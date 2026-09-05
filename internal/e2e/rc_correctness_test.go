@@ -7841,6 +7841,119 @@ function main(): i32 {
 }`,
 	},
 	{
+		// #8406: a `[T]` slice header is an rc1 block the IR releases like a
+		// tuple box — the exit sweep for a local, the arg-temp release for
+		// `f(s.as_bytes())`, the receiver stash for `.len()` / `[i]`, the
+		// cast for `as usize` (std/string.bytes), and the parent of a
+		// sub-slice. Every consumer shape in one 10k loop; before the
+		// header carried an rc it bumped 16 bytes per call that nothing
+		// could free. Heap-form strings only: `as_bytes` on an inline
+		// string promotes the bytes into an unowned copy, a separate gap.
+		name: "slice_header_churn_free",
+		src: `
+import "std/string";
+function sum_view(b: [u8]): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < b.len()) { t = t + (b[i] as i32); i = i + 1; }
+    return t;
+}
+function main(): i32 {
+    var s: string = "hello world, this is a heap string";
+    var want_sum: i32 = 0;
+    var k: i32 = 0;
+    while (k < s.len()) { want_sum = want_sum + (s[k] as i32); k = k + 1; }
+    var per: i32 = (s[0] as i32) + want_sum + s.len() + (s[1] as i32) + (s[1] as i32) + s.len();
+    var xs: i32[] = [10, 20, 30, 40, 50];
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 10000) {
+        var b: [u8] = s.as_bytes();
+        acc = acc + (b[0] as i32);
+        acc = acc + sum_view(s.as_bytes());
+        acc = acc + s.as_bytes().len();
+        acc = acc + (s.as_bytes()[1] as i32);
+        var c: [u8] = b[1:3];
+        acc = acc + (c[0] as i32);
+        var copy: u8[] = s.bytes();
+        acc = acc + copy.len();
+        var v: [i32] = xs[1:4];
+        var w: [i32] = v[1:2];
+        acc = acc + v[0] + w[0] + xs[2:5].len();
+        i = i + 1;
+    }
+    if (acc != 10000 * (per + 53)) { return 1; }
+    return __rc_underflow_count();
+}`,
+	},
+	{
+		// A sub-slice views the SOURCE's bytes, never its parent header, so
+		// the parent may be released first: reassigned while the child is
+		// live, dropped at a callee's exit while the child is returned, or
+		// released as the temp the child was cut from. The child stays
+		// valid and the parent's header is reclaimed each time.
+		name: "slice_sub_view_outlives_parent_header",
+		src: `
+function tail(s: string): [u8] {
+    var a: [u8] = s.as_bytes();
+    var b: [u8] = a[1:3];
+    return b;
+}
+function main(): i32 {
+    var s: string = "hello world, this is a heap string";
+    var t: string = "another heap string, also long";
+    var bad: i32 = 0;
+    var i: i32 = 0;
+    while (i < 1000) {
+        var a: [u8] = s.as_bytes();
+        var b: [u8] = a[1:3];
+        a = t.as_bytes();
+        if (b.len() != 2 || (b[0] as i32) != 101 || (b[1] as i32) != 108) { bad = bad + 1; }
+        if ((a[0] as i32) != 97) { bad = bad + 2; }
+        var r: [u8] = tail(s);
+        if (r.len() != 2 || (r[1] as i32) != 108) { bad = bad + 4; }
+        var q: [u8] = s.as_bytes()[6:11];
+        if (q.len() != 5 || (q[0] as i32) != 119) { bad = bad + 8; }
+        i = i + 1;
+    }
+    return bad + __rc_underflow_count();
+}`,
+	},
+	{
+		// A slice header stored in a struct field, an array element and a
+		// tuple is retained on the store (needsRcIncOnAlias) and released by
+		// the container's own drop — the same counted-alias protocol every
+		// other rc-tracked shape runs. The source local's exit dec only decs
+		// the shared header; the last container to let go frees it. The
+		// `[u8][]` element walk is the per-element __fern_closure_drop of
+		// __drop_arr_slice; a bare __fern_rc_dec would strand the fresh
+		// second element at rc 0. Closure captures are exercised by the
+		// correctness-only view program (closure churn is a pinned gap of
+		// its own).
+		name: "slice_header_in_containers_churn_free",
+		src: `
+struct View { v: [u8], n: i32 }
+function first(v: View): i32 { return v.v[0] as i32; }
+function main(): i32 {
+    var s: string = "hello world, this is a heap string";
+    var bad: i32 = 0;
+    var i: i32 = 0;
+    while (i < 2000) {
+        var b: [u8] = s.as_bytes();
+        var w: View = View { v: b, n: i };
+        var arr: [u8][] = [b, s.as_bytes()];
+        var pair: ([u8], i32) = (b, 7);
+        var c: [u8] = arr[1];
+        if (first(w) != 104) { bad = bad + 1; }
+        if (arr[1].len() != s.len() || c.len() != s.len()) { bad = bad + 2; }
+        if (pair.0.len() != s.len() || pair.1 != 7) { bad = bad + 4; }
+        if (w.n != i) { bad = bad + 16; }
+        i = i + 1;
+    }
+    return bad + __rc_underflow_count();
+}`,
+	},
+	{
 		// The `.with` half of the superseded-field move: `x = S { ...x, f:
 		// x.f.with(i, v) }` (and the return form, and a method receiver)
 		// hands the field to __fern_arr_cow_inplace at the box's own count,

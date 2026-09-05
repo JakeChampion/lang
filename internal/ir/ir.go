@@ -3350,6 +3350,7 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 				}
 				if (strings.HasPrefix(op.Str, "__drop_struct_") ||
 					op.Str == "__drop_arr_closure" ||
+					op.Str == "__drop_arr_slice" ||
 					op.Str == "__drop_closure_value" ||
 					op.Str == "__drop_strarr" ||
 					strings.HasPrefix(op.Str, "__drop_arr_struct_") ||
@@ -3402,6 +3403,10 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 				// env (generically, through the embedded drop-fn pointer) +
 				// the pair block, then free the outer buffer.
 				fn = genArrClosureDropFn(ptrW)
+			} else if name == "__drop_arr_slice" {
+				// Array-of-slice outer drop: per element free the view header
+				// (__fern_closure_drop at rc==1), then free the outer buffer.
+				fn = genArrSliceDropFn(ptrW)
 			} else if name == "__drop_closure_value" {
 				// One closure value reached through a container (struct field
 				// / enum payload / tuple element), where nothing names which
@@ -9848,6 +9853,22 @@ func (b *builder) expr(e ast.Expr) error {
 					// pointer-width field (8 bytes native /
 					// 4 wasm32), so load at WidthPtr; a plain
 					// i32 load would truncate a high pointer.
+					//
+					// A FRESH header (`s.as_bytes() as usize`, the
+					// std/string.bytes hot path) is dead once its
+					// data pointer is out: the bytes belong to the
+					// source, not the header, so releasing it here
+					// leaves the pointer valid. Stash, load, drop.
+					if tt, ok := b.freshOwnedRcTempType(n.Inner); ok {
+						hdr := b.allocSlot()
+						b.locals[fmt.Sprintf("__slice_cast_hdr_%d", hdr)] = hdr
+						b.scratchType[hdr] = tt
+						b.emit(Op{Kind: OpStoreLocal, I32: hdr})
+						b.emit(Op{Kind: OpLoadLocal, I32: hdr})
+						b.emit(Op{Kind: OpLoad, Width: WidthPtr})
+						b.emitSliceSlotDrop(hdr)
+						return nil
+					}
 					b.emit(Op{Kind: OpLoad, Width: WidthPtr})
 					return nil
 				case ast.StringType:
@@ -10601,12 +10622,29 @@ func (b *builder) expr(e ast.Expr) error {
 				b.emit(Op{Kind: OpLoadLocal, I32: idxContainerSlot})
 			}
 		}
+		// A FRESH slice header (`s.as_bytes()[i]`) is dead once the element
+		// is loaded: the element lives in the viewed storage, which the
+		// header does not own, so releasing the header after the load
+		// neither frees the element nor needs a retain on it.
+		sliceHdrSlot := int32(-1)
+		if n.IsSlice {
+			if st, ok := b.freshOwnedRcTempType(n.Array); ok {
+				sliceHdrSlot = b.allocSlot()
+				b.locals[fmt.Sprintf("__idxhdr_%d", sliceHdrSlot)] = sliceHdrSlot
+				b.scratchType[sliceHdrSlot] = st
+				if err := b.expr(n.Array); err != nil {
+					return err
+				}
+				b.emit(Op{Kind: OpStoreLocal, I32: sliceHdrSlot})
+				b.emit(Op{Kind: OpLoadLocal, I32: sliceHdrSlot})
+			}
+		}
 		if n.IsString {
 			var err error
 			if strIdxSlot, err = b.stashOwnedStringOperand(n.Array); err != nil {
 				return err
 			}
-		} else if idxContainerSlot < 0 {
+		} else if idxContainerSlot < 0 && sliceHdrSlot < 0 {
 			if err := b.expr(n.Array); err != nil {
 				return err
 			}
@@ -10715,6 +10753,9 @@ func (b *builder) expr(e ast.Expr) error {
 				b.emitRetainValueOnStack(n.ElemType)
 			}
 			b.emitOwnedSlotDrop(idxContainerSlot, b.scratchType[idxContainerSlot])
+		}
+		if sliceHdrSlot >= 0 {
+			b.emitSliceSlotDrop(sliceHdrSlot)
 		}
 		b.decStashedStringTemps(strIdxSlot)
 	case *ast.SliceExpr:
@@ -10903,6 +10944,19 @@ func (b *builder) expr(e ast.Expr) error {
 		srcSlot := b.allocSlot()
 		b.locals[fmt.Sprintf("__sl_slice_src_%d", srcSlot)] = srcSlot
 		b.emit(Op{Kind: OpStoreLocal, I32: srcSlot})
+		// A sub-slice of a FRESH slice header (`s.as_bytes()[1:3]`) copies
+		// the parent's data pointer into its own header, so the parent is
+		// dead once the child is built; release it below. The child views
+		// the source's bytes, never the parent header, so freeing the
+		// parent leaves it valid. An owned ARRAY source is left alone: the
+		// child views its buffer.
+		releaseSrcHeader := false
+		if n.SourceIsSlice {
+			if st, ok := b.freshOwnedRcTempType(n.Source); ok {
+				b.scratchType[srcSlot] = st
+				releaseSrcHeader = true
+			}
+		}
 
 		// Source length: a slice carries its len at header + ptrW
 		// (after the pointer-width data field); an owned array at
@@ -10977,6 +11031,9 @@ func (b *builder) expr(e ast.Expr) error {
 		}
 		b.emit(Op{Kind: OpLoadLocal, I32: lenSlot})
 		b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__slice_make", Width: ResAddr, I32: 2})
+		if releaseSrcHeader {
+			b.emitSliceSlotDrop(srcSlot)
+		}
 	case *ast.ArrayLit:
 		// Allocate `headerBytes + len*stride` bytes (header + payload),
 		// store the length at base+headerBytes-4, then each element
@@ -16495,6 +16552,10 @@ func (b *builder) emitOwnedSlotDrop(idx int32, t ast.Type) {
 		// between OpMakeClosure and OpStoreLocal breaks the defunctionalise /
 		// closure-pair-elide pattern match, and a flat closure dec leaks
 		// captures anyway — it keeps its prior safe-leak behaviour.
+	case ast.SliceType:
+		// An owned slice frees its rc1 header on reinit / overwrite / temp
+		// release; the viewed bytes are the source's and are never touched.
+		b.emitSliceSlotDrop(idx)
 	case ast.DynTraitType:
 		// `dyn Trait` reclamation on loop-body re-declaration
 		// (docs/DYN-TRAITS.md §4.4) — mirrors the exit sweep's DynTraitType
@@ -16603,6 +16664,12 @@ func (b *builder) decValueOnStack(t ast.Type, mayFree bool) {
 			// cells.
 		}
 	}
+	// A slice header owned by the value being released frees at rc==1; a
+	// flat-dec site (mayFree false: the owner is not itself freed) only decs.
+	if isSliceType(t) && mayFree {
+		b.emitSliceHeaderDropOnStack()
+		return
+	}
 	// __fern_rc_dec is a void-returning runtime helper but OpCallDirect's
 	// codegen always pushes the call's return-value register onto the operand
 	// stack; drop the bogus push to keep the stack balanced.
@@ -16674,6 +16741,12 @@ func (b *builder) dropStructField(t ast.Type) {
 	// see appendChildDrop's dyn arm + docs/DYN-TRAITS.md §7.8.
 	if dt, isDyn := t.(ast.DynTraitType); isDyn && b.dynRcSupported {
 		b.emit(Op{Kind: OpCallDirect, Str: dynDropFnName(dt.Traits), I32: 1})
+		return
+	}
+	// Slice child: the owner is unique here, so its header frees at rc==1
+	// (a shared header only decs); the viewed bytes are the source's.
+	if isSliceType(t) {
+		b.emitSliceHeaderDropOnStack()
 		return
 	}
 	if name, ok := dropFnNameFor(t, b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW, b.dynRcSupported); ok {
@@ -17409,8 +17482,8 @@ func (b *builder) freshOwnedIndexContainer(array ast.Expr) bool {
 // inc-and-pass-through, so the value survives for whatever consumes it next.
 //
 // The set is rcTrackedSlotType, not ast.IsPointerType: a `dyn Trait` value
-// carries no rc header and a slice is a borrowed view, so neither may take
-// __fern_rc_inc even though both are pointer-shaped.
+// carries no rc header, so it may not take __fern_rc_inc even though it is
+// pointer-shaped.
 func (b *builder) emitRetainValueOnStack(t ast.Type) {
 	if !rcTrackedSlotType(t) {
 		return
@@ -18123,6 +18196,13 @@ func (b *builder) assign(n *ast.Assign) error {
 			// zero on the operand stack, so the new RHS value underneath is
 			// left in place for the store below.
 			b.emitTupleSlotDrop(idx, tt)
+		} else if lt, isLocal := b.localDeclType(t.Name); isLocal && isSliceType(lt) && ast.RcFreeEnabled && b.rc.freeEligible[t.Name] {
+			// Slice reassignment-overwrite — `v = s.as_bytes()` ends the old
+			// binding's ownership of its header exactly like a scope exit;
+			// the same eligible-gated header release applies. A sub-slice
+			// cut from the old value views the SOURCE's bytes, so it is
+			// unaffected.
+			b.emitSliceSlotDrop(idx)
 		} else if b.dynReclaim() && b.localIsDynTrait(t.Name) {
 			// `d = <dyn>` reassignment-overwrite. A `dyn` local sits outside
 			// every arm above (its cell carries no rc header, so it is neither

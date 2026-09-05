@@ -18,12 +18,20 @@ package ir
 //	tuple       | yes             | yes        | if string/array/Map-free| __drop_tuple_*
 //	enum        | yes             | yes        | if eligible + uniform   | enumNeedsDrop
 //	closure     | yes             | yes        | no                      | __closure_drop_*
+//	slice [T]   | yes             | yes        | no                      | header only (closure_drop)
 //	dyn Trait   | dynRc-gated     | sweep-only | no                      | __drop_dyn_<set>
 //	Map         | via struct name | via struct | no (isMapType excluded) | map drop glue
 //
+// A slice is an rc=1 heap HEADER `{data_ptr, len}` viewing storage it does
+// not own (an array's buffer, a string's bytes). Its drop is the header's
+// release only — __fern_closure_drop frees an rc1 block at its stashed size
+// on the last reference and decs otherwise, which is exactly that — and
+// never touches the viewed bytes; what keeps those alive is the source's
+// own scope (E063 rejects a view that outlives function-local storage).
+//
 // Layering of the tracked sets (each a strict superset of the previous):
 //
-//	arrElemIsRcTracked  = {array, struct, enum, closure, tuple}
+//	arrElemIsRcTracked  = {array, struct, enum, closure, tuple, slice}
 //	rcTrackedSlotType   = arrElemIsRcTracked + {string}
 //	                      (also the counted-array-element set: see below)
 //	exit-sweep tracked  = rcTrackedSlotType + {dyn Trait} (dynReclaim-gated,
@@ -66,8 +74,9 @@ func rcTrackedSlotType(t ast.Type) bool {
 
 // arrElemIsRcTracked reports whether an array element type is a
 // SINGLE-WORD pointer-shaped rc-tracked value — array / struct (incl.
-// Map) / enum / closure. These are the elements __fern_drop_arr_ptr /
-// __fern_arr_cow_inplace_ptr can walk with a bare __fern_rc_dec / _inc.
+// Map) / enum / closure / tuple / slice header. These are the elements
+// __fern_drop_arr_ptr / __fern_arr_cow_inplace_ptr can walk with a bare
+// __fern_rc_dec / _inc.
 // Strings are excluded for shape, not for tracking: they ARE counted
 // array elements (see rcTrackedSlotType), but a two-word (data, len)
 // element carries its inline tag in `len`, so it needs the string-aware
@@ -75,10 +84,17 @@ func rcTrackedSlotType(t ast.Type) bool {
 // Primitive elements (i32 etc.) are not pointers, so no drop.
 func arrElemIsRcTracked(elem ast.Type) bool {
 	switch elem.(type) {
-	case ast.ArrayType, ast.StructType, ast.EnumType, *ast.FuncType, ast.TupleType:
+	case ast.ArrayType, ast.StructType, ast.EnumType, *ast.FuncType, ast.TupleType, ast.SliceType:
 		return true
 	}
 	return false
+}
+
+// isSliceType reports whether t is a `[T]` view header — the shape whose
+// drop is the header free alone (see the capability table above).
+func isSliceType(t ast.Type) bool {
+	_, ok := t.(ast.SliceType)
+	return ok
 }
 
 // isMapType reports whether t is the runtime Map handle type. A
