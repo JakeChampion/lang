@@ -14605,12 +14605,17 @@ func (b *builder) callBody(n *ast.Call) error {
 	// re-evaluates them (same idempotence requirement as the inc-on-set
 	// above). The set's own overwrite-dec stays a no-op for kind 4, so
 	// there's no double free; the freed box isn't dereferenced by the set
-	// (it only probes keys, then overwrites the slot).
+	// (it only probes keys, then overwrites the slot). Sole-owner gated
+	// like the string pre-drops below, and for the same reason: a copy
+	// shares this column too (#8354).
 	if id.Name == "__method_Map_set" && len(n.Args) == 3 && len(n.TypeArgs) >= 2 &&
 		ast.RcFreeEnabled && !needBoxK && !keyKind3 &&
 		mapValKindTag(n.TypeArgs[1], b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW) == 4 &&
 		exprSafeToReevaluate(n.Args[0]) && exprSafeToReevaluate(n.Args[1]) {
 		if perVal, ok := mapValHasDrop(n.TypeArgs[1], b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW); ok {
+			if err := b.emitMapPredropSoleOwnerGate(n.Args[0]); err != nil {
+				return err
+			}
 			if err := b.expr(n.Args[0]); err != nil { // m
 				return err
 			}
@@ -14628,39 +14633,68 @@ func (b *builder) callBody(n *ast.Call) error {
 			b.emit(Op{Kind: OpCallDirect, Str: perVal, I32: 1})
 			b.emit(Op{Kind: OpDrop})
 			b.emit(Op{Kind: OpEnd})
+			b.emit(Op{Kind: OpEnd}) // the sole-owner gate
 		}
 	}
 	// Map[K, string] (two-word ABI — wasm + arm64-TwoWordOverride)
 	// overwrite pre-drop: m.set(k, v) replacing an existing string
-	// value must reclaim the old buffer (the runtime's type-erased
-	// overwrite-dec is a no-op for valKind 1). Look up the old
-	// value cell (non-retaining) and, if present, __fern_str_dec the
-	// (data, len) it holds. The old cell itself leaks (as on map
-	// drop). Scoped to the non-boxed-key fast path; m / k must be
-	// call-free (the set below re-evaluates them — same idempotence
-	// as the kind-4 path).
+	// value must reclaim the old CELL and the buffer it points at (the
+	// runtime's type-erased overwrite-dec is a no-op for valKind 1).
+	// Look up the old value cell (non-retaining) and, if present,
+	// __fern_str_dec the (data, len) it holds, then free the cell —
+	// the same pair __drop_map_str_values runs when the whole map dies.
+	// m / k must be call-free (the set below re-evaluates them — same
+	// idempotence as the kind-4 path).
+	//
+	// A BOXED key reaches the lookup through a cell of its own, because
+	// __map_lookup_val dispatches on the map's stored key kind and the
+	// column holds cell pointers. Only the CELL is freed, never what it
+	// points at: exprSafeToReevaluate admits an alias the caller still
+	// owns (ident / field / index), a literal (static, so a dec would be a
+	// no-op), and a cast of either — never a concat, so no key reaching
+	// here is a fresh buffer this lowering owns. Same rule as
+	// freeLookupBoxCell's, for the same reason.
 	if id.Name == "__method_Map_set" && len(n.Args) == 3 && len(n.TypeArgs) >= 2 &&
-		ast.RcFreeEnabled && ast.UseTwoWordStrings(b.ptrW) && !needBoxK && !keyKind3 &&
+		ast.RcFreeEnabled && ast.UseTwoWordStrings(b.ptrW) && !keyKind3 &&
 		exprSafeToReevaluate(n.Args[0]) && exprSafeToReevaluate(n.Args[1]) {
 		if _, isStr := n.TypeArgs[1].(ast.StringType); isStr {
+			if err := b.emitMapPredropSoleOwnerGate(n.Args[0]); err != nil {
+				return err
+			}
 			if err := b.expr(n.Args[0]); err != nil { // m
 				return err
 			}
-			if err := b.expr(n.Args[1]); err != nil { // k (non-boxed)
+			lookupKeyCell := int32(-1)
+			if needBoxK {
+				var err error
+				if lookupKeyCell, err = b.boxIntoCellSlot(n.Args[1], n.TypeArgs[0], "__map_predrop_kbox"); err != nil {
+					return err
+				}
+			} else if err := b.expr(n.Args[1]); err != nil { // k
 				return err
 			}
 			b.emit(Op{Kind: OpCallDirect, Str: "__map_lookup_val", I32: 2})
 			oldSlot := b.allocSlot()
 			b.locals[fmt.Sprintf("__map_overwrite_oldstr_%d", oldSlot)] = oldSlot
 			b.emit(Op{Kind: OpStoreLocal, I32: oldSlot})
-			// if oldCell != 0: __fern_str_dec the (data, len) in the cell.
+			if lookupKeyCell >= 0 {
+				b.emit(Op{Kind: OpLoadLocal, I32: lookupKeyCell})
+				b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_cell_free", Width: ResAddr, I32: 1})
+				b.emit(Op{Kind: OpDrop})
+			}
+			// if oldCell != 0: __fern_str_dec the (data, len) in the cell,
+			// then return the cell.
 			b.emit(Op{Kind: OpLoadLocal, I32: oldSlot})
 			b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
 			b.emit(Op{Kind: OpLoadLocal, I32: oldSlot})
 			b.emit(Op{Kind: OpLoad, Width: WidthString})
 			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", Width: ResAddr, I32: 1})
 			b.emit(Op{Kind: OpDrop})
+			b.emit(Op{Kind: OpLoadLocal, I32: oldSlot})
+			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_cell_free", Width: ResAddr, I32: 1})
+			b.emit(Op{Kind: OpDrop})
 			b.emit(Op{Kind: OpEnd})
+			b.emit(Op{Kind: OpEnd}) // the sole-owner gate
 		}
 	}
 	// Map[K, string] (native single-word) overwrite pre-drop: the native
@@ -14678,6 +14712,9 @@ func (b *builder) callBody(n *ast.Call) error {
 		ast.RcFreeEnabled && b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) && !needBoxK && !keyKind3 &&
 		exprSafeToReevaluate(n.Args[0]) && exprSafeToReevaluate(n.Args[1]) {
 		if _, isStr := n.TypeArgs[1].(ast.StringType); isStr {
+			if err := b.emitMapPredropSoleOwnerGate(n.Args[0]); err != nil {
+				return err
+			}
 			if err := b.expr(n.Args[0]); err != nil { // m
 				return err
 			}
@@ -14696,6 +14733,7 @@ func (b *builder) callBody(n *ast.Call) error {
 			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", Width: ResAddr, I32: 1})
 			b.emit(Op{Kind: OpDrop})
 			b.emit(Op{Kind: OpEnd})
+			b.emit(Op{Kind: OpEnd}) // the sole-owner gate
 		}
 	}
 	// `m.get(k)` ALWAYS reboxes the helper's uniform `Option[usize]`
@@ -17438,7 +17476,7 @@ func (b *builder) emitMapSlotDrop(slot int32, st ast.StructType) {
 // It walks exactly the columns __map_own_copied_cols gives the copy a claim of
 // its own on: the string-KEY column, and the array-value and boxed-cell value
 // columns via the kind-guarded __map_drop_values. A string or struct VALUE
-// column is still SHARED with the copy (#6242 claims neither), so walking it
+// column is still SHARED with the copy (#8354 claims neither), so walking it
 // would free what the new handle reads — those values leak here instead, until
 // the claim widens. Then the buf and handle, which are exclusively the old
 // handle's.
@@ -21071,6 +21109,24 @@ func (b *builder) emitWideMapSet(n *ast.Call, kType, vType ast.Type) error {
 	}
 	b.emitMapCall("__method_Map_set", 3, kType)
 	b.freeDiscardedSetKeyCell(keyCell, preLen, kType)
+	return nil
+}
+
+// emitMapPredropSoleOwnerGate opens an `if __fern_rc_is_unique(m)` around an
+// overwrite pre-drop, which the caller closes with an OpEnd.
+//
+// A pre-drop RELEASES the value the set is about to replace, and it runs
+// BEFORE the set's own __map_cow_inplace. A second handle over the same buffer
+// still names that value — __map_own_copied_cols claims neither a string nor a
+// struct value column on a copy (#8354) — so releasing it without owning the
+// handle frees storage the other handle reads. `m` is re-evaluated here, which
+// the pre-drop gates already require of it.
+func (b *builder) emitMapPredropSoleOwnerGate(m ast.Expr) error {
+	if err := b.expr(m); err != nil {
+		return err
+	}
+	b.emit(Op{Kind: OpRcIsUnique, Str: "__fern_rc_is_unique", I32: 1})
+	b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
 	return nil
 }
 
