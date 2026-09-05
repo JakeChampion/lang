@@ -114,6 +114,19 @@ func TestSeqParity(t *testing.T) {
 		{name: "capital P quarter", args: []string{"0X1P-2", "1", "3"}},
 		{name: "negative capital P halves", args: []string{"--", "-0X1P-1", "1", "3"}},
 
+		// A LAST with no precision of its own sends the whole sequence to
+		// %g, though its precision never RAISES the derived one — that is
+		// what separates `seq 0.5 0.5 0x1.8` from `seq 0.5 0.5 0x2`, whose
+		// LAST is a hex integer and asks for precision 0, and both from
+		// `seq 1 1 1.5`, whose one decimal is ignored.
+		{name: "hex power last gives up the precision", args: []string{"1", "0.5", "0x1p2"}},
+		{name: "hex fraction last gives up the precision", args: []string{"0.5", "0.5", "0x1.8"}},
+		{name: "hex last with a long increment", args: []string{"-0.3", "0.35000005", "0x1.8"}},
+		{name: "hex integer last keeps the precision", args: []string{"0.5", "0.5", "0x2"}},
+		{name: "hex integer last keeps two decimals", args: []string{"1", "0.25", "0x2"}},
+		{name: "equal width hex fraction last", args: []string{"-w", "0.5", "0.5", "0x1.8"}},
+		{name: "equal width hex power last", args: []string{"-w", "1", "0.5", "0x1p2"}},
+
 		// -w: the width the spellings ask for.
 		{name: "equal width", args: []string{"-w", "1", "10"}},
 		{name: "equal width across zero", args: []string{"-w", "-5", "5"}},
@@ -300,6 +313,47 @@ func TestSeqParity(t *testing.T) {
 		{name: "format twenty decimals stops early", args: []string{"-f", "%.20f", "0", "0.3", "0.9"}},
 		{name: "format no decimals stops early", args: []string{"-f", "%.0f", "0", "0.3", "0.9"}},
 		{name: "format two decimals keeps it", args: []string{"-f", "%.2f", "0", "0.3", "0.9"}},
+
+		// A term past LAST is printed only when its own text reads back
+		// as LAST ITSELF and differs, AS TEXT, from the text just
+		// printed.
+		//
+		// Reading back merely inside the range does not do it, which is
+		// what separates `%.1f 0 0.36 0.7` from `%.1f 0 0.36 0.71` —
+		// same terms, same text, and only the first prints its 0.72 as
+		// `0.7`. A hex conversion therefore never prints this term at
+		// all: at full precision it reads back as the out-of-range
+		// value, and cut short it lands under LAST.
+		//
+		// The second half is a text comparison and not a value one in
+		// both directions: two terms that print the same bytes end the
+		// sequence even though their values differ, and `0.0` followed
+		// by `-0.0` does not even though the two values are equal.
+		{name: "extra term reads back as last", args: []string{"-f", "%.1f", "0", "0.36", "0.7"}},
+		{name: "extra term reads back short of last", args: []string{"-f", "%.1f", "0", "0.36", "0.71"}},
+		{name: "extra term short of a fractional last", args: []string{"-f", "%.1f", "0", "0.36", "0.715"}},
+		{name: "extra term reads back as an integer last", args: []string{"-f", "%.0f", "0", "0.6", "1.2"}},
+		{name: "extra term short of an integer last", args: []string{"-f", "%.0f", "0", "0.6", "1.1"}},
+		{name: "extra term short with a rounded step", args: []string{"-f", "%.0f", "0", "0.7000005", "1.4"}},
+		{name: "extra term short in e", args: []string{"-f", "%.0e", "0", "0.7000005", "1.4"}},
+		{name: "extra term short in g", args: []string{"-f", "%.1g", "0", "0.7000005", "1.4"}},
+		{name: "extra term short of a quarter last", args: []string{"-f", "%.1f", "0", "0.26", "0.51"}},
+		{name: "extra term as a quarter last", args: []string{"-f", "%.1f", "0", "0.26", "0.5"}},
+		{name: "a cuts the extra term under last", args: []string{"-f", "%.3a", "0", "0.3", "0.9"}},
+		{name: "a cuts it under a lower last", args: []string{"-f", "%.3a", "0", "0.3", "0.8999999"}},
+		{name: "a with no digits cuts it too", args: []string{"-f", "%.0a", "0", "0.3", "0.88"}},
+		{name: "a at full precision keeps the term out", args: []string{"-f", "%a", "0", "0.3", "0.9"}},
+		{name: "extra term reads back as last but repeats it", args: []string{"-f", "%.1f", "1", "1e-18", "1"}},
+		{name: "a step too small to advance at all", args: []string{"-f", "%g", "1", "1e-18", "1"}},
+		{name: "extra term repeats a whole number", args: []string{"-f", "%.0f", "0.71", "0.35000005", "5"}},
+		{name: "extra term repeats one below last", args: []string{"-f", "%.0f", "0.71", "0.35000005", "4.9"}},
+		{name: "the same term inside the range", args: []string{"-f", "%.0f", "0.71", "0.35000005", "5.3"}},
+		{name: "extra term differs only in its sign", args: []string{"-f", "%.1f", "0", "-1e-18", "0"}},
+		{name: "extra term repeats a signed zero", args: []string{"-f", "%.1f", "0", "1e-18", "0"}},
+		{name: "extra term after a negative zero first", args: []string{"-f", "%.1f", "-0.0", "1e-18", "0"}},
+		{name: "extra term after a negative zero both ends", args: []string{"-f", "%.1f", "-0.0", "1e-18", "-0.0"}},
+		{name: "extra term descending reads back as last", args: []string{"-f", "%.1f", "0.72", "-0.36", "0"}},
+		{name: "extra term descending short of last", args: []string{"-f", "%.1f", "0.72", "-0.36", "0.01"}},
 		{name: "format glued to the option", args: []string{"-f%g", "3"}},
 		{name: "format that is not valid UTF-8", args: []string{"-f", "%g\xff", "2"}},
 
@@ -510,10 +564,52 @@ func TestSeqParity(t *testing.T) {
 		{name: "tiny everything", args: []string{"1e-400", "1e-400", "1e-400"}},
 		{name: "equal width tiny to one long", args: []string{"-w", "1e-400", "1"}},
 		{name: "largest finite", args: []string{"1e4932", "1", "1e4932"}},
+		// A term of zero carries the LONG DOUBLE's sign, which exact
+		// decimal arithmetic cannot produce: 3 x 0.3 rounds to a hair
+		// above 0.9, so the term that lands on zero is a hair below it
+		// and prints `-0.0`. The same sequence one step shorter cancels
+		// exactly and prints `0.0`.
+		{name: "zero term is negative", args: []string{"-f", "%.1f", "0.9", "-0.3", "0"}},
+		{name: "zero term is negative by default", args: []string{"0.9", "-0.3", "0"}},
+		{name: "zero term is negative with equal width", args: []string{"-w", "0.9", "-0.3", "0"}},
+		{name: "zero term is negative at two decimals", args: []string{"-f", "%.2f", "0.9", "-0.3", "0"}},
+		{name: "zero term is negative mid sequence", args: []string{"-f", "%.1f", "0.9", "-0.3", "-0.3"}},
+		{name: "zero term cancels exactly", args: []string{"-f", "%.1f", "0.6", "-0.3", "0"}},
+		{name: "zero term cancels from a longer run", args: []string{"-f", "%.1f", "1.2", "-0.3", "0"}},
+		{name: "zero term ascending", args: []string{"-f", "%.1f", "-0.9", "0.3", "0"}},
+		{name: "zero term ascending in tenths", args: []string{"-f", "%.1f", "-0.3", "0.1", "0"}},
 		{name: "negative zero", args: []string{"-0"}},
 		{name: "negative zero to one", args: []string{"-0.0", "1"}},
 		{name: "negative zero increment of zero", args: []string{"-0", "0"}},
 		{name: "zero to negative zero", args: []string{"0", "-0"}},
+
+		// One per long double a target can have. seq computes and prints
+		// in C's `long double`, which is x87 80-bit extended on x86-64,
+		// IEEE binary128 on arm64 and wasm32, and binary64 on Darwin
+		// (#8513), so the corpus above only ever proves the format of the
+		// host it runs on. These are the invocations whose bytes differ
+		// between the three, measured against GNU on both an x86-64 and an
+		// aarch64 host: how many hex digits `%a` carries and where its
+		// point sits, how far the exact decimal tail of a tenth runs, which
+		// precisions survive the round trip (LDBL_DIG is 18, 33 or 15),
+		// where the subnormals stop, and the largest whole number the
+		// format holds — which is the edge the digit and scaled-decimal
+		// engines hand over at.
+		{name: "a signature of each format", args: []string{"-f", "%a", "0.1", "0.1", "0.3"}},
+		{name: "a of a tenth to three digits", args: []string{"-f", "%.3a", "0.1", "0.1", "0.3"}},
+		{name: "decimal tail of a tenth", args: []string{"-f", "%.40f", "0.1", "0.1", "0.3"}},
+		{name: "decimal tail of a tenth in e", args: []string{"-f", "%.30e", "0.1", "0.1", "0.3"}},
+		{name: "decimal tail of a tenth in g", args: []string{"-f", "%.25g", "0.1", "0.1", "0.3"}},
+		{name: "one past the x87 digit count", args: []string{"-f", "%.20f", "0.1", "0.1", "0.3"}},
+		{name: "two past the x87 digit count", args: []string{"-f", "%.21f", "0.1", "0.1", "0.3"}},
+		{name: "at the binary128 digit count", args: []string{"-f", "%.33f", "0.1", "0.1", "0.3"}},
+		{name: "one past the binary128 digit count", args: []string{"-f", "%.34f", "0.1", "0.1", "0.3"}},
+		{name: "a precision only a wide format carries", args: []string{"-f", "%.19f", "0.0000000000000000001", "0.0000000000000000001", "0.0000000000000000003"}},
+		{name: "where each format's subnormals stop", args: []string{"6.5e-4966", "1"}},
+		{name: "least binary128 subnormal", args: []string{"0x1p-16494", "1"}},
+		{name: "equal width past the subnormals", args: []string{"-w", "6.5e-4966", "1"}},
+		{name: "largest exactly held integer", args: []string{"-f", "%.0f", "18446744073709551615", "1", "18446744073709551617"}},
+		{name: "rendered past the exactly held integer", args: []string{"+18446744073709551615", "1", "18446744073709551617"}},
 
 		// Write failures: a closed descriptor and a full device.
 		{name: "stdout closed", args: []string{"3"}, stdout: stdoutClosed},
