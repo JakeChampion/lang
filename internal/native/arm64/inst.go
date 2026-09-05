@@ -65,7 +65,7 @@ func (o Operand) Kind() OpKind { return o.kind }
 
 // Text is the operand as it was spelled. Migration scaffolding: the arms
 // that have not moved to the typed accessors read this, and it is
-// removed with the last of them.
+// removed with the last of them (#8510).
 func (o Operand) Text() string { return o.text }
 
 // RegNum is the register number for OpReg, OpFPReg, OpVecReg and
