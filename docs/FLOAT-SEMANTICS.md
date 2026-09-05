@@ -156,8 +156,12 @@ Go's `strconv` shortest formatting has, and the two agree digit for digit:
 `(3.14f32).to_string()` is `"3.14"`, `(0.1 + 0.2).to_string()` is
 `"0.30000000000000004"`.
 
-Notation follows Go's `%v` / `strconv` `'g'`: scientific when the decimal
-exponent of the leading digit is `< -4` or `>= 21`, fixed-point otherwise.
+Notation is scientific when the decimal exponent of the leading digit is
+`< -4` or `>= 21`, fixed-point otherwise, and the exponent is written with a
+sign and no zero padding (`1e-5`, `1e+21`). The low threshold is C/Go `'g'`'s;
+the high one and the exponent spelling are JavaScript's. So `1e20` prints as
+`100000000000000000000` where Go's `%v` gives `1e+20`, and `0.00001` prints as
+`1e-5` where Go gives `1e-05` (`internal/stdlib/std/float.fern:363`).
 
 Guaranteed:
 

@@ -247,6 +247,9 @@ env:
   # when that issue closes.
   QUARANTINED_TESTS: ""
 
+permissions:
+  contents: read
+
 jobs:
   # WARM THE DRIVER CACHE (x86). The per-shard cost is dominated by self-host
   # DRIVERS, each a ~50-70s Go x86-64 emit of the ~35k-line front-end PLUS a gcc

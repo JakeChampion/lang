@@ -25,6 +25,7 @@ function main(): i32 {
     if ((16 as u32).next_power_of_2() != (16 as u32)) { return 11; }
     if ((2147483648 as u32).next_power_of_2() != (2147483648 as u32)) { return 12; }  // 2^31
     if (((2147483648 as u32) + (1 as u32)).next_power_of_2() != (0 as u32)) { return 13; }  // > 2^31 -> 0
+    if ((4294967295 as u32).next_power_of_2() != (0 as u32)) { return 17; }               // u32::MAX -> 0, terminates
     if ((2147483648 as u32).log2_floor() != 31) { return 14; }
     if ((1 as u32).log2_floor() != 0) { return 15; }
     if ((0 as u32).log2_floor() != (0 - 1)) { return 16; }               // sentinel

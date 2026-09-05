@@ -302,11 +302,13 @@ space; impossible on wasm32 — another reason wasm defers), and the
 rule that **a worker only frees memory it allocated** — which is
 what copy-at-boundary guarantees (design space (a)).
 
-**C3 — cycles are unconstructible, and that must survive workers.**
+**C3 — cycles must be unconstructible, and that must survive workers.**
 E048 (no struct-field assignment) + E049 (no reference-capture
-write-back) close the cycle vectors so RC needs no cycle collector
-(`RC-PERCEUS-PLAN.md`, `CELL-TYPE-PLAN.md`). Nothing about message
-passing may reopen a vector (e.g. a mailbox must not be a value a
+write-back) are the rules RC's lack of a cycle collector rests on
+(`RC-PERCEUS-PLAN.md`, `CELL-TYPE-PLAN.md`); one vector is still open
+single-threaded, since E049 guards only the inside of the closure
+and an outer rebind of the captured variable closes a cycle
+(#8440). Nothing about message passing may reopen a vector (e.g. a mailbox must not be a value a
 message can contain, or two workers' mailboxes could form a
 cross-heap cycle). Positive interaction: a per-worker heap can be
 **bulk-unmapped at worker exit** after the join-result is moved

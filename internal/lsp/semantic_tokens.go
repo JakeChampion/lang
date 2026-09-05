@@ -68,12 +68,27 @@ func runSemanticTokens(state *docState, uri string) semanticTokensResponse {
 		return semanticTokensResponse{Data: []int{}}
 	}
 	mod := requestModule(uri)
+	src := srcFor(state, uri)
 	var raw []rawToken
+	// The protocol counts a token's START and its LENGTH in UTF-16 units, so
+	// both are converted (#8468). A byte length would also be wrong on a line
+	// whose token itself holds non-ASCII, not only one preceded by it. With no
+	// text for this uri, srcFor returns "" and both fall back to bytes, which
+	// is what every position was before.
 	add := func(pos ast.Position, length, tt int) {
 		if length <= 0 || pos.Line <= 0 {
 			return
 		}
-		raw = append(raw, rawToken{line: pos.Line - 1, char: pos.Col - 1, length: length, tokenType: tt})
+		char, u16len := pos.Col-1, length
+		if src != "" {
+			line := lineTextAt(src, pos.Line)
+			char = utf16ColForByte(line, pos.Col)
+			u16len = utf16ColForByte(line, pos.Col+length) - char
+			if u16len <= 0 {
+				u16len = length
+			}
+		}
+		raw = append(raw, rawToken{line: pos.Line - 1, char: char, length: u16len, tokenType: tt})
 	}
 	for _, fd := range state.prog.Funcs {
 		if fd == nil || fd.Body == nil {

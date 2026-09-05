@@ -1815,8 +1815,10 @@ pub function (s: string) swap_case(): string {
 // `s.split(sep)` — splits on every non-overlapping
 // occurrence of sep. Empty pieces around adjacent
 // separators are preserved (`",a,b,".split(",")` →
-// `["", "a", "b", ""]`). Empty separator splits into
-// single-byte strings (matches JS's `split("")`). Result
+// `["", "a", "b", ""]`). An empty separator splits into
+// CHARACTERS — one string per codepoint, the same units
+// `chars()` yields, so no piece is ever half a multibyte
+// sequence. (`to_array()` is the per-byte split.) Result
 // is built incrementally via `__array_append_string`.
 pub function (s: string) split(sep: string): string[] {
     var n: i32 = s.len();
@@ -1829,8 +1831,9 @@ pub function (s: string) split(sep: string): string[] {
     var i: i32 = 0;
     if (sepLen == 0) {
         while (i < n) {
-            out = out.append(slice_unchecked(s, i, i+1));
-            i = i + 1;
+            var step: i32 = __utf8_step(s, i, n);
+            out = out.append(slice_unchecked(s, i, i + step));
+            i = i + step;
         }
         return out;
     }
@@ -1877,10 +1880,11 @@ pub function (s: string) splitn(sep: string, n: i32): string[] {
     var i: i32 = 0;
     var start: i32 = 0;
     if (sepLen == 0) {
-        // Match split's empty-sep behaviour: per-byte slicing.
+        // Match split's empty-sep behaviour: one piece per codepoint.
         while (i < sLen && out.len() < n - 1) {
-            out = out.append(slice_unchecked(s, i, i + 1));
-            i = i + 1;
+            var step: i32 = __utf8_step(s, i, sLen);
+            out = out.append(slice_unchecked(s, i, i + step));
+            i = i + step;
         }
         return out.append(slice_unchecked(s, i, sLen));
     }
@@ -2560,65 +2564,106 @@ pub function (s: string) to_array(): string[] {
 // level, so anything non-ASCII is fragile through them. These decode/encode
 // the UTF-8 content as Unicode scalar values (`char`), the eager-array form
 // the roadmap asks for (#4416 ROADMAP #6). Ill-formed input never throws: a
-// malformed lead, a truncated or bad continuation, an overlong encoding, a UTF-16
-// surrogate (U+D800..U+DFFF), or a value past U+10FFFF each decodes to one
-// U+FFFD (`�`, the Unicode replacement character) and the scan resumes —
-// the WHATWG-style substitution policy, so `chars()` is total.
+// malformed lead, a truncated or bad continuation, an overlong encoding, a
+// UTF-16 surrogate (U+D800..U+DFFF), or a value past U+10FFFF decodes to
+// U+FFFD (the Unicode replacement character) and the scan resumes, so
+// `chars()` is total.
+//
+// HOW MANY U+FFFDs an ill-formed run costs is the part implementations
+// disagree on, so this stdlib pins it: one per MAXIMAL SUBPART (Unicode
+// 15.0 §3.9), the recommended practice WHATWG's UTF-8 decoder
+// implements. Bytes that could still have begun a valid sequence are
+// consumed as one unit; the byte that broke it starts the next. So
+// `F0 9F 98` at end-of-input is ONE U+FFFD (a truncated emoji), while
+// `ED A0 80` is THREE (`A0` is not a legal continuation of `ED`, so `ED`
+// stands alone and the two orphaned continuation bytes follow).
+// std/utf8's `codepoints` / `codepoint_count` walk with the same rule and
+// agree byte-for-byte; the strict `utf8.utf8_decode_at` is the other
+// layer — it reports ill-formed input as `None` rather than substituting.
 
 // `__utf8_is_cont(b)` — is byte `b` a UTF-8 continuation byte (0x80..0xBF)?
 function __utf8_is_cont(b: i32): boolean { return b >= 128 && b < 192; }
 
-// `__utf8_step(s, i, n)` — number of bytes the codepoint starting at `i`
-// consumes: 1 for ASCII, a stray continuation, or an invalid / truncated
-// lead; otherwise the 2/3/4 the lead's continuation structure spells (even
-// when the value is overlong / a surrogate / out of range — those still
-// consume the whole sequence, they just decode to U+FFFD). Sharing this
-// with both decoders keeps `codepoint_count()` == `chars().len()`.
-function __utf8_step(s: string, i: i32, n: i32): i32 {
-    var b0: i32 = s[i] as i32;
-    if (b0 < 192) { return 1; }   // ASCII (< 128) or stray continuation
-    if (b0 < 224) {
-        if (i + 1 < n && __utf8_is_cont((s[i + 1] as i32))) { return 2; }
-        return 1;
-    }
-    if (b0 < 240) {
-        if (i + 2 < n && __utf8_is_cont((s[i + 1] as i32)) && __utf8_is_cont((s[i + 2] as i32))) { return 3; }
-        return 1;
-    }
-    if (b0 < 248) {
-        if (i + 3 < n && __utf8_is_cont((s[i + 1] as i32)) && __utf8_is_cont((s[i + 2] as i32)) && __utf8_is_cont((s[i + 3] as i32))) { return 4; }
-        return 1;
-    }
-    return 1;   // 0xF8..0xFF: never a valid lead
+// `__utf8_expect(b0)` — how many bytes the lead `b0` announces: 1 for
+// ASCII, 2/3/4 for a well-formed lead, 0 for a byte that can never start
+// a sequence (0x80..0xBF continuation, 0xC0/0xC1 — only ever overlong —
+// and 0xF5..0xFF, past U+10FFFF).
+function __utf8_expect(b0: i32): i32 {
+    if (b0 < 128) { return 1; }
+    if (b0 < 194) { return 0; }   // 0x80..0xC1
+    if (b0 < 224) { return 2; }
+    if (b0 < 240) { return 3; }
+    if (b0 < 245) { return 4; }
+    return 0;                     // 0xF5..0xFF
 }
 
-// `__utf8_decode_at(s, i, step)` — the scalar value at `i` given the
-// `__utf8_step` length, folding every ill-formed case to U+FFFD (65533).
+// `__utf8_cont_lo(b0)` / `__utf8_cont_hi(b0)` — the range the FIRST
+// continuation byte after lead `b0` may take (Unicode Table 3-7). E0 and
+// F0 raise the floor so an overlong encoding is rejected at the second
+// byte; ED lowers the ceiling to exclude the UTF-16 surrogates and F4
+// lowers it to cap the value at U+10FFFF. Every other lead takes the
+// full 0x80..0xBF, as does every continuation after the first.
+function __utf8_cont_lo(b0: i32): i32 {
+    if (b0 == 224) { return 160; }   // E0: A0..BF
+    if (b0 == 240) { return 144; }   // F0: 90..BF
+    return 128;
+}
+
+function __utf8_cont_hi(b0: i32): i32 {
+    if (b0 == 237) { return 159; }   // ED: 80..9F
+    if (b0 == 244) { return 143; }   // F4: 80..8F
+    return 191;
+}
+
+// `__utf8_step(s, i, n)` — bytes the unit starting at `i` consumes: the
+// length of the encoded codepoint when the sequence is well-formed, and
+// otherwise the MAXIMAL SUBPART of the ill-formed sequence (Unicode 15.0
+// §3.9, "U+FFFD Substitution of Maximal Subparts" — the recommended
+// practice WHATWG's UTF-8 decoder implements). That means the bytes that
+// still could have begun a valid sequence are consumed together and cost
+// ONE U+FFFD, while the byte that broke it is left for the next step:
+// `F1 80 62` is two units (`F1 80` then `b`), not three.
+//
+// `pub` because std/utf8's lossy walkers step with this too — one rule
+// for "how many bytes is the next character" across the whole stdlib.
+pub function __utf8_step(s: string, i: i32, n: i32): i32 {
+    var b0: i32 = s[i] as i32;
+    var want: i32 = __utf8_expect(b0);
+    if (want <= 1) { return 1; }   // ASCII, or a byte that cannot lead
+    if (i + 1 >= n) { return 1; }
+    var c1: i32 = s[i + 1] as i32;
+    if (c1 < __utf8_cont_lo(b0) || c1 > __utf8_cont_hi(b0)) { return 1; }
+    var k: i32 = 2;
+    while (k < want) {
+        if (i + k >= n) { return k; }                            // truncated
+        if (!__utf8_is_cont((s[i + k] as i32))) { return k; }    // broken tail
+        k = k + 1;
+    }
+    return want;
+}
+
+// `__utf8_decode_at(s, i, step)` — the scalar value of the unit at `i`
+// whose width `__utf8_step` measured. A step shorter than the lead
+// announces is a maximal subpart, so it decodes to U+FFFD (65533); a
+// step equal to it is well-formed by construction — `__utf8_step`'s
+// lead-specific continuation range has already excluded the overlong,
+// surrogate and out-of-range forms, so there is nothing left to re-check.
 function __utf8_decode_at(s: string, i: i32, step: i32): i32 {
     var b0: i32 = s[i] as i32;
-    if (step == 1) {
-        if (b0 < 128) { return b0; }
-        return 65533;   // stray continuation / invalid / truncated lead
-    }
+    if (b0 < 128) { return b0; }
+    if (step != __utf8_expect(b0)) { return 65533; }
     if (step == 2) {
-        var cp2: i32 = ((b0 & 31) << 6) | ((s[i + 1] as i32) & 63);
-        if (cp2 < 128) { return 65533; }   // overlong
-        return cp2;
+        return ((b0 & 31) << 6) | ((s[i + 1] as i32) & 63);
     }
     if (step == 3) {
-        var cp3: i32 = ((b0 & 15) << 12) | (((s[i + 1] as i32) & 63) << 6) | ((s[i + 2] as i32) & 63);
-        if (cp3 < 2048) { return 65533; }                   // overlong
-        if (cp3 >= 55296 && cp3 <= 57343) { return 65533; } // UTF-16 surrogate
-        return cp3;
+        return ((b0 & 15) << 12) | (((s[i + 1] as i32) & 63) << 6) | ((s[i + 2] as i32) & 63);
     }
-    var cp4: i32 = ((b0 & 7) << 18) | (((s[i + 1] as i32) & 63) << 12) | (((s[i + 2] as i32) & 63) << 6) | ((s[i + 3] as i32) & 63);
-    if (cp4 < 65536) { return 65533; }     // overlong
-    if (cp4 > 1114111) { return 65533; }   // beyond U+10FFFF
-    return cp4;
+    return ((b0 & 7) << 18) | (((s[i + 1] as i32) & 63) << 12) | (((s[i + 2] as i32) & 63) << 6) | ((s[i + 3] as i32) & 63);
 }
 
 // `s.chars()` — decode the UTF-8 content to Unicode scalar values, one
-// `char` per codepoint (ill-formed bytes → U+FFFD; see the layer note).
+// `char` per codepoint (one U+FFFD per ill-formed maximal subpart; see
+// the layer note).
 // This is the codepoint layer, matching what `chars` means in Rust, Swift
 // and Go's `[]rune`: iterating it never splits a multibyte sequence. For
 // the byte layer reach for `bytes()` (u8) or `to_array()` (1-byte strings).
@@ -2635,10 +2680,10 @@ pub function (s: string) chars(): char[] {
 }
 
 // `s.codepoint_count()` — number of Unicode codepoints in the UTF-8
-// content, without materialising the array. Equal to `chars().len()`
-// (both advance by `__utf8_step`), including the one-U+FFFD-per-ill-formed
-// -unit accounting. This is the "length in characters" a byte `len()`
-// can't give for non-ASCII text.
+// content, without materialising the array. Equal to `chars().len()` and
+// to `utf8.codepoint_count(s)` — all three advance by `__utf8_step`, so
+// ill-formed input costs one U+FFFD per maximal subpart in each. This is
+// the "length in characters" a byte `len()` can't give for non-ASCII text.
 pub function (s: string) codepoint_count(): i32 {
     var n: i32 = s.len();
     var count: i32 = 0;

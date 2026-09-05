@@ -68,6 +68,29 @@ func TestReapStaleRunsCancelsSafely(t *testing.T) {
 		}
 	}
 
+	// The sweep must be startable by something that actually happens here.
+	//
+	// It shipped on a `*/20` cron alone and the cron never fired: 69 minutes and
+	// three slots after it merged, its only run was a manual dispatch. GitHub's
+	// scheduler sheds scheduled runs under load — the same load this sweep
+	// exists to relieve — so the one condition that makes it necessary is the
+	// condition that stops it starting. A repository event does not have that
+	// failure mode, and a merge or a closed pull request is exactly when runs go
+	// stale.
+	on, ok := onBlock(src)
+	if !ok {
+		t.Fatalf("%s has no `on:` block", reapFile)
+	}
+	if _, push := triggerBlock(on, "push"); !push {
+		if _, pr := triggerBlock(on, "pull_request"); !pr {
+			t.Errorf("%s is driven by the clock alone. Its cron did not fire for 69 "+
+				"minutes across three slots on the day it landed, because GitHub sheds "+
+				"scheduled runs under exactly the load this sweep is for. Keep a "+
+				"repository-event trigger (a merge, a closed pull request) as the "+
+				"mechanism and the cron as the quiet-hours floor", reapFile)
+		}
+	}
+
 	// The sweep is itself an action: a cancelled run is a sweep that did not
 	// happen, and the next one is a schedule interval away.
 	block, ok := topLevelBlock(src, "concurrency")

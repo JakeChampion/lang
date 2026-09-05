@@ -28,6 +28,7 @@ function main(): i32 {
     if ((16 as u64).next_power_of_2() != (16 as u64)) { return 11; }
     if (two63().next_power_of_2() != two63()) { return 12; }                // 2^63
     if ((two63() + (1 as u64)).next_power_of_2() != (0 as u64)) { return 13; }  // > 2^63 -> 0
+    if (((0 as u64) - (1 as u64)).next_power_of_2() != (0 as u64)) { return 17; }  // u64::MAX -> 0, terminates
     if (two63().log2_floor() != 63) { return 14; }
     if ((1 as u64).log2_floor() != 0) { return 15; }
     if ((0 as u64).log2_floor() != (0 - 1)) { return 16; }                  // sentinel

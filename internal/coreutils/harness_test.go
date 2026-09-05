@@ -169,7 +169,8 @@ func gnuVersion(dir string) (string, error) {
 	if _, err := os.Stat(bin); err != nil {
 		return "", err
 	}
-	out, err := exec.Command(bin, "--version").Output()
+	argv := append(crossPrefix(), bin, "--version")
+	out, err := exec.Command(argv[0], argv[1:]...).Output()
 	if err != nil {
 		return "", err
 	}
@@ -191,10 +192,23 @@ func referenceBin(t *testing.T, util string) string {
 	return bin
 }
 
-// fernTarget is the -target for the host: these are native binaries
-// that have to run here, so cross-compiling is not an option.
+// fernTarget is the -target the utilities are compiled for: the host's,
+// unless FERN_COREUTILS_TARGET names another one to cross-run under
+// FERN_COREUTILS_QEMU.
+//
+// That cross leg exists because `long double` is the machine's, so this
+// corpus proves exactly one format — the host's — and the second is
+// otherwise reachable only from CI's aarch64 runner. It is a debug
+// affordance for that class of bug (#8513) and not a gate;
+// docs/COREUTILS.md has the recipe.
 func fernTarget(t *testing.T) string {
 	t.Helper()
+	if target := os.Getenv("FERN_COREUTILS_TARGET"); target != "" {
+		if len(crossPrefix()) == 0 {
+			t.Fatalf("FERN_COREUTILS_TARGET=%s needs FERN_COREUTILS_QEMU to run the binaries it builds", target)
+		}
+		return target
+	}
 	switch runtime.GOOS + "/" + runtime.GOARCH {
 	case "linux/amd64":
 		return "x86-64-linux"
@@ -258,12 +272,30 @@ func repoRoot(t *testing.T) string {
 	return filepath.Dir(filepath.Dir(filepath.Dir(self)))
 }
 
+// crossPrefix is the emulator command FERN_COREUTILS_QEMU names, split on
+// blanks — for example `qemu-aarch64 -L /usr/aarch64-linux-gnu`, where the
+// sysroot is what the dynamically linked GNU binaries need and the static
+// Fern ones do not. Empty when the corpus runs natively.
+func crossPrefix() []string {
+	return strings.Fields(os.Getenv("FERN_COREUTILS_QEMU"))
+}
+
 // run executes `bin` with argv[0] = argv0 and reports what happened.
 func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 	t.Helper()
 	cmd := exec.Command(bin)
 	cmd.Path = bin
 	cmd.Args = append([]string{argv0}, inv.args...)
+	if pre := crossPrefix(); len(pre) > 0 {
+		// qemu's -0 sets the argv[0] the emulated process sees, which is
+		// the whole point of running both sides with the bare name.
+		emu, err := exec.LookPath(pre[0])
+		if err != nil {
+			t.Fatalf("FERN_COREUTILS_QEMU names %s: %v", pre[0], err)
+		}
+		cmd.Path = emu
+		cmd.Args = append(append(append([]string{pre[0]}, pre[1:]...), "-0", argv0, bin), inv.args...)
+	}
 	cmd.Env = append(baseEnv(), inv.env...)
 	cmd.Stdin = strings.NewReader(inv.stdin)
 

@@ -73,6 +73,22 @@ function test_rejects_malformed(): test.TestOutcome {
     return test.pass();
 }
 
+// §11 puts no width on a numeric prerelease identifier, so comparing
+// them through a machine integer wraps: `1.0.0-99999999999` used to
+// sort BELOW `1.0.0-1` (#8469). The comparison is on magnitude now —
+// significant digits, then lexical.
+function test_prerelease_wide_numeric(): test.TestOutcome {
+    if (cmp("1.0.0-99999999999", "1.0.0-1") <= 0) { return test.fail("11-digit id vs 1"); }
+    if (cmp("1.0.0-2147483648", "1.0.0-2147483647") <= 0) { return test.fail("across the i32 edge"); }
+    if (cmp("1.0.0-99999999999", "1.0.0-99999999998") <= 0) { return test.fail("equal-width wide ids"); }
+    if (cmp("1.0.0-99999999999", "1.0.0-99999999999") != 0) { return test.fail("wide id equals itself"); }
+    // A wide numeric identifier is still below any alphanumeric one.
+    if (cmp("1.0.0-99999999999", "1.0.0-alpha") >= 0) { return test.fail("numeric < alphanumeric"); }
+    // The narrow neighbours these rows generalise still hold.
+    return test.assert_true(cmp("1.0.0-9", "1.0.0-10") < 0);
+}
+
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/semver");
     r = r.it("parse fields",           test_parse_fields);
@@ -82,5 +98,6 @@ function main(): i32 {
     r = r.it("precedence chain",       test_precedence_chain);
     r = r.it("build ignored",          test_build_ignored);
     r = r.it("rejects malformed",      test_rejects_malformed);
+    r = r.it("wide numeric prerelease", test_prerelease_wide_numeric);
     return r.finish();
 }

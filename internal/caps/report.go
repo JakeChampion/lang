@@ -34,7 +34,7 @@ type Row struct {
 // through the stdlib and through deeper packages — mirroring the
 // brief's enforcement rule.
 //
-// pkgOf maps a FuncDecl.SourceModule to the owning package's report
+// pkgOf maps a FuncDecl.BodyModule to the owning package's report
 // name; returning "" marks the module as fold-through (the stdlib):
 // its functions are traversal nodes, never roots, so `std/fetch`'s
 // tcp_connect shows up on the row of whichever package calls into
@@ -54,6 +54,10 @@ type Row struct {
 //   - A `dyn Trait` method call edges to every method with that
 //     simple name — the static walk cannot narrow the runtime
 //     dispatch, so the report over-approximates rather than misses.
+//   - A trait's default body counts at the package that DECLARED the
+//     trait, not the one that wrote the `impl` inheriting it: the
+//     effectful code is the trait author's. Adopting a trait would
+//     otherwise launder its capabilities onto the adopter (#8450).
 //
 // The result is deterministic: rows sort by package name, uses by
 // capability, and each chain is the first one a FIFO walk over the
@@ -69,7 +73,7 @@ func Analyze(prog *ast.Program, pkgOf func(module string) string) []Row {
 	pkgRoots := map[string][]string{}
 	var pkgOrder []string
 	for _, fn := range prog.Funcs {
-		p := pkgOf(fn.SourceModule)
+		p := pkgOf(fn.BodyModule())
 		if p == "" {
 			continue
 		}

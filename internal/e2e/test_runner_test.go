@@ -290,7 +290,9 @@ func TestRunnerHexExamplePasses(t *testing.T) {
 // percent-encoding (url_encode / url_decode — unreserved pass-through,
 // reserved escaping, lower-case + truncated decode, round-trip) and the
 // best-effort url_parse split (scheme/host/port/path/query/fragment plus
-// the empty-input None). Passing suite → exit 0.
+// the empty-input None) and the RFC 3986 §3.2 authority rules — userinfo
+// at the last '@', bracketed IP-literals, port range, reg-name bytes and
+// the anchored scheme. Passing suite → exit 0.
 func TestRunnerUrlExamplePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := langSrcAbs(t, "examples/tests/url_test.fern")
@@ -298,7 +300,7 @@ func TestRunnerUrlExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/url", "# pass 20", "# fail 0", "1..20"} {
+	for _, w := range []string{"# Suite: std/url", "# pass 26", "# fail 0", "1..26"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
@@ -900,8 +902,10 @@ func TestRunnerJsonPointerExamplePasses(t *testing.T) {
 // / surrogate rejections), encode (widths + U+FFFD substitution),
 // codepoint_count / codepoints, is_valid_utf8, the encode_all round
 // trip, the codepoint-indexing layer (codepoint_at / char_at /
-// substring), and the byte-boundary layer (is_char_boundary /
-// floor_char_boundary / ceil_char_boundary). Passing → exit 0.
+// substring), the byte-boundary layer (is_char_boundary /
+// floor_char_boundary / ceil_char_boundary), and the lossy walk's
+// one-U+FFFD-per-maximal-subpart rule, pinned across all four walkers.
+// Passing → exit 0.
 func TestRunnerUtf8ExamplePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := langSrcAbs(t, "examples/tests/utf8_test.fern")
@@ -909,7 +913,7 @@ func TestRunnerUtf8ExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/utf8", "# pass 26", "# fail 0", "1..26"} {
+	for _, w := range []string{"# Suite: std/utf8", "# pass 29", "# fail 0", "1..29"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
@@ -1376,10 +1380,10 @@ func TestRunnerSelfTestPasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("self-test exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	// 20 meta-tests; if this number changes intentionally,
+	// 44 meta-tests; if this number changes intentionally,
 	// update both the file and this expected count together.
-	if !strings.Contains(out, "# pass 20") || !strings.Contains(out, "# fail 0") {
-		t.Errorf("expected 20 passes, 0 fails\noutput:\n%s", out)
+	if !strings.Contains(out, "# pass 44") || !strings.Contains(out, "# fail 0") {
+		t.Errorf("expected 44 passes, 0 fails\noutput:\n%s", out)
 	}
 }
 
@@ -1437,11 +1441,11 @@ function main(): i32 {
 	wantPieces := []string{
 		"ok 1 - passing",
 		"not ok 2 - failing",
-		"  message: assert_eq: expected 5, got 4",
+		"  message: assert_eq: expected \"5\", got \"4\"",
 		"# pass 1",
 		"# fail 1",
 		"# failures:",
-		"failing: assert_eq: expected 5, got 4",
+		"failing: assert_eq: expected \"5\", got \"4\"",
 	}
 	for _, w := range wantPieces {
 		if !strings.Contains(gotOut, w) {
@@ -1450,11 +1454,123 @@ function main(): i32 {
 	}
 }
 
+// #8466 — the runner must not be able to under-report. A
+// `TestRunner` handle carries no outcome of its own: `it` and
+// `subsuite` record into a tally shared by every handle derived
+// from one `test_new`, and `finish()` reads the plan, the counts
+// and the exit code back out of it. So dropping a handle drops
+// nothing that was recorded through it.
+//
+// Before the fix each of these three printed its `not ok` lines
+// and then reported `1..0`, `# fail 0`, exit 0 — a suite with a
+// failing test that a TAP consumer and a human both read as
+// clean. The numbering was TAP-invalid too: every dropped case
+// reused index 1.
+//
+// runDroppedHandleCase runs one inline source through
+// `fern -interp -` and asserts a non-zero exit plus the exact
+// plan / summary lines the printed results imply.
+func runDroppedHandleCase(t *testing.T, src string, want []string) {
+	t.Helper()
+	bin := buildLangBinForInterp(t)
+	cmd := exec.Command(bin, "-interp", "-")
+	cmd.Stdin = strings.NewReader(src)
+	var out, errb bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	_ = cmd.Run()
+	if code := cmd.ProcessState.ExitCode(); code == 0 {
+		t.Fatalf("exit = 0, want non-zero (a printed `not ok` must fail the run)\nstdout: %s\nstderr: %s",
+			out.String(), errb.String())
+	}
+	got := out.String()
+	for _, w := range want {
+		if !strings.Contains(got, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, got)
+		}
+	}
+}
+
+const droppedHandlePreamble = `
+import "std/test";
+
+function failing(): test.TestOutcome { return test.assert_eq(1, 2); }
+function passing(): test.TestOutcome { return test.assert_eq(1, 1); }
+`
+
+// The result of `it` is discarded outright.
+func TestRunnerDroppedItResultStillFailsSuite(t *testing.T) {
+	runDroppedHandleCase(t, droppedHandlePreamble+`
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("dropped-it");
+    r = r.it("kept", passing);
+    r.it("dropped result", failing);
+    return r.finish();
+}
+`, []string{
+		"ok 1 - kept",
+		"not ok 2 - dropped result",
+		"1..2",
+		"# tests 2",
+		"# pass 1",
+		"# fail 1",
+		"# failures:",
+		"#   dropped result: assert_eq: expected \"2\", got \"1\"",
+	})
+}
+
+// A subsuite handle whose cases are never folded back into the
+// parent.
+func TestRunnerUnusedSubsuiteHandleStillFailsSuite(t *testing.T) {
+	runDroppedHandleCase(t, droppedHandlePreamble+`
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("unused-subsuite");
+    r = r.it("kept", passing);
+    var sub: test.TestRunner = r.subsuite("child");
+    sub = sub.it("child fails", failing);
+    return r.finish();
+}
+`, []string{
+		"ok 1 - kept",
+		"not ok 2 - child / child fails",
+		"1..2",
+		"# tests 2",
+		"# pass 1",
+		"# fail 1",
+		"#   child / child fails: assert_eq: expected \"2\", got \"1\"",
+	})
+}
+
+// Both mistakes at once — the issue's repro verbatim. The plan
+// must count both failures and the two `not ok` lines must carry
+// DISTINCT indices (duplicate numbering is invalid TAP on its
+// own).
+func TestRunnerDroppedItAndUnusedSubsuiteTogether(t *testing.T) {
+	runDroppedHandleCase(t, droppedHandlePreamble+`
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("s");
+    r.it("dropped result", failing);
+    var sub: test.TestRunner = r.subsuite("child");
+    sub = sub.it("child fails", failing);
+    return r.finish();
+}
+`, []string{
+		"not ok 1 - dropped result",
+		"not ok 2 - child / child fails",
+		"1..2",
+		"# tests 2",
+		"# pass 0",
+		"# fail 2",
+		"#   dropped result: assert_eq: expected \"2\", got \"1\"",
+		"#   child / child fails: assert_eq: expected \"2\", got \"1\"",
+	})
+}
+
 // `examples/tests/skip_and_subsuites_test.fern` covers the
 // skip / skip_if / subsuite / merge surface. Skips don't count
 // as failures (exit 0) and the TAP stream stays monotonic
-// across subsuite boundaries — the harness threads a base_idx
-// through the child runner so the first subsuite case prints
+// across subsuite boundaries — the child runner writes the same
+// shared tally as its parent, so the first subsuite case prints
 // `ok 5` (not `ok 1` again) when the parent ran 4 cases first.
 func TestRunnerSkipAndSubsuitesExample(t *testing.T) {
 	bin := buildLangBinForInterp(t)
@@ -2325,6 +2441,27 @@ func TestRunnerU32RootsExample(t *testing.T) {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
 	for _, w := range []string{"# Suite: std/u32 roots", "# pass 6", "# fail 0", "1..6"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `examples/tests/i32_roots_prime_test.fern` covers std/i32's next_power_of_2
+// and is_prime at the top of the signed 32-bit range (#8467): next_power_of_2
+// caps at 2^30 and returns the 0 sentinel above it (the i64 / u32 / u64
+// convention), and is_prime bounds its trial divisor by `i <= n / i` so M31 and
+// the composites whose smallest factor sits at the root come out right. On the
+// interp gate; the Go-side TestI32RootsPrime pins native compilation on all
+// four backends. A regression hangs rather than failing. Passing → exit 0.
+func TestRunnerI32RootsPrimeExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/i32_roots_prime_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/i32 roots + prime", "# pass 5", "# fail 0", "1..5"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
@@ -4017,8 +4154,9 @@ func TestRunnerUnicodeExamplePasses(t *testing.T) {
 
 // `examples/tests/semver_test.fern` covers std/semver — SemVer 2.0.0
 // parse, canonical to_string, the §11 precedence chain (incl. the
-// numeric `beta.2 < beta.11` trap), build-metadata-ignored, and
-// malformed-input rejection. Passing suite → exit 0; plan line `1..7`.
+// numeric `beta.2 < beta.11` trap plus identifiers too wide for a
+// machine int), build-metadata-ignored, and malformed-input rejection.
+// Passing suite → exit 0; plan line `1..8`.
 func TestRunnerSemverExamplePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := langSrcAbs(t, "examples/tests/semver_test.fern")
@@ -4026,7 +4164,7 @@ func TestRunnerSemverExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/semver", "1..7", "# pass 7", "# fail 0"} {
+	for _, w := range []string{"# Suite: std/semver", "1..8", "# pass 8", "# fail 0"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
@@ -4347,7 +4485,8 @@ function main(): i32 {
 // one this host has: `%a` digits and leading bit, the subnormal and
 // overflow edges, the exact decimal expansion, strtold, the arithmetic
 // including the division seq and numfmt need, numfmt's --round modes,
-// and LDBL_DIG. Which format a target selects is pinned separately by
+// LDBL_DIG, and the whole-number conversion sleep reads a millisecond
+// count out of. Which format a target selects is pinned separately by
 // internal/coreutils/longdouble_test.go. Passing suite -> exit 0.
 func TestRunnerCoreutilsLongDoubleExamplePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
@@ -4356,7 +4495,7 @@ func TestRunnerCoreutilsLongDoubleExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: coreutils/lib/ld", "1..16", "# pass 16", "# fail 0"} {
+	for _, w := range []string{"# Suite: coreutils/lib/ld", "1..17", "# pass 17", "# fail 0"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}

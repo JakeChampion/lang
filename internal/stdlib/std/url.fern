@@ -15,8 +15,11 @@
 // literal. The `form_*` pair maps `+` ↔ space, and `query_parse`
 // form-decodes each key/value — a `+` in a query or form body IS
 // an encoded space, so plain `url_decode` there decoded it wrong.
-// url_parse is best-effort: returns None only on empty input;
-// otherwise fills missing sections with empty strings / port=0.
+// url_parse is best-effort about what is ABSENT — a missing scheme,
+// path, query or fragment comes back as "" (and an absent port as 0)
+// rather than failing — but it does not guess at what is MALFORMED: an
+// authority that RFC 3986 cannot parse returns None instead of a
+// confidently wrong host. See url_parse's own doc for the exact rules.
 // Query duplicates collect into a `string[]` per key.
 //
 // No prelude: these are in scope only after a program
@@ -194,6 +197,68 @@ pub function form_encode(s: string): string {
     return string_from_bytes_unchecked(buf);
 }
 
+// `__url_scheme_char(b, first)` — is byte `b` allowed in a scheme at
+// this position? RFC 3986 §3.1: `scheme = ALPHA *( ALPHA / DIGIT / "+"
+// / "-" / "." )`, so the first byte must be a letter.
+function __url_scheme_char(b: i32, first: boolean): boolean {
+    if (b >= 65 && b <= 90) { return true; }    // A-Z
+    if (b >= 97 && b <= 122) { return true; }   // a-z
+    if (first) { return false; }
+    if (b >= 48 && b <= 57) { return true; }    // 0-9
+    return b == 43 || b == 45 || b == 46;       // '+' '-' '.'
+}
+
+// `__url_ip_literal_char(b)` — a byte allowed inside the brackets of an
+// IP-literal: hex digits and `:` for IPv6, `.` for an IPv4-mapped tail,
+// `v` for the IPvFuture form, and `%` for an RFC 6874 zone id.
+function __url_ip_literal_char(b: i32): boolean {
+    if (b >= 48 && b <= 57) { return true; }    // 0-9
+    if (b >= 97 && b <= 102) { return true; }   // a-f
+    if (b >= 65 && b <= 70) { return true; }    // A-F
+    if (b == 118 || b == 86) { return true; }   // 'v' / 'V' (IPvFuture)
+    return b == 58 || b == 46 || b == 37;       // ':' '.' '%'
+}
+
+// `__url_reg_name_char(b)` — a byte allowed in a registered name
+// (RFC 3986 §3.2.2 `reg-name = *( unreserved / pct-encoded / sub-delims )`).
+// The bytes that delimit a component — `/ ? # @ : [ ]` — are excluded, so a
+// stray one is a parse failure rather than part of the host.
+function __url_reg_name_char(b: i32): boolean {
+    if (__url_unreserved(b)) { return true; }
+    if (b == 37) { return true; }               // '%' (pct-encoded)
+    // sub-delims: ! $ & ' ( ) * + , ; =
+    if (b == 33 || b == 36 || b == 38 || b == 39) { return true; }
+    if (b == 40 || b == 41 || b == 42 || b == 43) { return true; }
+    return b == 44 || b == 59 || b == 61;
+}
+
+// `url_parse(s)` — decompose a URL into its `Url` components.
+//
+// Best-effort about ABSENCE: every component is optional and a missing
+// one comes back as `""` (port 0). Strict about MALFORMEDNESS: `None`
+// when the input is empty, or when it carries an authority that RFC 3986
+// cannot parse. Specifically —
+//
+//   - A scheme is recognised only as `ALPHA *( ALPHA / DIGIT / +-. ) "://"`
+//     at offset 0. `/a?to=http://x` has no scheme; its path is the whole
+//     string. A scheme-relative `//host/p` likewise parses as a path,
+//     since without a scheme there is no authority to split.
+//   - `authority = [ userinfo "@" ] host [ ":" port ]`. Userinfo ends at
+//     the LAST `@`, so `a@b@host` has host `host`; it is discarded (the
+//     `Url` struct has no field for it, and credentials in a URL are
+//     deprecated by RFC 3986 §3.2.1).
+//   - An IPv6 / IPvFuture host is bracketed. `[::1]:8080` yields host
+//     `::1` — WITHOUT the brackets, so `host` is always the bare address
+//     an origin comparison wants. An unterminated `[`, an empty `[]`, a
+//     non-address byte inside, or trailing bytes between `]` and the port
+//     are all `None`.
+//   - A registered name may hold only `unreserved / pct-encoded /
+//     sub-delims`; `/ ? # @ : [ ]` there is `None`. An EMPTY host is
+//     allowed (`file:///etc/hosts`), matching RFC 3986's `host = ...
+//     / reg-name` where reg-name may be zero-length.
+//   - `port = *DIGIT`, so an empty port (`host:/p`) is 0, and a non-digit
+//     or a value above 65535 is `None` — never a silent 0, which a caller
+//     cannot tell from "no port given".
 pub function url_parse(s: string): Option[Url] {
     var n: i32 = s.len();
     if (n == 0) { return None; }
@@ -207,19 +272,26 @@ pub function url_parse(s: string): Option[Url] {
         fragment: ""
     };
 
-    // Find scheme: look for ":" followed by "//".
+    // Scheme: the bytes before the first ':', when they form a valid
+    // scheme and "//" follows. Anchored at 0 — scanning for any "://"
+    // in the string made `/redirect?to=http://x` a scheme of
+    // "/redirect?to=http".
     var scheme_end: i32 = -1;
     var i: i32 = 0;
-    while (i + 2 < n) {
-        if (s[i] == 58 && s[i+1] == 47 && s[i+2] == 47) {
-            if (i > 0) { scheme_end = i; }
-            break;
+    while (i < n) {
+        var sb: i32 = s[i] as i32;
+        if (sb == 58) {   // ':'
+            if (i + 2 < n && s[i+1] == 47 && s[i+2] == 47) { scheme_end = i; }
+            i = n;
+        } else if (__url_scheme_char(sb, i == 0)) {
+            i = i + 1;
+        } else {
+            i = n;
         }
-        i = i + 1;
     }
 
     var rest_start: i32 = 0;
-    if (scheme_end >= 0) {
+    if (scheme_end > 0) {
         u = Url { ...u, scheme: slice_unchecked(s, 0, scheme_end) + "" };
         rest_start = scheme_end + 3;
     }
@@ -251,7 +323,7 @@ pub function url_parse(s: string): Option[Url] {
     // whole [rest_start, ...] is the path, so authority_end
     // collapses to rest_start.
     var authority_end: i32 = query_start;
-    if (scheme_end >= 0) {
+    if (scheme_end > 0) {
         i = rest_start;
         while (i < query_start) {
             if (s[i] == 47) { authority_end = i; break; }   // '/'
@@ -261,30 +333,60 @@ pub function url_parse(s: string): Option[Url] {
         authority_end = rest_start;
     }
 
-    // Authority — split host:port.
-    if (rest_start < authority_end) {
-        var colon: i32 = authority_end;
+    // Authority — [userinfo "@"] host [":" port].
+    if (scheme_end > 0) {
+        // Userinfo ends at the LAST '@': a host cannot contain one, but
+        // a password can, so the first '@' is the wrong split point.
+        var host_start: i32 = rest_start;
         i = rest_start;
         while (i < authority_end) {
-            if (s[i] == 58) { colon = i; break; }   // ':'
+            if (s[i] == 64) { host_start = i + 1; }   // '@'
             i = i + 1;
         }
-        if (colon < authority_end) {
-            // Port: digits only, max 65535. Any non-digit or
-            // out-of-range value zeroes the port.
-            var port: i32 = 0;
+
+        var host: string = "";
+        var colon: i32 = -1;
+        if (host_start < authority_end && s[host_start] == 91) {   // '['
+            var close: i32 = -1;
+            i = host_start + 1;
+            while (i < authority_end) {
+                if (s[i] == 93) { close = i; i = authority_end; }   // ']'
+                else if (!__url_ip_literal_char((s[i] as i32))) { return None; }
+                else { i = i + 1; }
+            }
+            if (close < 0) { return None; }               // unterminated '['
+            if (close == host_start + 1) { return None; } // empty "[]"
+            host = slice_unchecked(s, host_start + 1, close) + "";
+            if (close + 1 < authority_end) {
+                if (s[close + 1] != 58) { return None; }  // junk between ']' and port
+                colon = close + 1;
+            }
+        } else {
+            i = host_start;
+            while (i < authority_end) {
+                if (s[i] == 58) { colon = i; i = authority_end; }   // ':'
+                else if (!__url_reg_name_char((s[i] as i32))) { return None; }
+                else { i = i + 1; }
+            }
+            var host_end: i32 = authority_end;
+            if (colon >= 0) { host_end = colon; }
+            host = slice_unchecked(s, host_start, host_end) + "";
+        }
+
+        // Port: *DIGIT, at most 65535. Empty means "unspecified" (0);
+        // anything else is a parse failure, not a silent 0.
+        var port: i32 = 0;
+        if (colon >= 0) {
             i = colon + 1;
             while (i < authority_end) {
                 var b: i32 = s[i] as i32;
-                if (b < 48 || b > 57) { port = 0; break; }
+                if (b < 48 || b > 57) { return None; }
                 port = port * 10 + (b - 48);
-                if (port > 65535) { port = 0; break; }
+                if (port > 65535) { return None; }
                 i = i + 1;
             }
-            u = Url { ...u, host: slice_unchecked(s, rest_start, colon) + "", port: port };
-        } else {
-            u = Url { ...u, host: slice_unchecked(s, rest_start, authority_end) + "" };
         }
+        u = Url { ...u, host: host, port: port };
     }
 
     // Path: [authority_end, query_start).

@@ -2458,10 +2458,11 @@ pub function (s: LowerState) mark_fn_value_sidecars(i: i32, dyn_positions: strin
     if (i < 0 || i >= s.locals.len()) { return s; }
     var li: LocalInfo = s.locals[i];
     if (dyn_positions.len() > 0) { li = li_set_fn_dyn(li, dyn_positions); }
-    if (sig.len() > 0) {
-        li = li_set_fn_sig(li, sig);
-        li = li_set_fn_ret(li, ret);
-    }
+    if (sig.len() > 0) { li = li_set_fn_sig(li, sig); }
+    // Independent of the signature: the return is what types a call through the
+    // value, and an all-i32 signature is recorded as "" while its return may
+    // still be a tuple or a nominal the caller has to know.
+    if (ret.len() > 0) { li = li_set_fn_ret(li, ret); }
     return LowerState { ...s, locals: s.locals.with(i, li) };
 }
 
@@ -2547,6 +2548,17 @@ pub function (s: LowerState) tup_elem_kinds_of(i: i32): string {
 pub function (s: LowerState) slot_is_tuple_box(i: i32): boolean {
     if (i < 0 || i >= s.locals.len()) { return false; }
     return s.locals[i].tuple_elems.len() > 0;
+}
+
+// slot_tuple_type_spelling is a tuple slot's "(t0, t1, …)" spelling: the
+// declared one it was bound with, else one rebuilt from its element tags — an
+// INFERRED tuple local (`var t = (3, 4.5)`) records tags but no declared
+// spelling, and every consumer that needs a nested tag needs the spelling.
+pub function slot_tuple_type_spelling(s: LowerState, i: i32): string {
+    if (i < 0 || i >= s.locals.len()) { return ""; }
+    if (s.locals[i].tuple_type.len() > 0) { return s.locals[i].tuple_type; }
+    if (s.locals[i].tuple_elems.len() == 0) { return ""; }
+    return "(" + s.locals[i].tuple_elems + ")";
 }
 
 pub function (s: LowerState) slot_is_rc_container(i: i32): boolean {
@@ -2814,6 +2826,53 @@ pub function csv_nth(enc: string, n: i32): string {
     return "";
 }
 
+// index_elem_tuple_type is the declared ELEMENT TUPLE spelling behind `arr[i]`
+// over a `(…)[]` array — "" when `arr` is not one, or when nothing in scope
+// records its type.
+//
+// Three routes, because a `(tuple)[]` reaches an index from three shapes and
+// each records its type somewhere else: a reclaim-eligible tuple-array LOCAL
+// carries the element spelling on its slot (arrarr_elem, #4365), an
+// array-of-tuples returning CALL has it in the signature registry
+// (arrtup_ret_type), and everything else — a struct field `p.ts`, a field of a
+// call result `getp().ts`, a nested index — is the ordinary array-tag walk with
+// one `[]` peeled.
+//
+// One leaf, because the width of a tuple-element read is decided from it: a
+// route missing here reads an f64 element as 4 bytes of i32 (#8459), and the
+// two consumers must not learn the routes separately.
+function index_elem_tuple_type(arr: ast.Expr, s: LowerState): string {
+    match (arr) {
+        ast.ExprIdent(aid) => {
+            var asl: i32 = s.slot_of(aid.name);
+            if (asl >= 0 && s.is_arr_slot(asl)) {
+                var slt: string = s.arrarr_elem_of_slot(asl);
+                if (util.is_tuple_type_name(slt)) { return slt; }
+            }
+        },
+        ast.ExprCall(ac) => {
+            match (ac.callee) {
+                ast.ExprIdent(acid) => {
+                    var ct: string = s.arrtup_ret_type(acid.name);
+                    if (util.is_tuple_type_name(ct)) { return ct; }
+                },
+                ast.ExprFieldAccess(acfa) => {
+                    var rty: string = expr_struct_type(acfa.obj, s);
+                    if (rty != "") {
+                        var mt: string = s.arrtup_ret_type(rty + "." + acfa.field);
+                        if (util.is_tuple_type_name(mt)) { return mt; }
+                    }
+                },
+                _ => {}
+            }
+        },
+        _ => {}
+    }
+    var wt: string = strip_arr_suffix(arr_tag_of(arr, s));
+    if (util.is_tuple_type_name(wt)) { return wt; }
+    return "";
+}
+
 // expr_tuple_elem_tag returns the type tag of element N of a tuple expression
 // (`t` an ident with tracked element types), or "".
 pub function expr_tuple_elem_tag(e: ast.Expr, n: i32, s: LowerState): string {
@@ -2840,41 +2899,38 @@ pub function expr_tuple_elem_tag(e: ast.Expr, n: i32, s: LowerState): string {
             return tuple_type_elem_tag(fa.ty, n);
         },
         ast.ExprIndex(ix) => {
-            // `arr[i].N` where arr is a `(tuple)[]` array-of-tuples local: the element
-            // TUPLE TYPE is recorded on the (is_arr) slot's arrarr_elem (set at binding
-            // for a reclaim-eligible tuple array, #4365). Read element n's tag out of it,
-            // so `arr[i].N.field` (struct field of a tuple element) and a wide `arr[i].N`
-            // read resolve on the IR path instead of bailing (the bail fired because
-            // expr_struct_type(arr[i].N) had no tag here → lower_expr fail).
-            match (ix.array) {
-                ast.ExprIdent(aid) => {
-                    var asl: i32 = s.slot_of(aid.name);
-                    if (asl >= 0 && s.is_arr_slot(asl)) {
-                        var et: string = s.arrarr_elem_of_slot(asl);
-                        if (util.is_tuple_type_name(et)) { return tuple_type_elem_tag(et, n); }
-                    }
-                },
-                _ => {}
-            }
-            // The slot walk above only reaches a NAMED (tuple)[] local. When the
-            // array is a call result or a nested chain — `mk()[i].N` — there is no
-            // slot to read, and returning "" here made the tuple-element read
-            // lower as a 4-byte i32: an f64 element then failed the wasm
-            // validator ("expected f64, found i32"). ExprIndex.ty (#6165) already
-            // carries the checker's type for this very node, and a tuple stamps
-            // its canonical "(f64, i32)" spelling, so the same tuple_type_elem_tag
-            // decoder reads element n out of it. Walk first, tag fills the hole.
+            // `arr[i].N` over a `(tuple)[]`: element n's tag comes from the
+            // declared element tuple spelling, whichever of the three shapes the
+            // array is (index_elem_tuple_type). Without a walk that reaches a
+            // struct FIELD (`p.ts[i].N`) the read lowered as a 4-byte i32 and an
+            // f64 element came back as its bit pattern (#8459).
+            var iet: string = index_elem_tuple_type(ix.array, s);
+            if (iet != "") { return tuple_type_elem_tag(iet, n); }
+            // ExprIndex.ty (#6165) carries the checker's type for this node, and
+            // a tuple stamps its canonical "(f64, i32)" spelling — the fallback
+            // for a shape the walk cannot reach. Only the annotating drivers set
+            // it, so the walk above has to stand on its own. Walk first, tag
+            // fills the hole.
             if (util.is_tuple_type_name(ix.ty)) { return tuple_type_elem_tag(ix.ty, n); }
             return "";
         },
         ast.ExprCall(tc) => {
+            // A call through a fn VALUE — a local or parameter holding a
+            // function / closure, or a fn-typed struct field. The value's TYPE
+            // is coarsened to the flat "fn" tag with the result in a sidecar, so
+            // no walk over the callee can answer; call_fn_value_ret reads the
+            // declared return. `visit(e, acc)` on a `(…) => (A, T, boolean)`
+            // parameter is the shape, and it is common enough that astwalk's
+            // generic mappers are built out of it.
+            var fvr: string = call_fn_value_ret(tc, s);
+            if (util.is_tuple_type_name(fvr)) { return tuple_type_elem_tag(fvr, n); }
             // typed-IR (#5531): a tuple-returning call carries its full
             // "(t0, t1, …)" tag on c.ty (the checker resolved any generic
             // element to a concrete type), so read element n directly. Without
             // it a `f().N` tuple-element read whose element is a struct / nested
             // tuple has no tag here, so `f().N.field` bails the enclosing function.
             // Unannotated (asm_ir_run / native) leaves c.ty "" →
-            // tuple_type_elem_tag("", n) is "" → unchanged, so the read still bails.
+            // tuple_type_elem_tag("", n) is "" → the read stays untyped.
             return tuple_type_elem_tag(tc.ty, n);
         },
         _ => { return ""; }
@@ -3423,6 +3479,18 @@ pub function elem_type_tag(e: ast.Expr, s: LowerState): string {
     // expr is already caught by infer_expr_width above).
     match (e) {
         ast.ExprNumber(num) => { if (!num.is_float && literal_is_i64(num.text)) { return "i64"; } },
+        _ => {}
+    }
+    // A tuple LOCAL as an element (`var o = (t, 99)`): tag it with the source
+    // slot's own tuple spelling, so `o.0.M` resolves the inner element's type.
+    // Without it the ident fell through to the "i32" default below and the
+    // inner read took the untyped 4-byte load — `o.0.1` over an (i32, f64)
+    // inner tuple came back as the low half of the double.
+    match (e) {
+        ast.ExprIdent(tid) => {
+            var tsl: i32 = s.slot_of(tid.name);
+            if (tsl >= 0 && s.slot_is_tuple_box(tsl)) { return slot_tuple_type_spelling(s, tsl); }
+        },
         _ => {}
     }
     // A NESTED tuple element (`(1, (2, 3))`): tag it with its own tuple type
@@ -5470,6 +5538,26 @@ pub function call_fn_field_ret(c: ast.ExprCall, s: LowerState): string {
         _ => {}
     }
     return "";
+}
+
+// call_fn_value_ret is the DECLARED return-type spelling of a call through a fn
+// VALUE — a local or parameter holding a function / closure, or a fn-typed
+// struct field. "" when the callee is not one, or records no return.
+//
+// The two halves belong together because they are the same gap: the fn TYPE is
+// coarsened to the flat "fn" tag wherever it is stored, so the result lives in a
+// sidecar (LocalInfo.fn_ret for a slot, StructFieldDecl.fn_ret for a field) and
+// no walk over the callee expression can recover it.
+pub function call_fn_value_ret(c: ast.ExprCall, s: LowerState): string {
+    match (c.callee) {
+        ast.ExprIdent(cid) => {
+            var csl: i32 = s.slot_of(cid.name);
+            if (csl >= 0) { return s.fn_value_ret(csl); }
+            return "";
+        },
+        _ => {}
+    }
+    return call_fn_field_ret(c, s);
 }
 
 // fn_sig_of_ref is fn_sig_of asked of a structured fn TYPE rather than a
@@ -15604,6 +15692,14 @@ function lower_expr_field_access(fa: ast.ExprFieldAccess, s: LowerState): LowerS
         var tgt: string = expr_tuple_elem_tag(fa.obj, tgi, s);
         if (tgt == "i64" || tgt == "u64") { return so0.emit(ir.op_tuple_get_w(tgi, 64, true)); }
         if (tgt == "f64" || tgt == "f32" || tgt == "float") { return so0.emit(ir.op_tuple_get_w(tgi, 64, false)); }
+        // An untyped element falls through to the 4-byte read, which is a GUESS
+        // — it returns the low half of an f64 element's bit pattern. The
+        // destructure refuses that guess (lower_stmt_var_destructure), and this
+        // read cannot yet: an ERASED generic's tuple array (`enumerate[T, I](it:
+        // I): (i32, T)[]`) reaches here with T unresolvable — the self-host does
+        // not monomorphise it and T is not a parameter position an argument can
+        // pin — so refusing would reject programs that compile today. The
+        // remaining wrong-width reads are all downstream of that erasure.
         return so0.emit(ir.op_tuple_get(tgi));
     }
     // Qualified built-in `Option.None` (no call) — the same value as the
@@ -20155,19 +20251,27 @@ function bind_var_slot(v: ast.StmtVar, s: LowerState, se: LowerState, vt: VarTyp
     // skipped at this bind (the same per-kind predicate the ladder
     // consulted), so the ALIAS slot's exit dec is elided with it.
     if (arr_dead_alias_bind(v, se) || str_dead_alias_bind(v, se) || struct_dead_alias_bind(v, se) || tuple_dead_alias_bind(v, se)) { sb = sb.note_moved_elided(slot); }
-    // A tuple MOVE-alias transfers the source's release role to this slot
-    // (the ladder's tuple clause swapped the credit class), so the slot facts
-    // that release reads move with it: the element type tags the "TUPRCS:"
-    // deep free walks, and the construction-retain kinds the "TUP:" sweep
-    // gives back (both are SLOT-keyed on the source today). Same predicate
-    // as the ladder — the two sites cannot disagree.
+    // A tuple alias inherits the source's element TYPES — `var u = t` reads the
+    // same box, so `u.N` is the same value at the same width. Unconditional: a
+    // type is not a release role, and gating it on the move (which the retain
+    // kinds below are rightly gated on) left every NON-move alias untyped, so
+    // `var u = t; u.1 + t.1` read u's f64 element as four bytes of its bit
+    // pattern while t's was correct.
+    //
+    // The construction-retain kinds the "TUP:" sweep gives back are a release
+    // fact, so they still move only at a MOVE-alias — where the ladder's tuple
+    // clause swapped the credit class onto this slot. Same predicate as the
+    // ladder: the two sites cannot disagree.
     match (v.init) {
         ast.ExprIdent(mvid) => {
             var mvsrc: i32 = se.slot_of(mvid.name);
-            if (mvsrc >= 0 && se.slot_is_tuple_box(mvsrc) && se.moves_local_at(mvid.name, v.line, v.col)) {
+            if (mvsrc >= 0 && se.slot_is_tuple_box(mvsrc)) {
                 if (se.locals[mvsrc].tuple_elems.len() > 0) { sb = sb.mark_tuple_elems(slot, se.locals[mvsrc].tuple_elems); }
-                var mvkinds: string = se.tup_elem_kinds_of(mvsrc);
-                if (mvkinds.len() > 0) { sb = sb.add_tup_elem_kinds(util.i32_to_string(slot) + "|" + mvkinds); }
+                if (se.locals[mvsrc].tuple_type.len() > 0) { sb = sb.mark_tuple_type(slot, se.locals[mvsrc].tuple_type); }
+                if (se.moves_local_at(mvid.name, v.line, v.col)) {
+                    var mvkinds: string = se.tup_elem_kinds_of(mvsrc);
+                    if (mvkinds.len() > 0) { sb = sb.add_tup_elem_kinds(util.i32_to_string(slot) + "|" + mvkinds); }
+                }
             }
         },
         _ => {}
@@ -22594,30 +22698,15 @@ function lower_stmt_var_destructure(v: ast.StmtVar, s: LowerState): LowerState {
             },
             ast.ExprIdent(did) => { dtag = s.tuple_elem_tag(s.slot_of(did.name), dk); },
             ast.ExprIndex(dix) => {
-                // `var (a, b, …) = arr[i]` over a `(tuple)[]` array-of-tuples
-                // local: the element TUPLE TYPE is recorded on the (is_arr)
-                // slot's arrarr_elem (#4365). Read element dk's tag out of it —
-                // the destructure sibling of expr_tuple_elem_tag's ExprIndex arm,
-                // so a struct / nested-tuple element binds typed instead of
-                // untyped (which read `p.x` off an unmarked slot and bailed).
-                match (dix.array) {
-                    ast.ExprIdent(daid) => {
-                        var dasl: i32 = s.slot_of(daid.name);
-                        if (dasl >= 0 && s.is_arr_slot(dasl)) {
-                            var det: string = s.arrarr_elem_of_slot(dasl);
-                            if (util.is_tuple_type_name(det)) { dtag = tuple_type_elem_tag(det, dk); }
-                        }
-                    },
-                    _ => {}
-                }
-                // arrarr_elem is only recorded for an ANNOTATED `(tuple)[]`
-                // local, so `var ps = mk();` (or a bare `mk()[0]`) leaves the
-                // walk empty and every element read as a 4-byte i32 — an f64
-                // element then came back garbage with no diagnostic. ExprIndex.ty
-                // (#6165) already carries the checker's type for this node; this
-                // is the same walk-first/tag-fills-the-hole fallback
-                // expr_tuple_elem_tag's ExprIndex arm has, which is why
-                // `ps[0].1` was right while `var (i, v) = ps[0]` was not.
+                // `var (a, b, …) = arr[i]` over a `(tuple)[]`: element dk's tag
+                // comes from the declared element tuple spelling — the
+                // destructure sibling of expr_tuple_elem_tag's ExprIndex arm, so
+                // a struct / nested-tuple element binds typed instead of untyped
+                // (which read `p.x` off an unmarked slot and bailed).
+                dtag = tuple_type_elem_tag(index_elem_tuple_type(dix.array, s), dk);
+                // ExprIndex.ty (#6165) carries the checker's type for this node,
+                // for a shape the walk cannot reach. Only the annotating drivers
+                // set it. Walk first, tag fills the hole.
                 if (dtag == "" && util.is_tuple_type_name(dix.ty)) { dtag = tuple_type_elem_tag(dix.ty, dk); }
             },
             ast.ExprCall(dcl) => {
@@ -22650,23 +22739,20 @@ function lower_stmt_var_destructure(v: ast.StmtVar, s: LowerState): LowerState {
             },
             _ => {}
         }
-        // The match above types only the source shapes it lists, and a
-        // FIELD access was not one of them: `var (a, b, c) = p.t` left dtag
-        // "" and read every element as an untyped 4 bytes, so an f64 element
-        // came back as its bit pattern and an i64 truncated — on all three
-        // backends, with no diagnostic (#8458). The identical destructure
-        // from a call, a local or a param was right, which is what made it
-        // look like a tuple bug rather than a source-shape one.
-        //
-        // tuple_decl_type already resolves a field's declared tuple type (it
-        // is what tuple_decl_type's own ExprFieldAccess arm is for), and it
-        // covers a nested field and a receiver field by the same walk. Ask it
-        // for anything the match left untyped rather than adding one arm and
-        // waiting for the next shape to go missing.
-        if (dtag == "") {
-            var ddt: string = tuple_decl_type(v.init, s);
-            if (util.is_tuple_type_name(ddt)) { dtag = tuple_type_elem_tag(ddt, dk); }
-        }
+        // Every remaining source shape — a struct field `p.t`, a nested field
+        // `p.q.t`, a receiver field inside a method, a tuple element `t.N` —
+        // types through the shared element-tag walk, which resolves each of them
+        // from the declared type. Also a second opinion for the shapes above:
+        // the arms answer from registries the walk does not read, and the walk
+        // reads declarations they do not.
+        if (dtag == "") { dtag = expr_tuple_elem_tag(v.init, dk, s); }
+        // Nothing typed element dk, so its WIDTH is unknown. Reading it anyway
+        // is the miscompile this bail exists to prevent: the untyped read is
+        // 4 bytes, so an f64 element came back as the low half of its bit
+        // pattern and an i64 element truncated, on every backend and with no
+        // diagnostic (#8458). A bail names the site under FERN_STRICT_IR=1
+        // instead.
+        if (dtag == "") { return dt.note_fail("destructured tuple element " + util.i32_to_string(dk) + " (`" + dbind + "`) has no type: its width is unknown").fail(); }
         // Emit the element read at its width (8-byte i64/f64 use the
         // matching load), then store + type the binding. An i64
         // element marks the slot i64 (so later uses route through
@@ -46428,18 +46514,9 @@ function arrarr_lit_strings_fresh(e: ast.Expr, stmts: ast.Stmt[], k: i32): boole
 // rule (arrarr_row_effective) also admits an ident whose local this statement
 // consumes; a rebind's row is not reached by that proof, so it is not taken
 // here.
-// An INDEX read (`out = out.append(pre[p])`) is admitted on counted-store
-// grounds rather than freshness: the append retains an array element read by
-// index (indexed_box_elem_escapes), so the row arrives at rc 2 and
-// __fern_arrarr_free's rc-guarded per-element dec lands on 2, not 1 — it frees
-// nothing the source still names. It can only ever take the LAX grade, because
-// arrarr_row_store_strings_fresh matches ExprArray alone, and a string-kind
-// slot needs the strict ARRARRS: credit to free element pointers. That is the
-// grading this class needs, and it falls out rather than being asserted here.
 function arrarr_row_store_ok(e: ast.Expr): boolean {
     match (e) {
         ast.ExprArray(_) => { return true; },
-        ast.ExprIndex(_) => { return true; },
         _ => { return false; }
     }
     return false;
@@ -52960,7 +53037,7 @@ function emit_self_overwrite_reuse(c_name: string, c_site: string, init: ast.Exp
                     // box only.
                     st = st.emit(ir.op_load_local(bslot));
                     st = st.emit(ir.op_struct_get(fidxs[rj], struct_field_width(st.frame.structs, slit.type_name, fidxs[rj])));
-                    if (struct_has_reclaim_array_field(st.frame.structs, rfty)) {
+                    if (!shallow && struct_has_reclaim_array_field(st.frame.structs, rfty)) {
                         st = st.emit(ir.op_call_direct("__struct_drop_" + rfty, 1));
                     }
                     st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
@@ -56795,15 +56872,22 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
         // wasm is structural, so a `(i64) => boolean` dispatched through the
         // all-i32 `$fn<argc>` type is a module that will not load and an
         // `(i32) => i64` one traps at the indirect call. FNSIG carries the
-        // signature tag the funcref actually has; FNRET carries the declared
-        // return spelling, which lower_i64 needs to tell a call that genuinely
-        // yields an i64 from one whose i32 result it has to sign-extend. Both
-        // are empty for an erased generic or an all-i32 signature, so only the
-        // shapes that were wrong move.
+        // signature tag the funcref actually has, and is empty for an erased
+        // generic or an all-i32 signature; FNRET carries the declared return
+        // spelling, which every caller reads to type the call's result.
         if (fn.params[fpdi].type_name == "fn") {
+            // The declared RETURN spelling is a TYPE fact, recorded whatever the
+            // width signature turns out to be — a call through the value reads it
+            // to type the result, and `(A, B) => (A, B, boolean)` has an all-i32
+            // signature and a tuple return. Tying it to FNSIG left every such
+            // parameter's tuple result untyped, so `var (a, b, c) = visit(e, acc)`
+            // read each element at the untyped 4-byte width.
+            if (fn.params[fpdi].fn_ret.len() > 0) {
+                locals0 = locals0.with(pbase + fpdi, li_set_fn_ret(locals0[pbase + fpdi], fn.params[fpdi].fn_ret));
+            }
             var fsg: string = fn_sig_of(fn.params[fpdi], fn.type_params);
             if (fsg.len() > 0) {
-                locals0 = locals0.with(pbase + fpdi, li_set_fn_ret(li_set_fn_sig(locals0[pbase + fpdi], fsg), fn.params[fpdi].fn_ret));
+                locals0 = locals0.with(pbase + fpdi, li_set_fn_sig(locals0[pbase + fpdi], fsg));
             }
             // A closure/fn param whose signature returns Option/Result: record it
             // so a direct `match (f(x))` / `f(x)?` scrutinee recovers the Option
@@ -56834,13 +56918,23 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
         match (fn.body[fnli]) {
             ast.StmtVar(fnlv) => {
                 var fnlp: ast.ParamDecl = fn_param_from_spelling(fnlv.name, fnlv.type_name);
+                // parse_type_name coarsens a fn annotation to the flat "fn" tag
+                // and records the signature in the StmtVar's own two sidecars, so
+                // a coarsened binding has to be rebuilt from those the way a fn
+                // ARRAY binding already is (fnarr_elem_of_var).
+                if (fnlp.type_name != "fn" && fnlv.fn_ret.len() > 0) {
+                    fnlp = fn_param_from_spelling(fnlv.name, "(" + fnlv.fn_param_types + ") => " + fnlv.fn_ret);
+                }
                 if (fnlp.type_name == "fn") {
                     var fnlsg: string = fn_sig_of(fnlp, fn.type_params);
-                    var fnlret: string = "";
-                    if (fnlsg.len() > 0) { fnlret = fnlp.fn_ret; }
-                    if (fnlp.fn_param_dyn.len() > 0 || fnlsg.len() > 0) {
+                    // The declared RETURN spelling rides the seed whatever the
+                    // width signature is — the fn-param twin of the same fact, and
+                    // the reason a `() => (i32, f64)` local's tuple result could not
+                    // be typed: its signature is all-i32 and gating the return on it
+                    // threw the return away.
+                    if (fnlp.fn_param_dyn.len() > 0 || fnlsg.len() > 0 || fnlp.fn_ret.len() > 0) {
                         fnval_seed0 = fnval_seed0.append(reclaim_site_key_of(fnlv.name, fnlv.line, fnlv.col)
-                            + "|" + fnlp.fn_param_dyn + "|" + fnlsg + "|" + fnlret);
+                            + "|" + fnlp.fn_param_dyn + "|" + fnlsg + "|" + fnlp.fn_ret);
                     }
                 }
             },
@@ -76011,14 +76105,13 @@ function arrtup_elem_tag_of_init(is_arr: boolean, is_arrarr: boolean, se: LowerS
 if (is_arr && !is_arrarr && arrarr_e == "") {
     match (v.init) {
         ast.ExprArray(atl2) => {
+            // Any element whose tag is a tuple spelling, not only an inline
+            // tuple LITERAL: `var arr = [t]` over a tuple local is the same
+            // array of tuple boxes, and gating on the literal left `arr[0].N`
+            // untyped and reading four bytes of an f64 element.
             if (atl2.elements.len() > 0) {
-                match (atl2.elements[0]) {
-                    ast.ExprTuple(_) => {
-                        var att2: string = elem_type_tag(atl2.elements[0], se);
-                        if (util.is_tuple_type_name(att2)) { arrarr_e = att2; }
-                    },
-                    _ => {}
-                }
+                var att2: string = elem_type_tag(atl2.elements[0], se);
+                if (util.is_tuple_type_name(att2)) { arrarr_e = att2; }
             }
         },
         // UNANNOTATED array-of-tuples from a CALL (`var ps = mk()` where

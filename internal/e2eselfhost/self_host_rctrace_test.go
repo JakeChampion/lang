@@ -2,6 +2,7 @@ package e2eselfhost
 
 import (
 	"bytes"
+	"fmt"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -517,4 +518,89 @@ func TestSelfHostRcTraceCallerX86_64(t *testing.T) {
 		t.Errorf("no site reported more than one caller (max %d); two appending functions "+
 			"share the __fern_arr_push allocation site, so caller must separate them", best)
 	}
+}
+
+// TestSelfHostRcTraceDeepX86_64 — FERN_RC_TRACE_DEEP appends a sixth field
+// reaching one frame further than `caller`, and the default stays at five.
+//
+// The default is half the contract: five fields is native's format, so one
+// parser reads both compilers' traces, and a self-host that widened it
+// unconditionally would emit something nothing else understands.
+//
+// The sixth exists because one frame is not always enough. A sole-owner append
+// reaches the allocator as Fern code -> __fern_arr_push_owned -> __fern_arr_push
+// -> __fern_arr_box, so `caller` is that wrapper for every owned append in the
+// program and they all collapse to one name. The assertion is therefore not
+// "a sixth field exists" but "it disagrees with caller" — the same trap the
+// caller field itself fell into, where a walk one link short produced a field
+// that parsed fine and duplicated its neighbour.
+func TestSelfHostRcTraceDeepX86_64(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	dir := t.TempDir()
+	copySelfHostDriver(t, dir, "asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+
+	// Default: five numbers, unchanged.
+	plain := hevCompile(t, runner, driverBin, hevTwoAppendSrc, []string{"FERN_RC_TRACE=1"})
+	plainBin := buildBin(t, gcc, dir, "hev_deep_off", plain)
+	if _, err := hevRows(t, runner, plainBin, 6); err != nil {
+		t.Fatalf("FERN_RC_TRACE alone: %v", err)
+	}
+
+	// Deep: six, and the extra one is a different frame.
+	deep := hevCompile(t, runner, driverBin, hevTwoAppendSrc,
+		[]string{"FERN_RC_TRACE=1", "FERN_RC_TRACE_DEEP=1"})
+	deepBin := buildBin(t, gcc, dir, "hev_deep_on", deep)
+	rows, err := hevRows(t, runner, deepBin, 7)
+	if err != nil {
+		t.Fatalf("FERN_RC_TRACE_DEEP: %v", err)
+	}
+
+	const caller, caller2 = 3, 4
+	differs := 0
+	for _, r := range rows {
+		if r[caller] != 0 && r[caller2] != 0 && r[caller2] != r[caller] {
+			differs++
+		}
+	}
+	if differs == 0 {
+		t.Fatal("no allocation reported a caller2 that differs from caller: the second walk " +
+			"is not stepping a frame, so the sixth field duplicates the fifth")
+	}
+}
+
+// hevRows returns the hex numbers of each `rctrace` ALLOCATION line, requiring
+// every trace line to carry exactly wantFields whitespace-separated fields.
+func hevRows(t *testing.T, runner []string, bin string, wantFields int) ([][]uint64, error) {
+	t.Helper()
+	stderr, _ := hevRun(t, runner, bin)
+	var rows [][]uint64
+	for _, line := range strings.Split(stderr, "\n") {
+		if !strings.HasPrefix(line, "rctrace ") {
+			continue
+		}
+		f := strings.Fields(line)
+		if len(f) != wantFields {
+			return nil, fmt.Errorf("line %q has %d fields, want %d", line, len(f), wantFields)
+		}
+		if f[1] != "a" {
+			continue
+		}
+		row := make([]uint64, 0, len(f)-2)
+		for _, n := range f[2:] {
+			if len(n) != 16 {
+				return nil, fmt.Errorf("field %q in %q is %d hex digits, want 16", n, line, len(n))
+			}
+			v, err := strconv.ParseUint(n, 16, 64)
+			if err != nil {
+				return nil, fmt.Errorf("field %q: %v", n, err)
+			}
+			row = append(row, v)
+		}
+		rows = append(rows, row)
+	}
+	if len(rows) == 0 {
+		return nil, fmt.Errorf("no rctrace allocation lines")
+	}
+	return rows, nil
 }

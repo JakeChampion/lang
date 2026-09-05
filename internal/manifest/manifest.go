@@ -27,6 +27,7 @@ import (
 	"strings"
 
 	"github.com/jakechampion/lang/internal/caps"
+	"github.com/jakechampion/lang/internal/pkgcache"
 )
 
 // FileName is the manifest file modload looks for next to (or above)
@@ -49,7 +50,7 @@ const DefaultLib = "lib.fern"
 type Dep struct {
 	Path string
 	URL  string
-	Hash string // "sha256:<64 hex>" — of the archive bytes
+	Hash string // "sha256:<64 lowercase hex>" — of the archive bytes
 	// Workspace is true for a `{ workspace = true }` dependency: the
 	// dependency is another member of the enclosing workspace, located by
 	// its package name rather than a path/url. Keeps cross-member deps
@@ -451,9 +452,8 @@ func parseDep(val string) (Dep, error) {
 			}
 			dep.URL = s
 		case "hash":
-			hex, ok := strings.CutPrefix(s, "sha256:")
-			if !ok || len(hex) != 64 || !isHex(hex) {
-				return Dep{}, fmt.Errorf("hash must be `sha256:` + 64 hex digits of the archive bytes, got %q", s)
+			if err := pkgcache.ValidateHash(s); err != nil {
+				return Dep{}, err
 			}
 			dep.Hash = s
 		case "version":
@@ -558,17 +558,6 @@ func isVersion(s string) bool {
 			if r < '0' || r > '9' {
 				return false
 			}
-		}
-	}
-	return true
-}
-
-func isHex(s string) bool {
-	for _, r := range s {
-		switch {
-		case r >= '0' && r <= '9', r >= 'a' && r <= 'f':
-		default:
-			return false
 		}
 	}
 	return true

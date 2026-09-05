@@ -705,9 +705,9 @@ func TestEmitMemoryRoundTrip(t *testing.T) {
 }
 
 // TestMemorySectionOnlyWhenUsed — a module with no memory ops
-// should NOT include a memory section. Tests the anyMemoryOp
-// gate; otherwise downstream tooling that inspects sections
-// would see a phantom memory.
+// should NOT include a memory section; otherwise downstream tooling
+// that inspects sections would see a phantom memory. This is the
+// guard against answering the memory question with "always yes".
 func TestMemorySectionOnlyWhenUsed(t *testing.T) {
 	prog := &ir.Program{Funcs: []*ir.Func{{
 		Name:       "main",
@@ -734,10 +734,16 @@ func TestMemorySectionOnlyWhenUsed(t *testing.T) {
 	}
 }
 
-// walkHasMemorySection — scan the module after the 8-byte
-// preamble, hopping section headers (1 byte id + uleb size),
-// and report whether id 5 (memory) appears as a header.
+// walkHasMemorySection reports whether the module declares a memory.
 func walkHasMemorySection(t *testing.T, bin []byte) bool {
+	t.Helper()
+	return walkHasSection(t, bin, encode.SectionMemory)
+}
+
+// walkHasSection — scan the module after the 8-byte preamble,
+// hopping section headers (1 byte id + uleb size), and report
+// whether `want` appears as a header.
+func walkHasSection(t *testing.T, bin []byte, want byte) bool {
 	t.Helper()
 	if len(bin) < 8 {
 		return false
@@ -761,7 +767,7 @@ func walkHasMemorySection(t *testing.T, bin []byte) bool {
 			}
 			shift += 7
 		}
-		if id == encode.SectionMemory {
+		if id == want {
 			return true
 		}
 		i += size

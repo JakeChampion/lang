@@ -81,6 +81,13 @@ Rules:
   doesn't need the dependency to hold the callback's capabilities.
   (This is the object-capability reading: passing a closure IS
   passing a capability, deliberately.)
+- **A trait default body is charged to the trait's package**, by the
+  same definition-not-use rule: the body was written there, so the
+  package shipping the trait needs the grant, and merely writing an
+  `impl` does not make the implementer answer for what the default
+  reaches. The walk roots on the `FuncDecl`'s `BodyModule()` for this
+  reason. The implementing package is still charged transitively when
+  it calls the method, as any caller is.
 
 ## Phases
 

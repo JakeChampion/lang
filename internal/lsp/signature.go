@@ -1,6 +1,8 @@
 package lsp
 
 import (
+	"strings"
+
 	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/checker"
 )
@@ -199,27 +201,26 @@ func indexLineComment(src string, start, end int) int {
 }
 
 // lspPositionToOffset returns the byte offset into src for the given
-// LSP position (0-based line + 0-based character). Returns -1 when
-// the position is out of bounds. Assumes ASCII for the character
-// dimension — same caveat as the toLSPPosition direction.
+// LSP position (0-based line + 0-based UTF-16 character). Returns -1 when
+// the line is out of bounds; a character past the end of its line clamps
+// there, which is what an editor sends for a cursor at end-of-line.
 func lspPositionToOffset(src string, pos Position) int {
-	line := 0
-	col := 0
-	for i := 0; i < len(src); i++ {
-		if line == pos.Line && col == pos.Character {
-			return i
-		}
-		if src[i] == '\n' {
-			line++
-			col = 0
-		} else {
-			col++
-		}
+	if pos.Line < 0 || pos.Character < 0 {
+		return -1
 	}
-	if line == pos.Line && col == pos.Character {
-		return len(src)
+	off := 0
+	for n := 0; n < pos.Line; n++ {
+		nl := strings.IndexByte(src[off:], '\n')
+		if nl < 0 {
+			return -1
+		}
+		off += nl + 1
 	}
-	return -1
+	line := src[off:]
+	if nl := strings.IndexByte(line, '\n'); nl >= 0 {
+		line = strings.TrimSuffix(line[:nl], "\r")
+	}
+	return off + byteColForUTF16(line, pos.Character) - 1
 }
 
 func paramInfo(sig *ast.FuncType) []parameterInformation {

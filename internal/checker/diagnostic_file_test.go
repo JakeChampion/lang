@@ -58,7 +58,7 @@ func filesOf(t *testing.T, err error) []string {
 // a LAMBDA body or a NESTED function body is blamed on the module that wrote
 // it, not on the entry file.
 //
-// errf fills Error.Path from c.current.SourceModule, and modload stamps
+// errf fills Error.Path from c.current's body module, and modload stamps
 // SourceModule on prog.Funcs only. The synthetic FuncDecl the checker swaps
 // c.current to for a lambda body was built without it, and a nested `function`
 // never reaches prog.Funcs at all — so both bodies reported an empty path,

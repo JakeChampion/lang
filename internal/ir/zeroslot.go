@@ -34,7 +34,12 @@ package ir
 // pointer and the guard an i32, so rewriting the load alone would leave
 // a pointer where an i32 is expected.
 //
-// Returns whether any function changed, for OptimizeCleanup's fixpoint.
+// Returns whether any function's op list changed.
+//
+// The shipped path reaches this pass through OptimizeCleanup, which drives
+// pruneZeroSlotGuardsIn per function inside its own fixpoint; this is the
+// whole-program entry point, in the same shape as Fold / PropagateCopies /
+// ConstPropagate / ReduceStrength.
 func PruneZeroSlotGuards(prog *Program) bool {
 	changed := false
 	for _, fn := range prog.Funcs {

@@ -37,6 +37,22 @@ function div_hex(f: ld.Format, a: string, b: string): string {
     return f.hex(f.div(f.strtold(a).v, f.strtold(b).v), none(), false);
 }
 
+// `as_i64` shown, so a missing answer is as testable as a present one.
+function whole(f: ld.Format, s: string): string {
+    return shown(f.strtold(s).v.as_i64());
+}
+
+function shown(v: Option[i64]): string {
+    match (v) {
+        Some(n) => {
+            return n.to_string();
+        },
+        None => {
+            return "none";
+        }
+    }
+}
+
 function test_x87_stores_its_integer_bit(): test.TestOutcome {
     var f: ld.Format = ld.x87();
     if (hex(f, "1") != "8p-3") { return test.fail("one"); }
@@ -270,6 +286,32 @@ function test_pow10(): test.TestOutcome {
     return test.assert_eq(q.to_fixed(q.pow10(30), 0), "1000000000000000000000000000000");
 }
 
+// `as_i64` is the inverse of `from_i64`: the value when it is a whole
+// number an i64 holds, None otherwise. It reads the FORMAT's value, not
+// the text — binary64 cannot tell 9007199254740993 from its neighbour —
+// and the two ends of the type are the edges it has to get right.
+function test_as_i64(): test.TestOutcome {
+    var f: ld.Format = ld.x87();
+    var min: i64 = 0 as i64 - 9223372036854775807 as i64 - 1 as i64;
+    if (shown(f.from_i64(7 as i64).as_i64()) != "7") { return test.fail("seven"); }
+    if (shown(f.from_i64(0 as i64 - 7 as i64).as_i64()) != "-7") { return test.fail("minus seven"); }
+    if (shown(f.zero(false).as_i64()) != "0") { return test.fail("zero"); }
+    if (shown(f.zero(true).as_i64()) != "0") { return test.fail("negative zero"); }
+    if (shown(ld.inf(false).as_i64()) != "none") { return test.fail("infinity"); }
+    if (shown(ld.nan(false).as_i64()) != "none") { return test.fail("nan"); }
+    if (whole(f, "2.5") != "none") { return test.fail("a fraction"); }
+    if (whole(f, "0.5") != "none") { return test.fail("below one"); }
+    if (shown(f.from_i64(9223372036854775807 as i64).as_i64()) != "9223372036854775807") { return test.fail("the largest"); }
+    if (shown(f.from_i64(min).as_i64()) != "-9223372036854775808") { return test.fail("the smallest"); }
+    if (whole(f, "9223372036854775808") != "none") { return test.fail("one past the largest"); }
+    if (whole(f, "-9223372036854775809") != "none") { return test.fail("one past the smallest"); }
+    if (whole(f, "1e30") != "none") { return test.fail("far past the type"); }
+    var q: ld.Format = ld.binary128();
+    if (whole(q, "18446744073709551617") != "none") { return test.fail("exact but past the type"); }
+    var d: ld.Format = ld.binary64();
+    return test.assert_eq(whole(d, "9007199254740993"), "9007199254740992");
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("coreutils/lib/ld");
     r = r.it("x87 stores its integer bit",        test_x87_stores_its_integer_bit);
@@ -288,6 +330,7 @@ function main(): i32 {
     r = r.it("format digit limits",               test_format_digit_limits);
     r = r.it("to_fixed and to_g",                 test_whole_conversions);
     r = r.it("pow10 is reached by multiplying",   test_pow10);
+    r = r.it("as_i64 is from_i64 inverted",       test_as_i64);
     r.finish();
     return 0;
 }

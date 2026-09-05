@@ -15,7 +15,12 @@
 // with `char_from_i32` (checked, `Option[char]`) or `as char` (an
 // unchecked reinterpret; a LITERAL outside the range is E071).
 // U+FFFD (65533) is the REPLACEMENT CHARACTER the lossy decoders
-// substitute for malformed input.
+// substitute for malformed input. They substitute one per MAXIMAL
+// SUBPART (Unicode 15.0 §3.9), which is std/string's rule too — the
+// lossy walkers here ARE the string methods, so `codepoint_count(s)`
+// and `s.codepoint_count()` cannot disagree. `utf8_decode_at` is the
+// strict layer instead: it reports ill-formed input as `None` rather
+// than substituting anything.
 
 import "std/string";
 
@@ -128,21 +133,13 @@ pub function utf8_encode(ch: char): string {
 }
 
 // `codepoints(s)` — decode the whole string to its sequence of
-// codepoints. LOSSY: each malformed / truncated byte contributes one
-// U+FFFD and the scan resumes one byte later, so the result is always
-// well-formed (and non-empty for a non-empty input). The free-function
-// form of `string.chars()`.
+// codepoints. LOSSY: an ill-formed run contributes one U+FFFD per
+// MAXIMAL SUBPART (see the module note) and the scan resumes after it,
+// so the result is always well-formed (and non-empty for a non-empty
+// input). The free-function form of `string.chars()`, and literally
+// that function — one substitution rule, one implementation.
 pub function codepoints(s: string): char[] {
-    var out: char[] = [];
-    var n: i32 = s.len();
-    var i: i32 = 0;
-    while (i < n) {
-        match (utf8_decode_at(s, i)) {
-            Some(pair) => { out = out.append(pair.0 as char); i = i + pair.1; },
-            None => { out = out.append(65533 as char); i = i + 1; }
-        }
-    }
-    return out;
+    return s.chars();
 }
 
 // `codepoint_count(s)` — the number of codepoints, counted with the
@@ -150,17 +147,7 @@ pub function codepoints(s: string): char[] {
 // without materialising the array. This is the "character length" a
 // user means when `s.len()` (byte length) surprises them.
 pub function codepoint_count(s: string): i32 {
-    var n: i32 = s.len();
-    var i: i32 = 0;
-    var count: i32 = 0;
-    while (i < n) {
-        match (utf8_decode_at(s, i)) {
-            Some(pair) => { i = i + pair.1; },
-            None => { i = i + 1; }
-        }
-        count = count + 1;
-    }
-    return count;
+    return s.codepoint_count();
 }
 
 // `is_valid_utf8(s)` — true iff every byte is part of a valid,
@@ -309,8 +296,8 @@ pub function codepoint_at(s: string, byte_index: i32): Option[char] {
 // (0-based) as a one-character string, or None when `index` is negative
 // or past the last codepoint. This is the "Nth character" byte indexing
 // can't do: `s[i]` is a byte, `char_at(s, i)` is a whole character. A
-// valid character comes back as its exact original bytes; a malformed
-// byte counts as one U+FFFD character (matching `codepoints`).
+// valid character comes back as its exact original bytes; an ill-formed
+// maximal subpart comes back as one U+FFFD (matching `codepoints`).
 pub function char_at(s: string, index: i32): Option[string] {
     if (index < 0) { return None; }
     var n: i32 = s.len();
@@ -318,14 +305,12 @@ pub function char_at(s: string, index: i32): Option[string] {
     var cp_idx: i32 = 0;
     while (i < n) {
         var start: i32 = i;
-        var valid: boolean = true;
-        match (utf8_decode_at(s, i)) {
-            Some(pair) => { i = i + pair.1; },
-            None => { i = i + 1; valid = false; }
-        }
+        i = i + string.__utf8_step(s, i, n);
         if (cp_idx == index) {
-            if (valid) { return Some(slice_unchecked(s, start, i).to_owned()); }
-            return Some(utf8_encode(65533 as char));   // U+FFFD for a malformed byte
+            if (is_valid_utf8(slice_unchecked(s, start, i))) {
+                return Some(slice_unchecked(s, start, i).to_owned());
+            }
+            return Some(utf8_encode(65533 as char));
         }
         cp_idx = cp_idx + 1;
     }
@@ -412,10 +397,7 @@ pub function substring(s: string, start: i32, end: i32): str {
     while (i < n) {
         if (cp_idx == lo) { byte_start = i; }
         if (cp_idx == end) { byte_end = i; }
-        match (utf8_decode_at(s, i)) {
-            Some(pair) => { i = i + pair.1; },
-            None => { i = i + 1; }
-        }
+        i = i + string.__utf8_step(s, i, n);
         cp_idx = cp_idx + 1;
     }
     // Boundaries landing exactly at the end-of-string (cp_idx == count).

@@ -583,6 +583,14 @@ when "cycles eventually become a thing."
 
 **Direction: immutable data structures only — which makes cycles unconstructible by construction.**
 
+*Status of that direction:* the checker rules landed (E048 / E049 / E055 /
+E056 / E057), but the property they were for did not follow. `E049` rejects a
+write-back only inside the closure, so rebinding a captured variable from the
+enclosing scope still closes a cycle, with no `Cell` and no diagnostic
+(#8440). Every decision below that cites cycle-freedom — "no fallback,
+document the invariant" included — rests on an invariant that does not hold
+today.
+
 The two questions this doc raised — "how do we handle cycles under RC?"
 and "is `p.field = v` without copy-on-write a bug?" — collapse into one
 answer. If post-construction mutation is removed from the language, a

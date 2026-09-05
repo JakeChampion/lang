@@ -94,10 +94,11 @@ designed-around but not built yet.
   `docs/IMMUTABILITY-MIGRATION-PLAN.md` §4 / `CYCLE-COLLECTION-
   ANALYSIS.md`), so a post-construction back-pointer — the only way
   to close a cycle when values are built bottom-up — can't be
-  written. (Mutable closure-capture write-back is the remaining
-  vector; its checker rejection is the follow-up that completes the
-  guarantee.) No cycle collector and no tracing fallback: cycles are
-  unconstructible, not collected.
+  written. No cycle collector and no tracing fallback: cycles are
+  meant to be unconstructible rather than collected. They are not yet
+  — E049 rejects a reference-capture write-back inside the closure, but
+  the enclosing scope can still store the closure into the shared capture
+  box and close the cycle (#8440).
 - **Thread safety.** Refcounts are non-atomic. Single-threaded.
   When concurrency lands, either atomic ops (slower) or thread-
   local heaps with explicit sharing.
@@ -417,8 +418,8 @@ Migration sequence:
 2. Migrate all in-tree callers to the new names.
 3. Delete the void variants and rename `set_returning` → `set`
    (still Phase 2, end of the PR series).
-4. Document the API in `docs/COLLECTIONS.md` once the migration
-   settles (Phase 6).
+4. Document the API in `docs/STDLIB.md`'s `core/map` section once the
+   migration settles (Phase 6).
 
 ### Considered and rejected
 

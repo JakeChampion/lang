@@ -75,18 +75,36 @@ function __sv_str_cmp(a: string, b: string): i32 {
     return 0;
 }
 
+// __sv_significant_digits drops leading zeros from an all-digit
+// identifier, so its length is the magnitude of the value it names
+// ("" for a run of zeros, which compares equal to "0").
+function __sv_significant_digits(s: string): string {
+    var i: i32 = 0;
+    while (i < s.len() && s[i] == 48) { i = i + 1; }
+    return __sv_slice(s, i, s.len());
+}
+
+// __sv_cmp_numeric compares two all-digit identifiers as unbounded
+// integers: after leading zeros, the shorter run is the smaller value
+// and equal lengths settle lexically. §11 puts no upper bound on a
+// numeric prerelease identifier, so parsing one into a machine integer
+// wraps — `1.0.0-99999999999` then sorts below `1.0.0-1`.
+function __sv_cmp_numeric(x: string, y: string): i32 {
+    var xs: string = __sv_significant_digits(x);
+    var ys: string = __sv_significant_digits(y);
+    if (xs.len() != ys.len()) {
+        if (xs.len() < ys.len()) { return 0 - 1; }
+        return 1;
+    }
+    return __sv_str_cmp(xs, ys);
+}
+
 // __sv_cmp_ident compares two prerelease identifiers (§11): numeric vs
 // numeric numerically, numeric < alphanumeric, else lexical.
 function __sv_cmp_ident(x: string, y: string): i32 {
     var xn: boolean = __sv_all_digits(x);
     var yn: boolean = __sv_all_digits(y);
-    if (xn && yn) {
-        var xi: i32 = x.parse_int_or(0);
-        var yi: i32 = y.parse_int_or(0);
-        if (xi < yi) { return 0 - 1; }
-        if (xi > yi) { return 1; }
-        return 0;
-    }
+    if (xn && yn) { return __sv_cmp_numeric(x, y); }
     if (xn && !yn) { return 0 - 1; }
     if (!xn && yn) { return 1; }
     return __sv_str_cmp(x, y);

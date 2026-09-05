@@ -21,6 +21,7 @@
 // the other.
 
 import "./util";
+import "./fern_toml";
 
 // Version is a MAJOR.MINOR.PATCH release version (no ranges, no
 // pre-release — the deterministic subset MVS operates on). `ok` is false
@@ -226,7 +227,13 @@ function parse_source(val: string): SourceResult {
         var v: string = slice_unchecked(raw, 1, raw.len() - 1) + "";
         if (k == "path") { path = v; }
         else if (k == "url") { url = v; }
-        else if (k == "hash") { hash = v; }
+        else if (k == "hash") {
+            var hr: fern_toml.HashResult = fern_toml.validate_hash(v);
+            if (hr.err.len() > 0) {
+                return SourceResult { src: none, err: k + " " + hr.err };
+            }
+            hash = v;
+        }
         else {
             return SourceResult { src: none, err: "unknown key " + quoted(k) + " (supported: path, url, hash)" };
         }

@@ -128,9 +128,9 @@ Two things that bear on the choice and are easy to lose:
   route feeds roadmap goal 2 (Perceus in the self-host) directly, where the
   codegen cutover does not.
 
-## What happens on the re-evaluation date
+## The re-evaluation procedure
 
-On 2026-09-01, revisit with fresh numbers:
+Revisit with fresh numbers:
 
 - If no tripwire has fired, **re-shelve** and set the next date. Record why.
 - If a tripwire fired, write an `SSA-CUTOVER-PLAN.md`: pick the shared
@@ -177,16 +177,18 @@ ground on the native side, exactly as `-backend ssa` (wasm) is.
   `examples/**` program through both `-target arm64-linux` and
   `-target arm64-linux -backend ssa` and compares exit status and stdout, with a
   refusal counted as the documented coverage endpoint rather than as a pass.
-  Its first run found four wrong answers and 56 heap SIGSEGVs
-  (`internal/e2e/testdata/arm64-ssa-diff-known-divergences.txt`). **`x86_64ssa`
-  and `-backend ssa` (wasm) still have no corpus differential** — their only
-  cover is their own hand-written cases, which is what this sentence claimed for
-  arm64 too until it was checked.
+  Its first run found four wrong answers and 56 heap SIGSEGVs; the
+  divergence file (`internal/e2e/testdata/arm64-ssa-diff-known-divergences.txt`)
+  has no rows today. `x86_64ssa` has the same shape of leg
+  (`internal/e2e/x86_64_ssa_differential_test.go`) over the same corpus, but it
+  compares 30 programs to arm64's 281 — the rest are refused for missing
+  helpers. **`-backend ssa` (wasm) still has no corpus differential**; its only
+  cover is its own hand-written cases.
 - **Not required to carry new features.** As with `-backend ssa` (wasm), a language
   feature these backends can't yet express is a logged gap, not a blocker.
 
-**The 2026-09-01 re-evaluation is unchanged.** If a tripwire fires before then
-(or the re-eval decides to cut over), the cutover point is still the shared
+**The re-evaluation does not change this.** Whenever the call is made (or a
+further tripwire fires), the cutover point is still the shared
 one — IR → SSA → *all* native backends — never one backend in isolation. The
 self-host mirror of this decision (the IR path is the single self-host
 production lowering; SSA `build_func` demoted to opt-in) is

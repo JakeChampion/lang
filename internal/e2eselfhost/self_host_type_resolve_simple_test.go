@@ -8,13 +8,14 @@ import (
 // TestSelfHostTypeResolveSimple pins the self-hosted checker's three simpler
 // type-name resolvers (examples/self_host/checker.fern's
 // type_from_name_with_structs / _with_struct_names / _with_names_and_unions —
-// SH-021 slice 5, docs/SELF-HOST-AUDIT.md T2). Unlike the richest resolver
-// (_with_structs_unions, slice 4), these model only scalars, the `Elem[]` array
-// suffix, and struct / union NAMES — a tuple or generic resolves to unknown by
-// its full spelling, except a builtin `Option[…]` / `Result[…]` instantiation
-// in the names+unions resolver (#5986). This slice retargets their array-suffix decode from the
-// magic-byte `[`(91)/`]`(93) scan onto the structured TypeRef's array_depth (the
-// same peel proven byte-identical in slice 4).
+// docs/SELF-HOST-AUDIT.md T2). All three share the one resolution ladder
+// (type_from_ref_names) with the richest resolver, so they differ from it only
+// in the name context each carries: the two struct-only ones cannot name a
+// union, and none of them substitutes a type parameter. A tuple, a Map, a fn
+// value and a generic instantiation resolve in every one of them — they used to
+// collapse to unknown by their full spelling here, which is how a struct field
+// declared `(i32, f64)[]` reached irlower as `unknown[]` and had its f64
+// element read at 4 bytes (#8459).
 //
 // The type_resolve_simple_run driver resolves a corpus through all three and
 // prints type_debug of each result.
@@ -33,8 +34,6 @@ func TestSelfHostTypeResolveSimple(t *testing.T) {
 		"i64 => structs=i64 names=i64 names+unions=i64\n" +
 		"u32 => structs=u32 names=u32 names+unions=u32\n" +
 		"u64 => structs=u64 names=u64 names+unions=u64\n" +
-		// `bool` is not a Fern type name — only `boolean` is, matching native,
-		// which has no synonym either. The row pins the rejection.
 		"bool => structs=unknown(unrecognised type name: bool) names=unknown(unrecognised type name: bool) names+unions=unknown(unrecognised type name: bool)\n" +
 		"boolean => structs=bool names=bool names+unions=bool\n" +
 		"string => structs=string names=string names+unions=string\n" +
@@ -52,15 +51,12 @@ func TestSelfHostTypeResolveSimple(t *testing.T) {
 		"i32[][] => structs=array<array<i32>> names=array<array<i32>> names+unions=array<array<i32>>\n" +
 		"Foo[][] => structs=array<array<struct:Foo>> names=array<array<struct:Foo>> names+unions=array<array<struct:Foo>>\n" +
 		"Bar[][][] => structs=array<array<array<struct:Bar>>> names=array<array<array<struct:Bar>>> names+unions=array<array<array<struct:Bar>>>\n" +
-		"(i32, string) => structs=unknown(unrecognised type name: (i32, string)) names=unknown(unrecognised type name: (i32, string)) names+unions=unknown(unrecognised type name: (i32, string))\n" +
-		"Map[string, i32] => structs=unknown(unrecognised type name: Map[string, i32]) names=unknown(unrecognised type name: Map[string, i32]) names+unions=unknown(unrecognised type name: Map[string, i32])\n" +
-		// Builtin generic enum instantiation resolves to the union in the
-		// names+unions resolver (#5986); the two struct-only resolvers
-		// still don't model it.
-		"Option[i32] => structs=unknown(unrecognised type name: Option[i32]) names=unknown(unrecognised type name: Option[i32]) names+unions=union:Option\n" +
-		"Vec[T] => structs=unknown(unrecognised type name: Vec[T]) names=unknown(unrecognised type name: Vec[T]) names+unions=unknown(unrecognised type name: Vec[T])\n" +
-		"(i32, string)[] => structs=array<unknown(unrecognised type name: (i32, string))> names=array<unknown(unrecognised type name: (i32, string))> names+unions=array<unknown(unrecognised type name: (i32, string))>\n" +
-		"Map[string, i32][] => structs=array<unknown(unrecognised type name: Map[string, i32])> names=array<unknown(unrecognised type name: Map[string, i32])> names+unions=array<unknown(unrecognised type name: Map[string, i32])>\n" +
+		"(i32, string) => structs=tuple<i32, string> names=tuple<i32, string> names+unions=tuple<i32, string>\n" +
+		"Map[string, i32] => structs=map<string, i32> names=map<string, i32> names+unions=map<string, i32>\n" +
+		"Option[i32] => structs=union:Option names=union:Option names+unions=union:Option\n" +
+		"Vec[T] => structs=union:Vec names=union:Vec names+unions=union:Vec\n" +
+		"(i32, string)[] => structs=array<tuple<i32, string>> names=array<tuple<i32, string>> names+unions=array<tuple<i32, string>>\n" +
+		"Map[string, i32][] => structs=array<map<string, i32>> names=array<map<string, i32>> names+unions=array<map<string, i32>>\n" +
 		"Bogus[] => structs=array<unknown(unrecognised type name: Bogus)> names=array<unknown(unrecognised type name: Bogus)> names+unions=array<unknown(unrecognised type name: Bogus)>\n" +
 		"mod.Thing => structs=unknown(unrecognised type name: mod.Thing) names=unknown(unrecognised type name: mod.Thing) names+unions=unknown(unrecognised type name: mod.Thing)\n" +
 		" => structs=unknown(unrecognised type name: ) names=unknown(unrecognised type name: ) names+unions=unknown(unrecognised type name: )\n"

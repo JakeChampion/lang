@@ -40,7 +40,8 @@ Receiver methods on i32 / byte values.
   `percent_of`, `reverse_digits`, `sum_of_digits`, `has_digit`,
   `saturating_add`, `saturating_sub`, `checked_add`,
   `checked_sub`, `checked_div`, `pow`, `gcd`, `lcm`, `factorial`,
-  `next_power_of_2`, `log2_floor`, `sqrt_floor`, `ceil_div`,
+  `next_power_of_2` (smallest power of two `>= n`; caps at 2^30,
+  returns 0 above), `log2_floor`, `sqrt_floor`, `ceil_div`,
   `round_up_to`, `round_down_to`, `divmod`
 - **Bit ops:** `count_ones`, `count_zeros` (`32 - count_ones`),
   `leading_zeros`, `trailing_zeros`, `bit_length` (bits to
@@ -1202,7 +1203,7 @@ function test_addition(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("arithmetic");
-    r = r.it("addition", test_addition());
+    r = r.it("addition", test_addition);
     return r.finish();
 }
 ```
@@ -1213,11 +1214,13 @@ is `test.TestRunner`; receiver methods (`.it`, `.finish`, `.skip`)
 stay bare.
 
 - **Runner:** `TestRunner` (struct), `test_new(suite)`,
-  `test_new_verbose(suite)`, `(r).it(name, result)`,
+  `test_new_verbose(suite)`, `(r).it(name, body)` — `body` is the
+  test passed UNEVALUATED, a bare function name or `() => …`, so the
+  runner's filter and fail-fast controls can decline to run it —
   `(r).finish() -> i32`
 - **Skips & subsuites:** `(r).skip(name, reason)`,
-  `(r).skip_if(cond, name, reason, result)`,
-  `(r).subsuite(name)`, `(r).merge(child)` — toolchain-gated
+  `(r).skip_if(cond, name, reason, body)`,
+  `(r).subsuite(name)` — toolchain-gated
   cases emit a TAP `# SKIP` directive; subsuites print with
   `parent / child` prefixes while keeping monotonic TAP
   numbering
@@ -1235,7 +1238,9 @@ stay bare.
   — trait-bounded (`cmp.Eq + cmp.Display` for `assert_eq` / `assert_neq`,
   `cmp.Ord + cmp.Display` for the relational four), so one helper each
   covers every integer width, `boolean`, and `string`. Failure
-  messages quote both the actual and expected `Display` forms
+  messages wrap both the actual and the expected `Display` form
+  in `"…"`, so an empty or whitespace-only value is still
+  visible in the diagnostic
 - **Float assertions:** `assert_eq_f64_near(actual, expected,
   epsilon)`, `assert_eq_f32_near`, `assert_eq_f64_exact`,
   `assert_is_nan_f32`, `assert_is_nan_f64` — `_near` is the
@@ -1251,8 +1256,12 @@ stay bare.
   ones. Falls back to absolute compare when `expected == 0.0`
 - **Range:** `assert_in_range_i32`, `assert_in_range_i64`,
   `assert_in_range_f64(v, lo, hi)`, `assert_in_range_f32` —
-  inclusive bounds; the float variants fail on NaN inputs
-  (NaN never satisfies an ordering compare)
+  inclusive bounds; all four reject an inverted range
+  (`lo > hi`) as a caller bug rather than blaming the side
+  the value fell outside, and the float variants fail on NaN
+  in the value **or in either bound** — every comparison
+  against a NaN bound is false, so "not below and not above"
+  would otherwise report a pass having asserted nothing
 - **Order:** `assert_sorted_asc(arr)` — generic
   (`cmp.Ord + cmp.Display`), monotonically non-decreasing;
   empty / single-element arrays vacuously pass; failure

@@ -18,7 +18,6 @@ at the operand's width. There is no overflow trap.
 
 ```
 255u8 + 1   == 0          // wraps at 8 bits
-127i8 + 1   == -128
 2147483647 + 1 == -2147483648   // i32
 100000 * 100000 == 1410065408   // i32, mod 2^32
 ```
