@@ -103,7 +103,7 @@ func TestSelfHostIRPerModuleLinkArm64(t *testing.T) {
 		t.Fatalf("aarch64 link failed: %v\n%s", err, out)
 	}
 
-	cmd := exec.Command(qemu, binPath)
+	cmd := runArm64Bin(qemu, binPath)
 	_ = cmd.Run()
 	if code := cmd.ProcessState.ExitCode(); code != 7 {
 		t.Errorf("arm64 per-module binary exit = %d, want 7 (cross-module enum shape identity Blue(7))", code)

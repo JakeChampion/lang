@@ -98,7 +98,7 @@ func TestSelfHostPerModuleArm64LeafOnlyLinkRun(t *testing.T) {
 	if lout, err := exec.Command(armgcc, linkArgs...).CombinedOutput(); err != nil {
 		t.Fatalf("per-module arm64 link failed (#4305 regression — undefined .S<idx>): %v\n%s", err, lout)
 	}
-	rcmd := exec.Command(qemu, bin)
+	rcmd := runArm64Bin(qemu, bin)
 	_ = rcmd.Run()
 	if code := rcmd.ProcessState.ExitCode(); code != 42 {
 		t.Errorf("per-module arm64 leaf-only program exited %d, want 42", code)
