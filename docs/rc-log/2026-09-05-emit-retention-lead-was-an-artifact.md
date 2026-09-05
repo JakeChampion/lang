@@ -297,9 +297,36 @@ retained: storing an already-owned `P` through the field append is clean on both
 compilers at equal allocation counts. A release added without a matching retain
 is how #8310 turned a bounded leak into a double free; here no retain is owed.
 
-What remains is threading the `.with` index into that branch, with an
-`old[i] != new[i]` guard — tracked in #8628, and worth landing only against the
-full 150-cell leak matrix on both ISAs plus the sanitize legs.
+### The gate that produces it is deliberate
+
+Threading the `.with` index into that branch is NOT the fix, and reading the
+admission rule before proposing one would have saved the detour.
+`__field_reclaim_<T>` already has a struct-array element walk —
+`field_reclaim_field_ops` emits `arrarr_free` with a `pre` element type — gated
+on the need `strfldok:sarr:<T>`, whose rule reads:
+
+> A type is admitted iff every one of its struct/enum-array fields is (a) never
+> read outside a bare `.len()` borrow — any other read binds an element alias
+> the walk would dangle — and (b) only ever stored an array literal of fresh
+> elements, so no surviving buffer shares an element with the one being
+> released.
+
+So the leak is the conservative side of a real trade. Releasing the displaced
+element without clearing (a) frees a box a live binding still points at.
+
+The two probes separate the clauses. For the minimal `W`, (a) holds — nothing
+reads an element — and only (b) fails, because a `.with` clone shares every
+element with the old buffer by construction and can never be "an array literal
+of fresh elements". For `Peep`, (a) fails as well: `peep_flush` binds
+`var l: PLine = p.w[i]` and `var m: PLine = p.w[j]`, exactly the element reads
+the clause refuses on.
+
+That leaves two pieces of work, only the first small: a `.with`-shaped
+admission for types where (a) already holds, which fixes `W` and not `Peep`;
+and narrowing clause (a) with liveness on element bindings, which is what
+actually recovers the ~20% — the same shape of work as #8644's gap 1, where a
+syntactically-aliased but dead `var prev = s` forces a copy. Both tracked in
+#8628.
 
 ## The accumulator cluster reproduces too, and it is quadratic: #8644
 
