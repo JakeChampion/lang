@@ -13438,8 +13438,8 @@ function hl_append_str(a: string[], b: string[]): string[] {
 // hl_collect_var_names collects the `var` names a statement subtree declares —
 // deliberately ONLY var names, not for-binders or pattern binders, and
 // deliberately not into lambda bodies: it feeds hl_capture_list's shadow list,
-// where an inner lambda's locals would suppress a capture the lift needs.
-// descend_none is that stop spelled once — a lambda body is reachable only
+// where an inner lambda's locals would suppress a capture the lift needs. The
+// statement spine is that stop spelled once — a lambda body is reachable only
 // through expression descent.
 function hl_collect_var_names(stmts: ast.Stmt[]): string[] {
     function vs(st: ast.Stmt, acc: string[]): string[] {
@@ -13449,9 +13449,8 @@ function hl_collect_var_names(stmts: ast.Stmt[]): string[] {
         }
         return acc;
     }
-    function ve(e: ast.Expr, acc: string[]): string[] { return acc; }
     var out: string[] = [];
-    for st in stmts { out = astwalk.fold_stmt_nodes(st, out, vs, ve, astwalk.descend_none); }
+    for st in stmts { out = astwalk.fold_stmt_spine(st, out, vs); }
     return out;
 }
 
@@ -13476,9 +13475,8 @@ function hl_has_rec_local(stmts: ast.Stmt[]): boolean {
         }
         return false;
     }
-    function ve(e: ast.Expr, hit: boolean): boolean { return hit; }
     var hit: boolean = false;
-    for st in stmts { hit = astwalk.fold_stmt_nodes(st, hit, vs, ve, astwalk.descend_none); }
+    for st in stmts { hit = astwalk.fold_stmt_spine(st, hit, vs); }
     return hit;
 }
 
@@ -15567,8 +15565,8 @@ function elb_is_nonneg_int(e: ast.Expr): boolean {
 // elb_assigns_stmts / elb_assigns_stmt report whether any `name = …` assignment
 // appears in the statement subtree. Assignments are always statements (the only
 // expr that carries statements is a lambda, which cannot assign the outer name),
-// so the walk is descend_none: statement lists at every depth, lambda bodies
-// never.
+// so the walk rides the statement spine: statement lists at every depth, lambda
+// bodies never.
 function elb_assigns_stmt(st: ast.Stmt, name: string): boolean {
     function vs(s: ast.Stmt, hit: boolean): boolean {
         if (hit) { return true; }
@@ -15578,8 +15576,7 @@ function elb_assigns_stmt(st: ast.Stmt, name: string): boolean {
         }
         return false;
     }
-    function ve(e: ast.Expr, hit: boolean): boolean { return hit; }
-    return astwalk.fold_stmt_nodes(st, false, vs, ve, astwalk.descend_none);
+    return astwalk.fold_stmt_spine(st, false, vs);
 }
 function elb_assigns_stmts(stmts: ast.Stmt[], name: string): boolean {
     for st in stmts { if (elb_assigns_stmt(st, name)) { return true; } }
@@ -15611,9 +15608,8 @@ function elb_idx_monotonic_stmts(stmts: ast.Stmt[], idx: string): boolean {
         }
         return true;
     }
-    function ve(e: ast.Expr, ok: boolean): boolean { return ok; }
     var ok: boolean = true;
-    for st in stmts { ok = astwalk.fold_stmt_nodes(st, ok, vs, ve, astwalk.descend_none); }
+    for st in stmts { ok = astwalk.fold_stmt_spine(st, ok, vs); }
     return ok;
 }
 function elb_is_monotonic_incr(v: ast.Expr, idx: string): boolean {
