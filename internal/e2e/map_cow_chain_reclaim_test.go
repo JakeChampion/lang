@@ -183,6 +183,48 @@ func TestMapCowChainReclaimArm64(t *testing.T) {
 	}
 }
 
+// The byte census over the same six shapes. The answers above say nothing was
+// freed too early; this says nothing was left behind.
+//
+// x86-64 is ABSOLUTE — every byte back. It reads 6368 for the struct chain and
+// 3168 for the string one before #8431 routed this site through the shared
+// map-drop chain, so the zero is what that change bought.
+//
+// arm64 and wasm carry a residual that is NOT this site's: #8432, one 32-byte
+// block per round whenever the value is an array or a struct, present in
+// arr_chain — whose column the release always walked — and absent for string
+// and scalar values. 1280 is exactly 40 blocks for the 20 rounds each of
+// arr_chain and struct_chain, with the other four shapes contributing nothing,
+// which is what attributes it. Pinned rather than asserted at 0 so closing
+// #8432 fails here and has to lower the number deliberately.
+func TestMapCowChainReclaimCensus(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		run      func(*testing.T, string) (string, string, int)
+		wantLive int64
+	}{
+		{"x86_64", runLeakCheckX86_64, 0},
+		{"arm64", runLeakCheckArm64, 1280},
+		{"wasm", func(t *testing.T, src string) (string, string, int) {
+			return runLeakCheckWasm(t, src, false)
+		}, 1280},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, stderr, code := tc.run(t, mapCowChainReclaimProg)
+			if code != 42 && code != 0 {
+				t.Fatalf("exit=%d, want the program's own 42 (or wasm's 0)", code)
+			}
+			allocs, frees, live := parseLeakCheckLine(t, stderr)
+			if allocs == 0 {
+				t.Fatalf("no allocations — the chains are not running")
+			}
+			if live != tc.wantLive {
+				t.Errorf("live_bytes=%d, want %d (allocs=%d frees=%d). Higher: a column the copy claims is going unreleased. Lower: #8432 got better — bank the new number here", live, tc.wantLive, allocs, frees)
+			}
+		})
+	}
+}
+
 // The boundedness probe. A chain doubles its own work when the rounds double
 // (each round copies a one-longer buffer), so the assertion is a RATIO and not
 // the sibling file's "must not grow" — linear reclamation lands at 2.0x and the

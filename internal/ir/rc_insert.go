@@ -1539,8 +1539,8 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 	}
 	// A cow-threaded Map param (cowMapParams) owns its slot only once a copy
 	// replaced the caller's handle; its ownership bit says which. The release
-	// is the cow-copy one (emitMapOverwriteDrop): a handle returned on the way
-	// out was inc'd for the caller and only decs here.
+	// is the shared map-drop chain (emitMapSlotDrop): a handle returned on the
+	// way out was inc'd for the caller and only decs here.
 	for _, p := range b.fn.Params {
 		if !b.rc.cowMapParams[p.Name] || seen[p.Name] {
 			continue
@@ -1554,7 +1554,7 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 		seen[p.Name] = true
 		b.emit(Op{Kind: OpLoadLocal, I32: flagSlot})
 		b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
-		b.emitMapOverwriteDrop(slot, mst)
+		b.emitMapSlotDrop(slot, mst)
 		b.emit(Op{Kind: OpEnd})
 	}
 	// Consuming-owned-match bindings (#4400) are counted owners: the per-arm
