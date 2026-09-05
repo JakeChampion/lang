@@ -14753,11 +14753,27 @@ func (b *builder) callBody(n *ast.Call) error {
 	// call path kept the fallback (its result may alias the argument) and
 	// nothing owned the retained value: 48 B per `m.get_or(i, [])` on an
 	// i32[] column, the array and its strings on a string[] one.
-	if id.Name == "__method_Map_get_or" && len(n.TypeArgs) >= 2 && !keyKind3 && !needBoxK && !needBoxV {
+	//
+	// A BOXED key is admitted, and boxes here like every other read does.
+	// The arm is about the FALLBACK, and the key's shape has nothing to say
+	// about it — but excluding needBoxK switched the fallback's release off
+	// for every string-keyed map on a two-word ABI, which is one stranded
+	// fallback per call (#8432). The cell is transient: the helper probes
+	// with it and retains nothing, so freeLookupBoxCell ends it after the
+	// call on exactly the terms the get / has / delete paths use.
+	if id.Name == "__method_Map_get_or" && len(n.TypeArgs) >= 2 && !keyKind3 && !needBoxV {
 		if _, isStr := n.TypeArgs[1].(ast.StringType); !isStr && b.mapGetHandsCountedValue(n.TypeArgs[1]) {
 			var tmpSlots []int32
 			var tmpTypes []ast.Type
+			keyCell := int32(-1)
 			for ai, a := range n.Args {
+				if ai == 1 && needBoxK {
+					var err error
+					if keyCell, err = b.boxIntoCellSlot(a, n.TypeArgs[0], "__map_or_ckbox"); err != nil {
+						return err
+					}
+					continue
+				}
 				if ai == 2 {
 					slot, tt, ok, err := b.stashOwnedArgTemp(a)
 					if err != nil {
@@ -14774,6 +14790,7 @@ func (b *builder) callBody(n *ast.Call) error {
 				}
 			}
 			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__method_Map_get_or", I32: int32(len(n.Args))})
+			b.freeLookupBoxCell(keyCell, n.Args[1], n.TypeArgs[0])
 			b.emitArgTempDrops(tmpSlots, tmpTypes)
 			return nil
 		}
