@@ -28,9 +28,10 @@
 //     the answer, so the reduction's absolute error becomes the result's
 //     relative error. A fourth chunk makes it worse — it perturbs the
 //     cancellation the third one sets up.
-//   - expovf/expunf bound exp BEFORE the 2^k reconstruction, which builds the
-//     exponent field as (k+1023)<<52 and otherwise overflows silently into the
-//     SIGN bit — exp(1000) came out as -6.1e-183 rather than +Inf.
+//   - expovf/expunf bound exp's domain: above the first e^x is not
+//     representable, below the second it rounds to zero. They do not protect
+//     the 2^k reconstruction, which is why that is built from two half-scales
+//     rather than one (k+1023)<<52 field — see any of the exp emitters.
 package fdlibm
 
 import "strconv"
