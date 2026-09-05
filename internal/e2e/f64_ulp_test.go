@@ -199,23 +199,47 @@ func f64UlpCases() []f64Case {
 			cs = append(cs, f64Case{fmt.Sprintf("__exp_f64(%s)", lit(x)), math.Exp(x)})
 		}
 	}
-	// The band whose true result is SUBNORMAL, between the smallest normal
-	// and expunf. Nothing above reaches it — the loop stops at |x| <= 700 and
-	// exp(-1000) is past expunf, so it tests the guard rather than the gap.
-	// A single (k+1023)<<52 field cannot hold k < -1022: exp(-720) returned
-	// -6.6e+303, finite, enormous and the WRONG SIGN, which no caller can
-	// detect (#8237). ulpDist orders across zero, so the sign flip shows up
-	// as a vast distance rather than being lost in a denormal ulp count.
-	// Stops at -740 rather than running to expunf. math.Exp is the oracle
-	// here and it is HOST-DEPENDENT at the very bottom: on an aarch64 runner
-	// it returns 0 for exp(-745), where amd64 and glibc return the correct
-	// 5e-324. checkF64Output treats a want of 0 as exact, so those rows
-	// demanded a flush that the fixed backends rightly no longer perform, and
-	// they failed on aarch64 while passing on x86-64. Above -745 the two
-	// agree. The band that remains still reports on the unfixed emitter (5 of
-	// these 6 rows), so nothing is lost but the unusable oracle.
-	for _, x := range []float64{-708.5, -709, -710, -720, -730, -740} {
-		cs = append(cs, f64Case{fmt.Sprintf("__exp_f64(%s)", lit(x)), math.Exp(x)})
+	// The two bands #8237's 2^k reconstruction got wrong, one at each end. A
+	// single (k+1023)<<52 exponent field cannot hold k outside [-1022, 1023]:
+	// below it the low bits land in the SIGN bit, so exp(-720) returned
+	// -6.6e+303 — finite, enormous and the wrong sign, which no caller can
+	// detect; above it every argument past ln2*1023.5 = 709.436 returned +Inf
+	// for an ordinary finite answer. ulpDist orders across zero, so the sign
+	// flip shows up as a vast distance rather than being lost in a denormal
+	// ulp count.
+	//
+	// The oracle here is a literal bit pattern per row, because math.Exp is
+	// unusable at BOTH ends: it carries the same k = 1024 overflow across the
+	// whole upper band (#8261), and at the bottom its answer is
+	// HOST-DEPENDENT — an aarch64 runner returns 0 for exp(-745) where amd64
+	// and glibc return the correct 5e-324, and checkF64Output treats a want of
+	// 0 as exact, so such a row demands a flush the fixed backends rightly no
+	// longer perform. Every value below is glibc's, and a 1400-bit computation
+	// agrees with it bit for bit.
+	//
+	// The -744 and -745 rows pin the value but cannot FAIL: the smallest
+	// subnormal is one ulp from zero, so flushing it passes a 2-ulp bound.
+	// -741 and -743 are the gating rows at that end.
+	for _, r := range []struct {
+		x    float64
+		bits uint64
+	}{
+		{-708.5, 0x000e6cf6d08897ac},
+		{-709, 0x0008bfe55de02338},
+		{-710, 0x00033802fd28b3c3},
+		{-720, 0x0000000993b4dc95},
+		{-730, 0x00000000001c7ea3},
+		{-740, 0x0000000000000055},
+		{-741, 0x000000000000001f},
+		{-743, 0x0000000000000004},
+		{-744, 0x0000000000000002},
+		{-745, 0x0000000000000001},
+		{709.5, 0x7fe81e9b4b52d0c9},
+		{709.7, 0x7fed75ae7a50ee14},
+		{709.78, 0x7fefe9ce5c4c52b4},
+		{709.7827128933839, 0x7feffffffffffb2a},
+	} {
+		cs = append(cs, f64Case{fmt.Sprintf("__exp_f64(%s)", lit(r.x)), math.Float64frombits(r.bits)})
 	}
 	for _, x := range f64UlpPosInputs {
 		cs = append(cs, f64Case{fmt.Sprintf("__log_f64(%s)", lit(x)), math.Log(x)})
