@@ -1,3 +1,7 @@
 # lane: selfhost-alloc-x86_64
 x86_64/checker.allocs	17565025
 x86_64/checker.frees	14364706
+
+# lane: append-cliff-x86_64
+x86_64/checker.cliff_bytes	171262032
+x86_64/checker.cliff_count	269309
