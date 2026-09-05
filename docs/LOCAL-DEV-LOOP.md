@@ -451,3 +451,33 @@ linux/arm64 on purpose: the aarch64 leg then runs natively and only x86-64 pays
 emulation. This makes those legs **runnable for debugging**; it does not make
 them a gate — the section above still applies, and `docs/CI-SIGNOFF.md` records
 which lanes may be signed off locally as a result.
+
+### The stage-1 / stage-2 self-compile on Apple Silicon
+
+Both stages run natively through `-target arm64-darwin`, so the self-compile
+IS reproducible on a Mac. Measured 2026-09-05 on an M-series machine from a
+fresh `go build -o $B/fern ./cmd/fern` (absolute paths throughout: the
+self-host CLI cannot open relative ones):
+
+```
+$B/fern    -target arm64-darwin -o $B/fern-s1 $W/examples/self_host/fern.fern      # stage 1: 10 s, 1.1 GB RSS
+$B/fern-s1 -target arm64-linux -emit asm -o $B/fern.s $W/examples/self_host/fern.fern  # 26 s, 1.0 GB, 63.3 MB of asm (#8212's shape)
+$B/fern-s1 -target arm64-darwin -o $B/fern-s2 $W/examples/self_host/fern.fern      # stage 2: 168 s, 1.3 GB, an 11 MB Mach-O
+```
+
+The "arena exhaustion, exit 125" that #6872 / #7267 reported for the stage-2
+build was not the arena: it was the string builder, which the self-host
+emitters backed with a fixed 64 MiB `.bss` buffer and trapped with that exit
+code when the emitted text passed it. The buffer grows now and the build
+completes. `asm_load_run.fern` is no longer needed as a stand-in for
+`fern.fern`.
+
+What does not yet hold on darwin is the fixpoint: `fern-s2` runs and compiles
+small programs, but its output diverges from `fern-s1`'s from the first `:lo12:`
+operand it emits (byte 534 of a hello-world `-target arm64-linux -emit asm`, a
+6-byte displacement that repeats through the text), and a program whose output
+carries the heap runtime is refused by the in-process assembler. That is #8400,
+an arm64-darwin-specific self-host miscompile surfacing at generation 2. The
+same chain for `-target arm64-linux` in the linux/arm64 container IS a
+fixpoint: stage 2 builds in 174 s at 1.8 GB RSS, emits byte-identical asm to
+stage 1, and compiles and runs a strbuf program correctly.

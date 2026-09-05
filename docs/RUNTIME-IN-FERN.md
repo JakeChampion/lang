@@ -846,9 +846,9 @@ remainder splits three ways:
 
   **strbuf is deferred, and the reason is storage, not length.** Its three
   helpers are trivial — set a word, copy bytes and bump a word, drain into a
-  fresh box — but all three operate on a NAMED 64 MiB `.bss` buffer and a
-  persistent global length word, and the floor has no first-class static
-  storage. `__raw_scratch` is not it: both backends DISCARD its size operand and
+  fresh box — but all three operate on three NAMED `.bss` words (length, heap
+  buffer pointer, capacity) that persist across calls, and the floor has no
+  first-class static storage. `__raw_scratch` is not it: both backends DISCARD its size operand and
   push `&__fern_scratch`, a single shared 256-byte object that `stat`, the
   clocks, `poll`, `timer_fd`, the sockets, `putchar`, `print_int` and `read_int`
   all borrow. An accumulator has to survive arbitrary intervening execution, so
@@ -876,10 +876,10 @@ remainder splits three ways:
   the refcount at box-8 and therefore read the last word of the preceding
   allocation, the tail of the text just copied out. Native had used an
   rc-headered allocation since `RC-STRINGS-PLAN.md`; the self-host was the last
-  producer left unconverted. And arm64 emitted the whole bundle — the 64 MiB
+  producer left unconverted. And arm64 emitted the whole bundle — the buffer
   reservation included — inside the bare `heap` gate where x86-64 had always
-  need-gated it, so every allocating arm64 program reserved 64 MiB for three
-  bodies nothing branched to.
+  need-gated it, so every allocating arm64 program carried three bodies nothing
+  branched to.
 
   That pairing is now **four for four** — the Reader leaves, `subprocess`,
   strbuf, and `$__fern_build_io_error` on wasm: **a hand-written body that

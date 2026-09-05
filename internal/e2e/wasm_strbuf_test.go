@@ -8,9 +8,9 @@ import "testing"
 // touched one died at codegen with `unknown callee "strbuf_reset"`.
 //
 // The wasm implementation differs from the natives' in two ways that these
-// cases are built around. Its buffer GROWS (256 bytes, doubling) where the
-// natives reserve a fixed 64 MiB .bss, so a build that crosses the initial
-// capacity exercises an allocate-and-copy the natives never run. And its
+// cases are built around. Its buffer starts at 256 bytes (doubling) where
+// the natives start at 64 KiB, so a build of a few hundred bytes exercises
+// an allocate-and-copy the natives reach only at scale. And its
 // strings are two words with a short form packed INTO them, so an appended
 // literal reaches the builder either as a memory address or as bytes inside
 // the (data, len) pair depending only on its length.
