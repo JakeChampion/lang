@@ -12,8 +12,11 @@ import "testing"
 // field with a trailing blank reads PAST the field's terminator in GNU
 // 9.4 and prints whatever follows it in memory — here, the environment
 // — so there is nothing to be byte-equal to (#8533).
-func TestNumfmtParity(t *testing.T) {
-	requireParity(t, "numfmt", []invocation{
+// numfmtCases is the corpus, shared by the GNU parity gate and the
+// self-host leg so neither can test something narrower than the other.
+func numfmtCases(t *testing.T) []invocation {
+	t.Helper()
+	return []invocation{
 		// No operands and no stdin.
 		{name: "no arguments"},
 		{name: "dashdash alone", args: []string{"--"}},
@@ -754,7 +757,11 @@ func TestNumfmtParity(t *testing.T) {
 		{name: "full stdout ignoring", args: []string{"--invalid=ignore", "x"}, stdout: stdoutFull},
 		{name: "full stdout failing", args: []string{"--invalid=fail", "x", "1"}, stdout: stdoutFull},
 		{name: "full stdout with nothing to write", args: []string{}, stdout: stdoutFull},
-	})
+	}
+}
+
+func TestNumfmtParity(t *testing.T) {
+	requireParity(t, "numfmt", numfmtCases(t))
 }
 
 func TestNumfmtHelp(t *testing.T) {

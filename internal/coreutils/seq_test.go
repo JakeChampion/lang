@@ -2,8 +2,11 @@ package coreutils
 
 import "testing"
 
-func TestSeqParity(t *testing.T) {
-	requireParity(t, "seq", []invocation{
+// seqCases is the corpus, shared by the GNU parity gate and the
+// self-host leg so neither can test something narrower than the other.
+func seqCases(t *testing.T) []invocation {
+	t.Helper()
+	return []invocation{
 		// The three synopses, and the empty ranges between them.
 		{name: "one operand", args: []string{"5"}},
 		{name: "one operand zero", args: []string{"0"}},
@@ -633,7 +636,11 @@ func TestSeqParity(t *testing.T) {
 		// A bounded read of an endless sequence: both sides meet SIGPIPE.
 		{name: "endless integers", args: []string{"1", "1", "inf"}, limit: 65536},
 		{name: "endless with a separator", args: []string{"-s,", "inf"}, limit: 65536},
-	})
+	}
+}
+
+func TestSeqParity(t *testing.T) {
+	requireParity(t, "seq", seqCases(t))
 }
 
 func TestSeqHelpVersion(t *testing.T) {

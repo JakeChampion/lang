@@ -2,8 +2,11 @@ package coreutils
 
 import "testing"
 
-func TestFactorParity(t *testing.T) {
-	requireParity(t, "factor", []invocation{
+// factorCases is the corpus, shared by the GNU parity gate and the
+// self-host leg so neither can test something narrower than the other.
+func factorCases(t *testing.T) []invocation {
+	t.Helper()
+	return []invocation{
 		// Small numbers, and the two that have no factors to print.
 		{name: "twelve", args: []string{"12"}},
 		{name: "zero", args: []string{"0"}},
@@ -168,7 +171,11 @@ func TestFactorParity(t *testing.T) {
 		{name: "stdout closed on an unbuffered line", args: []string{"340282366920938463463374607431768211455"}, stdout: stdoutClosed},
 		{name: "stdout full on an unbuffered line", args: []string{"340282366920938463463374607431768211455"}, stdout: stdoutFull},
 		{name: "stdout full over many lines", stdin: "2 3 4 5 6 7 8 9 10 11 12 13 14 15\n", stdout: stdoutFull},
-	})
+	}
+}
+
+func TestFactorParity(t *testing.T) {
+	requireParity(t, "factor", factorCases(t))
 }
 
 func TestFactorHelpVersion(t *testing.T) {
