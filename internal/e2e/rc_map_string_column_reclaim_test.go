@@ -117,14 +117,11 @@ function main(): i32 {
 // two-word ABIs and leaks on the native single-word one — a residual of #8354,
 // not of this guard.
 //
-// ONE ENTRY, and that is the boundary of what this pins. The gate stops the
-// pre-drop releasing a value another handle names; it says nothing about DROP
-// time, where a copy's value column is still shared (#8354 claims neither a
-// string nor a struct value). Add a second, untouched entry and both copies'
-// drop walks free that entry's cell and buffer twice — measured over 200
-// rounds, main crashes on every backend (wasm 134, arm64 139, x86-64 139) and
-// this gate moves only the x86-64 leg, from a crash to a wrong answer. That is
-// #8354's to close, and a test asserting it here could only be a red one.
+// ONE ENTRY, which is all this particular probe pins: the gate stops the
+// pre-drop releasing a value another handle names, and says nothing about DROP
+// time. The second, untouched entry — where both copies' drop walks used to
+// free the same cell and buffer — is mapAliasedTwoEntrySrc below, green since
+// the string value column gained its own claim.
 const mapAliasedOverwriteSrc = `import "core/map";
 function mk(): i32 {
     var stem: string = "a";
@@ -138,6 +135,43 @@ function mk(): i32 {
     if (m.get_or(k, "") == "a-value-long-two") { ok = ok + 2; }
     if (snap.len() == 1) { ok = ok + 4; }
     if (m.len() == 1) { ok = ok + 8; }
+    return ok;
+}
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 200) { t = t + mk(); i = i + 1; }
+    if (t != 200 * 15) { return 97; }
+    return __rc_underflow_count();
+}`
+
+// The DROP-time half, and #8354's own repro. A second entry that is never
+// written still had both copies' drop walks free its value cell and its
+// buffer, because __memcpy'ing the kv buffer shares the value column and
+// nothing claimed it. Unfixed this crashes on every backend — wasm traps on
+// an out-of-bounds read at a string's own bytes read as a pointer, arm64 dies
+// on a signal, x86-64 returns the wrong answer.
+//
+// 0 iff all four reads through both handles are right AND nothing
+// over-released. The byte census is deliberately not asserted: the aliased
+// overwrite still leaks the value it replaces, because the pre-drop is gated
+// off when the handle is shared and __map_dec_value is a no-op for a string
+// column. That is the overwrite-dec's placement, tracked separately.
+const mapAliasedTwoEntrySrc = `import "core/map";
+function mk(): i32 {
+    var stem: string = "a";
+    var m: Map[string, string] = map_new(8);
+    var k1: string = stem + "-key-long-one";
+    var k2: string = stem + "-key-long-two";
+    m = m.insert(k1, stem + "-value-long-one");
+    m = m.insert(k2, stem + "-value-long-untouched");
+    var snap: Map[string, string] = m;
+    m = m.insert(k1, stem + "-value-long-two");
+    var ok: i32 = 0;
+    if (snap.get_or(k1, "") == "a-value-long-one") { ok = ok + 1; }
+    if (m.get_or(k1, "") == "a-value-long-two") { ok = ok + 2; }
+    if (snap.get_or(k2, "") == "a-value-long-untouched") { ok = ok + 4; }
+    if (m.get_or(k2, "") == "a-value-long-untouched") { ok = ok + 8; }
     return ok;
 }
 function main(): i32 {
@@ -174,6 +208,9 @@ func TestX86_64MapStringColumnReclaim(t *testing.T) {
 	if small != large {
 		t.Errorf("map bump should be bounded: N=50 -> %d, N=5000 -> %d", small, large)
 	}
+	if _, code := compileAndRunX86_64FreeOn(t, mapAliasedTwoEntrySrc); code != 0 {
+		t.Errorf("aliased two-entry: code=%d (97=wrong value, >0=over-release, signal=a shared value column was freed twice)", code)
+	}
 }
 
 func TestArm64MapStringColumnReclaim(t *testing.T) {
@@ -202,6 +239,9 @@ func TestArm64MapStringColumnReclaim(t *testing.T) {
 	if small != large {
 		t.Errorf("map bump should be bounded: N=50 -> %d, N=5000 -> %d", small, large)
 	}
+	if _, code := compileAndRunArm64FreeOn(t, mapAliasedTwoEntrySrc); code != 0 {
+		t.Errorf("aliased two-entry: code=%d (97=wrong value, >0=over-release, signal=a shared value column was freed twice)", code)
+	}
 }
 
 func TestWASMMapStringColumnReclaim(t *testing.T) {
@@ -224,6 +264,9 @@ func TestWASMMapStringColumnReclaim(t *testing.T) {
 	}
 	if got := runWasm(t, mapAliasedOverwriteSrc); got != 0 {
 		t.Errorf("aliased overwrite: code=%d (97=wrong value, >0=over-release)", got)
+	}
+	if got := runWasm(t, mapAliasedTwoEntrySrc); got != 0 {
+		t.Errorf("aliased two-entry: code=%d (97=wrong value, >0=over-release)", got)
 	}
 }
 

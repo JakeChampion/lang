@@ -13339,11 +13339,14 @@ func mapKeyTypeName(t ast.Type) string {
 //	0 = scalar — i32-sized (stored raw), or a wide scalar
 //	    (i64 / u64 / f64) stored as a pointer to a cell the
 //	    column owns, which mapValTag's size byte marks
-//	1 = non-array pointer (string / struct / enum / slice /
-//	    tuple) — pointer-shaped but not yet reclaimed by
-//	    map_drop
+//	1 = non-array pointer (generic enum / slice / tuple /
+//	    runtime handle) — pointer-shaped but not yet
+//	    reclaimed by map_drop
 //	2 = array value with non-rc elements (plain arr_dec free)
 //	3 = array value with rc-tracked elements (drop_arr_ptr)
+//	4 = pointer value with a generated deep drop (concrete
+//	    struct / enum), walked by __drop_map_via_<drop>
+//	5 = string value, walked by __drop_map_str_values
 //
 // Kinds 2 / 3 and the boxed half of kind 0 are reclaimed by
 // __map_drop_values + the overwrite-dec in __map_set_impl;
@@ -13361,11 +13364,19 @@ func mapValKindTag(t ast.Type, info *checker.Info, genEnumDrops map[string]*ast.
 	// __drop_map_via_<drop> loop at the map's last reference, and retained
 	// on set / get / values / iter through the same `kind >= 2` machinery
 	// as arrays. The kind-4 set is exactly mapValHasDrop's domain, so
-	// retain (here) and drop (routing) never disagree. Other pointers
-	// (string / generic-enum / tuple / slice / runtime handles) fall
-	// through to the non-reclaimed pointer kind (1).
+	// retain (here) and drop (routing) never disagree. A string takes its
+	// own kind below; the remaining pointers (generic-enum / tuple / slice
+	// / runtime handles) fall through to the non-reclaimed kind (1).
 	if _, ok := mapValHasDrop(t, info, genEnumDrops, genTupleDrops, ptrW); ok {
 		return 4
+	}
+	// A string value is kind 5: reclaimed by __drop_map_str_values exactly
+	// as a string KEY is by __drop_map_str_keys, so a COW copy needs its own
+	// claim on the column (__map_own_copied_cols) or both copies free the
+	// same cells. Its own kind is what lets the runtime recognise it —
+	// valKind 1 is shared with every other unreclaimed pointer (#8354).
+	if _, isStr := t.(ast.StringType); isStr {
+		return 5
 	}
 	if ast.IsPointerType(t) {
 		return 1
@@ -20906,29 +20917,31 @@ func (b *builder) emitMapSetRetains(keyArg, valArg ast.Expr, kType, vType ast.Ty
 // kind-1 pointer (a nested Map, a slice, a runtime handle), which the
 // column neither retains nor drops.
 //
-// The native single-word string arm tests the alias SHAPE directly rather
-// than needsRcIncOnAlias: a CaptureRef string is retained by the closure
-// env's own reference and takes the two-word helper on those ABIs, but the
-// single-word __fern_rc_inc path never covered it.
+// A string (kind 5) is tested FIRST, because its answer is ABI-specific and
+// the `>= 2` test below would otherwise shadow it: the native single-word arm
+// reads the alias SHAPE directly rather than needsRcIncOnAlias, since a
+// CaptureRef string is retained by the closure env's own reference and takes
+// the two-word helper on those ABIs, but the single-word __fern_rc_inc path
+// never covered it.
 func (b *builder) mapSetValueCounted(valArg ast.Expr, vType ast.Type) bool {
 	if vType == nil {
 		return false
 	}
+	if _, isStr := vType.(ast.StringType); isStr {
+		if ast.UseTwoWordStrings(b.ptrW) {
+			return needsRcIncOnAlias(valArg, b)
+		}
+		if b.ptrW != 8 {
+			return false
+		}
+		switch valArg.(type) {
+		case *ast.Ident, *ast.FieldAccess, *ast.Index:
+			return true
+		}
+		return false
+	}
 	if mapValKindTag(vType, b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW) >= 2 {
 		return needsRcIncOnAlias(valArg, b)
-	}
-	if _, isStr := vType.(ast.StringType); !isStr {
-		return false
-	}
-	if ast.UseTwoWordStrings(b.ptrW) {
-		return needsRcIncOnAlias(valArg, b)
-	}
-	if b.ptrW != 8 {
-		return false
-	}
-	switch valArg.(type) {
-	case *ast.Ident, *ast.FieldAccess, *ast.Index:
-		return true
 	}
 	return false
 }
@@ -21241,18 +21254,15 @@ type mapGetReboxPlan struct {
 }
 
 // mapGetHandsCountedValue reports whether lowering `m.get(k)` for a value type
-// gives the caller a reference of its own: the kinds `__map_retain_val` bumps
-// (mapValKindTag >= 2 — arrays and values with a generated deep drop) plus a
-// string, which emitMapGetRebox retains itself on every ABI. Every other value
-// is handed out borrowed, so releasing one would free storage the map still
+// gives the caller a reference of its own — every reclaimed kind
+// (mapValKindTag >= 2: arrays, values with a generated deep drop, and
+// strings). A string is retained by emitMapGetRebox rather than by
+// __map_retain_val, but it carries a count either way. Every other value is
+// handed out borrowed, so releasing one would free storage the map still
 // owns. Shared by the retain side and the match-scrutinee release, so the two
 // cannot disagree about which values carry a count.
 func (b *builder) mapGetHandsCountedValue(vType ast.Type) bool {
-	if mapValKindTag(vType, b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW) >= 2 {
-		return true
-	}
-	_, isStr := vType.(ast.StringType)
-	return isStr
+	return mapValKindTag(vType, b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW) >= 2
 }
 
 // emitMapGetRebox lowers `m.get(k)` by reboxing the helper's
