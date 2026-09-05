@@ -242,6 +242,9 @@ suites, so the debt stays visible in one place.
   routing around it.
 - **Fix bugs you find on the way.** If exploring for one feature surfaces a
   separate bug, fix it in the same PR with its own test rather than leaving it.
+- **A Fern quirk or bug you hit gets an issue AND a fix — never a workaround.**
+  Standing order. If the fix is too broad for the current PR, file the issue,
+  land nothing that routes around it, and make the fix the next PR.
 
 Timings, memory budgets, sharding, the arena-vs-OOM exit codes, which instrument
 to measure with, and the arm64/qemu policy all live in
