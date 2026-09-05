@@ -74,8 +74,8 @@ func peepholeFoldHarness(t *testing.T) (func(t *testing.T, src string) string, f
 	return emit, run
 }
 
-// selfHostFnBody returns the emitted body of `__fn_<name>`, up to its `ret`.
-func selfHostFnBody(t *testing.T, asm, name string) string {
+// peepholeFnBody returns the emitted body of `__fn_<name>`, up to its `ret`.
+func peepholeFnBody(t *testing.T, asm, name string) string {
 	t.Helper()
 	re := regexp.MustCompile(`(?s)\n__fn_` + regexp.QuoteMeta(name) + `:\n(.*?)\n    ret\n`)
 	m := re.FindStringSubmatch(asm)
@@ -104,7 +104,7 @@ func runPeepholeFoldCases(t *testing.T, cases []peepholeFoldCase) {
 		t.Run(tc.name, func(t *testing.T) {
 			asm := emit(t, tc.src)
 			for fn, lines := range tc.has {
-				body := selfHostFnBody(t, asm, fn)
+				body := peepholeFnBody(t, asm, fn)
 				for _, l := range lines {
 					if !strings.Contains(body, l) {
 						t.Errorf("%s: missing %q:\n%s", fn, l, body)
@@ -112,7 +112,7 @@ func runPeepholeFoldCases(t *testing.T, cases []peepholeFoldCase) {
 				}
 			}
 			for fn, lines := range tc.lacks {
-				body := selfHostFnBody(t, asm, fn)
+				body := peepholeFnBody(t, asm, fn)
 				for _, l := range lines {
 					if strings.Contains(body, l) {
 						t.Errorf("%s: still carries %q:\n%s", fn, l, body)
