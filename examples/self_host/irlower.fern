@@ -45652,9 +45652,11 @@ function structarr_lit_is_fresh(e: ast.Expr): boolean {
 // at rc 2 and the walk's rc-guarded dec lands on 2, not 1 — it frees nothing the
 // source still names, and reclaims once that source dies. A bare IDENT element
 // stays refused: nothing retains it, so it really would dangle. The kind is not
-// re-derived here because it cannot differ — a candidate of this class has a
-// struct element type, so an element expression the checker accepted is a struct
-// and takes the retain.
+// re-derived here because this arm does not decide it: the append-built
+// collection above is type-agnostic, and slot_is_reclaimable_structarr resolves
+// the slot's struct type later, so only a struct-typed array reaches the walk.
+// An enum array admitted here is refused there — measured unchanged, where
+// crediting it would be a double free rather than a leak fix.
 function structarr_elem_store_ok(e: ast.Expr, fresh_ret: string[]): boolean {
     match (e) {
         ast.ExprStructLit(sl) => { return !sl.has_base; },
