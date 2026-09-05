@@ -6,8 +6,10 @@ import "core/map";
 // best-effort url_parse decomposition. Covers unreserved pass-through,
 // reserved-char escaping, case-insensitive + truncated decode, a
 // round-trip, and url_parse's scheme/host/port/path/query/fragment
-// split (plus the empty-input None). The Go-side suite unit-tests the
-// prelude origin; this is the migration-shaped (pure-Fern) companion.
+// split (plus the empty-input None) and the RFC 3986 §3.2 authority
+// rules — userinfo at the last '@', bracketed IP-literals, port range,
+// reg-name bytes, and the anchored scheme. The Go-side suite unit-tests
+// the prelude origin; this is the migration-shaped (pure-Fern) companion.
 
 function test_encode_space(): test.TestOutcome {
     return test.assert_eq(url.url_encode("a b"), "a%20b");
@@ -162,6 +164,85 @@ function test_query_has_and_all(): test.TestOutcome {
     return test.assert_eq(url.query_get_all("a=1", "z").len(), 0);
 }
 
+// ---- url_parse authority: RFC 3986 §3.2 (#8469) ----
+
+// `__parse_host_port(s)` — "host|port" for a parse that succeeds,
+// "None" for one that does not. Keeps the authority rows one-liners.
+function __parse_host_port(s: string): string {
+    match (url.url_parse(s)) {
+        Some(u) => { return u.host + "|" + u.port.to_string(); },
+        None => { return "None"; }
+    }
+}
+
+// Userinfo ends at the LAST '@', not the first: a password may contain
+// one, a host may not. Before #8469 the whole authority went to `host`
+// (or, with a ':' in the userinfo, just the username did).
+function test_parse_userinfo(): test.TestOutcome {
+    if (__parse_host_port("http://user:pw@host:8080/p") != "host|8080") {
+        return test.fail("userinfo not stripped");
+    }
+    return test.assert_eq(__parse_host_port("http://a@b@host/p"), "host|0");
+}
+
+// A bracketed IPv6 literal is one host, and `host` holds the bare
+// address — the brackets are RFC 3986 delimiters, not part of it.
+function test_parse_ipv6(): test.TestOutcome {
+    if (__parse_host_port("http://[::1]:8080/x") != "::1|8080") {
+        return test.fail("[::1]:8080");
+    }
+    if (__parse_host_port("http://[::1]/x") != "::1|0") { return test.fail("[::1]"); }
+    return test.assert_eq(__parse_host_port("http://user@[2001:db8::1]:443/x"),
+        "2001:db8::1|443");
+}
+
+// A malformed IP-literal is None, never a host of "[".
+function test_parse_ipv6_malformed(): test.TestOutcome {
+    if (__parse_host_port("http://[::1/x") != "None") { return test.fail("unterminated"); }
+    if (__parse_host_port("http://[]/x") != "None") { return test.fail("empty brackets"); }
+    if (__parse_host_port("http://[g::1]/x") != "None") { return test.fail("non-hex byte"); }
+    return test.assert_eq(__parse_host_port("http://[::1]junk:80/x"), "None");
+}
+
+// `port = *DIGIT`, capped at 65535. Out of range or non-digit is None —
+// a silent 0 is indistinguishable from "no port given". An EMPTY port is
+// legal and means unspecified.
+function test_parse_port(): test.TestOutcome {
+    if (__parse_host_port("http://host:65535/") != "host|65535") { return test.fail("max port"); }
+    if (__parse_host_port("http://host:99999/") != "None") { return test.fail("port overflow"); }
+    if (__parse_host_port("http://host:abc/") != "None") { return test.fail("non-digit port"); }
+    return test.assert_eq(__parse_host_port("http://host:/p"), "host|0");
+}
+
+// A registered name may not hold a component delimiter, and an empty
+// host is legal (`file:///path`).
+function test_parse_host_shape(): test.TestOutcome {
+    if (__parse_host_port("http://ho[st/x") != "None") { return test.fail("bracket in reg-name"); }
+    if (__parse_host_port("http://a%20b.example/x") != "a%20b.example|0") {
+        return test.fail("pct-encoded reg-name");
+    }
+    return test.assert_eq(__parse_host_port("file:///etc/hosts"), "|0");
+}
+
+// The scheme is anchored at offset 0 and must match `ALPHA *( ALPHA /
+// DIGIT / "+" / "-" / "." )`. Scanning the whole string for "://" made
+// a query value carrying a URL into the scheme.
+function test_parse_scheme_anchored(): test.TestOutcome {
+    match (url.url_parse("/redirect?to=http://evil.example")) {
+        Some(u) => {
+            if (u.scheme != "" || u.path != "/redirect"
+                || u.query != "to=http://evil.example") {
+                return test.fail("nested URL leaked into the scheme");
+            }
+        },
+        None => { return test.fail("relative path expected Some"); }
+    }
+    match (url.url_parse("ws+x-1.y://h/p")) {
+        Some(u) => { return test.assert_eq(u.scheme, "ws+x-1.y"); },
+        None => { return test.fail("valid scheme punctuation expected Some"); }
+    }
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/url");
     r = r.it("encode space",            test_encode_space);
@@ -184,5 +265,11 @@ function main(): i32 {
     r = r.it("query_get",               test_query_get);
     r = r.it("query_get missing",       test_query_get_missing);
     r = r.it("query_has + get_all",     test_query_has_and_all);
+    r = r.it("parse userinfo",          test_parse_userinfo);
+    r = r.it("parse IPv6 literal",      test_parse_ipv6);
+    r = r.it("parse IPv6 malformed",    test_parse_ipv6_malformed);
+    r = r.it("parse port validation",   test_parse_port);
+    r = r.it("parse host shape",        test_parse_host_shape);
+    r = r.it("parse scheme anchored",   test_parse_scheme_anchored);
     return r.finish();
 }
