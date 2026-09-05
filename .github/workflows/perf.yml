@@ -120,18 +120,35 @@ jobs:
           path: ${{ runner.temp }}/perf-report.txt
           if-no-files-found: warn
 
-  # How much the SELF-HOST COMPILER copies crossing the rc==1 append cliff.
-  # Separate job because it is a different subject and a different cost: `bench`
-  # measures small programs the native compiler built, this builds the whole
-  # self-hosted compiler and runs it over a real module, so it takes minutes
-  # rather than seconds.
+  # THREE MEASUREMENTS, ONE JOB. Each of these builds the whole self-hosted
+  # compiler and then measures for well under a minute, so as separate jobs they
+  # paid three checkouts, three toolchain setups, three queue admissions and two
+  # redundant self-host builds to do about two minutes of work. lint.yml made
+  # this same trade first and recorded the number: eight sub-minute jobs spent
+  # 165 job-minutes in the queue (run 31819147972). Fewer, fuller jobs beat
+  # more, emptier ones whenever the pool is the constraint, and it is.
   #
-  # It exists because nothing measured this. docs/LOCAL-DEV-LOOP.md recorded the
-  # workload at 188 crossings / 812 bytes on 2026-08-04; by 2026-08-16 it copied
-  # 21.4 GB, and twelve days of PRs went green over it (#6911). x86_64 only for
-  # now — the aarch64 lane does not build a self-host compiler.
-  cliff:
-    name: append-cliff-x86_64
+  # The scripts already share by construction — cliff-bench and
+  # perf-bench-selfhost both skip the build when bin/fern-selfhost is present
+  # and current — so one job builds it once and the other two measurements find
+  # it there.
+  #
+  # It also removes a contention this lane created for itself: three concurrent
+  # jobs pushing refs/notes/perf for the same commit raced, and scripts/perf-
+  # history retried the loser. In one job they append in sequence.
+  #
+  # `if: ${{ !cancelled() }}` on every step is what keeps the collapse honest:
+  # a red cliff gate must not hide the size and allocation numbers, which is the
+  # "which gates are red" signal three separate check runs gave for free. The
+  # perf-history LANE LABELS are unchanged — they key the note blocks that
+  # `scripts/perf-history show` reads back across main, so renaming one would
+  # orphan its history.
+  #
+  # x86_64 only, all three: the aarch64 lane does not build a self-host
+  # compiler. That costs nothing, because these metrics are keyed by TARGET
+  # rather than host — one binary cross-emits x86-64, arm64 and wasm.
+  selfhost-perf:
+    name: selfhost-perf-x86_64
     permissions:
       contents: write
     runs-on: ubuntu-latest
@@ -139,110 +156,77 @@ jobs:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
 
+      # How much the SELF-HOST COMPILER copies crossing the rc==1 append cliff.
+      #
+      # It exists because nothing measured this. docs/LOCAL-DEV-LOOP.md recorded
+      # the workload at 188 crossings / 812 bytes on 2026-08-04; by 2026-08-16 it
+      # copied 21.4 GB, and twelve days of PRs went green over it (#6911).
       - name: Measure the append cliff
+        if: ${{ !cancelled() }}
         run: scripts/cliff-bench "${{ runner.temp }}/cliff-report.txt"
 
-      - name: Compare against the baseline
+      - name: Compare the append cliff against the baseline
+        if: ${{ !cancelled() }}
         env:
           FERN_PERF_GATE_LABEL: self-host append cliff
         run: scripts/ci-check-perf .github/cliff-baseline.txt "${{ runner.temp }}/cliff-report.txt"
 
-      - name: Record the report in refs/notes/perf
-        if: github.event_name == 'push'
-        run: scripts/perf-history record append-cliff-x86_64 "${{ runner.temp }}/cliff-report.txt"
-
-      - name: Upload the report
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: cliff-report-x86_64
-          path: ${{ runner.temp }}/cliff-report.txt
-          if-no-files-found: warn
-
-  # What the SELF-HOST compiler EMITS, for all three targets from one build.
-  #
-  # `bench` above measures the native compiler, so the self-host compiler's own
-  # output was never measured and moved unobserved: the roadmap's 353-line
-  # figure was stale and unreproducible, and arm64 shipped a ~400-instruction
-  # f64 transcendental bundle in every program — pure-integer ones included —
-  # until #2649 gated it. A size lane exists to catch precisely that, and
-  # neither showed up in the native numbers.
-  #
-  # x86_64 only, like `cliff`: the aarch64 lane does not build a self-host
-  # compiler. That costs nothing here, because these metrics are keyed by
-  # TARGET rather than host — one binary cross-emits x86-64, arm64 and wasm, so
-  # a single host covers the whole namespace.
-  selfhost-size:
-    name: selfhost-size-x86_64
-    permissions:
-      contents: write
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: ./.github/actions/setup-fern
-
+      # What the SELF-HOST compiler EMITS, for all three targets from one build.
+      #
+      # `bench` above measures the native compiler, so the self-host compiler's
+      # own output was never measured and moved unobserved: the roadmap's
+      # 353-line figure was stale and unreproducible, and arm64 shipped a
+      # ~400-instruction f64 transcendental bundle in every program — pure-integer
+      # ones included — until #2649 gated it.
       - name: Measure the self-host compiler's emitted size
+        if: ${{ !cancelled() }}
         run: scripts/perf-bench-selfhost "${{ runner.temp }}/selfhost-size-report.txt"
 
-      - name: Compare against the baseline
+      - name: Compare the emitted size against the baseline
+        if: ${{ !cancelled() }}
         env:
           FERN_PERF_GATE_LABEL: self-host emitted size
         run: scripts/ci-check-perf .github/perf-baseline-selfhost.txt "${{ runner.temp }}/selfhost-size-report.txt"
 
-      - name: Record the report in refs/notes/perf
-        if: github.event_name == 'push'
-        run: scripts/perf-history record selfhost-size-x86_64 "${{ runner.temp }}/selfhost-size-report.txt"
-
-      - name: Upload the report
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: selfhost-size-report-x86_64
-          path: ${{ runner.temp }}/selfhost-size-report.txt
-          if-no-files-found: warn
-
-  # How much the SELF-HOST COMPILER ALLOCATES compiling one real module.
-  #
-  # docs/IR-SELFCOMPILE-OOM-FINDINGS.md pins the self-compile's binding
-  # constraint on allocation PERFORMED, and it is a number the other three lanes
-  # cannot see: `cliff` counts only what the append cliff copies, so a quadratic
-  # `.with` or a per-occurrence substring moves neither of its metrics, and the
-  # two size lanes measure emitted text and never run a compile at all. The
-  # harness has existed since #4394 was measured and retired; nothing ran it
-  # outside a human typing the command, which is the shape that let the cliff
-  # workload go from 812 bytes to 21.4 GB over twelve green days (#6911).
-  #
-  # x86_64 only, like `cliff` — the aarch64 lane does not build a self-host
-  # compiler. FERN_ALLOC_PEAK_RSS=0 drops the script's optional peak-RSS row:
-  # it is not comparable across hosts, so it cannot be baselined here, and
-  # skipping it also drops a second full self-host build from the lane.
-  alloc:
-    name: selfhost-alloc-x86_64
-    permissions:
-      contents: write
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: ./.github/actions/setup-fern
-
+      # How much the SELF-HOST COMPILER ALLOCATES compiling one real module.
+      #
+      # docs/IR-SELFCOMPILE-OOM-FINDINGS.md pins the self-compile's binding
+      # constraint on allocation PERFORMED, and it is a number the others cannot
+      # see: `cliff` counts only what the append cliff copies, so a quadratic
+      # `.with` moves neither of its metrics, and the two size lanes measure
+      # emitted text and never run a compile at all.
+      #
+      # FERN_ALLOC_PEAK_RSS=0 drops the script's optional peak-RSS row: it is not
+      # comparable across hosts, so it cannot be baselined here, and skipping it
+      # also drops a second full self-host build.
       - name: Measure the self-host compiler's allocation
+        if: ${{ !cancelled() }}
         env:
           FERN_ALLOC_PEAK_RSS: "0"
         run: scripts/selfhost-alloc-bench "${{ runner.temp }}/alloc-report.txt"
 
-      - name: Compare against the baseline
+      - name: Compare the allocation against the baseline
+        if: ${{ !cancelled() }}
         env:
           FERN_PERF_GATE_LABEL: self-host allocation
         run: scripts/ci-check-perf .github/alloc-baseline.txt "${{ runner.temp }}/alloc-report.txt"
 
-      - name: Record the report in refs/notes/perf
-        if: github.event_name == 'push'
-        run: scripts/perf-history record selfhost-alloc-x86_64 "${{ runner.temp }}/alloc-report.txt"
+      # One lane label per metric, unchanged: the note blocks are keyed by them.
+      - name: Record the reports in refs/notes/perf
+        if: ${{ !cancelled() && github.event_name == 'push' }}
+        run: |
+          set -euo pipefail
+          scripts/perf-history record append-cliff-x86_64 "${{ runner.temp }}/cliff-report.txt"
+          scripts/perf-history record selfhost-size-x86_64 "${{ runner.temp }}/selfhost-size-report.txt"
+          scripts/perf-history record selfhost-alloc-x86_64 "${{ runner.temp }}/alloc-report.txt"
 
-      - name: Upload the report
+      - name: Upload the reports
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: alloc-report-x86_64
-          path: ${{ runner.temp }}/alloc-report.txt
+          name: selfhost-perf-reports-x86_64
+          path: |
+            ${{ runner.temp }}/cliff-report.txt
+            ${{ runner.temp }}/selfhost-size-report.txt
+            ${{ runner.temp }}/alloc-report.txt
           if-no-files-found: warn
