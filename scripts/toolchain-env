@@ -9,7 +9,7 @@
 # bootstrap mise, so netlify.toml provisions Go/Node and the smoke lane reads
 # the wasm pins from mise.toml directly): scripts/devbox's image and the Claude
 # session hook. mise itself is installed when absent, at the release
-# mise.toml's min_version names, so a stale mise cannot misread the file.
+# mise.toml's FERN_MISE_VERSION names, so a stale mise cannot misread the file.
 #
 # FERN_MISE_HOME relocates the mise binary and its installs together. Unset,
 # everything lands in mise's defaults (~/.local/bin, ~/.local/share/mise),
@@ -28,7 +28,7 @@ export PATH="$bin_dir:$PATH" MISE_YES=1
 
 if ! command -v mise >/dev/null 2>&1; then
   mkdir -p "$bin_dir"
-  MISE_VERSION="v$(sed -n 's/^min_version = "\(.*\)"/\1/p' "$root/mise.toml")" \
+  MISE_VERSION="v$(sed -n 's/^FERN_MISE_VERSION = "\(.*\)"/\1/p' "$root/mise.toml")" \
     MISE_INSTALL_PATH="$bin_dir/mise" \
     sh -c "$(curl -sSfL --retry 5 --retry-delay 2 https://mise.run)" >&2
 fi
