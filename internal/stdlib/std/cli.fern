@@ -5,8 +5,9 @@
 // `--output=F`, `-o F`), boolean flags (`--verbose` / `-v`),
 // positional operands, the `--` end-of-options terminator, and
 // subcommands, each a spec of its own. One spec also yields the
-// usage text and shell completions for bash, zsh and fish, so a tool
-// describes its interface once. Pure library — no compiler changes.
+// usage text, a roff man page, and shell completions for bash, zsh and
+// fish, so a tool describes its interface once. Pure library — no
+// compiler changes.
 //
 // Build a spec, parse argv, query the result:
 //
@@ -379,6 +380,86 @@ pub function (s: CliSpec) usage(): string {
         out = out + "\n      " + s.commands[i].about;
       }
       out = out + "\n";
+      i = i + 1;
+    }
+  }
+  return out;
+}
+
+// ============================================================
+// Man page (roff) output.
+//
+// The same spec `.usage()` and `.completion()` read, rendered as a
+// section-N troff man page. A tool writes `spec.manpage("1")` to
+// `name.1` (or ships it) so `man name` documents the interface the
+// CliSpec already describes — one source, no drift.
+// ============================================================
+// Escape a user string for roff text. A lone backslash introduces a
+// roff escape sequence, so double every one; help or about text holding
+// a path or a `\d` cannot then smuggle a formatting request into the
+// page. `replace` returns the receiver unchanged when there is no
+// backslash — the identity-return fast path #8409 fixed for a fresh
+// argument.
+function __cli_roff(s: string): string {
+  return s.replace("\\", "\\\\");
+}
+
+// Render the OPTIONS section: one `.TP` tagged paragraph per flag — the
+// tag is the bold dash spelling (`\-s`, `\-\-long`) plus an italic
+// `<value>` for a valued option, the body its help.
+function __cli_man_flags(flags: CliFlag[]): string {
+  var out: string = "";
+  var i: i32 = 0;
+  while (i < flags.len()) {
+    var f: CliFlag = flags[i];
+    out = out + ".TP\n";
+    var tag: string = "";
+    if (f.short.len() > 0) {
+      tag = "\\fB\\-" + __cli_roff(f.short) + "\\fR, ";
+    }
+    tag = tag + "\\fB\\-\\-" + __cli_roff(f.long) + "\\fR";
+    if (f.takes_value) {
+      tag = tag + " \\fI<value>\\fR";
+    }
+    out = out + tag + "\n";
+    if (f.help.len() > 0) {
+      out = out + __cli_roff(f.help) + "\n";
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+// `.manpage(section)` — a section-`section` man page in roff. `section`
+// is the numeric string a man page carries in its `.TH` header and its
+// filename suffix (`"1"` for a user command, `"8"` for an admin tool).
+pub function (s: CliSpec) manpage(section: string): string {
+  var out: string = ".TH \"" + __cli_roff(s.name) + "\" \"" + __cli_roff(section) + "\"\n";
+  out = out + ".SH NAME\n" + __cli_roff(s.name);
+  if (s.about.len() > 0) {
+    out = out + " \\- " + __cli_roff(s.about);
+  }
+  out = out + "\n";
+  var shape: string = " [options] [args]";
+  if (s.commands.len() > 0) {
+    shape = " [options] <command> [args]";
+  }
+  out = out + ".SH SYNOPSIS\n\\fB" + __cli_roff(s.name) + "\\fR" + shape + "\n";
+  if (s.about.len() > 0) {
+    out = out + ".SH DESCRIPTION\n" + __cli_roff(s.about) + "\n";
+  }
+  if (s.flags.len() > 0) {
+    out = out + ".SH OPTIONS\n" + __cli_man_flags(s.flags);
+  }
+  if (s.commands.len() > 0) {
+    out = out + ".SH COMMANDS\n";
+    var i: i32 = 0;
+    while (i < s.commands.len()) {
+      var c: CliSpec = s.commands[i];
+      out = out + ".TP\n\\fB" + __cli_roff(c.name) + "\\fR\n";
+      if (c.about.len() > 0) {
+        out = out + __cli_roff(c.about) + "\n";
+      }
       i = i + 1;
     }
   }
