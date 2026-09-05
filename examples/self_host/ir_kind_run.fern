@@ -6,13 +6,16 @@
 // kind_id(kind_name(id)) == id and kind_name(id) is never the "invalid"
 // sentinel — so a new op kind added to one direction but not the other (or a
 // duplicate id) fails here rather than silently miscompiling a backend once
-// the int tag is wired. It also pins the KIND_INVALID contract
-// (unknown tag -> 0, out-of-range / 0 id -> "invalid") and the int-keyed
-// classifier predicates (is_const_kind / is_terminator_kind /
-// is_foldable_binary_kind / is_commutative_kind).
+// the int tag is wired. Those two sweeps between them name every tag kind_id
+// knows, so the round trip is EXHAUSTIVE, not a sample. It also pins the
+// KIND_INVALID contract (unknown tag -> 0, out-of-range / 0 id -> "invalid"),
+// a negative sweep over near-miss tags that probes kind_id's (length, first
+// byte) narrowing from the other side, and the int-keyed classifier predicates
+// (is_const_kind / is_terminator_kind / is_foldable_binary_kind /
+// is_commutative_kind).
 //
-// The companion Go test (internal/e2e/self_host_ir_kind_test.go) asserts the
-// exact stdout and an exit code of 0 (zero bijection failures), pinning the
+// The companion Go test (internal/e2eselfhost/self_host_ir_kind_test.go) asserts
+// the exact stdout and an exit code of 0 (zero bijection failures), pinning the
 // registry end-to-end through the self-host -> native pipeline (proving the
 // registry compiles + round-trips, not just type-checks).
 
@@ -82,6 +85,31 @@ function main(): i32 {
     out = out + "bijection_failures=" + util.i32_to_string(failures) + "\n";
     out = out + "ext_ok=" + util.i32_to_string(ext_ok) + "\n";
     out = out + "ext_failures=" + util.i32_to_string(ext_failures) + "\n";
+
+    // 1c. Negative sweep. kind_id narrows on the tag's (length, first byte)
+    //     before it compares a string (#8258), so "returns 0" has to be proved
+    //     against tags that pass one guard and fail the other: a near miss
+    //     inside a populated bucket ("adz" against add/and, "fadz" against the
+    //     twelve four-byte f-ops), a first byte no bucket of that length has
+    //     ("zadd"), a real tag one byte short or long ("call_direc",
+    //     "call_directt"), a length no tag has at all (17 and 20 bytes, which
+    //     reach the >= 16 leaf), the empty string, and a one-byte tag. Every
+    //     one of them must be KIND_INVALID.
+    var neg_names: string[] = [
+        "", "a", "adz", "fadz", "zadd", "or_", "brif_", "call_direc",
+        "tcp_connecx", "call_directt", "arr_push_shared_bytez",
+        "aaaaaaaaaaaaaaaaa", "aaaaaaaaaaaaaaaaaaaa", "ADD"
+    ];
+    var neg_ok: i32 = 0;
+    var neg_failures: i32 = 0;
+    var ni: i32 = 0;
+    while (ni < neg_names.len()) {
+        if (ir.kind_id(neg_names[ni]) == 0) { neg_ok = neg_ok + 1; }
+        else { neg_failures = neg_failures + 1; }
+        ni = ni + 1;
+    }
+    out = out + "neg_ok=" + util.i32_to_string(neg_ok) + "\n";
+    out = out + "neg_failures=" + util.i32_to_string(neg_failures) + "\n";
 
     // 2. KIND_INVALID contract: unknown tag -> 0, and 0 / past-every-
     //    registered-id (extension tags included) -> the "invalid" sentinel.
@@ -163,6 +191,6 @@ function main(): i32 {
     write(out);
 
     // Exit code is the total failure count (bijection + extension sweep +
-    // tag consistency): 0 on a clean sweep.
-    return failures + ext_failures + tag_bad;
+    // negative sweep + tag consistency): 0 on a clean sweep.
+    return failures + ext_failures + neg_failures + tag_bad;
 }

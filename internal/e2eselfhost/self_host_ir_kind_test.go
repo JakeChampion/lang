@@ -32,8 +32,15 @@ func TestSelfHostIRKindRegistry(t *testing.T) {
 	// Golden report — locks kind_count, the full-table bijection (all 196 ids
 	// round-trip), the extension-tag sweep (the 37 registered ids beyond
 	// kind_count(), struct_copy=198 … lstat=236 — #5452's skew
-	// left them unrendered by kind_name), the KIND_INVALID sentinels, a few stable ids,
-	// and every classifier predicate's answer on representative kinds.
+	// left them unrendered by kind_name), the negative sweep (14 near-miss tags
+	// that must all be KIND_INVALID, probing kind_id's (length, first byte)
+	// narrowing from the other side), the KIND_INVALID sentinels, a few stable
+	// ids, and every classifier predicate's answer on representative kinds.
+	//
+	// The two sweeps together name EVERY tag kind_id knows — the 196 dense ids
+	// via kind_name, the 37 extension tags by name — so the round trip this
+	// pins is exhaustive. An id that moved would fail here whatever else went
+	// green.
 	//
 	// ext_ok and tag_consistency move together whenever an extension op is
 	// added: both count entries in ir_kind_run.fern's sweep lists, and the
@@ -44,6 +51,8 @@ func TestSelfHostIRKindRegistry(t *testing.T) {
 		"bijection_failures=0\n" +
 		"ext_ok=37\n" +
 		"ext_failures=0\n" +
+		"neg_ok=14\n" +
+		"neg_failures=0\n" +
 		"unknown_id=0\n" +
 		"id0=invalid\n" +
 		"oob=invalid\n" +
