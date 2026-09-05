@@ -162,7 +162,7 @@ pub function (v: LD) as_i64(): Option[i64] {
     }
     mag = v.m << v.e as u64;
   } else {
-    if (v.e <= 0 - 64 || (v.m << (64 + v.e) as u64) != 0 as u64) {
+    if (v.e <= 0 - 64 || v.m << (64 + v.e) as u64 != 0 as u64) {
       return None;
     }
     mag = v.m >> (0 - v.e) as u64;
@@ -190,7 +190,7 @@ pub function (v: LD) as_bigint(): Option[bigint.BigInt] {
   } else {
     // A canonical significand has its top bit set, so a value whose
     // lowest bit sits 64 or more places below the point is below 1.
-    if (v.e <= 0 - 64 || (v.m << (64 + v.e) as u64) != 0 as u64) {
+    if (v.e <= 0 - 64 || v.m << (64 + v.e) as u64 != 0 as u64) {
       return None;
     }
     b = bigint.from_u64(v.m >> (0 - v.e) as u64);
@@ -317,7 +317,7 @@ pub function mul64(x: u64, y: u64): (u64, u64) {
   var bc: u64 = b * c;
   var mid: u64 = (bd >> sh) + (ad & mask) + (bc & mask);
   var hi: u64 = a * c + (mid >> sh) + (ad >> sh) + (bc >> sh);
-  return (hi, ((mid & mask) << sh) | (bd & mask));
+  return (hi, (mid & mask) << sh | bd & mask);
 }
 
 // `from_u128(hi, lo, e, sticky, neg)` — the long double nearest
@@ -343,7 +343,7 @@ function from_u128(hi0: u64, lo0: u64, e: i32, sticky: boolean, neg: boolean): L
   } else {
     lz = __clz64(hi);
     if (lz > 0) {
-      hi = (hi << lz as u64) | (lo >> (64 - lz) as u64);
+      hi = hi << lz as u64 | lo >> (64 - lz) as u64;
       lo = lo << lz as u64;
     }
   }
@@ -436,7 +436,13 @@ function add_aligned(a: LD, b: LD): LD {
   if (d == 0) {
     bhi = b.m >> 1 as u64;
     blo = b.m << 63 as u64;
-  } else if (d <= 63) {
+  } else if (d == 63) {
+    // `b.m >> 64` is not a shift the hardware performs — x86 and arm64
+    // both take the count modulo the width — so the one alignment that
+    // needs it is spelled out.
+    bhi = 0 as u64;
+    blo = b.m;
+  } else if (d < 63) {
     bhi = b.m >> (d + 1) as u64;
     blo = b.m << (63 - d) as u64;
   } else if (d <= 127) {
@@ -447,7 +453,7 @@ function add_aligned(a: LD, b: LD): LD {
       blo = 0 as u64;
       sticky = true;
     } else {
-      sticky = (b.m << (64 - s) as u64) != 0 as u64;
+      sticky = b.m << (64 - s) as u64 != 0 as u64;
     }
   } else {
     sticky = true;

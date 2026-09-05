@@ -548,10 +548,7 @@ pub function (g: Getopt) at_negative_number(): boolean {
     return false;
   }
   var b: i32 = a[1] as i32;
-  if (b >= 48 && b <= 57) {
-    return true;
-  }
-  return b == 46 && a.len() > 2 && a[2] as i32 >= 48 && a[2] as i32 <= 57;
+  return b == 46 || b >= 48 && b <= 57;
 }
 
 // `(g).stop()` — end the scan: every remaining token is an operand.

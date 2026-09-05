@@ -583,8 +583,6 @@ function emit_field(p: Pf, field: Option[string]): Pf {
 }
 
 // ---- conversions -------------------------------------------------------------
-
-
 // Digits of `v` in `base`, most significant first.
 function radix_digits(v: u64, base: u64, upper: boolean): string {
   if (v == 0 as u64) {

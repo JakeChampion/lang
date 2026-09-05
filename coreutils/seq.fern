@@ -18,25 +18,26 @@
 //    of digits, the increment is at most 200, the separator is one byte,
 //    and neither -w nor -f is in play (`use_fast`).
 //
-// 2. SCALED DECIMAL (`dec_seq`). Every operand written as a fixed-point
-//    decimal exact at the printed precision P, and every value fitting a
-//    64-bit integer once scaled by 10^P: then GNU counts in those scaled
-//    integers. This is the engine that makes `seq 0 0.3 0.9` end ON 0.9,
-//    where floating point would stop at 0.6 — 3 x 0.3 is one ulp past 0.9
-//    in long double. One digit more of precision than 64 bits can carry
-//    (`seq 0.00000000000000000000 0.30000000000000000000 0.9...`) drops
-//    GNU back to engine 3, which stops early and prints the binary value.
+// 2. LONG DOUBLE (`print_numbers`, lib/ldbl.fern). Terms are `first +
+//    i*step`, never accumulated, and the comparison against LAST is exact
+//    — with one documented exception, `prints_as_in_range`: a term that
+//    lands past LAST is still printed when what the conversion prints
+//    reads back inside the range, which is why `seq 0 0.3 0.9` ends on
+//    0.9 though 3 x 0.3 is an ulp beyond it. Numbers are printed with a
+//    format derived from how the operands were WRITTEN, not from their
+//    values: `1.0` asks for one decimal, `1e-3` for three, `10e-1` for
+//    one, and a hex operand asks for none of it (`%Lg`, which is why -w
+//    silently stops padding for `seq -w 0x1p4 1000`). `scan_arg` is that
+//    derivation.
 //
-// 3. LONG DOUBLE (`print_numbers`, lib/ldbl.fern). Terms are `first +
-//    i*step`, never accumulated, and the comparison against LAST is exact:
-//    `seq 1 0.1 1.05` stops at 1.0. Numbers are printed with a format
-//    derived from how the operands were WRITTEN, not from their values:
-//    `1.0` asks for one decimal, `1e-3` for three, `10e-1` for one, and a
-//    hex operand asks for none of it (`%Lg`, which is why -w silently
-//    stops padding for `seq -w 0x1p4 1000`). `scan_arg` is that derivation.
+// 3. SCALED DECIMAL (`dec_seq`). Not a behaviour of its own: when every
+//    operand is a fixed-point decimal exact at the printed precision P
+//    and every value fits a 64-bit integer once scaled by 10^P, the whole
+//    sequence is integer arithmetic and the terms are the same bytes
+//    engine 2 would print, so `seq 1 1000000` runs without touching a
+//    float or allocating per number.
 //
-// Engines 1 and 2 emit digits straight into the output block, so neither
-// allocates per number.
+// Engines 1 and 3 emit digits straight into the output block.
 import "std/string";
 import "std/array";
 import "std/i64";
@@ -138,7 +139,10 @@ function contains(s: string, byte: i32): boolean {
 // whose value is not finite.
 function scan_arg(s: string): Operand {
   var r: ldbl.FloatParse = ldbl.strtold(s);
-  if (r.end == 0 || r.end < s.len()) {
+  // A value out of the format's range is rejected, but underflow all the
+  // way to zero is not: `seq 1e-4951 1` counts from 0, where the slightly
+  // larger `4e-4951` — a subnormal, and inexact — is refused.
+  if (r.end == 0 || r.end < s.len() || r.erange && !r.v.is_zero()) {
     gnu.die_usage("invalid floating point argument: " + gnu.quote(s), 1);
   }
   if (r.v.is_nan()) {
@@ -300,7 +304,11 @@ function default_format(first: Operand, step: Operand, last: Operand, equal_widt
   if (prec == auto_prec()) {
     return Fmt { pre: "", spec: ldbl.spec(103), post: "" };
   }
-  if (equal_width && last.prec != auto_prec()) {
+  // A width needs a LAST to measure: an endless sequence has none, so
+  // `seq -w 5 1 inf` counts unpadded where `seq -w 1 inf 100` — whose
+  // LAST is finite and whose infinite INCREMENT never reaches it — pads
+  // to that LAST's three columns.
+  if (equal_width && last.prec != auto_prec() && last.v.is_finite()) {
     var first_width: i32 = rewidth(first, prec);
     var last_width: i32 = rewidth(last, prec);
     var width: i32 = first_width;
@@ -500,6 +508,16 @@ function flush_block(b: Block): Block {
   return Block { bs: empty, o: o };
 }
 
+// A sequence that printed anything ends with a newline, whatever the
+// separator between its numbers was: `seq -s, 3` is `1,2,3` and then a
+// newline. A sequence with no numbers ends with nothing at all.
+function terminate(b: Block, written: boolean): Block {
+  if (!written) {
+    return b;
+  }
+  return push_byte(b, 10);
+}
+
 function block_finish(b: Block): void {
   gnu.finish(flush_block(b).o);
 }
@@ -549,27 +567,38 @@ function u64_digits(v: u64): i32 {
 // Operands that are plain digit runs, counted in decimal rather than in
 // long double. Values inside u64 are counted there; beyond it the digits
 // themselves are the accumulator.
-function seq_fast(b: Block, first: string, step: u64, last: string, sep: string): Block {
-  var lo: u8[] = trim_zeros(first);
-  var hi: u8[] = trim_zeros(last);
-  if (cmp_digits(lo, hi) > 0) {
-    return b;
-  }
-  match (digits_to_u64(hi)) {
-    Some(hi64) => {
-      match (digits_to_u64(lo)) {
-        Some(lo64) => {
-          return fast_u64(b, lo64, step, hi64, sep);
+// `bound` empty means no upper bound at all, which is what an infinite
+// LAST asks for.
+function seq_fast(b: Block, first: u8[], step: u64, bound: Option[u8[]], sep: string): Block {
+  match (bound) {
+    Some(hi) => {
+      if (cmp_digits(first, hi) > 0) {
+        return b;
+      }
+      match (digits_to_u64(hi)) {
+        Some(hi64) => {
+          match (digits_to_u64(first)) {
+            Some(lo64) => {
+              return fast_u64(b, lo64, step, hi64, sep);
+            },
+            None => {}
+          }
         },
         None => {}
       }
+      return fast_digits(b, first, step, Some(hi), sep);
     },
-    None => {}
+    None => {
+      return fast_digits(b, first, step, None, sep);
+    }
   }
+}
+
+function fast_digits(b: Block, first: u8[], step: u64, bound: Option[u8[]], sep: string): Block {
   var out: Block = b;
-  var cur: u8[] = lo;
+  var cur: u8[] = first;
   var written: boolean = false;
-  while (cmp_digits(cur, hi) <= 0) {
+  while (in_bound(cur, bound)) {
     if (written) {
       out = push_str(out, sep);
     }
@@ -578,7 +607,18 @@ function seq_fast(b: Block, first: string, step: u64, last: string, sep: string)
     written = true;
     cur = add_u64(cur, step);
   }
-  return out;
+  return terminate(out, written);
+}
+
+function in_bound(cur: u8[], bound: Option[u8[]]): boolean {
+  match (bound) {
+    Some(hi) => {
+      return cmp_digits(cur, hi) <= 0;
+    },
+    None => {
+      return true;
+    }
+  }
 }
 
 function fast_u64(b: Block, first: u64, step: u64, last: u64, sep: string): Block {
@@ -597,7 +637,7 @@ function fast_u64(b: Block, first: u64, step: u64, last: u64, sep: string): Bloc
     }
     x = x + step;
   }
-  return out;
+  return terminate(out, written);
 }
 
 // A digit string with its leading zeros dropped, as a byte array of
@@ -657,8 +697,8 @@ function add_u64(d: u8[], n: u64): u8[] {
     var sum: u64 = out[i] as u64 + carry % (10 as u64);
     carry = carry / (10 as u64);
     if (sum >= 10 as u64) {
-      sum = sum - (10 as u64);
-      carry = carry + (1 as u64);
+      sum = sum - 10 as u64;
+      carry = carry + 1 as u64;
     }
     out = out.with(i, sum as u8);
     i = i - 1;
@@ -703,7 +743,12 @@ function print_numbers(b: Block, f: Fmt, first: ldbl.LD, step: ldbl.LD, last: ld
   while (true) {
     var x: ldbl.LD = ldbl.add(first, ldbl.mul(ldbl.from_i64(i), step));
     if (out_of_range(x, step, last)) {
-      return out;
+      var prev: ldbl.LD = ldbl.add(first, ldbl.mul(ldbl.from_i64(i - 1 as i64), step));
+      if (prints_as_in_range(f, x, prev, step, last)) {
+        out = push_str(out, sep);
+        out = emit_term(out, f, x);
+      }
+      return terminate(out, true);
     }
     out = push_str(out, sep);
     out = emit_term(out, f, x);
@@ -711,6 +756,38 @@ function print_numbers(b: Block, f: Fmt, first: ldbl.LD, step: ldbl.LD, last: ld
     i = i + 1 as i64;
   }
   return out;
+}
+
+// The last term of `seq 0 0.3 0.9` is 0.9 even though 3 x 0.3 lands one
+// ulp beyond it: a term past LAST is still printed when what the
+// conversion PRINTS reads back inside the range, and past the term
+// before it. Three ways to fail that, all measured:
+//   - the field is not read back whole, so a left-justified format loses
+//     the term on its trailing blanks: `seq -f %-8.1f 0 0.3 0.9` stops
+//     at 0.6 where `seq -f %5.1f 0 0.3 0.9` does not;
+//   - what it reads back is still past LAST (`-f %.0f` rounds 0.9 to 1);
+//   - what it reads back does not advance, which is what a format too
+//     coarse to separate the terms does: `seq -f %g 1000000 1 1000002`
+//     prints every term as 1e+06 and stops at the third.
+function prints_as_in_range(f: Fmt, x: ldbl.LD, prev: ldbl.LD, step: ldbl.LD, last: ldbl.LD): boolean {
+  match (ldbl.format(f.spec, x)) {
+    Some(s) => {
+      if (s.len() == 0) {
+        return false;
+      }
+      var r: ldbl.FloatParse = ldbl.strtold(s);
+      if (r.end != s.len() || out_of_range(r.v, step, last)) {
+        return false;
+      }
+      if (step.neg) {
+        return ldbl.cmp(r.v, prev) < 0;
+      }
+      return ldbl.cmp(r.v, prev) > 0;
+    },
+    None => {
+      return false;
+    }
+  }
 }
 
 function out_of_range(x: ldbl.LD, step: ldbl.LD, last: ldbl.LD): boolean {
@@ -778,7 +855,7 @@ function scaled(arg: string, p: i32): Option[i64] {
       return None;
     }
     seen = true;
-    if (digits > 922337203685477580 as i64) {
+    if (digits > (9223372036854775807 as i64 - (b - 48) as i64) / (10 as i64)) {
       return None;
     }
     digits = digits * (10 as i64) + (b - 48) as i64;
@@ -803,6 +880,9 @@ function scaled(arg: string, p: i32): Option[i64] {
     v = v * (10 as i64);
     n = n + 1;
   }
+  if (v < 0 as i64) {
+    return None;
+  }
   if (neg) {
     return Some(0 as i64 - v);
   }
@@ -822,7 +902,7 @@ function dec_seq(b: Block, first: i64, step: i64, last: i64, prec: i32, width: i
   if (step > 0 as i64 && first > last || step < 0 as i64 && first < last) {
     return b;
   }
-  var count: i64 = (last - first) / step + (1 as i64);
+  var count: i64 = (last - first) / step + 1 as i64;
   var out: Block = b;
   var x: i64 = first;
   var i: i64 = 0 as i64;
@@ -835,7 +915,7 @@ function dec_seq(b: Block, first: i64, step: i64, last: i64, prec: i32, width: i
     x = x + step;
     i = i + 1 as i64;
   }
-  return out;
+  return terminate(out, count > 0 as i64);
 }
 
 // One scaled value as `[-]ddd[.ddd]`, zero-padded to `width` after the
@@ -927,22 +1007,127 @@ function parse_args(argv: string[]): Args {
   return Args { format: format, has_format: has_format, sep: sep, equal_width: equal_width, operands: g.operands() };
 }
 
-// Whether GNU runs the exact decimal engine: every operand a plain digit
-// run, a single-byte separator, an increment it will count by, and
-// neither -w nor -f asking for a shape the digits cannot take.
-function use_fast(a: Args, first: string, step: string, last: string): boolean {
-  if (a.has_format || a.equal_width || a.sep.len() != 1) {
-    return false;
-  }
-  if (!all_digits(first) || !all_digits(step) || !all_digits(last)) {
-    return false;
-  }
-  match (digits_to_u64(trim_zeros(step))) {
-    Some(v) => {
-      return v >= 1 as u64 && v <= fast_step_limit();
+// ---- choosing the digit engine ---------------------------------------------
+//
+// Operands that are already plain runs of digits are counted AS WRITTEN,
+// which is what keeps `seq 99999999999999999999 100000000000000000001`
+// exact through 10^20. One operand spelled any other way — a `+`, an
+// exponent, hex — and GNU counts the values as a whole-number format
+// would PRINT them instead, which is both why `seq 0X1P-1 1 3` (a first
+// of 0.5) counts 0 1 2 3 and why `seq +99999999999999999999 1
+// 100000000000000000001` prints a single term: rendered, its three
+// operands are all 10^20. A rendering that is not a run of digits — a
+// first of -0.5 — leaves the digit engine altogether, and the long
+// double engine prints -0 0 2 2.
+// `Fast` — what the digit engine needs: FIRST's digits, the increment,
+// and the bound (None for an infinite LAST).
+struct Fast { first: u8[], step: u64, bound: Option[u8[]] }
+
+// FIRST as `%.0Lf` would print it, when that is a run of digits.
+function whole_digits(v: ldbl.LD): Option[u8[]] {
+  var s0: ldbl.Spec = ldbl.spec(102);
+  match (ldbl.format(ldbl.Spec { ...s0, prec: 0 as i64 }, v)) {
+    Some(s) => {
+      if (!all_digits(s)) {
+        return None;
+      }
+      return Some(trim_zeros(s));
     },
     None => {
-      return false;
+      return None;
+    }
+  }
+}
+
+// LAST's integer part, which is the real bound on a whole-number
+// sequence: `seq 1 1 3.5` ends at 3.
+function bound_digits(v: ldbl.LD): Option[Option[u8[]]] {
+  if (v.is_inf()) {
+    if (v.neg) {
+      return None;
+    }
+    return Some(None);
+  }
+  if (!v.is_finite() || v.neg && !v.is_zero()) {
+    return None;
+  }
+  if (v.is_zero()) {
+    return Some(Some(trim_zeros("0")));
+  }
+  var d: ldbl.Dec = ldbl.dec(v);
+  if (d.dp <= 0) {
+    return Some(Some(trim_zeros("0")));
+  }
+  var n: i32 = d.dp;
+  if (n > d.digits.len()) {
+    return Some(Some(trim_zeros(d.digits + "0".repeat(n - d.digits.len()))));
+  }
+  return Some(Some(trim_zeros(slice_unchecked(d.digits, 0, n) + "")));
+}
+
+// Whether GNU runs the digit engine, and with what.
+function use_fast(a: Args, f: Fmt, first: Operand, step: Operand, last: Operand, first_str: string, step_str: string, last_str: string): Option[Fast] {
+  if (a.has_format || a.equal_width || a.sep.len() != 1) {
+    return None;
+  }
+  if (f.spec.conv != 102 || f.spec.prec != 0 as i64) {
+    return None;
+  }
+  if (all_digits(first_str) && all_digits(step_str) && all_digits(last_str)) {
+    var lo: u8[] = trim_zeros(first_str);
+    var hi: u8[] = trim_zeros(last_str);
+    // A range that runs backwards is not this engine's: the values, not
+    // the digits, decide it, and rounded to the format they may still
+    // meet — `seq 100000000000000000001 1 99999999999999999999` prints
+    // the one term where both ends are 10^20.
+    if (cmp_digits(lo, hi) <= 0) {
+      match (digits_to_u64(trim_zeros(step_str))) {
+        Some(sv) => {
+          if (sv > fast_step_limit()) {
+            return None;
+          }
+          return Some(Fast { first: lo, step: sv, bound: Some(hi) });
+        },
+        None => {
+          return None;
+        }
+      }
+    }
+  }
+  return use_fast_rendered(first.v, step.v, last.v);
+}
+
+function use_fast_rendered(first: ldbl.LD, step: ldbl.LD, last: ldbl.LD): Option[Fast] {
+  match (whole_digits(step)) {
+    Some(sd) => {
+      match (digits_to_u64(sd)) {
+        Some(sv) => {
+          if (sv > fast_step_limit()) {
+            return None;
+          }
+          match (whole_digits(first)) {
+            Some(fd) => {
+              match (bound_digits(last)) {
+                Some(bound) => {
+                  return Some(Fast { first: fd, step: sv, bound: bound });
+                },
+                None => {
+                  return None;
+                }
+              }
+            },
+            None => {
+              return None;
+            }
+          }
+        },
+        None => {
+          return None;
+        }
+      }
+    },
+    None => {
+      return None;
     }
   }
 }
@@ -981,22 +1166,18 @@ function main(): i32 {
   }
   var last: Operand = scan_arg(last_str);
   var b: Block = block_new();
-  if (use_fast(a, first_str, step_str, last_str)) {
-    var sv: u64 = 1 as u64;
-    match (digits_to_u64(trim_zeros(step_str))) {
-      Some(v) => {
-        sv = v;
-      },
-      None => {}
-    }
-    b = seq_fast(b, first_str, sv, last_str, a.sep);
-    block_finish(b);
-    return 0;
-  }
   if (!a.has_format) {
     f = default_format(first, step, last, a.equal_width);
   } else if (fmt_overflows(f)) {
     write_overflow(b);
+  }
+  match (use_fast(a, f, first, step, last, first_str, step_str, last_str)) {
+    Some(fast) => {
+      b = seq_fast(b, fast.first, fast.step, fast.bound, a.sep);
+      block_finish(b);
+      return 0;
+    },
+    None => {}
   }
   if (is_derived_fixed(f, a.has_format)) {
     var p: i32 = f.spec.prec as i32;
