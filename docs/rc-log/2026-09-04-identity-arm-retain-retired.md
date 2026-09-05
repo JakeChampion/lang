@@ -31,9 +31,41 @@ the RECEIVER or a PARAMETER, never a local, which is what keeps the list short.
 | 3 | `__fern_snapshot_dec` / `emit_arr_store`'s do_dec | the BOX | the frame being rebound | SAFE. Box-only; it never reads a field |
 | 4 | `__struct_drop_<T>` — `emit_struct_field_drops` — reached through a method RECEIVER or an uncounted struct-update BASE | every rc field of a dead box, unguarded | the frame that owns the box | SAFE. `moves_fields_expr` marks both uses `"NODEEP:"`, and `emit_struct_field_drops` withholds the deep walk for such a slot |
 | 5 | `__struct_drop_<T>` reached through a bare call ARGUMENT `f(a)`, which `moves_fields_expr` does NOT mark | as above | the caller's frame | **UNSAFE — see below** |
-| 6 | the callee's own frame releasing its root | — | — | SAFE. The exit sweep's struct loop starts at `st.n_params`, so **no frame releases the fields of a parameter**, `own` or not |
+| 6 | the callee's own frame releasing its root | every rc field of an `own` struct param | the frame being exited | SAFE **only because #8274 moves the field out** — see below. The original rationale here was wrong |
 | 7 | `__struct_arr_elems_drop_<T>` / `__fern_arrarr_free` reaching `SRC`'s box as an ELEMENT | the element boxes then the buffer | the container being deep-dropped | SAFE. A local bound from an index / field / slice read is in `grow_alias_names_of`, which withdraws its dying exemption, so the call takes the bracket and the callee's grow copies |
 | 8 | `emit_struct_deep_reinit_store`'s unguarded `__struct_drop_<T>` | every rc field of the old box | the frame being rebound | SAFE by admission. It fires only for a fresh no-base struct LITERAL init, and a literal-rooted append has a LOCAL root, which the site analysis refuses |
+
+### Row 6's first rationale was false
+
+This row originally read "the exit sweep's struct loop starts at `st.n_params`,
+so no frame releases the fields of a parameter, `own` or not". That is not true.
+`emit_dec_sweep_except_list` runs an `OWNREL:` / `OWNRELB:` loop over params
+`0..n_params` BEFORE the from-`n_params` loops, and an `OWNREL:` row emits a deep
+field walk under the box's rc==1 gate. Emitting the two-line case below shows it
+directly — `__fn_mk` contains `__fern_rc_is_unique`, `__struct_drop_St` and
+`__fern_arr_dec` on an `own` param:
+
+```fern
+function f(s: St, v: i32): St { return St { ops: s.ops.append(v), n: 1 }; }
+function mk(own a: St): St { return f(a, 999); }
+```
+
+The corrupting spelling was `conformance/cases/own_self_reassign_move`
+(`a = push_box(a, i)`, 500 iterations). Retiring the identity retain in
+`2ddc6cb0e` turned what had been a bounded leak into a double free: the grow
+handed the buffer back uncounted, the returned struct held it, and the `own`
+param's exit release freed it. It segfaulted locally and hung at 20 s in CI.
+`ff8433241` and `e2def9033` fixed it, and #8274 completed the shape.
+
+**What makes row 6 safe is the move-out, not the slot range.** The identity arm
+now stores NULL into the source field, so the `own`-param `OWNREL:` walk finds
+nothing to free. The release still runs; it just has nothing to release.
+
+Two things that did NOT work, recorded so they are not retried: withdrawing the
+sole-occurrence exemption in `grow_sole_exempt_names_of` for `own` params does
+not fix `own_self_reassign_move`, and `grow_return_local_filter` — which kept the
+exemption for params on the strength of the false rationale above — never fixed
+it either, and was dropped in `9403d61` as superseded.
 
 **What closes the list** is the caller-side exemption set, which is small and
 enumerable. `grow_exempt_names_of_stmt` exempts only a self-reassign

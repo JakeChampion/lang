@@ -273,10 +273,16 @@ function main(): i32 {
     for v in r.ops { t = t + v; }
     return r.ops.len() * 10 + (t % 97) + r.ctrl;
 }`},
-	// An `own` container root: the callee, not the caller, holds the box. The
-	// exit sweep starts at the first NON-parameter slot, so no frame releases the
-	// fields of a parameter — which is what lets the grown buffer travel out of
-	// the callee uncounted (#8254).
+	// An `own` container root: the callee, not the caller, holds the box. What
+	// lets the grown buffer travel out uncounted is #8274's move-out — the
+	// identity arm stores NULL into the source field, so the `own` param's exit
+	// OWNREL walk finds nothing to free. It is NOT that parameters are exempt
+	// from the sweep: the params loop runs before the from-n_params loops and
+	// does emit a deep field drop under the box's rc==1 gate (#8254).
+	//
+	// This case's own route is the SPREAD base, which `moves_fields_expr` marks
+	// moved, so its row is box-only `OWNRELB:` — it does not exercise the deep
+	// walk. `own_self_reassign_move` in conformance is the case that does.
 	{"own-param-container", `
 struct St { ops: i32[], ctrl: i32 }
 function bump(own s: St, v: i32): St { return St { ...s, ops: s.ops.append(v), ctrl: s.ctrl + 1 }; }
