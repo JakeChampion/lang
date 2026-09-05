@@ -235,8 +235,9 @@ issue and a fix, never a workaround:
   and open failures as `prog: context: <strerror text>`. The four named
   IoError variants map to their text in `lib/gnu.fern`; `Other` has no errno
   left to map. So `yes >&-` (`yes: standard output: Bad file descriptor`),
-  `echo hi >&-` (`echo: write error: Bad file descriptor`) and `> /dev/full`
-  are not in the corpus yet. The utilities already print the field as the
+  `echo hi >&-` (`echo: write error: Bad file descriptor`), `> /dev/full`
+  and `tsort /tmp` (`tsort: /tmp: read error: Is a directory`) are not in
+  the corpus yet. The utilities already print the field as the
   strerror text, so the fix needs no change here beyond adding the cases.
 - **#8338 — Fern source cannot learn its compile target's OS.** The pipe
   write size that beats GNU is 4 KiB on Linux and 1 KiB on macOS, and a

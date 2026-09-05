@@ -125,9 +125,11 @@ pub function write_out(s: string): void {
 
 // ---- quoting ---------------------------------------------------------------
 //
-// GNU quotes the strings it embeds in diagnostics; in the C locale
-// `quote` wraps an operand in single quotes with C escapes
-// (`extra operand 'c\nd'`).
+// GNU quotes the strings it embeds in diagnostics, and two styles are
+// visible in the C locale: `quote` wraps an operand in single quotes
+// with C escapes (`extra operand 'c\nd'`), `quotef` renders a file name
+// the way a shell would need it typed (`'no such': No such file or
+// directory`, bare when nothing in it is special).
 
 // `quote(s)` — `s` in single quotes; backslash and the quote itself
 // backslashed, the seven named control characters as C escapes, and
@@ -188,6 +190,118 @@ function c_escape_letter(b: i32): i32 {
     return 118;
   }
   return 0;
+}
+
+function is_control_or_high(b: i32): boolean {
+  return b < 32 || b >= 127;
+}
+
+// Whether byte `b` makes a file name need quoting at all. `~` and `#`
+// count only at the start of the name.
+function shell_special(b: i32, leading: boolean): boolean {
+  if (is_control_or_high(b)) {
+    return true;
+  }
+  if (b == 126 || b == 35) {
+    return leading;
+  }
+  return b == 32 || b == 39 || b == 34 || b == 92 || b == 36 || b == 42 || b == 59 || b == 61 || b == 58 || b == 33 || b == 63 || b == 91 || b == 40 || b == 41 || b == 38 || b == 124 || b == 60 || b == 62 || b == 96 || b == 94;
+}
+
+// Whether byte `b` rules out the double-quoted form. Not the same set
+// as above: `:` and a space are fine inside double quotes, `{` and `}`
+// are not, and `~` / `#` are the other way round from `shell_special`.
+function double_quote_unsafe(b: i32, leading: boolean): boolean {
+  if (is_control_or_high(b)) {
+    return true;
+  }
+  if (b == 126 || b == 35) {
+    return !leading;
+  }
+  return b == 34 || b == 92 || b == 36 || b == 96 || b == 33 || b == 42 || b == 63 || b == 91 || b == 40 || b == 41 || b == 38 || b == 124 || b == 60 || b == 62 || b == 59 || b == 61 || b == 94 || b == 123 || b == 125;
+}
+
+// `quotef(name)` — the file name as a shell would need it typed: bare
+// when nothing in it is special, else single-quoted with a quote
+// inside written `'\''` and every control or non-ASCII byte spliced
+// in as an ANSI-C `$'...'` run. A name whose only trouble is the
+// apostrophe goes in double quotes. Empty is `''`.
+pub function quotef(s: string): string {
+  if (s.len() == 0) {
+    return "''";
+  }
+  var needs: boolean = false;
+  var double_ok: boolean = true;
+  var has_quote: boolean = false;
+  var i: i32 = 0;
+  while (i < s.len()) {
+    var b: i32 = s[i] as i32;
+    if (shell_special(b, i == 0)) {
+      needs = true;
+    }
+    if (double_quote_unsafe(b, i == 0)) {
+      double_ok = false;
+    }
+    if (b == 39) {
+      has_quote = true;
+    }
+    i = i + 1;
+  }
+  if (!needs) {
+    return s;
+  }
+  if (has_quote && double_ok) {
+    return "\"" + s + "\"";
+  }
+  var bs: u8[] = [];
+  bs = bs.append(39 as u8);
+  var open: boolean = true;
+  var run: boolean = false;
+  i = 0;
+  while (i < s.len()) {
+    var b: i32 = s[i] as i32;
+    if (is_control_or_high(b)) {
+      if (open) {
+        bs = bs.append(39 as u8);
+        open = false;
+      }
+      if (!run) {
+        bs = bs.append(36 as u8);
+        bs = bs.append(39 as u8);
+        run = true;
+      }
+      bs = append_c_escape(bs, b);
+      i = i + 1;
+      continue;
+    }
+    if (run) {
+      bs = bs.append(39 as u8);
+      run = false;
+    }
+    if (b == 39) {
+      if (open) {
+        bs = bs.append(39 as u8);
+      }
+      bs = bs.append(92 as u8);
+      bs = bs.append(39 as u8);
+      bs = bs.append(39 as u8);
+      open = true;
+    } else {
+      if (!open) {
+        bs = bs.append(39 as u8);
+        open = true;
+      }
+      bs = bs.append(b as u8);
+    }
+    i = i + 1;
+  }
+  if (run) {
+    bs = bs.append(39 as u8);
+  }
+  if (open) {
+    bs = bs.append(39 as u8);
+  }
+  return string_from_bytes_unchecked(bs);
 }
 
 // ---- buffered stdout -------------------------------------------------------
