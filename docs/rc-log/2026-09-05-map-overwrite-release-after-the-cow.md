@@ -42,21 +42,22 @@ x86-64, 200 rounds:
 
 Flat in the number of reads and in the value length, linear in the KEY length,
 zero without a read — #8277's recorded signature exactly, and present with no
-alias and no overwrite anywhere in the program. It is untouched by this work
-and it is what the x86-64 residual is.
+alias and no overwrite anywhere in the program. It was untouched by this work
+and was the whole x86-64 residual; it closed the same day, and the numbers
+above now read 0.
 
 ## What the tests assert
 
 wasm32 and arm64 assert an absolute census: `allocs == frees`, `live == 0`.
 
-x86-64 cannot, and pinning its current number would bank #8277. It asserts the
-DIFFERENCE instead — the same program with the alias and the overwrite taken
-out strands exactly as many bytes — plus that the probe allocates strictly
-more than the baseline, so a probe that stopped building the map could not pass
-it. That is the property #8421 is actually about: aliasing an overwrite costs
-nothing.
+x86-64 could not, while #8277 was open: pinning its number would have banked
+that leak, so it asserted the DIFFERENCE instead — the same program with the
+alias and the overwrite taken out strands exactly as many bytes. **#8277 closed
+the same day** (`2026-09-05-map-read-key-taint.md`), and all three backends now
+assert the census directly; the two baseline programs and the differential
+helper are gone.
 
-All six assertions fail on the pre-fix compiler.
+Every assertion fails on the pre-fix compiler.
 
 ## How the runtime knows whether to free a cell
 
@@ -107,9 +108,6 @@ native single-word path, and an `m` or `k` that `exprSafeToReevaluate` refused.
 
 ## Not done
 
-- **#8277** — the x86-64 key-column residual above. It is the only thing
-  standing between the x86-64 probes and an absolute census, so it is the
-  natural next one.
 - **Kind 4 (struct / enum) values** keep the pre-drop and the gate, so an
   aliased overwrite of a struct value still leaks. The runtime helper is
   type-erased and cannot call the generated per-value drop; closing it means
