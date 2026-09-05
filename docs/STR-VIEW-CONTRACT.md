@@ -196,10 +196,10 @@ And `as_bytes()` on an inline-packed string today "first copies the bytes into
 a bare `__fern_alloc` block the header points at; that copy has no owner"
 (`internal/ir/rcresults.go:145`, the backends' helpers at e.g.
 `internal/codegen/x86_64/x86_64.go:11134`) — an ownerless copy whose only
-holder is the header that is being retired. **Open:** does the two-word slice forbid the
-inline-materialising path, forcing a heap-form promotion inside the string, or
-carry an inline tag of its own? The decision does not turn on the answer; the
-implementation does.
+holder is the header that is being retired. **Open:** does the two-word slice
+forbid the inline-materialising path, forcing a heap-form promotion inside the
+string, or carry an inline tag of its own? The decision does not turn on the
+answer; the implementation does.
 
 ### Why not rc-track slices
 
