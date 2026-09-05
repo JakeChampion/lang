@@ -6413,55 +6413,28 @@ func (g *generator) emitAllocRuntime() {
 		// small structs / strings / boxes — unchanged from the original
 		// Phase-3 design.
 		//
-		// Large tier (>2048 B): power-of-two classes. The request is
-		// rounded UP to the next power of two — the bytes actually bumped —
-		// and binned by that power's bit position + 128. Because every
-		// block in a class is bumped at the class's power-of-two capacity, a
-		// popped block always fits any later same-class request, so reuse
-		// tolerates the size *variance* that exact-fit cannot: a 12 KiB and
-		// a 13 KiB array both land in the 16 KiB class and recycle each
-		// other. This is what lets a whole-compiler self-compile reclaim its
-		// per-function array churn (instruction / block / value lists grow
-		// past 2 KiB and vary per function) instead of leaking it. Cost is
-		// ≤2x internal waste on large blocks — bounded, demand-paged, and
-		// vastly cheaper than the exact-fit alternative, which reclaims none
-		// of it. Blocks >1 GiB skip the freelist (bump-only) so the class
-		// index can never run off the heads array.
+		// Large tier (>2048 B): three-significant-bit classes. The request
+		// is rounded UP to the class capacity — the bytes actually bumped —
+		// and binned by it (emitSizeClassCap / emitSizeClassIndex, which
+		// __fern_free and __fern_str_append share). Because every block in
+		// a class is bumped at the class's capacity, a popped block always
+		// fits any later same-class request, so reuse tolerates the size
+		// *variance* that exact-fit cannot: a 12 KiB and a 13 KiB array
+		// both land in one class and recycle each other. This is what lets
+		// a whole-compiler self-compile reclaim its per-function array
+		// churn (instruction / block / value lists grow past 2 KiB and vary
+		// per function) instead of leaking it, and what gives a string
+		// accumulator its slack to grow into. Cost is ≤25% internal waste
+		// on large blocks — bounded, demand-paged, and vastly cheaper than
+		// the exact-fit alternative, which reclaims none of it. Blocks
+		// >1 GiB skip the freelist (bump-only) so the class index can never
+		// run off the heads array.
 		g.emit("cmp rdi, 16")
 		g.emit("jb .Lalloc_bump")
-		g.emit("cmp rdi, 2048")
-		g.emit("ja .Lalloc_large")
-		g.emit("mov rax, rdi")
-		g.emit("shr rax, 4")
-		g.emit("sub rax, 1") // small class index 0..127
-		g.emit("jmp .Lalloc_fltry")
-		g.label(".Lalloc_large")
 		g.emit("cmp rdi, 0x40000000") // >1 GiB: bump-only, never freelisted
 		g.emit("ja .Lalloc_bump")
-		// Round the request UP to 3 significant bits (1 leading + 2 mantissa)
-		// instead of the next power of two — ≤25% internal waste vs ≤2x. The
-		// grid spacing at magnitude 2^e is 2^(e-2): round rdi up to a multiple
-		// of that, giving the bytes to bump (rdi), then derive the class from
-		// the rounded capacity so alloc and free agree.
-		g.emit("bsr rcx, rdi")      // rcx = e = floor(log2(size)) >= 11
-		g.emit("lea r8, [rcx - 2]") // r8 = e-2 = grid-spacing exponent
-		g.emit("mov r9, 1")
-		g.emit("mov rcx, r8")
-		g.emit("shl r9, cl") // r9 = gran = 1<<(e-2)
-		g.emit("lea rax, [rdi + r9 - 1]")
-		g.emit("neg r9")
-		g.emit("and rax, r9")  // rax = cap = roundup(size, gran)
-		g.emit("mov rdi, rax") // rdi = cap = bytes to bump
-		// class = (e2-11)*4 + (mant-4) + 128, where e2 = bsr(cap) (recomputed
-		// so a round-up that carried into a new power of two is binned right)
-		// and mant = cap>>(e2-2) ∈ {4,5,6,7}. Folds to 4*(e2-2) + mant + 88.
-		g.emit("bsr rcx, rax")      // rcx = e2 = floor(log2(cap))
-		g.emit("lea r8, [rcx - 2]") // r8 = e2-2
-		g.emit("mov rdx, rax")
-		g.emit("mov rcx, r8")
-		g.emit("shr rdx, cl")                // rdx = mant = cap>>(e2-2)
-		g.emit("lea rax, [rdx + r8*4 + 88]") // large class index
-		g.label(".Lalloc_fltry")
+		g.emitSizeClassCap("rdi", "r9", "r8") // rdi = cap = bytes to bump
+		g.emitSizeClassIndex("rdi")
 		g.emit("lea rcx, [rip + __fern_freelist_heads]")
 		g.emit("mov rdx, [rcx + rax*8]") // head
 		g.emit("test rdx, rdx")
@@ -6622,34 +6595,10 @@ func (g *generator) emitFreeRuntime() {
 		g.emit("and rsi, -16") // round size to the class granularity
 		g.emit("cmp rsi, 16")
 		g.emit("jb .Lfree_ret")
-		g.emit("cmp rsi, 2048")
-		g.emit("ja .Lfree_large")
-		g.emit("mov rax, rsi")
-		g.emit("shr rax, 4")
-		g.emit("sub rax, 1") // small class index 0..127
-		g.emit("jmp .Lfree_push")
-		g.label(".Lfree_large")
-		// Mirror __fern_alloc's large tier exactly: round the logical size up
-		// to 3 significant bits and bin by the rounded capacity, so a block
-		// returns to the class whose capacity it was bumped at. >1 GiB is
-		// dropped (alloc never freelisted it).
-		g.emit("cmp rsi, 0x40000000")
+		g.emit("cmp rsi, 0x40000000") // >1 GiB was never freelisted
 		g.emit("ja .Lfree_ret")
-		g.emit("bsr rcx, rsi")
-		g.emit("lea r8, [rcx - 2]")
-		g.emit("mov r9, 1")
-		g.emit("mov rcx, r8")
-		g.emit("shl r9, cl") // r9 = gran
-		g.emit("lea rax, [rsi + r9 - 1]")
-		g.emit("neg r9")
-		g.emit("and rax, r9") // rax = cap
-		g.emit("bsr rcx, rax")
-		g.emit("lea r8, [rcx - 2]")
-		g.emit("mov rdx, rax")
-		g.emit("mov rcx, r8")
-		g.emit("shr rdx, cl")                // rdx = mant
-		g.emit("lea rax, [rdx + r8*4 + 88]") // class
-		g.label(".Lfree_push")
+		g.emitSizeClassCap("rsi", "r9", "r8")
+		g.emitSizeClassIndex("rsi")
 		g.emit("lea rcx, [rip + __fern_freelist_heads]")
 		g.emit("mov rdx, [rcx + rax*8]") // old head
 		g.emit("mov [rdi], rdx")         // base.next = old head
@@ -6658,6 +6607,52 @@ func (g *generator) emitFreeRuntime() {
 	}
 	g.emit("ret")
 	g.line(".size __fern_free, .-__fern_free")
+}
+
+// emitSizeClassCap rounds the 16-aligned request in reg — 16 B up to 1 GiB
+// — up to the capacity the allocator reserves for its class: the request
+// itself in the small tier (16..2048 B, exact fit), three significant bits
+// above it, so the waste is at most 25%. It is the one definition of a
+// block's size: __fern_alloc bumps at it, __fern_free bins by it, and
+// __fern_str_append grows in place while it is unchanged. Clobbers rcx
+// (the shift count) and the two scratch registers.
+func (g *generator) emitSizeClassCap(reg, t1, t2 string) {
+	done := g.freshLabel("cap_done")
+	g.emit(fmt.Sprintf("cmp %s, 2048", reg))
+	g.emit(fmt.Sprintf("jbe %s", done))
+	g.emit(fmt.Sprintf("bsr rcx, %s", reg)) // e = floor(log2(size)) >= 11
+	g.emit("sub rcx, 2")                    // grid spacing at magnitude 2^e is 2^(e-2)
+	g.emit(fmt.Sprintf("mov %s, 1", t1))
+	g.emit(fmt.Sprintf("shl %s, cl", t1)) // gran
+	g.emit(fmt.Sprintf("lea %s, [%s + %s - 1]", t2, reg, t1))
+	g.emit(fmt.Sprintf("neg %s", t1))
+	g.emit(fmt.Sprintf("and %s, %s", t2, t1)) // roundup(size, gran)
+	g.emit(fmt.Sprintf("mov %s, %s", reg, t2))
+	g.label(done)
+}
+
+// emitSizeClassIndex leaves the freelist head slot of the capacity in capReg
+// in rax: (cap >> 4) - 1 in the small tier; 4*(e-2) + mant + 88 above it,
+// where e = floor(log2(cap)) is re-derived from the CAPACITY (a round-up
+// that carried into the next power of two must bin there) and mant =
+// cap >> (e-2) is the 3-bit mantissa in 4..7. Clobbers rcx, rdx, r8.
+func (g *generator) emitSizeClassIndex(capReg string) {
+	large := g.freshLabel("cls_large")
+	done := g.freshLabel("cls_done")
+	g.emit(fmt.Sprintf("cmp %s, 2048", capReg))
+	g.emit(fmt.Sprintf("ja %s", large))
+	g.emit(fmt.Sprintf("mov rax, %s", capReg))
+	g.emit("shr rax, 4")
+	g.emit("sub rax, 1") // small class index 0..127
+	g.emit(fmt.Sprintf("jmp %s", done))
+	g.label(large)
+	g.emit(fmt.Sprintf("bsr rcx, %s", capReg))
+	g.emit("lea r8, [rcx - 2]")
+	g.emit(fmt.Sprintf("mov rdx, %s", capReg))
+	g.emit("mov rcx, r8")
+	g.emit("shr rdx, cl")                // mant
+	g.emit("lea rax, [rdx + r8*4 + 88]") // large class index
+	g.label(done)
 }
 
 // emitAllocReuseRuntime emits
@@ -8411,19 +8406,18 @@ func (g *generator) emitStrcatRuntime() {
 //
 // Same-class is the exact capacity test rather than a heuristic: every heap
 // string is __fern_alloc_rc1(len + 1) (data + NUL) and __fern_str_dec frees
-// it at the CURRENT len, so a growth that keeps `(len + 9 + 15) & -16`
+// it at the CURRENT len, so a growth that keeps emitSizeClassCap(len + 9)
 // unchanged both fits the block and still frees back to the class it was
-// bumped at. This is the same rounded-size class match __fern_alloc_reuse
-// uses, so alloc / free / reuse / append all agree by construction. (The IR
-// only emits calls here under ast.RcFreeEnabled, which is also what makes
-// the trailing __fern_str_dec a real reclaim rather than a bare decrement.)
+// bumped at — alloc / free / append agree by construction. (The IR only
+// emits calls here under ast.RcFreeEnabled, which is also what makes the
+// trailing __fern_str_dec a real reclaim rather than a bare decrement.)
 //
-// The slack is the allocator's 16-byte granularity, so an accumulator
-// absorbs ~8-16 short appends per allocation instead of one allocation and
-// a full re-copy each. It is NOT amortised growth — there is no capacity
-// slot in the 8-byte [rc][len] header to hold one — so a long accumulator
-// still re-copies once per class step; the geometric fix is the string
-// builder of #5637 option 2.
+// The capacity is the growth schedule: 16-byte exact fit below 2048 B, so
+// a short accumulator absorbs ~8-16 short appends per allocation, and
+// three significant bits above it, so a long one grows in place until it
+// has used 12-25% more than it had and then copies once into a block that
+// much larger — amortised O(1) per byte with no capacity word in the
+// [rc][len] header.
 //
 // System V: rdi = a, rsi = b. Returns the data pointer in rax.
 func (g *generator) emitStrAppendRuntime() {
@@ -8455,17 +8449,34 @@ func (g *generator) emitStrAppendRuntime() {
 	g.emitStrLen("rdx", "rsi")  // lb (b may still be inline)
 	g.emit("mov r8d, ecx")
 	g.emit("add r8d, edx") // total = la + lb
-	// Same size class? class(len) = (len + 1 + 8 + 15) & -16.
-	g.emit("lea r9d, [rcx + 24]")
-	g.emit("and r9d, -16")
-	g.emit("lea r10d, [r8 + 24]")
-	g.emit("and r10d, -16")
-	g.emit("cmp r9d, r10d")
+	g.emit("mov r11, rcx") // la, kept across the class arithmetic
+	// Same capacity? request(len) = (len + 1 + 8 + 15) & -16, then the tier's
+	// round-up. A bump-only block (>1 GiB) is never grown in place.
+	g.emit("lea r9, [rcx + 24]")
+	g.emit("and r9, -16")
+	g.emit("lea r10, [r8 + 24]")
+	g.emit("and r10, -16")
+	g.emit("cmp r10, 0x40000000")
+	g.emit("ja .Lstrapp_copy")
+	if ast.LeakCheckEnabled {
+		// The block was charged at its 16-rounded request and __fern_free
+		// will charge the grown one; the difference keeps the pair exact.
+		g.emit("mov rsi, r10")
+		g.emit("sub rsi, r9")
+	}
+	g.emitSizeClassCap("r9", "rax", "rdx")
+	g.emitSizeClassCap("r10", "rax", "rdx")
+	g.emit("cmp r9, r10")
 	g.emit("jne .Lstrapp_copy")
 	// --- in place: memcpy(a + la, b_data, lb) ---
+	if ast.LeakCheckEnabled {
+		g.emit("add qword ptr [rip + __fern_lc_alloc_bytes], rsi")
+	}
 	g.emit("mov [rbp - 32], r8") // total survives the call
 	g.emitStrDataPtr("rsi", "r12", "[rbp - 24]")
-	g.emit("lea rdi, [rbx + rcx]") // dst = a + la; rdx already holds lb
+	g.emit("lea rdi, [rbx + r11]") // dst = a + la
+	g.emit("mov rdx, r8")
+	g.emit("sub rdx, r11") // lb
 	g.emit("call __fern_memcpy")
 	g.emit("mov r8, [rbp - 32]")
 	g.emitStrLenStore("r8d", "rbx") // [a - 4] = total

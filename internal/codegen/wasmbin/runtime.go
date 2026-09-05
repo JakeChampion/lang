@@ -3551,15 +3551,17 @@ func buildStrConcatBody(idxs map[string]uint32) []byte {
 //
 // Signature: (param $a_data $a_len $b_data $b_len i32) (result i32 i32)
 // Locals (after params): $la (4), $lb (5), $total (6), $i (7 —
-// strConcatCopyOne's scratch), $out_data (8), $out_len (9).
+// strConcatCopyOne's scratch), $out_data (8), $out_len (9), then the class
+// arithmetic's $size_a (10), $cap_a (11), $class (12), $tmp (13), $size_t
+// (14), $cap_t (15).
 //
 // It CONSUMES `a`: the IR only emits it where the assignment was about to
 // overwrite and reclaim that slot, so its dec-on-overwrite is suppressed.
 //
 //   - Fast path — `a` is a uniquely-held heap buffer (heap form, at/above
 //     the rc guard, rc==1) whose grown length still lands in the SAME
-//     16-byte allocator class: copy b's bytes into the slack past a's data
-//     and hand the same buffer back as (a_data, la+lb). No allocation, no
+//     allocator class: copy b's bytes into the slack past a's data and
+//     hand the same buffer back as (a_data, la+lb). No allocation, no
 //     re-copy of the accumulated prefix.
 //   - Slow path — anything else (inline/SSO `a`, a literal, a shared
 //     buffer, the class boundary crossed): __str_concat, then
@@ -3567,20 +3569,21 @@ func buildStrConcatBody(idxs map[string]uint32) []byte {
 //     suppressed overwrite dec did.
 //
 // Same-class is the exact capacity test, not a heuristic: an owned heap
-// string is __fern_alloc_rc1(len) — `len + 8` bytes rounded to 16 — and
-// __fern_str_dec frees it at the CURRENT len, so a growth that keeps
-// `(len + 23) & -16` unchanged both fits the block and still frees back to
-// the class it was bumped at. The 16-byte rounding is __fern_alloc's only
-// under ast.RcFreeEnabled (it rounds to 8 with the freelist compiled out),
-// which is fine because the IR only emits calls here under that flag — the
-// same flag that makes the fallback's __fern_str_dec a real reclaim.
+// string is __fern_alloc_rc1(len) — `len + 8` bytes rounded to 16, then
+// capacity-rounded by tier (emitFreelistBin, the binning __fern_alloc and
+// __fern_free share) — and __fern_str_dec frees it at the CURRENT len
+// through the same function, so a growth that keeps the capacity unchanged
+// both fits the block and still frees back to the class it was bumped at.
+// The 16-byte rounding is __fern_alloc's only under ast.RcFreeEnabled (it
+// rounds to 8 with the freelist compiled out), which is fine because the IR
+// only emits calls here under that flag — the same flag that makes the
+// fallback's __fern_str_dec a real reclaim.
 //
-// The slack is the allocator's 16-byte granularity, so an accumulator
-// absorbs ~8-16 short appends per allocation instead of one allocation and
-// a full re-copy each. It is NOT amortised growth — there is no capacity
-// slot in the 8-byte rc header to hold one — so a long accumulator still
-// re-copies once per class step; the geometric fix is the string builder of
-// #5637 option 2.
+// The capacity is the growth schedule: 16-byte exact fit below 2048 B, so
+// a short accumulator absorbs ~8-16 short appends per allocation, and three
+// significant bits above it, so a long one grows in place until it has used
+// 12-25% more than it had and then copies once into a block that much
+// larger — amortised O(1) per byte with no capacity word in the rc header.
 func buildStrAppendBody(idxs map[string]uint32) []byte {
 	strLen := idxs["__fern_str_len"]
 	strByte := idxs["__fern_str_byte"]
@@ -3623,18 +3626,38 @@ func buildStrAppendBody(idxs map[string]uint32) []byte {
 		body = inst.InstLocalGet(body, 5)
 		body = numeric.InstI32Add(body)
 		body = inst.InstLocalSet(body, 6) // $total
-		// Same 16-byte allocator class? (len + 8 + 15) & -16.
-		roundedClass := func(b []byte, local uint32) []byte {
-			b = inst.InstLocalGet(b, local)
+		// Same allocator capacity? request(len) = (len + 8 + 15) & -16,
+		// then the tier's round-up.
+		roundedSize := func(b []byte, lenLocal, sizeLocal uint32) []byte {
+			b = inst.InstLocalGet(b, lenLocal)
 			b = inst.InstI32Const(b, 23)
 			b = numeric.InstI32Add(b)
 			b = inst.InstI32Const(b, -16)
-			return numeric.InstI32And(b)
+			b = numeric.InstI32And(b)
+			return inst.InstLocalSet(b, sizeLocal)
 		}
-		body = roundedClass(body, 4)
-		body = roundedClass(body, 6)
+		body = roundedSize(body, 4, 10)
+		body = roundedSize(body, 6, 14)
+		body = emitFreelistBin(body, 10, 11, 12, 13)
+		body = emitFreelistBin(body, 14, 15, 12, 13)
+		body = inst.InstLocalGet(body, 11)
+		body = inst.InstLocalGet(body, 15)
 		body = numeric.InstI32Ne(body)
 		body = inst.InstBrIf(body, 0)
+		if ast.LeakCheckEnabled {
+			// The block was charged at its 16-rounded request and __free
+			// will charge the grown one; the difference keeps the pair
+			// exact. mem[lcAllocBytesAddr] += $size_t - $size_a.
+			body = inst.InstI32Const(body, lcAllocBytesAddr)
+			body = inst.InstI32Const(body, lcAllocBytesAddr)
+			body = memory.InstI64Load(body, 3, 0)
+			body = inst.InstLocalGet(body, 14)
+			body = inst.InstLocalGet(body, 10)
+			body = numeric.InstI32Sub(body)
+			body = convert.InstI64ExtendI32U(body)
+			body = numeric.InstI64Add(body)
+			body = memory.InstI64Store(body, 3, 0)
+		}
 		// In place: copy b's bytes to mem[$a_data + $la ..] and return
 		// (a_data, total). rc stays 1 — the accumulator's sole owner is
 		// still the slot the caller is about to store into.
@@ -3658,7 +3681,7 @@ func buildStrAppendBody(idxs map[string]uint32) []byte {
 	body = inst.InstDrop(body)
 	body = inst.InstLocalGet(body, 8)
 	body = inst.InstLocalGet(body, 9)
-	locals := inst.PutLocalsOneGroup(nil, 6, encode.ValtypeI32)
+	locals := inst.PutLocalsOneGroup(nil, 12, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
 }
 

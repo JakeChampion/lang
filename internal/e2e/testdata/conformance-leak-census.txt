@@ -51,6 +51,11 @@ alloc_flat_nested_string_array                       0
 alloc_flat_struct_self_update                        0
 alloc_flat_struct_string_field                       0
 alloc_flat_under_reclaim                             0
+# The four are two stdout() handles and two Writer.write result boxes: the
+# I/O helpers hand back static-sentinel / header-less boxes that no release
+# can reclaim (rcresults.go, #8398). The accumulator the case measures is
+# clean — it is what the "flat" line asserts.
+alloc_flat_writer_accumulator                        4
 alloc_grows_when_retained                            0
 args                                                 2
 arith_precedence                                     0

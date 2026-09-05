@@ -15107,13 +15107,18 @@ func (b *builder) callBody(n *ast.Call) error {
 	// inc'd it. The temp is therefore at rc 2 on the escaping path and rc 1
 	// on the non-escaping one, and the immediate post-call dec nets it to
 	// exactly one owner either way. The map is keyed by user declaration, so
-	// builtins — whose allocation contracts are per-helper — are absent and
-	// keep their prior safe-leak; the local / pair-form / map_new /
+	// a builtin is absent from it; a builtin position is admitted only by
+	// copyingBuiltinArg — the bytes are copied out and the result, a scalar
+	// or a fresh box, cannot alias the argument — and every other builtin
+	// keeps its prior safe-leak. The local / pair-form / map_new /
 	// retain-sink exclusions carry over from the call-level gate unchanged.
 	countedArgTemp := func(ai int) bool {
 		if !ast.RcFreeEnabled || !calleeIsFunc || calleeIsLocal ||
 			b.pairForm[id.Name] || id.Name == "map_new" || calleeRetainsAnyArg(id.Name) {
 			return false
+		}
+		if copyingBuiltinArg(id.Name, ai) {
+			return true
 		}
 		counted := b.paramCountedRetain[id.Name]
 		return ai < len(counted) && counted[ai]
