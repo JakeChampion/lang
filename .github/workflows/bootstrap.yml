@@ -100,6 +100,30 @@ jobs:
       - name: make bootstrap (pinned stage0 -> stage1, smoke-tested, installed)
         run: make bootstrap
 
+  # The freshly built arm64 candidate compiling the whole compiler. `verify`
+  # above runs the PINNED stage0, and stage2-fixpoint-arm64 drives
+  # asm_load_run.fern rather than fern.fern, so without this the publish job is
+  # the first thing to run this shape — which is how #8430 sat undetected.
+  candidate-arm64:
+    if: github.event_name == 'pull_request' || !inputs.publish
+    name: candidate-arm64-linux
+    runs-on: ubuntu-24.04-arm
+    # 24 s to build the candidate, 47 s for it to compile the compiler, on this
+    # runner (measured 2026-09-05 from the publish job's own steps).
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-fern
+
+      - name: native toolchain builds the candidate (make selfhost-cli)
+        run: |
+          make selfhost-cli SELFHOST_TARGET=arm64-linux
+          mkdir -p build
+          cp bin/fern-selfhost build/candidate
+
+      - name: the candidate compiles the current compiler, and that compiler works
+        run: STAGE0=build/candidate make bootstrap
+
   publish:
     if: github.event_name == 'workflow_dispatch' && inputs.publish
     strategy:
