@@ -21,6 +21,29 @@ import "./util";
 
 // =================== EXPRESSIONS ====================
 
+// hex_digit is one lowercase hex digit as its ASCII byte.
+function hex_digit(d: i32): u8 {
+    if (d < 10) { return (48 + d) as u8; }
+    return (87 + d) as u8;
+}
+
+// append_hex_escape writes `\xNN` for one byte. A control byte stays an escape
+// so the formatted source stays text — a raw NUL makes git read the file as
+// binary — and scan_string's `\xNN` reads the same byte back.
+function append_hex_escape(out: u8[], b: i32): u8[] {
+    var a: u8[] = out;
+    a = a.append(92 as u8);
+    a = a.append(120 as u8);
+    a = a.append(hex_digit(b / 16));
+    a = a.append(hex_digit(b % 16));
+    return a;
+}
+
+// is_control_byte: the bytes native's printer re-escapes rather than emit raw.
+function is_control_byte(b: i32): boolean {
+    return b < 32 || b == 127;
+}
+
 // quote_string wraps a string value in `"`-delimited form, with
 // the same escape set scan_string in the lexer recognises (so
 // the result re-parses). The Fern strings here don't carry the
@@ -38,6 +61,7 @@ function quote_string(s: string): string {
         else if (b == 10) { out = out.append(92 as u8); out = out.append(110 as u8); }  // \n
         else if (b == 9) { out = out.append(92 as u8); out = out.append(116 as u8); }   // \t
         else if (b == 13) { out = out.append(92 as u8); out = out.append(114 as u8); }  // \r
+        else if (is_control_byte(b)) { out = append_hex_escape(out, b); }
         else { out = out.append(s[i]); }
         i = i + 1;
     }
@@ -59,6 +83,7 @@ function escape_fstring_lit(s: string): string {
         else if (b == 13) { out = out.append(92 as u8); out = out.append(114 as u8); }   // \r
         else if (b == 123) { out = out.append(123 as u8); out = out.append(123 as u8); } // {{
         else if (b == 125) { out = out.append(125 as u8); out = out.append(125 as u8); } // }}
+        else if (is_control_byte(b)) { out = append_hex_escape(out, b); }
         else { out = out.append(s[i]); }
         i = i + 1;
     }
@@ -3379,6 +3404,12 @@ function check_traits_and_impls(): i32 {
     // rebuilds byte-exact (no per-byte slicing of split code points).
     if (quote_string("héllo\nwörld") != "\"héllo\\nwörld\"") { return 340; }
     if (escape_fstring_lit("pré{x}é") != "pré{{x}}é") { return 341; }
+
+    // A control byte re-emits as `\xNN` rather than raw, so the formatted
+    // source stays text and scan_string reads the same byte back. `\0` takes
+    // the hex form too — native's printer has no `\0` arm either.
+    if (quote_string("a\x00b\x1fc\x7fd") != "\"a\\x00b\\x1fc\\x7fd\"") { return 342; }
+    if (escape_fstring_lit("a\x00b") != "a\\x00b") { return 343; }
     // And survive a full format → re-lex round-trip: the verbatim parse
     // keeps the f-string form, so its literal parts go through
     // escape_fstring_lit.

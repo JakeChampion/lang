@@ -96,6 +96,9 @@ func ReadLock(dir string) (map[string]Selected, error) {
 		case "url":
 			cur.Source.URL = v
 		case "hash":
+			if !validHashShape(v) {
+				return nil, fmt.Errorf("%s line %d: hash must be `sha256:` + 64 hex digits, got %q", LockFileName, ln+1, v)
+			}
 			cur.Source.Hash = v
 		default:
 			return nil, fmt.Errorf("%s line %d: unknown key %q", LockFileName, ln+1, k)
@@ -105,4 +108,25 @@ func ReadLock(dir string) (map[string]Selected, error) {
 		return nil, err
 	}
 	return out, nil
+}
+
+// validHashShape reports whether s is `sha256:` + 64 lowercase hex digits.
+//
+// Duplicated rather than shared: the hex half of a hash is joined onto the
+// package-store root to name a directory, so pkgcache.ValidateHash is the
+// authoritative gate (#8464) — but mvs is deliberately free of
+// manifest/pkgcache (see the note at the top of mvs.go), and catching a
+// malformed hash at parse time names the file and the key instead of
+// surfacing it from inside the loader.
+func validHashShape(s string) bool {
+	hex, ok := strings.CutPrefix(s, "sha256:")
+	if !ok || len(hex) != 64 {
+		return false
+	}
+	for _, r := range hex {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return false
+		}
+	}
+	return true
 }

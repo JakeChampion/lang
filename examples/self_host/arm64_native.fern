@@ -2815,13 +2815,13 @@ function arm64_gas_bad_cond_token(mnem: string, ops: string[]): string {
 //   - ins writes into the 128-bit register, so it has no half-width form.
 //   - ld1/st1/ld1r take a ONE-register list and a bare `[Xn]`: this form has
 //     no offset field, so an offset has to be refused rather than dropped.
-function arm64_gas_bad_lane(mnem: string, ops: string[]): string {
+function arm64_gas_bad_lane(mnem: string, ops: string[], lm: Arm64Mem): string {
     if (mnem == "ld1" || mnem == "st1" || mnem == "ld1r") {
         if (ops.len() != 2) { return mnem + ":arity"; }
         if (arm64_gas_vlist_one(ops[0]) < 0) { return arm64_gas_trim(ops[0]); }
         var lc: i32 = arm64_gas_vlist_one_arr(ops[0]);
         if (lc < 0) { return arm64_gas_trim(ops[0]); }
-        var m: Arm64Mem = arm64_gas_mem(ops[1]);
+        var m: Arm64Mem = arm64_gas_mem_at(ops, 1, lm);
         if (m.base < 0 || m.off != 0 || m.off_reg >= 0) { return arm64_gas_trim(ops[1]); }
         return "";
     }
@@ -2895,10 +2895,10 @@ function arm64_gas_bad_lane(mnem: string, ops: string[]): string {
 // encoders cannot express is returned so the caller records it on p.unknown
 // and refuses the output, rather than letting a -1 sentinel fold into the
 // register field.
-function arm64_gas_bad_vec_token(mnem: string, ops: string[]): string {
+function arm64_gas_bad_vec_token(mnem: string, ops: string[], lm: Arm64Mem): string {
     var fam: i32 = arm64_gas_family(mnem);
     if (fam == arm64_fam_vecldst() || fam == arm64_fam_vecmov() || fam == arm64_fam_movi()) {
-        return arm64_gas_bad_lane(mnem, ops);
+        return arm64_gas_bad_lane(mnem, ops, lm);
     }
     // The across-lanes reductions come first: their destination is a SCALAR,
     // so routing on ops[0] being an arranged operand would miss them — and
@@ -3145,6 +3145,10 @@ struct Arm64Mem {
     ext_opt: i32,
     ext_amt: i32,
     ext_has_amt: boolean, // explicit #amt (an explicit #0 still sets S on a byte access)
+    // Index in the line's operand list this was parsed from, or -1 when the
+    // value did not come from arm64_gas_line_mem. arm64_gas_mem_at compares
+    // it to decide whether the line's one parse answers a given operand.
+    at: i32,
 }
 
 // arm64_gas_mem parses `[Xn]`, `[Xn, #off]` or `[Xn, Xm]`, tolerating a trailing
@@ -3191,7 +3195,34 @@ function arm64_gas_mem(op: string): Arm64Mem {
         }
     }
     return Arm64Mem { base: base, off: off, off_reg: off_reg,
-        idx_w: idx_w, ext_opt: ext_opt, ext_amt: ext_amt, ext_has_amt: ext_has_amt };
+        idx_w: idx_w, ext_opt: ext_opt, ext_amt: ext_amt, ext_has_amt: ext_has_amt,
+        at: 0 - 1 };
+}
+
+// arm64_gas_line_mem parses the line's memory operand — the first operand
+// carrying a `[` — ONCE, stamping the index it came from. Every form that has
+// one has exactly one, so this is the whole line's answer; a line with none
+// gets `at` = -1 and no parse.
+function arm64_gas_line_mem(ops: string[]): Arm64Mem {
+    var i: i32 = 0;
+    while (i < ops.len()) {
+        if (arm64_str_indexof(ops[i], "[") >= 0) {
+            var m: Arm64Mem = arm64_gas_mem(ops[i]);
+            return Arm64Mem { ...m, at: i };
+        }
+        i = i + 1;
+    }
+    return Arm64Mem { base: 0 - 1, off: 0, off_reg: 0 - 1, idx_w: false,
+        ext_opt: 3, ext_amt: 0, ext_has_amt: false, at: 0 - 1 };
+}
+
+// arm64_gas_mem_at answers `arm64_gas_mem(ops[k])` from the line's single
+// parse when that parse IS operand k, and parses otherwise. The two arms
+// return the same value by construction — `lm` was parsed from `ops[lm.at]` —
+// so a caller can switch to this without re-reasoning about its operand.
+function arm64_gas_mem_at(ops: string[], k: i32, lm: Arm64Mem): Arm64Mem {
+    if (lm.at == k) { return lm; }
+    return arm64_gas_mem(ops[k]);
 }
 
 // arm64_gas_mem_opt maps a memory operand's extend piece to its option
@@ -3256,14 +3287,11 @@ function arm64_gas_movwide_out_of_range(mnem: string, ops: string[]): boolean {
 // offsets through arm64_ldst_regext; the sign-extending loads, ldur and
 // stur have only an immediate-offset encoder, and must refuse rather than
 // quietly drop the index register.
-function arm64_gas_regoff_unsupported(mnem: string, ops: string[]): boolean {
+function arm64_gas_regoff_unsupported(mnem: string, ops: string[], lm: Arm64Mem): boolean {
     if (mnem != "ldrsw" && mnem != "ldrsb" && mnem != "ldrsh" && mnem != "ldur" && mnem != "stur") { return false; }
-    var i: i32 = 0;
-    while (i < ops.len()) {
-        if (arm64_str_indexof(ops[i], "[") >= 0 && arm64_gas_mem(ops[i]).off_reg >= 0) { return true; }
-        i = i + 1;
-    }
-    return false;
+    // The loop this replaces stopped at the first bracketed operand, which is
+    // what arm64_gas_line_mem parsed; a line has at most one.
+    return lm.at >= 0 && lm.off_reg >= 0;
 }
 
 // arm64_gas_has_bang reports whether an operand carries the `!` pre-index
@@ -4206,7 +4234,7 @@ function arm64_fam_is_excl(fam: i32): boolean {
 // express comes back non-empty, the program loop records it, and the
 // driver refuses the output — never a value folded into a field that does
 // not exist. "" = clean, or not one of these families.
-function arm64_gas_bad_ext_token(mnem: string, ops: string[]): string {
+function arm64_gas_bad_ext_token(mnem: string, ops: string[], lm: Arm64Mem): string {
     // An arranged vector operand routes the mnemonic to its SIMD form, so the
     // scalar family checks do not apply — the dual-form ones (fadd, fmul,
     // fneg, add, …) would reject `v23.4s` as a bad scalar register. The
@@ -4215,7 +4243,7 @@ function arm64_gas_bad_ext_token(mnem: string, ops: string[]): string {
     var fam: i32 = arm64_gas_family(mnem);
     var t: string = arm64_gas_bad_ext_alu(fam, mnem, ops);
     if (t.len() > 0) { return t; }
-    t = arm64_gas_bad_ext_mem(fam, mnem, ops);
+    t = arm64_gas_bad_ext_mem(fam, mnem, ops, lm);
     if (t.len() > 0) { return t; }
     return arm64_gas_bad_ext_fp(fam, mnem, ops);
 }
@@ -4229,18 +4257,18 @@ function arm64_gas_bad_ext_alu(fam: i32, mnem: string, ops: string[]): string {
     if (fam == arm64_fam_neg()) { return arm64_gas_bad_neg(ops); }
     return "";
 }
-function arm64_gas_bad_ext_mem(fam: i32, mnem: string, ops: string[]): string {
-    if (arm64_fam_is_excl(fam)) { return arm64_gas_bad_excl(mnem, ops); }
+function arm64_gas_bad_ext_mem(fam: i32, mnem: string, ops: string[], lm: Arm64Mem): string {
+    if (arm64_fam_is_excl(fam)) { return arm64_gas_bad_excl(mnem, ops, lm); }
     if (fam == arm64_fam_barrier()) { return arm64_gas_bad_barrier(mnem, ops); }
-    if (fam == arm64_fam_unscaled2()) { return arm64_gas_bad_unscaled2(mnem, ops); }
-    if (fam == arm64_fam_pair()) { return arm64_gas_bad_pair(mnem, ops); }
+    if (fam == arm64_fam_unscaled2()) { return arm64_gas_bad_unscaled2(mnem, ops, lm); }
+    if (fam == arm64_fam_pair()) { return arm64_gas_bad_pair(mnem, ops, lm); }
     if (mnem == "ldr" || mnem == "str" || mnem == "ldrb" || mnem == "strb" || mnem == "ldrh" || mnem == "strh") {
-        var re: string = arm64_gas_bad_regext(mnem, ops);
+        var re: string = arm64_gas_bad_regext(mnem, ops, lm);
         if (re != "") { return re; }
     }
     if (mnem == "ldr" || mnem == "str" || mnem == "ldrb" || mnem == "strb" || mnem == "ldrh" || mnem == "strh"
         || mnem == "ldrsb" || mnem == "ldrsh" || mnem == "ldrsw") {
-        return arm64_gas_bad_ldst_off(mnem, ops);
+        return arm64_gas_bad_ldst_off(mnem, ops, lm);
     }
     return "";
 }
@@ -4251,12 +4279,12 @@ function arm64_gas_bad_ext_mem(fam: i32, mnem: string, ops: string[]): string {
 // offset in neither is not merely unrepresentable — both fields WRAP, so
 // emitting one anyway yields a valid instruction addressing somewhere else
 // entirely. gas refuses these with "immediate offset out of range".
-function arm64_gas_bad_ldst_off(mnem: string, ops: string[]): string {
+function arm64_gas_bad_ldst_off(mnem: string, ops: string[], lm: Arm64Mem): string {
     if (ops.len() != 2) { return ""; }                        // post-index takes another path
     if (arm64_str_indexof(ops[1], "[") < 0) { return ""; }    // `ldr x0, =literal`
     if (arm64_gas_has_bang(ops[1])) { return ""; }            // pre-index is its own imm9
     if (arm64_gas_is_d(ops[0]) || arm64_gas_is_sreg(ops[0])) { return ""; } // FP scales differ
-    var m: Arm64Mem = arm64_gas_mem(ops[1]);
+    var m: Arm64Mem = arm64_gas_mem_at(ops, 1, lm);
     if (m.off_reg >= 0) { return ""; }
     if (arm64_ldst_scalable(m.off, arm64_gas_ldst_size(mnem, ops[0]))) { return ""; }
     if (m.off >= (0 - 256) && m.off <= 255) { return ""; }
@@ -4419,13 +4447,13 @@ function arm64_gas_bad_rev(mnem: string, ops: string[]): string {
 
 // The exclusives/ordered accesses take a plain [Xn] (no offset, index or
 // writeback), a W status register, and W data for the b/h variants.
-function arm64_gas_bad_excl(mnem: string, ops: string[]): string {
+function arm64_gas_bad_excl(mnem: string, ops: string[], lm: Arm64Mem): string {
     var want: i32 = 2;
     if (arm64_gas_is_excl_st(mnem)) { want = 3; }
     if (ops.len() != want) { return "arity"; }
     if (want == 3 && !arm64_gas_is_w(ops[0])) { return "status"; }
     if (arm64_gas_excl_size(mnem, ops[want - 2]) < 0) { return "w"; }
-    var m: Arm64Mem = arm64_gas_mem(ops[want - 1]);
+    var m: Arm64Mem = arm64_gas_mem_at(ops, want - 1, lm);
     if (m.off != 0 || m.off_reg >= 0 || arm64_gas_has_bang(ops[want - 1])) { return "mem"; }
     return "";
 }
@@ -4455,10 +4483,10 @@ function arm64_gas_bad_barrier(mnem: string, ops: string[]): string {
 
 // The unscaled b/h and sign-extending forms take a plain [Xn{, #imm9}]
 // with imm9 in -256..255; ldursw's destination is X only.
-function arm64_gas_bad_unscaled2(mnem: string, ops: string[]): string {
+function arm64_gas_bad_unscaled2(mnem: string, ops: string[], lm: Arm64Mem): string {
     if (ops.len() != 2) { return "arity"; }
     if (mnem == "ldursw" && arm64_gas_is_w(ops[0])) { return "w"; }
-    var m: Arm64Mem = arm64_gas_mem(ops[1]);
+    var m: Arm64Mem = arm64_gas_mem_at(ops, 1, lm);
     if (m.off_reg >= 0 || arm64_gas_has_bang(ops[1])) { return "mem"; }
     if (m.off < (0 - 256) || m.off > 255) { return "imm9"; }
     return "";
@@ -4468,14 +4496,14 @@ function arm64_gas_bad_unscaled2(mnem: string, ops: string[]): string {
 // pairs are a loud gap, and the offset is range-checked here — the
 // encoder masks it into imm7, so out of range would encode a different,
 // valid instruction.
-function arm64_gas_bad_pair(mnem: string, ops: string[]): string {
+function arm64_gas_bad_pair(mnem: string, ops: string[], lm: Arm64Mem): string {
     if (ops.len() < 3 || ops.len() > 4) { return "arity"; }
     if (arm64_gas_is_sreg(ops[0]) || arm64_gas_is_sreg(ops[1])) { return "sreg"; }
     if (arm64_gas_is_w(ops[0]) != arm64_gas_is_w(ops[1])) { return "width"; }
     if (arm64_gas_is_d(ops[0]) != arm64_gas_is_d(ops[1])) { return "width"; }
     var scale: i32 = 8;
     if (arm64_gas_is_w(ops[0])) { scale = 4; }
-    var off: i32 = arm64_gas_mem(ops[2]).off;
+    var off: i32 = arm64_gas_mem_at(ops, 2, lm).off;
     if (ops.len() == 4) {
         if (off != 0) { return "mem"; }   // post-index base must be plain [Xn]
         off = arm64_gas_imm(ops[3]);
@@ -4488,9 +4516,9 @@ function arm64_gas_bad_pair(mnem: string, ops: string[]): string {
 // must match the offset register's width — a W index REQUIRES uxtw/sxtw,
 // lsl/sxtx take an X index — and the amount must be 0 or log2 of the
 // access size. The FP registers have no register-offset encoder here.
-function arm64_gas_bad_regext(mnem: string, ops: string[]): string {
+function arm64_gas_bad_regext(mnem: string, ops: string[], lm: Arm64Mem): string {
     if (ops.len() != 2) { return ""; }   // post-index and `=literal` shapes take other paths
-    var m: Arm64Mem = arm64_gas_mem(ops[1]);
+    var m: Arm64Mem = arm64_gas_mem_at(ops, 1, lm);
     if (m.off_reg < 0) { return ""; }
     if (arm64_gas_is_d(ops[0]) || arm64_gas_is_sreg(ops[0])) { return "regoff"; }
     if (m.ext_opt < 0) { return "ext"; }
@@ -4685,16 +4713,16 @@ function arm64_gas_emit_bitops(own a: Arm64Asm, mnem: string, ops: string[]): Ar
     return Arm64Asm { ...a, code: arm64_cls(a.code, rd, rn, w) };
 }
 
-function arm64_gas_emit_excl(own a: Arm64Asm, mnem: string, ops: string[]): Arm64Asm {
+function arm64_gas_emit_excl(own a: Arm64Asm, mnem: string, ops: string[], lm: Arm64Mem): Arm64Asm {
     if (arm64_gas_is_excl_st(mnem)) {
         if (ops.len() < 3) { return a; }
         return Arm64Asm { ...a, code: arm64_excl_store(a.code, arm64_gas_excl_size(mnem, ops[1]),
-            arm64_str_starts_with(mnem, "stl"), arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_mem(ops[2]).base) };
+            arm64_str_starts_with(mnem, "stl"), arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_mem_at(ops, 2, lm).base) };
     }
     if (ops.len() < 2) { return a; }
     var size: i32 = arm64_gas_excl_size(mnem, ops[0]);
     var rt: i32 = arm64_gas_reg(ops[0]);
-    var rn: i32 = arm64_gas_mem(ops[1]).base;
+    var rn: i32 = arm64_gas_mem_at(ops, 1, lm).base;
     if (arm64_gas_is_acqrel(mnem)) {
         return Arm64Asm { ...a, code: arm64_acqrel(a.code, size, arm64_str_starts_with(mnem, "ld"), rt, rn) };
     }
@@ -4707,10 +4735,10 @@ function arm64_gas_emit_barrier(own a: Arm64Asm, mnem: string, ops: string[]): A
     return Arm64Asm { ...a, code: arm64_barrier(a.code, mnem == "dsb", arm64_barrier_opt(arm64_gas_trim(ops[0]))) };
 }
 
-function arm64_gas_emit_unscaled2(own a: Arm64Asm, mnem: string, ops: string[]): Arm64Asm {
+function arm64_gas_emit_unscaled2(own a: Arm64Asm, mnem: string, ops: string[], lm: Arm64Mem): Arm64Asm {
     if (ops.len() < 2) { return a; }
     var rt: i32 = arm64_gas_reg(ops[0]);
-    var m: Arm64Mem = arm64_gas_mem(ops[1]);
+    var m: Arm64Mem = arm64_gas_mem_at(ops, 1, lm);
     if (mnem == "ldursb" || mnem == "ldursh" || mnem == "ldursw") {
         var ssz: i32 = 0;
         if (mnem == "ldursh") { ssz = 1; }
@@ -4725,14 +4753,14 @@ function arm64_gas_emit_unscaled2(own a: Arm64Asm, mnem: string, ops: string[]):
 // stp/ldp for X, W and D pairs in the three addressing modes (offset,
 // pre-index `!`, post-index fourth operand). The shape and range were
 // vetted by arm64_gas_bad_pair.
-function arm64_gas_emit_pair(own a: Arm64Asm, mnem: string, ops: string[]): Arm64Asm {
+function arm64_gas_emit_pair(own a: Arm64Asm, mnem: string, ops: string[], lm: Arm64Mem): Arm64Asm {
     if (ops.len() < 3) { return a; }
     var base: i64 = 0xa8000000;
     var scale: i32 = 8;
     if (arm64_gas_is_w(ops[0])) { base = 0x28000000; scale = 4; }
     if (arm64_gas_is_d(ops[0])) { base = 0x6c000000; }
     if (mnem == "ldp") { base = base | 0x00400000; }
-    var m: Arm64Mem = arm64_gas_mem(ops[2]);
+    var m: Arm64Mem = arm64_gas_mem_at(ops, 2, lm);
     var off: i32 = m.off;
     var mode: i64 = 0x1000000;   // signed offset (2 << 23)
     if (arm64_gas_has_bang(ops[2])) {
@@ -4756,12 +4784,12 @@ function arm64_gas_emit_ldst_regext(own a: Arm64Asm, load: boolean, size: i32, r
 // Scalar D/S ldr/str in all four addressing modes; a negative or
 // unaligned scaled offset falls back to the unscaled imm9 form exactly as
 // GNU as rewrites it.
-function arm64_gas_emit_ldst_fp(own a: Arm64Asm, load: boolean, rt: i32, ops: string[], single: boolean): Arm64Asm {
+function arm64_gas_emit_ldst_fp(own a: Arm64Asm, load: boolean, rt: i32, ops: string[], single: boolean, lm: Arm64Mem): Arm64Asm {
     if (ops.len() >= 3) {   // post-index `[Xn], #imm9`
-        var pm: Arm64Mem = arm64_gas_mem(ops[1]);
+        var pm: Arm64Mem = arm64_gas_mem_at(ops, 1, lm);
         return Arm64Asm { ...a, code: arm64_ldst_fp_imm9(a.code, load, rt, pm.base, arm64_gas_imm(ops[2]), 0x400, single) };
     }
-    var m: Arm64Mem = arm64_gas_mem(ops[1]);
+    var m: Arm64Mem = arm64_gas_mem_at(ops, 1, lm);
     if (arm64_gas_has_bang(ops[1])) {    // pre-index `[Xn, #imm9]!`
         return Arm64Asm { ...a, code: arm64_ldst_fp_imm9(a.code, load, rt, m.base, m.off, 0xc00, single) };
     }
@@ -4813,7 +4841,7 @@ function arm64_gas_bcond_suffix(mnem: string): str {
 
 // arm64_gas_emit assembles one mnemonic + operand list into a.code (or
 // queues a label fixup). Unknown mnemonics are ignored.
-function arm64_gas_emit(own a: Arm64Asm, mnem: string, ops: string[]): Arm64Asm {
+function arm64_gas_emit(own a: Arm64Asm, mnem: string, ops: string[], lm: Arm64Mem): Arm64Asm {
     var fam: i32 = arm64_gas_family(mnem);
     if (fam == arm64_fam_fixed()) {
         if (mnem == "ret") { return Arm64Asm { ...a, code: arm64_ret(a.code, arm64_lr()) }; }
@@ -4845,10 +4873,10 @@ function arm64_gas_emit(own a: Arm64Asm, mnem: string, ops: string[]): Arm64Asm 
     if (fam == arm64_fam_extr_ror()) { return arm64_gas_emit_extr_ror(a, mnem, ops); }
     if (fam == arm64_fam_condsel()) { return arm64_gas_emit_condsel(a, mnem, ops); }
     if (fam == arm64_fam_bitops()) { return arm64_gas_emit_bitops(a, mnem, ops); }
-    if (arm64_fam_is_excl(fam)) { return arm64_gas_emit_excl(a, mnem, ops); }
+    if (arm64_fam_is_excl(fam)) { return arm64_gas_emit_excl(a, mnem, ops, lm); }
     if (fam == arm64_fam_barrier()) { return arm64_gas_emit_barrier(a, mnem, ops); }
-    if (fam == arm64_fam_unscaled2()) { return arm64_gas_emit_unscaled2(a, mnem, ops); }
-    if (fam == arm64_fam_pair()) { return arm64_gas_emit_pair(a, mnem, ops); }
+    if (fam == arm64_fam_unscaled2()) { return arm64_gas_emit_unscaled2(a, mnem, ops, lm); }
+    if (fam == arm64_fam_pair()) { return arm64_gas_emit_pair(a, mnem, ops, lm); }
     if (fam == arm64_fam_fp3()) {
         if (ops.len() < 3) { return a; }
         return Arm64Asm { ...a, code: arm64_fp3(a.code, arm64_fp3_base(mnem), arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_reg(ops[2]), arm64_gas_is_sreg(ops[0])) };
@@ -4857,7 +4885,7 @@ function arm64_gas_emit(own a: Arm64Asm, mnem: string, ops: string[]): Arm64Asm 
     if (fam == arm64_fam_fcmp()) { return arm64_gas_emit_fcmp(a, mnem, ops); }
     if (fam == arm64_fam_movwide()) { return arm64_gas_emit_movwide(a, mnem, ops); }
     if (fam == arm64_fam_addsub()) { return arm64_gas_emit_addsub(a, mnem, ops); }
-    if (fam == arm64_fam_ldst()) { return arm64_gas_emit_ldst(a, mnem, ops); }
+    if (fam == arm64_fam_ldst()) { return arm64_gas_emit_ldst(a, mnem, ops, lm); }
     if (fam == arm64_fam_neg()) {
         if (ops.len() < 2) { return a; }
         var nst: i32 = 0;
@@ -4889,7 +4917,7 @@ function arm64_gas_emit(own a: Arm64Asm, mnem: string, ops: string[]): Arm64Asm 
         return Arm64Asm { ...a, code: arm64_extend(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), xsign, xhalf, !arm64_gas_is_w(ops[0])) };
     }
     if (fam == arm64_fam_muldiv()) { return arm64_gas_emit_muldiv(a, mnem, ops); }
-    if (fam == arm64_fam_unscaled()) { return arm64_gas_emit_unscaled(a, mnem, ops); }
+    if (fam == arm64_fam_unscaled()) { return arm64_gas_emit_unscaled(a, mnem, ops, lm); }
     if (fam == arm64_fam_shift()) { return arm64_gas_emit_shift(a, mnem, ops); }
     if (fam == arm64_fam_logical3()) {
         // register forms only here; the #imm forms are handled in the
@@ -4913,10 +4941,10 @@ function arm64_gas_emit(own a: Arm64Asm, mnem: string, ops: string[]): Arm64Asm 
         return Arm64Asm { ...a, code: arm64_vecacross(a.code, arm64_gas_scalar_reg(ops[0]), arm64_gas_vreg_any(ops[1]),
             arm64_vec_entry_op(acr), arm64_gas_arr_size(ac), arm64_gas_arr_q(ac), arm64_vec_entry_u(acr)) };
     }
-    if (fam == arm64_fam_vecldst()) { return arm64_gas_emit_vecldst(a, mnem, ops); }
+    if (fam == arm64_fam_vecldst()) { return arm64_gas_emit_vecldst(a, mnem, ops, lm); }
     if (fam == arm64_fam_vecmov()) { return arm64_gas_emit_vecmov(a, mnem, ops); }
     if (fam == arm64_fam_movi()) { return arm64_gas_emit_movi(a, ops); }
-    if (fam == arm64_fam_ldst_narrow()) { return arm64_gas_emit_ldst_narrow(a, mnem, ops); }
+    if (fam == arm64_fam_ldst_narrow()) { return arm64_gas_emit_ldst_narrow(a, mnem, ops, lm); }
     if (fam == arm64_fam_funary()) {
         return Arm64Asm { ...a, code: arm64_funary_d(a.code, arm64_funary_d_base(mnem), arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_is_sreg(ops[0])) };
     }
@@ -5065,20 +5093,20 @@ function arm64_gas_emit_addsub(own a: Arm64Asm, mnem: string, ops: string[]): Ar
 }
 // arm64_gas_emit_ldst encodes ldr/str for X, W, D and S registers in
 // every addressing mode.
-function arm64_gas_emit_ldst(own a: Arm64Asm, mnem: string, ops: string[]): Arm64Asm {
+function arm64_gas_emit_ldst(own a: Arm64Asm, mnem: string, ops: string[], lm: Arm64Mem): Arm64Asm {
     var rt: i32 = arm64_gas_reg(ops[0]);
     // SIMD&FP `ldr/str Dt|St, <mem>` — a separate opcode space (V=1).
     if (arm64_gas_is_d(ops[0]) || arm64_gas_is_sreg(ops[0])) {
-        return arm64_gas_emit_ldst_fp(a, mnem == "ldr", rt, ops, arm64_gas_is_sreg(ops[0]));
+        return arm64_gas_emit_ldst_fp(a, mnem == "ldr", rt, ops, arm64_gas_is_sreg(ops[0]), lm);
     }
     if (ops.len() >= 3) {
         // post-index: `ldr Xt, [Xn], #off` (ops[1]="[Xn]", ops[2]="#off")
-        var pb: i32 = arm64_gas_mem(ops[1]).base;
+        var pb: i32 = arm64_gas_mem_at(ops, 1, lm).base;
         var po: i32 = arm64_gas_imm(ops[2]);
         if (mnem == "ldr") { return Arm64Asm { ...a, code: arm64_ldr_post(a.code, rt, pb, po) }; }
         return Arm64Asm { ...a, code: arm64_str_post(a.code, rt, pb, po) };
     }
-    var m: Arm64Mem = arm64_gas_mem(ops[1]);
+    var m: Arm64Mem = arm64_gas_mem_at(ops, 1, lm);
     // register / extended-register offset `[Xn, Rm{, <ext> {#s}}]`
     // (array indexing; the shape was vetted by arm64_gas_bad_regext).
     if (m.off_reg >= 0) {
@@ -5144,9 +5172,9 @@ function arm64_gas_emit_muldiv(own a: Arm64Asm, mnem: string, ops: string[]): Ar
     return Arm64Asm { ...a, code: arm64_div_w(a.code, mnem == "sdiv", rd, rn, rm, w) };
 }
 // arm64_gas_emit_unscaled encodes the explicit ldur/stur spellings.
-function arm64_gas_emit_unscaled(own a: Arm64Asm, mnem: string, ops: string[]): Arm64Asm {
+function arm64_gas_emit_unscaled(own a: Arm64Asm, mnem: string, ops: string[], lm: Arm64Mem): Arm64Asm {
     if (ops.len() < 2) { return a; }
-    var um: Arm64Mem = arm64_gas_mem(ops[1]);
+    var um: Arm64Mem = arm64_gas_mem_at(ops, 1, lm);
     // A d- or s-register is SIMD&FP, a different opcode space (V=1).
     // The explicit ldur/stur spelling used to fall straight through to the
     // GP encoder, so `stur d1, [x2, #-16]` assembled as the integer STUR of
@@ -5165,14 +5193,14 @@ function arm64_gas_emit_unscaled(own a: Arm64Asm, mnem: string, ops: string[]): 
 // arm64_gas_emit_vecldst encodes the single-structure ld1/st1/ld1r the
 // __memchr / __ascii_run kernels emit. Operand shapes are vetted in
 // arm64_gas_bad_vec_token before reaching here.
-function arm64_gas_emit_vecldst(own a: Arm64Asm, mnem: string, ops: string[]): Arm64Asm {
+function arm64_gas_emit_vecldst(own a: Arm64Asm, mnem: string, ops: string[], lm: Arm64Mem): Arm64Asm {
     if (ops.len() != 2) { return a; }
     var lbase: i64 = 0x0c407000;
     if (mnem == "st1") { lbase = 0x0c007000; }
     if (mnem == "ld1r") { lbase = 0x0d40c000; }
     var lc: i32 = arm64_gas_vlist_one_arr(ops[0]);
     return Arm64Asm { ...a, code: arm64_vecldst1(a.code, lbase, arm64_gas_vlist_one(ops[0]),
-        arm64_gas_mem(ops[1]).base, arm64_gas_arr_size(lc), arm64_gas_arr_q(lc)) };
+        arm64_gas_mem_at(ops, 1, lm).base, arm64_gas_arr_size(lc), arm64_gas_arr_q(lc)) };
 }
 // arm64_gas_emit_vecmov encodes the lane moves: dup, ins, umov and smov.
 function arm64_gas_emit_vecmov(own a: Arm64Asm, mnem: string, ops: string[]): Arm64Asm {
@@ -5226,17 +5254,17 @@ function arm64_gas_emit_movi(own a: Arm64Asm, ops: string[]): Arm64Asm {
 }
 // arm64_gas_emit_ldst_narrow encodes the byte and halfword accesses and the
 // sign-extending loads.
-function arm64_gas_emit_ldst_narrow(own a: Arm64Asm, mnem: string, ops: string[]): Arm64Asm {
+function arm64_gas_emit_ldst_narrow(own a: Arm64Asm, mnem: string, ops: string[], lm: Arm64Mem): Arm64Asm {
     if (ops.len() < 2) { return a; }
     // post-index `ldrb/strb Wt, [Xn], #imm` (the byte-copy loop): 3
     // operands, ops[1]="[Xn]", ops[2]="#imm".
     if ((mnem == "ldrb" || mnem == "strb") && ops.len() >= 3) {
-        var pbb: i32 = arm64_gas_mem(ops[1]).base;
+        var pbb: i32 = arm64_gas_mem_at(ops, 1, lm).base;
         var poo: i32 = arm64_gas_imm(ops[2]);
         if (mnem == "ldrb") { return Arm64Asm { ...a, code: arm64_ldrb_post(a.code, arm64_gas_reg(ops[0]), pbb, poo) }; }
         return Arm64Asm { ...a, code: arm64_strb_post(a.code, arm64_gas_reg(ops[0]), pbb, poo) };
     }
-    var bm: Arm64Mem = arm64_gas_mem(ops[1]);
+    var bm: Arm64Mem = arm64_gas_mem_at(ops, 1, lm);
     // `ldrb/strb/ldrh/strh Wt, [Xn, Rm{, <ext> {#s}}]` — base + index,
     // what every string-copy loop emits. #6047: this fell through to the
     // immediate encoder below with bm.off carrying the digit from the
@@ -6238,6 +6266,10 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
             rest = arm64_gas_trim(slice_unchecked(line, sp + 1, line.len()));
         }
         var ops: string[] = arm64_gas_operands(rest);
+        // The line's memory operand, parsed once: the vet steps and the
+        // encoders below each used to re-parse it, three times over on a
+        // plain ldr/str.
+        var lmem: Arm64Mem = arm64_gas_line_mem(ops);
         // A register-shaped operand that fails the strict decode (SH-006 —
         // `x1a`, `x31`, `d40`) is recorded like an unknown mnemonic: the
         // encoders below would otherwise fold the -1 sentinel into garbage
@@ -6249,7 +6281,7 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
         // Same discipline for the SIMD operands: a shape the encoders have no
         // form for is recorded, never folded into the register field, where a
         // -1 would emit a plausible instruction on the wrong register.
-        var badvec: string = arm64_gas_bad_vec_token(mnem, ops);
+        var badvec: string = arm64_gas_bad_vec_token(mnem, ops, lmem);
         if (badvec.len() > 0) {
             p = Arm64GasProg { ...p, unknown: p.unknown.append(mnem + ":" + badvec) };
         }
@@ -6258,7 +6290,7 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
         // extended-register addressing, exclusives, barriers, the scalar-FP
         // additions): a shape their encoders cannot express is recorded,
         // never folded into a wrong field.
-        var badext: string = arm64_gas_bad_ext_token(mnem, ops);
+        var badext: string = arm64_gas_bad_ext_token(mnem, ops, lmem);
         if (badext.len() > 0) {
             p = Arm64GasProg { ...p, unknown: p.unknown.append(mnem + ":" + badext) };
         }
@@ -6272,7 +6304,7 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
         // only encoder takes an immediate: refuse the line instead of silently
         // dropping the index. #6047 was exactly this hole, on ldrb/strb, which
         // now encode the register form properly.
-        if (arm64_gas_regoff_unsupported(mnem, ops)) {
+        if (arm64_gas_regoff_unsupported(mnem, ops, lmem)) {
             p = Arm64GasProg { ...p, unknown: p.unknown.append(mnem + ":regoff") };
         }
         // Same discipline for a `!` pre-index writeback on a form that has only
@@ -6340,7 +6372,7 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
             continue;
         }
         if (mnem == "ldr" && arm64_str_indexof(rest, "@PAGEOFF") >= 0) {
-            var lm: Arm64Mem = arm64_gas_mem(ops[1]); // base reg; off symbolic
+            var lm: Arm64Mem = arm64_gas_mem_at(ops, 1, lmem); // base reg; off symbolic
             // symbol is the bracket's second operand, before '@'
             var linner: string = ops[1];
             var lb: i32 = arm64_str_indexof(linner, "[");
@@ -6464,7 +6496,7 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
             }
             continue;
         }
-        a = arm64_gas_emit(a, mnem, ops);
+        a = arm64_gas_emit(a, mnem, ops, lmem);
     }
     if (arm64_lit_pool_far(p, a.code.len()) > arm64_lit_reach()) {
         p = Arm64GasProg { ...p, unknown: p.unknown.append("ltorg:range") };

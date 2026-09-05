@@ -312,7 +312,7 @@ func TestConstPropEnablesEndToEndCollapse(t *testing.T) {
 	FuseTee(p)
 	PropagateCopies(p)
 	ConstPropagate(p)
-	Fold(p)
+	foldProgram(p)
 	PropagateCopies(p)
 	fn := findFunc(p, "f")
 	found := false
@@ -398,7 +398,7 @@ func TestFoldRemovesConstDropPair(t *testing.T) {
 		},
 	}
 	p := &Program{Funcs: []*Func{fn}}
-	Fold(p)
+	foldProgram(p)
 	if len(fn.Ops) != 1 || fn.Ops[0].Kind != OpReturnVoid {
 		t.Errorf("expected only ReturnVoid after const+drop fold, got:\n%s", p)
 	}

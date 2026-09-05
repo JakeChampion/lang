@@ -505,6 +505,60 @@ function main(): i32 { var e: email.Email = email.Email { addr: "x" }; return 0;
 	if code, out := runFernInterp(t, badCtor); code == 0 || !strings.Contains(out, "construct opaque type") {
 		t.Errorf("construction of opaque type should be rejected: exit=%d out=%q", code, out)
 	}
+	// Illegal: a struct PATTERN reads the fields by name, which is the same
+	// access as `e.addr` — the rule was enforced on field access,
+	// construction and var-destructure, but neither match path consulted it,
+	// so these three spellings walked straight through (#8451).
+	patterns := []struct{ name, body string }{
+		{"bad_match.fern", `import "./email";
+function main(): i32 {
+    var e: email.Email = email.make("x");
+    match (e) { email.Email { addr } => { print(addr); return 0; } }
+}
+`},
+		{"bad_iflet.fern", `import "./email";
+function main(): i32 {
+    var e: email.Email = email.make("x");
+    if let email.Email { addr } = e { print(addr); }
+    return 0;
+}
+`},
+		{"bad_match_expr.fern", `import "./email";
+function main(): i32 {
+    var e: email.Email = email.make("x");
+    var s: string = match (e) { email.Email { addr } => addr };
+    print(s);
+    return 0;
+}
+`},
+	}
+	for _, p := range patterns {
+		src := write(p.name, p.body)
+		if code, out := runFernInterp(t, src); code == 0 || !strings.Contains(out, "opaque type email.Email") {
+			t.Errorf("%s: destructuring an opaque type should be rejected: exit=%d out=%q", p.name, code, out)
+		}
+	}
+	// Legal: a pattern that binds NO field is an existence test, not an
+	// access, and the defining module may of course destructure its own type.
+	okRest := write("ok_rest.fern", `import "./email";
+function main(): i32 {
+    var e: email.Email = email.make("x");
+    match (e) { email.Email { .. } => { print("ok"); return 0; } }
+}
+`)
+	if code, out := runFernInterp(t, okRest); code != 0 || !strings.Contains(out, "ok") {
+		t.Errorf("`S { .. }` binds nothing and must stay legal: exit=%d out=%q", code, out)
+	}
+	okInside := write("ok_inside.fern", `pub opaque struct Email { addr: string }
+pub function make(a: string): Email { return Email { addr: a }; }
+function main(): i32 {
+    var e: Email = make("a@b.com");
+    match (e) { Email { addr } => { print(addr); return 0; } }
+}
+`)
+	if code, out := runFernInterp(t, okInside); code != 0 || !strings.Contains(out, "a@b.com") {
+		t.Errorf("the defining module must still destructure its own opaque type: exit=%d out=%q", code, out)
+	}
 }
 
 // `dyn Trait` (runtime trait objects): a heterogeneous `dyn Shape[]`

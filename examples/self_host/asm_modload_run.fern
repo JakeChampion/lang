@@ -35,6 +35,8 @@ import "./irverifyprovided";
 import "./modloader";
 import "./treeshake";
 import "./ircore";
+import "./constfold";
+import "./platforms";
 
 // ---- callee resolution (#6639 slice 4) ---------------------------------
 
@@ -1074,6 +1076,11 @@ function main(): i32 {
             }
             var merged: parser.Module = flatten.bundle(entry, loaded);
             merged = modloader.merge_builtins(dir, merged);
+            // target_os() is the -target's environment as a string literal, not
+            // a call: the compile driver folds it here (fern.fern) and no
+            // backend emits a body for it, so a pipeline that skips the fold
+            // hands every later pass a call to a symbol nothing defines.
+            merged = constfold.fold_target_os(merged, platforms.for_target(target).environment);
             if (vprovided) { return verify_provided_module(merged); }
             if (probe) {
                 // Probe the module codegen actually routes on: run the same

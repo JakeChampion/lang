@@ -835,6 +835,12 @@ pub struct LowerFrame {
     // (field_move_keys_of_stmt); set/cleared per statement by lower_stmt's
     // wrapper, read at the call-argument site by emit_own_field_arg.
     fld_bases: string[],
+    // own_lift_sites: the "line:col" keys of the `var` LIFTS whose local is
+    // handed to a declared `own` position (own_lift_retain_sites_of, #8267).
+    // Each takes the transfer retain emit_own_field_arg gives a field read
+    // passed directly, at the BIND rather than the argument — the field can be
+    // released between the two.
+    own_lift_sites: string[],
 }
 
 pub struct LowerState {
@@ -12288,7 +12294,9 @@ function lower_call_named_generic(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIde
         if (!sc.ok) { return sc; }
         // A field read at an explicit `own` position is the superseded-field
         // shape E051 admits (#8186): moved out of its box when this statement
-        // claimed it, retained for the callee otherwise.
+        // claimed it, retained for the callee otherwise. The same hand-over one
+        // binding along — `var st = a.cfi; f(st)` — is retained at the BIND
+        // instead (emit_own_lift_retain, #8267).
         if (util.index_of_str(sc.frame.sigs.own_positions, cid.name + "|" + util.i32_to_string(ai)) >= 0
             && !sc.callee_param_is_typevar(cid.name, ai)) {
             match (c.args[ai]) {
@@ -18855,6 +18863,7 @@ function lower_stmt_inner(st: ast.Stmt, s: LowerState): LowerState {
     match (st) {
         ast.StmtVar(v) =>{
             var sv: LowerState = lower_stmt_var(v, s);
+            sv = emit_own_lift_retain(v, sv);
             sv = seed_snapshot_local(v, sv);
             return release_last_use_source(v, sv);
         },
@@ -25414,9 +25423,14 @@ function append_inplace_recvs(stmts: ast.Stmt[], esc: string[], acc: string[]): 
 //     function exits before anything here can look again;
 //   - in the rebind `s = S { ...s, xs: s.xs.append(v) }`, every read outside the
 //     assignment: later reads resolve through the replacing container.
+//   - a LENGTH or INDEX read of the same field from a top-level statement the
+//     site is sequenced after (`var bk = h(s.xs.len()); … s.xs.with(bk, v)`):
+//     it yields a scalar computed before the mutation, so it observes neither
+//     the store nor the field's move-out. Only those two positions — anything
+//     else can bind the buffer itself to a name that outlives the site.
 //
-// A bare read of the root, a read of the same field, or a method call on the
-// root forces the clone. So does a root read from a defer action or a lambda
+// A bare read of the root, any other read of the same field, or a method call
+// on the root forces the clone. So does a root read from a defer action or a lambda
 // (those run after the return), and a root bound to a second name anywhere
 // (`var t = s`), which keeps the old container reachable under that name.
 //
@@ -25550,10 +25564,24 @@ function fai_cands_expr(e: ast.Expr, roots: string[], acc: string[]): string[] {
     return a;
 }
 
+// fai_is_root_field reports whether `e` is exactly `<root>.<field>`.
+function fai_is_root_field(e: ast.Expr, root: string, field: string): boolean {
+    match (e) {
+        ast.ExprFieldAccess(fa) => {
+            match (fa.obj) {
+                ast.ExprIdent(id) => { return id.name == root && fa.field == field; },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
 // fai_excused_place classifies one ident-rooted field chain. Only the FIRST
 // segment out of the root decides: a chain that starts through another field
 // cannot reach `root.field`'s buffer.
-function fai_excused_place(x: ast.Expr, root: string, field: string, site: string, n: i32): i32 {
+function fai_excused_place(x: ast.Expr, root: string, field: string, site: string, pre: boolean, n: i32): i32 {
     match (x) {
         ast.ExprFieldAccess(fa) => {
             match (fa.obj) {
@@ -25561,11 +25589,11 @@ function fai_excused_place(x: ast.Expr, root: string, field: string, site: strin
                     if (id.name == root && fa.field != field) { return n + 1; }
                     return n;
                 },
-                ast.ExprFieldAccess(_) => { return fai_excused_place(fa.obj, root, field, site, n); },
-                _ => { return fai_excused_expr(fa.obj, root, field, site, n); }
+                ast.ExprFieldAccess(_) => { return fai_excused_place(fa.obj, root, field, site, pre, n); },
+                _ => { return fai_excused_expr(fa.obj, root, field, site, pre, n); }
             }
         },
-        _ => { return fai_excused_expr(x, root, field, site, n); }
+        _ => { return fai_excused_expr(x, root, field, site, pre, n); }
     }
     return n;
 }
@@ -25574,7 +25602,11 @@ function fai_excused_place(x: ast.Expr, root: string, field: string, site: strin
 // buffer `root.field` names. It mirrors astwalk.collect_idents_expr's traversal
 // so the two counts are comparable; a node kind it does not know contributes
 // nothing, which withholds the site.
-function fai_excused_expr(e: ast.Expr, root: string, field: string, site: string, acc: i32): i32 {
+//
+// `pre` marks an expression the site is SEQUENCED AFTER, where `root.field` in
+// length or index position is excused too: both yield a scalar computed before
+// the store, so neither observes it nor the field's move-out.
+function fai_excused_expr(e: ast.Expr, root: string, field: string, site: string, pre: boolean, acc: i32): i32 {
     var n: i32 = acc;
     match (e) {
         ast.ExprCall(c) => {
@@ -25582,14 +25614,16 @@ function fai_excused_expr(e: ast.Expr, root: string, field: string, site: string
                 ast.ExprFieldAccess(cfa) => {
                     var rk: string = fai_call_site_key(c, cfa);
                     if (rk.len() > 0 && rk == site) { n = n + 1; }
-                    else { n = fai_excused_place(cfa.obj, root, field, site, n); }
+                    else if (pre && cfa.field == "len" && c.args.len() == 0
+                        && fai_is_root_field(cfa.obj, root, field)) { n = n + 1; }
+                    else { n = fai_excused_place(cfa.obj, root, field, site, pre, n); }
                 },
-                _ => { n = fai_excused_expr(c.callee, root, field, site, n); }
+                _ => { n = fai_excused_expr(c.callee, root, field, site, pre, n); }
             }
-            for arg in c.args { n = fai_excused_expr(arg, root, field, site, n); }
+            for arg in c.args { n = fai_excused_expr(arg, root, field, site, pre, n); }
             return n;
         },
-        ast.ExprFieldAccess(_) => { return fai_excused_place(e, root, field, site, n); },
+        ast.ExprFieldAccess(_) => { return fai_excused_place(e, root, field, site, pre, n); },
         ast.ExprStructLit(sl) => {
             if (sl.has_base) {
                 var base_is_root: boolean = false;
@@ -25599,36 +25633,37 @@ function fai_excused_expr(e: ast.Expr, root: string, field: string, site: string
                 }
                 if (base_is_root) {
                     if (util.index_of_str(sl.field_names, field) >= 0) { n = n + 1; }
-                } else { n = fai_excused_expr(sl.base, root, field, site, n); }
+                } else { n = fai_excused_expr(sl.base, root, field, site, pre, n); }
             }
-            for fv in sl.field_values { n = fai_excused_expr(fv, root, field, site, n); }
+            for fv in sl.field_values { n = fai_excused_expr(fv, root, field, site, pre, n); }
             return n;
         },
         ast.ExprBinary(b) => {
-            n = fai_excused_expr(b.left, root, field, site, n);
-            return fai_excused_expr(b.right, root, field, site, n);
+            n = fai_excused_expr(b.left, root, field, site, pre, n);
+            return fai_excused_expr(b.right, root, field, site, pre, n);
         },
-        ast.ExprUnary(u) => { return fai_excused_expr(u.operand, root, field, site, n); },
+        ast.ExprUnary(u) => { return fai_excused_expr(u.operand, root, field, site, pre, n); },
         ast.ExprArray(ar) => {
             var i: i32 = 0;
-            while (i < ar.elements.len()) { n = fai_excused_expr(ar.elements[i], root, field, site, n); i = i + 1; }
+            while (i < ar.elements.len()) { n = fai_excused_expr(ar.elements[i], root, field, site, pre, n); i = i + 1; }
             return n;
         },
-        ast.ExprTuple(tp) => { for el in tp.elements { n = fai_excused_expr(el, root, field, site, n); } return n; },
+        ast.ExprTuple(tp) => { for el in tp.elements { n = fai_excused_expr(el, root, field, site, pre, n); } return n; },
         ast.ExprIndex(ix) => {
-            n = fai_excused_expr(ix.array, root, field, site, n);
-            return fai_excused_expr(ix.index, root, field, site, n);
+            if (pre && fai_is_root_field(ix.array, root, field)) { n = n + 1; }
+            else { n = fai_excused_expr(ix.array, root, field, site, pre, n); }
+            return fai_excused_expr(ix.index, root, field, site, pre, n);
         },
         ast.ExprSlice(sx) => {
-            n = fai_excused_expr(sx.array, root, field, site, n);
-            n = fai_excused_expr(sx.start, root, field, site, n);
-            return fai_excused_expr(sx.end, root, field, site, n);
+            n = fai_excused_expr(sx.array, root, field, site, pre, n);
+            n = fai_excused_expr(sx.start, root, field, site, pre, n);
+            return fai_excused_expr(sx.end, root, field, site, pre, n);
         },
         ast.ExprMapLit(ml) => {
             var mi: i32 = 0;
             while (mi < ml.keys.len()) {
-                n = fai_excused_expr(ml.keys[mi], root, field, site, n);
-                n = fai_excused_expr(ml.vals[mi], root, field, site, n);
+                n = fai_excused_expr(ml.keys[mi], root, field, site, pre, n);
+                n = fai_excused_expr(ml.vals[mi], root, field, site, pre, n);
                 mi = mi + 1;
             }
             return n;
@@ -25636,7 +25671,7 @@ function fai_excused_expr(e: ast.Expr, root: string, field: string, site: string
         ast.ExprFString(fs) => {
             var fi: i32 = 0;
             while (fi < fs.exprs.len()) {
-                if (fs.is_expr[fi]) { n = fai_excused_expr(fs.exprs[fi], root, field, site, n); }
+                if (fs.is_expr[fi]) { n = fai_excused_expr(fs.exprs[fi], root, field, site, pre, n); }
                 fi = fi + 1;
             }
             return n;
@@ -25650,37 +25685,41 @@ function fai_excused_expr(e: ast.Expr, root: string, field: string, site: string
 // no-overlap-anywhere arm. An assignment TARGET is one of the occurrences
 // collect_idents_stmt counts and none of the ones this excuses, so a reassigned
 // root refuses every site under it.
-function fai_excused_stmts(stmts: ast.Stmt[], root: string, field: string, site: string, acc: i32): i32 {
+function fai_excused_stmts(stmts: ast.Stmt[], root: string, field: string, site: string, pre: boolean, acc: i32): i32 {
     var n: i32 = acc;
-    for st in stmts {
-        match (st) {
-            ast.StmtVar(v) => { n = fai_excused_expr(v.init, root, field, site, n); },
-            ast.StmtReturn(r) => { n = fai_excused_expr(r.value, root, field, site, n); },
-            ast.StmtExpr(e) => { n = fai_excused_expr(e.value, root, field, site, n); },
-            ast.StmtAssign(a) => { n = fai_excused_expr(a.value, root, field, site, n); },
-            ast.StmtDefer(d) => { n = fai_excused_stmts([d.action], root, field, site, n); },
-            ast.StmtIf(f) => {
-                n = fai_excused_expr(f.cond, root, field, site, n);
-                n = fai_excused_stmts(f.then_body, root, field, site, n);
-                n = fai_excused_stmts(f.else_body, root, field, site, n);
-            },
-            ast.StmtWhile(w) => {
-                n = fai_excused_expr(w.cond, root, field, site, n);
-                n = fai_excused_stmts(w.body, root, field, site, n);
-            },
-            ast.StmtFor(f2) => {
-                n = fai_excused_expr(f2.iter, root, field, site, n);
-                n = fai_excused_stmts(f2.body, root, field, site, n);
-            },
-            ast.StmtMatch(m) => {
-                n = fai_excused_expr(m.scrutinee, root, field, site, n);
-                for arm in m.arms {
-                    if (arm.has_guard) { n = fai_excused_expr(arm.guard, root, field, site, n); }
-                    n = fai_excused_stmts(arm.body, root, field, site, n);
-                }
-            },
-            _ => {}
-        }
+    for st in stmts { n = fai_excused_stmt(st, root, field, site, pre, n); }
+    return n;
+}
+
+function fai_excused_stmt(st: ast.Stmt, root: string, field: string, site: string, pre: boolean, acc: i32): i32 {
+    var n: i32 = acc;
+    match (st) {
+        ast.StmtVar(v) => { n = fai_excused_expr(v.init, root, field, site, pre, n); },
+        ast.StmtReturn(r) => { n = fai_excused_expr(r.value, root, field, site, pre, n); },
+        ast.StmtExpr(e) => { n = fai_excused_expr(e.value, root, field, site, pre, n); },
+        ast.StmtAssign(a) => { n = fai_excused_expr(a.value, root, field, site, pre, n); },
+        ast.StmtDefer(d) => { n = fai_excused_stmt(d.action, root, field, site, pre, n); },
+        ast.StmtIf(f) => {
+            n = fai_excused_expr(f.cond, root, field, site, pre, n);
+            n = fai_excused_stmts(f.then_body, root, field, site, pre, n);
+            n = fai_excused_stmts(f.else_body, root, field, site, pre, n);
+        },
+        ast.StmtWhile(w) => {
+            n = fai_excused_expr(w.cond, root, field, site, pre, n);
+            n = fai_excused_stmts(w.body, root, field, site, pre, n);
+        },
+        ast.StmtFor(f2) => {
+            n = fai_excused_expr(f2.iter, root, field, site, pre, n);
+            n = fai_excused_stmts(f2.body, root, field, site, pre, n);
+        },
+        ast.StmtMatch(m) => {
+            n = fai_excused_expr(m.scrutinee, root, field, site, pre, n);
+            for arm in m.arms {
+                if (arm.has_guard) { n = fai_excused_expr(arm.guard, root, field, site, pre, n); }
+                n = fai_excused_stmts(arm.body, root, field, site, pre, n);
+            }
+        },
+        _ => {}
     }
     return n;
 }
@@ -25812,7 +25851,7 @@ function fai_capture_scan(bound: ast.Expr, target: string, roots: string[], acc:
         var r: string = roots[i];
         // Reading a container to rebuild ITSELF hands the old value to its own
         // replacement, not to a name that outlives it.
-        if (r != target && fai_count_ident_expr(bound, r) != fai_excused_expr(bound, r, "|", "", 0)) {
+        if (r != target && fai_count_ident_expr(bound, r) != fai_excused_expr(bound, r, "|", "", false, 0)) {
             a = push_str_unique(a, r);
         }
         i = i + 1;
@@ -25835,7 +25874,12 @@ pub function field_append_inplace_sites_of(fn: parser.FuncDecl): string[] {
     var esc: string[] = fai_esc_idents(fn.body, []);
     var cap: string[] = fai_captured_roots(fn.body, roots, []);
     var out: string[] = [];
-    return fai_admit_stmts(fn.body, fn.body, roots, esc, cap, false, out);
+    var ti: i32 = 0;
+    while (ti < fn.body.len()) {
+        out = fai_admit_stmt(fn.body[ti], fn.body, roots, esc, cap, false, ti, out);
+        ti = ti + 1;
+    }
+    return out;
 }
 
 // fai_cands_stmt collects the candidate sites of one statement, for the
@@ -25887,33 +25931,42 @@ function fai_cands_stmt(st: ast.Stmt, roots: string[], acc: string[]): string[] 
 // the whole body, and INSIDE A LOOP it cannot: the grow moves the field out of
 // the root, and the next iteration would read the moved-out field. A return
 // exits the loop and a rebind of the root replaces it, so those two stay.
-function fai_admit_stmts(stmts: ast.Stmt[], body: ast.Stmt[], roots: string[], esc: string[], cap: string[], in_loop: boolean, acc: string[]): string[] {
+//
+// `prefix` is the number of leading TOP-LEVEL statements of `body` the site is
+// sequenced after — the body-scope arm reads those under the relaxed rule.
+// It is inherited by every nested list, since a statement nested under
+// `body[prefix]` still runs after `body[0 .. prefix)`.
+function fai_admit_stmts(stmts: ast.Stmt[], body: ast.Stmt[], roots: string[], esc: string[], cap: string[], in_loop: boolean, prefix: i32, acc: string[]): string[] {
     var out: string[] = acc;
-    for st in stmts {
-        match (st) {
-            ast.StmtReturn(r) => { out = fai_admit_scope(fai_cands_expr(r.value, roots, []), r.value, "", body, esc, cap, in_loop, out); },
-            ast.StmtAssign(asg) => { out = fai_admit_scope(fai_cands_expr(asg.value, roots, []), asg.value, asg.target, body, esc, cap, in_loop, out); },
-            ast.StmtVar(v) => { out = fai_admit_body(fai_cands_expr(v.init, roots, []), body, esc, cap, in_loop, out); },
-            ast.StmtExpr(e) => { out = fai_admit_body(fai_cands_expr(e.value, roots, []), body, esc, cap, in_loop, out); },
-            ast.StmtIf(f) => {
-                out = fai_admit_body(fai_cands_expr(f.cond, roots, []), body, esc, cap, in_loop, out);
-                out = fai_admit_stmts(f.then_body, body, roots, esc, cap, in_loop, out);
-                out = fai_admit_stmts(f.else_body, body, roots, esc, cap, in_loop, out);
-            },
-            ast.StmtWhile(w) => {
-                out = fai_admit_body(fai_cands_expr(w.cond, roots, []), body, esc, cap, true, out);
-                out = fai_admit_stmts(w.body, body, roots, esc, cap, true, out);
-            },
-            ast.StmtFor(f2) => {
-                out = fai_admit_body(fai_cands_expr(f2.iter, roots, []), body, esc, cap, true, out);
-                out = fai_admit_stmts(f2.body, body, roots, esc, cap, true, out);
-            },
-            ast.StmtMatch(m) => {
-                out = fai_admit_body(fai_cands_expr(m.scrutinee, roots, []), body, esc, cap, in_loop, out);
-                for arm in m.arms { out = fai_admit_stmts(arm.body, body, roots, esc, cap, in_loop, out); }
-            },
-            _ => {}
-        }
+    for st in stmts { out = fai_admit_stmt(st, body, roots, esc, cap, in_loop, prefix, out); }
+    return out;
+}
+
+function fai_admit_stmt(st: ast.Stmt, body: ast.Stmt[], roots: string[], esc: string[], cap: string[], in_loop: boolean, prefix: i32, acc: string[]): string[] {
+    var out: string[] = acc;
+    match (st) {
+        ast.StmtReturn(r) => { out = fai_admit_scope(fai_cands_expr(r.value, roots, []), r.value, "", body, esc, cap, in_loop, prefix, out); },
+        ast.StmtAssign(asg) => { out = fai_admit_scope(fai_cands_expr(asg.value, roots, []), asg.value, asg.target, body, esc, cap, in_loop, prefix, out); },
+        ast.StmtVar(v) => { out = fai_admit_body(fai_cands_expr(v.init, roots, []), body, esc, cap, in_loop, prefix, out); },
+        ast.StmtExpr(e) => { out = fai_admit_body(fai_cands_expr(e.value, roots, []), body, esc, cap, in_loop, prefix, out); },
+        ast.StmtIf(f) => {
+            out = fai_admit_body(fai_cands_expr(f.cond, roots, []), body, esc, cap, in_loop, prefix, out);
+            out = fai_admit_stmts(f.then_body, body, roots, esc, cap, in_loop, prefix, out);
+            out = fai_admit_stmts(f.else_body, body, roots, esc, cap, in_loop, prefix, out);
+        },
+        ast.StmtWhile(w) => {
+            out = fai_admit_body(fai_cands_expr(w.cond, roots, []), body, esc, cap, true, prefix, out);
+            out = fai_admit_stmts(w.body, body, roots, esc, cap, true, prefix, out);
+        },
+        ast.StmtFor(f2) => {
+            out = fai_admit_body(fai_cands_expr(f2.iter, roots, []), body, esc, cap, true, prefix, out);
+            out = fai_admit_stmts(f2.body, body, roots, esc, cap, true, prefix, out);
+        },
+        ast.StmtMatch(m) => {
+            out = fai_admit_body(fai_cands_expr(m.scrutinee, roots, []), body, esc, cap, in_loop, prefix, out);
+            for arm in m.arms { out = fai_admit_stmts(arm.body, body, roots, esc, cap, in_loop, prefix, out); }
+        },
+        _ => {}
     }
     return out;
 }
@@ -25921,7 +25974,7 @@ function fai_admit_stmts(stmts: ast.Stmt[], body: ast.Stmt[], roots: string[], e
 // fai_admit_scope decides the candidates of a scoped host. `rebind_target` is
 // the assignment's target, or "" for a return: a rebind only excuses the reads
 // outside it when the container being replaced is the append's own root.
-function fai_admit_scope(cands: string[], scope: ast.Expr, rebind_target: string, body: ast.Stmt[], esc: string[], cap: string[], in_loop: boolean, acc: string[]): string[] {
+function fai_admit_scope(cands: string[], scope: ast.Expr, rebind_target: string, body: ast.Stmt[], esc: string[], cap: string[], in_loop: boolean, prefix: i32, acc: string[]): string[] {
     var out: string[] = acc;
     var i: i32 = 0;
     while (i < cands.len()) {
@@ -25931,9 +25984,9 @@ function fai_admit_scope(cands: string[], scope: ast.Expr, rebind_target: string
         var scoped: boolean = rebind_target.len() == 0 || rebind_target == root;
         if (!fai_root_refused(root, esc, cap)
             && scoped
-            && fai_count_ident_expr(scope, root) == fai_excused_expr(scope, root, field, k, 0)) {
+            && fai_count_ident_expr(scope, root) == fai_excused_expr(scope, root, field, k, false, 0)) {
             out = push_str_unique(out, k);
-        } else if (!in_loop && fai_admits_over_body(k, root, field, body, esc, cap)) {
+        } else if (!in_loop && fai_admits_over_body(k, root, field, body, esc, cap, prefix)) {
             out = push_str_unique(out, k);
         }
         i = i + 1;
@@ -25941,13 +25994,13 @@ function fai_admit_scope(cands: string[], scope: ast.Expr, rebind_target: string
     return out;
 }
 
-function fai_admit_body(cands: string[], body: ast.Stmt[], esc: string[], cap: string[], in_loop: boolean, acc: string[]): string[] {
+function fai_admit_body(cands: string[], body: ast.Stmt[], esc: string[], cap: string[], in_loop: boolean, prefix: i32, acc: string[]): string[] {
     if (in_loop) { return acc; }
     var out: string[] = acc;
     var i: i32 = 0;
     while (i < cands.len()) {
         var k: string = cands[i];
-        if (fai_admits_over_body(k, fai_key_part(k, 1), fai_key_part(k, 2), body, esc, cap)) {
+        if (fai_admits_over_body(k, fai_key_part(k, 1), fai_key_part(k, 2), body, esc, cap, prefix)) {
             out = push_str_unique(out, k);
         }
         i = i + 1;
@@ -25956,10 +26009,18 @@ function fai_admit_body(cands: string[], body: ast.Stmt[], esc: string[], cap: s
 }
 
 // fai_admits_over_body is native's third arm: no overlapping read anywhere in
-// the body, so the host statement does not matter.
-function fai_admits_over_body(k: string, root: string, field: string, body: ast.Stmt[], esc: string[], cap: string[]): boolean {
+// the body, so the host statement does not matter. The first `prefix` top-level
+// statements run before the site, so their length and index reads of the field
+// are excused too (fai_excused_expr's `pre`).
+function fai_admits_over_body(k: string, root: string, field: string, body: ast.Stmt[], esc: string[], cap: string[], prefix: i32): boolean {
     if (fai_root_refused(root, esc, cap)) { return false; }
-    return fai_count_ident_stmts(body, root) == fai_excused_stmts(body, root, field, k, 0);
+    var n: i32 = 0;
+    var i: i32 = 0;
+    while (i < body.len()) {
+        n = fai_excused_stmt(body[i], root, field, k, i < prefix, n);
+        i = i + 1;
+    }
+    return fai_count_ident_stmts(body, root) == n;
 }
 
 function fai_root_refused(root: string, esc: string[], cap: string[]): boolean {
@@ -30808,7 +30869,8 @@ pub function lower_block(stmts: ast.Stmt[], s: LowerState): LowerState {
     // list), lower_block is called for nested bodies only (the fn body has
     // its own loop), and block-level reuse donors are struct/tuple boxes
     // (never Option locals) — so each box is freed at most once.
-    var rcopt: OptRcFrees = consumed_rcpayload_option_frees(stmts, s.frame.structs, s.frame.sigs.opt_fresh_ret_fns, true);
+    var reasg: string[] = body_assign_targets(stmts);
+    var rcopt: OptRcFrees = consumed_rcpayload_option_frees(stmts, reasg, s.frame.structs, s.frame.sigs.opt_fresh_ret_fns, true);
     // Consumed ALL-SCALAR enum free, per block (#6127). lower_func runs
     // consumed_scalar_enum_frees over the fn's TOP-LEVEL statements only, so a
     // scalar-payload enum declared inside a loop or an if — `while { var e =
@@ -30828,7 +30890,7 @@ pub function lower_block(stmts: ast.Stmt[], s: LowerState): LowerState {
     //   - enum_donor_reuse_sites takes the fn-level EnumFrees and scans fn.body
     //     flat, so a nested-block box can never have been donated to a reuse site
     //     (which is what the fn-level emission's edon check guards against).
-    var scenfrees: EnumFrees = consumed_scalar_enum_frees(stmts, s.frame.structs, s.frame.sigs.opt_fresh_ret_fns, true);
+    var scenfrees: EnumFrees = consumed_scalar_enum_frees(stmts, reasg, s.frame.structs, s.frame.sigs.opt_fresh_ret_fns, true);
     // Consumed RC-PAYLOAD enum free, per block (#6127) — the last member of this
     // family to get a block-level sibling. lower_func runs
     // consumed_rcpayload_enum_frees over fn.body only, so `while { var t =
@@ -30844,7 +30906,7 @@ pub function lower_block(stmts: ast.Stmt[], s: LowerState): LowerState {
     // computed over fn.body FLAT, exactly like edon, so a nested-block box can
     // never have been donated to a cross-reuse recipient — which is what the
     // fn-level emission's ecross.donors suppression guards against.
-    var rcenfrees: RcEnumFrees = consumed_rcpayload_enum_frees(stmts, s.frame.structs, s.frame.sigs.opt_fresh_ret_fns, s.frame.sigs.str_fresh_ret_fns, s.frame.move_sites, s.frame.sigs.borrowable_params);
+    var rcenfrees: RcEnumFrees = consumed_rcpayload_enum_frees(stmts, reasg, s.frame.structs, s.frame.sigs.opt_fresh_ret_fns, s.frame.sigs.str_fresh_ret_fns, s.frame.move_sites, s.frame.sigs.borrowable_params);
     var st: LowerState = s;
     var i: i32 = 0;
     while (i < stmts.len()) {
@@ -31896,7 +31958,7 @@ function map_tuple_holder_rows(stmts: ast.Stmt[], name: string, msite: string, a
     var seeded: string[] = [name, msite];
     var i: i32 = 0;
     while (i < stmts.len()) {
-        seeded = astwalk.fold_stmt_nodes(stmts[i], seeded, maptup_row_at, no_expr_strs, astwalk.descend_none);
+        seeded = astwalk.fold_stmt_spine(stmts[i], seeded, maptup_row_at);
         i = i + 1;
     }
     var out: string[] = acc;
@@ -41943,12 +42005,11 @@ function expr_is_scalarish(e: ast.Expr): boolean {
 // second credit loads 0 and decs null. The boundary is kept because two analyses
 // silently claiming one local is how a real over-release gets built later, and
 // because the redundant credit buys nothing precise-drop has not already done.
-function consumed_scalar_enum_frees(body: ast.Stmt[], structs: StructTab, opt_fresh_reg: SigReg, nested_ok: boolean): EnumFrees {
+function consumed_scalar_enum_frees(body: ast.Stmt[], reassigned: string[], structs: StructTab, opt_fresh_reg: SigReg, nested_ok: boolean): EnumFrees {
     var idxs: i32[] = [];
     var vidxs: i32[] = [];
     var names: string[] = [];
     var sites: string[] = [];
-    var reassigned: string[] = body_assign_targets(body);
     var vi: i32 = 0;
     while (vi < body.len()) {
         match (body[vi]) {
@@ -42588,12 +42649,11 @@ struct RcEnumFrees { idxs: i32[], vidxs: i32[], names: string[], enums: string[]
 // exit sweep, and this pass emits the free the credit assumes. Admitting the
 // call form there and not here left `var v: E = mkv(i)` with a sole consuming
 // match reclaiming nothing at all.
-function consumed_rcpayload_enum_frees(body: ast.Stmt[], structs: StructTab, opt_fresh_ret: SigReg, str_fresh: string[], msites: string[], borrowable: string[]): RcEnumFrees {
+function consumed_rcpayload_enum_frees(body: ast.Stmt[], reassigned: string[], structs: StructTab, opt_fresh_ret: SigReg, str_fresh: string[], msites: string[], borrowable: string[]): RcEnumFrees {
     var idxs: i32[] = [];
     var vidxs: i32[] = [];
     var names: string[] = [];
     var enums: string[] = [];
-    var reassigned: string[] = body_assign_targets(body);
     var vi: i32 = 0;
     while (vi < body.len()) {
         match (body[vi]) {
@@ -44246,7 +44306,7 @@ function call_init_callee_err_fresh(e: ast.Expr, reg: SigReg): boolean {
 // `nested_ok` is TRUE only from lower_block, and it is what lets a DIRECT ctor
 // take the nested-match lookup. See the comment at the lookup itself for why that
 // is safe there and unsafe at function scope.
-function consumed_rcpayload_option_frees(body: ast.Stmt[], structs: StructTab, opt_fresh_reg: SigReg, nested_ok: boolean): OptRcFrees {
+function consumed_rcpayload_option_frees(body: ast.Stmt[], reassigned: string[], structs: StructTab, opt_fresh_reg: SigReg, nested_ok: boolean): OptRcFrees {
     var idxs: i32[] = [];
     var vidxs: i32[] = [];
     var names: string[] = [];
@@ -44256,7 +44316,6 @@ function consumed_rcpayload_option_frees(body: ast.Stmt[], structs: StructTab, o
     var stys: string[] = [];
     var tagged: boolean[] = [];
     var errstrs: boolean[] = [];
-    var reassigned: string[] = body_assign_targets(body);
     var vi: i32 = 0;
     while (vi < body.len()) {
         match (body[vi]) {
@@ -46735,7 +46794,7 @@ function collect_fresh_cloarr_names(body: ast.Stmt[], caset: string[], closurese
     }
     var out: string[] = [];
     for st in body {
-        out = astwalk.fold_stmt_nodes(st, out, cand_site_of, no_expr_strs, astwalk.descend_none);
+        out = astwalk.fold_stmt_spine(st, out, cand_site_of);
     }
     return out;
 }
@@ -46762,7 +46821,7 @@ function closurearr_append_decl_sites(body: ast.Stmt[], closureset: string[]): s
     }
     var grown: string[] = [];
     for st in body {
-        grown = astwalk.fold_stmt_nodes(st, grown, box_appended_names, no_expr_strs, astwalk.descend_none);
+        grown = astwalk.fold_stmt_spine(st, grown, box_appended_names);
     }
     if (grown.len() == 0) { return grown; }
     function empty_fnarr_decl(st: ast.Stmt, acc: string[]): string[] {
@@ -46777,7 +46836,7 @@ function closurearr_append_decl_sites(body: ast.Stmt[], closureset: string[]): s
     }
     var out: string[] = [];
     for st in body {
-        out = astwalk.fold_stmt_nodes(st, out, empty_fnarr_decl, no_expr_strs, astwalk.descend_none);
+        out = astwalk.fold_stmt_spine(st, out, empty_fnarr_decl);
     }
     return out;
 }
@@ -46804,7 +46863,7 @@ function body_binds_fresh_cloarr(body: ast.Stmt[], name: string, closureset: str
     }
     var found: boolean = false;
     for st in body {
-        found = astwalk.fold_stmt_nodes(st, found, binds_fresh_at, no_expr_bool, astwalk.descend_none);
+        found = astwalk.fold_stmt_spine(st, found, binds_fresh_at);
         if (found) { return true; }
     }
     return false;
@@ -56380,6 +56439,13 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
         locals0 = locals0.append(LocalInfo { slot_name: names[lzi], is_arr: isarr[lzi], is_str: isstr[lzi], is_strarr: isstrarr[lzi], strarr_builtin: false, str_view_local: false, str_identity_src: 0 - 1, reclaim_site: "", struct_type: structty[lzi], opt_type: optty[lzi], tuple_elems: tupty[lzi], tuple_type: "", fnarr_elem: "", map_type: mapty[lzi], is_i64: isi64[lzi], is_f64: isf64[lzi], is_f32: isf32[lzi], is_f64arr: isf64arr[lzi], is_f32arr: isf32arr[lzi], is_i64arr: isi64arr[lzi], is_bool: isbool[lzi], is_boolarr: isboolarr[lzi], is_closurearr: isclosurearr[lzi], is_fnarr: isfnarr[lzi], is_arrarr: isarrarr[lzi], arrarr_elem: arrarr_elem[lzi], is_u32: isu32[lzi], is_u64: isu64[lzi], subword: subword[lzi], is_cell: cellty[lzi].len() > 0, cell_elem: cellty[lzi], fn_dyn: "", fn_sig: "", fn_ret: "", fn_opt_ret: "", str_own: 1, str_caller_elem: false, borrowed_arr: false, moved_claim: false });
         lzi = lzi + 1;
     }
+    // Consumed scalar-payload enum frees: a function-local `var x = V(scalar...)`
+    // consumed by exactly one `match (x)` where x is single-owner and dead after
+    // the match. The box is freed (dec + zero) right after its match statement —
+    // sound because the box now carries an rc header and the match read its scalar
+    // payloads as borrows before any free.
+    var asg_targets: string[] = body_assign_targets(fn.body);
+    var enumfrees: EnumFrees = consumed_scalar_enum_frees(fn.body, asg_targets, structs, sg.opt_fresh_ret_fns, false);
     // SCENRB: an all-scalar enum / scalar Option local that consumed_scalar_enum_frees
     // admits DESPITE being rebound (#6127). Each rebind orphans the previous box, so
     // lower_stmt_assign releases it before storing the new one; the final value is
@@ -56393,12 +56459,10 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
     // examined — and `a.target` resolves to whichever binding is innermost at the
     // assignment. A name key handed the inner slot the outer one's credit and
     // released a box the block-level pass claims at its own consuming match.
-    var scenrb: EnumFrees = consumed_scalar_enum_frees(fn.body, structs, sg.opt_fresh_ret_fns, false);
-    var asg_targets: string[] = body_assign_targets(fn.body);
     var scrb_i: i32 = 0;
-    while (scrb_i < scenrb.names.len()) {
-        if (util.index_of_str(asg_targets, scenrb.names[scrb_i]) >= 0) {
-            reclaim = reclaim.append("SCENRB:" + scenrb.sites[scrb_i]);
+    while (scrb_i < enumfrees.names.len()) {
+        if (util.index_of_str(asg_targets, enumfrees.names[scrb_i]) >= 0) {
+            reclaim = reclaim.append("SCENRB:" + enumfrees.sites[scrb_i]);
         }
         scrb_i = scrb_i + 1;
     }
@@ -56528,7 +56592,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
     // (erased_passthrough_safe), so its bare-typevar return lowers via the
     // uniform-i64 path in StmtReturn (#5464). Kept off the non-wasm path.
     if (for_wasm && erased_passthrough_safe(fn, structs)) { ret_arrdyn0 = ret_arrdyn0 + 8; }
-    var s: LowerState = LowerState { ops: empty, locals: locals0, ctrl: 0, loop_blk: noloop, frame: LowerFrame { ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, sigs: FnSigs { ...sg, arr_ret_fns: arr_ret_fns_aug, struct_ret_fns: struct_ret_fns_aug }, clo_base: clo_owner_name(fn), cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: noclos, tup_elem_kinds: [], alias_incs: [], dead_alias_ok: dead_alias_of(fn.body, rc_ml_compute(fn, structs).names).sites, spread_sites: spread_sites_of(fn.body, structs, []), fnval_seed: fnval_seed0, structs: structs, reclaimable_names: reclaim, aliased_names: aliased, map_clone_sites: map_clone_insert_sites_of(fn.body), borrowed_names: borrowed, try_cleanup: tclean, defer_slots: [], defer_guard: "", append_inplace: append_inplace_names_of(fn), field_append_inplace: field_append_inplace_sites_of(fn), grow_sole: grow_sole_exempt_names_of(fn), grow_alias: grow_alias_names_of(fn), own_params: own_names, n_params: names.len(), fail_why: "", moved_names: moved_locals_toplevel_of(fn, structs), moved_elided: [], move_sites: move_sites_toplevel_of(fn, structs), fld_bases: field_move_bases_of(fn, sg) }, xblock_pending: [], optret_pending: [], grow_exempt: [], ok: true, selfrebind: "", fld_moves: [] };
+    var s: LowerState = LowerState { ops: empty, locals: locals0, ctrl: 0, loop_blk: noloop, frame: LowerFrame { ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, sigs: FnSigs { ...sg, arr_ret_fns: arr_ret_fns_aug, struct_ret_fns: struct_ret_fns_aug }, clo_base: clo_owner_name(fn), cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: noclos, tup_elem_kinds: [], alias_incs: [], dead_alias_ok: dead_alias_of(fn.body, rc_ml_compute(fn, structs).names).sites, spread_sites: spread_sites_of(fn.body, structs, []), fnval_seed: fnval_seed0, structs: structs, reclaimable_names: reclaim, aliased_names: aliased, map_clone_sites: map_clone_insert_sites_of(fn.body), borrowed_names: borrowed, try_cleanup: tclean, defer_slots: [], defer_guard: "", append_inplace: append_inplace_names_of(fn), field_append_inplace: field_append_inplace_sites_of(fn), grow_sole: grow_sole_exempt_names_of(fn), grow_alias: grow_alias_names_of(fn), own_params: own_names, n_params: names.len(), fail_why: "", moved_names: moved_locals_toplevel_of(fn, structs), moved_elided: [], move_sites: move_sites_toplevel_of(fn, structs), fld_bases: field_move_bases_of(fn, sg), own_lift_sites: own_lift_retain_sites_of(fn, sg, structs) }, xblock_pending: [], optret_pending: [], grow_exempt: [], ok: true, selfrebind: "", fld_moves: [] };
     // Consumed-threaded array params (ownflag_name): allocate and zero each flag
     // before any body op, in parameter order, so slot numbering is deterministic.
     // A declared `own` param is excluded — the caller moved its reference in.
@@ -56608,12 +56672,6 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
     // struct / enum reuse sites (a tuple init is never a struct-lit / enum-ctor).
     var xtuple: CrossTupleReuseSites = CrossTupleReuseSites { idxs: [], donors: [] };
     if (!no_reuse) { xtuple = cross_tuple_reuse_sites(fn.body); }
-    // Consumed scalar-payload enum frees: a function-local `var x = V(scalar...)`
-    // consumed by exactly one `match (x)` where x is single-owner and dead after
-    // the match. The box is freed (dec + zero) right after its match statement —
-    // sound because the box now carries an rc header and the match read its scalar
-    // payloads as borrows before any free.
-    var enumfrees: EnumFrees = consumed_scalar_enum_frees(fn.body, structs, sg.opt_fresh_ret_fns, false);
     // Consumed RC-PAYLOAD enum frees: a function-local `var x = V(payload...)` of
     // an rc-droppable enum (variant payloads are scalar / string / leak-safe array)
     // consumed by exactly one `match (x)`, single-owner, dead-after, non-escaping,
@@ -56621,14 +56679,14 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
     // variant_is guard releasing that variant's rc fields) then freed right after
     // its match (emit_enum_variant_drops). Kept DISJOINT from enumfrees and never
     // fed to the donor path, so an rc-payload box is freed exactly once here.
-    var rcenumfrees: RcEnumFrees = consumed_rcpayload_enum_frees(fn.body, structs, sg.opt_fresh_ret_fns, sg.str_fresh_ret_fns, move_sites_toplevel_of(fn, structs), sg.borrowable_params);
+    var rcenumfrees: RcEnumFrees = consumed_rcpayload_enum_frees(fn.body, asg_targets, structs, sg.opt_fresh_ret_fns, sg.str_fresh_ret_fns, move_sites_toplevel_of(fn, structs), sg.borrowable_params);
     // Consumed RC-PAYLOAD option/result frees: a function-local `var o = Some([..])`
     // / `Ok([..])` / `Err([..])` (leak-safe scalar-array payload) consumed by exactly
     // one `match (o)`, single-owner, dead-after, non-escaping, and whose constructed-
     // variant arm borrows (not escapes) the payload. The box's array payload is
     // deep-dropped then the box freed right after its match (emit_opt_payload_drop).
     // DISJOINT from enumfrees (that's scalar-payload options) — freed once here.
-    var rcoptfrees: OptRcFrees = consumed_rcpayload_option_frees(fn.body, structs, sg.opt_fresh_ret_fns, false);
+    var rcoptfrees: OptRcFrees = consumed_rcpayload_option_frees(fn.body, asg_targets, structs, sg.opt_fresh_ret_fns, false);
     // Enum-donor cross-reuse (FBIP): a consumed-and-dead scalar-enum box donated to
     // a later same-size full struct construction instead of being freed (see
     // enum_donor_reuse_sites). The recipient is lowered by emit_enum_donor_reuse, and
@@ -61429,7 +61487,7 @@ pub function closure_ret_fns_of(funcs: parser.FuncDecl[], structs: StructTab): s
     }
     // Indexed once for the whole pass: gfns_visible_in asks whether any of this
     // frame's binders shadows a module function, and the list is fixed here.
-    let (ghead, gnext) = gfn_index_of(gfns);
+    var gset: SigReg = sig_reg_of(gfns);
     var out: string[] = [];
     // Two forms produce a closure box the caller must dispatch env-first:
     //   (a) `return <capturing lambda>` — a fresh box built at the return.
@@ -61466,7 +61524,7 @@ pub function closure_ret_fns_of(funcs: parser.FuncDecl[], structs: StructTab): s
                             // module-fn list, and this loop visits every
                             // function every round.
                             ast.ExprLambda(nlam) => {
-                                if (!lambda_has_no_captures(nlam, gfns_visible_in(fn, gfns, ghead, gnext))) { hit = true; }
+                                if (!lambda_has_no_captures(nlam, gfns_visible_in(fn, gfns, gset))) { hit = true; }
                             },
                             ast.ExprIdent(nrid) => {
                                 if (body_binds_closure_local(b, nrid.name, out)) { hit = true; }
@@ -61551,7 +61609,7 @@ pub function closure_ret_fns_of(funcs: parser.FuncDecl[], structs: StructTab): s
                         ast.StmtReturn(r) => {
                             match (r.value) {
                                 ast.ExprLambda(lam) => {
-                                    if (!lambda_has_no_captures(lam, gfns_visible_in(fn, gfns, ghead, gnext))) { out = out.append(fn.name); changed = true; }
+                                    if (!lambda_has_no_captures(lam, gfns_visible_in(fn, gfns, gset))) { out = out.append(fn.name); changed = true; }
                                 },
                                 _ => { }
                             }
@@ -67672,7 +67730,7 @@ pub function str_own_dump(fn: parser.FuncDecl, structs: StructTab, funcs: parser
         locals0 = locals0.append(li);
         pi = pi + 1;
     }
-    var st: LowerState = LowerState { ops: no_ops, locals: locals0, ctrl: 0, loop_blk: no_blk, frame: LowerFrame { ret_is_i64: false, ret_arrdyn: 0, sigs: FnSigs { ...fn_sigs_empty(), str_ret_fns: sig_reg_of(str_ret_fns_of(funcs)) }, clo_base: clo_owner_name(fn), cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: no_strs, tup_elem_kinds: no_strs, alias_incs: no_strs, dead_alias_ok: no_strs, spread_sites: spread_sites_of(fn.body, structs, []), fnval_seed: no_strs, structs: structs, reclaimable_names: no_strs, aliased_names: no_strs, map_clone_sites: no_strs, borrowed_names: no_strs, try_cleanup: no_stmts, defer_slots: no_strs, defer_guard: "", append_inplace: [], field_append_inplace: [], grow_sole: [], grow_alias: [], own_params: own_param_names_of(fn), n_params: fn.params.len(), fail_why: "", moved_names: [], moved_elided: [], move_sites: [], fld_bases: [] }, xblock_pending: no_strs, optret_pending: [], grow_exempt: [], ok: true, selfrebind: "", fld_moves: [] };
+    var st: LowerState = LowerState { ops: no_ops, locals: locals0, ctrl: 0, loop_blk: no_blk, frame: LowerFrame { ret_is_i64: false, ret_arrdyn: 0, sigs: FnSigs { ...fn_sigs_empty(), str_ret_fns: sig_reg_of(str_ret_fns_of(funcs)) }, clo_base: clo_owner_name(fn), cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: no_strs, tup_elem_kinds: no_strs, alias_incs: no_strs, dead_alias_ok: no_strs, spread_sites: spread_sites_of(fn.body, structs, []), fnval_seed: no_strs, structs: structs, reclaimable_names: no_strs, aliased_names: no_strs, map_clone_sites: no_strs, borrowed_names: no_strs, try_cleanup: no_stmts, defer_slots: no_strs, defer_guard: "", append_inplace: [], field_append_inplace: [], grow_sole: [], grow_alias: [], own_params: own_param_names_of(fn), n_params: fn.params.len(), fail_why: "", moved_names: [], moved_elided: [], move_sites: [], fld_bases: [], own_lift_sites: [] }, xblock_pending: no_strs, optret_pending: [], grow_exempt: [], ok: true, selfrebind: "", fld_moves: [] };
     var out: string = "";
     var qi: i32 = 0;
     while (qi < fn.params.len()) {
@@ -68491,44 +68549,6 @@ pub struct LiftAcc { funcs: parser.FuncDecl[], counter: i32 }
 struct LiftExpr { expr: ast.Expr, acc: LiftAcc }
 struct LiftStmts { stmts: ast.Stmt[], acc: LiftAcc }
 
-// gfn_index_of buckets `gfns` by name and returns (head, next) as plain index
-// arrays rather than a SigReg. The distinction is load-bearing rather than
-// stylistic: SigReg stores the rows in a field, so `sig_reg_of(gfns)` would
-// leave the index and the caller's own `gfns` naming one array for the rest of
-// the pass, and the wasm-hosted compiler miscompiles that — it emits a function
-// name as the two bytes of a string header (#8210). Index arrays name nothing,
-// and cost no copy of the rows either.
-//
-// Built backward so each chain ascends, which is the order the scan this
-// replaces visited.
-function gfn_index_of(gfns: string[]): (i32[], i32[]) {
-    var nb: i32 = sig_bucket_count(gfns.len());
-    var head: i32[] = [];
-    var b: i32 = 0;
-    while (b < nb) { head = head.append(0 - 1); b = b + 1; }
-    var next: i32[] = [];
-    var j: i32 = 0;
-    while (j < gfns.len()) { next = next.append(0 - 1); j = j + 1; }
-    var k: i32 = gfns.len() - 1;
-    while (k >= 0) {
-        var bk: i32 = sig_key_bucket(gfns[k], "", nb);
-        next = next.with(k, head[bk]);
-        head = head.with(bk, k);
-        k = k - 1;
-    }
-    return (head, next);
-}
-
-// gfn_index_has: is `name` one of the rows the index was built over?
-function gfn_index_has(gfns: string[], head: i32[], next: i32[], name: string): boolean {
-    var i: i32 = head[sig_key_bucket(name, "", head.len())];
-    while (i >= 0) {
-        if (gfns[i] == name) { return true; }
-        i = next[i];
-    }
-    return false;
-}
-
 // lambda_has_no_captures: every identifier the body uses must be one of the
 // lambda's params, a local it binds, a global function, or a literal keyword —
 // nothing from the enclosing scope. (A conservative check: a false "captures"
@@ -68548,7 +68568,7 @@ function gfn_index_has(gfns: string[], head: i32[], next: i32[], name: string): 
 // The sibling predicate kept it. Filtering the LIST once per function fixes
 // every consumer without threading fd through the lift, and costs one walk of
 // the body.
-function gfns_visible_in(fd: parser.FuncDecl, gfns: string[], ghead: i32[], gnext: i32[]): string[] {
+function gfns_visible_in(fd: parser.FuncDecl, gfns: string[], gset: SigReg): string[] {
     var bound: string[] = [];
     if (fd.receiver_name.len() > 0) { bound = bound.append(fd.receiver_name); }
     var pi: i32 = 0;
@@ -68564,7 +68584,7 @@ function gfns_visible_in(fd: parser.FuncDecl, gfns: string[], ghead: i32[], gnex
     var shadows: boolean = false;
     var bi: i32 = 0;
     while (bi < bound.len()) {
-        if (gfn_index_has(gfns, ghead, gnext, bound[bi])) { shadows = true; bi = bound.len(); } else { bi = bi + 1; }
+        if (sig_reg_has_exact(gset, bound[bi])) { shadows = true; bi = bound.len(); } else { bi = bi + 1; }
     }
     if (!shadows) { return gfns; }
     var out: string[] = [];
@@ -69184,16 +69204,11 @@ function cap_local_init(body: ast.Stmt[], name: string): ast.Expr {
     }
     var found: ast.Expr = parser.e_unknown("");
     for st in body {
-        found = astwalk.fold_stmt_nodes(st, found, init_of, no_expr_expr, astwalk.descend_none);
+        found = astwalk.fold_stmt_spine(st, found, init_of);
         match (found) { ast.ExprUnknown(_) => {}, _ => { return found; } }
     }
     return found;
 }
-
-// The statement-shaped cap walks contribute nothing from an expression slot;
-// paired with astwalk.descend_none the spine never enters one.
-function no_expr_expr(e: ast.Expr, acc: ast.Expr): ast.Expr { return acc; }
-function no_expr_str(e: ast.Expr, acc: string): string { return acc; }
 
 // cap_local_fn_ret is the declared RETURN spelling of fn-typed local `name`'s
 // binding (`var f: (i32) => i32` -> "i32"), or "". Same walk as cap_local_init,
@@ -69210,7 +69225,7 @@ function cap_local_fn_ret(body: ast.Stmt[], name: string): string {
     }
     var found: string = "";
     for st in body {
-        found = astwalk.fold_stmt_nodes(st, found, fn_ret_of, no_expr_str, astwalk.descend_none);
+        found = astwalk.fold_stmt_spine(st, found, fn_ret_of);
         if (found.len() > 0) { return found; }
     }
     return "";
@@ -69400,9 +69415,9 @@ function tuple_tag_i32_only(t: string): boolean {
 
 // cap_type_in_stmts finds the binding of `name` anywhere in `body` — a `var`
 // (annotation or inferable init), a `for` binder, a match-arm pattern — and
-// resolves its type; astwalk's statement spine carries the recursion, with
-// descend_none keeping it out of expressions and lambda bodies. First match
-// wins — shadowing across sibling blocks is an accepted over-approximation,
+// resolves its type; astwalk's statement spine carries the recursion, which
+// keeps it out of expressions and lambda bodies. First match wins — shadowing
+// across sibling blocks is an accepted over-approximation,
 // same as the other lift-side body walkers (the fn-gates keep consequences to
 // a declined or extra lift, never a miscompile: the lifted capture param only
 // labels the hoisted function's parameter).
@@ -69658,7 +69673,7 @@ function cap_type_in_stmts(body: ast.Stmt[], name: string, fd: parser.FuncDecl, 
     }
     var found: string = "";
     for st in body {
-        found = astwalk.fold_stmt_nodes(st, found, cap_type_of, no_expr_str, astwalk.descend_none);
+        found = astwalk.fold_stmt_spine(st, found, cap_type_of);
         if (found.len() > 0) {
             if (found == "!") { return ""; }
             return found;
@@ -69787,13 +69802,13 @@ function body_assign_targets(stmts: ast.Stmt[]): string[] {
 }
 
 // assign_targets_into threads ONE accumulator through astwalk's statement
-// spine. It is a hot path: this runs at the head of consumed_scalar_enum_frees /
-// consumed_rcpayload_option_frees / consumed_rcpayload_enum_frees, which
-// lower_block runs on every nested block (#6911) — assign_target_into captures
-// nothing, so the fold allocates nothing per call.
+// spine. It is a hot path — lower_block classifies every nested block (#6911),
+// and a statement at depth d sits in the body of every block above it — so the
+// classifiers there take the set as a parameter and the block folds it once.
+// assign_target_into captures nothing, so the fold allocates nothing per call.
 function assign_targets_into(out: string[], stmts: ast.Stmt[]): string[] {
     for stmt in stmts {
-        out = astwalk.fold_stmt_nodes(stmt, out, assign_target_into, no_expr_strs, astwalk.descend_none);
+        out = astwalk.fold_stmt_spine(stmt, out, assign_target_into);
     }
     return out;
 }
@@ -70885,7 +70900,7 @@ function fd_passes_fn_array_elem(fd: parser.FuncDecl, mfuncs: MFuncs): boolean {
 function fd_index_bound_names(body: ast.Stmt[]): string[] {
     var out: string[] = [];
     for st in body {
-        out = astwalk.fold_stmt_nodes(st, out, idx_bound_name_at, no_expr_strs, astwalk.descend_none);
+        out = astwalk.fold_stmt_spine(st, out, idx_bound_name_at);
     }
     return out;
 }
@@ -71017,7 +71032,7 @@ function body_binds_lambda(body: ast.Stmt[], name: string): boolean {
     }
     var found: boolean = false;
     for st in body {
-        found = astwalk.fold_stmt_nodes(st, found, binds_lambda_at, no_expr_bool, astwalk.descend_none);
+        found = astwalk.fold_stmt_spine(st, found, binds_lambda_at);
         if (found) { return true; }
     }
     return false;
@@ -73117,7 +73132,7 @@ function append_bound_binder(acc: string[], name: string): string[] {
 function body_var_decl_names(stmts: ast.Stmt[]): string[] {
     var out: string[] = [];
     for stmt in stmts {
-        out = astwalk.fold_stmt_nodes(stmt, out, var_decl_name_into, no_expr_strs, astwalk.descend_none);
+        out = astwalk.fold_stmt_spine(stmt, out, var_decl_name_into);
     }
     return out;
 }
@@ -74162,7 +74177,7 @@ pub function lift_lambdas_view(raw_mod: parser.Module, view: parser.FuncDecl[]):
         gi = gi + 1;
     }
     // Indexed once for the whole lift (see gfns_visible_in).
-    let (ghead, gnext) = gfn_index_of(gfns);
+    var gset: SigReg = sig_reg_of(gfns);
     var acc: LiftAcc = LiftAcc { funcs: [], counter: 0 };
     var newfuncs: parser.FuncDecl[] = [];
     // Worklist: the module's functions PLUS every function lifted out of a
@@ -74254,7 +74269,7 @@ pub function lift_lambdas_view(raw_mod: parser.Module, view: parser.FuncDecl[]):
         // 2. No-capture lambdas passed as call arguments: hoist to function values.
         // The module-fn list is filtered to what is still VISIBLE here: a name
         // this function also binds is a local, not a call target (#7253).
-        var r: LiftStmts = lift_stmts(cbody, acc, gfns_visible_in(fd, gfns, ghead, gnext));
+        var r: LiftStmts = lift_stmts(cbody, acc, gfns_visible_in(fd, gfns, gset));
         acc = r.acc;
         var nb: ast.Stmt[] = r.stmts;
         newfuncs = newfuncs.append(parser.FuncDecl { ...fd, body: nb });
@@ -75872,6 +75887,20 @@ function snapshot_slot_name(i: i32): string {
     return "$snap$" + util.i32_to_string(i);
 }
 
+// emit_own_lift_retain: a `var st = a.cfi` bind whose local is handed on to a
+// declared `own` position (own_lift_retain_sites_of) takes the transfer retain
+// here, at the BIND. The claim it makes is the one the `own` position consumes;
+// without it the callee spends a's, and a's own release — the exit deep drop,
+// or the in-place reuse behind a supersede — frees the box the callee handed
+// back (#8267).
+function emit_own_lift_retain(v: ast.StmtVar, sv: LowerState): LowerState {
+    if (!sv.ok) { return sv; }
+    if (util.index_of_str(sv.frame.own_lift_sites, util.i32_to_string(v.line) + ":" + util.i32_to_string(v.col)) < 0) { return sv; }
+    var slot: i32 = sv.slot_of(v.name);
+    if (slot < 0) { return sv; }
+    return sv.retain(slot, "own-lift-field");
+}
+
 // seed_snapshot_local: a struct local whose binding recorded the variable its
 // value derives from ("SNAPSRC:<site>|<name>", snapshot_local_names_of) gets a
 // hidden copy of that variable's box, `$snap$<slot>`, right after the binding.
@@ -77424,6 +77453,129 @@ function field_move_type(structs: StructTab, t: string): boolean {
     if (t == "string" || t.len() == 0) { return false; }
     if (decl_is_struct(structs, t) || decl_is_enum(structs, t)) { return true; }
     return t.len() > 2 && t[t.len() - 2] == b'[' && t[t.len() - 1] == b']';
+}
+
+// own_lift_stmt_uses counts the bare-ident mentions of `name` inside `e` that
+// sit at a declared `own` position of a direct call.
+function own_lift_stmt_uses(e: ast.Expr, name: string, own_positions: string[]): i32 {
+    function tally(n: ast.Expr, acc: i32): i32 {
+        match (n) {
+            ast.ExprCall(c) => {
+                var cn: string = ident_name_or_empty(c.callee);
+                if (cn.len() == 0) { return acc; }
+                var out: i32 = acc;
+                var i: i32 = 0;
+                while (i < c.args.len()) {
+                    match (c.args[i]) {
+                        ast.ExprIdent(aid) => {
+                            if (aid.name == name
+                                && util.index_of_str(own_positions, cn + "|" + util.i32_to_string(i)) >= 0) {
+                                out = out + 1;
+                            }
+                        },
+                        _ => {}
+                    }
+                    i = i + 1;
+                }
+                return out;
+            },
+            _ => { return acc; }
+        }
+        return acc;
+    }
+    return astwalk.fold_expr(e, 0, tally);
+}
+
+// own_lift_retain_sites_of: the `var` LIFTS whose local is handed to a declared
+// `own` position — the ones that need a transfer retain.
+//
+// `var st = a.cfi` binds st to the box a's field points at and emits no retain:
+// a keeps the only claim. Two later events then destroy that claim under st —
+// a declared `own` parameter consuming it, and whatever releases a's field:
+// the exit deep drop, or the in-place reuse behind `a = Asm { ...a, cfi: … }`,
+// which decs the replaced field outright. Either way the box the result is
+// built from is freed under it (#8267). Retaining at the LIFT covers both,
+// where retaining at the argument would already be too late for the supersede.
+//
+// The retain is paid for by the `own` position that consumes it, which is why
+// the consuming use is the condition rather than the lift alone: a lift nothing
+// consumes still needs no claim, and giving it one would leak.
+//
+// STRAIGHT-LINE and top-level: the lift, the consuming call, and every
+// statement between them are read in order, and a rebind of the LOCAL — or any
+// branch or loop appearing — ends the alias and the scan. A rebind of the BASE
+// does not: superseding the field is the very case the retain is for. Exactly
+// one consuming use is admitted; two would consume two claims against the one
+// retain, so the pair declines rather than under-count.
+//
+// A lift inside a loop body is not covered — the retain would repeat on a value
+// the first iteration already made counted.
+function own_lift_retain_sites_of(fn: parser.FuncDecl, sg: FnSigs, structs: StructTab): string[] {
+    var out: string[] = [];
+    if (sg.own_positions.len() == 0) { return out; }
+    var fs: FeState = FeState { tainted: [], an: [], av: [], av_env: [], types_n: [], types_t: [], decl_s: [], site_mode: false };
+    for p in fn.params {
+        fs = FeState { ...fs, types_n: fs.types_n.append(p.name), types_t: fs.types_t.append(p.type_name), decl_s: fs.decl_s.append(p.name) };
+    }
+    fs = rc_fe_collect_types(fn.body, fs, structs, sig_reg_empty());
+    var k: i32 = 0;
+    while (k < fn.body.len()) {
+        var base: string = "";
+        var fld: string = "";
+        var lifted: string = "";
+        var key: string = "";
+        match (fn.body[k]) {
+            ast.StmtVar(v) => {
+                match (v.init) {
+                    ast.ExprFieldAccess(fa) => {
+                        base = ident_name_or_empty(fa.obj);
+                        fld = fa.field;
+                        lifted = v.name;
+                        key = util.i32_to_string(v.line) + ":" + util.i32_to_string(v.col);
+                    },
+                    _ => {}
+                }
+            },
+            _ => {}
+        }
+        var bty: string = rc_ml_local_type(base, fs.types_n, fs.types_t);
+        // STRUCT fields only. An array field's bind already takes a Perceus dup
+        // (lower_stmt_var's array arms), and an enum field's is balanced by its
+        // alias marking, so both own their claim before the `own` position sees
+        // them — a second retain there strands the box. A nested struct field
+        // gets neither, which is the whole of #8267.
+        if (base.len() > 0 && decl_is_struct(structs, bty)
+            && decl_is_struct(structs, decl_field_type(structs, bty, fld))
+            && own_lift_scan_uses(fn.body, k + 1, lifted, sg.own_positions) == 1) {
+            out = push_str_unique(out, key);
+        }
+        k = k + 1;
+    }
+    return out;
+}
+
+// own_lift_scan_uses walks forward from statement `from`, counting the
+// `own`-position uses of `name` and stopping at the statement that rebinds it
+// (after reading it — the RHS runs before the store) or at the first statement
+// that is not straight-line.
+function own_lift_scan_uses(body: ast.Stmt[], from: i32, name: string, own_positions: string[]): i32 {
+    var n: i32 = 0;
+    var m: i32 = from;
+    var go: boolean = true;
+    while (go && m < body.len()) {
+        var target: string = "";
+        var straight: boolean = false;
+        match (body[m]) {
+            ast.StmtVar(v) => { n = n + own_lift_stmt_uses(v.init, name, own_positions); target = v.name; straight = true; },
+            ast.StmtAssign(a) => { n = n + own_lift_stmt_uses(a.value, name, own_positions); target = a.target; straight = true; },
+            ast.StmtReturn(r) => { n = n + own_lift_stmt_uses(r.value, name, own_positions); straight = true; },
+            ast.StmtExpr(e) => { n = n + own_lift_stmt_uses(e.value, name, own_positions); straight = true; },
+            _ => {}
+        }
+        if (!straight || target == name) { go = false; }
+        m = m + 1;
+    }
+    return n;
 }
 
 // emit_own_field_arg: the value of `base.f` is on the stack, bound for an
