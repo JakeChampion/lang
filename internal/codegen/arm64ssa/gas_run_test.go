@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	arm64ssa "github.com/jakechampion/lang/internal/codegen/arm64ssa"
@@ -80,15 +81,43 @@ func rcCell(f *ssa.Func, b *ssa.Block, payload int64) ssa.Value {
 	return f.AddOp(b, ssa.OpAdd, base, constOp(f, b, 8))
 }
 
+// qemuOrNative is the launcher for an arm64 binary: qemu where this host needs
+// one, and the EMPTY STRING on a native arm64 Linux host, where the binary runs
+// directly.
+//
+// The three run helpers here looked qemu up and skipped without it. The unit
+// lane runs on ubuntu-24.04-arm as well — the one host that can execute these
+// binaries with no emulator at all — so 49 TestArmRun* cases skipped there too,
+// and a skipped test reports `ok` (#8472). internal/native/arm64's veneer_test
+// has had this shape all along.
+func qemuOrNative(t *testing.T) string {
+	t.Helper()
+	if runtime.GOOS == "linux" && runtime.GOARCH == "arm64" {
+		return ""
+	}
+	for _, c := range []string{"qemu-aarch64", "qemu-aarch64-static"} {
+		if p, err := exec.LookPath(c); err == nil {
+			return p
+		}
+	}
+	t.Skip("no qemu-aarch64 to run arm64 binaries")
+	return ""
+}
+
+// arm64Cmd runs bin under launcher, or directly when launcher is empty.
+func arm64Cmd(launcher, bin string) *exec.Cmd {
+	if launcher == "" {
+		return exec.Command(bin)
+	}
+	return exec.Command(launcher, bin)
+}
+
 // assembleRunArmModule assembles a multi-function module's arm64 SSA output into
 // a static AArch64 ELF and runs it under qemu-aarch64, returning the exit code.
 // Skips when qemu is unavailable.
 func assembleRunArmModule(t *testing.T, funcs map[string]*ssa.Func, entry string, numAlloc int, entryArgs ...int64) int {
 	t.Helper()
-	qemu, err := exec.LookPath("qemu-aarch64")
-	if err != nil {
-		t.Skip("qemu-aarch64 not available")
-	}
+	qemu := qemuOrNative(t)
 	asm, err := arm64ssa.EmitAsmModule(funcs, entry, numAlloc, entryArgs)
 	if err != nil {
 		t.Fatalf("EmitAsmModule: %v", err)
@@ -97,7 +126,7 @@ func assembleRunArmModule(t *testing.T, funcs map[string]*ssa.Func, entry string
 	if err := os.WriteFile(bin, assembleWX(t, asm), 0o755); err != nil {
 		t.Fatalf("write bin: %v", err)
 	}
-	if e := exec.Command(qemu, bin).Run(); e != nil {
+	if e := arm64Cmd(qemu, bin).Run(); e != nil {
 		var ee *exec.ExitError
 		if errors.As(e, &ee) {
 			return ee.ExitCode()
@@ -133,10 +162,7 @@ func moduleMatchesEval(t *testing.T, funcs map[string]*ssa.Func, entry string, e
 // unavailable.
 func assembleRunArm(t *testing.T, f *ssa.Func, numAlloc int, entryArgs ...int64) int {
 	t.Helper()
-	qemu, err := exec.LookPath("qemu-aarch64")
-	if err != nil {
-		t.Skip("qemu-aarch64 not available")
-	}
+	qemu := qemuOrNative(t)
 	asm, err := arm64ssa.EmitAsm(f, numAlloc, entryArgs...)
 	if err != nil {
 		t.Fatalf("EmitAsm: %v", err)
@@ -145,7 +171,7 @@ func assembleRunArm(t *testing.T, f *ssa.Func, numAlloc int, entryArgs ...int64)
 	if err := os.WriteFile(bin, assembleWX(t, asm), 0o755); err != nil {
 		t.Fatalf("write bin: %v", err)
 	}
-	if e := exec.Command(qemu, bin).Run(); e != nil {
+	if e := arm64Cmd(qemu, bin).Run(); e != nil {
 		var ee *exec.ExitError
 		if errors.As(e, &ee) {
 			return ee.ExitCode()

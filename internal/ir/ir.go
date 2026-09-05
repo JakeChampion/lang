@@ -3372,6 +3372,29 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 		for _, fn := range out.Funcs {
 			enqueueCalls(fn.Ops)
 		}
+		// A closure local whose slot does not elide keeps its {fn, env}
+		// pair, and ElideClosurePair rewrites that slot's
+		// __closure_drop_<name> to __drop_closure_value — but it runs
+		// AFTER this worklist, so the rewrite would name a function
+		// nothing generated. Seed it from the rewrite's two
+		// preconditions: a pair exists, and some slot's drop is a
+		// per-closure thunk. The per-backend dead-function cull removes
+		// it again when every such slot turned out to elide.
+		var sawPair, sawThunkDrop bool
+		for _, fn := range out.Funcs {
+			for _, op := range fn.Ops {
+				if op.Kind == OpMakeClosure {
+					sawPair = true
+				}
+				if op.Kind == OpCallDirect && strings.HasPrefix(op.Str, "__closure_drop_") {
+					sawThunkDrop = true
+				}
+			}
+		}
+		if sawPair && sawThunkDrop && !queued["__drop_closure_value"] {
+			queued["__drop_closure_value"] = true
+			work = append(work, "__drop_closure_value")
+		}
 		// Seed the worklist with the concrete-destructor drop fns named in
 		// the `dyn` vtable drop slots (docs/DYN-TRAITS.md §4.4). The
 		// __drop_dyn_<set> helper reaches these by an indirect call through
@@ -5727,13 +5750,20 @@ func isArraySetCall(c *ast.Call) bool {
 	return ok && id.Name == "__method_Array_set" && len(c.Args) == 3
 }
 
-// stmtContainsReturn reports whether a statement (or anything nested
-// in it) can `return` — used to stop move-on-alias once a path could
+// stmtCanLeaveFunction reports whether a statement (or anything nested in
+// it) can leave the function — used to stop move-on-alias once a path could
 // exit before a later top-level alias.
-func stmtContainsReturn(st ast.Stmt) bool {
+//
+// `?` counts. Its lowering runs the owned-local dec sweep exactly like the
+// `*ast.Return` lowering, and that sweep skips locals marked moved, so a
+// move claimed textually after a `?` is a leak on the error path (#8442).
+// This is the MAY question; stmtDiverges asks the MUST one, where `?` does
+// NOT belong — it leaves only on Err.
+func stmtCanLeaveFunction(st ast.Stmt) bool {
 	found := false
 	ast.Walk(st, func(n ast.Node) bool {
-		if _, ok := n.(*ast.Return); ok {
+		switch n.(type) {
+		case *ast.Return, *ast.TryOp:
 			found = true
 		}
 		return !found
@@ -18353,16 +18383,24 @@ func (b *builder) assign(n *ast.Assign) error {
 				//     table leaked behind it — 1328 B an iteration in the
 				//     temporary-bound insert loop of #6227.
 				//   - new == old — the same reference carried across the
-				//     rebind. A release is owed only if a second count was
-				//     created for it: the alias inc of `m = m2`, or the return
-				//     transfer inc of a callee that handed the local's own
-				//     handle back (`m = f(m)`, the query_parse threading). A
-				//     self-mutation created none, and dec'ing there is the
+				//     rebind. A release is owed only if the RHS brought a
+				//     second count with it: the alias of `m = m2`, or the
+				//     return transfer inc of a callee that handed the local's
+				//     own handle back (`m = f(m)`, the query_parse threading).
+				//     A self-mutation brought none, and dec'ing there is the
 				//     over-release isSelfMapMutation's COW-aware branch exists
 				//     to avoid.
+				//
+				//     A MOVED alias brings one too. `var (m2, ok) = m.without(k);
+				//     m = m2` skips the transfer inc and skips m2's exit sweep,
+				//     so no inc is emitted — but the count m2 held is still
+				//     handed to the slot, on top of the one the slot already
+				//     had. Testing `!moveSites` here asked whether an inc was
+				//     emitted, which is the wrong question, and stranded the
+				//     whole table once per rebind (#8434).
 				if mst, isMap := sety.(ast.StructType); isMap && mst.Name == "Map" {
 					_, isCall := n.Value.(*ast.Call)
-					aliasInced := (needsRcIncOnAlias(n.Value, b) && !b.rc.moveSites[n]) ||
+					rhsCarriesACount := needsRcIncOnAlias(n.Value, b) ||
 						(isCall && exprMentionsIdent(n.Value, t.Name))
 					newTmp := b.allocSlot()
 					b.locals[fmt.Sprintf("__mapow_new_%d", newTmp)] = newTmp
@@ -18372,7 +18410,7 @@ func (b *builder) assign(n *ast.Assign) error {
 					b.emit(Op{Kind: OpNe, Width: WidthPtr})
 					b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
 					b.emitMapSlotDrop(idx, mst)
-					if aliasInced {
+					if rhsCarriesACount {
 						b.emit(Op{Kind: OpElse})
 						b.emit(Op{Kind: OpLoadLocal, I32: idx})
 						b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})

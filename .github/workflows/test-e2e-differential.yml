@@ -126,7 +126,16 @@ jobs:
           # same runner don't clobber each other's failed-
           # program asm. `diffOracleArtifactDir()` reads this.
           DIFF_ORACLE_ARTIFACT_DIR: "${{ runner.temp }}/fern-diff-failures"
-        run: gotestsum --format pkgname-and-test-fails -- -run '^TestDifferential' ./internal/e2e/
+        # -timeout is EXPLICIT because Go's default is 10 minutes, which
+        # sits inside this lane's own headroom: the sweep is ~9.5 min at
+        # one shard against a 25-minute job budget, so a slightly slow
+        # runner panics at Go's default long before the budget is spent.
+        # That does not read as a timeout — the panic dumps every in-flight
+        # subtest as a failure with no reason, so one slow run reported 391
+        # phantom seed failures next to 638 genuine passes at exactly
+        # 600.035s. 20m keeps the timeout inside timeout-minutes, so the
+        # lane fails as a timeout rather than as a wall of miscompiles.
+        run: gotestsum --format pkgname-and-test-fails -- -timeout 20m -run '^TestDifferential' ./internal/e2e/
 
       - name: Upload failing-seed artifacts
         if: failure()
