@@ -1876,6 +1876,10 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__str_ord":                     emitStrOrdHelper,
 	"__str_concat":                  emitStrConcatHelper,
 	"__fern_str_dec":                emitStrDecHelper,
+	"__fern_drop_arr_str":           emitDropArrStrHelper,
+	"__alloc_reuse":                 emitAllocReuseHelper,
+	"print":                         emitPrintHelper("print", 1),
+	"eprint":                        emitPrintHelper("eprint", 2),
 }
 
 // heapUsingHelpers are runtime helpers that allocate on the SSA bump heap, so
@@ -1887,6 +1891,7 @@ var heapUsingHelpers = map[string]bool{
 	"string_from_bytes_unchecked": true, "__str_slice": true,
 	"__fern_arr_push_grow":   true,
 	"__fern_arr_cow_inplace": true,
+	"__alloc_reuse":          true,
 }
 
 // runtimeHelperDeps records the helper→helper call edges (a helper that tail-
@@ -1900,6 +1905,7 @@ var runtimeHelperDeps = map[string][]string{
 	"__fern_arr_push_grow_move_str": {"__fern_arr_push_grow"},
 	"__fern_arr_cow_inplace_ptr":    {"__fern_arr_cow_inplace", "__fern_rc_inc"},
 	"__fern_arr_cow_inplace_str":    {"__fern_arr_cow_inplace"},
+	"__fern_drop_arr_str":           {"__fern_str_dec", "__fern_arr_dec"},
 }
 
 // emitRuntimeHelpers writes the named helper bodies, each at a 16-byte
@@ -2878,6 +2884,146 @@ func emitStrDecHelper(w func(string, ...any)) {
 	w("\tmov %s, eax", memRef("rdi", -8))
 	w(".Lssa_strdec_ret:")
 	rcPassThroughRet(w)
+}
+
+// emitPrintHelper writes print(s) / eprint(s): the string's bytes to the fd,
+// then a newline, as the two write(2) calls the stack-machine backend's
+// __fern_puts / __fern_eprint make — same syscall count, same order, so a
+// program interleaving stdout and stderr writes the same bytes under either
+// backend. The string is one word with its length at [ptr-4]; the value is
+// returned unchanged, as every rc-neutral helper here does.
+//
+// The newline is a byte on this frame rather than a .rodata entry: one word of
+// stack costs nothing and keeps the helper self-contained, where a shared
+// literal would have to be emitted whether or not any helper referenced it.
+//
+// Not a short-write loop, deliberately — the stack-machine backend does not
+// have one either, and this leg exists to compare the two.
+func emitPrintHelper(name string, fd int) func(w func(string, ...any)) {
+	return func(w func(string, ...any)) {
+		w("")
+		w("%s:", fnLabel(name))
+		w("\tpush rbp")
+		w("\tmov rbp, rsp")
+		w("\tpush rbx")
+		w("\tsub rsp, 8") // 16-byte aligned; [rsp] holds the newline byte
+		w("\tmov rbx, rdi")
+		w("\tmov edx, %s", memRef("rdi", -4)) // len
+		w("\tmov rsi, rdi")                   // buf
+		w("\tmov edi, %d", fd)
+		w("\tmov eax, 1") // sysWrite
+		w("\tsyscall")
+		w("\tmov byte ptr [rsp], 10")
+		w("\tmov rsi, rsp")
+		w("\tmov edx, 1")
+		w("\tmov edi, %d", fd)
+		w("\tmov eax, 1")
+		w("\tsyscall")
+		w("\tmov rax, rbx")
+		w("\tadd rsp, 8")
+		w("\tpop rbx")
+		w("\tpop rbp")
+		w("\tret")
+	}
+}
+
+// emitAllocReuseHelper writes __alloc_reuse(token, tokenSize, size) -> data —
+// the drop-reuse (FBIP) primitive. A live token whose 16-byte size class matches
+// the request's is handed straight back, so the constructor writes its fields
+// into the block the drop just released; anything else allocates fresh.
+//
+// The class arithmetic is the stack-machine backend's, ((sz+15)&-16), because a
+// match has to mean the same thing on both sides of the differential: the
+// reused block must be wide enough for the new value.
+//
+// Where this backend differs is the mismatch path. The native helper FREES the
+// dropped block before allocating, which it can do because it has a freelist;
+// this heap is a bump cursor with no reclamation (see emitArrPushGrowHelper),
+// so the block is simply left behind. A leak, not a miscompile — the same
+// trade every allocating helper here already makes.
+//
+// The fresh path is MemAlloc's sequence: rc=1 at base+0, data at base+8, cursor
+// past header+size. __ssa_heap_guard preserves rax, rcx and the flags, so the
+// data pointer survives the guard call in rax.
+func emitAllocReuseHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__alloc_reuse"))
+	w("\ttest rdi, rdi")
+	w("\tjz .Lssa_reuse_fresh") // null token: nothing to reuse
+	w("\tmov rax, rsi")
+	w("\tadd rax, 15")
+	w("\tand rax, -16") // class(tokenSize)
+	w("\tmov rcx, rdx")
+	w("\tadd rcx, 15")
+	w("\tand rcx, -16") // class(size)
+	w("\tcmp rax, rcx")
+	w("\tjne .Lssa_reuse_fresh")
+	w("\tmov rax, rdi") // in place: the token IS the block
+	w("\tret")
+	w(".Lssa_reuse_fresh:")
+	w("\tmov rax, [rip + %s]", heapPtrSym)
+	w("\tadd rax, 7")
+	w("\tand rax, -8")            // base, 8-aligned
+	w("\tmov dword ptr [rax], 1") // rc = 1
+	w("\tmov rcx, rax")
+	w("\tadd rcx, rdx")
+	w("\tadd rcx, 8") // header
+	w("\tmov [rip + %s], rcx", heapPtrSym)
+	w("\t%s", heapGuardCall)
+	w("\tadd rax, 8") // data = base + 8
+	w("\tret")
+}
+
+// emitDropArrStrHelper writes __fern_drop_arr_str(ptr, stride) -> ptr — the
+// scope-exit drop of a string ARRAY, which owns its elements: at rc == 1 the
+// array is about to die, so each element's own reference goes first, then the
+// array's. A SHARED array (rc != 1) walks nothing — the other owner still reads
+// those elements — which is the same test the stack-machine backend makes.
+//
+// The element release is __fern_str_dec and the array's is __fern_arr_dec, so
+// the guards (null, low address, static sentinel, rc underflow) are stated once
+// each and this helper is the walk alone.
+func emitDropArrStrHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__fern_drop_arr_str"))
+	w("\tpush rbp")
+	w("\tmov rbp, rsp")
+	w("\tpush rbx")
+	w("\tpush r12")
+	w("\tpush r13")
+	w("\tpush r14") // four pushes past rbp: rsp stays 16-aligned
+	w("\tmov rbx, rdi")
+	w("\tmov r14, rsi") // stride
+	w("\tcmp rbx, 0x10000")
+	w("\tjb .Lssa_dropstr_ret")
+	w("\tmov eax, %s", memRef("rbx", -8)) // rc
+	w("\ttest eax, eax")
+	w("\tjs .Lssa_dropstr_ret") // static sentinel
+	w("\tcmp eax, 1")
+	w("\tjne .Lssa_dropstr_arr")           // shared: the elements are not ours to drop
+	w("\tmov r12d, %s", memRef("rbx", -4)) // len
+	w("\txor r13, r13")
+	w(".Lssa_dropstr_loop:")
+	w("\tcmp r13, r12")
+	w("\tjge .Lssa_dropstr_arr")
+	w("\tmov rax, r13")
+	w("\timul rax, r14")
+	w("\tmov rdi, [rbx + rax]") // element i, a string pointer
+	w("\tcall %s", fnLabel("__fern_str_dec"))
+	w("\tinc r13")
+	w("\tjmp .Lssa_dropstr_loop")
+	w(".Lssa_dropstr_arr:")
+	w("\tmov rdi, rbx")
+	w("\tmov rsi, r14")
+	w("\tcall %s", fnLabel("__fern_arr_dec"))
+	w(".Lssa_dropstr_ret:")
+	w("\tmov rax, rbx")
+	w("\tpop r14")
+	w("\tpop r13")
+	w("\tpop r12")
+	w("\tpop rbx")
+	w("\tpop rbp")
+	w("\tret")
 }
 
 // rcxReg/raxReg/rdxReg are the fixed registers the shift/div and call sequences
