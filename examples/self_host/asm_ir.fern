@@ -1201,9 +1201,8 @@ function emit_rt_float_transcendentals(s: asmcore.EmitState): asmcore.EmitState 
     s = s.write(".Lfc_lg6: .double 1.531383769920937332e-01\n");
     s = s.write(".Lfc_lg7: .double 1.479819860511658591e-01\n");
     // exp's finite range. Above the first e^x is not representable; below the
-    // second it rounds to zero. Both are needed BEFORE the 2^k reconstruction,
-    // which builds the exponent field as (k+1023)<<52 and otherwise overflows
-    // silently into the SIGN bit — exp(1000) came out as -6.1e-183, not +Inf.
+    // second it rounds to zero. They bound the domain only; the 2^k
+    // reconstruction below is what keeps k inside one exponent field.
     s = s.write(".Lfc_expovf: .double 709.782712893383973096\n");
     s = s.write(".Lfc_expunf: .double -745.133219101941108420\n");
     s = s.write("    .section .text\n");
@@ -1377,8 +1376,12 @@ function emit_rt_float_transcendentals(s: asmcore.EmitState): asmcore.EmitState 
     s = s.write("    movsd %xmm1, %xmm2\n    subsd %xmm7, %xmm2\n");           // lo - …
     s = s.write("    subsd %xmm3, %xmm2\n");                                   // - hi
     s = s.write(fc_ld("%xmm0", ".Lfc_one") + "    subsd %xmm2, %xmm0\n");
-    // 2^k by assembling the exponent field directly.
-    s = s.write("    addq $1023, %rax\n    shlq $52, %rax\n    movq %rax, %xmm1\n    mulsd %xmm1, %xmm0\n");
+    // 2^k as two half-scales; one exponent field cannot hold the subnormal
+    // band, where the low bits of k land in the sign bit.
+    s = s.write("    movq %rax, %rcx\n    sarq $1, %rcx\n    subq %rcx, %rax\n");
+    s = s.write("    addq $1023, %rcx\n    shlq $52, %rcx\n    movq %rcx, %xmm1\n");
+    s = s.write("    addq $1023, %rax\n    shlq $52, %rax\n    movq %rax, %xmm2\n");
+    s = s.write("    mulsd %xmm1, %xmm0\n    mulsd %xmm2, %xmm0\n");
     s = s.write(".Lfexp_ret:\n    ret\n");
     s = s.write(".Lfexp_inf:\n" + fc_retbits("0x7ff0000000000000"));
     s = s.write(".Lfexp_zero:\n    xorpd %xmm0, %xmm0\n    ret\n");

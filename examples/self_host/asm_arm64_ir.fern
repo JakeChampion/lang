@@ -6186,10 +6186,9 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
 //     a zero of sine, where the reduced argument IS the answer, so the
 //     reduction's absolute error becomes the result's relative error: sin(pi)
 //     measured 285,696 ulp. A fourth chunk makes it worse, not better.
-//   - Every function guards its domain. Without that, exp(1000) returned
-//     -6.1e-183 rather than +Inf, because 2^k is assembled as (k+1023)<<52 and
-//     k=1443 overflows the exponent field into the SIGN bit; log(0) returned
-//     -709.09 and log(-1) returned 0.
+//   - Every function guards its domain: log(0) returned -709.09 and log(-1)
+//     returned 0 without it. The domain guard is not what keeps 2^k in range —
+//     that is the two half-scales the reconstruction is built from.
 //
 // fc_pio2_reduce: d0 = x -> x10 = quadrant (k&3), d0 = r with |r| <= pi/4.
 // prefix keeps the local labels unique across the two emission sites (sin and
@@ -6553,10 +6552,18 @@ function emit_rt_float_transcendentals(s: asmcore.EmitState): asmcore.EmitState 
     s = s.write("    fsub d2, d2, d3\n");
     s = emit_ldc(s, "d0", ".Lfc_one");
     s = s.write("    fsub d0, d0, d2\n");
+    // 2^k as two half-scales; see asm_ir.fern's exp for why one field
+    // cannot hold the subnormal band.
+    s = s.write("    asr x11, x10, #1\n");
+    s = s.write("    sub x10, x10, x11\n");
+    s = s.write("    add x11, x11, #1023\n");
+    s = s.write("    lsl x11, x11, #52\n");
+    s = s.write("    fmov d1, x11\n");
     s = s.write("    add x10, x10, #1023\n");
     s = s.write("    lsl x10, x10, #52\n");
-    s = s.write("    fmov d1, x10\n");
+    s = s.write("    fmov d2, x10\n");
     s = s.write("    fmul d0, d0, d1\n");
+    s = s.write("    fmul d0, d0, d2\n");
     s = s.write(".Lexp_ret:\n");
     s = s.write("    ret\n");
     s = s.write(".Lexp_inf:\n");
