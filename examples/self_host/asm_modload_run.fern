@@ -359,9 +359,9 @@ function module_ir_eligible(infmods: parser.Module[], parts: flatten.PerModule[]
 //
 // A window covering the whole module is normalised to hi = -1, which is how a
 // single `-per-module-emit N` spells it. The two routes emit byte-identical
-// bytes for that unit (TestSelfHostPerModuleEmitAllX86_64 pins it), so without
-// the normalisation they would key the same asm twice and never reuse each
-// other's entries.
+// bytes for that unit (TestSelfHostAssumeEligibleByteIdenticalX86_64 pins it),
+// so without the normalisation they would key the same asm twice and never
+// reuse each other's entries.
 function unit_cache_file(cache_dir: string, parts: flatten.PerModule[], infmods: parser.Module[], sighashes: string[], src_hash: string, midx: i32, extra: string[], wlo: i32, whi: i32): string {
     if (cache_dir.len() == 0 || sighashes.len() == 0 || src_hash.len() == 0) { return ""; }
     var khi: i32 = whi;
@@ -896,9 +896,12 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
             }
         }
     }
+    // The pre-check covers the window this process emits: a sharded module's
+    // windows are separate processes, so each checking the whole module would
+    // lower it once per window. The entry is never sharded.
     var elig: boolean = true;
     if (!assume_eligible) {
-        elig = ircore.all_eligible_lib_known_view(infmods[pm_index], known, all_funcs, all_stab);
+        elig = ircore.all_eligible_lib_known_view_range(infmods[pm_index], known, all_funcs, all_stab, pm_lo, pm_hi);
         if (parts[pm_index].is_entry) { elig = ircore.all_eligible_known_view(infmods[pm_index], known, all_funcs, all_stab); }
     }
     if (!elig) {
