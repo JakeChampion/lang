@@ -7006,6 +7006,65 @@ function main(): i32 {
 `,
 	},
 	{
+		// `?` is an exit, so a move claimed textually AFTER one is a leak on
+		// the error path (#8442): the TryOp lowering runs the owned-local dec
+		// sweep, and that sweep skips locals marked moved. Both move kinds
+		// the dominance guard admits are covered — the bare-ident alias
+		// (computeMovedLocals) and the `own` argument (walkDominatingExprs) —
+		// and each is driven down BOTH paths so an Ok-only case cannot pass
+		// vacuously. Before the fix: 32 bytes live on each Err path, clean on
+		// each Ok path.
+		name: "move_after_try_op_releases_on_the_err_path",
+		src: `
+@noinline
+function take(own a: i32[]): i32 { return a[0]; }
+
+@noinline
+function g(c: i32): Result[i32, i32] {
+    if (c == 0) { return Err(7); }
+    return Ok(c * 2);
+}
+
+@noinline
+function aliased(c: i32): Result[i32, i32] {
+    var x: i32[] = [1, 2, 3];
+    var r: i32 = g(c)?;
+    var y: i32[] = x;
+    return Ok(y[0] + r);
+}
+
+@noinline
+function owned(own a: i32[], c: i32): Result[i32, i32] {
+    var r: i32 = g(c)?;
+    return Ok(take(a) + r);
+}
+
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 50) {
+        match (aliased(0)) {
+            Ok(v) => { acc = acc + 1000; },
+            Err(e) => { acc = acc + e; }
+        }
+        match (aliased(3)) {
+            Ok(v) => { acc = acc + v; },
+            Err(e) => { acc = acc + 1000; }
+        }
+        match (owned([4, 5, 6], 0)) {
+            Ok(v) => { acc = acc + 1000; },
+            Err(e) => { acc = acc + e; }
+        }
+        match (owned([4, 5, 6], 3)) {
+            Ok(v) => { acc = acc + v; },
+            Err(e) => { acc = acc + 1000; }
+        }
+        i = i + 1;
+    }
+    return (acc - 1550) + __rc_underflow_count();
+}`,
+	},
+	{
 		// A closure LOCAL handed to a callee keeps its pair: the slot has a
 		// reader ElideClosurePair cannot elide, so the exit sweep's
 		// per-closure thunk — which reads a bare env — cannot run on the
