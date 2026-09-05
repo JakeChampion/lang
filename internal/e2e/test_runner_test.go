@@ -4242,8 +4242,9 @@ func TestRunnerPegExamplePasses(t *testing.T) {
 // on x86-64, IEEE binary128 on arm64 and wasm32 and plain binary64 on
 // Darwin, so the suite drives all three explicitly rather than only the
 // one this host has: `%a` digits and leading bit, the subnormal and
-// overflow edges, the exact decimal expansion, strtold, and the
-// arithmetic. Which format a target selects is pinned separately by
+// overflow edges, the exact decimal expansion, strtold, the arithmetic
+// including the division seq and numfmt need, numfmt's --round modes,
+// and LDBL_DIG. Which format a target selects is pinned separately by
 // internal/coreutils/longdouble_test.go. Passing suite -> exit 0.
 func TestRunnerCoreutilsLongDoubleExamplePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
@@ -4252,7 +4253,7 @@ func TestRunnerCoreutilsLongDoubleExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: coreutils/lib/ld", "1..10", "# pass 10", "# fail 0"} {
+	for _, w := range []string{"# Suite: coreutils/lib/ld", "1..16", "# pass 16", "# fail 0"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}

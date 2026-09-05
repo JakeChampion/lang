@@ -84,6 +84,15 @@ pub function (f: Format) min_exp(): i32 {
   return f.emin() - (f.mant - 1);
 }
 
+// C's LDBL_DIG: how many decimal digits survive a round trip through
+// the format — 18 in x87, 33 in binary128, 15 in binary64. It is
+// floor((mant - 1) * log10 2), with log10 2 as 30103/100000, which is
+// exact enough to land on the same integer for every width a format
+// here has.
+pub function (f: Format) dig(): i32 {
+  return (f.mant - 1) * 30103 / 100000;
+}
+
 // How far below the significand's top the printed `%a` point sits: the
 // stored integer bit takes four bits with it, an implied one takes one.
 function hex_shift(f: Format): i32 {
@@ -206,6 +215,40 @@ pub function (f: Format) from_i64(v: i64): LD {
   }
   var r: (LD, boolean) = f.round(bigint.from_i64(mag), 0, false, neg);
   return r.0;
+}
+
+pub function (f: Format) from_u64(v: u64): LD {
+  var r: (LD, boolean) = f.round(bigint.from_u64(v), 0, false, false);
+  return r.0;
+}
+
+// The largest whole number the format holds exactly, capped at what a
+// u64 carries. A digit fold that stays under this is exact, so it can
+// run in plain integer arithmetic and convert once; past it, every step
+// has to round the way the C one does.
+pub function (f: Format) max_exact_u64(): u64 {
+  if (f.mant >= 64) {
+    return 18446744073709551615 as u64;
+  }
+  return (1 as u64 << f.mant as u64) - 1 as u64;
+}
+
+// `pow10(f, k)` — 10^k, reached the way a C program reaches it: by
+// multiplying, so the result carries the roundings that accumulate once
+// the power outgrows the significand. Exact either way while 5^k still
+// fits (k up to 27 in x87, 48 in binary128, 22 in binary64).
+pub function (f: Format) pow10(k: i32): LD {
+  var v: LD = f.from_i64(1 as i64);
+  if (k <= 0) {
+    return v;
+  }
+  var ten: LD = f.from_i64(10 as i64);
+  var i: i32 = 0;
+  while (i < k) {
+    v = f.mul(v, ten);
+    i = i + 1;
+  }
+  return v;
 }
 
 function pow5(k: i32): bigint.BigInt {
@@ -570,6 +613,46 @@ pub function (f: Format) mul(a: LD, b: LD): LD {
   return r.0;
 }
 
+// `div(f, a, b)` — a / b rounded once to the format. The quotient is
+// almost never exact, so the dividend is shifted first by enough that
+// the integer quotient carries the whole significand plus the round
+// bit; a non-zero remainder is the sticky bit, which is all `round`
+// needs to break the tie correctly however much was cut off below.
+pub function (f: Format) div(a: LD, b: LD): LD {
+  if (a.kind == 2) {
+    return a;
+  }
+  if (b.kind == 2) {
+    return b;
+  }
+  var neg: boolean = a.neg != b.neg;
+  if (a.kind == 1) {
+    if (b.kind == 1) {
+      return nan(false);
+    }
+    return inf(neg);
+  }
+  if (b.kind == 1) {
+    return f.zero(neg);
+  }
+  if (b.m.is_zero()) {
+    if (a.m.is_zero()) {
+      return nan(false);
+    }
+    return inf(neg);
+  }
+  if (a.m.is_zero()) {
+    return f.zero(neg);
+  }
+  var s: i32 = f.mant + 3 + b.m.bit_length() - a.m.bit_length();
+  if (s < 0) {
+    s = 0;
+  }
+  var qr: (bigint.BigInt, bigint.BigInt) = a.m.shl(s).divmod(b.m);
+  var r: (LD, boolean) = f.round(qr.0, a.e - b.e - s, !qr.1.is_zero(), neg);
+  return r.0;
+}
+
 // `cmp(a, b)` — -1, 0 or 1, and 2 when the two are UNORDERED because
 // one is a NaN. 2 makes `a.cmp(b) < 0` and `a.cmp(b) == 0` answer as C
 // does; a caller that wants `>=` has to rule the NaN out first, exactly
@@ -613,9 +696,17 @@ function mag_class(v: LD): i32 {
   return 0;
 }
 
-// Magnitudes only, both non-NaN. The leading bits' exponents settle
-// almost every pair, so the two significands are aligned only when
-// they share a binade — where the shift is at most `mant` bits.
+// `cmp_abs(a, b)` — |a| against |b|, without building either. The
+// leading bits' exponents settle almost every pair, so the two
+// significands are aligned only when they share a binade, where the
+// shift is at most `mant` bits. A NaN operand is unordered here too.
+pub function (a: LD) cmp_abs(b: LD): i32 {
+  if (a.kind == 2 || b.kind == 2) {
+    return 2;
+  }
+  return mag_cmp(a, b);
+}
+
 function mag_cmp(a: LD, b: LD): i32 {
   var ca: i32 = mag_class(a);
   var cb: i32 = mag_class(b);
@@ -641,6 +732,101 @@ function mag_cmp(a: LD, b: LD): i32 {
     e = b.e;
   }
   return a.m.shl(a.e - e).cmp(b.m.shl(b.e - e));
+}
+
+// ---- rounding a value to a whole number ------------------------------------
+// The modes `numfmt --round` selects between. They round the VALUE to a
+// whole number, which is a different question from the rounding every
+// operation above does to fit the format.
+pub function round_up(): i32 {
+  return 0;
+}
+
+pub function round_down(): i32 {
+  return 1;
+}
+
+pub function round_from_zero(): i32 {
+  return 2;
+}
+
+pub function round_toward_zero(): i32 {
+  return 3;
+}
+
+pub function round_nearest(): i32 {
+  return 4;
+}
+
+// `round_to_int(f, v, mode)` — v as a whole number.
+//
+// `nearest` is `floor(|v| + 1/2)` with the sign put back, NOT a
+// correctly-rounded round-half-away: the addition rounds to the format
+// first, so a value a hair under a half carries up to the half and then
+// rounds away with it. That asymmetry is load-bearing — it is why
+// `numfmt --round=nearest --format=%.3f 0.0005` is 0.001 — so the
+// addition has to happen at the target's precision, not exactly.
+pub function (f: Format) round_to_int(v: LD, mode: i32): LD {
+  if (v.kind != 0 || v.m.is_zero() || v.e >= 0) {
+    return v;
+  }
+  if (mode == round_nearest()) {
+    return signed(trunc_mag(f, f.add(v.abs(), f.half())), v.neg);
+  }
+  if (!has_fraction(v)) {
+    return v;
+  }
+  var whole: LD = trunc_mag(f, v.abs());
+  if (away_from_zero(mode, v.neg)) {
+    whole = f.add(whole, f.from_i64(1 as i64));
+  }
+  return signed(whole, v.neg);
+}
+
+pub function (f: Format) half(): LD {
+  var r: (LD, boolean) = f.round(bigint.from_i64(1 as i64), 0 - 1, false, false);
+  return r.0;
+}
+
+function signed(v: LD, neg: boolean): LD {
+  if (neg) {
+    return v.negate();
+  }
+  return v;
+}
+
+// Whether a value with a fraction moves one step away from zero. The
+// caller has already established that there is a fraction.
+function away_from_zero(mode: i32, neg: boolean): boolean {
+  if (mode == round_toward_zero()) {
+    return false;
+  }
+  if (mode == round_from_zero()) {
+    return true;
+  }
+  if (mode == round_up()) {
+    return !neg;
+  }
+  return neg;
+}
+
+// Whether anything is lost by dropping the fraction.
+function has_fraction(v: LD): boolean {
+  if (v.kind != 0 || v.e >= 0 || v.m.is_zero()) {
+    return false;
+  }
+  var drop: i32 = 0 - v.e;
+  return !v.m.shr(drop).shl(drop).eq(v.m);
+}
+
+// The whole part of a non-negative value, which is exact in the format:
+// it has no more significant bits than the value it came from.
+function trunc_mag(f: Format, v: LD): LD {
+  if (v.kind != 0 || v.e >= 0) {
+    return v;
+  }
+  var r: (LD, boolean) = f.round(v.m.shr(0 - v.e), 0, false, false);
+  return r.0;
 }
 
 // ---- exact decimal digits ---------------------------------------------------
@@ -931,6 +1117,28 @@ function strip_zeros(s: string): string {
     n = n - 1;
   }
   return slice_unchecked(s, 0, n) + "";
+}
+
+// ---- whole conversions ------------------------------------------------------
+// The bodies above carry no sign, because printf writes its own from
+// the flags. A caller that just wants what C would print reaches for
+// these.
+// `to_fixed(f, v, prec)` — `printf("%.*Lf", prec, v)`.
+pub function (f: Format) to_fixed(v: LD, prec: i32): string {
+  return sign_of(v) + fixed(v.dec(), prec as i64, false, 0 as i64).s;
+}
+
+// `to_g(f, v)` — `printf("%Lg", v)`: six significant digits, exponent
+// form below -4 or from 6 up, trailing zeros dropped.
+pub function (f: Format) to_g(v: LD): string {
+  return sign_of(v) + general(v.dec(), 6 as i64, false, false, 0 as i64).s;
+}
+
+function sign_of(v: LD): string {
+  if (v.neg) {
+    return "-";
+  }
+  return "";
 }
 
 // ---- %a ---------------------------------------------------------------------

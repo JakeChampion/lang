@@ -290,10 +290,11 @@ type rcPlan struct {
 	// owns an independent buffer. Filled by computeBorrowedMapFieldResults.
 	borrowedMapFieldResults map[string]bool
 	// mapCowBindSites holds the Map COW-mutator CALL nodes whose result is
-	// bound straight to a new local — `var m2 = m.insert(k, v)` and
-	// `var (m2, ok) = m.without(k)`. Those are the sites that owe the COW-seam
-	// retain (#6227): the binding co-exists with the receiver's binding, so on
-	// the in-place branch two names share one refcount and both release it.
+	// bound straight to a new local — `var m2 = m.insert(k, v)`,
+	// `var (m2, ok) = m.without(k)`, and `var t = m.without(k)` binding the
+	// tuple WHOLE. Those are the sites that owe the COW-seam retain (#6227):
+	// the binding co-exists with the receiver's binding, so on the in-place
+	// branch two names share one refcount and both release it.
 	// Every OTHER position a mutator result can appear in is deliberately
 	// excluded, because there the result is a temporary nobody binds and a
 	// retain would leak it instead: a chained receiver
@@ -1274,6 +1275,16 @@ func inferParamCountedRetain(prog *ast.Program, info *checker.Info) map[string][
 				// arm of paramProjectionsSafe. This is what lets a caller
 				// release the lambda it passes to `m.update(k, f)`.
 				flags[i] = paramProjectionsSafe(fn, p.Name, info, out, ctorCounted)
+			case ast.SliceType:
+				// A slice header is retained by the same counted slots (a
+				// tuple's argument), and read without retaining by `.len()`
+				// (pureReadReceiverBuiltin) and by a scalar element read,
+				// which copies a byte out of storage the header does not own.
+				// That is the whole of a digest's `absorb(h, chunk)`, and
+				// without the arm the parameter is refused — which then
+				// de-credits the function's OTHER parameters through
+				// ptrAllCounted below and strands the caller's header.
+				flags[i] = paramProjectionsSafe(fn, p.Name, info, out, ctorCounted)
 			}
 		}
 		ptrAllCounted := true
@@ -2047,8 +2058,10 @@ func paramProjectionsSafe(fn *ast.FuncDecl, pn string, info *checker.Info, summa
 		}
 	}
 	// scalarElemRead reports the tracked root of an index read whose element
-	// is a plain scalar — `p.tail[i]`, or `xs[i]` on a tracked array binding
-	// — which copies a value out and retains nothing.
+	// is a plain scalar — `p.tail[i]`, `xs[i]` on a tracked array binding, or
+	// `b[i]` through a tracked `[T]` view — which copies a value out and
+	// retains nothing. A slice reads through its header into storage the
+	// header does not own, so the copy aliases neither.
 	scalarElemRead := func(x *ast.Index) (*ast.Ident, bool) {
 		var root *ast.Ident
 		var at ast.Type
@@ -2065,11 +2078,19 @@ func paramProjectionsSafe(fn *ast.FuncDecl, pn string, info *checker.Info, summa
 		default:
 			return nil, false
 		}
-		arrT, ok := at.(ast.ArrayType)
-		if !ok || !tracked[root.Name] {
+		var elem ast.Type
+		switch c := at.(type) {
+		case ast.ArrayType:
+			elem = c.Elem
+		case ast.SliceType:
+			elem = c.Elem
+		default:
 			return nil, false
 		}
-		switch arrT.Elem.(type) {
+		if !tracked[root.Name] {
+			return nil, false
+		}
+		switch elem.(type) {
 		case ast.NumberType, ast.BoolType, ast.FloatType:
 			return root, true
 		}
@@ -2973,6 +2994,11 @@ func (b *builder) computeFreeEligible() map[string]bool {
 			// borrow-aware taint as the others; box reclamation only
 			// (elements keep their own rc, freed where they're owned).
 			elig[v.Name] = true
+		case ast.SliceType:
+			// An owned slice frees its header at the last reference
+			// (emitDec → __fern_closure_drop); the viewed bytes belong to
+			// the source and are never touched.
+			elig[v.Name] = true
 		case ast.StringType:
 			// Fresh owned heap string (concat / slice — rhsTainted whitelists
 			// exactly those) frees at its last reference via __fern_str_dec on
@@ -3025,7 +3051,7 @@ func (b *builder) computeFreeEligible() map[string]bool {
 			continue
 		}
 		switch t := p.Type.(type) {
-		case ast.ArrayType, ast.EnumType, *ast.FuncType, ast.TupleType:
+		case ast.ArrayType, ast.EnumType, *ast.FuncType, ast.TupleType, ast.SliceType:
 			elig[p.Name] = true
 		case ast.StructType:
 			if t.Name == "Map" {
@@ -3153,14 +3179,15 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 		// tuple's. `(value, state)` threading is where this shows up, and
 		// reading the field straight through — `p.1.a` — was flat all along.
 		//
-		// A MAP element is excluded, and it is not a hypothetical: crediting
-		// one segfaulted map_delete_tuple_churn_free on both natives. The
-		// counted-alias argument above rests on the destination's drop being
-		// is_unique-gated and shallow, which holds for a struct / array /
-		// enum element and NOT for a map — emitMapSlotDrop deep-frees the
-		// value column, so `var m = t.0` on a `(Map, boolean)` freed a map
-		// the tuple still referenced. ownedCallResultType singles maps out
-		// for the same reason; this is that caution, one site over.
+		// A MAP element is credited too, but only because the tuple now holds
+		// a reference of its own. It did not: the delete tuple stored the
+		// receiver's handle uncounted, so crediting the projection gave the
+		// destination a deep drop of a map the tuple still referenced, and
+		// segfaulted map_delete_tuple_churn_free on both natives. The
+		// COW-seam retain above is what supplies that count (#8276), and the
+		// two are a pair — crediting here without it is the segfault, and
+		// retaining there without this is a count nobody returns. The rest of
+		// the counted-alias argument carries over unchanged.
 		if id, ok := b.projectionChainRoot(x.Target).(*ast.Ident); ok {
 			_, isLocal := b.locals[id.Name]
 			// A MATCH-ARM BINDING is the same case and was invisible to
@@ -3190,9 +3217,7 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 				case ast.StructType:
 					return false
 				case ast.TupleType:
-					if !isMapType(b.exprType(x)) {
-						return false
-					}
+					return false
 				}
 			}
 		}
@@ -3251,15 +3276,16 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 	case *ast.SliceExpr:
 		// A STRING slice copies its bytes into a fresh owned heap buffer
 		// (the wasm runtime always allocates) and boxes it in a fresh
-		// `Option`, so both are reclaimable — not views. Array / other
-		// slices share the source buffer → tainted. Keyed on IsString,
-		// NOT on exprType: exprType now reports the Option box, so a type
-		// test would taint the fresh box and downgrade the consumer's
-		// reclaim to the non-freeing __fern_rc_dec.
-		if x.IsString {
-			return false
-		}
-		return true
+		// `Option`, so both are reclaimable — not views. Keyed on
+		// IsString, NOT on exprType: exprType now reports the Option box,
+		// so a type test would taint the fresh box and downgrade the
+		// consumer's reclaim to the non-freeing __fern_rc_dec.
+		//
+		// An ARRAY slice is a fresh rc=1 header over the source's buffer.
+		// The header is what the local owns and what its drop releases;
+		// the shared buffer is never touched by that release, so the
+		// source's taint says nothing about it.
+		return false
 	case *ast.Binary:
 		// String concat (`a + b`) copies both operands into a fresh owned
 		// heap buffer regardless of operand provenance, so the result is
@@ -3285,6 +3311,15 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 		}
 		return b.rhsTainted(x.Operand, tainted)
 	case *ast.Call:
+		// A slice-typed result always hands the caller exactly one unit on
+		// the HEADER: a fresh __slice_make, a moved local, or a returned
+		// param / field / element alias carrying the return-transfer inc (a
+		// param is never an owned local, so move-on-return cannot cancel
+		// it). Whether the viewed bytes alias an argument is immaterial —
+		// the binding's release frees the header alone.
+		if isSliceType(b.exprType(x)) {
+			return false
+		}
 		// Slice 1b: under EnumRcPayloads a variant constructor is a FRESH
 		// rc=1 box that inc's its pointer payloads (like StructLit), so the
 		// constructed value is reclaimable regardless of payload taint — return
@@ -3399,6 +3434,11 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 				// buffer (the __str_slice contract) — the string
 				// SliceExpr arm above, spelled as a builtin, so the
 				// source's taint says nothing about the result.
+				return false
+			case "__method_string_as_bytes":
+				// A fresh rc=1 slice header viewing the receiver's bytes —
+				// the array SliceExpr arm above, spelled as a method. Only
+				// the header is owned and released.
 				return false
 			}
 		}
@@ -5185,7 +5225,7 @@ func (b *builder) isOwnedRcLocal(name string) bool {
 			continue
 		}
 		switch v.Type.(type) {
-		case ast.ArrayType, ast.StructType, ast.EnumType, *ast.FuncType, ast.TupleType:
+		case ast.ArrayType, ast.StructType, ast.EnumType, *ast.FuncType, ast.TupleType, ast.SliceType:
 			return true
 		case ast.StringType:
 			// Two-word string ABIs (wasm + arm64-TwoWordOverride) and
@@ -5281,6 +5321,13 @@ func needsRcIncOnAlias(e ast.Expr, b *builder) bool {
 	// outlives the source local (no inc would let the source's box_free
 	// strand the container's reference).
 	if _, isTuple := t.(ast.TupleType); isTuple {
+		return true
+	}
+	// A slice header (rc=1 from __slice_make) is retained like a tuple box:
+	// the inc balances the header release the exit sweep emits for slice
+	// locals and keeps a header stored into a container alive past the
+	// source local. The viewed bytes are not counted either way.
+	if isSliceType(t) {
 		return true
 	}
 	// wasm two-word strings: aliasing inc's the heap buffer's rc via
@@ -6295,15 +6342,20 @@ func (b *builder) computeBorrowedMapFieldResults() map[string]bool {
 // computeMapCowBindSites finds the Map COW-mutator calls bound directly to a
 // new local — see the mapCowBindSites field doc (#6227). `insert` / `cleared`
 // return the map and bind through `var`; `without` returns a (Map, boolean)
-// tuple and can ONLY be consumed by destructuring, which is why it was the
-// spelling that surfaced the bug. Purely syntactic: the walk runs on the
-// already-mangled AST, the same form isMapMutatorCall matches at the call site.
+// tuple, which destructuring and a plain `var t = m.without(k)` both bind, and
+// BOTH owe the retain. Reading the tuple whole and projecting `t.0` / `t.1` is
+// the spelling the rc corpus itself uses, and excluding it left the tuple's
+// map element aliasing the receiver's handle at rc 1: two names, one count,
+// both releasing — an rc underflow everywhere and a SIGSEGV on arm64 / a trap
+// on wasm32 once the freed key cell was recycled (#8276).
+// Purely syntactic: the walk runs on the already-mangled AST, the same form
+// isMapMutatorCall matches at the call site.
 func (b *builder) computeMapCowBindSites() map[ast.Node]bool {
 	out := map[ast.Node]bool{}
 	ast.Walk(b.fn.Body, func(n ast.Node) bool {
 		switch s := n.(type) {
 		case *ast.Var:
-			if c, ok := s.Init.(*ast.Call); ok && isMapMutatorCall(c) && !isMapDeleteCall(c) {
+			if c, ok := s.Init.(*ast.Call); ok && isMapMutatorCall(c) {
 				out[c] = true
 			}
 		case *ast.Destructure:

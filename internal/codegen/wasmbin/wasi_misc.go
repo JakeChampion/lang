@@ -16,10 +16,13 @@ import (
 // buildSliceMakeBody assembles __slice_make.
 //
 // Signature: (data, len: i32) → i32 — heap pointer to an
-// 8-byte slice header `(data, len)` matching what the WAT
-// path emits. data is stored at offset 0, len at offset 4.
-// Used by the slice-syntax forms (`a[lo..hi]` etc.) and by
-// `string.as_bytes()` to build a non-copying view.
+// 8-byte slice header `(data, len)`, data at offset 0, len at
+// offset 4. The header is an rc1 block (__fern_alloc_rc1: rc=1
+// at hdr-8, payload size 8 at hdr-4), so the IR releases it
+// through __fern_closure_drop like any other owned box; the
+// viewed bytes stay the source's. Used by the slice-syntax forms
+// (`a[lo..hi]` etc.) and by `string.as_bytes()` to build a
+// non-copying view.
 //
 // Locals (after the two params):
 //
@@ -27,10 +30,10 @@ import (
 //	1: $len  (param)
 //	2: $hdr  heap-allocated slice header
 func buildSliceMakeBody(idxs map[string]uint32) []byte {
-	alloc := idxs["__fern_alloc"]
+	allocRc1 := idxs["__fern_alloc_rc1"]
 	var body []byte
 	body = inst.InstI32Const(body, 8)
-	body = inst.InstCall(body, alloc)
+	body = inst.InstCall(body, allocRc1)
 	body = inst.InstLocalTee(body, 2)
 	body = inst.InstLocalGet(body, 0)
 	body = memory.InstI32Store(body, 2, 0) // data @ +0
@@ -130,12 +133,15 @@ func buildSliceRangeBody(_ map[string]uint32) []byte {
 // buildStringAsBytesBody assembles __method_string_as_bytes.
 //
 // Signature: (s_data, s_len: i32) → i32 — heap pointer to an
-// 8-byte slice header `(data, len)` aliasing the source
-// string's bytes. Inline-form strings (SSO-encoded with the
-// high bit on `len`) get promoted to a fresh heap buffer
-// first so the slice header's data field points at real
-// linear memory — the caller's subsequent indexing /
-// memcpy reads through it directly.
+// rc1 8-byte slice header `(data, len)` aliasing the source
+// string's bytes (the __slice_make shape). Inline-form strings
+// (SSO-encoded with the high bit on `len`) get promoted to a
+// fresh heap buffer first so the slice header's data field
+// points at real linear memory — the caller's subsequent
+// indexing / memcpy reads through it directly. That copy has
+// no owner: the header cannot own it, because a sub-slice or a
+// raw `as usize` pointer may outlive the header (a view's
+// lifetime is its SOURCE's, never the header's).
 //
 // Locals (after the two params):
 //
@@ -148,6 +154,7 @@ func buildSliceRangeBody(_ map[string]uint32) []byte {
 //	5: $i         per-byte copy loop counter
 func buildStringAsBytesBody(idxs map[string]uint32) []byte {
 	alloc := idxs["__fern_alloc"]
+	allocRc1 := idxs["__fern_alloc_rc1"]
 	strLen := idxs["__fern_str_len"]
 	strByte := idxs["__fern_str_byte"]
 	var body []byte
@@ -203,9 +210,9 @@ func buildStringAsBytesBody(idxs map[string]uint32) []byte {
 	body = inst.InstEnd(body)
 	body = inst.InstLocalSet(body, 4) // $dataPtr ← if-block result
 
-	// hdr = alloc(8); mem[hdr] = dataPtr; mem[hdr+4] = byteLen.
+	// hdr = alloc_rc1(8); mem[hdr] = dataPtr; mem[hdr+4] = byteLen.
 	body = inst.InstI32Const(body, 8)
-	body = inst.InstCall(body, alloc)
+	body = inst.InstCall(body, allocRc1)
 	body = inst.InstLocalTee(body, 2)
 	body = inst.InstLocalGet(body, 4)
 	body = memory.InstI32Store(body, 2, 0)

@@ -32,6 +32,11 @@ function dec(f: ld.Format, s: string): string {
     return d.digits + "e" + (d.dp as i64).to_string();
 }
 
+// The exact `%a` of `a / b` in the format, without the `0x`.
+function div_hex(f: ld.Format, a: string, b: string): string {
+    return f.hex(f.div(f.strtold(a).v, f.strtold(b).v), none(), false);
+}
+
 function test_x87_stores_its_integer_bit(): test.TestOutcome {
     var f: ld.Format = ld.x87();
     if (hex(f, "1") != "8p-3") { return test.fail("one"); }
@@ -174,6 +179,97 @@ function test_hex_precision_rounds_half_to_even(): test.TestOutcome {
     return test.assert_eq(q.hex(q.strtold("1").v, 0 as i64, true), "1.p+0");
 }
 
+// Division is correctly rounded at each width — the operation printf
+// never needed and seq / numfmt do.
+function test_division_rounds_to_the_format(): test.TestOutcome {
+    var x: ld.Format = ld.x87();
+    if (div_hex(x, "1", "3") != "a.aaaaaaaaaaaaaabp-5") { return test.fail("x87 a third"); }
+    if (div_hex(x, "1", "10") != "c.ccccccccccccccdp-7") { return test.fail("x87 a tenth"); }
+    if (div_hex(x, "2", "7") != "9.249249249249249p-5") { return test.fail("x87 two sevenths"); }
+    if (div_hex(x, "1e30", "3") != "8.6a1dbde02ef89eap+95") { return test.fail("x87 big"); }
+    var q: ld.Format = ld.binary128();
+    if (div_hex(q, "1", "3") != "1.5555555555555555555555555555p-2") { return test.fail("quad a third"); }
+    if (div_hex(q, "2", "7") != "1.2492492492492492492492492492p-2") { return test.fail("quad two sevenths"); }
+    if (div_hex(q, "1e30", "3") != "1.0d43b7bc05df13d3855555555555p+98") { return test.fail("quad big"); }
+    var d: ld.Format = ld.binary64();
+    if (div_hex(d, "1", "3") != "1.5555555555555p-2") { return test.fail("double a third"); }
+    if (div_hex(d, "2", "7") != "1.2492492492492p-2") { return test.fail("double two sevenths"); }
+    return test.assert_eq(div_hex(d, "1", "10"), "1.999999999999ap-4");
+}
+
+// An exact quotient stays exact, and the specials answer as 754 says.
+function test_division_specials(): test.TestOutcome {
+    var f: ld.Format = ld.binary128();
+    var six: ld.LD = f.from_i64(6 as i64);
+    var two: ld.LD = f.from_i64(2 as i64);
+    var three: ld.LD = f.from_i64(3 as i64);
+    if (!f.div(six, two).eq(three)) { return test.fail("exact"); }
+    if (!f.div(six, f.zero(false)).is_inf()) { return test.fail("by zero"); }
+    if (!f.div(f.zero(false), f.zero(false)).is_nan()) { return test.fail("zero by zero"); }
+    if (!f.div(ld.inf(false), ld.inf(false)).is_nan()) { return test.fail("inf by inf"); }
+    if (!f.div(six, ld.inf(false)).is_zero()) { return test.fail("by inf"); }
+    if (!f.div(six.negate(), two).eq(three.negate())) { return test.fail("sign"); }
+    return test.assert_true(f.div(ld.inf(false), two).is_inf());
+}
+
+// numfmt's --round. `nearest` is floor(|x| + 1/2) with the addition
+// rounded to the format FIRST, which is why a value a hair under a half
+// still carries up: 0.0005 scaled by 1000 is 0.49999999999999999997 in
+// x87, and adding a half lands on exactly 1.
+function test_round_modes(): test.TestOutcome {
+    var f: ld.Format = ld.x87();
+    var scaled: ld.LD = f.mul(f.strtold("0.0005").v, f.pow10(3));
+    if (f.to_fixed(scaled, 20) != "0.49999999999999999997") { return test.fail("the scaled half"); }
+    if (f.to_fixed(f.round_to_int(scaled, ld.round_nearest()), 0) != "1") { return test.fail("nearest carries"); }
+    var v: ld.LD = f.strtold("2.5").v;
+    if (f.to_fixed(f.round_to_int(v, ld.round_nearest()), 0) != "3") { return test.fail("nearest is not half-even"); }
+    if (f.to_fixed(f.round_to_int(v, ld.round_up()), 0) != "3") { return test.fail("up"); }
+    if (f.to_fixed(f.round_to_int(v, ld.round_down()), 0) != "2") { return test.fail("down"); }
+    if (f.to_fixed(f.round_to_int(v, ld.round_from_zero()), 0) != "3") { return test.fail("from zero"); }
+    if (f.to_fixed(f.round_to_int(v, ld.round_toward_zero()), 0) != "2") { return test.fail("toward zero"); }
+    var n: ld.LD = v.negate();
+    if (f.to_fixed(f.round_to_int(n, ld.round_up()), 0) != "-2") { return test.fail("up negative"); }
+    if (f.to_fixed(f.round_to_int(n, ld.round_down()), 0) != "-3") { return test.fail("down negative"); }
+    if (f.to_fixed(f.round_to_int(n, ld.round_nearest()), 0) != "-3") { return test.fail("nearest negative"); }
+    return test.assert_eq(f.to_fixed(f.round_to_int(f.from_i64(7 as i64), ld.round_up()), 0), "7");
+}
+
+// LDBL_DIG and the largest exactly-held integer are the format's, and
+// GNU reads both: numfmt prints nothing unscaled past LDBL_DIG digits.
+function test_format_digit_limits(): test.TestOutcome {
+    if (ld.x87().dig() != 18) { return test.fail("x87 dig"); }
+    if (ld.binary128().dig() != 33) { return test.fail("quad dig"); }
+    if (ld.binary64().dig() != 15) { return test.fail("double dig"); }
+    if (ld.x87().max_exact_u64() != 18446744073709551615 as u64) { return test.fail("x87 exact"); }
+    if (ld.binary128().max_exact_u64() != 18446744073709551615 as u64) { return test.fail("quad exact"); }
+    return test.assert_true(ld.binary64().max_exact_u64() == 9007199254740991 as u64);
+}
+
+// `to_fixed` and `to_g` are `%.*Lf` and `%Lg` with the sign attached.
+function test_whole_conversions(): test.TestOutcome {
+    var f: ld.Format = ld.x87();
+    if (f.to_fixed(f.strtold("0.1").v, 25) != "0.1000000000000000000013553") { return test.fail("x87 fixed"); }
+    if (f.to_fixed(f.strtold("-1.5").v, 2) != "-1.50") { return test.fail("negative"); }
+    if (f.to_fixed(f.zero(false), 0) != "0") { return test.fail("zero"); }
+    if (f.to_g(f.strtold("1234567").v) != "1.23457e+06") { return test.fail("g exponent"); }
+    if (f.to_g(f.strtold("0.0001").v) != "0.0001") { return test.fail("g fixed"); }
+    if (f.to_g(f.strtold("0.00001").v) != "1e-05") { return test.fail("g small"); }
+    if (f.to_g(f.zero(false)) != "0") { return test.fail("g zero"); }
+    var d: ld.Format = ld.binary64();
+    return test.assert_eq(d.to_fixed(d.strtold("0.1").v, 25), "0.1000000000000000055511151");
+}
+
+// `pow10` is reached by multiplying, the way a C program reaches it, so
+// it is exact exactly as far as the significand allows.
+function test_pow10(): test.TestOutcome {
+    var f: ld.Format = ld.x87();
+    if (f.to_fixed(f.pow10(0), 0) != "1") { return test.fail("ten to the zero"); }
+    if (f.to_fixed(f.pow10(19), 0) != "10000000000000000000") { return test.fail("ten to the nineteen"); }
+    if (f.to_fixed(f.pow10(27), 0) != "1000000000000000000000000000") { return test.fail("the last exact one"); }
+    var q: ld.Format = ld.binary128();
+    return test.assert_eq(q.to_fixed(q.pow10(30), 0), "1000000000000000000000000000000");
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("coreutils/lib/ld");
     r = r.it("x87 stores its integer bit",        test_x87_stores_its_integer_bit);
@@ -186,6 +282,12 @@ function main(): i32 {
     r = r.it("arithmetic rounds once",            test_arithmetic_rounds_once_to_the_format);
     r = r.it("specials and ordering",             test_specials_and_ordering);
     r = r.it("hex precision rounds half to even", test_hex_precision_rounds_half_to_even);
+    r = r.it("division rounds to the format",     test_division_rounds_to_the_format);
+    r = r.it("division specials",                 test_division_specials);
+    r = r.it("--round modes",                     test_round_modes);
+    r = r.it("format digit limits",               test_format_digit_limits);
+    r = r.it("to_fixed and to_g",                 test_whole_conversions);
+    r = r.it("pow10 is reached by multiplying",   test_pow10);
     r.finish();
     return 0;
 }

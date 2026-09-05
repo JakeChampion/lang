@@ -3319,7 +3319,7 @@ func (g *generator) emitRcIsUniqueRuntime() {
 }
 
 // emitSliceMakeRuntime emits `__fern_slice_make(data, len)`:
-// allocate a 16-byte slice header [data_ptr, len] on the bump heap
+// allocate a 16-byte slice header [data_ptr, len] as an rc1 block
 // and return its address. Layout: an 8-byte (pointer-width)
 // data_ptr at +0, the i32 len at +8, 16 bytes total (trailing 4
 // padding). The full-width data pointer keeps a slice over high
@@ -3328,9 +3328,14 @@ func (g *generator) emitRcIsUniqueRuntime() {
 // The IR reads len at `[slice + ptrW]`, so wasm32 (ptrW=4) keeps
 // its 8-byte {i32 data, i32 len} layout unchanged.
 //
+// The block comes from __fern_alloc_rc1 (rc=1 at data-8, payload
+// size at data-4), so the IR releases the header like a tuple box
+// through __fern_closure_drop; the viewed bytes are never freed
+// through it.
+//
 // Calling convention: x0 = data_ptr, x1 = len. Returns slice
 // header address in x0. Stash inputs in callee-save x19 / x20
-// across __fern_alloc.
+// across the allocator call.
 func (g *generator) emitSliceMakeRuntime() {
 	g.line("")
 	g.line(".global __fern_slice_make")
@@ -3342,7 +3347,7 @@ func (g *generator) emitSliceMakeRuntime() {
 	g.emit("mov x19, x0") // data_ptr (full 8 bytes)
 	g.emit("mov w20, w1") // len
 	g.emit("mov x0, #16")
-	g.emit("bl __fern_alloc")
+	g.emit("bl __fern_alloc_rc1")
 	g.emit("str x19, [x0]")     // [+0..+7] data_ptr (8-byte pointer)
 	g.emit("str w20, [x0, #8]") // [+8..+11] len (i32)
 	g.emit("ldp x19, x20, [sp], #16")
@@ -7642,7 +7647,7 @@ func (g *generator) emitRandomI32Runtime() {
 }
 
 // emitStringAsBytesRuntime emits `__method_string_as_bytes(s)` —
-// the non-copying `.as_bytes()` view: an 8-byte slice header
+// the non-copying `.as_bytes()` view: an rc1 slice header
 // `(data_ptr, len)` aliasing the receiver string's bytes.
 //
 // arm64 always runs the two-word string ABI (arm64.Emit forces
@@ -7651,7 +7656,8 @@ func (g *generator) emitRandomI32Runtime() {
 // (heap or .rodata literal) is aliased zero-copy: __fern_slice_make
 // stores the full 8-byte data pointer. An inline-form string has no
 // address, so its bytes are first copied into a fresh __fern_alloc
-// buffer, as the x86-64 and wasm helpers do.
+// buffer, as the x86-64 and wasm helpers do; that copy has no owner
+// (the x86-64 helper's comment says why the header cannot be one).
 func (g *generator) emitStringAsBytesRuntime() {
 	g.line("")
 	g.line(".global __method_string_as_bytes")
