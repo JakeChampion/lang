@@ -416,10 +416,10 @@ pub function __map_cow_inplace(m: usize): usize {
 // __map_own_str_slot — __drop_map_str_values releases that column the way
 // __drop_map_str_keys releases the key one, so the two need the same claim.
 //
-// A struct value (valKind 4) is the one column still left shared (#8354), for
-// want of a way to claim it here: its deep drop is the IR-generated
-// __drop_map_struct_<T>, and matching it needs the same per-field walk in the
-// inc direction rather than a recognition test.
+// A struct value (valKind 4) is claimed by the retain above, and that is the
+// whole claim: the slot is one pointer to an rc'd box and the generated deep
+// drop frees at the box's last reference, so an inc per entry is enough. No
+// per-field walk is needed in the inc direction.
 function __map_own_copied_cols(buf: usize): void {
     var ownKeys: boolean = __load_i32(buf + 8) == 1;
     var valKind: i32 = __map_val_kind(buf);
