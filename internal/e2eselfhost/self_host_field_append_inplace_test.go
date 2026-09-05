@@ -373,6 +373,40 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return ms.n;
 }`},
+	// A second NAME for the root's box: `var cur = s` inside a walk that
+	// recurses with `cur` and rebinds it per statement, the checker's slc_walk
+	// shape. The self-reassign exempts the bracket and the alias scan does not
+	// see a bare ident of a parameter, so the callee's move would null `names`
+	// in a box the outer frames still read (segfault in the self-compiled
+	// checker's Scope.lookup). The box's count is what tells the site to copy.
+	{"aliased-root-box-copies", `
+struct Sc { names: i32[], n: i32 }
+function (s: Sc) bind(v: i32): Sc {
+    var ns: i32[] = s.names.append(v);
+    return Sc { names: ns, n: s.n + 1 };
+}
+function step(v: i32, s: Sc): Sc { return s.bind(v); }
+function walk(s: Sc, depth: i32): i32 {
+    var cur: Sc = s;
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 4) {
+        if (depth > 0) { acc = acc + walk(cur, depth - 1); }
+        cur = step(i, cur);
+        i = i + 1;
+    }
+    return acc + cur.names.len() * 3 + cur.n;
+}
+function main(): i32 {
+    var s0: Sc = Sc { names: [], n: 0 };
+    s0 = step(1, s0);
+    s0 = step(2, s0);
+    s0 = step(3, s0);
+    var r: i32 = walk(s0, 2);
+    if (s0.names.len() != 3) { return 90; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return (r + s0.names[2]) % 200;
+}`},
 	// A body-scope host INSIDE A LOOP runs again with the same root, and the
 	// grow has moved the field out of it — so the site keeps the clone form.
 	// The root arrives as a fresh call result at an `own` position: no caller
