@@ -400,10 +400,10 @@ name — a container element, another struct's field, a counted alias — is a
 runtime fact. `aliased-root-box-copies` in `selfHostFieldAppendCases` pins the
 shape, and the arm64 stage-2 fixpoint is the gate that found it.
 
-**#8259's `grow_return_local_filter` is the first row's bracket-side fix**:
-withdrawing the return-position death forces the callee's copy, so the identity
-arm is never reached. With the move it is no longer needed for this hazard —
-the deep drop finds a null field — and it costs a whole-buffer copy per
-return-position death of a local (measured there at +5 s / +0.33 GB on the
-one-process whole-compiler emit). The two compose: with both in, the bracketed
-sites copy and the rest move.
+**#8259's `grow_return_local_filter` was the first row's bracket-side fix**:
+withdrawing the return-position death forced the callee's copy, so the identity
+arm was never reached. With the move the deep drop finds a null field, so the
+filter bought nothing and cost a whole-buffer copy per return-position death of
+a local (+5 s / +0.33 GB on the one-process whole-compiler emit, and the
+pinned K row of `TestSelfHostGrowSoleOccurrenceX86_64` moving 44 -> 50). It was
+dropped when #8259 took this change in.

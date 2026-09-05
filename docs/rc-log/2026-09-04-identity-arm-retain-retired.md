@@ -175,3 +175,15 @@ probes of that exact shape all agreed with the oracle; it took twenty appends
 after the call, sized to reuse the freed block, to move the answer. A shape
 audit that stops at "the program printed the right number" would have shipped
 it.
+
+## Superseded at merge: the move-out closes row 5 without the copy
+
+#8274 landed on main while this was open. Its identity arm STORES NULL into the
+source field, so a return-position death of a frame-owned local (row 5) finds
+nothing to free at the exit sweep, with no bracket and no copy. That made
+`grow_return_local_filter` redundant, and it was not free: it moved
+`TestSelfHostGrowSoleOccurrenceX86_64/K_two_calls_via_local` from its
+deliberately pinned 44 copies to 50 (`return f(t, v + 1)` on a local is the
+exact shape it withdraws), on top of the 5 s / 0.33 GB measured above. The
+filter is gone; `return-position-death-frees-the-grown-buffer` stays as the pin
+on row 5 and passes on the move alone.
