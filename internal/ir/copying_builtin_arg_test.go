@@ -22,6 +22,7 @@ func TestCopyingBuiltinArgIsCounted(t *testing.T) {
 		{"memchr", `return __memchr(p, 97, 0);`},
 		{"print", `print(p); return 0;`},
 		{"writer-write", `var w: Writer = stdout(); var e: Option[IoError] = w.write(p); return 0;`},
+		{"Writer.write", `match (stdout().write(p)) { Some(_) => { return 1; }, None => { return 0; } } return 0;`},
 	}
 	for _, c := range cases {
 		src := "function eat(p: string): i32 { " + c.body + " }\nfunction main(): i32 { return 0; }"

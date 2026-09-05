@@ -176,6 +176,7 @@ func TestTsortParity(t *testing.T) {
 		// Missing files, and the shell quoting of their names.
 		{name: "missing file", args: []string{"/nope"}},
 		{name: "missing file under a missing directory", args: []string{"/nosuch/x"}},
+		{name: "a directory operand is a read error", args: []string{"/tmp"}},
 		{name: "missing relative file", args: []string{"nosuch"}},
 		{name: "missing file with a trailing slash", args: []string{"nosuch/"}},
 		{name: "empty operand", args: []string{""}},

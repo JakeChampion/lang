@@ -511,6 +511,8 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 		g.usesIoError = true
 		g.usesMemcpy = true
 		g.usesAlloc = true
+		g.usesBoxFree = true // read_chunk gives back a short-read / EOF buffer
+		g.usesFree = true    // box_free → __fern_free
 	}
 	// Fatal-abort diagnostics (#5538): __fern_report writes an abort's
 	// cause to stderr before exit_group, so a bounds / arena / slice abort
@@ -13024,10 +13026,10 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.label("__fern_reader_read_chunk")
 	g.emit("push rbp")
 	g.emit("mov rbp, rsp")
-	g.emit("push rbx") // fd
-	g.emit("push r12") // n
-	g.emit("push r13") // base ptr
-	g.emit("sub rsp, 8")
+	g.emit("push rbx")       // fd, then bytes_read
+	g.emit("push r12")       // n
+	g.emit("push r13")       // data ptr
+	g.emit("push r14")       // exact-size data ptr on a short read
 	g.emit("mov ebx, [rdi]") // fd
 	g.emit("mov r12, rsi")   // n
 	// L2 rc-header layout (see __fern_strcat): payload = n data + NUL slack so
@@ -13043,21 +13045,43 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emitSyscallPreloaded(sysRead)
 	g.emit("test rax, rax")
 	g.emit("jle .Lrrc_none")
-	g.emit("mov [r13 - 4], eax")          // length prefix at data-4
-	g.emit("mov r12, rax")                // r12 = bytes_read
-	g.emit("mov rbx, r13")                // data ptr
-	g.emit("mov byte ptr [rbx + r12], 0") // trailing NUL within alloc
+	g.emit("cmp rax, r12")
+	g.emit("je .Lrrc_some")
+	// Short read (a pipe hands back at most 64 KiB): __fern_str_dec frees
+	// at length+1, so the bytes move to a block of that class and the
+	// oversized one goes back — else it strands below its class and every
+	// following read_chunk(n) bumps fresh.
+	g.emit("mov rbx, rax") // rbx = bytes_read
+	g.emit("lea edi, [rbx + 1]")
+	g.emit("call __fern_alloc_rc1")
+	g.emit("mov r14, rax")
+	g.emit("mov rdi, r14")
+	g.emit("mov rsi, r13")
+	g.emit("mov rdx, rbx")
+	g.emit("call __fern_memcpy")
+	g.emit("mov rdi, r13")
+	g.emit("lea esi, [r12 + 1]")
+	g.emit("call __fern_box_free")
+	g.emit("mov r13, r14")
+	g.emit("mov r12, rbx")
+	g.label(".Lrrc_some")
+	g.emit("mov [r13 - 4], r12d")         // length prefix at data-4
+	g.emit("mov byte ptr [r13 + r12], 0") // trailing NUL within alloc
 	g.emit("mov edi, 16")
 	g.emit("call __fern_alloc_box")
 	g.emit("mov dword ptr [rax], 0")
-	g.emit("mov [rax + 8], rbx")
+	g.emit("mov [rax + 8], r13")
 	g.emit("jmp .Lrrc_ret")
 	g.label(".Lrrc_none")
+	// EOF / error: nothing owns the buffer, so give it back.
+	g.emit("mov rdi, r13")
+	g.emit("lea esi, [r12 + 1]")
+	g.emit("call __fern_box_free")
 	g.emit("mov edi, 4")
 	g.emit("call __fern_alloc_box")
 	g.emit("mov dword ptr [rax], 1")
 	g.label(".Lrrc_ret")
-	g.emit("add rsp, 8")
+	g.emit("pop r14")
 	g.emit("pop r13")
 	g.emit("pop r12")
 	g.emit("pop rbx")

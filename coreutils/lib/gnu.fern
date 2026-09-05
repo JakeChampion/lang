@@ -331,9 +331,41 @@ pub function put(o: io_buffered.BufWriter, s: string): io_buffered.BufWriter {
   return w;
 }
 
-// `finish(o)` — flush what is left; dies if that fails.
+// `finish(o)` — the end of the program: gnulib's close_stdout.
 pub function finish(o: io_buffered.BufWriter): void {
-  die_on_write_error(o.flush());
+  close_stdout(o, false);
+}
+
+// `close_stdout(o, prev_fail)` — gnulib's close_stream on stdout, reported
+// the way close_stdout reports it. `prev_fail` is the stream's error flag
+// set by something other than a write here (glibc refusing a conversion).
+// fclose failing with EBADF and nothing pending is not an error, so a
+// utility that printed nothing to a closed stdout exits 0; a failure
+// already on the stream is reported without strerror text unless fclose
+// itself failed too.
+pub function close_stdout(o: io_buffered.BufWriter, prev_fail: boolean): void {
+  var some_pending: boolean = o.buffered() > 0;
+  var prev: boolean = prev_fail;
+  match (o.error()) {
+    Some(_) => {
+      prev = true;
+    },
+    None => {}
+  }
+  match (o.close()) {
+    Some(e) => {
+      var text: string = io_error_text(e);
+      if (prev || some_pending || text != "Bad file descriptor") {
+        error("write error: " + text);
+        exit(1);
+      }
+    },
+    None => {}
+  }
+  if (prev) {
+    error("write error");
+    exit(1);
+  }
 }
 
 function die_on_write_error(w: io_buffered.BufWriter): void {

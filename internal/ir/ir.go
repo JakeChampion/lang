@@ -4214,9 +4214,31 @@ func computeFreshLocals(fn *ast.FuncDecl, info *checker.Info, variantPayloads ma
 		}
 		return true
 	})
+	// A `__memcpy(out as usize, …)` fills a SCALAR-element buffer with bytes
+	// during the call: no pointer can be embedded by it, so the write does
+	// not end `out`'s freshness — the `bytes()` shape (#8403). A
+	// pointer-element buffer is excluded because a byte copy into it could
+	// plant uncounted aliases of a parameter's elements.
+	syncCopyUse := map[*ast.Ident]bool{}
+	ast.Walk(fn.Body, func(n ast.Node) bool {
+		call, ok := n.(*ast.Call)
+		if !ok || !syncByteCopyCall(call) {
+			return true
+		}
+		for _, id := range syncByteCopyRoots(call) {
+			decl, isDecl := decls[id.Name]
+			if !isDecl {
+				continue
+			}
+			if at, isArr := decl.Type.(ast.ArrayType); isArr && !ast.IsPointerType(at.Elem) {
+				syncCopyUse[id] = true
+			}
+		}
+		return true
+	})
 	tainted := map[string]bool{}
 	ast.Walk(fn.Body, func(n ast.Node) bool {
-		if id, ok := n.(*ast.Ident); ok && !inReturn[id] && !cowUse[id] {
+		if id, ok := n.(*ast.Ident); ok && !inReturn[id] && !cowUse[id] && !syncCopyUse[id] {
 			tainted[id.Name] = true
 		}
 		return true
@@ -4391,6 +4413,15 @@ func exprNoParamEscape(e ast.Expr, slot ast.Type, info *checker.Info, variantPay
 		// without it the builtin (absent from q) rejected the init and the
 		// local never entered freshLocals.
 		if id.Name == "map_new" {
+			return true
+		}
+		// `__alloc_u8(n)` and its siblings hand back a fresh rc=1 byte
+		// buffer from scalar arguments alone, so no parameter heap can flow
+		// through the result — the same verdict rhsTainted's arm gives them.
+		// Without it `bytes()` (`var out = __alloc_u8(n); …; return out;`)
+		// could not prove its return fresh, and every caller's binding of a
+		// byte copy stayed permanently taint-ineligible (#8403).
+		if id.Name == "__alloc_u8" || id.Name == "random_bytes" || id.Name == "tcp_recv" {
 			return true
 		}
 		// `string_from_bytes_unchecked(buf)` always COPIES — into an
@@ -5902,7 +5933,12 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bo
 		for _, nm := range names {
 			slot := b.allocSlot()
 			b.locals[nm] = slot
-			b.scratchType[slot] = b.rc.consumingBindings[nm]
+			bt := b.rc.consumingBindings[nm]
+			b.scratchType[slot] = bt
+			// A two-word string slot stores (data, len): two zeros.
+			if _, isStr := bt.(ast.StringType); isStr && ast.UseTwoWordStrings(b.ptrW) {
+				b.emit(Op{Kind: OpConstI32, I32: 0})
+			}
 			b.emit(Op{Kind: OpConstI32, I32: 0})
 			b.emit(Op{Kind: OpStoreLocal, I32: slot})
 		}
@@ -9346,6 +9382,12 @@ func (b *builder) stmt(s ast.Stmt) error {
 			// arm body instead — see reclaimablePairFormPayload.
 			payReleaseSlot := int32(-1)
 			var payReleaseType ast.Type
+			// An owned-payload match (rcOwnedPayloadBuiltins) hands the
+			// arm a payload nobody else releases: an admitted binding owns
+			// it (consumingBindings — swept at exit, so the bind site must
+			// first drop what the slot held from the previous iteration),
+			// and a `_` drops it on the spot.
+			ownedPayloadArm := b.rc.ownedPayloadMatches[n] && arm.Guard == nil && !armHasSubPatterns(arm)
 			for i, name := range arm.Bindings {
 				// A slot carrying a sub-pattern binds nothing itself — its
 				// pattern did, in armPayloadBind above — and its Bindings
@@ -9358,8 +9400,22 @@ func (b *builder) stmt(s ast.Stmt) error {
 				if i < len(arm.BindingTypes) && arm.BindingTypes[i] != nil {
 					bt = arm.BindingTypes[i]
 				}
+				if ownedPayloadArm && name == "_" && ownedPayloadType(bt) {
+					scratch := b.allocSlot()
+					b.scratchType[scratch] = bt
+					b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
+					b.emit(Op{Kind: OpConstI32, I32: offsets[i]})
+					b.emit(Op{Kind: OpAdd})
+					b.emit(payloadLoadOpFor(bt, b.ptrW))
+					b.emit(Op{Kind: OpStoreLocal, I32: scratch})
+					b.emitOwnedSlotDrop(scratch, bt)
+					continue
+				}
 				slot, restore := b.bindingSlotScoped(name, bt)
 				armRestores = append(armRestores, restore)
+				if _, owned := b.rc.consumingBindings[name]; ownedPayloadArm && owned && b.rc.freeEligible[name] {
+					b.emitOwnedSlotDrop(slot, bt)
+				}
 				if pairFormScrutinee && arm.Guard == nil && arm.AtBinding == "" &&
 					b.reclaimablePairFormPayload(n.Tag, bt, arm.Body, name) {
 					payReleaseSlot, payReleaseType = slot, bt
@@ -15039,6 +15095,10 @@ func (b *builder) callBody(n *ast.Call) error {
 			b.pairForm[id.Name] || id.Name == "map_new" || calleeRetainsAnyArg(id.Name) {
 			return false
 		}
+		// A builtin that copies the argument out with a result that cannot
+		// alias it is the same fact stated for a helper with no Fern body:
+		// `w.write(string_from_bytes_unchecked(bs))` returns an Option box
+		// that names nothing, and the temp is dead once written (#8403).
 		if copyingBuiltinArg(id.Name, ai) {
 			return true
 		}
@@ -20045,6 +20105,12 @@ func (b *builder) emitArraySet(n *ast.Call) error {
 	// skips this and keeps the rc==1 in-place fast path.
 	if b.rc.arraySetInc[n] {
 		b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
+	}
+	// A field receiver of the superseded-field shape (computeFieldOwnMoves)
+	// moves out of its box when the box is unique, so the helper sees the
+	// field's own count and mutates in place; a shared box retains instead.
+	if fa, isField := n.Args[0].(*ast.FieldAccess); isField && b.rc.fieldOwnMoves[fa] {
+		b.emitFieldOwnMove(fa)
 	}
 	// A consumed receiver (arraySetConsumedSites): the helper takes the
 	// reference now on the stack over, so the slot no longer holds one —

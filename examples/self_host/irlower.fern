@@ -4365,7 +4365,7 @@ pub function is_scalar_array_type(t: string): boolean {
 // the u64 tuple element slice — a separate increment). NOT used for enum
 // payloads (those need the element-width mark, not a plain mark_arr).
 pub function is_leaksafe_array_field(t: string): boolean {
-    return is_scalar_array_type(t) || is_float_array_type_name(t) || t == "i64[]" || t == "u32[]"
+    return is_scalar_array_type(t) || is_float_array_type_name(t) || t == "i64[]" || t == "u64[]" || t == "u32[]"
         || is_subword_array_type(t);
 }
 
@@ -52172,6 +52172,7 @@ function emit_self_overwrite_reuse(c_name: string, c_site: string, init: ast.Exp
                     st = st.emit(ir.op_const_i32(0));
                 } else if (struct_field_is_i64(st.frame.structs, slit.type_name, fidx)) {
                     st = lower_i64(slit.field_values[fj], st);
+                    st = st.mark_i64(tslot, true);
                 } else {
                     st = lower_expr(slit.field_values[fj], st);
                 }
@@ -52274,7 +52275,7 @@ function emit_self_overwrite_reuse(c_name: string, c_site: string, init: ast.Exp
                     }
                     st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
                     st = st.emit(ir.op_drop());
-                } else if (is_enum_like_name(rfty, st.frame.structs)) {
+                } else if (!is_scalar_field_type(rfty) && is_enum_like_name(rfty, st.frame.structs)) {
                     // ENUM override (#4356 divergence 1, self-overwrite family):
                     // flat rc-gated box dec of the OLD value — sentinel guard-
                     // skipped, sole-owned box frees (payloads leak, the exit
@@ -52358,11 +52359,18 @@ function emit_self_overwrite_reuse(c_name: string, c_site: string, init: ast.Exp
                     var cfty: string = decl_field_type_at(st.frame.structs, slit.type_name, di);
                     st = st.emit(ir.op_load_local(bslot));
                     st = st.emit(ir.op_load_local(dslot));
-                    st = st.emit(ir.op_struct_get(di, struct_field_width(st.frame.structs, slit.type_name, di)));
-                    if (is_leaksafe_array_field(cfty) || decl_is_struct(st.frame.structs, cfty) || is_enum_like_name(cfty, st.frame.structs) || cfty == "string" || cfty == "string[]" || is_struct_array_field_type(st.frame.structs, cfty) || is_enum_array_field_type(st.frame.structs, cfty)) {
-                        st = st.emit(ir.op_call_direct("__fern_rc_inc", 1));
+                    if (struct_field_is_i64(st.frame.structs, slit.type_name, di)) {
+                        // An 8-byte INTEGER field copies through the i64 ops (wasm
+                        // reads a width-64 struct_get as f64) and holds no reference.
+                        st = st.emit(ir.op_struct_get_i64(di));
+                        st = st.emit(ir.op_struct_set_i64(di));
+                    } else {
+                        st = st.emit(ir.op_struct_get(di, struct_field_width(st.frame.structs, slit.type_name, di)));
+                        if (!is_scalar_field_type(cfty) && (is_leaksafe_array_field(cfty) || decl_is_struct(st.frame.structs, cfty) || is_enum_like_name(cfty, st.frame.structs) || cfty == "string" || cfty == "string[]" || is_struct_array_field_type(st.frame.structs, cfty) || is_enum_array_field_type(st.frame.structs, cfty))) {
+                            st = st.emit(ir.op_call_direct("__fern_rc_inc", 1));
+                        }
+                        st = st.emit(ir.op_struct_set(di, struct_field_width(st.frame.structs, slit.type_name, di)));
                     }
-                    st = st.emit(ir.op_struct_set(di, struct_field_width(st.frame.structs, slit.type_name, di)));
                 }
                 di = di + 1;
             }
@@ -52874,7 +52882,7 @@ function emit_cross_struct_reuse(c_name: string, c_site: string, init: ast.Expr,
                     }
                     st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
                     st = st.emit(ir.op_drop());
-                } else if (is_enum_like_name(rty, st.frame.structs)) {
+                } else if (!is_scalar_field_type(rty) && is_enum_like_name(rty, st.frame.structs)) {
                     // ENUM field (#4356 divergence 1): flat rc-gated box dec of
                     // the OLD value — a payloadless sentinel is guard-skipped, a
                     // sole-owned box frees (payloads leak, the exit sweep's
@@ -55691,7 +55699,8 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
     if (fn.receiver_name.len() > 0) {
         var rbase: string = util.base_type_name(fn.receiver_type);
         var r_is_struct: boolean = decl_is_struct(structs, rbase);
-        var r_is_prim: boolean = rbase == "i32" || rbase == "boolean" || rbase == "string" || rbase == "i64" || is_f64_scalar_type_name(rbase);
+        var r_is_prim: boolean = rbase == "i32" || rbase == "boolean" || rbase == "string" || rbase == "i64"
+            || rbase == "u8" || rbase == "u32" || rbase == "u64" || rbase == "usize" || rbase == "char" || is_f64_scalar_type_name(rbase);
         // A Map[K, V] receiver (`function (m: Map[K, V]) contains_value(...)`).
         // base_type_name strips the generics to "Map", which is_enum_like_name
         // would otherwise mis-accept as a bare nominal enum — so test r_is_map

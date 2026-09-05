@@ -414,6 +414,189 @@ pub function (a: BigInt) shl(k: i32): BigInt {
     return __bi_make(a.neg, out);
 }
 
+// from_u64 builds a BigInt from an unsigned 64-bit value, which `from_i64`
+// cannot express above i64 MAX.
+pub function from_u64(v: u64): BigInt {
+    var m: u64[] = [];
+    m = m.append(v & __bi_mask());
+    m = m.append((v >> __bi_sh32()) & __bi_mask());
+    return __bi_make(false, m);
+}
+
+// low_u64 is the low 64 bits of the magnitude — the whole value when
+// `bit_length()` is at most 64.
+pub function (a: BigInt) low_u64(): u64 {
+    var v: u64 = a.mag[0];
+    if (a.mag.len() > 1) { v = v | (a.mag[1] << __bi_sh32()); }
+    return v;
+}
+
+// bit reads bit `i` of the magnitude; bits past the top are zero.
+pub function (a: BigInt) bit(i: i32): boolean {
+    if (i < 0) { return false; }
+    var limb: i32 = i / 32;
+    if (limb >= a.mag.len()) { return false; }
+    return ((a.mag[limb] >> ((i % 32) as u64)) & (1 as u64)) == (1 as u64);
+}
+
+// shr divides the magnitude by 2^k, discarding the low bits — the sign is
+// kept, so it truncates toward zero rather than flooring a negative value.
+pub function (a: BigInt) shr(k: i32): BigInt {
+    if (k <= 0) { return a; }
+    var mask: u64 = __bi_mask();
+    var limbShift: i32 = k / 32;
+    var bitShift: u64 = (k % 32) as u64;
+    var n: i32 = a.mag.len() - limbShift;
+    if (n <= 0) { return zero(); }
+    var out: u64[] = [];
+    var i: i32 = 0;
+    while (i < n) {
+        var cur: u64 = a.mag[i + limbShift] >> bitShift;
+        if (bitShift > (0 as u64) && i + limbShift + 1 < a.mag.len()) {
+            cur = cur | ((a.mag[i + limbShift + 1] << ((32 as u64) - bitShift)) & mask);
+        }
+        out = out.append(cur);
+        i = i + 1;
+    }
+    return __bi_make(a.neg, out);
+}
+
+// pow raises to a non-negative integer power by square-and-multiply.
+pub function (a: BigInt) pow(n: i32): BigInt {
+    var result: BigInt = from_i64(1 as i64);
+    var base: BigInt = a;
+    var e: i32 = n;
+    while (e > 0) {
+        if (e % 2 == 1) { result = result.mul(base); }
+        e = e / 2;
+        if (e > 0) { base = base.mul(base); }
+    }
+    return result;
+}
+
+// divmod is truncated division: the quotient rounds toward zero and the
+// remainder takes the dividend's sign, the same contract as `/` and `%` on
+// the machine integers (docs/INTEGER-SEMANTICS.md) and Go's QuoRem. A zero
+// divisor is a caller bug and traps rather than returning a value.
+pub function (a: BigInt) divmod(b: BigInt): (BigInt, BigInt) {
+    assert(!__bi_is_zero_mag(b.mag));
+    var qr: (u64[], u64[]) = __bi_divmod_mag(a.mag, b.mag);
+    return (__bi_make(a.neg != b.neg, qr.0), __bi_make(a.neg, qr.1));
+}
+
+// Knuth's Algorithm D over base-2^32 limbs. Both magnitudes are trimmed;
+// the divisor is normalised so its top limb has its high bit set, which is
+// what bounds the trial quotient digit to at most two corrections.
+function __bi_divmod_mag(a: u64[], b: u64[]): (u64[], u64[]) {
+    var mask: u64 = __bi_mask();
+    var base: u64 = __bi_base();
+    var sh: u64 = __bi_sh32();
+    if (__bi_cmp_mag(a, b) < 0) {
+        var z: u64[] = [];
+        return (z.append(0 as u64), a);
+    }
+    if (b.len() == 1) {
+        var dm: (u64[], u64) = __bi_divmod_small(a, b[0]);
+        var r1: u64[] = [];
+        return (dm.0, r1.append(dm.1));
+    }
+    var s: i32 = 0;
+    var top: u64 = b[b.len() - 1];
+    while ((top & (2147483648 as u64)) == (0 as u64)) { top = top << (1 as u64); s = s + 1; }
+    var v: u64[] = __bi_shl_limbs(b, s, false);
+    var u: u64[] = __bi_shl_limbs(a, s, true);
+    var n: i32 = v.len();
+    var m: i32 = u.len() - n;
+    var q: u64[] = [];
+    var k: i32 = 0;
+    while (k < m) { q = q.append(0 as u64); k = k + 1; }
+    var j: i32 = m - 1;
+    while (j >= 0) {
+        var num: u64 = (u[j + n] << sh) | u[j + n - 1];
+        var qhat: u64 = num / v[n - 1];
+        var rhat: u64 = num % v[n - 1];
+        while (qhat >= base || qhat * v[n - 2] > ((rhat << sh) | u[j + n - 2])) {
+            qhat = qhat - (1 as u64);
+            rhat = rhat + v[n - 1];
+            if (rhat >= base) { break; }
+        }
+        // u[j .. j+n] -= qhat * v, tracking the borrow by comparison.
+        var carry: u64 = 0 as u64;
+        var borrow: u64 = 0 as u64;
+        var i: i32 = 0;
+        while (i < n) {
+            var p: u64 = qhat * v[i] + carry;
+            carry = p >> sh;
+            var sub: u64 = (p & mask) + borrow;
+            if (u[i + j] >= sub) {
+                u = u.with(i + j, u[i + j] - sub);
+                borrow = 0 as u64;
+            } else {
+                u = u.with(i + j, u[i + j] + base - sub);
+                borrow = 1 as u64;
+            }
+            i = i + 1;
+        }
+        var subTop: u64 = carry + borrow;
+        if (u[j + n] >= subTop) {
+            u = u.with(j + n, u[j + n] - subTop);
+            q = q.with(j, qhat);
+        } else {
+            // qhat was one too large: add v back and drop the borrow.
+            q = q.with(j, qhat - (1 as u64));
+            var c2: u64 = 0 as u64;
+            i = 0;
+            while (i < n) {
+                var sum: u64 = u[i + j] + v[i] + c2;
+                u = u.with(i + j, sum & mask);
+                c2 = sum >> sh;
+                i = i + 1;
+            }
+            u = u.with(j + n, (u[j + n] + base - subTop + c2) & mask);
+        }
+        j = j - 1;
+    }
+    var rem: u64[] = [];
+    k = 0;
+    while (k < n) { rem = rem.append(u[k]); k = k + 1; }
+    return (__bi_trim(q), __bi_shr_limbs(__bi_trim(rem), s));
+}
+
+// __bi_shl_limbs shifts a magnitude left by s < 32 bits; `extend` always
+// appends the carry limb (even a zero one), which Algorithm D needs so the
+// dividend has one more limb than the divisor's length demands.
+function __bi_shl_limbs(a: u64[], s: i32, extend: boolean): u64[] {
+    var mask: u64 = __bi_mask();
+    var sh: u64 = __bi_sh32();
+    var bs: u64 = s as u64;
+    var out: u64[] = [];
+    var carry: u64 = 0 as u64;
+    var i: i32 = 0;
+    while (i < a.len()) {
+        var cur: u64 = (a[i] << bs) | carry;
+        out = out.append(cur & mask);
+        carry = cur >> sh;
+        i = i + 1;
+    }
+    if (extend || carry > (0 as u64)) { out = out.append(carry); }
+    return out;
+}
+
+function __bi_shr_limbs(a: u64[], s: i32): u64[] {
+    if (s == 0) { return a; }
+    var mask: u64 = __bi_mask();
+    var bs: u64 = s as u64;
+    var out: u64[] = [];
+    var i: i32 = 0;
+    while (i < a.len()) {
+        var cur: u64 = a[i] >> bs;
+        if (i + 1 < a.len()) { cur = cur | ((a[i + 1] << ((32 as u64) - bs)) & mask); }
+        out = out.append(cur);
+        i = i + 1;
+    }
+    return __bi_trim(out);
+}
+
 // --- rendering ---
 
 // to_string emits base-10 by repeatedly dividing by 10^9 and emitting nine
