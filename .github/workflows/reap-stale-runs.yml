@@ -1,0 +1,129 @@
+name: Reap stale runs
+
+# A scheduled sweep for queued runs nobody is waiting on: a pull request's runs
+# after it closed, and runs at a SHA a later push superseded.
+#
+# cancel-on-merge.yml already reaps the first class the moment a PR closes, and
+# every lane's own `concurrency` group reaps the second the moment a push lands.
+# This exists because BOTH mechanisms need a runner to act, and the queue they
+# drain is what they are queued behind. On 2026-09-05 five consecutive
+# cancel-on-merge runs sat pending or queued at once, one of them for twenty
+# minutes before it was itself cancelled — while 77 runs for already-merged pull
+# requests held slots ahead of every open PR. A hand sweep cleared 111 runs, 42%
+# of everything queued.
+#
+# So this is a backstop, not a replacement: the event-driven reapers still act in
+# seconds whenever the pool is free, and this catches what they could not reach.
+# It is cheap and idempotent — one API listing and a cancel per victim — so a run
+# that finds nothing costs one slot for well under a minute.
+#
+# What it will NOT touch, because each is someone's live signal:
+#   - anything but a `pull_request` run. A push, a release, a dispatch or a
+#     scheduled run exists for a reason that has nothing to do with a PR, and a
+#     main run in particular has no successor to inherit its result.
+#   - a run at the current head of an OPEN pull request, draft ones included.
+#     Branches get reused by successive PRs here, so this is checked per SHA and
+#     never per branch.
+#   - a run that has already reached a terminal state (409 from the API), which
+#     is routine rather than a failure.
+
+on:
+  schedule:
+    # Every 20 minutes. The sweep is only useful while it is more frequent than
+    # the queue is long, and cheaper than one job of what it reclaims.
+    - cron: "*/20 * * * *"
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  pull-requests: read
+
+# This lane ACTS: a cancelled run is a sweep that did not happen, and the next
+# one is twenty minutes away. It must never cancel itself — see
+# internal/sourcelint/main_concurrency_test.go for the policy this follows.
+concurrency:
+  group: reap-stale-runs
+  cancel-in-progress: false
+
+jobs:
+  reap:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/github-script@v9
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+
+            // The open pull requests FIRST, so every run judged against them was
+            // listed afterwards. In the other order a PR opened mid-job has runs
+            // that match no open head and get reaped — the same ordering trap
+            // cancel-on-merge.yml documents.
+            const open = new Map(); // branch -> Set of live head SHAs
+            for (const pr of await github.paginate(github.rest.pulls.list, {
+              owner, repo, state: "open", per_page: 100,
+            })) {
+              const ref = pr.head?.ref;
+              if (!ref) continue;
+              if (!open.has(ref)) open.set(ref, new Set());
+              open.get(ref).add(pr.head.sha);
+            }
+            core.info(`${open.size} branch(es) with an open pull request`);
+
+            const self = String(context.runId);
+            const candidates = new Map();
+            for (const status of ["requested", "waiting", "pending", "queued", "in_progress"]) {
+              for (const run of await github.paginate(
+                github.rest.actions.listWorkflowRunsForRepo,
+                { owner, repo, status, event: "pull_request", per_page: 100 },
+              )) {
+                if (String(run.id) === self) continue;
+                candidates.set(run.id, run);
+              }
+            }
+            core.info(`${candidates.size} pull_request run(s) not yet finished`);
+
+            const doomed = [];
+            for (const run of candidates.values()) {
+              const live = open.get(run.head_branch);
+              if (!live) {
+                doomed.push([run, "its pull request is closed"]);
+              } else if (!live.has(run.head_sha)) {
+                doomed.push([run, "superseded by a later push"]);
+              }
+            }
+
+            let cancelled = 0;
+            let denied = false;
+            const reaped = [];
+            for (const [run, why] of doomed) {
+              try {
+                await github.rest.actions.cancelWorkflowRun({ owner, repo, run_id: run.id });
+                cancelled++;
+                reaped.push(`${run.name} on \`${run.head_branch}\` @ ${run.head_sha.slice(0, 8)} — ${why}`);
+              } catch (e) {
+                // 409: reached a terminal state between the listing and the
+                // cancel. Routine, and the commonest outcome on a busy queue.
+                if (e.status === 409) continue;
+                if (e.status === 403) denied = true;
+                core.warning(`could not cancel ${run.id}: ${e.message}`);
+              }
+            }
+
+            core.notice(
+              `reaped ${cancelled} of ${candidates.size} unfinished pull_request run(s)`,
+            );
+            const summary = core.summary.addHeading("Reap stale runs", 3);
+            if (reaped.length) {
+              summary.addRaw(`Cancelled ${cancelled} run(s) nobody was waiting on:\n`).addList(reaped);
+            } else {
+              summary.addRaw(
+                `Nothing to reap: all ${candidates.size} unfinished run(s) belong to the ` +
+                `current head of an open pull request.\n`,
+              );
+            }
+            await summary.write();
+
+            if (denied) {
+              core.setFailed("the token may not cancel runs — nothing was reaped");
+            }
