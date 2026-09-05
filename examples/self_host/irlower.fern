@@ -24851,27 +24851,49 @@ function field_append_inplace_at(c: ast.ExprCall, recv: ast.Expr, s: LowerState)
 // arr_push never frees its receiver, so the reallocating path leaves the
 // pre-grow buffer valid for the container that still names it.
 //
-// The IN-PLACE result IS the source container's own buffer, and it takes no
-// retain: the superseded box hands the buffer over rather than freeing it,
-// because __field_reclaim_<T> skips a field whose value the replacement still
-// holds. A second counted reference here would have nothing to release it.
+// The IN-PLACE result IS the source container's own buffer, so the literal this
+// value feeds becomes a second owner of it and owes the counted retain a
+// container field always owes. BOTH release paths need it: the caller's
+// __field_reclaim_<T>, which releases a carried field that carries a second
+// claim, and the callee's __struct_drop_<T> over a moved `own` parameter or
+// receiver, which has no `new` to compare against at all (#8271 — without it
+// own_self_reassign_move segfaulted and receiver-move-inplace-append had its
+// moved element boxes freed under the returned value). Guarded on IDENTITY: a
+// grow, and a shared-receiver copy, hand back a fresh rc 1 buffer that already
+// is the one reference.
 pub function lower_field_append_inplace(obj: ast.Expr, val: ast.Expr, s: LowerState): LowerState {
     var kind: string = arr_elem_kind(obj, s);
-    var st: LowerState = lower_expr(obj, s);
+    var srcname: string = "$fiab" + util.i32_to_string(s.locals.len());
+    var st: LowerState = s.add_local(srcname);
+    var srcslot: i32 = st.slot_of(srcname);
+    st = lower_expr(obj, st);
     if (!st.ok) { return st; }
+    st = st.emit(ir.op_store_local(srcslot));
+    st = st.emit(ir.op_load_local(srcslot));
     if (kind == "i64") {
         st = lower_i64(val, st);
         if (!st.ok) { return st; }
-        return st.emit(ir.op_arr_push_i64());
-    }
-    if (kind == "f64") {
+        st = st.emit(ir.op_arr_push_i64());
+    } else if (kind == "f64") {
         st = lower_expr(val, st);
         if (!st.ok) { return st; }
-        return st.emit(ir.op_arr_push_f64());
+        st = st.emit(ir.op_arr_push_f64());
+    } else {
+        st = lower_append_elem_value(val, st);
+        if (!st.ok) { return st; }
+        st = st.emit(ir.op_arr_push());
     }
-    st = lower_append_elem_value(val, st);
-    if (!st.ok) { return st; }
-    return st.emit(ir.op_arr_push());
+    var resname: string = "$fiar" + util.i32_to_string(st.locals.len());
+    st = st.add_local(resname);
+    var resslot: i32 = st.slot_of(resname);
+    st = st.emit(ir.op_store_local(resslot));
+    st = st.emit(ir.op_load_local(resslot));
+    st = st.emit(ir.op_load_local(srcslot));
+    st = st.emit(ir.op_bin("eq", 0, false));
+    st = st.emit(ir.op_if(0));
+    st = st.retain(resslot, "field-append-inplace-share");
+    st = st.emit(ir.op_end());
+    return st.emit(ir.op_load_local(resslot));
 }
 
 // lower_arr_append_value lowers `obj.append(val)` as a VALUE-PRODUCING
