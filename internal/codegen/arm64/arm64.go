@@ -4387,7 +4387,10 @@ func (g *generator) emitAllocU8Runtime() {
 	g.adrpAdd("x0", ".LArr_Empty")
 	g.emit("b .Lallocu8_ret")
 	g.label(".Lallocu8_alloc")
-	g.emit("add x0, x19, #16")
+	// `n` is an i32, so only w19 holds it — bits 32..63 are whatever the
+	// caller left in x0. The 32-bit add zero-extends into x0, which is
+	// what __fern_alloc reads at full width.
+	g.emit("add w0, w19, #16")
 	g.emit("bl __fern_alloc")
 	g.emit("add x0, x0, #16")      // x0 = data ptr (past 16-byte header)
 	g.emit("stur w19, [x0, #-12]") // cap = n  (Phase 2-prep)
