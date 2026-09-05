@@ -2,6 +2,7 @@ package x86_64ssa
 
 import (
 	"fmt"
+	"github.com/jakechampion/lang/internal/strerror"
 	"math"
 	"regexp"
 	"sort"
@@ -1879,6 +1880,8 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__fern_drop_arr_str":           emitDropArrStrHelper,
 	"__alloc_reuse":                 emitAllocReuseHelper,
 	"print":                         emitPrintHelper("print", 1),
+	"remove_dir_all":                emitRemoveDirAllHelper,
+	"__fern_io_error":               emitIoErrorHelper,
 	"eprint":                        emitPrintHelper("eprint", 2),
 }
 
@@ -1892,6 +1895,8 @@ var heapUsingHelpers = map[string]bool{
 	"__fern_arr_push_grow":   true,
 	"__fern_arr_cow_inplace": true,
 	"__alloc_reuse":          true,
+	"remove_dir_all":         true,
+	"__fern_io_error":        true,
 }
 
 // runtimeHelperDeps records the helper→helper call edges (a helper that tail-
@@ -1906,6 +1911,7 @@ var runtimeHelperDeps = map[string][]string{
 	"__fern_arr_cow_inplace_ptr":    {"__fern_arr_cow_inplace", "__fern_rc_inc"},
 	"__fern_arr_cow_inplace_str":    {"__fern_arr_cow_inplace"},
 	"__fern_drop_arr_str":           {"__fern_str_dec", "__fern_arr_dec"},
+	"remove_dir_all":                {"__fern_io_error"},
 }
 
 // emitRuntimeHelpers writes the named helper bodies, each at a 16-byte
@@ -3018,6 +3024,373 @@ func emitDropArrStrHelper(w func(string, ...any)) {
 	w("\tcall %s", fnLabel("__fern_arr_dec"))
 	w(".Lssa_dropstr_ret:")
 	w("\tmov rax, rbx")
+	w("\tpop r14")
+	w("\tpop r13")
+	w("\tpop r12")
+	w("\tpop rbx")
+	w("\tpop rbp")
+	w("\tret")
+}
+
+// ssaBumpAlloc emits the bump-heap allocation every helper here opens with:
+// `dst` = the 16-aligned cursor, the cursor moves past `size` bytes, and the
+// guard checks the reservation. `size` is an immediate or a register name.
+// __ssa_heap_guard preserves rax, rcx and the flags, so a caller may hold the
+// block pointer in either across the call — anything else it must place after.
+func ssaBumpAlloc(w func(string, ...any), dst, size string) {
+	w("\tmov %s, [rip + %s]", dst, heapPtrSym)
+	w("\tadd %s, 15", dst)
+	w("\tand %s, -16", dst)
+	w("\tmov r11, %s", dst)
+	w("\tadd r11, %s", size)
+	w("\tmov [rip + %s], r11", heapPtrSym)
+	w("\t%s", heapGuardCall)
+}
+
+// emitIoErrorHelper writes __fern_io_error(errno, path) -> IoError box: the
+// errno's IoError variant, boxed the way a Match reads it. The x86-64 sibling
+// of arm64ssa's, and the layouts are the natives': the four path variants —
+// NotFound(0) / PermissionDenied(1) / AlreadyExists(2) / InvalidUtf8(3) — are
+// {tag@0, path@8}, Interrupted(4) is tag-only, and Other(6) carries
+// {tag@0, path@8, msg@16} where msg is glibc's strerror text for that errno.
+//
+// The text comes from internal/strerror, the one table #8265 pinned across
+// every backend and the self-host, as a compare ladder over .rodata literals —
+// each with the immortal rc header a user literal carries, so a drop of the
+// message short-circuits instead of writing to .rodata. An errno outside the
+// table builds "Unknown error N" on the stack and copies it into a fresh rc
+// string, digits first from the end of a 32-byte scratch.
+//
+// rdi = errno (positive), rsi = path string. Leaf.
+func emitIoErrorHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__fern_io_error"))
+	w("\tcmp edi, 2") // ENOENT
+	w("\tje .Lssa_ioe_nf")
+	w("\tcmp edi, 13") // EACCES
+	w("\tje .Lssa_ioe_pm")
+	w("\tcmp edi, 17") // EEXIST
+	w("\tje .Lssa_ioe_ex")
+	w("\tcmp edi, 4") // EINTR
+	w("\tje .Lssa_ioe_intr")
+	// EILSEQ is synthetic — read_file's UTF-8 validation dispatches it; no
+	// file syscall produces it (#5714).
+	w("\tcmp edi, 84") // EILSEQ
+	w("\tje .Lssa_ioe_il")
+	texts := strerror.Dense(strerror.Linux)
+	for n, text := range texts {
+		if text == "" {
+			continue
+		}
+		w("\tcmp edi, %d", n)
+		w("\tjne .Lssa_ioe_not_%d", n)
+		w("\tlea r9, [rip + .Lssa_ioe_str_%d]", n)
+		w("\tjmp .Lssa_ioe_other")
+		w(".Lssa_ioe_not_%d:", n)
+	}
+	// "Unknown error N": the digits into a 32-byte stack scratch from its end,
+	// the prefix in front of them, then a bump-allocated rc string of exactly
+	// the bytes written.
+	w("\tsub rsp, 32")
+	w("\tlea rcx, [rsp + 32]") // write cursor, moving down
+	w("\tmov eax, edi")        // the errno to render
+	w(".Lssa_ioe_itoa:")
+	w("\txor edx, edx")
+	w("\tmov r8d, 10")
+	w("\tdiv r8d") // eax = n/10, edx = n%%10
+	w("\tadd edx, 48")
+	w("\tsub rcx, 1")
+	w("\tmov [rcx], dl")
+	w("\ttest eax, eax")
+	w("\tjnz .Lssa_ioe_itoa")
+	w("\tlea rsi, [rip + .Lssa_ioe_unknown_prefix]")
+	w("\tadd rsi, %d", len(strerror.UnknownPrefix))
+	w("\tmov r8d, %d", len(strerror.UnknownPrefix))
+	w(".Lssa_ioe_prefix:")
+	w("\tsub rsi, 1")
+	w("\tsub rcx, 1")
+	w("\tmov al, [rsi]")
+	w("\tmov [rcx], al")
+	w("\tsub r8d, 1")
+	w("\tjnz .Lssa_ioe_prefix")
+	w("\tlea rdx, [rsp + 32]")
+	w("\tsub rdx, rcx") // rdx = byte length
+	// The message string: rc header + bytes + NUL. rdx is live across the
+	// bump, so the size goes through r10 and the length is re-read after.
+	w("\tmov r10, rdx")
+	w("\tadd r10, 9")
+	ssaBumpAlloc(w, "rax", "r10")
+	w("\tmov dword ptr [rax], 1") // rc = 1
+	w("\tmov [rax + 4], edx")     // len
+	w("\tlea r9, [rax + 8]")      // r9 = msg data ptr
+	w("\tmov r8, r9")
+	w(".Lssa_ioe_copy:")
+	w("\tmov al, [rcx]")
+	w("\tmov [r8], al")
+	w("\tadd rcx, 1")
+	w("\tadd r8, 1")
+	w("\tsub rdx, 1")
+	w("\tjnz .Lssa_ioe_copy")
+	w("\tmov byte ptr [r8], 0") // NUL
+	w("\tadd rsp, 32")
+	w(".Lssa_ioe_other:")
+	ssaBumpAlloc(w, "rax", "32")  // 8 header + 24 box (tag, path, msg)
+	w("\tmov dword ptr [rax], 1") // rc = 1
+	w("\tadd rax, 8")             // box data
+	w("\tmov dword ptr [rax], 6") // tag = 6 (Other)
+	w("\tmov [rax + 8], rsi")
+	w("\tmov [rax + 16], r9")
+	w("\tret")
+	w(".Lssa_ioe_intr:")
+	ssaBumpAlloc(w, "rax", "16") // 8 header + 8 (tag only)
+	w("\tmov dword ptr [rax], 1")
+	w("\tadd rax, 8")
+	w("\tmov dword ptr [rax], 4") // tag = 4 (Interrupted)
+	w("\tret")
+	w(".Lssa_ioe_nf:")
+	w("\tmov r9d, 0")
+	w("\tjmp .Lssa_ioe_path")
+	w(".Lssa_ioe_pm:")
+	w("\tmov r9d, 1")
+	w("\tjmp .Lssa_ioe_path")
+	w(".Lssa_ioe_ex:")
+	w("\tmov r9d, 2")
+	w("\tjmp .Lssa_ioe_path")
+	w(".Lssa_ioe_il:")
+	w("\tmov r9d, 3")
+	w(".Lssa_ioe_path:")
+	ssaBumpAlloc(w, "rax", "24") // 8 header + 16 (tag, path)
+	w("\tmov dword ptr [rax], 1")
+	w("\tadd rax, 8")
+	w("\tmov [rax], r9d") // tag
+	w("\tmov [rax + 8], rsi")
+	w("\tret")
+	// The strerror literals, each with the immortal rc header a .rodata string
+	// literal carries (see the .rodata block in emitProgram).
+	w(".section .rodata")
+	for n, text := range texts {
+		if text == "" {
+			continue
+		}
+		w("\t.4byte 0x80000000")
+		w("\t.4byte %d", len(text))
+		w(".Lssa_ioe_str_%d:", n)
+		w("\t.byte %s", asmByteList(text))
+	}
+	w(".Lssa_ioe_unknown_prefix:")
+	w("\t.byte %s", asmByteList(strerror.UnknownPrefix))
+	w(".text")
+}
+
+// asmByteList renders a string as a `.byte` operand list.
+func asmByteList(s string) string {
+	parts := make([]string, len(s))
+	for i := 0; i < len(s); i++ {
+		parts[i] = strconv.Itoa(int(s[i]))
+	}
+	return strings.Join(parts, ", ")
+}
+
+// emitRemoveDirAllHelper writes remove_dir_all(path) -> Result[void, IoError]:
+// a recursive rm -rf. It opens the path O_DIRECTORY; a directory is drained
+// (getdents64) and each non-"."/".." child is recursed into (a child that is a
+// plain file hits ENOTDIR and is unlinked), then the now-empty directory is
+// removed via unlinkat(AT_REMOVEDIR); a plain-file path is unlinked; a missing
+// path is a silent success, matching os.RemoveAll. Child errors are
+// best-effort, as they are on every other backend.
+//
+// The path arrives as a single-word string and is copied into a
+// NUL-terminated heap buffer once at entry, since every syscall here needs a C
+// string. Child paths "pathz/name" are fresh single-word rc strings.
+//
+// NOTE: each recursion level bump-allocates a 1 KiB getdents buffer this heap
+// never reclaims, so a directory whose entries do not fit in 1 KiB per level is
+// drained only as far as the buffer — the same bound arm64ssa's helper carries,
+// where the stack-machine backends use 64 KiB.
+//
+// Non-leaf and self-recursive. Callee-saved: rbx=pathz, r12=dir fd, r13=dirent
+// buffer, r14=total, r15=offset; the child's name pointer and the two lengths
+// live in the frame, since the recursion clobbers every caller-saved register.
+func emitRemoveDirAllHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("remove_dir_all"))
+	w("\tpush rbp")
+	w("\tmov rbp, rsp")
+	w("\tpush rbx")
+	w("\tpush r12")
+	w("\tpush r13")
+	w("\tpush r14")
+	w("\tpush r15")
+	// Five pushes past rbp leave rsp 8 mod 16; 24 bytes of scratch realign it
+	// and give the three slots the recursion has to survive:
+	//   [rbp-48] child name ptr   [rbp-56] plen   [rbp-64] nlen
+	w("\tsub rsp, 24")
+	w("\tmov r8d, %s", memRef("rdi", -4)) // path len
+	w("\tmov r9, rdi")                    // path data
+	w("\tmov r10, r8")
+	w("\tadd r10, 1") // + NUL
+	ssaBumpAlloc(w, "rbx", "r10")
+	w("\txor ecx, ecx")
+	w(".Lssa_rda_cp:")
+	w("\tcmp rcx, r8")
+	w("\tjae .Lssa_rda_cpd")
+	w("\tmov al, [r9 + rcx]")
+	w("\tmov [rbx + rcx], al")
+	w("\tadd rcx, 1")
+	w("\tjmp .Lssa_rda_cp")
+	w(".Lssa_rda_cpd:")
+	w("\tmov byte ptr [rbx + r8], 0")
+	// openat(AT_FDCWD, pathz, O_RDONLY|O_DIRECTORY, 0). O_DIRECTORY is
+	// 0x10000 on x86-64, not the generic 0x4000 the arm64 helper uses.
+	w("\tmov edi, -100")
+	w("\tmov rsi, rbx")
+	w("\tmov edx, 0x10000")
+	w("\txor r10d, r10d")
+	w("\tmov eax, 257") // openat
+	w("\tsyscall")
+	w("\ttest rax, rax")
+	w("\tjns .Lssa_rda_dir")
+	w("\tcmp rax, -2") // -ENOENT: already gone
+	w("\tje .Lssa_rda_ok")
+	w("\tcmp rax, -20") // -ENOTDIR: a plain file
+	w("\tjne .Lssa_rda_err")
+	w("\tmov edi, -100")
+	w("\tmov rsi, rbx")
+	w("\txor edx, edx")
+	w("\tmov eax, 263") // unlinkat
+	w("\tsyscall")
+	w("\tjmp .Lssa_rda_ok")
+	w(".Lssa_rda_dir:")
+	w("\tmov r12, rax") // dir fd
+	ssaBumpAlloc(w, "r13", "1024")
+	w("\txor r14, r14") // total
+	w(".Lssa_rda_g:")
+	w("\tmov edx, 1024")
+	w("\tsub rdx, r14")
+	w("\tjz .Lssa_rda_gd") // buffer full: stop draining
+	w("\tmov edi, r12d")
+	w("\tlea rsi, [r13 + r14]")
+	w("\tmov eax, 217") // getdents64
+	w("\tsyscall")
+	w("\ttest rax, rax")
+	w("\tjle .Lssa_rda_gd") // 0 (end) or < 0 (error)
+	w("\tadd r14, rax")
+	w("\tjmp .Lssa_rda_g")
+	w(".Lssa_rda_gd:")
+	w("\txor r15, r15") // offset
+	w(".Lssa_rda_it:")
+	w("\tcmp r15, r14")
+	w("\tjae .Lssa_rda_itd")
+	w("\tlea rax, [r13 + r15]")
+	w("\tlea rsi, [rax + 19]") // d_name
+	w("\tmovzx ecx, byte ptr [rsi]")
+	w("\tcmp cl, 46") // '.'
+	w("\tjne .Lssa_rda_ch")
+	w("\tmovzx ecx, byte ptr [rsi + 1]")
+	w("\ttest cl, cl")
+	w("\tjz .Lssa_rda_adv") // "."
+	w("\tcmp cl, 46")
+	w("\tjne .Lssa_rda_ch")
+	w("\tmovzx ecx, byte ptr [rsi + 2]")
+	w("\ttest cl, cl")
+	w("\tjz .Lssa_rda_adv") // ".."
+	w(".Lssa_rda_ch:")
+	w("\tmov [rbp - 48], rsi")
+	// plen = strlen(pathz)
+	w("\txor rcx, rcx")
+	w(".Lssa_rda_pl:")
+	w("\tcmp byte ptr [rbx + rcx], 0")
+	w("\tje .Lssa_rda_pld")
+	w("\tadd rcx, 1")
+	w("\tjmp .Lssa_rda_pl")
+	w(".Lssa_rda_pld:")
+	w("\tmov [rbp - 56], rcx")
+	// nlen = strlen(name)
+	w("\txor rdx, rdx")
+	w(".Lssa_rda_nl:")
+	w("\tcmp byte ptr [rsi + rdx], 0")
+	w("\tje .Lssa_rda_nld")
+	w("\tadd rdx, 1")
+	w("\tjmp .Lssa_rda_nl")
+	w(".Lssa_rda_nld:")
+	w("\tmov [rbp - 64], rdx")
+	// The child string "pathz/name": rc header + childlen bytes + NUL.
+	w("\tlea r10, [rcx + rdx + 10]") // 8 header + childlen(plen+1+nlen) + NUL
+	ssaBumpAlloc(w, "rax", "r10")
+	w("\tmov rcx, [rbp - 56]")
+	w("\tmov rdx, [rbp - 64]")
+	w("\tmov dword ptr [rax], 1") // rc = 1
+	w("\tlea r8d, [rcx + rdx + 1]")
+	w("\tmov [rax + 4], r8d") // len = childlen
+	w("\tlea r8, [rax + 8]")  // child data
+	w("\txor r9, r9")
+	w(".Lssa_rda_c1:")
+	w("\tcmp r9, rcx")
+	w("\tjae .Lssa_rda_c1d")
+	w("\tmov al, [rbx + r9]")
+	w("\tmov [r8 + r9], al")
+	w("\tadd r9, 1")
+	w("\tjmp .Lssa_rda_c1")
+	w(".Lssa_rda_c1d:")
+	w("\tmov byte ptr [r8 + rcx], 47") // '/'
+	w("\tmov rsi, [rbp - 48]")
+	w("\txor r9, r9")
+	w(".Lssa_rda_c2:")
+	w("\tcmp r9, rdx")
+	w("\tjae .Lssa_rda_c2d")
+	w("\tmov al, [rsi + r9]")
+	w("\tlea r10, [rcx + r9 + 1]")
+	w("\tmov [r8 + r10], al")
+	w("\tadd r9, 1")
+	w("\tjmp .Lssa_rda_c2")
+	w(".Lssa_rda_c2d:")
+	w("\tlea r10, [rcx + rdx + 1]")
+	w("\tmov byte ptr [r8 + r10], 0")
+	w("\tmov rdi, r8")
+	w("\tcall %s", fnLabel("remove_dir_all"))
+	w(".Lssa_rda_adv:")
+	w("\tmovzx eax, word ptr [r13 + r15 + 16]") // d_reclen
+	w("\tadd r15, rax")
+	w("\tjmp .Lssa_rda_it")
+	w(".Lssa_rda_itd:")
+	w("\tmov edi, r12d")
+	w("\tmov eax, 3") // close
+	w("\tsyscall")
+	w("\tmov edi, -100")
+	w("\tmov rsi, rbx")
+	w("\tmov edx, 512") // AT_REMOVEDIR
+	w("\tmov eax, 263") // unlinkat
+	w("\tsyscall")
+	w(".Lssa_rda_ok:")
+	// Result.Ok(()): the unit rides a payload slot like any other value, so
+	// this is the same 24-byte block the Err arm builds, tag 0.
+	ssaBumpAlloc(w, "rax", "24")
+	w("\tmov dword ptr [rax], 1") // rc = 1
+	w("\tadd rax, 8")
+	w("\tmov dword ptr [rax], 0")     // tag = 0 (Ok)
+	w("\tmov qword ptr [rax + 8], 0") // unit payload
+	w("\tjmp .Lssa_rda_ret")
+	w(".Lssa_rda_err:")
+	w("\tneg rax")
+	w("\tmov r12, rax") // errno — r12 is free, no fd was opened on this path
+	// __fern_io_error(errno, "") — a top-level open failure reports the path
+	// it was given, and this helper hands it an empty one, as arm64ssa does.
+	ssaBumpAlloc(w, "rax", "9")
+	w("\tmov dword ptr [rax], 1")     // rc = 1
+	w("\tmov dword ptr [rax + 4], 0") // len = 0
+	w("\tlea rsi, [rax + 8]")
+	w("\tmov byte ptr [rsi], 0")
+	w("\tmov edi, r12d")
+	w("\tcall %s", fnLabel("__fern_io_error"))
+	w("\tmov r12, rax") // IoError box
+	ssaBumpAlloc(w, "rax", "24")
+	w("\tmov dword ptr [rax], 1")
+	w("\tadd rax, 8")
+	w("\tmov dword ptr [rax], 1") // tag = 1 (Err)
+	w("\tmov [rax + 8], r12")
+	w(".Lssa_rda_ret:")
+	w("\tadd rsp, 24")
+	w("\tpop r15")
 	w("\tpop r14")
 	w("\tpop r13")
 	w("\tpop r12")

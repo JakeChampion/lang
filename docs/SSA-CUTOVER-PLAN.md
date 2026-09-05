@@ -87,10 +87,10 @@ backend.** The cutover is much closer than the shelve doc reads.
 |---|---|---|---|
 | `arm64ssa` | yes | yes | 281/281 compared, 0 refused, 0 divergences |
 | `wasmssa` | yes | no | **single user function only** — measured below |
-| `x86_64ssa` | **yes, since 2026-09-01** | **yes, since 2026-09-02** | 39/337 compared, 0 divergences; 278 refused — the runtime-helper table is still the wall |
+| `x86_64ssa` | **yes, since 2026-09-01** | **yes, since 2026-09-02** | 194/337 compared, 0 divergences; 123 refused — the runtime-helper table is still the wall, in groups now rather than one symbol |
 
 The spread is much wider than "arm64 is ahead". One backend is corpus-complete,
-one compares a tenth of the corpus and agrees on all of it, and one cannot
+one compares three fifths of the corpus and agrees on all of it, and one cannot
 compile a program with two functions in it.
 
 Two concrete blockers, and only two:
@@ -171,25 +171,34 @@ Two concrete blockers, and only two:
    time, naming every missing helper at once, so a coverage gap reads as one
    instead of arriving from the assembler as `undefined label`.
 
-   **Re-measured 2026-09-05, after the table reached 44 emitters (#8570).** The
-   corpus is 337 programs: **39** compile under both backends, 278 are refused
-   (241 for a helper, 57 for something else — float reinterprets and the rest of
-   the list above), 20 are baseline-rejected. What the second measurement changes
-   is the SHAPE of the remaining gap — it is no longer a flat co-occurrence
-   wall but one symbol:
+   **Re-measured twice on 2026-09-05, and #8570 acted on both.** The corpus is
+   337 programs. It went 29 → 39 comparable with `print`, `eprint`,
+   `__alloc_reuse` and `__fern_drop_arr_str`; the measurement that mattered was
+   what the remaining refusals then looked like, which was no longer a flat
+   co-occurrence wall but ONE symbol:
 
    | | refused for it | refused for it ALONE |
    |---|---|---|
    | `remove_dir_all` | 208 | **155** |
-   | `__memcpy` | 45 | 0 |
-   | `__free` | 32 | 0 |
-   | `__method_string_as_bytes` | 27 | 0 |
 
-   Those 155 reference `remove_dir_all` through `std/test`'s import graph
-   without ever calling it, so the one helper takes this leg from 39 comparable
-   programs to **194** — the largest single step available, and the next slice.
-   The four that landed in #8570 (`print`, `eprint`, `__alloc_reuse`,
-   `__fern_drop_arr_str`) moved it 29 → 39 and found no divergence.
+   Those 155 reach `remove_dir_all` through `std/test`'s import graph without
+   ever calling it — a symbol the linker needs and the program never runs — so
+   that one helper (with the `__fern_io_error` it reports through) took the leg
+   to **194 comparable, 0 divergences**.
+
+   **Where the wall is now**, over the 123 still refused with a baseline to
+   compare against: back to groups, with no single symbol unlocking anything on
+   its own.
+
+   | | refused for it | refused for it ALONE |
+   |---|---|---|
+   | `__memcpy` | 56 | 0 |
+   | `__free` | 39 | 0 |
+   | `__method_string_as_bytes` | 33 | 0 |
+   | the Map family (`map_new`, `__method_Map_set`, `__fern_map_hash_seed`, `__memset`) | 28 each | 0 |
+
+   So the next slice is a GROUP — the Map methods, or the memory trio — and the
+   2026-09-02 lesson below is the one to size it by.
 
    **The 2026-09-02 measurement below is kept because its LESSON stands**: size
    this work by removal, never by which name appears most. It is what the table

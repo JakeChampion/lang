@@ -48,17 +48,17 @@ const (
 	// regression that widened the SSA bail set would otherwise turn the lane
 	// green by comparing almost nothing.
 	//
-	// 39 as measured 2026-09-05, after `print`, `eprint`, `__alloc_reuse` and
-	// `__fern_drop_arr_str` joined the helper table (#8570). It is far below
-	// the arm64 leg's floor because this backend is still missing most of its
-	// helper table (docs/SSA-CUTOVER-PLAN.md). RAISE IT with each helper slice
-	// — that is the point of the number.
+	// 194 as measured 2026-09-05, after `remove_dir_all` and the
+	// `__fern_io_error` it reports through joined the helper table — the
+	// second half of #8570, and the cliff the first half measured: 155 of
+	// these programs were refused for that ONE symbol, which they reach
+	// through std/test's import graph without ever calling it. RAISE IT with
+	// each helper slice — that is the point of the number.
 	//
-	// The next cliff is one symbol wide: 155 corpus programs are refused for
-	// `remove_dir_all` ALONE, which they reference through `std/test`'s import
-	// graph without calling it. Implementing that helper takes this leg from 39
-	// comparable programs to 194.
-	x86SSADiffMinCompared = 39
+	// What is left is no longer one cliff: the 123 still refused want the Map
+	// method family, the Reader/host builtins, `__memcpy` / `__free`, and the
+	// float reinterprets, in groups (docs/SSA-CUTOVER-PLAN.md).
+	x86SSADiffMinCompared = 194
 )
 
 func TestX86_64SSABackendDifferential(t *testing.T) {
