@@ -48,14 +48,14 @@ package ir
 
 import "math"
 
-// Fold rewrites every function in prog to its constant-folded form.
-// Iterates each function to a fixed point (constant arithmetic can
-// cascade — `1 + 2 + 3` lowers to two adds, the first fold reveals
-// the second), so backends never need to re-run the pass.
-// Returns whether any function's op list changed — the cleanup fixpoint
-// (OptimizeCleanup) uses this to detect convergence without snapshotting +
-// deep-comparing the whole program each iteration (#4377 slice 1b).
-func Fold(prog *Program) bool {
+// foldProgram rewrites every function in prog to its constant-folded
+// form, iterating each to a fixed point (constant arithmetic cascades —
+// `1 + 2 + 3` lowers to two adds, and the first fold reveals the second).
+//
+// The shipped path does not call this: optimizeCleanupFunc drives
+// foldOnce itself so folding interleaves with the other cleanup passes.
+// This is the whole-program driver the fold tests exercise it through.
+func foldProgram(prog *Program) bool {
 	changed := false
 	for _, fn := range prog.Funcs {
 		for {
