@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# toolchain-env — install the toolchain mise.toml pins, if it is not already,
+# and print the shell exports that put it on PATH, for `eval`:
+#
+#   eval "$(scripts/toolchain-env)"    # PATH, GOROOT, GOBIN, FERN_WASI_ADAPTER
+#
+# The one bootstrap shared by every host that is not a GitHub runner (those
+# use jdx/mise-action) and not the Netlify deploy sandbox (which cannot
+# bootstrap mise, so netlify.toml provisions Go/Node and the smoke lane reads
+# the wasm pins from mise.toml directly): scripts/devbox's image and the Claude
+# session hook. mise itself is installed when absent, at the release
+# mise.toml's min_version names, so a stale mise cannot misread the file.
+#
+# FERN_MISE_HOME relocates the mise binary and its installs together. Unset,
+# everything lands in mise's defaults (~/.local/bin, ~/.local/share/mise),
+# where a laptop's own `mise activate` finds it too.
+set -euo pipefail
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+if [ -n "${FERN_MISE_HOME:-}" ]; then
+  export MISE_DATA_DIR="$FERN_MISE_HOME/data" MISE_CACHE_DIR="$FERN_MISE_HOME/cache"
+  bin_dir="$FERN_MISE_HOME/bin"
+else
+  bin_dir="$HOME/.local/bin"
+fi
+export PATH="$bin_dir:$PATH" MISE_YES=1
+
+if ! command -v mise >/dev/null 2>&1; then
+  mkdir -p "$bin_dir"
+  MISE_VERSION="v$(sed -n 's/^min_version = "\(.*\)"/\1/p' "$root/mise.toml")" \
+    MISE_INSTALL_PATH="$bin_dir/mise" \
+    sh -c "$(curl -sSfL --retry 5 --retry-delay 2 https://mise.run)" >&2
+fi
+
+cd "$root"
+mise trust mise.toml >&2
+mise install >&2
+
+echo "export PATH=\"$bin_dir:\$PATH\""
+if [ -n "${FERN_MISE_HOME:-}" ]; then
+  echo "export MISE_DATA_DIR=\"$MISE_DATA_DIR\" MISE_CACHE_DIR=\"$MISE_CACHE_DIR\""
+fi
+# Absolute install paths, so the tools resolve from any directory.
+mise env -s bash
+# The adapter is a data file the wasm e2e tests read, not a program on PATH.
+echo "export FERN_WASI_ADAPTER=\"$(mise where http:wasi-adapter)/wasi_snapshot_preview1.command.wasm\""

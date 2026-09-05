@@ -22,6 +22,13 @@ name: Perf
 # while and the corpus is trusted. This mirrors the size gate (#6826), which
 # took the same route.
 #
+# HISTORY. On main, every job also appends its report to the commit's note
+# under refs/notes/perf (scripts/perf-history). The baseline files are the
+# gate; the notes are the trend — `scripts/perf-history show METRIC` reads a
+# metric back across the last 50 main commits, with nothing hosted and nothing
+# that expires the way the report artifacts do. `contents: write` on each job
+# is what lets it push that ref; branch protection does not apply to notes.
+#
 # Cost: `bench` is ~8 seconds of measurement on top of a Go build. `cliff`,
 # `selfhost-size` and `alloc` all build the self-hosted compiler first, so they
 # run in minutes — `selfhost-size` measures for ~30 seconds once it has a
@@ -82,6 +89,8 @@ jobs:
           - { runner: ubuntu-latest,    host: x86_64  }
           - { runner: ubuntu-24.04-arm, host: aarch64 }
     name: perf-${{ matrix.host }}
+    permissions:
+      contents: write
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v7
@@ -98,6 +107,10 @@ jobs:
 
       - name: Compare against the baseline
         run: scripts/ci-check-perf .github/perf-baseline.txt "${{ runner.temp }}/perf-report.txt"
+
+      - name: Record the report in refs/notes/perf
+        if: github.event_name == 'push'
+        run: scripts/perf-history record perf-${{ matrix.host }} "${{ runner.temp }}/perf-report.txt"
 
       - name: Upload the report
         if: always()
@@ -119,6 +132,8 @@ jobs:
   # now — the aarch64 lane does not build a self-host compiler.
   cliff:
     name: append-cliff-x86_64
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -131,6 +146,10 @@ jobs:
         env:
           FERN_PERF_GATE_LABEL: self-host append cliff
         run: scripts/ci-check-perf .github/cliff-baseline.txt "${{ runner.temp }}/cliff-report.txt"
+
+      - name: Record the report in refs/notes/perf
+        if: github.event_name == 'push'
+        run: scripts/perf-history record append-cliff-x86_64 "${{ runner.temp }}/cliff-report.txt"
 
       - name: Upload the report
         if: always()
@@ -155,6 +174,8 @@ jobs:
   # a single host covers the whole namespace.
   selfhost-size:
     name: selfhost-size-x86_64
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -167,6 +188,10 @@ jobs:
         env:
           FERN_PERF_GATE_LABEL: self-host emitted size
         run: scripts/ci-check-perf .github/perf-baseline-selfhost.txt "${{ runner.temp }}/selfhost-size-report.txt"
+
+      - name: Record the report in refs/notes/perf
+        if: github.event_name == 'push'
+        run: scripts/perf-history record selfhost-size-x86_64 "${{ runner.temp }}/selfhost-size-report.txt"
 
       - name: Upload the report
         if: always()
@@ -193,6 +218,8 @@ jobs:
   # skipping it also drops a second full self-host build from the lane.
   alloc:
     name: selfhost-alloc-x86_64
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -207,6 +234,10 @@ jobs:
         env:
           FERN_PERF_GATE_LABEL: self-host allocation
         run: scripts/ci-check-perf .github/alloc-baseline.txt "${{ runner.temp }}/alloc-report.txt"
+
+      - name: Record the report in refs/notes/perf
+        if: github.event_name == 'push'
+        run: scripts/perf-history record selfhost-alloc-x86_64 "${{ runner.temp }}/alloc-report.txt"
 
       - name: Upload the report
         if: always()
