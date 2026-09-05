@@ -2764,6 +2764,117 @@ function log2_i32(n: i32): i32 {
     return r;
 }
 
+// ---- magic-number reciprocals (native internal/ir/magic.go) --------------
+//
+// The constants that turn a division by a compile-time constant into a
+// multiply-high plus a shift: Granlund–Montgomery as in Hacker's Delight
+// figures 10-1 (signed) and 10-3 (unsigned). Both search for the smallest p
+// at which the rounded-up 2^p/d reproduces `x / d` exactly for every dividend
+// at the operand width — a search, not an approximation with a tolerance.
+//
+// Only the 32-bit families exist, here and natively: a backend gets the high
+// half from a 32x32 multiply, and there is no cheap high half of a 64x64
+// product on x86-64. Which backend uses them is instruction selection
+// (asm_ir.fern's ir_div_const); only the derivation is shared.
+
+// MagicS32 is the signed 32-bit reciprocal for d. The quotient is
+//
+//     q  = mulhi_s(x, m)          // (i64)x * m >> 32
+//     q += x    if add            // m's sign disagrees with d's
+//     q -= x    if sub
+//     q >>= s                     // arithmetic
+//     q += (unsigned)q >> 31      // +1 for a negative quotient: round toward zero
+//
+// add and sub are never both set. d must not be 0, ±1, ±2^k or INT_MIN.
+pub struct MagicS32 {
+    m: i32,
+    s: i32,
+    add: boolean,
+    sub: boolean,
+}
+
+pub function derive_magic_s32(d: i32): MagicS32 {
+    var ad: u32 = d as u32;
+    if (d < 0) { ad = (0 - d) as u32; }
+    var two31: u32 = 2147483648u32;
+    // t = 2^31 + (sign bit of d): the bound on |nc| is one larger for a
+    // negative divisor, because the negative side of the range is one wider.
+    var t: u32 = two31 + ((d as u32) >> 31);
+    var anc: u32 = t - 1u32 - t % ad;   // |nc|, the largest |x| with x % d == d-1
+    var p: i32 = 31;
+    var q1: u32 = two31 / anc;
+    var r1: u32 = two31 - q1 * anc;
+    var q2: u32 = two31 / ad;
+    var r2: u32 = two31 - q2 * ad;
+    var searching: boolean = true;
+    while (searching) {
+        p = p + 1;
+        q1 = q1 * 2u32;
+        r1 = r1 * 2u32;
+        if (r1 >= anc) { q1 = q1 + 1u32; r1 = r1 - anc; }
+        q2 = q2 * 2u32;
+        r2 = r2 * 2u32;
+        if (r2 >= ad) { q2 = q2 + 1u32; r2 = r2 - ad; }
+        var delta: u32 = ad - r2;
+        if (q1 > delta || (q1 == delta && r1 != 0u32)) { searching = false; }
+    }
+    var m: i32 = (q2 + 1u32) as i32;
+    if (d < 0) { m = 0 - m; }
+    // A magic whose sign disagrees with the divisor's has wrapped past 2^31;
+    // adding (or subtracting) the dividend back recovers the product's true
+    // high half.
+    return MagicS32 { m: m, s: p - 32, add: d > 0 && m < 0, sub: d < 0 && m > 0 };
+}
+
+// MagicU32 is the unsigned 32-bit reciprocal for d. The quotient is
+//
+//     h = mulhi_u(x, m)                        // (u64)x * m >> 32
+//     q = h >> s                               if !add
+//     q = (((x - h) >>u 1) + h) >> (s - 1)     if add
+//
+// add marks a magic that needs 33 bits. Rather than widen m, the shift-average
+// form computes (x + h) / 2 without the carry out of bit 31 that a plain add
+// would lose. d must not be 0, 1 or a power of two.
+pub struct MagicU32 {
+    m: u32,
+    s: i32,
+    add: boolean,
+}
+
+pub function derive_magic_u32(d: u32): MagicU32 {
+    var two31: u32 = 2147483648u32;
+    var nc: u32 = 0u32 - 1u32 - (0u32 - d) % d;
+    var p: i32 = 31;
+    var q1: u32 = two31 / nc;
+    var r1: u32 = two31 - q1 * nc;
+    var q2: u32 = (two31 - 1u32) / d;
+    var r2: u32 = (two31 - 1u32) - q2 * d;
+    var add: boolean = false;
+    var searching: boolean = true;
+    while (searching) {
+        p = p + 1;
+        if (r1 >= nc - r1) {
+            q1 = q1 * 2u32 + 1u32;
+            r1 = r1 * 2u32 - nc;
+        } else {
+            q1 = q1 * 2u32;
+            r1 = r1 * 2u32;
+        }
+        if (r2 + 1u32 >= d - r2) {
+            if (q2 >= two31 - 1u32) { add = true; }
+            q2 = q2 * 2u32 + 1u32;
+            r2 = r2 * 2u32 + 1u32 - d;
+        } else {
+            if (q2 >= two31) { add = true; }
+            q2 = q2 * 2u32;
+            r2 = r2 * 2u32 + 1u32;
+        }
+        var delta: u32 = d - 1u32 - r2;
+        if (p >= 64 || q1 > delta || (q1 == delta && r1 != 0u32)) { searching = false; }
+    }
+    return MagicU32 { m: q2 + 1u32, s: p - 32, add: add };
+}
+
 // strength_rewrite decides what replaces `const k ; bop`.
 function strength_rewrite(k: i32, bop: Op): StrengthRewrite {
     var t: i32 = bop.kind_tag;

@@ -616,7 +616,9 @@ cross-block analysis to.
 
 - **A6's reciprocal, beyond x86-64's i32.** The magic-number reciprocal
   (`internal/ir/magic.go`, Granlund–Montgomery via Hacker's Delight 10-1 and
-  10-3) lands for i32 in x86-64's `emitConstDivRemMagic`. Two gaps remain, and
+  10-3) lands for i32 in x86-64's `emitConstDivRemMagic`, and in the self-host
+  x86-64 emitter (`asm_ir.fern`'s `ir_div_const`, with the derivation mirrored
+  as `ir.fern`'s `derive_magic_*32`). Two gaps remain, and
   both are their own change: **i64**, which needs the derivation at 64-bit
   width and `imul r64`, and **arm64, which has no constant-divisor lowering at
   all** — every `x / K` there is a full `sdiv`, power of two included. arm64
