@@ -194,7 +194,7 @@ on:
 # one ~1-minute job can afford a slot per merge; this lane cannot.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  cancel-in-progress: true
 
 # ISOLATED WHOLE-COMPILER DRIVER TESTS — the `^TestSelfHost*` tests that build
 # examples/self_host/fern.fern, the ENTIRE self-hosted compiler and the single

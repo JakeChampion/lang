@@ -248,6 +248,10 @@ type rcPlan struct {
 	// after lowering that top-level statement (Perceus garbage-free precise
 	// drops — computePreciseDrops).
 	preciseDrops map[int][]string
+	// viewLocalDrops[stmt] names the `[T]` view locals whose header is freed
+	// after that statement — the binding-lifetime half of #8502, keyed by
+	// statement so one table serves the top level and every nested block.
+	viewLocalDrops map[ast.Stmt][]string
 	// nestedDrops[stmt] is the same precise-drop list for a local declared
 	// inside a NESTED block, keyed by the block statement to drop after
 	// rather than by a top-level index (computeNestedDrops).
@@ -5106,6 +5110,141 @@ func (b *builder) flowsIntoUncountedAlias(st ast.Node, name string) bool {
 			if b.mayAliasResult(e) && hasName(e) {
 				bad = true
 			}
+		}
+		return !bad
+	})
+	return bad
+}
+
+// computeViewLocalDrops places the release of a `[T]` view header bound to a
+// LOCAL. #8522 gave the header an owner where it is materialised as a call
+// ARGUMENT — dead once the call returns — but a header bound to a local has
+// the binding's lifetime and nothing released it (#8535): 16 bytes per binding
+// on the natives, 8 on wasm.
+//
+// The placement is the precise-drop one: after the statement carrying the
+// local's last use, so a loop body reclaims per iteration rather than at the
+// function's exit sweep. Keyed by statement rather than by index so the one
+// map serves the function's top level and every nested block.
+//
+// A view header carries no refcount, so unlike an rc local this cannot lean on
+// an is_unique gate to make a double release harmless: `var t = s` copies the
+// pointer and both names then hold one block. viewHeaderEscapes is what keeps
+// the release attached to the binding that MATERIALISED the header.
+func (b *builder) computeViewLocalDrops() map[ast.Stmt][]string {
+	if !ast.RcFreeEnabled || b.fn.Body == nil {
+		return nil
+	}
+	blocks := []*ast.Block{b.fn.Body}
+	for _, st := range b.fn.Body.Stmts {
+		collectNestedBlocks(st, &blocks)
+	}
+	reassigned := b.reassignedAnywhere()
+	bodyRefs := identCounts(b.fn.Body)
+	out := map[ast.Stmt][]string{}
+	for _, blk := range blocks {
+		declIdx := blockDeclIndices(blk.Stmts, reassigned)
+		if len(declIdx) == 0 {
+			continue
+		}
+		blkRefs := identCounts(blk)
+		for _, name := range sortedByDeclIdx(declIdx) {
+			v, ok := blk.Stmts[declIdx[name]].(*ast.Var)
+			if !ok || !isViewHeaderLocal(v) || reassigned[name] {
+				continue
+			}
+			// Every reference must be inside this block: the last-use scan
+			// below only reads blk.Stmts, so a reference outside it would be
+			// past the release.
+			if bodyRefs[name] != blkRefs[name] {
+				continue
+			}
+			last, ok := b.viewDropTarget(blk.Stmts, declIdx[name], name)
+			if !ok {
+				continue
+			}
+			out[blk.Stmts[last]] = append(out[blk.Stmts[last]], name)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// isViewHeaderLocal reports whether `v` declares a `[T]` local whose
+// initialiser MATERIALISES a header rather than naming one someone else owns.
+func isViewHeaderLocal(v *ast.Var) bool {
+	if _, isView := v.Type.(ast.SliceType); !isView {
+		return false
+	}
+	return makesFreshViewHeader(v.Init)
+}
+
+// viewDropTarget returns the index of the statement after which `name`'s
+// header is freed, or ok=false when any use could outlive that point.
+func (b *builder) viewDropTarget(stmts []ast.Stmt, di int, name string) (int, bool) {
+	last := -1
+	for i := di + 1; i < len(stmts); i++ {
+		if !stmtReferencesName(stmts[i], name) {
+			continue
+		}
+		if b.viewHeaderEscapes(stmts[i], name) {
+			return 0, false
+		}
+		last = i
+	}
+	if last < 0 {
+		last = di
+	}
+	return last, true
+}
+
+// viewHeaderEscapes reports whether a use of `name` in `st` can leave the
+// header reachable past the drop point.
+//
+// flowsIntoUncountedAlias is deliberately NOT composed in, though it guards
+// the same drop placement for rc locals. It asks whether an expression's
+// result may ALIAS the local, so it rejects any pointer-returning call
+// containing the name — `s.len().to_string()` among them. The question here is
+// narrower and answerable: whether the result can BE the two-word header, and
+// typeCannotCarrySlice decides that from the type alone. A `s[0:2]` reads
+// through the header and materialises its own, so it is not an escape either. Reading THROUGH the view is safe —
+// `s.len()`, `s[i]`, `for x in s`, and a call whose result cannot carry a
+// slice all consume the window without keeping the two-word block. What is not
+// safe is anything that gives the block a second name or a longer life.
+//
+// The `*ast.Var` arm keys on a BARE ident deliberately: `var t = s` aliases the
+// header, but `var s2 = s[0:2]` reads through it and materialises its own, so
+// only the first has to disqualify `s`.
+func (b *builder) viewHeaderEscapes(st ast.Node, name string) bool {
+	isName := func(e ast.Expr) bool {
+		id, ok := e.(*ast.Ident)
+		return ok && id.Name == name
+	}
+	hasName := func(n ast.Node) bool { return n != nil && stmtReferencesName(n, name) }
+	bad := false
+	ast.Walk(st, func(n ast.Node) bool {
+		if bad {
+			return false
+		}
+		switch e := n.(type) {
+		case *ast.Var:
+			bad = e.Init != nil && isName(e.Init)
+		case *ast.Destructure:
+			bad = e.Init != nil && isName(e.Init)
+		case *ast.Assign:
+			bad = e.Value != nil && isName(e.Value)
+		case *ast.Return:
+			bad = e.Value != nil && isName(e.Value)
+		case *ast.ArrayLit, *ast.StructLit, *ast.TupleLit:
+			bad = hasName(n)
+		case *ast.Call:
+			bad = hasName(e) && !b.typeCannotCarrySlice(b.exprType(e))
+		case *ast.IfExpr:
+			bad = hasName(e) && !b.typeCannotCarrySlice(b.exprType(e))
+		case *ast.MatchExpr:
+			bad = hasName(e) && !b.typeCannotCarrySlice(b.exprType(e))
 		}
 		return !bad
 	})

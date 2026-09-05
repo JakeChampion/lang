@@ -1,0 +1,17 @@
+// Pins the E076 shapes the first version of the check let through.
+//
+// It hunted for free IDENTIFIERS, descending into Ident / Unary / Binary /
+// Call only. A name wrapped in any other node was invisible to it, so this
+// program compiled and `f(1)` returned 42 — reading the CALLER's `config`,
+// which is the exact class E076 exists to stop. The check is a whitelist of
+// literal / unary / binary now, so every other form is refused by shape.
+struct Config { timeout: i32 }
+
+function f(a: i32, b: i32 = config.timeout): i32 {
+    return a + b;
+}
+
+function main(): i32 {
+    var config: Config = Config { timeout: 41 };
+    return f(1);
+}

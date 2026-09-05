@@ -118,6 +118,17 @@ func FoldWith(prog *ast.Program, in Inputs) error {
 	// of the pipeline runs against a const-free program.
 	sub := substituter{values: values, assets: in.Assets, targetOS: in.TargetOS}
 	for _, fn := range prog.Funcs {
+		// A parameter DEFAULT is not part of the body and sees none of the
+		// parameters: it is pasted into the CALL site. Walk it at top-level
+		// scope, before the body's binders go in. Without this a default was
+		// never folded at all, so `= SOME_CONST` reached defaultargs still
+		// spelled as a name and was refused by E076 as reading one — the
+		// diagnostic telling the author a const is not a constant expression.
+		for i := range fn.Params {
+			if fn.Params[i].Default != nil {
+				sub.walkExpr(&fn.Params[i].Default)
+			}
+		}
 		sub.pushScope()
 		for _, p := range fn.Params {
 			sub.bind(p.Name)

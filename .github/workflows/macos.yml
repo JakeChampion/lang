@@ -125,7 +125,7 @@ on:
 # one ~1-minute job can afford a slot per merge; this lane cannot.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  cancel-in-progress: true
 
 jobs:
   test-arm64-darwin:
@@ -207,8 +207,9 @@ jobs:
               echo "build $name FAILED:"; cat "build/$name.err"; exit 1
             fi
             echo "::group::run $name"
-            "./build/$name" || echo "(exited $?)"
+            rc=0; scripts/ci-run-example "$name" "./build/$name" || rc=$?
             echo "::endgroup::"
+            if [ "$rc" -ne 0 ]; then echo "::error::example $name failed (exit $rc)"; exit 1; fi
           done
 
       - name: clang fallback still works (-cc opt-out)

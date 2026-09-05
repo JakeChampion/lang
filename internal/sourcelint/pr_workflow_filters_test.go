@@ -210,15 +210,11 @@ func TestGateLanesRunOnMain(t *testing.T) {
 				e.Name(), got, want)
 		}
 
-		// How main is grouped, in both directions it can go wrong.
+		// Whether main cancels its own runs is settled in
+		// main_concurrency_test.go, which states the policy for every main lane
+		// rather than for gate lanes alone. What stays here is the grouping KEY,
+		// which is what makes cancellation coalesce instead of misfiring.
 		if conc, ok := concurrencyBlock(src); ok {
-			if strings.Contains(conc, "cancel-in-progress: true") {
-				t.Errorf("%s: main cancels its own in-flight run. Once merges land "+
-					"faster than the lane runs, each cancels the previous before it "+
-					"finishes and the lane reports on main never — exempt main with "+
-					"`cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}` "+
-					"(see test-units.yml)", e.Name())
-			}
 			if strings.Contains(conc, "github.sha") {
 				t.Errorf("%s: main is keyed on the SHA, so every merge gets its own "+
 					"concurrency group and supersedes nothing. A burst of rebase-merges "+
