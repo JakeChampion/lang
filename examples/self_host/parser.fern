@@ -7943,7 +7943,10 @@ pub function builtin_function_names(): string[] {
         "open_reader", "open_writer", "open_appender",
         // filesystem
         "read_file", "read_file_bytes", "write_file", "write_file_exec", "read_dir", "remove_dir_all", "remove_file",
-        "create_dir_all", "stat", "lstat", "temp_dir",
+        "create_dir_all", "stat", "lstat", "access", "temp_dir",
+        // the process's own effective ids, which `test -O` / `-G` compare a
+        // file's owner against
+        "geteuid", "getegid",
         // clocks + randomness + sleep + reactor readiness
         "now_unix_ms", "now_ns", "monotonic_ns", "sleep_ms", "random_bytes",
         "random_i32", "poll", "timer_fd", "wasm_timer_pollable",
@@ -8001,15 +8004,32 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
         structs = structs.append(StructDecl { name: "Other", fields: otf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "IoError", must_consume: false, variant_field_names: [] , is_pub: true });
     }
     // FileStat: the builtin struct returned by stat(path). Injected so
-    // the emitter knows its field layout ([shape, is_file@8, is_dir@16,
-    // size@24]) — the __fern_stat runtime helper builds a struct whose
-    // shape pointer is the interned "FileStat" name, matching the arm
-    // that field access emits for is_file / is_dir / size.
+    // the emitter knows its field layout ([shape, then one 8-byte slot
+    // per field in declaration order]) — the __fern_stat runtime helper
+    // builds a struct whose shape pointer is the interned "FileStat"
+    // name, matching the arm that field access emits. The field list
+    // mirrors native's checker declaration entry for entry, which
+    // TestSelfHostBuiltinStructsMatchChecker pins.
     if (!struct_declared(structs, "FileStat")) {
         var fsf: StructFieldDecl[] = [];
         fsf = fsf.append(StructFieldDecl { name: "is_file", type_name: "boolean", fn_ret: "", fn_param_types: "" });
         fsf = fsf.append(StructFieldDecl { name: "is_dir", type_name: "boolean", fn_ret: "", fn_param_types: "" });
         fsf = fsf.append(StructFieldDecl { name: "size", type_name: "i64", fn_ret: "", fn_param_types: "" });
+        fsf = fsf.append(StructFieldDecl { name: "mode", type_name: "u32", fn_ret: "", fn_param_types: "" });
+        fsf = fsf.append(StructFieldDecl { name: "nlink", type_name: "u32", fn_ret: "", fn_param_types: "" });
+        fsf = fsf.append(StructFieldDecl { name: "uid", type_name: "u32", fn_ret: "", fn_param_types: "" });
+        fsf = fsf.append(StructFieldDecl { name: "gid", type_name: "u32", fn_ret: "", fn_param_types: "" });
+        fsf = fsf.append(StructFieldDecl { name: "dev", type_name: "i64", fn_ret: "", fn_param_types: "" });
+        fsf = fsf.append(StructFieldDecl { name: "rdev", type_name: "i64", fn_ret: "", fn_param_types: "" });
+        fsf = fsf.append(StructFieldDecl { name: "ino", type_name: "i64", fn_ret: "", fn_param_types: "" });
+        fsf = fsf.append(StructFieldDecl { name: "blksize", type_name: "i64", fn_ret: "", fn_param_types: "" });
+        fsf = fsf.append(StructFieldDecl { name: "blocks", type_name: "i64", fn_ret: "", fn_param_types: "" });
+        fsf = fsf.append(StructFieldDecl { name: "atime", type_name: "i64", fn_ret: "", fn_param_types: "" });
+        fsf = fsf.append(StructFieldDecl { name: "atime_nsec", type_name: "i64", fn_ret: "", fn_param_types: "" });
+        fsf = fsf.append(StructFieldDecl { name: "mtime", type_name: "i64", fn_ret: "", fn_param_types: "" });
+        fsf = fsf.append(StructFieldDecl { name: "mtime_nsec", type_name: "i64", fn_ret: "", fn_param_types: "" });
+        fsf = fsf.append(StructFieldDecl { name: "ctime", type_name: "i64", fn_ret: "", fn_param_types: "" });
+        fsf = fsf.append(StructFieldDecl { name: "ctime_nsec", type_name: "i64", fn_ret: "", fn_param_types: "" });
         structs = structs.append(StructDecl { name: "FileStat", fields: fsf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [] , is_pub: true });
     }
     // ProcessResult — returned by `subprocess(cmd, args, stdin)`.

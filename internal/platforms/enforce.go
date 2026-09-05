@@ -122,8 +122,21 @@ var gatedBuiltins = map[string]string{
 
 	// Permission bits on a filesystem entry, which is a separate
 	// capability from having a filesystem: a host can offer files and no
-	// mode word to set on them.
+	// mode word to set on them. `access` is the READ of the same
+	// property — "do the mode bits permit this for my effective ids" —
+	// so it sits here rather than on `fs`, and a target with files and
+	// no permission model refuses the question instead of answering it
+	// wrongly.
 	"write_file_exec": "fsmode",
+	"access":          "fsmode",
+
+	// The process's own effective identity. A host with no users cannot
+	// answer this, and unlike `isatty` there is no correct constant to
+	// fall back on: answering 0 claims to be root, and WASI's FileStat
+	// uid/gid are also zero, so `-O` / `-G` would report that every file
+	// is owned by the caller. See docs/FREESTANDING-CORE.md.
+	"geteuid": "userid",
+	"getegid": "userid",
 
 	// The C-ABI FFI shims (#4375). Enumerated rather than matched by
 	// prefix so this table stays the one place the classification lives —

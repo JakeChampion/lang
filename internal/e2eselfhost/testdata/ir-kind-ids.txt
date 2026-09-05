@@ -231,3 +231,6 @@ read_file_bytes=233
 rmemchr=234
 count_byte=235
 lstat=236
+access=237
+geteuid=238
+getegid=239

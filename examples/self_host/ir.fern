@@ -560,6 +560,16 @@ pub function op_timer_fd(): Op { return op0("timer_fd"); }
 // Lowers to __fern_isatty, one terminal-attribute ioctl. std/cli's colour gate
 // is the caller — no terminal means plain text.
 pub function op_isatty(): Op { return op0("isatty"); }
+
+// `access` takes two operands [path, mode] and pushes Result[void, IoError]:
+// may the process perform `mode` on `path`, judged against its EFFECTIVE ids?
+// Lowers to __fern_access, one faccessat with AT_EACCESS set.
+pub function op_access(): Op { return op0("access"); }
+
+// `geteuid` / `getegid` take no operands and push the process's effective user
+// and group id. One argument-free syscall each; neither can fail.
+pub function op_geteuid(): Op { return op0("geteuid"); }
+pub function op_getegid(): Op { return op0("getegid"); }
 // `wasm_timer_pollable` takes one operand [ns] and pushes an i32. On native it
 // is -1 (no pollable; deadlines ride poll(2)'s timeout arg); on wasm it is a
 // real wasi timer pollable. Portability shim for std/async's with_deadline.
@@ -1445,12 +1455,11 @@ pub function kind_count(): i32 { return 196; }
 // 1..kind_count() sweep requires the id space to stay dense, and moving the
 // last entry into the hole beats renumbering every id above it.
 //
-// Extension tags beyond kind_count() (struct_copy=198 … lstat=236): not in the
-// 1..kind_count() bijection sweep (ir_kind_run sweeps them separately by
+// Extension tags beyond kind_count() (struct_copy=198 … getegid=239): not in
+// the 1..kind_count() bijection sweep (ir_kind_run sweeps them separately by
 // name), but nameable so module_emits_op_cached / the backends see them.
-// NEXT FREE EXTENSION ID: 237 (lstat took 236 while this line still said 236
-// was free — that is the drift the paragraph below is about, so re-grep
-// rather than trusting it).
+// NEXT FREE EXTENSION ID: 240 (re-grep rather than trusting this line — it has
+// been stale before, which is the drift the paragraph below is about).
 // ADDING AN EXTENSION TAG: take the next id here AND register it in
 // kind_name + ir_kind_run's two sweep lists, then re-grep the whole tree
 // for the number you took. Two branches that each claim "the next free
@@ -1597,6 +1606,7 @@ function kind_id_len6(name: string): i32 {
     var c: u8 = name[0];
     if (c == b'a' && name == "arr_rc") { return 91; }
     if (c == b'a' && name == "arg_at") { return 210; }
+    if (c == b'a' && name == "access") { return 237; }
     if (c == b'f') { return kind_id_len6_f(name); }
     if (c == b'i' && name == "isatty") { return 232; }
     if (c == b'm') { return kind_id_len6_m(name); }
@@ -1624,6 +1634,8 @@ function kind_id_len7(name: string): i32 {
     var c: u8 = name[0];
     if (c == b'a') { return kind_id_len7_a(name); }
     if (c == b'd' && name == "dyn_box") { return 146; }
+    if (c == b'g' && name == "geteuid") { return 238; }
+    if (c == b'g' && name == "getegid") { return 239; }
     if (c == b'm') { return kind_id_len7_m(name); }
     if (c == b'o' && name == "opt_tag") { return 122; }
     if (c == b'p' && name == "putchar") { return 165; }
@@ -2189,6 +2201,9 @@ function kind_name_4(id: i32): string {
     if (id == 230) { return "heap_release_to"; }
     if (id == 231) { return "create_dir_all"; }
     if (id == 232) { return "isatty"; }
+    if (id == 237) { return "access"; }
+    if (id == 238) { return "geteuid"; }
+    if (id == 239) { return "getegid"; }
     return "invalid";
 }
 
@@ -2247,7 +2262,8 @@ function pops0(t: i32): boolean {
         || t == 186                                                      // random_i32
         || t == 207 || t == 209 || t == 211                              // raw_environ, read_all_stdin, proc_fork
         || t == 216 || t == 217 || t == 218                              // arr_push_shared_*, const_struct
-        || t == 222;                                                     // map_hash_seed
+        || t == 222                                                      // map_hash_seed
+        || t == 238 || t == 239;                                         // geteuid, getegid
 }
 
 function pops1_conv(t: i32): boolean {
@@ -2315,6 +2331,7 @@ function pops2_mem(t: i32): boolean {
 
 function pops2_io(t: i32): boolean {
     return t == 170 || t == 226                                          // write_file, write_file_exec
+        || t == 237                                                      // access (path, mode)
         || t == 178 || t == 187                                          // read_chunk, poll
         || t == 193 || t == 194 || t == 195                              // tcp_connect, tcp_send, tcp_recv
         || t == 202 || t == 213;                                         // writer_write, proc_exec
