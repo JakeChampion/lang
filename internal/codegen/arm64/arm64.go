@@ -11831,7 +11831,7 @@ func (g *generator) emitStrLen2W(dstW, lenX string) {
 }
 
 // emitNulTermPath2W allocates `len + 1` bytes on the bump heap,
-// memcpys `len` bytes from `dataX`, and writes a trailing NUL —
+// memcpys `len` bytes from `dataX`, and writes a trailing NUL,
 // producing a NUL-terminated C string in `dstX` suitable for
 // passing as the path argument to openat / etc. `lenX` is the
 // string's len word: either form is accepted, so a caller may pass
@@ -11840,7 +11840,7 @@ func (g *generator) emitStrLen2W(dstW, lenX string) {
 //
 // The two-word string ABI carries (data, len) with no trailing
 // NUL, and the bump heap leaves no zero pad between adjacent
-// same-16-byte-aligned allocations — so if `len` is 0 mod 16
+// same-16-byte-aligned allocations, so if `len` is 0 mod 16
 // (e.g. "examples/tests/strings_test.fern" is 32 bytes) the
 // byte after the path data is the first byte of the next
 // allocation. The kernel happily reads past the intended end
