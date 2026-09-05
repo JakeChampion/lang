@@ -22,14 +22,9 @@
 // character constant. A bad number is reported and the program goes
 // on, exiting 1 at the end.
 //
-// FLOATS ARE LONG DOUBLE, because GNU's are. On the x86-64 reference
-// that is the x87 80-bit format — a 64-bit significand and a 15-bit
-// exponent — so `1e400` is finite, `0.1` prints twenty-one correct
-// digits, and `%a` of 1 is `0x8p-3`. The model below (`LD`) is that
-// format, parsed with correct rounding and printed from the exact
-// binary value, which is the only way to match glibc digit for digit.
-// (GNU built against a 128-bit or 64-bit long double prints differently
-// past the 53rd bit; those are not the reference this is held to.)
+// FLOATS ARE LONG DOUBLE, because GNU's are: `lib/ldbl.fern` holds
+// that format — parsed with correct rounding, printed from the exact
+// binary value — and every float conversion here goes through it.
 //
 // glibc refuses a single conversion whose output would reach INT_MAX-1
 // bytes — the directive prints nothing and the stream carries an error
@@ -40,8 +35,8 @@ import "std/string";
 import "std/array";
 import "std/i64";
 import "std/io_buffered";
-import "core/bigint";
 import "./lib/gnu";
+import "./lib/ldbl";
 
 // ---- program state ---------------------------------------------------------
 // `Pf` threads through every formatter: the buffered stdout, the exit
@@ -136,16 +131,6 @@ function hex_digit(b: i32): i32 {
     return b - 55;
   }
   return 0 - 1;
-}
-
-function hex_char(v: i32, upper: boolean): i32 {
-  if (v < 10) {
-    return 48 + v;
-  }
-  if (upper) {
-    return 55 + v;
-  }
-  return 87 + v;
 }
 
 // isspace in the C locale.
@@ -412,7 +397,7 @@ function hex_padded(v: i64, width: i32, upper: boolean): string {
   var digits: u8[] = [];
   var x: i64 = v;
   while (x > 0 as i64) {
-    digits = digits.append(hex_char((x % (16 as i64)) as i32, upper) as u8);
+    digits = digits.append(ldbl.hex_char((x % (16 as i64)) as i32, upper) as u8);
     x = x / (16 as i64);
   }
   var out: u8[] = [];
@@ -575,488 +560,30 @@ function arg_int(p: Pf, s: string, unsigned: boolean): (Pf, u64) {
   return (verify_numeric(p, s, r.erange, r.end), r.bits);
 }
 
-// ---- long double -----------------------------------------------------------
-// `LD` — an x87 extended-precision value: `m` the 64-bit significand
-// with its integer bit explicit, `e` the exponent of its lowest bit,
-// so the value is m × 2^e. Canonical form: a normal number has the top
-// bit of `m` set and e ≥ -16445; a subnormal has e = -16445 exactly.
-// `kind` is 0 for finite, 1 for infinity, 2 for NaN.
-struct LD { neg: boolean, kind: i32, m: u64, e: i32 }
-
-function ld_zero(neg: boolean): LD {
-  return LD { neg: neg, kind: 0, m: 0 as u64, e: 0 - 16445 };
-}
-
-function ld_inf(neg: boolean): LD {
-  return LD { neg: neg, kind: 1, m: 0 as u64, e: 0 };
-}
-
-function ld_nan(neg: boolean): LD {
-  return LD { neg: neg, kind: 2, m: 0 as u64, e: 0 };
-}
-
-function min_exp(): i32 {
-  return 0 - 16445;
-}
-
-function top_bit(): u64 {
-  return 9223372036854775808 as u64;
-}
-
-// `Rounded` — a significand cut to 64 bits: `lsb` the exponent of its
-// lowest bit (one higher than asked when rounding carried out), and
-// whether anything was lost.
-struct Rounded { m: u64, lsb: i32, inexact: boolean }
-
-// `round_bits(q, e, lsb, sticky)` — q × 2^e (plus a little when
-// `sticky`) rounded to a multiple of 2^lsb, half to even.
-function round_bits(q: bigint.BigInt, e: i32, lsb: i32, sticky: boolean): Rounded {
-  var shift: i32 = lsb - e;
-  if (shift <= 0) {
-    return Rounded { m: q.shl(0 - shift).low_u64(), lsb: lsb, inexact: sticky };
-  }
-  var kept: bigint.BigInt = q.shr(shift);
-  var dropped: bigint.BigInt = q.sub(kept.shl(shift));
-  var half: bigint.BigInt = bigint.from_i64(1 as i64).shl(shift - 1);
-  var m: u64 = kept.low_u64();
-  var c: i32 = dropped.cmp(half);
-  var inexact: boolean = sticky || !dropped.is_zero();
-  var up: boolean = c > 0 || c == 0 && (sticky || (m & 1 as u64) == 1 as u64);
-  var out_lsb: i32 = lsb;
-  if (up) {
-    m = m + 1 as u64;
-    if (m == 0 as u64) {
-      m = top_bit();
-      out_lsb = lsb + 1;
-    }
-  }
-  return Rounded { m: m, lsb: out_lsb, inexact: inexact };
-}
-
-// `to_ld(q, e, sticky, neg)` — the long double nearest q × 2^e, and
-// whether strtold would set ERANGE: overflow to infinity, or a result
-// that is tiny AND inexact. Tininess is judged after rounding to the
-// normal precision, as the x87 does — a value just under the smallest
-// normal that rounds up to it is not tiny.
-function to_ld(q: bigint.BigInt, e: i32, sticky: boolean, neg: boolean): (LD, boolean) {
-  if (q.is_zero()) {
-    return (ld_zero(neg), false);
-  }
-  var top: i32 = e + q.bit_length() - 1;
-  if (top > 16383) {
-    return (ld_inf(neg), true);
-  }
-  if (top < min_exp() - 1) {
-    return (ld_zero(neg), true);
-  }
-  var r: Rounded = round_bits(q, e, top - 63, sticky);
-  if (top < 0 - 16382) {
-    if (r.lsb + 63 < 0 - 16382) {
-      r = round_bits(q, e, min_exp(), sticky);
-      return (LD { neg: neg, kind: 0, m: r.m, e: min_exp() }, r.inexact);
-    }
-    return (LD { neg: neg, kind: 0, m: r.m, e: r.lsb }, false);
-  }
-  if (r.lsb + 63 > 16383) {
-    return (ld_inf(neg), true);
-  }
-  return (LD { neg: neg, kind: 0, m: r.m, e: r.lsb }, false);
-}
-
-function pow5(k: i32): bigint.BigInt {
-  return bigint.from_i64(5 as i64).pow(k);
-}
-
-// `decimal_to_ld(digits, k, neg)` — digits × 10^k, correctly rounded.
-// `digits` has no leading or trailing zeros. Magnitudes far outside
-// the format are decided from the digit count alone; the rest go
-// through exact bignum arithmetic — a division for a negative k, wide
-// enough that the quotient carries the round and sticky bits.
-function decimal_to_ld(digits: string, k: i32, neg: boolean): (LD, boolean) {
-  if (digits.len() == 0) {
-    return (ld_zero(neg), false);
-  }
-  var mag: i32 = digits.len() + k;
-  if (mag > 4940) {
-    return (ld_inf(neg), true);
-  }
-  if (mag < 0 - 4960) {
-    return (ld_zero(neg), true);
-  }
-  var d: bigint.BigInt = bigint.zero();
-  match (bigint.parse(digits)) {
-    Some(v) => {
-      d = v;
-    },
-    None => {}
-  }
-  if (k >= 0) {
-    return to_ld(d.mul_pow10(k), 0, false, neg);
-  }
-  var b: bigint.BigInt = bigint.from_i64(1 as i64).mul_pow10(0 - k);
-  var s: i32 = 66 + b.bit_length() - d.bit_length();
-  if (s < 0) {
-    s = 0;
-  }
-  var qr: (bigint.BigInt, bigint.BigInt) = d.shl(s).divmod(b);
-  return to_ld(qr.0, 0 - s, !qr.1.is_zero(), neg);
-}
-
-// `FloatParse` — what strtold reports.
-struct FloatParse { v: LD, erange: boolean, end: i32 }
-
-function no_float(): FloatParse {
-  return FloatParse { v: ld_zero(false), erange: false, end: 0 };
-}
-
-// Whether `s[i..]` starts with `word` case-insensitively.
-function has_word(s: string, i: i32, word: string): boolean {
-  if (i + word.len() > s.len()) {
-    return false;
-  }
-  var k: i32 = 0;
-  while (k < word.len()) {
-    if (lower(s[i + k] as i32) != word[k] as i32) {
-      return false;
-    }
-    k = k + 1;
-  }
-  return true;
-}
-
-// A decimal exponent, saturating far beyond any magnitude that matters.
-function read_exponent(s: string, i: i32): (i32, i32) {
-  var j: i32 = i;
-  var neg: boolean = false;
-  if (j < s.len() && (s[j] as i32 == 43 || s[j] as i32 == 45)) {
-    neg = s[j] as i32 == 45;
-    j = j + 1;
-  }
-  if (j >= s.len() || !is_digit(s[j] as i32)) {
-    return (0, i);
-  }
-  var v: i32 = 0;
-  while (j < s.len() && is_digit(s[j] as i32)) {
-    if (v < 100000000) {
-      v = v * 10 + (s[j] as i32 - 48);
-    }
-    j = j + 1;
-  }
-  if (neg) {
-    v = 0 - v;
-  }
-  return (v, j);
-}
-
-// `strtold(s)` — glibc's c_strtold: white space, sign, then inf /
-// infinity / nan / nan(chars), a hex float, or a decimal one.
-function strtold(s: string): FloatParse {
-  var n: i32 = s.len();
-  var i: i32 = 0;
-  while (i < n && is_space(s[i] as i32)) {
-    i = i + 1;
-  }
-  var neg: boolean = false;
-  if (i < n && (s[i] as i32 == 45 || s[i] as i32 == 43)) {
-    neg = s[i] as i32 == 45;
-    i = i + 1;
-  }
-  if (has_word(s, i, "inf")) {
-    i = i + 3;
-    if (has_word(s, i, "inity")) {
-      i = i + 5;
-    }
-    return FloatParse { v: ld_inf(neg), erange: false, end: i };
-  }
-  if (has_word(s, i, "nan")) {
-    i = i + 3;
-    if (i < n && s[i] as i32 == 40) {
-      var k: i32 = i + 1;
-      while (k < n && (is_digit(s[k] as i32) || is_alpha(s[k] as i32) || s[k] as i32 == 95)) {
-        k = k + 1;
-      }
-      if (k < n && s[k] as i32 == 41) {
-        i = k + 1;
-      }
-    }
-    return FloatParse { v: ld_nan(neg), erange: false, end: i };
-  }
-  if (i + 1 < n && s[i] as i32 == 48 && lower(s[i + 1] as i32) == 120) {
-    var j: i32 = i + 2;
-    var hex_start: boolean = j < n && hex_digit(s[j] as i32) >= 0;
-    if (!hex_start && j + 1 < n && s[j] as i32 == 46 && hex_digit(s[j + 1] as i32) >= 0) {
-      hex_start = true;
-    }
-    if (hex_start) {
-      return hex_float(s, j, neg);
-    }
-  }
-  return decimal_float(s, i, neg);
-}
-
-function is_alpha(b: i32): boolean {
-  var l: i32 = lower(b);
-  return l >= 97 && l <= 122;
-}
-
-function hex_float(s: string, start: i32, neg: boolean): FloatParse {
-  var n: i32 = s.len();
-  var i: i32 = start;
-  var q: bigint.BigInt = bigint.zero();
-  var sixteen: bigint.BigInt = bigint.from_i64(16 as i64);
-  var frac: i32 = 0;
-  var in_frac: boolean = false;
-  var any: boolean = false;
-  while (i < n) {
-    var b: i32 = s[i] as i32;
-    if (b == 46 && !in_frac) {
-      in_frac = true;
-      i = i + 1;
-      continue;
-    }
-    var d: i32 = hex_digit(b);
-    if (d < 0) {
-      break;
-    }
-    if (any || d != 0) {
-      q = q.mul(sixteen).add(bigint.from_i64(d as i64));
-      any = true;
-    }
-    if (in_frac) {
-      frac = frac + 1;
-    }
-    i = i + 1;
-  }
-  var exp: i32 = 0;
-  if (i < n && lower(s[i] as i32) == 112) {
-    var r: (i32, i32) = read_exponent(s, i + 1);
-    if (r.1 > i + 1) {
-      exp = r.0;
-      i = r.1;
-    }
-  }
-  if (q.is_zero()) {
-    return FloatParse { v: ld_zero(neg), erange: false, end: i };
-  }
-  var lr: (LD, boolean) = to_ld(q, exp - 4 * frac, false, neg);
-  return FloatParse { v: lr.0, erange: lr.1, end: i };
-}
-
-function decimal_float(s: string, start: i32, neg: boolean): FloatParse {
-  var n: i32 = s.len();
-  var i: i32 = start;
-  var digits: u8[] = [];
-  var frac: i32 = 0;
-  var in_frac: boolean = false;
-  var seen: boolean = false;
-  var lead_zero: boolean = true;
-  while (i < n) {
-    var b: i32 = s[i] as i32;
-    if (b == 46 && !in_frac) {
-      if (i + 1 >= n || !is_digit(s[i + 1] as i32)) {
-        if (!seen) {
-          return no_float();
-        }
-        i = i + 1;
-        break;
-      }
-      in_frac = true;
-      i = i + 1;
-      continue;
-    }
-    if (!is_digit(b)) {
-      break;
-    }
-    seen = true;
-    if (lead_zero && b == 48) {
-      if (in_frac) {
-        frac = frac + 1;
-      }
-    } else {
-      lead_zero = false;
-      digits = digits.append(b as u8);
-      if (in_frac) {
-        frac = frac + 1;
-      }
-    }
-    i = i + 1;
-  }
-  if (!seen) {
-    return no_float();
-  }
-  var exp: i32 = 0;
-  if (i < n && lower(s[i] as i32) == 101) {
-    var r: (i32, i32) = read_exponent(s, i + 1);
-    if (r.1 > i + 1) {
-      exp = r.0;
-      i = r.1;
-    }
-  }
-  var last: i32 = digits.len();
-  while (last > 0 && digits[last - 1] as i32 == 48) {
-    last = last - 1;
-  }
-  var k: i32 = exp - frac + (digits.len() - last);
-  var ds: string = "";
-  if (last > 0) {
-    var kept: u8[] = [];
-    var j: i32 = 0;
-    while (j < last) {
-      kept = kept.append(digits[j]);
-      j = j + 1;
-    }
-    ds = string_from_bytes_unchecked(kept);
-  }
-  var lr: (LD, boolean) = decimal_to_ld(ds, k, neg);
-  return FloatParse { v: lr.0, erange: lr.1, end: i };
-}
-
-// `arg_float(p, s)` — the long double an argument names.
-function arg_float(p: Pf, s: string): (Pf, LD) {
+function arg_float(p: Pf, s: string): (Pf, ldbl.LD) {
   var cc: i32 = char_constant(s);
   if (cc >= 0) {
-    var lr: (LD, boolean) = to_ld(bigint.from_i64(cc as i64), 0, false, false);
-    return (warn_char_rest(p, s), lr.0);
+    return (warn_char_rest(p, s), ldbl.from_i64(cc as i64));
   }
-  var r: FloatParse = strtold(s);
+  var r: ldbl.FloatParse = ldbl.strtold(s);
   return (verify_numeric(p, s, r.erange, r.end), r.v);
 }
 
-// ---- exact decimal digits ----------------------------------------------------
-// `Dec` — a finite non-zero value as 0.digits × 10^dp with the
-// leading digit non-zero; the digit string is the EXACT expansion of
-// the binary value.
-struct Dec { digits: string, dp: i32 }
-
-function ld_dec(v: LD): Dec {
-  var m: u64 = v.m;
-  var e: i32 = v.e;
-  while ((m & 1 as u64) == 0 as u64) {
-    m = m >> 1 as u64;
-    e = e + 1;
-  }
-  if (e >= 0) {
-    var s: string = bigint.from_u64(m).shl(e).to_string();
-    return Dec { digits: s, dp: s.len() };
-  }
-  var t: string = bigint.from_u64(m).mul(pow5(0 - e)).to_string();
-  return Dec { digits: t, dp: t.len() + e };
-}
-
-// `round_digits(d, n)` — the first `n` digits of `d`, rounded half to
-// even on the exact tail and zero-padded when `d` is shorter. When the
-// rounding carries out of the top digit the result is one digit longer
-// (a 1 and n zeros) and the boolean says so.
-function round_digits(d: string, n: i32): (string, boolean) {
-  if (n <= 0) {
-    if (n < 0) {
-      return ("", false);
-    }
-    var first: i32 = d[0] as i32;
-    if (first > 53 || first == 53 && has_nonzero(d, 1)) {
-      return ("1", true);
-    }
-    return ("", false);
-  }
-  if (n >= d.len()) {
-    return (d + "0".repeat(n - d.len()), false);
-  }
-  var c: i32 = d[n] as i32;
-  var up: boolean = false;
-  if (c > 53) {
-    up = true;
-  } else if (c == 53) {
-    if (has_nonzero(d, n + 1)) {
-      up = true;
-    } else {
-      up = (d[n - 1] as i32 - 48) % 2 == 1;
+// `emit_field(p, field)` — one conversion's text, or the refusal
+// glibc answers an oversized one with (see the header).
+function emit_field(p: Pf, field: Option[string]): Pf {
+  match (field) {
+    Some(s) => {
+      return emit(p, s);
+    },
+    None => {
+      return Pf { ...p, werr: true };
     }
   }
-  var kept: u8[] = __alloc_u8(n);
-  var i: i32 = 0;
-  while (i < n) {
-    kept = kept.with(i, d[i]);
-    i = i + 1;
-  }
-  if (!up) {
-    return (string_from_bytes_unchecked(kept), false);
-  }
-  i = n - 1;
-  while (i >= 0) {
-    if (kept[i] as i32 == 57) {
-      kept = kept.with(i, 48 as u8);
-      i = i - 1;
-    } else {
-      kept = kept.with(i, (kept[i] as i32 + 1) as u8);
-      return (string_from_bytes_unchecked(kept), false);
-    }
-  }
-  return ("1" + string_from_bytes_unchecked(kept), true);
 }
 
-function has_nonzero(d: string, from: i32): boolean {
-  var i: i32 = from;
-  while (i < d.len()) {
-    if (d[i] as i32 != 48) {
-      return true;
-    }
-    i = i + 1;
-  }
-  return false;
-}
+// ---- conversions -------------------------------------------------------------
 
-// ---- conversion specifications -------------------------------------------
-// `Spec` — one parsed `%` directive. `width` and `prec` are -1 when
-// absent; a negative width from `*` has already become the `-` flag.
-struct Spec { minus: boolean, plus: boolean, space: boolean, hash: boolean, zero: boolean, width: i64, prec: i64, conv: i32 }
-
-function none(): i64 {
-  return 0 as i64 - 1 as i64;
-}
-
-// glibc refuses a conversion whose output would reach this many bytes.
-function overflow_len(): i64 {
-  return 2147483646 as i64;
-}
-
-// `pad(p, spec, prefix, body, zero_ok)` — emit one conversion: the
-// sign/radix prefix, zero padding between prefix and body when the `0`
-// flag applies, else space padding on the side `-` selects. A field
-// glibc could not produce is dropped and remembered (see the header).
-function pad(p: Pf, spec: Spec, prefix: string, body: string, zero_ok: boolean): Pf {
-  var len: i64 = (prefix.len() + body.len()) as i64;
-  var total: i64 = len;
-  if (spec.width > total) {
-    total = spec.width;
-  }
-  if (total >= overflow_len()) {
-    return Pf { ...p, werr: true };
-  }
-  var fill: i32 = (total - len) as i32;
-  if (fill <= 0) {
-    return emit(emit(p, prefix), body);
-  }
-  if (spec.minus) {
-    return emit(emit(emit(p, prefix), body), " ".repeat(fill));
-  }
-  if (spec.zero && zero_ok) {
-    return emit(emit(emit(p, prefix), "0".repeat(fill)), body);
-  }
-  return emit(emit(emit(p, " ".repeat(fill)), prefix), body);
-}
-
-function sign_prefix(spec: Spec, neg: boolean): string {
-  if (neg) {
-    return "-";
-  }
-  if (spec.plus) {
-    return "+";
-  }
-  if (spec.space) {
-    return " ";
-  }
-  return "";
-}
 
 // Digits of `v` in `base`, most significant first.
 function radix_digits(v: u64, base: u64, upper: boolean): string {
@@ -1066,7 +593,7 @@ function radix_digits(v: u64, base: u64, upper: boolean): string {
   var digits: u8[] = [];
   var x: u64 = v;
   while (x > 0 as u64) {
-    digits = digits.append(hex_char((x % base) as i32, upper) as u8);
+    digits = digits.append(ldbl.hex_char((x % base) as i32, upper) as u8);
     x = x / base;
   }
   var out: u8[] = __alloc_u8(digits.len());
@@ -1079,19 +606,19 @@ function radix_digits(v: u64, base: u64, upper: boolean): string {
 }
 
 // %d %i %o %u %x %X.
-function fmt_int(p: Pf, spec: Spec, bits: u64): Pf {
+function fmt_int(p: Pf, spec: ldbl.Spec, bits: u64): Pf {
   var conv: i32 = spec.conv;
   var neg: boolean = false;
   var mag: u64 = bits;
   var prefix: string = "";
   var digits: string = "";
   if (conv == 100 || conv == 105) {
-    neg = (bits & top_bit()) != 0 as u64;
+    neg = (bits & ldbl.top_bit()) != 0 as u64;
     if (neg) {
       mag = 0 as u64 - bits;
     }
     digits = radix_digits(mag, 10 as u64, false);
-    prefix = sign_prefix(spec, neg);
+    prefix = ldbl.sign_prefix(spec, neg);
   } else if (conv == 117) {
     digits = radix_digits(mag, 10 as u64, false);
   } else if (conv == 111) {
@@ -1109,7 +636,7 @@ function fmt_int(p: Pf, spec: Spec, bits: u64): Pf {
     if (spec.prec == 0 as i64 && mag == 0 as u64) {
       digits = "";
     } else if (spec.prec > digits.len() as i64) {
-      if (spec.prec + prefix.len() as i64 >= overflow_len()) {
+      if (spec.prec + prefix.len() as i64 >= ldbl.overflow_len()) {
         return Pf { ...p, werr: true };
       }
       digits = "0".repeat(spec.prec as i32 - digits.len()) + digits;
@@ -1118,299 +645,7 @@ function fmt_int(p: Pf, spec: Spec, bits: u64): Pf {
   if (conv == 111 && spec.hash && !digits.starts_with("0")) {
     digits = "0" + digits;
   }
-  return pad(p, spec, prefix, digits, spec.prec < 0 as i64);
-}
-
-// %f %F %e %E %g %G %a %A.
-function fmt_float(p: Pf, spec: Spec, v: LD): Pf {
-  var conv: i32 = spec.conv;
-  var upper: boolean = conv == 70 || conv == 69 || conv == 71 || conv == 65;
-  var prefix: string = sign_prefix(spec, v.neg);
-  if (v.kind != 0) {
-    var word: string = "inf";
-    if (v.kind == 2) {
-      word = "nan";
-    }
-    if (upper) {
-      word = word.to_upper();
-    }
-    return pad(p, spec, prefix, word, false);
-  }
-  var lc: i32 = lower(conv);
-  var prec: i64 = spec.prec;
-  if (prec < 0 as i64) {
-    prec = 6 as i64;
-  }
-  if (lc == 97) {
-    return fmt_hex_float(p, spec, v, prefix, prec, upper);
-  }
-  if (v.m == 0 as u64) {
-    if (prec + 7 as i64 + prefix.len() as i64 >= overflow_len() && lc != 103) {
-      return Pf { ...p, werr: true };
-    }
-    if (lc == 102) {
-      return fmt_fixed(p, spec, prefix, "", 0 - prec as i32, prec, upper);
-    }
-    if (lc == 101) {
-      return fmt_exp(p, spec, prefix, "0".repeat(prec as i32 + 1), 0, prec, upper);
-    }
-    if (prec == 0 as i64) {
-      prec = 1 as i64;
-    }
-    return fmt_general(p, spec, prefix, "0".repeat(prec as i32), 0, prec, upper, false);
-  }
-  var d: Dec = ld_dec(v);
-  if (lc == 102) {
-    var n: i64 = d.dp as i64 + prec;
-    if (n + 2 as i64 + prefix.len() as i64 >= overflow_len()) {
-      return Pf { ...p, werr: true };
-    }
-    var rf: (string, boolean) = round_digits(d.digits, n as i32);
-    var dp: i32 = d.dp;
-    if (rf.1) {
-      dp = dp + 1;
-    }
-    if (n < 0 as i64) {
-      dp = 0 - prec as i32;
-    }
-    return fmt_fixed(p, spec, prefix, rf.0, dp, prec, upper);
-  }
-  if (lc == 101) {
-    if (prec + 2 as i64 + prefix.len() as i64 + exp_suffix(d.dp - 1, false).len() as i64 >= overflow_len()) {
-      return Pf { ...p, werr: true };
-    }
-    var re: (string, boolean) = round_digits(d.digits, prec as i32 + 1);
-    var xe: i32 = d.dp - 1;
-    var de: string = re.0;
-    if (re.1) {
-      xe = xe + 1;
-      de = slice_unchecked(de, 0, prec as i32 + 1) + "";
-    }
-    return fmt_exp(p, spec, prefix, de, xe, prec, upper);
-  }
-  if (prec == 0 as i64) {
-    prec = 1 as i64;
-  }
-  var sig: i32 = d.digits.len();
-  if (prec < sig as i64) {
-    sig = prec as i32;
-  }
-  var r: (string, boolean) = round_digits(d.digits, sig);
-  var x: i32 = d.dp - 1;
-  var digits: string = r.0;
-  if (r.1) {
-    x = x + 1;
-    digits = slice_unchecked(digits, 0, sig) + "";
-  }
-  return fmt_general(p, spec, prefix, digits, x, prec, upper, r.1);
-}
-
-// The %f shape: `digits` holds the rounded digits with the decimal
-// point `dp` digits in (dp ≤ 0 puts leading zeros after the point);
-// exactly `prec` digits follow the point.
-function fmt_fixed(p: Pf, spec: Spec, prefix: string, digits: string, dp: i32, prec: i64, upper: boolean): Pf {
-  var body: string = "";
-  if (dp >= 1) {
-    body = slice_unchecked(digits, 0, dp) + "";
-    if (prec > 0 as i64 || spec.hash) {
-      body = body + ".";
-    }
-    body = body + slice_unchecked(digits, dp, digits.len());
-  } else {
-    body = "0";
-    if (prec > 0 as i64 || spec.hash) {
-      body = body + ".";
-    }
-    body = body + "0".repeat(0 - dp) + digits;
-  }
-  return pad(p, spec, prefix, body, true);
-}
-
-function exp_suffix(x: i32, upper: boolean): string {
-  var out: string = "e";
-  if (upper) {
-    out = "E";
-  }
-  var ax: i32 = x;
-  if (x < 0) {
-    out = out + "-";
-    ax = 0 - x;
-  } else {
-    out = out + "+";
-  }
-  var ds: string = (ax as i64).to_string();
-  if (ds.len() < 2) {
-    ds = "0" + ds;
-  }
-  return out + ds;
-}
-
-// The %e shape from `prec + 1` significant digits and exponent `x`.
-function fmt_exp(p: Pf, spec: Spec, prefix: string, digits: string, x: i32, prec: i64, upper: boolean): Pf {
-  var body: string = slice_unchecked(digits, 0, 1) + "";
-  if (prec > 0 as i64 || spec.hash) {
-    body = body + ".";
-  }
-  body = body + slice_unchecked(digits, 1, digits.len()) + exp_suffix(x, upper);
-  return pad(p, spec, prefix, body, true);
-}
-
-// The %g shape: `digits` are the value's leading significant digits
-// (at most `prec`, fewer only when the exact expansion ends sooner) and
-// `x` the exponent of the first. Style %e when x < -4 or x ≥ prec,
-// else %f; trailing zeros go unless `#` asks for them. glibc chooses
-// the style BEFORE rounding, so when `carried` lifted a fixed-style
-// value to exactly 10^prec the exponent style inherits the fixed
-// style's zero fraction digits: `%#.3g` of 999.5 is `1.e+03`.
-function fmt_general(p: Pf, spec: Spec, prefix: string, digits: string, x: i32, prec: i64, upper: boolean, carried: boolean): Pf {
-  var pr: i32 = prec as i32;
-  if (x < 0 - 4 || x as i64 >= prec) {
-    var mant: string = slice_unchecked(digits, 0, 1) + "";
-    var frac: string = slice_unchecked(digits, 1, digits.len()) + "";
-    if (carried && x as i64 == prec) {
-      frac = "";
-    } else if (spec.hash) {
-      if (prec - 1 as i64 >= overflow_len()) {
-        return Pf { ...p, werr: true };
-      }
-      frac = frac + "0".repeat(pr - digits.len());
-    } else {
-      frac = strip_zeros(frac);
-    }
-    if (frac.len() > 0 || spec.hash) {
-      mant = mant + "." + frac;
-    }
-    return pad(p, spec, prefix, mant + exp_suffix(x, upper), true);
-  }
-  var dp: i32 = x + 1;
-  var ip: string = "0";
-  var frac: string = "";
-  if (dp >= 1) {
-    if (dp > digits.len()) {
-      ip = digits + "0".repeat(dp - digits.len());
-    } else {
-      ip = slice_unchecked(digits, 0, dp) + "";
-      frac = slice_unchecked(digits, dp, digits.len()) + "";
-    }
-  } else {
-    frac = "0".repeat(0 - dp) + digits;
-  }
-  if (spec.hash) {
-    var want: i32 = pr - 1 - x;
-    if (want as i64 >= overflow_len()) {
-      return Pf { ...p, werr: true };
-    }
-    if (frac.len() < want) {
-      frac = frac + "0".repeat(want - frac.len());
-    }
-  } else {
-    frac = strip_zeros(frac);
-  }
-  var body: string = ip;
-  if (frac.len() > 0 || spec.hash) {
-    body = body + "." + frac;
-  }
-  return pad(p, spec, prefix, body, true);
-}
-
-function strip_zeros(s: string): string {
-  var n: i32 = s.len();
-  while (n > 0 && s[n - 1] as i32 == 48) {
-    n = n - 1;
-  }
-  return slice_unchecked(s, 0, n) + "";
-}
-
-// %a: the significand as one hex digit (the top four bits, so 1 is
-// `0x8p-3`) and up to fifteen more, trailing zeros dropped unless a
-// precision asks for them; rounding is half to even in hex, and a
-// carry out of the top digit renormalises to `0x1…` four binades up.
-function fmt_hex_float(p: Pf, spec: Spec, v: LD, prefix: string, prec: i64, upper: boolean): Pf {
-  var radix: string = "0x";
-  if (upper) {
-    radix = "0X";
-  }
-  var lead: i32 = 0;
-  var frac: u8[] = __alloc_u8(15);
-  var pe: i32 = 0;
-  if (v.m != 0 as u64) {
-    lead = (v.m >> 60 as u64) as i32;
-    var i: i32 = 0;
-    while (i < 15) {
-      frac = frac.with(i, hex_char((v.m >> (56 - 4 * i) as u64 & 15 as u64) as i32, upper) as u8);
-      i = i + 1;
-    }
-    pe = v.e + 60;
-  } else {
-    var z: i32 = 0;
-    while (z < 15) {
-      frac = frac.with(z, 48 as u8);
-      z = z + 1;
-    }
-  }
-  var keep: i32 = 15;
-  if (spec.prec >= 0 as i64 && spec.prec < 15 as i64) {
-    keep = spec.prec as i32;
-    var rd: i32 = hex_digit(frac[keep] as i32);
-    var rest: boolean = false;
-    var k: i32 = keep + 1;
-    while (k < 15) {
-      if (frac[k] as i32 != 48) {
-        rest = true;
-      }
-      k = k + 1;
-    }
-    var last_odd: boolean = lead % 2 == 1;
-    if (keep > 0) {
-      last_odd = hex_digit(frac[keep - 1] as i32) % 2 == 1;
-    }
-    if (rd > 8 || rd == 8 && (rest || last_odd)) {
-      var j: i32 = keep - 1;
-      var carry: boolean = true;
-      while (j >= 0 && carry) {
-        var dv: i32 = hex_digit(frac[j] as i32) + 1;
-        if (dv == 16) {
-          frac = frac.with(j, 48 as u8);
-        } else {
-          frac = frac.with(j, hex_char(dv, upper) as u8);
-          carry = false;
-        }
-        j = j - 1;
-      }
-      if (carry) {
-        lead = lead + 1;
-        if (lead == 16) {
-          lead = 1;
-          pe = pe + 4;
-        }
-      }
-    }
-  } else if (spec.prec < 0 as i64) {
-    while (keep > 0 && frac[keep - 1] as i32 == 48) {
-      keep = keep - 1;
-    }
-  }
-  var digits: string = slice_unchecked(string_from_bytes_unchecked(frac), 0, keep) + "";
-  if (spec.prec > 15 as i64) {
-    if (spec.prec + 10 as i64 + prefix.len() as i64 >= overflow_len()) {
-      return Pf { ...p, werr: true };
-    }
-    digits = digits + "0".repeat(spec.prec as i32 - 15);
-  }
-  var body: string = byte_str(hex_char(lead, upper));
-  if (digits.len() > 0 || spec.hash) {
-    body = body + "." + digits;
-  }
-  var ps: string = "p";
-  if (upper) {
-    ps = "P";
-  }
-  if (pe < 0) {
-    ps = ps + "-" + ((0 - pe) as i64).to_string();
-  } else {
-    ps = ps + "+" + (pe as i64).to_string();
-  }
-  return pad(p, spec, prefix + radix, body + ps, true);
+  return emit_field(p, ldbl.pad(spec, prefix, digits, spec.prec < 0 as i64));
 }
 
 // ---- the format walk ---------------------------------------------------------
@@ -1476,7 +711,7 @@ function star_precision(p: Pf, a: Args): (Pf, Args, i64) {
   var r: (Pf, u64) = arg_int(p, t.0, false);
   var v: i64 = r.1 as i64;
   if (v < 0 as i64) {
-    return (r.0, t.1, none());
+    return (r.0, t.1, ldbl.none());
   }
   if (v > 2147483647 as i64) {
     fatal(r.0, "invalid precision: " + gnu.quote(t.0));
@@ -1508,19 +743,19 @@ function directive(p: Pf, s: string, i: i32, a: Args): (Pf, i32, Args, boolean) 
     }
     return (emit(q, shell_quote(tb.0)), j + 1, args, false);
   }
-  var spec: Spec = Spec { minus: false, plus: false, space: false, hash: false, zero: false, width: none(), prec: none(), conv: 0 };
+  var spec: ldbl.Spec = ldbl.spec(0);
   while (j < n && flag_byte(s[j] as i32)) {
     var f: i32 = s[j] as i32;
     if (f == 45) {
-      spec = Spec { ...spec, minus: true };
+      spec = ldbl.Spec { ...spec, minus: true };
     } else if (f == 43) {
-      spec = Spec { ...spec, plus: true };
+      spec = ldbl.Spec { ...spec, plus: true };
     } else if (f == 32) {
-      spec = Spec { ...spec, space: true };
+      spec = ldbl.Spec { ...spec, space: true };
     } else if (f == 35) {
-      spec = Spec { ...spec, hash: true };
+      spec = ldbl.Spec { ...spec, hash: true };
     } else {
-      spec = Spec { ...spec, zero: true };
+      spec = ldbl.Spec { ...spec, zero: true };
     }
     j = j + 1;
   }
@@ -1531,14 +766,14 @@ function directive(p: Pf, s: string, i: i32, a: Args): (Pf, i32, Args, boolean) 
     q = sw.0;
     args = sw.1;
     if (sw.2 < 0 as i64) {
-      spec = Spec { ...spec, minus: true, width: 0 as i64 - sw.2 };
+      spec = ldbl.Spec { ...spec, minus: true, width: 0 as i64 - sw.2 };
     } else {
-      spec = Spec { ...spec, width: sw.2 };
+      spec = ldbl.Spec { ...spec, width: sw.2 };
     }
   } else {
     var w: (i64, i32) = read_number(s, j);
     if (w.1 > j) {
-      spec = Spec { ...spec, width: w.0 };
+      spec = ldbl.Spec { ...spec, width: w.0 };
       j = w.1;
     }
   }
@@ -1550,10 +785,10 @@ function directive(p: Pf, s: string, i: i32, a: Args): (Pf, i32, Args, boolean) 
       var sp: (Pf, Args, i64) = star_precision(q, args);
       q = sp.0;
       args = sp.1;
-      spec = Spec { ...spec, prec: sp.2 };
+      spec = ldbl.Spec { ...spec, prec: sp.2 };
     } else {
       var pr: (i64, i32) = read_number(s, j);
-      spec = Spec { ...spec, prec: pr.0 };
+      spec = ldbl.Spec { ...spec, prec: pr.0 };
       j = pr.1;
     }
   }
@@ -1564,7 +799,7 @@ function directive(p: Pf, s: string, i: i32, a: Args): (Pf, i32, Args, boolean) 
     bad_spec(q, s, i, j);
   }
   var conv: i32 = s[j] as i32;
-  spec = Spec { ...spec, conv: conv };
+  spec = ldbl.Spec { ...spec, conv: conv };
   var is_c: boolean = conv == 99;
   var is_s: boolean = conv == 115;
   var no_hash: boolean = conv == 100 || conv == 105 || conv == 117 || is_c || is_s;
@@ -1579,19 +814,19 @@ function directive(p: Pf, s: string, i: i32, a: Args): (Pf, i32, Args, boolean) 
     if (arg.len() > 0) {
       b = arg[0] as i32;
     }
-    return (pad(q, spec, "", byte_str(b), false), j + 1, args, false);
+    return (emit_field(q, ldbl.pad(spec, "", byte_str(b), false)), j + 1, args, false);
   }
   if (is_s) {
     var body: string = arg;
     if (spec.prec >= 0 as i64 && spec.prec < arg.len() as i64) {
       body = slice_unchecked(arg, 0, spec.prec as i32) + "";
     }
-    return (pad(q, spec, "", body, false), j + 1, args, false);
+    return (emit_field(q, ldbl.pad(spec, "", body, false)), j + 1, args, false);
   }
   var lc: i32 = lower(conv);
   if (lc == 102 || lc == 101 || lc == 103 || lc == 97) {
-    var fr: (Pf, LD) = arg_float(q, arg);
-    return (fmt_float(fr.0, spec, fr.1), j + 1, args, false);
+    var fr: (Pf, ldbl.LD) = arg_float(q, arg);
+    return (emit_field(fr.0, ldbl.format(spec, fr.1)), j + 1, args, false);
   }
   var unsigned: boolean = conv != 100 && conv != 105;
   var ir: (Pf, u64) = arg_int(q, arg, unsigned);
