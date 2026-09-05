@@ -28,10 +28,9 @@ type Assembler struct {
 	rodata []byte
 	// bss accumulates .bss (zero-initialised) contributions separately from
 	// rodata and is concatenated after it at layout time. Folding the two in
-	// emission order left the 64 MiB __fern_strbuf_data reservation with
-	// initialised .rodata after it, so the ELF writer's trailing-zero trim
-	// could not reach it and every strbuf-using binary carried 64 MiB of
-	// zeros on disk (#6928).
+	// emission order left a large .bss reservation with initialised .rodata
+	// after it, so the ELF writer's trailing-zero trim could not reach it and
+	// the binary carried the zeros on disk (#6928).
 	bss           []byte
 	inBssSection  bool
 	syms          map[string]symbol

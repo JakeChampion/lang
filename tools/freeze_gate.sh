@@ -21,8 +21,9 @@
 # Three trackers drifting the same direction is a systems problem, not three
 # oversights: a human has to notice that a condition changed, and nobody is
 # assigned to notice. So anything derivable is derived here instead. The
-# irreducibly-human ones (is the Perceus port at parity?) are printed as
-# UNVERIFIABLE with a pointer, rather than silently assumed either way.
+# ones this cannot cheaply measure (is the Perceus port at parity? — `make
+# distcheck` answers it, at ~14 GB and minutes) are printed as UNVERIFIABLE
+# with a pointer, rather than silently assumed either way.
 #
 # EXIT STATUS. 0 unless a derivable precondition has REGRESSED — an AST emitter
 # comes back, a backend loses its IR-or-error routing, the checker-codes filter
@@ -54,7 +55,33 @@ if grep -q 'struct_fields_reusable_cross' examples/self_host/irlower.fern 2>/dev
 else
   bad "struct_fields_reusable_cross is gone — reuse admission was removed?"
 fi
-huh "parity itself — see docs/SELFHOST-PERCEUS-REUSE.md §3 for the live delta list"
+# Parity's criterion is `make distcheck` green (NATIVE-CONVERGENCE.md
+# precondition 1). The gate cannot RUN it — it needs ~14 GB and several
+# minutes — but it does not have to: .github/workflows/bootstrap.yml says
+# distcheck joins the `verify` job the day it passes, so the wiring IS the
+# signal, and it cannot be switched on while the target is red.
+#
+# Match an INVOCATION, not a mention: `^[^#]*` cannot span a '#', so the
+# comment in that file explaining why distcheck is absent does not read as
+# distcheck being present. Keying on the comment's wording instead would turn
+# any rewrite of it into a false GREEN on a freeze precondition.
+#
+# The wiring only stands in for the measurement while the lane can actually
+# FAIL. A step neutered by `continue-on-error` or `|| true` would be wired and
+# green with distcheck still broken, so those disqualify rather than pass —
+# UNVERIFIABLE, never GREEN, since a wrong green here is the whole failure mode
+# this gate exists to prevent.
+distcheck_wired=$(grep -E '^[^#]*\b(make|bootstrap\.sh)[[:space:]]+distcheck' .github/workflows/bootstrap.yml 2>/dev/null)
+if [ -n "$distcheck_wired" ]; then
+  if printf '%s' "$distcheck_wired" | grep -q '|| *true' \
+     || grep -Eq '^[^#]*continue-on-error:[[:space:]]*true' .github/workflows/bootstrap.yml 2>/dev/null; then
+    huh "distcheck is wired but its lane cannot fail (continue-on-error / || true) — that proves nothing; make the lane failing"
+  else
+    ok "make distcheck runs in CI — the self-host compiler reproduces itself"
+  fi
+else
+  huh "parity itself — criterion is \`make distcheck\` green (red today: docs/BOOTSTRAP.md); live delta list in docs/SELFHOST-PERCEUS-REUSE.md §3"
+fi
 echo
 
 # --- 2. #3451 / #3457 — per-module epic -----------------------------------
@@ -127,7 +154,7 @@ else
 fi
 echo
 
-printf 'summary: %d derived green, %d needing human judgement' "$green" "$unverifiable"
+printf 'summary: %d derived green, %d pending measurement' "$green" "$unverifiable"
 if [ "$regressed" -gt 0 ]; then
   printf ', \033[31m%d REGRESSED\033[0m\n' "$regressed"
   echo
@@ -137,6 +164,6 @@ if [ "$regressed" -gt 0 ]; then
   exit 1
 fi
 printf '\n\n'
-echo "Update #4451 from this output rather than from memory. What this cannot"
-echo "settle — precondition 1's parity question — is the only part that should"
-echo "still be argued in prose."
+echo "Update #4451 from this output rather than from memory. Precondition 1 is"
+echo "no longer a prose argument either: its criterion is \`make distcheck\`"
+echo "green, which this gate reads off the CI wiring rather than running."

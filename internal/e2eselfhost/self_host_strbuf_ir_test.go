@@ -27,8 +27,8 @@ var strbufIRCases = []struct {
 	// GROWTH past the wasm runtime's 256-byte initial capacity: 100 appends of
 	// "xyz" = 300 bytes, forcing the buffer to grow (alloc + copy). Reads back a
 	// byte PAST the 256 boundary (s[250] in "xyz"*100 = 'y' = 121) so a botched
-	// grow-copy corrupts the result. (Register backends have a 64 MiB .bss, so
-	// this just exercises their normal path; on wasm it pins the grow logic.)
+	// grow-copy corrupts the result. (The register backends start at 64 KiB, so
+	// 300 bytes never grows there; on wasm it pins the grow logic.)
 	{"grow-byte", `function main(): i32 { strbuf_reset(); var i: i32 = 0; while (i < 100) { strbuf_append("xyz"); i = i + 1; } var s: string = strbuf_take(); return s[250] as i32; }`, ""},
 }
 

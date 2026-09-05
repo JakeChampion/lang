@@ -147,14 +147,13 @@ func bigintCases() []bigintCase {
 		}
 	}
 
-	// A zero divisor is total, not a trap: `(0, 0)`, the same answer
-	// `std/i32`'s divmod gives and the same shape `/` and `%` give on the
-	// machine integers. core/bigint is freestanding, so it has no way to
-	// report a caller bug and does not try.
-	for _, a := range ops[:22] {
+	// A zero divisor takes the machine contract (docs/INTEGER-SEMANTICS.md):
+	// `x / 0 == 0`, `x % 0 == x`. math/big traps on it, so the expectation is
+	// written out rather than derived.
+	for _, a := range ops[:12] {
 		la := bigintFernLit(a)
 		emit("(("+la+").divmod(bigint.zero())).0.to_string()", "0")
-		emit("(("+la+").divmod(bigint.zero())).1.to_string()", "0")
+		emit("(("+la+").divmod(bigint.zero())).1.to_string()", a.String())
 	}
 
 	// The bit-level accessors and the u64 constructor, which printf's

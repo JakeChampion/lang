@@ -22,10 +22,10 @@ import (
 // one with an rc-headered allocation since docs/RC-STRINGS-PLAN.md; the
 // self-host was the last producer left unconverted.
 //
-// (2) arm64 emitted the whole bundle — the 64 MiB `.bss` reservation and all
-// three bodies — inside the bare `heap` gate, where x86-64 has always gated it
-// on the strbuf need. So every allocating arm64 program reserved 64 MiB and
-// carried three bodies nothing branched to.
+// (2) arm64 emitted the whole bundle (the `.bss` words and all three bodies)
+// inside the bare `heap` gate, where x86-64 has always gated it on the strbuf
+// need. So every allocating arm64 program carried three bodies nothing
+// branched to.
 
 // strbufTakeAsm compiles a strbuf program for `target` on the self-host IR path
 // and returns the emitted assembly.
@@ -99,8 +99,8 @@ func strbufTakeBody(t *testing.T, asm string) string {
 }
 
 // TestSelfHostStrbufNeedGatedArm64 pins defect (2): a heap-using program that
-// never touches the string-builder must not reserve its 64 MiB .bss buffer or
-// emit its bodies. Asserted in both directions so the gate cannot be vacuous.
+// never touches the string-builder must not reserve its .bss words or emit
+// its bodies. Asserted in both directions so the gate cannot be vacuous.
 func TestSelfHostStrbufNeedGatedArm64(t *testing.T) {
 	x86gcc, x86runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -116,8 +116,8 @@ func TestSelfHostStrbufNeedGatedArm64(t *testing.T) {
 	if !strings.Contains(asm, "__fern_alloc") {
 		t.Fatal("the no-strbuf program did not emit the heap runtime — the gate under test is vacuous")
 	}
-	if strings.Contains(asm, "__fern_strbuf_data") {
-		t.Error("a heap-using program that never uses the string-builder still reserves its 64 MiB .bss buffer")
+	if strings.Contains(asm, "__fern_strbuf_ptr") {
+		t.Error("a heap-using program that never uses the string-builder still reserves its .bss words")
 	}
 	if strings.Contains(asm, "__fern_strbuf_take:") {
 		t.Error("a heap-using program that never uses the string-builder still emits __fern_strbuf_take")
@@ -130,7 +130,7 @@ func TestSelfHostStrbufNeedGatedArm64(t *testing.T) {
     return strbuf_take().len() - 2;
 }`
 	asm2 := string(runCapture(t, x86gcc, x86runner, driverBin, []byte(usesStrbuf+"\n"), "-target", "arm64-linux"))
-	for _, want := range []string{"__fern_strbuf_data", "__fern_strbuf_take:", "__fern_strbuf_append:", "__fern_strbuf_reset:"} {
+	for _, want := range []string{"__fern_strbuf_ptr", "__fern_strbuf_take:", "__fern_strbuf_append:", "__fern_strbuf_reset:", "__fern_strbuf_grow:"} {
 		if !strings.Contains(asm2, want) {
 			t.Errorf("a strbuf-using arm64 program is missing %q — the need is not reaching the bundle", want)
 		}

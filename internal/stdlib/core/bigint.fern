@@ -476,11 +476,11 @@ pub function (a: BigInt) pow(n: i32): BigInt {
 
 // divmod is truncated division: the quotient rounds toward zero and the
 // remainder takes the dividend's sign, the same contract as `/` and `%` on
-// the machine integers (docs/INTEGER-SEMANTICS.md) and Go's QuoRem. Division
-// here is TOTAL for the same reason it is there: a zero divisor returns
-// `(0, 0)`, as `std/i32`'s divmod does, and the caller validates.
+// the machine integers (docs/INTEGER-SEMANTICS.md) and Go's QuoRem. That
+// contract is total, so a zero divisor answers `(0, a)` here as well
+// rather than aborting.
 pub function (a: BigInt) divmod(b: BigInt): (BigInt, BigInt) {
-    if (__bi_is_zero_mag(b.mag)) { return (zero(), zero()); }
+    if (__bi_is_zero_mag(b.mag)) { return (zero(), a); }
     var qr: (u64[], u64[]) = __bi_divmod_mag(a.mag, b.mag);
     return (__bi_make(a.neg != b.neg, qr.0), __bi_make(a.neg, qr.1));
 }

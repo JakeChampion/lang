@@ -3145,7 +3145,35 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 	// in place — drives the caller-side containment bracket in callBody.
 	paramFieldObs := computeParamFieldObs(prog, vtableDispatched)
 	growParams := computeGrowParams(prog, info, paramFieldObs)
-	for _, fn := range prog.Funcs {
+	// Every whole-program fact the builder consults is final from here on,
+	// so the bodies lower independently on a worker pool, each into its own
+	// position; the walk below then assembles out.Funcs in declaration
+	// order, which keeps labels and the string pool where a sequential run
+	// puts them. Two consumers still want the sequential walk: the -cover
+	// table numbers a site on first sight, and RcPlanHook receives plans in
+	// lowering order.
+	jobs := lowerJobs()
+	if cover != nil || RcPlanHook != nil {
+		jobs = 1
+	}
+	lowered := make([]*Func, len(prog.Funcs))
+	targetOS := targetOSFor(lo.targetOS, ptrW)
+	err := forEach(len(prog.Funcs), jobs, func(i int) error {
+		fn := prog.Funcs[i]
+		if fn.ImportIface != "" {
+			return nil
+		}
+		f, err := lowerFunc(fn, info, ptrW, lo.dynRcSupported, lo.emitLineMarkers, targetOS, cover, pairForm, closureCaps, genEnumDrops, genTupleDrops, returnsNoParamEscape, returnsFreshPairPayload, returnsFreshBox, trmcFuncs, trmcConsumeSafe, paramEscapes, returnsParamProjection, paramCountedRetain, consumedArrayArgPos, readOnlyComparators, vtableDispatched, addressTaken, growParams, paramFieldObs)
+		if err != nil {
+			return err
+		}
+		lowered[i] = f
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	for i, fn := range prog.Funcs {
 		// Body-less `@import` functions are extern WASM-component imports, not
 		// defined functions: record their signature in out.Externs and skip
 		// lowering (there is no body). The wasm backend turns each into a core
@@ -3199,11 +3227,7 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 			out.Externs = append(out.Externs, ef)
 			continue
 		}
-		f, err := lowerFunc(fn, info, ptrW, lo.dynRcSupported, lo.emitLineMarkers, targetOSFor(lo.targetOS, ptrW), cover, pairForm, closureCaps, genEnumDrops, genTupleDrops, returnsNoParamEscape, returnsFreshPairPayload, returnsFreshBox, trmcFuncs, trmcConsumeSafe, paramEscapes, returnsParamProjection, paramCountedRetain, consumedArrayArgPos, readOnlyComparators, vtableDispatched, addressTaken, growParams, paramFieldObs)
-		if err != nil {
-			return nil, err
-		}
-		out.Funcs = append(out.Funcs, f)
+		out.Funcs = append(out.Funcs, lowered[i])
 		if fn.ExportIface != "" {
 			// `@export` function: lowered normally (it has a body), with the
 			// world-export binding recorded for the wasm backend / composer (P6).
@@ -14823,11 +14847,29 @@ func (b *builder) callBody(n *ast.Call) error {
 	// call path kept the fallback (its result may alias the argument) and
 	// nothing owned the retained value: 48 B per `m.get_or(i, [])` on an
 	// i32[] column, the array and its strings on a string[] one.
-	if id.Name == "__method_Map_get_or" && len(n.TypeArgs) >= 2 && !keyKind3 && !needBoxK && !needBoxV {
+	//
+	// A BOXED key is admitted, and boxes here like every other read does.
+	// The arm is about the FALLBACK, and the key's shape has nothing to say
+	// about it — but excluding needBoxK switched the fallback's release off
+	// for every map whose key boxes, which is one stranded fallback per call
+	// (#8432). That is BOTH key kinds needBoxK covers: a two-word string key,
+	// and a wide scalar wasm32 boxes because it does not fit a 4-byte slot.
+	// The cell is transient: the helper probes with it and retains nothing,
+	// so freeLookupBoxCell ends it after the call on exactly the terms the
+	// get / has / delete paths use.
+	if id.Name == "__method_Map_get_or" && len(n.TypeArgs) >= 2 && !keyKind3 && !needBoxV {
 		if _, isStr := n.TypeArgs[1].(ast.StringType); !isStr && b.mapGetHandsCountedValue(n.TypeArgs[1]) {
 			var tmpSlots []int32
 			var tmpTypes []ast.Type
+			keyCell := int32(-1)
 			for ai, a := range n.Args {
+				if ai == 1 && needBoxK {
+					var err error
+					if keyCell, err = b.boxIntoCellSlot(a, n.TypeArgs[0], "__map_or_ckbox"); err != nil {
+						return err
+					}
+					continue
+				}
 				if ai == 2 {
 					slot, tt, ok, err := b.stashOwnedArgTemp(a)
 					if err != nil {
@@ -14844,6 +14886,7 @@ func (b *builder) callBody(n *ast.Call) error {
 				}
 			}
 			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__method_Map_get_or", I32: int32(len(n.Args))})
+			b.freeLookupBoxCell(keyCell, n.Args[1], n.TypeArgs[0])
 			b.emitArgTempDrops(tmpSlots, tmpTypes)
 			return nil
 		}
@@ -17486,54 +17529,33 @@ func (b *builder) emitFieldDropOnStack(t ast.Type) {
 	b.emit(Op{Kind: OpDrop})
 }
 
-// emitMapSlotDrop reclaims the Map value in local slot `slot` — the
-// shared body for the exit sweep and the loop-body re-declaration drop
-// (emitVarReinitDropOld). It frees the value column (struct/enum values
-// via the generated __drop_map_via_<perValueDrop>; array values via the
-// generic __map_drop_values; string values via __drop_map_str_values),
-// then any string-key column (__drop_map_str_keys), then the buf +
-// handle (__fern_map_drop). Every helper self-guards on the map's own
-// rc==1, so a shared map only dec's. Net-zero on the operand stack, so a
-// value sitting underneath (a reinit RHS) is left untouched. Callers gate
-// on RcFreeEnabled + freeEligible.
+// emitMapSlotDrop reclaims the Map value in local slot `slot` — the shared
+// body for the exit sweep, the loop-body re-declaration drop
+// (emitVarReinitDropOld), and the OLD handle of a `a = <a COW copy of a>`
+// reassignment. It frees the value column (struct/enum values via the
+// generated __drop_map_via_<perValueDrop>; array values via the generic
+// __map_drop_values; string values via __drop_map_str_values), then any
+// string-key column (__drop_map_str_keys), then the buf + handle
+// (__fern_map_drop). Every helper self-guards on the map's own rc==1, so a
+// shared map only dec's. Net-zero on the operand stack, so a value sitting
+// underneath (a reinit RHS) is left untouched. Callers gate on
+// RcFreeEnabled + freeEligible.
+//
+// The reassignment site had its own narrower copy until #8431. It walked the
+// value column through the generic __map_drop_values whatever the kind, so a
+// struct or string column was never reclaimed there — the chain shape's whole
+// leak, and quadratic on a boxing ABI, where each copy allocates a cell per
+// entry that the round's own release then never freed. That copy could only
+// cover the columns the copy CLAIMS (#6227) and none of these were claimed
+// when it was written; all of them are now (#7114, #8390, #8420), so the two
+// bodies became the same body and only appendMapDropChain decides coverage —
+// which is what its own header says, and what stopped being true the moment a
+// second implementation existed.
 func (b *builder) emitMapSlotDrop(slot int32, st ast.StructType) {
 	b.emit(Op{Kind: OpLoadLocal, I32: slot})
 	for _, op := range appendMapDropChain(nil, st, b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW) {
 		b.emit(op)
 	}
-	b.emit(Op{Kind: OpDrop})
-}
-
-// emitMapOverwriteDrop releases the OLD handle of a Map reassignment whose
-// reference genuinely changed hands (`a = <a COW copy of a>`), where the new
-// handle may still share columns with the old buffer.
-//
-// It walks the string-KEY column and the array-value and boxed-cell value
-// columns via the kind-guarded __map_drop_values, then the buf and handle,
-// which are exclusively the old handle's.
-//
-// It does NOT walk the string (kind 5) or struct (kind 4) value columns. Both
-// ARE claimed on a copy, so walking them is no longer unsafe the way it was
-// when this site was written — whether it SHOULD is an open measurement, not a
-// refusal: the chain shape leaks here, but the same program also leaks through
-// the aliased overwrite (#8421), and the two have not been told apart.
-//
-// Every helper self-guards on the map's own rc==1, so a still-shared handle
-// only dec's. Net-zero on the operand stack, so a reinit RHS sitting
-// underneath is left untouched.
-func (b *builder) emitMapOverwriteDrop(slot int32, st ast.StructType) {
-	b.emit(Op{Kind: OpLoadLocal, I32: slot})
-	b.emit(Op{Kind: OpCallDirect, Str: "__map_drop_values", I32: 1})
-	b.emit(Op{Kind: OpDrop})
-	if len(st.Args) >= 1 {
-		if _, isStr := st.Args[0].(ast.StringType); isStr {
-			b.emit(Op{Kind: OpLoadLocal, I32: slot})
-			b.emit(Op{Kind: OpCallDirect, Str: "__drop_map_str_keys", I32: 1})
-			b.emit(Op{Kind: OpDrop})
-		}
-	}
-	b.emit(Op{Kind: OpLoadLocal, I32: slot})
-	b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_map_drop", Width: ResAddr, I32: 1})
 	b.emit(Op{Kind: OpDrop})
 }
 
@@ -17815,7 +17837,7 @@ func (b *builder) assign(n *ast.Assign) error {
 					// and is set because the frame owns what came back.
 					b.emit(Op{Kind: OpLoadLocal, I32: flagSlot})
 					b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
-					b.emitMapOverwriteDrop(idx, mst.(ast.StructType))
+					b.emitMapSlotDrop(idx, mst.(ast.StructType))
 					b.emit(Op{Kind: OpEnd})
 					b.emit(Op{Kind: OpConstI32, I32: 1})
 					b.emit(Op{Kind: OpStoreLocal, I32: flagSlot})
@@ -17962,7 +17984,7 @@ func (b *builder) assign(n *ast.Assign) error {
 				// the reference genuinely changed hands:
 				//
 				//   - new != old — the old handle lost this binding's claim,
-				//     so it is released by emitMapOverwriteDrop: the columns
+				//     so it is released by emitMapSlotDrop: the columns
 				//     a COW copy claims for itself, then the buf and handle.
 				//     A flat dec frees nothing here, and every COW-copied
 				//     table leaked behind it — 1328 B an iteration in the
@@ -17986,7 +18008,7 @@ func (b *builder) assign(n *ast.Assign) error {
 					b.emit(Op{Kind: OpLoadLocal, I32: newTmp})
 					b.emit(Op{Kind: OpNe, Width: WidthPtr})
 					b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
-					b.emitMapOverwriteDrop(idx, mst)
+					b.emitMapSlotDrop(idx, mst)
 					if aliasInced {
 						b.emit(Op{Kind: OpElse})
 						b.emit(Op{Kind: OpLoadLocal, I32: idx})

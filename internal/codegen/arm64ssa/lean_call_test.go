@@ -90,7 +90,7 @@ func liveAcrossOpaqueModule() map[string]*ssa.Func {
 func liveAcrossRcModule() map[string]*ssa.Func {
 	f := ssa.NewFunc("main")
 	b := f.NewBlock()
-	cell := f.AddOp(b, ssa.OpAlloc, constOp(f, b, 8))
+	cell := rcCell(f, b, 8)
 	a := constOp(f, b, 3)
 	c := constOp(f, b, 5)
 	d := constOp(f, b, 7)
