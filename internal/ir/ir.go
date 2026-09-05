@@ -16118,12 +16118,11 @@ func sameAllocClass(a, b int32) bool { return (a+15)&^15 == (b+15)&^15 }
 // already taken for srcSlot; decline, when non-nil, emits the extra work the
 // shared branch owes before it releases the donor.
 //
-// The decision used to be re-made inside __alloc_reuse, from a token the
-// caller computed and passed in — so the REUSE path, which is the whole point
-// of the optimisation, paid a call to be handed its own argument back (#8530).
-// Taking it here leaves the helper only the case it is needed for, the one
-// with no donor to reuse. The caller must have established that the two sizes
-// share a class (sameAllocClass), which is what makes the donor's block usable
+// The branch is taken here rather than inside __alloc_reuse so the reuse path
+// — the whole point of the optimisation — does not pay a call to be handed
+// its own donor back; the helper is left the one case it is needed for, where
+// there is no donor. The caller must have established that the two sizes share
+// a class (sameAllocClass), which is what makes the donor's block usable
 // without the runtime check the helper would otherwise make.
 //
 // The fresh arm stays on __alloc_reuse rather than a bare OpAlloc: an OpAlloc
