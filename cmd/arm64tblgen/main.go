@@ -4,10 +4,11 @@
 //
 // Two kinds of block are rewritten in place in
 // examples/self_host/arm64_native.fern: one per Advanced SIMD class, and the
-// scalar vocabulary — a predicate per family for the dispatch to test, the
-// base-word lookups the encoders read, and arm64_gas_known, the allow-list
-// the program loop consults. The staleness test fails if the committed
-// output stops matching the table.
+// scalar vocabulary — the family lookup and the index constants the
+// dispatch compares it against, a predicate per family, the base-word
+// lookups the encoders read, and arm64_gas_known, the allow-list the
+// program loop consults. The staleness test fails if the committed output
+// stops matching the table.
 //
 //	go run ./cmd/arm64tblgen examples/self_host/arm64_native.fern
 package main
@@ -15,6 +16,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/jakechampion/lang/internal/native/arm64tbl"
@@ -65,32 +67,111 @@ const (
 // predicateName is the Fern predicate a family generates.
 func predicateName(f arm64tbl.Family) string { return "arm64_gas_is_" + f.Name }
 
-// genScalar renders the by-name vocabulary: a predicate per family, the
-// base-word lookup for the families whose encoders read one, and
-// arm64_gas_known over all of them plus the pattern-matched and
-// table-dispatched rest.
+// familyID is the Fern constant naming a family's index in the table.
+func familyID(f arm64tbl.Family) string { return "arm64_fam_" + f.Name }
+
+// spelling is one mnemonic with the index of the family it belongs to.
+type spelling struct {
+	mnem string
+	fam  int
+}
+
+// genFamily renders arm64_gas_family: a mnemonic's family index, or -1.
+// The lookup narrows by length, then by one byte at a time from the front,
+// until at most leafSpellings candidates remain and are compared
+// outright — the shape ir.fern's kind_id takes — so a lookup costs a few
+// byte tests and one or two string compares instead of a compare against
+// every spelling in the table. Each narrowing step is its own function, so
+// no function's fork count outgrows the lint limit as the table grows.
+func genFamily(b *strings.Builder) {
+	byLen := map[int][]spelling{}
+	for i, f := range arm64tbl.Scalar {
+		for _, o := range f.Ops {
+			byLen[len(o.Mnemonic)] = append(byLen[len(o.Mnemonic)], spelling{o.Mnemonic, i})
+		}
+	}
+	lens := make([]int, 0, len(byLen))
+	for n := range byLen {
+		lens = append(lens, n)
+	}
+	sort.Ints(lens)
+	b.WriteString("// arm64_gas_family is the index in the table of the family a mnemonic\n")
+	b.WriteString("// belongs to, or -1: length first, then the leading bytes, then the\n")
+	b.WriteString("// spellings left. The predicates below and arm64_gas_known read it.\n")
+	b.WriteString("function arm64_gas_family(mnem: string): i32 {\n    var n: i32 = mnem.len();\n")
+	for _, n := range lens {
+		fmt.Fprintf(b, "    if (n == %d) { return arm64_gas_family_len%d(mnem); }\n", n, n)
+	}
+	b.WriteString("    return 0 - 1;\n}\n")
+	for _, n := range lens {
+		genFamilyGroup(b, fmt.Sprintf("arm64_gas_family_len%d", n), 0, byLen[n])
+	}
+}
+
+// leafSpellings is the largest group compared spelling by spelling rather
+// than narrowed by another byte: with the length and the leading bytes
+// already fixed, a few compares against near-identical spellings are
+// cheaper than another call. A narrowing step inlines only a byte that one
+// spelling alone starts with; the lint counts each `&&` as a fork, so
+// inlining more would put the wider steps over the complexity limit.
+const leafSpellings = 4
+
+// genFamilyGroup renders one narrowing step over `group`, which share
+// their first `depth` bytes, as function `name` and the steps under it.
+func genFamilyGroup(b *strings.Builder, name string, depth int, group []spelling) {
+	fmt.Fprintf(b, "function %s(mnem: string): i32 {\n", name)
+	if len(group) <= leafSpellings {
+		for _, s := range group {
+			fmt.Fprintf(b, "    if (mnem == %q) { return %s(); }\n", s.mnem, familyID(arm64tbl.Scalar[s.fam]))
+		}
+		b.WriteString("    return 0 - 1;\n}\n")
+		return
+	}
+	byByte := map[byte][]spelling{}
+	var order []byte
+	for _, s := range group {
+		c := s.mnem[depth]
+		if _, seen := byByte[c]; !seen {
+			order = append(order, c)
+		}
+		byByte[c] = append(byByte[c], s)
+	}
+	sort.Slice(order, func(i, j int) bool { return order[i] < order[j] })
+	fmt.Fprintf(b, "    var c: u8 = mnem[%d];\n", depth)
+	type step struct {
+		name  string
+		group []spelling
+	}
+	var subs []step
+	for _, c := range order {
+		sub := byByte[c]
+		if len(sub) == 1 {
+			fmt.Fprintf(b, "    if (c == b'%c' && mnem == %q) { return %s(); }\n", c, sub[0].mnem, familyID(arm64tbl.Scalar[sub[0].fam]))
+			continue
+		}
+		subName := fmt.Sprintf("%s_%s", name, sub[0].mnem[:depth+1])
+		fmt.Fprintf(b, "    if (c == b'%c') { return %s(mnem); }\n", c, subName)
+		subs = append(subs, step{subName, sub})
+	}
+	b.WriteString("    return 0 - 1;\n}\n")
+	for _, s := range subs {
+		genFamilyGroup(b, s.name, depth+1, s.group)
+	}
+}
+
+// genScalar renders the by-name vocabulary: an index constant and a
+// predicate per family, the family lookup they read, the base-word lookup
+// for the families whose encoders read one, and arm64_gas_known over all
+// of them plus the pattern-matched and table-dispatched rest.
 func genScalar() string {
 	var b strings.Builder
+	for i, f := range arm64tbl.Scalar {
+		fmt.Fprintf(&b, "function %s(): i32 { return %d; }\n", familyID(f), i)
+	}
+	genFamily(&b)
 	for _, f := range arm64tbl.Scalar {
 		fmt.Fprintf(&b, "// %s: %s.\n", predicateName(f), f.Doc)
-		fmt.Fprintf(&b, "function %s(mnem: string): boolean {\n", predicateName(f))
-		terms := make([]string, 0, len(f.Ops))
-		for _, o := range f.Ops {
-			terms = append(terms, fmt.Sprintf("mnem == %q", o.Mnemonic))
-		}
-		// Four spellings to a line keeps a long family readable.
-		b.WriteString("    return ")
-		for i, t := range terms {
-			if i > 0 {
-				if i%4 == 0 {
-					b.WriteString("\n        || ")
-				} else {
-					b.WriteString(" || ")
-				}
-			}
-			b.WriteString(t)
-		}
-		b.WriteString(";\n}\n")
+		fmt.Fprintf(&b, "function %s(mnem: string): boolean { return arm64_gas_family(mnem) == %s(); }\n", predicateName(f), familyID(f))
 		if f.Base == "" {
 			continue
 		}
@@ -117,11 +198,8 @@ func genScalar() string {
 // by-name families above, the across-lanes and general Advanced SIMD
 // classes, and the conditional branches in both spellings.
 function arm64_gas_known(mnem: string): boolean {
-`)
-	for _, f := range arm64tbl.Scalar {
-		fmt.Fprintf(&b, "    if (%s(mnem)) { return true; }\n", predicateName(f))
-	}
-	b.WriteString(`    if (arm64_across_entry(mnem) >= 0) { return true; }
+    if (arm64_gas_family(mnem) >= 0) { return true; }
+    if (arm64_across_entry(mnem) >= 0) { return true; }
     if (arm64_gas_vecgen_handles(mnem)) { return true; }
     return arm64_gas_is_bcond(mnem);
 }
