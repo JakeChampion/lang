@@ -25504,10 +25504,12 @@ function append_inplace_recvs(stmts: ast.Stmt[], esc: string[], acc: string[]): 
 // — any host inside a loop other than a return or a rebind of the root — is
 // refused: the next iteration would read the moved-out field.
 //
-// The root must be the RECEIVER or a PARAMETER; a struct LOCAL's field keeps the
-// clone form. What the CALLER can still see through the borrowed box is the
-// #4873 grow bracket's job — the growFieldBufs half of grow_param_flags_of,
-// below.
+// The root is the RECEIVER, a PARAMETER, or a top-level `var` this function
+// builds itself (fai_keep_local_roots, #8556 — without it the same expression is
+// linear through an `own` parameter and QUADRATIC through a local). What the
+// CALLER can still see through a borrowed box is the #4873 grow bracket's job
+// — the growFieldBufs half of grow_param_flags_of, below; a local has no
+// caller to bracket, so only the runtime `__fern_rc_is_unique` gate applies.
 //
 // COUNTING is the safety net. The total occurrences of the root come from
 // astwalk.collect_idents_*, which walks everything; the excused-read walk here
@@ -25924,6 +25926,189 @@ function fai_capture_scan(bound: ast.Expr, target: string, roots: string[], acc:
     return a;
 }
 
+// --- #8556: a top-level `var` as a root ------------------------------------
+//
+// A parameter's box belongs to the caller, and what the caller can still see is
+// covered by the #4873 grow bracket plus the runtime `__fern_rc_is_unique` gate.
+// A LOCAL has no caller, so the only thing that can defeat the gate is a second
+// name in THIS frame that took no count: grow_alias_bind records that a bind
+// whose source is a parameter, the receiver, or a field/index/slice chain is
+// exactly that (#4402), and `__fern_rc_is_unique` then reads 1 with two live
+// names while the move-out nulls a field the other name still reads — #8310's
+// shape. So a local qualifies only when EVERY binding of the name — its
+// declaration and every assignment to it — is a struct literal, which always
+// yields a box built here. `var a = f(p)` is refused with the rest: a callee may
+// hand back one of its own parameters.
+//
+// The fai_* walks match a root by NAME over the whole body, so a name bound a
+// second time anywhere would conflate two variables — one of them possibly a
+// match-arm payload or a `for` element this frame does not own. A root must
+// therefore be bound exactly once, and that one binding must be a direct child
+// of `fn.body`: a nested declaration is re-run per iteration of whatever
+// encloses it, which the body-wide counting arms do not model.
+
+// fai_is_struct_lit: is `e` a struct literal — a freshly constructed box?
+function fai_is_struct_lit(e: ast.Expr): boolean {
+    match (e) {
+        ast.ExprStructLit(_) => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// fai_binds_name: does one binder spelling bind `name`? A destructuring `var`
+// and a variant's extra bindings arrive comma-joined (astwalk's
+// append_bound_name splits the same way).
+function fai_binds_name(spec: string, name: string): boolean {
+    if (spec == name) { return true; }
+    var start: i32 = 0;
+    var i: i32 = 0;
+    while (i <= spec.len()) {
+        if (i == spec.len() || spec[i] == b',') {
+            var piece: string = slice_unchecked(spec, start, i) + "";
+            if (piece == name) { return true; }
+            start = i + 1;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// fai_pat_binds counts the bindings of `name` in one match pattern. Deliberately
+// wider than astwalk.pattern_binders, which does not look at a variant's TUPLE
+// sub-pattern: a name missed here would be read as the root itself.
+function fai_pat_binds(p: ast.Pattern, name: string, acc: i32): i32 {
+    var n: i32 = acc;
+    match (p) {
+        ast.PatVariant(pv) => {
+            if (fai_binds_name(pv.binding, name)) { n = n + 1; }
+            if (fai_binds_name(pv.at_binding, name)) { n = n + 1; }
+            for eb in pv.extra_bindings { if (fai_binds_name(eb, name)) { n = n + 1; } }
+            for tb in pv.tup_binds { if (fai_binds_name(tb, name)) { n = n + 1; } }
+            for sub in pv.nested { n = fai_pat_binds(sub, name, n); }
+            for tp in pv.tup_pats { n = fai_pat_binds(tp, name, n); }
+            return n;
+        },
+        ast.PatWildcard(_) => { return n; }
+    }
+    return n;
+}
+
+// fai_binder_count counts every binding of `name` on this body's statement
+// spine. A lambda body is not walked: fai_esc_idents already refuses any root a
+// lambda mentions, and fai_cands_expr never admits a site inside one.
+function fai_binder_count(stmts: ast.Stmt[], name: string, acc: i32): i32 {
+    var n: i32 = acc;
+    for st in stmts { n = fai_binder_count_stmt(st, name, n); }
+    return n;
+}
+
+function fai_binder_count_stmt(st: ast.Stmt, name: string, acc: i32): i32 {
+    var n: i32 = acc;
+    match (st) {
+        ast.StmtVar(v) => { if (fai_binds_name(v.name, name)) { n = n + 1; } },
+        ast.StmtFor(f) => {
+            if (fai_binds_name(f.var_name, name)) { n = n + 1; }
+            n = fai_binder_count(f.body, name, n);
+        },
+        ast.StmtIf(f2) => {
+            n = fai_binder_count(f2.then_body, name, n);
+            n = fai_binder_count(f2.else_body, name, n);
+        },
+        ast.StmtWhile(w) => { n = fai_binder_count(w.body, name, n); },
+        ast.StmtMatch(m) => {
+            for arm in m.arms {
+                n = fai_pat_binds(arm.pattern, name, n);
+                n = fai_binder_count(arm.body, name, n);
+            }
+        },
+        ast.StmtDefer(d) => { n = fai_binder_count_stmt(d.action, name, n); },
+        _ => {}
+    }
+    return n;
+}
+
+// fai_rebuilds_only: every binding of `name` is a struct literal. See the block
+// comment above — this is what keeps the local from ever naming a box the frame
+// does not own.
+function fai_rebuilds_only(stmts: ast.Stmt[], name: string): boolean {
+    for st in stmts { if (!fai_rebuilds_only_stmt(st, name)) { return false; } }
+    return true;
+}
+
+function fai_rebuilds_only_stmt(st: ast.Stmt, name: string): boolean {
+    match (st) {
+        ast.StmtVar(v) => {
+            if (v.name == name) { return fai_is_struct_lit(v.init); }
+            return true;
+        },
+        ast.StmtAssign(a) => {
+            if (a.target == name) { return fai_is_struct_lit(a.value); }
+            return true;
+        },
+        ast.StmtIf(f) => {
+            if (!fai_rebuilds_only(f.then_body, name)) { return false; }
+            return fai_rebuilds_only(f.else_body, name);
+        },
+        ast.StmtWhile(w) => { return fai_rebuilds_only(w.body, name); },
+        ast.StmtFor(f2) => { return fai_rebuilds_only(f2.body, name); },
+        ast.StmtMatch(m) => {
+            for arm in m.arms { if (!fai_rebuilds_only(arm.body, name)) { return false; } }
+            return true;
+        },
+        ast.StmtDefer(d) => { return fai_rebuilds_only_stmt(d.action, name); },
+        _ => { return true; }
+    }
+    return true;
+}
+
+// fai_toplevel_struct_locals names the top-level `var`s built from a struct
+// literal — the CANDIDATE local roots, before the whole-body checks. Kept cheap
+// and separate so a function with no candidate site pays only this scan.
+function fai_toplevel_struct_locals(fn: parser.FuncDecl, roots: string[]): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < fn.body.len()) {
+        match (fn.body[i]) {
+            ast.StmtVar(v) => {
+                if (fai_is_struct_lit(v.init) && util.index_of_str(roots, v.name) < 0) {
+                    out = push_str_unique(out, v.name);
+                }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// fai_keep_local_roots filters the candidate locals down to those that actually
+// root one of `cands` and pass the whole-body checks. Running the checks only
+// for a local a site names keeps them off every other function's body.
+function fai_keep_local_roots(fn: parser.FuncDecl, locals: string[], cands: string[]): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < locals.len()) {
+        var nm: string = locals[i];
+        if (fai_roots_a_cand(cands, nm)
+            && fai_binder_count(fn.body, nm, 0) == 1
+            && fai_rebuilds_only(fn.body, nm)) {
+            out = out.append(nm);
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+function fai_roots_a_cand(cands: string[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < cands.len()) {
+        if (fai_key_part(cands[i], 1) == name) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
 // field_append_inplace_sites_of returns the site keys of this function's
 // field-receiver appends that may grow in place. See the block comment above.
 pub function field_append_inplace_sites_of(fn: parser.FuncDecl): string[] {
@@ -25931,11 +26116,19 @@ pub function field_append_inplace_sites_of(fn: parser.FuncDecl): string[] {
     if (fn.receiver_name.len() > 0) { roots = roots.append(fn.receiver_name); }
     var pi: i32 = 0;
     while (pi < fn.params.len()) { roots = roots.append(fn.params[pi].name); pi = pi + 1; }
-    if (roots.len() == 0) { return []; }
+    var locs: string[] = fai_toplevel_struct_locals(fn, roots);
+    var probe: string[] = roots;
+    var li: i32 = 0;
+    while (li < locs.len()) { probe = probe.append(locs[li]); li = li + 1; }
+    if (probe.len() == 0) { return []; }
     var any: string[] = [];
     var bi: i32 = 0;
-    while (bi < fn.body.len()) { any = fai_cands_stmt(fn.body[bi], roots, any); bi = bi + 1; }
+    while (bi < fn.body.len()) { any = fai_cands_stmt(fn.body[bi], probe, any); bi = bi + 1; }
     if (any.len() == 0) { return []; }
+    var keep: string[] = fai_keep_local_roots(fn, locs, any);
+    var ki: i32 = 0;
+    while (ki < keep.len()) { roots = roots.append(keep[ki]); ki = ki + 1; }
+    if (roots.len() == 0) { return []; }
     var esc: string[] = fai_esc_idents(fn.body, []);
     var cap: string[] = fai_captured_roots(fn.body, roots, []);
     var out: string[] = [];
