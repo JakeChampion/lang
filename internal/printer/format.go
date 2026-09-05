@@ -1587,7 +1587,13 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 			case '\r':
 				f.b.WriteString(`\r`)
 			default:
-				f.b.WriteByte(c)
+				// A control byte stays an escape so the source stays
+				// text: a raw NUL makes git treat the file as binary.
+				if c < 0x20 || c == 0x7f {
+					fmt.Fprintf(&f.b, `\x%02x`, c)
+				} else {
+					f.b.WriteByte(c)
+				}
 			}
 		}
 		f.b.WriteByte('"')

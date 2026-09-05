@@ -1482,3 +1482,20 @@ function f(p: P): i32 { return match (p) { P { x: a, y: b } => a + b }; }`, "P {
 		})
 	}
 }
+
+// A control byte in a string literal is re-emitted as a hex escape, so a
+// formatted source never carries a raw NUL — which git would read as a
+// binary file — and the escape round-trips to the same byte.
+func TestFormatKeepsControlBytesEscaped(t *testing.T) {
+	got := formatSrc(t, "function f(): string { return \"a\\x00b\\x1f\\x7fc\"; }")
+	want := `return "a\x00b\x1f\x7fc";`
+	if !strings.Contains(got, want) {
+		t.Fatalf("want %q in:\n%s", want, got)
+	}
+	if strings.ContainsRune(got, 0) {
+		t.Fatalf("a raw NUL survived the format:\n%q", got)
+	}
+	if again := formatSrc(t, got); again != got {
+		t.Fatalf("not idempotent:\n%s\n---\n%s", got, again)
+	}
+}
