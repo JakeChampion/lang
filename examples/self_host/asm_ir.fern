@@ -4158,6 +4158,11 @@ function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg: irl
 // One guard per IR op and no multi-line body left to move — 190 guards over
 // 950 lines is the op table itself.
 function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s: asmcore.EmitState, vsigs: irverify.NameIndex): asmcore.EmitState {
+    // Methods get the receiver-type-qualified label `__fn_<Type>.<name>` (matching
+    // asm.fern + irlower's dispatch); free functions stay `__fn_<name>`.
+    var label_name: string = fd.name;
+    if (fd.receiver_type.len() > 0) { label_name = util.base_type_name(fd.receiver_type) + "." + fd.name; }
+    ircore.lower_failed_refuse(label_name, r);
     // Runtime-need detection is marked off the ops of this one lowering; the
     // runtime tail reads the accumulated needs (has_need) rather than lowering
     // the module again to inspect it.
@@ -4188,10 +4193,6 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
         dop = dop + 1;
     }
 
-    // Methods get the receiver-type-qualified label `__fn_<Type>.<name>` (matching
-    // asm.fern + irlower's dispatch); free functions stay `__fn_<name>`.
-    var label_name: string = fd.name;
-    if (fd.receiver_type.len() > 0) { label_name = util.base_type_name(fd.receiver_type) + "." + fd.name; }
     irverifygate.verify_or_refuse(label_name, r.ops, r.n_params, r.n_locals, vsigs);
     s = s.write("__fn_" + asmcore.sanitize_label(label_name) + ":\n");
     // Unwind rules for the frame this prologue builds (#7901): the CFA starts
