@@ -10791,6 +10791,24 @@ function lower_fn_value_arg_wc(a: ast.Expr, wc: string, s: LowerState): LowerSta
 // 278 guards over 1192 lines — one per intercepted builtin. Splitting the
 // table would spread the same list over more functions, not shorten it.
 function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: LowerState): LowerState {
+    // target_os() / target_arch() are compile-time constants, not calls:
+    // there is no such symbol to call, so a driver that lowers WITHOUT
+    // folding them first (fern.fern folds; asm_modload_run does not) would
+    // otherwise emit a call_direct to a name no module defines and bail the
+    // whole module out of the IR path. internal/ir answers the same call
+    // from its own target for the same reason, and this mirrors its default
+    // when nothing named one: the pointer width picks the target, so wasm32
+    // is wasm32-wasi and a register lowering is the project's default
+    // arm64-linux. A driver that knows better folds before it gets here.
+    if (c.args.len() == 0 && (cid.name == "target_os" || cid.name == "target_arch")) {
+        var tw: boolean = s.for_wasm();
+        if (cid.name == "target_os") {
+            if (tw) { return s.emit(ir.op_const_str("wasi")); }
+            return s.emit(ir.op_const_str("linux"));
+        }
+        if (tw) { return s.emit(ir.op_const_str("wasm32")); }
+        return s.emit(ir.op_const_str("arm64"));
+    }
     // Closure-box constructor marker (#2994): lift_inline_closures
     // rewrites a CAPTURING inline lambda in array-element / struct-
     // field-value position to `__mkclo$<cloname>(caps…)`, having
