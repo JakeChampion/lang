@@ -856,10 +856,11 @@ func buildReadFileErr(body []byte, idxs map[string]uint32, buildIoErr, allocBox,
 // Leaves nothing on the operand stack on entry/exit; bufLocal
 // holds the heap pointer and lenLocal holds the byte length.
 //
-// Mirrors the SSO-aware copy loop in buildPrintBodyFd —
-// path_open's path argument must be a contiguous byte buffer
-// in linear memory, so inline-form strings (high bit on len)
-// can't be passed straight through.
+// A heap-form string's data is already that buffer, so it is used in
+// place; only an inline-form string (high bit on len — its bytes live in
+// the (data, len) words, not in memory) is spilled, the way
+// buildStringAsBytesBody promotes one. The spill is a bump block of at
+// most 7 bytes that nothing frees (#8408).
 func emitStrNormalize(body []byte, idxs map[string]uint32, dataLocal, lenLocal, bufLocal, byteLenLocal, iLocal uint32) []byte {
 	strLen := idxs["__fern_str_len"]
 	strByte := idxs["__fern_str_byte"]
@@ -869,40 +870,54 @@ func emitStrNormalize(body []byte, idxs map[string]uint32, dataLocal, lenLocal, 
 	body = inst.InstLocalGet(body, dataLocal)
 	body = inst.InstLocalGet(body, lenLocal)
 	body = inst.InstCall(body, strLen)
-	body = inst.InstLocalTee(body, byteLenLocal)
+	body = inst.InstLocalSet(body, byteLenLocal)
 
-	// buf = alloc(byteLen)
-	body = inst.InstCall(body, alloc)
-	body = inst.InstLocalSet(body, bufLocal)
-
-	// for i in 0..byteLen: mem[buf+i] = __fern_str_byte(data, len, i)
-	body = inst.InstI32Const(body, 0)
-	body = inst.InstLocalSet(body, iLocal)
-	body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
-	body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+	// if (len & 0x80000000) != 0: inline → spill; else buf = data.
+	body = inst.InstLocalGet(body, lenLocal)
+	body = inst.InstI32Const(body, int32(-0x80000000))
+	body = numeric.InstI32And(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	{
-		body = inst.InstLocalGet(body, iLocal)
+		// buf = alloc(byteLen)
 		body = inst.InstLocalGet(body, byteLenLocal)
-		body = numeric.InstI32GeS(body)
-		body = inst.InstBrIf(body, 1) // exit on i >= byteLen
+		body = inst.InstCall(body, alloc)
+		body = inst.InstLocalSet(body, bufLocal)
 
-		body = inst.InstLocalGet(body, bufLocal)
-		body = inst.InstLocalGet(body, iLocal)
-		body = numeric.InstI32Add(body)
-		body = inst.InstLocalGet(body, dataLocal)
-		body = inst.InstLocalGet(body, lenLocal)
-		body = inst.InstLocalGet(body, iLocal)
-		body = inst.InstCall(body, strByte)
-		body = memory.InstI32Store8(body, 0, 0)
-
-		body = inst.InstLocalGet(body, iLocal)
-		body = inst.InstI32Const(body, 1)
-		body = numeric.InstI32Add(body)
+		// for i in 0..byteLen: mem[buf+i] = __fern_str_byte(data, len, i)
+		body = inst.InstI32Const(body, 0)
 		body = inst.InstLocalSet(body, iLocal)
-		body = inst.InstBr(body, 0)
+		body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
+		body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+		{
+			body = inst.InstLocalGet(body, iLocal)
+			body = inst.InstLocalGet(body, byteLenLocal)
+			body = numeric.InstI32GeS(body)
+			body = inst.InstBrIf(body, 1) // exit on i >= byteLen
+
+			body = inst.InstLocalGet(body, bufLocal)
+			body = inst.InstLocalGet(body, iLocal)
+			body = numeric.InstI32Add(body)
+			body = inst.InstLocalGet(body, dataLocal)
+			body = inst.InstLocalGet(body, lenLocal)
+			body = inst.InstLocalGet(body, iLocal)
+			body = inst.InstCall(body, strByte)
+			body = memory.InstI32Store8(body, 0, 0)
+
+			body = inst.InstLocalGet(body, iLocal)
+			body = inst.InstI32Const(body, 1)
+			body = numeric.InstI32Add(body)
+			body = inst.InstLocalSet(body, iLocal)
+			body = inst.InstBr(body, 0)
+		}
+		body = inst.InstEnd(body) // end loop
+		body = inst.InstEnd(body) // end block
 	}
-	body = inst.InstEnd(body) // end loop
-	body = inst.InstEnd(body) // end block
+	body = inst.InstElse(body)
+	{
+		body = inst.InstLocalGet(body, dataLocal)
+		body = inst.InstLocalSet(body, bufLocal)
+	}
+	body = inst.InstEnd(body)
 	return body
 }
 
