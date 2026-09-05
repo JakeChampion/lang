@@ -55,6 +55,20 @@ func TestShadowedNameIsNotSubstituted(t *testing.T) {
 			name: "destructure",
 			src:  "function main(): i32 { var (N, b) = (7, 1); return N + b; }\n",
 		},
+		{
+			name: "nested-destructure",
+			// A nested level's binders live on Nested[i].Names. The
+			// Destructure doc comment requires any pass that cares about
+			// declared names to recurse; this one did not.
+			src: "function main(): i32 { var t: ((i32, i32), i32) = ((7, 1), 2); var ((a, N), c) = t; return N + c; }\n",
+		},
+		{
+			name: "for-each-pattern",
+			// A destructuring header carries its binders on the loop's
+			// Pattern; Var is only the synthetic element holder. The checker
+			// lowers these loops away, so nothing downstream can see it.
+			src: "function main(): i32 { var xs: (i32, i32)[] = [(7, 1)]; var t: i32 = 0; for (N, v) in xs { t = t + N; } return t; }\n",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -136,8 +150,15 @@ func TestAssignToConstIsDiagnosed(t *testing.T) {
 // The shadowed counterpart is a legal assignment to a local and must NOT be
 // diagnosed — the rule is about the const, not about the spelling.
 func TestAssignToShadowedNameIsFine(t *testing.T) {
-	prog := fold(t, "const N: i32 = 5;\nfunction main(): i32 { var N: i32 = 7; N = 9; return N; }\n")
-	if n := countIdents(prog, "N"); n == 0 {
-		t.Error("the local's references were substituted with the const's value")
+	for _, src := range []string{
+		"function main(): i32 { var N: i32 = 7; N = 9; return N; }\n",
+		// A for-each pattern binder is a local too, and assigning to it was
+		// reported as `cannot assign to const N` while it was invisible.
+		"function main(): i32 { var xs: (i32, i32)[] = [(7, 1)]; var t: i32 = 0; for (N, v) in xs { N = 9; t = t + N; } return t; }\n",
+	} {
+		prog := fold(t, "const N: i32 = 5;\n"+src)
+		if n := countIdents(prog, "N"); n == 0 {
+			t.Errorf("the local's references were substituted with the const's value;\nsource:\n%s", src)
+		}
 	}
 }

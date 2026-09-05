@@ -134,6 +134,7 @@ concat_of_empties                                    0
 const_divisor_lowering                               0
 const_divisor_runtime                                0
 const_shadowed_by_binder                             0
+const_shadowed_by_pattern_binder                     0
 const_struct_negative_fields                         0
 consuming_method                                     0
 consuming_trait_method                               0

@@ -619,8 +619,16 @@ func (s *substituter) walkStmt(st ast.Stmt) {
 		s.popScope()
 	case *ast.ForEach:
 		s.walkExpr(&x.Iter)
+		s.walkExpr(&x.RangeHigh)
 		s.pushScope()
+		// A destructuring header carries its real binders on Pattern —
+		// `for (a, b) in xs` — with Var only the synthetic element holder.
+		// The checker lowers these loops away, so this pass is the only one
+		// positioned to see the pattern's names at all.
 		s.bind(x.Var)
+		if x.Pattern != nil {
+			s.walkStmt(x.Pattern)
+		}
 		s.walkStmt(x.Body)
 		s.popScope()
 	case *ast.Return:
@@ -634,8 +642,19 @@ func (s *substituter) walkStmt(st ast.Stmt) {
 		s.bind(x.Name)
 	case *ast.Destructure:
 		s.walkExpr(&x.Init)
+		s.bind(x.AtName)
+		s.bind(x.TempName)
 		for _, n := range x.Names {
 			s.bind(n)
+		}
+		// A nested level's binders live on Nested[i].Names, and its Init
+		// reads Names[i] — so recurse after this level binds, exactly as
+		// the Destructure doc comment requires of any pass that cares about
+		// declared names.
+		for _, nd := range x.Nested {
+			if nd != nil {
+				s.walkStmt(nd)
+			}
 		}
 	case *ast.ExprStmt:
 		s.walkExpr(&x.Expr)
