@@ -2581,7 +2581,7 @@ function arm64_gas_reg(tok: string): i32 {
     return 0 - 1;
 }
 
-// arm64_gas_bad_reg_token scans an operand string for a REGISTER-SHAPED
+// arm64_gas_bad_reg_token scans an operand list for a REGISTER-SHAPED
 // token that fails the strict decode: a piece (top-level operand, or a
 // comma piece inside a `[...]` memory operand) whose first char is
 // x/w/d/s followed by a digit must parse as a register — trailing junk
@@ -2589,8 +2589,7 @@ function arm64_gas_reg(tok: string): i32 {
 // the caller can record it on p.unknown. Pieces not shaped like registers
 // (immediates, labels, shift specs, sysregs) are ignored. Returns "" when
 // everything register-shaped decodes.
-function arm64_gas_bad_reg_token(rest: string): string {
-    var ops: string[] = arm64_gas_operands(rest);
+function arm64_gas_bad_reg_token(ops: string[]): string {
     var i: i32 = 0;
     while (i < ops.len()) {
         var t: string = ops[i];
@@ -2787,10 +2786,9 @@ function arm64_gas_cond_inverts(mnem: string): boolean {
 // Without it, arm64_gas_cond's miss value went straight into the 4-bit
 // condition field, so an unrecognised suffix assembled as `eq` — a valid
 // instruction testing the wrong flag, with nothing reported.
-function arm64_gas_bad_cond_token(mnem: string, rest: string): string {
+function arm64_gas_bad_cond_token(mnem: string, ops: string[]): string {
     var idx: i32 = arm64_gas_cond_operand(mnem);
     if (idx < 0) { return ""; }
-    var ops: string[] = arm64_gas_operands(rest);
     if (ops.len() <= idx) { return mnem + ":arity"; }
     var c: string = arm64_gas_trim(ops[idx]);
     if (arm64_gas_cond(c) < 0) { return c; }
@@ -2889,8 +2887,7 @@ function arm64_gas_bad_lane(mnem: string, ops: string[]): string {
 // encoders cannot express is returned so the caller records it on p.unknown
 // and refuses the output, rather than letting a -1 sentinel fold into the
 // register field.
-function arm64_gas_bad_vec_token(mnem: string, rest: string): string {
-    var ops: string[] = arm64_gas_operands(rest);
+function arm64_gas_bad_vec_token(mnem: string, ops: string[]): string {
     if (mnem == "ld1" || mnem == "st1" || mnem == "ld1r" || mnem == "dup"
         || mnem == "movi" || mnem == "umov" || mnem == "smov" || mnem == "ins") {
         return arm64_gas_bad_lane(mnem, ops);
@@ -3097,6 +3094,9 @@ function arm64_gas_bad_vecfp(mnem: string, ops: string[]): string {
 
 // arm64_gas_operands splits an operand list on top-level commas, ignoring
 // commas inside `[ … ]` (so a memory operand stays one token).
+// arm64_gas_operands splits an operand string on the commas outside `[…]`
+// and trims each piece. The program loop splits a line ONCE and hands the
+// list to every vet and emit step; nothing downstream re-splits the text.
 function arm64_gas_operands(rest: string): string[] {
     var out: string[] = [];
     var depth: i32 = 0;
@@ -3232,9 +3232,8 @@ function arm64_movwide_hw(v: i64): i32 {
 // this one-instruction-per-line assembler cannot emit. Anything expressible as a
 // single chunk plus a shift is encoded, not refused. The emitter builds wider
 // constants through the literal pool (`ldr Xt, =N`).
-function arm64_gas_movwide_out_of_range(mnem: string, rest: string): boolean {
+function arm64_gas_movwide_out_of_range(mnem: string, ops: string[]): boolean {
     if (mnem != "mov" && mnem != "movz" && mnem != "movn") { return false; }
-    var ops: string[] = arm64_gas_operands(rest);
     if (ops.len() < 2) { return false; }
     if (ops[1].len() == 0 || ops[1][0] != b'#') { return false; }   // register form
     if (ops.len() > 2 && arm64_gas_lsl_amount(ops[2]) != 0) { return false; }  // explicit shift
@@ -3245,15 +3244,14 @@ function arm64_gas_movwide_out_of_range(mnem: string, rest: string): boolean {
     return arm64_movwide_hw(v) < 0;
 }
 
-// arm64_gas_regoff_unsupported reports whether `rest` puts a REGISTER in the
+// arm64_gas_regoff_unsupported reports whether `ops` puts a REGISTER in the
 // offset position of a memory operand that `mnem`'s encoder cannot express.
 // ldr/str/ldrb/strb/ldrh/strh all encode register (and extended-register)
 // offsets through arm64_ldst_regext; the sign-extending loads, ldur and
 // stur have only an immediate-offset encoder, and must refuse rather than
 // quietly drop the index register.
-function arm64_gas_regoff_unsupported(mnem: string, rest: string): boolean {
+function arm64_gas_regoff_unsupported(mnem: string, ops: string[]): boolean {
     if (mnem != "ldrsw" && mnem != "ldrsb" && mnem != "ldrsh" && mnem != "ldur" && mnem != "stur") { return false; }
-    var ops: string[] = arm64_gas_operands(rest);
     var i: i32 = 0;
     while (i < ops.len()) {
         if (arm64_str_indexof(ops[i], "[") >= 0 && arm64_gas_mem(ops[i]).off_reg >= 0) { return true; }
@@ -3268,7 +3266,7 @@ function arm64_gas_has_bang(op: string): boolean {
     return arm64_str_indexof(op, "!") >= 0;
 }
 
-// arm64_gas_writeback_unsupported reports whether `rest` asks for a `!`
+// arm64_gas_writeback_unsupported reports whether `ops` asks for a `!`
 // pre-index WRITEBACK on a mnemonic whose only encoder here is the plain
 // unsigned-offset form. `ldr` / `str` / `ldp` / `stp` implement it (that is the
 // operand stack's whole idiom); the byte / half-word / sign-extending forms do
@@ -3278,10 +3276,9 @@ function arm64_gas_has_bang(op: string): boolean {
 // `strb w1, [sp, #-16]!` and released it with `add sp, sp, #16`, so every
 // eprint raised sp by 16 and the next call ran on a corrupted frame — a SEGV
 // arbitrarily later, with eprint's own output looking perfectly fine.
-function arm64_gas_writeback_unsupported(mnem: string, rest: string): boolean {
+function arm64_gas_writeback_unsupported(mnem: string, ops: string[]): boolean {
     if (mnem != "ldrb" && mnem != "strb" && mnem != "ldrh" && mnem != "strh" && mnem != "ldrsw"
         && mnem != "ldrsb" && mnem != "ldrsh" && mnem != "ldur" && mnem != "stur") { return false; }
-    var ops: string[] = arm64_gas_operands(rest);
     var i: i32 = 0;
     while (i < ops.len()) {
         if (arm64_str_indexof(ops[i], "[") >= 0 && arm64_gas_has_bang(ops[i])) { return true; }
@@ -3339,11 +3336,10 @@ function arm64_gas_extend_option(tok: string): i32 {
 // operand names the shift instead of leaving it to be derived, and then only
 // the bare 12-bit field is reachable -- and only `lsl #0` and `lsl #12` are
 // spellings of it at all.
-function arm64_gas_addsub_imm_unsupported(mnem: string, rest: string): boolean {
+function arm64_gas_addsub_imm_unsupported(mnem: string, ops: string[]): boolean {
     var at: i32 = 2;
     if (mnem == "cmp" || mnem == "cmn") { at = 1; }
     else if (mnem != "add" && mnem != "sub" && mnem != "adds" && mnem != "subs") { return false; }
-    var ops: string[] = arm64_gas_operands(rest);
     if (ops.len() <= at) { return false; }
     if (ops[at].len() == 0 || ops[at][0] != b'#') { return false; }
     var mag: i32 = arm64_addsub_imm_mag(arm64_gas_imm(ops[at]));
@@ -3356,9 +3352,8 @@ function arm64_gas_addsub_imm_unsupported(mnem: string, rest: string): boolean {
     return !arm64_addsub_imm_ok(mag);
 }
 
-function arm64_gas_addsub_operand_unsupported(mnem: string, rest: string): boolean {
+function arm64_gas_addsub_operand_unsupported(mnem: string, ops: string[]): boolean {
     if (mnem != "add" && mnem != "sub") { return false; }
-    var ops: string[] = arm64_gas_operands(rest);
     if (ops.len() < 4) { return false; }
     if (arm64_gas_shift_type(ops[3]) >= 0) { return false; }
     if (arm64_gas_extend_option(ops[3]) >= 0) { return false; }
@@ -3767,8 +3762,7 @@ function arm64_gas_is_excl(mnem: string): boolean {
 // express comes back non-empty, the program loop records it, and the
 // driver refuses the output — never a value folded into a field that does
 // not exist. "" = clean, or not one of these families.
-function arm64_gas_bad_ext_token(mnem: string, rest: string): string {
-    var ops: string[] = arm64_gas_operands(rest);
+function arm64_gas_bad_ext_token(mnem: string, ops: string[]): string {
     // An arranged vector operand routes the mnemonic to its SIMD form, so the
     // scalar family checks do not apply — the dual-form ones (fadd, fmul,
     // fneg, add, …) would reject `v23.4s` as a bad scalar register. The
@@ -3904,8 +3898,7 @@ function arm64_gas_bad_bitmask_imm(tok: string, w: boolean): string {
 // an immediate. The and#/eor# program-loop paths keyed on any '#' in the
 // line, which also matched the shift amount of `and x1, x2, x3, lsr #4`
 // and encoded the register token as a bitmask.
-function arm64_gas_third_is_imm(rest: string): boolean {
-    var ops: string[] = arm64_gas_operands(rest);
+function arm64_gas_third_is_imm(ops: string[]): boolean {
     return ops.len() > 2 && ops[2].len() > 0 && ops[2][0] == b'#';
 }
 
@@ -4373,14 +4366,13 @@ function arm64_gas_bcond_suffix(mnem: string): str {
     return slice_unchecked(mnem, 1, 3);
 }
 
-// arm64_gas_emit assembles one mnemonic + operand string into a.code (or
+// arm64_gas_emit assembles one mnemonic + operand list into a.code (or
 // queues a label fixup). Unknown mnemonics are ignored.
-function arm64_gas_emit(own a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
+function arm64_gas_emit(own a: Arm64Asm, mnem: string, ops: string[]): Arm64Asm {
     if (arm64_gas_is_fixed(mnem)) {
         if (mnem == "ret") { return Arm64Asm { ...a, code: arm64_ret(a.code, arm64_lr()) }; }
         return Arm64Asm { ...a, code: arm64_nop(a.code) };
     }
-    var ops: string[] = arm64_gas_operands(rest);
     // SIMD forms are recognised by the first operand being an arranged vector
     // register, so the mnemonics that have both — add, sub, mul, and, orr,
     // eor, neg, mvn, cmeq — keep their scalar path on scalar operands.
@@ -5764,18 +5756,19 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
             mnem = slice_unchecked(line, 0, sp) + "";
             rest = arm64_gas_trim(slice_unchecked(line, sp + 1, line.len()));
         }
+        var ops: string[] = arm64_gas_operands(rest);
         // A register-shaped operand that fails the strict decode (SH-006 —
         // `x1a`, `x31`, `d40`) is recorded like an unknown mnemonic: the
         // encoders below would otherwise fold the -1 sentinel into garbage
         // bits, and the p.unknown gate refuses the output instead.
-        var badreg: string = arm64_gas_bad_reg_token(rest);
+        var badreg: string = arm64_gas_bad_reg_token(ops);
         if (badreg.len() > 0) {
             p = Arm64GasProg { ...p, unknown: p.unknown.append(mnem + ":" + badreg) };
         }
         // Same discipline for the SIMD operands: a shape the encoders have no
         // form for is recorded, never folded into the register field, where a
         // -1 would emit a plausible instruction on the wrong register.
-        var badvec: string = arm64_gas_bad_vec_token(mnem, rest);
+        var badvec: string = arm64_gas_bad_vec_token(mnem, ops);
         if (badvec.len() > 0) {
             p = Arm64GasProg { ...p, unknown: p.unknown.append(mnem + ":" + badvec) };
         }
@@ -5784,13 +5777,13 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
         // extended-register addressing, exclusives, barriers, the scalar-FP
         // additions): a shape their encoders cannot express is recorded,
         // never folded into a wrong field.
-        var badext: string = arm64_gas_bad_ext_token(mnem, rest);
+        var badext: string = arm64_gas_bad_ext_token(mnem, ops);
         if (badext.len() > 0) {
             p = Arm64GasProg { ...p, unknown: p.unknown.append(mnem + ":" + badext) };
         }
         // Same discipline for the condition operand of the select / conditional
         // compare / cset families.
-        var badcond: string = arm64_gas_bad_cond_token(mnem, rest);
+        var badcond: string = arm64_gas_bad_cond_token(mnem, ops);
         if (badcond.len() > 0) {
             p = Arm64GasProg { ...p, unknown: p.unknown.append(mnem + ":" + badcond) };
         }
@@ -5798,20 +5791,20 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
         // only encoder takes an immediate: refuse the line instead of silently
         // dropping the index. #6047 was exactly this hole, on ldrb/strb, which
         // now encode the register form properly.
-        if (arm64_gas_regoff_unsupported(mnem, rest)) {
+        if (arm64_gas_regoff_unsupported(mnem, ops)) {
             p = Arm64GasProg { ...p, unknown: p.unknown.append(mnem + ":regoff") };
         }
         // Same discipline for a `!` pre-index writeback on a form that has only
         // the unsigned-offset encoder: dropping the writeback leaves the base
         // register un-updated, and any paired release then moves it the wrong
         // way (#6083). Refuse the line.
-        if (arm64_gas_writeback_unsupported(mnem, rest)) {
+        if (arm64_gas_writeback_unsupported(mnem, ops)) {
             p = Arm64GasProg { ...p, unknown: p.unknown.append(mnem + ":writeback") };
         }
         // Same discipline for an add/sub shift or extend operand this
         // assembler has no encoder for: dropping it emits a plausible
         // instruction that computes the wrong address (#6849).
-        if (arm64_gas_addsub_operand_unsupported(mnem, rest)) {
+        if (arm64_gas_addsub_operand_unsupported(mnem, ops)) {
             p = Arm64GasProg { ...p, unknown: p.unknown.append(mnem + ":shift") };
         }
         // Same discipline for an add/sub immediate outside imm12's reach. The
@@ -5820,7 +5813,7 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
         // else. Masking anything else to twelve bits encodes a DIFFERENT
         // number and the instruction still assembles: `sub sp, sp, #4096`
         // became `sub sp, sp, #0`, so a frame that big was never allocated.
-        if (arm64_gas_addsub_imm_unsupported(mnem, rest)) {
+        if (arm64_gas_addsub_imm_unsupported(mnem, ops)) {
             p = Arm64GasProg { ...p, unknown: p.unknown.append(mnem + ":imm12") };
         }
         // A mov-wide immediate that does not fit imm16 (or whose complement does
@@ -5828,17 +5821,16 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
         // constant. Refuse it: the emitter builds anything wider through the
         // literal pool (`ldr Xt, =N`), so this only ever fires on a form the
         // assembler genuinely cannot express.
-        if (arm64_gas_movwide_out_of_range(mnem, rest)) {
+        if (arm64_gas_movwide_out_of_range(mnem, ops)) {
             p = Arm64GasProg { ...p, unknown: p.unknown.append(mnem + ":imm16") };
         }
         // `ldr Xd, =N` (literal-pool load): emit an LDR-literal placeholder
         // and queue the 64-bit value; `.ltorg` (or end of program) flushes
         // the pool into .text and patches the imm19.
         if (mnem == "ldr" && arm64_str_indexof(rest, "=") >= 0) {
-            var rops: string[] = arm64_gas_operands(rest);
-            var litok: string = arm64_gas_trim(rops[1]);
+            var litok: string = arm64_gas_trim(ops[1]);
             var nval: i64 = arm64_gas_atoi64(arm64_gas_trim(slice_unchecked(litok, 1, litok.len())));
-            a = Arm64Asm { ...a, code: arm64_ldr_lit(a.code, arm64_gas_reg(rops[0]), 0) };
+            a = Arm64Asm { ...a, code: arm64_ldr_lit(a.code, arm64_gas_reg(ops[0]), 0) };
             p = Arm64GasProg { ...p, lit_sites: p.lit_sites.append(a.code.len() - 4) };
             p = Arm64GasProg { ...p, lit_vals: p.lit_vals.append(nval) };
             continue;
@@ -5846,10 +5838,9 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
         // @PAGE / @PAGEOFF symbol references queue a fixup; everything else
         // assembles directly into .text.
         if (mnem == "adrp") {
-            var aops: string[] = arm64_gas_operands(rest);
-            a = Arm64Asm { ...a, code: arm64_adrp(a.code, arm64_gas_reg(aops[0]), 0) };
+            a = Arm64Asm { ...a, code: arm64_adrp(a.code, arm64_gas_reg(ops[0]), 0) };
             p = Arm64GasProg { ...p, pf_sites: p.pf_sites.append(a.code.len() - 4) };
-            p = Arm64GasProg { ...p, pf_syms: p.pf_syms.append(arm64_gas_strip_at(aops[1])) };
+            p = Arm64GasProg { ...p, pf_syms: p.pf_syms.append(arm64_gas_strip_at(ops[1])) };
             p = Arm64GasProg { ...p, pf_kinds: p.pf_kinds.append(0) };
             continue;
         }
@@ -5857,36 +5848,33 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
         // so it is a kind-3 fixup with no companion :lo12: add. There is no
         // W form of the instruction.
         if (mnem == "adr") {
-            var drops: string[] = arm64_gas_operands(rest);
-            if (drops.len() != 2 || arm64_gas_is_w(drops[0])) {
+            if (ops.len() != 2 || arm64_gas_is_w(ops[0])) {
                 p = Arm64GasProg { ...p, unknown: p.unknown.append("adr:operands") };
                 continue;
             }
-            a = Arm64Asm { ...a, code: arm64_adr(a.code, arm64_gas_reg(drops[0]), 0) };
+            a = Arm64Asm { ...a, code: arm64_adr(a.code, arm64_gas_reg(ops[0]), 0) };
             p = Arm64GasProg { ...p, pf_sites: p.pf_sites.append(a.code.len() - 4) };
-            p = Arm64GasProg { ...p, pf_syms: p.pf_syms.append(arm64_gas_trim(drops[1])) };
+            p = Arm64GasProg { ...p, pf_syms: p.pf_syms.append(arm64_gas_trim(ops[1])) };
             p = Arm64GasProg { ...p, pf_kinds: p.pf_kinds.append(3) };
             continue;
         }
         if (mnem == "ldr" && arm64_str_indexof(rest, "@PAGEOFF") >= 0) {
-            var lops: string[] = arm64_gas_operands(rest);
-            var lm: Arm64Mem = arm64_gas_mem(lops[1]); // base reg; off symbolic
+            var lm: Arm64Mem = arm64_gas_mem(ops[1]); // base reg; off symbolic
             // symbol is the bracket's second operand, before '@'
-            var linner: string = lops[1];
+            var linner: string = ops[1];
             var lb: i32 = arm64_str_indexof(linner, "[");
             var rb: i32 = arm64_str_indexof(linner, "]");
             var lparts: string[] = arm64_gas_operands(slice_unchecked(linner, lb + 1, rb));
-            a = Arm64Asm { ...a, code: arm64_ldr(a.code, arm64_gas_reg(lops[0]), lm.base, 0, arm64_gas_is_w(lops[0])) };
+            a = Arm64Asm { ...a, code: arm64_ldr(a.code, arm64_gas_reg(ops[0]), lm.base, 0, arm64_gas_is_w(ops[0])) };
             p = Arm64GasProg { ...p, pf_sites: p.pf_sites.append(a.code.len() - 4) };
             p = Arm64GasProg { ...p, pf_syms: p.pf_syms.append(arm64_gas_strip_at(lparts[1])) };
             p = Arm64GasProg { ...p, pf_kinds: p.pf_kinds.append(1) };
             continue;
         }
         if (mnem == "add" && arm64_str_indexof(rest, "@PAGEOFF") >= 0) {
-            var dops: string[] = arm64_gas_operands(rest);
-            a = Arm64Asm { ...a, code: arm64_addimm(a.code, arm64_gas_reg(dops[0]), arm64_gas_reg(dops[1]), 0, false) };
+            a = Arm64Asm { ...a, code: arm64_addimm(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), 0, false) };
             p = Arm64GasProg { ...p, pf_sites: p.pf_sites.append(a.code.len() - 4) };
-            p = Arm64GasProg { ...p, pf_syms: p.pf_syms.append(arm64_gas_strip_at(dops[2])) };
+            p = Arm64GasProg { ...p, pf_syms: p.pf_syms.append(arm64_gas_strip_at(ops[2])) };
             p = Arm64GasProg { ...p, pf_kinds: p.pf_kinds.append(2) };
             continue;
         }
@@ -5895,10 +5883,9 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
         // arm64_gas_link resolves both to target & 0xfff). The matching
         // `adrp Xd, sym` is handled by the adrp branch above (bare symbol).
         if (mnem == "add" && arm64_str_indexof(rest, ":lo12:") >= 0) {
-            var lops: string[] = arm64_gas_operands(rest);
-            a = Arm64Asm { ...a, code: arm64_addimm(a.code, arm64_gas_reg(lops[0]), arm64_gas_reg(lops[1]), 0, false) };
+            a = Arm64Asm { ...a, code: arm64_addimm(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), 0, false) };
             p = Arm64GasProg { ...p, pf_sites: p.pf_sites.append(a.code.len() - 4) };
-            p = Arm64GasProg { ...p, pf_syms: p.pf_syms.append(arm64_gas_strip_lo12(lops[2])) };
+            p = Arm64GasProg { ...p, pf_syms: p.pf_syms.append(arm64_gas_strip_lo12(ops[2])) };
             p = Arm64GasProg { ...p, pf_kinds: p.pf_kinds.append(2) };
             continue;
         }
@@ -5906,12 +5893,11 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
         // encoding; an unsupported immediate is recorded (never silently
         // mis-encoded). Register-form `and` — whose shifted spelling also
         // carries a '#', in the shift amount — falls through to emit.
-        if (mnem == "and" && arm64_gas_third_is_imm(rest)) {
-            var nops: string[] = arm64_gas_operands(rest);
-            var nimm: i64 = arm64_gas_imm64(nops[2]);
-            var nw: boolean = arm64_gas_is_w(nops[0]);
+        if (mnem == "and" && arm64_gas_third_is_imm(ops)) {
+            var nimm: i64 = arm64_gas_imm64(ops[2]);
+            var nw: boolean = arm64_gas_is_w(ops[0]);
             if (arm64_logical_imm_ok(nimm, nw)) {
-                a = Arm64Asm { ...a, code: arm64_le32(a.code, arm64_logical_imm_word(0x92000000, nw, arm64_gas_reg(nops[0]), arm64_gas_reg(nops[1]), nimm)) };
+                a = Arm64Asm { ...a, code: arm64_le32(a.code, arm64_logical_imm_word(0x92000000, nw, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), nimm)) };
             } else {
                 p = Arm64GasProg { ...p, unknown: p.unknown.append("and#") };
             }
@@ -5922,12 +5908,11 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
         // immediate token as a register, got -1, masked it to XZR, and
         // silently encoded `orr Xd, Xn, xzr` — a no-op wearing the right
         // mnemonic. Register-form `orr` falls through to emit.
-        if (mnem == "orr" && arm64_gas_third_is_imm(rest)) {
-            var oops: string[] = arm64_gas_operands(rest);
-            var oimm: i64 = arm64_gas_imm64(oops[2]);
-            var ow: boolean = arm64_gas_is_w(oops[0]);
+        if (mnem == "orr" && arm64_gas_third_is_imm(ops)) {
+            var oimm: i64 = arm64_gas_imm64(ops[2]);
+            var ow: boolean = arm64_gas_is_w(ops[0]);
             if (arm64_logical_imm_ok(oimm, ow)) {
-                a = Arm64Asm { ...a, code: arm64_le32(a.code, arm64_logical_imm_word(0xb2000000, ow, arm64_gas_reg(oops[0]), arm64_gas_reg(oops[1]), oimm)) };
+                a = Arm64Asm { ...a, code: arm64_le32(a.code, arm64_logical_imm_word(0xb2000000, ow, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), oimm)) };
             } else {
                 p = Arm64GasProg { ...p, unknown: p.unknown.append("orr#") };
             }
@@ -5935,12 +5920,11 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
         }
         // `eor Xd, Xn, #imm` (logical immediate) — same verified-bitmask path
         // as `and #imm`. Register-form `eor` falls through to emit.
-        if (mnem == "eor" && arm64_gas_third_is_imm(rest)) {
-            var eops: string[] = arm64_gas_operands(rest);
-            var eimm: i64 = arm64_gas_imm64(eops[2]);
-            var ew: boolean = arm64_gas_is_w(eops[0]);
+        if (mnem == "eor" && arm64_gas_third_is_imm(ops)) {
+            var eimm: i64 = arm64_gas_imm64(ops[2]);
+            var ew: boolean = arm64_gas_is_w(ops[0]);
             if (arm64_logical_imm_ok(eimm, ew)) {
-                a = Arm64Asm { ...a, code: arm64_le32(a.code, arm64_logical_imm_word(0xd2000000, ew, arm64_gas_reg(eops[0]), arm64_gas_reg(eops[1]), eimm)) };
+                a = Arm64Asm { ...a, code: arm64_le32(a.code, arm64_logical_imm_word(0xd2000000, ew, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), eimm)) };
             } else {
                 p = Arm64GasProg { ...p, unknown: p.unknown.append("eor#") };
             }
@@ -5951,22 +5935,20 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
         // data register must be an X register; anything else is recorded
         // (never mis-encoded — a read-only msr would trap at runtime).
         if (mnem == "mrs") {
-            var sops: string[] = arm64_gas_operands(rest);
-            if (sops.len() != 2 || arm64_gas_is_w(sops[0]) || arm64_mrs_base(arm64_gas_trim(sops[1])) < 0) {
+            if (ops.len() != 2 || arm64_gas_is_w(ops[0]) || arm64_mrs_base(arm64_gas_trim(ops[1])) < 0) {
                 p = Arm64GasProg { ...p, unknown: p.unknown.append("mrs:" + rest) };
                 continue;
             }
-            a = Arm64Asm { ...a, code: arm64_mrs(a.code, arm64_gas_reg(sops[0]), arm64_gas_trim(sops[1])) };
+            a = Arm64Asm { ...a, code: arm64_mrs(a.code, arm64_gas_reg(ops[0]), arm64_gas_trim(ops[1])) };
             continue;
         }
         if (mnem == "msr") {
-            var wops: string[] = arm64_gas_operands(rest);
-            if (wops.len() != 2 || arm64_gas_is_w(wops[1]) || arm64_gas_reg(wops[1]) < 0
-                || arm64_msr_base(arm64_gas_trim(wops[0])) < 0) {
+            if (ops.len() != 2 || arm64_gas_is_w(ops[1]) || arm64_gas_reg(ops[1]) < 0
+                || arm64_msr_base(arm64_gas_trim(ops[0])) < 0) {
                 p = Arm64GasProg { ...p, unknown: p.unknown.append("msr:" + rest) };
                 continue;
             }
-            a = Arm64Asm { ...a, code: arm64_msr(a.code, arm64_gas_reg(wops[1]), arm64_gas_trim(wops[0])) };
+            a = Arm64Asm { ...a, code: arm64_msr(a.code, arm64_gas_reg(ops[1]), arm64_gas_trim(ops[0])) };
             continue;
         }
         if (!arm64_gas_known(mnem)) {
@@ -5983,25 +5965,24 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
         // place.
         if (arm64_gas_is_branch(mnem) || arm64_gas_is_cbranch(mnem)
             || arm64_gas_is_tbranch(mnem) || arm64_gas_is_bcond(mnem)) {
-            var bops: string[] = arm64_gas_operands(rest);
             if (mnem == "b") {
-                a = arm64_asm_b(a, arm64_gas_nl_ref(nl_cnt, bops[0]));
+                a = arm64_asm_b(a, arm64_gas_nl_ref(nl_cnt, ops[0]));
             } else if (mnem == "bl") {
-                a = arm64_asm_bl(a, arm64_gas_nl_ref(nl_cnt, bops[0]));
+                a = arm64_asm_bl(a, arm64_gas_nl_ref(nl_cnt, ops[0]));
             } else if (mnem == "cbz") {
-                a = arm64_asm_cbz(a, arm64_gas_reg(bops[0]), arm64_gas_nl_ref(nl_cnt, bops[1]), arm64_gas_is_w(bops[0]));
+                a = arm64_asm_cbz(a, arm64_gas_reg(ops[0]), arm64_gas_nl_ref(nl_cnt, ops[1]), arm64_gas_is_w(ops[0]));
             } else if (mnem == "cbnz") {
-                a = arm64_asm_cbnz(a, arm64_gas_reg(bops[0]), arm64_gas_nl_ref(nl_cnt, bops[1]), arm64_gas_is_w(bops[0]));
+                a = arm64_asm_cbnz(a, arm64_gas_reg(ops[0]), arm64_gas_nl_ref(nl_cnt, ops[1]), arm64_gas_is_w(ops[0]));
             } else if (mnem == "tbz") {
-                a = arm64_asm_tbz(a, arm64_gas_reg(bops[0]), arm64_gas_imm(bops[1]), arm64_gas_nl_ref(nl_cnt, bops[2]));
+                a = arm64_asm_tbz(a, arm64_gas_reg(ops[0]), arm64_gas_imm(ops[1]), arm64_gas_nl_ref(nl_cnt, ops[2]));
             } else if (mnem == "tbnz") {
-                a = arm64_asm_tbnz(a, arm64_gas_reg(bops[0]), arm64_gas_imm(bops[1]), arm64_gas_nl_ref(nl_cnt, bops[2]));
+                a = arm64_asm_tbnz(a, arm64_gas_reg(ops[0]), arm64_gas_imm(ops[1]), arm64_gas_nl_ref(nl_cnt, ops[2]));
             } else {
-                a = arm64_asm_bcond(a, arm64_gas_cond(arm64_gas_bcond_suffix(mnem)), arm64_gas_nl_ref(nl_cnt, bops[0]));
+                a = arm64_asm_bcond(a, arm64_gas_cond(arm64_gas_bcond_suffix(mnem)), arm64_gas_nl_ref(nl_cnt, ops[0]));
             }
             continue;
         }
-        a = arm64_gas_emit(a, mnem, rest);
+        a = arm64_gas_emit(a, mnem, ops);
     }
     if (arm64_lit_pool_far(p, a.code.len()) > arm64_lit_reach()) {
         p = Arm64GasProg { ...p, unknown: p.unknown.append("ltorg:range") };
