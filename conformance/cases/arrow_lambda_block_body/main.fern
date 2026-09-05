@@ -1,0 +1,49 @@
+// An arrow lambda with a BLOCK body, on every backend (#2673).
+//
+// `(x) => { ...; return e; }` means what `function (x) { ...; return e; }`
+// means. It parsed and ran before; what it could not do was INFER its return
+// type, because the arrow desugar wraps the body in a `return` and the block
+// — which always returns — has no trailing value, so its own type is `never`.
+// Unifying that with the inner return's type read as a conflict rather than as
+// the bottom type absorbing, and the form needed an explicit return type that
+// the anonymous `function` spelling it is meant to replace never needed.
+//
+// Every body shape an arrow lambda can carry is exercised here, so a backend
+// that lowers one of them differently is caught rather than assumed.
+
+function apply(f: (i32) => i32, v: i32): i32 {
+    return f(v);
+}
+
+function main(): i32 {
+    // Expression body — the common form.
+    if (apply((x: i32) => x * 2, 4) != 8) {
+        return 10;
+    }
+    // Block body whose only statement returns.
+    var single = (x: i32) => { return x * 2; };
+    if (apply(single, 4) != 8) {
+        return 11;
+    }
+    // Statements, then a return.
+    var stmts = (x: i32) => { var y: i32 = x + 1; return y * 2; };
+    if (apply(stmts, 3) != 8) {
+        return 12;
+    }
+    // Returns on every branch, so the block's own type is `never`.
+    var branch = (x: i32) => { if (x > 0) { return x; } return 0 - x; };
+    if (apply(branch, 0 - 8) != 8) {
+        return 13;
+    }
+    // A tail value instead of a return — the block has a value of its own.
+    var tail = (x: i32) => { var y: i32 = x + 1; y * 2 };
+    if (apply(tail, 3) != 8) {
+        return 14;
+    }
+    // An explicit return type beside a block body still means what it said.
+    var typed = (x: i32): i32 => { return x * 2; };
+    if (apply(typed, 4) != 8) {
+        return 15;
+    }
+    return 0;
+}

@@ -3611,6 +3611,22 @@ func (g *generator) emitArrBoundsCheck() {
 	g.label(ok)
 }
 
+// emitStrBoundsCheckAgainst is emitArrBoundsCheck for a string, with
+// the length already in lenW and the byte index in w0. A single
+// unsigned compare catches a negative index (huge as unsigned) too.
+//
+// The caller supplies the length because the only place it is cheap to
+// know is inside the __str_idx tag dispatch, which has already decided
+// whether this is a heap or an inline string. Decoding it again here
+// would repeat that test and emit a second SSO decode per index.
+func (g *generator) emitStrBoundsCheckAgainst(lenW string) {
+	ok := g.freshLabel("str_ok")
+	g.emit("cmp w0, %s", lenW)
+	g.emit("b.lo %s", ok) // unsigned idx < len → in bounds
+	g.emitAbort("__fern_msg_str_slice")
+	g.label(ok)
+}
+
 // emitSliceBoundsCheck is emitArrBoundsCheck for a slice: the
 // length lives in the slice header at [slice+8] (the 8-byte
 // data_ptr is at [slice+0]), so it must be read before the helper
@@ -3660,7 +3676,11 @@ func (g *generator) emitInlineIdxHelper(name string) error {
 		g.emit("ldr x1, [sp], #%d", slotBytes) // len
 		g.emit("ldr x2, [sp], #%d", slotBytes) // data
 		g.emit("tbnz x1, #63, %s", inlineLbl)
-		// Heap form: byte address = data + idx.
+		// Heap form: byte address = data + idx, and the low 32 bits of
+		// the len word are the byte length.
+		if checked {
+			g.emitStrBoundsCheckAgainst("w1")
+		}
 		g.emit("add x0, x2, x0")
 		g.emit("b %s", doneLbl)
 		g.label(inlineLbl)
@@ -3668,6 +3688,11 @@ func (g *generator) emitInlineIdxHelper(name string) error {
 		// .bss scratch slot. Bytes 0..7 from `data`, bytes
 		// 8..14 from `len`'s low 56 bits. Result address =
 		// scratch + idx.
+		if checked {
+			// Inline form: the length nibble sits at bits 56..59.
+			g.emit("ubfx x3, x1, #56, #4")
+			g.emitStrBoundsCheckAgainst("w3")
+		}
 		g.adrpAdd("x3", "__fern_str_idx_scratch")
 		g.emit("str x2, [x3]")     // data bytes at scratch[0..7]
 		g.emit("str x1, [x3, #8]") // len bytes at scratch[8..15]
@@ -3698,9 +3723,19 @@ func (g *generator) emitInlineIdxHelper(name string) error {
 		inlineLbl := fmt.Sprintf(".Lstridx_inline_%d", id)
 		doneLbl := fmt.Sprintf(".Lstridx_done_%d", id)
 		g.emit("tbnz x1, #0, %s", inlineLbl)
+		// Heap form: the 4-byte length prefix sits just below the data.
+		if checked {
+			g.emit("ldur w2, [x1, #-4]")
+			g.emitStrBoundsCheckAgainst("w2")
+		}
 		g.emit("add x0, x1, x0")
 		g.emit("b %s", doneLbl)
 		g.label(inlineLbl)
+		if checked {
+			// Inline form: length in bits 1..3 of the value.
+			g.emit("ubfx x2, x1, #1, #3")
+			g.emitStrBoundsCheckAgainst("w2")
+		}
 		g.adrpAdd("x2", "__fern_str_idx_scratch")
 		g.emit("str x1, [x2]")
 		g.emit("add x0, x2, x0")

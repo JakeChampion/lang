@@ -1859,8 +1859,10 @@ pub function rt_src_arr_str_join(): string {
 
 // rt_src_str_search backs the string-search predicates (#2649): all three are
 // gated by the single `str_search` need, so one source defines all three and
-// emit_*_runtime_fern_fn emits each. Self-contained — byte indexing only, no
-// alloc, no other helper call — so they reuse the migration primitives as-is.
+// emit_*_runtime_fern_fn emits each. They allocate nothing and call no other
+// helper, but byte indexing is bounds-checked (#8454), so each body branches
+// to __fern_oob_abort — hence the `heap` edge runtime_need_deps declares for
+// this root.
 // __fern_str_starts_with(s, p) / _ends_with(s, p): 1 if s has p as a prefix /
 // suffix (empty p → 1), else 0. __fern_str_index_of(s, needle): first byte
 // offset where needle occurs (empty needle → 0), or -1. Arg order matches the
@@ -3780,6 +3782,12 @@ pub function runtime_need_deps(name: string): string[] {
         // when the need is seeded from all_runtime_need_roots instead.
         || name == "arr_i32_index_of_opt" || name == "arr_i32_min_max_opt"
         || name == "arrarr_free" || name == "strarrarr_free" || name == "optarrarr_free"
+        // str_search allocates nothing either. Its three bodies index bytes
+        // (`s[i]`), and a bounds-checked index branches to __fern_oob_abort
+        // (#8454) — which is emitted INSIDE the heap bundle, the same reason
+        // the array deep-free family is listed above. Without this edge the
+        // helper links with a dangling abort symbol.
+        || name == "str_search"
         || name == "poll") {
         // poll's __fern_poll allocates the transient pollfd[] via __fern_alloc.
         return heap;

@@ -1302,6 +1302,15 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"cap-assign-param", "function g(s: string): i32 { var f = function(): i32 { s = \"y\"; return 0; }; return f(); }\nfunction main(): i32 { return 0; }\n", []string{"E049"}},
 		{"cap-assign-scalar-ok", "function main(): i32 { var n: i32 = 1; var f = function(): i32 { n = 2; return n; }; return f(); }\n", nil},
 		{"cap-read-ref-ok", "function main(): i32 { var s: string = \"x\"; var f = function(): i32 { return s.len(); }; return f(); }\n", nil},
+		// #2673: an arrow lambda with a BLOCK body infers its return type.
+		// The two checkers disagreed here — the self-host accepted it and
+		// native reported E002, because the arrow desugar wraps the body in a
+		// `return` and native unified the inner return's type against the
+		// block's own `never`. Pinned so the convergence cannot come apart,
+		// and so the anonymous `function` expression this form is meant to
+		// replace is not the only spelling that infers.
+		{"arrow-block-body-infer-ok", "function apply(f: (i32) => i32, v: i32): i32 { return f(v); }\nfunction main(): i32 {\n    var g = (x: i32) => { return x * 2; };\n    return apply(g, 4);\n}\n", nil},
+		{"arrow-block-body-stmts-infer-ok", "function apply(f: (i32) => i32, v: i32): i32 { return f(v); }\nfunction main(): i32 {\n    var g = (x: i32) => { var y: i32 = x + 1; return y * 2; };\n    return apply(g, 3);\n}\n", nil},
 		{"cap-assign-local-ok", "function main(): i32 { var f = function(): i32 { var t: string = \"a\"; t = \"b\"; return 0; }; return f(); }\n", nil},
 		// #4410: the closure-capture contract (docs/CLOSURE-CAPTURE.md). The
 		// scalar/reference split must be BYTE-identical to native's

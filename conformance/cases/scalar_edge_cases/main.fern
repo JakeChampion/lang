@@ -12,10 +12,10 @@ import "core/int";
 //  - string.truncate now guards a non-positive cap (a negative `n` would
 //    otherwise fall through to `s[0:n]`, a negative slice bound), matching
 //    its `ellipsis` sibling.
-//  - int_to_string_radix(bad base) returns its documented sentinel, "".
-//  - divmod has no sentinel: it IS the (n/d, n%d) pair for every divisor,
-//    and `/` and `%` are total (docs/INTEGER-SEMANTICS.md), so a zero
-//    divisor gives (0, n) rather than a value the caller must recognise.
+//  - int_to_string_radix(bad base) returns its documented "" sentinel.
+//  - divmod has no zero sentinel: it IS the `(n/d, n%d)` pair for every
+//    divisor, and `/` and `%` are total (docs/INTEGER-SEMANTICS.md), so
+//    `(10).divmod(0)` is `(0, 10)` rather than `(0, 0)`.
 function d(n: i32): string { return int.int_to_string_radix(n, 10); }
 
 function main(): i32 {
@@ -28,10 +28,9 @@ function main(): i32 {
     // with a negative bound.
     print("[" + "hello".truncate(0 - 3, "..") + "]");   // []
     print("[" + "hello".truncate(0, "..") + "]");       // []
-    // divmod of a zero divisor is the machine contract, not a sentinel
+    // divmod by zero is the total-division pair, not a sentinel
     var dm = (10).divmod(0);
-    print(d(dm.0) + "," + d(dm.1));      // 0,10  — 10 / 0 == 0, 10 % 0 == 10
-    // documented sentinel
+    print(d(dm.0) + "," + d(dm.1));      // 0,10 — total division, no sentinel
     print("[" + int.int_to_string_radix(42, 99) + "]");   // []  base > 36
     print("[" + int.int_to_string_radix(42, 1) + "]");    // []  base < 2
     print(int.int_to_string_radix(0 - 255, 16));          // -ff (valid base)
