@@ -308,7 +308,12 @@ pub function __map_hash(k: i32, keyKind: i32): i32 {
     return __map_wang_mix(k);
 }
 
-pub function map_new_impl(cap_hint: i32, keyKind: i32, valKind: i32): usize {
+pub function map_new_impl(cap_hint: i32, keyTag: i32, valKind: i32): usize {
+    // keyTag is `kind | keyCellBytes<<8` (the IR's mapKeyTag). Split it on
+    // arrival: the plain kind stays at +8, where eight readers already expect
+    // it, and the cell size takes the pad at +20. Encoding the size into +8
+    // instead would make every one of those readers mask (#8493).
+    var keyKind: i32 = keyTag & 255;
     var cap: i32 = __map_pow2_ceil(cap_hint);
     var hdr: i32 = __map_hdr_bytes(keyKind);
     var buf: usize = __alloc(__map_buf_bytes(cap, hdr));
@@ -336,7 +341,7 @@ pub function map_new_impl(cap_hint: i32, keyKind: i32, valKind: i32): usize {
     var seed: i32 = 0;
     if (keyKind == 1) { seed = __map_hash_seed(); }
     __store_i32(buf + 16, seed);
-    __store_i32(buf + 20, 0);                     // pad — keeps buckets 8-byte aligned
+    __store_i32(buf + 20, keyTag >> 8);           // key cell bytes (0 = the slot IS the key)
     __memset(buf + hdr, 255, cap * 4);            // buckets → all -1
     __memset(__map_ctrl_base(buf, cap), 128, cap + 8);  // ctrl → all empty
     // Map handle is a heap-allocated pointer cell. 8 bytes
@@ -621,6 +626,30 @@ function __map_val_cell_bytes(buf: usize): i32 {
 // __map_free_val_cell reclaims the boxed cell a value slot pointed at once
 // the map has stopped naming it — the displaced slot of an overwrite or a
 // delete. No-op for a column whose slots are not boxed.
+// __map_free_key_cell is __map_free_val_cell's KEY-side twin: it returns the
+// cell a key slot points at, with the size map_new stamped into the header.
+//
+// A deleted entry's key was orphaned. __map_delete_keyed_impl frees the value
+// cell and tombstones the bucket, and swap-with-last then overwrites the key
+// slot — so the cell it pointed at is unreachable, and __drop_map_str_keys
+// only ever walks LIVE entries. 16 B per delete hit on the two boxing ABIs;
+// x86-64 stores a string key as its data pointer with no cell at all, which
+// is why it read clean (#8493).
+//
+// A kind-1 cell holds a string the map owns, so the string is released before
+// the cell — the same order __drop_map_str_keys uses. `k as string` is the
+// two-word load on a boxing target, and cellBytes is only ever non-zero
+// there, so one spelling covers every case that reaches it.
+function __map_free_key_cell(buf: usize, k: usize): void {
+    var cellBytes: i32 = __load_i32(buf + 20);
+    if (cellBytes == 0) { return; }
+    if (k == 0) { return; }
+    if (__load_i32(buf + 8) == 1) {
+        __fern_str_dec(k as string);
+    }
+    __free(k, cellBytes);
+}
+
 function __map_free_val_cell(buf: usize, v: usize): void {
     var cellBytes: i32 = __map_val_cell_bytes(buf);
     if (cellBytes == 0) { return; }
@@ -1009,6 +1038,7 @@ pub function __map_clear_impl(m: usize): void {
         var i: i32 = 0;
         while (i < len_) {
             __map_free_val_cell(buf, __load_ptr(entriesBase + i * entryStride + ptrW));
+            __map_free_key_cell(buf, __load_ptr(entriesBase + i * entryStride));
             i = i + 1;
         }
     }
@@ -1155,7 +1185,7 @@ function __map_grow_keyed(m: usize, hash_fn: (usize) => i32): usize {
     __store_i32(newBuf + 8,  oldKK);
     __store_i32(newBuf + 12, oldVK);
     __store_i32(newBuf + 16, seed);   // a grow must not change the map's hash
-    __store_i32(newBuf + 20, 0);
+    __store_i32(newBuf + 20, __load_i32(oldBuf + 20));
     __memset(newBuf + hdr, 255, newCap * 4);
     var newCtrl: usize = __map_ctrl_base(newBuf, newCap);
     __memset(newCtrl, 128, newCap + 8);
@@ -1335,6 +1365,7 @@ pub function __map_delete_keyed_impl(m: usize, k: usize, hash_fn: (usize) => i32
     }
     if (foundBucket == 0 - 1) { return false; }
     __map_free_val_cell(buf, __load_ptr(entriesBase + idx * entryStride + ptrW));
+    __map_free_key_cell(buf, __load_ptr(entriesBase + idx * entryStride));
     __store_i32(buf + __map_hdr(buf) + foundBucket * 4, 0 - 2);
     __map_ctrl_set(ctrlBase, cap, foundBucket, 254);
     var last: i32 = len_ - 1;

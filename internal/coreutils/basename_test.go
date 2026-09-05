@@ -2,8 +2,8 @@ package coreutils
 
 import "testing"
 
-func TestBasenameParity(t *testing.T) {
-	requireParity(t, "basename", []invocation{
+func basenameCases(t *testing.T) []invocation {
+	return []invocation{
 		// The name rule: last component, trailing slashes dropped, all
 		// slashes is `/`, empty stays empty.
 		{name: "plain name", args: []string{"a"}},
@@ -134,7 +134,11 @@ func TestBasenameParity(t *testing.T) {
 		{name: "extra operand with a backslash", args: []string{"a", "b", "\\c"}},
 		{name: "extra operand with question marks", args: []string{"a", "b", "c??(d"}},
 		{name: "extra operand that is empty", args: []string{"a", "b", ""}},
-	})
+	}
+}
+
+func TestBasenameParity(t *testing.T) {
+	requireParity(t, "basename", basenameCases(t))
 }
 
 func TestBasenameHelpVersion(t *testing.T) {

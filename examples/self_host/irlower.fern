@@ -3050,10 +3050,11 @@ pub function ident_is_fn_value(name: string, s: LowerState): boolean {
 // "Option[string]"), or "" otherwise. Comma-free is required because the tuple-
 // element tag encoding (mark_tuple_elems / tuple_elem_tag) splits on commas, so
 // `Result[T, E]` (which has one) is deliberately NOT recovered here — a Result
-// element gets no tag, so the lowering bails on it (#3018). Only a `Some(<scalar/string>)`
-// construction or an Option-typed local/param is admitted (a leak-only box, one
-// pointer slot, like a struct element); a `None` with no statically-known
-// payload, or a nested Option, falls through to "".
+// element gets no tag, so the lowering bails on it (#3018). Admitted: a
+// `Some(<scalar / string / leak-safe struct>)` construction, and an
+// Option-typed local / param / call result (a leak-only box, one pointer slot,
+// like a struct element). A `None` with no statically-known payload, or a
+// nested Option, falls through to "".
 pub function expr_opt_elem_tag(e: ast.Expr, s: LowerState): string {
     match (e) {
         ast.ExprCall(c) => {
@@ -3072,15 +3073,24 @@ pub function expr_opt_elem_tag(e: ast.Expr, s: LowerState): string {
                         if (pt == "i32" || pt == "string" || pt == "i64" || elem_ty_is_f64slot(pt) || pt == "boolean" || pt == "clo") {
                             return "Option[" + pt + "]";
                         }
+                        // A leak-safe STRUCT payload (`Some(S { … })`): the box
+                        // holds one struct pointer at offset 8, which is what the
+                        // match lowering's ptag_is_struct branch already reads —
+                        // the same slot shape a struct FIELD of type Option[S] has
+                        // carried since is_leaksafe_opt_field_d admitted it. Only
+                        // this tag was missing, so `(Some(S { … }), g)` bailed the
+                        // whole module while `var o: Option[S] = Some(S { … })`
+                        // lowered (#8407).
+                        if (opt_payload_struct_ok(pt, s)) { return "Option[" + pt + "]"; }
                         return "";
                     }
                     var rt: string = resolve_argref_opt_type(s.opt_ret_type(cid.name), c.args, s);
                     if (rt.len() >= 8 && slice_unchecked(rt, 0, 7) == "Option[") { return rt; }
-                    return opt_elem_tag_from_ty(c.ty);
+                    return opt_elem_tag_from_ty(c.ty, s);
                 },
                 // typed-IR (#5986): an Option-returning METHOD call (`st.find(x)`)
                 // has no registry key here; the checker's stamped tag answers.
-                _ => { return opt_elem_tag_from_ty(c.ty); }
+                _ => { return opt_elem_tag_from_ty(c.ty, s); }
             }
         },
         ast.ExprIdent(id) => {
@@ -3095,14 +3105,30 @@ pub function expr_opt_elem_tag(e: ast.Expr, s: LowerState): string {
 
 // opt_elem_tag_from_ty admits a checker-stamped "Option[T]" for tuple-element
 // typing under the same payload constraint the Some-construction walk
-// enforces: the element machinery handles exactly these payload kinds, and a
-// wider tag (Option[u64], a struct payload) admitted here routes the element
-// into lowering the walk's rejection deliberately kept it out of.
-function opt_elem_tag_from_ty(ty: string): string {
+// enforces — the two are kept in step deliberately, so a method returning
+// `Option[S]` at an element types exactly as the direct `Some(S { … })` does.
+// A payload outside the set (Option[u64]) admitted here would route the element
+// into lowering the walk's rejection keeps it out of.
+function opt_elem_tag_from_ty(ty: string, s: LowerState): string {
     if (ty.len() < 8 || slice_unchecked(ty, 0, 7) != "Option[") { return ""; }
     var pt: string = opt_payload_type(ty, "Some");
     if (pt == "i32" || pt == "string" || pt == "i64" || elem_ty_is_f64slot(pt) || pt == "boolean") { return ty; }
+    // The struct payload the Some-construction walk admits (#8407): a call or
+    // method returning `Option[S]` types its element the same way the direct
+    // construction does.
+    if (opt_payload_struct_ok(pt, s)) { return ty; }
     return "";
+}
+
+// opt_payload_struct_ok reports whether `pt` names a struct whose Option box may
+// ride one tuple slot: leak-safe, so the tuple leaks it exactly as a struct
+// element or an Option[i32] element leaks — no rc traffic to get wrong. The
+// depth/visiting pair is threaded so a self-referential payload
+// (`Option[Node]` on `struct Node`) short-circuits rather than recursing.
+function opt_payload_struct_ok(pt: string, s: LowerState): boolean {
+    if (!decl_is_struct(s.frame.structs, pt)) { return false; }
+    var visiting: string[] = [];
+    return decl_is_leaksafe_d(s.frame.structs, pt, 0, visiting);
 }
 
 // some_opt_type returns the "Option[T]" type of a DIRECT `Some(x)` construction
@@ -28536,6 +28562,7 @@ function str_cand_site_of(cands: string[], name: string): string {
 function alias_bind_sites_of(stmts: ast.Stmt[], src: string, borrowable: string[], recv_borrow: string[], body: ast.Stmt[], acc: string[]): string[] {
     var a: string[] = acc;
     var found: string[] = bare_alias_bind_sites_of(stmts, src, false, []);
+    if (found.len() == 0) { return a; }
     var reasg: string[] = body_assign_targets(body);
     var fi: i32 = 0;
     while (fi < found.len()) {
@@ -29610,11 +29637,10 @@ struct PreciseDrops { idxs: i32[], names: string[], kinds: string[] }
 // is its LAST top-level statement reference; releasing after that whole
 // statement completes is sound even when the last reference sits inside a
 // nested block.
-function precise_drop_names(body: ast.Stmt[], structs: StructTab, arr_ret: SigReg, strarr_ret: SigReg, borrowable: string[], opt_fresh_reg: SigReg, str_fresh: string[], msites: string[]): PreciseDrops {
+function precise_drop_names(body: ast.Stmt[], reassigned: string[], structs: StructTab, arr_ret: SigReg, strarr_ret: SigReg, borrowable: string[], opt_fresh_reg: SigReg, str_fresh: string[], msites: string[]): PreciseDrops {
     var idxs: i32[] = [];
     var names: string[] = [];
     var kinds: string[] = [];
-    var reassigned: string[] = body_assign_targets(body);
     var seen: string[] = [];
     var i: i32 = 0;
     while (i < body.len()) {
@@ -33733,9 +33759,8 @@ function stmt_assigns_fresh_rcenum(st: ast.Stmt, name: string, owner: string, st
 // and crediting it here would be a second claim on a released box), a rebind
 // that always rebuilds a fresh all-scalar enum, and body_unsafe_for to prove the
 // name never escapes.
-function collect_fresh_scenum_names(stmts: ast.Stmt[], structs: StructTab, borrowable: string[], plan_on: boolean, plan_fe: string[], acc: string[]): string[] {
+function collect_fresh_scenum_names(stmts: ast.Stmt[], reassigned: string[], structs: StructTab, borrowable: string[], plan_on: boolean, plan_fe: string[], acc: string[]): string[] {
     var a: string[] = acc;
-    var reassigned: string[] = body_assign_targets(stmts);
     for stmt in stmts {
         match (stmt) {
             ast.StmtVar(v) => {
@@ -33763,11 +33788,11 @@ function collect_fresh_scenum_names(stmts: ast.Stmt[], structs: StructTab, borro
                     a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
                 }
             },
-            ast.StmtIf(iff) => { a = collect_fresh_scenum_names(iff.then_body, structs, borrowable, plan_on, plan_fe, a); a = collect_fresh_scenum_names(iff.else_body, structs, borrowable, plan_on, plan_fe, a); },
-            ast.StmtWhile(w) => { a = collect_fresh_scenum_names(w.body, structs, borrowable, plan_on, plan_fe, a); },
-            ast.StmtFor(fo) => { a = collect_fresh_scenum_names(fo.body, structs, borrowable, plan_on, plan_fe, a); },
+            ast.StmtIf(iff) => { a = collect_fresh_scenum_names(iff.then_body, body_assign_targets(iff.then_body), structs, borrowable, plan_on, plan_fe, a); a = collect_fresh_scenum_names(iff.else_body, body_assign_targets(iff.else_body), structs, borrowable, plan_on, plan_fe, a); },
+            ast.StmtWhile(w) => { a = collect_fresh_scenum_names(w.body, body_assign_targets(w.body), structs, borrowable, plan_on, plan_fe, a); },
+            ast.StmtFor(fo) => { a = collect_fresh_scenum_names(fo.body, body_assign_targets(fo.body), structs, borrowable, plan_on, plan_fe, a); },
             ast.StmtMatch(m) => {
-                for arm in m.arms { a = collect_fresh_scenum_names(arm.body, structs, borrowable, plan_on, plan_fe, a); }
+                for arm in m.arms { a = collect_fresh_scenum_names(arm.body, body_assign_targets(arm.body), structs, borrowable, plan_on, plan_fe, a); }
             },
             _ => {}
         }
@@ -33775,9 +33800,8 @@ function collect_fresh_scenum_names(stmts: ast.Stmt[], structs: StructTab, borro
     return a;
 }
 
-function collect_fresh_rcenum_names(stmts: ast.Stmt[], structs: StructTab, opt_fresh_ret: SigReg, borrowable: string[], str_fresh: string[], msites: string[], acc: string[]): string[] {
+function collect_fresh_rcenum_names(stmts: ast.Stmt[], reassigned: string[], structs: StructTab, opt_fresh_ret: SigReg, borrowable: string[], str_fresh: string[], msites: string[], acc: string[]): string[] {
     var a: string[] = acc;
-    var reassigned: string[] = body_assign_targets(stmts);
     var vi: i32 = 0;
     while (vi < stmts.len()) {
         match (stmts[vi]) {
@@ -33831,15 +33855,15 @@ function collect_fresh_rcenum_names(stmts: ast.Stmt[], structs: StructTab, opt_f
                     }
                 }
             },
-            ast.StmtIf(iff) => { a = collect_fresh_rcenum_names(iff.then_body, structs, opt_fresh_ret, borrowable, str_fresh, msites, a); a = collect_fresh_rcenum_names(iff.else_body, structs, opt_fresh_ret, borrowable, str_fresh, msites, a); },
-            ast.StmtWhile(w) => { a = collect_fresh_rcenum_names(w.body, structs, opt_fresh_ret, borrowable, str_fresh, msites, a); },
-            ast.StmtFor(f) => { a = collect_fresh_rcenum_names(f.body, structs, opt_fresh_ret, borrowable, str_fresh, msites, a); },
+            ast.StmtIf(iff) => { a = collect_fresh_rcenum_names(iff.then_body, body_assign_targets(iff.then_body), structs, opt_fresh_ret, borrowable, str_fresh, msites, a); a = collect_fresh_rcenum_names(iff.else_body, body_assign_targets(iff.else_body), structs, opt_fresh_ret, borrowable, str_fresh, msites, a); },
+            ast.StmtWhile(w) => { a = collect_fresh_rcenum_names(w.body, body_assign_targets(w.body), structs, opt_fresh_ret, borrowable, str_fresh, msites, a); },
+            ast.StmtFor(f) => { a = collect_fresh_rcenum_names(f.body, body_assign_targets(f.body), structs, opt_fresh_ret, borrowable, str_fresh, msites, a); },
             ast.StmtMatch(m) => {
-                for arm in m.arms { a = collect_fresh_rcenum_names(arm.body, structs, opt_fresh_ret, borrowable, str_fresh, msites, a); }
+                for arm in m.arms { a = collect_fresh_rcenum_names(arm.body, body_assign_targets(arm.body), structs, opt_fresh_ret, borrowable, str_fresh, msites, a); }
             },
             ast.StmtDefer(d) => {
                 match (d.action) {
-                    ast.StmtWhile(dw) => { a = collect_fresh_rcenum_names(dw.body, structs, opt_fresh_ret, borrowable, str_fresh, msites, a); },
+                    ast.StmtWhile(dw) => { a = collect_fresh_rcenum_names(dw.body, body_assign_targets(dw.body), structs, opt_fresh_ret, borrowable, str_fresh, msites, a); },
                     _ => {}
                 }
             },
@@ -39146,12 +39170,11 @@ function arrstruct_credit_rows(body: ast.Stmt[], structs: StructTab, borrowable:
     return out;
 }
 
-function reclaimable_names_of(body: ast.Stmt[], structs: StructTab, borrowable: string[], fresh_ret: string[], str_fresh_ret: string[], opt_fresh_ret: SigReg, tup_fresh_ret: string[], msites: string[], recv_borrow: string[], struct_ret_fns: SigReg, params: ast.ParamDecl[], plan_on: boolean, plan_fe: string[], handback: string[], sfok: string[], str_handback_ret: string[]): string[] {
+function reclaimable_names_of(body: ast.Stmt[], reassigned: string[], structs: StructTab, borrowable: string[], fresh_ret: string[], str_fresh_ret: string[], opt_fresh_ret: SigReg, tup_fresh_ret: string[], msites: string[], recv_borrow: string[], struct_ret_fns: SigReg, params: ast.ParamDecl[], plan_on: boolean, plan_fe: string[], handback: string[], sfok: string[], str_handback_ret: string[]): string[] {
     var fresh: string[] = collect_fresh_struct_names(body, structs, []);
     // Widen with the DISCARDED fresh-ret-call locals (#3457 follow-up): a
     // `var r = f(..)` whose result is read-then-dead, rebound or not. The shared
     // body_unsafe_for gate below still proves non-escape before any is freed.
-    var reassigned: string[] = body_assign_targets(body);
     fresh = collect_fresh_ret_call_names(body, structs, fresh_ret, fresh);
     // The array-of-structs rows come FIRST: their "APOWNED:" stamps say which
     // self-appends are counted shares, which is what decides whether the struct
@@ -39278,12 +39301,12 @@ function reclaimable_names_of(body: ast.Stmt[], structs: StructTab, borrowable: 
     // moved-out payload is rejected) before crediting. The consuming-match reclaim
     // (consumed_rcpayload_enum_frees) is top-level-only, so it never covers a
     // loop-local; this closes that gap (#4357) with no overlap.
-    var rcenums: string[] = collect_fresh_rcenum_names(body, structs, opt_fresh_ret, borrowable, str_fresh_ret, msites, []);
+    var rcenums: string[] = collect_fresh_rcenum_names(body, reassigned, structs, opt_fresh_ret, borrowable, str_fresh_ret, msites, []);
     out = reclaimable_rcenum(rcenums, out);
     // All-scalar ENUM locals with no consuming match ("SCENUMS:"): the shallow
     // sibling of the "RCENUMS:" credit above. Both the loop rebind and the
     // scope-exit sweep release the box with a plain rc-dec.
-    var scenums: string[] = collect_fresh_scenum_names(body, structs, borrowable, plan_on, plan_fe, []);
+    var scenums: string[] = collect_fresh_scenum_names(body, reassigned, structs, borrowable, plan_on, plan_fe, []);
     out = reclaimable_scenum(scenums, out);
     // Fresh heap-string locals (`var s: string = a + b` / `.to_upper()` / chr(..)
     // / …): credited under a "STR:" prefix so only slot_is_reclaimable_str matches
@@ -39480,7 +39503,7 @@ function reclaimable_names_of(body: ast.Stmt[], structs: StructTab, borrowable: 
     // analysis), so the names it returns are already escape-checked — credit
     // them directly (a body_unsafe_for gate here would reject the consuming
     // match scrutinee, exactly what the block-level analysis handles instead).
-    var ots: string[] = collect_fresh_opttup_names(body, structs, []);
+    var ots: string[] = collect_fresh_opttup_names(body, reassigned, structs, []);
     out = reclaimable_opttup(ots, out);
     // Fresh Option[<struct-with-array-field>] locals (#4365): `var o: Option[P] =
     // Some(P { xs: [..] })` (P routes field-reclaim) consumed by a borrow-only match —
@@ -39489,7 +39512,7 @@ function reclaimable_names_of(body: ast.Stmt[], structs: StructTab, borrowable: 
     // struct-field deep-drop __struct_drop_<P> -> struct box dec -> option box dec).
     // collect_fresh_optstruct_names is self-gating (block-level consuming-match analysis),
     // so credit the names it returns directly.
-    var oss: string[] = collect_fresh_optstruct_names(body, structs, []);
+    var oss: string[] = collect_fresh_optstruct_names(body, reassigned, structs, []);
     out = reclaimable_optstruct(oss, out);
     // Fresh Option[<scalar-arr-of-arr>] locals (#4365): `var o: Option[i32[][]] =
     // Some([[i, i+1], ...])` consumed by a borrow-only match — the arr-of-arr sibling of
@@ -39497,7 +39520,7 @@ function reclaimable_names_of(body: ast.Stmt[], structs: StructTab, borrowable: 
     // + exit sweep through emit_optarrarr_deep_free (tag-check -> __fern_arrarr_free payload ->
     // option box dec). collect_fresh_optarrarr_names is self-gating (block-level consuming-match
     // analysis), so credit its names directly.
-    var oas: string[] = collect_fresh_optarrarr_names(body, []);
+    var oas: string[] = collect_fresh_optarrarr_names(body, reassigned, []);
     out = reclaimable_optarrarr(oas, out);
     // REBOUND Option[<flat scalar array>] locals (#6127): `var o: Option[i32[]] =
     // Some([..]); while { o = Some([..]) }`. The simplest payload kind in this
@@ -39509,12 +39532,12 @@ function reclaimable_names_of(body: ast.Stmt[], structs: StructTab, borrowable: 
     // gate, so the two sets are disjoint and no box is freed twice. It covers
     // the rebound local whether or not a match consumes it — see
     // optarr_rebound_credit_ok for the two proofs.
-    var ofa: string[] = collect_fresh_optarr_names(body, plan_on, plan_fe, []);
+    var ofa: string[] = collect_fresh_optarr_names(body, reassigned, plan_on, plan_fe, []);
     out = reclaimable_optarr(ofa, out);
     // The non-reassigned, non-match-consumed sibling (#6360) — same tag, same
     // exit sweep; see collect_unmatched_optarr_names for why the two sets
     // cannot overlap.
-    var ufa: string[] = collect_unmatched_optarr_names(body, opt_fresh_ret, plan_on, plan_fe, []);
+    var ufa: string[] = collect_unmatched_optarr_names(body, reassigned, opt_fresh_ret, plan_on, plan_fe, []);
     out = reclaimable_unmatched_optarr(body, opt_fresh_ret, ufa, out);
     // A vetted alias of one of these shares the box and releases it BOX-ONLY
     // (#7687). Granted here rather than inside reclaimable_unmatched_optarr
@@ -39524,18 +39547,18 @@ function reclaimable_names_of(body: ast.Stmt[], structs: StructTab, borrowable: 
     // Same quadrant, STRING payload (#6360) — its own tag because the release is
     // __fern_str_free, not the flat dec, and the call form needs the registry's
     // "f" flag rather than bare membership.
-    var ufs: string[] = collect_unmatched_optstr_names(body, opt_fresh_ret, str_fresh_ret, plan_on, plan_fe, []);
+    var ufs: string[] = collect_unmatched_optstr_names(body, reassigned, opt_fresh_ret, str_fresh_ret, plan_on, plan_fe, []);
     out = reclaimable_optstr(ufs, out);
     out = credit_opt_alias_sites(body, ufs, "OPTSTR:", out);
     // `Option[Option[<rc payload>]]` (#7718) — the two-level release, which the
     // scalar-inner nested sibling's flat dec would strand the inner payload of.
-    var uor: string[] = collect_unmatched_optopt_rc_names(body, plan_on, plan_fe, []);
+    var uor: string[] = collect_unmatched_optopt_rc_names(body, reassigned, plan_on, plan_fe, []);
     out = reclaimable_optopt_rc(uor, out);
     out = credit_opt_alias_sites(body, uor, "OPTOPTRC:", out);
     // The superseded boxes of a MATCH-CONSUMED, reassigned nested Option (#7716)
     // — assign-path only; see collect_optopt_rebind_names for why this cannot
     // collide with the consuming-match family's own release.
-    var orb: string[] = collect_optopt_rebind_names(body, []);
+    var orb: string[] = collect_optopt_rebind_names(body, reassigned, []);
     out = reclaimable_optopt_rebind(orb, out);
     // The MATCH-CONSUMED quadrant of the same family (#7710). The array payload
     // kinds are reclaimed whether or not a match consumes them; the string one was
@@ -39543,7 +39566,7 @@ function reclaimable_names_of(body: ast.Stmt[], structs: StructTab, borrowable: 
     // match (o) { .. }` freed nothing at all — 72 B/round, unbounded, against 0 on
     // native. Same tag and same exit sweep; see collect_fresh_optstr_names for why
     // the two collectors cannot overlap.
-    var mfs: string[] = collect_fresh_optstr_names(body, opt_fresh_ret, str_fresh_ret, []);
+    var mfs: string[] = collect_fresh_optstr_names(body, reassigned, opt_fresh_ret, str_fresh_ret, []);
     out = reclaimable_optstr(mfs, out);
     // Fresh (<tuple-with-array>)[] locals (#4365): `var xs: (i32, i32[])[] =
     // [(i, [i, i+1]), ...]` — an array whose elements are fresh tuples carrying fresh
@@ -39565,7 +39588,7 @@ function reclaimable_names_of(body: ast.Stmt[], structs: StructTab, borrowable: 
     // block). The escape gate is deliberately much tighter than its siblings' — only
     // `xs.len()` — because an element extraction here risks a double-free rather than
     // a leak; arrenum_esc_expr says why.
-    var aens: string[] = collect_fresh_arrenum_names(body, body, structs, fresh_ret, []);
+    var aens: string[] = collect_fresh_arrenum_names(body, reassigned, body, structs, fresh_ret, []);
     out = reclaimable_arrenum(aens, body, borrowable, msites, recv_borrow, structs, out);
     // Fresh SCALAR-FIELD struct-array locals (#4355): `var g = [P { .. }, P { .. }]`
     // — every element fresh (a no-base struct literal, or a call to a strict-fresh
@@ -39621,7 +39644,7 @@ function reclaimable_names_of(body: ast.Stmt[], structs: StructTab, borrowable: 
     // box-only shallow free that leaked it on the register backends. Gated
     // (enum_only_wildcard_used_rec + array-payload-only) so b's payload is never aliased;
     // DISJOINT from the consume-by-match enum frees (those require b NOT reassigned).
-    out = enum_reassign_reclaim_names(body, structs, out);
+    out = enum_reassign_reclaim_names(body, reassigned, structs, out);
     // Enum locals this frame CONSTRUCTED, credited "FRESHBOX:<name>" — the
     // ownership question a match-arm payload return has to answer (#8070). See
     // frame_constructed_enum_names_of.
@@ -39683,9 +39706,8 @@ function frame_constructed_enum_names_of(body: ast.Stmt[], structs: StructTab, o
 // caller's original). Eligibility: reassigned + only-safe-uses-plus-return. The
 // struct-slot check is applied at the emit site (struct_type_of_slot), so a
 // scalar param — flagged unsafe by its arithmetic — never reaches here.
-function snapshot_param_slots_of(fn: parser.FuncDecl, borrowable: string[], consume_safe: string[]): string[] {
+function snapshot_param_slots_of(fn: parser.FuncDecl, reassigned: string[], borrowable: string[], consume_safe: string[]): string[] {
     var out: string[] = [];
-    var reassigned: string[] = body_assign_targets(fn.body);
     // Slot numbers, not names (#7253). lower_func lays the frame out receiver-
     // first then parameters, in this order, so the slot is known here without a
     // LowerState — and unlike the name it cannot be answered by a body local of
@@ -41257,8 +41279,7 @@ function is_fresh_ret_binding(e: ast.Expr, recv_type: string, fresh_ret: string[
 // <name>" row names the variable whose box seed_snapshot_local copies as the
 // rebind release's snapshot; the moved-out final is kept by struct
 // move-on-return.
-function snapshot_local_names_of(fn: parser.FuncDecl, structs: StructTab, borrowable: string[], fresh_ret: string[], consume_safe: string[], ret_fresh: string[]): string[] {
-    var reassigned: string[] = body_assign_targets(fn.body);
+function snapshot_local_names_of(fn: parser.FuncDecl, reassigned: string[], structs: StructTab, borrowable: string[], fresh_ret: string[], consume_safe: string[], ret_fresh: string[]): string[] {
     return collect_snap_locals(fn.body, fn, structs, borrowable, fresh_ret, consume_safe, reassigned, ret_fresh, []);
 }
 function collect_snap_locals(stmts: ast.Stmt[], fn: parser.FuncDecl, structs: StructTab, borrowable: string[], fresh_ret: string[], consume_safe: string[], reassigned: string[], ret_fresh: string[], acc: string[]): string[] {
@@ -43207,9 +43228,8 @@ function enum_only_wildcard_used_rec(stmts: ast.Stmt[], name: string, enum_name:
 // "ENUMRE:<E>:<binding site>". Array-payload-only enum E, fresh array payloads, b IS reassigned
 // (DISJOINT from the consume-by-match frees, which require NOT reassigned), and
 // enum_only_wildcard_used_rec proves the payload is never aliased.
-function enum_reassign_reclaim_names(body: ast.Stmt[], structs: StructTab, acc: string[]): string[] {
+function enum_reassign_reclaim_names(body: ast.Stmt[], reassigned: string[], structs: StructTab, acc: string[]): string[] {
     var out: string[] = acc;
-    var reassigned: string[] = body_assign_targets(body);
     var i: i32 = 0;
     while (i < body.len()) {
         match (body[i]) {
@@ -45701,9 +45721,8 @@ function opttup_payload_escapes(stmts: ast.Stmt[], name: string, inner: string, 
 // 60000 bytes over 100 rounds with ZERO releases emitted. #6225 established the
 // per-rebind discipline for the flat-array kind; this is the same relaxation for
 // the tuple payload.
-function collect_fresh_opttup_names(stmts: ast.Stmt[], structs: StructTab, acc: string[]): string[] {
+function collect_fresh_opttup_names(stmts: ast.Stmt[], reassigned: string[], structs: StructTab, acc: string[]): string[] {
     var a: string[] = acc;
-    var reassigned: string[] = body_assign_targets(stmts);
     var vi: i32 = 0;
     while (vi < stmts.len()) {
         match (stmts[vi]) {
@@ -45731,11 +45750,11 @@ function collect_fresh_opttup_names(stmts: ast.Stmt[], structs: StructTab, acc: 
                     }
                 }
             },
-            ast.StmtIf(f) => { a = collect_fresh_opttup_names(f.then_body, structs, a); a = collect_fresh_opttup_names(f.else_body, structs, a); },
-            ast.StmtWhile(w) => { a = collect_fresh_opttup_names(w.body, structs, a); },
-            ast.StmtFor(fo) => { a = collect_fresh_opttup_names(fo.body, structs, a); },
+            ast.StmtIf(f) => { a = collect_fresh_opttup_names(f.then_body, body_assign_targets(f.then_body), structs, a); a = collect_fresh_opttup_names(f.else_body, body_assign_targets(f.else_body), structs, a); },
+            ast.StmtWhile(w) => { a = collect_fresh_opttup_names(w.body, body_assign_targets(w.body), structs, a); },
+            ast.StmtFor(fo) => { a = collect_fresh_opttup_names(fo.body, body_assign_targets(fo.body), structs, a); },
             ast.StmtMatch(m) => {
-                for arm in m.arms { a = collect_fresh_opttup_names(arm.body, structs, a); }
+                for arm in m.arms { a = collect_fresh_opttup_names(arm.body, body_assign_targets(arm.body), structs, a); }
             },
             _ => {}
         }
@@ -47287,9 +47306,8 @@ function optstruct_payload_escapes(stmts: ast.Stmt[], name: string, sty: string,
 // Some(<struct lit>)/None under an Option[<struct-with-array>] annotation, consumed by
 // exactly one borrow-only match in the same block, not escaping. A reassigned name is
 // admitted when every rebind is itself fresh (opt_rebinds_all_fresh, #6127).
-function collect_fresh_optstruct_names(stmts: ast.Stmt[], structs: StructTab, acc: string[]): string[] {
+function collect_fresh_optstruct_names(stmts: ast.Stmt[], reassigned: string[], structs: StructTab, acc: string[]): string[] {
     var a: string[] = acc;
-    var reassigned: string[] = body_assign_targets(stmts);
     var vi: i32 = 0;
     while (vi < stmts.len()) {
         match (stmts[vi]) {
@@ -47317,11 +47335,11 @@ function collect_fresh_optstruct_names(stmts: ast.Stmt[], structs: StructTab, ac
                     }
                 }
             },
-            ast.StmtIf(f) => { a = collect_fresh_optstruct_names(f.then_body, structs, a); a = collect_fresh_optstruct_names(f.else_body, structs, a); },
-            ast.StmtWhile(w) => { a = collect_fresh_optstruct_names(w.body, structs, a); },
-            ast.StmtFor(fo) => { a = collect_fresh_optstruct_names(fo.body, structs, a); },
+            ast.StmtIf(f) => { a = collect_fresh_optstruct_names(f.then_body, body_assign_targets(f.then_body), structs, a); a = collect_fresh_optstruct_names(f.else_body, body_assign_targets(f.else_body), structs, a); },
+            ast.StmtWhile(w) => { a = collect_fresh_optstruct_names(w.body, body_assign_targets(w.body), structs, a); },
+            ast.StmtFor(fo) => { a = collect_fresh_optstruct_names(fo.body, body_assign_targets(fo.body), structs, a); },
             ast.StmtMatch(m) => {
-                for arm in m.arms { a = collect_fresh_optstruct_names(arm.body, structs, a); }
+                for arm in m.arms { a = collect_fresh_optstruct_names(arm.body, body_assign_targets(arm.body), structs, a); }
             },
             _ => {}
         }
@@ -47812,9 +47830,8 @@ function unmatched_optarr_err_str_fresh(stmts: ast.Stmt[], name: string, opt_fre
     return false;
 }
 
-function collect_unmatched_optstr_names(stmts: ast.Stmt[], opt_fresh_reg: SigReg, str_fresh_ret: string[], plan_on: boolean, plan_fe: string[], acc: string[]): string[] {
+function collect_unmatched_optstr_names(stmts: ast.Stmt[], reassigned: string[], opt_fresh_reg: SigReg, str_fresh_ret: string[], plan_on: boolean, plan_fe: string[], acc: string[]): string[] {
     var a: string[] = acc;
-    var reassigned: string[] = body_assign_targets(stmts);
     for stmt in stmts {
         match (stmt) {
             ast.StmtVar(v) => {
@@ -47830,11 +47847,11 @@ function collect_unmatched_optstr_names(stmts: ast.Stmt[], opt_fresh_reg: SigReg
                     a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
                 }
             },
-            ast.StmtIf(f) => { a = collect_unmatched_optstr_names(f.then_body, opt_fresh_reg, str_fresh_ret, plan_on, plan_fe, a); a = collect_unmatched_optstr_names(f.else_body, opt_fresh_reg, str_fresh_ret, plan_on, plan_fe, a); },
-            ast.StmtWhile(w) => { a = collect_unmatched_optstr_names(w.body, opt_fresh_reg, str_fresh_ret, plan_on, plan_fe, a); },
-            ast.StmtFor(fo) => { a = collect_unmatched_optstr_names(fo.body, opt_fresh_reg, str_fresh_ret, plan_on, plan_fe, a); },
+            ast.StmtIf(f) => { a = collect_unmatched_optstr_names(f.then_body, body_assign_targets(f.then_body), opt_fresh_reg, str_fresh_ret, plan_on, plan_fe, a); a = collect_unmatched_optstr_names(f.else_body, body_assign_targets(f.else_body), opt_fresh_reg, str_fresh_ret, plan_on, plan_fe, a); },
+            ast.StmtWhile(w) => { a = collect_unmatched_optstr_names(w.body, body_assign_targets(w.body), opt_fresh_reg, str_fresh_ret, plan_on, plan_fe, a); },
+            ast.StmtFor(fo) => { a = collect_unmatched_optstr_names(fo.body, body_assign_targets(fo.body), opt_fresh_reg, str_fresh_ret, plan_on, plan_fe, a); },
             ast.StmtMatch(m) => {
-                for arm in m.arms { a = collect_unmatched_optstr_names(arm.body, opt_fresh_reg, str_fresh_ret, plan_on, plan_fe, a); }
+                for arm in m.arms { a = collect_unmatched_optstr_names(arm.body, body_assign_targets(arm.body), opt_fresh_reg, str_fresh_ret, plan_on, plan_fe, a); }
             },
             _ => {}
         }
@@ -47922,9 +47939,8 @@ function unmatched_optopt_init_is_fresh(e: ast.Expr): boolean {
 // collide even so: this releases the OLD value at an assignment and that
 // releases the CURRENT value at the match. A disagreement costs a leak in one
 // direction or the other, never a double release.
-function collect_optopt_rebind_names(stmts: ast.Stmt[], acc: string[]): string[] {
+function collect_optopt_rebind_names(stmts: ast.Stmt[], reassigned: string[], acc: string[]): string[] {
     var a: string[] = acc;
-    var reassigned: string[] = body_assign_targets(stmts);
     var vi: i32 = 0;
     while (vi < stmts.len()) {
         match (stmts[vi]) {
@@ -47941,11 +47957,11 @@ function collect_optopt_rebind_names(stmts: ast.Stmt[], acc: string[]): string[]
                     }
                 }
             },
-            ast.StmtIf(f) => { a = collect_optopt_rebind_names(f.then_body, a); a = collect_optopt_rebind_names(f.else_body, a); },
-            ast.StmtWhile(w) => { a = collect_optopt_rebind_names(w.body, a); },
-            ast.StmtFor(fo) => { a = collect_optopt_rebind_names(fo.body, a); },
+            ast.StmtIf(f) => { a = collect_optopt_rebind_names(f.then_body, body_assign_targets(f.then_body), a); a = collect_optopt_rebind_names(f.else_body, body_assign_targets(f.else_body), a); },
+            ast.StmtWhile(w) => { a = collect_optopt_rebind_names(w.body, body_assign_targets(w.body), a); },
+            ast.StmtFor(fo) => { a = collect_optopt_rebind_names(fo.body, body_assign_targets(fo.body), a); },
             ast.StmtMatch(m) => {
-                for arm in m.arms { a = collect_optopt_rebind_names(arm.body, a); }
+                for arm in m.arms { a = collect_optopt_rebind_names(arm.body, body_assign_targets(arm.body), a); }
             },
             _ => {}
         }
@@ -47963,9 +47979,8 @@ function reclaimable_optopt_rebind(ns: string[], out: string[]): string[] {
     return out;
 }
 
-function collect_unmatched_optopt_rc_names(stmts: ast.Stmt[], plan_on: boolean, plan_fe: string[], acc: string[]): string[] {
+function collect_unmatched_optopt_rc_names(stmts: ast.Stmt[], reassigned: string[], plan_on: boolean, plan_fe: string[], acc: string[]): string[] {
     var a: string[] = acc;
-    var reassigned: string[] = body_assign_targets(stmts);
     for stmt in stmts {
         match (stmt) {
             ast.StmtVar(v) => {
@@ -47977,11 +47992,11 @@ function collect_unmatched_optopt_rc_names(stmts: ast.Stmt[], plan_on: boolean, 
                     a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
                 }
             },
-            ast.StmtIf(f) => { a = collect_unmatched_optopt_rc_names(f.then_body, plan_on, plan_fe, a); a = collect_unmatched_optopt_rc_names(f.else_body, plan_on, plan_fe, a); },
-            ast.StmtWhile(w) => { a = collect_unmatched_optopt_rc_names(w.body, plan_on, plan_fe, a); },
-            ast.StmtFor(fo) => { a = collect_unmatched_optopt_rc_names(fo.body, plan_on, plan_fe, a); },
+            ast.StmtIf(f) => { a = collect_unmatched_optopt_rc_names(f.then_body, body_assign_targets(f.then_body), plan_on, plan_fe, a); a = collect_unmatched_optopt_rc_names(f.else_body, body_assign_targets(f.else_body), plan_on, plan_fe, a); },
+            ast.StmtWhile(w) => { a = collect_unmatched_optopt_rc_names(w.body, body_assign_targets(w.body), plan_on, plan_fe, a); },
+            ast.StmtFor(fo) => { a = collect_unmatched_optopt_rc_names(fo.body, body_assign_targets(fo.body), plan_on, plan_fe, a); },
             ast.StmtMatch(m) => {
-                for arm in m.arms { a = collect_unmatched_optopt_rc_names(arm.body, plan_on, plan_fe, a); }
+                for arm in m.arms { a = collect_unmatched_optopt_rc_names(arm.body, body_assign_targets(arm.body), plan_on, plan_fe, a); }
             },
             _ => {}
         }
@@ -47998,9 +48013,8 @@ function reclaimable_optopt_rc(ns: string[], out: string[]): string[] {
     return out;
 }
 
-function collect_unmatched_optarr_names(stmts: ast.Stmt[], opt_fresh_reg: SigReg, plan_on: boolean, plan_fe: string[], acc: string[]): string[] {
+function collect_unmatched_optarr_names(stmts: ast.Stmt[], reassigned: string[], opt_fresh_reg: SigReg, plan_on: boolean, plan_fe: string[], acc: string[]): string[] {
     var a: string[] = acc;
-    var reassigned: string[] = body_assign_targets(stmts);
     for stmt in stmts {
         match (stmt) {
             ast.StmtVar(v) => {
@@ -48022,11 +48036,11 @@ function collect_unmatched_optarr_names(stmts: ast.Stmt[], opt_fresh_reg: SigReg
                     a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
                 }
             },
-            ast.StmtIf(f) => { a = collect_unmatched_optarr_names(f.then_body, opt_fresh_reg, plan_on, plan_fe, a); a = collect_unmatched_optarr_names(f.else_body, opt_fresh_reg, plan_on, plan_fe, a); },
-            ast.StmtWhile(w) => { a = collect_unmatched_optarr_names(w.body, opt_fresh_reg, plan_on, plan_fe, a); },
-            ast.StmtFor(fo) => { a = collect_unmatched_optarr_names(fo.body, opt_fresh_reg, plan_on, plan_fe, a); },
+            ast.StmtIf(f) => { a = collect_unmatched_optarr_names(f.then_body, body_assign_targets(f.then_body), opt_fresh_reg, plan_on, plan_fe, a); a = collect_unmatched_optarr_names(f.else_body, body_assign_targets(f.else_body), opt_fresh_reg, plan_on, plan_fe, a); },
+            ast.StmtWhile(w) => { a = collect_unmatched_optarr_names(w.body, body_assign_targets(w.body), opt_fresh_reg, plan_on, plan_fe, a); },
+            ast.StmtFor(fo) => { a = collect_unmatched_optarr_names(fo.body, body_assign_targets(fo.body), opt_fresh_reg, plan_on, plan_fe, a); },
             ast.StmtMatch(m) => {
-                for arm in m.arms { a = collect_unmatched_optarr_names(arm.body, opt_fresh_reg, plan_on, plan_fe, a); }
+                for arm in m.arms { a = collect_unmatched_optarr_names(arm.body, body_assign_targets(arm.body), opt_fresh_reg, plan_on, plan_fe, a); }
             },
             _ => {}
         }
@@ -48073,9 +48087,8 @@ function optarr_rebound_credit_ok(stmts: ast.Stmt[], v: ast.StmtVar, vi: i32, pl
         && !body_unsafe_for(stmts, v.name, [], []);
 }
 
-function collect_fresh_optarr_names(stmts: ast.Stmt[], plan_on: boolean, plan_fe: string[], acc: string[]): string[] {
+function collect_fresh_optarr_names(stmts: ast.Stmt[], reassigned: string[], plan_on: boolean, plan_fe: string[], acc: string[]): string[] {
     var a: string[] = acc;
-    var reassigned: string[] = body_assign_targets(stmts);
     var vi: i32 = 0;
     while (vi < stmts.len()) {
         match (stmts[vi]) {
@@ -48088,11 +48101,11 @@ function collect_fresh_optarr_names(stmts: ast.Stmt[], plan_on: boolean, plan_fe
                     a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
                 }
             },
-            ast.StmtIf(f) => { a = collect_fresh_optarr_names(f.then_body, plan_on, plan_fe, a); a = collect_fresh_optarr_names(f.else_body, plan_on, plan_fe, a); },
-            ast.StmtWhile(w) => { a = collect_fresh_optarr_names(w.body, plan_on, plan_fe, a); },
-            ast.StmtFor(fo) => { a = collect_fresh_optarr_names(fo.body, plan_on, plan_fe, a); },
+            ast.StmtIf(f) => { a = collect_fresh_optarr_names(f.then_body, body_assign_targets(f.then_body), plan_on, plan_fe, a); a = collect_fresh_optarr_names(f.else_body, body_assign_targets(f.else_body), plan_on, plan_fe, a); },
+            ast.StmtWhile(w) => { a = collect_fresh_optarr_names(w.body, body_assign_targets(w.body), plan_on, plan_fe, a); },
+            ast.StmtFor(fo) => { a = collect_fresh_optarr_names(fo.body, body_assign_targets(fo.body), plan_on, plan_fe, a); },
             ast.StmtMatch(m) => {
-                for arm in m.arms { a = collect_fresh_optarr_names(arm.body, plan_on, plan_fe, a); }
+                for arm in m.arms { a = collect_fresh_optarr_names(arm.body, body_assign_targets(arm.body), plan_on, plan_fe, a); }
             },
             _ => {}
         }
@@ -48465,9 +48478,8 @@ function optarrarr_payload_escapes(stmts: ast.Stmt[], name: string): boolean {
 // fresh Some(<arr-of-arr lit>)/None under an Option[<scalar-arr-of-arr>] annotation, consumed
 // by exactly one borrow-only match in the same block, not escaping. A reassigned name is
 // admitted when every rebind is itself fresh (opt_rebinds_all_fresh, #6127).
-function collect_fresh_optarrarr_names(stmts: ast.Stmt[], acc: string[]): string[] {
+function collect_fresh_optarrarr_names(stmts: ast.Stmt[], reassigned: string[], acc: string[]): string[] {
     var a: string[] = acc;
-    var reassigned: string[] = body_assign_targets(stmts);
     var vi: i32 = 0;
     while (vi < stmts.len()) {
         match (stmts[vi]) {
@@ -48486,11 +48498,11 @@ function collect_fresh_optarrarr_names(stmts: ast.Stmt[], acc: string[]): string
                     }
                 }
             },
-            ast.StmtIf(f) => { a = collect_fresh_optarrarr_names(f.then_body, a); a = collect_fresh_optarrarr_names(f.else_body, a); },
-            ast.StmtWhile(w) => { a = collect_fresh_optarrarr_names(w.body, a); },
-            ast.StmtFor(fo) => { a = collect_fresh_optarrarr_names(fo.body, a); },
+            ast.StmtIf(f) => { a = collect_fresh_optarrarr_names(f.then_body, body_assign_targets(f.then_body), a); a = collect_fresh_optarrarr_names(f.else_body, body_assign_targets(f.else_body), a); },
+            ast.StmtWhile(w) => { a = collect_fresh_optarrarr_names(w.body, body_assign_targets(w.body), a); },
+            ast.StmtFor(fo) => { a = collect_fresh_optarrarr_names(fo.body, body_assign_targets(fo.body), a); },
             ast.StmtMatch(m) => {
-                for arm in m.arms { a = collect_fresh_optarrarr_names(arm.body, a); }
+                for arm in m.arms { a = collect_fresh_optarrarr_names(arm.body, body_assign_targets(arm.body), a); }
             },
             _ => {}
         }
@@ -48654,9 +48666,8 @@ function optstr_payload_escapes(stmts: ast.Stmt[], name: string): boolean {
 // Freshness is required for the same reason the unmatched sibling requires it: a
 // string payload is stored uncounted and assignment borrows it, so an aliased
 // payload would be released under a live reference.
-function collect_fresh_optstr_names(stmts: ast.Stmt[], opt_fresh_reg: SigReg, str_fresh_ret: string[], acc: string[]): string[] {
+function collect_fresh_optstr_names(stmts: ast.Stmt[], reassigned: string[], opt_fresh_reg: SigReg, str_fresh_ret: string[], acc: string[]): string[] {
     var a: string[] = acc;
-    var reassigned: string[] = body_assign_targets(stmts);
     var vi: i32 = 0;
     while (vi < stmts.len()) {
         match (stmts[vi]) {
@@ -48675,11 +48686,11 @@ function collect_fresh_optstr_names(stmts: ast.Stmt[], opt_fresh_reg: SigReg, st
                     }
                 }
             },
-            ast.StmtIf(f) => { a = collect_fresh_optstr_names(f.then_body, opt_fresh_reg, str_fresh_ret, a); a = collect_fresh_optstr_names(f.else_body, opt_fresh_reg, str_fresh_ret, a); },
-            ast.StmtWhile(w) => { a = collect_fresh_optstr_names(w.body, opt_fresh_reg, str_fresh_ret, a); },
-            ast.StmtFor(fo) => { a = collect_fresh_optstr_names(fo.body, opt_fresh_reg, str_fresh_ret, a); },
+            ast.StmtIf(f) => { a = collect_fresh_optstr_names(f.then_body, body_assign_targets(f.then_body), opt_fresh_reg, str_fresh_ret, a); a = collect_fresh_optstr_names(f.else_body, body_assign_targets(f.else_body), opt_fresh_reg, str_fresh_ret, a); },
+            ast.StmtWhile(w) => { a = collect_fresh_optstr_names(w.body, body_assign_targets(w.body), opt_fresh_reg, str_fresh_ret, a); },
+            ast.StmtFor(fo) => { a = collect_fresh_optstr_names(fo.body, body_assign_targets(fo.body), opt_fresh_reg, str_fresh_ret, a); },
             ast.StmtMatch(m) => {
-                for arm in m.arms { a = collect_fresh_optstr_names(arm.body, opt_fresh_reg, str_fresh_ret, a); }
+                for arm in m.arms { a = collect_fresh_optstr_names(arm.body, body_assign_targets(arm.body), opt_fresh_reg, str_fresh_ret, a); }
             },
             _ => {}
         }
@@ -50757,9 +50768,8 @@ function arrenum_append_built_enum(stmts: ast.Stmt[], name: string, tname: strin
 // binding whose name is never reassigned. The enum rides the entry so the release side
 // gets it without a slot column; the escape gate is applied by the caller, which owns
 // the whole function body (a nested binding's uses can sit in the enclosing tail).
-function collect_fresh_arrenum_names(stmts: ast.Stmt[], body: ast.Stmt[], structs: StructTab, fresh_ret: string[], acc: string[]): string[] {
+function collect_fresh_arrenum_names(stmts: ast.Stmt[], reassigned: string[], body: ast.Stmt[], structs: StructTab, fresh_ret: string[], acc: string[]): string[] {
     var a: string[] = acc;
-    var reassigned: string[] = body_assign_targets(stmts);
     for stmt in stmts {
         match (stmt) {
             ast.StmtVar(v) => {
@@ -50784,11 +50794,11 @@ function collect_fresh_arrenum_names(stmts: ast.Stmt[], body: ast.Stmt[], struct
                     }
                 }
             },
-            ast.StmtIf(f) => { a = collect_fresh_arrenum_names(f.then_body, body, structs, fresh_ret, a); a = collect_fresh_arrenum_names(f.else_body, body, structs, fresh_ret, a); },
-            ast.StmtWhile(w) => { a = collect_fresh_arrenum_names(w.body, body, structs, fresh_ret, a); },
-            ast.StmtFor(fo) => { a = collect_fresh_arrenum_names(fo.body, body, structs, fresh_ret, a); },
+            ast.StmtIf(f) => { a = collect_fresh_arrenum_names(f.then_body, body_assign_targets(f.then_body), body, structs, fresh_ret, a); a = collect_fresh_arrenum_names(f.else_body, body_assign_targets(f.else_body), body, structs, fresh_ret, a); },
+            ast.StmtWhile(w) => { a = collect_fresh_arrenum_names(w.body, body_assign_targets(w.body), body, structs, fresh_ret, a); },
+            ast.StmtFor(fo) => { a = collect_fresh_arrenum_names(fo.body, body_assign_targets(fo.body), body, structs, fresh_ret, a); },
             ast.StmtMatch(m) => {
-                for arm in m.arms { a = collect_fresh_arrenum_names(arm.body, body, structs, fresh_ret, a); }
+                for arm in m.arms { a = collect_fresh_arrenum_names(arm.body, body_assign_targets(arm.body), body, structs, fresh_ret, a); }
             },
             _ => {},
         }
@@ -52989,13 +52999,12 @@ function cross_construction_donor(body: ast.Stmt[], structs: StructTab, k: i32, 
 // never escaping, dead from the construction onward, each own param consumed at
 // most once. A construction already owned by a self-overwrite / cross-local /
 // enum-donor site is skipped (checked against `reuse`/`xreuse`/`edon`).
-function own_param_reuse_sites(fn: parser.FuncDecl, structs: StructTab, sfok: string[], reuse: ReuseSites, xreuse: CrossReuseSites, edon: EnumDonorSites): CrossReuseSites {
+function own_param_reuse_sites(fn: parser.FuncDecl, reassigned: string[], structs: StructTab, sfok: string[], reuse: ReuseSites, xreuse: CrossReuseSites, edon: EnumDonorSites): CrossReuseSites {
     var idxs: i32[] = [];
     var donors: string[] = [];
     var dtypes: string[] = [];
     // Own struct params that are all-scalar and never reassigned / never
     // escaping across the whole body — the donor candidate pool.
-    var reassigned: string[] = body_assign_targets(fn.body);
     var allesc: string[] = walk_stmts_escapes(fn.body, []);
     var consumed: string[] = [];
     var k: i32 = 0;
@@ -53081,10 +53090,9 @@ function own_param_reuse_sites(fn: parser.FuncDecl, structs: StructTab, sfok: st
 // the statement, never reassigned, and escaping nowhere but the update base
 // here. A statement already claimed by a self-overwrite-local / cross-local /
 // cross-own-param / enum-donor site is skipped.
-function own_param_self_overwrite_sites(fn: parser.FuncDecl, structs: StructTab, sfok: string[], reuse: ReuseSites, xreuse: CrossReuseSites, ownxr: CrossReuseSites, edon: EnumDonorSites): ReuseSites {
+function own_param_self_overwrite_sites(fn: parser.FuncDecl, reassigned: string[], structs: StructTab, sfok: string[], reuse: ReuseSites, xreuse: CrossReuseSites, ownxr: CrossReuseSites, edon: EnumDonorSites): ReuseSites {
     var idxs: i32[] = [];
     var bases: string[] = [];
-    var reassigned: string[] = body_assign_targets(fn.body);
     var i: i32 = 0;
     while (i < fn.body.len()) {
         // Skip statements already claimed by another reuse site.
@@ -54131,11 +54139,10 @@ struct EnumCrossSites { idxs: i32[], donors: string[], enums: string[] }
 // matching box size (enum_init_box_fields == want), never reassigned, never escaping,
 // dead from k onward, not already consumed, a != c, whose payload is provably never
 // aliased (enum_only_wildcard_used_rec). Each donor is consumed at most once.
-function enum_cross_reuse_sites(body: ast.Stmt[], structs: StructTab, so: ReuseSites, xr: CrossReuseSites, edr: EnumDonorSites): EnumCrossSites {
+function enum_cross_reuse_sites(body: ast.Stmt[], reassigned: string[], structs: StructTab, so: ReuseSites, xr: CrossReuseSites, edr: EnumDonorSites): EnumCrossSites {
     var idxs: i32[] = [];
     var donors: string[] = [];
     var enums: string[] = [];
-    var reassigned: string[] = body_assign_targets(body);
     var k: i32 = 0;
     while (k < body.len()) {
         // skip a statement already owned by a self-overwrite / cross-struct /
@@ -54617,10 +54624,9 @@ struct InArmReuseSites { idxs: i32[], donors: string[] }
 // bare-ident scrutinee, declared by a fresh scalar-enum init earlier, not
 // reassigned, used exactly ONCE (as this scrutinee) and DEAD after this statement,
 // and not escape anywhere. The match must reach lower_iife_match's enum path.
-function consumed_inarm_reuse_sites(body: ast.Stmt[], structs: StructTab): InArmReuseSites {
+function consumed_inarm_reuse_sites(body: ast.Stmt[], reassigned: string[], structs: StructTab): InArmReuseSites {
     var idxs: i32[] = [];
     var donors: string[] = [];
-    var reassigned: string[] = body_assign_targets(body);
     var k: i32 = 0;
     while (k < body.len()) {
         match (body[k]) {
@@ -56426,10 +56432,15 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
     // The rc-plan verdict for the routed release families (step 2): one
     // fn-level analysis per function (the harmless pre-walk shape — the
     // per-BLOCK variant is the quadratic trap the performance audit records).
+    // The names this function reassigns (`x = …`) anywhere in the body. Every
+    // fn-level analysis below excludes a reassigned name from its candidates, so
+    // they share this one fold; a nested BLOCK keeps its own narrower set (a
+    // function-wide one would silence a free the block emits, #6127).
+    var asg_targets: string[] = body_assign_targets(fn.body);
     var plan_on: boolean = !rc_plan_disabled();
     var plan_fe: string[] = [];
-    if (plan_on) { plan_fe = free_eligible_sites_of(fn, structs, sg.ret_type_fns, sg.noesc_ret_fns); }
-    var reclaim: string[] = reclaimable_names_of(fn.body, structs, sg.borrowable_params, sg.return_fresh_struct_ret_fns, sg.str_fresh_ret_fns, sg.opt_fresh_ret_fns, sg.tuple_fresh_ret_fns, move_sites_of(fn, structs), sg.recv_borrow_fns, sg.struct_ret_fns, fn.params, plan_on, plan_fe, sg.handback_params, sg.strfld_ok_types, sg.str_handback_ret);
+    if (plan_on) { plan_fe = free_eligible_sites_of(fn, asg_targets, structs, sg.ret_type_fns, sg.noesc_ret_fns); }
+    var reclaim: string[] = reclaimable_names_of(fn.body, asg_targets, structs, sg.borrowable_params, sg.return_fresh_struct_ret_fns, sg.str_fresh_ret_fns, sg.opt_fresh_ret_fns, sg.tuple_fresh_ret_fns, move_sites_of(fn, structs), sg.recv_borrow_fns, sg.struct_ret_fns, fn.params, plan_on, plan_fe, sg.handback_params, sg.strfld_ok_types, sg.str_handback_ret);
     // Hoisted-closure capture extracts are BORROWS (#4354): make_clo_func
     // synthesizes `var <cap> = __env[1+i]` reads at the top of a `$clo`/`$wrap`
     // body, but the env box owns those references — the exit sweep's shallow
@@ -56457,7 +56468,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
     // through a consume-rebind (`s = s.write(x); return s`). Piggybacked as
     // "SNAP:<slot>" — they are NOT swept/deep-dropped (their final value shares
     // the caller's fields); each reassign instead emits emit_snapshot_store.
-    var snaps: string[] = snapshot_param_slots_of(fn, sg.borrowable_params, sg.consume_safe_params);
+    var snaps: string[] = snapshot_param_slots_of(fn, asg_targets, sg.borrowable_params, sg.consume_safe_params);
     var snj: i32 = 0;
     while (snj < snaps.len()) { reclaim = reclaim.append("SNAP:" + snaps[snj]); snj = snj + 1; }
     // Snapshot-LOCAL reclaim (#3457): struct LOCALS threaded and moved out
@@ -56470,7 +56481,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
     // Each rebind reclaims via the StmtAssign emit_field_reclaim_store path under
     // the snapshot of the box the binding derived from; the moved-out final is
     // kept by the struct move-on-return in StmtReturn.
-    reclaim = reclaim_snapshot_locals(fn, sg, structs, reclaim);
+    reclaim = reclaim_snapshot_locals(fn, asg_targets, sg, structs, reclaim);
     // Array locals that acquire a lasting local alias — the in-place
     // `a = a.with(i, v)` self-reassign must clone instead of mutating in place
     // when its target is here (#3599; see the aliased_names field doc).
@@ -56495,7 +56506,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
     }
     // An `own` struct param this frame still holds at exit is released by the
     // sweep ("OWNREL:" deep / "OWNRELB:" box-only).
-    reclaim = append_all(reclaim, own_struct_param_release_rows_of(fn, structs, sg.strfld_ok_types, sg.borrowable_params, sg.recv_borrow_fns, sg.handback_params, oup));
+    reclaim = append_all(reclaim, own_struct_param_release_rows_of(fn, asg_targets, structs, sg.strfld_ok_types, sg.borrowable_params, sg.recv_borrow_fns, sg.handback_params, oup));
     // #6713: seed the frame-allocated string VIEW set as "VIEWFRAME:<name>" —
     // the slice-bound locals whose every use borrows the view (view_frame_names_of).
     // Prefix-tagged like the registries above; inert for every other
@@ -56514,7 +56525,6 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
     // the match. The box is freed (dec + zero) right after its match statement —
     // sound because the box now carries an rc header and the match read its scalar
     // payloads as borrows before any free.
-    var asg_targets: string[] = body_assign_targets(fn.body);
     var enumfrees: EnumFrees = consumed_scalar_enum_frees(fn.body, asg_targets, structs, sg.opt_fresh_ret_fns, false);
     // SCENRB: an all-scalar enum / scalar Option local that consumed_scalar_enum_frees
     // admits DESPITE being rebound (#6127). Each rebind orphans the previous box, so
@@ -56662,7 +56672,8 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
     // (erased_passthrough_safe), so its bare-typevar return lowers via the
     // uniform-i64 path in StmtReturn (#5464). Kept off the non-wasm path.
     if (for_wasm && erased_passthrough_safe(fn, structs)) { ret_arrdyn0 = ret_arrdyn0 + 8; }
-    var s: LowerState = LowerState { ops: empty, locals: locals0, ctrl: 0, loop_blk: noloop, frame: LowerFrame { ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, sigs: FnSigs { ...sg, arr_ret_fns: arr_ret_fns_aug, struct_ret_fns: struct_ret_fns_aug }, clo_base: clo_owner_name(fn), cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: noclos, tup_elem_kinds: [], alias_incs: [], dead_alias_ok: dead_alias_of(fn.body, rc_ml_compute(fn, structs).names).sites, spread_sites: spread_sites_of(fn.body, structs, []), fnval_seed: fnval_seed0, structs: structs, reclaimable_names: reclaim, aliased_names: aliased, map_clone_sites: map_clone_insert_sites_of(fn.body), borrowed_names: borrowed, try_cleanup: tclean, defer_slots: [], defer_guard: "", append_inplace: append_inplace_names_of(fn), field_append_inplace: field_append_inplace_sites_of(fn), grow_sole: grow_sole_exempt_names_of(fn), grow_alias: grow_alias_names_of(fn), own_params: own_names, n_params: names.len(), fail_why: "", moved_names: moved_locals_toplevel_of(fn, structs), moved_elided: [], move_sites: move_sites_toplevel_of(fn, structs), fld_bases: field_move_bases_of(fn, sg), own_lift_sites: own_lift_retain_sites_of(fn, sg, structs) }, xblock_pending: [], optret_pending: [], grow_exempt: [], ok: true, selfrebind: "", fld_moves: [] };
+    var dalias: DeadAliases = dead_alias_of(fn.body, asg_targets, rc_ml_compute(fn, structs).names);
+    var s: LowerState = LowerState { ops: empty, locals: locals0, ctrl: 0, loop_blk: noloop, frame: LowerFrame { ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, sigs: FnSigs { ...sg, arr_ret_fns: arr_ret_fns_aug, struct_ret_fns: struct_ret_fns_aug }, clo_base: clo_owner_name(fn), cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: noclos, tup_elem_kinds: [], alias_incs: [], dead_alias_ok: dalias.sites, spread_sites: spread_sites_of(fn.body, structs, []), fnval_seed: fnval_seed0, structs: structs, reclaimable_names: reclaim, aliased_names: aliased, map_clone_sites: map_clone_insert_sites_of(fn.body), borrowed_names: borrowed, try_cleanup: tclean, defer_slots: [], defer_guard: "", append_inplace: append_inplace_names_of(fn), field_append_inplace: field_append_inplace_sites_of(fn), grow_sole: grow_sole_exempt_names_of(fn), grow_alias: grow_alias_names_of(fn), own_params: own_names, n_params: names.len(), fail_why: "", moved_names: moved_locals_toplevel_of(fn, structs), moved_elided: [], move_sites: move_sites_toplevel_of(fn, structs), fld_bases: field_move_bases_of(fn, sg), own_lift_sites: own_lift_retain_sites_of(fn, sg, structs) }, xblock_pending: [], optret_pending: [], grow_exempt: [], ok: true, selfrebind: "", fld_moves: [] };
     // Consumed-threaded array params (ownflag_name): allocate and zero each flag
     // before any body op, in parameter order, so slot numbering is deterministic.
     // A declared `own` param is excluded — the caller moved its reference in.
@@ -56717,7 +56728,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
     // after its last top-level use (drop-on-last-use), instead of at the exit
     // sweep — bounding the live set so its block recycles for later allocations.
     // Emitted as dec + zero the slot, so the exit sweep harmlessly decs null.
-    var pdrops: PreciseDrops = pd_filter_names(precise_drop_names(fn.body, structs, sg.arr_ret_fns, sg.strarr_ret_fns, sg.borrowable_params, sg.opt_fresh_ret_fns, sg.str_fresh_ret_fns, move_sites_toplevel_of(fn, structs)), dead_alias_of(fn.body, rc_ml_compute(fn, structs).names).srcs);
+    var pdrops: PreciseDrops = pd_filter_names(precise_drop_names(fn.body, asg_targets, structs, sg.arr_ret_fns, sg.strarr_ret_fns, sg.borrowable_params, sg.opt_fresh_ret_fns, sg.str_fresh_ret_fns, move_sites_toplevel_of(fn, structs)), dalias.srcs);
     // Reuse-layer switch (#4350 §6.5): with FERN_SELFHOST_NO_REUSE=1 every
     // donor-based pairing below stays EMPTY, so every construction allocates
     // fresh and every donor keeps its normal free (the suppressions keyed on
@@ -56769,7 +56780,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
     // (emit_inarm_match_reuse). No post-match free exists for an in-arm scrutinee, so
     // nothing to suppress; y owns the box on every path, freed once at its reclamation.
     var inarm: InArmReuseSites = InArmReuseSites { idxs: [], donors: [] };
-    if (!no_reuse) { inarm = consumed_inarm_reuse_sites(fn.body, structs); }
+    if (!no_reuse) { inarm = consumed_inarm_reuse_sites(fn.body, asg_targets, structs); }
     // General enum->enum cross-local box reuse (FBIP): a `var c = V([..])` array-
     // payload-enum construction reuses an earlier dead same-enum donor `a = W([..])`'s
     // box in place instead of allocating (see enum_cross_reuse_sites). The recipient is
@@ -56777,20 +56788,20 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
     // rcenumfrees / the enum-rcpayload precise drop) is SUPPRESSED below so its box
     // survives to the reuse and is freed exactly once via c.
     var ecross: EnumCrossSites = EnumCrossSites { idxs: [], donors: [], enums: [] };
-    if (!no_reuse) { ecross = enum_cross_reuse_sites(fn.body, structs, reuse, xreuse, edon); }
+    if (!no_reuse) { ecross = enum_cross_reuse_sites(fn.body, asg_targets, structs, reuse, xreuse, edon); }
     // Own-param struct donors (#4356 divergence 3): a full construction reusing a
     // dead `own` struct PARAMETER's box (see own_param_reuse_sites). Lowered by the
     // same emit_cross_struct_reuse as a cross-local donor (a param has a slot too);
     // disjoint from every list above (its donor is a param, never a body local, and
     // its recipient index is skipped when already claimed by reuse/xreuse/edon).
     var ownxr: CrossReuseSites = CrossReuseSites { idxs: [], donors: [], dtypes: [] };
-    if (!no_reuse) { ownxr = own_param_reuse_sites(fn, structs, sg.strfld_ok_types, reuse, xreuse, edon); }
+    if (!no_reuse) { ownxr = own_param_reuse_sites(fn, asg_targets, structs, sg.strfld_ok_types, reuse, xreuse, edon); }
     // Own-param functional-update bases (#4356 slice 12): `var c = T { ...own_d, .. }`
     // reusing a dead `own` struct param's box in place. Lowered by the same
     // emit_self_overwrite_reuse as a fresh-literal base; disjoint from every list
     // above (its base is a param, and claimed indices are skipped inside).
     var ownso: ReuseSites = ReuseSites { idxs: [], bases: [] };
-    if (!no_reuse) { ownso = own_param_self_overwrite_sites(fn, structs, sg.strfld_ok_types, reuse, xreuse, ownxr, edon); }
+    if (!no_reuse) { ownso = own_param_self_overwrite_sites(fn, asg_targets, structs, sg.strfld_ok_types, reuse, xreuse, ownxr, edon); }
     // TRMC (#4352 slice 1): the canonical single-hole modulo-cons shape lowers
     // as a hole-passing loop instead of the recursive body — O(1) stack. The
     // emission is the complete body (its own return); everything below the
@@ -62334,9 +62345,8 @@ function own_param_names_of(fn: parser.FuncDecl): string[] {
 // not retain (spread_copy_counted). A reassigned param is admitted only when
 // every assignment is an admitted self-update (`upd`, own_update_params_of):
 // the slot then always holds a box this frame owns.
-function own_struct_param_release_rows_of(fn: parser.FuncDecl, structs: StructTab, sfok: string[], borrowable: string[], recv_borrow: string[], handback: string[], upd: string[]): string[] {
+function own_struct_param_release_rows_of(fn: parser.FuncDecl, reassigned: string[], structs: StructTab, sfok: string[], borrowable: string[], recv_borrow: string[], handback: string[], upd: string[]): string[] {
     var out: string[] = [];
-    var reassigned: string[] = body_assign_targets(fn.body);
     for pd in fn.params {
         var nm: string = pd.name;
         var ty: string = pd.type_name;
@@ -63729,48 +63739,53 @@ function call_name_of(e: ast.Expr, acc: string[]): string[] {
     return acc;
 }
 
-// reg_indices_of appends the value of every "<key>|<index>" record for exactly
-// `key` to `acc`.
-function reg_indices_of(reg: string[], key: string, acc: i32[]): i32[] {
-    var a: i32[] = acc;
-    var e: string = reg[util.hash_bucket(key, reg.len())];
-    var nl: i32 = key.len();
-    var n: i32 = e.len();
-    var p: i32 = 0;
-    while (p < n) {
-        var bar: i32 = p;
-        while (bar < n && e[bar] != b'|') { bar = bar + 1; }
-        var end: i32 = bar;
-        while (end < n && e[end] != b'\n') { end = end + 1; }
-        if (bar < n && bar - p == nl && bytes_at(e, p, key)) {
-            a = a.append(util.digits_to_i32(slice_unchecked(e, bar + 1, end) + ""));
-        }
-        p = end + 1;
-    }
-    return a;
-}
-
 // call_deps_of builds the dependency table. `with_methods` adds, for each
 // method call, every function whose key ends in "." + the method name — the
 // records method_param_borrowable_all matches; `with_self` adds the function
 // itself, for a fixpoint that reads its own entry.
+//
+// The callee-name lookup is an integer chained hash table, private to this
+// function, NOT one of the record-text registries: a registry put rewrites its
+// whole bucket array per entry, which costs more than the body walks it feeds.
+// `ekeys[e]` is function `e`'s key for e < n and function `e - n`'s ".<method>"
+// key above it, "" where there is none. `head[b]` starts the chain of plain keys
+// in bucket b and `mhead[b]` the chain of method keys — separate heads so a
+// method call can only ever find a method key, as two registries gave — with
+// `next[e]` continuing both, in ascending function order (entries are inserted
+// in reverse) and -1 for the end.
 function call_deps_of(funcs: parser.FuncDecl[], with_methods: boolean, with_self: boolean): CallDeps {
     var n: i32 = funcs.len();
     var nb: i32 = sig_bucket_count(n);
-    var keys: string[] = [];
-    var methods: string[] = [];
-    var b: i32 = 0;
-    while (b < nb) { keys = keys.append(""); methods = methods.append(""); b = b + 1; }
+    var ekeys: string[] = [];
     var fi: i32 = 0;
-    while (fi < n) {
-        var key: string = borrowable_key(funcs[fi]);
-        keys = borrow_reg_put(keys, key, util.i32_to_string(fi));
-        if (with_methods) {
+    while (fi < n) { ekeys = ekeys.append(borrowable_key(funcs[fi])); fi = fi + 1; }
+    if (with_methods) {
+        fi = 0;
+        while (fi < n) {
+            var key: string = ekeys[fi];
             var dot: i32 = key.len();
             while (dot > 0 && key[dot - 1] != b'.') { dot = dot - 1; }
-            if (dot > 0) { methods = borrow_reg_put(methods, "." + slice_unchecked(key, dot, key.len()), util.i32_to_string(fi)); }
+            if (dot > 0) { ekeys = ekeys.append("." + slice_unchecked(key, dot, key.len())); }
+            else { ekeys = ekeys.append(""); }
+            fi = fi + 1;
         }
-        fi = fi + 1;
+    }
+    var head: i32[] = i32_filled(nb, -1);
+    var mhead: i32[] = i32_filled(nb, -1);
+    var next: i32[] = i32_filled(ekeys.len(), -1);
+    var e: i32 = ekeys.len() - 1;
+    while (e >= 0) {
+        if (ekeys[e].len() > 0) {
+            var eb: i32 = util.hash_bucket(ekeys[e], nb);
+            if (e < n) {
+                next = next.with(e, head[eb]);
+                head = head.with(eb, e);
+            } else {
+                next = next.with(e, mhead[eb]);
+                mhead = mhead.with(eb, e);
+            }
+        }
+        e = e - 1;
     }
     var starts: i32[] = [];
     var deps: i32[] = [];
@@ -63779,24 +63794,26 @@ function call_deps_of(funcs: parser.FuncDecl[], with_methods: boolean, with_self
     fi = 0;
     while (fi < n) {
         starts = starts.append(deps.len());
-        var found: i32[] = [];
-        if (with_self) { found = found.append(fi); }
+        if (with_self) { stamp = stamp.with(fi, fi + 1); deps = deps.append(fi); }
         var names: string[] = call_names_of_body(funcs[fi].body);
         var ni: i32 = 0;
         while (ni < names.len()) {
             var nm: string = names[ni];
+            var c: i32 = -1;
             if (nm.len() > 0 && nm[0] == b'.') {
-                if (with_methods) { found = reg_indices_of(methods, nm, found); }
+                if (with_methods) { c = mhead[util.hash_bucket(nm, nb)]; }
             } else {
-                found = reg_indices_of(keys, nm, found);
+                c = head[util.hash_bucket(nm, nb)];
+            }
+            while (c >= 0) {
+                if (ekeys[c] == nm) {
+                    var d: i32 = c;
+                    if (d >= n) { d = d - n; }
+                    if (stamp[d] != fi + 1) { stamp = stamp.with(d, fi + 1); deps = deps.append(d); }
+                }
+                c = next[c];
             }
             ni = ni + 1;
-        }
-        var k: i32 = 0;
-        while (k < found.len()) {
-            var d: i32 = found[k];
-            if (stamp[d] != fi + 1) { stamp = stamp.with(d, fi + 1); deps = deps.append(d); }
-            k = k + 1;
         }
         fi = fi + 1;
     }
@@ -63896,6 +63913,9 @@ pub function borrowable_params_interproc(funcs: parser.FuncDecl[]): string[] {
     var nb: i32 = borrow_reg_buckets();
     var keys: string[] = [];
     var cur: string[] = [];
+    // The reassign set is a function of the BODY, which no round changes, so
+    // each round's borrowable_flags_under reads it instead of re-folding it.
+    var reasgs: string[][] = [];
     // Three rows per function: its box entry, then its "TUPB:" and "ELB:" tiers.
     var rows: string[] = [];
     var row_bucket: i32[] = [];
@@ -63905,6 +63925,8 @@ pub function borrowable_params_interproc(funcs: parser.FuncDecl[]): string[] {
         var seedflags: string = seed_flags(funcs[fi]);
         keys = keys.append(key);
         cur = cur.append(seedflags);
+        if (funcs[fi].params.len() > 0) { reasgs = reasgs.append(body_assign_targets(funcs[fi].body)); }
+        else { reasgs = reasgs.append([]); }
         rows = rows.append(borrow_reg_row(key, seedflags));
         rows = rows.append("");
         rows = rows.append("");
@@ -63934,7 +63956,7 @@ pub function borrowable_params_interproc(funcs: parser.FuncDecl[]): string[] {
         fi = 0;
         while (fi < n) {
             if (dirty[fi] == 1 && funcs[fi].params.len() > 0) {
-                var flags: string = borrowable_flags_under(funcs[fi], reg);
+                var flags: string = borrowable_flags_under(funcs[fi], reasgs[fi], reg);
                 // The "TUPB:" payload tier and the "ELB:" element tier are
                 // functions of the box flags alone (both walk with empty
                 // registries), so they follow a changed verdict — and the
@@ -63967,10 +63989,9 @@ pub function borrowable_params_interproc(funcs: parser.FuncDecl[]): string[] {
 
 // borrowable_flags_under: one function's box-borrowability flags under the
 // registry `reg`, or "" when no parameter is borrowable.
-function borrowable_flags_under(fn: parser.FuncDecl, reg: string[]): string {
+function borrowable_flags_under(fn: parser.FuncDecl, ip_reasgn: string[], reg: string[]): string {
     var flags: string = "";
     var any: boolean = false;
-    var ip_reasgn: string[] = body_assign_targets(fn.body);
     var pj: i32 = 0;
     while (pj < fn.params.len()) {
         // The scrutinee of a `match (param)` is a BORROW — see
@@ -65088,9 +65109,8 @@ function rc_consumed_drop_wired(t: string, structs: StructTab, seen: string[]): 
 // promoted here — a corpus case with that shape would pin the gap;
 // (b) native returns the empty table for TRMC'd functions, which the
 // port doesn't model.
-pub function consumed_params_of(fn: parser.FuncDecl, structs: StructTab): string[] {
+pub function consumed_params_of(fn: parser.FuncDecl, reassigned: string[], structs: StructTab): string[] {
     var out: string[] = [];
-    var reassigned: string[] = body_assign_targets(fn.body);
     var pi: i32 = 0;
     while (pi < fn.params.len()) {
         var p: ast.ParamDecl = fn.params[pi];
@@ -65818,22 +65838,22 @@ function rc_fe_rhs_tainted(e: ast.Expr, tainted: string[], types_n: string[], ty
 
 // free_eligible_of: the ported analysis. Returns the name-set (unsorted) of
 // freeEligible locals + own/consumed params for `fn`.
-pub function free_eligible_of(fn: parser.FuncDecl, structs: StructTab, retreg: SigReg, noesc: SigReg): string[] {
-    return rc_fe_run(fn, structs, retreg, noesc, false);
+pub function free_eligible_of(fn: parser.FuncDecl, reassigned: string[], structs: StructTab, retreg: SigReg, noesc: SigReg): string[] {
+    return rc_fe_run(fn, reassigned, structs, retreg, noesc, false);
 }
 
 // free_eligible_sites_of: the same analysis keyed by BINDING SITE — the
 // verdicts the plan-routed release gates consume. A shadow-sibling pair or a
 // binder collision resolves per binding here, where the name-level dump
 // variant (kept above for native parity) must collapse them.
-pub function free_eligible_sites_of(fn: parser.FuncDecl, structs: StructTab, retreg: SigReg, noesc: SigReg): string[] {
-    return rc_fe_run(fn, structs, retreg, noesc, true);
+pub function free_eligible_sites_of(fn: parser.FuncDecl, reassigned: string[], structs: StructTab, retreg: SigReg, noesc: SigReg): string[] {
+    return rc_fe_run(fn, reassigned, structs, retreg, noesc, true);
 }
 
-function rc_fe_run(fn: parser.FuncDecl, structs: StructTab, retreg: SigReg, noesc: SigReg, site_mode: boolean): string[] {
+function rc_fe_run(fn: parser.FuncDecl, reassigned: string[], structs: StructTab, retreg: SigReg, noesc: SigReg, site_mode: boolean): string[] {
     var st: FeState = FeState { tainted: [], an: [], av: [], av_env: [], types_n: [], types_t: [], decl_s: [], site_mode: site_mode };
     // param types recorded first (projection unwrap + destructure typing).
-    var consumed: string[] = consumed_params_of(fn, structs);
+    var consumed: string[] = consumed_params_of(fn, reassigned, structs);
     var pi: i32 = 0;
     while (pi < fn.params.len()) {
         var p: ast.ParamDecl = fn.params[pi];
@@ -66621,8 +66641,7 @@ pub struct DeadAliases { sites: string[], srcs: string[] }
 // moves included) — native's movedLocals gate, which is wider than the
 // top-level set the emitting predicates read: a loop-body-moved source keeps
 // the retain-and-cancel path, so its alias pair must keep the retain too.
-pub function dead_alias_of(body: ast.Stmt[], moved: string[]): DeadAliases {
-    var assigned: string[] = body_assign_targets(body);
+pub function dead_alias_of(body: ast.Stmt[], assigned: string[], moved: string[]): DeadAliases {
     var rets: string[] = da_returned_names(body, []);
     var scruts: string[] = da_scrutinee_names(body, []);
     return da_scan(body, body, assigned, rets, scruts, moved, DeadAliases { sites: [], srcs: [] });
@@ -67095,7 +67114,7 @@ function rc_asi_stmts(stmts: ast.Stmt[], body: ast.Stmt[], k: i32, borrowed: str
 // per `.with` call in `fn`. The borrow cut matches free_eligible_of's: a
 // param is borrowed unless `own` or consumed-threaded.
 pub function array_set_incs_of(fn: parser.FuncDecl, structs: StructTab): string[] {
-    var consumed: string[] = consumed_params_of(fn, structs);
+    var consumed: string[] = consumed_params_of(fn, body_assign_targets(fn.body), structs);
     var borrowed: string[] = [];
     var pi: i32 = 0;
     while (pi < fn.params.len()) {
@@ -67382,7 +67401,7 @@ pub function consuming_match_reuse_of(fn: parser.FuncDecl, structs: StructTab): 
 
 function consuming_match_reuse_block(stmts: ast.Stmt[], structs: StructTab, out: string[]): string[] {
     var acc: string[] = out;
-    var sites: InArmReuseSites = consumed_inarm_reuse_sites(stmts, structs);
+    var sites: InArmReuseSites = consumed_inarm_reuse_sites(stmts, body_assign_targets(stmts), structs);
     var i: i32 = 0;
     while (i < sites.idxs.len()) {
         match (stmts[sites.idxs[i]]) {
@@ -67436,9 +67455,10 @@ function consuming_match_reuse_block(stmts: ast.Stmt[], structs: StructTab, out:
 // module-local `*_of(funcs)` side-tables, not a cross-module fixed point).
 pub function rc_plan_dump(fn: parser.FuncDecl, structs: StructTab, funcs: parser.FuncDecl[]): string {
     var head: string = "";
+    var reasg: string[] = body_assign_targets(fn.body);
     // consumedParams (line order matches native's dumpRcPlan): the params
     // promoted to consumed-threading, name-sorted.
-    var cps: string[] = consumed_params_of(fn, structs);
+    var cps: string[] = consumed_params_of(fn, reasg, structs);
     if (cps.len() > 0) {
         var sorted: string[] = [];
         var ci: i32 = 0;
@@ -67464,7 +67484,7 @@ pub function rc_plan_dump(fn: parser.FuncDecl, structs: StructTab, funcs: parser
     }
     // freeEligible (#4482 — between consumedParams and preciseDrops, matching
     // native dumpRcPlan's line order): name-sorted, comma-joined.
-    var fe: string[] = free_eligible_of(fn, structs, sig_reg_of(ret_type_fns_of(funcs)), sig_reg_of(noesc_ret_fns_of(funcs, structs)));
+    var fe: string[] = free_eligible_of(fn, reasg, structs, sig_reg_of(ret_type_fns_of(funcs)), sig_reg_of(noesc_ret_fns_of(funcs, structs)));
     if (fe.len() > 0) {
         var fes: string[] = [];
         var fi: i32 = 0;
@@ -67699,7 +67719,7 @@ pub function rc_plan_dump(fn: parser.FuncDecl, structs: StructTab, funcs: parser
         }
     }
     var arr_ret: string[] = array_ret_fn_names(funcs);
-    var pd: PreciseDrops = pd_filter_names(precise_drop_names(fn.body, structs, sig_reg_of(arr_ret), sig_reg_of(strarr_ret_fns_of(funcs)), borrowable_params_of(funcs), sig_reg_of(opt_fresh_ret_fns_of(funcs, structs, str_fresh_ret_fns_of(funcs))), str_fresh_ret_fns_of(funcs), move_sites_toplevel_of(fn, structs)), dead_alias_of(fn.body, rc_ml_compute(fn, structs).names).srcs);
+    var pd: PreciseDrops = pd_filter_names(precise_drop_names(fn.body, reasg, structs, sig_reg_of(arr_ret), sig_reg_of(strarr_ret_fns_of(funcs)), borrowable_params_of(funcs), sig_reg_of(opt_fresh_ret_fns_of(funcs, structs, str_fresh_ret_fns_of(funcs))), str_fresh_ret_fns_of(funcs), move_sites_toplevel_of(fn, structs)), dead_alias_of(fn.body, reasg, rc_ml_compute(fn, structs).names).srcs);
     // Dump fidelity: lower_func SUPPRESSES the precise drop of a local consumed
     // as a reuse donor (its box survives into the recipient); the dump must
     // mirror that or it over-reports drops the lowering never emits (native's
@@ -69877,17 +69897,20 @@ function cap_type_expr(e: ast.Expr, fd: parser.FuncDecl, depth: i32, structs: St
 }
 
 // body_assign_targets collects the names reassigned (`x = …`) anywhere in a body
-// (recursing control flow + match arms). Used to decline lifting when a capture
-// — or the closure local — is mutated, so the lifted call-time argument always
-// equals the capture's value at the lambda's definition.
+// (recursing control flow + match arms). Every consumer uses it the same way —
+// to withhold a credit, a reuse or a lift from a name whose slot does not hold
+// one value for the scope's life.
 function body_assign_targets(stmts: ast.Stmt[]): string[] {
     return assign_targets_into([], stmts);
 }
 
 // assign_targets_into threads ONE accumulator through astwalk's statement
-// spine. It is a hot path — lower_block classifies every nested block (#6911),
-// and a statement at depth d sits in the body of every block above it — so the
-// classifiers there take the set as a parameter and the block folds it once.
+// spine. It is a hot path — a statement at depth d sits in the body of every
+// block above it — so every consumer takes the set as a PARAMETER and each
+// scope folds it once: lower_func for the fn-level analyses, lower_block and
+// the block-level classifiers for their own block (#6911). A function-wide set
+// must never be handed to a nested block: these gates EXCLUDE a reassigned
+// name, so the wider set silences a free the block emits today (#6127).
 // assign_target_into captures nothing, so the fold allocates nothing per call.
 function assign_targets_into(out: string[], stmts: ast.Stmt[]): string[] {
     for stmt in stmts {
@@ -70156,7 +70179,10 @@ function cl_replace_at(body: ast.Stmt[], at: i32, ns: ast.Stmt): ast.Stmt[] {
 // f(i) … }`) was never lifted, taking the whole module off the IR path (the
 // loop-local capturing-closure IR gap).
 function closure_lift_one(body: ast.Stmt[], fd: parser.FuncDecl, acc: LiftAcc, gfns: string[], structs: StructTab, mfuncs: MFuncs): ClosureLift {
-    var assigns: string[] = body_assign_targets(body);
+    // Only a lambda BINDING consults the block's reassign set, and most blocks
+    // hold none — the walk recurses into every one of them.
+    var assigns: string[] = [];
+    var assigns_done: boolean = false;
     var i: i32 = 0;
     while (i < body.len()) {
         match (body[i]) {
@@ -70169,6 +70195,7 @@ function closure_lift_one(body: ast.Stmt[], fd: parser.FuncDecl, acc: LiftAcc, g
                         // binding declines (keeping the closure-box path) if
                         // the binding escapes — used as a value, returned, or
                         // reassigned — rather than only called.
+                        if (!assigns_done) { assigns = body_assign_targets(body); assigns_done = true; }
                         var lifted: ClosureLift = try_lift_binding(body, i, v.name, lam, fd, acc, gfns, assigns, structs, mfuncs);
                         if (lifted.changed) { return lifted; }
                     },
@@ -75814,8 +75841,8 @@ if (fn.params.len() > 0 && fn.params[0].name == "__env") {
     return reclaim;
 }
 
-function reclaim_snapshot_locals(fn: parser.FuncDecl, sg: FnSigs, structs: StructTab, reclaim: string[]): string[] {
-var snap_locals: string[] = snapshot_local_names_of(fn, structs, sg.borrowable_params, sg.fresh_struct_ret_fns, sg.consume_safe_params, sg.return_fresh_struct_ret_fns);
+function reclaim_snapshot_locals(fn: parser.FuncDecl, reassigned: string[], sg: FnSigs, structs: StructTab, reclaim: string[]): string[] {
+var snap_locals: string[] = snapshot_local_names_of(fn, reassigned, structs, sg.borrowable_params, sg.fresh_struct_ret_fns, sg.consume_safe_params, sg.return_fresh_struct_ret_fns);
 var sli: i32 = 0;
 while (sli < snap_locals.len()) {
     var row: string = snap_locals[sli];

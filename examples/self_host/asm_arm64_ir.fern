@@ -2763,6 +2763,27 @@ function emit_arm64_field_reclaim_one(s: asmcore.EmitState, sty: string): asmcor
             s = s.write("    bl __fn___fern_arrarr_free\n");   // element walk at rc==1, then the buffer
             s = s.write("    add sp, sp, #16\n");
         } else {
+            if (op.kind == "deep_struct_dec") {
+                // The nested struct's OWN rc children, before the dec below frees
+                // the box holding them (#8538). Gated on rc==1: a SHARED inner
+                // keeps its fields for its other owner. __fern_rc_is_unique
+                // leaves x1 alone; __struct_drop_<ty> does not, so reload the
+                // frame and the field after it.
+                var dsan: string = asmcore.sanitize_label(op.ty);
+                s = s.need("struct_drop:" + op.ty);
+                s = s.write("    str x1, [sp, #-16]!\n");
+                s = s.write("    bl __fn___fern_rc_is_unique\n");
+                s = s.write("    add sp, sp, #16\n");
+                s = s.write("    cbz x0, .Lafr_" + san + "_nodeep" + ks + "\n");
+                s = s.write("    str x1, [sp, #-16]!\n");
+                s = s.write("    bl __fn___struct_drop_" + dsan + "\n");
+                s = s.write("    add sp, sp, #16\n");
+                s = s.write("    ldr x10, [sp, #48]\n");             // new
+                s = s.write("    ldr x11, [sp, #32]\n");             // old
+                s = s.write("    ldr x12, [sp, #16]\n");             // snap
+                s = s.write("    ldr x1, [x11, #" + off + "]\n");    // old.field_k
+                s = s.write(".Lafr_" + san + "_nodeep" + ks + ":\n");
+            }
             s = s.write("    str x1, [sp, #-16]!\n");
             if (op.kind == "str_free" || op.kind == "str_arr_free") {
                 if (op.kind == "str_free") {
@@ -3173,8 +3194,9 @@ function emit_rt_clock_and_print(s: asmcore.EmitState, darwin: boolean): asmcore
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_read_line(ctgt), s.struct_decls, s);
     }
     if (s.has_need("reader")) {
+        // read_chunk only: reader_close calls __fern_io_error, so it is
+        // emitted with the fs bundle rather than here.
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_reader_read_chunk(ctgt), s.struct_decls, s);
-        s = emit_ir_runtime_fern_fn(asmcore.rt_src_reader_close(ctgt), s.struct_decls, s);
     }
     if (s.has_need("str_print")) {
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_print_str(ctgt), s.struct_decls, s);
@@ -6046,8 +6068,9 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     // started returning a Result (#7758) — it calls io_error like every other
     // leaf, so it has to share the bundle's call graph rather than sit alone.
     // writer_write joined for the same reason once its own result became an
-    // Option[IoError] (#7926).
-    if (s.has_need("read_file") || s.has_need("read_file_bytes") || s.has_need("write_file") || s.has_need("write_file_exec") || s.has_need("remove_file") || s.has_need("create_dir_all") || s.has_need("temp_dir") || s.has_need("stat") || s.has_need("lstat") || s.has_need("read_dir") || s.has_need("remove_dir_all") || s.has_need("open_file") || s.has_need("writer_write")) {
+    // Option[IoError] (#7926), and reader_close once it started reporting a
+    // failing close instead of discarding it.
+    if (s.has_need("read_file") || s.has_need("read_file_bytes") || s.has_need("write_file") || s.has_need("write_file_exec") || s.has_need("remove_file") || s.has_need("create_dir_all") || s.has_need("temp_dir") || s.has_need("stat") || s.has_need("lstat") || s.has_need("read_dir") || s.has_need("remove_dir_all") || s.has_need("open_file") || s.has_need("writer_write") || s.has_need("reader")) {
         var fs_src: string = asmcore.rt_src_io_error(tgt);
         if (s.has_need("stat")) { fs_src = fs_src + " " + asmcore.rt_src_stat(tgt); }
         if (s.has_need("lstat")) { fs_src = fs_src + " " + asmcore.rt_src_lstat(tgt); }
@@ -6062,6 +6085,7 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
         if (s.has_need("remove_dir_all")) { fs_src = fs_src + " " + asmcore.rt_src_remove_dir_all(tgt); }
         if (s.has_need("open_file")) { fs_src = fs_src + " " + asmcore.rt_src_open_res(tgt); }
         if (s.has_need("writer_write")) { fs_src = fs_src + " " + asmcore.rt_src_writer_write(tgt); }
+        if (s.has_need("reader")) { fs_src = fs_src + " " + asmcore.rt_src_reader_close(tgt); }
         s = emit_ir_runtime_fern_fn(fs_src, s.struct_decls, s);
     }
     // env is the odd one out: no syscall at all, so it needs none of `tgt` and

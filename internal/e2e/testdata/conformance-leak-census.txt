@@ -19,15 +19,14 @@
 # leaking fixture is 2, and regex_captures_assert alone is 5987 of the
 # total.
 #
-# arrow_lambda_block_body went 0 -> 3 without a compiler change: #8504 gave
-# the fixture its void-body arrow lambdas, and each of the three is a
-# closure bound to a local, capturing by env, then handed to a callee —
-# the #8057 shape the rc corpus already pins as
-# closure_local_passed_to_callee_released, one pair + env apiece. The
-# release is blocked on a second owner that never takes a count: routing
-# it through the pair's drop-fn pointer frees a closure the self-host
-# checker's Scope field still holds. Owned by that gap, not by this
-# fixture; the row returns to 0 when it closes.
+# arrow_lambda_block_body went 0 -> 3 (#8550). Its verdict predates its
+# content: #2673 extended the fixture with capturing void lambdas, and the
+# three allocations are the closure ENV boxes that capture leaks — the same
+# boxes the rc corpus already pins non-zero for closure_churn_free and its
+# neighbours, and that #8545 / #8546 own. The anonymous `function` spelling
+# of the same lambda leaks identically, so nothing about the new parse is
+# implicated. generic_array_methods (1 -> 0) and open_slice_evaluates_base_once
+# (6 -> 4) went DOWN with #8527 / #8535.
 #
 # Ten rows went DOWN and two arrived at once with #8396 / #8399 / #8403: a
 # match over read_chunk / read_line / env / read_file now owns the payload

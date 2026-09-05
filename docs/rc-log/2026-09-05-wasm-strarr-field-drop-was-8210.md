@@ -40,8 +40,9 @@ shape.
 `strarr-field-caller-array-co-owner` in
 `internal/e2eselfhost/self_host_strarr_field_buffer_release_test.go`. 30 ms per
 leg, against ~2.5 min for one whole-compiler emit + link + hosted run. Measured
-on `29f56065e` (the commit before the fix): wasm exits 97 (six of ten labels
-corrupted), x86-64 exits 0.
+on `29f56065e` (the commit before the fix): wasm exits 97 — a label read back
+wrong after the churn — and x86-64 exits 0. A counting variant of the same shape
+over twelve items read six of them wrong there.
 
 ## Trap: the over-release counter reads 0 here
 

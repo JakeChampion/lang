@@ -1,4 +1,4 @@
-# What enforces `str`'s contract — a design review
+# What enforces `str`'s contract — a design review, and the decision
 
 `STRINGS-SOTA.md` settled the *representation* questions (D1–D11): UTF-8, byte
 indices, SSO, the owned/borrowed split itself. This document is about the
@@ -6,10 +6,11 @@ question that survey did not ask and 2026-08 answered empirically: **what
 enforces the view type's contract**, and the answer today is *nothing* —
 safety rests on an accident, and the accident has started failing.
 
-Written 2026-08-23, every measurement code-verified that day. The probes live
-in the discussion below rather than a suite because the conclusion is a
-decision request, not a regression pin; #7393 carries the repro that should
-become a test with whichever option is chosen.
+**§5 carries the decision: O2 for `str`, a two-word value for `[u8]`, O3
+refused.** §1–§4 are the review that led there, written 2026-08-23 with every
+measurement code-verified that day; §5 adds the 2026-09-05 measurements that
+settled the `[u8]` half §3 had deferred. The probes in §1 are the tests §3's
+step 3 needs; #7393 carries the repro.
 
 ## 1. The evidence
 
@@ -132,3 +133,75 @@ Concretely, in order:
 The split itself — `string`/`str` at argument boundaries — stays exactly as
 `STRINGS-SOTA.md` §2.2 concluded. What changes is that its contract becomes
 something the compiler states, instead of something the leak list implies.
+
+## 5. Decision (2026-09-05)
+
+**O2 is adopted for `str`, and `[u8]` becomes a two-word value rather than a
+heap box. O3 is refused for both.** §3's recommendation stands; what follows is
+the part §3 left open — it deferred `[u8]` explicitly ("its producers can adopt
+whichever contract is chosen here") — plus the evidence that arrived after it
+was written.
+
+### The evidence that settles `[u8]`
+
+Measured on `958a003d3`, x86-64, allocations paired by pointer from
+`FERN_RC_TRACE=1` on a `-g` build:
+
+```
+$ FERN_LEAKCHECK=1 ./c1        # main() { crypto.sha256_hex("abc"); }
+leakcheck: allocs=11 frees=8 live_bytes=48
+
+3 unpaired allocation(s):
+    16 B  site=__fern_slice_make+0x14   caller=__fn_main+0x1b6
+    16 B  site=__fern_slice_make+0x14   caller=__fn_main+0x22c
+    16 B  site=__fern_slice_make+0x14   caller=__fn_main+0x22c
+```
+
+Every `[u8]` slice leaks its 16-byte `(data, len)` header, always has, and
+`rc_caps.go` says why: slices are on the borrow model ("it rejects Map …,
+**slices**, closures"), and a borrowed value is never released. #8278 did not
+introduce this; it put `[u8]` into a hot stdlib wrapper an audited fixture
+calls, which is how the census caught a standing gap (#8534).
+
+**This leak is not the §1 leak floor and buys no safety.** The floor is the
+*backing buffer* outliving the view; this is the *descriptor*, which nothing
+reads after the call. It is pure waste, so the "views are safe because their
+targets leak" trade does not apply to it and nothing is lost by removing it.
+
+Two facts make the fix cheap. `[u8]` appears 34 times across the stdlib and the
+self-host, from 14 producers — and it appears **only in parameter position**:
+never a return type, never a struct field, never an array element. Slices are
+already, in practice, the non-escaping call-boundary value O2 blesses. And the
+language already ships the representation: the SSO two-word ABI carries a
+string as `(data, len)` unboxed on wasm32 and both native backends
+(`SSO-TWOWORD-EXEC.md`, `SSO-NATIVE-FLIP-STATUS.md`). A slice is that shape.
+The boxed header is the outlier, not the baseline.
+
+### Why not rc-track slices
+
+Making the header rc-tracked would fix the leak and is the wrong fix: it is O3
+in miniature, and it buys retention semantics — a stored view silently
+extending its buffer's lifetime — for a value that is never stored. It also
+adds a count to something whose whole purpose is to be cheaper than the array
+it points into. Deleting the allocation dominates reclaiming it.
+
+### Consequences
+
+- The escape story is deferred, not skipped. A two-word `[u8]` cannot dangle
+  today because it cannot escape today; §3's step 3 (a staged checker refusal
+  of escaping positions) is what keeps that true, and it now covers `[u8]`
+  alongside `str` rather than only `str`.
+- `__slice_make` and the `rcResultRaw` / `rcsigs` entries for it retire with
+  the box. A "slice header" allocation surviving anywhere afterwards is a bug,
+  which makes the change self-checking.
+- #8534's crypto half closes as a consequence rather than as a stdlib rewrite:
+  `sha256_hex` was never the defect, and rewriting the wrappers to dodge `[u8]`
+  would have hidden a general gap behind one call site.
+
+### What would reopen this
+
+A use for `[u8]` in a return, field or element position. That is a genuine
+escape and needs O1's lifetime-dependent returns, not a wider box — the two-word
+value is chosen *because* the escape set is empty, and the checker rule is what
+holds it empty. If that rule is not landed, this decision decays into C++'s
+`string_view` with a cheaper representation, which is worse than today.

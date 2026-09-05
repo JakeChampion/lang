@@ -5,9 +5,9 @@ import (
 	"testing"
 )
 
-func TestPrintfParity(t *testing.T) {
+func printfCases(t *testing.T) []invocation {
 	long := strings.Repeat("x", 10000)
-	requireParity(t, "printf", []invocation{
+	return []invocation{
 		// printf(1) does not use getopt: only a sole --help / --version
 		// is an option, a leading `--` is skipped, and everything else
 		// is the format.
@@ -395,7 +395,11 @@ func TestPrintfParity(t *testing.T) {
 		{name: "stdout full warning then fatal", args: []string{`%d\n%z`, "abc"}, stdout: stdoutFull},
 		{name: "stdout closed warning then fatal", args: []string{`%d\n%z`, "abc"}, stdout: stdoutClosed},
 		{name: "stdout full warning then fatal no newline", args: []string{`%d%z`, "abc"}, stdout: stdoutFull},
-	})
+	}
+}
+
+func TestPrintfParity(t *testing.T) {
+	requireParity(t, "printf", printfCases(t))
 }
 
 func TestPrintfHelpVersion(t *testing.T) {

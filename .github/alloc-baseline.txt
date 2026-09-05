@@ -44,5 +44,5 @@
 # on purpose, update it in the same PR; the job summary prints the corrected
 # lines ready to paste. Keep the reason in the PR, not here.
 
-x86_64/checker.allocs	17674612
-x86_64/checker.frees	14474056
+x86_64/checker.allocs	15344503
+x86_64/checker.frees	12150332

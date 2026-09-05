@@ -5903,6 +5903,29 @@ function emit_ir_field_reclaim_one(s: asmcore.EmitState, sty: string): asmcore.E
             s = s.write("    call __fn___fern_arrarr_free\n");  // element walk at rc==1, then the buffer
             s = s.write("    addq $8, %rsp\n");
         } else {
+            if (op.kind == "deep_struct_dec") {
+                // The nested struct's OWN rc children, before the box dec below
+                // frees the box holding them (#8538). Gated on rc==1: a SHARED
+                // inner keeps its fields for its other owner, the same gate
+                // __struct_drop_<T>'s deep_struct_drop arm applies.
+                // __fern_rc_is_unique leaves %rsi alone; __struct_drop_<ty>
+                // clobbers %r9/%r10/%r11, so reload from the stable frame.
+                var dsan: string = asmcore.sanitize_label(op.ty);
+                s = s.need("struct_drop:" + op.ty);
+                s = s.write("    pushq %rsi\n");
+                s = s.write("    call __fn___fern_rc_is_unique\n");
+                s = s.write("    addq $8, %rsp\n");
+                s = s.write("    testq %rax, %rax\n");
+                s = s.write("    jz .Lfr_" + san + "_nodeep" + ks + "\n");
+                s = s.write("    pushq %rsi\n");
+                s = s.write("    call __fn___struct_drop_" + dsan + "\n");
+                s = s.write("    addq $8, %rsp\n");
+                s = s.write("    movq 24(%rsp), %r11\n");          // reload new
+                s = s.write("    movq 16(%rsp), %r10\n");          // reload old
+                s = s.write("    movq 8(%rsp), %r9\n");            // reload snap
+                s = s.write("    movq " + off + "(%r10), %rsi\n"); // reload old.field_k
+                s = s.write(".Lfr_" + san + "_nodeep" + ks + ":\n");
+            }
             s = s.write("    pushq %rsi\n");
             if (op.kind == "str_free") {
                 s = s.write("    call __fn___fern_str_free\n");     // rc-aware string free (data buffer + box)
@@ -7767,8 +7790,9 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
     }
     if (s.has_need("reader")) {
         s = s.write("    .text\n");
+        // read_chunk only: reader_close calls __fern_io_error, so it is
+        // emitted with the fs bundle below rather than here.
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_reader_read_chunk("x86_64"), all_structs, s);
-        s = emit_ir_runtime_fern_fn(asmcore.rt_src_reader_close("x86_64"), all_structs, s);
     }
     if (s.has_need("str_print")) {
         s = s.write("    .text\n");
@@ -7813,7 +7837,7 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
     // additionally calls the monotonic_ns builtin (op-mediated, so recognized in
     // the bundle like any builtin; its __fn___fern_monotonic_ns is emitted above,
     // need-marked by op_temp_dir). Heap-dependent (present above); x86-64-only.
-    if (s.has_need("stat") || s.has_need("lstat") || s.has_need("read_file") || s.has_need("read_file_bytes") || s.has_need("remove_file") || s.has_need("create_dir_all") || s.has_need("write_file") || s.has_need("write_file_exec") || s.has_need("temp_dir") || s.has_need("read_dir") || s.has_need("remove_dir_all") || s.has_need("open_file") || s.has_need("writer_write")) {
+    if (s.has_need("stat") || s.has_need("lstat") || s.has_need("read_file") || s.has_need("read_file_bytes") || s.has_need("remove_file") || s.has_need("create_dir_all") || s.has_need("write_file") || s.has_need("write_file_exec") || s.has_need("temp_dir") || s.has_need("read_dir") || s.has_need("remove_dir_all") || s.has_need("open_file") || s.has_need("writer_write") || s.has_need("reader")) {
         s = s.write("    .text\n");
         var fs_src: string = asmcore.rt_src_io_error("x86_64");
         if (s.has_need("stat")) { fs_src = fs_src + " " + asmcore.rt_src_stat("x86_64"); }
@@ -7829,6 +7853,7 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
         if (s.has_need("remove_dir_all")) { fs_src = fs_src + " " + asmcore.rt_src_remove_dir_all("x86_64"); }
         if (s.has_need("open_file")) { fs_src = fs_src + " " + asmcore.rt_src_open_res("x86_64"); }
         if (s.has_need("writer_write")) { fs_src = fs_src + " " + asmcore.rt_src_writer_write("x86_64"); }
+        if (s.has_need("reader")) { fs_src = fs_src + " " + asmcore.rt_src_reader_close("x86_64"); }
         s = emit_ir_runtime_fern_fn(fs_src, all_structs, s);
     }
     // env — now a Fern runtime function (#2649): walks the envp array (via

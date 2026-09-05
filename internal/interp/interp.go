@@ -496,6 +496,11 @@ type Interp struct {
 	// works in both worlds.
 	openFiles map[int64]*os.File
 	nextFd    int64
+	// closedStd records which of fd 0/1/2 the program has closed.
+	// The interpreter never closes the host's own stdio, but it has
+	// to answer a SECOND close the way the kernel does — see
+	// closeFile.
+	closedStd map[int64]bool
 	// deferStack is a per-call list of expressions to evaluate at
 	// function exit, in LIFO order. callFunc / callClosure push
 	// a fresh empty frame on entry, the `*ast.Defer` stmt
@@ -2730,14 +2735,29 @@ func closeFile(i *Interp, args []Value) (Value, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Closing stdin / stdout / stderr is a no-op in the
-	// interpreter — those streams are owned by the host.
+	// Closing stdin / stdout / stderr does not touch the host's own
+	// stdio — those streams outlive the program being interpreted —
+	// but a SECOND close still answers EBADF, because that is what
+	// the kernel tells every compiled backend and what gnulib's
+	// close_stream contract is written against. Answering None twice
+	// made the interpreter unusable as the oracle for close
+	// reporting (#8569).
 	if fd == 0 || fd == 1 || fd == 2 {
+		if i.closedStd[fd] {
+			return optionSome(ioErrorOther("", syscall.EBADF)), nil
+		}
+		if i.closedStd == nil {
+			i.closedStd = map[int64]bool{}
+		}
+		i.closedStd[fd] = true
 		return optionNone(), nil
 	}
 	f, ok := i.openFiles[fd]
 	if !ok {
-		return nil, fmt.Errorf("close: fd %d not registered", fd)
+		// Closed already, so there is no host file left to close:
+		// EBADF, as a compiled binary gets from the kernel. Not an
+		// interpreter error — the program did nothing illegal.
+		return optionSome(ioErrorOther("", syscall.EBADF)), nil
 	}
 	if err := f.Close(); err != nil {
 		return optionSome(classifyIoError("", err)), nil

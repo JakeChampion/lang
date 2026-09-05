@@ -125,6 +125,25 @@ A case whose behaviour changed within 9.x records the version it needs in a
 comment and is the exception, not the pattern — the utilities done so far
 have no such case.
 
+### The self-host leg
+
+`TestSelfHostCoreutilsParity` compiles every utility a second time with the
+SELF-HOST compiler (`examples/self_host/fern.fern`) under `FERN_STRICT_IR=1`,
+runs the same corpus against those binaries, and requires them to agree with
+the native build. Comparing against native rather than GNU is deliberate:
+native is already held to GNU by the corpus above, so a failure here says the
+two COMPILERS disagree instead of re-reporting a parity bug in both.
+
+It exists because nothing else compiles this tree with the self-host compiler,
+and the gap that hid behind that was not small: the getopt cursor returns
+`(Option[OptMatch], Getopt)`, which the self-host tuple lowering refused, so
+every utility declaring an option bailed the module (#8407). The first green
+run of the leg then found `Writer.close()` answering None to a failing close
+on all three self-host backends, which is the whole of `close_stdout`'s
+decision (#8569). `TestSelfHostCoreutilsCoverage` fails when a utility has no
+entry in `corpusByUtil`, so a new one cannot join the tree without joining
+this leg.
+
 The package is in the unit-test lane (`scripts/unit-test-packages` derives
 the lane from `go list`, so it was covered the moment it existed). It
 compiles each utility once per process, without `-O` so the assert() checks
