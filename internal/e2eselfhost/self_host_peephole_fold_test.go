@@ -10,9 +10,10 @@ import (
 	"testing"
 )
 
-// The emitter-shape gates for asm_ir.fern's P4 and P5 peepholes — the
-// self-host mirror of native's const_alu_fold_test.go and
-// stacked_materialise_test.go (internal/codegen/x86_64).
+// The emitter-shape gates for asm_ir.fern's P4, P5 and P6 peepholes — the
+// self-host mirror of native's const_alu_fold_test.go,
+// stacked_materialise_test.go and arg_materialise_test.go
+// (internal/codegen/x86_64).
 //
 // Each case asserts two things that have to travel together: the folded form
 // is present in the function that produces it and the round trip it replaces
@@ -226,6 +227,28 @@ function main(): i32 { var n: i32 = 0; if (is_ab("ab")) { n = n + 1; } if (!is_a
 			},
 			lacks: map[string][]string{
 				"is_ab": {"movq %rax, %rsi", "popq %rdi"},
+			},
+		},
+	})
+}
+
+// TestSelfHostSingleArgumentLoadsStraightIntoItsRegisterX86_64 pins P6: a
+// value computed into the accumulator for a register argument is materialised
+// into that register instead, the copy being the last read of %rax before
+// the call.
+func TestSelfHostSingleArgumentLoadsStraightIntoItsRegisterX86_64(t *testing.T) {
+	runPeepholeFoldCases(t, []peepholeFoldCase{
+		{
+			name: "field-into-rdi",
+			src: `struct Rec { name: string }
+function say(r: Rec): i32 { strbuf_append(r.name); return 1; }
+function main(): i32 { strbuf_reset(); var r: Rec = Rec { name: "abc" }; var n: i32 = say(r); return n + strbuf_take().len(); }`,
+			want: 4,
+			has: map[string][]string{
+				"say": {"movq 8(%rax), %rdi\n    call __fern_strbuf_append"},
+			},
+			lacks: map[string][]string{
+				"say": {"movq %rax, %rdi"},
 			},
 		},
 	})

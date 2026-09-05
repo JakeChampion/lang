@@ -6442,6 +6442,16 @@ pub function emit_module_ir_gated(mod: parser.Module, known: string[]): string {
 // like the other arguments' own materialisations, provably neither read nor
 // write %rax, so the call still proves it dead across them.
 //
+// P6 — materialise straight into the argument register. A value bound for a
+// register argument is computed into the accumulator and copied, because the
+// operand stack has nowhere else to put it:
+//
+//     movq (%rax), %rax / movq %rax, %rdi / movl $16, %esi / call f
+//       ->  movq (%rax), %rdi / movl $16, %esi / call f
+//
+// Sound for the same reason as P5's second form: the copy is the last read of
+// %rax before a call.
+//
 // The head of P4 and P5 is `pushq SRC` for ANY source without %rsp, not just
 // `pushq %rax`, because this backend pushes a local's frame slot directly; the
 // restore each folds to is the `movq SRC, %rax` P1 makes of an adjacent pair,
@@ -6771,10 +6781,10 @@ function pl_classify(s: string, ln: i32, bs: i32, hi: i32): PLine {
     return pl_two(p, me + 1, cm, cm + 2, hi);
 }
 
-// pl_is_argsetup reports whether a window line may sit between the pop of
-// P5's second form and the call, provably neither reading nor writing %rax:
-// another argument's materialisation, the stack adjustment around the call,
-// or a push of some other register.
+// pl_is_argsetup reports whether a window line may sit between an argument's
+// copy out of the accumulator and the call, provably neither reading nor
+// writing %rax: another argument's materialisation, the stack adjustment
+// around the call, or a push of some other register.
 function pl_is_argsetup(l: PLine): boolean {
     if (l.kind == PK_ARG || l.kind == PK_RSP8) { return true; }
     return l.kind == PK_PUSH && (l.flags & PF_REG) != 0 && (l.flags & (PF_ACC | PF_RSP)) == 0;
@@ -7001,15 +7011,16 @@ function peep_p5_acc(own p: Peep, e: i32): Peep {
     return peep_readd(p, tail);
 }
 
-// peep_call_tail handles P5's second form, which a `call` completes: walking
-// back over the argument setup finds the pop, and the lines walked over are
-// re-added behind the rewrite.
+// peep_call_tail handles the two rules a `call` completes. Walking back over
+// the argument setup finds either the pop of P5's second form or the copy of
+// P6; the lines walked over are re-added behind the rewrite.
 function peep_call_tail(own p: Peep): Peep {
     var n: i32 = p.n;
     if (n < 3 || p.w[n - 1].kind != PK_CALL) { return p; }
     var k: i32 = n - 2;
     while (k >= 1 && pl_is_argsetup(p.w[k])) { k = k - 1; }
     if (p.w[k].kind == PK_POP) { return peep_p5_call(p, k); }
+    if (k >= 1 && p.w[k].kind == PK_COPY && p.w[k - 1].kind == PK_MAT) { return peep_p6(p, k); }
     return p;
 }
 
@@ -7035,6 +7046,16 @@ function peep_p5_call(own p: Peep, k: i32): Peep {
     if (!pp_same(push.s, push.a, push.b, pop.s, pop.a, pop.b)) {
         p = peep_add_text(p, "    movq " + pl_operand(push) + ", " + pl_operand(pop) + "\n");
     }
+    p = peep_add_text(p, line);
+    return peep_readd(p, tail);
+}
+
+// peep_p6: w[k] copies %rax to the argument register, w[k-1] materialised it.
+function peep_p6(own p: Peep, k: i32): Peep {
+    var line: string = pl_rename(p.w[k - 1], p.w[k]);
+    if (line.len() == 0) { return p; }
+    var tail: PLine[] = peep_tail_from(p, k + 1);
+    p = Peep { ...p, n: k - 1, fired: true };
     p = peep_add_text(p, line);
     return peep_readd(p, tail);
 }
