@@ -21,7 +21,7 @@ function test_i64_lt_failure_message(): test.TestOutcome {
     // Confirm the failure message names the violation.
     match (test.assert_lt(10 as i64, 5 as i64)) {
         Fail(msg) => {
-            if (!msg.contains("expected 10")) {
+            if (!msg.contains("expected \"10\"")) {
                 return test.fail("missing actual value: " + msg);
             }
             return test.pass();

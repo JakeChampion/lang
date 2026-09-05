@@ -722,6 +722,15 @@ pub function assert_false(cond: boolean): TestOutcome {
     return Fail("assert_false: condition was true");
 }
 
+// `__quoted` — every value a generic assertion embeds in its
+// failure message goes through here. Without the delimiters an
+// empty or whitespace-only `Display` form leaves the message
+// ending in nothing at all, which reads as a truncated
+// diagnostic rather than as the value it is.
+function __quoted(s: string): string {
+    return "\"" + s + "\"";
+}
+
 // Generic equality + relational assertions over the core/cmp traits.
 // `assert_eq` / `assert_neq` accept any `Eq + Display` type (i32 / i64
 // / u32 / u64 / string / boolean, and any user type that implements
@@ -729,37 +738,42 @@ pub function assert_false(cond: boolean): TestOutcome {
 // `Ord + Display` type. These replaced the old per-width
 // `assert_eq_i32` / `assert_lt_u64` / … families once traits landed
 // (docs/TRAITS.md). The failure messages embed both values via
-// `to_string` so you don't have to re-run a test to see what came out.
+// `to_string`, quoted, so you don't have to re-run a test to see
+// what came out.
 pub function assert_eq[T: cmp.Eq + cmp.Display](actual: T, expected: T): TestOutcome {
     if (actual.eq(expected)) { return Pass; }
-    return Fail("assert_eq: expected " + expected.to_string() +
-                ", got " + actual.to_string());
+    return Fail("assert_eq: expected " + __quoted(expected.to_string()) +
+                ", got " + __quoted(actual.to_string()));
 }
 
 pub function assert_neq[T: cmp.Eq + cmp.Display](actual: T, expected: T): TestOutcome {
     if (!actual.eq(expected)) { return Pass; }
-    return Fail("assert_neq: expected != " + expected.to_string() +
-                ", got " + actual.to_string());
+    return Fail("assert_neq: expected != " + __quoted(expected.to_string()) +
+                ", got " + __quoted(actual.to_string()));
 }
 
 pub function assert_lt[T: cmp.Ord + cmp.Display](a: T, b: T): TestOutcome {
     if (a.cmp(b) < 0) { return Pass; }
-    return Fail("assert_lt: expected " + a.to_string() + " < " + b.to_string());
+    return Fail("assert_lt: expected " + __quoted(a.to_string()) +
+                " < " + __quoted(b.to_string()));
 }
 
 pub function assert_le[T: cmp.Ord + cmp.Display](a: T, b: T): TestOutcome {
     if (a.cmp(b) <= 0) { return Pass; }
-    return Fail("assert_le: expected " + a.to_string() + " <= " + b.to_string());
+    return Fail("assert_le: expected " + __quoted(a.to_string()) +
+                " <= " + __quoted(b.to_string()));
 }
 
 pub function assert_gt[T: cmp.Ord + cmp.Display](a: T, b: T): TestOutcome {
     if (a.cmp(b) > 0) { return Pass; }
-    return Fail("assert_gt: expected " + a.to_string() + " > " + b.to_string());
+    return Fail("assert_gt: expected " + __quoted(a.to_string()) +
+                " > " + __quoted(b.to_string()));
 }
 
 pub function assert_ge[T: cmp.Ord + cmp.Display](a: T, b: T): TestOutcome {
     if (a.cmp(b) >= 0) { return Pass; }
-    return Fail("assert_ge: expected " + a.to_string() + " >= " + b.to_string());
+    return Fail("assert_ge: expected " + __quoted(a.to_string()) +
+                " >= " + __quoted(b.to_string()));
 }
 
 // Float equality with a tolerance, plus exact equality for
@@ -1663,10 +1677,17 @@ pub function assert_lines_eq(actual: string, expected_lines: string[]): TestOutc
 // Common in property tests: "the result must land between two
 // inclusive bounds". Equivalent to `assert_ge_i32(v, lo) +
 // assert_le_i32(v, hi)` but in one line, with a failure message
-// that names the violated side.
+// that names the violated side. A range that cannot hold
+// anything (`lo > hi`) is the caller's bug, not a value
+// mismatch, so it is reported as such rather than blamed on
+// whichever side `v` fell outside.
 
 // `assert_in_range_i32(v, lo, hi)` — `lo <= v <= hi`.
 pub function assert_in_range_i32(v: i32, lo: i32, hi: i32): TestOutcome {
+    if (lo > hi) {
+        return Fail("assert_in_range_i32: inverted range - lower bound " +
+                    lo.to_string() + " > upper bound " + hi.to_string());
+    }
     if (v < lo) {
         return Fail("assert_in_range_i32: " + v.to_string() +
                     " < lower bound " + lo.to_string());
@@ -1680,6 +1701,10 @@ pub function assert_in_range_i32(v: i32, lo: i32, hi: i32): TestOutcome {
 
 // `assert_in_range_i64(v, lo, hi)` — same for wider ints.
 pub function assert_in_range_i64(v: i64, lo: i64, hi: i64): TestOutcome {
+    if (lo > hi) {
+        return Fail("assert_in_range_i64: inverted range - lower bound " +
+                    lo.to_string() + " > upper bound " + hi.to_string());
+    }
     if (v < lo) {
         return Fail("assert_in_range_i64: " + v.to_string() +
                     " < lower bound " + lo.to_string());
@@ -1692,11 +1717,23 @@ pub function assert_in_range_i64(v: i64, lo: i64, hi: i64): TestOutcome {
 }
 
 // `assert_in_range_f64(v, lo, hi)` — inclusive float range.
-// NaN inputs always fail (NaN never satisfies an ordering
-// comparison; pretending it's in-range would mask bugs).
+// NaN anywhere fails — in the value or in either bound. A NaN
+// bound is the dangerous one: every comparison against it is
+// false, so the "not below and not above" formulation would
+// report Pass while asserting nothing at all.
 pub function assert_in_range_f64(v: f64, lo: f64, hi: f64): TestOutcome {
     if (v != v) {
         return Fail("assert_in_range_f64: value is NaN");
+    }
+    if (lo != lo) {
+        return Fail("assert_in_range_f64: lower bound is NaN");
+    }
+    if (hi != hi) {
+        return Fail("assert_in_range_f64: upper bound is NaN");
+    }
+    if (lo > hi) {
+        return Fail("assert_in_range_f64: inverted range - lower bound " +
+                    lo.to_string() + " > upper bound " + hi.to_string());
     }
     if (v < lo) {
         return Fail("assert_in_range_f64: " + v.to_string() +
@@ -1715,6 +1752,16 @@ pub function assert_in_range_f64(v: f64, lo: f64, hi: f64): TestOutcome {
 pub function assert_in_range_f32(v: f32, lo: f32, hi: f32): TestOutcome {
     if (v != v) {
         return Fail("assert_in_range_f32: value is NaN");
+    }
+    if (lo != lo) {
+        return Fail("assert_in_range_f32: lower bound is NaN");
+    }
+    if (hi != hi) {
+        return Fail("assert_in_range_f32: upper bound is NaN");
+    }
+    if (lo > hi) {
+        return Fail("assert_in_range_f32: inverted range - lower bound " +
+                    lo.to_string() + " > upper bound " + hi.to_string());
     }
     if (v < lo) {
         return Fail("assert_in_range_f32: " + v.to_string() +
