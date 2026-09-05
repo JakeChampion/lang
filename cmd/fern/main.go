@@ -38,6 +38,22 @@
 // -check / -interp modes directly: it is tangled in memory first, and
 // diagnostics are mapped back to the lines you wrote in the document.
 //
+// # Program arguments
+//
+// Driver flags come before FILE; everything after FILE belongs to the
+// program and reaches it through `args()`. One leading `--` separates the
+// two and is consumed by the driver, so a literal `--` is written `-- --`.
+// `args()[0]` is the program as invoked — the source path under -interp,
+// the executable's own path for a compiled binary — and `args()[1:]` is
+// identical between the two for the same command tail:
+//
+//	fern -interp prog.fern -- --filter x   # args() = [prog.fern --filter x]
+//	fern --run prog.fern -- --filter x     # args() = [/tmp/…   --filter x]
+//
+// A flag written after FILE with no `--` before it is refused (exit 2)
+// rather than handed to the program as data: `fern prog.fern -o out` is a
+// misplaced driver flag far more often than it is an argument named `-o`.
+//
 // The -cc and -qemu flags override the linker and emulator.
 // The formatter preserves `//` line comments (leading, trailing, and
 // standalone) and an author's blank-line grouping between statements.
@@ -790,19 +806,12 @@ func main() {
 		var interpArgs []string
 		if flag.NArg() >= 1 {
 			path = flag.Arg(0)
-			// Anything after the source path is forwarded to the
-			// program through `args()`. Mirrors the compile-and-
-			// run path's flag.Args()[1:] behaviour so test runners
-			// can do `fern -interp test.fern -- --filter foo`
-			// without going through env vars. Strip a literal `--`
-			// separator if present — Go's `flag` package doesn't
-			// consume it, but conventional `program -- args`
-			// invocations expect it to disappear.
-			rest := flag.Args()[1:]
-			if len(rest) > 0 && rest[0] == "--" {
-				rest = rest[1:]
+			a, err := programArgs(flag.Args()[1:])
+			if err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(2)
 			}
-			interpArgs = rest
+			interpArgs = a
 		} else {
 			path = "-"
 		}
@@ -976,10 +985,17 @@ func main() {
 		os.Exit(2)
 	}
 	srcPath := flag.Arg(0)
-	progArgs := flag.Args()[1:] // anything after the source path is forwarded to the program
 
+	// -fmt takes a file LIST, not a program tail: every positional is an
+	// input, so it must not go through programArgs.
 	if *doFmt {
 		os.Exit(formatFiles(flag.Args(), *writeBack, *diffMode, *out))
+	}
+
+	progArgs, err := programArgs(flag.Args()[1:])
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
 	}
 
 	if *componentWrap && *componentWrapCli {
@@ -1174,8 +1190,8 @@ func runInterp(srcPath string, argv []string) (int, error) {
 	ip := interp.New()
 	// argv[0] is conventionally the program path so `args()`
 	// matches the C / Go shape. Subsequent entries are the
-	// user's own arguments, passed after `--` on the fern
-	// command line.
+	// user's own arguments, written after FILE on the fern
+	// command line (see programArgs).
 	ip.Args = append([]string{srcPath}, argv...)
 	for _, ed := range prog.Enums {
 		ip.RegisterEnum(ed)
