@@ -1136,7 +1136,7 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		Result: ast.VoidType{},
 	}
 	// strbuf_reset() / strbuf_append(s) / strbuf_take() — global
-	// mutable string-builder primitive. There's a single 64 MiB BSS
+	// mutable string-builder primitive. There's a single growable
 	// scratch buffer; reset zeroes its length, append memcpys bytes
 	// past the current tail, take allocates a fresh string of the
 	// accumulated bytes and resets. Built for the asm self-host
@@ -2233,6 +2233,24 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	}
 	c.info.FuncSigs["__fern_drop_arr_ptr"] = &ast.FuncType{
 		Params: []ast.Type{usizeT, ast.NumberType{}},
+		Result: usizeT,
+	}
+	// `__fern_str_dec(s)` decs a string's rc and, at its last reference,
+	// RETURNS the buffer to the freelist — a bare rc dec would only zero
+	// the count and strand it. It carries its own guards for the shapes
+	// that own no buffer (the SSO inline tag, the literal sentinel at
+	// data-8), so it is safe on any string a column can hold.
+	//
+	// Exposed to the Map runtime so __map_dec_value can release the string
+	// value an overwrite displaces. That release cannot live on the IR
+	// side: the lowering runs BEFORE the set's own __map_cow_inplace, where
+	// a shared buffer's value still belongs to the other handle, while
+	// __map_dec_value runs after it (#8421). The (data, len) cell a
+	// two-word target leaves behind goes back through the ordinary
+	// __free — a size the value tag carries, so no second builtin and
+	// nothing for a single-word target, which boxes no string at all.
+	c.info.FuncSigs["__fern_str_dec"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}},
 		Result: usizeT,
 	}
 	// `__free(ptr, size)` returns the `size`-byte block at `ptr` to
@@ -9722,7 +9740,44 @@ func SelfReassignOwnMoveArg(asn *ast.Assign, ownFuncs map[string][]bool) *ast.Id
 // Exported because the checker's E051 admission and the IR's field move
 // (computeFieldOwnMoves) must key on the IDENTICAL recognition.
 func SupersededFieldOwnMoveArgs(sl *ast.StructLit, target string, ownFuncs map[string][]bool) []*ast.FieldAccess {
-	if sl.Base == nil || len(ownFuncs) == 0 {
+	if len(ownFuncs) == 0 {
+		return nil
+	}
+	return SupersededFieldMoves(sl, target, func(field string, value ast.Expr) *ast.FieldAccess {
+		call, ok := value.(*ast.Call)
+		if !ok || call.Method != nil {
+			return nil
+		}
+		cid, ok := call.Callee.(*ast.Ident)
+		if !ok {
+			return nil
+		}
+		flags, isOwn := ownFuncs[cid.Name]
+		if !isOwn {
+			return nil
+		}
+		for i, a := range call.Args {
+			if i >= len(flags) || !flags[i] {
+				continue
+			}
+			if fa, ok := a.(*ast.FieldAccess); ok && fa.Field == field {
+				return fa
+			}
+		}
+		return nil
+	})
+}
+
+// SupersededFieldMoves is the shape test SupersededFieldOwnMoveArgs and the
+// IR's `.with` receiver move (computeFieldOwnMoves) share: the literal's base
+// is the bare ident `target`, `target` occurs bare nowhere else in the
+// literal, and each `target.f` the returned list names is read exactly once
+// in the whole literal — by the initialiser of the very field f the literal
+// overrides. `consumed(f, value)` says which `target.f` node, if any, field
+// f's initialiser hands to a consuming position; only its identity is checked
+// here, since the shape is what makes the transfer sound.
+func SupersededFieldMoves(sl *ast.StructLit, target string, consumed func(field string, value ast.Expr) *ast.FieldAccess) []*ast.FieldAccess {
+	if sl.Base == nil {
 		return nil
 	}
 	if bid, ok := sl.Base.(*ast.Ident); !ok || bid.Name != target {
@@ -9751,30 +9806,15 @@ func SupersededFieldOwnMoveArgs(sl *ast.StructLit, target string, ownFuncs map[s
 	}
 	var out []*ast.FieldAccess
 	for _, f := range sl.Fields {
-		call, ok := f.Value.(*ast.Call)
-		if !ok || call.Method != nil {
+		if fieldReads[f.Name] != 1 {
 			continue
 		}
-		cid, ok := call.Callee.(*ast.Ident)
-		if !ok {
+		fa := consumed(f.Name, f.Value)
+		if fa == nil || fa.Field != f.Name {
 			continue
 		}
-		flags, isOwn := ownFuncs[cid.Name]
-		if !isOwn || fieldReads[f.Name] != 1 {
-			continue
-		}
-		for i, a := range call.Args {
-			if i >= len(flags) || !flags[i] {
-				continue
-			}
-			fa, ok := a.(*ast.FieldAccess)
-			if !ok || fa.Field != f.Name {
-				continue
-			}
-			if id, ok := fa.Target.(*ast.Ident); ok && id.Name == target {
-				out = append(out, fa)
-				break
-			}
+		if id, ok := fa.Target.(*ast.Ident); ok && id.Name == target {
+			out = append(out, fa)
 		}
 	}
 	return out

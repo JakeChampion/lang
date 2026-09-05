@@ -74,9 +74,6 @@ function round(i: i32): i32 {
 function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }
 `
 
-// The user rc-enum producer is NOT in the wasm list below: its call-bound
-// release is refused on every backend (the leak-matrix row pins that gap), so
-// the shape has no balance to assert here.
 const callScrutUserEnumSrc = `function w(i: i32): string { var t: string = "x"; if (i % 2 == 0) { t = "yy"; } return "v-a-wide-payload-past-any-inline-threshold-" + t; }
 enum E { Full(string[]), Note(string), Nil }
 function mk(i: i32): E {
@@ -107,6 +104,7 @@ func TestSelfHostCallScrutineeReleaseWasmIR(t *testing.T) {
 		{"optopt_strarr", callScrutOptOptStrArrSrc},
 		{"opt_str", callScrutOptStrSrc},
 		{"bound_opt_strarr", callBoundOptStrArrSrc},
+		{"user_enum", callScrutUserEnumSrc},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			want := interpExit(t, interpBin, tc.src)

@@ -451,6 +451,8 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 		g.usesIoError = true
 		g.usesMemcpy = true
 		g.usesAlloc = true
+		g.usesBoxFree = true // read_chunk gives back an EOF'd buffer
+		g.usesFree = true    // box_free → __fern_free
 	}
 	// The file-I/O + filesystem-op helpers all NUL-terminate the
 	// path with an alloc + memcpy before their path syscall (see
@@ -5471,9 +5473,10 @@ func (g *generator) emitLcReportRuntime() {
 // helpers and the BSS scratch they share. arm64 mirror of the
 // x86_64 emission — see that comment for the user-facing spec.
 //
-// The strbuf is a 64 MiB BSS region + a single 8-byte length
-// counter. Heap-form output only (no inline-SSO encoding) since
-// the asm-self-host use case always exceeds the 7-byte inline cap.
+// The strbuf is a heap buffer that doubles when an append would not
+// fit (three .bss words: len, data ptr, cap). Heap-form output only
+// (no inline-SSO encoding) since the asm-self-host use case always
+// exceeds the 7-byte inline cap.
 func (g *generator) emitStrBufRuntime() {
 	twoWord := ast.UseTwoWordStrings(8)
 
@@ -5489,12 +5492,14 @@ func (g *generator) emitStrBufRuntime() {
 	g.line(".align 8")
 	g.label("__fern_strbuf_len")
 	g.emit(".skip 8")
-	g.line(".align 8")
-	g.label("__fern_strbuf_data")
-	g.emit(".skip 67108864") // 64 MiB
+	g.label("__fern_strbuf_ptr")
+	g.emit(".skip 8")
+	g.label("__fern_strbuf_cap")
+	g.emit(".skip 8")
 	g.line(".text")
 
-	// __fern_strbuf_reset(): len = 0.
+	// __fern_strbuf_reset(): len = 0. The buffer stays allocated for the
+	// next build.
 	g.line("")
 	g.line(".global __fern_strbuf_reset")
 	g.typeDirective("__fern_strbuf_reset")
@@ -5504,10 +5509,62 @@ func (g *generator) emitStrBufRuntime() {
 	g.emit("ret")
 	g.sizeDirective("__fern_strbuf_reset")
 
+	// __fern_strbuf_grow(x0 = bytes needed): replace the buffer with one
+	// of at least that capacity, doubling from 64 KiB, and copy the
+	// live bytes across. The old buffer is left to the arena, like the
+	// wasm runtime's strbufEnsure.
+	g.line("")
+	g.line(".global __fern_strbuf_grow")
+	g.typeDirective("__fern_strbuf_grow")
+	g.label("__fern_strbuf_grow")
+	g.emit("stp x29, x30, [sp, #-32]!")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	g.emit("mov x19, x0") // need
+	g.adrpAdd("x1", "__fern_strbuf_cap")
+	g.emit("ldr x20, [x1]")
+	g.emit("cbnz x20, .Lsbgrow_dbl")
+	g.emit("mov x20, #0x10000")
+	g.label(".Lsbgrow_dbl")
+	g.emit("cmp x20, x19")
+	g.emit("b.hs .Lsbgrow_alloc")
+	g.emit("lsl x20, x20, #1")
+	g.emit("b .Lsbgrow_dbl")
+	g.label(".Lsbgrow_alloc")
+	g.emit("mov x0, x20")
+	g.emit("bl __fern_alloc")
+	if ast.LeakCheckEnabled {
+		// The builder's buffer is runtime state the program never holds,
+		// so the census leaves it out as it left out the .bss reservation
+		// it replaced. x20 is a power of two >= 64 KiB, already 16-rounded.
+		g.adrpAdd("x9", "__fern_lc_alloc_count")
+		g.emit("ldr x10, [x9]")
+		g.emit("sub x10, x10, #1")
+		g.emit("str x10, [x9]")
+		g.adrpAdd("x9", "__fern_lc_alloc_bytes")
+		g.emit("ldr x10, [x9]")
+		g.emit("sub x10, x10, x20")
+		g.emit("str x10, [x9]")
+	}
+	g.emit("mov x19, x0") // new buffer
+	g.adrpAdd("x1", "__fern_strbuf_ptr")
+	g.emit("ldr x1, [x1]")
+	g.adrpAdd("x2", "__fern_strbuf_len")
+	g.emit("ldr x2, [x2]")
+	g.emit("bl __fern_memcpy") // memcpy(new, old, len); len is 0 while old is null
+	g.adrpAdd("x1", "__fern_strbuf_ptr")
+	g.emit("str x19, [x1]")
+	g.adrpAdd("x1", "__fern_strbuf_cap")
+	g.emit("str x20, [x1]")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #32")
+	g.emit("ret")
+	g.sizeDirective("__fern_strbuf_grow")
+
 	// __fern_strbuf_append: (x0, x1) = (data, len-with-tag) on two-
 	// word ABI, (x0) = string ptr on legacy. Materialise byte ptr +
-	// byte length via the SSO-aware helpers, memcpy into the BSS
-	// buffer past the current tail, bump the counter.
+	// byte length via the SSO-aware helpers, grow if the bytes do not
+	// fit, memcpy past the current tail, bump the counter.
 	g.line("")
 	g.line(".global __fern_strbuf_append")
 	g.typeDirective("__fern_strbuf_append")
@@ -5522,45 +5579,46 @@ func (g *generator) emitStrBufRuntime() {
 		g.emit("mov x20, x1")                       // a_len-with-tag
 		g.emitStrDataPtr2W("x19", "x19", "x20", 32) // x19 = byte ptr (after SSO spill if needed)
 		g.emitStrLen2W("w20", "x20")                // w20 = byte length (untagged)
-		// dst = strbuf_data + strbuf_len
-		g.adrpAdd("x2", "__fern_strbuf_len")
-		g.emit("ldr x3, [x2]")
-		g.adrpAdd("x0", "__fern_strbuf_data")
-		g.emit("add x0, x0, x3")
-		g.emit("mov x1, x19")
-		g.emit("mov x2, x20")
-		g.emit("bl __fern_memcpy")
-		// bump len
-		g.adrpAdd("x2", "__fern_strbuf_len")
-		g.emit("ldr x3, [x2]")
-		g.emit("add x3, x3, x20")
-		g.emit("str x3, [x2]")
-		g.emit("ldp x19, x20, [sp, #16]")
-		g.emit("ldp x29, x30, [sp], #64")
-		g.emit("ret")
 	} else {
-		// Legacy single-pointer ABI: length at [x0 - 4].
-		g.emit("stp x29, x30, [sp, #-32]!")
+		// Legacy single-pointer ABI: length at [x0 - 4]. Frame: fp/lr
+		// (16) + x19/x20 (16) + 8-byte spill for inline data + 8 align = 48.
+		g.emit("stp x29, x30, [sp, #-48]!")
 		g.emit("mov x29, sp")
-		g.emit("str x19, [sp, #16]")
+		g.emit("stp x19, x20, [sp, #16]")
 		g.emit("mov x19, x0")
 		g.emitStrLen("w20", "x19")         // w20 = byte length
-		g.emitStrDataPtr("x19", "x19", 24) // x19 = byte ptr
-		g.adrpAdd("x2", "__fern_strbuf_len")
-		g.emit("ldr x3, [x2]")
-		g.adrpAdd("x0", "__fern_strbuf_data")
-		g.emit("add x0, x0, x3")
-		g.emit("mov x1, x19")
-		g.emit("mov x2, x20")
-		g.emit("bl __fern_memcpy")
-		g.adrpAdd("x2", "__fern_strbuf_len")
-		g.emit("ldr x3, [x2]")
-		g.emit("add x3, x3, x20")
-		g.emit("str x3, [x2]")
-		g.emit("ldr x19, [sp, #16]")
-		g.emit("ldp x29, x30, [sp], #32")
-		g.emit("ret")
+		g.emitStrDataPtr("x19", "x19", 32) // x19 = byte ptr
 	}
+	g.adrpAdd("x2", "__fern_strbuf_len")
+	g.emit("ldr x3, [x2]")
+	g.emit("add x0, x3, x20") // bytes needed after this append
+	g.adrpAdd("x4", "__fern_strbuf_cap")
+	g.emit("ldr x5, [x4]")
+	g.emit("cmp x0, x5")
+	g.emit("b.ls .Lsbapp_fits")
+	g.emit("bl __fern_strbuf_grow")
+	g.label(".Lsbapp_fits")
+	// dst = strbuf_ptr + strbuf_len
+	g.adrpAdd("x2", "__fern_strbuf_len")
+	g.emit("ldr x3, [x2]")
+	g.adrpAdd("x0", "__fern_strbuf_ptr")
+	g.emit("ldr x0, [x0]")
+	g.emit("add x0, x0, x3")
+	g.emit("mov x1, x19")
+	g.emit("mov x2, x20")
+	g.emit("bl __fern_memcpy")
+	// bump len
+	g.adrpAdd("x2", "__fern_strbuf_len")
+	g.emit("ldr x3, [x2]")
+	g.emit("add x3, x3, x20")
+	g.emit("str x3, [x2]")
+	g.emit("ldp x19, x20, [sp, #16]")
+	if twoWord {
+		g.emit("ldp x29, x30, [sp], #64")
+	} else {
+		g.emit("ldp x29, x30, [sp], #48")
+	}
+	g.emit("ret")
 	g.sizeDirective("__fern_strbuf_append")
 
 	// __fern_strbuf_take(): allocate fresh buffer of current len,
@@ -5588,9 +5646,10 @@ func (g *generator) emitStrBufRuntime() {
 		g.emit("mov x0, x19")
 		g.emit("bl __fern_alloc_rc1")
 		g.emit("mov x20, x0")
-		// memcpy(dst, strbuf_data, len)
+		// memcpy(dst, strbuf_ptr, len)
 		g.emit("mov x0, x20")
-		g.adrpAdd("x1", "__fern_strbuf_data")
+		g.adrpAdd("x1", "__fern_strbuf_ptr")
+		g.emit("ldr x1, [x1]")
 		g.emit("mov x2, x19")
 		g.emit("bl __fern_memcpy")
 		// reset
@@ -5615,9 +5674,10 @@ func (g *generator) emitStrBufRuntime() {
 		g.emit("bl __fern_alloc_rc1")
 		g.emit("mov x20, x0") // x20 = data ptr (= base+8)
 		g.emitStrLenStore("w19", "x20")
-		// memcpy(data, strbuf_data, len)
+		// memcpy(data, strbuf_ptr, len)
 		g.emit("mov x0, x20")
-		g.adrpAdd("x1", "__fern_strbuf_data")
+		g.adrpAdd("x1", "__fern_strbuf_ptr")
+		g.emit("ldr x1, [x1]")
 		g.emit("mov x2, x19")
 		g.emit("bl __fern_memcpy")
 		// reset
@@ -9623,8 +9683,11 @@ func (g *generator) emitReaderWriterRuntime() {
 	// __fern_reader_read_chunk(reader_ptr, n) →
 	// Option[string]. Single read of up to n bytes; None if
 	// the read returns 0 (EOF). Allocates the n-byte string
-	// buffer first; if the read is short, the length prefix
-	// records the actual byte count.
+	// buffer first; the Some box's len field records the
+	// actual byte count, and the block frees at the size word
+	// __fern_alloc_rc1 wrote, so a short read keeps its class.
+	// Two-word string ABI (ast.TwoWordOverride is set for the
+	// whole arm64 emit).
 	g.line("")
 	g.line(".global __fern_reader_read_chunk")
 	g.typeDirective("__fern_reader_read_chunk")
@@ -9635,63 +9698,33 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("str x21, [sp, #32]")
 	g.emit("ldr w19, [x0]") // fd
 	g.emit("mov x20, x1")   // n
-	if twoWord {
-		// Two-word heap form: alloc exactly n bytes (no
-		// prefix). Actual bytes read tracked in the Some
-		// box's len field. rc-headered alloc (rc=1 @data-8, size @data-4) so
-		// the owned Some(string) is reclaimed correctly by __fern_str_dec;
-		// plain __fern_alloc corrupts the heap (#2817 class).
-		g.emit("mov x0, x20")
-		g.emit("bl __fern_alloc_rc1")
-		g.emit("mov x21, x0") // = base+8
-		g.emit("mov w0, w19")
-		g.emit("mov x1, x21")
-		g.emit("mov x2, x20")
-		g.syscall("read")
-		g.emit("cmp x0, #0")
-		g.emit("ble .Lrrc2w_none")
-		g.emit("mov x20, x0") // x20 = bytes read
-		// Some(string) 24-byte box.
-		g.emit("mov x0, #24")
-		g.emit("bl __fern_alloc_box")
-		g.emit("str wzr, [x0]")
-		g.emit("str x21, [x0, #8]")
-		g.emit("str x20, [x0, #16]")
-		g.emit("b .Lrrc2w_ret")
-		g.label(".Lrrc2w_none")
-		g.emit("mov x0, #4")
-		g.emit("bl __fern_alloc_box")
-		g.emit("mov w1, #1")
-		g.emit("str w1, [x0]")
-		g.label(".Lrrc2w_ret")
-	} else {
-		// L2 rc-header layout — see __fern_strcat. Payload = n data only.
-		g.emit("mov x0, x20")
-		g.emit("bl __fern_alloc_rc1")
-		g.emit("mov x21, x0") // x21 = data ptr (= base+8)
-		g.emit("mov w0, w19")
-		g.emit("mov x1, x21")
-		g.emit("mov x2, x20")
-		g.syscall("read")
-		g.emit("cmp x0, #0")
-		g.emit("ble .Lrrc_none")
-		g.emit("stur w0, [x21, #-4]") // length at data-4
-		g.emit("mov x20, x0")
-		g.emit("mov x19, x21") // x19 = data ptr
-		g.emit("add x0, x19, x20")
-		g.emit("strb wzr, [x0]")
-		g.emit("mov x0, #16")
-		g.emit("bl __fern_alloc_box")
-		g.emit("str wzr, [x0]")
-		g.emit("str x19, [x0, #8]")
-		g.emit("b .Lrrc_ret")
-		g.label(".Lrrc_none")
-		g.emit("mov x0, #4")
-		g.emit("bl __fern_alloc_box")
-		g.emit("mov w1, #1")
-		g.emit("str w1, [x0]")
-		g.label(".Lrrc_ret")
-	}
+	g.emit("mov x0, x20")
+	g.emit("bl __fern_alloc_rc1")
+	g.emit("mov x21, x0") // = base+8
+	g.emit("mov w0, w19")
+	g.emit("mov x1, x21")
+	g.emit("mov x2, x20")
+	g.syscall("read")
+	g.emit("cmp x0, #0")
+	g.emit("ble .Lrrc2w_none")
+	g.emit("mov x20, x0") // x20 = bytes read
+	// Some(string) 24-byte box.
+	g.emit("mov x0, #24")
+	g.emit("bl __fern_alloc_box")
+	g.emit("str wzr, [x0]")
+	g.emit("str x21, [x0, #8]")
+	g.emit("str x20, [x0, #16]")
+	g.emit("b .Lrrc2w_ret")
+	g.label(".Lrrc2w_none")
+	// EOF / error: nothing owns the buffer, so give it back.
+	g.emit("mov x0, x21")
+	g.emit("mov x1, x20")
+	g.emit("bl __fern_box_free")
+	g.emit("mov x0, #4")
+	g.emit("bl __fern_alloc_box")
+	g.emit("mov w1, #1")
+	g.emit("str w1, [x0]")
+	g.label(".Lrrc2w_ret")
 	g.emit("ldr x21, [sp, #32]")
 	g.emit("ldp x19, x20, [sp, #16]")
 	g.emit("ldp x29, x30, [sp], #48")

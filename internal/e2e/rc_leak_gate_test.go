@@ -66,16 +66,27 @@ var rcCorpusLeakBaselineX86_64 = map[string]int64{
 	"closure_churn_free":                             1584,
 	"closure_escapes_return":                         16,
 	"closure_capture_passed_to_owned_param":          64,
-	"map_delete_tuple_churn_free":                    304000,
-	"map_iter_escape_churn_free":                     32000,
-	"map_iter_string_kv_retain_churn_free":           19200,
-	"matchexpr_alias_array_no_free":                  1600,
-	"option_of_array":                                32,
-	"pair_form_enum_temp_as_argument":                288,
-	"pair_form_payload_borrowing_call":               144,
-	"stdlib_json_cursor_idiom":                       1488,
-	"stdlib_json_roundtrip":                          640,
-	"string_closure_capture_aliased":                 16,
+	// The five `m.without(k)` shapes, split out of one case so a fix to one
+	// can bank its own zero (#8276). They are NOT four times the old single
+	// entry gone wrong: each now runs its own 500-round loop over its own map,
+	// so the totals are not comparable with the one body that shared a map
+	// across all of them. What IS comparable is shape against shape, which is
+	// the point — the two bound forms and the miss reclaim completely under the
+	// #8276 seam retain + projection credit, while the self-assignment does not.
+	"map_delete_bound_reassign_churn_free":        128000,
+	"map_delete_projected_self_assign_churn_free": 128000,
+	"map_delete_bound_miss_churn_free":            128000,
+	"map_delete_destructure_churn_free":           112000,
+	"map_delete_i32_key_churn_free":               144000,
+	"map_iter_escape_churn_free":                  32000,
+	"map_iter_string_kv_retain_churn_free":        19200,
+	"matchexpr_alias_array_no_free":               1600,
+	"option_of_array":                             32,
+	"pair_form_enum_temp_as_argument":             288,
+	"pair_form_payload_borrowing_call":            144,
+	"stdlib_json_cursor_idiom":                    1456,
+	"stdlib_json_roundtrip":                       640,
+	"string_closure_capture_aliased":              16,
 	// A closure LOCAL handed to a callee keeps its pair, and the exit
 	// sweep's per-closure thunk is downgraded to the pair-only release
 	// (ElideClosurePair). Routing it through the pair's drop-fn pointer
@@ -104,17 +115,27 @@ var rcCorpusLeakBaselineArm64 = map[string]int64{
 	"closure_churn_free":                             1584,
 	"closure_escapes_return":                         16,
 	"closure_capture_passed_to_owned_param":          80,
-	"map_delete_tuple_churn_free":                    328000,
-	"map_iter_escape_churn_free":                     32000,
-	"map_iter_string_kv_retain_churn_free":           19200,
-	"map_string_array_values":                        16,
-	"matchexpr_alias_array_no_free":                  1600,
-	"option_of_array":                                32,
-	"pair_form_enum_temp_as_argument":                288,
-	"pair_form_payload_borrowing_call":               144,
-	"stdlib_json_cursor_idiom":                       1696,
-	"stdlib_json_roundtrip":                          720,
-	"string_closure_capture_aliased":                 32,
+	// The five `m.without(k)` shapes, split out of one case so a fix to one
+	// can bank its own zero (#8276). They are NOT four times the old single
+	// entry gone wrong: each now runs its own 500-round loop over its own map,
+	// so the totals are not comparable with the one body that shared a map
+	// across all of them. What IS comparable is shape against shape, which is
+	// the point — the two bound forms and the miss reclaim completely under the
+	// #8276 seam retain + projection credit, while the self-assignment does not.
+	"map_delete_bound_reassign_churn_free":        152000,
+	"map_delete_projected_self_assign_churn_free": 152000,
+	"map_delete_bound_miss_churn_free":            152000,
+	"map_delete_destructure_churn_free":           136000,
+	"map_delete_i32_key_churn_free":               144000,
+	"map_iter_escape_churn_free":                  32000,
+	"map_iter_string_kv_retain_churn_free":        19200,
+	"matchexpr_alias_array_no_free":               1600,
+	"option_of_array":                             32,
+	"pair_form_enum_temp_as_argument":             288,
+	"pair_form_payload_borrowing_call":            144,
+	"stdlib_json_cursor_idiom":                    1664,
+	"stdlib_json_roundtrip":                       720,
+	"string_closure_capture_aliased":              32,
 	// See the x86-64 twin.
 	"closure_local_passed_to_callee_released": 384,
 	"string_closure_capture_churn_free":       6400,
@@ -143,25 +164,35 @@ var rcCorpusLeakBaselineArm64 = map[string]int64{
 // Cases the correctness corpus skips on wasm (`skipWasm`) are skipped
 // here too — a case that cannot run cannot be weighed.
 var rcCorpusLeakBaselineWasm = map[string]int64{
-	"closure_array_capture_churn":                    4752,
-	"closure_call_arg_handed_back_is_not_reclaimed":  1920,
-	"closure_capture_passed_to_owned_param":          64,
-	"closure_captures_arr_of_struct_churn_free":      14256,
-	"closure_captures_struct_churn_free":             6336,
-	"closure_churn_free":                             1584,
-	"closure_escapes_return":                         16,
-	"closure_local_passed_to_callee_released":        384,
-	"consumed_array_arg_temp_released_and_guarded":   128,
-	"map_delete_tuple_churn_free":                    224000,
+	"closure_array_capture_churn":                   4752,
+	"closure_call_arg_handed_back_is_not_reclaimed": 1920,
+	"closure_capture_passed_to_owned_param":         64,
+	"closure_captures_arr_of_struct_churn_free":     14256,
+	"closure_captures_struct_churn_free":            6336,
+	"closure_churn_free":                            1584,
+	"closure_escapes_return":                        16,
+	"closure_local_passed_to_callee_released":       384,
+	"consumed_array_arg_temp_released_and_guarded":  128,
+	// The five `m.without(k)` shapes, split out of one case so a fix to one
+	// can bank its own zero (#8276). They are NOT four times the old single
+	// entry gone wrong: each now runs its own 500-round loop over its own map,
+	// so the totals are not comparable with the one body that shared a map
+	// across all of them. What IS comparable is shape against shape, which is
+	// the point — the two bound forms and the miss reclaim completely under the
+	// #8276 seam retain + projection credit, while the self-assignment does not.
+	"map_delete_bound_reassign_churn_free":           112000,
+	"map_delete_projected_self_assign_churn_free":    112000,
+	"map_delete_bound_miss_churn_free":               112000,
+	"map_delete_destructure_churn_free":              104000,
+	"map_delete_i32_key_churn_free":                  96000,
 	"map_iter_escape_churn_free":                     32000,
 	"map_iter_string_kv_retain_churn_free":           19200,
 	"map_keys_values_header_churn_free":              16000,
-	"map_string_array_values":                        16,
 	"matchexpr_alias_array_no_free":                  1600,
 	"option_of_array":                                32,
 	"pair_form_enum_temp_as_argument":                160,
 	"pair_form_payload_borrowing_call":               144,
-	"stdlib_json_cursor_idiom":                       1264,
+	"stdlib_json_cursor_idiom":                       1232,
 	"stdlib_json_roundtrip":                          560,
 	"string_closure_capture_aliased":                 32,
 	"string_closure_capture_churn_free":              3200,

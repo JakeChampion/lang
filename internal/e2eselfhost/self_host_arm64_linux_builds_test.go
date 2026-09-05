@@ -57,6 +57,22 @@ func TestSelfHostArm64LinuxBuilds(t *testing.T) {
 		{"print_literal", `function main(): i32 { print("Hello, Fern!"); return 0; }`, 0, "Hello, Fern!\n"},
 		{"print_concat", `function main(): i32 { var s: string = "Hello, " + "Fern!"; print(s); return 0; }`, 0, "Hello, Fern!\n"},
 		{"index_byte", `function main(): i32 { var s: string = "abcdef"; return (s[3] as i32) - 90; }`, 10, ""},
+		// The string builder assembled IN-PROCESS: __fern_strbuf_grow's
+		// mov-with-hw-select / lsl / b.hs / cbnz must encode, and a 108,000-byte
+		// build grows the 64 KiB buffer twice before the take.
+		{"strbuf_grow", `function main(): i32 {
+    strbuf_reset();
+    var i: i32 = 0;
+    while (i < 3000) { strbuf_append("0123456789abcdefghijklmnopqrstuvwxyz"); i = i + 1; }
+    var s: string = strbuf_take();
+    if (s.len() != 108000) { return 1; }
+    if ((s[65536] as i32) != (s[16] as i32)) { return 2; }
+    if ((s[107999] as i32) != (s[35] as i32)) { return 3; }
+    strbuf_append("ok");
+    var t: string = strbuf_take();
+    if (t.len() != 2) { return 4; }
+    return 42;
+}`, 42, ""},
 		{"struct_method", `struct Box { v: i32 } function (b: Box) scale(n: i32): i32 { return b.v * n; } function main(): i32 { var x = Box { v: 4 }; return x.scale(3); }`, 12, ""},
 		{"array_sum", `function main(): i32 { var a = [1, 2, 3, 4, 5]; var i = 0; var s = 0; while (i < a.len()) { s = s + a[i]; i = i + 1; } return s; }`, 15, ""},
 		{"option", `function pick(n: i32): Option[i32] { if (n == 0) { return None; } return Some(n + 1); } function main(): i32 { match (pick(41)) { Some(v) => { return v; }, None => { return 0; } } return 99; }`, 42, ""},

@@ -43,6 +43,8 @@ package ir
 // declared type → capability), not a type.
 
 import (
+	"sync"
+
 	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/checker"
 )
@@ -354,18 +356,29 @@ func deepDropWired(info *checker.Info, t ast.Type) bool {
 	})
 }
 
+// typeMemoMu guards info.IRTypeMemo: LowerWith lowers functions on several
+// goroutines that share one Info, and the memo fills lazily from all of
+// them. Package-wide rather than on Info because Info is copied by value
+// (monomorph's re-check) and a lock inside it would not survive that.
+var typeMemoMu sync.RWMutex
+
 // typeMemo answers key from info.IRTypeMemo, computing and recording it on
-// a miss. One Info is lowered by one goroutine, so the map needs no lock;
-// a parallel lowering must fill it before fanning out or guard it.
+// a miss. Two workers missing the same key both compute it; the answers
+// agree, so the second write is harmless.
 func typeMemo(info *checker.Info, key string, compute func() bool) bool {
-	if v, ok := info.IRTypeMemo[key]; ok {
+	typeMemoMu.RLock()
+	v, ok := info.IRTypeMemo[key]
+	typeMemoMu.RUnlock()
+	if ok {
 		return v
 	}
-	v := compute()
+	v = compute()
+	typeMemoMu.Lock()
 	if info.IRTypeMemo == nil {
 		info.IRTypeMemo = map[string]bool{}
 	}
 	info.IRTypeMemo[key] = v
+	typeMemoMu.Unlock()
 	return v
 }
 

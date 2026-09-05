@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/checker"
@@ -248,7 +249,13 @@ func (b *builder) freshOwnedRcTempType(e ast.Expr) (ast.Type, bool) {
 		// stranded on every call: one rc1 buffer per call above the
 		// 7-byte inline threshold on native, and per call at ANY length
 		// on the two-word ABIs, which have no inline packing (#7876).
-		if cid, ok := x.Callee.(*ast.Ident); ok && cid.Name == "slice_unchecked" {
+		//
+		// `string_from_bytes_unchecked(bs)` is the same contract from the
+		// other direction: it always copies (exprNoParamEscape says so, and
+		// rcResultOwned records `__fern_string_from_bytes`), so the argument
+		// temp of `w.write(string_from_bytes_unchecked(bs))` is one owned
+		// buffer per call that nothing else releases (#8403).
+		if cid, ok := x.Callee.(*ast.Ident); ok && (cid.Name == "slice_unchecked" || cid.Name == "string_from_bytes_unchecked") {
 			if t, ok := b.exprType(x).(ast.StringType); ok {
 				return t, true
 			}
@@ -1562,8 +1569,8 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 	}
 	// A cow-threaded Map param (cowMapParams) owns its slot only once a copy
 	// replaced the caller's handle; its ownership bit says which. The release
-	// is the cow-copy one (emitMapOverwriteDrop): a handle returned on the way
-	// out was inc'd for the caller and only decs here.
+	// is the shared map-drop chain (emitMapSlotDrop): a handle returned on the
+	// way out was inc'd for the caller and only decs here.
 	for _, p := range b.fn.Params {
 		if !b.rc.cowMapParams[p.Name] || seen[p.Name] {
 			continue
@@ -1577,7 +1584,7 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 		seen[p.Name] = true
 		b.emit(Op{Kind: OpLoadLocal, I32: flagSlot})
 		b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
-		b.emitMapOverwriteDrop(slot, mst)
+		b.emitMapSlotDrop(slot, mst)
 		b.emit(Op{Kind: OpEnd})
 	}
 	// Consuming-owned-match bindings (#4400) are counted owners: the per-arm
@@ -2149,6 +2156,19 @@ func appendUserDrop(ops []Op, info *checker.Info, typeName string) []Op {
 		Op{Kind: OpCallDirect, Str: fn, I32: 1})
 }
 
+// dropRegMu guards the two drop registries (LowerWith's genEnumDrops and
+// genTupleDrops) while the per-function lowering that fills them runs on
+// several goroutines. Every entry is a function of its key alone, so two
+// workers recording the same shape agree, and the post-pass worklist that
+// reads the registries runs after the workers have joined.
+var dropRegMu sync.Mutex
+
+func recordDrop[V any](reg map[string]V, mangled string, v V) {
+	dropRegMu.Lock()
+	reg[mangled] = v
+	dropRegMu.Unlock()
+}
+
 func dropFnNameFor(t ast.Type, info *checker.Info, reg map[string]*ast.EnumDecl, tupleReg map[string]ast.TupleType, ptrW int, dynRcSupported bool) (string, bool) {
 	switch v := t.(type) {
 	case ast.StructType:
@@ -2194,9 +2214,8 @@ func dropFnNameFor(t ast.Type, info *checker.Info, reg map[string]*ast.EnumDecl,
 			if reg == nil {
 				return "", false
 			}
-			sub := substituteEnumDecl(ed, v.Args)
 			mangled := mangleEnumInst(v)
-			reg[mangled] = sub
+			recordDrop(reg, mangled, substituteEnumDecl(ed, v.Args))
 			return "__drop_enum_" + mangled, true
 		}
 		// A `Drop` impl needs glue even when nothing inside the enum does:
@@ -2211,7 +2230,7 @@ func dropFnNameFor(t ast.Type, info *checker.Info, reg map[string]*ast.EnumDecl,
 			return "", false
 		}
 		mangled := mangleTupleInst(v)
-		tupleReg[mangled] = v
+		recordDrop(tupleReg, mangled, v)
 		return "__drop_tuple_" + mangled, true
 	case ast.DynTraitType:
 		// A `dyn Trait` value owns its concrete `data` object (the erased
@@ -2462,7 +2481,7 @@ func arrElemStructDropName(elem ast.Type, info *checker.Info, reg map[string]*as
 	// unit calls) we bail to the safe flat path.
 	if tt, ok := elem.(ast.TupleType); ok && tupleReg != nil {
 		mangled := mangleTupleInst(tt)
-		tupleReg[mangled] = tt
+		recordDrop(tupleReg, mangled, tt)
 		return "__drop_arr_tuple_" + mangled, true
 	}
 	// Enum-element array (`E[]`): each element is a pointer to an enum box

@@ -109,6 +109,18 @@ produce timings.
 (128+9). They are deliberately distinct so that a genuine compiler regression
 is not filed as infrastructure flake, and vice versa.
 
+**Native merge queue is not being adopted.** GitHub gates it on organization
+ownership, and this repo is personal; transferring it to an org to unlock the
+feature breaks `jakechampion.github.io/lang`, because Pages URLs do not redirect
+on transfer the way git remotes do. The gates would not survive the move either:
+`merge_group` supports no `paths` / `paths-ignore` filter, and a required check
+that path-filters itself out never reports, so the queue waits on it forever
+(community discussion 45899, open since 2023). Every heavy lane here is
+path-filtered by design, pinned by `TestPRWorkflowsShareOneDocOnlyFilter`. The
+coupling a queue would catch — two individually-green PRs that conflict only in
+combination — is already caught by the `push: [main]` half of every gate lane
+(`TestGateLanesRunOnMain`), one merge later rather than one merge earlier.
+
 ## Compiler architecture
 
 **The legacy AST→asm emitters are deleted and are not coming back.** All three

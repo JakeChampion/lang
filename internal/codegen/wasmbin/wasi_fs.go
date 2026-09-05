@@ -942,10 +942,11 @@ func buildReadFileErr(body []byte, idxs map[string]uint32, buildIoErr, allocBox,
 // Leaves nothing on the operand stack on entry/exit; bufLocal
 // holds the heap pointer and lenLocal holds the byte length.
 //
-// Mirrors the SSO-aware copy loop in buildPrintBodyFd —
-// path_open's path argument must be a contiguous byte buffer
-// in linear memory, so inline-form strings (high bit on len)
-// can't be passed straight through.
+// A heap-form string's data is already that buffer, so it is used in
+// place; only an inline-form string (high bit on len — its bytes live in
+// the (data, len) words, not in memory) is spilled, the way
+// buildStringAsBytesBody promotes one. The spill is a bump block of at
+// most 7 bytes that nothing frees (#8408).
 func emitStrNormalize(body []byte, idxs map[string]uint32, dataLocal, lenLocal, bufLocal, byteLenLocal, iLocal uint32) []byte {
 	strLen := idxs["__fern_str_len"]
 	strByte := idxs["__fern_str_byte"]
@@ -955,40 +956,54 @@ func emitStrNormalize(body []byte, idxs map[string]uint32, dataLocal, lenLocal, 
 	body = inst.InstLocalGet(body, dataLocal)
 	body = inst.InstLocalGet(body, lenLocal)
 	body = inst.InstCall(body, strLen)
-	body = inst.InstLocalTee(body, byteLenLocal)
+	body = inst.InstLocalSet(body, byteLenLocal)
 
-	// buf = alloc(byteLen)
-	body = inst.InstCall(body, alloc)
-	body = inst.InstLocalSet(body, bufLocal)
-
-	// for i in 0..byteLen: mem[buf+i] = __fern_str_byte(data, len, i)
-	body = inst.InstI32Const(body, 0)
-	body = inst.InstLocalSet(body, iLocal)
-	body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
-	body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+	// if (len & 0x80000000) != 0: inline → spill; else buf = data.
+	body = inst.InstLocalGet(body, lenLocal)
+	body = inst.InstI32Const(body, int32(-0x80000000))
+	body = numeric.InstI32And(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	{
-		body = inst.InstLocalGet(body, iLocal)
+		// buf = alloc(byteLen)
 		body = inst.InstLocalGet(body, byteLenLocal)
-		body = numeric.InstI32GeS(body)
-		body = inst.InstBrIf(body, 1) // exit on i >= byteLen
+		body = inst.InstCall(body, alloc)
+		body = inst.InstLocalSet(body, bufLocal)
 
-		body = inst.InstLocalGet(body, bufLocal)
-		body = inst.InstLocalGet(body, iLocal)
-		body = numeric.InstI32Add(body)
-		body = inst.InstLocalGet(body, dataLocal)
-		body = inst.InstLocalGet(body, lenLocal)
-		body = inst.InstLocalGet(body, iLocal)
-		body = inst.InstCall(body, strByte)
-		body = memory.InstI32Store8(body, 0, 0)
-
-		body = inst.InstLocalGet(body, iLocal)
-		body = inst.InstI32Const(body, 1)
-		body = numeric.InstI32Add(body)
+		// for i in 0..byteLen: mem[buf+i] = __fern_str_byte(data, len, i)
+		body = inst.InstI32Const(body, 0)
 		body = inst.InstLocalSet(body, iLocal)
-		body = inst.InstBr(body, 0)
+		body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
+		body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+		{
+			body = inst.InstLocalGet(body, iLocal)
+			body = inst.InstLocalGet(body, byteLenLocal)
+			body = numeric.InstI32GeS(body)
+			body = inst.InstBrIf(body, 1) // exit on i >= byteLen
+
+			body = inst.InstLocalGet(body, bufLocal)
+			body = inst.InstLocalGet(body, iLocal)
+			body = numeric.InstI32Add(body)
+			body = inst.InstLocalGet(body, dataLocal)
+			body = inst.InstLocalGet(body, lenLocal)
+			body = inst.InstLocalGet(body, iLocal)
+			body = inst.InstCall(body, strByte)
+			body = memory.InstI32Store8(body, 0, 0)
+
+			body = inst.InstLocalGet(body, iLocal)
+			body = inst.InstI32Const(body, 1)
+			body = numeric.InstI32Add(body)
+			body = inst.InstLocalSet(body, iLocal)
+			body = inst.InstBr(body, 0)
+		}
+		body = inst.InstEnd(body) // end loop
+		body = inst.InstEnd(body) // end block
 	}
-	body = inst.InstEnd(body) // end loop
-	body = inst.InstEnd(body) // end block
+	body = inst.InstElse(body)
+	{
+		body = inst.InstLocalGet(body, dataLocal)
+		body = inst.InstLocalSet(body, bufLocal)
+	}
+	body = inst.InstEnd(body)
 	return body
 }
 
@@ -2589,10 +2604,12 @@ func buildReaderReadLineFdBodyP2(idxs map[string]uint32) []byte {
 //	6: $result
 func buildReaderReadChunkBody(idxs map[string]uint32) []byte {
 	// $buf (the n-byte chunk) is returned as the Some(chunk) string data
-	// → rc1 for reclamation (scratch over-headering is harmless).
+	// → rc1 for reclamation. The scratch is rc1 too (the same allocator)
+	// and freed once the syscall has been read back.
 	alloc := idxs["__fern_alloc_rc1"]
 	allocBox := idxs["__fern_alloc_box"]
 	fdRead := idxs["wasi_fd_read"]
+	free := idxs["__free"]
 
 	var body []byte
 
@@ -2637,12 +2654,32 @@ func buildReaderReadChunkBody(idxs map[string]uint32) []byte {
 	body = inst.InstI32Const(body, 8)
 	body = numeric.InstI32Add(body)
 	body = memory.InstI32Load(body, 2, 0)
-	body = inst.InstLocalTee(body, 5)
+	body = inst.InstLocalSet(body, 5)
 
-	// if nread == 0, return None.
+	// __free(scratch - 8, 12 + 8): the rc1 header sits in front of it.
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstI32Const(body, 8)
+	body = numeric.InstI32Sub(body)
+	body = inst.InstI32Const(body, 20)
+	body = inst.InstCall(body, free)
+
+	// __free(buf - 8, n + 8): the n-byte block nobody owns.
+	freeBuf := func(body []byte) []byte {
+		body = inst.InstLocalGet(body, 4)
+		body = inst.InstI32Const(body, 8)
+		body = numeric.InstI32Sub(body)
+		body = inst.InstLocalGet(body, 1)
+		body = inst.InstI32Const(body, 8)
+		body = numeric.InstI32Add(body)
+		return inst.InstCall(body, free)
+	}
+
+	// if nread == 0, free the buffer nobody owns and return None.
+	body = inst.InstLocalGet(body, 5)
 	body = numeric.InstI32Eqz(body)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	{
+		body = freeBuf(body)
 		body = inst.InstI32Const(body, 4)
 		body = inst.InstCall(body, allocBox)
 		body = inst.InstLocalTee(body, 6)
@@ -2650,6 +2687,28 @@ func buildReaderReadChunkBody(idxs map[string]uint32) []byte {
 		body = memory.InstI32Store(body, 2, 0)
 		body = inst.InstLocalGet(body, 6)
 		body = inst.InstReturn(body)
+	}
+	body = inst.InstEnd(body)
+
+	// Short read (the host hands stdin back in 64 KiB pieces):
+	// __fern_str_dec frees at the string's LENGTH, so the bytes move to a
+	// block of that class and the n-byte one goes back — else it strands
+	// below its class and every following read_chunk(n) bumps fresh.
+	body = inst.InstLocalGet(body, 5)
+	body = inst.InstLocalGet(body, 1)
+	body = numeric.InstI32LtU(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	{
+		// new = alloc_rc1(nread); memory.copy(new, buf, nread); free(buf); buf = new
+		body = inst.InstLocalGet(body, 5)
+		body = inst.InstCall(body, alloc)
+		body = inst.InstLocalTee(body, 7)
+		body = inst.InstLocalGet(body, 4)
+		body = inst.InstLocalGet(body, 5)
+		body = memory.InstMemoryCopy(body)
+		body = freeBuf(body)
+		body = inst.InstLocalGet(body, 7)
+		body = inst.InstLocalSet(body, 4)
 	}
 	body = inst.InstEnd(body)
 
@@ -2671,26 +2730,37 @@ func buildReaderReadChunkBody(idxs map[string]uint32) []byte {
 	body = memory.InstI32Store(body, 2, 0)
 	body = inst.InstLocalGet(body, 6)
 
-	// 5 i32 locals after the 2 params (slots 2..6).
-	locals := inst.PutLocalsOneGroup(nil, 5, encode.ValtypeI32)
+	// 6 i32 locals after the 2 params (slots 2..7; 7 = the short-read copy).
+	locals := inst.PutLocalsOneGroup(nil, 6, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
 }
 
 // buildReaderReadChunkBodyP2 is the preview-2 variant of
 // __method_Reader_read_chunk. A single
 // wasi:io/streams::blocking-read(handle, n) on the Reader's stored
-// stream handle; the host returns the bytes in a freshly
-// realloc'd list, so the Some(string) points straight at that
-// buffer (no copy). disc != 0 (closed / error) or an empty list
-// yields None.
+// stream handle; the host returns the bytes in a list it had
+// cabi_realloc materialise — raw arena memory with no rc header —
+// so they are copied into an rc1 block the caller can release and
+// the raw list goes back through __free. disc != 0 (closed /
+// error) or an empty list yields None.
 //
 // Locals (after 2 params r, n): 2=retbuf(12), 3=handle,
-// 4=chunk_ptr, 5=chunk_len, 6=box.
+// 4=chunk_ptr, 5=chunk_len, 6=box, 7=data (the rc1 copy).
 func buildReaderReadChunkBodyP2(idxs map[string]uint32) []byte {
 	// chunk buffer returned as Some(chunk) string data → rc1.
 	alloc := idxs["__fern_alloc_rc1"]
 	allocBox := idxs["__fern_alloc_box"]
 	blockingRead := idxs["wasi_io_blocking_read"]
+	free := idxs["__free"]
+
+	// __free(retbuf - 8, 12 + 8).
+	freeRetbuf := func(body []byte) []byte {
+		body = inst.InstLocalGet(body, 2)
+		body = inst.InstI32Const(body, 8)
+		body = numeric.InstI32Sub(body)
+		body = inst.InstI32Const(body, 20)
+		return inst.InstCall(body, free)
+	}
 
 	var body []byte
 	// retbuf = alloc(12).
@@ -2712,6 +2782,7 @@ func buildReaderReadChunkBodyP2(idxs map[string]uint32) []byte {
 	body = memory.InstI32Load8U(body, 0, 0)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	{
+		body = freeRetbuf(body)
 		body = inst.InstI32Const(body, 4)
 		body = inst.InstCall(body, allocBox)
 		body = inst.InstLocalTee(body, 6)
@@ -2728,6 +2799,7 @@ func buildReaderReadChunkBodyP2(idxs map[string]uint32) []byte {
 	body = numeric.InstI32Eqz(body)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	{
+		body = freeRetbuf(body)
 		body = inst.InstI32Const(body, 4)
 		body = inst.InstCall(body, allocBox)
 		body = inst.InstLocalTee(body, 6)
@@ -2741,7 +2813,19 @@ func buildReaderReadChunkBodyP2(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 2)
 	body = memory.InstI32Load(body, 2, 4)
 	body = inst.InstLocalSet(body, 4)
-	// Some(string): box(16) tag=0 @0, data=chunk_ptr @+8, len @+12.
+	body = freeRetbuf(body)
+	// data = alloc_rc1(chunk_len); memory.copy(data, chunk_ptr, chunk_len);
+	// __free(chunk_ptr, chunk_len) — cabi_realloc bumped exactly that.
+	body = inst.InstLocalGet(body, 5)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstLocalTee(body, 7)
+	body = inst.InstLocalGet(body, 4)
+	body = inst.InstLocalGet(body, 5)
+	body = memory.InstMemoryCopy(body)
+	body = inst.InstLocalGet(body, 4)
+	body = inst.InstLocalGet(body, 5)
+	body = inst.InstCall(body, free)
+	// Some(string): box(16) tag=0 @0, data @+8, len @+12.
 	body = inst.InstI32Const(body, 16)
 	body = inst.InstCall(body, allocBox)
 	body = inst.InstLocalTee(body, 6)
@@ -2750,7 +2834,7 @@ func buildReaderReadChunkBodyP2(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 6)
 	body = inst.InstI32Const(body, 8)
 	body = numeric.InstI32Add(body)
-	body = inst.InstLocalGet(body, 4)
+	body = inst.InstLocalGet(body, 7)
 	body = memory.InstI32Store(body, 2, 0)
 	body = inst.InstLocalGet(body, 6)
 	body = inst.InstI32Const(body, 12)
@@ -2759,6 +2843,6 @@ func buildReaderReadChunkBodyP2(idxs map[string]uint32) []byte {
 	body = memory.InstI32Store(body, 2, 0)
 	body = inst.InstLocalGet(body, 6)
 
-	locals := inst.PutLocalsOneGroup(nil, 5, encode.ValtypeI32)
+	locals := inst.PutLocalsOneGroup(nil, 6, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
 }

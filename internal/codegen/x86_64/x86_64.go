@@ -511,6 +511,8 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 		g.usesIoError = true
 		g.usesMemcpy = true
 		g.usesAlloc = true
+		g.usesBoxFree = true // read_chunk gives back a short-read / EOF buffer
+		g.usesFree = true    // box_free → __fern_free
 	}
 	// Fatal-abort diagnostics (#5538): __fern_report writes an abort's
 	// cause to stderr before exit_group, so a bounds / arena / slice abort
@@ -949,8 +951,8 @@ type generator struct {
 	usesExit   bool
 	// usesStrBuf — strbuf_reset / strbuf_append / strbuf_take —
 	// global mutable scratch buffer primitive for O(1) amortised
-	// append (escape hatch from O(N²) `s.out + text`). 64 MiB BSS
-	// region + 8-byte len counter. Single-threaded; one builder
+	// append (escape hatch from O(N²) `s.out + text`). A heap buffer
+	// that doubles on demand. Single-threaded; one builder
 	// at a time. See checker.go for the user-facing spec.
 	usesStrBuf bool
 	// usesNowUnixMs pulls in `__fern_now_unix_ms()` — wall-
@@ -5932,9 +5934,8 @@ func (g *generator) emitDataSections() {
 // emitAllocRuntime emits `__fern_alloc(size: i64) -> i64`,
 // the mmap-backed bump allocator. Same shape as arm64's:
 // lazy mmap reservation on first call, then a cursor bump
-// per allocation. 64 MiB virtual reservation is plenty for
-// the CLI / edge-handler workloads we target. The arena is
-// reclaimed by the OS at process exit — no `free`.
+// per allocation. The arena is a 16 GiB MAP_NORESERVE
+// reservation (heapBytes), reclaimed by the OS at process exit.
 //
 // Allocations are rounded up to a 16-byte boundary so
 // subsequent allocs stay 16-aligned for any pointer-pair
@@ -9734,11 +9735,13 @@ func (g *generator) emitEprintRuntime() {
 // emitStrBufRuntime emits the three global mutable-string-builder
 // helpers and the BSS scratch they share.
 //
-//	__fern_strbuf_data: .skip 64 MiB
-//	__fern_strbuf_len:  .quad 0 (current byte count)
+//	__fern_strbuf_len: .quad 0 (current byte count)
+//	__fern_strbuf_ptr: .quad 0 (heap buffer, null until the first append)
+//	__fern_strbuf_cap: .quad 0 (its capacity)
 //
 //	__fern_strbuf_reset()       — len = 0
-//	__fern_strbuf_append(s)     — memcpy s past current tail, bump len
+//	__fern_strbuf_append(s)     — grow if needed, memcpy s past current
+//	                              tail, bump len
 //	__fern_strbuf_take() -> str — allocate fresh string of accumulated
 //	                              bytes, copy, reset len, return it
 //
@@ -9747,22 +9750,20 @@ func (g *generator) emitEprintRuntime() {
 // through the bump heap, which can't compile asm.fern through itself
 // (~60 GB needed). With the strbuf the same loop is O(N).
 //
-// Single-threaded; only one strbuf active at a time. The 64 MiB cap
-// is generous for the asm-self-host use case (asm.fern's expected
-// output is ~2 MB) but documented. It costs nothing on disk: the
-// assembler keeps .bss at the tail of the data blob so the ELF writer
-// leaves it to the loader's zero-fill (#6928). It is NOT free on the
-// Mach-O path, which has no zero-fill section.
+// Single-threaded; only one strbuf active at a time. The buffer is a
+// heap block that doubles (from 64 KiB) when an append would not fit,
+// so the accumulated output has no fixed ceiling.
 func (g *generator) emitStrBufRuntime() {
 	g.line("")
 	g.line(".section .bss")
 	g.line(".align 8")
 	g.line("__fern_strbuf_len: .skip 8")
-	g.line(".align 8")
-	g.line("__fern_strbuf_data: .skip 67108864") // 64 MiB
+	g.line("__fern_strbuf_ptr: .skip 8")
+	g.line("__fern_strbuf_cap: .skip 8")
 	g.line(".section .text")
 
-	// __fern_strbuf_reset(): len = 0
+	// __fern_strbuf_reset(): len = 0. The buffer stays allocated for the
+	// next build.
 	g.line("")
 	g.line(".globl __fern_strbuf_reset")
 	g.line(".type __fern_strbuf_reset, @function")
@@ -9771,12 +9772,57 @@ func (g *generator) emitStrBufRuntime() {
 	g.emit("ret")
 	g.line(".size __fern_strbuf_reset, .-__fern_strbuf_reset")
 
+	// __fern_strbuf_grow(rdi = bytes needed): replace the buffer with one
+	// of at least that capacity, doubling from 64 KiB, and copy the
+	// live bytes across. The old buffer is left to the arena, like the
+	// wasm runtime's strbufEnsure.
+	g.line("")
+	g.line(".globl __fern_strbuf_grow")
+	g.line(".type __fern_strbuf_grow, @function")
+	g.label("__fern_strbuf_grow")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx")
+	g.emit("push r12")
+	g.emit("mov rbx, rdi") // need
+	g.emit("mov r12, qword ptr [rip + __fern_strbuf_cap]")
+	g.emit("test r12, r12")
+	g.emit("jnz .Lsbgrow_dbl")
+	g.emit("mov r12, 65536")
+	g.label(".Lsbgrow_dbl")
+	g.emit("cmp r12, rbx")
+	g.emit("jae .Lsbgrow_alloc")
+	g.emit("add r12, r12")
+	g.emit("jmp .Lsbgrow_dbl")
+	g.label(".Lsbgrow_alloc")
+	g.emit("mov rdi, r12")
+	g.emit("call __fern_alloc")
+	if ast.LeakCheckEnabled {
+		// The builder's buffer is runtime state the program never holds,
+		// so the census leaves it out as it left out the .bss reservation
+		// it replaced. r12 is a power of two >= 64 KiB, already 16-rounded.
+		g.emit("sub qword ptr [rip + __fern_lc_alloc_count], 1")
+		g.emit("sub qword ptr [rip + __fern_lc_alloc_bytes], r12")
+	}
+	g.emit("mov rbx, rax") // new buffer
+	// memcpy(new, old, len); len is 0 while old is null.
+	g.emit("mov rdi, rax")
+	g.emit("mov rsi, qword ptr [rip + __fern_strbuf_ptr]")
+	g.emit("mov rdx, qword ptr [rip + __fern_strbuf_len]")
+	g.emit("call __fern_memcpy")
+	g.emit("mov qword ptr [rip + __fern_strbuf_ptr], rbx")
+	g.emit("mov qword ptr [rip + __fern_strbuf_cap], r12")
+	g.emit("pop r12")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_strbuf_grow, .-__fern_strbuf_grow")
+
 	// __fern_strbuf_append(s): rdi = string (may be inline-tagged).
 	// Reads len via emitStrLen, materialises data ptr via
-	// emitStrDataPtr (spilling inline form to a frame slot), then
-	// memcpys bytes to __fern_strbuf_data + __fern_strbuf_len and
-	// bumps the counter. No bounds check — overflow is UB (caller
-	// keeps total under 64 MiB).
+	// emitStrDataPtr (spilling inline form to a frame slot), grows the
+	// buffer if the bytes do not fit, then memcpys them to
+	// __fern_strbuf_ptr + __fern_strbuf_len and bumps the counter.
 	g.line("")
 	g.line(".globl __fern_strbuf_append")
 	g.line(".type __fern_strbuf_append, @function")
@@ -9789,16 +9835,22 @@ func (g *generator) emitStrBufRuntime() {
 	g.emit("mov r12, rdi")
 	g.emitStrLen("ebx", "r12")                   // ebx = src len
 	g.emitStrDataPtr("r12", "r12", "[rbp - 32]") // r12 = src data ptr
-	// dst = strbuf_data + strbuf_len
+	g.emit("mov rdi, qword ptr [rip + __fern_strbuf_len]")
+	g.emit("add rdi, rbx") // bytes needed after this append
+	g.emit("cmp rdi, qword ptr [rip + __fern_strbuf_cap]")
+	g.emit("jbe .Lsbapp_fits")
+	g.emit("call __fern_strbuf_grow")
+	g.label(".Lsbapp_fits")
+	// dst = strbuf_ptr + strbuf_len
 	g.emit("mov rcx, qword ptr [rip + __fern_strbuf_len]")
-	g.emit("lea rdi, [rip + __fern_strbuf_data]")
+	g.emit("mov rdi, qword ptr [rip + __fern_strbuf_ptr]")
 	g.emit("add rdi, rcx")
 	g.emit("mov rsi, r12")
 	g.emit("mov edx, ebx")
 	g.emit("call __fern_memcpy")
 	// strbuf_len += src len
 	g.emit("mov rcx, qword ptr [rip + __fern_strbuf_len]")
-	g.emit("add ecx, ebx")
+	g.emit("add rcx, rbx")
 	g.emit("mov qword ptr [rip + __fern_strbuf_len], rcx")
 	g.emit("add rsp, 16")
 	g.emit("pop r12")
@@ -9828,9 +9880,9 @@ func (g *generator) emitStrBufRuntime() {
 	// length prefix
 	g.emit("mov ecx, r12d")
 	g.emitStrLenStore("ecx", "rbx")
-	// memcpy(rbx, &__fern_strbuf_data, r12)
+	// memcpy(rbx, strbuf_ptr, r12)
 	g.emit("mov rdi, rbx")
-	g.emit("lea rsi, [rip + __fern_strbuf_data]")
+	g.emit("mov rsi, qword ptr [rip + __fern_strbuf_ptr]")
 	g.emit("mov edx, r12d")
 	g.emit("call __fern_memcpy")
 	// NUL terminator at rbx + r12
@@ -13034,10 +13086,10 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.label("__fern_reader_read_chunk")
 	g.emit("push rbp")
 	g.emit("mov rbp, rsp")
-	g.emit("push rbx") // fd
-	g.emit("push r12") // n
-	g.emit("push r13") // base ptr
-	g.emit("sub rsp, 8")
+	g.emit("push rbx")       // fd, then bytes_read
+	g.emit("push r12")       // n
+	g.emit("push r13")       // data ptr
+	g.emit("push r14")       // exact-size data ptr on a short read
 	g.emit("mov ebx, [rdi]") // fd
 	g.emit("mov r12, rsi")   // n
 	// L2 rc-header layout (see __fern_strcat): payload = n data + NUL slack so
@@ -13053,21 +13105,43 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emitSyscallPreloaded(sysRead)
 	g.emit("test rax, rax")
 	g.emit("jle .Lrrc_none")
-	g.emit("mov [r13 - 4], eax")          // length prefix at data-4
-	g.emit("mov r12, rax")                // r12 = bytes_read
-	g.emit("mov rbx, r13")                // data ptr
-	g.emit("mov byte ptr [rbx + r12], 0") // trailing NUL within alloc
+	g.emit("cmp rax, r12")
+	g.emit("je .Lrrc_some")
+	// Short read (a pipe hands back at most 64 KiB): __fern_str_dec frees
+	// at length+1, so the bytes move to a block of that class and the
+	// oversized one goes back — else it strands below its class and every
+	// following read_chunk(n) bumps fresh.
+	g.emit("mov rbx, rax") // rbx = bytes_read
+	g.emit("lea edi, [rbx + 1]")
+	g.emit("call __fern_alloc_rc1")
+	g.emit("mov r14, rax")
+	g.emit("mov rdi, r14")
+	g.emit("mov rsi, r13")
+	g.emit("mov rdx, rbx")
+	g.emit("call __fern_memcpy")
+	g.emit("mov rdi, r13")
+	g.emit("lea esi, [r12 + 1]")
+	g.emit("call __fern_box_free")
+	g.emit("mov r13, r14")
+	g.emit("mov r12, rbx")
+	g.label(".Lrrc_some")
+	g.emit("mov [r13 - 4], r12d")         // length prefix at data-4
+	g.emit("mov byte ptr [r13 + r12], 0") // trailing NUL within alloc
 	g.emit("mov edi, 16")
 	g.emit("call __fern_alloc_box")
 	g.emit("mov dword ptr [rax], 0")
-	g.emit("mov [rax + 8], rbx")
+	g.emit("mov [rax + 8], r13")
 	g.emit("jmp .Lrrc_ret")
 	g.label(".Lrrc_none")
+	// EOF / error: nothing owns the buffer, so give it back.
+	g.emit("mov rdi, r13")
+	g.emit("lea esi, [r12 + 1]")
+	g.emit("call __fern_box_free")
 	g.emit("mov edi, 4")
 	g.emit("call __fern_alloc_box")
 	g.emit("mov dword ptr [rax], 1")
 	g.label(".Lrrc_ret")
-	g.emit("add rsp, 8")
+	g.emit("pop r14")
 	g.emit("pop r13")
 	g.emit("pop r12")
 	g.emit("pop rbx")

@@ -960,6 +960,21 @@ func (f *formatter) formatJumpLabel(label string) {
 // formatForEach emits the three `for … in …` surface forms: the plain
 // iterator `for x in xs`, the range `for i in lo..hi` (`..=` when inclusive),
 // and the map destructuring `for (k, v) in m`.
+// formatAssert re-prints a parseAssert desugar as the `assert(cond[, msg]);`
+// it came from: the If's condition is `!cond`, and its then-block's eprint
+// carries the message as `"assertion failed: " + msg`. Printing the
+// desugared `if` would drop IsAssert, so `-O` could no longer elide it.
+func (f *formatter) formatAssert(x *ast.If) {
+	f.b.WriteString("assert(")
+	f.formatExpr(x.Cond.(*ast.Unary).Operand, precLowest)
+	eprint := x.Then.(*ast.Block).Stmts[0].(*ast.ExprStmt).Expr.(*ast.Call)
+	if text, ok := eprint.Args[0].(*ast.Binary); ok {
+		f.b.WriteString(", ")
+		f.formatExpr(text.Right, precLowest)
+	}
+	f.b.WriteString(");")
+}
+
 func (f *formatter) formatForEach(fe *ast.ForEach, depth int) {
 	f.formatLoopLabel(fe.Label)
 	f.b.WriteString("for ")
@@ -1006,6 +1021,10 @@ func (f *formatter) formatStmt(s ast.Stmt, depth int) {
 		// this form does reach the printer directly.
 		f.formatForEach(x, depth)
 	case *ast.If:
+		if x.IsAssert {
+			f.formatAssert(x)
+			return
+		}
 		f.b.WriteString("if (")
 		f.formatExpr(x.Cond, precLowest)
 		f.b.WriteString(") ")
@@ -1023,9 +1042,8 @@ func (f *formatter) formatStmt(s ast.Stmt, depth int) {
 	case *ast.Loop:
 		// A parser-synthesised `todo` stub re-prints as its sugar
 		// (`todo;` / `todo("msg");`), not the desugared
-		// `loop { eprint(...); exit(101); }` body — unlike `assert`,
-		// the todo marker is a workflow inventory the formatter
-		// must not erase. TodoMsg is the original message expression.
+		// `loop { eprint(...); exit(101); }` body. TodoMsg is the
+		// original message expression.
 		if x.IsTodo {
 			if x.TodoMsg != nil {
 				f.b.WriteString("todo(")
@@ -1587,7 +1605,13 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 			case '\r':
 				f.b.WriteString(`\r`)
 			default:
-				f.b.WriteByte(c)
+				// A control byte stays an escape so the source stays
+				// text: a raw NUL makes git treat the file as binary.
+				if c < 0x20 || c == 0x7f {
+					fmt.Fprintf(&f.b, `\x%02x`, c)
+				} else {
+					f.b.WriteByte(c)
+				}
 			}
 		}
 		f.b.WriteByte('"')

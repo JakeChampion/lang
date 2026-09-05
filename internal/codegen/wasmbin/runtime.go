@@ -488,9 +488,12 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 				case "__fern_reader_read_chunk":
 					// (r, n) → i32 — single fd_read of up to n
 					// bytes into a fresh n-byte heap buffer,
-					// returned as Some(chunk) string → rc1.
+					// returned as Some(chunk) string → rc1. The
+					// scratch, an EOF'd buffer and (preview 2)
+					// the host's raw list go back through __free.
 					needs.add("__fern_alloc") // rc1 calls it
 					needs.add("__fern_alloc_rc1")
+					needs.add("__free")
 					needs.add("__fern_reader_read_chunk")
 				case "__fern_reader_close_fd":
 					// (r) → i32 — fd_close on r.fd; returns
@@ -999,7 +1002,7 @@ var unconditionalHelperCalls = map[string][]string{
 	// string's bytes through the bare allocator.
 	"__slice_make":             {"__fern_alloc_rc1"},
 	"__method_string_as_bytes": {"__fern_alloc_rc1", "__fern_alloc", "__fern_str_len", "__fern_str_byte"},
-	"__fern_lc_report":       {"__fern_lc_wrnum"},
+	"__fern_lc_report":         {"__fern_lc_wrnum"},
 	// The print family copies its argument into a fresh buffer and
 	// releases it once the (synchronous) write returns.
 	"__fern_print":  {"__free"},
@@ -3756,11 +3759,9 @@ func strConcatCopyOne(body []byte, strByte uint32, dataLocal, lenLocal, lenCompu
 // string and rewinds the length so the buffer and its capacity are reused
 // across builds.
 //
-// The natives back the same builtins with a fixed 64 MiB .bss reservation.
-// That shape does not transfer: a static region of that size in linear
-// memory would push the string pool and the whole heap above it, so the
-// buffer grows on demand instead. A grow leaks the old block into the bump
-// heap, which is the norm for this allocator and bounded by the doubling.
+// A grow leaks the old block into the bump heap, which is the norm for this
+// allocator and bounded by the doubling; the natives' builder grows the same
+// way.
 
 // scratchLoad pushes the i32 held in one scratch word.
 func scratchLoad(body []byte, addr int32) []byte {

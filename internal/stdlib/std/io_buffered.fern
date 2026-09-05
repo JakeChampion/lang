@@ -153,6 +153,23 @@ pub function (b: BufWriter) flush(): BufWriter {
   return BufWriter { ...flushed, buf: "" };
 }
 
+// `(b).close()` — flush, then close the Writer: fclose. The error is the
+// close's when that fails, else the flush's; pending bytes behind a
+// sticky error count as a failed write, as the fd already refused them.
+pub function (b: BufWriter) close(): Option[IoError] {
+  var flushed: BufWriter = b.flush();
+  match (b.w.close()) {
+    Some(e) => {
+      return Some(e);
+    },
+    None => {}
+  }
+  if (b.buf.len() > 0) {
+    return flushed.error();
+  }
+  return None;
+}
+
 // `(b).error()` — the first write failure, if any.
 pub function (b: BufWriter) error(): Option[IoError] {
   return b.err;

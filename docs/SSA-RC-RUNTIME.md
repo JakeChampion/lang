@@ -76,30 +76,65 @@ call sites already agree on the contract; the SSA path must join it.
 
 ### Allocator
 
-Give every SSA heap allocation the rc-header layout: bump `size + 8`,
-write `rc = 1` at `base+0`, return `base + 8`. `MemLoad`/`MemStore` are
-unaffected — they already operate on the returned data pointer, and every
-payload offset is relative to it. The bump cursor simply advances by
-`size + 8`. Uniformly heading every allocation (not just closure cells)
-keeps the emitter simple and matches the native model, and is invisible to
-the differential oracle (exit codes are offset-independent).
+`OpAlloc` hands back a bare 16-aligned block, exactly what the SSA evaluator's
+heap does and what the IR expects: the IR writes `rc = 1` at `base+0` itself
+and uses `base+8` as the data pointer, so the flat backend, the evaluator and
+this emitter agree on where a block starts. The emitter-built cells - closure
+environments and closure cells (`closureLines`), `dyn` boxes (`boxDynLines`) -
+lay the same header down themselves, with the payload size at `base+4` for
+`__fern_closure_drop`. The Option[IoError] and Result[void, IoError] boxes the
+I/O helpers return (`emitOptionBox`, `emitResultUnitBox`) are ordinary rc = 1
+boxes of 24 bytes in every arm, None included: that is the IR's uniform enum
+box size plus the rc header, so the IR frees them like any other box. The flat
+backend marks its helper-built boxes immortal instead. Reader and Writer
+handles carry the immortal sentinel here too and are never freed.
 
-No freelist reuse initially: the SSA bump heap never frees. `__fern_free`
-/ the closure-env reclamation **no-op the physical free** (leak within the
-process) while still performing the *observable* work — deciding
-uniqueness, dispatching the embedded drop-fn over captures. Leaking is
-memory-safe, and the whole-program differential tests pass because results
-do not depend on reclamation — but peak RSS is linear in a program's
-allocation volume where the flat backend's is flat, and `CLAUDE.md` puts
-long-running, allocation-heavy programs in scope. So this is a gap the
-`RC-4+` freelist slice below owes, not a settled boundary.
+Every block, whether from a compiled `OpAlloc`, a hand-written helper or
+`__alloc` itself, comes out of one allocator, `__alloc(n)`: the size is rounded
+to the flat backend's classes (16-byte exact-fit up to 2048 B, 3-significant-bit
+capacities above, bump-only past 1 GiB), the class's freelist is popped when it
+has a block, and otherwise the cursor advances by the rounded size. Compiled
+code and the helpers that allocate mid-computation reach it through
+`__ssa_alloc_pres`, a trampoline that preserves every register and the flags
+(size in x16, base back in x16), so an allocation can be spliced anywhere
+without knowing what is live around it. The sites that still bump inline (the
+string producers, the helper-built boxes, two dirent scratch buffers) advance
+the cursor by their unrounded size, and every allocation, `__alloc`'s bump path
+included, 16-aligns its base: a block's physical extent is therefore at least
+`roundup16(size)`, which is its class for every size at or below 2048 B and
+for an exact power of two above it, so a later free never pushes a block onto
+a class its extent does not cover. An inline site that bumps a non-power-of-two
+size above 2048 B would break that and has to go through `__alloc`.
 
-What it is NOT is a speed problem. Disabling the flat backend's freelist
-pop reproduces this backend's memory profile row for row on the
-allocation-heavy benchmarks and costs 3–15% of the time
-(`docs/SSA-REGALLOC-PLAN.md`, "Reclamation is a memory fix, not a speed
-fix"). Build the slice for bounded memory; the benchmark ratios will not
-move.
+**What is reclaimed.** `__free(base, n)` pushes the block onto its class's
+intrusive list, and everything the IR releases reaches it: struct and enum
+boxes through `__fern_box_free(data, size)` (base `data-8`, `size+8` bytes),
+arrays through `__fern_arr_dec` at rc == 1 (base `data - max(16, stride)`,
+header plus `cap*stride`; the `__fern_drop_arr_*` wrappers release the elements
+first), closure cells through `__fern_closure_drop` (the payload size at
+`data-4`) and their environments through the IR's `__closure_drop_*` thunks,
+map buffers and handles through `__fern_map_drop`, and a mispaired reuse token
+through `__alloc_reuse`. `__fern_rc_dec` does not free at zero, like the flat
+backend's: the IR gates every release on rc == 1 and frees through the
+type-specific drop.
+
+**What is not.** Strings: `__fern_str_dec` still leaks at rc == 1, because not
+every string producer puts the block base at `ptr-8` (`strbuf_take` hands out
+a 16-byte-headed buffer), and a push from the wrong base would hand `__alloc`
+an undersized block. Fixing that means either a uniform string header or a
+size word every producer writes. Until then a string-heavy loop still grows;
+an allocation-heavy one over structs and arrays does not:
+`examples/bench/pmap_insert.fern` holds at 2 MB peak RSS from 1000 to 8000
+entries where it was 4 / 8 / 16 / 32 MB before (#8069), the same as the flat
+build.
+
+Reclamation is a memory fix, not a speed fix: disabling the flat backend's
+freelist pop reproduced this backend's old memory profile row for row on the
+allocation-heavy benchmarks and cost 3-15% of the time
+(`docs/SSA-REGALLOC-PLAN.md`, "Reclamation is a memory fix, not a speed fix").
+
+The x86-64 SSA emitter still adds its own 8-byte header under the IR's on every
+`OpAlloc` and never frees; it is not in this slice.
 
 ### Helper port order (leaf-first)
 
@@ -108,8 +143,7 @@ move.
    SSA program that allocs a cell and calls `is_unique` returns `1`; on a
    null/sentinel operand returns `0`.
 2. **`__fern_rc_inc` / `__fern_rc_dec`** — the same guard chain; `inc`
-   bumps the rc word, `dec` decrements and (when it would hit 0) frees —
-   here, no-ops the free.
+   bumps the rc word, `dec` decrements; neither frees (the drop helpers do).
 3. **`__fern_closure_drop`** — on `is_unique`, dispatch the embedded
    per-closure drop-fn over the captures (`OpCallIndirect` on the drop
    sub-pair), then free the cell; else `dec`. Unblocks stored/capturing
@@ -133,7 +167,9 @@ targets (and the transitive helper closure — `closure_drop` pulls in
 - **RC-1** allocator rc-header + `__fern_rc_is_unique` + gating scaffold.
 - **RC-2** `__fern_rc_inc` / `__fern_rc_dec`.
 - **RC-3** `__fern_closure_drop`; escaping-closure whole-program tests.
-- **RC-4+** struct/array drop thunks; later, freelist reuse (goal 2).
+- **RC-4** freelist reuse: landed with #8069. The struct/array drop thunks
+  come from the IR and are shared with the flat backend. Open: string
+  reclamation (see "What is not" above).
 
 ## Validation
 

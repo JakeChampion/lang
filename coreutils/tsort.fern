@@ -292,12 +292,24 @@ function main(): i32 {
   if (path == "-") {
     text = io.read_all_stdin();
   } else {
+    // GNU words an open failure and a read failure differently
+    // (`tsort: d: read error: Is a directory` for a directory, whose
+    // read-only open succeeds), so open first to tell them apart.
+    match (open_reader(path)) {
+      Ok(r) => {
+        r.close();
+      },
+      Err(e) => {
+        gnu.error(gnu.quotef(path) + ": " + gnu.io_error_text(e));
+        exit(1);
+      }
+    }
     match (read_file(path)) {
       Ok(t) => {
         text = t;
       },
       Err(e) => {
-        gnu.error(gnu.quotef(path) + ": " + gnu.io_error_text(e));
+        gnu.error(gnu.quotef(path) + ": read error: " + gnu.io_error_text(e));
         exit(1);
       }
     }

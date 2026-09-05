@@ -69,6 +69,17 @@ func storeOp(f *ssa.Func, b *ssa.Block, base, val ssa.Value, offset int64) {
 	op.Imm = offset
 }
 
+// rcCell builds a cell the way the IR does on an OpAlloc block: rc = 1 at
+// base+0, the payload size at base+4, and the data pointer at base+8, which is
+// where the rc helpers look for the count and __fern_closure_drop for the size.
+func rcCell(f *ssa.Func, b *ssa.Block, payload int64) ssa.Value {
+	base := f.AddOp(b, ssa.OpAlloc, constOp(f, b, payload+8))
+	f.AddOpNoResult(b, ssa.OpStore32, base, constOp(f, b, 1))
+	size := f.AddOpNoResult(b, ssa.OpStore32, base, constOp(f, b, payload))
+	size.Imm = 4
+	return f.AddOp(b, ssa.OpAdd, base, constOp(f, b, 8))
+}
+
 // assembleRunArmModule assembles a multi-function module's arm64 SSA output into
 // a static AArch64 ELF and runs it under qemu-aarch64, returning the exit code.
 // Skips when qemu is unavailable.
@@ -497,7 +508,7 @@ func TestArmRunSubwordMemory(t *testing.T) {
 }
 
 // __fern_rc_is_unique on the arm64 SSA path: a freshly rc-headed heap cell
-// (OpAlloc lays down rc == 1) is unique; a null or low-address non-pointer
+// (rc == 1 written the way the IR does) is unique; a null or low-address non-pointer
 // scalar is not. Exit code is the helper result directly (not Eval-derived,
 // since Eval can't model runtime-helper calls).
 func TestArmRunRcIsUnique(t *testing.T) {
@@ -508,7 +519,7 @@ func TestArmRunRcIsUnique(t *testing.T) {
 		return assembleRunArmModule(t, map[string]*ssa.Func{"main": f}, "main", 8)
 	}
 	if got := isUniqueOf(func(f *ssa.Func, b *ssa.Block) ssa.Value {
-		return f.AddOp(b, ssa.OpAlloc, constOp(f, b, 8)) // fresh rc=1 cell
+		return rcCell(f, b, 8) // fresh rc=1 cell
 	}); got != 1 {
 		t.Errorf("is_unique(fresh cell) = %d, want 1", got)
 	}
@@ -532,7 +543,7 @@ func TestArmRunRcIncDec(t *testing.T) {
 	isUniqueAfter := func(ops ...string) int {
 		f := ssa.NewFunc("main")
 		e := f.NewBlock()
-		c := f.AddOp(e, ssa.OpAlloc, constOp(f, e, 8)) // fresh rc=1 cell
+		c := rcCell(f, e, 8) // fresh rc=1 cell
 		for _, op := range ops {
 			callOp(f, e, op, c) // void, impure — kept + ordered
 		}
@@ -550,10 +561,11 @@ func TestArmRunRcIncDec(t *testing.T) {
 	}
 }
 
-// __fern_closure_drop on the arm64 SSA path, observed through
-// __fern_rc_is_unique. Two paths: rc == 1 tail-calls __fern_box_free (a no-op on
-// the bump heap, so the cell stays unique); rc > 1 tail-calls __fern_rc_dec
-// (dropping a shared reference). __fern_box_free is pulled in transitively via
+// __fern_closure_drop on the arm64 SSA path. Two paths: rc == 1 tail-calls
+// __fern_box_free with the size at [data-4], returning the cell to the
+// freelist (observed as the next same-class allocation landing on it); rc > 1
+// tail-calls __fern_rc_dec, dropping a shared reference (observed through
+// __fern_rc_is_unique). __fern_box_free is pulled in transitively via
 // runtimeHelperDeps.
 func TestArmRunClosureDrop(t *testing.T) {
 	// isUniqueAfter allocs a cell, applies each mutation call in order, then
@@ -561,16 +573,22 @@ func TestArmRunClosureDrop(t *testing.T) {
 	isUniqueAfter := func(ops ...string) int {
 		f := ssa.NewFunc("main")
 		e := f.NewBlock()
-		c := f.AddOp(e, ssa.OpAlloc, constOp(f, e, 8)) // fresh rc=1 cell
+		c := rcCell(f, e, 8) // fresh rc=1 cell
 		for _, op := range ops {
 			callOp(f, e, op, c) // void, impure — kept + ordered
 		}
 		f.SetRet(e, callOp(f, e, "__fern_rc_is_unique", c))
 		return assembleRunArmModule(t, map[string]*ssa.Func{"main": f}, "main", 8)
 	}
-	// rc=1 -> closure_drop -> box_free (no-op) -> still unique.
-	if got := isUniqueAfter("__fern_closure_drop"); got != 1 {
-		t.Errorf("is_unique after closure_drop(rc=1) = %d, want 1 (box_free no-op)", got)
+	// rc=1 -> closure_drop -> box_free -> the cell is on the freelist.
+	f := ssa.NewFunc("main")
+	e := f.NewBlock()
+	c := rcCell(f, e, 8)
+	callOp(f, e, "__fern_closure_drop", c)
+	again := rcCell(f, e, 8)
+	f.SetRet(e, f.AddOp(e, ssa.OpSub, again, c))
+	if got := assembleRunArmModule(t, map[string]*ssa.Func{"main": f}, "main", 8); got != 0 {
+		t.Errorf("cell allocated after closure_drop(rc=1) is %d bytes away, want the released cell back", got)
 	}
 	// rc=1 -> inc -> 2 -> closure_drop -> rc_dec -> 1 -> unique again.
 	if got := isUniqueAfter("__fern_rc_inc", "__fern_closure_drop"); got != 1 {
@@ -579,19 +597,6 @@ func TestArmRunClosureDrop(t *testing.T) {
 	// rc=1 -> inc -> inc -> 3 -> closure_drop -> rc_dec -> 2 -> not unique.
 	if got := isUniqueAfter("__fern_rc_inc", "__fern_rc_inc", "__fern_closure_drop"); got != 0 {
 		t.Errorf("is_unique after inc,inc,closure_drop = %d, want 0 (rc 3->2)", got)
-	}
-}
-
-// __fern_box_free returns the data pointer and leaves the cell intact (it's a
-// no-op until the reuse slice), so a fresh cell is still unique after it.
-func TestArmRunBoxFreeNoop(t *testing.T) {
-	f := ssa.NewFunc("main")
-	e := f.NewBlock()
-	c := f.AddOp(e, ssa.OpAlloc, constOp(f, e, 8))
-	callOp(f, e, "__fern_box_free", c) // no-op
-	f.SetRet(e, callOp(f, e, "__fern_rc_is_unique", c))
-	if got := assembleRunArmModule(t, map[string]*ssa.Func{"main": f}, "main", 8); got != 1 {
-		t.Errorf("is_unique after box_free = %d, want 1 (no-op)", got)
 	}
 }
 
@@ -719,24 +724,21 @@ func load32u(f *ssa.Func, b *ssa.Block, base ssa.Value, offset int64) ssa.Value 
 	return v
 }
 
-// __fern_arr_dec on the arm64 SSA path, observed through __fern_rc_is_unique
-// (array rc lives at [data-8], same as other rc-headed cells). rc<=1 leaks
-// (unchanged); rc>1 drops one. The stride arg is ignored.
+// __fern_arr_dec on the arm64 SSA path. rc > 1 drops one reference, observed
+// through __fern_rc_is_unique; rc == 1 returns the buffer (16-byte header plus
+// cap*stride) to the freelist, observed as the next __alloc_u8 of the same size
+// coming back at the same address.
 func TestArmRunArrDec(t *testing.T) {
 	isUniqueAfterDec := func(incs int) int {
 		f := ssa.NewFunc("main")
 		e := f.NewBlock()
-		c := f.AddOp(e, ssa.OpAlloc, constOp(f, e, 8)) // fresh rc=1 cell
+		c := addrCallOp(f, e, "__alloc_u8", constOp(f, e, 8)) // cap = len = 8, rc = 1
 		for i := 0; i < incs; i++ {
 			callOp(f, e, "__fern_rc_inc", c)
 		}
-		callOp(f, e, "__fern_arr_dec", c, constOp(f, e, 4)) // (data, stride)
+		callOp(f, e, "__fern_arr_dec", c, constOp(f, e, 1)) // (data, stride)
 		f.SetRet(e, callOp(f, e, "__fern_rc_is_unique", c))
 		return assembleRunArmModule(t, map[string]*ssa.Func{"main": f}, "main", 8)
-	}
-	// rc=1 -> arr_dec -> leak, rc stays 1 -> unique.
-	if got := isUniqueAfterDec(0); got != 1 {
-		t.Errorf("is_unique after arr_dec(rc=1) = %d, want 1 (leak)", got)
 	}
 	// rc=2 -> arr_dec -> 1 -> unique.
 	if got := isUniqueAfterDec(1); got != 1 {
@@ -745,6 +747,17 @@ func TestArmRunArrDec(t *testing.T) {
 	// rc=3 -> arr_dec -> 2 -> not unique.
 	if got := isUniqueAfterDec(2); got != 0 {
 		t.Errorf("is_unique after inc,inc,arr_dec = %d, want 0 (rc 3->2)", got)
+	}
+	// rc=1 -> arr_dec -> the buffer is on the freelist -> the next same-size
+	// buffer is the same block.
+	f := ssa.NewFunc("main")
+	e := f.NewBlock()
+	c := addrCallOp(f, e, "__alloc_u8", constOp(f, e, 8))
+	callOp(f, e, "__fern_arr_dec", c, constOp(f, e, 1))
+	again := addrCallOp(f, e, "__alloc_u8", constOp(f, e, 8))
+	f.SetRet(e, f.AddOp(e, ssa.OpSub, again, c))
+	if got := assembleRunArmModule(t, map[string]*ssa.Func{"main": f}, "main", 8); got != 0 {
+		t.Errorf("buffer allocated after arr_dec(rc=1) is %d bytes away, want the released buffer back", got)
 	}
 }
 

@@ -10268,10 +10268,13 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
     it. Making it a counted owner is the ownership question `consumingBindings`
     answers for enum payloads, and it has to keep `Some(g) => { keep = g; }`
     working, so it is a design pass rather than a missing call.
-  - **Overwriting a STRING value in a live map** — 64 B/round. That is
-    `emitMapOverwriteDrop`'s documented refusal (#6242 gives the COW copy no
-    claim on a string or struct value column, so walking it would free what the
-    new handle reads), not an oversight.
+  - **Overwriting a STRING value in a live map** — was 64 B/round, now 0.
+    Recorded here as `emitMapOverwriteDrop`'s documented refusal (#6242 giving
+    the COW copy no claim on a string or struct value column, so walking it
+    would free what the new handle reads). Both halves of that expired: the
+    copy claims every column (#7114, #8390, #8420), the overwrite release moved
+    past the COW into `__map_dec_value` (#8421), and `emitMapOverwriteDrop`
+    itself is deleted (#8431).
   - **wasm strands 32 B/round of an ARRAY value column**, in the literal and the
     insert spelling alike, before and after this change. Both natives are flat
     on the same source, so it is a wasm-side question about the kind-2 column
