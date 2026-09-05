@@ -300,3 +300,47 @@ is how #8310 turned a bounded leak into a double free; here no retain is owed.
 What remains is threading the `.with` index into that branch, with an
 `old[i] != new[i]` guard — tracked in #8628, and worth landing only against the
 full 150-cell leak matrix on both ISAs plus the sanitize legs.
+
+## The accumulator cluster reproduces too, and it is quadratic: #8644
+
+The section above left open why `LowerState.emit`'s retained buffers are never
+released. They are, when the struct box is unique. The trigger is an alias:
+
+```fern
+struct S { ops: i32[], n: i32 }
+function (s: S) emit(op: i32): S { return S { ...s, ops: s.ops.append(op), n: s.n + 1 }; }
+...
+    var prev: S = s;        // the entire difference
+    s = s.emit(i);
+```
+
+| | allocs | frees | live_bytes |
+|---|--:|--:|--:|
+| self-host, without `prev` | 20,900 | 20,900 | 0 |
+| self-host, with `prev` | 40,200 | 20,200 | 23,763,200 |
+| native, either | 900 | 900 | 0 |
+
+One line takes it from clean to 23.7 MB. And it is not a constant factor —
+sweeping the inner bound gives live_bytes 6,012,800 / 23,763,200 / 94,489,600
+for N of 100 / 200 / 400, i.e. **3.95× and 3.98× per doubling: Θ(N²)**.
+Allocation count stays linear, so it is one allocation per iteration of
+linearly growing size. Native over the same sweep is 800 → 900 → 1,000 —
+logarithmic, amortised doubling, `live_bytes` 0 throughout.
+
+The emitted code says why: the uniqueness test is on the STRUCT BOX, not on the
+array, and it decides both halves. Shared box means the array is retained and
+`__fern_arr_push` may not mutate it, so it copies; and the `arr_dec` that would
+release the superseded copy sits on the unique path only.
+
+So the self-host is quadratic in time and memory on an aliased accumulator where
+native is linear-time with constant space overhead. That is a complexity-class
+gap, not an RC constant factor, and `LowerState` is aliased constantly — which
+is what the `is_aliased_name` machinery exists for. It also explains the volume
+behind #7954's thin arena margin: 3.26 GB requested for one module, and
+`LOCAL-DEV-LOOP.md`'s "the self-host-built compiler's live set grows with every
+compiler-source addition" is what a quadratic looks like from outside.
+
+Both of the attribution's clusters now have a ten-line reproduction and an
+issue: #8628 for the peephole's displaced element, #8644 for this. Neither was
+reachable from a guessed shape — eight probes tried that and all eight came back
+clean. Both fell out of reading the attribution and then the emitted assembly.
