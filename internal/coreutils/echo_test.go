@@ -2,8 +2,8 @@ package coreutils
 
 import "testing"
 
-func TestEchoParity(t *testing.T) {
-	requireParity(t, "echo", []invocation{
+func echoCases(t *testing.T) []invocation {
+	return []invocation{
 		{name: "no arguments"},
 		{name: "one operand", args: []string{"a"}},
 		{name: "operands are space separated", args: []string{"a", "b", "c"}},
@@ -61,7 +61,11 @@ func TestEchoParity(t *testing.T) {
 		{name: "posix cannot turn escapes off", args: []string{"-n", "-E", `a\tb`}, env: []string{"POSIXLY_CORRECT=1"}},
 		{name: "posix does not answer --help", args: []string{"--help"}, env: []string{"POSIXLY_CORRECT=1"}},
 		{name: "posix empty value still counts as set", args: []string{`a\tb`}, env: []string{"POSIXLY_CORRECT="}},
-	})
+	}
+}
+
+func TestEchoParity(t *testing.T) {
+	requireParity(t, "echo", echoCases(t))
 }
 
 func TestEchoHelpVersion(t *testing.T) {

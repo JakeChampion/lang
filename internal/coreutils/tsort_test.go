@@ -16,7 +16,7 @@ func tsortFile(t *testing.T, dir, name, content string) string {
 	return p
 }
 
-func TestTsortParity(t *testing.T) {
+func tsortCases(t *testing.T) []invocation {
 	dir := t.TempDir()
 	pairs := tsortFile(t, dir, "pairs", "a b\nb c\n")
 	loop := tsortFile(t, dir, "loop", "a b\nb a\n")
@@ -25,7 +25,7 @@ func TestTsortParity(t *testing.T) {
 	quoted := tsortFile(t, dir, "f'n", "a b c\n")
 	empty := tsortFile(t, dir, "empty", "")
 
-	requireParity(t, "tsort", []invocation{
+	return []invocation{
 		// The queue phase: byte-ordered seeds, FIFO, each written name
 		// freeing its successors most recent first.
 		{name: "one pair", stdin: "a b\n"},
@@ -254,7 +254,11 @@ func TestTsortParity(t *testing.T) {
 		{name: "bad option before help", args: []string{"--foo", "--help"}},
 		{name: "posix operand ends the options", args: []string{"-", "--foo"}, stdin: "a b\n", env: []string{"POSIXLY_CORRECT=1"}},
 		{name: "posix option before the operand", args: []string{"--foo", "-"}, env: []string{"POSIXLY_CORRECT=1"}},
-	})
+	}
+}
+
+func TestTsortParity(t *testing.T) {
+	requireParity(t, "tsort", tsortCases(t))
 }
 
 func TestTsortHelpVersion(t *testing.T) {
