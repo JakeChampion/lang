@@ -172,7 +172,7 @@ programs through the self-hosted x86-64 driver + CI-gated arm64); native
 | `random_bytes` / `random_i32` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | length + usable value; `random_bytes(n): u8[]` (#5714) |
 | `f32_bits/f32_from_bits/f64_bits/f64_from_bits` | | | | | | ⬜ | |
 | float math builtins `__sqrt_f64` etc. | ✅ | ✅ | ✅ | ✅ | ⚠️ | ⚠️ | via std/float; self-host IR path (`op_funary`; `TestSelfHostFloatMathIR`): `__sqrt_f64`/`__floor_f64`/`__ceil_f64`/`__trunc_f64`/`__abs_f64` lower to a single hardware instruction on all three backends, and `__round_f64` (round-half-away) lowers too — one instruction on arm64 (`frinta`), emulated on x86/wasm (`roundsd`/`f64.nearest` have no ties-away mode) as `t = trunc(x)` plus `t += copysign(1,x)` when `|x-t| >= 0.5`. The shorter `trunc(x+copysign(0.5,x))` identity is NOT equivalent — its addition rounds first, so it answered 1 for `0.5-2^-54` and shifted every integral double at or above 2^52 by one ([#7880](https://github.com/JakeChampion/lang/issues/7880)). Only the libm transcendentals (`__log_f64`/`__exp_f64`/`__sin_f64`/`__cos_f64`/`__pow_f64`) still route AST |
-| `strbuf_reset/append/take` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | global string-builder (reset zeroes / append adds bytes / take returns + resets). interp impl added [#3579](https://github.com/JakeChampion/lang/pull/3579); native x86-64/arm64 + self-host IR lower it; native wasm added in [#7947](https://github.com/JakeChampion/lang/issues/7947) — a growable heap buffer over three scratch words, not the natives' fixed 64 MiB `.bss`, since a static region that size in linear memory would push the whole heap above it. Tests: `interp_strbuf_test.go`, `self_host_strbuf_ir_test.go`, `arm64_strbuf_test.go`, `wasm_strbuf_test.go` |
+| `strbuf_reset/append/take` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | global string-builder (reset zeroes / append adds bytes / take returns + resets). interp impl added [#3579](https://github.com/JakeChampion/lang/pull/3579); native x86-64/arm64 + self-host IR lower it; native wasm added in [#7947](https://github.com/JakeChampion/lang/issues/7947) — a growable heap buffer over three scratch words, the shape the natives use over three `.bss` words too ([#8212](https://github.com/JakeChampion/lang/issues/8212)). Tests: `interp_strbuf_test.go`, `self_host_strbuf_ir_test.go`, `arm64_strbuf_test.go`, `wasm_strbuf_test.go` |
 | `__heap_bump_bytes` | ⚠️ | ✅ | ✅ | ✅ | ✅ | 🔧 | bump high-water mark (cursor − region base; 0 before the first alloc), **i64** on every target — the natives return the full 64-bit register, wasm zero-extends its i32 cursor difference. self-host **IR path** ([#3534](https://github.com/JakeChampion/lang/issues/3534)) lowers it inline — x86-64 `__fern_heap_ptr − &__fern_heap`, arm64 `__fern_heap_ptr − (__fern_heap_end − heap_size)`, wasm `$heap − heap_base` — with `ir.op_allocates` admitting it so an introspection-only module still emits the heap runtime. Guarded by `TestSelfHostHeapBumpBytesIR{X86_64,Wasm}` (+ native x86-64 cross-check). interp has no bump allocator so it reports 0 (the pre-alloc zero baseline holds; the growth contract does not). Legacy AST self-host path unchanged (IR-path-only, per goal 1) |
 | `__rc_*` (inc/dec/get/underflow_count) | | | | | | ⬜ | RC introspection |
 | `__arr_push_shared_count` | ⚠️ | ✅ | ✅ | ✅ | ✅ | 🔧 | the rc==1 cliff counter: appends that copied a buffer which still had SPARE CAPACITY, so the copy was bought by an extra reference rather than a full buffer. `__fern_arr_push_grow` mutates in place only at rc == 1, making that threshold a performance-correctness boundary with no diagnostic of its own — a stray retain upstream turns a threaded accumulator from O(n) into O(n²) while the program stays correct. Bumped on the copy path (zero cost on the fast path) and read back over a BSS global on the natives / a low-memory slot on wasm (`arrPushSharedAddr`). interp returns 0: it has no refcounts and copies nothing, which is also the healthy value everywhere. Guarded by `Test{X86_64,Arm64,WASM}ArrPushCliffCounter` (healthy = 0 AND shared = 1, so a counter that never fires cannot pass) and asserted by `Test{X86_64,WASM}ThreadedArrayParamBounded`. Self-host lowering knows it too: `ir.op_arr_push_shared_count` (tag 216), an `irlower.lower_expr` arm, and a per-backend reader over the same store the self-host `__fern_arr_push` bumps on its un-share path — a `.bss` word on x86-64 / arm64, `arr_push_shared_addr` (low scratch, 16) on wasm. Both halves matter: a reader with no bump site reports 0 forever, which reads as healthy |
@@ -398,9 +398,10 @@ alias, so any wasm program touching one died with
 The wasm builder is a GROWABLE heap buffer addressed by three scratch words
 (ptr / len / cap), doubling from 256 bytes; `take` snapshots into an
 `__fern_alloc_rc1` string and rewinds the length, so the buffer and its
-capacity are reused across builds. It deliberately does NOT copy the natives'
-fixed 64 MiB `.bss` reservation: a static region that size in linear memory
-would push `stringStart` and the whole heap up by 64 MiB. `append` goes
+capacity are reused across builds. It deliberately did NOT copy the natives'
+then-fixed 64 MiB `.bss` reservation: a static region that size in linear memory
+would push `stringStart` and the whole heap up by 64 MiB. (The natives grow the
+same way since #8212.) `append` goes
 through the two-word string tag — heap-form bytes move with one `memory.copy`,
 inline/SSO bytes come out through `__fern_str_byte` — the same split
 `__str_concat` makes.
@@ -3353,9 +3354,9 @@ single-program driver resolves no imports). `std/stream` row flipped to ✅.
 ### 2026-06-21 — `strbuf_reset/append/take` audited; interp gap found + filled (#3579)
 
 Audited the `strbuf_reset/append/take` row (was ⬜ across the board) — the global
-string-builder primitive (the AOT backends back it with a 64 MiB BSS scratch
-buffer; reset zeroes the length, append memcpys a string's bytes past the tail,
-take allocates a fresh string of the accumulated bytes and resets). The audit
+string-builder primitive (the AOT backends backed it with a fixed 64 MiB BSS
+scratch buffer until #8212; reset zeroes the length, append memcpys a string's
+bytes past the tail, take allocates a fresh string of the accumulated bytes and resets). The audit
 found the **interpreter had no implementation at all** — a program using it
 errored with `undefined function "strbuf_reset"` (exit 1) even though the checker
 knows the signatures (`FuncSigs`) and the native + self-host IR backends lower

@@ -1124,11 +1124,10 @@ func TestFormatMustConsumeAttr(t *testing.T) {
 }
 
 // `todo;` / `todo("msg");` desugars in the parser to a `loop { eprint;
-// exit(101); }` stub, but — unlike `assert`, which formats as its desugared
-// form — the formatter must re-print the todo SUGAR: the marker is a
-// remaining-work inventory (`-check` warns per site) that `fern -fmt` must
-// not erase. Pinned here: both forms survive, the message expression is
-// reproduced verbatim, and formatting is idempotent.
+// exit(101); }` stub, and the formatter must re-print the todo SUGAR: the
+// marker is a remaining-work inventory (`-check` warns per site) that
+// `fern -fmt` must not erase. Pinned here: both forms survive, the message
+// expression is reproduced verbatim, and formatting is idempotent.
 func TestFormatTodoRoundTrip(t *testing.T) {
 	cases := []struct {
 		src  string
@@ -1494,6 +1493,22 @@ func TestFormatKeepsControlBytesEscaped(t *testing.T) {
 	}
 	if strings.ContainsRune(got, 0) {
 		t.Fatalf("a raw NUL survived the format:\n%q", got)
+	}
+	if again := formatSrc(t, got); again != got {
+		t.Fatalf("not idempotent:\n%s\n---\n%s", got, again)
+	}
+}
+
+func TestFormatKeepsAssertSugar(t *testing.T) {
+	src := "function f(x: i32): void {\n  assert(x > 0);\n  assert(x < 10, \"x is \" + x.to_string());\n}\n"
+	got := formatSrc(t, src)
+	for _, want := range []string{"assert(x > 0);", "assert(x < 10, \"x is \" + x.to_string());"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("want %q in:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "assertion failed") {
+		t.Fatalf("the desugared if leaked into the output:\n%s", got)
 	}
 	if again := formatSrc(t, got); again != got {
 		t.Fatalf("not idempotent:\n%s\n---\n%s", got, again)

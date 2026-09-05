@@ -94,6 +94,9 @@ func TestLowerDeterministicOverFixtureCorpus(t *testing.T) {
 	// practice — Go randomises the seed per range, so a two-element bucket
 	// disagrees about half the time and the corpus has many such buckets.
 	// Repeating more would trade a lot of wall-clock for very little power.
+	// The first round lowers sequentially and the second on four workers,
+	// so the same comparison is also the gate that the parallel
+	// per-function lowering assembles the program a sequential run would.
 	const rounds = 2
 	lowered, skipped := 0, 0
 	for _, path := range cases {
@@ -101,6 +104,7 @@ func TestLowerDeterministicOverFixtureCorpus(t *testing.T) {
 		if _, err := os.Stat(path); err != nil {
 			continue
 		}
+		t.Setenv("FERN_LOWER_JOBS", "1")
 		want, ok := lowerFixture(t, path, 8)
 		if !ok {
 			skipped++
@@ -108,6 +112,7 @@ func TestLowerDeterministicOverFixtureCorpus(t *testing.T) {
 		}
 		lowered++
 		for i := 1; i < rounds; i++ {
+			t.Setenv("FERN_LOWER_JOBS", "4")
 			got, ok := lowerFixture(t, path, 8)
 			if !ok {
 				t.Errorf("%s: lowered on round 1 but not round %d", name, i+1)

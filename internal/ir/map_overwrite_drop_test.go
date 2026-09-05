@@ -3,15 +3,19 @@ package ir
 import "testing"
 
 // The Map reassignment-overwrite releases the columns the COW copy claimed
-// (#6828), and only those.
+// (#6828) — all of them.
 //
 // `__map_own_copied_cols` gives each COW copy its own claim on the key column
-// and the array-value column (#6242). The overwrite that ends the OLD handle's
-// ownership therefore owes their release — with the buf-and-handle free alone it
-// leaks the whole claim per copy, which in a chain is quadratic. The string
-// (kind 5) and struct (kind 4) VALUE walks stay out of this site — not
-// because those columns are shared, since both are claimed, but because
-// whether the release should widen to them is an open measurement (#8421).
+// and on every value column (#6242, then #7114 / #8390 / #8420). The overwrite
+// that ends the OLD handle's ownership therefore owes their release — with the
+// buf-and-handle free alone it leaks the whole claim per copy, which in a chain
+// is quadratic.
+//
+// The string (kind 5) and struct (kind 4) value walks used to stay out of this
+// site, which is what #8431 closed: the release is now the shared map-drop
+// chain, so the columns it walks are exactly the ones the copy claims, by
+// construction rather than by a list kept in step here.
+// TestMapOverwriteDropWalksTheValueColumn below pins the two that were missing.
 //
 // Both ptrW legs run. The two-word ABI is where the claim allocates a cell per
 // entry per copy and the leak is immediate, but the release is emitted the same
@@ -62,12 +66,25 @@ function main(): i32 { return chain(3); }`
 	}
 }
 
-// The string VALUE column stays SHARED with the copy, so the overwrite must not
-// reclaim it — releasing it there frees what the handle being stored reads.
-// (The loop-reinit and exit-sweep drops do walk it; that is the pre-existing
-// Map[K, string] hazard #8354 records, and not this site.)
-func TestMapOverwriteDropLeavesSharedValueColumn(t *testing.T) {
-	src := `function strvals(n: i32): i32 {
+// The COW-overwrite release walks the VALUE column through the same dispatch
+// every other map-drop site uses, so a string or struct column is reclaimed
+// there rather than stranded.
+//
+// This asserted the OPPOSITE until #8431, on the premise that the copy shared
+// the value column — true when the site was written (#6227: releasing a shared
+// column frees what the handle being stored reads), false since every column
+// gained its claim (#7114, #8390, #8420). What the stale exclusion cost was
+// the whole chain leak, quadratic on a boxing ABI: 100 rounds of a
+// Map[string, string] chain stranded 83648 bytes on arm64 and 83968 on wasm,
+// and 0 after.
+func TestMapOverwriteDropWalksTheValueColumn(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		fn     string
+		src    string
+		callee string
+	}{
+		{"string values", "strvals", `function strvals(n: i32): i32 {
     var a: Map[string, string] = map_new(16);
     a = a.insert("k", "v");
     var i: i32 = 0;
@@ -79,19 +96,40 @@ func TestMapOverwriteDropLeavesSharedValueColumn(t *testing.T) {
     }
     return a.len();
 }
-function main(): i32 { return strvals(3); }`
-
-	for _, ptrW := range []int{4, 8} {
-		p := lowerSourceWith(t, src, ptrW)
-		blocks := mapPtrCompareGuardCallees(p, "strvals")
-		if len(blocks) == 0 {
-			t.Fatalf("ptrW=%d: found no pointer-compare guard in strvals:\n%s", ptrW, p)
-		}
-		for _, callees := range blocks {
-			if hasCallee(callees, "__drop_map_str_values") {
-				t.Errorf("ptrW=%d: COW-overwrite release calls %v — the copy shares the string-value column, so releasing it here frees what the new handle reads:\n%s", ptrW, callees, p)
+function main(): i32 { return strvals(3); }`, "__drop_map_str_values"},
+		{"struct values", "structvals", `struct Rec { name: string }
+function structvals(n: i32): i32 {
+    var a: Map[string, Rec] = map_new(16);
+    a = a.insert("k", Rec { name: "v" });
+    var i: i32 = 0;
+    while (i < n) {
+        var b = a;
+        b = b.insert("c" + "hain", Rec { name: "w" });
+        a = b;
+        i = i + 1;
+    }
+    return a.len();
+}
+function main(): i32 { return structvals(3); }`, "__drop_map_via___drop_struct_Rec"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, ptrW := range []int{4, 8} {
+				p := lowerSourceWith(t, tc.src, ptrW)
+				blocks := mapPtrCompareGuardCallees(p, tc.fn)
+				if len(blocks) == 0 {
+					t.Fatalf("ptrW=%d: found no pointer-compare guard in %s:\n%s", ptrW, tc.fn, p)
+				}
+				found := false
+				for _, callees := range blocks {
+					if hasCallee(callees, tc.callee) {
+						found = true
+					}
+				}
+				if !found {
+					t.Errorf("ptrW=%d: no COW-overwrite release calls %s — the copy claims that column, so leaving it unwalked strands it (#8431); guards found: %v\n%s", ptrW, tc.callee, blocks, p)
+				}
 			}
-		}
+		})
 	}
 }
 

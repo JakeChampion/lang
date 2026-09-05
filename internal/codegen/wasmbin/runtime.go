@@ -3753,11 +3753,9 @@ func strConcatCopyOne(body []byte, strByte uint32, dataLocal, lenLocal, lenCompu
 // string and rewinds the length so the buffer and its capacity are reused
 // across builds.
 //
-// The natives back the same builtins with a fixed 64 MiB .bss reservation.
-// That shape does not transfer: a static region of that size in linear
-// memory would push the string pool and the whole heap above it, so the
-// buffer grows on demand instead. A grow leaks the old block into the bump
-// heap, which is the norm for this allocator and bounded by the doubling.
+// A grow leaks the old block into the bump heap, which is the norm for this
+// allocator and bounded by the doubling; the natives' builder grows the same
+// way.
 
 // scratchLoad pushes the i32 held in one scratch word.
 func scratchLoad(body []byte, addr int32) []byte {

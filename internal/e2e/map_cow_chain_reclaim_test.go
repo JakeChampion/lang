@@ -4,10 +4,17 @@ package e2e
 //
 // The sibling file pins the copy's CLAIM on the columns it copied (#6242).
 // This one pins the release of that claim at the other end: `a = <a COW copy
-// of a>`, where the reassignment ends the old handle's ownership. That site
-// deliberately freed only the buf and the handle — the column walks could not
-// run while `__map_cow_inplace` copied the columns shallowly, because freeing
-// the key column pulled the strings out from under the fresh handle (#6227).
+// of a>`, where the reassignment ends the old handle's ownership. That release
+// goes through the shared map-drop chain (emitMapSlotDrop): the value column by
+// kind, then a string key column, then the buf and handle, every helper
+// self-guarded on the handle's own rc==1.
+//
+// It did not always. The site kept its own narrower body, which freed only the
+// buf, the handle and the string keys, because the column walks could not run
+// while `__map_cow_inplace` copied the columns shallowly — freeing a column
+// pulled storage out from under the fresh handle (#6227). Every column is
+// claimed now (#7114, #8390, #8420), so that reason expired and the second
+// body went with it (#8431).
 //
 // Once the copy owned its columns, that narrow free became a per-copy leak of
 // everything the copy had just claimed, which in a chain is quadratic: round N
@@ -26,9 +33,20 @@ package e2e
 // entry per copy. The bounded leg below is therefore non-vacuous on wasm and
 // arm64 and vacuous on x86-64, which is stated rather than papered over.
 //
-// The release may only cover the columns the copy claims — every column is
-// claimed now, so the value cases below are what would keep a widened walk
-// from becoming a use-after-free if it ever widens (#8421).
+// A release may only cover the columns the copy CLAIMS, or it frees what the
+// new handle reads — so the value cases below are what keeps the widened walk
+// honest, and they are why widening was safe to do.
+//
+// What the two un-walked columns had been costing, 100 rounds, live_bytes,
+// x86-64 / arm64 / wasm, before #8431 and after:
+//
+//	arr_chain     (kind 2, always walked)  0 / 3200 / 3200   unchanged
+//	str_chain     (kind 5)   3168 / 83648 / 83968  ->  0 / 0 / 0
+//	struct_chain  (kind 4)   6368 /  6400 /  9568  ->  0 / 3200 / 3200
+//
+// TestMapCowChainReclaimCensus below holds those numbers. The residual the two
+// two-word columns still read is #8432's, not this site's — it is present in
+// arr_chain, which this release has always walked.
 
 import "testing"
 
@@ -56,8 +74,11 @@ function arr_chain(rounds: i32): i32 {
     return a.len();
 }
 
-// String values (valKind 1) — SHARED with the copy, so the release must leave
-// them alone. They leak instead; that is the conservative direction.
+// String values (valKind 5) — claimed by the copy since #8390, and walked by
+// the release since #8431, through __drop_map_str_values. The claim is what
+// makes that walk a balanced release rather than a use-after-free. This chain
+// is where the un-walked column cost the most: 83648 / 83968 bytes on arm64 /
+// wasm over 100 rounds, now 0.
 function str_chain(rounds: i32): i32 {
     var a: Map[string, string] = map_new(16);
     a = a.insert("sv-seed-key-that-heap-allocates", "sv-seed-value-that-heap-allocates");
@@ -72,7 +93,11 @@ function str_chain(rounds: i32): i32 {
     return a.len();
 }
 
-// Struct values (valKind 4) — shared on the same terms.
+// Struct values (valKind 4) — claimed on the same terms, and walked on the same
+// terms, through the generated __drop_map_via_<perValueDrop>. This chain and
+// arr_chain both carried a further 32 B/round on the two-word ABIs until
+// #8432: their get_or fallback, not their column, which is why arr_chain
+// read the same despite having been walked all along.
 function struct_chain(rounds: i32): i32 {
     var a: Map[string, Rec] = map_new(16);
     a = a.insert("st-seed-key-that-heap-allocates", Rec { name: "st-seed-name-that-heap-allocates", n: 7 });
@@ -171,6 +196,44 @@ func TestMapCowChainReclaimWasm(t *testing.T) {
 func TestMapCowChainReclaimArm64(t *testing.T) {
 	if _, got := compileAndRunArm64(t, mapCowChainReclaimProg); got != 42 {
 		t.Fatalf("arm64 got %d, want 42", got)
+	}
+}
+
+// The byte census over the same six shapes. The answers above say nothing was
+// freed too early; this says nothing was left behind.
+//
+// ABSOLUTE on every backend — every byte back. Two changes bought that, and
+// the numbers before each are what the shapes below are sized to show:
+// #8431 routed this site through the shared map-drop chain (the struct chain
+// read 6368 on x86-64, the string one 3168, and 83648 / 83968 on the two-word
+// ABIs), and #8432 stopped a `get_or` with a fresh fallback stranding it under
+// a boxed key, which was the last 1280 on arm64 and wasm.
+//
+// A rise here means a column the copy claims is going unreleased again.
+func TestMapCowChainReclaimCensus(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		run  func(*testing.T, string) (string, string, int)
+	}{
+		{"x86_64", runLeakCheckX86_64},
+		{"arm64", runLeakCheckArm64},
+		{"wasm", func(t *testing.T, src string) (string, string, int) {
+			return runLeakCheckWasm(t, src, false)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, stderr, code := tc.run(t, mapCowChainReclaimProg)
+			if code != 42 && code != 0 {
+				t.Fatalf("exit=%d, want the program's own 42 (or wasm's 0)", code)
+			}
+			allocs, frees, live := parseLeakCheckLine(t, stderr)
+			if allocs == 0 {
+				t.Fatalf("no allocations — the chains are not running")
+			}
+			if allocs != frees || live != 0 {
+				t.Errorf("the COW chain leaks: allocs=%d frees=%d live_bytes=%d, want balanced / 0", allocs, frees, live)
+			}
+		})
 	}
 }
 
