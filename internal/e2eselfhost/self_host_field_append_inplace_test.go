@@ -26,6 +26,11 @@ import (
 //
 // SPARE CAPACITY is what makes an in-place grow possible at all, so each case
 // threads its container through several appends before the read it checks.
+//
+// `S { ...s, xs: s.xs.with(i, v) }` rides the same admission (#8419): the store
+// lands in the field's own buffer, gated on the buffer's own count since
+// arr_set has no gate of its own, and the caller half brackets it exactly as
+// it brackets a grow. The `with-` cases below pin both halves for the store.
 var selfHostFieldAppendCases = []struct {
 	name string
 	src  string
@@ -487,6 +492,117 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return (r + s0.names[2]) % 200;
 }`},
+	// The `.with` twin's measured shape: the x86 assembler's label table threads
+	// three bucket arrays through `X86Asm { ...a, lab_head: a.lab_head.with(b, at) }`
+	// per label, and each one cloned the array (#8419).
+	{"with-spread-threading", `
+struct St { tab: i32[], n: i32 }
+function (s: St) put(i: i32, v: i32): St { return St { ...s, tab: s.tab.with(i, v), n: s.n + 1 }; }
+function main(): i32 {
+    var s: St = St { tab: [0, 0, 0, 0, 0, 0, 0, 0], n: 0 };
+    var i: i32 = 0;
+    while (i < 40) { s = s.put(i % 8, i); i = i + 1; }
+    var sum: i32 = 0;
+    for v in s.tab { sum = sum + v; }
+    return (s.n + sum) % 113;
+}`},
+	// The caller-side hole for the store: `a` survives the call, so its buffer
+	// must not be written under it.
+	{"with-method-recv-survives", `
+struct St { tab: i32[], n: i32 }
+function (s: St) put(i: i32, v: i32): St { return St { ...s, tab: s.tab.with(i, v), n: s.n + 1 }; }
+function main(): i32 {
+    var a: St = St { tab: [1, 2, 3, 4], n: 0 };
+    a = a.put(0, 5);
+    var b: St = a.put(2, 9);
+    return a.tab[2] * 10 + b.tab[2] + a.tab[0];
+}`},
+	// The label table itself: an `own` root, a rebind in each branch of an
+	// `if` and a third after it — three body-scope hosts, each of its own
+	// field — and a duplicate name still resolves to its first entry.
+	{"with-own-param-label-table", `
+struct Tab { names: string[], head: i32[], tail: i32[], next: i32[] }
+function bucket(name: string): i32 { return name.len() % 4; }
+function add(own a: Tab, name: string): Tab {
+    var at: i32 = a.names.len();
+    var b: i32 = bucket(name);
+    var prev: i32 = a.tail[b];
+    a = Tab { ...a, names: a.names.append(name) };
+    a = Tab { ...a, next: a.next.append(0 - 1) };
+    if (prev < 0) {
+        a = Tab { ...a, head: a.head.with(b, at) };
+    } else {
+        a = Tab { ...a, next: a.next.with(prev, at) };
+    }
+    a = Tab { ...a, tail: a.tail.with(b, at) };
+    return a;
+}
+function lookup(t: Tab, name: string): i32 {
+    var i: i32 = t.head[bucket(name)];
+    while (i >= 0) {
+        if (t.names[i] == name) { return i; }
+        i = t.next[i];
+    }
+    return 0 - 1;
+}
+function main(): i32 {
+    var t: Tab = Tab { names: [], head: [0 - 1, 0 - 1, 0 - 1, 0 - 1], tail: [0 - 1, 0 - 1, 0 - 1, 0 - 1], next: [] };
+    t = add(t, "a");
+    t = add(t, "bb");
+    t = add(t, "ccc");
+    t = add(t, "dddd");
+    t = add(t, "eeeee");
+    t = add(t, "ff");
+    t = add(t, "a");
+    return lookup(t, "a") * 100 + lookup(t, "eeeee") * 10 + lookup(t, "ff") + lookup(t, "zz") + 1;
+}`},
+	// The same field READ AGAIN inside the literal the store feeds: the clone
+	// must stay, or `n` reads the new element.
+	{"with-same-field-read-forces-clone", `
+struct St { tab: i32[], n: i32 }
+function put(s: St, v: i32): St { return St { tab: s.tab.with(0, v), n: s.tab[0] }; }
+function main(): i32 {
+    var a: St = St { tab: [3, 4], n: 0 };
+    var b: St = put(a, 9);
+    return (a.tab[0] * 100 + b.tab[0] * 10 + b.n) % 101;
+}`},
+	// An i64[] field takes the 8-byte store.
+	{"with-i64-field", `
+struct W { xs: i64[], n: i32 }
+function (w: W) put(i: i32, v: i64): W { return W { ...w, xs: w.xs.with(i, v), n: w.n + 1 }; }
+function main(): i32 {
+    var w: W = W { xs: [0i64, 0i64, 0i64], n: 0 };
+    var i: i32 = 0;
+    while (i < 9) { w = w.put(i % 3, (i as i64) * 5i64); i = i + 1; }
+    var t: i64 = 0i64;
+    for v in w.xs { t = t + v; }
+    return (t as i32) + w.n;
+}`},
+	// A second NAME for the root's box, with a store instead of a grow: the
+	// box's count is what tells the site to copy.
+	{"with-aliased-root-box-copies", `
+struct Sc { tab: i32[], n: i32 }
+function (s: Sc) put(v: i32): Sc { return Sc { ...s, tab: s.tab.with(0, v), n: s.n + 1 }; }
+function step(v: i32, s: Sc): Sc { return s.put(v); }
+function walk(s: Sc, depth: i32): i32 {
+    var cur: Sc = s;
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 3) {
+        if (depth > 0) { acc = acc + walk(cur, depth - 1); }
+        cur = step(i + 10 * depth, cur);
+        i = i + 1;
+    }
+    return acc + cur.tab[0] + cur.n;
+}
+function main(): i32 {
+    var s0: Sc = Sc { tab: [7, 7], n: 0 };
+    s0 = step(1, s0);
+    var r: i32 = walk(s0, 2);
+    if (s0.tab[0] != 1) { return 90; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return r % 113;
+}`},
 	// A body-scope host INSIDE A LOOP runs again with the same root, and the
 	// grow has moved the field out of it — so the site keeps the clone form.
 	// The root arrives as a fresh call result at an `own` position: no caller
@@ -610,11 +726,19 @@ func TestSelfHostFieldAppendInPlaceWasmIR(t *testing.T) {
 	}
 }
 
-// The analysis itself, read off the emitted asm: an admitted site grows the
+// The analysis itself, read off the emitted asm: an admitted append grows the
 // field's own buffer (__fern_arr_push, no slice), a refused one still clones
 // (__fern_arr_slice) before growing. Answers alone cannot separate these — the
 // clone form computes the same result, just quadratically — so the shape is
 // what pins that the decision went the intended way.
+//
+// A `.with` keeps a slice either way — the in-place store's shared-buffer arm
+// is one — so its mark is the gate that arm sits under: the in-place lowering
+// asks __fern_rc_is_unique (of the root box, then of the buffer), and the value
+// form, on a borrowed receiver, asks nothing (an `own` root's reuse arm asks it
+// too, which is why the refused cases here keep a borrowed one). Nor does the
+// bump high-water mark separate them: each clone is the size class of the
+// buffer it replaces, so the freelist recycles it.
 func TestSelfHostFieldAppendInPlaceShapeX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -626,6 +750,7 @@ func TestSelfHostFieldAppendInPlaceShapeX86_64(t *testing.T) {
 		src       string
 		label     string
 		wantClone bool
+		with      bool
 	}{
 		{
 			name: "spread-override-grows-in-place",
@@ -654,11 +779,71 @@ function main(): i32 { return grow(3).ops.len(); }`,
 			label:     "__fn_grow",
 			wantClone: true,
 		},
+		{
+			name: "spread-override-with-stores-in-place",
+			src: `
+struct St { tab: i32[], n: i32 }
+function (s: St) put(i: i32, v: i32): St { return St { ...s, tab: s.tab.with(i, v), n: s.n + 1 }; }
+function main(): i32 { var s: St = St { tab: [0, 0], n: 0 }; s = s.put(1, 4); return s.tab[1]; }`,
+			label:     "__fn_St__put",
+			wantClone: false,
+			with:      true,
+		},
+		// The label table's shape (#8419): an `own` root rebound in a branch and
+		// again after it, each a body-scope host of its own field.
+		{
+			name: "own-root-branch-rebinds-store-in-place",
+			src: `
+struct St { head: i32[], tail: i32[] }
+function add(own a: St, b: i32, at: i32): St {
+    if (a.tail[b] < 0) {
+        a = St { ...a, head: a.head.with(b, at) };
+    }
+    a = St { ...a, tail: a.tail.with(b, at) };
+    return a;
+}
+function main(): i32 { var s: St = St { head: [0 - 1, 0 - 1], tail: [0 - 1, 0 - 1] }; s = add(s, 1, 4); return s.head[1] + s.tail[1]; }`,
+			label:     "__fn_add",
+			wantClone: false,
+			with:      true,
+		},
+		{
+			name: "same-field-read-with-clones",
+			src: `
+struct St { tab: i32[], n: i32 }
+function (s: St) put(v: i32): St { return St { ...s, tab: s.tab.with(0, v), n: s.tab[0] }; }
+function main(): i32 { var s: St = St { tab: [0, 0], n: 0 }; s = s.put(4); return s.n; }`,
+			label:     "__fn_St__put",
+			wantClone: true,
+			with:      true,
+		},
+		// A pointer-element field keeps the value form whatever the analysis
+		// says: the overwritten element is the container's to release.
+		{
+			name: "string-field-with-clones",
+			src: `
+struct St { names: string[], n: i32 }
+function (s: St) put(v: string): St { return St { ...s, names: s.names.with(0, v), n: s.n + 1 }; }
+function main(): i32 { var s: St = St { names: ["a", "b"], n: 0 }; s = s.put("c"); return s.names[0].len() + s.n; }`,
+			label:     "__fn_St__put",
+			wantClone: true,
+			with:      true,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			asm := string(runCaptureStrictIR(t, gcc, runner, driverBin, []byte(tc.src), "-ir"))
 			body := asmFuncBody(t, asm, tc.label)
+			if tc.with {
+				gotClone := !strings.Contains(body, "call __fn___fern_rc_is_unique")
+				if gotClone != tc.wantClone {
+					t.Errorf("%s: value-form .with = %v, want %v; body:\n%s", tc.name, gotClone, tc.wantClone, body)
+				}
+				if !strings.Contains(body, "__fern_arr_slice") {
+					t.Errorf("%s: no arr_slice in %s — neither form; body:\n%s", tc.name, tc.label, body)
+				}
+				return
+			}
 			gotClone := strings.Contains(body, "__fern_arr_slice")
 			if gotClone != tc.wantClone {
 				t.Errorf("%s: clone-before-grow = %v, want %v; body:\n%s", tc.name, gotClone, tc.wantClone, body)
@@ -810,4 +995,5 @@ function main(): i32 {
 	if got := run(t, refused); got < 32 {
 		t.Errorf("refused clone shape bumped only %d x 64 KiB, want >= 32 — the calibration case is not allocating, so the admitted case proves nothing", got)
 	}
+
 }
