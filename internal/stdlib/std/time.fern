@@ -471,15 +471,34 @@ pub function (i: Instant) format_rfc3339(): string {
     return head + "." + frac + "Z";
 }
 
+// `__rfc3339_fields_valid(y, mo, d, h, mn, sc)` — does the digit-parsed
+// date-time name a real instant? RFC 3339 §5.6 constrains every field
+// (`date-mday` is "01-28, 01-29, 01-30, 01-31 based on month/year"), so
+// `2023-02-29` and hour `24` are syntax errors there, not values to
+// normalise. `:60` is rejected too: the grammar admits it for a leap
+// second, but a Unix `Instant` counts seconds without them, so the only
+// thing this parser could do with one is silently mean 00:00:00 the
+// next day.
+function __rfc3339_fields_valid(y: i32, mo: i32, d: i32, h: i32, mn: i32, sc: i32): boolean {
+    if (!(Date { year: y, month: mo, day: d }).is_valid()) { return false; }
+    if (h > 23 || mn > 59 || sc > 59) { return false; }
+    return true;
+}
+
 // `instant_parse_rfc3339(s)` — parse the UTC form
 // `YYYY-MM-DDTHH:MM:SS[.fraction]Z`. Returns None on any
-// deviation. Doesn't accept the lowercase `t` / `z` variants
-// (RFC 3339 §5.6 allows them, but the canonical form
-// dominates in the wild and accepting both invites
-// case-mismatch bugs in callers comparing strings).
+// deviation, in shape OR in value: a field outside its RFC 3339
+// range is rejected, not normalised, so `2023-02-29`, hour `24`
+// and the leap second `:60` are all None rather than the
+// following midnight. (`date_parse_iso` deliberately keeps the
+// opposite contract — it checks shape only and leaves
+// `.is_valid()` to the caller.)
 //
-// Zone offsets `+HH:MM` / `-HH:MM` land in Phase 5 with
-// TimeZone.
+// Doesn't accept the lowercase `t` / `z` variants (RFC 3339
+// §5.6 allows them, but the canonical form dominates in the
+// wild and accepting both invites case-mismatch bugs in callers
+// comparing strings). Zone offsets `+HH:MM` / `-HH:MM` belong to
+// `instant_zoned_parse_rfc3339`.
 pub function instant_parse_rfc3339(s: string): Option[Instant] {
     var n: i32 = s.len();
     // 20 = "YYYY-MM-DDTHH:MM:SSZ" minimum. Beyond that there's
@@ -495,6 +514,7 @@ pub function instant_parse_rfc3339(s: string): Option[Instant] {
     var mn: i32 = __parse_digits(s, 14, 16);
     var sc: i32 = __parse_digits(s, 17, 19);
     if (y < 0 || mo < 0 || d < 0 || h < 0 || mn < 0 || sc < 0) { return None; }
+    if (!__rfc3339_fields_valid(y, mo, d, h, mn, sc)) { return None; }
     // Fraction (optional) + trailing Z.
     var nsec: i32 = 0;
     if (s[19] == 46) {  // '.' = 46
@@ -796,8 +816,10 @@ pub function (z: Zoned) format_rfc3339(): string {
 // — the returned Zoned's zone.name is `"UTC"` for that case,
 // or `"UTC±HH:MM"` for explicit offsets.
 //
-// Lowercase `t`/`z` still rejected (same strictness as
-// `instant_parse_rfc3339`).
+// Lowercase `t`/`z` still rejected, and out-of-range fields
+// rejected rather than normalised — same strictness as
+// `instant_parse_rfc3339`, extended to the offset (`±HH:MM` with
+// HH <= 23 and MM <= 59).
 pub function instant_zoned_parse_rfc3339(s: string): Option[Zoned] {
     var n: i32 = s.len();
     if (n < 20) { return None; }
@@ -811,6 +833,7 @@ pub function instant_zoned_parse_rfc3339(s: string): Option[Zoned] {
     var mn: i32 = __parse_digits(s, 14, 16);
     var sc: i32 = __parse_digits(s, 17, 19);
     if (y < 0 || mo < 0 || d < 0 || h < 0 || mn < 0 || sc < 0) { return None; }
+    if (!__rfc3339_fields_valid(y, mo, d, h, mn, sc)) { return None; }
     // After seconds: optional `.fraction`, then `Z` or `±HH:MM`.
     var pos: i32 = 19;
     var nsec: i32 = 0;
@@ -850,6 +873,7 @@ pub function instant_zoned_parse_rfc3339(s: string): Option[Zoned] {
         var oh: i32 = __parse_digits(s, pos + 1, pos + 3);
         var om: i32 = __parse_digits(s, pos + 4, pos + 6);
         if (oh < 0 || om < 0) { return None; }
+        if (oh > 23 || om > 59) { return None; }
         offset_seconds = oh * 3600 + om * 60;
         if (s[pos] == 45) { offset_seconds = -offset_seconds; }
         var sign_str: string = "+";

@@ -1223,9 +1223,12 @@ function main(): i32 {
     show("2024-02-29T23:59:59Z");
     show("2026-05-19T14:30:00.500Z");           // 3-digit fraction → nsec=5e8
     show("2026-05-19T14:30:00.123456789Z");
+    // The in-range neighbours of the out-of-range rows below.
+    show("2023-02-28T23:59:59Z");
+    show("2023-12-31T00:00:00Z");
     return 0;
 }`,
-			wantStdout: "2026-05-19T14:30:00Z\n1970-01-01T00:00:00Z\n2024-02-29T23:59:59Z\n2026-05-19T14:30:00.500000000Z\n2026-05-19T14:30:00.123456789Z\n",
+			wantStdout: "2026-05-19T14:30:00Z\n1970-01-01T00:00:00Z\n2024-02-29T23:59:59Z\n2026-05-19T14:30:00.500000000Z\n2026-05-19T14:30:00.123456789Z\n2023-02-28T23:59:59Z\n2023-12-31T00:00:00Z\n",
 		},
 		{
 			name: "instant_parse_rfc3339 rejects malformed input",
@@ -1245,9 +1248,20 @@ function main(): i32 {
     show("2026-05-19T14:30:00+00:00");            // offset form (Phase 5)
     show("2026-05-19T14:30:00.Z");                // empty fraction
     show("2026-05-19T14:30:00.1234567890Z");      // 10-digit fraction
+    // RFC 3339 §5.6 constrains every field, so an out-of-range one is a
+    // syntax error, not a value to roll over into the next unit (#8469).
+    show("2023-02-29T00:00:00Z");                 // Feb 29 in a common year
+    show("2023-04-31T00:00:00Z");                 // April has 30 days
+    show("2023-13-01T00:00:00Z");                 // month 13
+    show("2023-00-01T00:00:00Z");                 // month 0
+    show("2023-01-00T00:00:00Z");                 // day 0
+    show("2023-01-01T24:00:00Z");                 // hour 24
+    show("2023-01-01T00:60:00Z");                 // minute 60
+    show("2023-01-01T23:59:60Z");                 // leap second
     return 0;
 }`,
-			wantStdout: "rejected\nrejected\nrejected\nrejected\nrejected\nrejected\nrejected\nrejected\n",
+			wantStdout: "rejected\nrejected\nrejected\nrejected\nrejected\nrejected\nrejected\nrejected\n" +
+				"rejected\nrejected\nrejected\nrejected\nrejected\nrejected\nrejected\nrejected\n",
 		},
 	}
 	for _, tc := range cases {
@@ -1342,9 +1356,13 @@ function main(): i32 {
     show("2026-05-19T14:30:00-05:00");
     show("2026-05-19T14:30:00+05:30");          // half-hour offset
     show("2026-05-19T14:30:00.500000000+09:00"); // with nsec
+    // The in-range neighbours of the out-of-range rows below: a real
+    // Feb 29, the last second of a day, and the extreme legal offset.
+    show("2024-02-29T23:59:59+23:59");
     return 0;
 }`,
-			wantStdout: "2026-05-19T14:30:00Z\n2026-05-19T14:30:00+09:00\n2026-05-19T14:30:00-05:00\n2026-05-19T14:30:00+05:30\n2026-05-19T14:30:00.500000000+09:00\n",
+			wantStdout: "2026-05-19T14:30:00Z\n2026-05-19T14:30:00+09:00\n2026-05-19T14:30:00-05:00\n2026-05-19T14:30:00+05:30\n2026-05-19T14:30:00.500000000+09:00\n" +
+				"2024-02-29T23:59:59+23:59\n",
 		},
 		{
 			name: "Parse computes correct UTC instant for an offset",
@@ -1385,9 +1403,16 @@ function main(): i32 {
     show("2026-05-19T14:30:00+09:00X");   // trailing junk
     show("2026-05-19T14:30:00Z00:00");    // mixed Z + offset
     show("2026-05-19T14:30:00+ab:cd");    // non-digit offset
+    // Out-of-range fields are rejected here too, offset included (#8469).
+    show("2023-02-29T00:00:00+09:00");    // Feb 29 in a common year
+    show("2023-01-01T24:00:00+09:00");    // hour 24
+    show("2023-01-01T23:59:60Z");         // leap second
+    show("2026-05-19T14:30:00+24:00");    // offset hour 24
+    show("2026-05-19T14:30:00+09:60");    // offset minute 60
     return 0;
 }`,
-			wantStdout: "rejected\nrejected\nrejected\nrejected\nrejected\nrejected\n",
+			wantStdout: "rejected\nrejected\nrejected\nrejected\nrejected\nrejected\n" +
+				"rejected\nrejected\nrejected\nrejected\nrejected\n",
 		},
 	}
 	for _, tc := range cases {
