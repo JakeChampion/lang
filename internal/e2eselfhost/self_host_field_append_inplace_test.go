@@ -603,6 +603,104 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return r % 113;
 }`},
+	// #8485 widened the store's element-kind gate to the pointer-element field
+	// kinds `.append` already admits — struct, enum and array elements — since
+	// neither form does anything to the element the store overwrites. The rows
+	// below are the pointer-element twins of the scalar ones above; the two
+	// shared-root shapes are what make the widening gated rather than merely
+	// tested, so they come first.
+	//
+	// The measured shape (asm_ir.peep_set): a struct-element window threaded
+	// through a spread literal that overrides the stored field.
+	{"with-ptr-elem-threading", `
+struct L { v: i32 }
+struct W { w: L[], n: i32 }
+function (p: W) put(i: i32, l: L): W { return W { ...p, w: p.w.with(i, l), n: p.n + 1 }; }
+function main(): i32 {
+    var p: W = W { w: [L { v: 0 }, L { v: 0 }, L { v: 0 }, L { v: 0 }], n: 0 };
+    var i: i32 = 0;
+    while (i < 20) { p = p.put(i % 4, L { v: i }); i = i + 1; }
+    var sum: i32 = 0;
+    for e in p.w { sum = sum + e.v; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return (sum + p.n) % 113;
+}`},
+	// The caller-side hole through a METHOD receiver, pointer elements: `a`
+	// survives the call, so the store must not land in its buffer.
+	{"with-ptr-elem-method-recv-survives", `
+struct L { v: i32 }
+struct W { w: L[], n: i32 }
+function (p: W) put(i: i32, l: L): W { return W { ...p, w: p.w.with(i, l), n: p.n + 1 }; }
+function main(): i32 {
+    var a: W = W { w: [L { v: 1 }, L { v: 2 }, L { v: 3 }, L { v: 4 }], n: 0 };
+    a = a.put(0, L { v: 5 });
+    var b: W = a.put(2, L { v: 9 });
+    if (__rc_underflow_count() != 0) { return 99; }
+    return a.w[2].v * 10 + b.w[2].v + a.w[0].v;
+}`},
+	// The same hole through a free function's struct PARAMETER, pointer elements.
+	{"with-ptr-elem-free-param-survives", `
+struct L { v: i32 }
+struct W { w: L[], n: i32 }
+function (p: W) put(i: i32, l: L): W { return W { ...p, w: p.w.with(i, l), n: p.n + 1 }; }
+function bump(p: W, i: i32, v: i32): W { return W { ...p, w: p.w.with(i, L { v: v }), n: p.n + 1 }; }
+function main(): i32 {
+    var a: W = W { w: [L { v: 1 }, L { v: 2 }, L { v: 3 }, L { v: 4 }], n: 0 };
+    a = a.put(0, L { v: 5 });
+    var c: W = bump(a, 2, 7);
+    if (__rc_underflow_count() != 0) { return 99; }
+    return a.w[2].v * 10 + c.w[2].v + a.w[0].v;
+}`},
+	// A second NAME for the root's box with a pointer-element store: the box's
+	// count is what sends the site to the copy, through the share bracket.
+	{"with-ptr-elem-aliased-root-box-copies", `
+struct L { v: i32 }
+struct W { w: L[], n: i32 }
+function (p: W) put(v: i32): W { return W { ...p, w: p.w.with(0, L { v: v }), n: p.n + 1 }; }
+function step(v: i32, p: W): W { return p.put(v); }
+function walk(p: W, depth: i32): i32 {
+    var cur: W = p;
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 3) {
+        if (depth > 0) { acc = acc + walk(cur, depth - 1); }
+        cur = step(i + 10 * depth, cur);
+        i = i + 1;
+    }
+    return acc + cur.w[0].v + cur.n;
+}
+function main(): i32 {
+    var p0: W = W { w: [L { v: 7 }, L { v: 7 }], n: 0 };
+    p0 = step(1, p0);
+    var r: i32 = walk(p0, 2);
+    if (p0.w[0].v != 1) { return 90; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return r % 113;
+}`},
+	// The ENUM-element classifier, same shared-root shape.
+	{"with-enum-elem-recv-survives", `
+enum E { A(i32), B }
+struct W { es: E[], n: i32 }
+function val(e: E): i32 { match (e) { E.A(x) => { return x; }, E.B => { return 0; } } return 0; }
+function (p: W) put(i: i32, e: E): W { return W { ...p, es: p.es.with(i, e), n: p.n + 1 }; }
+function main(): i32 {
+    var a: W = W { es: [E.A(1), E.A(2), E.A(3), E.B], n: 0 };
+    a = a.put(0, E.A(5));
+    var b: W = a.put(2, E.A(9));
+    if (__rc_underflow_count() != 0) { return 99; }
+    return val(a.es[2]) * 10 + val(b.es[2]) + val(a.es[0]);
+}`},
+	// The ARRAY-of-array classifier, same shared-root shape.
+	{"with-nested-arr-elem-recv-survives", `
+struct W { rows: i32[][], n: i32 }
+function (p: W) put(i: i32, r: i32[]): W { return W { ...p, rows: p.rows.with(i, r), n: p.n + 1 }; }
+function main(): i32 {
+    var a: W = W { rows: [[1], [2], [3]], n: 0 };
+    a = a.put(0, [5]);
+    var b: W = a.put(2, [9]);
+    if (__rc_underflow_count() != 0) { return 99; }
+    return a.rows[2][0] * 10 + b.rows[2][0] + a.rows[0][0];
+}`},
 	// A body-scope host INSIDE A LOOP runs again with the same root, and the
 	// grow has moved the field out of it — so the site keeps the clone form.
 	// The root arrives as a fresh call result at an `own` position: no caller
@@ -817,8 +915,38 @@ function main(): i32 { var s: St = St { tab: [0, 0], n: 0 }; s = s.put(4); retur
 			wantClone: true,
 			with:      true,
 		},
-		// A pointer-element field keeps the value form whatever the analysis
-		// says: the overwritten element is the container's to release.
+		// A struct-element field takes the store under the same admission
+		// (#8485): what the store does to the element it overwrites — nothing —
+		// is what the clone form does to it as well.
+		{
+			name: "ptr-elem-with-stores-in-place",
+			src: `
+struct L { v: i32 }
+struct W { w: L[], n: i32 }
+function (p: W) put(i: i32, l: L): W { return W { ...p, w: p.w.with(i, l), n: p.n + 1 }; }
+function main(): i32 { var p: W = W { w: [L { v: 0 }, L { v: 0 }], n: 0 }; p = p.put(1, L { v: 4 }); return p.w[1].v; }`,
+			label:     "__fn_W__put",
+			wantClone: false,
+			with:      true,
+		},
+		// Widening the element kinds did not weaken the per-function analysis:
+		// the same field read again in the literal the store feeds still
+		// refuses, pointer elements included.
+		{
+			name: "ptr-elem-same-field-read-with-clones",
+			src: `
+struct L { v: i32 }
+struct W { w: L[], n: i32 }
+function (p: W) put(l: L): W { return W { ...p, w: p.w.with(0, l), n: p.w[0].v }; }
+function main(): i32 { var p: W = W { w: [L { v: 0 }, L { v: 0 }], n: 0 }; p = p.put(L { v: 4 }); return p.n; }`,
+			label:     "__fn_W__put",
+			wantClone: true,
+			with:      true,
+		},
+		// STRING elements stay on the value form: unlike a struct / enum /
+		// array element they have release machinery of their own, so "neither
+		// form touches the overwritten element" is not true of them and the
+		// widening (#8485) deliberately left them out.
 		{
 			name: "string-field-with-clones",
 			src: `
@@ -986,6 +1114,25 @@ function main(): i32 {
 		return cmd.ProcessState.ExitCode()
 	}
 
+	// The pointer-element `.with` (#8485). Nothing here grows, so the clone
+	// form is invisible to this instrument — each copy is the size class of the
+	// buffer it replaces and the freelist takes it back. What the instrument
+	// CAN see is the #8254 failure mode: an in-place result left counted keeps
+	// the field's buffer at rc >= 2 forever, so every later store takes the copy
+	// arm and abandons a 256-slot buffer nothing reclaims. 4000 of those is
+	// ~4 MB; the `refused` control below is what shows the reading is live.
+	withPtr := `
+struct L { v: i32 }
+struct W { w: L[], n: i32 }
+function (p: W) put(i: i32, l: L): W { return W { ...p, w: p.w.with(i, l), n: p.n + 1 }; }
+function main(): i32 {
+    var w: L[] = [];
+    var j: i32 = 0;
+    while (j < 256) { w = w.append(L { v: 0 }); j = j + 1; }
+    var p: W = W { w: w, n: 0 };
+    var i: i32 = 0;
+    while (i < 4000) { p = p.put(i % 256, L { v: i }); i = i + 1; }` + tail
+
 	// Measured: 0 units here, 165 with the identity-arm retain in place.
 	if got := run(t, admitted); got > 4 {
 		t.Errorf("admitted in-place shape bumped %d x 64 KiB, want <= 4 — the grown buffer is not being reclaimed", got)
@@ -995,5 +1142,9 @@ function main(): i32 {
 	if got := run(t, refused); got < 32 {
 		t.Errorf("refused clone shape bumped only %d x 64 KiB, want >= 32 — the calibration case is not allocating, so the admitted case proves nothing", got)
 	}
-
+	// Measured: 2 units, and 2 for the clone form this replaced — the orphaned
+	// L boxes are the whole of it and both forms orphan the same ones.
+	if got := run(t, withPtr); got > 8 {
+		t.Errorf("pointer-element in-place .with bumped %d x 64 KiB, want <= 8 — the field's buffer is not being reused across stores", got)
+	}
 }

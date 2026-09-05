@@ -17,7 +17,10 @@ sites, under the same rules — `fai_call_site_key` is the one predicate both th
 candidate walk and the excused-read walk ask. The `.with` dispatch takes
 `lower_field_with_inplace` for an admitted site on a SCALAR-element field
 (`scalar_arr_field_type`); pointer-element fields keep the value form, since the
-overwritten element would owe the container a release.
+overwritten element would owe the container a release. (#8485 later widened that
+to struct-, enum- and array-element fields, where neither form releases the
+overwritten element; string elements, which do have release machinery, still
+keep the value form.)
 
 The lowering is `lower_field_append_inplace` with the store in place of the grow,
 and one difference: `arr_push` carries its own rc == 1 gate and `arr_set` has
@@ -26,8 +29,11 @@ picks the field's own buffer or a full copy, after the #4873 share bracket has
 had its say on the root box. The identity arm moves the field out of the root
 exactly as the append does.
 
-This is self-host-first surface: native clones every field-receiver `.with`
-(#4451 debt runs the other way here).
+Native reaches the same store from the other end — a runtime helper rather than
+a per-function admission. `__method_Array_set` emits
+`__fern_arr_cow_inplace{,_ptr,_str}`, whose rc == 1 fast path returns the
+receiver unchanged; `__fern_arr_cow_inplace_ptr` is why native already stores a
+pointer-element field `.with` in place.
 
 ## Why the lifted form was not the fix
 

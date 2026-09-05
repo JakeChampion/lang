@@ -13812,10 +13812,22 @@ function lower_call_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerSta
     // (#7208). Every one of those clones the buffer SHALLOW, which is what
     // keeps the pointer-element kinds sound: their elements are owned by the
     // source struct and freed by neither copy.
-    // A SCALAR-element field the per-function analysis admitted (#8419) stores
-    // into the field's own buffer instead; pointer-element fields keep the
-    // clone, whose overwritten element the container still owns.
-    if (fa.field == "with" && c.args.len() == 2 && scalar_arr_field_type(fa.obj, s) != "") {
+    // A field the per-function analysis admitted (#8419) stores into the
+    // field's own buffer instead. The element kinds admitted are the ones
+    // `.append` admits above MINUS strings: what the store does to the
+    // OVERWRITTEN element has to match what the clone form does to it, and for
+    // a struct / enum / array element that is nothing either way — the clone
+    // form's identity arm nulls the field and releases the superseded buffer
+    // with a shallow `__fern_arr_dec`, so the element it held is orphaned
+    // whichever form runs. String elements have real release machinery
+    // (slot_is_reclaimable_strarr, __fern_str_arr_free, str_field_share_read),
+    // so that parity argument does not carry and they keep the clone until it
+    // has been audited on its own (#8485).
+    if (fa.field == "with" && c.args.len() == 2
+        && (scalar_arr_field_type(fa.obj, s) != ""
+            || struct_arr_field_read_type(fa.obj, s) != ""
+            || enum_arr_field_read_type(fa.obj, s) != ""
+            || nested_arr_field_read_type(fa.obj, s) != "")) {
         var fwik: string = field_append_inplace_key(c, fa.obj, s);
         if (fwik.len() > 0) {
             return lower_field_with_inplace(fa.obj, c.args[0], c.args[1], fwik, s);
@@ -24808,8 +24820,9 @@ function match_scrut_is_map_get(m: ast.StmtMatch, s: LowerState): boolean {
 // value-producing `.with` / `.append` clone helpers: "i64" (i64[]/u64[], 8-byte
 // integer store), "f64" (f64[], 8-byte float store), or "i32" (i32[]/string[]/
 // boolean[]/u32[]/…, the 4-byte-slot default — strings and structs ride the
-// pointer slot like an i32). The caller has already confirmed the receiver IS a
-// leak-safe scalar / string-element array (so no array-of-struct/enum here).
+// pointer slot like an i32). Array-of-struct / -enum / -array receivers reach
+// here too, from the field-read clone and in-place paths: their elements are
+// pointers, so they take the same 4-byte slot as an i32.
 function arr_elem_kind(obj: ast.Expr, s: LowerState): string {
     if (expr_is_f64arr(obj, s)) { return "f64"; }
     if (expr_is_i64arr(obj, s) || (expr_is_arr_src(obj, s) && expr_is_u64(obj, s))) { return "i64"; }
@@ -25047,8 +25060,9 @@ function fai_bracket_shared_root(s: LowerState, uniqslot: i32, srcslot: i32, fn:
 // same share bracket. arr_push carries its own rc == 1 gate; arr_set has none,
 // so the gate is spelled here — a buffer anything else still holds takes the
 // clone (a fresh rc 1 copy, exactly the value form's result), and the identity
-// arm moves the field out of the root as the append does. Scalar element kinds
-// only: overwriting a pointer element would owe the container a release.
+// arm moves the field out of the root as the append does. The overwritten
+// element is left alone deliberately — releasing it here would double-free
+// against a clone form that never released it either (#8310).
 pub function lower_field_with_inplace(obj: ast.Expr, idx: ast.Expr, val: ast.Expr, key: string, s: LowerState): LowerState {
     var kind: string = arr_elem_kind(obj, s);
     var sw: i32 = 32;
