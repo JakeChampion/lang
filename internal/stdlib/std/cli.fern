@@ -394,14 +394,23 @@ pub function (s: CliSpec) usage(): string {
 // `name.1` (or ships it) so `man name` documents the interface the
 // CliSpec already describes — one source, no drift.
 // ============================================================
-// Escape a user string for roff text. A lone backslash introduces a
-// roff escape sequence, so double every one; help or about text holding
-// a path or a `\d` cannot then smuggle a formatting request into the
-// page. `replace` returns the receiver unchanged when there is no
-// backslash — the identity-return fast path #8409 fixed for a fresh
-// argument.
+// Escape a user string for roff text. Two vectors, both of which would
+// let help or about text smuggle a formatting request into the page:
+//
+//   - a lone backslash introduces a roff escape sequence, so double
+//     every one (`replace` returns the receiver unchanged when there is
+//     none — the identity-return fast path #8409 fixed for a fresh arg);
+//   - a `.` or `'` as the FIRST character of a text line makes the whole
+//     line a roff CONTROL line, not text. Every escaped value can land
+//     at column 0 (right after a section's newline), so a leading
+//     control character is neutralised with the zero-width
+//     dummy-character escape `\&`, keeping `./build` literal text.
 function __cli_roff(s: string): string {
-  return s.replace("\\", "\\\\");
+  var out: string = s.replace("\\", "\\\\");
+  if (out.len() > 0 && (out[0] as i32 == 46 || out[0] as i32 == 39)) {
+    out = "\\&" + out;
+  }
+  return out;
 }
 
 // Render the OPTIONS section: one `.TP` tagged paragraph per flag — the

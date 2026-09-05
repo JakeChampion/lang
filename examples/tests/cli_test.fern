@@ -286,6 +286,18 @@ function test_manpage_roff_escapes_backslash(): test.TestOutcome {
   return test.assert_true(m.contains("a \\\\ separator") && !m.contains("a \\ separator"));
 }
 
+// Help or about text that begins with `.` (or `'`) would start a roff
+// CONTROL line at column 0 and be swallowed as a request; __cli_roff
+// prefixes the zero-width `\&` so it renders as literal text instead.
+function test_manpage_roff_escapes_leading_dot(): test.TestOutcome {
+  var s: cli.CliSpec = cli.cli_new("dot", ".config tool");
+  s = s.flag("run", "", "./build first");
+  var m: string = s.manpage("1");
+  return test.assert_true(m.contains(".SH DESCRIPTION\n\\&.config tool")
+    && m.contains("\\&./build first")
+    && !m.contains("\n./build first"));
+}
+
 function main(): i32 {
   var r: test.TestRunner = test.test_new("std/cli");
   r = r.it("option --long V", test_option_long);
@@ -321,5 +333,6 @@ function main(): i32 {
   r = r.it("manpage flags", test_manpage_flags);
   r = r.it("manpage commands", test_manpage_commands);
   r = r.it("manpage escapes backslash", test_manpage_roff_escapes_backslash);
+  r = r.it("manpage escapes leading dot", test_manpage_roff_escapes_leading_dot);
   return r.finish();
 }
