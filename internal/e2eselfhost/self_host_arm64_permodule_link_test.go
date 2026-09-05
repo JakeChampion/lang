@@ -26,7 +26,7 @@ import (
 // This drives the exact failing shape: a main → mid → leaf tree with NO library
 // string literals, whose entry emits the whole runtime (arr_str_join / str_lines
 // pull in the .S0/.S1 constants). It must link with the aarch64 cross gcc and
-// run to exit 42 under qemu.
+// run to exit 42, natively or under qemu-aarch64.
 func TestSelfHostPerModuleArm64LeafOnlyLinkRun(t *testing.T) {
 	armgcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -98,7 +98,7 @@ func TestSelfHostPerModuleArm64LeafOnlyLinkRun(t *testing.T) {
 	if lout, err := exec.Command(armgcc, linkArgs...).CombinedOutput(); err != nil {
 		t.Fatalf("per-module arm64 link failed (#4305 regression — undefined .S<idx>): %v\n%s", err, lout)
 	}
-	rcmd := exec.Command(qemu, bin)
+	rcmd := runArm64Bin(qemu, bin)
 	_ = rcmd.Run()
 	if code := rcmd.ProcessState.ExitCode(); code != 42 {
 		t.Errorf("per-module arm64 leaf-only program exited %d, want 42", code)

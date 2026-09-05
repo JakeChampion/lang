@@ -4085,16 +4085,9 @@ function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg: irl
 // One guard per IR op and no multi-line body left to move — 190 guards over
 // 950 lines is the op table itself.
 function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s: asmcore.EmitState, vsigs: irverify.NameIndex): asmcore.EmitState {
-    // Runtime-need detection, folded into the per-function lowering the emit loop
-    // ALREADY performs. The tail used to re-derive these by re-lowering the WHOLE
-    // module twice (module_uses_maps / module_uses_heap, each a full second/third
-    // lower_func_for_noret pass over all funcs) — on a large module (the whole
-    // self-host compiler, ~1000 funcs) those redundant passes blew the bump heap
-    // (#3425: each retained pass's per-function ops pushed peak live set past the
-    // ~3.875 GiB ceiling and OOM'd the self-compile). Marking the needs here off
-    // the ops we just lowered keeps it to a SINGLE lowering pass; the tail reads
-    // the accumulated needs (has_need) instead of re-lowering. Byte-identical
-    // output: the runtime is still emitted at the tail gated on the same needs.
+    // Runtime-need detection is marked off the ops of this one lowering; the
+    // runtime tail reads the accumulated needs (has_need) rather than lowering
+    // the module again to inspect it.
     //
     // Read `.kind` off the bound Op struct INLINE rather than via a `var dk:
     // string = ...kind` local: a named string local aliasing a struct field and

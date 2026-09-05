@@ -23,7 +23,7 @@ import (
 // in the entry resolves to ONE linker-merged address and the match finds its
 // arm across the module boundary. Without it the match silently fails (the
 // per-module bootstrap miscompile this slice prevents). The linked binary,
-// run under qemu-aarch64, returns 7.
+// run natively or under qemu-aarch64, returns 7.
 //
 // The driver itself is built as an x86 host binary (only its OUTPUT is arm64
 // asm); the emitted units are assembled+linked with the aarch64 cross gcc.
@@ -103,7 +103,7 @@ func TestSelfHostIRPerModuleLinkArm64(t *testing.T) {
 		t.Fatalf("aarch64 link failed: %v\n%s", err, out)
 	}
 
-	cmd := exec.Command(qemu, binPath)
+	cmd := runArm64Bin(qemu, binPath)
 	_ = cmd.Run()
 	if code := cmd.ProcessState.ExitCode(); code != 7 {
 		t.Errorf("arm64 per-module binary exit = %d, want 7 (cross-module enum shape identity Blue(7))", code)

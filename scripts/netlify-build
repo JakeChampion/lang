@@ -31,9 +31,10 @@ cd "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/.."
 
 stage=site/public/playground
 
-# Echoed so a toolchain mismatch is one glance into the deploy log rather
-# than a puzzling compile error further down. go.mod needs Go 1.26+, Astro 6
-# needs Node 22.12+; netlify.toml pins both.
+# Go and Node are provisioned by the Netlify build image itself (GO_VERSION /
+# NODE_VERSION in netlify.toml), before this command runs — mise is not
+# bootstrapped in the deploy sandbox. Echoed so a toolchain mismatch is one
+# glance into the deploy log rather than a puzzling compile error further down.
 echo "==> $(go version)"
 echo "==> node $(node --version)"
 

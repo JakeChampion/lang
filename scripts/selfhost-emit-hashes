@@ -26,11 +26,11 @@
 #   scripts/selfhost-emit-hashes bin/fern-selfhost /tmp/hashes-after.txt
 #   diff /tmp/hashes-before.txt /tmp/hashes-after.txt && echo PURE
 #
-# Runs ~28 minutes for the corpus's (fixture, target) pairs — three per fixture,
-# so 1521 at the 507 fixtures of 2026-08-25, and 1491 when the runtime was
-# measured on 2026-08-22 on a 4-core dev container (the header before that said
-# ~8, from a smaller corpus again). The count moves with the corpus; take it
-# from the row count of a completed run, not from this comment. Fixtures the
+# Runs ~4 minutes for the corpus's (fixture, target) pairs — three per fixture,
+# so 1644 at the 548 fixtures of 2026-09-05, measured that day on a 4-core dev
+# container with a second sweep running alongside it. The count moves with the
+# corpus and the runtime moves with the compiler; take both from a completed
+# run, not from this comment. Fixtures the
 # compiler refuses are recorded as FAILED rather than skipped, so a refactor
 # that changes WHICH programs compile shows up as a diff too.
 #

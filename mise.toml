@@ -1,0 +1,40 @@
+# The pinned developer toolchain: the ONE place a tool version lives.
+#
+# Everything that installs a tool reads this file. CI does through
+# jdx/mise-action (.github/actions/setup-fern, plus the workflows that set Go
+# up directly); scripts/devbox, scripts/netlify-build and
+# .claude/hooks/session-start.sh run `mise install` against it; so does a
+# laptop (docs/LOCAL-DEV-LOOP.md). mise.lock pins every entry to an exact
+# release and checksum. To bump a version: edit it here, run `mise lock`,
+# commit both files.
+#
+# The mise release this repo runs lives in [env] below, NOT in a top-level
+# `min_version`. min_version is a floor every mise that reads this file
+# enforces — including one in a build sandbox nobody controls. Netlify's build
+# image ships its own mise and runs it against this file during `Install
+# dependencies`, before the build command; a floor it cannot meet failed the
+# deploy outright (#8423, and the deploy doubles as a smoke CI lane). The
+# property the repo actually wants is a single source for the release CI and
+# the shell bootstrap install, which an ordinary key gives without arming a
+# floor anywhere.
+
+[settings]
+lockfile = true
+
+[env]
+# The one mise release the repo runs: scripts/toolchain-env installs exactly
+# it, and every jdx/mise-action step passes it as `version:`.
+# internal/sourcelint keeps them equal.
+FERN_MISE_VERSION = "2026.9.1"
+
+[tools]
+go = "1.26"
+# wasmtime and the WASI preview1 adapter ship from the same wasmtime release,
+# so these two versions must always be equal. The adapter is a data file the
+# wasm e2e tests read via FERN_WASI_ADAPTER, which every consumer derives from
+# `mise where http:wasi-adapter`.
+wasmtime = "46.0.1"
+"http:wasi-adapter" = { version = "46.0.1", url = "https://github.com/bytecodealliance/wasmtime/releases/download/v{{ version }}/wasi_snapshot_preview1.command.wasm" }
+wasm-tools = "1.253.0"
+actionlint = "1.7.10"
+gotestsum = "1.13.0"

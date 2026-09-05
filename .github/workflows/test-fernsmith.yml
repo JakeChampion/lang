@@ -78,8 +78,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
-        with:
-          gotestsum: "true"
       # RUN_SHRINK_PROPERTY widens TestGenBytesShrinkIsMonotonicAndValid
       # from its 3-seed default to the full 24-seed sweep: one type-check
       # per truncation point per seed, ~6 minutes. It belongs here rather

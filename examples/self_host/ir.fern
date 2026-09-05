@@ -1398,21 +1398,19 @@ pub function op_return(): Op { return op0("return"); }
 // ---- integer op-kind registry (issue #4394 lever 2) --------------------
 //
 // The canonical string<->int op-kind mapping, mirroring native's `ir.OpKind`
-// enum + its `String()` / `intOp` (internal/ir/ir.go:44, :344, :13652). Native
-// dispatches every backend op on an INT `OpKind` (an O(1) compare); the
-// self-host still tags each `Op.kind` with a STRING, so every backend dispatch
-// (asm_ir / asm_arm64_ir / wasm_ir / irlower) runs an O(len) string
-// compare inside its triple-nested emit loop, and each string tag fattens the
-// persistent Op box (the residual pinned on `Op.str` in
-// docs/IR-SELFCOMPILE-OOM-FINDINGS.md).
+// enum + its `String()` / `intOp` (internal/ir/ir.go:44, :344, :13652).
 //
-// This is slice 1 of that conversion: the canonical id<->name bijection + the
-// int-keyed classifier predicates, landed additively (nothing consumes them
-// yet, exactly like ir.fern slice 0). A later slice stamps `kind_id(op.kind)`
-// into an int field on `Op` at construction and rewrites the backend dispatch
-// ladders to compare ints, at which point the string `kind` becomes debug-only
-// (rendered via `kind_name`). Ids are stable and 1-based; 0 is KIND_INVALID (an
-// unknown / not-yet-registered tag), mirroring native's `OpInvalid = iota`.
+// The conversion this registry was staged for has LANDED: `Op` carries
+// `kind_tag: i32` and no string kind, and every backend dispatch ladder
+// compares ints. Two things still reach kind_id at run time — `op0`, which
+// takes a tag by name, and the ~175 sites across this file and the IR
+// verifiers that write `kind_id("call_direct")` inline to obtain a constant
+// they then compare a `kind_tag` against. The latter is what makes this
+// function hot (#8258); hoisting those literals to named id constants is what
+// is left of the conversion.
+//
+// Ids are stable and 1-based; 0 is KIND_INVALID (an unknown / not-yet-
+// registered tag), mirroring native's `OpInvalid = iota`.
 //
 // kind_id and kind_name are generated from ONE ordered vocabulary, so they are
 // mutual inverses by construction; ir_kind_run.fern asserts the round-trip over

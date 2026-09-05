@@ -1385,11 +1385,12 @@ function main(): i32 { var keep: (i32, i32[]) = (5, [6, 7]); return get(keep).le
 			// the same shape as the leak matrix's `str__fnscope__alias_param`
 			// cell (#7553: the callee only aliases its param, so the param
 			// stays borrowable and the caller keeps its own release), which
-			// is `clean clean` on x86-64 and `leak clean` on arm64 — native
-			// leaks it there (#7446). Both legs of that cell pass, including
-			// the FERN_SANITIZE re-run that is what would report an
-			// over-release, so the self-host's extra credits here are
-			// reclaims native does not make rather than frees it must not.
+			// is `clean clean` on both ISAs: native's clean is SSO keeping
+			// the string inline, the self-host's is a real reclaim. Both legs
+			// of that cell pass, including the FERN_SANITIZE re-run that is
+			// what would report an over-release, so the self-host's extra
+			// credits here are reclaims native does not make rather than
+			// frees it must not.
 			//
 			// So the string exemption in rc_fe_run's seed is load-bearing and
 			// must NOT be "fixed" into native parity: seeding a string param

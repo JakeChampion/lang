@@ -250,7 +250,8 @@ Timings, memory budgets, sharding, the arena-vs-OOM exit codes, which instrument
 to measure with, and the arm64/qemu policy all live in
 **`docs/LOCAL-DEV-LOOP.md`**. Read it before running anything long — several of
 its numbers were previously off by an order of magnitude, and a stale one costs
-an hour per attempt.
+an hour per attempt. Tool versions (Go, wasmtime, …) are pinned in **`mise.toml`**
++ `mise.lock` and nowhere else; `eval "$(scripts/toolchain-env)"` installs them.
 
 ## Code comments
 

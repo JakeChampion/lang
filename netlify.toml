@@ -28,10 +28,18 @@
   publish = "site/dist"
 
 [build.environment]
-  # Astro 6 requires Node >=22.12; go.mod requires Go 1.26. Both pins match
-  # what pages.yml is tested on — bump them together with that workflow.
-  # Go is pinned to a concrete release rather than "1.26" because the build
-  # image resolves this through gimme, which wants an exact version.
+  # Astro 6 requires Node >=22.12; the pin matches what pages.yml is tested on.
+  # Netlify provisions Go through gimme BEFORE the build command runs, so it
+  # cannot read mise.toml the way every other host does — the version is
+  # restated here as a concrete release (gimme wants one) and TestNetlifyGoPin
+  # (internal/sourcelint) keeps its major.minor equal to mise.toml's `go`.
+  #
+  # This host also runs its OWN mise against mise.toml during `Install
+  # dependencies`, a stage that precedes the build command — so nothing in
+  # scripts/netlify-build can influence it. That is why mise.toml carries no
+  # top-level min_version: its mise is older than the release the repo pins,
+  # and a floor it cannot meet failed the deploy in 2.7 s before any build ran
+  # (#8423).
   NODE_VERSION = "22"
   GO_VERSION = "1.26.7"
   # The smoke lane's knobs (FERN_SMOKE, FERN_SMOKE_BUDGET_S,

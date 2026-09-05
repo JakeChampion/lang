@@ -406,24 +406,27 @@ pub function __map_cow_inplace(m: usize): usize {
 // first one to fire takes the other's memory with it.
 //
 // A string KEY slot means two different things across the two string ABIs, and
-// __map_own_key covers both. Array VALUES are counted on every target, so one
+// __map_own_str_slot covers both. Array VALUES are counted on every target, so one
 // inc each is the whole claim — __map_retain_val's own kind guard decides
 // which values get it. A boxed wide-scalar VALUE carries no count at all, so
 // the copy needs a cell of its own; that is what lets an overwrite / delete /
 // drop free the cell it displaces instead of leaking it.
 //
-// Two value columns are left shared, both for want of a way to recognise them
-// HERE (#8354): a struct value (valKind 4), whose deep drop is the IR-generated
-// __drop_map_struct_<T> and needs the same per-field walk in the inc direction;
-// and a STRING value, which __drop_map_str_values releases exactly like a key
-// but which shares valKind 1 with every other unreclaimed pointer (tuple,
-// generic enum, slice, runtime handle) — telling them apart needs a kind of its
-// own in mapValKindTag, not a runtime test.
+// A STRING value (valKind 5) is claimed exactly like a key, through the same
+// __map_own_str_slot — __drop_map_str_values releases that column the way
+// __drop_map_str_keys releases the key one, so the two need the same claim.
+//
+// A struct value (valKind 4) is claimed by the retain above, and that is the
+// whole claim: the slot is one pointer to an rc'd box and the generated deep
+// drop frees at the box's last reference, so an inc per entry is enough. No
+// per-field walk is needed in the inc direction.
 function __map_own_copied_cols(buf: usize): void {
     var ownKeys: boolean = __load_i32(buf + 8) == 1;
-    var retainVals: boolean = __map_val_kind(buf) >= 2;
+    var valKind: i32 = __map_val_kind(buf);
+    var ownVals: boolean = valKind == 5;
+    var retainVals: boolean = valKind >= 2 && !ownVals;
     var cellBytes: i32 = __map_val_cell_bytes(buf);
-    if (!ownKeys && !retainVals && cellBytes == 0) { return; }
+    if (!ownKeys && !ownVals && !retainVals && cellBytes == 0) { return; }
     var cap: i32 = __load_i32(buf);
     var len_: i32 = __load_i32(buf + 4);
     var ptrW: i32 = __ptr_width();
@@ -432,7 +435,8 @@ function __map_own_copied_cols(buf: usize): void {
     var i: i32 = 0;
     while (i < len_) {
         var slot: usize = entriesBase + i * entryStride;
-        if (ownKeys) { __store_ptr(slot, __map_own_key(__load_ptr(slot))); }
+        if (ownKeys) { __store_ptr(slot, __map_own_str_slot(__load_ptr(slot))); }
+        if (ownVals) { __store_ptr(slot + ptrW, __map_own_str_slot(__load_ptr(slot + ptrW))); }
         if (retainVals) { __map_retain_val(buf, __load_ptr(slot + ptrW)); }
         if (cellBytes != 0) {
             var fresh: usize = __alloc(cellBytes);
@@ -443,7 +447,8 @@ function __map_own_copied_cols(buf: usize): void {
     }
 }
 
-// __map_own_key turns a shared string-key slot value into one this map owns.
+// __map_own_str_slot turns a shared string slot — a KEY slot, or since #8354 a
+// string VALUE slot — into one this map owns.
 //
 // On a two-word-string target the slot holds a (data, len) cell that
 // __drop_map_str_keys frees OUTRIGHT — it carries no refcount of its own — so
@@ -462,7 +467,7 @@ function __map_own_copied_cols(buf: usize): void {
 // which __fern_rc_inc itself skips. The two-word form is tagged in the top bit
 // of the cell's `len` word, which `data` carries no trace of — so inc'ing
 // `data` unguarded there dereferences the key's own characters (#7081).
-function __map_own_key(slot: usize): usize {
+function __map_own_str_slot(slot: usize): usize {
     var boxed: usize = (slot as string) as usize;
     if (boxed == slot) { return __fern_rc_inc(slot); }
     // `len` sits at cell+ptrW and its top bit is the inline flag, so on a
@@ -583,11 +588,13 @@ pub function __map_has_impl(m: usize, k: usize): boolean {
 
 // __map_val_kind / __map_val_stride unpack the value tag stored
 // at buf+12 by map_new: the low byte is the valKind (0 = scalar,
-// 1 = non-array pointer, 2 = plain-elem array, 3 = rc-elem
-// array); for kinds 2/3 the high bytes carry the value element
-// stride in bytes (the IR's mapValTag), which is what
+// 1 = non-array pointer map_drop does not reclaim, 2 = plain-elem
+// array, 3 = rc-elem array, 4 = pointer with a generated deep
+// drop, 5 = string); for kinds 2/3 the high bytes carry the value
+// element stride in bytes (the IR's mapValTag), which is what
 // __map_val_stride reads — a kind-0 column packs its cell size
-// there instead (__map_val_cell_bytes).
+// there instead (__map_val_cell_bytes). Kinds 4 and 5 carry no
+// size byte.
 function __map_val_kind(buf: usize): i32 {
     return __load_i32(buf + 12) & 255;
 }
@@ -641,14 +648,20 @@ function __map_dec_value(buf: usize, v: usize): void {
     }
 }
 
-// __map_retain_val bumps the rc of a pointer-shaped value that
-// map_drop will later free (valKind 2/3 = array values), so a
-// value handed out via get / get_or / values / iter co-owns its
-// storage and survives the map's drop (the read side of
-// map-value reclamation). A no-op for scalar (0) and non-array
-// pointer (1) values, which map_drop does not yet reclaim.
+// __map_retain_val bumps the rc of a pointer-shaped value that map_drop will
+// later free (valKind 2/3 = array values, 4 = deep-dropped pointer), so a
+// value handed out via get / get_or / values / iter co-owns its storage and
+// survives the map's drop (the read side of map-value reclamation). A no-op
+// for scalar (0) and non-array pointer (1) values, which map_drop does not
+// yet reclaim.
+//
+// A string value (5) is excluded although map_drop DOES reclaim it: the IR
+// retains it at the read itself (emitMapGetRebox, on every ABI), and on a
+// two-word target the slot holds an unrefcounted cell whose rc word is not
+// the string's. Inc'ing here would double-retain every read.
 function __map_retain_val(buf: usize, v: usize): usize {
-    if (__map_val_kind(buf) >= 2) {
+    var vk: i32 = __map_val_kind(buf);
+    if (vk >= 2 && vk != 5) {
         return __fern_rc_inc(v);
     }
     return v;
@@ -796,11 +809,13 @@ pub function __map_values_impl(m: usize): usize {
     // bounds on those targets (x86 only works because its string
     // is single-word). Each value is retained so the snapshot
     // co-owns storage map_drop will free.
-    if (valKind >= 2) {
+    if (valKind >= 2 && valKind != 5) {
         return __map_ptr_column(m, ptrW, 1);
     }
-    // string / struct / enum values: string-shaped column.
-    if (valKind == 1) {
+    // string / struct / enum values: string-shaped column. A string value is
+    // kind 5, so it must be tested out of the `>= 2` arm above rather than
+    // after it — its slots are two-word string cells, not single pointers.
+    if (valKind == 1 || valKind == 5) {
         return __map_string_column(m, ptrW);
     }
     return __map_column(m, ptrW, 4);

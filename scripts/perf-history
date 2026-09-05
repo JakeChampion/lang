@@ -1,0 +1,106 @@
+#!/usr/bin/env bash
+# perf-history — every main-branch perf report, kept as git notes.
+#
+#   perf-history record LANE REPORT        append REPORT to HEAD's note under
+#                                          refs/notes/perf and push it
+#   perf-history show METRIC [N] [REV]     `date  sha  value` for METRIC over the
+#                                          last N commits of REV (50, origin/main)
+#   perf-history metrics [REV]             the metric names REV's newest note holds
+#
+# WHY. .github/perf-baseline.txt and its siblings are the GATE: one number per
+# metric, moved by hand. perf.yml uploaded each run's report as an artifact,
+# and artifacts expire, so there was no way to ask how a metric moved over the
+# last quarter — only whether today's run cleared today's ceiling. The notes
+# are the TREND: one note per main commit, one block per lane, nothing to host
+# and nothing to expire, read back by the same git that holds the code.
+#
+# FORMAT. A note is one or more blocks, each `# lane: NAME` followed by the
+# report's `metric<TAB>value` rows (comment and directive lines dropped). The
+# perf lanes' metric namespaces are disjoint, so `show` takes a metric's first
+# occurrence.
+#
+# CONCURRENCY. Five jobs record against the same commit within minutes of each
+# other, and a notes push is an ordinary ref update: the second one to land is
+# rejected as non-fast-forward. `record` therefore fetches, appends and pushes
+# in a loop, taking the remote's note over its own local copy on every retry —
+# a lane already present in the note is never appended twice, so a re-run of a
+# job is a no-op.
+set -euo pipefail
+
+ref=refs/notes/perf
+remote="${FERN_PERF_REMOTE:-origin}"
+
+usage() { sed -n '2,10p' "$0" >&2; exit 2; }
+
+# Notes commits need an identity; a runner has none configured.
+if ! git config user.email >/dev/null 2>&1; then
+  export GIT_AUTHOR_NAME=perf-history GIT_AUTHOR_EMAIL=perf-history@fern.invalid
+  export GIT_COMMITTER_NAME=perf-history GIT_COMMITTER_EMAIL=perf-history@fern.invalid
+fi
+
+fetch_notes() {
+  # `+` so the local ref FOLLOWS the remote: a local note the remote does not
+  # have is one whose push was rejected, and re-appending is how it lands.
+  # No remote notes yet (the first record ever) is not an error.
+  git fetch -q "$remote" "+$ref:$ref" 2>/dev/null || true
+}
+
+record() {
+  local lane="$1" report="$2" block attempt
+  [ -s "$report" ] || { echo "perf-history: no report at $report; nothing to record" >&2; exit 1; }
+  block="$(mktemp)"
+  # Expanded now: the trap fires after this function's locals are gone.
+  trap "rm -f '$block'" EXIT
+  {
+    printf '# lane: %s\n' "$lane"
+    grep -vE '^[[:space:]]*(#|$)' "$report"
+  } > "$block"
+
+  for attempt in 1 2 3 4 5; do
+    fetch_notes
+    if git notes --ref="$ref" show HEAD 2>/dev/null | grep -qxF "# lane: $lane"; then
+      echo "perf-history: $lane already recorded on $(git rev-parse --short HEAD)"
+      return 0
+    fi
+    git notes --ref="$ref" append -F "$block" HEAD
+    if git push -q "$remote" "$ref:$ref" 2>/dev/null; then
+      echo "perf-history: recorded $lane on $(git rev-parse --short HEAD) ($(grep -c . "$block") lines)"
+      return 0
+    fi
+    echo "perf-history: notes push rejected (attempt $attempt); another lane landed first, retrying" >&2
+  done
+  echo "perf-history: gave up pushing $ref after 5 attempts" >&2
+  exit 1
+}
+
+default_rev() {
+  if git rev-parse -q --verify "$remote/main" >/dev/null 2>&1; then echo "$remote/main"; else echo HEAD; fi
+}
+
+show() {
+  local metric="$1" n="${2:-50}" rev="${3:-$(default_rev)}" sha date v
+  fetch_notes
+  git log --format='%H %cs' -n "$n" "$rev" | while read -r sha date; do
+    v="$(git notes --ref="$ref" show "$sha" 2>/dev/null | awk -v m="$metric" '$1 == m { print $2; exit }')"
+    [ -n "$v" ] && printf '%s  %s  %s\n' "$date" "${sha:0:12}" "$v"
+  done
+}
+
+metrics() {
+  local rev="${1:-$(default_rev)}" sha
+  fetch_notes
+  # The newest commit under REV that carries a note.
+  sha="$(git log --format=%H -n 200 "$rev" | while read -r s; do
+    git notes --ref="$ref" show "$s" >/dev/null 2>&1 && { echo "$s"; break; }
+  done)"
+  [ -n "$sha" ] || { echo "perf-history: no notes under $ref reachable from $rev" >&2; exit 1; }
+  echo "# $(git log -1 --format='%cs %h' "$sha")"
+  git notes --ref="$ref" show "$sha" | awk '/^# lane: / { lane = $3; next } NF >= 2 { printf "%s\t%s\n", $1, lane }'
+}
+
+case "${1:-}" in
+  record)  [ $# -eq 3 ] || usage; record "$2" "$3" ;;
+  show)    [ $# -ge 2 ] && [ $# -le 4 ] || usage; show "$2" "${3:-}" "${4:-}" ;;
+  metrics) [ $# -le 2 ] || usage; metrics "${2:-}" ;;
+  *)       usage ;;
+esac

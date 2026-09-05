@@ -297,8 +297,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
-        with:
-          gotestsum: "true"
       - uses: ./.github/actions/build-e2e-binaries
       - name: warm ${{ matrix.key }} drivers (${{ matrix.drivers }})
         env:
@@ -378,7 +376,6 @@ jobs:
       - uses: ./.github/actions/setup-fern
         with:
           wasmtime: "true" # the CLI tests' `-target wasm32-wasi` sub-legs run wasmtime
-          gotestsum: "true"
       # TestSelfHostArm64LinuxBuilds and TestSelfHostArm64DarwinBuilds are in
       # this job's -test.run list, and the Linux one EXECUTES its arm64 output —
       # under qemu-aarch64, which was never installed here, so it t.Skipped every
@@ -526,8 +523,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
-        with:
-          gotestsum: "true"
       - uses: ./.github/actions/build-e2e-binaries
       # TestSelfHostConstFuncGen2 is the ONLY guard for a self-referential
       # miscompile: the IR path compiling the code that decides IR eligibility.
@@ -579,8 +574,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
-        with:
-          gotestsum: "true"
       - name: aarch64 cross-gcc + qemu (stage 2 is linked and RUN)
         uses: ./.github/actions/apt-cross-toolchain
         with:
@@ -613,8 +606,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
-        with:
-          gotestsum: "true"
       - uses: ./.github/actions/build-e2e-binaries
       - name: whole-compiler emit-all fixpoint at batch=8 (gen0 == gen1)
         env:
@@ -657,7 +648,6 @@ jobs:
       - uses: ./.github/actions/setup-fern
         with:
           wasmtime: "true" # the test t.Skips without BOTH wasm-tools and wasmtime
-          gotestsum: "true"
       - uses: ./.github/actions/build-e2e-binaries
       - name: whole-compiler wasm link (15 modules, function-windowed, then run)
         env:
@@ -698,8 +688,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
-        with:
-          gotestsum: "true"
       # Assembles arm64 units with the cross gcc and RUNS the linked compiler,
       # so this needs both halves of the toolchain.
       - name: aarch64 cross-gcc + qemu
@@ -982,7 +970,6 @@ jobs:
       - uses: ./.github/actions/setup-fern
         with:
           wasmtime: "true"
-          gotestsum: "true"
       # aarch64 cross toolchain, x86 shards only. The TestSelfHost*Arm64 family
       # runs the self-host DRIVER on the host (it is always emitted as x86-64 asm
       # — e2eharness.emitDriverAsm calls x86_64.Emit) and cross-emits the arm64

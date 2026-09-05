@@ -118,7 +118,6 @@ jobs:
       - uses: ./.github/actions/setup-fern
         with:
           wasmtime: "true"
-          gotestsum: "true"
       - name: go test (differential shard ${{ matrix.shard.index }}/${{ matrix.shard.nshard }})
         env:
           DIFF_ORACLE_SHARD: "${{ matrix.shard.index }}/${{ matrix.shard.nshard }}"

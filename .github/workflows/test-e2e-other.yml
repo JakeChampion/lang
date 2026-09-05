@@ -118,7 +118,6 @@ jobs:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
         with:
-          gotestsum: "true"
           # The catch-all lane owns every test without a dedicated
           # prefix — including the wasm-component interop tests
           # (TestExternVariant*, TestCmdLang*, TestComponent*, …)

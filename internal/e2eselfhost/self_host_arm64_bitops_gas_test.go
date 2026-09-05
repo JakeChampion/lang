@@ -8,9 +8,9 @@ import (
 )
 
 // TestSelfHostArm64BitOpsGas byte-checks arm64_gas/arm64_encode's bit-
-// manipulation surface — neg, ubfx, tbz/tbnz (with an imm14 label fixup),
-// the extended condition codes (cc/cs/hi/ls/…), and the bit-counting trio
-// rbit / cnt / addv that the popcount and ctz lowerings emit — against the
+// manipulation surface: neg, ubfx, tbz/tbnz (with an imm14 label fixup),
+// the extended condition codes (cc/cs/hi/ls/...), and the bit-counting trio
+// rbit / cnt / addv that the popcount and ctz lowerings emit, against the
 // llvm-mc-pinned encodings, through the self-host wasm pipeline. Exit 0 =
 // all pass, else the failing check id.
 func TestSelfHostArm64BitOpsGas(t *testing.T) {
@@ -40,10 +40,10 @@ func TestSelfHostArm64BitOpsGas(t *testing.T) {
 	}
 }
 
-// TestSelfHostArm64DarwinMachOBitOpsRuns exercises the new ops end-to-end:
+// TestSelfHostArm64DarwinMachOBitOpsRuns exercises the bit ops end-to-end:
 // a Fern program assembles `ubfx`/`neg`/`tbz` into a value computation
 // (extract -> negate twice -> add -> test-bit branch) that exits 42, wraps
-// it with macho.fern, and the signed Mach-O runs — no external tool.
+// it with macho.fern, and the signed Mach-O runs: no external tool.
 func TestSelfHostArm64DarwinMachOBitOpsRuns(t *testing.T) {
 	assertMachORuns(t, machoRun{name: "bitops42", main: arm64MachOBitOpsDriverMain, wantExit: 42})
 }
