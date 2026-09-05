@@ -42,6 +42,15 @@ seconds and fails CI most often — `go build`, `go vet`, `gofmt-check`,
 `freeze` stay in CI's lint lane. `git push --no-verify` skips it; it is a
 convenience, not a gate.
 
+## Perf history: `scripts/perf-history`
+
+Every main-branch run of `perf.yml` appends its report to that commit's note
+under `refs/notes/perf`; the baseline files stay the gate, the notes are the
+trend. `scripts/perf-history metrics` lists what the newest note holds and
+`scripts/perf-history show x86_64/map_string.ir` prints `date  sha  value` over
+the last 50 main commits (`show METRIC N REV` widens or moves the window). Both
+fetch the notes ref first, so they need the remote; nothing else is hosted.
+
 ## `make bootstrap`: the Go-less build, and `make distcheck`
 
 `make bootstrap` (pinned stage0 compiling the whole compiler, then the smoke
