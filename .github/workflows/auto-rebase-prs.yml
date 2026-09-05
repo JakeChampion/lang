@@ -19,8 +19,9 @@ name: Auto-rebase open PRs
 # repo that merges on the checks list. Leaving a PR green-but-unchecked is worse
 # than leaving it behind, so the rebase half activates only when the repo has an
 # `AUTO_REBASE_TOKEN` secret (a PAT or App token with `contents: write` +
-# `pull-requests: write`). Without it the job still runs and still comments on
-# conflicts; the summary lists what it would have rebased.
+# `pull-requests: write`). Without it the job still runs and still comments —
+# every branch it cannot push gets a notice asking its author to rebase, whether
+# the replay conflicted or would have been clean.
 #
 # Opt out per PR with the `no-auto-rebase` label. A PR based on something other
 # than the default branch (a stacked PR) is left alone: its base is not what
@@ -166,7 +167,7 @@ jobs:
           git checkout --quiet --force "$BASE_SHA"
           cat results.tsv
 
-      - name: Report the conflicts on their pull requests
+      - name: Report on the pull requests that need their author
         if: always()
         uses: actions/github-script@v9
         env:
@@ -190,53 +191,87 @@ jobs:
               core.warning("no results.tsv — the replay step never produced one");
             }
 
-            // The dedupe key. A conflict survives every later push to main, so
-            // without it each merge posts the same comment again; keyed on the
-            // PR's own head so a push that fails to resolve it still gets one.
-            const marker = (sha) => `Head at time of check: \`${sha.slice(0, 8)}\``;
+            // The dedupe key, and the last line of every notice. A branch stays
+            // behind (or conflicted) across every later push to main, so without
+            // it each merge posts the same notice again; keyed on the PR's own
+            // head, so main moving does not re-post and the author pushing does.
+            // Plain text, not an HTML comment: GitHub strips anything that reads
+            // as a tag out of a posted body, taking the rest of the span with it.
+            const marker = (kind, sha) =>
+              `Automated by \`.github/workflows/auto-rebase-prs.yml\` — ` +
+              `${kind} at \`${sha.slice(0, 8)}\`.`;
 
-            const conflicted = rows.filter((r) => r.status === "conflict");
-            for (const row of conflicted) {
-              const key = marker(row.head);
+            const resolve = (conflicted) => [
+              "```",
+              `git fetch origin main`,
+              `git rebase origin/main`,
+              ...(conflicted ? [`# resolve, git add, git rebase --continue`] : []),
+              `git push --force-with-lease`,
+              "```",
+              ``,
+            ];
+
+            // Why a branch that replays cleanly is still the author's to push.
+            const why = {
+              "would-rebase":
+                "this repository has no `AUTO_REBASE_TOKEN` secret, so nothing here " +
+                "will push the rebase",
+              fork: "the branch lives in a fork, which no token here can write to",
+            };
+
+            const commented = [];
+            for (const row of rows) {
+              let kind, lines;
+              if (row.status === "conflict") {
+                const paths = row.detail ? row.detail.split(",").filter(Boolean) : [];
+                kind = "conflict";
+                lines = [
+                  `**A rebase is required, and this branch conflicts with \`main\`.**`,
+                  ``,
+                  `\`main\` is now at \`${shortBase}\`, and replaying this branch onto it stops` +
+                    (paths.length ? ` in:` : ` with a conflict.`),
+                  ...(paths.length ? [``, ...paths.map((p) => `- \`${p}\``)] : []),
+                  ``,
+                  `Nothing here will push to this branch until it replays cleanly:`,
+                  ``,
+                  ...resolve(true),
+                ];
+              } else if (why[row.status]) {
+                kind = "behind";
+                lines = [
+                  `**A rebase is required: this branch is behind \`main\`.**`,
+                  ``,
+                  `\`main\` is now at \`${shortBase}\`. This branch replays onto it cleanly, ` +
+                    `but ${why[row.status]} — the rebase is yours to run:`,
+                  ``,
+                  ...resolve(false),
+                ];
+              } else {
+                continue;
+              }
+
+              const key = marker(kind, row.head);
               const existing = await github.paginate(github.rest.issues.listComments, {
                 owner, repo, issue_number: row.number, per_page: 100,
               });
               if (existing.some((c) => c.body?.includes(key))) {
-                core.info(`#${row.number} already told about ${key}`);
+                core.info(`#${row.number} was already told: ${key}`);
                 continue;
               }
-              const paths = row.detail ? row.detail.split(",").filter(Boolean) : [];
-              const body = [
-                `**Automatic rebase blocked: this branch conflicts with \`main\`.**`,
-                ``,
-                `\`main\` is now at \`${shortBase}\`, and replaying this branch onto it stops` +
-                  (paths.length ? ` in:` : ` with a conflict.`),
-                ...(paths.length ? [``, ...paths.map((p) => `- \`${p}\``)] : []),
-                ``,
-                `Resolve it locally — nothing here will push to this branch until it replays cleanly:`,
-                ``,
-                "```",
-                `git fetch origin main`,
-                `git rebase origin/main`,
-                `# resolve, git add, git rebase --continue`,
-                `git push --force-with-lease`,
-                "```",
-                ``,
-                `Automated by \`.github/workflows/auto-rebase-prs.yml\`. ${key}`,
-              ].join("\n");
               await github.rest.issues.createComment({
-                owner, repo, issue_number: row.number, body,
+                owner, repo, issue_number: row.number, body: [...lines, key].join("\n"),
               });
-              core.info(`commented on #${row.number}`);
+              commented.push(`#${row.number} (${kind})`);
+              core.info(`commented on #${row.number}: ${kind}`);
             }
 
             const label = {
               rebased: "rebased",
-              "would-rebase": "would rebase (no AUTO_REBASE_TOKEN)",
-              conflict: "conflict — commented",
+              "would-rebase": "behind — rebase asked for (no AUTO_REBASE_TOKEN)",
+              conflict: "conflict — reported",
               current: "already on this base",
               moved: "head moved mid-run",
-              fork: "fork — cannot push",
+              fork: "behind — fork, rebase asked for",
               "merged-out": "content already in main",
               "push-failed": "push refused",
               unreachable: "head ref not found",
@@ -255,6 +290,7 @@ jobs:
             }
             const skipped = (process.env.SKIPPED || "").split("\n").filter(Boolean);
             if (skipped.length) summary.addRaw("Skipped:\n").addList(skipped);
+            if (commented.length) summary.addRaw("Commented on:\n").addList(commented);
             if (!process.env.PUSH_ENABLED) {
               summary.addRaw(
                 "\nPushing is off: set an `AUTO_REBASE_TOKEN` secret to let the rebases land. " +
