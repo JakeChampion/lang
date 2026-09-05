@@ -980,6 +980,7 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 var unconditionalHelperCalls = map[string][]string{
 	"__fern_read_file": {"__fern_utf8_valid"},
 	"__fern_str_copy":  {"__fern_alloc_rc1"},
+	"__build_io_error": {"__fern_alloc_rc1"},
 	"__http_entry": {
 		"__fern_alloc", "__alloc_u8", "__bytes_to_lang_string",
 		// emitStrNormalize, for the outgoing body's SSO pair.
@@ -998,6 +999,43 @@ var unconditionalHelperCalls = map[string][]string{
 	"__fern_print":  {"__free"},
 	"__fern_write":  {"__free"},
 	"__fern_eprint": {"__free"},
+}
+
+// preview2HelperCalls is unconditionalHelperCalls for the preview-2
+// bodies (preview2HelperBodyOverrides), which replace the preview-1
+// ones wholesale and so call helpers the preview-1 body never does.
+// Each listed caller's preview-2 body translates the host's
+// error-code through appendErrnoFromErrorCode.
+var preview2HelperCalls = map[string][]string{
+	"__fern_read_file":         {"__wasi_errno_of_code"},
+	"__fern_read_file_bytes":   {"__wasi_errno_of_code"},
+	"__fern_write_file":        {"__wasi_errno_of_code"},
+	"__fern_open_reader":       {"__wasi_errno_of_code"},
+	"__fern_open_writer":       {"__wasi_errno_of_code"},
+	"__fern_open_appender":     {"__wasi_errno_of_code"},
+	"__fern_reader_read_chunk": {"__wasi_errno_of_code"},
+	"__fern_remove_file":       {"__wasi_errno_of_code"},
+	"__fern_create_dir_all":    {"__wasi_errno_of_code"},
+	"__fern_temp_dir":          {"__wasi_errno_of_code"},
+	"__fern_stat":              {"__wasi_errno_of_code"},
+	"__fern_lstat":             {"__wasi_errno_of_code"},
+	"__fern_open_dir":          {"__wasi_errno_of_code"},
+	"__fern_read_dir_raw":      {"__wasi_errno_of_code"},
+	"__fern_rmdir_rec":         {"__wasi_errno_of_code"},
+}
+
+// closePreview2HelperCalls adds the preview-2 bodies' callees; run it
+// only when those bodies are the ones being emitted.
+func closePreview2HelperCalls(needs *runtimeNeeds) {
+	for caller, callees := range preview2HelperCalls {
+		if !needs.set[caller] {
+			continue
+		}
+		for _, callee := range callees {
+			needs.add(callee)
+		}
+	}
+	closeUnconditionalHelperCalls(needs)
 }
 
 // helperAllocBoxCallers are the helpers that build an Option / Result
@@ -1995,9 +2033,19 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		// WASI preview-1 errno into a heap-form IoError
 		// variant; the address goes into Result.Err's payload
 		// slot. See wasi_fs.go for the errno-to-variant map.
+		// The body is closed over the string interner where the
+		// helpers are emitted (its Other message is a literal),
+		// like __enum_sent's.
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
-		body:    buildBuildIoErrorBody,
+	},
+	"__wasi_errno_of_code": {
+		// (code) → i32 — the preview-1 errno for a preview-2
+		// wasi:filesystem error-code discriminant. Every
+		// preview-2 fs body calls it before __build_io_error.
+		params:  []byte{encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildWasiErrnoOfCodeBody,
 	},
 	"__fern_read_file": {
 		// (path_data, path_len) → i32 — heap-form

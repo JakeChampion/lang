@@ -30,6 +30,7 @@ import (
 	"github.com/jakechampion/lang/internal/fernrt"
 	"github.com/jakechampion/lang/internal/ir"
 	"github.com/jakechampion/lang/internal/ssa"
+	"github.com/jakechampion/lang/internal/strerror"
 )
 
 // armX / armW map an abstract register index to its 64-bit / 32-bit AArch64
@@ -3624,8 +3625,10 @@ func emitEnvHelper(w func(string, ...any)) {
 // matching the native layout so a Match on the value reads the right tag/payload.
 // Payloaded path variants — NotFound(0)/PermissionDenied(1)/AlreadyExists(2)/
 // InvalidUtf8(3) — are {tag@0, path@8}; Interrupted(4) is tag-only; the Other(6) fallback carries
-// {tag@0, path@8, msg@16} with an empty msg string built on the heap. Every box
-// carries the standard rc header (rc=1 at [box-8]). Leaf; x0=errno, x1=path.
+// {tag@0, path@8, msg@16} with msg the strerror text for the errno: a compare
+// ladder over the .rodata literals emitted below it, or a fresh "Unknown error
+// N" heap string for an errno outside the table (#8265). Every box carries the
+// standard rc header (rc=1 at [box-8]). Leaf; x0=errno, x1=path.
 func emitIoErrorHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("__fern_io_error"))
@@ -3641,21 +3644,74 @@ func emitIoErrorHelper(w func(string, ...any)) {
 	// it; no file syscall produces it (#5714).
 	w("\tcmp w0, #84") // EILSEQ
 	w("\tb.eq .Lssa_ioe_il")
-	// Other(path, ""): build the empty msg string, then a 3-slot box.
+	// Other(path, msg): x6 = msg.
+	texts := strerror.Dense(strerror.Linux)
+	for n, text := range texts {
+		if text == "" {
+			continue
+		}
+		w("\tcmp w0, #%d", n)
+		w("\tb.ne .Lssa_ioe_not_%d", n)
+		w("\tadrp x6, .Lssa_ioe_str_%d", n)
+		w("\tadd x6, x6, #:lo12:.Lssa_ioe_str_%d", n)
+		w("\tb .Lssa_ioe_other")
+		w(".Lssa_ioe_not_%d:", n)
+	}
+	// "Unknown error N": digits into a 32-byte stack scratch from its end,
+	// the prefix in front, then a bump-allocated rc string of exactly that.
+	w("\tsub sp, sp, #32")
+	w("\tadd x2, sp, #32")
+	w("\tmov w3, w0")
+	w("\tmov w4, #10")
+	w(".Lssa_ioe_itoa:")
+	w("\tudiv w5, w3, w4")
+	w("\tmsub w7, w5, w4, w3")
+	w("\tadd w7, w7, #48")
+	w("\tsub x2, x2, #1")
+	w("\tstrb w7, [x2]")
+	w("\tmov w3, w5")
+	w("\tcbnz w3, .Lssa_ioe_itoa")
+	w("\tadrp x3, .Lssa_ioe_unknown_prefix")
+	w("\tadd x3, x3, #:lo12:.Lssa_ioe_unknown_prefix")
+	w("\tadd x3, x3, #%d", len(strerror.UnknownPrefix))
+	w("\tmov w4, #%d", len(strerror.UnknownPrefix))
+	w(".Lssa_ioe_prefix:")
+	w("\tsub x3, x3, #1")
+	w("\tsub x2, x2, #1")
+	w("\tldrb w5, [x3]")
+	w("\tstrb w5, [x2]")
+	w("\tsubs w4, w4, #1")
+	w("\tb.ne .Lssa_ioe_prefix")
+	w("\tadd x7, sp, #32")
+	w("\tsub x7, x7, x2") // x7 = byte length
+	w("\tadrp x3, %s", heapPtrSym)
+	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
+	w("\tldr x4, [x3]")
+	w("\tadd x4, x4, #7")
+	w("\tand x4, x4, #-8") // base
+	w("\tadd x5, x4, #9")  // 8 header + NUL
+	w("\tadd x5, x5, x7")  // + bytes
+	w("\tstr x5, [x3]")
+	emitHeapGuardCall(w)
+	w("\tmov w5, #1")
+	w("\tstr w5, [x4]")     // rc = 1
+	w("\tstr w7, [x4, #4]") // len
+	w("\tadd x6, x4, #8")   // x6 = msg data ptr
+	w("\tmov x3, x6")
+	w("\tmov x5, x7")
+	w(".Lssa_ioe_copy:")
+	w("\tldrb w4, [x2]")
+	w("\tstrb w4, [x3]")
+	w("\tadd x2, x2, #1")
+	w("\tadd x3, x3, #1")
+	w("\tsubs x5, x5, #1")
+	w("\tb.ne .Lssa_ioe_copy")
+	w("\tstrb wzr, [x3]") // NUL
+	w("\tadd sp, sp, #32")
+	w(".Lssa_ioe_other:")
 	w("\tadrp x2, %s", heapPtrSym)
 	w("\tadd x2, x2, #:lo12:%s", heapPtrSym) // x2 = &cursor
 	w("\tldr x3, [x2]")
-	w("\tadd x3, x3, #7")
-	w("\tand x3, x3, #-8") // base_msg
-	w("\tadd x4, x3, #9")  // 8 header + 0 len + 1 NUL
-	w("\tstr x4, [x2]")
-	emitHeapGuardCall(w)
-	w("\tmov w5, #1")
-	w("\tstr w5, [x3]")      // rc = 1
-	w("\tstr wzr, [x3, #4]") // len = 0
-	w("\tadd x6, x3, #8")    // x6 = empty msg ptr
-	w("\tstrb wzr, [x6]")    // NUL
-	w("\tldr x3, [x2]")      // box alloc
 	w("\tadd x3, x3, #7")
 	w("\tand x3, x3, #-8")
 	w("\tadd x4, x3, #32") // 8 header + 24 box (tag + path + msg)
@@ -3667,7 +3723,7 @@ func emitIoErrorHelper(w func(string, ...any)) {
 	w("\tmov w5, #6")
 	w("\tstr w5, [x0]")      // tag = 6 (Other)
 	w("\tstr x1, [x0, #8]")  // path
-	w("\tstr x6, [x0, #16]") // msg = ""
+	w("\tstr x6, [x0, #16]") // msg
 	w("\tret")
 	w(".Lssa_ioe_intr:")
 	w("\tadrp x2, %s", heapPtrSym)
@@ -3710,6 +3766,31 @@ func emitIoErrorHelper(w func(string, ...any)) {
 	w("\tstr w7, [x0]")     // tag
 	w("\tstr x1, [x0, #8]") // path
 	w("\tret")
+	// The strerror literals, each with the same immortal rc header as a
+	// user literal (see the .rodata block in emitProgram).
+	w(".section .rodata")
+	for n, text := range texts {
+		if text == "" {
+			continue
+		}
+		w("\t.4byte 0x80000000")
+		w("\t.4byte %d", len(text))
+		w(".Lssa_ioe_str_%d:", n)
+		w("\t.byte %s", byteList(text))
+	}
+	w(".Lssa_ioe_unknown_prefix:")
+	w("\t.byte %s", byteList(strerror.UnknownPrefix))
+	w(".text")
+}
+
+// byteList renders s as the comma-separated decimal bytes a `.byte`
+// directive takes.
+func byteList(s string) string {
+	parts := make([]string, len(s))
+	for i := 0; i < len(s); i++ {
+		parts[i] = strconv.Itoa(int(s[i]))
+	}
+	return strings.Join(parts, ", ")
 }
 
 // emitWriteFileHelper writes write_file(path, content) -> Option[IoError]:

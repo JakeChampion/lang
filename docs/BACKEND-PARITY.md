@@ -100,7 +100,14 @@ PermissionDenied, EEXIST → AlreadyExists, EINTR → Interrupted,
 EILSEQ → InvalidUtf8 — synthetic, dispatched by `read_file`'s
 UTF-8 validation via `__fern_utf8_valid`, 84 on Linux / 92 on
 Darwin / WASI errno 25; no file syscall produces it — default →
-Other(path, "")).
+Other(path, strerror(errno))). The message is glibc's text for
+the errno from the one table in `internal/strerror`, in the
+target OS's numbering, on every backend and in the self-host
+(pinned by `TestSelfHostTableMatches`); an errno outside the
+table reads `Unknown error N`. The errno itself is the host's:
+wasmtime answers a read on a directory with `bad-descriptor`
+where Linux says EISDIR, so the wasm message there is `Bad file
+descriptor`, not `Is a directory`.
 
 Coverage: `Test{Arm64,X86_64}ReadFileOk` /
 `...ReadFileNotFound` / `...WriteFileOk` /

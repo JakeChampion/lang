@@ -18,6 +18,7 @@
 package wasmbin
 
 import (
+	"github.com/jakechampion/lang/internal/strerror"
 	"github.com/jakechampion/lang/internal/wasm/encode"
 	"github.com/jakechampion/lang/internal/wasm/inst"
 	"github.com/jakechampion/lang/internal/wasm/memory"
@@ -84,14 +85,17 @@ const (
 	wasiFdflagAppend int32 = 0x01
 )
 
-// buildBuildIoErrorBody assembles __build_io_error.
+// buildBuildIoErrorBody assembles __build_io_error, closed over the
+// data-segment interner because the Other variant's message is a
+// literal: strerror's text for the errno (#8265).
 //
 // Signature: (errno, path_data, path_len) → i32 (heap-form
 // IoError pointer).
 //
-// Maps a small set of preview-1 errnos to the matching
-// IoError variant; everything else lands in
-// `Other(path, "io error")`. The variant struct layout is
+// Maps the preview-1 errnos with a variant of their own; everything
+// else lands in `Other(path, strerror(errno))` — a compare ladder over
+// the interned texts, or a fresh "Unknown error N" rc1 string for an
+// errno outside the table. The variant struct layout is
 // (tag@0 + padding + payload@8); single-string payloads
 // occupy 8 bytes (data@8, len@12) for 16 bytes total;
 // two-string Other occupies 16 bytes (data@8/len@12 +
@@ -104,109 +108,207 @@ const (
 //	1: $path_data
 //	2: $path_len
 //	3: $result
-func buildBuildIoErrorBody(idxs map[string]uint32) []byte {
-	allocBox := idxs["__fern_alloc_box"]
+//	4: $msg_data
+//	5: $msg_len
+//	6: $t   (itoa: remaining magnitude, then the write cursor)
+//	7: $d   (itoa: digit count)
+func buildBuildIoErrorBody(internString func(string) int) func(map[string]uint32) []byte {
+	return func(idxs map[string]uint32) []byte {
+		allocBox := idxs["__fern_alloc_box"]
+		allocRc1 := idxs["__fern_alloc_rc1"]
+		var body []byte
+
+		// Each errno case: compare, if-then-allocate-and-return the
+		// matching variant. Inline rather than table-driven; the set
+		// is small and the wasm validator benefits from explicit
+		// branch shapes.
+		emitSingleStringCase := func(b []byte, errnoVal, tag int32) []byte {
+			// if errno == errnoVal { return NotFound|PermissionDenied|... }
+			b = inst.InstLocalGet(b, 0) // errno
+			b = inst.InstI32Const(b, errnoVal)
+			b = numeric.InstI32Eq(b)
+			b = inst.InstIfStart(b, inst.BlocktypeEmpty)
+			{
+				b = inst.InstI32Const(b, 16) // 16-byte single-string variant
+				b = inst.InstCall(b, allocBox)
+				b = inst.InstLocalTee(b, 3)
+				b = inst.InstI32Const(b, tag)
+				b = memory.InstI32Store(b, 2, 0) // tag @ +0
+				// payload string @ +8/+12
+				b = inst.InstLocalGet(b, 3)
+				b = inst.InstLocalGet(b, 1) // path_data
+				b = memory.InstI32Store(b, 2, 8)
+				b = inst.InstLocalGet(b, 3)
+				b = inst.InstLocalGet(b, 2) // path_len
+				b = memory.InstI32Store(b, 2, 12)
+				b = inst.InstLocalGet(b, 3)
+				b = inst.InstReturn(b)
+			}
+			b = inst.InstEnd(b)
+			return b
+		}
+		emitNullaryCase := func(b []byte, errnoVal, tag int32) []byte {
+			// if errno == errnoVal { return Interrupted|Unsupported }
+			b = inst.InstLocalGet(b, 0)
+			b = inst.InstI32Const(b, errnoVal)
+			b = numeric.InstI32Eq(b)
+			b = inst.InstIfStart(b, inst.BlocktypeEmpty)
+			{
+				b = inst.InstI32Const(b, 4) // 4-byte tag-only variant
+				b = inst.InstCall(b, allocBox)
+				b = inst.InstLocalTee(b, 3)
+				b = inst.InstI32Const(b, tag)
+				b = memory.InstI32Store(b, 2, 0)
+				b = inst.InstLocalGet(b, 3)
+				b = inst.InstReturn(b)
+			}
+			b = inst.InstEnd(b)
+			return b
+		}
+
+		body = emitSingleStringCase(body, errnoNoEnt, ioErrTagNotFound)
+		body = emitSingleStringCase(body, errnoAccess, ioErrTagPermissionDenied)
+		body = emitSingleStringCase(body, errnoExist, ioErrTagAlreadyExists)
+		body = emitSingleStringCase(body, errnoIlseq, ioErrTagInvalidUtf8)
+		body = emitNullaryCase(body, errnoIntr, ioErrTagInterrupted)
+		body = emitNullaryCase(body, errnoNoTsup, ioErrTagUnsupported)
+
+		// The message: `if errno == n { msg = text_n }` per table entry.
+		for n, text := range strerror.Dense(strerror.Wasi) {
+			if text == "" {
+				continue
+			}
+			body = inst.InstLocalGet(body, 0)
+			body = inst.InstI32Const(body, int32(n))
+			body = numeric.InstI32Eq(body)
+			body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+			body = inst.InstI32Const(body, int32(internString(text)))
+			body = inst.InstLocalSet(body, 4)
+			body = inst.InstI32Const(body, int32(len(text)))
+			body = inst.InstLocalSet(body, 5)
+			body = inst.InstEnd(body)
+		}
+		// No entry matched: "Unknown error N" in a fresh rc1 string. The
+		// buffer is sized for the prefix plus every digit an i32 has.
+		prefix := strerror.UnknownPrefix
+		body = inst.InstLocalGet(body, 5)
+		body = numeric.InstI32Eqz(body)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		{
+			body = inst.InstI32Const(body, int32(len(prefix)+10))
+			body = inst.InstCall(body, allocRc1)
+			body = inst.InstLocalSet(body, 4)
+			// memory.copy(msg, prefix, len(prefix))
+			body = inst.InstLocalGet(body, 4)
+			body = inst.InstI32Const(body, int32(internString(prefix)))
+			body = inst.InstI32Const(body, int32(len(prefix)))
+			body = memory.InstMemoryCopy(body)
+			// d = number of decimal digits in errno
+			body = inst.InstLocalGet(body, 0)
+			body = inst.InstLocalSet(body, 6)
+			body = inst.InstI32Const(body, 1)
+			body = inst.InstLocalSet(body, 7)
+			body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
+			body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+			{
+				body = inst.InstLocalGet(body, 6)
+				body = inst.InstI32Const(body, 10)
+				body = numeric.InstI32LtU(body)
+				body = inst.InstBrIf(body, 1)
+				body = inst.InstLocalGet(body, 6)
+				body = inst.InstI32Const(body, 10)
+				body = numeric.InstI32DivU(body)
+				body = inst.InstLocalSet(body, 6)
+				body = inst.InstLocalGet(body, 7)
+				body = inst.InstI32Const(body, 1)
+				body = numeric.InstI32Add(body)
+				body = inst.InstLocalSet(body, 7)
+				body = inst.InstBr(body, 0)
+			}
+			body = inst.InstEnd(body)
+			body = inst.InstEnd(body)
+			// msg_len = len(prefix) + d; the digits go in from the end.
+			body = inst.InstI32Const(body, int32(len(prefix)))
+			body = inst.InstLocalGet(body, 7)
+			body = numeric.InstI32Add(body)
+			body = inst.InstLocalSet(body, 5)
+			body = inst.InstLocalGet(body, 4)
+			body = inst.InstLocalGet(body, 5)
+			body = numeric.InstI32Add(body)
+			body = inst.InstLocalSet(body, 6) // cursor, one past the end
+			body = inst.InstLocalGet(body, 0)
+			body = inst.InstLocalSet(body, 7) // remaining magnitude
+			body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
+			body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+			{
+				body = inst.InstLocalGet(body, 6)
+				body = inst.InstI32Const(body, 1)
+				body = numeric.InstI32Sub(body)
+				body = inst.InstLocalTee(body, 6)
+				body = inst.InstLocalGet(body, 7)
+				body = inst.InstI32Const(body, 10)
+				body = numeric.InstI32RemU(body)
+				body = inst.InstI32Const(body, '0')
+				body = numeric.InstI32Add(body)
+				body = memory.InstI32Store8(body, 0, 0)
+				body = inst.InstLocalGet(body, 7)
+				body = inst.InstI32Const(body, 10)
+				body = numeric.InstI32DivU(body)
+				body = inst.InstLocalTee(body, 7)
+				body = numeric.InstI32Eqz(body)
+				body = inst.InstBrIf(body, 1)
+				body = inst.InstBr(body, 0)
+			}
+			body = inst.InstEnd(body)
+			body = inst.InstEnd(body)
+		}
+		body = inst.InstEnd(body)
+
+		// Other(path, msg) — 24 bytes.
+		body = inst.InstI32Const(body, 24)
+		body = inst.InstCall(body, allocBox)
+		body = inst.InstLocalTee(body, 3)
+		body = inst.InstI32Const(body, ioErrTagOther)
+		body = memory.InstI32Store(body, 2, 0) // tag
+		// path string @ +8/+12
+		body = inst.InstLocalGet(body, 3)
+		body = inst.InstLocalGet(body, 1)
+		body = memory.InstI32Store(body, 2, 8)
+		body = inst.InstLocalGet(body, 3)
+		body = inst.InstLocalGet(body, 2)
+		body = memory.InstI32Store(body, 2, 12)
+		// msg string @ +16/+20
+		body = inst.InstLocalGet(body, 3)
+		body = inst.InstLocalGet(body, 4)
+		body = memory.InstI32Store(body, 2, 16)
+		body = inst.InstLocalGet(body, 3)
+		body = inst.InstLocalGet(body, 5)
+		body = memory.InstI32Store(body, 2, 20)
+
+		body = inst.InstLocalGet(body, 3)
+		locals := inst.PutLocalsOneGroup(nil, 5, encode.ValtypeI32)
+		return inst.PutFunctionBody(nil, locals, body)
+	}
+}
+
+// buildWasiErrnoOfCodeBody assembles __wasi_errno_of_code.
+//
+// Signature: (code) → i32 — the preview-1 errno for a
+// wasi:filesystem error-code discriminant, strerror.WasiErrorCodes as
+// a compare ladder. A discriminant past the enum reads as ENOENT.
+func buildWasiErrnoOfCodeBody(_ map[string]uint32) []byte {
 	var body []byte
-
-	// Each errno case: compare, if-then-allocate-and-return the
-	// matching variant. Inline rather than table-driven; the set
-	// is small and the wasm validator benefits from explicit
-	// branch shapes.
-	emitSingleStringCase := func(b []byte, errnoVal, tag int32) []byte {
-		// if errno == errnoVal { return NotFound|PermissionDenied|... }
-		b = inst.InstLocalGet(b, 0) // errno
-		b = inst.InstI32Const(b, errnoVal)
-		b = numeric.InstI32Eq(b)
-		b = inst.InstIfStart(b, inst.BlocktypeEmpty)
-		{
-			b = inst.InstI32Const(b, 16) // 16-byte single-string variant
-			b = inst.InstCall(b, allocBox)
-			b = inst.InstLocalTee(b, 3)
-			b = inst.InstI32Const(b, tag)
-			b = memory.InstI32Store(b, 2, 0) // tag @ +0
-			// payload string @ +8/+12
-			b = inst.InstLocalGet(b, 3)
-			b = inst.InstI32Const(b, 8)
-			b = numeric.InstI32Add(b)
-			b = inst.InstLocalGet(b, 1) // path_data
-			b = memory.InstI32Store(b, 2, 0)
-			b = inst.InstLocalGet(b, 3)
-			b = inst.InstI32Const(b, 12)
-			b = numeric.InstI32Add(b)
-			b = inst.InstLocalGet(b, 2) // path_len
-			b = memory.InstI32Store(b, 2, 0)
-			b = inst.InstLocalGet(b, 3)
-			b = inst.InstReturn(b)
-		}
-		b = inst.InstEnd(b)
-		return b
+	for i, ec := range strerror.WasiErrorCodes {
+		body = inst.InstLocalGet(body, 0)
+		body = inst.InstI32Const(body, int32(i))
+		body = numeric.InstI32Eq(body)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		body = inst.InstI32Const(body, int32(strerror.Number(strerror.Wasi, ec.Errno)))
+		body = inst.InstReturn(body)
+		body = inst.InstEnd(body)
 	}
-	emitNullaryCase := func(b []byte, errnoVal, tag int32) []byte {
-		// if errno == errnoVal { return Interrupted|Unsupported }
-		b = inst.InstLocalGet(b, 0)
-		b = inst.InstI32Const(b, errnoVal)
-		b = numeric.InstI32Eq(b)
-		b = inst.InstIfStart(b, inst.BlocktypeEmpty)
-		{
-			b = inst.InstI32Const(b, 4) // 4-byte tag-only variant
-			b = inst.InstCall(b, allocBox)
-			b = inst.InstLocalTee(b, 3)
-			b = inst.InstI32Const(b, tag)
-			b = memory.InstI32Store(b, 2, 0)
-			b = inst.InstLocalGet(b, 3)
-			b = inst.InstReturn(b)
-		}
-		b = inst.InstEnd(b)
-		return b
-	}
-
-	body = emitSingleStringCase(body, errnoNoEnt, ioErrTagNotFound)
-	body = emitSingleStringCase(body, errnoAccess, ioErrTagPermissionDenied)
-	body = emitSingleStringCase(body, errnoExist, ioErrTagAlreadyExists)
-	body = emitSingleStringCase(body, errnoIlseq, ioErrTagInvalidUtf8)
-	body = emitNullaryCase(body, errnoIntr, ioErrTagInterrupted)
-	body = emitNullaryCase(body, errnoNoTsup, ioErrTagUnsupported)
-
-	// Default: Other(path, "io error") — 24 bytes. We don't
-	// have a way to materialise a constant inline string here
-	// (no string data segment for runtime helpers), so use an
-	// empty second string. Callers reading the message will see
-	// (empty) which is a downgrade from WAT's "io error"
-	// literal; acceptable for the first wasmbin slice — the
-	// shaped variant tag still drives match-arm dispatch.
-	body = inst.InstI32Const(body, 24)
-	body = inst.InstCall(body, allocBox)
-	body = inst.InstLocalTee(body, 3)
-	body = inst.InstI32Const(body, ioErrTagOther)
-	body = memory.InstI32Store(body, 2, 0) // tag
-
-	// path string @ +8/+12
-	body = inst.InstLocalGet(body, 3)
-	body = inst.InstI32Const(body, 8)
-	body = numeric.InstI32Add(body)
-	body = inst.InstLocalGet(body, 1)
-	body = memory.InstI32Store(body, 2, 0)
-	body = inst.InstLocalGet(body, 3)
-	body = inst.InstI32Const(body, 12)
-	body = numeric.InstI32Add(body)
-	body = inst.InstLocalGet(body, 2)
-	body = memory.InstI32Store(body, 2, 0)
-
-	// empty msg @ +16/+20
-	body = inst.InstLocalGet(body, 3)
-	body = inst.InstI32Const(body, 16)
-	body = numeric.InstI32Add(body)
-	body = inst.InstI32Const(body, 0) // data ptr = 0 (empty)
-	body = memory.InstI32Store(body, 2, 0)
-	body = inst.InstLocalGet(body, 3)
-	body = inst.InstI32Const(body, 20)
-	body = numeric.InstI32Add(body)
-	body = inst.InstI32Const(body, 0) // len = 0
-	body = memory.InstI32Store(body, 2, 0)
-
-	body = inst.InstLocalGet(body, 3)
-	locals := inst.PutLocalsOneGroup(nil, 1, encode.ValtypeI32)
-	return inst.PutFunctionBody(nil, locals, body)
+	body = inst.InstI32Const(body, errnoNoEnt)
+	return inst.PutFunctionBody(nil, inst.PutLocalsOneGroup(nil, 0, encode.ValtypeI32), body)
 }
 
 // buildReadFileBody assembles __fern_read_file.
@@ -592,7 +694,7 @@ func buildReadFileBodyP2Common(idxs map[string]uint32, asBytes bool) []byte {
 	body = memory.InstI32Load8U(body, 0, 0)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	{
-		body = appendErrnoFromErrorCode(body, 2, 16)
+		body = appendErrnoFromErrorCode(body, idxs, 2, 16)
 		body = buildReadFileErr(body, idxs, buildIoErr, allocBox, 16)
 	}
 	body = inst.InstEnd(body)
@@ -612,7 +714,7 @@ func buildReadFileBodyP2Common(idxs map[string]uint32, asBytes bool) []byte {
 	{
 		body = inst.InstLocalGet(body, 6)
 		body = inst.InstCall(body, descDrop)
-		body = appendErrnoFromErrorCode(body, 2, 16)
+		body = appendErrnoFromErrorCode(body, idxs, 2, 16)
 		body = buildReadFileErr(body, idxs, buildIoErr, allocBox, 16)
 	}
 	body = inst.InstEnd(body)
@@ -789,14 +891,11 @@ func buildReadFileBodyP2Common(idxs map[string]uint32, asBytes bool) []byte {
 // appendErrnoFromErrorCode maps the wasi:filesystem error-code
 // discriminant at mem8[rbLocal+4] (the err arm of
 // result<_, error-code>) to the preview-1 errno __build_io_error
-// understands, writing it into errnoLocal. Default ENOENT
-// (NotFound); the recognised cases line up with __build_io_error's
-// errno→IoError-variant map (access → PermissionDenied, exist →
-// AlreadyExists, interrupted → Interrupted, unsupported →
-// Unsupported). error-code disc indices follow
-// WasiFilesystemErrorCodeNames order.
-func appendErrnoFromErrorCode(body []byte, rbLocal, errnoLocal uint32) []byte {
-	return appendErrnoFromErrorCodeAt(body, rbLocal, errnoLocal, 4)
+// understands, writing it into errnoLocal — a call to
+// __wasi_errno_of_code, so every preview-2 body that translates a
+// host failure declares that helper in preview2HelperCalls.
+func appendErrnoFromErrorCode(body []byte, idxs map[string]uint32, rbLocal, errnoLocal uint32) []byte {
+	return appendErrnoFromErrorCodeAt(body, idxs, rbLocal, errnoLocal, 4)
 }
 
 // appendErrnoFromErrorCodeAt is appendErrnoFromErrorCode with the
@@ -806,26 +905,13 @@ func appendErrnoFromErrorCode(body []byte, rbLocal, errnoLocal uint32) []byte {
 // error-code at 8, because descriptor-stat's u64 fields make the whole
 // payload 8-aligned. Reading it at 4 there yields the top half of a
 // zeroed word — a silent "ENOENT for everything".
-func appendErrnoFromErrorCodeAt(body []byte, rbLocal, errnoLocal uint32, codeOff uint32) []byte {
-	// errno = ENOENT (default / no-entry).
-	body = inst.InstI32Const(body, errnoNoEnt)
+func appendErrnoFromErrorCodeAt(body []byte, idxs map[string]uint32, rbLocal, errnoLocal uint32, codeOff uint32) []byte {
+	body = inst.InstLocalGet(body, rbLocal)
+	body = memory.InstI32Load8U(body, 0, codeOff)
+	body = inst.InstCall(body, idxs["__wasi_errno_of_code"])
 	body = inst.InstLocalSet(body, errnoLocal)
-	for _, m := range []struct{ discVal, errnoVal int32 }{
-		{0, errnoAccess}, {7, errnoExist}, {11, errnoIntr}, {27, errnoNoTsup},
-	} {
-		// if mem8[rb+codeOff] == discVal { errno = errnoVal }
-		body = inst.InstLocalGet(body, rbLocal)
-		body = memory.InstI32Load8U(body, 0, codeOff)
-		body = inst.InstI32Const(body, m.discVal)
-		body = numeric.InstI32Eq(body)
-		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-		body = inst.InstI32Const(body, m.errnoVal)
-		body = inst.InstLocalSet(body, errnoLocal)
-		body = inst.InstEnd(body)
-	}
 	return body
 }
-
 func buildReadFileErr(body []byte, idxs map[string]uint32, buildIoErr, allocBox, errnoLocal uint32) []byte {
 	body = inst.InstLocalGet(body, errnoLocal)
 	// __build_io_error(errno, path_data, path_len)
@@ -1155,7 +1241,7 @@ func buildWriteFileBodyP2(idxs map[string]uint32) []byte {
 	body = memory.InstI32Load8U(body, 0, 0)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	{
-		body = appendErrnoFromErrorCode(body, 4, 17)
+		body = appendErrnoFromErrorCode(body, idxs, 4, 17)
 		body = buildWriteFileErr(body, buildIoErr, allocBox, 17)
 	}
 	body = inst.InstEnd(body)
@@ -1175,7 +1261,7 @@ func buildWriteFileBodyP2(idxs map[string]uint32) []byte {
 	{
 		body = inst.InstLocalGet(body, 10)
 		body = inst.InstCall(body, descDrop)
-		body = appendErrnoFromErrorCode(body, 4, 17)
+		body = appendErrnoFromErrorCode(body, idxs, 4, 17)
 		body = buildWriteFileErr(body, buildIoErr, allocBox, 17)
 	}
 	body = inst.InstEnd(body)
@@ -1474,7 +1560,7 @@ func buildOpenReaderBodyP2(idxs map[string]uint32) []byte {
 	body = memory.InstI32Load8U(body, 0, 0)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	{
-		body = appendErrnoFromErrorCode(body, 2, 16)
+		body = appendErrnoFromErrorCode(body, idxs, 2, 16)
 		body = buildReadFileErr(body, idxs, buildIoErr, allocBox, 16)
 	}
 	body = inst.InstEnd(body)
@@ -1493,7 +1579,7 @@ func buildOpenReaderBodyP2(idxs map[string]uint32) []byte {
 	{
 		body = inst.InstLocalGet(body, 6)
 		body = inst.InstCall(body, descDrop)
-		body = appendErrnoFromErrorCode(body, 2, 16)
+		body = appendErrnoFromErrorCode(body, idxs, 2, 16)
 		body = buildReadFileErr(body, idxs, buildIoErr, allocBox, 16)
 	}
 	body = inst.InstEnd(body)
@@ -1591,7 +1677,7 @@ func buildOpenWriterBodyP2(idxs map[string]uint32) []byte {
 	body = memory.InstI32Load8U(body, 0, 0)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	{
-		body = appendErrnoFromErrorCode(body, 2, 16)
+		body = appendErrnoFromErrorCode(body, idxs, 2, 16)
 		body = buildReadFileErr(body, idxs, buildIoErr, allocBox, 16)
 	}
 	body = inst.InstEnd(body)
@@ -1610,7 +1696,7 @@ func buildOpenWriterBodyP2(idxs map[string]uint32) []byte {
 	{
 		body = inst.InstLocalGet(body, 6)
 		body = inst.InstCall(body, descDrop)
-		body = appendErrnoFromErrorCode(body, 2, 16)
+		body = appendErrnoFromErrorCode(body, idxs, 2, 16)
 		body = buildReadFileErr(body, idxs, buildIoErr, allocBox, 16)
 	}
 	body = inst.InstEnd(body)
@@ -1692,7 +1778,7 @@ func buildOpenAppenderBodyP2(idxs map[string]uint32) []byte {
 	body = memory.InstI32Load8U(body, 0, 0)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	{
-		body = appendErrnoFromErrorCode(body, 2, 16)
+		body = appendErrnoFromErrorCode(body, idxs, 2, 16)
 		body = buildReadFileErr(body, idxs, buildIoErr, allocBox, 16)
 	}
 	body = inst.InstEnd(body)
@@ -1710,7 +1796,7 @@ func buildOpenAppenderBodyP2(idxs map[string]uint32) []byte {
 	{
 		body = inst.InstLocalGet(body, 6)
 		body = inst.InstCall(body, descDrop)
-		body = appendErrnoFromErrorCode(body, 2, 16)
+		body = appendErrnoFromErrorCode(body, idxs, 2, 16)
 		body = buildReadFileErr(body, idxs, buildIoErr, allocBox, 16)
 	}
 	body = inst.InstEnd(body)

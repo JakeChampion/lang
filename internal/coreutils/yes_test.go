@@ -31,6 +31,12 @@ func TestYesParity(t *testing.T) {
 		// single copy of the line rather than many.
 		{name: "operand longer than the write block", args: []string{strings.Repeat("z", 70000)}, limit: 4096},
 
+		// Write failures: `yes: standard output: <strerror>`, exit 1. The
+		// text is the runtime's IoError.Other message (#8265).
+		{name: "stdout closed", stdout: stdoutClosed},
+		{name: "stdout full", stdout: stdoutFull},
+		{name: "stdout closed with an operand", args: []string{"hello"}, stdout: stdoutClosed},
+
 		// Usage errors: the message, the `Try …` line, exit 1.
 		{name: "unrecognized long option", args: []string{"--foo"}},
 		{name: "unrecognized long option with a value", args: []string{"--foo=bar"}},

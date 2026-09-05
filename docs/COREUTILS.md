@@ -86,7 +86,9 @@ cosmetic and are not:
   token including any `=value`). A hidden option is visible here: `head`'s
   ambiguity list names `---presume-input-pipe`.
 - strerror text: `No such file or directory`, `Is a directory`, `Bad file
-  descriptor`. See "Open gaps".
+  descriptor`, `No space left on device` — `IoError.Other` carries glibc's
+  text for the errno on every backend (`internal/strerror`), so a write or
+  open failure prints what C prints.
 - The `Try '<argv0> --help' for more information.` line and the fact that a
   usage error never prints the full help.
 - Per-utility exit codes for usage errors: 1 for most, 2 for `sort`, `expr`,
@@ -104,9 +106,9 @@ it.
 ## How parity is enforced
 
 `internal/coreutils/` is the gate. It is oracle-based: no expected output is
-ever written down. Each case is an invocation (argv, stdin, extra env, and
-for a utility that never stops, a byte limit); the harness runs GNU and Fern
-and diffs. A case costs one line, and a case cannot record a wrong
+ever written down. Each case is an invocation (argv, stdin, extra env, where
+stdout goes — captured, closed, or `/dev/full` — and for a utility that never
+stops, a byte limit); the harness runs GNU and Fern and diffs. A case costs one line, and a case cannot record a wrong
 expectation, which is what makes the corpus cheap to grow and hard to get
 wrong. See the package doc in `harness_test.go`.
 
@@ -227,17 +229,11 @@ recorded in `yes.fern`.
 
 ## Open gaps
 
-One, a Fern gap with its own issue rather than a corpus carve-out — the
-standing order is that a Fern bug met on the way gets an issue and a fix,
-never a workaround:
-
-- **#8265 — `IoError.Other` carries an empty message.** GNU reports write
-  and open failures as `prog: context: <strerror text>`. The four named
-  IoError variants map to their text in `lib/gnu.fern`; `Other` has no errno
-  left to map. So `yes >&-` (`yes: standard output: Bad file descriptor`),
-  `echo hi >&-` (`echo: write error: Bad file descriptor`) and `> /dev/full`
-  are not in the corpus yet. The utilities already print the field as the
-  strerror text, so the fix needs no change here beyond adding the cases.
+None. Both Fern gaps the first utilities met — `IoError.Other` carrying no
+strerror text (#8265) and source unable to learn its compile target
+(#8338) — are closed, and each is exercised by the corpus: the
+write-failure cases (`yes >&-`, `> /dev/full`) and `yes.fern`'s per-target
+block. A gap met later gets an issue and a fix, never a corpus carve-out.
 
 ## Staging
 

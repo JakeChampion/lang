@@ -316,6 +316,7 @@ var rcResultNonPointer = map[string]bool{
 	"__ptr_width":   true,
 	"__slice_range": true, "__fern_idiv_s32": true, "__fern_idiv_u32": true,
 	"__fern_irem_s32": true, "__fern_irem_u32": true, "isatty": true,
+	"__wasi_errno_of_code": true,
 
 	// The rc probes and the uniqueness test — counters and a boolean.
 	"__fern_rc_is_unique": true, "__fern_rc_underflow_count": true,
