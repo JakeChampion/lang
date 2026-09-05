@@ -17,6 +17,7 @@ import (
 	"github.com/jakechampion/lang/internal/constfold"
 	"github.com/jakechampion/lang/internal/modload"
 	"github.com/jakechampion/lang/internal/monomorph"
+	"github.com/jakechampion/lang/internal/platforms"
 )
 
 func RunFixtureInterp(t *testing.T, mainPath, stdin string) (string, int) {
@@ -36,17 +37,19 @@ func RunFixtureInterp(t *testing.T, mainPath, stdin string) (string, int) {
 // loads from the real fixture directory so relative `./sibling`
 // imports resolve against the on-disk layout.
 //
-// It names no target, so a program calling `target_os()` must go through
-// LoadCheckMonoFor instead: the lowering refuses an unresolved call.
+// It names no target, so a program calling `target_os()` or
+// `target_arch()` must go through LoadCheckMonoFor instead: the lowering
+// refuses an unresolved call.
 func LoadCheckMono(t *testing.T, mainPath string) (*checker.Info, *ast.Program) {
 	t.Helper()
 	return LoadCheckMonoFor(t, mainPath, "")
 }
 
-// LoadCheckMonoFor is LoadCheckMono for a program compiled for a target
-// whose environment is targetOS ("linux", "wasi", …), which is what
-// `target_os()` folds to.
-func LoadCheckMonoFor(t *testing.T, mainPath, targetOS string) (*checker.Info, *ast.Program) {
+// LoadCheckMonoFor is LoadCheckMono for a program compiled for the named
+// target ("arm64-linux", "wasm32-wasi", …), whose two halves are what
+// `target_os()` and `target_arch()` fold to. An empty or unknown name
+// leaves both calls unfolded.
+func LoadCheckMonoFor(t *testing.T, mainPath, target string) (*checker.Info, *ast.Program) {
 	t.Helper()
 	// Ensure core/int is in the import closure so the wasm runner's
 	// BuildOptions.PrintMainResult wrapper can stringify main()'s i32
@@ -69,7 +72,11 @@ func LoadCheckMonoFor(t *testing.T, mainPath, targetOS string) (*checker.Info, *
 	if err != nil {
 		t.Fatalf("modload: %v", err)
 	}
-	if err := constfold.FoldWith(prog, constfold.Inputs{TargetOS: targetOS}); err != nil {
+	targetOS, targetArch := "", ""
+	if d := platforms.ForTarget(target); d != nil {
+		targetOS, targetArch = d.Environment, d.ISA
+	}
+	if err := constfold.FoldWith(prog, constfold.Inputs{TargetOS: targetOS, TargetArch: targetArch}); err != nil {
 		t.Fatalf("constfold: %v", err)
 	}
 	info, err := checker.Check(prog)

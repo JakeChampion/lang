@@ -1720,8 +1720,8 @@ Free functions every program can call without an import — `print`, `args`,
 `read_file`, `isatty`, … — are declared by the checker
 (`internal/checker/checker.go`) and classified per target in
 `docs/FREESTANDING-CORE.md` and per package in
-`docs/PACKAGE-CAPABILITIES-BRIEF.md`. One of them is a compile-time constant
-rather than a runtime call:
+`docs/PACKAGE-CAPABILITIES-BRIEF.md`. Two of them are compile-time constants
+rather than runtime calls, one per half of the `-target` name:
 
 ### `target_os(): string`
 
@@ -1763,3 +1763,16 @@ It needs no capability (core in `internal/platforms`, ungated in
 `internal/caps`) and has no `std/` wrapper: `std/platform` is the `Platform`
 bag a handler is handed at run time, and a fact fixed at compile time does
 not belong on a value a mock can substitute.
+
+### `target_arch(): string`
+
+The ISA half of the same name — `"arm64"`, `"x86-64"` or `"wasm32"`. Everything
+above holds for it unchanged: same fold before the check, same dead-arm drop,
+same absence of a capability, same host answer under `-interp` (with Go's
+`amd64` spelled `x86-64`, the name the target uses).
+
+The two halves answer different questions and a program usually wants only one.
+Reach for `target_arch()` when the difference is the machine rather than the
+host — register widths, an instruction only one ISA has, or a C ABI detail like
+the width of `long double`, which is 80-bit x87 on x86-64 and IEEE binary128 on
+arm64. Reach for `target_os()` when it is the kernel or the loader.

@@ -149,8 +149,9 @@ var gatedBuiltins = map[string]string{
 //     gated above, so gating the wait too would double-count the same
 //     authority.
 //
-// `target_os` is pure in the strictest sense: it is a string literal by
-// the time anything could run, folded from the target's own name.
+// `target_os` and `target_arch` are pure in the strictest sense: each is
+// a string literal by the time anything could run, folded from the two
+// halves of the target's own name.
 //
 // `exit` and `isatty` are the deliberate judgement calls. `exit` is
 // host-shaped — a hosted process exits through the kernel — but every
@@ -163,9 +164,10 @@ var gatedBuiltins = map[string]string{
 // target-specific lowering rather than a capability an artifact could be
 // refused.
 var coreBuiltins = map[string]bool{
-	"exit":      true,
-	"isatty":    true,
-	"target_os": true,
+	"exit":        true,
+	"isatty":      true,
+	"target_os":   true,
+	"target_arch": true,
 
 	"map_new":                     true,
 	"cell_new":                    true,

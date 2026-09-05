@@ -1,0 +1,9 @@
+waiver: harness-limit
+reason: target_arch() is defined per target and a case carries one
+  expected.stdout, so it can only be asserted on the leg that compiles for
+  the same ISA. This leg answers "wasm32"; the others are pinned by
+  target_arch_x86_64 and target_arch_arm64. The interpreter answers with its host — the machine
+  running the corpus, which is not fixed — and its rule is pinned by
+  internal/interp's own test instead. target_arch_named asserts on all four
+  backends what every one must agree on: the value is one of the documented
+  ISA names and a branch on it takes the expected arm.
