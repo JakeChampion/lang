@@ -14,10 +14,20 @@
 # it being visible; a row going DOWN is progress and also fails, so the
 # improvement gets recorded rather than absorbed.
 #
-# Measured 2026-09-05: 485 fixtures, 412 clean, 73 leaking, 7518
+# Measured 2026-09-05: 487 fixtures, 413 clean, 74 leaking, 7521
 # unpaired allocations. The distribution is heavily skewed — the median
 # leaking fixture is 2, and regex_captures_assert alone is 5987 of the
 # total.
+#
+# arrow_lambda_block_body went 0 -> 3 without a compiler change: #8504 gave
+# the fixture its void-body arrow lambdas, and each of the three is a
+# closure bound to a local, capturing by env, then handed to a callee —
+# the #8057 shape the rc corpus already pins as
+# closure_local_passed_to_callee_released, one pair + env apiece. The
+# release is blocked on a second owner that never takes a count: routing
+# it through the pair's drop-fn pointer frees a closure the self-host
+# checker's Scope field still holds. Owned by that gap, not by this
+# fixture; the row returns to 0 when it closes.
 #
 # Ten rows went DOWN and two arrived at once with #8396 / #8399 / #8403: a
 # match over read_chunk / read_line / env / read_file now owns the payload
@@ -89,7 +99,7 @@ array_param_threaded_reassign                        0
 array_reverse                                        0
 array_sort                                           0
 array_with_rc_elem_drop                              0
-arrow_lambda_block_body                              0
+arrow_lambda_block_body                              3
 arrpush                                              0
 associated_functions                                 0
 audit_core_builtins                                  0
