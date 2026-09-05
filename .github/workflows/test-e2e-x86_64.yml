@@ -87,26 +87,25 @@ jobs:
         # chasing a TRMC deep-stack test that passes in 0.20s.
         run: gotestsum --format pkgname-and-test-fails -- -run '^TestX86_64' -timeout 25m ./internal/e2e/
 
-  # The pure-Go in-process assembler+linker (internal/native/x86_64 +
-  # internal/native/elf) is the DEFAULT assemble+link path for
-  # `cmd/fern -target x86-64-linux` — and it falls back to gcc automatically on any
-  # instruction it cannot encode, so a gap in it degrades silently rather than
-  # failing. FERN_NATIVE_ASM=1 routes the whole fixture corpus through it with
-  # no fallback (an encode error is a hard NATIVE-ASM-FAIL), which is the only
-  # thing that actually exercises the production path.
-  #
-  # Nothing set the variable, so nothing ever ran this. The missing `ud2`
-  # encoding (#6021) is what that cost: FERN_RC_FREE_DEBUG=1 — the
-  # use-after-free detector — could not build at all on the default path, and
-  # it is the tool that found the bug once it worked. ~60s, so it gets its own
-  # job rather than being folded into the lane above.
-  native-asm:
-    name: test-e2e-x86_64-native-asm
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: ./.github/actions/setup-fern
+      # The pure-Go in-process assembler+linker (internal/native/x86_64 +
+      # internal/native/elf) is the DEFAULT assemble+link path for
+      # `cmd/fern -target x86-64-linux` — and it falls back to gcc automatically on
+      # any instruction it cannot encode, so a gap in it degrades silently rather
+      # than failing. FERN_NATIVE_ASM=1 routes the whole fixture corpus through it
+      # with no fallback (an encode error is a hard NATIVE-ASM-FAIL), which is the
+      # only thing that actually exercises the production path.
+      #
+      # Nothing set the variable, so nothing ever ran this. The missing `ud2`
+      # encoding (#6021) is what that cost: FERN_RC_FREE_DEBUG=1 — the
+      # use-after-free detector — could not build at all on the default path, and
+      # it is the tool that found the bug once it worked.
+      #
+      # It is ~60 SECONDS, which is why it is a step here rather than the job it
+      # used to be: a job that short spends more on its checkout, its toolchain
+      # and its wait for a runner than on the work. lint.yml measured that shape
+      # at 165 job-minutes of queue for ~5 minutes of work (run 31819147972).
       - name: go test (fixture corpus through the in-process assembler)
+        if: ${{ !cancelled() }}
         env:
           FERN_NATIVE_ASM: "1"
         run: gotestsum --format pkgname-and-test-fails -- -run '^TestFernFixtures$' ./internal/e2e/
