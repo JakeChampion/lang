@@ -2444,55 +2444,41 @@ function arm64_str_contains(s: string, sub: string): boolean {
     return arm64_str_indexof(s, sub) >= 0;
 }
 
-function arm64_str_split(s: string, sep: string): string[] {
-    var out: string[] = [];
-    var m: i32 = sep.len();
-    if (m == 0) { out = out.append(s); return out; }
-    var n: i32 = s.len();
-    var c0: u8 = sep[0];
-    var last: i32 = n - m;
-    var start: i32 = 0;
-    var i: i32 = 0;
-    while (i <= last) {
-        var hit: boolean = false;
-        if (s[i] == c0) {
-            var j: i32 = 1;
-            while (j < m && s[i + j] == sep[j]) { j = j + 1; }
-            hit = j == m;
-        }
-        if (hit) {
-            out = out.append(slice_unchecked(s, start, i));
-            i = i + m;
-            start = i;
-        } else {
-            i = i + 1;
-        }
-    }
-    out = out.append(slice_unchecked(s, start, n));
-    return out;
-}
-
-// arm64_gas_trim_bounds is the span of `s` left once leading and trailing
-// ASCII spaces and tabs are stripped. The token readers below index `s`
-// within it rather than copying the trimmed token, and nothing keeps the
-// span past `s`.
-function arm64_gas_trim_bounds(s: string): (i32, i32) {
-    var n: i32 = s.len();
-    var i: i32 = 0;
-    while (i < n && (s[i] == b' ' || s[i] == b'\t')) {
+// arm64_gas_trim_lo / arm64_gas_trim_hi bound the part of `s[from, to)` left
+// once leading and trailing ASCII spaces and tabs are stripped. The token
+// readers below index `s` within that span rather than copying the trimmed
+// token, and nothing keeps the span past `s`.
+//
+// They are two i32 returns rather than one `(i32, i32)` because a tuple
+// return is boxed, and that box would be an allocation on every token the
+// assembler looks at. A reader that only needs the first byte calls
+// arm64_gas_trim_lo alone: `lo < to` is exactly `hi > lo`, since the byte at
+// `lo` is non-blank whenever one exists.
+function arm64_gas_trim_lo(s: string, from: i32, to: i32): i32 {
+    var i: i32 = from;
+    while (i < to && (s[i] == b' ' || s[i] == b'\t')) {
         i = i + 1;
     }
-    var j: i32 = n;
-    while (j > i && (s[j - 1] == b' ' || s[j - 1] == b'\t')) {
+    return i;
+}
+
+function arm64_gas_trim_hi(s: string, from: i32, to: i32): i32 {
+    var j: i32 = to;
+    while (j > from && (s[j - 1] == b' ' || s[j - 1] == b'\t')) {
         j = j - 1;
     }
-    return (i, j);
+    return j;
+}
+
+// arm64_gas_trim_span is the owned, trimmed copy of `s[from, to)`.
+function arm64_gas_trim_span(s: string, from: i32, to: i32): string {
+    var i: i32 = arm64_gas_trim_lo(s, from, to);
+    return slice_unchecked(s, i, arm64_gas_trim_hi(s, i, to)) + "";
 }
 
 // arm64_gas_trim strips leading/trailing ASCII spaces and tabs.
 function arm64_gas_trim(s: string): string {
-    var (i, j) = arm64_gas_trim_bounds(s);
-    return slice_unchecked(s, i, j) + "";
+    return arm64_gas_trim_span(s, 0, s.len());
 }
 
 // arm64_gas_atoi parses a signed integer token: optional '-', decimal or
@@ -2533,7 +2519,8 @@ function arm64_gas_atoi(tok: string): i32 {
 // arm64_gas_imm parses an immediate operand `#N` (decimal or 0x hex,
 // optional '-'); the leading '#' is dropped.
 function arm64_gas_imm(tok: string): i32 {
-    var (i, j) = arm64_gas_trim_bounds(tok);
+    var i: i32 = arm64_gas_trim_lo(tok, 0, tok.len());
+    var j: i32 = arm64_gas_trim_hi(tok, i, tok.len());
     if (j > i && tok[i] == b'#') { i = i + 1; }
     return arm64_gas_atoi(slice_unchecked(tok, i, j));
 }
@@ -2542,7 +2529,8 @@ function arm64_gas_imm(tok: string): i32 {
 // truncates, which made `mov x1, #4294967295` indistinguishable from
 // `mov x1, #-1` — and the mov-wide path then encoded the latter.
 function arm64_gas_imm64(tok: string): i64 {
-    var (i, j) = arm64_gas_trim_bounds(tok);
+    var i: i32 = arm64_gas_trim_lo(tok, 0, tok.len());
+    var j: i32 = arm64_gas_trim_hi(tok, i, tok.len());
     if (j > i && tok[i] == b'#') { i = i + 1; }
     return arm64_gas_atoi64(slice_unchecked(tok, i, j));
 }
@@ -2556,7 +2544,8 @@ function arm64_gas_imm64(tok: string): i64 {
 // records offenders on p.unknown, so the driver refuses the output before
 // a -1 ever reaches an executed encoding.
 function arm64_gas_reg(tok: string): i32 {
-    var (i, j) = arm64_gas_trim_bounds(tok);
+    var i: i32 = arm64_gas_trim_lo(tok, 0, tok.len());
+    var j: i32 = arm64_gas_trim_hi(tok, i, tok.len());
     var alias: i32 = arm64_gas_reg_alias(tok, i, j);
     if (alias >= 0) { return alias; }
     if (j - i < 2 || !(tok[i] == b'x' || tok[i] == b'w' || tok[i] == b'd' || tok[i] == b's')) { return 0 - 1; }
@@ -2601,15 +2590,36 @@ function arm64_gas_bad_reg_token(ops: string[]): string {
         if (t.len() > 0 && t[0] == b'[') {           // memory operand
             var rb: i32 = arm64_str_indexof(t, "]");
             if (rb > 1) {
-                var inner: string[] = arm64_gas_operands(slice_unchecked(t, 1, rb));
-                var k: i32 = 0;
-                while (k < inner.len()) {
-                    if (arm64_gas_reg_shaped_bad(inner[k])) { return inner[k]; }
-                    k = k + 1;
-                }
+                var bad: string = arm64_gas_bad_reg_piece(t, 1, rb);
+                if (bad.len() > 0) { return bad; }
             }
         } else if (arm64_gas_reg_shaped_bad(t)) {
             return t;
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+// arm64_gas_bad_reg_piece is arm64_gas_bad_reg_token's test applied to the
+// comma-separated pieces of `s[lo, hi)` — the inside of a `[...]` memory
+// operand — reading them as spans of `s` rather than materialising the split
+// the line's memory parse has already made. Returns the offending piece, or
+// "" when every register-shaped one decodes.
+function arm64_gas_bad_reg_piece(s: string, lo: i32, hi: i32): string {
+    var depth: i32 = 0;
+    var start: i32 = lo;
+    var i: i32 = lo;
+    while (i <= hi) {
+        if (i == hi || (s[i] == b',' && depth == 0)) {
+            var a: i32 = arm64_gas_trim_lo(s, start, i);
+            var tok: str = slice_unchecked(s, a, arm64_gas_trim_hi(s, a, i));
+            if (arm64_gas_reg_shaped_bad(tok)) { return tok + ""; }
+            start = i + 1;
+        } else if (s[i] == b'[') {
+            depth = depth + 1;
+        } else if (s[i] == b']') {
+            depth = depth - 1;
         }
         i = i + 1;
     }
@@ -2655,14 +2665,16 @@ function arm64_gas_is_cond(s: string): boolean {
 
 // arm64_gas_is_w reports whether a register token names a 32-bit w-register.
 function arm64_gas_is_w(tok: string): boolean {
-    var (i, j) = arm64_gas_trim_bounds(tok);
-    return j > i && tok[i] == b'w';
+    var n: i32 = tok.len();
+    var i: i32 = arm64_gas_trim_lo(tok, 0, n);
+    return i < n && tok[i] == b'w';
 }
 
 // arm64_gas_is_d reports whether a register token names a 64-bit FP (d) register.
 function arm64_gas_is_d(tok: string): boolean {
-    var (i, j) = arm64_gas_trim_bounds(tok);
-    return j > i && tok[i] == b'd';
+    var n: i32 = tok.len();
+    var i: i32 = arm64_gas_trim_lo(tok, 0, n);
+    return i < n && tok[i] == b'd';
 }
 
 // arm64_gas_is_s distinguishes a SINGLE-precision FP register from the
@@ -2671,15 +2683,17 @@ function arm64_gas_is_d(tok: string): boolean {
 // latter — the wrong register file at the wrong width, 121 times in one
 // float-heavy fixture (#6044).
 function arm64_gas_is_s(tok: string): boolean {
-    var (i, j) = arm64_gas_trim_bounds(tok);
-    return j > i && tok[i] == b's';
+    var n: i32 = tok.len();
+    var i: i32 = arm64_gas_trim_lo(tok, 0, n);
+    return i < n && tok[i] == b's';
 }
 
 // arm64_gas_is_sreg is the stricter test — an s-REGISTER (s0..s31), as
 // opposed to any token starting with 's' (which "sp" also does).
 function arm64_gas_is_sreg(tok: string): boolean {
-    var (i, j) = arm64_gas_trim_bounds(tok);
-    return j - i >= 2 && tok[i] == b's' && tok[i + 1] >= b'0' && tok[i + 1] <= b'9';
+    var n: i32 = tok.len();
+    var i: i32 = arm64_gas_trim_lo(tok, 0, n);
+    return i + 1 < n && tok[i] == b's' && tok[i + 1] >= b'0' && tok[i + 1] <= b'9';
 }
 
 
@@ -2746,8 +2760,9 @@ function arm64_gas_vreg_arrof(tok: string): i32 {
 // register at all — what routes a dual-form mnemonic (add, mvn, neg, …) to
 // its SIMD encoding instead of the scalar one it shares a name with.
 function arm64_gas_is_vecarr(tok: string): boolean {
-    var (i, j) = arm64_gas_trim_bounds(tok);
-    return j - i > 1 && tok[i] == b'v' && tok[i + 1] >= b'0' && tok[i + 1] <= b'9'
+    var n: i32 = tok.len();
+    var i: i32 = arm64_gas_trim_lo(tok, 0, n);
+    return i + 1 < n && tok[i] == b'v' && tok[i + 1] >= b'0' && tok[i + 1] <= b'9'
         && arm64_str_indexof(tok, ".") > 0;
 }
 
@@ -3115,12 +3130,12 @@ function arm64_gas_operands(rest: string): string[] {
         if (c == b'[') { depth = depth + 1; }
         else if (c == b']') { depth = depth - 1; }
         else if (c == b',' && depth == 0) {
-            out = out.append(arm64_gas_trim(slice_unchecked(rest, start, i)));
+            out = out.append(arm64_gas_trim_span(rest, start, i));
             start = i + 1;
         }
         i = i + 1;
     }
-    var last: string = arm64_gas_trim(slice_unchecked(rest, start, rest.len()));
+    var last: string = arm64_gas_trim_span(rest, start, rest.len());
     if (last.len() > 0) {
         out = out.append(last);
     }
@@ -5696,34 +5711,65 @@ function arm64_gas_data_asciz(own p: Arm64GasProg, line: string): Arm64GasProg {
     return p;
 }
 
-// arm64_gas_strip_comment removes a `//` line comment, but only where the `//`
-// is OUTSIDE a double-quoted string. The old unconditional
-// `indexof(raw, "//")` truncated any line whose STRING CONTENT contained `//`,
-// and the emitter escapes `"` / `\` / control bytes but not `/` — so
-// `.ascii "http://h.com"` became `.ascii "http:`, silently shortening that
-// literal and shifting every constant after it in .rodata. #6082: a program
-// slicing a URL read whatever landed at the shifted offset, which is why the
-// symptom presented as unrelated string constants spliced together. Escapes are
-// honoured (`\"` does not close the string) so an escaped quote cannot desync
-// the scan. Only arm64 has this class of bug: `//` is a line comment in the
-// aarch64 GAS dialect, and this parser is the only assembler on that path.
-function arm64_gas_strip_comment(raw: string): string {
-    var n: i32 = raw.len();
+// arm64_gas_label_colon is the index of the colon that makes `line` a label
+// definition (`name:`), or -1. The colon has to come before any space or
+// comma, so the scan stops at whichever of the three comes first rather than
+// walking a whole instruction line looking for a colon it does not have.
+function arm64_gas_label_colon(line: string): i32 {
+    var n: i32 = line.len();
     var i: i32 = 0;
+    while (i < n) {
+        var c: u8 = line[i];
+        if (c == b':') { return i; }
+        if (c == b' ' || c == b',') { return 0 - 1; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// arm64_gas_line_cut is where the assembler's view of the line starting at
+// `pos` ends: the `//` that opens a comment, the newline, or the end of `src`.
+//
+// The `//` counts only OUTSIDE a double-quoted string. An unconditional search
+// truncated any line whose STRING CONTENT held `//`, and the emitter escapes
+// `"` / `\` / control bytes but not `/` — so `.ascii "http://h.com"` became
+// `.ascii "http:`, silently shortening that literal and shifting every constant
+// after it in .rodata. #6082: a program slicing a URL read whatever landed at
+// the shifted offset, which is why the symptom presented as unrelated string
+// constants spliced together. Escapes are honoured (`\"` does not close the
+// string) so an escaped quote cannot desync the scan, and the newline is
+// tested first so an escape at the end of a line cannot skip past it. Only
+// arm64 has this class of bug: `//` is a line comment in the aarch64 GAS
+// dialect, and this parser is the only assembler on that path.
+function arm64_gas_line_cut(src: string, pos: i32): i32 {
+    var n: i32 = src.len();
+    var i: i32 = pos;
     var inq: boolean = false;
     while (i < n) {
-        var c: u8 = raw[i];
+        var c: u8 = src[i];
+        if (c == b'\n') { return i; }
         if (inq) {
-            if (c == b'\\') { i = i + 2; }   // skip the escaped byte
-            else {
+            if (c == b'\\') {
+                if (i + 1 < n && src[i + 1] == b'\n') { return i + 1; }
+                i = i + 2;                       // skip the escaped byte
+            } else {
                 if (c == b'"') { inq = false; }
                 i = i + 1;
             }
         } else if (c == b'"') { inq = true; i = i + 1; }
-        else if (c == b'/' && i + 1 < n && raw[i + 1] == b'/') { return slice_unchecked(raw, 0, i) + ""; }
+        else if (c == b'/' && i + 1 < n && src[i + 1] == b'/') { return i; }
         else { i = i + 1; }
     }
-    return raw;
+    return n;
+}
+
+// arm64_gas_line_end is the index of the newline at or after `from`, or the
+// end of `src`.
+function arm64_gas_line_end(src: string, from: i32): i32 {
+    var n: i32 = src.len();
+    var i: i32 = from;
+    while (i < n && src[i] != b'\n') { i = i + 1; }
+    return i;
 }
 
 // arm64_gas_data_ascii appends a `.ascii "…"` string (NO trailing NUL) to
@@ -6182,39 +6228,40 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
     p = Arm64GasProg { ...p, asm: arm64_asm_new() };
     var section: i32 = 0; // 0 = .text, 1 = data (__const / __data)
     var nl_cnt: i32[] = []; // definitions seen per numeric local label
-    var lines: string[] = arm64_str_split(src, "\n");
-    var li: i32 = 0;
-    while (li < lines.len()) {
-        var raw: string = lines[li];
-        li = li + 1;
-        raw = arm64_gas_strip_comment(raw);
-        var line: string = arm64_gas_trim(raw);
+    var srcn: i32 = src.len();
+    var pos: i32 = 0;
+    while (pos <= srcn) {
+        // One scan per line finds the comment cut, and for the lines that have
+        // no comment — nearly all of them — the newline that ends the line too.
+        var cut: i32 = arm64_gas_line_cut(src, pos);
+        var eol: i32 = cut;
+        if (eol < srcn && src[eol] != b'\n') { eol = arm64_gas_line_end(src, eol); }
+        var line: string = arm64_gas_trim_span(src, pos, cut);
+        pos = eol + 1;
         if (line.len() == 0) {
             continue;
         }
         // label prefix `name:`
-        var colon: i32 = arm64_str_indexof(line, ":");
+        var colon: i32 = arm64_gas_label_colon(line);
         if (colon > 0) {
             var before: str = slice_unchecked(line, 0, colon);
-            if (arm64_str_indexof(before, " ") < 0 && arm64_str_indexof(before, ",") < 0) {
-                if (section == 1) {
-                    var doff: i32 = p.data.len();
-                    p = arm64_gas_dlabel(p, before, doff);
-                } else if (section == 2) {
-                    p = Arm64GasProg { ...p, bss_names: p.bss_names.append(before) };
-                    p = Arm64GasProg { ...p, bss_offs: p.bss_offs.append(p.bss_size) };
-                } else if (arm64_gas_is_digits(before + "")) {
-                    var nv: i32 = arm64_gas_atoi(before + "");
-                    nl_cnt = arm64_gas_nl_grow(nl_cnt, nv);
-                    a = arm64_asm_label(a, arm64_gas_nl_name(nv, nl_cnt[nv]));
-                    nl_cnt = nl_cnt.with(nv, nl_cnt[nv] + 1);
-                } else {
-                    a = arm64_asm_label(a, before);
-                }
-                line = arm64_gas_trim(slice_unchecked(line, colon + 1, line.len()));
-                if (line.len() == 0) {
-                    continue;
-                }
+            if (section == 1) {
+                var doff: i32 = p.data.len();
+                p = arm64_gas_dlabel(p, before, doff);
+            } else if (section == 2) {
+                p = Arm64GasProg { ...p, bss_names: p.bss_names.append(before) };
+                p = Arm64GasProg { ...p, bss_offs: p.bss_offs.append(p.bss_size) };
+            } else if (arm64_gas_is_digits(before + "")) {
+                var nv: i32 = arm64_gas_atoi(before + "");
+                nl_cnt = arm64_gas_nl_grow(nl_cnt, nv);
+                a = arm64_asm_label(a, arm64_gas_nl_name(nv, nl_cnt[nv]));
+                nl_cnt = nl_cnt.with(nv, nl_cnt[nv] + 1);
+            } else {
+                a = arm64_asm_label(a, before);
+            }
+            line = arm64_gas_trim(slice_unchecked(line, colon + 1, line.len()));
+            if (line.len() == 0) {
+                continue;
             }
         }
         // directives
