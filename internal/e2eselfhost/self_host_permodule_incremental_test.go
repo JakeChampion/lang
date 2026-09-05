@@ -59,7 +59,8 @@ func TestSelfHostPerModuleIncrementalCodegenX86_64(t *testing.T) {
 		"import \"./leaf\";\n"+
 			"pub function mid_val(): i32 {\n"+
 			"    var x = leaf.leaf_val();\n"+
-			"    if (x > 0) { return 42; }\n"+
+			"    var y = x * x;\n"+
+			"    if (y > 0) { return 42; }\n"+
 			"    return 0;\n"+
 			"}\n"), 0o644); err != nil {
 		t.Fatalf("write mid.fern: %v", err)
@@ -387,7 +388,8 @@ func TestSelfHostPerModuleObjectCacheX86_64(t *testing.T) {
 		"import \"./leaf\";\n"+
 			"pub function mid_val(): i32 {\n"+
 			"    var x = leaf.leaf_val();\n"+
-			"    if (x > 0) { return 42; }\n"+
+			"    var y = x * x;\n"+
+			"    if (y > 0) { return 42; }\n"+
 			"    return 0;\n"+
 			"}\n"), 0o644); err != nil {
 		t.Fatalf("write mid.fern: %v", err)
