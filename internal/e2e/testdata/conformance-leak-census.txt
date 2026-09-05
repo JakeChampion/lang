@@ -14,10 +14,19 @@
 # it being visible; a row going DOWN is progress and also fails, so the
 # improvement gets recorded rather than absorbed.
 #
-# Measured 2026-09-05: 473 fixtures, 396 clean, 77 leaking, 7725
+# Measured 2026-09-05: 483 fixtures, 402 clean, 81 leaking, 7734
 # unpaired allocations. The distribution is heavily skewed — the median
 # leaking fixture is 2, and regex_captures_assert alone is 5987 of the
 # total.
+#
+# arrow_lambda_block_body went 0 -> 3 (#8550). Its verdict predates its
+# content: #2673 extended the fixture with capturing void lambdas, and the
+# three allocations are the closure ENV boxes that capture leaks — the same
+# boxes the rc corpus already pins non-zero for closure_churn_free and its
+# neighbours, and that #8545 / #8546 own. The anonymous `function` spelling
+# of the same lambda leaks identically, so nothing about the new parse is
+# implicated. generic_array_methods (1 -> 0) and open_slice_evaluates_base_once
+# (6 -> 4) went DOWN with #8527 / #8535.
 #
 # Ten rows went DOWN and two arrived at once with #8396 / #8399 / #8403: a
 # match over read_chunk / read_line / env / read_file now owns the payload
@@ -81,7 +90,7 @@ array_param_threaded_reassign                        0
 array_reverse                                        0
 array_sort                                           0
 array_with_rc_elem_drop                              0
-arrow_lambda_block_body                              0
+arrow_lambda_block_body                              3
 arrpush                                              0
 associated_functions                                 0
 audit_core_builtins                                  0
@@ -206,7 +215,7 @@ general_reuse_crosstype                              0
 general_reuse_struct                                 0
 general_reuse_tuple                                  0
 generic_array_method_chain                           0
-generic_array_methods                                1
+generic_array_methods                                0
 generic_associated_fn                                0
 generic_box                                          0
 generic_call_in_struct_field                         0
@@ -330,7 +339,7 @@ oob_index_write                                      2
 oob_slice_range                                      1
 op_overload_nested                                   0
 op_trait_generic                                     0
-open_slice_evaluates_base_once                       6
+open_slice_evaluates_base_once                       4
 opt_arr_alias_match_reclaim                          0
 opt_array_struct_field                               0
 opt_f32_payload                                      0
