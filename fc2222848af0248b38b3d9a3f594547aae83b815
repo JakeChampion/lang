@@ -49,3 +49,7 @@ aarch64/utf8_ingest_unchecked.text	40914
 aarch64/utf8_ingest_unchecked.ir	18122721
 aarch64/utf8_ingest_validated.text	41437
 aarch64/utf8_ingest_validated.ir	24185925
+
+# lane: selfhost-alloc-x86_64
+x86_64/checker.allocs	17579167
+x86_64/checker.frees	14378843
