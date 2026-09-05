@@ -65,8 +65,20 @@ fi
 # comment in that file explaining why distcheck is absent does not read as
 # distcheck being present. Keying on the comment's wording instead would turn
 # any rewrite of it into a false GREEN on a freeze precondition.
-if grep -Eq '^[^#]*\b(make|bootstrap\.sh)[[:space:]]+distcheck' .github/workflows/bootstrap.yml 2>/dev/null; then
-  ok "make distcheck runs in CI — the self-host compiler reproduces itself"
+#
+# The wiring only stands in for the measurement while the lane can actually
+# FAIL. A step neutered by `continue-on-error` or `|| true` would be wired and
+# green with distcheck still broken, so those disqualify rather than pass —
+# UNVERIFIABLE, never GREEN, since a wrong green here is the whole failure mode
+# this gate exists to prevent.
+distcheck_wired=$(grep -E '^[^#]*\b(make|bootstrap\.sh)[[:space:]]+distcheck' .github/workflows/bootstrap.yml 2>/dev/null)
+if [ -n "$distcheck_wired" ]; then
+  if printf '%s' "$distcheck_wired" | grep -q '|| *true' \
+     || grep -Eq '^[^#]*continue-on-error:[[:space:]]*true' .github/workflows/bootstrap.yml 2>/dev/null; then
+    huh "distcheck is wired but its lane cannot fail (continue-on-error / || true) — that proves nothing; make the lane failing"
+  else
+    ok "make distcheck runs in CI — the self-host compiler reproduces itself"
+  fi
 else
   huh "parity itself — criterion is \`make distcheck\` green (red today: docs/BOOTSTRAP.md); live delta list in docs/SELFHOST-PERCEUS-REUSE.md §3"
 fi
