@@ -76,10 +76,11 @@ function main(): i32 { return chain(3); }`
 func TestMapOverwriteDropWalksTheValueColumn(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
+		fn     string
 		src    string
 		callee string
 	}{
-		{"string values", `function strvals(n: i32): i32 {
+		{"string values", "strvals", `function strvals(n: i32): i32 {
     var a: Map[string, string] = map_new(16);
     a = a.insert("k", "v");
     var i: i32 = 0;
@@ -92,7 +93,7 @@ func TestMapOverwriteDropWalksTheValueColumn(t *testing.T) {
     return a.len();
 }
 function main(): i32 { return strvals(3); }`, "__drop_map_str_values"},
-		{"struct values", `struct Rec { name: string }
+		{"struct values", "structvals", `struct Rec { name: string }
 function structvals(n: i32): i32 {
     var a: Map[string, Rec] = map_new(16);
     a = a.insert("k", Rec { name: "v" });
@@ -110,13 +111,9 @@ function main(): i32 { return structvals(3); }`, "__drop_map_via___drop_struct_R
 		t.Run(tc.name, func(t *testing.T) {
 			for _, ptrW := range []int{4, 8} {
 				p := lowerSourceWith(t, tc.src, ptrW)
-				fnName := "strvals"
-				if tc.callee != "__drop_map_str_values" {
-					fnName = "structvals"
-				}
-				blocks := mapPtrCompareGuardCallees(p, fnName)
+				blocks := mapPtrCompareGuardCallees(p, tc.fn)
 				if len(blocks) == 0 {
-					t.Fatalf("ptrW=%d: found no pointer-compare guard in %s:\n%s", ptrW, fnName, p)
+					t.Fatalf("ptrW=%d: found no pointer-compare guard in %s:\n%s", ptrW, tc.fn, p)
 				}
 				found := false
 				for _, callees := range blocks {

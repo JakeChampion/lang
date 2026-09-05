@@ -112,7 +112,12 @@ native single-word path, and an `m` or `k` that `exprSafeToReevaluate` refused.
   aliased overwrite of a struct value still leaks. The runtime helper is
   type-erased and cannot call the generated per-value drop; closing it means
   threading a drop function into the set, which is a bigger change than this.
-- **`emitMapOverwriteDrop`** still skips the kind-4 and kind-5 value walks.
+- **`emitMapOverwriteDrop`** — CLOSED the same day by #8431, which deleted it:
+  it was a second implementation of the map-drop chain, and routing its three
+  callers through the shared one is what widened the walk. The measurement
+  below is what made that attributable. Original note follows.
+
+- ~~`emitMapOverwriteDrop` still skips the kind-4 and kind-5 value walks.~~
   The measurement that was blocked on this leak HAS now been made, since
   #8277 landed the same day and took the last confounder out of the program:
   100 rounds of the COW chain, `live_bytes`, x86-64 / arm64 / wasm —
