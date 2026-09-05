@@ -47,15 +47,10 @@ import "./lib/gnu";
 // `Pf` threads through every formatter: the buffered stdout, the exit
 // status accumulated from non-fatal argument errors, whether a
 // directive was refused the way glibc refuses one (see the header),
-// whether POSIXLY_CORRECT is set, and the two facts close_stdout needs
-// (below): `failed`, a flush ahead of a diagnostic failed; `pending`,
-// output was written after that.
-struct Pf { o: io_buffered.BufWriter, status: i32, werr: boolean, posix: boolean, failed: boolean, pending: boolean }
+// and whether POSIXLY_CORRECT is set.
+struct Pf { o: io_buffered.BufWriter, status: i32, werr: boolean, posix: boolean }
 
 function emit(p: Pf, s: string): Pf {
-  if (p.failed && s.len() > 0) {
-    return Pf { ...p, o: p.o.write_string(s), pending: true };
-  }
   return Pf { ...p, o: p.o.write_string(s) };
 }
 
@@ -63,41 +58,14 @@ function emit(p: Pf, s: string): Pf {
 // flushed first, and a flush that fails drops what it held.
 function diag(p: Pf, msg: string): Pf {
   var o: io_buffered.BufWriter = p.o.flush();
-  var failed: boolean = p.failed;
-  match (o.error()) {
-    Some(_) => {
-      failed = true;
-    },
-    None => {}
-  }
   gnu.error(msg);
-  return Pf { ...p, o: o, failed: failed, pending: false };
+  return Pf { ...p, o: o };
 }
 
-// `close_stdout(p, code)` — the end of the program by any route,
-// reporting as gnulib's close_stdout does. The message carries
-// strerror text only when fclose itself would fail: pending output
-// that cannot be written, or a closed descriptor. A failure already
-// met at a diagnostic, with nothing written since, is a bare
-// `write error`, and so is glibc's refusal of an oversized conversion.
+// `close_stdout(p, code)` — the end of the program by any route. A
+// refused conversion is the stream's error flag, as it is in glibc.
 function close_stdout(p: Pf, code: i32): void {
-  var o: io_buffered.BufWriter = p.o.flush();
-  match (o.error()) {
-    Some(e) => {
-      var text: string = gnu.io_error_text(e);
-      if (p.failed && !p.pending && text != "Bad file descriptor") {
-        gnu.error("write error");
-      } else {
-        gnu.error("write error: " + text);
-      }
-      exit(1);
-    },
-    None => {}
-  }
-  if (p.werr) {
-    gnu.error("write error");
-    exit(1);
-  }
+  gnu.close_stdout(p.o, p.werr);
   exit(code);
 }
 
@@ -1686,7 +1654,7 @@ function main(): i32 {
     },
     None => {}
   }
-  var p: Pf = Pf { o: gnu.out_new(), status: 0, werr: false, posix: posix, failed: false, pending: false };
+  var p: Pf = Pf { o: gnu.out_new(), status: 0, werr: false, posix: posix };
   var a: Args = Args { argv: argv, next: first + 1 };
   while (true) {
     var before: i32 = a.next;

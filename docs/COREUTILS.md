@@ -229,20 +229,11 @@ recorded in `yes.fern`.
 
 ## Open gaps
 
-One. Both Fern gaps the first utilities met — `IoError.Other` carrying no
+None. Both Fern gaps the first utilities met — `IoError.Other` carrying no
 strerror text (#8265) and source unable to learn its compile target
 (#8338) — are closed, and each is exercised by the corpus: the
 write-failure cases (`yes >&-`, `> /dev/full`) and `yes.fern`'s per-target
-block.
-
-`printf '%2147483647d' 1 >&-` is the one invocation the corpus leaves out.
-glibc refuses the oversized conversion without writing a byte, so at exit
-the only failure is `fclose` finding fd 1 closed, and GNU says `write
-error: Bad file descriptor` where Fern says `write error`. Telling the two
-apart needs a probe that reaches the kernel with nothing to write — a
-zero-length `Writer.write` never issues the syscall, and there is no
-fcntl — which is a runtime primitive, not something printf can supply.
-Every other refusal and write-failure shape is in the corpus.
+block. A gap met later gets an issue and a fix, never a corpus carve-out.
 
 ## Staging
 

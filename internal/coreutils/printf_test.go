@@ -343,6 +343,14 @@ func TestPrintfParity(t *testing.T) {
 		{name: "stdout closed output around warning", args: []string{`x%d\nxyz\n`, "abc"}, stdout: stdoutClosed},
 		{name: "stdout full excess warning", args: []string{"abc", "x"}, stdout: stdoutFull},
 		{name: "stdout closed excess warning", args: []string{"abc", "x"}, stdout: stdoutClosed},
+		// A refused conversion with nothing written: only fclose's close(2)
+		// can fail, and it does on a closed descriptor.
+		{name: "stdout closed refused conversion", args: []string{"%2147483647d", "1"}, stdout: stdoutClosed},
+		{name: "stdout full refused conversion", args: []string{"%2147483647d", "1"}, stdout: stdoutFull},
+		{name: "stdout closed refused conversion after output", args: []string{`x%2147483647d`, "1"}, stdout: stdoutClosed},
+		{name: "stdout full refused conversion after output", args: []string{`x%2147483647d`, "1"}, stdout: stdoutFull},
+		{name: "stdout closed refused then output", args: []string{`%2147483647dx`, "1"}, stdout: stdoutClosed},
+		{name: "stdout full refused then output", args: []string{`%2147483647dx`, "1"}, stdout: stdoutFull},
 		{name: "stdout closed empty format", args: []string{""}, stdout: stdoutClosed},
 		{name: "stdout full empty format", args: []string{""}, stdout: stdoutFull},
 		{name: "stdout full backslash c", args: []string{`\c`}, stdout: stdoutFull},
