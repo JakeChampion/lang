@@ -8,9 +8,10 @@ import "testing"
 // `__map_own_copied_cols` gives each COW copy its own claim on the key column
 // and the array-value column (#6242). The overwrite that ends the OLD handle's
 // ownership therefore owes their release — with the buf-and-handle free alone it
-// leaks the whole claim per copy, which in a chain is quadratic. A string or
-// struct VALUE is still shared with the copy, so the walks that reclaim those
-// must stay out of this site.
+// leaks the whole claim per copy, which in a chain is quadratic. The string
+// (kind 5) and struct (kind 4) VALUE walks stay out of this site — not
+// because those columns are shared, since both are claimed, but because
+// whether the release should widen to them is an open measurement (#8421).
 //
 // Both ptrW legs run. The two-word ABI is where the claim allocates a cell per
 // entry per copy and the leak is immediate, but the release is emitted the same

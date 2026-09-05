@@ -61,8 +61,12 @@ the same reason.
 Review caught the half this entry first missed. A pre-drop RELEASES the value
 the set is about to replace, and it runs BEFORE the set's own
 `__map_cow_inplace`. A second handle over the same buffer still names that
-value, and `__map_own_copied_cols` claims neither a string nor a struct value
-column on a copy (#8354) — so the release frees storage the other handle reads.
+value, and at the time of writing `__map_own_copied_cols` was believed to claim
+neither a string nor a struct value column on a copy — so the release frees
+storage the other handle reads. (Both readings have since moved: the string
+column gained its claim in #8390, the struct column always had one, and the
+gate's real justification is the ORDER — the pre-drop runs before any copy
+exists. The gate is right either way.)
 An uncounted-alias free: no rc detector fires, and the fault lands wherever the
 freelist next hands the block out.
 
@@ -117,9 +121,10 @@ recognise and claim it.
 
 **The probe is single-entry, and that is the boundary of what the gate buys.**
 The gate stops the PRE-DROP releasing a value another handle names; it says
-nothing about DROP time, where a copy's value column is still shared. Add a
-second, untouched entry and both copies' drop walks free that entry's cell and
-buffer twice — 200 rounds, both handles read back:
+nothing about DROP time, where a copy's string value column was still shared
+when this was written. Add a second, untouched entry and both copies' drop
+walks free that entry's cell and buffer twice — 200 rounds, both handles read
+back (#8390 closed this; the numbers below are the state at the time):
 
 | | wasm32 | arm64 | x86-64 |
 |---|---|---|---|

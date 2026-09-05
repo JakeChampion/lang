@@ -26,9 +26,9 @@ package e2e
 // entry per copy. The bounded leg below is therefore non-vacuous on wasm and
 // arm64 and vacuous on x86-64, which is stated rather than papered over.
 //
-// The release may only cover the columns the copy claims. A string or struct
-// VALUE column is still shared with the copy, so the value cases below are
-// what stops the walk from widening into a use-after-free.
+// The release may only cover the columns the copy claims — every column is
+// claimed now, so the value cases below are what would keep a widened walk
+// from becoming a use-after-free if it ever widens (#8421).
 
 import "testing"
 
