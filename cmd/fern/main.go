@@ -436,7 +436,7 @@ func runDoctestCase(srcPath, src string, tc literate.Doctest) error {
 	if err != nil {
 		return fmtErr(err)
 	}
-	if err := constfold.Fold(prog, nil); err != nil {
+	if err := constfold.Fold(prog, nil, hostOSOption()); err != nil {
 		return fmtErr(err)
 	}
 	info, err := checker.Check(prog)
@@ -1155,7 +1155,7 @@ func runInterp(srcPath string, argv []string) (int, error) {
 		prog = e.prog
 		formatErr = e.format
 	}
-	if err := constfold.Fold(prog, embeddedAssets); err != nil {
+	if err := constfold.Fold(prog, embeddedAssets, hostOSOption()); err != nil {
 		return 1, formatErr(err)
 	}
 	info, err := checker.Check(prog)
@@ -1333,7 +1333,7 @@ func runCheck(srcPath, target string) error {
 		prog = e.prog
 		formatErr = e.format
 	}
-	if err := constfold.Fold(prog, embeddedAssets); err != nil {
+	if err := constfold.Fold(prog, embeddedAssets, targetOSOption(target)); err != nil {
 		return formatErr(err)
 	}
 	info, err := checker.Check(prog)
@@ -1376,7 +1376,7 @@ func run(srcPath, outPath, target, backend, emit, cc string, runIt, native bool,
 		return 1, err
 	}
 	prog := e.prog
-	if err := constfold.Fold(prog, embeddedAssets); err != nil {
+	if err := constfold.Fold(prog, embeddedAssets, targetOSOption(target)); err != nil {
 		return 1, e.format(err)
 	}
 	info, err := checker.Check(prog)
@@ -2961,4 +2961,24 @@ func buildPreview2Component(prog *ast.Program, info *checker.Info, bin []byte, e
 		b = rb
 	}
 	return component.Compose(b, req, "_lang_run"), nil
+}
+
+// targetOSOption tells constfold which OS `__fern_target_os()` answers with:
+// the environment half of the target being compiled for (#8338). Every Fern
+// compile is a cross-compile (docs/COMPTIME-BRIEF.md rule 1), so this is the
+// TARGET's OS and never this machine's — `fern -target arm64-linux` on a Mac
+// answers linux. An unknown target leaves constfold on its own default rather
+// than inventing a name; the target itself is rejected elsewhere.
+func targetOSOption(target string) constfold.Option {
+	if d := platforms.ForTarget(target); d != nil {
+		return constfold.ForTarget(d.Environment)
+	}
+	return constfold.ForTarget("")
+}
+
+// hostOSOption is the interpreter's answer to the same question. `-interp` is
+// the one path that is not a cross-compile: the program runs on this machine
+// now, so the host IS the target and `__fern_target_os()` says so.
+func hostOSOption() constfold.Option {
+	return constfold.ForTarget(runtime.GOOS)
 }

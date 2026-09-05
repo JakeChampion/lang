@@ -113,6 +113,7 @@ import (
 	"github.com/jakechampion/lang/internal/lsp"
 	"github.com/jakechampion/lang/internal/modload"
 	"github.com/jakechampion/lang/internal/monomorph"
+	"github.com/jakechampion/lang/internal/platforms"
 	"github.com/jakechampion/lang/internal/wasm/playground"
 )
 
@@ -141,7 +142,9 @@ func interpret(src string) map[string]any {
 		result["exit"] = 1
 		return result
 	}
-	if err := constfold.Fold(prog, nil); err != nil {
+	// The browser build interprets and compiles for wasm and nothing else,
+	// so that is what `__fern_target_os()` answers (#8338).
+	if err := constfold.Fold(prog, nil, constfold.ForTarget("wasi")); err != nil {
 		result["error"] = diag.Format("<playground>", src, err)
 		result["exit"] = 1
 		return result
@@ -249,7 +252,7 @@ func compile(src, target string) map[string]any {
 		result["error"] = diag.Format("<playground>", src, err)
 		return result
 	}
-	if err := constfold.Fold(prog, nil); err != nil {
+	if err := constfold.Fold(prog, nil, constfold.ForTarget(wasmTargetOS(target))); err != nil {
 		result["error"] = diag.Format("<playground>", src, err)
 		return result
 	}
@@ -489,4 +492,14 @@ func jsValueOf(v any) any {
 		return out
 	}
 	return v
+}
+
+// wasmTargetOS names the OS `__fern_target_os()` answers with for one of the
+// two component worlds this build emits. Unknown names fall through to the
+// CLI world, which is what `compile` itself defaults to.
+func wasmTargetOS(target string) string {
+	if d := platforms.ForTarget(target); d != nil {
+		return d.Environment
+	}
+	return "wasi"
 }

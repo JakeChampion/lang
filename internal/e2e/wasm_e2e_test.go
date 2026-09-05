@@ -149,7 +149,7 @@ func buildComponent(t *testing.T, src string) string {
 	if err != nil {
 		t.Fatalf("modload: %v", err)
 	}
-	if err := constfold.Fold(prog, nil); err != nil {
+	if err := constfold.Fold(prog, nil, constfold.ForTarget("wasi")); err != nil {
 		t.Fatalf("constfold: %v", err)
 	}
 	info, err := checker.Check(prog)
@@ -196,7 +196,7 @@ func buildComponentMulti(t *testing.T, entry string, files map[string]string) st
 	if err != nil {
 		t.Fatalf("modload: %v", err)
 	}
-	if err := constfold.Fold(prog, nil); err != nil {
+	if err := constfold.Fold(prog, nil, constfold.ForTarget("wasi")); err != nil {
 		t.Fatalf("constfold: %v", err)
 	}
 	info, err := checker.Check(prog)
@@ -11718,7 +11718,7 @@ func TestWASMComponentGoEncoderRunsLangCore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if err := constfold.Fold(prog, nil); err != nil {
+	if err := constfold.Fold(prog, nil, constfold.ForTarget("wasi")); err != nil {
 		t.Fatalf("constfold: %v", err)
 	}
 	info, err := checker.Check(prog)

@@ -101,3 +101,28 @@ Design a real comptime only when at least one of:
 Until then: `@derive` for API synthesis, monomorphisation for
 type-level genericity, `internal/constfold` for value folding,
 tooling for codegen.
+
+## What exists today: compile-time constants, not comptime
+
+Two builtins are substituted for literals before the checker runs, in
+`internal/constfold` natively and in `embed.fern` / `constfold.fern` on the
+self-host. Neither is comptime — nothing user-written evaluates — but both
+are bound by rule 1, and a future comptime inherits their contract:
+
+| builtin | becomes | where it comes from |
+|---|---|---|
+| `__fern_asset("name")` / `__fern_assets()` | the file's bytes as a string literal | `-embed DIR` (`docs/EMBED.md`) |
+| `__fern_target_os()` | the target's environment: linux / darwin / android / wasi / wasi-http / freestanding | `-target` (#8338) |
+
+`__fern_target_os()` is rule 1 in miniature. It answers for the TARGET, so
+`fern -target arm64-linux` on a Mac says linux; `-interp` is the one path
+where host and target are the same machine, and it answers with the host's.
+`std/platform` wraps it as `OS` plus `IS_LINUX` / `IS_DARWIN` / `IS_WASI`, and
+because the value is a literal by the time the checker runs, a comparison
+against it folds and the branch it guards never reaches codegen — which is the
+whole point: a per-target choice (a pipe write size, a path separator) that
+costs nothing at run time.
+
+The one thing it must never become is a capability test. Whether a target HAS
+a filesystem is `internal/platforms` and E066, decided at build time whatever
+the program branches on; this only says which host it is going to.

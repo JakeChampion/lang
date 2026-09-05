@@ -118,7 +118,10 @@ func frontEnd(src string) (*ast.Program, *checker.Info, error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("%s", diag.Format("<playground>", src, err))
 	}
-	if err := constfold.Fold(prog, nil); err != nil {
+	// This front end only ever produces wasm components, so that is the
+	// target `__fern_target_os()` answers for (#8338) — never the host the
+	// playground itself happens to be running on.
+	if err := constfold.Fold(prog, nil, constfold.ForTarget("wasi")); err != nil {
 		return nil, nil, fmt.Errorf("%s", diag.Format("<playground>", src, err))
 	}
 	info, err := checker.Check(prog)

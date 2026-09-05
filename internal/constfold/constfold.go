@@ -18,10 +18,15 @@
 //
 // The same traversal resolves `__fern_asset("name")` against the
 // compile-time asset set (see internal/embed), replacing the call with a
-// string literal holding the file's bytes. Assets ride the const machinery
-// rather than a pass of their own for two reasons: an asset IS a
-// compile-time constant, and a `const PAGE: string = __fern_asset(...)`
-// has to resolve during const evaluation, not after it.
+// string literal holding the file's bytes, and `__fern_target_os()` against
+// the target being compiled for. Both ride the const machinery rather than a
+// pass of their own for the same two reasons: each IS a compile-time
+// constant, and a `const PAGE: string = __fern_asset(...)` has to resolve
+// during const evaluation, not after it.
+//
+// The traversal also folds a binary whose operands both substituted to string
+// literals, so `__fern_target_os() == "darwin"` is a bool literal by the time
+// the checker sees it and the dead branch never reaches codegen.
 package constfold
 
 import (
@@ -44,6 +49,49 @@ const assetBuiltin = "__fern_asset"
 // unaware of it too.
 const assetsBuiltin = "__fern_assets"
 
+// targetOSBuiltin answers the environment half of the `-target` — "linux",
+// "darwin", "android", "wasi", "wasi-http" or "freestanding" — as a string
+// literal. Substituted here, and by the same trick as the asset builtins, for
+// the same reason: the value IS a compile-time constant, and a `const OS:
+// string = __fern_target_os()` has to resolve during const evaluation rather
+// than after it (#8338). Nothing downstream learns it exists.
+//
+// Target-faithful, never host (docs/COMPTIME-BRIEF.md rule 1): every Fern
+// compile is a cross-compile, so this is the TARGET's OS — `fern -target
+// arm64-linux` on a Mac answers linux. The interpreter is the one place where
+// host and target are the same machine, and its caller passes the host's OS.
+//
+// The environment half is reported verbatim rather than mapped to a coarser
+// family: android is a Linux kernel and wasi-http is a WASI world, but which
+// grouping a program wants is the program's business — `std/platform` derives
+// IS_LINUX / IS_DARWIN / IS_WASI from this, and a mapping here would throw
+// away a distinction no caller could get back.
+const targetOSBuiltin = "__fern_target_os"
+
+// defaultTargetOS is what __fern_target_os() answers when the caller named no
+// target: the environment half of `-target`'s own default (arm64-linux). A
+// caller that never mentions a target therefore gets the answer the compiler's
+// default would give, rather than the host's.
+const defaultTargetOS = "linux"
+
+// Option configures a Fold. Variadic because the target matters to a handful
+// of compile paths and to none of the ~150 other callers, which keep their
+// two-argument call.
+type Option func(*settings)
+
+type settings struct{ targetOS string }
+
+// ForTarget names the OS `__fern_target_os()` answers with — the environment
+// half of the target being compiled for (platforms.Descriptor.Environment), or
+// the HOST's OS when the "target" is the interpreter running the program here.
+func ForTarget(os string) Option {
+	return func(s *settings) {
+		if os != "" {
+			s.targetOS = os
+		}
+	}
+}
+
 // Fold evaluates every top-level const declaration in prog, then
 // substitutes references with the resolved literal and clears
 // prog.Consts. Errors aggregate; the first diagnostic surfaced
@@ -52,7 +100,11 @@ const assetsBuiltin = "__fern_assets"
 //
 // assets carries the `-embed` bundle and may be nil, in which case any use
 // of __fern_asset is itself the error.
-func Fold(prog *ast.Program, assets *embed.Set) error {
+func Fold(prog *ast.Program, assets *embed.Set, opts ...Option) error {
+	cfg := settings{targetOS: defaultTargetOS}
+	for _, o := range opts {
+		o(&cfg)
+	}
 	values := map[string]ast.Expr{}
 	types := map[string]ast.Type{}
 	var errs []error
@@ -62,7 +114,7 @@ func Fold(prog *ast.Program, assets *embed.Set) error {
 			errs = append(errs, fmt.Errorf("%s: const %q redeclared", cd.P, cd.Name))
 			continue
 		}
-		val, err := evalConst(cd.Value, values, types, assets)
+		val, err := evalConst(cd.Value, values, types, assets, cfg.targetOS)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("%s: const %s: %w", cd.P, cd.Name, err))
 			continue
@@ -88,7 +140,7 @@ func Fold(prog *ast.Program, assets *embed.Set) error {
 	// Substitute every Ident reference matching a const name with
 	// the resolved literal. Const decls are then dropped — the rest
 	// of the pipeline runs against a const-free program.
-	sub := substituter{values: values, assets: assets}
+	sub := substituter{values: values, assets: assets, targetOS: cfg.targetOS}
 	for _, fn := range prog.Funcs {
 		sub.walkBlock(fn.Body)
 	}
@@ -102,7 +154,7 @@ func Fold(prog *ast.Program, assets *embed.Set) error {
 // evalConst tries to reduce e to a literal AST node using only
 // constant-expression rules. Returned values are always one of
 // *ast.NumberLit, *ast.FloatLit, *ast.BoolLit, *ast.StringLit.
-func evalConst(e ast.Expr, values map[string]ast.Expr, types map[string]ast.Type, assets *embed.Set) (ast.Expr, error) {
+func evalConst(e ast.Expr, values map[string]ast.Expr, types map[string]ast.Type, assets *embed.Set, targetOS string) (ast.Expr, error) {
 	switch n := e.(type) {
 	case *ast.NumberLit, *ast.FloatLit, *ast.BoolLit, *ast.StringLit, *ast.CharLit:
 		return n, nil
@@ -115,6 +167,9 @@ func evalConst(e ast.Expr, values map[string]ast.Expr, types map[string]ast.Type
 		if isAssetsCall(n) {
 			return nil, fmt.Errorf("%s() builds an array, which is not a constant expression — assign it to a `var` instead", assetsBuiltin)
 		}
+		if isTargetOSCall(n) {
+			return resolveTargetOS(n, targetOS)
+		}
 		if !isAssetCall(n) {
 			return nil, fmt.Errorf("expression is not a constant (only literals, earlier consts, and arithmetic / comparison / logical operations on them are allowed)")
 		}
@@ -126,17 +181,17 @@ func evalConst(e ast.Expr, values map[string]ast.Expr, types map[string]ast.Type
 		}
 		return v, nil
 	case *ast.Unary:
-		operand, err := evalConst(n.Operand, values, types, assets)
+		operand, err := evalConst(n.Operand, values, types, assets, targetOS)
 		if err != nil {
 			return nil, err
 		}
 		return foldUnary(n, operand)
 	case *ast.Binary:
-		left, err := evalConst(n.Left, values, types, assets)
+		left, err := evalConst(n.Left, values, types, assets, targetOS)
 		if err != nil {
 			return nil, err
 		}
-		right, err := evalConst(n.Right, values, types, assets)
+		right, err := evalConst(n.Right, values, types, assets, targetOS)
 		if err != nil {
 			return nil, err
 		}
@@ -420,9 +475,10 @@ func litType(e ast.Expr) ast.Type {
 // Unary nodes with downstream metadata; cloning the literal keeps
 // each substitution position independent.
 type substituter struct {
-	values map[string]ast.Expr
-	assets *embed.Set
-	errs   []error
+	values   map[string]ast.Expr
+	assets   *embed.Set
+	targetOS string
+	errs     []error
 }
 
 // isAssetCall reports whether c is a call of the __fern_asset builtin. It
@@ -432,6 +488,44 @@ type substituter struct {
 func isAssetCall(c *ast.Call) bool {
 	id, ok := c.Callee.(*ast.Ident)
 	return ok && id.Name == assetBuiltin
+}
+
+// isTargetOSCall reports whether c is a call of the __fern_target_os builtin.
+// Matched on the callee name alone, like isAssetCall, so a malformed use is
+// reported as such rather than reaching the checker as an undefined function.
+func isTargetOSCall(c *ast.Call) bool {
+	id, ok := c.Callee.(*ast.Ident)
+	return ok && id.Name == targetOSBuiltin
+}
+
+// resolveTargetOS turns one __fern_target_os() call into the string literal
+// naming the target's environment.
+func resolveTargetOS(c *ast.Call, targetOS string) (ast.Expr, error) {
+	if len(c.Args) != 0 {
+		return nil, fmt.Errorf("%s: %s takes no arguments, got %d", c.P, targetOSBuiltin, len(c.Args))
+	}
+	return &ast.StringLit{P: c.P, Value: targetOS}, nil
+}
+
+// foldStringLits reduces `"a" == "b"` / `!=` / `+` to a single literal, or
+// returns nil when either side is not a string literal. It is the ordinary-code
+// half of foldBinary's string arm: a const initialiser reaches that one, and a
+// comparison written inline in a function body reaches this one.
+func foldStringLits(n *ast.Binary) ast.Expr {
+	ls, lok := n.Left.(*ast.StringLit)
+	rs, rok := n.Right.(*ast.StringLit)
+	if !lok || !rok {
+		return nil
+	}
+	switch n.Op {
+	case "==":
+		return &ast.BoolLit{P: n.P, Value: ls.Value == rs.Value}
+	case "!=":
+		return &ast.BoolLit{P: n.P, Value: ls.Value != rs.Value}
+	case "+":
+		return &ast.StringLit{P: n.P, Value: ls.Value + rs.Value}
+	}
+	return nil
 }
 
 // resolveAsset turns one __fern_asset("name") call into the string literal
@@ -588,6 +682,15 @@ func (s *substituter) walkExpr(slot *ast.Expr) {
 			*slot = cloneLit(v, x.P)
 		}
 	case *ast.Call:
+		if isTargetOSCall(x) {
+			lit, err := resolveTargetOS(x, s.targetOS)
+			if err != nil {
+				s.errs = append(s.errs, err)
+				return
+			}
+			*slot = lit
+			return
+		}
 		if isAssetCall(x) {
 			lit, err := resolveAsset(x, s.assets)
 			if err != nil {
@@ -613,6 +716,17 @@ func (s *substituter) walkExpr(slot *ast.Expr) {
 	case *ast.Binary:
 		s.walkExpr(&x.Left)
 		s.walkExpr(&x.Right)
+		// Both operands substituted to string literals: fold the comparison
+		// so `__fern_target_os() == "darwin"` is a bool literal here and the
+		// dead branch never reaches codegen. Only the string operators, and
+		// only when BOTH sides are literals — the numeric folds belong to the
+		// IR's constant propagation, which already has the width rules this
+		// pass does not. The self-host's folder (examples/self_host/
+		// constfold.fern) folds the same three everywhere it walks; this is
+		// the native half agreeing with it.
+		if lit := foldStringLits(x); lit != nil {
+			*slot = lit
+		}
 	case *ast.Unary:
 		s.walkExpr(&x.Operand)
 	case *ast.Index:

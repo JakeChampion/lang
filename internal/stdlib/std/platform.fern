@@ -31,6 +31,35 @@
 // which before it acts: a recording bag appends the call to its sink and
 // answers a fixed value, so a test can hand a handler a mock and read back
 // what it tried to do without the effect happening (std/mock_platform).
+// ---- the compile target (#8338) --------------------------------------
+//
+// `OS` is the environment half of the `-target` this program is being
+// compiled for: "linux", "darwin", "android", "wasi", "wasi-http" or
+// "freestanding". It is a compile-time constant — the compiler substitutes
+// `__fern_target_os()` for a string literal before the checker runs — so a
+// comparison against it folds and the branch it guards costs nothing at run
+// time. Under `-interp` there is no cross-compile to speak of and the value
+// is the host's OS.
+//
+// This is the only way Fern source can learn where it is going, and what it
+// is for is a choice the kernel decides rather than the program: a pipe
+// write size, a path separator, which syscall shape to prefer. It is NOT a
+// capability test — whether a target HAS a filesystem is `internal/platforms`
+// and E066, checked at build time whatever the program branches on.
+//
+//     var block: i32 = 4096;
+//     if (platform.IS_DARWIN) { block = 1024; }
+//
+// The three predicates group the environments the way a caller almost always
+// wants: android is a Linux kernel, and wasi-http is a WASI world. Compare
+// against `OS` directly for the distinction they discard.
+pub const OS: string = __fern_target_os();
+
+pub const IS_LINUX: boolean = OS == "linux" || OS == "android";
+
+pub const IS_DARWIN: boolean = OS == "darwin";
+
+pub const IS_WASI: boolean = OS == "wasi" || OS == "wasi-http";
 
 // PLATFORM_MODE_HOST / PLATFORM_MODE_MOCK — what the bag's `mode` field
 // selects. A host bag performs its effects; a recording one appends them to
