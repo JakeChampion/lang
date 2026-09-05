@@ -5833,18 +5833,85 @@ func letElseDivergentArm(m *ast.Match, i int) bool {
 	return m.Origin == ast.OriginLetElse && i == len(m.Arms)-1 && m.Arms[i].IsWildcard
 }
 
+// loopCanBreak reports whether `body` contains a `break` that targets THIS
+// loop — an unlabelled break not enclosed in a nested loop, or a labelled
+// break naming `label`. A loop that can break does not diverge, which is
+// what the reachability analyses below need to know.
+//
+// Both of them used to answer "a `loop` always diverges" outright, on the
+// stated grounds that it was conservative. It was the opposite: treating a
+// breakable loop as divergent ACCEPTS programs that fall through, so a
+// value fell off the end of a function (E052), a `never`-typed block
+// initialised a string from garbage, and a `let … else` whose else arm
+// broke out of a loop left the pattern's bindings uninitialised (#8447).
+//
+// It walks statements only. A `break` can appear nowhere else, except
+// inside a block-expression in expression position — not descending there
+// keeps the old answer for that shape rather than making it worse, and
+// deliberately does NOT descend into a lambda body, whose `break` belongs
+// to a loop inside the lambda.
+func loopCanBreak(body ast.Stmt, label string) bool {
+	found := false
+	var walk func(s ast.Stmt, nested bool)
+	walk = func(s ast.Stmt, nested bool) {
+		if s == nil || found {
+			return
+		}
+		switch x := s.(type) {
+		case *ast.Break:
+			// An unlabelled break belongs to the innermost enclosing
+			// loop; a labelled one names its target outright.
+			if x.Label == "" {
+				if !nested {
+					found = true
+				}
+			} else if x.Label == label {
+				found = true
+			}
+		case *ast.Block:
+			for _, st := range x.Stmts {
+				walk(st, nested)
+			}
+		case *ast.If:
+			walk(x.Then, nested)
+			walk(x.Else, nested)
+		case *ast.Match:
+			for _, arm := range x.Arms {
+				walk(arm.Body, nested)
+			}
+		case *ast.Defer:
+			// A defer's body runs at scope exit, so a break inside it
+			// cannot carry this loop's control flow.
+		case *ast.While:
+			walk(x.Body, true)
+		case *ast.Loop:
+			walk(x.Body, true)
+		case *ast.For:
+			walk(x.Body, true)
+		case *ast.ForEach:
+			walk(x.Body, true)
+		}
+	}
+	walk(body, false)
+	return found
+}
+
 func stmtDiverges(s ast.Stmt) bool {
 	switch x := s.(type) {
 	case *ast.Return, *ast.Break, *ast.Continue:
 		return true
 	case *ast.Loop:
-		// `loop { … }` is unconditional by construction, so treat it
-		// as diverging — same conservative "ignore breaks" stance as
-		// stmtExits below: a `loop` containing a `break` could in
-		// principle fall through to here, but requiring every escape
-		// to be spelled as an explicit trailing return/break/continue
-		// is what this analysis already asks of every other construct.
-		return true
+		// `loop { … }` is unconditional by construction, so it diverges
+		// unless something breaks out of it.
+		return !loopCanBreak(x.Body, x.Label)
+	case *ast.While:
+		// A literal-true condition is the same shape as `loop`. Handled
+		// here as well as in stmtExits so the two predicates agree on
+		// it — they disagreed before, which is how the gap survived.
+		if lit, ok := x.Cond.(*ast.BoolLit); ok && lit.Value {
+			return !loopCanBreak(x.Body, x.Label)
+		}
+		return false
 	case *ast.Block:
 		return blockDiverges(x)
 	case *ast.If:
@@ -5913,19 +5980,15 @@ func stmtExits(s ast.Stmt) bool {
 		}
 		return true
 	case *ast.While:
-		// `while (true) { … }` never falls through. Conservatively treat
-		// any literal-true loop as divergent (ignoring breaks): a loop
-		// that can actually break and needs a following value will still
-		// have a trailing return, which the surrounding block catches.
+		// `while (true) { … }` never falls through — unless it breaks.
 		if lit, ok := x.Cond.(*ast.BoolLit); ok && lit.Value {
-			return true
+			return !loopCanBreak(x.Body, x.Label)
 		}
 		return false
 	case *ast.Loop:
-		// `loop { … }` is unconditional by construction — same
-		// conservative treatment as literal-true While above, without
-		// needing to pattern-match a BoolLit condition.
-		return true
+		// `loop { … }` is unconditional by construction, so the same
+		// rule applies without pattern-matching a BoolLit condition.
+		return !loopCanBreak(x.Body, x.Label)
 	}
 	return false
 }
