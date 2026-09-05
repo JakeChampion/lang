@@ -3,8 +3,10 @@
 // A small, spec-driven parser for the shape the examples/cli tools
 // hand-roll today (grep, head, …): valued options (`--output F`,
 // `--output=F`, `-o F`), boolean flags (`--verbose` / `-v`),
-// positional operands, the `--` end-of-options terminator, and an
-// auto-generated usage string. Pure library — no compiler changes.
+// positional operands, the `--` end-of-options terminator, and
+// subcommands, each a spec of its own. One spec also yields the
+// usage text and shell completions for bash, zsh and fish, so a tool
+// describes its interface once. Pure library — no compiler changes.
 //
 // Build a spec, parse argv, query the result:
 //
@@ -23,7 +25,11 @@
 // characters and support the usual clustering: bundled booleans
 // (`-abc` == `-a -b -c`), a glued value (`-n5` == `-n 5`), and a
 // bundle ending in a valued option (`-vn5` == `-v -n 5`).
-
+//
+// Subcommands: `.command(sub)` attaches another spec under its name.
+// The first operand of a spec with commands must name one; the flags
+// before it belong to the parent, everything after it is parsed by
+// the sub-spec, and `.subcommand()` on the result says which one ran.
 import "std/string";
 import "std/utf8" as utf8;
 import "core/map";
@@ -31,262 +37,543 @@ import "core/map";
 // A single declared flag. `takes_value` distinguishes a valued
 // option (`--output F`) from a boolean flag (`--verbose`). `short`
 // is "" when the flag has no single-character alias.
-struct CliFlag {
-    long: string,
-    short: string,
-    takes_value: boolean,
-    help: string,
-}
+struct CliFlag { long: string, short: string, takes_value: boolean, help: string }
 
 // The parser spec: a program name + one-line description for the
-// usage text, plus the declared flags. Built up immutably via
-// `.option` / `.flag` (each returns an updated spec to rebind).
-pub struct CliSpec {
-    name: string,
-    about: string,
-    flags: CliFlag[],
-}
+// usage text, the declared flags, and the subcommand specs. Built up
+// immutably via `.option` / `.flag` / `.command` (each returns an
+// updated spec to rebind).
+pub struct CliSpec { name: string, about: string, flags: CliFlag[], commands: CliSpec[] }
 
 // The parse result. `opts` maps each set flag's long name to its
 // value (a valued option's argument, or "true" for a boolean flag
 // that appeared); `positionals` is the operand list in order;
-// `error` is "" on success or a human-readable message on failure.
-pub struct CliArgs {
-    opts: Map[string, string],
-    positionals: string[],
-    error: string,
-}
+// `command` is the subcommand that ran, or "" for none; `error` is
+// "" on success or a human-readable message on failure.
+pub struct CliArgs { opts: Map[string, string], positionals: string[], command: string, error: string }
+
+// One token's worth of parse progress: the options after it, the
+// argv index to continue from, and the error ("" when none).
+struct CliStep { opts: Map[string, string], next: i32, error: string }
 
 // `cli_new(name, about)` — start a spec with no flags.
 pub function cli_new(name: string, about: string): CliSpec {
-    var fs: CliFlag[] = [];
-    return CliSpec { name: name, about: about, flags: fs };
+  var fs: CliFlag[] = [];
+  var cs: CliSpec[] = [];
+  return CliSpec { name: name, about: about, flags: fs, commands: cs };
 }
 
 // `.option(long, short, help)` — declare a valued option, matched
 // as `--long V`, `--long=V`, or `-short V`. Pass "" for `short` to
 // give it no single-character alias.
 pub function (s: CliSpec) option(long: string, short: string, help: string): CliSpec {
-    return CliSpec {
-        ...s,
-        flags: s.flags.append(CliFlag { long: long, short: short, takes_value: true, help: help }),
-    };
+  return CliSpec { ...s, flags: s.flags.append(CliFlag { long: long, short: short, takes_value: true, help: help }) };
 }
 
 // `.flag(long, short, help)` — declare a boolean flag, matched as
 // `--long` or `-short`. Its presence is queried with `is_set`.
 pub function (s: CliSpec) flag(long: string, short: string, help: string): CliSpec {
-    return CliSpec {
-        ...s,
-        flags: s.flags.append(CliFlag { long: long, short: short, takes_value: false, help: help }),
-    };
+  return CliSpec { ...s, flags: s.flags.append(CliFlag { long: long, short: short, takes_value: false, help: help }) };
+}
+
+// `.command(sub)` — declare a subcommand. `sub.name` is the word
+// that selects it, `sub.about` its one-line description; its flags
+// apply after that word.
+pub function (s: CliSpec) command(sub: CliSpec): CliSpec {
+  return CliSpec { ...s, commands: s.commands.append(sub) };
 }
 
 // Find a declared flag by its long name.
 function __cli_find_long(s: CliSpec, name: string): Option[CliFlag] {
-    var i: i32 = 0;
-    while (i < s.flags.len()) {
-        if (s.flags[i].long == name) { return Some(s.flags[i]); }
-        i = i + 1;
+  var i: i32 = 0;
+  while (i < s.flags.len()) {
+    if (s.flags[i].long == name) {
+      return Some(s.flags[i]);
     }
-    return None;
+    i = i + 1;
+  }
+  return None;
 }
 
 // Find a declared flag by its (single-byte) short alias.
 function __cli_find_short_byte(s: CliSpec, b: i32): Option[CliFlag] {
-    var i: i32 = 0;
-    while (i < s.flags.len()) {
-        if (s.flags[i].short.len() == 1 && (s.flags[i].short[0] as i32) == b) { return Some(s.flags[i]); }
-        i = i + 1;
+  var i: i32 = 0;
+  while (i < s.flags.len()) {
+    if (s.flags[i].short.len() == 1 && s.flags[i].short[0] as i32 == b) {
+      return Some(s.flags[i]);
     }
-    return None;
+    i = i + 1;
+  }
+  return None;
+}
+
+// Find a declared subcommand by name.
+function __cli_find_command(s: CliSpec, name: string): Option[CliSpec] {
+  var i: i32 = 0;
+  while (i < s.commands.len()) {
+    if (s.commands[i].name == name) {
+      return Some(s.commands[i]);
+    }
+    i = i + 1;
+  }
+  return None;
 }
 
 // Render the flag name at cluster[j] for an error message: the ASCII
 // byte itself, the whole code point when the byte starts a multibyte
 // character, or U+FFFD for an invalid byte.
 function __cli_short_name_at(cluster: string, j: i32): string {
-    var b: i32 = cluster[j] as i32;
-    if (b < 128) { return string_from_bytes_unchecked([cluster[j]]); }
-    match (utf8.utf8_decode_at(cluster, j)) {
-        Some(pair) => { return slice_unchecked(cluster, j, j + pair.1) + ""; },
-        None => { return "\xef\xbf\xbd"; }
+  var b: i32 = cluster[j] as i32;
+  if (b < 128) {
+    return string_from_bytes_unchecked([cluster[j]]);
+  }
+  match (utf8.utf8_decode_at(cluster, j)) {
+    Some(pair) => {
+      return slice_unchecked(cluster, j, j + pair.1) + "";
+    },
+    None => {
+      return "�";
     }
+  }
 }
 
 // Build a failed CliArgs, preserving the operands parsed so far.
 function __cli_err(positionals: string[], msg: string): CliArgs {
-    var empty: Map[string, string] = map_new(1);
-    return CliArgs { opts: empty, positionals: positionals, error: msg };
+  var empty: Map[string, string] = map_new(1);
+  return CliArgs { opts: empty, positionals: positionals, command: "", error: msg };
+}
+
+function __cli_step_err(opts: Map[string, string], i: i32, msg: string): CliStep {
+  return CliStep { opts: opts, next: i, error: msg };
+}
+
+// Consume argv[i], a `--name`, `--name=V` or `--name V` token.
+function __cli_long(s: CliSpec, opts: Map[string, string], argv: string[], i: i32): CliStep {
+  var a: string = argv[i];
+  var body: str = slice_unchecked(a, 2, a.len());
+  var eq: i32 = body.index_of("=");
+  var name: str = body;
+  var inline_val: str = "";
+  if (eq >= 0) {
+    name = slice_unchecked(body, 0, eq);
+    inline_val = slice_unchecked(body, eq + 1, body.len());
+  }
+  match (__cli_find_long(s, name)) {
+    Some(f) => {
+      if (!f.takes_value) {
+        if (eq >= 0) {
+          return __cli_step_err(opts, i, "flag --" + name + " takes no value");
+        }
+        return CliStep { opts: opts.insert(f.long, "true"), next: i + 1, error: "" };
+      }
+      if (eq >= 0) {
+        return CliStep { opts: opts.insert(f.long, inline_val), next: i + 1, error: "" };
+      }
+      if (i + 1 < argv.len()) {
+        return CliStep { opts: opts.insert(f.long, argv[i + 1]), next: i + 2, error: "" };
+      }
+      return __cli_step_err(opts, i, "option --" + name + " requires a value");
+    },
+    None => {
+      return __cli_step_err(opts, i, "unknown option --" + name);
+    }
+  }
+}
+
+// Consume argv[i], a short cluster `-abc`. Each character is a
+// single-char short flag: a boolean flag continues the cluster, and a
+// valued option consumes the rest of the token as its value (`-n5`)
+// or, when it's the last character, the next argv token (`-n 5`).
+function __cli_cluster(s: CliSpec, opts: Map[string, string], argv: string[], i: i32): CliStep {
+  var a: string = argv[i];
+  var cluster: str = slice_unchecked(a, 1, a.len());
+  var j: i32 = 0;
+  while (j < cluster.len()) {
+    match (__cli_find_short_byte(s, cluster[j] as i32)) {
+      Some(f) => {
+        if (!f.takes_value) {
+          opts = opts.insert(f.long, "true");
+          j = j + 1;
+        } else {
+          // A valued option swallows the token tail.
+          var glued: str = slice_unchecked(cluster, j + 1, cluster.len());
+          if (glued.len() > 0) {
+            return CliStep { opts: opts.insert(f.long, glued), next: i + 1, error: "" };
+          }
+          if (i + 1 < argv.len()) {
+            return CliStep { opts: opts.insert(f.long, argv[i + 1]), next: i + 2, error: "" };
+          }
+          return __cli_step_err(opts, i, "option -" + f.short + " requires a value");
+        }
+      },
+      None => {
+        return __cli_step_err(opts, i, "unknown option -" + __cli_short_name_at(cluster, j));
+      }
+    }
+  }
+  return CliStep { opts: opts, next: i + 1, error: "" };
+}
+
+// Parse argv[start..] against `s`, starting from the options a parent
+// spec has already collected.
+function __cli_parse(s: CliSpec, argv: string[], start: i32, opts: Map[string, string]): CliArgs {
+  var positionals: string[] = [];
+  var i: i32 = start;
+  var no_more: boolean = false;
+  while (i < argv.len()) {
+    var a: string = argv[i];
+    if (no_more) {
+      positionals = positionals.append(a);
+      i = i + 1;
+    } else if (a == "--") {
+      // Everything after `--` is a positional, even `-`-prefixed.
+      no_more = true;
+      i = i + 1;
+    } else if (a.starts_with("--") || a.len() >= 2 && a[0] == 45) {
+      // A lone "-" falls through to positionals (stdin convention).
+      var st: CliStep = __cli_long(s, opts, argv, i);
+      if (!a.starts_with("--")) {
+        st = __cli_cluster(s, opts, argv, i);
+      }
+      if (st.error.len() > 0) {
+        return __cli_err(positionals, st.error);
+      }
+      opts = st.opts;
+      i = st.next;
+    } else if (s.commands.len() > 0 && positionals.len() == 0) {
+      // The first operand of a spec with commands names one, and
+      // that spec parses the rest on top of the flags seen so far.
+      match (__cli_find_command(s, a)) {
+        Some(sub) => {
+          var r: CliArgs = __cli_parse(sub, argv, i + 1, opts);
+          if (r.error.len() > 0) {
+            return r;
+          }
+          return CliArgs { ...r, command: sub.name };
+        },
+        None => {
+          return __cli_err(positionals, "unknown command " + a);
+        }
+      }
+    } else {
+      positionals = positionals.append(a);
+      i = i + 1;
+    }
+  }
+  return CliArgs { opts: opts, positionals: positionals, command: "", error: "" };
 }
 
 // `.parse(argv)` — parse `argv` (argv[0] is the program name and is
 // skipped) against this spec. On the first malformed token the
-// result carries a non-empty `error`; otherwise `opts` / operands
-// are populated.
+// result carries a non-empty `error`; otherwise `opts` / operands /
+// `command` are populated.
 pub function (s: CliSpec) parse(argv: string[]): CliArgs {
-    var opts: Map[string, string] = map_new(8);
-    var positionals: string[] = [];
-    var i: i32 = 1;
-    var no_more: boolean = false;
-    while (i < argv.len()) {
-        var a: string = argv[i];
-        if (no_more) {
-            positionals = positionals.append(a);
-            i = i + 1;
-        } else if (a == "--") {
-            // Everything after `--` is a positional, even `-`-prefixed.
-            no_more = true;
-            i = i + 1;
-        } else if (a.starts_with("--")) {
-            var body: str = slice_unchecked(a, 2, a.len());
-            var eq: i32 = body.index_of("=");
-            var name: str = body;
-            var inline_val: str = "";
-            var has_inline: boolean = false;
-            if (eq >= 0) {
-                name = slice_unchecked(body, 0, eq);
-                inline_val = slice_unchecked(body, eq + 1, body.len());
-                has_inline = true;
-            }
-            match (__cli_find_long(s, name)) {
-                Some(f) => {
-                    if (f.takes_value) {
-                        if (has_inline) {
-                            opts = opts.insert(f.long, inline_val);
-                        } else if (i + 1 < argv.len()) {
-                            opts = opts.insert(f.long, argv[i + 1]);
-                            i = i + 1;
-                        } else {
-                            return __cli_err(positionals, "option --" + name + " requires a value");
-                        }
-                    } else {
-                        if (has_inline) {
-                            return __cli_err(positionals, "flag --" + name + " takes no value");
-                        }
-                        opts = opts.insert(f.long, "true");
-                    }
-                },
-                None => {
-                    return __cli_err(positionals, "unknown option --" + name);
-                }
-            }
-            i = i + 1;
-        } else if (a.len() >= 2 && a[0] == 45) {
-            // Short cluster `-abc` (a lone "-" falls through to
-            // positionals). Each character is a single-char short
-            // flag: a boolean flag continues the cluster, and a
-            // valued option consumes the rest of the token as its
-            // value (`-n5`) or, when it's the last character, the
-            // next argv token (`-n 5`).
-            var cluster: str = slice_unchecked(a, 1, a.len());
-            var j: i32 = 0;
-            while (j < cluster.len()) {
-                match (__cli_find_short_byte(s, cluster[j] as i32)) {
-                    Some(f) => {
-                        if (f.takes_value) {
-                            var glued: str = slice_unchecked(cluster, j + 1, cluster.len());
-                            if (glued.len() > 0) {
-                                opts = opts.insert(f.long, glued);
-                            } else if (i + 1 < argv.len()) {
-                                opts = opts.insert(f.long, argv[i + 1]);
-                                i = i + 1;
-                            } else {
-                                return __cli_err(positionals, "option -" + f.short + " requires a value");
-                            }
-                            // A valued option swallows the token tail; end the cluster.
-                            j = cluster.len();
-                        } else {
-                            opts = opts.insert(f.long, "true");
-                            j = j + 1;
-                        }
-                    },
-                    None => {
-                        return __cli_err(positionals, "unknown option -" + __cli_short_name_at(cluster, j));
-                    }
-                }
-            }
-            i = i + 1;
-        } else {
-            positionals = positionals.append(a);
-            i = i + 1;
-        }
-    }
-    return CliArgs { opts: opts, positionals: positionals, error: "" };
+  var opts: Map[string, string] = map_new(8);
+  return __cli_parse(s, argv, 1, opts);
 }
 
 // `.is_error()` — true when parsing failed.
 pub function (a: CliArgs) is_error(): boolean {
-    return a.error.len() > 0;
+  return a.error.len() > 0;
 }
 
 // `.error_text()` — the failure message, or "" on success.
 pub function (a: CliArgs) error_text(): string {
-    return a.error;
+  return a.error;
 }
 
 // `.value(name)` — the value of a valued option by its long name,
 // or None if it wasn't set.
 pub function (a: CliArgs) value(name: string): Option[string] {
-    return a.opts.get(name);
+  return a.opts.get(name);
 }
 
 // `.value_or(name, fallback)` — the value of a valued option, or
 // `fallback` when it wasn't set.
 pub function (a: CliArgs) value_or(name: string, fallback: string): string {
-    match (a.opts.get(name)) {
-        Some(v) => { return v; },
-        None => { return fallback; }
+  match (a.opts.get(name)) {
+    Some(v) => {
+      return v;
+    },
+    None => {
+      return fallback;
     }
+  }
 }
 
 // `.is_set(name)` — true if the flag (bool or valued) appeared,
 // queried by its long name.
 pub function (a: CliArgs) is_set(name: string): boolean {
-    return a.opts.has(name);
+  return a.opts.has(name);
 }
 
 // `.operands()` — the positional arguments in order.
 pub function (a: CliArgs) operands(): string[] {
-    return a.positionals;
+  return a.positionals;
 }
 
 // `.operand(idx)` — the positional at `idx`, or None if out of range.
 pub function (a: CliArgs) operand(idx: i32): Option[string] {
-    if (idx < 0 || idx >= a.positionals.len()) { return None; }
-    return Some(a.positionals[idx]);
+  if (idx < 0 || idx >= a.positionals.len()) {
+    return None;
+  }
+  return Some(a.positionals[idx]);
+}
+
+// `.subcommand()` — the name of the subcommand that ran, or None
+// when the spec has none or argv named none.
+pub function (a: CliArgs) subcommand(): Option[string] {
+  if (a.command.len() == 0) {
+    return None;
+  }
+  return Some(a.command);
+}
+
+// The aligned flag list shared by the usage text and each command's
+// section of it.
+function __cli_usage_flags(flags: CliFlag[], indent: string): string {
+  var out: string = "";
+  var i: i32 = 0;
+  while (i < flags.len()) {
+    var f: CliFlag = flags[i];
+    var line: string = indent;
+    if (f.short.len() > 0) {
+      line = line + "-" + f.short + ", ";
+    } else {
+      line = line + "    ";
+    }
+    line = line + "--" + f.long;
+    if (f.takes_value) {
+      line = line + " <value>";
+    }
+    out = out + line + "\n";
+    if (f.help.len() > 0) {
+      out = out + indent + "    " + f.help + "\n";
+    }
+    i = i + 1;
+  }
+  return out;
 }
 
 // `.usage()` — a formatted help string: a usage line, the optional
-// description, and an aligned list of the declared flags.
+// description, an aligned list of the declared flags, and the
+// subcommands with their descriptions.
 pub function (s: CliSpec) usage(): string {
-    var out: string = "Usage: " + s.name + " [options] [args]\n";
-    if (s.about.len() > 0) {
-        out = out + "\n" + s.about + "\n";
+  var shape: string = " [options] [args]\n";
+  if (s.commands.len() > 0) {
+    shape = " [options] <command> [args]\n";
+  }
+  var out: string = "Usage: " + s.name + shape;
+  if (s.about.len() > 0) {
+    out = out + "\n" + s.about + "\n";
+  }
+  if (s.flags.len() > 0) {
+    out = out + "\nOptions:\n" + __cli_usage_flags(s.flags, "  ");
+  }
+  if (s.commands.len() > 0) {
+    out = out + "\nCommands:\n";
+    var i: i32 = 0;
+    while (i < s.commands.len()) {
+      out = out + "  " + s.commands[i].name;
+      if (s.commands[i].about.len() > 0) {
+        out = out + "\n      " + s.commands[i].about;
+      }
+      out = out + "\n";
+      i = i + 1;
     }
-    if (s.flags.len() > 0) {
-        out = out + "\nOptions:\n";
-        var i: i32 = 0;
-        while (i < s.flags.len()) {
-            var f: CliFlag = s.flags[i];
-            var line: string = "  ";
-            if (f.short.len() > 0) {
-                line = line + "-" + f.short + ", ";
-            } else {
-                line = line + "    ";
-            }
-            line = line + "--" + f.long;
-            if (f.takes_value) {
-                line = line + " <value>";
-            }
-            out = out + line + "\n";
-            if (f.help.len() > 0) {
-                out = out + "      " + f.help + "\n";
-            }
-            i = i + 1;
-        }
+  }
+  return out;
+}
+
+// ============================================================
+// Shell completions.
+//
+// One spec, three shells. Each script is self-contained and is meant
+// to be written to the shell's completion directory (or `eval`ed /
+// `source`d) by the tool's own `--completion SHELL` handling. Help
+// text is quoted for the shell it lands in, so a description holding
+// a quote or a bracket cannot break the script.
+// ============================================================
+// A shell-safe identifier for the program: bash and zsh function
+// names cannot carry `-` or `.`.
+function __cli_ident(name: string): string {
+  return name.replace("-", "_").replace(".", "_");
+}
+
+// POSIX single-quoting, for bash and fish descriptions.
+function __cli_sq(s: string): string {
+  return "'" + s.replace("'", "'\\''") + "'";
+}
+
+// zsh `_arguments` spec text sits in single quotes and treats `]`
+// and `:` as structure; both are escaped, and a `'` is closed and
+// reopened around a double-quoted one.
+function __cli_zsh_desc(s: string): string {
+  return s.replace("\\", "\\\\").replace("]", "\\]").replace(":", "\\:").replace("'", "'\"'\"'");
+}
+
+// Every completable word of a spec: its long and short flags, then
+// its subcommand names — the bash `compgen -W` word list.
+function __cli_words(s: CliSpec): string {
+  var out: string = "";
+  var i: i32 = 0;
+  while (i < s.flags.len()) {
+    out = out + " --" + s.flags[i].long;
+    if (s.flags[i].short.len() > 0) {
+      out = out + " -" + s.flags[i].short;
     }
-    return out;
+    i = i + 1;
+  }
+  i = 0;
+  while (i < s.commands.len()) {
+    out = out + " " + s.commands[i].name;
+    i = i + 1;
+  }
+  if (out.len() == 0) {
+    return "";
+  }
+  return slice_unchecked(out, 1, out.len()) + "";
+}
+
+function __cli_completion_bash(s: CliSpec): string {
+  var fn: string = "_" + __cli_ident(s.name);
+  var out: string = fn + "() {\n";
+  out = out + "    local cur=\"${COMP_WORDS[COMP_CWORD]}\" words=" + __cli_sq(__cli_words(s)) + "\n";
+  if (s.commands.len() > 0) {
+    // The word list narrows to a subcommand's once its name has
+    // appeared earlier on the line.
+    out = out + "    local i\n";
+    out = out + "    for ((i = 1; i < COMP_CWORD; i++)); do\n";
+    out = out + "        case \"${COMP_WORDS[i]}\" in\n";
+    var i: i32 = 0;
+    while (i < s.commands.len()) {
+      var c: CliSpec = s.commands[i];
+      out = out + "            " + c.name + ") words=" + __cli_sq(__cli_words(c)) + " ;;\n";
+      i = i + 1;
+    }
+    out = out + "        esac\n";
+    out = out + "    done\n";
+  }
+  out = out + "    COMPREPLY=($(compgen -W \"$words\" -- \"$cur\"))\n";
+  out = out + "}\n";
+  // `-o default` falls back to filenames when no word matches, so
+  // operands and option values still complete as paths.
+  out = out + "complete -o default -F " + fn + " " + s.name + "\n";
+  return out;
+}
+
+// One spec's flags as zsh `_arguments` entries, one per line.
+function __cli_zsh_opts(s: CliSpec, indent: string): string {
+  var out: string = "";
+  var i: i32 = 0;
+  while (i < s.flags.len()) {
+    var f: CliFlag = s.flags[i];
+    var tail: string = "[" + __cli_zsh_desc(f.help) + "]";
+    if (f.takes_value) {
+      tail = tail + ":value:_files";
+    }
+    if (f.short.len() > 0) {
+      out = out + indent + "'(-" + f.short + " --" + f.long + ")'{-" + f.short + ",--" + f.long + "}'" + tail + "'\n";
+    } else {
+      out = out + indent + "'--" + f.long + tail + "'\n";
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+function __cli_completion_zsh(s: CliSpec): string {
+  var fn: string = "_" + __cli_ident(s.name);
+  var out: string = "#compdef " + s.name + "\n";
+  out = out + fn + "() {\n";
+  out = out + "    local -a opts cmds\n";
+  out = out + "    opts=(\n" + __cli_zsh_opts(s, "        ") + "    )\n";
+  if (s.commands.len() == 0) {
+    out = out + "    _arguments -s \"${opts[@]}\" '*::arg:_files'\n";
+  } else {
+    out = out + "    local context state line\n";
+    out = out + "    _arguments -s -C \"${opts[@]}\" '1:command:->cmd' '*::arg:->args'\n";
+    out = out + "    case \"$state\" in\n";
+    out = out + "        cmd)\n            cmds=(\n";
+    var i: i32 = 0;
+    while (i < s.commands.len()) {
+      var c: CliSpec = s.commands[i];
+      out = out + "                '" + c.name + ":" + __cli_zsh_desc(c.about) + "'\n";
+      i = i + 1;
+    }
+    out = out + "            )\n            _describe 'command' cmds ;;\n";
+    out = out + "        args)\n            case \"$line[1]\" in\n";
+    i = 0;
+    while (i < s.commands.len()) {
+      var c: CliSpec = s.commands[i];
+      out = out + "                " + c.name + ")\n";
+      out = out + "                    opts=(\n" + __cli_zsh_opts(c, "                        ") + "                    )\n";
+      out = out + "                    _arguments -s \"${opts[@]}\" '*::arg:_files' ;;\n";
+      i = i + 1;
+    }
+    out = out + "            esac ;;\n";
+    out = out + "    esac\n";
+  }
+  out = out + "}\n";
+  out = out + fn + " \"$@\"\n";
+  return out;
+}
+
+// One spec's flags as fish `complete` lines, each under `cond`
+// (a `-n` condition, or "" for none).
+function __cli_fish_flags(prog: string, s: CliSpec, cond: string): string {
+  var out: string = "";
+  var i: i32 = 0;
+  while (i < s.flags.len()) {
+    var f: CliFlag = s.flags[i];
+    var line: string = "complete -c " + prog + cond + " -l " + f.long;
+    if (f.short.len() > 0) {
+      line = line + " -s " + f.short;
+    }
+    if (f.help.len() > 0) {
+      line = line + " -d " + __cli_sq(f.help);
+    }
+    if (f.takes_value) {
+      line = line + " -r";
+    }
+    out = out + line + "\n";
+    i = i + 1;
+  }
+  return out;
+}
+
+function __cli_completion_fish(s: CliSpec): string {
+  if (s.commands.len() == 0) {
+    return __cli_fish_flags(s.name, s, "");
+  }
+  var out: string = __cli_fish_flags(s.name, s, " -n __fish_use_subcommand");
+  var i: i32 = 0;
+  while (i < s.commands.len()) {
+    var c: CliSpec = s.commands[i];
+    var line: string = "complete -c " + s.name + " -n __fish_use_subcommand -a " + c.name;
+    if (c.about.len() > 0) {
+      line = line + " -d " + __cli_sq(c.about);
+    }
+    out = out + line + "\n";
+    out = out + __cli_fish_flags(s.name, c, " -n " + __cli_sq("__fish_seen_subcommand_from " + c.name));
+    i = i + 1;
+  }
+  return out;
+}
+
+// `.completion(shell)` — a completion script for "bash", "zsh" or
+// "fish", or None for any other shell name.
+pub function (s: CliSpec) completion(shell: string): Option[string] {
+  if (shell == "bash") {
+    return Some(__cli_completion_bash(s));
+  }
+  if (shell == "zsh") {
+    return Some(__cli_completion_zsh(s));
+  }
+  if (shell == "fish") {
+    return Some(__cli_completion_fish(s));
+  }
+  return None;
 }
 
 // ============================================================
@@ -300,7 +587,6 @@ pub function (s: CliSpec) usage(): string {
 // (no-color.org) and TERM=dumb force it off; see cli_color_enabled
 // below for the precedence.
 // ============================================================
-
 // `cli_color_enabled()` — the gate every coloriser consults.
 //
 // Four signals, in precedence order:
@@ -327,38 +613,68 @@ pub function (s: CliSpec) usage(): string {
 // three environment variables are overrides — a user who exported one
 // has said something more specific than the stream shape has.
 pub function cli_color_enabled(): boolean {
-    match (env("FORCE_COLOR")) {
-        Some(_) => { return true; },
-        None => { }
-    }
-    match (env("NO_COLOR")) {
-        Some(_) => { return false; },
-        None => { }
-    }
-    match (env("TERM")) {
-        Some(t) => {
-            if (t == "dumb") { return false; }
-        },
-        None => { }
-    }
-    return isatty(1);
+  match (env("FORCE_COLOR")) {
+    Some(_) => {
+      return true;
+    },
+    None => {}
+  }
+  match (env("NO_COLOR")) {
+    Some(_) => {
+      return false;
+    },
+    None => {}
+  }
+  match (env("TERM")) {
+    Some(t) => {
+      if (t == "dumb") {
+        return false;
+      }
+    },
+    None => {}
+  }
+  return isatty(1);
 }
 
 // Wrap `s` in the SGR `code` and a reset, or return it unchanged
 // when colour is disabled.
 function __cli_sgr(code: string, s: string): string {
-    if (!cli_color_enabled()) { return s; }
-    return "\x1b[" + code + "m" + s + "\x1b[0m";
+  if (!cli_color_enabled()) {
+    return s;
+  }
+  return "[" + code + "m" + s + "[0m";
 }
 
 // Foreground colours.
-pub function cli_red(s: string): string { return __cli_sgr("31", s); }
-pub function cli_green(s: string): string { return __cli_sgr("32", s); }
-pub function cli_yellow(s: string): string { return __cli_sgr("33", s); }
-pub function cli_blue(s: string): string { return __cli_sgr("34", s); }
-pub function cli_magenta(s: string): string { return __cli_sgr("35", s); }
-pub function cli_cyan(s: string): string { return __cli_sgr("36", s); }
+pub function cli_red(s: string): string {
+  return __cli_sgr("31", s);
+}
+
+pub function cli_green(s: string): string {
+  return __cli_sgr("32", s);
+}
+
+pub function cli_yellow(s: string): string {
+  return __cli_sgr("33", s);
+}
+
+pub function cli_blue(s: string): string {
+  return __cli_sgr("34", s);
+}
+
+pub function cli_magenta(s: string): string {
+  return __cli_sgr("35", s);
+}
+
+pub function cli_cyan(s: string): string {
+  return __cli_sgr("36", s);
+}
 
 // Text attributes.
-pub function cli_bold(s: string): string { return __cli_sgr("1", s); }
-pub function cli_dim(s: string): string { return __cli_sgr("2", s); }
+pub function cli_bold(s: string): string {
+  return __cli_sgr("1", s);
+}
+
+pub function cli_dim(s: string): string {
+  return __cli_sgr("2", s);
+}
