@@ -46,9 +46,9 @@ import (
 //
 // WHAT THIS DOES NOT COVER. This is the emit-ALL fixpoint: one process emits a
 // batch of units. It does not run the one-unit-per-process shape, which
-// TestSelfHostAssumeEligibleByteIdenticalX86_64 drives on every push; that the
-// two routes emit the same bytes is TestSelfHostPerModuleEmitAllX86_64's proof.
-// gen0 == gen1 byte identity is what is covered HERE.
+// TestSelfHostAssumeEligibleByteIdenticalX86_64 drives on every push and proves
+// byte-identical to emit-all. gen0 == gen1 byte identity is what is covered
+// HERE.
 func TestSelfHostPerModuleEmitAllFixpointX86_64(t *testing.T) {
 	// Both generations use the same batch so the comparison isolates the
 	// COMPILER, not the windowing.

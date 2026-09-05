@@ -65,14 +65,15 @@
 # new shape is ~349 s. Entry is that with the audit's own 1.5x pessimism band —
 # and note the old 460 was already UNDER the 805.7 s it was carrying.
 TestSelfHostModloadPerModuleWholeCompilerX86_64 525
-# The whole compiler's 21 modules emitted twice, one process each (with and
-# without -assume-eligible), and compared byte-for-byte. It carried NO entry —
-# so LPT ranked ~10 minutes of work as 1 s — and the shard holding it ran 13 min
-# on run 31758666459 (482 s) and blew the 18-minute timeout on run 31759653118
-# (738 s), where the partition happened to pair it with a heavier complement.
-# Weighted at the slower of the two: it varies by ~50% run to run, so give it
-# the pessimistic bucket.
-TestSelfHostAssumeEligibleByteIdenticalX86_64 738
+# The whole compiler's 56 planned units emitted by the checked per-process
+# route (four at a time) and compared byte-for-byte with one -assume-eligible
+# emit-all of the same windows, then linked and smoke-run. It once carried NO
+# entry — so LPT ranked ~10 minutes of work as 1 s — and the shard holding it
+# blew the 18-minute timeout on run 31759653118 (738 s). Measured locally
+# 2026-09-04 at 377 s (255 s per-process on 4 workers + 69 s emit-all) on a
+# shared 4-core box, against 475 s for the shape it replaced; entry is that
+# with the audit's 1.5x band. It varies ~50% run to run, so keep it pessimistic.
+TestSelfHostAssumeEligibleByteIdenticalX86_64 570
 # Two warm drivers (asm_ir_run + wasm_ir_run), 14 subtests that are ~0.01s each —
 # the cost is almost entirely the driver restore.
 TestSelfHostFnArrayFieldGateX86_64 12

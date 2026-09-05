@@ -379,6 +379,13 @@ pub function all_eligible_lib_known_view(mod: parser.Module, known: string[], al
     return eligible_core_known_view_impl(mod, known, all_funcs, all_structs);
 }
 
+// all_eligible_lib_known_view_range is all_eligible_lib_known_view restricted to
+// the functions [lo, hi) a function-window emit covers; hi < 0 means the module
+// end, so (0, -1) is the whole-module check.
+pub function all_eligible_lib_known_view_range(mod: parser.Module, known: string[], all_funcs: parser.FuncDecl[], all_structs: irlower.StructTab, lo: i32, hi: i32): boolean {
+    return eligible_core_known_view_range(mod, known, all_funcs, all_structs, lo, hi);
+}
+
 // eligible_core_known_impl is the shared body. It used to take a `require_main`
 // flag — true for the whole-program / entry path, false for a per-module library
 // unit — but the distinction is gone: emit_module_ir_unit's `_start` exits 0 for a
@@ -478,6 +485,14 @@ pub function strict_ir_refuse(what: string): i32 {
 // array_ret_fns / borrowable_params_of (vs the _of / _interproc forms emit
 // uses); this variant tracks emit, not that legacy gate, by design.
 pub function eligible_core_known_view_impl(mod: parser.Module, known: string[], all_funcs: parser.FuncDecl[], all_structs: irlower.StructTab): boolean {
+    return eligible_core_known_view_range(mod, known, all_funcs, all_structs, 0, mod.funcs.len());
+}
+
+// eligible_core_known_view_range is eligible_core_known_view_impl over the
+// functions [lo, hi) of `mod` only: the per-process function window, so a
+// windowed unit's pre-check lowers its own window rather than the whole module
+// once per process. hi < 0 (or past the end) means to the module end.
+pub function eligible_core_known_view_range(mod: parser.Module, known: string[], all_funcs: parser.FuncDecl[], all_structs: irlower.StructTab, lo: i32, hi: i32): boolean {
     var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
     // A function-less module is eligible: a types-only module (ast.fern) has
     // nothing that could fail to lower, and its unit is the preamble alone.
@@ -497,8 +512,11 @@ pub function eligible_core_known_view_impl(mod: parser.Module, known: string[], 
         closurearr_ret_fns: irlower.closurearr_ret_fns_of(mod.funcs, stab),
     };
     var freg: irlower.SigReg = module_func_reg(mod);
-    var i: i32 = 0;
-    while (i < mod.funcs.len()) {
+    var end: i32 = hi;
+    if (end < 0 || end > mod.funcs.len()) { end = mod.funcs.len(); }
+    var i: i32 = lo;
+    if (i < 0) { i = 0; }
+    while (i < end) {
         if (!func_eligible(mod.funcs[i], mod, all_structs, known, sg, freg)) {
             if (strict_ir_on()) {
                 strict_ir_refuse(mod.funcs[i].name
