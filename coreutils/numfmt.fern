@@ -7,11 +7,15 @@
 //   --suffix --padding --grouping --field --delimiter --header
 //   --invalid=MODE --debug -z
 //
-// Every value goes through `lib/ld.fern` — the x87 extended-precision
-// arithmetic GNU does this in — because the answers differ in the last
-// digit otherwise: `numfmt --from=si 1.555` is 1.556 because 555/1000
-// lands a hair above 0.555 in that format, and nothing but the same
-// arithmetic reproduces it.
+// Every value goes through `lib/ld.fern` — C's `long double` as the
+// TARGET has it — because the answers differ in the last digit
+// otherwise: `numfmt --from=si 1.555` is 1.556 because 555/1000 lands a
+// hair above 0.555 in that format, and nothing but the same arithmetic
+// reproduces it. Which format that is belongs to the machine (x87 on
+// x86-64, IEEE binary128 on arm64 and wasm32, binary64 on Darwin), and
+// it decides more than the last digit: LDBL_DIG is how many digits the
+// unscaled path will print at all, so a value GNU prints on one machine
+// it refuses on another.
 //
 // The scaling is GNU's, not a rounding of the quotient: the value is
 // divided by the base until it is below it, then rounded at one decimal
@@ -178,14 +182,16 @@ function conv_status(): i32 {
 }
 
 // GNU refuses an input with more than this many digits before it ever
-// converts one, and warns past MAX_UNSCALED_DIGITS that a long double
-// cannot hold them all.
+// converts one. 33 is 999Q, the largest the unit letters reach, and is
+// the same on every machine.
 function max_acceptable_digits(): i32 {
   return 33;
 }
 
-function max_unscaled_digits(): i32 {
-  return 18;
+// GNU's MAX_UNSCALED_DIGITS, which is LDBL_DIG: how many digits the
+// target's long double holds, so it moves with the target.
+function max_unscaled_digits(f: ld.Format): i32 {
+  return f.dig();
 }
 
 // The unit letters, in order: K is 1, Q is 10.
@@ -207,11 +213,13 @@ function no_format(): Fmt {
 }
 
 // ---- options ---------------------------------------------------------------
-struct Opts { from: i32, to: i32, from_unit: ld.Ld, to_unit: ld.Ld, round: i32, suffix: string, padding: i32, grouping: boolean, delim: i32, fields: i32[], all_fields: boolean, debug: boolean, fmt: Fmt, invalid: i32, header: i32, zero: boolean, conv: boolean }
+struct Opts { ldbl: ld.Format, from: i32, to: i32, from_unit: ld.LD, to_unit: ld.LD, round: i32, suffix: string, padding: i32, grouping: boolean, delim: i32, fields: i32[], all_fields: boolean, debug: boolean, fmt: Fmt, invalid: i32, header: i32, zero: boolean, conv: boolean }
 
 function default_opts(): Opts {
   var none: i32[] = [];
-  return Opts { from: scale_none(), to: scale_none(), from_unit: ld.ld_from_i32(1), to_unit: ld.ld_from_i32(1), round: ld.round_from_zero(), suffix: "", padding: 0, grouping: false, delim: 0 - 1, fields: none, all_fields: false, debug: false, fmt: no_format(), invalid: inv_abort(), header: 0, zero: false, conv: false };
+  var f: ld.Format = ld.format();
+  var one: ld.LD = f.from_i64(1 as i64);
+  return Opts { ldbl: f, from: scale_none(), to: scale_none(), from_unit: one, to_unit: one, round: ld.round_from_zero(), suffix: "", padding: 0, grouping: false, delim: 0 - 1, fields: none, all_fields: false, debug: false, fmt: no_format(), invalid: inv_abort(), header: 0, zero: false, conv: false };
 }
 
 // A `--from` / `--to` value, with GNU's list of what it could have been.
@@ -309,7 +317,7 @@ function arg_error(v: string, which: string, names: string[]): i32 {
 
 // `--from-unit` / `--to-unit`: a whole number, with an optional unit
 // letter, that must fit a uintmax and not be zero.
-function parse_unit(v: string): ld.Ld {
+function parse_unit(f: ld.Format, v: string): ld.LD {
   var i: i32 = 0;
   while (i < v.len() && is_blank(v[i] as i32)) {
     i = i + 1;
@@ -346,21 +354,21 @@ function parse_unit(v: string): ld.Ld {
     gnu.error("invalid unit size: " + gnu.quote(v));
     exit(1);
   }
-  var out: ld.Ld = ld.ld_from_u64(acc);
+  var out: ld.LD = f.from_u64(acc);
   var k: i32 = 0;
   while (k < power) {
-    out = out.mul(ld.ld_from_i32(base));
+    out = f.mul(out, f.from_i64(base as i64));
     k = k + 1;
   }
-  if (!fits_u64(out)) {
+  if (!fits_u64(f, out)) {
     gnu.error("invalid unit size: " + gnu.quote(v));
     exit(1);
   }
   return out;
 }
 
-function fits_u64(v: ld.Ld): boolean {
-  return v.cmp(ld.ld_from_u64(18446744073709551615 as u64)) <= 0;
+function fits_u64(f: ld.Format, v: ld.LD): boolean {
+  return v.cmp(f.from_u64(18446744073709551615 as u64)) <= 0;
 }
 
 // The power of the unit letter `b`, 0 when there is none and -1 when
@@ -700,10 +708,10 @@ function read_precision(s: string, from: i32): (i64, i32) {
 // The result of reading one field: the value, the number of fraction
 // digits it was written with, and the error to report when it is not a
 // number at all.
-struct Num { val: ld.Ld, prec: i32, err: string, ok: boolean }
+struct Num { val: ld.LD, prec: i32, err: string, ok: boolean }
 
-function bad(msg: string): Num {
-  return Num { val: ld.ld_zero(), prec: 0, err: msg, ok: false };
+function bad(f: ld.Format, msg: string): Num {
+  return Num { val: f.zero(false), prec: 0, err: msg, ok: false };
 }
 
 // GNU's `simple_strtod_human`, which is not strtold: the digits are
@@ -724,18 +732,18 @@ function parse_number(text0: string, o: Opts): Num {
     neg = true;
     i = i + 1;
   }
-  var whole: (ld.Ld, i32, i32) = read_digits(s, i);
-  var val: ld.Ld = whole.0;
+  var whole: (ld.LD, i32, i32) = read_digits(o.ldbl, s, i);
+  var val: ld.LD = whole.0;
   var digits: i32 = whole.1;
   i = whole.2;
   var prec: i32 = 0;
   if (i < s.len() && s[i] as i32 == 46) {
-    var frac: (ld.Ld, i32, i32) = read_digits(s, i + 1);
+    var frac: (ld.LD, i32, i32) = read_digits(o.ldbl, s, i + 1);
     // A point with no digit after it ends the number, and the number is
     // not one at all unless what follows is a SECOND point: `5.` and
     // `1.K` are invalid numbers, while `1..5` is 1 followed by `..5`.
     if (frac.1 == 0 && (i + 1 >= s.len() || s[i + 1] as i32 != 46)) {
-      return bad("invalid number: " + gnu.quote(text));
+      return bad(o.ldbl, "invalid number: " + gnu.quote(text));
     }
     if (frac.1 == 0) {
       i = i + 1;
@@ -743,17 +751,20 @@ function parse_number(text0: string, o: Opts): Num {
     if (frac.1 > 0) {
       prec = frac.1;
       digits = digits + frac.1;
-      val = val.add(frac.0.div(ld.ld_pow10(prec)));
+      val = o.ldbl.add(val, o.ldbl.div(frac.0, o.ldbl.pow10(prec)));
       i = frac.2;
     }
   }
   if (digits == 0) {
-    return bad("invalid number: " + gnu.quote(text));
+    return bad(o.ldbl, "invalid number: " + gnu.quote(text));
   }
   if (digits > max_acceptable_digits()) {
-    return bad("value too large to be converted: " + gnu.quote(text));
+    return bad(o.ldbl, "value too large to be converted: " + gnu.quote(text));
   }
-  if (neg) {
+  // numfmt reads no signed zero: `-0` and `-0.0` are 0. A value that is
+  // merely SMALL keeps its sign all the way down, so `--to=si -- -0.5`
+  // is still `-0`.
+  if (neg && !val.is_zero()) {
     val = val.negate();
   }
   return apply_suffix(text, s, i, val, prec, o);
@@ -761,41 +772,43 @@ function parse_number(text0: string, o: Opts): Num {
 
 // Digits folded the way GNU folds them, plus how many there were and
 // where they end.
-function read_digits(s: string, from: i32): (ld.Ld, i32, i32) {
-  // The fold is exact while it fits 64 bits, which is the whole of a
-  // long double's significand, so the digits go through plain integer
-  // arithmetic until one would not fit and only then through the
-  // rounding one.
+function read_digits(f: ld.Format, s: string, from: i32): (ld.LD, i32, i32) {
+  // The fold is exact while it stays inside the significand, so the
+  // digits go through plain integer arithmetic until one would not fit
+  // and only then through the rounding one. Where the significand is
+  // narrower than a u64 the limit is the significand's, not u64's:
+  // every step past it has to round as the C one does.
+  var limit: u64 = f.max_exact_u64();
   var acc: u64 = 0 as u64;
-  var v: ld.Ld = ld.ld_zero();
+  var v: ld.LD = f.zero(false);
   var wide: boolean = false;
-  var ten: ld.Ld = ld.ld_from_i32(10);
+  var ten: ld.LD = f.from_i64(10 as i64);
   var i: i32 = from;
   var n: i32 = 0;
   while (i < s.len() && is_digit(s[i] as i32)) {
     var d: i32 = s[i] as i32 - 48;
-    if (!wide && acc <= (18446744073709551615 as u64 - d as u64) / (10 as u64)) {
+    if (!wide && acc <= (limit - d as u64) / (10 as u64)) {
       acc = acc * (10 as u64) + d as u64;
     } else {
       if (!wide) {
-        v = ld.ld_from_u64(acc);
+        v = f.from_u64(acc);
         wide = true;
       }
-      v = v.mul(ten).add(ld.ld_from_i32(d));
+      v = f.add(f.mul(v, ten), f.from_i64(d as i64));
     }
     n = n + 1;
     i = i + 1;
   }
   if (!wide) {
-    v = ld.ld_from_u64(acc);
+    v = f.from_u64(acc);
   }
   return (v, n, i);
 }
 
 // What follows the digits: the unit letter `--from` allows, then the
 // `--suffix` string, and nothing else.
-function apply_suffix(text: string, s: string, at: i32, val0: ld.Ld, prec: i32, o: Opts): Num {
-  var val: ld.Ld = val0;
+function apply_suffix(text: string, s: string, at: i32, val0: ld.LD, prec: i32, o: Opts): Num {
+  var val: ld.LD = val0;
   var i: i32 = at;
   // Blanks between the number and its unit belong to neither: `1000 K`
   // is a megabyte.
@@ -807,7 +820,7 @@ function apply_suffix(text: string, s: string, at: i32, val0: ld.Ld, prec: i32, 
   var rest: string = slice_unchecked(s, i, s.len()) + "";
   if (rest.len() == 0) {
     if (spaced && o.from == scale_none()) {
-      return bad("rejecting suffix in input: " + gnu.quote(text) + " (consider using --from)");
+      return bad(o.ldbl, "rejecting suffix in input: " + gnu.quote(text) + " (consider using --from)");
     }
     return Num { val: val, prec: prec, err: "", ok: true };
   }
@@ -817,12 +830,12 @@ function apply_suffix(text: string, s: string, at: i32, val0: ld.Ld, prec: i32, 
   // --from), anything else as not being one at all.
   if (o.from == scale_none()) {
     if (power >= 0) {
-      return bad("rejecting suffix in input: " + gnu.quote(text) + " (consider using --from)");
+      return bad(o.ldbl, "rejecting suffix in input: " + gnu.quote(text) + " (consider using --from)");
     }
-    return bad("invalid suffix in input: " + gnu.quote(text));
+    return bad(o.ldbl, "invalid suffix in input: " + gnu.quote(text));
   }
   if (power < 0) {
-    return bad("invalid suffix in input: " + gnu.quote(text));
+    return bad(o.ldbl, "invalid suffix in input: " + gnu.quote(text));
   }
   var base: i32 = 1000;
   var after: i32 = 1;
@@ -834,17 +847,17 @@ function apply_suffix(text: string, s: string, at: i32, val0: ld.Ld, prec: i32, 
       base = 1024;
       after = 2;
     } else if (o.from == scale_iec_i()) {
-      return bad("missing 'i' suffix in input: " + gnu.quote(text) + " (e.g Ki/Mi/Gi)");
+      return bad(o.ldbl, "missing 'i' suffix in input: " + gnu.quote(text) + " (e.g Ki/Mi/Gi)");
     }
   }
   var k: i32 = 0;
   while (k < power) {
-    val = val.mul(ld.ld_from_i32(base));
+    val = o.ldbl.mul(val, o.ldbl.from_i64(base as i64));
     k = k + 1;
   }
   var tail: string = slice_unchecked(rest, after, rest.len()) + "";
   if (tail.len() > 0) {
-    return bad("invalid suffix in input " + gnu.quote(text) + ": " + gnu.quote(tail));
+    return bad(o.ldbl, "invalid suffix in input " + gnu.quote(text) + ": " + gnu.quote(tail));
   }
   // A scaled value loses the precision it was written with: `1.5K` is
   // 1500, not 1500.0.
@@ -861,7 +874,7 @@ struct Human { text: string, unit: string, err: string }
 // divided down by the base, rounded at one decimal while it is under ten
 // (or at `min(3 * steps, precision)` when --format set a precision), and
 // scaled once more when the rounding carried it up to the base.
-function to_human(val0: ld.Ld, prec: i32, o: Opts): Human {
+function to_human(val0: ld.LD, prec: i32, o: Opts): Human {
   if (o.to == scale_none()) {
     return Human { text: scale_none_text(val0, prec, o), unit: "", err: "" };
   }
@@ -869,16 +882,17 @@ function to_human(val0: ld.Ld, prec: i32, o: Opts): Human {
   if (o.to == scale_iec() || o.to == scale_iec_i()) {
     base = 1024;
   }
-  var b: ld.Ld = ld.ld_from_i32(base);
-  var ten: ld.Ld = ld.ld_from_i32(10);
-  var val: ld.Ld = val0;
+  var f: ld.Format = o.ldbl;
+  var b: ld.LD = f.from_i64(base as i64);
+  var ten: ld.LD = f.from_i64(10 as i64);
+  var val: ld.LD = val0;
   var power: i32 = 0;
   while (val.cmp_abs(b) >= 0 && power < 10) {
-    val = val.div(b);
+    val = f.div(val, b);
     power = power + 1;
   }
   if (val.cmp_abs(b) >= 0) {
-    return Human { text: "", unit: "", err: "value too large to be printed: " + gnu.quote(val0.to_g()) + " (cannot handle values > 999Q)" };
+    return Human { text: "", unit: "", err: "value too large to be printed: " + gnu.quote(f.to_g(val0)) + " (cannot handle values > 999Q)" };
   }
   var adjust: i32 = 0;
   if (o.fmt.prec >= 0 as i64) {
@@ -892,13 +906,13 @@ function to_human(val0: ld.Ld, prec: i32, o: Opts): Human {
   // At zero decimals the scaling either way is the identity, and each
   // of those operations would allocate a value to no purpose.
   if (adjust == 0) {
-    val = val.round(o.round);
+    val = f.round_to_int(val, o.round);
   } else {
-    var p10: ld.Ld = ld.ld_pow10(adjust);
-    val = val.mul(p10).round(o.round).div(p10);
+    var p10: ld.LD = f.pow10(adjust);
+    val = f.div(f.round_to_int(f.mul(val, p10), o.round), p10);
   }
   if (val.cmp_abs(b) >= 0) {
-    val = val.div(b);
+    val = f.div(val, b);
     power = power + 1;
   }
   var out_prec: i32 = 0;
@@ -908,12 +922,21 @@ function to_human(val0: ld.Ld, prec: i32, o: Opts): Human {
   if (o.fmt.prec >= 0 as i64) {
     out_prec = o.fmt.prec as i32;
   }
-  return Human { text: val.to_fixed(out_prec), unit: unit_suffix(power, o.to), err: "" };
+  return Human { text: f.to_fixed(val, out_prec), unit: unit_suffix(power, o.to), err: "" };
 }
 
 function unit_suffix(power: i32, to: i32): string {
   if (power == 0) {
     return "";
+  }
+  // Rounding can carry a value past the last letter — `--to=si` of
+  // 999999999999999999999999999999999 divides ten times and then rounds
+  // up to 1000 — and GNU names that with a sentinel rather than a unit:
+  // `1.0(error)`. Only a long double wide enough to keep the digits
+  // reaches it, so this is an aarch64 and wasm answer, not an x86-64
+  // one.
+  if (power > unit_letters().len()) {
+    return "(error)";
   }
   var s: string = slice_unchecked(unit_letters(), power - 1, power) + "";
   if (to == scale_iec_i()) {
@@ -925,25 +948,27 @@ function unit_suffix(power: i32, to: i32): string {
 // The unscaled path, which is where a value with too many digits for a
 // long double is refused: GNU prints at most 19 significant digits, so
 // the integer part and the precision together may not want more.
-function scale_none_text(val: ld.Ld, prec0: i32, o: Opts): string {
+function scale_none_text(val: ld.LD, prec0: i32, o: Opts): string {
   var prec: i32 = prec0;
   if (o.fmt.prec >= 0 as i64) {
     prec = o.fmt.prec as i32;
   }
   if (prec == 0) {
-    return val.round(o.round).to_fixed(0);
+    return o.ldbl.to_fixed(o.ldbl.round_to_int(val, o.round), 0);
   }
-  var p10: ld.Ld = ld.ld_pow10(prec);
-  return val.mul(p10).round(o.round).div(p10).to_fixed(prec);
+  var p10: ld.LD = o.ldbl.pow10(prec);
+  return o.ldbl.to_fixed(o.ldbl.div(o.ldbl.round_to_int(o.ldbl.mul(val, p10), o.round), p10), prec);
 }
 
-// Whether the value and precision fit the 19 significant digits the
-// unscaled path can print.
-function too_wide(val: ld.Ld, prec: i64): boolean {
-  if (prec > max_unscaled_digits() as i64) {
+// Whether the value and precision fit the significant digits the
+// unscaled path can print, which is the target long double's LDBL_DIG:
+// 18 in x87, 33 in binary128, 15 in binary64. GNU's limit is that same
+// macro, so a value it prints on one machine it refuses on another.
+function too_wide(f: ld.Format, val: ld.LD, prec: i64): boolean {
+  if (prec > max_unscaled_digits(f) as i64) {
     return true;
   }
-  return val.cmp_abs(ld.ld_pow10(19 - prec as i32)) >= 0;
+  return val.cmp_abs(f.pow10(max_unscaled_digits(f) + 1 - prec as i32)) >= 0;
 }
 
 // The precision the output is written at: --format's when it set one,
@@ -1016,14 +1041,14 @@ function convert(text: string, raw: string, o: Opts, out0: Out, auto: i32): Out 
     body = slice_unchecked(body, 0, body.len() - o.suffix.len()) + "";
   }
   var n: Num = parse_number(body, o);
-  if (o.debug && n.ok && digits_of(body) > max_unscaled_digits()) {
+  if (o.debug && n.ok && digits_of(body) > max_unscaled_digits(o.ldbl)) {
     gnu.error("large input value " + gnu.quote(text) + ": possible precision loss");
   }
-  var val: ld.Ld = ld.ld_zero();
+  var val: ld.LD = o.ldbl.zero(false);
   if (n.ok) {
     val = scaled(n, o);
-    if (o.to == scale_none() && too_wide(val, effective_prec(o, n.prec))) {
-      n = bad(wide_message(val, n.prec, o));
+    if (o.to == scale_none() && too_wide(o.ldbl, val, effective_prec(o, n.prec))) {
+      n = bad(o.ldbl, wide_message(val, n.prec, o));
     }
   }
   if (!n.ok) {
@@ -1056,20 +1081,20 @@ function convert(text: string, raw: string, o: Opts, out0: Out, auto: i32): Out 
   return out;
 }
 
-function scaled(n: Num, o: Opts): ld.Ld {
-  return n.val.mul(o.from_unit).div(o.to_unit);
+function scaled(n: Num, o: Opts): ld.LD {
+  return o.ldbl.div(o.ldbl.mul(n.val, o.from_unit), o.to_unit);
 }
 
-function wide_message(val: ld.Ld, prec: i32, o: Opts): string {
+function wide_message(val: ld.LD, prec: i32, o: Opts): string {
   var tail: string = " (consider using --to)";
   var p: i64 = prec as i64;
   if (o.fmt.prec >= 0 as i64) {
     p = o.fmt.prec;
   }
   if (p > 0 as i64) {
-    return "value/precision too large to be printed: " + gnu.quote(val.to_g() + "/" + p.to_string()) + tail;
+    return "value/precision too large to be printed: " + gnu.quote(o.ldbl.to_g(val) + "/" + p.to_string()) + tail;
   }
-  return "value too large to be printed: " + gnu.quote(val.to_g()) + tail;
+  return "value too large to be printed: " + gnu.quote(o.ldbl.to_g(val)) + tail;
 }
 
 function digits_of(s: string): i32 {
@@ -1227,10 +1252,10 @@ function apply_option(o: Opts, m: gnu.OptMatch): Opts {
     return Opts { ...o, to: parse_scale(m.value, "--to"), conv: true };
   }
   if (m.id == opt_from_unit()) {
-    return Opts { ...o, from_unit: parse_unit(m.value) };
+    return Opts { ...o, from_unit: parse_unit(o.ldbl, m.value) };
   }
   if (m.id == opt_to_unit()) {
-    return Opts { ...o, to_unit: parse_unit(m.value) };
+    return Opts { ...o, to_unit: parse_unit(o.ldbl, m.value) };
   }
   if (m.id == opt_round()) {
     return Opts { ...o, round: parse_round(m.value) };

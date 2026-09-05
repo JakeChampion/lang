@@ -139,20 +139,54 @@ coreutils/
   lib/gnu.fern      what every utility shares with GNU: argv[0] verbatim,
                     the usage-error path, --help/--version handling,
                     strerror text, checked stdout writes
+  lib/ld.fern       C's `long double` as the TARGET has it, for the
+                    utilities that convert and compute in one
+                    (printf, numfmt, and the rest that follow)
   <util>.fern       one program per utility
 internal/coreutils/
   harness_test.go   the oracle harness (this file's "How parity is enforced")
+  longdouble_test.go
+                    the long double each target gets, which the
+                    host-oracle corpus cannot see (#8513)
   <util>_test.go    that utility's cases
 scripts/coreutils-bench
                     hyperfine: Fern vs GNU vs uutils, one table
 ```
 
-A utility is one file. Shared behaviour goes in `lib/gnu.fern` only once a
+A utility is one file. Shared behaviour goes in `lib/` only once a
 second utility needs it — the standard-options-only parse arrived with `yes`,
 the sole-argument `--help` rule with `true`/`false`/`echo`, and the full
 getopt_long emulation (valued options, permutation, `-n5` / `-n 5`, the
 ambiguity list) arrives with the first utility that declares an option of its
 own, as its own sub-issue. Do not build it ahead of a consumer.
+
+`lib/ld.fern` is the one module that is not about GNU's conventions but
+about the machine: `printf`, `numfmt` and `seq` all compute in C's `long
+double`, which is x87 80-bit extended on x86-64, IEEE binary128 on arm64
+and wasm32, and plain binary64 on Darwin. It is a `Format` — significand
+bits, exponent range, whether the leading bit is stored — plus parsing
+(`strtold`), arithmetic (add / sub / mul / div / compare, each rounded
+once), the exact decimal expansion, the `%a` / `%e` / `%f` / `%g` bodies,
+and the facts a utility reads off the format rather than the value:
+`LDBL_DIG`, the largest exactly-held integer, the `--round` modes.
+`format()` reads `target_arch()` / `target_os()`, so those fold before
+the checker and a build carries one model.
+
+**A host oracle can only ever prove the format it runs on.** That is how
+the hardcoded x87 model in #8513 survived a year, and it is why there is
+one module rather than one per utility: a second copy is a second place
+for the same bug, and numfmt shipped exactly that — its own 64-bit
+significand, 29 of its 662 cases diverging on aarch64 with nothing on an
+x86-64 host to show it. Two gates cover what the corpus cannot see:
+`internal/coreutils/longdouble_test.go` checks every target's selection
+and FAILS rather than guess when a target it does not know appears, and
+`examples/tests/coreutils_ld_test.fern` drives all three formats
+explicitly on whatever host runs it.
+
+**Anything a utility reads off `long double` belongs in this module**,
+not just arithmetic. `MAX_UNSCALED_DIGITS` in numfmt is GNU's `LDBL_DIG`
+— 18, 33 or 15 — so a value GNU prints on one machine it refuses on
+another; a literal 18 there was the same bug wearing different clothes.
 
 ## Adding a utility
 
