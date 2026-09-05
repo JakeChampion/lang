@@ -500,7 +500,8 @@ const (
 
 	// The global string-builder: an 8-byte length counter and a fixed .bss byte
 	// buffer that strbuf_append writes into and strbuf_take copies out of. 64 MiB,
-	// matching the native backend. This costs no file space: the W^X ELF writer
+	// fixed: the register backends grow theirs on demand (#8212); this
+	// experimental one still does not. This costs no file space: the W^X ELF writer
 	// stores the data segment only up to its last non-zero byte (p_filesz) and
 	// lets the loader zero-fill the rest via p_memsz, so the whole zero-init buffer
 	// is NOBITS (see elf.imageWX / trailingTrimZeros).

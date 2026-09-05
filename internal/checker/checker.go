@@ -1136,7 +1136,7 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		Result: ast.VoidType{},
 	}
 	// strbuf_reset() / strbuf_append(s) / strbuf_take() — global
-	// mutable string-builder primitive. There's a single 64 MiB BSS
+	// mutable string-builder primitive. There's a single growable
 	// scratch buffer; reset zeroes its length, append memcpys bytes
 	// past the current tail, take allocates a fresh string of the
 	// accumulated bytes and resets. Built for the asm self-host

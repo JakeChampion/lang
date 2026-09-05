@@ -93,9 +93,9 @@ type Assembler struct {
 	// bss accumulates .bss (zero-initialised) contributions SEPARATELY from
 	// rodata, and is concatenated after it once layout is final. Folding the
 	// two in emission order is what made the ELF writer's trailing-zero trim
-	// useless: `.section .bss` blocks are emitted mid-stream, so the 64 MiB
-	// __fern_strbuf_data reservation had initialised .rodata after it and the
-	// whole run was written to the file (#6928). Kept at the tail, it is
+	// useless: `.section .bss` blocks are emitted mid-stream, so a large
+	// reservation had initialised .rodata after it and the whole run was
+	// written to the file (#6928). Kept at the tail, it is
 	// trailing zeros and the loader supplies it via p_memsz.
 	bss          []byte
 	textLabels   map[string]int

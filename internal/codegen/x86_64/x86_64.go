@@ -948,8 +948,8 @@ type generator struct {
 	usesExit   bool
 	// usesStrBuf — strbuf_reset / strbuf_append / strbuf_take —
 	// global mutable scratch buffer primitive for O(1) amortised
-	// append (escape hatch from O(N²) `s.out + text`). 64 MiB BSS
-	// region + 8-byte len counter. Single-threaded; one builder
+	// append (escape hatch from O(N²) `s.out + text`). A heap buffer
+	// that doubles on demand. Single-threaded; one builder
 	// at a time. See checker.go for the user-facing spec.
 	usesStrBuf bool
 	// usesNowUnixMs pulls in `__fern_now_unix_ms()` — wall-
@@ -5931,9 +5931,8 @@ func (g *generator) emitDataSections() {
 // emitAllocRuntime emits `__fern_alloc(size: i64) -> i64`,
 // the mmap-backed bump allocator. Same shape as arm64's:
 // lazy mmap reservation on first call, then a cursor bump
-// per allocation. 64 MiB virtual reservation is plenty for
-// the CLI / edge-handler workloads we target. The arena is
-// reclaimed by the OS at process exit — no `free`.
+// per allocation. The arena is a 16 GiB MAP_NORESERVE
+// reservation (heapBytes), reclaimed by the OS at process exit.
 //
 // Allocations are rounded up to a 16-byte boundary so
 // subsequent allocs stay 16-aligned for any pointer-pair
@@ -9716,11 +9715,13 @@ func (g *generator) emitEprintRuntime() {
 // emitStrBufRuntime emits the three global mutable-string-builder
 // helpers and the BSS scratch they share.
 //
-//	__fern_strbuf_data: .skip 64 MiB
-//	__fern_strbuf_len:  .quad 0 (current byte count)
+//	__fern_strbuf_len: .quad 0 (current byte count)
+//	__fern_strbuf_ptr: .quad 0 (heap buffer, null until the first append)
+//	__fern_strbuf_cap: .quad 0 (its capacity)
 //
 //	__fern_strbuf_reset()       — len = 0
-//	__fern_strbuf_append(s)     — memcpy s past current tail, bump len
+//	__fern_strbuf_append(s)     — grow if needed, memcpy s past current
+//	                              tail, bump len
 //	__fern_strbuf_take() -> str — allocate fresh string of accumulated
 //	                              bytes, copy, reset len, return it
 //
@@ -9729,22 +9730,21 @@ func (g *generator) emitEprintRuntime() {
 // through the bump heap, which can't compile asm.fern through itself
 // (~60 GB needed). With the strbuf the same loop is O(N).
 //
-// Single-threaded; only one strbuf active at a time. The 64 MiB cap
-// is generous for the asm-self-host use case (asm.fern's expected
-// output is ~2 MB) but documented. It costs nothing on disk: the
-// assembler keeps .bss at the tail of the data blob so the ELF writer
-// leaves it to the loader's zero-fill (#6928). It is NOT free on the
-// Mach-O path, which has no zero-fill section.
+// Single-threaded; only one strbuf active at a time. The buffer is a
+// heap block that doubles (from 64 KiB) when an append would not fit,
+// so the accumulated output has no fixed ceiling: the self-host
+// compiler's own arm64 output passed 64 MiB (#8212).
 func (g *generator) emitStrBufRuntime() {
 	g.line("")
 	g.line(".section .bss")
 	g.line(".align 8")
 	g.line("__fern_strbuf_len: .skip 8")
-	g.line(".align 8")
-	g.line("__fern_strbuf_data: .skip 67108864") // 64 MiB
+	g.line("__fern_strbuf_ptr: .skip 8")
+	g.line("__fern_strbuf_cap: .skip 8")
 	g.line(".section .text")
 
-	// __fern_strbuf_reset(): len = 0
+	// __fern_strbuf_reset(): len = 0. The buffer stays allocated for the
+	// next build.
 	g.line("")
 	g.line(".globl __fern_strbuf_reset")
 	g.line(".type __fern_strbuf_reset, @function")
@@ -9753,12 +9753,50 @@ func (g *generator) emitStrBufRuntime() {
 	g.emit("ret")
 	g.line(".size __fern_strbuf_reset, .-__fern_strbuf_reset")
 
+	// __fern_strbuf_grow(rdi = bytes needed): replace the buffer with one
+	// of at least that capacity — doubling from 64 KiB — and copy the
+	// live bytes across. The old buffer is left to the arena, like the
+	// wasm runtime's strbufEnsure.
+	g.line("")
+	g.line(".globl __fern_strbuf_grow")
+	g.line(".type __fern_strbuf_grow, @function")
+	g.label("__fern_strbuf_grow")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx")
+	g.emit("push r12")
+	g.emit("mov rbx, rdi") // need
+	g.emit("mov r12, qword ptr [rip + __fern_strbuf_cap]")
+	g.emit("test r12, r12")
+	g.emit("jnz .Lsbgrow_dbl")
+	g.emit("mov r12, 65536")
+	g.label(".Lsbgrow_dbl")
+	g.emit("cmp r12, rbx")
+	g.emit("jae .Lsbgrow_alloc")
+	g.emit("add r12, r12")
+	g.emit("jmp .Lsbgrow_dbl")
+	g.label(".Lsbgrow_alloc")
+	g.emit("mov rdi, r12")
+	g.emit("call __fern_alloc")
+	g.emit("mov rbx, rax") // new buffer
+	// memcpy(new, old, len); len is 0 while old is null.
+	g.emit("mov rdi, rax")
+	g.emit("mov rsi, qword ptr [rip + __fern_strbuf_ptr]")
+	g.emit("mov rdx, qword ptr [rip + __fern_strbuf_len]")
+	g.emit("call __fern_memcpy")
+	g.emit("mov qword ptr [rip + __fern_strbuf_ptr], rbx")
+	g.emit("mov qword ptr [rip + __fern_strbuf_cap], r12")
+	g.emit("pop r12")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_strbuf_grow, .-__fern_strbuf_grow")
+
 	// __fern_strbuf_append(s): rdi = string (may be inline-tagged).
 	// Reads len via emitStrLen, materialises data ptr via
-	// emitStrDataPtr (spilling inline form to a frame slot), then
-	// memcpys bytes to __fern_strbuf_data + __fern_strbuf_len and
-	// bumps the counter. No bounds check — overflow is UB (caller
-	// keeps total under 64 MiB).
+	// emitStrDataPtr (spilling inline form to a frame slot), grows the
+	// buffer if the bytes do not fit, then memcpys them to
+	// __fern_strbuf_ptr + __fern_strbuf_len and bumps the counter.
 	g.line("")
 	g.line(".globl __fern_strbuf_append")
 	g.line(".type __fern_strbuf_append, @function")
@@ -9771,16 +9809,22 @@ func (g *generator) emitStrBufRuntime() {
 	g.emit("mov r12, rdi")
 	g.emitStrLen("ebx", "r12")                   // ebx = src len
 	g.emitStrDataPtr("r12", "r12", "[rbp - 32]") // r12 = src data ptr
-	// dst = strbuf_data + strbuf_len
+	g.emit("mov rdi, qword ptr [rip + __fern_strbuf_len]")
+	g.emit("add rdi, rbx") // bytes needed after this append
+	g.emit("cmp rdi, qword ptr [rip + __fern_strbuf_cap]")
+	g.emit("jbe .Lsbapp_fits")
+	g.emit("call __fern_strbuf_grow")
+	g.label(".Lsbapp_fits")
+	// dst = strbuf_ptr + strbuf_len
 	g.emit("mov rcx, qword ptr [rip + __fern_strbuf_len]")
-	g.emit("lea rdi, [rip + __fern_strbuf_data]")
+	g.emit("mov rdi, qword ptr [rip + __fern_strbuf_ptr]")
 	g.emit("add rdi, rcx")
 	g.emit("mov rsi, r12")
 	g.emit("mov edx, ebx")
 	g.emit("call __fern_memcpy")
 	// strbuf_len += src len
 	g.emit("mov rcx, qword ptr [rip + __fern_strbuf_len]")
-	g.emit("add ecx, ebx")
+	g.emit("add rcx, rbx")
 	g.emit("mov qword ptr [rip + __fern_strbuf_len], rcx")
 	g.emit("add rsp, 16")
 	g.emit("pop r12")
@@ -9810,9 +9854,9 @@ func (g *generator) emitStrBufRuntime() {
 	// length prefix
 	g.emit("mov ecx, r12d")
 	g.emitStrLenStore("ecx", "rbx")
-	// memcpy(rbx, &__fern_strbuf_data, r12)
+	// memcpy(rbx, strbuf_ptr, r12)
 	g.emit("mov rdi, rbx")
-	g.emit("lea rsi, [rip + __fern_strbuf_data]")
+	g.emit("mov rsi, qword ptr [rip + __fern_strbuf_ptr]")
 	g.emit("mov edx, r12d")
 	g.emit("call __fern_memcpy")
 	// NUL terminator at rbx + r12

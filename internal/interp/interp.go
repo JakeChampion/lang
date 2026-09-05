@@ -522,8 +522,8 @@ type Interp struct {
 	// strbuf is the interpreter's analogue of the compiled backends'
 	// single global string-builder scratch buffer: strbuf_reset zeroes
 	// it, strbuf_append adds a string's bytes, strbuf_take returns the
-	// accumulated string and resets. (The AOT backends use a 64 MiB BSS
-	// buffer; the interp just grows a []byte.)
+	// accumulated string and resets. (The AOT backends grow a heap
+	// buffer; the interp grows a []byte.)
 	strbuf []byte
 	// traitMethods is the interpreter's own copy of the checker's
 	// TraitMethods index — `<Trait>.<Type>.<method>` to the flat symbol
@@ -599,7 +599,7 @@ func New() *Interp {
 	i.Builtins["isatty"] = &Builtin{Fn: builtinIsatty}
 	// strbuf_reset() / strbuf_append(s) / strbuf_take() — the global
 	// string-builder primitive (see checker FuncSigs); the compiled
-	// backends back it with a 64 MiB BSS scratch buffer.
+	// backends back it with a growable heap buffer.
 	i.Builtins["strbuf_reset"] = &Builtin{Fn: builtinStrbufReset}
 	i.Builtins["strbuf_append"] = &Builtin{Fn: builtinStrbufAppend}
 	i.Builtins["strbuf_take"] = &Builtin{Fn: builtinStrbufTake}

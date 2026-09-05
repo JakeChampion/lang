@@ -1272,16 +1272,16 @@ func TestFuncSyms(t *testing.T) {
 // so only proves the trim works when the layout is already right.
 //
 // The code generator does not emit that layout. It opens `.section .bss`,
-// reserves 64 MiB for __fern_strbuf_data, returns to `.text`, and then emits
-// more `.rodata` (vtables, abort messages, float constants). Folded in
-// emission order, the zero run is stranded mid-blob and trailing-zero
-// trimming reaches none of it — which is how a six-line Fern program linked
-// to 67 MB.
+// reserves its scratch words, returns to `.text`, and then emits more
+// `.rodata` (vtables, abort messages, float constants). Folded in emission
+// order, a zero run is stranded mid-blob and trailing-zero trimming reaches
+// none of it — which is how a six-line Fern program linked to 67 MB while
+// the string builder was a 64 MiB .bss reservation.
 //
 // So this drives the real path: assembler first, on interleaved sections,
 // then the writer. It must hold for both native assemblers.
 func TestInterleavedBssIsNotMaterialised(t *testing.T) {
-	const reserve = 1 << 20 // stand-in for __fern_strbuf_data
+	const reserve = 1 << 20 // a large .bss reservation
 
 	t.Run("x86_64", func(t *testing.T) {
 		src := "" +
