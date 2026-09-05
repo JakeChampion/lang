@@ -5415,15 +5415,19 @@ func (g *generator) emitArrBoundsCheck() {
 	g.label(ok)
 }
 
-// emitStrBoundsCheck is emitArrBoundsCheck for a string: with the
-// string value in rax and the byte index in rcx, an out-of-range
-// index aborts with exit code 134. The length is SSO-encoded, so
-// emitStrLen owns the heap/inline branch rather than this site
-// open-coding a prefix load. rdx is scratch.
-func (g *generator) emitStrBoundsCheck() {
+// emitStrBoundsCheckAgainst is emitArrBoundsCheck for a string, with
+// the length already in lenReg and the byte index in rcx. An
+// out-of-range index aborts with exit code 134; a single unsigned
+// compare catches a negative index (huge as unsigned) too.
+//
+// The caller supplies the length because the only place it is cheap to
+// know is inside the __str_idx tag dispatch, which has already decided
+// whether this is a heap or an inline string. Calling emitStrLen here
+// instead would repeat that tag test and emit a second SSO decode per
+// index — a redundant branch, and one the LICM parity gate counts.
+func (g *generator) emitStrBoundsCheckAgainst(lenReg string) {
 	ok := g.freshLabel(".Lstr_ok")
-	g.emitStrLen("edx", "rax")
-	g.emit("cmp ecx, edx")
+	g.emit(fmt.Sprintf("cmp ecx, %s", lenReg))
 	g.emit(fmt.Sprintf("jb %s", ok)) // unsigned idx < len → in bounds
 	g.emitAbort("__fern_msg_str_slice")
 	g.label(ok)
@@ -5468,11 +5472,6 @@ func (g *generator) emitInlineIdxHelper(name string) error {
 			g.emitArrBoundsCheck()
 		}
 	}
-	strBounds := func() {
-		if checked {
-			g.emitStrBoundsCheck()
-		}
-	}
 	// Pop in the order the OpCallDirect dispatch would
 	// use: rhs (idx, top of stack) first, lhs (base, next)
 	// second.
@@ -5498,15 +5497,28 @@ func (g *generator) emitInlineIdxHelper(name string) error {
 		// but the immediate OpLoadByte that follows in the IR
 		// consumes the address before the next call, so there
 		// is no observable race even in `a[i] + b[j]` shapes.
-		strBounds()
+		//
+		// The bounds check rides each arm of this dispatch: the heap
+		// length is the 4-byte prefix, the inline length is in the tag
+		// byte, and the tag test that tells them apart is already here.
 		g.usesStrIdx = true
 		id := g.labelCounter
 		g.labelCounter++
 		g.emit("test rax, 1")
 		g.emit(fmt.Sprintf("jnz .Lstridx_inline_%d", id))
+		if checked {
+			g.emit("mov edx, [rax - 4]")
+			g.emitStrBoundsCheckAgainst("edx")
+		}
 		g.emit("lea rax, [rax + rcx]")
 		g.emit(fmt.Sprintf("jmp .Lstridx_done_%d", id))
 		g.label(fmt.Sprintf(".Lstridx_inline_%d", id))
+		if checked {
+			g.emit("mov edx, eax")
+			g.emit("shr edx, 1")
+			g.emit("and edx, 7")
+			g.emitStrBoundsCheckAgainst("edx")
+		}
 		g.emit("mov [rip + __fern_str_idx_scratch], rax")
 		g.emit("lea rax, [rip + __fern_str_idx_scratch]")
 		g.emit("add rax, rcx")

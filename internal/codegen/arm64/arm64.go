@@ -3603,28 +3603,18 @@ func (g *generator) emitArrBoundsCheck() {
 	g.label(ok)
 }
 
-// emitStrBoundsCheck is emitArrBoundsCheck for a legacy
-// single-register string: the value in x1 carries the length
-// SSO-encoded, so emitStrLen owns the heap/inline branch. Index in
-// w0, x2 is scratch.
-func (g *generator) emitStrBoundsCheck() {
+// emitStrBoundsCheckAgainst is emitArrBoundsCheck for a string, with
+// the length already in lenW and the byte index in w0. A single
+// unsigned compare catches a negative index (huge as unsigned) too.
+//
+// The caller supplies the length because the only place it is cheap to
+// know is inside the __str_idx tag dispatch, which has already decided
+// whether this is a heap or an inline string. Decoding it again here
+// would repeat that test and emit a second SSO decode per index.
+func (g *generator) emitStrBoundsCheckAgainst(lenW string) {
 	ok := g.freshLabel("str_ok")
-	g.emitStrLen("w2", "x1")
-	g.emit("cmp w0, w2")
+	g.emit("cmp w0, %s", lenW)
 	g.emit("b.lo %s", ok) // unsigned idx < len → in bounds
-	g.emitAbort("__fern_msg_str_slice")
-	g.label(ok)
-}
-
-// emitStrBoundsCheck2W is emitStrBoundsCheck for the two-word ABI,
-// where the len word is already in x1 and only needs the inline-form
-// extraction emitStrLen2W does. Index in w0, x3 is scratch (x2 holds
-// the data word the caller still needs).
-func (g *generator) emitStrBoundsCheck2W() {
-	ok := g.freshLabel("str2w_ok")
-	g.emitStrLen2W("w3", "x1")
-	g.emit("cmp w0, w3")
-	g.emit("b.lo %s", ok)
 	g.emitAbort("__fern_msg_str_slice")
 	g.label(ok)
 }
@@ -3677,11 +3667,12 @@ func (g *generator) emitInlineIdxHelper(name string) error {
 		g.emit("mov w0, w0")                   // zero-extend i32 index (see below, #4377)
 		g.emit("ldr x1, [sp], #%d", slotBytes) // len
 		g.emit("ldr x2, [sp], #%d", slotBytes) // data
-		if checked {
-			g.emitStrBoundsCheck2W()
-		}
 		g.emit("tbnz x1, #63, %s", inlineLbl)
-		// Heap form: byte address = data + idx.
+		// Heap form: byte address = data + idx, and the low 32 bits of
+		// the len word are the byte length.
+		if checked {
+			g.emitStrBoundsCheckAgainst("w1")
+		}
 		g.emit("add x0, x2, x0")
 		g.emit("b %s", doneLbl)
 		g.label(inlineLbl)
@@ -3689,6 +3680,11 @@ func (g *generator) emitInlineIdxHelper(name string) error {
 		// .bss scratch slot. Bytes 0..7 from `data`, bytes
 		// 8..14 from `len`'s low 56 bits. Result address =
 		// scratch + idx.
+		if checked {
+			// Inline form: the length nibble sits at bits 56..59.
+			g.emit("ubfx x3, x1, #56, #4")
+			g.emitStrBoundsCheckAgainst("w3")
+		}
 		g.adrpAdd("x3", "__fern_str_idx_scratch")
 		g.emit("str x2, [x3]")     // data bytes at scratch[0..7]
 		g.emit("str x1, [x3, #8]") // len bytes at scratch[8..15]
@@ -3713,18 +3709,25 @@ func (g *generator) emitInlineIdxHelper(name string) error {
 		// `&scratch[1 + idx]`. Single shared scratch slot, OK
 		// because the immediate OpLoadByte that follows
 		// consumes the address before the next __str_idx fires.
-		if checked {
-			g.emitStrBoundsCheck()
-		}
 		g.usesStrIdx = true
 		id := g.labelN
 		g.labelN++
 		inlineLbl := fmt.Sprintf(".Lstridx_inline_%d", id)
 		doneLbl := fmt.Sprintf(".Lstridx_done_%d", id)
 		g.emit("tbnz x1, #0, %s", inlineLbl)
+		// Heap form: the 4-byte length prefix sits just below the data.
+		if checked {
+			g.emit("ldur w2, [x1, #-4]")
+			g.emitStrBoundsCheckAgainst("w2")
+		}
 		g.emit("add x0, x1, x0")
 		g.emit("b %s", doneLbl)
 		g.label(inlineLbl)
+		if checked {
+			// Inline form: length in bits 1..3 of the value.
+			g.emit("ubfx x2, x1, #1, #3")
+			g.emitStrBoundsCheckAgainst("w2")
+		}
 		g.adrpAdd("x2", "__fern_str_idx_scratch")
 		g.emit("str x1, [x2]")
 		g.emit("add x0, x2, x0")
