@@ -646,6 +646,13 @@ carry is prepended as a FIRST element (0 or 1) and the caller splits it off"
 exist; what is missing is a tuple return that is free, so the workaround is a
 sentinel element in an `i32[]`.
 
+The cost is a heap box per call, and it is not small at the scale a compiler
+reaches. `arm64_native.fern`'s trim helper returned `(i32, i32)`; assembling
+`checker.fern` for arm64-linux called it 4.59 M times, so it accounted for
+4.59 M `__fern_alloc` calls and 804 M Ir — the largest single item in the
+assembler. Splitting it into two `i32` returns removed the allocation
+entirely (#8185).
+
 ### 3.5 An error channel that survives state threading
 
 `lexer.fern:46`: "Fern has no exception / multi-return-with-error idiom in this
