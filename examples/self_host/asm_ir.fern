@@ -1459,7 +1459,9 @@ function emit_rt_float_transcendentals(s: asmcore.EmitState): asmcore.EmitState 
     s = s.write("__fern_pow_f64:\n");
     s = s.write("    cvttsd2si %xmm1, %rax\n    cvtsi2sd %rax, %xmm2\n");
     s = s.write("    ucomisd %xmm1, %xmm2\n    jne .Lfpow_general\n");
-    // |n|, branch-free: (n ^ (n>>63)) - (n>>63).
+    // |n|, branch-free: (n ^ (n>>63)) - (n>>63). Re-entered once with a
+    // reciprocated base and a negated n; see the overflow retry below.
+    s = s.write(".Lfpow_retry:\n");
     s = s.write("    movq %rax, %rcx\n    movq %rax, %rdx\n    sarq $63, %rdx\n");
     s = s.write("    xorq %rdx, %rcx\n    subq %rdx, %rcx\n");
     s = s.write("    cmpq $1074, %rcx\n    ja .Lfpow_general\n");
@@ -1468,7 +1470,16 @@ function emit_rt_float_transcendentals(s: asmcore.EmitState): asmcore.EmitState 
     s = s.write("    mulsd %xmm4, %xmm3\n");
     s = s.write(".Lfpow_skip:\n    mulsd %xmm4, %xmm4\n    shrq $1, %rcx\n    jnz .Lfpow_loop\n");
     s = s.write("    testq %rax, %rax\n    jns .Lfpow_done\n");
-    s = s.write(fc_ld("%xmm5", ".Lfc_one") + "    divsd %xmm3, %xmm5\n    movsd %xmm5, %xmm3\n");
+    s = s.write(fc_ld("%xmm5", ".Lfc_one") + "    divsd %xmm3, %xmm5\n");
+    // 1/acc is zero only when acc reached an infinity, so the magnitude
+    // overflowed on the way to a result that may itself be representable.
+    // Redo on 1/x; negating n makes the second pass return the accumulator
+    // directly, so the retry runs at most once and needs no flag.
+    s = s.write("    xorpd %xmm6, %xmm6\n    ucomisd %xmm6, %xmm5\n");
+    s = s.write("    jne .Lfpow_recip\n    jp .Lfpow_recip\n");
+    s = s.write(fc_ld("%xmm5", ".Lfc_one") + "    divsd %xmm0, %xmm5\n    movsd %xmm5, %xmm0\n");
+    s = s.write("    negq %rax\n    jmp .Lfpow_retry\n");
+    s = s.write(".Lfpow_recip:\n    movsd %xmm5, %xmm3\n");
     s = s.write(".Lfpow_done:\n    movsd %xmm3, %xmm0\n    ret\n");
     // General case: x^y = sign · exp(y·ln|x|). ln is defined only for x > 0, so
     // a negative base is split into a sign and |x| first: for an integral y the

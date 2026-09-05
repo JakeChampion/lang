@@ -8938,6 +8938,7 @@ func (g *generator) emitFloatTranscendentalsRuntime() {
 	fn("__fern_pow_f64")
 	powGen, powLoop, powSkip, powDone := g.freshLabel("powGeneral"), g.freshLabel("powLoop"), g.freshLabel("powSkip"), g.freshLabel("powDone")
 	powMag, powParity, powSign, powNaN := g.freshLabel("powMag"), g.freshLabel("powParity"), g.freshLabel("powSign"), g.freshLabel("powNaN")
+	powRetry, powRecip := g.freshLabel("powRetry"), g.freshLabel("powRecip")
 	// Integer-exponent fast path. exp(y*ln x) CANNOT return exactly 9 for
 	// pow(3,2): a 1-ulp error in ln 3 is amplified by the exponential to
 	// ~4e-15 on a result of 9, so it lands just under and truncates to 8.
@@ -8951,7 +8952,9 @@ func (g *generator) emitFloatTranscendentalsRuntime() {
 	g.emit("cvtsi2sd xmm2, rax")
 	g.emit("ucomisd xmm2, xmm1")
 	g.emit("jne " + powGen)
-	// |n|, branch-free: (n ^ (n>>63)) - (n>>63).
+	// |n|, branch-free: (n ^ (n>>63)) - (n>>63). Re-entered once with a
+	// reciprocated base and a negated n; see the overflow retry below.
+	g.label(powRetry)
 	g.emit("mov rcx, rax")
 	g.emit("mov rdx, rax")
 	g.emit("sar rdx, 63")
@@ -8973,6 +8976,23 @@ func (g *generator) emitFloatTranscendentalsRuntime() {
 	g.emit("jns " + powDone)
 	ldc("xmm5", ".Lfc_one") // negative exponent: reciprocal
 	g.emit("divsd xmm5, xmm3")
+	// 1/acc is zero only when acc reached an infinity, so the magnitude
+	// overflowed on the way to a result that may itself be representable:
+	// 2^-1074 accumulated 2^1074 and reciprocated it to 0. Redo the loop on
+	// 1/x, which cannot overflow. Negating n is what makes the second pass
+	// return the accumulator directly instead of reciprocating twice, so the
+	// retry needs no flag and cannot be entered again. Unreachable while acc
+	// is finite, which is what keeps pow(3,-2) a single exact division.
+	g.emit("xorpd xmm6, xmm6")
+	g.emit("ucomisd xmm5, xmm6")
+	g.emit("jne " + powRecip)
+	g.emit("jp " + powRecip)
+	ldc("xmm5", ".Lfc_one")
+	g.emit("divsd xmm5, xmm0")
+	g.emit("movsd xmm0, xmm5")
+	g.emit("neg rax")
+	g.emit("jmp " + powRetry)
+	g.label(powRecip)
 	g.emit("movsd xmm3, xmm5")
 	g.label(powDone)
 	g.emit("movsd xmm0, xmm3")

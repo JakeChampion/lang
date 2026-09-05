@@ -4737,12 +4737,18 @@ pub function log_func(): string {
 // out-of-range y, where the round-trip just rejects the saturated value.
 pub function pow_func(): string {
     var o: string = "";    o = o + "  (func $__fern_pow_f64 (param $x f64) (param $y f64) (result f64)\n";
-    o = o + "    (local $n i64) (local $an i64) (local $acc f64) (local $base f64) (local $sign f64)\n";
+    o = o + "    (local $n i64) (local $an i64) (local $acc f64) (local $base f64) (local $sign f64) (local $tmp f64)\n";
     o = o + "    (local.set $n (i64.trunc_sat_f64_s (local.get $y)))\n";
     o = o + "    (if (f64.eq (f64.convert_i64_s (local.get $n)) (local.get $y)) (then\n";
     o = o + "      (local.set $an (local.get $n))\n";
     o = o + "      (if (i64.lt_s (local.get $an) (i64.const 0)) (then (local.set $an (i64.sub (i64.const 0) (local.get $an)))))\n";
     o = o + "      (if (i64.le_s (local.get $an) (i64.const 1074)) (then\n";
+    // The overflow path below re-enters this loop once, with a reciprocated
+    // base and a negated n; $an is recomputed here because the squaring loop
+    // consumes it.
+    o = o + "        (loop $retry\n";
+    o = o + "        (local.set $an (local.get $n))\n";
+    o = o + "        (if (i64.lt_s (local.get $an) (i64.const 0)) (then (local.set $an (i64.sub (i64.const 0) (local.get $an)))))\n";
     o = o + "        (local.set $acc (f64.const 1.0))\n";
     o = o + "        (local.set $base (local.get $x))\n";
     o = o + "        (block $done (loop $lp\n";
@@ -4751,8 +4757,18 @@ pub function pow_func(): string {
     o = o + "          (local.set $an (i64.shr_u (local.get $an) (i64.const 1)))\n";
     o = o + "          (br_if $done (i64.eqz (local.get $an)))\n";
     o = o + "          (br $lp)))\n";
-    o = o + "        (if (i64.lt_s (local.get $n) (i64.const 0)) (then (local.set $acc (f64.div (f64.const 1.0) (local.get $acc)))))\n";
-    o = o + "        (return (local.get $acc))))))\n";
+    // 1/acc is zero only when acc reached an infinity, so the magnitude
+    // overflowed on the way to a result that may itself be representable.
+    // Redo on 1/x; negating n makes the next pass return the accumulator
+    // directly, so the retry runs at most once and needs no flag.
+    o = o + "        (if (i64.lt_s (local.get $n) (i64.const 0)) (then\n";
+    o = o + "          (local.set $tmp (f64.div (f64.const 1.0) (local.get $acc)))\n";
+    o = o + "          (if (f64.eq (local.get $tmp) (f64.const 0.0)) (then\n";
+    o = o + "            (local.set $x (f64.div (f64.const 1.0) (local.get $x)))\n";
+    o = o + "            (local.set $n (i64.sub (i64.const 0) (local.get $n)))\n";
+    o = o + "            (br $retry)))\n";
+    o = o + "          (local.set $acc (local.get $tmp))))\n";
+    o = o + "        (return (local.get $acc)))))))\n";
     // General case: sign * exp(y*ln|x|). ln is defined only for x > 0, so a
     // negative base is split into a sign and |x| first: for an integral y the sign
     // is (-1)^y, and a non-integral y makes the result NaN. Every |y| >= 2^53 is an
