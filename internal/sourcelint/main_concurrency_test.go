@@ -3,41 +3,47 @@ package sourcelint
 import (
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 )
 
-// The shared idiom: cancel a superseded run on a PR branch, never on main.
-const mainSafeCancel = "cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}"
-
-// No workflow triggered by a push to main may auto-cancel its own main runs.
+// actionLanes are the main lanes whose run DOES something rather than reporting
+// something. A cancelled test run costs a result that the next run reproduces;
+// a cancelled action is work that silently never happens, and main runs have no
+// successor to inherit it.
 //
-// A main run has no successor to inherit its result: cancelling it does not
-// defer the work, it drops it. And the lane most likely to be cancelled is the
-// one that waits longest for a runner, which here is a pool shared with ~85
-// jobs per open PR — so during a busy hour the queue wait exceeds the gap
-// between merges and EVERY run is cancelled before it is allocated a machine.
-//
-// Both halves of that have happened. auto-rebase-prs.yml shipped with
-// `cancel-in-progress: true` and its first eleven runs were cancelled with
-// runner_id 0 and no steps — it had never executed. pages.yml lost five
+// Both entries here have already failed that way. auto-rebase-prs.yml shipped
+// with `cancel-in-progress: true` and its first eleven runs were cancelled with
+// runner_id 0 and no steps — it had never executed once. pages.yml lost five
 // consecutive deploys between 18:47 and 20:32 on 2026-09-05, leaving the docs
 // site nearly two hours stale.
 //
-// Neither is visible: no red check, no failed step, nothing that says the run
-// did not happen. The Actions list shows `cancelled`, which in this repository
-// is also what a healthy cancel-on-failure reap looks like. Green by absence is
-// exactly what a source lint is for.
+// Adding a lane that pushes, deploys, publishes or comments? It belongs here.
+var actionLanes = map[string]string{
+	"auto-rebase-prs.yml": "rebases and pushes every open PR branch",
+	"pages.yml":           "builds and deploys the docs site",
+}
+
+// Main lanes cancel their own superseded runs; action lanes do not.
 //
-// A workflow with no `concurrency:` at all is not checked — nothing cancels it.
-// check-sources.yml is deliberately in that state and documents why.
-func TestMainLanesDoNotCancelThemselves(t *testing.T) {
+// The queue here is the scarce resource — 75% of a PR's CI time is spent
+// waiting, not computing (docs/CI-SIGNOFF.md) — and when several merges land in
+// a burst, only the newest main commit's result is worth the slots. Cancelling
+// the older main runs hands those slots back.
+//
+// What that trades away is per-merge attribution: a red main names the newest
+// commit of the burst rather than the merge that caused it. check-sources.yml
+// keeps that attribution deliberately by carrying no concurrency group at all,
+// which is why it is not checked here — nothing cancels it.
+func TestMainLanesCancelExceptWhenTheyAct(t *testing.T) {
 	dir := filepath.Join("..", "..", ".github", "workflows")
 	ents, err := os.ReadDir(dir)
 	if err != nil {
 		t.Fatalf("read workflows: %v", err)
 	}
 
+	seen := map[string]bool{}
 	var checked []string
 	for _, e := range ents {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".yml") {
@@ -48,6 +54,7 @@ func TestMainLanesDoNotCancelThemselves(t *testing.T) {
 			t.Fatalf("read %s: %v", e.Name(), err)
 		}
 		src := string(b)
+		seen[e.Name()] = true
 
 		on, ok := onBlock(src)
 		if !ok {
@@ -69,24 +76,34 @@ func TestMainLanesDoNotCancelThemselves(t *testing.T) {
 				setting = strings.TrimSpace(s)
 			}
 		}
-		switch {
-		case setting == "":
-			// Absent means false, which is what we want, but say so out loud:
-			// a reader cannot tell it from an oversight.
-			t.Errorf("%s declares a concurrency group with no `cancel-in-progress:`. "+
-				"It defaults to false, which is correct for a main lane — write it "+
-				"explicitly (`false`, or %q) so the next edit does not read the "+
-				"omission as undecided", e.Name(), mainSafeCancel)
-		case setting == "false":
-		case strings.Contains(setting, "github.ref != 'refs/heads/main'"):
-		default:
-			t.Errorf("%s cancels its own main runs (`cancel-in-progress: %s`). A main "+
-				"run has no successor to inherit its result, and when the queue wait "+
-				"exceeds the gap between merges the lane never runs at all. Use %q, or "+
-				"`false` if the lane is main-only", e.Name(), setting, mainSafeCancel)
+
+		if why, isAction := actionLanes[e.Name()]; isAction {
+			if setting != "false" {
+				t.Errorf("%s %s, so a cancelled run is work that never happens — main "+
+					"has no later run to inherit it. It must be "+
+					"`cancel-in-progress: false`, not %q", e.Name(), why, setting)
+			}
+			continue
+		}
+		if setting != "true" {
+			t.Errorf("%s does not cancel its superseded main runs (`cancel-in-progress: "+
+				"%s`). A burst of merges then holds a runner each for results only the "+
+				"newest commit's supersedes. Use `true`, or add the lane to actionLanes "+
+				"if its run does something a later run cannot redo", e.Name(), setting)
 		}
 	}
 
+	var missing []string
+	for name := range actionLanes {
+		if !seen[name] {
+			missing = append(missing, name)
+		}
+	}
+	sort.Strings(missing)
+	if len(missing) > 0 {
+		t.Errorf("actionLanes names %v, which no longer exist — a renamed lane leaves "+
+			"an entry protecting nothing, and the lane itself unprotected", missing)
+	}
 	if len(checked) == 0 {
 		t.Fatal("no main-triggered workflows with a concurrency group — did the " +
 			"`on:` or `concurrency:` format change?")
