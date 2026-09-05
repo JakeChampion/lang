@@ -577,8 +577,8 @@ func TestRunnerUintRangeExamplePasses(t *testing.T) {
 	}
 }
 
-// TestRunnerIoBufferedExamplePasses gates the std/io_buffered BytesWriter suite
-// under the interpreter. Interp-gated only: BytesWriter holds a `u8[]` field and
+// TestRunnerIoBufferedExamplePasses gates the std/io_buffered suite (BytesWriter,
+// BufWriter, LineReader) under the interpreter. Interp-gated only: BytesWriter holds a `u8[]` field and
 // is rebuilt immutably (`{ ...w, data }`) per write, so a writer retained to
 // scope/program exit hits the RC drop-at-exit gap on the self-host backends
 // (the same class as array_hof's flat_map/reduce/sort_by — crashes -1 during the
@@ -591,7 +591,7 @@ func TestRunnerIoBufferedExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/io_buffered BytesWriter", "# pass 9", "# fail 0", "1..9"} {
+	for _, w := range []string{"# Suite: std/io_buffered BytesWriter", "# pass 14", "# fail 0", "1..14"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}

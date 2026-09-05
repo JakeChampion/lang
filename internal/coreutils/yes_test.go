@@ -45,6 +45,9 @@ func TestYesParity(t *testing.T) {
 		// makes them unrecognized rather than a help request.
 		{name: "help with a value", args: []string{"--help=x"}},
 		{name: "version with a value", args: []string{"--version=x"}},
+		// POSIXLY_CORRECT ends the options at the first operand.
+		{name: "posix operand then help", args: []string{"x", "--help"}, env: []string{"POSIXLY_CORRECT=1"}, limit: 64},
+		{name: "posix option before the operand", args: []string{"--foo", "x"}, env: []string{"POSIXLY_CORRECT=1"}},
 	})
 }
 
