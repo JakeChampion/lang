@@ -784,10 +784,18 @@ The rejected patch is not in the tree; this section is what it bought.
 Stated plainly so the gaps are not mistaken for clean bills of health.
 
 - **The self-hosted compiler's own emitters.** Everything above measures the Go
-  implementation. `examples/self_host/x86_native.fern` and `arm64_native.fern`
+  implementation. `examples/self_host/asm_ir.fern` and `asm_arm64_ir.fern`
   are separate emitters with their own instruction selection, and per
   `docs/NATIVE-CONVERGENCE.md` they are where new surface should land first.
-  A fix in `internal/codegen` is half the work.
+  A fix in `internal/codegen` is half the work. The x86-64 one has since
+  taken tier A's P4, P5 and P6 and the 32-bit constant form (#8195), and the
+  yield there is far smaller than native's: the compiler's own x86-64 emit
+  through `bin/fern-selfhost` went 2,221,428 → 2,150,681 instruction lines
+  (−3.2%; `checker.fern` alone −4.2%). The constant-operand shapes native's
+  A1 fed on are ~3% of the self-host emit, which is dominated by the
+  stack-argument rc calls and the string helpers that tier A never touched
+  — the inline rc guards and the string kernels (#8192) are where the next
+  order of magnitude is. The arm64 twin has not taken the port yet.
 - **Whether `gcc -O2` is the right target.** A language with bounds checks,
   reference counting and a zero-divisor guard cannot reach C's numbers on
   array code and should not pretend to. The right frame is probably Go — same
