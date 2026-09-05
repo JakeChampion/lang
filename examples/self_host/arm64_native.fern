@@ -518,9 +518,8 @@ function arm64_empty_buckets(): i32[] {
 // arm64_asm_label records `name` at the current code offset and links it
 // to the end of its bucket's chain, so a name defined twice resolves to its
 // first definition exactly as the table scan it replaces did. Each chain
-// array is lifted out of the struct before its `.with`, so the write lands
-// in place instead of cloning the table — the same discipline as the code
-// buffer's patches.
+// write is a field-receiver `.with` on the `own` root, the shape the
+// self-host stores in place (#8419).
 function arm64_asm_label(own a: Arm64Asm, name: string): Arm64Asm {
     var at: i32 = a.lab_names.len();
     var b: i32 = arm64_name_bucket(name);
@@ -529,20 +528,12 @@ function arm64_asm_label(own a: Arm64Asm, name: string): Arm64Asm {
     a = Arm64Asm { ...a, lab_offs: a.lab_offs.append(a.code.len()) };
     a = Arm64Asm { ...a, lab_next: a.lab_next.append(0 - 1) };
     if (prev < 0) {
-        var head: i32[] = a.lab_head;
-        a = Arm64Asm { ...a, lab_head: [] };
-        head = head.with(b, at);
-        a = Arm64Asm { ...a, lab_head: head };
+        a = Arm64Asm { ...a, lab_head: a.lab_head.with(b, at) };
     } else {
-        var next: i32[] = a.lab_next;
-        a = Arm64Asm { ...a, lab_next: [] };
-        next = next.with(prev, at);
-        a = Arm64Asm { ...a, lab_next: next };
+        a = Arm64Asm { ...a, lab_next: a.lab_next.with(prev, at) };
     }
-    var tail: i32[] = a.lab_tail;
-    a = Arm64Asm { ...a, lab_tail: [] };
-    tail = tail.with(b, at);
-    return Arm64Asm { ...a, lab_tail: tail };
+    a = Arm64Asm { ...a, lab_tail: a.lab_tail.with(b, at) };
+    return a;
 }
 
 // arm64_asm_label_off returns the byte offset of label `name`, or -1 if it

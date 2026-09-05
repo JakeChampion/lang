@@ -754,9 +754,10 @@ pub struct LowerFrame {
     // semantics. See that function for the two sound shapes.
     append_inplace: string[],
     // field_append_inplace: the site keys ("<line>:<col>|<root>|<field>") of the
-    // struct-FIELD-receiver appends this function may grow in place instead of
-    // cloning (#8224). Computed ONCE per function by
-    // field_append_inplace_sites_of; a site absent from it takes the clone form.
+    // struct-FIELD-receiver `.append` / `.with` calls this function may apply to
+    // the field's own buffer instead of a clone (#8224, #8419). Computed ONCE per
+    // function by field_append_inplace_sites_of; a site absent from it takes
+    // the clone form.
     field_append_inplace: string[],
     // grow_sole: the #6043 sole-occurrence deaths, computed ONCE per function
     // (grow_sole_exempt_names_of) because the per-statement hook cannot see the
@@ -13795,6 +13796,15 @@ function lower_call_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerSta
     // (#7208). Every one of those clones the buffer SHALLOW, which is what
     // keeps the pointer-element kinds sound: their elements are owned by the
     // source struct and freed by neither copy.
+    // A SCALAR-element field the per-function analysis admitted (#8419) stores
+    // into the field's own buffer instead; pointer-element fields keep the
+    // clone, whose overwritten element the container still owns.
+    if (fa.field == "with" && c.args.len() == 2 && scalar_arr_field_type(fa.obj, s) != "") {
+        var fwik: string = field_append_inplace_key(c, fa.obj, s);
+        if (fwik.len() > 0) {
+            return lower_field_with_inplace(fa.obj, c.args[0], c.args[1], fwik, s);
+        }
+    }
     if (fa.field == "with" && c.args.len() == 2
         && (expr_is_arr_src(fa.obj, s) || expr_is_strarr(fa.obj, s)
             || expr_is_f64arr(fa.obj, s) || expr_is_i64arr(fa.obj, s)
@@ -24898,7 +24908,7 @@ function lower_map_clone_insert(target: string, recv: ast.Expr, key: ast.Expr, v
 }
 
 // field_append_inplace_key returns the site key of THIS `<root>.<field>.append(v)`
-// call when the per-function analysis admitted it (field_append_inplace_sites_of)
+// / `.with(i, v)` call when the per-function analysis admitted it (field_append_inplace_sites_of)
 // and the root's box type resolves here, which the move-out store needs; else "",
 // and the site takes the clone form. The second gate is defence in depth: the
 // admitted receivers are depth-1 ident-rooted chains, whose root type resolves.
@@ -24999,6 +25009,75 @@ function fai_bracket_shared_root(s: LowerState, uniqslot: i32, srcslot: i32, fn:
     st = st.emit(ir.op_call_direct(fn, 1));
     st = st.emit(ir.op_drop());
     return st.emit(ir.op_end());
+}
+
+// lower_field_with_inplace is lower_arr_with_value without the clone: the
+// `.with` twin of lower_field_append_inplace, under the same admission and the
+// same share bracket. arr_push carries its own rc == 1 gate; arr_set has none,
+// so the gate is spelled here — a buffer anything else still holds takes the
+// clone (a fresh rc 1 copy, exactly the value form's result), and the identity
+// arm moves the field out of the root as the append does. Scalar element kinds
+// only: overwriting a pointer element would owe the container a release.
+pub function lower_field_with_inplace(obj: ast.Expr, idx: ast.Expr, val: ast.Expr, key: string, s: LowerState): LowerState {
+    var kind: string = arr_elem_kind(obj, s);
+    var sw: i32 = 32;
+    if (kind != "i32") { sw = 64; }
+    var root: i32 = s.slot_of(fai_key_part(key, 1));
+    var sty: string = s.struct_type_of_slot(root);
+    var fidx: i32 = s.field_index_in(sty, fai_key_part(key, 2));
+    var srcname: string = "$fiwb" + util.i32_to_string(s.locals.len());
+    var st: LowerState = s.add_local(srcname);
+    var srcslot: i32 = st.slot_of(srcname);
+    var uniqname: string = "$fiwu" + util.i32_to_string(st.locals.len());
+    st = st.add_local(uniqname);
+    var uniqslot: i32 = st.slot_of(uniqname);
+    var resname: string = "$fiwr" + util.i32_to_string(st.locals.len());
+    st = st.add_local(resname);
+    var resslot: i32 = st.slot_of(resname);
+    st = lower_expr(obj, st);
+    if (!st.ok) { return st; }
+    st = st.emit(ir.op_store_local(srcslot));
+    st = st.emit(ir.op_load_local(root));
+    st = st.emit(ir.op_call_direct("__fern_rc_is_unique", 1));
+    st = st.emit(ir.op_store_local(uniqslot));
+    st = fai_bracket_shared_root(st, uniqslot, srcslot, "__fern_arr_share_inc");
+    // res = src, or a full copy when the buffer has a second holder.
+    st = st.emit(ir.op_load_local(srcslot));
+    st = st.emit(ir.op_store_local(resslot));
+    st = st.emit(ir.op_load_local(srcslot));
+    st = st.emit(ir.op_call_direct("__fern_rc_is_unique", 1));
+    st = st.emit(ir.op_const_i32(0));
+    st = st.emit(ir.op_bin("eq", 0, false));
+    st = st.emit(ir.op_if(0));
+    st = st.emit(ir.op_load_local(srcslot));
+    st = st.emit(ir.op_const_i32(0));
+    st = st.emit(ir.op_load_local(srcslot));
+    st = st.emit(ir.op_arr_len());
+    st = st.emit(ir.op_arr_slice(sw));
+    st = st.emit(ir.op_store_local(resslot));
+    st = st.emit(ir.op_end());
+    st = st.emit(ir.op_load_local(resslot));
+    st = lower_expr(idx, st);
+    if (!st.ok) { return st; }
+    if (kind == "i64") {
+        st = lower_i64(val, st);
+        if (!st.ok) { return st; }
+        st = st.emit(ir.op_arr_set_i64());
+    } else {
+        st = lower_expr(val, st);
+        if (!st.ok) { return st; }
+        st = st.emit(ir.op_arr_set(sw));
+    }
+    st = fai_bracket_shared_root(st, uniqslot, srcslot, "__fern_arr_share_dec");
+    st = st.emit(ir.op_load_local(resslot));
+    st = st.emit(ir.op_load_local(srcslot));
+    st = st.emit(ir.op_bin("eq", 0, false));
+    st = st.emit(ir.op_if(0));
+    st = st.emit(ir.op_load_local(root));
+    st = st.emit(ir.op_const_i32(0));
+    st = st.emit(ir.op_struct_set(fidx, struct_field_width(st.frame.structs, sty, fidx)));
+    st = st.emit(ir.op_end());
+    return st.emit(ir.op_load_local(resslot));
 }
 
 // lower_arr_append_value lowers `obj.append(val)` as a VALUE-PRODUCING
@@ -25251,8 +25330,12 @@ function append_inplace_recvs(stmts: ast.Stmt[], esc: string[], acc: string[]): 
 //
 // field_append_inplace_sites_of is native's fieldPlaceAppendCopies
 // (internal/ir/rc_analysis.go), inverted: it names the sites that may take the
-// consuming in-place grow. A site qualifies when every read of the receiver's
-// ROOT that could reach the grown buffer is out of the grow's reach:
+// consuming in-place grow. A `<root>.<field>.with(i, v)` site is admitted under
+// the same rules (#8419) — the store, like the grow, hands the field's own
+// buffer to the value and moves it out of the root — which native does not do;
+// it clones every field-receiver `.with`. A site qualifies when every read of
+// the receiver's ROOT that could reach the mutated buffer is out of the
+// mutation's reach:
 //
 //   - a read of a DIFFERENT field (`s.ctrl` against `s.ops`) never names it;
 //   - a struct-update SPREAD base whose literal OVERRIDES the appended field
@@ -25309,8 +25392,8 @@ function fai_key_part(k: string, idx: i32): string {
     return "";
 }
 
-// fai_recv_key returns the site key for `<root>.<field>.append(…)` when `recv`
-// is exactly that depth-1 ident-rooted chain, else "". Deeper chains are
+// fai_recv_key returns the site key for `<root>.<field>.append(…)` / `.with(…)`
+// when `recv` is exactly that depth-1 ident-rooted chain, else "". Deeper chains are
 // refused: the caller-side bracket walks a struct's array fields, and a depth-1
 // receiver is what keeps the two halves describing the same buffer.
 pub function fai_recv_key(recv: ast.Expr, line: i32, col: i32): string {
@@ -25326,18 +25409,25 @@ pub function fai_recv_key(recv: ast.Expr, line: i32, col: i32): string {
     return "";
 }
 
-// fai_cands_expr collects the candidate append sites in `e`. A lambda body is
-// NOT descended: its appends run when the closure is called, not here.
+// fai_call_site_key returns the site key of a field-place mutation call —
+// `<root>.<field>.append(v)` or `<root>.<field>.with(i, v)` — else "".
+function fai_call_site_key(c: ast.ExprCall, cfa: ast.ExprFieldAccess): string {
+    if ((cfa.field == "append" && c.args.len() == 1) || (cfa.field == "with" && c.args.len() == 2)) {
+        return fai_recv_key(cfa.obj, c.line, c.col);
+    }
+    return "";
+}
+
+// fai_cands_expr collects the candidate sites in `e`. A lambda body is NOT
+// descended: its calls run when the closure is called, not here.
 function fai_cands_expr(e: ast.Expr, roots: string[], acc: string[]): string[] {
     var a: string[] = acc;
     match (e) {
         ast.ExprCall(c) => {
             match (c.callee) {
                 ast.ExprFieldAccess(cfa) => {
-                    if (cfa.field == "append" && c.args.len() == 1) {
-                        var rk: string = fai_recv_key(cfa.obj, c.line, c.col);
-                        if (rk.len() > 0 && util.index_of_str(roots, fai_key_part(rk, 1)) >= 0) { a = push_str_unique(a, rk); }
-                    }
+                    var rk: string = fai_call_site_key(c, cfa);
+                    if (rk.len() > 0 && util.index_of_str(roots, fai_key_part(rk, 1)) >= 0) { a = push_str_unique(a, rk); }
                     a = fai_cands_expr(cfa.obj, roots, a);
                 },
                 _ => { a = fai_cands_expr(c.callee, roots, a); }
@@ -25423,8 +25513,7 @@ function fai_excused_expr(e: ast.Expr, root: string, field: string, site: string
         ast.ExprCall(c) => {
             match (c.callee) {
                 ast.ExprFieldAccess(cfa) => {
-                    var rk: string = "";
-                    if (cfa.field == "append" && c.args.len() == 1) { rk = fai_recv_key(cfa.obj, c.line, c.col); }
+                    var rk: string = fai_call_site_key(c, cfa);
                     if (rk.len() > 0 && rk == site) { n = n + 1; }
                     else { n = fai_excused_place(cfa.obj, root, field, site, n); }
                 },
@@ -74191,7 +74280,7 @@ pub function consumed_arr_positions_of(funcs: parser.FuncDecl[]): string[] {
 //   "1"           an ARRAY parameter whose own buffer a direct
 //                 `<param>.append(v)` / `.set` grows
 //   "F:xs,ys"     a struct receiver or parameter whose NAMED array fields an
-//                 admitted in-place field append grows
+//                 admitted in-place field append or `.with` mutates
 //                 (field_append_inplace_sites_of)
 //
 // Naming the fields rather than carrying one may-grow BIT is what keeps the
