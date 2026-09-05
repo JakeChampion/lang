@@ -6,7 +6,7 @@ ACTIONLINT_VERSION ?= v1.7.10
 EXAMPLES := $(basename $(notdir $(wildcard examples/*.fern)))
 ASMS     := $(addprefix build/,$(addsuffix .s,$(EXAMPLES)))
 BINS     := $(addprefix build/,$(EXAMPLES))
-LANG_SRCS := $(wildcard examples/*.fern)
+LANG_SRCS := $(wildcard examples/*.fern) $(wildcard coreutils/*.fern) $(wildcard coreutils/lib/*.fern)
 
 .PHONY: all build test vet deadcode actionlint testnames freeze check-sources selfhost-cli bootstrap distcheck clean examples run-% fmt fmt-check gofmt gofmt-check lint-all
 

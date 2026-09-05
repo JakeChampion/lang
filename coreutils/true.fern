@@ -1,0 +1,28 @@
+// true.fern — GNU-compatible `true`.
+//
+// Exits 0. Every argument is ignored, with one exception: `--help` or
+// `--version` as the SOLE argument is answered instead. Spelled in
+// full, and only when alone — `true --help x` exits 0 in silence, and
+// unlike most utilities there is no unique-prefix matching, because
+// true(1) tests argv[1] itself rather than going through getopt.
+//
+// The help and version output still exits 0 here and 1 in false(1):
+// both write to stdout and then exit with the utility's own status.
+import "std/string";
+import "./lib/gnu";
+
+function help_text(): string {
+  var out: string = "";
+  out = out + "Usage: " + gnu.prog() + " [ARGUMENT]...\n";
+  out = out + "  or:  " + gnu.prog() + " OPTION\n";
+  out = out + "Do nothing, successfully. Arguments are ignored.\n";
+  out = out + "\n";
+  out = out + "      --help     display this help and exit\n";
+  out = out + "      --version  output version information and exit\n";
+  return out;
+}
+
+function main(): i32 {
+  gnu.sole_help_version(args(), "true", help_text(), 0);
+  return 0;
+}

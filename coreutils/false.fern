@@ -1,0 +1,25 @@
+// false.fern — GNU-compatible `false`.
+//
+// The mirror of true.fern: exits 1, ignores its arguments, and answers
+// `--help` / `--version` as the sole argument. Both of those write to
+// STDOUT and still exit 1 — false(1) exits with its own status from
+// every path, which is why the help text is not on stderr the way a
+// usage error would be.
+import "std/string";
+import "./lib/gnu";
+
+function help_text(): string {
+  var out: string = "";
+  out = out + "Usage: " + gnu.prog() + " [ARGUMENT]...\n";
+  out = out + "  or:  " + gnu.prog() + " OPTION\n";
+  out = out + "Do nothing, unsuccessfully. Arguments are ignored.\n";
+  out = out + "\n";
+  out = out + "      --help     display this help and exit\n";
+  out = out + "      --version  output version information and exit\n";
+  return out;
+}
+
+function main(): i32 {
+  gnu.sole_help_version(args(), "false", help_text(), 1);
+  return 1;
+}
