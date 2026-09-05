@@ -6069,6 +6069,10 @@ func (p *parser) parsePrimary() (ast.Expr, error) {
 	case lexer.Number:
 		p.advance()
 		var n int64
+		// Set when the written magnitude is above i64 max, so `n` holds a
+		// wrapped bit pattern. The checker needs to know, since it cannot
+		// otherwise tell a literal at 2^63 from the negative it wraps to.
+		exceedsI64 := false
 		if len(t.Text) > 2 && t.Text[0] == '0' && (t.Text[1] == 'x' || t.Text[1] == 'X') {
 			// Hex literal: parse the digits after the `0x` prefix.
 			// Width up to 64 bits so `0xFFFFFFFF` round-trips; the
@@ -6081,6 +6085,7 @@ func (p *parser) parsePrimary() (ast.Expr, error) {
 				// path keeps `18446744073709551615`.
 				if uv, uerr := strconv.ParseUint(t.Text[2:], 16, 64); uerr == nil {
 					v = int64(uv)
+					exceedsI64 = true
 				} else {
 					p.errors = append(p.errors, p.errorfCode(t.Pos, "P002", "invalid hex literal %q: %v", t.Text, err))
 				}
@@ -6101,13 +6106,14 @@ func (p *parser) parsePrimary() (ast.Expr, error) {
 				// context.
 				if uv, uerr := strconv.ParseUint(t.Text, 10, 64); uerr == nil {
 					v = int64(uv)
+					exceedsI64 = true
 				} else {
 					p.errors = append(p.errors, p.errorfCode(t.Pos, "P002", "invalid integer literal %q: %v", t.Text, err))
 				}
 			}
 			n = v
 		}
-		lit := &ast.NumberLit{P: t.Pos, Value: n}
+		lit := &ast.NumberLit{P: t.Pos, Value: n, ExceedsI64: exceedsI64}
 		if len(t.Text) > 2 && t.Text[0] == '0' && (t.Text[1] == 'x' || t.Text[1] == 'X') {
 			lit.Raw = t.Text
 		}

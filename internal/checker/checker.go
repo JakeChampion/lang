@@ -16634,29 +16634,63 @@ func intLitExceedsI32(e ast.Expr) bool {
 	return false
 }
 
+// litText renders the literal the way the source wrote it, sign included.
+// Past i64 max the Value field holds a wrapped bit pattern, so the
+// magnitude has to be read back as unsigned — otherwise the diagnostic
+// quotes a number the author never typed.
+func litText(lit *ast.NumberLit, negated bool) string {
+	sign := ""
+	if negated {
+		sign = "-"
+	}
+	if lit.ExceedsI64 {
+		return sign + strconv.FormatUint(uint64(lit.Value), 10)
+	}
+	return sign + strconv.FormatInt(lit.Value, 10)
+}
+
 func (c *checker) checkLiteralFits(lit *ast.NumberLit, t ast.NumberType, negated bool) {
 	w := t.NormalWidth()
 	if t.IsSigned() {
+		// Judge — and report — the value the source wrote, sign included. A
+		// literal is only ever the magnitude; `-2147483648` is in range and
+		// `2147483648` is not, and they share a NumberLit.
+		if w == 64 {
+			// Only i64 MIN is reachable past i64 max, and only negated:
+			// `-9223372036854775808` is in range, `9223372036854775808`
+			// is not, and both carry the same wrapped Value.
+			if lit.ExceedsI64 && !(negated && uint64(lit.Value) == 1<<63) {
+				c.errfCode(lit.P, "E047", "literal %s does not fit in %s", litText(lit, negated), t)
+			}
+			return
+		}
 		var min, max int64
 		switch w {
 		case 32:
 			min, max = -1<<31, 1<<31-1
-		case 64:
-			return
 		default:
 			return
 		}
-		// Judge — and report — the value the source wrote, sign included. A
-		// literal is only ever the magnitude; `-2147483648` is in range and
-		// `2147483648` is not, and they share a NumberLit.
+		if lit.ExceedsI64 {
+			c.errfCode(lit.P, "E047", "literal %s does not fit in %s", litText(lit, negated), t)
+			return
+		}
 		v := lit.Value
 		if negated {
 			v = -v
 		}
 		if v < min || v > max {
-			c.errfCode(lit.P, "E047", "literal %d does not fit in %s", v, t)
+			c.errfCode(lit.P, "E047", "literal %s does not fit in %s", litText(lit, negated), t)
 		}
 	} else {
+		// A negative literal has no unsigned reading. The sign lives on the
+		// enclosing unary, so testing lit.Value alone (which is only ever
+		// the magnitude) let `var a: u8 = -1` through, and the natives then
+		// stored 0xFFFFFFFF into a u8 slot while interp said 255.
+		if negated && !(lit.Value == 0 && !lit.ExceedsI64) {
+			c.errfCode(lit.P, "E047", "literal %s does not fit in %s: unsigned types have no negative values", litText(lit, negated), t)
+			return
+		}
 		var max uint64
 		switch w {
 		case 8:
@@ -16664,12 +16698,12 @@ func (c *checker) checkLiteralFits(lit *ast.NumberLit, t ast.NumberType, negated
 		case 32:
 			max = 1<<32 - 1
 		case 64:
-			return
+			return // every u64 bit pattern is representable
 		default:
 			return
 		}
-		if lit.Value < 0 || uint64(lit.Value) > max {
-			c.errfCode(lit.P, "E047", "literal %d does not fit in %s", lit.Value, t)
+		if uint64(lit.Value) > max || lit.ExceedsI64 {
+			c.errfCode(lit.P, "E047", "literal %s does not fit in %s", litText(lit, negated), t)
 		}
 	}
 }
