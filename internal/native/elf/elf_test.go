@@ -1275,7 +1275,7 @@ func TestFuncSyms(t *testing.T) {
 // reserves its scratch words, returns to `.text`, and then emits more
 // `.rodata` (vtables, abort messages, float constants). Folded in emission
 // order, a zero run is stranded mid-blob and trailing-zero trimming reaches
-// none of it — which is how a six-line Fern program linked to 67 MB while
+// none of it, which is how a six-line Fern program linked to 67 MB while
 // the string builder was a 64 MiB .bss reservation.
 //
 // So this drives the real path: assembler first, on interleaved sections,

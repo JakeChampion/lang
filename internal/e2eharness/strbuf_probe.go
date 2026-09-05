@@ -1,12 +1,10 @@
 package e2eharness
 
 // StrbufCeilingProbe builds a 72,089,600-byte string through the string
-// builder: past the 64 MiB the register backends used to reserve as a fixed
-// .bss buffer, whose overrun corrupted the words after it (#8212). The buffer
-// doubles from 64 KiB now, so the build grows it repeatedly. It checks the
-// length and the bytes at the start, at the old 64 MiB boundary and at the
-// end, then that the drained builder still takes a small append. Non-zero
-// exits are keyed in StrbufCeilingProbeCodes.
+// builder, past 64 MiB (#8212), growing the buffer repeatedly from its 64 KiB
+// start. It checks the length and the bytes at the start, at the 64 MiB
+// boundary and at the end, then that the drained builder still takes a small
+// append. Non-zero exits are keyed in StrbufCeilingProbeCodes.
 const StrbufCeilingProbe = `function main(): i32 {
     strbuf_reset();
     var i: i32 = 0;

@@ -22,7 +22,7 @@ import (
 // one with an rc-headered allocation since docs/RC-STRINGS-PLAN.md; the
 // self-host was the last producer left unconverted.
 //
-// (2) arm64 emitted the whole bundle — the `.bss` words and all three bodies —
+// (2) arm64 emitted the whole bundle (the `.bss` words and all three bodies)
 // inside the bare `heap` gate, where x86-64 has always gated it on the strbuf
 // need. So every allocating arm64 program carried three bodies nothing
 // branched to.

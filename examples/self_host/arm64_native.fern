@@ -6838,7 +6838,7 @@ pub function macho_entry_off(a: Arm64Asm): i32 {
 // `data_vaddr + data.len() + bss_off`, so __DATA's vmsize must cover it
 // while its filesize stays at the bytes actually in the file; the kernel
 // zero-fills the difference. Omit it and every symbol past the emitter's
-// `.skip` reservations (the 64 MiB strbuf, the freelists) resolves outside
+// `.skip` reservations (the strbuf words, the freelists) resolves outside
 // the mapped segment: reads and writes there fault, and because the
 // affected symbols sit at the tail, the failure looks like a bug in
 // whatever runtime helper happens to touch one first.

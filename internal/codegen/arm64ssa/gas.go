@@ -498,13 +498,13 @@ const (
 	// the detector actually runs, so the two ship together.
 	rcUnderflowSym = "__fern_rc_underflow"
 
-	// The global string-builder: an 8-byte length counter and a fixed .bss byte
-	// buffer that strbuf_append writes into and strbuf_take copies out of. 64 MiB,
-	// fixed: the register backends grow theirs on demand (#8212); this
-	// experimental one still does not. This costs no file space: the W^X ELF writer
-	// stores the data segment only up to its last non-zero byte (p_filesz) and
-	// lets the loader zero-fill the rest via p_memsz, so the whole zero-init buffer
-	// is NOBITS (see elf.imageWX / trailingTrimZeros).
+	// The global string-builder: an 8-byte length counter and a fixed 64 MiB
+	// .bss byte buffer that strbuf_append writes into and strbuf_take copies out
+	// of, with no bounds check (the register backends grow theirs on demand;
+	// this experimental one never builds the compiler). It costs no file space:
+	// the W^X ELF writer stores the data segment only up to its last non-zero
+	// byte (p_filesz) and lets the loader zero-fill the rest via p_memsz, so the
+	// whole zero-init buffer is NOBITS (see elf.imageWX / trailingTrimZeros).
 	strbufLenSym  = "__ssa_strbuf_len"
 	mapSeedSym    = "__ssa_map_seed"
 	strbufDataSym = "__ssa_strbuf_data"

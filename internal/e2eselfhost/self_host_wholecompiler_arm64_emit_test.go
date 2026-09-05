@@ -10,15 +10,12 @@ import (
 )
 
 // TestSelfHostWholeCompilerArm64SingleProcessEmit emits the WHOLE compiler for
-// -target arm64-linux in ONE process of the self-host CLI: the path #8212
-// segfaulted on with no diagnostic. The emitted text accumulates in the
-// string builder, and at this scale (63 MB after the peephole, more before
-// it) it passed the 64 MiB the builder reserved as a fixed .bss buffer and
-// overwrote the words after it. Neither arm64 route CI already ran reached
-// that shape: the per-module whole-compiler build emits one unit per process
-// and the fixture corpus is small programs. Exit 0 and a compiler-sized
-// output are the assertions here; what the bytes say is the fixpoint and
-// fixture legs' job.
+// -target arm64-linux in ONE process of the self-host CLI (#8212): 63 MB of
+// text after the peephole, more before it, through one string builder. No
+// other arm64 route reaches that shape: the per-module whole-compiler build
+// emits one unit per process and the fixture corpus is small programs. Exit 0
+// and a compiler-sized output are the assertions here; what the bytes say is
+// the fixpoint and fixture legs' job.
 //
 // Builds fern.fern, so it is in ISOLATED_DRIVER_TESTS (test-e2e-selfhost.yml)
 // and runs in the cli job against the driver that job just built. The emit

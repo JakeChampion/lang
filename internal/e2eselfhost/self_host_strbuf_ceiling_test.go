@@ -7,13 +7,10 @@ import (
 	"github.com/jakechampion/lang/internal/e2eharness"
 )
 
-// The string builder past 64 MiB through the SELF-HOST-emitted runtime. Both
-// self-host register emitters reserved a fixed 64 MiB .bss buffer and trapped
-// an append past it with exit 125, which is what #7267 read as arena
-// exhaustion when the compiler compiled itself; the buffer is a heap block
-// that doubles now. Each leg builds the probe with the self-host compiler and
-// runs it, so the grow copy, the append after a grow and the take of a buffer
-// that grew all execute in the emitted runtime.
+// The string builder past 64 MiB through the SELF-HOST-emitted runtime (#8212,
+// #7267). Each leg builds the probe with the self-host compiler and runs it, so
+// the grow copy, the append after a grow and the take of a buffer that grew all
+// execute in the emitted runtime.
 
 func TestSelfHostStrbufGrowsPastOldCeilingX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)

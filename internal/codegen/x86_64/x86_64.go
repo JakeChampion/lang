@@ -9732,8 +9732,7 @@ func (g *generator) emitEprintRuntime() {
 //
 // Single-threaded; only one strbuf active at a time. The buffer is a
 // heap block that doubles (from 64 KiB) when an append would not fit,
-// so the accumulated output has no fixed ceiling: the self-host
-// compiler's own arm64 output passed 64 MiB (#8212).
+// so the accumulated output has no fixed ceiling.
 func (g *generator) emitStrBufRuntime() {
 	g.line("")
 	g.line(".section .bss")
@@ -9754,7 +9753,7 @@ func (g *generator) emitStrBufRuntime() {
 	g.line(".size __fern_strbuf_reset, .-__fern_strbuf_reset")
 
 	// __fern_strbuf_grow(rdi = bytes needed): replace the buffer with one
-	// of at least that capacity — doubling from 64 KiB — and copy the
+	// of at least that capacity, doubling from 64 KiB, and copy the
 	// live bytes across. The old buffer is left to the arena, like the
 	// wasm runtime's strbufEnsure.
 	g.line("")

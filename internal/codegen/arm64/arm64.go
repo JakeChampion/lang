@@ -5516,7 +5516,7 @@ func (g *generator) emitStrBufRuntime() {
 	g.sizeDirective("__fern_strbuf_reset")
 
 	// __fern_strbuf_grow(x0 = bytes needed): replace the buffer with one
-	// of at least that capacity — doubling from 64 KiB — and copy the
+	// of at least that capacity, doubling from 64 KiB, and copy the
 	// live bytes across. The old buffer is left to the arena, like the
 	// wasm runtime's strbufEnsure.
 	g.line("")
@@ -5573,13 +5573,14 @@ func (g *generator) emitStrBufRuntime() {
 		g.emitStrLen2W("w20", "x20")                // w20 = byte length (untagged)
 		g.emitStrDataPtr2W("x19", "x19", "x20", 32) // x19 = byte ptr (after SSO spill if needed)
 	} else {
-		// Legacy single-pointer ABI: length at [x0 - 4].
-		g.emit("stp x29, x30, [sp, #-32]!")
+		// Legacy single-pointer ABI: length at [x0 - 4]. Frame: fp/lr
+		// (16) + x19/x20 (16) + 8-byte spill for inline data + 8 align = 48.
+		g.emit("stp x29, x30, [sp, #-48]!")
 		g.emit("mov x29, sp")
 		g.emit("stp x19, x20, [sp, #16]")
 		g.emit("mov x19, x0")
 		g.emitStrLen("w20", "x19")         // w20 = byte length
-		g.emitStrDataPtr("x19", "x19", 24) // x19 = byte ptr
+		g.emitStrDataPtr("x19", "x19", 32) // x19 = byte ptr
 	}
 	g.adrpAdd("x2", "__fern_strbuf_len")
 	g.emit("ldr x3, [x2]")
@@ -5608,7 +5609,7 @@ func (g *generator) emitStrBufRuntime() {
 	if twoWord {
 		g.emit("ldp x29, x30, [sp], #64")
 	} else {
-		g.emit("ldp x29, x30, [sp], #32")
+		g.emit("ldp x29, x30, [sp], #48")
 	}
 	g.emit("ret")
 	g.sizeDirective("__fern_strbuf_append")

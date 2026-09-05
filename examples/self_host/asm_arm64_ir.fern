@@ -3964,8 +3964,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     // accumulator (strbuf_reset / strbuf_append / strbuf_take), gated on the
     // strbuf need its op sites mark. The buffer is a heap block that doubles
     // (from 64 KiB) when an append would not fit, so the accumulated output
-    // has no fixed ceiling — the compiler's own arm64 output passed 64 MiB
-    // (#8212). Three .bss words: len, data ptr, cap. A string is a 16-byte
+    // has no fixed ceiling. Three .bss words: len, data ptr, cap. A string is a 16-byte
     // view {data@0, len@8} over the 24-byte rc-headered block __fern_str_box
     // builds.
     if (s.has_need("strbuf")) {
