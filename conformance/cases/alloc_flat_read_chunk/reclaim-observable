@@ -1,0 +1,5 @@
+Reports the SHAPE of the allocator's fresh-byte curve over a read_chunk
+loop: "constant" (independent of the chunk size) with reclamation on,
+"scales" with it off. The *FixturesFreeMatchesNoFree gates therefore
+require the two runs to DIFFER; see alloc_flat_under_reclaim/reclaim-observable
+for the contract.

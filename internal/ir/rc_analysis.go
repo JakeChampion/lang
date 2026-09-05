@@ -196,6 +196,18 @@ type rcPlan struct {
 	// the plan instead (see the fixpoint in computeConsumingOwnedMatches).
 	// Filled by computeConsumingOwnedMatches.
 	consumingBindings map[string]ast.Type
+	// ownedPayloadMatches marks a `match` whose scrutinee is a direct call to
+	// an rcOwnedPayloadBuiltins builtin: the box is immortal and needs no
+	// release, but its success payload is a fresh rc=1 value the caller owns
+	// and nothing else ever releases. Its qualifying arms' owned-payload
+	// bindings are counted owners in consumingBindings; the bind site drops
+	// the slot's previous value first so a loop releases every iteration's
+	// payload, and a `_` at an owned position drops the payload at once.
+	// Unlike a consuming owned-param match this may sit in a loop (each
+	// iteration produces a fresh box) and no arm poisons its siblings (an
+	// unadmitted binding is today's leak, not a stranded transfer). Filled
+	// by computeConsumingOwnedMatches.
+	ownedPayloadMatches map[*ast.Match]bool
 	// borrowedBindings names the arm bindings (and `@` bindings) of every
 	// NON-consuming match: the arm loads the payload straight out of the
 	// scrutinee's box with no retain, so a binding holds the box's own
@@ -304,7 +316,7 @@ func (b *builder) computeRcAnalyses() {
 	// Koka-style consuming matches on owned-by-default enum params (#4400).
 	// Computed before freeEligible, which consults consumingBindings (a
 	// qualifying binding becomes a counted owner instead of a tainted borrow).
-	b.rc.consumingOwnedMatches, b.rc.consumingBindings = b.computeConsumingOwnedMatches()
+	b.rc.consumingOwnedMatches, b.rc.ownedPayloadMatches, b.rc.consumingBindings = b.computeConsumingOwnedMatches()
 	b.rc.borrowedBindings = b.computeBorrowedBindings()
 	// Borrow-aware free analysis: which array locals are OWNED and
 	// thus safe to return to the freelist at rc==0. Borrowed /
@@ -3978,11 +3990,18 @@ func (b *builder) computeBorrowedBindings() map[string]bool {
 		if _, ownScrut := b.ownParamEnumScrutinee(m.Tag); ownScrut {
 			return true
 		}
+		// An owned-payload match's admitted bindings own their reference;
+		// its other bindings are borrows like any non-consuming arm's.
+		ownedPayload := b.rc.ownedPayloadMatches[m]
 		for _, arm := range m.Arms {
 			for _, name := range arm.Bindings {
-				if name != "" && name != "_" {
-					out[name] = true
+				if name == "" || name == "_" {
+					continue
 				}
+				if _, owned := b.rc.consumingBindings[name]; owned && ownedPayload {
+					continue
+				}
+				out[name] = true
 			}
 			if arm.AtBinding != "" {
 				out[arm.AtBinding] = true
@@ -5288,11 +5307,22 @@ func (b *builder) computeConsumingMatchReuse() map[*ast.Call]bool {
 // transferred count — a per-call leak of the whole sub-tree where today's exit
 // sweep reclaims it), and a name qualifies only against the surviving match
 // set. Resolved by a small monotone fixpoint below.
-func (b *builder) computeConsumingOwnedMatches() (map[*ast.Match]string, map[string]ast.Type) {
+//
+// The same binding role serves a second scrutinee shape, returned as the
+// second map: a direct call to an rcOwnedPayloadBuiltins builtin
+// (ownedPayloadMatches). There the box is immortal and released by nobody,
+// so the only question is who owns the fresh payload; its qualifying arms'
+// string / array bindings become counted owners under the same name gates,
+// with no loop restriction (each iteration reads a fresh box — the bind site
+// drops the previous value) and no sibling poisoning (an unadmitted binding
+// is a leak, not a stranded transfer). A `_` there is released at the bind
+// site rather than disqualifying the match.
+func (b *builder) computeConsumingOwnedMatches() (map[*ast.Match]string, map[*ast.Match]bool, map[string]ast.Type) {
 	matches := map[*ast.Match]string{}
+	payload := map[*ast.Match]bool{}
 	bindings := map[string]ast.Type{}
 	if !ast.RcFreeEnabled || b.fn.Body == nil {
-		return matches, bindings
+		return matches, payload, bindings
 	}
 	declared := map[string]bool{}
 	for _, p := range b.fn.Params {
@@ -5354,12 +5384,19 @@ func (b *builder) computeConsumingOwnedMatches() (map[*ast.Match]string, map[str
 		return true
 	})
 	if hasDefer {
-		return matches, bindings
+		return matches, payload, bindings
 	}
 	order := b.curIdentOrder()
 	ast.Walk(b.fn.Body, func(n ast.Node) bool {
 		m, ok := n.(*ast.Match)
-		if !ok || inLoop[m] {
+		if !ok {
+			return true
+		}
+		if b.ownedPayloadScrutinee(m.Tag) {
+			payload[m] = true
+			return true
+		}
+		if inLoop[m] {
 			return true
 		}
 		id, ok := m.Tag.(*ast.Ident)
@@ -5418,8 +5455,8 @@ func (b *builder) computeConsumingOwnedMatches() (map[*ast.Match]string, map[str
 		matches[m] = id.Name
 		return true
 	})
-	if len(matches) == 0 {
-		return matches, bindings
+	if len(matches) == 0 && len(payload) == 0 {
+		return matches, payload, bindings
 	}
 	// Binding pass, to a fixpoint: a NAME is admissible only when every
 	// binding occurrence in the function is in a qualifying arm (unguarded,
@@ -5460,7 +5497,7 @@ func (b *builder) computeConsumingOwnedMatches() (map[*ast.Match]string, map[str
 				}
 			}
 		}
-		admit := func(arm *ast.MatchArm) {
+		admit := func(arm *ast.MatchArm, sweepable func(ast.Type) bool) {
 			for i, nm := range arm.Bindings {
 				if nm == "" || nm == "_" {
 					continue
@@ -5491,6 +5528,16 @@ func (b *builder) computeConsumingOwnedMatches() (map[*ast.Match]string, map[str
 			switch x := n.(type) {
 			case *ast.Match:
 				_, consuming := matches[x]
+				if payload[x] {
+					for _, arm := range x.Arms {
+						if !arm.IsWildcard && arm.Guard == nil && arm.Literal == nil && !armHasSubPatterns(arm) {
+							admit(arm, ownedPayloadType)
+						} else {
+							disqualify(arm.Bindings)
+						}
+					}
+					break
+				}
 				// A non-qualifying arm that BINDS anything poisons the whole
 				// match, not just its own names. The canonical shape is a
 				// guarded arm followed by an unguarded one over the same
@@ -5523,7 +5570,7 @@ func (b *builder) computeConsumingOwnedMatches() (map[*ast.Match]string, map[str
 				}
 				for _, arm := range x.Arms {
 					if !poisoned && consuming && !arm.IsWildcard && arm.Guard == nil && arm.Literal == nil {
-						admit(arm)
+						admit(arm, sweepable)
 					} else {
 						disqualify(arm.Bindings)
 					}
@@ -5577,7 +5624,7 @@ func (b *builder) computeConsumingOwnedMatches() (map[*ast.Match]string, map[str
 			// whose every occurrence sat in dropped matches has no arm to
 			// transfer it ownership, so sweeping it would over-release.
 			used := map[string]bool{}
-			for m := range matches {
+			markUsed := func(m *ast.Match) {
 				for _, arm := range m.Arms {
 					if arm.IsWildcard || arm.Guard != nil || arm.Literal != nil {
 						continue
@@ -5587,14 +5634,48 @@ func (b *builder) computeConsumingOwnedMatches() (map[*ast.Match]string, map[str
 					}
 				}
 			}
+			for m := range matches {
+				markUsed(m)
+			}
+			for m := range payload {
+				markUsed(m)
+			}
 			for nm, bt := range cand {
 				if used[nm] {
 					bindings[nm] = bt
 				}
 			}
-			return matches, bindings
+			return matches, payload, bindings
 		}
 	}
+}
+
+// ownedPayloadScrutinee reports whether `tag` is a direct call to an
+// rcOwnedPayloadBuiltins builtin, so a match over it owns the string / array
+// payload it binds. A user-declared function of the same name (the oracle
+// maps key every decl in prog.Funcs) is not the builtin.
+func (b *builder) ownedPayloadScrutinee(tag ast.Expr) bool {
+	call, ok := tag.(*ast.Call)
+	if !ok {
+		return false
+	}
+	id, ok := call.Callee.(*ast.Ident)
+	if !ok || !rcOwnedPayloadBuiltins[id.Name] {
+		return false
+	}
+	_, isUserFn := b.returnsNoParamEscape[id.Name]
+	return !isUserFn
+}
+
+// armHasSubPatterns reports whether any payload position of `arm` carries a
+// sub-pattern (`Some((a, b))`, `Ok("x")`) rather than a plain binding.
+func armHasSubPatterns(arm *ast.MatchArm) bool {
+	for _, p := range arm.Payloads {
+		if p != nil {
+			return true
+		}
+	}
+	return false
 }
 
 // stmtReferencesName reports whether any *ast.Ident named `name` appears

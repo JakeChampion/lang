@@ -5875,7 +5875,12 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bo
 		for _, nm := range names {
 			slot := b.allocSlot()
 			b.locals[nm] = slot
-			b.scratchType[slot] = b.rc.consumingBindings[nm]
+			bt := b.rc.consumingBindings[nm]
+			b.scratchType[slot] = bt
+			// A two-word string slot stores (data, len): two zeros.
+			if _, isStr := bt.(ast.StringType); isStr && ast.UseTwoWordStrings(b.ptrW) {
+				b.emit(Op{Kind: OpConstI32, I32: 0})
+			}
 			b.emit(Op{Kind: OpConstI32, I32: 0})
 			b.emit(Op{Kind: OpStoreLocal, I32: slot})
 		}
@@ -9319,6 +9324,12 @@ func (b *builder) stmt(s ast.Stmt) error {
 			// arm body instead — see reclaimablePairFormPayload.
 			payReleaseSlot := int32(-1)
 			var payReleaseType ast.Type
+			// An owned-payload match (rcOwnedPayloadBuiltins) hands the
+			// arm a payload nobody else releases: an admitted binding owns
+			// it (consumingBindings — swept at exit, so the bind site must
+			// first drop what the slot held from the previous iteration),
+			// and a `_` drops it on the spot.
+			ownedPayloadArm := b.rc.ownedPayloadMatches[n] && arm.Guard == nil && !armHasSubPatterns(arm)
 			for i, name := range arm.Bindings {
 				// A slot carrying a sub-pattern binds nothing itself — its
 				// pattern did, in armPayloadBind above — and its Bindings
@@ -9331,8 +9342,22 @@ func (b *builder) stmt(s ast.Stmt) error {
 				if i < len(arm.BindingTypes) && arm.BindingTypes[i] != nil {
 					bt = arm.BindingTypes[i]
 				}
+				if ownedPayloadArm && name == "_" && ownedPayloadType(bt) {
+					scratch := b.allocSlot()
+					b.scratchType[scratch] = bt
+					b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
+					b.emit(Op{Kind: OpConstI32, I32: offsets[i]})
+					b.emit(Op{Kind: OpAdd})
+					b.emit(payloadLoadOpFor(bt, b.ptrW))
+					b.emit(Op{Kind: OpStoreLocal, I32: scratch})
+					b.emitOwnedSlotDrop(scratch, bt)
+					continue
+				}
 				slot, restore := b.bindingSlotScoped(name, bt)
 				armRestores = append(armRestores, restore)
+				if _, owned := b.rc.consumingBindings[name]; ownedPayloadArm && owned && b.rc.freeEligible[name] {
+					b.emitOwnedSlotDrop(slot, bt)
+				}
 				if pairFormScrutinee && arm.Guard == nil && arm.AtBinding == "" &&
 					b.reclaimablePairFormPayload(n.Tag, bt, arm.Body, name) {
 					payReleaseSlot, payReleaseType = slot, bt

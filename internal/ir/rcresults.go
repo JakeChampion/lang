@@ -44,6 +44,8 @@
 //     thing it exists to convert.
 package ir
 
+import "github.com/jakechampion/lang/internal/ast"
+
 // RcResult is what a call's returned pointer means for the caller's
 // ownership books.
 type RcResult int
@@ -175,6 +177,34 @@ var rcResultImmortal = map[string]bool{
 	"__fern_stdout": true,
 	"__fern_stderr": true,
 	"__fern_stdin":  true,
+}
+
+// rcOwnedPayloadBuiltins names the builtins — by the callee spelling the IR
+// sees, which every backend maps to the runtime helper in the comment —
+// whose rcResultImmortal Option / Result box carries a SUCCESS payload the
+// caller owns: a fresh rc=1 string (`__fern_alloc_rc1`) or u8[]
+// (`__alloc_u8`) built for this call, on every backend. The box needs no
+// release; the payload's unit is the caller's, and a match that binds it
+// takes ownership (computeConsumingOwnedMatches → consumingBindings). A
+// failure payload (`IoError`) is an immortal box and is not owned.
+var rcOwnedPayloadBuiltins = map[string]bool{
+	"__method_Reader_read_chunk": true, // __fern_reader_read_chunk
+	"__method_Reader_read_line":  true, // __fern_reader_read_line
+	"read_line":                  true, // __fern_read_line
+	"env":                        true, // __fern_env
+	"read_file":                  true, // __fern_read_file
+	"read_file_bytes":            true, // __fern_read_file_bytes
+}
+
+// ownedPayloadType reports whether a binding of type `t` extracted from an
+// rcOwnedPayloadBuiltins box is the owned payload — the string / byte-array
+// shapes those helpers build fresh — rather than an immortal failure box.
+func ownedPayloadType(t ast.Type) bool {
+	switch t.(type) {
+	case ast.StringType, ast.ArrayType:
+		return true
+	}
+	return false
 }
 
 // rcResultRaw: fresh arena memory with no rc header.
