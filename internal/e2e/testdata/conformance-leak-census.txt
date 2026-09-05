@@ -81,6 +81,7 @@ array_param_threaded_reassign                        0
 array_reverse                                        0
 array_sort                                           0
 array_with_rc_elem_drop                              0
+arrow_lambda_block_body                              0
 arrpush                                              0
 associated_functions                                 0
 audit_core_builtins                                  0
@@ -132,6 +133,8 @@ compound_assign_wider                                0
 concat_of_empties                                    0
 const_divisor_lowering                               0
 const_divisor_runtime                                0
+const_shadowed_by_binder                             0
+const_shadowed_by_pattern_binder                     0
 const_struct_negative_fields                         0
 consuming_method                                     0
 consuming_trait_method                               0
