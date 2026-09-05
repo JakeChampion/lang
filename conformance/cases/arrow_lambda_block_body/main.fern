@@ -24,6 +24,12 @@ function run(f: (i32) => void, v: i32): void {
     f(v);
 }
 
+function give(x: i32, cb: (i32) => i32): i32 {
+    return cb(x);
+}
+
+enum Opt { Has(i32), Nil }
+
 function main(): i32 {
     // Expression body — the common form.
     if (apply((x: i32) => x * 2, 4) != 8) {
@@ -98,13 +104,30 @@ function main(): i32 {
     if (apply(branchy, 0 - 8) != 8) {
         return 22;
     }
+    // `use` and `let … else` rewrite the REST of the block they appear in, so
+    // they only work where the body is a real function body (#8593).
+    var bound = (): i32 => {
+        use n <- give(41);
+        return n + 1;
+    };
+    if (bound() != 42) {
+        return 23;
+    }
+    var unwrapped = (): i32 => {
+        var o: Opt = Nil;
+        let Has(v) = o else { return 7; };
+        return v;
+    };
+    if (unwrapped() != 7) {
+        return 24;
+    }
     // A trailing `match` written without a `;` IS the value, still.
     var pick = (x: i32) => {
         var y: i32 = x + 1;
         match (y) { 0 => 100, _ => y * 2 }
     };
     if (apply(pick, 3) != 8) {
-        return 23;
+        return 25;
     }
     return 0;
 }

@@ -1326,6 +1326,11 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// has to be re-read as the statement it is.
 		{"arrow-block-body-match-stmt-ok", "function apply(f: (i32) => i32, v: i32): i32 { return f(v); }\nfunction main(): i32 {\n    var g = (x: i32) => {\n        match (x) {\n            0 => { return 100; },\n            _ => {}\n        }\n        return x * 2;\n    };\n    return apply(g, 4) - 8;\n}\n", nil},
 		{"arrow-block-body-if-stmt-ok", "function apply(f: (i32) => i32, v: i32): i32 { return f(v); }\nfunction main(): i32 {\n    var g = (x: i32) => {\n        if (x > 0) { return x * 2; } else { return 0 - x; }\n    };\n    return apply(g, 4) - 8;\n}\n", nil},
+		// #8593: `use` and `let … else` rewrite the REST of the block they
+		// appear in, so they work only where the body is a real function body
+		// — a value-block scanner has no remainder to give them.
+		{"arrow-block-body-use-ok", "function give(x: i32, cb: (i32) => i32): i32 { return cb(x); }\nfunction main(): i32 {\n    var f = (): i32 => {\n        use n <- give(41);\n        return n + 1;\n    };\n    return f() - 42;\n}\n", nil},
+		{"arrow-block-body-letelse-ok", "enum O { Has(i32), Nil }\nfunction main(): i32 {\n    var f = (): i32 => {\n        var o: O = Nil;\n        let Has(v) = o else { return 0; };\n        return v;\n    };\n    return f();\n}\n", nil},
 		// The other direction: a trailing `match` written without a `;` is
 		// still the block's value.
 		{"arrow-block-body-match-tail-ok", "function apply(f: (i32) => i32, v: i32): i32 { return f(v); }\nfunction main(): i32 {\n    var g = (x: i32) => {\n        var y: i32 = x + 1;\n        match (y) { 0 => 100, _ => y * 2 }\n    };\n    return apply(g, 3) - 8;\n}\n", nil},
