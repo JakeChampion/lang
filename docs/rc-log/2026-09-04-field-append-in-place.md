@@ -155,9 +155,10 @@ was not a like-for-like pair: the 5.4 GB leg SEGFAULTED about 50 s in and never
 finished, so it is the peak of a partial run. The 155.3 s / 12.98 GB leg was
 measured with the identity-arm retain in place, and that retain is the whole of
 the regression — see the section below. It is gone; the numbers in this table
-describe a lowering that no longer exists. With the retain retired and the one
-release the audit found unguarded now bracketed, this workload runs
-94.8 s / 8.32 GB (#8254).
+describe a lowering that no longer exists. With the retain retired and the
+unguarded release bracketed by an interim filter, this workload ran
+94.8 s / 8.32 GB — a figure taken before #8274 and before that filter was
+dropped in `9403d61`, so it is history rather than the shipped number (#8254).
 
 ## Two containment holes a self-host-EMITTED compiler found
 

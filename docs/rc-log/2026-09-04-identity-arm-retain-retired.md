@@ -101,13 +101,21 @@ the sweep frees it — value semantics hold right up to the moment the freed blo
 is handed out again. Twenty appends after the call is enough: the answer goes
 from 60 to 196.
 
-The fix is at the exemption, not at the drop. `return f(a, v)` kills `a`'s
-BINDING; it does not establish that this frame is done with the buffers inside
-it, and the sweep runs after the call. `grow_return_local_filter` therefore
-withdraws a return-position death from any name that is a frame-owned LOCAL,
-leaving it for PARAMETERS — where row 6 says no frame here releases the fields
-at all. That is `grow_alias_filter`'s rule read from the other side: there the
-frame does not own the container, here it owns it too well.
+**The fix that shipped is #8274's move-out, not what this section first
+described.** The identity arm stores NULL into the source field, so the buffer
+rides out with the value and every surviving release — the `OWNREL:` deep walk
+over own params, `emit_struct_field_drops_gated` under `__fern_rc_is_unique`,
+`__field_reclaim_<T>`'s null skip, `__struct_drop_<T>`'s null jump — finds
+NULL and frees nothing. That covers frame-owned locals and `own` params alike,
+which is why no filter is needed to tell them apart.
+
+The interim fix this branch carried was `grow_return_local_filter`: it withdrew
+a return-position death from frame-owned LOCALS and kept it for PARAMETERS, on
+the strength of row 6's claim that no frame releases a parameter's fields. That
+claim was false, so the filter left the `own`-param spelling uncovered — and
+`conformance/cases/own_self_reassign_move` was exactly that spelling, which
+`2ddc6cb0e` turned from a bounded leak into a double free. The filter was
+dropped in `9403d61` once the move-out superseded it.
 
 Placing it there also covers row 4's own soft spot without naming it. That row
 rests on `moves_fields_expr` marking a method receiver — except for a method the
@@ -136,13 +144,18 @@ binaries differing only in the lowering that built them:
 |---|---|---|
 | pre-#8251 (e28ccd865) | 127.4 s | 10.72 GB |
 | main, with the identity retain | 118.3 s | 11.91 GB |
-| **this change** | **94.8 s** | **8.32 GB** |
+| **this branch, with the filter, pre-#8274** | **94.8 s** | **8.32 GB** |
 
 Against a 16 GiB arena that is 11.91 -> 8.32 GB, below the pre-#8224 figure as
 well — the clone form allocated a fresh buffer per append too, it was merely
-reclaimed. `grow_return_local_filter` is 5 s and 0.33 GB of that: the same
-source with only the retain retired reads 89.8 s / 7.99 GB, which is the price
-of the copies row 5 needs.
+reclaimed. `grow_return_local_filter` was 5 s and 0.33 GB of that: the same
+source with only the retain retired reads 89.8 s / 7.99 GB, which was the price
+of the copies row 5 needed. **That cost is no longer paid** — the filter is
+gone, so the shipped state should sit nearer the 89.8 s / 7.99 GB leg than the
+94.8 s / 8.32 GB row above. Every figure in this table was taken with the
+filter present and before #8274; none has been re-measured on the shipped
+tree, so read them as the history of the investigation rather than as the
+current numbers.
 
 **The absolute numbers do not match #8254's**, which reads 155.3 s / 12.98 GB
 for main and 142.1 s / 10.91 GB pre-#8251 on a different host. The RSS ratios
