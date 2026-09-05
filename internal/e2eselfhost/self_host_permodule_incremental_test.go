@@ -34,11 +34,9 @@ import (
 //     scenario B is the guard the issue asks for.
 //
 // The tree: main → mid → leaf. `mid_val` reads leaf's return value into an
-// inferred local and adds to it, so its emitted code depends on leaf's *return
-// type* while its own source never mentions it — the exact shape that makes a
-// source-only cache wrong. The add is what carries the type: an i32 sum takes
-// the width normalise (movslq) after it and an i64 sum does not, whereas a bare
-// compare against zero is spelled the same 64-bit way for both.
+// inferred local, so its emitted code depends on leaf's *return type* while its
+// own source never mentions it — the exact shape that makes a source-only cache
+// wrong.
 func TestSelfHostPerModuleIncrementalCodegenX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	shDir := writeSelfHostModloadProject(t)
