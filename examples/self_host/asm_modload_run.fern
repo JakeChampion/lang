@@ -944,6 +944,21 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
     return 0;
 }
 
+// fold_target_calls resolves `target_os()` / `target_arch()` in the entry and
+// every loaded module, as fern.fern does before its own check. irlower answers
+// an unfolded call from the pointer width's default target, which names the
+// environment correctly on every native target and the ISA only on arm64 — so
+// a driver that knows its -target folds rather than taking that default.
+function fold_target_calls(entry: parser.Module, loaded: flatten.LoadedModule[], target: string): (parser.Module, flatten.LoadedModule[]) {
+    var d: platforms.Descriptor = platforms.for_target(target);
+    var e2: parser.Module = constfold.fold_target_name(entry, d.environment, d.isa);
+    var out: flatten.LoadedModule[] = [];
+    for lm in loaded {
+        out = out.append(flatten.LoadedModule { name: lm.name, mod: constfold.fold_target_name(lm.mod, d.environment, d.isa) });
+    }
+    return (e2, out);
+}
+
 function main(): i32 {
     var a: string[] = args();
     // `-ir-probe`: after real import resolution + bundling, report the IR-
@@ -1071,6 +1086,9 @@ function main(): i32 {
         Ok(src) => {
             var entry: parser.Module = parser.parse_module(lexer.tokenize(src));
             var loaded: flatten.LoadedModule[] = modloader.load_imports(modloader.no_overlay(), dir, entry);
+            var (fentry, floaded) = fold_target_calls(entry, loaded, target);
+            entry = fentry;
+            loaded = floaded;
             if (pm_mode.len() > 0) {
                 return run_per_module(dir, entry_path, entry, loaded, pm_mode, pm_index, pm_extra, cache_dir, pm_lo, pm_hi, target, out_dir, func_budget, unit_lo, unit_hi, assume_eligible);
             }
