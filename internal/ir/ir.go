@@ -13972,6 +13972,140 @@ func resultCannotAliasArg(t ast.Type) bool {
 	return false
 }
 
+// typeCannotCarrySlice reports whether a value of type t provably cannot BE or
+// CONTAIN a `[T]` view header. An allow-list: only shapes whose contents are
+// fully known answer true, so a type variable, a trait object, a closure or a
+// handle blocks the answer rather than passing it.
+//
+// A different question from resultCannotAliasArg, and deliberately wider. That
+// one asks whether the result can alias the ARGUMENT, which a `u8[]` result can
+// — the callee may hand the caller's array straight back. The header a lend
+// materialises is a separate two-word object that nothing but the call site can
+// name, so an array result cannot be it (#8502).
+func (b *builder) typeCannotCarrySlice(t ast.Type) bool {
+	return b.sliceFreeType(t, map[string]bool{})
+}
+
+func (b *builder) sliceFreeType(t ast.Type, seen map[string]bool) bool {
+	switch x := t.(type) {
+	case ast.NumberType, ast.BoolType, ast.FloatType, ast.VoidType,
+		ast.StringType, ast.CharType, ast.NeverType:
+		return true
+	case ast.ArrayType:
+		return x.Elem != nil && b.sliceFreeType(x.Elem, seen)
+	case ast.TupleType:
+		for _, e := range x.Elems {
+			if !b.sliceFreeType(e, seen) {
+				return false
+			}
+		}
+		return true
+	case ast.StructType:
+		if seen[x.Name] {
+			return true // a cycle reaches nothing new
+		}
+		seen[x.Name] = true
+		d := b.info.Structs[x.Name]
+		if d == nil {
+			return false
+		}
+		for _, f := range d.Fields {
+			if !b.sliceFreeType(f.Type, seen) {
+				return false
+			}
+		}
+		return true
+	case ast.EnumType:
+		if seen[x.Name] {
+			return true
+		}
+		seen[x.Name] = true
+		d := b.info.Enums[x.Name]
+		if d == nil {
+			return false
+		}
+		for _, v := range d.Variants {
+			for _, pt := range v.Payloads {
+				if !b.sliceFreeType(pt, seen) {
+					return false
+				}
+			}
+		}
+		return true
+	}
+	return false
+}
+
+// stashLentViewTemp evaluates a LENT view argument — the full-range slice the
+// checker synthesises for a `T[]` argument at a `[T]` parameter — into a
+// scratch slot, leaving it on the operand stack for the call. Reports the slot
+// so the caller can free the header once the call has returned.
+//
+// The header is 2 pointer-widths of raw `__fern_alloc` memory with no rc
+// header, so nothing in the rc machinery owns it and it leaked once per call on
+// every backend. Three things together make the caller-side free sound, and the
+// first two are the language's rather than this analysis's:
+//
+//   - the coercion fires only at ARGUMENT positions, so a header cannot be born
+//     anywhere else (E043 rejects the same coercion in a struct literal);
+//   - fields are immutable after construction (E048), so the callee cannot
+//     write the view into storage the caller still reads;
+//   - which leaves the callee's RETURN as the only way out, and resultType is
+//     admitted only when it provably cannot carry a slice.
+func (b *builder) stashLentViewTempIf(admitted bool, a ast.Expr, resultType ast.Type) (int32, bool, error) {
+	if !admitted {
+		return 0, false, nil
+	}
+	return b.stashLentViewTemp(a, resultType)
+}
+
+func (b *builder) stashLentViewTemp(a ast.Expr, resultType ast.Type) (int32, bool, error) {
+	if !ast.RcFreeEnabled || !makesFreshViewHeader(a) || !b.typeCannotCarrySlice(resultType) {
+		return 0, false, nil
+	}
+	slot := b.allocSlot()
+	b.locals[fmt.Sprintf("__lentview_%d", slot)] = slot
+	if err := b.expr(a); err != nil {
+		return 0, false, err
+	}
+	b.emit(Op{Kind: OpStoreLocal, I32: slot})
+	b.emit(Op{Kind: OpLoadLocal, I32: slot})
+	return slot, true, nil
+}
+
+// makesFreshViewHeader reports whether evaluating e MATERIALISES a `[T]`
+// header — as opposed to naming one someone else owns. A bare ident holding a
+// view is the shape this must exclude: its owner keeps it past the call.
+//
+// Both producers allocate the same two-word `__fern_alloc` block with no rc
+// header: the slice lowering's `__slice_make` (whether the author wrote
+// `xs[a:b]` or the checker synthesised the full-range lend), and
+// `as_bytes`, which rcresults.go already classifies as raw for the same
+// reason. A string slice is not one of them — `IsString` lowers to
+// `__str_slice`, a copy into a fresh owned string, which the rc machinery
+// already reclaims.
+func makesFreshViewHeader(e ast.Expr) bool {
+	switch x := e.(type) {
+	case *ast.SliceExpr:
+		return !x.IsString
+	case *ast.Call:
+		id, ok := x.Callee.(*ast.Ident)
+		return ok && id.Name == "__method_string_as_bytes"
+	}
+	return false
+}
+
+// emitLentViewDrops frees the headers stashLentViewTemp stashed. Net-zero on
+// the operand stack, so the call's result sitting underneath is untouched.
+func (b *builder) emitLentViewDrops(slots []int32) {
+	for _, slot := range slots {
+		b.emit(Op{Kind: OpLoadLocal, I32: slot})
+		b.emit(Op{Kind: OpConstI32, I32: int32(2 * b.ptrW)})
+		// __free is (base, size) and returns nothing, so nothing follows it.
+		b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__free", Width: ResNarrow, I32: 2})
+	}
+}
+
 // resultIsCountedStringAlias admits the stage-(b) arg-temp reclaim for a
 // STRING-returning user callee, where resultCannotAliasArg says no. The result
 // really can be the argument — `pad_start`'s `if (sl >= n) { return s; }` is the
@@ -15196,6 +15330,10 @@ func (b *builder) callBody(n *ast.Call) error {
 		resultCannotAliasArg(b.exprType(n))
 	var argTempSlots []int32
 	var argTempTypes []ast.Type
+	// The lend headers this call materialises, freed after it returns (#8502).
+	// Kept separate from argTempSlots because the admission is a different
+	// question — typeCannotCarrySlice, not resultCannotAliasArg.
+	var lentViewSlots []int32
 	// Parallel to argTempSlots: true where the drop must be gated on the
 	// call's result not BEING this temp (consumedArrayArgTemp).
 	var argTempGuarded []bool
@@ -15220,6 +15358,17 @@ func (b *builder) callBody(n *ast.Call) error {
 	}
 	for ai, a := range n.Args {
 		toOwnParam := ownedByCalleeAt(ai)
+		// A view is a borrow, so the checker refuses it at an `own` position
+		// and ownedByDefaultTypeIn does not admit one — but both would want
+		// the retain/move handling below rather than this free, so fall
+		// through rather than assume.
+		lentOK := !toOwnParam && !ownedByDefaultAt(ai)
+		if slot, ok, err := b.stashLentViewTempIf(lentOK, a, b.exprType(n)); err != nil {
+			return err
+		} else if ok {
+			lentViewSlots = append(lentViewSlots, slot)
+			continue
+		}
 		guardArgTemp := !toOwnParam && !reclaimArgTemps && !reclaimIndirectArgTemps &&
 			!countedArgTemp(ai) && consumedArrayArgTemp(ai)
 		if (reclaimArgTemps || reclaimIndirectArgTemps || countedArgTemp(ai) ||
@@ -15389,6 +15538,7 @@ func (b *builder) callBody(n *ast.Call) error {
 			// incoming count (the inc preceded it; never frees).
 			b.emitGrowBracket(growBracket, OpRcDec, "__fern_rc_dec")
 			b.emitArgTempDropsGuarded(argTempSlots, argTempTypes, argTempGuarded, b.exprType(n))
+			b.emitLentViewDrops(lentViewSlots)
 			return nil
 		}
 	}
@@ -15407,6 +15557,7 @@ func (b *builder) callBody(n *ast.Call) error {
 	b.emit(Op{Kind: OpCallIndirect, I32: int32(len(n.Args)), Ext: &OpExt{Sig: sig}})
 	// Release the fresh owned temps stashed for this call (#6460).
 	b.emitArgTempDrops(argTempSlots, argTempTypes)
+	b.emitLentViewDrops(lentViewSlots)
 	return nil
 }
 
