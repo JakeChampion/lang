@@ -1,0 +1,3 @@
+# lane: selfhost-alloc-x86_64
+x86_64/checker.allocs	15215539
+x86_64/checker.frees	12045209
