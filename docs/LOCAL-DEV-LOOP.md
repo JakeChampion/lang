@@ -146,6 +146,17 @@ passes are the largest cost. To re-measure, wrap `run()` in
 `pprof.StartCPUProfile` from a throwaway `cmd/fern` test and read
 `go tool pprof -top -cum`.
 
+Two stages of that pipeline run on every core (#8176): `ir.LowerWith`'s
+per-function body lowering (`FERN_LOWER_JOBS=N` sets the worker count, `1` is
+sequential) and the x86-64 assembler's line parse, which reads the text in
+chunks ahead of the in-order encode. Both are GC-bound rather than core-bound:
+on the same container the lowering loop went 3.4 s to 2.3 s at four workers
+and 3.0 s to 1.3 s with `GOGC=400`, so the allocation rate, not the worker
+count, is what to attack next. `ir.OptimizeCleanup` was tried on the same
+pool and gained nothing measurable at the default GOGC (its passes copy each
+op list per round, so it is allocation all the way down); it stays sequential
+until that copying goes.
+
 ## Suite timings and sharding
 
 The e2e suite is split (#4398 part 3) into `internal/e2eselfhost` (the
