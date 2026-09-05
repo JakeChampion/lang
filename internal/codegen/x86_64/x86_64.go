@@ -1952,6 +1952,12 @@ func (g *generator) emitFunc(fn *ast.FuncDecl, irFn *ir.Func) error {
 			i += adv
 			continue
 		}
+		// And for the inline rc uniqueness guard, whose result nearly
+		// always feeds the branch that follows it. See tryFuseIsUniqueBranch.
+		if adv, ok := g.tryFuseIsUniqueBranch(irFn.Ops, i, &scope); ok {
+			i += adv
+			continue
+		}
 		// Division by a literal (#7991 follow-up): the divisor is known, so
 		// the zero and INT_MIN/-1 guards are dead code and a power of two is
 		// a shift. See emitConstDivRem.
@@ -3579,6 +3585,42 @@ func (g *generator) tryFuseNotBranch(ops []ir.Op, i int, scope *[]irScope) (int,
 		return j - i, true
 	}
 	return 0, false
+}
+
+// tryFuseIsUniqueBranch fuses `OpRcIsUnique; OpIf` into the guard's own
+// compares, each jumping to the else-label.
+//
+// The inline is_unique (the OpRcIsUnique case in emitOp) materialises its
+// 0/1 result through `xor / sete / mov` only for the `if` to `test` it
+// again. The guard is two conditions — the pointer is at or above the low
+// bound, and the count is exactly 1 — and the not-unique arm is exactly
+// where a failed compare jumps, so the branch reads the compares directly.
+// The sentinel test the bool form carries (`test edx, edx / js`) is not
+// needed: a negative count is never equal to 1, so `cmp [rax - 8], 1`
+// already puts every static/immortal value on the not-unique side. Null and
+// every other below-bound value takes that side at the first compare,
+// before the load, exactly as the bool form does.
+//
+// Only the `OpIf` consumer is handled: is_unique is machine-made, and the
+// lowering emits it either straight into an `if` or into a store (the reuse
+// token, read again later), never through OpNot or into a br_if. Sound for
+// the same reason as the other two fusions — the IR is single-use, so the
+// `if` is the sole consumer — and it defers to the bool form whenever emitOp
+// would not inline the guard.
+func (g *generator) tryFuseIsUniqueBranch(ops []ir.Op, i int, scope *[]irScope) (int, bool) {
+	if ops[i].Kind != ir.OpRcIsUnique || ast.RcFreeDebug || !g.rcInlineOK ||
+		i+1 >= len(ops) || ops[i+1].Kind != ir.OpIf {
+		return 0, false
+	}
+	elseL := g.freshLabel("ifElse")
+	endL := g.freshLabel("ifEnd")
+	g.pop()
+	g.emit("cmp rax, 0x10000")
+	g.emit("jb " + elseL)
+	g.emit("cmp dword ptr [rax - 8], 1")
+	g.emit("jne " + elseL)
+	*scope = append(*scope, irScope{kind: ir.OpIf, brTarget: endL, endLabel: endL, elseLabel: elseL, entryBytes: g.opBytes})
+	return 1, true
 }
 
 func (g *generator) binPop() {
