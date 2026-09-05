@@ -4848,6 +4848,12 @@ pub struct Arm64GasProg {
     data: i32[],
     dlab_names: string[],
     dlab_offs: i32[],
+    // The data symbols' bucket chains, the shape Arm64Asm keeps for the text
+    // labels: dlab_head[b] is the first symbol in bucket b, dlab_next[i] the
+    // one after i in its chain, dlab_tail[b] the chain's last.
+    dlab_head: i32[],
+    dlab_next: i32[],
+    dlab_tail: i32[],
     pf_sites: i32[],    // byte offset of the instruction to patch in .text
     pf_syms: string[],  // target data symbol
     pf_kinds: i32[],    // 0 = adrp@PAGE, 1 = ldr@PAGEOFF, 2 = add@PAGEOFF
@@ -4875,6 +4881,7 @@ function arm64_gas_prog_new(): Arm64GasProg {
     return Arm64GasProg {
         asm: arm64_asm_new(), data: [],
         dlab_names: [], dlab_offs: [],
+        dlab_head: arm64_empty_buckets(), dlab_next: [], dlab_tail: arm64_empty_buckets(),
         pf_sites: [], pf_syms: [], pf_kinds: [],
         lit_sites: [], lit_vals: [],
         dref_offs: [], dref_syms: [],
@@ -5092,14 +5099,42 @@ function arm64_gas_nl_ref(cnt: i32[], tok: string): string {
 // arm64_gas_dlabel_off returns the data-blob offset of a data symbol, or
 // -1 if it is not defined.
 function arm64_gas_dlabel_off(p: Arm64GasProg, name: string): i32 {
-    var i: i32 = 0;
-    while (i < p.dlab_names.len()) {
+    var i: i32 = p.dlab_head[arm64_name_bucket(name)];
+    while (i >= 0) {
         if (p.dlab_names[i] == name) {
             return p.dlab_offs[i];
         }
-        i = i + 1;
+        i = p.dlab_next[i];
     }
     return 0 - 1;
+}
+
+// arm64_gas_dlabel records data symbol `name` at blob offset `off` and links
+// it to the end of its bucket's chain, so a name defined twice resolves to
+// its first definition. Each chain array is lifted out of the struct before
+// its `.with`, as arm64_asm_label does, so the write lands in place.
+function arm64_gas_dlabel(own p: Arm64GasProg, name: string, off: i32): Arm64GasProg {
+    var at: i32 = p.dlab_names.len();
+    var b: i32 = arm64_name_bucket(name);
+    var prev: i32 = p.dlab_tail[b];
+    p = Arm64GasProg { ...p, dlab_names: p.dlab_names.append(name) };
+    p = Arm64GasProg { ...p, dlab_offs: p.dlab_offs.append(off) };
+    p = Arm64GasProg { ...p, dlab_next: p.dlab_next.append(0 - 1) };
+    if (prev < 0) {
+        var head: i32[] = p.dlab_head;
+        p = Arm64GasProg { ...p, dlab_head: [] };
+        head = head.with(b, at);
+        p = Arm64GasProg { ...p, dlab_head: head };
+    } else {
+        var next: i32[] = p.dlab_next;
+        p = Arm64GasProg { ...p, dlab_next: [] };
+        next = next.with(prev, at);
+        p = Arm64GasProg { ...p, dlab_next: next };
+    }
+    var tail: i32[] = p.dlab_tail;
+    p = Arm64GasProg { ...p, dlab_tail: [] };
+    tail = tail.with(b, at);
+    return Arm64GasProg { ...p, dlab_tail: tail };
 }
 
 // arm64_gas_strip_at returns the symbol portion of a `sym@PAGE` /
@@ -5689,8 +5724,8 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
             var before: str = slice_unchecked(line, 0, colon);
             if (arm64_str_indexof(before, " ") < 0 && arm64_str_indexof(before, ",") < 0) {
                 if (section == 1) {
-                    p = Arm64GasProg { ...p, dlab_names: p.dlab_names.append(before) };
-                    p = Arm64GasProg { ...p, dlab_offs: p.dlab_offs.append(p.data.len()) };
+                    var doff: i32 = p.data.len();
+                    p = arm64_gas_dlabel(p, before, doff);
                 } else if (section == 2) {
                     p = Arm64GasProg { ...p, bss_names: p.bss_names.append(before) };
                     p = Arm64GasProg { ...p, bss_offs: p.bss_offs.append(p.bss_size) };
