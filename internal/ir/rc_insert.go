@@ -196,7 +196,21 @@ func (b *builder) freshOwnedRcTempType(e ast.Expr) (ast.Type, bool) {
 		if t, ok := b.exprType(e).(ast.StringType); ok {
 			return t, true
 		}
+		// `a[lo:hi]` over an array or slice builds a fresh rc=1 header
+		// (__slice_make) that nothing else references; releasing it frees
+		// the header alone, never the viewed buffer.
+		if t, ok := b.exprType(e).(ast.SliceType); ok && !x.IsString {
+			return t, true
+		}
 	case *ast.Call:
+		// `s.as_bytes()` is the array SliceExpr arm above spelled as a
+		// method: a fresh header viewing the receiver's bytes, owned by this
+		// expression alone (rcResultOwned records the same for the helper).
+		if cid, ok := x.Callee.(*ast.Ident); ok && cid.Name == "__method_string_as_bytes" {
+			if t, ok := b.exprType(x).(ast.SliceType); ok {
+				return t, true
+			}
+		}
 		// `c.get()` on a Cell[string]: emitCellGet RETAINS the slot's buffer
 		// unconditionally, so the expression yields an owned +1 reference. A
 		// BINDING balances it with its exit-sweep dec; every borrowing
@@ -919,6 +933,8 @@ func (b *builder) emitOwnedTempStackDrop(t ast.Type) {
 			b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
 			b.emit(Op{Kind: OpDrop})
 		}
+	case ast.SliceType:
+		b.emitSliceHeaderDropOnStack()
 	case ast.TupleType:
 		// A needs-drop tuple has a generated __drop_tuple_<mangled> fn (1
 		// arg). A plain-element tuple's inline is_unique + box_free reads the
@@ -1395,6 +1411,13 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 			b.emit(Op{Kind: OpDrop})
 			return
 		}
+		// Slice reclamation: an OWNED `[T]` local frees its rc1 header at
+		// the last reference. Ineligible (aliased / escaping) headers and
+		// flag-off builds fall through to the plain dec.
+		if isSliceType(t) && ast.RcFreeEnabled && eligible {
+			b.emitSliceSlotDrop(slot)
+			return
+		}
 		b.emit(Op{Kind: OpLoadLocal, I32: slot})
 		b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
 		b.emit(Op{Kind: OpDrop})
@@ -1827,6 +1850,25 @@ func (b *builder) emitTupleSlotDrop(idx int32, tt ast.TupleType) {
 	b.emit(Op{Kind: OpEnd})
 }
 
+// emitSliceHeaderDropOnStack releases the slice header on top of the
+// operand stack — the one body every slice drop site shares (exit sweep,
+// reinit / reassign, arg and statement temps, container children). A
+// header is an rc1 block whose payload size __fern_alloc_rc1 stashed at
+// data-4, so __fern_closure_drop's contract — free the block at that size
+// on rc==1, dec otherwise, null / low-address / sentinel guarded — is
+// exactly the header's; the bytes it views are never touched.
+func (b *builder) emitSliceHeaderDropOnStack() {
+	b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_closure_drop", Width: ResAddr, I32: 1})
+	b.emit(Op{Kind: OpDrop})
+}
+
+// emitSliceSlotDrop is emitSliceHeaderDropOnStack for the header held in
+// local slot `idx`. Net-zero on the operand stack.
+func (b *builder) emitSliceSlotDrop(idx int32) {
+	b.emit(Op{Kind: OpLoadLocal, I32: idx})
+	b.emitSliceHeaderDropOnStack()
+}
+
 // emitReuseOldFieldDrops releases D's OLD pointer fields/elements from the
 // reused box on the REUSE branch (gated reusedSlot), before C's stores
 // overwrite them. D is dead at C, so every pointer slot is replaced — each old
@@ -2015,6 +2057,10 @@ func genClosureDropThunk(name string, caps []ast.Param, ptrW int, info *checker.
 				// Concrete-struct (or boxed generic-enum) capture: free its
 				// box + nested children.
 				ops = append(ops, Op{Kind: OpCallDirect, Str: drop, I32: 1})
+			} else if isSliceType(c.Type) {
+				// Slice capture: free the header (rc1 block) on its last
+				// reference; the viewed bytes are the source's.
+				ops = append(ops, Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_closure_drop", Width: ResAddr, I32: 1})
 			} else {
 				// enum / closure capture: flat one-level dec (a union's
 				// variant type isn't statically known; nested closures
@@ -2382,6 +2428,13 @@ func arrElemStructDropName(elem ast.Type, info *checker.Info, reg map[string]*as
 	// cells (OpConstFunc, rc sentinel) are skipped by the is_unique gate.
 	if _, ok := elem.(*ast.FuncType); ok {
 		return "__drop_arr_closure", true
+	}
+	// Slice-element array (`[T][]`): each element is an rc1 view header.
+	// __fern_drop_arr_ptr's per-element __fern_rc_dec would take a header
+	// to rc 0 without freeing it, so the loop calls __fern_closure_drop
+	// per element instead (genArrSliceDropFn), then frees the buffer.
+	if isSliceType(elem) {
+		return "__drop_arr_slice", true
 	}
 	// Enum-element sibling of the struct case: a `E[]` whose variants carry
 	// rc-tracked payloads (e.g. `Value[]` — pervasive in the self-host
@@ -2916,6 +2969,23 @@ func genArrOfArrDropFn(perElemDrop string, ptrW int) *Func {
 	}
 }
 
+// genArrSliceDropFn builds __drop_arr_slice(ptr): the genArrOfArrDropFn loop
+// with __fern_closure_drop as the per-element release, which frees each
+// slice header at rc==1 (emitSliceHeaderDropOnStack says why that helper is
+// the header's drop). The per-element call is marked Runtime so the backends
+// resolve it to the helper rather than looking for a defined function.
+func genArrSliceDropFn(ptrW int) *Func {
+	fn := genArrOfArrDropFn("__fern_closure_drop", ptrW)
+	fn.Name = "__drop_arr_slice"
+	for i := range fn.Ops {
+		if fn.Ops[i].Kind == OpCallDirect && fn.Ops[i].Str == "__fern_closure_drop" {
+			fn.Ops[i].Runtime = true
+			fn.Ops[i].Width = ResAddr
+		}
+	}
+	return fn
+}
+
 // genArrDynDropFn builds __drop_arr_dyn_<__drop_dyn_<set>>(ptr) — the
 // outer drop for a `dyn Trait[]` array (docs/DYN-TRAITS.md §7.8). On the
 // array's last reference (rc==1) it walks every element and runs the
@@ -3348,6 +3418,13 @@ func appendChildDrop(ops []Op, t ast.Type, info *checker.Info, ptrW int, reg map
 	if _, isFunc := t.(*ast.FuncType); isFunc {
 		return append(ops,
 			Op{Kind: OpCallDirect, Str: "__drop_closure_value", I32: 1},
+			Op{Kind: OpDrop})
+	}
+	// Slice child: free the rc1 header on its last reference (see
+	// emitSliceHeaderDropOnStack); the viewed bytes are the source's.
+	if isSliceType(t) {
+		return append(ops,
+			Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_closure_drop", Width: ResAddr, I32: 1},
 			Op{Kind: OpDrop})
 	}
 	if name, ok := dropFnNameFor(t, info, reg, tupleReg, ptrW, false); ok {

@@ -5537,14 +5537,17 @@ func emitSliceRangeHelper(w func(string, ...any)) {
 }
 
 // emitSliceMakeHelper writes __slice_make(data, len) -> slice: the 16-byte
-// {data_ptr@+0, i32 len@+8} view header, 4 bytes of trailing pad. x0 = data
-// (full 64 bits — a `str w` here would truncate a heap pointer, since this
-// arena is based above 4 GiB), w1 = len.
+// {data_ptr@+0, i32 len@+8} view header, 4 bytes of trailing pad, behind
+// the 8-byte rc1 header __fern_alloc_rc1 lays down on the natives (rc=1 at
+// data-8, payload size 16 at data-4). x0 = data (full 64 bits — a `str w`
+// here would truncate a heap pointer, since this arena is based above
+// 4 GiB), w1 = len.
 //
 // The layout is forced, not chosen: the IR lowers `.len()` to a load at
 // [slice + ptrW] and `slice as usize` to a pointer-width load at [slice + 0],
-// and __slice_idx_* dereference the same two fields. No rc header — a slice is
-// a view over someone else's bytes and nothing drops it.
+// and __slice_idx_* dereference the same two fields. The rc header is what
+// lets the IR release the header through __fern_closure_drop like any other
+// owned box; the viewed bytes stay someone else's.
 func emitSliceMakeHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("__slice_make"))
@@ -5552,12 +5555,17 @@ func emitSliceMakeHelper(w func(string, ...any)) {
 	w("\tadd x8, x8, #:lo12:%s", heapPtrSym)
 	w("\tldr x9, [x8]")
 	w("\tadd x9, x9, #7")
-	w("\tand x9, x9, #-8") // header base, 8-aligned
-	w("\tadd x10, x9, #16")
+	w("\tand x9, x9, #-8") // block base, 8-aligned: rc header + 16-byte header
+	w("\tadd x10, x9, #24")
 	w("\tstr x10, [x8]")
 	emitHeapGuardCall(w)
-	w("\tstr x0, [x9]")     // [+0] data pointer
-	w("\tstr w1, [x9, #8]") // [+8] len (i32)
+	w("\tmov w10, #1")
+	w("\tstr w10, [x9]") // rc = 1 (= data-8)
+	w("\tmov w10, #16")
+	w("\tstr w10, [x9, #4]") // payload size (= data-4)
+	w("\tadd x9, x9, #8")    // data = base + 8
+	w("\tstr x0, [x9]")      // [+0] data pointer
+	w("\tstr w1, [x9, #8]")  // [+8] len (i32)
 	w("\tmov x0, x9")
 	w("\tret")
 }

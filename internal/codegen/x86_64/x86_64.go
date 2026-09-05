@@ -6974,8 +6974,8 @@ func (g *generator) emitStrDecRuntime() {
 }
 
 // emitSliceMakeRuntime emits `__fern_slice_make(data, len)`:
-// allocate a 16-byte slice header [data_ptr, len] on the bump
-// heap and return its address. The IR's slice-construction path
+// allocate a 16-byte slice header [data_ptr, len] as an rc1 block
+// and return its address. The IR's slice-construction path
 // (per `*ast.SliceExpr` and `*ast.IndexExpr` write side) calls
 // this helper to materialise the header — element indexing is
 // inlined as a stride-aware `data_ptr + i * N` via the existing
@@ -6991,11 +6991,17 @@ func (g *generator) emitStrDecRuntime() {
 // keeps its 8-byte {i32 data, i32 len} layout unchanged while the
 // native backends use the widened one.
 //
+// The block comes from __fern_alloc_rc1 (rc=1 at data-8, the 16-byte
+// payload size at data-4), so the header is an owned value the IR
+// releases like a tuple box — __fern_closure_drop frees it at its
+// stashed size on the last reference. The viewed bytes are not the
+// header's and are never freed through it.
+//
 // Calling convention: rdi = data_ptr (post-stride-offset),
-// rsi = len. Returns slice header address in rax. Calls
-// __fern_alloc which clobbers rcx / rdx / rsi / rdi (caller-
-// save), so we stash both inputs in r12 / r13 around the alloc
-// — same trick the strcat / env / args helpers use.
+// rsi = len. Returns slice header address in rax. The allocator
+// clobbers rcx / rdx / rsi / rdi (caller-save), so we stash both
+// inputs in r12 / r13 around the call — same trick the strcat /
+// env / args helpers use.
 func (g *generator) emitSliceMakeRuntime() {
 	g.line("")
 	g.line(".globl __fern_slice_make")
@@ -7006,7 +7012,7 @@ func (g *generator) emitSliceMakeRuntime() {
 	g.emit("mov r12, rdi") // save data_ptr (full 8 bytes)
 	g.emit("mov r13, rsi") // save len
 	g.emit("mov edi, 16")
-	g.emit("call __fern_alloc")
+	g.emit("call __fern_alloc_rc1")
 	g.emit("mov [rax], r12")      // [+0..+7] data_ptr (8-byte pointer)
 	g.emit("mov [rax + 8], r13d") // [+8..+11] len (i32)
 	g.emit("pop r13")
@@ -11034,13 +11040,17 @@ func (g *generator) emitRandomI32Runtime() {
 }
 
 // emitStringAsBytesRuntime emits `__method_string_as_bytes(s)` —
-// builds an 8-byte slice header `(data_ptr, len)` aliasing the
+// builds an rc1 slice header `(data_ptr, len)` aliasing the
 // receiver string's bytes (the non-copying `.as_bytes()` view).
 // Heap-form strings (LSB tag 0) reuse their data pointer directly;
 // SSO inline strings (LSB tag 1) are first promoted to a fresh
 // heap buffer so the slice header points at real linear memory
-// that outlives the call. Returns the slice header pointer in rax.
-// Mirrors wasm's buildStringAsBytesBody.
+// that outlives the call. That promoted copy is a bare __fern_alloc
+// block with no owner: the header cannot own it, because a sub-slice
+// or a raw `as usize` pointer may outlive the header (a view's
+// lifetime is its SOURCE's, never the header's), so the copy is
+// only ever released by process exit. Returns the slice header
+// pointer in rax. Mirrors wasm's buildStringAsBytesBody.
 //
 // The heap path is genuinely zero-copy: __fern_slice_make now stores a full
 // 8-byte data pointer, so aliasing a string LITERAL's .rodata address works

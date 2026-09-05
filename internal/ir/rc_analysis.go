@@ -2872,6 +2872,11 @@ func (b *builder) computeFreeEligible() map[string]bool {
 			// borrow-aware taint as the others; box reclamation only
 			// (elements keep their own rc, freed where they're owned).
 			elig[v.Name] = true
+		case ast.SliceType:
+			// An owned slice frees its header at the last reference
+			// (emitDec → __fern_closure_drop); the viewed bytes belong to
+			// the source and are never touched.
+			elig[v.Name] = true
 		case ast.StringType:
 			// Fresh owned heap string (concat / slice — rhsTainted whitelists
 			// exactly those) frees at its last reference via __fern_str_dec on
@@ -2924,7 +2929,7 @@ func (b *builder) computeFreeEligible() map[string]bool {
 			continue
 		}
 		switch t := p.Type.(type) {
-		case ast.ArrayType, ast.EnumType, *ast.FuncType, ast.TupleType:
+		case ast.ArrayType, ast.EnumType, *ast.FuncType, ast.TupleType, ast.SliceType:
 			elig[p.Name] = true
 		case ast.StructType:
 			if t.Name == "Map" {
@@ -3150,15 +3155,16 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 	case *ast.SliceExpr:
 		// A STRING slice copies its bytes into a fresh owned heap buffer
 		// (the wasm runtime always allocates) and boxes it in a fresh
-		// `Option`, so both are reclaimable — not views. Array / other
-		// slices share the source buffer → tainted. Keyed on IsString,
-		// NOT on exprType: exprType now reports the Option box, so a type
-		// test would taint the fresh box and downgrade the consumer's
-		// reclaim to the non-freeing __fern_rc_dec.
-		if x.IsString {
-			return false
-		}
-		return true
+		// `Option`, so both are reclaimable — not views. Keyed on
+		// IsString, NOT on exprType: exprType now reports the Option box,
+		// so a type test would taint the fresh box and downgrade the
+		// consumer's reclaim to the non-freeing __fern_rc_dec.
+		//
+		// An ARRAY slice is a fresh rc=1 header over the source's buffer.
+		// The header is what the local owns and what its drop releases;
+		// the shared buffer is never touched by that release, so the
+		// source's taint says nothing about it.
+		return false
 	case *ast.Binary:
 		// String concat (`a + b`) copies both operands into a fresh owned
 		// heap buffer regardless of operand provenance, so the result is
@@ -3184,6 +3190,15 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 		}
 		return b.rhsTainted(x.Operand, tainted)
 	case *ast.Call:
+		// A slice-typed result always hands the caller exactly one unit on
+		// the HEADER: a fresh __slice_make, a moved local, or a returned
+		// param / field / element alias carrying the return-transfer inc (a
+		// param is never an owned local, so move-on-return cannot cancel
+		// it). Whether the viewed bytes alias an argument is immaterial —
+		// the binding's release frees the header alone.
+		if isSliceType(b.exprType(x)) {
+			return false
+		}
 		// Slice 1b: under EnumRcPayloads a variant constructor is a FRESH
 		// rc=1 box that inc's its pointer payloads (like StructLit), so the
 		// constructed value is reclaimable regardless of payload taint — return
@@ -3298,6 +3313,11 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 				// buffer (the __str_slice contract) — the string
 				// SliceExpr arm above, spelled as a builtin, so the
 				// source's taint says nothing about the result.
+				return false
+			case "__method_string_as_bytes":
+				// A fresh rc=1 slice header viewing the receiver's bytes —
+				// the array SliceExpr arm above, spelled as a method. Only
+				// the header is owned and released.
 				return false
 			}
 		}
@@ -5077,7 +5097,7 @@ func (b *builder) isOwnedRcLocal(name string) bool {
 			continue
 		}
 		switch v.Type.(type) {
-		case ast.ArrayType, ast.StructType, ast.EnumType, *ast.FuncType, ast.TupleType:
+		case ast.ArrayType, ast.StructType, ast.EnumType, *ast.FuncType, ast.TupleType, ast.SliceType:
 			return true
 		case ast.StringType:
 			// Two-word string ABIs (wasm + arm64-TwoWordOverride) and
@@ -5173,6 +5193,13 @@ func needsRcIncOnAlias(e ast.Expr, b *builder) bool {
 	// outlives the source local (no inc would let the source's box_free
 	// strand the container's reference).
 	if _, isTuple := t.(ast.TupleType); isTuple {
+		return true
+	}
+	// A slice header (rc=1 from __slice_make) is retained like a tuple box:
+	// the inc balances the header release the exit sweep emits for slice
+	// locals and keeps a header stored into a container alive past the
+	// source local. The viewed bytes are not counted either way.
+	if isSliceType(t) {
 		return true
 	}
 	// wasm two-word strings: aliasing inc's the heap buffer's rc via
