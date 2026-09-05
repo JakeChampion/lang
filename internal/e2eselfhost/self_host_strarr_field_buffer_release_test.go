@@ -156,6 +156,53 @@ function main(): i32 {
     if (r != 25) { return 97; }
     return 0;
 }`, 0},
+	// A struct field naming a still-live CALLER array (#8210). `names` is built
+	// from element strings the `items` structs own, so nothing in the buffer is
+	// the registry's to free; `reg_of` then stores that same buffer in a field,
+	// and both names die at probe's exit — the local first, which leaves the
+	// field holding the last reference. An ungated deep arm walks it there and
+	// frees every element while `items` still reads them, and the size-class
+	// freelist hands the blocks straight back: the corrupted read is what the
+	// wasm-hosted compiler emitted as a function name of two binary bytes, the
+	// bytes of a recycled array header. Distinct per-item labels built at run
+	// time, so nothing folds to an immortal literal and the churn recycles.
+	{"strarr-field-caller-array-co-owner", `struct Item { name: string }
+struct Reg { rows: string[], head: i32[] }
+function digit(d: i32): string {
+    if (d == 0) { return "0"; } if (d == 1) { return "1"; } if (d == 2) { return "2"; }
+    if (d == 3) { return "3"; } if (d == 4) { return "4"; } if (d == 5) { return "5"; }
+    if (d == 6) { return "6"; } if (d == 7) { return "7"; } if (d == 8) { return "8"; }
+    return "9";
+}
+function label(i: i32): string { return "row" + digit(i); }
+function reg_of(rows: string[]): Reg { var head: i32[] = []; var i: i32 = 0; while (i < rows.len()) { head = head.append(i); i = i + 1; } return Reg { rows: rows, head: head }; }
+function probe(items: Item[], want: string): i32 {
+    var names: string[] = [];
+    var i: i32 = 0;
+    while (i < items.len()) { names = names.append(items[i].name); i = i + 1; }
+    var r: Reg = reg_of(names);
+    var hits: i32 = 0;
+    var j: i32 = 0;
+    while (j < r.rows.len()) { if (r.rows[j] == want) { hits = hits + 1; } j = j + 1; }
+    return hits + names.len();
+}
+function churn(n: i32): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) { var a: string[] = []; a = a.append("w" + digit(i % 10)); a = a.append("q" + digit(i % 7)); acc = acc + a.len(); i = i + 1; }
+    return acc;
+}
+function main(): i32 {
+    var items: Item[] = [];
+    var i: i32 = 0;
+    while (i < 10) { items = items.append(Item { name: label(i) }); i = i + 1; }
+    if (probe(items, "row7") != 11) { return 97; }
+    if (churn(64) != 128) { return 97; }
+    var k: i32 = 0;
+    while (k < items.len()) { if (items[k].name != label(k)) { return 97; } k = k + 1; }
+    if (__rc_underflow() != 0) { return 99; }
+    return 0;
+}`, 0},
 }
 
 // TestSelfHostStrArrFieldBufferReleaseIRX86_64 drives the cases through the
