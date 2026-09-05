@@ -60,8 +60,12 @@ fi
 # minutes — but it does not have to: .github/workflows/bootstrap.yml says
 # distcheck joins the `verify` job the day it passes, so the wiring IS the
 # signal, and it cannot be switched on while the target is red.
-if grep -q 'make distcheck' .github/workflows/bootstrap.yml 2>/dev/null \
-   && ! grep -q 'is NOT' .github/workflows/bootstrap.yml 2>/dev/null; then
+#
+# Match an INVOCATION, not a mention: `^[^#]*` cannot span a '#', so the
+# comment in that file explaining why distcheck is absent does not read as
+# distcheck being present. Keying on the comment's wording instead would turn
+# any rewrite of it into a false GREEN on a freeze precondition.
+if grep -Eq '^[^#]*\b(make|bootstrap\.sh)[[:space:]]+distcheck' .github/workflows/bootstrap.yml 2>/dev/null; then
   ok "make distcheck runs in CI — the self-host compiler reproduces itself"
 else
   huh "parity itself — criterion is \`make distcheck\` green (red today: docs/BOOTSTRAP.md); live delta list in docs/SELFHOST-PERCEUS-REUSE.md §3"
