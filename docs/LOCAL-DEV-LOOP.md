@@ -460,9 +460,9 @@ fresh `go build -o $B/fern ./cmd/fern` (absolute paths throughout: the
 self-host CLI cannot open relative ones):
 
 ```
-$B/fern    -target arm64-darwin -o $B/fern-s1 $W/examples/self_host/fern.fern      # stage 1: 10 s, 1.1 GB RSS
+$B/fern    -target arm64-darwin -o $B/fern-s1 $W/examples/self_host/fern.fern      # stage 1: 8 s, 1.3 GB RSS
 $B/fern-s1 -target arm64-linux -emit asm -o $B/fern.s $W/examples/self_host/fern.fern  # 26 s, 1.0 GB, 63.3 MB of asm (#8212's shape)
-$B/fern-s1 -target arm64-darwin -o $B/fern-s2 $W/examples/self_host/fern.fern      # stage 2: 168 s, 1.3 GB, an 11 MB Mach-O
+$B/fern-s1 -target arm64-darwin -o $B/fern-s2 $W/examples/self_host/fern.fern      # stage 2: 36 s, 1.4-1.7 GB, an 11 MB Mach-O
 ```
 
 The "arena exhaustion, exit 125" that #6872 / #7267 reported for the stage-2
@@ -478,7 +478,7 @@ runnable conformance cases (#8400 was `darwinize` rewriting the `:lo12:`
 inside the compiler's own string literals). What does not yet hold is stage 3:
 `fern-s2` building `fern.fern` exits 125 (arena exhausted) after 20 s at
 3.9-5.1 GB RSS (two runs), where `fern-s1` finishes the same build in 36 s at
-1.4 GB. The same chain for `-target arm64-linux` in the linux/arm64 container
-is a full fixpoint: stage 2 builds in 174 s at 1.8 GB RSS, emits
+1.4-1.7 GB (#8479). The same chain for `-target arm64-linux` in the linux/arm64
+container is a full fixpoint: stage 2 builds in 174 s at 1.8 GB RSS, emits
 byte-identical asm to stage 1, and compiles and runs a strbuf program
 correctly.
