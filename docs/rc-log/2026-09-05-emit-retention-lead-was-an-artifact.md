@@ -161,3 +161,67 @@ Peak is not the missing instrument: peak RSS (1512 MiB) already matches
 exit-live (1548.7 MiB) for this workload, so the compiler accumulates
 monotonically and exit-live *is* the peak. The open question is what that set
 consists of, not when it is reached.
+
+## Pointer-tracked attribution, on that reproduction
+
+Both remaining measurements are now done. The traced driver — the same emit
+with `FERN_RC_TRACE=1 FERN_RC_TRACE_DEEP=1` added — compiling `x86_native.fern`
+gives 3,695,957 allocations and 1,387,550 frees, every free matched to its
+allocation by pointer (**0 unmatched**), leaving 2,308,407 surviving blocks
+holding 274,270,688 bytes. That total agrees with the untraced run's
+`live_bytes` to 3%, so the trace is accounting for the same retention the
+oracle comparison measured.
+
+Bucketing the **survivors** by their allocating `(site, caller, caller2)`:
+
+| retained | share | blocks | site <- caller <- caller2 |
+|--:|--:|--:|---|
+| 29.8 MB | 10.9% | 3,113 | `__fern_arr_push` <- `LowerState.emit` <- `lower_expr_ident` |
+| 24.4 MB | 8.9% | 1,804 | `__fern_arr_push` <- `LowerState.emit` <- `emit_str_concat_reclaim` |
+| 19.6 MB | 7.2% | 175,281 | `pl_none` <- `peep_line` <- `peephole_push_pop` |
+| 19.0 MB | 6.9% | 169,781 | `pl_classify` <- `peep_line` <- `peephole_push_pop` |
+| 11.1 MB | 4.1% | 99,234 | `pl_one` <- `pl_classify` <- `peep_line` |
+| 6.8 MB | 2.5% | 1,673 | `__fern_arr_push` <- `LowerState.emit` <- `lower_expr_dispatch` |
+| 5.9 MB | 2.2% | 618 | `__fern_arr_push` <- `LowerState.emit` <- `LowerState.release` |
+
+Two clusters carry it, and they have opposite shapes.
+
+**The IR op accumulator, ~25%, in a few thousand blocks averaging 10 KB.**
+Large and few is the signature of superseded array generations: one live ops
+array per lowering is expected, thousands of multi-KB buffers are not. So the
+first run's headline was pointing at a real retainer after all — it just could
+not have known, since the quantity it ranked was gross allocation.
+
+**The `asm_ir` peephole pass, ~20%, in 470,000 blocks averaging 110 bytes.**
+Small and many: a per-line record allocated by `peep_line` and never released.
+Self-contained in one pass, which makes it the easier of the two to attack.
+
+### What `LowerState.emit` actually emits
+
+Reading the driver's own asm rather than inferring it, `__fn_irlower__LowerState__emit`:
+
+```
+call __fn___fern_rc_is_unique     ; on the STRUCT BOX s, not on s.ops
+jz   .Lemit_61                    ; unique -> skip
+call __fn___fern_rc_inc           ; not unique: retain s.ops for the older box
+.Lemit_61:
+call __fern_arr_push              ; the LEAK-ON-GROW push, both paths
+...
+call __fn___fern_arr_dec          ; unique path only: release the old array
+```
+
+so the uniqueness test decides whether the superseded buffer is released, and
+the not-unique path retains it deliberately, for a `LowerState` that still
+points at it. The open question is why those retained buffers are never
+released afterwards. Note that `__struct_drop_irlower__LowerState` is not among
+the 187 drop helpers the self-host emits — but native emits only 9 helpers in
+the same binary, so the two use different drop strategies and a missing helper
+name proves nothing by itself. That is the thing to establish next, and it is
+not established here.
+
+### Reproducing
+
+Add `FERN_RC_TRACE=1 FERN_RC_TRACE_DEEP=1` to the driver emit in the recipe
+above, link, and pipe the run's stderr through a pointer-tracking aggregator
+that buckets survivors by allocating triple; `nm` on the linked driver resolves
+the addresses. The run takes about 40 s.
