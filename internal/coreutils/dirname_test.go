@@ -2,8 +2,8 @@ package coreutils
 
 import "testing"
 
-func TestDirnameParity(t *testing.T) {
-	requireParity(t, "dirname", []invocation{
+func dirnameCases(t *testing.T) []invocation {
+	return []invocation{
 		// The name rule: drop the last component and the slashes before
 		// it; nothing left is `.`, only slashes left is `/`.
 		{name: "plain name", args: []string{"a"}},
@@ -67,7 +67,11 @@ func TestDirnameParity(t *testing.T) {
 		{name: "--zero with a value", args: []string{"--zero=x", "a"}},
 		{name: "help with a value", args: []string{"--help=x"}},
 		{name: "bad option before help", args: []string{"--foo", "--help"}},
-	})
+	}
+}
+
+func TestDirnameParity(t *testing.T) {
+	requireParity(t, "dirname", dirnameCases(t))
 }
 
 func TestDirnameHelpVersion(t *testing.T) {
