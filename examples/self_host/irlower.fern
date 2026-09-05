@@ -1229,6 +1229,23 @@ pub function str_param_elem_escapes(e: ast.Expr, s: LowerState): boolean {
     return false;
 }
 
+// indexed_box_elem_escapes reports whether `e` is an index read of a STRUCT or
+// ARRAY element — a box the source array's own release drops, whoever owns that
+// array — so a container storing it takes a second owner and the store must be
+// COUNTED: the indexed sibling of struct_alias_ident_escapes. A string element
+// is not here (str_param_elem_escapes and the local deep-free withdrawal cover
+// it), nor an enum element, whose read is already balanced.
+pub function indexed_box_elem_escapes(e: ast.Expr, s: LowerState): boolean {
+    match (e) {
+        ast.ExprIndex(_) => {
+            if (decl_is_struct(s.structs, expr_struct_type(e, s))) { return true; }
+            return expr_is_arr_src(e, s) || expr_is_strarr(e, s) || expr_is_f64arr(e, s) || expr_is_i64arr(e, s);
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
 // is_own_param reports whether `name` is an `own` (consuming) parameter of the
 // function being lowered.
 pub function (s: LowerState) is_own_param(name: string): boolean {
@@ -12643,8 +12660,10 @@ function lower_call_append(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerSta
     aps = lower_expr(c.args[0], aps);
     if (!aps.ok) { return aps; }
     // An element of a caller-owned string[] is a second owner once stored
-    // (str_param_elem_escapes), here as in the self-append and clone forms.
+    // (str_param_elem_escapes), here as in the self-append and clone forms;
+    // so is a struct or array element read by index (indexed_box_elem_escapes).
     if (str_param_elem_escapes(c.args[0], aps)) { aps = aps.retain_tos("append-param-str-elem"); }
+    if (indexed_box_elem_escapes(c.args[0], aps)) { aps = aps.retain_tos("append-indexed-elem"); }
     aps = aps.emit(ir.op_arr_push());
     if (apcs >= 0) { aps = emit_arr_share(aps, apcs, "__fern_arr_share_dec"); }
     // An in-place push on a BORROWED param's buffer hands that same buffer out
@@ -22878,6 +22897,12 @@ function lower_stmt_assign(a: ast.StmtAssign, s: LowerState): LowerState {
                                     else if (str_param_elem_escapes(wc.args[0], aps)) {
                                         aps = aps.retain_tos("append-param-str-elem");
                                     }
+                                    // `xs.append(ys[i])` over a struct or array
+                                    // element: ys's own release drops it, so the
+                                    // store is a second owner (indexed_box_elem_escapes).
+                                    else if (indexed_box_elem_escapes(wc.args[0], aps)) {
+                                        aps = aps.retain_tos("append-indexed-elem");
+                                    }
                                 }
                             }
                             // Sole-owner (unaliased) `a = a.append(v)`: the old
@@ -25001,9 +25026,10 @@ pub function lower_arr_append_value(obj: ast.Expr, val: ast.Expr, s: LowerState)
 // onto an array the frame owns, with the retains a stored reference owes: a
 // direct enum field read or enum alias (the source struct's __struct_drop_<T>
 // decs it, #6049), a struct element that is a borrowed parameter (the caller
-// still releases it, #7853), and a string element of a caller-owned string[]
-// (#6644). Shared by the clone-form append and the in-place field append of an
-// `own` base's reuse arm, so the two store the same reference.
+// still releases it, #7853), a string element of a caller-owned string[]
+// (#6644), and a struct or array element read by index (the source array's
+// release drops it). Shared by the clone-form append and the in-place field
+// append of an `own` base's reuse arm, so the two store the same reference.
 function lower_append_elem_value(val: ast.Expr, s: LowerState): LowerState {
     var st: LowerState = lower_expr(val, s);
     if (!st.ok) { return st; }
@@ -25015,6 +25041,9 @@ function lower_append_elem_value(val: ast.Expr, s: LowerState): LowerState {
     }
     if (str_param_elem_escapes(val, st)) {
         st = st.retain_tos("clone-append-param-str-elem");
+    }
+    if (indexed_box_elem_escapes(val, st)) {
+        st = st.retain_tos("clone-append-indexed-elem");
     }
     return st;
 }
