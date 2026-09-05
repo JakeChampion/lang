@@ -1,0 +1,45 @@
+// The target-OS compile-time constant (#8338), on every backend.
+//
+// `__fern_target_os()` is substituted for a string literal before the checker
+// runs — natively in internal/constfold, on the self-host in
+// constfold.fold_target_os — so what reaches any backend is a literal and the
+// comparisons below fold away entirely.
+//
+// What is pinned here is the CONTRACT rather than a value: the value
+// legitimately differs per backend (wasi on the component target, linux on the
+// native ones) and, under `-interp`, per host — so a case asserting one string
+// would be asserting where CI happens to run. The exact per-target values are
+// pinned in internal/e2e/target_os_test.go and
+// internal/e2eselfhost/self_host_target_os_test.go, where the target is named.
+//
+// The builtin is spelled directly rather than through `std/platform`'s `OS` /
+// `IS_DARWIN`: that surface is gated in internal/e2e/target_os_test.go, and
+// importing the module here would drag in the `Platform` built-in type, which
+// the self-host checker does not yet know — a gap that has nothing to do with
+// this case.
+
+function os_is_named(): boolean {
+    return __fern_target_os().len() > 0;
+}
+
+function main(): i32 {
+    if (!os_is_named()) {
+        return 10;
+    }
+
+    // Exactly one family owns the answer.
+    var families: i32 = 0;
+    if (__fern_target_os() == "linux" || __fern_target_os() == "android") { families = families + 1; }
+    if (__fern_target_os() == "darwin") { families = families + 1; }
+    if (__fern_target_os() == "wasi" || __fern_target_os() == "wasi-http") { families = families + 1; }
+    if (families != 1) {
+        return 11;
+    }
+
+    // The answer is stable: two reads in one program agree. A builtin that
+    // resolved per call site rather than per compile would fail here.
+    if (__fern_target_os() != __fern_target_os()) {
+        return 12;
+    }
+    return 0;
+}

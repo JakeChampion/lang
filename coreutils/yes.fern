@@ -23,6 +23,7 @@
 // the other utilities inherit from gnulib's close_stdout.
 import "std/string";
 import "std/array";
+import "std/platform";
 import "./lib/gnu";
 
 // Bytes per write(2), and the one number here that is a measurement
@@ -34,10 +35,14 @@ import "./lib/gnu";
 //   Linux arm64:  1K 549 ms   2K 164   4K 138   8K 162 (GNU)   64K 229
 //   macOS arm64:  1K 482 (GNU)   2K 674   4K 674   64K 613
 //
-// 4 KiB is the Linux optimum and Linux is the default target; macOS
-// wants 1 KiB, and selecting per target needs a way for Fern source to
-// know its target OS, which is #8338.
+// 4 KiB is the Linux optimum; macOS wants 1 KiB, which is BUFSIZ there
+// and what GNU writes. `platform.IS_DARWIN` is a compile-time constant
+// (#8338), so this is one of the two returns after folding and the
+// comparison costs nothing at run time.
 function block_bytes(): i32 {
+  if (platform.IS_DARWIN) {
+    return 1024;
+  }
   return 4096;
 }
 
