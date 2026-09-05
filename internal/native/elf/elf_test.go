@@ -16,6 +16,37 @@ import (
 	x86 "github.com/jakechampion/lang/internal/native/x86_64"
 )
 
+// qemuOrNative is the launcher for an arm64 binary: qemu where this host needs
+// one, and the EMPTY STRING on a native arm64 Linux host, where the binary runs
+// directly.
+//
+// The five tests below used a bare qemu lookup and skipped without it. The unit
+// lane runs on ubuntu-24.04-arm as well — the one host that can execute these
+// binaries with no emulator at all — so they skipped there too, and a skipped
+// test reports `ok` (#8472). internal/native/arm64's veneer_test has had this
+// shape all along; this is the same fallback for the sites that lacked it.
+func qemuOrNative(t *testing.T) string {
+	t.Helper()
+	if runtime.GOOS == "linux" && runtime.GOARCH == "arm64" {
+		return ""
+	}
+	for _, c := range []string{"qemu-aarch64", "qemu-aarch64-static"} {
+		if p, err := exec.LookPath(c); err == nil {
+			return p
+		}
+	}
+	t.Skip("no qemu-aarch64 to run arm64 binaries")
+	return ""
+}
+
+// arm64Cmd runs path under launcher, or directly when launcher is empty.
+func arm64Cmd(launcher, path string) *exec.Cmd {
+	if launcher == "" {
+		return exec.Command(path)
+	}
+	return exec.Command(launcher, path)
+}
+
 // TestWXPageAlignPerArch pins the per-architecture page alignment of the W^X
 // two-segment image (#4380/#4382): x86-64 aligns its data segment to 4 KiB
 // (its only page size), arm64 to 64 KiB (the max-page floor that loads on
@@ -219,12 +250,7 @@ func TestStaticExecutableDataWXBssNobits(t *testing.T) {
 // Proves the page-aligned data resolution and two-segment load agree:
 // loading the .rodata constant 42 and exiting with it.
 func TestAssembledDataWXRunsUnderQemu(t *testing.T) {
-	qemu, err := exec.LookPath("qemu-aarch64")
-	if err != nil {
-		if qemu, err = exec.LookPath("qemu-aarch64-static"); err != nil {
-			t.Skip("qemu-aarch64 not on PATH")
-		}
-	}
+	qemu := qemuOrNative(t)
 	src := "" +
 		"\t.text\n" +
 		"\tadrp x1, val\n" +
@@ -245,7 +271,7 @@ func TestAssembledDataWXRunsUnderQemu(t *testing.T) {
 	if err := os.WriteFile(path, bin, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	err = exec.Command(qemu, path).Run()
+	err = arm64Cmd(qemu, path).Run()
 	got := 0
 	if err != nil {
 		ee, ok := err.(*exec.ExitError)
@@ -445,12 +471,7 @@ func TestSharedLibraryArm64Structure(t *testing.T) {
 // encoding, ELF layout, kernel/qemu load, syscall — has to be right
 // for the process to exit 42.
 func TestExitCodeRunsUnderQemu(t *testing.T) {
-	qemu, err := exec.LookPath("qemu-aarch64")
-	if err != nil {
-		if qemu, err = exec.LookPath("qemu-aarch64-static"); err != nil {
-			t.Skip("qemu-aarch64 not on PATH")
-		}
-	}
+	qemu := qemuOrNative(t)
 
 	// exit(42): movz x0,#42 ; movz x8,#93 (__NR_exit) ; svc #0.
 	var text []byte
@@ -464,8 +485,8 @@ func TestExitCodeRunsUnderQemu(t *testing.T) {
 		t.Fatalf("write binary: %v", err)
 	}
 
-	cmd := exec.Command(qemu, path)
-	err = cmd.Run()
+	cmd := arm64Cmd(qemu, path)
+	err := cmd.Run()
 	if err == nil {
 		t.Fatalf("process exited 0, want 42")
 	}
@@ -483,12 +504,7 @@ func TestExitCodeRunsUnderQemu(t *testing.T) {
 // with it. Covers MOVZ, ADDreg, SUBimm, and the exit syscall in one
 // runnable binary.
 func TestArithmeticRunsUnderQemu(t *testing.T) {
-	qemu, err := exec.LookPath("qemu-aarch64")
-	if err != nil {
-		if qemu, err = exec.LookPath("qemu-aarch64-static"); err != nil {
-			t.Skip("qemu-aarch64 not on PATH")
-		}
-	}
+	qemu := qemuOrNative(t)
 
 	// x1 = 40 ; x2 = 5 ; x1 = x1 + x2 (=45) ; x0 = x1 - 3 (=42) ;
 	// x8 = 93 (__NR_exit) ; svc #0.
@@ -506,7 +522,7 @@ func TestArithmeticRunsUnderQemu(t *testing.T) {
 		t.Fatalf("write binary: %v", err)
 	}
 
-	err = exec.Command(qemu, path).Run()
+	err := arm64Cmd(qemu, path).Run()
 	if err == nil {
 		t.Fatalf("process exited 0, want 42")
 	}
@@ -836,12 +852,7 @@ func TestAssembledSinglePrecisionTextRunsUnderQemu(t *testing.T) {
 // add #:lo12:, loads the value (42), and exits with it. Wrong adrp page
 // math or rodata layout would load garbage and miss exit 42.
 func TestAssembledDataTextRunsUnderQemu(t *testing.T) {
-	qemu, err := exec.LookPath("qemu-aarch64")
-	if err != nil {
-		if qemu, err = exec.LookPath("qemu-aarch64-static"); err != nil {
-			t.Skip("qemu-aarch64 not on PATH")
-		}
-	}
+	qemu := qemuOrNative(t)
 	src := "" +
 		"\t.text\n" +
 		"\tadrp x1, val\n" +
@@ -862,7 +873,7 @@ func TestAssembledDataTextRunsUnderQemu(t *testing.T) {
 	if err := os.WriteFile(path, bin, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	err = exec.Command(qemu, path).Run()
+	err = arm64Cmd(qemu, path).Run()
 	got := 0
 	if err != nil {
 		ee, ok := err.(*exec.ExitError)
@@ -903,18 +914,13 @@ func TestAssembledTestBranchRunsUnderQemu(t *testing.T) {
 // runs it under qemu-aarch64, and asserts the process exit code.
 func runExpectExit(t *testing.T, want int, gen func() []byte) {
 	t.Helper()
-	qemu, err := exec.LookPath("qemu-aarch64")
-	if err != nil {
-		if qemu, err = exec.LookPath("qemu-aarch64-static"); err != nil {
-			t.Skip("qemu-aarch64 not on PATH")
-		}
-	}
+	qemu := qemuOrNative(t)
 	bin := elf.StaticExecutable(gen())
 	path := filepath.Join(t.TempDir(), "prog")
 	if err := os.WriteFile(path, bin, 0o755); err != nil {
 		t.Fatalf("write binary: %v", err)
 	}
-	err = exec.Command(qemu, path).Run()
+	err := arm64Cmd(qemu, path).Run()
 	got := 0
 	if err != nil {
 		ee, ok := err.(*exec.ExitError)
