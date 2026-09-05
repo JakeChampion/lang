@@ -1,165 +1,279 @@
 import "std/test";
 import "std/cli" as cli;
+import "std/option";
 
 // examples/tests/cli_test.fern — pure-Fern coverage of std/cli's
 // spec-driven argument parser (#4385 item 1): valued options in
 // `--long V` / `--long=V` / `-short V` forms, boolean flags,
 // positional operands, the `--` end-of-options terminator, the
 // value_or default, the error paths (unknown option, missing
-// value, value on a bool), and the auto-usage string.
-
+// value, value on a bool), the auto-usage string, subcommands, and
+// shell completions generated from the same spec.
 // Shared spec: a valued option (--name/-n) and two bools
 // (--shout/-s, --verbose/-v). Two bools let the short-cluster
 // tests exercise bundling.
 function spec(): cli.CliSpec {
-    var s: cli.CliSpec = cli.cli_new("greet", "print a greeting");
-    s = s.option("name", "n", "who to greet");
-    s = s.flag("shout", "s", "upper-case the greeting");
-    s = s.flag("verbose", "v", "explain what is happening");
-    return s;
+  var s: cli.CliSpec = cli.cli_new("greet", "print a greeting");
+  s = s.option("name", "n", "who to greet");
+  s = s.flag("shout", "s", "upper-case the greeting");
+  s = s.flag("verbose", "v", "explain what is happening");
+  return s;
 }
 
 function test_option_long(): test.TestOutcome {
-    var a: cli.CliArgs = spec().parse(["greet", "--name", "Ada"]);
-    return test.assert_eq(a.value_or("name", "world"), "Ada");
+  var a: cli.CliArgs = spec().parse(["greet", "--name", "Ada"]);
+  return test.assert_eq(a.value_or("name", "world"), "Ada");
 }
 
 function test_option_equals(): test.TestOutcome {
-    var a: cli.CliArgs = spec().parse(["greet", "--name=Bob"]);
-    return test.assert_eq(a.value_or("name", "world"), "Bob");
+  var a: cli.CliArgs = spec().parse(["greet", "--name=Bob"]);
+  return test.assert_eq(a.value_or("name", "world"), "Bob");
 }
 
 function test_option_short(): test.TestOutcome {
-    var a: cli.CliArgs = spec().parse(["greet", "-n", "Cy"]);
-    return test.assert_eq(a.value_or("name", "world"), "Cy");
+  var a: cli.CliArgs = spec().parse(["greet", "-n", "Cy"]);
+  return test.assert_eq(a.value_or("name", "world"), "Cy");
 }
 
 function test_bool_flag(): test.TestOutcome {
-    // Both the long and the short spelling set the same canonical key.
-    var a: cli.CliArgs = spec().parse(["greet", "--shout"]);
-    var b: cli.CliArgs = spec().parse(["greet", "-s"]);
-    return test.assert_true(a.is_set("shout") && b.is_set("shout"));
+  // Both the long and the short spelling set the same canonical key.
+  var a: cli.CliArgs = spec().parse(["greet", "--shout"]);
+  var b: cli.CliArgs = spec().parse(["greet", "-s"]);
+  return test.assert_true(a.is_set("shout") && b.is_set("shout"));
 }
 
 function test_positionals(): test.TestOutcome {
-    var a: cli.CliArgs = spec().parse(["greet", "--name", "Ada", "one", "two"]);
-    return test.assert_eq_array(a.operands(), ["one", "two"]);
+  var a: cli.CliArgs = spec().parse(["greet", "--name", "Ada", "one", "two"]);
+  return test.assert_eq_array(a.operands(), ["one", "two"]);
 }
 
 function test_end_of_options(): test.TestOutcome {
-    // After `--`, dash-prefixed tokens are operands, not flags.
-    var a: cli.CliArgs = spec().parse(["greet", "--", "--name", "-s"]);
-    return test.assert_true(
-        a.operands().len() == 2 && !a.is_set("name") && !a.is_set("shout"));
+  // After `--`, dash-prefixed tokens are operands, not flags.
+  var a: cli.CliArgs = spec().parse(["greet", "--", "--name", "-s"]);
+  return test.assert_true(a.operands().len() == 2 && !a.is_set("name") && !a.is_set("shout"));
 }
 
 function test_value_or_default(): test.TestOutcome {
-    var a: cli.CliArgs = spec().parse(["greet"]);
-    return test.assert_true(
-        a.value_or("name", "world") == "world" && !a.is_set("shout"));
+  var a: cli.CliArgs = spec().parse(["greet"]);
+  return test.assert_true(a.value_or("name", "world") == "world" && !a.is_set("shout"));
 }
 
 function test_unknown_option_errors(): test.TestOutcome {
-    return test.assert_true(spec().parse(["greet", "--nope"]).is_error());
+  return test.assert_true(spec().parse(["greet", "--nope"]).is_error());
 }
 
 function test_missing_value_errors(): test.TestOutcome {
-    return test.assert_true(spec().parse(["greet", "--name"]).is_error());
+  return test.assert_true(spec().parse(["greet", "--name"]).is_error());
 }
 
 function test_value_on_bool_errors(): test.TestOutcome {
-    return test.assert_true(spec().parse(["greet", "--shout=1"]).is_error());
+  return test.assert_true(spec().parse(["greet", "--shout=1"]).is_error());
 }
 
 function test_usage_lists_flags(): test.TestOutcome {
-    var u: string = spec().usage();
-    return test.assert_true(
-        u.contains("--name") && u.contains("--shout") && u.contains("greet"));
+  var u: string = spec().usage();
+  return test.assert_true(u.contains("--name") && u.contains("--shout") && u.contains("greet"));
 }
 
 // ---- short-flag clustering ----
-
 // -n5 : a valued short option with its value glued to the token.
 function test_short_glued_value(): test.TestOutcome {
-    var a: cli.CliArgs = spec().parse(["greet", "-n5"]);
-    return test.assert_eq(a.value_or("name", "x"), "5");
+  var a: cli.CliArgs = spec().parse(["greet", "-n5"]);
+  return test.assert_eq(a.value_or("name", "x"), "5");
 }
 
 // -vs : two boolean short flags bundled in one token.
 function test_short_bundled_bools(): test.TestOutcome {
-    var a: cli.CliArgs = spec().parse(["greet", "-vs"]);
-    return test.assert_true(a.is_set("verbose") && a.is_set("shout"));
+  var a: cli.CliArgs = spec().parse(["greet", "-vs"]);
+  return test.assert_true(a.is_set("verbose") && a.is_set("shout"));
 }
 
 // -vn5 : a bundle ending in a valued option that swallows the tail.
 function test_short_bundle_ending_valued(): test.TestOutcome {
-    var a: cli.CliArgs = spec().parse(["greet", "-vn5"]);
-    return test.assert_true(a.is_set("verbose") && a.value_or("name", "x") == "5");
+  var a: cli.CliArgs = spec().parse(["greet", "-vn5"]);
+  return test.assert_true(a.is_set("verbose") && a.value_or("name", "x") == "5");
 }
 
 // -vn 5 : same, but the value is the next token (nothing glued).
 function test_short_bundle_next_token_value(): test.TestOutcome {
-    var a: cli.CliArgs = spec().parse(["greet", "-vn", "5"]);
-    return test.assert_true(
-        a.is_set("verbose") && a.value_or("name", "x") == "5"
-        && a.operands().len() == 0);
+  var a: cli.CliArgs = spec().parse(["greet", "-vn", "5"]);
+  return test.assert_true(a.is_set("verbose") && a.value_or("name", "x") == "5" && a.operands().len() == 0);
 }
 
 // A lone "-" is a positional (stdin convention), not a flag cluster.
 function test_short_lone_dash_is_positional(): test.TestOutcome {
-    var a: cli.CliArgs = spec().parse(["greet", "-"]);
-    return test.assert_true(a.operands().len() == 1 && !a.is_error());
+  var a: cli.CliArgs = spec().parse(["greet", "-"]);
+  return test.assert_true(a.operands().len() == 1 && !a.is_error());
 }
 
 // -é : a multibyte character in a short cluster is an unknown flag, and
 // the error names the whole character rather than a split byte.
 function test_short_multibyte_unknown(): test.TestOutcome {
-    var a: cli.CliArgs = spec().parse(["greet", "-é"]);
-    if (!a.is_error()) { return test.fail("expected an unknown-option error"); }
-    return test.assert_eq(a.error_text(), "unknown option -é");
+  var a: cli.CliArgs = spec().parse(["greet", "-é"]);
+  if (!a.is_error()) {
+    return test.fail("expected an unknown-option error");
+  }
+  return test.assert_eq(a.error_text(), "unknown option -é");
 }
 
 // ---- ANSI colour helpers (env-robust: assert per cli_color_enabled) ----
-
 // A coloriser wraps text in an SGR sequence when colour is on, and
 // is a passthrough when NO_COLOR disables it.
 function test_color_red(): test.TestOutcome {
-    var red: string = cli.cli_red("x");
-    if (cli.cli_color_enabled()) {
-        // ESC (byte 27) ... "31m" ... "x"
-        return test.assert_true(red[0] == 27 && red.contains("31m") && red.contains("x"));
-    }
-    return test.assert_eq(red, "x");
+  var red: string = cli.cli_red("x");
+  if (cli.cli_color_enabled()) {
+    // ESC (byte 27) ... "31m" ... "x"
+    return test.assert_true(red[0] == 27 && red.contains("31m") && red.contains("x"));
+  }
+  return test.assert_eq(red, "x");
 }
 
 function test_color_bold(): test.TestOutcome {
-    var b: string = cli.cli_bold("hi");
-    if (cli.cli_color_enabled()) {
-        return test.assert_true(b[0] == 27 && b.contains("1m") && b.contains("hi"));
+  var b: string = cli.cli_bold("hi");
+  if (cli.cli_color_enabled()) {
+    return test.assert_true(b[0] == 27 && b.contains("1m") && b.contains("hi"));
+  }
+  return test.assert_eq(b, "hi");
+}
+
+// ---- subcommands ----
+// A tool with one parent flag and a `deploy` command carrying its own
+// valued option; `--env` exists only under `deploy`.
+function spec_cmds(): cli.CliSpec {
+  var deploy: cli.CliSpec = cli.cli_new("deploy", "push the build");
+  deploy = deploy.option("env", "e", "target environment");
+  var s: cli.CliSpec = cli.cli_new("tool", "ship things");
+  s = s.flag("verbose", "v", "explain what is happening");
+  s = s.option("name", "n", "who to ship as");
+  return s.command(deploy);
+}
+
+// Parent flags before the command, the command's own after it, and
+// the operands that follow all land in one result.
+function test_subcommand_parses(): test.TestOutcome {
+  var a: cli.CliArgs = spec_cmds().parse(["tool", "-v", "deploy", "--env", "prod", "x"]);
+  if (a.is_error()) {
+    return test.fail(a.error_text());
+  }
+  return test.assert_true(a.subcommand().unwrap_or("") == "deploy" && a.is_set("verbose") && a.value_or("env", "") == "prod" && a.operands().len() == 1);
+}
+
+// The first operand of a spec with commands must name one.
+function test_unknown_command_errors(): test.TestOutcome {
+  var a: cli.CliArgs = spec_cmds().parse(["tool", "launch"]);
+  if (!a.is_error()) {
+    return test.fail("expected an unknown-command error");
+  }
+  return test.assert_eq(a.error_text(), "unknown command launch");
+}
+
+// No command named: not an error, the caller decides (usually by
+// printing usage).
+function test_no_subcommand_is_none(): test.TestOutcome {
+  var a: cli.CliArgs = spec_cmds().parse(["tool", "-v"]);
+  return test.assert_true(!a.is_error() && a.subcommand().is_none() && a.is_set("verbose"));
+}
+
+// A command's flags are its own: the parent's `--name` is unknown
+// after `deploy`, and the error names it.
+function test_subcommand_scopes_flags(): test.TestOutcome {
+  var a: cli.CliArgs = spec_cmds().parse(["tool", "deploy", "--name", "x"]);
+  if (!a.is_error()) {
+    return test.fail("expected an unknown-option error");
+  }
+  return test.assert_eq(a.error_text(), "unknown option --name");
+}
+
+function test_usage_lists_commands(): test.TestOutcome {
+  var u: string = spec_cmds().usage();
+  return test.assert_true(u.contains("<command>") && u.contains("Commands:") && u.contains("deploy") && u.contains("push the build"));
+}
+
+// ---- completions ----
+function test_completion_bash(): test.TestOutcome {
+  match (spec_cmds().completion("bash")) {
+    Some(c) => {
+      return test.assert_true(c.contains("complete -o default -F _tool tool") && c.contains("--verbose -v") && c.contains("deploy) words='--env -e'"));
+    },
+    None => {
+      return test.fail("bash is a supported shell");
     }
-    return test.assert_eq(b, "hi");
+  }
+}
+
+function test_completion_zsh(): test.TestOutcome {
+  match (spec_cmds().completion("zsh")) {
+    Some(c) => {
+      return test.assert_true(c.starts_with("#compdef tool\n") && c.contains("{-n,--name}'[who to ship as]:value:_files'") && c.contains("'deploy:push the build'"));
+    },
+    None => {
+      return test.fail("zsh is a supported shell");
+    }
+  }
+}
+
+// fish gets one `complete` line per flag; a command's flags are
+// conditioned on the command having been seen.
+function test_completion_fish(): test.TestOutcome {
+  match (spec_cmds().completion("fish")) {
+    Some(c) => {
+      return test.assert_true(c.contains("complete -c tool -n __fish_use_subcommand -l name -s n -d 'who to ship as' -r\n") && c.contains("complete -c tool -n '__fish_seen_subcommand_from deploy' -l env -s e"));
+    },
+    None => {
+      return test.fail("fish is a supported shell");
+    }
+  }
+}
+
+function test_completion_unknown_shell(): test.TestOutcome {
+  return test.assert_true(spec().completion("powershell").is_none());
+}
+
+// A quote in help text is closed and reopened, so the script it lands
+// in still parses.
+function test_completion_quotes_help(): test.TestOutcome {
+  var s: cli.CliSpec = cli.cli_new("q", "quoting");
+  s = s.flag("it", "", "don't break");
+  match (s.completion("fish")) {
+    Some(c) => {
+      return test.assert_true(c.contains("-d 'don'\\''t break'"));
+    },
+    None => {
+      return test.fail("fish is a supported shell");
+    }
+  }
 }
 
 function main(): i32 {
-    var r: test.TestRunner = test.test_new("std/cli");
-    r = r.it("option --long V",        test_option_long);
-    r = r.it("option --long=V",        test_option_equals);
-    r = r.it("option -short V",        test_option_short);
-    r = r.it("boolean flag",           test_bool_flag);
-    r = r.it("positional operands",    test_positionals);
-    r = r.it("-- ends options",        test_end_of_options);
-    r = r.it("value_or default",       test_value_or_default);
-    r = r.it("unknown option errors",  test_unknown_option_errors);
-    r = r.it("missing value errors",   test_missing_value_errors);
-    r = r.it("value on bool errors",   test_value_on_bool_errors);
-    r = r.it("usage lists flags",      test_usage_lists_flags);
-    r = r.it("short glued value -n5",  test_short_glued_value);
-    r = r.it("short bundled bools -vs", test_short_bundled_bools);
-    r = r.it("short bundle ending valued -vn5", test_short_bundle_ending_valued);
-    r = r.it("short bundle next-token value -vn 5", test_short_bundle_next_token_value);
-    r = r.it("lone dash is positional", test_short_lone_dash_is_positional);
-    r = r.it("multibyte short flag unknown", test_short_multibyte_unknown);
-    r = r.it("colour red wraps or passes", test_color_red);
-    r = r.it("colour bold wraps or passes", test_color_bold);
-    return r.finish();
+  var r: test.TestRunner = test.test_new("std/cli");
+  r = r.it("option --long V", test_option_long);
+  r = r.it("option --long=V", test_option_equals);
+  r = r.it("option -short V", test_option_short);
+  r = r.it("boolean flag", test_bool_flag);
+  r = r.it("positional operands", test_positionals);
+  r = r.it("-- ends options", test_end_of_options);
+  r = r.it("value_or default", test_value_or_default);
+  r = r.it("unknown option errors", test_unknown_option_errors);
+  r = r.it("missing value errors", test_missing_value_errors);
+  r = r.it("value on bool errors", test_value_on_bool_errors);
+  r = r.it("usage lists flags", test_usage_lists_flags);
+  r = r.it("short glued value -n5", test_short_glued_value);
+  r = r.it("short bundled bools -vs", test_short_bundled_bools);
+  r = r.it("short bundle ending valued -vn5", test_short_bundle_ending_valued);
+  r = r.it("short bundle next-token value -vn 5", test_short_bundle_next_token_value);
+  r = r.it("lone dash is positional", test_short_lone_dash_is_positional);
+  r = r.it("multibyte short flag unknown", test_short_multibyte_unknown);
+  r = r.it("colour red wraps or passes", test_color_red);
+  r = r.it("colour bold wraps or passes", test_color_bold);
+  r = r.it("subcommand parses", test_subcommand_parses);
+  r = r.it("unknown command errors", test_unknown_command_errors);
+  r = r.it("no subcommand is none", test_no_subcommand_is_none);
+  r = r.it("subcommand scopes flags", test_subcommand_scopes_flags);
+  r = r.it("usage lists commands", test_usage_lists_commands);
+  r = r.it("completion bash", test_completion_bash);
+  r = r.it("completion zsh", test_completion_zsh);
+  r = r.it("completion fish", test_completion_fish);
+  r = r.it("completion unknown shell", test_completion_unknown_shell);
+  r = r.it("completion quotes help", test_completion_quotes_help);
+  return r.finish();
 }

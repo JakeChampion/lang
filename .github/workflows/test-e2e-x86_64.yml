@@ -71,8 +71,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
-        with:
-          gotestsum: "true"
       - name: go test (x86_64 e2e)
         # `^TestX86_64` covers internal/e2e/x86_64_test.go +
         # cross_module_variant_test.go's X86_64 subset. The
@@ -108,8 +106,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
-        with:
-          gotestsum: "true"
       - name: go test (fixture corpus through the in-process assembler)
         env:
           FERN_NATIVE_ASM: "1"
@@ -127,8 +123,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
-        with:
-          gotestsum: "true"
       - name: go test (fixture corpus under the seccomp filter)
         env:
           RUN_SECCOMP_CORPUS: "1"

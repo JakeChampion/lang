@@ -228,7 +228,7 @@ self-host-versus-native grid
 (`internal/e2eselfhost/testdata/selfhost-leak-matrix.txt`) now reads clean on
 x86-64. What remains is shared with native and is pinned, not tracked in an
 issue: 80 non-zero rows in `internal/e2e/testdata/conformance-leak-census.txt`
-and 40 of 216 rc-corpus cases in `internal/e2e/rc_leak_gate_test.go`.
+and 24 of 272 rc-corpus cases in `internal/e2e/rc_leak_gate_test.go`.
 
 **Verdict:** Phase 1 is closed as written, and so is the cycle question. The
 successor item is emptying those pin files — *reclaim*, not *allocation*.

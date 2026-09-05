@@ -10,18 +10,12 @@
 # and only the x86-64 leg pays emulation. Building linux/amd64 instead inverts
 # that and emulates the leg you run most.
 #
-# The wasm pins arrive as build args from scripts/devbox, which reads them from
-# scripts/wasm-toolchain-pins. Do not hardcode them here: a second copy of the
-# pins is exactly what buys an opaque `invalid leading byte (0x43)` when it
-# falls behind.
-FROM golang:1.26-bookworm
-
-ARG WASMTIME_VER
-ARG WASMTOOLS_VER
-ARG TARGETARCH
-
-RUN test -n "$WASMTIME_VER" -a -n "$WASMTOOLS_VER" \
-    || (echo "build args WASMTIME_VER / WASMTOOLS_VER are required" >&2; exit 1)
+# Go, wasmtime, wasm-tools and the WASI adapter are installed by mise from the
+# repo's own mise.toml + mise.lock (COPYed in; scripts/devbox builds with the
+# repo root as context and .dockerignore admits only what this file COPYs). No
+# version is written here: a second copy of a pin is exactly what buys an
+# opaque `invalid leading byte (0x43)` when it falls behind.
+FROM debian:bookworm
 
 # qemu-user-static carries the user-mode emulators for BOTH arches, so one
 # image runs either leg. The x86-64 cross-gcc links the x86-64 ELF that the
@@ -33,6 +27,7 @@ RUN apt-get update \
       gcc-x86-64-linux-gnu \
       gcc \
       libc6-dev \
+      make git \
       xz-utils curl ca-certificates gdb \
  && rm -rf /var/lib/apt/lists/* \
  && for t in qemu-x86_64 qemu-aarch64; do \
@@ -40,34 +35,31 @@ RUN apt-get update \
     done \
  && [ -e /usr/bin/aarch64-linux-gnu-gcc ] || ln -sf /usr/bin/gcc /usr/bin/aarch64-linux-gnu-gcc
 
-# wasmtime + wasm-tools + the WASI preview1 adapter, same versions and the same
-# FERN_WASI_ADAPTER wiring the CI action uses, so the wasm legs behave here as
-# they do on a runner.
-RUN set -eux; \
-    case "$TARGETARCH" in \
-      arm64) WT_ARCH=aarch64-linux ;; \
-      amd64) WT_ARCH=x86_64-linux ;; \
-      *) echo "unsupported TARGETARCH: $TARGETARCH" >&2; exit 1 ;; \
-    esac; \
-    mkdir -p /opt/wasm; \
-    curl -sSfL "https://github.com/bytecodealliance/wasmtime/releases/download/v${WASMTIME_VER}/wasmtime-v${WASMTIME_VER}-${WT_ARCH}.tar.xz" \
-      | tar -xJ -C /opt/wasm --strip-components=1 "wasmtime-v${WASMTIME_VER}-${WT_ARCH}/wasmtime"; \
-    curl -sSfL "https://github.com/bytecodealliance/wasm-tools/releases/download/v${WASMTOOLS_VER}/wasm-tools-${WASMTOOLS_VER}-${WT_ARCH}.tar.gz" \
-      | tar -xz -C /opt/wasm --strip-components=1 "wasm-tools-${WASMTOOLS_VER}-${WT_ARCH}/wasm-tools"; \
-    curl -sSfL -o /opt/wasm/adapter.wasm \
-      "https://github.com/bytecodealliance/wasmtime/releases/download/v${WASMTIME_VER}/wasi_snapshot_preview1.command.wasm"
-
-ENV PATH=/opt/wasm:$PATH \
-    FERN_WASI_ADAPTER=/opt/wasm/adapter.wasm \
-    GOFLAGS=-buildvcs=false
-
 WORKDIR /work
+COPY mise.toml mise.lock /work/
+COPY scripts/toolchain-env /work/scripts/toolchain-env
+
+# The repo is mounted over /work at run time, so the shims resolve tools from
+# the same mise.toml the image installed from; MISE_TRUSTED_CONFIG_PATHS keeps
+# mise from refusing the mounted copy when it differs from the built-in one.
+ENV MISE_TRUSTED_CONFIG_PATHS=/work MISE_YES=1
+RUN set -eux; \
+    HOME=/root scripts/toolchain-env >/dev/null; \
+    ln -s "$(/root/.local/bin/mise where http:wasi-adapter)/wasi_snapshot_preview1.command.wasm" /opt/adapter.wasm
+
+# GOPATH stays at the golang image's /go so the module-cache volume
+# scripts/devbox mounts keeps its name.
+ENV PATH=/root/.local/bin:/root/.local/share/mise/shims:$PATH \
+    FERN_WASI_ADAPTER=/opt/adapter.wasm \
+    GOPATH=/go \
+    GOFLAGS=-buildvcs=false
 
 # Fail the CONTAINER, not the tests, when a tool is missing. Every wasm and
 # cross-arch e2e test skips on a failed lookup and a skipped test reports `ok`,
 # so a half-built image would report a green sweep having run nothing.
 RUN set -eux; \
-    for t in wasmtime wasm-tools qemu-x86_64 qemu-aarch64 x86_64-linux-gnu-gcc aarch64-linux-gnu-gcc; do \
+    for t in go wasmtime wasm-tools qemu-x86_64 qemu-aarch64 x86_64-linux-gnu-gcc aarch64-linux-gnu-gcc; do \
       command -v "$t" >/dev/null || (echo "missing tool in image: $t" >&2; exit 1); \
     done; \
+    go version; wasmtime --version; wasm-tools --version; \
     test -f "$FERN_WASI_ADAPTER"

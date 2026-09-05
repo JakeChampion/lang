@@ -213,12 +213,16 @@ assert_ok_packages() {
 # ---------------------------------------------------------------------------
 # The wasm toolchain.
 #
-# The pinned versions come from scripts/wasm-toolchain-pins, which derives them
-# from .github/actions/setup-fern — a third hand-copied pin is a third pin that
-# can fall behind, and a mismatched wasmtime fails as an opaque `invalid leading
-# byte (0x43)` rather than as a version complaint.
+# mise is not bootstrapped in the deploy sandbox (see scripts/netlify-build),
+# so the smoke lane downloads wasmtime + wasm-tools directly, reading their
+# pinned versions from mise.toml — the one place a version lives. A hand-copied
+# pin here is what buys an opaque `invalid leading byte (0x43)` when it falls
+# behind; a sed of the single source does not.
+mise_ver() {
+  sed -n "s/^$1 = \"\([^\"]*\)\"/\1/p" "$repo/mise.toml" | head -1
+}
 install_wasm_toolchain() {
-  local arch dir base
+  local arch dir base wasmtime_ver wasmtools_ver
   case "$(uname -m)" in
     x86_64) arch=x86_64-linux ;;
     aarch64) arch=aarch64-linux ;;
@@ -227,9 +231,10 @@ install_wasm_toolchain() {
       return 1
       ;;
   esac
-  eval "$("$repo/scripts/wasm-toolchain-pins")" || return 1
-  # shellcheck disable=SC2153 # both come from the eval on the line above
-  local wasmtime_ver=$WASMTIME_VER wasmtools_ver=$WASMTOOLS_VER
+  wasmtime_ver=$(mise_ver wasmtime)
+  wasmtools_ver=$(mise_ver wasm-tools)
+  [ -n "$wasmtime_ver" ] && [ -n "$wasmtools_ver" ] || {
+    echo "smoke: could not read wasm pins from mise.toml" >&2; return 1; }
   dir="$cache/wasm-$wasmtime_ver-$wasmtools_ver-$arch"
   export PATH="$dir:$PATH"
   export FERN_WASI_ADAPTER="$dir/wasi_snapshot_preview1.command.wasm"

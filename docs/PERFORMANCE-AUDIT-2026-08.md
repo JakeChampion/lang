@@ -333,12 +333,20 @@ place — so confirm by fixing the site and re-measuring an unprobed build.
 
 ## 5. Multiplier 4 — repeated whole-program walks
 
-Not separately quantified, but visible in the profile's any-frame column:
-`irlower` runs interprocedural fixpoints (`borrowable_params_interproc`, the
-`lift_lambdas` / `lift_inline_closures` views, `expr_unsafe_for` /
-`stmt_unsafe_for` / `body_unsafe_for`) that re-walk every function body
-several times each, on top of ~15 `module_uses_*` inspection passes. Each
-walk is cheap; there are a lot of them, and each one pays §4's lookup costs.
+Measured in #8199 with round / visit / ms counters on the self-compile: the
+whole-program registry set (`borrowable_params_interproc`, 8 rounds;
+`consume_safe_params_interproc`, 7; `fn_sigs_for_borrow` incl.
+`param_counted_of`, 5) costs 7.9-8.6 s per derivation, and the x86 driver
+derived it twice, the arm64 driver three times (the eligibility pass, then
+emit twice) while also lowering every function twice. Each driver now derives
+it once and lowers once: x86 040f865f5 (self-compile wall 68.8 s to 59.6 s
+and 74.2 s to 60.8 s, two interleaved pairs), the per-module emit-all drivers
+e370545e6 (an 8-unit arm64 batch 62-92 s to 11-21 s), arm64 whole-program
+49b803f5a (about -33%), wasm whole-program 9a97bde6f. Nothing else here
+repeats a whole-program walk worth counting: the `module_uses_*` inspection
+passes no longer exist on the register backends, and the lift / closure /
+noesc / str_fresh / fresh_fwd fixpoints are each under 150 ms, ~0.35 s
+together.
 
 ## 6. What is *not* wrong
 
@@ -603,7 +611,7 @@ self-compile reports 1,056 crossings / 4,792 bytes; the appends grow in place.
 
 Huge pages are not it either — §4d above.
 
-**It is not the whole-body pre-walks either — §5's hypothesis is ruled out.**
+**It is not the whole-body pre-walks either.**
 `lower_func` opens with fourteen of them (`reclaimable_names_of`,
 `snapshot_param_names_of`, `aliased_array_names_of`, `precise_drop_names`,
 `consumed_scalar_enum_frees`, `trmc_eligible`, …), each handed the whole body,

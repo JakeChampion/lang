@@ -24,7 +24,7 @@ import (
 //
 // # Why a pinned baseline rather than a flat zero
 //
-// 40 of 216 cases leak on x86-64 today and 47 on arm64 — the map and
+// 24 of 272 cases leak on x86-64 today and 23 on arm64: the map and
 // closure drop paths do not fully reclaim, which is the same list the
 // corpus header names. A flat zero assertion could not land without
 // fixing all of that first, and deleting the leg until then is how the
@@ -33,7 +33,7 @@ import (
 // So each leaking case is pinned at its exact byte count and everything
 // else must be zero. What that buys, which nothing had before:
 //
-//   - the 176 (x86-64) / 169 (arm64) clean cases are now GATED. A change
+//   - the 248 (x86-64) / 249 (arm64) clean cases are now GATED. A change
 //     that starts leaking in any of them fails here.
 //   - a new corpus case that leaks fails, because absent from the table
 //     means zero. Joining the leaking set is a deliberate act.
@@ -112,9 +112,9 @@ var rcCorpusLeakBaselineArm64 = map[string]int64{
 	"option_of_array":                                32,
 	"pair_form_enum_temp_as_argument":                288,
 	"pair_form_payload_borrowing_call":               144,
-	"stdlib_json_cursor_idiom":                       1776,
-	"stdlib_json_roundtrip":                          768,
-	"string_closure_capture_aliased":                 48,
+	"stdlib_json_cursor_idiom":                       1696,
+	"stdlib_json_roundtrip":                          720,
+	"string_closure_capture_aliased":                 32,
 	// See the x86-64 twin.
 	"closure_local_passed_to_callee_released": 384,
 	"string_closure_capture_churn_free":       6400,

@@ -51,9 +51,9 @@ var (
 )
 
 // wasmtimePin is the wasmtime version this suite is verified against, and the
-// single place the number lives on the Go side. CI installs it via
-// .github/actions/setup-fern/action.yml; TestWasmtimePinMatchesCI asserts the
-// two agree so this cannot drift into a lie.
+// single place the number lives on the Go side. CI, devbox and the session
+// hook install it from mise.toml; TestWasmtimePinMatchesCI asserts the two
+// agree so this cannot drift into a lie.
 const wasmtimePin = "46.0.1"
 
 // wasmtimeVersion returns the version of the wasmtime on PATH, parsed out of
@@ -96,8 +96,8 @@ func skipIfPreview2Missing(t *testing.T) {
 			preview2Err = err
 		} else if v != wasmtimePin {
 			preview2Err = fmt.Errorf("wasmtime %s on PATH, but this suite is pinned to %s "+
-				"(see .github/actions/setup-fern/action.yml); the component-model-async "+
-				"ABI differs between them", v, wasmtimePin)
+				"(see mise.toml; `eval \"$(scripts/toolchain-env)\"` installs it); the "+
+				"component-model-async ABI differs between them", v, wasmtimePin)
 		}
 	})
 	if preview2Err != nil {

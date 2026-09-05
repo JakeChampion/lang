@@ -2,18 +2,8 @@
 # verdict, note. Same loader rules as selfhost-leak-matrix.txt (the x86 file);
 # regenerate with FERN_LEAK_MATRIX_DUMP=1 on TestSelfHostLeakMatrixIRArm64.
 #
-# Two rows still differ from the x86 file on the NATIVE side only, both
-# alias_param shapes: native-x86 reads clean because SSO keeps these <=7-byte
-# strings inline (allocs=0), while native-arm64 heap-allocates them (no SSO on
-# its concat path) and a borrowed param is not free-eligible, so nothing
-# releases them. That SSO gap is #7446's remaining limb; the self-host columns
-# agree with the x86 file on every cell.
-#
-# The two rebind rows left that set when the string overwrite dec was widened
-# to arm64 (#7446 / #6554) - what leaked there was the superseded string
-# itself, which the two-word ABI now releases like every other. The two
-# str_arr rows left earlier, when the array overwrite dec started walking the
-# superseded buffer's elements: string ELEMENTS, not the SSO gap.
+# Every verdict agrees with the x86 file; a row differing from it is a
+# per-ISA gap and says so in its note.
 
 arr_i32__fnscope__read                        clean  clean  clean on both sides
 arr_i32__fnscope__unused                      clean  clean  clean on both sides
@@ -119,8 +109,8 @@ arr_i32__if_block__alias_param                clean  clean  clean on both sides
 str__fnscope__alias_local                     clean  clean  clean on both sides
 str__if_block__alias_local                    clean  clean  clean on both sides
 str__loop_local__alias_local                  clean  clean  clean on both sides
-str__fnscope__alias_param                     leak   clean  #7553: the aliased param is borrowable again, so the self-host reclaims keep. Native-arm64 still leaks the shape (#7446, no SSO on its concat path) — the one cell where the self-host is AHEAD of native, and the non-vacuous proof the x86 row cannot give
-str__if_block__alias_param                    leak   clean  same as the fnscope cell, native-arm64 #7446 gap included
+str__fnscope__alias_param                     clean  clean  #7553: the callee only ALIASES its param, so the param stays borrowable and main's keep keeps its own release. Native's clean is VACUOUS (SSO: keep never allocates); the self-host column is the one that says the shape is reclaimed
+str__if_block__alias_param                    clean  clean  same as the fnscope cell, vacuous native column included
 str_arr__fnscope__alias_local                 clean  clean  #7391: alias shares the "SARR:" credit; __fern_str_arr_free's rc gate walks elements once, at the last owner
 str_arr__if_block__alias_local                clean  clean  same #7391 alias credit, block-scoped site
 str_arr__fnscope__alias_param                 clean  clean  #7553: the aliased-param borrow, string[] flavor — the constant keep-sweep refusal is gone

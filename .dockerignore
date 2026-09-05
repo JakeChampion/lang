@@ -1,0 +1,6 @@
+# scripts/devbox builds scripts/devbox.Dockerfile with the repo root as its
+# context, so the image can COPY the toolchain pin. Nothing else is sent.
+*
+!mise.toml
+!mise.lock
+!scripts/toolchain-env
