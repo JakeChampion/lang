@@ -1,0 +1,37 @@
+import "core/cmp";
+import "std/i32";
+import "std/string";
+
+// sort_strings — `cmp.sort` over strings, the shape tsort, ls and every
+// name-ordering caller reaches for. Same merge sort as sort_ints, but the
+// elements are refcounted: a copy of the array retains and releases every
+// string in it, so an accidental whole-array copy inside the sort — one per
+// insertion-sorted run, as __cmp_insertion once made — costs n²/32 element
+// copies here and shows as a multiple of this count, where on ints it hides
+// inside memcpy.
+function main(): i32 {
+  var total: i64 = 0i64;
+  var r: i32 = 0;
+  while (r < 2) {
+    var xs: string[] = [];
+    var i: i32 = 0;
+    // A deterministic, poorly-ordered sequence: a linear congruential walk,
+    // rendered as names so the comparisons are byte loops over a shared
+    // prefix.
+    var seed: i32 = 12345 + r;
+    while (i < 16000) {
+      seed = (seed * 1103515 + 12345) % 100000;
+      if (seed < 0) {
+        seed = 0 - seed;
+      }
+      xs = xs.append("n" + seed.to_string());
+      i = i + 1;
+    }
+    var sorted: string[] = cmp.sort(xs);
+    var first: string = sorted[0];
+    var last: string = sorted[sorted.len() - 1];
+    total = total + first.len() as i64 + (first[1] as i32) as i64 + (last[last.len() - 1] as i32) as i64;
+    r = r + 1;
+  }
+  return (total % 97i64) as i32;
+}
