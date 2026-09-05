@@ -102,7 +102,7 @@ func TestAnalyzeClosureDefinitionSiteAttribution(t *testing.T) {
 		"app/fern.toml": "[package]\nname = \"app\"\n[dependencies]\nhelper = { path = \"../helper\" }\n",
 		"app/main.fern": `import "helper";
 function main(): i32 {
-  return helper.run(function (host: i32): i32 {
+  return helper.run((host: i32): i32 => {
     return tcp_connect(host, 80);
   });
 }`,

@@ -76,7 +76,7 @@ function main(): i32 {
 function mk2(): i32 { return 7; }
 
 function main(): i32 {
-    var g: () => i32 = function (): i32 {
+    var g: () => i32 = (): i32 => {
         var fns = [mk, mk2];
         return fns[0]() + fns[1]();
     };
@@ -102,7 +102,7 @@ function main(): i32 {
 `},
 	// settle: a literal assigned to the lambda's own f64 PARAM.
 	{"lambda-f64-param-literal", `function main(): i32 {
-    var f: (f64) => i32 = function (x: f64): i32 {
+    var f: (f64) => i32 = (x: f64): i32 => {
         x = 3;
         if (x > 2.5) { return 0; }
         return 90;
@@ -113,7 +113,7 @@ function main(): i32 {
 	// settle control: an annotated LOCAL in the same lambda was always correct,
 	// so this passes either side of the fix and isolates the param scope.
 	{"lambda-f64-local-control", `function main(): i32 {
-    var f: () => i32 = function (): i32 {
+    var f: () => i32 = (): i32 => {
         var y: f64 = 3;
         if (y > 2.5) { return 0; }
         return 90;
@@ -130,7 +130,7 @@ function (a: Acc) bump(d: f64): f64 { return a.v + d; }
 
 function main(): i32 {
     var acc: Acc = Acc { v: 1.0 };
-    var f: () => f64 = function (): f64 { return acc.bump(2); };
+    var f: () => f64 = (): f64 => { return acc.bump(2); };
     var r: f64 = f();
     if (r > 2.5 && r < 3.5) { return 0; }
     return 90;
@@ -144,8 +144,8 @@ function (a: Acc) bump(d: f64): f64 { return a.v + d; }
 
 function main(): i32 {
     var acc: Acc = Acc { v: 1.0 };
-    var f: () => f64 = function (): f64 {
-        var g: () => f64 = function (): f64 { return acc.bump(2); };
+    var f: () => f64 = (): f64 => {
+        var g: () => f64 = (): f64 => { return acc.bump(2); };
         return g();
     };
     var r: f64 = f();
@@ -169,7 +169,7 @@ function run(f: (Ctr) => i32): i32 { return f(Ctr { n: 40 }); }
 
 function main(): i32 {
     var acc: Acc = Acc { v: 1.0 };
-    var r: i32 = run(function (acc: Ctr): i32 { return acc.bump(2); });
+    var r: i32 = run((acc: Ctr): i32 => { return acc.bump(2); });
     if (r != 42) { return 90; }
     var q: f64 = acc.bump(1);
     if (q > 1.5 && q < 2.5) { return 0; }
@@ -178,7 +178,7 @@ function main(): i32 {
 `},
 	// resolve_labels regression guard: `break outer` must leave the OUTER loop.
 	{"labeled-break-in-lambda", `function main(): i32 {
-    var f: () => i32 = function (): i32 {
+    var f: () => i32 = (): i32 => {
         var n: i32 = 0;
         outer: while (n < 100) {
             inner: while (true) {

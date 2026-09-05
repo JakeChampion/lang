@@ -202,7 +202,7 @@ function test_closures_capture_their_own_iteration(): test.TestOutcome {
 // A closure built by a factory captures the factory's argument, and two
 // closures from the same factory do not share it.
 function suffixer(sfx: string): (string) => string {
-    return function(s: string): string { return s + sfx; };
+    return (s: string): string => { return s + sfx; };
 }
 
 function test_factories_do_not_share_captures(): test.TestOutcome {

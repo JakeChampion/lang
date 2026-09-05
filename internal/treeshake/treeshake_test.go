@@ -151,7 +151,7 @@ func TestShakeNoOpOnEmptyProgram(t *testing.T) {
 func TestShakeWalksLambdaBody(t *testing.T) {
 	src := `function helper(): i32 { return 7; }
 function main(): i32 {
-    var f = function (): i32 { return helper(); };
+    var f = (): i32 => { return helper(); };
     return f();
 }`
 	names := runShake(t, src)

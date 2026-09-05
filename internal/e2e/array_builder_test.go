@@ -19,7 +19,7 @@ var arrayBuilderCases = []struct {
 		src: `
 import "core/int";
 function main(): i32 {
-  var out: i32[] = Array.build(function(b: ArrayBuilder[i32]): void {
+  var out: i32[] = Array.build((b: ArrayBuilder[i32]): void => {
     var i: i32 = 0;
     while (i < 5) { b.append(i * 2); i = i + 1; }
   });
@@ -35,7 +35,7 @@ function main(): i32 {
 import "core/int";
 function main(): i32 {
   var xs: i32[] = [1, 2, 3];
-  var out: i32[] = Array.build(function(b: ArrayBuilder[i32]): void {
+  var out: i32[] = Array.build((b: ArrayBuilder[i32]): void => {
     for x in xs { b.append(x * x); }
   });
   return out[0] + out[1] + out[2];
@@ -49,7 +49,7 @@ function main(): i32 {
 		src: `
 import "core/int";
 function main(): i32 {
-  var out: i32[] = Array.build(function(b: ArrayBuilder[i32]): void {
+  var out: i32[] = Array.build((b: ArrayBuilder[i32]): void => {
     b.append(0); b.append(0); b.append(0);
     b.with(1, 99);
   });
@@ -64,7 +64,7 @@ function main(): i32 {
 		src: `
 import "core/int";
 function main(): i32 {
-  var out: i32[] = Array.build(function(b: ArrayBuilder[i32]): void {
+  var out: i32[] = Array.build((b: ArrayBuilder[i32]): void => {
     var i: i32 = 1;
     while (i <= 10) {
       if (b.len() < 3) { b.append(i); }
@@ -86,7 +86,7 @@ function main(): i32 {
   var acc: i32 = 0;
   var c: i32 = 0;
   while (c < 200) {
-    var out: i32[] = Array.build(function(b: ArrayBuilder[i32]): void {
+    var out: i32[] = Array.build((b: ArrayBuilder[i32]): void => {
       b.append(c);
       b.append(c);
     });

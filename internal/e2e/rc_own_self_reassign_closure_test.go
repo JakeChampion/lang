@@ -20,7 +20,7 @@ function grow(own b: B, x: i32): B { return B { items: b.items.append(x), tag: b
 function main(): i32 {
     var k: i32 = 0;
     while (k < 100) {
-        var build = function(n: i32): i32 {
+        var build = (n: i32): i32 => {
             var a: B = B { items: [], tag: [42] };
             var i: i32 = 0;
             while (i < n) { a = grow(a, i); i = i + 1; }

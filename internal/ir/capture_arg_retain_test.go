@@ -19,7 +19,7 @@ function run_sub(ctx: Ctx, t: Txn, name: string): Out {
 }
 function driver(decls: string[]): (string, Txn) => Out {
     var ctx: Ctx = Ctx { decls: decls };
-    var runner: (string, Txn) => Out = function(name: string, t: Txn): Out { return run_sub(ctx, t, name); };
+    var runner: (string, Txn) => Out = (name: string, t: Txn): Out => { return run_sub(ctx, t, name); };
     return runner;
 }`, 8)
 	var lambda string

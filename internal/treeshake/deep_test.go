@@ -129,7 +129,7 @@ func TestShakeKeepsFunctionReachableOnlyViaClosure(t *testing.T) {
 	src := `function target(): i32 { return 7; }
 function main(): i32 {
     var x = 3;
-    var f = function (): i32 { return target() + x; };
+    var f = (): i32 => { return target() + x; };
     return f();
 }`
 	names := runShake(t, src)

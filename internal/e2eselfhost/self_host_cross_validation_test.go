@@ -259,13 +259,13 @@ func TestSelfHostCrossValidationX86_64(t *testing.T) {
 		{"struct-field-read", `struct P { x: i32, y: i32 } function main(): i32 { var p: P = P { x: 40, y: 2 }; return p.x + p.y; }`, 42},
 		{"struct-method", `struct P { x: i32 } function (p: P) dbl(): i32 { return p.x * 2; } function main(): i32 { var p: P = P { x: 21 }; return p.dbl(); }`, 42},
 		{"tuple-elements", `function main(): i32 { var t: (i32, i32) = (40, 2); return t.0 + t.1; }`, 42},
-		{"closure-capture", `function main(): i32 { var n: i32 = 40; var f: () => i32 = function (): i32 { return n + 2; }; return f(); }`, 42},
+		{"closure-capture", `function main(): i32 { var n: i32 = 40; var f: () => i32 = (): i32 => { return n + 2; }; return f(); }`, 42},
 		// A closure that WRITES its captured scalar. By-reference scalar capture
 		// is a deliberate language feature, and the interpreter got it wrong for
 		// months while the compiled path was correct (SH-057 / #2850) — exactly
 		// the divergence class this suite exists to catch.
-		{"closure-mutates-capture", `function main(): i32 { var n: i32 = 0; var inc: () => i32 = function (): i32 { n = n + 1; return n; }; inc(); inc(); return n + 40; }`, 42},
-		{"higher-order-fn", `function ap(f: (i32) => i32, x: i32): i32 { return f(x); } function main(): i32 { return ap(function (n: i32): i32 { return n + 1; }, 41); }`, 42},
+		{"closure-mutates-capture", `function main(): i32 { var n: i32 = 0; var inc: () => i32 = (): i32 => { n = n + 1; return n; }; inc(); inc(); return n + 40; }`, 42},
+		{"higher-order-fn", `function ap(f: (i32) => i32, x: i32): i32 { return f(x); } function main(): i32 { return ap((n: i32): i32 => { return n + 1; }, 41); }`, 42},
 		{"enum-match", `enum C { A, B } function main(): i32 { var c: C = C.A; match (c) { C.A => { return 3; }, C.B => { return 4; } } }`, 3},
 		{"i64-arith", `function main(): i32 { var n: i64 = 5000000000; return (n % 97) as i32; }`, 73},
 		{"f64-arith", `function main(): i32 { var f: f64 = 2.5; var g: f64 = 1.5; return (f + g) as i32; }`, 4},
@@ -292,7 +292,7 @@ func TestSelfHostCrossValidationX86_64(t *testing.T) {
 		// one this suite cannot catch by construction unless a row disagrees
 		// with the other two. Also pinned as a four-backend fixture
 		// (conformance/cases/try_op_in_closure).
-		{"try-in-closure", `function main(): i32 { var f: (Option[i32]) => Option[i32] = function (o: Option[i32]): Option[i32] { var v: i32 = o?; return Some(v + 1); }; match (f(None)) { Some(a) => { return a; }, None => { match (f(Some(41))) { Some(b) => { return b; }, None => { return 0; } } } } }`, 42},
+		{"try-in-closure", `function main(): i32 { var f: (Option[i32]) => Option[i32] = (o: Option[i32]): Option[i32] => { var v: i32 = o?; return Some(v + 1); }; match (f(None)) { Some(a) => { return a; }, None => { match (f(Some(41))) { Some(b) => { return b; }, None => { return 0; } } } } }`, 42},
 	}
 
 	for _, tc := range cases {

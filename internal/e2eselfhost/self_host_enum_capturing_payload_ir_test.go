@@ -23,7 +23,7 @@ import (
 const capturingEnumProgram = `enum Box { Wrap((i32) => i32), Empty }
 
 function make(base: i32): Box {
-    return Wrap(function(x: i32): i32 { return x + base; });
+    return Wrap((x: i32): i32 => { return x + base; });
 }
 
 function main(): i32 {

@@ -77,7 +77,7 @@ function main(): i32 {
 	// `apply(add, 9)` with `add` capturing `base` -> 33 + 9.
 	{"hof_arg", `function apply(g: (i32) => i32, n: i32): i32 { return g(n); }
 function mk(base: i32): i32 {
-    var add = function(x: i32): i32 { return x + base; };
+    var add = (x: i32): i32 => { return x + base; };
     return apply(add, 9);
 }
 function main(): i32 { return mk(33); }`},

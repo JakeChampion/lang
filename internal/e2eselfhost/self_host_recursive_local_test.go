@@ -26,7 +26,7 @@ var recursiveLocalCases = []struct {
 	// rebuild (regression: the lift dropped non-lifted `var`s that shared
 	// the body). A plain var before it, and a capturing closure alongside.
 	{"var-before", "function main(): i32 { var x: i32 = 5; function r(n: i32): i32 { if (n <= 0) { return 0; } return r(n - 1); } return x + r(3); }", 5},
-	{"with-sibling-closure", "function main(): i32 { var base: i32 = 100; var add = function(x: i32): i32 { return x + base; }; function cd(n: i32): i32 { if (n <= 0) { return 0; } return 1 + cd(n - 1); } return add(cd(5) + 17); }", 122},
+	{"with-sibling-closure", "function main(): i32 { var base: i32 = 100; var add = (x: i32): i32 => { return x + base; }; function cd(n: i32): i32 { if (n <= 0) { return 0; } return 1 + cd(n - 1); } return add(cd(5) + 17); }", 122},
 	// Capturing recursive locals: lambda-lifted with the captured enclosing
 	// names threaded through as trailing params + at every call site.
 	{"capture-one", "function main(): i32 { var base: i32 = 10; function f(n: i32): i32 { if (n <= 0) { return base; } return 1 + f(n - 1); } return f(3); }", 13},

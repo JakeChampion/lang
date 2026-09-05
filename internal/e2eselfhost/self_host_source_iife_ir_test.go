@@ -48,7 +48,7 @@ var sourceIifeCases = []struct {
 	// the time the enclosing return reads it: 5 + 1 = 6, not 1.
 	{"var_init_iife", `function main(): i32 {
     var out = 0;
-    var v = (function(): i32 { defer { out = out + 5; } return 1; })();
+    var v = ((): i32 => { defer { out = out + 5; } return 1; })();
     return out + v;
 }`},
 	// Per-iteration: the defer fires each time the IIFE returns, not once at
@@ -57,7 +57,7 @@ var sourceIifeCases = []struct {
     var out = 0;
     var i = 0;
     while (i < 3) {
-        var v = (function(): i32 { defer { out = out + 5; } return 1; })();
+        var v = ((): i32 => { defer { out = out + 5; } return 1; })();
         out = out + v;
         i = i + 1;
     }
@@ -68,9 +68,9 @@ var sourceIifeCases = []struct {
 	// would order them differently.
 	{"nested_iifes", `function main(): i32 {
     var out = 0;
-    var v = (function(): i32 {
+    var v = ((): i32 => {
         defer { out = out + 5; }
-        var w = (function(): i32 { defer { out = out + 100; } return 2; })();
+        var w = ((): i32 => { defer { out = out + 100; } return 2; })();
         return w;
     })();
     return out + v;
@@ -80,7 +80,7 @@ var sourceIifeCases = []struct {
 	{"iife_captures_local", `function main(): i32 {
     var base = 10;
     var out = 0;
-    var v = (function(): i32 { defer { out = out + base; } return base + 1; })();
+    var v = ((): i32 => { defer { out = out + base; } return base + 1; })();
     return out + v;
 }`},
 	// The defer sits inside an `if` in the IIFE body, not at its top level. The
@@ -91,14 +91,14 @@ var sourceIifeCases = []struct {
 	{"defer_nested_in_if", `function main(): i32 {
     var out = 0;
     var c = true;
-    var v = (function(): i32 { if (c) { defer { out = out + 5; } } return 1; })();
+    var v = ((): i32 => { if (c) { defer { out = out + 5; } } return 1; })();
     return out + v;
 }`},
 	// Control: an IIFE with no defer at all. It has no scope to get wrong, and
 	// it compiled before the change — this is what catches a fix that makes the
 	// unmarked shape stop lowering rather than lower correctly.
 	{"iife_no_defer", `function main(): i32 {
-    var v = (function(): i32 { return 42; })();
+    var v = ((): i32 => { return 42; })();
     return v;
 }`},
 	// Control in the other direction: a genuine value block in the same program
@@ -107,7 +107,7 @@ var sourceIifeCases = []struct {
 	{"value_block_beside_iife", `function main(): i32 {
     var out = 0;
     var b = { defer { out = out + 1; } 3 };
-    var v = (function(): i32 { defer { out = out + 5; } return 1; })();
+    var v = ((): i32 => { defer { out = out + 5; } return 1; })();
     return out * 100 + b * 10 + v;
 }`},
 }

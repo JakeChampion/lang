@@ -1,6 +1,6 @@
 // Struct-pattern parameters — `P { x, y }: P` in every binding form: named
 // function, second-position param, a field renamed on binding, a partial
-// bind, the `w @` whole-value binder, a verbose lambda and an arrow lambda.
+// bind, and a lambda with each body form — braced and expression.
 // Desugars at parse time into a holder param plus a leading
 // `let P { x, y } = <holder>;`, so this exercises the same Destructure path
 // as the tuple spelling in param_destructure.
@@ -31,7 +31,7 @@ function whole(p @ Point { x, y }: Point): i32 {
 }
 
 function lam(): i32 {
-    var f = function (Point { x, y }: Point): i32 { return x * 10 + y; };
+    var f = (Point { x, y }: Point): i32 => { return x * 10 + y; };
     return f(Point { x: 1, y: 2 });
 }
 

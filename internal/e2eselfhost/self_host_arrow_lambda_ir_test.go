@@ -38,7 +38,7 @@ var arrowLambdaIRCases = []struct {
 	// Capture used twice in the body expression.
 	{"capture-twice", `function main(): i32 { var n = 6; var f = (x: i32): i32 => x * n + n; return f(4); }`},
 	// Regression: the function(){} closure form still lowers.
-	{"fn-form-regress", `function main(): i32 { var n = 10; var f = function(x: i32): i32 { return x + n; }; return f(5); }`},
+	{"fn-form-regress", `function main(): i32 { var n = 10; var f = (x: i32): i32 => { return x + n; }; return f(5); }`},
 }
 
 // TestSelfHostArrowLambdaIRX86_64 routes each case through the self-hosted x86-64

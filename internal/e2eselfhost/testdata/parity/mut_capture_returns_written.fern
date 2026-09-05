@@ -1,2 +1,2 @@
 // The lambda's own return reflects the post-write value (#2850) -> 5*2 = 10.
-function main(): i32 { var x = 5; var f = function (): i32 { x = x * 2; return x; }; return f(); }
+function main(): i32 { var x = 5; var f = (): i32 => { x = x * 2; return x; }; return f(); }

@@ -23,7 +23,7 @@ const foreachInNestedFuncSrc = `function total(xs: i32[]): i32 {
         for x in xs {
             n = n + x;
         }
-        var again = function(): i32 {
+        var again = (): i32 => {
             var m: i32 = 0;
             for y in xs {
                 m = m + y;

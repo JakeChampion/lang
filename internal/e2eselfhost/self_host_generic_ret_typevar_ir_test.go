@@ -34,7 +34,7 @@ pub function showeq[T: cmp.Eq + cmp.Display](a: T, b: T): i32 {
     return b.to_string().len();
 }
 function main(): i32 {
-    var s = gfold(0, function(a: i32, x: i32): i32 { return a + x; });
+    var s = gfold(0, (a: i32, x: i32): i32 => { return a + x; });
     return showeq(s, 7);
 }`},
 

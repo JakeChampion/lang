@@ -30,24 +30,24 @@ var arrayClosureMethodIRCases = []struct {
 }{
 	// reduce: seedless left fold returning Option[T].
 	{"reduce", `import "std/array";
-function main(): i32 { var xs: i32[] = [1, 2, 3, 4]; match (xs.reduce(function (a: i32, b: i32): i32 { return a + b; })) { Some(v) => { return v; }, None => { return 0; } } }`},
+function main(): i32 { var xs: i32[] = [1, 2, 3, 4]; match (xs.reduce((a: i32, b: i32): i32 => { return a + b; })) { Some(v) => { return v; }, None => { return 0; } } }`},
 	// sort_by: comparator-driven sort, read back as a scalar.
 	{"sort_by", `import "std/array";
-function main(): i32 { var xs: i32[] = [3, 1, 2]; var s: i32[] = xs.sort_by(function (a: i32, b: i32): i32 { return a - b; }); return s[0] * 100 + s[1] * 10 + s[2]; }`},
+function main(): i32 { var xs: i32[] = [3, 1, 2]; var s: i32[] = xs.sort_by((a: i32, b: i32): i32 => { return a - b; }); return s[0] * 100 + s[1] * 10 + s[2]; }`},
 	// filter: predicate keep, reduced to a scalar.
 	{"filter", `import "std/array";
-function main(): i32 { var xs: i32[] = [1, 2, 3, 4, 5, 6]; var e: i32[] = xs.filter(function (n: i32): boolean { return n % 2 == 0; }); return e.len() * 100 + e[0] * 10 + e[2]; }`},
+function main(): i32 { var xs: i32[] = [1, 2, 3, 4, 5, 6]; var e: i32[] = xs.filter((n: i32): boolean => { return n % 2 == 0; }); return e.len() * 100 + e[0] * 10 + e[2]; }`},
 	// find: first matching element as Option[T].
 	{"find", `import "std/array";
-function main(): i32 { var xs: i32[] = [5, 8, 3, 9]; match (xs.find(function (n: i32): boolean { return n > 7; })) { Some(v) => { return v; }, None => { return 0; } } }`},
+function main(): i32 { var xs: i32[] = [5, 8, 3, 9]; match (xs.find((n: i32): boolean => { return n > 7; })) { Some(v) => { return v; }, None => { return 0; } } }`},
 	// find_last: LAST matching element (right-to-left mirror of find). In
 	// [5,8,3,9,2] the elements > 4 are 5,8,9 — the last is 9.
 	{"find_last", `import "std/array";
-function main(): i32 { var xs: i32[] = [5, 8, 3, 9, 2]; match (xs.find_last(function (n: i32): boolean { return n > 4; })) { Some(v) => { return v; }, None => { return 0; } } }`},
+function main(): i32 { var xs: i32[] = [5, 8, 3, 9, 2]; match (xs.find_last((n: i32): boolean => { return n > 4; })) { Some(v) => { return v; }, None => { return 0; } } }`},
 	// rposition: index of the LAST matching element. In [1,2,3,2,1] the 2s
 	// are at indices 1 and 3 — rposition returns 3.
 	{"rposition", `import "std/array";
-function main(): i32 { var xs: i32[] = [1, 2, 3, 2, 1]; match (xs.rposition(function (n: i32): boolean { return n == 2; })) { Some(i) => { return i; }, None => { return 9; } } }`},
+function main(): i32 { var xs: i32[] = [1, 2, 3, 2, 1]; match (xs.rposition((n: i32): boolean => { return n == 2; })) { Some(i) => { return i; }, None => { return 9; } } }`},
 }
 
 func TestSelfHostArrayClosureMethodIR(t *testing.T) {

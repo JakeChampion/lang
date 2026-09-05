@@ -48,7 +48,7 @@ func TestSelfHostMethodReturnsClosureIR(t *testing.T) {
 			// the call site must dispatch env-first.
 			name: "noncapturing",
 			src: `struct Maker { }
-function (m: Maker) make(): (i32) => i32 { return function(x: i32): i32 { return x * 2; }; }
+function (m: Maker) make(): (i32) => i32 { return (x: i32): i32 => { return x * 2; }; }
 function main(): i32 { var m = Maker { }; var f = m.make(); return f(21); }`,
 		},
 		{
@@ -57,7 +57,7 @@ function main(): i32 { var m = Maker { }; var f = m.make(); return f(21); }`,
 			// rather than merely mis-indexing.
 			name: "captures-method-param",
 			src: `struct F { }
-function (f: F) mul(k: i32): (i32) => i32 { return function(x: i32): i32 { return x * k; }; }
+function (f: F) mul(k: i32): (i32) => i32 { return (x: i32): i32 => { return x * k; }; }
 function main(): i32 { var f = F { }; var g = f.mul(7); return g(6); }`,
 		},
 		{
@@ -66,14 +66,14 @@ function main(): i32 { var f = F { }; var g = f.mul(7); return g(6); }`,
 			// two above.
 			name: "called-without-binding",
 			src: `struct Maker { }
-function (m: Maker) make(): (i32) => i32 { return function(x: i32): i32 { return x * 3; }; }
+function (m: Maker) make(): (i32) => i32 { return (x: i32): i32 => { return x * 3; }; }
 function main(): i32 { var m = Maker { }; return m.make()(14); }`,
 		},
 		{
 			// A free function returning a closure — the path that already
 			// worked. Pins that the new ExprFieldAccess arm did not disturb it.
 			name: "free-fn-unaffected",
-			src: `function make(): (i32) => i32 { return function(x: i32): i32 { return x * 2; }; }
+			src: `function make(): (i32) => i32 { return (x: i32): i32 => { return x * 2; }; }
 function main(): i32 { var f = make(); return f(21); }`,
 		},
 	}

@@ -62,7 +62,7 @@ func TestSelfHostClofldDropIRX86_64(t *testing.T) {
 
 	// DROP FIRES: an admitted straight-line fn-field struct — the exit sweep
 	// calls __struct_drop_H, whose k_clo arm frees the env box. Value 13.
-	run(t, `struct H { f: (i32) => i32, id: i32 } function main(): i32 { var h: H = H { f: function (x: i32): i32 { return x + 3; }, id: 1 }; var r: i32 = h.f(10); return r; }`,
+	run(t, `struct H { f: (i32) => i32, id: i32 } function main(): i32 { var h: H = H { f: (x: i32): i32 => { return x + 3; }, id: 1 }; var r: i32 = h.f(10); return r; }`,
 		"clofld-drop-fires", 13, "call __fn___struct_drop_H")
 
 	// CHURN balance + loop-REINIT reclaim: the c1 shape — a capturing lambda
@@ -70,18 +70,18 @@ func TestSelfHostClofldDropIRX86_64(t *testing.T) {
 	// re-bind routes through __field_reclaim_H (fr_clo frees the prior
 	// iteration's env box); values right and the underflow detector clean
 	// prove the admission + drops never over-release.
-	run(t, `struct H { f: (i32) => i32, id: i32 } function churn(n: i32): i32 { var bad: i32 = 0; var i: i32 = 0; while (i < n) { var k: i32 = i % 5; var h: H = H { f: function (x: i32): i32 { return x + k; }, id: i }; if (h.f(10) != 10 + k) { bad = 1; } i = i + 1; } return bad; } function main(): i32 { var v: i32 = churn(2000000); if (__rc_underflow() != 0) { return 99; } return v; }`,
+	run(t, `struct H { f: (i32) => i32, id: i32 } function churn(n: i32): i32 { var bad: i32 = 0; var i: i32 = 0; while (i < n) { var k: i32 = i % 5; var h: H = H { f: (x: i32): i32 => { return x + k; }, id: i }; if (h.f(10) != 10 + k) { bad = 1; } i = i + 1; } return bad; } function main(): i32 { var v: i32 = churn(2000000); if (__rc_underflow() != 0) { return 99; } return v; }`,
 		"clofld-capture-churn-balanced", 0, "call __fn___field_reclaim_H")
 
 	// NON-admitted: a bare closure IDENT as the field value (an alias of a
 	// live closure local) — the clofld store gate marks the field unsafe and
 	// the type keeps the sound leak; g stays callable after h's drop.
-	run(t, `struct H { f: (i32) => i32, id: i32 } function main(): i32 { var g = function (x: i32): i32 { return x * 2; }; var h: H = H { f: g, id: 3 }; var r: i32 = h.f(5) + g(2) + h.id; if (r != 17) { return 90; } if (__rc_underflow() != 0) { return 99; } return 0; }`,
+	run(t, `struct H { f: (i32) => i32, id: i32 } function main(): i32 { var g = (x: i32): i32 => { return x * 2; }; var h: H = H { f: g, id: 3 }; var r: i32 = h.f(5) + g(2) + h.id; if (r != 17) { return 90; } if (__rc_underflow() != 0) { return 99; } return 0; }`,
 		"clofld-ident-excluded", 0, "")
 
 	// NON-admitted: a BASE COPY carries the field's box into a second struct
 	// (two drops of one box if admitted) — the scan excludes the type; both
 	// structs' fields stay callable.
-	run(t, `struct H { f: (i32) => i32, id: i32 } function main(): i32 { var h1: H = H { f: function (x: i32): i32 { return x + 1; }, id: 3 }; var h2: H = H { ...h1, id: 4 }; var r: i32 = h1.f(5) + h2.f(10) + h2.id; if (r != 21) { return 90; } if (__rc_underflow() != 0) { return 99; } return 0; }`,
+	run(t, `struct H { f: (i32) => i32, id: i32 } function main(): i32 { var h1: H = H { f: (x: i32): i32 => { return x + 1; }, id: 3 }; var h2: H = H { ...h1, id: 4 }; var r: i32 = h1.f(5) + h2.f(10) + h2.id; if (r != 21) { return 90; } if (__rc_underflow() != 0) { return 99; } return 0; }`,
 		"clofld-base-copy-excluded", 0, "")
 }

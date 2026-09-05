@@ -22,12 +22,12 @@ var lambdaLiftSliceFieldIRCases = []struct {
 	main string
 }{
 	// IIFE as a slice's start bound: a[1:3] -> len 2.
-	{"slice-start", `function main(): i32 { var a: i32[] = [10, 20, 30, 40]; var s = a[(function(x: i32): i32 { return x; })(1) : 3]; return s.len(); }`},
+	{"slice-start", `function main(): i32 { var a: i32[] = [10, 20, 30, 40]; var s = a[((x: i32): i32 => { return x; })(1) : 3]; return s.len(); }`},
 	// IIFE as a slice's end bound: a[0:3] -> len 3.
-	{"slice-end", `function main(): i32 { var a: i32[] = [10, 20, 30, 40]; var s = a[0 : (function(x: i32): i32 { return x; })(3)]; return s.len(); }`},
+	{"slice-end", `function main(): i32 { var a: i32[] = [10, 20, 30, 40]; var s = a[0 : ((x: i32): i32 => { return x; })(3)]; return s.len(); }`},
 	// IIFE as the index inside a field-access object: arr[0].v = 7.
 	{"fieldaccess-index", `struct P { v: i32 }
-function main(): i32 { var p = P { v: 7 }; var arr: P[] = [p]; return arr[(function(x: i32): i32 { return x; })(0)].v; }`},
+function main(): i32 { var p = P { v: 7 }; var arr: P[] = [p]; return arr[((x: i32): i32 => { return x; })(0)].v; }`},
 }
 
 // TestSelfHostLambdaLiftSliceFieldIRX86_64 routes each case through the

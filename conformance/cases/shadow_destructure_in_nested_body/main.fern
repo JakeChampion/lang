@@ -14,12 +14,12 @@ function main(): i32 {
     var y: i32 = 2;
 
     // Destructuring lambda parameter shadowing both outer names.
-    var lam = function (Point { x, y }: Point): i32 { return x * 10 + y; };
+    var lam = (Point { x, y }: Point): i32 => { return x * 10 + y; };
     if (lam(Point { x: 3, y: 4 }) != 34) { return 1; }
 
     // The same, one lambda deeper.
-    var outer = function (): i32 {
-        var inner = function ((x, y): (i32, i32)): i32 { return x * 100 + y; };
+    var outer = (): i32 => {
+        var inner = ((x, y): (i32, i32)): i32 => { return x * 100 + y; };
         return inner((5, 6));
     };
     if (outer() != 506) { return 2; }
@@ -35,7 +35,7 @@ function main(): i32 {
     if (total != 46) { return 4; }
 
     // A nested body whose binders shadow nothing still works.
-    var free = function ((p, q): (i32, i32)): i32 { return p - q; };
+    var free = ((p, q): (i32, i32)): i32 => { return p - q; };
     if (free((9, 5)) != 4) { return 5; }
 
     if (x != 1) { return 6; }

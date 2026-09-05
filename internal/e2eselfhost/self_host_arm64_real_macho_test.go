@@ -40,7 +40,7 @@ func TestSelfHostArm64DarwinMachORealAsm(t *testing.T) {
 		// Closures / function-pointer calls lower to `blr` (indirect call) —
 		// which the in-process arm64 assembler must encode rather than landing
 		// in p.unknown -> "UNKNOWN: blr".
-		{"closure", `function main(): i32 { var k = 40; var f = function(x: i32): i32 { return x + k; }; return f(2); }`, 42},
+		{"closure", `function main(): i32 { var k = 40; var f = (x: i32): i32 => { return x + k; }; return f(2); }`, 42},
 		{"higher_order", `function apply(g: (i32) => i32, n: i32): i32 { return g(n); } function dbl(x: i32): i32 { return x * 2; } function main(): i32 { return apply(dbl, 21); }`, 42},
 	}
 

@@ -132,7 +132,7 @@ func TestConvertRewritesCapturedRefsAsCaptureRef(t *testing.T) {
 func TestConvertLambdaExpression(t *testing.T) {
 	src := `function main(): i32 {
 		var k: i32 = 7;
-		var mul: (i32) => i32 = function (x: i32): i32 { return x * k; };
+		var mul: (i32) => i32 = (x: i32): i32 => { return x * k; };
 		return mul(6);
 	}`
 	prog := runConvert(t, src)

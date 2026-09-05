@@ -4097,7 +4097,7 @@ function check_union_receiver_method(): i32 {
 
 function check_lambdas_and_closures(): i32 {
     // Lambda expression bound to a var, then called.
-    var src81: string = "function main(): i32 { var f = function (x: i32): i32 { return x + 1; }; return f(41); }";
+    var src81: string = "function main(): i32 { var f = (x: i32): i32 => { return x + 1; }; return f(41); }";
     var r81: Value = run_module(src81);
     match (r81) {
         VInt(i) => { if (i.v != 42) { return 810; } },
@@ -4105,7 +4105,7 @@ function check_lambdas_and_closures(): i32 {
     }
 
     // Closure captures an outer local var.
-    var src82: string = "function main(): i32 { var k: i32 = 10; var f = function (x: i32): i32 { return x + k; }; return f(5); }";
+    var src82: string = "function main(): i32 { var k: i32 = 10; var f = (x: i32): i32 => { return x + k; }; return f(5); }";
     var r82: Value = run_module(src82);
     match (r82) {
         VInt(i) => { if (i.v != 15) { return 820; } },
@@ -4113,7 +4113,7 @@ function check_lambdas_and_closures(): i32 {
     }
 
     // Immediate-invoked function expression.
-    var src83: string = "function main(): i32 { return function (n: i32): i32 { return n * 2; }(21); }";
+    var src83: string = "function main(): i32 { return (n: i32): i32 => { return n * 2; }(21); }";
     var r83: Value = run_module(src83);
     match (r83) {
         VInt(i) => { if (i.v != 42) { return 830; } },

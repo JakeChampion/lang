@@ -19,6 +19,10 @@
 # leaking fixture is 2, and regex_captures_assert alone is 5987 of the
 # total.
 #
+# cast_int_arith_to_float arrives at 0 with #8456's fixture, which landed
+# without a row — a new fixture needs a verdict, and a clean one is the
+# registration the census asks for rather than a pin being moved.
+#
 # arrow_lambda_block_body is back to 0, and #8550's diagnosis was right:
 # #2673 extended the fixture with capturing void lambdas, and the three
 # allocations were the closure env boxes. #8545 removed the leak — a
@@ -136,6 +140,7 @@ bytes_writer                                         0
 c2_consuming_reuse                                   0
 call_result_arg_temp                                 0
 cast_in_tuple                                        0
+cast_int_arith_to_float                              0
 cast_narrow_binding                                  0
 cell_in_container                                    0
 cell_string_accumulate                               2

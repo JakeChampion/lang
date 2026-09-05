@@ -108,7 +108,7 @@ function main(): i32 {
     return fs[0]();
 }`},
 	{"fnarray_closure_f64", `function main(): i32 {
-    var fs: (() => f64)[] = [function (): f64 { return 4.5; }];
+    var fs: (() => f64)[] = [(): f64 => { return 4.5; }];
     return (fs[0]() * 10.0) as i32;
 }`},
 

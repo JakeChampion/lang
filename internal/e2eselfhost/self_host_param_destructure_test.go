@@ -25,7 +25,7 @@ var paramDestructureCases = []struct {
 }{
 	{"fn-param", "struct Point { x: i32, y: i32 } function add((a, b): (i32, i32)): i32 { return a + b; } function main(): i32 { var t: Point = Point { x: 1, y: 1 }; var pad: i32 = t.x - t.y; return add((30, 12)) + pad; }", 42},
 	{"second-position", "struct Point { x: i32, y: i32 } function scale(k: i32, (lo, hi): (i32, i32)): i32 { return k * (hi - lo); } function main(): i32 { var t: Point = Point { x: 1, y: 1 }; var pad: i32 = t.x - t.y; return scale(21, (3, 5)) + pad; }", 42},
-	{"lambda", "struct Point { x: i32, y: i32 } function main(): i32 { var t: Point = Point { x: 1, y: 1 }; var pad: i32 = t.x - t.y; var f = function((x, y): (i32, i32)): i32 { return x * y; }; return f((6, 7)) + pad; }", 42},
+	{"lambda", "struct Point { x: i32, y: i32 } function main(): i32 { var t: Point = Point { x: 1, y: 1 }; var pad: i32 = t.x - t.y; var f = ((x, y): (i32, i32)): i32 => { return x * y; }; return f((6, 7)) + pad; }", 42},
 	{"arrow-lambda", "struct Point { x: i32, y: i32 } function main(): i32 { var t: Point = Point { x: 1, y: 1 }; var pad: i32 = t.x - t.y; var g = ((lo, hi): (i32, i32)) => hi - lo; return g((5, 47)) + pad; }", 42},
 }
 

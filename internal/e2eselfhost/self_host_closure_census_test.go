@@ -121,7 +121,7 @@ function main(): i32 { return apply(inc, 41); }`,
 			// adjacent call_direct, so resolving it means reading that one
 			// function's returns.
 			name: "returned-closure",
-			src: `function mk(n: i32): (i32) => i32 { return function(x: i32): i32 { return x + n; }; }
+			src: `function mk(n: i32): (i32) => i32 { return (x: i32): i32 => { return x + n; }; }
 function main(): i32 { var f = mk(5); return f(37); }`,
 			want: "env=1 env_local=0 env_call=1 env_param=0 env_other=0 plain=0",
 		},
@@ -134,7 +134,7 @@ function main(): i32 { var f = mk(5); return f(37); }`,
 			name: "called-only-lambda",
 			src: `function main(): i32 {
     var n: i32 = 10;
-    var f: (i32) => i32 = function(x: i32): i32 { return x + n; };
+    var f: (i32) => i32 = (x: i32): i32 => { return x + n; };
     return f(5);
 }`,
 			want: "env=0 env_local=0 env_call=0 env_param=0 env_other=0 plain=0",
@@ -147,7 +147,7 @@ function main(): i32 { var f = mk(5); return f(37); }`,
 			name: "escaping-and-called",
 			src: `function apply(f: (i32) => i32, x: i32): i32 { return f(x); }
 function main(): i32 {
-    var inc: (i32) => i32 = function(x: i32): i32 { return x + 1; };
+    var inc: (i32) => i32 = (x: i32): i32 => { return x + 1; };
     if (inc(41) != 42) { return 14; }
     if (apply(inc, 100) != 101) { return 17; }
     return 0;
@@ -164,7 +164,7 @@ function main(): i32 {
 			src: `function apply(f: (i32) => i32, x: i32): i32 { return f(x); }
 function main(): i32 {
     var n: i32 = 10;
-    var addn: (i32) => i32 = function(x: i32): i32 { return x + n; };
+    var addn: (i32) => i32 = (x: i32): i32 => { return x + n; };
     return addn(5) + apply(addn, 1);
 }`,
 			want: "env=2 env_local=0 env_call=0 env_param=1 env_other=1 plain=0",

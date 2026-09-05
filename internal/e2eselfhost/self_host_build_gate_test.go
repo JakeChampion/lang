@@ -159,7 +159,7 @@ func TestSelfHostBuildGateX86_64(t *testing.T) {
 			// read its second argument out of whatever was in the register
 			// (the binary returned 121 rather than failing).
 			name:     "closure-call-arity-E004",
-			src:      "function main(): i32 { var g = function(a: i32, b: i32): i32 { return a + b; }; return g(1); }\n",
+			src:      "function main(): i32 { var g = (a: i32, b: i32): i32 => { return a + b; }; return g(1); }\n",
 			wantDiag: "error[E004]",
 		},
 		{
@@ -182,7 +182,7 @@ func TestSelfHostBuildGateX86_64(t *testing.T) {
 			// arity, including a zero-parameter callable — `()` must read as
 			// arity 0 and not as "no parameter list recorded". Runs to 10.
 			name:     "closure-and-fn-value-at-correct-arity-compile",
-			src:      "function dbl(a: i32, b: i32): i32 { return a + b; }\nfunction z(f: () => i32): i32 { var q = f; return q(); }\nfunction main(): i32 { var g = function(a: i32, b: i32): i32 { return a + b; }; var h = dbl; return g(1, 2) + h(3, 4) + z((): i32 => 0); }\n",
+			src:      "function dbl(a: i32, b: i32): i32 { return a + b; }\nfunction z(f: () => i32): i32 { var q = f; return q(); }\nfunction main(): i32 { var g = (a: i32, b: i32): i32 => { return a + b; }; var h = dbl; return g(1, 2) + h(3, 4) + z((): i32 => 0); }\n",
 			wantDiag: "",
 		},
 		{

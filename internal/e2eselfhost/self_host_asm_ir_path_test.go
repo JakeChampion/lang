@@ -114,9 +114,9 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// hoisted to a top-level fn, so the field holds a function pointer — the
 		// same shape a named-function field above lowers, and `b.f(args)` rides the
 		// existing fn-value-field call path. Capturing lambda fields still bail.
-		{"clo-struct-field", `struct Box { f: (i32) => i32 } function main(): i32 { var b = Box { f: function(x: i32): i32 { return x * 3; } }; return b.f(7); }`},
-		{"clo-struct-field-mixed", `struct H { f: (i32) => i32, n: i32 } function main(): i32 { var h = H { f: function(x: i32): i32 { return x + 1; }, n: 100 }; return h.f(h.n); }`},
-		{"clo-struct-field-2fn", `struct Ops { add1: (i32) => i32, dbl: (i32) => i32 } function main(): i32 { var o = Ops { add1: function(x: i32): i32 { return x + 1; }, dbl: function(x: i32): i32 { return x * 2; } }; return o.add1(10) + o.dbl(10); }`},
+		{"clo-struct-field", `struct Box { f: (i32) => i32 } function main(): i32 { var b = Box { f: (x: i32): i32 => { return x * 3; } }; return b.f(7); }`},
+		{"clo-struct-field-mixed", `struct H { f: (i32) => i32, n: i32 } function main(): i32 { var h = H { f: (x: i32): i32 => { return x + 1; }, n: 100 }; return h.f(h.n); }`},
+		{"clo-struct-field-2fn", `struct Ops { add1: (i32) => i32, dbl: (i32) => i32 } function main(): i32 { var o = Ops { add1: (x: i32): i32 => { return x + 1; }, dbl: (x: i32): i32 => { return x * 2; } }; return o.add1(10) + o.dbl(10); }`},
 		// Calling an element of a function-value ARRAY inline (`fns[i](args)`):
 		// a plain fn-pointer array element lowers to args + the element + call_
 		// indirect (the local-bind form `var f = fns[i]; f()` already lowered).
@@ -128,11 +128,11 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// array is a function-pointer array and `fs[i](args)` / `for f in fs`
 		// ride the existing fn-pointer-array call path. (Named-function arrays
 		// above already lowered; this adds the inline-lambda element form.)
-		{"clo-arr-call", `function main(): i32 { var fs = [function(x: i32): i32 { return x * 2; }, function(x: i32): i32 { return x + 100; }]; return fs[0](5) + fs[1](5); }`},
-		{"clo-arr-len", `function main(): i32 { var fs = [function(x: i32): i32 { return x + 1; }]; return fs.len() + 9; }`},
-		{"clo-arr-idxvar", `function main(): i32 { var fs = [function(x: i32): i32 { return x * 10; }]; var i = 0; return fs[i](7); }`},
-		{"clo-arr-forin", `function main(): i32 { var fs = [function(x: i32): i32 { return x + 1; }, function(x: i32): i32 { return x + 2; }]; var s = 0; for f in fs { s = s + f(10); } return s; }`},
-		{"clo-arr-mixed", `function dbl(x: i32): i32 { return x * 2; } function main(): i32 { var fs = [dbl, function(x: i32): i32 { return x + 5; }]; return fs[0](10) + fs[1](10); }`},
+		{"clo-arr-call", `function main(): i32 { var fs = [(x: i32): i32 => { return x * 2; }, (x: i32): i32 => { return x + 100; }]; return fs[0](5) + fs[1](5); }`},
+		{"clo-arr-len", `function main(): i32 { var fs = [(x: i32): i32 => { return x + 1; }]; return fs.len() + 9; }`},
+		{"clo-arr-idxvar", `function main(): i32 { var fs = [(x: i32): i32 => { return x * 10; }]; var i = 0; return fs[i](7); }`},
+		{"clo-arr-forin", `function main(): i32 { var fs = [(x: i32): i32 => { return x + 1; }, (x: i32): i32 => { return x + 2; }]; var s = 0; for f in fs { s = s + f(10); } return s; }`},
+		{"clo-arr-mixed", `function dbl(x: i32): i32 { return x * 2; } function main(): i32 { var fs = [dbl, (x: i32): i32 => { return x + 5; }]; return fs[0](10) + fs[1](10); }`},
 		// flat_map shape: `for y in f(x)` where `f` is a closure PARAM whose type
 		// `(T) => U[]` returns an array (ParamDecl.ret_arr). lower_func admits
 		// such a param into its arr_ret_fns view, so the foreach snapshot
@@ -1935,71 +1935,71 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// IR-only gate against the absolute value. (A capturing lambda in a struct
 		// FIELD is scoped out of this slice — see lift_inline_closures_expr — and
 		// stays on AST.) Single capturing lambda; fs[0](7) = 7 + 10 = 17.
-		{"clo-cap-arr-elem", `function main(): i32 { var n = 10; var fs = [function(x: i32): i32 { return x + n; }]; return fs[0](7); }`, 17},
+		{"clo-cap-arr-elem", `function main(): i32 { var n = 10; var fs = [(x: i32): i32 => { return x + n; }]; return fs[0](7); }`, 17},
 		// Capture used twice in the body (x*n + n with n=3, x=5): 15 + 3 = 18.
-		{"clo-cap-arr-body-twice", `function main(): i32 { var n = 3; var fs = [function(x: i32): i32 { return x * n + n; }]; return fs[0](5); }`, 18},
+		{"clo-cap-arr-body-twice", `function main(): i32 { var n = 3; var fs = [(x: i32): i32 => { return x * n + n; }]; return fs[0](5); }`, 18},
 		// Two captures in one lambda (a + b with a=4, b=100, x=7): 7 + 4 + 100 = 111.
-		{"clo-cap-arr-two-caps", `function main(): i32 { var a = 4; var b = 100; var fs = [function(x: i32): i32 { return x + a + b; }]; return fs[0](7); }`, 111},
+		{"clo-cap-arr-two-caps", `function main(): i32 { var a = 4; var b = 100; var fs = [(x: i32): i32 => { return x + a + b; }]; return fs[0](7); }`, 111},
 		// Multiple distinct capturing lambdas in ONE array — each gets its own
 		// `$cloN`. fs[0](5)=5+1=6, fs[1](5)=5*10=50; 6 + 50 = 56.
-		{"clo-cap-arr-multi", `function main(): i32 { var a = 1; var b = 10; var fs = [function(x: i32): i32 { return x + a; }, function(x: i32): i32 { return x * b; }]; return fs[0](5) + fs[1](5); }`, 56},
+		{"clo-cap-arr-multi", `function main(): i32 { var a = 1; var b = 10; var fs = [(x: i32): i32 => { return x + a; }, (x: i32): i32 => { return x * b; }]; return fs[0](5) + fs[1](5); }`, 56},
 		// A capturing array element bound to a local first, then called (`var g =
 		// fs[0]; g(args)`) — the closure-array element binds a closure LOCAL whose
 		// call also unpacks the box. g(5) = 5 + n = 5 + 100 = 105.
-		{"clo-cap-arr-bind-call", `function main(): i32 { var n = 100; var fs = [function(x: i32): i32 { return x + n; }]; var g = fs[0]; return g(5); }`, 105},
+		{"clo-cap-arr-bind-call", `function main(): i32 { var n = 100; var fs = [(x: i32): i32 => { return x + n; }]; var g = fs[0]; return g(5); }`, 105},
 		// Two distinct capturing lambdas summed via a `for f in fs` loop — each
 		// gets its own `$cloN` and reads its own env box. With a=1, b=10:
 		// fs[0](10) = 10 + a = 11, fs[1](10) = 10 * b = 100; 11 + 100 = 111.
-		{"clo-cap-arr-multi-forin", `function main(): i32 { var a = 1; var b = 10; var fs = [function(x: i32): i32 { return x + a; }, function(x: i32): i32 { return x * b; }]; var s = 0; for f in fs { s = s + f(10); } return s; }`, 111},
+		{"clo-cap-arr-multi-forin", `function main(): i32 { var a = 1; var b = 10; var fs = [(x: i32): i32 => { return x + a; }, (x: i32): i32 => { return x * b; }]; var s = 0; for f in fs { s = s + f(10); } return s; }`, 111},
 		// A CAPTURING inline lambda in a STRUCT FIELD value (#3445). The lift pass
 		// now wraps EVERY fn-typed field into an env box: a capturing lambda →
 		// [funcval($cloN), caps…], a no-capture lambda / bare fn-name → a [$wrapN]
 		// env-taking trampoline (slot 0 only); `b.f(args)` dispatches uniformly
 		// env-first. Single capturing field: b.f(7) = 7 + n = 7 + 10 = 17.
-		{"clo-cap-struct-field", `struct Box { f: (i32) => i32 } function main(): i32 { var n = 10; var b = Box { f: function(x: i32): i32 { return x + n; } }; return b.f(7); }`, 17},
+		{"clo-cap-struct-field", `struct Box { f: (i32) => i32 } function main(): i32 { var n = 10; var b = Box { f: (x: i32): i32 => { return x + n; } }; return b.f(7); }`, 17},
 		// Two distinct capturing fields, each its own `$cloN` env box. With n=5,
 		// m=3: o.add(10)=10+5=15, o.mul(10)=10*3=30; 15 + 30 = 45.
-		{"clo-cap-struct-field-2cap", `struct Ops { add: (i32) => i32, mul: (i32) => i32 } function main(): i32 { var n = 5; var m = 3; var o = Ops { add: function(x: i32): i32 { return x + n; }, mul: function(x: i32): i32 { return x * m; } }; return o.add(10) + o.mul(10); }`, 45},
+		{"clo-cap-struct-field-2cap", `struct Ops { add: (i32) => i32, mul: (i32) => i32 } function main(): i32 { var n = 5; var m = 3; var o = Ops { add: (x: i32): i32 => { return x + n; }, mul: (x: i32): i32 => { return x * m; } }; return o.add(10) + o.mul(10); }`, 45},
 		// A capturing field PLUS a no-capture lambda field in the same struct: the
 		// capturing field is a [$cloN, caps…] box, the no-capture field a [$wrapN]
 		// trampoline box; both call env-first. n=100: cap(7)=107, plain(7)=14; 121.
-		{"clo-cap-struct-field-mixed-nocap", `struct Ops { cap: (i32) => i32, plain: (i32) => i32 } function main(): i32 { var n = 100; var o = Ops { cap: function(x: i32): i32 { return x + n; }, plain: function(x: i32): i32 { return x * 2; } }; return o.cap(7) + o.plain(7); }`, 121},
+		{"clo-cap-struct-field-mixed-nocap", `struct Ops { cap: (i32) => i32, plain: (i32) => i32 } function main(): i32 { var n = 100; var o = Ops { cap: (x: i32): i32 => { return x + n; }, plain: (x: i32): i32 => { return x * 2; } }; return o.cap(7) + o.plain(7); }`, 121},
 		// A capturing field PLUS a bare fn-name field: the fn-name field is wrapped
 		// in a [$wrapN] trampoline that calls the named fn. n=1: cap(7)=8,
 		// named(7)=trip(7)=21; 8 + 21 = 29.
-		{"clo-cap-struct-field-mixed-named", `struct Ops { cap: (i32) => i32, named: (i32) => i32 } function trip(x: i32): i32 { return x * 3; } function main(): i32 { var n = 1; var o = Ops { cap: function(x: i32): i32 { return x + n; }, named: trip }; return o.cap(7) + o.named(7); }`, 29},
+		{"clo-cap-struct-field-mixed-named", `struct Ops { cap: (i32) => i32, named: (i32) => i32 } function trip(x: i32): i32 { return x * 3; } function main(): i32 { var n = 1; var o = Ops { cap: (x: i32): i32 => { return x + n; }, named: trip }; return o.cap(7) + o.named(7); }`, 29},
 		// A capturing field PLUS a separate non-fn (i32) field: the i32 field is
 		// stored normally, the fn field as the env box. n=10: f(7)=17, base=100; 117.
-		{"clo-cap-struct-field-with-nonfn", `struct Box { f: (i32) => i32, base: i32 } function main(): i32 { var n = 10; var b = Box { f: function(x: i32): i32 { return x + n; }, base: 100 }; return b.f(7) + b.base; }`, 117},
+		{"clo-cap-struct-field-with-nonfn", `struct Box { f: (i32) => i32, base: i32 } function main(): i32 { var n = 10; var b = Box { f: (x: i32): i32 => { return x + n; }, base: 100 }; return b.f(7) + b.base; }`, 117},
 		// CAPTURING inline lambda passed as a CALL ARGUMENT (slice #3445 follow-up).
 		// The lift pass wraps the fn-typed argument into an env box [funcval, caps…]
 		// and the callee's fn-typed param `f` is a closure local (lower_func), so
 		// `f(x)` dispatches env-first. n=10: apply(λx.x+n, 5) = 5 + 10 = 15.
-		{"clo-cap-fn-arg", `function apply(f: (i32) => i32, x: i32): i32 { return f(x); } function main(): i32 { var n = 10; return apply(function(x: i32): i32 { return x + n; }, 5); }`, 15},
+		{"clo-cap-fn-arg", `function apply(f: (i32) => i32, x: i32): i32 { return f(x); } function main(): i32 { var n = 10; return apply((x: i32): i32 => { return x + n; }, 5); }`, 15},
 		// Capturing lambda argument with TWO captures: box [funcval, a, b]. a=8,
 		// b=100: apply(λx.x+a+b, 0) = 0 + 8 + 100 = 108.
-		{"clo-cap-fn-arg-two-caps", `function apply(f: (i32) => i32, x: i32): i32 { return f(x); } function main(): i32 { var a = 8; var b = 100; return apply(function(x: i32): i32 { return x + a + b; }, 0); }`, 108},
+		{"clo-cap-fn-arg-two-caps", `function apply(f: (i32) => i32, x: i32): i32 { return f(x); } function main(): i32 { var a = 8; var b = 100; return apply((x: i32): i32 => { return x + a + b; }, 0); }`, 108},
 		// A capturing lambda arg AND a no-capture lambda arg into a TWO-fn-param
 		// call: the capturing one is a [funcval, caps…] box, the no-capture one a
 		// [$wrapN] trampoline box; both dispatch env-first. n=10:
 		// combine(λx.x+n, λx.x*2, 5) = (5+10) + (5*2) = 15 + 10 = 25.
-		{"clo-cap-fn-arg-plus-nocap", `function combine(f: (i32) => i32, g: (i32) => i32, x: i32): i32 { return f(x) + g(x); } function main(): i32 { var n = 10; return combine(function(x: i32): i32 { return x + n; }, function(x: i32): i32 { return x * 2; }, 5); }`, 25},
+		{"clo-cap-fn-arg-plus-nocap", `function combine(f: (i32) => i32, g: (i32) => i32, x: i32): i32 { return f(x) + g(x); } function main(): i32 { var n = 10; return combine((x: i32): i32 => { return x + n; }, (x: i32): i32 => { return x * 2; }, 5); }`, 25},
 		// Capturing closures collected in an array, then each APPLIED through a
 		// fn-arg helper inside a `for f in fs` loop: the loop binds `f` a closure
 		// local and `apply(f, 10)` passes it unwrapped (already a box) to apply's
 		// fn-typed param. a=1, b=10: apply(fs[0],10)=10+a=11, apply(fs[1],10)=100;
 		// 11 + 100 = 111.
-		{"clo-cap-fn-arg-forin", `function apply(f: (i32) => i32, x: i32): i32 { return f(x); } function main(): i32 { var a = 1; var b = 10; var fs = [function(x: i32): i32 { return x + a; }, function(x: i32): i32 { return x * b; }]; var s = 0; for f in fs { s = s + apply(f, 10); } return s; }`, 111},
+		{"clo-cap-fn-arg-forin", `function apply(f: (i32) => i32, x: i32): i32 { return f(x); } function main(): i32 { var a = 1; var b = 10; var fs = [(x: i32): i32 => { return x + a; }, (x: i32): i32 => { return x * b; }]; var s = 0; for f in fs { s = s + apply(f, 10); } return s; }`, 111},
 		// NO-CAPTURE lambda argument (regression guard for the env-box arg path):
 		// wrapped in a [$wrapN] env-ignoring trampoline. apply(λx.x+1, 5) = 6.
-		{"clo-nocap-fn-arg", `function apply(f: (i32) => i32, x: i32): i32 { return f(x); } function main(): i32 { return apply(function(x: i32): i32 { return x + 1; }, 5); }`, 6},
+		{"clo-nocap-fn-arg", `function apply(f: (i32) => i32, x: i32): i32 { return f(x); } function main(): i32 { return apply((x: i32): i32 => { return x + 1; }, 5); }`, 6},
 		// BARE fn-name argument (regression guard): wrapped in a [$wrapN] trampoline
 		// that forwards to the named fn. apply(inc, 5) = inc(5) = 6.
 		{"clo-named-fn-arg", `function inc(x: i32): i32 { return x + 1; } function apply(f: (i32) => i32, x: i32): i32 { return f(x); } function main(): i32 { return apply(inc, 5); }`, 6},
 		// A CLOSURE returned from a call, passed as an argument (regression guard):
 		// `mk(10)` is already an env box, so it flows UNWRAPPED to apply's fn-typed
 		// param. apply(mk(10), 5) = 5 + 10 = 15.
-		{"clo-from-call-fn-arg", `function apply(f: (i32) => i32, x: i32): i32 { return f(x); } function mk(n: i32): (i32) => i32 { return function(x: i32): i32 { return x + n; }; } function main(): i32 { return apply(mk(10), 5); }`, 15},
+		{"clo-from-call-fn-arg", `function apply(f: (i32) => i32, x: i32): i32 { return f(x); } function mk(n: i32): (i32) => i32 { return (x: i32): i32 => { return x + n; }; } function main(): i32 { return apply(mk(10), 5); }`, 15},
 		// A fn-VALUE LOCAL `var g = dbl` is env-boxed at its binding into a [$wrapN]
 		// trampoline box and marked a closure local, so passing it to apply's
 		// fn-typed param flows the box unwrapped (env-first). apply(g, 21) = 42.
@@ -2009,17 +2009,17 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// The constructor side wraps the no-capture lambda payload of `Some(...)`
 		// into a [$wrapN] env box; the match arm marks `f` a closure local so `f()`
 		// dispatches env-first. Option[() => i32], Some(λ.9) -> 9.
-		{"match-opt-fn-call", `function mk(): Option[() => i32] { return Some(function(): i32 { return 9; }); } function main(): i32 { match (mk()) { Some(f) => { return f(); }, None => { return 0; } } }`, 9},
+		{"match-opt-fn-call", `function mk(): Option[() => i32] { return Some((): i32 => { return 9; }); } function main(): i32 { match (mk()) { Some(f) => { return f(); }, None => { return 0; } } }`, 9},
 		// MATCH binds a fn-typed Result Ok payload that CAPTURES and calls it. The
 		// constructor wraps the capturing lambda into a [funcval, n] box; the Ok arm
 		// marks `g` a closure local so `g(5)` dispatches env-first against the box.
 		// Result[(i32) => i32, i32], mk2(10) = Ok(λx.x+10); g(5) = 15.
-		{"match-result-fn-call-captured", `function mk2(n: i32): Result[(i32) => i32, i32] { return Ok(function(x: i32): i32 { return x + n; }); } function main(): i32 { match (mk2(10)) { Ok(g) => { return g(5); }, Err(e) => { return e; } } }`, 15},
+		{"match-result-fn-call-captured", `function mk2(n: i32): Result[(i32) => i32, i32] { return Ok((x: i32): i32 => { return x + n; }); } function main(): i32 { match (mk2(10)) { Ok(g) => { return g(5); }, Err(e) => { return e; } } }`, 15},
 		// MATCH binds a no-capture fn-typed Option payload and calls it, while the
 		// matching function ALSO has an outer capture-free local in scope (regression
 		// guard that the closure-local mark doesn't leak onto unrelated locals).
 		// Option[() => i32], Some(λ.7); f() + base = 7 + 100 = 107.
-		{"match-opt-fn-call-outer-local", `function mk(): Option[() => i32] { return Some(function(): i32 { return 7; }); } function main(): i32 { var base = 100; match (mk()) { Some(f) => { return f() + base; }, None => { return 0; } } }`, 107},
+		{"match-opt-fn-call-outer-local", `function mk(): Option[() => i32] { return Some((): i32 => { return 7; }); } function main(): i32 { var base = 100; match (mk()) { Some(f) => { return f() + base; }, None => { return 0; } } }`, 107},
 		// A closure stored as a MAP VALUE, retrieved and called (slice #3445
 		// map-values): `m.set(1, <lambda>)` wraps the lambda into an env box (the
 		// lift method-callee arm — `.set` lowers to the builtin op_map_set whose
@@ -2030,8 +2030,8 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// variant carries an env `[funcval, n]`; the no-capture a `[$wrapN]` box.
 		// (Converting a USER method's declared fn-param to the env-box ABI is a
 		// separate deferred slice — it destabilises the byte-identical fixpoint.)
-		{"map-value-closure", `import "core/map"; function main(): i32 { var m: Map[i32, () => i32] = map_new(4); m = m.set(1, function(): i32 { return 42; }); match (m.get(1)) { Some(f) => { return f(); }, None => { return 0; } } }`, 42},
-		{"map-value-closure-captured", `import "core/map"; function main(): i32 { var n = 10; var m: Map[i32, () => i32] = map_new(4); m = m.set(1, function(): i32 { return n + 7; }); match (m.get(1)) { Some(f) => { return f(); }, None => { return 0; } } }`, 17},
+		{"map-value-closure", `import "core/map"; function main(): i32 { var m: Map[i32, () => i32] = map_new(4); m = m.set(1, (): i32 => { return 42; }); match (m.get(1)) { Some(f) => { return f(); }, None => { return 0; } } }`, 42},
+		{"map-value-closure-captured", `import "core/map"; function main(): i32 { var n = 10; var m: Map[i32, () => i32] = map_new(4); m = m.set(1, (): i32 => { return n + 7; }); match (m.get(1)) { Some(f) => { return f(); }, None => { return 0; } } }`, 17},
 		// A match-EXPRESSION arm that binds a NON-SCALAR payload (struct / enum /
 		// string) and passes it as an ARGUMENT to a free-function call (#3498). The
 		// statement-form match already lowered this; the value-position gate now

@@ -74,7 +74,7 @@ function main(): i32 {
   var u: Shape = mk();
   var m: Map[string, i32] = {};
   var tup: (i32, string) = (1, "a");
-  var fnv: fn = function(z: i32): i32 { return z; };
+  var fnv: fn = (z: i32): i32 => { return z; };
   var unknownAnn: NoSuchType = 1;
   var mismatch: i32 = "not an i32";
   var slice: [i32] = arr;
@@ -126,8 +126,8 @@ function main(): i32 {
 		name: "lambdas and recursive locals",
 		src: `function main(): i32 {
   function rec(n: i32): i32 { if (n <= 0) { return 0; } return rec(n - 1); }
-  var lam = function(z: i32): i32 { return z + 1; };
-  var lam2: fn = function(z: f64): f64 { return z; };
+  var lam = (z: i32): i32 => { return z + 1; };
+  var lam2: fn = (z: f64): f64 => { return z; };
   var arrfn: fn[] = [];
   var used = lam(1) + rec(2);
   return used + arrfn.len();

@@ -2261,7 +2261,7 @@ func TestTupleParamDestructureParses(t *testing.T) {
 // same body-prelude desugar as named functions.
 func TestTupleParamDestructureLambdas(t *testing.T) {
 	prog, err := Parse(`function f(): i32 {
-		var g = function((x, y): (i32, i32)): i32 { return x * y; };
+		var g = ((x, y): (i32, i32)): i32 => { return x * y; };
 		var h = ((lo, hi): (i32, i32)) => hi - lo;
 		return g((2, 3)) + h((1, 5));
 	}`)
@@ -3594,7 +3594,7 @@ func TestArrowLambdaParse(t *testing.T) {
 // survives the desugar. See docs/ARRAY-BUILDER-PLAN.md.
 func TestArrayBuildDesugars(t *testing.T) {
 	prog, err := Parse(`function f(): i32[] {
-  return Array.build(function(b: ArrayBuilder[i32]): void {
+  return Array.build((b: ArrayBuilder[i32]): void => {
     b.append(1);
     while (true) { b.append(2); }
   });
@@ -3662,7 +3662,7 @@ func TestArrayBuildMalformed(t *testing.T) {
 // trailing `return b`. See docs/ARRAY-BUILDER-PLAN.md.
 func TestMapBuildDesugars(t *testing.T) {
 	prog, err := Parse(`function f(): i32 {
-  var m = Map.build(function(b: MapBuilder[i32, i32]): void {
+  var m = Map.build((b: MapBuilder[i32, i32]): void => {
     b.insert(1, 2);
   });
   return 0;

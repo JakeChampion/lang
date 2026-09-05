@@ -23,56 +23,56 @@ function test_unwrap_or(): test.TestOutcome {
 
 function test_unwrap_or_else(): test.TestOutcome {
     var n: Option[i32] = None;
-    return test.assert_eq(n.unwrap_or_else(function (): i32 { return 7; }), 7);
+    return test.assert_eq(n.unwrap_or_else((): i32 => { return 7; }), 7);
 }
 
 function test_map(): test.TestOutcome {
     var s: Option[i32] = Some(5);
-    var m = s.map(function (x: i32): i32 { return x * 2; });
+    var m = s.map((x: i32): i32 => { return x * 2; });
     return test.assert_eq(m.unwrap_or(0), 10);
 }
 
 function test_map_none(): test.TestOutcome {
     var n: Option[i32] = None;
-    var m = n.map(function (x: i32): i32 { return x * 2; });
+    var m = n.map((x: i32): i32 => { return x * 2; });
     return test.assert_eq(m.unwrap_or(0 - 1), 0 - 1);
 }
 
 function test_and_then(): test.TestOutcome {
     var s: Option[i32] = Some(5);
-    var r = s.and_then(function (x: i32): Option[i32] { return Some(x + 1); });
+    var r = s.and_then((x: i32): Option[i32] => { return Some(x + 1); });
     return test.assert_eq(r.unwrap_or(0), 6);
 }
 
 function test_or_else(): test.TestOutcome {
     var n: Option[i32] = None;
-    var r = n.or_else(function (): Option[i32] { return Some(9); });
+    var r = n.or_else((): Option[i32] => { return Some(9); });
     return test.assert_eq(r.unwrap_or(0), 9);
 }
 
 function test_filter_keep(): test.TestOutcome {
     var s: Option[i32] = Some(5);
-    var r = s.filter(function (x: i32): boolean { return x > 3; });
+    var r = s.filter((x: i32): boolean => { return x > 3; });
     return test.assert_eq(r.unwrap_or(0), 5);
 }
 
 function test_filter_drop(): test.TestOutcome {
     var s: Option[i32] = Some(2);
-    var r = s.filter(function (x: i32): boolean { return x > 3; });
+    var r = s.filter((x: i32): boolean => { return x > 3; });
     return test.assert_true(r.is_none());
 }
 
 function test_map_or(): test.TestOutcome {
     var s: Option[i32] = Some(5);
     var n: Option[i32] = None;
-    var a = s.map_or(0, function (x: i32): i32 { return x * 10; });
-    var b = n.map_or(0, function (x: i32): i32 { return x * 10; });
+    var a = s.map_or(0, (x: i32): i32 => { return x * 10; });
+    var b = n.map_or(0, (x: i32): i32 => { return x * 10; });
     return test.assert_true(a == 50 && b == 0);
 }
 
 function test_is_some_and(): test.TestOutcome {
     var s: Option[i32] = Some(5);
-    return test.assert_true(s.is_some_and(function (x: i32): boolean { return x > 3; }));
+    return test.assert_true(s.is_some_and((x: i32): boolean => { return x > 3; }));
 }
 
 function test_or(): test.TestOutcome {
@@ -98,7 +98,7 @@ function test_ok_or(): test.TestOutcome {
 function test_ok_or_else(): test.TestOutcome {
     // None takes the lazy error arm; Some ignores it and yields Ok.
     var n: Option[i32] = None;
-    match (n.ok_or_else(function (): i32 { return 99; })) {
+    match (n.ok_or_else((): i32 => { return 99; })) {
         Ok(v) => { return test.fail("expected Err for None"); },
         Err(e) => { return test.assert_eq(e, 99); }
     }
@@ -108,8 +108,8 @@ function test_map_or_else(): test.TestOutcome {
     // Some routes through `f`; None computes the lazy default.
     var s: Option[i32] = Some(5);
     var n: Option[i32] = None;
-    var a: i32 = s.map_or_else(function (): i32 { return 0; }, function (x: i32): i32 { return x + 1; });
-    var b: i32 = n.map_or_else(function (): i32 { return 0; }, function (x: i32): i32 { return x + 1; });
+    var a: i32 = s.map_or_else((): i32 => { return 0; }, (x: i32): i32 => { return x + 1; });
+    var b: i32 = n.map_or_else((): i32 => { return 0; }, (x: i32): i32 => { return x + 1; });
     return test.assert_true(a == 6 && b == 0);
 }
 
