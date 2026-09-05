@@ -19,6 +19,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -597,6 +598,7 @@ func New() *Interp {
 	i.Builtins["putchar"] = &Builtin{Fn: builtinPutchar}
 	i.Builtins["poll"] = &Builtin{Fn: builtinPoll}
 	i.Builtins["isatty"] = &Builtin{Fn: builtinIsatty}
+	i.Builtins["target_os"] = &Builtin{Fn: builtinTargetOS}
 	// strbuf_reset() / strbuf_append(s) / strbuf_take() — the global
 	// string-builder primitive (see checker FuncSigs); the compiled
 	// backends back it with a 64 MiB BSS scratch buffer.
@@ -2887,6 +2889,18 @@ func builtinIsatty(_ *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("isatty: expected number arg, got %T", args[0])
 	}
 	return Bool(tty.IsTerminal(int(fd))), nil
+}
+
+// builtinTargetOS answers `target_os()` with the interpreter's host: under
+// `fern -interp` the program runs where the compiler runs, so the host IS
+// the target. A compile never reaches here — constfold folds the call to
+// the `-target` environment first — so this is the one implementation
+// whose answer is the host's, spelled as Go names it.
+func builtinTargetOS(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 0 {
+		return nil, fmt.Errorf("target_os: expected 0 args, got %d", len(args))
+	}
+	return String(runtime.GOOS), nil
 }
 
 // builtinStrbufReset zeroes the global string-builder buffer.

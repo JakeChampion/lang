@@ -1887,6 +1887,16 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{ast.NumberType{}},
 		Result: ast.BoolType{},
 	}
+	// target_os(): string — the compile target's environment ("linux",
+	// "darwin", "android", "wasi", "wasi-http", "freestanding"), never
+	// the compiler's host. A compile folds it to a string literal before
+	// the check (internal/constfold), so the signature is what a bare
+	// `-check` and the interpreter see; the interpreter answers with its
+	// host, which under `-interp` is the target.
+	c.info.FuncSigs["target_os"] = &ast.FuncType{
+		Params: []ast.Type{},
+		Result: ast.StringType{},
+	}
 	// Auto-injected methods on Reader / Writer. The names are
 	// the mangled forms the existing method-call rewrite uses
 	// (`r.read_line()` → `__method_Reader_read_line(r)`); we

@@ -1658,3 +1658,53 @@ The following types are synthesised by the checker (declared in
 - `Url` — host / port / path / query / fragment parts
 - `Map[K, V]`, `MapIter[K, V]` — generic associative container
   + iterator
+
+## Built-in functions
+
+Free functions every program can call without an import — `print`, `args`,
+`read_file`, `isatty`, … — are declared by the checker
+(`internal/checker/checker.go`) and classified per target in
+`docs/FREESTANDING-CORE.md` and per package in
+`docs/PACKAGE-CAPABILITIES-BRIEF.md`. One of them is a compile-time constant
+rather than a runtime call:
+
+### `target_os(): string`
+
+The environment half of the `-target` name the program is compiled for —
+`"linux"`, `"darwin"`, `"android"`, `"wasi"`, `"wasi-http"` or
+`"freestanding"` — and never the compiler's host: `fern -target arm64-linux`
+on a Mac says `linux`. Android is its own value because it is its own
+environment (a different object format and loader); the two wasm worlds are
+named as the target spells them.
+
+The compiler replaces the call with a string literal before type-checking
+(`internal/constfold`, `examples/self_host/constfold.fern`), and the IR fold
+turns `"linux" == "darwin"` into a constant and drops the dead arm, so a
+branch on it costs nothing at runtime and the other arm's code and strings
+never reach the binary:
+
+```fern
+function block_bytes(): i32 {
+    if (target_os() == "darwin") { return 1024; }
+    return 4096;
+}
+```
+
+Compare the call itself, as above. A string held in a local is not
+propagated into a comparison, so `var os: string = target_os(); if (os == …)`
+evaluates the comparison at runtime — correctly, just not for free.
+
+Under `fern -interp` the program runs where the compiler runs, so the value
+is the host's operating system as Go names it. `fern -check` with no
+`-target` leaves the call alone and types it as a `string`.
+
+Capability enforcement (E066) runs on the tree-shaken AST, before the fold,
+so a builtin the target lacks is refused inside a dead arm too:
+`if (target_os() != "wasi") { proc_fork(); }` does not compile for
+`wasm32-wasi`. The constant selects between behaviours every target
+provides; it does not gate a capability.
+
+It needs no capability (core in `internal/platforms`, ungated in
+`internal/caps`) and has no `std/` wrapper: `std/platform` is the `Platform`
+bag a handler is handed at run time, and a fact fixed at compile time does
+not belong on a value a mock can substitute.

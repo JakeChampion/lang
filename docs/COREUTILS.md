@@ -220,16 +220,16 @@ measured, not chosen: a C `write(2)` loop through the same pipe puts the
 optimum at 4 KiB on Linux (138 ms median; GNU's 8 KiB, 163) and 1 KiB on
 macOS (482 ms; GNU writes 1 KiB there, 477), with every size from 2 KiB up
 costing 570–680 ms on macOS because a write that overfills the 64 KiB pipe
-puts writer and reader into lockstep. `yes.fern` ships the Linux optimum, so
-it is 1.06× GNU on Linux and 0.75× on macOS until the block can be selected
-per target — #8338, the second open Fern gap below. The sweeps are recorded
-in that issue and in `yes.fern`.
+puts writer and reader into lockstep. `yes.fern` selects the block with
+`target_os()` — 4 KiB compiled for Linux, 1 KiB for macOS — so it is 1.06×
+GNU on Linux and writes the same 1 KiB GNU does on macOS. The sweeps are
+recorded in `yes.fern`.
 
 ## Open gaps
 
-Two, and both are Fern gaps with their own issues rather than corpus
-carve-outs — the standing order is that a Fern bug met on the way gets an
-issue and a fix, never a workaround:
+One, a Fern gap with its own issue rather than a corpus carve-out — the
+standing order is that a Fern bug met on the way gets an issue and a fix,
+never a workaround:
 
 - **#8265 — `IoError.Other` carries an empty message.** GNU reports write
   and open failures as `prog: context: <strerror text>`. The four named
@@ -238,10 +238,6 @@ issue and a fix, never a workaround:
   `echo hi >&-` (`echo: write error: Bad file descriptor`) and `> /dev/full`
   are not in the corpus yet. The utilities already print the field as the
   strerror text, so the fix needs no change here beyond adding the cases.
-- **#8338 — Fern source cannot learn its compile target's OS.** The pipe
-  write size that beats GNU is 4 KiB on Linux and 1 KiB on macOS, and a
-  program can only hold one constant. Blocks `yes` beating GNU on macOS and
-  the per-target block size the group-B buffered writer will want.
 
 ## Staging
 

@@ -1,0 +1,8 @@
+waiver: harness-limit
+reason: target_os() is defined per target and a case carries one
+  expected.stdout, so it can only be asserted on the legs that compile for
+  the same environment. The wasm leg compiles for the CLI world and answers
+  "wasi"; the native legs answer "linux", which target_os_linux pins. The
+  interpreter answers with its host and is pinned by internal/interp's own
+  test. target_os_named asserts on all four backends what every one must
+  agree on.
