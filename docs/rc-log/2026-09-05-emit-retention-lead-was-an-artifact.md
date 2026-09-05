@@ -257,3 +257,46 @@ code every carried field is `rc_inc`'d into the new box, so nothing moves out of
 This is the ninth probe of this investigation and the first to reproduce the
 retention outside the compiler. The eight before it were guesses at a shape;
 this one was read off an attribution.
+
+### Localised
+
+The compiler's own spelling is one level below that probe. `asm_ir.fern`'s
+window writes through
+
+```fern
+function peep_set(own p: Peep, i: i32, l: PLine): Peep {
+    if (i < p.w.len()) { return Peep { ...p, w: p.w.with(i, l) }; }
+    return Peep { ...p, w: p.w.append(l) };
+}
+```
+
+so what leaks is the superseded **element**, not the superseded array — 20,010
+boxes against native's clean run on twelve lines of the same source, one per
+replaced element.
+
+A `.with` written as a struct-literal override reaches
+`emit_self_overwrite_reuse`, whose struct-array branch shallow-frees the old
+buffer and leaves its elements alone. That is right for every element the clone
+carries — shared uncounted, so freeing them would hit live values — and wrong
+for exactly one: the element the `.with` displaced, which is in the old buffer
+and nowhere else.
+
+Reading emitted code beat reasoning about it twice here. `lower_field_with_inplace`
+looked like the site and says in its own comment that it leaves the overwritten
+element alone deliberately; implementing the release there changed the emitted
+`wset` by **zero bytes**, because a `.with` in override position never reaches
+it. That change was reverted rather than left as an unexercised release path in
+the area that has produced two SIGSEGVs on main.
+
+Both soundness preconditions were measured rather than assumed. A struct-array
+field's element walk **is** credited — a `W { w: P[] }` built, filled and
+dropped 2000 times reclaims to `live_bytes 0` on both compilers, with
+`__struct_drop_W` and `__struct_drop_P` emitted — so the container owns the
+element being released. And the stored element **moves** in rather than being
+retained: storing an already-owned `P` through the field append is clean on both
+compilers at equal allocation counts. A release added without a matching retain
+is how #8310 turned a bounded leak into a double free; here no retain is owed.
+
+What remains is threading the `.with` index into that branch, with an
+`old[i] != new[i]` guard — tracked in #8628, and worth landing only against the
+full 150-cell leak matrix on both ISAs plus the sanitize legs.
