@@ -264,18 +264,37 @@
 # checker_modload_run, ssa_emit_run and ssa_run are inside the 5% band and the
 # job did not list them.
 
-fern.fern 11780988
-asm_load_run.fern 8812812
-asm_modload_run.fern 8148876
-asm_ir_run.fern 8016876
-asm_run.fern 7635916
-wasm_ir_run.fern 7744476
-wasm_run.fern 7731836
-wasm_runio_run.fern 7694044
-asm_pathprobe_run.fern 7016172
-ssa_lift_scan_run.fern 6822028
-asm_ir_elig_run.fern 6516108
-irlower_run.fern 6825036
-checker_modload_run.fern 2000236
-ssa_emit_run.fern 1752764
-ssa_run.fern 1578764
+# 2026-09-05 — twelve rows grew 5.3-9.4%, the three front-end slices shrank
+# 1.8-2.6%, and all fifteen are refreshed. One commit carries the growth:
+# 1df1072 (selfhost(#8179): box LowerState's per-function facts as LowerFrame).
+# Measured on irlower_run, the dedicated irlower driver, with CI's own method
+# (TestSelfHostWarmStockDriver at the commit, gcc link):
+#
+#   bbab1a8 (its parent)   6956444   +1.9% of drift on the previous table
+#   1df1072                7431580   +6.8% in the one commit
+#   509aa8f (main)         7431580   nothing after it moved this driver
+#
+# The last figure is CI's figure for main to the byte, and every byte of the
+# step is in the R E segment (0x698ec2 -> 0x70ccd0); the RW segment is
+# identical. The three drivers that do not link irlower.fern are the three
+# that shrank. The commit's own measurement is instructions executed (-1.82%
+# Ir on a checker.fern compile, from spreading 9 rc fields per LowerState
+# copy instead of 41); this is the .text the frame indirection costs at its
+# 702 read sites and 13 whole-frame rebuilds. Numbers pasted from
+# driver-sizes' union on 509aa8f, main's own run, which was red on them.
+
+fern.fern 12408028
+asm_load_run.fern 9454628
+asm_modload_run.fern 8803004
+asm_ir_run.fern 8675116
+asm_run.fern 8293660
+wasm_ir_run.fern 8356972
+wasm_run.fern 8340236
+wasm_runio_run.fern 8306540
+asm_pathprobe_run.fern 7622716
+ssa_lift_scan_run.fern 7428572
+asm_ir_elig_run.fern 7126748
+irlower_run.fern 7431580
+checker_modload_run.fern 1963372
+ssa_emit_run.fern 1715900
+ssa_run.fern 1537804
