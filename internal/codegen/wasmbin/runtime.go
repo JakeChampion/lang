@@ -35,6 +35,10 @@ const (
 	// rounding and the freelist's 3-significant-bit capacity round-up
 	// can both apply without overflowing i32.
 	maxAllocRequest = 0x7FFFFFFF
+	// maxStrLen is the largest representable string byte length: the length
+	// word's top bit is the inline-form flag, so a heap string's length is a
+	// non-negative i32 (#8457).
+	maxStrLen = 0x7FFFFFFF
 	// pageRoundCeil (0xFFFF0000) is the highest end-of-block address
 	// whose page round-up (end + 65535) still fits in i32.
 	pageRoundCeil = -65536
@@ -3530,6 +3534,20 @@ func buildStrConcatBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 3)
 	body = inst.InstCall(body, strLen)
 	body = inst.InstLocalSet(body, 5) // $lb
+	// A total past the i32 ceiling traps (#8457). wasm32 has no wider index
+	// type to widen into, so the ceiling is a check rather than a wider sum:
+	// the length word's top bit is the inline-form flag, so a total at or
+	// above 2^31 would hand back a heap buffer that every reader decodes as
+	// an inline string. Unsigned compare — la and lb are each below 2^31, so
+	// their i32 sum never wraps, it only crosses the sign bit.
+	body = inst.InstLocalGet(body, 4)
+	body = inst.InstLocalGet(body, 5)
+	body = numeric.InstI32Add(body)
+	body = inst.InstI32Const(body, maxStrLen)
+	body = numeric.InstI32GtU(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstUnreachable(body)
+	body = inst.InstEnd(body)
 	// dst = __fern_alloc(la + lb)
 	body = inst.InstLocalGet(body, 4)
 	body = inst.InstLocalGet(body, 5)
@@ -3635,6 +3653,13 @@ func buildStrAppendBody(idxs map[string]uint32) []byte {
 		body = inst.InstLocalGet(body, 5)
 		body = numeric.InstI32Add(body)
 		body = inst.InstLocalSet(body, 6) // $total
+		// Past the i32 length ceiling there is no representable result, and
+		// the capacity test below can still match (#8457). Decline the
+		// in-place grow and let __str_concat trap on it.
+		body = inst.InstLocalGet(body, 6)
+		body = inst.InstI32Const(body, maxStrLen)
+		body = numeric.InstI32GtU(body)
+		body = inst.InstBrIf(body, 0)
 		// Same allocator capacity? request(len) = (len + 8 + 15) & -16,
 		// then the tier's round-up.
 		roundedSize := func(b []byte, lenLocal, sizeLocal uint32) []byte {
@@ -6160,6 +6185,17 @@ func buildAllocU8Body(helperIdxs map[string]uint32) []byte {
 	alloc := helperIdxs["__fern_alloc"]
 	pushN := func(b []byte) []byte { return inst.InstLocalGet(b, 0) }
 	var body []byte
+	// A negative n is a length computation that overflowed i32 (#8457). The
+	// header add below wraps it back into __fern_alloc's accepted range, so
+	// the allocator's own guard never sees it: the buffer comes back short
+	// and memory.fill runs on the unwrapped count. Reject it here, at the
+	// widest n whose header add still fits.
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, maxAllocRequest-arrHeaderBytes)
+	body = numeric.InstI32GtU(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstUnreachable(body)
+	body = inst.InstEnd(body)
 	body = emitArrHeaderAlloc(body, alloc, 1, arrRcOwned, pushN, pushN)
 	// Zero the n payload bytes via memory.fill($base, 0, n). __fern_alloc may
 	// reuse a freelist block carrying stale bytes; the interpreter returns a
