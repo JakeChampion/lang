@@ -310,6 +310,13 @@ function v_struct(type_name: string, names: string[], values: Value[]): Value {
 }
 function v_err(msg: string): Value { return VErr { msg: msg }; }
 
+// v_void is the result of an expression that produces no value — a call to a
+// void function, or a body that runs off its end without a `return`, which is
+// how a void function returns. The interpreter has no VVoid variant: nothing
+// reads a void result, so it rides on the zero the void builtins already
+// return.
+function v_void(): Value { return v_int(0); }
+
 // v_absent fills a Value slot that is provably never read: the receiver
 // argument at a `has_recv: false` call (bind_tyargs reads `recv` only under
 // that flag), and the `recv` / `closure_val` initialisers every path
@@ -2040,8 +2047,12 @@ function call_closure(cv: Value, args: Value[], funcs: parser.FuncDecl[], aliase
         j = j + 1;
     }
     var step: StepResult = eval_block(fv.body, env);
+    // Falling off the end is how a void body returns, exactly as it is for a
+    // named function — native's callFunc yields Void{} there rather than
+    // failing, and a non-void body that does it is a checker error, not the
+    // interpreter's to catch.
     if (step.sig != 1) {
-        return v_err("closure reached end without `return`");
+        return v_void();
     }
     // A `?` unwind stops at the frame that owns it: unwrap_try turns the
     // in-flight VTry back into the None / Err box this call returns (#5990).
@@ -2078,7 +2089,7 @@ function call_assoc(type_name: string, name: string, args: Value[], funcs: parse
         j = j + 1;
     }
     var step: StepResult = eval_block(fd.body, env);
-    if (step.sig != 1) { return v_err("associated function `" + name + "` reached end without `return`"); }
+    if (step.sig != 1) { return v_void(); }
     return coerce_int_width(unwrap_try(step.ret), fd.ret_type);
 }
 
@@ -2377,7 +2388,7 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
             }
             var step: StepResult = eval_block(fd.body, env);
             if (step.sig != 1) {
-                return v_err("method `" + name + "` reached end without `return`");
+                return v_void();
             }
             return unwrap_try(step.ret);
         }
@@ -2684,7 +2695,7 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
             }
             var step: StepResult = eval_block(fd.body, env);
             if (step.sig != 1) {
-                return v_err("function `" + name + "` reached end without `return`");
+                return v_void();
             }
             return unwrap_try(step.ret);
         }

@@ -1311,6 +1311,15 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// replace is not the only spelling that infers.
 		{"arrow-block-body-infer-ok", "function apply(f: (i32) => i32, v: i32): i32 { return f(v); }\nfunction main(): i32 {\n    var g = (x: i32) => { return x * 2; };\n    return apply(g, 4);\n}\n", nil},
 		{"arrow-block-body-stmts-infer-ok", "function apply(f: (i32) => i32, v: i32): i32 { return f(v); }\nfunction main(): i32 {\n    var g = (x: i32) => { var y: i32 = x + 1; return y * 2; };\n    return apply(g, 3);\n}\n", nil},
+		// A braced body that yields nothing is a VOID lambda, not a value-less
+		// block in value position — the shape the `function` spelling has, and
+		// the last one the arrow form could not express (#2673).
+		{"arrow-block-body-void-ok", "function run(f: (i32) => void, v: i32): void { f(v); }\nfunction main(): i32 {\n    var seen: i32 = 0;\n    var g = (x: i32) => { seen = seen + x; };\n    run(g, 4);\n    return seen - 4;\n}\n", nil},
+		{"arrow-block-body-empty-ok", "function run(f: (i32) => void, v: i32): void { f(v); }\nfunction main(): i32 {\n    var g = (x: i32) => {};\n    run(g, 4);\n    return 0;\n}\n", nil},
+		// An ASSIGNMENT inside a value block is a statement, not the block's
+		// trailing value: parse_expr stops in front of the `=`, and the item has
+		// to be re-read as the statement it is.
+		{"value-block-assign-ok", "function main(): i32 {\n    var a: i32 = 1;\n    var b: i32 = if (a > 0) { a = a + 1; a } else { 0 };\n    return b - 2;\n}\n", nil},
 		{"cap-assign-local-ok", "function main(): i32 { var f = function(): i32 { var t: string = \"a\"; t = \"b\"; return 0; }; return f(); }\n", nil},
 		// #4410: the closure-capture contract (docs/CLOSURE-CAPTURE.md). The
 		// scalar/reference split must be BYTE-identical to native's

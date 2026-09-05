@@ -5575,7 +5575,7 @@ func (b *builder) emitDeferCleanupKind(onError bool) error {
 		if err := b.expr(b.defers[i].Expr); err != nil {
 			return err
 		}
-		if exprLeavesValue(b.defers[i].Expr, b.info) {
+		if b.exprLeavesValue(b.defers[i].Expr) {
 			b.emit(Op{Kind: OpDrop})
 		}
 		b.closeScope()
@@ -5622,7 +5622,7 @@ func (b *builder) emitIterDeferCleanup(idxs []int) error {
 			if err := b.expr(b.defers[i].Expr); err != nil {
 				return err
 			}
-			if exprLeavesValue(b.defers[i].Expr, b.info) {
+			if b.exprLeavesValue(b.defers[i].Expr) {
 				b.emit(Op{Kind: OpDrop})
 			}
 		}
@@ -9106,7 +9106,7 @@ func (b *builder) stmt(s ast.Stmt) error {
 		// Without this a bare `a + b;` / `[x, y];` leaks its box every time.
 		// Gated inside freshOwnedRcTempType on RcFreeEnabled, so free-off
 		// stays byte-identical to the plain-drop baseline below.
-		if exprLeavesValue(n.Expr, b.info) {
+		if b.exprLeavesValue(n.Expr) {
 			if t, ok := b.freshOwnedRcTempType(n.Expr); ok {
 				b.emitOwnedTempStackDrop(t)
 				break
@@ -19153,7 +19153,8 @@ func exprSafeToReevaluate(e ast.Expr) bool {
 	return false
 }
 
-func exprLeavesValue(e ast.Expr, info *checker.Info) bool {
+func (b *builder) exprLeavesValue(e ast.Expr) bool {
+	info := b.info
 	if a, ok := e.(*ast.Assign); ok {
 		// Ident assignment leaves the assigned value on the stack
 		// (tee semantics). Index and FieldAccess assignments don't —
@@ -19169,6 +19170,14 @@ func exprLeavesValue(e ast.Expr, info *checker.Info) bool {
 			if sig, ok := info.FuncSigs[id.Name]; ok {
 				return !ast.Equal(sig.Result, ast.VoidType{})
 			}
+		}
+		// A call through a function VALUE — a closure-typed parameter, local
+		// or field — has no FuncSigs entry, so the result type has to come
+		// from the callee's own type. Assuming a value was left put a `drop`
+		// after a void call_indirect, which underflows the wasm stack and
+		// fails module validation (#8504).
+		if ft, ok := b.exprType(c.Callee).(*ast.FuncType); ok && ft.Result != nil {
+			return !isVoid(ft.Result)
 		}
 		return true
 	}
