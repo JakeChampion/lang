@@ -299,12 +299,60 @@ grow:
 No detector outside `FERN_LEAKCHECK` sees either: every free involved is at rc 1
 and every answer is correct, which is how it reached main.
 
-Without the retain the counting is the one the cow guard already assumes. The
-in-place arm hands the buffer over: source and replacement never both name it
-past the store, because the site is admitted only where no later read of the
-source's root can reach the field. The reallocating arm is unchanged — the
-pre-grow buffer stays the source's, differs from the replacement's, and
-`__field_reclaim_<T>` frees it.
-
 `TestSelfHostFieldAppendInPlaceReclaimsX86_64` is the gate that was missing: the
 feature's own cases are differential, and an answer cannot see a leak.
+
+## The identity arm is a MOVE: the field is nulled
+
+Retiring the retain on the reading "source and replacement never both name the
+buffer past the store" broke two tests on main's own run
+(`TestSelfHostRecvMoveNoDeepIRX86_64/receiver-move-inplace-append-survives-sweep`
+exit 91; the `own_self_reassign_move` fixture hanging on both natives). The
+reading was wrong: after an in-place grow the buffer has TWO uncounted names at
+rc 1 — the root's field and the value — and the cow-guarded rebind is only one of
+the paths that can release either. Four others were found, each a use-after-free
+or a double free with nothing at rc 0 to trip a detector:
+
+| route | shape | who frees the buffer the other still holds |
+|---|---|---|
+| return sweep of a bare-credit local | `var ms = S {…}; …; return ms.emit(4)` | the caller's `__struct_drop_S(ms)` — `emit` is in the receiver-borrow registry's `nomove` list, so `ms` is not NODEEP and the return-position death deep-drops it |
+| an `own` param's exit release | `function push(own b: S, v) { var ys = b.ops.append(v); … }` | the callee's OWNREL row: `__struct_drop_S(b)` at exit, on its own root |
+| the same, one call down | `function g(own s: S, v): S { return h(s, v); }` with `h` growing `s.ops` | `g`'s OWNREL exit release, after `h` handed the buffer to its result |
+| the VALUE's holder | `var ys = s.ops.append(v); var n = ys.len(); return S { ops: [], n }` | `ys` is swept at exit; the caller's `__field_reclaim_S` then frees `s.ops` again |
+
+The fix is at the site, not at the releases: on the identity arm
+`lower_field_append_inplace` STORES NULL into the source field. The grow was a
+move out of the box — a field's counterpart of the zeroed slot a moved local
+gets — and every rc helper (`__field_reclaim_<T>`'s array arm,
+`__struct_drop_<T>`, `__fern_arr_dec`, `__struct_arr_elems_drop_<T>`) already
+skips a null field, so each release above finds nothing to free. The
+reallocating arm is untouched: the pre-grow buffer stays the source's, differs
+from the value, and the source's release frees it. `field_append_inplace_at`
+also asks that the root's box type resolves, since the store needs the field
+slot.
+
+Two consequences for the admission. A body-scope host (`var`, an expression
+statement, a condition) INSIDE A LOOP is refused: the next iteration would read
+the moved-out field. A return exits and a rebind of the root replaces it, so
+those keep their sites in loops. And the E051 caller side had a hole the `own`
+probes exposed: `a = f(a, i)` into an `own` position ran the struct rebind's
+`__field_reclaim_<T>` on the box the callee had already released. The fixture
+only passed because `push_box` frees `b`'s box and then allocates a same-sized
+result box, so the freelist handed the same block back and the `old != new`
+cow guard skipped everything; a callee that allocates its result before
+releasing (`g` above) reads a freed block. The struct rebind now bare-stores
+when `call_owns_arg` says the callee took the box (`lower_stmt_assign`).
+
+The four rows and the loop refusal are in `selfHostFieldAppendCases`, so all
+three backends run them against the interpreter. The loop case hands the callee
+a fresh call result at an `own` position: a LOCAL receiver is bracketed by its
+caller (rc 2, copy), which is what made the first cut of that case pass with
+the refusal stubbed out.
+
+**#8259's `grow_return_local_filter` is the first row's bracket-side fix**:
+withdrawing the return-position death forces the callee's copy, so the identity
+arm is never reached. With the move it is no longer needed for this hazard —
+the deep drop finds a null field — and it costs a whole-buffer copy per
+return-position death of a local (measured there at +5 s / +0.33 GB on the
+one-process whole-compiler emit). The two compose: with both in, the bracketed
+sites copy and the rest move.
