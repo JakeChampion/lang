@@ -1494,17 +1494,15 @@ function parse_arrow_lambda(p: Par): (ast.Expr, Par) {
     if (p.peek_punct() == "=>") { p = p.advance(); }
     var body: ast.Stmt[] = [];
     if (p.peek_punct() == "{") {
-        // A braced body IS the lambda's body, spliced in statement for
-        // statement — not a value block wrapped in a `return`. That is what
+        // A braced body IS a function body — statements, the `use` desugar,
+        // and an optional trailing value — not a value block. That is what
         // lets a lambda whose body only runs statements be void rather than a
         // value-less block in value position, and it takes the `{` before
         // parse_expr can read it as a value block (which `no_struct` would
-        // suppress in a loop / if HEADER anyway). A trailing value, written
-        // without a `;`, is the returned value.
-        var (lb_leading, lb_have_tail, lb_tail, lb_ok, lb_p) = parse_block_items(p);
+        // suppress in a loop / if HEADER anyway).
+        var (lb_body, lb_p) = parse_lambda_body(p);
         p = lb_p;
-        body = lb_leading;
-        if (lb_have_tail) { body = body.append(s_return(lb_tail)); }
+        body = lb_body;
     } else {
         var (ber_expr, ber_p) = parse_expr(p);
         p = ber_p;
@@ -4078,7 +4076,7 @@ function parse_block(p: Par): (ast.Stmt[], Par) {
         return (miss, p);
     }
     p = p.advance();
-    var (r_body, r_p) = parse_block_body(p);
+    var (r_body, r_p) = parse_block_body(p, false);
     p = r_p;
     if (p.peek_punct() == "}") { p = p.advance(); }
     return (r_body, p);
@@ -4088,13 +4086,34 @@ function parse_block(p: Par): (ast.Stmt[], Par) {
 // closing `}`. Split from parse_block so the callback-passing `use` bind can
 // recurse on the rest of the block.
 // parse_block_body is the depth-guarded face of parse_block_body_nested: see MAX_NEST_DEPTH.
-function parse_block_body(p: Par): (ast.Stmt[], Par) {
+//
+// tail_value says whether the block may end in a VALUE — an expression written
+// without a `;`, which becomes a `return` of it. Only a lambda's braced body
+// can: it is the one block whose result is the enclosing construct's value. A
+// lambda body is parsed here rather than by parse_block_items because `use`
+// rewrites the REST of the block it appears in, and this is the only parser
+// that has that remainder to give it (#8593).
+function parse_block_body(p: Par, tail_value: boolean): (ast.Stmt[], Par) {
     if (p.too_deep()) { return ([s_unknown_at("nest:too-deep", p.peek_line(), p.peek_col())], p.bail()); }
-    var (g0, gq) = parse_block_body_nested(p.with_depth(p.depth + 1));
+    var (g0, gq) = parse_block_body_nested(p.with_depth(p.depth + 1), tail_value);
     return (g0, gq.with_depth(p.depth));
 }
 
-function parse_block_body_nested(p: Par): (ast.Stmt[], Par) {
+// parse_lambda_body parses a lambda's braced body: a function body, with the
+// statements and the `use` rest-of-block desugar an ordinary body has, plus an
+// optional trailing value. The cursor is on `{`.
+function parse_lambda_body(p: Par): (ast.Stmt[], Par) {
+    if (p.peek_punct() != "{") {
+        return ([s_unknown(p, "missing { in lambda body")], p);
+    }
+    p = p.advance();
+    var (lb_body, lb_p) = parse_block_body(p, true);
+    p = lb_p;
+    if (p.peek_punct() == "}") { p = p.advance(); }
+    return (lb_body, p);
+}
+
+function parse_block_body_nested(p: Par, tail_value: boolean): (ast.Stmt[], Par) {
     var body: ast.Stmt[] = [];
     while (p.peek_punct() != "}" && !p.at_end()) {
         // `use NAME [: TYPE] <- CALL;` — monadic-bind / callback-passing sugar
@@ -4122,7 +4141,7 @@ function parse_block_body_nested(p: Par): (ast.Stmt[], Par) {
             if (p.peek_punct() == ";") { p = p.advance(); }
             // The rest of the block is the callback body (recurse so a further
             // `use` chains).
-            var (rest_body, rest_p) = parse_block_body(p);
+            var (rest_body, rest_p) = parse_block_body(p, false);
             p = rest_p;
             var cbparam: ast.ParamDecl = ast.ParamDecl { name: uname, type_name: utype, own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" };
             var cbparams: ast.ParamDecl[] = [cbparam];
@@ -4141,6 +4160,17 @@ function parse_block_body_nested(p: Par): (ast.Stmt[], Par) {
                 },
             }
             return (body, p);
+        }
+        if (tail_value && !branch_stmt_start(p)) {
+            // A non-keyword item that the closing `}` follows is the body's
+            // trailing value. Anything else — including the same expression
+            // followed by a `;` — is an ordinary statement, so the cursor is
+            // put back and the statement parser reads it.
+            var (tv_expr, tv_p) = parse_expr(p);
+            if (tv_p.peek_punct() == "}") {
+                body = body.append(s_return(tv_expr));
+                return (body, tv_p);
+            }
         }
         var (r_stmt, r_p) = parse_stmt(p);
         // Guarantee progress: a malformed statement that doesn't consume a

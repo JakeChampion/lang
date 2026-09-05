@@ -2444,7 +2444,7 @@ func (p *parser) parseBlock() (*ast.Block, error) {
 		return nil, err
 	}
 	block := &ast.Block{P: open.Pos}
-	p.parseBlockStmts(block)
+	p.parseBlockStmts(block, false)
 	if _, err := p.expect(lexer.Punct, "}"); err != nil {
 		return block, err
 	}
@@ -2456,7 +2456,15 @@ func (p *parser) parseBlock() (*ast.Block, error) {
 // desugars that swallow the rest of their enclosing block — `use` and
 // `let … else` — so the tail they capture is parsed by exactly the same
 // loop, error sync and progress guard as the block they were written in.
-func (p *parser) parseBlockStmts(block *ast.Block) {
+// parseBlockStmts fills `block` with the statements up to its closing `}`.
+//
+// tailValue says whether the block may end in a VALUE — an expression written
+// without a `;`, which becomes a `return` of it. Only a lambda's braced body
+// can: it is the one block whose result is the enclosing construct's value. A
+// lambda body is parsed here rather than by the value-block scanner because
+// `use` and `let … else` rewrite the REST of the block they appear in, and
+// this is the only parser that has that remainder to give them (#8593).
+func (p *parser) parseBlockStmts(block *ast.Block, tailValue bool) {
 	if err := p.enter(); err != nil {
 		p.errors = append(p.errors, err)
 		return
@@ -2506,6 +2514,20 @@ func (p *parser) parseBlockStmts(block *ast.Block) {
 			}
 			continue
 		}
+		if tailValue && !p.branchStmtStart() {
+			// A non-keyword item that the closing `}` follows is the body's
+			// trailing value. Anything else — including the same expression
+			// followed by a `;` — is an ordinary statement, so the cursor is
+			// put back and the statement parser reads it.
+			mark, nRefs, nTodo, nErr := p.i, len(p.typeRefs), len(p.todoSites), len(p.errors)
+			e, err := p.parseExpr()
+			if err == nil && p.match(lexer.Punct, "}") {
+				block.Stmts = append(block.Stmts, &ast.Return{P: e.Pos(), Value: e})
+				return
+			}
+			p.i = mark
+			p.typeRefs, p.todoSites, p.errors = p.typeRefs[:nRefs], p.todoSites[:nTodo], p.errors[:nErr]
+		}
 		s, err := p.parseStmt()
 		if err != nil {
 			p.errors = append(p.errors, err)
@@ -2519,6 +2541,22 @@ func (p *parser) parseBlockStmts(block *ast.Block) {
 			block.Stmts = append(block.Stmts, s)
 		}
 	}
+}
+
+// parseLambdaBody parses a lambda's braced body: a function body, with the
+// statements and the `use` / `let … else` rest-of-block desugars an ordinary
+// body has, plus an optional trailing value.
+func (p *parser) parseLambdaBody() (*ast.Block, error) {
+	open, err := p.expect(lexer.Punct, "{")
+	if err != nil {
+		return nil, err
+	}
+	block := &ast.Block{P: open.Pos}
+	p.parseBlockStmts(block, true)
+	if _, err := p.expect(lexer.Punct, "}"); err != nil {
+		return block, err
+	}
+	return block, nil
 }
 
 func (p *parser) parseStmt() (ast.Stmt, error) {
@@ -2859,31 +2897,29 @@ func (p *parser) parseArrowLambda() (ast.Expr, error) {
 		return nil, err
 	}
 	p.returnTypeStack = append(p.returnTypeStack, ret)
-	bodyExpr, err := p.parseExpr()
+	body, err := p.parseArrowBody(open.Pos)
 	p.returnTypeStack = p.returnTypeStack[:len(p.returnTypeStack)-1]
 	if err != nil {
 		return nil, err
 	}
-	body := arrowLambdaBody(open.Pos, bodyExpr)
 	prependParamDestructures(body, paramDestrs)
 	return &ast.Lambda{P: open.Pos, Params: params, ReturnType: ret, ReturnUnannotated: unannotated, Arrow: true, Body: body}, nil
 }
 
-// arrowLambdaBody turns what follows `=>` into the lambda's body block. A
-// braced body is spliced in as the body's own statements, so a lambda whose
-// body only runs statements is void rather than a value-less block in value
-// position (E061); a trailing value, written without a `;`, becomes the
-// returned value. Any other expression is returned directly.
-func arrowLambdaBody(pos ast.Position, e ast.Expr) *ast.Block {
-	be, ok := e.(*ast.BlockExpr)
-	if !ok {
-		return &ast.Block{P: pos, Stmts: []ast.Stmt{&ast.Return{P: pos, Value: e}}}
+// parseArrowBody turns what follows `=>` into the lambda's body block. A
+// braced body IS a function body — parseLambdaBody, so `use` and `let … else`
+// mean there what they mean anywhere else, and a body that only runs
+// statements is void rather than a value-less block in value position (E061).
+// Any other expression is the returned value.
+func (p *parser) parseArrowBody(pos ast.Position) (*ast.Block, error) {
+	if p.match(lexer.Punct, "{") {
+		return p.parseLambdaBody()
 	}
-	stmts := append([]ast.Stmt(nil), be.Stmts...)
-	if be.Tail != nil {
-		stmts = append(stmts, &ast.Return{P: be.Tail.Pos(), Value: be.Tail})
+	e, err := p.parseExpr()
+	if err != nil {
+		return nil, err
 	}
-	return &ast.Block{P: be.P, Stmts: stmts}
+	return &ast.Block{P: pos, Stmts: []ast.Stmt{&ast.Return{P: pos, Value: e}}}, nil
 }
 
 func (p *parser) parseLambda() (ast.Expr, error) {
@@ -4901,7 +4937,7 @@ func (p *parser) parseUse(parent *ast.Block) error {
 	// recursion and the `let … else` rest-capture, both of which have to
 	// see this body as their enclosing block.
 	body := &ast.Block{P: kw.Pos}
-	p.parseBlockStmts(body)
+	p.parseBlockStmts(body, false)
 	if len(p.returnTypeStack) == 0 {
 		return p.errorf(kw.Pos, "use must appear inside a function body")
 	}
@@ -4992,7 +5028,7 @@ func (p *parser) parseLet(captureRest bool) (ast.Stmt, error) {
 	}
 	rest := &ast.Block{P: semi.Pos}
 	if captureRest {
-		p.parseBlockStmts(rest)
+		p.parseBlockStmts(rest, false)
 	}
 	return p.buildPatternBindingMatch(kw.Pos, pats, src, rest, elseBlk, ast.OriginLetElse)
 }
