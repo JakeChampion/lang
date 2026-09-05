@@ -12063,6 +12063,14 @@ func (c *checker) checkStructMatch(n *ast.Match, st ast.StructType, s *scope) {
 			continue
 		}
 		armScope := newScope(s)
+		// A struct pattern reads fields by name, so it is the same access
+		// `s.field` is — the rule was enforced on field access, construction
+		// and var-destructure but not here, leaving two doors open (#8451).
+		// A bare `S { .. }` binds nothing and stays legal as an existence
+		// test.
+		if len(arm.Bindings) > 0 {
+			c.checkOpaqueAccess(sd, arm.P, "destructure")
+		}
 		// `@` binding: the whole matched struct, bound at the scrutinee type.
 		if arm.AtBinding != "" {
 			armScope.names[arm.AtBinding] = st
@@ -12398,6 +12406,14 @@ func (c *checker) checkStructMatchExpr(n *ast.MatchExpr, st ast.StructType, s *s
 			continue
 		}
 		armScope := newScope(s)
+		// A struct pattern reads fields by name, so it is the same access
+		// `s.field` is — the rule was enforced on field access, construction
+		// and var-destructure but not here, leaving two doors open (#8451).
+		// A bare `S { .. }` binds nothing and stays legal as an existence
+		// test.
+		if len(arm.Bindings) > 0 {
+			c.checkOpaqueAccess(sd, arm.P, "destructure")
+		}
 		// `@` binding: the whole matched struct, bound at the scrutinee type.
 		if arm.AtBinding != "" {
 			armScope.names[arm.AtBinding] = st
