@@ -12,7 +12,12 @@ import "testing"
 // Counting note: every `var` of slice type carries TWO releases — the
 // loop-body re-declaration drop at the binding (emitVarReinitDropOld,
 // null-guarded on the first pass) and the exit sweep's — so a local counts
-// as 2 and a temp as 1.
+// as 2 and a temp as 1. A local whose LAST USE is not the exit carries a
+// third: emitViewLocalDrops releases it there and nulls the slot, so the
+// exit sweep's is null-guarded rather than a second release. That site
+// used to free the header outright; it takes the same
+// emitSliceHeaderDropOnStack as every other now, since a header that is an
+// rc1 block cannot be handed to __free.
 
 func sliceHeaderProgram(t *testing.T, src string, ptrW int) *Func {
 	t.Helper()
@@ -33,8 +38,8 @@ function main(): i32 {
 }`
 	for _, ptrW := range []int{4, 8} {
 		fn := sliceHeaderProgram(t, src, ptrW)
-		if n := countCallDirect(fn.Ops, "__fern_closure_drop"); n != 2 {
-			t.Errorf("ptrW=%d: slice local b: want its reinit + exit header releases (2), got %d; ops:\n%v",
+		if n := countCallDirect(fn.Ops, "__fern_closure_drop"); n != 3 {
+			t.Errorf("ptrW=%d: slice local b: want its reinit, its last-use release and the exit sweep's (3), got %d; ops:\n%v",
 				ptrW, n, fn.Ops)
 		}
 		if n := countCallDirect(fn.Ops, "__fern_rc_dec"); n != 0 {
@@ -120,10 +125,10 @@ function main(): i32 {
 }`
 	for _, ptrW := range []int{4, 8} {
 		fn := sliceHeaderProgram(t, src, ptrW)
-		// One for the parent temp once the child header is built, two for c.
-		if n := countCallDirect(fn.Ops, "__fern_closure_drop"); n != 3 {
-			t.Errorf("ptrW=%d: want the parent temp released after the sub-slice plus c's reinit + exit "+
-				"(3 releases), got %d; ops:\n%v", ptrW, n, fn.Ops)
+		// One for the parent temp once the child header is built, three for c.
+		if n := countCallDirect(fn.Ops, "__fern_closure_drop"); n != 4 {
+			t.Errorf("ptrW=%d: want the parent temp released after the sub-slice plus c's reinit, "+
+				"last-use release and exit (4 releases), got %d; ops:\n%v", ptrW, n, fn.Ops)
 		}
 	}
 }
