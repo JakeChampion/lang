@@ -40,7 +40,7 @@ func TestSelfHostArm64BitOpsGas(t *testing.T) {
 	}
 }
 
-// TestSelfHostArm64DarwinMachOBitOpsRuns exercises the new ops end-to-end:
+// TestSelfHostArm64DarwinMachOBitOpsRuns exercises the bit ops end-to-end:
 // a Fern program assembles `ubfx`/`neg`/`tbz` into a value computation
 // (extract -> negate twice -> add -> test-bit branch) that exits 42, wraps
 // it with macho.fern, and the signed Mach-O runs: no external tool.
