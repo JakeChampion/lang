@@ -6363,34 +6363,19 @@ pub function emit_module_ir_gated(mod: parser.Module, known: string[]): string {
     return emit_module_ir_unit_flat(im, true, false, "", [], im.funcs, imtab, 0, 0 - 1, cache, base);
 }
 
-// pp_has_mem reports whether asm[lo:hi] is a memory operand, i.e. carries a
-// `(`. A push of one is a LOAD, and the dead-push rule drops the push outright
-// rather than rewriting it, so it must leave those alone.
-function pp_has_mem(asm: string, lo: i32, hi: i32): boolean {
-    var i: i32 = lo;
-    while (i < hi) {
-        if (asm[i] == 40) { return true; }
-        i = i + 1;
-    }
-    return false;
-}
-
-// pp_has_rsp reports whether asm[lo:hi] names %rsp.
-function pp_has_rsp(asm: string, lo: i32, hi: i32): boolean {
-    var i: i32 = lo;
-    while (i + 4 <= hi) {
-        if (asm[i] == 37 && asm[i + 1] == 114 && asm[i + 2] == 115 && asm[i + 3] == 112) { return true; }
-        i = i + 1;
-    }
-    return false;
-}
-
-// peephole_push_pop folds the stack machine's operand round-trips out of the
-// emitted text.
+// ---- The x86-64 peephole ---------------------------------------------------
 //
-// The op loop pushes every result and pops every operand, so a value produced
-// by one op and consumed by the next travels through memory even when both
-// ends are already where they need to be:
+// peephole_push_pop folds the stack machine's operand round-trips out of the
+// emitted text. The op loop pushes every result and pops every operand, so a
+// value produced by one op and consumed by the next travels through memory
+// even when both ends are already where they need to be. The rules are the
+// self-host mirror of native's peepholeTail (internal/codegen/x86_64/x86_64.go)
+// and keep its numbering; each is purely local — a few contiguous lines — so
+// none of them ever touches a genuinely live stack slot.
+//
+// P1 — redundant store/reload. `popq Y` reads the top of the stack, and the
+// line before it just wrote X there, so the adjacent pair is exactly `Y := X`
+// with %rsp restored, whatever either line was meant for:
 //
 //     pushq %rax        ->  (both lines dropped)
 //     popq %rax
@@ -6398,105 +6383,568 @@ function pp_has_rsp(asm: string, lo: i32, hi: i32): boolean {
 //     pushq -16(%rbp)   ->  movq -16(%rbp), %rcx
 //     popq %rcx
 //
-// Only an IMMEDIATELY adjacent pair folds, which is what makes the rewrite
-// need no clobber analysis: `popq Y` reads the top of the stack, and the line
-// before it just wrote X there, so the pair is exactly `Y := X` with %rsp
-// restored — whatever either line was *meant* for. Alignment is untouched
-// because a push/pop pair is net-zero on %rsp either way.
-//
 // A source naming %rsp is left alone: the push moves %rsp, so the folded mov
 // would read a different address.
 //
-// Worth ~20% of the emitted lines on the compiler's own source. The
-// non-adjacent case — a binary op's outer operand pair, one instruction apart
-// once the inner pair folds — is deliberately not handled: it needs the
-// clobber analysis this shape avoids.
-//
-// # The DEAD push
-//
-// The other adjacent shape is a push the very next line throws away:
+// P3 — dead push: a push whose slot is freed without ever being read. Every
+// statement-position expression pushes a result nobody wants, and `drop`
+// lowers to the stack restore:
 //
 //     pushq %rax        ->  (both lines dropped)
 //     addq $8, %rsp
 //
-// `addq $8, %rsp` is what a `drop` lowers to, and the IR drops a great deal —
-// every statement-position expression pushes a result nobody wants, and `exit`
-// is emitted as a call plus a dummy its following drop consumes. So this is not
-// a rare shape: ~545 pairs per module on the conformance corpus, 1.2% of all
-// emitted lines. Native's peepholeTail has had the rule for a while
-// (internal/codegen/x86_64/x86_64.go, P3); neither self-host register backend
-// did, which made it a plain parity gap rather than a new idea.
+// %rsp ends where it started, the store lands below it where nothing reads,
+// and the FLAGS the `addq` wrote are never live across an IR-op boundary
+// (the invariant the const-zero `xorl` relies on too). Restricted to a
+// register or immediate source: dropping a memory push would drop a load.
 //
-// Removing the pair is sound on the same adjacency argument as the fold above:
-// %rsp ends where it started, and the only other effects are a write below
-// %rsp that nothing reads back and the FLAGS the `addq` clobbers, which are
-// never live across an IR-op boundary here (the same invariant the const-zero
-// `xorl` relies on — see the const_i32 arm).
+// P4 — constant operand folded into the ALU form. Instruction selection never
+// inspects an operand for constness, so `x + 5` materialises the 5 into %rax,
+// hands it to %rcx and consumes it as a register. Once P1 has collapsed the
+// constant's own push/pop pair the tail reads:
 //
-// It is restricted to a REGISTER or IMMEDIATE source. A memory operand would
-// make the push a load, and dropping a load is only safe if it cannot fault —
-// true for a frame slot but not worth asserting, especially as the corpus emits
-// no such pair at all (644 dead pushes, every one `%rax`, `%rdx` or `$K`).
+//     pushq SRC / movl $K, %eax / movq %rax, %rcx / popq %rax / addq %rcx, %rax
+//       ->  [movq SRC, %rax] / addq $K, %rax
+//
+// The dropped lines leave %rax, %rsp and the flags exactly as the fold does.
+// The only other state they wrote is %rcx, and every consumer of %rcx in this
+// backend writes it before reading it — a binary op pops into it, a helper
+// call loads it as an argument, a shift count travels in %cl. The immediate's
+// width is the whole risk: `movl $K, %eax` leaves %rcx the ZERO-extended K
+// where `<alu> $K, %rax` SIGN-extends, so a narrow constant folds only when
+// K >= 0, and a wide one only when it fits imm32. The two-operand imulq has
+// no immediate form, so it takes the three-operand multiply-by-constant one.
+// A shift's count is masked to six bits by the hardware exactly as an imm8
+// is, so `shlq %cl` folds to `shlq $(K & 63)`; a shift whose count was
+// already selected as an immediate just loses the dead materialisation.
+//
+// The head of P4 is `pushq SRC` for ANY source without %rsp, not just `pushq
+// %rax`, because this backend pushes a local's frame slot directly; the
+// restore it folds to is the `movq SRC, %rax` P1 makes of an adjacent pair,
+// and the argument is P1's.
+//
+// Untouched bytes are copied in RUNS, not per line: this pass rewrites one
+// line in eight, so the other seven must be free. Only a line that can take
+// part in a rule enters the window; anything else — a label, a directive, a
+// store, a branch — closes the window and joins the run.
+
+const PK_NONE: i32 = 0;
+const PK_PUSH: i32 = 1;     // pushq SRC              a..b = SRC
+const PK_POP: i32 = 2;      // popq %REG              a..b = %REG, a plain register other than %rsp
+const PK_RSP8: i32 = 3;     // addq $8, %rsp
+const PK_MAT: i32 = 4;      // MNEM SRC, %rax|%eax    a..b = SRC (past the `$` of a literal)
+const PK_COPY: i32 = 5;     // movq %rax, %REG        a..b = %REG, a known 64-bit register
+const PK_ALU: i32 = 6;      // addq|subq|imulq|andq|orq|xorq|cmpq|testq %rcx, %rax
+const PK_SHCL: i32 = 7;     // shlq|sarq|shrq %cl, %rax
+const PK_SHIMM: i32 = 8;    // shlq|sarq|shrq $K, %rax
+const PK_CALL: i32 = 9;     // call SYM, a direct call
+const PK_ARG: i32 = 10;     // an argument setup that neither reads nor writes %rax
+
+const PF_RSP: i32 = 1;      // the operand names %rsp
+const PF_MEM: i32 = 2;      // the operand is a memory reference
+const PF_RAX: i32 = 4;      // the operand is exactly %rax
+const PF_ACC: i32 = 8;      // the operand names the accumulator under any width
+const PF_REG: i32 = 16;     // the operand is a plain register
+const PF_CONST: i32 = 32;   // PK_MAT: the source is a literal
+const PF_NARROW: i32 = 64;  // PK_MAT: the destination is %eax, zero-extending into %rax
+const PF_IMMOK: i32 = 128;  // PK_MAT + PF_CONST: `val` holds the literal's value
+const PF_MOVABS: i32 = 256; // PK_MAT: a movabsq, which the rename does not take
+const PF_XORZ: i32 = 512;   // PK_MAT: `xorl %eax, %eax`
+
+// A PLine is one line held back in the window: where its bytes live and what
+// the line is, decoded once on entry so the rules compare kinds and operand
+// ranges instead of re-reading text.
+struct PLine {
+    s: string,   // the text the line lives in: `asm` itself, or a rewritten line
+    ln: i32,     // line start in s, indentation included; -1 for a rewritten line
+    bs: i32,     // first byte of the mnemonic
+    me: i32,     // end of the mnemonic
+    hi: i32,     // end of the line, exclusive of its newline
+    kind: i32,
+    a: i32,      // the operand the kind names, as a range of s
+    b: i32,
+    val: i64,    // PF_IMMOK: the value the constant leaves in %rax
+    flags: i32,
+}
+
+// The window holds at most PW_CAP lines; when it fills, the oldest PW_DRAIN
+// are flushed. The deepest shape, P4's, is five lines.
+const PW_CAP: i32 = 24;
+const PW_DRAIN: i32 = 12;
+
+struct Peep {
+    asm: string,
+    w: PLine[],
+    n: i32,          // lines in the window
+    run_start: i32,  // pending run of untouched bytes of asm, -1 when none
+    run_end: i32,
+    fired: boolean,  // set by a rule that rewrote the tail
+}
+
+// ---- byte-range helpers over one line ----
+
+function pp_has_mem(s: string, lo: i32, hi: i32): boolean {
+    var i: i32 = lo;
+    while (i < hi) {
+        if (s[i] == 40) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+function pp_has_rsp(s: string, lo: i32, hi: i32): boolean {
+    return pp_contains(s, lo, hi, "%rsp");
+}
+
+// pp_is reports whether s[lo:hi] is exactly `lit`.
+function pp_is(s: string, lo: i32, hi: i32, lit: string): boolean {
+    return hi - lo == lit.len() && asmcore.pp_at(s, lo, hi, lit);
+}
+
+// pp_find returns the first offset of byte `c` in s[lo:hi], or hi.
+function pp_find(s: string, lo: i32, hi: i32, c: i32): i32 {
+    var i: i32 = lo;
+    while (i < hi) {
+        if ((s[i] as i32) == c) { return i; }
+        i = i + 1;
+    }
+    return hi;
+}
+
+// pp_find_sep returns the offset of the `, ` separating two operands in
+// s[lo:hi], or hi. A comma inside a memory operand has no space after it.
+function pp_find_sep(s: string, lo: i32, hi: i32): i32 {
+    var i: i32 = lo;
+    while (i + 1 < hi) {
+        if (s[i] == 44 && s[i + 1] == 32) { return i; }
+        i = i + 1;
+    }
+    return hi;
+}
+
+// pp_contains reports whether `lit` occurs anywhere in s[lo:hi].
+function pp_contains(s: string, lo: i32, hi: i32, lit: string): boolean {
+    var i: i32 = lo;
+    while (i + lit.len() <= hi) {
+        if (asmcore.pp_at(s, i, hi, lit)) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// pp_same reports whether two operand ranges, possibly of different strings,
+// hold the same bytes.
+function pp_same(s: string, lo: i32, hi: i32, t: string, tlo: i32, thi: i32): boolean {
+    if (hi - lo != thi - tlo) { return false; }
+    var k: i32 = 0;
+    while (lo + k < hi) {
+        if (s[lo + k] != t[tlo + k]) { return false; }
+        k = k + 1;
+    }
+    return true;
+}
+
+function pp_is_digit(c: i32): boolean {
+    return c >= 48 && c <= 57;
+}
+
+function pp_is_hex_digit(c: i32): boolean {
+    return pp_is_digit(c) || (c >= 97 && c <= 102) || (c >= 65 && c <= 70);
+}
+
+function pp_is_alnum(c: i32): boolean {
+    return pp_is_digit(c) || (c >= 97 && c <= 122);
+}
+
+// pp_acc_at reports whether the register name starting at s[i], just past
+// its `%`, is the accumulator: rax, eax, ax, al or ah and nothing more.
+function pp_acc_at(s: string, i: i32, hi: i32): boolean {
+    var e: i32 = i;
+    while (e < hi && pp_is_alnum(s[e] as i32)) { e = e + 1; }
+    if (pp_is(s, i, e, "rax") || pp_is(s, i, e, "eax") || pp_is(s, i, e, "ax")) { return true; }
+    return pp_is(s, i, e, "al") || pp_is(s, i, e, "ah");
+}
+
+// pp_names_acc reports whether s[lo:hi] mentions the accumulator under any of
+// its names. AT&T's `%` sigil makes the scan exact: `call` and `.Lsan_leak`
+// carry the letters but never the register.
+function pp_names_acc(s: string, lo: i32, hi: i32): boolean {
+    var i: i32 = lo;
+    while (i < hi) {
+        if (s[i] == 37 && pp_acc_at(s, i + 1, hi)) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// pp_reg32 is the 32-bit name of the 64-bit register s[lo:hi], or "" when
+// s[lo:hi] is not a value register this backend copies into.
+function pp_reg32(s: string, lo: i32, hi: i32): string {
+    if (pp_is(s, lo, hi, "%rcx")) { return "%ecx"; }
+    if (pp_is(s, lo, hi, "%rdx")) { return "%edx"; }
+    if (pp_is(s, lo, hi, "%rsi")) { return "%esi"; }
+    if (pp_is(s, lo, hi, "%rdi")) { return "%edi"; }
+    if (pp_is(s, lo, hi, "%rbx")) { return "%ebx"; }
+    return pp_reg32_numbered(s, lo, hi);
+}
+
+// pp_reg32_numbered handles %r8..%r15, whose 32-bit names take a `d`.
+function pp_reg32_numbered(s: string, lo: i32, hi: i32): string {
+    if (hi - lo < 3 || hi - lo > 4) { return ""; }
+    if (s[lo] != 37 || s[lo + 1] != 114 || !pp_is_digit(s[lo + 2] as i32)) { return ""; }
+    if (hi - lo == 4 && !pp_is_digit(s[lo + 3] as i32)) { return ""; }
+    return slice_unchecked(s, lo, hi) + "d";
+}
+
+// pp_imm_ok reports whether the literal s[lo:hi], past its `$`, is one
+// util.lit_to_i64 reads exactly: an optional `-` and up to eighteen decimal
+// digits, or `0x` and up to sixteen hex digits.
+function pp_imm_ok(s: string, lo: i32, hi: i32): boolean {
+    var i: i32 = lo;
+    if (i < hi && s[i] == 45) { i = i + 1; }
+    if (i + 1 < hi && s[i] == 48 && (s[i + 1] == 120 || s[i + 1] == 88)) {
+        return pp_digits_ok(s, i + 2, hi, 16, true);
+    }
+    return pp_digits_ok(s, i, hi, 18, false);
+}
+
+function pp_digits_ok(s: string, lo: i32, hi: i32, max: i32, hex: boolean): boolean {
+    if (hi - lo < 1 || hi - lo > max) { return false; }
+    var i: i32 = lo;
+    while (i < hi) {
+        var c: i32 = s[i] as i32;
+        if (hex && !pp_is_hex_digit(c)) { return false; }
+        if (!hex && !pp_is_digit(c)) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+// ---- classification ----
+
+function pl_none(s: string, ln: i32, bs: i32, hi: i32): PLine {
+    return PLine { s: s, ln: ln, bs: bs, me: bs, hi: hi, kind: PK_NONE, a: 0, b: 0, val: 0i64, flags: 0 };
+}
+
+// pl_operand_flags decodes the shape of one operand.
+function pl_operand_flags(s: string, lo: i32, hi: i32): i32 {
+    var f: i32 = 0;
+    if (pp_has_rsp(s, lo, hi)) { f = f | PF_RSP; }
+    if (pp_has_mem(s, lo, hi)) { f = f | PF_MEM; }
+    if (pp_is(s, lo, hi, "%rax")) { f = f | PF_RAX; }
+    if (pp_names_acc(s, lo, hi)) { f = f | PF_ACC; }
+    if (hi > lo && s[lo] == 37 && (f & PF_MEM) == 0) { f = f | PF_REG; }
+    return f;
+}
+
+function pl_mnem_is(p: PLine, lit: string): boolean {
+    return pp_is(p.s, p.bs, p.me, lit);
+}
+
+// pl_is_mov_mnem: the pure register writes a materialisation may use.
+function pl_is_mov_mnem(p: PLine): boolean {
+    return pl_mnem_is(p, "movq") || pl_mnem_is(p, "movl") || pl_mnem_is(p, "leaq")
+        || pl_mnem_is(p, "movzbl") || pl_mnem_is(p, "movslq");
+}
+
+function pl_is_alu_mnem(p: PLine): boolean {
+    return pl_mnem_is(p, "addq") || pl_mnem_is(p, "subq") || pl_mnem_is(p, "andq") || pl_mnem_is(p, "orq")
+        || pl_mnem_is(p, "xorq") || pl_mnem_is(p, "cmpq") || pl_mnem_is(p, "testq") || pl_mnem_is(p, "imulq");
+}
+
+function pl_is_shift_mnem(p: PLine): boolean {
+    return pl_mnem_is(p, "shlq") || pl_mnem_is(p, "sarq") || pl_mnem_is(p, "shrq");
+}
+
+// pl_into_acc classifies a two-operand line whose destination is %rax or
+// %eax: a materialisation (constant or not), a binary op against %rcx, or a
+// shift.
+function pl_into_acc(p: PLine, o1: i32, o1e: i32, narrow: boolean): PLine {
+    if (pl_is_mov_mnem(p) || pl_mnem_is(p, "movabsq")) { return pl_mat(p, o1, o1e, narrow); }
+    if (narrow) { return p; }
+    if (pp_is(p.s, o1, o1e, "%rcx") && pl_is_alu_mnem(p)) { return PLine { ...p, kind: PK_ALU }; }
+    if (!pl_is_shift_mnem(p)) { return p; }
+    if (pp_is(p.s, o1, o1e, "%cl")) { return PLine { ...p, kind: PK_SHCL }; }
+    if (p.s[o1] == 36) { return PLine { ...p, kind: PK_SHIMM }; }
+    return p;
+}
+
+// pl_mat classifies a materialisation into the accumulator. A literal source
+// makes it a constant, whose `val` is the number the literal spells; the
+// rules read it against the line's width — a wide form sign-extends or
+// carries all 64 bits, the narrow one zero-extends.
+function pl_mat(p: PLine, o1: i32, o1e: i32, narrow: boolean): PLine {
+    var f: i32 = pl_operand_flags(p.s, o1, o1e);
+    if (narrow) { f = f | PF_NARROW; }
+    if (pl_mnem_is(p, "movabsq")) { f = f | PF_MOVABS; }
+    if (p.s[o1] != 36) { return PLine { ...p, kind: PK_MAT, a: o1, b: o1e, flags: f }; }
+    f = f | PF_CONST;
+    var v: i64 = 0i64;
+    if (pp_imm_ok(p.s, o1 + 1, o1e)) {
+        f = f | PF_IMMOK;
+        v = util.lit_to_i64(slice_unchecked(p.s, o1 + 1, o1e));
+    }
+    return PLine { ...p, kind: PK_MAT, a: o1 + 1, b: o1e, val: v, flags: f };
+}
+
+// pl_reg_dest classifies a two-operand line writing a plain register other
+// than the accumulator or %rsp: the copy out of %rax, or an argument setup
+// that never touches it.
+function pl_reg_dest(p: PLine, o1: i32, o1e: i32, o2: i32, o2e: i32): PLine {
+    var f2: i32 = pl_operand_flags(p.s, o2, o2e);
+    if ((f2 & PF_REG) == 0 || (f2 & (PF_ACC | PF_RSP)) != 0) { return p; }
+    if (pl_mnem_is(p, "movq") && pp_is(p.s, o1, o1e, "%rax")) {
+        if (pp_reg32(p.s, o2, o2e).len() > 0) { return PLine { ...p, kind: PK_COPY, a: o2, b: o2e }; }
+        return p;
+    }
+    if (pl_is_mov_mnem(p) && !pp_names_acc(p.s, o1, o1e)) { return PLine { ...p, kind: PK_ARG }; }
+    return p;
+}
+
+// pl_two classifies the two-operand lines by destination.
+function pl_two(p: PLine, o1: i32, o1e: i32, o2: i32, o2e: i32): PLine {
+    if (pp_is(p.s, o2, o2e, "%rax")) { return pl_into_acc(p, o1, o1e, false); }
+    if (pp_is(p.s, o2, o2e, "%eax")) {
+        if (pl_mnem_is(p, "xorl") && pp_is(p.s, o1, o1e, "%eax")) {
+            return PLine { ...p, kind: PK_MAT, flags: PF_CONST | PF_NARROW | PF_IMMOK | PF_XORZ };
+        }
+        return pl_into_acc(p, o1, o1e, true);
+    }
+    if (pp_is(p.s, o2, o2e, "%rsp")) { return pl_rsp_dest(p, o1, o1e); }
+    return pl_reg_dest(p, o1, o1e, o2, o2e);
+}
+
+// pl_rsp_dest classifies the stack adjustments: the drop's `addq $8, %rsp`,
+// and the alignment around a call.
+function pl_rsp_dest(p: PLine, o1: i32, o1e: i32): PLine {
+    if (pp_is(p.s, o1, o1e, "$8") && pl_mnem_is(p, "addq")) { return PLine { ...p, kind: PK_RSP8 }; }
+    if (p.s[o1] == 36 && (pl_mnem_is(p, "addq") || pl_mnem_is(p, "subq"))) { return PLine { ...p, kind: PK_ARG }; }
+    return p;
+}
+
+// pl_one classifies the one-operand lines: a push, a pop into a register,
+// a direct call.
+function pl_one(p: PLine, o1: i32): PLine {
+    var f: i32 = pl_operand_flags(p.s, o1, p.hi);
+    if (pl_mnem_is(p, "pushq")) { return PLine { ...p, kind: PK_PUSH, a: o1, b: p.hi, flags: f }; }
+    if (pl_mnem_is(p, "popq") && (f & PF_REG) != 0 && (f & PF_RSP) == 0) {
+        return PLine { ...p, kind: PK_POP, a: o1, b: p.hi, flags: f };
+    }
+    if (pl_mnem_is(p, "call") && p.s[o1] != 42) { return PLine { ...p, kind: PK_CALL }; }
+    return p;
+}
+
+// pl_classify decodes one indented line of s. Anything it does not recognise
+// is PK_NONE, which closes the window.
+function pl_classify(s: string, ln: i32, bs: i32, hi: i32): PLine {
+    var me: i32 = pp_find(s, bs, hi, 32);
+    var p: PLine = PLine { s: s, ln: ln, bs: bs, me: me, hi: hi, kind: PK_NONE, a: 0, b: 0, val: 0i64, flags: 0 };
+    if (me + 1 >= hi) { return p; }
+    var cm: i32 = pp_find_sep(s, me + 1, hi);
+    if (cm >= hi) { return pl_one(p, me + 1); }
+    if (cm + 2 >= hi) { return p; }
+    return pl_two(p, me + 1, cm, cm + 2, hi);
+}
+
+function pl_text(l: PLine, lo: i32, hi: i32): string {
+    return slice_unchecked(l.s, lo, hi) + "";
+}
+
+function pl_operand(l: PLine): string {
+    return slice_unchecked(l.s, l.a, l.b) + "";
+}
+
+// ---- the window ----
+
+function peep_set(own p: Peep, i: i32, l: PLine): Peep {
+    if (i < p.w.len()) { return Peep { ...p, w: p.w.with(i, l) }; }
+    return Peep { ...p, w: p.w.append(l) };
+}
+
+// peep_emit writes one line out. An original line extends the pending run
+// when it starts where the run ended, and otherwise starts a new one — a
+// rule that dropped lines outright leaves a gap the run must not cover. A
+// rewritten line closes the run and is written as is.
+function peep_emit(own p: Peep, l: PLine): Peep {
+    if (l.ln >= 0) {
+        if (p.run_start >= 0 && p.run_end == l.ln) { return Peep { ...p, run_end: l.hi + 1 }; }
+        p = peep_close_run(p);
+        return Peep { ...p, run_start: l.ln, run_end: l.hi + 1 };
+    }
+    p = peep_close_run(p);
+    strbuf_append(l.s);
+    return p;
+}
+
+function peep_close_run(own p: Peep): Peep {
+    if (p.run_start < 0) { return p; }
+    var e: i32 = p.run_end;
+    if (e > p.asm.len()) { e = p.asm.len(); }
+    strbuf_append(slice_unchecked(p.asm, p.run_start, e));
+    return Peep { ...p, run_start: 0 - 1, run_end: 0 - 1 };
+}
+
+// peep_flush writes the oldest `k` window lines out and shifts the rest down.
+function peep_flush(own p: Peep, k: i32): Peep {
+    var i: i32 = 0;
+    while (i < k) {
+        var l: PLine = p.w[i];
+        p = peep_emit(p, l);
+        i = i + 1;
+    }
+    var j: i32 = k;
+    var n: i32 = p.n;
+    while (j < n) {
+        var m: PLine = p.w[j];
+        p = peep_set(p, j - k, m);
+        j = j + 1;
+    }
+    return Peep { ...p, n: n - k };
+}
+
+// peep_add appends a line to the window. The rules run from peep_settle, so
+// a rule can add its rewrite through here without recursing.
+function peep_add(own p: Peep, l: PLine): Peep {
+    if (p.n == PW_CAP) { p = peep_flush(p, PW_DRAIN); }
+    var n: i32 = p.n;
+    p = peep_set(p, n, l);
+    return Peep { ...p, n: n + 1 };
+}
+
+// peep_add_text appends a rewritten line, given with its indentation and
+// newline.
+function peep_add_text(own p: Peep, text: string): Peep {
+    return peep_add(p, pl_classify(text, 0 - 1, 4, text.len() - 1));
+}
+
+// peep_settle re-runs the rules until none rewrites the tail: one rule's
+// output is another's input — P1 collapses a constant's push/pop pair into
+// the copy that P4 then folds into the ALU op. It terminates because every
+// rule removes at least one line from the window.
+function peep_settle(own p: Peep): Peep {
+    p = Peep { ...p, fired: true };
+    while (p.fired) {
+        p = Peep { ...p, fired: false };
+        p = peep_rules(p);
+    }
+    return p;
+}
+
+function peep_rules(own p: Peep): Peep {
+    p = peep_p1(p);
+    if (p.fired) { return p; }
+    p = peep_p3(p);
+    if (p.fired) { return p; }
+    return peep_p4(p);
+}
+
+// ---- the rules ----
+
+function peep_p1(own p: Peep): Peep {
+    var n: i32 = p.n;
+    if (n < 2 || p.w[n - 2].kind != PK_PUSH || p.w[n - 1].kind != PK_POP) { return p; }
+    var a: PLine = p.w[n - 2];
+    var b: PLine = p.w[n - 1];
+    if ((a.flags & PF_RSP) != 0) { return p; }
+    p = Peep { ...p, n: n - 2, fired: true };
+    if (pp_same(a.s, a.a, a.b, b.s, b.a, b.b)) { return p; }
+    return peep_add_text(p, "    movq " + pl_operand(a) + ", " + pl_operand(b) + "\n");
+}
+
+function peep_p3(own p: Peep): Peep {
+    var n: i32 = p.n;
+    if (n < 2 || p.w[n - 2].kind != PK_PUSH || p.w[n - 1].kind != PK_RSP8) { return p; }
+    if ((p.w[n - 2].flags & (PF_MEM | PF_RSP)) != 0) { return p; }
+    return Peep { ...p, n: n - 2, fired: true };
+}
+
+// peep_head_ok reports whether w[k..k+4) is P4's head — `pushq SRC` with no
+// %rsp, a materialisation, the copy to a register, and a pop into a register
+// — leaving the rule to check what it folds.
+function peep_head_ok(p: Peep, k: i32): boolean {
+    if (k < 0 || p.w[k].kind != PK_PUSH || (p.w[k].flags & PF_RSP) != 0) { return false; }
+    return p.w[k + 1].kind == PK_MAT && p.w[k + 2].kind == PK_COPY && p.w[k + 3].kind == PK_POP;
+}
+
+// peep_restore adds the `movq SRC, %rax` a folded push/pop pair still owes
+// when the push was not of %rax itself.
+function peep_restore(own p: Peep, push: PLine): Peep {
+    if ((push.flags & PF_RAX) != 0) { return p; }
+    return peep_add_text(p, "    movq " + pl_operand(push) + ", %rax\n");
+}
+
+function peep_p4(own p: Peep): Peep {
+    var n: i32 = p.n;
+    if (n < 5 || !peep_head_ok(p, n - 5)) { return p; }
+    var c: PLine = p.w[n - 4];
+    if ((c.flags & PF_CONST) == 0 || !pp_is(p.w[n - 3].s, p.w[n - 3].a, p.w[n - 3].b, "%rcx")) { return p; }
+    if ((p.w[n - 2].flags & PF_RAX) == 0) { return p; }
+    var line: string = peep_p4_line(c, p.w[n - 1]);
+    if (line.len() == 0) { return p; }
+    var push: PLine = p.w[n - 5];
+    p = Peep { ...p, n: n - 5, fired: true };
+    p = peep_restore(p, push);
+    return peep_add_text(p, line);
+}
+
+// peep_p4_fits reports whether constant `c` can stand as the imm32 of a
+// 64-bit operation: sign-extended, it must be the value the original left
+// in %rcx.
+function peep_p4_fits(c: PLine): boolean {
+    if (c.val > 2147483647i64 || c.val < (0i64 - 2147483648i64)) { return false; }
+    return (c.flags & PF_NARROW) == 0 || c.val >= 0i64;
+}
+
+// peep_p4_line renders the consumer `u` with constant `c` folded in, or ""
+// when the fold is unsound.
+function peep_p4_line(c: PLine, u: PLine): string {
+    if (u.kind == PK_SHIMM) { return "    " + pl_text(u, u.bs, u.hi) + "\n"; }
+    if ((c.flags & PF_IMMOK) == 0) { return ""; }
+    var mnem: string = pl_text(u, u.bs, u.me);
+    if (u.kind == PK_SHCL) { return "    " + mnem + " $" + util.i64_to_string(c.val & 63i64) + ", %rax\n"; }
+    if (u.kind != PK_ALU || !peep_p4_fits(c)) { return ""; }
+    var imm: string = "0";
+    if ((c.flags & PF_XORZ) == 0) { imm = pl_operand(c); }
+    if (mnem == "imulq") { return "    imulq $" + imm + ", %rax, %rax\n"; }
+    return "    " + mnem + " $" + imm + ", %rax\n";
+}
+
+// ---- the pass ----
+
+// peep_line feeds one line of asm to the window. A line no rule can use
+// closes the window: everything flushes and the line joins the run.
+function peep_line(own p: Peep, ln: i32, bs: i32, hi: i32): Peep {
+    var l: PLine = pl_none(p.asm, ln, bs, hi);
+    if (bs < hi && p.asm[ln] == 32) { l = pl_classify(p.asm, ln, bs, hi); }
+    if (l.kind != PK_NONE) {
+        p = peep_add(p, l);
+        return peep_settle(p);
+    }
+    var n: i32 = p.n;
+    p = peep_flush(p, n);
+    return peep_emit(p, l);
+}
+
 function peephole_push_pop(asm: string): string {
     // Re-entering strbuf is safe: `asm` is already materialised, so the buffer
     // is drained before this reset (same contract as arm64's darwinize).
     strbuf_reset();
+    var p: Peep = Peep { asm: asm, w: [], n: 0, run_start: 0 - 1, run_end: 0 - 1, fired: false };
     var n: i32 = asm.len();
-    // Untouched bytes are copied in RUNS, not per line: run_start is the start
-    // of the stretch not yet appended, and only a fold breaks it. Line-at-a-time
-    // copying here cost 28% of total compile time on the compiler's own source —
-    // this pass rewrites one line in eight, so the other seven must be free.
-    var run_start: i32 = 0;
-    // The deferred push: the offset its line starts at, and its source operand's
-    // byte range. push_at < 0 means nothing is deferred.
-    var push_at: i32 = 0 - 1;
-    var src_lo: i32 = 0;
-    var src_hi: i32 = 0;
     var ln: i32 = 0;
     var i: i32 = 0;
     while (i <= n) {
         if (i == n || asm[i] == 10) {
             var bs: i32 = ln;
             while (bs < i && asm[bs] == 32) { bs = bs + 1; }
-            var folded: boolean = false;
-            if (push_at >= 0 && asmcore.pp_at(asm, bs, i, "popq %")) {
-                var dlo: i32 = bs + 5;
-                if (run_start < push_at) { strbuf_append(slice_unchecked(asm, run_start, push_at)); }
-                if (!asmcore.pp_eq_bytes(asm, src_lo, src_hi, dlo, i)) {
-                    strbuf_append("    movq ");
-                    strbuf_append(slice_unchecked(asm, src_lo, src_hi));
-                    strbuf_append(", ");
-                    strbuf_append(slice_unchecked(asm, dlo, i));
-                    strbuf_append("\n");
-                }
-                run_start = i + 1;
-                push_at = 0 - 1;
-                folded = true;
-            } else if (push_at >= 0 && asmcore.pp_at(asm, bs, i, "addq $8, %rsp")
-                    && !pp_has_mem(asm, src_lo, src_hi)) {
-                // The push is dead: this line discards exactly what it wrote.
-                // Both lines go, and nothing is emitted in their place.
-                if (run_start < push_at) { strbuf_append(slice_unchecked(asm, run_start, push_at)); }
-                run_start = i + 1;
-                push_at = 0 - 1;
-                folded = true;
-            }
-            if (!folded) {
-                push_at = 0 - 1;
-                if (asmcore.pp_at(asm, bs, i, "pushq ")) {
-                    var slo: i32 = bs + 6;
-                    if (!pp_has_rsp(asm, slo, i)) {
-                        push_at = ln;
-                        src_lo = slo;
-                        src_hi = i;
-                    }
-                }
-            }
+            p = peep_line(p, ln, bs, i);
             ln = i + 1;
         }
         i = i + 1;
     }
-    if (run_start < n) { strbuf_append(slice_unchecked(asm, run_start, n)); }
+    var k: i32 = p.n;
+    p = peep_flush(p, k);
+    p = peep_close_run(p);
     return strbuf_take();
 }
 
