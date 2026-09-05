@@ -295,23 +295,25 @@ differential fuzz and `__rc_underflow_count` guard.
    x86_64 (the generator branches on ptrW). The set retains an aliased
    value (`__fern_str_inc` on wasm, `__fern_rc_inc` on x86_64), `m.get`
    /`m.get_or` / `m.iter().value()` all retain the returned string, and
-   a key OVERWRITE pre-drops the replaced buffer via `__map_lookup_val`
-   + `__fern_str_dec` on both, under an `__fern_rc_is_unique(m)` gate: a
-   pre-drop runs before the set's own `__map_cow_inplace`, so a copy of
-   the handle still names the value it releases. The cell the two-word
-   ABI boxes that value into is freed alongside the buffer (#2704).
-   What remains is the ALIASED case, where the pre-drop is gated off and
-   nothing else picks the replaced value up: #8421. A copy now claims
-   every value column — the string one by reboxing (#8390), the struct
-   one by the retain, the wide-scalar one outright (#7114) — so what is
-   left is the release's PLACEMENT, not a missing claim.
+   a key OVERWRITE releases the replaced value in `__map_dec_value`,
+   which `__map_set_keyed_impl` reaches AFTER its own
+   `__map_cow_inplace` — so the buffer and its cells are the setting
+   handle's alone and the release needs no ownership test (#8421). The
+   cell the two-word ABI boxed that value into goes back with it, at the
+   size the kind-5 value tag carries (#2704). A copy claims every value
+   column — the string one by reboxing (#8390), the struct one by the
+   retain, the wide-scalar one outright (#7114).
 
-   **arm64 is excluded.** arm64 IR-lowering forces `TwoWordOverride=true`
-   (see `internal/codegen/arm64/arm64.go`), so strings are stored boxed
-   like wasm — but arm64 lacks the native `__fern_str_dec` and
-   `__fern_cell_free` runtime helpers, so the boxed reclaim path can't
-   run there yet. arm64 stays on the pre-slice (leaking-but-stable)
-   behaviour pending a future PR that ports those helpers.
+   The IR-side pre-drop this replaced ran BEFORE the COW, so it had to
+   be gated on `__fern_rc_is_unique(m)` and reclaimed nothing under an
+   alias; it is gone. Only the kind-4 (struct / enum) pre-drop is still
+   on that side of the COW, because its release is the IR-generated
+   per-value drop and the runtime helper is type-erased.
+
+   **All three backends.** arm64 IR-lowering forces
+   `TwoWordOverride=true` (see `internal/codegen/arm64/arm64.go`), so
+   strings are stored boxed like wasm, and its `__fern_str_dec` /
+   `__fern_cell_free` runtime helpers carry the same reclaim.
 
    The SSO inline-tag (`bit 0` of the data pointer on natives) and
    literal sentinel (`0x80000000` at data-8, from prereq 2) are both

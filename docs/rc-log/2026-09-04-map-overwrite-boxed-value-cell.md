@@ -114,7 +114,9 @@ What it costs is a leak in the aliased case, which is where the release belongs
 to whoever owns the column: the two-word ABIs reclaim it at map drop and read 0,
 the native single-word one strands it. Closing that is #8354 — a string value
 needs a kind of its own in `mapValKindTag` before `__map_own_copied_cols` can
-recognise and claim it.
+recognise and claim it. *(Both landed: the claim in #8390, and then #8421 moved
+the release itself to the far side of the COW, which retired the string
+pre-drops and their gate entirely.)*
 
 `TestX86_64MapStringColumnReclaim` and its arm64 / wasm siblings carry
 `mapAliasedOverwriteSrc`, which fails on main today (x86-64, killed by a signal).
@@ -190,6 +192,10 @@ needs is its counterpart.
 - The native single-word pre-drop still carries `!needBoxK`, so a `Map[i64,
   string]` overwrite on x86-64 loses its old value. x86-64 has no
   `__fern_cell_free`, so its boxed cells are a separate gap first.
+  *(Closed by #8421: both string pre-drops are gone and the release runs in
+  `__map_dec_value`, past the COW, where no key shape can gate it off. The
+  dead cell goes back through `__free` at a size the value tag carries, so
+  x86-64 still needs no `__fern_cell_free`.)*
 - **#8277** — on x86-64 a Map read with an ALIASED string key strands the map's
   KEY buffer: one block per MAP, sized by the key, flat in the value length and
   in the number of reads. Not `get_or`-specific (`get` does it too) and the

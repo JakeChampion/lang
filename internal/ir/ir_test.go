@@ -2900,58 +2900,117 @@ func callOrderIn(p *Program, fnName, callee string, from int) int {
 	return -1
 }
 
-// TestLowerMapStringValueOverwriteFreesOldCell verifies the two-word ABI's
-// overwrite pre-drop reclaims BOTH halves of the superseded value: the
-// string buffer the cell points at, and the cell. Freeing only the buffer
-// strands a 16-byte cell per overwrite, which no answer and no underflow
-// counter can see.
-func TestLowerMapStringValueOverwriteFreesOldCell(t *testing.T) {
-	p := lowerSourceWith(t, `function build(): i32 {
+// TestLowerMapStringValueTagCarriesCellSize pins what map_new stamps at
+// buf+12 for a string-valued map: kind 5, plus — on a boxing target — the
+// byte size of the (data, len) cell each slot points at, which is the size
+// boxIntoCell allocated. __map_dec_value reads it back to free the cell an
+// overwrite displaces, and reads 0 on the single-word ABI, where the slot
+// IS the string and there is no cell. Whether a target boxes is the one
+// thing the runtime cannot work out for itself in the release direction
+// (#8421), so a wrong size here frees a live block at the wrong class and a
+// missing one leaks every displaced cell.
+func TestLowerMapStringValueTagCarriesCellSize(t *testing.T) {
+	const src = `function build(): i32 {
+    var m: Map[i32, string] = map_new(8);
+    m = m.insert(1, "hello" + "world");
+    return 0;
+}`
+	for _, tc := range []struct {
+		name    string
+		ptrW    int
+		twoWord bool
+		wantTag int32
+	}{
+		{"wasm32", 4, false, 5 | (8 << 8)},
+		{"arm64TwoWord", 8, true, 5 | (16 << 8)},
+		{"x86_64SingleWord", 8, false, 5},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			prev := ast.TwoWordOverride
+			ast.TwoWordOverride = tc.twoWord
+			defer func() { ast.TwoWordOverride = prev }()
+			p := lowerSourceWith(t, src, tc.ptrW)
+			if got := mapNewValTagIn(p, "build"); got != tc.wantTag {
+				t.Errorf("map_new value tag = %d, want %d (kind %d, cell bytes %d):\n%s",
+					got, tc.wantTag, tc.wantTag&255, tc.wantTag>>8, p)
+			}
+		})
+	}
+}
+
+// mapNewValTagIn returns the valKind tag map_new is called with in fnName —
+// the second of the two tags the lowering appends, so the last OpConstI32
+// before the call. -1 when there is no map_new call.
+func mapNewValTagIn(p *Program, fnName string) int32 {
+	for _, fn := range p.Funcs {
+		if fn.Name != fnName {
+			continue
+		}
+		for i, op := range fn.Ops {
+			if !isNamedCallKind(op.Kind) || op.Str != "map_new" {
+				continue
+			}
+			for j := i - 1; j >= 0; j-- {
+				if fn.Ops[j].Kind == OpConstI32 {
+					return fn.Ops[j].I32
+				}
+			}
+		}
+	}
+	return -1
+}
+
+// TestLowerMapStringValueOverwriteHasNoPreDrop pins the erasure that came
+// with moving the release into __map_dec_value: a string-valued overwrite
+// emits NO pre-drop at all, on any ABI and with a boxed key or a raw one.
+//
+// This is a correctness invariant, not tidiness. __map_dec_value releases
+// the displaced value unconditionally, so a pre-drop that survived beside
+// it would release the same value twice — and the pre-drop's own sole-owner
+// gate would not stop that, since the two are on opposite sides of the COW
+// and both run on the sole-owner path.
+func TestLowerMapStringValueOverwriteHasNoPreDrop(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		ptrW    int
+		twoWord bool
+		src     string
+	}{
+		{"wasm32/rawKey", 4, false, `function build(): i32 {
     var m: Map[i32, string] = map_new(8);
     m = m.insert(1, "hello" + "world");
     m = m.insert(1, "hello" + "there");
     return 0;
-}`, 4)
-	lookup := callOrderIn(p, "build", "__map_lookup_val", 0)
-	if lookup < 0 {
-		t.Fatalf("expected the overwrite pre-drop lookup via __map_lookup_val:\n%s", p)
-	}
-	dec := callOrderIn(p, "build", "__fern_str_dec", lookup)
-	if dec < 0 {
-		t.Fatalf("expected the pre-drop to release the old value buffer via __fern_str_dec:\n%s", p)
-	}
-	if free := callOrderIn(p, "build", "__fern_cell_free", dec); free < 0 {
-		t.Errorf("expected the pre-drop to free the superseded value cell after the str_dec:\n%s", p)
-	}
-}
-
-// TestLowerMapBoxedKeyReachesOverwritePreDrop verifies a BOXED key does not
-// skip the pre-drop. __map_lookup_val dispatches on the map's stored key
-// kind and the column holds cell pointers, so the key is boxed for the
-// lookup like any other read — and that transient cell is freed before the
-// set, which is what separates it from the discarded-key cell the set's own
-// tail releases.
-func TestLowerMapBoxedKeyReachesOverwritePreDrop(t *testing.T) {
-	p := lowerSourceWith(t, `function build(): i32 {
+}`},
+		{"wasm32/boxedKey", 4, false, `function build(): i32 {
     var k: string = "he" + "llo";
     var m: Map[string, string] = map_new(8);
     m = m.insert(k, "wor" + "ld");
     m = m.insert(k, "the" + "re");
     return 0;
-}`, 4)
-	lookup := callOrderIn(p, "build", "__map_lookup_val", 0)
-	if lookup < 0 {
-		t.Fatalf("a boxed key must still reach the overwrite pre-drop:\n%s", p)
-	}
-	set := callOrderIn(p, "build", "__method_Map_set", 0)
-	if set < 0 {
-		t.Fatalf("expected a __method_Map_set call:\n%s", p)
-	}
-	if lookup > set {
-		t.Errorf("the pre-drop lookup must run BEFORE the set it precedes (lookup %d, set %d):\n%s", lookup, set, p)
-	}
-	if free := callOrderIn(p, "build", "__fern_cell_free", lookup); free < 0 || free > set {
-		t.Errorf("expected the transient lookup key cell to be freed before the set (got %d, set %d):\n%s", free, set, p)
+}`},
+		{"arm64TwoWord/rawKey", 8, true, `function build(): i32 {
+    var m: Map[i32, string] = map_new(8);
+    m = m.insert(1, "hello" + "world");
+    m = m.insert(1, "hello" + "there");
+    return 0;
+}`},
+		{"x86_64SingleWord/rawKey", 8, false, `function build(): i32 {
+    var m: Map[i32, string] = map_new(8);
+    m = m.insert(1, "hello" + "world");
+    m = m.insert(1, "hello" + "there");
+    return 0;
+}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			prev := ast.TwoWordOverride
+			ast.TwoWordOverride = tc.twoWord
+			defer func() { ast.TwoWordOverride = prev }()
+			p := lowerSourceWith(t, tc.src, tc.ptrW)
+			if callsDirect(p, "build", "__map_lookup_val") {
+				t.Errorf("a string-valued overwrite must have no pre-drop — __map_dec_value releases the displaced value, so both would release it twice:\n%s", p)
+			}
+		})
 	}
 }
 

@@ -11026,6 +11026,20 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
         if (!rd.ok) { return rd; }
         return rd.emit(ir.op_free());
     }
+    // __fern_str_dec(s): core/map's string-value release, which
+    // __map_dec_value runs on the value an overwrite displaces (#8421).
+    // A NO-OP here, for the same reason as the two above: the self-host
+    // backends have no rc-guarded string dec — __fern_str_free frees a
+    // fresh, non-escaping string outright, which is not what a shared
+    // column slot wants — so the map runtime stays in safe-leak mode until
+    // goal #2 ports the native RC. Its argument is a pure load off the
+    // value slot, so it is left unlowered rather than popped: the arg is a
+    // `string`, whose slot COUNT differs between the two string ABIs, and
+    // there is no pop-n op to match it with. Pushes the dummy 0 the
+    // statement position discards.
+    if (cid.name == "__fern_str_dec" && c.args.len() == 1) {
+        return s.emit(ir.op_const_i32(0));
+    }
     // __memcpy(dst, src, n): raw byte copy. Lower the three
     // usize/i32 operands (dst, src, n) then emit op_memcpy, which
     // the IR backends select rep movsb / a byte loop / memory.copy

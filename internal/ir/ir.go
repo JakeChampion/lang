@@ -13427,12 +13427,25 @@ func mapValHasDrop(v ast.Type, info *checker.Info, genEnumDrops map[string]*ast.
 // f64, which emitWideMapSet cell-boxes on every target) it is the
 // byte size of the cell each value slot points at, which is what
 // lets the runtime free a displaced one (__map_val_cell_bytes).
+// A STRING value (kind 5) carries the same thing kind 0 does: the
+// byte size of the cell each slot points at, and 0 when the slot IS
+// the value (the single-word ABI stores the string's data pointer
+// directly). It is the size boxIntoCell allocated, so the free that
+// reads it back matches its __alloc exactly. Whether a target boxes
+// at all is an ABI fact rather than a per-map one, but the runtime
+// has no other way to ask it — __map_dec_value must know whether a
+// displaced value leaves a cell behind, and the INC direction's trick
+// for the same question (__map_own_str_slot's rebox identity)
+// allocates, which is the wrong direction for a release (#8421).
 // Both sizes are read straight off the buf (vk = tag & 255,
 // size = tag >> 8) so the runtime can reclaim a value without the
 // IR threading the size through every set / drop call. A
 // non-boxed kind-0 (i32-sized) or kind-1 value carries no size.
 func mapValTag(t ast.Type, ptrW int, info *checker.Info, genEnumDrops map[string]*ast.EnumDecl, genTupleDrops map[string]ast.TupleType) int32 {
 	kind := mapValKindTag(t, info, genEnumDrops, genTupleDrops, ptrW)
+	if kind == 5 && ast.UseTwoWordStrings(ptrW) {
+		return kind | (stringSlotSize(ptrW) << 8)
+	}
 	if kind >= 2 {
 		if at, ok := t.(ast.ArrayType); ok {
 			return kind | (int32(ast.ElemSizeBytesFor(at.Elem, ptrW)) << 8)
@@ -14616,9 +14629,9 @@ func (b *builder) callBody(n *ast.Call) error {
 	// re-evaluates them (same idempotence requirement as the inc-on-set
 	// above). The set's own overwrite-dec stays a no-op for kind 4, so
 	// there's no double free; the freed box isn't dereferenced by the set
-	// (it only probes keys, then overwrites the slot). Sole-owner gated
-	// like the string pre-drops below, and for the same reason: a copy
-	// shares this column too (#8354).
+	// (it only probes keys, then overwrites the slot). Sole-owner gated —
+	// see emitMapPredropSoleOwnerGate for why the gate is about ORDER, and
+	// for what being on this side of the COW still costs.
 	if id.Name == "__method_Map_set" && len(n.Args) == 3 && len(n.TypeArgs) >= 2 &&
 		ast.RcFreeEnabled && !needBoxK && !keyKind3 &&
 		mapValKindTag(n.TypeArgs[1], b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW) == 4 &&
@@ -14647,106 +14660,13 @@ func (b *builder) callBody(n *ast.Call) error {
 			b.emit(Op{Kind: OpEnd}) // the sole-owner gate
 		}
 	}
-	// Map[K, string] (two-word ABI — wasm + arm64-TwoWordOverride)
-	// overwrite pre-drop: m.set(k, v) replacing an existing string
-	// value must reclaim the old CELL and the buffer it points at (the
-	// runtime's type-erased overwrite-dec is a no-op for valKind 1).
-	// Look up the old value cell (non-retaining) and, if present,
-	// __fern_str_dec the (data, len) it holds, then free the cell —
-	// the same pair __drop_map_str_values runs when the whole map dies.
-	// m / k must be call-free (the set below re-evaluates them — same
-	// idempotence as the kind-4 path).
-	//
-	// A BOXED key reaches the lookup through a cell of its own, because
-	// __map_lookup_val dispatches on the map's stored key kind and the
-	// column holds cell pointers. Only the CELL is freed, never what it
-	// points at: exprSafeToReevaluate admits an alias the caller still
-	// owns (ident / field / index), a literal (static, so a dec would be a
-	// no-op), and a cast of either — never a concat, so no key reaching
-	// here is a fresh buffer this lowering owns. Same rule as
-	// freeLookupBoxCell's, for the same reason.
-	if id.Name == "__method_Map_set" && len(n.Args) == 3 && len(n.TypeArgs) >= 2 &&
-		ast.RcFreeEnabled && ast.UseTwoWordStrings(b.ptrW) && !keyKind3 &&
-		exprSafeToReevaluate(n.Args[0]) && exprSafeToReevaluate(n.Args[1]) {
-		if _, isStr := n.TypeArgs[1].(ast.StringType); isStr {
-			if err := b.emitMapPredropSoleOwnerGate(n.Args[0]); err != nil {
-				return err
-			}
-			if err := b.expr(n.Args[0]); err != nil { // m
-				return err
-			}
-			lookupKeyCell := int32(-1)
-			if needBoxK {
-				var err error
-				if lookupKeyCell, err = b.boxIntoCellSlot(n.Args[1], n.TypeArgs[0], "__map_predrop_kbox"); err != nil {
-					return err
-				}
-			} else if err := b.expr(n.Args[1]); err != nil { // k
-				return err
-			}
-			b.emit(Op{Kind: OpCallDirect, Str: "__map_lookup_val", I32: 2})
-			oldSlot := b.allocSlot()
-			b.locals[fmt.Sprintf("__map_overwrite_oldstr_%d", oldSlot)] = oldSlot
-			b.emit(Op{Kind: OpStoreLocal, I32: oldSlot})
-			if lookupKeyCell >= 0 {
-				b.emit(Op{Kind: OpLoadLocal, I32: lookupKeyCell})
-				b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_cell_free", Width: ResAddr, I32: 1})
-				b.emit(Op{Kind: OpDrop})
-			}
-			// if oldCell != 0: __fern_str_dec the (data, len) in the cell,
-			// then return the cell.
-			b.emit(Op{Kind: OpLoadLocal, I32: oldSlot})
-			b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
-			b.emit(Op{Kind: OpLoadLocal, I32: oldSlot})
-			b.emit(Op{Kind: OpLoad, Width: WidthString})
-			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", Width: ResAddr, I32: 1})
-			b.emit(Op{Kind: OpDrop})
-			b.emit(Op{Kind: OpLoadLocal, I32: oldSlot})
-			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_cell_free", Width: ResAddr, I32: 1})
-			b.emit(Op{Kind: OpDrop})
-			b.emit(Op{Kind: OpEnd})
-			b.emit(Op{Kind: OpEnd}) // the sole-owner gate
-		}
-	}
-	// Map[K, string] (native single-word) overwrite pre-drop: the native
-	// counterpart of the wasm gate above. Natives store the string data
-	// pointer directly in the value slot (no boxing), so __map_lookup_val
-	// returns the data pointer instead of a cell pointer — no deref
-	// needed; just __fern_str_dec on the loaded pointer, which RETURNS the
-	// block at the last reference where a bare rc dec would only zero the
-	// count and strand the replaced buffer. Its own guards cover every
-	// source the slot can hold: the SSO inline tag and the literal sentinel
-	// at data-8. arm64 (ptrW=8 + TwoWordOverride) stays excluded — same
-	// gating as the rest of the native string-reclaim path, awaiting
-	// boxed-string runtime helpers.
-	if id.Name == "__method_Map_set" && len(n.Args) == 3 && len(n.TypeArgs) >= 2 &&
-		ast.RcFreeEnabled && b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) && !needBoxK && !keyKind3 &&
-		exprSafeToReevaluate(n.Args[0]) && exprSafeToReevaluate(n.Args[1]) {
-		if _, isStr := n.TypeArgs[1].(ast.StringType); isStr {
-			if err := b.emitMapPredropSoleOwnerGate(n.Args[0]); err != nil {
-				return err
-			}
-			if err := b.expr(n.Args[0]); err != nil { // m
-				return err
-			}
-			if err := b.expr(n.Args[1]); err != nil { // k (non-boxed)
-				return err
-			}
-			b.emit(Op{Kind: OpCallDirect, Str: "__map_lookup_val", I32: 2})
-			oldSlot := b.allocSlot()
-			b.locals[fmt.Sprintf("__map_overwrite_oldstr_native_%d", oldSlot)] = oldSlot
-			b.emit(Op{Kind: OpStoreLocal, I32: oldSlot})
-			// if oldPtr != 0: __fern_str_dec it (its low-bit guard handles
-			// inline strings, the data-8 sentinel handles literals).
-			b.emit(Op{Kind: OpLoadLocal, I32: oldSlot})
-			b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
-			b.emit(Op{Kind: OpLoadLocal, I32: oldSlot})
-			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", Width: ResAddr, I32: 1})
-			b.emit(Op{Kind: OpDrop})
-			b.emit(Op{Kind: OpEnd})
-			b.emit(Op{Kind: OpEnd}) // the sole-owner gate
-		}
-	}
+	// A string VALUE (kind 5) has no pre-drop here. Its release lives in
+	// __map_dec_value, which __map_set_keyed_impl reaches AFTER its own
+	// __map_cow_inplace — so it is sole-owner-correct by construction and
+	// reclaims on the aliased path too, where a pre-drop had to be gated
+	// off and leak (#8421). It also covers what a pre-drop could not reach
+	// at all: a boxed or struct key, and an `m` / `k` the set re-evaluates.
+
 	// `m.get(k)` ALWAYS reboxes the helper's uniform `Option[usize]`
 	// into a consumer-shaped `Option[V]`. The helper's payload sits
 	// at the usize slot offset (8 on natives), which only lines up
@@ -21127,8 +21047,8 @@ func (b *builder) emitWideMapSet(n *ast.Call, kType, vType ast.Type) error {
 	return nil
 }
 
-// emitMapPredropSoleOwnerGate opens an `if __fern_rc_is_unique(m)` around an
-// overwrite pre-drop, which the caller closes with an OpEnd.
+// emitMapPredropSoleOwnerGate opens an `if __fern_rc_is_unique(m)` around the
+// kind-4 overwrite pre-drop, which the caller closes with an OpEnd.
 //
 // A pre-drop RELEASES the value the set is about to replace, and it runs
 // BEFORE the set's own __map_cow_inplace. The ORDER is what makes the gate
@@ -21136,7 +21056,13 @@ func (b *builder) emitWideMapSet(n *ast.Call, kType, vType ast.Type) error {
 // whatever __map_own_copied_cols would go on to do, and a second handle over
 // the same buffer still names the value. Releasing it without owning the
 // handle frees storage the other handle reads. `m` is re-evaluated here, which
-// the pre-drop gates already require of it.
+// the pre-drop gate already requires of it.
+//
+// The cost of being on that side of the COW is that an aliased overwrite
+// reclaims nothing. The string column paid it until #8421 moved its release
+// into __map_dec_value, which runs after the COW; kind 4 cannot follow yet
+// because its release is the IR-generated per-value drop and the runtime
+// helper is type-erased.
 func (b *builder) emitMapPredropSoleOwnerGate(m ast.Expr) error {
 	if err := b.expr(m); err != nil {
 		return err
