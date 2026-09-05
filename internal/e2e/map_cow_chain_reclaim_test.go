@@ -4,10 +4,17 @@ package e2e
 //
 // The sibling file pins the copy's CLAIM on the columns it copied (#6242).
 // This one pins the release of that claim at the other end: `a = <a COW copy
-// of a>`, where the reassignment ends the old handle's ownership. That site
-// deliberately freed only the buf and the handle — the column walks could not
-// run while `__map_cow_inplace` copied the columns shallowly, because freeing
-// the key column pulled the strings out from under the fresh handle (#6227).
+// of a>`, where the reassignment ends the old handle's ownership. That release
+// goes through the shared map-drop chain (emitMapSlotDrop): the value column by
+// kind, then a string key column, then the buf and handle, every helper
+// self-guarded on the handle's own rc==1.
+//
+// It did not always. The site kept its own narrower body, which freed only the
+// buf, the handle and the string keys, because the column walks could not run
+// while `__map_cow_inplace` copied the columns shallowly — freeing a column
+// pulled storage out from under the fresh handle (#6227). Every column is
+// claimed now (#7114, #8390, #8420), so that reason expired and the second
+// body went with it (#8431).
 //
 // Once the copy owned its columns, that narrow free became a per-copy leak of
 // everything the copy had just claimed, which in a chain is quadratic: round N
@@ -26,16 +33,20 @@ package e2e
 // entry per copy. The bounded leg below is therefore non-vacuous on wasm and
 // arm64 and vacuous on x86-64, which is stated rather than papered over.
 //
-// The release may only cover the columns the copy claims — every column is
-// claimed now, so the value cases below are what would keep a widened walk
-// from becoming a use-after-free if it ever widens.
+// A release may only cover the columns the copy CLAIMS, or it frees what the
+// new handle reads — so the value cases below are what keeps the widened walk
+// honest, and they are why widening was safe to do.
 //
-// It should widen. With #8421 and #8277 out of the frame the chain leak is
-// attributable, and it is almost entirely the two un-walked value columns:
-// 100 rounds, live_bytes, arr_chain (walked) reads 0 / 3200 / 3200 across
-// x86-64 / arm64 / wasm, while str_chain reads 3168 / 83648 / 83968 and
-// struct_chain 6368 / 6400 / 9568. #8431 carries the numbers; closing it turns
-// the cases below into census assertions.
+// What the two un-walked columns had been costing, 100 rounds, live_bytes,
+// x86-64 / arm64 / wasm, before #8431 and after:
+//
+//	arr_chain     (kind 2, always walked)  0 / 3200 / 3200   unchanged
+//	str_chain     (kind 5)   3168 / 83648 / 83968  ->  0 / 0 / 0
+//	struct_chain  (kind 4)   6368 /  6400 /  9568  ->  0 / 3200 / 3200
+//
+// TestMapCowChainReclaimCensus below holds those numbers. The residual the two
+// two-word columns still read is #8432's, not this site's — it is present in
+// arr_chain, which this release has always walked.
 
 import "testing"
 
