@@ -18,11 +18,9 @@ import (
 // f64-returning `match` was rejected at instantiation, std/test included
 // (#6192).
 //
-// This assertion lives here rather than only in internal/e2e because the e2e
-// wasm harness turns a validator rejection into a t.Skip (it is the signal for
-// a wasmbin coverage gap, and this failure is indistinguishable from one). A
-// regression would therefore go quiet rather than red. Here it is a hard
-// failure on the op kind itself.
+// This assertion lives here as well as in internal/e2e because it pins the op
+// kind directly, so a regression is named at the IR layer rather than reported
+// as a validator rejection several stages downstream.
 func TestImplicitFloatReturnMatchesDeclaredWidth(t *testing.T) {
 	// `fall64` / `fall32` end in an if/else where both arms return, so the
 	// builder has to synthesise a value for the path after it.
