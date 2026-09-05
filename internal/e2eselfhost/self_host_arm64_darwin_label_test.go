@@ -82,11 +82,9 @@ func TestSelfHostArm64DarwinStringLiteralKeepsDotL(t *testing.T) {
 	}
 }
 
-// A program whose STRING contains a `:lo12:` operand. This is not contrived:
-// the self-host compiler's own emitter literals are exactly this shape, and
-// rewriting them is how the arm64-darwin stage-2 compiler came to emit a
-// listing 6 bytes out of step at every `:lo12:` (#8400). The `.ascii`
-// directive keeps its payload; no `@PAGEOFF` is appended to a data line.
+// A program whose STRING contains a `:lo12:` operand, the shape of the
+// self-host compiler's own emitter literals (#8400). The `.ascii` directive
+// keeps its payload; no `@PAGEOFF` is appended to a data line.
 const darwinLo12StrSrc = `function main(): i32 {
     print("    add x9, x9, :lo12:.Lfern_relanchor");
     return 0;
@@ -104,11 +102,15 @@ func TestSelfHostArm64DarwinStringLiteralKeepsLo12(t *testing.T) {
 	if !strings.Contains(out, `:lo12:.Lfern_relanchor"`) {
 		t.Error(`the string literal's ":lo12:" was rewritten in the self-host Darwin listing - string data is not an operand`)
 	}
+	if strings.Contains(out, `"@PAGEOFF`) {
+		t.Error(`a .ascii data line carries a @PAGEOFF suffix in the self-host Darwin listing`)
+	}
+	// Both directions: the operands themselves must still be rewritten.
 	if n := countOutsideStrings(out, ":lo12:"); n != 0 {
 		t.Errorf("the self-host Darwin listing still has %d :lo12: operands outside string data", n)
 	}
-	if n := countOutsideStrings(out, `"@PAGEOFF`); n != 0 {
-		t.Errorf("%d .ascii data lines carry a @PAGEOFF suffix in the self-host Darwin listing", n)
+	if !strings.Contains(out, "@PAGEOFF") {
+		t.Error("the self-host Darwin listing has no @PAGEOFF operand at all")
 	}
 }
 

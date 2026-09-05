@@ -102,8 +102,7 @@ func TestSelfHostArm64DarwinBuilds(t *testing.T) {
 		// .rodata (__TEXT,__const) string literal.
 		{"print", `function main(): i32 { print("hi"); return 0; }`, 0},
 		// A literal shaped like the emitter's own `:lo12:` operands: its bytes
-		// must survive darwinize (#8400). Under the rewrite the payload lost
-		// 6 bytes under an unchanged length, so s[16] read '.' not ':'.
+		// must survive darwinize (#8400).
 		{"lo12_literal", `function main(): i32 {
     var s: string = "    add x9, x9, :lo12:.Lfern_relanchor";
     if (s.len() != 38) { return 1; }
