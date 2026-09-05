@@ -40,7 +40,7 @@ func TestParseIndex(t *testing.T) {
 	ix, err := ParseIndex(`# registry
 [foo]
 "1.0.0" = { path = "../foo-1.0.0" }
-"1.2.0" = { url = "https://x/foo.tar.gz", hash = "sha256:abc" }
+"1.2.0" = { url = "https://x/foo.tar.gz", hash = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }
 [bar]
 "2.1.0" = { path = "bar" }
 `)
@@ -51,7 +51,7 @@ func TestParseIndex(t *testing.T) {
 		t.Errorf("latest foo = %v %v", v, ok)
 	}
 	s, ok := ix.SourceFor("foo", Version{1, 2, 0})
-	if !ok || s.URL != "https://x/foo.tar.gz" || s.Hash != "sha256:abc" {
+	if !ok || s.URL != "https://x/foo.tar.gz" || s.Hash != "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" {
 		t.Errorf("foo 1.2.0 source = %+v", s)
 	}
 }
@@ -189,7 +189,7 @@ func TestResolveExcludeUnrelatedNoOp(t *testing.T) {
 func TestLockRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	sel := []Selected{
-		{Name: "foo", Version: Version{1, 2, 0}, Source: Source{URL: "https://x/foo.tar.gz", Hash: "sha256:abc"}},
+		{Name: "foo", Version: Version{1, 2, 0}, Source: Source{URL: "https://x/foo.tar.gz", Hash: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}},
 		{Name: "bar", Version: Version{2, 0, 0}, Source: Source{Path: filepath.FromSlash("/pkgs/bar")}},
 	}
 	if err := WriteLock(dir, sel); err != nil {
@@ -199,7 +199,7 @@ func TestLockRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 2 || got["foo"].Version.String() != "1.2.0" || got["foo"].Source.Hash != "sha256:abc" {
+	if len(got) != 2 || got["foo"].Version.String() != "1.2.0" || got["foo"].Source.Hash != "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" {
 		t.Errorf("foo round-trip wrong: %+v", got["foo"])
 	}
 	if got["bar"].Source.Path != filepath.FromSlash("/pkgs/bar") {
