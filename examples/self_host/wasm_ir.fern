@@ -4537,7 +4537,7 @@ function struct_type_id(structs: irlower.StructTab, name: string): i32 {
 // register backends' __fern_io_error (asm_ir). Maps a small set of WASI
 // preview-1 errnos to the matching IoError variant, carrying the offending path
 // string on the single-string variants; everything else lands in
-// Other(path, ""). The variant ids are baked from the module's struct table
+// Other(path, strerror(errno)). The variant ids are baked from the module's struct table
 // (same table the match arms read, so ids agree). errno→variant matches native
 // wasmbin: ENOENT(44) → NotFound(path), EACCES(2) → PermissionDenied(path),
 // EEXIST(20) → AlreadyExists(path), EINTR(27) → Interrupted, ENOTSUP(58) →
@@ -4561,21 +4561,22 @@ function struct_type_id(structs: irlower.StructTab, name: string): i32 {
 // discriminant into the preview1 errno the existing boxer understands, then
 // delegates, so the IoError variant shapes stay defined in exactly one place.
 //
-// The translation mirrors the native backend's appendErrnoFromErrorCode
-// (internal/codegen/wasmbin/wasi_fs.go), the oracle: default ENOENT (so an
-// unrecognised failure reads as NotFound, not Other), plus access(0) -> EACCES,
-// exist(7) -> EEXIST, interrupted(11) -> EINTR, unsupported(27) -> ENOTSUP.
-// The discriminant indices are positional in the enum as vendored at
-// cmd/fern/wit/deps/filesystem/types.wit.
+// The translation mirrors the native backend's __wasi_errno_of_code
+// (internal/codegen/wasmbin/wasi_fs.go), the oracle: every error-code case to
+// its errno, from asmcore.wasi_error_code_errnos, with ENOENT for a
+// discriminant past the enum. The discriminant indices are positional in the
+// enum as vendored at cmd/fern/wit/deps/filesystem/types.wit.
 pub function build_io_error_p2_func(): string {
     var o: string = "";
     o = o + "  (func $__fern_build_io_error_p2 (param $code i32) (param $path i32) (result i32)\n";
     o = o + "    (local $errno i32)\n";
     o = o + "    (local.set $errno (i32.const 44))\n";
-    o = o + "    (if (i32.eq (local.get $code) (i32.const 0)) (then (local.set $errno (i32.const 2))))\n";
-    o = o + "    (if (i32.eq (local.get $code) (i32.const 7)) (then (local.set $errno (i32.const 20))))\n";
-    o = o + "    (if (i32.eq (local.get $code) (i32.const 11)) (then (local.set $errno (i32.const 27))))\n";
-    o = o + "    (if (i32.eq (local.get $code) (i32.const 27)) (then (local.set $errno (i32.const 58))))\n";
+    var codes: i32[] = asmcore.wasi_error_code_errnos();
+    var ci: i32 = 0;
+    while (ci < codes.len()) {
+        o = o + "    (if (i32.eq (local.get $code) (i32.const " + util.i32_to_string(ci) + ")) (then (local.set $errno (i32.const " + util.i32_to_string(codes[ci]) + "))))\n";
+        ci = ci + 1;
+    }
     o = o + "    (call $__fern_build_io_error (local.get $errno) (local.get $path)))\n";
     return o;
 }
@@ -4590,10 +4591,29 @@ function io_err_field_off(i: i32, slot: i32): string {
     return util.i32_to_string(slot * (1 + i));
 }
 
-pub function build_io_error_func(slot: i32): string {
+// needs_io_error reports whether the module carries any fs op — the gate on
+// $__fern_build_io_error and on the strerror texts it selects from.
+pub function needs_io_error(needs: string[]): boolean {
+    return need(needs, "stat") || need(needs, "lstat") || need(needs, "remove_file") || need(needs, "create_dir_all") || need(needs, "read_dir") || need(needs, "remove_dir_all") || need(needs, "temp_dir") || need(needs, "read_file") || need(needs, "read_file_bytes") || need(needs, "write_file") || need(needs, "open_file") || need(needs, "writer_write");
+}
+
+// with_strerror_texts adds the strerror texts and the "Unknown error " prefix
+// to the literal pool, each once.
+pub function with_strerror_texts(sv: string[]): string[] {
+    var texts: string[] = asmcore.strerror_texts();
+    var i: i32 = 0;
+    while (i < texts.len()) {
+        if (util.index_of_str(sv, texts[i]) < 0) { sv = sv.append(texts[i]); }
+        i = i + 1;
+    }
+    if (util.index_of_str(sv, "Unknown error ") < 0) { sv = sv.append("Unknown error "); }
+    return sv;
+}
+
+pub function build_io_error_func(slot: i32, sv: string[]): string {
     var o: string = "";
     o = o + "  (func $__fern_build_io_error (param $errno i32) (param $path i32) (result i32)\n";
-    o = o + "    (local $r i32) (local $e i32)\n";
+    o = o + "    (local $r i32) (local $e i32) (local $n i32) (local $t i32)\n";
     // ENOENT(44) -> NotFound(path)
     o = o + "    (if (i32.eq (local.get $errno) (i32.const 44)) (then\n";
     o = o + "      (local.set $r (call $__fern_str_box (i32.const " + io_err_box_bytes(1, slot) + ")))\n";
@@ -4628,14 +4648,38 @@ pub function build_io_error_func(slot: i32): string {
     o = o + "      (i32.store (local.get $r) (global.get " + tid_global("InvalidUtf8") + "))\n";
     o = o + "      (i32.store (i32.add (local.get $r) (i32.const " + io_err_field_off(0, slot) + ")) (local.get $path))\n";
     o = o + "      (return (local.get $r))))\n";
-    // default -> Other(path, ""). The empty message goes through $__fern_str_box
-    // like every arm above it, NOT a bare $__fern_alloc: a bare block has no rc
-    // word at [e-8], and $__fern_alloc returns a bump-heap address, so it clears
-    // the low-address guard in $__fern_arr_dec / $__fern_rc_dec and each reads
-    // the last word of the PRECEDING allocation instead. [e] = len stays at
-    // offset 0, so no consumer moves.
-    o = o + "    (local.set $e (call $__fern_str_box (i32.const 4)))\n";
-    o = o + "    (i32.store (local.get $e) (i32.const 0))\n";
+    // default -> Other(path, strerror(errno)) (#8265): $e is the pooled
+    // literal for the errno (with_strerror_texts put every text in sv), or a
+    // fresh "Unknown error N" block past the table. That block goes through
+    // $__fern_str_box like every arm above it, NOT a bare $__fern_alloc: a bare
+    // block has no rc word at [e-8], and $__fern_alloc returns a bump-heap
+    // address, so it clears the low-address guard in $__fern_arr_dec /
+    // $__fern_rc_dec and each reads the last word of the PRECEDING allocation
+    // instead.
+    var texts: string[] = asmcore.strerror_texts();
+    var wasi: i32[] = asmcore.strerror_wasi();
+    var ti: i32 = 0;
+    while (ti < texts.len()) {
+        var en: i32 = wasi[ti];
+        if (en != 0 && en != 44 && en != 2 && en != 20 && en != 27 && en != 58 && en != 25) {
+            o = o + "    (if (i32.eq (local.get $errno) (i32.const " + util.i32_to_string(en) + ")) (then (local.set $e (i32.const " + util.i32_to_string(offset_of_value(sv, texts[ti])) + "))))\n";
+        }
+        ti = ti + 1;
+    }
+    var pfx: string = "Unknown error ";
+    var plen: string = util.i32_to_string(pfx.len());
+    o = o + "    (if (i32.eqz (local.get $e)) (then\n";
+    o = o + "      (local.set $e (call $__fern_str_box (i32.const " + util.i32_to_string(4 + pfx.len() + 10) + ")))\n";
+    o = o + "      (memory.copy (i32.add (local.get $e) (i32.const 4)) (i32.const " + util.i32_to_string(offset_of_value(sv, pfx) + 4) + ") (i32.const " + plen + "))\n";
+    // $n = digit count of $errno
+    o = o + "      (local.set $n (i32.const 1)) (local.set $t (local.get $errno))\n";
+    o = o + "      (block $dc (loop $dl (br_if $dc (i32.lt_u (local.get $t) (i32.const 10))) (local.set $t (i32.div_u (local.get $t) (i32.const 10))) (local.set $n (i32.add (local.get $n) (i32.const 1))) (br $dl)))\n";
+    o = o + "      (i32.store (local.get $e) (i32.add (i32.const " + plen + ") (local.get $n)))\n";
+    // $t = one past the last digit; $n = the value, written from the end
+    o = o + "      (local.set $t (i32.add (i32.add (local.get $e) (i32.const " + util.i32_to_string(4 + pfx.len()) + ")) (local.get $n)))\n";
+    o = o + "      (local.set $n (local.get $errno))\n";
+    o = o + "      (block $wd (loop $wl (local.set $t (i32.sub (local.get $t) (i32.const 1))) (i32.store8 (local.get $t) (i32.add (i32.const 48) (i32.rem_u (local.get $n) (i32.const 10)))) (local.set $n (i32.div_u (local.get $n) (i32.const 10))) (br_if $wd (i32.eqz (local.get $n))) (br $wl)))\n";
+    o = o + "    ))\n";
     o = o + "    (local.set $r (call $__fern_str_box (i32.const " + io_err_box_bytes(2, slot) + ")))\n";
     o = o + "    (i32.store (local.get $r) (global.get " + tid_global("Other") + "))\n";
     o = o + "    (i32.store (i32.add (local.get $r) (i32.const " + io_err_field_off(0, slot) + ")) (local.get $path))\n";
@@ -8662,6 +8706,9 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     // before anything runs, so they are gathered ahead of the memory section
     // rather than at their first use below.
     var sv: string[] = unit_strs(units);
+    // The strerror texts $__fern_build_io_error selects from are literals like
+    // any other: they join the pool here so the data section carries them.
+    if (needs_io_error(needs)) { sv = with_strerror_texts(sv); }
     var cv: string[] = unit_caggs(units);
     parts = parts.append("  (memory (export \"memory\") " + util.i32_to_string(memory_min_pages(sv, cv)) + ")\n");
     // String literals -> data-section blocks `[len:i32 LE][bytes]`. Emitted
@@ -8831,7 +8878,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     // sibling of native wasmbin's __build_io_error / asm_ir's
     // __fern_io_error). Emit it once whenever any fs op is present so the
     // helpers' Err/Some payloads carry a matchable variant, not a raw errno.
-    if (need(needs, "stat") || need(needs, "lstat") || need(needs, "remove_file") || need(needs, "create_dir_all") || need(needs, "read_dir") || need(needs, "remove_dir_all") || need(needs, "temp_dir") || need(needs, "read_file") || need(needs, "read_file_bytes") || need(needs, "write_file") || need(needs, "open_file") || need(needs, "writer_write")) { parts = parts.append(build_io_error_func(8)); }
+    if (needs_io_error(needs)) { parts = parts.append(build_io_error_func(8, sv)); }
     // $__fern_stat(path, fstype): path_filestat_get -> FileStat struct +
     // Result box. Heap-backed (allocates the buffer + boxes), so folded into
     // the heap gate above.

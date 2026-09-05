@@ -37,6 +37,7 @@ import (
 	"github.com/jakechampion/lang/internal/ir"
 	nativearm64 "github.com/jakechampion/lang/internal/native/arm64"
 	"github.com/jakechampion/lang/internal/platforms"
+	"github.com/jakechampion/lang/internal/strerror"
 	"github.com/jakechampion/lang/internal/symname"
 	"github.com/jakechampion/lang/internal/treeshake"
 )
@@ -7588,7 +7589,7 @@ func (g *generator) emitStringAsBytesRuntime() {
 }
 
 // emitIoErrorRuntime emits `__fern_io_error(errno, path) → ptr`
-// — constructs an `IoError` enum-box for the given Linux errno.
+// — constructs an `IoError` enum-box for the given errno.
 // Layout matches the IR: 16-byte box `{tag:i32 @0, _:i32 @4,
 // payload:ptr @8}` for variants with payloads, 8 bytes
 // `{tag:i32 @0}` for payload-less variants. Tag values follow
@@ -7604,15 +7605,15 @@ func (g *generator) emitStringAsBytesRuntime() {
 //	ENOENT (2)  → NotFound          EACCES (13) → PermissionDenied
 //	EEXIST (17) → AlreadyExists     EINTR  (4)  → Interrupted
 //	EILSEQ (84 Linux / 92 Darwin) → InvalidUtf8
-//	all other   → Other(path, "")
+//	all other   → Other(path, strerror(errno))
 //
 // EILSEQ is synthetic — read_file's UTF-8 validation dispatches
 // it; no file syscall produces it (#5714). Unsupported is never
 // surfaced (both OSes support the ops we issue). The Other
-// variant carries (path, "") — the
-// second string is a deliberately empty placeholder rather
-// than e.g. strerror text; tracker note in BACKEND-PARITY.md
-// can promote that later.
+// variant's message is the strerror.Table text for the errno in
+// the target OS's numbering — a compare ladder over .rodata
+// literals (emitIoErrorMessage) — or a fresh "Unknown error N"
+// heap string for an errno outside the table (#8265).
 //
 // Args: x0 = errno (positive), x1 = path data ptr.
 // Returns: x0 = IoError box ptr.
@@ -7623,11 +7624,15 @@ func (g *generator) emitIoErrorRuntime() {
 	g.label("__fern_io_error")
 	if ast.UseTwoWordStrings(8) {
 		g.emitIoErrorRuntime2W()
+		g.emitIoErrorRodata()
 		return
 	}
-	g.emit("stp x29, x30, [sp, #-32]!")
+	// Frame: fp/lr, x19/x20, x21, then a 32-byte itoa scratch at
+	// [x29 + 40, x29 + 72).
+	g.emit("stp x29, x30, [sp, #-80]!")
 	g.emit("mov x29, sp")
 	g.emit("stp x19, x20, [sp, #16]")
+	g.emit("str x21, [sp, #32]")
 	g.emit("mov x19, x0") // errno
 	g.emit("mov x20, x1") // path
 
@@ -7643,18 +7648,14 @@ func (g *generator) emitIoErrorRuntime() {
 	g.emit("cmp w19, #%d", g.eilseq()) // EILSEQ (synthetic, #5714)
 	g.emit("b.eq .Lioe_ilseq")
 
-	// Other(path, ""). The "" payload needs the SECOND string
-	// payload at +16 (third 8-byte slot). Box is 24 bytes for
-	// two payloads. The empty-string ptr comes from interning
-	// "" at compile time — but we need a runtime constant.
-	// Use the .LStr_empty label below.
+	// Other(path, msg): x21 = msg, then a 24-byte box.
+	g.emitIoErrorMessage("w19", "x21", 72)
 	g.emit("mov x0, #24")
 	g.emit("bl __fern_alloc_box")
 	g.emit("mov w1, #6")
 	g.emit("str w1, [x0]")
-	g.emit("str x20, [x0, #8]") // path
-	g.adrpAdd("x1", ".LStr_ioerr_empty")
-	g.emit("str x1, [x0, #16]") // ""
+	g.emit("str x20, [x0, #8]")  // path
+	g.emit("str x21, [x0, #16]") // msg
 	g.emit("b .Lioe_done")
 
 	g.label(".Lioe_notfound")
@@ -7683,27 +7684,115 @@ func (g *generator) emitIoErrorRuntime() {
 	g.emit("str w19, [x0]")     // tag
 	g.emit("str x20, [x0, #8]") // path
 	g.label(".Lioe_done")
+	g.emit("ldr x21, [sp, #32]")
 	g.emit("ldp x19, x20, [sp, #16]")
-	g.emit("ldp x29, x30, [sp], #32")
+	g.emit("ldp x29, x30, [sp], #80")
 	g.emit("ret")
 	g.sizeDirective("__fern_io_error")
+	g.emitIoErrorRodata()
+}
 
-	// Compile-time empty-string literal used for the Other
-	// variant's second-string slot. Length=0, NUL-terminated.
-	// We can't easily intern this via the regular string-pool
-	// path because the io-error runtime emits before the
-	// string section; ad-hoc emit here keeps things simple.
+// emitIoErrorMessage leaves the strerror text for the errno in errW as
+// a string data pointer in msgX: a compare ladder over the .rodata
+// literals emitIoErrorRodata emits, falling through to a fresh
+// "Unknown error N" heap string for an errno outside the table. The
+// caller's frame holds a 32-byte scratch buffer ending at
+// [x29 + scratchEnd]. Clobbers x0-x5; msgX must be callee-save.
+func (g *generator) emitIoErrorMessage(errW, msgX string, scratchEnd int) {
+	texts := strerror.Dense(g.targetOS())
+	for n, text := range texts {
+		if text == "" {
+			continue
+		}
+		g.emit("cmp %s, #%d", errW, n)
+		g.emit("b.ne .Lioe_not_%d", n)
+		g.adrpAdd(msgX, fmt.Sprintf(".Lioe_str_%d", n))
+		g.emit("b .Lioe_msg_done")
+		g.label(fmt.Sprintf(".Lioe_not_%d", n))
+	}
+	// The decimal digits go into the scratch buffer from its end, the
+	// prefix in front of them, and the message is copied out into a
+	// fresh rc1 string.
+	g.emit("add x1, x29, #%d", scratchEnd)
+	g.emit("mov w2, %s", errW)
+	g.emit("mov w3, #10")
+	g.label(".Lioe_itoa")
+	g.emit("udiv w4, w2, w3")
+	g.emit("msub w5, w4, w3, w2")
+	g.emit("add w5, w5, #48")
+	g.emit("sub x1, x1, #1")
+	g.emit("strb w5, [x1]")
+	g.emit("mov w2, w4")
+	g.emit("cbnz w2, .Lioe_itoa")
+	g.adrpAdd("x2", ".Lioe_unknown_prefix")
+	g.emit("add x2, x2, #%d", len(strerror.UnknownPrefix))
+	g.emit("mov w3, #%d", len(strerror.UnknownPrefix))
+	g.label(".Lioe_prefix")
+	g.emit("sub x2, x2, #1")
+	g.emit("sub x1, x1, #1")
+	g.emit("ldrb w4, [x2]")
+	g.emit("strb w4, [x1]")
+	g.emit("subs w3, w3, #1")
+	g.emit("b.ne .Lioe_prefix")
+	g.emit("mov %s, x1", msgX) // message start, kept across the alloc
+	g.emit("add x0, x29, #%d", scratchEnd)
+	g.emit("sub x0, x0, x1") // byte length
+	g.emit("add x0, x0, #1") // + NUL
+	g.emit("bl __fern_alloc_rc1")
+	g.emit("add x3, x29, #%d", scratchEnd)
+	g.emit("sub x3, x3, %s", msgX) // byte length again
+	g.emitStrLenStore("w3", "x0")
+	g.emit("mov x1, %s", msgX)
+	g.emit("mov %s, x0", msgX)
+	g.emit("mov x2, x0")
+	g.label(".Lioe_copy")
+	g.emit("ldrb w4, [x1]")
+	g.emit("strb w4, [x2]")
+	g.emit("add x1, x1, #1")
+	g.emit("add x2, x2, #1")
+	g.emit("subs x3, x3, #1")
+	g.emit("b.ne .Lioe_copy")
+	g.emit("strb wzr, [x2]")
+	g.label(".Lioe_msg_done")
+}
+
+// emitIoErrorRodata emits the strerror literals the ladder loads, the
+// empty path a write error carries (writes have no path), and the
+// "Unknown error " prefix. Each string has the same immortal rc
+// header as a user literal so the rc helpers short-circuit on it.
+func (g *generator) emitIoErrorRodata() {
 	if g.darwin {
 		g.line(".section __TEXT,__const")
 	} else {
 		g.line(".section .rodata")
 	}
-	g.line(".align 2")
+	g.line(".align 3")
+	g.line("\t.4byte 0x80000000")
 	g.line("\t.4byte 0")
 	g.label(".LStr_ioerr_empty")
-	g.line("\t.byte 0")
+	g.line(`	.asciz ""`)
+	for n, text := range strerror.Dense(g.targetOS()) {
+		if text == "" {
+			continue
+		}
+		g.line(".align 3")
+		g.line("\t.4byte 0x80000000")
+		g.line(fmt.Sprintf("\t.4byte %d", len(text)))
+		g.label(fmt.Sprintf(".Lioe_str_%d", n))
+		g.line("\t.asciz " + escapeForGAS(text))
+	}
+	g.label(".Lioe_unknown_prefix")
+	g.line("\t.asciz " + escapeForGAS(strerror.UnknownPrefix))
 	g.line(".text")
 	g.line(".ltorg")
+}
+
+// targetOS is the strerror table the emitted runtime reports from.
+func (g *generator) targetOS() string {
+	if g.darwin {
+		return strerror.Darwin
+	}
+	return strerror.Linux
 }
 
 // emitIoErrorRuntime2W is the two-word-ABI variant.
@@ -7719,15 +7808,16 @@ func (g *generator) emitIoErrorRuntime() {
 //	                         msg_data@24, msg_len@32 → 40 bytes
 //	Interrupted:             tag@0 → 8 bytes (no payload)
 //
-// The empty-string sentinel used as the Other variant's
-// `msg` is a (data=0, len=`1<<63`) inline-empty pair —
-// stored inline rather than as a `.LStr_ioerr_empty` adrp
-// since the empty form doesn't need memory.
+// The message is a .rodata literal or a fresh rc1 heap string
+// (emitIoErrorMessage); both keep their byte length at data-4, which
+// is where the len word is read from.
 func (g *generator) emitIoErrorRuntime2W() {
-	g.emit("stp x29, x30, [sp, #-48]!")
+	// Frame: fp/lr, x19-x22, then a 32-byte itoa scratch at
+	// [x29 + 48, x29 + 80).
+	g.emit("stp x29, x30, [sp, #-96]!")
 	g.emit("mov x29, sp")
 	g.emit("stp x19, x20, [sp, #16]")
-	g.emit("str x21, [sp, #32]")
+	g.emit("stp x21, x22, [sp, #32]")
 	g.emit("mov x19, x0") // errno
 	g.emit("mov x20, x1") // path_data
 	g.emit("mov x21, x2") // path_len
@@ -7742,16 +7832,17 @@ func (g *generator) emitIoErrorRuntime2W() {
 	g.emit("b.eq .Lioe2w_intr")
 	g.emit("cmp w19, #%d", g.eilseq()) // EILSEQ (synthetic, #5714)
 	g.emit("b.eq .Lioe2w_ilseq")
-	// Other(path, "") — 40-byte box, msg = empty inline pair.
+	// Other(path, msg) — 40-byte box; x22 = msg data.
+	g.emitIoErrorMessage("w19", "x22", 80)
 	g.emit("mov x0, #40")
 	g.emit("bl __fern_alloc_box")
 	g.emit("mov w1, #6")
 	g.emit("str w1, [x0]")
 	g.emit("str x20, [x0, #8]")  // path_data
 	g.emit("str x21, [x0, #16]") // path_len
-	g.emit("str xzr, [x0, #24]") // msg_data = 0
-	g.emit("movz x1, #0x8000, lsl #48")
-	g.emit("str x1, [x0, #32]") // msg_len = inline-empty
+	g.emit("str x22, [x0, #24]") // msg_data
+	g.emit("ldur w1, [x22, #-4]")
+	g.emit("str x1, [x0, #32]") // msg_len
 	g.emit("b .Lioe2w_done")
 	g.label(".Lioe2w_notfound")
 	g.emit("mov w19, #0")
@@ -7778,12 +7869,11 @@ func (g *generator) emitIoErrorRuntime2W() {
 	g.emit("str x20, [x0, #8]")  // path_data
 	g.emit("str x21, [x0, #16]") // path_len
 	g.label(".Lioe2w_done")
-	g.emit("ldr x21, [sp, #32]")
+	g.emit("ldp x21, x22, [sp, #32]")
 	g.emit("ldp x19, x20, [sp, #16]")
-	g.emit("ldp x29, x30, [sp], #48")
+	g.emit("ldp x29, x30, [sp], #96")
 	g.emit("ret")
 	g.sizeDirective("__fern_io_error")
-	g.line(".ltorg")
 }
 
 // emitReadFileRuntime emits `__fern_read_file(path) →

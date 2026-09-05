@@ -282,6 +282,9 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 	// it. Without this the missing callee is silent: an absent key
 	// reads 0 out of helperIdxs and the body emits `call 0`.
 	closeUnconditionalHelperCalls(&helpers)
+	if opts.Preview2WASI {
+		closePreview2HelperCalls(&helpers)
+	}
 
 	// WASI Preview-3 async export: pull in the ("", "task-return")
 	// import (importSpecs["async_task_return"]) so the synthetic async
@@ -786,6 +789,9 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 				results: []byte{encode.ValtypeI32},
 				body:    buildEnumSentBody(internEnumSentinel, maxEnumN),
 			}
+		} else if name == "__build_io_error" {
+			spec = runtimeHelperSpecs[name]
+			spec.body = buildBuildIoErrorBody(internString)
 		} else if s, ok := externWrappers[name]; ok {
 			spec, isExtern = s, true
 		} else {

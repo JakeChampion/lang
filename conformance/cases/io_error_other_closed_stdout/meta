@@ -1,0 +1,6 @@
+waiver: harness-limit
+reason: only a process of its own can close fd 1. The interpreter runs
+  inside the test binary, whose stdout it shares, so Writer.close on fd 1
+  is a no-op there; and a WASI stdout is a stream handle obtained per
+  call, so dropping one leaves the next write working. Neither runner can
+  hand the program a closed stdout to observe.

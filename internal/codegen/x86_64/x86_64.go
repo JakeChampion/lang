@@ -58,6 +58,7 @@ import (
 	"github.com/jakechampion/lang/internal/fernrt"
 	"github.com/jakechampion/lang/internal/ir"
 	"github.com/jakechampion/lang/internal/platforms"
+	"github.com/jakechampion/lang/internal/strerror"
 	"github.com/jakechampion/lang/internal/symname"
 	"github.com/jakechampion/lang/internal/treeshake"
 )
@@ -11442,7 +11443,11 @@ func (g *generator) emitMemsetRuntime() {
 //
 //	ENOENT (2)  → NotFound          EACCES (13) → PermissionDenied
 //	EEXIST (17) → AlreadyExists     EINTR  (4)  → Interrupted
-//	default     → Other(path, "")
+//	default     → Other(path, strerror(errno))
+//
+// The message is the strerror.Table text for the errno — a compare
+// ladder over .rodata literals — or a fresh "Unknown error N" heap
+// string for an errno outside the table (#8265).
 //
 // System V: rdi=errno, rsi=path; result in rax.
 func (g *generator) emitIoErrorRuntime() {
@@ -11454,7 +11459,7 @@ func (g *generator) emitIoErrorRuntime() {
 	g.emit("mov rbp, rsp")
 	g.emit("push rbx")     // callee-save
 	g.emit("push r12")     // callee-save
-	g.emit("sub rsp, 8")   // 16-byte align
+	g.emit("sub rsp, 40")  // 16-byte align; [rsp + 8, rsp + 40) is itoa scratch
 	g.emit("mov ebx, edi") // ebx = errno
 	g.emit("mov r12, rsi") // r12 = path
 
@@ -11471,13 +11476,70 @@ func (g *generator) emitIoErrorRuntime() {
 	g.emit("cmp ebx, 84")
 	g.emit("je .Lioe_ilseq")
 
-	// Other(path, ""). 24-byte box: tag, pad, path, "".
+	// Other(path, msg). The ladder leaves the message pointer in rbx
+	// (callee-save, so it survives __fern_alloc_box).
+	texts := strerror.Dense(strerror.Linux)
+	for n, text := range texts {
+		if text == "" {
+			continue
+		}
+		g.emit(fmt.Sprintf("cmp ebx, %d", n))
+		g.emit(fmt.Sprintf("jne .Lioe_not_%d", n))
+		g.emit(fmt.Sprintf("lea rbx, [rip + .Lioe_str_%d]", n))
+		g.emit("jmp .Lioe_other")
+		g.label(fmt.Sprintf(".Lioe_not_%d", n))
+	}
+	// "Unknown error N": the decimal digits go into the scratch buffer
+	// from its end, the prefix in front of them, and the whole message
+	// is copied into a fresh rc1 heap string.
+	g.emit("lea rdi, [rsp + 40]")
+	g.emit("mov eax, ebx")
+	g.emit("mov ecx, 10")
+	g.label(".Lioe_itoa")
+	g.emit("xor edx, edx")
+	g.emit("idiv ecx")
+	g.emit("add edx, 48")
+	g.emit("dec rdi")
+	g.emit("mov byte ptr [rdi], dl")
+	g.emit("test eax, eax")
+	g.emit("jnz .Lioe_itoa")
+	g.emit("lea rsi, [rip + .Lioe_unknown_prefix]")
+	g.emit(fmt.Sprintf("add rsi, %d", len(strerror.UnknownPrefix)))
+	g.emit(fmt.Sprintf("mov ecx, %d", len(strerror.UnknownPrefix)))
+	g.label(".Lioe_prefix")
+	g.emit("dec rsi")
+	g.emit("dec rdi")
+	g.emit("movzx eax, byte ptr [rsi]")
+	g.emit("mov byte ptr [rdi], al")
+	g.emit("dec ecx")
+	g.emit("jnz .Lioe_prefix")
+	g.emit("mov [rsp], rdi") // message start, kept across the alloc
+	g.emit("lea rax, [rsp + 40]")
+	g.emit("sub rax, rdi")       // byte length
+	g.emit("lea rdi, [rax + 1]") // + NUL
+	g.emit("call __fern_alloc_rc1")
+	g.emit("mov rbx, rax") // msg data ptr
+	g.emit("mov rsi, [rsp]")
+	g.emit("lea rcx, [rsp + 40]")
+	g.emit("sub rcx, rsi") // byte length again
+	g.emitStrLenStore("ecx", "rbx")
+	g.emit("mov rdi, rbx")
+	g.label(".Lioe_copy")
+	g.emit("movzx eax, byte ptr [rsi]")
+	g.emit("mov byte ptr [rdi], al")
+	g.emit("inc rsi")
+	g.emit("inc rdi")
+	g.emit("dec ecx")
+	g.emit("jnz .Lioe_copy")
+	g.emit("mov byte ptr [rdi], 0")
+
+	g.label(".Lioe_other")
+	// 24-byte box: tag, pad, path, msg.
 	g.emit("mov edi, 24")
 	g.emit("call __fern_alloc_box")
 	g.emit("mov dword ptr [rax], 6")
 	g.emit("mov [rax + 8], r12")
-	g.emit("lea rcx, [rip + .LStr_ioerr_empty]")
-	g.emit("mov [rax + 16], rcx")
+	g.emit("mov [rax + 16], rbx")
 	g.emit("jmp .Lioe_done")
 
 	g.label(".Lioe_notfound")
@@ -11505,21 +11567,35 @@ func (g *generator) emitIoErrorRuntime() {
 	g.emit("mov [rax + 8], r12") // path
 
 	g.label(".Lioe_done")
-	g.emit("add rsp, 8")
+	g.emit("add rsp, 40")
 	g.emit("pop r12")
 	g.emit("pop rbx")
 	g.emit("pop rbp")
 	g.emit("ret")
 	g.line(".size __fern_io_error, .-__fern_io_error")
 
-	// Compile-time empty-string literal for the Other variant.
-	// Length=0 prefix + NUL — same layout as user-facing string
-	// literals so len("") works and the data is well-formed.
+	// The strerror literals, the empty path a write error carries
+	// (writes have no path), and the "Unknown error " prefix. Each
+	// string has the same immortal rc header as a user literal so the
+	// rc helpers short-circuit on it.
 	g.line(".section .rodata")
-	g.line(".align 4")
+	g.line(".align 8")
+	g.line("\t.4byte 0x80000000")
 	g.line("\t.4byte 0")
 	g.label(".LStr_ioerr_empty")
-	g.line("\t.byte 0")
+	g.line(`	.asciz ""`)
+	for n, text := range texts {
+		if text == "" {
+			continue
+		}
+		g.line(".align 8")
+		g.line("\t.4byte 0x80000000")
+		g.line(fmt.Sprintf("\t.4byte %d", len(text)))
+		g.label(fmt.Sprintf(".Lioe_str_%d", n))
+		g.line("\t.asciz " + escapeForGAS(text))
+	}
+	g.label(".Lioe_unknown_prefix")
+	g.line("\t.asciz " + escapeForGAS(strerror.UnknownPrefix))
 	g.line(".text")
 }
 

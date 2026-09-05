@@ -12,6 +12,7 @@ package interp
 import (
 	"bytes"
 	cryptorand "crypto/rand"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -19,12 +20,15 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 	"unicode/utf8"
 
 	"github.com/jakechampion/lang/internal/ast"
+	"github.com/jakechampion/lang/internal/strerror"
 	"github.com/jakechampion/lang/internal/tty"
 )
 
@@ -2279,7 +2283,7 @@ func builtinTempDir(_ *Interp, args []Value) (Value, error) {
 	// rather than laundering Go's own pattern error through
 	// classifyIoError, so the answer is identical on all of them.
 	if strings.ContainsRune(string(prefix), '/') {
-		return resultErr(ioErrorOther(string(prefix), "")), nil
+		return resultErr(ioErrorOther(string(prefix), syscall.EINVAL)), nil
 	}
 	dir, err := os.MkdirTemp("", string(prefix)+"-*")
 	if err != nil {
@@ -2501,15 +2505,27 @@ func classifyIoError(path string, err error) *Enum {
 		return &Enum{EnumName: "IoError", VariantName: "AlreadyExists", Index: 2,
 			Payloads: []Value{String(path)}}
 	}
-	return ioErrorOther(path, err.Error())
+	var errno syscall.Errno
+	switch {
+	case errors.As(err, &errno):
+		return ioErrorOther(path, errno)
+	case errors.Is(err, os.ErrClosed):
+		// Go refuses a write on a closed *os.File before the kernel
+		// sees it; the kernel's answer would be EBADF.
+		return ioErrorOther(path, syscall.EBADF)
+	}
+	// Not a syscall failure at all, so there is no errno to name: Go's
+	// own text is the only description there is.
+	return &Enum{EnumName: "IoError", VariantName: "Other", Index: 6,
+		Payloads: []Value{String(path), String(err.Error())}}
 }
 
-// ioErrorOther builds `IoError::Other(path, msg)` — where every
-// errno without a variant of its own lands, on this backend and
-// on the natives alike.
-func ioErrorOther(path, msg string) *Enum {
+// ioErrorOther builds `IoError::Other(path, strerror(errno))` — where
+// every errno without a variant of its own lands, with the same glibc
+// text the natives report (#8265).
+func ioErrorOther(path string, errno syscall.Errno) *Enum {
 	return &Enum{EnumName: "IoError", VariantName: "Other", Index: 6,
-		Payloads: []Value{String(path), String(msg)}}
+		Payloads: []Value{String(path), String(strerror.Text(runtime.GOOS, int(errno)))}}
 }
 
 // resultOk / resultErr wrap a value into the canonical
