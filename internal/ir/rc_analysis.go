@@ -3030,12 +3030,17 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 		// a scanner returns `Res { lex, tok }`, the caller extracts `l = r.lex`
 		// to thread the cursor, and the conservative FieldAccess taint
 		// stranded `l` — and through it the whole result-struct cluster —
-		// every iteration. Gated to a struct LOCAL source: a container this
-		// function reasons about and that itself reclaims. A param, a
-		// projection chain (`r.a.b`, whose Target is a FieldAccess), or a
-		// non-struct source keeps the conservative taint. The escape sink
-		// walk is unchanged, so a projection flowing into an UNCOUNTED sink
-		// (`m.set(k, r.field)`) still taints its source there.
+		// every iteration. Gated to a struct source this function holds a
+		// slot for — a local, a parameter or a match binding — reached
+		// directly or through a chain of struct / tuple fields (`r.a.b`):
+		// every container on the chain deep-drops the next one, so the
+		// counted-alias argument holds at each level, and the two-level
+		// read taints nothing the one-level read does not (#8179, the
+		// self-host LowerState's nested per-function box). A non-struct
+		// source, or a Map anywhere on the chain, keeps the conservative
+		// taint. The escape sink walk is unchanged, so a projection flowing
+		// into an UNCOUNTED sink (`m.set(k, r.field)`) still taints its
+		// source there.
 		// A TUPLE local is the same argument, and was one type short of it.
 		// `var q: P = p.1` incs at the binding site exactly as the struct read
 		// does, and the tuple deep-drops its elements at scope exit
@@ -3054,7 +3059,7 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 		// value column, so `var m = t.0` on a `(Map, boolean)` freed a map
 		// the tuple still referenced. ownedCallResultType singles maps out
 		// for the same reason; this is that caution, one site over.
-		if id, ok := x.Target.(*ast.Ident); ok {
+		if id, ok := b.projectionChainRoot(x.Target).(*ast.Ident); ok {
 			_, isLocal := b.locals[id.Name]
 			// A MATCH-ARM BINDING is the same case and was invisible to
 			// it. `b.locals` is the lowering's slot map, which
@@ -3372,6 +3377,30 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 		return true
 	default:
 		return true
+	}
+}
+
+// projectionChainRoot walks a field-read chain down to the expression it
+// projects out of, stepping only through struct / tuple fields that are not
+// maps: for `s.frame.alias` (Target `s.frame`) it returns `s`; for a direct
+// read (Target `s`) it returns `s` unchanged. A step through any other type
+// stops the walk there, so the caller's Ident test fails for it.
+func (b *builder) projectionChainRoot(e ast.Expr) ast.Expr {
+	for {
+		fa, ok := e.(*ast.FieldAccess)
+		if !ok {
+			return e
+		}
+		switch t := b.exprType(fa).(type) {
+		case ast.StructType:
+			if isMapType(t) {
+				return e
+			}
+		case ast.TupleType:
+		default:
+			return e
+		}
+		e = fa.Target
 	}
 }
 
