@@ -72,11 +72,14 @@ resolution removed and the rest of the change in place.
 
 ## Still open
 
-The tuple-return spelling the issue records under its workaround is unmoved:
-`return (C { ...c, insts: c.insts.append(in) }, in.op)` measures 916 ms before
-and 940 ms after against 0 ms for the same emit returning the struct alone. It
-is a different mechanism — #6665's field-place RETURN admission does not look
-inside a returned tuple — and has its own issue.
+The tuple spelling the issue records under its workaround is unmoved at 920 ms
+against 0 ms — but the tuple RETURN is not what costs it, and neither is a
+second reference into the array. Reached through a wrapper whose parameter is
+at its last occurrence, the identical `emit2` is linear (1 ms). What is
+quadratic is the CALLER's two-statement rebind: `let (c2, p) = emit2(c, …); c =
+c2;` splits `callArgDeaths`' one-statement self-reassign shape in half, so
+inside a loop nothing marks the argument dead and every call is bracketed.
+#8633 has the measurement and the rule.
 
 The self-host's port (`grow_param_flags_of` +  `grow_sole_exempt_names_of`)
 carries only the SOLE-occurrence exemption, not the last-occurrence family this
