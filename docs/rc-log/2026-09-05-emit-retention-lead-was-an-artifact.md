@@ -225,3 +225,35 @@ Add `FERN_RC_TRACE=1 FERN_RC_TRACE_DEEP=1` to the driver emit in the recipe
 above, link, and pipe the run's stderr through a pointer-tracking aggregator
 that buckets survivors by allocating triple; `nm` on the linked driver resolves
 the addresses. The run takes about 40 s.
+
+## The peephole cluster reproduces: #8628
+
+The smaller-blocks cluster now has a shape. `peep_line` classifies one assembly
+line into a `PLine` box and hands it to a fixed-size window that
+`peep_flush` / `peep_close_run` periodically REPLACE — and a struct-literal
+spread that overrides an array field never releases the superseded array:
+
+```fern
+struct W { src: string, w: i32[], n: i32 }
+function w_flush(own q: W): W {
+    if (q.w.len() < 8) { return q; }
+    var keep: i32[] = [];
+    return W { ...q, w: keep, n: 0 };
+}
+```
+
+| emitter | allocs | frees | live_bytes |
+|---|--:|--:|--:|
+| native | 7,502 | 7,500 | 48 |
+| self-host | 10,002 | 5,000 | 360,080 |
+
+One leaked buffer per replacement. Neither the element type nor the `own`
+annotation is the trigger — `P[]` elements leak 35,002 blocks, `i32[]` leak
+5,002, dropping `own` still leaks — but removing the *replacement* makes the two
+compilers agree allocation for allocation (2012 / 10 on both). In the emitted
+code every carried field is `rc_inc`'d into the new box, so nothing moves out of
+`q`, and neither `q.w` nor `q`'s own box is ever released.
+
+This is the ninth probe of this investigation and the first to reproduce the
+retention outside the compiler. The eight before it were guesses at a shape;
+this one was read off an attribution.
