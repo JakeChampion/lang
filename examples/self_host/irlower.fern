@@ -46116,9 +46116,18 @@ function arrarr_lit_strings_fresh(e: ast.Expr, stmts: ast.Stmt[], k: i32): boole
 // rule (arrarr_row_effective) also admits an ident whose local this statement
 // consumes; a rebind's row is not reached by that proof, so it is not taken
 // here.
+// An INDEX read (`out = out.append(pre[p])`) is admitted on counted-store
+// grounds rather than freshness: the append retains an array element read by
+// index (indexed_box_elem_escapes), so the row arrives at rc 2 and
+// __fern_arrarr_free's rc-guarded per-element dec lands on 2, not 1 — it frees
+// nothing the source still names. It can only ever take the LAX grade, because
+// arrarr_row_store_strings_fresh matches ExprArray alone, and a string-kind
+// slot needs the strict ARRARRS: credit to free element pointers. That is the
+// grading this class needs, and it falls out rather than being asserted here.
 function arrarr_row_store_ok(e: ast.Expr): boolean {
     match (e) {
         ast.ExprArray(_) => { return true; },
+        ast.ExprIndex(_) => { return true; },
         _ => { return false; }
     }
     return false;
