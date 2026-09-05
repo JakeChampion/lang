@@ -94,7 +94,7 @@ func appendIndexedElemCases() []struct {
 		// The second affected kind: an array element of an array of arrays.
 		{"nested_arr", appendIndexedElemSrc("var out: i32[][] = [];",
 			"var pre: i32[][] = []; var i: i32 = 0; while (i < 3) { pre = pre.append([i, 7]); i = i + 1; } var p: i32 = 0; while (p < 3) { out = out.append(pre[p]); p = p + 1; }",
-			"out.len()", "t = t * 10 + out[k][0];"), false},
+			"out.len()", "t = t * 10 + out[k][0];"), true},
 		// Controls: an enum and a string element were already balanced by
 		// their own rules, so the leak counters catch a retain added on top.
 		{"enum_local", appendIndexedElemSrc("var out: E[] = [];",
@@ -118,9 +118,10 @@ func appendIndexedElemCases() []struct {
 // So `stmt_local_sameframe`, whose source is append-built in this frame, is the
 // row that balances (144 -> 0 when the destination was admitted); every other
 // struct row sources from `three()` and still ends with its three boxes live at
-// rc 1, one dec short. `nested_arr` waits on the same admission for the ARRARR
-// class (arrarr_row_store_ok), whose string-kind rows need a freshness answer an
-// index read cannot give. `enum_local` is not waiting on anything: its store is
+// rc 1, one dec short. `nested_arr` balances on the ARRARR half of the same
+// admission (arrarr_row_store_ok). Its string-kind siblings do NOT: an index
+// read cannot answer arrarr_row_store_strings_fresh, so it takes only the lax
+// grade and a string-kind slot, which frees element pointers, still refuses. `enum_local` is not waiting on anything: its store is
 // UNCOUNTED by design, so crediting the destination there would double-free.
 // `str_local` already balances by its own rules.
 //
