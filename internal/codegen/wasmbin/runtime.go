@@ -7304,9 +7304,9 @@ func buildRoundF64Body(_ map[string]uint32) []byte {
 //
 //   - f64.nearest is ties-to-even, matching arm64 `frintn` and x86
 //     `roundsd …, 0`, so every backend picks the same k. `frinta` would not.
-//   - The domain guards are load-bearing, not defensive. 2^k is built as
-//     (k+1023)<<52, so without them exp(1000) overflows the exponent field into
-//     the sign bit and returns -6.1e-183 instead of +Inf.
+//   - The domain guards bound exp's range, but they are not what keeps 2^k
+//     representable: that is the two half-scales the reconstruction is built
+//     from, since one (k+1023)<<52 field cannot hold the subnormal band.
 
 // f64 bit patterns for the infinities, used by the domain guards.
 const (
@@ -7345,8 +7345,8 @@ func instPolyStep(body []byte, p, t uint32, c float64) []byte {
 // buildExpF64Body — (f64) → f64, fdlibm __ieee754_exp. ln2 is carried as hi/lo
 // so the reduction keeps its low bits.
 //
-// Locals (all f64, param x is 0): kf=1 r=2 hi=3 lo=4 t=5 c=6 p=7. k is
-// recomputed from kf at the end so the locals vector stays a single group.
+// Locals (param x is 0): f64 kf=1 r=2 hi=3 lo=4 t=5 c=6 p=7, then i64 k1=8 —
+// two groups, so the vector goes through putLocalsGroups.
 func buildExpF64Body(_ map[string]uint32) []byte {
 	const (
 		lx = 0 // param x
@@ -7357,6 +7357,7 @@ func buildExpF64Body(_ map[string]uint32) []byte {
 		t  = 5
 		c  = 6
 		p  = 7
+		k1 = 8 // i64
 	)
 	var body []byte
 	// NaN in, NaN out — the comparisons below would all read false.
@@ -7428,17 +7429,35 @@ func buildExpF64Body(_ map[string]uint32) []byte {
 	body = numeric.InstF64Sub(body)
 	body = numeric.InstF64Sub(body)
 	body = inst.InstLocalSet(body, p)
-	// result = p * 2^k, with 2^k = reinterpret((trunc(kf)+1023) << 52)
-	body = inst.InstLocalGet(body, p)
+	// result = p * 2^k1 * 2^(k-k1), each field built as (kn+1023)<<52. One
+	// field cannot hold the subnormal band; see the x86-64 emitter.
 	body = inst.InstLocalGet(body, kf)
 	body = convert.InstI64TruncF64S(body)
+	body = inst.InstI64Const(body, 1)
+	body = numeric.InstI64ShrS(body)
+	body = inst.InstLocalSet(body, k1)
+	body = inst.InstLocalGet(body, p)
+	body = inst.InstLocalGet(body, k1)
 	body = inst.InstI64Const(body, 1023)
 	body = numeric.InstI64Add(body)
 	body = inst.InstI64Const(body, 52)
 	body = numeric.InstI64Shl(body)
 	body = convert.InstF64ReinterpretI64(body)
 	body = numeric.InstF64Mul(body)
-	return inst.PutFunctionBody(nil, inst.PutLocalsOneGroup(nil, 7, encode.ValtypeF64), body)
+	body = inst.InstLocalGet(body, kf)
+	body = convert.InstI64TruncF64S(body)
+	body = inst.InstLocalGet(body, k1)
+	body = numeric.InstI64Sub(body)
+	body = inst.InstI64Const(body, 1023)
+	body = numeric.InstI64Add(body)
+	body = inst.InstI64Const(body, 52)
+	body = numeric.InstI64Shl(body)
+	body = convert.InstF64ReinterpretI64(body)
+	body = numeric.InstF64Mul(body)
+	locals := putLocalsGroups(nil,
+		localGroup{count: 7, vt: encode.ValtypeF64},
+		localGroup{count: 1, vt: encode.ValtypeI64})
+	return inst.PutFunctionBody(nil, locals, body)
 }
 
 // localGroup is one (count, valtype) run of a locals vector. Local indices
