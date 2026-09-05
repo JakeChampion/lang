@@ -5488,14 +5488,21 @@ func emitArrPushGrowHelper(w func(string, ...any)) {
 	w("\tret")
 	w(".Lssa_apg_copy:")
 	w("\tadd w4, w1, #1") // w4 = newLen
-	w("\tlsl w5, w4, #1")
+	// Sized in 64 bits: a 32-bit doubling goes negative past 2^30 elements
+	// (the floor would then pick cap = 4 under a length near 1e9) and the
+	// product wraps past 4 GiB. Array sizes are i32, so a total past 2^31 - 1
+	// is refused.
+	w("\tlsl x5, x4, #1")
 	w("\tmov w6, #4")
-	w("\tcmp w5, w6")
-	w("\tcsel w5, w5, w6, ge") // w5 = newCap = max(2*newLen, 4)
+	w("\tcmp x5, x6")
+	w("\tcsel x5, x5, x6, ge") // x5 = newCap = max(2*newLen, 4)
 	w("\tmov w6, #16")
 	w("\tcmp w2, w6")
 	w("\tcsel w6, w2, w6, ge") // w6 = headerBytes = max(stride, 16)
-	w("\tmadd w7, w5, w2, w6") // w7 = allocSize = headerBytes + newCap*stride
+	w("\tmov w2, w2")          // stride is an i32: clear the high half for the product
+	w("\tmadd x7, x5, x2, x6") // x7 = allocSize = headerBytes + newCap*stride
+	w("\tlsr x8, x7, #31")
+	w("\tcbnz x8, .Lssa_apg_sizebad")
 	// The array lays its own cap/rc/len header past the headerBytes prefix.
 	w("\tmov w16, w7")
 	emitAllocPresCall(w)
@@ -5507,11 +5514,15 @@ func emitArrPushGrowHelper(w func(string, ...any)) {
 	w("\tstur w13, [x11, #-8]") // rc = 1
 	w("\tstur w4, [x11, #-4]")  // len = newLen
 	// Copy oldLen*stride bytes from arr (x0) to new_data (x11).
-	w("\tmul w14, w1, w2") // nbytes (a w-destination zero-extends into x14)
-	w("\tmov x15, x0")     // src, clear of __ssa_bcopy's argument registers
+	w("\tumull x14, w1, w2") // nbytes = oldLen*stride
+	w("\tmov x15, x0")       // src, clear of __ssa_bcopy's argument registers
 	emitBcopyCall(w, "x11", "x15", "x14")
 	w("\tmov x0, x11") // return new_data
 	w("\tret")
+	w(".Lssa_apg_sizebad:")
+	w("\tmov x0, #134")
+	w("\tmov x8, #94") // exit_group
+	w("\tsvc #0")
 }
 
 // emitArrPushGrowElemHelper writes the element-retaining siblings of

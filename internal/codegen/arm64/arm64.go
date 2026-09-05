@@ -2671,17 +2671,23 @@ func (g *generator) emitArrPushGrowRuntime() {
 	g.emit("mov w20, w1")      // w20 = oldLen
 	g.emit("mov w21, w2")      // w21 = stride
 	g.emit("add w22, w20, #1") // w22 = newLen
-	// newCap = max(2*newLen, 4)
-	g.emit("lsl w23, w22, #1")
+	// newCap = max(2*newLen, 4), doubled in 64 bits: a 32-bit shift goes
+	// negative past 2^30 elements and the floor below would then pick cap = 4
+	// under a length near 1e9.
+	g.emit("lsl x23, x22, #1")
 	g.emit("mov w0, #4")
-	g.emit("cmp w23, w0")
-	g.emit("csel w23, w23, w0, ge") // w23 = max(2*newLen, 4)
+	g.emit("cmp x23, x0")
+	g.emit("csel x23, x23, x0, ge") // x23 = max(2*newLen, 4)
 	// headerBytes = max(16, stride). For stride <= 16 use 16.
 	g.emit("mov w24, #16")
 	g.emit("cmp w21, w24")
 	g.emit("csel w24, w21, w24, ge") // w24 = max(stride, 16)
-	// allocSize = headerBytes + newCap * stride
-	g.emit("madd w0, w23, w21, w24")
+	// allocSize = headerBytes + newCap * stride, in 64 bits so a payload past
+	// 4 GiB cannot wrap. Array sizes are i32, so a total past 2^31 - 1 is
+	// refused rather than handed on.
+	g.emit("madd x0, x23, x21, x24")
+	g.emit("lsr x1, x0, #31")
+	g.emit("cbnz x1, .Lpush_sizebad")
 	g.emit("bl __fern_alloc")
 	// x0 = base; new_data = base + headerBytes (in w24).
 	g.emit("add x25, x0, x24")
@@ -2704,7 +2710,7 @@ func (g *generator) emitArrPushGrowRuntime() {
 	// AAPCS64: x0=dst, x1=src, x2=n.
 	g.emit("mov x0, x25")
 	g.emit("mov x1, x19")
-	g.emit("mul w2, w20, w21")
+	g.emit("mul x2, x20, x21")
 	g.emit("bl __fern_memcpy")
 	// Return new_data in x0.
 	g.emit("mov x0, x25")
@@ -2714,6 +2720,8 @@ func (g *generator) emitArrPushGrowRuntime() {
 	g.emit("ldp x19, x20, [sp, #16]")
 	g.emit("ldp x29, x30, [sp], #80")
 	g.emit("ret")
+	g.label(".Lpush_sizebad")
+	g.emitAbort("__fern_msg_alloc_size")
 	g.sizeDirective("__fern_arr_push_grow")
 	g.line(".ltorg")
 }
@@ -2770,17 +2778,22 @@ func (g *generator) emitArrPushGrowPtrRuntime(moveForm bool) {
 	g.emit("mov w20, w1")      // w20 = oldLen
 	g.emit("mov w21, w2")      // w21 = stride
 	g.emit("add w22, w20, #1") // w22 = newLen
-	// newCap = max(2*newLen, 4)
-	g.emit("lsl w23, w22, #1")
+	// newCap = max(2*newLen, 4), doubled in 64 bits: a 32-bit shift goes
+	// negative past 2^30 elements and the floor below would then pick cap = 4
+	// under a length near 1e9.
+	g.emit("lsl x23, x22, #1")
 	g.emit("mov w0, #4")
-	g.emit("cmp w23, w0")
-	g.emit("csel w23, w23, w0, ge")
+	g.emit("cmp x23, x0")
+	g.emit("csel x23, x23, x0, ge")
 	// headerBytes = max(16, stride)
 	g.emit("mov w24, #16")
 	g.emit("cmp w21, w24")
 	g.emit("csel w24, w21, w24, ge")
-	// allocSize = headerBytes + newCap * stride
-	g.emit("madd w0, w23, w21, w24")
+	// allocSize = headerBytes + newCap * stride, in 64 bits; a total past
+	// 2^31 - 1 is refused (see __fern_arr_push_grow).
+	g.emit("madd x0, x23, x21, x24")
+	g.emit("lsr x1, x0, #31")
+	g.emit("cbnz x1, %s_sizebad", lbl)
 	g.emit("bl __fern_alloc")
 	g.emit("add x25, x0, x24") // x25 = new_data
 	g.emit("sub w1, w24, #12")
@@ -2796,7 +2809,7 @@ func (g *generator) emitArrPushGrowPtrRuntime(moveForm bool) {
 	// memcpy(new_data, arr, oldLen * stride)
 	g.emit("mov x0, x25")
 	g.emit("mov x1, x19")
-	g.emit("mul w2, w20, w21")
+	g.emit("mul x2, x20, x21")
 	g.emit("bl __fern_memcpy")
 	if moveForm {
 		// The copy path leaves the OLD buffer's rc untouched, so x19 (still
@@ -2828,6 +2841,8 @@ func (g *generator) emitArrPushGrowPtrRuntime(moveForm bool) {
 	g.emit("ldp x19, x20, [sp, #16]")
 	g.emit("ldp x29, x30, [sp], #80")
 	g.emit("ret")
+	g.label(lbl + "_sizebad")
+	g.emitAbort("__fern_msg_alloc_size")
 	g.sizeDirective(name)
 	g.line(".ltorg")
 }
@@ -2878,14 +2893,18 @@ func (g *generator) emitArrPushGrowStrRuntime(moveForm bool) {
 	g.emit("mov w20, w1")      // w20 = oldLen
 	g.emit("mov w21, w2")      // w21 = stride
 	g.emit("add w22, w20, #1") // w22 = newLen
-	g.emit("lsl w23, w22, #1")
+	g.emit("lsl x23, x22, #1")
 	g.emit("mov w0, #4")
-	g.emit("cmp w23, w0")
-	g.emit("csel w23, w23, w0, ge") // newCap = max(2*newLen, 4)
+	g.emit("cmp x23, x0")
+	g.emit("csel x23, x23, x0, ge") // newCap = max(2*newLen, 4)
 	g.emit("mov w24, #16")
 	g.emit("cmp w21, w24")
 	g.emit("csel w24, w21, w24, ge") // headerBytes = max(16, stride)
-	g.emit("madd w0, w23, w21, w24")
+	// allocSize in 64 bits; a total past 2^31 - 1 is refused (see
+	// __fern_arr_push_grow).
+	g.emit("madd x0, x23, x21, x24")
+	g.emit("lsr x1, x0, #31")
+	g.emit("cbnz x1, %s_sizebad", lbl)
 	g.emit("bl __fern_alloc")
 	g.emit("add x25, x0, x24") // x25 = new_data
 	g.emit("sub w1, w24, #12")
@@ -2900,7 +2919,7 @@ func (g *generator) emitArrPushGrowStrRuntime(moveForm bool) {
 	g.emit("str w22, [x2]") // len = newLen
 	g.emit("mov x0, x25")
 	g.emit("mov x1, x19")
-	g.emit("mul w2, w20, w21")
+	g.emit("mul x2, x20, x21")
 	g.emit("bl __fern_memcpy")
 	if moveForm {
 		// The copy path leaves the OLD buffer's rc untouched, so x19 (still
@@ -2933,6 +2952,8 @@ func (g *generator) emitArrPushGrowStrRuntime(moveForm bool) {
 	g.emit("ldp x19, x20, [sp, #16]")
 	g.emit("ldp x29, x30, [sp], #80")
 	g.emit("ret")
+	g.label(lbl + "_sizebad")
+	g.emitAbort("__fern_msg_alloc_size")
 	g.sizeDirective(name)
 	g.line(".ltorg")
 }
@@ -2988,7 +3009,9 @@ func (g *generator) emitArrCowInPlaceRuntime() {
 	g.emit("cmp w20, w23")
 	g.emit("csel w23, w20, w23, ge")
 	// allocSize = headerBytes + cap * stride.
-	g.emit("madd w0, w22, w20, w23")
+	// In 64 bits: cap came from a header the grow guard already accepted, so
+	// the total needs no check of its own; __fern_alloc reads all of x0.
+	g.emit("madd x0, x22, x20, x23")
 	g.emit("bl __fern_alloc")
 	g.emit("add x24, x0, x23") // x24 = new_data = base + headerBytes
 	// [base + headerBytes - 12] = cap
@@ -3007,7 +3030,7 @@ func (g *generator) emitArrCowInPlaceRuntime() {
 	// memcpy(new_data, arr, len * stride)
 	g.emit("mov x0, x24")
 	g.emit("mov x1, x19")
-	g.emit("mul w2, w21, w20")
+	g.emit("mul x2, x21, x20")
 	g.emit("bl __fern_memcpy")
 	g.emit("mov x0, x24")
 	g.emit("ldp x23, x24, [sp, #48]")
@@ -3074,7 +3097,9 @@ func (g *generator) emitArrCowInPlacePtrRuntime(strForm bool) {
 	g.emit("cmp w20, w23")
 	g.emit("csel w23, w20, w23, ge")
 	// allocSize = headerBytes + cap * stride.
-	g.emit("madd w0, w22, w20, w23")
+	// In 64 bits: cap came from a header the grow guard already accepted, so
+	// the total needs no check of its own; __fern_alloc reads all of x0.
+	g.emit("madd x0, x22, x20, x23")
 	g.emit("bl __fern_alloc")
 	g.emit("add x24, x0, x23") // x24 = new_data = base + headerBytes
 	// [base + headerBytes - 12] = cap
@@ -3093,7 +3118,7 @@ func (g *generator) emitArrCowInPlacePtrRuntime(strForm bool) {
 	// memcpy(new_data, arr, len * stride)
 	g.emit("mov x0, x24")
 	g.emit("mov x1, x19")
-	g.emit("mul w2, w21, w20")
+	g.emit("mul x2, x21, x20")
 	g.emit("bl __fern_memcpy")
 	// Element-retain loop: inc each copied element. x24 = new_data,
 	// w21 = len, w20 = stride all survive the retain call (callee-saved);
