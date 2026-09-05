@@ -1,0 +1,21 @@
+// Pins E076: a parameter's default value must be a constant expression.
+//
+// Defaults are filled in by copying the expression into each CALL SITE
+// before type-checking, so any name inside it resolves in the caller
+// rather than in the function that declared it. `b: i32 = a * 2` read the
+// CALLER's `a` — `f(1)` below returned 201 rather than 3 — and a default
+// naming a module function silently picked up a caller local of the same
+// name. Requiring the expression to carry no free names removes the
+// question: there is nothing left to resolve in the wrong scope.
+//
+// Top-level consts are folded to literals before defaults are resolved, so
+// `= SOME_CONST` still works; only a name that survives to this pass is an
+// error.
+function f(a: i32, b: i32 = a * 2): i32 {
+    return a + b;
+}
+
+function main(): i32 {
+    var a: i32 = 100;
+    return f(1);
+}
