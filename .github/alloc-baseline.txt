@@ -10,16 +10,19 @@
 # here. These count events the program performed rather than time it took,
 # so on one path they repeat to the digit over every run. But the compiler
 # is handed ABSOLUTE paths to the subject and the stdlib, and it allocates a
-# handful more for a longer one: measured on one binary, /home/user/lang
-# gives 14520755, GitHub's /home/runner/work/lang/lang gives 14520754, and a
-# deeply-nested path gives 14520750. That is four orders of magnitude inside
-# the 1% tolerance, so it cannot trip the gate — but it does mean a local run
-# legitimately differs from CI by a few counts, and that is not a regression
-# to chase. The tolerance stays a significance threshold rather than a noise
-# floor, the same as the instruction-count lanes.
+# handful FEWER for a longer one: a spread of 5 counts between a short path
+# and a deeply-nested one, with GitHub's /home/runner/work/lang/lang sitting
+# one BELOW /home/user/lang. That spread reproduced identically on two
+# unrelated compiler binaries, so it is structural and not incidental. Four
+# orders of magnitude inside the 1% tolerance, so it cannot trip the gate —
+# but a local run legitimately differs from CI by a count or two, and that is
+# not a regression to chase. The tolerance stays a significance threshold
+# rather than a noise floor, the same as the instruction-count lanes.
 #
-# The figures banked below are the ones GitHub's runner produces, since that is
-# where the gate runs; a local run reads a little high.
+# Quoted as a SPREAD rather than as absolute figures per path, deliberately:
+# absolutes go stale every time the compiler moves, and a stale absolute reads
+# as a real measurement. The pair banked below is the one GitHub's runner
+# produces, since that is where the gate runs.
 #
 # WHY THE GAP. allocs exceeds frees by the ~3.03M objects live when the process
 # exits — a compiler that runs once and exits does not tear its world down. The
@@ -41,5 +44,5 @@
 # on purpose, update it in the same PR; the job summary prints the corrected
 # lines ready to paste. Keep the reason in the PR, not here.
 
-x86_64/checker.allocs	14520754
-x86_64/checker.frees	11486354
+x86_64/checker.allocs	14614610
+x86_64/checker.frees	11561415
