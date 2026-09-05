@@ -218,9 +218,8 @@ type selfHostStdTestCase struct {
 }
 
 // selfHostStdTestCases returns the differential gate case list shared
-// by both backend variants. Kept in sync with the case slice
-// constructed in TestSelfHostStdTestE2E — when a new gate case lands
-// there, mirror it here so the arm64 variant picks it up too.
+// by both backend variants. It is the single list: TestSelfHostStdTestE2E
+// calls it too, so a case added here reaches every variant.
 func selfHostStdTestCases(t *testing.T, failing string) []selfHostStdTestCase {
 	t.Helper()
 	return []selfHostStdTestCase{
@@ -261,6 +260,7 @@ func selfHostStdTestCases(t *testing.T, failing string) []selfHostStdTestCase {
 		{"float_recip_copysign_midpoint", langSrcAbs(t, "examples/tests/float_recip_copysign_midpoint_test.fern"), ""},
 		{"i64_roots", langSrcAbs(t, "examples/tests/i64_roots_test.fern"), ""},
 		{"i64_intdiv", langSrcAbs(t, "examples/tests/i64_intdiv_test.fern"), ""},
+		{"i32_roots_prime", langSrcAbs(t, "examples/tests/i32_roots_prime_test.fern"), ""},
 		{"u64_roots", langSrcAbs(t, "examples/tests/u64_roots_test.fern"), ""},
 		{"float_clamp01_absdiff_muladd", langSrcAbs(t, "examples/tests/float_clamp01_absdiff_muladd_test.fern"), ""},
 		{"float_cbrt_hypot3", langSrcAbs(t, "examples/tests/float_cbrt_hypot3_test.fern"), ""},

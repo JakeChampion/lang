@@ -19,6 +19,7 @@ function main(): i32 {
     if ((1 as i64).next_power_of_2() != (1 as i64)) { return 6; }
     if ((4611686018427387904 as i64).next_power_of_2() != (4611686018427387904 as i64)) { return 7; }  // 2^62
     if (((4611686018427387904 as i64) + 1).next_power_of_2() != (0 as i64)) { return 8; }              // > 2^62 -> 0
+    if ((9223372036854775807 as i64).next_power_of_2() != (0 as i64)) { return 15; }                   // i64::MAX -> 0, terminates
     if ((10 as i64).ceil_div(3 as i64) != (4 as i64)) { return 9; }
     if ((9 as i64).ceil_div(3 as i64) != (3 as i64)) { return 10; }           // exact division
     if ((7 as i64).ceil_div(0 as i64) != (0 as i64)) { return 11; }           // d<=0 -> 0
