@@ -10813,6 +10813,30 @@ function lower_fn_value_arg_wc(a: ast.Expr, wc: string, s: LowerState): LowerSta
     return lower_expr(a, s);
 }
 
+// target_os() / target_arch() are compile-time constants, not calls: there is
+// no such symbol to call, so a driver that lowers WITHOUT folding them first
+// (fern.fern folds; asm_modload_run does not) would otherwise emit a
+// call_direct to a name no module defines and bail the whole module out of the
+// IR path.
+function is_target_name_call(c: ast.ExprCall, cid: ast.ExprIdent): boolean {
+    if (c.args.len() != 0) { return false; }
+    return cid.name == "target_os" || cid.name == "target_arch";
+}
+
+// lower_target_name answers an unfolded target_os() / target_arch() from the
+// pointer width, as internal/ir does when nothing named a target: wasm32 is
+// wasm32-wasi, a register lowering is the project's default arm64-linux. A
+// driver that knows its -target folds before it gets here.
+function lower_target_name(name: string, s: LowerState): LowerState {
+    var tw: boolean = s.for_wasm();
+    if (name == "target_os") {
+        if (tw) { return s.emit(ir.op_const_str("wasi")); }
+        return s.emit(ir.op_const_str("linux"));
+    }
+    if (tw) { return s.emit(ir.op_const_str("wasm32")); }
+    return s.emit(ir.op_const_str("arm64"));
+}
+
 // lower_expr emits ops that leave the value of `e` on the operand stack.
 // lower_call_named lowers a call whose callee is a bare NAME — a user
 // function, a `const`, a builtin, or one of the closure / marker forms.
@@ -10821,24 +10845,7 @@ function lower_fn_value_arg_wc(a: ast.Expr, wc: string, s: LowerState): LowerSta
 // 278 guards over 1192 lines — one per intercepted builtin. Splitting the
 // table would spread the same list over more functions, not shorten it.
 function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: LowerState): LowerState {
-    // target_os() / target_arch() are compile-time constants, not calls:
-    // there is no such symbol to call, so a driver that lowers WITHOUT
-    // folding them first (fern.fern folds; asm_modload_run does not) would
-    // otherwise emit a call_direct to a name no module defines and bail the
-    // whole module out of the IR path. internal/ir answers the same call
-    // from its own target for the same reason, and this mirrors its default
-    // when nothing named one: the pointer width picks the target, so wasm32
-    // is wasm32-wasi and a register lowering is the project's default
-    // arm64-linux. A driver that knows better folds before it gets here.
-    if (c.args.len() == 0 && (cid.name == "target_os" || cid.name == "target_arch")) {
-        var tw: boolean = s.for_wasm();
-        if (cid.name == "target_os") {
-            if (tw) { return s.emit(ir.op_const_str("wasi")); }
-            return s.emit(ir.op_const_str("linux"));
-        }
-        if (tw) { return s.emit(ir.op_const_str("wasm32")); }
-        return s.emit(ir.op_const_str("arm64"));
-    }
+    if (is_target_name_call(c, cid)) { return lower_target_name(cid.name, s); }
     // Closure-box constructor marker (#2994): lift_inline_closures
     // rewrites a CAPTURING inline lambda in array-element / struct-
     // field-value position to `__mkclo$<cloname>(caps…)`, having
@@ -61505,7 +61512,7 @@ pub function closure_ret_fns_of(funcs: parser.FuncDecl[], structs: StructTab): s
     }
     // Indexed once for the whole pass: gfns_visible_in asks whether any of this
     // frame's binders shadows a module function, and the list is fixed here.
-    let (ghead, gnext) = gfn_index_of(gfns);
+    var gset: SigReg = sig_reg_of(gfns);
     var out: string[] = [];
     // Two forms produce a closure box the caller must dispatch env-first:
     //   (a) `return <capturing lambda>` — a fresh box built at the return.
@@ -61542,7 +61549,7 @@ pub function closure_ret_fns_of(funcs: parser.FuncDecl[], structs: StructTab): s
                             // module-fn list, and this loop visits every
                             // function every round.
                             ast.ExprLambda(nlam) => {
-                                if (!lambda_has_no_captures(nlam, gfns_visible_in(fn, gfns, ghead, gnext))) { hit = true; }
+                                if (!lambda_has_no_captures(nlam, gfns_visible_in(fn, gfns, gset))) { hit = true; }
                             },
                             ast.ExprIdent(nrid) => {
                                 if (body_binds_closure_local(b, nrid.name, out)) { hit = true; }
@@ -61627,7 +61634,7 @@ pub function closure_ret_fns_of(funcs: parser.FuncDecl[], structs: StructTab): s
                         ast.StmtReturn(r) => {
                             match (r.value) {
                                 ast.ExprLambda(lam) => {
-                                    if (!lambda_has_no_captures(lam, gfns_visible_in(fn, gfns, ghead, gnext))) { out = out.append(fn.name); changed = true; }
+                                    if (!lambda_has_no_captures(lam, gfns_visible_in(fn, gfns, gset))) { out = out.append(fn.name); changed = true; }
                                 },
                                 _ => { }
                             }
@@ -68567,44 +68574,6 @@ pub struct LiftAcc { funcs: parser.FuncDecl[], counter: i32 }
 struct LiftExpr { expr: ast.Expr, acc: LiftAcc }
 struct LiftStmts { stmts: ast.Stmt[], acc: LiftAcc }
 
-// gfn_index_of buckets `gfns` by name and returns (head, next) as plain index
-// arrays rather than a SigReg. The distinction is load-bearing rather than
-// stylistic: SigReg stores the rows in a field, so `sig_reg_of(gfns)` would
-// leave the index and the caller's own `gfns` naming one array for the rest of
-// the pass, and the wasm-hosted compiler miscompiles that — it emits a function
-// name as the two bytes of a string header (#8210). Index arrays name nothing,
-// and cost no copy of the rows either.
-//
-// Built backward so each chain ascends, which is the order the scan this
-// replaces visited.
-function gfn_index_of(gfns: string[]): (i32[], i32[]) {
-    var nb: i32 = sig_bucket_count(gfns.len());
-    var head: i32[] = [];
-    var b: i32 = 0;
-    while (b < nb) { head = head.append(0 - 1); b = b + 1; }
-    var next: i32[] = [];
-    var j: i32 = 0;
-    while (j < gfns.len()) { next = next.append(0 - 1); j = j + 1; }
-    var k: i32 = gfns.len() - 1;
-    while (k >= 0) {
-        var bk: i32 = sig_key_bucket(gfns[k], "", nb);
-        next = next.with(k, head[bk]);
-        head = head.with(bk, k);
-        k = k - 1;
-    }
-    return (head, next);
-}
-
-// gfn_index_has: is `name` one of the rows the index was built over?
-function gfn_index_has(gfns: string[], head: i32[], next: i32[], name: string): boolean {
-    var i: i32 = head[sig_key_bucket(name, "", head.len())];
-    while (i >= 0) {
-        if (gfns[i] == name) { return true; }
-        i = next[i];
-    }
-    return false;
-}
-
 // lambda_has_no_captures: every identifier the body uses must be one of the
 // lambda's params, a local it binds, a global function, or a literal keyword —
 // nothing from the enclosing scope. (A conservative check: a false "captures"
@@ -68624,7 +68593,7 @@ function gfn_index_has(gfns: string[], head: i32[], next: i32[], name: string): 
 // The sibling predicate kept it. Filtering the LIST once per function fixes
 // every consumer without threading fd through the lift, and costs one walk of
 // the body.
-function gfns_visible_in(fd: parser.FuncDecl, gfns: string[], ghead: i32[], gnext: i32[]): string[] {
+function gfns_visible_in(fd: parser.FuncDecl, gfns: string[], gset: SigReg): string[] {
     var bound: string[] = [];
     if (fd.receiver_name.len() > 0) { bound = bound.append(fd.receiver_name); }
     var pi: i32 = 0;
@@ -68640,7 +68609,7 @@ function gfns_visible_in(fd: parser.FuncDecl, gfns: string[], ghead: i32[], gnex
     var shadows: boolean = false;
     var bi: i32 = 0;
     while (bi < bound.len()) {
-        if (gfn_index_has(gfns, ghead, gnext, bound[bi])) { shadows = true; bi = bound.len(); } else { bi = bi + 1; }
+        if (sig_reg_has_exact(gset, bound[bi])) { shadows = true; bi = bound.len(); } else { bi = bi + 1; }
     }
     if (!shadows) { return gfns; }
     var out: string[] = [];
@@ -74233,7 +74202,7 @@ pub function lift_lambdas_view(raw_mod: parser.Module, view: parser.FuncDecl[]):
         gi = gi + 1;
     }
     // Indexed once for the whole lift (see gfns_visible_in).
-    let (ghead, gnext) = gfn_index_of(gfns);
+    var gset: SigReg = sig_reg_of(gfns);
     var acc: LiftAcc = LiftAcc { funcs: [], counter: 0 };
     var newfuncs: parser.FuncDecl[] = [];
     // Worklist: the module's functions PLUS every function lifted out of a
@@ -74325,7 +74294,7 @@ pub function lift_lambdas_view(raw_mod: parser.Module, view: parser.FuncDecl[]):
         // 2. No-capture lambdas passed as call arguments: hoist to function values.
         // The module-fn list is filtered to what is still VISIBLE here: a name
         // this function also binds is a local, not a call target (#7253).
-        var r: LiftStmts = lift_stmts(cbody, acc, gfns_visible_in(fd, gfns, ghead, gnext));
+        var r: LiftStmts = lift_stmts(cbody, acc, gfns_visible_in(fd, gfns, gset));
         acc = r.acc;
         var nb: ast.Stmt[] = r.stmts;
         newfuncs = newfuncs.append(parser.FuncDecl { ...fd, body: nb });
@@ -77595,8 +77564,13 @@ function own_lift_retain_sites_of(fn: parser.FuncDecl, sg: FnSigs, structs: Stru
             _ => {}
         }
         var bty: string = rc_ml_local_type(base, fs.types_n, fs.types_t);
+        // STRUCT fields only. An array field's bind already takes a Perceus dup
+        // (lower_stmt_var's array arms), and an enum field's is balanced by its
+        // alias marking, so both own their claim before the `own` position sees
+        // them — a second retain there strands the box. A nested struct field
+        // gets neither, which is the whole of #8267.
         if (base.len() > 0 && decl_is_struct(structs, bty)
-            && field_move_type(structs, decl_field_type(structs, bty, fld))
+            && decl_is_struct(structs, decl_field_type(structs, bty, fld))
             && own_lift_scan_uses(fn.body, k + 1, lifted, sg.own_positions) == 1) {
             out = push_str_unique(out, key);
         }

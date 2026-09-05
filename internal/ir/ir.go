@@ -14113,12 +14113,12 @@ func (b *builder) sliceFreeType(t ast.Type, seen map[string]bool) bool {
 // stashLentViewTemp evaluates a LENT view argument — the full-range slice the
 // checker synthesises for a `T[]` argument at a `[T]` parameter — into a
 // scratch slot, leaving it on the operand stack for the call. Reports the slot
-// so the caller can free the header once the call has returned.
+// so the caller can release the header once the call has returned.
 //
-// The header is 2 pointer-widths of raw `__fern_alloc` memory with no rc
-// header, so nothing in the rc machinery owns it and it leaked once per call on
-// every backend. Three things together make the caller-side free sound, and the
-// first two are the language's rather than this analysis's:
+// The header is an rc1 block (#8406), so the release is the ordinary
+// refcounted one and this analysis only decides WHERE the caller's reference
+// dies. Three things together make that sound, and the first two are the
+// language's rather than this analysis's:
 //
 //   - the coercion fires only at ARGUMENT positions, so a header cannot be born
 //     anywhere else (E043 rejects the same coercion in a struct literal);
@@ -14126,6 +14126,9 @@ func (b *builder) sliceFreeType(t ast.Type, seen map[string]bool) bool {
 //     write the view into storage the caller still reads;
 //   - which leaves the callee's RETURN as the only way out, and resultType is
 //     admitted only when it provably cannot carry a slice.
+//
+// A header the callee retained anyway is still safe: the release is
+// is_unique-gated, so a shared header is decremented rather than freed.
 func (b *builder) stashLentViewTempIf(admitted bool, a ast.Expr, resultType ast.Type) (int32, bool, error) {
 	if !admitted {
 		return 0, false, nil
@@ -14151,13 +14154,14 @@ func (b *builder) stashLentViewTemp(a ast.Expr, resultType ast.Type) (int32, boo
 // header — as opposed to naming one someone else owns. A bare ident holding a
 // view is the shape this must exclude: its owner keeps it past the call.
 //
-// Both producers allocate the same two-word `__fern_alloc` block with no rc
-// header: the slice lowering's `__slice_make` (whether the author wrote
-// `xs[a:b]` or the checker synthesised the full-range lend), and
-// `as_bytes`, which rcresults.go already classifies as raw for the same
-// reason. A string slice is not one of them — `IsString` lowers to
-// `__str_slice`, a copy into a fresh owned string, which the rc machinery
-// already reclaims.
+// Both producers allocate the same rc1 header block: the slice lowering's
+// `__slice_make` (whether the author wrote `xs[a:b]` or the checker
+// synthesised the full-range lend), and `as_bytes`, which tail-calls it.
+// rcresults.go classifies both `owned` for that reason, and
+// freshOwnedRcTempType admits exactly this pair — the two must agree, since
+// whichever path claims the temp is the one that releases it. A string slice
+// is not one of them — `IsString` lowers to `__str_slice`, a copy into a
+// fresh owned string, which the rc machinery already reclaims.
 func makesFreshViewHeader(e ast.Expr) bool {
 	switch x := e.(type) {
 	case *ast.SliceExpr:
@@ -14169,14 +14173,20 @@ func makesFreshViewHeader(e ast.Expr) bool {
 	return false
 }
 
-// emitLentViewDrops frees the headers stashLentViewTemp stashed. Net-zero on
-// the operand stack, so the call's result sitting underneath is untouched.
+// emitLentViewDrops releases the headers stashLentViewTemp stashed, through
+// the one release every slice header takes (emitSliceHeaderDropOnStack).
+// Net-zero on the operand stack, so the call's result sitting underneath is
+// untouched.
+//
+// A raw `__free(header, 2*ptrW)` here would be wrong on all three of its
+// arguments once the header carries an rc1 header (#8406): __free takes the
+// block BASE and the header's data pointer is base+8, the block is 8 bytes
+// longer than the payload, and an aliased header must be decremented rather
+// than freed. Freeing base+8 at the payload size does not merely leak the
+// block — it pushes an overlapping block onto that size class's freelist.
 func (b *builder) emitLentViewDrops(slots []int32) {
 	for _, slot := range slots {
-		b.emit(Op{Kind: OpLoadLocal, I32: slot})
-		b.emit(Op{Kind: OpConstI32, I32: int32(2 * b.ptrW)})
-		// __free is (base, size) and returns nothing, so nothing follows it.
-		b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__free", Width: ResNarrow, I32: 2})
+		b.emitSliceSlotDrop(slot)
 	}
 }
 

@@ -151,3 +151,57 @@ function main(): i32 {
 		}
 	}
 }
+
+// The LENT view header (#8502) is released through the header's own protocol,
+// not a raw `__free`.
+//
+// The lend reclaim landed against the pre-#8406 contract, where a header was a
+// bare `__fern_alloc` block with no rc header, and freed it with
+// `__free(header, 2*ptrW)`. Once the header carries an rc1 header that call is
+// wrong on all three arguments — `__free` takes the block BASE and the data
+// pointer is base+8, the block is 8 bytes longer than the payload, and an
+// aliased header must be dec'd rather than freed. Freeing base+8 at the payload
+// size does not merely strand the block: it pushes a block overlapping a live
+// one onto that size class's freelist.
+//
+// Both producers are pinned — the synthesised full-range lend of an owned
+// array, and `as_bytes` — since makesFreshViewHeader admits exactly those two.
+func TestLentViewHeaderReleasedThroughHeaderDrop(t *testing.T) {
+	cases := []struct{ name, src string }{
+		{"lend of an owned array", `
+function total(src: [u8], n: i32): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) { t = t + (src[i] as i32); i = i + 1; }
+    return t;
+}
+function main(): i32 {
+    var b: u8[] = __alloc_u8(8);
+    return total(b, 8);
+}`},
+		{"as_bytes at an argument position", `
+function total(src: [u8], n: i32): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) { t = t + (src[i] as i32); i = i + 1; }
+    return t;
+}
+function main(): i32 {
+    var s: string = "hello world, this is a heap string";
+    return total(s.as_bytes(), 5);
+}`},
+	}
+	for _, c := range cases {
+		for _, ptrW := range []int{4, 8} {
+			fn := sliceHeaderProgram(t, c.src, ptrW)
+			if n := countCallDirect(fn.Ops, "__free"); n != 0 {
+				t.Errorf("%s (ptrW=%d): the lent header is released with a raw __free (%d call(s)) — "+
+					"it is an rc1 block, so __free gets the wrong base, the wrong size and no rc gate; ops:\n%v",
+					c.name, ptrW, n, fn.Ops)
+			}
+			if countCallDirect(fn.Ops, "__fern_closure_drop") == 0 {
+				t.Errorf("%s (ptrW=%d): the lent header is never released; ops:\n%v", c.name, ptrW, fn.Ops)
+			}
+		}
+	}
+}
