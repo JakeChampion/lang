@@ -27,10 +27,28 @@ name: Reap stale runs
 #   - a run that has already reached a terminal state (409 from the API), which
 #     is routine rather than a failure.
 
+# TRIGGERED BY REPOSITORY ACTIVITY, NOT BY THE CLOCK. This shipped on a
+# `*/20` cron alone and the cron never fired: 69 minutes and three slots after
+# it merged, the only run it had ever had was a manual dispatch. GitHub's
+# scheduler is explicitly best-effort and sheds scheduled runs under load —
+# which is the same load this sweep exists to relieve, so the one condition
+# that makes it necessary is the condition that stops it starting.
+#
+# A merge into main and a closed pull request are precisely the two moments
+# runs go stale, they fire reliably because they are repository events rather
+# than a scheduler's promise, and here they come every few minutes. The
+# concurrency group bounds the cost: one sweep runs, one waits, and a burst of
+# merges collapses into that pair rather than a job apiece.
+#
+# The cron stays as a floor for the quiet hours, when nothing merges for a
+# while and a PR closed days ago still has runs queued. It is the fallback now,
+# not the mechanism.
 on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [closed]
   schedule:
-    # Every 20 minutes. The sweep is only useful while it is more frequent than
-    # the queue is long, and cheaper than one job of what it reclaims.
     - cron: "*/20 * * * *"
   workflow_dispatch:
 
