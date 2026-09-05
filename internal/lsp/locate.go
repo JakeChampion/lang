@@ -194,20 +194,29 @@ func isMangledIdent(name string) bool {
 	return false
 }
 
-// lspToInternalPos turns LSP's 0-based line + 0-based UTF-16 character
-// into lang's 1-based line + 1-based UTF-8 byte column. Inverse of
-// toLSPPosition; correct for ASCII source, off for non-ASCII. The MVP
-// scope (lang source is mostly ASCII) accepts the asymmetry.
-func lspToInternalPos(p Position) (line, col int) {
-	return p.Line + 1, p.Character + 1
+// lspToInternalPos turns LSP's 0-based line + 0-based UTF-16 character into
+// lang's 1-based line + 1-based UTF-8 byte column. Inverse of toLSPPosition.
+//
+// src is the document text, needed because the two units only agree while the
+// line is ASCII — see utf16.go. Without it this returned the character offset
+// as a byte column, so every position on a line containing a non-ASCII
+// character was wrong (#8468).
+func lspToInternalPos(src string, p Position) (line, col int) {
+	line = p.Line + 1
+	if src == "" {
+		return line, p.Character + 1
+	}
+	return line, byteColForUTF16(lineTextAt(src, line), p.Character)
 }
 
 // nameRange returns the LSP Range covering an identifier whose
 // 1-based start position is pos and whose source spelling is name.
 // Used as the selection range for definition / hover-target.
-func nameRange(pos ast.Position, name string) Range {
-	start := toLSPPosition(pos)
+func nameRange(src string, pos ast.Position, name string) Range {
+	start := toLSPPosition(src, pos)
 	end := start
-	end.Character += len(name)
+	// The end is start plus the name's width in UTF-16 units, not its byte
+	// length: a non-ASCII identifier overshot its own range (#8468).
+	end.Character += utf16Len(name)
 	return Range{Start: start, End: end}
 }

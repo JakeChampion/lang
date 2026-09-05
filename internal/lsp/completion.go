@@ -47,7 +47,7 @@ func runCompletion(state *docState, uri string, pos Position) *completionList {
 	if state == nil || state.prog == nil {
 		return &completionList{Items: []completionItem{}}
 	}
-	line, col := lspToInternalPos(pos)
+	line, col := lspToInternalPos(srcFor(state, uri), pos)
 	enclosing := enclosingFunc(state.prog, requestModule(uri), line, col)
 
 	items := []completionItem{}

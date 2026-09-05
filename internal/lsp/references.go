@@ -24,7 +24,7 @@ func runReferences(state *docState, uri string, pos Position) []Location {
 	if state == nil || state.prog == nil {
 		return []Location{}
 	}
-	line, col := lspToInternalPos(pos)
+	line, col := lspToInternalPos(srcFor(state, uri), pos)
 	hit := findNameAt(state.prog, requestModule(uri), line, col)
 	if hit == nil {
 		return []Location{}
@@ -32,9 +32,10 @@ func runReferences(state *docState, uri string, pos Position) []Location {
 	occs := collectOccurrences(state, hit)
 	out := make([]Location, 0, len(occs))
 	for _, o := range occs {
+		ouri := declURI(o.sourceModule, uri)
 		out = append(out, Location{
-			URI:   declURI(o.sourceModule, uri),
-			Range: rangeOf(o.pos, len(o.name)),
+			URI:   ouri,
+			Range: rangeOf(srcFor(state, ouri), o.pos, len(o.name)),
 		})
 	}
 	return out
@@ -47,7 +48,7 @@ func runRename(state *docState, uri string, pos Position, newName string) *works
 	if state == nil || state.prog == nil || newName == "" {
 		return nil
 	}
-	line, col := lspToInternalPos(pos)
+	line, col := lspToInternalPos(srcFor(state, uri), pos)
 	hit := findNameAt(state.prog, requestModule(uri), line, col)
 	if hit == nil {
 		return nil
@@ -60,7 +61,7 @@ func runRename(state *docState, uri string, pos Position, newName string) *works
 	for _, o := range occs {
 		u := declURI(o.sourceModule, uri)
 		changes[u] = append(changes[u], textEdit{
-			Range:   rangeOf(o.pos, len(o.name)),
+			Range:   rangeOf(srcFor(state, u), o.pos, len(o.name)),
 			NewText: newName,
 		})
 	}

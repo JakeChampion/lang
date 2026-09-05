@@ -4744,6 +4744,24 @@ pub function type_from_name_with_names_and_unions(name: string, struct_names: st
     var elem: parser.TypeRef = parser.elem_type_ref(r);
     return t_array(type_from_name_with_names_and_unions(parser.render_type_ref(elem), struct_names, union_names));
   }
+  // Tuple `(A, B, …)` → TypeTuple of its elements, needing ≥2 exactly as
+  // type_from_ref_su's arm does. This resolver had no tuple branch at all,
+  // and it is the one the STRUCT TABLE uses — so a `ts: (i32, f64)[]` field
+  // resolved to `unknown[]`, and every consumer of that type then read the
+  // elements at a default 4-byte width: `p.ts[0].1` came back as the f64 bit
+  // pattern (#8459). The parser was never at fault; `-fmt` reconstructs the
+  // spelling correctly, and four of the five sibling resolvers already had
+  // this arm.
+  //
+  // Same class as the `char` note below, one type constructor over: an
+  // `unknown` here is silent, and widens into everything downstream.
+  if (r.is_tuple && r.args.len() >= 2) {
+    var telems: Type[] = [];
+    for targ in r.args {
+      telems = telems.append(type_from_name_with_names_and_unions(parser.render_type_ref(targ), struct_names, union_names));
+    }
+    return t_tuple(telems);
+  }
   if (name == "i32") {
     return t_i32();
   }

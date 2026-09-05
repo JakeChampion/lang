@@ -32,7 +32,7 @@ func runDefinition(state *docState, uri string, pos Position) *Location {
 	if state == nil || state.prog == nil {
 		return nil
 	}
-	line, col := lspToInternalPos(pos)
+	line, col := lspToInternalPos(srcFor(state, uri), pos)
 	hit := findNameAt(state.prog, requestModule(uri), line, col)
 	if hit == nil {
 		return nil
@@ -43,7 +43,7 @@ func runDefinition(state *docState, uri string, pos Position) *Location {
 	}
 	return &Location{
 		URI:   defURI,
-		Range: rangeOf(defPos, defLen),
+		Range: rangeOf(srcFor(state, defURI), defPos, defLen),
 	}
 }
 
@@ -235,8 +235,8 @@ func locateIdentDef(info *checker.Info, prog *ast.Program, enclosing *ast.FuncDe
 // rangeOf builds an LSP Range from a 1-based ast.Position + a byte
 // length on the same line. Used to mark the selection range of a
 // definition target.
-func rangeOf(pos ast.Position, length int) Range {
-	start := toLSPPosition(pos)
+func rangeOf(src string, pos ast.Position, length int) Range {
+	start := toLSPPosition(src, pos)
 	end := start
 	end.Character += length
 	return Range{Start: start, End: end}

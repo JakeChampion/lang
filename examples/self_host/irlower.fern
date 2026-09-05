@@ -22637,6 +22637,23 @@ function lower_stmt_var_destructure(v: ast.StmtVar, s: LowerState): LowerState {
             },
             _ => {}
         }
+        // The match above types only the source shapes it lists, and a
+        // FIELD access was not one of them: `var (a, b, c) = p.t` left dtag
+        // "" and read every element as an untyped 4 bytes, so an f64 element
+        // came back as its bit pattern and an i64 truncated — on all three
+        // backends, with no diagnostic (#8458). The identical destructure
+        // from a call, a local or a param was right, which is what made it
+        // look like a tuple bug rather than a source-shape one.
+        //
+        // tuple_decl_type already resolves a field's declared tuple type (it
+        // is what tuple_decl_type's own ExprFieldAccess arm is for), and it
+        // covers a nested field and a receiver field by the same walk. Ask it
+        // for anything the match left untyped rather than adding one arm and
+        // waiting for the next shape to go missing.
+        if (dtag == "") {
+            var ddt: string = tuple_decl_type(v.init, s);
+            if (util.is_tuple_type_name(ddt)) { dtag = tuple_type_elem_tag(ddt, dk); }
+        }
         // Emit the element read at its width (8-byte i64/f64 use the
         // matching load), then store + type the binding. An i64
         // element marks the slot i64 (so later uses route through
