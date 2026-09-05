@@ -6035,11 +6035,6 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bo
 			for _, name := range b.rc.preciseDrops[i] {
 				b.emitPreciseDrop(name)
 			}
-			// A drop keyed to a `return` is emitted by that Return's own
-			// lowering, once its value is on the stack; emitting it here
-			// would be unreachable.
-			if _, isRet := st.(*ast.Return); !isRet {
-			}
 		}
 	}
 	// If the body falls off the end, emit an implicit return so the
@@ -8498,8 +8493,6 @@ func (b *builder) stmt(s ast.Stmt) error {
 			// top-level splice in lowerFunc.
 			for _, name := range b.rc.nestedDrops[ss] {
 				b.emitPreciseDrop(name)
-			}
-			if _, isRet := ss.(*ast.Return); !isRet {
 			}
 		}
 	case *ast.If:
