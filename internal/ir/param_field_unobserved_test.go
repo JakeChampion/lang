@@ -89,6 +89,53 @@ function main(): i32 { return 0; }`
 	}
 }
 
+// A callee that grows a NESTED path (`s.cur.insts.append(v)`) is recorded as
+// growing the unnamed field, which the bracket reads as every field. The
+// propagation over a dying field has to read it the same way: `pass` skips
+// the bracket on `ops` (its later use of `s` cannot reach it), so the growth
+// reaches `pass`'s own parameter and `outer`, whose `s` survives the call,
+// brackets it. Under the literal reading nothing propagated, and whether the
+// summary carried a stray named field beside the unnamed one — which did
+// propagate — was a map-order coin flip.
+func TestGrowUnnamedFieldPropagatesThroughDyingField(t *testing.T) {
+	src := `struct Inner { insts: i32[] }
+struct St { cur: Inner, ops: i32[], ctrl: i32 }
+function depth(s: St): i32 { return s.ctrl; }
+function grow_nested(s: St, v: i32): St {
+    return St { ...s, cur: Inner { insts: s.cur.insts.append(v) } };
+}
+function keep(s: St, v: i32): St {
+    return St { ...s, ctrl: s.ctrl + v };
+}
+function pass(s: St, v: i32): i32 {
+    var p: St = grow_nested(s, v);
+    return p.ctrl + depth(s);
+}
+function pass_keep(s: St, v: i32): i32 {
+    var p: St = keep(s, v);
+    return p.ctrl + depth(s);
+}
+function outer(s: St, v: i32): i32 {
+    var r: i32 = pass(s, v);
+    return r + s.ops.len();
+}
+function outer_keep(s: St, v: i32): i32 {
+    var r: i32 = pass_keep(s, v);
+    return r + s.ops.len();
+}
+function main(): i32 { return 0; }`
+
+	for _, ptrW := range []int{4, 8} {
+		prog := lowerSourceWith(t, src, ptrW)
+		if countRcDecs(prog, "outer") == 0 {
+			t.Errorf("ptrW=%d: outer does not bracket s, though pass grows it at ops", ptrW)
+		}
+		if countRcDecs(prog, "outer_keep") != 0 {
+			t.Errorf("ptrW=%d: outer_keep brackets s, though nothing grows it", ptrW)
+		}
+	}
+}
+
 // countRcDecs counts the OpRcDec ops in a function — the closing half of the
 // #4873 containment bracket.
 func countRcDecs(p *Program, fnName string) int {
