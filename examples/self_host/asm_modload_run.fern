@@ -273,8 +273,8 @@ function prune_to_reachable(mod: parser.Module, reach: string[]): parser.Module 
 // "fall back to the AST emitter"; the emitters are gone (#3457), so the caller
 // turns it into a hard error via emit_module_or_error.
 // `target` selects the per-unit emitter: "arm64" uses
-// asm_arm64_ir.emit_module_ir_unit_arm64, anything else the x86-64
-// asm_ir.emit_module_ir_unit. The other per-module routes here were already
+// asm_arm64_ir.emit_module_ir_unit_arm64_flat, anything else the x86-64
+// asm_ir.emit_module_ir_unit_flat. The other per-module routes here were already
 // target-aware; this one was not, so the arm64 merged leg had no over-budget
 // rescue and dropped straight to the (since-deleted) AST emitter for the whole
 // single-process band x86 served via IR (#3457 slice 5).
@@ -320,12 +320,13 @@ function emit_per_module_concat(dir: string, entry_mod: parser.Module, loaded: f
     // silently skipped and the needs it would have marked — tcp_send,
     // tcp_close — go missing, dangling at link.
     var needs: string[] = ircore.all_runtime_need_roots();
+    // The whole-program registry base, derived once and shared by every unit's
+    // gate and emit (#8199).
+    var wpb: irlower.FnSigs = ircore.wp_fn_sigs(all_funcs, all_stab);
     var out: string = "";
     var idx: i32 = 0;
     while (idx < parts.len()) {
-        var elig: boolean = ircore.all_eligible_lib_known_view(infmods[idx], known, all_funcs, all_stab);
-        if (parts[idx].is_entry) { elig = ircore.all_eligible_known_view(infmods[idx], known, all_funcs, all_stab); }
-        if (!elig) {
+        if (!ircore.all_eligible_view_base(infmods[idx], known, all_stab, wpb)) {
             // Name the module that took the whole program off the per-module
             // route. Without this the decline is silent and the failure
             // resurfaces as an undefined `__fn_` at link, with nothing
@@ -336,21 +337,13 @@ function emit_per_module_concat(dir: string, entry_mod: parser.Module, loaded: f
         var extra: string[] = [];
         if (parts[idx].is_entry) { extra = needs; }
         if (target == "arm64-linux") {
-            out = out + asm_arm64_ir.emit_module_ir_unit_arm64(infmods[idx], parts[idx].is_entry, true, parts[idx].ns, extra, all_funcs, all_stab, 0, 0 - 1);
+            out = out + asm_arm64_ir.emit_module_ir_unit_arm64_flat(infmods[idx], parts[idx].is_entry, true, parts[idx].ns, extra, all_funcs, all_stab, 0, 0 - 1, wpb);
         } else {
-            out = out + asm_ir.emit_module_ir_unit(infmods[idx], parts[idx].is_entry, true, parts[idx].ns, extra, all_funcs, all_stab, 0, 0 - 1, []);
+            out = out + asm_ir.emit_module_ir_unit_flat(infmods[idx], parts[idx].is_entry, true, parts[idx].ns, extra, all_funcs, all_stab, 0, 0 - 1, [], wpb);
         }
         idx = idx + 1;
     }
     return dedupe_weak_defs(out);
-}
-
-// module_ir_eligible reports whether one module lowers wholly on the IR path
-// under the whole-program view. The entry uses the stricter gate (it owns
-// `main` + the shared runtime).
-function module_ir_eligible(infmods: parser.Module[], parts: flatten.PerModule[], midx: i32, known: string[], all_funcs: parser.FuncDecl[], all_stab: irlower.StructTab): boolean {
-    if (parts[midx].is_entry) { return ircore.all_eligible_known_view(infmods[midx], known, all_funcs, all_stab); }
-    return ircore.all_eligible_lib_known_view(infmods[midx], known, all_funcs, all_stab);
 }
 
 // unit_cache_file returns the object path for ONE emitted unit, or "" when the
@@ -409,7 +402,7 @@ function emit_unit_to_file(out_dir: string, unit_spec: string, infmods: parser.M
     }
     var unit: string = "";
     if (target == "arm64-linux") {
-        unit = asm_arm64_ir.emit_module_ir_unit_arm64(infmods[midx], is_entry, true, shard_ns, extra, all_funcs, all_stab, wlo, whi);
+        unit = asm_arm64_ir.emit_module_ir_unit_arm64_flat(infmods[midx], is_entry, true, shard_ns, extra, all_funcs, all_stab, wlo, whi, wpb);
     } else {
         unit = asm_ir.emit_module_ir_unit_flat(infmods[midx], is_entry, true, shard_ns, extra, all_funcs, all_stab, wlo, whi, [], wpb);
     }
@@ -783,7 +776,7 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
                 }
             }
             if (!assume_eligible && !cached_here && idx != checked_idx) {
-                if (!module_ir_eligible(infmods, parts, idx, known, all_funcs, all_stab)) {
+                if (!ircore.all_eligible_view_base(infmods[idx], known, all_stab, wpb)) {
                     eprint("per-module: module not IR-eligible: ");
                     eprint(parts[idx].ns);
                     eprint("\n");
@@ -896,13 +889,16 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
             }
         }
     }
-    // The pre-check covers the window this process emits: a sharded module's
-    // windows are separate processes, so each checking the whole module would
-    // lower it once per window. The entry is never sharded.
+    // One whole-program registry base for this process: the gate lowers with
+    // it and the unit emit routes on it (#8199). The pre-check covers the
+    // window this process emits: a sharded module's windows are separate
+    // processes, so each checking the whole module would lower it once per
+    // window. The entry is never sharded.
+    var pm_wpb: irlower.FnSigs = ircore.wp_fn_sigs(all_funcs, all_stab);
     var elig: boolean = true;
     if (!assume_eligible) {
-        elig = ircore.all_eligible_lib_known_view_range(infmods[pm_index], known, all_funcs, all_stab, pm_lo, pm_hi);
-        if (parts[pm_index].is_entry) { elig = ircore.all_eligible_known_view(infmods[pm_index], known, all_funcs, all_stab); }
+        elig = ircore.all_eligible_view_base_range(infmods[pm_index], known, all_stab, pm_wpb, pm_lo, pm_hi);
+        if (parts[pm_index].is_entry) { elig = ircore.all_eligible_view_base(infmods[pm_index], known, all_stab, pm_wpb); }
     }
     if (!elig) {
         eprint("per-module: module not IR-eligible: ");
@@ -928,9 +924,9 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
     // fold doubled the whole-compiler per-module program (both backends in
     // one closure), pushing its biggest modules past the one-process ceiling.
     if (target == "arm64-linux") {
-        unit = asm_arm64_ir.emit_module_ir_unit_arm64(infmods[pm_index], parts[pm_index].is_entry, true, shard_ns, extra, all_funcs, all_stab, pm_lo, pm_hi);
+        unit = asm_arm64_ir.emit_module_ir_unit_arm64_flat(infmods[pm_index], parts[pm_index].is_entry, true, shard_ns, extra, all_funcs, all_stab, pm_lo, pm_hi, pm_wpb);
     } else {
-        unit = asm_ir.emit_module_ir_unit(infmods[pm_index], parts[pm_index].is_entry, true, shard_ns, extra, all_funcs, all_stab, pm_lo, pm_hi, []);
+        unit = asm_ir.emit_module_ir_unit_flat(infmods[pm_index], parts[pm_index].is_entry, true, shard_ns, extra, all_funcs, all_stab, pm_lo, pm_hi, [], pm_wpb);
     }
     // Emit to stdout first, then populate the cache. Both consume `unit`; doing
     // the file write last keeps the ordering unambiguous and avoids relying on
@@ -991,7 +987,7 @@ function main(): i32 {
     var unit_lo: i32 = 0;
     var unit_hi: i32 = 2000000000;
     // -assume-eligible skips the per-module IR-eligibility pre-check
-    // (all_eligible_lib_known_view). That check fully re-lowers every function of
+    // (ircore.all_eligible_view_base). That check fully re-lowers every function of
     // the module purely to verify it lowers — a SECOND whole-module lowering pass
     // on top of the emit's own. On the self-host bump arena (no GC) the two passes
     // stack, so the pre-check ~doubles the per-window peak (measured: irlower

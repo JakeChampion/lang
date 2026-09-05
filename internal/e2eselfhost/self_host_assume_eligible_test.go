@@ -20,7 +20,7 @@ import (
 // relies on.
 //
 // The per-process route (`-per-module-emit N [-func-range LO:HI]`, one unit per
-// process) runs the IR-eligibility pre-check (asm_ir.all_eligible_lib_known_view),
+// process) runs the IR-eligibility pre-check (ircore.all_eligible_view_base_range),
 // which fully RE-LOWERS every function of the module purely to verify it lowers
 // — a second whole-module lowering pass on top of the emit's own. On the
 // self-host bump arena (no GC) the two passes stack, so the pre-check ~doubles

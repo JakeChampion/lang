@@ -368,24 +368,6 @@ pub function all_eligible_lib_known(mod: parser.Module, known: string[]): boolea
     return eligible_core_known_impl(mod, known);
 }
 
-// all_eligible_lib_known_view is all_eligible_lib_known with the WHOLE-PROGRAM
-// func/struct view threaded in (#3451): a per-module library unit whose
-// functions touch a sibling module's struct layout lowers in the gate exactly as
-// emit_module_funcs lowers it (against all_structs), instead of bailing because
-// the imported struct is absent from `mod.structs`. Use this — not the bare
-// all_eligible_lib_known — to gate a per-module emit driven off
-// flatten.bundle_per_module.
-pub function all_eligible_lib_known_view(mod: parser.Module, known: string[], all_funcs: parser.FuncDecl[], all_structs: irlower.StructTab): boolean {
-    return eligible_core_known_view_impl(mod, known, all_funcs, all_structs);
-}
-
-// all_eligible_lib_known_view_range is all_eligible_lib_known_view restricted to
-// the functions [lo, hi) a function-window emit covers; hi < 0 means the module
-// end, so (0, -1) is the whole-module check.
-pub function all_eligible_lib_known_view_range(mod: parser.Module, known: string[], all_funcs: parser.FuncDecl[], all_structs: irlower.StructTab, lo: i32, hi: i32): boolean {
-    return eligible_core_known_view_range(mod, known, all_funcs, all_structs, lo, hi);
-}
-
 // eligible_core_known_impl is the shared body. It used to take a `require_main`
 // flag — true for the whole-program / entry path, false for a per-module library
 // unit — but the distinction is gone: emit_module_ir_unit's `_start` exits 0 for a
@@ -394,7 +376,7 @@ pub function all_eligible_lib_known_view_range(mod: parser.Module, known: string
 // deleted rather than left inert (#3457 slice 5).
 pub function eligible_core_known_impl(mod: parser.Module, known: string[]): boolean {
     var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
-    // A function-less module is eligible, as in eligible_core_known_view_impl:
+    // A function-less module is eligible, as in all_eligible_view_base:
     // emit_module_ir_unit's `_start` exits 0 when there is no main, so a
     // types-only unit lowers to the preamble and that stub.
     //
@@ -464,35 +446,31 @@ pub function strict_ir_refuse(what: string): i32 {
     return 0;
 }
 
-// eligible_core_known_main_view is the per-module twin of
-// eligible_core_known_main (#3451 — retiring the AST fallback for the bootstrap
-// self-compile). Where eligible_core_known_main derives its lowering side-tables
-// and struct layouts from the module's OWN funcs/structs — correct for the
-// merged whole-program path, where `mod` already holds every decl — a per-module
-// LIBRARY unit's `mod` is one module of the program. A function in it that calls
-// a sibling module's function (resolved via `known`, an extern at link) OR
-// touches a sibling module's STRUCT layout must lower in the gate exactly as it
-// does in emit_module_funcs, which lowers every function against the WHOLE-
-// PROGRAM `all_funcs` / `all_structs` view (#3454). So this variant mirrors
-// emit_module_funcs's derivation precisely: the fourteen return-type side-tables
-// + interprocedural borrowability come from `all_funcs`, struct layouts from
-// `all_structs`. Without it, every module touching an imported struct (parser →
-// lexer.Token, asm → ir.Op, …) fails the gate and bails even though the
-// emit would succeed — the central blocker to routing the bootstrap per-module.
+// all_eligible_view_base is the PER-MODULE eligibility gate (#3451 — retiring
+// the AST fallback for the bootstrap self-compile): one module of a program,
+// judged against the WHOLE-PROGRAM view. A function in it that calls a sibling
+// module's function (resolved via `known`, an extern at link) OR touches a
+// sibling module's STRUCT layout must lower in the gate exactly as it does in
+// emit_module_funcs, which lowers every function against the whole-program
+// registry base and `all_structs` (#3454). So this gate lowers with the same
+// `base` the emit uses — ircore.wp_fn_sigs over the program's functions, derived
+// once by the driver and shared with every unit it emits — with struct layouts
+// from `all_structs`. Without the view, every module touching an imported struct
+// (parser → lexer.Token, asm → ir.Op, …) fails the gate and bails even though
+// the emit would succeed — the central blocker to routing the bootstrap
+// per-module.
 //
-// Passing all_funcs == mod.funcs and all_structs == mod.structs reproduces
-// eligible_core_known_main, modulo the merged path's historical use of
-// array_ret_fns / borrowable_params_of (vs the _of / _interproc forms emit
-// uses); this variant tracks emit, not that legacy gate, by design.
-pub function eligible_core_known_view_impl(mod: parser.Module, known: string[], all_funcs: parser.FuncDecl[], all_structs: irlower.StructTab): boolean {
-    return eligible_core_known_view_range(mod, known, all_funcs, all_structs, 0, mod.funcs.len());
+// The entry unit and a library unit take the same gate: a main-less module is
+// eligible, because the entry emitter's `_start` exits 0 when there is no main.
+pub function all_eligible_view_base(mod: parser.Module, known: string[], all_structs: irlower.StructTab, base: irlower.FnSigs): boolean {
+    return all_eligible_view_base_range(mod, known, all_structs, base, 0, mod.funcs.len());
 }
 
-// eligible_core_known_view_range is eligible_core_known_view_impl over the
-// functions [lo, hi) of `mod` only: the per-process function window, so a
-// windowed unit's pre-check lowers its own window rather than the whole module
-// once per process. hi < 0 (or past the end) means to the module end.
-pub function eligible_core_known_view_range(mod: parser.Module, known: string[], all_funcs: parser.FuncDecl[], all_structs: irlower.StructTab, lo: i32, hi: i32): boolean {
+// all_eligible_view_base_range is all_eligible_view_base over the functions
+// [lo, hi) of `mod` only: the per-process function window, so a windowed unit's
+// pre-check lowers its own window rather than the whole module once per
+// process. hi < 0 (or past the end) means to the module end.
+pub function all_eligible_view_base_range(mod: parser.Module, known: string[], all_structs: irlower.StructTab, base: irlower.FnSigs, lo: i32, hi: i32): boolean {
     var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
     // A function-less module is eligible: a types-only module (ast.fern) has
     // nothing that could fail to lower, and its unit is the preamble alone.
@@ -500,13 +478,8 @@ pub function eligible_core_known_view_range(mod: parser.Module, known: string[],
     // (the largest, irlower, is ~350 funcs), so the merged-bundle OOM the budget
     // guards against (eligible_core_known_impl) can't arise — each module is
     // emitted in its own process, holding only its own ops live.
-    // Side-tables + struct layouts from the WHOLE-PROGRAM view, exactly as
-    // emit_module_funcs derives them (array_ret_fns_of / borrowable_params_interproc
-    // / *_of from all_funcs, struct_ret_fns_of against all_structs).
-    var arf: string[] = array_ret_fns_of(all_funcs);
-    var bparams: string[] = irlower.borrowable_params_interproc(all_funcs);
     var sg: irlower.FnSigs = irlower.FnSigs {
-        ...irlower.fn_sigs_without_ownership(irlower.fn_sigs_for_borrow(all_funcs, all_structs, arf, bparams)),
+        ...irlower.fn_sigs_without_ownership(base),
         // These two stay scoped to THIS module rather than the whole program.
         fn_names: irlower.sig_reg_of(irlower.fn_names_of(mod.funcs)),
         closurearr_ret_fns: irlower.closurearr_ret_fns_of(mod.funcs, stab),
@@ -638,15 +611,6 @@ pub function all_eligible(mod: parser.Module): boolean {
 // all_eligible.
 pub function all_eligible_known(mod: parser.Module, known: string[]): boolean {
     return eligible_core_known(mod, known);
-}
-
-// all_eligible_known_view is all_eligible_known with the WHOLE-PROGRAM
-// func/struct view threaded in (#3451): the entry-unit twin of
-// all_eligible_lib_known_view (require_main=true — the entry emits `_start` →
-// `call __fn_main`). Gates a per-module ENTRY emit against the same all_funcs /
-// all_structs view emit_module_ir_unit lowers it with.
-pub function all_eligible_known_view(mod: parser.Module, known: string[], all_funcs: parser.FuncDecl[], all_structs: irlower.StructTab): boolean {
-    return eligible_core_known_view_impl(mod, known, all_funcs, all_structs);
 }
 
 // eligibility_report returns a per-function IR-eligibility breakdown for `mod`:

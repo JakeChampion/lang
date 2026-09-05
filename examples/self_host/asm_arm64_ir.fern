@@ -2032,13 +2032,13 @@ function emit_arm64_op_call_direct_helper(o: ir.Op, s: asmcore.EmitState): asmco
     // __map_vals_struct_drop_<T>: the struct-VALUE column walk a reclaimable
     // map takes before __fern_map_free_va; its body pulls in the element walk.
     if (ircore.is_map_vals_struct_drop_name(o.str)) { s = s.mark_heap(); s = s.need("map_vals_struct_drop:" + ircore.map_vals_struct_drop_type(o.str)); }
-    // __field_reclaim_<T> (#3457): record the type so emit_module_ir_unit_arm64
+    // __field_reclaim_<T> (#3457): record the type so emit_module_ir_unit_arm64_flat
     // emits a per-type pass-through body. arm64 does NOT deep-drop struct
     // fields yet (leak-safe pass-through); still needs the heap runtime.
     // (__fern_snapshot_dec — the shallow consume-rebind free — IS real on
     // arm64 now; only the per-type deep-drop helpers remain pass-throughs.)
     if (ircore.is_field_reclaim_name(o.str)) { s = s.mark_heap(); s = s.need("field_reclaim:" + ircore.field_reclaim_type(o.str)); }
-    // __struct_drop_<T> (#3457): record the type so emit_module_ir_unit_arm64
+    // __struct_drop_<T> (#3457): record the type so emit_module_ir_unit_arm64_flat
     // emits a per-type pass-through body (leak-safe; arm64 does NOT deep-drop
     // yet, mirroring __field_reclaim). Still needs the heap runtime.
     if (ircore.is_struct_drop_name(o.str)) { s = s.mark_heap(); s = s.need("struct_drop:" + ircore.struct_drop_type(o.str)); }
@@ -2620,7 +2620,7 @@ pub function emit_ir_runtime_fern_fn(src: string, all_structs: irlower.StructTab
 
 // emit_arm64_reclaim_drop_bodies emits this unit's per-type __field_reclaim_<T>
 // + __struct_drop_<T> helper bodies (#3457), `.weak` (link-deduped across units).
-// Called by BOTH arm64 IR emit paths — emit_module_ir_unit_arm64 (multi-unit)
+// Called by BOTH arm64 IR emit paths — emit_module_ir_unit_arm64_flat (multi-unit)
 // and emit_module's single-unit IR dispatch — so a reclaimable struct with an
 // rc-array field links on either. Both are now REAL: __struct_drop the deep-drop
 // (slice 1a), __field_reclaim the consume-rebind replaced-field reclaim (slice
@@ -6944,7 +6944,7 @@ pub function emit_module_ir(mod: parser.Module, darwin: boolean): string {
     return peephole_push_pop_arm64(strbuf_take());
 }
 
-// emit_module_ir_unit_arm64 is the arm64 mirror of asm_ir.emit_module_ir_unit
+// emit_module_ir_unit_arm64_flat is the arm64 mirror of asm_ir.emit_module_ir_unit_flat
 // (the per-module-compilation epic, #3451 / #3457 step 0a): it emits ONE
 // translation unit's worth of arm64 asm from the IR path. The four knobs match
 // x86's: is_entry (emit `_start` + the single shared __fern_* runtime),
@@ -6957,7 +6957,10 @@ pub function emit_module_ir(mod: parser.Module, darwin: boolean): string {
 // layout; only mod.funcs are EMITTED. The _start is copied verbatim from
 // emit_body (the proven single-unit IR path). Caller must have established
 // asm_ir.all_eligible_*_known_view(mod) and seeded nothing (we reset here).
-pub function emit_module_ir_unit_arm64(mod: parser.Module, is_entry: boolean, globl_defs: boolean, str_ns: string, extra_needs: string[], all_funcs: parser.FuncDecl[], all_structs: irlower.StructTab, lo: i32, hi: i32): string {
+// `b` is the whole-program registry base (ircore.wp_fn_sigs over all_funcs /
+// all_structs), derived once by the driver and shared by every unit it emits
+// (the arm64 twin of asm_ir.emit_module_ir_unit_flat).
+pub function emit_module_ir_unit_arm64_flat(mod: parser.Module, is_entry: boolean, globl_defs: boolean, str_ns: string, extra_needs: string[], all_funcs: parser.FuncDecl[], all_structs: irlower.StructTab, lo: i32, hi: i32, b: irlower.FnSigs): string {
     var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
     mod = parser.infer_ret_types_module(mod);
     strbuf_reset();
@@ -6972,14 +6975,10 @@ pub function emit_module_ir_unit_arm64(mod: parser.Module, is_entry: boolean, gl
     // externs resolve against the single copy it emits. Target-independent
     // symbol list — reused from asm_ir.
     if (is_entry && globl_defs) { s = asmcore.emit_runtime_globls(s); }
-    // Derived ONCE over the whole-program all_funcs (#3454) — per-fn derivation
-    // is O(n^2) and OOMs the bump heap (mirrors emit_body / x86
-    // emit_module_funcs).
-    var bparams: string[] = irlower.borrowable_params_interproc(all_funcs);
+    // `b` is the whole-program registry (all_funcs, #3454); only the two
+    // module-scoped registries are applied on top, and they are cheap.
     var sg: irlower.FnSigs = irlower.FnSigs {
-        ...irlower.fn_sigs_for_borrow(all_funcs, all_structs, ircore.array_ret_fns_of(all_funcs), bparams),
-        consume_safe_params: irlower.consume_safe_params_interproc(all_funcs, bparams),
-        // These two stay scoped to THIS module rather than the whole program.
+        ...b,
         closurearr_ret_fns: irlower.closurearr_ret_fns_of(mod.funcs, stab),
         fn_names: irlower.sig_reg_of(irlower.fn_names_of(mod.funcs)),
     };
@@ -7013,7 +7012,10 @@ pub function emit_module_ir_unit_arm64(mod: parser.Module, is_entry: boolean, gl
     var sfoi: i32 = 0;
     while (sfoi < sfok.len()) { s = s.need("strfldok:" + sfok[sfoi]); sfoi = sfoi + 1; }
     // #6127: the DIRECT nested-struct / nested-enum field arm, whole-program.
-    var nfok: string[] = irlower.structfld_reclaim_ok_types_of(all_funcs, all_structs, bparams);
+    // b.borrowable_params is the same whole-program verdict the base was built
+    // from (the counted rows it adds are keyed apart from the param rows the
+    // scan looks up).
+    var nfok: string[] = irlower.structfld_reclaim_ok_types_of(all_funcs, all_structs, b.borrowable_params);
     var nfoi: i32 = 0;
     while (nfoi < nfok.len()) { s = s.need("structfldok:" + nfok[nfoi]); nfoi = nfoi + 1; }
     // #5235: seed the plain-fn-pointer-array field registry as needs so
