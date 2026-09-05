@@ -301,6 +301,21 @@ function rc_trace_on(): boolean {
     }
 }
 
+// rc_trace_deep_on reports whether FERN_RC_TRACE_DEEP is set: append a SIXTH
+// field, the return address two frames above `site` rather than one.
+//
+// Off by default because five fields is native's format exactly, so one parser
+// reads both compilers' traces. The sixth is for the owned-append chain, which
+// reaches the allocator as Fern code -> __fern_arr_push_owned ->
+// __fern_arr_push -> __fern_arr_box: `caller` is the wrapper for every owned
+// append in the program, and only the frame above it names user code.
+function rc_trace_deep_on(): boolean {
+    match (env("FERN_RC_TRACE_DEEP")) {
+        Some(_) => { return true; },
+        None => { return false; }
+    }
+}
+
 // leak_check_on reports whether FERN_LEAKCHECK is set — the self-host port of
 // ast.LeakCheckEnabled. Counts every alloc and every free (count + bytes) and
 // prints one line at exit:
@@ -613,6 +628,7 @@ function emit_hev_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // Site override, set by the box shims (hev_shim_site) and consumed by the
     // next __fern_hev_a. 0 = no claim, so __fern_alloc's own caller is used.
     s = s.write("__fern_hev_site: .quad 0\n");
+    if (rc_trace_deep_on()) { s = s.write("__fern_hev_caller2: .quad 0\n"); }
     s = s.write("    .section .rodata\n");
     // The writer passes exact lengths, so no NUL is ever emitted; .ascii
     // rather than .asciz keeps that explicit.
@@ -743,10 +759,33 @@ function emit_hev_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    je .Lhev_nocaller\n");
         s = s.write("    movq 8(%rax), %rbx\n");
         s = s.write(".Lhev_nocaller:\n");
+        // caller2: one link further again, for the owned-append chain whose
+        // `caller` is only ever the wrapper. Parked in a global rather than a
+        // register because every callee-saved one here is spoken for, and the
+        // hex writer runs between computing it and printing it.
+        if (rc_trace_deep_on()) {
+            s = s.write("    movq $0, %rax\n");
+            s = s.write("    movq %rax, __fern_hev_caller2(%rip)\n");
+            s = s.write("    testq %rbp, %rbp\n");
+            s = s.write("    je .Lhev_nocaller2\n");
+            s = s.write("    movq (%rbp), %rax\n");
+            s = s.write("    testq %rax, %rax\n");
+            s = s.write("    je .Lhev_nocaller2\n");
+            s = s.write("    movq (%rax), %rax\n");
+            s = s.write("    testq %rax, %rax\n");
+            s = s.write("    je .Lhev_nocaller2\n");
+            s = s.write("    movq 8(%rax), %rax\n");
+            s = s.write("    movq %rax, __fern_hev_caller2(%rip)\n");
+            s = s.write(".Lhev_nocaller2:\n");
+        }
         s = hev_field(s, "%r12");
         s = hev_field(s, "%r13");
         s = hev_field(s, "%r14");
         s = hev_field(s, "%rbx");
+        if (rc_trace_deep_on()) {
+            s = s.write("    movq __fern_hev_caller2(%rip), %rbx\n");
+            s = hev_field(s, "%rbx");
+        }
         s = s.write("    leaq .Lhev_nl(%rip), %rsi\n");
         s = s.write("    movq $1, %rdx\n");
         s = s.write("    call .Lhev_w\n");
