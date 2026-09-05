@@ -44,20 +44,23 @@ func TestConstFoldMatchesRuntimeAtDeclaredWidth(t *testing.T) {
 				"    var r: " + c.ty + " = " + strings.ReplaceAll(c.expr, "@", "s") + ";\n" +
 				"    if (K == r) { return 0; }\n" +
 				"    return 7;\n}\n"
-			assertConstAgreesWithRuntime(t, src)
+			assertExitsZeroEverywhere(t, src)
 		})
 	}
 }
 
-// assertConstAgreesWithRuntime runs src on every available backend and
-// requires exit 0 — 7 is the program reporting the const and the runtime
-// value differ. The interp leg goes through the DRIVER rather than
-// interpStdout: the numeric-property harness calls modload → checker
-// directly and never folds consts, so a const never reaches it.
-func assertConstAgreesWithRuntime(t *testing.T, src string) {
+// assertExitsZeroEverywhere runs src on every available backend and requires
+// exit 0; the program reports a mismatch it found itself as a non-zero status.
+// Exit code rather than stdout because the wasm runner returns only a status,
+// and wasm is one of the engines these cases have to cover.
+//
+// The interp leg goes through the DRIVER rather than the numeric-property
+// harness's interpStdout: that one calls modload → checker directly and never
+// folds consts, so a const never reaches it.
+func assertExitsZeroEverywhere(t *testing.T, src string) {
 	t.Helper()
 	if code := runInterpExit(t, src); code != 0 {
-		t.Errorf("interp exited %d, want 0 (7 = const and runtime disagree)\nsrc:\n%s", code, src)
+		t.Errorf("interp exited %d, want 0 (non-zero = the program found a mismatch)\nsrc:\n%s", code, src)
 	}
 	t.Run("x86_64", func(t *testing.T) {
 		if out, code := compileAndRunX86_64(t, src); code != 0 {

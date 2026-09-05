@@ -13213,6 +13213,27 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			// an arithmetic intent, and it is the case the widening rule above
 			// (`4611686018427387904 as u64`) was written for.
 			c.settleNumeric(n.Inner, ast.NumberType{Width: 32})
+		} else if innerNum, innerIsInt := inner.(ast.NumberType); innerIsInt &&
+			isFloatTarget(n.Target) && !isBareNumericLiteral(n.Inner) {
+			// An INT→FLOAT cast converts the RESULT, not the operands.
+			// settleFloat stamps a FloatWidth on a `+ - * /` binary and
+			// recurses into both sides, so `(7 / 2) as f64` became float
+			// division — 3.5 on interp, 0 on both natives, and a module wasm
+			// refused to validate (#8456). The same expression through
+			// variables was right all along, because its operands had already
+			// committed and settleFloat left them alone.
+			//
+			// A BARE literal still settles at the target, for the same reason
+			// the narrowing rule above keeps `300 as u8` an E047: `1 as f64`
+			// is a float literal, and a wide one (`4611686018427387904 as f64`)
+			// needs the target to escape the i32 default.
+			// i32, spelled with Signed — `NumberType{Width: 32}` is u32,
+			// which turns `(3 - 4) as f64` into 4294967295.
+			intHint := ast.NumberType{Width: 32, Signed: true}
+			if !innerNum.Polymorphic {
+				intHint = innerNum
+			}
+			c.settleNumeric(n.Inner, intHint)
 		} else {
 			c.settleNumeric(n.Inner, n.Target)
 		}
@@ -17189,6 +17210,12 @@ func (c *checker) requireBool(p ast.Position, t ast.Type, op string) {
 // isBareNumericLiteral reports whether `e` is a numeric literal, optionally
 // negated — the shape a narrowing cast still settles at its target so an
 // out-of-range constant stays an E047 rather than silently wrapping.
+// isFloatTarget reports whether a cast target is a float type.
+func isFloatTarget(t ast.Type) bool {
+	_, ok := t.(ast.FloatType)
+	return ok
+}
+
 func isBareNumericLiteral(e ast.Expr) bool {
 	switch x := e.(type) {
 	case *ast.NumberLit:
