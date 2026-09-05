@@ -15,12 +15,17 @@ import (
 // base's box keeps the only claim. Passing it to a declared `own` parameter
 // gives the callee a claim that was never made: the callee releases it at exit
 // (or, having found it unique, reuses the box in place and hands it back), and
-// `a`'s own deep drop releases it again. When the returned box IS that field,
-// the result is built on freed memory.
+// a's own release takes the same box again. When the returned box IS that
+// field, the result is built on freed memory.
+//
+// a's release is either of two: the exit deep drop, or — when the base is
+// superseded first — the in-place reuse behind `a = Asm { ...a, cfi: … }`,
+// which decs the replaced field outright, before the call even runs.
 //
 // A field read passed DIRECTLY to an `own` position already takes a transfer
 // retain (emit_own_field_arg, #8186). The fix is that same pairing one binding
-// along, so the two release paths have two claims between them.
+// along, emitted at the BIND — at the argument it would be too late for the
+// supersede — so the two release paths have two claims between them.
 //
 // Assertions are on the answer AND __rc_underflow_count(): this is a genuine
 // over-release, so the counter moves, unlike the #8198 family where the free is
@@ -40,6 +45,12 @@ var selfHostOwnParamLiftedFieldCases = []struct {
 	// same emit today; the analysis reads the SOURCE, so pinning both is what
 	// says the fix is at the argument rather than in one literal form.
 	{"lifted-field-returned-spread", "struct CfiState { bad: i32[], open: boolean }\nstruct Asm { cfi: CfiState, n: i32 }\n@noinline\nfunction directive(own s: CfiState, v: i32): CfiState {\n    return CfiState { ...s, bad: s.bad.append(v), open: true };\n}\n@noinline\nfunction step(own a: Asm, v: i32): Asm {\n    var st: CfiState = a.cfi;\n    st = directive(st, v);\n    return Asm { ...a, cfi: st };\n}\nfunction main(): i32 {\n    var a: Asm = Asm { cfi: CfiState { bad: [], open: false }, n: 0 };\n    a = step(a, 1);\n    a = step(a, 2);\n    return a.cfi.bad.len() + __rc_underflow_count();\n}"},
+
+	// The supersede shape (#8267's A): the base is REBOUND between the lift and
+	// the call, and its in-place reuse decs the replaced field outright — so the
+	// box st names is freed before the call even runs. This is why the retain is
+	// emitted at the BIND: at the argument it would already be too late.
+	{"lifted-field-superseded-base", "struct CfiState { bad: i32[], open: boolean }\nstruct Asm { cfi: CfiState, n: i32 }\n@noinline\nfunction directive(own s: CfiState, v: i32): CfiState {\n    return CfiState { ...s, bad: s.bad.append(v), open: true };\n}\n@noinline\nfunction step(own a: Asm, v: i32): Asm {\n    var st: CfiState = a.cfi;\n    a = Asm { ...a, cfi: CfiState { bad: [], open: false } };\n    st = directive(st, v);\n    return Asm { cfi: st, n: a.n };\n}\nfunction main(): i32 {\n    var a: Asm = Asm { cfi: CfiState { bad: [], open: false }, n: 0 };\n    a = step(a, 1);\n    a = step(a, 2);\n    return a.cfi.bad.len() + __rc_underflow_count();\n}"},
 
 	// Control: the callee BORROWS the field, so nothing consumes the alias and
 	// the base's single claim is still the right count. Correct before the fix,
