@@ -8,21 +8,21 @@ import (
 // toDiagnostics flattens a diag.Errors (or a single error) into LSP
 // Diagnostic structs. Anything that doesn't carry source position
 // info is reported at the start of the file with the raw message.
-func toDiagnostics(err error) []Diagnostic {
+func toDiagnostics(src string, err error) []Diagnostic {
 	if err == nil {
 		return nil
 	}
 	if es, ok := err.(diag.Errors); ok {
 		out := make([]Diagnostic, 0, len(es))
 		for _, e := range es {
-			out = append(out, toDiagnostic(e))
+			out = append(out, toDiagnostic(src, e))
 		}
 		return out
 	}
-	return []Diagnostic{toDiagnostic(err)}
+	return []Diagnostic{toDiagnostic(src, err)}
 }
 
-func toDiagnostic(err error) Diagnostic {
+func toDiagnostic(src string, err error) Diagnostic {
 	d := Diagnostic{
 		Severity: severityError,
 		Source:   "fern",
@@ -30,7 +30,7 @@ func toDiagnostic(err error) Diagnostic {
 	}
 	if p, ok := err.(diag.Positioned); ok {
 		pos := p.Position()
-		start := toLSPPosition(pos)
+		start := toLSPPosition(src, pos)
 		// Span comes from the Spanned interface when the error
 		// knows the offending token's length; otherwise underline
 		// a single character (the LSP-recommended fallback for
@@ -68,7 +68,7 @@ func toDiagnostic(err error) Diagnostic {
 	if sg, ok := err.(diag.Suggested); ok {
 		if fix := sg.Suggestion(); fix != nil {
 			d.Data = fixData{
-				Range:   rangeOfFix(fix),
+				Range:   rangeOfFix(src, fix),
 				NewText: fix.Replacement,
 				Title:   fix.Title,
 			}
@@ -77,19 +77,32 @@ func toDiagnostic(err error) Diagnostic {
 	return d
 }
 
-// toLSPPosition converts lang's 1-based UTF-8 byte position to LSP's
-// 0-based UTF-16 character position. Exact for ASCII; off for non-
-// ASCII identifiers / string contents — flagged for a follow-up.
-func toLSPPosition(p ast.Position) Position {
+// toLSPPosition converts lang's 1-based UTF-8 byte position to LSP's 0-based
+// UTF-16 character position. Inverse of lspToInternalPos.
+//
+// src is the document text, needed because the two units only agree while the
+// line is ASCII — see utf16.go. Without it this returned the byte column as a
+// character offset, so a diagnostic on a line containing a non-ASCII character
+// underlined the wrong span (#8468).
+func toLSPPosition(src string, p ast.Position) Position {
 	line := p.Line - 1
 	if line < 0 {
 		line = 0
 	}
-	col := p.Col - 1
-	if col < 0 {
-		col = 0
+	col := p.Col
+	if col < 1 {
+		col = 1
 	}
-	return Position{Line: line, Character: col}
+	// An empty src means the position belongs to a document this server does
+	// not have in hand — an occurrence in another file, or a diagnostic filed
+	// against one. Measuring it with the WRONG file's text would be worse than
+	// not measuring it, so fall back to the byte column, which is what every
+	// position used to be. Same-file positions, which is every cursor-driven
+	// request, take the real conversion.
+	if src == "" {
+		return Position{Line: line, Character: col - 1}
+	}
+	return Position{Line: line, Character: utf16ColForByte(lineTextAt(src, p.Line), col)}
 }
 
 // stripPositionPrefix removes the "parse error at L:C: " /

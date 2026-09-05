@@ -31,13 +31,13 @@ func (s *Server) updateLiterateDoc(uri, src string) []string {
 	// in-editor single-document diagnostics slice doesn't cover them
 	// yet, so publish a clean slate rather than a spurious tangle error.
 	if doc.HasFiles() {
-		s.docs[uri] = &docState{src: src, diags: []Diagnostic{}}
+		s.docs[uri] = &docState{uri: uri, src: src, diags: []Diagnostic{}}
 		return nil
 	}
 
 	code, lineMap, terr := doc.Tangle()
 	if terr != nil {
-		s.docs[uri] = &docState{src: src, diags: toDiagnostics(terr)}
+		s.docs[uri] = &docState{uri: uri, src: src, diags: toDiagnostics(src, terr)}
 		return nil
 	}
 
@@ -47,7 +47,7 @@ func (s *Server) updateLiterateDoc(uri, src string) []string {
 	if prog != nil {
 		info, checkErr = checker.Check(prog)
 	}
-	diags := remapLiterateDiagnostics(collectDiagnostics(perr, checkErr), lineMap)
+	diags := remapLiterateDiagnostics(collectDiagnostics(src, perr, checkErr), lineMap)
 
 	// Keep the tangled products + the bidirectional line maps in a side
 	// channel (state.lit). The top-level prog/info stay nil so features

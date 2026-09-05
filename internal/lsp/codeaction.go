@@ -25,8 +25,8 @@ type fixData struct {
 
 // rangeOfFix converts a diag.Suggestion's 1-based byte span to the
 // LSP range it replaces.
-func rangeOfFix(fix *diag.Suggestion) Range {
-	start := toLSPPosition(fix.Pos)
+func rangeOfFix(src string, fix *diag.Suggestion) Range {
+	start := toLSPPosition(src, fix.Pos)
 	end := start
 	end.Character = start.Character + fix.Length
 	return Range{Start: start, End: end}

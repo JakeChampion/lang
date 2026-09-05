@@ -84,6 +84,11 @@ func NewServer() *Server {
 // parsing or type-checking bailed; consumers (hover, definition)
 // must nil-check before walking.
 type docState struct {
+	// uri names the document src belongs to. A workspace request can hand a
+	// docState built from the ENTRY file to a request naming another file, so
+	// src is only the right ruler for UTF-16 position conversion when this
+	// matches (#8468); srcFor is the check.
+	uri   string
 	src   string
 	prog  *ast.Program
 	info  *checker.Info
@@ -567,9 +572,10 @@ func (s *Server) updateDoc(uri, src string) []string {
 			// Stash the new src in s.docs so loadWorkspace's
 			// override-snapshot sees the latest content for this
 			// URI. We rebuild state into the same slot below.
-			s.docs[uri] = &docState{src: src}
+			s.docs[uri] = &docState{uri: uri, src: src}
 			prog, info, diagsByFile := s.loadWorkspace(entryPath)
 			s.docs[uri] = &docState{
+				uri:   uri,
 				src:   src,
 				prog:  prog,
 				info:  info,
@@ -603,6 +609,7 @@ func (s *Server) updateDoc(uri, src string) []string {
 	}
 	if hit := s.cache.get(src); hit != nil {
 		s.docs[uri] = &docState{
+			uri:   uri,
 			src:   hit.src,
 			prog:  hit.prog,
 			info:  hit.info,
@@ -610,26 +617,26 @@ func (s *Server) updateDoc(uri, src string) []string {
 		}
 		return nil
 	}
-	state := &docState{src: src}
+	state := &docState{uri: uri, src: src}
 	prog, perr := parseFor(src)
 	state.prog = prog
 	var checkErr error
 	if prog != nil {
 		state.info, checkErr = checker.Check(prog)
 	}
-	state.diags = collectDiagnostics(perr, checkErr)
+	state.diags = collectDiagnostics(src, perr, checkErr)
 	s.docs[uri] = state
 	s.cache.put(src, state.prog, state.info, state.diags)
 	return nil
 }
 
-func collectDiagnostics(parseErr, checkErr error) []Diagnostic {
+func collectDiagnostics(src string, parseErr, checkErr error) []Diagnostic {
 	out := []Diagnostic{}
 	if parseErr != nil {
-		out = append(out, toDiagnostics(parseErr)...)
+		out = append(out, toDiagnostics(src, parseErr)...)
 	}
 	if checkErr != nil {
-		out = append(out, toDiagnostics(checkErr)...)
+		out = append(out, toDiagnostics(src, checkErr)...)
 	}
 	return out
 }

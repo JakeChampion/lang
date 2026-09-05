@@ -36,7 +36,7 @@ func runHover(state *docState, uri string, pos Position) *hoverResult {
 	if state == nil || state.prog == nil {
 		return nil
 	}
-	line, col := lspToInternalPos(pos)
+	line, col := lspToInternalPos(srcFor(state, uri), pos)
 	hit := findNameAt(state.prog, requestModule(uri), line, col)
 	if hit == nil {
 		return nil
@@ -45,7 +45,7 @@ func runHover(state *docState, uri string, pos Position) *hoverResult {
 	if !ok {
 		return nil
 	}
-	r := nameRange(hit.pos, hit.name)
+	r := nameRange(srcFor(state, uri), hit.pos, hit.name)
 	return &hoverResult{
 		Contents: markupContent{
 			Kind:  "markdown",

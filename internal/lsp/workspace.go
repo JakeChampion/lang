@@ -130,7 +130,7 @@ func splitDiagnosticsByFile(err error, entryFallback string) map[string][]Diagno
 				path = v
 			}
 		}
-		out[path] = append(out[path], toDiagnostic(e))
+		out[path] = append(out[path], toDiagnostic("", e))
 	}
 	if es, ok := err.(diag.Errors); ok {
 		for _, e := range es {

@@ -62,7 +62,7 @@ func runInlayHints(state *docState, uri string, rng Range) []inlayHint {
 			if !ok {
 				continue
 			}
-			lspPos := toLSPPosition(endPos)
+			lspPos := toLSPPosition(srcFor(state, uri), endPos)
 			if !inRange(lspPos, rng) {
 				continue
 			}

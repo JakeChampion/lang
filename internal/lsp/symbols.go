@@ -47,7 +47,7 @@ func runDocumentSymbols(state *docState, uri string) []documentSymbol {
 		if isInternalName(fd.Name) {
 			continue
 		}
-		r := nameRange(fd.P, fd.Name)
+		r := nameRange(srcFor(state, uri), fd.P, fd.Name)
 		out = append(out, documentSymbol{
 			Name:           fd.Name,
 			Detail:         formatFuncSig(fd.Name, funcDeclSig(fd)),
@@ -60,7 +60,7 @@ func runDocumentSymbols(state *docState, uri string) []documentSymbol {
 		if sd == nil || !keep(sd.SourceModule) {
 			continue
 		}
-		r := nameRange(sd.P, sd.Name)
+		r := nameRange(srcFor(state, uri), sd.P, sd.Name)
 		var fields []documentSymbol
 		for _, f := range sd.Fields {
 			// StructDecl.Fields are ast.Param with no per-field
@@ -93,10 +93,10 @@ func runDocumentSymbols(state *docState, uri string) []documentSymbol {
 		if ed.P == (ast.Position{}) {
 			continue
 		}
-		r := nameRange(ed.P, ed.Name)
+		r := nameRange(srcFor(state, uri), ed.P, ed.Name)
 		var variants []documentSymbol
 		for _, v := range ed.Variants {
-			vr := nameRange(v.P, v.Name)
+			vr := nameRange(srcFor(state, uri), v.P, v.Name)
 			variants = append(variants, documentSymbol{
 				Name:           v.Name,
 				Kind:           symKindEnumMember,
@@ -117,7 +117,7 @@ func runDocumentSymbols(state *docState, uri string) []documentSymbol {
 		if cd == nil {
 			continue
 		}
-		r := nameRange(cd.P, cd.Name)
+		r := nameRange(srcFor(state, uri), cd.P, cd.Name)
 		out = append(out, documentSymbol{
 			Name:           cd.Name,
 			Detail:         typeString(cd.Type),
