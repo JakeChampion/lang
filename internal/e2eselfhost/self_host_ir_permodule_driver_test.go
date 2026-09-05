@@ -118,7 +118,7 @@ func TestSelfHostIRPerModuleDriver(t *testing.T) {
 }
 
 // TestSelfHostIRPerModuleCrossStruct guards the per-module eligibility-gate
-// VIEW fix (#3451): the gate (all_eligible_known_view / all_eligible_lib_known_view
+// VIEW fix (#3451): the gate (all_eligible_view_base
 // → eligible_core_known_main_view) must lower each function against the WHOLE-
 // PROGRAM struct view (all_structs), exactly as emit_module_funcs does — not the
 // module's own structs. Without it, a module that touches a SIBLING module's
