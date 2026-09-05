@@ -7893,18 +7893,25 @@ var freshOwnedProducers = map[string]bool{
 	"__method_string_to_owned": true,
 }
 
-// strCopyHint names the remedy when a borrowed `str` view reaches an owning
-// sink. Refusing the promotion is deliberate — see `assignable` — but the
-// diagnostic only restated the two type names, and the way out was written
-// down in a checker comment and nowhere the reader could see it. That dead-
-// ends the most ordinary string expression there is:
+// assignHint names the remedy for an assignment the checker deliberately
+// refuses, appended to the E002 / E003 / E043 message that reports it. Empty
+// when no remedy applies.
+//
+// The `str` case: a borrowed `str` view reaching an owning sink. Refusing the
+// promotion is deliberate — see `assignable` — but the diagnostic only
+// restated the two type names, and the way out was written down in a checker
+// comment and nowhere the reader could see it. That dead-ends the most
+// ordinary string expression there is:
 //
 //	var t: string = s.trim();
 //	error[E003]: cannot assign str to variable of type string
 //
 // `.to_owned()` is the materialiser, and the stdlib already uses it at every
 // such site. Empty for any other pair, so it only fires where it applies.
-func strCopyHint(want, got ast.Type) string {
+func assignHint(want, got ast.Type) string {
+	if h := dynElemHint(want, got); h != "" {
+		return h
+	}
 	if _, gotStr := got.(ast.StrType); !gotStr {
 		return ""
 	}
@@ -7914,7 +7921,80 @@ func strCopyHint(want, got ast.Type) string {
 	return " — `str` is a borrowed view of a string; add `.to_owned()` to copy it into an owned string"
 }
 
+// dynElemHint names the remedy when the only thing separating two container
+// types is a `dyn Trait` element the compiler would have to box. Boxing is a
+// representation change and it happens only at a direct coercion site, so the
+// conversion has to be written out — otherwise the checker accepts an
+// assignment no backend lowers (#8446). Empty for any other pair.
+func dynElemHint(want, got ast.Type) string {
+	pos, ok := dynElemMismatch(want, got)
+	if !ok {
+		return ""
+	}
+	return fmt.Sprintf(" — %s is a trait object, and boxing one is a representation change that only happens at a direct coercion site, "+
+		"never inside a container; rebuild it element by element (match / map the %s and coerce each payload)", pos, containerNoun(want))
+}
+
+// dynElemMismatch reports the first `dyn Trait` element position that stops
+// two same-shaped containers from assigning, and whether there was one.
+func dynElemMismatch(want, got ast.Type) (string, bool) {
+	switch w := want.(type) {
+	case ast.DynTraitType:
+		if _, gotDyn := got.(ast.DynTraitType); !gotDyn && got != nil {
+			return w.String(), true
+		}
+	case ast.EnumType:
+		g, ok := got.(ast.EnumType)
+		if !ok || g.Name != w.Name || len(g.Args) != len(w.Args) {
+			return "", false
+		}
+		for i := range w.Args {
+			if p, found := dynElemMismatch(w.Args[i], g.Args[i]); found {
+				return p, true
+			}
+		}
+	case ast.TupleType:
+		g, ok := got.(ast.TupleType)
+		if !ok || len(g.Elems) != len(w.Elems) {
+			return "", false
+		}
+		for i := range w.Elems {
+			if p, found := dynElemMismatch(w.Elems[i], g.Elems[i]); found {
+				return p, true
+			}
+		}
+	}
+	return "", false
+}
+
+// containerNoun names the shape the rebuild has to walk.
+func containerNoun(t ast.Type) string {
+	if _, ok := t.(ast.TupleType); ok {
+		return "tuple"
+	}
+	return "enum"
+}
+
 func (c *checker) assignable(dst, src ast.Type) bool {
+	return c.assignableWith(dst, src, true)
+}
+
+// assignableWith is assignable with control over whether a `dyn Trait`
+// COERCION may fire.
+//
+// Boxing is a representation change — a `dyn` value is [data, vtable] — and
+// it is materialised only at a direct coercion site. Inside a container it
+// never is: `Option[Square]` reaching an `Option[dyn Shape]` destination
+// leaves a raw Square pointer in the payload slot, and the method call then
+// dispatches through whatever the second word happens to be (SIGSEGV on the
+// natives, `indirect call type mismatch` on wasm, correct on interp). So the
+// three container hops below recurse with dynBox=false: a container assigns
+// element-wise only when no element needs boxing, which is the invariance
+// structs have always had (their branch requires an argument-free source).
+//
+// Rebuilding explicitly — match the container, coerce the payload, re-wrap —
+// still works, and is what the diagnostic's hint says to do. #8446.
+func (c *checker) assignableWith(dst, src ast.Type, dynBox bool) bool {
 	if ast.Equal(dst, src) {
 		return true
 	}
@@ -7947,6 +8027,11 @@ func (c *checker) assignable(dst, src ast.Type) bool {
 	// downcast) and two different `dyn` types do not inter-assign. See
 	// docs/DYN-TRAITS.md §5.
 	if dt, ok := dst.(ast.DynTraitType); ok {
+		if !dynBox {
+			// Element position — nothing here will box it. See
+			// assignableWith's comment.
+			return false
+		}
 		if _, isDyn := src.(ast.DynTraitType); isDyn {
 			return false // distinct dyn types: only Equal (handled above) assigns
 		}
@@ -8016,7 +8101,7 @@ func (c *checker) assignable(dst, src ast.Type) bool {
 		if se, sok := src.(ast.EnumType); sok && de.Name == se.Name && len(de.Args) == len(se.Args) {
 			allOk := true
 			for i := range de.Args {
-				if !c.assignable(de.Args[i], se.Args[i]) {
+				if !c.assignableWith(de.Args[i], se.Args[i], false) {
 					allOk = false
 					break
 				}
@@ -8047,7 +8132,7 @@ func (c *checker) assignable(dst, src ast.Type) bool {
 	// like `Option[Option[i64]] = Some(Some(1))` also work.
 	if dok && sok && d.Name == s.Name && len(d.Args) == len(s.Args) && len(d.Args) > 0 {
 		for i := range d.Args {
-			if !c.assignable(d.Args[i], s.Args[i]) {
+			if !c.assignableWith(d.Args[i], s.Args[i], false) {
 				return false
 			}
 		}
@@ -8066,7 +8151,7 @@ func (c *checker) assignable(dst, src ast.Type) bool {
 	if dt, dok := dst.(ast.TupleType); dok {
 		if st, sok := src.(ast.TupleType); sok && len(dt.Elems) == len(st.Elems) {
 			for i := range dt.Elems {
-				if !c.assignable(dt.Elems[i], st.Elems[i]) {
+				if !c.assignableWith(dt.Elems[i], st.Elems[i], false) {
 					return false
 				}
 			}
@@ -8396,7 +8481,7 @@ func (c *checker) errArgMismatch(n *ast.Call, i int, recvIsArg0 bool, expected, 
 		return
 	}
 	c.errfCode(n.Args[i].Pos(), "E038", "argument %d: expected %s, got %s%s",
-		i+1, expected, at, strCopyHint(expected, at))
+		i+1, expected, at, assignHint(expected, at))
 }
 
 // moduleAlreadyImports reports whether the module being checked names `mod`
@@ -10854,7 +10939,7 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		// concrete before monomorph runs.
 		c.refineCallTypeArgsFromDest(n.Value, want)
 		if got != nil && !c.assignable(want, got) {
-			c.errfCode(n.P, "E002", "return type mismatch: function returns %s but expression is %s%s", want, got, strCopyHint(want, got))
+			c.errfCode(n.P, "E002", "return type mismatch: function returns %s but expression is %s%s", want, got, assignHint(want, got))
 		}
 	case *ast.Defer:
 		// Just type-check the action; its result is discarded (defer is
@@ -10942,7 +11027,7 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		} else if got != nil {
 			got = c.maybeWrapForUnion(n.Type, &n.Init, got, s)
 			if !c.assignable(n.Type, got) {
-				c.errfCode(n.P, "E003", "cannot assign %s to variable of type %s%s", got, n.Type, strCopyHint(n.Type, got))
+				c.errfCode(n.P, "E003", "cannot assign %s to variable of type %s%s", got, n.Type, assignHint(n.Type, got))
 			}
 		}
 		s.names[n.Name] = n.Type
@@ -14985,7 +15070,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			rt = c.maybeWrapForUnion(lt, &n.Value, rt, s)
 		}
 		if lt != nil && rt != nil && !ast.Equal(lt, rt) && !c.assignable(lt, rt) {
-			c.errfCode(n.P, "E003", "cannot assign %s to %s%s", rt, lt, strCopyHint(lt, rt))
+			c.errfCode(n.P, "E003", "cannot assign %s to %s%s", rt, lt, assignHint(lt, rt))
 		}
 		// Fields are immutable after construction: a struct value
 		// can't have a field reassigned in place. This is the
@@ -15384,7 +15469,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					// Show the substituted field type (`i32`) rather than the
 					// bare parameter (`T`) when the instantiation is known —
 					// e.g. seeded from a `Box[i32]` destination.
-					c.errfCode(f.Value.Pos(), "E043", "field %q: expected %s, got %s%s", f.Name, substituteType(expected, sub), vt, strCopyHint(substituteType(expected, sub), vt))
+					c.errfCode(f.Value.Pos(), "E043", "field %q: expected %s, got %s%s", f.Name, substituteType(expected, sub), vt, assignHint(substituteType(expected, sub), vt))
 				}
 			} else if !ast.Equal(vt, expected) && !dynFieldOK {
 				// Allow the polymorphic / argless-enum vs
@@ -15394,7 +15479,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				// to `Option` with empty Args). Same shape as
 				// the array-element widening from #541.
 				if unifyIfArms(expected, vt) == nil {
-					c.errfCode(f.Value.Pos(), "E043", "field %q: expected %s, got %s%s", f.Name, expected, vt, strCopyHint(expected, vt))
+					c.errfCode(f.Value.Pos(), "E043", "field %q: expected %s, got %s%s", f.Name, expected, vt, assignHint(expected, vt))
 				}
 			}
 		}
