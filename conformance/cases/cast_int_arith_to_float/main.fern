@@ -1,0 +1,29 @@
+// An `as f64` / `as f32` cast converts the RESULT of its operand; the target
+// type must not reach into the operand's arithmetic. `(7 / 2) as f64` is an
+// integer division (3) converted to float, which the same expression written
+// through variables agrees with on every engine. #8456.
+function main(): i32 {
+    var a: f64 = (7 / 2) as f64;
+    if (a != 3.0) { return 1; }
+    var b: f64 = (7 % 2) as f64;
+    if (b != 1.0) { return 2; }
+    var c: f32 = (7 / 2) as f32;
+    if (c != 3.0) { return 3; }
+    var d: f32 = (7 % 2) as f32;
+    if (d != 1.0) { return 4; }
+    var g: f64 = (7 + 2) as f64;
+    if (g != 9.0) { return 5; }
+    var h: f64 = (7 - 2) as f64;
+    if (h != 5.0) { return 6; }
+    var k: f64 = (7 * 2) as f64;
+    if (k != 14.0) { return 7; }
+    var p: i32 = 7;
+    var q: i32 = 2;
+    var e: f64 = (p / q) as f64;
+    if (e != a) { return 8; }
+    var f: f64 = (p % q) as f64;
+    if (f != b) { return 9; }
+    var r: f32 = (p / q) as f32;
+    if (r != c) { return 10; }
+    return 42;
+}
