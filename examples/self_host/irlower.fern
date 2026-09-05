@@ -835,10 +835,11 @@ pub struct LowerFrame {
     // (field_move_keys_of_stmt); set/cleared per statement by lower_stmt's
     // wrapper, read at the call-argument site by emit_own_field_arg.
     fld_bases: string[],
-    // own_lift_sites: the "line:col" keys of the argument IDENTs that hand an
-    // UNCOUNTED field lift to a declared `own` position (own_lift_arg_sites_of,
-    // #8267). Each takes the transfer retain emit_own_field_arg gives a field
-    // read passed directly.
+    // own_lift_sites: the "line:col" keys of the `var` LIFTS whose local is
+    // handed to a declared `own` position (own_lift_retain_sites_of, #8267).
+    // Each takes the transfer retain emit_own_field_arg gives a field read
+    // passed directly, at the BIND rather than the argument — the field can be
+    // released between the two.
     own_lift_sites: string[],
 }
 
@@ -12293,18 +12294,13 @@ function lower_call_named_generic(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIde
         if (!sc.ok) { return sc; }
         // A field read at an explicit `own` position is the superseded-field
         // shape E051 admits (#8186): moved out of its box when this statement
-        // claimed it, retained for the callee otherwise. An IDENT holding an
-        // uncounted lift of such a field (`var st = a.cfi; f(st)`) is the same
-        // hand-over one binding along, and takes the retain half (#8267).
+        // claimed it, retained for the callee otherwise. The same hand-over one
+        // binding along — `var st = a.cfi; f(st)` — is retained at the BIND
+        // instead (emit_own_lift_retain, #8267).
         if (util.index_of_str(sc.frame.sigs.own_positions, cid.name + "|" + util.i32_to_string(ai)) >= 0
             && !sc.callee_param_is_typevar(cid.name, ai)) {
             match (c.args[ai]) {
                 ast.ExprFieldAccess(ofa) => { sc = emit_own_field_arg(ofa, sc); },
-                ast.ExprIdent(oaid) => {
-                    if (util.index_of_str(sc.frame.own_lift_sites, util.i32_to_string(oaid.line) + ":" + util.i32_to_string(oaid.col)) >= 0) {
-                        sc = sc.emit(ir.op_call_direct("__fern_rc_inc", 1));
-                    }
-                },
                 _ => {}
             }
         }
@@ -18867,6 +18863,7 @@ function lower_stmt_inner(st: ast.Stmt, s: LowerState): LowerState {
     match (st) {
         ast.StmtVar(v) =>{
             var sv: LowerState = lower_stmt_var(v, s);
+            sv = emit_own_lift_retain(v, sv);
             sv = seed_snapshot_local(v, sv);
             return release_last_use_source(v, sv);
         },
@@ -56540,7 +56537,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
     // (erased_passthrough_safe), so its bare-typevar return lowers via the
     // uniform-i64 path in StmtReturn (#5464). Kept off the non-wasm path.
     if (for_wasm && erased_passthrough_safe(fn, structs)) { ret_arrdyn0 = ret_arrdyn0 + 8; }
-    var s: LowerState = LowerState { ops: empty, locals: locals0, ctrl: 0, loop_blk: noloop, frame: LowerFrame { ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, sigs: FnSigs { ...sg, arr_ret_fns: arr_ret_fns_aug, struct_ret_fns: struct_ret_fns_aug }, clo_base: clo_owner_name(fn), cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: noclos, tup_elem_kinds: [], alias_incs: [], dead_alias_ok: dead_alias_of(fn.body, rc_ml_compute(fn, structs).names).sites, spread_sites: spread_sites_of(fn.body, structs, []), fnval_seed: fnval_seed0, structs: structs, reclaimable_names: reclaim, aliased_names: aliased, map_clone_sites: map_clone_insert_sites_of(fn.body), borrowed_names: borrowed, try_cleanup: tclean, defer_slots: [], defer_guard: "", append_inplace: append_inplace_names_of(fn), field_append_inplace: field_append_inplace_sites_of(fn), grow_sole: grow_sole_exempt_names_of(fn), grow_alias: grow_alias_names_of(fn), own_params: own_names, n_params: names.len(), fail_why: "", moved_names: moved_locals_toplevel_of(fn, structs), moved_elided: [], move_sites: move_sites_toplevel_of(fn, structs), fld_bases: field_move_bases_of(fn, sg), own_lift_sites: own_lift_arg_sites_of(fn, sg, structs) }, xblock_pending: [], optret_pending: [], grow_exempt: [], ok: true, selfrebind: "", fld_moves: [] };
+    var s: LowerState = LowerState { ops: empty, locals: locals0, ctrl: 0, loop_blk: noloop, frame: LowerFrame { ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, sigs: FnSigs { ...sg, arr_ret_fns: arr_ret_fns_aug, struct_ret_fns: struct_ret_fns_aug }, clo_base: clo_owner_name(fn), cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: noclos, tup_elem_kinds: [], alias_incs: [], dead_alias_ok: dead_alias_of(fn.body, rc_ml_compute(fn, structs).names).sites, spread_sites: spread_sites_of(fn.body, structs, []), fnval_seed: fnval_seed0, structs: structs, reclaimable_names: reclaim, aliased_names: aliased, map_clone_sites: map_clone_insert_sites_of(fn.body), borrowed_names: borrowed, try_cleanup: tclean, defer_slots: [], defer_guard: "", append_inplace: append_inplace_names_of(fn), field_append_inplace: field_append_inplace_sites_of(fn), grow_sole: grow_sole_exempt_names_of(fn), grow_alias: grow_alias_names_of(fn), own_params: own_names, n_params: names.len(), fail_why: "", moved_names: moved_locals_toplevel_of(fn, structs), moved_elided: [], move_sites: move_sites_toplevel_of(fn, structs), fld_bases: field_move_bases_of(fn, sg), own_lift_sites: own_lift_retain_sites_of(fn, sg, structs) }, xblock_pending: [], optret_pending: [], grow_exempt: [], ok: true, selfrebind: "", fld_moves: [] };
     // Consumed-threaded array params (ownflag_name): allocate and zero each flag
     // before any body op, in parameter order, so slot numbering is deterministic.
     // A declared `own` param is excluded — the caller moved its reference in.
@@ -75884,6 +75881,20 @@ function snapshot_slot_name(i: i32): string {
     return "$snap$" + util.i32_to_string(i);
 }
 
+// emit_own_lift_retain: a `var st = a.cfi` bind whose local is handed on to a
+// declared `own` position (own_lift_retain_sites_of) takes the transfer retain
+// here, at the BIND. The claim it makes is the one the `own` position consumes;
+// without it the callee spends a's, and a's own release — the exit deep drop,
+// or the in-place reuse behind a supersede — frees the box the callee handed
+// back (#8267).
+function emit_own_lift_retain(v: ast.StmtVar, sv: LowerState): LowerState {
+    if (!sv.ok) { return sv; }
+    if (util.index_of_str(sv.frame.own_lift_sites, util.i32_to_string(v.line) + ":" + util.i32_to_string(v.col)) < 0) { return sv; }
+    var slot: i32 = sv.slot_of(v.name);
+    if (slot < 0) { return sv; }
+    return sv.retain(slot, "own-lift-field");
+}
+
 // seed_snapshot_local: a struct local whose binding recorded the variable its
 // value derives from ("SNAPSRC:<site>|<name>", snapshot_local_names_of) gets a
 // hidden copy of that variable's box, `$snap$<slot>`, right after the binding.
@@ -77438,22 +77449,22 @@ function field_move_type(structs: StructTab, t: string): boolean {
     return t.len() > 2 && t[t.len() - 2] == b'[' && t[t.len() - 1] == b']';
 }
 
-// own_lift_stmt_sites: the "line:col" keys of every bare-ident mention of
-// `name` inside `e` sitting at a declared `own` position of a direct call.
-function own_lift_stmt_sites(e: ast.Expr, name: string, own_positions: string[], acc: string[]): string[] {
-    function pick(n: ast.Expr, a: string[]): string[] {
+// own_lift_stmt_uses counts the bare-ident mentions of `name` inside `e` that
+// sit at a declared `own` position of a direct call.
+function own_lift_stmt_uses(e: ast.Expr, name: string, own_positions: string[]): i32 {
+    function tally(n: ast.Expr, acc: i32): i32 {
         match (n) {
             ast.ExprCall(c) => {
                 var cn: string = ident_name_or_empty(c.callee);
-                if (cn.len() == 0) { return a; }
-                var out: string[] = a;
+                if (cn.len() == 0) { return acc; }
+                var out: i32 = acc;
                 var i: i32 = 0;
                 while (i < c.args.len()) {
                     match (c.args[i]) {
                         ast.ExprIdent(aid) => {
-                            if (aid.name == name && (aid.line != 0 || aid.col != 0)
+                            if (aid.name == name
                                 && util.index_of_str(own_positions, cn + "|" + util.i32_to_string(i)) >= 0) {
-                                out = push_str_unique(out, util.i32_to_string(aid.line) + ":" + util.i32_to_string(aid.col));
+                                out = out + 1;
                             }
                         },
                         _ => {}
@@ -77462,30 +77473,38 @@ function own_lift_stmt_sites(e: ast.Expr, name: string, own_positions: string[],
                 }
                 return out;
             },
-            _ => { return a; }
+            _ => { return acc; }
         }
-        return a;
+        return acc;
     }
-    return astwalk.fold_expr(e, acc, pick);
+    return astwalk.fold_expr(e, 0, tally);
 }
 
-// own_lift_arg_sites_of: the `own`-position argument sites that hand over an
-// UNCOUNTED field lift.
+// own_lift_retain_sites_of: the `var` LIFTS whose local is handed to a declared
+// `own` position — the ones that need a transfer retain.
 //
 // `var st = a.cfi` binds st to the box a's field points at and emits no retain:
-// a keeps the only claim. Passing st to a declared `own` parameter gives the
-// callee a claim that was never made, so the callee's release and a's own deep
-// drop both reach the same box — and when the callee reused it in place and
-// handed it back, the box the result is built from is freed under it (#8267).
-// The site takes the transfer retain, the pairing emit_own_field_arg gives a
-// field read passed directly.
+// a keeps the only claim. Two later events then destroy that claim under st —
+// a declared `own` parameter consuming it, and whatever releases a's field:
+// the exit deep drop, or the in-place reuse behind `a = Asm { ...a, cfi: … }`,
+// which decs the replaced field outright. Either way the box the result is
+// built from is freed under it (#8267). Retaining at the LIFT covers both,
+// where retaining at the argument would already be too late for the supersede.
+//
+// The retain is paid for by the `own` position that consumes it, which is why
+// the consuming use is the condition rather than the lift alone: a lift nothing
+// consumes still needs no claim, and giving it one would leak.
 //
 // STRAIGHT-LINE and top-level: the lift, the consuming call, and every
-// statement between them are read in order, and either name being rebound (or
-// any branch or loop appearing) ends the alias and the scan. A lift inside a
-// loop body is not covered — the retain would repeat on a value the first
-// iteration already made counted.
-function own_lift_arg_sites_of(fn: parser.FuncDecl, sg: FnSigs, structs: StructTab): string[] {
+// statement between them are read in order, and a rebind of the LOCAL — or any
+// branch or loop appearing — ends the alias and the scan. A rebind of the BASE
+// does not: superseding the field is the very case the retain is for. Exactly
+// one consuming use is admitted; two would consume two claims against the one
+// retain, so the pair declines rather than under-count.
+//
+// A lift inside a loop body is not covered — the retain would repeat on a value
+// the first iteration already made counted.
+function own_lift_retain_sites_of(fn: parser.FuncDecl, sg: FnSigs, structs: StructTab): string[] {
     var out: string[] = [];
     if (sg.own_positions.len() == 0) { return out; }
     var fs: FeState = FeState { tainted: [], an: [], av: [], av_env: [], types_n: [], types_t: [], decl_s: [], site_mode: false };
@@ -77498,10 +77517,16 @@ function own_lift_arg_sites_of(fn: parser.FuncDecl, sg: FnSigs, structs: StructT
         var base: string = "";
         var fld: string = "";
         var lifted: string = "";
+        var key: string = "";
         match (fn.body[k]) {
             ast.StmtVar(v) => {
                 match (v.init) {
-                    ast.ExprFieldAccess(fa) => { base = ident_name_or_empty(fa.obj); fld = fa.field; lifted = v.name; },
+                    ast.ExprFieldAccess(fa) => {
+                        base = ident_name_or_empty(fa.obj);
+                        fld = fa.field;
+                        lifted = v.name;
+                        key = util.i32_to_string(v.line) + ":" + util.i32_to_string(v.col);
+                    },
                     _ => {}
                 }
             },
@@ -77509,36 +77534,37 @@ function own_lift_arg_sites_of(fn: parser.FuncDecl, sg: FnSigs, structs: StructT
         }
         var bty: string = rc_ml_local_type(base, fs.types_n, fs.types_t);
         if (base.len() > 0 && decl_is_struct(structs, bty)
-            && field_move_type(structs, decl_field_type(structs, bty, fld))) {
-            out = own_lift_scan_uses(fn.body, k + 1, lifted, base, sg.own_positions, out);
+            && field_move_type(structs, decl_field_type(structs, bty, fld))
+            && own_lift_scan_uses(fn.body, k + 1, lifted, sg.own_positions) == 1) {
+            out = push_str_unique(out, key);
         }
         k = k + 1;
     }
     return out;
 }
 
-// own_lift_scan_uses walks forward from statement `from`, recording the
-// `own`-position sites of `name` and stopping at the statement that rebinds
-// either name (after reading it — the RHS runs before the store) or at the
-// first statement that is not straight-line.
-function own_lift_scan_uses(body: ast.Stmt[], from: i32, name: string, base: string, own_positions: string[], acc: string[]): string[] {
-    var out: string[] = acc;
+// own_lift_scan_uses walks forward from statement `from`, counting the
+// `own`-position uses of `name` and stopping at the statement that rebinds it
+// (after reading it — the RHS runs before the store) or at the first statement
+// that is not straight-line.
+function own_lift_scan_uses(body: ast.Stmt[], from: i32, name: string, own_positions: string[]): i32 {
+    var n: i32 = 0;
     var m: i32 = from;
     var go: boolean = true;
     while (go && m < body.len()) {
         var target: string = "";
         var straight: boolean = false;
         match (body[m]) {
-            ast.StmtVar(v) => { out = own_lift_stmt_sites(v.init, name, own_positions, out); target = v.name; straight = true; },
-            ast.StmtAssign(a) => { out = own_lift_stmt_sites(a.value, name, own_positions, out); target = a.target; straight = true; },
-            ast.StmtReturn(r) => { out = own_lift_stmt_sites(r.value, name, own_positions, out); straight = true; },
-            ast.StmtExpr(e) => { out = own_lift_stmt_sites(e.value, name, own_positions, out); straight = true; },
+            ast.StmtVar(v) => { n = n + own_lift_stmt_uses(v.init, name, own_positions); target = v.name; straight = true; },
+            ast.StmtAssign(a) => { n = n + own_lift_stmt_uses(a.value, name, own_positions); target = a.target; straight = true; },
+            ast.StmtReturn(r) => { n = n + own_lift_stmt_uses(r.value, name, own_positions); straight = true; },
+            ast.StmtExpr(e) => { n = n + own_lift_stmt_uses(e.value, name, own_positions); straight = true; },
             _ => {}
         }
-        if (!straight || target == name || target == base) { go = false; }
+        if (!straight || target == name) { go = false; }
         m = m + 1;
     }
-    return out;
+    return n;
 }
 
 // emit_own_field_arg: the value of `base.f` is on the stack, bound for an
