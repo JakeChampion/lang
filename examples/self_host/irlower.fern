@@ -3050,10 +3050,11 @@ pub function ident_is_fn_value(name: string, s: LowerState): boolean {
 // "Option[string]"), or "" otherwise. Comma-free is required because the tuple-
 // element tag encoding (mark_tuple_elems / tuple_elem_tag) splits on commas, so
 // `Result[T, E]` (which has one) is deliberately NOT recovered here — a Result
-// element gets no tag, so the lowering bails on it (#3018). Only a `Some(<scalar/string>)`
-// construction or an Option-typed local/param is admitted (a leak-only box, one
-// pointer slot, like a struct element); a `None` with no statically-known
-// payload, or a nested Option, falls through to "".
+// element gets no tag, so the lowering bails on it (#3018). Admitted: a
+// `Some(<scalar / string / leak-safe struct>)` construction, and an
+// Option-typed local / param / call result (a leak-only box, one pointer slot,
+// like a struct element). A `None` with no statically-known payload, or a
+// nested Option, falls through to "".
 pub function expr_opt_elem_tag(e: ast.Expr, s: LowerState): string {
     match (e) {
         ast.ExprCall(c) => {
@@ -3072,15 +3073,24 @@ pub function expr_opt_elem_tag(e: ast.Expr, s: LowerState): string {
                         if (pt == "i32" || pt == "string" || pt == "i64" || elem_ty_is_f64slot(pt) || pt == "boolean" || pt == "clo") {
                             return "Option[" + pt + "]";
                         }
+                        // A leak-safe STRUCT payload (`Some(S { … })`): the box
+                        // holds one struct pointer at offset 8, which is what the
+                        // match lowering's ptag_is_struct branch already reads —
+                        // the same slot shape a struct FIELD of type Option[S] has
+                        // carried since is_leaksafe_opt_field_d admitted it. Only
+                        // this tag was missing, so `(Some(S { … }), g)` bailed the
+                        // whole module while `var o: Option[S] = Some(S { … })`
+                        // lowered (#8407).
+                        if (opt_payload_struct_ok(pt, s)) { return "Option[" + pt + "]"; }
                         return "";
                     }
                     var rt: string = resolve_argref_opt_type(s.opt_ret_type(cid.name), c.args, s);
                     if (rt.len() >= 8 && slice_unchecked(rt, 0, 7) == "Option[") { return rt; }
-                    return opt_elem_tag_from_ty(c.ty);
+                    return opt_elem_tag_from_ty(c.ty, s);
                 },
                 // typed-IR (#5986): an Option-returning METHOD call (`st.find(x)`)
                 // has no registry key here; the checker's stamped tag answers.
-                _ => { return opt_elem_tag_from_ty(c.ty); }
+                _ => { return opt_elem_tag_from_ty(c.ty, s); }
             }
         },
         ast.ExprIdent(id) => {
@@ -3095,14 +3105,30 @@ pub function expr_opt_elem_tag(e: ast.Expr, s: LowerState): string {
 
 // opt_elem_tag_from_ty admits a checker-stamped "Option[T]" for tuple-element
 // typing under the same payload constraint the Some-construction walk
-// enforces: the element machinery handles exactly these payload kinds, and a
-// wider tag (Option[u64], a struct payload) admitted here routes the element
-// into lowering the walk's rejection deliberately kept it out of.
-function opt_elem_tag_from_ty(ty: string): string {
+// enforces — the two are kept in step deliberately, so a method returning
+// `Option[S]` at an element types exactly as the direct `Some(S { … })` does.
+// A payload outside the set (Option[u64]) admitted here would route the element
+// into lowering the walk's rejection keeps it out of.
+function opt_elem_tag_from_ty(ty: string, s: LowerState): string {
     if (ty.len() < 8 || slice_unchecked(ty, 0, 7) != "Option[") { return ""; }
     var pt: string = opt_payload_type(ty, "Some");
     if (pt == "i32" || pt == "string" || pt == "i64" || elem_ty_is_f64slot(pt) || pt == "boolean") { return ty; }
+    // The struct payload the Some-construction walk admits (#8407): a call or
+    // method returning `Option[S]` types its element the same way the direct
+    // construction does.
+    if (opt_payload_struct_ok(pt, s)) { return ty; }
     return "";
+}
+
+// opt_payload_struct_ok reports whether `pt` names a struct whose Option box may
+// ride one tuple slot: leak-safe, so the tuple leaks it exactly as a struct
+// element or an Option[i32] element leaks — no rc traffic to get wrong. The
+// depth/visiting pair is threaded so a self-referential payload
+// (`Option[Node]` on `struct Node`) short-circuits rather than recursing.
+function opt_payload_struct_ok(pt: string, s: LowerState): boolean {
+    if (!decl_is_struct(s.frame.structs, pt)) { return false; }
+    var visiting: string[] = [];
+    return decl_is_leaksafe_d(s.frame.structs, pt, 0, visiting);
 }
 
 // some_opt_type returns the "Option[T]" type of a DIRECT `Some(x)` construction

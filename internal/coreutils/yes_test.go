@@ -8,8 +8,8 @@ import (
 // yes(1) never stops, so every output case bounds the read. The bound
 // doubles as the SIGPIPE check: the harness closes the read end after
 // the prefix, and both sides have to die of it.
-func TestYesParity(t *testing.T) {
-	requireParity(t, "yes", []invocation{
+func yesCases(t *testing.T) []invocation {
+	return []invocation{
 		{name: "no arguments", limit: 64},
 		{name: "one operand", args: []string{"hello"}, limit: 64},
 		{name: "two operands", args: []string{"a", "b"}, limit: 64},
@@ -54,7 +54,11 @@ func TestYesParity(t *testing.T) {
 		// POSIXLY_CORRECT ends the options at the first operand.
 		{name: "posix operand then help", args: []string{"x", "--help"}, env: []string{"POSIXLY_CORRECT=1"}, limit: 64},
 		{name: "posix option before the operand", args: []string{"--foo", "x"}, env: []string{"POSIXLY_CORRECT=1"}},
-	})
+	}
+}
+
+func TestYesParity(t *testing.T) {
+	requireParity(t, "yes", yesCases(t))
 }
 
 // The unique-prefix rule and the option scan that reaches past an
