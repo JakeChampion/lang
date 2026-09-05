@@ -976,7 +976,7 @@ func (l *lifter) handle(i int, op ir.Op) error {
 		}
 		l.stack = append(l.stack, result)
 	case ir.OpCallIndirect:
-		argc, _, _ := l.callShape(op)
+		argc, results, shaped := l.callShape(op)
 		// Layout on the stack: [args..., callee_idx]. Pop callee
 		// first, then argc args.
 		if len(l.stack) < argc+1 {
@@ -987,6 +987,19 @@ func (l *lifter) handle(i int, op ir.Op) error {
 		args := append([]Value(nil), l.stack[len(l.stack)-1-argc:len(l.stack)-1]...)
 		l.stack = l.stack[:len(l.stack)-argc-1]
 		all := append([]Value{callee}, args...)
+		if shaped && results == 0 {
+			// A void callee pushes nothing, exactly as in the direct case
+			// above. The IR stopped emitting a drop after one when #8504
+			// fixed `exprLeavesValue`, so pushing a result here left a value
+			// nothing consumed and every subsequent stack height was one too
+			// high — which is what TestLiftAgreesWithTheVerifiersStackModel
+			// then reported against the verifier (#8539). The verifier reads
+			// its own count from CallShapes.ResultSlots, so taking `results`
+			// from the same place is what makes the two agree by
+			// construction rather than by a second opinion.
+			l.out.AddOpNoResult(l.cur, OpCallIndirect, all...)
+			break
+		}
 		result := l.out.AddOp(l.cur, OpCallIndirect, all...)
 		// Result width, for the same reason ResolveWidths sets it on a
 		// direct call: a 64-bit return (i64, or ANY float, which lives in a

@@ -11,9 +11,15 @@ const autoRebaseFile = "auto-rebase-prs.yml"
 
 func autoRebaseSource(t *testing.T) string {
 	t.Helper()
-	b, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", autoRebaseFile))
+	return workflowSource(t, autoRebaseFile)
+}
+
+// workflowSource reads one workflow from .github/workflows.
+func workflowSource(t *testing.T, name string) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", name))
 	if err != nil {
-		t.Fatalf("read %s: %v", autoRebaseFile, err)
+		t.Fatalf("read %s: %v", name, err)
 	}
 	return string(b)
 }

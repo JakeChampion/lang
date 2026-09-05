@@ -6,7 +6,7 @@ import "testing"
 // like options, and answer `--help` / `--version` only when it is the
 // sole argument and spelled in full. Both write those to stdout and
 // still exit with their own status, so false(1) exits 1 from `--help`.
-func trueFalseCases() []invocation {
+func trueFalseCases(t *testing.T) []invocation {
 	return []invocation{
 		{name: "no arguments"},
 		{name: "an operand", args: []string{"x"}},
@@ -26,11 +26,11 @@ func trueFalseCases() []invocation {
 }
 
 func TestTrueParity(t *testing.T) {
-	requireParity(t, "true", trueFalseCases())
+	requireParity(t, "true", trueFalseCases(t))
 }
 
 func TestFalseParity(t *testing.T) {
-	requireParity(t, "false", trueFalseCases())
+	requireParity(t, "false", trueFalseCases(t))
 }
 
 func TestTrueHelpVersion(t *testing.T) {
