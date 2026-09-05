@@ -955,6 +955,62 @@ func TestRunnerCryptoExamplePasses(t *testing.T) {
 	}
 }
 
+// `examples/tests/digest_*_test.fern` cover std/crypto's streaming digests
+// (#8278): each against its RFC / NIST known-answer vectors (empty, "abc", the
+// multi-block message, one million 'a') fed as whole strings, as 1000 updates
+// of 1000 bytes, and as 7-byte view slices — so the pending-block logic, not
+// just the round function, is what the vectors prove. `hash_checksums_test`
+// does the same for std/hash's cksum(1) CRC and the sum(1) checksums against
+// GNU coreutils' values. Interp oracle here; all of them also ride the
+// self-host IR differential (selfHostStdTestCases).
+func runnerSuitePasses(t *testing.T, file, suite string, n int) {
+	t.Helper()
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/"+file+"_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	plan := fmt.Sprintf("1..%d", n)
+	for _, w := range []string{"# Suite: " + suite, fmt.Sprintf("# pass %d", n), "# fail 0", plan} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+func TestRunnerDigestMd5ExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "digest_md5", "std/crypto MD5", 7)
+}
+
+func TestRunnerDigestSha1ExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "digest_sha1", "std/crypto SHA-1", 7)
+}
+
+func TestRunnerDigestSha224ExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "digest_sha224", "std/crypto SHA-224", 7)
+}
+
+func TestRunnerDigestSha256ExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "digest_sha256", "std/crypto SHA-256", 7)
+}
+
+func TestRunnerDigestSha384ExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "digest_sha384", "std/crypto SHA-384", 7)
+}
+
+func TestRunnerDigestSha512ExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "digest_sha512", "std/crypto SHA-512", 7)
+}
+
+func TestRunnerDigestBlake2bExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "digest_blake2b", "std/crypto BLAKE2b", 8)
+}
+
+func TestRunnerHashChecksumsExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "hash_checksums", "std/hash checksums", 6)
+}
+
 // `examples/tests/cli_test.fern` covers std/cli's spec-driven argument
 // parser (#4385 item 1): valued options in --long V / --long=V / -short V
 // forms, boolean flags, positional operands, the `--` terminator, the

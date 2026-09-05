@@ -20184,6 +20184,12 @@ func (b *builder) emitArraySet(n *ast.Call) error {
 	if b.rc.arraySetInc[n] {
 		b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
 	}
+	// A field receiver of the superseded-field shape (computeFieldOwnMoves)
+	// moves out of its box when the box is unique, so the helper sees the
+	// field's own count and mutates in place; a shared box retains instead.
+	if fa, isField := n.Args[0].(*ast.FieldAccess); isField && b.rc.fieldOwnMoves[fa] {
+		b.emitFieldOwnMove(fa)
+	}
 	// A consumed receiver (arraySetConsumedSites): the helper takes the
 	// reference now on the stack over, so the slot no longer holds one —
 	// null it, and every later release of the slot no-ops.

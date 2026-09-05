@@ -1,0 +1,199 @@
+// std/hash — non-cryptographic checksums: the CRC-32 that cksum(1) prints
+// and the two sum(1) checksums (BSD `sum -r`, System V `sum -s`).
+//
+// These share std/crypto's streaming shape — a value with `update` /
+// `update_bytes` that is rebound (`c = c.update(chunk)`) and read out with
+// `finish()` — but live apart from it because none of them is a hash
+// function in the cryptographic sense: a CRC detects line noise, not an
+// adversary, and putting it under `crypto` would suggest otherwise. This is
+// also where a future non-cryptographic hash (FNV, xxHash, a map hasher)
+// belongs.
+//
+// Each carries the byte count the utilities print next to the checksum:
+// cksum's is the exact length, sum's are 1 KiB (BSD) and 512-byte (System V)
+// block counts, rounded up. Bit-for-bit what GNU coreutils prints:
+//
+//   cksum:  crc = CRC-32/CKSUM (poly 0x04C11DB7, MSB first, no reflection),
+//           over the data followed by the length in little-endian bytes with
+//           trailing zero bytes dropped, then complemented.
+//   sum -r: 16-bit right-rotate-then-add over every byte.
+//   sum -s: the 32-bit byte sum folded to 16 bits twice.
+
+// === CRC-32 as cksum(1) computes it ===
+
+pub struct Cksum {
+    crc: u32,
+    len: u64,
+    // 256-entry table of `(i << 24)` fed through eight polynomial steps;
+    // built once per hasher and only ever read.
+    table: u32[]
+}
+
+function __cksum_table(): u32[] {
+    var t: u32[] = [];
+    var i: u32 = 0;
+    while (i < 256) {
+        var c: u32 = i << 24;
+        var k: i32 = 0;
+        while (k < 8) {
+            if ((c & 0x80000000) != 0) { c = (c << 1) ^ 0x04c11db7; } else { c = c << 1; }
+            k = k + 1;
+        }
+        t = t.append(c);
+        i = i + 1;
+    }
+    return t;
+}
+
+pub function cksum_new(): Cksum {
+    return Cksum { crc: 0, len: 0 as u64, table: __cksum_table() };
+}
+
+function __cksum_absorb(c: Cksum, bs: [u8]): Cksum {
+    var t: u32[] = c.table;
+    var crc: u32 = c.crc;
+    var n: i32 = bs.len();
+    var i: i32 = 0;
+    while (i < n) {
+        crc = (crc << 8) ^ t[(((crc >> 24) ^ (bs[i] as u32)) & 255) as i32];
+        i = i + 1;
+    }
+    return Cksum { ...c, crc: crc, len: c.len + (n as u64) };
+}
+
+pub function (c: Cksum) update(chunk: string): Cksum {
+    c = __cksum_absorb(c, chunk.as_bytes());
+    return c;
+}
+
+pub function (c: Cksum) update_bytes(chunk: [u8]): Cksum {
+    c = __cksum_absorb(c, chunk);
+    return c;
+}
+
+// len() — the number of bytes absorbed, the second field of cksum's output.
+pub function (c: Cksum) len(): u64 {
+    return c.len;
+}
+
+// finish() — the CRC with the length folded in and complemented. Reads the
+// state without consuming it: more `update`s may follow.
+pub function (c: Cksum) finish(): u32 {
+    var crc: u32 = c.crc;
+    var n: u64 = c.len;
+    while (n != (0 as u64)) {
+        crc = (crc << 8) ^ c.table[(((crc >> 24) ^ ((n & (255 as u64)) as u32)) & 255) as i32];
+        n = n >> (8 as u64);
+    }
+    return crc ^ 0xffffffff;
+}
+
+// cksum_of(s) — the one-shot checksum of `s`.
+pub function cksum_of(s: string): u32 {
+    return cksum_new().update(s).finish();
+}
+
+// === BSD sum (`sum -r`): 16-bit rotate-and-add, 1 KiB blocks ===
+
+pub struct BsdSum {
+    sum: u32,
+    len: u64
+}
+
+pub function bsd_sum_new(): BsdSum {
+    return BsdSum { sum: 0, len: 0 as u64 };
+}
+
+function __bsd_sum_absorb(s: BsdSum, bs: [u8]): BsdSum {
+    var sum: u32 = s.sum;
+    var n: i32 = bs.len();
+    var i: i32 = 0;
+    while (i < n) {
+        sum = ((sum >> 1) | (sum << 15)) & 0xffff;
+        sum = (sum + (bs[i] as u32)) & 0xffff;
+        i = i + 1;
+    }
+    return BsdSum { sum: sum, len: s.len + (n as u64) };
+}
+
+pub function (s: BsdSum) update(chunk: string): BsdSum {
+    s = __bsd_sum_absorb(s, chunk.as_bytes());
+    return s;
+}
+
+pub function (s: BsdSum) update_bytes(chunk: [u8]): BsdSum {
+    s = __bsd_sum_absorb(s, chunk);
+    return s;
+}
+
+// finish() — the 16-bit checksum (0..65535).
+pub function (s: BsdSum) finish(): u32 {
+    return s.sum;
+}
+
+pub function (s: BsdSum) len(): u64 {
+    return s.len;
+}
+
+// blocks() — the 1 KiB block count sum(1) prints, rounded up.
+pub function (s: BsdSum) blocks(): u64 {
+    return (s.len + (1023 as u64)) / (1024 as u64);
+}
+
+// bsd_sum_of(s) — the one-shot checksum of `s`.
+pub function bsd_sum_of(s: string): u32 {
+    return bsd_sum_new().update(s).finish();
+}
+
+// === System V sum (`sum -s`): folded 32-bit byte sum, 512-byte blocks ===
+
+pub struct SysvSum {
+    sum: u32,
+    len: u64
+}
+
+pub function sysv_sum_new(): SysvSum {
+    return SysvSum { sum: 0, len: 0 as u64 };
+}
+
+function __sysv_sum_absorb(s: SysvSum, bs: [u8]): SysvSum {
+    var sum: u32 = s.sum;
+    var n: i32 = bs.len();
+    var i: i32 = 0;
+    while (i < n) {
+        sum = sum + (bs[i] as u32);
+        i = i + 1;
+    }
+    return SysvSum { sum: sum, len: s.len + (n as u64) };
+}
+
+pub function (s: SysvSum) update(chunk: string): SysvSum {
+    s = __sysv_sum_absorb(s, chunk.as_bytes());
+    return s;
+}
+
+pub function (s: SysvSum) update_bytes(chunk: [u8]): SysvSum {
+    s = __sysv_sum_absorb(s, chunk);
+    return s;
+}
+
+// finish() — the 16-bit checksum: the wrapped 32-bit byte sum folded to
+// 16 bits, then folded once more so the carry of the first fold lands.
+pub function (s: SysvSum) finish(): u32 {
+    var r: u32 = (s.sum & 0xffff) + (s.sum >> 16);
+    return (r & 0xffff) + (r >> 16);
+}
+
+pub function (s: SysvSum) len(): u64 {
+    return s.len;
+}
+
+// blocks() — the 512-byte block count sum(1) prints, rounded up.
+pub function (s: SysvSum) blocks(): u64 {
+    return (s.len + (511 as u64)) / (512 as u64);
+}
+
+// sysv_sum_of(s) — the one-shot checksum of `s`.
+pub function sysv_sum_of(s: string): u32 {
+    return sysv_sum_new().update(s).finish();
+}
