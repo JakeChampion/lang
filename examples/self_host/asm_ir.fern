@@ -5903,6 +5903,29 @@ function emit_ir_field_reclaim_one(s: asmcore.EmitState, sty: string): asmcore.E
             s = s.write("    call __fn___fern_arrarr_free\n");  // element walk at rc==1, then the buffer
             s = s.write("    addq $8, %rsp\n");
         } else {
+            if (op.kind == "deep_struct_dec") {
+                // The nested struct's OWN rc children, before the box dec below
+                // frees the box holding them (#8538). Gated on rc==1: a SHARED
+                // inner keeps its fields for its other owner, the same gate
+                // __struct_drop_<T>'s deep_struct_drop arm applies.
+                // __fern_rc_is_unique leaves %rsi alone; __struct_drop_<ty>
+                // clobbers %r9/%r10/%r11, so reload from the stable frame.
+                var dsan: string = asmcore.sanitize_label(op.ty);
+                s = s.need("struct_drop:" + op.ty);
+                s = s.write("    pushq %rsi\n");
+                s = s.write("    call __fn___fern_rc_is_unique\n");
+                s = s.write("    addq $8, %rsp\n");
+                s = s.write("    testq %rax, %rax\n");
+                s = s.write("    jz .Lfr_" + san + "_nodeep" + ks + "\n");
+                s = s.write("    pushq %rsi\n");
+                s = s.write("    call __fn___struct_drop_" + dsan + "\n");
+                s = s.write("    addq $8, %rsp\n");
+                s = s.write("    movq 24(%rsp), %r11\n");          // reload new
+                s = s.write("    movq 16(%rsp), %r10\n");          // reload old
+                s = s.write("    movq 8(%rsp), %r9\n");            // reload snap
+                s = s.write("    movq " + off + "(%r10), %rsi\n"); // reload old.field_k
+                s = s.write(".Lfr_" + san + "_nodeep" + ks + ":\n");
+            }
             s = s.write("    pushq %rsi\n");
             if (op.kind == "str_free") {
                 s = s.write("    call __fn___fern_str_free\n");     // rc-aware string free (data buffer + box)

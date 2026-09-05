@@ -5405,6 +5405,15 @@ pub function field_reclaim_field_ops(s: EmitState, sty: string): RcOp[] {
         if (participates) {
             var uniq: boolean = fr_struct || fr_enum;
             var cow: boolean = !uniq;
+            // A nested STRUCT field owns rc children of its own, and the box dec
+            // below frees only the box — so the children were stranded (#8538).
+            // `__struct_drop_<inner>` releases them, under the same rc==1 gate
+            // struct_drop_field_ops' deep_struct_drop arm uses: a SHARED inner
+            // keeps its fields for the other owner. Empty when the inner reaches
+            // nothing reclaimable, or when its graph has a cycle
+            // (nested_field_deep_drop_ok), leaving today's box-only release.
+            var deep: string = "";
+            if (fr_struct && irlower.nested_field_deep_drop_ok(s.struct_decls, fdt)) { deep = fdt; }
             if (fr_box_arr) {
                 var pre: string = "";
                 if (irlower.is_struct_array_field_type(s.struct_decls, fdt)) {
@@ -5418,6 +5427,8 @@ pub function field_reclaim_field_ops(s: EmitState, sty: string): RcOp[] {
                 ops = ops.append(RcOp { kind: "str_free", idx: k, ty: "", cow: cow, uniq: uniq });
             } else if (fr_str_arr) {
                 ops = ops.append(RcOp { kind: "str_arr_free", idx: k, ty: "", cow: cow, uniq: uniq });
+            } else if (deep.len() > 0) {
+                ops = ops.append(RcOp { kind: "deep_struct_dec", idx: k, ty: deep, cow: cow, uniq: uniq });
             } else {
                 ops = ops.append(RcOp { kind: "arr_dec", idx: k, ty: "", cow: cow, uniq: uniq });
             }

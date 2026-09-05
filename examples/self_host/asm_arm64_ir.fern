@@ -2763,6 +2763,27 @@ function emit_arm64_field_reclaim_one(s: asmcore.EmitState, sty: string): asmcor
             s = s.write("    bl __fn___fern_arrarr_free\n");   // element walk at rc==1, then the buffer
             s = s.write("    add sp, sp, #16\n");
         } else {
+            if (op.kind == "deep_struct_dec") {
+                // The nested struct's OWN rc children, before the dec below frees
+                // the box holding them (#8538). Gated on rc==1: a SHARED inner
+                // keeps its fields for its other owner. __fern_rc_is_unique
+                // leaves x1 alone; __struct_drop_<ty> does not, so reload the
+                // frame and the field after it.
+                var dsan: string = asmcore.sanitize_label(op.ty);
+                s = s.need("struct_drop:" + op.ty);
+                s = s.write("    str x1, [sp, #-16]!\n");
+                s = s.write("    bl __fn___fern_rc_is_unique\n");
+                s = s.write("    add sp, sp, #16\n");
+                s = s.write("    cbz x0, .Lafr_" + san + "_nodeep" + ks + "\n");
+                s = s.write("    str x1, [sp, #-16]!\n");
+                s = s.write("    bl __fn___struct_drop_" + dsan + "\n");
+                s = s.write("    add sp, sp, #16\n");
+                s = s.write("    ldr x10, [sp, #48]\n");             // new
+                s = s.write("    ldr x11, [sp, #32]\n");             // old
+                s = s.write("    ldr x12, [sp, #16]\n");             // snap
+                s = s.write("    ldr x1, [x11, #" + off + "]\n");    // old.field_k
+                s = s.write(".Lafr_" + san + "_nodeep" + ks + ":\n");
+            }
             s = s.write("    str x1, [sp, #-16]!\n");
             if (op.kind == "str_free" || op.kind == "str_arr_free") {
                 if (op.kind == "str_free") {
