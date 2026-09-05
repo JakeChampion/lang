@@ -86,7 +86,9 @@ cosmetic and are not:
   token including any `=value`). A hidden option is visible here: `head`'s
   ambiguity list names `---presume-input-pipe`.
 - strerror text: `No such file or directory`, `Is a directory`, `Bad file
-  descriptor`. See "Open gaps".
+  descriptor`, `No space left on device` — `IoError.Other` carries glibc's
+  text for the errno on every backend (`internal/strerror`), so a write or
+  open failure prints what C prints.
 - The `Try '<argv0> --help' for more information.` line and the fact that a
   usage error never prints the full help.
 - Per-utility exit codes for usage errors: 1 for most, 2 for `sort`, `expr`,
@@ -104,9 +106,9 @@ it.
 ## How parity is enforced
 
 `internal/coreutils/` is the gate. It is oracle-based: no expected output is
-ever written down. Each case is an invocation (argv, stdin, extra env, and
-for a utility that never stops, a byte limit); the harness runs GNU and Fern
-and diffs. A case costs one line, and a case cannot record a wrong
+ever written down. Each case is an invocation (argv, stdin, extra env, where
+stdout goes — captured, closed, or `/dev/full` — and for a utility that never
+stops, a byte limit); the harness runs GNU and Fern and diffs. A case costs one line, and a case cannot record a wrong
 expectation, which is what makes the corpus cheap to grow and hard to get
 wrong. See the package doc in `harness_test.go`.
 
@@ -220,28 +222,18 @@ measured, not chosen: a C `write(2)` loop through the same pipe puts the
 optimum at 4 KiB on Linux (138 ms median; GNU's 8 KiB, 163) and 1 KiB on
 macOS (482 ms; GNU writes 1 KiB there, 477), with every size from 2 KiB up
 costing 570–680 ms on macOS because a write that overfills the 64 KiB pipe
-puts writer and reader into lockstep. `yes.fern` ships the Linux optimum, so
-it is 1.06× GNU on Linux and 0.75× on macOS until the block can be selected
-per target — #8338, the second open Fern gap below. The sweeps are recorded
-in that issue and in `yes.fern`.
+puts writer and reader into lockstep. `yes.fern` selects the block with
+`target_os()` — 4 KiB compiled for Linux, 1 KiB for macOS — so it is 1.06×
+GNU on Linux and writes the same 1 KiB GNU does on macOS. The sweeps are
+recorded in `yes.fern`.
 
 ## Open gaps
 
-Two, and both are Fern gaps with their own issues rather than corpus
-carve-outs — the standing order is that a Fern bug met on the way gets an
-issue and a fix, never a workaround:
-
-- **#8265 — `IoError.Other` carries an empty message.** GNU reports write
-  and open failures as `prog: context: <strerror text>`. The four named
-  IoError variants map to their text in `lib/gnu.fern`; `Other` has no errno
-  left to map. So `yes >&-` (`yes: standard output: Bad file descriptor`),
-  `echo hi >&-` (`echo: write error: Bad file descriptor`) and `> /dev/full`
-  are not in the corpus yet. The utilities already print the field as the
-  strerror text, so the fix needs no change here beyond adding the cases.
-- **#8338 — Fern source cannot learn its compile target's OS.** The pipe
-  write size that beats GNU is 4 KiB on Linux and 1 KiB on macOS, and a
-  program can only hold one constant. Blocks `yes` beating GNU on macOS and
-  the per-target block size the group-B buffered writer will want.
+None. Both Fern gaps the first utilities met — `IoError.Other` carrying no
+strerror text (#8265) and source unable to learn its compile target
+(#8338) — are closed, and each is exercised by the corpus: the
+write-failure cases (`yes >&-`, `> /dev/full`) and `yes.fern`'s per-target
+block. A gap met later gets an issue and a fix, never a corpus carve-out.
 
 ## Staging
 
@@ -256,10 +248,11 @@ groups are the order of work. Each sub-issue names its group.
   `unexpand` `split` `csplit` `shuf` `od` `base32` `base64` `basenc` `cksum`
   `sum` `md5sum` `sha1sum` `sha224sum` `sha256sum` `sha384sum` `sha512sum`
   `b2sum` `tee`. Needs a buffered stdout writer in `std/io_buffered` (its
-  own header already promises one) and a streaming stdin reader; the hash
-  utilities need the digests `std/crypto` lacks (MD5, SHA-1, SHA-224/384/512,
-  BLAKE2b) — each a stdlib addition with its own tests. `tail -f` waits for
-  group C.
+  own header already promises one) and a streaming stdin reader. The hash
+  utilities have their digests: `std/crypto` streams MD5, SHA-1,
+  SHA-224/256/384/512 and BLAKE2b (`h = h.update(chunk)` per `read_chunk`
+  piece), and `std/hash` has cksum's CRC-32 and both sum(1) checksums with
+  their block counts. `tail -f` waits for group C.
 - **C. needs a runtime primitive first** — everything that reads the process
   or the filesystem beyond `read_file` / `stat` / `read_dir`: `pwd`
   (getcwd), `tty` (ttyname), `nproc` (affinity), `uname` `arch` (uname),

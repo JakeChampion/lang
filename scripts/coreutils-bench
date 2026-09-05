@@ -130,6 +130,34 @@ workloads() {
     true|false)
       printf '%s\tn\t{}\n' "$1"
       ;;
+    printf)
+      printf "printf '%%s\\\\n' x\tn\t{} '%%s\\\\n' x\n"
+      printf "printf '%%d %%s %%5.2f\\\\n' 1 a 2.5\tn\t{} '%%d %%s %%5.2f\\\\n' 1 a 2.5\n"
+      printf "printf '%%s\\\\n' cycling over 2000 operands\tn\t{} '%%s\\\\n' %s\n" "$(seq 2000 | tr '\n' ' ')"
+      printf "printf '%%.20f %%e %%g' cycling over 300 floats\tn\t{} '%%.20f %%e %%g\\\\n' %s\n" "$(seq 1 0.37 111 | tr '\n' ' ')"
+      ;;
+    basename)
+      printf 'basename one path\tn\t{} /usr/local/lib/libfoo.so.1.2.3 .3\n'
+      printf 'basename -a 200 operands\tn\t{} -a -s .o %s\n' "$(seq 200 | sed 's|.*|/usr/lib/x86_64-linux-gnu/lib&.o|' | tr '\n' ' ')"
+      ;;
+    dirname)
+      printf 'dirname one path\tn\t{} /usr/local/lib/libfoo.so.1.2.3\n'
+      ;;
+    tsort)
+      # A 100k-edge DAG over 50k names, generated once per run. Acyclic so
+      # the workload is the queue phase, not the loop report.
+      graph="$out/tsort-100k.txt"
+      [ -f "$graph" ] || python3 - "$graph" <<'PY'
+import random, sys
+rnd = random.Random(8288)
+with open(sys.argv[1], "w") as f:
+    for _ in range(100000):
+        i = rnd.randrange(0, 49999)
+        j = rnd.randrange(i + 1, 50000)
+        f.write("n%d n%d\n" % (i, j))
+PY
+      printf 'tsort 100k-edge DAG from a file\tn\t{} %s\n' "$graph"
+      ;;
     *)
       echo "coreutils-bench: no workloads defined for $1 — add a case to workloads()" >&2
       exit 1

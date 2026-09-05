@@ -115,16 +115,64 @@ func bigintCases() []bigintCase {
 		}
 	}
 
-	// mul_pow10 and shl get their own sweep — both are hand-rolled scaling
-	// paths that the pair-wise ops never reach.
+	// mul_pow10, shl and shr get their own sweep — all hand-rolled scaling
+	// paths that the pair-wise ops never reach. shr truncates toward zero, so
+	// it is checked against the shifted magnitude with the sign put back.
 	for _, a := range ops[:22] {
 		for _, k := range []int{0, 1, 9, 10, 17, 40} {
 			emit(fmt.Sprintf("%s.mul_pow10(%d).to_string()", bigintFernLit(a), k),
 				new(big.Int).Mul(a, new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(k)), nil)).String())
 			emit(fmt.Sprintf("%s.shl(%d).to_string()", bigintFernLit(a), k),
 				new(big.Int).Lsh(a, uint(k)).String())
+			shifted := new(big.Int).Rsh(new(big.Int).Abs(a), uint(k))
+			if a.Sign() < 0 {
+				shifted.Neg(shifted)
+			}
+			emit(fmt.Sprintf("%s.shr(%d).to_string()", bigintFernLit(a), k), shifted.String())
 		}
 	}
+
+	// divmod is truncated division (Go's QuoRem), over every pair with a
+	// non-zero divisor: the trial-digit corrections in Algorithm D only fire
+	// on particular limb patterns, and the wide randoms are where they show.
+	for i, a := range ops {
+		for j, b := range ops {
+			if b.Sign() == 0 || (i >= 22 && j >= 22 && (i+j)%3 != 0) {
+				continue
+			}
+			q, r := new(big.Int).QuoRem(a, b, new(big.Int))
+			la, lb := bigintFernLit(a), bigintFernLit(b)
+			emit("(("+la+").divmod("+lb+")).0.to_string()", q.String())
+			emit("(("+la+").divmod("+lb+")).1.to_string()", r.String())
+		}
+	}
+
+	// A zero divisor takes the machine contract (docs/INTEGER-SEMANTICS.md):
+	// `x / 0 == 0`, `x % 0 == x`. math/big traps on it, so the expectation is
+	// written out rather than derived.
+	for _, a := range ops[:12] {
+		la := bigintFernLit(a)
+		emit("(("+la+").divmod(bigint.zero())).0.to_string()", "0")
+		emit("(("+la+").divmod(bigint.zero())).1.to_string()", a.String())
+	}
+
+	// The bit-level accessors and the u64 constructor, which printf's
+	// exact float conversion is built on.
+	for _, a := range ops[:22] {
+		la := bigintFernLit(a)
+		low := new(big.Int).And(new(big.Int).Abs(a), new(big.Int).SetUint64(^uint64(0)))
+		emit("("+la+".low_u64()).to_string()", low.String())
+		for _, i := range []int{0, 1, 31, 32, 63, 64, 95, 200} {
+			emit(fmt.Sprintf("(%s.bit(%d)).to_string()", la, i), fmt.Sprint(new(big.Int).Abs(a).Bit(i) == 1))
+		}
+		for _, n := range []int{0, 1, 2, 3, 7} {
+			emit(fmt.Sprintf("%s.pow(%d).to_string()", la, n), new(big.Int).Exp(a, big.NewInt(int64(n)), nil).String())
+		}
+	}
+	emit("bigint.from_u64((0 as u64) - (1 as u64)).to_string()", "18446744073709551615")
+	emit("bigint.from_u64(9223372036854775808 as u64).to_string()", "9223372036854775808")
+	emit("bigint.from_u64(4294967296 as u64).to_string()", "4294967296")
+	emit("bigint.from_u64(0 as u64).to_string()", "0")
 	return cases
 }
 
@@ -134,6 +182,7 @@ func bigintCases() []bigintCase {
 // value the differential would then compare against the wrong expectation.
 const bigintPrelude = `import "core/bigint";
 import "std/i32";
+import "std/u64";
 
 function bigint_or_die(s: string): bigint.BigInt {
     match (bigint.parse(s)) {

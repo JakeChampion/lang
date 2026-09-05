@@ -827,9 +827,10 @@ pub function (n: i32) round_down_to(m: i32): i32 {
 // `(n: i32) divmod(d)` — `(quotient, remainder)` pair from a
 // single division. Saves the two-call boilerplate `(n/d, n%d)`
 // and signals intent at the call site (the pair is the unit
-// of work). d == 0 returns (0, 0) — caller validates.
+// of work). It IS that pair for every d, zero included, since
+// `/` and `%` are total (docs/INTEGER-SEMANTICS.md): d == 0
+// gives `(0, n)`.
 pub function (n: i32) divmod(d: i32): (i32, i32) {
-    if (d == 0) { return (0, 0); }
     return (n / d, n % d);
 }
 

@@ -1399,7 +1399,7 @@ func buildRemoveFileBodyP2(idxs map[string]uint32) []byte {
 	body = memory.InstI32Load8U(body, 0, 0)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	{
-		body = appendErrnoFromErrorCodeAt(body, 2, 6, emptyOkErrorCodeOff)
+		body = appendErrnoFromErrorCodeAt(body, idxs, 2, 6, emptyOkErrorCodeOff)
 		body = emitResultErr(body, buildIoErr, allocBox, 6, 7, 8)
 	}
 	body = inst.InstEnd(body)
@@ -1494,7 +1494,7 @@ func buildCreateDirAllBodyP2(idxs map[string]uint32) []byte {
 		body = numeric.InstI32Ne(body)
 		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 		{
-			body = appendErrnoFromErrorCodeAt(body, 2, 6, emptyOkErrorCodeOff)
+			body = appendErrnoFromErrorCodeAt(body, idxs, 2, 6, emptyOkErrorCodeOff)
 			body = emitResultErr(body, buildIoErr, allocBox, 6, 7, 8)
 		}
 		body = inst.InstEnd(body)
@@ -1590,7 +1590,7 @@ func buildTempDirBodyP2(idxs map[string]uint32) []byte {
 		body = numeric.InstI32Ne(body)
 		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 		{
-			body = appendErrnoFromErrorCodeAt(body, 14, 9, emptyOkErrorCodeOff)
+			body = appendErrnoFromErrorCodeAt(body, idxs, 14, 9, emptyOkErrorCodeOff)
 			body = emitResultErr(body, buildIoErr, allocBox, 9, 10, 11)
 		}
 		body = inst.InstEnd(body)
@@ -1608,7 +1608,7 @@ func buildTempDirBodyP2(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 16)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	{
-		body = appendErrnoFromErrorCodeAt(body, 14, 9, emptyOkErrorCodeOff)
+		body = appendErrnoFromErrorCodeAt(body, idxs, 14, 9, emptyOkErrorCodeOff)
 		body = emitResultErr(body, buildIoErr, allocBox, 9, 10, 11)
 	}
 	body = inst.InstEnd(body)
@@ -1731,7 +1731,7 @@ func buildStatLikeBodyP2(idxs map[string]uint32, pathFlags int32) []byte {
 	body = memory.InstI32Load8U(body, 0, 0)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	{
-		body = appendErrnoFromErrorCodeAt(body, 2, 6, statAtTypeOff)
+		body = appendErrnoFromErrorCodeAt(body, idxs, 2, 6, statAtTypeOff)
 		body = emitResultErr(body, buildIoErr, allocBox, 6, 10, 9)
 	}
 	body = inst.InstEnd(body)
@@ -1838,7 +1838,7 @@ func buildOpenDirBodyP2(idxs map[string]uint32) []byte {
 	body = memory.InstI32Load8U(body, 0, 0)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	{
-		body = appendErrnoFromErrorCode(body, 2, 4)
+		body = appendErrnoFromErrorCode(body, idxs, 2, 4)
 		body = inst.InstI32Const(body, 0)
 		body = inst.InstLocalGet(body, 4)
 		body = numeric.InstI32Sub(body)
@@ -1893,7 +1893,7 @@ func buildReadDirRawBodyP2(idxs map[string]uint32) []byte {
 	body = memory.InstI32Load8U(body, 0, 0)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	{
-		body = appendErrnoFromErrorCode(body, 1, 7)
+		body = appendErrnoFromErrorCode(body, idxs, 1, 7)
 		body = inst.InstI32Const(body, 0)
 		body = inst.InstLocalGet(body, 7)
 		body = numeric.InstI32Sub(body)
@@ -1924,7 +1924,7 @@ func buildReadDirRawBodyP2(idxs map[string]uint32) []byte {
 		{
 			body = inst.InstLocalGet(body, 2)
 			body = inst.InstCall(body, dropStream)
-			body = appendErrnoFromErrorCode(body, 1, 7)
+			body = appendErrnoFromErrorCode(body, idxs, 1, 7)
 			body = inst.InstI32Const(body, 0)
 			body = inst.InstLocalGet(body, 7)
 			body = numeric.InstI32Sub(body)
@@ -2214,7 +2214,7 @@ func buildRmdirRecBodyP2(idxs map[string]uint32) []byte {
 		b = memory.InstI32Load8U(b, 0, 0)
 		b = inst.InstIfStart(b, inst.BlocktypeEmpty)
 		{
-			b = appendErrnoFromErrorCodeAt(b, 12, 14, emptyOkErrorCodeOff)
+			b = appendErrnoFromErrorCodeAt(b, idxs, 12, 14, emptyOkErrorCodeOff)
 			b = inst.InstLocalGet(b, 14)
 			b = inst.InstReturn(b)
 		}

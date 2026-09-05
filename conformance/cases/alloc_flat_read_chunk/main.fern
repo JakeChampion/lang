@@ -1,0 +1,53 @@
+// spec: AL-01
+//
+// The streaming-reader shape: `match (r.read_chunk(n)) { Some(chunk) => … }`
+// in a loop. The runtime hands back an Option box whose payload is a fresh
+// rc=1 string built for the caller, and the binding is the only owner of
+// that string — so each iteration's chunk must be released as the next one
+// is bound, and the last one at function exit (#8396).
+//
+// The observable is that fresh memory does NOT scale with the chunk size:
+// the same number of reads at 1024 bytes must cost no more fresh bytes than
+// at 16 bytes, up to a factor that tolerates the per-call Option box (a
+// constant, independent of the chunk). With the chunks leaking, the wide
+// round costs ~19x the narrow one; with them recycled, the two are equal.
+// One warm-up read at each size precedes its measured round, so the first
+// allocation of each chunk class — fresh however well it recycles — is not
+// in the comparison.
+//
+// stdin is 41 x 16 bytes followed by 41 x 1024 bytes, so every read returns
+// a full chunk.
+import "std/i32";
+import "std/i64";
+
+function rounds(r: Reader, size: i32, n: i32): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) {
+        match (r.read_chunk(size)) {
+            Some(chunk) => { acc = acc + chunk.len(); },
+            None => { return acc; }
+        }
+        i = i + 1;
+    }
+    return acc;
+}
+
+function main(): i32 {
+    var r: Reader = stdin();
+    var warm: i32 = rounds(r, 16, 1);
+    var b0: i64 = __heap_bump_bytes();
+    var x: i32 = rounds(r, 16, 40);
+    var b1: i64 = __heap_bump_bytes();
+    warm = warm + rounds(r, 1024, 1);
+    var b2: i64 = __heap_bump_bytes();
+    var y: i32 = rounds(r, 1024, 40);
+    var b3: i64 = __heap_bump_bytes();
+
+    print(warm.to_string());
+    print(x.to_string());
+    print(y.to_string());
+    // Sixty-four times the bytes must not cost more than twice the fresh memory.
+    if ((b3 - b2) > 2 * (b1 - b0)) { print("scales"); } else { print("constant"); }
+    return 0;
+}

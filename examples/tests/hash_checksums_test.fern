@@ -1,0 +1,106 @@
+import "std/test";
+import "std/hash" as hash;
+import "std/string";
+// examples/tests/hash_checksums_test.fern — std/hash's cksum(1) CRC-32 and the
+// sum(1) checksums against values from GNU coreutils (`printf abc | cksum`,
+// `sum -r`, `sum -s`), streamed in 7-byte updates and cross-checked against the
+// one-shot forms, with the block counts the utilities print.
+
+// __pseudo builds the 10,003-byte fixed pattern byte i = (i * 7 + 3) & 255:
+// long enough that 7-byte updates straddle every block boundary offset, and
+// not valid UTF-8, so the hasher is fed raw bytes.
+function __pseudo(): u8[] {
+    var b: u8[] = __alloc_u8(10003);
+    var i: i32 = 0;
+    while (i < 10003) { b = b.with(i, ((i * 7 + 3) & 255) as u8); i = i + 1; }
+    return b;
+}
+
+// __thousand_a is 1000 'a's, the unit of the million-'a' vector.
+function __thousand_a(): string {
+    var b: u8[] = __alloc_u8(1000);
+    var i: i32 = 0;
+    while (i < 1000) { b = b.with(i, 97 as u8); i = i + 1; }
+    return string_from_bytes_unchecked(b);
+}
+
+function test_cksum_vectors(): test.TestOutcome {
+    if (hash.cksum_of("") != 4294967295) { return test.fail("empty"); }
+    if (hash.cksum_of("abc") != 1219131554) { return test.fail("abc"); }
+    var c: hash.Cksum = hash.cksum_new().update("abc");
+    if (c.len() != (3 as u64)) { return test.fail("len"); }
+    return test.assert_eq(c.finish(), 1219131554);
+}
+
+// finish() reads the state; more updates may follow it.
+function test_cksum_finish_is_a_read(): test.TestOutcome {
+    var c: hash.Cksum = hash.cksum_new().update("ab");
+    var mid: u32 = c.finish();
+    c = c.update("c");
+    if (mid != 2072780115) { return test.fail("mid"); }
+    return test.assert_eq(c.finish(), 1219131554);
+}
+
+function test_cksum_seven_byte_updates(): test.TestOutcome {
+    var msg: u8[] = __pseudo();
+    var c: hash.Cksum = hash.cksum_new();
+    var i: i32 = 0;
+    while (i + 7 <= 10003) { c = c.update_bytes(msg[i:i + 7]); i = i + 7; }
+    c = c.update_bytes(msg[i:10003]);
+    if (c.finish() != 741291487) { return test.fail("chunked"); }
+    if (c.len() != (10003 as u64)) { return test.fail("len"); }
+    return test.assert_eq(c.finish(), hash.cksum_of(string_from_bytes_unchecked(msg)));
+}
+
+function test_bsd_sum(): test.TestOutcome {
+    if (hash.bsd_sum_of("") != 0) { return test.fail("empty"); }
+    if (hash.bsd_sum_of("abc") != 16556) { return test.fail("abc"); }
+    var msg: u8[] = __pseudo();
+    var s: hash.BsdSum = hash.bsd_sum_new();
+    var i: i32 = 0;
+    while (i + 7 <= 10003) { s = s.update_bytes(msg[i:i + 7]); i = i + 7; }
+    s = s.update_bytes(msg[i:10003]);
+    if (s.finish() != 21454) { return test.fail("chunked"); }
+    if (s.finish() != hash.bsd_sum_of(string_from_bytes_unchecked(msg))) { return test.fail("one-shot"); }
+    if (s.len() != (10003 as u64)) { return test.fail("len"); }
+    return test.assert_eq(s.blocks(), 10 as u64);
+}
+
+function test_sysv_sum(): test.TestOutcome {
+    if (hash.sysv_sum_of("") != 0) { return test.fail("empty"); }
+    if (hash.sysv_sum_of("abc") != 294) { return test.fail("abc"); }
+    var msg: u8[] = __pseudo();
+    var s: hash.SysvSum = hash.sysv_sum_new();
+    var i: i32 = 0;
+    while (i + 7 <= 10003) { s = s.update_bytes(msg[i:i + 7]); i = i + 7; }
+    s = s.update_bytes(msg[i:10003]);
+    if (s.finish() != 29049) { return test.fail("chunked"); }
+    if (s.finish() != hash.sysv_sum_of(string_from_bytes_unchecked(msg))) { return test.fail("one-shot"); }
+    if (s.len() != (10003 as u64)) { return test.fail("len"); }
+    return test.assert_eq(s.blocks(), 20 as u64);
+}
+
+// Block counts round up: one byte past a block boundary is one more block, and
+// the empty input is zero blocks.
+function test_block_counts(): test.TestOutcome {
+    var b: u8[] = __alloc_u8(1025);
+    var i: i32 = 0;
+    while (i < 1025) { b = b.with(i, 0 as u8); i = i + 1; }
+    var r: hash.BsdSum = hash.bsd_sum_new().update_bytes(b);
+    var s: hash.SysvSum = hash.sysv_sum_new().update_bytes(b);
+    if (r.blocks() != (2 as u64)) { return test.fail("bsd 1025 -> 2"); }
+    if (s.blocks() != (3 as u64)) { return test.fail("sysv 1025 -> 3"); }
+    if (hash.bsd_sum_new().blocks() != (0 as u64)) { return test.fail("bsd empty"); }
+    return test.assert_eq(hash.sysv_sum_new().blocks(), 0 as u64);
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/hash checksums");
+    r = r.it("cksum vectors", test_cksum_vectors);
+    r = r.it("cksum finish is a read", test_cksum_finish_is_a_read);
+    r = r.it("cksum 7-byte updates", test_cksum_seven_byte_updates);
+    r = r.it("bsd sum", test_bsd_sum);
+    r = r.it("sysv sum", test_sysv_sum);
+    r = r.it("block counts", test_block_counts);
+    return r.finish();
+}

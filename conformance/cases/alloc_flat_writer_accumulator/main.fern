@@ -1,0 +1,64 @@
+// spec: AL-01
+//
+// The AL-01 shape for a string accumulator declared inside a match arm and
+// handed to `Writer.write`: every piece is appended in place and the
+// accumulator is released when the arm ends, so doubling the round count
+// cannot cost more fresh memory.
+//
+// `w.write(out)` is the load-bearing occurrence. The single-word string ABI
+// taints a string local passed to a call it cannot see through, and
+// `__method_Writer_write` is a copying builtin — the bytes go to the fd and
+// nothing retains them. Without that credit `out` was not owned, so each
+// `out = out + piece` copied the whole accumulator afresh and the superseded
+// copy was decremented but never freed: quadratic time and an unbounded leak
+// (#8394).
+//
+// The case prints the SHAPE, never a byte count — see
+// docs/ALLOCATION-OBSERVABLE.md.
+import "std/i32";
+import "std/i64";
+import "std/string";
+
+function pick(n: i32): Option[i32] { return Some(n); }
+
+function round(w: Writer, n: i32): i32 {
+    var src: string = "abcdefgh" + n.to_string() + "\n";
+    match (pick(n)) {
+        Some(k) => {
+            var out: string = "";
+            var i: i32 = 0;
+            while (i < 8) {
+                out = out + slice_unchecked(src, 0, src.len());
+                i = i + 1;
+            }
+            if (k == 0) {
+                match (w.write(out)) { Some(_) => { return -1; }, None => {} }
+            }
+            return out.len();
+        },
+        None => { return 0; }
+    }
+}
+
+function rounds(n: i32): i32 {
+    var w: Writer = stdout();
+    var acc: i32 = 0;
+    for i in 0..n {
+        acc = acc + round(w, i);
+    }
+    return acc;
+}
+
+function main(): i32 {
+    var b0: i64 = __heap_bump_bytes();
+    var x: i32 = rounds(50);
+    var b1: i64 = __heap_bump_bytes();
+    var y: i32 = rounds(100);
+    var b2: i64 = __heap_bump_bytes();
+
+    print(x.to_string());
+    print(y.to_string());
+    // Twice the work must not cost more fresh memory.
+    if ((b2 - b1) > (b1 - b0)) { print("grows"); } else { print("flat"); }
+    return 0;
+}

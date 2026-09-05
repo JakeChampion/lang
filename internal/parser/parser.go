@@ -6058,7 +6058,15 @@ func (p *parser) parsePrimary() (ast.Expr, error) {
 			// checker applies the same range rules as decimal.
 			v, err := strconv.ParseInt(t.Text[2:], 16, 64)
 			if err != nil {
-				p.errors = append(p.errors, p.errorfCode(t.Pos, "P002", "invalid hex literal %q: %v", t.Text, err))
+				// Sixteen hex digits with the top bit set (a u64 round
+				// constant, `0xffffffffffffffff`) exceed i64 max yet are
+				// valid u64 bit patterns; keep them the way the decimal
+				// path keeps `18446744073709551615`.
+				if uv, uerr := strconv.ParseUint(t.Text[2:], 16, 64); uerr == nil {
+					v = int64(uv)
+				} else {
+					p.errors = append(p.errors, p.errorfCode(t.Pos, "P002", "invalid hex literal %q: %v", t.Text, err))
+				}
 			}
 			n = v
 		} else {

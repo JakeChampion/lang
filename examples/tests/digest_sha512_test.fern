@@ -1,0 +1,86 @@
+import "std/test";
+import "std/crypto" as crypto;
+import "std/string";
+// examples/tests/digest_sha512_test.fern — std/crypto's streaming SHA-512 (FIPS 180-4)
+// against the standard known-answer vectors (empty, "abc", the 112-byte
+// multi-block message, one million 'a'), fed through the pending-block logic in
+// every way that matters: whole strings, 1000 updates of 1000 bytes, and 7-byte
+// updates that straddle each block boundary, cross-checked against the one-shot form.
+
+// __pseudo builds the 10,003-byte fixed pattern byte i = (i * 7 + 3) & 255:
+// long enough that 7-byte updates straddle every block boundary offset, and
+// not valid UTF-8, so the hasher is fed raw bytes.
+function __pseudo(): u8[] {
+    var b: u8[] = __alloc_u8(10003);
+    var i: i32 = 0;
+    while (i < 10003) { b = b.with(i, ((i * 7 + 3) & 255) as u8); i = i + 1; }
+    return b;
+}
+
+// __thousand_a is 1000 'a's, the unit of the million-'a' vector.
+function __thousand_a(): string {
+    var b: u8[] = __alloc_u8(1000);
+    var i: i32 = 0;
+    while (i < 1000) { b = b.with(i, 97 as u8); i = i + 1; }
+    return string_from_bytes_unchecked(b);
+}
+
+function test_empty(): test.TestOutcome {
+    return test.assert_eq(crypto.sha512_new().final_hex(), "cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e");
+}
+
+function test_abc(): test.TestOutcome {
+    return test.assert_eq(crypto.sha512_new().update("abc").final_hex(), "ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f");
+}
+
+function test_multiblock(): test.TestOutcome {
+    return test.assert_eq(crypto.sha512_new().update("abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmnoijklmnopjklmnopqklmnopqrlmnopqrsmnopqrstnopqrstu").final_hex(),
+        "8e959b75dae313da8cf4f72814fc143f8f7779c6eb9f7fa17299aeadb6889018501d289e4900f7e4331b99dec4b5433ac7d329eeb6dd26545e96e55b874be909");
+}
+
+function test_bytes_len(): test.TestOutcome {
+    return test.assert_eq(crypto.sha512_new().update("abc").final_bytes().len(), 64);
+}
+
+// One million 'a' as 1000 updates of 1000 bytes: 1000 is not a multiple of the
+// block size, so every update leaves a partial block pending.
+function test_million_a_chunked(): test.TestOutcome {
+    var h: crypto.Sha512 = crypto.sha512_new();
+    var chunk: string = __thousand_a();
+    var i: i32 = 0;
+    while (i < 1000) { h = h.update(chunk); i = i + 1; }
+    return test.assert_eq(h.final_hex(), "e718483d0ce769644e2e42c7bc15b4638e1f98b13b2044285632a803afa973ebde0ff244877ea60a4cb0432ce577c31beb009c5c2c49aa2e4eadb217ad8cc09b");
+}
+
+// 7-byte view slices over the fixed pattern, against the whole message fed as a
+// string and the reference value.
+function test_seven_byte_updates(): test.TestOutcome {
+    var msg: u8[] = __pseudo();
+    var h: crypto.Sha512 = crypto.sha512_new();
+    var i: i32 = 0;
+    while (i + 7 <= 10003) { h = h.update_bytes(msg[i:i + 7]); i = i + 7; }
+    h = h.update_bytes(msg[i:10003]);
+    var chunked: string = h.final_hex();
+    var whole: string = crypto.sha512_new().update(string_from_bytes_unchecked(msg)).final_hex();
+    if (chunked != "436cf1f167ed2199d3b6b342af4b1a8c727741672ba32805c492d67fa5eb6a13f9c06cf79b29c167ea5df115f296a84d824c5db2fcb4a8e815893b12566e6d36") { return test.fail("chunked: " + chunked); }
+    return test.assert_eq(chunked, whole);
+}
+
+// update_bytes takes the same bytes as u8[]; the one-shot helpers agree.
+function test_update_bytes_and_oneshot(): test.TestOutcome {
+    var via_bytes: string = crypto.sha512_new().update_bytes("abc".bytes()).final_hex();
+    if (via_bytes != crypto.sha512_hex("abc")) { return test.fail("one-shot differs: " + via_bytes); }
+    return test.assert_eq(via_bytes, "ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f");
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/crypto SHA-512");
+    r = r.it("empty", test_empty);
+    r = r.it("abc", test_abc);
+    r = r.it("multi-block", test_multiblock);
+    r = r.it("final_bytes len", test_bytes_len);
+    r = r.it("million a, 1000x1000", test_million_a_chunked);
+    r = r.it("7-byte updates", test_seven_byte_updates);
+    r = r.it("update_bytes + one-shot", test_update_bytes_and_oneshot);
+    return r.finish();
+}

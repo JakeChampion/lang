@@ -131,6 +131,22 @@ func foldOnce(ops []Op) []Op {
 			i++ // consume the guard; is_unique(null) is 0
 			continue
 		}
+		// String equality over two literals: `OpConstStr a; OpConstStr b;
+		// OpStrEq` → `OpConstI32 (a == b)`. This is what turns a branch on
+		// `target_os()` — a literal once constfold has resolved it — into a
+		// constant condition for the pruning above; `!=` is the same op
+		// followed by OpNot, which the unary rule then takes.
+		if i+2 < len(ops) &&
+			ops[i].Kind == OpConstStr && ops[i+1].Kind == OpConstStr &&
+			ops[i+2].Kind == OpStrEq {
+			var eq int32
+			if ops[i].Str == ops[i+1].Str {
+				eq = 1
+			}
+			out = append(out, Op{Kind: OpConstI32, I32: eq, Pos: ops[i+2].Pos})
+			i += 2
+			continue
+		}
 		// Binary fold (i32): OpConstI32 a; OpConstI32 b; <binop>.
 		if i+2 < len(ops) &&
 			ops[i].Kind == OpConstI32 && ops[i+1].Kind == OpConstI32 &&

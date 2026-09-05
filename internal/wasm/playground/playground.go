@@ -34,14 +34,18 @@ import (
 // bytes. Front-end errors (parse / check) come back formatted the
 // same way the playground's other panes show them.
 func CompileComponent(src, world string) ([]byte, error) {
-	prog, info, err := frontEnd(src)
-	if err != nil {
-		return nil, err
-	}
 	switch world {
 	case "wasm32-wasi":
+		prog, info, err := frontEnd(src, "wasi")
+		if err != nil {
+			return nil, err
+		}
 		return cliRunComponent(prog, info)
 	case "wasm32-wasi-http":
+		prog, info, err := frontEnd(src, "wasi-http")
+		if err != nil {
+			return nil, err
+		}
 		return httpHandlerComponent(prog, info)
 	default:
 		return nil, fmt.Errorf("unknown world %q (want \"wasm\" or \"wasi-http\")", world)
@@ -69,7 +73,7 @@ func CompileComponent(src, world string) ([]byte, error) {
 // so `main` returning 20 reports 20 rather than the 0 a dropped
 // result leaves behind.
 func CompileCoreWasm(src string) ([]byte, error) {
-	prog, info, err := frontEnd(src)
+	prog, info, err := frontEnd(src, "wasi")
 	if err != nil {
 		return nil, err
 	}
@@ -96,7 +100,7 @@ func CompileCoreWasm(src string) ([]byte, error) {
 // user-supplied request, call `__http_entry`, read back the
 // response the guest committed via response-outparam.set.
 func CompileHttpHandlerCore(src string) ([]byte, error) {
-	prog, info, err := frontEnd(src)
+	prog, info, err := frontEnd(src, "wasi-http")
 	if err != nil {
 		return nil, err
 	}
@@ -109,8 +113,9 @@ func CompileHttpHandlerCore(src string) ([]byte, error) {
 
 // frontEnd runs the shared parse → constfold → check → monomorph
 // pipeline. Errors are formatted with diag so the playground shows
-// the same caret diagnostics it does for Run / View assembly.
-func frontEnd(src string) (*ast.Program, *checker.Info, error) {
+// the same caret diagnostics it does for Run / View assembly. targetOS
+// is the world's environment, what `target_os()` folds to.
+func frontEnd(src, targetOS string) (*ast.Program, *checker.Info, error) {
 	// modload (not bare parser.Parse) so the program's `std/…` /
 	// `core/…` imports resolve — the auto-prelude is gone, so stdlib
 	// is in scope only when imported.
@@ -118,7 +123,7 @@ func frontEnd(src string) (*ast.Program, *checker.Info, error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("%s", diag.Format("<playground>", src, err))
 	}
-	if err := constfold.Fold(prog, nil); err != nil {
+	if err := constfold.FoldWith(prog, constfold.Inputs{TargetOS: targetOS}); err != nil {
 		return nil, nil, fmt.Errorf("%s", diag.Format("<playground>", src, err))
 	}
 	info, err := checker.Check(prog)
