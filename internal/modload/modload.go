@@ -1963,8 +1963,9 @@ func (r *rewriter) rewriteTraitDefaultBody(m *ast.TraitMethod) {
 }
 
 // collectLocals adds to dst every name b binds — a `var`, a
-// destructure, a `for` binder, and a match arm's payload and `@`
-// bindings — at any depth, INCLUDING inside a block sitting in
+// destructure, a `for` binder, and everything a match arm binds
+// (ast.EachArmBinder: payload, `@`, payload sub-pattern and tuple-element
+// binders) — at any depth, INCLUDING inside a block sitting in
 // expression position (`defer { … }`, a value `if`). It runs over
 // ast.Walk rather than its own switch so a new binding form is
 // reachable here the moment the shared walk reaches it.
@@ -1992,12 +1993,11 @@ func collectLocals(b *ast.Block, dst map[string]bool) {
 				dst[x.Var] = true
 			case *ast.Match:
 				for _, arm := range x.Arms {
-					for _, name := range arm.Bindings {
-						dst[name] = true
-					}
-					if arm.AtBinding != "" {
-						dst[arm.AtBinding] = true
-					}
+					ast.EachArmBinder(arm, func(name *string) { dst[*name] = true })
+				}
+			case *ast.MatchExpr:
+				for _, arm := range x.Arms {
+					ast.EachArmExprBinder(arm, func(name *string) { dst[*name] = true })
 				}
 			}
 			return true

@@ -1,0 +1,83 @@
+// A match binder shadowing a LOCAL of a different type. The IR builder keys
+// its locals by a flat name map, so shadowrename gives each declaration a
+// unique name first; a binder it does not rename shares the outer
+// declaration's slot and the borrowed element overwrites the outer value.
+//
+// It is a silent wrong answer, not a diagnostic: `outer` reads back as the
+// element the arm bound. Only the payload-binder form was renamed — the
+// tuple, payload sub-pattern and `@` forms were not (#8607).
+enum Inner { Some1(string), None1 }
+enum Outer2 { Holds(Inner), Empty }
+
+// Tuple element binder.
+function tuple_binder(): i32 {
+    var s: string = "outer";
+    var t: (string, i32) = ("elem", 4);
+    match (t) {
+        (s, n) => { if (s != "elem") { return 1; } }
+    }
+    if (s != "outer") { return 2; }
+    return 0;
+}
+
+// Payload sub-pattern binder.
+function payload_sub_binder(): i32 {
+    var s: string = "outer";
+    var o: Outer2 = Holds(Some1("elem"));
+    match (o) {
+        Holds(Some1(s)) => { if (s != "elem") { return 3; } },
+        Holds(None1()) => { return 4; },
+        Empty => { return 5; }
+    }
+    if (s != "outer") { return 6; }
+    return 0;
+}
+
+// `@` whole-value binder. The name is bound to the scrutinee, so the outer
+// string is gone if the two share a slot.
+function at_binder(): i32 {
+    var s: string = "outer";
+    var i: Inner = Some1("elem");
+    match (i) {
+        s @ Some1(v) => { if (v != "elem") { return 7; } },
+        None1 => { return 8; }
+    }
+    if (s != "outer") { return 9; }
+    return 0;
+}
+
+// Control: the plain payload binder, renamed since the pass was written.
+function variant_binder(): i32 {
+    var s: string = "outer";
+    var i: Inner = Some1("elem");
+    match (i) {
+        Some1(s) => { if (s != "elem") { return 10; } },
+        None1 => { return 11; }
+    }
+    if (s != "outer") { return 12; }
+    return 0;
+}
+
+// The expression form has the same three gaps.
+function match_expr_tuple_binder(): i32 {
+    var s: string = "outer";
+    var t: (string, i32) = ("elem", 4);
+    var got: string = match (t) {
+        (s, n) => s
+    };
+    if (got != "elem") { return 13; }
+    if (s != "outer") { return 14; }
+    return 0;
+}
+
+function main(): i32 {
+    var r: i32 = tuple_binder();
+    if (r != 0) { return r; }
+    r = payload_sub_binder();
+    if (r != 0) { return r; }
+    r = at_binder();
+    if (r != 0) { return r; }
+    r = variant_binder();
+    if (r != 0) { return r; }
+    return match_expr_tuple_binder();
+}

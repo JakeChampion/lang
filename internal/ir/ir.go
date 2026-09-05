@@ -7452,7 +7452,7 @@ func (b *builder) emitLiteralMatchExpr(n *ast.MatchExpr) error {
 		if arm == nil || arm.Body == nil {
 			continue
 		}
-		t := b.exprType(arm.Body)
+		t := b.matchExprArmBodyType(arm, tagT)
 		if nt, ok := t.(ast.NumberType); ok && !nt.Polymorphic {
 			resultType = nt
 			break
@@ -7578,7 +7578,7 @@ func (b *builder) emitStructMatchExpr(n *ast.MatchExpr) error {
 		if arm == nil || arm.Body == nil {
 			continue
 		}
-		t := b.exprType(arm.Body)
+		t := b.matchExprArmBodyType(arm, tagT)
 		if nt, ok := t.(ast.NumberType); ok && !nt.Polymorphic {
 			resultType = nt
 			break
@@ -8261,7 +8261,7 @@ func (b *builder) emitTupleMatchExpr(n *ast.MatchExpr) error {
 		if arm == nil || arm.Body == nil {
 			continue
 		}
-		t := b.exprType(arm.Body)
+		t := b.matchExprArmBodyType(arm, tup)
 		if t == nil {
 			continue
 		}
@@ -10209,7 +10209,7 @@ func (b *builder) expr(e ast.Expr) error {
 			if arm == nil {
 				continue
 			}
-			t := b.exprType(arm.Body)
+			t := b.matchExprArmBodyType(arm, b.exprType(n.Tag))
 			if nt, ok := t.(ast.NumberType); ok && !nt.Polymorphic {
 				resultType = nt
 				break
@@ -11701,6 +11701,98 @@ func (b *builder) expr(e ast.Expr) error {
 // supports the small set of expression shapes the IR needs to lower
 // FieldAccess: identifiers (var / param), nested field access, and
 // struct literals.
+// matchExprArmBodyType is the type an arm body contributes to the result
+// slot a match EXPRESSION is lowered through.
+//
+// exprType resolves an Ident by NAME against the function's locals and
+// params, and an arm's own binders are neither: they get their slots when
+// the arm is lowered, which is after the result slot has to be sized. So an
+// arm body that is JUST a binder — `Only(q) => q`, `(q, n) => q` — answered
+// nil, the slot fell back to i32, and a two-word string result then failed
+// wasm validation outright ("expected i32 but nothing on stack"). A second
+// arm whose body had a derivable type masked it, which is why only the
+// single-typed-arm shapes ever showed it. Ask the ARM what it binds first,
+// exprType second.
+func (b *builder) matchExprArmBodyType(arm *ast.MatchExprArm, scrutinee ast.Type) ast.Type {
+	if arm == nil || arm.Body == nil {
+		return nil
+	}
+	if id, ok := arm.Body.(*ast.Ident); ok {
+		if t := armExprBinderType(arm, id.Name, scrutinee); t != nil {
+			return t
+		}
+	}
+	return b.exprType(arm.Body)
+}
+
+// armExprBinderType returns the type `name` is bound to by this arm's
+// pattern, or nil when the arm does not bind it. The checker fills
+// BindingTypes parallel to Bindings (variant / struct arms) or to TupleElems
+// (tuple arms), and the per-element types parallel to the sub-patterns, so
+// every position answers from the type list beside it.
+func armExprBinderType(arm *ast.MatchExprArm, name string, scrutinee ast.Type) ast.Type {
+	if name == "" {
+		return nil
+	}
+	if arm.AtBinding == name {
+		return scrutinee
+	}
+	for i, bn := range arm.Bindings {
+		if bn == name && i < len(arm.BindingTypes) {
+			return arm.BindingTypes[i]
+		}
+	}
+	for i, p := range arm.Payloads {
+		if p == nil {
+			continue
+		}
+		if t := patElemBinderType(p, name, nthType(arm.BindingTypes, i)); t != nil {
+			return t
+		}
+	}
+	for i := range arm.TupleElems {
+		if t := patElemBinderType(&arm.TupleElems[i], name, nthType(arm.BindingTypes, i)); t != nil {
+			return t
+		}
+	}
+	return nil
+}
+
+// patElemBinderType is armExprBinderType for ONE pattern position — a tuple
+// element or a payload slot, which are the same node — and everything nested
+// inside it. elT is the type of the value at that position.
+func patElemBinderType(el *ast.TuplePatElem, name string, elT ast.Type) ast.Type {
+	if el.Name == name || el.AtBinding == name {
+		return elT
+	}
+	for i, bn := range el.VariantBindings {
+		if bn == name && i < len(el.VariantBindingTypes) {
+			return el.VariantBindingTypes[i]
+		}
+	}
+	for i, p := range el.VariantPayloads {
+		if p == nil {
+			continue
+		}
+		if t := patElemBinderType(p, name, nthType(el.VariantBindingTypes, i)); t != nil {
+			return t
+		}
+	}
+	for i := range el.Nested {
+		if t := patElemBinderType(&el.Nested[i], name, nthType(el.NestedTypes, i)); t != nil {
+			return t
+		}
+	}
+	return nil
+}
+
+func nthType(ts []ast.Type, i int) ast.Type {
+	if i < len(ts) {
+		return ts[i]
+	}
+	return nil
+}
+
 // exprType returns the static type of `e` for the limited set of
 // shapes the IR layer needs to distinguish at lowering time. Falls
 // back to nil when the expression's type can't be derived purely

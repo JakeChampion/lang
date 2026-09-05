@@ -760,23 +760,6 @@ func freshLocalsIn(fn *ast.FuncDecl, q *summaryTable[bool], ctorFresh func(*ast.
 	return fresh
 }
 
-// tuplePatBinders lists every name a tuple pattern binds, nested elements
-// and `@` binders included.
-func tuplePatBinders(elems []ast.TuplePatElem) []string {
-	var out []string
-	for _, el := range elems {
-		out = append(out, el.Name, el.AtBinding)
-		out = append(out, el.VariantBindings...)
-		out = append(out, tuplePatBinders(el.Nested)...)
-		for _, vp := range el.VariantPayloads {
-			if vp != nil {
-				out = append(out, tuplePatBinders([]ast.TuplePatElem{*vp})...)
-			}
-		}
-	}
-	return out
-}
-
 // findReturnsFreshPairPayload reports, per function, whether every value
 // return hands back a variant whose payload box is NEWLY ALLOCATED rather
 // than a pointer the function received.
@@ -1151,9 +1134,10 @@ func variantCtorFreshIn(info *checker.Info, shadowed map[string]bool) func(*ast.
 }
 
 // shadowingNames lists every name `fn` binds besides its parameters — declared
-// locals, match-arm binders (payload, `@` and tuple-pattern binders included)
-// and for-each variables. A parameter reusing one of these names cannot be
-// told from the binding by an occurrence walk, and a variant constructor by
+// locals, match-arm binders (ast.EachArmBinder: payload, `@`, payload
+// sub-pattern and tuple-element binders) and for-each variables. A parameter
+// reusing one of these names cannot be told from the binding by an
+// occurrence walk, and a variant constructor by
 // that name is not what a call to it reaches.
 func shadowingNames(fn *ast.FuncDecl, info *checker.Info) map[string]bool {
 	out := map[string]bool{}
@@ -1178,15 +1162,11 @@ func shadowingNames(fn *ast.FuncDecl, info *checker.Info) map[string]bool {
 			bind(x.Name)
 		case *ast.Match:
 			for _, arm := range x.Arms {
-				bind(arm.Bindings...)
-				bind(arm.AtBinding)
-				bind(tuplePatBinders(arm.TupleElems)...)
+				bind(ast.ArmBinderNames(arm)...)
 			}
 		case *ast.MatchExpr:
 			for _, arm := range x.Arms {
-				bind(arm.Bindings...)
-				bind(arm.AtBinding)
-				bind(tuplePatBinders(arm.TupleElems)...)
+				bind(ast.ArmExprBinderNames(arm)...)
 			}
 		case *ast.ForEach:
 			bind(x.Var)

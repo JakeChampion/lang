@@ -784,9 +784,7 @@ func (s *substituter) walkStmt(st ast.Stmt) {
 				s.walkExpr(&arm.RangeHi)
 			}
 			s.pushScope()
-			for _, b := range arm.Bindings {
-				s.bind(b)
-			}
+			ast.EachArmBinder(arm, func(b *string) { s.bind(*b) })
 			if arm.Guard != nil {
 				s.walkExpr(&arm.Guard)
 			}
@@ -876,9 +874,7 @@ func (s *substituter) walkExpr(slot *ast.Expr) {
 		s.walkExpr(&x.Tag)
 		for _, arm := range x.Arms {
 			s.pushScope()
-			for _, b := range arm.Bindings {
-				s.bind(b)
-			}
+			ast.EachArmExprBinder(arm, func(b *string) { s.bind(*b) })
 			if arm.Guard != nil {
 				s.walkExpr(&arm.Guard)
 			}

@@ -899,10 +899,16 @@ pub function collect_calls_stmt(st: ast.Stmt, want: string[], acc: CallSite[]): 
 }
 
 // pattern_binders appends every name a match-arm pattern binds: the payload
-// slot, each further slot of a multi-payload variant (`Tag(a, b)`), and the
-// `@` whole-value binder of `n @ Tag(x)`. `nested` is a parse-time transient —
-// desugar_nested_arms flattens sub-patterns before any consumer sees one — but
-// it is recursed anyway so a pattern that does reach here cannot hide a binder.
+// slot, each further slot of a multi-payload variant (`Tag(a, b)`), the
+// `@` whole-value binder of `n @ Tag(x)`, and every binder of a TUPLE
+// sub-pattern (`tup_binds`, plus each element's own pattern in `tup_pats` —
+// a variant element or a deeper tuple, recursively). `nested` and the tuple
+// fields are parse-time transients: the arm builders flatten sub-patterns and
+// turn a tuple head into an inner match, so nothing measured reaches here
+// carrying either. They are walked regardless, because reading only
+// `binding` / `extra_bindings` answers "binds nothing" for `(a, b)` — which
+// is what the NATIVE twin of this walk did, mangling every tuple binder into
+// a same-named module decl (#8607).
 //
 // This is the same set irlower's sa_pat_binds enumerates, which is the point:
 // two answers to "what does this pattern bind" is how at_binding came to be
@@ -915,8 +921,14 @@ function pattern_binders(p: ast.Pattern, acc: string[]): string[] {
             for eb in pv.extra_bindings {
                 if (eb.len() > 0) { acc = acc.append(eb); }
             }
+            for tb in pv.tup_binds {
+                if (tb.len() > 0) { acc = acc.append(tb); }
+            }
             for sub in pv.nested {
                 acc = pattern_binders(sub, acc);
+            }
+            for tsub in pv.tup_pats {
+                acc = pattern_binders(tsub, acc);
             }
             return acc;
         },

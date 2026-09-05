@@ -27,10 +27,10 @@ import (
 )
 
 // Rename walks every function in `prog` and renames shadowed
-// local variables (Var declarations, Destructure names, match /
-// if-let payload bindings, for-init Var). Param names stay
-// fixed; user code that names two params the same in different
-// scopes never happens because params share one scope.
+// local variables (Var declarations, Destructure names, everything a
+// match / if-let arm binds — ast.EachArmBinder — and for-init Var).
+// Param names stay fixed; user code that names two params the same in
+// different scopes never happens because params share one scope.
 func Rename(prog *ast.Program, info *checker.Info) {
 	for _, fn := range prog.Funcs {
 		r := newRenamer(info)
@@ -303,9 +303,7 @@ func (r *renamer) walkMatchArm(arm *ast.MatchArm) {
 		return
 	}
 	r.pushFrame()
-	for i, name := range arm.Bindings {
-		arm.Bindings[i] = r.bindShadow(name)
-	}
+	ast.EachArmBinder(arm, func(name *string) { *name = r.bindShadow(*name) })
 	if arm.Guard != nil {
 		r.walkExpr(arm.Guard)
 	}
@@ -369,9 +367,7 @@ func (r *renamer) walkExpr(e ast.Expr) {
 		r.walkExpr(n.Tag)
 		for _, arm := range n.Arms {
 			r.pushFrame()
-			for i, name := range arm.Bindings {
-				arm.Bindings[i] = r.bindShadow(name)
-			}
+			ast.EachArmExprBinder(arm, func(name *string) { *name = r.bindShadow(*name) })
 			if arm.Guard != nil {
 				r.walkExpr(arm.Guard)
 			}
