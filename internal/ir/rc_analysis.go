@@ -6290,12 +6290,16 @@ func (g growParam) growsField(name string) bool {
 	return g.fields[growAnyField] || g.fields[name]
 }
 
-// addField records one growable field, reporting whether it was new.
+// addField records one growable field, reporting whether it was new. The
+// set has one form: growAnyField alone, or named fields — the unnamed path
+// covers every name, and a name beside it would be read twice, by
+// growsField as redundant and by the propagation over dying fields as the
+// only entry that propagates.
 func (g *growParam) addField(name string) bool {
 	if g.fields[growAnyField] || g.fields[name] {
 		return false
 	}
-	if g.fields == nil {
+	if g.fields == nil || name == growAnyField {
 		g.fields = map[string]bool{}
 	}
 	g.fields[name] = true
@@ -7296,11 +7300,12 @@ func computeGrowParams(prog *ast.Program, info *checker.Info, obs map[string][]f
 						// is equally unprotected, so it propagates the same
 						// way: the enclosing param grows at that field, and
 						// ITS caller brackets a surviving argument there.
-						for f := range cg[ai].fields {
-							if !deaths[c][arg.Name+"."+f] {
-								continue
-							}
-							if g[pi].addField(f) {
+						// growsField reads the callee's set the way the
+						// bracket does, so an unnamed growth covers every
+						// dying field.
+						for key := range deaths[c] {
+							f, isField := strings.CutPrefix(key, arg.Name+".")
+							if isField && cg[ai].growsField(f) && g[pi].addField(f) {
 								changed = true
 							}
 						}
