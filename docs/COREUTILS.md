@@ -86,7 +86,9 @@ cosmetic and are not:
   token including any `=value`). A hidden option is visible here: `head`'s
   ambiguity list names `---presume-input-pipe`.
 - strerror text: `No such file or directory`, `Is a directory`, `Bad file
-  descriptor`. See "Open gaps".
+  descriptor`, `No space left on device` — `IoError.Other` carries glibc's
+  text for the errno on every backend (`internal/strerror`), so a write or
+  open failure prints what C prints.
 - The `Try '<argv0> --help' for more information.` line and the fact that a
   usage error never prints the full help.
 - Per-utility exit codes for usage errors: 1 for most, 2 for `sort`, `expr`,
@@ -104,9 +106,9 @@ it.
 ## How parity is enforced
 
 `internal/coreutils/` is the gate. It is oracle-based: no expected output is
-ever written down. Each case is an invocation (argv, stdin, extra env, and
-for a utility that never stops, a byte limit); the harness runs GNU and Fern
-and diffs. A case costs one line, and a case cannot record a wrong
+ever written down. Each case is an invocation (argv, stdin, extra env, where
+stdout goes — captured, closed, or `/dev/full` — and for a utility that never
+stops, a byte limit); the harness runs GNU and Fern and diffs. A case costs one line, and a case cannot record a wrong
 expectation, which is what makes the corpus cheap to grow and hard to get
 wrong. See the package doc in `harness_test.go`.
 
@@ -227,17 +229,10 @@ in that issue and in `yes.fern`.
 
 ## Open gaps
 
-Two, and both are Fern gaps with their own issues rather than corpus
-carve-outs — the standing order is that a Fern bug met on the way gets an
-issue and a fix, never a workaround:
+One, a Fern gap with its own issue rather than a corpus carve-out — the
+standing order is that a Fern bug met on the way gets an issue and a fix,
+never a workaround:
 
-- **#8265 — `IoError.Other` carries an empty message.** GNU reports write
-  and open failures as `prog: context: <strerror text>`. The four named
-  IoError variants map to their text in `lib/gnu.fern`; `Other` has no errno
-  left to map. So `yes >&-` (`yes: standard output: Bad file descriptor`),
-  `echo hi >&-` (`echo: write error: Bad file descriptor`) and `> /dev/full`
-  are not in the corpus yet. The utilities already print the field as the
-  strerror text, so the fix needs no change here beyond adding the cases.
 - **#8338 — Fern source cannot learn its compile target's OS.** The pipe
   write size that beats GNU is 4 KiB on Linux and 1 KiB on macOS, and a
   program can only hold one constant. Blocks `yes` beating GNU on macOS and

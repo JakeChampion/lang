@@ -91,10 +91,9 @@ pub function is_option(a: string): boolean {
 // `io_error_text(e)` — the strerror text GNU prints for an IoError.
 //
 // The kinds the runtime names carry no message of their own, so the
-// mapping is by errno text; `Other` carries the runtime's own string.
-// That string is EMPTY today for every errno outside the named set
-// (#8265), which is the one gap between these utilities and GNU
-// on the write-failure paths — docs/COREUTILS.md records it.
+// mapping is by errno text; `Other` carries the runtime's own string,
+// which is glibc's strerror text for the errno on every backend
+// (internal/strerror).
 pub function io_error_text(e: IoError): string {
   match (e) {
     NotFound(_) => {
