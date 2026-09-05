@@ -11697,15 +11697,6 @@ func (b *builder) expr(e ast.Expr) error {
 	return nil
 }
 
-// fieldOwner returns the struct name of the value t produces. It
-// supports the small set of expression shapes the IR needs to lower
-// FieldAccess: identifiers (var / param), nested field access, and
-// struct literals.
-// exprType returns the static type of `e` for the limited set of
-// shapes the IR layer needs to distinguish at lowering time. Falls
-// back to nil when the expression's type can't be derived purely
-// from local / param / argument metadata. Used by `len()` so we
-// can pick the slice (`+4`) vs array / string (`-4`) offset.
 // closureLiteralType is the user-facing signature of a closure literal — a
 // Lambda closureconv has not yet rewritten, or the MakeClosure it becomes.
 // The hoisted FuncSigs entry carries a trailing __env param that
@@ -11733,6 +11724,11 @@ func (b *builder) closureLiteralType(e ast.Expr) *ast.FuncType {
 	return nil
 }
 
+// exprType returns the static type of `e` for the limited set of
+// shapes the IR layer needs to distinguish at lowering time. Falls
+// back to nil when the expression's type can't be derived purely
+// from local / param / argument metadata. Used by `len()` so we
+// can pick the slice (`+4`) vs array / string (`-4`) offset.
 func (b *builder) exprType(e ast.Expr) ast.Type {
 	switch x := e.(type) {
 	case *ast.Ident:
@@ -12214,6 +12210,10 @@ func (b *builder) targetTupleType(e ast.Expr) (ast.TupleType, bool) {
 	return ast.TupleType{}, false
 }
 
+// fieldOwner returns the struct name of the value e produces. It
+// supports the small set of expression shapes the IR needs to lower
+// FieldAccess: identifiers (var / param), nested field access, and
+// struct literals.
 func (b *builder) fieldOwner(e ast.Expr) string {
 	switch x := e.(type) {
 	case *ast.Ident:
