@@ -1331,24 +1331,26 @@ func pureReadReceiverBuiltin(name string) bool {
 	return false
 }
 
-// copyingBuiltinArg reports whether argument i of BUILTIN name is
-// COPIED rather than retained, with a result that cannot alias it —
-// the general, per-argument form of the fact pureReadReceiverBuiltin
-// states for receivers (#7867 slice 2).
+// copyingBuiltinArg reports whether argument i of BUILTIN name is COPIED or
+// merely READ rather than retained, with a result that cannot alias it — the
+// general, per-argument form of the fact pureReadReceiverBuiltin states for
+// receivers (#7867 slice 2).
 //
 // Membership demands TWO claims, verified against the runtime body
 // (rcsigs.go's rule: read the body, not the name): the callee moves no
 // count on the argument — every member is in the inert registry, which
 // TestCopyingBuiltinArgsAreInertPerTheRegistry pins — AND the call's
 // result cannot alias it. The second is why this is a hand-audited
-// table and not derived from rcInertBuiltins: `__method_Map_get` /
-// `_get_or` / `_keys` / `_values` / `MapIter_key` / `_value` are inert
-// on their arguments and their results alias the receiver's interior,
-// which the inert registry's own header says it does not model.
-// `__method_Map_set` / `__method_Array_push` / `_set` move counts and
-// are already refused at the call site by calleeRetainsAnyArg;
-// `__heap_release_to` invalidates memory wholesale. All deliberately
-// absent.
+// table and not derived from rcInertBuiltins, whose header says it does
+// not model the result axis.
+//
+// Both claims are per ARGUMENT, which is why a callee lists positions
+// rather than appearing wholesale: a Map read is the case that needs the
+// distinction, since it satisfies both for its key and neither for the
+// values it hands back. `__method_Map_set` / `__method_Array_push` /
+// `_set` move counts and are already refused at the call site by
+// calleeRetainsAnyArg; `__heap_release_to` invalidates memory wholesale.
+// Those stay out entirely.
 //
 //   - strbuf_append memcpys the string's bytes past the buffer tail
 //     and returns void (its runtime doc, all three implementations);
@@ -1361,26 +1363,43 @@ func pureReadReceiverBuiltin(name string) bool {
 //     (inline-packed, the empty sentinel, or an rc1 heap copy — never
 //     the input buffer);
 //   - __memchr / __rmemchr / __ascii_run / __count_byte scan the
-//     bytes and return a scalar.
+//     bytes and return a scalar;
+//   - a Map READ's KEY (position 1) is hashed and compared and nothing
+//     else — __map_lookup_keyed reaches only __map_hash_str /
+//     __map_eq_str, neither of which moves a count — and what the call
+//     returns is the stored VALUE, which cannot alias the key. The same
+//     callees' RECEIVER (0) and get_or's FALLBACK (2) are precisely the
+//     aliasing results the table must keep out, and do not appear here.
+//     Without the key, the native single-word taint below treated every
+//     `m.get(k)` as a possible retention of k and suppressed k's own
+//     scope-exit release: one stranded key buffer per map (#8277).
 //
 // The checker rejects a user function redeclaring a builtin name, so
 // the table can never answer for a defined function.
-var copyingBuiltinArgs = map[string]int{
-	"strbuf_append":               0,
-	"print":                       0,
-	"write":                       0,
-	"eprint":                      0,
-	"__method_Writer_write":       1,
-	"string_from_bytes_unchecked": 0,
-	"__memchr":                    0,
-	"__rmemchr":                   0,
-	"__ascii_run":                 0,
-	"__count_byte":                0,
+var copyingBuiltinArgs = map[string][]int{
+	"strbuf_append":               {0},
+	"print":                       {0},
+	"write":                       {0},
+	"eprint":                      {0},
+	"__method_Writer_write":       {1},
+	"string_from_bytes_unchecked": {0},
+	"__memchr":                    {0},
+	"__rmemchr":                   {0},
+	"__ascii_run":                 {0},
+	"__count_byte":                {0},
+	"__method_Map_get":            {1},
+	"__method_Map_get_or":         {1},
+	"__method_Map_has":            {1},
+	"__method_Map_delete":         {1},
 }
 
 func copyingBuiltinArg(name string, i int) bool {
-	idx, ok := copyingBuiltinArgs[name]
-	return ok && i == idx
+	for _, idx := range copyingBuiltinArgs[name] {
+		if idx == i {
+			return true
+		}
+	}
+	return false
 }
 
 // stringParamCounted reports whether string parameter `pn` of fn is retained
