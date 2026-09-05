@@ -104,6 +104,41 @@ function main(): i32 {
     return 0;
 }`
 
+// An OVERWRITE under an alias. The overwrite pre-drop releases the value the
+// set is about to replace, and it runs before the set's own __map_cow_inplace —
+// so a second handle over the same buffer still names that value. The value
+// column is not claimed on a copy (#6242), and releasing it anyway is an
+// uncounted-alias free: no rc detector fires, and the fault lands wherever the
+// freelist next hands the block out. Unfixed, x86-64 SIGSEGVs here.
+//
+// 0 iff both handles read back what they should AND nothing over-released. The
+// byte census is deliberately not asserted: the pre-drop is skipped when the
+// handle is shared, so the replaced value is reclaimed at map drop on the
+// two-word ABIs and leaks on the native single-word one — a residual of #6242,
+// not of this guard.
+const mapAliasedOverwriteSrc = `import "core/map";
+function mk(): i32 {
+    var stem: string = "a";
+    var m: Map[string, string] = map_new(8);
+    var k: string = stem + "-key-long-one";
+    m = m.insert(k, stem + "-value-long-one");
+    var snap: Map[string, string] = m;
+    m = m.insert(k, stem + "-value-long-two");
+    var ok: i32 = 0;
+    if (snap.get_or(k, "") == "a-value-long-one") { ok = ok + 1; }
+    if (m.get_or(k, "") == "a-value-long-two") { ok = ok + 2; }
+    if (snap.len() == 1) { ok = ok + 4; }
+    if (m.len() == 1) { ok = ok + 8; }
+    return ok;
+}
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 200) { t = t + mk(); i = i + 1; }
+    if (t != 200 * 15) { return 97; }
+    return __rc_underflow_count();
+}`
+
 func TestX86_64MapStringColumnReclaim(t *testing.T) {
 	_, stderr, code := runLeakCheckX86_64(t, mapStringColumnSrc)
 	if code != 0 {
@@ -121,6 +156,9 @@ func TestX86_64MapStringColumnReclaim(t *testing.T) {
 	}
 	if _, code := compileAndRunX86_64FreeOn(t, mapWideValueFallbackSrc); code != 0 {
 		t.Errorf("wide-value get_or: code=%d (99=wrong value)", code)
+	}
+	if _, code := compileAndRunX86_64FreeOn(t, mapAliasedOverwriteSrc); code != 0 {
+		t.Errorf("aliased overwrite: code=%d (97=wrong value, >0=over-release, signal=the freed value came back)", code)
 	}
 	small := mustRunX86_64FreeOn(t, mapStringColumnBumpSrc("50"))
 	large := mustRunX86_64FreeOn(t, mapStringColumnBumpSrc("5000"))
@@ -147,6 +185,9 @@ func TestArm64MapStringColumnReclaim(t *testing.T) {
 	if _, code := compileAndRunArm64FreeOn(t, mapWideValueFallbackSrc); code != 0 {
 		t.Errorf("wide-value get_or: code=%d (99=wrong value)", code)
 	}
+	if _, code := compileAndRunArm64FreeOn(t, mapAliasedOverwriteSrc); code != 0 {
+		t.Errorf("aliased overwrite: code=%d (97=wrong value, >0=over-release, signal=the freed value came back)", code)
+	}
 	small := mustRunArm64FreeOn(t, mapStringColumnBumpSrc("50"))
 	large := mustRunArm64FreeOn(t, mapStringColumnBumpSrc("5000"))
 	if small != large {
@@ -171,6 +212,9 @@ func TestWASMMapStringColumnReclaim(t *testing.T) {
 	}
 	if got := runWasm(t, mapWideValueFallbackSrc); got != 0 {
 		t.Errorf("wide-value get_or: code=%d (99=wrong value)", got)
+	}
+	if got := runWasm(t, mapAliasedOverwriteSrc); got != 0 {
+		t.Errorf("aliased overwrite: code=%d (97=wrong value, >0=over-release)", got)
 	}
 }
 

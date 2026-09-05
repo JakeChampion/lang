@@ -56,6 +56,46 @@ has already excluded a concat from this gate, so the key is an alias the caller
 still owns and only the cell is ours to free — `freeLookupBoxCell`'s rule, for
 the same reason.
 
+## The pre-drop needs a sole-owner gate, and always did
+
+Review caught the half this entry first missed. A pre-drop RELEASES the value
+the set is about to replace, and it runs BEFORE the set's own
+`__map_cow_inplace`. A second handle over the same buffer still names that
+value, and `__map_own_copied_cols` claims neither a string nor a struct value
+column on a copy (#6242) — so the release frees storage the other handle reads.
+An uncounted-alias free: no rc detector fires, and the fault lands wherever the
+freelist next hands the block out.
+
+```fern
+var m: Map[string, string] = map_new(8);
+m = m.insert(k, v1);
+var snap: Map[string, string] = m;   // rc 2, same buffer, same value cell
+m = m.insert(k, v2);                 // the pre-drop releases v1 under snap
+```
+
+200 rounds of that, values read back through both handles:
+
+| | wasm32 | arm64 | x86-64 |
+|---|---|---|---|
+| before this entry's change | 0 | 0 | **SIGSEGV** |
+| with the widened pre-drop, ungated | **-3200 live (over-release)** | **SIGSEGV** | SIGSEGV |
+| with the sole-owner gate | 0 | 0 | 0, 6400 leaked |
+
+The x86-64 crash predates all of this: its own pre-drop never carried the gate
+either, and the `!needBoxK` condition is what kept the two-word ABIs out of the
+same shape. So the gate is not a concession to the widening — it is the
+condition every overwrite pre-drop was missing, and all three string pre-drops
+now open with `__fern_rc_is_unique(m)`.
+
+What it costs is a leak in the aliased case, which is where the release belongs
+to whoever owns the column: the two-word ABIs reclaim it at map drop and read 0,
+the native single-word one strands it. Closing that is #6242 — a string value
+needs a kind of its own in `mapValKindTag` before `__map_own_copied_cols` can
+recognise and claim it.
+
+`TestX86_64MapStringColumnReclaim` and its arm64 / wasm siblings carry
+`mapAliasedOverwriteSrc`, which fails on main today (x86-64, killed by a signal).
+
 ## Why freeing the cell before the set is sound
 
 `__map_dec_value` is the set's own overwrite-dec and is a no-op for valKind 1
