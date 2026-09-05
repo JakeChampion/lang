@@ -514,15 +514,64 @@ jobs:
           FERN_CI_SIZE_GATE_STRICT: "1"
         run: scripts/ci-check-driver-sizes .github/selfhost-driver-sizes.txt "${{ runner.temp }}/union.txt"
 
-  gen2:
-    name: const-func-gen2-x86_64
+  # THREE FIXPOINTS, ONE JOB. Measured on the last green round (#8020):
+  # const-func gen2 1.6 min, the arm64 stage-2 fixpoint 2.3, the emit-all
+  # fixpoint 3.0 — 6.9 minutes of work that cost three checkouts, three
+  # toolchain installs, three `go test -c` builds and three waits for a runner.
+  # Each had waited 4-6 minutes to be admitted. lint.yml drew the rule: fewer,
+  # fuller jobs beat more, emptier ones whenever the pool is the constraint.
+  #
+  # The cross toolchain moves up here because the stage-2 leg links and RUNS an
+  # arm64 binary; the other two do not need it and now share the one install
+  # rather than the lane paying for it in a job of its own.
+  #
+  # `if: ${{ !cancelled() }}` per step so one red fixpoint still reports the
+  # other two — the signal three separate check runs gave for free.
+  #
+  # What each one is for, unchanged:
+  #
+  #
+  # The ARM64 STAGE-2 FIXPOINT (#6327). #5972 deleted the original along with
+  # the AST emitters — correctly, its driver was one of them — and nothing
+  # replaced it, so from then until now no lane checked that the arm64 emit is
+  # a fixed point of itself. This job is the replacement.
+  #
+  # It needs BOTH toolchains and is the only job here that does: a native x86
+  # host to run the emitting driver, plus cross-gcc AND qemu to link and run
+  # generation 2. That combination is why it is a job rather than a shard
+  # member — and cross-gcc is exactly the install #6038 records stalling and
+  # vanishing shards, which is a failure this lane can absorb and a shard
+  # cannot.
+  #
+  # BUDGET, MEASURED (the mistake #6310 records is a budget written for a test
+  # nobody had run). Locally, 4 cores: 262 s total — ~220 s of it stage 1, which
+  # runs NATIVELY, then 1.9 s for the bare compiler-module case and ~35 s each
+  # for the three stdlib-importing ones under qemu. Per-case cost is dominated
+  # by stdlib LOADING, not emit. 25 minutes is ~5.7x the measured run.
+  #
+  # FERN_STAGE2_SELF is deliberately NOT set: that case is gen2 recompiling the
+  # whole compiler under qemu, and it is left to a human with time rather than
+  # paid on every push.
+  #
+  # WHOLE-COMPILER EMIT-ALL FIXPOINT at batch=8 — the config that IS the
+  # pre-`-assume-eligible` OOM shape, so it is the one worth guarding.
+  #
+  # It was env-gated on RUN_EMITALL_FIXPOINT, which nothing set, on the grounds
+  # that its gen1 emit "peaks 7909 MB against the 8 GiB arena (~99% of the
+  # ceiling)". The arena has been 16 GiB for some time, making that ~45%, so the
+  # test had been retired by an argument that stopped being true. Re-measured
+  # 2026-08-03: gen0 42.0 s / 4.96 GB, gen1 108.8 s / 7.27 GB, 297.6 s total.
+  # Its own job because ~5 min is enough to matter inside an LPT shard and
+  # nothing about it needs to share one.
+  selfhost-fixpoints:
+    name: selfhost-fixpoints-x86_64
     runs-on: ubuntu-latest
-    # The test builds an mmc1/mmc2 pair (a whole-compiler-scale stage-1 binary
-    # and a heavy emit) — its own docs quote ~4 min, so 30 gives the runner room.
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
+      - name: aarch64 cross-gcc + qemu (the stage-2 leg is linked and RUN)
+        uses: ./.github/actions/apt-cross-toolchain
       - uses: ./.github/actions/build-e2e-binaries
       # TestSelfHostConstFuncGen2 is the ONLY guard for a self-referential
       # miscompile: the IR path compiling the code that decides IR eligibility.
@@ -534,6 +583,7 @@ jobs:
       # change that needs it. Native x86-64 only (the test skips under a qemu
       # runner — it passes argv paths), which ubuntu-latest is.
       - name: two-generation const_func eligibility check
+        if: ${{ !cancelled() }}
         env:
           RUN_CONST_FUNC_GEN2: "1"
           FERN_SELFHOST_BUILD_CACHE: "${{ runner.temp }}/selfhost-unicache"
@@ -567,20 +617,8 @@ jobs:
   # FERN_STAGE2_SELF is deliberately NOT set: that case is gen2 recompiling the
   # whole compiler under qemu, and it is left to a human with time rather than
   # paid on every push.
-  stage2-fixpoint-arm64:
-    name: stage2-fixpoint-arm64
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
-    steps:
-      - uses: actions/checkout@v7
-      - uses: ./.github/actions/setup-fern
-      - name: aarch64 cross-gcc + qemu (stage 2 is linked and RUN)
-        uses: ./.github/actions/apt-cross-toolchain
-        with:
-          qemu-package: qemu-user
-          cross-gcc: "true"
-      - uses: ./.github/actions/build-e2e-binaries
       - name: arm64 stage-2 fixpoint (gen1 == gen2, byte-identical)
+        if: ${{ !cancelled() }}
         run: |
           set -euo pipefail
           chmod +x e2eselfhost.test
@@ -599,15 +637,8 @@ jobs:
   # 2026-08-03: gen0 42.0 s / 4.96 GB, gen1 108.8 s / 7.27 GB, 297.6 s total.
   # Its own job because ~5 min is enough to matter inside an LPT shard and
   # nothing about it needs to share one.
-  emitall-fixpoint:
-    name: emitall-fixpoint-x86_64
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
-    steps:
-      - uses: actions/checkout@v7
-      - uses: ./.github/actions/setup-fern
-      - uses: ./.github/actions/build-e2e-binaries
       - name: whole-compiler emit-all fixpoint at batch=8 (gen0 == gen1)
+        if: ${{ !cancelled() }}
         env:
           FERN_SELFHOST_BUILD_CACHE: "${{ runner.temp }}/selfhost-unicache"
         run: |
@@ -637,6 +668,7 @@ jobs:
   #
   # No `needs: warm`: the driver it builds is wasm_modload_run, which no warm job
   # primes, so the artifacts would be a download it does not read.
+
   wasm-wholecompiler-link:
     name: wasm-wholecompiler-link-x86_64
     runs-on: ubuntu-latest
