@@ -1224,6 +1224,7 @@ var abortMessages = []struct {
 	{"__fern_msg_oom", MsgArenaExhausted, ExitArenaExhausted, nil},
 	{"__fern_msg_slice_range", "fern: slice range out of bounds\n", 134, nil},
 	{"__fern_msg_str_slice", "fern: string index out of range\n", 134, nil},
+	{"__fern_msg_alloc_size", "fern: allocation size out of range\n", 134, nil},
 	{sanDoubleFreeMsg, "fern-sanitizer: rc over-release (double free)\n", ExitSanitizer, func() bool { return ast.RcUnderflowTrap }},
 	{sanUseAfterFreeMsg, "fern-sanitizer: use-after-free (touched a quarantined block)\n", ExitSanitizer, func() bool { return ast.RcFreeDebug }},
 }
@@ -3442,6 +3443,13 @@ func (g *generator) emitStrcatRuntime() {
 	g.label(".Lstrcat_nonzero")
 	// Combined length in w24 (scratch — caller-save, no save).
 	g.emit("add w24, w21, w22")
+	// The add is 32-bit, so two operands past 2 GiB wrap NEGATIVE — and a
+	// negative total is not > 7, so the inline path was taken and memcpy'd
+	// gigabytes into the 8-byte buffer below (#8457). Abort on the sign bit,
+	// before either path reads the total.
+	g.emit("tbz w24, #31, .Lstrcat_sizeok")
+	g.emitAbort("__fern_msg_alloc_size")
+	g.label(".Lstrcat_sizeok")
 	// If total <= 7, build inline output without allocating.
 	g.emit("cmp w24, #7")
 	g.emit("b.gt .Lstrcat_heap")
@@ -3541,6 +3549,12 @@ func (g *generator) emitStrcatRuntime2W() {
 	g.emit("movz x1, #0x8000, lsl #48")
 	g.emit("b .Lstrcat2w_ret")
 	g.label(".Lstrcat2w_nonempty")
+	// Same 32-bit combined-length overflow as the single-register form
+	// (#8457): a negative total compares below the inline cap, so the
+	// inline path would memcpy gigabytes into a 16-byte buffer.
+	g.emit("tbz w0, #31, .Lstrcat2w_sizeok")
+	g.emitAbort("__fern_msg_alloc_size")
+	g.label(".Lstrcat2w_sizeok")
 	g.emit("cmp w0, #%d", fernstring.InlineCap(8))
 	g.emit("b.gt .Lstrcat2w_heap")
 	// Inline form: memcpy both operands into the zeroed 16-byte
@@ -4417,6 +4431,17 @@ func (g *generator) emitAllocU8Runtime() {
 	g.emit("mov x29, sp")
 	g.emit("str x19, [sp, #16]")
 	g.emit("mov x19, x0") // x19 = n (callee-save, survives bl)
+	// A NEGATIVE length is a size computation that overflowed i32 upstream —
+	// `s.repeat(n)` computes `sl * n` in i32, so 8 x 300000000 wraps to
+	// -1894967296 (#8457). Everything below reads `n` as unsigned: `add w0,
+	// w19, #16` zero-extends into x0, so a ~2.4 GB block is allocated and the
+	// length word is stored negative, which is what let this backend hand the
+	// caller a string reporting length -1894967296 and exit 0. The
+	// interpreter has rejected it since it was written and wasm traps; abort
+	// with a named cause, as every other size failure in the runtime does.
+	g.emit("tbz w19, #31, .Lallocu8_sizeok")
+	g.emitAbort("__fern_msg_alloc_size")
+	g.label(".Lallocu8_sizeok")
 	// Short-circuit on n == 0: return the shared static empty-
 	// array sentinel rather than allocating a fresh header-only
 	// buffer. The sentinel's byte at offset -4 is 0 (length), so

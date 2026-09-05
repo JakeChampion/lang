@@ -6021,6 +6021,7 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bo
 	// the no-free path.
 	b.rc.preciseDrops = b.computePreciseDrops()
 	b.rc.nestedDrops = b.computeNestedDrops()
+	b.rc.viewLocalDrops = b.computeViewLocalDrops()
 	if handled, err := b.tryEmitTrmc(); err != nil {
 		return nil, err
 	} else if handled {
@@ -6034,6 +6035,12 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bo
 			}
 			for _, name := range b.rc.preciseDrops[i] {
 				b.emitPreciseDrop(name)
+			}
+			// A drop keyed to a `return` is emitted by that Return's own
+			// lowering, once its value is on the stack; emitting it here
+			// would be unreachable.
+			if _, isRet := st.(*ast.Return); !isRet {
+				b.emitViewLocalDrops(st)
 			}
 		}
 	}
@@ -8494,6 +8501,9 @@ func (b *builder) stmt(s ast.Stmt) error {
 			for _, name := range b.rc.nestedDrops[ss] {
 				b.emitPreciseDrop(name)
 			}
+			if _, isRet := ss.(*ast.Return); !isRet {
+				b.emitViewLocalDrops(ss)
+			}
 		}
 	case *ast.If:
 		taken := b.coverBranch(n.Pos())
@@ -8744,6 +8754,7 @@ func (b *builder) stmt(s ast.Stmt) error {
 			if err := b.emitDeferCleanup(); err != nil {
 				return err
 			}
+			b.emitViewLocalDrops(n)
 			b.emitRcDecLocalsAtExit()
 			b.emit(Op{Kind: OpReturnVoid})
 			return nil
@@ -8761,6 +8772,7 @@ func (b *builder) stmt(s ast.Stmt) error {
 			if err := b.emitPairFormPushValue(n.Value); err != nil {
 				return err
 			}
+			b.emitViewLocalDrops(n)
 			b.emitRcDecLocalsAtExit()
 			b.emit(Op{Kind: OpReturnPair})
 			return nil
@@ -8826,6 +8838,7 @@ func (b *builder) stmt(s ast.Stmt) error {
 		// index loads) still take the inc; fresh values aren't locals.
 		if id, ok := n.Value.(*ast.Ident); ok && len(b.defers) == 0 &&
 			needsRcIncOnAlias(n.Value, b) && b.isOwnedRcLocal(id.Name) {
+			b.emitViewLocalDrops(n)
 			b.emitRcDecLocalsAtExitExcept(id.Name)
 			b.emit(Op{Kind: OpReturn})
 			return nil
@@ -8844,6 +8857,7 @@ func (b *builder) stmt(s ast.Stmt) error {
 		// dedicated branch rather than widening those predicates.
 		if id, ok := n.Value.(*ast.Ident); ok && len(b.defers) == 0 &&
 			b.dynReclaim() && b.localIsDynTrait(id.Name) {
+			b.emitViewLocalDrops(n)
 			b.emitRcDecLocalsAtExitExcept(id.Name)
 			b.emit(Op{Kind: OpReturn})
 			return nil
@@ -8862,6 +8876,7 @@ func (b *builder) stmt(s ast.Stmt) error {
 		// sweep must not also release it. Per-site, so the OTHER returns keep
 		// sweeping p — which is what lets the transfer be claimed at all on a
 		// branchy function (computeReturnOwnMoves, #6125).
+		b.emitViewLocalDrops(n)
 		b.emitRcDecLocalsAtExitExcept(b.rc.returnOwnMove[n])
 		b.emit(Op{Kind: OpReturn})
 	case *ast.Defer:
@@ -14173,17 +14188,33 @@ func makesFreshViewHeader(e ast.Expr) bool {
 	return false
 }
 
-// emitLentViewDrops releases the headers stashLentViewTemp stashed, through
-// the one release every slice header takes (emitSliceHeaderDropOnStack).
-// Net-zero on the operand stack, so the call's result sitting underneath is
-// untouched.
+// emitViewLocalDrops releases the view headers whose last use is `st`
+// (computeViewLocalDrops), through the one release every slice header takes
+// (emitSliceHeaderDropOnStack), and nulls the slot so a later sweep cannot
+// reach the same header twice. Stack-neutral.
 //
-// A raw `__free(header, 2*ptrW)` here would be wrong on all three of its
-// arguments once the header carries an rc1 header (#8406): __free takes the
-// block BASE and the header's data pointer is base+8, the block is 8 bytes
-// longer than the payload, and an aliased header must be decremented rather
-// than freed. Freeing base+8 at the payload size does not merely leak the
-// block — it pushes an overlapping block onto that size class's freelist.
+// It cannot be the raw `__free(header, 2*ptrW)` it was first written as: once
+// the header carries an rc1 header (#8406) that is wrong on all three of its
+// arguments — __free takes the block BASE and the header's data pointer is
+// base+8, the block is 8 bytes longer than the payload, and an aliased header
+// must be decremented rather than freed. Freeing base+8 at the payload size
+// does not merely leak the block; it pushes an overlapping block onto that
+// size class's freelist.
+func (b *builder) emitViewLocalDrops(st ast.Stmt) {
+	for _, name := range b.rc.viewLocalDrops[st] {
+		slot, ok := b.locals[name]
+		if !ok {
+			continue
+		}
+		b.emitSliceSlotDrop(slot)
+		b.emit(Op{Kind: OpConstI32, I32: 0})
+		b.emit(Op{Kind: OpStoreLocal, I32: slot})
+	}
+}
+
+// emitLentViewDrops releases the headers stashLentViewTemp stashed, through
+// the same one release. Net-zero on the operand stack, so the call's result
+// sitting underneath is untouched.
 func (b *builder) emitLentViewDrops(slots []int32) {
 	for _, slot := range slots {
 		b.emitSliceSlotDrop(slot)

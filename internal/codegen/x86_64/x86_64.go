@@ -5997,6 +5997,7 @@ var abortMessages = []struct {
 	{"__fern_msg_oom", MsgArenaExhausted, ExitArenaExhausted, nil},
 	{"__fern_msg_slice_range", "fern: slice range out of bounds\n", 134, nil},
 	{"__fern_msg_str_slice", "fern: string index out of range\n", 134, nil},
+	{"__fern_msg_alloc_size", "fern: allocation size out of range\n", 134, nil},
 	{sanDoubleFreeMsg, "fern-sanitizer: rc over-release (double free)\n", ExitSanitizer, func() bool { return ast.RcUnderflowTrap }},
 	{sanUseAfterFreeMsg, "fern-sanitizer: use-after-free (touched a quarantined block)\n", ExitSanitizer, func() bool { return ast.RcFreeDebug }},
 }
@@ -8344,6 +8345,14 @@ func (g *generator) emitStrcatRuntime() {
 	// else fall through to the heap path.
 	g.emit("mov ecx, r14d")
 	g.emit("add ecx, r15d")
+	// The combined length is a 32-bit add, so two operands past 2 GiB wrap
+	// NEGATIVE — and a negative total is not > 7, so the inline path was
+	// taken and memcpy'd gigabytes into the 8-byte stack buffer below
+	// (#8457). Abort on the sign bit, before either path reads the total.
+	g.emit("test ecx, ecx")
+	g.emit("jns .Lstrcat_sizeok")
+	g.emitAbort("__fern_msg_alloc_size")
+	g.label(".Lstrcat_sizeok")
 	g.emit("cmp ecx, 7")
 	g.emit("jg .Lstrcat_heap")
 	// --- Inline output path ---
@@ -11303,6 +11312,19 @@ func (g *generator) emitAllocU8Runtime() {
 	g.emit("push rbx")
 	g.emit("sub rsp, 8")
 	g.emit("mov ebx, edi") // rbx = n
+	// A NEGATIVE length is a size computation that overflowed i32 upstream —
+	// `s.repeat(n)` computes `sl * n` in i32, so 8 x 300000000 wraps to
+	// -1894967296 (#8457). Everything below reads `n` as unsigned: `lea edi,
+	// [rbx + 16]` zero-extends into rdi, so a ~2.4 GB block is allocated,
+	// the length word is stored negative, and the caller then walks off it.
+	// The interpreter has rejected this since it was written; the natives
+	// silently continued (SIGSEGV on x86-64, a string reporting length
+	// -1894967296 on arm64), and wasm traps. Abort with a named cause, which
+	// is what every other size failure in the runtime already does.
+	g.emit("test ebx, ebx")
+	g.emit("jns .Lallocu8_sizeok")
+	g.emitAbort("__fern_msg_alloc_size")
+	g.label(".Lallocu8_sizeok")
 	// Short-circuit on n == 0: return the shared static empty-
 	// array sentinel rather than allocating a fresh header-only
 	// buffer.
