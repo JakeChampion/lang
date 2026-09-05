@@ -7649,6 +7649,8 @@ pub function emit_module_ir_unit_arm64_flat(mod: parser.Module, is_entry: boolea
 //     relocation pair; only the assembler syntax differs. Every
 //     emitted `adrp` is paired with an `add ..., :lo12:...` and there
 //     are no `ldr [.., :lo12:..]` forms, so the rewrite is unambiguous.
+//     Like the `.L` prefix rewrite it skips quoted string operands: a
+//     `.ascii` payload is program data, not an addressing mode.
 //   - Sections. `.section .rodata` -> `.section __TEXT,__const`;
 //     `.bss` / `.section .bss` -> `.section __DATA,__bss`;
 //     `.section .text` -> `.text`.
@@ -7698,13 +7700,26 @@ function darwin_lstrip(s: string): string {
     return slice_unchecked(s, i, s.len()) + "";
 }
 
-// darwin_index_of returns the first index of sub in s, or -1.
-function darwin_index_of(s: string, sub: string): i32 {
-    if (sub.len() == 0) { return 0; }
-    if (s.len() < sub.len()) { return 0 - 1; }
+// darwin_index_of_unquoted returns the first index of sub in s that is not
+// inside a double-quoted string operand, or -1. A `.ascii` payload flows
+// through darwinize's line loop like every instruction, and the self-host
+// compiler's own literals contain `:lo12:`: rewriting one shortens the data
+// under a length recorded elsewhere, so the string reads into its neighbour.
+function darwin_index_of_unquoted(s: string, sub: string): i32 {
+    var n: i32 = s.len();
+    var m: i32 = sub.len();
+    var in_str: boolean = false;
     var i: i32 = 0;
-    while (i <= s.len() - sub.len()) {
-        if (slice_unchecked(s, i, i + sub.len()) == sub) { return i; }
+    while (i < n) {
+        var c: u8 = s[i];
+        if (in_str) {
+            if (c == 92 && i + 1 < n) { i = i + 1; }        // backslash escape
+            else if (c == 34) { in_str = false; }           // closing quote
+        } else if (c == 34) {
+            in_str = true;
+        } else if (i + m <= n && slice_unchecked(s, i, i + m) == sub) {
+            return i;
+        }
         i = i + 1;
     }
     return 0 - 1;
@@ -7859,8 +7874,8 @@ pub function darwinize(asm: string): string {
                 out_line = "_main:";
             } else if (darwin_starts_with(body, "adrp ")) {
                 out_line = line + "@PAGE";
-            } else if (darwin_index_of(line, ":lo12:") >= 0) {
-                var idx: i32 = darwin_index_of(line, ":lo12:");
+            } else if (darwin_index_of_unquoted(line, ":lo12:") >= 0) {
+                var idx: i32 = darwin_index_of_unquoted(line, ":lo12:");
                 out_line = slice_unchecked(line, 0, idx) + slice_unchecked(line, idx + 6, line.len()) + "@PAGEOFF";
             } else if (body == "ldr x8, [sp], #16") {
                 // The __syscall3 op's number load (#2649) — a generic syscall
