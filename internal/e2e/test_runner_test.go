@@ -4235,3 +4235,26 @@ func TestRunnerPegExamplePasses(t *testing.T) {
 		t.Errorf("expected 18 passes, 0 fails\noutput:\n%s", out)
 	}
 }
+
+// `examples/tests/coreutils_ld_test.fern` covers coreutils/lib/ld — the
+// model of C's `long double` that printf, and the utilities that follow
+// it, convert and compute in. GNU's is the host's, which is x87 80-bit
+// on x86-64, IEEE binary128 on arm64 and wasm32 and plain binary64 on
+// Darwin, so the suite drives all three explicitly rather than only the
+// one this host has: `%a` digits and leading bit, the subnormal and
+// overflow edges, the exact decimal expansion, strtold, and the
+// arithmetic. Which format a target selects is pinned separately by
+// internal/coreutils/longdouble_test.go. Passing suite -> exit 0.
+func TestRunnerCoreutilsLongDoubleExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/coreutils_ld_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: coreutils/lib/ld", "1..10", "# pass 10", "# fail 0"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
