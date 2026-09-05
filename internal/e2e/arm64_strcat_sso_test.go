@@ -72,7 +72,7 @@ function main(): i32 {
         t = (t + c.len() + (c[0] as i32)) % 101;
         i = i + 1;
     }
-    print(("ab" + "cd") + ("ef" + "gh"));
+    print(pick(0) + "fgh");
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 83;
 }`
@@ -133,12 +133,14 @@ func TestArm64StrcatPastCapAllocatesAndFrees(t *testing.T) {
 // as_bytes copies the bytes out first. 12 + 'a' + 'l' = 217.
 func TestArm64StrcatInlineAsBytes(t *testing.T) {
 	_, _, code := runLeakCheckArm64(t, `function main(): i32 {
+    var e: string = "";
+    if (e.as_bytes().len() != 0) { return 1; }
     var s: string = "abc" + "defghijkl";
     var b = s.as_bytes();
     return b.len() + (b[0] as i32) + (b[11] as i32);
 }`)
 	if code != 217 {
-		t.Errorf("exit = %d, want 217 (12 + 'a' + 'l')", code)
+		t.Errorf("exit = %d, want 217 (12 + 'a' + 'l'; 1 means the empty string's as_bytes was not empty)", code)
 	}
 }
 

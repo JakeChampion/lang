@@ -415,9 +415,9 @@ in the list at all:
 - **Over-retention**: measured under `FERN_LEAKCHECK=1` and pinned per case.
   The self-host-versus-native gap #6127 opened is closed — that grid
   (`internal/e2eselfhost/testdata/selfhost-leak-matrix.txt`) reads clean on
-  x86-64, and on arm64 the four divergent rows have the self-host ahead. What
+  x86-64 and arm64. What
   remains is shared with native: 80 non-zero rows in
-  `internal/e2e/testdata/conformance-leak-census.txt`, and 40 of 216 rc-corpus
+  `internal/e2e/testdata/conformance-leak-census.txt`, and 24 of 272 rc-corpus
   cases in `internal/e2e/rc_leak_gate_test.go`.
 - **The rc==1 append cliff**: `__arr_push_shared_count()` /
   `__arr_push_shared_bytes()`. And the lesson attached to it — **rank by the

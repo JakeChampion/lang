@@ -24,7 +24,7 @@ import (
 //
 // # Why a pinned baseline rather than a flat zero
 //
-// 24 of 272 cases leak on x86-64 today and 23 on arm64 — the map and
+// 24 of 272 cases leak on x86-64 today and 23 on arm64: the map and
 // closure drop paths do not fully reclaim, which is the same list the
 // corpus header names. A flat zero assertion could not land without
 // fixing all of that first, and deleting the leg until then is how the
