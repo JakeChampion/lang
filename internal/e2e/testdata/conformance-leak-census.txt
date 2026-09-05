@@ -414,7 +414,7 @@ single_insert                                        0
 slice_at_length                                      3
 slice_unchecked_bytes                                0
 slice_unchecked_oob                                  0
-slice_views                                          5
+slice_views                                          1
 smallest_int_literal                                 0
 snapshot_local_shared_field                          0
 some_branch                                          0

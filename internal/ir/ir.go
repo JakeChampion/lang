@@ -5999,6 +5999,7 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bo
 	// the no-free path.
 	b.rc.preciseDrops = b.computePreciseDrops()
 	b.rc.nestedDrops = b.computeNestedDrops()
+	b.rc.viewLocalDrops = b.computeViewLocalDrops()
 	if handled, err := b.tryEmitTrmc(); err != nil {
 		return nil, err
 	} else if handled {
@@ -6012,6 +6013,12 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bo
 			}
 			for _, name := range b.rc.preciseDrops[i] {
 				b.emitPreciseDrop(name)
+			}
+			// A drop keyed to a `return` is emitted by that Return's own
+			// lowering, once its value is on the stack; emitting it here
+			// would be unreachable.
+			if _, isRet := st.(*ast.Return); !isRet {
+				b.emitViewLocalDrops(st)
 			}
 		}
 	}
@@ -8472,6 +8479,9 @@ func (b *builder) stmt(s ast.Stmt) error {
 			for _, name := range b.rc.nestedDrops[ss] {
 				b.emitPreciseDrop(name)
 			}
+			if _, isRet := ss.(*ast.Return); !isRet {
+				b.emitViewLocalDrops(ss)
+			}
 		}
 	case *ast.If:
 		taken := b.coverBranch(n.Pos())
@@ -8722,6 +8732,7 @@ func (b *builder) stmt(s ast.Stmt) error {
 			if err := b.emitDeferCleanup(); err != nil {
 				return err
 			}
+			b.emitViewLocalDrops(n)
 			b.emitRcDecLocalsAtExit()
 			b.emit(Op{Kind: OpReturnVoid})
 			return nil
@@ -8739,6 +8750,7 @@ func (b *builder) stmt(s ast.Stmt) error {
 			if err := b.emitPairFormPushValue(n.Value); err != nil {
 				return err
 			}
+			b.emitViewLocalDrops(n)
 			b.emitRcDecLocalsAtExit()
 			b.emit(Op{Kind: OpReturnPair})
 			return nil
@@ -8804,6 +8816,7 @@ func (b *builder) stmt(s ast.Stmt) error {
 		// index loads) still take the inc; fresh values aren't locals.
 		if id, ok := n.Value.(*ast.Ident); ok && len(b.defers) == 0 &&
 			needsRcIncOnAlias(n.Value, b) && b.isOwnedRcLocal(id.Name) {
+			b.emitViewLocalDrops(n)
 			b.emitRcDecLocalsAtExitExcept(id.Name)
 			b.emit(Op{Kind: OpReturn})
 			return nil
@@ -8822,6 +8835,7 @@ func (b *builder) stmt(s ast.Stmt) error {
 		// dedicated branch rather than widening those predicates.
 		if id, ok := n.Value.(*ast.Ident); ok && len(b.defers) == 0 &&
 			b.dynReclaim() && b.localIsDynTrait(id.Name) {
+			b.emitViewLocalDrops(n)
 			b.emitRcDecLocalsAtExitExcept(id.Name)
 			b.emit(Op{Kind: OpReturn})
 			return nil
@@ -8840,6 +8854,7 @@ func (b *builder) stmt(s ast.Stmt) error {
 		// sweep must not also release it. Per-site, so the OTHER returns keep
 		// sweeping p — which is what lets the transfer be claimed at all on a
 		// branchy function (computeReturnOwnMoves, #6125).
+		b.emitViewLocalDrops(n)
 		b.emitRcDecLocalsAtExitExcept(b.rc.returnOwnMove[n])
 		b.emit(Op{Kind: OpReturn})
 	case *ast.Defer:
@@ -14093,6 +14108,23 @@ func makesFreshViewHeader(e ast.Expr) bool {
 		return ok && id.Name == "__method_string_as_bytes"
 	}
 	return false
+}
+
+// emitViewLocalDrops frees the view headers whose last use is `st`
+// (computeViewLocalDrops). Stack-neutral: `__free` is (base, size) and returns
+// nothing.
+func (b *builder) emitViewLocalDrops(st ast.Stmt) {
+	for _, name := range b.rc.viewLocalDrops[st] {
+		slot, ok := b.locals[name]
+		if !ok {
+			continue
+		}
+		b.emit(Op{Kind: OpLoadLocal, I32: slot})
+		b.emit(Op{Kind: OpConstI32, I32: int32(2 * b.ptrW)})
+		b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__free", Width: ResNarrow, I32: 2})
+		b.emit(Op{Kind: OpConstI32, I32: 0})
+		b.emit(Op{Kind: OpStoreLocal, I32: slot})
+	}
 }
 
 // emitLentViewDrops frees the headers stashLentViewTemp stashed. Net-zero on
