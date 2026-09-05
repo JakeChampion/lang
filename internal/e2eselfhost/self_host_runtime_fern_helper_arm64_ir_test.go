@@ -369,7 +369,11 @@ func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 		{"openat", "463"},
 		{"unlinkat", "472"},
 		{"O_WRONLY|O_CREAT|O_TRUNC", "1537"},
-		{"lseek", "199"},
+		// fstat, which read_file sizes its buffer with. It was lseek (199)
+		// until #8265: lseek lies on directories (EINVAL on tmpfs, the htree
+		// sentinel on indexed ext4), and no helper in this set issues it any
+		// more, so asserting its number asserted nothing.
+		{"fstat", "339"},
 		{"mkdirat", "475"},
 		{"fstatat64", "470"},
 		{"st_size offset", "96"},

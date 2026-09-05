@@ -1897,6 +1897,14 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{},
 		Result: ast.StringType{},
 	}
+	// target_arch(): string — the compile target's ISA ("arm64",
+	// "x86-64", "wasm32"), the other half of the `-target` name and
+	// never the compiler's host. Folded, declared and answered on the
+	// same three paths as target_os above.
+	c.info.FuncSigs["target_arch"] = &ast.FuncType{
+		Params: []ast.Type{},
+		Result: ast.StringType{},
+	}
 	// Auto-injected methods on Reader / Writer. The names are
 	// the mangled forms the existing method-call rewrite uses
 	// (`r.read_line()` → `__method_Reader_read_line(r)`); we

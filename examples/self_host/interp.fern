@@ -2500,6 +2500,13 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
         if (args.len() != 0) { return v_err("target_os takes no arguments"); }
         return v_string(target_os());
     }
+    // target_arch(): the ISA half, answered from this compiler's own
+    // target_arch() for the same reason. Mirrors internal/interp's
+    // builtinTargetArch.
+    if (name == "target_arch") {
+        if (args.len() != 0) { return v_err("target_arch takes no arguments"); }
+        return v_string(target_arch());
+    }
     // map_new(cap) — capacity arg is accepted but ignored
     // since VMap uses dynamic parallel arrays.
     if (name == "map_new") {

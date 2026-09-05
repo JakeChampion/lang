@@ -745,7 +745,8 @@ think they're free additions to make.
 - **`(n: i32).to_string_with_sep(sep)`**: decimal with
   thousand-separator. `1234567` → `"1,234,567"`.
 - **`(n: i32).divmod(d)`**: returns `(quotient, remainder)`
-  pair. `d == 0` returns `(0, 0)`.
+  pair. `/` and `%` are total, so `d == 0` returns `(0, n)`
+  (docs/INTEGER-SEMANTICS.md).
 - **`s.escape_shell()`**: POSIX-shell-safe single-quote
   wrap with `'\''` escape dance for interior quotes.
 - **`s.snake_case()` / `s.kebab_case()`**: convert

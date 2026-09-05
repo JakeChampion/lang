@@ -14,30 +14,41 @@
 # it being visible; a row going DOWN is progress and also fails, so the
 # improvement gets recorded rather than absorbed.
 #
-# Measured 2026-09-05: 483 fixtures, 403 clean, 80 leaking, 7731
+# Measured 2026-09-05: 487 fixtures, 414 clean, 73 leaking, 7518
 # unpaired allocations. The distribution is heavily skewed — the median
 # leaking fixture is 2, and regex_captures_assert alone is 5987 of the
 # total.
 #
-# arrow_lambda_block_body is back to 0, and its diagnosis in #8550 was
-# right: #2673 extended the fixture with capturing void lambdas, and the
-# three allocations were the closure env boxes plus the cell the mutable
-# capture is boxed into. #8557 banked the row at 3 while the leak stood;
-# #8545 removed the leak — a closure LOCAL handed to a callee releases its
-# env and captures through the drop-fn pointer its pair already carries —
-# so the row returns to the verdict it was pinned at rather than keeping
-# the banked one. generic_array_methods (1) and
-# open_slice_evaluates_base_once (6 -> 4) fell to the view header a local
-# owns (#8535).
+# arrow_lambda_block_body is back to 0, and #8550's diagnosis was right:
+# #2673 extended the fixture with capturing void lambdas, and the three
+# allocations were the closure env boxes. #8545 removed the leak — a
+# closure LOCAL handed to a callee releases its env and captures through
+# the drop-fn pointer its pair already carries. The 3 was banked while the
+# leak stood, and #8495 carried that banked pin past the fix, so merging it
+# put a stale verdict back on a row the tree had already fixed.
+#
+# generic_array_methods (1 -> 0) and open_slice_evaluates_base_once (6 -> 4)
+# hold those numbers WITHOUT #8535's last-use free, which is the measurement
+# that retired it in #8495: making SliceType rc-tracked (#8406) already gives
+# a `[T]` local's header an owner, so the second mechanism was releasing what
+# the first had already nulled. #8527 keeps its share.
 #
 # Ten rows went DOWN and two arrived at once with #8396 / #8399 / #8403: a
 # match over read_chunk / read_line / env / read_file now owns the payload
 # it binds, read_chunk gives back its buffer on EOF, and the bytes() /
 # string_from_bytes_unchecked copies release. prop_string_involution (580)
 # and prop_url_roundtrip (293) fell to 0 on the second; read_all_stdin_chunks
-# lost its chunks on the first. What the two new alloc_flat rows still
-# carry is the per-call immortal Option box (#8405) and the as_bytes slice
-# header (#8406).
+# lost its chunks on the first. What alloc_flat_read_chunk still carries is
+# the per-call immortal Option box (#8405); its as_bytes slice header, and
+# all of alloc_flat_bytes_roundtrip's, went with #8406 below.
+#
+# Eleven rows went DOWN when `[T]` slice headers became rc1 blocks the IR
+# releases (#8406): the view fixtures (slice_views, slice_at_length,
+# open_slice_evaluates_base_once), the `as_bytes` consumers (bytes_writer,
+# stream_reader, alloc_flat_bytes_roundtrip, base64 / hex round trips) and
+# generic_array_methods each stop stranding one header per slice they cut,
+# and audit_std_crypto's five `chunk.as_bytes()` digests reach the 0 this
+# file already pinned for them.
 #
 # The four json rows went back UP to the numbers main carries. A
 # Map-carrying enum is EnumRcPayloads-INELIGIBLE even with the flag on,
@@ -60,7 +71,7 @@ ackermann                                            0
 add_sub_pair                                         0
 aliased_and_used_twice                               0
 alloc_flat_array_push_bound_elem                     0
-alloc_flat_bytes_roundtrip                           204
+alloc_flat_bytes_roundtrip                           0
 alloc_flat_closure_env                               0
 alloc_flat_consumed_append                           0
 alloc_flat_fresh_array_arg                           0
@@ -112,7 +123,7 @@ audit_std_time                                       0
 audit_std_uuid                                       0
 audit_strings_arrays_maps                            1
 audit_types_match                                    0
-base64_roundtrip                                     1
+base64_roundtrip                                     0
 binding_site_pattern_grammar                         0
 bool_in_tuple_with_i64                               0
 bool_to_string                                       0
@@ -121,7 +132,7 @@ boolean_logic                                        0
 boolean_scalar_dispatch                              1
 both_arms_read_p                                     0
 break_continue                                       0
-bytes_writer                                         1
+bytes_writer                                         0
 c2_consuming_reuse                                   0
 call_result_arg_temp                                 0
 cast_in_tuple                                        0
@@ -234,7 +245,7 @@ hash_struct_enum                                     0
 headers_map                                          0
 hello_world                                          0
 hex_literal                                          0
-hex_roundtrip                                        1
+hex_roundtrip                                        0
 higher_order                                         0
 http_content_type                                    5
 http_cookies                                         9
@@ -422,10 +433,10 @@ shared_variant_payload                               0
 single_alias                                         0
 single_alias_with_arg                                0
 single_insert                                        0
-slice_at_length                                      3
+slice_at_length                                      0
 slice_unchecked_bytes                                0
 slice_unchecked_oob                                  0
-slice_views                                          1
+slice_views                                          0
 smallest_int_literal                                 0
 snapshot_local_shared_field                          0
 some_branch                                          0
@@ -451,7 +462,7 @@ stdin_line                                           2
 str_to_owned_into_own_param                          0
 strarrarr_struct_field                               0
 strconcat                                            0
-stream_reader                                        2
+stream_reader                                        0
 strength_reduction_mul                               0
 string_and_i64                                       0
 string_arr                                           0
@@ -486,6 +497,10 @@ sum_10_args_order_check                              0
 sum_12_args_order_check                              0
 sum_8_args                                           0
 sxtw_preserves_sign                                  0
+target_arch_arm64                                    0
+target_arch_named                                    0
+target_arch_wasm32                                   0
+target_arch_x86_64                                   0
 target_os_linux                                      0
 target_os_named                                      0
 target_os_wasi                                       0

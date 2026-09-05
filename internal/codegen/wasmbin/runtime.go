@@ -720,6 +720,7 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_udp_send")
 				case "__slice_make":
 					needs.add("__fern_alloc")
+					needs.add("__fern_alloc_rc1")
 					needs.add("__slice_make")
 				case "__slice_range":
 					needs.add("__slice_range")
@@ -733,6 +734,7 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__slice_idx_8")
 				case "__method_string_as_bytes":
 					needs.add("__fern_alloc")
+					needs.add("__fern_alloc_rc1")
 					needs.add("__fern_str_len")
 					needs.add("__method_string_as_bytes")
 				case "__fern_stdout":
@@ -996,7 +998,11 @@ var unconditionalHelperCalls = map[string][]string{
 	"__fern_alloc_rc1":       {"__fern_alloc"},
 	"strbuf_append":          {"__fern_str_len", "__fern_str_byte", "__fern_alloc"},
 	"strbuf_take":            {"__fern_alloc_rc1"},
-	"__fern_lc_report":       {"__fern_lc_wrnum"},
+	// The slice header is an rc1 block; as_bytes also promotes an inline
+	// string's bytes through the bare allocator.
+	"__slice_make":             {"__fern_alloc_rc1"},
+	"__method_string_as_bytes": {"__fern_alloc_rc1", "__fern_alloc", "__fern_str_len", "__fern_str_byte"},
+	"__fern_lc_report":         {"__fern_lc_wrnum"},
 	// The print family copies its argument into a fresh buffer and
 	// releases it once the (synchronous) write returns.
 	"__fern_print":  {"__free"},
@@ -2411,7 +2417,7 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		body:    buildCabiReallocBody,
 	},
 	"__slice_make": {
-		// (data, len) → i32 — 8-byte slice header (data@0, len@4).
+		// (data, len) → i32 — rc1 8-byte slice header (data@0, len@4).
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildSliceMakeBody,

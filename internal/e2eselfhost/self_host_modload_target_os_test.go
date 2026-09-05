@@ -11,7 +11,7 @@ import (
 // The modload driver did not fold `target_os()`.
 //
 // `target_os()` is the -target's environment as a string LITERAL, not a call:
-// fern.fern folds it (constfold.fold_target_os) right after merging the bundle,
+// fern.fern folds it (constfold.fold_target_name) right after merging the bundle,
 // and no backend emits a body for the name. asm_modload_run merged the bundle
 // and went straight on, so every later pass in that driver saw a call to a
 // symbol nothing defines — `-verifyprovided` reported it on the three
