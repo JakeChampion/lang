@@ -228,10 +228,13 @@ TestSelfHostFrontEndNumericLiteralCodes 60
 TestSelfHostFmtCorpusParityX86_64 60
 
 # The two host-independent fmt legs: they drive fern.fern through the native
-# `-interp` rather than linking a driver, so no gcc and no x86-64 host. The 28 s
-# this entry was set from was measured LOCALLY; on the runner it is 192 s, and
-# the interp is why — each of the 32 parity cases re-parses and re-checks the
-# whole self-host source before formatting a small file. 290 is that with the
-# audit's 1.5x pessimism band, the number `ci-test-weights check` prints.
-TestSelfHostFmtWrittenFormViaInterp 290
-TestSelfHostFmtWriteAndDiffViaInterp 15
+# `-interp` rather than linking a driver, so no gcc and no x86-64 host. Every
+# interp spawn re-parses and re-checks the whole self-host source (~6 s here)
+# before it formats anything, so the cost is the SPAWN COUNT: the written-form
+# leg formats all 54 cases in two spawns (`-fmt -w FILE...`, once per
+# idempotence pass) — 23 s measured locally 2026-09-04 against 432 s for one
+# spawn per case per pass — and the write/diff leg is nine spawns (29.5 s
+# locally, same day). Both entries are the local number with the audit's 1.5x
+# band; the runner ran the old shape at ~0.4x this machine.
+TestSelfHostFmtWrittenFormViaInterp 35
+TestSelfHostFmtWriteAndDiffViaInterp 45
