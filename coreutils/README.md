@@ -70,7 +70,7 @@ they are not on PATH. Wall time, so compare within one run only.
 | `echo` | done — `-n` `-e` `-E`, the full escape table, POSIXLY_CORRECT |
 | `basename` | done — `-a` `-s` `-z`, in-order option scan, proper-suffix rule |
 | `dirname` | done — `-z`, the leading-slash rules |
-| `tsort` | done — GNU's exact order, the loop report, NUL-cut tokens; `read error:` waits on #8265 |
+| `tsort` | done — GNU's exact order, the loop report, NUL-cut tokens |
 | `lib/gnu.fern` | the GNU conventions every utility shares |
 
 The tracking epic (#8278) lists every other utility and its status.
