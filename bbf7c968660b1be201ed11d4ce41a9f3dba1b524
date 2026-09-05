@@ -130,3 +130,7 @@ selfhost/wasm32-wasi/utf8_ingest_unchecked.emit	8199
 selfhost/x86-64-linux/utf8_ingest_validated.emit	10242
 selfhost/arm64-linux/utf8_ingest_validated.emit	12146
 selfhost/wasm32-wasi/utf8_ingest_validated.emit	8558
+
+# lane: append-cliff-x86_64
+x86_64/checker.cliff_bytes	171262032
+x86_64/checker.cliff_count	269309
