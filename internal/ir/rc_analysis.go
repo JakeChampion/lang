@@ -215,6 +215,14 @@ type rcPlan struct {
 	// argument's slot once the value is on the operand stack. Filled by
 	// computeOwnedArgMoves, which also records each in moveSites.
 	ownedArgMoves map[*ast.Ident]bool
+	// fieldOwnMoves marks the `x.f` argument nodes this frame hands to an
+	// explicit `own` parameter as a MOVE out of x's box: the enclosing
+	// statement is `x = S { ...x, f: g(.., x.f, ..) }` or the return of that
+	// literal (checker.SupersededFieldOwnMoveArgs), so the store supersedes
+	// the field the callee consumes. The call site empties the slot when the
+	// box is unique at runtime and retains the value otherwise — see
+	// emitFieldOwnMove. Filled by computeFieldOwnMoves.
+	fieldOwnMoves map[*ast.FieldAccess]bool
 	// preciseDrops[stmtIdx] lists the owned locals to deep-drop + zero right
 	// after lowering that top-level statement (Perceus garbage-free precise
 	// drops — computePreciseDrops).
@@ -322,6 +330,7 @@ func (b *builder) computeRcAnalyses() {
 	// After the borrow analyses: a borrowed view's source must stay in its
 	// slot until the exit sweep, so it is never moved into a call.
 	b.rc.ownedArgMoves = b.computeOwnedArgMoves()
+	b.rc.fieldOwnMoves = b.computeFieldOwnMoves()
 	b.rc.reuseSources, b.rc.reuseConsumed = b.computeReuseSources()
 	b.rc.consumingMatchReuse = b.computeConsumingMatchReuse()
 }
@@ -7572,6 +7581,102 @@ func (b *builder) computeOwnedArgMoves() map[*ast.Ident]bool {
 		}
 		return true
 	})
+	return out
+}
+
+// computeFieldOwnMoves claims the `x.f` arguments of the superseded-field
+// shape — `x = S { ...x, f: g(.., x.f, ..) }` and `return S { ...x, f: g(..,
+// x.f, ..) }` — as moves out of x's box into g's `own` parameter (#8186).
+// The recognition is the checker's (SupersededFieldOwnMoveArgs): E051 admits
+// exactly these nodes, so an admitted argument the analysis does NOT claim
+// still reaches the call and must be retained there instead (the call site's
+// fallback); the two verdicts are each sound on their own.
+//
+// A claim needs the frame to hold x's reference (frameOwnsIdent — a borrowed
+// param's box belongs to the caller, who reads the field back), a field the
+// flat helpers can null and retain (arrElemIsRcTracked: one word, not the
+// two-word string), a callee that is a direct function, and no defer or
+// lambda that could read x after the slot is emptied. The return form also
+// needs a function without defers: a defer runs after the return value is
+// built, while x is still in its slot.
+//
+// Uniqueness is decided at RUNTIME, not here. The box may be shared — `var
+// b = x` earlier, a capture, a global — and every such route would read the
+// emptied slot; so the call site tests is_unique(x) and only then nulls the
+// slot, retaining the value for the callee otherwise. That keeps the claim
+// free of an alias analysis the way tryStructReuseOverwrite's reuse is.
+func (b *builder) computeFieldOwnMoves() map[*ast.FieldAccess]bool {
+	out := map[*ast.FieldAccess]bool{}
+	if b.fn.Body == nil || !ast.RcFreeEnabled || len(b.info.OwnFuncs) == 0 {
+		return out
+	}
+	var defers []*ast.Defer
+	collectDefers(b.fn.Body, &defers)
+	hasDefer := len(defers) > 0
+	esc := deferOrLambdaNames(b.fn.Body)
+	claim := func(sl *ast.StructLit, base *ast.Ident, isReturn bool) {
+		if esc[base.Name] || (isReturn && hasDefer) || !b.frameOwnsIdent(base.Name) {
+			return
+		}
+		st, ok := b.exprStaticType(base).(ast.StructType)
+		if !ok || st.Name != sl.TypeName {
+			return
+		}
+		sd, ok := b.info.Structs[st.Name]
+		if !ok {
+			return
+		}
+		for _, fa := range checker.SupersededFieldOwnMoveArgs(sl, base.Name, b.info.OwnFuncs) {
+			if !arrElemIsRcTracked(fieldType(sd.Fields, fa.Field)) {
+				continue
+			}
+			out[fa] = true
+		}
+	}
+	ast.Walk(b.fn.Body, func(n ast.Node) bool {
+		switch st := n.(type) {
+		case *ast.Assign:
+			t, ok := st.Target.(*ast.Ident)
+			if !ok {
+				return true
+			}
+			if sl, isLit := st.Value.(*ast.StructLit); isLit {
+				claim(sl, t, false)
+			}
+		case *ast.Return:
+			sl, isLit := st.Value.(*ast.StructLit)
+			if !isLit || sl.Base == nil {
+				return true
+			}
+			if bid, ok := sl.Base.(*ast.Ident); ok {
+				claim(sl, bid, true)
+			}
+		}
+		return true
+	})
+	// The recognizer needs the callee to be a direct function; a local of
+	// the same name shadows it, and the checker's own-flag table is keyed by
+	// bare name.
+	for fa := range out {
+		ast.Walk(b.fn.Body, func(n ast.Node) bool {
+			c, ok := n.(*ast.Call)
+			if !ok {
+				return true
+			}
+			for _, a := range c.Args {
+				if a != fa {
+					continue
+				}
+				cid := c.Callee.(*ast.Ident)
+				if _, isLocal := b.locals[cid.Name]; isLocal {
+					delete(out, fa)
+				} else if _, isFunc := b.info.FuncSigs[cid.Name]; !isFunc {
+					delete(out, fa)
+				}
+			}
+			return true
+		})
+	}
 	return out
 }
 
