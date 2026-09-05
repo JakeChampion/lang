@@ -11380,13 +11380,9 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
         if (!tf.ok) { return tf; }
         return tf.emit(ir.op_timer_fd());
     }
-    // isatty(fd): lower fd, then a dedicated op the backends emit as a
-    // call into __fern_isatty (one terminal-attribute ioctl) → 0/1.
-    if (cid.name == "isatty" && c.args.len() == 1) {
-        var it: LowerState = lower_expr(c.args[0], s);
-        if (!it.ok) { return it; }
-        return it.emit(ir.op_isatty());
-    }
+    // isatty / access / geteuid / getegid — see lower_call_os_query, which is
+    // split out so this dispatch does not grow four more arms.
+    if (is_os_query_call(cid.name, c.args.len())) { return lower_call_os_query(c, cid, s); }
     // wasm_timer_pollable(ns) / wasm_pollable_drop(p): portability
     // shims (native: -1 / 0). Lower the arg, then emit the op.
     if (cid.name == "wasm_timer_pollable" && c.args.len() == 1) {
@@ -12223,6 +12219,39 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
 // The generic direct-call lowering: everything reached once the builtin-name
 // intercepts above have declined the callee. Lowers the arguments, brackets the
 // ones a callee may grow or free, emits the call, and releases what it retained.
+// is_os_query_call recognises the builtins that ask the OS ABOUT the process
+// or a path without reading or writing anything: is this fd a terminal, may I
+// do this to that path, and who am I. The ARITY is part of the test so a call
+// with the wrong number of arguments falls through to the ordinary named-call
+// path exactly as it did before these four were split out.
+function is_os_query_call(name: string, argc: i32): boolean {
+    if (name == "isatty") { return argc == 1; }
+    if (name == "access") { return argc == 2; }
+    if (name == "geteuid" || name == "getegid") { return argc == 0; }
+    return false;
+}
+
+// lower_call_os_query lowers the four builtins is_os_query_call selects. It is
+// a separate function for the same reason emit_str_op is on the backend side:
+// lower_call_named is the compiler's single biggest dispatch, and every arm
+// added to it inline costs the whole function's readability.
+//
+//   isatty(fd)          → op_isatty, one terminal-attribute ioctl → 0/1.
+//   access(path, mode)  → op_access → Result[void, IoError], judged against
+//                         the EFFECTIVE ids. opt_ret_type's access case
+//                         resolves the Result, so both match arms bind.
+//   geteuid() / getegid() → one argument-free syscall each; no operands.
+function lower_call_os_query(c: ast.ExprCall, cid: ast.ExprIdent, s: LowerState): LowerState {
+    if (cid.name == "geteuid") { return s.emit(ir.op_geteuid()); }
+    if (cid.name == "getegid") { return s.emit(ir.op_getegid()); }
+    var a0: LowerState = lower_expr(c.args[0], s);
+    if (!a0.ok) { return a0; }
+    if (cid.name == "isatty") { return a0.emit(ir.op_isatty()); }
+    var a1: LowerState = lower_expr(c.args[1], a0);
+    if (!a1.ok) { return a1; }
+    return a1.emit(ir.op_access());
+}
+
 function lower_call_named_generic(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: LowerState): LowerState {
     var sc: LowerState = s;
     var ai: i32 = 0;
@@ -68580,6 +68609,7 @@ pub function (s: LowerState) opt_ret_type(name: string): string {
     if (name == "env") { return "Option[string]"; }
     if (name == "stat") { return "Result[FileStat, IoError]"; }
     if (name == "lstat") { return "Result[FileStat, IoError]"; }
+    if (name == "access") { return "Result[void, IoError]"; }
     // The streaming-I/O constructors (#7758): open_reader -> Result[Reader,
     // IoError], open_writer / open_appender -> Result[Writer, IoError], so
     // `match (open_reader(p)) { Ok(r) => .., Err(e) => .. }` recovers both

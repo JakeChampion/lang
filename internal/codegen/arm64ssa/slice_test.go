@@ -1,8 +1,10 @@
 package arm64ssa_test
 
 import (
+	"os"
 	"testing"
 
+	"github.com/jakechampion/lang/internal/ir"
 	"github.com/jakechampion/lang/internal/ssa"
 )
 
@@ -94,9 +96,9 @@ func statOf(f *ssa.Func, b *ssa.Block, path string) ssa.Value {
 }
 
 // stat(path) -> Result[FileStat, IoError]. The Result box is {tag@+0,
-// payload@+8}; the Ok payload is a FileStat box {is_file@+0, is_dir@+4,
-// size@+8} — the same layout the flat backend builds, since the IR reads
-// these fields the same way whichever backend produced them.
+// payload@+8}; the Ok payload is a FileStat laid out by ir.FileStat — the same
+// layout the flat backend builds, since the IR reads these fields the same way
+// whichever backend produced them.
 //
 // The three cases below pin the two things the helper decodes out of the
 // 128-byte struct stat: the S_IFMT bits of st_mode (u32 at +16), and the
@@ -217,5 +219,105 @@ func TestArmRunSliceRange(t *testing.T) {
 		if got := rangeOf(c.lo, c.hi, c.len); got != c.want {
 			t.Errorf("__slice_range(%d, %d, %d) = %d, want %d", c.lo, c.hi, c.len, got, c.want)
 		}
+	}
+}
+
+// The rest of the `stat(2)` record — everything past the kind and the size —
+// on the SSA backend. Each field comes from a different offset in the kernel's
+// 128-byte struct, and a wrong one is silent: it lands inside a buffer the
+// kernel filled and reads a real number out of the neighbouring field. So the
+// assertions are on values that are FIXED for the path being stat'd rather
+// than on "not zero".
+//
+// /proc/version is the fixture for the same reason TestArmRunStat uses it: it
+// exists on every Linux this runs on, needs no setup, and procfs gives it a
+// known mode (0444), owner (root) and link count (1).
+func TestArmRunStatFields(t *testing.T) {
+	field := func(path string, offset int64, wide bool) int {
+		f := ssa.NewFunc("main")
+		e := f.NewBlock()
+		fs := loadOp(f, e, statOf(f, e, path), 8)
+		if wide {
+			f.SetRet(e, loadOp(f, e, fs, offset))
+		} else {
+			f.SetRet(e, load32u(f, e, fs, offset))
+		}
+		return assembleRunArmModule(t, map[string]*ssa.Func{"main": f}, "main", 12)
+	}
+	const procVersion = "/proc/version"
+	// A program's answer reaches this harness as an exit STATUS, which is one
+	// byte, so every expectation is the low byte of the real value.
+	lowByte := func(v int) int { return v & 0xff }
+
+	// st_mode: S_IFREG | 0444 = 0o100444, whose low byte is 0o044.
+	if got, want := field(procVersion, int64(ir.FileStat.Mode), false), lowByte(0o100444); got != want {
+		t.Errorf("stat(%q).mode low byte = %#o, want %#o", procVersion, got, want)
+	}
+	// st_nlink: a procfs file has exactly one link.
+	if got := field(procVersion, int64(ir.FileStat.Nlink), false); got != 1 {
+		t.Errorf("stat(%q).nlink = %d, want 1", procVersion, got)
+	}
+	// st_uid / st_gid: procfs entries belong to root.
+	if got := field(procVersion, int64(ir.FileStat.UID), false); got != 0 {
+		t.Errorf("stat(%q).uid = %d, want 0", procVersion, got)
+	}
+	if got := field(procVersion, int64(ir.FileStat.GID), false); got != 0 {
+		t.Errorf("stat(%q).gid = %d, want 0", procVersion, got)
+	}
+	// st_rdev: a regular file names no device node.
+	if got := field(procVersion, int64(ir.FileStat.Rdev), true); got != 0 {
+		t.Errorf("stat(%q).rdev = %d, want 0", procVersion, got)
+	}
+	// /dev/null IS a device node, so the same slot is non-zero there — which
+	// is what distinguishes "read the rdev field" from "read a zero". Its
+	// device id is makedev(1, 3), and 3 is the minor in the low byte.
+	if got := field("/dev/null", int64(ir.FileStat.Rdev), true); got != 3 {
+		t.Errorf("stat(/dev/null).rdev low byte = %d, want 3 (minor of char 1:3)", got)
+	}
+	// st_mtime: seconds since the epoch. The exit status truncates it, so
+	// assert the field is READ rather than its value — paired with the
+	// nanosecond slot below, which must stay inside one second whatever the
+	// seconds count is, an off-by-one row in the offset table shows up.
+	if got := field(procVersion, int64(ir.FileStat.MtimeNsec), true); got < 0 || got > 255 {
+		t.Errorf("stat(%q).mtime_nsec truncated to %d — not a sub-second remainder", procVersion, got)
+	}
+}
+
+// `access` and the effective-id pair on the SSA backend. The X_OK case carries
+// signal whatever uid the suite runs as: the execute bit is checked even for
+// root, so /proc/version (0444) is not executable and /bin/sh is.
+func TestArmRunAccessAndIds(t *testing.T) {
+	accessTag := func(path string, mode int64) int {
+		f := ssa.NewFunc("main")
+		e := f.NewBlock()
+		r := addrCallOp(f, e, "access", constStr(f, e, path), constOp(f, e, mode))
+		f.SetRet(e, load32u(f, e, r, 0))
+		return assembleRunArmModule(t, map[string]*ssa.Func{"main": f}, "main", 12)
+	}
+	// tag 0 = Ok, tag 1 = Err.
+	if got := accessTag("/proc/version", 0); got != 0 {
+		t.Errorf("access(/proc/version, F_OK) tag = %d, want 0 (Ok)", got)
+	}
+	if got := accessTag("/proc/version", 4); got != 0 {
+		t.Errorf("access(/proc/version, R_OK) tag = %d, want 0 (Ok)", got)
+	}
+	if got := accessTag("/proc/version", 1); got != 1 {
+		t.Errorf("access(/proc/version, X_OK) tag = %d, want 1 (Err — 0444 has no x bit)", got)
+	}
+	if got := accessTag("/no/such/path/here", 0); got != 1 {
+		t.Errorf("access(missing, F_OK) tag = %d, want 1 (Err)", got)
+	}
+
+	id := func(callee string) int {
+		f := ssa.NewFunc("main")
+		e := f.NewBlock()
+		f.SetRet(e, callOp(f, e, callee))
+		return assembleRunArmModule(t, map[string]*ssa.Func{"main": f}, "main", 12)
+	}
+	if got, want := id("geteuid"), os.Geteuid(); got != want {
+		t.Errorf("geteuid() = %d, want %d", got, want)
+	}
+	if got, want := id("getegid"), os.Getegid(); got != want {
+		t.Errorf("getegid() = %d, want %d", got, want)
 	}
 }

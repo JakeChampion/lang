@@ -1100,6 +1100,18 @@ pub function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDec
             // [fd] -> __fern_isatty(x0=fd) -> 1 when fd is a terminal, else 0.
             s = s.write("    bl __fn___fern_isatty\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
             s = s.need("isatty");
+        } else if (o.kind_tag == 237) {  // access
+            // [pathbox][mode] -> Result[void, IoError]. The stack ABI wants
+            // param[0] on top, so re-push the popped pair in reverse — the
+            // same shuffle write_file does.
+            s = s.need("heap"); s = s.need("access");
+            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_access\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind_tag == 238) {  // geteuid
+            s = s.write("    bl __fn___fern_geteuid\n    str x0, [sp, #-16]!\n");
+            s = s.need("geteuid");
+        } else if (o.kind_tag == 239) {  // getegid
+            s = s.write("    bl __fn___fern_getegid\n    str x0, [sp, #-16]!\n");
+            s = s.need("getegid");
         } else if (o.kind_tag == 189) {  // wasm_timer_pollable
             // [ns] -> __fern_wasm_timer_pollable(x0=ns) -> -1 (native shim) in x0.
             s = s.write("    ldr x0, [sp], #16\n    bl __fern_wasm_timer_pollable\n    str x0, [sp, #-16]!\n");
@@ -3181,7 +3193,7 @@ function emit_rt_clock_and_print(s: asmcore.EmitState, darwin: boolean): asmcore
     // timing program referencing a slot nothing defined. Same gate as asm_ir's.
     var ctgt: string = "arm64-linux";
     if (darwin) { ctgt = "arm64-darwin"; }
-    if (s.has_need("monotonic_ns") || s.has_need("now_unix_ms") || s.has_need("now_ns") || s.has_need("stat") || s.has_need("lstat") || s.has_need("read_file") || s.has_need("read_file_bytes") || s.has_need("random_i32") || s.has_need("sleep_ms") || s.has_need("poll") || s.has_need("proc_waitpid") || s.has_need("timer_fd") || s.has_need("tcp_listen") || s.has_need("tcp_connect") || s.has_need("print_int") || s.has_need("putchar") || s.has_need("eprint") || s.has_need("read_int") || s.has_need("udp_send") || s.has_need("isatty")) {
+    if (s.has_need("monotonic_ns") || s.has_need("now_unix_ms") || s.has_need("now_ns") || s.has_need("stat") || s.has_need("lstat") || s.has_need("read_file") || s.has_need("read_file_bytes") || s.has_need("random_i32") || s.has_need("sleep_ms") || s.has_need("poll") || s.has_need("proc_waitpid") || s.has_need("timer_fd") || s.has_need("tcp_listen") || s.has_need("tcp_connect") || s.has_need("print_int") || s.has_need("putchar") || s.has_need("eprint") || s.has_need("read_int") || s.has_need("udp_send") || s.has_need("isatty") || s.has_need("access") || s.has_need("geteuid") || s.has_need("getegid")) {
         s = s.write("    .section .bss\n    .align 8\n__fern_scratch: .skip 256\n    .section .text\n");
     }
     if (s.has_need("read_int")) {
@@ -6070,9 +6082,10 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     // writer_write joined for the same reason once its own result became an
     // Option[IoError] (#7926), and reader_close once it started reporting a
     // failing close instead of discarding it.
-    if (s.has_need("read_file") || s.has_need("read_file_bytes") || s.has_need("write_file") || s.has_need("write_file_exec") || s.has_need("remove_file") || s.has_need("create_dir_all") || s.has_need("temp_dir") || s.has_need("stat") || s.has_need("lstat") || s.has_need("read_dir") || s.has_need("remove_dir_all") || s.has_need("open_file") || s.has_need("writer_write") || s.has_need("reader")) {
+    if (s.has_need("read_file") || s.has_need("read_file_bytes") || s.has_need("write_file") || s.has_need("write_file_exec") || s.has_need("remove_file") || s.has_need("create_dir_all") || s.has_need("temp_dir") || s.has_need("stat") || s.has_need("lstat") || s.has_need("access") || s.has_need("read_dir") || s.has_need("remove_dir_all") || s.has_need("open_file") || s.has_need("writer_write") || s.has_need("reader")) {
         var fs_src: string = asmcore.rt_src_io_error(tgt);
         if (s.has_need("stat")) { fs_src = fs_src + " " + asmcore.rt_src_stat(tgt); }
+        if (s.has_need("access")) { fs_src = fs_src + " " + asmcore.rt_src_access(tgt); }
         if (s.has_need("lstat")) { fs_src = fs_src + " " + asmcore.rt_src_lstat(tgt); }
         if (s.has_need("read_file")) { fs_src = fs_src + " " + asmcore.rt_src_utf8_valid() + " " + asmcore.rt_src_read_file(tgt); }
         if (s.has_need("read_file_bytes")) { fs_src = fs_src + " " + asmcore.rt_src_read_file_bytes(tgt); }
@@ -6142,6 +6155,12 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     }
     // isatty: one terminal-attribute ioctl, whose request number is the only
     // per-target difference (TCGETS vs TIOCGETA).
+    if (s.has_need("geteuid")) {
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_getid(tgt, "geteuid"), s.struct_decls, s);
+    }
+    if (s.has_need("getegid")) {
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_getid(tgt, "getegid"), s.struct_decls, s);
+    }
     if (s.has_need("isatty")) {
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_isatty(tgt), s.struct_decls, s);
     }

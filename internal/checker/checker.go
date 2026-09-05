@@ -348,6 +348,12 @@ func builtinEnumDecls() []*ast.EnumDecl {
 // because we don't have opaque types yet, and because users
 // may need it for FFI escape hatches; it isn't part of the
 // stable surface.
+// BuiltinStructDecls is the exported view of builtinStructDecls, for the
+// layers that must lay one of these structs out by hand: `internal/ir`
+// derives FileStat's field offsets from it so the four backends that
+// build that struct in assembly share one source for the numbers.
+func BuiltinStructDecls() []*ast.StructDecl { return builtinStructDecls() }
+
 func builtinStructDecls() []*ast.StructDecl {
 	return []*ast.StructDecl{
 		{
@@ -634,17 +640,42 @@ func builtinStructDecls() []*ast.StructDecl {
 				{Name: "exit_code", Type: ast.NumberType{}},
 			},
 		},
-		// FileStat — `stat(path)` shape. Carries the minimum
-		// surface needed by test fixtures: the kind (file vs
-		// directory vs other) and the byte size. Mtime is a
-		// follow-up: lang has no Time type yet, and the
-		// migration's tests don't need it.
+		// FileStat — `stat(path)` shape: every field `stat(2)`
+		// returns that a program can act on. `mode` carries the
+		// type bits AND the permission bits (S_IFMT included), so
+		// the kind predicates a shell `test` needs (-b -c -p -S
+		// -h/-L) read it directly; `is_file` / `is_dir` stay as
+		// the derived conveniences they always were. The three
+		// timestamps are split into whole seconds since the Unix
+		// epoch plus the sub-second nanosecond remainder, because
+		// the language has no Time type to hand back.
+		//
+		// On wasm32-wasi the fields WASI does not report are zero:
+		// preview 1's `filestat` has no mode / uid / gid / blksize
+		// / blocks / rdev, and preview 2's `descriptor-stat` has
+		// neither those nor `dev`. See the `stat` signature below
+		// for the exact per-preview list.
 		{
 			Name: "FileStat",
 			Fields: []ast.Param{
 				{Name: "is_file", Type: ast.BoolType{}},
 				{Name: "is_dir", Type: ast.BoolType{}},
 				{Name: "size", Type: ast.NumberType{Width: 64, Signed: true}},
+				{Name: "mode", Type: ast.NumberType{Width: 32, Signed: false}},
+				{Name: "nlink", Type: ast.NumberType{Width: 32, Signed: false}},
+				{Name: "uid", Type: ast.NumberType{Width: 32, Signed: false}},
+				{Name: "gid", Type: ast.NumberType{Width: 32, Signed: false}},
+				{Name: "dev", Type: ast.NumberType{Width: 64, Signed: true}},
+				{Name: "rdev", Type: ast.NumberType{Width: 64, Signed: true}},
+				{Name: "ino", Type: ast.NumberType{Width: 64, Signed: true}},
+				{Name: "blksize", Type: ast.NumberType{Width: 64, Signed: true}},
+				{Name: "blocks", Type: ast.NumberType{Width: 64, Signed: true}},
+				{Name: "atime", Type: ast.NumberType{Width: 64, Signed: true}},
+				{Name: "atime_nsec", Type: ast.NumberType{Width: 64, Signed: true}},
+				{Name: "mtime", Type: ast.NumberType{Width: 64, Signed: true}},
+				{Name: "mtime_nsec", Type: ast.NumberType{Width: 64, Signed: true}},
+				{Name: "ctime", Type: ast.NumberType{Width: 64, Signed: true}},
+				{Name: "ctime_nsec", Type: ast.NumberType{Width: 64, Signed: true}},
 			},
 		},
 		// Map[i32, i32] — first cut of the IndexMap-shaped Map
@@ -1772,8 +1803,28 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// `size` carries byte size for regular files (and the
 	// directory entry size on POSIX for `is_dir == true`,
 	// which is platform-defined but useful as a non-zero
-	// signal that the directory exists). Mtime is omitted
-	// pending a Time type in the language.
+	// signal that the directory exists). `mode` carries the
+	// full `st_mode` word — S_IFMT type bits and permission
+	// bits — and the rest of the `stat(2)` record follows it.
+	//
+	// WASI reports less than a kernel does, and the missing
+	// fields read ZERO rather than being absent from the type:
+	//
+	//   - preview 1 (`path_filestat_get`) has dev, ino, nlink,
+	//     size and the three timestamps. mode, uid, gid, rdev,
+	//     blksize and blocks are zero; `mode` therefore cannot
+	//     answer a permission question there, only `is_file` /
+	//     `is_dir`, which come from `filetype`.
+	//   - preview 2 (`descriptor.stat-at`) has nlink, size and the
+	//     timestamps, and nothing else: the 0.2 `descriptor-stat`
+	//     record dropped the device and inode pair preview 1 still
+	//     carries, so `dev` and `ino` are zero there as well. A
+	//     timestamp the host reports as absent (`none`) is zero
+	//     rather than an error.
+	//
+	// A zero `mode` is distinguishable from a real one: no
+	// existing file has an S_IFMT of 0, so `mode & 0o170000 ==
+	// 0` means "this target did not report a mode".
 	c.info.FuncSigs["stat"] = &ast.FuncType{
 		Params: []ast.Type{ast.StringType{}},
 		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
@@ -1800,6 +1851,44 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 			ast.StructType{Name: "FileStat"},
 			ast.EnumType{Name: "IoError"},
 		}},
+	}
+	// access(path, mode): Result[void, IoError] — may the process
+	// perform `mode` on `path`? `mode` is the POSIX bitmask
+	// F_OK=0, X_OK=1, W_OK=2, R_OK=4, and the answer is computed
+	// against the EFFECTIVE user and group ids, not the real ones
+	// — `faccessat(AT_FDCWD, path, mode, AT_EACCESS)`, which is
+	// what `euidaccess(3)` is and what a shell's `test -r` / `-w`
+	// / `-x` is specified to use. `access(2)` itself asks about
+	// the REAL ids and would answer the wrong question for a
+	// set-uid process.
+	//
+	// `Ok(())` means permitted. The errno reaches the caller as
+	// the `IoError`, so a refusal (EACCES) is distinguishable
+	// from a missing path (ENOENT) — `test -r` needs exactly that
+	// distinction and would otherwise conflate them.
+	c.info.FuncSigs["access"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}, ast.NumberType{Width: 32, Signed: true}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.VoidType{},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
+	// geteuid() / getegid(): the process's EFFECTIVE user and
+	// group ids. The effective pair is the one every access
+	// decision is made against, which is why these and not
+	// getuid / getgid: a shell's `test -O file` asks whether the
+	// file's owner is the identity the kernel would check, and on
+	// a set-uid binary the real uid is not that identity.
+	//
+	// Neither can fail — POSIX gives them no error return — so
+	// they are plain numbers rather than a Result.
+	c.info.FuncSigs["geteuid"] = &ast.FuncType{
+		Params: nil,
+		Result: ast.NumberType{Width: 32, Signed: false},
+	}
+	c.info.FuncSigs["getegid"] = &ast.FuncType{
+		Params: nil,
+		Result: ast.NumberType{Width: 32, Signed: false},
 	}
 	// remove_file(path): Result[void, IoError] — unlink the file.
 	// `Ok(())` on success, `Err(e)` on failure (mirrors

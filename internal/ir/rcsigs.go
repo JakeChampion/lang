@@ -280,6 +280,15 @@ var rcInertBuiltins = map[string]bool{
 	// through the rename rule, but there is no
 	// `__fern_write_file_exec` helper for this one to follow.
 	"write_file_exec": true,
+
+	// (path, mode) → Result. The path is read and NUL-copied, never
+	// retained; the mode is a scalar. Native-only — E066 refuses it on
+	// both wasm worlds, which have no permission bits — so like
+	// `write_file_exec` it is classified here under the builtin name
+	// rather than as a wasm runtime helper.
+	"access": true,
+	// No arguments at all, so there is nothing to move.
+	"geteuid": true, "getegid": true,
 }
 
 // rcUnmodelled are helpers that do move counts, and whose movement one
@@ -357,8 +366,9 @@ var rcInert = map[string]bool{
 	"__fern_remove_file": true, "__fern_rmdir_rec": true,
 	"__fern_round_f64": true, "__fern_sin_f64": true,
 	"__fern_sleep_ms": true,
-	"__fern_sqrt_f64": true, "__fern_stat": true, "__fern_lstat": true, "__fern_stderr": true,
-	"__fern_stdin": true, "__fern_stdout": true,
+	"__fern_sqrt_f64": true, "__fern_stat": true, "__fern_lstat": true,
+	"__fern_stderr": true,
+	"__fern_stdin":  true, "__fern_stdout": true,
 	"__fern_str_byte": true, "__fern_str_copy": true, "__fern_str_len": true,
 	"__fern_string_from_bytes": true, "__fern_tcp_accept": true,
 	"__fern_tcp_close": true, "__fern_tcp_connect": true,
