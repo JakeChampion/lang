@@ -1,0 +1,831 @@
+// factor.fern — GNU-compatible `factor`.
+//
+//   factor [NUMBER]...        the prime factors of each NUMBER
+//   -h, --exponents           write a repeated factor as p^e
+//
+// With no operands the numbers come from stdin, split on spaces, tabs and
+// newlines (nothing else: a carriage return stays part of the token and
+// makes it invalid). A NUL cuts a token short, as it does everywhere a
+// C program takes a string.
+//
+// `---debug` is declared because GNU declares it: it is hidden from the
+// help but visible in getopt's answers, so `--debug` is unrecognized and
+// `--=x` lists it among the possibilities. What GNU prints under it is a
+// trace of GNU's own algorithm ("[pollard-rho (1)]"), which belongs to
+// that implementation rather than to factor(1); it is accepted here and
+// changes nothing.
+//
+// A number is `[ ]*[+]?[0-9]+` — leading blanks and one plus sign, then
+// digits, and nothing after them. Anything else is
+// `'x' is not a valid positive integer` on stderr; the remaining
+// operands are still factored, and the exit status is 1.
+//
+// There is no bound on the size of a NUMBER, so there are two engines:
+//
+//   - up to 2^64, Montgomery arithmetic (`Mont`): every product is a
+//     64x64 multiply and a shift, never a division, which is what makes
+//     Pollard rho affordable. Primality is Miller-Rabin over the twelve
+//     bases that decide it for every 64-bit number.
+//   - beyond it, the same algorithms over `core/bigint`, where a modular
+//     multiply costs a divmod. Slower by orders of magnitude, and only
+//     reached by numbers a 64-bit word cannot hold.
+//
+// Both start by dividing out the small primes, which is what finishes
+// most numbers, and only then look for a large factor.
+import "std/string";
+import "std/array";
+import "std/io";
+import "std/io_buffered";
+import "core/bigint";
+import "./lib/gnu";
+
+// The bound trial division sweeps to before Pollard rho is worth
+// starting.
+function trial_limit(): u64 {
+  return 1000 as u64;
+}
+
+// One small prime, with what turns dividing by it into multiplying:
+// `inv` is p^-1 mod 2^64 and `lim` is (2^64-1)/p, so `n * inv <= lim`
+// holds exactly when p divides n, and that product IS the quotient.
+// Trial division by 168 primes then costs a multiply each rather than a
+// divide, which is most of what factoring a prime near 200000 spends.
+struct SmallPrime { p: u64, inv: u64, lim: u64 }
+
+// The odd primes below `trial_limit()`, sieved once per run. Two is left
+// out: it is divided off by shifting.
+function small_primes(): SmallPrime[] {
+  var limit: i32 = trial_limit() as i32;
+  var composite: u8[] = __alloc_u8(limit + 1);
+  var i: i32 = 0;
+  while (i <= limit) {
+    composite = composite.with(i, 0 as u8);
+    i = i + 1;
+  }
+  var out: SmallPrime[] = [];
+  var n: i32 = 3;
+  while (n <= limit) {
+    if (composite[n] as i32 == 0) {
+      var p: u64 = n as u64;
+      out = out.append(SmallPrime { p: p, inv: inverse_mod_2_64(p), lim: (0 as u64 - 1 as u64) / p });
+      var m: i32 = n * n;
+      while (m <= limit) {
+        composite = composite.with(m, 1 as u8);
+        m = m + n;
+      }
+    }
+    n = n + 2;
+  }
+  return out;
+}
+
+// p^-1 mod 2^64 for odd p, by Newton's iteration: each step doubles the
+// bits that are right, and the seed is right to three.
+function inverse_mod_2_64(p: u64): u64 {
+  var inv: u64 = p;
+  var i: i32 = 0;
+  while (i < 5) {
+    inv = inv * (2 as u64 - p * inv);
+    i = i + 1;
+  }
+  return inv;
+}
+
+function help_text(): string {
+  var out: string = "";
+  out = out + "Usage: " + gnu.prog() + " [OPTION] [NUMBER]...\n";
+  out = out + "Print the prime factors of each specified integer NUMBER.  If none\n";
+  out = out + "are specified on the command line, read them from standard input.\n";
+  out = out + "\n";
+  out = out + "  -h, --exponents   print repeated factors in form p^e unless e is 1\n";
+  out = out + "      --help        display this help and exit\n";
+  out = out + "      --version     output version information and exit\n";
+  return out;
+}
+
+// ---- 64-bit helpers --------------------------------------------------------
+// `mul64(x, y)` — the full 128-bit product as (high, low). Fern has no
+// 128-bit integer; every wide step below is built from this.
+function mul64(x: u64, y: u64): (u64, u64) {
+  var mask: u64 = 4294967295 as u64;
+  var sh: u64 = 32 as u64;
+  var a: u64 = x >> sh;
+  var b: u64 = x & mask;
+  var c: u64 = y >> sh;
+  var d: u64 = y & mask;
+  var bd: u64 = b * d;
+  var ad: u64 = a * d;
+  var bc: u64 = b * c;
+  var mid: u64 = (bd >> sh) + (ad & mask) + (bc & mask);
+  var hi: u64 = a * c + (mid >> sh) + (ad >> sh) + (bc >> sh);
+  return (hi, (mid & mask) << sh | bd & mask);
+}
+
+// ---- Montgomery arithmetic -------------------------------------------------
+//
+// Residues are held as `a * 2^64 mod n`, so a modular multiply is two
+// 64x64 products and no division. `n` is odd, which is what lets
+// `n_prime` exist.
+struct Mont { n: u64, n_prime: u64, r1: u64, r2: u64 }
+
+// `mont_new(n)` — the parameters for an odd modulus: -n^-1 mod 2^64 by
+// Newton's iteration (each step doubles the correct bits, so five reach
+// 64), then 2^64 and 2^128 reduced.
+function mont_new(n: u64): Mont {
+  var n_prime: u64 = 0 as u64 - inverse_mod_2_64(n);
+  var r1: u64 = 0 as u64 - n;
+  if (n == 1 as u64) {
+    r1 = 0 as u64;
+  } else {
+    r1 = r1 % n;
+  }
+  var r2: u64 = r1;
+  var k: i32 = 0;
+  while (k < 64) {
+    var prev: u64 = r2;
+    r2 = r2 + r2;
+    if (r2 < prev || r2 >= n) {
+      r2 = r2 - n;
+    }
+    k = k + 1;
+  }
+  return Mont { n: n, n_prime: n_prime, r1: r1, r2: r2 };
+}
+
+// REDC of a 128-bit product.
+function mont_redc(m: Mont, hi: u64, lo: u64): u64 {
+  var q: u64 = lo * m.n_prime;
+  var p: (u64, u64) = mul64(q, m.n);
+  var t: u64 = hi + p.0;
+  var carry: boolean = t < hi;
+  if (lo != 0 as u64 && p.1 != 0 as u64) {
+    // lo + p.1 is exactly 2^64 whenever the low words are non-zero, so
+    // the carry out of the low half is the only part that matters.
+    if (lo + p.1 < lo) {
+      t = t + 1 as u64;
+      if (t == 0 as u64) {
+        carry = true;
+      }
+    }
+  }
+  if (carry || t >= m.n) {
+    t = t - m.n;
+  }
+  return t;
+}
+
+function mont_mul(m: Mont, a: u64, b: u64): u64 {
+  var p: (u64, u64) = mul64(a, b);
+  return mont_redc(m, p.0, p.1);
+}
+
+// Into and out of Montgomery form.
+function mont_in(m: Mont, a: u64): u64 {
+  return mont_mul(m, a % m.n, m.r2);
+}
+
+function mont_out(m: Mont, a: u64): u64 {
+  return mont_redc(m, 0 as u64, a);
+}
+
+function mont_add(m: Mont, a: u64, b: u64): u64 {
+  var s: u64 = a + b;
+  if (s < a || s >= m.n) {
+    s = s - m.n;
+  }
+  return s;
+}
+
+function mont_sub(m: Mont, a: u64, b: u64): u64 {
+  if (a >= b) {
+    return a - b;
+  }
+  return m.n - (b - a);
+}
+
+// `mont_pow(m, base, e)` — base^e in Montgomery form.
+function mont_pow(m: Mont, base: u64, e: u64): u64 {
+  var result: u64 = m.r1;
+  var b: u64 = base;
+  var k: u64 = e;
+  while (k > 0 as u64) {
+    if ((k & 1 as u64) == 1 as u64) {
+      result = mont_mul(m, result, b);
+    }
+    b = mont_mul(m, b, b);
+    k = k >> 1 as u64;
+  }
+  return result;
+}
+
+// ---- primality -------------------------------------------------------------
+//
+// Miller-Rabin over the twelve smallest primes, which is a proof for
+// every value a u64 can hold.
+function miller_rabin_bases(): u64[] {
+  return [2 as u64, 3 as u64, 5 as u64, 7 as u64, 11 as u64, 13 as u64, 17 as u64, 19 as u64, 23 as u64, 29 as u64, 31 as u64, 37 as u64];
+}
+
+function is_prime_u64(n: u64): boolean {
+  if (n < 2 as u64) {
+    return false;
+  }
+  var small: u64[] = miller_rabin_bases();
+  var i: i32 = 0;
+  while (i < small.len()) {
+    if (n == small[i]) {
+      return true;
+    }
+    if (n % small[i] == 0 as u64) {
+      return false;
+    }
+    i = i + 1;
+  }
+  var d: u64 = n - 1 as u64;
+  var s: i32 = 0;
+  while ((d & 1 as u64) == 0 as u64) {
+    d = d >> 1 as u64;
+    s = s + 1;
+  }
+  var m: Mont = mont_new(n);
+  var n_minus_1: u64 = mont_sub(m, 0 as u64, m.r1);
+  i = 0;
+  while (i < small.len()) {
+    if (!mr_witness(m, small[i], d, s, n_minus_1)) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+// Whether `base` fails to witness compositeness.
+function mr_witness(m: Mont, base: u64, d: u64, s: i32, n_minus_1: u64): boolean {
+  var x: u64 = mont_pow(m, mont_in(m, base), d);
+  if (x == m.r1 || x == n_minus_1) {
+    return true;
+  }
+  var r: i32 = 1;
+  while (r < s) {
+    x = mont_mul(m, x, x);
+    if (x == n_minus_1) {
+      return true;
+    }
+    r = r + 1;
+  }
+  return false;
+}
+
+// ---- Pollard rho -----------------------------------------------------------
+//
+// Brent's variant: x <- x^2 + c, with the gcd taken over a batch of
+// differences so one inversion-free multiply per step is the whole cost.
+function gcd_u64(a: u64, b: u64): u64 {
+  var x: u64 = a;
+  var y: u64 = b;
+  while (y != 0 as u64) {
+    var t: u64 = x % y;
+    x = y;
+    y = t;
+  }
+  return x;
+}
+
+// A factor of the odd composite `n`, never 1 or n.
+function rho_u64(n: u64): u64 {
+  var c: u64 = 1 as u64;
+  while (true) {
+    var f: u64 = rho_try(n, c);
+    if (f != 0 as u64 && f != n) {
+      return f;
+    }
+    c = c + 1 as u64;
+  }
+  return n;
+}
+
+function rho_try(n: u64, c: u64): u64 {
+  var m: Mont = mont_new(n);
+  var cm: u64 = mont_in(m, c);
+  var x: u64 = mont_in(m, 2 as u64);
+  var y: u64 = x;
+  var q: u64 = m.r1;
+  var g: u64 = 1 as u64;
+  var r: i32 = 1;
+  var saved_y: u64 = y;
+  while (g == 1 as u64) {
+    x = y;
+    var i: i32 = 0;
+    while (i < r) {
+      y = mont_add(m, mont_mul(m, y, y), cm);
+      i = i + 1;
+    }
+    var k: i32 = 0;
+    while (k < r && g == 1 as u64) {
+      saved_y = y;
+      var j: i32 = 0;
+      var batch: i32 = r - k;
+      if (batch > 128) {
+        batch = 128;
+      }
+      while (j < batch) {
+        y = mont_add(m, mont_mul(m, y, y), cm);
+        q = mont_mul(m, q, mont_sub(m, x, y));
+        j = j + 1;
+      }
+      g = gcd_u64(mont_out(m, q), n);
+      k = k + batch;
+    }
+    r = r * 2;
+  }
+  if (g == n) {
+    // The batch hid the factor: walk the last stretch one step at a time.
+    var z: u64 = saved_y;
+    g = 1 as u64;
+    while (g == 1 as u64) {
+      z = mont_add(m, mont_mul(m, z, z), cm);
+      g = gcd_u64(mont_out(m, mont_sub(m, x, z)), n);
+    }
+  }
+  return g;
+}
+
+// ---- factoring a 64-bit number ---------------------------------------------
+// `Factors` — the primes found so far, ascending, with multiplicity.
+struct Factors { primes: u64[], big: bigint.BigInt[] }
+
+function factors_new(): Factors {
+  var p: u64[] = [];
+  var b: bigint.BigInt[] = [];
+  return Factors { primes: p, big: b };
+}
+
+function factor_u64(f: Factors, n0: u64, primes: SmallPrime[]): Factors {
+  var out: Factors = f;
+  var n: u64 = n0;
+  if (n <= 1 as u64) {
+    return out;
+  }
+  while ((n & 1 as u64) == 0 as u64) {
+    out = Factors { ...out, primes: out.primes.append(2 as u64) };
+    n = n >> 1 as u64;
+  }
+  var i: i32 = 0;
+  while (i < primes.len()) {
+    var d: u64 = primes[i].p;
+    if (d * d > n) {
+      break;
+    }
+    var q: u64 = n * primes[i].inv;
+    while (q <= primes[i].lim) {
+      out = Factors { ...out, primes: out.primes.append(d) };
+      n = q;
+      q = n * primes[i].inv;
+    }
+    i = i + 1;
+  }
+  if (n == 1 as u64) {
+    return out;
+  }
+  return split_u64(out, n);
+}
+
+// `n` has no factor below the trial limit: prime, or split by rho.
+function split_u64(f: Factors, n: u64): Factors {
+  if (n == 1 as u64) {
+    return f;
+  }
+  if (is_prime_u64(n)) {
+    return Factors { ...f, primes: f.primes.append(n) };
+  }
+  var d: u64 = rho_u64(n);
+  var out: Factors = split_u64(f, d);
+  return split_u64(out, n / d);
+}
+
+// ---- factoring beyond 64 bits ----------------------------------------------
+//
+// The same shape over bigints. A modular multiply here is a divmod, so
+// this path is slow, and nothing reaches it that a u64 could hold.
+function bi_mod(a: bigint.BigInt, n: bigint.BigInt): bigint.BigInt {
+  return a.divmod(n).1;
+}
+
+function bi_mulmod(a: bigint.BigInt, b: bigint.BigInt, n: bigint.BigInt): bigint.BigInt {
+  return bi_mod(a.mul(b), n);
+}
+
+function bi_powmod(base: bigint.BigInt, e: bigint.BigInt, n: bigint.BigInt): bigint.BigInt {
+  var result: bigint.BigInt = bigint.from_i64(1 as i64);
+  var b: bigint.BigInt = bi_mod(base, n);
+  var bits: i32 = e.bit_length();
+  var i: i32 = 0;
+  while (i < bits) {
+    if (e.bit(i)) {
+      result = bi_mulmod(result, b, n);
+    }
+    b = bi_mulmod(b, b, n);
+    i = i + 1;
+  }
+  return result;
+}
+
+function bi_gcd(a: bigint.BigInt, b: bigint.BigInt): bigint.BigInt {
+  var x: bigint.BigInt = a;
+  var y: bigint.BigInt = b;
+  while (!y.is_zero()) {
+    var t: bigint.BigInt = bi_mod(x, y);
+    x = y;
+    y = t;
+  }
+  return x;
+}
+
+function is_prime_big(n: bigint.BigInt): boolean {
+  var one: bigint.BigInt = bigint.from_i64(1 as i64);
+  if (n.cmp(one) <= 0) {
+    return false;
+  }
+  var bases: u64[] = miller_rabin_bases();
+  var i: i32 = 0;
+  while (i < bases.len()) {
+    var b: bigint.BigInt = bigint.from_u64(bases[i]);
+    if (n.cmp(b) == 0) {
+      return true;
+    }
+    if (bi_mod(n, b).is_zero()) {
+      return false;
+    }
+    i = i + 1;
+  }
+  var n1: bigint.BigInt = n.sub(one);
+  var d: bigint.BigInt = n1;
+  var s: i32 = 0;
+  while (!d.bit(0)) {
+    d = d.shr(1);
+    s = s + 1;
+  }
+  i = 0;
+  while (i < bases.len()) {
+    if (!mr_witness_big(n, n1, d, s, bigint.from_u64(bases[i]))) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+function mr_witness_big(n: bigint.BigInt, n1: bigint.BigInt, d: bigint.BigInt, s: i32, base: bigint.BigInt): boolean {
+  var one: bigint.BigInt = bigint.from_i64(1 as i64);
+  var x: bigint.BigInt = bi_powmod(base, d, n);
+  if (x.cmp(one) == 0 || x.cmp(n1) == 0) {
+    return true;
+  }
+  var r: i32 = 1;
+  while (r < s) {
+    x = bi_mulmod(x, x, n);
+    if (x.cmp(n1) == 0) {
+      return true;
+    }
+    r = r + 1;
+  }
+  return false;
+}
+
+function rho_big(n: bigint.BigInt): bigint.BigInt {
+  var one: bigint.BigInt = bigint.from_i64(1 as i64);
+  var c: bigint.BigInt = one;
+  while (true) {
+    var g: bigint.BigInt = rho_try_big(n, c);
+    if (g.cmp(one) != 0 && g.cmp(n) != 0) {
+      return g;
+    }
+    c = c.add(one);
+  }
+  return n;
+}
+
+function rho_try_big(n: bigint.BigInt, c: bigint.BigInt): bigint.BigInt {
+  var one: bigint.BigInt = bigint.from_i64(1 as i64);
+  var x: bigint.BigInt = bigint.from_i64(2 as i64);
+  var y: bigint.BigInt = x;
+  var g: bigint.BigInt = one;
+  while (g.cmp(one) == 0) {
+    x = bi_mod(bi_mulmod(x, x, n).add(c), n);
+    y = bi_mod(bi_mulmod(y, y, n).add(c), n);
+    y = bi_mod(bi_mulmod(y, y, n).add(c), n);
+    var diff: bigint.BigInt = x.sub(y);
+    if (diff.is_negative()) {
+      diff = diff.negate();
+    }
+    if (diff.is_zero()) {
+      return n;
+    }
+    g = bi_gcd(diff, n);
+  }
+  return g;
+}
+
+function factor_big(f: Factors, n0: bigint.BigInt, primes: SmallPrime[]): Factors {
+  var out: Factors = f;
+  var n: bigint.BigInt = n0;
+  while (!n.bit(0)) {
+    out = Factors { ...out, primes: out.primes.append(2 as u64) };
+    n = n.shr(1);
+  }
+  var i: i32 = 0;
+  while (i < primes.len()) {
+    var bd: bigint.BigInt = bigint.from_u64(primes[i].p);
+    while (bi_mod(n, bd).is_zero()) {
+      out = Factors { ...out, primes: out.primes.append(primes[i].p) };
+      n = n.divmod(bd).0;
+    }
+    i = i + 1;
+  }
+  return split_big(out, n, primes);
+}
+
+function split_big(f: Factors, n: bigint.BigInt, primes: SmallPrime[]): Factors {
+  var one: bigint.BigInt = bigint.from_i64(1 as i64);
+  if (n.cmp(one) <= 0) {
+    return f;
+  }
+  match (fits_u64(n)) {
+    Some(v) => {
+      return split_u64(f, v);
+    },
+    None => {}
+  }
+  if (is_prime_big(n)) {
+    return Factors { ...f, big: f.big.append(n) };
+  }
+  var d: bigint.BigInt = rho_big(n);
+  var out: Factors = split_big(f, d, primes);
+  return split_big(out, n.divmod(d).0, primes);
+}
+
+// The value when 64 bits hold it.
+function fits_u64(n: bigint.BigInt): Option[u64] {
+  if (n.bit_length() > 64) {
+    return None;
+  }
+  return Some(n.low_u64());
+}
+
+// ---- printing --------------------------------------------------------------
+//
+// The factors ascend, so the two lists — those that fit a word and those
+// that do not — are already in order end to end.
+struct Term { text: string, count: i32 }
+
+function terms_of(f: Factors): Term[] {
+  var small: u64[] = sort_u64(f.primes);
+  var wide: bigint.BigInt[] = sort_big(f.big);
+  var out: Term[] = [];
+  var i: i32 = 0;
+  while (i < small.len()) {
+    out = push_term(out, small[i].to_string());
+    i = i + 1;
+  }
+  i = 0;
+  while (i < wide.len()) {
+    out = push_term(out, wide[i].to_string());
+    i = i + 1;
+  }
+  return out;
+}
+
+// Trial division hands the small factors over in order, but rho splits a
+// composite either way round, so both lists are sorted before printing.
+// Insertion sort: a number has at most a few hundred factors.
+function sort_u64(xs: u64[]): u64[] {
+  var out: u64[] = xs;
+  var i: i32 = 1;
+  while (i < out.len()) {
+    var v: u64 = out[i];
+    var j: i32 = i - 1;
+    while (j >= 0 && out[j] > v) {
+      out = out.with(j + 1, out[j]);
+      j = j - 1;
+    }
+    out = out.with(j + 1, v);
+    i = i + 1;
+  }
+  return out;
+}
+
+function sort_big(xs: bigint.BigInt[]): bigint.BigInt[] {
+  var out: bigint.BigInt[] = xs;
+  var i: i32 = 1;
+  while (i < out.len()) {
+    var v: bigint.BigInt = out[i];
+    var j: i32 = i - 1;
+    while (j >= 0 && out[j].cmp(v) > 0) {
+      out = out.with(j + 1, out[j]);
+      j = j - 1;
+    }
+    out = out.with(j + 1, v);
+    i = i + 1;
+  }
+  return out;
+}
+
+function push_term(out: Term[], text: string): Term[] {
+  if (out.len() > 0 && out[out.len() - 1].text == text) {
+    var last: Term = out[out.len() - 1];
+    return out.with(out.len() - 1, Term { ...last, count: last.count + 1 });
+  }
+  return out.append(Term { text: text, count: 1 });
+}
+
+// `report(o, n, f, exponents)` — one line: the number, a colon, then the
+// factors. Nothing follows the colon for 0 and 1.
+// `unbuffered` is for a number at or above 2^127, which GNU hands to a
+// different arithmetic and a different stream: that line goes straight
+// to the descriptor while the buffered ones wait for exit, so
+// `printf '15\n<2^128-1>\n21\n' | factor` prints the big one first. The
+// boundary is the value, not the engine used to factor it.
+function report(o: io_buffered.BufWriter, n: string, f: Factors, exponents: boolean, unbuffered: boolean): (io_buffered.BufWriter, boolean) {
+  var line: string = n + ":";
+  var terms: Term[] = terms_of(f);
+  var i: i32 = 0;
+  while (i < terms.len()) {
+    var t: Term = terms[i];
+    if (exponents) {
+      line = line + " " + t.text;
+      if (t.count > 1) {
+        line = line + "^" + (t.count as i64).to_string();
+      }
+    } else {
+      var k: i32 = 0;
+      while (k < t.count) {
+        line = line + " " + t.text;
+        k = k + 1;
+      }
+    }
+    i = i + 1;
+  }
+  if (unbuffered) {
+    // The failure is remembered rather than reported: it is the stream's
+    // error flag, which close_stdout reports at exit as a bare
+    // `write error`, with no strerror text after it.
+    var w: Writer = stdout();
+    match (w.write(line + "\n")) {
+      Some(_) => {
+        return (o, true);
+      },
+      None => {
+        return (o, false);
+      }
+    }
+  }
+  return (gnu.put(o, line + "\n"), false);
+}
+
+// ---- reading a number ------------------------------------------------------
+//
+// `[ ]*[+]?[0-9]+` and nothing else. The digits themselves are kept for
+// the report, without their leading zeros, because that is what GNU
+// echoes back.
+struct Number { digits: string, small: u64, wide: boolean }
+
+function parse_number(s: string): Option[Number] {
+  var i: i32 = 0;
+  while (i < s.len() && s[i] as i32 == 32) {
+    i = i + 1;
+  }
+  if (i < s.len() && s[i] as i32 == 43) {
+    i = i + 1;
+  }
+  var start: i32 = i;
+  while (i < s.len() && s[i] as i32 >= 48 && s[i] as i32 <= 57) {
+    i = i + 1;
+  }
+  if (i == start || i != s.len()) {
+    return None;
+  }
+  var digits: string = slice_unchecked(s, start, i) + "";
+  var lead: i32 = 0;
+  while (lead + 1 < digits.len() && digits[lead] as i32 == 48) {
+    lead = lead + 1;
+  }
+  digits = slice_unchecked(digits, lead, digits.len()) + "";
+  if (digits.len() <= 19) {
+    var v: u64 = 0 as u64;
+    var k: i32 = 0;
+    while (k < digits.len()) {
+      v = v * (10 as u64) + (digits[k] as i32 - 48) as u64;
+      k = k + 1;
+    }
+    return Some(Number { digits: digits, small: v, wide: false });
+  }
+  return Some(Number { digits: digits, small: 0 as u64, wide: true });
+}
+
+// ---- the program -----------------------------------------------------------
+// `State` — the buffered stdout and whether any number was rejected.
+struct State { o: io_buffered.BufWriter, status: i32, failed: boolean }
+
+function handle(st: State, token: string, exponents: boolean, primes: SmallPrime[]): State {
+  var s: string = cut_at_nul(token);
+  match (parse_number(s)) {
+    Some(num) => {
+      var f: Factors = factors_new();
+      var unbuffered: boolean = false;
+      if (num.wide) {
+        match (bigint.parse(num.digits)) {
+          Some(b) => {
+            unbuffered = b.bit_length() >= 128;
+            if (b.bit_length() <= 64) {
+              f = factor_u64(f, b.low_u64(), primes);
+            } else {
+              f = factor_big(f, b, primes);
+            }
+          },
+          None => {}
+        }
+      } else {
+        f = factor_u64(f, num.small, primes);
+      }
+      var r: (io_buffered.BufWriter, boolean) = report(st.o, num.digits, f, exponents, unbuffered);
+      return State { ...st, o: r.0, failed: st.failed || r.1 };
+    },
+    None => {
+      // Not flushed first: GNU's stdout stays block-buffered across the
+      // diagnostic, so the two streams interleave as they interleave.
+      gnu.error(gnu.quote(s) + " is not a valid positive integer");
+      return State { ...st, status: 1 };
+    }
+  }
+}
+
+// A NUL ends the token, as it ends any C string.
+function cut_at_nul(s: string): string {
+  var i: i32 = 0;
+  while (i < s.len()) {
+    if (s[i] as i32 == 0) {
+      return slice_unchecked(s, 0, i) + "";
+    }
+    i = i + 1;
+  }
+  return s;
+}
+
+// Tokens from stdin: runs of anything that is not a space, tab or
+// newline.
+function handle_stdin(st: State, exponents: boolean, primes: SmallPrime[]): State {
+  var text: string = io.read_all_stdin();
+  var out: State = st;
+  var i: i32 = 0;
+  while (i < text.len()) {
+    if (is_blank(text[i] as i32)) {
+      i = i + 1;
+      continue;
+    }
+    var start: i32 = i;
+    while (i < text.len() && !is_blank(text[i] as i32)) {
+      i = i + 1;
+    }
+    out = handle(out, slice_unchecked(text, start, i) + "", exponents, primes);
+  }
+  return out;
+}
+
+function is_blank(b: i32): boolean {
+  return b == 32 || b == 9 || b == 10;
+}
+
+function main(): i32 {
+  var argv: string[] = args();
+  var opts: gnu.Opt[] = [gnu.flag("h", "exponents", 1), gnu.flag("", "-debug", 2)];
+  var g: gnu.Getopt = gnu.getopt_new(argv, opts, "factor", help_text(), 1);
+  var exponents: boolean = false;
+  while (true) {
+    var r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    g = r.1;
+    match (r.0) {
+      Some(m) => {
+        if (m.id == 1) {
+          exponents = true;
+        }
+      },
+      None => {
+        break;
+      }
+    }
+  }
+  var operands: string[] = g.operands();
+  var st: State = State { o: gnu.out_new(), status: 0, failed: false };
+  var primes: SmallPrime[] = small_primes();
+  if (operands.len() == 0) {
+    st = handle_stdin(st, exponents, primes);
+  } else {
+    var i: i32 = 0;
+    while (i < operands.len()) {
+      st = handle(st, operands[i], exponents, primes);
+      i = i + 1;
+    }
+  }
+  gnu.close_stdout(st.o, st.failed);
+  return st.status;
+}

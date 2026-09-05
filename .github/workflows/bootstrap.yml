@@ -81,11 +81,15 @@ on:
 # it, since that only protects a run already executing. The publish path is
 # where that hurts most: it is 40 minutes across three hosts and ends in a
 # release, and it is dispatched exactly when the ref is busy, because a pin
-# refresh is needed when the sources moved. Two publishes still serialise,
-# which is what we want — they would tag the same release.
+# refresh is needed when the sources moved.
+#
+# Separating the GROUP is what fixes that, so cancellation stays plain `true`
+# on both: a ref's verify runs reap their own superseded siblings, as every
+# main lane must, and a later publish supersedes an earlier one — which is
+# what a second dispatch means anyway, since both would tag the same release.
 concurrency:
   group: ${{ github.workflow }}-${{ (github.event_name == 'workflow_dispatch' && 'publish') || github.ref }}
-  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' && github.ref != 'refs/heads/main' }}
+  cancel-in-progress: true
 
 permissions:
   contents: read

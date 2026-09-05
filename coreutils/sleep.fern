@@ -1,0 +1,171 @@
+// sleep.fern — GNU-compatible `sleep`.
+//
+//   sleep NUMBER[SUFFIX]...    pause for the SUM of the intervals
+//
+// A NUMBER is anything strtold reads — decimal, hex float, `inf` — and
+// SUFFIX is one of `s` `m` `h` `d`, lowercase only, so `0S` is not an
+// interval at all. A negative value is not one either, though `-0` is.
+//
+// Every operand is checked BEFORE anything is slept: `sleep 1 x` reports
+// x and exits without pausing, and `sleep x y` reports both, then the
+// one `Try …` line.
+//
+// GRANULARITY. GNU sleeps with nanosleep(2); the runtime here offers
+// `sleep_ms`, so an interval is rounded UP to the next millisecond — the
+// program always sleeps at least what was asked, which is what sleep(1)
+// promises, but `sleep 1e-9` costs a millisecond rather than a
+// nanosecond. Closing that needs a nanosecond sleep primitive in the
+// runtime (four classifications and a helper per backend); it is
+// reported rather than worked around here.
+import "std/string";
+import "std/array";
+import "./lib/gnu";
+import "./lib/ldbl";
+
+function help_text(): string {
+  var out: string = "";
+  out = out + "Usage: " + gnu.prog() + " NUMBER[SUFFIX]...\n";
+  out = out + "  or:  " + gnu.prog() + " OPTION\n";
+  out = out + "Pause for NUMBER seconds.  SUFFIX may be 's' for seconds (the default),\n";
+  out = out + "'m' for minutes, 'h' for hours or 'd' for days.  NUMBER need not be an\n";
+  out = out + "integer.  Given two or more arguments, pause for the amount of time\n";
+  out = out + "specified by the sum of their values.\n";
+  out = out + "\n";
+  out = out + "      --help        display this help and exit\n";
+  out = out + "      --version     output version information and exit\n";
+  return out;
+}
+
+// The seconds one suffix byte stands for; 0 when it is not a suffix.
+function suffix_seconds(b: i32): i64 {
+  if (b == 115) {
+    return 1 as i64;
+  }
+  if (b == 109) {
+    return 60 as i64;
+  }
+  if (b == 104) {
+    return 3600 as i64;
+  }
+  if (b == 100) {
+    return 86400 as i64;
+  }
+  return 0 as i64;
+}
+
+// `interval(s)` — the seconds `s` asks for, or None when it is not an
+// interval: unparsable, trailing bytes that are not a single suffix, a
+// NaN, or a negative value.
+function interval(s: string): Option[ldbl.LD] {
+  var r: ldbl.FloatParse = ldbl.strtold(s);
+  if (r.end == 0) {
+    return None;
+  }
+  var scale: i64 = 1 as i64;
+  if (r.end == s.len() - 1) {
+    scale = suffix_seconds(s[r.end] as i32);
+    if (scale == 0 as i64) {
+      return None;
+    }
+  } else if (r.end != s.len()) {
+    return None;
+  }
+  if (r.v.is_nan()) {
+    return None;
+  }
+  if (r.v.neg && !r.v.is_zero()) {
+    return None;
+  }
+  if (scale == 1 as i64) {
+    return Some(r.v);
+  }
+  return Some(ldbl.mul(r.v, ldbl.from_i64(scale)));
+}
+
+// Milliseconds covering `seconds`, rounded up so the sleep is never
+// short. Infinity has no count; the caller loops instead.
+function millis_ceil(seconds: ldbl.LD): Option[i64] {
+  if (!seconds.is_finite()) {
+    return None;
+  }
+  var ms: ldbl.LD = ldbl.mul(seconds, ldbl.from_i64(1000 as i64));
+  var whole: ldbl.LD = ceil_ld(ms);
+  match (whole.as_i64()) {
+    Some(v) => {
+      return Some(v);
+    },
+    None => {
+      // Past what a count of milliseconds can hold: sleep in the longest
+      // steps available until the program is killed, as GNU's own
+      // nanosleep loop would.
+      return None;
+    }
+  }
+}
+
+// The smallest integer at least `v`, for a non-negative value.
+function ceil_ld(v: ldbl.LD): ldbl.LD {
+  if (v.is_zero() || v.neg) {
+    return ldbl.from_i64(0 as i64);
+  }
+  var d: ldbl.Dec = ldbl.dec(v);
+  if (d.dp <= 0) {
+    return ldbl.from_i64(1 as i64);
+  }
+  var whole: string = slice_unchecked(d.digits, 0, d.dp) + "";
+  if (d.dp > d.digits.len()) {
+    whole = d.digits + "0".repeat(d.dp - d.digits.len());
+  }
+  var r: ldbl.FloatParse = ldbl.strtold(whole);
+  if (d.dp < d.digits.len()) {
+    return ldbl.add(r.v, ldbl.from_i64(1 as i64));
+  }
+  return r.v;
+}
+
+// Sleep until killed: the interval is infinite, or longer than a count of
+// milliseconds can express.
+function sleep_forever(): void {
+  while (true) {
+    sleep_ms(2147483647 as i64);
+  }
+}
+
+function main(): i32 {
+  var argv: string[] = args();
+  // The missing operand is judged on argv, not on what the option scan
+  // left: `sleep --` has nothing to sleep for and still exits 0.
+  if (argv.len() <= 1) {
+    gnu.die_usage("missing operand", 1);
+  }
+  var operands: string[] = gnu.parse_standard_options_only(argv, "sleep", help_text(), 1);
+  var total: ldbl.LD = ldbl.from_i64(0 as i64);
+  var bad: boolean = false;
+  var i: i32 = 0;
+  while (i < operands.len()) {
+    match (interval(operands[i])) {
+      Some(v) => {
+        total = ldbl.add(total, v);
+      },
+      None => {
+        gnu.error("invalid time interval " + gnu.quote(operands[i]));
+        bad = true;
+      }
+    }
+    i = i + 1;
+  }
+  if (bad) {
+    gnu.try_help(1);
+  }
+  match (millis_ceil(total)) {
+    Some(ms) => {
+      if (ms > 0 as i64) {
+        sleep_ms(ms);
+      }
+    },
+    None => {
+      sleep_forever();
+    }
+  }
+  return 0;
+}
