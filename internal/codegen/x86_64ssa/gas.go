@@ -2012,10 +2012,9 @@ func emitRcIncHelper(w func(string, ...any)) {
 }
 
 // emitRcDecHelper writes __fern_rc_dec(data): drop the reference count at
-// [data-8] by one, same guard chain as __fern_rc_inc. It does NOT free at rc==0
-// — the SSA bump heap never reclaims (docs/SSA-RC-RUNTIME.md: leak-until-a-later
-// reuse slice); the free-and-reclaim decision belongs to __fern_closure_drop /
-// the per-type drop thunks. Returns the pointer it was given, leaf.
+// [data-8] by one, same guard chain as __fern_rc_inc. It does NOT free at rc==0:
+// the free-and-reclaim decision belongs to __fern_closure_drop / the per-type
+// drop thunks. Returns the pointer it was given, leaf.
 func emitRcDecHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("__fern_rc_dec"))
@@ -2055,10 +2054,10 @@ func emitClosureDropHelper(w func(string, ...any)) {
 }
 
 // emitBoxFreeHelper writes __fern_box_free(data, size) -> data: release an
-// rc-headed heap block. On the SSA bump heap there is no reclamation yet
-// (docs/SSA-RC-RUNTIME.md: leak until a later reuse slice), so this is a no-op
-// that returns the data pointer — memory-safe and correct for short-lived
-// programs. A real freelist return is the follow-up that makes the size arg live.
+// rc-headed heap block. This emitter's heap has no freelist yet (the arm64 SSA
+// emitter's does, docs/SSA-RC-RUNTIME.md), so this is a no-op that returns the
+// data pointer. A real freelist return is the follow-up that makes the size arg
+// live.
 func emitBoxFreeHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("__fern_box_free"))
@@ -2081,9 +2080,8 @@ func emitStrLenHelper(w func(string, ...any)) {
 // inserts at scope exit. The array element pointer carries a 16-byte header with
 // its reference count at [data-8] (ArrayLit builds it: cap@-12, rc@-8, len@-4).
 // Guarded (null / low-address / static sentinel); if the array is uniquely held
-// (rc == 1) the buffer would be freed — a no-op on the SSA bump heap, which
-// doesn't reclaim (docs/SSA-RC-RUNTIME.md: leak until a later reuse slice, which
-// also skips the recursive per-element drops), so we just return; otherwise it
+// (rc == 1) the buffer would be freed — a no-op while this emitter's heap has
+// no freelist (the arm64 SSA emitter's does), so we just return; otherwise it
 // drops a shared reference. The stride arg is unused until real reclamation
 // lands. Leaf.
 func emitArrDecHelper(w func(string, ...any)) {
@@ -2411,7 +2409,7 @@ func emitStrSliceHelper(w func(string, ...any)) {
 // pointer. Otherwise a fresh buffer of newCap = max(2*newLen, 4) elements, past
 // a headerBytes = max(16, stride) prefix, with the old elements copied over.
 //
-// The old buffer LEAKS: this heap does not reclaim (docs/SSA-RC-RUNTIME.md).
+// The old buffer LEAKS: this emitter's heap has no freelist.
 // rdi=arr, esi=oldLen, edx=stride; returns rax=new_data.
 func emitArrPushGrowHelper(w func(string, ...any)) {
 	w("")

@@ -22,8 +22,8 @@ func TestArmRunArrCowInplacePtrRetainsElements(t *testing.T) {
 	// Two pointer elements: len = cap = 2 at the header's len / cap words.
 	f.AddOpNoResult(e, ssa.OpStore32, f.AddOp(e, ssa.OpAdd, arr, constOp(f, e, -4)), constOp(f, e, 2))
 	f.AddOpNoResult(e, ssa.OpStore32, f.AddOp(e, ssa.OpAdd, arr, constOp(f, e, -12)), constOp(f, e, 2))
-	e0 := f.AddOp(e, ssa.OpAlloc, constOp(f, e, 8)) // fresh rc=1 cells
-	e1 := f.AddOp(e, ssa.OpAlloc, constOp(f, e, 8))
+	e0 := rcCell(f, e, 8) // fresh rc=1 cells
+	e1 := rcCell(f, e, 8)
 	f.AddOpNoResult(e, ssa.OpStore, arr, e0)
 	f.AddOpNoResult(e, ssa.OpStore, f.AddOp(e, ssa.OpAdd, arr, constOp(f, e, 8)), e1)
 	callOp(f, e, "__fern_rc_inc", arr) // shared: rc 2
