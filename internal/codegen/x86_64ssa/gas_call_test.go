@@ -13,9 +13,11 @@ import (
 	"github.com/jakechampion/lang/internal/ssa"
 )
 
-// assembleRunModule renders a multi-function module to real x86-64, links a
-// static ELF, runs it, and returns the exit code.
-func assembleRunModule(t *testing.T, funcs map[string]*ssa.Func, entry string, numAlloc int, args []int64) int {
+// assembleModuleBinary renders a multi-function module to real x86-64 and links
+// a static ELF, returning the path. Split out from assembleRunModule so a test
+// that needs the program's OUTPUT rather than its exit code runs the same
+// binary the rest of the package does.
+func assembleModuleBinary(t *testing.T, funcs map[string]*ssa.Func, entry string, numAlloc int, args []int64) string {
 	t.Helper()
 	if runtime.GOARCH != "amd64" || runtime.GOOS != "linux" {
 		t.Skipf("native x86-64 run needs amd64/linux, have %s/%s", runtime.GOOS, runtime.GOARCH)
@@ -32,7 +34,15 @@ func assembleRunModule(t *testing.T, funcs map[string]*ssa.Func, entry string, n
 	if err := os.WriteFile(bin, nativeelf.StaticExecutableDataX86(text, rodata), 0o755); err != nil {
 		t.Fatalf("write bin: %v", err)
 	}
-	err = exec.Command(bin).Run()
+	return bin
+}
+
+// assembleRunModule renders a multi-function module to real x86-64, links a
+// static ELF, runs it, and returns the exit code.
+func assembleRunModule(t *testing.T, funcs map[string]*ssa.Func, entry string, numAlloc int, args []int64) int {
+	t.Helper()
+	bin := assembleModuleBinary(t, funcs, entry, numAlloc, args)
+	err := exec.Command(bin).Run()
 	if err == nil {
 		return 0
 	}

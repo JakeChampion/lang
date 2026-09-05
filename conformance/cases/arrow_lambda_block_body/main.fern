@@ -73,5 +73,38 @@ function main(): i32 {
     if (sink != 10) {
         return 18;
     }
+    // A `match` STATEMENT among the body's statements, not the block's value:
+    // its arms need not yield anything, and more statements follow it.
+    var classify = (x: i32) => {
+        match (x) {
+            0 => { return 100; },
+            _ => {}
+        }
+        return x * 2;
+    };
+    if (apply(classify, 4) != 8) {
+        return 19;
+    }
+    if (apply(classify, 0) != 100) {
+        return 20;
+    }
+    // The same for an `if` with an `else`, which can equally be a value.
+    var branchy = (x: i32) => {
+        if (x > 0) { return x * 2; } else { return 0 - x; }
+    };
+    if (apply(branchy, 4) != 8) {
+        return 21;
+    }
+    if (apply(branchy, 0 - 8) != 8) {
+        return 22;
+    }
+    // A trailing `match` written without a `;` IS the value, still.
+    var pick = (x: i32) => {
+        var y: i32 = x + 1;
+        match (y) { 0 => 100, _ => y * 2 }
+    };
+    if (apply(pick, 3) != 8) {
+        return 23;
+    }
     return 0;
 }

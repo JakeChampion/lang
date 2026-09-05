@@ -93,9 +93,28 @@ jobs:
       - name: Cache day stamp
         id: day
         run: echo "stamp=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+      # wasmtime, because this lane owns the wasm UNIT packages and no other
+      # lane runs them: internal/codegen/{wasmbin,wasmssa},
+      # internal/wasm/{component,componenttype,simd,playground} and cmd/fern's
+      # component-runtime cases. 902 test sites across internal/ open with
+      # `exec.LookPath("wasmtime")` and t.Skip() without it, and a skipped test
+      # reports `ok` — so the lane was green while never executing a module
+      # (#8472). CLAUDE.md: a SKIP is a missing dependency to fix, not a green
+      # light.
+      #
+      # setup-fern's own comment reasons about the cost — the two install
+      # profiles must not share a cache, and a shard measured without wasmtime
+      # keeps its weight — but that argument is about the wasm E2E lanes, which
+      # have their own workflow. It was never true of the wasm unit packages.
+      #
+      # Requesting it also arms setup-fern's preflight, which fails the JOB
+      # when a requested tool is missing. That is what makes this real rather
+      # than hopeful: without it a half-succeeded install returns the lane to
+      # silently running nothing.
       - uses: ./.github/actions/setup-fern
         with:
           build-cache-key: ${{ steps.day.outputs.stamp }}
+          wasmtime: true
       # llvm-mc second oracle for the assembler differential lanes
       # (internal/native/{x86_64,arm64} TestEncodingsAgainstLLVMMC, #7895):
       # the tests skip when llvm-mc is absent, so this install is what makes

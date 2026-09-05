@@ -91,10 +91,7 @@ func TestArmRunHeapExhaustionAbortsWithArenaStatus(t *testing.T) {
 // returning its exit status and stderr. A death by signal reports as -1.
 func runArmCapturing(t *testing.T, f *ssa.Func, numAlloc int) (int, string) {
 	t.Helper()
-	qemu, err := exec.LookPath("qemu-aarch64")
-	if err != nil {
-		t.Skip("qemu-aarch64 not available")
-	}
+	qemu := qemuOrNative(t)
 	asm, err := arm64ssa.EmitAsm(f, numAlloc)
 	if err != nil {
 		t.Fatalf("EmitAsm: %v", err)
@@ -103,7 +100,7 @@ func runArmCapturing(t *testing.T, f *ssa.Func, numAlloc int) (int, string) {
 	if err := os.WriteFile(bin, assembleWX(t, asm), 0o755); err != nil {
 		t.Fatalf("write bin: %v", err)
 	}
-	cmd := exec.Command(qemu, bin)
+	cmd := arm64Cmd(qemu, bin)
 	var errBuf strings.Builder
 	cmd.Stderr = &errBuf
 	if e := cmd.Run(); e != nil {
