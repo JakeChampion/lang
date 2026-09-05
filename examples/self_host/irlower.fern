@@ -53029,12 +53029,13 @@ function emit_self_overwrite_reuse(c_name: string, c_site: string, init: ast.Exp
                     // Nested-struct override: FULL freeing drop of the OLD inner box
                     // (deep-drop its rc fields first when it owns any — each self-
                     // guarded on rc==1 — then free the inner box header). A
-                    // `shallow` caller (an `own` base, whose override values are
-                    // owned but may share the old value's children) releases the
-                    // box only.
+                    // `shallow` caller (an `own` base) takes the same deep drop:
+                    // a child the NEW inner carries over from the old one is
+                    // retained by the construction, so it is at rc 2 when the walk
+                    // decs it and survives at 1 for its new owner (#8568).
                     st = st.emit(ir.op_load_local(bslot));
                     st = st.emit(ir.op_struct_get(fidxs[rj], struct_field_width(st.frame.structs, slit.type_name, fidxs[rj])));
-                    if (!shallow && struct_has_reclaim_array_field(st.frame.structs, rfty)) {
+                    if (struct_has_reclaim_array_field(st.frame.structs, rfty)) {
                         st = st.emit(ir.op_call_direct("__struct_drop_" + rfty, 1));
                     }
                     st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
