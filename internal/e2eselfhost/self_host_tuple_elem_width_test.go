@@ -142,6 +142,37 @@ function main(): i32 {
 	return 0;
 }`, "local: 350 1\ncall: 350 1\nfield: 450 2\ncallfield: 450 2\nbind: 450\n"},
 
+	// --- #8745: the same array-of-tuples read whose base is a PARAMETER. The
+	// four rows above cover a local, a call, a struct field and a call
+	// result's field; a parameter had no route at all, because the param-slot
+	// seeding recorded an element spelling only for a `T[][]` depth-2 array.
+	// Every `(tuple)[]` parameter therefore answered "unknown", which #8458's
+	// bail turned from a silent 4-byte read into a refusal of the whole
+	// module — `std/url`'s `query_encode` is the shape that surfaced it, and
+	// the destructure row is written the way that function reads its pairs. ---
+	{"tuple-array-param", `function elems(ps: (i32, f64)[]): string { return df(ps[0].1) + " " + d32(ps[0].0); }
+function destr(ps: (i32, f64)[]): string {
+	var (k, v) = ps[0];
+	return df(v) + " " + d32(k);
+}
+function loop_destr(ps: (i32, f64)[]): string {
+	var out: string = "";
+	var i: i32 = 0;
+	while (i < ps.len()) {
+		var (k, v) = ps[i];
+		out = out + df(v) + " " + d32(k) + ";";
+		i = i + 1;
+	}
+	return out;
+}
+function main(): i32 {
+	var ps: (i32, f64)[] = [(2, 4.5), (3, 5.5)];
+	print("read: " + elems(ps));
+	print("destr: " + destr(ps));
+	print("loop: " + loop_destr(ps));
+	return 0;
+}`, "read: 450 2\ndestr: 450 2\nloop: 450 2;550 3;\n"},
+
 	// --- Same class, found while closing it: three shapes whose element
 	// TYPES the lowering dropped, each of which read an f64 element as four
 	// bytes of its bit pattern. A non-move tuple alias inherited the release
