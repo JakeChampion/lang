@@ -49,6 +49,9 @@ var i64MixWidthIRCases = []struct {
 	// The same literal as a generic call's only T argument and on either side
 	// of a comparison: each shape adds its own bit, 15 when all four widen.
 	{"wide-literal-generic-compare", `function id[T](v: T): T { return v; } function main(): i32 { var t = id(4611686018427387904); var c = 0; if (t > 0) { c = c + 1; } if (4611686018427387904 > 1) { c = c + 2; } var b = 1 < 4611686018427387904; if (b) { c = c + 4; } if (4611686018427387904 != 0) { c = c + 8; } return c; }`},
+	// The literal pins a T carried inside a tuple result: the binding is
+	// (i64, string) on both compilers. 3 when both bits hold.
+	{"wide-literal-generic-tuple", `function pair[A, B](a: A, b: B): (A, B) { return (a, b); } function main(): i32 { var p = pair(4611686018427387904, "hello"); var c = 0; if (p.0 == 4611686018427387904 && p.1 == "hello") { c = c + 1; } if (p.0 / 1000000000000000000 == 4) { c = c + 2; } return c; }`},
 }
 
 // TestSelfHostI64MixWidthIRX86_64 routes each case through the self-hosted x86-64

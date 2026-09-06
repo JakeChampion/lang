@@ -11223,6 +11223,11 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 			// settles here — `var x = 5` stays polymorphic. Arithmetic ON
 			// an i32 value still wraps at 32 bits (#3581); it is the
 			// literal-only init whose width the literal decides.
+			if call, ok := n.Init.(*ast.Call); ok {
+				if widened := c.widenGenericCallByLiterals(call); widened != nil {
+					got = widened
+				}
+			}
 			if gn, ok := got.(ast.NumberType); ok && gn.Polymorphic {
 				if def := c.polymorphicIntDefault(n.Init); def.Width == 64 {
 					c.settleInt(n.Init, def)
@@ -16986,6 +16991,65 @@ func (c *checker) polymorphicIntDefault(es ...ast.Expr) ast.NumberType {
 		}
 	}
 	return ast.NumberType{Width: 32, Signed: true}
+}
+
+// widenGenericCallByLiterals gives each type parameter of a generic call that
+// is pinned by nothing but literal-shaped arguments the default those literals
+// select: one past i32 range settles every argument bound to that parameter at
+// i64 and restamps the TypeArgs entry, and the result type is re-derived so an
+// unannotated binding sees `(i64, string)` for `pair(4611686018427387904,
+// "hello")`. Left polymorphic, the monomorphiser defaulted that T to i32 while
+// a comparison against the same literal widened its side to i64. Returns the
+// re-derived result type, or nil when no parameter changed.
+func (c *checker) widenGenericCallByLiterals(call *ast.Call) ast.Type {
+	id, ok := call.Callee.(*ast.Ident)
+	if !ok || c.shadowedGenericCalls[call] {
+		return nil
+	}
+	fn, isGen := c.info.GenericFuncs[id.Name]
+	if !isGen || len(call.TypeArgs) != len(fn.TypeParams) {
+		return nil
+	}
+	i64 := ast.NumberType{Width: 64, Signed: true}
+	changed := false
+	for i, tp := range fn.TypeParams {
+		if !isPolymorphicNumeric(call.TypeArgs[i]) {
+			continue
+		}
+		var bound []ast.Expr
+		wide, pinned := false, false
+		for j, p := range fn.Params {
+			if j >= len(call.Args) {
+				break
+			}
+			if pt, ok := p.Type.(ast.ParamType); ok && pt.Name == tp {
+				if !unsettledNumericShape(call.Args[j]) {
+					pinned = true
+				}
+				bound = append(bound, call.Args[j])
+				wide = wide || c.unsettledIntLitExceedsI32(call.Args[j], false)
+			} else if !ast.Equal(substituteType(p.Type, map[string]ast.Type{tp: i64}), p.Type) {
+				// `T[]`, `Option[T]`: the argument pins T on its own.
+				pinned = true
+			}
+		}
+		if pinned || !wide {
+			continue
+		}
+		for _, a := range bound {
+			c.settleInt(a, i64)
+		}
+		call.TypeArgs[i] = i64
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+	sub := make(map[string]ast.Type, len(fn.TypeParams))
+	for i, tp := range fn.TypeParams {
+		sub[tp] = call.TypeArgs[i]
+	}
+	return c.resolveProj(substituteType(fn.ReturnType, sub))
 }
 
 func (c *checker) unsettledIntLitExceedsI32(e ast.Expr, negated bool) bool {

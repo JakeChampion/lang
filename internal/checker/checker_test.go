@@ -586,6 +586,43 @@ func TestUnannotatedCompoundWithBigLiteralDefaultsToI64(t *testing.T) {
 	}
 }
 
+// A generic call's result can carry T anywhere — `pair[A, B](a: A, b: B):
+// (A, B)` — so the widening restamps the TypeArgs entry a wide literal pins
+// and re-derives the result from it (#8668): the binding is `(i64, string)`,
+// not a tuple whose first element the monomorphiser defaults to i32 while a
+// comparison against the same literal widens its own side to i64 (that was
+// E041 "cannot compare i32 and i64" on `p.0 == 4611686018427387904`).
+func TestGenericCallResultCarryingWideLiteralTWidens(t *testing.T) {
+	const big = "4611686018427387904"
+	const decls = "function pair[A, B](a: A, b: B): (A, B) { return (a, b); } function both[T](a: T, b: T): (T, T) { return (a, b); } "
+	accepted := []string{
+		`var p = pair(` + big + `, "hello"); var q: i64 = p.0;`,
+		`var p = pair(` + big + `, "hello"); if (p.0 == ` + big + ` && p.1 == "hello") { return 1; }`,
+		`var p = pair("hello", ` + big + `); var q: i64 = p.1;`,
+		// Every literal bound to the same T settles with it.
+		`var q = both(1, ` + big + `); var a: i64 = q.0; var b: i64 = q.1;`,
+		// A small literal keeps the default.
+		`var p = pair(5, "x"); var q: i32 = p.0;`,
+	}
+	for _, src := range accepted {
+		if err := checkSource(t, decls+"function main(): i32 { "+src+" return 0; }"); err != nil {
+			t.Errorf("%s: rejected, want accepted: %v", src, err)
+		}
+	}
+	rejected := []struct{ src, want string }{
+		{`var p = pair(` + big + `, "hello"); var q: i32 = p.0;`, "cannot assign i64"},
+		{`var q = both(1, ` + big + `); var a: i32 = q.0;`, "cannot assign i64"},
+		// An argument with a type of its own pins T; the literal is judged there.
+		{`var a: i32 = 1; var q = both(a, ` + big + `);`, "does not fit in i32"},
+	}
+	for _, c := range rejected {
+		err := checkSource(t, decls+"function main(): i32 { "+c.src+" return 0; }")
+		if err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: want an error containing %q, got: %v", c.src, c.want, err)
+		}
+	}
+}
+
 // A comparison's result is a boolean, so nothing outside it ever settles its
 // operands: two polymorphic sides take the default at the comparison itself,
 // and a wide literal on either side makes that default i64 (#8668) instead of
