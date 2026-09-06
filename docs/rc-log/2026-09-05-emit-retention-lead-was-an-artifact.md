@@ -412,3 +412,32 @@ Both of the attribution's clusters now have a ten-line reproduction and an
 issue: #8628 for the peephole's displaced element, #8644 for this. Neither was
 reachable from a guessed shape — eight probes tried that and all eight came back
 clean. Both fell out of reading the attribution and then the emitted assembly.
+
+
+## Re-measured on main, 91 commits later (2026-09-06)
+
+The comparison is cheap enough to be a TRACKING number, so it was re-run from a
+main that had moved 91 commits past the one above, several of them RC fixes from
+parallel work:
+
+| input | emitter | allocs | frees | freed | live_bytes |
+|---|---|--:|--:|--:|--:|
+| `x86_native.fern` | native | 3,011,121 | 2,511,677 | 83.4% | 28.27 MB |
+| | self-host | 3,641,520 | 1,381,432 | **37.9%** | **264.41 MB** |
+| `arm64_native.fern` | native | 4,129,305 | 3,500,540 | 84.8% | 31.58 MB |
+| | self-host | 4,696,895 | 1,626,097 | **34.6%** | **266.97 MB** |
+
+**The gap has not moved.** Retention went 265.95 -> 264.41 MB and 268.98 ->
+266.97 MB, both under 1%. Both compilers allocate about 1.5% less than before, so
+the ratio is flat — 9.21x to 9.35x on x86_native, which is drift, not a
+regression, and certainly not progress.
+
+Emitted asm is byte-identical to the earlier run on both inputs (2,869,663 and
+2,537,980 bytes), so this is the same workload measured twice, not two workloads.
+
+What that says: the RC fixes landing in parallel are not reaching the dominant
+retention. They may be individually correct and still invisible here — each
+closes a shape, and the shapes that dominate this workload are not those. Worth
+re-running after any change that claims to move goal 2's memory, precisely
+because it is the number that has stayed still while a lot of adjacent work
+landed.
