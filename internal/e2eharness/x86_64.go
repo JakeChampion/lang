@@ -22,14 +22,25 @@ import (
 // the emitted asm. `qemu-x86_64` is optional — when the host
 // is already x86_64 Linux the binary runs natively. Returns
 // the binary executor command line (qemu prefix or empty).
+//
+// FERN_REQUIRE_X86_64_TOOLING=1 turns the skip into a failure, for a lane that
+// has the toolchain and is the only place a test runs — the mirror of
+// FERN_REQUIRE_ARM64_TOOLING. It belongs on the x86_64 leg alone: the aarch64
+// leg carries no x86 cross-compiler by design, so requiring it there would
+// trade an honest skip for an infrastructure red.
 func X86_64Tooling(t testing.TB) (gcc string, exec_ []string) {
 	t.Helper()
 	gcc, exec_, ok := LookupX86_64Tooling()
 	if !ok {
+		why := "non-x86_64 host and no qemu-x86_64 on PATH"
 		if gcc == "" {
-			t.Skip("no x86_64-linux-gnu-gcc / gcc on PATH; skipping x86-64 e2e")
+			why = "no x86_64-linux-gnu-gcc / gcc on PATH"
 		}
-		t.Skip("non-x86_64 host and no qemu-x86_64 on PATH; skipping x86-64 e2e")
+		if os.Getenv("FERN_REQUIRE_X86_64_TOOLING") == "1" {
+			t.Fatalf("%s and FERN_REQUIRE_X86_64_TOOLING=1: this lane has the "+
+				"toolchain and is the only one running this test, so a skip here covers nothing", why)
+		}
+		t.Skipf("%s; skipping x86-64 e2e", why)
 	}
 	return gcc, exec_
 }
