@@ -1,0 +1,72 @@
+// [.fern — GNU-compatible `[`, the bracket form of test(1): the same
+// expression with a mandatory closing `]`, and `--help` / `--version`
+// honoured only as the sole argument (so only when no `]` follows).
+// The evaluator is `lib/cond.fern`, shared with `test.fern`.
+import "./lib/cond";
+import "./lib/gnu";
+
+function help_text(): string {
+  var out: string = "";
+  out = out + "Usage: " + gnu.prog() + " EXPRESSION ]\n";
+  out = out + "  or:  " + gnu.prog() + " ]\n";
+  out = out + "  or:  " + gnu.prog() + " OPTION\n";
+  out = out + "Exit with the status determined by EXPRESSION: 0 when it is true,\n";
+  out = out + "1 when it is false or omitted, 2 when it is not an expression.\n";
+  out = out + "\n";
+  out = out + "      --help        display this help and exit\n";
+  out = out + "      --version     output version information and exit\n";
+  out = out + "\n";
+  out = out + "EXPRESSION is one of:\n";
+  out = out + "\n";
+  out = out + "  ( EXPRESSION )               EXPRESSION is true\n";
+  out = out + "  ! EXPRESSION                 EXPRESSION is false\n";
+  out = out + "  EXPRESSION1 -a EXPRESSION2   both are true\n";
+  out = out + "  EXPRESSION1 -o EXPRESSION2   either is true\n";
+  out = out + "\n";
+  out = out + "  -n STRING            STRING is not empty\n";
+  out = out + "  STRING               the same as -n STRING\n";
+  out = out + "  -z STRING            STRING is empty\n";
+  out = out + "  STRING1 = STRING2    the strings are equal\n";
+  out = out + "  STRING1 != STRING2   the strings differ\n";
+  out = out + "\n";
+  out = out + "  INTEGER1 -eq INTEGER2   equal\n";
+  out = out + "  INTEGER1 -ne INTEGER2   not equal\n";
+  out = out + "  INTEGER1 -lt INTEGER2   less than\n";
+  out = out + "  INTEGER1 -le INTEGER2   less than or equal\n";
+  out = out + "  INTEGER1 -gt INTEGER2   greater than\n";
+  out = out + "  INTEGER1 -ge INTEGER2   greater than or equal\n";
+  out = out + "  An INTEGER may be written -l STRING, the length of STRING.\n";
+  out = out + "\n";
+  out = out + "  FILE1 -ef FILE2   the same device and inode\n";
+  out = out + "  FILE1 -nt FILE2   FILE1 was modified more recently than FILE2\n";
+  out = out + "  FILE1 -ot FILE2   FILE1 was modified less recently than FILE2\n";
+  out = out + "\n";
+  out = out + "  -b FILE   a block special file\n";
+  out = out + "  -c FILE   a character special file\n";
+  out = out + "  -d FILE   a directory\n";
+  out = out + "  -e FILE   exists\n";
+  out = out + "  -f FILE   a regular file\n";
+  out = out + "  -g FILE   set-group-ID bit set\n";
+  out = out + "  -G FILE   owned by the effective group ID\n";
+  out = out + "  -h FILE   a symbolic link (the same as -L)\n";
+  out = out + "  -k FILE   sticky bit set\n";
+  out = out + "  -L FILE   a symbolic link (the same as -h)\n";
+  out = out + "  -N FILE   modified since it was last read\n";
+  out = out + "  -O FILE   owned by the effective user ID\n";
+  out = out + "  -p FILE   a named pipe\n";
+  out = out + "  -r FILE   readable\n";
+  out = out + "  -s FILE   not empty\n";
+  out = out + "  -S FILE   a socket\n";
+  out = out + "  -t FD     file descriptor FD is open on a terminal\n";
+  out = out + "  -u FILE   set-user-ID bit set\n";
+  out = out + "  -w FILE   writable\n";
+  out = out + "  -x FILE   executable, or searchable for a directory\n";
+  out = out + "\n";
+  out = out + "Every FILE test except -h and -L follows symbolic links. The shell\n";
+  out = out + "usually has its own [ and test, which take precedence over these.\n";
+  return out;
+}
+
+function main(): i32 {
+  return cond.run(true, "[", help_text());
+}

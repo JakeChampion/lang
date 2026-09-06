@@ -107,10 +107,19 @@ it.
 
 `internal/coreutils/` is the gate. It is oracle-based: no expected output is
 ever written down. Each case is an invocation (argv, stdin, extra env, where
-stdout goes — captured, closed, or `/dev/full` — and for a utility that never
-stops, a byte limit); the harness runs GNU and Fern and diffs. A case costs one line, and a case cannot record a wrong
-expectation, which is what makes the corpus cheap to grow and hard to get
-wrong. See the package doc in `harness_test.go`.
+stdout goes — captured, closed, or `/dev/full` — for a utility that never
+stops, a byte limit, and for `test -t`, a pseudo-terminal on fd 3); the
+harness runs GNU and Fern and diffs. A case costs one line, and a case cannot
+record a wrong expectation, which is what makes the corpus cheap to grow and
+hard to get wrong. See the package doc in `harness_test.go`.
+
+A utility that reads the filesystem is asked about a tree its corpus builds
+under `t.TempDir()` — `test`'s has every file kind it can tell apart, the
+three special bits, pinned timestamps that differ below the second, a hard
+link, and a block device (made with mknod when the process may, else one
+the system has). Both sides see the same tree, so the answer on a machine
+where the suite runs as root (`-r` on a mode-0 file is true there) is still
+the same answer on both.
 
 The reference is whatever GNU coreutils the harness finds:
 `$FERN_GNU_COREUTILS`, then the `yes` on PATH if its `--version` says GNU,

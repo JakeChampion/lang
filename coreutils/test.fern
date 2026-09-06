@@ -1,0 +1,11 @@
+// test.fern — GNU-compatible `test`: exit 0 when EXPRESSION is true,
+// 1 when it is false or absent, 2 when it does not parse.
+//
+// `test` has no options at all: `test --help` is a non-empty string
+// and exits 0 in silence. The `[` form (`[.fern`) is the one that
+// prints help. The evaluator is `lib/cond.fern`, shared by both.
+import "./lib/cond";
+
+function main(): i32 {
+  return cond.run(false, "test", "");
+}
