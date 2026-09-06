@@ -3138,6 +3138,17 @@ pub function expr_opt_elem_tag(e: ast.Expr, s: LowerState): string {
                         // whole module while `var o: Option[S] = Some(S { … })`
                         // lowered (#8407).
                         if (opt_payload_struct_ok(pt, s)) { return "Option[" + pt + "]"; }
+                        // A nominal ENUM payload (`Some(e)` with e an IoError,
+                        // say): one enum-box pointer at offset 8, the same slot
+                        // shape the struct payload above has, and the same one
+                        // the match lowering's ptag_is_enum branch already
+                        // reads. Only this tag was missing, so
+                        // `(c, Some(e))` bailed the whole module while a bare
+                        // enum tuple element (el_enum_ok) and
+                        // `var o: Option[E] = Some(e)` both lowered — the
+                        // mirror of #8407's struct case, found by wc's
+                        // `(Counts, Option[IoError])` (#8737).
+                        if (is_enum_like_name(pt, s.frame.structs)) { return "Option[" + pt + "]"; }
                         return "";
                     }
                     var rt: string = resolve_argref_opt_type(s.opt_ret_type(cid.name), c.args, s);

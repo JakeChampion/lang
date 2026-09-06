@@ -33,6 +33,18 @@ import (
 // The payload struct still has to be leak-safe (opt_payload_struct_ok), the
 // same requirement a struct FIELD of type `Option[S]` has carried since
 // is_leaksafe_opt_field_d admitted it.
+//
+// The enum cases below are the same gap one payload kind over, found by wc's
+//
+//	function count_stream(r: Reader, show: Show): (Counts, Option[IoError])
+//
+// which is the shape every streaming utility returns an IO error through, so
+// the whole of coreutils group B was blocked behind it (#8737). A nominal enum
+// payload is the same one-pointer-at-offset-8 slot the struct payload is, and
+// the match lowering's ptag_is_enum branch already read it — only the
+// construction tag was missing, so `(c, Some(e))` refused the module while a
+// BARE enum element and `var o: Option[E] = Some(e)` both lowered. Those two
+// spellings are the controls.
 var tupleOptStructElemCases = []struct {
 	name string
 	src  string
@@ -269,5 +281,72 @@ func TestSelfHostTupleOptStructElemStampedX86_64(t *testing.T) {
 	_ = cmd.Run()
 	if got := cmd.ProcessState.ExitCode(); got != want {
 		t.Errorf("method-call Option[struct] element = %d, want %d (interp oracle)", got, want)
+	}
+}
+
+// An Option[ENUM] element is the same gap one payload kind over, and it is the
+// shape every streaming utility returns an IO error through:
+//
+//	function count_stream(r: Reader, show: Show): (Counts, Option[IoError])
+//
+// so the whole of coreutils group B was blocked behind it (#8737). A nominal
+// enum payload is the same one-pointer-at-offset-8 slot the struct payload is,
+// and the match lowering's ptag_is_enum branch already read it — only the
+// CONSTRUCTION tag was missing, so `(c, Some(e))` refused the module while a
+// bare enum element and `var o: Option[E] = Some(e)` both lowered.
+//
+// It is pinned on the module-LOADING compiler rather than the `-ir` driver
+// above, and that distinction is the whole test: under the driver these cases
+// pass WITHOUT the fix, because the payload has no stamped type there and
+// elem_type_tag falls to its i32 default instead of naming the enum. Only the
+// loading path resolves `e` to its enum type, reaches the admission, and
+// bailed. A driver-path case would have looked like coverage and asserted
+// nothing.
+const tupleOptEnumStampedSrc = `enum E { A, B(i32) }
+struct C { n: i32 }
+function step(c: C, k: i32): (C, Option[E]) {
+    var e: E = B(k);
+    if (k > 0) { return (C { n: c.n + k }, Some(e)); }
+    return (C { n: c.n + 1 }, None);
+}
+function main(): i32 {
+    var r: (C, Option[E]) = step(C { n: 0 }, 5);
+    var a: i32 = r.0.n;
+    match (r.1) { Some(x) => { match (x) { A => { a = a + 50; }, B(v) => { a = a + v; } } }, None => { a = a + 100; } }
+    var r2: (C, Option[E]) = step(r.0, 0);
+    match (r2.1) { Some(y) => { a = a + 100; }, None => { a = a + r2.0.n; } }
+    return a;
+}`
+
+func TestSelfHostTupleOptEnumElemStampedX86_64(t *testing.T) {
+	dir, mmc, stdlibRoot, gcc, runner, interpBin := annotateF64ProjDir(t)
+	want := interpExit(t, interpBin, tupleOptEnumStampedSrc)
+
+	proj := t.TempDir()
+	mainPath := filepath.Join(proj, "main.fern")
+	if err := os.WriteFile(mainPath, []byte(tupleOptEnumStampedSrc), 0o644); err != nil {
+		t.Fatalf("write main.fern: %v", err)
+	}
+	route, derr := runX86_64Bin(runner, mmc, mainPath, stdlibRoot, "-decide").Output()
+	if derr != nil {
+		t.Fatalf("route decide: %v", derr)
+	}
+	if got := strings.TrimSpace(string(route)); got != "ir" {
+		t.Fatalf("routed %q, want \"ir\" — the case no longer exercises the IR path", got)
+	}
+	asm, cerr := runX86_64Bin(runner, mmc, mainPath, stdlibRoot).Output()
+	if cerr != nil || len(asm) == 0 {
+		t.Fatalf("loader compile: %v (%d bytes)", cerr, len(asm))
+	}
+	progBin := buildBin(t, gcc, dir, "tupleoptenum_stamped", string(asm))
+	var cmd *exec.Cmd
+	if len(runner) == 0 {
+		cmd = exec.Command(progBin)
+	} else {
+		cmd = exec.Command(runner[0], append(runner[1:], progBin)...)
+	}
+	_ = cmd.Run()
+	if got := cmd.ProcessState.ExitCode(); got != want {
+		t.Errorf("Option[enum] tuple element = %d, want %d (interp oracle)", got, want)
 	}
 }
