@@ -3789,9 +3789,9 @@ function diff_compare(anchors: i32[], ia: i32[], ib: i32[], alo: i32, ahi: i32, 
 
 // diff_edit_script diffs a against b and returns the merge of the two as one
 // ordered script. The alignment is Myers' O(ND) greedy diff in its
-// linear-space divide-and-conquer form: memory is O(m+n), where the LCS table
-// this replaced was O(m*n) and so could not diff a source the size of
-// irlower.fern at all.
+// linear-space divide-and-conquer form: memory is O(m+n), which is what lets
+// `-fmt -d` run on a source the size of irlower.fern at all — an O(m*n) table
+// is 48 GB there.
 function diff_edit_script(a: string[], b: string[]): DiffScript {
     var m: i32 = a.len();
     var n: i32 = b.len();

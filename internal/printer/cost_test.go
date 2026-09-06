@@ -9,12 +9,12 @@ import (
 	"github.com/jakechampion/lang/internal/parser"
 )
 
-// A cost ceiling on `fern -fmt -d`, which is what #8586 lacked: the LCS table
-// the alignment used to build is O(m*n), so diffing the largest source in this
-// tree wanted 48 GB and the formatter was OOM-killed rather than failing.
-// Correctness tests do not see that — the table is built whatever the content
-// is — and a gate that only bounds the output proves nothing about the cost of
-// producing it.
+// A cost ceiling on `fern -fmt -d`. ccd2c82 made the alignment linear in space
+// (#8526); what #8586 then found is that nothing HOLDS it there. The O(m*n)
+// table it replaced wanted 48 GB for the largest source in this tree, and the
+// formatter was OOM-killed rather than failing. Correctness tests do not see
+// that — the table is built whatever the content is — and a gate that only
+// bounds the output proves nothing about the cost of producing it.
 //
 // Both halves matter. The ratio is what separates a large constant from a
 // quadratic: the table implementation allocates 3,965 bytes per source byte at

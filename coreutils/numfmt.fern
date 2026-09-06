@@ -1384,24 +1384,28 @@ function apply_option(o: Opts, m: gnu.OptMatch): Opts {
 }
 
 function check_options(o: Opts, operands: string[]): Opts {
-  if (o.grouping && o.to != scale_none()) {
-    gnu.error("grouping cannot be combined with --to");
-    exit(1);
-  }
   if (o.grouping && o.fmt.given) {
     gnu.error("--grouping cannot be combined with --format");
+    exit(1);
+  }
+  // GNU reads --format only after that check, so the directive's own
+  // `'` asks for grouping everywhere below without conflicting with
+  // the option that carried it.
+  var grouping: boolean = o.grouping || o.fmt.group;
+  if (grouping && o.to != scale_none()) {
+    gnu.error("grouping cannot be combined with --to");
     exit(1);
   }
   if (o.debug && !o.conv) {
     gnu.error("no conversion option specified");
   }
-  if (o.debug && o.grouping) {
-    gnu.error("grouping has no effect in this locale");
-  }
   // A width in --format replaces --padding rather than adding to it,
   // except that a zero-padded width leaves --padding to do the field.
   if (o.debug && o.padding != 0 && o.fmt.width != 0 && zero_pad_width(o) == 0) {
     gnu.error("--format padding overriding --padding");
+  }
+  if (o.debug && grouping) {
+    gnu.error("grouping has no effect in this locale");
   }
   if (o.debug && o.header > 0 && operands.len() > 0) {
     gnu.error("--header ignored with command-line input");
