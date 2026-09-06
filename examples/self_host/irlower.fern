@@ -50561,16 +50561,77 @@ function arrenum_lit_enum(e: ast.Expr, structs: StructTab): string {
     return "";
 }
 
+// arrenum_scrut_elem_read: `e` is exactly `name[<idx>]`, an element read of the
+// candidate array, with `name` appearing nowhere in the index. That is the one
+// shape the match-scrutinee widening below admits.
+function arrenum_scrut_elem_read(e: ast.Expr, name: string, borrowable: string[]): boolean {
+    match (e) {
+        ast.ExprIndex(ix) => {
+            if (ident_name_or_empty(ix.array) != name) { return false; }
+            return !arrenum_esc_expr(ix.index, name, borrowable);
+        },
+        _ => { return false; }
+    }
+}
+
+// arrenum_binding_confined: the arm binding `bnd`, which names payload field `fi`
+// of variant `vname`, cannot outlive its arm. A SCALAR payload is a value copy —
+// storing it aliases nothing, so it is confined whatever the arm does with it,
+// the same reading arrtup_elem_esc_shape gives a scalar tuple element. A POINTER
+// payload has to prove itself borrow-only through binding_escapes_arm.
+function arrenum_binding_confined(arm: ast.MatchArm, bnd: string, vname: string, fi: i32, structs: StructTab, borrowable: string[]): boolean {
+    if (bnd == "" || bnd == "_") { return true; }
+    if (is_scalar_type_name(decl_field_type_at(structs, vname, fi))) { return true; }
+    return !binding_escapes_arm(arm, bnd, borrowable);
+}
+
+// arrenum_match_arms_borrow_only: every arm of `m` confines its pattern bindings
+// to the arm, per arrenum_binding_confined.
+//
+// This is what makes `match (name[i])` safe to treat as a borrow (#8610). The
+// element boxes are freed by the reclaim that runs AFTER the whole match, so a
+// binding whose last use is inside its arm is already dead by then; a POINTER
+// binding that is stored, returned or passed on outlives the arm and would
+// dangle. An `@` binding names the whole element box rather than a payload, so it
+// is refused outright rather than reasoned about.
+function arrenum_match_arms_borrow_only(m: ast.StmtMatch, structs: StructTab, borrowable: string[]): boolean {
+    for arm in m.arms {
+        match (arm.pattern) {
+            ast.PatVariant(pv) => {
+                if (pv.at_binding.len() > 0) { return false; }
+                // Strip a qualified `Payload.Some` to the bare variant name the
+                // struct table records the payload fields under.
+                var vname: string = pv.type_name;
+                var vc: i32 = 0;
+                while (vc < pv.type_name.len()) {
+                    if (pv.type_name[vc] == b'.') { vname = slice_unchecked(pv.type_name, vc + 1, pv.type_name.len()) + ""; }
+                    vc = vc + 1;
+                }
+                if (!arrenum_binding_confined(arm, pv.binding, vname, 0, structs, borrowable)) { return false; }
+                var ebi: i32 = 0;
+                while (ebi < pv.extra_bindings.len()) {
+                    if (!arrenum_binding_confined(arm, pv.extra_bindings[ebi], vname, ebi + 1, structs, borrowable)) { return false; }
+                    ebi = ebi + 1;
+                }
+            },
+            _ => {}
+        }
+    }
+    return true;
+}
+
 // arrenum_esc_expr reports whether `e` uses `name` in ANY way other than as the
 // receiver of `name.len()`.
 //
-// This is the maximally-conservative first cut the issue asks for, and the reason
-// is that the hazard here is a double-free rather than a leak: `match (xs[i])` reads
-// an element box as a borrowed indexed value and an arm may bind its payload, so
-// freeing that element while a binding aliases it corrupts the self-compile. Every
-// extraction — `xs[i]` bare, as a match subject, or a payload binding — therefore
-// falls back to the existing leak-safe shallow dec. Widening this to admit indexed
-// reads is the follow-up, and it needs the arm-binding escape analysis ARRTUP grew.
+// The hazard is a double-free rather than a leak: freeing an element while a
+// binding still aliases its payload corrupts the self-compile. So every extraction
+// — `xs[i]` bare, or a payload binding that outlives its arm — falls back to the
+// leak-safe shallow dec.
+//
+// One extraction is admitted, and NOT here: `match (xs[i])` is vetted at the
+// statement level by arrenum_append_escapes, which pairs it with
+// arrenum_match_arms_borrow_only (#8610). This expression scan never sees that
+// scrutinee, so it stays strict.
 function arrenum_esc_expr(e: ast.Expr, name: string, borrowable: string[]): boolean {
     match (e) {
         ast.ExprIdent(id) => { return id.name == name; },
@@ -51086,7 +51147,14 @@ function arrenum_append_escapes(stmts: ast.Stmt[], name: string, structs: Struct
                 if (arrenum_append_escapes(fo.body, name, structs, ename, msites, allow_ret, borrowable)) { return true; }
             },
             ast.StmtMatch(m) => {
-                if (arrenum_esc_expr(m.scrutinee, name, borrowable)) { return true; }
+                // `match (name[i])` reads an element box as a BORROW, admitted when
+                // every arm's bindings stay inside their arm (#8610). Without this
+                // the whole class fell back to the shallow dec and leaked every
+                // element box, per round.
+                var aem_elem: boolean = arrenum_scrut_elem_read(m.scrutinee, name, borrowable);
+                if (aem_elem) {
+                    if (!arrenum_match_arms_borrow_only(m, structs, borrowable)) { return true; }
+                } else if (arrenum_esc_expr(m.scrutinee, name, borrowable)) { return true; }
                 for arm in m.arms {
                     if (arm.has_guard && arrenum_esc_expr(arm.guard, name, borrowable)) { return true; }
                     if (arrenum_append_escapes(arm.body, name, structs, ename, msites, allow_ret, borrowable)) { return true; }
