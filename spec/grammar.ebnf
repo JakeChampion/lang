@@ -343,6 +343,14 @@ MatchExprArm
 # Fern (the parser reports P001), and admitting it here would swallow
 # the `=>` of a match arm: `when x == y => x + y` would read `y => x + y`
 # as a lambda and leave the arm with no arrow.
+# The return annotation is ambiguous with a function type, because the
+# lambda's own '=>' follows it: in `(): (string, i32) => e` the annotation
+# could be the tuple `(string, i32)` or the function type
+# `(string, i32) => e`. The annotation is read greedily, and re-read with
+# the top-level '=>' reserved when the greedy read leaves no arrow for the
+# lambda. So `(): (i32) => i32 => e` is a lambda returning a function, and
+# `(): (string, i32) => e` one returning a tuple; explicit parens around a
+# function-typed return say so unambiguously.
 ArrowLambda = '(' [ LambdaParams ] ')' [ ':' Type ] '=>' Expr ;
 LambdaParams
             = LambdaParam { ',' LambdaParam } [ ',' ] ;

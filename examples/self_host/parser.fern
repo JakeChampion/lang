@@ -1492,9 +1492,26 @@ function parse_arrow_lambda(p: Par): (ast.Expr, Par) {
     var ret_type: string = "";
     if (p.peek_punct() == ":") {
         p = p.advance();
+        // A parenthesised annotation is ambiguous with a function type:
+        // `(): (string, i32) => …` reads as a two-parameter function type and
+        // goes looking for its result in the lambda's body, so a tuple return
+        // had no spelling at all once #2673 retired the braced `function`
+        // expression (#8743). Read it greedily first, and when that leaves no
+        // `=>` for the lambda it took ours: re-read from the saved cursor with
+        // the top-level arrow reserved. Only a read that swallows the arrow
+        // can reach the second call, so nothing that parses today changes —
+        // including a function-typed return, whose explicit parens keep its
+        // arrow off the top level.
+        var saved: Par = p;
         var (rtr_name, rtr_ret_arr, rtr_fn_ret, rtr_p) = parse_type_name(p);
-        p = rtr_p;
-        ret_type = rtr_name;
+        if (rtr_p.peek_punct() == "=>") {
+            p = rtr_p;
+            ret_type = rtr_name;
+        } else {
+            var (ra_name, ra_ret_arr, ra_fn_ret, ra_p) = parse_type_name_reserving_arrow(saved);
+            p = ra_p;
+            ret_type = ra_name;
+        }
     }
     if (p.peek_punct() == "=>") { p = p.advance(); }
     var body: ast.Stmt[] = [];
@@ -6370,6 +6387,22 @@ function parse_type_handle(p: Par, base: string): (string, boolean, string, Par)
 // parens are redundant grouping that has to be unwrapped rather than folded
 // into the name.
 function parse_type_paren(p: Par): (string, boolean, string, Par) {
+    return parse_type_paren_arrow(p, true);
+}
+
+// parse_type_name_reserving_arrow is parse_type_name with the top-level
+// function-type arrow left for the caller: `(string, i32)` stops at the `=>`
+// instead of reading it as the arrow of a function type. An arrow lambda's
+// return annotation is the one position that needs it, because the lambda's
+// own arrow follows the annotation (#8743). Only the parenthesised head is
+// ambiguous — every other type form ends before a `=>` — so anything else
+// delegates unchanged.
+function parse_type_name_reserving_arrow(p: Par): (string, boolean, string, Par) {
+    if (p.peek_punct() != "(") { return parse_type_name(p); }
+    return parse_type_paren_arrow(p, false);
+}
+
+function parse_type_paren_arrow(p: Par, top_arrow: boolean): (string, boolean, string, Par) {
     // A parenthesized SINGLE trait-object type — `(dyn T)`,
     // `(dyn A + B)`, optionally arrayed `(dyn T)[]`. The parens are
     // redundant grouping (source needs them so a trailing `[]` binds to
@@ -6394,7 +6427,7 @@ function parse_type_paren(p: Par): (string, boolean, string, Par) {
             // arrow + return type are dropped and `(dyn T) => R` params
             // fail to parse (#5267 regressed this shape).
             var dpw_after: Par = dpw_p.advance();   // past `)`
-            if (dpw_after.peek_punct() != "=>") {
+            if (!top_arrow || dpw_after.peek_punct() != "=>") {
                 return consume_array_suffix(dpw_after, dpw_name);
             }
         }
@@ -6474,7 +6507,7 @@ function parse_type_paren(p: Par): (string, boolean, string, Par) {
     // the emitter needs is that a value of this type is a
     // closure box). Without consuming `=> R` the arrow + return
     // type are left on the cursor and the decl loop spins (OOM).
-    if (p.peek_punct() == "=>") {
+    if (top_arrow && p.peek_punct() == "=>") {
         p = p.advance();  // consume `=>`
         var (rr_name, rr_ret_arr, rr_fn_ret, rr_p) = parse_type_name(p);
         p = rr_p;

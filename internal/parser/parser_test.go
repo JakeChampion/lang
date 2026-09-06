@@ -3559,6 +3559,53 @@ func TestOpaqueStructParses(t *testing.T) {
 	}
 }
 
+// An arrow lambda's return annotation may be a TUPLE, which is ambiguous with
+// a function type: the annotation is followed by the lambda's own `=>`, so
+// `(): (string, i32) => …` reads greedily as a two-parameter function type and
+// goes looking for its result in the lambda's body. Since #2673 retired the
+// braced `function` expression there is no other spelling, so a tuple return
+// was unwritable (#8743). The annotation is read greedily and re-read with the
+// top-level arrow reserved only when the greedy read leaves the lambda without
+// one — so the function-typed forms below, which parse today, are unchanged.
+func TestArrowLambdaTupleReturnType(t *testing.T) {
+	prog, err := Parse(`function f(): i32 {
+  var tup = (n: i32): (string, i32) => { return ("ab", n); };
+  var arr = (): (string, i32)[] => { return [("a", 1)]; };
+  var fnParen = (): ((i32) => i32) => { return (x: i32): i32 => x; };
+  var fnBare = (): (i32) => i32 => { return (x: i32): i32 => x; };
+  return 0;
+}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stmts := prog.Funcs[0].Body.Stmts
+	want := []struct {
+		name string
+		kind string
+	}{
+		{"tup", "(string, i32)"},
+		{"arr", "(string, i32)[]"},
+		{"fnParen", "(i32) => i32"},
+		{"fnBare", "(i32) => i32"},
+	}
+	for i, w := range want {
+		v, ok := stmts[i].(*ast.Var)
+		if !ok {
+			t.Fatalf("stmt %d should be a Var, got %T", i, stmts[i])
+		}
+		if v.Name != w.name {
+			t.Fatalf("stmt %d name = %q, want %q", i, v.Name, w.name)
+		}
+		lam, ok := v.Init.(*ast.Lambda)
+		if !ok {
+			t.Fatalf("%s init should be a Lambda, got %T", w.name, v.Init)
+		}
+		if got := lam.ReturnType.String(); got != w.kind {
+			t.Errorf("%s return type = %q, want %q", w.name, got, w.kind)
+		}
+	}
+}
+
 // Arrow lambdas `(params): R => expr` desugar to an ast.Lambda whose body
 // is `{ return expr; }`. Parens that hold a parameter list are an arrow
 // lambda; ordinary grouping `(e)` and tuples `(e1, e2)` are unaffected.
