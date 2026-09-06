@@ -66701,24 +66701,56 @@ function rc_ml_count_in_stmts(stmts: ast.Stmt[], name: string): i32 {
     return n;
 }
 
+// rc_ml_rc_type_name: the type spelling carries an rc box — array / user
+// struct / enum / tuple / string. (Closures are excluded — scoping cut.)
+function rc_ml_rc_type_name(t: string, structs: StructTab): boolean {
+    if (is_array_type_name(t)) { return true; }
+    if (t == "string") { return true; }
+    if (t.len() > 0 && t[0] == b'(') { return true; }
+    if (rc_struct_decl_index(structs, t) >= 0) { return true; }
+    return rc_fe_is_enum_name(structs, t);
+}
+
 // rc_ml_owned_rc_local: `name` is a declared LOCAL (params excluded — native
-// isOwnedRcLocal reads info.Locals) whose type carries an rc box: array /
-// user struct / enum / tuple / string. (Closures are excluded — scoping cut.)
+// isOwnedRcLocal reads info.Locals) whose type carries an rc box.
 function rc_ml_owned_rc_local(name: string, fn: parser.FuncDecl, types_n: string[], types_t: string[], structs: StructTab): boolean {
     var pi: i32 = 0;
     while (pi < fn.params.len()) { if (fn.params[pi].name == name) { return false; } pi = pi + 1; }
     var i: i32 = 0;
     while (i < types_n.len()) {
-        if (types_n[i] == name) {
-            var t: string = types_t[i];
-            if (is_array_type_name(t)) { return true; }
-            if (t == "string") { return true; }
-            if (t.len() > 0 && t[0] == b'(') { return true; }
-            if (rc_struct_decl_index(structs, t) >= 0) { return true; }
-            if (rc_fe_is_enum_name(structs, t)) { return true; }
-            return false;
-        }
+        if (types_n[i] == name) { return rc_ml_rc_type_name(types_t[i], structs); }
         i = i + 1;
+    }
+    return false;
+}
+
+// rc_ml_owned_rc_param: `name` is a PARAMETER this frame releases at exit —
+// `own`, or consumed-threaded (consumed_params_of) — with an rc-boxed type.
+// The param-side sibling of rc_ml_owned_rc_local, and with it the port of
+// native movableAliasSource (isOwnedRcLocal || isOwnedRcParam, #8498): an
+// alias or destructure taking such a param's LAST mention is a move.
+//
+// Native's third rung, owned-by-default (paramOwnedByDefault), is not here:
+// that is the documented ABI cut (see rc_fe_run) — this compiler has no
+// caller-side retain, so a param is owned only when `own` moved it in or the
+// body reassigned it. Same set the exit sweep releases, which is the point:
+// "will this frame dec it?" has one answer for both roles.
+//
+// Each alias limb decides from its own slot facts whether to ACT on a param
+// move: the array limb does (the alias takes the param's one release), the
+// credited tuple / string / struct limbs read credits a param never holds,
+// and the destructure never consults the plan. TestSelfHostRcParamMoveX86_64
+// pins both outcomes.
+function rc_ml_owned_rc_param(name: string, fn: parser.FuncDecl, structs: StructTab): boolean {
+    var pi: i32 = 0;
+    while (pi < fn.params.len()) {
+        var p: ast.ParamDecl = fn.params[pi];
+        if (p.name == name) {
+            if (!rc_ml_rc_type_name(p.type_name, structs)) { return false; }
+            if (p.own) { return true; }
+            return rc_seen_has(consumed_params_of(fn, body_assign_targets(fn.body), structs), name);
+        }
+        pi = pi + 1;
     }
     return false;
 }
@@ -67193,8 +67225,9 @@ function rc_ml_compute_toplevel(fn: parser.FuncDecl, structs: StructTab): MlOut 
                         ast.ExprIdent(id) => {
                             // move-on-alias (`var b = a`) and the destructure
                             // move (`var (x, y) = a`) share the bare-ident-RHS
-                            // site shape; native keys the STATEMENT node.
-                            if (rc_ml_owned_rc_local(id.name, fn, st.types_n, st.types_t, structs) && rc_ml_last_use(fn.body, id.name, k) && util.index_of_str(moved.names, id.name) < 0) {
+                            // site shape; native keys the STATEMENT node. An
+                            // owned PARAM qualifies too (rc_ml_owned_rc_param).
+                            if ((rc_ml_owned_rc_local(id.name, fn, st.types_n, st.types_t, structs) || rc_ml_owned_rc_param(id.name, fn, structs)) && rc_ml_last_use(fn.body, id.name, k) && util.index_of_str(moved.names, id.name) < 0) {
                                 moved = MlOut { names: moved.names.append(id.name), sites: moved.sites.append(util.i32_to_string(v.line) + ":" + util.i32_to_string(v.col)) };
                             }
                         },
@@ -67205,7 +67238,7 @@ function rc_ml_compute_toplevel(fn: parser.FuncDecl, structs: StructTab): MlOut 
                 ast.StmtAssign(a) => {
                     match (a.value) {
                         ast.ExprIdent(id) => {
-                            if (rc_ml_owned_rc_local(id.name, fn, st.types_n, st.types_t, structs) && rc_ml_last_use(fn.body, id.name, k) && util.index_of_str(moved.names, id.name) < 0) {
+                            if ((rc_ml_owned_rc_local(id.name, fn, st.types_n, st.types_t, structs) || rc_ml_owned_rc_param(id.name, fn, structs)) && rc_ml_last_use(fn.body, id.name, k) && util.index_of_str(moved.names, id.name) < 0) {
                                 moved = MlOut { names: moved.names.append(id.name), sites: moved.sites.append(util.i32_to_string(a.line) + ":" + util.i32_to_string(a.col)) };
                             }
                         },
