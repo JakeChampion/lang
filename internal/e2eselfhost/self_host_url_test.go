@@ -12,6 +12,15 @@ import (
 // .len() / .append() path that depends on the Map value-type inference. Exit
 // codes cross-checked vs the Go backend.
 //
+// `-no-treeshake` is load-bearing, and it is what keeps these cases meaning
+// what their name says. asm_load_run prunes to what `main` reaches by default,
+// which for a main that only calls `url_parse` is 21 functions and NONE of
+// url's real ones — `query_parse` and `query_encode` both pruned away. The
+// cases would still pass, having stopped compiling the module they exist to
+// compile. Un-pruned it is 107 functions on x86-64 and 118 on arm64, with
+// `query_encode` — the `(string, string)[]` parameter destructured per element,
+// which is the shape #8745 is about — among them.
+//
 // std/url.fern `import "core/map"` (since #1576), so these need a LOADING
 // driver. They used to run on the stdin bundle drivers — asm_run / asm_ir_run —
 // which resolve no imports; that worked only because the unresolved import left
@@ -70,7 +79,7 @@ func TestSelfHostUrlX86_64(t *testing.T) {
 
 	for _, tc := range urlCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm, cerr := runX86_64Bin(runner, driverBin, urlEntry(t, tc.main), stdlibRoot).Output()
+			asm, cerr := runX86_64Bin(runner, driverBin, urlEntry(t, tc.main), stdlibRoot, "-no-treeshake").Output()
 			if cerr != nil {
 				t.Fatalf("loader compile: %v", cerr)
 			}
@@ -103,7 +112,7 @@ func TestSelfHostUrlArm64(t *testing.T) {
 
 	for _, tc := range urlCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm, cerr := runX86_64Bin(x86runner, driverBin, urlEntry(t, tc.main), stdlibRoot, "-target", "arm64-linux").Output()
+			asm, cerr := runX86_64Bin(x86runner, driverBin, urlEntry(t, tc.main), stdlibRoot, "-no-treeshake", "-target", "arm64-linux").Output()
 			if cerr != nil {
 				t.Fatalf("loader compile: %v", cerr)
 			}
