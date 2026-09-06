@@ -5318,7 +5318,7 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
         "__fern_remove_dir_all", "__fn___fern_remove_dir_all", "__fn___fern_temp_dir", "__fern_read_dir", "__fn___fern_read_dir", "__fn___fern_remove_file",
         "__fn___fern_create_dir_all",
         "__fn___fern_env", "__fern_stat", "__fn___fern_stat", "__fn___fern_subprocess",
-        "__fern_args", "__fern_arg_at", "__fern_arg_at_rc", "__fern_strbuf_append",
+        "__fern_args", "__fern_arg_at", "__fern_strbuf_append",
         // #5623: the IR path's whole-stdin reader, emitted in the entry module's
         // runtime — .globl so a per-module sibling's `call` resolves against it.
         "__fn___fern_read_all_stdin",
