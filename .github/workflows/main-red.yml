@@ -1,0 +1,181 @@
+name: Main red
+
+# Main's gate lanes already run on every push — TestGateLanesRunOnMain pins that
+# every pull_request lane mirrors onto main with the same path filter, because a
+# rebase-merge replays commits onto a main their PR's CI never saw. So the
+# signal exists and is correct. What was missing is anything that CONSUMES it.
+#
+# 967393aaf is the case that prompted this: `Test units`, `Test e2e self-host`
+# and `Bootstrap` all concluded `failure` on main at 07:12, and nothing said so.
+# Nine lanes were eventually found red across two PRs' CI, hours later, by
+# reading them off an unrelated pull request. Seven of the nine were a pin or a
+# harness that had outlived the thing it described — cheap to fix, and cheap
+# only while someone knows they are there.
+#
+# So: when a gate lane concludes `failure` on a push to main, open one issue for
+# that lane. When the same lane next concludes `success` on main, close it. The
+# issue is the handle — a name in the tracker that a person or an agent can pick
+# up — not a diagnosis.
+#
+# Deliberately NOT a fixer. Every auto-remedy available here is one that can
+# also paper over a real regression: re-pinning a size baseline silently raises
+# the ceiling the next one is measured against (that is how checker_modload_run
+# reached +9.6%), and regenerating a golden would equally "fix" a miscompile.
+# The one exception, the stage0 pin, is called out in the issue body with its
+# remedy rather than applied, because publishing a stage0 mints an IMMUTABLE
+# release: a flaky bootstrap would leave a permanent tag behind it.
+
+on:
+  workflow_run:
+    # Every lane a push to main launches, by workflow `name:` rather than
+    # filename, and identical to cancel-on-failure.yml's list for the same
+    # reason: the lanes that gate a pull request are the lanes that gate main.
+    # TestMainRedWatchesEveryMainLane pins it to the directory, so a new lane
+    # added without an entry here is a lane whose red main goes unreported.
+    # This workflow is absent from its own list — it does not gate anything, and
+    # watching itself would file an issue about failing to file an issue.
+    workflows:
+      - "Bootstrap"
+      - "Docs build"
+      - "Examples"
+      - "Fuzz"
+      - "Lint"
+      - "Perf"
+      - "Playground E2E"
+      - "Test e2e arm64"
+      - "Test e2e differential"
+      - "Test e2e other"
+      - "Test e2e self-host"
+      - "Test e2e wasm"
+      - "Test e2e x86_64"
+      - "Test fernsmith"
+      - "Test units"
+      - "VS Code Extension"
+      - "macOS arm64"
+    types: [completed]
+
+permissions:
+  actions: read
+  contents: read
+  issues: write
+
+# One lane, one issue, so two runs of the SAME lane must not race into two
+# issues. Different lanes proceed in parallel — they file different issues.
+concurrency:
+  group: main-red-${{ github.event.workflow_run.name }}
+  cancel-in-progress: false
+
+jobs:
+  triage:
+    # Pushes to main only. A pull_request run is the PR author's to fix and
+    # cancel-on-failure.yml already reaps its siblings; a dispatch is someone's
+    # deliberate run and may be red on purpose.
+    if: >-
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      (github.event.workflow_run.conclusion == 'failure' ||
+       github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v9
+        with:
+          script: |
+            const run = context.payload.workflow_run;
+            const { owner, repo } = context.repo;
+            const lane = run.name;
+            const sha = run.head_sha;
+            const short = sha.slice(0, 9);
+
+            // Identity is the LABEL plus an exact title, deliberately not a
+            // hidden marker in the body. GitHub silently strips anything that
+            // reads as an HTML tag, and everything up to the next `>` with it,
+            // so a marker would be deleted on the way in and every run would
+            // find nothing and file a duplicate. CLAUDE.md records the same
+            // trap for PR bodies: "GitHub can silently delete a span".
+            const LABEL = "main-red";
+            const title = `main is red: ${lane}`;
+
+            const open = await github.paginate(
+              github.rest.issues.listForRepo,
+              { owner, repo, state: "open", labels: LABEL, per_page: 100 },
+            );
+            const existing = open.find((i) => i.title === title);
+
+            if (run.conclusion === "success") {
+              if (!existing) return;
+              await github.rest.issues.createComment({
+                owner, repo, issue_number: existing.number,
+                body: `\`${lane}\` is green on main again at \`${short}\`.\n\n` +
+                      `[Run](${run.html_url}) · closing.`,
+              });
+              await github.rest.issues.update({
+                owner, repo, issue_number: existing.number, state: "closed",
+              });
+              core.notice(`${lane} green at ${short} — closed #${existing.number}`);
+              return;
+            }
+
+            // Which JOBS failed, rather than which lane. A sharded lane names
+            // one shard; reading the logs to find `--- FAIL` would need a
+            // second round of API calls and is what the run link is for.
+            let failed = [];
+            try {
+              const jobs = await github.paginate(
+                github.rest.actions.listJobsForWorkflowRun,
+                { owner, repo, run_id: run.id, per_page: 100 },
+              );
+              failed = jobs
+                .filter((j) => j.conclusion === "failure")
+                .map((j) => `\`${j.name}\``);
+            } catch (e) {
+              core.warning(`could not list jobs for ${run.id}: ${e.message}`);
+            }
+
+            // The one failure with a known, self-validating remedy. The publish
+            // job proves a candidate compiles the compiler AND that the result
+            // runs before it tags, so the fix is safe — but it mints an
+            // immutable release, so it is named here rather than applied.
+            const stage0Hint = lane === "Bootstrap"
+              ? "\n\n**If `stage1 failed` names a construct the pinned compiler does not know**, " +
+                "this is the stage0 pin going stale (`docs/BOOTSTRAP.md`, refresh trigger one). " +
+                "Remedy: dispatch `bootstrap.yml` with `publish=true` on the branch that needs it, " +
+                "then commit the `stage0.lock` it releases. It is not done automatically because " +
+                "publishing mints a release that is never deleted or moved.\n"
+              : "";
+
+            const body =
+              `\`${lane}\` concluded **failure** on a push to main.\n\n` +
+              `- Commit: ${sha}\n` +
+              `- Run: ${run.html_url}\n` +
+              (failed.length ? `- Failing jobs: ${failed.join(", ")}\n` : "") +
+              stage0Hint +
+              `\nMain's lanes run on every push (\`TestGateLanesRunOnMain\`), and ` +
+              `cancel-on-failure.yml deliberately spares main — so this run went to ` +
+              `completion and the failing-job list above is the whole set for this ` +
+              `lane, not just the first.\n\n` +
+              `This issue closes itself when \`${lane}\` next concludes success on main.`;
+
+            if (existing) {
+              await github.rest.issues.createComment({
+                owner, repo, issue_number: existing.number,
+                body: `Still red at \`${short}\`.\n\n${body}`,
+              });
+              core.notice(`${lane} still red at ${short} — commented on #${existing.number}`);
+              return;
+            }
+
+            // The label must exist before it can be applied, and creating it is
+            // a 422 once it does. Tolerated rather than checked first.
+            try {
+              await github.rest.issues.createLabel({
+                owner, repo, name: LABEL, color: "b60205",
+                description: "A gate lane is failing on main",
+              });
+            } catch (e) {
+              if (e.status !== 422) core.warning(`createLabel: ${e.message}`);
+            }
+
+            const made = await github.rest.issues.create({
+              owner, repo, title, body, labels: [LABEL],
+            });
+            core.notice(`${lane} red at ${short} — opened #${made.data.number}`);
