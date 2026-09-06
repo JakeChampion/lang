@@ -2668,6 +2668,8 @@ pub function emit_arm64_reclaim_drop_bodies(s: asmcore.EmitState): asmcore.EmitS
             s = emit_arm64_struct_arr_elems_drop_one(s, slice_unchecked(sdnd, 22, sdnd.len()));
         } else if (sdnd.len() > 20 && slice_unchecked(sdnd, 0, 20) == "enum_arr_elems_drop:") {
             s = emit_arm64_enum_arr_elems_drop_one(s, slice_unchecked(sdnd, 20, sdnd.len()));
+        } else if (sdnd.len() > 10 && slice_unchecked(sdnd, 0, 10) == "enum_drop:") {
+            s = emit_arm64_enum_drop_one(s, slice_unchecked(sdnd, 10, sdnd.len()));
         } else if (sdnd.len() > 21 && slice_unchecked(sdnd, 0, 21) == "map_vals_struct_drop:") {
             s = emit_arm64_map_vals_struct_drop_one(s, slice_unchecked(sdnd, 21, sdnd.len()));
         } else if (sdnd.len() > 12 && slice_unchecked(sdnd, 0, 12) == "struct_drop:") {
@@ -2778,6 +2780,21 @@ function emit_arm64_field_reclaim_one(s: asmcore.EmitState, sty: string): asmcor
             s = s.write("    bl __fn___fern_arrarr_free\n");   // element walk at rc==1, then the buffer
             s = s.write("    add sp, sp, #16\n");
         } else {
+            if (op.kind == "deep_enum_dec") {
+                // A DIRECT enum field's live-variant rc payloads, before the dec
+                // below frees the box holding them (#8567). __enum_drop_ applies
+                // the rc==1 gate itself; it does not preserve x1, so reload the
+                // frame and the field after it.
+                var edsan: string = asmcore.sanitize_label(op.ty);
+                s = s.need("enum_drop:" + op.ty);
+                s = s.write("    str x1, [sp, #-16]!\n");
+                s = s.write("    bl __fn___enum_drop_" + edsan + "\n");
+                s = s.write("    add sp, sp, #16\n");
+                s = s.write("    ldr x10, [sp, #48]\n");             // new
+                s = s.write("    ldr x11, [sp, #32]\n");             // old
+                s = s.write("    ldr x12, [sp, #16]\n");             // snap
+                s = s.write("    ldr x1, [x11, #" + off + "]\n");    // old.field_k
+            }
             if (op.kind == "deep_struct_dec") {
                 // The nested struct's OWN rc children, before the dec below frees
                 // the box holding them (#8538). Gated on rc==1: a SHARED inner
@@ -2868,6 +2885,17 @@ function emit_arm64_struct_drop_one(s: asmcore.EmitState, sty: string): asmcore.
             s = s.write("    ldr x0, [x10, #" + off + "]\n");       // buffer
             s = s.write("    str x0, [sp, #-16]!\n");
             s = s.write("    bl __fn___struct_arr_elems_drop_" + esan + "\n");
+            s = s.write("    add sp, sp, #16\n");
+            s = s.write("    ldr x10, [sp, #16]\n");                // reload box (helper clobbered x10)
+        } else if (op.kind == "deep_enum_drop") {
+            // A DIRECT enum field: release the live variant's rc payloads before
+            // the box dec that follows (#8567). Sole-ownership is gated inside
+            // the helper.
+            var edsan: string = asmcore.sanitize_label(op.ty);
+            s = s.need("enum_drop:" + op.ty);
+            s = s.write("    ldr x0, [x10, #" + off + "]\n");       // enum box
+            s = s.write("    str x0, [sp, #-16]!\n");
+            s = s.write("    bl __fn___enum_drop_" + edsan + "\n");
             s = s.write("    add sp, sp, #16\n");
             s = s.write("    ldr x10, [sp, #16]\n");                // reload box (helper clobbered x10)
         } else if (op.kind == "elems_drop_enum") {
@@ -3002,6 +3030,68 @@ function emit_arm64_struct_arr_elems_drop_one(s: asmcore.EmitState, ety: string)
 // owned element (box@0 against the interned variant labels) and decs the
 // matched variant's leak-safe-array payload fields via the rc-guarded
 // __fern_arr_dec. x19=buffer, x20=index, x21=element survive the calls.
+// emit_arm64_enum_variant_payload_decs is emit_ir_enum_variant_payload_decs'
+// arm64 twin: the tag dispatch releasing enum `ety`'s rc payloads for the box in
+// `reg`, branching to `done` once a matching variant is handled. `reg` must be
+// callee-saved — the helper calls out per payload.
+function emit_arm64_enum_variant_payload_decs(s: asmcore.EmitState, ety: string, reg: string, lp: string, done: string): asmcore.EmitState {
+    var vi: i32 = 0;
+    var vlabel: i32 = 0;
+    while (vi < s.struct_decls.decls.len()) {
+        if (s.struct_decls.decls[vi].enum_owner == ety) {
+            var offs: i32[] = irlower.enum_walk_payload_offsets(s.struct_decls, s.struct_decls.decls[vi].name);
+            if (offs.len() > 0) {
+                var vlo: asmcore.ShapeRefOut = asmcore.shape_ref(s, s.struct_decls.decls[vi].name);
+                s = vlo.state;
+                var vls: string = util.i32_to_string(vlabel);
+                s = s.write("    ldr x0, [" + reg + "]\n");     // shape ptr @0
+                s = s.write("    adrp x1, " + vlo.label + "\n");
+                s = s.write("    add x1, x1, :lo12:" + vlo.label + "\n");
+                s = s.write("    cmp x0, x1\n");
+                s = s.write("    bne " + lp + "_v" + vls + "\n");
+                var oi: i32 = 0;
+                while (oi < offs.len()) {
+                    s = s.write("    ldr x0, [" + reg + ", #" + util.i32_to_string(offs[oi]) + "]\n");
+                    s = s.write("    str x0, [sp, #-16]!\n");
+                    s = s.write("    bl __fn___fern_arr_dec\n");
+                    s = s.write("    add sp, sp, #16\n");
+                    oi = oi + 1;
+                }
+                s = s.write("    b " + done + "\n");
+                s = s.write(lp + "_v" + vls + ":\n");
+                vlabel = vlabel + 1;
+            }
+        }
+        vi = vi + 1;
+    }
+    return s;
+}
+
+// emit_arm64_enum_drop_one emits __enum_drop_<E>(box) -> box, the arm64 twin of
+// emit_ir_enum_drop_one: release ONE enum box's live-variant rc payloads, sole-
+// ownership gated, leaving the box itself to the caller's dec (#8567).
+function emit_arm64_enum_drop_one(s: asmcore.EmitState, ety: string): asmcore.EmitState {
+    var san: string = asmcore.sanitize_label(ety);
+    s = s.write(".weak __fn___enum_drop_" + san + "\n");
+    s = s.write("__fn___enum_drop_" + san + ":\n");
+    s = s.write("    stp x29, x30, [sp, #-16]!\n");
+    s = s.write("    stp x19, x20, [sp, #-16]!\n");
+    s = s.write("    ldr x19, [sp, #32]\n");                    // box (arg + 32 for two stp saves)
+    s = s.write("    cmp x19, #16, lsl #12\n");
+    s = s.write("    blo .Led_" + san + "_ret\n");
+    s = s.write("    str x19, [sp, #-16]!\n");
+    s = s.write("    bl __fn___fern_rc_is_unique\n");
+    s = s.write("    add sp, sp, #16\n");
+    s = s.write("    cbz x0, .Led_" + san + "_ret\n");
+    s = emit_arm64_enum_variant_payload_decs(s, ety, "x19", ".Led_" + san, ".Led_" + san + "_ret");
+    s = s.write(".Led_" + san + "_ret:\n");
+    s = s.write("    mov x0, x19\n");                           // return box (caller decs it)
+    s = s.write("    ldp x19, x20, [sp], #16\n");
+    s = s.write("    ldp x29, x30, [sp], #16\n");
+    s = s.write("    ret\n");
+    return s;
+}
+
 function emit_arm64_enum_arr_elems_drop_one(s: asmcore.EmitState, ety: string): asmcore.EmitState {
     var san: string = asmcore.sanitize_label(ety);
     s = s.write(".weak __fn___enum_arr_elems_drop_" + san + "\n");
@@ -3029,35 +3119,7 @@ function emit_arm64_enum_arr_elems_drop_one(s: asmcore.EmitState, ety: string): 
     s = s.write("    bl __fn___fern_rc_is_unique\n");           // shared element (aliased out) -> skip
     s = s.write("    add sp, sp, #16\n");
     s = s.write("    cbz x0, .Leaed_" + san + "_next\n");
-    var vi: i32 = 0;
-    var vlabel: i32 = 0;
-    while (vi < s.struct_decls.decls.len()) {
-        if (s.struct_decls.decls[vi].enum_owner == ety) {
-            var offs: i32[] = irlower.enum_walk_payload_offsets(s.struct_decls, s.struct_decls.decls[vi].name);
-            if (offs.len() > 0) {
-                var vlo: asmcore.ShapeRefOut = asmcore.shape_ref(s, s.struct_decls.decls[vi].name);
-                s = vlo.state;
-                var vls: string = util.i32_to_string(vlabel);
-                s = s.write("    ldr x0, [x21]\n");             // shape ptr @0
-                s = s.write("    adrp x1, " + vlo.label + "\n");
-                s = s.write("    add x1, x1, :lo12:" + vlo.label + "\n");
-                s = s.write("    cmp x0, x1\n");
-                s = s.write("    bne .Leaed_" + san + "_v" + vls + "\n");
-                var oi: i32 = 0;
-                while (oi < offs.len()) {
-                    s = s.write("    ldr x0, [x21, #" + util.i32_to_string(offs[oi]) + "]\n");
-                    s = s.write("    str x0, [sp, #-16]!\n");
-                    s = s.write("    bl __fn___fern_arr_dec\n");
-                    s = s.write("    add sp, sp, #16\n");
-                    oi = oi + 1;
-                }
-                s = s.write("    b .Leaed_" + san + "_next\n");
-                s = s.write(".Leaed_" + san + "_v" + vls + ":\n");
-                vlabel = vlabel + 1;
-            }
-        }
-        vi = vi + 1;
-    }
+    s = emit_arm64_enum_variant_payload_decs(s, ety, "x21", ".Leaed_" + san, ".Leaed_" + san + "_next");
     s = s.write(".Leaed_" + san + "_next:\n");
     s = s.write("    add x20, x20, #1\n");
     s = s.write("    b .Leaed_" + san + "_loop\n");

@@ -5500,6 +5500,8 @@ pub function pp_eq_bytes(asm: string, a: i32, a_end: i32, b: i32, b_end: i32): b
 //   box_walk_dec           unique-gate the buffer, dec each element box, dec
 //                          the buffer
 //   deep_struct_drop  <T>  unique-gate the inner box and release ITS rc fields
+//   deep_enum_drop    <E>  the enum sibling: unique-gate the enum box and
+//                          release the LIVE variant's rc payloads
 //   str_free               rc-aware string-box release
 //   str_arr_free           deep string[] release (elements + buffer at rc==1)
 //   arr_dec                shallow rc-guarded box/buffer dec
@@ -5571,6 +5573,13 @@ pub function struct_drop_field_ops(s: EmitState, sty: string): RcOp[] {
             ops = ops.append(RcOp { kind: "str_free", idx: k, ty: "", cow: false, uniq: false });
         } else if (k_str_arr) {
             ops = ops.append(RcOp { kind: "str_arr_free", idx: k, ty: "", cow: false, uniq: false });
+        } else if (k_enum && irlower.enum_arr_elems_walk_ok(s.struct_decls, fdt)) {
+            // A DIRECT enum field owns its live variant's rc payloads, and the box
+            // dec frees only the box — so they were stranded (#8567). Same gate the
+            // enum-ARRAY element walk uses, so the two spellings of the same enum
+            // release identically.
+            ops = ops.append(RcOp { kind: "deep_enum_drop", idx: k, ty: fdt, cow: false, uniq: false });
+            ops = ops.append(RcOp { kind: "arr_dec", idx: k, ty: "", cow: false, uniq: false });
         } else if (k_scalar || k_struct || k_enum || k_clo || k_fnptr || k_str_arr_shallow) {
             ops = ops.append(RcOp { kind: "arr_dec", idx: k, ty: "", cow: false, uniq: false });
         }
@@ -5628,6 +5637,11 @@ pub function field_reclaim_field_ops(s: EmitState, sty: string): RcOp[] {
             // (nested_field_deep_drop_ok), leaving today's box-only release.
             var deep: string = "";
             if (fr_struct && irlower.nested_field_deep_drop_ok(s.struct_decls, fdt)) { deep = fdt; }
+            // The enum sibling (#8567): a direct enum field's live variant owns rc
+            // payloads the box dec alone strands, under the gate struct_drop_field_ops
+            // uses for the same field.
+            var deep_enum: string = "";
+            if (fr_enum && irlower.enum_arr_elems_walk_ok(s.struct_decls, fdt)) { deep_enum = fdt; }
             if (fr_box_arr) {
                 var pre: string = "";
                 var pre_kind: string = "arrarr_free";
@@ -5652,6 +5666,8 @@ pub function field_reclaim_field_ops(s: EmitState, sty: string): RcOp[] {
                 ops = ops.append(RcOp { kind: "str_arr_free", idx: k, ty: "", cow: cow, uniq: uniq });
             } else if (deep.len() > 0) {
                 ops = ops.append(RcOp { kind: "deep_struct_dec", idx: k, ty: deep, cow: cow, uniq: uniq });
+            } else if (deep_enum.len() > 0) {
+                ops = ops.append(RcOp { kind: "deep_enum_dec", idx: k, ty: deep_enum, cow: cow, uniq: uniq });
             } else {
                 ops = ops.append(RcOp { kind: "arr_dec", idx: k, ty: "", cow: cow, uniq: uniq });
             }
