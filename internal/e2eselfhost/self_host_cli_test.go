@@ -999,6 +999,58 @@ function main(): i32 {
 		}
 	})
 
+	// #8738. `top_stmts` has two tenants and only one of them is a feature.
+	// With NO `main` it is the interpreter's script mode — eval_module runs the
+	// statements and answers with the top-level `return`. With a `main`,
+	// eval_module calls that and returns before it ever looks at the bucket,
+	// and the compile path drops it: the statements are unreachable, and the
+	// self-host said nothing, so `var g: i32 = 1;` beside a `main` produced a
+	// clean binary with the initialiser silently discarded.
+	//
+	// Native rejects the source either way, so the accepted-and-dead case is a
+	// divergence in the direction that matters. Script mode is left alone and
+	// is asserted here as the control, because a gate that also killed it
+	// would pass every assertion above.
+	t.Run("check-top-level-stmt-gate", func(t *testing.T) {
+		for _, tc := range []struct {
+			name string
+			src  string
+		}{
+			{"var", "var g: i32 = 1;\nfunction main(): i32 { return 0; }\n"},
+			{"call", "print(\"hi\");\nfunction main(): i32 { return 0; }\n"},
+			{"if", "if (1 > 0) { }\nfunction main(): i32 { return 0; }\n"},
+			// The shape #2673's migration turned `function (): i32 {…}` into,
+			// which is how this hole was found: a top-level arrow lambda
+			// parses cleanly and lands in the same dead bucket.
+			{"lambda", "(): i32 => {\n  return 1;\n}\nfunction main(): i32 { return 0; }\n"},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				srcPath := filepath.Join(dir, "toplevel.fern")
+				if err := os.WriteFile(srcPath, []byte(tc.src), 0o644); err != nil {
+					t.Fatalf("write src: %v", err)
+				}
+				combined, _ := exec.Command(fernBin, "-check", srcPath).CombinedOutput()
+				got := uniqueSortedCodes(frontEndCodeRE.FindAllString(string(combined), -1))
+				want := goFrontEndCodes(t, tc.src)
+				if !equalStrings(got, want) {
+					t.Errorf("-check codes = %v, want native's %v\nself-host output:\n%s", got, want, combined)
+				}
+				if _, code := runDriver(t, "-check", srcPath); code != 1 {
+					t.Errorf("-check exited %d, want 1 — the statement is dead code", code)
+				}
+			})
+		}
+		// The control: no `main`, so this IS the script mode, and the gate must
+		// not touch it. `-interp` answers with the top-level return.
+		scriptPath := filepath.Join(dir, "script.fern")
+		if err := os.WriteFile(scriptPath, []byte("var x = 1 + 2 * 3;\nreturn x;\n"), 0o644); err != nil {
+			t.Fatalf("write src: %v", err)
+		}
+		if out, code := runDriver(t, "-interp", scriptPath); code != 7 {
+			t.Errorf("-interp on a no-main script exited %d, want 7 (the top-level return):\n%s", code, out)
+		}
+	})
+
 	t.Run("check-str-view-arg-is-a-borrow", func(t *testing.T) {
 		// #7086: a parameter is BORROWED, so lending a `str` view to a
 		// `string` parameter is fine — native's argAssignable accepts it.

@@ -5186,6 +5186,47 @@ pub function check_decl_names(mod: parser.Module): util.Diag[] {
     return errs;
 }
 
+// check_top_level_stmts refuses a statement written at module level in a module
+// that also declares `main` (#8738).
+//
+// The self-host parser's top-level loop dispatches on the declaration keywords
+// and lets everything else fall through to parse_stmt, which lands in
+// `top_stmts`. That bucket has two very different tenants:
+//
+//   - With NO `main`, it is the interpreter's SCRIPT mode: eval_module runs
+//     the statements in order and answers with the top-level `return`, which
+//     is what parser.parse_program + interp.run_source are for. Untouched
+//     here, and a self-host extension native does not have.
+//   - With a `main`, eval_module calls that and returns before it ever looks
+//     at the bucket, and the compile path drops it outright. The statements
+//     are unreachable, and nothing said so: `var g: i32 = 1;` beside a `main`
+//     compiled to a clean binary with the initialiser silently discarded.
+//
+// Native rejects the source either way — its parser requires `function` at top
+// level — so the second case is a divergence in the direction that matters: a
+// program the self-host accepts and native does not, whose accepted meaning is
+// "the code you wrote does not run".
+//
+// A gate rather than a parser error because the parser has nowhere to put one,
+// same shape and same place as check_decl_names.
+pub function check_top_level_stmts(mod: parser.Module): util.Diag[] {
+    var errs: util.Diag[] = [];
+    if (mod.top_stmts.len() == 0) { return errs; }
+    var has_main: boolean = false;
+    var fi: i32 = 0;
+    while (fi < mod.funcs.len()) {
+        if (mod.funcs[fi].receiver_type.len() == 0 && mod.funcs[fi].name == "main") { has_main = true; }
+        fi = fi + 1;
+    }
+    if (!has_main) { return errs; }
+    for st in mod.top_stmts {
+        errs = errs.append(util.Diag { code: "P001",
+            message: "statement at top level: a module declaring `main` runs that, so this never executes — move it inside a function",
+            line: ast.stmt_line(st), col: 0 });
+    }
+    return errs;
+}
+
 pub function check_undefined_calls(mod: parser.Module): util.Diag[] {
     // argc is filled even though the arity rule is off: the walk reads
     // `g.argc[ti]` under an `&&` with check_arity, and a parallel table is

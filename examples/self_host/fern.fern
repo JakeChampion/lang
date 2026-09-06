@@ -1414,6 +1414,19 @@ function report_parse_unknown_errors(mod: parser.Module): boolean {
     return true;
 }
 
+// report_top_level_stmt_errors is the third of these gates, for statements
+// written outside any declaration in a module that declares `main` — dead code
+// the self-host used to discard in silence (#8738). It runs AFTER the two
+// above: a malformed declaration parses on as top-level statements, so debris
+// must be named by the gate that understands it rather than reported here as
+// though the author had written a script.
+function report_top_level_stmt_errors(mod: parser.Module): boolean {
+    var ds: util.Diag[] = asmcore.check_top_level_stmts(mod);
+    if (ds.len() == 0) { return false; }
+    eprint(util.format_diags(ds));
+    return true;
+}
+
 // fold_embedded_assets loads `-embed DIR` and substitutes every asset call in
 // the bundle, returning the rewritten bundle and 0, or the original bundle and
 // the exit code to answer with.
@@ -1455,6 +1468,7 @@ function check_bundle(b: Bundle, target: string, target_given: boolean): i32 {
     // downstream of a declaration that did not parse is noise.
     if (report_decl_name_errors(merged)) { return 1; }
     if (report_parse_unknown_errors(merged)) { return 1; }
+    if (report_top_level_stmt_errors(merged)) { return 1; }
     var mt: checker.ModuleTypes = checker.check_module(merged);
     // Surface the coded diagnostics (the same E0XX codes the Go
     // checker emits — see docs/SELFHOST-CHECKER-PORT.md) on stderr.
@@ -2301,6 +2315,7 @@ function run(): i32 {
     // as a nameless declaration.
     if (report_decl_name_errors(merged)) { return 1; }
     if (report_parse_unknown_errors(merged)) { return 1; }
+    if (report_top_level_stmt_errors(merged)) { return 1; }
 
     // Build gate: reject what the checker rejects BEFORE codegen, so the
     // compiler is not MORE permissive than the native compiler / `-check`
