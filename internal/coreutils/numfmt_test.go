@@ -673,6 +673,10 @@ func numfmtCases(t *testing.T) []invocation {
 		// conversion left, and --padding is applied outside it. The
 		// buffer is GNU's own, so unlike the unscaled path's LDBL_DIG
 		// limit these boundaries are the same on every host.
+		//
+		// GNU <= 9.4 only, per docs/COREUTILS.md's version rule: from 9.5
+		// prepare_padded_number grows the buffer with xpalloc, so these
+		// boundary rows do not hold against a newer reference. #8765.
 		{name: "scaled buffer fits", args: []string{"--to=si", "--format=%.123f", "1000"}},
 		{name: "scaled buffer overflows", args: []string{"--to=si", "--format=%.124f", "1000"}},
 		{name: "scaled buffer two integer digits", args: []string{"--to=si", "--format=%.122f", "12000"}},
