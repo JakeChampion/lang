@@ -39298,30 +39298,47 @@ function credited_holds_name(credited: string[], name: string): boolean {
 // Such a local is left to LEAK, exactly like the borrowed match-payload struct
 // bindings already are (see the k_enum struct-payload note in lower_stmt_match).
 function reassigned_from_alias(stmts: ast.Stmt[], name: string): boolean {
-    for stmt in stmts { if (stmt_reassigns_alias(stmt, name)) { return true; } }
+    return reassigned_from_alias_of(stmts, name, "", true);
+}
+
+// reassigned_from_other_ident: the narrow question — some `name = <ident>`
+// assigns a variable OTHER than `src`, the one the snapshot records. The stored
+// box is then a reference the snapshot guard cannot recognise, so the next
+// rebind's release can free a box this frame does not own. It leaves the field
+// and element reads alone, where the superseded box IS this frame's and
+// refusing the credit would turn a correct reclaim into a leak.
+function reassigned_from_other_ident(stmts: ast.Stmt[], name: string, src: string): boolean {
+    return reassigned_from_alias_of(stmts, name, src, false);
+}
+
+// The walk both ask through. `src` is the one ident whose assignment does not
+// count (empty for the broad question, which counts every other name), and
+// `borrows` says whether a field / element read counts as an alias too.
+function reassigned_from_alias_of(stmts: ast.Stmt[], name: string, src: string, borrows: boolean): boolean {
+    for stmt in stmts { if (stmt_reassigns_alias(stmt, name, src, borrows)) { return true; } }
     return false;
 }
-function stmt_reassigns_alias(st: ast.Stmt, name: string): boolean {
+function stmt_reassigns_alias(st: ast.Stmt, name: string, src: string, borrows: boolean): boolean {
     match (st) {
         ast.StmtAssign(a) => {
             if (a.target == name) {
                 match (a.value) {
-                    ast.ExprIdent(rid) => { if (rid.name != name) { return true; } },   // `name = other` — alias
-                    ast.ExprFieldAccess(_) => { return true; },                          // `name = x.f` — field borrow
-                    ast.ExprIndex(_) => { return true; },                                // `name = xs[i]` — element borrow
+                    ast.ExprIdent(rid) => { if (rid.name != name && rid.name != src) { return true; } },   // `name = other` — alias
+                    ast.ExprFieldAccess(_) => { return borrows; },                        // `name = x.f` — field borrow
+                    ast.ExprIndex(_) => { return borrows; },                              // `name = xs[i]` — element borrow
                     _ => {}
                 }
             }
             return false;
         },
-        ast.StmtIf(f) => { return reassigned_from_alias(f.then_body, name) || reassigned_from_alias(f.else_body, name); },
-        ast.StmtWhile(w) => { return reassigned_from_alias(w.body, name); },
-        ast.StmtFor(fo) => { return reassigned_from_alias(fo.body, name); },
+        ast.StmtIf(f) => { return reassigned_from_alias_of(f.then_body, name, src, borrows) || reassigned_from_alias_of(f.else_body, name, src, borrows); },
+        ast.StmtWhile(w) => { return reassigned_from_alias_of(w.body, name, src, borrows); },
+        ast.StmtFor(fo) => { return reassigned_from_alias_of(fo.body, name, src, borrows); },
         ast.StmtMatch(m) => {
-            for arm in m.arms { if (reassigned_from_alias(arm.body, name)) { return true; } }
+            for arm in m.arms { if (reassigned_from_alias_of(arm.body, name, src, borrows)) { return true; } }
             return false;
         },
-        ast.StmtDefer(d) => { return stmt_reassigns_alias(d.action, name); },
+        ast.StmtDefer(d) => { return stmt_reassigns_alias(d.action, name, src, borrows); },
         _ => { return false; }
     }
     return false;
@@ -41718,7 +41735,14 @@ function collect_snap_locals(stmts: ast.Stmt[], fn: parser.FuncDecl, structs: St
                     && src != "!"
                     && decl_is_struct(structs, v.type_name) && decl_is_leaksafe(structs, v.type_name)
                     && (rebinds_only || struct_has_reclaim_array_field(structs, v.type_name))
-                    && !body_consume_unsafe_for(fn.body, v.name, borrowable, consume_safe, [], true)) {
+                    && !body_consume_unsafe_for(fn.body, v.name, borrowable, consume_safe, [], true)
+                    // `x = y` stores a box the snapshot does not name, so the
+                    // next rebind's release can reach a SECOND borrow — the
+                    // caller's, when y traces to another param (`var x: T = a;
+                    // var y: T = b; … x = y; y = t;` freed b under its owner).
+                    // The fresh struct credit refuses the same shape for the
+                    // same reason; this class simply never asked.
+                    && !reassigned_from_other_ident(fn.body, v.name, src)) {
                     var key: string = reclaim_site_key_of(v.name, v.line, v.col);
                     if (!rebinds_only) { a = push_str_unique(a, key); }
                     if (src.len() > 0) { a = push_str_unique(a, "SNAPSRC:" + key + "|" + src); }
