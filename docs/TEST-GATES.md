@@ -868,9 +868,11 @@ answer, these are the tools, in the order they are usually reached for:
   `docs/LOCAL-DEV-LOOP.md` both record two earlier rounds falling into.
 
   `.with` is deliberately absent: it lowers to a copy-on-write helper that
-  reads the refcount at run time, so it has no compile-time decision to
-  report — and the cliff counters miss it too, so nothing measures a
-  quadratic `.with` today.
+  reads the refcount at run time. A FIELD-place `.with` does have a
+  compile-time decision since #8523 — the same admission this reports for
+  `.append`, plus the move-out that pairs with it — and it is still not listed
+  here; nor do the cliff counters see it, so nothing measures a quadratic
+  `.with` today.
 - **`FERN_LEAKCHECK=1`** — alloc/free counts and live bytes at exit. The other
   direction: what the rc detector cannot see. Under `-sanitize` the same
   counters also produce a one-line verdict (`fern-sanitizer: leak <K> bytes in

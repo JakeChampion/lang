@@ -8237,6 +8237,191 @@ function main(): i32 {
     return bad + __rc_underflow_count();
 }`,
 	},
+	{
+		// #8523, the field-place .with in place: the hash-index shape, where
+		// every read of the bucket array precedes the store that replaces one
+		// of its slots, so the analysis admits the site and the CoW stores
+		// into the field's own buffer. The chain has to read back — a store
+		// through the wrong buffer, or a bucket array left behind by a move
+		// that did not happen, changes what lookup finds.
+		name: "field_with_inplace_hash_index",
+		src: `
+import "core/int";
+import "std/i32";
+import "std/string";
+struct RefSet { names: string[], head: i32[], next: i32[] }
+function bucket_of(name: string, n: i32): i32 {
+    var h: i32 = 0;
+    var i: i32 = 0;
+    while (i < name.len()) { h = h * 31 + (name[i] as i32); i = i + 1; }
+    if (h < 0) { h = 0 - h; }
+    return h % n;
+}
+function refset_add(rs: RefSet, name: string): RefSet {
+    var bk: i32 = bucket_of(name, rs.head.len());
+    var names: string[] = rs.names.append(name);
+    var next: i32[] = rs.next.append(rs.head[bk]);
+    var head: i32[] = rs.head.with(bk, names.len() - 1);
+    return RefSet { names: names, head: head, next: next };
+}
+function refset_has(rs: RefSet, name: string): boolean {
+    var i: i32 = rs.head[bucket_of(name, rs.head.len())];
+    while (i >= 0) {
+        if (rs.names[i] == name) { return true; }
+        i = rs.next[i];
+    }
+    return false;
+}
+function main(): i32 {
+    var rs: RefSet = RefSet { names: [], head: [0 - 1, 0 - 1, 0 - 1, 0 - 1], next: [] };
+    var i: i32 = 0;
+    while (i < 40) {
+        rs = refset_add(rs, "sym" + i.to_string());
+        i = i + 1;
+    }
+    var bad: i32 = 0;
+    if (rs.names.len() != 40) { bad = bad + 1; }
+    if (!refset_has(rs, "sym0")) { bad = bad + 2; }
+    if (!refset_has(rs, "sym39")) { bad = bad + 4; }
+    if (refset_has(rs, "sym40")) { bad = bad + 8; }
+    return bad + __rc_underflow_count();
+}`,
+	},
+	{
+		// The caller-side half of the same admission: the callee's .with is
+		// admitted on its own body, and the container it reads through is the
+		// CALLER's, still live across the call. The #4873 grow bracket holds
+		// the buffer above rc 1 there, so the CoW copies and the field keeps
+		// its buffer — the branch that pays the inc the helper's copy path
+		// consumes. A missing inc over-releases; a missing bracket rewrites
+		// the caller's array.
+		name: "field_with_inplace_caller_keeps_container",
+		src: `
+struct Box { xs: i32[], n: i32 }
+function setter(b: Box, i: i32, v: i32): i32[] {
+    return b.xs.with(i, v);
+}
+function main(): i32 {
+    var bad: i32 = 0;
+    var i: i32 = 0;
+    while (i < 30) {
+        var b: Box = Box { xs: [1, 2, 3], n: i };
+        var ys: i32[] = setter(b, 0, 9);
+        if (b.xs[0] != 1) { bad = bad + 1; }
+        if (ys[0] != 9) { bad = bad + 2; }
+        if (b.xs.len() != 3 || ys.len() != 3) { bad = bad + 4; }
+        i = i + 1;
+    }
+    return bad + __rc_underflow_count();
+}`,
+	},
+	{
+		// The move-out itself: the root is a struct the frame BUILDS, the CoW
+		// stores into its buffer at rc 1, and the result outlives the box. The
+		// field is nulled behind the store, so the box's exit drop finds
+		// nothing to free — without the move the box and the returned array
+		// both name one buffer at rc 1 and the drop frees it under the
+		// caller. A pointer-element field runs beside the scalar one, since
+		// that is the arm whose overwritten element the store releases.
+		name: "field_with_inplace_local_root_move",
+		src: `
+import "core/int";
+import "std/i32";
+import "std/string";
+struct Box { xs: i32[], names: string[] }
+function build(n: i32): i32[] {
+    var b: Box = Box { xs: [0, 0, 0], names: [] };
+    var ys: i32[] = b.xs.with(0, n);
+    return ys;
+}
+function build_str(n: i32): string[] {
+    var b: Box = Box { xs: [], names: ["a", "b"] };
+    var ns: string[] = b.names.with(0, "v" + n.to_string());
+    return ns;
+}
+function main(): i32 {
+    var bad: i32 = 0;
+    var i: i32 = 0;
+    while (i < 50) {
+        var ys: i32[] = build(i);
+        if (ys[0] != i || ys[1] != 0 || ys.len() != 3) { bad = bad + 1; }
+        var ns: string[] = build_str(i);
+        if (ns[0] != "v" + i.to_string() || ns[1] != "b") { bad = bad + 2; }
+        i = i + 1;
+    }
+    return bad + __rc_underflow_count();
+}`,
+	},
+	{
+		// The two refusals the move needs. loop_host: a body-scope .with
+		// inside a loop would read its own moved-out field on the next pass,
+		// so the site keeps the copy. alias_root: the root is a local bound
+		// from another container's FIELD, so the box is not this frame's and
+		// emptying its field would take the buffer from the container that
+		// still reads it — a read the analysis cannot see, since it is rooted
+		// at a different name.
+		name: "field_with_inplace_refused_shapes",
+		src: `
+struct Inner { xs: i32[] }
+struct Outer { inner: Inner, n: i32 }
+function loop_host(k: i32): i32 {
+    var b: Inner = Inner { xs: [1, 2, 3] };
+    var acc: i32 = 0;
+    var j: i32 = 0;
+    while (j < k) {
+        var zs: i32[] = b.xs.with(0, j);
+        acc = acc + zs[0] + zs.len();
+        j = j + 1;
+    }
+    return acc;
+}
+function alias_root(): i32 {
+    var o: Outer = Outer { inner: Inner { xs: [1, 2, 3] }, n: 0 };
+    var t: Inner = o.inner;
+    var ys: i32[] = t.xs.with(0, 9);
+    return ys[0] + o.inner.xs[0];
+}
+function main(): i32 {
+    var bad: i32 = 0;
+    if (loop_host(3) != 12) { bad = bad + 1; }
+    if (alias_root() != 10) { bad = bad + 2; }
+    return bad + __rc_underflow_count();
+}`,
+	},
+	{
+		// #8523 arm 2, the sequenced no-overlap arm, on the .append it was
+		// written for: the length and the element read both precede the grow,
+		// so the site is admitted where the flow-insensitive rule refused it.
+		// The value is the same either way — what this pins is that admitting
+		// it neither corrupts the buffer those reads produced nor unbalances
+		// the container's own reference.
+		name: "field_append_reads_sequenced_before",
+		src: `
+import "core/int";
+import "std/i32";
+import "std/string";
+struct S { xs: i32[], ys: string[], n: i32 }
+function grow(s: S, v: i32): S {
+    var k: i32 = s.xs.len();
+    var e: i32 = s.xs[0];
+    var zs: i32[] = s.xs.append(v + e);
+    var ws: string[] = s.ys.append("n" + k.to_string());
+    return S { xs: zs, ys: ws, n: k };
+}
+function main(): i32 {
+    var s: S = S { xs: [7], ys: [], n: 0 };
+    var i: i32 = 0;
+    while (i < 40) {
+        s = grow(s, i);
+        i = i + 1;
+    }
+    var bad: i32 = 0;
+    if (s.xs.len() != 41 || s.n != 40) { bad = bad + 1; }
+    if (s.xs[0] != 7 || s.xs[40] != 46) { bad = bad + 2; }
+    if (s.ys.len() != 40 || s.ys[39] != "n40") { bad = bad + 4; }
+    return bad + __rc_underflow_count();
+}`,
+	},
 }
 
 func TestX86_64RcCorrectnessCorpus(t *testing.T) {

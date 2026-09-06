@@ -5310,15 +5310,18 @@ type builder struct {
 	// every push site. appendOrderFn is the fn the cache was built for.
 	// appendInPlaceOK (built in the same refresh) is the set of push calls
 	// exempt from the reused-after forced copy — see inPlacePushes.
-	// appendFieldCopy (same refresh) is the field-receiver half of the same
-	// question — see fieldPlaceAppendCopies.
 	appendOrder     identOrder
 	appendOrderFn   *ast.FuncDecl
 	appendInPlaceOK map[*ast.Call]bool
-	appendFieldCopy map[*ast.Call]bool
+	// fieldMutCopy is the field-receiver half of the same question, for both
+	// `.append` and `.with` — see fieldPlaceMutationCopies. Under its own key
+	// (fieldMutCopyFn) and behind fieldMutationCopies(), since the `.with`
+	// consumer is an rc analysis that runs before any push is lowered.
+	fieldMutCopy   map[*ast.Call]bool
+	fieldMutCopyFn *ast.FuncDecl
 	// identOrder is the same order under its own key, for the analyses that
 	// want only it. Separate from appendOrderFn so asking for the order does
-	// not also build inPlacePushes and fieldPlaceAppendCopies, which are far
+	// not also build inPlacePushes and fieldPlaceMutationCopies, which are far
 	// more expensive and which those analyses never read (#8175).
 	identOrderCache identOrder
 	identOrderFn    *ast.FuncDecl
@@ -17966,7 +17969,7 @@ func (b *builder) structUpdateBaseIsOwned(base ast.Expr) bool {
 	return false
 }
 
-// callArgNoEscape answers fieldPlaceAppendCopies' question for one call
+// callArgNoEscape answers fieldPlaceMutationCopies' question for one call
 // argument: after this call returns, can anything still reachable name that
 // argument's buffer?
 //
@@ -20680,6 +20683,54 @@ func (b *builder) emitCowInplace(bufSlot, stride int32, helper string) {
 	b.emit(Op{Kind: OpEnd})
 }
 
+// emitCowInplaceFieldMove is emitCowInplace for an admitted field-place
+// `.with` (#8523): the same runtime uniqueness test, with the two branches
+// carrying the rc bookkeeping the field receiver needs.
+//
+//	if is_unique(arr) { root.f = 0; buf = arr }
+//	else              { rc_inc(arr); buf = helper(arr, stride) }
+//
+// The unique branch stores into the field's OWN buffer and the result is the
+// only name left for it, so the field is MOVED out — every later release of
+// the box (__field_reclaim_<T>, __struct_drop_<T>, an exit sweep) meets a null
+// field and no-ops, where leaving it would give the buffer two names at rc 1
+// and let the first release free it under the other.
+//
+// The copy branch pays the inc the plain path leaves to the caller: the helper
+// takes a reference as it copies (it decs arr, see emitArrCowInPlaceRuntime),
+// and here the field keeps the buffer — so the reference the helper consumes
+// must be one this site added, not the field's. That is what makes the site
+// safe under the #4873 caller-side grow bracket, which is exactly what puts
+// this buffer above rc 1: the bracket's own dec after the call still finds the
+// field pointing at the buffer it retained.
+func (b *builder) emitCowInplaceFieldMove(fa *ast.FieldAccess, bufSlot, stride int32, helper string) {
+	base := fa.Target.(*ast.Ident)
+	baseSlot := b.locals[base.Name]
+	sd := b.info.Structs[b.fieldOwner(fa.Target)]
+	offs, _ := structFieldLayout(sd.Fields, b.ptrW)
+	ft := fieldType(sd.Fields, fa.Field)
+	b.emit(Op{Kind: OpStoreLocal, I32: bufSlot})
+	b.emit(Op{Kind: OpLoadLocal, I32: bufSlot})
+	b.emit(Op{Kind: OpRcIsUnique, Str: "__fern_rc_is_unique", I32: 1})
+	b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
+	b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
+	if off := offs[fa.Field]; off != 0 {
+		b.emit(Op{Kind: OpConstI32, I32: off})
+		b.emit(Op{Kind: OpAdd})
+	}
+	b.emit(Op{Kind: OpConstI32, I32: 0})
+	b.emit(payloadStoreOpFor(ft, b.ptrW))
+	b.emit(Op{Kind: OpElse})
+	b.emit(Op{Kind: OpLoadLocal, I32: bufSlot})
+	b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
+	b.emit(Op{Kind: OpDrop})
+	b.emit(Op{Kind: OpLoadLocal, I32: bufSlot})
+	b.emit(Op{Kind: OpConstI32, I32: stride})
+	b.emit(Op{Kind: OpCallDirect, Str: helper, Width: ResAddr, I32: 2})
+	b.emit(Op{Kind: OpStoreLocal, I32: bufSlot})
+	b.emit(Op{Kind: OpEnd})
+}
+
 // emitArraySet lowers `arr.set(i, v)` inline — Phase 2b's
 // explicit value-returning sister to `arr[i] = v`. Same shape
 // as the IR-level CoW desugar but expression-position: leaves
@@ -20786,6 +20837,8 @@ func (b *builder) emitArraySet(n *ast.Call) error {
 		b.emit(Op{Kind: OpConstI32, I32: stride})
 		b.emit(Op{Kind: OpCallDirect, Str: cowHelper, Width: ResAddr, I32: 2})
 		b.emit(Op{Kind: OpStoreLocal, I32: bufSlot})
+	} else if b.rc.fieldSetMoves[n] {
+		b.emitCowInplaceFieldMove(n.Args[0].(*ast.FieldAccess), bufSlot, stride, cowHelper)
 	} else {
 		b.emitCowInplace(bufSlot, stride, cowHelper)
 	}
@@ -21140,11 +21193,21 @@ func (b *builder) curAppendOrder() identOrder {
 	if b.appendOrderFn != b.fn {
 		b.appendOrder = b.curIdentOrder()
 		b.appendInPlaceOK = inPlacePushes(b.fn.Body)
-		b.appendFieldCopy = fieldPlaceAppendCopies(b.fn.Body, b.callArgNoEscape)
 		b.appendOrderFn = b.fn
 	}
 	_ = b.curCallArgDies() // emitArrayPush's callers read b.callArgDies directly
 	return b.appendOrder
+}
+
+// fieldMutationCopies is fieldPlaceMutationCopies for the function being
+// lowered, built once. Both consumers read it here: emitArrayPush's field-
+// receiver arm and computeArraySetIncs' — one analysis, one verdict per site.
+func (b *builder) fieldMutationCopies() map[*ast.Call]bool {
+	if b.fieldMutCopyFn != b.fn {
+		b.fieldMutCopy = fieldPlaceMutationCopies(b.fn.Body, b.callArgNoEscape)
+		b.fieldMutCopyFn = b.fn
+	}
+	return b.fieldMutCopy
 }
 
 // curIdentOrder is identOrderOf for the function being lowered, built once.
@@ -21219,7 +21282,7 @@ func appendRecvString(e ast.Expr) string {
 // (#4849's return-position / borrowed-param self-reassign shapes), a
 // binding of a non-consuming match (rc.borrowedBindings — the buffer is
 // the scrutinee box's), and a FIELD place the container can still be read
-// through (#6665, fieldPlaceAppendCopies).
+// through (#6665, fieldPlaceMutationCopies).
 //
 // The reason is what `fern -append-report` prints (#6992), from these
 // branches rather than a second walk, so the report cannot drift from what
@@ -21231,8 +21294,7 @@ func (b *builder) appendDecision(n *ast.Call) (bool, string) {
 		return false, "self-reassign move: the only reference is overwritten by the assignment"
 	}
 	if _, ok := n.Args[0].(*ast.FieldAccess); ok {
-		b.curAppendOrder() // refresh appendFieldCopy for the current fn
-		if b.appendFieldCopy[n] {
+		if b.fieldMutationCopies()[n] {
 			return true, "field receiver: the container can still be read through (#6665)"
 		}
 		return false, "field receiver: the container is not read again"
@@ -21337,7 +21399,7 @@ func (b *builder) emitArrayPush(n *ast.Call) error {
 	//
 	// Two operand shapes qualify: a bare ident whose occurrence here is NOT
 	// its last in the function body (identOrder), and a FIELD place the
-	// container can still be read through (fieldPlaceAppendCopies, #6665).
+	// container can still be read through (fieldPlaceMutationCopies, #6665).
 	// This leaves sound in-place cases on the fast path:
 	//   - the ident's LAST use — nothing reads it after, so the mutation
 	//     is unobservable (the second `path.append` above);

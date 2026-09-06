@@ -121,7 +121,7 @@ function main(): i32 { return retpos([1], 1).len() + selfp([1], 2); }`
 	}
 }
 
-// A field receiver goes through fieldPlaceAppendCopies (#6665) rather than
+// A field receiver goes through fieldPlaceMutationCopies (#6665) rather than
 // the ident path, and the report has to reach that branch too — a receiver
 // spelling of "<expr>" there would make the site unmatchable to its source.
 func TestAppendReportNamesFieldReceivers(t *testing.T) {
