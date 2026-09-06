@@ -2651,15 +2651,13 @@ func emitArrCowInplaceElemHelper(name, elemInc, tag string) func(w func(string, 
 // there is no unboxing step; the native x86-64 twins spend a frame pulling a
 // two-word SSO string apart before they can start.
 //
-// Three of the four are SSE2, 16 bytes an iteration, the same block algorithms
-// the native backend and arm64ssa run (docs/ATLAS-PLATFORM-PLAN.md §3). Only
-// __fern_ascii_run is still the scalar byte-an-iteration version these all
-// started as. What paid for the vectorising was a net rather than a decision to
-// go faster: the flat-vs-ssa ratio gate (#8069) named memchr as a 20x
-// divergence the moment the flat side got quicker, and the length sweep in
-// gas_scan_lengths_test.go is what makes a block kernel readable off the page —
-// it walks every length across two blocks with the needle at every position.
-// Vectorising ascii_run wants the same sweep first.
+// All four are SSE2, 16 bytes an iteration, the same block algorithms the
+// native backend and arm64ssa run (docs/ATLAS-PLATFORM-PLAN.md §3). What paid
+// for the vectorising was a net rather than a decision to go faster: the
+// flat-vs-ssa ratio gate (#8069) named memchr as a 20x divergence the moment
+// the flat side got quicker, and the length sweep in gas_scan_lengths_test.go
+// is what makes a block kernel readable off the page — it walks every length
+// across two blocks with the needle at every position.
 //
 // Two conventions are shared and worth stating once. A byte operand outside
 // 0..255 can never occur in the haystack, and ONE unsigned compare covers both
@@ -2804,6 +2802,11 @@ func emitRmemchrHelper(w func(string, ...any)) {
 // byte at or after `from` with its high bit set, or len(s) if the rest is ASCII.
 // The length rather than -1 on a miss, matching the intrinsic's branch-free-skip
 // contract on the other backends. Leaf.
+//
+// SSE2, 16 bytes an iteration, and the cheapest of the four: `pmovmskb` gathers
+// the top bit of each byte, which IS the "not ASCII" test, so there is no splat
+// and no compare — the whole block is movdqu / pmovmskb / test where __memchr
+// needs four instructions to broadcast the needle and a pcmpeqb per block.
 func emitAsciiRunHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("__fern_ascii_run"))
@@ -2812,15 +2815,41 @@ func emitAsciiRunHelper(w func(string, ...any)) {
 	w("\tjns .Lssa_ascii_from_ok")
 	w("\txor esi, esi") // clamp `from` up to 0
 	w(".Lssa_ascii_from_ok:")
-	w(".Lssa_ascii_loop:")
+	// The cursor is scaled into an address below, so its top half has to be
+	// clean; `from` arrives as an i32 and the caller owes nothing about rsi's
+	// upper bits. One instruction, once — every later write to esi zeroes the
+	// top half itself.
+	w("\tmov esi, esi")
+	w(".Lssa_ascii_vec:")
+	w("\tmov eax, r8d")
+	w("\tsub eax, esi") // bytes left at or after the cursor
+	w("\tcmp eax, 16")
+	w("\tjl .Lssa_ascii_tail")
+	// Unaligned load is deliberate, as in __memchr: at least 16 bytes remain,
+	// so the read stays inside the string.
+	w("\tmovdqu xmm0, [rdi + rsi]")
+	w("\tpmovmskb eax, xmm0")
+	w("\ttest eax, eax")
+	w("\tjnz .Lssa_ascii_hit")
+	w("\tadd esi, 16")
+	w("\tjmp .Lssa_ascii_vec")
+	w(".Lssa_ascii_hit:")
+	// bsf, not tzcnt: tzcnt is BMI1, and below the baseline its F3 prefix is
+	// ignored, so it degrades silently to bsf rather than faulting.
+	w("\tbsf eax, eax")
+	w("\tadd eax, esi")
+	w("\tret")
+	// Scalar tail: under 16 bytes left, and the whole algorithm for a string
+	// shorter than one block.
+	w(".Lssa_ascii_tail:")
 	w("\tcmp esi, r8d")
 	w("\tjae .Lssa_ascii_none")
 	w("\tmovzx r9d, byte ptr [rdi + rsi]")
 	w("\ttest r9d, 128")
-	w("\tjnz .Lssa_ascii_hit")
+	w("\tjnz .Lssa_ascii_tail_hit")
 	w("\tadd esi, 1")
-	w("\tjmp .Lssa_ascii_loop")
-	w(".Lssa_ascii_hit:")
+	w("\tjmp .Lssa_ascii_tail")
+	w(".Lssa_ascii_tail_hit:")
 	w("\tmov eax, esi")
 	w("\tret")
 	w(".Lssa_ascii_none:")
