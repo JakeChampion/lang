@@ -31025,6 +31025,21 @@ function returned_moved_arr_slots(e: ast.Expr, s: LowerState, acc: i32[]): i32[]
                             out = returned_moved_arr_slots(arg, s, out);
                         }
                     }
+                    // `return g(.., o, ..)` where g hands that parameter back BARE
+                    // (handback_params): the result may be o's own box, uncounted
+                    // — the same box a bare `return o` moves out — so a credited
+                    // struct local there is kept from the sweep, which would
+                    // otherwise free it under the caller. A callee returning
+                    // something else leaves the box to leak, the safe direction.
+                    var hbi: i32 = 0;
+                    while (hbi < c.args.len()) {
+                        var hbn: string = ident_name_or_empty(c.args[hbi]);
+                        if (hbn.len() > 0 && util.index_of_str(s.frame.sigs.handback_params, cid.name + "|" + util.i32_to_string(hbi)) >= 0) {
+                            var hbs: i32 = s.slot_of(hbn);
+                            if (hbs >= s.frame.n_params && slot_is_reclaimable_struct(s, hbs) && !slot_list_has(out, hbs)) { out = out.append(hbs); }
+                        }
+                        hbi = hbi + 1;
+                    }
                     // Built-in payload constructors `Ok(a)/Err(a)/Some(a)`: the
                     // Result/Option box stores the payload pointer with NO alias-inc
                     // and is leak-mode (never deep-dropped), exactly like a user enum

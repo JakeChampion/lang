@@ -34,7 +34,10 @@ instrumented verdict named four statements, one at a time:
    forward over statements that mention neither name nor `d`, or that read a
    DIFFERENT element of `d` whose declared type is not the handed-back
    element's — `w = d.0` — and refuses a second read of the same element.
-   `dor_scan` (the `NOFLD:` box-only decision) takes the same pair.
+   `dor_scan` (the `NOFLD:` box-only decision) takes the same pair. The
+   destructure spellings — `var (w, out) = drain(w, out)` and the
+   two-statement `var (w2, o2) = drain(w, out); out = o2;` — are outside
+   this rule and stay leak-mode: #8734.
 3. `write_overflow(o, out)` in `emit_term`'s `None` arm: a call in statement
    position, result discarded. `expr_consume_transparent` admits it when
    every mention of name sits at a consume-safe position of some call, or is
@@ -48,6 +51,24 @@ instrumented verdict named four statements, one at a time:
    "TUP:" box credit and the 40-byte tuple box leaked per iteration. The
    registry is a least fixpoint that also admits a return that is a call to
    a member; a function admitted only that way records no `ARRF:` flags.
+
+## The sweep that took the box back
+
+The tuple-return admission exposed a hazard the top-level form already had:
+`return g(.., o, ..)` where `o` is a FRESH local (fresh-ret credit, released by
+the exit sweep) and `g` hands its parameter back bare — numfmt's `options`,
+`return (check_options(o, operands), operands)`. The consume-safe registry is
+right that `check_options` neither keeps nor frees the box; the sweep then
+freed it anyway, while the tuple carried it back — numfmt's five fraction rows
+read `o.fmt` out of a recycled block (SIGSEGV; the sanitizer's quarantine hides
+it, since nothing is recycled there, and the interpreter's exit is what sees
+it). The issue-base compiler already miscompiled the top-level shape
+(`options_call` in the probe, 34 against the interpreter's 37).
+`returned_moved_arr_slots` now keeps a credited struct local named as a bare
+argument at a `handback_params` position of a returned call — top level or a
+tuple element, since the tuple arm recurses — the same keep a bare `return o`
+takes. A callee that returned something else leaves the box to leak, the safe
+direction; the intermediate generations still reclaim.
 
 ## The count nobody gave back
 
@@ -85,11 +106,13 @@ red for that class alone.
 
 ## Witnessed
 
-`internal/e2eselfhost/self_host_tuple_handback_reclaim_test.go` — five
+`internal/e2eselfhost/self_host_tuple_handback_reclaim_test.go` — six
 shapes at 200 and 2000 rounds on x86-64, arm64 and wasm; the unreclaimed
 count may not move with the loop. A sanitizer leg on x86-64 pins the other
 direction: the rebind release now runs where it was refused, so the quarantine
-and the over-release trap must stay silent.
+and the over-release trap must stay silent. The swept-local shape carries its
+own witness — a same-class allocation after the call recycles a freed box, so
+the exit moves against the interpreter's; the quarantine cannot see it.
 
 ## Traps
 

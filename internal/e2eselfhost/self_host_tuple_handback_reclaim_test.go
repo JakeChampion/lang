@@ -34,6 +34,10 @@ import (
 //     `finish(flush(w, b).0)` needed a scalar position to count as safe.
 //   - `var d = drain(w, out)` earned no box credit for `d`, because
 //     `drain`'s slow path returns `flush(w, b)` — a call, not a literal.
+//   - with the tuple return admitted, a FRESH local handed back bare by a
+//     callee inside that tuple (numfmt's `options`) was freed by the exit
+//     sweep while the tuple carried it — the top-level `return g(o)` form
+//     already had that hazard; the sweep now keeps it like a bare return.
 //
 // Each case runs at two round counts and the number of unreclaimed blocks
 // must not move: a leak of this family is one block per iteration, and a
@@ -199,6 +203,37 @@ function run(w0: i32, b: Block, rounds: i32): (i32, Block) {
     i = i + 1;
   }
   return (w, out);
+}`},
+	// numfmt's `options`: a FRESH local the exit sweep releases, handed back
+	// bare by `check` inside the returned tuple. The sweep must keep it — the
+	// box IS the result — and `junk` recycles its block if it does not, so
+	// the caller's read moves rather than reading intact freed bytes (the
+	// quarantine cannot see this one; the interpreter's exit can).
+	{"swept_local_handed_back", `function check(b: Block, w: i32): Block {
+  if (w < 0) {
+    exit(3);
+  }
+  return b;
+}
+function build(w0: i32, rounds: i32): (i32, Block) {
+  var w: i32 = w0;
+  var o: Block = block_new();
+  var i: i32 = 0;
+  while (i < rounds) {
+    o = push_str(o, "1234567890123\n");
+    var d: (i32, Block) = drain(w, o);
+    w = d.0;
+    o = d.1;
+    i = i + 1;
+  }
+  return (w + o.n, check(o, w));
+}
+function run(w0: i32, b: Block, rounds: i32): (i32, Block) {
+  var inner: (i32, Block) = build(w0, rounds);
+  var o: Block = inner.1;
+  var junk: Block = Block { buf: __alloc_u8(8), n: 77 };
+  var out: Block = push_str(b, "x");
+  return (inner.0 + junk.n - 77, Block { ...out, n: o.n % 100 + out.n });
 }`},
 	// A call-derived local rather than an alias, with the loop's exit a
 	// tuple return whose element is a call taking the local.
