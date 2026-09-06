@@ -320,7 +320,6 @@ Primary     = NUMBER
             | 'false'
             | IfExpr
             | MatchExpr
-            | LambdaExpr
             | ArrowLambda
             | ParenOrTuple
             | ArrayLit
@@ -336,7 +335,10 @@ MatchExpr   = 'match' NoStructExpr '{' { MatchExprArm } '}' ;
 MatchExprArm
             = ArmPatterns [ 'when' Expr ] '=>' ( ValueBlock | Expr ) [ ',' ] ;
 
-LambdaExpr  = 'function' [ '(' [ ParamList ] ')' ] [ ':' Type ] ValueBlock ;
+# `function` opens a declaration and nothing else: the anonymous
+# `function (x: T): R { … }` expression was retired in #2673, and writing one
+# is a parse error naming the arrow form as its replacement.
+#
 # The parameter list is always parenthesized. A bare `x => e` is NOT
 # Fern (the parser reports P001), and admitting it here would swallow
 # the `=>` of a match arm: `when x == y => x + y` would read `y => x + y`
