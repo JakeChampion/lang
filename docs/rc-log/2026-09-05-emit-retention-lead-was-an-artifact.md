@@ -441,3 +441,67 @@ closes a shape, and the shapes that dominate this workload are not those. Worth
 re-running after any change that claims to move goal 2's memory, precisely
 because it is the number that has stayed still while a lot of adjacent work
 landed.
+
+
+## What the retained set is MADE OF
+
+Ranking by bytes, which every attribution above did, hides the composition. The
+same trace, bucketed by block size:
+
+```
+survivors=2,260,095   live_bytes=272,733,408
+min 16   p50 56   p90 112   p99 344   max 4,194,304   mean 120
+```
+
+| bucket | blocks | bytes | share |
+|---|--:|--:|--:|
+| 2^4 (16-31 B) | 325,530 | 7.8 MB | 2.9% |
+| 2^5 (32-63 B) | 903,319 | 40.3 MB | 14.8% |
+| 2^6 (64-127 B) | 978,842 | 97.7 MB | **35.8%** |
+| 2^12-2^15 | 4,627 | 45.0 MB | 16.5% |
+| 2^16 (64-128 KB) | 569 | 37.3 MB | 13.7% |
+
+**53.5% of the retained bytes are in blocks under 128 bytes.** The multi-KB
+buffers this document spent most of its length on are 13.7%, in 569 blocks.
+The `LowerState.emit` cluster is 10.9% of bytes and 0.14% of BLOCKS — 3,113 out
+of 2.26 million. Ranking by bytes made a rounding error in the block count look
+like the headline.
+
+Ranked by count instead, the top sites are `pl_none` / `pl_classify` / `pl_one`
+(the peephole window), then `__fern_arr_push <- __fern_arr_push_owned`, then
+lexer, parser and closure-lifting walkers at a few percent each. Every phase.
+
+### Against native, and why the excess is the only number that means anything
+
+| | native | self-host |
+|---|--:|--:|
+| survivors | 479,509 | 2,260,095 |
+| live_bytes | 29.6 MB | 272.7 MB |
+| mean block | 61 B | 120 B |
+| p50 | 48 B | 56 B |
+
+Both retain mostly small blocks. The self-host retains 4.7x as many.
+
+Native retains peephole `PLine` boxes too — 76,090 at its top site — so the
+self-host's 444,296 are not all defect. The recoverable quantity is the EXCESS,
+368,206 blocks, 16.3% of self-host survivors. Every per-construct share quoted
+anywhere above should be read the same way and mostly was not.
+
+Two caveats on the comparison. Native's trace reports 71.4 M frees with no
+matching allocation against 3.0 M allocations, so its `f` events do not mean
+what the self-host's do and its distribution is indicative rather than exact —
+its derived survivor set does land within 4% of its own leakcheck. And both
+sides are EXIT-LIVE sets, which include everything still reachable, not only
+leaks; peak RSS tracks exit-live on this workload, which is what makes that a
+fair proxy at all.
+
+### What it implies
+
+Retention spread over 2.26 M blocks at a 56-byte median, across every phase,
+will not yield to shape-by-shape fixes — which is what the flat re-measurement
+above shows empirically. The exception is the peephole at ~16% excess (#8628).
+Below that the tail is genuinely a tail.
+
+So the question worth asking is not "which construct leaks" but "why does this
+compiler free 38% of its blocks where native frees 83%, uniformly". That is a
+different investigation from the one this document has been conducting.
