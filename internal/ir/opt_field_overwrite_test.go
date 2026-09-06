@@ -42,3 +42,39 @@ function main(): i32 {
 		}
 	}
 }
+
+// A fresh box returned by a user function and passed straight on under a
+// pointer-typed result is released after the call, behind the identity
+// guard (#8755): `id_w(o).put(s)` stashes id_w's result and drops it unless
+// put handed it back, in which case only the return transfer's count goes.
+func TestBoxTempUnderPointerResultIsReleased(t *testing.T) {
+	src := `struct W { buf: string, err: Option[i32] }
+function (w: W) put(s: string): W { return W { ...w, buf: w.buf + s }; }
+function id_w(w: W): W { return w; }
+function main(): i32 {
+    var o: W = W { buf: "", err: None };
+    o = id_w(o).put("a");
+    return o.buf.len();
+}`
+	prog := lowerSourceWith(t, src, 8)
+	for _, f := range prog.Funcs {
+		if f.Name != "main" {
+			continue
+		}
+		guardedDrops, flatDecs := 0, 0
+		for i, op := range f.Ops {
+			if op.Kind == OpNe && i+1 < len(f.Ops) && f.Ops[i+1].Kind == OpIf {
+				guardedDrops++
+			}
+			if op.Kind == OpRcDec && op.Str == "__fern_rc_dec" {
+				flatDecs++
+			}
+		}
+		if guardedDrops == 0 {
+			t.Errorf("main has no identity-guarded release of id_w's result: the temp handed to put is never released")
+		}
+		if flatDecs == 0 {
+			t.Errorf("main has no flat dec for the identity case: a callee handing the temp back leaves the return transfer's count unreleased")
+		}
+	}
+}

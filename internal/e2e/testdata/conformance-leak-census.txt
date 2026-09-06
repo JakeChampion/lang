@@ -349,7 +349,7 @@ match_some                                           0
 match_struct_pattern                                 0
 match_wildcard                                       0
 math_range                                           0
-mock_platform_log                                    4
+mock_platform_log                                    2
 module_scoped_variant                                0
 multi_file                                           0
 multi_hop_alias                                      0
