@@ -11217,23 +11217,17 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 				s.poison(n.Name)
 				return
 			}
-			// An unannotated binding whose init is a bare integer
-			// literal that doesn't fit i32 defaults to i64 rather
-			// than the usual i32 (#3676). i32 is the default int, so
-			// `var x = 5` stays polymorphic→i32; but a written-out
-			// constant past i32 range (`var big = 5000000000`) has no
-			// valid i32 reading — native would silently truncate it to
-			// INT_MIN while the interp / self-host IR kept it wide, a
-			// three-way divergence. Widening to i64 here makes all
-			// paths agree and lets the literal "just work" (the
-			// interp + self-host IR already treat a too-big bare
-			// literal as i64; this pins native to match). Arithmetic
-			// ON an i32 value still wraps at 32 bits (#3581) — only the
-			// bare literal's own type widens.
-			if gn, ok := got.(ast.NumberType); ok && gn.Polymorphic && intLitExceedsI32(n.Init) {
-				i64 := ast.NumberType{Width: 64, Signed: true}
-				c.settleInt(n.Init, i64)
-				got = i64
+			// An unannotated binding whose init is still polymorphic
+			// takes the default width: i32, or i64 when a literal in the
+			// init has no i32 reading (#3676, #8668). Only the widening
+			// settles here — `var x = 5` stays polymorphic. Arithmetic ON
+			// an i32 value still wraps at 32 bits (#3581); it is the
+			// literal-only init whose width the literal decides.
+			if gn, ok := got.(ast.NumberType); ok && gn.Polymorphic {
+				if def := polymorphicIntDefault(n.Init); def.Width == 64 {
+					c.settleInt(n.Init, def)
+					got = def
+				}
 			}
 			n.Type = got
 		} else if got != nil {
@@ -13505,12 +13499,12 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			// the narrowing rule below keeps `300 as u8` an E047: `1 as f64`
 			// is a float literal, and a wide one (`4611686018427387904 as f64`)
 			// needs the target to escape the i32 default.
-			c.settleNumeric(n.Inner, castOperandInt(inner))
+			c.settleNumeric(n.Inner, castOperandInt(inner, n.Inner))
 		} else if _, tgtIsChar := n.Target.(ast.CharType); tgtIsChar {
 			// `65 as char`: `char` is not a NumberType, so settle the inner
 			// at its own integer type rather than handing settleNumeric a
 			// non-numeric target.
-			c.settleNumeric(n.Inner, castOperandInt(inner))
+			c.settleNumeric(n.Inner, castOperandInt(inner, n.Inner))
 		} else if nt, tgtNum := n.Target.(ast.NumberType); tgtNum &&
 			nt.NormalWidth() > 0 && nt.NormalWidth() < 32 &&
 			!isBareNumericLiteral(n.Inner) {
@@ -13531,7 +13525,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			// so `300 as u8` stays the E047 it should be — that is a typo, not
 			// an arithmetic intent, and it is the case the widening rule above
 			// (`4611686018427387904 as u64`) was written for.
-			c.settleNumeric(n.Inner, castOperandInt(inner))
+			c.settleNumeric(n.Inner, castOperandInt(inner, n.Inner))
 		} else {
 			c.settleNumeric(n.Inner, n.Target)
 		}
@@ -16959,22 +16953,55 @@ func (c *checker) postSettleType(e ast.Expr, prior ast.Type) ast.Type {
 	return prior
 }
 
-// intLitExceedsI32 reports whether `e` is a bare integer literal (or a
-// unary-negated one) whose value lies outside the signed i32 range. It drives
-// the i64-widening default for an unannotated binding (#3676): a written-out
-// constant past i32 range has no valid i32 reading, so it defaults to i64
-// instead of being silently truncated. A typed-suffix literal (`42i64`) already
-// carries a Width and isn't a default case; a float literal is excluded.
-func intLitExceedsI32(e ast.Expr) bool {
-	negated := false
-	if u, ok := e.(*ast.Unary); ok && u.Op == "-" {
-		e, negated = u.Operand, true
+// polymorphicIntDefault is the width a still-polymorphic integer expression
+// settles at when no context names one: i32, or i64 when an unsuffixed literal
+// anywhere in it lies outside the i32 range (#3676). Such a constant has no i32
+// reading, so lowering it at the default would truncate it silently — and a
+// literal inside `3 - 4611686018427387904` or an if-expression arm is no more
+// readable at i32 than a bare one (#8668). The walk covers the literal-only
+// shapes settleInt descends; anything with a type of its own (an identifier, a
+// call, a suffixed literal) has already settled and commits the tree itself.
+func polymorphicIntDefault(e ast.Expr) ast.NumberType {
+	if unsettledIntLitExceedsI32(e, false) {
+		return ast.NumberType{Width: 64, Signed: true}
 	}
-	lit, ok := e.(*ast.NumberLit)
-	if !ok || lit.IsFloat || lit.Width != 0 {
-		return false
+	return ast.NumberType{Width: 32, Signed: true}
+}
+
+func unsettledIntLitExceedsI32(e ast.Expr, negated bool) bool {
+	switch x := e.(type) {
+	case *ast.NumberLit:
+		if x.IsFloat || x.Width != 0 {
+			return false
+		}
+		return ast.IntLitOutOfRange(x, negated, ast.NumberType{Width: 32, Signed: true}) != ""
+	case *ast.Unary:
+		switch x.Op {
+		case "-":
+			return unsettledIntLitExceedsI32(x.Operand, !negated)
+		case "+":
+			return unsettledIntLitExceedsI32(x.Operand, negated)
+		}
+	case *ast.Binary:
+		if x.IntWidth != 0 || x.FloatWidth != 0 || x.IsStringConcat {
+			return false
+		}
+		switch x.Op {
+		case "+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>", "+|", "-|", "*|", "<<|":
+			return unsettledIntLitExceedsI32(x.Left, false) || unsettledIntLitExceedsI32(x.Right, false)
+		}
+	case *ast.IfExpr:
+		return unsettledIntLitExceedsI32(x.Then, false) || unsettledIntLitExceedsI32(x.Else, false)
+	case *ast.MatchExpr:
+		for _, arm := range x.Arms {
+			if arm != nil && unsettledIntLitExceedsI32(arm.Body, false) {
+				return true
+			}
+		}
+	case *ast.BlockExpr:
+		return unsettledIntLitExceedsI32(x.Tail, false)
 	}
-	return ast.IntLitOutOfRange(lit, negated, ast.NumberType{Width: 32, Signed: true}) != ""
+	return false
 }
 
 // checkLiteralFits reports E047 when the literal, as the source wrote it, is
@@ -17421,13 +17448,13 @@ func (c *checker) requireBool(p ast.Position, t ast.Type, op string) {
 // out-of-range constant stays an E047 rather than silently wrapping.
 // castOperandInt is the type a cast settles a non-bare integer operand at
 // when its target must stay out of the operand: the operand's own type, or
-// i32 while it is still polymorphic. Spelled with Signed — `NumberType{Width:
-// 32}` is u32, and settling `(3 - 4) as f64` there gave 4294967295.
-func castOperandInt(inner ast.Type) ast.NumberType {
+// the polymorphic default while it has none — i32, or i64 when a literal in it
+// needs that (`(3 - 4611686018427387904) as f64`, #8668).
+func castOperandInt(inner ast.Type, e ast.Expr) ast.NumberType {
 	if in, ok := inner.(ast.NumberType); ok && !in.Polymorphic {
 		return in
 	}
-	return ast.NumberType{Width: 32, Signed: true}
+	return polymorphicIntDefault(e)
 }
 
 func isBareNumericLiteral(e ast.Expr) bool {

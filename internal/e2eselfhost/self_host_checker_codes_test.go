@@ -905,6 +905,11 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"literal-i32-max-ok", "function main(): i32 { var x: i32 = 2147483647; return 0; }\n", nil},
 		{"literal-i32-maxplus1", "function main(): i32 { var x: i32 = 2147483648; return 0; }\n", []string{"E047"}},
 		{"literal-fits-i32-ok", "function main(): i32 { var x: i32 = 2000000000; return 0; }\n", nil},
+		// A wide literal inside an unannotated binding's arithmetic, or a cast
+		// operand, widens the whole expression to i64 rather than being judged
+		// against the i32 default (#8668) — both checkers are silent.
+		{"literal-wide-compound-unannot-ok", "function main(): i32 { var t = 3 - 4611686018427387904; var u: i64 = t; return 0; }\n", nil},
+		{"literal-wide-compound-cast-ok", "function main(): i32 { var f = (3 - 4611686018427387904) as f64; return 0; }\n", nil},
 		{"enum-redeclared", "enum Opt { A, B }\nenum Opt { C, D }\nfunction main(): i32 { return 0; }\n", []string{"E006"}},
 		{"enum-dup-variant", "enum Opt { A, A, B }\nfunction main(): i32 { return 0; }\n", []string{"E017"}},
 		{"enum-clean-ok", "enum Opt { A, B }\nfunction main(): i32 { return 0; }\n", nil},

@@ -524,6 +524,54 @@ func TestUnannotatedBigLiteralDefaultsToI64(t *testing.T) {
 	}
 }
 
+// TestUnannotatedCompoundWithBigLiteralDefaultsToI64 covers #8668: the #3676
+// widening reads through a literal-only init, not only a bare literal. Before
+// it, `var t = 3 - 4611686018427387904` left the binary polymorphic, nothing
+// settled it, and the literal lowered at the i32 default as 0 — so `t` was 3
+// with no diagnostic, where the bare literal widens and an operand already
+// committed to i32 gets E047. The width is asserted through assignability as
+// in the bare-literal test: an i64 slot accepts the binding, an i32 slot
+// refuses it.
+func TestUnannotatedCompoundWithBigLiteralDefaultsToI64(t *testing.T) {
+	const big = "4611686018427387904"
+	widened := []string{
+		`var t = 3 - ` + big + `;`,
+		`var t = ` + big + ` - 3;`,
+		`var t = -` + big + ` + 1;`,
+		`var t = (1 + 2) * ` + big + `;`,
+		`var t = if (true) { 3 - ` + big + ` } else { 0 };`,
+	}
+	for _, decl := range widened {
+		if err := checkSource(t, "function main(): i32 { "+decl+" var u: i64 = t; return 0; }"); err != nil {
+			t.Errorf("%s: should be i64 (assignable to i64), got: %v", decl, err)
+		}
+		err := checkSource(t, "function main(): i32 { "+decl+" var u: i32 = t; return 0; }")
+		if err == nil || !strings.Contains(err.Error(), "cannot assign i64") {
+			t.Errorf("%s: into an i32 slot should be E003 naming i64, got: %v", decl, err)
+		}
+	}
+	// The compound is settled at i64, so its wide literal passes the range
+	// check there instead of being judged against i32.
+	if err := checkSource(t, "function main(): i32 { var t = 3 - "+big+"; var f = (3 - "+big+") as f64; return 0; }"); err != nil {
+		t.Errorf("compound with a wide literal should check clean, got: %v", err)
+	}
+	// A compound of small literals keeps the i32 default.
+	if err := checkSource(t, "function main(): i32 { var t = 3 - 4; var u: i32 = t; return u; }"); err != nil {
+		t.Errorf("small compound should stay i32, got: %v", err)
+	}
+	// A literal too wide even for i64 is refused against the i64 the compound
+	// settles at, not silently wrapped.
+	err := checkSource(t, "function main(): i32 { var t = 3 - 18446744073709551616; return 0; }")
+	if err == nil || !strings.Contains(err.Error(), "does not fit in i64") {
+		t.Errorf("past-u64 literal in a compound should be E047 naming i64, got: %v", err)
+	}
+	// An operand already committed to i32 is not widened behind its back.
+	err = checkSource(t, "function main(): i32 { var a: i32 = 3; var t = a - "+big+"; return 0; }")
+	if err == nil || !strings.Contains(err.Error(), "does not fit in i32") {
+		t.Errorf("wide literal beside an i32 operand should stay E047 naming i32, got: %v", err)
+	}
+}
+
 // The wasm reactor builtins (wasm_timer_pollable / wasm_block) are
 // registered as FuncSigs and type-check: wasm_timer_pollable takes an
 // i64 duration and returns an i32 pollable handle; wasm_block takes a

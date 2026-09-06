@@ -41,6 +41,11 @@ var i64MixWidthIRCases = []struct {
 	{"neg-sign", `function main(): i32 { var i: i32 = -8; var s: i64 = 50; return (s + i) as i32; }`},
 	// Accumulate over 100 iterations in the i64 domain, then narrow. sum(0..99)=4950, /100 = 49.
 	{"big-acc", `function main(): i32 { var s: i64 = 0; for i in 0..100 { s = s + i; } return (s / 100) as i32; }`},
+	// An UNANNOTATED literal-only compound whose width comes from a literal past
+	// i32 range (#8668): the binding is i64 on both compilers, and the value is
+	// the one the source wrote, not the truncated i32 default. 2^62 / 10^18 = 4,
+	// +40 = 44.
+	{"wide-literal-compound", `function main(): i32 { var t = 3 - 4611686018427387904; var u = 4611686018427387904 - 3; if (t != 0 - u) { return 1; } return ((u / 1000000000000000000) as i32) + 40; }`},
 }
 
 // TestSelfHostI64MixWidthIRX86_64 routes each case through the self-hosted x86-64

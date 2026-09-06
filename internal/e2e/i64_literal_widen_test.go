@@ -33,17 +33,43 @@ function main(): i32 {
 }
 `
 
+// compoundBigLiteralProgram pins #8668: the widening reads through an
+// unannotated binding's ARITHMETIC, not only a bare literal. `3 - 2^62` was
+// left polymorphic, nothing settled it, and the literal lowered at the i32
+// default as 0 — so `t` was 3, `u` was -3, and no engine complained. Every
+// form here must agree with the annotated `: i64` spelling: the compound in
+// either operand order, an if-expression arm, and a cast operand.
+// 2^62 / 10^18 = 4, so a correct run exits 44; the truncated one exited 1.
+const compoundBigLiteralProgram = `
+function main(): i32 {
+  var w: i64 = 3 - 4611686018427387904;
+  var t = 3 - 4611686018427387904;
+  var u = 4611686018427387904 - 3;
+  var v = if (u > 0) { 3 - 4611686018427387904 } else { 0 };
+  var f = (3 - 4611686018427387904) as f64;
+  if (t != w) { return 1; }
+  if (u != 0 - w) { return 2; }
+  if (v != w) { return 3; }
+  if (f > -4600000000000000000.0) { return 4; }
+  return ((u / 1000000000000000000) as i32) + 40;
+}
+`
+
 func TestInterpUnannotatedBigLiteralWidens(t *testing.T) {
 	bin := buildLangBinForInterp(t)
-	cmd := exec.Command(bin, "-interp", "-")
-	cmd.Stdin = bytes.NewReader([]byte(unannotatedBigLiteralProgram))
-	var out, errb bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &errb
-	_ = cmd.Run()
-	if code := cmd.ProcessState.ExitCode(); code != 0 {
-		t.Fatalf("interp exit = %d, want 0 (literal widens to i64, stays positive)\nstderr: %s", code, errb.String())
+	run := func(src string, want int, what string) {
+		cmd := exec.Command(bin, "-interp", "-")
+		cmd.Stdin = bytes.NewReader([]byte(src))
+		var out, errb bytes.Buffer
+		cmd.Stdout = &out
+		cmd.Stderr = &errb
+		_ = cmd.Run()
+		if code := cmd.ProcessState.ExitCode(); code != want {
+			t.Errorf("interp %s: exit = %d, want %d\nstderr: %s", what, code, want, errb.String())
+		}
 	}
+	run(unannotatedBigLiteralProgram, 0, "big-literal widen (stays positive)")
+	run(compoundBigLiteralProgram, 44, "big-literal compound")
 }
 
 func TestX86_64UnannotatedBigLiteralWidens(t *testing.T) {
@@ -52,6 +78,9 @@ func TestX86_64UnannotatedBigLiteralWidens(t *testing.T) {
 	}
 	if _, code := compileAndRunX86_64(t, bigLiteralArithmeticProgram); code != 5 {
 		t.Errorf("x86-64 big-literal arithmetic: exit = %d, want 5", code)
+	}
+	if _, code := compileAndRunX86_64(t, compoundBigLiteralProgram); code != 44 {
+		t.Errorf("x86-64 big-literal compound: exit = %d, want 44", code)
 	}
 }
 
@@ -62,6 +91,9 @@ func TestArm64UnannotatedBigLiteralWidens(t *testing.T) {
 	if _, code := compileAndRunArm64(t, bigLiteralArithmeticProgram); code != 5 {
 		t.Errorf("arm64 big-literal arithmetic: exit = %d, want 5", code)
 	}
+	if _, code := compileAndRunArm64(t, compoundBigLiteralProgram); code != 44 {
+		t.Errorf("arm64 big-literal compound: exit = %d, want 44", code)
+	}
 }
 
 func TestWASMUnannotatedBigLiteralWidens(t *testing.T) {
@@ -70,5 +102,8 @@ func TestWASMUnannotatedBigLiteralWidens(t *testing.T) {
 	}
 	if code := runWasm(t, bigLiteralArithmeticProgram); code != 5 {
 		t.Errorf("wasm big-literal arithmetic: exit = %d, want 5", code)
+	}
+	if code := runWasm(t, compoundBigLiteralProgram); code != 44 {
+		t.Errorf("wasm big-literal compound: exit = %d, want 44", code)
 	}
 }

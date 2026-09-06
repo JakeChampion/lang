@@ -210,7 +210,8 @@ func checkErrors(t *testing.T, src string) []*Error {
 // refuses it as E047 against the type the context asked for, at the literal's
 // own column — the report every other over-range literal gets (#8563). With no
 // context to name, the refusal names the type the literal would otherwise
-// default to: i64 for a bare binding (the #3676 widening), i32 anywhere else.
+// default to: i64 for an unannotated binding (the #3676 widening, which reads
+// through the binding's arithmetic too), i32 anywhere else.
 func TestIntLiteralPastU64IsE047(t *testing.T) {
 	const lit = "18446744073709551616"
 	cases := []struct {
@@ -225,11 +226,11 @@ func TestIntLiteralPastU64IsE047(t *testing.T) {
 		{`var a: u8 = ` + lit + `;`, lit, "u8", 36},
 		{`var a = ` + lit + `;`, lit, "i64", 32},
 		{`var a = -` + lit + `;`, "-" + lit, "i64", 33},
+		{`var b = ` + lit + ` + 1;`, lit, "i64", 32},
 		{`var a = ` + lit + ` as u64;`, lit, "u64", 32},
 		// Typed by its suffix, so it never settles: judged against that type.
 		{`var a = ` + lit + `u64;`, lit, "u64", 32},
 		// Nothing settles these; they would lower as the i32 default.
-		{`var b = ` + lit + ` + 1;`, lit, "i32", 32},
 		{`var t = (` + lit + `, 1);`, lit, "i32", 33},
 		{`var xs = [` + lit + `];`, lit, "i32", 34},
 		{`var b: boolean = ` + lit + ` > 1;`, lit, "i32", 41},
@@ -263,18 +264,21 @@ func TestIntLiteralPastU64IsE047(t *testing.T) {
 
 // A literal past i64 max fits only u64 (or i64 as its minimum), so it is valid
 // only where a context settles it. One left unsettled — a tuple or array
-// element, an operand of a comparison or of an arithmetic expression with no
-// typed side — lowered as the i32 default and wrapped silently (the #8449
-// family). It is refused against that default now; a settled one is untouched.
+// element, an operand of a comparison with no typed side — lowered as the i32
+// default and wrapped silently (the #8449 family). It is refused against that
+// default now; a settled one is untouched. An unannotated binding settles its
+// own arithmetic at the i64 default a wide literal selects (#8668), so the
+// literal is judged there.
 func TestWideIntLiteralLeftUnsettledIsE047(t *testing.T) {
 	rejected := []struct {
 		src     string
 		wantCol int
+		wantIn  string
 	}{
-		{`var b = 9223372036854775808 + 1;`, 32},
-		{`var t = (9223372036854775808, 1);`, 33},
-		{`var xs = [18446744073709551615];`, 34},
-		{`var b: boolean = 9223372036854775808 > 1;`, 41},
+		{`var b = 9223372036854775808 + 1;`, 32, "i64"},
+		{`var t = (9223372036854775808, 1);`, 33, "i32"},
+		{`var xs = [18446744073709551615];`, 34, "i32"},
+		{`var b: boolean = 9223372036854775808 > 1;`, 41, "i32"},
 	}
 	for _, c := range rejected {
 		errs := checkErrors(t, "function main(): i32 { "+c.src+" return 0; }")
@@ -283,8 +287,8 @@ func TestWideIntLiteralLeftUnsettledIsE047(t *testing.T) {
 			continue
 		}
 		e := errs[0]
-		if e.ErrCode != "E047" || e.Pos.Col != c.wantCol || !strings.Contains(e.Msg, "does not fit in i32") {
-			t.Errorf("%s: got %s at %d:%d %q, want E047 at 1:%d naming i32", c.src, e.ErrCode, e.Pos.Line, e.Pos.Col, e.Msg, c.wantCol)
+		if e.ErrCode != "E047" || e.Pos.Col != c.wantCol || !strings.Contains(e.Msg, "does not fit in "+c.wantIn) {
+			t.Errorf("%s: got %s at %d:%d %q, want E047 at 1:%d naming %s", c.src, e.ErrCode, e.Pos.Line, e.Pos.Col, e.Msg, c.wantCol, c.wantIn)
 		}
 	}
 	accepted := []string{
