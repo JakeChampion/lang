@@ -32,12 +32,6 @@ func TestNumericLiteralErrorsCarryCode(t *testing.T) {
 		}
 		return ""
 	}
-	if c := codeOf(`function main(): i32 { return 99999999999999999999999; }`); c != "P002" {
-		t.Errorf("out-of-range integer literal: code = %q, want P002", c)
-	}
-	if c := codeOf(`function main(): i32 { return 0xFFFFFFFFFFFFFFFFFFFF; }`); c != "P002" {
-		t.Errorf("out-of-range hex literal: code = %q, want P002", c)
-	}
 	// Float literals are range-checked at f64 width, whatever the suffix says
 	// a magnitude no double can hold is P002, not a silent +Inf. The
 	// self-host front end has to agree, which is what #6842 was about, so both
@@ -1629,7 +1623,8 @@ func TestLargeU64DecimalLiteralParses(t *testing.T) {
 
 // A sixteen-digit hex literal with the top bit set is the same u64 bit
 // pattern spelled in base 16 (a SHA-512 round constant, `0xffffffffffffffff`),
-// and takes the same unsigned fallback; seventeen digits is still an error.
+// and takes the same unsigned fallback; seventeen digits is past u64 and is
+// kept flagged for the checker to refuse.
 func TestLargeU64HexLiteralParses(t *testing.T) {
 	prog, err := Parse(`function main(): u64 { return 0xd807aa98a3030242 as u64; }`)
 	if err != nil {
@@ -1645,8 +1640,19 @@ func TestLargeU64HexLiteralParses(t *testing.T) {
 	if lit == nil || uint64(lit.Value) != 0xd807aa98a3030242 {
 		t.Fatalf("hex literal value = %v, want the 0xd807aa98a3030242 bit pattern", lit)
 	}
-	if _, err := Parse(`function main(): u64 { return 0x1ffffffffffffffff as u64; }`); err == nil || !strings.Contains(err.Error(), "hex literal") {
-		t.Fatalf("17-digit hex literal should be rejected as an invalid hex literal; got %v", err)
+	prog, err = Parse(`function main(): u64 { return 0x1ffffffffffffffff as u64; }`)
+	if err != nil {
+		t.Fatalf("17-digit hex literal should parse flagged: %v", err)
+	}
+	lit = nil
+	ast.Walk(prog.Funcs[0].Body, func(n ast.Node) bool {
+		if l, ok := n.(*ast.NumberLit); ok {
+			lit = l
+		}
+		return true
+	})
+	if lit == nil || !lit.ExceedsU64 || lit.Raw != "0x1ffffffffffffffff" {
+		t.Fatalf("17-digit hex literal = %+v, want ExceedsU64 with its spelling in Raw", lit)
 	}
 }
 
@@ -4056,5 +4062,55 @@ func TestUnterminatedReceiverClauseDoesNotPanic(t *testing.T) {
 		if _, err := Parse(src); err == nil {
 			t.Errorf("expected a parse error for %q", src)
 		}
+	}
+}
+
+// An integer literal no 64-bit type can hold is not a parse error: the parser
+// keeps it, flagged ExceedsU64 with its spelling in Raw and nothing in Value,
+// so the checker can refuse it as E047 against the type the context asked for
+// — the way every other over-range literal is refused — instead of the parser
+// quoting strconv (#8563). A suffix still types it.
+func TestIntegerLiteralPastU64ParsesFlagged(t *testing.T) {
+	cases := []struct {
+		text      string
+		wantWidth int
+	}{
+		{"18446744073709551616", 0},
+		{"99999999999999999999999", 0},
+		{"0xFFFFFFFFFFFFFFFFFFFF", 0},
+		{"18446744073709551616u64", 64},
+	}
+	for _, c := range cases {
+		prog, err := Parse(`function main(): i32 { return ` + c.text + `; }`)
+		if err != nil {
+			t.Errorf("%s: parse error %v, want the literal kept", c.text, err)
+			continue
+		}
+		ret, ok := prog.Funcs[0].Body.Stmts[0].(*ast.Return)
+		if !ok {
+			t.Fatalf("%s: statement is %T, want *ast.Return", c.text, prog.Funcs[0].Body.Stmts[0])
+		}
+		lit, ok := ret.Value.(*ast.NumberLit)
+		if !ok {
+			t.Errorf("%s: returned %T, want *ast.NumberLit", c.text, ret.Value)
+			continue
+		}
+		raw := strings.TrimSuffix(c.text, "u64")
+		if !lit.ExceedsU64 || lit.ExceedsI64 || lit.Value != 0 || lit.Raw != raw || lit.Width != c.wantWidth {
+			t.Errorf("%s: got ExceedsU64=%v ExceedsI64=%v Value=%d Raw=%q Width=%d, want ExceedsU64 with Raw %q and Width %d",
+				c.text, lit.ExceedsU64, lit.ExceedsI64, lit.Value, lit.Raw, lit.Width, raw, c.wantWidth)
+		}
+		if lit.P.Col != 31 {
+			t.Errorf("%s: literal at column %d, want 31", c.text, lit.P.Col)
+		}
+	}
+	// The boundary: u64 max is a value, not a flag.
+	prog, err := Parse(`function main(): i32 { return 18446744073709551615; }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lit := prog.Funcs[0].Body.Stmts[0].(*ast.Return).Value.(*ast.NumberLit)
+	if lit.ExceedsU64 || !lit.ExceedsI64 || uint64(lit.Value) != 18446744073709551615 {
+		t.Errorf("u64 max: got ExceedsU64=%v ExceedsI64=%v Value=%d", lit.ExceedsU64, lit.ExceedsI64, lit.Value)
 	}
 }

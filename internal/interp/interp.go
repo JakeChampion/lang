@@ -4144,6 +4144,10 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 				w = 64
 			}
 			v := float64(x.Value)
+			if x.ExceedsI64 {
+				// Value is the wrapped bit pattern; the magnitude is unsigned.
+				v = float64(uint64(x.Value))
+			}
 			if w == 32 {
 				v = float64(float32(v))
 			}
