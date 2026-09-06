@@ -44,6 +44,18 @@ const (
 	pageRoundCeil = -65536
 )
 
+// strRoundedSize writes the 16-rounded allocator request for a string of
+// byte length local[lenLocal] into local[sizeLocal]: (len + 8 + 15) & -16,
+// the header word included. It is what emitFreelistBin bins.
+func strRoundedSize(b []byte, lenLocal, sizeLocal uint32) []byte {
+	b = inst.InstLocalGet(b, lenLocal)
+	b = inst.InstI32Const(b, 23)
+	b = numeric.InstI32Add(b)
+	b = inst.InstI32Const(b, -16)
+	b = numeric.InstI32And(b)
+	return inst.InstLocalSet(b, sizeLocal)
+}
+
 // emitFreelistBin appends the size→(capacity, class) binning both
 // __fern_alloc and __fern_free must agree on. Emitting it from ONE
 // place is the point: alloc has to BUMP at the same capacity free
@@ -3625,7 +3637,7 @@ func buildStrConcatBody(idxs map[string]uint32) []byte {
 // Locals (after params): $la (4), $lb (5), $total (6), $i (7 —
 // strConcatCopyOne's scratch), $out_data (8), $out_len (9), then the class
 // arithmetic's $size_a (10), $cap_a (11), $class (12), $tmp (13), $size_t
-// (14), $cap_t (15).
+// (14).
 //
 // It CONSUMES `a`: the IR only emits it where the assignment was about to
 // overwrite and reclaim that slot, so its dec-on-overwrite is suppressed.
@@ -3705,23 +3717,16 @@ func buildStrAppendBody(idxs map[string]uint32) []byte {
 		body = inst.InstI32Const(body, maxStrLen)
 		body = numeric.InstI32GtU(body)
 		body = inst.InstBrIf(body, 0)
-		// Same allocator capacity? request(len) = (len + 8 + 15) & -16,
-		// then the tier's round-up.
-		roundedSize := func(b []byte, lenLocal, sizeLocal uint32) []byte {
-			b = inst.InstLocalGet(b, lenLocal)
-			b = inst.InstI32Const(b, 23)
-			b = numeric.InstI32Add(b)
-			b = inst.InstI32Const(b, -16)
-			b = numeric.InstI32And(b)
-			return inst.InstLocalSet(b, sizeLocal)
-		}
-		body = roundedSize(body, 4, 10)
-		body = roundedSize(body, 6, 14)
+		// Still the same block? request(len) = (len + 8 + 15) & -16, and
+		// the capacity function is monotone and idempotent, so the grown
+		// request classing the same as the old one is exactly
+		// `size_t > cap_a` being false — one binning, not two.
+		body = strRoundedSize(body, 4, 10)
+		body = strRoundedSize(body, 6, 14)
 		body = emitFreelistBin(body, 10, 11, 12, 13)
-		body = emitFreelistBin(body, 14, 15, 12, 13)
+		body = inst.InstLocalGet(body, 14)
 		body = inst.InstLocalGet(body, 11)
-		body = inst.InstLocalGet(body, 15)
-		body = numeric.InstI32Ne(body)
+		body = numeric.InstI32GtU(body)
 		body = inst.InstBrIf(body, 0)
 		if ast.LeakCheckEnabled {
 			// The block was charged at its 16-rounded request and __free
@@ -3760,7 +3765,7 @@ func buildStrAppendBody(idxs map[string]uint32) []byte {
 	body = inst.InstDrop(body)
 	body = inst.InstLocalGet(body, 8)
 	body = inst.InstLocalGet(body, 9)
-	locals := inst.PutLocalsOneGroup(nil, 12, encode.ValtypeI32)
+	locals := inst.PutLocalsOneGroup(nil, 11, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
 }
 

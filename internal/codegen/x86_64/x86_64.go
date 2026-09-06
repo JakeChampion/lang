@@ -8590,8 +8590,11 @@ func (g *generator) emitStrAppendRuntime() {
 	g.emit("mov r8d, ecx")
 	g.emit("add r8d, edx") // total = la + lb
 	g.emit("mov r11, rcx") // la, kept across the class arithmetic
-	// Same capacity? request(len) = (len + 1 + 8 + 15) & -16, then the tier's
-	// round-up. A bump-only block (>1 GiB) is never grown in place.
+	// Still the same block? request(len) = (len + 1 + 8 + 15) & -16. The
+	// capacity function is monotone and idempotent, so the grown request
+	// classing the same as the old one is exactly `req_new <= cap(req_old)`
+	// — one cap computation, not two. A bump-only block (>1 GiB) is never
+	// grown in place.
 	g.emit("lea r9, [rcx + 24]")
 	g.emit("and r9, -16")
 	g.emit("lea r10, [r8 + 24]")
@@ -8605,9 +8608,8 @@ func (g *generator) emitStrAppendRuntime() {
 		g.emit("sub rsi, r9")
 	}
 	g.emitSizeClassCap("r9", "rax", "rdx")
-	g.emitSizeClassCap("r10", "rax", "rdx")
-	g.emit("cmp r9, r10")
-	g.emit("jne .Lstrapp_copy")
+	g.emit("cmp r10, r9")
+	g.emit("ja .Lstrapp_copy")
 	// --- in place: memcpy(a + la, b_data, lb) ---
 	if ast.LeakCheckEnabled {
 		g.emit("add qword ptr [rip + __fern_lc_alloc_bytes], rsi")
