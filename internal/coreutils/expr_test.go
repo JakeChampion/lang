@@ -509,6 +509,19 @@ func exprCases(t *testing.T) []invocation {
 		{name: "buffer end", args: []string{"a", ":", `a\'`}},
 		{name: "buffer end with more text", args: []string{"a'", ":", `a\'`}},
 		{name: "buffer start", args: []string{"a", ":", "\\`a"}},
+		// A duplication operator has no atom to repeat after a
+		// zero-width word operator, so it is the literal character —
+		// the same rule `^*a` already took for the anchor.
+		{name: "question after a word start is a literal", args: []string{"a", ":", `\<\?[ab]`}},
+		{name: "question after a word start matches the character", args: []string{"?a", ":", "\\`\\?a"}},
+		{name: "plus after a buffer start is a literal", args: []string{"a", ":", "\\`\\+a"}},
+		{name: "plus after a buffer start matches the character", args: []string{"+a", ":", "\\`\\+a"}},
+		{name: "star after a word boundary is a literal", args: []string{"a", ":", `\b*a`}},
+		{name: "star after a word boundary matches the character", args: []string{"*a", ":", `\b*a`}},
+		{name: "brace after a word start is a literal", args: []string{"a", ":", `\<\{2,1\}a`}},
+		{name: "unclosed brace after a word start is a literal", args: []string{"a", ":", `\<\{a`}},
+		{name: "the second question repeats the first", args: []string{"a", ":", `\<\?\?a`}},
+		{name: "a repeated word end", args: []string{"abc", ":", `\(ab\)[a-c]\>\+`}},
 		{name: "backreference", args: []string{"aa", ":", `\(a\)\1`}},
 		{name: "backreference that fails", args: []string{"abc", ":", `\(a\)\1`}},
 		{name: "backreference of a star", args: []string{"aa", ":", `\(a*\)\1`}},

@@ -166,7 +166,12 @@ coreutils/
   README.md         build / run / test / bench, for a reader who wants a binary
   lib/gnu.fern      what every utility shares with GNU: argv[0] verbatim,
                     the usage-error path, --help/--version handling,
-                    strerror text, checked stdout writes
+                    strerror text, checked stdout writes, and glibc's
+                    stdio buffering for the utilities whose write-error
+                    wording depends on it (tac)
+  lib/bre.fern      regular expressions as glibc compiles them —
+                    POSIX basic for expr, syntax 0 (Emacs) for tac -r,
+                    with glibc's regerror texts as the diagnostics
   lib/ld.fern       C's `long double` as the TARGET has it, for the
                     utilities that convert and compute in one
                     (printf, numfmt, seq, sleep)
@@ -373,6 +378,21 @@ the elision.
 
 ## Known divergences
 
+**`tac` holds a non-seekable input in memory.** tac reads its input
+backwards, so a pipe has to be stored before the first record can be
+written. GNU spools it to an unlinked `$TMPDIR/cutmpXXXXXX` and keeps one
+8 KiB block resident; `tac.fern` holds the whole stream instead, because
+creating that temporary safely needs a file created EXCLUSIVELY at a
+chosen path and `open_writer` truncates whatever the name reaches
+(#8776; `temp_dir()` is exclusive but chooses the directory itself, so it
+cannot take gnulib's `$TMPDIR`-only-if-it-is-a-directory rule). Nothing
+in the bytes differs: the held stream is handed back in the SAME 8 KiB
+windows the temporary file would be read in, so `-r` meets the same
+buffer boundaries and `^` anchors in the same places. What differs is
+memory — the input's size rather than a block — and that GNU's
+`failed to create temporary file` is unreachable here, so an unwritable
+`$TMPDIR` under an unprivileged user fails on GNU and succeeds on this.
+
 **`hostid` asks DNS over TCP.** The id is glibc's `gethostid`: `/etc/hostid`
 if it holds four bytes, else the hostname's IPv4 address with its halves
 swapped, else 0 — and the address comes from NSS, which `lib/resolv.fern`
@@ -437,7 +457,7 @@ groups are the order of work. Each sub-issue names its group.
   `join` `comm` `uniq` `sort` `tr` `fold` `fmt` `pr` `ptx` `expand`
   `unexpand` `split` `csplit` `shuf` `od` `base32` `base64` `basenc` `cksum`
   `sum` `md5sum` `sha1sum` `sha224sum` `sha256sum` `sha384sum` `sha512sum`
-  `b2sum` `tee`. `head` and `wc` are done. Needs a buffered stdout writer in
+  `b2sum` `tee`. `head`, `wc` and `tac` are done. Needs a buffered stdout writer in
   `std/io_buffered` (its own header already promises one) and a streaming
   stdin reader whose reads can FAIL: every one of these reaches a read error
   through a directory operand, and `Reader.read_chunk` answered None to EOF

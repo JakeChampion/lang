@@ -425,6 +425,198 @@ function die_on_write_error(w: io_buffered.BufWriter, status: i32): void {
   }
 }
 
+// ---- glibc's stdio, emulated -----------------------------------------------
+//
+// A utility that prints through stdio inherits one visible behaviour
+// from glibc that a plain buffered writer does not reproduce: what
+// close_stdout says when the output could not be written. `write error:
+// No space left on device` names the errno when the flush fclose runs
+// is what failed, and a bare `write error` reports a failure met
+// earlier with nothing left pending at the close. Which one a run gets
+// is decided by glibc's buffering algorithm — how much of a piece fits
+// in the buffer, when the buffer is flushed, and that a failed flush
+// drops the rest of the piece — so a utility reproduces the diagnostic
+// by issuing the same fwrite / printf / putc calls GNU does against
+// this emulation of that algorithm: `_IO_file_xsputn` for fwrite, fputs
+// and putc, and `_IO_do_flush` for fflush.
+//
+// The buffer is BUFSIZ (8192) bytes, or st_blksize when fstat of the
+// descriptor reports a smaller one, which every pipe, device and
+// ordinary file on Linux does (4096); it is allocated at the first
+// overflow, and a closed stdout fails the fstat and gets BUFSIZ. A
+// write that fails is sticky: glibc retries every later flush and
+// fails it again, and this stops issuing the syscall instead, which no
+// diagnostic can tell apart.
+//
+// The pending bytes are grown inside the struct literal, as
+// io_buffered's BufWriter grows its own: read into a local first and
+// every append copies the whole buffer.
+pub struct Stdio { w: Writer, buf: string, cap: i32, alloc: boolean, err: Option[IoError] }
+
+pub function stdio_new(): Stdio {
+  var w: Writer = stdout();
+  var cap: i32 = bufsiz();
+  match (w.stat()) {
+    Ok(st) => {
+      if (st.blksize > 0 as i64 && st.blksize < bufsiz() as i64) {
+        cap = st.blksize as i32;
+      }
+    },
+    Err(_) => {}
+  }
+  return Stdio { w: w, buf: "", cap: cap, alloc: false, err: None };
+}
+
+function bufsiz(): i32 {
+  return 8192;
+}
+
+// `(s).fwrite(data)` — fwrite, fputs, putc: `_IO_file_xsputn`.
+pub function (s: Stdio) fwrite(data: string): Stdio {
+  return xsputn(s, data).0;
+}
+
+// `(s).fflush()` — write what is pending; nothing is allocated for an
+// empty stream.
+pub function (s: Stdio) fflush(): Stdio {
+  if (s.buf.len() == 0) {
+    return s;
+  }
+  var r: (Stdio, boolean) = sys_write(s, s.buf);
+  return Stdio { ...r.0, buf: "" };
+}
+
+// `(s).report(msg)` — gnulib's error(): stdout flushed, then the
+// diagnostic. Rebind: `s = s.report(msg);`.
+pub function (s: Stdio) report(msg: string): Stdio {
+  var flushed: Stdio = s.fflush();
+  error(msg);
+  return flushed;
+}
+
+// `(s).close_stdout()` — gnulib's close_stdout over close_stream:
+// fclose, then `write error` with the errno when fclose failed and
+// without one when only an earlier write had, and no error at all for
+// a closed descriptor that had nothing pending and no earlier failure.
+pub function (s: Stdio) close_stdout(): void {
+  var some_pending: boolean = s.buf.len() > 0;
+  var prev_fail: boolean = false;
+  match (s.err) {
+    Some(_) => {
+      prev_fail = true;
+    },
+    None => {}
+  }
+  var fclose_fail: boolean = false;
+  var text: string = "";
+  if (some_pending) {
+    var r: (Stdio, boolean) = sys_write(s, s.buf);
+    if (!r.1) {
+      fclose_fail = true;
+      match (r.0.err) {
+        Some(e) => {
+          text = io_error_text(e);
+        },
+        None => {}
+      }
+    }
+  }
+  match (s.w.close()) {
+    Some(e) => {
+      fclose_fail = true;
+      text = io_error_text(e);
+    },
+    None => {}
+  }
+  if (prev_fail || fclose_fail && (some_pending || text != "Bad file descriptor")) {
+    if (fclose_fail) {
+      error("write error: " + text);
+    } else {
+      error("write error");
+    }
+    exit(1);
+  }
+}
+
+// `_IO_file_xsputn`: fill the buffer, flush it if that did not take
+// everything, write whole blocks of what is left directly, and buffer
+// the remainder. Returns the stream and how many bytes it took; a
+// failed flush ends the write with the rest dropped.
+function xsputn(s0: Stdio, data: string): (Stdio, i32) {
+  var s: Stdio = s0;
+  var n: i32 = data.len();
+  if (n == 0) {
+    return (s, 0);
+  }
+  var pos: i32 = 0;
+  var count: i32 = 0;
+  if (s.alloc) {
+    count = s.cap - s.buf.len();
+  }
+  if (count > 0) {
+    if (count > n) {
+      count = n;
+    }
+    s = Stdio { ...s, buf: s.buf + slice_unchecked(data, 0, count) };
+    pos = count;
+  }
+  if (pos < n) {
+    var f: (Stdio, boolean) = overflow(s);
+    s = f.0;
+    if (!f.1) {
+      return (s, pos);
+    }
+    var to_do: i32 = n - pos;
+    var do_write: i32 = to_do - to_do % s.cap;
+    if (do_write > 0) {
+      var piece: string = data;
+      if (do_write != n) {
+        piece = slice_unchecked(data, pos, pos + do_write) + "";
+      }
+      var w: (Stdio, boolean) = sys_write(s, piece);
+      s = w.0;
+      if (!w.1) {
+        return (s, pos);
+      }
+      pos = pos + do_write;
+    }
+    if (pos < n) {
+      s = Stdio { ...s, buf: s.buf + slice_unchecked(data, pos, n) };
+    }
+  }
+  return (s, n);
+}
+
+// `_IO_OVERFLOW(EOF)`: allocate the buffer on first use and write what
+// it holds. The buffer is empty afterwards whether or not the write
+// succeeded, as `new_do_write` leaves it.
+function overflow(s0: Stdio): (Stdio, boolean) {
+  var s: Stdio = Stdio { ...s0, alloc: true };
+  if (s.buf.len() == 0) {
+    return (s, true);
+  }
+  var r: (Stdio, boolean) = sys_write(s, s.buf);
+  return (Stdio { ...r.0, buf: "" }, r.1);
+}
+
+// One write(2), never retried once the stream has failed.
+function sys_write(s: Stdio, data: string): (Stdio, boolean) {
+  match (s.err) {
+    Some(_) => {
+      return (s, false);
+    },
+    None => {}
+  }
+  match (s.w.write(data)) {
+    Some(e) => {
+      return (Stdio { ...s, err: Some(e) }, false);
+    },
+    None => {
+      return (s, true);
+    }
+  }
+}
+
 // The long-option name in `a` (`--name` or `--name=value`), plus
 // whether a value was glued on.
 function long_parts(a: string): (string, boolean) {
