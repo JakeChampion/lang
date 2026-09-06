@@ -1,0 +1,739 @@
+// coreutils/lib/cond.fern — the conditional expression test(1) and [(1)
+// evaluate. The two utilities are one program: `[` requires a closing
+// `]` and honours `--help` / `--version` where `test` treats them as
+// strings, and everything after that is shared, so it lives here.
+//
+// The exit status is the value: 0 true, 1 false, 2 for an expression
+// that does not parse or an operand that is not what its operator
+// needs. Nothing is written to stdout.
+//
+// The grammar is GNU's, which is POSIX's four-argument table plus
+// GNU's own recursive descent for anything longer, and the two do
+// not agree with each other — `x = y -a` is "missing argument" while
+// `( x ) )` is also "missing argument" but for the opposite reason —
+// so the shape below follows what the reference binary does rather
+// than what a fresh grammar would. In particular:
+//
+//   - With one to four arguments the count decides the reading, not
+//     the tokens: `-a x` is a unary operator that does not exist,
+//     `( = )` is a string comparison of "(" and ")", and `! x y` is
+//     an error about `y`.
+//   - `-a` and `-o` are the general parser's, evaluated left to right
+//     with `-a` binding tighter, and BOTH sides are always evaluated:
+//     `'' -a 1 -eq a` still reports the bad integer.
+//   - A parenthesis in the general parser re-enters the four-argument
+//     table with whatever is inside, if that is at most four tokens.
+//   - `-l STRING` stands in for an integer operand on either side of
+//     the six numeric operators, and is silently a string operand of
+//     the string ones.
+//
+// Integers are compared as digit strings of any length, so leading
+// zeros, an explicit sign, and surrounding blanks are all accepted and
+// `-0` equals `0`. File predicates never report a failure: a path that
+// cannot be stat'ed is simply false.
+import "./gnu";
+
+// `run(bracket)` — the whole program. `bracket` selects the `[` rules;
+// `help` / `name` are what `[ --help` / `[ --version` print.
+pub function run(bracket: boolean, name: string, help: string): i32 {
+  var argv: string[] = args();
+  var argc: i32 = argv.len();
+  if (bracket) {
+    gnu.sole_help_version_with(argv, name, help, 0, 2);
+    if (argc < 2 || argv[argc - 1] != "]") {
+      die("missing " + gnu.quote("]"));
+    }
+    argc = argc - 1;
+  }
+  if (argc <= 1) {
+    return 1;
+  }
+  var r: (boolean, S) = posixtest(S { argv: argv, pos: 1, argc: argc }, argc - 1);
+  if (r.1.pos != argc) {
+    die("extra argument " + gnu.quote(argv[r.1.pos]));
+  }
+  if (r.0) {
+    return 0;
+  }
+  return 1;
+}
+
+function die(msg: string): void {
+  gnu.error(msg);
+  exit(2);
+}
+
+// ---- the argument cursor ---------------------------------------------------
+//
+// `pos` indexes argv the way GNU's does: argv[0] is the program and
+// `argc` is one past the last token (with `]` already dropped).
+struct S { argv: string[], pos: i32, argc: i32 }
+
+function tok(s: S): string {
+  return s.argv[s.pos];
+}
+
+function at(s: S, i: i32): string {
+  return s.argv[i];
+}
+
+function left(s: S): i32 {
+  return s.argc - s.pos;
+}
+
+// Running out of arguments names the LAST one, wherever the cursor is.
+function beyond(s: S): void {
+  die("missing argument after " + gnu.quote(s.argv[s.argc - 1]));
+}
+
+function advance(s: S, strict: boolean): S {
+  var n: S = S { ...s, pos: s.pos + 1 };
+  if (strict && n.pos >= n.argc) {
+    beyond(n);
+  }
+  return n;
+}
+
+function skip(s: S, n: i32): S {
+  return S { ...s, pos: s.pos + n };
+}
+
+// A token shaped like a unary operator: a dash and exactly one more byte.
+function unary_shaped(t: string): boolean {
+  return t.len() == 2 && t[0] as i32 == 45;
+}
+
+function is_binop(t: string): boolean {
+  return t == "=" || t == "==" || t == "!=" || is_intop(t) || t == "-nt" || t == "-ot" || t == "-ef";
+}
+
+function is_intop(t: string): boolean {
+  return t == "-eq" || t == "-ne" || t == "-lt" || t == "-le" || t == "-gt" || t == "-ge";
+}
+
+// ---- the argument-count table ----------------------------------------------
+function one_argument(s: S): (boolean, S) {
+  return (tok(s).len() > 0, advance(s, false));
+}
+
+function two_arguments(s: S): (boolean, S) {
+  if (tok(s) == "!") {
+    var r: (boolean, S) = one_argument(advance(s, false));
+    return (!r.0, r.1);
+  }
+  if (unary_shaped(tok(s))) {
+    return unary_operator(s);
+  }
+  beyond(s);
+  return (false, s);
+}
+
+function three_arguments(s: S): (boolean, S) {
+  var second: string = at(s, s.pos + 1);
+  if (is_binop(second)) {
+    return binary_operator(s, false);
+  }
+  if (tok(s) == "!") {
+    var r: (boolean, S) = two_arguments(advance(s, true));
+    return (!r.0, r.1);
+  }
+  if (tok(s) == "(" && at(s, s.pos + 2) == ")") {
+    var p: (boolean, S) = one_argument(advance(s, false));
+    return (p.0, advance(p.1, false));
+  }
+  if (second == "-a" || second == "-o") {
+    return expr(s);
+  }
+  die(gnu.quote(second) + ": binary operator expected");
+  return (false, s);
+}
+
+function four_arguments(s: S): (boolean, S) {
+  if (tok(s) == "!") {
+    var r: (boolean, S) = three_arguments(advance(s, true));
+    return (!r.0, r.1);
+  }
+  if (tok(s) == "(" && at(s, s.pos + 3) == ")") {
+    var p: (boolean, S) = two_arguments(advance(s, false));
+    return (p.0, advance(p.1, false));
+  }
+  if (tok(s) == "-l" && is_binop(at(s, s.pos + 2))) {
+    return binary_operator(s, true);
+  }
+  return expr(s);
+}
+
+function posixtest(s: S, nargs: i32): (boolean, S) {
+  if (nargs == 1) {
+    return one_argument(s);
+  }
+  if (nargs == 2) {
+    return two_arguments(s);
+  }
+  if (nargs == 3) {
+    return three_arguments(s);
+  }
+  if (nargs == 4) {
+    return four_arguments(s);
+  }
+  return expr(s);
+}
+
+// ---- the general grammar ---------------------------------------------------
+//
+// or → and (`-o` and)* ; and → term (`-a` term)* ; both sides of each
+// are evaluated whatever the other said.
+function expr(s: S): (boolean, S) {
+  if (s.pos >= s.argc) {
+    beyond(s);
+  }
+  return or_expr(s);
+}
+
+function or_expr(s0: S): (boolean, S) {
+  var s: S = s0;
+  var value: boolean = false;
+  while (true) {
+    var r: (boolean, S) = and_expr(s);
+    s = r.1;
+    if (r.0) {
+      value = true;
+    }
+    if (s.pos >= s.argc || tok(s) != "-o") {
+      return (value, s);
+    }
+    s = advance(s, false);
+  }
+  return (value, s);
+}
+
+function and_expr(s0: S): (boolean, S) {
+  var s: S = s0;
+  var value: boolean = true;
+  while (true) {
+    var r: (boolean, S) = term(s);
+    s = r.1;
+    if (!r.0) {
+      value = false;
+    }
+    if (s.pos >= s.argc || tok(s) != "-a") {
+      return (value, s);
+    }
+    s = advance(s, false);
+  }
+  return (value, s);
+}
+
+function term(s0: S): (boolean, S) {
+  var s: S = s0;
+  var negated: boolean = false;
+  while (s.pos < s.argc && tok(s) == "!") {
+    s = advance(s, true);
+    negated = !negated;
+  }
+  if (s.pos >= s.argc) {
+    beyond(s);
+  }
+  var r: (boolean, S) = primary(s);
+  if (negated) {
+    return (!r.0, r.1);
+  }
+  return r;
+}
+
+function primary(s: S): (boolean, S) {
+  if (tok(s) == "(") {
+    return paren(s);
+  }
+  if (4 <= left(s) && tok(s) == "-l" && is_binop(at(s, s.pos + 2))) {
+    return binary_operator(s, true);
+  }
+  if (3 <= left(s) && is_binop(at(s, s.pos + 1))) {
+    return binary_operator(s, false);
+  }
+  if (unary_shaped(tok(s))) {
+    return unary_operator(s);
+  }
+  return one_argument(s);
+}
+
+// A parenthesised group re-enters the count table with what is inside,
+// when a `)` closes it within four tokens; otherwise everything to the
+// end of the arguments is the inside, and the `)` is expected after.
+function paren(s0: S): (boolean, S) {
+  var s: S = advance(s0, true);
+  var nargs: i32 = 1;
+  while (s.pos + nargs < s.argc && at(s, s.pos + nargs) != ")") {
+    if (nargs == 4) {
+      nargs = left(s);
+      break;
+    }
+    nargs = nargs + 1;
+  }
+  var r: (boolean, S) = posixtest(s, nargs);
+  s = r.1;
+  // Past `argc` there is still the `]` of the bracket form, and GNU
+  // names it: `[ ( x` says "found ']'" where `test ( x` says nothing.
+  if (s.pos >= s.argv.len()) {
+    die("')' expected");
+  }
+  if (tok(s) != ")") {
+    die("')' expected, found " + gnu.quote(tok(s)));
+  }
+  return (r.0, advance(s, false));
+}
+
+// ---- integers --------------------------------------------------------------
+//
+// An integer operand is a sign and a run of digits, with blanks
+// allowed on either side and any number of digits. It is kept as a
+// sign plus the digits with the leading zeros gone, so the comparison
+// is by length and then bytes, and `-0` is zero.
+struct Int { neg: boolean, digits: string }
+
+// Only a space or a tab: GNU scans the operand with isblank, not isspace.
+function is_blank(b: i32): boolean {
+  return b == 32 || b == 9;
+}
+
+function is_digit(b: i32): boolean {
+  return b >= 48 && b <= 57;
+}
+
+function find_int(str: string): Int {
+  var i: i32 = 0;
+  while (i < str.len() && is_blank(str[i] as i32)) {
+    i = i + 1;
+  }
+  var neg: boolean = false;
+  if (i < str.len() && str[i] as i32 == 43) {
+    i = i + 1;
+  } else if (i < str.len() && str[i] as i32 == 45) {
+    neg = true;
+    i = i + 1;
+  }
+  var start: i32 = i;
+  while (i < str.len() && is_digit(str[i] as i32)) {
+    i = i + 1;
+  }
+  var end: i32 = i;
+  while (i < str.len() && is_blank(str[i] as i32)) {
+    i = i + 1;
+  }
+  if (end == start || i != str.len()) {
+    die("invalid integer " + gnu.quote(str));
+  }
+  while (start < end && str[start] as i32 == 48) {
+    start = start + 1;
+  }
+  return Int { neg: neg && start < end, digits: slice_unchecked(str, start, end) + "" };
+}
+
+function length_int(str: string): Int {
+  if (str.len() == 0) {
+    return Int { neg: false, digits: "" };
+  }
+  return Int { neg: false, digits: (str.len() as i64).to_string() };
+}
+
+function magnitude_cmp(a: string, b: string): i32 {
+  if (a.len() != b.len()) {
+    if (a.len() < b.len()) {
+      return 0 - 1;
+    }
+    return 1;
+  }
+  var i: i32 = 0;
+  while (i < a.len()) {
+    var x: i32 = a[i] as i32;
+    var y: i32 = b[i] as i32;
+    if (x != y) {
+      if (x < y) {
+        return 0 - 1;
+      }
+      return 1;
+    }
+    i = i + 1;
+  }
+  return 0;
+}
+
+function int_cmp(a: Int, b: Int): i32 {
+  if (a.neg && !b.neg) {
+    return 0 - 1;
+  }
+  if (!a.neg && b.neg) {
+    return 1;
+  }
+  var c: i32 = magnitude_cmp(a.digits, b.digits);
+  if (a.neg) {
+    return 0 - c;
+  }
+  return c;
+}
+
+function relate(op: string, c: i32): boolean {
+  if (op == "-eq") {
+    return c == 0;
+  }
+  if (op == "-ne") {
+    return c != 0;
+  }
+  if (op == "-lt") {
+    return c < 0;
+  }
+  if (op == "-le") {
+    return c <= 0;
+  }
+  if (op == "-gt") {
+    return c > 0;
+  }
+  return c >= 0;
+}
+
+// ---- binary operators ------------------------------------------------------
+//
+// `l_is_l` says the left operand is `-l STRING`; the right one is
+// whenever `-l` stands where the right operand would and a token
+// follows it — for every operator, which is why `abc = -l abc` is a
+// four-token comparison of "=" against "abc".
+function binary_operator(s0: S, l_is_l: boolean): (boolean, S) {
+  var s: S = s0;
+  if (l_is_l) {
+    s = advance(s, false);
+  }
+  var op: i32 = s.pos + 1;
+  var r_is_l: boolean = false;
+  if (op < s.argc - 2 && at(s, op + 1) == "-l") {
+    r_is_l = true;
+    s = advance(s, false);
+  }
+  var name: string = at(s, op);
+  if (is_intop(name)) {
+    var right: i32 = op + 1;
+    if (r_is_l) {
+      right = op + 2;
+    }
+    var l: Int = int_operand(at(s, op - 1), l_is_l);
+    var r: Int = int_operand(at(s, right), r_is_l);
+    return (relate(name, int_cmp(l, r)), skip(s, 3));
+  }
+  if (name == "-nt" || name == "-ot" || name == "-ef") {
+    s = skip(s, 3);
+    if (l_is_l || r_is_l) {
+      die(name + " does not accept -l");
+    }
+    return (file_pair(name, at(s, s.pos - 3), at(s, s.pos - 1)), s);
+  }
+  var equal: boolean = at(s, s.pos) == at(s, s.pos + 2);
+  if (name == "!=") {
+    return (!equal, skip(s, 3));
+  }
+  return (equal, skip(s, 3));
+}
+
+function int_operand(t: string, is_length: boolean): Int {
+  if (is_length) {
+    return length_int(t);
+  }
+  return find_int(t);
+}
+
+// ---- files -----------------------------------------------------------------
+function s_ifmt(): u32 {
+  return 61440 as u32;
+}
+
+function kind_of(path: string, follow: boolean): u32 {
+  if (follow) {
+    match (stat(path)) {
+      Ok(st) => {
+        return st.mode & s_ifmt();
+      },
+      Err(_) => {
+        return 0 as u32;
+      }
+    }
+  }
+  match (lstat(path)) {
+    Ok(st) => {
+      return st.mode & s_ifmt();
+    },
+    Err(_) => {
+      return 0 as u32;
+    }
+  }
+  return 0 as u32;
+}
+
+function mode_bit(path: string, bit: u32): boolean {
+  match (stat(path)) {
+    Ok(st) => {
+      return (st.mode & bit) != 0 as u32;
+    },
+    Err(_) => {
+      return false;
+    }
+  }
+  return false;
+}
+
+function accessible(path: string, mode: i32): boolean {
+  match (access(path, mode)) {
+    Ok(_) => {
+      return true;
+    },
+    Err(_) => {
+      return false;
+    }
+  }
+  return false;
+}
+
+function exists(path: string): boolean {
+  match (stat(path)) {
+    Ok(_) => {
+      return true;
+    },
+    Err(_) => {
+      return false;
+    }
+  }
+  return false;
+}
+
+function non_empty(path: string): boolean {
+  match (stat(path)) {
+    Ok(st) => {
+      return st.size > 0 as i64;
+    },
+    Err(_) => {
+      return false;
+    }
+  }
+  return false;
+}
+
+function owned_by_euid(path: string): boolean {
+  match (stat(path)) {
+    Ok(st) => {
+      return st.uid == geteuid();
+    },
+    Err(_) => {
+      return false;
+    }
+  }
+  return false;
+}
+
+function owned_by_egid(path: string): boolean {
+  match (stat(path)) {
+    Ok(st) => {
+      return st.gid == getegid();
+    },
+    Err(_) => {
+      return false;
+    }
+  }
+  return false;
+}
+
+// `-N`: modified since last read — the mtime is past the atime.
+function modified_since_read(path: string): boolean {
+  match (stat(path)) {
+    Ok(st) => {
+      return time_cmp(st.atime, st.atime_nsec, st.mtime, st.mtime_nsec) < 0;
+    },
+    Err(_) => {
+      return false;
+    }
+  }
+  return false;
+}
+
+function time_cmp(s1: i64, n1: i64, s2: i64, n2: i64): i32 {
+  if (s1 != s2) {
+    if (s1 < s2) {
+      return 0 - 1;
+    }
+    return 1;
+  }
+  if (n1 != n2) {
+    if (n1 < n2) {
+      return 0 - 1;
+    }
+    return 1;
+  }
+  return 0;
+}
+
+// `-nt` / `-ot` / `-ef`. A missing file decides the answer before any
+// comparison: `-nt` is true when only the right file is missing,
+// `-ot` when only the left one is, and `-ef` needs both.
+function file_pair(op: string, a: string, b: string): boolean {
+  if (op == "-nt") {
+    return newer(a, b);
+  }
+  if (op == "-ot") {
+    return newer(b, a);
+  }
+  return same_file(a, b);
+}
+
+function newer(a: string, b: string): boolean {
+  match (stat(a)) {
+    Ok(sa) => {
+      match (stat(b)) {
+        Ok(sb) => {
+          return time_cmp(sa.mtime, sa.mtime_nsec, sb.mtime, sb.mtime_nsec) > 0;
+        },
+        Err(_) => {
+          return true;
+        }
+      }
+    },
+    Err(_) => {
+      return false;
+    }
+  }
+  return false;
+}
+
+function same_file(a: string, b: string): boolean {
+  match (stat(a)) {
+    Ok(sa) => {
+      match (stat(b)) {
+        Ok(sb) => {
+          return sa.dev == sb.dev && sa.ino == sb.ino;
+        },
+        Err(_) => {
+          return false;
+        }
+      }
+    },
+    Err(_) => {
+      return false;
+    }
+  }
+  return false;
+}
+
+// `-t FD`: a terminal is on that descriptor. The operand is parsed as
+// an integer like any other; one that is negative or past INT_MAX is
+// simply not a terminal.
+function is_terminal(arg: string): boolean {
+  var n: Int = find_int(arg);
+  if (n.neg || n.digits.len() > 10) {
+    return false;
+  }
+  var fd: i64 = 0 as i64;
+  var i: i32 = 0;
+  while (i < n.digits.len()) {
+    fd = fd * (10 as i64) + (n.digits[i] as i32 - 48) as i64;
+    i = i + 1;
+  }
+  if (fd > 2147483647 as i64) {
+    return false;
+  }
+  return isatty(fd as i32);
+}
+
+// ---- unary operators -------------------------------------------------------
+function unary_operator(s0: S): (boolean, S) {
+  var name: string = tok(s0);
+  var letter: i32 = name[1] as i32;
+  if (!is_unary_letter(letter)) {
+    die(gnu.quote(name) + ": unary operator expected");
+  }
+  var s: S = advance(s0, true);
+  var arg: string = tok(s);
+  s = advance(s, false);
+  return (unary_value(letter, arg), s);
+}
+
+function is_unary_letter(b: i32): boolean {
+  var letters: string = "bcdefgGhkLNOprsStuwxzn";
+  var i: i32 = 0;
+  while (i < letters.len()) {
+    if (letters[i] as i32 == b) {
+      return true;
+    }
+    i = i + 1;
+  }
+  return false;
+}
+
+function unary_value(letter: i32, arg: string): boolean {
+  if (letter == 110) {
+    return arg.len() > 0;
+  }
+  if (letter == 122) {
+    return arg.len() == 0;
+  }
+  if (letter == 116) {
+    return is_terminal(arg);
+  }
+  if (letter == 101) {
+    return exists(arg);
+  }
+  if (letter == 115) {
+    return non_empty(arg);
+  }
+  if (letter == 114) {
+    return accessible(arg, 4);
+  }
+  if (letter == 119) {
+    return accessible(arg, 2);
+  }
+  if (letter == 120) {
+    return accessible(arg, 1);
+  }
+  if (letter == 79) {
+    return owned_by_euid(arg);
+  }
+  if (letter == 71) {
+    return owned_by_egid(arg);
+  }
+  if (letter == 78) {
+    return modified_since_read(arg);
+  }
+  return unary_mode(letter, arg);
+}
+
+// The predicates answered by `st_mode` alone: the file type
+// (`-b -c -d -f -p -S`, and `-h` / `-L` without following the link)
+// and the three special bits (`-u -g -k`).
+function unary_mode(letter: i32, arg: string): boolean {
+  if (letter == 117) {
+    return mode_bit(arg, 2048 as u32);
+  }
+  if (letter == 103) {
+    return mode_bit(arg, 1024 as u32);
+  }
+  if (letter == 107) {
+    return mode_bit(arg, 512 as u32);
+  }
+  if (letter == 104 || letter == 76) {
+    return kind_of(arg, false) == 40960 as u32;
+  }
+  return kind_of(arg, true) == kind_for(letter);
+}
+
+function kind_for(letter: i32): u32 {
+  if (letter == 102) {
+    return 32768 as u32;
+  }
+  if (letter == 100) {
+    return 16384 as u32;
+  }
+  if (letter == 99) {
+    return 8192 as u32;
+  }
+  if (letter == 98) {
+    return 24576 as u32;
+  }
+  if (letter == 112) {
+    return 4096 as u32;
+  }
+  return 49152 as u32;
+}

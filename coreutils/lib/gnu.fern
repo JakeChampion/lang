@@ -112,11 +112,18 @@ pub function io_error_text(e: IoError): string {
 // exiting 1. For the paths where the utility has its own wording —
 // yes(1) says `standard output:` — hold a Writer and check it there.
 pub function write_out(s: string): void {
+  write_out_with(s, 1);
+}
+
+// `write_out_with(s, status)` — `write_out` for a utility whose
+// write-failure exit is not 1: gnulib's `exit_failure`, which test(1)
+// sets to 2.
+pub function write_out_with(s: string, status: i32): void {
   var w: Writer = stdout();
   match (w.write(s)) {
     Some(e) => {
       error("write error: " + io_error_text(e));
-      exit(1);
+      exit(status);
     },
     None => {}
   }
@@ -407,16 +414,18 @@ function long_parts(a: string): (string, boolean) {
   return (body + "", false);
 }
 
-// `print_help_version(name, help_text, status)` — the two outputs
-// every utility shares. `status` is the exit code: 0 for most, but
-// true(1) and false(1) exit with THEIR status even from `--help`.
-function print_help(help_text: string, status: i32): void {
-  write_out(help_text);
+// `print_help` / `print_version` — the two outputs every utility
+// shares. `status` is the exit code: 0 for most, but true(1) and
+// false(1) exit with THEIR status even from `--help`. `fail_status`
+// is the exit code when the write fails: 1, or the utility's own
+// `exit_failure` (test(1) sets 2).
+function print_help(help_text: string, status: i32, fail_status: i32): void {
+  write_out_with(help_text, fail_status);
   exit(status);
 }
 
-function print_version(name: string, status: i32): void {
-  write_out(name + " (Fern coreutils) " + version() + "\n");
+function print_version(name: string, status: i32, fail_status: i32): void {
+  write_out_with(name + " (Fern coreutils) " + version() + "\n", fail_status);
   exit(status);
 }
 
@@ -674,10 +683,10 @@ function long_option(g: Getopt, a: string): (Option[OptMatch], Getopt) {
     }
   }
   if (o.id == help_id()) {
-    print_help(g.help, 0);
+    print_help(g.help, 0, 1);
   }
   if (o.id == version_id()) {
-    print_version(g.name, 0);
+    print_version(g.name, 0, 1);
   }
   return (Some(OptMatch { id: o.id, value: value, has_value: has }), s);
 }
@@ -710,14 +719,20 @@ pub function parse_standard_options_only(argv: string[], name: string, help_text
 // ordinary operands otherwise. `true --help x` therefore exits 0 in
 // silence, and `echo --help x` prints `--help x`.
 pub function sole_help_version(argv: string[], name: string, help_text: string, status: i32): void {
+  sole_help_version_with(argv, name, help_text, status, 1);
+}
+
+// `sole_help_version_with(argv, name, help_text, status, fail_status)`
+// — the same, exiting `fail_status` rather than 1 when the write
+// fails: `[ --help` reports a closed stdout with test's own 2.
+pub function sole_help_version_with(argv: string[], name: string, help_text: string, status: i32, fail_status: i32): void {
   if (argv.len() != 2) {
     return;
   }
   if (argv[1] == "--help") {
-    print_help(help_text, status);
-    return;
+    print_help(help_text, status, fail_status);
   }
   if (argv[1] == "--version") {
-    print_version(name, status);
+    print_version(name, status, fail_status);
   }
 }

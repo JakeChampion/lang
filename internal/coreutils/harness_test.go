@@ -54,6 +54,10 @@ type invocation struct {
 	// write-error paths (`prog: standard output: <strerror>`) are
 	// reached, and both sides meet the same one.
 	stdout stdoutMode
+	// tty hands the child a pseudo-terminal master as fd 3. Fds 0-2
+	// are pipes here, so this is the one descriptor on which `test -t`
+	// can answer true.
+	tty bool
 }
 
 type stdoutMode int
@@ -298,6 +302,14 @@ func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 	}
 	cmd.Env = append(baseEnv(), inv.env...)
 	cmd.Stdin = strings.NewReader(inv.stdin)
+	if inv.tty {
+		pty, err := os.OpenFile("/dev/ptmx", os.O_RDWR, 0)
+		if err != nil {
+			t.Fatalf("open a pseudo-terminal for fd 3: %v", err)
+		}
+		defer pty.Close()
+		cmd.ExtraFiles = []*os.File{pty}
+	}
 
 	var errBuf bytes.Buffer
 	cmd.Stderr = &errBuf
