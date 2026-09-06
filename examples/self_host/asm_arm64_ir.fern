@@ -5968,15 +5968,30 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
         s = s.write("    bl __fern_arr_box\n");      // -> data ptr in x0 (cap + len=cap written)
         s = s.write("    add x1, x21, #1\n");
         s = s.write("    str x1, [x0]\n");           // new len = old+1 (overwrite box's len)
-        // Copy old elements (slots 1..len) from old arr to new.
-        s = s.write("    mov x2, #1\n");
-        s = s.write(".Larr_push_copy:\n");
-        s = s.write("    cmp x2, x21\n");
-        s = s.write("    b.gt .Larr_push_copy_done\n");
-        s = s.write("    ldr x3, [x19, x2, lsl #3]\n");
-        s = s.write("    str x3, [x0, x2, lsl #3]\n");
-        s = s.write("    add x2, x2, #1\n");
-        s = s.write("    b .Larr_push_copy\n");
+        // Copy old elements (slots 1..len) from old arr to new, four to the
+        // iteration through post-indexed pairs: two instructions per element
+        // against the six a one-element-per-branch loop costs. The scratch is
+        // x2..x8 — x0 (the new buffer, the return value), x19, x20 and x21 all
+        // outlive this and are untouched. A word-count tail finishes the run.
+        s = s.write("    add x2, x19, #8\n");        // src cursor
+        s = s.write("    add x3, x0, #8\n");         // dst cursor
+        s = s.write("    mov x4, x21\n");            // elements remaining
+        s = s.write(".Larr_push_copy4:\n");
+        s = s.write("    cmp x4, #4\n");
+        s = s.write("    b.lt .Larr_push_copy1\n");
+        s = s.write("    ldp x5, x6, [x2], #16\n");
+        s = s.write("    ldp x7, x8, [x2], #16\n");
+        s = s.write("    stp x5, x6, [x3], #16\n");
+        s = s.write("    stp x7, x8, [x3], #16\n");
+        s = s.write("    sub x4, x4, #4\n");
+        s = s.write("    b .Larr_push_copy4\n");
+        s = s.write(".Larr_push_copy1:\n");
+        s = s.write("    cbz x4, .Larr_push_copy_done\n");
+        s = s.write(".Larr_push_copy1_loop:\n");
+        s = s.write("    ldr x5, [x2], #8\n");
+        s = s.write("    str x5, [x3], #8\n");
+        s = s.write("    subs x4, x4, #1\n");
+        s = s.write("    b.ne .Larr_push_copy1_loop\n");
         s = s.write(".Larr_push_copy_done:\n");
         // Store the new value at slot (len+1).
         s = s.write("    add x1, x21, #1\n");

@@ -16,10 +16,17 @@ import (
 // EXACT output the old byte-scan produced (captured before the migration), so
 // this test is the byte-identical guard: it locks scalars, the dedicated scalar
 // arrays vs coarse arrays, the Map / MapIter / Cell / Option / Result generics
-// (incl. nested + single-arg degradations), the `Map`-prefix bare-name quirk,
-// unrecognised generics collapsing to coarse array, tuples, and bare / qualified
-// names — so any change to ty_from_ref or the parse_type_ref feeding it that
-// shifts a decoded Ty fails here rather than silently miscompiling a typed path.
+// (incl. nested + single-arg degradations), bare `Map` against the user types
+// that merely START with it, unrecognised generics collapsing to coarse array,
+// tuples, and bare / qualified names — so any change to ty_from_ref or the
+// parse_type_ref feeding it that shifts a decoded Ty fails here rather than
+// silently miscompiling a typed path.
+//
+// `MapConfig => unknown` is the one row that is NOT the byte scan's output.
+// The scan matched "Map" as a PREFIX, so every user type spelled MapConfig /
+// MapCloneScan / Maple decoded as a map and had its methods typed as map ops;
+// #8462 made the test an exact match and left this golden pinning the quirk it
+// had just deleted, which is what made the lane red on main.
 //
 // The driver is built natively via the Go x86-64 backend; its stdout is the map.
 func TestSelfHostTyFromRef(t *testing.T) {
@@ -62,7 +69,7 @@ func TestSelfHostTyFromRef(t *testing.T) {
 		"Map[i32, Option[i32]] => mapI:option:i32\n" +
 		"Map[string, Map[i32, string]] => map:mapI:string\n" +
 		"Map => map:unknown\n" +
-		"MapConfig => map:unknown\n" +
+		"MapConfig => unknown\n" +
 		"Map[string] => map:unknown\n" +
 		"MapIter[i32, string] => mapiter:string\n" +
 		"MapIter[string] => mapiter:unknown\n" +

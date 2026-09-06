@@ -78,8 +78,8 @@ pub struct ExprCall { callee: Expr, args: Expr[], line: i32, col: i32, type_argc
 // sizes elements from it via ast.ElemSizeBytesFor.
 pub struct ExprArray { elements: Expr[], elem_ty: string, line: i32, col: i32 }
 
-// ExprLambda is a function-valued expression: `function (a: T,
-// b: T): U { body }` — same shape as FuncDecl minus the name.
+// ExprLambda is a function-valued expression: `(a: T, b: T): U => body`
+// — same shape as FuncDecl minus the name.
 // Capture semantics happen at the runtime layer; the parser
 // just builds the AST node.
 // origin records the source form a lambda the PARSER synthesised stands in for.
@@ -195,6 +195,28 @@ pub type Expr = ExprNumber | ExprIdent | ExprString | ExprBool
 // carries, or 0 for the three that carry none (ExprBool, ExprIndex,
 // ExprSlice). Every variant is named so a new one is a compile error here
 // rather than a silent 0.
+// stmt_line reports the source line a statement starts on, or 0 for one the
+// compiler synthesised (no source position, so nothing can attach to it).
+// Statements carry `line` uniformly but only some carry `col`, so this is the
+// line alone; a caller wanting a column takes it from the statement it matched.
+pub function stmt_line(st: Stmt): i32 {
+    match (st) {
+        StmtVar(v) => { return v.line; },
+        StmtReturn(r) => { return r.line; },
+        StmtAssign(a) => { return a.line; },
+        StmtExpr(x) => { return x.line; },
+        StmtIf(f) => { return f.line; },
+        StmtWhile(w) => { return w.line; },
+        StmtFor(fo) => { return fo.line; },
+        StmtMatch(m) => { return m.line; },
+        StmtDefer(d) => { return d.line; },
+        StmtBreak(b) => { return b.line; },
+        StmtContinue(c) => { return c.line; },
+        _ => { return 0; }
+    }
+    return 0;
+}
+
 pub function expr_line(e: Expr): i32 {
     match (e) {
         ExprNumber(n) => { return n.line; },

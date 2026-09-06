@@ -22,14 +22,25 @@ import (
 // the emitted asm. `qemu-x86_64` is optional — when the host
 // is already x86_64 Linux the binary runs natively. Returns
 // the binary executor command line (qemu prefix or empty).
+//
+// FERN_REQUIRE_X86_64_TOOLING=1 turns the skip into a failure, for a lane that
+// has the toolchain and is the only place a test runs — the mirror of
+// FERN_REQUIRE_ARM64_TOOLING. It belongs on the x86_64 leg alone: the aarch64
+// leg carries no x86 cross-compiler by design, so requiring it there would
+// trade an honest skip for an infrastructure red.
 func X86_64Tooling(t testing.TB) (gcc string, exec_ []string) {
 	t.Helper()
 	gcc, exec_, ok := LookupX86_64Tooling()
 	if !ok {
+		why := "non-x86_64 host and no qemu-x86_64 on PATH"
 		if gcc == "" {
-			t.Skip("no x86_64-linux-gnu-gcc / gcc on PATH; skipping x86-64 e2e")
+			why = "no x86_64-linux-gnu-gcc / gcc on PATH"
 		}
-		t.Skip("non-x86_64 host and no qemu-x86_64 on PATH; skipping x86-64 e2e")
+		if os.Getenv("FERN_REQUIRE_X86_64_TOOLING") == "1" {
+			t.Fatalf("%s and FERN_REQUIRE_X86_64_TOOLING=1: this lane has the "+
+				"toolchain and is the only one running this test, so a skip here covers nothing", why)
+		}
+		t.Skipf("%s; skipping x86-64 e2e", why)
 	}
 	return gcc, exec_
 }
@@ -37,10 +48,15 @@ func X86_64Tooling(t testing.TB) (gcc string, exec_ []string) {
 // LookupX86_64Tooling is X86_64Tooling's discovery half without the skip. See
 // LookupArm64Tooling for why a caller would want it.
 func LookupX86_64Tooling() (gcc string, exec_ []string, ok bool) {
-	for _, c := range []string{"x86_64-linux-gnu-gcc", "gcc"} {
-		if p, err := exec.LookPath(c); err == nil {
+	if p, err := exec.LookPath("x86_64-linux-gnu-gcc"); err == nil {
+		gcc = p
+	} else if runtime.GOOS == "linux" && runtime.GOARCH == "amd64" {
+		// Bare `gcc` is x86-64 tooling only on an x86-64 host. Anywhere else
+		// it produces the HOST's binaries, and handing it x86-64 asm gets
+		// "unknown mnemonic" from the host assembler rather than a link.
+		// LookupArm64Tooling gates its own bare-gcc fallback the same way.
+		if p, err := exec.LookPath("gcc"); err == nil {
 			gcc = p
-			break
 		}
 	}
 	if gcc == "" {
@@ -152,3 +168,7 @@ func CompileX86_64Bin(t testing.TB, src string) (binPath string, runner []string
 	}
 	return binPath, runner
 }
+
+// x86MachinePrefix is what `gcc -dumpmachine` starts with for a compiler that
+// targets x86-64: `x86_64-linux-gnu`, `x86_64-pc-linux-gnu`, and so on.
+const x86MachinePrefix = "x86_64-"

@@ -283,6 +283,32 @@
 # 702 read sites and 13 whole-frame rebuilds. Numbers pasted from
 # driver-sizes' union on 509aa8f, main's own run, which was red on them.
 
+# 2026-09-06 — checker_modload_run alone, 1963372 -> 2151348 (+9.6%), and the
+# other fourteen rows are inside the band and unchanged. Two commits carry the
+# step, both in #8720 (selfhost #8445, mirroring E076/E077 into the self-host
+# checker). Measured with CI's own method — TestSelfHostWarmStockDriver at each
+# commit — on this file's terms:
+#
+#   2e9424d (#8718)   2084852   the last commit before the step
+#   58c8ba9           2143156   +58,304 B — "mirror E076 and E077"
+#   dfc22ea           2151348   +8,192 B — "fold top-level consts into defaults"
+#   967393a (main)    2151348   nothing after it moved this driver
+#
+# The last figure is CI's figure for this PR's head to the byte, and this
+# branch measures the same 2151348 as main does: none of the growth is its own.
+# The walk also discriminates, which an agreeing number alone does not show —
+# it moves 2109332 -> 2084852 -> 2143156 -> 2151348 across the sampled range,
+# following the source rather than the checkout.
+#
+# TWO EARLIER MOVES ARE FOLDED INTO THIS ROW, because the baseline outlasted
+# them both. 1963372 was already stale by #8682, where the driver measures
+# 2109332; #8712 then SHRANK it to 2084852 and nothing recorded that either.
+# That is precisely the failure the header describes — an un-updated baseline
+# after a win silently raises the ceiling the next regression is measured
+# against — and it is why a +9.6% breach names a +2.8% commit. Only the step
+# above is attributed to a commit; the two before it are recorded as observed,
+# not credited to a change this pass did not isolate.
+
 fern.fern 12408028
 asm_load_run.fern 9454628
 asm_modload_run.fern 8803004
@@ -295,6 +321,6 @@ asm_pathprobe_run.fern 7622716
 ssa_lift_scan_run.fern 7428572
 asm_ir_elig_run.fern 7126748
 irlower_run.fern 7431580
-checker_modload_run.fern 1963372
+checker_modload_run.fern 2151348
 ssa_emit_run.fern 1715900
 ssa_run.fern 1537804

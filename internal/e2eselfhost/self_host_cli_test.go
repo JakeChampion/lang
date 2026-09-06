@@ -945,6 +945,112 @@ function main(): i32 {
 		}
 	})
 
+	// #8739. The parser is permissive: where it cannot read the source it
+	// plants an ExprUnknown and carries on, so every later pass reasons about
+	// the MARKER. `-check` never ran the gate that turns those markers back
+	// into P001/P002, so `var x: i32 = ;` surfaced as the #4346
+	// "cannot represent yet" catch-all, and a `= ;` parameter default — which
+	// no walk reached at all — surfaced as E076's non-constant rule, naming a
+	// rule the author had not broken.
+	//
+	// The oracle is the Go front end, because the divergence IS the bug: both
+	// engines must name the same code for the same unreadable source. An exit
+	// code alone would not have caught it, since the old behaviour also
+	// exited 1 — with the wrong diagnostic.
+	t.Run("check-parse-unknown-gate", func(t *testing.T) {
+		for _, tc := range []struct {
+			name string
+			src  string
+		}{
+			{"body-sentinel", "function main(): i32 { var x: i32 = ;\n  return 0; }\n"},
+			// The default cases are the ones the gate was added for: a
+			// default hangs off the declaration, not off a statement, so
+			// neither the body walk nor the top-level one reached it.
+			{"param-default-sentinel", "function f(x: i32 = ;): i32 { return x; }\nfunction main(): i32 { return 0; }\n"},
+			{"param-default-at", "function f(x: i32 = @): i32 { return x; }\nfunction main(): i32 { return 0; }\n"},
+			// An out-of-range float in a default is P002 on both engines and
+			// was already agreed; it is here so the fix cannot regress it
+			// into P001 by treating every marker alike.
+			{"param-default-float-range", "function f(x: f64 = 1e309): f64 { return x; }\nfunction main(): i32 { return 0; }\n"},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				srcPath := filepath.Join(dir, "parse_unknown.fern")
+				if err := os.WriteFile(srcPath, []byte(tc.src), 0o644); err != nil {
+					t.Fatalf("write src: %v", err)
+				}
+				combined, _ := exec.Command(fernBin, "-check", srcPath).CombinedOutput()
+				got := uniqueSortedCodes(frontEndCodeRE.FindAllString(string(combined), -1))
+				want := goFrontEndCodes(t, tc.src)
+				if !equalStrings(got, want) {
+					t.Errorf("-check codes = %v, want native's %v\nself-host output:\n%s", got, want, combined)
+				}
+				if _, code := runDriver(t, "-check", srcPath); code != 1 {
+					t.Errorf("-check exited %d, want 1", code)
+				}
+			})
+		}
+		// The gate must not fire on a default it CAN read.
+		cleanPath := filepath.Join(dir, "parse_unknown_clean.fern")
+		if err := os.WriteFile(cleanPath, []byte("function f(x: i32 = 41): i32 { return x; }\nfunction main(): i32 { return f(); }\n"), 0o644); err != nil {
+			t.Fatalf("write src: %v", err)
+		}
+		if out, code := runDriver(t, "-check", cleanPath); code != 0 {
+			t.Errorf("-check on a readable default exited %d, want 0:\n%s", code, out)
+		}
+	})
+
+	// #8738. `top_stmts` has two tenants and only one of them is a feature.
+	// With NO `main` it is the interpreter's script mode — eval_module runs the
+	// statements and answers with the top-level `return`. With a `main`,
+	// eval_module calls that and returns before it ever looks at the bucket,
+	// and the compile path drops it: the statements are unreachable, and the
+	// self-host said nothing, so `var g: i32 = 1;` beside a `main` produced a
+	// clean binary with the initialiser silently discarded.
+	//
+	// Native rejects the source either way, so the accepted-and-dead case is a
+	// divergence in the direction that matters. Script mode is left alone and
+	// is asserted here as the control, because a gate that also killed it
+	// would pass every assertion above.
+	t.Run("check-top-level-stmt-gate", func(t *testing.T) {
+		for _, tc := range []struct {
+			name string
+			src  string
+		}{
+			{"var", "var g: i32 = 1;\nfunction main(): i32 { return 0; }\n"},
+			{"call", "print(\"hi\");\nfunction main(): i32 { return 0; }\n"},
+			{"if", "if (1 > 0) { }\nfunction main(): i32 { return 0; }\n"},
+			// The shape #2673's migration turned `function (): i32 {…}` into,
+			// which is how this hole was found: a top-level arrow lambda
+			// parses cleanly and lands in the same dead bucket.
+			{"lambda", "(): i32 => {\n  return 1;\n}\nfunction main(): i32 { return 0; }\n"},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				srcPath := filepath.Join(dir, "toplevel.fern")
+				if err := os.WriteFile(srcPath, []byte(tc.src), 0o644); err != nil {
+					t.Fatalf("write src: %v", err)
+				}
+				combined, _ := exec.Command(fernBin, "-check", srcPath).CombinedOutput()
+				got := uniqueSortedCodes(frontEndCodeRE.FindAllString(string(combined), -1))
+				want := goFrontEndCodes(t, tc.src)
+				if !equalStrings(got, want) {
+					t.Errorf("-check codes = %v, want native's %v\nself-host output:\n%s", got, want, combined)
+				}
+				if _, code := runDriver(t, "-check", srcPath); code != 1 {
+					t.Errorf("-check exited %d, want 1 — the statement is dead code", code)
+				}
+			})
+		}
+		// The control: no `main`, so this IS the script mode, and the gate must
+		// not touch it. `-interp` answers with the top-level return.
+		scriptPath := filepath.Join(dir, "script.fern")
+		if err := os.WriteFile(scriptPath, []byte("var x = 1 + 2 * 3;\nreturn x;\n"), 0o644); err != nil {
+			t.Fatalf("write src: %v", err)
+		}
+		if out, code := runDriver(t, "-interp", scriptPath); code != 7 {
+			t.Errorf("-interp on a no-main script exited %d, want 7 (the top-level return):\n%s", code, out)
+		}
+	})
+
 	t.Run("check-str-view-arg-is-a-borrow", func(t *testing.T) {
 		// #7086: a parameter is BORROWED, so lending a `str` view to a
 		// `string` parameter is fine — native's argAssignable accepts it.

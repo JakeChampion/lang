@@ -270,6 +270,15 @@ func (p *parser) accept(kind lexer.Kind, text string) (lexer.Token, bool) {
 	return lexer.Token{}, false
 }
 
+// acceptIf is accept gated on a condition, so a caller that reserves a token
+// for its own use reads as one expression rather than a nested if.
+func (p *parser) acceptIf(when bool, kind lexer.Kind, text string) (lexer.Token, bool) {
+	if !when {
+		return lexer.Token{}, false
+	}
+	return p.accept(kind, text)
+}
+
 // discardName maps a binding name to the name that actually enters scope.
 // `_` is a DISCARD wherever a binding is introduced — a var, a tuple- or
 // struct-destructure element, or a parameter — so each occurrence gets its
@@ -2114,6 +2123,17 @@ func (p *parser) parseUnionMember() (ast.StructType, error) {
 }
 
 func (p *parser) parseType() (ast.Type, error) {
+	return p.parseTypeArrow(true)
+}
+
+// parseTypeArrow is parseType with the top-level function-type arrow made
+// optional. topArrow is false only in an arrow lambda's return-type position,
+// where a `(T1, T2) => …` reading would consume the lambda's own arrow and go
+// looking for the function's result in its body. Every recursive call below
+// goes through parseType, so the reservation applies to the outermost `(…)`
+// alone: `((string, i32) => i32)` still parses as a function type there,
+// because its arrow is not the top-level one.
+func (p *parser) parseTypeArrow(topArrow bool) (ast.Type, error) {
 	if err := p.enter(); err != nil {
 		return nil, err
 	}
@@ -2202,7 +2222,7 @@ func (p *parser) parseType() (ast.Type, error) {
 		if _, err := p.expect(lexer.Punct, ")"); err != nil {
 			return nil, err
 		}
-		if _, isArrow := p.accept(lexer.Punct, "=>"); isArrow {
+		if _, isArrow := p.acceptIf(topArrow, lexer.Punct, "=>"); isArrow {
 			ret, err := p.parseType()
 			if err != nil {
 				return nil, err
@@ -2880,7 +2900,22 @@ func (p *parser) parseArrowLambda() (ast.Expr, error) {
 	var ret ast.Type = ast.VoidType{}
 	unannotated := true
 	if _, ok := p.accept(lexer.Punct, ":"); ok {
+		// A parenthesised annotation is ambiguous with a function type:
+		// `(): (string, i32) => …` reads as a two-parameter function type
+		// and goes looking for its result in the lambda's body, so a tuple
+		// return had no spelling at all once #2673 retired the braced
+		// `function` expression (#8743). Read it greedily first, and when
+		// that leaves no `=>` for the lambda it took ours: rewind and read
+		// the annotation again with the top-level arrow reserved. Only a
+		// parse that fails today can reach the rewind, so nothing that
+		// parses now changes meaning — including a function-typed return,
+		// whose arrow the explicit parens keep off the top level.
+		mark, refs := p.i, len(p.typeRefs)
 		t, err := p.parseType()
+		if err != nil || !p.match(lexer.Punct, "=>") {
+			p.i, p.typeRefs = mark, p.typeRefs[:refs]
+			t, err = p.parseTypeArrow(false)
+		}
 		if err != nil {
 			return nil, err
 		}
