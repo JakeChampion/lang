@@ -170,6 +170,11 @@ coreutils/
   lib/ld.fern       C's `long double` as the TARGET has it, for the
                     utilities that convert and compute in one
                     (printf, numfmt, seq, sleep)
+  lib/digest.fern   md5sum, sha1sum, sha224sum, sha256sum, sha384sum,
+                    sha512sum and b2sum, which GNU also builds from one
+                    source: the option surface, the file-name escaping
+                    and the check-line grammar, parameterised by the
+                    digest each of the seven names
   lib/resolv.fern   glibc's IPv4 name lookup — /etc/hosts, the
                     `hosts:` line of nsswitch.conf, resolv.conf and an
                     RFC 1035 A query — for the utilities that resolve
@@ -411,11 +416,6 @@ Neither is visible to this corpus: the harness always hands the child a pipe
 for stdin, so the width is 7 on both sides, and `cat` is not in the tree. That
 is what makes them worth writing down here rather than leaving to a gate.
 
-Two earlier gaps are closed and each is now exercised by the corpus:
-`IoError.Other` carrying no strerror text (#8265) — the write-failure cases
-(`yes >&-`, `> /dev/full`) — and source unable to learn its compile target
-(#8338) — `yes.fern`'s per-target block. A gap met later gets an issue and a
-fix, never a corpus carve-out.
 None. Both Fern gaps the first utilities met — `IoError.Other` carrying no
 strerror text (#8265) and source unable to learn its compile target
 (#8338) — are closed, and each is exercised by the corpus: the
@@ -437,7 +437,7 @@ groups are the order of work. Each sub-issue names its group.
   `join` `comm` `uniq` `sort` `tr` `fold` `fmt` `pr` `ptx` `expand`
   `unexpand` `split` `csplit` `shuf` `od` `base32` `base64` `basenc` `cksum`
   `sum` `md5sum` `sha1sum` `sha224sum` `sha256sum` `sha384sum` `sha512sum`
-  `b2sum` `tee`. `head` and `wc` are done. Needs a buffered stdout writer in
+  `b2sum` `tee`. `head`, `wc` and the seven checksum utilities are done. Needs a buffered stdout writer in
   `std/io_buffered` (its own header already promises one) and a streaming
   stdin reader whose reads can FAIL: every one of these reaches a read error
   through a directory operand, and `Reader.read_chunk` answered None to EOF

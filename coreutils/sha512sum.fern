@@ -1,0 +1,8 @@
+// sha512sum.fern — GNU-compatible `sha512sum`: print or check SHA-512
+// checksums. The whole program is `lib/digest.fern`, which the seven
+// checksum utilities share; this file names the digest.
+import "./lib/digest";
+
+function main(): i32 {
+  return digest.run(digest.algo_sha512());
+}
