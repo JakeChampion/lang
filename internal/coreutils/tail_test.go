@@ -292,7 +292,14 @@ func tailCases(t *testing.T) []invocation {
 			follow: []followStep{{after: 22, act: "remove", path: g6}, {after: 22, act: "append", path: k6, data: "k2\n"}, {after: 36, act: "truncate", path: g6, data: "new\n"}}},
 		{name: "follow two files", args: fol("-f", "-n", "1", g7, x), limit: 30,
 			follow: []followStep{{after: 20, act: "append", path: g7, data: "3\n"}}},
-		{name: "follow with a directory operand", args: fol("-f", "-n", "1", g8, d), limit: 40,
+		// The limit has to clear the WHOLE initial pass, not just reach the
+		// step: stderr is compared however the child ends, and the child is
+		// terminated on a stdout byte count, so a limit inside the startup
+		// output makes the directory diagnostic a race between the two
+		// implementations. Two `==> NAME <==` headers over temp paths are
+		// already ~140 bytes, so this reads past anything the case can
+		// produce and lets the deadline stop it.
+		{name: "follow with a directory operand", args: fol("-f", "-n", "1", g8, d), limit: 512,
 			follow: []followStep{{after: 27, act: "append", path: g8, data: "3\n"}}},
 		{name: "follow stdin regular file", args: fol("-f", "-n", "1"), stdinPath: g9, limit: 4,
 			follow: []followStep{{after: 2, act: "append", path: g9, data: "3\n"}}},
