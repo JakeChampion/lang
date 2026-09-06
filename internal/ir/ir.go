@@ -19426,6 +19426,14 @@ func typeSelfDropSafeNoStrings(t ast.Type, info *checker.Info, seen map[string]b
 		}
 		return true
 	case ast.EnumType:
+		if ty.Name == "Option" || ty.Name == "Result" {
+			for _, a := range ty.Args {
+				if !typeSelfDropSafeNoStrings(a, info, seen) {
+					return false
+				}
+			}
+			return true
+		}
 		if seen[ty.Name] {
 			return true
 		}
@@ -19482,6 +19490,17 @@ func typeSelfDropSafe(t ast.Type, info *checker.Info, seen map[string]bool) bool
 		}
 		return true
 	case ast.EnumType:
+		// Option / Result are the builtin generics: info.Enums has no
+		// declaration for them, so they are judged by their type arguments
+		// — an `Option[string]` field is as droppable as a string one.
+		if ty.Name == "Option" || ty.Name == "Result" {
+			for _, a := range ty.Args {
+				if !typeSelfDropSafe(a, info, seen) {
+					return false
+				}
+			}
+			return true
+		}
 		if seen[ty.Name] {
 			return true
 		}
