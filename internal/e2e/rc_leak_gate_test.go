@@ -50,7 +50,13 @@ import (
 // and the difference is itself a finding rather than noise — see
 // docs/rc-log/2026-08-29-arm64-string-map-leak-divergence.md.
 var rcCorpusLeakBaselineX86_64 = map[string]int64{
-	"cell_string_read_aliased": 32,
+	// A closure cycle is uncollectable by refcount, so it leaks by
+	// construction — 32 bytes a round for the env plus the capture cell.
+	// What the case gates is that it does not CRASH: #8545 made the
+	// per-closure thunk reachable here and it recursed into
+	// __drop_arr_closure and back, SIGSEGV on all three (#8637).
+	"closure_cycle_leaks_without_crashing": 1600,
+	"cell_string_read_aliased":             32,
 	// Deliberate refusal pins, not regressions: a fresh temp handed to a
 	// REFUSED parameter has no owner left to free it — the residual class
 	// #7867 tracks. The pushed-then-returned-bare case watches the #7914
@@ -93,6 +99,12 @@ var rcCorpusLeakBaselineX86_64 = map[string]int64{
 }
 
 var rcCorpusLeakBaselineArm64 = map[string]int64{
+	// A closure cycle is uncollectable by refcount, so it leaks by
+	// construction — 32 bytes a round for the env plus the capture cell.
+	// What the case gates is that it does not CRASH: #8545 made the
+	// per-closure thunk reachable here and it recursed into
+	// __drop_arr_closure and back, SIGSEGV on all three (#8637).
+	"closure_cycle_leaks_without_crashing": 1600,
 	// See the x86-64 twin — the pushed-then-returned-bare pin is the same
 	// deliberate refusal class; the own-string case is clean here (the
 	// two-word ABI reclaims it).
@@ -147,6 +159,12 @@ var rcCorpusLeakBaselineArm64 = map[string]int64{
 // Cases the correctness corpus skips on wasm (`skipWasm`) are skipped
 // here too — a case that cannot run cannot be weighed.
 var rcCorpusLeakBaselineWasm = map[string]int64{
+	// A closure cycle is uncollectable by refcount, so it leaks by
+	// construction — 32 bytes a round for the env plus the capture cell.
+	// What the case gates is that it does not CRASH: #8545 made the
+	// per-closure thunk reachable here and it recursed into
+	// __drop_arr_closure and back, SIGSEGV on all three (#8637).
+	"closure_cycle_leaks_without_crashing":          1600,
 	"closure_array_capture_churn":                   4752,
 	"closure_call_arg_handed_back_is_not_reclaimed": 1920,
 	"closure_capture_passed_to_owned_param":         64,
