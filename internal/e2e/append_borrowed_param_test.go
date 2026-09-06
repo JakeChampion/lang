@@ -180,6 +180,28 @@ function main(): i32 {
     var after: i32 = s.insts.len();
     return before * 10 + after + (t.insts.len() - 4);
 }`, 22},
+	// A NESTED call in the assignment's value: the cursor is handed to the
+	// inner emit, and the store supersedes it either way, so the death belongs
+	// there (#8696). The growable position still has to reach this caller for
+	// its live `s` — reads 23 otherwise.
+	{"nested-call-rebind", `struct Blk { insts: i32[] }
+function emit(s: Blk, x: i32): Blk { return Blk { insts: s.insts.append(x) }; }
+function thread(s: Blk, n: i32): Blk {
+    var i: i32 = 0;
+    while (i < n) {
+        s = emit(emit(s, i), i + 1);
+        i = i + 1;
+    }
+    return s;
+}
+function main(): i32 {
+    var s: Blk = Blk { insts: [] };
+    s = thread(s, 1);
+    var before: i32 = s.insts.len();
+    var t: Blk = thread(s, 1);
+    var after: i32 = s.insts.len();
+    return before * 10 + after + (t.insts.len() - 4);
+}`, 22},
 	// `.with` on a borrowed param: already contained by its own
 	// receiver-live machinery (#2832) — pinned here as the sibling
 	// regression guard.
