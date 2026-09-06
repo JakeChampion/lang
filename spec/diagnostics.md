@@ -127,7 +127,7 @@ language does not have. It is deleted.
 | `P003` | Left-hand side of assignment is not assignable | `diag_p003` |
 | `P004` | At most one `_` placeholder in a piped call | `diag_p004` |
 | `P005` | Input nests deeper than the parser's recursion bound | `diag_p005` |
-| `P006` | `function` used where a value is expected | `diag_p006` |
+| `P006` | `function` in expression position | `diag_p006` |
 
 ## The 17 unpinned codes
 

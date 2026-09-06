@@ -1359,6 +1359,36 @@ None => { return 0; }
 }
 }
 `},
+	// Every lambda prints in the arrow form, with a braced body indented
+	// against the statement it sits in (#8730): print_expr carried no depth,
+	// so an annotated or multi-statement lambda fell back to the retired
+	// `function(` spelling with its block at column 0. Nested lambdas at
+	// depths 2 and 3, the written return type kept, an unannotated braced
+	// body, a destructuring parameter with an expression body, and an IIFE
+	// whose callee needs parens.
+	{"lambda-arrow-depth", `struct P { x: i32, y: i32 }
+function chain(start: i32): i32 {
+var f = (n: i32): i32 => {
+var a: i32 = n + 1;
+return a * 2;
+};
+var g = (P { x, y }: P): i32 => x * 10 + y;
+var h = (n: i32) => { var t: i32 = n; return t + 1; };
+var k = (): i32 => { return 7; }();
+while (true) {
+var inner = (m: i32): i32 => {
+var q = (z: i32): i32 => {
+var w: i32 = z;
+return w;
+};
+return q(m);
+};
+return inner(start) + f(start) + g(P { x: 1, y: 2 }) + h(1) + k;
+}
+return 0;
+}
+function main(): i32 { return chain(1); }
+`},
 }
 
 // typeChecks reports whether src is a program the checker accepts, running the

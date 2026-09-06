@@ -15119,7 +15119,12 @@ function lower_expr_index(ix: ast.ExprIndex, s: LowerState): LowerState {
 }
 
 // lower_expr_tuple lowers a tuple literal into its boxed representation.
-function lower_expr_tuple(tup: ast.ExprTuple, s: LowerState): LowerState {
+// `returning` marks the function's return value: a bare PARAMETER element
+// there is the caller's own box going back to it, which stays an UNCOUNTED
+// alias exactly as a bare `return p` of a struct param does (the Return
+// lowering's rule) — no owner on the caller's side gives a count back, so the
+// retain a binding-position literal takes would strand the box.
+function lower_expr_tuple(tup: ast.ExprTuple, s: LowerState, returning: boolean): LowerState {
     // Tuple literal `(a, b, …)` → tuple_make. Scalar elements only
     // (leak-only); a heap element bails. Elements lower
     // in source order (element 0 deepest), then tuple_make boxes them.
@@ -15182,7 +15187,8 @@ function lower_expr_tuple(tup: ast.ExprTuple, s: LowerState): LowerState {
                 // one release, which is what makes tuple__moved clean.
                 else if (decl_is_struct(ts.frame.structs, tek)
                     && ts.struct_type_of_slot(ts.slot_of(teid.name)).len() > 0
-                    && !ts.moves_local_at(teid.name, teid.line, teid.col)) {
+                    && !ts.moves_local_at(teid.name, teid.line, teid.col)
+                    && !(returning && ts.slot_of(teid.name) < ts.frame.n_params)) {
                     ts = ts.retain_tos("tuplit-struct-elem");
                 }
             },
@@ -16588,7 +16594,7 @@ function lower_expr_dispatch(e: ast.Expr, s: LowerState): LowerState {
         ast.ExprBinary(b) => { return lower_expr_binary(b, e, s); },
         ast.ExprUnary(u) => { return lower_expr_unary(u, s); },
         ast.ExprArray(arr) => { return lower_expr_array(arr, s); },
-        ast.ExprTuple(tup) => { return lower_expr_tuple(tup, s); },
+        ast.ExprTuple(tup) => { return lower_expr_tuple(tup, s, false); },
         ast.ExprIndex(ix) => { return lower_expr_index(ix, s); },
         ast.ExprSlice(slc) => { return lower_expr_slice(slc, s); },
         ast.ExprCall(c) => { return lower_expr_call(c, e, s); },
@@ -19419,7 +19425,11 @@ function lower_stmt_inner(st: ast.Stmt, s: LowerState): LowerState {
                     return rbl.emit(ir.op_return());
                 }
             }
-            var se: LowerState = lower_expr(r.value, s);
+            var se: LowerState = s;
+            match (r.value) {
+                ast.ExprTuple(rtup) => { se = lower_expr_tuple(rtup, s, true); },
+                _ => { se = lower_expr(r.value, s); }
+            }
             if (!se.ok) { return se; }
             se = tail_release_snapshot_locals(r.value, se);
             // Perceus move-on-return: any array local the returned value MOVES out
@@ -29642,6 +29652,49 @@ function stmt_unsafe_for_allow_ret(st: ast.Stmt, name: string, borrowable: strin
 function is_consume_rebind_call(e: ast.Expr, name: string, borrowable: string[], consume_safe: string[], recv_borrow: string[]): boolean {
     return consume_rebind_kind(e, name, borrowable, consume_safe, recv_borrow) > 0;
 }
+// expr_consume_transparent: `e` is evaluated for a result nobody keeps, and
+// every mention of name in it is a bare argument at a consume-safe position of
+// some call, or a projection or borrow read of such a call's result that is
+// itself passed on only at consume-safe positions — `finish(flush(o, name).0)`.
+// Nothing of name's box survives the expression. The nested form of
+// is_consume_rebind_call, with the same receiver and position rules.
+function expr_consume_transparent(e: ast.Expr, name: string, borrowable: string[], consume_safe: string[], recv_borrow: string[]): boolean {
+    if (!expr_mentions_name(e, name)) { return true; }
+    match (e) {
+        ast.ExprCall(c) => {
+            var callee_name: string = "";
+            var method: string = "";
+            match (c.callee) {
+                ast.ExprIdent(cid) => { if (cid.name == name) { return false; } callee_name = cid.name; },
+                ast.ExprFieldAccess(fa) => {
+                    if (ident_name_or_empty(fa.obj).len() == 0) { return false; }
+                    method = fa.field;
+                },
+                _ => { return false; }
+            }
+            var ai: i32 = 0;
+            while (ai < c.args.len()) {
+                var arg: ast.Expr = c.args[ai];
+                if (expr_mentions_name(arg, name)) {
+                    var pos_ok: boolean = false;
+                    if (method.len() > 0) { pos_ok = method_param_borrowable_all(consume_safe, method, ai); }
+                    else { pos_ok = param_is_borrowable(consume_safe, callee_name, ai) || param_is_borrowable(borrowable, callee_name, ai); }
+                    if (!pos_ok) { return false; }
+                    if (ident_name_or_empty(arg) != name && !expr_consume_transparent(arg, name, borrowable, consume_safe, recv_borrow)) { return false; }
+                }
+                ai = ai + 1;
+            }
+            return true;
+        },
+        ast.ExprFieldAccess(fa) => {
+            if (ident_name_or_empty(fa.obj) == name) { return true; }
+            return expr_consume_transparent(fa.obj, name, borrowable, consume_safe, recv_borrow);
+        },
+        _ => { return !expr_unsafe_for(e, name, borrowable, recv_borrow); }
+    }
+    return false;
+}
+
 // consume_rebind_kind: 0 when `e` is not a consume-rebind call for name; 2 when
 // it is and every `name` argument sits at a BORROWABLE position, so the callee
 // can neither return nor keep the box; 1 when some position is consume-safe
@@ -29730,11 +29783,11 @@ function body_consume_unsafe_seen(stmts: ast.Stmt[], name: string, borrowable: s
             if (util.index_of_str(seen, q) < 0
                 && body_consume_unsafe_seen(stmts, q, borrowable, consume_safe, recv_borrow, false, seen.append(q))) { return true; }
             // The handback: `var st: R = g(.., name, ..); name = st.f;` — the callee
-            // returned name's box, or one derived from it, inside a fresh result the
-            // very next statement unpacks back into name. No rebind of name lies
+            // returned name's box, or one derived from it, inside a fresh result
+            // that a later statement unpacks back into name. No rebind of name lies
             // between the two, so nothing st shares with name's box is released
             // before name holds it again; from then on the two are one lineage.
-            var handback: boolean = i + 1 < stmts.len() && ident_name_or_empty(v_init_field_obj(stmts[i + 1], name)) == q;
+            var handback: boolean = handback_unpacks(stmts, i, name, q);
             // The last use: `var q: T = g(.., name, ..)` binds the last value
             // derived from name's box, and the lowering releases that box at the
             // same statement (release_last_use_source) — a move-out, as a bare
@@ -29750,21 +29803,65 @@ function body_consume_unsafe_seen(stmts: ast.Stmt[], name: string, borrowable: s
     return false;
 }
 
-// v_init_field_obj: the object of a field read `name = obj.f` at `st`, else an
-// empty-named ident.
-function v_init_field_obj(st: ast.Stmt, name: string): ast.Expr {
-    match (st) {
-        ast.StmtAssign(a) => {
-            if (a.target == name) {
-                match (a.value) {
-                    ast.ExprFieldAccess(fa) => { return fa.obj; },
-                    _ => {}
-                }
-            }
-        },
+// handback_unpacks: after statement `i` bound `q` from a call that may hand
+// name's box back, some later `name = q.<f>` takes it, and every statement
+// between the two is transparent to the pair: it mentions neither name nor q,
+// or it reads a DIFFERENT element of q into another local — `w = d.0` ahead
+// of `out = d.1` — of a type other than element f's, so it cannot be the box
+// name is about to hold. A rebind of name in between would release the
+// generation q still shares; a second read of the handed-back element would
+// leave two owners for one release.
+function handback_unpacks(stmts: ast.Stmt[], i: i32, name: string, q: string): boolean {
+    return handback_unpack_at(stmts, i, name, q) >= 0;
+}
+// handback_unpack_at: the index of that `name = q.<f>`, or -1.
+function handback_unpack_at(stmts: ast.Stmt[], i: i32, name: string, q: string): i32 {
+    var qt: string = var_annot_at_top(stmts, q);
+    var read: string[] = [];
+    var j: i32 = i + 1;
+    while (j < stmts.len()) {
+        var fld: string = "";
+        var other: string = "";
+        match (stmts[j]) {
+            ast.StmtAssign(a) => {
+                if (a.target == name) { fld = field_read_of(a.value, q); }
+                else if (a.target != q) { other = field_read_of(a.value, q); }
+            },
+            ast.StmtVar(v) => { if (v.name != name && v.name != q) { other = field_read_of(v.init, q); } },
+            _ => {}
+        }
+        if (fld.len() > 0) {
+            var ft: string = tuple_elem_type_of(qt, fld);
+            if (ft.len() == 0) { return 0 - 1; }
+            for r in read { if (tuple_elem_type_of(qt, r) == ft) { return 0 - 1; } }
+            return j;
+        }
+        if (other.len() > 0) {
+            if (tuple_elem_type_of(qt, other).len() == 0) { return 0 - 1; }
+            read = read.append(other);
+        } else {
+            var ids: string[] = astwalk.collect_idents_stmt(stmts[j], []);
+            if (util.index_of_str(ids, name) >= 0 || util.index_of_str(ids, q) >= 0) { return 0 - 1; }
+        }
+        j = j + 1;
+    }
+    return 0 - 1;
+}
+
+// tuple_elem_type_of: the declared type of element `fld` of a tuple type `t`,
+// "" when `fld` is not a tuple position or `t` not a tuple spelling.
+function tuple_elem_type_of(t: string, fld: string): string {
+    if (!util.is_all_digits(fld)) { return ""; }
+    return tuple_type_elem_tag(t, util.digits_to_i32(fld));
+}
+
+// field_read_of: the field `f` when `e` is exactly `obj.f`, else "".
+function field_read_of(e: ast.Expr, obj: string): string {
+    match (e) {
+        ast.ExprFieldAccess(fa) => { if (ident_name_or_empty(fa.obj) == obj) { return fa.field; } },
         _ => {}
     }
-    return ast.ExprIdent { name: "", line: 0, col: 0, ty: "" };
+    return "";
 }
 
 // consume_alias_bound_by: the local a `var q: T = name` / `var q: R = g(.., name, ..)`
@@ -29793,26 +29890,43 @@ function consume_alias_bound_by(st: ast.Stmt, name: string, borrowable: string[]
     return "";
 }
 
+// ret_hands_back: returning `e` lets name's box leave the frame only INSIDE the
+// result — the move-out a bare `return name` is. A struct literal may carry it
+// as a spread base or a field value, a consume-rebind call may hand it back,
+// and a tuple literal is judged element by element by the same rule; anywhere
+// else a mention of name is an escape.
+function ret_hands_back(e: ast.Expr, name: string, borrowable: string[], consume_safe: string[], recv_borrow: string[]): boolean {
+    match (e) {
+        ast.ExprIdent(_) => { return true; },
+        ast.ExprStructLit(rsl) => {
+            if (rsl.has_base && ident_name_or_empty(rsl.base).len() == 0 && expr_unsafe_for(rsl.base, name, borrowable, recv_borrow)) { return false; }
+            for fv in rsl.field_values {
+                if (ident_name_or_empty(fv) != name && expr_unsafe_for(fv, name, borrowable, recv_borrow)) { return false; }
+            }
+            return true;
+        },
+        ast.ExprTuple(rtp) => {
+            for el in rtp.elements {
+                if (!ret_hands_back(el, name, borrowable, consume_safe, recv_borrow)) { return false; }
+            }
+            return true;
+        },
+        _ => {
+            if (is_consume_rebind_call(e, name, borrowable, consume_safe, recv_borrow)) { return true; }
+            return !expr_unsafe_for(e, name, borrowable, recv_borrow);
+        }
+    }
+    return false;
+}
+
 function stmt_consume_unsafe_for(st: ast.Stmt, name: string, borrowable: string[], consume_safe: string[], recv_borrow: string[], own_rebinds: boolean, seen: string[]): boolean {
     match (st) {
         ast.StmtVar(v) => { return expr_unsafe_for(v.init, name, borrowable, recv_borrow); },
-        ast.StmtReturn(r) => {
-            match (r.value) {
-                ast.ExprIdent(_) => { return false; },   // `return name`: move-out, safe
-                ast.ExprStructLit(rsl) => {
-                    if (rsl.has_base && ident_name_or_empty(rsl.base).len() == 0 && expr_unsafe_for(rsl.base, name, borrowable, recv_borrow)) { return true; }
-                    for fv in rsl.field_values {
-                        if (ident_name_or_empty(fv) != name && expr_unsafe_for(fv, name, borrowable, recv_borrow)) { return true; }
-                    }
-                    return false;
-                },
-                _ => {
-                    if (is_consume_rebind_call(r.value, name, borrowable, consume_safe, recv_borrow)) { return false; }
-                    return expr_unsafe_for(r.value, name, borrowable, recv_borrow);
-                }
-            }
-        },
-        ast.StmtExpr(e) => { return expr_unsafe_for(e.value, name, borrowable, recv_borrow); },
+        ast.StmtReturn(r) => { return !ret_hands_back(r.value, name, borrowable, consume_safe, recv_borrow); },
+        // A call in statement position hands its result to nobody: with name at
+        // consume-safe positions the callees neither keep nor free the box, and
+        // whatever they derived from it dies with the discarded result.
+        ast.StmtExpr(e) => { return !expr_consume_transparent(e.value, name, borrowable, consume_safe, recv_borrow); },
         ast.StmtAssign(a) => {
             if (a.target == name && is_consume_rebind_call(a.value, name, borrowable, consume_safe, recv_borrow)) { return false; }
             return expr_unsafe_for(a.value, name, borrowable, recv_borrow);
@@ -30910,6 +31024,21 @@ function returned_moved_arr_slots(e: ast.Expr, s: LowerState, acc: i32[]): i32[]
                         for arg in c.args {
                             out = returned_moved_arr_slots(arg, s, out);
                         }
+                    }
+                    // `return g(.., o, ..)` where g hands that parameter back BARE
+                    // (handback_params): the result may be o's own box, uncounted
+                    // — the same box a bare `return o` moves out — so a credited
+                    // struct local there is kept from the sweep, which would
+                    // otherwise free it under the caller. A callee returning
+                    // something else leaves the box to leak, the safe direction.
+                    var hbi: i32 = 0;
+                    while (hbi < c.args.len()) {
+                        var hbn: string = ident_name_or_empty(c.args[hbi]);
+                        if (hbn.len() > 0 && util.index_of_str(s.frame.sigs.handback_params, cid.name + "|" + util.i32_to_string(hbi)) >= 0) {
+                            var hbs: i32 = s.slot_of(hbn);
+                            if (hbs >= s.frame.n_params && slot_is_reclaimable_struct(s, hbs) && !slot_list_has(out, hbs)) { out = out.append(hbs); }
+                        }
+                        hbi = hbi + 1;
                     }
                     // Built-in payload constructors `Ok(a)/Err(a)/Some(a)`: the
                     // Result/Option box stores the payload pointer with NO alias-inc
@@ -36072,13 +36201,14 @@ function tuple_return_is_fresh(e: ast.Expr): boolean {
 }
 
 // body_has_nonfresh_tuple_return: any return whose value is NOT a direct
-// tuple literal (tuple_return_is_fresh) or a bare `return t` of a
-// FRAME-FRESH tuple local (tuple_ret_local_is_frame_fresh — declared once
-// from a direct tuple literal, never reassigned, escaping only through the
-// return itself, so the caller receives the sole reference exactly as it
-// would from a return-position literal). Any other return declines the
-// whole function.
-function body_has_nonfresh_tuple_return(stmts: ast.Stmt[], body: ast.Stmt[]): boolean {
+// tuple literal (tuple_return_is_fresh), a bare `return t` of a FRAME-FRESH
+// tuple local (tuple_ret_local_is_frame_fresh — declared once from a direct
+// tuple literal, never reassigned, escaping only through the return itself,
+// so the caller receives the sole reference exactly as it would from a
+// return-position literal), or `return g(..)` for a free `g` already in
+// `fresh` — the box g built is handed straight through, never bound here.
+// Any other return declines the whole function.
+function body_has_nonfresh_tuple_return(stmts: ast.Stmt[], body: ast.Stmt[], fresh: string[]): boolean {
     for stmt in stmts {
         match (stmt) {
             ast.StmtReturn(r) => {
@@ -36086,15 +36216,21 @@ function body_has_nonfresh_tuple_return(stmts: ast.Stmt[], body: ast.Stmt[]): bo
                     var lret_ok: boolean = false;
                     match (r.value) {
                         ast.ExprIdent(rid) => { lret_ok = tuple_ret_local_is_frame_fresh(body, rid.name); },
+                        ast.ExprCall(rc) => {
+                            match (rc.callee) {
+                                ast.ExprIdent(rcid) => { lret_ok = util.index_of_str(fresh, rcid.name) >= 0; },
+                                _ => {}
+                            }
+                        },
                         _ => {}
                     }
                     if (!lret_ok) { return true; }
                 }
             },
-            ast.StmtIf(f) => { if (body_has_nonfresh_tuple_return(f.then_body, body) || body_has_nonfresh_tuple_return(f.else_body, body)) { return true; } },
-            ast.StmtWhile(w) => { if (body_has_nonfresh_tuple_return(w.body, body)) { return true; } },
-            ast.StmtFor(fo) => { if (body_has_nonfresh_tuple_return(fo.body, body)) { return true; } },
-            ast.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (body_has_nonfresh_tuple_return(m.arms[a].body, body)) { return true; } a = a + 1; } },
+            ast.StmtIf(f) => { if (body_has_nonfresh_tuple_return(f.then_body, body, fresh) || body_has_nonfresh_tuple_return(f.else_body, body, fresh)) { return true; } },
+            ast.StmtWhile(w) => { if (body_has_nonfresh_tuple_return(w.body, body, fresh)) { return true; } },
+            ast.StmtFor(fo) => { if (body_has_nonfresh_tuple_return(fo.body, body, fresh)) { return true; } },
+            ast.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (body_has_nonfresh_tuple_return(m.arms[a].body, body, fresh)) { return true; } a = a + 1; } },
             _ => {}
         }
     }
@@ -36236,20 +36372,39 @@ function tuple_ret_local_init_shape(stmts: ast.Stmt[], name: string): string {
 // membership checks, and every backend that threads this one list into
 // lower_func gets all three credits.
 pub function tuple_fresh_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
+    // A least fixpoint: a function joins once every return is a literal, a
+    // frame-fresh local, or a call to a member — `drain` returning
+    // `flush(w, b)` on its slow path joins the round after `flush`.
+    var names: string[] = [];
+    var grew: boolean = true;
+    while (grew) {
+        grew = false;
+        for fn in funcs {
+            if (fn.ret_type.len() > 0 && fn.ret_type[0] == b'('
+                    && fn.receiver_type.len() == 0
+                    && util.index_of_str(names, fn.name) < 0
+                    && body_has_return(fn.body) && !body_has_nonfresh_tuple_return(fn.body, fn.body, names)) {
+                names = names.append(fn.name);
+                grew = true;
+            }
+        }
+    }
     var out: string[] = [];
     for fn in funcs {
-        if (fn.ret_type.len() > 0 && fn.ret_type[0] == b'('
-                && fn.receiver_type.len() == 0
-                && body_has_return(fn.body) && !body_has_nonfresh_tuple_return(fn.body, fn.body)) {
+        if (util.index_of_str(names, fn.name) >= 0) {
             out = out.append(fn.name);
             // #4365 (discarded rc-field tuple temps): also record the per-position
             // deep-drop flags as an "ARRF:<name>|<flags>" entry riding the same
             // list (a ':' can't appear in an identifier, so these never collide
             // with the bare-name membership checks above). lower_func re-seeds
             // them as "TUPRET:" reclaim entries for callees the body DISCARDS,
-            // and the StmtExpr lowering deep-drops flagged positions.
-            var arrf: string = tuple_ret_arrfree_flags(fn);
-            if (arrf.len() > 0) { out = out.append("ARRF:" + fn.name + "|" + arrf); }
+            // and the StmtExpr lowering deep-drops flagged positions. The flags
+            // read this function's own literals, so a function admitted through
+            // a returned call records none: its discarded result stays leak-mode.
+            if (!body_has_nonfresh_tuple_return(fn.body, fn.body, [])) {
+                var arrf: string = tuple_ret_arrfree_flags(fn);
+                if (arrf.len() > 0) { out = out.append("ARRF:" + fn.name + "|" + arrf); }
+            }
         }
     }
     var mf: string[] = map_fresh_ret_fns_of(funcs);
@@ -64576,14 +64731,18 @@ pub function consume_safe_params_interproc(funcs: parser.FuncDecl[], borrowable:
 }
 
 // consume_safe_flags_under: one function's consume-safe flags under the
-// registry `reg`, or "" when no parameter is.
+// registry `reg`, or "" when no parameter is. A scalar position is safe by
+// construction — no box arrives there — which is what lets a projection of a
+// tuple-returning call, `finish(flush(o, b).0)`, pass a scalar on without
+// the scan reading its arithmetic as an escape.
 function consume_safe_flags_under(fn: parser.FuncDecl, key: string, reg: string[], borrowable: string[]): string {
     var flags: string = "";
     var any: boolean = false;
     var pj: i32 = 0;
     while (pj < fn.params.len()) {
-        if (param_is_borrowable(reg, key, pj)
-            && !body_consume_unsafe_for(fn.body, fn.params[pj].name, borrowable, reg, [], false)) { flags = flags + "1"; any = true; }
+        if (is_scalar_type_name(fn.params[pj].type_name)
+            || (param_is_borrowable(reg, key, pj)
+                && !body_consume_unsafe_for(fn.body, fn.params[pj].name, borrowable, reg, [], false))) { flags = flags + "1"; any = true; }
         else { flags = flags + "0"; }
         pj = pj + 1;
     }
@@ -76708,9 +76867,10 @@ function dor_scan(stmts: ast.Stmt[], name: string, fn: parser.FuncDecl, structs:
             },
             ast.StmtVar(v) => {
                 if (expr_mentions_name(v.init, name) && dor_type_can_hold(v.type_name, structs)) {
-                    if (i + 1 < stmts.len() && ident_name_or_empty(v_init_field_obj(stmts[i + 1], name)) == v.name) {
+                    var hb: i32 = handback_unpack_at(stmts, i, name, v.name);
+                    if (hb >= 0) {
                         if (seen) { return DorScan { seen: true, hazard: true }; }
-                        i = i + 1;
+                        i = hb;
                     } else {
                         if (rebinding_loop) { return DorScan { seen: true, hazard: true }; }
                         seen = true;

@@ -31,3 +31,4 @@ parse:diag_p002
 parse:diag_p003
 parse:diag_p004
 parse:diag_p005
+parse:diag_p006

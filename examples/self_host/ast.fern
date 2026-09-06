@@ -78,8 +78,8 @@ pub struct ExprCall { callee: Expr, args: Expr[], line: i32, col: i32, type_argc
 // sizes elements from it via ast.ElemSizeBytesFor.
 pub struct ExprArray { elements: Expr[], elem_ty: string, line: i32, col: i32 }
 
-// ExprLambda is a function-valued expression: `function (a: T,
-// b: T): U { body }` — same shape as FuncDecl minus the name.
+// ExprLambda is a function-valued expression: `(a: T, b: T): U => body`
+// — same shape as FuncDecl minus the name.
 // Capture semantics happen at the runtime layer; the parser
 // just builds the AST node.
 // origin records the source form a lambda the PARSER synthesised stands in for.
