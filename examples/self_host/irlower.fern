@@ -56979,6 +56979,18 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
                 var inner: str = slice_unchecked(ptn2, 0, ptn2.len() - 4);
                 if (inner == "i64" || inner == "u64") { aelem = "i64"; }
                 if (inner == "f64") { aelem = "f64"; }
+            } else if (is_array_type_name(ptn2)) {
+                // A `(tuple)[]` PARAM records its ELEMENT TUPLE spelling in the
+                // same column — the form arrtup_ret_fns documents and a local
+                // gets from its annotation. index_elem_tuple_type reads it to
+                // width a `var (k, v) = pairs[i]`, and had no route to a
+                // parameter at all: every one of them answered "unknown", which
+                // #8458's bail turned from a silent 4-byte read into a refusal
+                // of the whole module (#8745). is_arrarr stays false — the
+                // element is a tuple box, not an inner array, so no reclaim or
+                // free helper reads this slot.
+                var telem: string = slice_unchecked(ptn2, 0, ptn2.len() - 2) + "";
+                if (util.is_tuple_type_name(telem)) { aelem = telem; }
             }
         }
         isarrarr = isarrarr.append(aa);
