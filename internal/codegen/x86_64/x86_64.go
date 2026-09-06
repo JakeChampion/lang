@@ -11866,8 +11866,11 @@ func (g *generator) emitIoErrorRuntime() {
 	g.emit("jmp .Lioe_done")
 
 	g.label(".Lioe_with_path")
+	// A headered box like the other arms (and arm64): the enum drop
+	// reads the rc at data-8 and frees from there, so a bare block
+	// makes it read the preceding block's tail as a refcount.
 	g.emit("mov edi, 16")
-	g.emit("call __fern_alloc")
+	g.emit("call __fern_alloc_box")
 	g.emit("mov [rax], ebx")     // tag
 	g.emit("mov [rax + 8], r12") // path
 

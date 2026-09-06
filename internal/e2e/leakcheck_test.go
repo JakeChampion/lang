@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1484,5 +1485,35 @@ func TestArm64LeakCheckStringArgTempReclaim(t *testing.T) {
 			_, stderr, code := runLeakCheckArm64(t, tc.src)
 			checkArgTempReclaim(t, stderr, code, tc.exit)
 		})
+	}
+}
+
+// Every IoError box __fern_io_error builds on x86-64 must carry the rc
+// header (__fern_alloc_box), whichever variant it is: the enum drop reads
+// the rc at data-8 and frees from there, so a bare __fern_alloc block makes
+// the drop read the preceding block's tail as a refcount and, when that
+// word happens to be 1, free 24 bytes inside a live block. The with-path
+// arm (NotFound / PermissionDenied / AlreadyExists / EILSEQ) did exactly
+// that; arm64 always boxed. The layout dependence makes the crash a matter
+// of which allocations preceded the open, so the invariant is pinned on the
+// emitted helper rather than on a run.
+func TestX86_64IoErrorBoxesAreHeadered(t *testing.T) {
+	asm := emitLeakCheck(t, "x86_64", `function main(): i32 {
+    match (open_reader("/nonexistent/path")) { Ok(r) => { r.close(); return 1; }, Err(e) => { return 0; } }
+}`, false)
+	start := strings.Index(asm, "__fern_io_error:")
+	if start < 0 {
+		t.Fatal("no __fern_io_error in the emitted asm")
+	}
+	body := asm[start:]
+	if end := strings.Index(body, "\tret\n"); end >= 0 {
+		// The helper's own return; the itoa / copy loops before it hold no ret.
+		body = body[:end]
+	}
+	if n := strings.Count(body, "call __fern_alloc\n"); n != 0 {
+		t.Errorf("__fern_io_error allocates %d IoError box(es) with bare __fern_alloc — every variant must go through __fern_alloc_box so the box has an rc header at data-8", n)
+	}
+	if !strings.Contains(body, "call __fern_alloc_box") {
+		t.Errorf("__fern_io_error has no __fern_alloc_box call at all; the helper's shape changed under this test")
 	}
 }
