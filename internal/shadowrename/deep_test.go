@@ -405,3 +405,84 @@ func contains(xs []string, want string) bool {
 	}
 	return false
 }
+
+// TestRenameTuplePatternBinderShadowsOuter — a tuple pattern's element
+// binder, and one a level down in a nested tuple, shadow outer locals. Both
+// must be renamed and the arm body must follow; the post-match reference
+// resolves to the original. A binder left alone here shares the outer
+// variable's slot in the IR, so the arm's value leaks out of the match
+// (#8607).
+func TestRenameTuplePatternBinderShadowsOuter(t *testing.T) {
+	prog := runRename(t, `function f(): i32 {
+		var x: i32 = 1;
+		var y: i32 = 2;
+		var t: (i32, (i32, i32)) = (5, (6, 7));
+		match (t) {
+			(x, (y, z)) => { return x; }
+		}
+		return x;
+	}`)
+	fn := prog.Funcs[len(prog.Funcs)-1]
+	m := firstMatch(t, fn.Body)
+	if len(m.Arms) != 1 || len(m.Arms[0].TupleElems) != 2 || len(m.Arms[0].TupleElems[1].Nested) != 2 {
+		t.Fatalf("unexpected arm shape: %+v", m.Arms)
+	}
+	elems := m.Arms[0].TupleElems
+	if !strings.HasPrefix(elems[0].Name, "x$") {
+		t.Errorf("tuple element binder: got %q, want `x$<N>`", elems[0].Name)
+	}
+	if !strings.HasPrefix(elems[1].Nested[0].Name, "y$") {
+		t.Errorf("nested tuple element binder: got %q, want `y$<N>`", elems[1].Nested[0].Name)
+	}
+	if got := elems[1].Nested[1].Name; got != "z" {
+		t.Errorf("unshadowed nested binder: got %q, want z", got)
+	}
+	if got := lastReturnIdent(t, m.Arms[0].Body); got != elems[0].Name {
+		t.Errorf("arm body return references %q, want tuple binder %q", got, elems[0].Name)
+	}
+	if got := lastReturnIdent(t, fn.Body); got != "x" {
+		t.Errorf("post-match return references %q, want outer %q", got, "x")
+	}
+}
+
+// TestRenamePayloadSubPatternBinderShadowsOuter — `Has(Some(x))`: the binder
+// rides the payload SUB-PATTERN, not the arm's Bindings list, and must be
+// renamed all the same.
+func TestRenamePayloadSubPatternBinderShadowsOuter(t *testing.T) {
+	prog := runRename(t, `enum Holder { Has(Option[i32]), Nothing }
+	function f(h: Holder): i32 {
+		var x: i32 = 1;
+		match (h) {
+			Has(Some(x)) => { return x; },
+			_ => { return 0; }
+		}
+		return x;
+	}`)
+	fn := prog.Funcs[len(prog.Funcs)-1]
+	m := firstMatch(t, fn.Body)
+	arm := m.Arms[0]
+	if len(arm.Payloads) != 1 || arm.Payloads[0] == nil || len(arm.Payloads[0].VariantBindings) != 1 {
+		t.Fatalf("unexpected arm shape: %+v", arm)
+	}
+	name := arm.Payloads[0].VariantBindings[0]
+	if !strings.HasPrefix(name, "x$") {
+		t.Errorf("payload sub-pattern binder: got %q, want `x$<N>`", name)
+	}
+	if got := lastReturnIdent(t, arm.Body); got != name {
+		t.Errorf("arm body return references %q, want sub-pattern binder %q", got, name)
+	}
+	if got := lastReturnIdent(t, fn.Body); got != "x" {
+		t.Errorf("post-match return references %q, want outer %q", got, "x")
+	}
+}
+
+func firstMatch(t *testing.T, b *ast.Block) *ast.Match {
+	t.Helper()
+	for _, s := range b.Stmts {
+		if m, ok := s.(*ast.Match); ok {
+			return m
+		}
+	}
+	t.Fatal("match stmt not found")
+	return nil
+}

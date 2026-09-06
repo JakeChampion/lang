@@ -1,0 +1,68 @@
+// Every binder a match arm's PATTERN introduces shadows a same-named
+// module-level declaration. The import rewriter collects "what this body
+// binds" to know which bare names to leave alone; a binder it cannot see is
+// prefix-mangled into the module function, and `helper + b` then adds a
+// `() => i32` to an i32 (#8607). Each function here binds `helper` from a
+// different pattern position and returns 7.
+
+enum Box { Wrap(i32), Empty }
+enum Holder { Has(Option[i32]), Nothing }
+
+function helper(): i32 { return 100; }
+
+// A tuple element binder.
+pub function tuple_binder(): i32 {
+    var t: (i32, i32) = (3, 4);
+    match (t) {
+        (helper, b) => { return helper + b; }
+    }
+    return 0;
+}
+
+// A binder one level down in a nested tuple pattern.
+pub function nested_tuple_binder(): i32 {
+    var t: (i32, (i32, i32)) = (1, (2, 4));
+    match (t) {
+        (a, (helper, c)) => { return a + helper + c; }
+    }
+    return 0;
+}
+
+// A variant sub-pattern's payload binder inside a tuple pattern.
+pub function variant_in_tuple_binder(): i32 {
+    var t: (Box, i32) = (Wrap(3), 4);
+    match (t) {
+        (Wrap(helper), b) => { return helper + b; },
+        _ => { return 0; }
+    }
+    return 0;
+}
+
+// A payload sub-pattern's binder, outside any tuple.
+pub function payload_subpattern_binder(): i32 {
+    var h: Holder = Has(Some(7));
+    match (h) {
+        Has(Some(helper)) => { return helper; },
+        _ => { return 0; }
+    }
+    return 0;
+}
+
+// The expression form of match.
+pub function match_expr_binder(): i32 {
+    var t: (i32, i32) = (3, 4);
+    return match (t) { (helper, b) => helper + b };
+}
+
+// Control: an ordinary variant payload binder, which always worked.
+pub function variant_binder(): i32 {
+    var b: Box = Wrap(3);
+    match (b) {
+        Wrap(helper) => { return helper + 4; },
+        Empty => { return 0; }
+    }
+    return 0;
+}
+
+// Control: a reference nothing shadows must still reach the module function.
+pub function unshadowed(): i32 { return helper(); }

@@ -26090,22 +26090,12 @@ function fai_binds_name(spec: string, name: string): boolean {
     return false;
 }
 
-// fai_pat_binds counts the bindings of `name` in one match pattern. Deliberately
-// wider than astwalk.pattern_binders, which does not look at a variant's TUPLE
-// sub-pattern: a name missed here would be read as the root itself.
+// fai_pat_binds counts the bindings of `name` in one match pattern.
 function fai_pat_binds(p: ast.Pattern, name: string, acc: i32): i32 {
     var n: i32 = acc;
-    match (p) {
-        ast.PatVariant(pv) => {
-            if (fai_binds_name(pv.binding, name)) { n = n + 1; }
-            if (fai_binds_name(pv.at_binding, name)) { n = n + 1; }
-            for eb in pv.extra_bindings { if (fai_binds_name(eb, name)) { n = n + 1; } }
-            for tb in pv.tup_binds { if (fai_binds_name(tb, name)) { n = n + 1; } }
-            for sub in pv.nested { n = fai_pat_binds(sub, name, n); }
-            for tp in pv.tup_pats { n = fai_pat_binds(tp, name, n); }
-            return n;
-        },
-        ast.PatWildcard(_) => { return n; }
+    var binders: string[] = astwalk.pattern_binders(p, []);
+    for b in binders {
+        if (fai_binds_name(b, name)) { n = n + 1; }
     }
     return n;
 }
@@ -52584,24 +52574,7 @@ function sa_rebound_stmt(st: ast.Stmt, name: string): boolean {
 }
 
 function sa_pat_binds(p: ast.Pattern, name: string): boolean {
-    match (p) {
-        ast.PatVariant(pv) => {
-            if (pv.binding == name || pv.at_binding == name) { return true; }
-            var i: i32 = 0;
-            while (i < pv.extra_bindings.len()) {
-                if (pv.extra_bindings[i] == name) { return true; }
-                i = i + 1;
-            }
-            var n: i32 = 0;
-            while (n < pv.nested.len()) {
-                if (sa_pat_binds(pv.nested[n], name)) { return true; }
-                n = n + 1;
-            }
-            return false;
-        },
-        _ => { return false; },
-    }
-    return false;
+    return util.has_str(astwalk.pattern_binders(p, []), name);
 }
 
 // self_assign_update_names returns the local names whose every record update

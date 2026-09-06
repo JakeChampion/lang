@@ -1963,11 +1963,12 @@ func (r *rewriter) rewriteTraitDefaultBody(m *ast.TraitMethod) {
 }
 
 // collectLocals adds to dst every name b binds — a `var`, a
-// destructure, a `for` binder, and a match arm's payload and `@`
-// bindings — at any depth, INCLUDING inside a block sitting in
-// expression position (`defer { … }`, a value `if`). It runs over
-// ast.Walk rather than its own switch so a new binding form is
-// reachable here the moment the shared walk reaches it.
+// destructure, a `for` binder, and everything a match arm's pattern
+// binds (statement or expression form) — at any depth, INCLUDING
+// inside a block sitting in expression position (`defer { … }`, a
+// value `if`). It runs over ast.Walk rather than its own switch so a
+// new binding form is reachable here the moment the shared walk
+// reaches it.
 //
 // A nested function or lambda is its own scope and is pruned:
 // rewriteNestedFuncBody seeds one from this set and adds its own
@@ -1992,11 +1993,14 @@ func collectLocals(b *ast.Block, dst map[string]bool) {
 				dst[x.Var] = true
 			case *ast.Match:
 				for _, arm := range x.Arms {
-					for _, name := range arm.Bindings {
+					for _, name := range arm.Binders() {
 						dst[name] = true
 					}
-					if arm.AtBinding != "" {
-						dst[arm.AtBinding] = true
+				}
+			case *ast.MatchExpr:
+				for _, arm := range x.Arms {
+					for _, name := range arm.Binders() {
+						dst[name] = true
 					}
 				}
 			}
