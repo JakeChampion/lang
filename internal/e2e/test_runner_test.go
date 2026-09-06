@@ -1380,10 +1380,30 @@ func TestRunnerSelfTestPasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("self-test exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	// 44 meta-tests; if this number changes intentionally,
+	// 53 meta-tests; if this number changes intentionally,
 	// update both the file and this expected count together.
-	if !strings.Contains(out, "# pass 44") || !strings.Contains(out, "# fail 0") {
-		t.Errorf("expected 44 passes, 0 fails\noutput:\n%s", out)
+	if !strings.Contains(out, "# pass 53") || !strings.Contains(out, "# fail 0") {
+		t.Errorf("expected 53 passes, 0 fails\noutput:\n%s", out)
+	}
+}
+
+// `examples/tests/cmp_nan_total_order_test.fern` pins core/cmp's float
+// instances as a TOTAL order — NaN after every number, all NaNs one value,
+// `cmp == 0` exactly when `eq` (#8588). Before it, "neither less nor greater"
+// was read as "equal", and 0 satisfies both `<= 0` and `>= 0`, so every
+// generic range assertion passed for a NaN while asserting nothing. The
+// operators stay IEEE; only the instances are total. Passing suite → exit 0.
+func TestRunnerCmpNanTotalOrderExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/cmp_nan_total_order_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: core/cmp NaN total order", "# pass 11", "# fail 0", "1..11"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
 	}
 }
 
