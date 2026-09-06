@@ -505,3 +505,36 @@ Below that the tail is genuinely a tail.
 So the question worth asking is not "which construct leaks" but "why does this
 compiler free 38% of its blocks where native frees 83%, uniformly". That is a
 different investigation from the one this document has been conducting.
+
+
+### The tail, quantified
+
+`__fern_arr_push <- __fern_arr_push_owned` is one 116,263-block row in the
+shallow attribution. `caller2` splits it into **125 distinct user call sites**,
+116,458 blocks / 20.9 MB / 7.7% of live:
+
+| blocks | bytes | share | caller2 |
+|--:|--:|--:|---|
+| 906 | 3.30 MB | 1.2% | `asmcore__add_string_lit` |
+| 15,996 | 2.67 MB | 1.0% | `irlower__rc_fe_collect_types` |
+| 670 | 1.83 MB | 0.7% | `ir__eliminate_dead_code` |
+| 14,130 | 0.84 MB | 0.3% | `irlower__rc_ml_compute_toplevel` |
+| 7,188 | 0.42 MB | 0.2% | `parser__dl_expr_with_kids` |
+
+and 120 more spanning `ir__reduce_strength_ex`, `ir__fuse_tee`,
+`ir__propagate_copies`, `ir__const_propagate`, `ir__prune_zero_slot_guards`,
+`lexer__tokenize_impl`, `astwalk__map_stmts_acc`, `irlower__lift_stmts`,
+`irlower__desugar_lambda_returns` — essentially every phase. **No single site
+exceeds 1.2% of live bytes.**
+
+That is what the tail looks like from the inside: the same small retention
+repeated at 125 places, in the path that specifically exists to reclaim on grow.
+
+The exit-live caveat bites hardest here. `arr_push_owned` allocates a NEW buffer
+per grow, so each array's final buffer is legitimately live at exit if the array
+is still reachable, and some unknown fraction of the 116,458 is not leaked at
+all. Separating the two needs a reachability pass the tracer does not do. What
+the number supports regardless is the distribution: 125 sites, not one.
+
+`AGG_ONLY=<substring>` on the aggregator expands one site's full `caller2` split
+rather than the top 25 by bytes, which is how that table was produced.
