@@ -135,6 +135,8 @@ func tacCases(t *testing.T) []invocation {
 		{name: "separator that is the whole file", args: []string{"-s", "axxbxc", xs}},
 		{name: "separator longer than the file", args: []string{"-s", "axxbxcd", xs}},
 		{name: "separator that is not valid UTF-8", args: []string{"-s", "\xff", rawc}},
+		{name: "separator that looks like dashdash", args: []string{"-s", "--", xs}},
+		{name: "separator that looks like an option", args: []string{"-s", "-b", xs}},
 
 		// -r: the separator is a regular expression, in glibc's syntax 0.
 		{name: "regex literal", args: []string{"-r", "-s", "x", xs}},
@@ -252,6 +254,7 @@ func tacCases(t *testing.T) []invocation {
 		{name: "posix operand then option", args: []string{abc, "-b"}, env: []string{"POSIXLY_CORRECT=1"}},
 		{name: "posix option before the operand", args: []string{"-b", abc}, env: []string{"POSIXLY_CORRECT=1"}},
 		{name: "posix separator after the operand", args: []string{xs, "-s", "x"}, env: []string{"POSIXLY_CORRECT=1"}},
+		{name: "posix dashdash then an option-looking name", args: []string{"--", "-b"}, env: []string{"POSIXLY_CORRECT=1"}},
 
 		// stdin, which never seeks here: the harness always hands the
 		// child a pipe, so every one of these is the held-stream path.

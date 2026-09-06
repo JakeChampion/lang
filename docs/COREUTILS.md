@@ -376,6 +376,49 @@ per chunk (0.17×). Both now decide a whole chunk with one `__count_byte` and
 walk only the chunk that reaches the count — backwards, with `__rmemchr`, for
 the elision.
 
+`tac`, 2026-09-06, same machine and same file, plus uutils 0.0.24 and a
+588 KiB file (100 000 lines of `seq`) for the regular-expression row:
+
+| utility | workload | fern (ms) | gnu (ms) | uutils (ms) | gnu / fern | uutils / fern |
+|---|---|---|---|---|---|---|
+| `tac` | a 62 MiB file | 380.18 ± 24.13 | 100.27 ± 3.85 | 85.11 ± 4.41 | **0.26×** | **0.22×** |
+| `tac` | `-b` of a 62 MiB file | 388.17 ± 11.12 | 95.56 ± 4.16 | 84.14 ± 4.24 | **0.25×** | **0.22×** |
+| `tac` | `-s 5` of a 62 MiB file | 296.30 ± 9.47 | 87.29 ± 4.98 | 67.00 ± 2.99 | **0.29×** | **0.23×** |
+| `tac` | a 62 MiB file from a pipe | 633.36 ± 38.48 | 185.29 ± 11.46 | 146.55 ± 13.84 | **0.29×** | **0.23×** |
+| `tac` | `-r -s "[0-9]"` of a 588 KiB file | 193.42 ± 11.41 | 33.49 ± 2.52 | 13.11 ± 1.08 | **0.17×** | **0.07×** |
+| `tac` | a one-line file | 0.28 ± 0.24 | 1.12 ± 0.34 | 2.11 ± 0.39 | 3.97× | 7.51× |
+
+**tac does not meet the epic's bar.** It wins startup and loses every
+throughput row by three to four times, and the cause is per-record rather
+than algorithmic: both sides read the same 8 KiB blocks backwards and copy
+each record once, and Fern's copy costs more. Measured on 8 000 000
+records, one at a time:
+
+- **the emit, ~22 ns a record.** `buf = buf + slice_unchecked(w, lo, hi)`
+  into a buffer that resets at 8 KiB: 12 ns for the append and 10 more for
+  materialising the slice as its own string first. That is #8770's floor,
+  not something tac can arrange around.
+- **the scan, ~21 ns a record.** `__rmemchr` itself is 4.5 ns; the rest is
+  the call returning `(i32, i32)`, which costs 8 ns against 1.3 for a
+  scalar return.
+- **the read, negligible.** 62 MiB backwards in 8 KiB blocks is 25 ms.
+
+GNU's whole per-record cost — memrchr, memcpy, and the share of the
+write(2) — is about 12 ns, so each of Fern's two halves alone is more than
+GNU spends in total.
+
+The first draft was 12× rather than 4×, and that part WAS arrangeable:
+the 8 KiB buffer lived in a struct field and was appended to through a
+helper, and neither shape keeps a string's in-place growth, so every
+record copied the whole buffer (#8785 — `io_buffered.fern`'s BufWriter
+documents that shape as the fast one and is wrong about it). The buffer is
+a local in `tac_backward` appended to inline, which is the only shape that
+grows in place today: 1.13 s → 0.39 s.
+
+The `-r` row is a third engine again: a backward `re_search` runs the
+thread simulation once per candidate start, with only the fastmap to skip
+positions.
+
 ## Known divergences
 
 **`tac` holds a non-seekable input in memory.** tac reads its input

@@ -64,31 +64,15 @@ function help_text(): string {
 struct Settings { sep: string, before: boolean, regex: boolean, re: bre.Bre }
 
 // ---- output ----------------------------------------------------------------
-// `Out` — GNU's 8 KiB output buffer in front of stdio, and whether any
-// operand failed. `buf` is grown in the struct literal so it grows in
-// place (see io_buffered.BufWriter).
+// `Out` — glibc's stdio, GNU's own 8 KiB buffer in front of it, and
+// whether any operand failed. The buffer reaches stdio as one fwrite
+// per full block, which is the call sequence the write-error wording
+// is decided by; `tac_backward` says why it is appended to as a local.
 struct Out { st: gnu.Stdio, buf: string, ok: boolean }
 
+// GNU's WRITESIZE: the bytes it accumulates before each fwrite.
 function write_size(): i32 {
   return 8192;
-}
-
-// `output(o, w, a, b)` — `w[a, b)` into the buffer, which reaches stdio
-// as one fwrite per full 8 KiB.
-function output(o0: Out, w: string, a: i32, b: i32): Out {
-  var o: Out = o0;
-  var from: i32 = a;
-  var avail: i32 = write_size() - o.buf.len();
-  while (b - from >= avail) {
-    o = Out { ...o, buf: o.buf + slice_unchecked(w, from, from + avail) };
-    o = Out { ...o, st: o.st.fwrite(o.buf), buf: "" };
-    from = from + avail;
-    avail = write_size();
-  }
-  if (from < b) {
-    o = Out { ...o, buf: o.buf + slice_unchecked(w, from, b) };
-  }
-  return o;
 }
 
 // One diagnostic, with stdout flushed ahead of it as gnulib's error()
@@ -182,10 +166,18 @@ function read_block(src: Src, name: string, at: i64, n: i64, o: Out): (Out, stri
 // separator found last, so a match is never found twice. When the
 // window is exhausted the block before it is read and `w` is rebuilt
 // with the pending bytes behind it.
+//
+// The 8 KiB output buffer is a LOCAL here, taken out of `Out` for the
+// duration and put back at the end, and each record is appended to it
+// inline rather than through a helper. That is the only shape the IR
+// grows a string in place: the same append behind a function call, or
+// held in a struct field, copies the whole buffer every time and makes
+// the loop quadratic in the buffer (#8785).
 function tac_backward(src: Src, name: string, size: i64, o: Out, s: Settings): Out {
-  var out: Out = o;
+  var out: Out = Out { ...o, buf: "" };
+  var buf: string = o.buf;
   if (size < 1 as i64) {
-    return out;
+    return Out { ...out, buf: buf };
   }
   var block: i64 = initial_read_size();
   var saved: i64 = size % block;
@@ -196,7 +188,7 @@ function tac_backward(src: Src, name: string, size: i64, o: Out, s: Settings): O
   var rb: (Out, string, boolean) = read_block(src, name, file_pos, block, out);
   out = rb.0;
   if (!rb.2) {
-    return out;
+    return Out { ...out, buf: buf };
   }
   var w: string = rb.1;
   var past_end: i32 = w.len();
@@ -204,53 +196,74 @@ function tac_backward(src: Src, name: string, size: i64, o: Out, s: Settings): O
   var first_time: boolean = true;
   while (true) {
     var m: (i32, i32) = find_sep(s, w, bound);
+    var lo: i32 = 0;
+    var last: boolean = true;
+    var emit: boolean = true;
     if (m.0 >= 0) {
+      last = false;
+      lo = m.1;
       if (s.before) {
-        out = output(out, w, m.0, past_end);
-        past_end = m.0;
-      } else {
-        if (!first_time || m.1 != past_end) {
-          out = output(out, w, m.1, past_end);
-        }
-        past_end = m.1;
-        first_time = false;
+        lo = m.0;
+      } else if (first_time && m.1 == past_end) {
+        emit = false;
       }
-      bound = m.0;
+    } else if (file_pos > 0 as i64) {
+      if (past_end as i64 > block) {
+        block = block * (2 as i64);
+      }
+      if (file_pos >= block) {
+        file_pos = file_pos - block;
+      } else {
+        block = file_pos;
+        file_pos = 0 as i64;
+      }
+      var next: (Out, string, boolean) = read_block(src, name, file_pos, block, out);
+      out = next.0;
+      if (!next.2) {
+        return Out { ...out, buf: buf };
+      }
+      var n: i32 = next.1.len();
+      w = next.1 + slice_unchecked(w, 0, past_end);
+      // A regular expression is re-run over the pending bytes, which is
+      // what lets `^` match at the old window's start; a plain
+      // separator can only straddle the join.
+      var straddle: i32 = n + s.sep.len() - 1;
+      if (s.regex) {
+        bound = n + past_end;
+      } else if (n + bound < straddle) {
+        bound = n + bound;
+      } else {
+        bound = straddle;
+      }
+      past_end = n + past_end;
       continue;
     }
-    if (file_pos == 0 as i64) {
-      return output(out, w, 0, past_end);
+    if (emit && lo < past_end) {
+      var avail: i32 = write_size() - buf.len();
+      if (past_end - lo < avail) {
+        buf = buf + slice_unchecked(w, lo, past_end);
+      } else {
+        buf = buf + slice_unchecked(w, lo, lo + avail);
+        out = Out { ...out, st: out.st.fwrite(buf) };
+        buf = "";
+        var from: i32 = lo + avail;
+        while (past_end - from >= write_size()) {
+          out = Out { ...out, st: out.st.fwrite(slice_unchecked(w, from, from + write_size()) + "") };
+          from = from + write_size();
+        }
+        if (from < past_end) {
+          buf = slice_unchecked(w, from, past_end) + "";
+        }
+      }
     }
-    if (past_end as i64 > block) {
-      block = block * (2 as i64);
+    if (last) {
+      return Out { ...out, buf: buf };
     }
-    if (file_pos >= block) {
-      file_pos = file_pos - block;
-    } else {
-      block = file_pos;
-      file_pos = 0 as i64;
-    }
-    var next: (Out, string, boolean) = read_block(src, name, file_pos, block, out);
-    out = next.0;
-    if (!next.2) {
-      return out;
-    }
-    var n: i32 = next.1.len();
-    w = next.1 + slice_unchecked(w, 0, past_end);
-    // A regular expression is re-run over the pending bytes, which is
-    // what lets `^` match at the old window's start; a plain
-    // separator can only straddle the join.
-    var straddle: i32 = n + s.sep.len() - 1;
-    if (s.regex) {
-      bound = n + past_end;
-    } else if (n + bound < straddle) {
-      bound = n + bound;
-    } else {
-      bound = straddle;
-    }
-    past_end = n + past_end;
+    past_end = lo;
+    bound = m.0;
+    first_time = false;
   }
-  return out;
+  return Out { ...out, buf: buf };
 }
 
 // ---- input that cannot seek ------------------------------------------------
