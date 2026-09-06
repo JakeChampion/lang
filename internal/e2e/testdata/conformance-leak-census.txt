@@ -14,7 +14,7 @@
 # it being visible; a row going DOWN is progress and also fails, so the
 # improvement gets recorded rather than absorbed.
 #
-# Measured 2026-09-05: 488 fixtures, 416 clean, 72 leaking, 7514
+# Measured 2026-09-06: 490 fixtures, 418 clean, 72 leaking, 7514
 # unpaired allocations. The distribution is heavily skewed — the median
 # leaking fixture is 2, and regex_captures_assert alone is 5987 of the
 # total.
@@ -22,6 +22,10 @@
 # cast_int_arith_to_float arrives at 0 with #8456's fixture, which landed
 # without a row — a new fixture needs a verdict, and a clean one is the
 # registration the census asks for rather than a pin being moved.
+# tuple_binder_shadows_module_decl and tuple_binder_shadows_outer_var are
+# the same registration for #8607's two, and the second time in a day that
+# a fixture reached main without one. Nothing but this gate notices, so it
+# fails on main until someone here adds the row.
 #
 # arrow_lambda_block_body is back to 0, and #8550's diagnosis was right:
 # #2673 extended the fixture with capturing void lambdas, and the three
@@ -520,6 +524,8 @@ trmc_map                                             0
 try_op_in_closure                                    2
 try_result_struct_payload                            6
 tuple_basics                                         0
+tuple_binder_shadows_module_decl                     0
+tuple_binder_shadows_outer_var                       0
 tuple_destructure                                    0
 tuple_elem_variant_pattern                           1
 tuple_element_field_access                           0
