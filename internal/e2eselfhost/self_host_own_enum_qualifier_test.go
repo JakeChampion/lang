@@ -178,4 +178,33 @@ pub function probe(n: i32): i32 {
 			t.Errorf("want E029 for `Other.Text` on a Kind scrutinee, got codes %q", out)
 		}
 	})
+
+	// Keeping the qualifier on the pattern for the payload-TYPE lookups made
+	// the record-rebind's struct lookup miss, because that table is keyed by
+	// the BARE variant name: rss.variant_field_names came back empty,
+	// record_fields_cover answered false, and an enum-qualified record pattern
+	// was silently ACCEPTED where native reports E015. Rejecting too much had
+	// become accepting too much, which is the direction that breaks the
+	// checker differential rather than merely annoying an author.
+	t.Run("qualified-record-pattern-is-refused", func(t *testing.T) {
+		out, code := check(t, `enum E { Wrap(i32, i32), Nil }
+
+pub function probe(n: i32): i32 {
+    var v: E = E.Wrap(1, 2);
+    match (v) {
+        E.Wrap { x: k, y: j } => { return k + j; },
+        E.Nil => { return 0; }
+    }
+    return n;
+}
+`)
+		if code != 1 {
+			t.Errorf("checker driver exited %d, want 1: a record pattern on a POSITIONAL "+
+				"variant is E015 whether or not the pattern carries its enum qualifier; "+
+				"codes %q", code, out)
+		}
+		if !strings.Contains(out, "E015") {
+			t.Errorf("want E015 for `E.Wrap { x: k, y: j }` on a positional variant, got codes %q", out)
+		}
+	})
 }

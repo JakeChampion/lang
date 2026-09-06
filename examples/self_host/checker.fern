@@ -2240,7 +2240,12 @@ function bind_variant_payloads(arm: Scope, look: Scope, pvin: ast.PatVariant): S
   // names, as native does after rejecting the rename — so the body's reference
   // to the renamed local is the undefined-name error native also reports.
   if (pv.field_names.len() > 0) {
-    var rss: StructSig = look.lookup_struct(pv.type_name);
+    // The struct table IS keyed bare, unlike the payload-type lookups below,
+    // so this one strips. Handed a qualified `E.Wrap` it would miss, leave
+    // rss.variant_field_names empty, and record_fields_cover would answer
+    // false — silently skipping the rebind and the E015 native reports for a
+    // renamed or positional-variant record pattern.
+    var rss: StructSig = look.lookup_struct(variant_pattern_name(pv.type_name));
     if (parser.record_fields_cover(rss.variant_field_names, pv.field_names)) {
       pv = parser.rebind_record_positional(pv, rss.variant_field_names);
     }
@@ -7127,7 +7132,12 @@ function variant_payload_count(name: string, structs: StructSig[]): i32 {
 // does not declare, named one twice, or missed one — or the variant carries
 // positional payloads and cannot be matched by name at all. Mirrors native's
 // resolveVariantBindings (checker.go:9363-9397).
-function record_pattern_diags(pv: ast.PatVariant, structs: StructSig[], line: i32, col: i32): util.Diag[] {
+function record_pattern_diags(pvin: ast.PatVariant, structs: StructSig[], line: i32, col: i32): util.Diag[] {
+  // Both the sig table and native's wording use the BARE variant name, and
+  // nothing here resolves a payload TYPE, so unlike bind_variant_payloads this
+  // function strips at entry. Handed a qualified `E.Wrap` it used to miss the
+  // sig, return empty, and let a record pattern on a positional variant pass.
+  var pv: ast.PatVariant = ast.PatVariant { ...pvin, type_name: variant_pattern_name(pvin.type_name) };
   var out: util.Diag[] = [];
   var ss: StructSig = find_struct_sig(structs, pv.type_name);
   if (ss.name.len() == 0) {
