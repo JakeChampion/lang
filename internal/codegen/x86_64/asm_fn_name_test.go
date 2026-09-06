@@ -48,7 +48,7 @@ function main(): i32 {
     var xs: string[] = ["a", "b"];
     xs = xs.append("c" + "d");
     var n: i32 = 1;
-    return apply(function (x: i32): i32 { return x + n; }, xs.len()) - 3;
+    return apply((x: i32): i32 => { return x + n; }, xs.len()) - 3;
 }`)
 	for _, line := range strings.Split(asm, "\n") {
 		sym, ok := strings.CutPrefix(line, ".globl ")

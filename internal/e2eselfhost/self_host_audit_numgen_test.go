@@ -30,10 +30,10 @@ var auditNumGenCases = []struct {
 	{"generic-struct", `struct Box[T] { v: T } function main(): i32 { var b: Box[i32] = Box { v: 33 }; return b.v; }`, 33},
 	{"generic-method", `struct Box[T] { v: T } function (b: Box[i32]) get(): i32 { return b.v; } function main(): i32 { var b: Box[i32] = Box { v: 33 }; return b.get(); }`, 33},
 	{"trait-dispatch", `trait Doubler { function dbl(self: Self): i32; } impl Doubler for i32 { function dbl(self: Self): i32 { return self * 2; } } function main(): i32 { return (21).dbl(); }`, 42},
-	{"lambda", `function main(): i32 { var f: (i32) => i32 = function(x: i32): i32 { return x + 1; }; return f(41); }`, 42},
-	{"closure-capture", `function main(): i32 { var n: i32 = 10; var f: (i32) => i32 = function(x: i32): i32 { return x + n; }; return f(5); }`, 15},
+	{"lambda", `function main(): i32 { var f: (i32) => i32 = (x: i32): i32 => { return x + 1; }; return f(41); }`, 42},
+	{"closure-capture", `function main(): i32 { var n: i32 = 10; var f: (i32) => i32 = (x: i32): i32 => { return x + n; }; return f(5); }`, 15},
 	{"fn-value", `function dbl(x: i32): i32 { return x * 2; } function main(): i32 { var f: (i32) => i32 = dbl; return f(21); }`, 42},
-	{"higher-order", `function apply(f: (i32) => i32, x: i32): i32 { return f(x); } function main(): i32 { var inc: (i32) => i32 = function(x: i32): i32 { return x + 1; }; return apply(inc, 41); }`, 42},
+	{"higher-order", `function apply(f: (i32) => i32, x: i32): i32 { return f(x); } function main(): i32 { var inc: (i32) => i32 = (x: i32): i32 => { return x + 1; }; return apply(inc, 41); }`, 42},
 	{"tail-call", `function sum_to(n: i32, acc: i32): i32 { if (n == 0) { return acc; } return sum_to(n - 1, acc + n); } function main(): i32 { return sum_to(100, 0); }`, 186}, // 5050 mod 256
 }
 

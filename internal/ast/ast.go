@@ -1839,8 +1839,9 @@ type NumberLit struct {
 	Value int64
 	// Raw is the literal exactly as the source spelled it, suffix
 	// excluded, and is set only when that spelling is not the decimal
-	// rendering of Value — today, a `0x…` hex literal. Only the
-	// formatter reads it, so a literal's base survives `-fmt`; every
+	// rendering of Value: a `0x…` hex literal, or one past u64 max
+	// (ExceedsU64), whose Value holds nothing. The formatter reads it so
+	// a literal's base survives `-fmt`, and diagnostics quote it; every
 	// other consumer works from Value.
 	Raw string
 	// Width is set by the checker once the literal's type has
@@ -1874,6 +1875,12 @@ type NumberLit struct {
 	// tell `9223372036854775808` from the `-9223372036854775808` it wraps
 	// to. Read the magnitude back with uint64(Value).
 	ExceedsI64 bool
+	// ExceedsU64 records a magnitude no 64-bit type can hold. The parser
+	// keeps the literal (Value is 0, Raw the spelling) so the checker can
+	// refuse it as E047 against the type the context asked for, the way
+	// every other out-of-range literal is refused, instead of the parser
+	// failing on a number it merely cannot store.
+	ExceedsU64 bool
 }
 
 // CastExpr is `expr as Type`. The checker requires Target to be a
@@ -4195,6 +4202,10 @@ type ConstDecl struct {
 	Type   Type
 	Value  Expr
 	Public bool
+	// SourceModule is the path of the module that declared the const,
+	// stamped by modload like FuncDecl.SourceModule, so a diagnostic on
+	// the initialiser names the right file.
+	SourceModule string
 	// PackageScoped marks a `pub(package)` declaration — visible to other
 	// modules in the same package (same directory; the stdlib is one
 	// package) but not exported to outside consumers. Mutually exclusive

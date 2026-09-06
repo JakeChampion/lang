@@ -39,9 +39,9 @@ var rcIndirectDispatchCorpus = []struct {
 		name: "two_destructuring_lambdas",
 		src: `
 function main(): i32 {
-    var lam = function ((x, y): (i32, i32)): i32 { return x * 10 + y; };
+    var lam = ((x, y): (i32, i32)): i32 => { return x * 10 + y; };
     if (lam((3, 4)) != 34) { return 1; }
-    var diff = function ((p, q): (i32, i32)): i32 { return p - q; };
+    var diff = ((p, q): (i32, i32)): i32 => { return p - q; };
     if (diff((9, 5)) != 4) { return 2; }
     return __rc_underflow_count();
 }`,
@@ -52,7 +52,7 @@ function main(): i32 {
 		name: "lambda_arg_is_live_local",
 		src: `
 function main(): i32 {
-    var lam = function (p: (i32, i32)): i32 { return p.0 * 10 + p.1; };
+    var lam = (p: (i32, i32)): i32 => { return p.0 * 10 + p.1; };
     var t = (3, 4);
     var a = lam(t);
     var b = lam(t);
@@ -99,9 +99,9 @@ function main(): i32 {
 		src: `
 struct P { x: i32, y: i32 }
 function main(): i32 {
-    var f = function (p: P): i32 { return p.x * 10 + p.y; };
+    var f = (p: P): i32 => { return p.x * 10 + p.y; };
     if (f(P { x: 3, y: 4 }) != 34) { return 1; }
-    var g = function (q: P): i32 { return q.x - q.y; };
+    var g = (q: P): i32 => { return q.x - q.y; };
     if (g(P { x: 9, y: 5 }) != 4) { return 2; }
     return __rc_underflow_count();
 }`,
@@ -120,7 +120,7 @@ function build(f: ((i32, i32)) => Box): Box {
     return f(t);
 }
 function main(): i32 {
-    var mk = function (p: (i32, i32)): Box { return Box { t: p }; };
+    var mk = (p: (i32, i32)): Box => { return Box { t: p }; };
     var b = build(mk);
     if (b.t.0 * 10 + b.t.1 != 34) { return 1; }
     return __rc_underflow_count();
@@ -132,7 +132,7 @@ function main(): i32 {
 		name: "lambda_array_param",
 		src: `
 function main(): i32 {
-    var f = function (xs: i32[]): i32 { return xs[0] + xs[1] + xs.len(); };
+    var f = (xs: i32[]): i32 => { return xs[0] + xs[1] + xs.len(); };
     var a = [1, 2];
     if (f(a) != 5) { return 1; }
     if (f([3, 4]) != 9) { return 2; }
@@ -204,7 +204,7 @@ var rcIndirectDispatchDefaultCorpus = []struct {
 		name: "identity_return_lambda",
 		src: `
 function main(): i32 {
-    var id = function (p: (i32, i32)): (i32, i32) { return p; };
+    var id = (p: (i32, i32)): (i32, i32) => { return p; };
     var t = (3, 4);
     var u = id(t);
     var j1 = (91, 92);

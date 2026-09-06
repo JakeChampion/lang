@@ -177,10 +177,14 @@ var rcResultImmortal = map[string]bool{
 	"__fern_remove_file":         true,
 	"__fern_stat":                true,
 	"__fern_lstat":               true,
-	"__fern_read_dir":            true,
-	"__fern_remove_dir_all":      true,
-	"__fern_temp_dir":            true,
-	"__fern_create_dir_all":      true,
+	// `access` has no `__fern_access` entry in rcsigs to alias through —
+	// it is native-only, so it is classified there under the builtin
+	// name — which is why this one is spelled the builtin's way too.
+	"access":                true,
+	"__fern_read_dir":       true,
+	"__fern_remove_dir_all": true,
+	"__fern_temp_dir":       true,
+	"__fern_create_dir_all": true,
 
 	// Sentinel-headered Writer / Reader structs.
 	"__fern_stdout": true,
@@ -353,6 +357,7 @@ var rcResultNonPointer = map[string]bool{
 	"__ptr_width":   true,
 	"__slice_range": true, "__fern_idiv_s32": true, "__fern_idiv_u32": true,
 	"__fern_irem_s32": true, "__fern_irem_u32": true, "isatty": true,
+	"geteuid": true, "getegid": true,
 	"__wasi_errno_of_code": true,
 
 	// The rc probes and the uniqueness test — counters and a boolean.

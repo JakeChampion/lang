@@ -64,7 +64,7 @@ function main(): i32 {
     if (d != 0) { return d; }
 
     // The same desugars inside an anonymous function expression.
-    var f: () => i32 = function (): i32 {
+    var f: () => i32 = (): i32 => {
         match (100 /? 5) { Some(v) => { if (v != 20) { return 30; } }, None => { return 31; } }
         var p: V = V { x: 5 };
         var q: V = V { x: 6 };

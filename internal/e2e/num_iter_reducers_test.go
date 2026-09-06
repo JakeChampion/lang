@@ -30,7 +30,7 @@ function main(): i32 { var a: i32[] = [2, 3, 7]; return num.product_iter(iter.of
 	// composed pipeline: sum of the evens of 1..6 (filter then sum_iter) → 2+4+6 = 12.
 	{"sum-iter-filter", `import "std/num";
 import "core/iter";
-function main(): i32 { var a: i32[] = [1, 2, 3, 4, 5, 6]; var e: i32[] = iter.filter(iter.of(a), function (n: i32): boolean { return n % 2 == 0; }); return num.sum_iter(iter.of(e), 0); }`, 12},
+function main(): i32 { var a: i32[] = [1, 2, 3, 4, 5, 6]; var e: i32[] = iter.filter(iter.of(a), (n: i32): boolean => { return n % 2 == 0; }); return num.sum_iter(iter.of(e), 0); }`, 12},
 	// i64 element type with a typed identity → 100+200+300 = 600, via sentinel
 	// (a raw 600 would wrap mod 256 as a process exit code).
 	{"sum-iter-i64", `import "std/num";

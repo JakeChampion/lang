@@ -714,7 +714,7 @@ function main(): i32 {
 	// both the Go and self-host parsers, so the built array is identical.
 	{"array_build", `import "std/i32";
 function main(): i32 {
-    var out: i32[] = Array.build(function(b: ArrayBuilder[i32]): void {
+    var out: i32[] = Array.build((b: ArrayBuilder[i32]): void => {
         var i: i32 = 0;
         while (i < 4) { b.append(i * i); i = i + 1; }
     });
@@ -727,7 +727,7 @@ function main(): i32 {
 	{"map_build", `import "std/i32";
 import "core/map";
 function main(): i32 {
-    var m: Map[i32, i32] = Map.build(function(b: MapBuilder[i32, i32]): void {
+    var m: Map[i32, i32] = Map.build((b: MapBuilder[i32, i32]): void => {
         var i: i32 = 0;
         while (i < 4) { b.insert(i, i * i); i = i + 1; }
     });

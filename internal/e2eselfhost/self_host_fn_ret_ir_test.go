@@ -30,19 +30,19 @@ var fnRetIRCases = []struct {
 	main string
 }{
 	// Return a no-capture lambda, bind it, then call it: 4 + 1 = 5.
-	{"nocap", `function mk(): (i32) => i32 { return function(b: i32): i32 { return b + 1; }; }
+	{"nocap", `function mk(): (i32) => i32 { return (b: i32): i32 => { return b + 1; }; }
 function main(): i32 { var g = mk(); return g(4); }`},
 	// No-capture lambda body with multiplication: 4 * 3 = 12.
-	{"nocap-mul", `function mk(): (i32) => i32 { return function(b: i32): i32 { return b * 3; }; }
+	{"nocap-mul", `function mk(): (i32) => i32 { return (b: i32): i32 => { return b * 3; }; }
 function main(): i32 { var g = mk(); return g(4); }`},
 	// Bound result called twice: (4+1) + (10+1) = 16.
-	{"nocap-twice", `function mk(): (i32) => i32 { return function(b: i32): i32 { return b + 1; }; }
+	{"nocap-twice", `function mk(): (i32) => i32 { return (b: i32): i32 => { return b + 1; }; }
 function main(): i32 { var g = mk(); return g(4) + g(10); }`},
 	// Two-parameter no-capture returned lambda: 5 + 6 = 11.
-	{"nocap-2arg", `function mk(): (i32, i32) => i32 { return function(a: i32, b: i32): i32 { return a + b; }; }
+	{"nocap-2arg", `function mk(): (i32, i32) => i32 { return (a: i32, b: i32): i32 => { return a + b; }; }
 function main(): i32 { var g = mk(); return g(5, 6); }`},
 	// Regression: returning a CAPTURING lambda still lowers (4 + 10 = 14).
-	{"cap-regress", `function mk(n: i32): (i32) => i32 { return function(b: i32): i32 { return b + n; }; }
+	{"cap-regress", `function mk(n: i32): (i32) => i32 { return (b: i32): i32 => { return b + n; }; }
 function main(): i32 { var g = mk(10); return g(4); }`},
 	// Regression: returning a NAMED function still lowers (4 + 1 = 5).
 	{"named-regress", `function inc(b: i32): i32 { return b + 1; }

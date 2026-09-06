@@ -39,17 +39,17 @@ var predicateAdapterCases = []struct {
 	want int
 }{
 	// any: 0..5 contains 3 → true → 5.
-	{"any-hit", `function main(): i32 { if (any(RangeIter { cur: 0, end: 5 }, function (x: i32): boolean { return x == 3; })) { return 5; } return 0; }`, 5},
+	{"any-hit", `function main(): i32 { if (any(RangeIter { cur: 0, end: 5 }, (x: i32): boolean => { return x == 3; })) { return 5; } return 0; }`, 5},
 	// any: 0..5 has no value > 9 → false → 9.
-	{"any-miss", `function main(): i32 { if (any(RangeIter { cur: 0, end: 5 }, function (x: i32): boolean { return x > 9; })) { return 0; } return 9; }`, 9},
+	{"any-miss", `function main(): i32 { if (any(RangeIter { cur: 0, end: 5 }, (x: i32): boolean => { return x > 9; })) { return 0; } return 9; }`, 9},
 	// all: every value in 0..5 is < 10 → true → 6.
-	{"all-true", `function main(): i32 { if (all(RangeIter { cur: 0, end: 5 }, function (x: i32): boolean { return x < 10; })) { return 6; } return 0; }`, 6},
+	{"all-true", `function main(): i32 { if (all(RangeIter { cur: 0, end: 5 }, (x: i32): boolean => { return x < 10; })) { return 6; } return 0; }`, 6},
 	// all: not every value is even → false → 8.
-	{"all-false", `function main(): i32 { if (all(RangeIter { cur: 0, end: 5 }, function (x: i32): boolean { return x % 2 == 0; })) { return 0; } return 8; }`, 8},
+	{"all-false", `function main(): i32 { if (all(RangeIter { cur: 0, end: 5 }, (x: i32): boolean => { return x % 2 == 0; })) { return 0; } return 8; }`, 8},
 	// find: first even ≥ 2 in 0..9 → Some(2).
-	{"find-some", `function main(): i32 { match (find(RangeIter { cur: 0, end: 9 }, function (x: i32): boolean { return x >= 2 && x % 2 == 0; })) { Some(v) => { return v; }, None => { return 99; } } }`, 2},
+	{"find-some", `function main(): i32 { match (find(RangeIter { cur: 0, end: 9 }, (x: i32): boolean => { return x >= 2 && x % 2 == 0; })) { Some(v) => { return v; }, None => { return 99; } } }`, 2},
 	// find: no match → None → 7.
-	{"find-none", `function main(): i32 { match (find(RangeIter { cur: 0, end: 3 }, function (x: i32): boolean { return x > 100; })) { Some(v) => { return v; }, None => { return 7; } } }`, 7},
+	{"find-none", `function main(): i32 { match (find(RangeIter { cur: 0, end: 3 }, (x: i32): boolean => { return x > 100; })) { Some(v) => { return v; }, None => { return 7; } } }`, 7},
 }
 
 // TestNativeGenericPredicateAdapters pins any/all/find on the native interp /

@@ -188,7 +188,7 @@ func TestSelfHostParseUnknownDiagSequence(t *testing.T) {
 		// A sentinel inside a lambda body, reachable only through expression
 		// descent.
 		{"lambda-body-sentinel",
-			"function main(): i32 {\n  var f = function(): i32 { var z: i32 = ;; return 0; };\n  return f();\n}\n",
+			"function main(): i32 {\n  var f = (): i32 => { var z: i32 = ;; return 0; };\n  return f();\n}\n",
 			"error[P001]: in fn 'main': parser-side unknown: punct:; (2:42)"},
 		// The one shape that maps to P002 rather than P001 (#6842).
 		{"float-range-p002",
@@ -197,7 +197,7 @@ func TestSelfHostParseUnknownDiagSequence(t *testing.T) {
 		// The nameless-function P001 raised by parse_unknown_errors_module
 		// itself, before any walk, followed by the top-level residue.
 		{"malformed-fn-decl",
-			"function (): i32 {\n  return 1;\n}\nfunction main(): i32 {\n  return 0;\n}\n",
+			"(): i32 => {\n  return 1;\n}\nfunction main(): i32 {\n  return 0;\n}\n",
 			"error[P001]: malformed function declaration (1:1)\n" +
 				"error[P001]: at top level: parser-side unknown: punct:: (1:12)"},
 	}

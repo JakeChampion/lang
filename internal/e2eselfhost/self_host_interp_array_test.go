@@ -26,7 +26,7 @@ var interpArrayRecvCases = []struct {
 	{"generic-receiver", "function (xs: T[]) second(): T { return xs[1]; }\nfunction main(): i32 {\n  var xs: i32[] = [3, 7, 2];\n  if (xs.second() != 7) { return 1; }\n  var ws: string[] = [\"a\", \"b\"];\n  if (ws.second() != \"b\") { return 2; }\n  return 7;\n}\n"},
 	// A method taking a closure, dispatched on an array: resolving the
 	// receiver is only half of it, the body has to run too.
-	{"receiver-with-closure-param", "function (xs: T[]) count_if(p: (T) => boolean): i32 {\n  var n: i32 = 0;\n  var i: i32 = 0;\n  while (i < xs.len()) {\n    if (p(xs[i])) { n = n + 1; }\n    i = i + 1;\n  }\n  return n;\n}\nfunction main(): i32 {\n  var xs: i32[] = [1, 5, 9];\n  return xs.count_if(function (v: i32): boolean { return v > 2; }) + 5;\n}\n"},
+	{"receiver-with-closure-param", "function (xs: T[]) count_if(p: (T) => boolean): i32 {\n  var n: i32 = 0;\n  var i: i32 = 0;\n  while (i < xs.len()) {\n    if (p(xs[i])) { n = n + 1; }\n    i = i + 1;\n  }\n  return n;\n}\nfunction main(): i32 {\n  var xs: i32[] = [1, 5, 9];\n  return xs.count_if((v: i32): boolean => { return v > 2; }) + 5;\n}\n"},
 	// The `__method_Array_<name>` convention — the free-function spelling the
 	// front end dispatches `xs.<name>(…)` to for helpers whose element type is
 	// concrete, and which std/array's sorted_asc / join / sum are written as.

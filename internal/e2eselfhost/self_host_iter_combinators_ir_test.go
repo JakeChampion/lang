@@ -35,7 +35,7 @@ function big(x: i32): boolean { return x > 100; }
 function main(): i32 { var xs: i32[] = [1, 2, 3]; match (iter.find(iter.of(xs), big)) { Some(v) => { return v; }, None => { return 7; } } }`},
 	// find with a lambda predicate (closure box — worked before; guards the path).
 	{"find-lambda", `import "core/iter";
-function main(): i32 { match (iter.find(iter.of([1, 2, 3]), function (x: i32): boolean { return x >= 2; })) { Some(v) => { return v; }, None => { return 0; } } }`},
+function main(): i32 { match (iter.find(iter.of([1, 2, 3]), (x: i32): boolean => { return x >= 2; })) { Some(v) => { return v; }, None => { return 0; } } }`},
 	// any / all over named predicates.
 	{"any", `import "core/iter";
 function gt2(x: i32): boolean { return x > 2; }

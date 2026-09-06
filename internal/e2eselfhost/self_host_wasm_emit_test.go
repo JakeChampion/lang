@@ -113,9 +113,9 @@ func TestSelfHostWasmRun(t *testing.T) {
 		// (the array-as-cell idiom migrated to Cell). 1 + 4 = 5.
 		// Array.build desugar through the self-host parser (parser.fern):
 		// b.append in a loop builds [1,2,3,4]; sum 10.
-		{"array-build", "function main(): i32 { var out: i32[] = Array.build(function(b: ArrayBuilder[i32]): void { var i = 0; while (i < 4) { b.append(i + 1); i = i + 1; } }); return out[0] + out[1] + out[2] + out[3]; }", 10, ""},
+		{"array-build", "function main(): i32 { var out: i32[] = Array.build((b: ArrayBuilder[i32]): void => { var i = 0; while (i < 4) { b.append(i + 1); i = i + 1; } }); return out[0] + out[1] + out[2] + out[3]; }", 10, ""},
 		{"two-lambdas", "function main(): i32 { var a: i32 = if (true) { 1 } else { 2 }; var b: i32 = if (false) { 3 } else { 4 }; return a + b; }", 5, ""},
-		{"direct-iife", "function main(): i32 { return (function(): i32 { return 7; })(); }", 7, ""},
+		{"direct-iife", "function main(): i32 { return ((): i32 => { return 7; })(); }", 7, ""},
 		// Local (nested) functions — desugar to a closure-valued local.
 		{"local-fn-basic", "function main(): i32 { function helper(): i32 { return 5; } return helper(); }", 5, ""},
 		{"local-fn-capture", "function main(): i32 { var n: i32 = 10; function bump(): i32 { return n + 1; } return bump(); }", 11, ""},
@@ -729,26 +729,26 @@ func TestSelfHostWasmRun(t *testing.T) {
 
 		// Non-capturing lambdas — a lambda value is a [table_idx] closure
 		// box; calls lower to call_indirect through the function table.
-		{"lambda-call", "function main(): i32 { var f = function(x: i32): i32 { return x * 2; }; print_int(f(5)); return 0; }", 0, "10"},
-		{"lambda-two-args", "function main(): i32 { var add = function(a: i32, b: i32): i32 { return a + b; }; print_int(add(3, 4)); return 0; }", 0, "7"},
-		{"lambda-zero-args", "function main(): i32 { var k = function(): i32 { return 42; }; print_int(k()); return 0; }", 0, "42"},
-		{"lambda-called-twice", "function main(): i32 { var sq = function(x: i32): i32 { return x * x; }; print_int(sq(3)); print_int(sq(4)); return 0; }", 0, "916"},
-		{"lambda-two-distinct", "function main(): i32 { var inc = function(x: i32): i32 { return x + 1; }; var dec = function(x: i32): i32 { return x - 1; }; print_int(inc(10)); print_int(dec(10)); return 0; }", 0, "119"},
-		{"lambda-interleaved", "function main(): i32 { var a = function(x: i32): i32 { return x + 100; }; var b = function(x: i32): i32 { return x + 200; }; var c = function(x: i32): i32 { return x + 300; }; print_int(b(1)); print_int(a(1)); print_int(c(1)); return 0; }", 0, "201101301"},
-		{"lambda-string-return", "function main(): i32 { var g = function(): string { return \"hi\"; }; write(g()); return 0; }", 0, "hi"},
-		{"lambda-calls-toplevel", "function dbl(n: i32): i32 { return n * 2; } function main(): i32 { var f = function(x: i32): i32 { return dbl(x) + 1; }; print_int(f(5)); return 0; }", 0, "11"},
-		{"lambda-as-fn-param", "function apply(g: fn, n: i32): i32 { return g(n); } function main(): i32 { print_int(apply(function(x: i32): i32 { return x * 3; }, 6)); return 0; }", 0, "18"},
-		{"lambda-fn-param-twice", "function twice(g: fn, n: i32): i32 { return g(g(n)); } function main(): i32 { print_int(twice(function(x: i32): i32 { return x + 5; }, 0)); return 0; }", 0, "10"},
-		{"lambda-prints-inside", "function main(): i32 { var f = function(): i32 { print_int(7); return 0; }; return f(); }", 0, "7"},
+		{"lambda-call", "function main(): i32 { var f = (x: i32): i32 => { return x * 2; }; print_int(f(5)); return 0; }", 0, "10"},
+		{"lambda-two-args", "function main(): i32 { var add = (a: i32, b: i32): i32 => { return a + b; }; print_int(add(3, 4)); return 0; }", 0, "7"},
+		{"lambda-zero-args", "function main(): i32 { var k = (): i32 => { return 42; }; print_int(k()); return 0; }", 0, "42"},
+		{"lambda-called-twice", "function main(): i32 { var sq = (x: i32): i32 => { return x * x; }; print_int(sq(3)); print_int(sq(4)); return 0; }", 0, "916"},
+		{"lambda-two-distinct", "function main(): i32 { var inc = (x: i32): i32 => { return x + 1; }; var dec = (x: i32): i32 => { return x - 1; }; print_int(inc(10)); print_int(dec(10)); return 0; }", 0, "119"},
+		{"lambda-interleaved", "function main(): i32 { var a = (x: i32): i32 => { return x + 100; }; var b = (x: i32): i32 => { return x + 200; }; var c = (x: i32): i32 => { return x + 300; }; print_int(b(1)); print_int(a(1)); print_int(c(1)); return 0; }", 0, "201101301"},
+		{"lambda-string-return", "function main(): i32 { var g = (): string => { return \"hi\"; }; write(g()); return 0; }", 0, "hi"},
+		{"lambda-calls-toplevel", "function dbl(n: i32): i32 { return n * 2; } function main(): i32 { var f = (x: i32): i32 => { return dbl(x) + 1; }; print_int(f(5)); return 0; }", 0, "11"},
+		{"lambda-as-fn-param", "function apply(g: fn, n: i32): i32 { return g(n); } function main(): i32 { print_int(apply((x: i32): i32 => { return x * 3; }, 6)); return 0; }", 0, "18"},
+		{"lambda-fn-param-twice", "function twice(g: fn, n: i32): i32 { return g(g(n)); } function main(): i32 { print_int(twice((x: i32): i32 => { return x + 5; }, 0)); return 0; }", 0, "10"},
+		{"lambda-prints-inside", "function main(): i32 { var f = (): i32 => { print_int(7); return 0; }; return f(); }", 0, "7"},
 
 		// Capturing closures — free locals of the enclosing function are
 		// copied into the closure box [idx, cap0, …]; the body loads them
 		// from $__env.
-		{"closure-capture-one", "function main(): i32 { var n: i32 = 10; var add = function(x: i32): i32 { return x + n; }; print_int(add(5)); return 0; }", 0, "15"},
-		{"closure-capture-two", "function main(): i32 { var a: i32 = 3; var b: i32 = 4; var f = function(x: i32): i32 { return x * a + b; }; print_int(f(2)); return 0; }", 0, "10"},
-		{"closure-capture-only", "function main(): i32 { var base: i32 = 100; var get = function(): i32 { return base; }; print_int(get()); return 0; }", 0, "100"},
-		{"closure-capture-string", "function main(): i32 { var name: string = \"world\"; var greet = function(): string { return \"hi \" + name; }; write(greet()); return 0; }", 0, "hi world"},
-		{"closure-capture-string-method", "function main(): i32 { var s: string = \"hello\"; var f = function(): i32 { return s.len(); }; print_int(f()); return 0; }", 0, "5"},
+		{"closure-capture-one", "function main(): i32 { var n: i32 = 10; var add = (x: i32): i32 => { return x + n; }; print_int(add(5)); return 0; }", 0, "15"},
+		{"closure-capture-two", "function main(): i32 { var a: i32 = 3; var b: i32 = 4; var f = (x: i32): i32 => { return x * a + b; }; print_int(f(2)); return 0; }", 0, "10"},
+		{"closure-capture-only", "function main(): i32 { var base: i32 = 100; var get = (): i32 => { return base; }; print_int(get()); return 0; }", 0, "100"},
+		{"closure-capture-string", "function main(): i32 { var name: string = \"world\"; var greet = (): string => { return \"hi \" + name; }; write(greet()); return 0; }", 0, "hi world"},
+		{"closure-capture-string-method", "function main(): i32 { var s: string = \"hello\"; var f = (): i32 => { return s.len(); }; print_int(f()); return 0; }", 0, "5"},
 		// Capture is by REFERENCE: one shared cell, so the outer `n = 99` is
 		// visible inside the closure. That is the designed semantics, not an
 		// accident — closureconv.BoxMutatedCaptures boxes a captured-and-
@@ -757,41 +757,41 @@ func TestSelfHostWasmRun(t *testing.T) {
 		// for pointers). This expectation was "1" while these modules lowered
 		// through the LEGACY AST wasm backend, which snapshotted at make time;
 		// they reach the IR path now, so it agrees with the oracle (#5479).
-		{"closure-snapshot-value", "function main(): i32 { var n: i32 = 1; var f = function(): i32 { return n; }; n = 99; print_int(f()); return 0; }", 0, "99"},
-		{"closure-passed-capturing", "function apply(g: fn): i32 { return g(); } function main(): i32 { var k: i32 = 42; print_int(apply(function(): i32 { return k + 1; })); return 0; }", 0, "43"},
-		{"closure-capture-param", "function make(p: i32): i32 { var f = function(x: i32): i32 { return x + p; }; return f(10); } function main(): i32 { print_int(make(5)); return 0; }", 0, "15"},
+		{"closure-snapshot-value", "function main(): i32 { var n: i32 = 1; var f = (): i32 => { return n; }; n = 99; print_int(f()); return 0; }", 0, "99"},
+		{"closure-passed-capturing", "function apply(g: fn): i32 { return g(); } function main(): i32 { var k: i32 = 42; print_int(apply((): i32 => { return k + 1; })); return 0; }", 0, "43"},
+		{"closure-capture-param", "function make(p: i32): i32 { var f = (x: i32): i32 => { return x + p; }; return f(10); } function main(): i32 { print_int(make(5)); return 0; }", 0, "15"},
 		// The by-reference counterpart in a loop: `add` reads the LIVE total
 		// each call, so this runs 0+1=1, 1+2=3, 3+4=7 -> 11, matching the
 		// oracle. It was "6" (add always seeing total == 0, summing 1+2+3)
 		// while these modules lowered through the legacy AST wasm backend's
 		// make-time snapshot; they reach the IR path now (#5479).
-		{"closure-capture-in-loop", "function main(): i32 { var total: i32 = 0; var add = function(x: i32): i32 { return x + total; }; var i: i32 = 1; while (i <= 3) { total = total + add(i); i = i + 1; } print_int(total); return 0; }", 0, "11"},
+		{"closure-capture-in-loop", "function main(): i32 { var total: i32 = 0; var add = (x: i32): i32 => { return x + total; }; var i: i32 = 1; while (i <= 3) { total = total + add(i); i = i + 1; } print_int(total); return 0; }", 0, "11"},
 		// Capturing a *struct* into a lambda must keep its struct type so a
 		// `cap.field` read resolves the field offset. An untyped capture emits
 		// a bogus `(i32.const 0)`; the method-receiver sub-case also needs the
 		// receiver in
 		// the capture set). Regression: struct-capture pass.
-		{"closure-capture-struct-local", "struct Point { x: i32, y: i32 } function main(): i32 { var p = Point { x: 30, y: 12 }; var f = function(): i32 { return p.x + p.y; }; return f(); }", 42, ""},
-		{"closure-capture-struct-two-fields", "struct Cfg { mult: i32, add: i32 } function main(): i32 { var c = Cfg { mult: 3, add: 1 }; var f = function(x: i32): i32 { return x * c.mult + c.add; }; return f(10); }", 31, ""},
-		{"closure-capture-struct-returned", "struct Box { v: i32 } function wrap(b: Box): (i32) => i32 { return function(x: i32): i32 { return x + b.v; }; } function main(): i32 { var b = Box { v: 40 }; var f = wrap(b); return f(2); }", 42, ""},
-		{"closure-capture-struct-receiver", "struct Adder { base: i32 } function (a: Adder) make(): (i32) => i32 { return function(x: i32): i32 { return x + a.base; }; } function main(): i32 { var a = Adder { base: 100 }; var f = a.make(); return f(5); }", 105, ""},
+		{"closure-capture-struct-local", "struct Point { x: i32, y: i32 } function main(): i32 { var p = Point { x: 30, y: 12 }; var f = (): i32 => { return p.x + p.y; }; return f(); }", 42, ""},
+		{"closure-capture-struct-two-fields", "struct Cfg { mult: i32, add: i32 } function main(): i32 { var c = Cfg { mult: 3, add: 1 }; var f = (x: i32): i32 => { return x * c.mult + c.add; }; return f(10); }", 31, ""},
+		{"closure-capture-struct-returned", "struct Box { v: i32 } function wrap(b: Box): (i32) => i32 { return (x: i32): i32 => { return x + b.v; }; } function main(): i32 { var b = Box { v: 40 }; var f = wrap(b); return f(2); }", 42, ""},
+		{"closure-capture-struct-receiver", "struct Adder { base: i32 } function (a: Adder) make(): (i32) => i32 { return (x: i32): i32 => { return x + a.base; }; } function main(): i32 { var a = Adder { base: 100 }; var f = a.make(); return f(5); }", 105, ""},
 
 		// Returned closures — a `var f = g(...)` bound to a call of a
 		// function whose return type is `fn` must go through call_indirect,
 		// not a direct `(call $f …)` to a nonexistent function (regression:
 		// harden10).
-		{"return-closure-capture", "function make_adder(n: i32): fn { return function(x: i32): i32 { return x + n; }; } function main(): i32 { var add5 = make_adder(5); return add5(37); }", 42, ""},
-		{"return-closure-noncap", "function get_const(): fn { return function(): i32 { return 99; }; } function main(): i32 { var f = get_const(); return f(); }", 99, ""},
-		{"return-closure-twice", "function adder(n: i32): fn { return function(x: i32): i32 { return x + n; }; } function main(): i32 { var a = adder(10); var b = adder(20); return a(1) + b(2); }", 33, ""},
-		{"return-closure-string", "function greeter(): fn { return function(): string { return \"hi\"; }; } function main(): i32 { var g = greeter(); write(g()); return 0; }", 0, "hi"},
+		{"return-closure-capture", "function make_adder(n: i32): fn { return (x: i32): i32 => { return x + n; }; } function main(): i32 { var add5 = make_adder(5); return add5(37); }", 42, ""},
+		{"return-closure-noncap", "function get_const(): fn { return (): i32 => { return 99; }; } function main(): i32 { var f = get_const(); return f(); }", 99, ""},
+		{"return-closure-twice", "function adder(n: i32): fn { return (x: i32): i32 => { return x + n; }; } function main(): i32 { var a = adder(10); var b = adder(20); return a(1) + b(2); }", 33, ""},
+		{"return-closure-string", "function greeter(): fn { return (): string => { return \"hi\"; }; } function main(): i32 { var g = greeter(); write(g()); return 0; }", 0, "hi"},
 		// A *method* returning a closure must also flow through
 		// call_indirect: `var f = obj.m()` where m returns `fn` (regression:
 		// harden12; the earlier fix only recognised free-function calls).
 		// The precise `(i32) => i32` return spelling (which the Go compiler
 		// requires and the self-host coarsens to `fn`) is used here.
-		{"method-return-closure-noncap", "struct Maker { } function (m: Maker) make(): (i32) => i32 { return function(x: i32): i32 { return x * 2; }; } function main(): i32 { var m = Maker { }; var f = m.make(); return f(21); }", 42, ""},
-		{"method-return-closure-capture-local", "struct Adder { base: i32 } function (a: Adder) make(): (i32) => i32 { var b = a.base; return function(x: i32): i32 { return x + b; }; } function main(): i32 { var a = Adder { base: 100 }; var f = a.make(); return f(5); }", 105, ""},
-		{"method-return-closure-capture-param", "struct F { } function (f: F) mul(k: i32): (i32) => i32 { return function(x: i32): i32 { return x * k; }; } function main(): i32 { var f = F { }; var g = f.mul(7); return g(6); }", 42, ""},
+		{"method-return-closure-noncap", "struct Maker { } function (m: Maker) make(): (i32) => i32 { return (x: i32): i32 => { return x * 2; }; } function main(): i32 { var m = Maker { }; var f = m.make(); return f(21); }", 42, ""},
+		{"method-return-closure-capture-local", "struct Adder { base: i32 } function (a: Adder) make(): (i32) => i32 { var b = a.base; return (x: i32): i32 => { return x + b; }; } function main(): i32 { var a = Adder { base: 100 }; var f = a.make(); return f(5); }", 105, ""},
+		{"method-return-closure-capture-param", "struct F { } function (f: F) mul(k: i32): (i32) => i32 { return (x: i32): i32 => { return x * k; }; } function main(): i32 { var f = F { }; var g = f.mul(7); return g(6); }", 42, ""},
 
 		// `.to_string()` (integer→string runtime) + f-strings (which the
 		// parser desugars to `"…" + (expr).to_string() + …`).
@@ -895,7 +895,7 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"integration-word-count", "function main(): i32 { var text: string = \"the cat sat on the mat the cat ran\"; var words: string[] = text.split(\" \"); var counts = map_new(8); var i: i32 = 0; while (i < words.len()) { var w: string = words[i]; counts = counts.insert(w, counts.get_or(w, 0) + 1); i = i + 1; } print_int(counts.get_or(\"the\", 0)); print_int(counts.get_or(\"cat\", 0)); print_int(counts.get_or(\"mat\", 0)); write(f\" total={counts.len()}\"); return 0; }", 0, "321 total=6"},
 		// Higher-order: a reduce over an array taking an `fn` param, with a
 		// plain lambda and a capturing closure (factor), reported via f-string.
-		{"integration-reduce-closure", "function reduce(xs: i32[], init: i32, f: fn): i32 { var acc: i32 = init; var i: i32 = 0; while (i < xs.len()) { acc = f(acc, xs[i]); i = i + 1; } return acc; } function main(): i32 { var xs = [1, 2, 3, 4, 5]; var factor: i32 = 10; var sum = reduce(xs, 0, function(a: i32, b: i32): i32 { return a + b; }); var scaled = reduce(xs, 0, function(a: i32, b: i32): i32 { return a + b * factor; }); write(f\"sum={sum} scaled={scaled}\"); return 0; }", 0, "sum=15 scaled=150"},
+		{"integration-reduce-closure", "function reduce(xs: i32[], init: i32, f: fn): i32 { var acc: i32 = init; var i: i32 = 0; while (i < xs.len()) { acc = f(acc, xs[i]); i = i + 1; } return acc; } function main(): i32 { var xs = [1, 2, 3, 4, 5]; var factor: i32 = 10; var sum = reduce(xs, 0, (a: i32, b: i32): i32 => { return a + b; }); var scaled = reduce(xs, 0, (a: i32, b: i32): i32 => { return a + b * factor; }); write(f\"sum={sum} scaled={scaled}\"); return 0; }", 0, "sum=15 scaled=150"},
 		// Structs + methods + array-of-structs + for-in + f-string.
 		{"integration-struct-method", "struct Pt { x: i32, y: i32 } function (p: Pt) dist2(): i32 { return p.x * p.x + p.y * p.y; } function main(): i32 { var pts = [Pt { x: 3, y: 4 }, Pt { x: 1, y: 1 }]; var total: i32 = 0; for p in pts { total = total + p.dist2(); } write(f\"total={total}\"); return 0; }", 0, "total=27"},
 		// Struct-array indexing: pts[i].field resolves the element struct type.
@@ -926,7 +926,7 @@ func TestSelfHostWasmRun(t *testing.T) {
 		// Hardening pass 3: more real-program shapes.
 		{"struct-update-spread", "struct C { r: i32, g: i32, b: i32 } function main(): i32 { var base = C { r: 1, g: 2, b: 3 }; var c2 = C { ...base, g: 99 }; print_int(c2.r); print_int(c2.g); print_int(c2.b); return 0; }", 0, "1993"},
 		{"union-match-method", "struct Circle { r: i32 } struct Square { s: i32 } type Shape = Circle | Square; function (c: Circle) area(): i32 { return c.r * c.r * 3; } function (sq: Square) area(): i32 { return sq.s * sq.s; } function describe(sh: Shape): i32 { match (sh) { Circle(c) => { return c.area(); }, Square(s) => { return s.area(); } } return 0; } function main(): i32 { print_int(describe(Circle { r: 2 })); print_int(describe(Square { s: 5 })); return 0; }", 0, "1225"},
-		{"closure-captures-array", "function main(): i32 { var xs = [10, 20, 30]; var get = function(i: i32): i32 { return xs[i]; }; print_int(get(0) + get(2)); return 0; }", 0, "40"},
+		{"closure-captures-array", "function main(): i32 { var xs = [10, 20, 30]; var get = (i: i32): i32 => { return xs[i]; }; print_int(get(0) + get(2)); return 0; }", 0, "40"},
 		{"array-2d", "function main(): i32 { var grid = [[1, 2], [3, 4]]; print_int(grid[0][1]); print_int(grid[1][0]); return 0; }", 0, "23"},
 		// Nested-array *type annotations* `i32[][]` must parse (the second
 		// `[]` was left on the cursor, dropping the `var` binding) — the
@@ -965,9 +965,9 @@ func TestSelfHostWasmRun(t *testing.T) {
 		// Closure arrays `(() => R)[]`: a closure read from an `fn[]` element
 		// (`var c = fns[i]` / `for f in fns`) is itself callable via
 		// call_indirect. (Needs the paren-fn-type parse + fn[]-element typing.)
-		{"closure-array-call", "function mk(s: i32): () => i32 { return function(): i32 { return s; }; } function main(): i32 { var fns: (() => i32)[] = [mk(42), mk(9)]; var c = fns[0]; return c(); }", 42, ""},
-		{"closure-array-for", "function mk(s: i32): () => i32 { return function(): i32 { return s; }; } function main(): i32 { var fns: (() => i32)[] = [mk(10), mk(20), mk(12)]; var s: i32 = 0; for f in fns { s = s + f(); } return s; }", 42, ""},
-		{"closure-array-arg", "function adder(n: i32): (i32) => i32 { return function(x: i32): i32 { return x + n; }; } function main(): i32 { var fs: ((i32) => i32)[] = [adder(10), adder(20)]; var g = fs[1]; return g(22); }", 42, ""},
+		{"closure-array-call", "function mk(s: i32): () => i32 { return (): i32 => { return s; }; } function main(): i32 { var fns: (() => i32)[] = [mk(42), mk(9)]; var c = fns[0]; return c(); }", 42, ""},
+		{"closure-array-for", "function mk(s: i32): () => i32 { return (): i32 => { return s; }; } function main(): i32 { var fns: (() => i32)[] = [mk(10), mk(20), mk(12)]; var s: i32 = 0; for f in fns { s = s + f(); } return s; }", 42, ""},
+		{"closure-array-arg", "function adder(n: i32): (i32) => i32 { return (x: i32): i32 => { return x + n; }; } function main(): i32 { var fs: ((i32) => i32)[] = [adder(10), adder(20)]; var g = fs[1]; return g(22); }", 42, ""},
 		{"method-chain-struct", "struct Acc { total: i32 } function (a: Acc) add(n: i32): Acc { return Acc { total: a.total + n }; } function main(): i32 { var r = Acc { total: 0 }.add(5).add(10).add(20); print_int(r.total); return 0; }", 0, "35"},
 		{"early-return-loop", "function find(xs: i32[], target: i32): i32 { var i: i32 = 0; while (i < xs.len()) { if (xs[i] == target) { return i; } i = i + 1; } return 0 - 1; } function main(): i32 { print_int(find([5, 10, 15, 20], 15)); print_int(find([1, 2], 9)); return 0; }", 0, "2-1"},
 
@@ -1019,7 +1019,7 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"void-method", "struct L { } function (l: L) log(n: i32): void { print_int(n); } function main(): i32 { var l = L {}; l.log(5); l.log(6); return 0; }", 0, "56"},
 		{"short-circuit-and-or", "function side(): boolean { print_int(9); return true; } function main(): i32 { if (false && side()) { print_int(1); } if (true || side()) { print_int(2); } return 0; }", 0, "2"},
 		{"short-circuit-guard", "function main(): i32 { var xs = [10, 20]; var i: i32 = 5; if (i < xs.len() && xs[i] > 0) { print_int(1); } else { print_int(0); } return 0; }", 0, "0"},
-		{"nested-closure", "function main(): i32 { var add = function(a: i32): i32 { var inner = function(b: i32): i32 { return a + b; }; return inner(10); }; print_int(add(5)); return 0; }", 0, "15"},
+		{"nested-closure", "function main(): i32 { var add = (a: i32): i32 => { var inner = (b: i32): i32 => { return a + b; }; return inner(10); }; print_int(add(5)); return 0; }", 0, "15"},
 		{"negative-literal", "function main(): i32 { var x: i32 = -5; print_int(x); print_int(-3 + 10); return 0; }", 0, "-57"},
 	}
 

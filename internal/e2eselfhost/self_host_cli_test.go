@@ -619,7 +619,7 @@ function main(): i32 {
 
 		// Closures compile through SSA now (function table + call_indirect):
 		// a capturing lambda's WAT differs from -no-ssa and runs correctly.
-		capSrc := "function main(): i32 { var n = 10; var f = function (x: i32): i32 { return x + n; }; return f(5); }\n"
+		capSrc := "function main(): i32 { var n = 10; var f = (x: i32): i32 => { return x + n; }; return f(5); }\n"
 		capPath := filepath.Join(dir, "wasm_cap.fern")
 		if err := os.WriteFile(capPath, []byte(capSrc), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
@@ -641,7 +641,7 @@ function main(): i32 {
 		// $__env → invalid WAT). Guard it: a while-true + capturing-lambda
 		// program falls back to the IR path (-ssa WAT == -no-ssa WAT) and
 		// runs correctly.
-		fbSrc := "function main(): i32 { var n = 5; var f = function (z: i32): i32 { return z + n; }; var r = f(2); var i = 0; while (true) { i = i + 1; if (i >= r) { return r; } } }\n"
+		fbSrc := "function main(): i32 { var n = 5; var f = (z: i32): i32 => { return z + n; }; var r = f(2); var i = 0; while (true) { i = i + 1; if (i >= r) { return r; } } }\n"
 		fbPath := filepath.Join(dir, "wasm_fb.fern")
 		if err := os.WriteFile(fbPath, []byte(fbSrc), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
@@ -808,14 +808,14 @@ function main(): i32 {
 			"    if (n > 0) { assert(n > 100, \"nested-if\"); }\n"+
 			"    var g: i32 = 0;\n"+
 			"    while (g < 1) { assert(n > 100, \"while\"); g = g + 1; }\n"+
-			"    var r: i32 = run(function(): i32 { assert(n > 100, \"lambda\"); return 1; });\n"+
+			"    var r: i32 = run((): i32 => { assert(n > 100, \"lambda\"); return 1; });\n"+
 			"    var e: E = E.A(1);\n"+
 			"    match (e) {\n"+
 			"        E.A(v) => { assert(v > 100, \"match-arm\"); },\n"+
 			"        _ => { return 90; }\n"+
 			"    }\n"+
-			"    var r2: i32 = run(function(): i32 {\n"+
-			"        return run(function(): i32 { assert(n > 100, \"nested-lambda\"); return 2; });\n"+
+			"    var r2: i32 = run((): i32 => {\n"+
+			"        return run((): i32 => { assert(n > 100, \"nested-lambda\"); return 2; });\n"+
 			"    });\n"+
 			"    return r + r2 + 2;\n"+
 			"}\n", 1, 5)
@@ -914,7 +914,7 @@ function main(): i32 {
 	// `-O` build refusing a program the default build compiles.
 	t.Run("opt-gate-normalises-a-script-with-a-lambda", func(t *testing.T) {
 		srcPath := filepath.Join(dir, "optscript.fern")
-		src := "var f = function(x: i32): i32 { return x * 2; };\n" +
+		src := "var f = (x: i32): i32 => { return x * 2; };\n" +
 			"var n: i32 = f(3);\n" +
 			"assert(n > 1, \"script\");\n"
 		if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {

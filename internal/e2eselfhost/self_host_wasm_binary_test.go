@@ -110,9 +110,9 @@ func TestSelfHostWasmBinary(t *testing.T) {
 		{"map-string-key", "function main(): i32 { var m = map_new(8); m = m.insert(\"k\", 41); return m.get_or(\"k\", 0) + 1; }", 42},
 		// Closures — named `(type $clos*)` decls + the table & elem sections
 		// + call_indirect through the function table.
-		{"closure-capture", "function adder(n: i32): fn { return function(x: i32): i32 { return x + n; }; } function main(): i32 { var a = adder(10); return a(5); }", 15},
-		{"closure-capture-array", "function main(): i32 { var xs = [10, 20, 30]; var get = function(i: i32): i32 { return xs[i]; }; return get(0) + get(2); }", 40},
-		{"lambda-as-arg", "function apply(f: fn, v: i32): i32 { return f(v); } function main(): i32 { return apply(function(x: i32): i32 { return x * 7; }, 6); }", 42},
+		{"closure-capture", "function adder(n: i32): fn { return (x: i32): i32 => { return x + n; }; } function main(): i32 { var a = adder(10); return a(5); }", 15},
+		{"closure-capture-array", "function main(): i32 { var xs = [10, 20, 30]; var get = (i: i32): i32 => { return xs[i]; }; return get(0) + get(2); }", 40},
+		{"lambda-as-arg", "function apply(f: fn, v: i32): i32 { return f(v); } function main(): i32 { return apply((x: i32): i32 => { return x * 7; }, 6); }", 42},
 		// f64: f64.const (8-byte IEEE-754 immediate via f64_bits), the f64
 		// arithmetic / comparison ops, the math intrinsics, and the
 		// int<->float conversions.

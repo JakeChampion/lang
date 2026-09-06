@@ -27,25 +27,25 @@ var tupleFnElemCases = []struct {
 }{
 	// Capturing closure in a tuple returned from a factory, element called
 	// through the caller's binding.
-	{"tuple-closure-returned", "function mk(): ((i32) => i32, i32) { var n = 5; var t = (function (x: i32): i32 { return x + n; }, 1); return t; } function main(): i32 { var t = mk(); return t.0(37); }", 42},
+	{"tuple-closure-returned", "function mk(): ((i32) => i32, i32) { var n = 5; var t = ((x: i32): i32 => { return x + n; }, 1); return t; } function main(): i32 { var t = mk(); return t.0(37); }", 42},
 	// The fn element is never CALLED — only the sibling scalar is read. Pins
 	// the layout + drop path alone (this crashed in __drop_tuple before the
 	// exprType fix).
-	{"tuple-closure-uncalled", "function mk(): ((i32) => i32, i32) { var n = 5; var t = (function (x: i32): i32 { return x + n; }, 41); return t; } function main(): i32 { var t = mk(); return t.1 + 1; }", 42},
+	{"tuple-closure-uncalled", "function mk(): ((i32) => i32, i32) { var n = 5; var t = ((x: i32): i32 => { return x + n; }, 41); return t; } function main(): i32 { var t = mk(); return t.1 + 1; }", 42},
 	// Non-capturing lambda element (still a closure box at the binding).
-	{"tuple-closure-nocapture", "function mk(): ((i32) => i32, i32) { var t = (function (x: i32): i32 { return x + 1; }, 1); return t; } function main(): i32 { var t = mk(); return t.0(41); }", 42},
+	{"tuple-closure-nocapture", "function mk(): ((i32) => i32, i32) { var t = ((x: i32): i32 => { return x + 1; }, 1); return t; } function main(): i32 { var t = mk(); return t.0(41); }", 42},
 	// Local tuple, never crosses a function boundary.
-	{"tuple-closure-local", "function main(): i32 { var n = 5; var t = (function (x: i32): i32 { return x + n; }, 1); return t.0(37); }", 42},
+	{"tuple-closure-local", "function main(): i32 { var n = 5; var t = ((x: i32): i32 => { return x + n; }, 1); return t.0(37); }", 42},
 	// A bare NAMED function as the element (an Ident in value position —
 	// resolves through FuncSigs, not MakeClosure).
 	{"tuple-named-fn", "function dbl(x: i32): i32 { return x * 2; } function main(): i32 { var t = (dbl, 1); return t.0(21); }", 42},
 	// TWO closures in one tuple — both slots must be 8-byte for the second
 	// element's offset to line up.
-	{"tuple-two-closures", "function mk(): ((i32) => i32, (i32) => i32) { var n = 1; var m = 2; var t = (function (x: i32): i32 { return x + n; }, function (x: i32): i32 { return x + m; }); return t; } function main(): i32 { var t = mk(); return t.0(19) + t.1(20); }", 42},
+	{"tuple-two-closures", "function mk(): ((i32) => i32, (i32) => i32) { var n = 1; var m = 2; var t = ((x: i32): i32 => { return x + n; }, (x: i32): i32 => { return x + m; }); return t; } function main(): i32 { var t = mk(); return t.0(19) + t.1(20); }", 42},
 	// A tuple-with-closure as an ARRAY element (`a[0].0(x)`).
-	{"array-of-tuple-closure", "function main(): i32 { var n = 5; var a = [(function (x: i32): i32 { return x + n; }, 1)]; return a[0].0(37); }", 42},
+	{"array-of-tuple-closure", "function main(): i32 { var n = 5; var a = [((x: i32): i32 => { return x + n; }, 1)]; return a[0].0(37); }", 42},
 	// A tuple-with-closure NESTED in another tuple (`t.0.0(x)`).
-	{"nested-tuple-closure", "function main(): i32 { var n = 5; var t = ((function (x: i32): i32 { return x + n; }, 1), 2); return t.0.0(37); }", 42},
+	{"nested-tuple-closure", "function main(): i32 { var n = 5; var t = (((x: i32): i32 => { return x + n; }, 1), 2); return t.0.0(37); }", 42},
 }
 
 // TestX86_64TupleFnElem — tuples with fn-typed elements through the native

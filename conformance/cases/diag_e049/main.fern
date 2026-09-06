@@ -6,7 +6,7 @@
 // it documents.
 function main(): i32 {
     var name: string = "a";
-    var f = function (): i32 {
+    var f = (): i32 => {
         name = "b";          // error[E049]: cannot assign to captured string "name"
         return name.len();
     };

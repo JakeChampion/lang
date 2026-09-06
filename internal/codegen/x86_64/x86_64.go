@@ -237,6 +237,14 @@ const (
 	sysListen    = 50
 	sysExitGroup = 231
 	sysGetrandom = 318
+	// faccessat2(2): x86-64 syscall 439, backing `__fern_access`.
+	// Deliberately NOT faccessat (269), which takes no flags word and
+	// so cannot express AT_EACCESS — the effective-id question that is
+	// the whole reason the builtin exists.
+	sysFaccessat2 = 439
+	// geteuid(2) / getegid(2): x86-64 syscalls 107 / 108.
+	sysGeteuid = 107
+	sysGetegid = 108
 	// prctl(2) / seccomp(2): x86-64 syscalls 157 / 317. Used only by
 	// __fern_seccomp_install under ast.SandboxEnabled (#6071).
 	sysPrctl   = 157
@@ -819,6 +827,15 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	if g.usesLstat {
 		g.emitLstatRuntime()
 	}
+	if g.usesAccess {
+		g.emitAccessRuntime()
+	}
+	if g.usesEuid {
+		g.emitIdRuntime("__fern_geteuid", sysGeteuid)
+	}
+	if g.usesEgid {
+		g.emitIdRuntime("__fern_getegid", sysGetegid)
+	}
 	if g.usesReaderWriter {
 		// Bundle: open_reader/writer/appender + stdin/stdout/
 		// stderr handle constructors + Reader.read_line /
@@ -1235,6 +1252,9 @@ type generator struct {
 	usesReadDir    bool
 	usesStat       bool
 	usesLstat      bool
+	usesAccess     bool
+	usesEuid       bool
+	usesEgid       bool
 	usesIoError    bool
 	// usesCreateDirAll pulls in the `mkdir -p` runtime
 	// (`__fern_create_dir_all(path) → Result[void, IoError]`), the
@@ -1647,6 +1667,14 @@ func (g *generator) recordUse(target string) {
 		g.usesLstat = true
 		g.usesAlloc = true
 		g.usesIoError = true
+	case "access":
+		g.usesAccess = true
+		g.usesAlloc = true
+		g.usesIoError = true
+	case "geteuid":
+		g.usesEuid = true
+	case "getegid":
+		g.usesEgid = true
 	}
 }
 
@@ -3147,6 +3175,12 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_stat"
 		case "lstat":
 			target = "__fern_lstat"
+		case "access":
+			target = "__fern_access"
+		case "geteuid":
+			target = "__fern_geteuid"
+		case "getegid":
+			target = "__fern_getegid"
 		case "random_bytes":
 			target = "__fern_random_bytes"
 		case "random_i32":
@@ -12867,13 +12901,42 @@ func (g *generator) emitReadDirRuntime() {
 	g.line(".size __fern_read_dir, .-__fern_read_dir")
 }
 
+// linuxStatFields maps each FileStat field onto the Linux x86-64
+// `struct stat` field it is read from: the box offset, the statbuf
+// offset, and how many bytes to load. It is the whole of what makes
+// this target-specific — everything else about the helper is shared.
+//
+// Two loads are narrower than the field they fill. `st_nlink` is a
+// 64-bit word here (it is 32-bit on arm64 Linux) and FileStat's `nlink`
+// is u32, so the low word is what lands; a link count past 4 billion is
+// not a thing any filesystem produces. Everything else is width-for-
+// width, and the three timestamps happen to sit at the same offsets in
+// both records.
+var linuxStatFields = []struct {
+	box, src, width int32
+}{
+	{ir.FileStat.Mode, 24, 4},
+	{ir.FileStat.Nlink, 16, 4},
+	{ir.FileStat.UID, 28, 4},
+	{ir.FileStat.GID, 32, 4},
+	{ir.FileStat.Dev, 0, 8},
+	{ir.FileStat.Rdev, 40, 8},
+	{ir.FileStat.Ino, 8, 8},
+	{ir.FileStat.Blksize, 56, 8},
+	{ir.FileStat.Blocks, 64, 8},
+	{ir.FileStat.Atime, 72, 8},
+	{ir.FileStat.AtimeNsec, 80, 8},
+	{ir.FileStat.Mtime, 88, 8},
+	{ir.FileStat.MtimeNsec, 96, 8},
+	{ir.FileStat.Ctime, 104, 8},
+	{ir.FileStat.CtimeNsec, 112, 8},
+}
+
 // emitStatRuntime emits `__fern_stat(path) →
 // Result[FileStat, IoError]` — newfstatat(AT_FDCWD, path, buf, 0)
-// into a 144-byte stack buffer; st_mode is the u32 at offset 24,
-// st_size the i64 at offset 48 (Linux x86-64 struct stat). The
-// FileStat box uses the native structFieldLayout offsets —
-// is_file (i32) @0, is_dir (i32) @4, size (i64) @8 — 16 bytes via
-// __fern_alloc_box (immortal, same class as the Result boxes).
+// into a 144-byte stack buffer, projected onto FileStat by
+// linuxStatFields. The box is ir.FileStat.Bytes from __fern_alloc_box
+// (immortal, same class as the Result boxes).
 // System V: rdi = path string value.
 func (g *generator) emitStatRuntime() {
 	g.emitStatLikeRuntime("__fern_stat", 0, "st")
@@ -12946,12 +13009,22 @@ func (g *generator) emitStatLikeRuntime(sym string, atFlags int, lp string) {
 	g.emit("cmp eax, 16384") // S_IFDIR
 	g.emit("sete r14b")
 	g.emit("mov r15, [rsp + 48]") // st_size
-	// FileStat box: is_file @0, is_dir @4, size @8.
-	g.emit("mov edi, 16")
+	// The statbuf stays at [rsp] across __fern_alloc_box, so the rest of
+	// the record is copied out after the box exists.
+	g.emit(fmt.Sprintf("mov edi, %d", ir.FileStat.Bytes))
 	g.emit("call __fern_alloc_box")
 	g.emit("mov [rax], r12d")
 	g.emit("mov [rax + 4], r14d")
-	g.emit("mov [rax + 8], r15")
+	g.emit(fmt.Sprintf("mov [rax + %d], r15", ir.FileStat.Size))
+	for _, f := range linuxStatFields {
+		if f.width == 4 {
+			g.emit(fmt.Sprintf("mov r9d, [rsp + %d]", f.src))
+			g.emit(fmt.Sprintf("mov [rax + %d], r9d", f.box))
+			continue
+		}
+		g.emit(fmt.Sprintf("mov r9, [rsp + %d]", f.src))
+		g.emit(fmt.Sprintf("mov [rax + %d], r9", f.box))
+	}
 	g.emit("mov r13, rax")
 	g.emit("mov edi, 16")
 	g.emit("call __fern_alloc_box")
@@ -12979,6 +13052,99 @@ func (g *generator) emitStatLikeRuntime(sym string, atFlags int, lp string) {
 	g.emit("pop r12")
 	g.emit("pop rbx")
 	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size " + sym + ", .-" + sym)
+}
+
+// emitAccessRuntime emits `__fern_access(path, mode) →
+// Result[void, IoError]` — faccessat2(AT_FDCWD, path, mode, AT_EACCESS).
+//
+// faccessat2 and not faccessat: only the newer call takes a flags word,
+// and AT_EACCESS is the whole point — the question `test -r` asks is
+// about the EFFECTIVE ids, which faccessat(2) cannot express. A kernel
+// without it (before 5.8) answers ENOSYS, which reaches the caller as an
+// IoError rather than being quietly replaced by the real-id answer.
+//
+// System V: rdi = path string value, esi = mode.
+func (g *generator) emitAccessRuntime() {
+	g.line("")
+	g.line(".globl __fern_access")
+	g.line(".type __fern_access, @function")
+	g.label("__fern_access")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx") // pathz
+	g.emit("push r12") // path byte ptr
+	g.emit("push r13") // path len / IoError box
+	g.emit("push r14") // mode
+	// 5 pushes ⇒ rsp≡0 mod 16; sub 16 keeps it. Slots:
+	//   [rbp-40] emitStrDataPtr inline-spill scratch
+	//   [rbp-48] original path string value (io_error arg)
+	g.emit("sub rsp, 16")
+	g.emit("mov [rbp - 48], rdi")
+	g.emit("mov r14d, esi")
+	g.emitStrLen("r13d", "rdi")
+	g.emitStrDataPtr("r12", "rdi", "[rbp - 40]")
+	// pathz = NUL-terminated heap copy.
+	g.emit("lea edi, [r13 + 1]")
+	g.emit("call __fern_alloc")
+	g.emit("mov rbx, rax")
+	g.emit("xor ecx, ecx")
+	g.label(".Lacc_cp")
+	g.emit("cmp rcx, r13")
+	g.emit("jae .Lacc_cpd")
+	g.emit("mov al, [r12 + rcx]")
+	g.emit("mov [rbx + rcx], al")
+	g.emit("add rcx, 1")
+	g.emit("jmp .Lacc_cp")
+	g.label(".Lacc_cpd")
+	g.emit("mov byte ptr [rbx + r13], 0")
+	// faccessat2(AT_FDCWD=-100, pathz, mode, AT_EACCESS=0x200)
+	g.emit("mov edi, -100")
+	g.emit("mov rsi, rbx")
+	g.emit("mov edx, r14d")
+	g.emit("mov r10d, 512")
+	g.emitSyscall(sysFaccessat2)
+	g.emit("test rax, rax")
+	g.emit("js .Lacc_err")
+	g.emit("mov edi, 16")
+	g.emit("call __fern_alloc_box")
+	g.emit("mov dword ptr [rax], 0")     // tag = 0 (Ok)
+	g.emit("mov qword ptr [rax + 8], 0") // unit payload
+	g.emit("jmp .Lacc_return")
+
+	g.label(".Lacc_err")
+	g.emit("neg rax")
+	g.emit("mov r13, rax")
+	g.emit("mov edi, r13d")
+	g.emit("mov rsi, [rbp - 48]")
+	g.emit("call __fern_io_error")
+	g.emit("mov r13, rax")
+	g.emit("mov edi, 16")
+	g.emit("call __fern_alloc_box")
+	g.emit("mov dword ptr [rax], 1") // tag = 1 (Err)
+	g.emit("mov [rax + 8], r13")
+
+	g.label(".Lacc_return")
+	g.emit("add rsp, 16")
+	g.emit("pop r14")
+	g.emit("pop r13")
+	g.emit("pop r12")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_access, .-__fern_access")
+}
+
+// emitIdRuntime emits a leaf that is one argument-free syscall returning
+// a 32-bit id: `__fern_geteuid` and `__fern_getegid`. Neither can fail —
+// POSIX gives them no error return — so there is no errno path.
+func (g *generator) emitIdRuntime(sym string, sysno int) {
+	g.line("")
+	g.line(".globl " + sym)
+	g.line(".type " + sym + ", @function")
+	g.label(sym)
+	g.emitSyscall(sysno)
 	g.emit("ret")
 	g.line(".size " + sym + ", .-" + sym)
 }

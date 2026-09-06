@@ -72,6 +72,7 @@ pub function builtin_caps(): BuiltinCap[] {
         BuiltinCap { builtin: "open_appender", capability: "fs" },
         BuiltinCap { builtin: "stat", capability: "fs" },
         BuiltinCap { builtin: "lstat", capability: "fs" },
+        BuiltinCap { builtin: "access", capability: "fs" },
         BuiltinCap { builtin: "read_dir", capability: "fs" },
         BuiltinCap { builtin: "remove_file", capability: "fs" },
         BuiltinCap { builtin: "remove_dir_all", capability: "fs" },
@@ -104,10 +105,15 @@ pub function builtin_caps(): BuiltinCap[] {
 // bit casts,
 // the strbuf scratch buffer,
 // the in-heap constructors, and the readiness helpers whose authority lives on
-// the pollable constructors instead. Mirrors native's Ungated exactly.
+// the pollable constructors instead. `geteuid` / `getegid` join them: reading
+// the process's own effective ids reaches nothing, since the identity was
+// chosen by whoever exec'd the program. (platforms.fern DOES gate those two —
+// there the question is whether the target can answer at all, not whether a
+// dependency may ask.) Mirrors native's Ungated exactly.
 pub function ungated(): string[] {
     return ["putchar", "print", "write", "eprint", "read_line",
             "stdin", "stdout", "stderr", "isatty", "target_os", "target_arch", "args", "exit",
+            "geteuid", "getegid",
             "strbuf_reset", "strbuf_append", "strbuf_take",
             "f32_bits", "f32_from_bits", "f64_bits", "f64_from_bits",
             "poll", "wasm_block", "wasm_poll", "wasm_pollable_drop",

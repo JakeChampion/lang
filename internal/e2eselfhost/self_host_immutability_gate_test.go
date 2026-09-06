@@ -51,7 +51,7 @@ func TestSelfHostImmutabilityGateX86_64(t *testing.T) {
 			// The self-host build gate must match (it filters check_module to the
 			// cycle rules, of which E049 is the reference-capture write-back one).
 			name:     "captured-ref-assign-E049",
-			src:      "function main(): i32 { var xs: i32[] = [1]; var f = function (): i32 { xs = xs.append(2); return xs.len(); }; return f(); }\n",
+			src:      "function main(): i32 { var xs: i32[] = [1]; var f = (): i32 => { xs = xs.append(2); return xs.len(); }; return f(); }\n",
 			wantDiag: "error[E049]",
 		},
 		{

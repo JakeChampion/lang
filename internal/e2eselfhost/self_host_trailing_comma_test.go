@@ -39,7 +39,7 @@ var trailingCommaCases = []struct {
 	// of them can pin the consequence.
 	{"fn-params-trailing", "function add3(a: i32, b: i32, c: i32,): i32 { return a + b + c; } function main(): i32 { return add3(35, 5, 2); }", 42},
 	{"arrow-lambda-params-trailing", "function main(): i32 { var twice: (i32) => i32 = (n: i32,) => n * 2; return twice(21); }", 42},
-	{"fn-keyword-lambda-params-trailing", "function main(): i32 { var f: (i32) => i32 = function (a: i32,): i32 { return a + 2; }; return f(40); }", 42},
+	{"fn-keyword-lambda-params-trailing", "function main(): i32 { var f: (i32) => i32 = (a: i32,): i32 => { return a + 2; }; return f(40); }", 42},
 	{"two-param-lambda-trailing", "function main(): i32 { var add: (i32, i32) => i32 = (a: i32, b: i32,) => a + b; return add(40, 2); }", 42},
 	{"single-param-no-trailing-regress", "function id2(a: i32): i32 { return a; } function main(): i32 { var f: (i32) => i32 = (n: i32) => n; return id2(f(42)); }", 42},
 }

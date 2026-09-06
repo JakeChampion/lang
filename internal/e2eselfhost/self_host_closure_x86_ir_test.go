@@ -66,9 +66,9 @@ func TestSelfHostClosureX86IR(t *testing.T) {
 		src      string
 		expected int
 	}{
-		{"adder", `function make_adder(n: i32): (i32) => i32 { return function(x: i32): i32 { return x + n; }; } function main(): i32 { var add5 = make_adder(5); return add5(3); }`, 8},
-		{"multi-capture", `function make(a: i32, b: i32): (i32) => i32 { return function(x: i32): i32 { return x * a + b; }; } function main(): i32 { var f = make(3, 7); return f(5); }`, 22},
-		{"called-twice", `function make(a: i32, b: i32): (i32) => i32 { return function(x: i32): i32 { return x * a + b; }; } function main(): i32 { var f = make(2, 1); return f(3) + f(4); }`, 16},
+		{"adder", `function make_adder(n: i32): (i32) => i32 { return (x: i32): i32 => { return x + n; }; } function main(): i32 { var add5 = make_adder(5); return add5(3); }`, 8},
+		{"multi-capture", `function make(a: i32, b: i32): (i32) => i32 { return (x: i32): i32 => { return x * a + b; }; } function main(): i32 { var f = make(3, 7); return f(5); }`, 22},
+		{"called-twice", `function make(a: i32, b: i32): (i32) => i32 { return (x: i32): i32 => { return x * a + b; }; } function main(): i32 { var f = make(2, 1); return f(3) + f(4); }`, 16},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

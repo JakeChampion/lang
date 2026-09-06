@@ -6881,7 +6881,7 @@ function label_in_scope(labels: string[], name: string): boolean {
 // resolves to `i32.append` and the module falls off the IR path.
 function loop_diags_in_exprs(st: ast.Stmt, in_loop: boolean, labels: string[]): util.Diag[] {
   var acc: util.Diag[] = [];
-  return astwalk.fold_stmt_pruned(st, acc, function (e: ast.Expr, a: util.Diag[]): util.Diag[] {
+  return astwalk.fold_stmt_pruned(st, acc, (e: ast.Expr, a: util.Diag[]): util.Diag[] => {
     match (e) {
       ast.ExprCall(c) => {
         if (parser.is_value_block(c)) { return util.append_diags(a, loop_diags(parser.vb_body(c), in_loop, labels)); }
@@ -14165,10 +14165,9 @@ function main(): i32 {
     return 560;
   }
 
-  // Lambda + invocation: `var f = function (x: i32): i32 { …
-  // }; f(41)` type-checks; f's call dispatches via the
-  // TypeFunc-binding path.
-  var src57: string = "function main(): i32 { var f = function (x: i32): i32 { return x + 1; }; return f(41); }";
+  // Lambda + invocation: `var f = (x: i32): i32 => { … }; f(41)`
+  // type-checks; f's call dispatches via the TypeFunc-binding path.
+  var src57: string = "function main(): i32 { var f = (x: i32): i32 => { return x + 1; }; return f(41); }";
   var mod57: parser.Module = parser.parse_module(lexer.tokenize(src57));
   var mt57: ModuleTypes = check_module(mod57);
   if (!mt57.all_well_typed) {
@@ -14176,7 +14175,7 @@ function main(): i32 {
   }
 
   // Lambda arg-type mismatch — `f("hi")` where f expects i32.
-  var src58: string = "function main(): i32 { var f = function (x: i32): i32 { return x + 1; }; return f(\"hi\"); }";
+  var src58: string = "function main(): i32 { var f = (x: i32): i32 => { return x + 1; }; return f(\"hi\"); }";
   var mod58: parser.Module = parser.parse_module(lexer.tokenize(src58));
   var mt58: ModuleTypes = check_module(mod58);
   if (mt58.all_well_typed) {

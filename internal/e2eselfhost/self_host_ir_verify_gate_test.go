@@ -66,7 +66,7 @@ function main(): i32 { return work("hello", [4, 5, 6]); }`},
 function apply(f: (i32) => i32, v: i32): i32 { return f(v); }
 function main(): i32 {
     var add5: (i32) => i32 = makeAdder(5);
-    var inc: (i32) => i32 = function(x: i32): i32 { return x + 1; };
+    var inc: (i32) => i32 = (x: i32): i32 => { return x + 1; };
     return apply(add5, 30) + inc(2);
 }`},
 	{"enum-match", `enum Shape { Dot, Line(i32), Box(i32, i32) }

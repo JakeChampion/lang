@@ -30,10 +30,10 @@ var nestedClosureIRCases = []struct {
 	src      string
 	expected int
 }{
-	{"no-outer-capture", `function main(): i32 { var f = function(x: i32): i32 { var g = function(y: i32): i32 { return y + 1; }; return g(x); }; return f(10); }`, 11},
-	{"capture-outer-local", `function main(): i32 { var a = 1; var f = function(x: i32): i32 { var g = function(y: i32): i32 { return y + a; }; return g(x); }; return f(10); }`, 11},
-	{"capture-outer-param", `function main(): i32 { var f = function(x: i32): i32 { var g = function(y: i32): i32 { return y + x; }; return g(5); }; return f(10); }`, 15},
-	{"triple-nested", `function main(): i32 { var f = function(x: i32): i32 { var g = function(y: i32): i32 { var h = function(z: i32): i32 { return z + 1; }; return h(y); }; return g(x); }; return f(10); }`, 11},
+	{"no-outer-capture", `function main(): i32 { var f = (x: i32): i32 => { var g = (y: i32): i32 => { return y + 1; }; return g(x); }; return f(10); }`, 11},
+	{"capture-outer-local", `function main(): i32 { var a = 1; var f = (x: i32): i32 => { var g = (y: i32): i32 => { return y + a; }; return g(x); }; return f(10); }`, 11},
+	{"capture-outer-param", `function main(): i32 { var f = (x: i32): i32 => { var g = (y: i32): i32 => { return y + x; }; return g(5); }; return f(10); }`, 15},
+	{"triple-nested", `function main(): i32 { var f = (x: i32): i32 => { var g = (y: i32): i32 => { var h = (z: i32): i32 => { return z + 1; }; return h(y); }; return g(x); }; return f(10); }`, 11},
 }
 
 // TestSelfHostNestedClosureX86IR gates nested capturing lambdas on x86-64: each

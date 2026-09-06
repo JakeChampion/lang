@@ -971,7 +971,7 @@ function rl_expr(e: ast.Expr, labels: string[]): ast.Expr {
 }
 
 function rl_expr_kids(e: ast.Expr, labels: string[]): ast.Expr {
-    return map_expr_kids(e, function (k: ast.Expr): ast.Expr { return rl_expr(k, labels); });
+    return map_expr_kids(e, (k: ast.Expr): ast.Expr => { return rl_expr(k, labels); });
 }
 
 function resolve_labels_block(stmts: ast.Stmt[], labels: string[]): ast.Stmt[] {
@@ -7969,7 +7969,10 @@ pub function builtin_function_names(): string[] {
         "open_reader", "open_writer", "open_appender",
         // filesystem
         "read_file", "read_file_bytes", "write_file", "write_file_exec", "read_dir", "remove_dir_all", "remove_file",
-        "create_dir_all", "stat", "lstat", "temp_dir",
+        "create_dir_all", "stat", "lstat", "access", "temp_dir",
+        // the process's own effective ids, which `test -O` / `-G` compare a
+        // file's owner against
+        "geteuid", "getegid",
         // clocks + randomness + sleep + reactor readiness
         "now_unix_ms", "now_ns", "monotonic_ns", "sleep_ms", "random_bytes",
         "random_i32", "poll", "timer_fd", "wasm_timer_pollable",
@@ -8027,15 +8030,32 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
         structs = structs.append(StructDecl { name: "Other", fields: otf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "IoError", must_consume: false, variant_field_names: [] , is_pub: true });
     }
     // FileStat: the builtin struct returned by stat(path). Injected so
-    // the emitter knows its field layout ([shape, is_file@8, is_dir@16,
-    // size@24]) — the __fern_stat runtime helper builds a struct whose
-    // shape pointer is the interned "FileStat" name, matching the arm
-    // that field access emits for is_file / is_dir / size.
+    // the emitter knows its field layout ([shape, then one 8-byte slot
+    // per field in declaration order]) — the __fern_stat runtime helper
+    // builds a struct whose shape pointer is the interned "FileStat"
+    // name, matching the arm that field access emits. The field list
+    // mirrors native's checker declaration entry for entry, which
+    // TestSelfHostBuiltinStructsMatchChecker pins.
     if (!struct_declared(structs, "FileStat")) {
         var fsf: StructFieldDecl[] = [];
         fsf = fsf.append(StructFieldDecl { name: "is_file", type_name: "boolean", fn_ret: "", fn_param_types: "" });
         fsf = fsf.append(StructFieldDecl { name: "is_dir", type_name: "boolean", fn_ret: "", fn_param_types: "" });
         fsf = fsf.append(StructFieldDecl { name: "size", type_name: "i64", fn_ret: "", fn_param_types: "" });
+        fsf = fsf.append(StructFieldDecl { name: "mode", type_name: "u32", fn_ret: "", fn_param_types: "" });
+        fsf = fsf.append(StructFieldDecl { name: "nlink", type_name: "u32", fn_ret: "", fn_param_types: "" });
+        fsf = fsf.append(StructFieldDecl { name: "uid", type_name: "u32", fn_ret: "", fn_param_types: "" });
+        fsf = fsf.append(StructFieldDecl { name: "gid", type_name: "u32", fn_ret: "", fn_param_types: "" });
+        fsf = fsf.append(StructFieldDecl { name: "dev", type_name: "i64", fn_ret: "", fn_param_types: "" });
+        fsf = fsf.append(StructFieldDecl { name: "rdev", type_name: "i64", fn_ret: "", fn_param_types: "" });
+        fsf = fsf.append(StructFieldDecl { name: "ino", type_name: "i64", fn_ret: "", fn_param_types: "" });
+        fsf = fsf.append(StructFieldDecl { name: "blksize", type_name: "i64", fn_ret: "", fn_param_types: "" });
+        fsf = fsf.append(StructFieldDecl { name: "blocks", type_name: "i64", fn_ret: "", fn_param_types: "" });
+        fsf = fsf.append(StructFieldDecl { name: "atime", type_name: "i64", fn_ret: "", fn_param_types: "" });
+        fsf = fsf.append(StructFieldDecl { name: "atime_nsec", type_name: "i64", fn_ret: "", fn_param_types: "" });
+        fsf = fsf.append(StructFieldDecl { name: "mtime", type_name: "i64", fn_ret: "", fn_param_types: "" });
+        fsf = fsf.append(StructFieldDecl { name: "mtime_nsec", type_name: "i64", fn_ret: "", fn_param_types: "" });
+        fsf = fsf.append(StructFieldDecl { name: "ctime", type_name: "i64", fn_ret: "", fn_param_types: "" });
+        fsf = fsf.append(StructFieldDecl { name: "ctime_nsec", type_name: "i64", fn_ret: "", fn_param_types: "" });
         structs = structs.append(StructDecl { name: "FileStat", fields: fsf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [] , is_pub: true });
     }
     // ProcessResult — returned by `subprocess(cmd, args, stdin)`.
@@ -15915,7 +15935,7 @@ function cf_inline_expr(e: ast.Expr, funcs: FuncDecl[]): ast.Expr {
         ast.ExprLambda(lm) => { return ast.ExprLambda { ...lm, body: cf_inline_fn_body(lm.body, funcs) }; },
         _ => {}
     }
-    return map_expr_kids(e, function (k: ast.Expr): ast.Expr { return cf_inline_expr(k, funcs); });
+    return map_expr_kids(e, (k: ast.Expr): ast.Expr => { return cf_inline_expr(k, funcs); });
 }
 
 function cf_inline_fn_body(body: ast.Stmt[], funcs: FuncDecl[]): ast.Stmt[] {
@@ -19745,8 +19765,8 @@ function check_generics(): i32 {
 }
 
 function check_lambdas(): i32 {
-    // Lambda expression: `function (x: i32): i32 { return x + 1; }`.
-    var srcLm: string = "var f = function (x: i32): i32 { return x + 1; }; return 0;";
+    // Lambda expression: `(x: i32): i32 => { return x + 1; }`.
+    var srcLm: string = "var f = (x: i32): i32 => { return x + 1; }; return 0;";
     var progLm: ast.Stmt[] = parse_program(lexer.tokenize(srcLm));
     match (progLm[0]) {
         ast.StmtVar(v) => {
@@ -19955,10 +19975,10 @@ function check_struct_patterns(): i32 {
         _ => { return 1176; }
     }
 
-    // The LAMBDA spelling — verbose `function (…)` and the arrow form, which
-    // needs first_param_looks_typed to tell `(Point { x, y }: Point) => …`
-    // from a parenthesised struct literal.
-    var srcSPL: string = "function main(): i32 { var f = function (Point { x, y }: Point): i32 { return x * 10 + y; }; var g = (Point { x, y }: Point) => x + y; return 0; }";
+    // The LAMBDA spelling with a struct-destructuring parameter, in both
+    // body forms. It needs first_param_looks_typed to tell
+    // `(Point { x, y }: Point) => …` from a parenthesised struct literal.
+    var srcSPL: string = "function main(): i32 { var f = (Point { x, y }: Point): i32 => { return x * 10 + y; }; var g = (Point { x, y }: Point) => x + y; return 0; }";
     var modSPL: Module = parse_module(lexer.tokenize(srcSPL));
     if (modSPL.funcs.len() != 1) { return 1180; }
     if (modSPL.funcs[0].body.len() != 3) { return 1181; }

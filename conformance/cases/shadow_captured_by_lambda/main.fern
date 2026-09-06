@@ -6,12 +6,12 @@ function main(): i32 {
     var v: i32 = 1;
     {
         var v: i32 = 5;
-        var f: () => i32 = function (): i32 { return v; };
+        var f: () => i32 = (): i32 => { return v; };
         if (f() != 5) { return 1; }
     }
     {
         var v: i32 = 7;
-        var g: (i32) => i32 = function (n: i32): i32 { return v + n; };
+        var g: (i32) => i32 = (n: i32): i32 => { return v + n; };
         if (g(1) != 8) { return 2; }
     }
     if (v != 1) { return 3; }

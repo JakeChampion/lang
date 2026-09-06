@@ -9717,10 +9717,17 @@ func (b *builder) expr(e ast.Expr) error {
 		// f32 = 0`, `r * 2`, `r <= 0` against an f32 r). Emit
 		// the f-const path with the integer Value cast to float.
 		if n.IsFloat {
+			// Past i64 max Value is the wrapped bit pattern, so read the
+			// written magnitude back as unsigned or the float gets the
+			// wrong sign.
+			f := float64(n.Value)
+			if n.ExceedsI64 {
+				f = float64(uint64(n.Value))
+			}
 			if n.FloatWidth == 32 {
-				b.emit(Op{Kind: OpConstF32, F32: float32(n.Value)})
+				b.emit(Op{Kind: OpConstF32, F32: float32(f)})
 			} else {
-				b.emit(Op{Kind: OpConstF64, F64: float64(n.Value)})
+				b.emit(Op{Kind: OpConstF64, F64: f})
 			}
 		} else if n.Width == 64 || (n.Width == ast.WidthPtr && b.ptrW == 8) {
 			// usize literals on natives (ptrW=8) emit as i64

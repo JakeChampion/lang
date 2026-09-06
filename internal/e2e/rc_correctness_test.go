@@ -581,7 +581,7 @@ function main(): i32 {
 import "core/int";
 function main(): i32 {
     var xs: i32[] = [5, 6, 7];
-    var f = function (d: i32): i32 { return xs[2] + d; };
+    var f = (d: i32): i32 => { return xs[2] + d; };
     var got: i32 = f(0);
     return (got - 7) + __rc_underflow_count();
 }`,
@@ -593,7 +593,7 @@ function main(): i32 {
 import "core/int";
 function main(): i32 {
     var k: i32 = 42;
-    var f = function (x: i32): i32 { return x + k; };
+    var f = (x: i32): i32 => { return x + k; };
     return (f(0) - 42) + __rc_underflow_count();
 }`,
 	},
@@ -610,7 +610,7 @@ function main(): i32 {
     var i: i32 = 0;
     while (i < 100) {
         var base: i32 = i;
-        var f = function (x: i32): i32 { return base + x; };
+        var f = (x: i32): i32 => { return base + x; };
         sum = sum + f(1);
         i = i + 1;
     }
@@ -648,7 +648,7 @@ function main(): i32 {
     var i: i32 = 0;
     while (i < 100) {
         var xs: i32[] = [i, i + 1, i + 2];
-        var f = function (d: i32): i32 { return xs[2] + d; };
+        var f = (d: i32): i32 => { return xs[2] + d; };
         acc = acc + f(0);
         i = i + 1;
     }
@@ -666,8 +666,8 @@ function main(): i32 {
 import "core/int";
 function main(): i32 {
     var xs: i32[] = [10, 20, 30];
-    var outer = function (a: i32): i32 {
-        var inner = function (b: i32): i32 { return xs[2] + a + b; };
+    var outer = (a: i32): i32 => {
+        var inner = (b: i32): i32 => { return xs[2] + a + b; };
         return inner(1);
     };
     return (outer(0) - 31) + __rc_underflow_count();
@@ -816,7 +816,7 @@ import "core/int";
 struct S { v: i32 }
 function main(): i32 {
     var s: S = S { v: 21 };
-    var f = function (d: i32): i32 { return s.v + d; };
+    var f = (d: i32): i32 => { return s.v + d; };
     return (f(0) - 21) + __rc_underflow_count();
 }`,
 	},
@@ -827,8 +827,8 @@ function main(): i32 {
 import "core/int";
 function main(): i32 {
     var base: i32[] = [10, 20, 30];
-    var f = function (i: i32): i32 { return base[i]; };
-    var g = function (i: i32): i32 { return base[i] + 1; };
+    var f = (i: i32): i32 => { return base[i]; };
+    var g = (i: i32): i32 => { return base[i] + 1; };
     return (f(2) - 30) + (g(0) - 11) + __rc_underflow_count();
 }`,
 	},
@@ -1081,7 +1081,7 @@ function main(): i32 {
 		name: "string_closure_capture_churn_free",
 		src: `function make_box(seed: i32): () => i32 {
     var s: string = "ab" + "cd";
-    return function (): i32 { return s.len(); };
+    return (): i32 => { return s.len(); };
 }
 function mk(seed: i32): i32 {
     var f: () => i32 = make_box(seed);
@@ -2290,7 +2290,7 @@ import "core/int";
 import "std/string";
 function mk(): i32 {
     var s: string = "value-aaaaaaaaaaaaaaaaaa-" + "1";
-    var f = function(): i32 { return s.len(); };
+    var f = (): i32 => { return s.len(); };
     return f();
 }
 function main(): i32 {
@@ -2387,7 +2387,7 @@ import "core/int";
 import "std/string";
 function mk(): i32 {
     var p: (string, i32) = ("value-aaaaaaaaaaaaaaaaaa-" + "1", 7);
-    var f: () => i32 = function(): i32 { return p.0.len() + p.1; };
+    var f: () => i32 = (): i32 => { return p.0.len() + p.1; };
     return f();
 }
 function main(): i32 {
@@ -3419,7 +3419,7 @@ function main(): i32 {
     var i: i32 = 0;
     while (i < 100) {
         var it: Item = Item { tags: [i, i + 1] };
-        var f = function (d: i32): i32 { return it.tags[1] + d; };
+        var f = (d: i32): i32 => { return it.tags[1] + d; };
         acc = acc + f(0);
         i = i + 1;
     }
@@ -3441,7 +3441,7 @@ function main(): i32 {
     var i: i32 = 0;
     while (i < 100) {
         var items: Item[] = [Item { tags: [i, i + 1] }, Item { tags: [i + 2] }];
-        var f = function (d: i32): i32 { return items.len() + d; };
+        var f = (d: i32): i32 => { return items.len() + d; };
         acc = acc + f(0);
         i = i + 1;
     }
@@ -4589,8 +4589,8 @@ function main(): i32 { return f() - 23 + __rc_underflow_count(); }`,
 struct Point { x: i32, y: i32 }
 function main(): i32 {
     var x: i32 = 1;
-    var f = function (Point { x, y }: Point): i32 { return x * 10 + y; };
-    var g = function ((x, y): (i32, i32)): i32 { return x + y; };
+    var f = (Point { x, y }: Point): i32 => { return x * 10 + y; };
+    var g = ((x, y): (i32, i32)): i32 => { return x + y; };
     return f(Point { x: 3, y: 4 }) + g((2, 3)) - 39 + x - 1 + __rc_underflow_count();
 }`,
 	},
@@ -7664,7 +7664,7 @@ function run_sub(ctx: Ctx, t: Txn, name: string): Out {
 }
 function driver(decls: string[]): (string, Txn) => Out {
     var ctx: Ctx = Ctx { decls: decls };
-    var runner: (string, Txn) => Out = function(name: string, t: Txn): Out { return run_sub(ctx, t, name); };
+    var runner: (string, Txn) => Out = (name: string, t: Txn): Out => { return run_sub(ctx, t, name); };
     return runner;
 }
 function main(): i32 {

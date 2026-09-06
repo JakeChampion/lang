@@ -36,13 +36,13 @@ var iterFlatMapCases = []struct {
 	want int
 }{
 	// fan each x to [x, x*10] over [1,4): [1,10,2,20,3,30]; sum 66 + len 6 = 72.
-	{"fan-out", `function main(): i32 { var r = flat_map(range(1, 4), function (x: i32): i32[] { return [x, x * 10]; }); var s = 0; for v in r { s = s + v; } return s + r.len(); }`, 72},
+	{"fan-out", `function main(): i32 { var r = flat_map(range(1, 4), (x: i32): i32[] => { return [x, x * 10]; }); var s = 0; for v in r { s = s + v; } return s + r.len(); }`, 72},
 	// drop evens (return []), keep odds over [0,6): [1,3,5]; sum 9 + len 3 = 12.
-	{"drop-and-keep", `function main(): i32 { var r = flat_map(range(0, 6), function (x: i32): i32[] { if (x % 2 == 0) { return []; } return [x]; }); var s = 0; for v in r { s = s + v; } return s + r.len(); }`, 12},
+	{"drop-and-keep", `function main(): i32 { var r = flat_map(range(0, 6), (x: i32): i32[] => { if (x % 2 == 0) { return []; } return [x]; }); var s = 0; for v in r { s = s + v; } return s + r.len(); }`, 12},
 	// every element maps to [] → empty result; len 0 + 5 = 5.
-	{"all-empty", `function main(): i32 { var r = flat_map(range(0, 4), function (x: i32): i32[] { return []; }); return r.len() + 5; }`, 5},
+	{"all-empty", `function main(): i32 { var r = flat_map(range(0, 4), (x: i32): i32[] => { return []; }); return r.len() + 5; }`, 5},
 	// flat_map over an empty source → empty; len 0 + 8 = 8.
-	{"empty-source", `function main(): i32 { var r = flat_map(range(3, 3), function (x: i32): i32[] { return [x, x]; }); return r.len() + 8; }`, 8},
+	{"empty-source", `function main(): i32 { var r = flat_map(range(3, 3), (x: i32): i32[] => { return [x, x]; }); return r.len() + 8; }`, 8},
 }
 
 func iterFlatMapProg(mainBody string) string { return iterFlatMapPrelude + mainBody + "\n" }
@@ -83,9 +83,9 @@ func TestNativeIterFlatMapArm64(t *testing.T) {
 func TestNativeIterFlatMapModule(t *testing.T) {
 	src := `import "core/iter" as iter;
 function main(): i32 {
-    var r = iter.flat_map(iter.range(1, 4), function (x: i32): i32[] { return [x, x * 10]; });  // [1,10,2,20,3,30]
+    var r = iter.flat_map(iter.range(1, 4), (x: i32): i32[] => { return [x, x * 10]; });  // [1,10,2,20,3,30]
     var s = 0; for v in r { s = s + v; }                                                          // 66
-    var o = iter.flat_map(iter.range(0, 6), function (x: i32): i32[] { if (x % 2 == 0) { return []; } return [x]; });  // [1,3,5]
+    var o = iter.flat_map(iter.range(0, 6), (x: i32): i32[] => { if (x % 2 == 0) { return []; } return [x]; });  // [1,3,5]
     var t = 0; for v in o { t = t + v; }                                                          // 9
     return s + r.len() + t + o.len();                                                             // 66+6+9+3 = 84
 }

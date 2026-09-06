@@ -68,8 +68,8 @@ function main(): i32 { return f(100, 3) + g(2, 3) - f(250, 10); }
 function apply(f: (i32) => i32, x: i32): i32 { return f(x); }
 function main(): i32 {
     var n: i32 = 5;
-    var add: (i32) => i32 = function (x: i32): i32 { return x + n; };
-    var dbl: (i32) => i32 = function (x: i32): i32 { return x * 2; };
+    var add: (i32) => i32 = (x: i32): i32 => { return x + n; };
+    var dbl: (i32) => i32 = (x: i32): i32 => { return x * 2; };
     var fs: ((i32) => i32)[] = [add, dbl];
     var t: i32 = 0;
     var i: i32 = 0;
@@ -395,7 +395,7 @@ function sort_by_key[T](arr: T[], key: (T) => i32): T[] {
 }
 function main(): i32 {
     var ps: P[] = [P { k: 3 }, P { k: 1 }, P { k: 2 }];
-    var s = sort_by_key(ps, function (p: P): i32 { return p.k; });
+    var s = sort_by_key(ps, (p: P): i32 => { return p.k; });
     var t: i32 = s[0].k * 10 + s[2].k;          // 1*10 + 3
     var qs: P[] = [P { k: 7 }];
     var d = idf(qs);
@@ -421,16 +421,16 @@ function main(): i32 {
 	{"direct-iife", `
 struct P { n: i32 }
 function g(n: i32): i32 { return n * 2; }
-function ret(): i32 { return (function (): i32 { return 7; })(); }
+function ret(): i32 { return ((): i32 => { return 7; })(); }
 function main(): i32 {
     var t: i32 = ret();                                              // 7
     var n: i32 = 5;
-    t = t + (function (): i32 { return n + 2; })();                   // +7
-    t = t + (function (): string { return "ab" + "cd"; })().len();    // +4
-    t = t + (function (): P { return P { n: 6 }; })().n;              // +6
-    t = t + (function (): i32 { return (function (): i32 { return 3; })() + 4; })(); // +7
+    t = t + ((): i32 => { return n + 2; })();                   // +7
+    t = t + ((): string => { return "ab" + "cd"; })().len();    // +4
+    t = t + ((): P => { return P { n: 6 }; })().n;              // +6
+    t = t + ((): i32 => { return ((): i32 => { return 3; })() + 4; })(); // +7
     var i: i32 = 0;
-    while (i < 3) { t = t + (function (): i32 { return g(i); })(); i = i + 1; }      // +6
+    while (i < 3) { t = t + ((): i32 => { return g(i); })(); i = i + 1; }      // +6
     return t;
 }
 `, 37},

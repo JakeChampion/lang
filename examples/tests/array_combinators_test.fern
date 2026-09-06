@@ -14,13 +14,13 @@ import "std/test";
 
 function test_map(): test.TestOutcome {
     var xs: i32[] = [1, 2, 3];
-    var ys: i32[] = array.map(xs, function (n: i32): i32 { return n * 10; });
+    var ys: i32[] = array.map(xs, (n: i32): i32 => { return n * 10; });
     return test.assert_eq(ys[0] + ys[1] + ys[2], 60);
 }
 
 function test_map_empty(): test.TestOutcome {
     var xs: i32[] = [];
-    var ys: i32[] = array.map(xs, function (n: i32): i32 { return n + 1; });
+    var ys: i32[] = array.map(xs, (n: i32): i32 => { return n + 1; });
     return test.assert_eq(ys.len(), 0);
 }
 
@@ -28,19 +28,19 @@ function test_map_empty(): test.TestOutcome {
 // T path is exercised, not just the same-width same-type case.
 function test_map_change_type(): test.TestOutcome {
     var xs: i32[] = [1, 2, 3];
-    var ss: string[] = array.map(xs, function (n: i32): string { return n.to_string(); });
+    var ss: string[] = array.map(xs, (n: i32): string => { return n.to_string(); });
     return test.assert_eq(ss.join("-"), "1-2-3");
 }
 
 function test_filter(): test.TestOutcome {
     var xs: i32[] = [1, 2, 3, 4, 5, 6];
-    var evens: i32[] = array.filter(xs, function (n: i32): boolean { return n % 2 == 0; });
+    var evens: i32[] = array.filter(xs, (n: i32): boolean => { return n % 2 == 0; });
     return test.assert_eq(evens.len() * 100 + evens[0] + evens[1] + evens[2], 312);
 }
 
 function test_filter_empty(): test.TestOutcome {
     var xs: i32[] = [1, 2, 3];
-    var none: i32[] = array.filter(xs, function (n: i32): boolean { return n > 100; });
+    var none: i32[] = array.filter(xs, (n: i32): boolean => { return n > 100; });
     return test.assert_eq(none.len(), 0);
 }
 
@@ -49,19 +49,19 @@ function test_filter_empty(): test.TestOutcome {
 function test_filter_capture(): test.TestOutcome {
     var threshold: i32 = 3;
     var xs: i32[] = [1, 2, 3, 4, 5];
-    var big: i32[] = array.filter(xs, function (n: i32): boolean { return n > threshold; });
+    var big: i32[] = array.filter(xs, (n: i32): boolean => { return n > threshold; });
     return test.assert_eq(big.len() * 100 + big[0] + big[1], 209);
 }
 
 function test_fold(): test.TestOutcome {
     var xs: i32[] = [4, 5, 6];
-    var s: i32 = array.fold(xs, 0, function (a: i32, n: i32): i32 { return a + n; });
+    var s: i32 = array.fold(xs, 0, (a: i32, n: i32): i32 => { return a + n; });
     return test.assert_eq(s, 15);
 }
 
 function test_fold_empty(): test.TestOutcome {
     var xs: i32[] = [];
-    var s: i32 = array.fold(xs, 42, function (a: i32, n: i32): i32 { return a + n; });
+    var s: i32 = array.fold(xs, 42, (a: i32, n: i32): i32 => { return a + n; });
     return test.assert_eq(s, 42);
 }
 
@@ -69,7 +69,7 @@ function test_fold_empty(): test.TestOutcome {
 // (string acc, i32 elements) — the A != T generic shape.
 function test_fold_acc_type(): test.TestOutcome {
     var xs: i32[] = [1, 2, 3];
-    var joined: string = array.fold(xs, "", function (a: string, n: i32): string {
+    var joined: string = array.fold(xs, "", (a: string, n: i32): string => {
         return a + n.to_string();
     });
     return test.assert_eq(joined, "123");
@@ -77,37 +77,37 @@ function test_fold_acc_type(): test.TestOutcome {
 
 function test_any_true(): test.TestOutcome {
     var xs: i32[] = [1, 2, 3];
-    return test.assert_true(array.any(xs, function (n: i32): boolean { return n == 2; }));
+    return test.assert_true(array.any(xs, (n: i32): boolean => { return n == 2; }));
 }
 
 function test_any_false(): test.TestOutcome {
     var xs: i32[] = [1, 2, 3];
-    return test.assert_false(array.any(xs, function (n: i32): boolean { return n == 9; }));
+    return test.assert_false(array.any(xs, (n: i32): boolean => { return n == 9; }));
 }
 
 function test_any_empty(): test.TestOutcome {
     var xs: i32[] = [];
-    return test.assert_false(array.any(xs, function (n: i32): boolean { return true; }));
+    return test.assert_false(array.any(xs, (n: i32): boolean => { return true; }));
 }
 
 function test_all_true(): test.TestOutcome {
     var xs: i32[] = [2, 4, 6];
-    return test.assert_true(array.all(xs, function (n: i32): boolean { return n % 2 == 0; }));
+    return test.assert_true(array.all(xs, (n: i32): boolean => { return n % 2 == 0; }));
 }
 
 function test_all_false(): test.TestOutcome {
     var xs: i32[] = [2, 4, 5];
-    return test.assert_false(array.all(xs, function (n: i32): boolean { return n % 2 == 0; }));
+    return test.assert_false(array.all(xs, (n: i32): boolean => { return n % 2 == 0; }));
 }
 
 function test_all_empty(): test.TestOutcome {
     var xs: i32[] = [];
-    return test.assert_true(array.all(xs, function (n: i32): boolean { return false; }));
+    return test.assert_true(array.all(xs, (n: i32): boolean => { return false; }));
 }
 
 function test_find_some(): test.TestOutcome {
     var xs: i32[] = [1, 2, 3, 4];
-    match (array.find(xs, function (n: i32): boolean { return n > 2; })) {
+    match (array.find(xs, (n: i32): boolean => { return n > 2; })) {
         Some(v) => { return test.assert_eq(v, 3); },
         None => { return test.fail("find returned None, expected Some(3)"); }
     }
@@ -116,7 +116,7 @@ function test_find_some(): test.TestOutcome {
 
 function test_find_none(): test.TestOutcome {
     var xs: i32[] = [1, 2, 3];
-    match (array.find(xs, function (n: i32): boolean { return n > 99; })) {
+    match (array.find(xs, (n: i32): boolean => { return n > 99; })) {
         Some(v) => { return test.fail("find returned Some, expected None"); },
         None => { return test.pass(); }
     }
@@ -147,8 +147,8 @@ function test_enumerate_empty(): test.TestOutcome {
 // reduce" shape these combinators are meant to enable.
 function test_map_then_fold(): test.TestOutcome {
     var xs: i32[] = [1, 2, 3, 4];
-    var doubled: i32[] = array.map(xs, function (n: i32): i32 { return n + n; });
-    var total: i32 = array.fold(doubled, 0, function (a: i32, n: i32): i32 { return a + n; });
+    var doubled: i32[] = array.map(xs, (n: i32): i32 => { return n + n; });
+    var total: i32 = array.fold(doubled, 0, (a: i32, n: i32): i32 => { return a + n; });
     return test.assert_eq(total, 20);
 }
 

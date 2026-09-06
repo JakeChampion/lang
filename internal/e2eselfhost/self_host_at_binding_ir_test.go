@@ -74,7 +74,7 @@ function main(): i32 { return f(Full(3)); }`},
 function total(b: Box): i32 { match (b) { Full(v) => { return v; }, Empty => { return 0; } } return 0; }
 function f(b: Box): i32 {
   match (b) {
-    n @ Full(v) when (function (): i32 { return total(n); })() > 0 => { return v + 5; },
+    n @ Full(v) when ((): i32 => { return total(n); })() > 0 => { return v + 5; },
     Full(v) => { return v; },
     Empty => { return 0; },
   }

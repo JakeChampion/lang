@@ -1259,7 +1259,7 @@ function main(): i32 { return outer("hello"); }`
 func TestX86_64LambdaWithBodyLocals(t *testing.T) {
 	src := `function main(): i32 {
     var greet = "hi";
-    var f = function (n: i32): i32 {
+    var f = (n: i32): i32 => {
         var sq = n * n;
         var tag = greet + "!";
         print(tag);
@@ -1287,7 +1287,7 @@ func TestX86_64LambdaCallsMethodOnCapturedString(t *testing.T) {
 import "std/string";
 function main(): i32 {
     var s: string = "  hi  ";
-    var f = function (): string { return s.trim().to_owned(); };
+    var f = (): string => { return s.trim().to_owned(); };
     var got = f();
     if (got == "hi") { return 0; }
     return 1;
@@ -1304,8 +1304,8 @@ function main(): i32 {
 // gets incremented).
 func TestX86_64NestedLambdaUniqueNames(t *testing.T) {
 	src := `function main(): i32 {
-    var outer = function (): i32 {
-        var inner = function (): i32 {
+    var outer = (): i32 => {
+        var inner = (): i32 => {
             var x = 21;
             return x * 2;
         };

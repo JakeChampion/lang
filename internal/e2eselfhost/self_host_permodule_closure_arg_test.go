@@ -33,40 +33,40 @@ var perModuleClosureArgCases = []struct {
 }{
 	// The reported shape: the call is the value of an ASSIGNMENT.
 	{"assign-arg", `import "./lib";
-function run(n: i32): i32 { var acc: i32 = 0; acc = lib.apply(function (y: i32): i32 { return y + n; }, 4); return acc; }
+function run(n: i32): i32 { var acc: i32 = 0; acc = lib.apply((y: i32): i32 => { return y + n; }, 4); return acc; }
 function main(): i32 { return run(3); }`, 7},
 	// The same, accumulating in a loop — the form the issue's repro used, where
 	// the capture is read once per iteration.
 	{"assign-arg-loop", `import "./lib";
-function run(n: i32, k: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < k) { acc = lib.apply(function (y: i32): i32 { return y + n; }, acc); i = i + 1; } return acc; }
+function run(n: i32, k: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < k) { acc = lib.apply((y: i32): i32 => { return y + n; }, acc); i = i + 1; } return acc; }
 function main(): i32 { return run(3, 4); }`, 12},
 	// var-init position.
 	{"var-arg", `import "./lib";
-function run(n: i32): i32 { var acc: i32 = lib.apply(function (y: i32): i32 { return y + n; }, 4); return acc; }
+function run(n: i32): i32 { var acc: i32 = lib.apply((y: i32): i32 => { return y + n; }, 4); return acc; }
 function main(): i32 { return run(3); }`, 7},
 	// return position — the one the issue expected to work.
 	{"return-arg", `import "./lib";
-function run(n: i32): i32 { return lib.apply(function (y: i32): i32 { return y + n; }, 4); }
+function run(n: i32): i32 { return lib.apply((y: i32): i32 => { return y + n; }, 4); }
 function main(): i32 { return run(3); }`, 7},
 	// Nested: the argument of the outer call is itself a call carrying one.
 	{"nested-arg", `import "./lib";
-function run(n: i32): i32 { var acc: i32 = 0; acc = lib.apply(function (y: i32): i32 { return y + n; }, lib.apply(function (z: i32): i32 { return z * 2; }, 5)); return acc; }
+function run(n: i32): i32 { var acc: i32 = 0; acc = lib.apply((y: i32): i32 => { return y + n; }, lib.apply((z: i32): i32 => { return z * 2; }, 5)); return acc; }
 function main(): i32 { return run(3); }`, 13},
 	// if-condition position.
 	{"if-cond-arg", `import "./lib";
-function run(n: i32): i32 { if (lib.apply(function (y: i32): i32 { return y + n; }, 4) > 5) { return 7; } return 1; }
+function run(n: i32): i32 { if (lib.apply((y: i32): i32 => { return y + n; }, 4) > 5) { return 7; } return 1; }
 function main(): i32 { return run(3); }`, 7},
 	// The closure is a RETURNED value first, then handed across the boundary —
 	// the escaping-closure hoist feeding a cross-module fn param.
 	{"returned-closure-arg", `import "./lib";
-function mk(n: i32): (i32) => i32 { return function (y: i32): i32 { return y + n; }; }
+function mk(n: i32): (i32) => i32 { return (y: i32): i32 => { return y + n; }; }
 function run(n: i32): i32 { return lib.apply(mk(n), 4); }
 function main(): i32 { return run(3); }`, 7},
 	// Control: bound to a local first. This one already linked before the fix,
 	// because the var-binding lift boxes a value-used lambda without consulting
 	// the callee at all.
 	{"local-first", `import "./lib";
-function run(n: i32): i32 { var f: (i32) => i32 = function (y: i32): i32 { return y + n; }; var acc: i32 = 0; acc = lib.apply(f, 4); return acc; }
+function run(n: i32): i32 { var f: (i32) => i32 = (y: i32): i32 => { return y + n; }; var acc: i32 = 0; acc = lib.apply(f, 4); return acc; }
 function main(): i32 { return run(3); }`, 7},
 }
 

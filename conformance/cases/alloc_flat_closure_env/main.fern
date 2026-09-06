@@ -15,7 +15,7 @@ import "core/int";
 
 function round(n: i32): i32 {
     var k: i32 = n;
-    var f = function (): i32 { return k + 1; };
+    var f = (): i32 => { return k + 1; };
     return f();
 }
 

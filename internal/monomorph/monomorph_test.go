@@ -103,7 +103,7 @@ function main(): i32 {
 			name: "Lambda body",
 			src: `function id[T](x: T): T { return x; }
 function main(): i32 {
-    var f: (i32) => i32 = function (x: i32): i32 { return id(x) + 1; };
+    var f: (i32) => i32 = (x: i32): i32 => { return id(x) + 1; };
     return f(41);
 }`,
 		},
@@ -231,7 +231,7 @@ func TestRunSubstitutesMethodCallTypeArgsInGenericBody(t *testing.T) {
 }
 function main(): i32 {
     var xs: i32[] = [1, 2, 3];
-    var ys: i32[] = map_arr(xs, function (n: i32): i32 { return n * 10; });
+    var ys: i32[] = map_arr(xs, (n: i32): i32 => { return n * 10; });
     return ys[0] + ys[1] + ys[2];
 }`,
 		},
@@ -447,7 +447,7 @@ function main(): i32 {
 }`},
 		{node: "Lambda", src: `function id[T](x: T): T { return x; }
 function main(): i32 {
-    var f: (i32) => i32 = function (x: i32): i32 { return id(x) + 1; };
+    var f: (i32) => i32 = (x: i32): i32 => { return id(x) + 1; };
     return f(41);
 }`},
 		{node: "CastExpr", src: `function id[T](x: T): T { return x; }
