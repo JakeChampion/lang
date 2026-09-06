@@ -77,6 +77,8 @@ they are not on PATH. Wall time, so compare within one run only.
 | `seq` | done — `-f` `-s` `-w`, the exact-digit engine for whole numbers, and the long-double one with the rule that prints a term past LAST when its own output reads back inside the range |
 | `factor` | done — Montgomery arithmetic to 2^64, `core/bigint` beyond it, `-h`, numbers from stdin, and GNU's unbuffered line for a number at or above 2^127 |
 | `sleep` | done — `s` `m` `h` `d`, floats and hex floats, `inf`, the sum of the operands, every operand validated before it pauses (intervals are rounded up to the millisecond until #8528) |
+| `head` | done — `-c` `-n` with the leading-minus elisions and gnulib's multiplier suffixes, `-q` `-v` `-z`, the obsolete `-NUM[bkmclqvz]` form, and the hidden `---presume-input-pipe` |
+| `wc` | done — `-c` `-l` `-m` `-w` `-L`, `--total=WHEN`, `--files0-from`, the column width taken from the operands' sizes, and the C-locale ISPRINT rule for words and display width. A REGULAR-FILE stdin still widens to seven columns, which needs fstat on a descriptor (#8713) |
 | `lib/gnu.fern` | the GNU conventions every utility shares |
 | `lib/bre.fern` | POSIX basic regular expressions as glibc compiles them |
 | `lib/ld.fern` | C's `long double` at the TARGET's format — strtold, arithmetic, rounding and the `%f` `%e` `%g` `%a` conversions — shared by `printf`, `numfmt`, `seq` and `sleep` |
