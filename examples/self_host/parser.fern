@@ -14779,16 +14779,19 @@ function fda_call_of(x: ast.Expr, funcs: FuncDecl[]): ast.Expr {
         ast.ExprCall(c) => {
             var new_args: ast.Expr[] = c.args;
             var has_named: boolean = fda_args_have_named(new_args);
+            // A call whose named arguments do not resolve is left exactly as
+            // written, markers included: fda_call_error names it (E077 / E004)
+            // and the checker types a marker as its value, so the diagnostic
+            // is the only thing that changes.
+            if (has_named) {
+                var (err_code, err_msg) = fda_call_error(c, funcs);
+                if (err_code.len() > 0) { return x; }
+            }
             match (c.callee) {
                 ast.ExprIdent(id) => {
                     var params: ast.ParamDecl[] = fda_lookup_params(id.name, funcs);
                     if (has_named) {
-                        // Reorder named + leading-positional args into a plain
-                        // positional list, filling defaults. A named arg on an
-                        // unknown callee (no params found) falls back to a
-                        // name-stripped positional call.
-                        if (params.len() > 0) { new_args = fda_resolve_named(params, new_args); }
-                        else { new_args = fda_strip_named(new_args); }
+                        new_args = fda_resolve_named(params, new_args);
                     } else if (params.len() > new_args.len()) {
                         var ok: boolean = true;
                         var k: i32 = new_args.len();
@@ -14799,12 +14802,7 @@ function fda_call_of(x: ast.Expr, funcs: FuncDecl[]): ast.Expr {
                         }
                     }
                 },
-                _ => {
-                    // Method / indirect callee: named args aren't supported on
-                    // these (an error natively); strip the marker so codegen
-                    // never sees it.
-                    if (has_named) { new_args = fda_strip_named(new_args); }
-                }
+                _ => {}
             }
             return ast.ExprCall { ...c, args: new_args };
         },
@@ -14824,8 +14822,178 @@ function fda_stmts(stmts: ast.Stmt[], funcs: FuncDecl[]): ast.Stmt[] {
 }
 
 
-pub function fill_default_args_module(mod: Module): Module {
-    if (!module_has_default_params(mod) && !module_has_named_args(mod)) { return mod; }
+// ---- default-argument diagnostics (mirrors internal/defaultargs) ----
+
+// default_nonconst_reason reports the first sub-expression that stops a
+// parameter default from being a constant expression, as the reason text E076
+// prints, and whether one was found. A WHITELIST of literal / unary / binary,
+// as native's nonConstReason is: a default is pasted into the CALL SITE, so a
+// name inside it resolves in the caller's scope (#8445), and a node this
+// function was never taught about is refused rather than waved through. A
+// cast is an ExprUnary whose op is `as_<type>`, refused before its operand.
+pub function default_nonconst_reason(e: ast.Expr): (string, boolean) {
+    match (e) {
+        ast.ExprNumber(n) => { return ("", false); },
+        ast.ExprString(st) => { return ("", false); },
+        ast.ExprBool(b) => { return ("", false); },
+        ast.ExprIdent(id) => { return ("reads \"" + id.name + "\"", true); },
+        ast.ExprUnary(u) => {
+            if (u.op.len() > 3 && slice_unchecked(u.op, 0, 3) == "as_") { return ("is a cast", true); }
+            return default_nonconst_reason(u.operand);
+        },
+        ast.ExprBinary(b) => {
+            var (lwhy, lbad) = default_nonconst_reason(b.left);
+            if (lbad) { return (lwhy, true); }
+            return default_nonconst_reason(b.right);
+        },
+        ast.ExprCall(c) => {
+            match (c.callee) {
+                ast.ExprIdent(id) => { return ("calls \"" + id.name + "\"", true); },
+                _ => { return ("is a call", true); }
+            }
+            return ("is a call", true);
+        },
+        ast.ExprFieldAccess(fa) => { return ("is a field access", true); },
+        ast.ExprIndex(ix) => { return ("is an index", true); },
+        ast.ExprLambda(lm) => { return ("is a lambda", true); },
+        ast.ExprStructLit(sl) => { return ("is a struct literal", true); },
+        ast.ExprArray(al) => { return ("is an array literal", true); },
+        ast.ExprTuple(tl) => { return ("is a tuple literal", true); },
+        ast.ExprSlice(sl) => { return ("is not a constant expression", true); },
+        ast.ExprMapLit(ml) => { return ("is not a constant expression", true); },
+        ast.ExprFString(fs) => { return ("is not a constant expression", true); },
+        ast.ExprUnknown(uk) => { return ("is not a constant expression", true); }
+    }
+    return ("is not a constant expression", true);
+}
+
+// fda_decl_diags is E076 for every parameter default that is not a constant
+// expression, reported at the declaration, where the author can act on it.
+function fda_decl_diags(mod: Module): util.Diag[] {
+    var out: util.Diag[] = [];
+    for fd in mod.funcs {
+        for param in fd.params {
+            if (param.has_default) {
+                var (why, bad) = default_nonconst_reason(param.default_value);
+                if (bad) {
+                    out = out.append(util.Diag { code: "E076", message: "default value for parameter \"" + param.name + "\" " + why + ": a default must be a constant expression, because it is evaluated at each call site rather than inside " + fd.name, line: ast.expr_line(param.default_value), col: ast.expr_col(param.default_value) });
+                }
+            }
+        }
+    }
+    return out;
+}
+
+function fda_known_func(name: string, funcs: FuncDecl[]): boolean {
+    for fd in funcs {
+        if (fd.receiver_type.len() == 0 && fd.name == name) { return true; }
+    }
+    return false;
+}
+
+function fda_param_index(params: ast.ParamDecl[], name: string): i32 {
+    var i: i32 = 0;
+    while (i < params.len()) {
+        if (params[i].name == name) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// fda_call_error is the diagnostic a call carrying named arguments draws, as
+// (code, message), with an empty code when it resolves. The rules and their
+// wording are native Fill's, in its order: E077 for a callee that is not a
+// named free function, a positional argument after a named one, a name no
+// parameter has, or a parameter given twice; E004 for too many positionals
+// or a required parameter nothing supplied.
+function fda_call_error(c: ast.ExprCall, funcs: FuncDecl[]): (string, string) {
+    var callee: string = "";
+    match (c.callee) {
+        ast.ExprIdent(id) => { callee = id.name; },
+        _ => { return ("E077", "named arguments are only supported on direct calls to named functions"); }
+    }
+    if (!fda_known_func(callee, funcs)) {
+        return ("E077", "named arguments are not supported for call to \"" + callee + "\"");
+    }
+    var params: ast.ParamDecl[] = fda_lookup_params(callee, funcs);
+    var filled: boolean[] = [];
+    var k: i32 = 0;
+    while (k < params.len()) { filled = filled.append(false); k = k + 1; }
+    var pos: i32 = 0;
+    var seen_named: boolean = false;
+    var i: i32 = 0;
+    while (i < c.args.len()) {
+        if (fda_is_named_marker(c.args[i])) {
+            seen_named = true;
+            var name: string = fda_marker_name(c.args[i]);
+            var idx: i32 = fda_param_index(params, name);
+            if (idx < 0) {
+                return ("E077", "\"" + callee + "\" has no parameter named \"" + name + "\"");
+            }
+            if (filled[idx]) {
+                return ("E077", "duplicate argument for parameter \"" + name + "\"");
+            }
+            filled = filled.with(idx, true);
+        } else {
+            if (seen_named) { return ("E077", "positional argument after named argument"); }
+            if (pos >= params.len()) {
+                return ("E004", "function \"" + callee + "\" expects " + util.i32_to_string(params.len()) + " argument(s), got more");
+            }
+            filled = filled.with(pos, true);
+            pos = pos + 1;
+        }
+        i = i + 1;
+    }
+    var pi: i32 = 0;
+    while (pi < params.len()) {
+        if (!filled[pi] && !params[pi].has_default) {
+            return ("E004", "missing argument for parameter \"" + params[pi].name + "\" of \"" + callee + "\"");
+        }
+        pi = pi + 1;
+    }
+    return ("", "");
+}
+
+// FdaAcc carries the module's function table beside the diagnostics the walk
+// below collects, so the fold visitor reaches both without a closure.
+struct FdaAcc { funcs: FuncDecl[], diags: util.Diag[] }
+
+function fda_call_diag_of(e: ast.Expr, acc: FdaAcc): FdaAcc {
+    match (e) {
+        ast.ExprCall(c) => {
+            if (!fda_args_have_named(c.args)) { return acc; }
+            var (code, msg) = fda_call_error(c, acc.funcs);
+            if (code.len() == 0) { return acc; }
+            return FdaAcc { ...acc, diags: acc.diags.append(util.Diag { code: code, message: msg, line: c.line, col: c.col }) };
+        },
+        _ => { return acc; }
+    }
+    return acc;
+}
+
+// fda_call_diags collects fda_call_error over every call in the module, at
+// the call's own position.
+function fda_call_diags(mod: Module): util.Diag[] {
+    var none: util.Diag[] = [];
+    var acc: FdaAcc = FdaAcc { funcs: mod.funcs, diags: none };
+    for fd in mod.funcs {
+        for st in fd.body { acc = astwalk.fold_stmt(st, acc, fda_call_diag_of); }
+    }
+    for st in mod.top_stmts { acc = astwalk.fold_stmt(st, acc, fda_call_diag_of); }
+    return acc.diags;
+}
+
+// fill_default_args_with_diags is native Fill: the E076 declaration check
+// first, and a module holding one is returned as written — a default carrying
+// a free name must not be pasted anywhere; then every call's named arguments
+// reordered and its omitted trailing defaults filled, with the calls that do
+// not resolve left as written and named by their diagnostic.
+pub function fill_default_args_with_diags(mod: Module): (Module, util.Diag[]) {
+    var decl_diags: util.Diag[] = fda_decl_diags(mod);
+    if (decl_diags.len() > 0) { return (mod, decl_diags); }
+    var none: util.Diag[] = [];
+    if (!module_has_default_params(mod) && !module_has_named_args(mod)) { return (mod, none); }
+    var call_diags: util.Diag[] = fda_call_diags(mod);
     var funcs: FuncDecl[] = [];
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
@@ -14833,7 +15001,12 @@ pub function fill_default_args_module(mod: Module): Module {
         funcs = funcs.append(FuncDecl { ...fd, body: fda_stmts(fd.body, mod.funcs) });
         i = i + 1;
     }
-    return Module { ...mod, funcs: funcs, top_stmts: fda_stmts(mod.top_stmts, mod.funcs) };
+    return (Module { ...mod, funcs: funcs, top_stmts: fda_stmts(mod.top_stmts, mod.funcs) }, call_diags);
+}
+
+pub function fill_default_args_module(mod: Module): Module {
+    var (filled, diags) = fill_default_args_with_diags(mod);
+    return filled;
 }
 
 // ---- return-type inference -----------------------------------------

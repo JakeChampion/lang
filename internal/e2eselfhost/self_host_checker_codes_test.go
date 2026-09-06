@@ -1721,6 +1721,44 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"mixed-width-same-sign-clean", "function main(): i32 { var n: i32 = 1; var q: i64 = 5; return (q + n) as i32; }\n", nil},
 		{"unsigned-plus-literal-clean", "function main(): i32 { var s: string = \"abc\"; var b: u8 = s[0]; return (b + 1) as i32; }\n", nil},
 		{"mixed-sign-cast-clean", "function main(): i32 { var n: i32 = 1; var u: u32 = 2; return (u as i32) + n; }\n", nil},
+		// E076: a parameter default must be a constant expression, because it
+		// is pasted into each CALL SITE and a name inside it resolves in the
+		// caller's scope (#8445). Native's Fill declines the whole program
+		// then, so the defaulted call also draws E004; the self-host fills
+		// inside check_module and declines the same way. The positive rows
+		// pin that a checker driver no longer reports E004 for a defaulted
+		// call it never filled.
+		{"default-reads-parameter", "function f(a: i32, b: i32 = a * 2): i32 { return a + b; }\nfunction main(): i32 { var a: i32 = 100; return f(1); }\n", []string{"E004", "E076"}},
+		{"default-calls-function", "function size(): i32 { return 8; }\nfunction f(n: i32 = size()): i32 { return n; }\nfunction main(): i32 { return f(); }\n", []string{"E004", "E076"}},
+		{"default-reads-bare-name", "function f(n: i32 = limit): i32 { return n; }\nfunction main(): i32 { return f(); }\n", []string{"E004", "E076"}},
+		{"default-nested-in-arithmetic", "function f(a: i32, b: i32 = 1 + (a * 2)): i32 { return a + b; }\nfunction main(): i32 { return f(1); }\n", []string{"E004", "E076"}},
+		{"default-field-access", "struct Config { timeout: i32 }\nfunction f(a: i32, b: i32 = config.timeout): i32 { return a + b; }\nfunction main(): i32 { var config: Config = Config { timeout: 41 }; return f(1); }\n", []string{"E004", "E076"}},
+		{"default-index", "function f(a: i32, b: i32 = xs[0]): i32 { return a + b; }\nfunction main(): i32 { var xs: i32[] = [41, 9]; return f(1); }\n", []string{"E004", "E076"}},
+		{"default-cast", "function f(a: i32, b: i32 = n as i32): i32 { return a + b; }\nfunction main(): i32 { var n: i64 = 41; return f(1); }\n", []string{"E004", "E076"}},
+		{"default-lambda", "function f(a: i32, g: (i32) => i32 = (x: i32) => x + n): i32 { return g(a); }\nfunction main(): i32 { var n: i32 = 41; return f(1); }\n", []string{"E004", "E076"}},
+		{"default-struct-literal", "struct P { v: i32 }\nfunction f(a: i32, p: P = P { v: n }): i32 { return a + p.v; }\nfunction main(): i32 { var n: i32 = 41; return f(1); }\n", []string{"E004", "E076"}},
+		{"default-array-literal", "function f(a: i32, xs: i32[] = [n]): i32 { return a + xs[0]; }\nfunction main(): i32 { var n: i32 = 41; return f(1); }\n", []string{"E004", "E076"}},
+		{"default-field-access-under-arithmetic", "struct Config { timeout: i32 }\nfunction f(a: i32, b: i32 = 1 + config.timeout): i32 { return a + b; }\nfunction main(): i32 { var config: Config = Config { timeout: 41 }; return f(1); }\n", []string{"E004", "E076"}},
+		{"default-number-ok", "function listen(port: i32, backlog: i32 = 128): i32 { return port + backlog; }\nfunction main(): i32 { return listen(80); }\n", nil},
+		{"default-string-ok", "function greet(name: string, greeting: string = \"hello\"): string { return greeting + name; }\nfunction main(): i32 { var s: string = greet(\"x\"); return s.len(); }\n", nil},
+		{"default-bool-ok", "function go(a: i32, verbose: boolean = true): i32 { if (verbose) { return a; } return 0; }\nfunction main(): i32 { return go(1); }\n", nil},
+		{"default-arithmetic-ok", "function scale(x: i32, factor: i32 = 2 * 3): i32 { return x * factor; }\nfunction main(): i32 { return scale(1); }\n", nil},
+		{"default-negative-ok", "function off(x: i32, delta: i32 = -1): i32 { return x + delta; }\nfunction main(): i32 { return off(1); }\n", nil},
+		{"default-two-one-supplied-ok", "function f(a: i32, b: i32 = 2, c: i32 = 3): i32 { return a + b + c; }\nfunction main(): i32 { return f(1); }\n", nil},
+		// E077: named arguments that do not resolve — a callee that is not a
+		// named free function, a positional after a named one, a name no
+		// parameter has, a parameter given twice — and E004 for a required
+		// parameter nothing supplied. A call that does not resolve is left as
+		// written, so the arity check still sees its argument count, as native.
+		{"named-on-method", "struct S { v: i32 }\nimpl S { function m(self: Self, a: i32): i32 { return self.v + a; } }\nfunction main(): i32 { var s: S = S { v: 1 }; return s.m(a = 1); }\n", []string{"E077"}},
+		{"named-on-fn-value", "function main(): i32 { var g: (i32) => i32 = (x: i32) => x + 1; return g(x = 1); }\n", []string{"E077"}},
+		{"named-unknown-param", "function listen(port: i32, backlog: i32 = 128): i32 { return port + backlog; }\nfunction main(): i32 { return listen(port = 80, backlogg = 5); }\n", []string{"E077"}},
+		{"named-duplicate", "function f(a: i32, b: i32): i32 { return a + b; }\nfunction main(): i32 { return f(a = 1, a = 2); }\n", []string{"E077"}},
+		{"positional-after-named", "function f(a: i32, b: i32): i32 { return a + b; }\nfunction main(): i32 { return f(a = 1, 2); }\n", []string{"E077"}},
+		{"named-missing-required", "function f(a: i32, b: i32): i32 { return a + b; }\nfunction main(): i32 { return f(b = 2); }\n", []string{"E004"}},
+		{"named-too-many-positional", "function f(a: i32, b: i32 = 2): i32 { return a + b; }\nfunction main(): i32 { return f(1, 2, b = 3); }\n", []string{"E004", "E077"}},
+		{"named-reorder-ok", "function f(a: i32, b: i32 = 2): i32 { return a - b; }\nfunction main(): i32 { return f(b = 1, a = 3); }\n", nil},
+		{"named-fills-default-ok", "function f(a: i32, b: i32 = 2, c: i32 = 3): i32 { return a + b + c; }\nfunction main(): i32 { return f(1, c = 5); }\n", nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

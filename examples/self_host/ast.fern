@@ -191,6 +191,56 @@ pub type Expr = ExprNumber | ExprIdent | ExprString | ExprBool
               | ExprStructLit | ExprFieldAccess | ExprLambda
               | ExprMapLit | ExprFString | ExprUnknown;
 
+// expr_line / expr_col are the 1-based source position an expression node
+// carries, or 0 for the three that carry none (ExprBool, ExprIndex,
+// ExprSlice). Every variant is named so a new one is a compile error here
+// rather than a silent 0.
+pub function expr_line(e: Expr): i32 {
+    match (e) {
+        ExprNumber(n) => { return n.line; },
+        ExprIdent(id) => { return id.line; },
+        ExprString(st) => { return st.line; },
+        ExprBool(b) => { return 0; },
+        ExprBinary(b) => { return b.line; },
+        ExprUnary(u) => { return u.line; },
+        ExprCall(c) => { return c.line; },
+        ExprArray(al) => { return al.line; },
+        ExprTuple(tl) => { return tl.line; },
+        ExprIndex(ix) => { return 0; },
+        ExprSlice(sl) => { return 0; },
+        ExprStructLit(st) => { return st.line; },
+        ExprFieldAccess(fa) => { return fa.line; },
+        ExprLambda(lm) => { return lm.line; },
+        ExprMapLit(ml) => { return ml.line; },
+        ExprFString(fs) => { return fs.line; },
+        ExprUnknown(uk) => { return uk.line; }
+    }
+    return 0;
+}
+
+pub function expr_col(e: Expr): i32 {
+    match (e) {
+        ExprNumber(n) => { return n.col; },
+        ExprIdent(id) => { return id.col; },
+        ExprString(st) => { return st.col; },
+        ExprBool(b) => { return 0; },
+        ExprBinary(b) => { return b.col; },
+        ExprUnary(u) => { return u.col; },
+        ExprCall(c) => { return c.col; },
+        ExprArray(al) => { return al.col; },
+        ExprTuple(tl) => { return tl.col; },
+        ExprIndex(ix) => { return 0; },
+        ExprSlice(sl) => { return 0; },
+        ExprStructLit(st) => { return st.col; },
+        ExprFieldAccess(fa) => { return fa.col; },
+        ExprLambda(lm) => { return lm.col; },
+        ExprMapLit(ml) => { return ml.col; },
+        ExprFString(fs) => { return fs.col; },
+        ExprUnknown(uk) => { return uk.col; }
+    }
+    return 0;
+}
+
 // Statement nodes.
 
 // StmtVar binds a name to an init value. `type_name` is the
