@@ -175,6 +175,7 @@ func (b *builder) freshOwnedRcTempType(e ast.Expr) (ast.Type, bool) {
 	if !ast.RcFreeEnabled {
 		return nil, false
 	}
+	e = unwrapFString(e)
 	switch x := e.(type) {
 	case *ast.ArrayLit, *ast.StructLit, *ast.TupleLit:
 		if t := b.exprType(e); ast.IsPointerType(t) {

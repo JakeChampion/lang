@@ -4373,7 +4373,7 @@ func exprNoParamEscape(e ast.Expr, slot ast.Type, info *checker.Info, variantPay
 	if isDefinitelyScalar(slot) {
 		return true
 	}
-	switch x := e.(type) {
+	switch x := unwrapFString(e).(type) {
 	case *ast.Ident:
 		// A nullary variant constructor (`Nil`, `None`) parses as a bare ident
 		// and is a fresh constant — no parameter can escape through it. A
@@ -12501,7 +12501,7 @@ func (b *builder) callReturnType(c *ast.Call) ast.Type {
 // results are inline-tagged and never allocated, which is why the leak
 // hid behind small numbers.
 func (b *builder) isOwnedStringTemp(e ast.Expr) bool {
-	switch x := e.(type) {
+	switch x := unwrapFString(e).(type) {
 	case *ast.Binary:
 		return x.IsStringConcat
 	case *ast.SliceExpr:
@@ -19605,6 +19605,20 @@ func exprSafeToReevaluate(e ast.Expr) bool {
 		return !x.IsStringConcat && exprSafeToReevaluate(x.Left) && exprSafeToReevaluate(x.Right)
 	}
 	return false
+}
+
+// unwrapFString returns the `+`-chain an f-string lowers to. The IR reads
+// Desugared and never Parts (see the *ast.FString case in expr), so every
+// classifier that answers a question about the value an expression
+// MATERIALISES has to look at the same node the codegen will. An f-string
+// falling through to a classifier's conservative default made
+// `s = f"{i}-x"` leak the superseded string once per store (#8441): the
+// concat was invisible, so `s` was never free-eligible.
+func unwrapFString(e ast.Expr) ast.Expr {
+	if fs, ok := e.(*ast.FString); ok && fs.Desugared != nil {
+		return fs.Desugared
+	}
+	return e
 }
 
 func (b *builder) exprLeavesValue(e ast.Expr) bool {

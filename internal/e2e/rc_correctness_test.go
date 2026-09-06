@@ -405,6 +405,27 @@ function main(): i32 {
 }`,
 	},
 	{
+		// An f-string reassigned in a loop. The classifiers that decide
+		// whether a destination local may release its superseded value read
+		// the raw expression, and an f-string reached each one's
+		// conservative default, so the store dropped the old buffer on the
+		// floor: 32 bytes a round on x86-64 and wasm, and arm64 clean, which
+		// is why only a three-backend gate catches it (#8697).
+		//
+		// `f"{i}"` alone never leaked — it desugars to a bare to_string()
+		// with no concat — so the literal tail is load-bearing.
+		name: "fstring_reassign_releases_superseded",
+		src: `
+import "core/int";
+import "std/i32";
+function main(): i32 {
+    var s: string = "";
+    var i: i32 = 0;
+    while (i < 50) { s = f"{i}-iteration"; i = i + 1; }
+    return (s.len() - 12) + __rc_underflow_count();
+}`,
+	},
+	{
 		// String captured by a closure + kept live in the source local.
 		// Exercises the native single-word x86-64 closure-capture string
 		// reclaim (env drop → __fern_str_dec); the capture is retained at

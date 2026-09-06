@@ -3085,7 +3085,7 @@ func (b *builder) computeFreeEligible() map[string]bool {
 // borrowed (tainted) value, given the current taint set. See
 // computeFreeEligible. Conservative: unknown shapes are tainted.
 func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
-	switch x := e.(type) {
+	switch x := unwrapFString(e).(type) {
 	case *ast.ArrayLit:
 		return false
 	case *ast.StructLit:

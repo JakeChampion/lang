@@ -1,0 +1,18 @@
+// An f-string RHS must release the destination's superseded string, the
+// way the `+`-chain it desugars to does. The classifiers that decide
+// that read the raw expression, and none knew about f-strings, so this
+// loop leaked one buffer per store on x86-64 and wasm (#8697).
+//
+// The interpolant is followed by literal text on purpose: `f"{i}"` alone
+// desugars to a bare `to_string()` with no concat and never leaked.
+import "std/i32";
+
+function main(): i32 {
+    var s: string = "";
+    var i: i32 = 0;
+    while (i < 8) {
+        s = f"{i}-iteration";
+        i = i + 1;
+    }
+    return s.len();
+}
