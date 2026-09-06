@@ -35,6 +35,7 @@ import (
 // A utility missing from here fails TestSelfHostCoreutilsCoverage.
 func corpusByUtil() map[string]func(*testing.T) []invocation {
 	return map[string]func(*testing.T) []invocation{
+		"[":        bracketCases,
 		"basename": basenameCases,
 		"dirname":  dirnameCases,
 		"echo":     echoCases,
@@ -46,6 +47,7 @@ func corpusByUtil() map[string]func(*testing.T) []invocation {
 		"printf":   printfCases,
 		"seq":      seqCases,
 		"sleep":    sleepCases,
+		"test":     testCases,
 		"true":     trueFalseCases,
 		"tsort":    tsortCases,
 		"wc":       wcCases,

@@ -1298,25 +1298,29 @@ function load_bundle(entry_path: string, entry_mod: parser.Module, root: string)
     var q: ImportQueue = queue_imports(ImportQueue { paths: [], dirs: [] }, entry_mod, dir_slash, root, deps);
     var loaded: flatten.LoadedModule[] = [];
     var done: string[] = [];
+    var done_paths: string[] = [];
     var j: i32 = 0;
     while (j < q.paths.len()) {
         var ipath: string = q.paths[j];
         var from: string = q.dirs[j];
         j = j + 1;
-        if (!util.has_str(done, ipath)) {
+        var from_dir: string = from;
+        if (from_dir.len() > 1) { from_dir = slice_unchecked(from_dir, 0, from_dir.len() - 1) + ""; }
+        var mpath: string = util.resolve_path(ipath, from_dir, root);
+        // One module is one file: `./lib/gnu` from the entry and `./gnu` from
+        // a module in lib/ name the same file and load it once.
+        if (!util.has_str(done, ipath) && !util.has_str(done_paths, mpath)) {
             done = done.append(ipath);
-            var from_dir: string = from;
-            if (from_dir.len() > 1) { from_dir = slice_unchecked(from_dir, 0, from_dir.len() - 1) + ""; }
-            var mpath: string = util.resolve_path(ipath, from_dir, root);
+            done_paths = done_paths.append(mpath);
             var msrc: string = "";
             var mok: boolean = false;
-            // The root the module's OWN imports resolve against. A module read
-            // beside the importer (or under the stdlib root) shares the
-            // importer's root — an import path is package-relative, so a
-            // module reached as `std/float` still writes `import "std/string"`
-            // for its sibling. Only crossing into another PACKAGE, through the
-            // manifest, moves the root.
-            var mdir: string = from;
+            // The directory the module's OWN `./` imports resolve against is
+            // its own — a module in lib/ writing `import "./gnu"` means
+            // lib/gnu.fern. Bare paths resolve under the stdlib root or the
+            // manifest whatever the directory; a manifest-resolved dependency
+            // moves the root to its package.
+            var mdir: string = util.dir_of(mpath);
+            if (mdir.len() > 0) { mdir = mdir + "/"; }
             match (read_file(mpath)) {
                 Ok(s2) => { msrc = s2; mok = true; },
                 Err(e) => { mok = false; },
