@@ -393,11 +393,18 @@ as a source with no module does, so a name in neither file nor DNS prints
 `00000000` where nss-myhostname would answer 127.0.0.2), and a nameserver
 that black-holes the connection holds `hostid` for the kernel's connect
 timeout where glibc gives up after resolv.conf's `timeout` × `attempts`.
-The search loop itself is `__res_context_search`'s and reacts to three
-failures separately, which is not obvious and was got wrong once: a
-SERVFAIL rcode records itself and moves to the NEXT candidate, a refused
-connection returns at once trying nothing further, and any other failure
-ends the candidate list but still asks the bare name.
+The search loop itself is `__res_context_search`'s, and the shape that
+matters is that **the as-is query is not one candidate among the others**
+— reading it as one gets two things wrong, and both were got wrong once.
+It sits outside the loop's stop rules, so however it fails the search
+list is still tried; and its status is saved and reported in preference
+to anything the suffixes produce, so an as-is NXDOMAIN reports NOTFOUND
+even when a later suffix hit a SERVFAIL. When ndots is satisfied it LEADS
+and there is no retry afterwards; otherwise it TRAILS and is the retry,
+which runs whether the suffix loop finished or was cut short. Within the
+suffixes, a SERVFAIL records itself and moves to the next, a refused
+connection returns at once trying nothing further, NXDOMAIN moves on, and
+anything else ends the loop.
 Neither changes the bytes on a host whose name resolves.
 
 ## Open gaps
