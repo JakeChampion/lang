@@ -965,7 +965,9 @@ func New() *Interp {
 	i.Builtins["f64_bits"] = &Builtin{Fn: builtinF64Bits}
 	i.Builtins["f64_from_bits"] = &Builtin{Fn: builtinF64FromBits}
 	// f64 math primitives. The Go-side implementation routes
-	// through `math.*` for hardware-precise results. User code
+	// through `math.*` wherever that is exact or correctly rounded,
+	// and through this package's own fdlibm kernels where it is
+	// not — see the transcendentals below. User code
 	// reaches these through receiver methods in `std/float`
 	// (`(x).sqrt()`, `.floor()`, …); the underscore-prefixed
 	// bare names are the IR-level entry points.
@@ -980,7 +982,8 @@ func New() *Interp {
 	// sin/cos carry their own fdlibm reduction (trig.go) rather than Go's:
 	// math.Sin's argument reduction is unboundedly wrong in ulp terms near
 	// the function's zeros, and the compiled backends all implement the
-	// fdlibm algorithm — so -interp matches them bit for bit instead.
+	// fdlibm algorithm — so -interp matches them bit for bit instead. exp
+	// (exp.go) and log (log.go) are here for the same reason.
 	i.Builtins["__sin_f64"] = mkUnaryF64Builtin("__sin_f64", fernSin)
 	i.Builtins["__cos_f64"] = mkUnaryF64Builtin("__cos_f64", fernCos)
 	i.Builtins["__pow_f64"] = &Builtin{Fn: builtinPowF64}

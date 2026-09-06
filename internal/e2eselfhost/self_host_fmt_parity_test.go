@@ -1,6 +1,7 @@
 package e2eselfhost
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1637,6 +1638,64 @@ func TestSelfHostFmtCorpusParityX86_64(t *testing.T) {
 	for rel, why := range selfHostFmtKnownDivergences {
 		if !diverged[rel] {
 			t.Errorf("%s is listed as a known divergence (%s) but the two formatters now agree — delete the row", rel, why)
+		}
+	}
+}
+
+// TestSelfHostFmtDiffCorpusParityX86_64 is the same corpus, comparing what the
+// two drivers print for `-fmt -d` rather than for `-fmt`.
+//
+// The alignment behind the diff is a separate implementation from the layout
+// the test above pins, and a shortest edit script is NOT unique: two correct
+// implementations can pick different, equally short arrangements of the same
+// change. So byte-parity here only holds while the two compute the alignment
+// the same way, and the dozen-line fixtures elsewhere in this package cannot
+// say whether they do — they are too short for the algorithms to disagree.
+// Over this corpus they can: before the self-host got the linear-space
+// alignment (#8611) 166 of these files came out arranged differently, with both
+// suites green.
+//
+// It is the only gate on the cost, too. examples/self_host/irlower.fern is the
+// one input in the tree that pushes the search at all, and the O(m*n) table
+// this replaced wanted 48 GB for it — a failure here that is a timeout rather
+// than a mismatch is that table coming back.
+func TestSelfHostFmtDiffCorpusParityX86_64(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	if len(runner) != 0 {
+		t.Skip("CLI driver test runs only natively (argv paths)")
+	}
+	root := repoRootFromTest(t)
+	dir := writeSelfHostAsmProject(t)
+	copySelfHostDriver(t, dir, "fern.fern")
+	fernBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
+
+	for _, rel := range corpusFernFiles(t, root) {
+		if _, known := selfHostFmtKnownDivergences[rel]; known {
+			// The two drivers would be diffing different pairs, so a mismatch
+			// here would just report the formatter divergence a second time.
+			continue
+		}
+		path := filepath.Join(root, rel)
+		src, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		prog, err := goparser.Parse(string(src))
+		if err != nil {
+			continue
+		}
+		want := goprinter.UnifiedDiff(string(src), goprinter.Format(prog), path, path)
+		// `-d` exits 1 when it prints a diff, which is the usual case here.
+		out, err := exec.Command(fernBin, "-fmt", "-d", path).Output()
+		if err != nil {
+			var ee *exec.ExitError
+			if !errors.As(err, &ee) || ee.ExitCode() != 1 {
+				t.Errorf("%s: self-host -fmt -d failed: %v", rel, err)
+				continue
+			}
+		}
+		if got := string(out); got != want {
+			t.Errorf("%s: self-host -fmt -d differs from native's\n%s", rel, firstDiffLines(want, got))
 		}
 	}
 }

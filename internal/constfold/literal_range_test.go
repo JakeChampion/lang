@@ -100,6 +100,56 @@ func TestConstLiteralRangeIsE047AtTheLiteral(t *testing.T) {
 	}
 }
 
+// A typed suffix pins the literal's width in the parser, so the const's
+// declared type never applies to it and the walk skipped it entirely: a
+// wrapped `const B: u8 = 300u8` folded silently where the same literal
+// without its suffix was E047 (#8639). It is judged against the type its
+// suffix names, with the sign the source wrote.
+func TestConstSuffixedLiteralRange(t *testing.T) {
+	cases := []struct {
+		src     string
+		want    string
+		wantCol int
+	}{
+		{`const B: u8 = 300u8;`, "literal 300 does not fit in u8", 15},
+		{`const B: u8 = -1u8;`, "literal -1 does not fit in u8: unsigned types have no negative values", 16},
+		{`const B: u32 = 4294967296u32;`, "literal 4294967296 does not fit in u32", 16},
+		{`const B: i32 = 2147483648i32;`, "literal 2147483648 does not fit in i32", 16},
+		{`const B: i64 = 9223372036854775808i64;`, "literal 9223372036854775808 does not fit in i64", 16},
+		// The suffix wins over the declared type: a u8 const holding an i32
+		// literal is judged at i32, and the assignment is the checker's E003.
+		{`const B: u8 = 300i32;`, "", 0},
+	}
+	for _, c := range cases {
+		if c.want == "" {
+			fold(t, c.src+"\nfunction main(): i32 { return 0; }")
+			continue
+		}
+		errs := foldErrors(t, c.src+"\nfunction main(): i32 { return 0; }")
+		if len(errs) != 1 {
+			t.Errorf("%s: %d diagnostics, want exactly one: %v", c.src, len(errs), errs)
+			continue
+		}
+		e := errs[0]
+		if e.ErrCode != "E047" || e.Pos.Line != 1 || e.Pos.Col != c.wantCol || e.Msg != c.want {
+			t.Errorf("%s: got %s at %d:%d %q, want E047 at 1:%d %q", c.src, e.ErrCode, e.Pos.Line, e.Pos.Col, e.Msg, c.wantCol, c.want)
+		}
+	}
+
+	accepted := []string{
+		`const B: u8 = 255u8;`,
+		`const B: u8 = 0u8;`,
+		`const B: u32 = 4294967295u32;`,
+		`const B: u64 = 18446744073709551615u64;`,
+		`const B: i32 = -2147483648i32;`,
+		`const B: i64 = -9223372036854775808i64;`,
+		`const B: u32 = -0u32;`,
+	}
+	for _, src := range accepted {
+		fold(t, src+"\nfunction main(): i32 { return 0; }")
+	}
+}
+
 // Two bad consts are two diagnostics, each rendered on its own.
 func TestConstLiteralRangeReportsEveryConst(t *testing.T) {
 	errs := foldErrors(t, "const A: i32 = 2147483648;\nconst B: u8 = 256;\nfunction main(): i32 { return 0; }")

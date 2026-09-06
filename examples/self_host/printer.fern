@@ -3017,21 +3017,21 @@ function check_lambdas(): i32 {
     var srcR: string = "function main(): i32 { var g = (): (string, i32) => { return (\"ab\", 7); }; var h = (p: i32): (i32) => i32 => (q: i32) => p + q; return 0; }";
     var pfR: parser.ParsedFmt = parser.parse_module_verbatim(lexer.tokenize(srcR));
     var outR: string = format_module(pfR.pmod, pfR.ptraits, pfR.pimpls, pfR.pflines, [], []);
-    if (!util.contains(outR, "var g = (): (string, i32) => (\"ab\", 7);")) { return 164; }
-    if (!util.contains(outR, "var h = (p: i32): ((i32) => i32) => (q: i32) => p + q;")) { return 165; }
+    if (!util.contains(outR, "var g = (): (string, i32) => (\"ab\", 7);")) { return 371; }
+    if (!util.contains(outR, "var h = (p: i32): ((i32) => i32) => (q: i32) => p + q;")) { return 372; }
     // The parens the reprint added are grouping, so a second pass adds no more.
     var pfR2: parser.ParsedFmt = parser.parse_module_verbatim(lexer.tokenize(outR));
-    if (format_module(pfR2.pmod, pfR2.ptraits, pfR2.pimpls, pfR2.pflines, [], []) != outR) { return 166; }
+    if (format_module(pfR2.pmod, pfR2.ptraits, pfR2.pimpls, pfR2.pflines, [], []) != outR) { return 373; }
     match (pfR2.pmod.funcs[0].body[0]) {
         ast.StmtVar(vr) => {
             match (vr.init) {
                 ast.ExprLambda(lr) => {
-                    if (lr.ret_type != "(string, i32)") { return 167; }
+                    if (lr.ret_type != "(string, i32)") { return 374; }
                 },
-                _ => { return 168; }
+                _ => { return 375; }
             }
         },
-        _ => { return 169; }
+        _ => { return 376; }
     }
 
     return 0;
@@ -3503,6 +3503,11 @@ function check_traits_and_impls(): i32 {
     if (dl.len() != 2) { return 345; }
     if (dl[0] != "é\n" || dl[1] != "ü") { return 346; }
 
+    // The linear-space alignment (#8611): the properties the byte-parity gates
+    // against native cannot state, since a shortest edit script is not unique.
+    var dcode: i32 = diff_selftest();
+    if (dcode != 0) { return dcode; }
+
     return 0;
 }
 
@@ -3966,4 +3971,143 @@ pub function unified_diff(before: string, after: string, path_before: string, pa
         h = h + 1;
     }
     return out;
+}
+
+// ---- diff self-test ----------------------------------------------------
+//
+// A shortest edit script is not unique, so the byte-parity gates against
+// native can only pin the alignment where the script is forced. These state
+// the two properties that hold whatever the tie-breaks are: the script
+// reproduces both of its inputs, and it is as short as an LCS table says the
+// shortest is.
+
+// diff_replay rebuilds one side of an edit script — `keep` is 1 for `a` and 2
+// for `b`; a shared line belongs to both.
+function diff_replay(sc: DiffScript, keep: i32): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < sc.kinds.len()) {
+        if (sc.kinds[i] == 0 || sc.kinds[i] == keep) { out = out + sc.lines[i]; }
+        i = i + 1;
+    }
+    return out;
+}
+
+// diff_edits counts the lines the script does not share.
+function diff_edits(sc: DiffScript): i32 {
+    var n: i32 = 0;
+    var i: i32 = 0;
+    while (i < sc.kinds.len()) {
+        if (sc.kinds[i] != 0) { n = n + 1; }
+        i = i + 1;
+    }
+    return n;
+}
+
+// diff_lcs_edits is the shortest edit-script length for a and b, straight from
+// an LCS table. Quadratic in time and memory, which is exactly why
+// diff_edit_script may not use one — but it is the ground truth the search is
+// checked against on inputs small enough to afford it.
+function diff_lcs_edits(a: string[], b: string[]): i32 {
+    var m: i32 = a.len();
+    var n: i32 = b.len();
+    var prev: i32[] = [];
+    var cur: i32[] = [];
+    var z: i32 = 0;
+    while (z <= n) {
+        prev = prev.append(0);
+        cur = cur.append(0);
+        z = z + 1;
+    }
+    var i: i32 = m - 1;
+    while (i >= 0) {
+        // `cur` is rewritten at every j below, so aliasing the finished row is
+        // safe: the first write copies it away from `prev`, which then holds
+        // the row this one reads.
+        prev = cur;
+        var j: i32 = n - 1;
+        while (j >= 0) {
+            if (a[i] == b[j]) {
+                cur = cur.with(j, prev[j + 1] + 1);
+            } else if (prev[j] >= cur[j + 1]) {
+                cur = cur.with(j, prev[j]);
+            } else {
+                cur = cur.with(j, cur[j + 1]);
+            }
+            j = j - 1;
+        }
+        i = i - 1;
+    }
+    return m + n - 2 * cur[0];
+}
+
+// diff_rand is a deterministic 31-bit Lehmer generator, so a failing case is
+// reproducible.
+function diff_rand(s: i64): i64 { return (s * 48271i64) % 2147483647i64; }
+
+// diff_lines_from draws `n` lines from the first `alphabet` entries of a fixed
+// vocabulary. The vocabulary is tiny on purpose: ties between equally short
+// scripts are then the common case rather than a rarity.
+function diff_lines_from(seed: i64, n: i32, alphabet: i32): string[] {
+    var vocab: string[] = ["a\n", "b\n", "c\n", "d\n", "e\n"];
+    var out: string[] = [];
+    var s: i64 = seed;
+    var i: i32 = 0;
+    while (i < n) {
+        s = diff_rand(s);
+        out = out.append(vocab[(s % (alphabet as i64)) as i32]);
+        i = i + 1;
+    }
+    return out;
+}
+
+// diff_selftest returns 0 when every property holds, or the failing case's
+// code. Called from main.
+function diff_selftest(): i32 {
+    // The script reproduces both inputs and is minimal, over inputs small
+    // enough for the LCS table to answer.
+    var s: i64 = 12345i64;
+    var iter: i32 = 0;
+    while (iter < 300) {
+        s = diff_rand(s);
+        var alphabet: i32 = 2 + (s % 4i64) as i32;
+        s = diff_rand(s);
+        var na: i32 = (s % 14i64) as i32;
+        s = diff_rand(s);
+        var nb: i32 = (s % 14i64) as i32;
+        s = diff_rand(s);
+        var a: string[] = diff_lines_from(s, na, alphabet);
+        s = diff_rand(s);
+        var b: string[] = diff_lines_from(s, nb, alphabet);
+        var sc: DiffScript = diff_edit_script(a, b);
+        if (diff_replay(sc, 1) != util.str_join_chunks(a)) { return 350; }
+        if (diff_replay(sc, 2) != util.str_join_chunks(b)) { return 351; }
+        if (diff_edits(sc) != diff_lcs_edits(a, b)) { return 352; }
+        iter = iter + 1;
+    }
+
+    // Same two properties over an input long enough to drive the recursive
+    // split several levels deep, which the small cases never reach.
+    var la: string[] = diff_lines_from(777i64, 400, 3);
+    var lb: string[] = diff_lines_from(999i64, 400, 3);
+    var lsc: DiffScript = diff_edit_script(la, lb);
+    if (diff_replay(lsc, 1) != util.str_join_chunks(la)) { return 353; }
+    if (diff_replay(lsc, 2) != util.str_join_chunks(lb)) { return 354; }
+    if (diff_edits(lsc) != diff_lcs_edits(la, lb)) { return 355; }
+
+    // A file with a shared head and tail costs what the change costs: the
+    // peeling leaves one line on each side for the search.
+    var pa: string[] = diff_split_lines("one\ntwo\nthree\nfour\nfive\n");
+    var pb: string[] = diff_split_lines("one\ntwo\nTHREE\nfour\nfive\n");
+    var psc: DiffScript = diff_edit_script(pa, pb);
+    if (diff_edits(psc) != 2) { return 356; }
+    if (diff_replay(psc, 1) != "one\ntwo\nthree\nfour\nfive\n") { return 357; }
+    if (diff_replay(psc, 2) != "one\ntwo\nTHREE\nfour\nfive\n") { return 358; }
+
+    // The unified-diff wrapper's layout: header rows, one hunk, the changed
+    // pair between context lines.
+    var ud: string = unified_diff("one\ntwo\nthree\nfour\nfive\n", "one\ntwo\nTHREE\nfour\nfive\n", "x.fern", "x.fern");
+    if (ud != "--- x.fern\n+++ x.fern\n@@ -1,5 +1,5 @@\n one\n two\n-three\n+THREE\n four\n five\n") { return 359; }
+    if (unified_diff("a\n", "a\n", "x", "y") != "") { return 360; }
+    return 0;
 }

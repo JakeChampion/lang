@@ -877,7 +877,12 @@ struct Human { text: string, unit: string, err: string, fatal: boolean }
 // scaled once more when the rounding carried it up to the base.
 function to_human(val0: ld.LD, prec: i32, o: Opts): Human {
   if (o.to == scale_none()) {
-    return Human { text: scale_none_text(val0, prec, o), unit: "", err: "", fatal: false };
+    var p: i32 = effective_prec(o, prec) as i32;
+    var rounded: ld.LD = scale_none_value(val0, p, o);
+    if (conv_width(rounded, p as i64, 0, o) >= out_buf_len() as i64) {
+      return refused_human(o.ldbl, rounded);
+    }
+    return Human { text: o.ldbl.to_fixed(rounded, p), unit: "", err: "", fatal: false };
   }
   var base: i32 = 1000;
   if (o.to == scale_iec() || o.to == scale_iec_i()) {
@@ -923,24 +928,37 @@ function to_human(val0: ld.LD, prec: i32, o: Opts): Human {
   if (o.fmt.prec >= 0 as i64) {
     out_prec = o.fmt.prec;
   }
-  if (scaled_width(val, out_prec, power, o) >= scaled_buf_len()) {
-    return Human { text: "", unit: "", err: "failed to prepare value " + gnu.quote(f.to_fixed(val, 6)) + " for printing", fatal: true };
+  if (conv_width(val, out_prec, power, o) >= scaled_buf_len()) {
+    return refused_human(f, val);
   }
   return Human { text: f.to_fixed(val, out_prec as i32), unit: unit_suffix(power, o.to), err: "", fatal: false };
 }
 
-// GNU formats the scaled number into a 128-byte buffer, holding one
-// byte back for the `i` of --to=iec-i, and refuses anything longer.
-// The buffer is its own, so unlike the unscaled path's LDBL_DIG limit
-// this number is the same on every target.
+// GNU formats the number into a fixed 128-byte buffer: --suffix is
+// appended into whatever room the conversion leaves, and --padding is
+// applied outside it. The buffer is GNU's own, so unlike the unscaled
+// path's LDBL_DIG limit these lengths are the same on every target.
+function out_buf_len(): i32 {
+  return 128;
+}
+
+// A scaled conversion is measured against one byte less, which is what
+// keeps the `i` of --to=iec-i a byte to go in; the `i` itself is
+// therefore not part of the length that is refused.
 function scaled_buf_len(): i64 {
-  return 127 as i64;
+  return out_buf_len() as i64 - 1 as i64;
+}
+
+// GNU names the value it could not print at `%Lf`, so at six decimals
+// rather than at the precision that overflowed its buffer.
+function refused_human(f: ld.Format, val: ld.LD): Human {
+  return Human { text: "", unit: "", err: "failed to prepare value " + gnu.quote(f.to_fixed(val, 6)) + " for printing", fatal: true };
 }
 
 // How many characters `%[0width].precf` writes for `val` and the scale
-// letter after it. --suffix and --padding are written around the
-// conversion rather than into its buffer, so they do not count.
-function scaled_width(val: ld.LD, prec: i64, power: i32, o: Opts): i64 {
+// letter after it. --suffix goes in after this is measured and --padding
+// outside the buffer entirely, so neither moves the refusal.
+function conv_width(val: ld.LD, prec: i64, power: i32, o: Opts): i64 {
   var d: ld.Dec = val.dec();
   var n: i64 = 1 as i64;
   if (d.dp >= 1) {
@@ -985,19 +1003,15 @@ function suffix_power_char(power: i32): string {
   return slice_unchecked(unit_letters(), power - 1, power) + "";
 }
 
-// The unscaled path, which is where a value with too many digits for a
-// long double is refused: GNU prints at most 19 significant digits, so
-// the integer part and the precision together may not want more.
-function scale_none_text(val: ld.LD, prec0: i32, o: Opts): string {
-  var prec: i32 = prec0;
-  if (o.fmt.prec >= 0 as i64) {
-    prec = o.fmt.prec as i32;
-  }
+// The unscaled path rounds at the precision it prints at. Its own
+// refusal is `too_wide` upstream, which is about the significant digits
+// a long double holds rather than about the buffer.
+function scale_none_value(val: ld.LD, prec: i32, o: Opts): ld.LD {
   if (prec == 0) {
-    return o.ldbl.to_fixed(o.ldbl.round_to_int(val, o.round), 0);
+    return o.ldbl.round_to_int(val, o.round);
   }
   var p10: ld.LD = o.ldbl.pow10(prec);
-  return o.ldbl.to_fixed(o.ldbl.div(o.ldbl.round_to_int(o.ldbl.mul(val, p10), o.round), p10), prec);
+  return o.ldbl.div(o.ldbl.round_to_int(o.ldbl.mul(val, p10), o.round), p10);
 }
 
 // Whether the value and precision fit the significant digits the
@@ -1123,7 +1137,7 @@ function convert(text: string, raw: string, o: Opts, out0: Out, auto: i32): Out 
     body_text = body_text + h.unit;
   }
   if (o.suffix.len() > 0) {
-    body_text = body_text + o.suffix;
+    body_text = body_text + fitted_suffix(o.suffix, body_text);
   }
   var padded: string = pad_text(body_text, o, auto);
   if (o.fmt.prefix.len() > 0) {
@@ -1134,6 +1148,18 @@ function convert(text: string, raw: string, o: Opts, out0: Out, auto: i32): Out 
     out = put(out, o.fmt.suffix);
   }
   return out;
+}
+
+// As much of --suffix as the number left room for in GNU's buffer.
+function fitted_suffix(suffix: string, body: string): string {
+  var room: i32 = out_buf_len() - 1 - body.len();
+  if (room <= 0) {
+    return "";
+  }
+  if (room >= suffix.len()) {
+    return suffix;
+  }
+  return slice_unchecked(suffix, 0, room) + "";
 }
 
 function scaled(n: Num, o: Opts): ld.LD {

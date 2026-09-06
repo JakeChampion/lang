@@ -7297,12 +7297,6 @@ function match_diags(stmts: ast.Stmt[], structs: StructSig[], unions: UnionTable
   return out;
 }
 
-// dupvar_diags emits the structural `var`-declaration diagnostics, per
-// block: E013 for a name already declared by an earlier `var` IN THE SAME
-// BLOCK (each block — function body, branch, loop / match-arm body — gets
-// a fresh name set, so shadowing across nested blocks / over a parameter
-// is allowed, matching the Go checker), and E020 for an un-annotated
-// `var x = []` whose empty-array initializer can't infer an element type.
 // is_hex_lit reports whether an integer literal's spelling is a `0x` numeral.
 function is_hex_lit(text: string): boolean {
   return text.len() > 2 && (text[0] as i32) == 48
@@ -7410,13 +7404,17 @@ function int_lit_fits(text: string, ty: string, negated: boolean): boolean {
 // spelled it, decimal with leading zeros dropped, and a `-` when the source
 // wrote one.
 function int_lit_as_written(text: string, negated: boolean): string {
+  var hex: boolean = is_hex_lit(text);
+  var start: i32 = 0;
   var out: string = text;
-  if (!is_hex_lit(text)) {
+  if (hex) {
+    start = 2;
+  } else {
     var i: i32 = 0;
     while (i + 1 < text.len() && (text[i] as i32) == 48) { i = i + 1; }
     out = slice_unchecked(text, i, text.len()) + "";
   }
-  if (negated && !magnitude_is_zero(text, 0)) { return "-" + out; }
+  if (negated && !magnitude_is_zero(text, start)) { return "-" + out; }
   return out;
 }
 
@@ -7448,6 +7446,12 @@ function dupvar_stmt_own_lambdas(st: ast.Stmt): util.Diag[] {
   return astwalk.fold_stmt_own_pruned(st, none, at_lambda, not_into_lambda);
 }
 
+// dupvar_diags emits the structural `var`-declaration diagnostics, per
+// block: E013 for a name already declared by an earlier `var` IN THE SAME
+// BLOCK (each block — function body, branch, loop / match-arm body — gets
+// a fresh name set, so shadowing across nested blocks / over a parameter
+// is allowed, matching the Go checker), and E020 for an un-annotated
+// `var x = []` whose empty-array initializer can't infer an element type.
 function dupvar_diags(stmts: ast.Stmt[]): util.Diag[] {
   var out: util.Diag[] = [];
   var declared: string[] = [];
