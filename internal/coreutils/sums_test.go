@@ -296,6 +296,9 @@ func checkCases(t *testing.T, spec sumSpec, tr sumTree) []invocation {
 	missFail := mk("c.missfail", tr.hex+"  "+tr.missing+"\n"+tr.hex+"  "+tr.a+"\n")
 	dirOk := mk("c.dirok", tr.hex+"  "+tr.subdir+"\n"+refOutput(t, spec.util, tr.a))
 	comment := mk("c.comment", "# a comment\n"+refOutput(t, spec.util, tr.a))
+	// A comment and an empty line still advance the line number the
+	// improperly-formatted diagnostic reports.
+	numbering := mk("c.numbering", "# a comment\n\ngarbage\n"+refOutput(t, spec.util, tr.a))
 	notComment := mk("c.notcomment", "  # a comment\n"+refOutput(t, spec.util, tr.a))
 	blanks := mk("c.blanks", "\n"+refOutput(t, spec.util, tr.a)+"\n")
 	crlf := mk("c.crlf", strings.ReplaceAll(refOutput(t, spec.util, tr.a), "\n", "\r\n"))
@@ -329,6 +332,7 @@ func checkCases(t *testing.T, spec sumSpec, tr sumTree) []invocation {
 		{name: "check all three faults twice", args: []string{"-c", two3}},
 		{name: "check all three faults with warn", args: []string{"-c", "-w", two3}},
 		{name: "check comment line", args: []string{"-c", comment}},
+		{name: "check line numbers count skipped lines", args: []string{"-c", "-w", numbering}},
 		{name: "check indented comment is not one", args: []string{"-c", "-w", notComment}},
 		{name: "check blank lines are skipped", args: []string{"-c", "-w", blanks}},
 		{name: "check CRLF line endings", args: []string{"-c", crlf}},

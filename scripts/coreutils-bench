@@ -298,7 +298,9 @@ PY
       printf '%s --tag of a 62 MiB file\tn\t{} --tag %s\n' "$1" "$big"
       printf '%s of a small file\tn\t{} %s\n' "$1" "$small"
       printf '%s -c over 500 small files\ty\tcd %s && {} -c %s > /dev/null\n' "$1" "$many" "$sums"
-      [ "$1" = b2sum ] && printf 'b2sum -l 256 of a 62 MiB file\tn\t{} -l 256 %s\n' "$big"
+      if [ "$1" = b2sum ]; then
+        printf 'b2sum -l 256 of a 62 MiB file\tn\t{} -l 256 %s\n' "$big"
+      fi
       ;;
     test|\[)
       # Startup-bound like sleep: what a script pays per condition. The
