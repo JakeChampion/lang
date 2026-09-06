@@ -15493,6 +15493,19 @@ func (b *builder) callBody(n *ast.Call) error {
 		if _, named := c.Callee.(*ast.Ident); !named {
 			return false
 		}
+		// The identity case (the call hands the temp straight back) is
+		// released with one flat dec, which balances only because a Fern
+		// `return b` emits the return-transfer inc. A backend-provided
+		// helper that returns its receiver in place carries no such inc,
+		// and the dec would then be an over-release — so the callee must
+		// be a user function, which is what presence in
+		// returnsNoParamEscape says (findReturnsNoParamEscape walks
+		// bodies; a builtin has none). A callee whose VALUE there is true
+		// never returns a param at all and is already admitted by the
+		// call-level gate above.
+		if _, isUserFn := b.returnsNoParamEscape[id.Name]; !isUserFn {
+			return false
+		}
 		at := b.exprType(a)
 		switch at.(type) {
 		case ast.StructType, ast.EnumType:
@@ -15893,13 +15906,17 @@ func (b *builder) emitArgTempDrop(slot int32, t ast.Type) {
 // slots drop unconditionally, as before — emitOwnedSlotDrop is net-zero on the
 // operand stack either way.
 //
-// identityDec marks the guarded temps whose callee hands them back WITH a
-// return-transfer inc (a struct / enum box returned through `return b`):
-// there the identity case owes one flat dec — the transfer's count — rather
-// than nothing, or a helper that threads a writer through and returns it
-// at its base case hands every caller a box one count too high (#8755). A
-// consumed-threaded array is handed back bare, so its identity case stays a
-// no-op.
+// identityDec marks the guarded temps that owe a flat dec when the call
+// hands the temp straight back. The slot holds one unit nobody else took,
+// and the result is that same live box, so a full emitOwnedSlotDrop — which
+// is_unique-gates and may deep-drop — is wrong there; one flat dec removes
+// exactly the slot's unit and leaves the result at the count its new
+// binding needs. It balances because the callee's `return b` emitted the
+// return-transfer inc, which is why boxTempUnderPointerResult admits only
+// user functions: a backend-provided helper returning its receiver in place
+// carries no inc and the dec would over-release (#8755). A consumed-threaded
+// array is handed back bare and its callee consumed the slot's unit, so its
+// identity case stays a no-op.
 func (b *builder) emitArgTempDropsGuarded(slots []int32, types []ast.Type, guarded []bool, identityDec []bool, resultType ast.Type) {
 	needGuard := false
 	for i := range slots {
