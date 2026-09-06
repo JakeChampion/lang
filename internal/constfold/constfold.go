@@ -796,8 +796,9 @@ func (s *substituter) walkStmt(st ast.Stmt) {
 		s.walkExpr(&x.Tag)
 		for _, arm := range x.Arms {
 			// A literal or range pattern is a VALUE position, so a const
-			// still substitutes there; the payload bindings shadow only the
-			// guard and the body.
+			// still substitutes there; the pattern's binders — every name
+			// ast.Binders reaches, not just the payload list — shadow only
+			// the guard and the body.
 			if arm.Literal != nil {
 				s.walkExpr(&arm.Literal)
 			}
@@ -805,7 +806,7 @@ func (s *substituter) walkStmt(st ast.Stmt) {
 				s.walkExpr(&arm.RangeHi)
 			}
 			s.pushScope()
-			for _, b := range arm.Bindings {
+			for _, b := range arm.Binders() {
 				s.bind(b)
 			}
 			if arm.Guard != nil {
@@ -897,7 +898,7 @@ func (s *substituter) walkExpr(slot *ast.Expr) {
 		s.walkExpr(&x.Tag)
 		for _, arm := range x.Arms {
 			s.pushScope()
-			for _, b := range arm.Bindings {
+			for _, b := range arm.Binders() {
 				s.bind(b)
 			}
 			if arm.Guard != nil {

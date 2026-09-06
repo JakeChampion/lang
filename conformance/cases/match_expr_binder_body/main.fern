@@ -1,0 +1,41 @@
+// A match EXPRESSION whose arm body is just the name the arm binds. The
+// result slot is sized before any arm is lowered, from each arm body's
+// type — and the IR derives an identifier's type by NAME, against locals
+// and params, neither of which a pattern binder is. So a bare binder body
+// answered "no type", the slot fell back to i32, and a two-word `string`
+// result was emitted through a one-word slot: the wasm module failed
+// validation with `expected i32 but nothing on stack`, while the natives
+// happened to survive it.
+//
+// A second arm whose body has a derivable type (a literal, a local) sizes
+// the slot correctly and hides the defect, so every probe here keeps every
+// arm body a bare binder.
+//
+// The TUPLE and payload-SUB-PATTERN spellings of the same shape are pinned
+// by internal/e2e/match_expr_binder_width_test.go rather than here: the
+// self-host types either one's result i32 whatever the binder is (#8657),
+// so a corpus case in those spellings would measure that gap rather than
+// this rule.
+enum One { Only(string) }
+enum Two { Left(string), Right(string) }
+
+function one_arm(): string {
+    var o: One = Only("elem");
+    return match (o) {
+        Only(q) => q
+    };
+}
+
+function two_arms(): string {
+    var t: Two = Left("elem");
+    return match (t) {
+        Left(q) => q,
+        Right(r) => r
+    };
+}
+
+function main(): i32 {
+    if (one_arm() != "elem") { return 1; }
+    if (two_arms() != "elem") { return 2; }
+    return 0;
+}

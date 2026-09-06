@@ -1380,10 +1380,30 @@ func TestRunnerSelfTestPasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("self-test exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	// 44 meta-tests; if this number changes intentionally,
+	// 53 meta-tests; if this number changes intentionally,
 	// update both the file and this expected count together.
-	if !strings.Contains(out, "# pass 44") || !strings.Contains(out, "# fail 0") {
-		t.Errorf("expected 44 passes, 0 fails\noutput:\n%s", out)
+	if !strings.Contains(out, "# pass 53") || !strings.Contains(out, "# fail 0") {
+		t.Errorf("expected 53 passes, 0 fails\noutput:\n%s", out)
+	}
+}
+
+// `examples/tests/cmp_nan_total_order_test.fern` pins core/cmp's float
+// instances as a TOTAL order — NaN after every number, all NaNs one value,
+// `cmp == 0` exactly when `eq` (#8588). Before it, "neither less nor greater"
+// was read as "equal", and 0 satisfies both `<= 0` and `>= 0`, so every
+// generic range assertion passed for a NaN while asserting nothing. The
+// operators stay IEEE; only the instances are total. Passing suite → exit 0.
+func TestRunnerCmpNanTotalOrderExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/cmp_nan_total_order_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: core/cmp NaN total order", "# pass 11", "# fail 0", "1..11"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
 	}
 }
 
@@ -1455,11 +1475,15 @@ function main(): i32 {
 }
 
 // #8466 — the runner must not be able to under-report. A
-// `TestRunner` handle carries no outcome of its own: `it` and
-// `subsuite` record into a tally shared by every handle derived
-// from one `test_new`, and `finish()` reads the plan, the counts
-// and the exit code back out of it. So dropping a handle drops
-// nothing that was recorded through it.
+// `TestRunner` is a value, so a result that is not assigned back is
+// lost from that handle's counts — but `it` and `subsuite` bump the
+// `emitted` / `emitted_failed` cells every handle derived from one
+// `test_new` shares, in the same step that prints the TAP line, and
+// `finish()` takes the plan, the fail count and the exit code from
+// those. The failure's text is in the `not ok` block it printed; the
+// `# failures:` summary lists only what the finishing handle
+// recorded, so a dropped result is named there by the `# WARNING`
+// count rather than by message.
 //
 // Before the fix each of these three printed its `not ok` lines
 // and then reported `1..0`, `# fail 0`, exit 0 — a suite with a
@@ -1510,16 +1534,16 @@ function main(): i32 {
 `, []string{
 		"ok 1 - kept",
 		"not ok 2 - dropped result",
+		"  message: assert_eq: expected \"2\", got \"1\"",
 		"1..2",
 		"# tests 2",
 		"# pass 1",
 		"# fail 1",
-		"# failures:",
-		"#   dropped result: assert_eq: expected \"2\", got \"1\"",
+		"# WARNING: 1 result(s) were discarded",
 	})
 }
 
-// A subsuite handle whose cases are never folded back into the
+// A subsuite handle whose cases are never `merge`d back into the
 // parent.
 func TestRunnerUnusedSubsuiteHandleStillFailsSuite(t *testing.T) {
 	runDroppedHandleCase(t, droppedHandlePreamble+`
@@ -1533,11 +1557,12 @@ function main(): i32 {
 `, []string{
 		"ok 1 - kept",
 		"not ok 2 - child / child fails",
+		"  message: assert_eq: expected \"2\", got \"1\"",
 		"1..2",
 		"# tests 2",
 		"# pass 1",
 		"# fail 1",
-		"#   child / child fails: assert_eq: expected \"2\", got \"1\"",
+		"# WARNING: 1 result(s) were discarded",
 	})
 }
 
@@ -1561,17 +1586,17 @@ function main(): i32 {
 		"# tests 2",
 		"# pass 0",
 		"# fail 2",
-		"#   dropped result: assert_eq: expected \"2\", got \"1\"",
-		"#   child / child fails: assert_eq: expected \"2\", got \"1\"",
+		"# WARNING: 2 result(s) were discarded",
 	})
 }
 
 // `examples/tests/skip_and_subsuites_test.fern` covers the
 // skip / skip_if / subsuite / merge surface. Skips don't count
 // as failures (exit 0) and the TAP stream stays monotonic
-// across subsuite boundaries — the child runner writes the same
-// shared tally as its parent, so the first subsuite case prints
-// `ok 5` (not `ok 1` again) when the parent ran 4 cases first.
+// across subsuite boundaries — the child shares the parent's
+// `emitted` counter, so the first subsuite case prints `ok 5`
+// (not `ok 1` again) when the parent ran 4 cases first; its
+// pass / skip counts reach the summary through `merge`.
 func TestRunnerSkipAndSubsuitesExample(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := langSrcAbs(t, "examples/tests/skip_and_subsuites_test.fern")

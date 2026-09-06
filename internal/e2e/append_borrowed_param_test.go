@@ -137,6 +137,49 @@ function main(): i32 {
     var after: i32 = s.insts.len();
     return before * 10 + after + (t.insts.len() - 4);
 }`, 22},
+	// The DESTRUCTURING self-reassign, one call deep. Inside `thread` the
+	// argument dies at the call (#8633), so the callee grows the buffer in
+	// place — and the growable position has to propagate out of `thread` so
+	// this caller brackets its own live `s`. Reads 23 without that.
+	{"destructure-rebind", `struct Blk { insts: i32[] }
+function emit(s: Blk, x: i32): (Blk, i32) { return (Blk { insts: s.insts.append(x) }, x); }
+function thread(c0: Blk, x: i32): Blk {
+    let (c2, p) = emit(c0, x);
+    c0 = c2;
+    return c0;
+}
+function main(): i32 {
+    var s: Blk = Blk { insts: [] };
+    s = thread(s, 1);
+    s = thread(s, 2);
+    var before: i32 = s.insts.len();
+    var t: Blk = thread(s, 3);
+    var after: i32 = s.insts.len();
+    return before * 10 + after + (t.insts.len() - 3);
+}`, 22},
+	// The two-statement rebind INSIDE A LOOP, in its `var` spelling. The store
+	// at the end of the body is what makes the death loop-safe — the next
+	// iteration reads the value this one produced — and the same growable
+	// position has to reach this caller for its live `s`.
+	{"loop-rebind-two-statement", `struct Blk { insts: i32[] }
+function emit(s: Blk, x: i32): Blk { return Blk { insts: s.insts.append(x) }; }
+function in_loop(s: Blk, n: i32): Blk {
+    var i: i32 = 0;
+    while (i < n) {
+        var a: Blk = emit(s, i);
+        s = emit(a, i + 1);
+        i = i + 1;
+    }
+    return s;
+}
+function main(): i32 {
+    var s: Blk = Blk { insts: [] };
+    s = in_loop(s, 1);
+    var before: i32 = s.insts.len();
+    var t: Blk = in_loop(s, 1);
+    var after: i32 = s.insts.len();
+    return before * 10 + after + (t.insts.len() - 4);
+}`, 22},
 	// `.with` on a borrowed param: already contained by its own
 	// receiver-live machinery (#2832) — pinned here as the sibling
 	// regression guard.

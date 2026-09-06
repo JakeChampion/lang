@@ -7126,6 +7126,60 @@ func callArgDeaths(fn *ast.FuncDecl, info *checker.Info, obs map[string][]fieldO
 		}
 		return true
 	})
+	// The TWO-STATEMENT spelling of the self-reassign shape. `x = f(…, x, …)`
+	// is one statement and matched above; a step that hands something back
+	// beside the cursor — a label id, an offset, a slot number — or that just
+	// names the result before storing it, spells the same thing as two:
+	//
+	//	let (c2, p) = emit(c, op);   var c2 = emit(c, op);
+	//	c = c2;                      c = c2;
+	//
+	// The store still supersedes x before any other statement runs, so no
+	// later read can reach the old buffer through it, exactly as in the
+	// one-statement form. Neither half matched on its own: the binding
+	// statement stores to a new name, and `c = c2` names no call. Inside a
+	// loop the last-occurrence shapes are out too (`repeating`), so nothing
+	// marked the argument dead and every call paid a full-buffer copy — 920 ms
+	// against 0 ms for the same emit written as one statement, over 20000
+	// appends (#8633).
+	//
+	// The store's value must not READ x: `var y = f(x); x = g(x);` would hand
+	// g the buffer the callee just grew.
+	ast.Walk(body, func(n ast.Node) bool {
+		blk, isBlk := n.(*ast.Block)
+		if !isBlk {
+			return true
+		}
+		for i := 0; i+1 < len(blk.Stmts); i++ {
+			var init ast.Expr
+			switch st := blk.Stmts[i].(type) {
+			case *ast.Var:
+				init = st.Init
+			case *ast.Destructure:
+				init = st.Init
+			default:
+				continue
+			}
+			c, isCall := init.(*ast.Call)
+			if !isCall {
+				continue
+			}
+			es, isExpr := blk.Stmts[i+1].(*ast.ExprStmt)
+			if !isExpr {
+				continue
+			}
+			asn, isAsn := es.Expr.(*ast.Assign)
+			if !isAsn || asn.Value == nil {
+				continue
+			}
+			t, isID := asn.Target.(*ast.Ident)
+			if !isID || stmtReferencesName(asn.Value, t.Name) {
+				continue
+			}
+			markOnce(c, t.Name)
+		}
+		return true
+	})
 	// Sole-occurrence shape. `repeating` is every call reachable from a
 	// loop or lambda body — a single textual read there is still many
 	// dynamic reads, so those calls are excluded.

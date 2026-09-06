@@ -1595,19 +1595,32 @@ func TestPubBeforeUnsupportedKindIsError(t *testing.T) {
 	}
 }
 
-// TestDecimalLiteralOverflowIsError — a decimal literal exceeding the
-// 64-bit range must be reported, not silently wrapped two's-complement.
-// The old hand-rolled `n = n*10 + digit` overflowed without a
-// diagnostic, and the wrapped value (which happened to fit i64) slipped
-// past the checker's range check. Regression for F3 in
-// docs/ADVERSARIAL-REVIEW-2026-06.md.
-func TestDecimalLiteralOverflowIsError(t *testing.T) {
-	_, err := Parse(`function main(): i64 { return 99999999999999999999999999; }`)
-	if err == nil {
-		t.Fatal("expected parse error for out-of-range decimal literal")
+// TestDecimalLiteralOverflowIsFlagged — a decimal literal exceeding the
+// 64-bit range must not be silently wrapped two's-complement. The old
+// hand-rolled `n = n*10 + digit` overflowed without a diagnostic, and the
+// wrapped value (which happened to fit i64) slipped past the checker's range
+// check. Regression for F3 in docs/ADVERSARIAL-REVIEW-2026-06.md.
+//
+// The REPORT moved to the checker with #8563 — E047 at the literal's own
+// column, against the type the context asked for, pinned by
+// TestIntLiteralPastU64IsE047 — so what the parser owes is the flagged
+// literal that refusal is made from, spelling intact. Asserting a parse
+// error here outlived the behaviour and failed on main.
+func TestDecimalLiteralOverflowIsFlagged(t *testing.T) {
+	const lit = "99999999999999999999999999"
+	prog, err := Parse(`function main(): i64 { return ` + lit + `; }`)
+	if err != nil {
+		t.Fatalf("an out-of-range literal is the checker's to refuse, so it parses: %v", err)
 	}
-	if !strings.Contains(err.Error(), "integer literal") {
-		t.Errorf("error should mention the integer literal; got %v", err)
+	var got *ast.NumberLit
+	ast.Walk(prog.Funcs[0].Body, func(n ast.Node) bool {
+		if l, ok := n.(*ast.NumberLit); ok {
+			got = l
+		}
+		return true
+	})
+	if got == nil || !got.ExceedsU64 || got.Raw != lit {
+		t.Fatalf("literal = %+v, want ExceedsU64 with %s in Raw", got, lit)
 	}
 }
 

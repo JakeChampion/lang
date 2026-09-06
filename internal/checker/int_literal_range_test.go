@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jakechampion/lang/internal/ast"
+	"github.com/jakechampion/lang/internal/constfold"
 	"github.com/jakechampion/lang/internal/diag"
 	"github.com/jakechampion/lang/internal/parser"
 )
@@ -296,5 +298,52 @@ func TestWideIntLiteralLeftUnsettledIsE047(t *testing.T) {
 		if errs := checkErrors(t, "function main(): i32 { "+src+" return 0; }"); len(errs) != 0 {
 			t.Errorf("%s: rejected, want accepted: %v", src, errs)
 		}
+	}
+}
+
+// constfold substitutes an untyped negative const as a literal whose Value
+// carries the sign (`const NEG = -5` arrives as a NumberLit holding -5, with
+// no width). Read as a magnitude that is 2^64-5: `var x = NEG` widened to i64
+// and `var y: i32 = NEG` drew E047. The folded sign is judged as a sign.
+func TestFoldedNegativeConstIsJudgedBySign(t *testing.T) {
+	src := `const NEG = -5;
+const MIN = 0 - 2147483647 - 1;
+function main(): i32 {
+	var x = NEG;
+	var y: i32 = NEG;
+	var m: i32 = MIN;
+	var q: i64 = NEG;
+	if (x == y && y == 0 - 5 && m < 0 && q < 0) { return 0; }
+	return 1;
+}`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := constfold.Fold(prog, nil); err != nil {
+		t.Fatalf("fold: %v", err)
+	}
+	info, err := Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	for v, ty := range info.VarTypes {
+		if v.Name == "x" {
+			if n, ok := ty.(ast.NumberType); !ok || n.NormalWidth() != 32 {
+				t.Errorf("var x = NEG has type %v, want the i32 default: a folded -5 is in i32 range", ty)
+			}
+		}
+	}
+	// The unsigned refusal still applies to the folded value.
+	prog, err = parser.Parse("const NEG = -5;\nfunction main(): i32 { var z: u8 = NEG; return 0; }")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := constfold.Fold(prog, nil); err != nil {
+		t.Fatalf("fold: %v", err)
+	}
+	_, err = Check(prog)
+	if err == nil || !strings.Contains(err.Error(), "literal -5 does not fit in u8") {
+		t.Errorf("var z: u8 = NEG: got %v, want E047 naming -5", err)
 	}
 }

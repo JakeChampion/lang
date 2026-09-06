@@ -3381,6 +3381,76 @@ func tuplePatBinders(acc []string, elems []TuplePatElem) []string {
 	return acc
 }
 
+// BinderType is Binders' sibling: the type this arm binds `name` to, or nil
+// when the arm does not bind it. `scrutinee` types the `@` whole-value
+// binder, the one position no list beside the pattern can supply.
+//
+// It lives here so the two answers cannot drift: the walk that says WHICH
+// names an arm binds and the walk that says what each one HOLDS read the
+// same fields. The IR needs the second when it sizes a match expression's
+// result slot, which happens before any arm is lowered — at that point a
+// binder is not yet a local, so resolving its name against the function's
+// locals answers i32 and a wider value goes through a one-word slot.
+func (a *MatchExprArm) BinderType(name string, scrutinee Type) Type {
+	if a == nil || name == "" {
+		return nil
+	}
+	if a.AtBinding == name {
+		return scrutinee
+	}
+	for i, bn := range a.Bindings {
+		if bn == name && i < len(a.BindingTypes) {
+			return a.BindingTypes[i]
+		}
+	}
+	for i, p := range a.Payloads {
+		if t := p.binderType(name, nthType(a.BindingTypes, i)); t != nil {
+			return t
+		}
+	}
+	for i := range a.TupleElems {
+		if t := a.TupleElems[i].binderType(name, nthType(a.BindingTypes, i)); t != nil {
+			return t
+		}
+	}
+	return nil
+}
+
+// binderType is BinderType for ONE pattern position — a tuple element or a
+// payload slot, which are the same node — and everything nested inside it.
+// elT is the type of the value at that position.
+func (el *TuplePatElem) binderType(name string, elT Type) Type {
+	if el == nil {
+		return nil
+	}
+	if el.Name == name || el.AtBinding == name {
+		return elT
+	}
+	for i, bn := range el.VariantBindings {
+		if bn == name && i < len(el.VariantBindingTypes) {
+			return el.VariantBindingTypes[i]
+		}
+	}
+	for i, p := range el.VariantPayloads {
+		if t := p.binderType(name, nthType(el.VariantBindingTypes, i)); t != nil {
+			return t
+		}
+	}
+	for i := range el.Nested {
+		if t := el.Nested[i].binderType(name, nthType(el.NestedTypes, i)); t != nil {
+			return t
+		}
+	}
+	return nil
+}
+
+func nthType(ts []Type, i int) Type {
+	if i < len(ts) {
+		return ts[i]
+	}
+	return nil
+}
+
 func appendNonEmpty(acc []string, names ...string) []string {
 	for _, n := range names {
 		if n != "" {
