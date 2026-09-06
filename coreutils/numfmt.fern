@@ -866,8 +866,9 @@ function apply_suffix(text: string, s: string, at: i32, val0: ld.LD, prec: i32, 
 
 // ---- formatting ------------------------------------------------------------
 // `Human` — a formatted value: the number, the scale letter that goes
-// after it, and the reason there is neither.
-struct Human { text: string, unit: string, err: string }
+// after it, and the reason there is neither. `fatal` marks a refusal
+// that ends the run whatever --invalid says.
+struct Human { text: string, unit: string, err: string, fatal: boolean }
 
 // GNU's `double_to_human`. Without a scale the value is rounded at the
 // precision it was written with and printed there. With one it is
@@ -876,7 +877,12 @@ struct Human { text: string, unit: string, err: string }
 // scaled once more when the rounding carried it up to the base.
 function to_human(val0: ld.LD, prec: i32, o: Opts): Human {
   if (o.to == scale_none()) {
-    return Human { text: scale_none_text(val0, prec, o), unit: "", err: "" };
+    var p: i32 = effective_prec(o, prec) as i32;
+    var rounded: ld.LD = scale_none_value(val0, p, o);
+    if (conv_width(rounded, p as i64, 0, o) >= out_buf_len() as i64) {
+      return refused_human(o.ldbl, rounded);
+    }
+    return Human { text: o.ldbl.to_fixed(rounded, p), unit: "", err: "", fatal: false };
   }
   var base: i32 = 1000;
   if (o.to == scale_iec() || o.to == scale_iec_i()) {
@@ -892,7 +898,7 @@ function to_human(val0: ld.LD, prec: i32, o: Opts): Human {
     power = power + 1;
   }
   if (val.cmp_abs(b) >= 0) {
-    return Human { text: "", unit: "", err: "value too large to be printed: " + gnu.quote(f.to_g(val0)) + " (cannot handle values > 999Q)" };
+    return Human { text: "", unit: "", err: "value too large to be printed: " + gnu.quote(f.to_g(val0)) + " (cannot handle values > 999Q)", fatal: false };
   }
   var adjust: i32 = 0;
   if (o.fmt.prec >= 0 as i64) {
@@ -915,49 +921,97 @@ function to_human(val0: ld.LD, prec: i32, o: Opts): Human {
     val = f.div(val, b);
     power = power + 1;
   }
-  var out_prec: i32 = 0;
+  var out_prec: i64 = 0 as i64;
   if (power > 0 && val.cmp_abs(ten) < 0) {
-    out_prec = 1;
+    out_prec = 1 as i64;
   }
   if (o.fmt.prec >= 0 as i64) {
-    out_prec = o.fmt.prec as i32;
+    out_prec = o.fmt.prec;
   }
-  return Human { text: f.to_fixed(val, out_prec), unit: unit_suffix(power, o.to), err: "" };
+  if (conv_width(val, out_prec, power, o) >= scaled_buf_len()) {
+    return refused_human(f, val);
+  }
+  return Human { text: f.to_fixed(val, out_prec as i32), unit: unit_suffix(power, o.to), err: "", fatal: false };
+}
+
+// GNU formats the number into a fixed 128-byte buffer: --suffix is
+// appended into whatever room the conversion leaves, and --padding is
+// applied outside it. The buffer is GNU's own, so unlike the unscaled
+// path's LDBL_DIG limit these lengths are the same on every target.
+function out_buf_len(): i32 {
+  return 128;
+}
+
+// A scaled conversion is measured against one byte less, which is what
+// keeps the `i` of --to=iec-i a byte to go in; the `i` itself is
+// therefore not part of the length that is refused.
+function scaled_buf_len(): i64 {
+  return out_buf_len() as i64 - 1 as i64;
+}
+
+// GNU names the value it could not print at `%Lf`, so at six decimals
+// rather than at the precision that overflowed its buffer.
+function refused_human(f: ld.Format, val: ld.LD): Human {
+  return Human { text: "", unit: "", err: "failed to prepare value " + gnu.quote(f.to_fixed(val, 6)) + " for printing", fatal: true };
+}
+
+// How many characters `%[0width].precf` writes for `val` and the scale
+// letter after it. --suffix goes in after this is measured and --padding
+// outside the buffer entirely, so neither moves the refusal.
+function conv_width(val: ld.LD, prec: i64, power: i32, o: Opts): i64 {
+  var d: ld.Dec = val.dec();
+  var n: i64 = 1 as i64;
+  if (d.dp >= 1) {
+    n = d.dp as i64;
+  }
+  if (val.neg) {
+    n = n + 1 as i64;
+  }
+  if (prec > 0 as i64) {
+    n = n + 1 as i64 + prec;
+  }
+  var zw: i64 = zero_pad_width(o) as i64;
+  if (zw > n) {
+    n = zw;
+  }
+  return n + suffix_power_char(power).len() as i64;
 }
 
 function unit_suffix(power: i32, to: i32): string {
-  if (power == 0) {
-    return "";
-  }
-  // Rounding can carry a value past the last letter — `--to=si` of
-  // 999999999999999999999999999999999 divides ten times and then rounds
-  // up to 1000 — and GNU names that with a sentinel rather than a unit:
-  // `1.0(error)`. Only a long double wide enough to keep the digits
-  // reaches it, so this is an aarch64 and wasm answer, not an x86-64
-  // one.
-  if (power > unit_letters().len()) {
-    return "(error)";
-  }
-  var s: string = slice_unchecked(unit_letters(), power - 1, power) + "";
-  if (to == scale_iec_i()) {
+  var s: string = suffix_power_char(power);
+  if (to == scale_iec_i() && power > 0) {
     return s + "i";
   }
   return s;
 }
 
-// The unscaled path, which is where a value with too many digits for a
-// long double is refused: GNU prints at most 19 significant digits, so
-// the integer part and the precision together may not want more.
-function scale_none_text(val: ld.LD, prec0: i32, o: Opts): string {
-  var prec: i32 = prec0;
-  if (o.fmt.prec >= 0 as i64) {
-    prec = o.fmt.prec as i32;
+// GNU's `suffix_power_char`, which is what the conversion itself
+// writes; the `i` of --to=iec-i goes on afterwards.
+//
+// Rounding can carry a value past the last letter — `--to=si` of
+// 999999999999999999999999999999999 divides ten times and then rounds
+// up to 1000 — and GNU names that with a sentinel rather than a unit:
+// `1.0(error)`. Only a long double wide enough to keep the digits
+// reaches it, so this is an aarch64 and wasm answer, not an x86-64 one.
+function suffix_power_char(power: i32): string {
+  if (power == 0) {
+    return "";
   }
+  if (power > unit_letters().len()) {
+    return "(error)";
+  }
+  return slice_unchecked(unit_letters(), power - 1, power) + "";
+}
+
+// The unscaled path rounds at the precision it prints at. Its own
+// refusal is `too_wide` upstream, which is about the significant digits
+// a long double holds rather than about the buffer.
+function scale_none_value(val: ld.LD, prec: i32, o: Opts): ld.LD {
   if (prec == 0) {
-    return o.ldbl.to_fixed(o.ldbl.round_to_int(val, o.round), 0);
+    return o.ldbl.round_to_int(val, o.round);
   }
   var p10: ld.LD = o.ldbl.pow10(prec);
-  return o.ldbl.to_fixed(o.ldbl.div(o.ldbl.round_to_int(o.ldbl.mul(val, p10), o.round), p10), prec);
+  return o.ldbl.div(o.ldbl.round_to_int(o.ldbl.mul(val, p10), o.round), p10);
 }
 
 // Whether the value and precision fit the significant digits the
@@ -999,7 +1053,7 @@ function pad_text(text: string, o: Opts, auto: i32): string {
     width = o.fmt.width;
   }
   // A zero-padded format width has already padded the number itself.
-  if (o.fmt.given && o.fmt.zero && o.fmt.width > 0) {
+  if (zero_pad_width(o) > 0) {
     return text;
   }
   if (width == 0 || text.len() >= abs_i32(width)) {
@@ -1010,6 +1064,16 @@ function pad_text(text: string, o: Opts, auto: i32): string {
     return text + " ".repeat(fill);
   }
   return " ".repeat(fill) + text;
+}
+
+// The width `%0Nf` zero-pads the number to, which sits inside the
+// conversion rather than around the field, or 0 when the format asks
+// for no such padding.
+function zero_pad_width(o: Opts): i32 {
+  if (o.fmt.given && o.fmt.zero && o.fmt.width > 0) {
+    return o.fmt.width;
+  }
+  return 0;
 }
 
 // `%0Nf` pads with zeros, after any minus sign.
@@ -1055,20 +1119,25 @@ function convert(text: string, raw: string, o: Opts, out0: Out, auto: i32): Out 
     return fail_field(raw, n.err, o, out);
   }
   var h: Human = to_human(val, n.prec, o);
+  if (h.fatal) {
+    gnu.error(h.err);
+    gnu.finish(out.w);
+    exit(1);
+  }
   if (h.err.len() > 0) {
     return fail_field(raw, h.err, o, out);
   }
   // `%0Nf` pads the NUMBER, before the scale letter, because the width
   // is inside the conversion there; every other width pads the field.
   var body_text: string = h.text;
-  if (o.fmt.given && o.fmt.zero && o.fmt.width > 0) {
-    body_text = zero_pad_to(h.text, o.fmt.width);
+  if (zero_pad_width(o) > 0) {
+    body_text = zero_pad_to(h.text, zero_pad_width(o));
   }
   if (h.unit.len() > 0) {
     body_text = body_text + h.unit;
   }
   if (o.suffix.len() > 0) {
-    body_text = body_text + o.suffix;
+    body_text = body_text + fitted_suffix(o.suffix, body_text);
   }
   var padded: string = pad_text(body_text, o, auto);
   if (o.fmt.prefix.len() > 0) {
@@ -1079,6 +1148,18 @@ function convert(text: string, raw: string, o: Opts, out0: Out, auto: i32): Out 
     out = put(out, o.fmt.suffix);
   }
   return out;
+}
+
+// As much of --suffix as the number left room for in GNU's buffer.
+function fitted_suffix(suffix: string, body: string): string {
+  var room: i32 = out_buf_len() - 1 - body.len();
+  if (room <= 0) {
+    return "";
+  }
+  if (room >= suffix.len()) {
+    return suffix;
+  }
+  return slice_unchecked(suffix, 0, room) + "";
 }
 
 function scaled(n: Num, o: Opts): ld.LD {
@@ -1303,24 +1384,28 @@ function apply_option(o: Opts, m: gnu.OptMatch): Opts {
 }
 
 function check_options(o: Opts, operands: string[]): Opts {
-  if (o.grouping && o.to != scale_none()) {
-    gnu.error("grouping cannot be combined with --to");
-    exit(1);
-  }
   if (o.grouping && o.fmt.given) {
     gnu.error("--grouping cannot be combined with --format");
+    exit(1);
+  }
+  // GNU reads --format only after that check, so the directive's own
+  // `'` asks for grouping everywhere below without conflicting with
+  // the option that carried it.
+  var grouping: boolean = o.grouping || o.fmt.group;
+  if (grouping && o.to != scale_none()) {
+    gnu.error("grouping cannot be combined with --to");
     exit(1);
   }
   if (o.debug && !o.conv) {
     gnu.error("no conversion option specified");
   }
-  if (o.debug && o.grouping) {
-    gnu.error("grouping has no effect in this locale");
-  }
   // A width in --format replaces --padding rather than adding to it,
   // except that a zero-padded width leaves --padding to do the field.
-  if (o.debug && o.padding != 0 && o.fmt.width != 0 && !(o.fmt.zero && o.fmt.width > 0)) {
+  if (o.debug && o.padding != 0 && o.fmt.width != 0 && zero_pad_width(o) == 0) {
     gnu.error("--format padding overriding --padding");
+  }
+  if (o.debug && grouping) {
+    gnu.error("grouping has no effect in this locale");
   }
   if (o.debug && o.header > 0 && operands.len() > 0) {
     gnu.error("--header ignored with command-line input");

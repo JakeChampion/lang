@@ -6904,6 +6904,7 @@ func (g *generator) emitFloatTranscendentalsRuntime() {
 	//   ln x = k·ln2_hi - ((hfsq - (s·(hfsq+R) + k·ln2_lo)) - f)
 	fn("__fern_log_f64")
 	logRet, logNaN, logNegInf := g.freshLabel("logRet"), g.freshLabel("logNaN"), g.freshLabel("logNegInf")
+	logNoScale := g.freshLabel("logNoScale")
 	// Domain guards. The bit-twiddling below happily extracts an exponent
 	// from 0 or +Inf and carries on, so log(0) returned -709.09 and
 	// log(+Inf) returned 709.78 — finite garbage. log(-0) == log(0) ==
@@ -6918,10 +6919,24 @@ func (g *generator) emitFloatTranscendentalsRuntime() {
 	g.emit("fcmp d0, d1")
 	g.emit("b.eq %s", logRet) // x == +Inf → itself
 	base()
+	// A subnormal stores exponent 0 — its magnitude is in the mantissa's
+	// leading zeros — so the field below reports the smallest normal
+	// exponent for every one of them. Scale into the normal range and take
+	// the 54 back off k. x13 carries the adjustment; it is dead until the
+	// mantissa mask below.
+	g.emit("mov x13, #0")
+	ldc("d1", "minnorm")
+	g.emit("fcmp d0, d1")
+	g.emit("b.ge %s", logNoScale)
+	ldc("d1", "two54")
+	g.emit("fmul d0, d0, d1")
+	g.emit("mov x13, #54")
+	g.label(logNoScale)
 	g.emit("fmov x10, d0")
 	g.emit("lsr x11, x10, #52")
 	g.emit("and x11, x11, #0x7ff")
 	g.emit("sub x11, x11, #1023") // k
+	g.emit("sub x11, x11, x13")
 	g.emit("mov x13, #1")
 	g.emit("lsl x13, x13, #52")
 	g.emit("sub x13, x13, #1")

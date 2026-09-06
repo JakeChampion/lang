@@ -7569,7 +7569,8 @@ func putLocalsGroups(buf []byte, groups ...localGroup) []byte {
 // [sqrt2/2, sqrt2). R(z) is two independent chains in w = z^2 so they evaluate
 // in parallel rather than as one 7-deep Horner.
 //
-// Locals: f64 m=1 f=2 s=3 z=4 w=5 t1=6 t2=7 hfsq=8 kf=9, then i64 k=10 bits=11.
+// Locals: f64 m=1 f=2 s=3 z=4 w=5 t1=6 t2=7 hfsq=8 kf=9, then i64 k=10 bits=11
+// kadj=12.
 func buildLogF64Body(_ map[string]uint32) []byte {
 	const (
 		lx   = 0
@@ -7584,6 +7585,7 @@ func buildLogF64Body(_ map[string]uint32) []byte {
 		kf   = 9
 		k    = 10
 		bits = 11
+		kadj = 12
 	)
 	var body []byte
 	body = inst.InstLocalGet(body, lx)
@@ -7606,7 +7608,22 @@ func buildLogF64Body(_ map[string]uint32) []byte {
 	body = instF64Inf(body, false)
 	body = numeric.InstF64Eq(body)
 	body = instGuardReturn(body, func(b []byte) []byte { return inst.InstLocalGet(b, lx) })
-	// bits = reinterpret(x); k = ((bits >> 52) & 0x7FF) - 1023
+	// A subnormal stores exponent 0 — its magnitude is in the mantissa's
+	// leading zeros — so the field below reports the smallest normal
+	// exponent for every one of them. Scale into the normal range and take
+	// the 54 back off k.
+	body = inst.InstLocalGet(body, lx)
+	body = inst.InstF64Const(body, math.Float64bits(fdlibm.MinNorm))
+	body = numeric.InstF64Lt(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, lx)
+	body = inst.InstF64Const(body, math.Float64bits(fdlibm.Two54))
+	body = numeric.InstF64Mul(body)
+	body = inst.InstLocalSet(body, lx)
+	body = inst.InstI64Const(body, 54)
+	body = inst.InstLocalSet(body, kadj)
+	body = inst.InstEnd(body)
+	// bits = reinterpret(x); k = ((bits >> 52) & 0x7FF) - 1023 - kadj
 	body = inst.InstLocalGet(body, lx)
 	body = convert.InstI64ReinterpretF64(body)
 	body = inst.InstLocalSet(body, bits)
@@ -7616,6 +7633,8 @@ func buildLogF64Body(_ map[string]uint32) []byte {
 	body = inst.InstI64Const(body, 2047)
 	body = numeric.InstI64And(body)
 	body = inst.InstI64Const(body, 1023)
+	body = numeric.InstI64Sub(body)
+	body = inst.InstLocalGet(body, kadj)
 	body = numeric.InstI64Sub(body)
 	body = inst.InstLocalSet(body, k)
 	// m = reinterpret((bits & mantissa) | exponent-of-1)
@@ -7711,7 +7730,7 @@ func buildLogF64Body(_ map[string]uint32) []byte {
 	body = numeric.InstF64Sub(body)
 	body = numeric.InstF64Sub(body)
 	return inst.PutFunctionBody(nil, putLocalsGroups(nil,
-		localGroup{9, encode.ValtypeF64}, localGroup{2, encode.ValtypeI64}), body)
+		localGroup{9, encode.ValtypeF64}, localGroup{3, encode.ValtypeI64}), body)
 }
 
 // twoOverPiSegment renders the table as the LE bytes its data segment at

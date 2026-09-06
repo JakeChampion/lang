@@ -6553,7 +6553,22 @@ function parse_type_paren_arrow(p: Par, top_arrow: boolean): (string, boolean, s
     // "function value" and the result type is what lets the
     // checker type a call through it (#7961). Consumers ask
     // parser.ref_is_fn_value rather than matching a spelling.
+    // With no depth-1 comma the parens hold ONE element, which makes them
+    // redundant grouping rather than a tuple — no one-element tuple type
+    // exists, and native's type parser resolves `(i32)` to `i32` the same way.
+    if (!top_comma) { return consume_array_suffix(p, unwrap_grouping_parens(tbuf)); }
     return consume_array_suffix(p, tbuf);
+}
+
+// unwrap_grouping_parens strips redundant grouping parens from a type spelling.
+// The caller has established the parens hold one non-fn element, so `()` — the
+// unit type, whose parens are its name — is the only shape left to protect.
+function unwrap_grouping_parens(s: string): string {
+    var t: string = s;
+    while (t.len() > 2 && t[0] == b'(' && t[t.len() - 1] == b')') {
+        t = slice_unchecked(t, 1, t.len() - 1) + "";
+    }
+    return t;
 }
 
 function parse_type_punct_led(p: Par): (string, boolean, string, Par) {
@@ -8507,7 +8522,7 @@ pub function elem_type_ref(t: TypeRef): TypeRef {
 // top_arrow_at returns the index of the FIRST top-level `=>` in `s`, or -1.
 // Depth-tracked like split_top_commas, so the arrow inside a parameter's own
 // function type (`(() => T) => U`) does not split the outer one.
-function top_arrow_at(s: string): i32 {
+pub function top_arrow_at(s: string): i32 {
     var depth: i32 = 0;
     var i: i32 = 0;
     while (i < s.len()) {

@@ -50,7 +50,7 @@ function test_u32_asc(): test.TestOutcome {
 function test_u64_asc_with_large_values(): test.TestOutcome {
   // Use values near u64-max to make sure unsigned compare
   // (not sign-extended i64) is what drives the order.
-  var arr: u64[] = [-1u64, 0u64, 1u64];
+  var arr: u64[] = [18446744073709551615u64, 0u64, 1u64];
   var sorted: u64[] = cmp.sort(arr);
   return test.assert_eq(sorted[0], 0u64);
 }
@@ -130,7 +130,7 @@ function test_u64_asc_large(): test.TestOutcome {
     arr = arr.append((79 - i) as u64);
     i = i + 1;
   }
-  arr = arr.append(-1u64);
+  arr = arr.append(18446744073709551615u64);
   var sorted: u64[] = cmp.sort(arr);
   if (sorted.len() != 80) {
     return test.fail("length changed: " + sorted.len().to_string());
@@ -145,7 +145,7 @@ function test_u64_asc_large(): test.TestOutcome {
   if (sorted[0] != 1u64) {
     return test.fail("u64 smallest wrong");
   }
-  if (sorted[79] != -1u64) {
+  if (sorted[79] != 18446744073709551615u64) {
     return test.fail("u64 max sentinel not last");
   }
   return test.pass();

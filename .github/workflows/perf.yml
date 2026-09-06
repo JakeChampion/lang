@@ -57,8 +57,6 @@ on:
     paths-ignore:
       - "docs/**"
       - "*.md"
-      - "LICENSE"
-      - ".github/ISSUE_TEMPLATE/**"
   # Also on main: a rebase-merge replays commits onto a main their PR's CI never
   # saw, so a coupling between two individually-green PRs exists only in the
   # merge. Filter mirrors the pull_request one; pinned by TestGateLanesRunOnMain.
@@ -67,8 +65,6 @@ on:
     paths-ignore:
       - "docs/**"
       - "*.md"
-      - "LICENSE"
-      - ".github/ISSUE_TEMPLATE/**"
   workflow_dispatch:
 
 # main never cancels its own in-flight run, and gets one concurrency group

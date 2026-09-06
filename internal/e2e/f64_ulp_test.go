@@ -44,11 +44,13 @@ import (
 const maxULP = 2
 
 // interpULP matches the compiled bound: the interpreter carries its own
-// fdlibm sin/cos (internal/interp/trig.go, the same algorithm the backends
-// emit) rather than delegating to Go's `math`, whose reduction error is
-// unbounded in ulp terms near a zero of sine. Loosening this again would be
-// re-recording Go's inaccuracy as Fern's contract — the fix is always better
-// interpreter kernels, never a bigger bound.
+// fdlibm sin/cos, exp and log (internal/interp/{trig,exp,log}.go, the same
+// algorithms the backends emit) rather than delegating to Go's `math`, which
+// is wrong past the bound on all three — unbounded in ulp terms near a zero
+// of sine, +Inf across [709.436, 709.7827) for exp, and saturated at
+// ln(2^-1022) for every subnormal argument to log. Loosening this again would
+// be re-recording Go's inaccuracy as Fern's contract — the fix is always
+// better interpreter kernels, never a bigger bound.
 const interpULP = maxULP
 
 // f64UlpInputs spans the ranges where each function's argument reduction does
@@ -70,11 +72,13 @@ var f64UlpInputs = []float64{
 	-1e7, -1e10, -1e18, -1e30, -1e300, -math.MaxFloat64,
 }
 
-// f64UlpPosInputs are the log-only inputs: strictly positive, spanning
-// subnormal-adjacent through the top of the exponent range.
+// f64UlpPosInputs are the log-only inputs: strictly positive, spanning the
+// smallest normal through the top of the exponent range. math.Log is a usable
+// reference across all of them; the subnormals below it are not here but in
+// f64UlpCases, against literal bit patterns.
 var f64UlpPosInputs = []float64{
-	1e-300, 1e-30, 1e-5, 0.1, 0.5, 0.9, 1, 1.0000001, 1.5, 2, 2.718281828459045,
-	10, 1e5, 1e30, 1e300,
+	2.2250738585072014e-308, 1e-300, 1e-30, 1e-5, 0.1, 0.5, 0.9, 1, 1.0000001,
+	1.5, 2, 2.718281828459045, 10, 1e5, 1e30, 1e300, math.MaxFloat64,
 }
 
 // ---- the reference ----
@@ -88,8 +92,10 @@ var f64UlpPosInputs = []float64{
 //
 // So sin/cos are referenced against a 1400-bit computation instead: reduce
 // with a 420-digit π, then a Taylor series that converges long before the
-// working precision runs out. exp/log/pow keep Go's math, which is accurate
-// to within the bound over the inputs used here.
+// working precision runs out. exp and log keep Go's math over the range where
+// it is accurate to within the bound, and fall back to a literal bit pattern
+// per row where it is not — exp's two overflow/underflow bands, log's
+// subnormals. pow keeps Go's math throughout.
 
 // piDigits is 420 significant digits (~1395 bits) and refPrec is sized to
 // match. Both are set by the LARGEST argument the sweep reduces, not by the
@@ -243,6 +249,28 @@ func f64UlpCases() []f64Case {
 	}
 	for _, x := range f64UlpPosInputs {
 		cs = append(cs, f64Case{fmt.Sprintf("__log_f64(%s)", lit(x)), math.Log(x)})
+	}
+	// The subnormal band, where the reduction x = 2^k*m has to prescale
+	// before reading k out of the exponent field — a subnormal stores 0
+	// there and keeps its magnitude in the mantissa's leading zeros. Without
+	// the prescale every argument below 2^-1022 answered ln(2^-1022) =
+	// -709.09 whatever its size, against true values running to -744.44
+	// (#8497).
+	//
+	// The oracle is a literal bit pattern per row because math.Log carries
+	// the identical defect: referencing these against it would pass a
+	// still-saturated backend. Every value below is glibc's, and refLog's
+	// 1400-bit computation in internal/interp/log_test.go agrees with it bit
+	// for bit.
+	for _, r := range []struct {
+		x    float64
+		bits uint64
+	}{
+		{1e-310, 0xc0864e69394d9508},
+		{1e-320, 0xc087069e3078e52d},
+		{5e-324, 0xc0874385446d71c3},
+	} {
+		cs = append(cs, f64Case{fmt.Sprintf("__log_f64(%s)", lit(r.x)), math.Float64frombits(r.bits)})
 	}
 	// pow: the integer-exponent path must be EXACT, not merely close —
 	// pow(3,2) truncating to 8 through `as i32` is what forced it to exist.
@@ -633,6 +661,17 @@ func TestF64TranscendentalUlpArm64(t *testing.T) {
 		t.Fatalf("arm64 exited %d\n%s", code, out)
 	}
 	checkF64Output(t, "arm64-linux", out, cs, maxULP)
+}
+
+// TestF64TranscendentalUlpArm64SSA holds the SSA arm64 backend to the same
+// bound as the register backends. Only its trig lane was covered
+// (TestF64SinCosLargeArgument/arm64-ssa), so its exp / log / pow helpers —
+// separate emitters from internal/codegen/arm64's, sharing only the fdlibm
+// table — had no accuracy gate at all.
+func TestF64TranscendentalUlpArm64SSA(t *testing.T) {
+	cs := append(f64UlpCases(), f64SpecialCases()...)
+	out := compileAndRunArm64SSACapture(t, f64UlpProg(cs))
+	checkF64Output(t, "arm64-ssa", out, cs, maxULP)
 }
 
 // TestF64TranscendentalUlpWasm holds the wasm backend to the same bound as

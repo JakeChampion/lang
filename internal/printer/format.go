@@ -1980,7 +1980,7 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 		f.b.WriteByte(')')
 		if !x.ReturnUnannotated && x.ReturnType != nil {
 			f.b.WriteString(": ")
-			f.b.WriteString(formatType(x.ReturnType))
+			f.b.WriteString(arrowReturnType(x.ReturnType))
 		}
 		f.b.WriteString(" => ")
 		if ret, _, ok := arrowReturn(x); ok {
@@ -2211,6 +2211,17 @@ func (f *formatter) writeCallTypeArgs(c *ast.Call) {
 	if c.TypeArgsWritten {
 		f.writeTypeArgs(c.TypeArgs)
 	}
+}
+
+// arrowReturnType renders an arrow lambda's return annotation. The lambda's own
+// `=>` follows it, so the type parser reserves the top-level function-type arrow
+// there: a function-typed return needs its grouping parens back, or
+// `(p: i32): (i32) => (i32, i32) => …` re-parses with the wrong split.
+func arrowReturnType(t ast.Type) string {
+	if _, isFn := t.(*ast.FuncType); isFn {
+		return "(" + formatType(t) + ")"
+	}
+	return formatType(t)
 }
 
 func formatType(t ast.Type) string {
