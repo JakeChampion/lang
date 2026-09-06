@@ -85,6 +85,25 @@ func rmemchrCases() []struct {
 		c{strings.Repeat("q", 300), 'q', 0}, // long, match at the very start
 	)
 
+	// x86-64's __rmemchr widens to a 32-byte AVX2 main loop with the
+	// 16-byte SSE2 loop kept as its tail (issue: `wc -l` at 16 bytes/
+	// iteration ran 25% more user time than glibc's AVX2 memchr at the same
+	// task), so every length here also needs a hit at each position
+	// straddling the 32-byte block boundary and the boundary between the
+	// AVX2 loop and its SSE2 tail — lengths just below/at/above one and two
+	// 32-byte blocks.
+	for _, n := range []int{31, 32, 33, 47, 48, 49, 63, 64, 65, 79, 80, 81} {
+		base := strings.Repeat("a", n)
+		out = append(out, c{base, 'z', n})
+		for at := 0; at < n; at++ {
+			withHit := base[:at] + "z" + base[at+1:]
+			out = append(out, c{withHit, 'z', n})
+			out = append(out, c{withHit, 'z', at})
+			out = append(out, c{withHit, 'z', at - 1})
+			out = append(out, c{withHit, 'a', at})
+		}
+	}
+
 	// Deterministic randoms over a small alphabet, so matches are dense and
 	// land at irregular offsets.
 	rng := rand.New(rand.NewSource(20260831))

@@ -9269,21 +9269,33 @@ func (g *generator) emitAsciiRunRuntime() {
 // emitMemchrRuntime emits `__fern_memchr(s, byte, from) -> i32`: the index of
 // the first occurrence of `byte` in `s` at or after `from`, or -1.
 //
-// THE FIRST VECTOR KERNEL (docs/ATLAS-PLATFORM-PLAN.md §3). SSE2, 16 bytes
-// per iteration: splat the needle with movd/punpcklbw/punpcklwd/pshufd, then
-// movdqu / pcmpeqb / pmovmskb / bsf. Measured **278ms -> 22ms, ~12x** against
-// the scalar version it replaces (20,000 scans of a 14.4 KB haystack with the
-// needle only at the very end, three runs each).
+// THE FIRST VECTOR KERNEL (docs/ATLAS-PLATFORM-PLAN.md §3). AVX2, 32 bytes
+// per iteration, with the original SSE2 16-byte loop kept as the tail:
+// splat the needle with movd/punpcklbw/punpcklwd/pshufd (SSE2, into xmm1),
+// broadcast it across ymm1 with vpbroadcastb, then vmovdqu / vpcmpeqb /
+// vpmovmskb / bsf on the 32-byte blocks. Measured **278ms -> 22ms, ~12x**
+// against the scalar version the original SSE2 kernel replaced (20,000 scans
+// of a 14.4 KB haystack with the needle only at the very end, three runs
+// each); AVX2 widens the same shape to two bytes a cycle rather than one
+// (issue: x86-64 `wc -l` at 16 bytes/iteration ran 25% more user time than
+// glibc's AVX2 `memchr`/`rawmemchr` at the same task).
 //
-// It needs no CPU feature detection. SSE2 is inside the declared x86-64
-// baseline (Haswell-class, SSE4.2 + BMI1), so a selected instruction is a
-// hard requirement rather than a fast path and there is nothing to dispatch
-// on — §1.1 of the plan.
+// It needs no CPU feature detection. AVX2 is inside the declared x86-64
+// baseline (Haswell-class 2013), so a selected instruction is a hard
+// requirement rather than a fast path and there is nothing to dispatch on —
+// §1.1 of the plan.
 //
 // It also satisfies §3.1's contract, which is what lets it exist without a
 // vector register class in the IR: the operands arriving are scalars (a
-// string value, a byte, an index), the result is a scalar, and no xmm value
-// is live across an op boundary, a call, or a branch out of this body.
+// string value, a byte, an index), the result is a scalar, and no xmm/ymm
+// value is live across an op boundary, a call, or a branch out of this body.
+//
+// vzeroupper is emitted on every path that leaves ymm state dirty before it
+// can reach a legacy-SSE (non-VEX) instruction: the 16-byte tail loop below
+// uses plain pcmpeqb/movdqu, and a hit inside the 32-byte loop returns
+// straight to a caller that may run legacy SSE next. Either without it pays
+// the AVX/SSE transition penalty the first legacy instruction that runs
+// against dirty upper state.
 //
 // WHAT THIS COST THAT THE PLAN DID NOT PREDICT. §3 argued the fused design
 // needs no vector register class, no regalloc and no ABI change — all true —
@@ -9331,11 +9343,40 @@ func (g *generator) emitMemchrRuntime() {
 	g.emit("add r9, rdi") // end = data + len
 	// Broadcast the needle byte across xmm1. movd + punpcklbw + punpcklwd
 	// + pshufd is the SSE2 splat; pshufb would be one instruction but is
-	// SSSE3, outside the declared baseline.
+	// SSSE3, outside the declared baseline. The 16-byte tail loop below
+	// reuses xmm1 directly; ymm1 is the same bytes, widened for the AVX2
+	// main loop.
 	g.emit("movd xmm1, esi")
 	g.emit("punpcklbw xmm1, xmm1")
 	g.emit("punpcklwd xmm1, xmm1")
 	g.emit("pshufd xmm1, xmm1, 0")
+	g.emit("vpbroadcastb ymm1, xmm1")
+	// AVX2 main loop: 32 bytes per iteration while at least 32 remain.
+	g.label(".Lmemchr_avx")
+	g.emit("mov rax, r9")
+	g.emit("sub rax, r8")
+	g.emit("cmp rax, 32")
+	g.emit("jl .Lmemchr_avx_done")
+	g.emit("vmovdqu ymm0, [r8]")
+	g.emit("vpcmpeqb ymm0, ymm0, ymm1")
+	g.emit("vpmovmskb eax, ymm0")
+	g.emit("test eax, eax")
+	g.emit("jnz .Lmemchr_hit32")
+	g.emit("add r8, 32")
+	g.emit("jmp .Lmemchr_avx")
+	g.label(".Lmemchr_hit32")
+	// Leaving ymm state dirty here, and this path returns straight to the
+	// caller: vzeroupper before it might run legacy SSE.
+	g.emit("vzeroupper")
+	g.emit("bsf eax, eax")
+	g.emit("add r8, rax")
+	g.emit("sub r8, rdi")
+	g.emit("mov eax, r8d")
+	g.emit("jmp .Lmemchr_ret")
+	g.label(".Lmemchr_avx_done")
+	// Falling into the legacy-SSE (non-VEX) tail loop below: vzeroupper
+	// once here rather than on every one of its exits.
+	g.emit("vzeroupper")
 	// Vector loop: 16 bytes per iteration while at least 16 remain.
 	g.label(".Lmemchr_vec")
 	g.emit("mov rax, r9")
@@ -9390,11 +9431,13 @@ func (g *generator) emitMemchrRuntime() {
 // emitRmemchrRuntime emits `__fern_rmemchr(s, byte, from) -> i32`: the index
 // of the LAST occurrence of `byte` at or before `from`, or -1.
 //
-// SSE2, 16 bytes per iteration, walking DOWN. The block ending at the cursor
-// is loaded at `cursor - 15`, and the mask is scanned with **bsr** rather than
-// bsf: the highest set bit is the rightmost matching byte, which is the answer
-// a backward scan wants. That one substitution is the whole difference from
-// __memchr's vector body — the splat, load, compare and gather are identical.
+// AVX2, 32 bytes per iteration, walking DOWN, with the original SSE2
+// 16-byte loop kept as the tail. The block ending at the cursor is loaded at
+// `cursor - 31`, and the mask is scanned with **bsr** rather than bsf: the
+// highest set bit is the rightmost matching byte, which is the answer a
+// backward scan wants. That one substitution is the whole difference from
+// __memchr's vector body — the splat, broadcast, load, compare and gather
+// are identical.
 //
 // Not lzcnt, for the same reason __memchr does not use tzcnt: lzcnt is BMI1
 // and on a pre-baseline CPU its F3 prefix is IGNORED, so it degrades silently
@@ -9408,6 +9451,11 @@ func (g *generator) emitMemchrRuntime() {
 // `from` UP to 0, so a backward scan clamps it DOWN to len-1. A negative
 // `from` therefore finds nothing here, where in __memchr it means "the whole
 // string".
+//
+// vzeroupper is emitted on every path that leaves ymm state dirty before it
+// can reach a legacy-SSE instruction — see __memchr's doc comment; the same
+// three exits (a 32-byte hit, falling into the 16-byte tail loop, and the
+// tail loop's own below-the-string escape) apply here.
 func (g *generator) emitRmemchrRuntime() {
 	g.line("")
 	g.line(".globl __fern_rmemchr")
@@ -9428,11 +9476,59 @@ func (g *generator) emitRmemchrRuntime() {
 	g.emit("js .Lrmemchr_miss")
 	g.emit("cmp edx, ecx")
 	g.emit("cmovg edx, ecx")
-	// Broadcast the needle byte across xmm1 — the SSE2 splat, as __memchr's.
+	// Broadcast the needle byte across xmm1 — the SSE2 splat, as __memchr's
+	// — then widen it to ymm1 for the AVX2 main loop below.
 	g.emit("movd xmm1, esi")
 	g.emit("punpcklbw xmm1, xmm1")
 	g.emit("punpcklwd xmm1, xmm1")
 	g.emit("pshufd xmm1, xmm1, 0")
+	g.emit("vpbroadcastb ymm1, xmm1")
+	// AVX2 main loop while a whole 32-byte block still fits BELOW the
+	// cursor, i.e. the block [edx-31, edx] starts at a non-negative index.
+	g.emit("cmp edx, 31")
+	g.emit("jl .Lrmemchr_avx_done")
+	// r8d = block base index, r9 = its address. Both are carried across
+	// iterations and stepped by 32, rather than recomputed from the cursor
+	// each time — measured true of the SSE2 tail loop's 16-byte step below,
+	// and the same cost applies here.
+	g.emit("mov r8d, edx")
+	g.emit("sub r8d, 31")
+	g.emit("mov r9, rdi")
+	g.emit("add r9, r8")
+	g.label(".Lrmemchr_avx")
+	g.emit("vmovdqu ymm0, [r9]")
+	g.emit("vpcmpeqb ymm0, ymm0, ymm1")
+	g.emit("vpmovmskb eax, ymm0")
+	g.emit("test eax, eax")
+	g.emit("jnz .Lrmemchr_hit32")
+	g.emit("sub r8d, 32")
+	g.emit("jns .Lrmemchr_step32")
+	// The next block would start below 0, so the untested bytes are
+	// [0, base-1] where base is the block just cleared — up to 31 bytes,
+	// still worth the 16-byte SSE2 loop below. Restore the cursor and hand
+	// it to that loop's entry — vzeroupper first, since it runs legacy
+	// pcmpeqb/movdqu.
+	g.emit("add r8d, 31")
+	g.emit("mov edx, r8d")
+	g.emit("vzeroupper")
+	g.emit("jmp .Lrmemchr_vec_entry")
+	g.label(".Lrmemchr_step32")
+	g.emit("sub r9, 32")
+	g.emit("jmp .Lrmemchr_avx")
+	g.label(".Lrmemchr_hit32")
+	// bsr = the HIGHEST set mask bit = the rightmost matching byte in the
+	// block. bsf here would answer the leftmost and be wrong in exactly the
+	// cases this op exists to get right. This path returns straight to the
+	// caller with ymm state dirty: vzeroupper before it might run legacy SSE.
+	g.emit("vzeroupper")
+	g.emit("bsr eax, eax")
+	g.emit("add eax, r8d")
+	g.emit("jmp .Lrmemchr_ret")
+	g.label(".Lrmemchr_avx_done")
+	// Falling into the legacy-SSE 16-byte tail loop below: vzeroupper once
+	// here rather than on every one of its exits.
+	g.emit("vzeroupper")
+	g.label(".Lrmemchr_vec_entry")
 	// Vector loop while a whole block still fits BELOW the cursor, i.e. the
 	// block [edx-15, edx] starts at a non-negative index. That bound is what
 	// keeps the load in bounds at the low end, where __memchr's `>= 16 left`
@@ -9501,18 +9597,25 @@ func (g *generator) emitRmemchrRuntime() {
 // emitCountByteRuntime emits `__fern_count_byte(s, byte) -> i32`: how many
 // bytes of `s` equal `byte`.
 //
-// SSE2, 16 bytes an iteration (docs/ATLAS-PLATFORM-PLAN.md §3.4 step 3). The
-// fourth kernel, and the first with no early exit: __memchr stops at the first
-// hit, this reads the whole string every time. That is what makes it the
-// clearest case of §4's input-length rule rather than a marginal one — and it
-// is also why it wins where __memchr's win is capped, since there is no early
-// return for a scalar loop to reach first.
+// AVX2, 32 bytes an iteration, with the original SSE2 16-byte loop kept as
+// the tail (docs/ATLAS-PLATFORM-PLAN.md §3.4 step 3). The fourth kernel, and
+// the first with no early exit: __memchr stops at the first hit, this reads
+// the whole string every time. That is what makes it the clearest case of
+// §4's input-length rule rather than a marginal one — and it is also why it
+// wins where __memchr's win is capped, since there is no early return for a
+// scalar loop to reach first. It is also the kernel behind `wc -l`'s hot
+// loop (one call per 64 KiB read), which is what made the 16-bytes-only
+// version 25% slower in user time than glibc's AVX2 `memchr`/`rawmemchr` at
+// the same task.
 //
-// The splat and compare are __memchr's exactly; what replaces its mask SCAN is
-// a mask POPCOUNT. pmovmskb gives one bit per byte, so popcnt of it is the
-// number of matches in the block, and the loop accumulates instead of
-// branching out. No per-block branch at all on the hot path, where __memchr
-// still has to test the mask.
+// The splat, broadcast and compare are __memchr's exactly; what replaces its
+// mask SCAN is a mask POPCOUNT. vpmovmskb gives one bit per byte, so popcnt
+// of it is the number of matches in the block, and the loop accumulates
+// instead of branching out. No per-block branch at all on the hot path,
+// where __memchr still has to test the mask — and no vzeroupper mid-loop
+// either, for the same reason: the only place ymm state can reach a
+// legacy-SSE instruction is the fall-through into the 16-byte tail loop
+// below, so that is the only place vzeroupper is needed.
 //
 // popcnt is a hard requirement, not a fast path: the declared x86-64 baseline
 // is Haswell-class 2013, and these binaries are static with no runtime
@@ -9543,11 +9646,31 @@ func (g *generator) emitCountByteRuntime() {
 	g.emit("ja .Lcount_byte_ret")
 	g.emit("xor edx, edx") // cursor, as an INDEX
 	// SSE2 splat, as __memchr's: pshufb would be one instruction but is
-	// SSSE3, outside the declared baseline.
+	// SSSE3, outside the declared baseline. ymm1 widens it for the AVX2
+	// main loop below; the 16-byte tail loop reuses xmm1 directly.
 	g.emit("movd xmm1, esi")
 	g.emit("punpcklbw xmm1, xmm1")
 	g.emit("punpcklwd xmm1, xmm1")
 	g.emit("pshufd xmm1, xmm1, 0")
+	g.emit("vpbroadcastb ymm1, xmm1")
+	// AVX2 main loop: 32 bytes an iteration while at least 32 remain.
+	g.label(".Lcount_byte_avx")
+	g.emit("mov r8d, ecx")
+	g.emit("sub r8d, edx")
+	g.emit("cmp r8d, 32")
+	g.emit("jl .Lcount_byte_avx_done")
+	g.emit("vmovdqu ymm0, [rdi + rdx]")
+	g.emit("vpcmpeqb ymm0, ymm0, ymm1")
+	g.emit("vpmovmskb r9d, ymm0")
+	g.emit("popcnt r9d, r9d")
+	g.emit("add eax, r9d")
+	g.emit("add edx, 32")
+	g.emit("jmp .Lcount_byte_avx")
+	g.label(".Lcount_byte_avx_done")
+	// Falling into the legacy-SSE (non-VEX) tail loop below: vzeroupper
+	// once here, the only place this kernel's ymm state can reach a
+	// legacy-SSE instruction.
+	g.emit("vzeroupper")
 	// Vector loop: 16 bytes an iteration while at least 16 remain. The
 	// unaligned load is deliberate for __memchr's reason — the pointer comes
 	// from the allocator, so a 16-byte read starting inside the string cannot

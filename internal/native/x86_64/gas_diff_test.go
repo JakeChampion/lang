@@ -132,6 +132,16 @@ func TestAssembleAgainstGNUAs(t *testing.T) {
 			"pcmpeqb xmm0, xmm1\npcmpeqw xmm2, xmm3\npcmpeqd xmm9, xmm1\n" +
 			"punpcklbw xmm1, xmm1\npunpcklwd xmm2, xmm2\npshufd xmm1, xmm2, 0\npshufd xmm5, xmm6, 27\n" +
 			"pmovmskb eax, xmm0\npmovmskb r10d, xmm11\npor xmm0, xmm1\npand xmm2, xmm3\npxor xmm4, xmm4\n",
+		// AVX2: the five VEX-encoded forms the memchr/rmemchr/count_byte
+		// kernels widen to over ymm, exercised on both the low (0..7) and
+		// extended (8..15) register ranges since the VEX prefix always
+		// carries the extension bits (avx.go).
+		"avx2": "" +
+			"vmovdqu ymm0, [r8]\nvmovdqu ymm9, [rax]\nvmovdqu ymm5, [r12+r13*2+8]\n" +
+			"vpbroadcastb ymm1, xmm1\nvpbroadcastb ymm10, xmm11\n" +
+			"vpcmpeqb ymm0, ymm0, ymm1\nvpcmpeqb ymm9, ymm10, ymm11\n" +
+			"vpmovmskb eax, ymm0\nvpmovmskb r9d, ymm10\n" +
+			"vzeroupper\n",
 	}
 	for name, src := range cases {
 		t.Run(name, func(t *testing.T) {
