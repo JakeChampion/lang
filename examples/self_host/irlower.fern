@@ -66712,7 +66712,8 @@ function rc_ml_owned_rc_local(name: string, fn: parser.FuncDecl, types_n: string
 }
 
 // rc_ml_owned_rc_param: `name` is a PARAMETER this frame releases at exit —
-// `own`, or consumed-threaded (consumed_params_of) — with an rc-boxed type.
+// `own`, or in `consumed` (consumed_params_of, computed once per function by
+// the caller) — with an rc-boxed type.
 // The param-side sibling of rc_ml_owned_rc_local, and with it the port of
 // native movableAliasSource (isOwnedRcLocal || isOwnedRcParam, #8498): an
 // alias or destructure taking such a param's LAST mention is a move.
@@ -66728,14 +66729,14 @@ function rc_ml_owned_rc_local(name: string, fn: parser.FuncDecl, types_n: string
 // credited tuple / string / struct limbs read credits a param never holds,
 // and the destructure never consults the plan. TestSelfHostRcParamMoveX86_64
 // pins both outcomes.
-function rc_ml_owned_rc_param(name: string, fn: parser.FuncDecl, structs: StructTab): boolean {
+function rc_ml_owned_rc_param(name: string, fn: parser.FuncDecl, consumed: string[], structs: StructTab): boolean {
     var pi: i32 = 0;
     while (pi < fn.params.len()) {
         var p: ast.ParamDecl = fn.params[pi];
         if (p.name == name) {
             if (!rc_ml_rc_type_name(p.type_name, structs)) { return false; }
             if (p.own) { return true; }
-            return rc_seen_has(consumed_params_of(fn, body_assign_targets(fn.body), structs), name);
+            return rc_seen_has(consumed, name);
         }
         pi = pi + 1;
     }
@@ -67190,6 +67191,7 @@ struct MlOut { names: string[], sites: string[] }
 // (pre-first-return) top-level statement, with their move-site positions.
 function rc_ml_compute_toplevel(fn: parser.FuncDecl, structs: StructTab): MlOut {
     var moved: MlOut = MlOut { names: [], sites: [] };
+    var consumed: string[] = consumed_params_of(fn, body_assign_targets(fn.body), structs);
     // local name->type table, reusing the freeEligible collector (params
     // recorded first so destructure typing can read them, then locals).
     var st: FeState = FeState { tainted: [], an: [], av: [], av_env: [], types_n: [], types_t: [], decl_s: [], site_mode: false };
@@ -67214,7 +67216,7 @@ function rc_ml_compute_toplevel(fn: parser.FuncDecl, structs: StructTab): MlOut 
                             // move (`var (x, y) = a`) share the bare-ident-RHS
                             // site shape; native keys the STATEMENT node. An
                             // owned PARAM qualifies too (rc_ml_owned_rc_param).
-                            if ((rc_ml_owned_rc_local(id.name, fn, st.types_n, st.types_t, structs) || rc_ml_owned_rc_param(id.name, fn, structs)) && rc_ml_last_use(fn.body, id.name, k) && util.index_of_str(moved.names, id.name) < 0) {
+                            if ((rc_ml_owned_rc_local(id.name, fn, st.types_n, st.types_t, structs) || rc_ml_owned_rc_param(id.name, fn, consumed, structs)) && rc_ml_last_use(fn.body, id.name, k) && util.index_of_str(moved.names, id.name) < 0) {
                                 moved = MlOut { names: moved.names.append(id.name), sites: moved.sites.append(util.i32_to_string(v.line) + ":" + util.i32_to_string(v.col)) };
                             }
                         },
@@ -67225,7 +67227,7 @@ function rc_ml_compute_toplevel(fn: parser.FuncDecl, structs: StructTab): MlOut 
                 ast.StmtAssign(a) => {
                     match (a.value) {
                         ast.ExprIdent(id) => {
-                            if ((rc_ml_owned_rc_local(id.name, fn, st.types_n, st.types_t, structs) || rc_ml_owned_rc_param(id.name, fn, structs)) && rc_ml_last_use(fn.body, id.name, k) && util.index_of_str(moved.names, id.name) < 0) {
+                            if ((rc_ml_owned_rc_local(id.name, fn, st.types_n, st.types_t, structs) || rc_ml_owned_rc_param(id.name, fn, consumed, structs)) && rc_ml_last_use(fn.body, id.name, k) && util.index_of_str(moved.names, id.name) < 0) {
                                 moved = MlOut { names: moved.names.append(id.name), sites: moved.sites.append(util.i32_to_string(a.line) + ":" + util.i32_to_string(a.col)) };
                             }
                         },
