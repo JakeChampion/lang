@@ -1,0 +1,15 @@
+// An arrow lambda's return annotation may be a tuple. The annotation is
+// followed by the lambda's own `=>`, so `(): (string, i32) => …` is ambiguous
+// with a two-parameter function type; the tuple reading is the right one when
+// taking the arrow would leave the lambda without one (#8743).
+function main(): i32 {
+    var pair = (n: i32): (string, i32) => { return ("ab", n + 1); };
+    var t = pair(6);
+    // A function-typed return keeps its arrow inside explicit parens.
+    var mk = (): ((i32) => i32) => { return (x: i32): i32 => x * 2; };
+    var f = mk();
+    // The unparenthesised function-typed return still reads greedily.
+    var mk2 = (): (i32) => i32 => { return (x: i32): i32 => x + 3; };
+    if (t.0.len() == 2 && t.1 == 7 && f(4) == 8 && mk2()(4) == 7) { return 0; }
+    return 1;
+}
