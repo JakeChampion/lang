@@ -390,7 +390,10 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	// slot + the per-set __drop_dyn_<set> helper + the dec/drop sweep
 	// arms). arm64 passes only DynSupported (dispatch) — its RC slice 4c
 	// hasn't landed, so it keeps leaking `dyn` (harmless).
-	lowerOpts := []ir.LowerOption{ir.DynSupported(), ir.DynRcSupported()}
+	// The target's two halves answer a `target_os()` / `target_arch()` the
+	// front end did not fold; the IR cannot tell the natives apart by pointer
+	// width alone.
+	lowerOpts := []ir.LowerOption{ir.DynSupported(), ir.DynRcSupported(), ir.WithTargetOS("linux"), ir.WithTargetArch("x86-64")}
 	if opts.DebugLines {
 		lowerOpts = append(lowerOpts, ir.EmitLineMarkers())
 	}

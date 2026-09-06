@@ -412,3 +412,129 @@ Both of the attribution's clusters now have a ten-line reproduction and an
 issue: #8628 for the peephole's displaced element, #8644 for this. Neither was
 reachable from a guessed shape — eight probes tried that and all eight came back
 clean. Both fell out of reading the attribution and then the emitted assembly.
+
+
+## Re-measured on main, 91 commits later (2026-09-06)
+
+The comparison is cheap enough to be a TRACKING number, so it was re-run from a
+main that had moved 91 commits past the one above, several of them RC fixes from
+parallel work:
+
+| input | emitter | allocs | frees | freed | live_bytes |
+|---|---|--:|--:|--:|--:|
+| `x86_native.fern` | native | 3,011,121 | 2,511,677 | 83.4% | 28.27 MB |
+| | self-host | 3,641,520 | 1,381,432 | **37.9%** | **264.41 MB** |
+| `arm64_native.fern` | native | 4,129,305 | 3,500,540 | 84.8% | 31.58 MB |
+| | self-host | 4,696,895 | 1,626,097 | **34.6%** | **266.97 MB** |
+
+**The gap has not moved.** Retention went 265.95 -> 264.41 MB and 268.98 ->
+266.97 MB, both under 1%. Both compilers allocate about 1.5% less than before, so
+the ratio is flat — 9.21x to 9.35x on x86_native, which is drift, not a
+regression, and certainly not progress.
+
+Emitted asm is byte-identical to the earlier run on both inputs (2,869,663 and
+2,537,980 bytes), so this is the same workload measured twice, not two workloads.
+
+What that says: the RC fixes landing in parallel are not reaching the dominant
+retention. They may be individually correct and still invisible here — each
+closes a shape, and the shapes that dominate this workload are not those. Worth
+re-running after any change that claims to move goal 2's memory, precisely
+because it is the number that has stayed still while a lot of adjacent work
+landed.
+
+
+## What the retained set is MADE OF
+
+Ranking by bytes, which every attribution above did, hides the composition. The
+same trace, bucketed by block size:
+
+```
+survivors=2,260,095   live_bytes=272,733,408
+min 16   p50 56   p90 112   p99 344   max 4,194,304   mean 120
+```
+
+| bucket | blocks | bytes | share |
+|---|--:|--:|--:|
+| 2^4 (16-31 B) | 325,530 | 7.8 MB | 2.9% |
+| 2^5 (32-63 B) | 903,319 | 40.3 MB | 14.8% |
+| 2^6 (64-127 B) | 978,842 | 97.7 MB | **35.8%** |
+| 2^12-2^15 | 4,627 | 45.0 MB | 16.5% |
+| 2^16 (64-128 KB) | 569 | 37.3 MB | 13.7% |
+
+**53.5% of the retained bytes are in blocks under 128 bytes.** The multi-KB
+buffers this document spent most of its length on are 13.7%, in 569 blocks.
+The `LowerState.emit` cluster is 10.9% of bytes and 0.14% of BLOCKS — 3,113 out
+of 2.26 million. Ranking by bytes made a rounding error in the block count look
+like the headline.
+
+Ranked by count instead, the top sites are `pl_none` / `pl_classify` / `pl_one`
+(the peephole window), then `__fern_arr_push <- __fern_arr_push_owned`, then
+lexer, parser and closure-lifting walkers at a few percent each. Every phase.
+
+### Against native, and why the excess is the only number that means anything
+
+| | native | self-host |
+|---|--:|--:|
+| survivors | 479,509 | 2,260,095 |
+| live_bytes | 29.6 MB | 272.7 MB |
+| mean block | 61 B | 120 B |
+| p50 | 48 B | 56 B |
+
+Both retain mostly small blocks. The self-host retains 4.7x as many.
+
+Native retains peephole `PLine` boxes too — 76,090 at its top site — so the
+self-host's 444,296 are not all defect. The recoverable quantity is the EXCESS,
+368,206 blocks, 16.3% of self-host survivors. Every per-construct share quoted
+anywhere above should be read the same way and mostly was not.
+
+Two caveats on the comparison. Native's trace reports 71.4 M frees with no
+matching allocation against 3.0 M allocations, so its `f` events do not mean
+what the self-host's do and its distribution is indicative rather than exact —
+its derived survivor set does land within 4% of its own leakcheck. And both
+sides are EXIT-LIVE sets, which include everything still reachable, not only
+leaks; peak RSS tracks exit-live on this workload, which is what makes that a
+fair proxy at all.
+
+### What it implies
+
+Retention spread over 2.26 M blocks at a 56-byte median, across every phase,
+will not yield to shape-by-shape fixes — which is what the flat re-measurement
+above shows empirically. The exception is the peephole at ~16% excess (#8628).
+Below that the tail is genuinely a tail.
+
+So the question worth asking is not "which construct leaks" but "why does this
+compiler free 38% of its blocks where native frees 83%, uniformly". That is a
+different investigation from the one this document has been conducting.
+
+
+### The tail, quantified
+
+`__fern_arr_push <- __fern_arr_push_owned` is one 116,263-block row in the
+shallow attribution. `caller2` splits it into **125 distinct user call sites**,
+116,458 blocks / 20.9 MB / 7.7% of live:
+
+| blocks | bytes | share | caller2 |
+|--:|--:|--:|---|
+| 906 | 3.30 MB | 1.2% | `asmcore__add_string_lit` |
+| 15,996 | 2.67 MB | 1.0% | `irlower__rc_fe_collect_types` |
+| 670 | 1.83 MB | 0.7% | `ir__eliminate_dead_code` |
+| 14,130 | 0.84 MB | 0.3% | `irlower__rc_ml_compute_toplevel` |
+| 7,188 | 0.42 MB | 0.2% | `parser__dl_expr_with_kids` |
+
+and 120 more spanning `ir__reduce_strength_ex`, `ir__fuse_tee`,
+`ir__propagate_copies`, `ir__const_propagate`, `ir__prune_zero_slot_guards`,
+`lexer__tokenize_impl`, `astwalk__map_stmts_acc`, `irlower__lift_stmts`,
+`irlower__desugar_lambda_returns` — essentially every phase. **No single site
+exceeds 1.2% of live bytes.**
+
+That is what the tail looks like from the inside: the same small retention
+repeated at 125 places, in the path that specifically exists to reclaim on grow.
+
+The exit-live caveat bites hardest here. `arr_push_owned` allocates a NEW buffer
+per grow, so each array's final buffer is legitimately live at exit if the array
+is still reachable, and some unknown fraction of the 116,458 is not leaked at
+all. Separating the two needs a reachability pass the tracer does not do. What
+the number supports regardless is the distribution: 125 sites, not one.
+
+`AGG_ONLY=<substring>` on the aggregator expands one site's full `caller2` split
+rather than the top 25 by bytes, which is how that table was produced.

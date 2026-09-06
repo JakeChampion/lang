@@ -7173,6 +7173,55 @@ function main(): i32 {
 `,
 	},
 	{
+		// The scalar-capture twin of the case above (#8546). A closure whose
+		// captures are all scalar has no rc-tracked capture, so emitDec drops
+		// its local through the generic __fern_closure_drop, which frees the
+		// one block it is handed. On a slot that does not elide that block
+		// is the PAIR, not the env, so the env leaked whenever such a
+		// closure crossed a call as an argument — value-returning inside a
+		// return expression and void statement spelling alike. The same
+		// closure called directly elides to a bare env and was always
+		// clean; it rides along as the control.
+		name: "closure_scalar_capture_passed_to_callee_released",
+		src: `
+@noinline
+function apply(f: (i32) => i32, v: i32): i32 { return f(v); }
+
+@noinline
+function run(f: (i32) => void, v: i32): void { f(v); }
+
+@noinline
+function returning(): i32 {
+    var sink: i32 = 3;
+    var add = (x: i32) => sink + x;
+    return apply(add, 4) - 4;
+}
+
+@noinline
+function statement(): i32 {
+    var sink: i32 = 0;
+    var log = function (x: i32): void { sink = sink + x * 2; };
+    run(log, 4);
+    return sink - 8;
+}
+
+@noinline
+function direct(): i32 {
+    var sink: i32 = 0;
+    var log = (x: i32) => { sink = sink + x * 2; };
+    log(4);
+    return sink - 8;
+}
+
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 4) { t = t + returning() + statement() + direct(); i = i + 1; }
+    return (t - 12) + __rc_underflow_count();
+}
+`,
+	},
+	{
 		// A tree walk's `Tip => return t` arm returns its OWNED-BY-DEFAULT
 		// parameter bare: the caller retained the argument on the way in
 		// and the callee's sweep releases it, so the return-transfer inc is

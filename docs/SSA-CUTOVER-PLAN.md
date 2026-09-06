@@ -87,7 +87,7 @@ backend.** The cutover is much closer than the shelve doc reads.
 |---|---|---|---|
 | `arm64ssa` | yes | yes | 281/281 compared, 0 refused, 0 divergences |
 | `wasmssa` | yes | no | **single user function only** — measured below |
-| `x86_64ssa` | **yes, since 2026-09-01** | **yes, since 2026-09-02** | 194/337 compared, 0 divergences; 123 refused — the runtime-helper table is still the wall, in groups now rather than one symbol |
+| `x86_64ssa` | **yes, since 2026-09-01** | **yes, since 2026-09-02** | 215/340 compared, 0 divergences; 105 refused — every one for the runtime-helper table, in groups rather than one symbol |
 
 The spread is much wider than "arm64 is ahead". One backend is corpus-complete,
 one compares three fifths of the corpus and agrees on all of it, and one cannot
@@ -186,19 +186,35 @@ Two concrete blockers, and only two:
    that one helper (with the `__fern_io_error` it reports through) took the leg
    to **194 comparable, 0 divergences**.
 
-   **Where the wall is now**, over the 123 still refused with a baseline to
-   compare against: back to groups, with no single symbol unlocking anything on
-   its own.
+   **2026-09-06: the float reinterprets** (`reinterpret_f64_to_i64` and its
+   three siblings) were the one refusal left that was not a missing helper —
+   the emitter's `fConvSeq` had no arm for them. They are identities or a
+   `cvtsd2ss` / `cvtss2sd` hop on the f64-bits-in-a-GPR model, and 31
+   programs had been refused for them alone; 20 now compare, the other 11
+   moved on to the helpers they were also missing. The leg is at **215 of 340
+   comparable, 0 divergences**. The first run after the arms found one real
+   divergence, which was not in them: the lifter left `f64→i64` at the i32
+   default width, so the constant the folder rewrote `f64_bits(NaN)` into was
+   sign-extended from bit 31 by `MovImm`'s maskFix — invisible while the op
+   was refused, and invisible on arm64, whose `MovImm` never masks. The lift
+   stamps Width 64 on it now.
+
+   **Where the wall is now**, over the 105 still refused: every one names a
+   helper with no emitter, and no single symbol unlocks more than three.
 
    | | refused for it | refused for it ALONE |
    |---|---|---|
-   | `__memcpy` | 56 | 0 |
-   | `__free` | 39 | 0 |
-   | `__method_string_as_bytes` | 33 | 0 |
-   | the Map family (`map_new`, `__method_Map_set`, `__fern_map_hash_seed`, `__memset`) | 28 each | 0 |
+   | `__memcpy` | 48 | 0 |
+   | `__method_string_as_bytes` | 28 | 0 |
+   | `args` | 26 | 2 |
+   | the Map family (`map_new`, `__method_Map_set`, `__fern_map_hash_seed`, `__memset`) and the memory trio (`__alloc`, `__free`, `__fern_drop_arr_ptr`) | 24 each | 0 |
+   | `stdin`, `read_file`, `__method_Reader_close`, `__method_Reader_read_chunk` | 21-24 | 0 |
+   | `monotonic_ns`, `__fern_heap_bump_bytes`, `__sqrt_f64` | 3 | 3 each |
 
-   So the next slice is a GROUP — the Map methods, or the memory trio — and the
-   2026-09-02 lesson below is the one to size it by.
+   The median refused program is missing 5 helpers (13 before #8570), and 30
+   are missing one or two. So the next slice is still a GROUP — the Map
+   methods, or the memory trio — and the 2026-09-02 lesson below is the one
+   to size it by.
 
    **The 2026-09-02 measurement below is kept because its LESSON stands**: size
    this work by removal, never by which name appears most. It is what the table
@@ -253,7 +269,7 @@ Two concrete blockers, and only two:
    they read would be missing at link time.
 
    What remains for this step is therefore the runtime-helper table (the whole
-   of the next slice), the float reinterprets, the stack-argument ABI, vtables,
+   of the next slice), the stack-argument ABI, vtables,
    and **the corpus differential** — the discovery mechanism, not a formality:
    arm64's first run found four wrong answers and 56 SIGSEGVs, and nothing on
    x86-64 has been differentially tested at all.

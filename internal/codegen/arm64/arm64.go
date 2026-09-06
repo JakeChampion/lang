@@ -334,7 +334,14 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	// 4c — docs/DYN-TRAITS.md §4.4): DynRcSupported lifts the RC path (the
 	// trailing vtable drop slot + the per-set __drop_dyn_<set> helper + the
 	// dec/drop sweep arms), the structural mirror of the x86-64 slice 4b.
-	lowerOpts := []ir.LowerOption{ir.DynSupported(), ir.DynRcSupported()}
+	// The target's two halves answer a `target_os()` / `target_arch()` the
+	// front end did not fold; the IR cannot tell the natives apart by pointer
+	// width alone.
+	targetOS := "linux"
+	if opts.Darwin {
+		targetOS = "darwin"
+	}
+	lowerOpts := []ir.LowerOption{ir.DynSupported(), ir.DynRcSupported(), ir.WithTargetOS(targetOS), ir.WithTargetArch("arm64")}
 	if opts.DebugLines {
 		lowerOpts = append(lowerOpts, ir.EmitLineMarkers())
 	}

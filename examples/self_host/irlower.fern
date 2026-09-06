@@ -9878,6 +9878,20 @@ pub function is_eager_safe(e: ast.Expr): boolean {
     }
 }
 
+// neg_width is the width of `-operand`. It is the operand's, with one exception:
+// `-2147483648` is i32::MIN, not a 64-bit value — literal_is_i64 judges the
+// MAGNITUDE, and 2147483648 exceeds i32-max only because the sign has not been
+// applied yet (#6396). A composite `neg` overload returning i64 / u64 (#5986) is
+// visible only through the node's checker type, since its operand is a struct.
+// Every unary-minus width decision goes through here, so the lowering cannot
+// disagree with the inference about the same node.
+function neg_width(u: ast.ExprUnary, s: LowerState): i32 {
+    if (lit_is_i32_min_magnitude(u.operand)) { return 32; }
+    if (infer_expr_width(u.operand, s) == 64) { return 64; }
+    if (u.ty == "i64" || u.ty == "u64") { return 64; }
+    return 32;
+}
+
 // infer_expr_width returns 64 if `e` evaluates to an i64 value, else 32.
 // Comparisons / equality / logical-not yield an i32 bool regardless of operand
 // width; arithmetic widens to i64 if either operand is i64. Bare literals are
@@ -9932,21 +9946,7 @@ pub function infer_expr_width(e: ast.Expr, s: LowerState): i32 {
             return 32;
         },
         ast.ExprUnary(u) => {
-            // `-2147483648` is i32::MIN, not a 64-bit value: literal_is_i64
-            // judges the operand's MAGNITUDE, and 2147483648 exceeds i32-max
-            // only because the sign has not been applied yet. Without this the
-            // negation infers 64, StmtVar i64-backs the slot despite an
-            // explicit `: i32`, and the arithmetic runs unwrapped — `0 - a`
-            // answered 2147483648 rather than i32::MIN (#6396). An `: i64`
-            // binding is unaffected: StmtVar tests the annotation first.
-            if (u.op == "-" && lit_is_i32_min_magnitude(u.operand)) { return 32; }
-            if (u.op == "-") {
-                if (infer_expr_width(u.operand, s) == 64) { return 64; }
-                // A composite `neg` overload returning i64 / u64 (#5986) — the
-                // operand is a struct, so the recursion above cannot see it.
-                if (u.ty == "i64" || u.ty == "u64") { return 64; }
-                return 32;
-            }
+            if (u.op == "-") { return neg_width(u, s); }
             if (u.op == "as_i64" || u.op == "as_u64") { return 64; }
             // `inner?` is i64-width when the Option/Result payload is i64/u64, so an
             // unannotated `var x = inner?` width-tracks i64 (StmtVar routes width-64
@@ -15320,13 +15320,13 @@ function lower_expr_unary(u: ast.ExprUnary, s: LowerState): LowerState {
             var negcall: ast.Expr = ast.ExprCall { callee: ast.ExprFieldAccess { obj: u.operand, field: "neg", line: u.line, col: u.col, ty: "" }, args: [], line: u.line, col: u.col, type_argc: 0, ty: u.ty };
             return lower_expr(negcall, s);
         }
-        // -x  ==  0 - x  : push 0, push x, sub — at the OPERAND's width.
+        // -x  ==  0 - x  : push 0, push x, sub — at the negation's width.
         // A 64-bit operand reaches here whenever the negation is not itself
         // in an i64 context, a method receiver being the way it happens
         // (`(-b).to_string()`). The register backends tolerated the 32-bit
         // form because the value lands in a 64-bit register either way; wasm
         // is typed and rejects the module outright (#8460).
-        if (infer_expr_width(u.operand, s) == 64) { return lower_neg_i64(u.operand, s); }
+        if (neg_width(u, s) == 64) { return lower_neg_i64(u.operand, s); }
         var sz: LowerState = s.emit(ir.op_const_i32(0));
         var sx: LowerState = lower_expr(u.operand, sz);
         if (!sx.ok) { return sx; }
@@ -24997,6 +24997,13 @@ function lower_stmt_match(m: ast.StmtMatch, s: LowerState): LowerState {
                             // value recovers its payload (the enum-payload sibling of
                             // the tuple-element / struct-field opt-type marking).
                             ms = ms.mark_opt_type(bslot, ev_ty);
+                        } else if (tuple_elems_lowerable(ev_ty, ms.frame.structs)) {
+                            // A tuple payload (`Pr((i32, i32))`): carry the element
+                            // tags so `p.N` reads at the element's width and the
+                            // destructure a `Pr((a, b))` sub-pattern desugars to
+                            // types its bindings (the Option/Result payload site
+                            // above does the same).
+                            ms = ms.mark_tuple_elems(bslot, tuple_elem_tags(ev_ty)).mark_tuple_type(bslot, ev_ty);
                         } else if (is_scalar_array_type(ev_ty)) {
                             ms = ms.mark_arr(bslot, true);
                         } else if (ev_ty == "string[]") {
@@ -27207,10 +27214,11 @@ function struct_is_scalar_only(structs: StructTab, sty: string): boolean {
 // arbitrary acyclic depth: `A { b: B }` / `B { c: C }` / `C { xs: i32[] }` now
 // deep-drops all the way down (A's drop releases B's box AND, transitively, C's xs
 // buffer), reusing the per-level rc_is_unique guard the leaf case already applied.
-// A `string` field counts as reclaimable (#4297 A2), and so does an enum field whose
-// variants the walk admits (#8567) — `__struct_drop_`'s deep_enum_drop releases its
-// live variant's payloads. Option / tuple inner fields are still not reclaimed, so a
-// struct reaching only those returns false.
+// A `string` field counts as reclaimable (#4297 A2). An enum field does NOT:
+// `__struct_drop_` releases it box-only, because the inline
+// emit_struct_enum_field_payload_drops sweep is its other releaser and the two
+// cannot both fire (#8692). Option / tuple inner fields are not reclaimed either,
+// so a struct reaching only those returns false.
 pub function nested_field_deep_drop_ok(structs: StructTab, sty: string): boolean {
     if (sty.len() == 0) { return false; }
     var visiting: string[] = [];
@@ -27248,8 +27256,6 @@ function nddo_reach(structs: StructTab, sty: string, visiting: string[]): i32 {
             has_arr = true;
         } else if (fdt == "string") {
             has_arr = true;   // #4297 A2: a string field is reclaimable (k_str drop)
-        } else if (decl_is_enum(structs, fdt) && enum_arr_elems_walk_ok(structs, fdt)) {
-            has_arr = true;   // #8567: __struct_drop_'s deep_enum_drop reclaims the live variant's payloads
         }
         fi = fi + 1;
     }
@@ -39298,30 +39304,47 @@ function credited_holds_name(credited: string[], name: string): boolean {
 // Such a local is left to LEAK, exactly like the borrowed match-payload struct
 // bindings already are (see the k_enum struct-payload note in lower_stmt_match).
 function reassigned_from_alias(stmts: ast.Stmt[], name: string): boolean {
-    for stmt in stmts { if (stmt_reassigns_alias(stmt, name)) { return true; } }
+    return reassigned_from_alias_of(stmts, name, "", true);
+}
+
+// reassigned_from_other_ident: the narrow question — some `name = <ident>`
+// assigns a variable OTHER than `src`, the one the snapshot records. The stored
+// box is then a reference the snapshot guard cannot recognise, so the next
+// rebind's release can free a box this frame does not own. It leaves the field
+// and element reads alone, where the superseded box IS this frame's and
+// refusing the credit would turn a correct reclaim into a leak.
+function reassigned_from_other_ident(stmts: ast.Stmt[], name: string, src: string): boolean {
+    return reassigned_from_alias_of(stmts, name, src, false);
+}
+
+// The walk both ask through. `src` is the one ident whose assignment does not
+// count (empty for the broad question, which counts every other name), and
+// `borrows` says whether a field / element read counts as an alias too.
+function reassigned_from_alias_of(stmts: ast.Stmt[], name: string, src: string, borrows: boolean): boolean {
+    for stmt in stmts { if (stmt_reassigns_alias(stmt, name, src, borrows)) { return true; } }
     return false;
 }
-function stmt_reassigns_alias(st: ast.Stmt, name: string): boolean {
+function stmt_reassigns_alias(st: ast.Stmt, name: string, src: string, borrows: boolean): boolean {
     match (st) {
         ast.StmtAssign(a) => {
             if (a.target == name) {
                 match (a.value) {
-                    ast.ExprIdent(rid) => { if (rid.name != name) { return true; } },   // `name = other` — alias
-                    ast.ExprFieldAccess(_) => { return true; },                          // `name = x.f` — field borrow
-                    ast.ExprIndex(_) => { return true; },                                // `name = xs[i]` — element borrow
+                    ast.ExprIdent(rid) => { if (rid.name != name && rid.name != src) { return true; } },   // `name = other` — alias
+                    ast.ExprFieldAccess(_) => { return borrows; },                        // `name = x.f` — field borrow
+                    ast.ExprIndex(_) => { return borrows; },                              // `name = xs[i]` — element borrow
                     _ => {}
                 }
             }
             return false;
         },
-        ast.StmtIf(f) => { return reassigned_from_alias(f.then_body, name) || reassigned_from_alias(f.else_body, name); },
-        ast.StmtWhile(w) => { return reassigned_from_alias(w.body, name); },
-        ast.StmtFor(fo) => { return reassigned_from_alias(fo.body, name); },
+        ast.StmtIf(f) => { return reassigned_from_alias_of(f.then_body, name, src, borrows) || reassigned_from_alias_of(f.else_body, name, src, borrows); },
+        ast.StmtWhile(w) => { return reassigned_from_alias_of(w.body, name, src, borrows); },
+        ast.StmtFor(fo) => { return reassigned_from_alias_of(fo.body, name, src, borrows); },
         ast.StmtMatch(m) => {
-            for arm in m.arms { if (reassigned_from_alias(arm.body, name)) { return true; } }
+            for arm in m.arms { if (reassigned_from_alias_of(arm.body, name, src, borrows)) { return true; } }
             return false;
         },
-        ast.StmtDefer(d) => { return stmt_reassigns_alias(d.action, name); },
+        ast.StmtDefer(d) => { return stmt_reassigns_alias(d.action, name, src, borrows); },
         _ => { return false; }
     }
     return false;
@@ -41718,7 +41741,14 @@ function collect_snap_locals(stmts: ast.Stmt[], fn: parser.FuncDecl, structs: St
                     && src != "!"
                     && decl_is_struct(structs, v.type_name) && decl_is_leaksafe(structs, v.type_name)
                     && (rebinds_only || struct_has_reclaim_array_field(structs, v.type_name))
-                    && !body_consume_unsafe_for(fn.body, v.name, borrowable, consume_safe, [], true)) {
+                    && !body_consume_unsafe_for(fn.body, v.name, borrowable, consume_safe, [], true)
+                    // `x = y` stores a box the snapshot does not name, so the
+                    // next rebind's release can reach a SECOND borrow — the
+                    // caller's, when y traces to another param (`var x: T = a;
+                    // var y: T = b; … x = y; y = t;` freed b under its owner).
+                    // The fresh struct credit refuses the same shape for the
+                    // same reason; this class simply never asked.
+                    && !reassigned_from_other_ident(fn.body, v.name, src)) {
                     var key: string = reclaim_site_key_of(v.name, v.line, v.col);
                     if (!rebinds_only) { a = push_str_unique(a, key); }
                     if (src.len() > 0) { a = push_str_unique(a, "SNAPSRC:" + key + "|" + src); }

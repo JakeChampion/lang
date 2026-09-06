@@ -73,6 +73,7 @@ func TestConformanceLeakCensusX86_64(t *testing.T) {
 
 	var mu sync.Mutex
 	var crashed []string
+	unmeasured := map[string]error{}
 	rows := make([]censusRow, 0, len(cases))
 	sites := map[string]string{}
 	sem := make(chan struct{}, 4)
@@ -92,9 +93,11 @@ func TestConformanceLeakCensusX86_64(t *testing.T) {
 				return
 			}
 			if err != nil {
-				// A fixture this pass cannot build or run is counted as
-				// unmeasured rather than clean; a silent zero here would
-				// be the vacuous-pass failure mode.
+				// A fixture this pass cannot build or run is unmeasured,
+				// not clean, and fails below: a -1 row compares as
+				// leaking nothing, so without that a compiler change that
+				// breaks the link of a fixture pinned at 0 passed here.
+				unmeasured[filepath.Base(c)] = err
 				rows = append(rows, censusRow{filepath.Base(c), -1})
 				return
 			}
@@ -106,6 +109,14 @@ func TestConformanceLeakCensusX86_64(t *testing.T) {
 	}
 	wg.Wait()
 	sort.Slice(rows, func(i, j int) bool { return rows[i].name < rows[j].name })
+	names := make([]string, 0, len(unmeasured))
+	for name := range unmeasured {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		t.Errorf("%s: could not be built or run, so it was not measured: %v", name, unmeasured[name])
+	}
 
 	// CI-DARK: FERN_LEAK_CENSUS_DUMP — a regeneration tool, not coverage:
 	// it prints measured census lines INSTEAD of comparing, so a lane

@@ -743,8 +743,16 @@ func (l *lifter) handle(i int, op ir.Op) error {
 		// precision, the same way it does for f32 arithmetic. An SSA float is
 		// an f64 bit pattern whatever its type, so without the width
 		// `16777217 as f32` kept every bit instead of rounding to 16777216.
+		//
+		// f64 bits → i64: the result is 64 bits by definition, whatever the
+		// IR annotated. A backend that masks integer results to their width
+		// would otherwise keep only the low half — not of the op itself,
+		// which every backend emits as an identity, but of the constant the
+		// folder rewrites it into.
 		switch {
 		case op.Width == 64 && (kind == OpFToIS || kind == OpFToIU):
+			l.cur.Ops[len(l.cur.Ops)-1].Width = 64
+		case kind == OpReinterpretF64ToI64:
 			l.cur.Ops[len(l.cur.Ops)-1].Width = 64
 		case op.Width == 32 && (kind == OpIToFS || kind == OpIToFU):
 			l.cur.Ops[len(l.cur.Ops)-1].Width = 32
