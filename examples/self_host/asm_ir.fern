@@ -5945,6 +5945,23 @@ function emit_ir_field_reclaim_one(s: asmcore.EmitState, sty: string): asmcore.E
             s = s.write("    call __fn___fern_arrarr_free\n");  // element walk at rc==1, then the buffer
             s = s.write("    addq $8, %rsp\n");
         } else {
+            if (op.kind == "deep_enum_dec") {
+                // A DIRECT enum field's live-variant rc payloads, before the box
+                // dec below frees the box holding them (#8567). __enum_drop_
+                // applies the rc==1 gate itself, so a SHARED enum box keeps its
+                // payloads for its other owner. Its inner __fern_arr_dec clobbers
+                // %rsi on the large-block path, so reload the frame and the field
+                // exactly as the nested-struct arm below does.
+                var edsan: string = asmcore.sanitize_label(op.ty);
+                s = s.need("enum_drop:" + op.ty);
+                s = s.write("    pushq %rsi\n");
+                s = s.write("    call __fn___enum_drop_" + edsan + "\n");
+                s = s.write("    addq $8, %rsp\n");
+                s = s.write("    movq 24(%rsp), %r11\n");          // reload new
+                s = s.write("    movq 16(%rsp), %r10\n");          // reload old
+                s = s.write("    movq 8(%rsp), %r9\n");            // reload snap
+                s = s.write("    movq " + off + "(%r10), %rsi\n"); // reload old.field_k
+            }
             if (op.kind == "deep_struct_dec") {
                 // The nested struct's OWN rc children, before the box dec below
                 // frees the box holding them (#8538). Gated on rc==1: a SHARED
@@ -6010,6 +6027,8 @@ function emit_ir_struct_drops(s: asmcore.EmitState): asmcore.EmitState {
             s = emit_ir_struct_arr_elems_drop_one(s, slice_unchecked(nd, 22, nd.len()));
         } else if (nd.len() > 20 && slice_unchecked(nd, 0, 20) == "enum_arr_elems_drop:") {
             s = emit_ir_enum_arr_elems_drop_one(s, slice_unchecked(nd, 20, nd.len()));
+        } else if (nd.len() > 10 && slice_unchecked(nd, 0, 10) == "enum_drop:") {
+            s = emit_ir_enum_drop_one(s, slice_unchecked(nd, 10, nd.len()));
         } else if (nd.len() > 21 && slice_unchecked(nd, 0, 21) == "map_vals_struct_drop:") {
             s = emit_ir_map_vals_struct_drop_one(s, slice_unchecked(nd, 21, nd.len()));
         } else if (nd.len() > 12 && slice_unchecked(nd, 0, 12) == "struct_drop:") {
@@ -6082,6 +6101,17 @@ function emit_ir_struct_drop_one(s: asmcore.EmitState, sty: string): asmcore.Emi
             s = s.write("    movq " + off + "(%r11), %rdi\n");      // buffer
             s = s.write("    pushq %rdi\n");
             s = s.write("    call __fn___struct_arr_elems_drop_" + esan + "\n");
+            s = s.write("    addq $8, %rsp\n");
+            s = s.write("    movq 8(%rsp), %r11\n");                // reload box (helper clobbered r11)
+        } else if (op.kind == "deep_enum_drop") {
+            // A DIRECT enum field: release the live variant's rc payloads before
+            // the box dec that follows (#8567). Sole-ownership is gated inside
+            // the helper, as __struct_drop_'s nested arm gates its own.
+            var edsan: string = asmcore.sanitize_label(op.ty);
+            s = s.need("enum_drop:" + op.ty);
+            s = s.write("    movq " + off + "(%r11), %rdi\n");      // enum box
+            s = s.write("    pushq %rdi\n");
+            s = s.write("    call __fn___enum_drop_" + edsan + "\n");
             s = s.write("    addq $8, %rsp\n");
             s = s.write("    movq 8(%rsp), %r11\n");                // reload box (helper clobbered r11)
         } else if (op.kind == "elems_drop_enum") {
@@ -6231,6 +6261,74 @@ function emit_ir_struct_arr_elems_drop_one(s: asmcore.EmitState, ety: string): a
 // buffer boxes themselves are still freed by the caller's existing walk.
 // %rbx=buffer, %r12=index, %r13=element survive the calls (callees clobber
 // only rax/rcx/rdx/rsi/rdi/r8).
+// emit_ir_enum_variant_payload_decs writes the tag dispatch that releases enum
+// `ety`'s rc payloads for the box held in `reg`, jumping to `done` once a
+// matching variant's payloads are released. `lp` prefixes the per-variant
+// labels. `reg` must survive a call — the callees clobber only
+// rax/rcx/rdx/rsi/rdi/r8.
+//
+// Shared by the array element walk and the single-box __enum_drop_ below, so a
+// direct enum field and an enum array element release identically (#8567).
+function emit_ir_enum_variant_payload_decs(s: asmcore.EmitState, ety: string, reg: string, lp: string, done: string): asmcore.EmitState {
+    var vi: i32 = 0;
+    var vlabel: i32 = 0;
+    while (vi < s.struct_decls.decls.len()) {
+        if (s.struct_decls.decls[vi].enum_owner == ety) {
+            var offs: i32[] = irlower.enum_walk_payload_offsets(s.struct_decls, s.struct_decls.decls[vi].name);
+            if (offs.len() > 0) {
+                var vlo: asmcore.ShapeRefOut = asmcore.shape_ref(s, s.struct_decls.decls[vi].name);
+                s = vlo.state;
+                var vls: string = util.i32_to_string(vlabel);
+                s = s.write("    movq (" + reg + "), %rax\n");    // shape ptr @0
+                s = s.write("    leaq " + vlo.label + "(%rip), %rcx\n");
+                s = s.write("    cmpq %rcx, %rax\n");
+                s = s.write("    jne " + lp + "_v" + vls + "\n");
+                var oi: i32 = 0;
+                while (oi < offs.len()) {
+                    s = s.write("    movq " + util.i32_to_string(offs[oi]) + "(" + reg + "), %rdi\n");
+                    s = s.write("    pushq %rdi\n");
+                    s = s.write("    call __fn___fern_arr_dec\n");
+                    s = s.write("    addq $8, %rsp\n");
+                    oi = oi + 1;
+                }
+                s = s.write("    jmp " + done + "\n");
+                s = s.write(lp + "_v" + vls + ":\n");
+                vlabel = vlabel + 1;
+            }
+        }
+        vi = vi + 1;
+    }
+    return s;
+}
+
+// emit_ir_enum_drop_one emits __enum_drop_<E>(box) -> box: release the live
+// variant's rc payloads of ONE enum box, leaving the box itself to the caller's
+// dec — the enum sibling of __struct_drop_<T>. Sole-ownership gated, so a box a
+// second owner still names keeps its payloads (and that owner's own release
+// frees them).
+//
+// %rbx survives the calls; the low-address test doubles as the null guard.
+function emit_ir_enum_drop_one(s: asmcore.EmitState, ety: string): asmcore.EmitState {
+    var san: string = asmcore.sanitize_label(ety);
+    s = s.write(".weak __fn___enum_drop_" + san + "\n");
+    s = s.write("__fn___enum_drop_" + san + ":\n");
+    s = s.write("    pushq %rbx\n");
+    s = s.write("    movq 16(%rsp), %rbx\n");                   // box (arg 8 + 8 for the push)
+    s = s.write("    cmpq $0x10000, %rbx\n");
+    s = s.write("    jb .Led_" + san + "_ret\n");
+    s = s.write("    pushq %rbx\n");
+    s = s.write("    call __fn___fern_rc_is_unique\n");
+    s = s.write("    addq $8, %rsp\n");
+    s = s.write("    testq %rax, %rax\n");
+    s = s.write("    jz .Led_" + san + "_ret\n");
+    s = emit_ir_enum_variant_payload_decs(s, ety, "%rbx", ".Led_" + san, ".Led_" + san + "_ret");
+    s = s.write(".Led_" + san + "_ret:\n");
+    s = s.write("    movq %rbx, %rax\n");
+    s = s.write("    popq %rbx\n");
+    s = s.write("    ret\n");
+    return s;
+}
+
 function emit_ir_enum_arr_elems_drop_one(s: asmcore.EmitState, ety: string): asmcore.EmitState {
     var san: string = asmcore.sanitize_label(ety);
     s = s.write(".weak __fn___enum_arr_elems_drop_" + san + "\n");
@@ -6261,34 +6359,7 @@ function emit_ir_enum_arr_elems_drop_one(s: asmcore.EmitState, ety: string): asm
     s = s.write("    addq $8, %rsp\n");
     s = s.write("    testq %rax, %rax\n");
     s = s.write("    jz .Leaed_" + san + "_next\n");
-    var vi: i32 = 0;
-    var vlabel: i32 = 0;
-    while (vi < s.struct_decls.decls.len()) {
-        if (s.struct_decls.decls[vi].enum_owner == ety) {
-            var offs: i32[] = irlower.enum_walk_payload_offsets(s.struct_decls, s.struct_decls.decls[vi].name);
-            if (offs.len() > 0) {
-                var vlo: asmcore.ShapeRefOut = asmcore.shape_ref(s, s.struct_decls.decls[vi].name);
-                s = vlo.state;
-                var vls: string = util.i32_to_string(vlabel);
-                s = s.write("    movq (%r13), %rax\n");          // shape ptr @0
-                s = s.write("    leaq " + vlo.label + "(%rip), %rcx\n");
-                s = s.write("    cmpq %rcx, %rax\n");
-                s = s.write("    jne .Leaed_" + san + "_v" + vls + "\n");
-                var oi: i32 = 0;
-                while (oi < offs.len()) {
-                    s = s.write("    movq " + util.i32_to_string(offs[oi]) + "(%r13), %rdi\n");
-                    s = s.write("    pushq %rdi\n");
-                    s = s.write("    call __fn___fern_arr_dec\n");
-                    s = s.write("    addq $8, %rsp\n");
-                    oi = oi + 1;
-                }
-                s = s.write("    jmp .Leaed_" + san + "_next\n");
-                s = s.write(".Leaed_" + san + "_v" + vls + ":\n");
-                vlabel = vlabel + 1;
-            }
-        }
-        vi = vi + 1;
-    }
+    s = emit_ir_enum_variant_payload_decs(s, ety, "%r13", ".Leaed_" + san, ".Leaed_" + san + "_next");
     s = s.write(".Leaed_" + san + "_next:\n");
     s = s.write("    incq %r12\n");
     s = s.write("    jmp .Leaed_" + san + "_loop\n");

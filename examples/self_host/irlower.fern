@@ -27139,8 +27139,10 @@ function struct_is_scalar_only(structs: StructTab, sty: string): boolean {
 // arbitrary acyclic depth: `A { b: B }` / `B { c: C }` / `C { xs: i32[] }` now
 // deep-drops all the way down (A's drop releases B's box AND, transitively, C's xs
 // buffer), reusing the per-level rc_is_unique guard the leaf case already applied.
-// Strings / enum / Option / tuple inner fields are still not reclaimed (decl_is_struct
-// is false for them), so a struct reaching only those (no array) returns false.
+// A `string` field counts as reclaimable (#4297 A2), and so does an enum field whose
+// variants the walk admits (#8567) — `__struct_drop_`'s deep_enum_drop releases its
+// live variant's payloads. Option / tuple inner fields are still not reclaimed, so a
+// struct reaching only those returns false.
 pub function nested_field_deep_drop_ok(structs: StructTab, sty: string): boolean {
     if (sty.len() == 0) { return false; }
     var visiting: string[] = [];
@@ -27178,6 +27180,8 @@ function nddo_reach(structs: StructTab, sty: string, visiting: string[]): i32 {
             has_arr = true;
         } else if (fdt == "string") {
             has_arr = true;   // #4297 A2: a string field is reclaimable (k_str drop)
+        } else if (decl_is_enum(structs, fdt) && enum_arr_elems_walk_ok(structs, fdt)) {
+            has_arr = true;   // #8567: __struct_drop_'s deep_enum_drop reclaims the live variant's payloads
         }
         fi = fi + 1;
     }

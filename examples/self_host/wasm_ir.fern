@@ -9270,7 +9270,15 @@ function emit_ir_rc_bodies_seeded(mod: parser.Module, frt: string[], sdt: string
                 var eae: str = slice_unchecked(eaft, 0, eaft.len() - 2);
                 if (irlower.enum_arr_elems_walk_ok(stab, eae) && util.index_of_str(eadone, eae) < 0) {
                     eadone = eadone.append(eae + "");
+                    parts = parts.append(emit_wasm_enum_drop_body(eae + "", stab));
                     parts = parts.append(emit_wasm_enum_arr_elems_drop_body(eae + "", stab));
+                }
+            } else if (irlower.decl_is_enum(stab, eaft)) {
+                // A DIRECT enum field wants the single-box walk only (#8567); the
+                // array case above emits it too, and delegates to it per element.
+                if (irlower.enum_arr_elems_walk_ok(stab, eaft) && util.index_of_str(eadone, eaft) < 0) {
+                    eadone = eadone.append(eaft);
+                    parts = parts.append(emit_wasm_enum_drop_body(eaft, stab));
                 }
             }
             eak = eak + 1;
@@ -9288,6 +9296,33 @@ function emit_ir_rc_bodies_seeded(mod: parser.Module, frt: string[], sdt: string
 // rc-guarded $__fern_arr_dec. Admission (enum_arr_elems_walk_ok, at the type
 // derivation) keeps every other payload kind out. Frees neither the element
 // boxes nor the buffer — the caller's arr_dec_ptr still does that.
+// emit_wasm_enum_drop_body returns the WAT for $__enum_drop_<E>(box) -> box: the
+// live variant's rc payloads of ONE enum box, sole-ownership gated, leaving the
+// box itself to the caller's dec (#8567). The wasm sibling of asm_ir's
+// emit_ir_enum_drop_one, and the element step the array walk above delegates to,
+// so a direct enum field and an enum-array element release identically.
+pub function emit_wasm_enum_drop_body(e: string, structs: irlower.StructTab): string {
+    var o: string = "  (func $__enum_drop_" + e + " (param $e i32) (result i32)\n";
+    o = o + "    (if (call $__fern_rc_is_unique (local.get $e)) (then\n";
+    var vi: i32 = irlower.stab_enum_first(structs, e);
+    while (vi >= 0) {
+        var offs: i32[] = irlower.enum_walk_payload_offsets(structs, structs.decls[vi].name);
+        if (offs.len() > 0) {
+            o = o + "      (if (i32.eq (i32.load (local.get $e)) (global.get " + tid_global(structs.decls[vi].name) + ")) (then\n";
+            var oi: i32 = 0;
+            while (oi < offs.len()) {
+                o = o + "        (drop (call $__fern_arr_dec (i32.load offset=" + util.i32_to_string(offs[oi]) + " (local.get $e))))\n";
+                oi = oi + 1;
+            }
+            o = o + "      ))\n";
+        }
+        vi = irlower.stab_enum_next(structs, vi, e);
+    }
+    o = o + "    ))\n";
+    o = o + "    (local.get $e))\n";
+    return o;
+}
+
 pub function emit_wasm_enum_arr_elems_drop_body(e: string, structs: irlower.StructTab): string {
     var o: string = "  (func $__enum_arr_elems_drop_" + e + " (param $buf i32) (result i32)\n";
     o = o + "    (local $i i32) (local $n i32) (local $e i32)\n";
@@ -9297,22 +9332,7 @@ pub function emit_wasm_enum_arr_elems_drop_body(e: string, structs: irlower.Stru
     o = o + "      (block $eaed_done (loop $eaed_lp\n";
     o = o + "        (br_if $eaed_done (i32.ge_u (local.get $i) (local.get $n)))\n";
     o = o + "        (local.set $e (i32.load (i32.add (i32.add (local.get $buf) (i32.const 8)) (i32.mul (local.get $i) (i32.const 4)))))\n";
-    o = o + "        (if (call $__fern_rc_is_unique (local.get $e)) (then\n";
-    var vi: i32 = irlower.stab_enum_first(structs, e);
-    while (vi >= 0) {
-        var offs: i32[] = irlower.enum_walk_payload_offsets(structs, structs.decls[vi].name);
-        if (offs.len() > 0) {
-            o = o + "          (if (i32.eq (i32.load (local.get $e)) (global.get " + tid_global(structs.decls[vi].name) + ")) (then\n";
-            var oi: i32 = 0;
-            while (oi < offs.len()) {
-                o = o + "            (drop (call $__fern_arr_dec (i32.load offset=" + util.i32_to_string(offs[oi]) + " (local.get $e))))\n";
-                oi = oi + 1;
-            }
-            o = o + "          ))\n";
-        }
-        vi = irlower.stab_enum_next(structs, vi, e);
-    }
-    o = o + "        ))\n";
+    o = o + "        (drop (call $__enum_drop_" + e + " (local.get $e)))\n";
     o = o + "        (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
     o = o + "        (br $eaed_lp))))) \n";
     o = o + "    (local.get $buf))\n";
@@ -9375,6 +9395,11 @@ pub function emit_wasm_struct_drop_body(t: string, s: asmcore.EmitState): string
             // element — a string is an inline rc-headered block on wasm, so
             // that dec is its free — then the buffer; a shared buffer just decs.
             o = o + "    (drop (call $__fern_arr_dec_ptr " + load + "))\n";
+        } else if (op.kind == "deep_enum_drop") {
+            // A DIRECT enum field: the live variant's rc payloads, before the
+            // arr_dec directive that follows frees the enum box (#8567).
+            // $__enum_drop_ rc-gates and null-guards internally.
+            o = o + "    (drop (call $__enum_drop_" + op.ty + " " + load + "))\n";
         } else if (op.kind == "deep_struct_drop") {
             // $__fern_rc_is_unique null-/rc-guards internally; the arr_dec
             // directive that follows frees the inner box.
@@ -9509,12 +9534,19 @@ pub function emit_wasm_field_reclaim_body(t: string, structs: irlower.StructTab,
                     // the dec above frees only its box — so they were stranded
                     // (#8538). $__struct_drop_<T> releases them, under the rc==1
                     // gate the exit path's own nested arm uses: a SHARED inner
-                    // keeps its fields for the other owner. Enum fields are not
-                    // covered — a direct enum field has no variant-walk helper
-                    // on any backend, so its rc payload still leaks.
+                    // keeps its fields for the other owner. A direct ENUM field
+                    // gets the same treatment from $__enum_drop_ just below
+                    // (#8567), which applies that gate itself.
                     if (frk_nest && irlower.decl_is_struct(structs, ft)
                         && irlower.nested_field_deep_drop_ok(structs, ft)) {
                         dec = "(if (call $__fern_rc_is_unique " + oldf + ") (then (drop (call $__struct_drop_" + ft + " " + oldf + ")))) " + dec;
+                    }
+                    // The enum sibling (#8567): the live variant's rc payloads,
+                    // before the dec above frees the enum box. $__enum_drop_ takes
+                    // the rc==1 gate itself, so no outer guard here.
+                    if (frk_nest && irlower.decl_is_enum(structs, ft)
+                        && irlower.enum_arr_elems_walk_ok(structs, ft)) {
+                        dec = "(drop (call $__enum_drop_" + ft + " " + oldf + ")) " + dec;
                     }
                     if (frk_nest) {
                         o = o + "      (if (i32.or (i32.ne " + oldf + " " + newf + ") (i32.eqz (call $__fern_rc_is_unique " + oldf + "))) (then\n";
