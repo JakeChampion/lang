@@ -88,6 +88,44 @@ function (p: P) via(): string { var (a, b, c) = p.t; return show(a, b, c); }
 function main(): i32 { var p: P = P { t: (5000000006, 7.5, "rcv") }; print("v: " + p.via()); return 0; }`,
 		"v: 5000000006|750|rcv\n"},
 
+	// --- #8656: the payload of a user enum's variant. A tuple sub-pattern in
+	// the payload slot (`Pr((a, b, c))`) desugars to a temp bound to the payload
+	// and a destructure of that temp, so the binding must carry the element
+	// tags the enum declares — without them the destructure has no width to
+	// read at, which is the #8458 bail. The flat sibling (`Pr(p)` then `p.N`)
+	// reads through the same tags, and the nested tuple destructures twice. ---
+	{"destructure-variant-payload", `enum T { Pr((i64, f64, string)), Non }
+function pick(t: T): string {
+	match (t) {
+		Pr((a, b, c)) => { return show(a, b, c); },
+		Non => { return "non"; }
+	}
+}
+function whole(t: T): string {
+	match (t) {
+		Pr(p) => { return show(p.0, p.1, p.2); },
+		Non => { return "non"; }
+	}
+}
+function main(): i32 {
+	print("v: " + pick(T.Pr((5000000007, 8.5, "pay"))));
+	print("w: " + whole(T.Pr((5000000008, 9.5, "flat"))));
+	print("n: " + pick(T.Non));
+	return 0;
+}`, "v: 5000000007|850|pay\nw: 5000000008|950|flat\nn: non\n"},
+	{"destructure-variant-payload-nested", `enum U { Q((i32, (i64, f64))), R }
+function deep(u: U): string {
+	match (u) {
+		Q((a, (b, c))) => { return d32(a) + "|" + d64(b) + "|" + df(c); },
+		R => { return "r"; }
+	}
+}
+function main(): i32 {
+	print("d: " + deep(U.Q((3, (5000000009, 1.5)))));
+	print("r: " + deep(U.R));
+	return 0;
+}`, "d: 3|5000000009|150\nr: r\n"},
+
 	// --- #8459: `.N` on an element of a `(i32, f64)[]`, every array shape. ---
 	{"tuple-array-elem", `struct P { ts: (i32, f64)[] }
 function mk(): (i32, f64)[] { return [(1, 3.5)]; }

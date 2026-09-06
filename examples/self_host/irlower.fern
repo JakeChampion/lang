@@ -9878,6 +9878,20 @@ pub function is_eager_safe(e: ast.Expr): boolean {
     }
 }
 
+// neg_width is the width of `-operand`. It is the operand's, with one exception:
+// `-2147483648` is i32::MIN, not a 64-bit value — literal_is_i64 judges the
+// MAGNITUDE, and 2147483648 exceeds i32-max only because the sign has not been
+// applied yet (#6396). A composite `neg` overload returning i64 / u64 (#5986) is
+// visible only through the node's checker type, since its operand is a struct.
+// Every unary-minus width decision goes through here, so the lowering cannot
+// disagree with the inference about the same node.
+function neg_width(u: ast.ExprUnary, s: LowerState): i32 {
+    if (lit_is_i32_min_magnitude(u.operand)) { return 32; }
+    if (infer_expr_width(u.operand, s) == 64) { return 64; }
+    if (u.ty == "i64" || u.ty == "u64") { return 64; }
+    return 32;
+}
+
 // infer_expr_width returns 64 if `e` evaluates to an i64 value, else 32.
 // Comparisons / equality / logical-not yield an i32 bool regardless of operand
 // width; arithmetic widens to i64 if either operand is i64. Bare literals are
@@ -9932,21 +9946,7 @@ pub function infer_expr_width(e: ast.Expr, s: LowerState): i32 {
             return 32;
         },
         ast.ExprUnary(u) => {
-            // `-2147483648` is i32::MIN, not a 64-bit value: literal_is_i64
-            // judges the operand's MAGNITUDE, and 2147483648 exceeds i32-max
-            // only because the sign has not been applied yet. Without this the
-            // negation infers 64, StmtVar i64-backs the slot despite an
-            // explicit `: i32`, and the arithmetic runs unwrapped — `0 - a`
-            // answered 2147483648 rather than i32::MIN (#6396). An `: i64`
-            // binding is unaffected: StmtVar tests the annotation first.
-            if (u.op == "-" && lit_is_i32_min_magnitude(u.operand)) { return 32; }
-            if (u.op == "-") {
-                if (infer_expr_width(u.operand, s) == 64) { return 64; }
-                // A composite `neg` overload returning i64 / u64 (#5986) — the
-                // operand is a struct, so the recursion above cannot see it.
-                if (u.ty == "i64" || u.ty == "u64") { return 64; }
-                return 32;
-            }
+            if (u.op == "-") { return neg_width(u, s); }
             if (u.op == "as_i64" || u.op == "as_u64") { return 64; }
             // `inner?` is i64-width when the Option/Result payload is i64/u64, so an
             // unannotated `var x = inner?` width-tracks i64 (StmtVar routes width-64
@@ -15320,13 +15320,13 @@ function lower_expr_unary(u: ast.ExprUnary, s: LowerState): LowerState {
             var negcall: ast.Expr = ast.ExprCall { callee: ast.ExprFieldAccess { obj: u.operand, field: "neg", line: u.line, col: u.col, ty: "" }, args: [], line: u.line, col: u.col, type_argc: 0, ty: u.ty };
             return lower_expr(negcall, s);
         }
-        // -x  ==  0 - x  : push 0, push x, sub — at the OPERAND's width.
+        // -x  ==  0 - x  : push 0, push x, sub — at the negation's width.
         // A 64-bit operand reaches here whenever the negation is not itself
         // in an i64 context, a method receiver being the way it happens
         // (`(-b).to_string()`). The register backends tolerated the 32-bit
         // form because the value lands in a 64-bit register either way; wasm
         // is typed and rejects the module outright (#8460).
-        if (infer_expr_width(u.operand, s) == 64) { return lower_neg_i64(u.operand, s); }
+        if (neg_width(u, s) == 64) { return lower_neg_i64(u.operand, s); }
         var sz: LowerState = s.emit(ir.op_const_i32(0));
         var sx: LowerState = lower_expr(u.operand, sz);
         if (!sx.ok) { return sx; }
@@ -24997,6 +24997,13 @@ function lower_stmt_match(m: ast.StmtMatch, s: LowerState): LowerState {
                             // value recovers its payload (the enum-payload sibling of
                             // the tuple-element / struct-field opt-type marking).
                             ms = ms.mark_opt_type(bslot, ev_ty);
+                        } else if (tuple_elems_lowerable(ev_ty, ms.frame.structs)) {
+                            // A tuple payload (`Pr((i32, i32))`): carry the element
+                            // tags so `p.N` reads at the element's width and the
+                            // destructure a `Pr((a, b))` sub-pattern desugars to
+                            // types its bindings (the Option/Result payload site
+                            // above does the same).
+                            ms = ms.mark_tuple_elems(bslot, tuple_elem_tags(ev_ty)).mark_tuple_type(bslot, ev_ty);
                         } else if (is_scalar_array_type(ev_ty)) {
                             ms = ms.mark_arr(bslot, true);
                         } else if (ev_ty == "string[]") {
