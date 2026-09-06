@@ -37,9 +37,10 @@ func RunFixtureInterp(t *testing.T, mainPath, stdin string) (string, int) {
 // loads from the real fixture directory so relative `./sibling`
 // imports resolve against the on-disk layout.
 //
-// It names no target, so a program calling `target_os()` or
-// `target_arch()` must go through LoadCheckMonoFor instead: the lowering
-// refuses an unresolved call.
+// It names no target, so a `target_os()` / `target_arch()` call reaches the
+// lowering unfolded and the backend answers it with its own target — which
+// is also what the driver's fold would have said. LoadCheckMonoFor folds
+// the two before the check, as the driver does.
 func LoadCheckMono(t *testing.T, mainPath string) (*checker.Info, *ast.Program) {
 	t.Helper()
 	return LoadCheckMonoFor(t, mainPath, "")

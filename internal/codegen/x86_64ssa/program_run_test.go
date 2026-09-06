@@ -60,7 +60,17 @@ func programMatchesInterp(t *testing.T, src string, numAlloc int) {
 	}
 
 	want := interpMain(t, prog)
+	got := runSSAProgram(t, prog, info, numAlloc)
+	if got != int(uint8(want)) {
+		t.Errorf("SSA-emitted program exit=%d, want interp&0xFF=%d (interp=%d)\nsrc: %s", got, int(uint8(want)), want, src)
+	}
+}
 
+// runSSAProgram emits a checked, monomorphised program through EmitProgram,
+// assembles and links it with the native x86-64 toolchain, runs it, and
+// returns the exit code.
+func runSSAProgram(t *testing.T, prog *ast.Program, info *checker.Info, numAlloc int) int {
+	t.Helper()
 	asm, err := x86.EmitProgram(prog, info, numAlloc)
 	if err != nil {
 		t.Fatalf("EmitProgram: %v", err)
@@ -76,17 +86,40 @@ func programMatchesInterp(t *testing.T, src string, numAlloc int) {
 	if err := os.WriteFile(bin, nativeelf.StaticExecutableDataX86(text, rodata), 0o755); err != nil {
 		t.Fatalf("write bin: %v", err)
 	}
-	got := 0
 	if err := exec.Command(bin).Run(); err != nil {
 		var ee *exec.ExitError
-		if errors.As(err, &ee) {
-			got = ee.ExitCode()
-		} else {
+		if !errors.As(err, &ee) {
 			t.Fatalf("run: %v", err)
 		}
+		return ee.ExitCode()
 	}
-	if got != int(uint8(want)) {
-		t.Errorf("SSA-emitted program exit=%d, want interp&0xFF=%d (interp=%d)\nsrc: %s", got, int(uint8(want)), want, src)
+	return 0
+}
+
+// A `target_os()` / `target_arch()` the front end did not fold is answered by
+// this backend's own target, x86-64-linux, never by the IR's arm64-linux
+// default. The interpreter is no oracle here — it answers with the HOST — so
+// the expected exit code is pinned instead.
+func TestProgramNamesItsTarget(t *testing.T) {
+	src := `function main(): i32 {
+    var code: i32 = 0;
+    if (target_arch() == "x86-64") { code = code + 1; }
+    if (target_os() == "linux") { code = code + 2; }
+    return code;
+}`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	if err := monomorph.Run(prog, info); err != nil {
+		t.Fatalf("monomorph: %v", err)
+	}
+	if got := runSSAProgram(t, prog, info, 8); got != 3 {
+		t.Errorf("exit = %d, want 3 (bit 0: target_arch() is \"x86-64\", bit 1: target_os() is \"linux\")", got)
 	}
 }
 
