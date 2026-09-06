@@ -9443,11 +9443,6 @@ pub function emit_wasm_struct_drop_body(t: string, s: asmcore.EmitState): string
             // element — a string is an inline rc-headered block on wasm, so
             // that dec is its free — then the buffer; a shared buffer just decs.
             o = o + "    (drop (call $__fern_arr_dec_ptr " + load + "))\n";
-        } else if (op.kind == "deep_enum_drop") {
-            // A DIRECT enum field: the live variant's rc payloads, before the
-            // arr_dec directive that follows frees the enum box (#8567).
-            // $__enum_drop_ rc-gates and null-guards internally.
-            o = o + "    (drop (call $__enum_drop_" + op.ty + " " + load + "))\n";
         } else if (op.kind == "deep_struct_drop") {
             // $__fern_rc_is_unique null-/rc-guards internally; the arr_dec
             // directive that follows frees the inner box.
