@@ -37,6 +37,8 @@ func TestIntExprCastToFloatConvertsTheResult(t *testing.T) {
 		{"multiply_f64", "f64", "@p * @q", "3", "4", "12.0"},
 		{"add_f64", "f64", "@p + @q", "3", "4", "7.0"},
 		{"subtract_f64", "f64", "@p - @q", "3", "4", "0.0 - 1.0"},
+		{"subtract_f32", "f32", "@p - @q", "3", "4", "0.0 - 1.0"},
+		{"negative_divide_f64", "f64", "(@p - @q) / 2", "0", "7", "0.0 - 3.0"},
 		{"nested_divide_f64", "f64", "(@p / @q) / @q", "9", "2", "2.0"},
 	}
 	for _, c := range cases {
@@ -54,6 +56,41 @@ func TestIntExprCastToFloatConvertsTheResult(t *testing.T) {
 			assertExitsZeroEverywhere(t, src)
 		})
 	}
+}
+
+// The i32 a cast stands in for a still-polymorphic operand was spelled
+// `NumberType{Width: 32}`, which is u32: `(3 - 4) as f64` wrapped to
+// 4294967295 on every engine. The narrowing rule carried the same spelling, so
+// `((0 - 7) / 2) as u8` divided as u32 — 252 from literals, 253 from a
+// variable. Both forms in one program, exit non-zero on a disagreement.
+func TestNarrowingCastComputesAtI32(t *testing.T) {
+	src := `function main(): i32 {
+    var fromLiterals: u8 = ((0 - 7) / 2) as u8;
+    var z: i32 = 0;
+    var fromVars: u8 = ((z - 7) / 2) as u8;
+    if (fromLiterals != fromVars) { return 7; }
+    if (fromLiterals != 253) { return 8; }
+    return 0;
+}
+`
+	assertExitsZeroEverywhere(t, src)
+}
+
+// A const operand reaches the cast through constfold's substitution — as a
+// width-stamped literal when the const is declared, polymorphic when it is
+// not — and both have to compute the subtraction signed.
+func TestConstOperandCastToFloatIsSigned(t *testing.T) {
+	src := `const P: i32 = 3;
+const Q = 4;
+function main(): i32 {
+    var declared: f64 = (P - Q) as f64;
+    if (declared != 0.0 - 1.0) { return 7; }
+    var undeclared: f64 = (Q - P - 5) as f64;
+    if (undeclared != 0.0 - 4.0) { return 8; }
+    return 0;
+}
+`
+	assertExitsZeroEverywhere(t, src)
 }
 
 // The cast still settles a BARE literal at its target, which is what lets a

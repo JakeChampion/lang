@@ -13491,27 +13491,26 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			} else {
 				c.settleNumeric(n.Inner, n.Target)
 			}
-		} else if innerNum, innerIsNum := inner.(ast.NumberType); innerIsNum && isFloat(n.Target) && !isBareNumericLiteral(n.Inner) {
-			// The mirror of the float→int exception above. An int→float
-			// cast converts the RESULT, so the float target must not reach
-			// the operands: settling `(7 / 2) as f64` at f64 stamps IsFloat
-			// on both literals while the Binary keeps the integer stamp
-			// checkExpr gave it, and the IR then feeds f64 constants to an
-			// i32 divide — 3.5 on interp, 0 on the natives, an invalid
-			// module on wasm. Settle the inner at its own integer type and
-			// let the cast do the conversion. A BARE literal still settles
-			// at the target, so `4611686018427387904 as f64` keeps its
-			// width.
-			intHint := ast.NumberType{Width: 32}
-			if !innerNum.Polymorphic {
-				intHint = innerNum
-			}
-			c.settleNumeric(n.Inner, intHint)
+		} else if _, innerIsInt := inner.(ast.NumberType); innerIsInt && isFloat(n.Target) && !isBareNumericLiteral(n.Inner) {
+			// An INT→FLOAT cast converts the RESULT, not the operands.
+			// settleFloat stamps a FloatWidth on a `+ - * /` binary and
+			// recurses into both sides, so settling `(7 / 2) as f64` at the
+			// target made it float division — 3.5 on interp, 0 on both
+			// natives, and a module wasm refused to validate (#8456). The
+			// same expression through variables was right all along, because
+			// its operands had already committed and settleFloat left them
+			// alone.
+			//
+			// A BARE literal still settles at the target, for the same reason
+			// the narrowing rule below keeps `300 as u8` an E047: `1 as f64`
+			// is a float literal, and a wide one (`4611686018427387904 as f64`)
+			// needs the target to escape the i32 default.
+			c.settleNumeric(n.Inner, castOperandInt(inner))
 		} else if _, tgtIsChar := n.Target.(ast.CharType); tgtIsChar {
-			// `65 as char`: `char` is not a NumberType, so settle the
-			// inner at i32 (the slot a scalar rides) rather than handing
-			// settleNumeric a non-numeric target.
-			c.settleNumeric(n.Inner, ast.NumberType{Width: 32})
+			// `65 as char`: `char` is not a NumberType, so settle the inner
+			// at its own integer type rather than handing settleNumeric a
+			// non-numeric target.
+			c.settleNumeric(n.Inner, castOperandInt(inner))
 		} else if nt, tgtNum := n.Target.(ast.NumberType); tgtNum &&
 			nt.NormalWidth() > 0 && nt.NormalWidth() < 32 &&
 			!isBareNumericLiteral(n.Inner) {
@@ -13532,29 +13531,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			// so `300 as u8` stays the E047 it should be — that is a typo, not
 			// an arithmetic intent, and it is the case the widening rule above
 			// (`4611686018427387904 as u64`) was written for.
-			c.settleNumeric(n.Inner, ast.NumberType{Width: 32})
-		} else if innerNum, innerIsInt := inner.(ast.NumberType); innerIsInt &&
-			isFloatTarget(n.Target) && !isBareNumericLiteral(n.Inner) {
-			// An INT→FLOAT cast converts the RESULT, not the operands.
-			// settleFloat stamps a FloatWidth on a `+ - * /` binary and
-			// recurses into both sides, so `(7 / 2) as f64` became float
-			// division — 3.5 on interp, 0 on both natives, and a module wasm
-			// refused to validate (#8456). The same expression through
-			// variables was right all along, because its operands had already
-			// committed and settleFloat left them alone.
-			//
-			// A BARE literal still settles at the target, for the same reason
-			// the narrowing rule above keeps `300 as u8` an E047: `1 as f64`
-			// is a float literal, and a wide one (`4611686018427387904 as f64`)
-			// needs the target to escape the i32 default.
-			// The hint is i32, and it has to be spelled with Signed: the
-			// bare `NumberType{Width: 32}` the branches above use is
-			// UNSIGNED, which turns `(3 - 4) as f64` into 4294967295.
-			intHint := ast.NumberType{Width: 32, Signed: true}
-			if !innerNum.Polymorphic {
-				intHint = innerNum
-			}
-			c.settleNumeric(n.Inner, intHint)
+			c.settleNumeric(n.Inner, castOperandInt(inner))
 		} else {
 			c.settleNumeric(n.Inner, n.Target)
 		}
@@ -17442,10 +17419,15 @@ func (c *checker) requireBool(p ast.Position, t ast.Type, op string) {
 // isBareNumericLiteral reports whether `e` is a numeric literal, optionally
 // negated — the shape a narrowing cast still settles at its target so an
 // out-of-range constant stays an E047 rather than silently wrapping.
-// isFloatTarget reports whether a cast target is a float type.
-func isFloatTarget(t ast.Type) bool {
-	_, ok := t.(ast.FloatType)
-	return ok
+// castOperandInt is the type a cast settles a non-bare integer operand at
+// when its target must stay out of the operand: the operand's own type, or
+// i32 while it is still polymorphic. Spelled with Signed — `NumberType{Width:
+// 32}` is u32, and settling `(3 - 4) as f64` there gave 4294967295.
+func castOperandInt(inner ast.Type) ast.NumberType {
+	if in, ok := inner.(ast.NumberType); ok && !in.Polymorphic {
+		return in
+	}
+	return ast.NumberType{Width: 32, Signed: true}
 }
 
 func isBareNumericLiteral(e ast.Expr) bool {
