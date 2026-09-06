@@ -374,8 +374,11 @@ function test_dns_answer_statuses(): test.TestOutcome {
   if (resolv.dns_answer_a(reply(3, 4660), 4660).0 != resolv.notfound()) {
     return test.fail("NXDOMAIN is notfound");
   }
-  if (resolv.dns_answer_a(reply(2, 4660), 4660).0 != resolv.unavail()) {
-    return test.fail("SERVFAIL is unavail");
+  if (resolv.dns_answer_a(reply(2, 4660), 4660).0 != resolv.servfail()) {
+    return test.fail("SERVFAIL is its own status, not a bare unavail");
+  }
+  if (resolv.dns_answer_a(reply(1, 4660), 4660).0 != resolv.unavail()) {
+    return test.fail("FORMERR is unavail");
   }
   if (resolv.dns_answer_a(reply(0, 4660), 4661).0 != resolv.unavail()) {
     return test.fail("a reply to another id is unavail");
@@ -404,6 +407,86 @@ function test_dns_answer_without_a_record(): test.TestOutcome {
 // The live cases: this machine's own /etc/hosts and the whole lookup.
 // Every system this runs on maps localhost to 127.0.0.1 in its hosts
 // file, and `files` comes before `dns` on every default nsswitch line.
+// The scripted nameserver the search-loop cases run against: a candidate
+// answers by its own name, so a case says what happens by choosing which
+// names go in the list, and no case needs to record what was asked — the
+// address that comes back says which candidate produced it.
+function scripted(qname: string): (i32, i32) {
+  if (qname == "ok1") {
+    return (resolv.success(), 1);
+  }
+  if (qname == "ok2") {
+    return (resolv.success(), 2);
+  }
+  if (qname == "servfail") {
+    return (resolv.servfail(), 0);
+  }
+  if (qname == "timeout") {
+    return (resolv.unavail(), 0);
+  }
+  if (qname == "refused") {
+    return (resolv.refused(), 0);
+  }
+  return (resolv.notfound(), 0);
+}
+
+function search(cands: string[]): (i32, i32) {
+  return resolv.dns_search(cands, (q: string): (i32, i32) => { return scripted(q); });
+}
+
+// __res_context_search's four reactions to a candidate that did not answer.
+function test_search_servfail_continues(): test.TestOutcome {
+  // glibc records the SERVFAIL and tries the NEXT candidate, so a broken
+  // zone on the first search suffix cannot hide a name the second reaches.
+  if (search(["servfail", "ok2", "nx"]).1 != 2) {
+    return test.fail("a SERVFAIL candidate must not end the search");
+  }
+  // Nothing found after one: TRY_AGAIN, not HOST_NOT_FOUND.
+  if (search(["servfail", "nx"]).0 != resolv.unavail()) {
+    return test.fail("a recorded SERVFAIL reports unavail, not notfound");
+  }
+  return test.pass();
+}
+
+function test_search_timeout_still_asks_the_bare_name(): test.TestOutcome {
+  // A non-SERVFAIL failure ends the search LIST, but glibc still asks the
+  // name as it stands. Here `ok2` sits between, so answering 1 proves the
+  // loop jumped to the tail rather than merely carrying on.
+  if (search(["timeout", "ok2", "ok1"]).1 != 1) {
+    return test.fail("a timeout must skip to the bare name, not to the next suffix");
+  }
+  if (search(["timeout", "ok2", "nx"]).0 != resolv.notfound()) {
+    return test.fail("the bare name's NXDOMAIN is the answer");
+  }
+  if (search(["timeout", "ok2", "timeout"]).0 != resolv.unavail()) {
+    return test.fail("a bare name that also times out is unavail");
+  }
+  // On the LAST candidate there is nothing left to fall back to.
+  if (search(["nx", "timeout"]).0 != resolv.unavail()) {
+    return test.fail("a timeout on the last candidate is unavail");
+  }
+  return test.pass();
+}
+
+function test_search_refused_stops_everything(): test.TestOutcome {
+  // ECONNREFUSED returns from res_search at once — no later candidate, and
+  // no as-is retry either.
+  if (search(["refused", "ok1"]).0 != resolv.unavail()) {
+    return test.fail("a refused connection must not fall through to a later candidate");
+  }
+  return test.pass();
+}
+
+function test_search_all_nxdomain(): test.TestOutcome {
+  if (search(["nx", "nx2", "nx3"]).0 != resolv.notfound()) {
+    return test.fail("every candidate NXDOMAIN is notfound");
+  }
+  if (search(["ok1"]).1 != 1) {
+    return test.fail("the first candidate's address wins");
+  }
+  return test.pass();
+}
+
 function test_live_hosts_file(): test.TestOutcome {
   match (read_file("/etc/hosts")) {
     Ok(c) => {
@@ -441,6 +524,10 @@ function main(): i32 {
   r = r.it("an A record behind a CNAME", test_dns_answer_after_cname);
   r = r.it("reply statuses", test_dns_answer_statuses);
   r = r.it("NOERROR without an A record", test_dns_answer_without_a_record);
+  r = r.it("search: a SERVFAIL candidate continues", test_search_servfail_continues);
+  r = r.it("search: a timeout still asks the bare name", test_search_timeout_still_asks_the_bare_name);
+  r = r.it("search: a refused connection stops everything", test_search_refused_stops_everything);
+  r = r.it("search: every candidate NXDOMAIN", test_search_all_nxdomain);
   r = r.it("live: this machine's /etc/hosts", test_live_hosts_file);
   r = r.it("live: resolve localhost", test_live_resolve_localhost);
   return r.finish();
