@@ -12723,6 +12723,40 @@ func (b *builder) binary(n *ast.Binary) error {
 			}
 			return b.stashOwnedStringOperand(e)
 		}
+		appendPath := ast.Expr(n) == b.selfStrAppendBin || consumeLeftTemp
+		// `acc + slice_unchecked(s, lo, hi)` appends the range straight out
+		// of `s`: one memcpy into the accumulator's slack, where the unfused
+		// pair allocates a slice buffer, copies into it, copies out of it and
+		// frees it. Only on the append path — a plain OpStrConcat allocates
+		// its result anyway, so there is no second copy to remove.
+		if appendPath {
+			if src, lo, hi, ok := b.sliceUncheckedArgs(n.Right); ok {
+				slL, err := stash(n.Left, consumeLeftTemp)
+				if err != nil {
+					return err
+				}
+				// The SOURCE keeps the ordinary borrowing-operand
+				// discipline: `acc + slice_unchecked(f(x), lo, hi)` has an
+				// owned temp nothing else reclaims.
+				slSrc, err := b.stashOwnedStringOperand(src)
+				if err != nil {
+					return err
+				}
+				if err := b.expr(lo); err != nil {
+					return err
+				}
+				if err := b.expr(hi); err != nil {
+					return err
+				}
+				b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_append_range", Width: ResAddr, I32: 4,
+					Ext: &OpExt{ArgTypes: []ast.Type{ast.StringType{}, ast.StringType{}, ast.NumberType{}, ast.NumberType{}}}})
+				if !consumeLeftTemp {
+					b.selfStrAppendDone = true
+				}
+				b.decStashedStringTemps(slL, slSrc)
+				return nil
+			}
+		}
 		slL, err := stash(n.Left, consumeLeftTemp)
 		if err != nil {
 			return err
@@ -12749,7 +12783,7 @@ func (b *builder) binary(n *ast.Binary) error {
 		// once per join. Its release is the __fern_str_dec the helper runs
 		// on its fallback path — exactly the dec the loop below would have
 		// emitted for the stashed temp.
-		if ast.Expr(n) == b.selfStrAppendBin || consumeLeftTemp {
+		if appendPath {
 			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_append", Width: ResAddr, I32: 2})
 			if !consumeLeftTemp {
 				b.selfStrAppendDone = true
@@ -21175,6 +21209,28 @@ func (b *builder) emitCellSet(n *ast.Call) error {
 	b.emit(Op{Kind: OpLoadLocal, I32: valSlot})
 	b.emit(arrayElemStoreOpFor(elemType, b.ptrW))
 	return nil
+}
+
+// sliceUncheckedArgs returns the (source, low, high) of a
+// `slice_unchecked(s, lo, hi)` call on a string, and whether `e` is one.
+//
+// The append lowering fuses this shape into `__fern_str_append_range` rather
+// than materialising the slice: `__str_slice` would allocate a buffer and copy
+// the bytes into it only for `__fern_str_append` to copy them straight out
+// again and free it.
+func (b *builder) sliceUncheckedArgs(e ast.Expr) (src, lo, hi ast.Expr, ok bool) {
+	call, isCall := unwrapFString(e).(*ast.Call)
+	if !isCall || len(call.Args) != 3 {
+		return nil, nil, nil, false
+	}
+	id, isIdent := call.Callee.(*ast.Ident)
+	if !isIdent || id.Name != "slice_unchecked" {
+		return nil, nil, nil, false
+	}
+	if _, isStr := b.exprType(call.Args[0]).(ast.StringType); !isStr {
+		return nil, nil, nil, false
+	}
+	return call.Args[0], call.Args[1], call.Args[2], true
 }
 
 // isCellStringGetExpr reports whether `e` is a `Cell[string]` read — the
