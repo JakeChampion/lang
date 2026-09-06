@@ -1620,7 +1620,6 @@ func (g *generator) recordUse(target string) {
 		"open_reader", "open_writer", "open_appender",
 		"stdin", "stdout", "stderr":
 		g.usesReaderWriter = true
-		g.usesFree = true // open_*'s NUL-terminated path copy
 	case "__memset":
 		// Byte-grain fill used by the Map clear path.
 		g.usesMemset = true
