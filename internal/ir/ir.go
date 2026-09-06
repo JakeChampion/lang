@@ -7470,7 +7470,7 @@ func (b *builder) emitLiteralMatchExpr(n *ast.MatchExpr) error {
 		if arm == nil || arm.Body == nil {
 			continue
 		}
-		t := b.exprType(arm.Body)
+		t := b.matchExprArmBodyType(arm, tagT)
 		if nt, ok := t.(ast.NumberType); ok && !nt.Polymorphic {
 			resultType = nt
 			break
@@ -7596,7 +7596,7 @@ func (b *builder) emitStructMatchExpr(n *ast.MatchExpr) error {
 		if arm == nil || arm.Body == nil {
 			continue
 		}
-		t := b.exprType(arm.Body)
+		t := b.matchExprArmBodyType(arm, tagT)
 		if nt, ok := t.(ast.NumberType); ok && !nt.Polymorphic {
 			resultType = nt
 			break
@@ -8279,7 +8279,7 @@ func (b *builder) emitTupleMatchExpr(n *ast.MatchExpr) error {
 		if arm == nil || arm.Body == nil {
 			continue
 		}
-		t := b.exprType(arm.Body)
+		t := b.matchExprArmBodyType(arm, tup)
 		if t == nil {
 			continue
 		}
@@ -10234,7 +10234,7 @@ func (b *builder) expr(e ast.Expr) error {
 			if arm == nil {
 				continue
 			}
-			t := b.exprType(arm.Body)
+			t := b.matchExprArmBodyType(arm, b.exprType(n.Tag))
 			if nt, ok := t.(ast.NumberType); ok && !nt.Polymorphic {
 				resultType = nt
 				break
@@ -11747,6 +11747,31 @@ func (b *builder) closureLiteralType(e ast.Expr) *ast.FuncType {
 		return ft
 	}
 	return nil
+}
+
+// matchExprArmBodyType is the type an arm body contributes to the result
+// slot a match EXPRESSION is lowered through.
+//
+// exprType resolves an Ident by NAME against the function's locals and
+// params, and an arm's own binders are neither: they get their slots when
+// the arm is lowered, which is after the result slot has to be sized. So an
+// arm body that is JUST a binder — `Only(q) => q`, `(q, n) => q` — answered
+// nil, the slot fell back to i32, and a two-word string result then failed
+// wasm validation outright ("expected i32 but nothing on stack"). A second
+// arm whose body had a derivable type masked it, which is why only the
+// single-typed-arm shapes ever showed it. Ask the ARM what it binds first
+// (ast.BinderType, the sibling of the Binders walk the shadow passes use),
+// exprType second.
+func (b *builder) matchExprArmBodyType(arm *ast.MatchExprArm, scrutinee ast.Type) ast.Type {
+	if arm == nil || arm.Body == nil {
+		return nil
+	}
+	if id, ok := arm.Body.(*ast.Ident); ok {
+		if t := arm.BinderType(id.Name, scrutinee); t != nil {
+			return t
+		}
+	}
+	return b.exprType(arm.Body)
 }
 
 // exprType returns the static type of `e` for the limited set of
