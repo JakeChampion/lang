@@ -17719,7 +17719,13 @@ func (b *builder) freshOwnedFieldContainerType(target ast.Expr) (ast.Type, bool)
 	if !ok && b.isOwnedContainerRead(target) {
 		ct, ok = b.exprType(target), true
 	}
-	if !ok {
+	// The seam-retained delete tuple (#8434). Gated on RcFreeEnabled because
+	// mapCowBindSites is a purely syntactic walk and is populated either way,
+	// while the drop-helper worklist that generates __drop_tuple_<…> runs only
+	// when frees are on — naming the container here with frees OFF emits a call
+	// to a function nothing generates, and the fixture fails to LINK. The arms
+	// above cannot reach that state: their analyses are empty without frees.
+	if !ok && ast.RcFreeEnabled {
 		if c, isCall := target.(*ast.Call); isCall && isMapDeleteCall(c) && b.rc.mapCowBindSites[c] {
 			ct, ok = b.exprType(target), true
 		}

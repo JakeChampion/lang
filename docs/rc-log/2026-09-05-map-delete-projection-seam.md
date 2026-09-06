@@ -44,6 +44,15 @@ the kv buffer and the key column are never walked: `freeEligible[sm]` is false.
    Restoring that guard alone puts 112000 back, so it is load-bearing rather
    than incidental.
 
+   That admission has to be gated on `RcFreeEnabled`, which the arms beside it
+   do not need. Theirs rest on analyses that are empty without frees;
+   `mapCowBindSites` is a purely syntactic walk and is populated either way, so
+   the ungated version named the container in a free-OFF build and emitted a
+   call to `__drop_tuple_…` that the drop-helper worklist — which runs only
+   when frees are on — never generates. The fixture then failed to **link**,
+   on all three backends, and only in `FixturesFreeMatchesNoFree`: every
+   free-on gate was green, because with frees on the helper exists.
+
 4. **The general one.** The `*ast.Assign` alias-inc path never had the
    `!isOwnedContainerRead` guard the `*ast.Var` path has carried since #6401.
    So `a = mk().items` took **two** retains — the container read's own, plus
