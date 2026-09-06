@@ -3344,6 +3344,10 @@ function check_expr(e: ast.Expr, s: Scope): Type {
       return bound;
     },
     ast.ExprBinary(b) => {
+      // A named-argument marker survives only on a call fill_default_args
+      // refused (E077 / E004 already reported); its value is what the
+      // parameter check types, as native types the argument beside its name.
+      if (b.op == "__named_arg") { return check_expr(b.right, s); }
       var lt: Type = check_expr(b.left, s);
       var rt: Type = check_expr(b.right, s);
       // `+` is overloaded across i32 (arithmetic) and string
@@ -8307,6 +8311,10 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
 }
 
 function call_diags_binary(b: ast.ExprBinary, s: Scope, out: util.Diag[]): util.Diag[] {
+  // A named-argument marker's left side is the parameter NAME, not a value
+  // read: only the value beside it is walked (the marker survives only on a
+  // call fill_default_args refused, which E077 / E004 already name).
+  if (b.op == "__named_arg") { return util.append_diags(out, call_diags(b.right, s)); }
   out = util.append_diags(call_diags(b.left, s), call_diags(b.right, s));
   // E009: `&&` / `||` require both operands to be boolean.
   if (b.op == "&&" || b.op == "||") {
@@ -9660,55 +9668,11 @@ function scalar_match_exhaustive_diags(m: ast.StmtMatch, acc: util.Diag[]): util
 // argument-level diagnostics (E038) that the Go checker reports at the
 // argument's own position rather than the call's.
 function expr_line(e: ast.Expr): i32 {
-  match (e) {
-    ast.ExprNumber(n) => {
-      return n.line;
-    },
-    ast.ExprString(st) => {
-      return st.line;
-    },
-    ast.ExprIdent(id) => {
-      return id.line;
-    },
-    ast.ExprFieldAccess(fa) => {
-      return fa.line;
-    },
-    ast.ExprCall(c) => {
-      return c.line;
-    },
-    ast.ExprStructLit(s) => {
-      return s.line;
-    },
-    _ => {
-      return 0;
-    }
-  }
+  return ast.expr_line(e);
 }
 
 function expr_col(e: ast.Expr): i32 {
-  match (e) {
-    ast.ExprNumber(n) => {
-      return n.col;
-    },
-    ast.ExprString(st) => {
-      return st.col;
-    },
-    ast.ExprIdent(id) => {
-      return id.col;
-    },
-    ast.ExprFieldAccess(fa) => {
-      return fa.col;
-    },
-    ast.ExprCall(c) => {
-      return c.col;
-    },
-    ast.ExprStructLit(s) => {
-      return s.col;
-    },
-    _ => {
-      return 0;
-    }
-  }
+  return ast.expr_col(e);
 }
 
 // dup_name_before reports whether names[idx] already appears at a lower
@@ -13083,7 +13047,14 @@ function e060_e062_diags(mod: parser.Module): util.Diag[] {
   return out;
 }
 
-pub function check_module(mod: parser.Module): ModuleTypes {
+pub function check_module(raw_mod: parser.Module): ModuleTypes {
+  // Native's checker resolves named arguments and fills omitted defaults
+  // before it types anything, and reports what does not resolve (E076 /
+  // E077 / E004) as its first diagnostics. Filling here rather than in each
+  // driver means a defaulted call arrives complete however this checker is
+  // reached, and a driver that already filled sees the same diagnostics again
+  // because a call that did not resolve was left as written.
+  var (mod, fda_diags) = parser.fill_default_args_with_diags(raw_mod);
   // Collect struct decls first; func sigs + union aliases
   // both use them to resolve names. Union aliases come next
   // so func sigs can reference union-typed params / returns.
@@ -13489,7 +13460,7 @@ pub function check_module(mod: parser.Module): ModuleTypes {
   }
   // own_diags (E050/E051) and e049_diags (E049) walk whole-function bodies
   // for move / capture analysis.
-  var dd: util.Diag[] = util.append_diags(util.append_diags(util.append_diags(util.append_diags(util.append_diags(util.append_diags(util.append_diags(collect_decl_diags(mod), body_diags), own_diags(mod)), e049_diags(mod)), e021_diags(mod)), derive_diags), e021_object_safety_diags(mod)), e060_e062_diags(mod));
+  var dd: util.Diag[] = util.append_diags(util.append_diags(util.append_diags(util.append_diags(util.append_diags(util.append_diags(util.append_diags(util.append_diags(fda_diags, collect_decl_diags(mod)), body_diags), own_diags(mod)), e049_diags(mod)), e021_diags(mod)), derive_diags), e021_object_safety_diags(mod)), e060_e062_diags(mod));
   if (dd.len() > 0) {
     well_typed = false;
   }
