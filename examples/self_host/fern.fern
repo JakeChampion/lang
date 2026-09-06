@@ -1396,6 +1396,24 @@ function report_decl_name_errors(mod: parser.Module): boolean {
     return true;
 }
 
+// report_parse_unknown_errors is the same gate for the parser's OWN markers,
+// shared by `-check` and the build path for the reason above. The permissive
+// parser plants an ExprUnknown where it could not read the source, so anything
+// a later pass says about that node describes the marker and not the program:
+// `var x: i32 = ;` reached `-check` as the #4346 "cannot represent yet"
+// catch-all, and a `= ;` parameter default reached both paths as E076's
+// non-constant rule, which is not the rule the author broke (#8739).
+//
+// It runs on the MERGED module, before tree-shaking, because a default on an
+// uncalled function is dead code: shaking drops the declaration, and with it
+// the only evidence the source did not parse.
+function report_parse_unknown_errors(mod: parser.Module): boolean {
+    var ds: util.Diag[] = asmcore.parse_unknown_errors_module(mod);
+    if (ds.len() == 0) { return false; }
+    eprint(util.format_diags(ds));
+    return true;
+}
+
 // fold_embedded_assets loads `-embed DIR` and substitutes every asset call in
 // the bundle, returning the rewritten bundle and 0, or the original bundle and
 // the exit code to answer with.
@@ -1436,6 +1454,7 @@ function check_bundle(b: Bundle, target: string, target_given: boolean): i32 {
     // alone is both the honest diagnostic and the code-set parity — anything
     // downstream of a declaration that did not parse is noise.
     if (report_decl_name_errors(merged)) { return 1; }
+    if (report_parse_unknown_errors(merged)) { return 1; }
     var mt: checker.ModuleTypes = checker.check_module(merged);
     // Surface the coded diagnostics (the same E0XX codes the Go
     // checker emits — see docs/SELFHOST-CHECKER-PORT.md) on stderr.
@@ -2281,6 +2300,7 @@ function run(): i32 {
     // permissive than `-check`, and a keyword-named function reaches codegen
     // as a nameless declaration.
     if (report_decl_name_errors(merged)) { return 1; }
+    if (report_parse_unknown_errors(merged)) { return 1; }
 
     // Build gate: reject what the checker rejects BEFORE codegen, so the
     // compiler is not MORE permissive than the native compiler / `-check`

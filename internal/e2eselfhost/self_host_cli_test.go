@@ -945,6 +945,60 @@ function main(): i32 {
 		}
 	})
 
+	// #8739. The parser is permissive: where it cannot read the source it
+	// plants an ExprUnknown and carries on, so every later pass reasons about
+	// the MARKER. `-check` never ran the gate that turns those markers back
+	// into P001/P002, so `var x: i32 = ;` surfaced as the #4346
+	// "cannot represent yet" catch-all, and a `= ;` parameter default — which
+	// no walk reached at all — surfaced as E076's non-constant rule, naming a
+	// rule the author had not broken.
+	//
+	// The oracle is the Go front end, because the divergence IS the bug: both
+	// engines must name the same code for the same unreadable source. An exit
+	// code alone would not have caught it, since the old behaviour also
+	// exited 1 — with the wrong diagnostic.
+	t.Run("check-parse-unknown-gate", func(t *testing.T) {
+		for _, tc := range []struct {
+			name string
+			src  string
+		}{
+			{"body-sentinel", "function main(): i32 { var x: i32 = ;\n  return 0; }\n"},
+			// The default cases are the ones the gate was added for: a
+			// default hangs off the declaration, not off a statement, so
+			// neither the body walk nor the top-level one reached it.
+			{"param-default-sentinel", "function f(x: i32 = ;): i32 { return x; }\nfunction main(): i32 { return 0; }\n"},
+			{"param-default-at", "function f(x: i32 = @): i32 { return x; }\nfunction main(): i32 { return 0; }\n"},
+			// An out-of-range float in a default is P002 on both engines and
+			// was already agreed; it is here so the fix cannot regress it
+			// into P001 by treating every marker alike.
+			{"param-default-float-range", "function f(x: f64 = 1e309): f64 { return x; }\nfunction main(): i32 { return 0; }\n"},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				srcPath := filepath.Join(dir, "parse_unknown.fern")
+				if err := os.WriteFile(srcPath, []byte(tc.src), 0o644); err != nil {
+					t.Fatalf("write src: %v", err)
+				}
+				combined, _ := exec.Command(fernBin, "-check", srcPath).CombinedOutput()
+				got := uniqueSortedCodes(frontEndCodeRE.FindAllString(string(combined), -1))
+				want := goFrontEndCodes(t, tc.src)
+				if !equalStrings(got, want) {
+					t.Errorf("-check codes = %v, want native's %v\nself-host output:\n%s", got, want, combined)
+				}
+				if _, code := runDriver(t, "-check", srcPath); code != 1 {
+					t.Errorf("-check exited %d, want 1", code)
+				}
+			})
+		}
+		// The gate must not fire on a default it CAN read.
+		cleanPath := filepath.Join(dir, "parse_unknown_clean.fern")
+		if err := os.WriteFile(cleanPath, []byte("function f(x: i32 = 41): i32 { return x; }\nfunction main(): i32 { return f(); }\n"), 0o644); err != nil {
+			t.Fatalf("write src: %v", err)
+		}
+		if out, code := runDriver(t, "-check", cleanPath); code != 0 {
+			t.Errorf("-check on a readable default exited %d, want 0:\n%s", code, out)
+		}
+	})
+
 	t.Run("check-str-view-arg-is-a-borrow", func(t *testing.T) {
 		// #7086: a parameter is BORROWED, so lending a `str` view to a
 		// `string` parameter is fine — native's argAssignable accepts it.

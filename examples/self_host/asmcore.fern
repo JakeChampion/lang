@@ -4387,6 +4387,15 @@ function unknown_errors_stmts(stmts: ast.Stmt[], where: string, errs: util.Diag[
     return a.errs;
 }
 
+// unknown_errors_expr is unknown_errors_stmts for a bare expression — a
+// parameter default, which hangs off the declaration rather than off any
+// statement and so is reachable from neither walk below.
+function unknown_errors_expr(e: ast.Expr, where: string, errs: util.Diag[]): util.Diag[] {
+    var a: UnkScan = UnkScan { where: where, skip_bare_return: false, errs: errs };
+    a = astwalk.fold_expr_nodes(e, a, unknown_error_stmt_at, unknown_error_expr_at, astwalk.descend_all);
+    return a.errs;
+}
+
 pub function parse_unknown_errors_module(mod: parser.Module): util.Diag[] {
     var errs: util.Diag[] = [];
     var fi: i32 = 0;
@@ -4396,6 +4405,18 @@ pub function parse_unknown_errors_module(mod: parser.Module): util.Diag[] {
             errs = errs.append(util.Diag { code: "P001", message: "malformed function declaration",
                 line: mod.funcs[fi].line, col: mod.funcs[fi].col });
             where = "in malformed function declaration";
+        }
+        // Parameter defaults before the body: they are written to the left of
+        // it, and a default the parser could not read is the same parse error
+        // a body sentinel is. Without this the only thing refusing one was
+        // E076's non-constant rule, which named the wrong code and reported it
+        // from the wrong pass (#8739).
+        var pi: i32 = 0;
+        while (pi < mod.funcs[fi].params.len()) {
+            if (mod.funcs[fi].params[pi].has_default) {
+                errs = unknown_errors_expr(mod.funcs[fi].params[pi].default_value, where, errs);
+            }
+            pi = pi + 1;
         }
         errs = unknown_errors_stmts(mod.funcs[fi].body, where, errs);
         fi = fi + 1;
