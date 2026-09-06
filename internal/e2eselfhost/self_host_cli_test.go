@@ -103,6 +103,34 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		}
 	})
 
+	// A `./` import inside an imported module resolves against THAT module's
+	// directory, as native does, not the entry's. The decoy `b.fern` beside
+	// the entry is what the wrong directory would find, and it answers 7 so
+	// a program that still runs cannot pass by accident. The same file
+	// reached by two spellings (`./lib/b` from the entry, `./b` from lib/)
+	// loads once, so the entry imports it as well.
+	t.Run("nested-relative-import", func(t *testing.T) {
+		proj := t.TempDir()
+		files := map[string]string{
+			"main.fern":  "import \"./lib/a\";\nimport \"./lib/b\";\nfunction main(): i32 { return a.value() + b.zero(); }\n",
+			"lib/a.fern": "import \"./b\";\npub function value(): i32 { return b.value(); }\n",
+			"lib/b.fern": "pub function value(): i32 { return 42; }\npub function zero(): i32 { return 0; }\n",
+			"b.fern":     "pub function value(): i32 { return 7; }\npub function zero(): i32 { return 0; }\n",
+		}
+		for name, src := range files {
+			p := filepath.Join(proj, name)
+			if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+				t.Fatalf("mkdir: %v", err)
+			}
+			if err := os.WriteFile(p, []byte(src), 0o644); err != nil {
+				t.Fatalf("write %s: %v", name, err)
+			}
+		}
+		if _, code := runDriver(t, "-interp", filepath.Join(proj, "main.fern")); code != 42 {
+			t.Errorf("-interp exit = %d, want 42: `./b` from lib/a.fern must be lib/b.fern, not the entry's b.fern", code)
+		}
+	})
+
 	// The u32 decimal formatter is reachable ONLY through this driver. It needs
 	// `import "std/u32"` (or std/string, which uses it), and every other
 	// self-host wasm driver — wasm_run, wasm_ir_run, wasm_modload_run — parses

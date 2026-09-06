@@ -891,11 +891,17 @@ pub function should_load(import_path: string, root: string, deps: string[]): boo
 }
 
 // resolve_path maps an import path to a file on disk. Local imports
-// resolve to `<entry_dir>/<name>.fern`; std/core imports resolve to
-// `<root>/<import_path>.fern` (e.g. `std/math` → `<root>/std/math.fern`).
+// resolve beside the importer, directory segments kept — `./lib/gnu`
+// from `<dir>` is `<dir>/lib/gnu.fern`, as native joins them; std/core
+// imports resolve to `<root>/<import_path>.fern` (e.g. `std/math` →
+// `<root>/std/math.fern`).
 pub function resolve_path(import_path: string, entry_dir: string, root: string): string {
   if (is_local(import_path)) {
-    return module_path_join(entry_dir, module_name(import_path));
+    var rel: string = import_path;
+    if (rel.len() >= 2 && slice_unchecked(rel, 0, 2) == "./") {
+      rel = slice_unchecked(rel, 2, rel.len()) + "";
+    }
+    return module_path_join(entry_dir, rel);
   }
   return root + "/" + import_path + ".fern";
 }
