@@ -847,15 +847,8 @@ func (f *formatter) formatBlock(blk *ast.Block, depth int) {
 		return
 	}
 	f.b.WriteString("{\n")
-	for i, s := range blk.Stmts {
-		// Preserve an author's blank-line separator between statements
-		// (never a leading blank just inside the opening brace).
-		if i > 0 && f.blankBefore(s.Pos().Line) {
-			f.b.WriteByte('\n')
-		}
-		f.formatStmtLine(s, depth+1)
-		f.b.WriteByte('\n')
-	}
+	f.formatStmtLines(blk.Stmts, depth+1, false)
+	f.b.WriteByte('\n')
 	// Comments past the last statement but still "inside" the
 	// block — i.e. before its closing brace — emit at the inner
 	// indent. We don't track the block's end position so we just
@@ -865,6 +858,64 @@ func (f *formatter) formatBlock(blk *ast.Block, depth int) {
 	// recursion level.
 	f.indent(depth)
 	f.b.WriteByte('}')
+}
+
+// formatStmtLines emits stmts one per line, newline-separated, keeping an
+// author's blank-line separator between them. blankFirst allows one ahead of
+// the first statement too: a continuation after a `let … else` or `use` line
+// may keep the blank that followed it, a block never keeps one just inside
+// its opening brace.
+//
+// The pair a `use` desugars to — the synthesised callback and the return that
+// passes it — re-renders as the one `use` line the source spelled.
+func (f *formatter) formatStmtLines(stmts []ast.Stmt, depth int, blankFirst bool) {
+	for i := 0; i < len(stmts); i++ {
+		s := stmts[i]
+		if i > 0 {
+			f.b.WriteByte('\n')
+		}
+		if (i > 0 || blankFirst) && f.blankBefore(s.Pos().Line) {
+			f.b.WriteByte('\n')
+		}
+		if fd, ok := s.(*ast.FuncDecl); ok && fd.UseSource != nil && i+1 < len(stmts) && returnsCall(stmts[i+1], fd.UseSource) {
+			f.formatUse(fd, depth)
+			i++
+			continue
+		}
+		f.formatStmtLine(s, depth)
+	}
+}
+
+// returnsCall reports whether s is `return call;` for that very call.
+func returnsCall(s ast.Stmt, call *ast.Call) bool {
+	r, ok := s.(*ast.Return)
+	return ok && r.Value == ast.Expr(call)
+}
+
+// formatUse re-renders a `use` callback as `use NAME[: T] <- CALL;` — CALL
+// without the callback the desugar appended — followed by the callback body's
+// statements, which are the rest of the enclosing block and re-emit as the
+// siblings they were written as. The type prints only when it is there: the
+// source may have left it for the checker to infer.
+func (f *formatter) formatUse(fd *ast.FuncDecl, depth int) {
+	f.drainLeading(fd.P.Line, depth)
+	f.indent(depth)
+	f.b.WriteString("use ")
+	f.b.WriteString(writtenName(fd.Params[0].Name))
+	if t := fd.Params[0].Type; t != nil {
+		f.b.WriteString(": ")
+		f.b.WriteString(formatType(t))
+	}
+	f.b.WriteString(" <- ")
+	call := *fd.UseSource
+	call.Args = call.Args[:len(call.Args)-1]
+	f.formatExpr(&call, precLowest)
+	f.b.WriteByte(';')
+	f.emitTrailing(fd.P.Line)
+	if fd.Body != nil && len(fd.Body.Stmts) > 0 {
+		f.b.WriteByte('\n')
+		f.formatStmtLines(fd.Body.Stmts, depth, true)
+	}
 }
 
 // formatStmtLine emits one statement's line content — leading comments,
@@ -1163,12 +1214,9 @@ func (f *formatter) formatStmt(s ast.Stmt, depth int) {
 				// The success arm holds the rest of the enclosing block —
 				// where the bindings are live — so its statements re-emit
 				// as the siblings they were written as.
-				for _, s := range success.Stmts {
+				if len(success.Stmts) > 0 {
 					f.b.WriteByte('\n')
-					if f.blankBefore(s.Pos().Line) {
-						f.b.WriteByte('\n')
-					}
-					f.formatStmtLine(s, depth)
+					f.formatStmtLines(success.Stmts, depth, true)
 				}
 				return
 			}

@@ -3727,13 +3727,13 @@ type FuncDecl struct {
 	// this list to size the env block and to know how to materialise
 	// each capture at the def site.
 	Captures []Param
-	// UseInferSource is set by the parser on a synthesised
-	// `use`-callback FuncDecl when the source omitted the type
-	// annotation (`use n <- foo(x);`). It points at the call the
-	// callback is being passed into; the checker reads the
-	// callee's signature to infer the missing parameter type.
-	// Nil otherwise.
-	UseInferSource *Call
+	// UseSource marks a callback the parser synthesised from
+	// `use n[: T] <- CALL;` and points at CALL, whose last argument
+	// is this callback. The checker infers the first parameter's type
+	// from the callee's signature when the source wrote no annotation;
+	// the formatter reads it back to re-render the `use`. Nil for a
+	// function the source spelled.
+	UseSource *Call
 	// SourceModule is the canonical module path that declared this
 	// function. modload stamps every FuncDecl as it loads each
 	// module — disk paths get their absolute path; stdlib paths

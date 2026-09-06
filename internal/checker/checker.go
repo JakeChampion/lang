@@ -13050,7 +13050,7 @@ func (c *checker) inferUseParam(fn *ast.FuncDecl, outer *scope) {
 	if len(fn.Params) == 0 || fn.Params[0].Type != nil {
 		return
 	}
-	src := fn.UseInferSource
+	src := fn.UseSource
 	if src == nil {
 		return
 	}
@@ -13265,7 +13265,7 @@ func (c *checker) checkLocalFunc(fn *ast.FuncDecl, outer *scope) {
 	// being passed into), and its first parameter is the binding
 	// type. Generic-callee inference is a follow-up — for now we
 	// require the callee to resolve to a concrete signature.
-	if fn.UseInferSource != nil {
+	if fn.UseSource != nil {
 		c.inferUseParam(fn, outer)
 	}
 	// Bind the function's name in the outer scope so subsequent code

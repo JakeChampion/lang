@@ -1334,6 +1334,31 @@ return tup((1, 2)) + strct(P { x: 1, y: 2 }) + block_arm((0, 3)) + sub_pattern_s
 		"var f: string = f\"pre\\x01{s}\";\n" +
 		"return s.len() + f.len();\n" +
 		"}\n"},
+
+	// `use` is a rest-of-block desugar on both sides — a synthesised callback
+	// passed as the call's last argument — and both printers emitted that
+	// callback instead of the `use` (#8729): native as a `__use_N` local
+	// function whose unannotated parameter printed as `(a: )`, the self-host
+	// as an arrow lambda. Annotated and unannotated bindings, nested, with a
+	// comment and a blank line in the continuation.
+	{"use-sugar", `function maybe_double(n: i32, cb: (i32) => Option[i32]): Option[i32] {
+return cb(n + n);
+}
+function chain(start: i32): Option[i32] {
+// bind the doubled value
+use a <- maybe_double(start);  // trailing
+
+var k: i32 = a * 2;
+use b: i32 <- maybe_double(k);
+return Some(b + 1);
+}
+function main(): i32 {
+match (chain(1)) {
+Some(v) => { return v; },
+None => { return 0; }
+}
+}
+`},
 }
 
 // typeChecks reports whether src is a program the checker accepts, running the

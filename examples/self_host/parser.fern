@@ -504,6 +504,11 @@ pub const ORIGIN_MAP_COMP: string = "map_comp";
 // the narrow marker fixes #7192 without moving any program that worked before.
 pub const ORIGIN_IIFE_SCOPED: string = "iife_scoped";
 
+// ORIGIN_USE marks the callback lambda a `use NAME[: TYPE] <- CALL;` desugars
+// to, appended as CALL's last argument. The printer reads it back to reprint
+// the `use`; nothing else treats the lambda differently from a written one.
+pub const ORIGIN_USE: string = "use";
+
 // no_match_sugar is the empty MatchSugar every StmtIf but the two match
 // desugars carries.
 pub function no_match_sugar(): ast.MatchSugar {
@@ -4075,6 +4080,8 @@ function parse_block_body_nested(p: Par, tail_value: boolean): (ast.Stmt[], Par)
         // `return apply(41, (n) => { <rest> });`. A nested `use` in <rest>
         // recurses. Without this the line shredded (#4335).
         if (p.peek_keyword() == "use") {
+            var uline: i32 = p.peek_line();
+            var ucol: i32 = p.peek_col();
             p = p.advance(); // consume `use`
             var uname: string = p.peek_ident();
             if (uname.len() > 0) { p = p.advance(); }
@@ -4101,11 +4108,13 @@ function parse_block_body_nested(p: Par, tail_value: boolean): (ast.Stmt[], Par)
             // no `: TYPE` — the checker's E032 rule verifies the binding
             // type is inferrable from the callee's signature (native
             // inferUseParam). An annotated `use n: T <- …` never draws E032.
-            var cb: ast.Expr = ast.ExprLambda { params: cbparams, ret_type: "", body: rest_body, use_infer: utype.len() == 0, origin: "", line: 0, col: 0 };
+            var cb: ast.Expr = ast.ExprLambda { params: cbparams, ret_type: "", body: rest_body, use_infer: utype.len() == 0, origin: ORIGIN_USE, line: 0, col: 0 };
             match (usrc_expr) {
                 ast.ExprCall(c) => {
                     var newargs: ast.Expr[] = c.args.append(cb);
-                    body = body.append(s_return(e_call(c.callee, newargs)));
+                    // The return stands for the `use` line, so it carries the
+                    // keyword's position for comment and blank-line placement.
+                    body = body.append(s_return_at(e_call(c.callee, newargs), uline, ucol));
                 },
                 _ => {
                     body = body.append(s_unknown(p, "use source must be a function call"));
