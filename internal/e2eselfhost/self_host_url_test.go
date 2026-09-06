@@ -7,12 +7,28 @@ import (
 	"testing"
 )
 
-// urlCases bundle the full std/url module (it has no imports — it
-// relies only on prelude built-ins: Option, structs, string methods,
-// and the string-keyed Map runtime) plus a main, and check the exit
-// code. query_parse exercises Map[string, string[]] with the get →
-// Option[string[]] → .len() / .append() path that depends on the Map
-// value-type inference. Exit codes cross-checked vs the Go backend.
+// urlCases bundle the full std/url module plus a main and check the exit code.
+// query_parse exercises Map[string, string[]] with the get → Option[string[]] →
+// .len() / .append() path that depends on the Map value-type inference. Exit
+// codes cross-checked vs the Go backend.
+//
+// `-no-treeshake` is load-bearing, and it is what keeps these cases meaning
+// what their name says. asm_load_run prunes to what `main` reaches by default,
+// which for a main that only calls `url_parse` is 21 functions and NONE of
+// url's real ones — `query_parse` and `query_encode` both pruned away. The
+// cases would still pass, having stopped compiling the module they exist to
+// compile. Un-pruned it is 107 functions on x86-64 and 118 on arm64, with
+// `query_encode` — the `(string, string)[]` parameter destructured per element,
+// which is the shape #8745 is about — among them.
+//
+// std/url.fern `import "core/map"` (since #1576), so these need a LOADING
+// driver. They used to run on the stdin bundle drivers — asm_run / asm_ir_run —
+// which resolve no imports; that worked only because the unresolved import left
+// the module IR-ineligible and the AST emitter silently picked it up. #5972
+// deleted the AST emitters, so the same bundle became a hard
+// "module is not IR-eligible" bail and the lane went red on main. The drivers
+// say so themselves: "asm_run has no module loader; UNRESOLVED imports:
+// core/map … to judge this program use a loading driver".
 var urlCases = []struct {
 	name string
 	main string
@@ -24,13 +40,32 @@ var urlCases = []struct {
 	{"query-has", `var m: Map[string,string[]] = query_parse("x=9"); if (m.has("x") && !m.has("z")) { return 5; } return 0;`, 5},
 }
 
-func urlSource(t *testing.T, mainBody string) []byte {
+// urlEntry writes std/url.fern plus `mainBody` to a fresh directory and returns
+// the entry path, for a loading driver to resolve `core/map` under the stdlib
+// root rather than being handed a bundle on stdin.
+func urlEntry(t *testing.T, mainBody string) string {
 	t.Helper()
 	src, err := os.ReadFile("../../internal/stdlib/std/url.fern")
 	if err != nil {
 		t.Fatalf("read std/url.fern: %v", err)
 	}
-	return append(src, []byte("\nfunction main(): i32 { "+mainBody+" }\n")...)
+	proj := t.TempDir()
+	entry := filepath.Join(proj, "main.fern")
+	body := append(src, []byte("\nfunction main(): i32 { "+mainBody+" }\n")...)
+	if err := os.WriteFile(entry, body, 0o644); err != nil {
+		t.Fatalf("write url entry: %v", err)
+	}
+	return entry
+}
+
+// urlStdlibRoot is the root a loading driver resolves `core/…` under.
+func urlStdlibRoot(t *testing.T) string {
+	t.Helper()
+	root, err := filepath.Abs("../../internal/stdlib")
+	if err != nil {
+		t.Fatalf("abs stdlib root: %v", err)
+	}
+	return root
 }
 
 // TestSelfHostUrlX86_64 compiles std/url + a main with the self-hosted
@@ -38,18 +73,16 @@ func urlSource(t *testing.T, mainBody string) []byte {
 func TestSelfHostUrlX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
-	src, err := os.ReadFile("../../examples/self_host/asm_run.fern")
-	if err != nil {
-		t.Fatalf("read asm_run.fern: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "asm_run.fern"), src, 0o644); err != nil {
-		t.Fatalf("write asm_run.fern: %v", err)
-	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
+	copySelfHostDriver(t, dir, "asm_load_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "asm_load_run.fern", "driver")
+	stdlibRoot := urlStdlibRoot(t)
 
 	for _, tc := range urlCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, gcc, runner, driverBin, urlSource(t, tc.main))
+			asm, cerr := runX86_64Bin(runner, driverBin, urlEntry(t, tc.main), stdlibRoot, "-no-treeshake").Output()
+			if cerr != nil {
+				t.Fatalf("loader compile: %v", cerr)
+			}
 			if len(asm) == 0 {
 				t.Fatal("self-host compiler emitted 0 bytes")
 			}
@@ -73,12 +106,16 @@ func TestSelfHostUrlArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "asm_load_run.fern")
+	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_load_run.fern", "driver")
+	stdlibRoot := urlStdlibRoot(t)
 
 	for _, tc := range urlCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, x86gcc, x86runner, driverBin, urlSource(t, tc.main), "-target", "arm64-linux")
+			asm, cerr := runX86_64Bin(x86runner, driverBin, urlEntry(t, tc.main), stdlibRoot, "-no-treeshake", "-target", "arm64-linux").Output()
+			if cerr != nil {
+				t.Fatalf("loader compile: %v", cerr)
+			}
 			if len(asm) == 0 {
 				t.Fatal("self-host arm64 compiler emitted 0 bytes")
 			}

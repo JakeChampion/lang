@@ -196,8 +196,14 @@ jobs:
         # internal/e2eharness's arm64 native-link parity gate runs ONLY here, so
         # a t.Skip would cover nothing: Arm64Tooling turns it into a failure.
         # Both legs satisfy it — the aarch64 runner through its native gcc.
+        #
+        # Its x86-64 mirror is scoped to the x86_64 leg, where the compiler is
+        # native. The aarch64 leg carries no x86 cross-compiler — the same
+        # reason cross-gcc above installs on the x86 leg only — so it skips
+        # those two gates by design and must not be asked to require them.
         env:
           FERN_REQUIRE_ARM64_TOOLING: "1"
+          FERN_REQUIRE_X86_64_TOOLING: ${{ matrix.host == 'x86_64' && '1' || '' }}
         # The package set is DERIVED, not enumerated — see
         # scripts/unit-test-packages, which is also what the Netlify smoke
         # lane's `units` stage runs, so the two cannot cover different sets.
