@@ -187,6 +187,9 @@ internal/coreutils/
                     the long double each target gets, which the
                     host-oracle corpus cannot see (#8513)
   <util>_test.go    that utility's cases
+  sums_test.go      the corpus the seven checksum utilities share, since
+                    they are one program: each <util>_test.go names its
+                    own digest and calls it
 scripts/coreutils-bench
                     hyperfine: Fern vs GNU vs uutils, one table
 ```
