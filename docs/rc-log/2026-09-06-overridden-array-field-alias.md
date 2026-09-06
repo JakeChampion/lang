@@ -55,12 +55,34 @@ The scalar-override row is what makes this actionable: same alias, same spread,
 same rebind, clean. The only axis that moves is whether the overridden field
 carries rc state.
 
-## A lead, explicitly not a finding
+## Why the old buffer survives
 
-`emit_self_overwrite_reuse`'s REUSE arm releases each overridden field's old
-value per kind. Its shared/fresh arm releases the box and not the field. That is
-where to look; it is not established that it is the cause, and no fix site
-should be proposed from it without measuring first.
+The rebind emits `emit_field_reclaim_store`'s documented shape — rc-gated on the
+OLD BOX, `__field_reclaim_S` when it is unique, a box-only `__fern_arr_dec` when
+it is shared — and that function's comment states the premise the shared arm
+rests on:
+
+> a shared old box takes the box-only path: this slot gives up its counted
+> reference (`__fern_rc_dec`) so **the surviving owner reaches rc 1 and does the
+> deep work**
+
+Here the surviving owner is `var prev: S = s;`, a LOOP-SCOPED binding. Hoisting
+it to function scope and reassigning it, changing nothing else:
+
+| alias scope | self-host | native |
+|---|---|---|
+| loop-scoped | 40,200 / 20,200 / **960,000** | 20,200 / 20,200 / 0 |
+| function-scoped | 40,200 / 39,600 / **28,800** | 40,200 / 40,200 / 0 |
+
+Same allocation count, one scope change, and 20,000 leaked blocks become 600.
+So the hand-off is real and it is the loop-scoped owner that drops it: its own
+release is box-only too, so the deep work happens for nobody.
+
+Two things this does NOT settle. The **residual** — 600 blocks still leak where
+native is at 0, so this is a mechanism rather than necessarily the only one. And
+**where the fix belongs**: a loop-scoped struct binding could deep-drop at scope
+exit, or the shared arm could stop handing off deep work it cannot prove anyone
+will do. Both fit the evidence; neither is established.
 
 ## Method note
 
