@@ -46,7 +46,11 @@
 
 package ir
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/jakechampion/lang/internal/ast"
+)
 
 // ElideClosurePair drops dead closure-pair allocations in each
 // function. Programs without OpMakeClosure are unchanged in O(N)
@@ -60,12 +64,23 @@ import "strings"
 // (4 on wasm, 8 on native) — that's the OpConstI32 value this
 // pass keys off when recognising the reader pattern.
 func ElideClosurePair(prog *Program, pairEnvOffset int32) {
+	// A callee whose result type is a FuncType hands back a closure PAIR, so
+	// a local it initialises holds one even though no OpMakeClosure wrote the
+	// slot. That is the third way a slot comes to hold a pair, and the drop
+	// rewrite below needs it: `var add5 = makeAdder(5);` leaked its env on
+	// every call because the slot's provenance was invisible here (#8622).
+	returnsClosure := map[string]bool{}
 	for _, fn := range prog.Funcs {
-		elideClosurePairFunc(fn, pairEnvOffset)
+		if _, ok := fn.ReturnType.(*ast.FuncType); ok {
+			returnsClosure[fn.Name] = true
+		}
+	}
+	for _, fn := range prog.Funcs {
+		elideClosurePairFunc(fn, pairEnvOffset, returnsClosure)
 	}
 }
 
-func elideClosurePairFunc(fn *Func, pairEnvOffset int32) {
+func elideClosurePairFunc(fn *Func, pairEnvOffset int32, returnsClosure map[string]bool) {
 	// Two writer shapes contribute to a slot's eligibility:
 	//
 	//   (a) "root": OpStoreLocal preceded by OpMakeClosure.
@@ -94,6 +109,10 @@ func elideClosurePairFunc(fn *Func, pairEnvOffset int32) {
 		makeClosureIdx int // -1 if not a root writer
 		aliasSrc       int32
 		aliasOk        bool // true when storeIdx is preceded by OpLoadLocal
+		// callPair is true when the store is fed by a direct call whose
+		// callee returns a function value: the slot holds a pair the
+		// caller owns, even though nothing here built it.
+		callPair bool
 	}
 	type reader struct {
 		loadIdx       int
@@ -145,6 +164,10 @@ func elideClosurePairFunc(fn *Func, pairEnvOffset int32) {
 						failed[op.I32] = true
 					}
 				case OpCallDirect:
+					// Still ineligible for ELISION — the slot holds a real
+					// pair, so its readers cannot be collapsed. But the
+					// drop rewrite below wants to know it IS a pair.
+					w.callPair = returnsClosure[prev.Str]
 					failed[op.I32] = true
 				case OpConstI32:
 					if prev.I32 == 0 {
@@ -363,7 +386,7 @@ func elideClosurePairFunc(fn *Func, pairEnvOffset int32) {
 	pairSlot := map[int32]bool{}
 	for slot, ws := range writers {
 		for _, w := range ws {
-			if w.makeClosureIdx >= 0 {
+			if w.makeClosureIdx >= 0 || w.callPair {
 				pairSlot[slot] = true
 			}
 		}

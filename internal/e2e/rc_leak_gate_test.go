@@ -70,7 +70,6 @@ var rcCorpusLeakBaselineX86_64 = map[string]int64{
 	"closure_captures_arr_of_struct_churn_free":      14256,
 	"closure_captures_struct_churn_free":             6336,
 	"closure_churn_free":                             1584,
-	"closure_escapes_return":                         16,
 	"closure_capture_passed_to_owned_param":          64,
 	// The `m.without(k)` shapes, split out of one case so a fix to one
 	// can bank its own zero (#8276). They are NOT four times the old single
@@ -89,7 +88,6 @@ var rcCorpusLeakBaselineX86_64 = map[string]int64{
 	"pair_form_payload_borrowing_call":     144,
 	"stdlib_json_cursor_idiom":             1456,
 	"stdlib_json_roundtrip":                640,
-	"string_closure_capture_churn_free":    3200,
 	"tuple_return_scalar_cursor_recursion": 320,
 	// The hand-back half of the guarded arg-temp release: the callee
 	// returned the temp unchanged, so the guard declined the drop and the
@@ -114,7 +112,6 @@ var rcCorpusLeakBaselineArm64 = map[string]int64{
 	"closure_captures_arr_of_struct_churn_free":      14256,
 	"closure_captures_struct_churn_free":             6336,
 	"closure_churn_free":                             1584,
-	"closure_escapes_return":                         16,
 	"closure_capture_passed_to_owned_param":          80,
 	// The `m.without(k)` shapes, split out of one case so a fix to one
 	// can bank its own zero (#8276). They are NOT four times the old single
@@ -133,7 +130,6 @@ var rcCorpusLeakBaselineArm64 = map[string]int64{
 	"pair_form_payload_borrowing_call":     144,
 	"stdlib_json_cursor_idiom":             1664,
 	"stdlib_json_roundtrip":                720,
-	"string_closure_capture_churn_free":    6400,
 	"tuple_return_scalar_cursor_recursion": 320,
 	// See the x86-64 twin — the same guarded hand-back, byte for byte.
 	"consumed_array_arg_temp_released_and_guarded": 128,
@@ -171,7 +167,6 @@ var rcCorpusLeakBaselineWasm = map[string]int64{
 	"closure_captures_arr_of_struct_churn_free":     14256,
 	"closure_captures_struct_churn_free":            6336,
 	"closure_churn_free":                            1584,
-	"closure_escapes_return":                        16,
 	"consumed_array_arg_temp_released_and_guarded":  128,
 	// The `m.without(k)` shapes, split out of one case so a fix to one
 	// can bank its own zero (#8276). They are NOT four times the old single
@@ -191,7 +186,6 @@ var rcCorpusLeakBaselineWasm = map[string]int64{
 	"pair_form_payload_borrowing_call":               144,
 	"stdlib_json_cursor_idiom":                       1232,
 	"stdlib_json_roundtrip":                          560,
-	"string_closure_capture_churn_free":              3200,
 	"string_pushed_then_returned_bare_stays_refused": 320,
 	"tuple_return_scalar_cursor_recursion":           320,
 }
