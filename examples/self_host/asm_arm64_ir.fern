@@ -2747,12 +2747,14 @@ function emit_arm64_field_reclaim_one(s: asmcore.EmitState, sty: string): asmcor
         s = s.write("    cmp x1, x2\n");                       // == snap? (caller's)
         s = s.write("    beq .Lafr_" + san + "_skip" + ks + "\n");
         s = s.write(".Lafr_" + san + "_dec" + ks + ":\n");
-        if (op.kind == "arrarr_free") {
+        if (op.kind == "arrarr_free" || op.kind == "arrarr_free_enum") {
             if (op.ty.len() > 0) {
                 var esan: string = asmcore.sanitize_label(op.ty);
-                s = s.need("struct_arr_elems_drop:" + op.ty);
+                var ewalk: string = "struct_arr_elems_drop";
+                if (op.kind == "arrarr_free_enum") { ewalk = "enum_arr_elems_drop"; }
+                s = s.need(ewalk + ":" + op.ty);
                 s = s.write("    str x1, [sp, #-16]!\n");          // buffer
-                s = s.write("    bl __fn___struct_arr_elems_drop_" + esan + "\n");
+                s = s.write("    bl __fn___" + ewalk + "_" + esan + "\n");
                 s = s.write("    add sp, sp, #16\n");
                 s = s.write("    ldr x10, [sp, #48]\n");           // reload new
                 s = s.write("    ldr x11, [sp, #32]\n");           // reload old

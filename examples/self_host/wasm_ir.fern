@@ -9472,16 +9472,22 @@ pub function emit_wasm_field_reclaim_body(t: string, structs: irlower.StructTab,
                         && array_field_elem_is_ptr(ft, structs, mr_types)
                         && !util.has_str(fnptr_fields, "FNPTR:" + t + "." + structs.decls[si].fields[k].name)) {
                         dec = "(drop (call $__fern_arr_dec_ptr " + oldf + "))";
-                        // MULTI-LEVEL element deep-drop (#2649), the same helper
+                        // MULTI-LEVEL element deep-drop (#2649), the same helpers
                         // $__struct_drop_<T>'s array arm calls first: release each
-                        // element's OWN rc fields before arr_dec_ptr frees the
-                        // element boxes. struct_drop_types seeds the field-reclaim
-                        // types into its closure, so $__struct_arr_elems_drop_E
-                        // and the $__struct_drop_E it calls are both emitted.
+                        // element's OWN rc fields — or, for an enum array, each
+                        // live variant's rc payload (#8604) — before arr_dec_ptr
+                        // frees the element boxes. struct_drop_types seeds the
+                        // field-reclaim types into its closure, so the walk helper
+                        // and anything it calls are emitted for both.
                         if (irlower.is_struct_array_field_type(structs, ft)) {
                             var elem_ty: str = slice_unchecked(ft, 0, ft.len() - 2);
                             if (irlower.nested_field_deep_drop_ok(structs, elem_ty)) {
                                 dec = "(drop (call $__struct_arr_elems_drop_" + elem_ty + " " + oldf + ")) " + dec;
+                            }
+                        } else if (irlower.is_enum_array_field_type(structs, ft)) {
+                            var eelem_ty: str = slice_unchecked(ft, 0, ft.len() - 2);
+                            if (irlower.enum_arr_elems_walk_ok(structs, eelem_ty)) {
+                                dec = "(drop (call $__enum_arr_elems_drop_" + eelem_ty + " " + oldf + ")) " + dec;
                             }
                         }
                     }
