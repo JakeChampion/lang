@@ -85,9 +85,9 @@ if [ -z "$uu" ]; then
   if p=$(command -v uutils-yes 2>/dev/null); then
     uu=$(dirname "$p")
   elif p=$(command -v coreutils 2>/dev/null) && is_uutils_multicall "$p"; then
-    # Per-utility names go in a scratch dir, made on demand by uutils_bin.
+    # Per-utility names go under $out (made below, removed on exit) on
+    # demand by uutils_bin.
     uu_multicall="$p"
-    uu=$(mktemp -d)
   else
     for d in /nix/store/*-uutils-coreutils-*/bin; do
       [ -x "$d/uutils-yes" ] && { uu="$d"; break; }
@@ -125,6 +125,10 @@ fi
 
 go build -o bin/fern ./cmd/fern
 out=$(mktemp -d)
+if [ -n "$uu_multicall" ]; then
+  uu="$out/uutils"
+  mkdir -p "$uu"
+fi
 trap 'rm -rf "$out"' EXIT
 mkdir -p "$out/fern"
 
