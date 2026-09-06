@@ -144,6 +144,47 @@ pub function (b: BufWriter) write_byte(byte: i32): BufWriter {
   return b.write_string(string_from_bytes_unchecked([byte as u8]));
 }
 
+// `(b).write_u64(n)` — append `n` in decimal. Each digit is a static
+// one-byte literal appended in place, so formatting a number costs no
+// allocation — unlike `n.to_string()`, which makes a string per call
+// and is most of what a counting utility's output loop spends.
+pub function (b: BufWriter) write_u64(n: u64): BufWriter {
+  var p: u64 = 1 as u64;
+  while (n / p >= 10 as u64) {
+    p = p * (10 as u64);
+  }
+  var out: BufWriter = b;
+  var rest: u64 = n;
+  while (p > 0 as u64) {
+    out = out.write_string(__digit_literal((rest / p) as i32));
+    rest = rest % p;
+    p = p / (10 as u64);
+  }
+  return out;
+}
+
+// `(b).write_i64(n)` — `write_u64` with a sign.
+pub function (b: BufWriter) write_i64(n: i64): BufWriter {
+  if (n < 0 as i64) {
+    return b.write_string("-").write_u64((0 as u64) - (n as u64));
+  }
+  return b.write_u64(n as u64);
+}
+
+// The ten digits as literals: a static string each, never allocated.
+function __digit_literal(d: i32): string {
+  if (d == 0) { return "0"; }
+  if (d == 1) { return "1"; }
+  if (d == 2) { return "2"; }
+  if (d == 3) { return "3"; }
+  if (d == 4) { return "4"; }
+  if (d == 5) { return "5"; }
+  if (d == 6) { return "6"; }
+  if (d == 7) { return "7"; }
+  if (d == 8) { return "8"; }
+  return "9";
+}
+
 // `(b).flush()` — write whatever is buffered. Rebind the result.
 pub function (b: BufWriter) flush(): BufWriter {
   if (b.buf.len() == 0) {

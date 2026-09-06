@@ -84,6 +84,32 @@ function test_buf_writer_holds_below_cap(): test.TestOutcome {
   return test.assert_true(b.buffered() == 4);
 }
 
+function test_buf_writer_write_u64(): test.TestOutcome {
+  // Digit counts through the width ladder: 0 and 9 are one digit, 10 is
+  // two, and u64's maximum is twenty. Every digit is appended in place.
+  var b: io.BufWriter = io.buf_writer_new(stderr(), 1024);
+  b = b.write_u64(0 as u64);
+  var one: i32 = b.buffered();
+  b = b.write_u64(9 as u64);
+  var two: i32 = b.buffered();
+  b = b.write_u64(10 as u64);
+  var four: i32 = b.buffered();
+  b = b.write_u64(18446744073709551615 as u64);
+  return test.assert_true(one == 1 && two == 2 && four == 4 && b.buffered() == 24);
+}
+
+function test_buf_writer_write_i64(): test.TestOutcome {
+  // A sign for a negative value and none otherwise; i64's minimum keeps
+  // its magnitude through the two's-complement negation.
+  var b: io.BufWriter = io.buf_writer_new(stderr(), 1024);
+  b = b.write_i64(0 - 5 as i64);
+  var two: i32 = b.buffered();
+  b = b.write_i64(42 as i64);
+  var four: i32 = b.buffered();
+  b = b.write_i64(0 - 9223372036854775807 as i64 - 1 as i64);
+  return test.assert_true(two == 2 && four == 4 && b.buffered() == 24);
+}
+
 function test_buf_writer_flushes_at_cap(): test.TestOutcome {
   var b: io.BufWriter = io.buf_writer_new(stderr(), 8);
   b = b.write_string("abcd");
@@ -262,6 +288,8 @@ function main(): i32 {
   r = r.it("reset then reuse", test_reset_then_reuse);
   r = r.it("BufWriter holds below cap", test_buf_writer_holds_below_cap);
   r = r.it("BufWriter flushes at cap", test_buf_writer_flushes_at_cap);
+  r = r.it("BufWriter write_u64 digit widths", test_buf_writer_write_u64);
+  r = r.it("BufWriter write_i64 sign and minimum", test_buf_writer_write_i64);
   r = r.it("BufWriter close writes what is held", test_buf_writer_close_writes);
   r = r.it("BufWriter close reports the refused write", test_buf_writer_close_refused);
   r = r.it("BufWriter close with nothing held", test_buf_writer_close_empty);
