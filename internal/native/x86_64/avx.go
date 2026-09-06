@@ -129,7 +129,7 @@ func (a *Assembler) vpcmpeqb(ops []Operand) error {
 // the top bit of each of the 32 lanes into a GPR — the AVX2 widening of
 // pmovmskb's 16-bit mask to 32 bits, one bit per byte of the block.
 func (a *Assembler) vpmovmskb(ops []Operand) error {
-	if len(ops) != 2 || ops[0].kind != opReg || ops[0].size == 256 || ops[0].size < 32 ||
+	if len(ops) != 2 || ops[0].kind != opReg || (ops[0].size != 32 && ops[0].size != 64) ||
 		ops[1].kind != opReg || ops[1].size != 256 {
 		return fmt.Errorf("vpmovmskb expects r32/r64, ymm")
 	}

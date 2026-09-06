@@ -77,6 +77,24 @@ func countByteCases() []struct {
 		out = append(out, c{aab.String(), 'a'}, c{aab.String(), 'b'})
 	}
 
+	// x86-64's __count_byte widens to a 32-byte AVX2 main loop with the
+	// 16-byte SSE2 loop kept as its tail (this is the kernel behind `wc
+	// -l`'s hot loop; issue: 16 bytes/iteration ran 25% more user time than
+	// glibc's AVX2 memchr/rawmemchr at the same task), so every length here
+	// also needs a hit at each position straddling the 32-byte block
+	// boundary and the boundary between the AVX2 loop and its SSE2 tail —
+	// lengths just below/at/above one and two 32-byte blocks.
+	for _, n := range []int{31, 32, 33, 47, 48, 49, 63, 64, 65, 79, 80, 81} {
+		base := strings.Repeat("a", n)
+		out = append(out, c{base, 'z'}) // nothing matches
+		out = append(out, c{base, 'a'}) // EVERYTHING matches
+		for at := 0; at < n; at++ {
+			withHit := base[:at] + "z" + base[at+1:]
+			out = append(out, c{withHit, 'z'})
+			out = append(out, c{withHit, 'a'})
+		}
+	}
+
 	// Edge cases the sweep cannot express.
 	out = append(out,
 		c{"", 'a'},                             // empty haystack
