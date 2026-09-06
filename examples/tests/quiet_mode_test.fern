@@ -35,10 +35,10 @@ function test_quiet_preserves_counters(): test.TestOutcome {
     sub = sub.it("p1", trivial_pass);
     sub = sub.it("p2", trivial_pass);
     sub = sub.it("p3", trivial_pass);
-    if (sub.passed.get() != 3 || sub.failed.get() != 0 || sub.skipped.get() != 0) {
-        return test.fail("quiet counters off: p=" + sub.passed.get().to_string() +
-                    " f=" + sub.failed.get().to_string() +
-                    " s=" + sub.skipped.get().to_string());
+    if (sub.passed != 3 || sub.failed != 0 || sub.skipped != 0) {
+        return test.fail("quiet counters off: p=" + sub.passed.to_string() +
+                    " f=" + sub.failed.to_string() +
+                    " s=" + sub.skipped.to_string());
     }
     return test.pass();
 }
@@ -48,7 +48,7 @@ function test_quiet_skip_still_counted(): test.TestOutcome {
     // even though the SKIP line is suppressed.
     var sub: test.TestRunner = test.test_new_quiet("quiet-skip");
     sub = sub.skip("p1", "manual skip");
-    if (sub.skipped.get() == 1 && sub.passed.get() == 0) { return test.pass(); }
+    if (sub.skipped == 1 && sub.passed == 0) { return test.pass(); }
     return test.fail("skip counter off in quiet mode");
 }
 

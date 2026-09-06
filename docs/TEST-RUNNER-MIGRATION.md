@@ -10,7 +10,7 @@ every `*_test.go` in the repo and classifies each by
 The runner side is essentially feature-complete: every
 assertion shape the Go suite uses has a Fern equivalent,
 plus `--filter` / `--fail-fast` / `--quiet` CLI flags,
-fuzz harness, bench harness, subsuites + skip,
+fuzz harness, bench harness, subsuites + skip + merge,
 golden files, file/timing/JSON assertion families,
 Option/Result helpers, and so on.
 What's left is **which Go tests can flip to Fern now**
@@ -315,26 +315,30 @@ analogue and the migration playbook in
   defer_cleanup
 - CLI: `--filter` / `--fail-fast` / `--quiet`
 
-## The tally is shared, not threaded
+## The stream is counted, the value is threaded
 
-A `TestRunner` value is a **handle**, not an accumulator. The
-counts, the failure/skip summary text and the deferred-cleanup
-list live in `Cell`s created by `test_new` and shared by every
-handle derived from it, subsuites included. `__tap_result` is the
-only place an `ok` / `not ok` line is printed, and it bumps the
-counter for that line in the same step, so `finish()`'s plan,
-counts and exit code are read back from exactly what reached
-stdout.
+A `TestRunner` is a value: `it()` / `skip()` / `merge()` return a
+new one carrying the updated `passed` / `failed` / `skipped`
+counts, failure and skip summary text and deferred-cleanup list,
+so `r = r.it(...)` is the house style and a subsuite is folded
+back with `r = r.merge(child)`. What a dropped handle cannot lose
+is the TAP line it already printed: `it()` bumps the `emitted` /
+`emitted_failed` cells shared by every handle derived from one
+`test_new` (subsuites included, which is also what keeps their
+numbering monotonic) in the same step it prints, and `finish()`
+takes the plan, the fail count and the exit code from those.
 
 Two consequences for anyone migrating a suite:
 
-- `r = r.it(...)` remains the house style and every example
-  writes it that way, but forgetting the assignment no longer
-  loses the case. Before #8466 it printed `not ok`, then reported
-  `1..0` / `# fail 0` / exit 0.
-- **There is no `merge`.** A subsuite writes its parent's tally,
-  so `r.subsuite(name)` is complete on its own; the old
-  `parent.merge(child)` fold has been removed rather than left as
-  a no-op.
+- Forgetting the assignment no longer lets a suite report success.
+  Before #8466 `r.it("case", body);` printed `not ok`, then
+  reported `1..0` / `# fail 0` / exit 0. Now the plan and `# fail`
+  count the printed line, `finish()` prints
+  `# WARNING: N result(s) were discarded …` and exits 1 — for a
+  dropped passing result too, since the run can no longer say what
+  happened to it.
+- A subsuite handle that is never `merge`d back is the same
+  mistake: its cases are in the stream and the plan, but not in
+  the parent's counts, so the run exits 1 with the WARNING.
 
 See `docs/STDLIB.md` for the canonical reference.
