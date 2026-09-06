@@ -1488,6 +1488,46 @@ func TestArm64LeakCheckStringArgTempReclaim(t *testing.T) {
 	}
 }
 
+// The x86-64 open_* helpers copy the path into a NUL-terminated heap
+// buffer for openat(2) (#8711) and must return it once the syscall has
+// read it. The copy is the only per-open allocation whose size follows the
+// path's length, and an IoError holds the literal itself rather than a
+// copy, so the same loop over a 7-byte and a 200-byte path must leave
+// live_bytes identical — without pinning the boxes each open leaves behind.
+func TestX86_64OpenPathCopyFreed(t *testing.T) {
+	const n = 64
+	prog := func(path string) string {
+		return `function main(): i32 {
+    var i: i32 = 0;
+    var errs: i32 = 0;
+    while (i < ` + fmt.Sprint(n) + `) {
+        match (open_reader("` + path + `")) {
+            Ok(r) => { r.close(); },
+            Err(e) => { errs = errs + 1; }
+        }
+        i = i + 1;
+    }
+    if (errs != ` + fmt.Sprint(n) + `) { return 1; }
+    return 0;
+}`
+	}
+	short := "/no/pth"
+	long := "/nonexistent/" + strings.Repeat("d", 187)
+	if len(short) != 7 || len(long) != 200 {
+		t.Fatalf("path lengths %d / %d", len(short), len(long))
+	}
+	_, errShort, exitShort := runLeakCheckX86_64(t, prog(short))
+	_, errLong, exitLong := runLeakCheckX86_64(t, prog(long))
+	if exitShort != 0 || exitLong != 0 {
+		t.Fatalf("exit %d / %d, want 0 (every open must fail with ENOENT)", exitShort, exitLong)
+	}
+	_, _, liveShort := parseLeakCheckLine(t, errShort)
+	_, _, liveLong := parseLeakCheckLine(t, errLong)
+	if liveShort != liveLong {
+		t.Errorf("live_bytes short=%d long=%d: the open helper's NUL-terminated path copy is not returned after openat (%d bytes over %d opens)", liveShort, liveLong, liveLong-liveShort, n)
+	}
+}
+
 // Every IoError box __fern_io_error builds on x86-64 must carry the rc
 // header (__fern_alloc_box), whichever variant it is: the enum drop reads
 // the rc at data-8 and frees from there, so a bare __fern_alloc block makes

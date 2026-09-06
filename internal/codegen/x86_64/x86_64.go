@@ -1620,6 +1620,7 @@ func (g *generator) recordUse(target string) {
 		"open_reader", "open_writer", "open_appender",
 		"stdin", "stdout", "stderr":
 		g.usesReaderWriter = true
+		g.usesFree = true // open_*'s NUL-terminated path copy
 	case "__memset":
 		// Byte-grain fill used by the Map clear path.
 		g.usesMemset = true
@@ -13378,6 +13379,12 @@ func (g *generator) emitReaderWriterRuntime() {
 		g.emit(fmt.Sprintf("mov edx, %d", e.flags))
 		g.emit(fmt.Sprintf("mov r10d, %d", e.mode))
 		g.emitSyscall(257)
+		// The syscall has read pathz; return it before either result box.
+		g.emit("mov r12, rax")
+		g.emit("mov rdi, rbx")
+		g.emit("lea esi, [r13 + 1]")
+		g.emit("call __fern_free")
+		g.emit("mov rax, r12")
 		g.emit("test rax, rax")
 		g.emit("js .Lorw_err_" + e.sym)
 		// Success: alloc handle, store fd, wrap in Ok box.
