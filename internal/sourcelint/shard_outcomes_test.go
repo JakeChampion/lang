@@ -419,15 +419,22 @@ func TestClassifyVanishedShardsIsAdvisory(t *testing.T) {
 		{[]string{"123", "notanumber"}, "is not a whole number of minutes"},
 	} {
 		cmd := exec.Command("bash", append([]string{p}, tc.args...)...)
-		// No GH_TOKEN and no network expectation: gh either errors or is
-		// absent, and either way the script must not fail the build.
+		// The API has to be UNREACHABLE, and the test has to make it so rather
+		// than assume it.
 		//
 		// ciEnv, not os.Environ(): an ambient FERN_CI_JOBS_JSON substitutes a
 		// saved payload for the API call, so the script DIAGNOSES instead of
 		// failing to resolve. Exit 0 holds on both branches, so inheriting it
 		// left this passing without reaching the path it names (#6833) —
 		// which is also why the branch is now asserted, not just the code.
-		cmd.Env = ciEnv("GH_TOKEN=", "GITHUB_TOKEN=")
+		//
+		// Emptying the token vars is not enough on a developer's machine: `gh`
+		// also authenticates from its own config, so anyone who has run
+		// `gh auth login` reached the API, got an empty job list for run 0, and
+		// saw the DIAGNOSIS ("no non-success test-e2e-selfhost-* job") where the
+		// advisory string was asserted. Green on CI, red for every maintainer.
+		// GH_CONFIG_DIR at an empty dir is what makes the premise true on both.
+		cmd.Env = ciEnv("GH_TOKEN=", "GITHUB_TOKEN=", "GH_CONFIG_DIR="+t.TempDir())
 		out, err := cmd.CombinedOutput()
 		if err != nil {
 			t.Errorf("args %v: classifier must exit 0 even when it cannot diagnose; got %v: %s", tc.args, err, out)
