@@ -2230,10 +2230,12 @@ function variant_payload_type_at(s: Scope, type_name: string, idx: i32): Type {
 // this only pv.binding was bound, so a multi-binding payload pattern
 // (`Rect(w, h)`) rejected the 2nd+ name as an undefined E001 (#4345).
 function bind_variant_payloads(arm: Scope, look: Scope, pvin: ast.PatVariant): Scope {
-  // Every lookup below is keyed by the VARIANT name, so an enum-qualified
-  // pattern (`E.Wrap(k)`) drops its qualifier first — otherwise the struct sig
-  // missed and the payload names went unbound as E001s.
-  var pv: ast.PatVariant = ast.PatVariant { ...pvin, type_name: variant_pattern_name(pvin.type_name) };
+  // The payload TYPE is resolved through the enum, not the variant struct:
+  // variant decls are keyed by the bare name, so `A.W` and `C.W` leave two
+  // decls called `W` and a bare lookup answers for whichever was declared
+  // first. The qualifier is what tells them apart, so it is kept here and
+  // dropped only at the individual lookups that are genuinely keyed bare.
+  var pv: ast.PatVariant = pvin;
   // A record pattern that named every field but renamed one binds the DECLARED
   // names, as native does after rejecting the rename — so the body's reference
   // to the renamed local is the undefined-name error native also reports.
