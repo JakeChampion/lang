@@ -127,11 +127,13 @@ func (a *Assembler) vpcmpeqb(ops []Operand) error {
 
 // vpmovmskb encodes `vpmovmskb r32, ymm` (VEX.256.66.0F.WIG D7 /r): gather
 // the top bit of each of the 32 lanes into a GPR — the AVX2 widening of
-// pmovmskb's 16-bit mask to 32 bits, one bit per byte of the block.
+// pmovmskb's 16-bit mask to 32 bits, one bit per byte of the block. The
+// instruction has no 64-bit-result form (VEX.W is WIG here, not a real
+// operand-size switch), so only r32 is accepted.
 func (a *Assembler) vpmovmskb(ops []Operand) error {
-	if len(ops) != 2 || ops[0].kind != opReg || (ops[0].size != 32 && ops[0].size != 64) ||
+	if len(ops) != 2 || ops[0].kind != opReg || ops[0].size != 32 ||
 		ops[1].kind != opReg || ops[1].size != 256 {
-		return fmt.Errorf("vpmovmskb expects r32/r64, ymm")
+		return fmt.Errorf("vpmovmskb expects r32, ymm")
 	}
 	dst, src := ops[0], ops[1]
 	r, x, b := vexRXB(dst.reg, src)
