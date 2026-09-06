@@ -33,31 +33,24 @@ func ssaHelperName(name string) string {
 // runtime's property, not this one's.
 func (l *lifter) liftStrAppendRange(args []Value) {
 	w := l.strWords()
-	acc, slice := args[:w], args[w:]
-	var sliceVals []Value
-	if w == 2 {
-		a, b := l.out.AddCallPair(l.cur, slice...)
-		l.cur.Ops[len(l.cur.Ops)-1].Str = "__str_slice"
-		sliceVals = []Value{a, b}
-	} else {
-		v := l.out.AddOp(l.cur, OpCall, slice...)
-		o := l.cur.Ops[len(l.cur.Ops)-1]
-		o.Str = "__str_slice"
-		o.Width, o.Addr = 64, true
-		sliceVals = []Value{v}
+	slice := l.callStringHelper("__str_slice", args[w:])
+	l.stack = append(l.stack, l.callStringHelper("__str_concat", append(append([]Value(nil), args[:w]...), slice...))...)
+}
+
+// callStringHelper emits a call to a runtime helper returning one string,
+// under whichever ABI this function was lowered for: a value pair on the
+// two-word ABIs, a single address on the one-word one.
+func (l *lifter) callStringHelper(name string, args []Value) []Value {
+	if l.strWords() == 2 {
+		a, b := l.out.AddCallPair(l.cur, args...)
+		l.cur.Ops[len(l.cur.Ops)-1].Str = name
+		return []Value{a, b}
 	}
-	joined := append(append([]Value(nil), acc...), sliceVals...)
-	if w == 2 {
-		a, b := l.out.AddCallPair(l.cur, joined...)
-		l.cur.Ops[len(l.cur.Ops)-1].Str = "__str_concat"
-		l.stack = append(l.stack, a, b)
-		return
-	}
-	v := l.out.AddOp(l.cur, OpCall, joined...)
+	v := l.out.AddOp(l.cur, OpCall, args...)
 	o := l.cur.Ops[len(l.cur.Ops)-1]
-	o.Str = "__str_concat"
-	o.Width, o.Addr = 64, true
-	l.stack = append(l.stack, v)
+	o.Str = name
+	applyCallResultWidth(o, ir.ResAddr)
+	return []Value{v}
 }
 
 // applyCallResultWidth transfers an ir call's result classification onto the
