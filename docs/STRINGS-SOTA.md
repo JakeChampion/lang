@@ -374,6 +374,13 @@ bytes 757 KB → 0). That shape is the stdlib's other common one — 25 sites,
 including `std/http`'s response-header assembly — against 711 single-join
 self-appends.
 
+`acc = acc + slice_unchecked(s, lo, hi)` — the hottest shape in every
+line-oriented utility — takes `__fern_str_append_range`, which reads the
+range straight out of the source rather than building a slice string and
+copying it in (#8770): one memcpy where there were two and an allocation.
+8M appends of an 8-byte range go 183 ms to 101 ms, and `cat -E` drops 16%
+of its retired instructions.
+
 What that does **not** buy is amortised growth: the 8-byte `[rc][len]`
 header has no capacity slot, so the class step is the allocator's 16-byte
 granularity and a long accumulator still re-copies its prefix once per
