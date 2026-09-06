@@ -2811,6 +2811,16 @@ function check_call_expr(c: ast.ExprCall, s: Scope): Type {
             }
           }
         }
+        // The tuple / struct / nested-pattern desugars carry the value in a
+        // LOCAL instead of arm `return`s, so their body is the three-statement
+        // value block and the arm types are the stores into that local. Left
+        // untyped, an unannotated `var got = match (t) { (q, n) => q }` sized
+        // its slot from a structural walk that cannot see into the block, and a
+        // string went into an i32 slot with no diagnostic.
+        var vlocal: string = vb_local_name(lm.body);
+        if (lm.params.len() == 0 && vlocal.len() > 0) {
+          return vb_store_type(lm.body, vlocal, s);
+        }
       },
       _ => {}
     }
@@ -13264,7 +13274,13 @@ pub function check_module(raw_mod: parser.Module): ModuleTypes {
   // driver means a defaulted call arrives complete however this checker is
   // reached, and a driver that already filled sees the same diagnostics again
   // because a call that did not resolve was left as written.
-  var (mod, fda_diags) = parser.fill_default_args_with_diags(raw_mod);
+  var (filled, fda_diags) = parser.fill_default_args_with_diags(raw_mod);
+  // A value block's local is declared from the first arm's syntax alone
+  // (parser.if_expr_rt); re-declare it from the type its arms assign before
+  // anything is typed against it, or a legal `string` / `i64` arm value reads
+  // as a store into an i32 (#8657). Lowering gets the same rewrite through
+  // annotate_module.
+  var mod: parser.Module = retype_value_blocks(filled);
   // Collect struct decls first; func sigs + union aliases
   // both use them to resolve names. Union aliases come next
   // so func sigs can reference union-typed params / returns.
@@ -14866,11 +14882,365 @@ function annotate_func(fd: parser.FuncDecl, mt: ModuleTables): parser.FuncDecl {
 // lowers through the IR path, #5657) gets the same annotation coverage a
 // function body does.
 pub function annotate_module(mod: parser.Module): parser.Module {
-  var mt: ModuleTables = build_module_tables(mod);
+  // The same value-local re-declaration check_module types against, so the
+  // module handed to lowering carries the arms' type rather than the parser's
+  // syntactic guess (#8657).
+  var rmod: parser.Module = retype_value_blocks(mod);
+  var mt: ModuleTables = build_module_tables(rmod);
   var nfuncs: parser.FuncDecl[] = [];
-  for func in mod.funcs {
+  for func in rmod.funcs {
     nfuncs = nfuncs.append(annotate_func(func, mt));
   }
-  var ntop: ast.Stmt[] = annotate_block(mod.top_stmts, new_scope_full(mt.sigs, mt.structs, mt.unions, mt.methods, mt.imports));
-  return parser.Module { funcs: nfuncs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: ntop, enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs, trait_decls: mod.trait_decls };
+  var ntop: ast.Stmt[] = annotate_block(rmod.top_stmts, new_scope_full(mt.sigs, mt.structs, mt.unions, mt.methods, mt.imports));
+  return parser.Module { funcs: nfuncs, structs: rmod.structs, aliases: rmod.aliases, imports: rmod.imports, top_stmts: ntop, enums: rmod.enums, resources: rmod.resources, exports: rmod.exports, impls: rmod.impls, trait_reqs: rmod.trait_reqs, trait_decls: rmod.trait_decls };
+}
+
+// ---------------------------------------------------------------------------
+// Value-block local retyping (#8657)
+//
+// A `match` in value position desugars to an IIFE, and the tuple- / struct- /
+// nested-pattern desugars route their arm values through a synthesised local
+// (parser.IfChain.value_local) rather than through `return`. The parser has to
+// declare that local before it can know what the arms produce, so it types it
+// from the first arm's SYNTAX (parser.if_expr_rt), where a bare pattern binder
+// reads as i32 — the arm store is then E003 on legal code and the slot the
+// lowering sizes is an i32 holding a string. The types exist here, so the
+// declaration (and the IIFE's matching return tag) is rewritten to the type the
+// arms actually assign.
+//
+// The pass is conservative in both directions: it rewrites only when every
+// store agrees on one resolved type that has a literal zero, and leaves the
+// parser's declaration alone otherwise.
+
+// vb_local_name returns the value local a value block routes its arm values
+// through — a body shaped `[var v = <zero>; <chain>; return v;]` — or "" for
+// any other body.
+function vb_local_name(body: ast.Stmt[]): string {
+  if (body.len() < 3) {
+    return "";
+  }
+  var name: string = "";
+  match (body[0]) {
+    ast.StmtVar(v) => {
+      if (v.type_name.len() > 0 || name_has_comma(v.name)) {
+        return "";
+      }
+      name = v.name;
+    },
+    _ => {
+      return "";
+    }
+  }
+  match (body[body.len() - 1]) {
+    ast.StmtReturn(r) => {
+      if (ow_ident_name(r.value) == name) {
+        return name;
+      }
+    },
+    _ => {}
+  }
+  return "";
+}
+
+// vb_assigned_types collects the checked type of every value stored into `name`
+// by the desugar chain, threading the scope the chain's own bindings introduce
+// (the tuple destructure and the per-arm binder decls the desugar emits).
+function vb_assigned_types(stmts: ast.Stmt[], name: string, s: Scope, acc: Type[]): Type[] {
+  var out: Type[] = acc;
+  var cur: Scope = s;
+  for st in stmts {
+    match (st) {
+      ast.StmtAssign(a) => {
+        if (a.target == name) {
+          out = out.append(check_expr(a.value, cur));
+        }
+      },
+      ast.StmtIf(f) => {
+        out = vb_assigned_types(f.then_body, name, cur, out);
+        out = vb_assigned_types(f.else_body, name, cur, out);
+      },
+      ast.StmtWhile(w) => {
+        out = vb_assigned_types(w.body, name, cur, out);
+      },
+      ast.StmtFor(fr) => {
+        out = vb_assigned_types(fr.body, name, annotate_for_scope(fr, cur), out);
+      },
+      ast.StmtMatch(m) => {
+        for arm in m.arms {
+          out = vb_assigned_types(arm.body, name, annotate_arm_scope(arm, cur), out);
+        }
+      },
+      ast.StmtDefer(d) => {
+        var one: ast.Stmt[] = [d.action];
+        out = vb_assigned_types(one, name, cur, out);
+      },
+      _ => {}
+    }
+    cur = bind_stmt(st, cur);
+  }
+  return out;
+}
+
+// vb_unified returns the type every store agrees on, or unknown when they
+// disagree, one is unresolved, or nothing is stored at all.
+function vb_unified(ts: Type[]): Type {
+  if (ts.len() == 0) {
+    return t_unknown("value block stores nothing");
+  }
+  var first: Type = ts[0];
+  if (is_unknown(first)) {
+    return first;
+  }
+  var i: i32 = 1;
+  while (i < ts.len()) {
+    if (!type_eq(ts[i], first)) {
+      return t_unknown("value block arms disagree");
+    }
+    i = i + 1;
+  }
+  return first;
+}
+
+// vb_store_type is the type a value-LOCAL block evaluates to: the one type
+// every store into its value local agrees on, or unknown. `s` is the scope the
+// block itself sits in.
+function vb_store_type(body: ast.Stmt[], name: string, s: Scope): Type {
+  var chain: ast.Stmt[] = [];
+  var i: i32 = 1;
+  while (i < body.len() - 1) {
+    chain = chain.append(body[i]);
+    i = i + 1;
+  }
+  var none: Type[] = [];
+  return vb_unified(vb_assigned_types(chain, name, bind_stmt(body[0], s), none));
+}
+
+// vb_local_tag names `t` as the value local's declaration spells it, or "" for a
+// type with no literal zero to declare it with (a struct, an array, a tuple),
+// which keeps the parser's declaration.
+function vb_local_tag(t: Type): string {
+  // A `str` VIEW is spelled "string" by the irlower tag vocabulary but has no
+  // literal to declare a local with — `""` is an OWNED string — so it keeps the
+  // parser's declaration, like the aggregates.
+  if (type_label(t) == "str") {
+    return "";
+  }
+  var tag: string = type_to_irtag(t);
+  if (tag == "string" || tag == "boolean" || tag == "f64" || tag == "char"
+      || tag == "i32" || tag == "i64" || tag == "u32" || tag == "u64" || tag == "u8") {
+    return tag;
+  }
+  return "";
+}
+
+// vb_zero_of builds the declaration placeholder for a value local of type
+// `tag`. The integer widths carry their suffix: the local is declared
+// unannotated, so a bare `0` is what makes it an i32 — the width and the
+// signedness have nowhere else to ride, and the store the arms make is checked
+// against exactly this declaration.
+function vb_zero_of(tag: string): ast.Expr {
+  if (tag == "string") {
+    return ast.ExprString { value: "", line: 0, col: 0 };
+  }
+  if (tag == "boolean") {
+    return ast.ExprBool { value: false };
+  }
+  if (tag == "f64") {
+    return ast.ExprNumber { text: "0", suffix: "", raw: "", is_float: true, line: 0, col: 0 };
+  }
+  if (tag == "i32") {
+    return ast.ExprNumber { text: "0", suffix: "", raw: "", is_float: false, line: 0, col: 0 };
+  }
+  return ast.ExprNumber { text: "0", suffix: tag, raw: "", is_float: false, line: 0, col: 0 };
+}
+
+// vb_retype rewrites one value block whose value local the arms contradict.
+// Everything else — including a value block whose local the parser already
+// typed correctly — is returned untouched.
+function vb_retype(e: ast.Expr, s: Scope): ast.Expr {
+  match (e) {
+    ast.ExprCall(c) => {
+      if (!parser.is_value_block(c)) {
+        return e;
+      }
+      var body: ast.Stmt[] = parser.vb_body(c);
+      var name: string = vb_local_name(body);
+      if (name.len() == 0) {
+        return e;
+      }
+      var want: Type = vb_store_type(body, name, s);
+      if (is_unknown(want)) {
+        return e;
+      }
+      var tag: string = vb_local_tag(want);
+      if (tag.len() == 0) {
+        return e;
+      }
+      var nbody: ast.Stmt[] = [];
+      match (body[0]) {
+        ast.StmtVar(v) => {
+          if (type_eq(check_expr(v.init, s), want)) {
+            return e;
+          }
+          nbody = nbody.append(ast.StmtVar { ...v, init: vb_zero_of(tag) });
+        },
+        _ => {
+          return e;
+        }
+      }
+      var j: i32 = 1;
+      while (j < body.len()) {
+        nbody = nbody.append(body[j]);
+        j = j + 1;
+      }
+      match (c.callee) {
+        ast.ExprLambda(lm) => {
+          return ast.ExprCall { ...c, callee: ast.ExprLambda { ...lm, ret_type: tag, body: nbody } };
+        },
+        _ => {
+          return e;
+        }
+      }
+    },
+    _ => {
+      return e;
+    }
+  }
+  return e;
+}
+
+// vb_expr rewrites every value block one expression holds. map_expr is
+// post-order, so a value block nested inside another is retyped before the
+// store that reads it is typed.
+function vb_expr(e: ast.Expr, s: Scope): ast.Expr {
+  function at(x: ast.Expr): ast.Expr {
+    return vb_retype(x, s);
+  }
+  return astwalk.map_expr(e, at);
+}
+
+function vb_stmt(st: ast.Stmt, s: Scope): ast.Stmt {
+  match (st) {
+    ast.StmtVar(v) => {
+      return ast.StmtVar { ...v, init: vb_expr(v.init, s) };
+    },
+    ast.StmtReturn(r) => {
+      return ast.StmtReturn { ...r, value: vb_expr(r.value, s) };
+    },
+    ast.StmtExpr(x) => {
+      return ast.StmtExpr { ...x, value: vb_expr(x.value, s) };
+    },
+    ast.StmtAssign(a) => {
+      return ast.StmtAssign { ...a, value: vb_expr(a.value, s) };
+    },
+    ast.StmtIf(f) => {
+      return ast.StmtIf { ...f, cond: vb_expr(f.cond, s), then_body: vb_stmts(f.then_body, s), else_body: vb_stmts(f.else_body, s) };
+    },
+    ast.StmtWhile(w) => {
+      return ast.StmtWhile { ...w, cond: vb_expr(w.cond, s), body: vb_stmts(w.body, s) };
+    },
+    ast.StmtFor(fr) => {
+      return ast.StmtFor { ...fr, iter: vb_expr(fr.iter, s), body: vb_stmts(fr.body, annotate_for_scope(fr, s)) };
+    },
+    ast.StmtMatch(m) => {
+      var narms: ast.MatchArm[] = [];
+      for arm in m.arms {
+        var asc: Scope = annotate_arm_scope(arm, s);
+        var g: ast.Expr = arm.guard;
+        if (arm.has_guard) {
+          g = vb_expr(arm.guard, asc);
+        }
+        narms = narms.append(ast.MatchArm { ...arm, body: vb_stmts(arm.body, asc), guard: g });
+      }
+      return ast.StmtMatch { ...m, scrutinee: vb_expr(m.scrutinee, s), arms: narms };
+    },
+    ast.StmtDefer(d) => {
+      return ast.StmtDefer { ...d, action: vb_stmt(d.action, s) };
+    },
+    _ => {
+      return st;
+    }
+  }
+  return st;
+}
+
+function vb_stmts(stmts: ast.Stmt[], s: Scope): ast.Stmt[] {
+  var out: ast.Stmt[] = [];
+  var cur: Scope = s;
+  for stmt in stmts {
+    out = out.append(vb_stmt(stmt, cur));
+    cur = bind_stmt(stmt, cur);
+  }
+  return out;
+}
+
+// vb_at_value_local is the pre-scan's per-node contribution: a value block that
+// routes its value through a local.
+function vb_at_value_local(x: ast.Expr, acc: boolean): boolean {
+  if (acc) {
+    return true;
+  }
+  match (x) {
+    ast.ExprCall(c) => {
+      if (!parser.is_value_block(c)) {
+        return false;
+      }
+      return vb_local_name(parser.vb_body(c)).len() > 0;
+    },
+    _ => {
+      return false;
+    }
+  }
+  return false;
+}
+
+// vb_holds_local reports whether a body holds a value block with a value local
+// at all. It is the cheap syntactic test that keeps the scoped rewrite (and the
+// module tables it needs) off the modules that have none.
+function vb_holds_local(stmts: ast.Stmt[]): boolean {
+  var found: boolean = false;
+  for stmt in stmts {
+    found = astwalk.fold_stmt_pruned(stmt, found, vb_at_value_local, astwalk.descend_all);
+  }
+  return found;
+}
+
+// retype_value_blocks re-declares every value-block local the parser typed from
+// syntax alone with the type its arms assign. Runs ahead of the checker's own
+// diagnostics and of lowering, so both see one declaration.
+pub function retype_value_blocks(mod: parser.Module): parser.Module {
+  // One pre-scan pass, kept as a per-function flag: the scan runs on every
+  // compile, and the module tables below are worth building only for a module
+  // that has a value local somewhere.
+  var top_hit: boolean = vb_holds_local(mod.top_stmts);
+  var hits: boolean[] = [];
+  var any: boolean = top_hit;
+  for fn in mod.funcs {
+    var hit: boolean = vb_holds_local(fn.body);
+    hits = hits.append(hit);
+    if (hit) {
+      any = true;
+    }
+  }
+  if (!any) {
+    return mod;
+  }
+  var mt: ModuleTables = build_module_tables(mod);
+  var nfuncs: parser.FuncDecl[] = [];
+  var i: i32 = 0;
+  while (i < mod.funcs.len()) {
+    var func: parser.FuncDecl = mod.funcs[i];
+    if (hits[i]) {
+      var fs: Scope = build_func_scope(func, mt.sigs, mt.structs, mt.unions, mt.methods, mt.imports);
+      nfuncs = nfuncs.append(parser.FuncDecl { ...func, body: vb_stmts(func.body, fs) });
+    } else {
+      nfuncs = nfuncs.append(func);
+    }
+    i = i + 1;
+  }
+  var ntop: ast.Stmt[] = mod.top_stmts;
+  if (top_hit) {
+    ntop = vb_stmts(mod.top_stmts, new_scope_full(mt.sigs, mt.structs, mt.unions, mt.methods, mt.imports));
+  }
+  return parser.Module { ...mod, funcs: nfuncs, top_stmts: ntop };
 }
