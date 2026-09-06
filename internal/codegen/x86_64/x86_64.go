@@ -13216,10 +13216,34 @@ func (g *generator) emitReaderWriterRuntime() {
 		g.label(e.sym)
 		g.emit("push rbp")
 		g.emit("mov rbp, rsp")
-		g.emit("push rbx")     // path
-		g.emit("push r12")     // handle / errno scratch
-		g.emit("mov rbx, rdi") // path
-		// openat(AT_FDCWD, path, flags, mode)
+		g.emit("push rbx") // NUL-terminated path copy
+		g.emit("push r12") // handle / errno scratch
+		g.emit("push r13") // path byte length
+		g.emit("push r14") // path byte pointer
+		// 5 pushes ⇒ rsp ≡ 8 mod 16; sub 24 realigns and buys:
+		//   [rbp-40] emitStrDataPtr inline-spill scratch
+		//   [rbp-48] the original path string value (io_error arg)
+		g.emit("sub rsp, 24")
+		g.emit("mov [rbp - 48], rdi")
+		// openat wants a NUL-terminated C string, and an SSO path is
+		// seven bytes in the register rather than a pointer at all, so
+		// the bytes are copied out before the syscall sees them.
+		g.emitStrLen("r13d", "rdi")
+		g.emitStrDataPtr("r14", "rdi", "[rbp - 40]")
+		g.emit("lea edi, [r13 + 1]")
+		g.emit("call __fern_alloc")
+		g.emit("mov rbx, rax")
+		g.emit("xor ecx, ecx")
+		g.label(".Lorw_cp_" + e.sym)
+		g.emit("cmp rcx, r13")
+		g.emit("jae .Lorw_cpd_" + e.sym)
+		g.emit("mov al, [r14 + rcx]")
+		g.emit("mov [rbx + rcx], al")
+		g.emit("add rcx, 1")
+		g.emit("jmp .Lorw_cp_" + e.sym)
+		g.label(".Lorw_cpd_" + e.sym)
+		g.emit("mov byte ptr [rbx + r13], 0")
+		// openat(AT_FDCWD, pathz, flags, mode)
 		g.emit("mov edi, -100")
 		g.emit("mov rsi, rbx")
 		g.emit(fmt.Sprintf("mov edx, %d", e.flags))
@@ -13238,8 +13262,8 @@ func (g *generator) emitReaderWriterRuntime() {
 		g.emit("jmp .Lorw_ret_" + e.sym)
 		g.label(".Lorw_err_" + e.sym)
 		g.emit("neg rax")
-		g.emit("mov edi, eax") // errno
-		g.emit("mov rsi, rbx") // path
+		g.emit("mov edi, eax")        // errno
+		g.emit("mov rsi, [rbp - 48]") // the path as a Fern string
 		g.emit("call __fern_io_error")
 		g.emit("mov r12, rax") // IoError ptr
 		g.emit("mov edi, 16")
@@ -13247,6 +13271,9 @@ func (g *generator) emitReaderWriterRuntime() {
 		g.emit("mov dword ptr [rax], 1") // Err
 		g.emit("mov [rax + 8], r12")
 		g.label(".Lorw_ret_" + e.sym)
+		g.emit("add rsp, 24")
+		g.emit("pop r14")
+		g.emit("pop r13")
 		g.emit("pop r12")
 		g.emit("pop rbx")
 		g.emit("pop rbp")
