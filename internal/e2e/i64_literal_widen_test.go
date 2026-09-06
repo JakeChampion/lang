@@ -55,6 +55,26 @@ function main(): i32 {
 }
 `
 
+// wideLiteralSiblingsProgram pins the two shapes the compound rule reaches
+// through their own walks: a generic call whose T is pinned by nothing but
+// the literal, and comparisons — whose boolean result means nothing outside
+// them ever settles the operands, so they take the default at the comparison
+// itself. Each shape adds a distinct bit; a correct run exits 15, and one that
+// truncates every literal to the i32 default exits 0.
+const wideLiteralSiblingsProgram = `
+function id[T](v: T): T { return v; }
+function main(): i32 {
+  var t = id(4611686018427387904);
+  var c = 0;
+  if (t > 0) { c = c + 1; }
+  if (4611686018427387904 > 1) { c = c + 2; }
+  var b = 1 < 4611686018427387904;
+  if (b) { c = c + 4; }
+  if (4611686018427387904 != 0) { c = c + 8; }
+  return c;
+}
+`
+
 func TestInterpUnannotatedBigLiteralWidens(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	run := func(src string, want int, what string) {
@@ -70,6 +90,7 @@ func TestInterpUnannotatedBigLiteralWidens(t *testing.T) {
 	}
 	run(unannotatedBigLiteralProgram, 0, "big-literal widen (stays positive)")
 	run(compoundBigLiteralProgram, 44, "big-literal compound")
+	run(wideLiteralSiblingsProgram, 15, "big-literal generic call and comparisons")
 }
 
 func TestX86_64UnannotatedBigLiteralWidens(t *testing.T) {
@@ -81,6 +102,9 @@ func TestX86_64UnannotatedBigLiteralWidens(t *testing.T) {
 	}
 	if _, code := compileAndRunX86_64(t, compoundBigLiteralProgram); code != 44 {
 		t.Errorf("x86-64 big-literal compound: exit = %d, want 44", code)
+	}
+	if _, code := compileAndRunX86_64(t, wideLiteralSiblingsProgram); code != 15 {
+		t.Errorf("x86-64 big-literal generic call and comparisons: exit = %d, want 15", code)
 	}
 }
 
@@ -94,6 +118,9 @@ func TestArm64UnannotatedBigLiteralWidens(t *testing.T) {
 	if _, code := compileAndRunArm64(t, compoundBigLiteralProgram); code != 44 {
 		t.Errorf("arm64 big-literal compound: exit = %d, want 44", code)
 	}
+	if _, code := compileAndRunArm64(t, wideLiteralSiblingsProgram); code != 15 {
+		t.Errorf("arm64 big-literal generic call and comparisons: exit = %d, want 15", code)
+	}
 }
 
 func TestWASMUnannotatedBigLiteralWidens(t *testing.T) {
@@ -105,5 +132,8 @@ func TestWASMUnannotatedBigLiteralWidens(t *testing.T) {
 	}
 	if code := runWasm(t, compoundBigLiteralProgram); code != 44 {
 		t.Errorf("wasm big-literal compound: exit = %d, want 44", code)
+	}
+	if code := runWasm(t, wideLiteralSiblingsProgram); code != 15 {
+		t.Errorf("wasm big-literal generic call and comparisons: exit = %d, want 15", code)
 	}
 }

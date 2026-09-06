@@ -11224,7 +11224,7 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 			// an i32 value still wraps at 32 bits (#3581); it is the
 			// literal-only init whose width the literal decides.
 			if gn, ok := got.(ast.NumberType); ok && gn.Polymorphic {
-				if def := polymorphicIntDefault(n.Init); def.Width == 64 {
+				if def := c.polymorphicIntDefault(n.Init); def.Width == 64 {
 					c.settleInt(n.Init, def)
 					got = def
 				}
@@ -13499,12 +13499,12 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			// the narrowing rule below keeps `300 as u8` an E047: `1 as f64`
 			// is a float literal, and a wide one (`4611686018427387904 as f64`)
 			// needs the target to escape the i32 default.
-			c.settleNumeric(n.Inner, castOperandInt(inner, n.Inner))
+			c.settleNumeric(n.Inner, c.castOperandInt(inner, n.Inner))
 		} else if _, tgtIsChar := n.Target.(ast.CharType); tgtIsChar {
 			// `65 as char`: `char` is not a NumberType, so settle the inner
 			// at its own integer type rather than handing settleNumeric a
 			// non-numeric target.
-			c.settleNumeric(n.Inner, castOperandInt(inner, n.Inner))
+			c.settleNumeric(n.Inner, c.castOperandInt(inner, n.Inner))
 		} else if nt, tgtNum := n.Target.(ast.NumberType); tgtNum &&
 			nt.NormalWidth() > 0 && nt.NormalWidth() < 32 &&
 			!isBareNumericLiteral(n.Inner) {
@@ -13525,7 +13525,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			// so `300 as u8` stays the E047 it should be — that is a typo, not
 			// an arithmetic intent, and it is the case the widening rule above
 			// (`4611686018427387904 as u64`) was written for.
-			c.settleNumeric(n.Inner, castOperandInt(inner, n.Inner))
+			c.settleNumeric(n.Inner, c.castOperandInt(inner, n.Inner))
 		} else {
 			c.settleNumeric(n.Inner, n.Target)
 		}
@@ -15060,6 +15060,13 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				}
 				return ast.BoolType{}
 			}
+			// The result is a boolean, so no outer context ever reaches the
+			// operands: two polymorphic sides take the default here.
+			if common.Polymorphic {
+				if def := c.polymorphicIntDefault(n.Left, n.Right); def.Width == 64 {
+					common = def
+				}
+			}
 			c.settleNumeric(n.Left, common)
 			c.settleNumeric(n.Right, common)
 			if ln, ok := lt.(ast.NumberType); ok {
@@ -15079,11 +15086,21 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			// equality check fires. `(x: i64) == 0` should not
 			// error on width mismatch — the `0` is a polymorphic
 			// literal that locks in i64 here. Same for floats.
-			if common, common_ok := commonIntegerWidth(lt, rt); common_ok && !common.Polymorphic {
-				c.settleNumeric(n.Left, common)
-				c.settleNumeric(n.Right, common)
-				lt = c.postSettleType(n.Left, lt)
-				rt = c.postSettleType(n.Right, rt)
+			if common, common_ok := commonIntegerWidth(lt, rt); common_ok {
+				// Two polymorphic sides take the default here — the boolean
+				// result means no outer context ever reaches them.
+				if common.Polymorphic {
+					common = c.polymorphicIntDefault(n.Left, n.Right)
+					if common.Width != 64 {
+						common = ast.NumberType{Polymorphic: true}
+					}
+				}
+				if !common.Polymorphic {
+					c.settleNumeric(n.Left, common)
+					c.settleNumeric(n.Right, common)
+					lt = c.postSettleType(n.Left, lt)
+					rt = c.postSettleType(n.Right, rt)
+				}
 			} else if common, common_ok := commonFloatWidth(lt, rt); common_ok && !common.Polymorphic {
 				c.settleNumeric(n.Left, common)
 				c.settleNumeric(n.Right, common)
@@ -16953,22 +16970,25 @@ func (c *checker) postSettleType(e ast.Expr, prior ast.Type) ast.Type {
 	return prior
 }
 
-// polymorphicIntDefault is the width a still-polymorphic integer expression
-// settles at when no context names one: i32, or i64 when an unsuffixed literal
-// anywhere in it lies outside the i32 range (#3676). Such a constant has no i32
-// reading, so lowering it at the default would truncate it silently — and a
-// literal inside `3 - 4611686018427387904` or an if-expression arm is no more
-// readable at i32 than a bare one (#8668). The walk covers the literal-only
-// shapes settleInt descends; anything with a type of its own (an identifier, a
-// call, a suffixed literal) has already settled and commits the tree itself.
-func polymorphicIntDefault(e ast.Expr) ast.NumberType {
-	if unsettledIntLitExceedsI32(e, false) {
-		return ast.NumberType{Width: 64, Signed: true}
+// polymorphicIntDefault is the width still-polymorphic integer expressions
+// settle at when no context names one: i32, or i64 when an unsuffixed literal
+// anywhere in them lies outside the i32 range (#3676). Such a constant has no
+// i32 reading, so lowering it at the default would truncate it silently — and a
+// literal inside `3 - 4611686018427387904`, an if-expression arm or a generic
+// call's `T` argument is no more readable at i32 than a bare one (#8668). The
+// walk covers the shapes settleInt descends; anything with a type of its own
+// (an identifier, a non-generic call, a suffixed literal) has already settled
+// and commits the tree itself.
+func (c *checker) polymorphicIntDefault(es ...ast.Expr) ast.NumberType {
+	for _, e := range es {
+		if c.unsettledIntLitExceedsI32(e, false) {
+			return ast.NumberType{Width: 64, Signed: true}
+		}
 	}
 	return ast.NumberType{Width: 32, Signed: true}
 }
 
-func unsettledIntLitExceedsI32(e ast.Expr, negated bool) bool {
+func (c *checker) unsettledIntLitExceedsI32(e ast.Expr, negated bool) bool {
 	switch x := e.(type) {
 	case *ast.NumberLit:
 		if x.IsFloat || x.Width != 0 {
@@ -16978,9 +16998,9 @@ func unsettledIntLitExceedsI32(e ast.Expr, negated bool) bool {
 	case *ast.Unary:
 		switch x.Op {
 		case "-":
-			return unsettledIntLitExceedsI32(x.Operand, !negated)
+			return c.unsettledIntLitExceedsI32(x.Operand, !negated)
 		case "+":
-			return unsettledIntLitExceedsI32(x.Operand, negated)
+			return c.unsettledIntLitExceedsI32(x.Operand, negated)
 		}
 	case *ast.Binary:
 		if x.IntWidth != 0 || x.FloatWidth != 0 || x.IsStringConcat {
@@ -16988,18 +17008,38 @@ func unsettledIntLitExceedsI32(e ast.Expr, negated bool) bool {
 		}
 		switch x.Op {
 		case "+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>", "+|", "-|", "*|", "<<|":
-			return unsettledIntLitExceedsI32(x.Left, false) || unsettledIntLitExceedsI32(x.Right, false)
+			return c.unsettledIntLitExceedsI32(x.Left, false) || c.unsettledIntLitExceedsI32(x.Right, false)
 		}
 	case *ast.IfExpr:
-		return unsettledIntLitExceedsI32(x.Then, false) || unsettledIntLitExceedsI32(x.Else, false)
+		return c.unsettledIntLitExceedsI32(x.Then, false) || c.unsettledIntLitExceedsI32(x.Else, false)
 	case *ast.MatchExpr:
 		for _, arm := range x.Arms {
-			if arm != nil && unsettledIntLitExceedsI32(arm.Body, false) {
+			if arm != nil && c.unsettledIntLitExceedsI32(arm.Body, false) {
 				return true
 			}
 		}
 	case *ast.BlockExpr:
-		return unsettledIntLitExceedsI32(x.Tail, false)
+		return c.unsettledIntLitExceedsI32(x.Tail, false)
+	case *ast.Call:
+		// A generic call is polymorphic only while its `T` is pinned by
+		// nothing but literal-shaped arguments, so those arguments are
+		// the tree — the same ones settleInt's Call case settles.
+		id, ok := x.Callee.(*ast.Ident)
+		if !ok || c.shadowedGenericCalls[x] {
+			return false
+		}
+		fn, isGen := c.info.GenericFuncs[id.Name]
+		if !isGen {
+			return false
+		}
+		for i, p := range fn.Params {
+			if i >= len(x.Args) {
+				break
+			}
+			if _, ok := p.Type.(ast.ParamType); ok && c.unsettledIntLitExceedsI32(x.Args[i], false) {
+				return true
+			}
+		}
 	}
 	return false
 }
@@ -17450,11 +17490,11 @@ func (c *checker) requireBool(p ast.Position, t ast.Type, op string) {
 // when its target must stay out of the operand: the operand's own type, or
 // the polymorphic default while it has none — i32, or i64 when a literal in it
 // needs that (`(3 - 4611686018427387904) as f64`, #8668).
-func castOperandInt(inner ast.Type, e ast.Expr) ast.NumberType {
+func (c *checker) castOperandInt(inner ast.Type, e ast.Expr) ast.NumberType {
 	if in, ok := inner.(ast.NumberType); ok && !in.Polymorphic {
 		return in
 	}
-	return polymorphicIntDefault(e)
+	return c.polymorphicIntDefault(e)
 }
 
 func isBareNumericLiteral(e ast.Expr) bool {

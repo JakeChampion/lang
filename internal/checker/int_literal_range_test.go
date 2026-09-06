@@ -230,10 +230,12 @@ func TestIntLiteralPastU64IsE047(t *testing.T) {
 		{`var a = ` + lit + ` as u64;`, lit, "u64", 32},
 		// Typed by its suffix, so it never settles: judged against that type.
 		{`var a = ` + lit + `u64;`, lit, "u64", 32},
+		// A comparison of two literals settles them itself, at the i64 the
+		// wide one selects (#8668).
+		{`var b: boolean = ` + lit + ` > 1;`, lit, "i64", 41},
 		// Nothing settles these; they would lower as the i32 default.
 		{`var t = (` + lit + `, 1);`, lit, "i32", 33},
 		{`var xs = [` + lit + `];`, lit, "i32", 34},
-		{`var b: boolean = ` + lit + ` > 1;`, lit, "i32", 41},
 		// Hex is quoted as written.
 		{`var a: u64 = 0xFFFFFFFFFFFFFFFFFFFF;`, "0xFFFFFFFFFFFFFFFFFFFF", "u64", 37},
 		// Float context has no integer to promote.
@@ -264,11 +266,11 @@ func TestIntLiteralPastU64IsE047(t *testing.T) {
 
 // A literal past i64 max fits only u64 (or i64 as its minimum), so it is valid
 // only where a context settles it. One left unsettled — a tuple or array
-// element, an operand of a comparison with no typed side — lowered as the i32
-// default and wrapped silently (the #8449 family). It is refused against that
-// default now; a settled one is untouched. An unannotated binding settles its
-// own arithmetic at the i64 default a wide literal selects (#8668), so the
-// literal is judged there.
+// element — lowered as the i32 default and wrapped silently (the #8449
+// family). It is refused against that default now; a settled one is untouched.
+// An unannotated binding's arithmetic and a comparison of two literals settle
+// themselves at the i64 default a wide literal selects (#8668), so the literal
+// is judged there.
 func TestWideIntLiteralLeftUnsettledIsE047(t *testing.T) {
 	rejected := []struct {
 		src     string
@@ -278,7 +280,7 @@ func TestWideIntLiteralLeftUnsettledIsE047(t *testing.T) {
 		{`var b = 9223372036854775808 + 1;`, 32, "i64"},
 		{`var t = (9223372036854775808, 1);`, 33, "i32"},
 		{`var xs = [18446744073709551615];`, 34, "i32"},
-		{`var b: boolean = 9223372036854775808 > 1;`, 41, "i32"},
+		{`var b: boolean = 9223372036854775808 > 1;`, 41, "i64"},
 	}
 	for _, c := range rejected {
 		errs := checkErrors(t, "function main(): i32 { "+c.src+" return 0; }")

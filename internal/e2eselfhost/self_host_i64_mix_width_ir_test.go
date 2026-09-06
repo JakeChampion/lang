@@ -46,6 +46,9 @@ var i64MixWidthIRCases = []struct {
 	// the one the source wrote, not the truncated i32 default. 2^62 / 10^18 = 4,
 	// +40 = 44.
 	{"wide-literal-compound", `function main(): i32 { var t = 3 - 4611686018427387904; var u = 4611686018427387904 - 3; if (t != 0 - u) { return 1; } return ((u / 1000000000000000000) as i32) + 40; }`},
+	// The same literal as a generic call's only T argument and on either side
+	// of a comparison: each shape adds its own bit, 15 when all four widen.
+	{"wide-literal-generic-compare", `function id[T](v: T): T { return v; } function main(): i32 { var t = id(4611686018427387904); var c = 0; if (t > 0) { c = c + 1; } if (4611686018427387904 > 1) { c = c + 2; } var b = 1 < 4611686018427387904; if (b) { c = c + 4; } if (4611686018427387904 != 0) { c = c + 8; } return c; }`},
 }
 
 // TestSelfHostI64MixWidthIRX86_64 routes each case through the self-hosted x86-64

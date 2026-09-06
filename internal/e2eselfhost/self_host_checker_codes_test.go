@@ -910,6 +910,8 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// against the i32 default (#8668) — both checkers are silent.
 		{"literal-wide-compound-unannot-ok", "function main(): i32 { var t = 3 - 4611686018427387904; var u: i64 = t; return 0; }\n", nil},
 		{"literal-wide-compound-cast-ok", "function main(): i32 { var f = (3 - 4611686018427387904) as f64; return 0; }\n", nil},
+		{"literal-wide-generic-arg-ok", "function id[T](v: T): T { return v; }\nfunction main(): i32 { var t = id(4611686018427387904); var u: i64 = t; return 0; }\n", nil},
+		{"literal-wide-compare-ok", "function main(): i32 { var b = 4611686018427387904 > 1; if (b) { return 1; } return 0; }\n", nil},
 		{"enum-redeclared", "enum Opt { A, B }\nenum Opt { C, D }\nfunction main(): i32 { return 0; }\n", []string{"E006"}},
 		{"enum-dup-variant", "enum Opt { A, A, B }\nfunction main(): i32 { return 0; }\n", []string{"E017"}},
 		{"enum-clean-ok", "enum Opt { A, B }\nfunction main(): i32 { return 0; }\n", nil},
