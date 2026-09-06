@@ -618,7 +618,7 @@ over small integer domains, for the sieve-shaped code in `std/fuzz` and
 `std/sim`, and for row 160. It is also the structure that gains the most from
 the bit intrinsics that already landed — `count_ones` / `trailing_zeros` are
 exactly what iteration over a bitset needs, and they are already single IR ops
-on all six backends. The prerequisite is done; the consumer is not written.
+on every backend. The prerequisite is done; the consumer is not written.
 
 Rows 167/168 are a **promotion**, not an implementation: the self-host compiler
 already has interning (`docs/SELFHOST-SYMBOL-INTERNING.md`). Lifting it into

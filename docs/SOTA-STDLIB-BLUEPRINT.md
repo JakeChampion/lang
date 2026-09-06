@@ -258,19 +258,17 @@ survives without SIMD, and the compiler's own lexer is the beneficiary.
 | `rotate_left/right` | Software | `ROL`/`ROR` / wasm `rotl` | GAP |
 
 These were 32- and 64-iteration software loops in all four integer modules —
-the source comment gave the reason plainly: "no intrinsics surface in lang".
-They are now branchless SWAR, which needs no compiler work at all and is
-**measured 4.3x faster** on x86-64 (3M iterations of all three ops: 1250-1282 ms
-before, 278-299 ms after; the loop overhead is inside both figures, so the
-speedup on the bit ops alone is larger).
+the source comment gave the reason plainly: "no intrinsics surface in lang" —
+and they got to hardware in two steps, each measured on x86-64. Branchless SWAR
+first, needing no compiler work at all, at **4.3x** (3M iterations of all three
+ops: 1250-1282 ms down to 278-299 ms, loop overhead inside both figures). Then
+the `OpPopcount` / `OpClz` / `OpCtz` family and its lowerings, at a further
+**3.9x** over the SWAR — the compiler project this row once called the endpoint,
+now done. Details and the per-backend instruction table are below.
 
-The hardware intrinsics are still the endpoint and still worth doing — a single
-instruction beats eight or ten. But that needs a new IR op family plus lowerings
-in three native backends AND three self-host backends to avoid a parity gap, so
-it is a compiler project, not the one-line change this row used to imply. The
-SWAR versions capture most of the win in the meantime, and anything built on
-them (hash mixing, bit-set iteration, `bit_length`, a future SWAR layer
-elsewhere) gets it for free.
+Anything built on them (hash mixing, bit-set iteration, `bit_length`) gets it
+for free, which is what makes `byte_swap` and `rotate` the two rows still worth
+taking: they are the same shape, and the op family they would join exists.
 
 ### Random numbers
 
@@ -330,16 +328,15 @@ constraints above.
 
 **Tier 1 — unblocked, high value**
 
-1. **Hardware bit intrinsics.** An IR op family plus lowerings in three native
-   and three self-host backends — a compiler project, not a one-liner. The SWAR
-   implementations now in the stdlib capture most of the win, so this is no
-   longer urgent.
+1. ~~**Hardware bit intrinsics.**~~ Done — the IR op family landed and lowers on
+   every backend, 3.9x over the SWAR it replaced. `byte_swap` and `rotate` are
+   the same shape and are what is left of this row.
 2. **Eisel–Lemire `parse_float`.** The sibling of the Dragonbox work; needs a
    128-bit high-multiply.
 3. ~~Move `std/fuzz` onto the seeded generator~~ — done, see below.
-4. ~~Small-map linear-scan path~~, ~~per-process hash seed~~ — done, see
-   below. What remains on `core/map` is the SWAR group probe, and SipHash for
-   the seeded path (the seed closes offline precomputation; an online timing
+4. ~~Small-map linear-scan path~~, ~~per-process hash seed~~, ~~SWAR group
+   probe~~ — done, see below. What remains on `core/map` is SipHash for the
+   seeded path (the seed closes offline precomputation; an online timing
    oracle can still recover an invertible FNV).
 5. ~~Adaptive sort~~, ~~`random_int` modulo bias~~, ~~SWAR bit counting~~,
    ~~bit-counting intrinsics~~,
@@ -550,7 +547,11 @@ reverted.
 SWAR sequences — 12-15 ALU ops each, portable and correct, and the right answer
 while the language had no intrinsic surface. They are now one-line wrappers over
 `__popcount*` / `__clz*` / `__ctz*`, each lowering to a SINGLE IR op
-(`OpPopcount` / `OpClz` / `OpCtz`) across all six backends plus the interpreter.
+(`OpPopcount` / `OpClz` / `OpCtz`) across all NINE backends plus the
+interpreter. Nine rather than the eight the fused SIMD kernels reach, and the
+difference is instructive: `internal/codegen/wasmssa` consumes `ssa.Func`
+directly and has no string-helper table, so a kernel cannot reach it — but a
+plain scalar op family lowers there like anywhere else.
 
 **Measured, because the estimate mattered.** On x86-64, 20M `count_ones()`
 calls: **0.489s → 0.127s (3.9x)**. `leading_zeros` lands at 0.108s against a
