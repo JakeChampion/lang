@@ -22,7 +22,7 @@ import (
 // slice 3c proceeds. The caller is expected to have run monomorphisation first
 // (as the interp and stack-machine paths do).
 func EmitProgram(prog *ast.Program, info *checker.Info, numAlloc int) (string, error) {
-	irProg, err := ir.LowerWith(prog, info, 8)
+	irProg, err := ir.LowerWith(prog, info, 8, ir.WithTargetOS("linux"), ir.WithTargetArch("x86-64"))
 	if err != nil {
 		return "", fmt.Errorf("x86_64ssa: lower: %w", err)
 	}

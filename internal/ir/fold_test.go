@@ -640,7 +640,10 @@ func TestFoldIsUniqueOnNull(t *testing.T) {
 		{Kind: OpCallDirect, Str: "__fern_box_free", I32: 2},
 		{Kind: OpDrop},
 		{Kind: OpElse},
-		{Kind: OpConstI32, I32: 0},
+		// A non-null operand, so the decline arm survives as itself: a
+		// release of the null pointer would fold away under the sibling
+		// rc_inc / rc_dec rule and leave nothing to look for.
+		{Kind: OpConstI32, I32: 4096},
 		{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1},
 		{Kind: OpDrop},
 		{Kind: OpEnd},
@@ -849,6 +852,69 @@ func TestTargetHalvesAreIndependent(t *testing.T) {
 	for k, seen := range want {
 		if !seen {
 			t.Fatalf("no const.str %q among %q in:\n%s", k, strs, p)
+		}
+	}
+}
+
+// `rc_inc(null)` / `rc_dec(null)` are no-ops by the same contract the
+// is_unique rule leans on: both ops are declared pass-through and every
+// backend's helper opens with the low-address guard, past which the
+// rc-trace hook sits. The shape is machine-made — a slot a move emptied is
+// still swept at scope exit, and ConstPropagate delivers the literal zero to
+// the release — and each survivor costs the whole guard chain to decide it
+// has nothing to do.
+func TestFoldRcIncDecOnNull(t *testing.T) {
+	for _, kind := range []OpKind{OpRcInc, OpRcDec} {
+		name := "__fern_rc_inc"
+		if kind == OpRcDec {
+			name = "__fern_rc_dec"
+		}
+		fn := &Func{Name: "f", Ops: []Op{
+			{Kind: OpConstI32, I32: 0},
+			{Kind: kind, Str: name, I32: 1},
+			{Kind: OpDrop},
+			{Kind: OpReturn},
+		}}
+		p := &Program{Funcs: []*Func{fn}}
+		foldProgram(p)
+		for _, o := range fn.Ops {
+			if o.Kind == kind {
+				t.Errorf("%s on null survived the fold:\n%s", kind, p)
+			}
+		}
+		// Pass-through: what is left has to balance. The constant and
+		// its OpDrop are then a dead pair, which the same pass removes,
+		// so the body reduces to the return.
+		if len(fn.Ops) != 1 || fn.Ops[0].Kind != OpReturn {
+			t.Fatalf("%s: want a bare `return`, got:\n%s", kind, p)
+		}
+	}
+}
+
+// Only a ZERO operand folds — a non-null pointer's count is a runtime fact
+// and the inc/dec is real work.
+func TestFoldLeavesRcOpsOnANonNullConstant(t *testing.T) {
+	for _, kind := range []OpKind{OpRcInc, OpRcDec} {
+		name := "__fern_rc_inc"
+		if kind == OpRcDec {
+			name = "__fern_rc_dec"
+		}
+		fn := &Func{Name: "f", Ops: []Op{
+			{Kind: OpConstI32, I32: 4096},
+			{Kind: kind, Str: name, I32: 1},
+			{Kind: OpDrop},
+			{Kind: OpReturn},
+		}}
+		p := &Program{Funcs: []*Func{fn}}
+		foldProgram(p)
+		found := false
+		for _, o := range fn.Ops {
+			if o.Kind == kind {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("%s on a non-null pointer was folded away:\n%s", kind, p)
 		}
 	}
 }

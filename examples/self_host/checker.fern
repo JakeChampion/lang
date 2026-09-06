@@ -6810,7 +6810,7 @@ function loop_can_break(stmts: ast.Stmt[], label: string, nested: boolean): bool
       },
       ast.StmtDefer(_) => {},
       _ => {
-        if (astwalk.fold_stmt_pruned(stmt, false, function (e: ast.Expr, a: boolean): boolean {
+        if (astwalk.fold_stmt_pruned(stmt, false, (e: ast.Expr, a: boolean): boolean => {
           return a || value_block_can_break(e, label, nested);
         }, not_a_scope_root)) {
           return true;
@@ -6823,7 +6823,7 @@ function loop_can_break(stmts: ast.Stmt[], label: string, nested: boolean): bool
 
 // expr_can_break is loop_can_break over the value blocks one expression holds.
 function expr_can_break(e: ast.Expr, label: string, nested: boolean): boolean {
-  return astwalk.fold_expr_pruned(e, false, function (x: ast.Expr, a: boolean): boolean {
+  return astwalk.fold_expr_pruned(e, false, (x: ast.Expr, a: boolean): boolean => {
     return a || value_block_can_break(x, label, nested);
   }, not_a_scope_root);
 }

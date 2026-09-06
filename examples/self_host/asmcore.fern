@@ -5318,7 +5318,7 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
         "__fern_remove_dir_all", "__fn___fern_remove_dir_all", "__fn___fern_temp_dir", "__fern_read_dir", "__fn___fern_read_dir", "__fn___fern_remove_file",
         "__fn___fern_create_dir_all",
         "__fn___fern_env", "__fern_stat", "__fn___fern_stat", "__fn___fern_subprocess",
-        "__fern_args", "__fern_arg_at", "__fern_arg_at_rc", "__fern_strbuf_append",
+        "__fern_args", "__fern_arg_at", "__fern_strbuf_append",
         // #5623: the IR path's whole-stdin reader, emitted in the entry module's
         // runtime — .globl so a per-module sibling's `call` resolves against it.
         "__fn___fern_read_all_stdin",
@@ -5500,8 +5500,6 @@ pub function pp_eq_bytes(asm: string, a: i32, a_end: i32, b: i32, b_end: i32): b
 //   box_walk_dec           unique-gate the buffer, dec each element box, dec
 //                          the buffer
 //   deep_struct_drop  <T>  unique-gate the inner box and release ITS rc fields
-//   deep_enum_drop    <E>  the enum sibling: unique-gate the enum box and
-//                          release the LIVE variant's rc payloads
 //   str_free               rc-aware string-box release
 //   str_arr_free           deep string[] release (elements + buffer at rc==1)
 //   arr_dec                shallow rc-guarded box/buffer dec
@@ -5573,13 +5571,12 @@ pub function struct_drop_field_ops(s: EmitState, sty: string): RcOp[] {
             ops = ops.append(RcOp { kind: "str_free", idx: k, ty: "", cow: false, uniq: false });
         } else if (k_str_arr) {
             ops = ops.append(RcOp { kind: "str_arr_free", idx: k, ty: "", cow: false, uniq: false });
-        } else if (k_enum && irlower.enum_arr_elems_walk_ok(s.struct_decls, fdt)) {
-            // A DIRECT enum field owns its live variant's rc payloads, and the box
-            // dec frees only the box — so they were stranded (#8567). Same gate the
-            // enum-ARRAY element walk uses, so the two spellings of the same enum
-            // release identically.
-            ops = ops.append(RcOp { kind: "deep_enum_drop", idx: k, ty: fdt, cow: false, uniq: false });
-            ops = ops.append(RcOp { kind: "arr_dec", idx: k, ty: "", cow: false, uniq: false });
+        // A DIRECT enum field is NOT deep-dropped here. It has a second releaser —
+        // the inline emit_struct_enum_field_payload_drops sweep at a struct local's
+        // scope exit — and __struct_drop_ cannot tell whether its caller already
+        // ran it. Both are rc==1-gated, so in a scope-exit context both fire and
+        // the second dec lands past a live claim (#8692). The field-reclaim side
+        // has no such twin and keeps its deep_enum_dec.
         } else if (k_scalar || k_struct || k_enum || k_clo || k_fnptr || k_str_arr_shallow) {
             ops = ops.append(RcOp { kind: "arr_dec", idx: k, ty: "", cow: false, uniq: false });
         }

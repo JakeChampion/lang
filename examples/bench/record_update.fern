@@ -1,0 +1,36 @@
+// record_update — the same per-byte writes as array_with, but the buffer is a
+// field of a threaded record that also carries a refcounted (string) field,
+// updated the way E048 forces an update to be written: `Blk { ...b, buf:
+// b.buf.with(i, v) }`, through a method taking the record by value.
+//
+// This is the shape every coreutils formatter reaches for, and the difference
+// against array_with is what the record costs per byte: the box reuse
+// decision, the release of the field the update replaces, and whatever the
+// carried fields are charged (#8530).
+struct Blk { buf: u8[], note: string, n: i32 }
+
+function (b: Blk) put(i: i32, v: u8): Blk {
+  return Blk { ...b, buf: b.buf.with(i, v) };
+}
+
+function main(): i32 {
+  var buf: u8[] = [];
+  var n: i32 = 0;
+  while (n < 4096) {
+    buf = buf.append(0u8);
+    n = n + 1;
+  }
+  var b: Blk = Blk { buf: buf, note: "a refcounted field the update carries", n: 0 };
+  var total: i64 = 0i64;
+  var r: i32 = 0;
+  while (r < 400) {
+    var i: i32 = 0;
+    while (i < 4096) {
+      b = b.put(i, ((i + r) % 251) as u8);
+      i = i + 1;
+    }
+    total = total + b.buf[r % 4096] as i64;
+    r = r + 1;
+  }
+  return (total % 97i64) as i32;
+}

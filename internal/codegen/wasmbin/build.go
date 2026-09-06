@@ -205,7 +205,7 @@ func BuildWithOptions(prog *ast.Program, info *checker.Info, opts BuildOptions) 
 		prog.Funcs = out
 	}
 	treeshake.Run(prog, info, treeshakeExtras...)
-	ip, err := ir.LowerWith(prog, info, 4)
+	ip, err := ir.LowerWith(prog, info, 4, ir.WithTargetOS("wasi"), ir.WithTargetArch("wasm32"))
 	if err != nil {
 		return nil, fmt.Errorf("wasmbin: lower: %w", err)
 	}

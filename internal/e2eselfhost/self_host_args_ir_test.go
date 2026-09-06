@@ -16,6 +16,16 @@ import (
 // import. `argc` returns a.len(); `index` returns a[1].len() (exercising the
 // str-array tracking that makes a[i] read a string box and .len() dispatch to
 // str_len).
+//
+// The last two rows are about the ELEMENTS' rc headers (#8648). An element the
+// program reads out of the array is a value the rc pass incs and decs, so each
+// one must carry the rc word at box-8 like any other heap string: `element-rc`
+// incs argv[2] three times while argv[1] is live and then reads argv[1]'s
+// length — on the headerless back-to-back boxes __fern_args used to build,
+// those incs landed on argv[1]'s length word, which is how every operator of
+// coreutils/expr came out as `+`, NUL, `2`. `element-outlives-array` keeps an
+// element past the drop of the array that owned it, so the per-element release
+// runs on a box whose bytes live outside the arena.
 var argsIRCases = []struct {
 	name, src string
 	extraArgs []string
@@ -24,6 +34,30 @@ var argsIRCases = []struct {
 	{"argc-0", `function main(): i32 { var a: string[] = args(); return a.len(); }`, nil, 1},
 	{"argc-2", `function main(): i32 { var a: string[] = args(); return a.len(); }`, []string{"x", "y"}, 3},
 	{"index", `function main(): i32 { var a: string[] = args(); if (a.len() < 2) { return 0; } var f: string = a[1]; return f.len(); }`, []string{"hello"}, 5},
+	{"element-rc", `function main(): i32 {
+    var argv: string[] = args();
+    if (argv.len() != 3) { return 1; }
+    var a: string = argv[1];
+    var b: string = argv[2];
+    var held: string[] = [b, b, b];
+    if (held.len() != 3) { return 2; }
+    if (a.len() != 5) { return 3; }
+    if (a != "alpha") { return 4; }
+    if (b != "beta") { return 5; }
+    return 42;
+}`, []string{"alpha", "beta"}, 42},
+	{"element-outlives-array", `function pick(): string {
+    var argv: string[] = args();
+    return argv[1];
+}
+function main(): i32 {
+    var a: string = pick();
+    var b: string = pick();
+    if (a != "alpha") { return 1; }
+    if (b != "alpha") { return 2; }
+    if (a.len() + b.len() != 10) { return 3; }
+    return 42;
+}`, []string{"alpha", "beta"}, 42},
 }
 
 func TestSelfHostArgsIRX86_64(t *testing.T) {

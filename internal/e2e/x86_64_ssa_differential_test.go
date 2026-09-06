@@ -48,17 +48,17 @@ const (
 	// regression that widened the SSA bail set would otherwise turn the lane
 	// green by comparing almost nothing.
 	//
-	// 194 as measured 2026-09-05, after `remove_dir_all` and the
-	// `__fern_io_error` it reports through joined the helper table — the
-	// second half of #8570, and the cliff the first half measured: 155 of
-	// these programs were refused for that ONE symbol, which they reach
-	// through std/test's import graph without ever calling it. RAISE IT with
-	// each helper slice — that is the point of the number.
+	// 215 as measured 2026-09-06, once the four float reinterprets had an
+	// emitter: 194 came from #8570's `remove_dir_all` slice, and the
+	// reinterprets were the last refusal that was not a missing runtime
+	// helper — every program still refused now names one or more helpers
+	// with no emitter. RAISE IT with each helper slice — that is the point
+	// of the number.
 	//
-	// What is left is no longer one cliff: the 123 still refused want the Map
-	// method family, the Reader/host builtins, `__memcpy` / `__free`, and the
-	// float reinterprets, in groups (docs/SSA-CUTOVER-PLAN.md).
-	x86SSADiffMinCompared = 194
+	// The 105 still refused want the Map method family, the Reader/host
+	// builtins, and `__memcpy` / `__free`, in groups
+	// (docs/SSA-CUTOVER-PLAN.md).
+	x86SSADiffMinCompared = 215
 )
 
 func TestX86_64SSABackendDifferential(t *testing.T) {

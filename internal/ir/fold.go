@@ -131,6 +131,26 @@ func foldOnce(ops []Op) []Op {
 			i++ // consume the guard; is_unique(null) is 0
 			continue
 		}
+		// `OpConstI32 0; OpRcInc|OpRcDec` → `OpConstI32 0`.
+		//
+		// The sibling of the is_unique rule above, on the same evidence:
+		// both ops are declared pass-through, every backend's helper
+		// opens with the same low-address guard, and the rc-trace hook
+		// sits past it — so on the null pointer they change nothing,
+		// report nothing, and hand back the argument they were given.
+		//
+		// The shape is machine-made and common: a slot a move emptied
+		// (a field-own move, a consumed `.with` receiver, a reuse that
+		// handed its box out) is still swept at scope exit, and
+		// ConstPropagate delivers the literal zero to the release. Each
+		// one costs the guard chain — a dozen instructions on the
+		// natives — to decide it has nothing to do.
+		if i+1 < len(ops) && ops[i].Kind == OpConstI32 && ops[i].I32 == 0 &&
+			(ops[i+1].Kind == OpRcInc || ops[i+1].Kind == OpRcDec) {
+			out = append(out, Op{Kind: OpConstI32, I32: 0, Pos: ops[i+1].Pos})
+			i++ // consume the rc op; inc/dec of null is a no-op
+			continue
+		}
 		// String equality over two literals: `OpConstStr a; OpConstStr b;
 		// OpStrEq` → `OpConstI32 (a == b)`. This is what turns a branch on
 		// `target_os()` — a literal once constfold has resolved it — into a
