@@ -16,7 +16,11 @@ import (
 // ELF file. Nothing else notices: the binary builds, the tests pass, and the
 // only symptom is the clone getting bigger every time it is rebuilt.
 func TestNoTrackedExecutables(t *testing.T) {
-	out, err := exec.Command("git", "-C", "../..", "ls-files", "-z").Output()
+	cmd := exec.Command("git", "-C", "../..", "ls-files", "-z")
+	// An inherited GIT_DIR outranks -C, which would list some other
+	// repository's files and say nothing about this one.
+	cmd.Env = gitEnv()
+	out, err := cmd.Output()
 	if err != nil {
 		t.Skipf("git ls-files unavailable: %v", err)
 	}
