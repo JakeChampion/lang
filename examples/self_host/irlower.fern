@@ -34087,14 +34087,12 @@ function stmt_assigns_fresh_rcenum(st: ast.Stmt, name: string, owner: string, st
 // and crediting it here would be a second claim on a released box), a rebind
 // that always rebuilds a fresh all-scalar enum, and body_unsafe_for to prove the
 // name never escapes.
-function collect_fresh_scenum_names(stmts: ast.Stmt[], reassigned: string[], structs: StructTab, borrowable: string[], plan_on: boolean, plan_fe: string[], acc: string[]): string[] {
+function collect_fresh_scenum_names(stmts: ast.Stmt[], fn_reassigned: string[], nested: boolean, structs: StructTab, borrowable: string[], plan_on: boolean, plan_fe: string[], acc: string[]): string[] {
     var a: string[] = acc;
     for stmt in stmts {
         match (stmt) {
             ast.StmtVar(v) => {
                 var owner: string = fresh_scalar_enum_init(v.init, structs);
-                var rebind_ok: boolean = util.index_of_str(reassigned, v.name) < 0
-                    || all_assigns_fresh_scalar_enum(stmts, v.name, structs);
                 // The escape gate is the routed half (promotion step 2): the
                 // plan's free_eligible_sites_of verdict replaces body_unsafe_for.
                 // The other three conjuncts stay family knowledge the
@@ -34112,15 +34110,18 @@ function collect_fresh_scenum_names(stmts: ast.Stmt[], reassigned: string[], str
                 var esc_ok: boolean = false;
                 if (plan_on) { esc_ok = util.index_of_str(plan_fe, reclaim_site_key_of(v.name, v.line, v.col)) >= 0; }
                 else { esc_ok = !body_unsafe_for(stmts, v.name, borrowable, []); }
-                if (owner != "" && rebind_ok && sole_top_level_match_idx(stmts, v.name) < 0 && esc_ok) {
+                if (owner != ""
+                    && (!block_reassigns(stmts, fn_reassigned, nested, v.name)
+                        || all_assigns_fresh_scalar_enum(stmts, v.name, structs))
+                    && sole_top_level_match_idx(stmts, v.name) < 0 && esc_ok) {
                     a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
                 }
             },
-            ast.StmtIf(iff) => { a = collect_fresh_scenum_names(iff.then_body, body_assign_targets(iff.then_body), structs, borrowable, plan_on, plan_fe, a); a = collect_fresh_scenum_names(iff.else_body, body_assign_targets(iff.else_body), structs, borrowable, plan_on, plan_fe, a); },
-            ast.StmtWhile(w) => { a = collect_fresh_scenum_names(w.body, body_assign_targets(w.body), structs, borrowable, plan_on, plan_fe, a); },
-            ast.StmtFor(fo) => { a = collect_fresh_scenum_names(fo.body, body_assign_targets(fo.body), structs, borrowable, plan_on, plan_fe, a); },
+            ast.StmtIf(iff) => { a = collect_fresh_scenum_names(iff.then_body, fn_reassigned, true, structs, borrowable, plan_on, plan_fe, a); a = collect_fresh_scenum_names(iff.else_body, fn_reassigned, true, structs, borrowable, plan_on, plan_fe, a); },
+            ast.StmtWhile(w) => { a = collect_fresh_scenum_names(w.body, fn_reassigned, true, structs, borrowable, plan_on, plan_fe, a); },
+            ast.StmtFor(fo) => { a = collect_fresh_scenum_names(fo.body, fn_reassigned, true, structs, borrowable, plan_on, plan_fe, a); },
             ast.StmtMatch(m) => {
-                for arm in m.arms { a = collect_fresh_scenum_names(arm.body, body_assign_targets(arm.body), structs, borrowable, plan_on, plan_fe, a); }
+                for arm in m.arms { a = collect_fresh_scenum_names(arm.body, fn_reassigned, true, structs, borrowable, plan_on, plan_fe, a); }
             },
             _ => {}
         }
@@ -34128,7 +34129,7 @@ function collect_fresh_scenum_names(stmts: ast.Stmt[], reassigned: string[], str
     return a;
 }
 
-function collect_fresh_rcenum_names(stmts: ast.Stmt[], reassigned: string[], structs: StructTab, opt_fresh_ret: SigReg, borrowable: string[], str_fresh: string[], msites: string[], acc: string[]): string[] {
+function collect_fresh_rcenum_names(stmts: ast.Stmt[], fn_reassigned: string[], nested: boolean, structs: StructTab, opt_fresh_ret: SigReg, borrowable: string[], str_fresh: string[], msites: string[], acc: string[]): string[] {
     var a: string[] = acc;
     var vi: i32 = 0;
     while (vi < stmts.len()) {
@@ -34144,9 +34145,9 @@ function collect_fresh_rcenum_names(stmts: ast.Stmt[], reassigned: string[], str
                 // fresh chain of the SAME enum (#6127) — the rebind then routes
                 // through emit_enum_deep_reinit_store like the re-declared
                 // loop-local already did.
-                var rce_rebind_ok: boolean = util.index_of_str(reassigned, v.name) < 0
-                    || all_assigns_fresh_rcenum(stmts, v.name, rceo, structs, opt_fresh_ret, str_fresh);
-                if (rceo != "" && rce_rebind_ok) {
+                if (rceo != ""
+                    && (!block_reassigns(stmts, fn_reassigned, nested, v.name)
+                        || all_assigns_fresh_rcenum(stmts, v.name, rceo, structs, opt_fresh_ret, str_fresh))) {
                     var match_idx: i32 = sole_top_level_match_idx(stmts, v.name);
                     if (match_idx > vi
                         && !match_arms_use_name(stmts[match_idx], v.name)
@@ -34183,15 +34184,15 @@ function collect_fresh_rcenum_names(stmts: ast.Stmt[], reassigned: string[], str
                     }
                 }
             },
-            ast.StmtIf(iff) => { a = collect_fresh_rcenum_names(iff.then_body, body_assign_targets(iff.then_body), structs, opt_fresh_ret, borrowable, str_fresh, msites, a); a = collect_fresh_rcenum_names(iff.else_body, body_assign_targets(iff.else_body), structs, opt_fresh_ret, borrowable, str_fresh, msites, a); },
-            ast.StmtWhile(w) => { a = collect_fresh_rcenum_names(w.body, body_assign_targets(w.body), structs, opt_fresh_ret, borrowable, str_fresh, msites, a); },
-            ast.StmtFor(f) => { a = collect_fresh_rcenum_names(f.body, body_assign_targets(f.body), structs, opt_fresh_ret, borrowable, str_fresh, msites, a); },
+            ast.StmtIf(iff) => { a = collect_fresh_rcenum_names(iff.then_body, fn_reassigned, true, structs, opt_fresh_ret, borrowable, str_fresh, msites, a); a = collect_fresh_rcenum_names(iff.else_body, fn_reassigned, true, structs, opt_fresh_ret, borrowable, str_fresh, msites, a); },
+            ast.StmtWhile(w) => { a = collect_fresh_rcenum_names(w.body, fn_reassigned, true, structs, opt_fresh_ret, borrowable, str_fresh, msites, a); },
+            ast.StmtFor(f) => { a = collect_fresh_rcenum_names(f.body, fn_reassigned, true, structs, opt_fresh_ret, borrowable, str_fresh, msites, a); },
             ast.StmtMatch(m) => {
-                for arm in m.arms { a = collect_fresh_rcenum_names(arm.body, body_assign_targets(arm.body), structs, opt_fresh_ret, borrowable, str_fresh, msites, a); }
+                for arm in m.arms { a = collect_fresh_rcenum_names(arm.body, fn_reassigned, true, structs, opt_fresh_ret, borrowable, str_fresh, msites, a); }
             },
             ast.StmtDefer(d) => {
                 match (d.action) {
-                    ast.StmtWhile(dw) => { a = collect_fresh_rcenum_names(dw.body, body_assign_targets(dw.body), structs, opt_fresh_ret, borrowable, str_fresh, msites, a); },
+                    ast.StmtWhile(dw) => { a = collect_fresh_rcenum_names(dw.body, fn_reassigned, true, structs, opt_fresh_ret, borrowable, str_fresh, msites, a); },
                     _ => {}
                 }
             },
@@ -39629,12 +39630,12 @@ function reclaimable_names_of(body: ast.Stmt[], reassigned: string[], structs: S
     // moved-out payload is rejected) before crediting. The consuming-match reclaim
     // (consumed_rcpayload_enum_frees) is top-level-only, so it never covers a
     // loop-local; this closes that gap (#4357) with no overlap.
-    var rcenums: string[] = collect_fresh_rcenum_names(body, reassigned, structs, opt_fresh_ret, borrowable, str_fresh_ret, msites, []);
+    var rcenums: string[] = collect_fresh_rcenum_names(body, reassigned, false, structs, opt_fresh_ret, borrowable, str_fresh_ret, msites, []);
     out = reclaimable_rcenum(rcenums, out);
     // All-scalar ENUM locals with no consuming match ("SCENUMS:"): the shallow
     // sibling of the "RCENUMS:" credit above. Both the loop rebind and the
     // scope-exit sweep release the box with a plain rc-dec.
-    var scenums: string[] = collect_fresh_scenum_names(body, reassigned, structs, borrowable, plan_on, plan_fe, []);
+    var scenums: string[] = collect_fresh_scenum_names(body, reassigned, false, structs, borrowable, plan_on, plan_fe, []);
     out = reclaimable_scenum(scenums, out);
     // Fresh heap-string locals (`var s: string = a + b` / `.to_upper()` / chr(..)
     // / …): credited under a "STR:" prefix so only slot_is_reclaimable_str matches
@@ -39831,7 +39832,7 @@ function reclaimable_names_of(body: ast.Stmt[], reassigned: string[], structs: S
     // analysis), so the names it returns are already escape-checked — credit
     // them directly (a body_unsafe_for gate here would reject the consuming
     // match scrutinee, exactly what the block-level analysis handles instead).
-    var ots: string[] = collect_fresh_opttup_names(body, reassigned, structs, []);
+    var ots: string[] = collect_fresh_opttup_names(body, reassigned, false, structs, []);
     out = reclaimable_opttup(ots, out);
     // Fresh Option[<struct-with-array-field>] locals (#4365): `var o: Option[P] =
     // Some(P { xs: [..] })` (P routes field-reclaim) consumed by a borrow-only match —
@@ -39840,7 +39841,7 @@ function reclaimable_names_of(body: ast.Stmt[], reassigned: string[], structs: S
     // struct-field deep-drop __struct_drop_<P> -> struct box dec -> option box dec).
     // collect_fresh_optstruct_names is self-gating (block-level consuming-match analysis),
     // so credit the names it returns directly.
-    var oss: string[] = collect_fresh_optstruct_names(body, reassigned, structs, []);
+    var oss: string[] = collect_fresh_optstruct_names(body, reassigned, false, structs, []);
     out = reclaimable_optstruct(oss, out);
     // Fresh Option[<scalar-arr-of-arr>] locals (#4365): `var o: Option[i32[][]] =
     // Some([[i, i+1], ...])` consumed by a borrow-only match — the arr-of-arr sibling of
@@ -39848,7 +39849,7 @@ function reclaimable_names_of(body: ast.Stmt[], reassigned: string[], structs: S
     // + exit sweep through emit_optarrarr_deep_free (tag-check -> __fern_arrarr_free payload ->
     // option box dec). collect_fresh_optarrarr_names is self-gating (block-level consuming-match
     // analysis), so credit its names directly.
-    var oas: string[] = collect_fresh_optarrarr_names(body, reassigned, []);
+    var oas: string[] = collect_fresh_optarrarr_names(body, reassigned, false, []);
     out = reclaimable_optarrarr(oas, out);
     // REBOUND Option[<flat scalar array>] locals (#6127): `var o: Option[i32[]] =
     // Some([..]); while { o = Some([..]) }`. The simplest payload kind in this
@@ -39860,12 +39861,12 @@ function reclaimable_names_of(body: ast.Stmt[], reassigned: string[], structs: S
     // gate, so the two sets are disjoint and no box is freed twice. It covers
     // the rebound local whether or not a match consumes it — see
     // optarr_rebound_credit_ok for the two proofs.
-    var ofa: string[] = collect_fresh_optarr_names(body, reassigned, plan_on, plan_fe, []);
+    var ofa: string[] = collect_fresh_optarr_names(body, reassigned, false, plan_on, plan_fe, []);
     out = reclaimable_optarr(ofa, out);
     // The non-reassigned, non-match-consumed sibling (#6360) — same tag, same
     // exit sweep; see collect_unmatched_optarr_names for why the two sets
     // cannot overlap.
-    var ufa: string[] = collect_unmatched_optarr_names(body, reassigned, opt_fresh_ret, plan_on, plan_fe, []);
+    var ufa: string[] = collect_unmatched_optarr_names(body, reassigned, false, opt_fresh_ret, plan_on, plan_fe, []);
     out = reclaimable_unmatched_optarr(body, opt_fresh_ret, ufa, out);
     // A vetted alias of one of these shares the box and releases it BOX-ONLY
     // (#7687). Granted here rather than inside reclaimable_unmatched_optarr
@@ -39875,18 +39876,18 @@ function reclaimable_names_of(body: ast.Stmt[], reassigned: string[], structs: S
     // Same quadrant, STRING payload (#6360) — its own tag because the release is
     // __fern_str_free, not the flat dec, and the call form needs the registry's
     // "f" flag rather than bare membership.
-    var ufs: string[] = collect_unmatched_optstr_names(body, reassigned, opt_fresh_ret, str_fresh_ret, plan_on, plan_fe, []);
+    var ufs: string[] = collect_unmatched_optstr_names(body, reassigned, false, opt_fresh_ret, str_fresh_ret, plan_on, plan_fe, []);
     out = reclaimable_optstr(ufs, out);
     out = credit_opt_alias_sites(body, ufs, "OPTSTR:", out);
     // `Option[Option[<rc payload>]]` (#7718) — the two-level release, which the
     // scalar-inner nested sibling's flat dec would strand the inner payload of.
-    var uor: string[] = collect_unmatched_optopt_rc_names(body, reassigned, plan_on, plan_fe, []);
+    var uor: string[] = collect_unmatched_optopt_rc_names(body, reassigned, false, plan_on, plan_fe, []);
     out = reclaimable_optopt_rc(uor, out);
     out = credit_opt_alias_sites(body, uor, "OPTOPTRC:", out);
     // The superseded boxes of a MATCH-CONSUMED, reassigned nested Option (#7716)
     // — assign-path only; see collect_optopt_rebind_names for why this cannot
     // collide with the consuming-match family's own release.
-    var orb: string[] = collect_optopt_rebind_names(body, reassigned, []);
+    var orb: string[] = collect_optopt_rebind_names(body, reassigned, false, []);
     out = reclaimable_optopt_rebind(orb, out);
     // The MATCH-CONSUMED quadrant of the same family (#7710). The array payload
     // kinds are reclaimed whether or not a match consumes them; the string one was
@@ -39894,7 +39895,7 @@ function reclaimable_names_of(body: ast.Stmt[], reassigned: string[], structs: S
     // match (o) { .. }` freed nothing at all — 72 B/round, unbounded, against 0 on
     // native. Same tag and same exit sweep; see collect_fresh_optstr_names for why
     // the two collectors cannot overlap.
-    var mfs: string[] = collect_fresh_optstr_names(body, reassigned, opt_fresh_ret, str_fresh_ret, []);
+    var mfs: string[] = collect_fresh_optstr_names(body, reassigned, false, opt_fresh_ret, str_fresh_ret, []);
     out = reclaimable_optstr(mfs, out);
     // Fresh (<tuple-with-array>)[] locals (#4365): `var xs: (i32, i32[])[] =
     // [(i, [i, i+1]), ...]` — an array whose elements are fresh tuples carrying fresh
@@ -39916,7 +39917,7 @@ function reclaimable_names_of(body: ast.Stmt[], reassigned: string[], structs: S
     // block). The escape gate is deliberately much tighter than its siblings' — only
     // `xs.len()` — because an element extraction here risks a double-free rather than
     // a leak; arrenum_esc_expr says why.
-    var aens: string[] = collect_fresh_arrenum_names(body, reassigned, body, structs, fresh_ret, []);
+    var aens: string[] = collect_fresh_arrenum_names(body, reassigned, false, body, structs, fresh_ret, []);
     out = reclaimable_arrenum(aens, body, borrowable, msites, recv_borrow, structs, out);
     // Fresh SCALAR-FIELD struct-array locals (#4355): `var g = [P { .. }, P { .. }]`
     // — every element fresh (a no-base struct literal, or a call to a strict-fresh
@@ -46049,7 +46050,7 @@ function opttup_payload_escapes(stmts: ast.Stmt[], name: string, inner: string, 
 // 60000 bytes over 100 rounds with ZERO releases emitted. #6225 established the
 // per-rebind discipline for the flat-array kind; this is the same relaxation for
 // the tuple payload.
-function collect_fresh_opttup_names(stmts: ast.Stmt[], reassigned: string[], structs: StructTab, acc: string[]): string[] {
+function collect_fresh_opttup_names(stmts: ast.Stmt[], fn_reassigned: string[], nested: boolean, structs: StructTab, acc: string[]): string[] {
     var a: string[] = acc;
     var vi: i32 = 0;
     while (vi < stmts.len()) {
@@ -46057,7 +46058,7 @@ function collect_fresh_opttup_names(stmts: ast.Stmt[], reassigned: string[], str
             ast.StmtVar(v) => {
                 if (opttup_ann_is(v.type_name, structs)
                     && opttup_init_is_fresh(opttup_inner_type(v.type_name), v.init, structs)
-                    && (util.index_of_str(reassigned, v.name) < 0
+                    && (!block_reassigns(stmts, fn_reassigned, nested, v.name)
                         || opt_rebinds_all_fresh(stmts, v.name, "tup", opttup_inner_type(v.type_name), structs, sig_reg_empty(), []))) {
                     // The consuming match may sit one block deeper (#6319). No
                     // nested_ok flag is needed here, unlike the scalar and rc-payload
@@ -46078,11 +46079,11 @@ function collect_fresh_opttup_names(stmts: ast.Stmt[], reassigned: string[], str
                     }
                 }
             },
-            ast.StmtIf(f) => { a = collect_fresh_opttup_names(f.then_body, body_assign_targets(f.then_body), structs, a); a = collect_fresh_opttup_names(f.else_body, body_assign_targets(f.else_body), structs, a); },
-            ast.StmtWhile(w) => { a = collect_fresh_opttup_names(w.body, body_assign_targets(w.body), structs, a); },
-            ast.StmtFor(fo) => { a = collect_fresh_opttup_names(fo.body, body_assign_targets(fo.body), structs, a); },
+            ast.StmtIf(f) => { a = collect_fresh_opttup_names(f.then_body, fn_reassigned, true, structs, a); a = collect_fresh_opttup_names(f.else_body, fn_reassigned, true, structs, a); },
+            ast.StmtWhile(w) => { a = collect_fresh_opttup_names(w.body, fn_reassigned, true, structs, a); },
+            ast.StmtFor(fo) => { a = collect_fresh_opttup_names(fo.body, fn_reassigned, true, structs, a); },
             ast.StmtMatch(m) => {
-                for arm in m.arms { a = collect_fresh_opttup_names(arm.body, body_assign_targets(arm.body), structs, a); }
+                for arm in m.arms { a = collect_fresh_opttup_names(arm.body, fn_reassigned, true, structs, a); }
             },
             _ => {}
         }
@@ -47634,7 +47635,7 @@ function optstruct_payload_escapes(stmts: ast.Stmt[], name: string, sty: string,
 // Some(<struct lit>)/None under an Option[<struct-with-array>] annotation, consumed by
 // exactly one borrow-only match in the same block, not escaping. A reassigned name is
 // admitted when every rebind is itself fresh (opt_rebinds_all_fresh, #6127).
-function collect_fresh_optstruct_names(stmts: ast.Stmt[], reassigned: string[], structs: StructTab, acc: string[]): string[] {
+function collect_fresh_optstruct_names(stmts: ast.Stmt[], fn_reassigned: string[], nested: boolean, structs: StructTab, acc: string[]): string[] {
     var a: string[] = acc;
     var vi: i32 = 0;
     while (vi < stmts.len()) {
@@ -47642,7 +47643,7 @@ function collect_fresh_optstruct_names(stmts: ast.Stmt[], reassigned: string[], 
             ast.StmtVar(v) => {
                 if (optstruct_ann_is(v.type_name, structs)
                     && optstruct_init_is_fresh(v.init, structs)
-                    && (util.index_of_str(reassigned, v.name) < 0
+                    && (!block_reassigns(stmts, fn_reassigned, nested, v.name)
                         || opt_rebinds_all_fresh(stmts, v.name, "struct", "", structs, sig_reg_empty(), []))) {
                     // The consuming match may sit one block deeper, or be a match
                     // EXPRESSION in a `return` (#6319 + the IIFE arm) — the same
@@ -47663,11 +47664,11 @@ function collect_fresh_optstruct_names(stmts: ast.Stmt[], reassigned: string[], 
                     }
                 }
             },
-            ast.StmtIf(f) => { a = collect_fresh_optstruct_names(f.then_body, body_assign_targets(f.then_body), structs, a); a = collect_fresh_optstruct_names(f.else_body, body_assign_targets(f.else_body), structs, a); },
-            ast.StmtWhile(w) => { a = collect_fresh_optstruct_names(w.body, body_assign_targets(w.body), structs, a); },
-            ast.StmtFor(fo) => { a = collect_fresh_optstruct_names(fo.body, body_assign_targets(fo.body), structs, a); },
+            ast.StmtIf(f) => { a = collect_fresh_optstruct_names(f.then_body, fn_reassigned, true, structs, a); a = collect_fresh_optstruct_names(f.else_body, fn_reassigned, true, structs, a); },
+            ast.StmtWhile(w) => { a = collect_fresh_optstruct_names(w.body, fn_reassigned, true, structs, a); },
+            ast.StmtFor(fo) => { a = collect_fresh_optstruct_names(fo.body, fn_reassigned, true, structs, a); },
             ast.StmtMatch(m) => {
-                for arm in m.arms { a = collect_fresh_optstruct_names(arm.body, body_assign_targets(arm.body), structs, a); }
+                for arm in m.arms { a = collect_fresh_optstruct_names(arm.body, fn_reassigned, true, structs, a); }
             },
             _ => {}
         }
@@ -48158,7 +48159,7 @@ function unmatched_optarr_err_str_fresh(stmts: ast.Stmt[], name: string, opt_fre
     return false;
 }
 
-function collect_unmatched_optstr_names(stmts: ast.Stmt[], reassigned: string[], opt_fresh_reg: SigReg, str_fresh_ret: string[], plan_on: boolean, plan_fe: string[], acc: string[]): string[] {
+function collect_unmatched_optstr_names(stmts: ast.Stmt[], fn_reassigned: string[], nested: boolean, opt_fresh_reg: SigReg, str_fresh_ret: string[], plan_on: boolean, plan_fe: string[], acc: string[]): string[] {
     var a: string[] = acc;
     for stmt in stmts {
         match (stmt) {
@@ -48170,16 +48171,16 @@ function collect_unmatched_optstr_names(stmts: ast.Stmt[], reassigned: string[],
                 var os_esc_ok: boolean = opt_unmatched_esc_ok(stmts, v.name, reclaim_site_key_of(v.name, v.line, v.col), plan_on, plan_fe, opt_alias_bind_sites_of(stmts, v.name));
                 if (unmatched_optstr_ann_is(v.type_name)
                     && unmatched_optstr_init_is_fresh(v.init, opt_fresh_reg, str_fresh_ret)
-                    && util.index_of_str(reassigned, v.name) < 0
+                    && !block_reassigns(stmts, fn_reassigned, nested, v.name)
                     && os_esc_ok) {
                     a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
                 }
             },
-            ast.StmtIf(f) => { a = collect_unmatched_optstr_names(f.then_body, body_assign_targets(f.then_body), opt_fresh_reg, str_fresh_ret, plan_on, plan_fe, a); a = collect_unmatched_optstr_names(f.else_body, body_assign_targets(f.else_body), opt_fresh_reg, str_fresh_ret, plan_on, plan_fe, a); },
-            ast.StmtWhile(w) => { a = collect_unmatched_optstr_names(w.body, body_assign_targets(w.body), opt_fresh_reg, str_fresh_ret, plan_on, plan_fe, a); },
-            ast.StmtFor(fo) => { a = collect_unmatched_optstr_names(fo.body, body_assign_targets(fo.body), opt_fresh_reg, str_fresh_ret, plan_on, plan_fe, a); },
+            ast.StmtIf(f) => { a = collect_unmatched_optstr_names(f.then_body, fn_reassigned, true, opt_fresh_reg, str_fresh_ret, plan_on, plan_fe, a); a = collect_unmatched_optstr_names(f.else_body, fn_reassigned, true, opt_fresh_reg, str_fresh_ret, plan_on, plan_fe, a); },
+            ast.StmtWhile(w) => { a = collect_unmatched_optstr_names(w.body, fn_reassigned, true, opt_fresh_reg, str_fresh_ret, plan_on, plan_fe, a); },
+            ast.StmtFor(fo) => { a = collect_unmatched_optstr_names(fo.body, fn_reassigned, true, opt_fresh_reg, str_fresh_ret, plan_on, plan_fe, a); },
             ast.StmtMatch(m) => {
-                for arm in m.arms { a = collect_unmatched_optstr_names(arm.body, body_assign_targets(arm.body), opt_fresh_reg, str_fresh_ret, plan_on, plan_fe, a); }
+                for arm in m.arms { a = collect_unmatched_optstr_names(arm.body, fn_reassigned, true, opt_fresh_reg, str_fresh_ret, plan_on, plan_fe, a); }
             },
             _ => {}
         }
@@ -48267,7 +48268,7 @@ function unmatched_optopt_init_is_fresh(e: ast.Expr): boolean {
 // collide even so: this releases the OLD value at an assignment and that
 // releases the CURRENT value at the match. A disagreement costs a leak in one
 // direction or the other, never a double release.
-function collect_optopt_rebind_names(stmts: ast.Stmt[], reassigned: string[], acc: string[]): string[] {
+function collect_optopt_rebind_names(stmts: ast.Stmt[], fn_reassigned: string[], nested: boolean, acc: string[]): string[] {
     var a: string[] = acc;
     var vi: i32 = 0;
     while (vi < stmts.len()) {
@@ -48275,7 +48276,7 @@ function collect_optopt_rebind_names(stmts: ast.Stmt[], reassigned: string[], ac
             ast.StmtVar(v) => {
                 if (unmatched_optopt_ann_is(v.type_name)
                     && unmatched_optopt_init_is_fresh(v.init)
-                    && util.index_of_str(reassigned, v.name) >= 0
+                    && block_reassigns(stmts, fn_reassigned, nested, v.name)
                     && opt_rebinds_all_fresh(stmts, v.name, "optopt", "", struct_tab_empty(), sig_reg_empty(), [])) {
                     var mi: i32 = sole_top_level_match_idx(stmts, v.name);
                     if (mi > vi && !match_arms_use_name(stmts[mi], v.name)
@@ -48285,11 +48286,11 @@ function collect_optopt_rebind_names(stmts: ast.Stmt[], reassigned: string[], ac
                     }
                 }
             },
-            ast.StmtIf(f) => { a = collect_optopt_rebind_names(f.then_body, body_assign_targets(f.then_body), a); a = collect_optopt_rebind_names(f.else_body, body_assign_targets(f.else_body), a); },
-            ast.StmtWhile(w) => { a = collect_optopt_rebind_names(w.body, body_assign_targets(w.body), a); },
-            ast.StmtFor(fo) => { a = collect_optopt_rebind_names(fo.body, body_assign_targets(fo.body), a); },
+            ast.StmtIf(f) => { a = collect_optopt_rebind_names(f.then_body, fn_reassigned, true, a); a = collect_optopt_rebind_names(f.else_body, fn_reassigned, true, a); },
+            ast.StmtWhile(w) => { a = collect_optopt_rebind_names(w.body, fn_reassigned, true, a); },
+            ast.StmtFor(fo) => { a = collect_optopt_rebind_names(fo.body, fn_reassigned, true, a); },
             ast.StmtMatch(m) => {
-                for arm in m.arms { a = collect_optopt_rebind_names(arm.body, body_assign_targets(arm.body), a); }
+                for arm in m.arms { a = collect_optopt_rebind_names(arm.body, fn_reassigned, true, a); }
             },
             _ => {}
         }
@@ -48307,24 +48308,24 @@ function reclaimable_optopt_rebind(ns: string[], out: string[]): string[] {
     return out;
 }
 
-function collect_unmatched_optopt_rc_names(stmts: ast.Stmt[], reassigned: string[], plan_on: boolean, plan_fe: string[], acc: string[]): string[] {
+function collect_unmatched_optopt_rc_names(stmts: ast.Stmt[], fn_reassigned: string[], nested: boolean, plan_on: boolean, plan_fe: string[], acc: string[]): string[] {
     var a: string[] = acc;
     for stmt in stmts {
         match (stmt) {
             ast.StmtVar(v) => {
                 if (nested_opt_inner_freefn(opttup_inner_type(v.type_name) + "") != ""
                     && unmatched_optopt_init_is_fresh(v.init)
-                    && (util.index_of_str(reassigned, v.name) < 0
+                    && (!block_reassigns(stmts, fn_reassigned, nested, v.name)
                         || opt_rebinds_all_fresh(stmts, v.name, "optopt", "", struct_tab_empty(), sig_reg_empty(), []))
                     && opt_unmatched_esc_ok(stmts, v.name, reclaim_site_key_of(v.name, v.line, v.col), plan_on, plan_fe, opt_alias_bind_sites_of(stmts, v.name))) {
                     a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
                 }
             },
-            ast.StmtIf(f) => { a = collect_unmatched_optopt_rc_names(f.then_body, body_assign_targets(f.then_body), plan_on, plan_fe, a); a = collect_unmatched_optopt_rc_names(f.else_body, body_assign_targets(f.else_body), plan_on, plan_fe, a); },
-            ast.StmtWhile(w) => { a = collect_unmatched_optopt_rc_names(w.body, body_assign_targets(w.body), plan_on, plan_fe, a); },
-            ast.StmtFor(fo) => { a = collect_unmatched_optopt_rc_names(fo.body, body_assign_targets(fo.body), plan_on, plan_fe, a); },
+            ast.StmtIf(f) => { a = collect_unmatched_optopt_rc_names(f.then_body, fn_reassigned, true, plan_on, plan_fe, a); a = collect_unmatched_optopt_rc_names(f.else_body, fn_reassigned, true, plan_on, plan_fe, a); },
+            ast.StmtWhile(w) => { a = collect_unmatched_optopt_rc_names(w.body, fn_reassigned, true, plan_on, plan_fe, a); },
+            ast.StmtFor(fo) => { a = collect_unmatched_optopt_rc_names(fo.body, fn_reassigned, true, plan_on, plan_fe, a); },
             ast.StmtMatch(m) => {
-                for arm in m.arms { a = collect_unmatched_optopt_rc_names(arm.body, body_assign_targets(arm.body), plan_on, plan_fe, a); }
+                for arm in m.arms { a = collect_unmatched_optopt_rc_names(arm.body, fn_reassigned, true, plan_on, plan_fe, a); }
             },
             _ => {}
         }
@@ -48341,7 +48342,7 @@ function reclaimable_optopt_rc(ns: string[], out: string[]): string[] {
     return out;
 }
 
-function collect_unmatched_optarr_names(stmts: ast.Stmt[], reassigned: string[], opt_fresh_reg: SigReg, plan_on: boolean, plan_fe: string[], acc: string[]): string[] {
+function collect_unmatched_optarr_names(stmts: ast.Stmt[], fn_reassigned: string[], nested: boolean, opt_fresh_reg: SigReg, plan_on: boolean, plan_fe: string[], acc: string[]): string[] {
     var a: string[] = acc;
     for stmt in stmts {
         match (stmt) {
@@ -48349,7 +48350,7 @@ function collect_unmatched_optarr_names(stmts: ast.Stmt[], reassigned: string[],
                 var oa_esc_ok: boolean = opt_unmatched_esc_ok(stmts, v.name, reclaim_site_key_of(v.name, v.line, v.col), plan_on, plan_fe, opt_alias_bind_sites_of(stmts, v.name));
                 var oa_arr_ok: boolean = unmatched_optarr_ann_is(v.type_name)
                     && unmatched_optarr_init_is_fresh(v.init, opt_fresh_reg)
-                    && util.index_of_str(reassigned, v.name) < 0;
+                    && !block_reassigns(stmts, fn_reassigned, nested, v.name);
                 // The nested-Option spelling may be REASSIGNED provided every
                 // rebind allocates its own inner box. The array spelling may not
                 // here: collect_fresh_optarr_names owns its reassigned class, and
@@ -48358,17 +48359,17 @@ function collect_unmatched_optarr_names(stmts: ast.Stmt[], reassigned: string[],
                 // credit it can earn.
                 var oa_opt_ok: boolean = unmatched_optopt_ann_is(v.type_name)
                     && unmatched_optopt_init_is_fresh(v.init)
-                    && (util.index_of_str(reassigned, v.name) < 0
+                    && (!block_reassigns(stmts, fn_reassigned, nested, v.name)
                         || opt_rebinds_all_fresh(stmts, v.name, "optopt", "", struct_tab_empty(), sig_reg_empty(), []));
                 if ((oa_arr_ok || oa_opt_ok) && oa_esc_ok) {
                     a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
                 }
             },
-            ast.StmtIf(f) => { a = collect_unmatched_optarr_names(f.then_body, body_assign_targets(f.then_body), opt_fresh_reg, plan_on, plan_fe, a); a = collect_unmatched_optarr_names(f.else_body, body_assign_targets(f.else_body), opt_fresh_reg, plan_on, plan_fe, a); },
-            ast.StmtWhile(w) => { a = collect_unmatched_optarr_names(w.body, body_assign_targets(w.body), opt_fresh_reg, plan_on, plan_fe, a); },
-            ast.StmtFor(fo) => { a = collect_unmatched_optarr_names(fo.body, body_assign_targets(fo.body), opt_fresh_reg, plan_on, plan_fe, a); },
+            ast.StmtIf(f) => { a = collect_unmatched_optarr_names(f.then_body, fn_reassigned, true, opt_fresh_reg, plan_on, plan_fe, a); a = collect_unmatched_optarr_names(f.else_body, fn_reassigned, true, opt_fresh_reg, plan_on, plan_fe, a); },
+            ast.StmtWhile(w) => { a = collect_unmatched_optarr_names(w.body, fn_reassigned, true, opt_fresh_reg, plan_on, plan_fe, a); },
+            ast.StmtFor(fo) => { a = collect_unmatched_optarr_names(fo.body, fn_reassigned, true, opt_fresh_reg, plan_on, plan_fe, a); },
             ast.StmtMatch(m) => {
-                for arm in m.arms { a = collect_unmatched_optarr_names(arm.body, body_assign_targets(arm.body), opt_fresh_reg, plan_on, plan_fe, a); }
+                for arm in m.arms { a = collect_unmatched_optarr_names(arm.body, fn_reassigned, true, opt_fresh_reg, plan_on, plan_fe, a); }
             },
             _ => {}
         }
@@ -48415,7 +48416,7 @@ function optarr_rebound_credit_ok(stmts: ast.Stmt[], v: ast.StmtVar, vi: i32, pl
         && !body_unsafe_for(stmts, v.name, [], []);
 }
 
-function collect_fresh_optarr_names(stmts: ast.Stmt[], reassigned: string[], plan_on: boolean, plan_fe: string[], acc: string[]): string[] {
+function collect_fresh_optarr_names(stmts: ast.Stmt[], fn_reassigned: string[], nested: boolean, plan_on: boolean, plan_fe: string[], acc: string[]): string[] {
     var a: string[] = acc;
     var vi: i32 = 0;
     while (vi < stmts.len()) {
@@ -48423,17 +48424,17 @@ function collect_fresh_optarr_names(stmts: ast.Stmt[], reassigned: string[], pla
             ast.StmtVar(v) => {
                 if (optarr_ann_is(v.type_name)
                     && optarr_init_is_fresh(v.init)
-                    && util.index_of_str(reassigned, v.name) >= 0
+                    && block_reassigns(stmts, fn_reassigned, nested, v.name)
                     && opt_rebinds_all_fresh(stmts, v.name, "arr", "", struct_tab_empty(), sig_reg_empty(), [])
                     && optarr_rebound_credit_ok(stmts, v, vi, plan_on, plan_fe)) {
                     a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
                 }
             },
-            ast.StmtIf(f) => { a = collect_fresh_optarr_names(f.then_body, body_assign_targets(f.then_body), plan_on, plan_fe, a); a = collect_fresh_optarr_names(f.else_body, body_assign_targets(f.else_body), plan_on, plan_fe, a); },
-            ast.StmtWhile(w) => { a = collect_fresh_optarr_names(w.body, body_assign_targets(w.body), plan_on, plan_fe, a); },
-            ast.StmtFor(fo) => { a = collect_fresh_optarr_names(fo.body, body_assign_targets(fo.body), plan_on, plan_fe, a); },
+            ast.StmtIf(f) => { a = collect_fresh_optarr_names(f.then_body, fn_reassigned, true, plan_on, plan_fe, a); a = collect_fresh_optarr_names(f.else_body, fn_reassigned, true, plan_on, plan_fe, a); },
+            ast.StmtWhile(w) => { a = collect_fresh_optarr_names(w.body, fn_reassigned, true, plan_on, plan_fe, a); },
+            ast.StmtFor(fo) => { a = collect_fresh_optarr_names(fo.body, fn_reassigned, true, plan_on, plan_fe, a); },
             ast.StmtMatch(m) => {
-                for arm in m.arms { a = collect_fresh_optarr_names(arm.body, body_assign_targets(arm.body), plan_on, plan_fe, a); }
+                for arm in m.arms { a = collect_fresh_optarr_names(arm.body, fn_reassigned, true, plan_on, plan_fe, a); }
             },
             _ => {}
         }
@@ -48806,7 +48807,7 @@ function optarrarr_payload_escapes(stmts: ast.Stmt[], name: string): boolean {
 // fresh Some(<arr-of-arr lit>)/None under an Option[<scalar-arr-of-arr>] annotation, consumed
 // by exactly one borrow-only match in the same block, not escaping. A reassigned name is
 // admitted when every rebind is itself fresh (opt_rebinds_all_fresh, #6127).
-function collect_fresh_optarrarr_names(stmts: ast.Stmt[], reassigned: string[], acc: string[]): string[] {
+function collect_fresh_optarrarr_names(stmts: ast.Stmt[], fn_reassigned: string[], nested: boolean, acc: string[]): string[] {
     var a: string[] = acc;
     var vi: i32 = 0;
     while (vi < stmts.len()) {
@@ -48814,7 +48815,7 @@ function collect_fresh_optarrarr_names(stmts: ast.Stmt[], reassigned: string[], 
             ast.StmtVar(v) => {
                 if (optarrarr_ann_is(v.type_name)
                     && optarrarr_init_is_fresh(v.init)
-                    && (util.index_of_str(reassigned, v.name) < 0
+                    && (!block_reassigns(stmts, fn_reassigned, nested, v.name)
                         || opt_rebinds_all_fresh(stmts, v.name, "arrarr", "", struct_tab_empty(), sig_reg_empty(), []))) {
                     var match_idx: i32 = sole_top_level_match_idx(stmts, v.name);
                     if (match_idx > vi
@@ -48826,11 +48827,11 @@ function collect_fresh_optarrarr_names(stmts: ast.Stmt[], reassigned: string[], 
                     }
                 }
             },
-            ast.StmtIf(f) => { a = collect_fresh_optarrarr_names(f.then_body, body_assign_targets(f.then_body), a); a = collect_fresh_optarrarr_names(f.else_body, body_assign_targets(f.else_body), a); },
-            ast.StmtWhile(w) => { a = collect_fresh_optarrarr_names(w.body, body_assign_targets(w.body), a); },
-            ast.StmtFor(fo) => { a = collect_fresh_optarrarr_names(fo.body, body_assign_targets(fo.body), a); },
+            ast.StmtIf(f) => { a = collect_fresh_optarrarr_names(f.then_body, fn_reassigned, true, a); a = collect_fresh_optarrarr_names(f.else_body, fn_reassigned, true, a); },
+            ast.StmtWhile(w) => { a = collect_fresh_optarrarr_names(w.body, fn_reassigned, true, a); },
+            ast.StmtFor(fo) => { a = collect_fresh_optarrarr_names(fo.body, fn_reassigned, true, a); },
             ast.StmtMatch(m) => {
-                for arm in m.arms { a = collect_fresh_optarrarr_names(arm.body, body_assign_targets(arm.body), a); }
+                for arm in m.arms { a = collect_fresh_optarrarr_names(arm.body, fn_reassigned, true, a); }
             },
             _ => {}
         }
@@ -48994,7 +48995,7 @@ function optstr_payload_escapes(stmts: ast.Stmt[], name: string): boolean {
 // Freshness is required for the same reason the unmatched sibling requires it: a
 // string payload is stored uncounted and assignment borrows it, so an aliased
 // payload would be released under a live reference.
-function collect_fresh_optstr_names(stmts: ast.Stmt[], reassigned: string[], opt_fresh_reg: SigReg, str_fresh_ret: string[], acc: string[]): string[] {
+function collect_fresh_optstr_names(stmts: ast.Stmt[], fn_reassigned: string[], nested: boolean, opt_fresh_reg: SigReg, str_fresh_ret: string[], acc: string[]): string[] {
     var a: string[] = acc;
     var vi: i32 = 0;
     while (vi < stmts.len()) {
@@ -49002,7 +49003,7 @@ function collect_fresh_optstr_names(stmts: ast.Stmt[], reassigned: string[], opt
             ast.StmtVar(v) => {
                 if (unmatched_optstr_ann_is(v.type_name)
                     && unmatched_optstr_init_is_fresh(v.init, opt_fresh_reg, str_fresh_ret)
-                    && (util.index_of_str(reassigned, v.name) < 0
+                    && (!block_reassigns(stmts, fn_reassigned, nested, v.name)
                         || opt_rebinds_all_fresh(stmts, v.name, "str", "", struct_tab_empty(), opt_fresh_reg, str_fresh_ret))) {
                     var match_idx: i32 = sole_top_level_match_idx(stmts, v.name);
                     if (match_idx > vi
@@ -49014,11 +49015,11 @@ function collect_fresh_optstr_names(stmts: ast.Stmt[], reassigned: string[], opt
                     }
                 }
             },
-            ast.StmtIf(f) => { a = collect_fresh_optstr_names(f.then_body, body_assign_targets(f.then_body), opt_fresh_reg, str_fresh_ret, a); a = collect_fresh_optstr_names(f.else_body, body_assign_targets(f.else_body), opt_fresh_reg, str_fresh_ret, a); },
-            ast.StmtWhile(w) => { a = collect_fresh_optstr_names(w.body, body_assign_targets(w.body), opt_fresh_reg, str_fresh_ret, a); },
-            ast.StmtFor(fo) => { a = collect_fresh_optstr_names(fo.body, body_assign_targets(fo.body), opt_fresh_reg, str_fresh_ret, a); },
+            ast.StmtIf(f) => { a = collect_fresh_optstr_names(f.then_body, fn_reassigned, true, opt_fresh_reg, str_fresh_ret, a); a = collect_fresh_optstr_names(f.else_body, fn_reassigned, true, opt_fresh_reg, str_fresh_ret, a); },
+            ast.StmtWhile(w) => { a = collect_fresh_optstr_names(w.body, fn_reassigned, true, opt_fresh_reg, str_fresh_ret, a); },
+            ast.StmtFor(fo) => { a = collect_fresh_optstr_names(fo.body, fn_reassigned, true, opt_fresh_reg, str_fresh_ret, a); },
             ast.StmtMatch(m) => {
-                for arm in m.arms { a = collect_fresh_optstr_names(arm.body, body_assign_targets(arm.body), opt_fresh_reg, str_fresh_ret, a); }
+                for arm in m.arms { a = collect_fresh_optstr_names(arm.body, fn_reassigned, true, opt_fresh_reg, str_fresh_ret, a); }
             },
             _ => {}
         }
@@ -51096,7 +51097,7 @@ function arrenum_append_built_enum(stmts: ast.Stmt[], name: string, tname: strin
 // binding whose name is never reassigned. The enum rides the entry so the release side
 // gets it without a slot column; the escape gate is applied by the caller, which owns
 // the whole function body (a nested binding's uses can sit in the enclosing tail).
-function collect_fresh_arrenum_names(stmts: ast.Stmt[], reassigned: string[], body: ast.Stmt[], structs: StructTab, fresh_ret: string[], acc: string[]): string[] {
+function collect_fresh_arrenum_names(stmts: ast.Stmt[], fn_reassigned: string[], nested: boolean, body: ast.Stmt[], structs: StructTab, fresh_ret: string[], acc: string[]): string[] {
     var a: string[] = acc;
     for stmt in stmts {
         match (stmt) {
@@ -51107,11 +51108,11 @@ function collect_fresh_arrenum_names(stmts: ast.Stmt[], reassigned: string[], bo
                 // box is the callee's own, and the ANNOTATION supplies the
                 // element enum, which an `E[]` slot records nowhere.
                 if (owner.len() == 0) { owner = arrenum_call_producer_enum(v.init, v.type_name, body, fresh_ret); }
-                if (owner.len() > 0 && util.index_of_str(reassigned, v.name) < 0) {
+                if (owner.len() > 0 && !block_reassigns(stmts, fn_reassigned, nested, v.name)) {
                     a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col) + "#" + owner);
                 }
                 // APPEND-BUILT: `var xs: E[] = []` grown by self-append. The
-                // `reassigned` exclusion above cannot apply — the self-append IS
+                // reassign exclusion above cannot apply — the self-append IS
                 // the reassignment — so this arm brings its own gates, marked
                 // "A|" so the crediting loop knows to use them.
                 else if (owner.len() == 0 && arrenum_lit_is_empty(v.init)) {
@@ -51122,11 +51123,11 @@ function collect_fresh_arrenum_names(stmts: ast.Stmt[], reassigned: string[], bo
                     }
                 }
             },
-            ast.StmtIf(f) => { a = collect_fresh_arrenum_names(f.then_body, body_assign_targets(f.then_body), body, structs, fresh_ret, a); a = collect_fresh_arrenum_names(f.else_body, body_assign_targets(f.else_body), body, structs, fresh_ret, a); },
-            ast.StmtWhile(w) => { a = collect_fresh_arrenum_names(w.body, body_assign_targets(w.body), body, structs, fresh_ret, a); },
-            ast.StmtFor(fo) => { a = collect_fresh_arrenum_names(fo.body, body_assign_targets(fo.body), body, structs, fresh_ret, a); },
+            ast.StmtIf(f) => { a = collect_fresh_arrenum_names(f.then_body, fn_reassigned, true, body, structs, fresh_ret, a); a = collect_fresh_arrenum_names(f.else_body, fn_reassigned, true, body, structs, fresh_ret, a); },
+            ast.StmtWhile(w) => { a = collect_fresh_arrenum_names(w.body, fn_reassigned, true, body, structs, fresh_ret, a); },
+            ast.StmtFor(fo) => { a = collect_fresh_arrenum_names(fo.body, fn_reassigned, true, body, structs, fresh_ret, a); },
             ast.StmtMatch(m) => {
-                for arm in m.arms { a = collect_fresh_arrenum_names(arm.body, body_assign_targets(arm.body), body, structs, fresh_ret, a); }
+                for arm in m.arms { a = collect_fresh_arrenum_names(arm.body, fn_reassigned, true, body, structs, fresh_ret, a); }
             },
             _ => {},
         }
@@ -56746,8 +56747,9 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
     // per-BLOCK variant is the quadratic trap the performance audit records).
     // The names this function reassigns (`x = …`) anywhere in the body. Every
     // fn-level analysis below excludes a reassigned name from its candidates, so
-    // they share this one fold; a nested BLOCK keeps its own narrower set (a
-    // function-wide one would silence a free the block emits, #6127).
+    // they share this one fold; a nested BLOCK keeps its own narrower answer,
+    // which block_reassigns derives from this set (a function-wide one would
+    // silence a free the block emits, #6127).
     var asg_targets: string[] = body_assign_targets(fn.body);
     var plan_on: boolean = !rc_plan_disabled();
     var plan_fe: string[] = [];
@@ -70234,13 +70236,33 @@ function body_assign_targets(stmts: ast.Stmt[]): string[] {
     return assign_targets_into([], stmts);
 }
 
+// block_reassigns answers "is `name` in `body_assign_targets(stmts)`?" for one
+// block without folding it. `fn_reassigned` is the enclosing FUNCTION's set,
+// and astwalk.fold_stmt_spine reaches every statement of every block the
+// function encloses — control flow, match arms and a defer's action alike — so
+// a block's set is always a SUBSET of it. A name the function never assigns is
+// therefore assigned in no block of it, and the fold runs only for the few
+// names that survive that filter. `nested` is false when `stmts` is the body
+// `fn_reassigned` was folded from, where the filter is already the exact
+// answer.
+//
+// The narrow answer is what the caller gets, not the wide one: these gates
+// EXCLUDE a reassigned name from being a free candidate, so answering a nested
+// block from `fn_reassigned` directly would silence a free it emits today — a
+// loop-local `var e = Box(k)` whose spelling a sibling block also assigns
+// (#6127).
+function block_reassigns(stmts: ast.Stmt[], fn_reassigned: string[], nested: boolean, name: string): boolean {
+    if (util.index_of_str(fn_reassigned, name) < 0) { return false; }
+    if (!nested) { return true; }
+    return util.index_of_str(body_assign_targets(stmts), name) >= 0;
+}
+
 // assign_targets_into threads ONE accumulator through astwalk's statement
 // spine. It is a hot path — a statement at depth d sits in the body of every
 // block above it — so every consumer takes the set as a PARAMETER and each
-// scope folds it once: lower_func for the fn-level analyses, lower_block and
-// the block-level classifiers for their own block (#6911). A function-wide set
-// must never be handed to a nested block: these gates EXCLUDE a reassigned
-// name, so the wider set silences a free the block emits today (#6127).
+// scope folds it once: lower_func for the fn-level analyses and lower_block for
+// its own block (#6911). The block-level classifiers fold no block of their
+// own: they thread the function's set down as block_reassigns' filter.
 // assign_target_into captures nothing, so the fold allocates nothing per call.
 function assign_targets_into(out: string[], stmts: ast.Stmt[]): string[] {
     for stmt in stmts {
