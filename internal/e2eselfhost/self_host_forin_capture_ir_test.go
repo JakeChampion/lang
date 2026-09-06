@@ -41,18 +41,18 @@ func TestSelfHostForinCaptureIRX86_64(t *testing.T) {
 		irWitness string
 	}{
 		{"forin-binder-fn-field",
-			`struct H { f: (i32) => i32, id: i32 } function main(): i32 { var acc: i32 = 0; var xs: i32[] = [1, 2, 3]; for x in xs { var h: H = H { f: function (q: i32): i32 { return q + x; }, id: x }; acc = acc + h.f(1) + h.id; } return acc; }`,
+			`struct H { f: (i32) => i32, id: i32 } function main(): i32 { var acc: i32 = 0; var xs: i32[] = [1, 2, 3]; for x in xs { var h: H = H { f: (q: i32): i32 => { return q + x; }, id: x }; acc = acc + h.f(1) + h.id; } return acc; }`,
 			15, ".Lir_main"},
 		{"forin-nested-two-binders",
-			`struct H { f: (i32) => i32, id: i32 } function main(): i32 { var acc: i32 = 0; var xs: i32[] = [1, 2, 3]; for x in xs { for y in xs { var h: H = H { f: function (q: i32): i32 { return q + x + y; }, id: x * y }; acc = acc + h.f(1) + h.id; } } return acc; }`,
+			`struct H { f: (i32) => i32, id: i32 } function main(): i32 { var acc: i32 = 0; var xs: i32[] = [1, 2, 3]; for x in xs { for y in xs { var h: H = H { f: (q: i32): i32 => { return q + x + y; }, id: x * y }; acc = acc + h.f(1) + h.id; } } return acc; }`,
 			81, ".Lir_main"},
 		{"forin-map-keys-binder",
 			`import "core/map";
-struct H { f: (i32) => i32, id: i32 } function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); m = m.insert(2, 20); var acc: i32 = 0; for k in m.keys() { var h: H = H { f: function (x: i32): i32 { return x + k; }, id: k }; acc = acc + h.f(5) + h.id; } return acc; }`,
+struct H { f: (i32) => i32, id: i32 } function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); m = m.insert(2, 20); var acc: i32 = 0; for k in m.keys() { var h: H = H { f: (x: i32): i32 => { return x + k; }, id: k }; acc = acc + h.f(5) + h.id; } return acc; }`,
 			16, ".Lir_main"},
 		{"forin-map-values-binder",
 			`import "core/map";
-struct H { f: (i32) => i32, id: i32 } function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); m = m.insert(2, 20); var acc: i32 = 0; for v in m.values() { var h: H = H { f: function (x: i32): i32 { return x + v; }, id: v }; acc = acc + h.f(1) + h.id; } return acc; }`,
+struct H { f: (i32) => i32, id: i32 } function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); m = m.insert(2, 20); var acc: i32 = 0; for v in m.values() { var h: H = H { f: (x: i32): i32 => { return x + v; }, id: v }; acc = acc + h.f(1) + h.id; } return acc; }`,
 			62, ".Lir_main"},
 		// The iter is not a bare ident: a struct FIELD array, a SLICE, and a
 		// string field array. cap_type_in_stmts' StmtFor arm resolves the
@@ -61,13 +61,13 @@ struct H { f: (i32) => i32, id: i32 } function main(): i32 { var m: Map[i32, i32
 		// `for x in items()` resolve the callee's declared array return type
 		// from the module's fn decls threaded into the lift pass (#5193).
 		{"forin-struct-field-array-binder",
-			`struct S { items: i32[], n: i32 } struct H { f: (i32) => i32, id: i32 } function g(s: S): i32 { var acc: i32 = 0; for x in s.items { var h: H = H { f: function (q: i32): i32 { return q + x; }, id: x }; acc = acc + h.f(1) + h.id; } return acc; } function main(): i32 { return g(S { items: [1, 2, 3], n: 0 }); }`,
+			`struct S { items: i32[], n: i32 } struct H { f: (i32) => i32, id: i32 } function g(s: S): i32 { var acc: i32 = 0; for x in s.items { var h: H = H { f: (q: i32): i32 => { return q + x; }, id: x }; acc = acc + h.f(1) + h.id; } return acc; } function main(): i32 { return g(S { items: [1, 2, 3], n: 0 }); }`,
 			15, ".Lir_g"},
 		{"forin-slice-binder",
-			`struct H { f: (i32) => i32, id: i32 } function g(): i32 { var xs: i32[] = [1, 2, 3, 4]; var acc: i32 = 0; for x in xs[0:2] { var h: H = H { f: function (q: i32): i32 { return q + x; }, id: x }; acc = acc + h.f(1) + h.id; } return acc; } function main(): i32 { return g(); }`,
+			`struct H { f: (i32) => i32, id: i32 } function g(): i32 { var xs: i32[] = [1, 2, 3, 4]; var acc: i32 = 0; for x in xs[0:2] { var h: H = H { f: (q: i32): i32 => { return q + x; }, id: x }; acc = acc + h.f(1) + h.id; } return acc; } function main(): i32 { return g(); }`,
 			8, ".Lir_g"},
 		{"forin-string-field-array-binder",
-			`struct S { tags: string[], n: i32 } struct H { f: (i32) => i32, id: i32 } function g(s: S): i32 { var acc: i32 = 0; for t in s.tags { var h: H = H { f: function (q: i32): i32 { return q + t.len(); }, id: 1 }; acc = acc + h.f(0); } return acc; } function main(): i32 { return g(S { tags: ["ab", "cde"], n: 0 }); }`,
+			`struct S { tags: string[], n: i32 } struct H { f: (i32) => i32, id: i32 } function g(s: S): i32 { var acc: i32 = 0; for t in s.tags { var h: H = H { f: (q: i32): i32 => { return q + t.len(); }, id: 1 }; acc = acc + h.f(0); } return acc; } function main(): i32 { return g(S { tags: ["ab", "cde"], n: 0 }); }`,
 			5, ".Lir_g"},
 		// A method-call iter (`for x in s.get()`) and a free-function iter
 		// (`for x in items()`): the binder's type is the callee's declared
@@ -75,10 +75,10 @@ struct H { f: (i32) => i32, id: i32 } function main(): i32 { var m: Map[i32, i32
 		// the lift pass (callee_ret_type, #5193). Resolving "" instead drops the
 		// module to the miscompiling AST path.
 		{"forin-method-iter-binder",
-			`struct S { items: i32[], n: i32 } function (s: S) get(): i32[] { return s.items; } struct H { f: (i32) => i32, id: i32 } function g(s: S): i32 { var acc: i32 = 0; for x in s.get() { var h: H = H { f: function (q: i32): i32 { return q + x; }, id: x }; acc = acc + h.f(1) + h.id; } return acc; } function main(): i32 { return g(S { items: [1, 2, 3], n: 0 }); }`,
+			`struct S { items: i32[], n: i32 } function (s: S) get(): i32[] { return s.items; } struct H { f: (i32) => i32, id: i32 } function g(s: S): i32 { var acc: i32 = 0; for x in s.get() { var h: H = H { f: (q: i32): i32 => { return q + x; }, id: x }; acc = acc + h.f(1) + h.id; } return acc; } function main(): i32 { return g(S { items: [1, 2, 3], n: 0 }); }`,
 			15, ".Lir_g"},
 		{"forin-free-fn-iter-binder",
-			`function items(): i32[] { return [10, 20, 30]; } struct H { f: (i32) => i32, id: i32 } function g(): i32 { var acc: i32 = 0; for x in items() { var h: H = H { f: function (q: i32): i32 { return q + x; }, id: x }; acc = acc + h.f(1) + h.id; } return acc; } function main(): i32 { return g(); }`,
+			`function items(): i32[] { return [10, 20, 30]; } struct H { f: (i32) => i32, id: i32 } function g(): i32 { var acc: i32 = 0; for x in items() { var h: H = H { f: (q: i32): i32 => { return q + x; }, id: x }; acc = acc + h.f(1) + h.id; } return acc; } function main(): i32 { return g(); }`,
 			123, ".Lir_g"},
 		// `for (k, v) in m` binds TWO names, encoded comma-joined ("k,v") like a
 		// tuple destructure. Neither half was recognised as an enclosing local
@@ -92,11 +92,11 @@ struct H { f: (i32) => i32, id: i32 } function main(): i32 { var m: Map[i32, i32
 		// The closure-array case is the shape fernsmith seed 407 contains.
 		{"forin-kv-binder-fn-field",
 			`import "core/map";
-struct H { f: (i32) => i32, id: i32 } function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); m = m.insert(2, 20); var acc: i32 = 0; for (k, v) in m { var h: H = H { f: function (q: i32): i32 { return q + k + v; }, id: v }; acc = acc + h.f(1) + h.id; } return acc; }`,
+struct H { f: (i32) => i32, id: i32 } function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); m = m.insert(2, 20); var acc: i32 = 0; for (k, v) in m { var h: H = H { f: (q: i32): i32 => { return q + k + v; }, id: v }; acc = acc + h.f(1) + h.id; } return acc; }`,
 			65, ".Lir_main"},
 		{"forin-kv-binder-closure-array",
 			`import "core/map";
-function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); var acc: i32 = 0; for (k, v) in m { var fs: ((i32) => i32)[] = [function (a: i32): i32 { return a + v; }, function (b: i32): i32 { return b + k; }]; acc = acc + fs[0](1) + fs[1](1); } return acc; }`,
+function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); var acc: i32 = 0; for (k, v) in m { var fs: ((i32) => i32)[] = [(a: i32): i32 => { return a + v; }, (b: i32): i32 => { return b + k; }]; acc = acc + fs[0](1) + fs[1](1); } return acc; }`,
 			13, ".Lir_main"},
 	}
 	for _, tc := range cases {

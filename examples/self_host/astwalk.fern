@@ -681,7 +681,7 @@ pub function map_stmts_acc[T](stmts: ast.Stmt[], acc: T, visit_stmt: (ast.Stmt, 
 // visited exactly once: map_expr is bottom-up, so an inner lambda is spliced
 // before the outer one, and splice_own never re-enters an expression.
 pub function splice_stmts(stmts: ast.Stmt[], visit: (ast.Stmt) => ast.Stmt[]): ast.Stmt[] {
-    var mapped: ast.Stmt[] = map_stmts(stmts, function(x: ast.Expr): ast.Expr {
+    var mapped: ast.Stmt[] = map_stmts(stmts, (x: ast.Expr): ast.Expr => {
         match (x) {
             ast.ExprLambda(lm) => { return ast.ExprLambda { ...lm, body: splice_own(lm.body, visit) }; },
             _ => { return x; }
@@ -899,21 +899,18 @@ pub function collect_calls_stmt(st: ast.Stmt, want: string[], acc: CallSite[]): 
 }
 
 // pattern_binders appends every name a match-arm pattern binds: the payload
-// slot, each further slot of a multi-payload variant (`Tag(a, b)`), the
-// `@` whole-value binder of `n @ Tag(x)`, and every binder of a TUPLE
-// sub-pattern (`tup_binds`, plus each element's own pattern in `tup_pats` —
-// a variant element or a deeper tuple, recursively). `nested` and the tuple
-// fields are parse-time transients: the arm builders flatten sub-patterns and
-// turn a tuple head into an inner match, so nothing measured reaches here
-// carrying either. They are walked regardless, because reading only
-// `binding` / `extra_bindings` answers "binds nothing" for `(a, b)` — which
-// is what the NATIVE twin of this walk did, mangling every tuple binder into
-// a same-named module decl (#8607).
+// slot, each further slot of a multi-payload variant (`Tag(a, b)`), the `@`
+// whole-value binder of `n @ Tag(x)`, and every binder of a tuple sub-pattern
+// — `tup_binds` directly, `tup_pats` recursed; `tup_lits` are literals, not
+// binders. `nested` and the tup_* fields are parse-time transients — the
+// parser's desugars flatten both before any consumer sees a pattern — but they
+// are recursed anyway so a pattern that does reach here cannot hide a binder.
 //
-// This is the same set irlower's sa_pat_binds enumerates, which is the point:
-// two answers to "what does this pattern bind" is how at_binding came to be
-// missing from one of them (#6993).
-function pattern_binders(p: ast.Pattern, acc: string[]): string[] {
+// irlower's fai_pat_binds and sa_pat_binds read this list rather than walking
+// the pattern themselves, which is the point: two answers to "what does this
+// pattern bind" is how at_binding came to be missing from one of them (#6993)
+// and the tuple binders from this one (#8607).
+pub function pattern_binders(p: ast.Pattern, acc: string[]): string[] {
     match (p) {
         ast.PatVariant(pv) => {
             if (pv.binding.len() > 0) { acc = acc.append(pv.binding); }
@@ -927,8 +924,8 @@ function pattern_binders(p: ast.Pattern, acc: string[]): string[] {
             for sub in pv.nested {
                 acc = pattern_binders(sub, acc);
             }
-            for tsub in pv.tup_pats {
-                acc = pattern_binders(tsub, acc);
+            for tp in pv.tup_pats {
+                acc = pattern_binders(tp, acc);
             }
             return acc;
         },

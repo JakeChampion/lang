@@ -26,14 +26,14 @@ var fnArgInCondCases = []struct {
 }{
 	// fn-typed arg inside an `if` condition. apply(<lambda>, 3) -> 3<10 -> true.
 	{"if-cond", `function apply(f: (i32) => boolean, x: i32): boolean { return f(x); }
-function main(): i32 { if (apply(function (x: i32): boolean { return x < 10; }, 3)) { return 5; } return 0; }`, 5},
+function main(): i32 { if (apply((x: i32): boolean => { return x < 10; }, 3)) { return 5; } return 0; }`, 5},
 	// fn-typed arg inside a `while` condition. Loops while i<3 -> i ends at 3.
 	{"while-cond", `function apply(f: (i32) => boolean, x: i32): boolean { return f(x); }
-function main(): i32 { var i = 0; while (apply(function (x: i32): boolean { return x < 3; }, i)) { i = i + 1; } return i; }`, 3},
+function main(): i32 { var i = 0; while (apply((x: i32): boolean => { return x < 3; }, i)) { i = i + 1; } return i; }`, 3},
 	// fn-typed arg inside a `for x in <iter>` iterated expression. pick doubles
 	// 0,1,2 -> [0,2,4]; summed = 6.
 	{"for-iter", `function pick(f: (i32) => i32): i32[] { var out: i32[] = []; var i = 0; while (i < 3) { out = out.append(f(i)); i = i + 1; } return out; }
-function main(): i32 { var s = 0; for x in pick(function (n: i32): i32 { return n * 2; }) { s = s + x; } return s; }`, 6},
+function main(): i32 { var s = 0; for x in pick((n: i32): i32 => { return n * 2; }) { s = s + x; } return s; }`, 6},
 }
 
 // TestNativeFnArgInCond exercises the three condition positions on the native

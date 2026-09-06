@@ -5,12 +5,9 @@ import "core/int";
 // prints "FAIL <id>" and returns a distinct non-zero code; success "OK".
 //
 // Covers (docs/FEATURE-AUDIT.md §A): generic function + struct + method,
-// trait + impl method dispatch, anonymous-function lambda, closure
-// capture, function values, higher-order functions, and tail-call
-// optimisation (deep self-recursion must not overflow the stack).
-//
-// NOTE: the lambda syntax is `function(x: T): R { ... }` — the arrow
-// `=>` is match-arm-only and is NOT a lambda form (native rejects it).
+// trait + impl method dispatch, lambdas, closure capture, function
+// values, higher-order functions, and tail-call optimisation (deep
+// self-recursion must not overflow the stack).
 
 function id[T](x: T): T { return x; }
 
@@ -38,13 +35,13 @@ function main(): i32 {
     // --- trait + impl dispatch ---
     if ((21).dbl() != 42) { print("FAIL trait"); return 13; }
 
-    // --- anonymous-function lambda ---
-    var inc: (i32) => i32 = function(x: i32): i32 { return x + 1; };
+    // --- lambda ---
+    var inc: (i32) => i32 = (x: i32): i32 => { return x + 1; };
     if (inc(41) != 42) { print("FAIL lambda"); return 14; }
 
     // --- closure capture ---
     var n: i32 = 10;
-    var addn: (i32) => i32 = function(x: i32): i32 { return x + n; };
+    var addn: (i32) => i32 = (x: i32): i32 => { return x + n; };
     if (addn(5) != 15) { print("FAIL closure"); return 15; }
 
     // --- function value (named fn used as a value) ---

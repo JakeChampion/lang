@@ -71,22 +71,20 @@ var rcCorpusLeakBaselineX86_64 = map[string]int64{
 	// entry gone wrong: each now runs its own 500-round loop over its own map,
 	// so the totals are not comparable with the one body that shared a map
 	// across all of them. What IS comparable is shape against shape, which is
-	// the point: four of the five now reclaim completely and are absent from
-	// these tables entirely (absent means zero). Only the projected SELF-assign
-	// resists — `sm = sm.without(k).0` taints `sm` out of freeEligible, so the
-	// slot takes a flat dec and a flat drop instead of a map slot drop, and the
-	// whole table goes with it (#8434).
-	"map_delete_projected_self_assign_churn_free": 128000,
-	"map_iter_escape_churn_free":                  32000,
-	"map_iter_string_kv_retain_churn_free":        19200,
-	"matchexpr_alias_array_no_free":               1600,
-	"option_of_array":                             32,
-	"pair_form_enum_temp_as_argument":             288,
-	"pair_form_payload_borrowing_call":            144,
-	"stdlib_json_cursor_idiom":                    1456,
-	"stdlib_json_roundtrip":                       640,
-	"string_closure_capture_churn_free":           3200,
-	"tuple_return_scalar_cursor_recursion":        320,
+	// the point. All of them now reclaim completely, so none of them appears
+	// in these tables at all (absent means zero) and #8434 is closed. The
+	// call-argument projection joined them as a case rather than a pin: it
+	// leaked only the undropped tuple box, which no fixture had ever covered.
+	"map_iter_escape_churn_free":           32000,
+	"map_iter_string_kv_retain_churn_free": 19200,
+	"matchexpr_alias_array_no_free":        1600,
+	"option_of_array":                      32,
+	"pair_form_enum_temp_as_argument":      288,
+	"pair_form_payload_borrowing_call":     144,
+	"stdlib_json_cursor_idiom":             1456,
+	"stdlib_json_roundtrip":                640,
+	"string_closure_capture_churn_free":    3200,
+	"tuple_return_scalar_cursor_recursion": 320,
 	// The hand-back half of the guarded arg-temp release: the callee
 	// returned the temp unchanged, so the guard declined the drop and the
 	// result's own reference keeps rhsTainted's conservative call-result
@@ -111,22 +109,20 @@ var rcCorpusLeakBaselineArm64 = map[string]int64{
 	// entry gone wrong: each now runs its own 500-round loop over its own map,
 	// so the totals are not comparable with the one body that shared a map
 	// across all of them. What IS comparable is shape against shape, which is
-	// the point: four of the five now reclaim completely and are absent from
-	// these tables entirely (absent means zero). Only the projected SELF-assign
-	// resists — `sm = sm.without(k).0` taints `sm` out of freeEligible, so the
-	// slot takes a flat dec and a flat drop instead of a map slot drop, and the
-	// whole table goes with it (#8434).
-	"map_delete_projected_self_assign_churn_free": 144000,
-	"map_iter_escape_churn_free":                  32000,
-	"map_iter_string_kv_retain_churn_free":        19200,
-	"matchexpr_alias_array_no_free":               1600,
-	"option_of_array":                             32,
-	"pair_form_enum_temp_as_argument":             288,
-	"pair_form_payload_borrowing_call":            144,
-	"stdlib_json_cursor_idiom":                    1664,
-	"stdlib_json_roundtrip":                       720,
-	"string_closure_capture_churn_free":           6400,
-	"tuple_return_scalar_cursor_recursion":        320,
+	// the point. All of them now reclaim completely, so none of them appears
+	// in these tables at all (absent means zero) and #8434 is closed. The
+	// call-argument projection joined them as a case rather than a pin: it
+	// leaked only the undropped tuple box, which no fixture had ever covered.
+	"map_iter_escape_churn_free":           32000,
+	"map_iter_string_kv_retain_churn_free": 19200,
+	"matchexpr_alias_array_no_free":        1600,
+	"option_of_array":                      32,
+	"pair_form_enum_temp_as_argument":      288,
+	"pair_form_payload_borrowing_call":     144,
+	"stdlib_json_cursor_idiom":             1664,
+	"stdlib_json_roundtrip":                720,
+	"string_closure_capture_churn_free":    6400,
+	"tuple_return_scalar_cursor_recursion": 320,
 	// See the x86-64 twin — the same guarded hand-back, byte for byte.
 	"consumed_array_arg_temp_released_and_guarded": 128,
 }
@@ -164,12 +160,10 @@ var rcCorpusLeakBaselineWasm = map[string]int64{
 	// entry gone wrong: each now runs its own 500-round loop over its own map,
 	// so the totals are not comparable with the one body that shared a map
 	// across all of them. What IS comparable is shape against shape, which is
-	// the point: four of the five now reclaim completely and are absent from
-	// these tables entirely (absent means zero). Only the projected SELF-assign
-	// resists — `sm = sm.without(k).0` taints `sm` out of freeEligible, so the
-	// slot takes a flat dec and a flat drop instead of a map slot drop, and the
-	// whole table goes with it (#8434).
-	"map_delete_projected_self_assign_churn_free":    104000,
+	// the point. All of them now reclaim completely, so none of them appears
+	// in these tables at all (absent means zero) and #8434 is closed. The
+	// call-argument projection joined them as a case rather than a pin: it
+	// leaked only the undropped tuple box, which no fixture had ever covered.
 	"map_iter_escape_churn_free":                     32000,
 	"map_iter_string_kv_retain_churn_free":           19200,
 	"map_keys_values_header_churn_free":              16000,

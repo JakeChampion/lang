@@ -50,7 +50,7 @@ struct Circle { tag: string }
 impl Shape for Circle { function area(self: Self): i32 { return 1; } }
 function make(seed: i32): () => i32 {
     var dc: dyn Shape = Circle { tag: "a heap string owned by a circle behind a captured dyn" };
-    return function (): i32 { return dc.area(); };
+    return (): i32 => { return dc.area(); };
 }
 function main(): i32 {
     var before: i32 = (__heap_bump_bytes() as i32);
@@ -77,7 +77,7 @@ struct Circle { tag: string }
 impl Shape for Circle { function area(self: Self): i32 { return 1; } }
 function make(seed: i32): () => i32 {
     var dc: dyn Shape = Circle { tag: "a heap string owned by a circle behind a captured dyn" };
-    return function (): i32 { return dc.area(); };
+    return (): i32 => { return dc.area(); };
 }
 function main(): i32 {
     var i: i32 = 0;

@@ -26,18 +26,18 @@ var lambdaLiftNestedIRCases = []struct {
 	main string
 }{
 	// IIFE in the left operand of a binary op: (5*3) + 1 = 16.
-	{"iife-binary-lhs", `function main(): i32 { return (function(x: i32): i32 { return x * 3; })(5) + 1; }`},
+	{"iife-binary-lhs", `function main(): i32 { return ((x: i32): i32 => { return x * 3; })(5) + 1; }`},
 	// IIFE in the right operand: 1 + (5*3) = 16.
-	{"iife-binary-rhs", `function main(): i32 { return 1 + (function(x: i32): i32 { return x * 3; })(5); }`},
+	{"iife-binary-rhs", `function main(): i32 { return 1 + ((x: i32): i32 => { return x * 3; })(5); }`},
 	// IIFE under a unary minus, kept positive: 100 - (5+1) = 94.
-	{"iife-unary", `function main(): i32 { return 100 - (function(x: i32): i32 { return x + 1; })(5); }`},
+	{"iife-unary", `function main(): i32 { return 100 - ((x: i32): i32 => { return x + 1; })(5); }`},
 	// IIFE as an array index: a[(1+1)] = a[2] = 30.
-	{"iife-index", `function main(): i32 { var a: i32[] = [10, 20, 30]; return a[(function(x: i32): i32 { return x + 1; })(1)]; }`},
+	{"iife-index", `function main(): i32 { var a: i32[] = [10, 20, 30]; return a[((x: i32): i32 => { return x + 1; })(1)]; }`},
 	// Lambda call ARGUMENT inside a binary op: ap(\x.x+1)=4, +1 = 5.
 	{"lambda-arg-binary", `function ap(f: (i32) => i32): i32 { return f(3); }
-function main(): i32 { return ap(function(x: i32): i32 { return x + 1; }) + 1; }`},
+function main(): i32 { return ap((x: i32): i32 => { return x + 1; }) + 1; }`},
 	// Nested deeper: a binary whose operands are both IIFE calls: 6 + 8 = 14.
-	{"iife-both-operands", `function main(): i32 { return (function(x: i32): i32 { return x + 1; })(5) + (function(y: i32): i32 { return y * 2; })(4); }`},
+	{"iife-both-operands", `function main(): i32 { return ((x: i32): i32 => { return x + 1; })(5) + ((y: i32): i32 => { return y * 2; })(4); }`},
 }
 
 // TestSelfHostLambdaLiftNestedIRX86_64 routes each case through the self-hosted

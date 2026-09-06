@@ -295,18 +295,20 @@ type rcPlan struct {
 	// a Map field initialised by a direct mutator call, so the new container
 	// owns an independent buffer. Filled by computeBorrowedMapFieldResults.
 	borrowedMapFieldResults map[string]bool
-	// mapCowBindSites holds the Map COW-mutator CALL nodes whose result is
-	// bound straight to a new local — `var m2 = m.insert(k, v)`,
-	// `var (m2, ok) = m.without(k)`, and `var t = m.without(k)` binding the
-	// tuple WHOLE. Those are the sites that owe the COW-seam retain (#6227):
-	// the binding co-exists with the receiver's binding, so on the in-place
-	// branch two names share one refcount and both release it.
-	// Every OTHER position a mutator result can appear in is deliberately
-	// excluded, because there the result is a temporary nobody binds and a
-	// retain would leak it instead: a chained receiver
-	// (`m.insert(a, 1).insert(b, 2)`), a call argument (`f(m.insert(k, v))`),
-	// and a projected tuple (`m = m.without(k).0`) each measured ~1.8 kB an
-	// iteration — a whole copied table — when the retain fired there.
+	// mapCowBindSites holds the Map COW-mutator CALL nodes that owe the
+	// COW-seam retain (#6227) — the sites where something OTHER than the
+	// receiver's binding will release the handle the in-place branch hands
+	// back, so two names share one refcount unless the seam adds a second.
+	// That is every binding — `var m2 = m.insert(k, v)`,
+	// `var (m2, ok) = m.without(k)`, `var t = m.without(k)` binding the tuple
+	// whole — and a delete tuple PROJECTED without one (`m.without(k).0`),
+	// whose box the field read deep-drops (#8434).
+	// A position where the result is a temporary NOTHING drops is excluded,
+	// because there the extra count is returned by no one and a retain leaks
+	// instead: a chained receiver (`m.insert(a, 1).insert(b, 2)`) and a call
+	// argument (`f(m.insert(k, v))`) each measured ~1.8 kB an iteration — a
+	// whole copied table — when the retain fired there.
+	// freeEligible consults this, so computeRcAnalyses runs it first.
 	// Purely syntactic; filled by computeMapCowBindSites.
 	mapCowBindSites map[ast.Node]bool
 }
@@ -328,6 +330,10 @@ func (b *builder) computeRcAnalyses() {
 	// qualifying binding becomes a counted owner instead of a tainted borrow).
 	b.rc.consumingOwnedMatches, b.rc.ownedPayloadMatches, b.rc.consumingBindings = b.computeConsumingOwnedMatches()
 	b.rc.borrowedBindings = b.computeBorrowedBindings()
+	// The COW-seam retain sites. Purely syntactic, and freeEligible consults
+	// it: a delete tuple projected without a binding owns its map element only
+	// where the seam retained it, so the two must be computed in this order.
+	b.rc.mapCowBindSites = b.computeMapCowBindSites()
 	// Borrow-aware free analysis: which array locals are OWNED and
 	// thus safe to return to the freelist at rc==0. Borrowed /
 	// borrowed-derived locals are excluded (only the owner frees).
@@ -344,7 +350,6 @@ func (b *builder) computeRcAnalyses() {
 	b.computeSelfReassignOwnMoves()
 	b.rc.ctorAliasInced = b.computeCtorAliasInced()
 	b.rc.borrowedMapFieldResults = b.computeBorrowedMapFieldResults()
-	b.rc.mapCowBindSites = b.computeMapCowBindSites()
 	b.rc.arraySetInc = b.computeArraySetIncs()
 	b.computeBorrowedAliases()
 	b.rc.dynAliasElemArrays = map[string]bool{}
@@ -1134,10 +1139,9 @@ func variantCtorFreshIn(info *checker.Info, shadowed map[string]bool) func(*ast.
 }
 
 // shadowingNames lists every name `fn` binds besides its parameters — declared
-// locals, match-arm binders (ast.EachArmBinder: payload, `@`, payload
-// sub-pattern and tuple-element binders) and for-each variables. A parameter
-// reusing one of these names cannot be told from the binding by an
-// occurrence walk, and a variant constructor by
+// locals, match-arm binders (payload, `@` and tuple-pattern binders included)
+// and for-each variables. A parameter reusing one of these names cannot be
+// told from the binding by an occurrence walk, and a variant constructor by
 // that name is not what a call to it reaches.
 func shadowingNames(fn *ast.FuncDecl, info *checker.Info) map[string]bool {
 	out := map[string]bool{}
@@ -1162,11 +1166,11 @@ func shadowingNames(fn *ast.FuncDecl, info *checker.Info) map[string]bool {
 			bind(x.Name)
 		case *ast.Match:
 			for _, arm := range x.Arms {
-				bind(ast.ArmBinderNames(arm)...)
+				bind(arm.Binders()...)
 			}
 		case *ast.MatchExpr:
 			for _, arm := range x.Arms {
-				bind(ast.ArmExprBinderNames(arm)...)
+				bind(arm.Binders()...)
 			}
 		case *ast.ForEach:
 			bind(x.Var)
@@ -3220,11 +3224,11 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 		//
 		// Gated on exactly the predicate that lowering uses, so the two
 		// cannot disagree: a struct/tuple temp the borrow analysis proved
-		// fresh. Maps stay out for the reason the local case gives above —
-		// their slot drop deep-frees the value column rather than being the
-		// shallow is_unique-gated release the counted-alias argument rests
-		// on.
-		if b.freshOwnedFieldContainer(x.Target) && !isMapType(b.exprType(x)) {
+		// fresh, or a delete tuple the COW seam retained. A MAP element out
+		// of one is credited on the same terms as out of a bound tuple — the
+		// seam supplies the count the container's drop spends — so it is the
+		// seam, not the element type, that decides.
+		if b.freshOwnedFieldContainer(x.Target) {
 			return false
 		}
 		return true
@@ -3573,7 +3577,7 @@ func (b *builder) computeMovedLocals() map[string]bool {
 				rhs, _ = s.Init.(*ast.Ident)
 				site = s
 			}
-			if rhs != nil && b.isOwnedRcLocal(rhs.Name) && order.isLast(rhs) {
+			if rhs != nil && b.movableAliasSource(rhs.Name) && order.isLast(rhs) {
 				moved[rhs.Name] = true
 				b.rc.moveSites[site] = true
 			}
@@ -5296,6 +5300,26 @@ func (b *builder) isOwnedRcLocal(name string) bool {
 	return false
 }
 
+// movableAliasSource reports whether `name` holds a reference this frame will
+// release at exit, so an alias taking its LAST occurrence can move it: the
+// alias skips its transfer inc and the sweep skips the dec, a net-zero pair.
+//
+// Both roles qualify, and the parameter half is the one that matters for a
+// cursor threaded through a function. `var c: C = c0;` on an owned parameter
+// used to inc, leaving c0's reference alive to the exit sweep for the whole
+// body — so the container's array field sat at rc 2 and every field append
+// after it copied the buffer instead of growing in place. Three appends around
+// one call went quadratic on that alone (#8498): 2990 ms against 2 ms for the
+// same work written without the alias.
+//
+// A BORROWED parameter is excluded, and must be: moving it would hand away a
+// reference the caller still owns. isOwnedRcParam is the same predicate the
+// sweep's owned-param pass releases on, so "will this frame dec it?" has one
+// answer for both.
+func (b *builder) movableAliasSource(name string) bool {
+	return b.isOwnedRcLocal(name) || b.isOwnedRcParam(name)
+}
+
 // isOwnedRcParam reports whether `name` is a parameter the CALLEE owns and so
 // must release at exit — `own`-annotated, owned by default for its type, or
 // proven consumed. It is the param-side sibling of isOwnedRcLocal (which only
@@ -6402,6 +6426,15 @@ func (b *builder) computeBorrowedMapFieldResults() map[string]bool {
 // map element aliasing the receiver's handle at rc 1: two names, one count,
 // both releasing — an rc underflow everywhere and a SIGSEGV on arm64 / a trap
 // on wasm32 once the freed key cell was recycled (#8276).
+//
+// The FieldAccess arm is the same call with no binding at all —
+// `m = m.without(k).0`, `f(m.without(k).0)`. The tuple is a temporary, but the
+// field read deep-drops its box (freshOwnedFieldContainerType admits a
+// seam-retained delete tuple), and that drop releases the map element, so this
+// owes the retain for the same reason a binding does. Without the pair the box
+// was never freed AND the receiver stayed tainted out of freeEligible: 128000 /
+// 144000 / 104000 B over the corpus fixture (#8434).
+//
 // Purely syntactic: the walk runs on the already-mangled AST, the same form
 // isMapMutatorCall matches at the call site.
 func (b *builder) computeMapCowBindSites() map[ast.Node]bool {
@@ -6414,6 +6447,10 @@ func (b *builder) computeMapCowBindSites() map[ast.Node]bool {
 			}
 		case *ast.Destructure:
 			if c, ok := s.Init.(*ast.Call); ok && isMapDeleteCall(c) {
+				out[c] = true
+			}
+		case *ast.FieldAccess:
+			if c, ok := s.Target.(*ast.Call); ok && isMapDeleteCall(c) {
 				out[c] = true
 			}
 		}
@@ -6798,6 +6835,58 @@ func (g *growParam) merge(o growParam) bool {
 	return changed
 }
 
+// renameRoots maps a local that RENAMES another binding — `var c: C = c0;`,
+// where c0 is named nowhere else in the body — to the name it renames, chased
+// through chained renames to the root.
+//
+// A rename is one binding spelled twice: nothing after it can read the source,
+// so the two names share every buffer with no second live reader. Every
+// analysis that asks "which binding is this name?" has to agree on that, or
+// the answer splits — callArgDeaths admitting the rename on its source's
+// footing while computeGrowParams stopped propagating at it withdrew the
+// caller-side bracket from a buffer the caller still read (#8498).
+//
+// A name declared twice is excluded: the occurrence census cannot tell its two
+// bindings apart.
+func renameRoots(body ast.Node) map[string]string {
+	occurrences := map[string]int{}
+	declCount := map[string]int{}
+	ast.Walk(body, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.Ident:
+			occurrences[x.Name]++
+		case *ast.Var:
+			declCount[x.Name]++
+		}
+		return true
+	})
+	direct := map[string]string{}
+	ast.Walk(body, func(n ast.Node) bool {
+		v, isVar := n.(*ast.Var)
+		if !isVar || declCount[v.Name] != 1 {
+			return true
+		}
+		if src, isID := v.Init.(*ast.Ident); isID && occurrences[src.Name] == 1 {
+			direct[v.Name] = src.Name
+		}
+		return true
+	})
+	out := make(map[string]string, len(direct))
+	for name := range direct {
+		root := direct[name]
+		seen := map[string]bool{name: true, root: true}
+		for {
+			next, chained := direct[root]
+			if !chained || seen[next] {
+				break
+			}
+			root, seen[next] = next, true
+		}
+		out[name] = root
+	}
+	return out
+}
+
 // callArgDeaths marks, per call node, the ident arguments whose value can
 // no longer be observed through that binding in this function after the
 // call, so the #4873 bracket may skip them. Four shapes qualify:
@@ -6827,7 +6916,10 @@ func (g *growParam) merge(o growParam) bool {
 //     where every receiver is at its last use. Each of those was paying a
 //     full-buffer copy per link, which is O(n²) bytes over a chain: the
 //     self-host lowering threads its LowerState this way and one 400-arm
-//     `else if` chain bumped 40 MB in `emit` alone.
+//     `else if` chain bumped 40 MB in `emit` alone. A local that RENAMES
+//     an admitted name at that name's only occurrence — `var c: C = c0;`
+//     on a parameter — is the same binding spelled twice, so it is
+//     admitted on the source's footing.
 //
 // The last-occurrence test needs the no-loop gate to be sound at all:
 // inside a loop the "last" occurrence re-executes, and an unbracketed
@@ -6847,6 +6939,10 @@ func (g *growParam) merge(o growParam) bool {
 // closure in computeGrowParams consults this map, so a buffer passed on
 // unbracketed propagates as a growable position of the enclosing
 // function's own parameter.
+//
+// A rename is not that alias either, for the plainer reason that its source is
+// never named again — and computeGrowParams resolves through it (renameRoots)
+// so the closure does not stop at the new name.
 func callArgDeaths(fn *ast.FuncDecl, info *checker.Info, obs map[string][]fieldObs) map[*ast.Call]map[string]bool {
 	body := fn.Body
 	out := map[*ast.Call]map[string]bool{}
@@ -6948,6 +7044,23 @@ func callArgDeaths(fn *ast.FuncDecl, info *checker.Info, obs map[string][]fieldO
 		}
 		return true
 	})
+	// A local RENAMED from an already-admitted name — `var c: C = c0;` on a
+	// parameter, the line every state-threading function in the self-host
+	// lowering opens with — is admitted on that name's footing. The alias
+	// exclusion asks whether another live name in this frame reads the same
+	// buffers, and a rename taking the source's ONLY occurrence leaves none.
+	// Without this the rename withheld the death from every call in the chain
+	// below it, so the container reaching each field append was at rc 2 and
+	// copied the whole buffer (#8498).
+	aliasInitLocal := map[string]bool{}
+	for name, root := range renameRoots(body) {
+		if isParam[root] || callInitLocal[root] || unpackInitLocal[root] {
+			aliasInitLocal[name] = true
+		}
+	}
+	admitted := func(name string) bool {
+		return isParam[name] || callInitLocal[name] || unpackInitLocal[name] || aliasInitLocal[name]
+	}
 	markOnce := func(c *ast.Call, name string) {
 		direct := 0
 		for _, a := range c.Args {
@@ -7064,7 +7177,7 @@ func callArgDeaths(fn *ast.FuncDecl, info *checker.Info, obs map[string][]fieldO
 			if !ok || escaping[aid.Name] || !order.isLast(aid) {
 				continue
 			}
-			if !isParam[aid.Name] && !callInitLocal[aid.Name] && !unpackInitLocal[aid.Name] {
+			if !admitted(aid.Name) {
 				continue
 			}
 			markOnce(c, aid.Name)
@@ -7092,7 +7205,7 @@ func callArgDeaths(fn *ast.FuncDecl, info *checker.Info, obs map[string][]fieldO
 			if !ok || escaping[aid.Name] || order.isLast(aid) {
 				continue
 			}
-			if !isParam[aid.Name] && !callInitLocal[aid.Name] && !unpackInitLocal[aid.Name] {
+			if !admitted(aid.Name) {
 				continue
 			}
 			// An ARRAY position is excluded. The death withdraws the bracket
@@ -7690,7 +7803,20 @@ func computeGrowParams(prog *ast.Program, info *checker.Info, obs map[string][]f
 			grow.vals[fn.Name] = make([]growParam, len(fn.Params))
 		}
 	}
+	// A rename resolves to the binding it renames, so a parameter threaded
+	// through `var c: C = c0;` still propagates as a growable position of c0.
+	renames := map[*ast.FuncDecl]map[string]string{}
 	paramIdx := func(fn *ast.FuncDecl, name string) int {
+		if fn.Body != nil {
+			r, ok := renames[fn]
+			if !ok {
+				r = renameRoots(fn.Body)
+				renames[fn] = r
+			}
+			if root, isRename := r[name]; isRename {
+				name = root
+			}
+		}
 		for i, p := range fn.Params {
 			if p.Name == name {
 				return i

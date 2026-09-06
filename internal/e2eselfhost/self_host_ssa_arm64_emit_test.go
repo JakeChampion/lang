@@ -124,26 +124,26 @@ func TestSelfHostSSAEmitArm64(t *testing.T) {
 		{"tuple-destructure", "function main(): i32 { var (a, b) = (5, 6); return a + b; }", 11},
 		{"tuple-destructure-call", "function pair(): (i32, i32) { return (7, 8); } function main(): i32 { var (lo, hi) = pair(); return hi - lo; }", 1},
 		// No-capture lambdas lift to top-level functions; `f(...)` is a direct call.
-		{"lambda-call", "function main(): i32 { var f = function (x: i32): i32 { return x + 1; }; return f(5); }", 6},
-		{"lambda-compose", "function main(): i32 { var inc = function (x: i32): i32 { return x + 1; }; var dbl = function (x: i32): i32 { return x * 2; }; return inc(dbl(10)); }", 21},
-		{"lambda-loop", "function main(): i32 { var f = function (a: i32, b: i32): i32 { return a * b + 1; }; var s = 0; var i = 0; while (i < 4) { s = s + f(i, 2); i = i + 1; } return s; }", 16},
+		{"lambda-call", "function main(): i32 { var f = (x: i32): i32 => { return x + 1; }; return f(5); }", 6},
+		{"lambda-compose", "function main(): i32 { var inc = (x: i32): i32 => { return x + 1; }; var dbl = (x: i32): i32 => { return x * 2; }; return inc(dbl(10)); }", 21},
+		{"lambda-loop", "function main(): i32 { var f = (a: i32, b: i32): i32 => { return a * b + 1; }; var s = 0; var i = 0; while (i < 4) { s = s + f(i, 2); i = i + 1; } return s; }", 16},
 		// Capturing lambdas: read-only free vars become trailing call args.
-		{"lambda-capture-local", "function main(): i32 { var n = 10; var f = function (x: i32): i32 { return x + n; }; return f(5); }", 15},
-		{"lambda-capture-params", "function add(a: i32, b: i32): i32 { var f = function (x: i32): i32 { return x + a + b; }; return f(100); } function main(): i32 { return add(3, 7); }", 110},
-		{"lambda-capture-string", "function main(): i32 { var prefix = \"hello\"; var f = function (n: i32): i32 { return prefix.len() + n; }; return f(37); }", 42},
+		{"lambda-capture-local", "function main(): i32 { var n = 10; var f = (x: i32): i32 => { return x + n; }; return f(5); }", 15},
+		{"lambda-capture-params", "function add(a: i32, b: i32): i32 { var f = (x: i32): i32 => { return x + a + b; }; return f(100); } function main(): i32 { return add(3, 7); }", 110},
+		{"lambda-capture-string", "function main(): i32 { var prefix = \"hello\"; var f = (n: i32): i32 => { return prefix.len() + n; }; return f(37); }", 42},
 		// Higher-order: no-capture lambda as a `(T)=>R` value, called indirectly.
-		{"lambda-indirect", "function apply(f: (i32) => i32, x: i32): i32 { return f(x); } function main(): i32 { var inc = function (n: i32): i32 { return n + 1; }; return apply(inc, 41); }", 42},
-		{"lambda-indirect-dispatch", "function apply2(f: (i32) => i32, x: i32): i32 { return f(x) + f(x + 1); } function main(): i32 { var dbl = function (n: i32): i32 { return n * 2; }; var sq = function (n: i32): i32 { return n * n; }; return apply2(dbl, 10) + apply2(sq, 3); }", 67},
-		{"lambda-indirect-loop", "function run(f: (i32) => i32): i32 { var s = 0; var i = 0; while (i < 4) { s = s + f(i); i = i + 1; } return s; } function main(): i32 { var t = function (n: i32): i32 { return n * 10; }; return run(t); }", 60},
+		{"lambda-indirect", "function apply(f: (i32) => i32, x: i32): i32 { return f(x); } function main(): i32 { var inc = (n: i32): i32 => { return n + 1; }; return apply(inc, 41); }", 42},
+		{"lambda-indirect-dispatch", "function apply2(f: (i32) => i32, x: i32): i32 { return f(x) + f(x + 1); } function main(): i32 { var dbl = (n: i32): i32 => { return n * 2; }; var sq = (n: i32): i32 => { return n * n; }; return apply2(dbl, 10) + apply2(sq, 3); }", 67},
+		{"lambda-indirect-loop", "function run(f: (i32) => i32): i32 { var s = 0; var i = 0; while (i < 4) { s = s + f(i); i = i + 1; } return s; } function main(): i32 { var t = (n: i32): i32 => { return n * 10; }; return run(t); }", 60},
 		// Function values: named function as a value, and a returned closure.
 		{"fn-value-by-name", "function work(): i32 { return 42; } function run(f: () => i32): i32 { return f(); } function main(): i32 { return run(work); }", 42},
 		{"fn-value-predicate", "function is_big(n: i32): i32 { if (n > 10) { return 1; } return 0; } function count_if(a: i32[], pred: (i32) => i32): i32 { var c = 0; for x in a { if (pred(x) == 1) { c = c + 1; } } return c; } function main(): i32 { var a = [5, 20, 8, 30, 15]; return count_if(a, is_big); }", 3},
-		{"closure-returned", "function maker(): (i32) => i32 { var f = function (n: i32): i32 { return n + 100; }; return f; } function main(): i32 { var g = maker(); return g(5); }", 105},
+		{"closure-returned", "function maker(): (i32) => i32 { var f = (n: i32): i32 => { return n + 100; }; return f; } function main(): i32 { var g = maker(); return g(5); }", 105},
 		// Escaping capturing closures (boxed [fn_addr, cap…], env passed at the
 		// indirect call).
-		{"closure-escape-arg", "function apply(f: (i32) => i32, x: i32): i32 { return f(x); } function main(): i32 { var k = 100; var add_k = function (n: i32): i32 { return n + k; }; return apply(add_k, 5); }", 105},
-		{"closure-escape-return", "function adder(a: i32): (i32) => i32 { var f = function (b: i32): i32 { return a + b; }; return f; } function main(): i32 { var add10 = adder(10); var add20 = adder(20); return add10(5) + add20(7); }", 42},
-		{"closure-capture-multicall", "function main(): i32 { var k = 10; var f = function (x: i32): i32 { return x + k; }; return f(1) + f(2); }", 23},
+		{"closure-escape-arg", "function apply(f: (i32) => i32, x: i32): i32 { return f(x); } function main(): i32 { var k = 100; var add_k = (n: i32): i32 => { return n + k; }; return apply(add_k, 5); }", 105},
+		{"closure-escape-return", "function adder(a: i32): (i32) => i32 { var f = (b: i32): i32 => { return a + b; }; return f; } function main(): i32 { var add10 = adder(10); var add20 = adder(20); return add10(5) + add20(7); }", 42},
+		{"closure-capture-multicall", "function main(): i32 { var k = 10; var f = (x: i32): i32 => { return x + k; }; return f(1) + f(2); }", 23},
 		// Receiver methods `function (r: T) m(...)` — receiver as implicit
 		// param 0, `recv.m(args)` → call "T__m" with the receiver first.
 		{"method-basic", "struct Counter { n: i32 } function (c: Counter) get(): i32 { return c.n; } function (c: Counter) plus(d: i32): i32 { return c.n + d; } function main(): i32 { var c = Counter { n: 40 }; return c.get() + c.plus(2) - c.n; }", 42},

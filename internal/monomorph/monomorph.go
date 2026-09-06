@@ -27,11 +27,13 @@
 package monomorph
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/checker"
+	"github.com/jakechampion/lang/internal/diag"
 )
 
 // instKey identifies a unique (generic-name, mangled-name) pair —
@@ -76,6 +78,7 @@ func Run(prog *ast.Program, info *checker.Info) error {
 	// cloned body in the worklist loop — the latter is what makes a
 	// generic function that calls another generic (`wrap[T]` calling
 	// `id[T]`) instantiate the callee transitively.
+	var boundErrs []error
 	collectCalls := func(body *ast.Block) {
 		walkBlock(body, func(c *ast.Call) {
 			id, ok := c.Callee.(*ast.Ident)
@@ -101,6 +104,13 @@ func Run(prog *ast.Program, info *checker.Info) error {
 				// concrete.
 				return
 			}
+			// The bound check the checker deferred. It skips an argument
+			// that is still a type parameter and leaves it "for the
+			// eventual monomorphic call"; this is that call, and until
+			// #8452 nothing was it — the clone's TypeParams are cleared
+			// below, so an unsatisfied bound surfaced as whatever the
+			// missing impl was needed for, under a compiler-bug banner.
+			boundErrs = append(boundErrs, checker.BoundErrors(info, gen, c.TypeArgs, c.P)...)
 			mang := mangle(id.Name, c.TypeArgs)
 			instantiations[instKey{name: id.Name, mang: mang}] = c.TypeArgs
 			id.Name = mang
@@ -240,6 +250,14 @@ func Run(prog *ast.Program, info *checker.Info) error {
 			sl.TypeArgs = nil
 		})
 		cloned = append(cloned, c)
+	}
+
+	// Every instantiation has been seen, so every deferred bound has been
+	// judged. Report before cloning any further: a program whose type
+	// argument does not implement the trait its parameter requires has no
+	// monomorphic form to produce.
+	if len(boundErrs) > 0 {
+		return diag.Errors(dedupeErrors(boundErrs))
 	}
 
 	// 3. Same shape for generic structs: clone per-instantiation
@@ -741,10 +759,62 @@ func Run(prog *ast.Program, info *checker.Info) error {
 	info.GenericStructs = map[string]*ast.StructDecl{}
 	newInfo, err := checker.Check(prog)
 	if err != nil {
+		// A coded diagnostic here is a USER error that only became
+		// visible once the type arguments were substituted — `Cell[T]`
+		// over a composite is the live one. Reporting it as a compiler
+		// bug gave the author a banner accusing the compiler and no code
+		// to look up, for a mistake in their own program (#8452). The
+		// banner is kept for a failure with no code, which is the only
+		// shape that really is an internal invariant breaking.
+		if hasDiagnosticCode(err) {
+			return err
+		}
 		return fmt.Errorf("monomorph: re-check failed (compiler bug): %w", err)
 	}
 	*info = *newInfo
 	return nil
+}
+
+// hasDiagnosticCode reports whether err carries a checker diagnostic code —
+// the mark of a USER error, as against an internal invariant failure.
+//
+// diag.Errors is unwrapped by hand rather than through errors.As: its own As
+// delegates to entries that implement As, and *checker.Error does not, so the
+// collection the checker actually returns would answer no.
+func hasDiagnosticCode(err error) bool {
+	switch e := err.(type) {
+	case nil:
+		return false
+	case *checker.Error:
+		return e.ErrCode != ""
+	case diag.Errors:
+		for _, one := range e {
+			if hasDiagnosticCode(one) {
+				return true
+			}
+		}
+		return false
+	}
+	var one *checker.Error
+	if errors.As(err, &one) {
+		return one.ErrCode != ""
+	}
+	return hasDiagnosticCode(errors.Unwrap(err))
+}
+
+// dedupeErrors drops repeats. One unsatisfied bound is reported once however
+// many times the offending call is instantiated — a generic called from a
+// cloned generic reaches collectCalls once per clone.
+func dedupeErrors(errs []error) []error {
+	seen := map[string]bool{}
+	out := errs[:0:0]
+	for _, e := range errs {
+		if k := e.Error(); !seen[k] {
+			seen[k] = true
+			out = append(out, e)
+		}
+	}
+	return out
 }
 
 // genericEnum returns the generic EnumDecl for `name` (TypeParams

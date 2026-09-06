@@ -29,66 +29,66 @@ var closureCallsClosureIRCases = []struct {
 }{
 	// nested call `add(add(a))` — the canonical shape.
 	{"nested", `function main(): i32 {
-    var add = function(a: i32): i32 { return a + 10; };
-    var twice = function(a: i32): i32 { return add(add(a)); };
+    var add = (a: i32): i32 => { return a + 10; };
+    var twice = (a: i32): i32 => { return add(add(a)); };
     return twice(1);
 }`, 21},
 	// binary call `mk(a) + mk(a)` — two separate call sites in one expression.
 	{"binary", `function main(): i32 {
-    var mk = function(a: i32): i32 { return a * 3; };
-    var combine = function(a: i32): i32 { return mk(a) + mk(a); };
+    var mk = (a: i32): i32 => { return a * 3; };
+    var combine = (a: i32): i32 => { return mk(a) + mk(a); };
     return combine(4);
 }`, 24},
 	// a three-deep chain: f -> dbl -> inc, each a capture-free local closure.
 	{"chain", `function main(): i32 {
-    var inc = function(a: i32): i32 { return a + 1; };
-    var dbl = function(a: i32): i32 { return inc(a) * 2; };
-    var f = function(a: i32): i32 { return dbl(a) + inc(a); };
+    var inc = (a: i32): i32 => { return a + 1; };
+    var dbl = (a: i32): i32 => { return inc(a) * 2; };
+    var f = (a: i32): i32 => { return dbl(a) + inc(a); };
     return f(3);
 }`, 12},
 	// control flow inside the calling closure (if + the called closure twice).
 	{"if_body", `function main(): i32 {
-    var pos = function(a: i32): i32 { if (a < 0) { return 0; } return a; };
-    var clamp = function(a: i32): i32 { return pos(a) + pos(0 - 5); };
+    var pos = (a: i32): i32 => { if (a < 0) { return 0; } return a; };
+    var clamp = (a: i32): i32 => { return pos(a) + pos(0 - 5); };
     return clamp(7);
 }`, 7},
 	// a loop in the calling closure calling the other closure each iteration.
 	{"loop_body", `function main(): i32 {
-    var sq = function(a: i32): i32 { return a * a; };
-    var sumsq = function(n: i32): i32 { var s = 0; var i = 1; while (i <= n) { s = s + sq(i); i = i + 1; } return s; };
+    var sq = (a: i32): i32 => { return a * a; };
+    var sumsq = (n: i32): i32 => { var s = 0; var i = 1; while (i <= n) { s = s + sq(i); i = i + 1; } return s; };
     return sumsq(3);
 }`, 14},
 	// the inner closure CAPTURES an outer variable (`add` captures `x`): the
 	// injected capture arg flows through as the calling closure's own capture.
 	{"capturing_inner", `function main(): i32 {
     var x = 10;
-    var add = function(a: i32): i32 { return a + x; };
-    var twice = function(a: i32): i32 { return add(a) + add(a); };
+    var add = (a: i32): i32 => { return a + x; };
+    var twice = (a: i32): i32 => { return add(a) + add(a); };
     return twice(1);
 }`, 22},
 	// the inner closure captures TWO variables.
 	{"capturing_two", `function main(): i32 {
     var x = 3;
     var y = 7;
-    var f = function(a: i32): i32 { return a * x + y; };
-    var g = function(a: i32): i32 { return f(a) + f(a); };
+    var f = (a: i32): i32 => { return a * x + y; };
+    var g = (a: i32): i32 => { return f(a) + f(a); };
     return g(2);
 }`, 26},
 	// two closures share a capture; a third calls both. (Return kept <= 125 for
 	// the WASI proc_exit range — base 50 → (1+50)+(50+1) = 102.)
 	{"shared_capture", `function main(): i32 {
     var base = 50;
-    var f = function(a: i32): i32 { return a + base; };
-    var g = function(a: i32): i32 { return base + a; };
-    var h = function(a: i32): i32 { return f(a) + g(a); };
+    var f = (a: i32): i32 => { return a + base; };
+    var g = (a: i32): i32 => { return base + a; };
+    var h = (a: i32): i32 => { return f(a) + g(a); };
     return h(1);
 }`, 102},
 	// the calling closure both CALLS the capturing inner closure and uses the
 	// captured variable directly.
 	{"direct_and_call", `function main(): i32 {
     var x = 5;
-    var add = function(a: i32): i32 { return a + x; };
-    var combo = function(a: i32): i32 { return add(a) + x; };
+    var add = (a: i32): i32 => { return a + x; };
+    var combo = (a: i32): i32 => { return add(a) + x; };
     return combo(10);
 }`, 20},
 	// The called closure's binding SPELLS ITS TYPE OUT. That spelling is what
@@ -99,8 +99,8 @@ var closureCallsClosureIRCases = []struct {
 	// trapped (`undefined element`) and the register backends took a bus
 	// error, both with the compiler reporting success.
 	{"annotated_inner_called", `function main(): i32 {
-    var add: (i32) => i32 = function(a: i32): i32 { return a + 10; };
-    var twice = function(a: i32): i32 { return add(add(a)); };
+    var add: (i32) => i32 = (a: i32): i32 => { return a + 10; };
+    var twice = (a: i32): i32 => { return add(add(a)); };
     return twice(1);
 }`, 21},
 }

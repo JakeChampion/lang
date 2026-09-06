@@ -1,6 +1,6 @@
 // Tuple-destructuring parameters — `(a, b): (T, U)` in every
-// binding form: named function, second-position param, verbose
-// lambda, and arrow lambda. Desugars at parse time into a
+// binding form: named function, second-position param, and a lambda
+// with each body form — braced and expression. Desugars at parse time into a
 // synthetic param + a leading `let (a, b) = <synth>;`, so this
 // exercises the same Destructure path as tuple_destructure.
 function add((a, b): (i32, i32)): i32 {
@@ -12,7 +12,7 @@ function scale(k: i32, (lo, hi): (i32, i32)): i32 {
 }
 
 function main(): i32 {
-    var f = function((x, y): (i32, i32)): i32 { return x * y; };
+    var f = ((x, y): (i32, i32)): i32 => { return x * y; };
     var g = ((lo, hi): (i32, i32)) => hi - lo;
     // 35 + 4 + 2 + 1 = 42
     return add((30, 5)) + scale(2, (3, 5)) + f((1, 2)) + g((5, 6));

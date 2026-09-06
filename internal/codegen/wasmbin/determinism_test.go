@@ -51,7 +51,7 @@ function main(): i32 {
 
 	"closures": `
 function adder(n: i32): (i32) => i32 {
-	return function (x: i32): i32 { return x + n; };
+	return (x: i32): i32 => { return x + n; };
 }
 function main(): i32 {
 	var f: (i32) => i32 = adder(10);

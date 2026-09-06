@@ -116,6 +116,27 @@ function main(): i32 {
     var out = walk([], 40);
     return out.len() + 2;
 }`, 42},
+	// A RENAMED cursor: `var c: Blk = c0;` opens the callee, and the rename is
+	// the same binding as the parameter, so the chain below it threads
+	// unbracketed (#8498). That only stays sound while the growable position
+	// propagates through the rename to c0 — otherwise this caller sees no
+	// growth summary for `thread` and leaves its own live `s` unbracketed,
+	// which reads back 23.
+	{"renamed-cursor", `struct Blk { insts: i32[] }
+function emit(s: Blk, x: i32): Blk { return Blk { insts: s.insts.append(x) }; }
+function thread(c0: Blk, x: i32): Blk {
+    var c: Blk = c0;
+    var open: Blk = emit(c, x);
+    return emit(open, x + 1);
+}
+function main(): i32 {
+    var s: Blk = Blk { insts: [] };
+    s = thread(s, 1);
+    var before: i32 = s.insts.len();
+    var t: Blk = thread(s, 3);
+    var after: i32 = s.insts.len();
+    return before * 10 + after + (t.insts.len() - 4);
+}`, 22},
 	// `.with` on a borrowed param: already contained by its own
 	// receiver-live machinery (#2832) — pinned here as the sibling
 	// regression guard.

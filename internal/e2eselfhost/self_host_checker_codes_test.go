@@ -762,7 +762,7 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"call-too-few-args", "function add(a: i32, b: i32): i32 { return a + b; }\nfunction main(): i32 { return add(1); }\n", []string{"E004"}},
 		{"call-too-many-args", "function id(a: i32): i32 { return a; }\nfunction main(): i32 { return id(1, 2); }\n", []string{"E004"}},
 		{"call-correct-arity-ok", "function add(a: i32, b: i32): i32 { return a + b; }\nfunction main(): i32 { return add(1, 2); }\n", nil},
-		{"call-shadowed-local-ok", "function f(a: i32, b: i32): i32 { return a + b; }\nfunction main(): i32 { var f = function(x: i32): i32 { return x; }; return f(7); }\n", nil},
+		{"call-shadowed-local-ok", "function f(a: i32, b: i32): i32 { return a + b; }\nfunction main(): i32 { var f = (x: i32): i32 => { return x; }; return f(7); }\n", nil},
 		{"method-too-few-args", "struct P { x: i32 }\nfunction (p: P) add(a: i32, b: i32): i32 { return p.x + a + b; }\nfunction main(): i32 { var p: P = P { x: 1 }; return p.add(5); }\n", []string{"E004"}},
 		{"method-too-many-args", "struct P { x: i32 }\nfunction (p: P) one(a: i32): i32 { return p.x + a; }\nfunction main(): i32 { var p: P = P { x: 1 }; return p.one(5, 6); }\n", []string{"E004"}},
 		{"method-correct-arity-ok", "struct P { x: i32 }\nfunction (p: P) add(a: i32, b: i32): i32 { return p.x + a + b; }\nfunction main(): i32 { var p: P = P { x: 1 }; return p.add(5, 6); }\n", nil},
@@ -781,7 +781,7 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"call-nonfn-i32", "function main(): i32 { var x = 5; return x(3); }\n", []string{"E038"}},
 		{"call-nonfn-string", "function main(): i32 { var s = \"a\"; return s(3); }\n", []string{"E038"}},
 		{"call-nonfn-noargs", "function main(): i32 { var x = 5; return x(); }\n", []string{"E038"}},
-		{"call-closure-ok", "function main(): i32 { var g = function(x: i32): i32 { return x + 1; }; return g(41); }\n", nil},
+		{"call-closure-ok", "function main(): i32 { var g = (x: i32): i32 => { return x + 1; }; return g(41); }\n", nil},
 		{"call-fnval-named-ok", "function dbl(n: i32): i32 { return n * 2; }\nfunction main(): i32 { var f = dbl; return f(21); }\n", nil},
 		{"if-nonbool-cond", "function main(): i32 { if (5) { return 1; } return 0; }\n", []string{"E008"}},
 		{"while-nonbool-cond", "function main(): i32 { while (\"x\") { return 1; } return 0; }\n", []string{"E008"}},
@@ -1071,6 +1071,16 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"missing-return-one-armed-if", "function f(c: boolean): i32 { if (c) { return 1; } }\nfunction main(): i32 { return 0; }\n", []string{"E052"}},
 		{"return-while-true-ok", "function f(): i32 { while (true) { return 1; } }\nfunction main(): i32 { return 0; }\n", nil},
 		{"return-loop-ok", "function f(): i32 { loop { return 1; } }\nfunction main(): i32 { return 0; }\n", nil},
+		// A loop that can break does not diverge (#8447), and a break inside
+		// a block-, if- or match-expression counts like any other (#8562);
+		// one that belongs to a nested loop or to a lambda's own loop does not.
+		{"missing-return-loop-breaks", "function f(): i32 { loop { break; } }\nfunction main(): i32 { return 0; }\n", []string{"E052"}},
+		{"missing-return-while-true-breaks", "function f(): i32 { while (true) { break; } }\nfunction main(): i32 { return 0; }\n", []string{"E052"}},
+		{"missing-return-loop-breaks-in-block-expr", "function f(): i32 { loop { var z: i32 = { break; 1 }; } }\nfunction main(): i32 { return 0; }\n", []string{"E052"}},
+		{"missing-return-loop-breaks-in-if-expr", "function f(n: i32): i32 { loop { var z: i32 = if (n > 0) { break; 1 } else { 2 }; } }\nfunction main(): i32 { return 0; }\n", []string{"E052"}},
+		{"missing-return-loop-breaks-in-match-expr", "function f(n: i32): i32 { loop { var z: i32 = match (n) { 0 => { break; 1 }, _ => 2 }; } }\nfunction main(): i32 { return 0; }\n", []string{"E052"}},
+		{"loop-inner-break-ok", "function f(): i32 { loop { while (true) { break; } } }\nfunction main(): i32 { return 0; }\n", nil},
+		{"loop-lambda-break-ok", "function f(): i32 { loop { var g: () => i32 = function (): i32 { while (true) { break; } return 1; }; var x: i32 = g(); } }\nfunction main(): i32 { return 0; }\n", nil},
 		{"return-if-else-ok", "function f(c: boolean): i32 { if (c) { return 1; } else { return 2; } }\nfunction main(): i32 { return 0; }\n", nil},
 		// void return type: an empty body is fine (no E052 — falling off the
 		// end is the normal exit), a bare `return;` is fine, and returning a
@@ -1232,13 +1242,13 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"try-option-ret-string", "function f(): string { return Some(3)?; }\nfunction main(): i32 { return 0; }\n", []string{"E042"}},
 		{"try-option-ret-bool", "function f(): boolean { var o: Option[i32] = Some(1); var v: i32 = o?; return v > 0; }\nfunction main(): i32 { return 0; }\n", []string{"E042"}},
 		{"try-result-ret-ok", "function get(): Result[i32, string] { return Ok(3); }\nfunction f(): Result[i32, string] { var v: i32 = get()?; return Ok(v + 1); }\nfunction main(): i32 { return 0; }\n", nil},
-		{"try-lambda-ret-i32", "function f(): Option[i32] {\n    var g = function(): i32 { var o: Option[i32] = Some(1); var v: i32 = o?; return v; };\n    return Some(1);\n}\nfunction main(): i32 { return 0; }\n", []string{"E042"}},
-		{"try-lambda-ret-option-ok", "function f(): i32 {\n    var g = function(): Option[i32] { var o: Option[i32] = Some(1); var v: i32 = o?; return Some(v); };\n    return 2;\n}\nfunction main(): i32 { return 0; }\n", nil},
+		{"try-lambda-ret-i32", "function f(): Option[i32] {\n    var g = (): i32 => { var o: Option[i32] = Some(1); var v: i32 = o?; return v; };\n    return Some(1);\n}\nfunction main(): i32 { return 0; }\n", []string{"E042"}},
+		{"try-lambda-ret-option-ok", "function f(): i32 {\n    var g = (): Option[i32] => { var o: Option[i32] = Some(1); var v: i32 = o?; return Some(v); };\n    return 2;\n}\nfunction main(): i32 { return 0; }\n", nil},
 		{"callee-undefined", "function main(): i32 { return foo(1); }\n", []string{"E001"}},
 		{"callee-user-fn-ok", "function g(): i32 { return 1; }\nfunction main(): i32 { return g(); }\n", nil},
 		{"callee-builtin-ok", "function main(): i32 { print(\"hi\"); return 0; }\n", nil},
 		{"callee-variant-ctor-ok", "function f(): Option[i32] { return Some(1); }\nfunction main(): i32 { return 0; }\n", nil},
-		{"callee-closure-ok", "function main(): i32 { var f = function(x: i32): i32 { return x; }; return f(7); }\n", nil},
+		{"callee-closure-ok", "function main(): i32 { var f = (x: i32): i32 => { return x; }; return f(7); }\n", nil},
 		{"value-builtin-as-value-ok", "function main(): i32 { var w = write; return 0; }\n", nil},
 		{"shadow-option", "enum Option { A, B }\nfunction main(): i32 { return 0; }\n", []string{"E010"}},
 		{"shadow-result", "enum Result { A, B }\nfunction main(): i32 { return 0; }\n", []string{"E010"}},
@@ -1296,12 +1306,12 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"own-arg-fresh-ok", "function consume(own xs: i32[]): i32 { return xs[0]; }\nfunction f(): i32 { return consume([1, 2]); }\nfunction main(): i32 { return 0; }\n", nil},
 		{"own-arg-forward-ok", "function consume(own xs: i32[]): i32 { return xs[0]; }\nfunction f(own ys: i32[]): i32 { return consume(ys); }\nfunction main(): i32 { return 0; }\n", nil},
 		// E049: assigning to a reference-typed variable captured by a closure.
-		{"cap-assign-string", "function main(): i32 { var s: string = \"x\"; var f = function(): i32 { s = \"y\"; return 0; }; return f(); }\n", []string{"E049"}},
-		{"cap-assign-array", "function main(): i32 { var a: i32[] = [1]; var f = function(): i32 { a = [2]; return 0; }; return f(); }\n", []string{"E049"}},
-		{"cap-assign-struct", "struct P { x: i32 }\nfunction main(): i32 { var p: P = P { x: 1 }; var f = function(): i32 { p = P { x: 2 }; return 0; }; return f(); }\n", []string{"E049"}},
-		{"cap-assign-param", "function g(s: string): i32 { var f = function(): i32 { s = \"y\"; return 0; }; return f(); }\nfunction main(): i32 { return 0; }\n", []string{"E049"}},
-		{"cap-assign-scalar-ok", "function main(): i32 { var n: i32 = 1; var f = function(): i32 { n = 2; return n; }; return f(); }\n", nil},
-		{"cap-read-ref-ok", "function main(): i32 { var s: string = \"x\"; var f = function(): i32 { return s.len(); }; return f(); }\n", nil},
+		{"cap-assign-string", "function main(): i32 { var s: string = \"x\"; var f = (): i32 => { s = \"y\"; return 0; }; return f(); }\n", []string{"E049"}},
+		{"cap-assign-array", "function main(): i32 { var a: i32[] = [1]; var f = (): i32 => { a = [2]; return 0; }; return f(); }\n", []string{"E049"}},
+		{"cap-assign-struct", "struct P { x: i32 }\nfunction main(): i32 { var p: P = P { x: 1 }; var f = (): i32 => { p = P { x: 2 }; return 0; }; return f(); }\n", []string{"E049"}},
+		{"cap-assign-param", "function g(s: string): i32 { var f = (): i32 => { s = \"y\"; return 0; }; return f(); }\nfunction main(): i32 { return 0; }\n", []string{"E049"}},
+		{"cap-assign-scalar-ok", "function main(): i32 { var n: i32 = 1; var f = (): i32 => { n = 2; return n; }; return f(); }\n", nil},
+		{"cap-read-ref-ok", "function main(): i32 { var s: string = \"x\"; var f = (): i32 => { return s.len(); }; return f(); }\n", nil},
 		// #2673: an arrow lambda with a BLOCK body infers its return type.
 		// The two checkers disagreed here — the self-host accepted it and
 		// native reported E002, because the arrow desugar wraps the body in a
@@ -1334,7 +1344,7 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// The other direction: a trailing `match` written without a `;` is
 		// still the block's value.
 		{"arrow-block-body-match-tail-ok", "function apply(f: (i32) => i32, v: i32): i32 { return f(v); }\nfunction main(): i32 {\n    var g = (x: i32) => {\n        var y: i32 = x + 1;\n        match (y) { 0 => 100, _ => y * 2 }\n    };\n    return apply(g, 3) - 8;\n}\n", nil},
-		{"cap-assign-local-ok", "function main(): i32 { var f = function(): i32 { var t: string = \"a\"; t = \"b\"; return 0; }; return f(); }\n", nil},
+		{"cap-assign-local-ok", "function main(): i32 { var f = (): i32 => { var t: string = \"a\"; t = \"b\"; return 0; }; return f(); }\n", nil},
 		// #4410: the closure-capture contract (docs/CLOSURE-CAPTURE.md). The
 		// scalar/reference split must be BYTE-identical to native's
 		// ast.IsPointerType. These pin the two former divergences the parity
@@ -1342,29 +1352,29 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// (native never flagged them; the self-host used to), and (2) an
 		// unannotated var bound to a pointer-shaped LITERAL is reference-typed
 		// (native infers it; the self-host used to skip unannotated captures).
-		{"cap-assign-u32-ok", "function main(): i32 { var n: u32 = 1; var f = function(): i32 { n = 2; return 0; }; return f(); }\n", nil},
-		{"cap-assign-u64-ok", "function main(): i32 { var n: u64 = 1; var f = function(): i32 { n = 2; return 0; }; return f(); }\n", nil},
-		{"cap-assign-u8-ok", "function main(): i32 { var n: u8 = 1; var f = function(): i32 { n = 2; return 0; }; return f(); }\n", nil},
-		{"cap-assign-usize-ok", "function main(): i32 { var n: usize = 1; var f = function(): i32 { n = 2; return 0; }; return f(); }\n", nil},
-		{"cap-assign-f64-ok", "function main(): i32 { var x: f64 = 1.5; var f = function(): i32 { x = 2.5; return 0; }; return f(); }\n", nil},
-		{"cap-assign-bool-ok", "function main(): i32 { var b: boolean = true; var f = function(): i32 { b = false; return 0; }; return f(); }\n", nil},
-		{"cap-assign-unann-string", "function main(): i32 { var s = \"x\"; var f = function(): i32 { s = \"y\"; return 0; }; return f(); }\n", []string{"E049"}},
-		{"cap-assign-unann-array", "function main(): i32 { var a = [1]; var f = function(): i32 { a = [2]; return 0; }; return f(); }\n", []string{"E049"}},
-		{"cap-assign-unann-struct", "struct P { x: i32 }\nfunction main(): i32 { var p = P { x: 1 }; var f = function(): i32 { p = P { x: 2 }; return 0; }; return f(); }\n", []string{"E049"}},
-		{"cap-assign-unann-tuple", "function main(): i32 { var t = (1, 2); var f = function(): i32 { t = (3, 4); return 0; }; return f(); }\n", []string{"E049"}},
-		{"cap-assign-unann-scalar-ok", "function main(): i32 { var n = 5; var f = function(): i32 { n = 7; return 0; }; return f(); }\n", nil},
+		{"cap-assign-u32-ok", "function main(): i32 { var n: u32 = 1; var f = (): i32 => { n = 2; return 0; }; return f(); }\n", nil},
+		{"cap-assign-u64-ok", "function main(): i32 { var n: u64 = 1; var f = (): i32 => { n = 2; return 0; }; return f(); }\n", nil},
+		{"cap-assign-u8-ok", "function main(): i32 { var n: u8 = 1; var f = (): i32 => { n = 2; return 0; }; return f(); }\n", nil},
+		{"cap-assign-usize-ok", "function main(): i32 { var n: usize = 1; var f = (): i32 => { n = 2; return 0; }; return f(); }\n", nil},
+		{"cap-assign-f64-ok", "function main(): i32 { var x: f64 = 1.5; var f = (): i32 => { x = 2.5; return 0; }; return f(); }\n", nil},
+		{"cap-assign-bool-ok", "function main(): i32 { var b: boolean = true; var f = (): i32 => { b = false; return 0; }; return f(); }\n", nil},
+		{"cap-assign-unann-string", "function main(): i32 { var s = \"x\"; var f = (): i32 => { s = \"y\"; return 0; }; return f(); }\n", []string{"E049"}},
+		{"cap-assign-unann-array", "function main(): i32 { var a = [1]; var f = (): i32 => { a = [2]; return 0; }; return f(); }\n", []string{"E049"}},
+		{"cap-assign-unann-struct", "struct P { x: i32 }\nfunction main(): i32 { var p = P { x: 1 }; var f = (): i32 => { p = P { x: 2 }; return 0; }; return f(); }\n", []string{"E049"}},
+		{"cap-assign-unann-tuple", "function main(): i32 { var t = (1, 2); var f = (): i32 => { t = (3, 4); return 0; }; return f(); }\n", []string{"E049"}},
+		{"cap-assign-unann-scalar-ok", "function main(): i32 { var n = 5; var f = (): i32 => { n = 7; return 0; }; return f(); }\n", nil},
 		// E002 inside lambda bodies: a lambda's `return` is checked against
 		// the lambda's OWN declared return type, not the enclosing function's
 		// (ret_diags stops at the lambda boundary). lret_stmts/lret_expr fill
 		// that gap.
-		{"lambda-ret-mismatch", "function main(): i32 { var f = function(): i32 { return \"x\"; }; return f(); }\n", []string{"E002"}},
-		{"lambda-ret-ok", "function main(): i32 { var f = function(): i32 { return 5; }; return f(); }\n", nil},
-		{"lambda-in-void-fn", "function g(): void { var f = function(): i32 { return \"x\"; }; }\nfunction main(): i32 { return 0; }\n", []string{"E002"}},
-		{"lambda-nested-if-mismatch", "function main(): i32 { var f = function(): i32 { if (1 < 2) { return \"x\"; } return 1; }; return f(); }\n", []string{"E002"}},
-		{"lambda-bare-return", "function main(): i32 { var f = function(): i32 { return; }; return f(); }\n", []string{"E012"}},
-		{"lambda-arg-mismatch", "function run(fn: () => i32): i32 { return fn(); }\nfunction main(): i32 { return run(function(): i32 { return \"x\"; }); }\n", []string{"E002"}},
-		{"lambda-nested-lambda-mismatch", "function main(): i32 { var f = function(): i32 { var g = function(): i32 { return \"x\"; }; return g(); }; return f(); }\n", []string{"E002"}},
-		{"lambda-no-rettype-ok", "function main(): i32 { var f = function() { return; }; return 0; }\n", nil},
+		{"lambda-ret-mismatch", "function main(): i32 { var f = (): i32 => { return \"x\"; }; return f(); }\n", []string{"E002"}},
+		{"lambda-ret-ok", "function main(): i32 { var f = (): i32 => { return 5; }; return f(); }\n", nil},
+		{"lambda-in-void-fn", "function g(): void { var f = (): i32 => { return \"x\"; }; }\nfunction main(): i32 { return 0; }\n", []string{"E002"}},
+		{"lambda-nested-if-mismatch", "function main(): i32 { var f = (): i32 => { if (1 < 2) { return \"x\"; } return 1; }; return f(); }\n", []string{"E002"}},
+		{"lambda-bare-return", "function main(): i32 { var f = (): i32 => { return; }; return f(); }\n", []string{"E012"}},
+		{"lambda-arg-mismatch", "function run(fn: () => i32): i32 { return fn(); }\nfunction main(): i32 { return run((): i32 => { return \"x\"; }); }\n", []string{"E002"}},
+		{"lambda-nested-lambda-mismatch", "function main(): i32 { var f = (): i32 => { var g = (): i32 => { return \"x\"; }; return g(); }; return f(); }\n", []string{"E002"}},
+		{"lambda-no-rettype-ok", "function main(): i32 { var f = () => { return; }; return 0; }\n", nil},
 		{"rec-local-capture-ret-mismatch", "function main(): i32 { var base: string = \"x\"; function f(n: i32): i32 { if (n <= 0) { return base; } return f(n - 1); } return f(3); }\n", []string{"E002"}},
 		// A `match` / `if` used in value position is desugared by the parser
 		// into an IIFE — (function(): RT { … })() — whose RT is a coarse
@@ -1680,7 +1690,7 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"mc-laundered-struct", "@must_consume\nstruct Ticket { id: i32 }\nstruct Box { inner: Ticket }\nfunction f(): void { var t: Ticket = Ticket { id: 1 }; var b: Box = Box { inner: t }; }\nfunction main(): i32 { return 0; }\n", []string{"E067"}},
 		{"mc-laundered-tuple", "@must_consume\nstruct Ticket { id: i32 }\nfunction f(): (Ticket, i32) { var t: Ticket = Ticket { id: 1 }; return (t, 3); }\nfunction main(): i32 { return 0; }\n", []string{"E067"}},
 		{"mc-marked-envelope-ok", "@must_consume\nstruct Ticket { id: i32 }\n@must_consume\nstruct Envelope { inner: Ticket }\nfunction open_env(e: Envelope): Envelope { return e; }\nfunction f(): void { var t: Ticket = Ticket { id: 1 }; var e: Envelope = Envelope { inner: t }; open_env(e); }\nfunction main(): i32 { return 0; }\n", nil},
-		{"mc-closure-capture", "@must_consume\nstruct Ticket { id: i32 }\nfunction f(): void { var t: Ticket = Ticket { id: 1 }; var g = function(): i32 { return t.id; }; print(\"captured\"); }\nfunction main(): i32 { return 0; }\n", []string{"E067"}},
+		{"mc-closure-capture", "@must_consume\nstruct Ticket { id: i32 }\nfunction f(): void { var t: Ticket = Ticket { id: 1 }; var g = (): i32 => { return t.id; }; print(\"captured\"); }\nfunction main(): i32 { return 0; }\n", []string{"E067"}},
 		{"mc-overwrite", "@must_consume\nenum Pending { Reply(string), Close }\nfunction f(): void { var p: Pending = Close; p = Reply(\"again\"); match (p) { Reply(s) => { }, Close => { } } }\nfunction main(): i32 { return 0; }\n", []string{"E067"}},
 		{"mc-nonown-param-leak", "@must_consume\nstruct Ticket { id: i32 }\nfunction f(t: Ticket): void { print(\"ignored\"); }\nfunction main(): i32 { return 0; }\n", []string{"E067"}},
 		{"mc-own-param-ok", "@must_consume\nstruct Ticket { id: i32 }\nfunction take(own t: Ticket): void { print(\"own\"); }\nfunction f(): void { take(Ticket { id: 9 }); }\nfunction main(): i32 { return 0; }\n", nil},
@@ -1807,7 +1817,7 @@ func wrapMainBodyInLambda(src string) string {
 	if !strings.Contains(body, "return") {
 		return ""
 	}
-	return src[:m[0]] + "function main(): i32 {\n    var __lam = function(): i32 {\n" +
+	return src[:m[0]] + "function main(): i32 {\n    var __lam = (): i32 => {\n" +
 		strings.Trim(body, "\n") + "\n    };\n    return __lam();\n}\n"
 }
 
@@ -1891,8 +1901,8 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 		// Lambda bodies see the LAMBDA's declared return type (not the
 		// enclosing function's) — pins the call_diags lambda-scope ret_type
 		// threading (#4363 item 1) on valid array-returning shapes.
-		{"lambda-arr-ret-ok", "function f(): i32[] {\n    var g = function(): string[] { return [\"a\", \"b\"]; };\n    return [1, 2];\n}\nfunction main(): i32 { return 0; }\n"},
-		{"lambda-try-ret-option-ok", "function f(): i32 {\n    var g = function(): Option[i32] { var o: Option[i32] = Some(1); var v: i32 = o?; return Some(v); };\n    return 2;\n}\nfunction main(): i32 { return 0; }\n"},
+		{"lambda-arr-ret-ok", "function f(): i32[] {\n    var g = (): string[] => { return [\"a\", \"b\"]; };\n    return [1, 2];\n}\nfunction main(): i32 { return 0; }\n"},
+		{"lambda-try-ret-option-ok", "function f(): i32 {\n    var g = (): Option[i32] => { var o: Option[i32] = Some(1); var v: i32 = o?; return Some(v); };\n    return 2;\n}\nfunction main(): i32 { return 0; }\n"},
 		// Method chains on string / array builtins (valid).
 		{"method-chain-len", "function main(): i32 { var s = \"abc\"; var n = s.len(); return n; }\n"},
 		{"method-chain-array", "function main(): i32 { var a = [1, 2, 3]; return a.len(); }\n"},

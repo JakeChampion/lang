@@ -39,7 +39,7 @@ function total(b: Box): i32 { match (b) { Full(v) => { return v; }, Empty => { r
 function f(b: Box): i32 {
   match (b) {
     n @ Full(v) => {
-      var g: (i32) => i32 = function(d: i32): i32 { return total(n) + d; };
+      var g: (i32) => i32 = (d: i32): i32 => { return total(n) + d; };
       return g(1);
     },
     Empty => { return 0; },

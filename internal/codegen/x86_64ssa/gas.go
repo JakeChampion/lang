@@ -2480,11 +2480,16 @@ func emitArrPushGrowHelper(w func(string, ...any)) {
 	w("\tmov rax, rdi")
 	w("\tret")
 	w(".Lssa_apg_copy:")
+	w("\tmov edx, edx") // stride is an i32: clear the high half for the 64-bit products below
 	w("\tmov r8d, esi")
 	w("\tadd r8d, 1") // newLen
+	// Sized in 64 bits: a 32-bit doubling goes negative past 2^30 elements
+	// (the floor would then pick cap = 4 under a length near 1e9) and the
+	// product wraps past 4 GiB. Array sizes are i32, so a total past 2^31 - 1
+	// is refused.
 	w("\tmov r9d, r8d")
-	w("\tshl r9d, 1")
-	w("\tcmp r9d, 4")
+	w("\tshl r9, 1")
+	w("\tcmp r9, 4")
 	w("\tjge .Lssa_apg_cap_ok")
 	w("\tmov r9d, 4") // newCap = max(2*newLen, 4)
 	w(".Lssa_apg_cap_ok:")
@@ -2493,9 +2498,11 @@ func emitArrPushGrowHelper(w func(string, ...any)) {
 	w("\tjle .Lssa_apg_hdr_ok")
 	w("\tmov r10d, edx") // headerBytes = max(stride, 16)
 	w(".Lssa_apg_hdr_ok:")
-	w("\tmov r11d, r9d")
-	w("\timul r11d, edx")
-	w("\tadd r11d, r10d") // allocSize = headerBytes + newCap*stride
+	w("\tmov r11, r9")
+	w("\timul r11, rdx")
+	w("\tadd r11, r10") // allocSize = headerBytes + newCap*stride
+	w("\tcmp r11, 2147483647")
+	w("\tja .Lssa_apg_sizebad")
 	w("\tmov rax, [rip + %s]", heapPtrSym)
 	w("\tadd rax, 7")
 	w("\tand rax, -8") // base (8-aligned)
@@ -2509,10 +2516,14 @@ func emitArrPushGrowHelper(w func(string, ...any)) {
 	w("\tmov dword ptr [r11 - 8], 1") // rc = 1
 	w("\tmov [r11 - 4], r8d")         // len = newLen
 	w("\tmov eax, esi")
-	w("\timul eax, edx") // nbytes = oldLen*stride (32-bit, zero-extends)
+	w("\timul rax, rdx") // nbytes = oldLen*stride
 	emitBcopyCall(w, "r11", "rdi", "rax")
 	w("\tmov rax, r11")
 	w("\tret")
+	w(".Lssa_apg_sizebad:")
+	w("\tmov edi, 134")
+	w("\tmov eax, 231") // exit_group
+	w("\tsyscall")
 }
 
 // emitArrCowInplaceHelper writes __fern_arr_cow_inplace(arr, stride) -> buf, the

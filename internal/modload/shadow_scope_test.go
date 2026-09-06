@@ -87,22 +87,17 @@ func TestShadowedLocalsInDeferAndAtBinding(t *testing.T) {
 	}
 }
 
-// The same rule, for the pattern positions collectLocals could not see at
-// all: a tuple pattern's elements, a payload SUB-PATTERN's binders, and the
-// expression form of `match`, which the walk did not visit in any shape
-// (#8607). Each binder shadows the module function `helper`, so a mangled
-// reference resolves to `shadowlib__helper` and the checker reports
-// `operator "+" requires an integer type, got () => i32`.
-const shadowArmLib = `function helper(): i32 { return 100; }
+const shadowScopePatternLib = `enum Box { Wrap(i32), Empty }
+enum Holder { Has(Option[i32]), Nothing }
 
-enum Inner { Some1(i32), None1 }
-enum Outer2 { Holds(Inner), Empty }
+function helper(): i32 { return 100; }
 
 pub function tuple_binder(): i32 {
     var t: (i32, i32) = (3, 4);
     match (t) {
         (helper, b) => { return helper + b; }
     }
+    return 0;
 }
 
 pub function nested_tuple_binder(): i32 {
@@ -110,61 +105,57 @@ pub function nested_tuple_binder(): i32 {
     match (t) {
         (a, (helper, c)) => { return a + helper + c; }
     }
+    return 0;
 }
 
-pub function tuple_variant_elem_binder(): i32 {
-    var t: (Inner, i32) = (Some1(3), 4);
+pub function variant_in_tuple_binder(): i32 {
+    var t: (Box, i32) = (Wrap(3), 4);
     match (t) {
-        (Some1(helper), b) => { return helper + b; },
+        (Wrap(helper), b) => { return helper + b; },
         _ => { return 0; }
     }
+    return 0;
 }
 
-pub function payload_sub_binder(): i32 {
-    var o: Outer2 = Holds(Some1(3));
-    match (o) {
-        Holds(Some1(helper)) => { return helper + 4; },
-        Holds(None1()) => { return 0; },
+pub function payload_subpattern_binder(): i32 {
+    var h: Holder = Has(Some(7));
+    match (h) {
+        Has(Some(helper)) => { return helper; },
+        _ => { return 0; }
+    }
+    return 0;
+}
+
+pub function match_expr_binder(): i32 {
+    var t: (i32, i32) = (3, 4);
+    return match (t) { (helper, b) => helper + b };
+}
+
+pub function variant_binder(): i32 {
+    var b: Box = Wrap(3);
+    match (b) {
+        Wrap(helper) => { return helper + 4; },
         Empty => { return 0; }
     }
-}
-
-pub function match_expr_tuple_binder(): i32 {
-    var t: (i32, i32) = (3, 4);
-    return match (t) {
-        (helper, b) => helper + b
-    };
-}
-
-pub function match_expr_variant_binder(): i32 {
-    var i: Inner = Some1(3);
-    return match (i) {
-        Some1(helper) => helper + 4,
-        None1 => 0
-    };
-}
-`
-
-const shadowArmMain = `import "./shadowlib";
-function main(): i32 {
-    if (shadowlib.tuple_binder() != 7) { return 1; }
-    if (shadowlib.nested_tuple_binder() != 7) { return 2; }
-    if (shadowlib.tuple_variant_elem_binder() != 7) { return 3; }
-    if (shadowlib.payload_sub_binder() != 7) { return 4; }
-    if (shadowlib.match_expr_tuple_binder() != 7) { return 5; }
-    if (shadowlib.match_expr_variant_binder() != 7) { return 6; }
     return 0;
 }
 `
 
-// TestShadowedLocalsInTupleAndSubPatterns pins that every binder position of
-// both arm forms suppresses the import rewrite. The shadowed decl is a
-// FUNCTION and every binder an `i32`, so a mangled reference is a type error
-// rather than a value that merely happens to be wrong.
-func TestShadowedLocalsInTupleAndSubPatterns(t *testing.T) {
+const shadowScopePatternMain = `import "./shadowlib";
+function main(): i32 { return shadowlib.tuple_binder(); }
+`
+
+// TestShadowedLocalsInPatternBinders pins that every binder position of a
+// match arm's pattern suppresses the import rewrite — a tuple element, a
+// nested tuple element, a variant sub-pattern inside a tuple, a payload
+// sub-pattern, and the expression form of match — beside the plain payload
+// binder that always did. The shadowed decl is a `() => i32` function and
+// every binder an `i32`, so a mangled reference cannot merely read the wrong
+// value: `helper + b` fails the checker (#8607).
+func TestShadowedLocalsInPatternBinders(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
-		"shadowlib.fern": shadowArmLib,
-		"main.fern":      shadowArmMain,
+		"shadowlib.fern": shadowScopePatternLib,
+		"main.fern":      shadowScopePatternMain,
 	})
 	entry := filepath.Join(dir, "main.fern")
 	prog, _, err := modload.Load(entry)
@@ -175,10 +166,8 @@ func TestShadowedLocalsInTupleAndSubPatterns(t *testing.T) {
 		t.Fatalf("constfold: %v", err)
 	}
 	if _, err := checker.Check(prog); err != nil {
-		t.Fatalf("checker rejected a match binder shadowing a module function: %v", err)
+		t.Fatalf("checker rejected a pattern binder shadowing a module function: %v", err)
 	}
-	// The module's own decls still mangle — only the shadowing binders are
-	// exempt.
 	if findFunc(prog, "shadowlib__helper") == nil {
 		t.Errorf("expected mangled shadowlib__helper in merged program; got %v", funcNames(prog))
 	}

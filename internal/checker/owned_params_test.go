@@ -360,7 +360,7 @@ func TestOwnGuardAllowsSelfReassignMoveInLambda(t *testing.T) {
 struct B { items: i32[] }
 function grow(own b: B, x: i32): B { return B { items: b.items.append(x) }; }
 function f(): i32 {
-    var lam = function(): i32 {
+    var lam = (): i32 => {
         var a = B { items: [] };
         a = grow(a, 1);
         a = grow(a, 2);
@@ -401,7 +401,7 @@ func TestOwnGuardRejectsKeptAliveLocalInLambda(t *testing.T) {
 struct B { items: i32[] }
 function grow(own b: B, x: i32): B { return B { items: b.items.append(x) }; }
 function f(): i32 {
-    var lam = function(): i32 {
+    var lam = (): i32 => {
         var a = B { items: [] };
         var c = grow(a, 1);
         return c.items.len();
@@ -413,7 +413,7 @@ function f(): i32 {
 func TestOwnedUseAfterConsumeInLambda(t *testing.T) {
 	wantE050(t, "double-consume-in-lambda", ownPrelude+`
 function f(own xs: i32[]): i32 {
-    var lam = function(): i32 {
+    var lam = (): i32 => {
         var a: i32 = sink(xs);
         return a + sink(xs);   // E050: xs already moved
     };
@@ -427,7 +427,7 @@ function f(own xs: i32[]): i32 {
 func TestOwnedNestedParamShadowsOuter(t *testing.T) {
 	src := ownPrelude + `
 function f(own xs: i32[]): i32 {
-    var lam = function(xs: i32[]): i32 { return sink(xs); };
+    var lam = (xs: i32[]): i32 => { return sink(xs); };
     return lam([1]) + sink(xs);
 }`
 	err := checkSource(t, src)

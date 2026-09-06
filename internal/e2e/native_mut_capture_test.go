@@ -30,48 +30,48 @@ func TestNativeMutScalarCapture(t *testing.T) {
 	}{
 		// Write-only: the lambda writes the captured scalar without reading it.
 		// By-value → write lost (8); by-reference → 7 + 42 = 49.
-		{"write-only", `function main(): i32 { var x = 1; var f = function (): i32 { x = 42; return 7; }; var r = f(); return r + x; }`, 49},
+		{"write-only", `function main(): i32 { var x = 1; var f = (): i32 => { x = 42; return 7; }; var r = f(); return r + x; }`, 49},
 		// Counter: read+write capture accumulates across two calls → 2.
-		{"counter", `function main(): i32 { var x = 0; var inc = function (): i32 { x = x + 1; return x; }; var a = inc(); var b = inc(); return x; }`, 2},
+		{"counter", `function main(): i32 { var x = 0; var inc = (): i32 => { x = x + 1; return x; }; var a = inc(); var b = inc(); return x; }`, 2},
 		// Counter taking a param, mutating a captured local across two calls → 18.
-		{"counter-param", `function main(): i32 { var n = 10; var add = function (d: i32): i32 { n = n + d; return n; }; var a = add(5); var b = add(3); return n; }`, 18},
+		{"counter-param", `function main(): i32 { var n = 10; var add = (d: i32): i32 => { n = n + d; return n; }; var a = add(5); var b = add(3); return n; }`, 18},
 		// The lambda's own return reflects the post-write value → 5*2 = 10.
-		{"returns-written", `function main(): i32 { var x = 5; var f = function (): i32 { x = x * 2; return x; }; return f(); }`, 10},
+		{"returns-written", `function main(): i32 { var x = 5; var f = (): i32 => { x = x * 2; return x; }; return f(); }`, 10},
 		// Read-only capture is NOT boxed — stays by-value; must still work → 6.
-		{"read-only", `function main(): i32 { var x = 5; var f = function (): i32 { return x + 1; }; return f(); }`, 6},
+		{"read-only", `function main(): i32 { var x = 5; var f = (): i32 => { return x + 1; }; return f(); }`, 6},
 		// A boolean captured scalar, toggled in the closure → 1.
-		{"bool-capture", `function main(): i32 { var b = false; var t = function (): i32 { b = true; return 0; }; var r = t(); if (b) { return 1; } return 0; }`, 1},
+		{"bool-capture", `function main(): i32 { var b = false; var t = (): i32 => { b = true; return 0; }; var r = t(); if (b) { return 1; } return 0; }`, 1},
 		// An f64 captured scalar mutated in the closure (8-byte cell stride) → 49.
-		{"f64-capture", `function main(): i32 { var x: f64 = 1.0; var f = function (): i32 { x = 42.0; return 7; }; var r = f(); if (x > 41.0) { return 49; } return r; }`, 49},
+		{"f64-capture", `function main(): i32 { var x: f64 = 1.0; var f = (): i32 => { x = 42.0; return 7; }; var r = f(); if (x > 41.0) { return 49; } return r; }`, 49},
 		// Two closures sharing one boxed cell: writer then reader observes it → 9.
-		{"shared-cell", `function main(): i32 { var x = 0; var setter = function (): i32 { x = 4; return 0; }; var getter = function (): i32 { return x + 5; }; var a = setter(); return getter(); }`, 9},
+		{"shared-cell", `function main(): i32 { var x = 0; var setter = (): i32 => { x = 4; return 0; }; var getter = (): i32 => { return x + 5; }; var a = setter(); return getter(); }`, 9},
 		// A boxed counter driven inside a loop → 3.
-		{"loop-counter", `function main(): i32 { var x = 0; var inc = function (): i32 { x = x + 1; return 0; }; var i = 0; while (i < 3) { var r = inc(); i = i + 1; } return x; }`, 3},
+		{"loop-counter", `function main(): i32 { var x = 0; var inc = (): i32 => { x = x + 1; return 0; }; var i = 0; while (i < 3) { var r = inc(); i = i + 1; } return x; }`, 3},
 		// #4391 follow-up — by-reference is SYMMETRIC: an outer-scope write AFTER
 		// the closure is made is seen by a closure that only READS the capture.
 		// By-value-at-make-time snapshotted x=0 (returned 0); shared cell → 5.
-		{"outer-mutation", `function main(): i32 { var i = 0; var f = function (): i32 { return i; }; i = 5; return f(); }`, 5},
+		{"outer-mutation", `function main(): i32 { var i = 0; var f = (): i32 => { return i; }; i = 5; return f(); }`, 5},
 		// A read-only capture whose value the enclosing loop keeps mutating: the
 		// closure reads the live counter each call → 1+2+3+4 = 10 (was 0).
-		{"loop-outer-mutation", `function main(): i32 { var s = 0; var i = 0; var add = function (): i32 { s = s + i; return 0; }; while (i < 4) { i = i + 1; add(); } return s; }`, 10},
+		{"loop-outer-mutation", `function main(): i32 { var s = 0; var i = 0; var add = (): i32 => { s = s + i; return 0; }; while (i < 4) { i = i + 1; add(); } return s; }`, 10},
 		// Both sides mutate the same captured cell: outer sets 3, closure adds 4,
 		// outer reads the shared result → 7. Guards that skipping CoW on the cell
 		// keeps the outer write and the closure write on the SAME buffer.
-		{"outer-and-inner", `function main(): i32 { var x = 0; var f = function (): i32 { x = x + 4; return 0; }; x = 3; f(); return x; }`, 7},
+		{"outer-and-inner", `function main(): i32 { var x = 0; var f = (): i32 => { x = x + 4; return 0; }; x = 3; f(); return x; }`, 7},
 		// A BOXED capture read inside an f-string. Only `n.Desugared`
 		// reaches the IR, and the box rewrite walked `n.Parts`, so a
 		// bare-name operand lowered the raw Ident and produced the
 		// CELL POINTER: f"{x}" was "268435472" on both natives and
 		// "2120" on wasm, against "74". The length is the i32 that
 		// pins it — 2 for the value, 9 or 4 for a pointer.
-		{"fstring-boxed-read", `import "std/i32"; function main(): i32 { var x = 0; x = 74; var f = function (): i32 { return x; }; var s: string = f"{x}"; return s.len(); }`, 2},
+		{"fstring-boxed-read", `import "std/i32"; function main(): i32 { var x = 0; x = 74; var f = (): i32 => { return x; }; var s: string = f"{x}"; return s.len(); }`, 2},
 		// The same read with STRUCTURE around the name. A part and its
 		// counterpart in Desugared are one node, so this one was already
 		// correct — the composite cases rewrite in place, which both
 		// slots see. It guards against fixing the bare name by walking
 		// Desugared as well as Parts: that rewrites this operand twice
 		// and indexes the cell as `c[0][0]`, which segfaults.
-		{"fstring-boxed-read-expr", `import "std/i32"; function main(): i32 { var x = 0; x = 70; var f = function (): i32 { return x; }; var s: string = f"{x + 4i32}"; return s.len(); }`, 2},
+		{"fstring-boxed-read-expr", `import "std/i32"; function main(): i32 { var x = 0; x = 70; var f = (): i32 => { return x; }; var s: string = f"{x + 4i32}"; return s.len(); }`, 2},
 	}
 	for _, tc := range cases {
 		tc := tc
@@ -113,27 +113,27 @@ func TestNativeMutPointerCapture(t *testing.T) {
 		want int
 	}{
 		// Array reassigned after capture: closure reads the NEW buffer → 42.
-		{"array-reassign", `function main(): i32 { var a: i32[] = [10, 1]; var f: () => i32 = function (): i32 { return a[0]; }; a = [42, 1]; return f(); }`, 42},
+		{"array-reassign", `function main(): i32 { var a: i32[] = [10, 1]; var f: () => i32 = (): i32 => { return a[0]; }; a = [42, 1]; return f(); }`, 42},
 		// String reassigned after capture: closure sees the new length → 6+36.
-		{"string-reassign", `function main(): i32 { var s: string = "aa"; var f: () => i32 = function (): i32 { return s.len(); }; s = "abcdef"; return f() + 36; }`, 42},
+		{"string-reassign", `function main(): i32 { var s: string = "aa"; var f: () => i32 = (): i32 => { return s.len(); }; s = "abcdef"; return f() + 36; }`, 42},
 		// Struct reassigned after capture: closure reads the new field → 42.
-		{"struct-reassign", `struct B { v: i32 } function main(): i32 { var b: B = B { v: 10 }; var f: () => i32 = function (): i32 { return b.v; }; b = B { v: 42 }; return f(); }`, 42},
+		{"struct-reassign", `struct B { v: i32 } function main(): i32 { var b: B = B { v: 10 }; var f: () => i32 = (): i32 => { return b.v; }; b = B { v: 42 }; return f(); }`, 42},
 		// Struct with a HEAP field reassigned twice: deep shape survives → 42.
-		{"struct-heap-field", `struct B { name: string, v: i32 } function main(): i32 { var b: B = B { name: "aa", v: 10 }; var f: () => i32 = function (): i32 { return b.v + b.name.len(); }; b = B { name: "abcd", v: 20 }; b = B { name: "abcdef", v: 30 }; return f() + 6; }`, 42},
+		{"struct-heap-field", `struct B { name: string, v: i32 } function main(): i32 { var b: B = B { name: "aa", v: 10 }; var f: () => i32 = (): i32 => { return b.v + b.name.len(); }; b = B { name: "abcd", v: 20 }; b = B { name: "abcdef", v: 30 }; return f() + 6; }`, 42},
 		// Read-only pointer capture is NOT boxed (no reassignment anywhere) → 42.
-		{"array-read-only", `function main(): i32 { var a: i32[] = [40, 2]; var f: () => i32 = function (): i32 { return a[0] + a[1]; }; return f(); }`, 42},
+		{"array-read-only", `function main(): i32 { var a: i32[] = [40, 2]; var f: () => i32 = (): i32 => { return a[0] + a[1]; }; return f(); }`, 42},
 		// Reassign from another still-live local, then read both through closure
 		// and directly — and assert zero rc underflows (over-release guard).
-		{"alias-no-underflow", `function main(): i32 { var keep: i32[] = [40, 7]; var a: i32[] = [10, 1]; var f: () => i32 = function (): i32 { return a[0]; }; a = keep; a = [1, 2]; a = keep; var x: i32 = f() + keep[0]; if (x != 80) { return 100; } return __rc_underflow_count(); }`, 0},
+		{"alias-no-underflow", `function main(): i32 { var keep: i32[] = [40, 7]; var a: i32[] = [10, 1]; var f: () => i32 = (): i32 => { return a[0]; }; a = keep; a = [1, 2]; a = keep; var x: i32 = f() + keep[0]; if (x != 80) { return 100; } return __rc_underflow_count(); }`, 0},
 		// Same aliasing shape for strings → 0 underflows, values intact.
-		{"string-alias-no-underflow", `function main(): i32 { var keep: string = "abcdefgh"; var s: string = "aa"; var f: () => i32 = function (): i32 { return s.len(); }; s = keep; s = "abc"; s = keep; var x: i32 = f() + keep.len(); if (x != 16) { return 100; } return __rc_underflow_count(); }`, 0},
+		{"string-alias-no-underflow", `function main(): i32 { var keep: string = "abcdefgh"; var s: string = "aa"; var f: () => i32 = (): i32 => { return s.len(); }; s = keep; s = "abc"; s = keep; var x: i32 = f() + keep.len(); if (x != 16) { return 100; } return __rc_underflow_count(); }`, 0},
 		// A loop that grows the captured string 40 times: cell stays shared → 42.
-		{"loop-string-grow", `function main(): i32 { var s: string = "x"; var f: () => i32 = function (): i32 { return s.len(); }; var i: i32 = 0; while (i < 40) { s = s + "y"; i = i + 1; } return f() + 1; }`, 42},
+		{"loop-string-grow", `function main(): i32 { var s: string = "x"; var f: () => i32 = (): i32 => { return s.len(); }; var i: i32 = 0; while (i < 40) { s = s + "y"; i = i + 1; } return f() + 1; }`, 42},
 		// The f-string read of a boxed POINTER capture, mirroring
 		// fstring-boxed-read in the scalar table: the cell holds the
 		// reassigned string and f"{s}" must print through it, not the
 		// cell itself.
-		{"fstring-boxed-read", `import "std/string"; function main(): i32 { var s: string = "aa"; var f: () => i32 = function (): i32 { return s.len(); }; s = "bb"; var t: string = f"{s}"; return t.len(); }`, 2},
+		{"fstring-boxed-read", `import "std/string"; function main(): i32 { var s: string = "aa"; var f: () => i32 = (): i32 => { return s.len(); }; s = "bb"; var t: string = f"{s}"; return t.len(); }`, 2},
 	}
 	for _, tc := range cases {
 		tc := tc

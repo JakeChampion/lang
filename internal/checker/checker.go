@@ -348,6 +348,12 @@ func builtinEnumDecls() []*ast.EnumDecl {
 // because we don't have opaque types yet, and because users
 // may need it for FFI escape hatches; it isn't part of the
 // stable surface.
+// BuiltinStructDecls is the exported view of builtinStructDecls, for the
+// layers that must lay one of these structs out by hand: `internal/ir`
+// derives FileStat's field offsets from it so the four backends that
+// build that struct in assembly share one source for the numbers.
+func BuiltinStructDecls() []*ast.StructDecl { return builtinStructDecls() }
+
 func builtinStructDecls() []*ast.StructDecl {
 	return []*ast.StructDecl{
 		{
@@ -634,17 +640,42 @@ func builtinStructDecls() []*ast.StructDecl {
 				{Name: "exit_code", Type: ast.NumberType{}},
 			},
 		},
-		// FileStat — `stat(path)` shape. Carries the minimum
-		// surface needed by test fixtures: the kind (file vs
-		// directory vs other) and the byte size. Mtime is a
-		// follow-up: lang has no Time type yet, and the
-		// migration's tests don't need it.
+		// FileStat — `stat(path)` shape: every field `stat(2)`
+		// returns that a program can act on. `mode` carries the
+		// type bits AND the permission bits (S_IFMT included), so
+		// the kind predicates a shell `test` needs (-b -c -p -S
+		// -h/-L) read it directly; `is_file` / `is_dir` stay as
+		// the derived conveniences they always were. The three
+		// timestamps are split into whole seconds since the Unix
+		// epoch plus the sub-second nanosecond remainder, because
+		// the language has no Time type to hand back.
+		//
+		// On wasm32-wasi the fields WASI does not report are zero:
+		// preview 1's `filestat` has no mode / uid / gid / blksize
+		// / blocks / rdev, and preview 2's `descriptor-stat` has
+		// neither those nor `dev`. See the `stat` signature below
+		// for the exact per-preview list.
 		{
 			Name: "FileStat",
 			Fields: []ast.Param{
 				{Name: "is_file", Type: ast.BoolType{}},
 				{Name: "is_dir", Type: ast.BoolType{}},
 				{Name: "size", Type: ast.NumberType{Width: 64, Signed: true}},
+				{Name: "mode", Type: ast.NumberType{Width: 32, Signed: false}},
+				{Name: "nlink", Type: ast.NumberType{Width: 32, Signed: false}},
+				{Name: "uid", Type: ast.NumberType{Width: 32, Signed: false}},
+				{Name: "gid", Type: ast.NumberType{Width: 32, Signed: false}},
+				{Name: "dev", Type: ast.NumberType{Width: 64, Signed: true}},
+				{Name: "rdev", Type: ast.NumberType{Width: 64, Signed: true}},
+				{Name: "ino", Type: ast.NumberType{Width: 64, Signed: true}},
+				{Name: "blksize", Type: ast.NumberType{Width: 64, Signed: true}},
+				{Name: "blocks", Type: ast.NumberType{Width: 64, Signed: true}},
+				{Name: "atime", Type: ast.NumberType{Width: 64, Signed: true}},
+				{Name: "atime_nsec", Type: ast.NumberType{Width: 64, Signed: true}},
+				{Name: "mtime", Type: ast.NumberType{Width: 64, Signed: true}},
+				{Name: "mtime_nsec", Type: ast.NumberType{Width: 64, Signed: true}},
+				{Name: "ctime", Type: ast.NumberType{Width: 64, Signed: true}},
+				{Name: "ctime_nsec", Type: ast.NumberType{Width: 64, Signed: true}},
 			},
 		},
 		// Map[i32, i32] — first cut of the IndexMap-shaped Map
@@ -1772,8 +1803,28 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// `size` carries byte size for regular files (and the
 	// directory entry size on POSIX for `is_dir == true`,
 	// which is platform-defined but useful as a non-zero
-	// signal that the directory exists). Mtime is omitted
-	// pending a Time type in the language.
+	// signal that the directory exists). `mode` carries the
+	// full `st_mode` word — S_IFMT type bits and permission
+	// bits — and the rest of the `stat(2)` record follows it.
+	//
+	// WASI reports less than a kernel does, and the missing
+	// fields read ZERO rather than being absent from the type:
+	//
+	//   - preview 1 (`path_filestat_get`) has dev, ino, nlink,
+	//     size and the three timestamps. mode, uid, gid, rdev,
+	//     blksize and blocks are zero; `mode` therefore cannot
+	//     answer a permission question there, only `is_file` /
+	//     `is_dir`, which come from `filetype`.
+	//   - preview 2 (`descriptor.stat-at`) has nlink, size and the
+	//     timestamps, and nothing else: the 0.2 `descriptor-stat`
+	//     record dropped the device and inode pair preview 1 still
+	//     carries, so `dev` and `ino` are zero there as well. A
+	//     timestamp the host reports as absent (`none`) is zero
+	//     rather than an error.
+	//
+	// A zero `mode` is distinguishable from a real one: no
+	// existing file has an S_IFMT of 0, so `mode & 0o170000 ==
+	// 0` means "this target did not report a mode".
 	c.info.FuncSigs["stat"] = &ast.FuncType{
 		Params: []ast.Type{ast.StringType{}},
 		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
@@ -1800,6 +1851,44 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 			ast.StructType{Name: "FileStat"},
 			ast.EnumType{Name: "IoError"},
 		}},
+	}
+	// access(path, mode): Result[void, IoError] — may the process
+	// perform `mode` on `path`? `mode` is the POSIX bitmask
+	// F_OK=0, X_OK=1, W_OK=2, R_OK=4, and the answer is computed
+	// against the EFFECTIVE user and group ids, not the real ones
+	// — `faccessat(AT_FDCWD, path, mode, AT_EACCESS)`, which is
+	// what `euidaccess(3)` is and what a shell's `test -r` / `-w`
+	// / `-x` is specified to use. `access(2)` itself asks about
+	// the REAL ids and would answer the wrong question for a
+	// set-uid process.
+	//
+	// `Ok(())` means permitted. The errno reaches the caller as
+	// the `IoError`, so a refusal (EACCES) is distinguishable
+	// from a missing path (ENOENT) — `test -r` needs exactly that
+	// distinction and would otherwise conflate them.
+	c.info.FuncSigs["access"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}, ast.NumberType{Width: 32, Signed: true}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.VoidType{},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
+	// geteuid() / getegid(): the process's EFFECTIVE user and
+	// group ids. The effective pair is the one every access
+	// decision is made against, which is why these and not
+	// getuid / getgid: a shell's `test -O file` asks whether the
+	// file's owner is the identity the kernel would check, and on
+	// a set-uid binary the real uid is not that identity.
+	//
+	// Neither can fail — POSIX gives them no error return — so
+	// they are plain numbers rather than a Result.
+	c.info.FuncSigs["geteuid"] = &ast.FuncType{
+		Params: nil,
+		Result: ast.NumberType{Width: 32, Signed: false},
+	}
+	c.info.FuncSigs["getegid"] = &ast.FuncType{
+		Params: nil,
+		Result: ast.NumberType{Width: 32, Signed: false},
 	}
 	// remove_file(path): Result[void, IoError] — unlink the file.
 	// `Ok(())` on success, `Err(e)` on failure (mirrors
@@ -3070,6 +3159,7 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 
 	c.checkEscapes(prog)
 	c.checkFipFunctions(prog)
+	c.checkUnsettledWideLiterals()
 
 	if len(c.errors) > 0 {
 		return c.info, diag.Errors(c.errors)
@@ -5599,6 +5689,10 @@ type checker struct {
 	// seenDiags drops a diagnostic identical to one already recorded at
 	// the same position — see errfCode.
 	seenDiags map[diagKey]bool
+	// wideLits are the integer literals past i64 max seen so far, each once
+	// — see checkUnsettledWideLiterals.
+	wideLits  []wideLit
+	wideSeen  map[*ast.NumberLit]bool
 	current   *ast.FuncDecl
 	loopDepth int
 	// tryConvN uniquifies the temp-var name in the error-converting `?`
@@ -5857,61 +5951,65 @@ func letElseDivergentArm(m *ast.Match, i int) bool {
 // loopCanBreak reports whether `body` contains a `break` that targets THIS
 // loop — an unlabelled break not enclosed in a nested loop, or a labelled
 // break naming `label`. A loop that can break does not diverge, which is
-// what the reachability analyses below need to know.
+// what the reachability analyses below need to know. Treating a breakable
+// loop as divergent is not conservative: it ACCEPTS programs that fall
+// through, so a value fell off the end of a function (E052), a
+// `never`-typed block initialised a string from garbage, and a `let … else`
+// whose else arm broke out of a loop left the pattern's bindings
+// uninitialised (#8447).
 //
-// Both of them used to answer "a `loop` always diverges" outright, on the
-// stated grounds that it was conservative. It was the opposite: treating a
-// breakable loop as divergent ACCEPTS programs that fall through, so a
-// value fell off the end of a function (E052), a `never`-typed block
-// initialised a string from garbage, and a `let … else` whose else arm
-// broke out of a loop left the pattern's bindings uninitialised (#8447).
-//
-// It walks statements only. A `break` can appear nowhere else, except
-// inside a block-expression in expression position — not descending there
-// keeps the old answer for that shape rather than making it worse, and
-// deliberately does NOT descend into a lambda body, whose `break` belongs
-// to a loop inside the lambda.
+// The walk covers expression position too: a block-, `if`- or
+// `match`-expression carries statements, and a `break` in one belongs to
+// this loop like any other (#8562). What it skips is decided per node: a
+// lambda or nested function body, whose `break` belongs to a loop of its
+// own; and a `defer` body, which runs at scope exit and cannot carry this
+// loop's control flow. A nested loop's header expressions (`while`
+// condition, `for` init / cond / step, `for … in` iterable) are evaluated
+// in this loop's context, so only the nested BODY counts as nested.
 func loopCanBreak(body ast.Stmt, label string) bool {
 	found := false
-	var walk func(s ast.Stmt, nested bool)
-	walk = func(s ast.Stmt, nested bool) {
-		if s == nil || found {
-			return
-		}
-		switch x := s.(type) {
-		case *ast.Break:
-			// An unlabelled break belongs to the innermost enclosing
-			// loop; a labelled one names its target outright.
-			if x.Label == "" {
-				if !nested {
-					found = true
+	var walk func(n ast.Node, nested bool)
+	walk = func(n ast.Node, nested bool) {
+		ast.Walk(n, func(n ast.Node) bool {
+			if found {
+				return false
+			}
+			switch x := n.(type) {
+			case *ast.Break:
+				if x.Label == "" {
+					found = !nested
+				} else {
+					found = x.Label == label
 				}
-			} else if x.Label == label {
-				found = true
+				return false
+			case *ast.Lambda, *ast.FuncDecl, *ast.Defer:
+				return false
+			case *ast.Loop:
+				walk(x.Body, true)
+				return false
+			case *ast.While:
+				walk(x.Cond, nested)
+				walk(x.Body, true)
+				return false
+			case *ast.For:
+				if x.Init != nil {
+					walk(x.Init, nested)
+				}
+				if x.Cond != nil {
+					walk(x.Cond, nested)
+				}
+				if x.Step != nil {
+					walk(x.Step, nested)
+				}
+				walk(x.Body, true)
+				return false
+			case *ast.ForEach:
+				walk(x.Iter, nested)
+				walk(x.Body, true)
+				return false
 			}
-		case *ast.Block:
-			for _, st := range x.Stmts {
-				walk(st, nested)
-			}
-		case *ast.If:
-			walk(x.Then, nested)
-			walk(x.Else, nested)
-		case *ast.Match:
-			for _, arm := range x.Arms {
-				walk(arm.Body, nested)
-			}
-		case *ast.Defer:
-			// A defer's body runs at scope exit, so a break inside it
-			// cannot carry this loop's control flow.
-		case *ast.While:
-			walk(x.Body, true)
-		case *ast.Loop:
-			walk(x.Body, true)
-		case *ast.For:
-			walk(x.Body, true)
-		case *ast.ForEach:
-			walk(x.Body, true)
-		}
+			return true
+		})
 	}
 	walk(body, false)
 	return found
@@ -5962,12 +6060,10 @@ func stmtDiverges(s ast.Stmt) bool {
 }
 
 // funcBodyExits reports whether every path through a function body either
-// returns or never falls off the end (an infinite loop). It is the
-// missing-return analysis behind E052 and is deliberately CONSERVATIVE:
+// returns or never falls off the end (a loop nothing breaks out of). It is
+// the missing-return analysis behind E052 and is deliberately CONSERVATIVE:
 // it only returns false when the body can demonstrably fall through, so
-// it never rejects a valid function. (It therefore accepts some functions
-// that could in principle fall through — e.g. an infinite loop with a
-// break — rather than risk a false positive.) See
+// it never rejects a valid function. See
 // docs/ADVERSARIAL-REVIEW-2026-06.md (F4).
 func funcBodyExits(b *ast.Block) bool {
 	if b == nil || len(b.Stmts) == 0 {
@@ -7085,6 +7181,98 @@ func substByName(t ast.Type, sub map[string]ast.Type) ast.Type {
 // unify the recorded `for` pattern (ArrayIter[T]) against `ct` (ArrayIter[i32])
 // to recover the binding (T=i32) and substitute, yielding the concrete args
 // ([i32]). See docs/TRAITS.md.
+// checkTypeArgBounds reports every trait bound `args` fails to satisfy for
+// genericFn, at pos. `sub` and `tpSet` resolve a generic-trait bound whose
+// arguments name type parameters the call inferred; both may be nil.
+//
+// A still-parametric argument is skipped, because the bound cannot be judged
+// until the type is known — that case is monomorph's, through BoundErrors,
+// once instantiation has made it concrete (#8452).
+// BoundErrors reports the trait bounds `args` fail to satisfy for fn, at pos.
+//
+// The call-site check skips an argument that is still a type parameter — a
+// generic calling a generic — because the bound cannot be judged before the
+// type is known. Nothing then judged it afterwards either: monomorph cleared
+// the clone's TypeParams, so the bound went with them and the body failed on
+// whatever the missing impl was needed for, reported as a compiler bug rather
+// than as the unsatisfied bound it is (#8452). Monomorph calls this once the
+// arguments are concrete, which is the "eventual monomorphic call" the
+// call-site check defers to.
+func BoundErrors(info *Info, fn *ast.FuncDecl, args []ast.Type, pos ast.Position) []error {
+	if info == nil || fn == nil || len(fn.Bounds) == 0 {
+		return nil
+	}
+	// A generic-trait bound names the call's own type parameters —
+	// `count[T, I: Iterator[T]]` — so the comparison against the impl's
+	// arguments needs T bound before `Iterator[T]` means anything. The
+	// call-site check builds that from the inferred arguments; here they are
+	// the instantiation's, paired with the parameters positionally.
+	sub := make(map[string]ast.Type, len(fn.TypeParams))
+	tpSet := make(map[string]bool, len(fn.TypeParams))
+	for i, name := range fn.TypeParams {
+		tpSet[name] = true
+		if i < len(args) {
+			sub[name] = args[i]
+		}
+	}
+	c := &checker{info: info}
+	c.checkTypeArgBounds(fn, args, sub, tpSet, pos)
+	return c.errors
+}
+
+func (c *checker) checkTypeArgBounds(genericFn *ast.FuncDecl, args []ast.Type, sub map[string]ast.Type, tpSet map[string]bool, pos ast.Position) {
+	// Trait-bound satisfaction: every concrete type
+	// argument must implement the traits its type
+	// parameter is bound by. A still-parametric arg
+	// (generic-into-generic) is left for the eventual
+	// monomorphic call. See docs/TRAITS.md §5.
+	for i, tp := range genericFn.TypeParams {
+		if _, isParam := args[i].(ast.ParamType); isParam {
+			continue
+		}
+		for bi, traitName := range genericFn.Bounds[tp] {
+			tn, ok := methodTypeName(args[i])
+			// Render `__method_Box_to_string` as the user-facing
+			// `Box.to_string` when the generic decl is a hoisted
+			// receiver method.
+			site := demangle(genericFn.Name)
+			if genericFn.MethodRecv != "" {
+				site = demangle(genericFn.MethodRecv) + "." + genericFn.MethodSimpleName
+			}
+			if !ok || !c.info.Impls[traitName][tn] {
+				c.errfCode(pos, "E021",
+					"type argument %s = %s does not implement trait %s required by %s",
+					tp, demangle(args[i].String()), demangle(traitName), site)
+				continue
+			}
+			// Generic-trait bound (`T: From[i32]`): the impl's
+			// trait args must match the bound's, not merely exist.
+			var boundArgs []ast.Type
+			if ba := genericFn.BoundArgs[tp]; bi < len(ba) {
+				boundArgs = ba[bi]
+			}
+			if len(boundArgs) > 0 {
+				// A bound arg may name a type param the call
+				// inferred (`I: Iterator[T]` with T pinned from the
+				// impl) — resolve those before comparing so the
+				// impl's concrete args match. See #2691.
+				resolved := make([]ast.Type, len(boundArgs))
+				for k, baT := range boundArgs {
+					resolved[k] = substBoundArg(baT, tpSet, sub)
+				}
+				boundArgs = resolved
+				implArgs := c.implTraitArgsFor(traitName, tn, args[i])
+				if !typeArgsEqual(implArgs, boundArgs) {
+					c.errfCode(pos, "E021",
+						"type argument %s = %s implements %s%s but the bound requires %s%s (in %s)",
+						tp, demangle(args[i].String()), demangle(traitName), traitArgsStr(implArgs),
+						demangle(traitName), traitArgsStr(boundArgs), site)
+				}
+			}
+		}
+	}
+}
+
 func (c *checker) implTraitArgsFor(traitName, tn string, ct ast.Type) []ast.Type {
 	implArgs := c.info.ImplTraitArgs[traitName][tn]
 	if len(implArgs) == 0 {
@@ -8222,8 +8410,11 @@ func (c *checker) assignableWith(dst, src ast.Type, dynBox bool) bool {
 // fields, wrong-arity calls). Future PRs expand coverage —
 // each stamping is mechanical, just touches the errf call.
 func (c *checker) errfCode(pos ast.Position, code, format string, args ...any) {
-	msg := fmt.Sprintf(format, args...)
-	path := c.currentModule()
+	c.report(c.currentModule(), pos, code, fmt.Sprintf(format, args...))
+}
+
+// report records one diagnostic against the module at path.
+func (c *checker) report(path string, pos ast.Position, code, msg string) {
 	// Identical diagnostics at the same position are dropped. Several
 	// checks reach the same expression by different routes — a string
 	// `a < b` produced the same E009 twice, byte for byte — and a reader
@@ -13202,6 +13393,13 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		// via `c.settleNumeric`. If the literal already has a
 		// resolved Width (set by a previous settling pass — e.g.
 		// from a re-check during monomorphisation), report that.
+		if (n.ExceedsI64 || n.ExceedsU64) && !c.wideSeen[n] {
+			if c.wideSeen == nil {
+				c.wideSeen = map[*ast.NumberLit]bool{}
+			}
+			c.wideSeen[n] = true
+			c.wideLits = append(c.wideLits, wideLit{lit: n, path: c.currentModule(), suffixed: n.Width != 0})
+		}
 		if n.IsFloat {
 			return ast.FloatType{Width: n.FloatWidth}
 		}
@@ -14598,56 +14796,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				}
 			}
 			if complete {
-				// Trait-bound satisfaction: every concrete type
-				// argument must implement the traits its type
-				// parameter is bound by. A still-parametric arg
-				// (generic-into-generic) is left for the eventual
-				// monomorphic call. See docs/TRAITS.md §5.
-				for i, tp := range genericFn.TypeParams {
-					if _, isParam := args[i].(ast.ParamType); isParam {
-						continue
-					}
-					for bi, traitName := range genericFn.Bounds[tp] {
-						tn, ok := methodTypeName(args[i])
-						// Render `__method_Box_to_string` as the user-facing
-						// `Box.to_string` when the generic decl is a hoisted
-						// receiver method.
-						site := demangle(genericFn.Name)
-						if genericFn.MethodRecv != "" {
-							site = demangle(genericFn.MethodRecv) + "." + genericFn.MethodSimpleName
-						}
-						if !ok || !c.info.Impls[traitName][tn] {
-							c.errfCode(n.P, "E021",
-								"type argument %s = %s does not implement trait %s required by %s",
-								tp, demangle(args[i].String()), demangle(traitName), site)
-							continue
-						}
-						// Generic-trait bound (`T: From[i32]`): the impl's
-						// trait args must match the bound's, not merely exist.
-						var boundArgs []ast.Type
-						if ba := genericFn.BoundArgs[tp]; bi < len(ba) {
-							boundArgs = ba[bi]
-						}
-						if len(boundArgs) > 0 {
-							// A bound arg may name a type param the call
-							// inferred (`I: Iterator[T]` with T pinned from the
-							// impl) — resolve those before comparing so the
-							// impl's concrete args match. See #2691.
-							resolved := make([]ast.Type, len(boundArgs))
-							for k, baT := range boundArgs {
-								resolved[k] = substBoundArg(baT, tpSet, sub)
-							}
-							boundArgs = resolved
-							implArgs := c.implTraitArgsFor(traitName, tn, args[i])
-							if !typeArgsEqual(implArgs, boundArgs) {
-								c.errfCode(n.P, "E021",
-									"type argument %s = %s implements %s%s but the bound requires %s%s (in %s)",
-									tp, demangle(args[i].String()), demangle(traitName), traitArgsStr(implArgs),
-									demangle(traitName), traitArgsStr(boundArgs), site)
-							}
-						}
-					}
-				}
+				c.checkTypeArgBounds(genericFn, args, sub, tpSet, n.P)
 				n.TypeArgs = args
 				// Resolve any associated-type projection the result picked up
 				// once the type args made its base concrete (`I::Item` →
@@ -16539,6 +16688,11 @@ func (c *checker) settleFloat(e ast.Expr, hf ast.FloatType) {
 		// integer type (typed-suffix `42i64` or a previous
 		// settle pass).
 		if x.Width == 0 && !x.IsFloat {
+			if x.ExceedsU64 {
+				// Value holds nothing for a literal this wide, so there is
+				// no number to promote.
+				c.errfCode(x.P, "E047", "literal %s does not fit in any integer type; write it as a float for %s", x.Raw, hf)
+			}
 			x.IsFloat = true
 			x.FloatWidth = width
 		}
@@ -16828,11 +16982,6 @@ func (c *checker) postSettleType(e ast.Expr, prior ast.Type) ast.Type {
 	return prior
 }
 
-// checkLiteralFits reports an error if the literal's value is
-// outside the range representable by the resolved integer type.
-// Run once the width has been decided. For unsigned types the
-// value must be in [0, 2^width); for signed it must be in
-// [-2^(width-1), 2^(width-1)).
 // intLitExceedsI32 reports whether `e` is a bare integer literal (or a
 // unary-negated one) whose value lies outside the signed i32 range. It drives
 // the i64-widening default for an unannotated binding (#3676): a written-out
@@ -16840,93 +16989,53 @@ func (c *checker) postSettleType(e ast.Expr, prior ast.Type) ast.Type {
 // instead of being silently truncated. A typed-suffix literal (`42i64`) already
 // carries a Width and isn't a default case; a float literal is excluded.
 func intLitExceedsI32(e ast.Expr) bool {
-	switch x := e.(type) {
-	case *ast.NumberLit:
-		if x.IsFloat || x.Width != 0 {
-			return false
-		}
-		return x.Value < -1<<31 || x.Value > 1<<31-1
-	case *ast.Unary:
-		if x.Op == "-" {
-			if nl, ok := x.Operand.(*ast.NumberLit); ok && !nl.IsFloat && nl.Width == 0 {
-				v := -nl.Value
-				return v < -1<<31 || v > 1<<31-1
-			}
-		}
+	negated := false
+	if u, ok := e.(*ast.Unary); ok && u.Op == "-" {
+		e, negated = u.Operand, true
 	}
-	return false
+	lit, ok := e.(*ast.NumberLit)
+	if !ok || lit.IsFloat || lit.Width != 0 {
+		return false
+	}
+	return ast.IntLitOutOfRange(lit, negated, ast.NumberType{Width: 32, Signed: true}) != ""
 }
 
-// litText renders the literal the way the source wrote it, sign included.
-// Past i64 max the Value field holds a wrapped bit pattern, so the
-// magnitude has to be read back as unsigned — otherwise the diagnostic
-// quotes a number the author never typed.
-func litText(lit *ast.NumberLit, negated bool) string {
-	sign := ""
-	if negated {
-		sign = "-"
-	}
-	if lit.ExceedsI64 {
-		return sign + strconv.FormatUint(uint64(lit.Value), 10)
-	}
-	return sign + strconv.FormatInt(lit.Value, 10)
-}
-
+// checkLiteralFits reports E047 when the literal, as the source wrote it, is
+// outside the range of the integer type it has settled to.
 func (c *checker) checkLiteralFits(lit *ast.NumberLit, t ast.NumberType, negated bool) {
-	w := t.NormalWidth()
-	if t.IsSigned() {
-		// Judge — and report — the value the source wrote, sign included. A
-		// literal is only ever the magnitude; `-2147483648` is in range and
-		// `2147483648` is not, and they share a NumberLit.
-		if w == 64 {
-			// Only i64 MIN is reachable past i64 max, and only negated:
-			// `-9223372036854775808` is in range, `9223372036854775808`
-			// is not, and both carry the same wrapped Value.
-			if lit.ExceedsI64 && !(negated && uint64(lit.Value) == 1<<63) {
-				c.errfCode(lit.P, "E047", "literal %s does not fit in %s", litText(lit, negated), t)
+	if msg := ast.IntLitOutOfRange(lit, negated, t); msg != "" {
+		c.errfCode(lit.P, "E047", "%s", msg)
+	}
+}
+
+// wideLit is an integer literal past i64 max the first time checkExpr saw it,
+// with the module it sits in. Only u64 (or i64, as its minimum) can hold one,
+// so it is valid only once some context has settled it: one still unsettled
+// after every body is checked would lower as the i32 default and has to be
+// refused instead — a tuple element, an array element or a comparison operand
+// gets no settling hint. A literal typed by its suffix never settles, so it is
+// judged against that type; only one past u64 can fail there.
+type wideLit struct {
+	lit      *ast.NumberLit
+	path     string
+	suffixed bool
+}
+
+func (c *checker) checkUnsettledWideLiterals() {
+	for _, w := range c.wideLits {
+		lit := w.lit
+		t := ast.NumberType{Width: 32, Signed: true}
+		switch {
+		case w.suffixed:
+			if !lit.ExceedsU64 {
+				continue
 			}
-			return
+			t = ast.NumberType{Width: lit.Width, Signed: !lit.IsUnsigned}
+		case lit.Width != 0 || lit.IsFloat:
+			continue
 		}
-		var min, max int64
-		switch w {
-		case 32:
-			min, max = -1<<31, 1<<31-1
-		default:
-			return
-		}
-		if lit.ExceedsI64 {
-			c.errfCode(lit.P, "E047", "literal %s does not fit in %s", litText(lit, negated), t)
-			return
-		}
-		v := lit.Value
-		if negated {
-			v = -v
-		}
-		if v < min || v > max {
-			c.errfCode(lit.P, "E047", "literal %s does not fit in %s", litText(lit, negated), t)
-		}
-	} else {
-		// A negative literal has no unsigned reading. The sign lives on the
-		// enclosing unary, so testing lit.Value alone (which is only ever
-		// the magnitude) let `var a: u8 = -1` through, and the natives then
-		// stored 0xFFFFFFFF into a u8 slot while interp said 255.
-		if negated && !(lit.Value == 0 && !lit.ExceedsI64) {
-			c.errfCode(lit.P, "E047", "literal %s does not fit in %s: unsigned types have no negative values", litText(lit, negated), t)
-			return
-		}
-		var max uint64
-		switch w {
-		case 8:
-			max = 1<<8 - 1
-		case 32:
-			max = 1<<32 - 1
-		case 64:
-			return // every u64 bit pattern is representable
-		default:
-			return
-		}
-		if uint64(lit.Value) > max || lit.ExceedsI64 {
-			c.errfCode(lit.P, "E047", "literal %s does not fit in %s", litText(lit, negated), t)
+		if msg := ast.IntLitOutOfRange(lit, false, t); msg != "" {
+			c.report(w.path, lit.P, "E047", msg)
 		}
 	}
 }

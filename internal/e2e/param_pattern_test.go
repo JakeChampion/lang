@@ -87,7 +87,7 @@ function main(): i32 { return f(1, Point { x: 3, y: 4 }); }`,
 		src: `struct Point { x: i32, y: i32 }
 function main(): i32 {
   var p: Point = Point { x: 3, y: 4 };
-  var verbose = function(Point { x, y }: Point): i32 { return x * 10 + y; };
+  var verbose = (Point { x, y }: Point): i32 => { return x * 10 + y; };
   var arrow = (Point { x, y }: Point) => x + y;
   return verbose(p) + arrow(p);
 }`,

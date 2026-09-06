@@ -87,8 +87,8 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"fnval-struct-field", `struct H { f: (i32) => i32 } function dbl(n: i32): i32 { return n * 2; } function main(): i32 { var h = H { f: dbl }; return h.f(21); }`},
 		{"fnval-struct-field-mixed", `struct H { f: (i32) => i32, n: i32 } function inc(n: i32): i32 { return n + 1; } function main(): i32 { var h = H { f: inc, n: 100 }; return h.f(h.n); }`},
 		// No-capture lambda as a struct-literal field value (#2994) on wasm.
-		{"clo-struct-field", `struct Box { f: (i32) => i32 } function main(): i32 { var b = Box { f: function(x: i32): i32 { return x * 3; } }; return b.f(7); }`},
-		{"clo-struct-field-2fn", `struct Ops { add1: (i32) => i32, dbl: (i32) => i32 } function main(): i32 { var o = Ops { add1: function(x: i32): i32 { return x + 1; }, dbl: function(x: i32): i32 { return x * 2; } }; return o.add1(10) + o.dbl(10); }`},
+		{"clo-struct-field", `struct Box { f: (i32) => i32 } function main(): i32 { var b = Box { f: (x: i32): i32 => { return x * 3; } }; return b.f(7); }`},
+		{"clo-struct-field-2fn", `struct Ops { add1: (i32) => i32, dbl: (i32) => i32 } function main(): i32 { var o = Ops { add1: (x: i32): i32 => { return x + 1; }, dbl: (x: i32): i32 => { return x * 2; } }; return o.add1(10) + o.dbl(10); }`},
 		// Calling an element of a function-value ARRAY inline (`fns[i](args)`):
 		// a plain fn-pointer array element lowers to args + the element + call_
 		// indirect (the local-bind form `var f = fns[i]; f()` already lowered).
@@ -96,9 +96,9 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"fnarr-elem-call-loop", `function apply(fns: ((i32) => i32)[], n: i32): i32 { var s = 0; var i = 0; while (i < fns.len()) { s = s + fns[i](n); i = i + 1; } return s; } function inc(n: i32): i32 { return n + 1; } function dbl(n: i32): i32 { return n * 2; } function main(): i32 { return apply([inc, dbl], 10); }`},
 		{"fnarr-elem-call-2arg", `function add(a: i32, b: i32): i32 { return a + b; } function mul(a: i32, b: i32): i32 { return a * b; } function main(): i32 { var ops = [add, mul]; return ops[0](3, 4) + ops[1](3, 4); }`},
 		// Array literals of no-capture lambdas (#2994) on the wasm backend.
-		{"clo-arr-call", `function main(): i32 { var fs = [function(x: i32): i32 { return x * 2; }, function(x: i32): i32 { return x + 100; }]; return fs[0](5) + fs[1](5); }`},
-		{"clo-arr-forin", `function main(): i32 { var fs = [function(x: i32): i32 { return x + 1; }, function(x: i32): i32 { return x + 2; }]; var s = 0; for f in fs { s = s + f(10); } return s; }`},
-		{"clo-arr-mixed", `function dbl(x: i32): i32 { return x * 2; } function main(): i32 { var fs = [dbl, function(x: i32): i32 { return x + 5; }]; return fs[0](10) + fs[1](10); }`},
+		{"clo-arr-call", `function main(): i32 { var fs = [(x: i32): i32 => { return x * 2; }, (x: i32): i32 => { return x + 100; }]; return fs[0](5) + fs[1](5); }`},
+		{"clo-arr-forin", `function main(): i32 { var fs = [(x: i32): i32 => { return x + 1; }, (x: i32): i32 => { return x + 2; }]; var s = 0; for f in fs { s = s + f(10); } return s; }`},
+		{"clo-arr-mixed", `function dbl(x: i32): i32 { return x * 2; } function main(): i32 { var fs = [dbl, (x: i32): i32 => { return x + 5; }]; return fs[0](10) + fs[1](10); }`},
 		{"modulo", "function main(): i32 { return 23 % 5; }"},
 		{"division", "function main(): i32 { return 84 / 2; }"},
 		{"bitwise", "function main(): i32 { return (6 & 3) | 8; }"},

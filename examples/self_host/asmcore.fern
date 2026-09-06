@@ -461,6 +461,9 @@ pub function sysno(t: string, name: string): string {
         if (name == "timerfd_create") { return "283"; }
         if (name == "timerfd_settime") { return "286"; }
         if (name == "ioctl") { return "16"; }
+        if (name == "faccessat") { return "439"; }
+        if (name == "geteuid") { return "107"; }
+        if (name == "getegid") { return "108"; }
         return "-1";
     }
     if (t == "arm64-darwin") {
@@ -498,6 +501,13 @@ pub function sysno(t: string, name: string): string {
         if (name == "connect") { return "98"; }
         if (name == "execve") { return "59"; }
         if (name == "ioctl") { return "54"; }
+        // faccessat here takes a flags word already; Linux's flagless
+        // faccessat cannot, so the Linux rows are faccessat2 instead. Same
+        // four-argument shape either way — see at_eaccess for the constant
+        // that does differ.
+        if (name == "faccessat") { return "467"; }
+        if (name == "geteuid") { return "25"; }
+        if (name == "getegid") { return "43"; }
         // No pipe2 / dup3 rows: XNU has neither, and its pipe() reports the
         // second fd in x1, which no __syscall* intrinsic can see. That is why
         // subprocess keeps a hand-written body on this one target — the same
@@ -534,7 +544,19 @@ pub function sysno(t: string, name: string): string {
     if (name == "timerfd_create") { return "85"; }
     if (name == "timerfd_settime") { return "86"; }
     if (name == "ioctl") { return "29"; }
+    if (name == "faccessat") { return "439"; }
+    if (name == "geteuid") { return "175"; }
+    if (name == "getegid") { return "177"; }
     return "-1";
+}
+
+// at_eaccess is faccessat's "answer for the EFFECTIVE ids" flag: 0x200 on
+// Linux, 0x10 on Darwin. Same flag, same meaning, different number — the shape
+// that silently asks a different question when it is assumed rather than
+// looked up, since without it the answer is about the REAL ids.
+pub function at_eaccess(t: string): string {
+    if (t == "arm64-darwin") { return "16"; }
+    return "512";
 }
 
 // at_fdcwd is the *at() family's "relative to the current directory" dirfd:
@@ -557,19 +579,130 @@ pub function at_fdcwd(t: string): string {
 // Darwin's st_nlink, sharing the word — is discarded by that mask anyway. So a
 // plain 32-bit load at the target's offset is correct on all three.
 pub function statoff(t: string, name: string): string {
-    if (t == "x86_64") {
-        if (name == "mode") { return "24"; }
-        if (name == "size") { return "48"; }
-        return "0";
-    }
-    if (t == "arm64-darwin") {
-        if (name == "mode") { return "4"; }
-        if (name == "size") { return "96"; }
-        return "0";
-    }
-    if (name == "mode") { return "16"; }
+    if (t == "x86_64") { return statoff_x86_64(name); }
+    if (t == "arm64-darwin") { return statoff_darwin(name); }
+    return statoff_arm64_linux(name);
+}
+
+// x86-64 Linux: 144 bytes, with 64-bit dev / ino / nlink ahead of the 32-bit
+// mode / uid / gid triple, and the three timestamps as second+nanosecond word
+// pairs from offset 72.
+function statoff_x86_64(name: string): string {
+    if (name == "dev") { return "0"; }
+    if (name == "ino") { return "8"; }
+    if (name == "nlink") { return "16"; }
+    if (name == "mode") { return "24"; }
+    if (name == "uid") { return "28"; }
+    if (name == "gid") { return "32"; }
+    if (name == "rdev") { return "40"; }
     if (name == "size") { return "48"; }
+    if (name == "blksize") { return "56"; }
+    if (name == "blocks") { return "64"; }
+    return statoff_times_72(name);
+}
+
+// arm64 Linux: the asm-generic record — 128 bytes, mode / nlink / uid / gid
+// all 32-bit up front, st_blksize a signed 32-bit word at 56. Timestamps sit
+// where x86-64's do.
+function statoff_arm64_linux(name: string): string {
+    if (name == "dev") { return "0"; }
+    if (name == "ino") { return "8"; }
+    if (name == "mode") { return "16"; }
+    if (name == "nlink") { return "20"; }
+    if (name == "uid") { return "24"; }
+    if (name == "gid") { return "28"; }
+    if (name == "rdev") { return "32"; }
+    if (name == "size") { return "48"; }
+    if (name == "blksize") { return "56"; }
+    if (name == "blocks") { return "64"; }
+    return statoff_times_72(name);
+}
+
+// The Linux timestamp block, identical on both arches: three
+// (seconds, nanoseconds) pairs of 64-bit words starting at 72.
+function statoff_times_72(name: string): string {
+    if (name == "atime") { return "72"; }
+    if (name == "atime_nsec") { return "80"; }
+    if (name == "mtime") { return "88"; }
+    if (name == "mtime_nsec") { return "96"; }
+    if (name == "ctime") { return "104"; }
+    if (name == "ctime_nsec") { return "112"; }
     return "0";
+}
+
+// arm64 Darwin: the 64-bit-inode record, 144 bytes and sharing almost nothing
+// with Linux's. mode and nlink are 16-bit; dev, rdev and blksize are signed
+// 32-bit; the timestamps are `struct timespec` pairs from 32 — with
+// st_birthtimespec occupying 80..96, which FileStat has no field for — and
+// size / blocks sit near the end at 96 and 104.
+function statoff_darwin(name: string): string {
+    if (name == "dev") { return "0"; }
+    if (name == "mode") { return "4"; }
+    if (name == "nlink") { return "6"; }
+    if (name == "ino") { return "8"; }
+    if (name == "uid") { return "16"; }
+    if (name == "gid") { return "20"; }
+    if (name == "rdev") { return "24"; }
+    if (name == "atime") { return "32"; }
+    if (name == "atime_nsec") { return "40"; }
+    if (name == "mtime") { return "48"; }
+    if (name == "mtime_nsec") { return "56"; }
+    if (name == "ctime") { return "64"; }
+    if (name == "ctime_nsec") { return "72"; }
+    if (name == "size") { return "96"; }
+    if (name == "blocks") { return "104"; }
+    if (name == "blksize") { return "112"; }
+    return "0";
+}
+
+// statkind is how WIDE a field is in the record — "i64", "i32", or "u16" for
+// the two 16-bit Darwin fields. It is the other half of statoff, and the half
+// that is easy to forget: reading Darwin's 16-bit st_mode with a 32-bit load
+// pulls st_nlink in with it, which is a plausible-looking mode with a link
+// count in its high bits.
+pub function statkind(t: string, name: string): string {
+    if (t == "arm64-darwin") {
+        if (name == "mode" || name == "nlink") { return "u16"; }
+        if (name == "dev" || name == "rdev" || name == "blksize") { return "i32"; }
+        if (name == "uid" || name == "gid") { return "i32"; }
+        return "i64";
+    }
+    if (name == "mode" || name == "uid" || name == "gid") { return "i32"; }
+    if (t == "x86_64") {
+        // st_nlink is a 64-bit word here and a 32-bit one on arm64; the
+        // FileStat slot is u32 either way, so this only decides the load.
+        return "i64";
+    }
+    if (name == "nlink" || name == "blksize") { return "i32"; }
+    return "i64";
+}
+
+// stat_load reads one field out of the scratch buffer as an i32. A "u16" field
+// is read with an ordinary 32-bit load and masked: the two extra bytes belong
+// to the next field and are discarded, and the load is unaligned only for
+// st_nlink at offset 6, which every target this compiler emits for permits.
+function stat_load(t: string, name: string): string {
+    var addr: string = "__raw_addr(buf, " + statoff(t, name) + ")";
+    if (statkind(t, name) == "u16") { return "(__load_i32(" + addr + ") & 65535)"; }
+    return "__load_i32(" + addr + ")";
+}
+
+// stat_i64 reads one field into an i64 FileStat slot, widening a 32-bit field
+// on the way. The sign matters: dev_t, rdev_t and blksize_t are SIGNED on
+// Darwin, so the widening is a sign-extension rather than a mask.
+function stat_i64(t: string, name: string): string {
+    if (statkind(t, name) == "i64") {
+        return "__load_i64(__raw_addr(buf, " + statoff(t, name) + "))";
+    }
+    return "(" + stat_load(t, name) + " as i64)";
+}
+
+// stat_u32 reads one field into a u32 FileStat slot.
+function stat_u32(t: string, name: string): string {
+    if (statkind(t, name) == "i64") {
+        return "(__load_i32(__raw_addr(buf, " + statoff(t, name) + ")) as u32)";
+    }
+    return "(" + stat_load(t, name) + " as u32)";
 }
 
 // oflag is the open(2) flag-set table, the other half of sysno: the numbers
@@ -1545,7 +1678,56 @@ pub function rt_src_lstat(t: string): string {
 }
 
 function rt_src_stat_like(t: string, name: string, at_flags: string): string {
-    return "function " + name + "(path: string): Result[FileStat, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var buf: i32 = __raw_scratch(160); var rc: i32 = __syscall4(" + sysno(t, "fstatat") + ", " + at_fdcwd(t) + ", pathz, buf, " + at_flags + "); if (rc < 0) { return Err(__fern_io_error(0 - rc, __raw_string(pathz, plen))); } var mode: i32 = __load_i32(__raw_addr(buf, " + statoff(t, "mode") + ")); var size: i64 = __load_i64(__raw_addr(buf, " + statoff(t, "size") + ")); var mfmt: i32 = mode & 61440; var isf: boolean = mfmt == 32768; var isd: boolean = mfmt == 16384; return Ok(FileStat { is_file: isf, is_dir: isd, size: size }); }";
+    return "function " + name + "(path: string): Result[FileStat, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var buf: i32 = __raw_scratch(160); var rc: i32 = __syscall4(" + sysno(t, "fstatat") + ", " + at_fdcwd(t) + ", pathz, buf, " + at_flags + "); if (rc < 0) { return Err(__fern_io_error(0 - rc, __raw_string(pathz, plen))); } var mode: i32 = " + stat_load(t, "mode") + "; var mfmt: i32 = mode & 61440; var isf: boolean = mfmt == 32768; var isd: boolean = mfmt == 16384; return Ok(FileStat { is_file: isf, is_dir: isd, size: " + stat_i64(t, "size") + ", mode: (mode as u32), " + stat_fields_src(t) + " }); }";
+}
+
+// stat_fields_src is the tail of the FileStat literal: everything past the
+// three fields the classification above already has in hand. One list for all
+// three targets — statoff / statkind carry the whole of the per-target
+// difference, which is why `stat` needs no per-target BODY.
+function stat_fields_src(t: string): string {
+    var o: string = "nlink: " + stat_u32(t, "nlink");
+    o = o + ", uid: " + stat_u32(t, "uid");
+    o = o + ", gid: " + stat_u32(t, "gid");
+    o = o + ", dev: " + stat_i64(t, "dev");
+    o = o + ", rdev: " + stat_i64(t, "rdev");
+    o = o + ", ino: " + stat_i64(t, "ino");
+    o = o + ", blksize: " + stat_i64(t, "blksize");
+    o = o + ", blocks: " + stat_i64(t, "blocks");
+    o = o + ", atime: " + stat_i64(t, "atime");
+    o = o + ", atime_nsec: " + stat_i64(t, "atime_nsec");
+    o = o + ", mtime: " + stat_i64(t, "mtime");
+    o = o + ", mtime_nsec: " + stat_i64(t, "mtime_nsec");
+    o = o + ", ctime: " + stat_i64(t, "ctime");
+    o = o + ", ctime_nsec: " + stat_i64(t, "ctime_nsec");
+    return o;
+}
+
+// rt_src_access backs `access(path, mode)` (syscall-leaf) →
+// Result[void, IoError]: may the process perform `mode` (the POSIX bitmask
+// F_OK=0, X_OK=1, W_OK=2, R_OK=4) on `path`?
+//
+// AT_EACCESS is what makes this the right question. Without it faccessat
+// answers for the REAL ids, and a shell's `test -r` / `-w` / `-x` is specified
+// against the EFFECTIVE ones — `euidaccess(3)`, which is exactly this call.
+// Linux's flagless faccessat cannot take the flag at all, so the Linux rows in
+// `sysno` are faccessat2 (5.8+); a kernel without it answers ENOSYS, which
+// reaches the caller as an IoError rather than being quietly replaced by the
+// real-id answer.
+//
+// One body for all three targets, same as stat: only the syscall number, the
+// AT_FDCWD constant and the AT_EACCESS constant come from `t`.
+pub function rt_src_access(t: string): string {
+    return "function __fern_access(path: string, mode: i32): Result[void, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var rc: i32 = __syscall4(" + sysno(t, "faccessat") + ", " + at_fdcwd(t) + ", pathz, mode, " + at_eaccess(t) + "); if (rc < 0) { return Err(__fern_io_error(0 - rc, __raw_string(pathz, plen))); } return Ok(()); }";
+}
+
+// rt_src_getid backs `geteuid()` / `getegid()` — one argument-free syscall
+// each, returning the process's EFFECTIVE user or group id. The effective pair
+// is the one every access decision is made against, which is why these and not
+// getuid / getgid. Neither can fail, so there is no errno path; the three zero
+// arguments are what __syscall3 requires, and the kernel ignores them.
+pub function rt_src_getid(t: string, which: string): string {
+    return "function __fern_" + which + "(): i32 { return __syscall3(" + sysno(t, which) + ", 0, 0, 0); }";
 }
 
 pub function (s: EmitState) mark_eprint(): EmitState {
@@ -3133,6 +3315,10 @@ function builtin_i32_names(): string[] {
         // isatty(fd) -> boolean, which the self-host carries in an
         // integer slot like every other 0/1 value.
         "isatty",
+        // geteuid() / getegid() -> the process's effective ids. u32 in
+        // native's signature; an integer slot here, like every other id.
+        "geteuid",
+        "getegid",
         "wasm_timer_pollable",
         "wasm_pollable_drop",
         "wasm_block",
@@ -3278,6 +3464,7 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
     if (id.name == "temp_dir") { return ty_result(ty_string()); }
     if (id.name == "read_dir") { return ty_result(ty_array_string()); }
     if (id.name == "stat") { return ty_result(ty_unknown()); }
+    if (id.name == "access") { return ty_result(ty_unknown()); }
     if (id.name == "lstat") { return ty_result(ty_unknown()); }
     if (id.name == "remove_dir_all") { return ty_option(ty_unknown()); }
     if (id.name == "f64_from_bits" || id.name == "f32_from_bits") { return ty_f64(); }
@@ -5394,9 +5581,11 @@ pub function struct_drop_field_ops(s: EmitState, sty: string): RcOp[] {
 
 // field_reclaim_field_ops returns the ordered per-field release directives for
 // `__field_reclaim_<sty>`, the rebind-side counterpart of struct_drop_field_ops.
-// One directive per PARTICIPATING field: `kind` is the terminal release, `ty` is
-// the element type of the pre-walk that precedes it (empty when there is none),
-// and `cow` says whether the new-vs-old compare guards the release.
+// One directive per PARTICIPATING field: `kind` is the terminal release and says
+// which pre-walk precedes it (`arrarr_free` walks struct elements,
+// `arrarr_free_enum` enum ones), `ty` is that pre-walk's element type (empty
+// when there is none), and `cow` says whether the new-vs-old compare guards the
+// release.
 //
 // `cow` is false exactly for a carried nested struct / enum field. Those release
 // without the compare, so a field the callee reused in place would otherwise dec
@@ -5441,13 +5630,22 @@ pub function field_reclaim_field_ops(s: EmitState, sty: string): RcOp[] {
             if (fr_struct && irlower.nested_field_deep_drop_ok(s.struct_decls, fdt)) { deep = fdt; }
             if (fr_box_arr) {
                 var pre: string = "";
+                var pre_kind: string = "arrarr_free";
                 if (irlower.is_struct_array_field_type(s.struct_decls, fdt)) {
                     var elem_ty: str = slice_unchecked(fdt, 0, fdt.len() - 2);
                     if (irlower.nested_field_deep_drop_ok(s.struct_decls, elem_ty)) {
                         pre = elem_ty + "";
                     }
+                } else if (irlower.is_enum_array_field_type(s.struct_decls, fdt)) {
+                    // The enum-array sibling, under the gate struct_drop_field_ops'
+                    // elems_drop_enum arm uses so the two helpers agree (#8604).
+                    var eaty: str = slice_unchecked(fdt, 0, fdt.len() - 2);
+                    if (irlower.enum_arr_elems_walk_ok(s.struct_decls, eaty)) {
+                        pre = eaty + "";
+                        pre_kind = "arrarr_free_enum";
+                    }
                 }
-                ops = ops.append(RcOp { kind: "arrarr_free", idx: k, ty: pre, cow: cow, uniq: uniq });
+                ops = ops.append(RcOp { kind: pre_kind, idx: k, ty: pre, cow: cow, uniq: uniq });
             } else if (fr_str) {
                 ops = ops.append(RcOp { kind: "str_free", idx: k, ty: "", cow: cow, uniq: uniq });
             } else if (fr_str_arr) {

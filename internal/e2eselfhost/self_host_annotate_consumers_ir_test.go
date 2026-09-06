@@ -35,8 +35,8 @@ var annotateConsumerCases = []struct {
 	{"bool_call_closure_local", `import "core/cmp";
 function main(): i32 {
     var flip: boolean = false;
-    var g = function (): boolean { return true; };
-    if (flip) { g = function (): boolean { return false; }; }
+    var g = (): boolean => { return true; };
+    if (flip) { g = (): boolean => { return false; }; }
     var n: i32 = g().to_string().len();
     if (n == 4) { return 42; }
     return n;
@@ -44,8 +44,8 @@ function main(): i32 {
 	{"bool_call_closure_local_control", `import "core/cmp";
 function main(): i32 {
     var flip: boolean = false;
-    var g = function (): boolean { return true; };
-    if (flip) { g = function (): boolean { return false; }; }
+    var g = (): boolean => { return true; };
+    if (flip) { g = (): boolean => { return false; }; }
     var b: boolean = g();
     var n: i32 = b.to_string().len();
     if (n == 4) { return 42; }
@@ -278,7 +278,7 @@ function main(): i32 {
 	// gap g14 — was: wrong-output (lift-detector)
 	{"lift_detector_unannotated_local", `struct R { hs: ((i32) => i32)[] }
 function mk(n: i32): R {
-    return R { hs: [function (x: i32): i32 { return x + n; }] };
+    return R { hs: [(x: i32): i32 => { return x + n; }] };
 }
 function pick(): (i32) => i32 {
     var r = mk(41);
@@ -290,7 +290,7 @@ function main(): i32 {
 }`},
 	{"lift_detector_unannotated_local_control", `struct R { hs: ((i32) => i32)[] }
 function mk(n: i32): R {
-    return R { hs: [function (x: i32): i32 { return x + n; }] };
+    return R { hs: [(x: i32): i32 => { return x + n; }] };
 }
 function pick(): (i32) => i32 {
     var r: R = mk(41);
@@ -303,7 +303,7 @@ function main(): i32 {
 	// gap g15 — was: wrong-output (lift-detector)
 	{"lift_detector_index_elem", `struct H { f: (i32) => i32 }
 function mkh(n: i32): H {
-    return H { f: function (x: i32): i32 { return x + n; } };
+    return H { f: (x: i32): i32 => { return x + n; } };
 }
 function load(): H[] {
     return [mkh(41)];
@@ -318,7 +318,7 @@ function main(): i32 {
 }`},
 	{"lift_detector_index_elem_control", `struct H { f: (i32) => i32 }
 function mkh(n: i32): H {
-    return H { f: function (x: i32): i32 { return x + n; } };
+    return H { f: (x: i32): i32 => { return x + n; } };
 }
 function load(): H[] {
     return [mkh(41)];
@@ -334,7 +334,7 @@ function main(): i32 {
 	// gap g16 — was: wrong-output (lift-detector)
 	{"lift_detector_call_chain", `struct R { hs: ((i32) => i32)[] }
 function mk(n: i32): R {
-    return R { hs: [function (x: i32): i32 { return x + n; }] };
+    return R { hs: [(x: i32): i32 => { return x + n; }] };
 }
 function pick(): (i32) => i32 {
     return mk(41).hs[0];
@@ -345,7 +345,7 @@ function main(): i32 {
 }`},
 	{"lift_detector_call_chain_control", `struct R { hs: ((i32) => i32)[] }
 function mk(n: i32): R {
-    return R { hs: [function (x: i32): i32 { return x + n; }] };
+    return R { hs: [(x: i32): i32 => { return x + n; }] };
 }
 function pick(): (i32) => i32 {
     var r: R = mk(41);
@@ -545,8 +545,8 @@ function main(): i32 {
 	// fn_ret widening gave the param/field siblings (below) the same footing.
 	{"fnvalue_local_strarr_index", `function main(): i32 {
     var flip: boolean = false;
-    var g = function (): string[] { return ["ab", "c"]; };
-    if (flip) { g = function (): string[] { return ["zz", "y"]; }; }
+    var g = (): string[] => { return ["ab", "c"]; };
+    if (flip) { g = (): string[] => { return ["zz", "y"]; }; }
     var n: i32 = g()[0].len();
     if (n == 2) { return 42; }
     return 1;
@@ -555,14 +555,14 @@ function main(): i32 {
 
 function main(): i32 {
     var flip: boolean = false;
-    var g = function (n: i32): Option[i32] { return Some(n + 41); };
-    if (flip) { g = function (n: i32): Option[i32] { return Some(n); }; }
+    var g = (n: i32): Option[i32] => { return Some(n + 41); };
+    if (flip) { g = (n: i32): Option[i32] => { return Some(n); }; }
     return g(1).unwrap_or(9);
 }`},
 	{"fnvalue_local_tuple_elem", `function main(): i32 {
     var flip: boolean = false;
-    var g = function (): (string, i32) { return ("abcd", 7); };
-    if (flip) { g = function (): (string, i32) { return ("zz", 1); }; }
+    var g = (): (string, i32) => { return ("abcd", 7); };
+    if (flip) { g = (): (string, i32) => { return ("zz", 1); }; }
     var t = g();
     return t.0.len() + 38;
 }`},
@@ -570,12 +570,12 @@ function main(): i32 {
 
 function main(): i32 {
     var flip: boolean = false;
-    var g = function (): Map[string, i32] {
+    var g = (): Map[string, i32] => {
         var m: Map[string, i32] = Map { "k": 1 };
         return m;
     };
     if (flip) {
-        g = function (): Map[string, i32] {
+        g = (): Map[string, i32] => {
             var m: Map[string, i32] = Map { "k": 2 };
             return m;
         };
@@ -591,7 +591,7 @@ function main(): i32 {
 	{"fnparam_field_strarr_index", `struct H { f: () => string[] }
 
 function main(): i32 {
-    var h: H = H { f: function (): string[] { return ["ab", "c"]; } };
+    var h: H = H { f: (): string[] => { return ["ab", "c"]; } };
     var n: i32 = h.f()[0].len();
     if (n == 2) { return 42; }
     return 1;
@@ -650,8 +650,8 @@ function mk(n: i64): i32[] { return [(n % 100i64) as i32, 7]; }
 function main(): i32 { return pick(mk); }`},
 	{"fnwiden_tuple_ret_capture", `function main(): i32 {
     var flip: boolean = false;
-    var g = function (): (string, i32) { return ("abcd", 4); };
-    if (flip) { g = function (): (string, i32) { return ("z", 1); }; }
+    var g = (): (string, i32) => { return ("abcd", 4); };
+    if (flip) { g = (): (string, i32) => { return ("z", 1); }; }
     var h = () => g().1 + 38;
     return h();
 }`},

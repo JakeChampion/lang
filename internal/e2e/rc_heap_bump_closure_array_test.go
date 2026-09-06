@@ -37,7 +37,7 @@ func scalarCapClosureArrSrc(n string) string {
     var acc: i32 = 0;
     while (i < ` + n + `) {
         var a: i32 = i;
-        var fs: (() => i32)[] = [function (): i32 { return a + 1; }, function (): i32 { return a + 2; }];
+        var fs: (() => i32)[] = [(): i32 => { return a + 1; }, (): i32 => { return a + 2; }];
         acc = acc + fs[0]() + fs[1]();
         i = i + 1;
     }
@@ -55,7 +55,7 @@ func ptrCapClosureArrSrc(n string) string {
     var acc: i32 = 0;
     while (i < ` + n + `) {
         var xs: i32[] = [i, i + 1, i + 2];
-        var fs: (() => i32)[] = [function (): i32 { return xs[0]; }, function (): i32 { return xs[2]; }];
+        var fs: (() => i32)[] = [(): i32 => { return xs[0]; }, (): i32 => { return xs[2]; }];
         acc = acc + fs[0]() + fs[1]();
         i = i + 1;
     }
@@ -71,7 +71,7 @@ const aliasClosureArrSrc = `function main(): i32 {
     var acc: i32 = 0;
     while (i < 200) {
         var a: i32 = i;
-        var fs: (() => i32)[] = [function (): i32 { return a + 1; }, function (): i32 { return a + 2; }];
+        var fs: (() => i32)[] = [(): i32 => { return a + 1; }, (): i32 => { return a + 2; }];
         var gs: (() => i32)[] = fs;
         acc = acc + fs[0]() + gs[1]();
         i = i + 1;
@@ -90,7 +90,7 @@ const sharedElemClosureArrSrc = `function main(): i32 {
     var acc: i32 = 0;
     while (i < 200) {
         var xs: i32[] = [i, i + 1, i + 2];
-        var f: (() => i32) = function (): i32 { return xs[1]; };
+        var f: (() => i32) = (): i32 => { return xs[1]; };
         var fs: (() => i32)[] = [f, f];
         acc = acc + fs[0]() + fs[1]() + f();
         i = i + 1;

@@ -8,6 +8,7 @@ package parser
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -6125,53 +6126,35 @@ func (p *parser) parsePrimary() (ast.Expr, error) {
 	switch t.Kind {
 	case lexer.Number:
 		p.advance()
-		var n int64
-		// Set when the written magnitude is above i64 max, so `n` holds a
-		// wrapped bit pattern. The checker needs to know, since it cannot
-		// otherwise tell a literal at 2^63 from the negative it wraps to.
-		exceedsI64 := false
-		if len(t.Text) > 2 && t.Text[0] == '0' && (t.Text[1] == 'x' || t.Text[1] == 'X') {
-			// Hex literal: parse the digits after the `0x` prefix.
-			// Width up to 64 bits so `0xFFFFFFFF` round-trips; the
-			// checker applies the same range rules as decimal.
-			v, err := strconv.ParseInt(t.Text[2:], 16, 64)
-			if err != nil {
-				// Sixteen hex digits with the top bit set (a u64 round
-				// constant, `0xffffffffffffffff`) exceed i64 max yet are
-				// valid u64 bit patterns; keep them the way the decimal
-				// path keeps `18446744073709551615`.
-				if uv, uerr := strconv.ParseUint(t.Text[2:], 16, 64); uerr == nil {
-					v = int64(uv)
-					exceedsI64 = true
-				} else {
-					p.errors = append(p.errors, p.errorfCode(t.Pos, "P002", "invalid hex literal %q: %v", t.Text, err))
-				}
-			}
-			n = v
-		} else {
-			// Decimal literal. Use strconv (like the hex path) so an
-			// out-of-range literal is reported instead of silently
-			// wrapping two's-complement — the old hand-rolled
-			// `n = n*10 + digit` overflowed without any diagnostic and
-			// the wrapped value could slip past the checker's range
-			// check. See docs/ADVERSARIAL-REVIEW-2026-06.md (F3).
-			v, err := strconv.ParseInt(t.Text, 10, 64)
-			if err != nil {
-				// A u64 literal can exceed i64 max yet still be valid;
-				// retry as unsigned and keep the bit pattern. The
-				// checker enforces the per-type range from the suffix /
-				// context.
-				if uv, uerr := strconv.ParseUint(t.Text, 10, 64); uerr == nil {
-					v = int64(uv)
-					exceedsI64 = true
-				} else {
-					p.errors = append(p.errors, p.errorfCode(t.Pos, "P002", "invalid integer literal %q: %v", t.Text, err))
-				}
-			}
-			n = v
+		isHex := len(t.Text) > 2 && t.Text[0] == '0' && (t.Text[1] == 'x' || t.Text[1] == 'X')
+		digits, base := t.Text, 10
+		if isHex {
+			digits, base = t.Text[2:], 16
 		}
-		lit := &ast.NumberLit{P: t.Pos, Value: n, ExceedsI64: exceedsI64}
-		if len(t.Text) > 2 && t.Text[0] == '0' && (t.Text[1] == 'x' || t.Text[1] == 'X') {
+		lit := &ast.NumberLit{P: t.Pos}
+		// strconv rather than a hand-rolled accumulate, so a magnitude past
+		// 64 bits is seen instead of wrapping (docs/ADVERSARIAL-REVIEW-2026-06.md, F3).
+		v, err := strconv.ParseInt(digits, base, 64)
+		if err != nil {
+			// Above i64 max the literal is still a u64 bit pattern
+			// (`18446744073709551615`, `0xffffffffffffffff`): keep it, flagged
+			// so the checker can tell it from the negative it wraps to. Past
+			// u64 too it is kept as well, flagged and with its spelling, so the
+			// checker refuses it against the type the context asked for the
+			// way it refuses every other out-of-range literal.
+			if uv, uerr := strconv.ParseUint(digits, base, 64); uerr == nil {
+				v = int64(uv)
+				lit.ExceedsI64 = true
+			} else if errors.Is(uerr, strconv.ErrRange) {
+				v = 0
+				lit.ExceedsU64 = true
+				lit.Raw = t.Text
+			} else {
+				p.errors = append(p.errors, p.errorfCode(t.Pos, "P002", "invalid integer literal %q: %v", t.Text, err))
+			}
+		}
+		lit.Value = v
+		if isHex {
 			lit.Raw = t.Text
 		}
 		// Typed suffix (`42i64`, `7u8`): stamp Width + IsUnsigned

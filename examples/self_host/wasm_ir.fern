@@ -4374,6 +4374,7 @@ function emit_function_ir(ns: string, r: irlower.LowerResult, fd: parser.FuncDec
     // allow `.`. r.n_params already counts the receiver as the first param.
     var fn_name: string = fd.name;
     if (fd.receiver_type.len() > 0) { fn_name = util.base_type_name(fd.receiver_type) + "." + fd.name; }
+    ircore.lower_failed_refuse(fn_name, r);
     irverifygate.verify_or_refuse(fn_name, r.ops, r.n_params, r.n_locals, vsigs);
     var parts: string[] = [];
     parts = parts.append("  (func $" + fn_name);
@@ -4447,18 +4448,6 @@ function emit_function_ir(ns: string, r: irlower.LowerResult, fd: parser.FuncDec
 // caller side lets wasm.fern import this module for the use_ir dispatch without
 // a cycle: wasm_ir never imports wasm. Caller must ensure wasm_eligible(mod).
 
-// lower_failed_refuse ends compilation for a function whose lowering REFUSED.
-// The whole-program route gates on all_lowered_ok before it emits; the PER-UNIT
-// route has no such gate, and emitting a failed LowerResult writes its partial op
-// stream — which reached wasm-tools as an elem entry naming a `$<fd>$clo` with no
-// definition rather than as a diagnostic (#7215).
-function lower_failed_refuse(name: string, r: irlower.LowerResult): i32 {
-    if (r.ok) { return 0; }
-    eprint("error: " + name + " did not lower on the wasm backend: " + r.why + "\n");
-    exit(3);
-    return 0;
-}
-
 // emit_functions emits a unit's function bodies. `ns` namespaces the base
 // globals the bodies reference (see str_base_global); "" is whole-program emit.
 // emit_functions_view emits ONE unit's function bodies against a WHOLE-PROGRAM
@@ -4508,7 +4497,6 @@ pub function emit_functions_view(ns: string, mod: parser.Module, cache: irlower.
         // Skipping it is the other half of bringing the extern bridge onto the IR
         // path: the bridge supplies the definition, so the lowering must not.
         if (mod.funcs[fi].import_iface.len() == 0) {
-            lower_failed_refuse(mod.funcs[fi].name, cache[fi]);
             parts = parts.append(emit_function_ir(ns, cache[fi], mod.funcs[fi], str_vals, cagg_vals, all_structs, ft, all_funcs, vsigs));
         }
         fi = fi + 1;
@@ -5136,10 +5124,45 @@ pub function lstat_func(): string {
     return stat_like_func("__fern_lstat", "0");
 }
 
+// FileStat's slots in the self-host's uniform-8-byte struct layout: the shape
+// pointer at 0, then one slot per field in declaration order. Written out
+// rather than computed because these are the addresses the hand-written wat
+// below stores to, and a wrong one is a silent wrong field.
+//
+//   is_file  8    is_dir  16   size    24   mode     32   nlink   40
+//   uid      48   gid     56   dev     64   rdev     72   ino     80
+//   blksize  88   blocks  96   atime  104   atime_nsec 112
+//   mtime  120   mtime_nsec 128   ctime 136   ctime_nsec 144
+function filestat_bytes(): i32 { return 152; }
+
+// filestat_copy_u64 stores one u64 straight out of the preview1 record.
+function filestat_copy_u64(slot: i32, src: i32): string {
+    return "    (i64.store (i32.add (local.get $fs) (i32.const " + util.i32_to_string(slot) +
+        ")) (i64.load (i32.add (local.get $buf) (i32.const " + util.i32_to_string(src) + "))))\n";
+}
+
+// filestat_split_ns turns one preview1 nanosecond timestamp into FileStat's
+// seconds / nanoseconds pair. The record is read twice rather than spending an
+// i64 local on the intermediate.
+function filestat_split_ns(slot: i32, src: i32): string {
+    var load: string = "(i64.load (i32.add (local.get $buf) (i32.const " + util.i32_to_string(src) + ")))";
+    var o: string = "    (i64.store (i32.add (local.get $fs) (i32.const " + util.i32_to_string(slot) +
+        ")) (i64.div_u " + load + " (i64.const 1000000000)))\n";
+    o = o + "    (i64.store (i32.add (local.get $fs) (i32.const " + util.i32_to_string(slot + 8) +
+        ")) (i64.rem_u " + load + " (i64.const 1000000000)))\n";
+    return o;
+}
+
+// filestat_zero writes 0 to a slot preview1 has no answer for.
+function filestat_zero(slot: i32): string {
+    return "    (i64.store (i32.add (local.get $fs) (i32.const " + util.i32_to_string(slot) +
+        ")) (i64.const 0))\n";
+}
+
 function stat_like_func(name: string, lookupflags: string): string {
     var o: string = "";
     o = o + "  (func $" + name + " (param $path i32) (param $fstype i32) (result i32)\n";
-    o = o + "    (local $err i32) (local $buf i32) (local $ft i32) (local $sz i64) (local $fs i32) (local $res i32)\n";
+    o = o + "    (local $err i32) (local $buf i32) (local $ft i32) (local $fs i32) (local $res i32)\n";
     o = o + "    (local.set $buf (call $__fern_alloc (i32.const 64)))\n";
     o = o + "    (local.set $err (call $path_filestat_get (i32.const 3) (i32.const " + lookupflags + ") (i32.add (local.get $path) (i32.const 4)) (i32.load (local.get $path)) (local.get $buf)))\n";
     o = o + "    (if (i32.ne (local.get $err) (i32.const 0)) (then\n";
@@ -5148,15 +5171,30 @@ function stat_like_func(name: string, lookupflags: string): string {
     o = o + "      (i32.store (i32.add (local.get $res) (i32.const 4)) (call $__fern_build_io_error (local.get $err) (local.get $path)))\n";
     o = o + "      (return (local.get $res))))\n";
     o = o + "    (local.set $ft (i32.load8_u (i32.add (local.get $buf) (i32.const 16))))\n";
-    // WASI filestat size is an i64 at buf+32; FileStat.size is i64, so load the
-    // full 8 bytes and i64.store it into the size@24 slot (a >2 GiB file would
-    // truncate under the old low-32-bit i32 load/store).
-    o = o + "    (local.set $sz (i64.load (i32.add (local.get $buf) (i32.const 32))))\n";
-    o = o + "    (local.set $fs (call $__fern_str_box (i32.const 32)))\n";
+    o = o + "    (local.set $fs (call $__fern_str_box (i32.const " + util.i32_to_string(filestat_bytes()) + ")))\n";
     o = o + "    (i32.store (local.get $fs) (local.get $fstype))\n";
     o = o + "    (i32.store (i32.add (local.get $fs) (i32.const 8)) (i32.eq (local.get $ft) (i32.const 4)))\n";
     o = o + "    (i32.store (i32.add (local.get $fs) (i32.const 16)) (i32.eq (local.get $ft) (i32.const 3)))\n";
-    o = o + "    (i64.store (i32.add (local.get $fs) (i32.const 24)) (local.get $sz))\n";
+    // The preview1 `filestat` record: dev@0, ino@8, filetype@16, nlink@24,
+    // size@32, and the three timestamps at 40 / 48 / 56 as u64 NANOSECONDS —
+    // not the seconds-plus-remainder pair stat(2) reports.
+    o = o + filestat_copy_u64(24, 32);  // size
+    o = o + filestat_copy_u64(40, 24);  // nlink
+    o = o + filestat_copy_u64(64, 0);   // dev
+    o = o + filestat_copy_u64(80, 8);   // ino
+    o = o + filestat_split_ns(104, 40); // atime / atime_nsec
+    o = o + filestat_split_ns(120, 48); // mtime / mtime_nsec
+    o = o + filestat_split_ns(136, 56); // ctime / ctime_nsec
+    // Preview 1 reports no mode, owner, device node or block accounting at
+    // all, so those slots read zero — the contract the checker's `stat`
+    // documentation states. A zero mode (an S_IFMT of 0, which no real file
+    // has) is how a caller tells "not reported" from a restrictive one.
+    o = o + filestat_zero(32); // mode
+    o = o + filestat_zero(48); // uid
+    o = o + filestat_zero(56); // gid
+    o = o + filestat_zero(72); // rdev
+    o = o + filestat_zero(88); // blksize
+    o = o + filestat_zero(96); // blocks
     o = o + "    (local.set $res (call $__fern_str_box (i32.const 8)))\n";
     o = o + "    (i32.store (local.get $res) (i32.const 0))\n";
     o = o + "    (i32.store (i32.add (local.get $res) (i32.const 4)) (local.get $fs))\n";
@@ -9484,16 +9522,22 @@ pub function emit_wasm_field_reclaim_body(t: string, structs: irlower.StructTab,
                         && array_field_elem_is_ptr(ft, structs, mr_types)
                         && !util.has_str(fnptr_fields, "FNPTR:" + t + "." + structs.decls[si].fields[k].name)) {
                         dec = "(drop (call $__fern_arr_dec_ptr " + oldf + "))";
-                        // MULTI-LEVEL element deep-drop (#2649), the same helper
+                        // MULTI-LEVEL element deep-drop (#2649), the same helpers
                         // $__struct_drop_<T>'s array arm calls first: release each
-                        // element's OWN rc fields before arr_dec_ptr frees the
-                        // element boxes. struct_drop_types seeds the field-reclaim
-                        // types into its closure, so $__struct_arr_elems_drop_E
-                        // and the $__struct_drop_E it calls are both emitted.
+                        // element's OWN rc fields — or, for an enum array, each
+                        // live variant's rc payload (#8604) — before arr_dec_ptr
+                        // frees the element boxes. struct_drop_types seeds the
+                        // field-reclaim types into its closure, so the walk helper
+                        // and anything it calls are emitted for both.
                         if (irlower.is_struct_array_field_type(structs, ft)) {
                             var elem_ty: str = slice_unchecked(ft, 0, ft.len() - 2);
                             if (irlower.nested_field_deep_drop_ok(structs, elem_ty)) {
                                 dec = "(drop (call $__struct_arr_elems_drop_" + elem_ty + " " + oldf + ")) " + dec;
+                            }
+                        } else if (irlower.is_enum_array_field_type(structs, ft)) {
+                            var eelem_ty: str = slice_unchecked(ft, 0, ft.len() - 2);
+                            if (irlower.enum_arr_elems_walk_ok(structs, eelem_ty)) {
+                                dec = "(drop (call $__enum_arr_elems_drop_" + eelem_ty + " " + oldf + ")) " + dec;
                             }
                         }
                     }

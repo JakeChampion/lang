@@ -45,34 +45,34 @@ func TestSelfHostFnKeyEnumIRX86_64(t *testing.T) {
 	}{
 		// Annotated var: build Opt[(i32)=>i32], match it, call the payload.
 		{"fnkey-enum-var-scrutinee",
-			`enum Opt[T] { Non, Has(T) } function main(): i32 { var f: (i32) => i32 = function (x: i32): i32 { return x + 40; }; var o: Opt[(i32) => i32] = Has(f); match (o) { Has(g) => { return g(2); }, Non => { return 0; } } }`,
+			`enum Opt[T] { Non, Has(T) } function main(): i32 { var f: (i32) => i32 = (x: i32): i32 => { return x + 40; }; var o: Opt[(i32) => i32] = Has(f); match (o) { Has(g) => { return g(2); }, Non => { return 0; } } }`,
 			42},
 		// Capture-free closure payload.
 		{"fnkey-enum-capturefree",
-			`enum Opt[T] { Non, Has(T) } function main(): i32 { var o: Opt[(i32) => i32] = Has(function (x: i32): i32 { return x + 40; }); match (o) { Has(g) => { return g(2); }, Non => { return 0; } } }`,
+			`enum Opt[T] { Non, Has(T) } function main(): i32 { var o: Opt[(i32) => i32] = Has((x: i32): i32 => { return x + 40; }); match (o) { Has(g) => { return g(2); }, Non => { return 0; } } }`,
 			42},
 		// Capturing closure payload (captures a local through the enum box).
 		{"fnkey-enum-capturing",
-			`enum Opt[T] { Non, Has(T) } function main(): i32 { var base: i32 = 40; var f: (i32) => i32 = function (x: i32): i32 { return x + base; }; var o: Opt[(i32) => i32] = Has(f); match (o) { Has(g) => { return g(2); }, Non => { return 0; } } }`,
+			`enum Opt[T] { Non, Has(T) } function main(): i32 { var base: i32 = 40; var f: (i32) => i32 = (x: i32): i32 => { return x + base; }; var o: Opt[(i32) => i32] = Has(f); match (o) { Has(g) => { return g(2); }, Non => { return 0; } } }`,
 			42},
 		// Fn-value param carrying the enum, matched inside the callee.
 		{"fnkey-enum-param",
-			`enum Opt[T] { Non, Has(T) } function run(o: Opt[(i32) => i32]): i32 { match (o) { Has(g) => { return g(2); }, Non => { return 0; } } } function main(): i32 { var f: (i32) => i32 = function (x: i32): i32 { return x + 40; }; return run(Has(f)); }`,
+			`enum Opt[T] { Non, Has(T) } function run(o: Opt[(i32) => i32]): i32 { match (o) { Has(g) => { return g(2); }, Non => { return 0; } } } function main(): i32 { var f: (i32) => i32 = (x: i32): i32 => { return x + 40; }; return run(Has(f)); }`,
 			42},
 		// Non branch taken (unit variant of the fn-keyed enum still resolves).
 		{"fnkey-enum-non-branch",
-			`enum Opt[T] { Non, Has(T) } function pick(b: boolean): Opt[(i32) => i32] { if (b) { return Has(function (x: i32): i32 { return x + 40; }); } return Non; } function main(): i32 { var o: Opt[(i32) => i32] = pick(false); match (o) { Has(g) => { return g(2); }, Non => { return 42; } } }`,
+			`enum Opt[T] { Non, Has(T) } function pick(b: boolean): Opt[(i32) => i32] { if (b) { return Has((x: i32): i32 => { return x + 40; }); } return Non; } function main(): i32 { var o: Opt[(i32) => i32] = pick(false); match (o) { Has(g) => { return g(2); }, Non => { return 42; } } }`,
 			42},
 		// INLINE construct-and-match, no annotation anywhere on the enum value
 		// (#5298 follow-up): the instantiation is inferred from the payload
 		// arg's full fn spelling and the match arms rewrite to the same clone
 		// the annotated path uses. Was a SIGSEGV.
 		{"fnkey-enum-inline-match",
-			`enum Opt[T] { Non, Has(T) } function main(): i32 { var f: (i32) => i32 = function (x: i32): i32 { return x + 40; }; match (Has(f)) { Has(g) => { return g(2); }, Non => { return 0; } } }`,
+			`enum Opt[T] { Non, Has(T) } function main(): i32 { var f: (i32) => i32 = (x: i32): i32 => { return x + 40; }; match (Has(f)) { Has(g) => { return g(2); }, Non => { return 0; } } }`,
 			42},
 		// Inline shape with a CAPTURING closure payload.
 		{"fnkey-enum-inline-capturing",
-			`enum Opt[T] { Non, Has(T) } function main(): i32 { var base: i32 = 40; var f: (i32) => i32 = function (x: i32): i32 { return x + base; }; match (Has(f)) { Has(g) => { return g(2); }, Non => { return 0; } } }`,
+			`enum Opt[T] { Non, Has(T) } function main(): i32 { var base: i32 = 40; var f: (i32) => i32 = (x: i32): i32 => { return x + base; }; match (Has(f)) { Has(g) => { return g(2); }, Non => { return 0; } } }`,
 			42},
 		// The i32 inline sibling stays correct (the inferred-key path is
 		// shared; a nominal key must not regress).

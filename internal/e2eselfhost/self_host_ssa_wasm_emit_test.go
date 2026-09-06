@@ -77,8 +77,8 @@ func TestSelfHostSSAEmitWasm(t *testing.T) {
 		{"fib", "function fib(n: i32): i32 { if (n < 2) { return n; } return fib(n - 1) + fib(n - 2); } function main(): i32 { var s = 0; var i = 0; while (i < 10) { s = s + fib(i); i = i + 1; } return s; }", 88},
 		{"all-return-helper", "function sign(n: i32): i32 { if (n < 0) { return 0 - 1; } else if (n == 0) { return 0; } else { return 1; } } function main(): i32 { return sign(0 - 5) + 10 * sign(7); }", 9},
 		// No-capture lambdas lift to top-level functions and are called directly.
-		{"lambda-call", "function main(): i32 { var f = function (x: i32): i32 { return x + 1; }; return f(5); }", 6},
-		{"lambda-compose", "function main(): i32 { var inc = function (x: i32): i32 { return x + 1; }; var dbl = function (x: i32): i32 { return x * 2; }; return inc(dbl(10)); }", 21},
+		{"lambda-call", "function main(): i32 { var f = (x: i32): i32 => { return x + 1; }; return f(5); }", 6},
+		{"lambda-compose", "function main(): i32 { var inc = (x: i32): i32 => { return x + 1; }; var dbl = (x: i32): i32 => { return x * 2; }; return inc(dbl(10)); }", 21},
 		// Heap (alloc / load_elem / store_elem): arrays. All wanted values stay
 		// below 126 — wasmtime rejects a WASI exit status outside [0,126).
 		{"arr-index", "function main(): i32 { var a = [10, 20, 30]; return a[1]; }", 20},
@@ -141,15 +141,15 @@ func TestSelfHostSSAEmitWasm(t *testing.T) {
 		// function values go through an env-dropping wrapper; capturing ones take
 		// __env directly. Covers indirect calls, fn-by-name, predicates, and
 		// returned / escaping / capturing closures.
-		{"lambda-indirect", "function apply(f: (i32) => i32, x: i32): i32 { return f(x); } function main(): i32 { var inc = function (n: i32): i32 { return n + 1; }; return apply(inc, 41); }", 42},
-		{"lambda-indirect-dispatch", "function apply2(f: (i32) => i32, x: i32): i32 { return f(x) + f(x + 1); } function main(): i32 { var dbl = function (n: i32): i32 { return n * 2; }; var sq = function (n: i32): i32 { return n * n; }; return apply2(dbl, 10) + apply2(sq, 3); }", 67},
-		{"lambda-indirect-loop", "function run(f: (i32) => i32): i32 { var s = 0; var i = 0; while (i < 4) { s = s + f(i); i = i + 1; } return s; } function main(): i32 { var t = function (n: i32): i32 { return n * 10; }; return run(t); }", 60},
+		{"lambda-indirect", "function apply(f: (i32) => i32, x: i32): i32 { return f(x); } function main(): i32 { var inc = (n: i32): i32 => { return n + 1; }; return apply(inc, 41); }", 42},
+		{"lambda-indirect-dispatch", "function apply2(f: (i32) => i32, x: i32): i32 { return f(x) + f(x + 1); } function main(): i32 { var dbl = (n: i32): i32 => { return n * 2; }; var sq = (n: i32): i32 => { return n * n; }; return apply2(dbl, 10) + apply2(sq, 3); }", 67},
+		{"lambda-indirect-loop", "function run(f: (i32) => i32): i32 { var s = 0; var i = 0; while (i < 4) { s = s + f(i); i = i + 1; } return s; } function main(): i32 { var t = (n: i32): i32 => { return n * 10; }; return run(t); }", 60},
 		{"fn-value-by-name", "function work(): i32 { return 42; } function run(f: () => i32): i32 { return f(); } function main(): i32 { return run(work); }", 42},
 		{"fn-value-predicate", "function is_big(n: i32): i32 { if (n > 10) { return 1; } return 0; } function count_if(a: i32[], pred: (i32) => i32): i32 { var c = 0; for x in a { if (pred(x) == 1) { c = c + 1; } } return c; } function main(): i32 { var a = [5, 20, 8, 30, 15]; return count_if(a, is_big); }", 3},
-		{"closure-returned", "function maker(): (i32) => i32 { var f = function (n: i32): i32 { return n + 100; }; return f; } function main(): i32 { var g = maker(); return g(5); }", 105},
-		{"closure-escape-arg", "function apply(f: (i32) => i32, x: i32): i32 { return f(x); } function main(): i32 { var k = 100; var add_k = function (n: i32): i32 { return n + k; }; return apply(add_k, 5); }", 105},
-		{"closure-escape-return", "function adder(a: i32): (i32) => i32 { var f = function (b: i32): i32 { return a + b; }; return f; } function main(): i32 { var add10 = adder(10); var add20 = adder(20); return add10(5) + add20(7); }", 42},
-		{"closure-capture-multicall", "function main(): i32 { var k = 10; var f = function (x: i32): i32 { return x + k; }; return f(1) + f(2); }", 23},
+		{"closure-returned", "function maker(): (i32) => i32 { var f = (n: i32): i32 => { return n + 100; }; return f; } function main(): i32 { var g = maker(); return g(5); }", 105},
+		{"closure-escape-arg", "function apply(f: (i32) => i32, x: i32): i32 { return f(x); } function main(): i32 { var k = 100; var add_k = (n: i32): i32 => { return n + k; }; return apply(add_k, 5); }", 105},
+		{"closure-escape-return", "function adder(a: i32): (i32) => i32 { var f = (b: i32): i32 => { return a + b; }; return f; } function main(): i32 { var add10 = adder(10); var add20 = adder(20); return add10(5) + add20(7); }", 42},
+		{"closure-capture-multicall", "function main(): i32 { var k = 10; var f = (x: i32): i32 => { return x + k; }; return f(1) + f(2); }", 23},
 		// f64 floats: f64 locals/params/results map to wasm f64 locals + ops
 		// (f64.add / f64.lt / f64.convert_i32_s / i32.trunc_f64_s). Results cast
 		// to i32 to surface as the exit code.

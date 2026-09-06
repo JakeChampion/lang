@@ -56,12 +56,18 @@ permissions:
   actions: write
   pull-requests: read
 
-# This lane ACTS: a cancelled run is a sweep that did not happen, and the next
-# one is twenty minutes away. It must never cancel itself — see
-# internal/sourcelint/main_concurrency_test.go for the policy this follows.
-concurrency:
-  group: reap-stale-runs
-  cancel-in-progress: false
+# NO CONCURRENCY GROUP, deliberately — and this is the third time today that
+# the same mechanism has bitten. `cancel-in-progress: false` protects the run
+# holding a RUNNER; a run still waiting for one counts as pending, and GitHub
+# keeps only the newest pending run per group. On a queue this deep nothing
+# reaches a runner before the next merge arrives, so a group does not bound the
+# cost — it guarantees the sweep never finishes. Runs 3 through 8 were each
+# cancelled within seconds of the next trigger, having done nothing.
+#
+# The sweep is ~20 seconds of API calls, so it can afford a slot per merge the
+# way check-sources.yml can: "one ~1-minute job can afford a slot per merge".
+# Two sweeps overlapping is harmless — they list the open pull requests before
+# the runs, and a cancel the other already made returns 409, which is handled.
 
 jobs:
   reap:

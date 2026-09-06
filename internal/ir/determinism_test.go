@@ -61,7 +61,7 @@ function main(): i32 { return area(Circle(3)) + area(Rect(2, 5)); }`,
 
 	"closures": `
 function adder(n: i32): (i32) => i32 {
-	return function (x: i32): i32 { return x + n; };
+	return (x: i32): i32 => { return x + n; };
 }
 function main(): i32 {
 	var f: (i32) => i32 = adder(10);
@@ -85,11 +85,11 @@ function main(): i32 {
 	// this were examples/tests/* — std/test users, which build many
 	// capturing closures. A corpus guard is only as wide as its corpus.
 	"closure_drop_thunks": `
-function mk_a(s: string): () => i32 { return function (): i32 { return s.len(); }; }
-function mk_b(s: string): () => i32 { return function (): i32 { return s.len() + 1; }; }
-function mk_c(s: string): () => i32 { return function (): i32 { return s.len() + 2; }; }
-function mk_d(s: string): () => i32 { return function (): i32 { return s.len() + 3; }; }
-function mk_e(s: string): () => i32 { return function (): i32 { return s.len() + 4; }; }
+function mk_a(s: string): () => i32 { return (): i32 => { return s.len(); }; }
+function mk_b(s: string): () => i32 { return (): i32 => { return s.len() + 1; }; }
+function mk_c(s: string): () => i32 { return (): i32 => { return s.len() + 2; }; }
+function mk_d(s: string): () => i32 { return (): i32 => { return s.len() + 3; }; }
+function mk_e(s: string): () => i32 { return (): i32 => { return s.len() + 4; }; }
 function main(): i32 {
 	var a: () => i32 = mk_a("v");
 	var b: () => i32 = mk_b("w");

@@ -32,7 +32,7 @@ function only[T](keep: (T) => boolean, xs: T[]): T[] { return xs; }
 
 // The bail shape: the result feeds a generic that needs the element type.
 function erased(i: i32): i32 {
-    var ys = pick2(function(x: i32): boolean { return x > 0; });
+    var ys = pick2((x: i32): boolean => { return x > 0; });
     var s = cmp.sort(ys);
     if (s.len() != 0) { return 253; }
     return 1;
@@ -40,7 +40,7 @@ function erased(i: i32): i32 {
 
 // T also reachable from an ordinary parameter — this always lowered.
 function bound_by_param(i: i32): i32 {
-    var zs = only(function(x: i32): boolean { return x > 1; }, [3, 1, 2]);
+    var zs = only((x: i32): boolean => { return x > 1; }, [3, 1, 2]);
     var t = cmp.sort(zs);
     if (t.len() != 3) { return 253; }
     return t[0];
@@ -48,15 +48,15 @@ function bound_by_param(i: i32): i32 {
 
 // A non-i32 element, so the recovery is not i32-shaped.
 function string_elem(i: i32): i32 {
-    var ss = pick2(function(x: string): boolean { return x.len() > 0; });
+    var ss = pick2((x: string): boolean => { return x.len() > 0; });
     if (ss.len() != 0) { return 252; }
     return 1;
 }
 
 // The same generic at two element types in one program.
 function two_calls(i: i32): i32 {
-    var a = pick2(function(x: i32): boolean { return true; });
-    var b = pick2(function(x: string): boolean { return true; });
+    var a = pick2((x: i32): boolean => { return true; });
+    var b = pick2((x: string): boolean => { return true; });
     return a.len() + b.len() + 1;
 }
 

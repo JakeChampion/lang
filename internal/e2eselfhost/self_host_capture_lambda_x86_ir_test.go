@@ -65,18 +65,18 @@ func TestSelfHostCaptureLambdaX86IR(t *testing.T) {
 		src      string
 		expected int
 	}{
-		{"single-capture", `function main(): i32 { var base: i32 = 20; var add = function(x: i32): i32 { return x + base; }; return add(5) + add(10); }`, 55},
-		{"capture-param", `function f(base: i32): i32 { var g = function(x: i32): i32 { return x * base; }; return g(3) + g(4); } function main(): i32 { return f(10); }`, 70},
-		{"multi-capture", `function main(): i32 { var a: i32 = 7; var b: i32 = 3; var combine = function(x: i32): i32 { return x + a - b; }; return combine(10); }`, 14},
-		{"capture-in-loop", `function main(): i32 { var step: i32 = 2; var bump = function(x: i32): i32 { return x + step; }; var total: i32 = 0; var i: i32 = 0; while (i < 3) { total = bump(total); i = i + 1; } return total; }`, 6},
+		{"single-capture", `function main(): i32 { var base: i32 = 20; var add = (x: i32): i32 => { return x + base; }; return add(5) + add(10); }`, 55},
+		{"capture-param", `function f(base: i32): i32 { var g = (x: i32): i32 => { return x * base; }; return g(3) + g(4); } function main(): i32 { return f(10); }`, 70},
+		{"multi-capture", `function main(): i32 { var a: i32 = 7; var b: i32 = 3; var combine = (x: i32): i32 => { return x + a - b; }; return combine(10); }`, 14},
+		{"capture-in-loop", `function main(): i32 { var step: i32 = 2; var bump = (x: i32): i32 => { return x + step; }; var total: i32 = 0; var i: i32 = 0; while (i < 3) { total = bump(total); i = i + 1; } return total; }`, 6},
 		// Unannotated literal captures: cap_type now infers the type from an
 		// array / struct LITERAL initializer (lit_init_type), so `var a =
 		// [..]` / `var p = P{..}` captures lift like the annotated/param cases
 		// (the capture flows as an ordinary typed argument — no env box, no RC).
-		{"arr-literal-capture", `function main(): i32 { var a = [10, 20, 30]; var len = function(): i32 { return a.len(); }; return len(); }`, 3},
-		{"arr-literal-index", `function main(): i32 { var a = [3, 5, 9]; var third = function(): i32 { return a[2]; }; return third(); }`, 9},
-		{"strarr-literal-capture", `function main(): i32 { var a = ["x", "y"]; var len = function(): i32 { return a.len(); }; return len(); }`, 2},
-		{"struct-literal-capture", `struct P { x: i32 } function main(): i32 { var p = P { x: 42 }; var get = function(): i32 { return p.x; }; return get(); }`, 42},
+		{"arr-literal-capture", `function main(): i32 { var a = [10, 20, 30]; var len = (): i32 => { return a.len(); }; return len(); }`, 3},
+		{"arr-literal-index", `function main(): i32 { var a = [3, 5, 9]; var third = (): i32 => { return a[2]; }; return third(); }`, 9},
+		{"strarr-literal-capture", `function main(): i32 { var a = ["x", "y"]; var len = (): i32 => { return a.len(); }; return len(); }`, 2},
+		{"struct-literal-capture", `struct P { x: i32 } function main(): i32 { var p = P { x: 42 }; var get = (): i32 => { return p.x; }; return get(); }`, 42},
 		// Wide-value (i64/u64) lambdas with an INFERRED (empty) return type: the
 		// lifted __lam_N carried ret_type "" so eligibility's `lower` bailed on the
 		// i64 return (ret_is_i64 unknown) → the lambda took the module off the IR path.
@@ -98,9 +98,9 @@ func TestSelfHostCaptureLambdaX86IR(t *testing.T) {
 		// Each expectation is the interpreter's answer for the same program.
 		// The measured self-host answers before the fix are in the comments:
 		// none of the three crashed, they returned plausible wrong numbers.
-		{"boxed-shadowed-by-for-binder", `function main(): i32 { var n: i32 = 0; var bump = function(): i32 { n = n + 1; return n; }; var s: i32 = bump() + bump(); var xs: i32[] = [0, 1, 2]; for n in xs { s = s + n; } return s; }`, 6},                                                                                                          // was 9: the loop read the cell (2) three times
-		{"boxed-shadowed-by-lambda-param", `function main(): i32 { var n: i32 = 0; var bump = function(): i32 { n = n + 1; return n; }; var twice = (n: i32) => n + n; var a: i32 = bump(); return a + twice(10); }`, 21},                                                                                                                           // was 3: twice became $cell$n[0] + $cell$n[0], ignoring its argument
-		{"boxed-shadowed-by-match-binder", `function pick(k: i32): Option[i32] { if (k > 0) { return Some(41); } return None; } function main(): i32 { var n: i32 = 0; var bump = function(): i32 { n = n + 1; return n; }; var s: i32 = bump() + bump(); match (pick(1)) { Some(n) => { s = s + n; }, None => { s = s + 100; } } return s; }`, 44}, // was 5: the arm read the cell instead of the payload
+		{"boxed-shadowed-by-for-binder", `function main(): i32 { var n: i32 = 0; var bump = (): i32 => { n = n + 1; return n; }; var s: i32 = bump() + bump(); var xs: i32[] = [0, 1, 2]; for n in xs { s = s + n; } return s; }`, 6},                                                                                                          // was 9: the loop read the cell (2) three times
+		{"boxed-shadowed-by-lambda-param", `function main(): i32 { var n: i32 = 0; var bump = (): i32 => { n = n + 1; return n; }; var twice = (n: i32) => n + n; var a: i32 = bump(); return a + twice(10); }`, 21},                                                                                                                           // was 3: twice became $cell$n[0] + $cell$n[0], ignoring its argument
+		{"boxed-shadowed-by-match-binder", `function pick(k: i32): Option[i32] { if (k > 0) { return Some(41); } return None; } function main(): i32 { var n: i32 = 0; var bump = (): i32 => { n = n + 1; return n; }; var s: i32 = bump() + bump(); match (pick(1)) { Some(n) => { s = s + n; }, None => { s = s + 100; } } return s; }`, 44}, // was 5: the arm read the cell instead of the payload
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

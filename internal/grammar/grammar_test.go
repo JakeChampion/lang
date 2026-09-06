@@ -85,7 +85,7 @@ func TestGrammarDerivesConstruct(t *testing.T) {
 
 		// A destructuring arrow-lambda parameter.
 		{"destructuring lambda param", `function main(): i32 { var g = ((lo, hi): (i32, i32)) => hi - lo; return 0; }`},
-		{"destructuring function param", `function main(): i32 { var f = function((x, y): (i32, i32)): i32 { return x * y; }; return 0; }`},
+		{"destructuring function param", `function main(): i32 { var f = ((x, y): (i32, i32)): i32 => { return x * y; }; return 0; }`},
 
 		// A block is an expression in its own right, not only as an if/match
 		// branch (docs/BLOCK-EXPRESSIONS.md). Nothing in the repo used a

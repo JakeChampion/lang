@@ -88,7 +88,7 @@ function main(): i32 { var p: P = P { x: 3, y: 4 }; return p.y; }`},
 			skip: "MakeClosure is closureconv-synthetic; interp builds Closure values directly from FuncDecl / Lambda",
 		},
 		{node: "Lambda", src: `function main(): i32 {
-    var add1: (i32) => i32 = function (x: i32): i32 { return x + 1; };
+    var add1: (i32) => i32 = (x: i32): i32 => { return x + 1; };
     return add1(41);
 }`},
 		// Statements.

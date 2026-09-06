@@ -21,7 +21,7 @@ var mapBuilderCases = []struct {
 import "core/int";
 import "core/map";
 function main(): i32 {
-  var m: Map[i32, i32] = Map.build(function(b: MapBuilder[i32, i32]): void {
+  var m: Map[i32, i32] = Map.build((b: MapBuilder[i32, i32]): void => {
     var i: i32 = 0;
     while (i < 5) { b.insert(i, i * 10); i = i + 1; }
   });
@@ -37,7 +37,7 @@ import "core/int";
 import "core/map";
 function main(): i32 {
   var xs: i32[] = [1, 2, 3];
-  var m: Map[i32, i32] = Map.build(function(b: MapBuilder[i32, i32]): void {
+  var m: Map[i32, i32] = Map.build((b: MapBuilder[i32, i32]): void => {
     for x in xs { b.insert(x, x * x); }
   });
   return m.get_or(3, -1) + m.len();
@@ -51,7 +51,7 @@ function main(): i32 {
 import "core/int";
 import "core/map";
 function main(): i32 {
-  var m: Map[i32, i32] = Map.build(function(b: MapBuilder[i32, i32]): void {
+  var m: Map[i32, i32] = Map.build((b: MapBuilder[i32, i32]): void => {
     var i: i32 = 0;
     while (i < 100) {
       if (b.len() < 3) { b.insert(i, i); }
@@ -70,7 +70,7 @@ import "core/int";
 import "core/map";
 import "std/string";
 function main(): i32 {
-  var m: Map[string, i32] = Map.build(function(b: MapBuilder[string, i32]): void {
+  var m: Map[string, i32] = Map.build((b: MapBuilder[string, i32]): void => {
     b.insert("a", 1);
     b.insert("b", 2);
     b.insert("b", 9);
@@ -90,7 +90,7 @@ function main(): i32 {
   var acc: i32 = 0;
   var c: i32 = 0;
   while (c < 200) {
-    var m: Map[i32, i32] = Map.build(function(b: MapBuilder[i32, i32]): void {
+    var m: Map[i32, i32] = Map.build((b: MapBuilder[i32, i32]): void => {
       b.insert(0, c);
       b.insert(1, c + 1);
     });

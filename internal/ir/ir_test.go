@@ -2157,7 +2157,7 @@ func closureDropCallsDirect(p *Program, callee string) bool {
 func TestLowerStringClosureCaptureReclaim(t *testing.T) {
 	p := lowerSourceWith(t, `function build(): i32 {
     var s: string = "cap" + "tured";
-    var f = function (): i32 { return s.len(); };
+    var f = (): i32 => { return s.len(); };
     return f();
 }`, 4)
 	if !closureDropCallsDirect(p, "__fern_str_dec") {
@@ -2176,7 +2176,7 @@ func TestLowerStringClosureCaptureReclaim(t *testing.T) {
 func TestLowerStringClosureCaptureReclaimOnNative(t *testing.T) {
 	p := lowerSourceWith(t, `function build(): i32 {
     var s: string = "cap" + "tured";
-    var f = function (): i32 { return s.len(); };
+    var f = (): i32 => { return s.len(); };
     return f();
 }`, 8)
 	if !closureDropCallsDirect(p, "__fern_str_dec") {
@@ -2198,7 +2198,7 @@ func TestLowerStringClosureCaptureReclaimOnArm64TwoWord(t *testing.T) {
 	defer func() { ast.TwoWordOverride = prevOverride }()
 	p := lowerSourceWith(t, `function build(): i32 {
     var s: string = "cap" + "tured";
-    var f = function (): i32 { return s.len(); };
+    var f = (): i32 => { return s.len(); };
     return f();
 }`, 8)
 	if !closureDropCallsDirect(p, "__fern_str_dec") {
@@ -2793,7 +2793,7 @@ function build(): i32 {
 func TestLowerClosureCaptureTupleStringReclaim(t *testing.T) {
 	p := lowerSourceWith(t, `function build(): i32 {
     var p: (string, i32) = ("h" + "i", 7);
-    var f: () => i32 = function(): i32 { return p.1; };
+    var f: () => i32 = (): i32 => { return p.1; };
     return f();
 }`, 4)
 	td, ok := anyTupleDropFn(p)

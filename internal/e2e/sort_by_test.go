@@ -19,10 +19,10 @@ var sortByCases = []struct {
 }{
 	// descending i32 sort via a comparator closure → [9,5,2,1]; 9*10+1 = 91.
 	{"sort-by-desc", `function sort_by[T](arr: T[], cmp: (T, T) => i32): T[] { var out: T[] = arr; var n = out.len(); var i = 1; while (i < n) { var j = i; while (j > 0 && cmp(out[j], out[j - 1]) < 0) { var tmp: T = out[j]; out = out.with(j, out[j - 1]); out = out.with(j - 1, tmp); j = j - 1; } i = i + 1; } return out; }
-function main(): i32 { var xs: i32[] = [5, 1, 9, 2]; var s = sort_by(xs, function (a: i32, b: i32): i32 { if (a > b) { return 0 - 1; } if (a < b) { return 1; } return 0; }); return s[0] * 10 + s[3]; }`, 91},
+function main(): i32 { var xs: i32[] = [5, 1, 9, 2]; var s = sort_by(xs, (a: i32, b: i32): i32 => { if (a > b) { return 0 - 1; } if (a < b) { return 1; } return 0; }); return s[0] * 10 + s[3]; }`, 91},
 	// ascending i32 sort via a comparator closure → [1,2,3]; 1*100+2*10+3 = 123.
 	{"sort-by-asc", `function sort_by[T](arr: T[], cmp: (T, T) => i32): T[] { var out: T[] = arr; var n = out.len(); var i = 1; while (i < n) { var j = i; while (j > 0 && cmp(out[j], out[j - 1]) < 0) { var tmp: T = out[j]; out = out.with(j, out[j - 1]); out = out.with(j - 1, tmp); j = j - 1; } i = i + 1; } return out; }
-function main(): i32 { var xs: i32[] = [3, 1, 2]; var s = sort_by(xs, function (a: i32, b: i32): i32 { if (a < b) { return 0 - 1; } if (a > b) { return 1; } return 0; }); return s[0] * 100 + s[1] * 10 + s[2]; }`, 123},
+function main(): i32 { var xs: i32[] = [3, 1, 2]; var s = sort_by(xs, (a: i32, b: i32): i32 => { if (a < b) { return 0 - 1; } if (a > b) { return 1; } return 0; }); return s[0] * 100 + s[1] * 10 + s[2]; }`, 123},
 	// is_sorted_by under an ascending comparator. sorted→+5, unsorted→+2 → 7.
 	{"is-sorted-by", `function is_sorted_by[T](arr: T[], cmp: (T, T) => i32): boolean { var i = 1; var n = arr.len(); while (i < n) { if (cmp(arr[i], arr[i - 1]) < 0) { return false; } i = i + 1; } return true; }
 function asc(a: i32, b: i32): i32 { if (a < b) { return 0 - 1; } if (a > b) { return 1; } return 0; }
@@ -34,7 +34,7 @@ function main(): i32 { var a: i32[] = [1, 2, 3]; var b: i32[] = [3, 1]; var r = 
 	// 0 + 50 + 9 = 59. Larger than the min two-run case, so it drives the
 	// width=1→2→4→8 pass loop and the tail (odd, short) runs.
 	{"sort-by-merge", `function sort_by[T](arr: T[], cmp: (T, T) => i32): T[] { var n = arr.len(); if (n < 2) { return arr; } var src: T[] = arr; var width = 1; while (width < n) { var dst: T[] = src; var lo = 0; while (lo < n) { var mid = lo + width; if (mid > n) { mid = n; } var hi = lo + width + width; if (hi > n) { hi = n; } var i = lo; var j = mid; var k = lo; while (i < mid && j < hi) { if (cmp(src[j], src[i]) < 0) { dst = dst.with(k, src[j]); j = j + 1; } else { dst = dst.with(k, src[i]); i = i + 1; } k = k + 1; } while (i < mid) { dst = dst.with(k, src[i]); i = i + 1; k = k + 1; } while (j < hi) { dst = dst.with(k, src[j]); j = j + 1; k = k + 1; } lo = lo + width + width; } src = dst; width = width + width; } return src; }
-function main(): i32 { var xs: i32[] = [8, 3, 3, 9, 1, 7, 2, 5, 0, 6]; var s = sort_by(xs, function (a: i32, b: i32): i32 { if (a < b) { return 0 - 1; } if (a > b) { return 1; } return 0; }); return s[0] * 100 + s[5] * 10 + s[9]; }`, 59},
+function main(): i32 { var xs: i32[] = [8, 3, 3, 9, 1, 7, 2, 5, 0, 6]; var s = sort_by(xs, (a: i32, b: i32): i32 => { if (a < b) { return 0 - 1; } if (a > b) { return 1; } return 0; }); return s[0] * 100 + s[5] * 10 + s[9]; }`, 59},
 }
 
 // TestNativeSortBy runs the inline sort_by programs on interp / x86-64 / wasm.
@@ -142,7 +142,7 @@ const sortByI32KeyProg = `import "std/sort" as sort;
 struct P { k: i32, tag: i32 }
 function main(): i32 {
     var xs: P[] = [P { k: 3, tag: 0 }, P { k: 1, tag: 0 }, P { k: 2, tag: 0 }];
-    var s = sort.sort_by_i32_key(xs, function (p: P): i32 { return p.k; });
+    var s = sort.sort_by_i32_key(xs, (p: P): i32 => { return p.k; });
     return s[0].k * 100 + s[1].k * 10 + s[2].k;
 }
 `
@@ -213,7 +213,7 @@ function sort_by_i32_key[T](arr: T[], key: (T) => i32): T[] {
 }
 function main(): i32 {
     var xs: P[] = [P { k: 3, tag: 0 }, P { k: 1, tag: 0 }, P { k: 2, tag: 0 }];
-    var s = sort_by_i32_key(xs, function (p: P): i32 { return p.k; });
+    var s = sort_by_i32_key(xs, (p: P): i32 => { return p.k; });
     return s[0].k * 100 + s[1].k * 10 + s[2].k;
 }
 `

@@ -56,6 +56,30 @@ function alias_init(h: St): i32 {
     var r: St = t.emit(1);
     return r.ctrl + h.ops.len();
 }
+// A local that RENAMES a parameter at that parameter's only occurrence is the
+// same binding spelled twice, so the chain below it threads unbracketed.
+function rename_chain(p: St): i32 {
+    var q: St = p;
+    var a: St = q.emit(1);
+    var b: St = a.emit(2);
+    return b.ctrl;
+}
+// Chained renames close under the rule itself.
+function rename_twice(p: St): i32 {
+    var q: St = p;
+    var r: St = q;
+    var a: St = r.emit(1);
+    return a.ctrl;
+}
+// A rename whose source is not itself admitted — here a struct literal, whose
+// buffers this frame built and whose freshness nothing in the shape records —
+// stays out.
+function rename_literal(k: i32): i32 {
+    var s: St = St { ops: [], names: [], ctrl: 0, who: "x" };
+    var t: St = s;
+    var a: St = t.emit(k);
+    return a.ctrl;
+}
 // Inside a loop, one textual read is many dynamic ones: the next iteration
 // would observe the previous one's in-place growth.
 function in_loop(s: St, n: i32): St {
@@ -81,7 +105,8 @@ function lambda_capture(s: St): i32 {
     return r.ctrl + f();
 }
 function main(): i32 { return chain(mk(), 1).ctrl + param_last(mk()) + read_after(mk()) +
-    alias_init(mk()) + in_loop(mk(), 2).ctrl + twice_in_call(mk()) + lambda_capture(mk()); }`
+    alias_init(mk()) + rename_chain(mk()) + rename_twice(mk()) + rename_literal(1) +
+    in_loop(mk(), 2).ctrl + twice_in_call(mk()) + lambda_capture(mk()); }`
 
 	prog, err := parser.Parse(src)
 	if err != nil {
@@ -99,7 +124,14 @@ function main(): i32 { return chain(mk(), 1).ctrl + param_last(mk()) + read_afte
 		// `a.emit(2)` one before it does not. `s` is sole-occurrence as before.
 		"read_after": "a,s",
 		// `h` survives to the len() read; `t` is excluded by its alias init.
-		"alias_init":     "",
+		"alias_init": "",
+		// `p` renamed into `q` is `p`, and `q` and `a` are each at their last
+		// use — the whole chain dies at its call.
+		"rename_chain": "a,q",
+		"rename_twice": "r",
+		// The literal initialiser is not an admitted source, so neither is the
+		// rename of it: only `k`, sole-occurrence, dies here.
+		"rename_literal": "k",
 		"in_loop":        "",
 		"twice_in_call":  "s",
 		"lambda_capture": "s",

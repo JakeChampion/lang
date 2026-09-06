@@ -253,6 +253,9 @@ func LoadStdlibFlatSkipping(paths []string, skipPaths map[string]bool) (*ast.Pro
 		for _, fn := range mod.prog.Funcs {
 			fn.SourceModule = ""
 		}
+		for _, cd := range mod.prog.Consts {
+			cd.SourceModule = ""
+		}
 		combined.Funcs = append(combined.Funcs, mod.prog.Funcs...)
 		combined.Structs = append(combined.Structs, mod.prog.Structs...)
 		combined.Enums = append(combined.Enums, mod.prog.Enums...)
@@ -528,6 +531,7 @@ func loadRecursive(path string, loaded map[string]*module, stack map[string]bool
 		}
 	}
 	for _, cd := range prog.Consts {
+		cd.SourceModule = path
 		mod.allConsts[cd.Name] = true
 		if cd.Public {
 			mod.publicConsts[cd.Name] = true
@@ -1963,12 +1967,12 @@ func (r *rewriter) rewriteTraitDefaultBody(m *ast.TraitMethod) {
 }
 
 // collectLocals adds to dst every name b binds — a `var`, a
-// destructure, a `for` binder, and everything a match arm binds
-// (ast.EachArmBinder: payload, `@`, payload sub-pattern and tuple-element
-// binders) — at any depth, INCLUDING inside a block sitting in
-// expression position (`defer { … }`, a value `if`). It runs over
-// ast.Walk rather than its own switch so a new binding form is
-// reachable here the moment the shared walk reaches it.
+// destructure, a `for` binder, and everything a match arm's pattern
+// binds (statement or expression form) — at any depth, INCLUDING
+// inside a block sitting in expression position (`defer { … }`, a
+// value `if`). It runs over ast.Walk rather than its own switch so a
+// new binding form is reachable here the moment the shared walk
+// reaches it.
 //
 // A nested function or lambda is its own scope and is pruned:
 // rewriteNestedFuncBody seeds one from this set and adds its own
@@ -1993,11 +1997,15 @@ func collectLocals(b *ast.Block, dst map[string]bool) {
 				dst[x.Var] = true
 			case *ast.Match:
 				for _, arm := range x.Arms {
-					ast.EachArmBinder(arm, func(name *string) { dst[*name] = true })
+					for _, name := range arm.Binders() {
+						dst[name] = true
+					}
 				}
 			case *ast.MatchExpr:
 				for _, arm := range x.Arms {
-					ast.EachArmExprBinder(arm, func(name *string) { dst[*name] = true })
+					for _, name := range arm.Binders() {
+						dst[name] = true
+					}
 				}
 			}
 			return true

@@ -9717,10 +9717,17 @@ func (b *builder) expr(e ast.Expr) error {
 		// f32 = 0`, `r * 2`, `r <= 0` against an f32 r). Emit
 		// the f-const path with the integer Value cast to float.
 		if n.IsFloat {
+			// Past i64 max Value is the wrapped bit pattern, so read the
+			// written magnitude back as unsigned or the float gets the
+			// wrong sign.
+			f := float64(n.Value)
+			if n.ExceedsI64 {
+				f = float64(uint64(n.Value))
+			}
 			if n.FloatWidth == 32 {
-				b.emit(Op{Kind: OpConstF32, F32: float32(n.Value)})
+				b.emit(Op{Kind: OpConstF32, F32: float32(f)})
 			} else {
-				b.emit(Op{Kind: OpConstF64, F64: float64(n.Value)})
+				b.emit(Op{Kind: OpConstF64, F64: f})
 			}
 		} else if n.Width == 64 || (n.Width == ast.WidthPtr && b.ptrW == 8) {
 			// usize literals on natives (ptrW=8) emit as i64
@@ -11697,10 +11704,33 @@ func (b *builder) expr(e ast.Expr) error {
 	return nil
 }
 
-// fieldOwner returns the struct name of the value t produces. It
-// supports the small set of expression shapes the IR needs to lower
-// FieldAccess: identifiers (var / param), nested field access, and
-// struct literals.
+// closureLiteralType is the user-facing signature of a closure literal — a
+// Lambda closureconv has not yet rewritten, or the MakeClosure it becomes.
+// The hoisted FuncSigs entry carries a trailing __env param that
+// OpCallIndirect supplies from the closure pair itself, so it is stripped.
+// Nil when e is not a closure literal, or its hoisted signature is missing.
+func (b *builder) closureLiteralType(e ast.Expr) *ast.FuncType {
+	switch x := e.(type) {
+	case *ast.Lambda:
+		ft := &ast.FuncType{Result: x.ReturnType}
+		for _, p := range x.Params {
+			ft.Params = append(ft.Params, p.Type)
+		}
+		return ft
+	case *ast.MakeClosure:
+		sig, ok := b.info.FuncSigs[x.FuncName]
+		if !ok || sig == nil {
+			return nil
+		}
+		ft := &ast.FuncType{Result: sig.Result}
+		if len(sig.Params) > 0 {
+			ft.Params = append([]ast.Type(nil), sig.Params[:len(sig.Params)-1]...)
+		}
+		return ft
+	}
+	return nil
+}
+
 // matchExprArmBodyType is the type an arm body contributes to the result
 // slot a match EXPRESSION is lowered through.
 //
@@ -11711,86 +11741,19 @@ func (b *builder) expr(e ast.Expr) error {
 // nil, the slot fell back to i32, and a two-word string result then failed
 // wasm validation outright ("expected i32 but nothing on stack"). A second
 // arm whose body had a derivable type masked it, which is why only the
-// single-typed-arm shapes ever showed it. Ask the ARM what it binds first,
+// single-typed-arm shapes ever showed it. Ask the ARM what it binds first
+// (ast.BinderType, the sibling of the Binders walk the shadow passes use),
 // exprType second.
 func (b *builder) matchExprArmBodyType(arm *ast.MatchExprArm, scrutinee ast.Type) ast.Type {
 	if arm == nil || arm.Body == nil {
 		return nil
 	}
 	if id, ok := arm.Body.(*ast.Ident); ok {
-		if t := armExprBinderType(arm, id.Name, scrutinee); t != nil {
+		if t := arm.BinderType(id.Name, scrutinee); t != nil {
 			return t
 		}
 	}
 	return b.exprType(arm.Body)
-}
-
-// armExprBinderType returns the type `name` is bound to by this arm's
-// pattern, or nil when the arm does not bind it. The checker fills
-// BindingTypes parallel to Bindings (variant / struct arms) or to TupleElems
-// (tuple arms), and the per-element types parallel to the sub-patterns, so
-// every position answers from the type list beside it.
-func armExprBinderType(arm *ast.MatchExprArm, name string, scrutinee ast.Type) ast.Type {
-	if name == "" {
-		return nil
-	}
-	if arm.AtBinding == name {
-		return scrutinee
-	}
-	for i, bn := range arm.Bindings {
-		if bn == name && i < len(arm.BindingTypes) {
-			return arm.BindingTypes[i]
-		}
-	}
-	for i, p := range arm.Payloads {
-		if p == nil {
-			continue
-		}
-		if t := patElemBinderType(p, name, nthType(arm.BindingTypes, i)); t != nil {
-			return t
-		}
-	}
-	for i := range arm.TupleElems {
-		if t := patElemBinderType(&arm.TupleElems[i], name, nthType(arm.BindingTypes, i)); t != nil {
-			return t
-		}
-	}
-	return nil
-}
-
-// patElemBinderType is armExprBinderType for ONE pattern position — a tuple
-// element or a payload slot, which are the same node — and everything nested
-// inside it. elT is the type of the value at that position.
-func patElemBinderType(el *ast.TuplePatElem, name string, elT ast.Type) ast.Type {
-	if el.Name == name || el.AtBinding == name {
-		return elT
-	}
-	for i, bn := range el.VariantBindings {
-		if bn == name && i < len(el.VariantBindingTypes) {
-			return el.VariantBindingTypes[i]
-		}
-	}
-	for i, p := range el.VariantPayloads {
-		if p == nil {
-			continue
-		}
-		if t := patElemBinderType(p, name, nthType(el.VariantBindingTypes, i)); t != nil {
-			return t
-		}
-	}
-	for i := range el.Nested {
-		if t := patElemBinderType(&el.Nested[i], name, nthType(el.NestedTypes, i)); t != nil {
-			return t
-		}
-	}
-	return nil
-}
-
-func nthType(ts []ast.Type, i int) ast.Type {
-	if i < len(ts) {
-		return ts[i]
-	}
-	return nil
 }
 
 // exprType returns the static type of `e` for the limited set of
@@ -11853,17 +11816,15 @@ func (b *builder) exprType(e ast.Expr) ast.Type {
 		// closure body asks "what struct/tuple is this?" for
 		// field-access offset resolution.
 		return x.Type
+	case *ast.Lambda:
+		return b.closureLiteralType(x)
 	case *ast.MakeClosure:
-		// A closureconv-rewritten lambda produces a closure value — a
-		// heap pointer to the closure pair — so it is pointer-shaped.
-		// Without this case an enclosing TupleLit / StructLit sized the
-		// element slot at the payloadSlotSize(nil) 4-byte default while
-		// the read/drop side used the DECLARED (fn, …) layout's 8-byte
-		// slot: the store packed the neighbouring element 4 bytes below
-		// where the load expects it, and the tuple drop rc_dec'd the two
-		// misaligned halves as one garbage pointer → segfault. The
-		// params/result don't matter for slot sizing; an empty FuncType
-		// classifies as IsPointerType.
+		if ft := b.closureLiteralType(x); ft != nil {
+			return ft
+		}
+		// A closure value is a heap pointer to its pair, so even without
+		// the hoisted signature it must classify as pointer-shaped or an
+		// enclosing tuple/struct sizes its slot at the 4-byte default.
 		return &ast.FuncType{}
 	case *ast.FString:
 		// f-strings always produce a string. The arms of a
@@ -12281,6 +12242,10 @@ func (b *builder) targetTupleType(e ast.Expr) (ast.TupleType, bool) {
 	return ast.TupleType{}, false
 }
 
+// fieldOwner returns the struct name of the value e produces. It
+// supports the small set of expression shapes the IR needs to lower
+// FieldAccess: identifiers (var / param), nested field access, and
+// struct literals.
 func (b *builder) fieldOwner(e ast.Expr) string {
 	switch x := e.(type) {
 	case *ast.Ident:
@@ -14049,59 +14014,21 @@ func (b *builder) call(n *ast.Call) error {
 		}
 	}
 	// Immediate lambda call: `(function (x) { ... })(arg)`. The
-	// Lambda lowers to a closure pair pointer (via closureconv's
-	// MakeClosure rewrite); OpCallIndirect dispatches through it
-	// like any other function-typed value. Same shape as the
-	// chained-Call / CaptureRef / FieldAccess callee branches
-	// — Lambda just happens to be a literal closure value
-	// inlined right at the call site. closureconv has likely
-	// already rewritten Lambda → MakeClosure before the IR
-	// builder runs, so we handle both shapes.
-	if lam, ok := n.Callee.(*ast.Lambda); ok {
-		ft := &ast.FuncType{Result: lam.ReturnType}
-		for _, p := range lam.Params {
-			ft.Params = append(ft.Params, p.Type)
-		}
+	// A closure literal called right where it is written — a Lambda, or
+	// the MakeClosure closureconv rewrites it to — lowers to a closure
+	// pair pointer and dispatches through OpCallIndirect like any other
+	// function-typed value.
+	if ft := b.closureLiteralType(n.Callee); ft != nil {
 		slots, types, err := b.emitIndirectCallArgs(n.Args, ft.Result)
 		if err != nil {
 			return err
 		}
-		if err := b.expr(lam); err != nil {
+		if err := b.expr(n.Callee); err != nil {
 			return err
 		}
 		b.emit(Op{Kind: OpCallIndirect, I32: int32(len(n.Args)), Ext: &OpExt{Sig: ft}})
 		b.emitArgTempDrops(slots, types)
 		return nil
-	}
-	if mc, ok := n.Callee.(*ast.MakeClosure); ok {
-		// closureconv-emitted MakeClosure callee — same path as
-		// the Lambda case above, but the function signature comes
-		// from info.FuncSigs[mc.FuncName] (closureconv stamped
-		// this for the hoisted target).
-		var ft *ast.FuncType
-		if sig, ok := b.info.FuncSigs[mc.FuncName]; ok && sig != nil {
-			// The hoisted sig includes the trailing __env param;
-			// drop it for the call-site signature, since the
-			// OpCallIndirect emit uses the pair's env_ptr to
-			// supply env automatically.
-			userSig := &ast.FuncType{Result: sig.Result}
-			if len(sig.Params) > 0 {
-				userSig.Params = append([]ast.Type(nil), sig.Params[:len(sig.Params)-1]...)
-			}
-			ft = userSig
-		}
-		if ft != nil {
-			slots, types, err := b.emitIndirectCallArgs(n.Args, ft.Result)
-			if err != nil {
-				return err
-			}
-			if err := b.expr(mc); err != nil {
-				return err
-			}
-			b.emit(Op{Kind: OpCallIndirect, I32: int32(len(n.Args)), Ext: &OpExt{Sig: ft}})
-			b.emitArgTempDrops(slots, types)
-			return nil
-		}
 	}
 	if _, ok := n.Callee.(*ast.Ident); !ok {
 		return fmt.Errorf("ir: indirect call from non-identifier expression")
@@ -17811,6 +17738,11 @@ func (b *builder) freshOwnedFieldContainerType(target ast.Expr) (ast.Type, bool)
 	if !ok && b.isOwnedContainerRead(target) {
 		ct, ok = b.exprType(target), true
 	}
+	if !ok {
+		if c, isCall := target.(*ast.Call); isCall && isMapDeleteCall(c) && b.rc.mapCowBindSites[c] {
+			ct, ok = b.exprType(target), true
+		}
+	}
 	return ct, ok
 }
 
@@ -18212,8 +18144,12 @@ func (b *builder) assign(n *ast.Assign) error {
 		// same alias-bump as the Var-binding path —
 		// `y = x;` shares an existing array reference, so the
 		// new binding needs its own rc. Move-on-alias skips the inc
-		// at a move site (see the Var path).
-		if needsRcIncOnAlias(n.Value, b) && !b.rc.moveSites[n] {
+		// at a move site (see the Var path), and so does a read out of a
+		// fresh owned container: that lowering already retained what it
+		// loaded before deep-dropping the container, so this would be a
+		// second retain nothing balances (isOwnedContainerRead).
+		if needsRcIncOnAlias(n.Value, b) && !b.rc.moveSites[n] &&
+			!b.isOwnedContainerRead(n.Value) {
 			b.emitAliasInc(n.Value)
 		}
 		// dec the old value of `y` before
@@ -19672,10 +19608,11 @@ func (b *builder) exprLeavesValue(e ast.Expr) bool {
 			}
 		}
 		// A call through a function VALUE — a closure-typed parameter, local
-		// or field — has no FuncSigs entry, so the result type has to come
-		// from the callee's own type. Assuming a value was left put a `drop`
-		// after a void call_indirect, which underflows the wasm stack and
-		// fails module validation (#8504).
+		// or field, or a closure literal called where it is written — has no
+		// FuncSigs entry, so the result type has to come from the callee's
+		// own type. Assuming a value was left put a `drop` after a void
+		// call_indirect, which underflows the wasm stack and fails module
+		// validation (#8504, #8551).
 		if ft, ok := b.exprType(c.Callee).(*ast.FuncType); ok && ft.Result != nil {
 			return !isVoid(ft.Result)
 		}

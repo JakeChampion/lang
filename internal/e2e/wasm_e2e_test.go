@@ -3674,7 +3674,7 @@ func TestWASMMutualRecursionThreeWay(t *testing.T) {
 // already use.
 func TestWASMImmediateLambdaCall(t *testing.T) {
 	src := `function main(): i32 {
-    var n: i32 = (function (x: i32): i32 { return x * 2; })(21);
+    var n: i32 = ((x: i32): i32 => { return x * 2; })(21);
     return n;
 }`
 	if got := runWasm(t, src); got != 42 {
@@ -3694,7 +3694,7 @@ func TestWASMImmediateLambdaCall(t *testing.T) {
 // instantiation gets a fresh body with the concrete type.
 func TestWASMLambdaInGenericFn(t *testing.T) {
 	src := `function makeId[T](): (T) => T {
-    return function (x: T): T { return x; };
+    return (x: T): T => { return x; };
 }
 function main(): i32 {
     var f = makeId[i32]();
@@ -3831,7 +3831,7 @@ function main(): i32 {
 // immediately returned / passed — the lambda just elides the name.
 func TestWASMLambdaBasic(t *testing.T) {
 	src := `function main(): i32 {
-    var f = function (x: i32): i32 { return x + 1; };
+    var f = (x: i32): i32 => { return x + 1; };
     return f(41);
 }`
 	if got := runWasm(t, src); got != 42 {
@@ -3842,7 +3842,7 @@ func TestWASMLambdaBasic(t *testing.T) {
 func TestWASMLambdaCaptures(t *testing.T) {
 	src := `function main(): i32 {
     var n: i32 = 10;
-    var f = function (x: i32): i32 { return x + n; };
+    var f = (x: i32): i32 => { return x + n; };
     return f(32);
 }`
 	if got := runWasm(t, src); got != 42 {
@@ -3852,7 +3852,7 @@ func TestWASMLambdaCaptures(t *testing.T) {
 
 func TestWASMLambdaReturned(t *testing.T) {
 	src := `function makeAdder(n: i32): (i32) => i32 {
-    return function (x: i32): i32 { return x + n; };
+    return (x: i32): i32 => { return x + n; };
 }
 function main(): i32 {
     var add10 = makeAdder(10);
@@ -3866,7 +3866,7 @@ function main(): i32 {
 func TestWASMLambdaAsArg(t *testing.T) {
 	src := `function apply(f: (i32) => i32, x: i32): i32 { return f(x); }
 function main(): i32 {
-    return apply(function (n: i32): i32 { return n * 2; }, 21);
+    return apply((n: i32): i32 => { return n * 2; }, 21);
 }`
 	if got := runWasm(t, src); got != 42 {
 		t.Errorf("got %d, want 42", got)
@@ -5051,7 +5051,7 @@ function main(): i32 { return outer("hello"); }`
 func TestWASMLambdaWithBodyLocals(t *testing.T) {
 	src := `function main(): i32 {
     var greet = "hi";
-    var f = function (n: i32): i32 {
+    var f = (n: i32): i32 => {
         var sq = n * n;
         var tag = greet + "!";
         print(tag);
@@ -5080,7 +5080,7 @@ func TestWASMLambdaCallsMethodOnCapturedString(t *testing.T) {
 import "std/string";
 function main(): i32 {
     var s: string = "  hi  ";
-    var f = function (): string { return s.trim().to_owned(); };
+    var f = (): string => { return s.trim().to_owned(); };
     var got = f();
     if (got == "hi") { return 0; }
     return 1;
@@ -17769,7 +17769,7 @@ func TestWASMVoidCallThroughFunctionValue(t *testing.T) {
 function apply(f: (i32) => void, x: i32): void { f(x); }
 function main(): i32 {
     var seen: i32 = 0;
-    apply(function (n: i32): void { seen = n; }, 7);
+    apply((n: i32): void => { seen = n; }, 7);
     if (seen != 7) { return 1; }
     return 0;
 }
@@ -17777,7 +17777,7 @@ function main(): i32 {
 		{"local-lambda", `
 function main(): i32 {
     var seen: i32 = 0;
-    var lam: (i32) => void = function (n: i32): void { seen = n; };
+    var lam: (i32) => void = (n: i32): void => { seen = n; };
     lam(7);
     if (seen != 7) { return 1; }
     return 0;
@@ -17787,7 +17787,7 @@ function main(): i32 {
 function main(): i32 {
     var base: i32 = 10;
     var seen: i32 = 0;
-    var cap: (i32) => void = function (n: i32): void { seen = n + base; };
+    var cap: (i32) => void = (n: i32): void => { seen = n + base; };
     cap(7);
     if (seen != 17) { return 1; }
     return 0;
@@ -17796,7 +17796,7 @@ function main(): i32 {
 		{"array-element", `
 function main(): i32 {
     var seen: i32 = 0;
-    var arr: ((i32) => void)[] = [function (n: i32): void { seen = n; }];
+    var arr: ((i32) => void)[] = [(n: i32): void => { seen = n; }];
     arr[0](7);
     if (seen != 7) { return 1; }
     return 0;
@@ -17805,12 +17805,26 @@ function main(): i32 {
 		{"higher-order-result", `
 function main(): i32 {
     var seen: i32 = 0;
-    var pick: () => (i32) => void = function (): (i32) => void {
-        return function (n: i32): void { seen = n; };
+    var pick: () => (i32) => void = (): (i32) => void => {
+        return (n: i32): void => { seen = n; };
     };
     pick()(7);
     if (seen != 7) { return 1; }
     return 0;
+}
+`},
+		{"inline-arrow-lambda", `
+function main(): i32 {
+    var sink: i32 = 0;
+    ((x: i32) => { sink = sink + x; })(4);
+    return sink - 4;
+}
+`},
+		{"inline-arrow-lambda-discarded-value", `
+function main(): i32 {
+    var sink: i32 = 0;
+    ((x: i32) => { sink = sink + x; return sink; })(4);
+    return sink - 4;
 }
 `},
 		{"pvec-for-each", `
@@ -17820,7 +17834,7 @@ function main(): i32 {
     v = v.append(1);
     v = v.append(2);
     var total: i32 = 0;
-    v.for_each(function (x: i32): void { total = total + x; });
+    v.for_each((x: i32): void => { total = total + x; });
     if (total != 3) { return 1; }
     return 0;
 }

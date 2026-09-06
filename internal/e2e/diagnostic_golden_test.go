@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/jakechampion/lang/internal/checker"
+	"github.com/jakechampion/lang/internal/constfold"
 	"github.com/jakechampion/lang/internal/diag"
 	"github.com/jakechampion/lang/internal/modload"
 )
@@ -76,6 +77,11 @@ var diagnosticGoldenCases = []struct {
 	{"E041_eq_mismatch", "function main(): i32 { if (\"a\" == 1) { return 1; } return 0; }\n"},
 	{"E046_tuple_index_oor", "function main(): i32 { var t = (1, 2); return t.5; }\n"},
 	{"E047_int_overflow", "function main(): i32 { return 9999999999; }\n"},
+	// The same code from a const initialiser, which constfold reports rather
+	// than the checker, and for a literal past u64, which the parser used to
+	// refuse in strconv's words (#8563).
+	{"E047_const_overflow", "const LIMIT: i32 = 2147483648;\nfunction main(): i32 { return LIMIT; }\n"},
+	{"E047_past_u64", "function main(): i32 { var a: u64 = 18446744073709551616; return 0; }\n"},
 	{"E055_discarded_result", "function main(): i32 { var a: i32[] = [1]; a.append(2); return 0; }\n"},
 	{"E058_labeled_break", "function main(): i32 { var c = 0; while (c < 3) { c = c + 1; if (c == 2) { break nope; } } return c; }\n"},
 	{"E061_value_block_no_tail", "function main(): i32 { var x = if (1 < 2) { print(\"hi\"); } else { 2 }; return 0; }\n"},
@@ -128,6 +134,9 @@ func renderDiagnostic(t *testing.T, name, src string) string {
 	prog, _, loadErr := modload.Load(path)
 	if loadErr != nil {
 		return diag.Format(display, src, loadErr)
+	}
+	if foldErr := constfold.Fold(prog, nil); foldErr != nil {
+		return diag.Format(display, src, foldErr)
 	}
 	if _, chkErr := checker.Check(prog); chkErr != nil {
 		return diag.Format(display, src, chkErr)

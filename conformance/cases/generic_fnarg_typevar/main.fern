@@ -28,7 +28,7 @@ import "core/cmp" as cmp;
 // The bail shape: filter's result, unannotated, feeding a generic consumer.
 function filter_chain(i: i32): i32 {
     var xs: i32[] = [5, 2, 8, 1, 4];
-    var evens = iter.filter(iter.of(xs), function(x: i32): boolean { return x % 2 == 0; });
+    var evens = iter.filter(iter.of(xs), (x: i32): boolean => { return x % 2 == 0; });
     var asc = cmp.sort(evens);
     if (asc.len() != 3) { return 253; }
     return asc[0];
@@ -37,7 +37,7 @@ function filter_chain(i: i32): i32 {
 // The sibling that always worked — U comes from the lambda's declared return.
 function map_chain(i: i32): i32 {
     var xs: i32[] = [3, 1, 2];
-    var dbl = iter.map(iter.of(xs), function(x: i32): i32 { return x * 2; });
+    var dbl = iter.map(iter.of(xs), (x: i32): i32 => { return x * 2; });
     var asc = cmp.sort(dbl);
     if (asc.len() != 3) { return 253; }
     return asc[0];
@@ -46,7 +46,7 @@ function map_chain(i: i32): i32 {
 // The annotated workaround, which lowered before this change.
 function annotated(i: i32): i32 {
     var xs: i32[] = [5, 2, 8];
-    var evens: i32[] = iter.filter(iter.of(xs), function(x: i32): boolean { return x % 2 == 0; });
+    var evens: i32[] = iter.filter(iter.of(xs), (x: i32): boolean => { return x % 2 == 0; });
     var asc = cmp.sort(evens);
     return asc[0];
 }
@@ -54,7 +54,7 @@ function annotated(i: i32): i32 {
 // A non-i32 element, so the recovery is not i32-shaped.
 function strings(i: i32): i32 {
     var ss: string[] = ["pear", "fig", "plum"];
-    var keep = iter.filter(iter.of(ss), function(s: string): boolean { return s.len() > 3; });
+    var keep = iter.filter(iter.of(ss), (s: string): boolean => { return s.len() > 3; });
     var asc = cmp.sort(keep);
     if (asc.len() != 2) { return 252; }
     return asc[0].len();

@@ -44,14 +44,14 @@ var iterMapFilterCases = []struct {
 	want int
 }{
 	// map x -> x*x over [0,4): [0,1,4,9]; sum 14 + len 4 = 18.
-	{"map-square", `function main(): i32 { var sq = map(range(0, 4), function (x: i32): i32 { return x * x; }); var s = 0; for v in sq { s = s + v; } return s + sq.len(); }`, 18},
+	{"map-square", `function main(): i32 { var sq = map(range(0, 4), (x: i32): i32 => { return x * x; }); var s = 0; for v in sq { s = s + v; } return s + sq.len(); }`, 18},
 	// filter even over [0,8): [0,2,4,6]; sum 12 + len 4 = 16.
-	{"filter-even", `function main(): i32 { var ev = filter(range(0, 8), function (x: i32): boolean { return x % 2 == 0; }); var t = 0; for v in ev { t = t + v; } return t + ev.len(); }`, 16},
+	{"filter-even", `function main(): i32 { var ev = filter(range(0, 8), (x: i32): boolean => { return x % 2 == 0; }); var t = 0; for v in ev { t = t + v; } return t + ev.len(); }`, 16},
 	// map to a DIFFERENT element type (U ≠ T): i32 → boolean (is-even) over [0,5)
 	// = [T,F,T,F,T]; count the trues → 3.
-	{"map-to-bool", `function main(): i32 { var bs = map(range(0, 5), function (x: i32): boolean { return x % 2 == 0; }); var c = 0; for b in bs { if (b) { c = c + 1; } } return c; }`, 3},
+	{"map-to-bool", `function main(): i32 { var bs = map(range(0, 5), (x: i32): boolean => { return x % 2 == 0; }); var c = 0; for b in bs { if (b) { c = c + 1; } } return c; }`, 3},
 	// map over an empty range yields an empty array → len 0; +7 = 7.
-	{"map-empty", `function main(): i32 { var e = map(range(3, 3), function (x: i32): i32 { return x + 1; }); return e.len() + 7; }`, 7},
+	{"map-empty", `function main(): i32 { var e = map(range(3, 3), (x: i32): i32 => { return x + 1; }); return e.len() + 7; }`, 7},
 }
 
 func iterMapFilterProg(mainBody string) string { return iterMapFilterPrelude + mainBody + "\n" }
@@ -92,9 +92,9 @@ func TestNativeIterMapFilterArm64(t *testing.T) {
 func TestNativeIterMapFilterModule(t *testing.T) {
 	src := `import "core/iter" as iter;
 function main(): i32 {
-    var sq = iter.map(iter.range(0, 4), function (x: i32): i32 { return x * x; });   // [0,1,4,9]
+    var sq = iter.map(iter.range(0, 4), (x: i32): i32 => { return x * x; });   // [0,1,4,9]
     var s = 0; for v in sq { s = s + v; }                                            // 14
-    var ev = iter.filter(iter.range(0, 8), function (x: i32): boolean { return x % 2 == 0; });  // [0,2,4,6]
+    var ev = iter.filter(iter.range(0, 8), (x: i32): boolean => { return x % 2 == 0; });  // [0,2,4,6]
     var t = 0; for v in ev { t = t + v; }                                            // 12
     return s + t + sq.len() + ev.len();                                              // 14+12+4+4 = 34
 }

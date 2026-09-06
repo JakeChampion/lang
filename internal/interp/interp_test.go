@@ -288,7 +288,7 @@ func TestInterpClosure(t *testing.T) {
 func TestInterpLambda(t *testing.T) {
 	src := `function main(): i32 {
 		var k: i32 = 7;
-		var mul: (i32) => i32 = function (x: i32): i32 { return x * k; };
+		var mul: (i32) => i32 = (x: i32): i32 => { return x * k; };
 		return mul(6);
 	}`
 	got, _ := evalProgram(t, src)
@@ -672,7 +672,7 @@ func TestInterpParamDestructure(t *testing.T) {
 		return k * (hi - lo);
 	}
 	function main(): i32 {
-		var f = function((x, y): (i32, i32)): i32 { return x * y; };
+		var f = ((x, y): (i32, i32)): i32 => { return x * y; };
 		var g = ((lo, hi): (i32, i32)) => hi - lo;
 		return add((30, 5)) + scale(2, (3, 5)) + f((1, 2)) + g((5, 6));
 	}`

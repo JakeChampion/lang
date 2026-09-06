@@ -1027,7 +1027,8 @@ function main(): i32 { return 0; }`,
 // callable from files whose import closure reaches A.
 func TestLoadStampsFuncDeclSourceModule(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
-		"util.fern": `pub function f(): i32 { return 1; }`,
+		"util.fern": `pub const K: i32 = 1;
+pub function f(): i32 { return K; }`,
 		"main.fern": `import "./util";
 function main(): i32 { return util.f(); }`,
 	})
@@ -1046,6 +1047,11 @@ function main(): i32 { return util.f(); }`,
 	}
 	if got["util__f"] != utilAbs {
 		t.Errorf("util__f.SourceModule = %q, want %q", got["util__f"], utilAbs)
+	}
+	// A const carries the same stamp, so a diagnostic on its initialiser
+	// names its file.
+	if len(prog.Consts) != 1 || prog.Consts[0].SourceModule != utilAbs {
+		t.Errorf("consts = %+v, want one const stamped %q", prog.Consts, utilAbs)
 	}
 }
 

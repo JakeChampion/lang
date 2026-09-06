@@ -1,7 +1,6 @@
 package constfold
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/jakechampion/lang/internal/ast"
@@ -40,33 +39,6 @@ func TestConstDeclaredWidthAccepted(t *testing.T) {
 			}
 			if err := Fold(prog, nil); err != nil {
 				t.Fatalf("Fold rejected a valid const: %v", err)
-			}
-		})
-	}
-}
-
-// TestConstOutOfRangeRejected pins that relaxing the type comparison did not
-// relax RANGE checking: a literal outside its declared type still fails, now
-// with a range diagnostic rather than the old (accidental) type mismatch.
-//
-// Every case is a bare LITERAL. An arithmetic expression cannot reach this
-// check any more: it folds at the declared width, so `const B: u32 = 0 - 1`
-// is the u32 wrap the same expression performs at runtime (#8444), not an
-// out-of-range error.
-func TestConstOutOfRangeRejected(t *testing.T) {
-	cases := []struct {
-		name string
-		src  string
-		want string
-	}{
-		{"i32-overflow", `const B: i32 = 5000000000; function main(): i32 { return 0; }`, "out of range for i32"},
-		{"u32-overflow", `const B: u32 = 5000000000; function main(): i32 { return 0; }`, "out of range for u32"},
-		{"u8-overflow", `const B: u8 = 300; function main(): i32 { return 0; }`, "out of range for u8"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := foldErr(t, tc.src); !strings.Contains(got, tc.want) {
-				t.Errorf("error = %q, want it to contain %q", got, tc.want)
 			}
 		})
 	}

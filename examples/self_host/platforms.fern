@@ -65,7 +65,7 @@ pub struct Descriptor {
 // native's own note claims for it.
 function capability_profile(profile: string): string[] {
     if (profile == "hosted-native") {
-        return ["log", "now", "env", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "subprocess"];
+        return ["log", "now", "env", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "subprocess"];
     }
     if (profile == "wasi-cli") {
         // fs is preview1's fd helpers and tcp is wasi:sockets; there is no
@@ -73,9 +73,9 @@ function capability_profile(profile: string): string[] {
         // `arena`. The three the wasm worlds lack for reasons of their own:
         // `pollfd` (readiness is a wasi:io/poll pollable, not a number in a
         // per-process fd table), `fsmode` (neither preview1's path_open nor
-        // the component-model filesystem has permission bits) and `cabi`
+        // the component-model filesystem has permission bits), `cabi`
         // (an unknown callee is reached through a typed table, not System V
-        // or AAPCS64).
+        // or AAPCS64) and `userid` (no notion of a user at all).
         return ["log", "now", "env", "args", "random", "stdin", "stdout", "fs", "tcp"];
     }
     if (profile == "wasi-proxy") {
@@ -270,8 +270,17 @@ pub function gated_builtins(): Gate[] {
 
         // Permission bits on a filesystem entry, which is a separate
         // capability from having a filesystem: a host can offer files and no
-        // mode word to set on them.
+        // mode word to set on them. `access` is the READ of the same
+        // property, so it sits here rather than on `fs`.
         Gate { builtin: "write_file_exec", capability: "fsmode" },
+        Gate { builtin: "access", capability: "fsmode" },
+
+        // The process's own effective identity. Neither WASI preview has a
+        // notion of a user, and there is no honest constant to answer with:
+        // 0 claims to be root while FileStat's uid/gid are also zero there,
+        // so every file would look like the caller's.
+        Gate { builtin: "geteuid", capability: "userid" },
+        Gate { builtin: "getegid", capability: "userid" },
 
         // The C-ABI FFI shims. Enumerated rather than matched with
         // ircore.is_c_call so this table stays the one place the
