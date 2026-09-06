@@ -85,6 +85,21 @@ stays at exactly 28,800 — so the hoisted version's leak is constant per CALL
 accounts for the whole of the iteration-scaling leak; what is left is a fixed
 per-call cost of a different origin, unchased.
 
+### The link to the compiler's own retention is NOT established
+
+The probe's shape does not literally occur in the compiler. Walking each
+function in `irlower.fern` with real brace tracking finds **zero** loop-scoped
+`var X: LowerState = <ident>;` bindings. The 77 a first, sloppier pass reported
+were function-scope state threading — `function f(s: LowerState) { var st = s; … }`
+— mis-attributed because an earlier function's `while` left the loop stack
+non-empty. Verifying two by eye is what caught it.
+
+That does not rule the mechanism out of the compiler: aliasing can arise without
+a named bare-ident binding — a call argument the callee retains, a field read, a
+struct literal capturing the state. It does mean the shape has to be found in
+the compiler by measurement before this defect is credited with any part of the
+retention attributed to `LowerState.emit`, and it is not credited here.
+
 What this does NOT settle is **where a fix belongs**: a loop-scoped struct
 binding could deep-drop at scope exit, or the shared arm could stop handing off
 deep work it cannot prove anyone will do. Both fit the evidence; neither is
