@@ -215,6 +215,31 @@ PY
       printf 'sleep 0\tn\t{} 0\n'
       printf 'sleep 0 four operands\tn\t{} 0 0s 0m 0h\n'
       ;;
+    head)
+      # head's shapes are: stop early on a big file (the count is small,
+      # so the cost is startup plus one read), copy a lot of it, and the
+      # two elisions, which have to buffer the tail rather than seek.
+      big="$out/text-64m.txt"
+      [ -f "$big" ] || "$gnu/seq" 1 8000000 > "$big"
+      printf 'head -n 10 of a 62 MiB file\tn\t{} -n 10 %s\n' "$big"
+      printf 'head -n 4000000 of a 62 MiB file\ty\t{} -n 4000000 %s > /dev/null\n' "$big"
+      printf 'head -c 32M of a 62 MiB file\ty\t{} -c 33554432 %s > /dev/null\n' "$big"
+      printf 'head -n 10 from a pipe\ty\t{gnu}/cat %s | {} -n 10 > /dev/null\n' "$big"
+      printf 'head -n -10 of a 62 MiB file\ty\t{} -n -10 %s > /dev/null\n' "$big"
+      printf 'head -c -10 of a 62 MiB file\ty\t{} -c -10 %s > /dev/null\n' "$big"
+      ;;
+    wc)
+      # wc -l is the SIMD count, wc -c is fstat and no read at all, and
+      # -w / -L are the byte-at-a-time scan the C locale asks for.
+      big="$out/text-64m.txt"
+      [ -f "$big" ] || "$gnu/seq" 1 8000000 > "$big"
+      printf 'wc -l of a 62 MiB file\tn\t{} -l %s\n' "$big"
+      printf 'wc -c of a 62 MiB file\tn\t{} -c %s\n' "$big"
+      printf 'wc of a 62 MiB file\tn\t{} %s\n' "$big"
+      printf 'wc -w of a 62 MiB file\tn\t{} -w %s\n' "$big"
+      printf 'wc -L of a 62 MiB file\tn\t{} -L %s\n' "$big"
+      printf 'wc -l from a pipe\ty\t{gnu}/cat %s | {} -l\n' "$big"
+      ;;
     *)
       echo "coreutils-bench: no workloads defined for $1 — add a case to workloads()" >&2
       exit 1

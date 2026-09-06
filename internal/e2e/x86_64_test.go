@@ -2253,6 +2253,32 @@ func TestX86_64ReaderWriter(t *testing.T) {
     }
     return 0 - 1;
 }`, "first-second", 0},
+		// A path of seven bytes or fewer is SSO-encoded — the bytes are
+		// IN the value rather than behind it — so the open helpers have
+		// to materialise and NUL-terminate them before openat sees a
+		// pointer. A literal escapes it by being heap-form already,
+		// which is why the path here is built at runtime (#8711).
+		{"open_reader_sso_path", `import "std/string";
+function main(): i32 {
+    match (open_writer("sso.txt")) {
+        Ok(w) => {
+            match (w.write("hi")) { Some(_) => { return 1; }, None => {} }
+            match (w.close()) { Some(_) => { return 2; }, None => {} }
+        },
+        Err(_) => { return 3; }
+    }
+    var p: string = slice_unchecked("x=sso.txt", 2, 9) + "";
+    match (open_reader(p)) {
+        Ok(r) => {
+            match (r.read_chunk(8)) {
+                Ok(s) => { write(s); r.close(); return 0; },
+                Err(e) => { return 4; }
+            }
+        },
+        Err(e) => { return 5; }
+    }
+    return 0 - 1;
+}`, "hi", 0},
 		{"reader_read_chunk", `function main(): i32 {
     match (open_writer("rc.txt")) {
         Ok(w) => {
@@ -2263,9 +2289,9 @@ func TestX86_64ReaderWriter(t *testing.T) {
     }
     match (open_reader("rc.txt")) {
         Ok(r) => {
-            match (r.read_chunk(5)) { Some(s) => { write(s); write(":"); }, None => { return 4; } }
-            match (r.read_chunk(20)) { Some(s) => { write(s); }, None => { return 5; } }
-            match (r.read_chunk(20)) { Some(_) => { return 6; }, None => { return 0; } }
+            match (r.read_chunk(5)) { Ok(s) => { write(s); write(":"); }, Err(_) => { return 4; } }
+            match (r.read_chunk(20)) { Ok(s) => { write(s); }, Err(_) => { return 5; } }
+            match (r.read_chunk(20)) { Ok(s) => { if (s.len() > 0) { return 6; } return 0; }, Err(_) => { return 8; } }
         },
         Err(_) => { return 7; }
     }

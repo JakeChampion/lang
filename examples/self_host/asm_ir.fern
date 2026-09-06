@@ -7913,12 +7913,6 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
         s = s.write("    .text\n");
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_read_line("x86_64"), all_structs, s);
     }
-    if (s.has_need("reader")) {
-        s = s.write("    .text\n");
-        // read_chunk only: reader_close calls __fern_io_error, so it is
-        // emitted with the fs bundle below rather than here.
-        s = emit_ir_runtime_fern_fn(asmcore.rt_src_reader_read_chunk("x86_64"), all_structs, s);
-    }
     if (s.has_need("str_print")) {
         s = s.write("    .text\n");
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_print_str("x86_64"), all_structs, s);
@@ -7979,7 +7973,7 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
         if (s.has_need("remove_dir_all")) { fs_src = fs_src + " " + asmcore.rt_src_remove_dir_all("x86_64"); }
         if (s.has_need("open_file")) { fs_src = fs_src + " " + asmcore.rt_src_open_res("x86_64"); }
         if (s.has_need("writer_write")) { fs_src = fs_src + " " + asmcore.rt_src_writer_write("x86_64"); }
-        if (s.has_need("reader")) { fs_src = fs_src + " " + asmcore.rt_src_reader_close("x86_64"); }
+        if (s.has_need("reader")) { fs_src = fs_src + " " + asmcore.rt_src_reader_read_chunk("x86_64") + " " + asmcore.rt_src_reader_close("x86_64"); }
         s = emit_ir_runtime_fern_fn(fs_src, all_structs, s);
     }
     // env — now a Fern runtime function (#2649): walks the envp array (via

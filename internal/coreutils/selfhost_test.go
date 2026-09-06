@@ -41,12 +41,14 @@ func corpusByUtil() map[string]func(*testing.T) []invocation {
 		"expr":     exprCases,
 		"factor":   factorCases,
 		"false":    trueFalseCases,
+		"head":     headCases,
 		"numfmt":   numfmtCases,
 		"printf":   printfCases,
 		"seq":      seqCases,
 		"sleep":    sleepCases,
 		"true":     trueFalseCases,
 		"tsort":    tsortCases,
+		"wc":       wcCases,
 		"yes":      yesCases,
 	}
 }

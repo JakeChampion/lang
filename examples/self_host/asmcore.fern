@@ -1269,14 +1269,17 @@ pub function rt_src_read_all_stdin(t: string): string {
 // tag at 0 exactly where they were, and puts a real rc=1 at box-8. Nothing reads
 // that header today; anything that later does now reads a valid one.
 
-// rt_src_reader_read_chunk backs `r.read_chunk(n)` → up to n bytes from fd, or
-// None. EOF and -errno both come back as None, as the hand-asm's single `<= 0`
-// test did: the op has no error channel to tell them apart.
+// rt_src_reader_read_chunk backs `r.read_chunk(n)` → up to n bytes from fd,
+// Ok("") at end of input, or the errno that stopped the read. A directory reads
+// EISDIR, and a utility streaming a file operand has to tell that from EOF, so
+// the op carries the error channel the hand-asm's single `<= 0` test never had
+// (#8700). Like rt_src_reader_close it classifies against an empty path — a read
+// carries none — which is why it belongs inside the fs bundle.
 //
 // The buffer is allocated at n and boxed at the SHORT length, so the block is
 // wider than the string thinks it is — what the hand-asm did.
 pub function rt_src_reader_read_chunk(t: string): string {
-    return "function __fern_reader_read_chunk(fd: i32, n: i32): Option[string] { var p: i32 = __raw_alloc(n); var r: i32 = __syscall3(" + sysno(t, "read") + ", fd, p, n); if (r <= 0) { return None; } return Some(__raw_string(p, r)); }";
+    return "function __fern_reader_read_chunk(fd: i32, n: i32): Result[string, IoError] { var p: i32 = __raw_alloc(n); var r: i32 = __syscall3(" + sysno(t, "read") + ", fd, p, n); if (r < 0) { return Err(__fern_io_error(0 - r, \"\")); } return Ok(__raw_string(p, r)); }";
 }
 
 // rt_src_reader_close backs `r.close()` and `w.close()` → close(fd), Some on a

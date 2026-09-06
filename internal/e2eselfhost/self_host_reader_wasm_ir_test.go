@@ -9,7 +9,7 @@ import (
 )
 
 // TestSelfHostReaderWasmIR closes the streaming-reader wasm IR gap: the Reader
-// intrinsics `r.read_chunk(n)` (-> Option[string]) and `r.close()` (-> the
+// intrinsics `r.read_chunk(n)` (-> Result[string, IoError]) and `r.close()` (-> the
 // always-None Option[IoError]) now lower on the wasm IR path. A Reader is just
 // its fd (stdin() = fd 0), so read_chunk reads stdin via preview1 fd_read into a
 // fresh string block and boxes Some(chunk) / None-at-EOF, and close calls
@@ -45,27 +45,28 @@ func TestSelfHostReaderWasmIR(t *testing.T) {
 		// close returns None (no error).
 		{"two_chunks_then_close", `function main(): i32 {
     var r: Reader = stdin();
-    match (r.read_chunk(5)) { Some(s) => { write(s); write(":"); }, None => { return 4; } }
-    match (r.read_chunk(20)) { Some(s) => { write(s); }, None => { return 5; } }
+    match (r.read_chunk(5)) { Ok(s) => { write(s); write(":"); }, Err(e) => { return 4; } }
+    match (r.read_chunk(20)) { Ok(s) => { write(s); }, Err(e) => { return 5; } }
     match (r.close()) { Some(_) => { return 6; }, None => {} }
     return 0;
 }`, "hello world", "hello: world", 0},
-		// Drain to EOF: loop read_chunk until None, summing bytes. Exit code =
-		// total bytes (7), proving None fires exactly at end-of-stream.
+		// Drain to EOF: loop read_chunk until it comes back empty, summing
+		// bytes. Exit code = total bytes (7), proving the empty chunk arrives
+		// exactly at end-of-stream.
 		{"drain_to_eof", `function main(): i32 {
     var r: Reader = stdin();
     var total: i32 = 0;
     var go: boolean = true;
     while (go) {
-        match (r.read_chunk(3)) { Some(s) => { total = total + s.len(); }, None => { go = false; } }
+        match (r.read_chunk(3)) { Ok(s) => { if (s.len() == 0) { go = false; } total = total + s.len(); }, Err(e) => { go = false; } }
     }
     return total;
 }`, "abcdefg", "", 7},
-		// Empty stdin: the very first read_chunk is None (nread == 0), so the
-		// program takes the None arm immediately.
-		{"empty_stdin_none", `function main(): i32 {
+		// Empty stdin: the very first read_chunk is Ok("") (nread == 0), so the
+		// program sees a zero-length chunk immediately.
+		{"empty_stdin_eof", `function main(): i32 {
     var r: Reader = stdin();
-    match (r.read_chunk(16)) { Some(_) => { return 1; }, None => { return 42; } }
+    match (r.read_chunk(16)) { Ok(s) => { if (s.len() > 0) { return 1; } return 42; }, Err(e) => { return 2; } }
     return 0;
 }`, "", "", 42},
 	}

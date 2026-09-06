@@ -13548,8 +13548,9 @@ function lower_call_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerSta
     // Reader.read_chunk(n) / Reader.close() — built-in resource
     // intrinsics. A Reader is just its fd (an i32; see stdin()), so
     // the receiver lowers as a plain i32 and the result is a fresh
-    // Option box: read_chunk → Option[string] (Some(chunk) / None at
-    // EOF), close and write → Option[IoError]. Mirrors the retired x86 AST
+    // box: read_chunk → Result[string, IoError] (the bytes, Ok("") at
+    // end of input, Err(e) on a failing read), close and write →
+    // Option[IoError]. Mirrors the retired x86 AST
     // emitter's emit_method_call, but gated to a non-struct / non-enum /
     // non-string / non-array receiver so a user `.close()` on a real
     // struct still routes to struct-method dispatch below (the AST
@@ -16812,10 +16813,10 @@ function lower_try(inner: ast.Expr, s: LowerState): LowerState {
     return ts;
 }
 
-// resource_method_opt_ret_type returns the Option type of a built-in Reader /
-// Writer resource method — read_line / read_chunk / write / close — or "" when
-// the receiver is not one. The five methods lower to ops that push a fresh
-// Option box (op_read_line / op_read_chunk / op_writer_write / op_reader_close),
+// resource_method_opt_ret_type returns the Option / Result type of a built-in
+// Reader / Writer resource method — read_line / read_chunk / write / close — or
+// "" when the receiver is not one. The five methods lower to ops that push a
+// fresh box (op_read_line / op_read_chunk / op_writer_write / op_reader_close),
 // so no module signature carries their return type and every scrutinee-type
 // resolver would otherwise bail the module.
 //
@@ -24460,8 +24461,9 @@ function lower_stmt_match(m: ast.StmtMatch, s: LowerState): LowerState {
                                         }
                                         // A built-in Reader/Writer resource method
                                         // (read_line / read_chunk / write / close), gated
-                                        // like lower_expr's interception. A read_line /
-                                        // read_chunk Some payload binds as a string (mark_str).
+                                        // like lower_expr's interception. read_line's Some
+                                        // payload and read_chunk's Ok payload both bind as
+                                        // a string (mark_str).
                                         if (srt == "") {
                                             srt = resource_method_opt_ret_type(scfa.field, scfa.obj, ms);
                                         }
@@ -68724,12 +68726,15 @@ pub function (s: LowerState) opt_ret_type(name: string): string {
     if (name == "read_line") { return "Option[string]"; }
     // The streaming-I/O METHODS, keyed as native keys its Methods table
     // (registerStructMethod in internal/checker) so the two compilers cannot
-    // drift again: the Reader reads yield Option[string], and every close plus
-    // Writer.write yields Option[IoError] — write reports failure, NOT the byte
-    // count, which native's signature has nowhere to put (#7926).
+    // drift again: read_line yields Option[string], read_chunk reports what
+    // read(2) reports — the bytes, Ok("") at end of input, or the errno that
+    // stopped it (#8700) — and every close plus Writer.write yields
+    // Option[IoError]: write reports failure, NOT the byte count, which
+    // native's signature has nowhere to put (#7926).
     // resource_method_opt_ret_type applies the bare-fd receiver gate and routes
     // here; Writer.close shares Reader.close's op and answer.
-    if (name == "Reader.read_line" || name == "Reader.read_chunk") { return "Option[string]"; }
+    if (name == "Reader.read_line") { return "Option[string]"; }
+    if (name == "Reader.read_chunk") { return "Result[string, IoError]"; }
     if (name == "Reader.close" || name == "Writer.close" || name == "Writer.write") { return "Option[IoError]"; }
     return "";
 }
