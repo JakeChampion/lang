@@ -24997,6 +24997,13 @@ function lower_stmt_match(m: ast.StmtMatch, s: LowerState): LowerState {
                             // value recovers its payload (the enum-payload sibling of
                             // the tuple-element / struct-field opt-type marking).
                             ms = ms.mark_opt_type(bslot, ev_ty);
+                        } else if (tuple_elems_lowerable(ev_ty, ms.frame.structs)) {
+                            // A tuple payload (`Pr((i32, i32))`): carry the element
+                            // tags so `p.N` reads at the element's width and the
+                            // destructure a `Pr((a, b))` sub-pattern desugars to
+                            // types its bindings (the Option/Result payload site
+                            // above does the same).
+                            ms = ms.mark_tuple_elems(bslot, tuple_elem_tags(ev_ty)).mark_tuple_type(bslot, ev_ty);
                         } else if (is_scalar_array_type(ev_ty)) {
                             ms = ms.mark_arr(bslot, true);
                         } else if (ev_ty == "string[]") {
