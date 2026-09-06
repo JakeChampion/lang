@@ -120,3 +120,70 @@ func TestAsmRunFloatMemory(t *testing.T) {
 		runMatchesEval(t, build(), n) // 3.5 -> 3
 	}
 }
+
+// The four reinterprets, run for real and diffed against ssa.Eval. The
+// 64-bit pair is an identity over the f64 pattern the register holds; the
+// 32-bit pair narrows through f32 and back. The same shapes
+// TestModuleReinterpret checks against the model.
+func TestAsmRunFloatReinterpret(t *testing.T) {
+	// f64->i64: 1.5's bits, masked to the low byte.
+	f64ToI64 := func() *ssa.Func {
+		f := ssa.NewFunc("f")
+		e := f.NewBlock()
+		bits := f.AddOp(e, ssa.OpReinterpretF64ToI64, constFloat(f, e, 1.5))
+		setLastWidth(e, 64)
+		f.SetRet(e, f.AddOp(e, ssa.OpAnd, bits, constOp(f, e, 0xff)))
+		return f
+	}
+	// i64->f64->i64 round-trip of a raw bit pattern.
+	i64Round := func() *ssa.Func {
+		f := ssa.NewFunc("f")
+		e := f.NewBlock()
+		raw := constOp(f, e, 0x4008000000000000) // f64 bits of 3.0
+		setLastWidth(e, 64)
+		asF := f.AddOp(e, ssa.OpReinterpretI64ToF64, raw)
+		setLastWidth(e, 64)
+		back := f.AddOp(e, ssa.OpReinterpretF64ToI64, asF)
+		setLastWidth(e, 64)
+		f.SetRet(e, f.AddOp(e, ssa.OpAnd, back, constOp(f, e, 0xff)))
+		return f
+	}
+	// f32->i32: 1.5f's bits are 0x3fc00000; shift the top byte down.
+	f32ToI32 := func() *ssa.Func {
+		f := ssa.NewFunc("f")
+		e := f.NewBlock()
+		bits := f.AddOp(e, ssa.OpReinterpretF32ToI32, constFloat(f, e, 1.5))
+		setLastWidth(e, 32)
+		f.SetRet(e, f.AddOp(e, ssa.OpShrU, bits, constOp(f, e, 24)))
+		return f
+	}
+	// -0.0f's bits set bit 31, so the i32 result is negative and its
+	// sign-extension is what the shift exposes.
+	f32Negative := func() *ssa.Func {
+		f := ssa.NewFunc("f")
+		e := f.NewBlock()
+		bits := f.AddOp(e, ssa.OpReinterpretF32ToI32, constFloat(f, e, -2.0))
+		setLastWidth(e, 32)
+		f.SetRet(e, f.AddOp(e, ssa.OpShr, bits, constOp(f, e, 28)))
+		return f
+	}
+	// i32->f32->i32 round-trip of a raw pattern, then to an int: 0x40490fdb
+	// is 3.1415927f, truncating to 3.
+	i32Round := func() *ssa.Func {
+		f := ssa.NewFunc("f")
+		e := f.NewBlock()
+		raw := constOp(f, e, 0x40490fdb)
+		setLastWidth(e, 32)
+		asF := f.AddOp(e, ssa.OpReinterpretI32ToF32, raw)
+		setLastWidth(e, 32)
+		f.SetRet(e, f.AddOp(e, ssa.OpFToIS, asF))
+		return f
+	}
+	for _, n := range []int{1, 2, 8} {
+		runMatchesEval(t, f64ToI64(), n)
+		runMatchesEval(t, i64Round(), n)
+		runMatchesEval(t, f32ToI32(), n)
+		runMatchesEval(t, f32Negative(), n)
+		runMatchesEval(t, i32Round(), n)
+	}
+}
