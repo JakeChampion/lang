@@ -376,8 +376,12 @@ per chunk (0.17×). Both now decide a whole chunk with one `__count_byte` and
 walk only the chunk that reaches the count — backwards, with `__rmemchr`, for
 the elision.
 
-`tac`, 2026-09-06, same machine and same file, plus uutils 0.0.24 and a
-588 KiB file (100 000 lines of `seq`) for the regular-expression row:
+`tac`, 2026-09-06, the same container and the same 62 MiB file, with
+uutils 0.0.24 (the Debian multi-call binary the script now finds) and a
+588 KiB file — 100 000 lines of `seq` — for the regular-expression row.
+Another agent was building on the same four cores for part of the run, so
+read the ratios rather than the absolute numbers; GNU's own figure for the
+plain copy moved 85 → 100 ms between two runs an hour apart:
 
 | utility | workload | fern (ms) | gnu (ms) | uutils (ms) | gnu / fern | uutils / fern |
 |---|---|---|---|---|---|---|
