@@ -330,3 +330,42 @@ func TestSolveOwnershipCreditsAFreshValueEnteringACarrierPhi(t *testing.T) {
 		t.Errorf("the phi's release on the rebuilt path spends the fresh unit, got %v", got)
 	}
 }
+
+// The same phi handed BACK instead of released: `d = d.with(i, v);
+// return d`, the shape every `.with` chain lowers to since the
+// uniqueness branch moved into the IR (#8530). One arm keeps the
+// parameter, the other hands it to a consuming callee and continues with
+// the fresh result, and the exit retains the phi for the return beside
+// the sweep's drop. The credit on the rebuilt edge has no release to pay
+// for — the unit leaves through the return — so that arm consumed the
+// parameter and nothing balanced it; the caller holds the result and
+// must not touch the argument.
+func TestSolveOwnershipReadsAReturnedRebuiltPhiAsConsumed(t *testing.T) {
+	sink := callFn("cow", 1, func(f *Func, b *Block, ps []Value) {
+		callVoid(f, b, "__fern_rc_dec", ps[0])
+		size := f.AddOp(b, OpConstInt)
+		f.AddOp(b, OpAlloc, size)
+	})
+	f := &Func{Name: "with", ReturnAddr: true}
+	p := f.AddParam()
+	f.ParamAddrs = []bool{true}
+	entry, grow, keep, exit := f.NewBlock(), f.NewBlock(), f.NewBlock(), f.NewBlock()
+	f.Entry = entry
+	cond := f.AddOp(entry, OpLoad, p)
+	f.SetBrIf(entry, cond, grow, keep)
+	size := f.AddOp(grow, OpConstInt)
+	fresh := f.AddOp(grow, OpAlloc, size)
+	callVoid(f, grow, "cow", p)
+	f.SetBr(grow, exit)
+	f.SetBr(keep, exit)
+	cur := f.AddPhi(exit, fresh, p)
+	out := call(f, exit, "__fern_rc_inc", cur)
+	callVoid(f, exit, "__fern_rc_dec", cur)
+	exit.Term = Terminator{Kind: TermRet, Value: out}
+
+	sol := SolveOwnership(map[string]*Func{"cow": sink, "with": f})
+	if got := modeOf(t, sol, "with", 0); got != Consumed {
+		t.Errorf("the rebuilt arm hands the parameter to a consuming callee and returns "+
+			"the replacement, got %v", got)
+	}
+}

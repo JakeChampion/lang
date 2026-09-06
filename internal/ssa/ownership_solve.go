@@ -352,9 +352,6 @@ func demandsUnit(f *Func, idx map[*Block]int, uses *Uses, units Units, vs []Valu
 			}
 		}
 	}
-	if !negative {
-		return false
-	}
 	// A phi in the carrier set holds the parameter's unit only along
 	// the edges a carrier feeds it. Along an edge that brings another
 	// value instead — the reassigned accumulator, `acc = push(acc, x)`
@@ -367,6 +364,7 @@ func demandsUnit(f *Func, idx map[*Block]int, uses *Uses, units Units, vs []Valu
 	// and every threaded array accumulator flows through it, and
 	// reading its result as unit-less called all of them consumed.
 	credit := map[int][]int{}
+	var rebuilt []Value
 	for _, b := range f.Blocks {
 		for _, o := range b.Ops {
 			if o.Kind != OpPhi || !carrier[o.Result.ID] {
@@ -382,10 +380,36 @@ func demandsUnit(f *Func, idx map[*Block]int, uses *Uses, units Units, vs []Valu
 				}
 				if credit[bi] == nil {
 					credit[bi] = make([]int, len(b.Preds))
+					rebuilt = append(rebuilt, o.Result)
 				}
 				credit[bi][i]++
 			}
 		}
+	}
+	// The credit pays for the release the phi's unit meets later. When
+	// the phi is RETURNED instead — `d = d.with(i, v); return d`, one arm
+	// keeping the parameter and the other continuing with a consuming
+	// callee's fresh result — there is no release to pay for: the unit
+	// leaves through the return, which the discharge set excludes, so
+	// the consumption on the rebuilt arm would read as balanced and the
+	// kept arm as a borrow of a value the caller no longer holds. The
+	// return of such a carrier is the unit leaving.
+	if len(rebuilt) > 0 {
+		returned := map[int32]bool{}
+		for _, r := range rebuilt {
+			for _, a := range unitCarriersOf(f, uses, r, sigs) {
+				returned[a.ID] = true
+			}
+		}
+		for i, b := range f.Blocks {
+			if b.Term.Kind == TermRet && b.Term.Value.IsValid() && returned[b.Term.Value.ID] {
+				delta[i]--
+				negative = negative || delta[i] < 0
+			}
+		}
+	}
+	if !negative {
+		return false
 	}
 
 	// Forward dataflow to a fixpoint. A block's entry balance is the

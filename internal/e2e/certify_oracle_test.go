@@ -147,6 +147,10 @@ func TestX86_64CertifyAgreesWithTheLeakCensus(t *testing.T) {
 	//	                closure alone cannot see it
 	//	make_env        `__closure_drop_<name>` was in no drop table, so
 	//	                the release it always performs was invisible
+	//	call            a `.with` chain's parameter, kept on the unique
+	//	                arm and replaced on the shared one, is returned
+	//	                through the phi; the credit for the replacement
+	//	                masked the consumption (#8530's inline branch)
 	//
 	// The floors below still matter more than this line. Zero findings
 	// over a walk that had stopped understanding anything would satisfy
