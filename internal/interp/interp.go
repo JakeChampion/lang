@@ -1004,6 +1004,9 @@ func New() *Interp {
 	i.Builtins["read_dir"] = &Builtin{Fn: builtinReadDir}
 	i.Builtins["stat"] = &Builtin{Fn: builtinStat}
 	i.Builtins["lstat"] = &Builtin{Fn: builtinLstat}
+	i.Builtins["access"] = &Builtin{Fn: builtinAccess}
+	i.Builtins["geteuid"] = &Builtin{Fn: builtinGeteuid}
+	i.Builtins["getegid"] = &Builtin{Fn: builtinGetegid}
 	i.Builtins["remove_file"] = &Builtin{Fn: builtinRemoveFile}
 	i.Builtins["create_dir_all"] = &Builtin{Fn: builtinCreateDirAll}
 	i.Builtins["remove_dir_all"] = &Builtin{Fn: builtinRemoveDirAll}
@@ -2353,15 +2356,69 @@ func statLike(name string, resolve func(string) (os.FileInfo, error), args []Val
 	if err != nil {
 		return resultErr(classifyIoError(string(path), err)), nil
 	}
+	raw := statFields(info)
 	st := &Struct{
 		TypeName: "FileStat",
 		Fields: map[string]Value{
-			"is_file": Bool(info.Mode().IsRegular()),
-			"is_dir":  Bool(info.IsDir()),
-			"size":    Number(info.Size()),
+			"is_file":    Bool(info.Mode().IsRegular()),
+			"is_dir":     Bool(info.IsDir()),
+			"size":       Number(info.Size()),
+			"mode":       Number(raw.mode),
+			"nlink":      Number(raw.nlink),
+			"uid":        Number(raw.uid),
+			"gid":        Number(raw.gid),
+			"dev":        Number(raw.dev),
+			"rdev":       Number(raw.rdev),
+			"ino":        Number(raw.ino),
+			"blksize":    Number(raw.blksize),
+			"blocks":     Number(raw.blocks),
+			"atime":      Number(raw.atime),
+			"atime_nsec": Number(raw.atimeNsec),
+			"mtime":      Number(raw.mtime),
+			"mtime_nsec": Number(raw.mtimeNsec),
+			"ctime":      Number(raw.ctime),
+			"ctime_nsec": Number(raw.ctimeNsec),
 		},
 	}
 	return resultOk(st), nil
+}
+
+// builtinAccess answers `access(path, mode)` against the EFFECTIVE ids,
+// which is `euidaccess(3)` and what a shell's `test -r` / `-w` / `-x`
+// asks. `Ok(())` means permitted; the errno reaches the caller as the
+// IoError so EACCES stays distinguishable from ENOENT.
+func builtinAccess(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("access: expected 2 args, got %d", len(args))
+	}
+	path, ok := args[0].(String)
+	if !ok {
+		return nil, fmt.Errorf("access: expected string path, got %T", args[0])
+	}
+	mode, ok := args[1].(Number)
+	if !ok {
+		return nil, fmt.Errorf("access: expected number mode, got %T", args[1])
+	}
+	if err := accessEffective(string(path), int(mode)); err != nil {
+		return resultErr(classifyIoError(string(path), err)), nil
+	}
+	return resultOk(unitValue()), nil
+}
+
+// builtinGeteuid / builtinGetegid report the process's effective ids.
+// Neither can fail, so both are plain numbers.
+func builtinGeteuid(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 0 {
+		return nil, fmt.Errorf("geteuid: expected 0 args, got %d", len(args))
+	}
+	return Number(os.Geteuid()), nil
+}
+
+func builtinGetegid(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 0 {
+		return nil, fmt.Errorf("getegid: expected 0 args, got %d", len(args))
+	}
+	return Number(os.Getegid()), nil
 }
 
 // builtinRemoveFile unlinks `path`. `Option[IoError]` mirrors

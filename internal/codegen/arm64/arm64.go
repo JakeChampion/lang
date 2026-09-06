@@ -163,7 +163,17 @@ var linuxDarwinSysno = map[string][2]int{
 	// dispatch shape is identical (fd, request, arg); only the REQUEST
 	// number differs (TCGETS vs TIOCGETA), and that is an argument the
 	// emitter picks, not part of the call.
-	"ioctl":      {29, 54},
+	"ioctl": {29, 54},
+	// faccessat: Linux's flag-taking form is faccessat2 (439) — the
+	// older faccessat (48) has no flags word and so cannot express
+	// AT_EACCESS. Darwin's faccessat (BSD 467) has taken flags since it
+	// was introduced. Same four-argument shape either way; only the
+	// AT_EACCESS and AT_FDCWD constants differ (see atEaccess/atFdcwd).
+	"faccessat": {439, 467},
+	// geteuid(2) / getegid(2) — Linux asm-generic 175 / 177, Darwin BSD
+	// 25 / 43. Neither takes an argument and neither can fail.
+	"geteuid":    {175, 25},
+	"getegid":    {177, 43},
 	"exit":       {sysExit, darExit},
 	"exit_group": {sysExitGroup, darExit},
 	"mmap":       {sysMmap, darMmap},
@@ -464,7 +474,7 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	// without the Reader API.
 	if g.usesReadFile || g.usesReadFileBytes || g.usesWriteFile || g.usesWriteFileExec ||
 		g.usesRemoveFile || g.usesTempDir || g.usesReadDir || g.usesStat || g.usesLstat ||
-		g.usesRemoveDirAll || g.usesCreateDirAll {
+		g.usesAccess || g.usesRemoveDirAll || g.usesCreateDirAll {
 		g.usesAlloc = true
 		g.usesMemcpy = true
 		g.usesIoError = true
@@ -759,6 +769,15 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	}
 	if g.usesLstat {
 		g.emitLstatRuntime()
+	}
+	if g.usesAccess {
+		g.emitAccessRuntime()
+	}
+	if g.usesEuid {
+		g.emitIdRuntime("__fern_geteuid", "geteuid")
+	}
+	if g.usesEgid {
+		g.emitIdRuntime("__fern_getegid", "getegid")
 	}
 	if g.usesRemoveDirAll {
 		g.emitRemoveDirAllRuntime()
@@ -9262,12 +9281,29 @@ func (g *generator) emitStatLikeRuntime(sym string, atFlags int, lp string) {
 	g.emit("cmp w9, #16384")                          // S_IFDIR
 	g.emit("cset x24, eq")                            // is_dir
 	g.emit("ldr x25, [x29, #%d]", 96+g.statSizeOff()) // st_size
-	// FileStat box: is_file @0, is_dir @4, size @8.
-	g.emit("mov x0, #16")
+	g.emit("mov x0, #%d", ir.FileStat.Bytes)
 	g.emit("bl __fern_alloc_box")
 	g.emit("str w23, [x0]")
 	g.emit("str w24, [x0, #4]")
-	g.emit("str x25, [x0, #8]")
+	g.emit("str x25, [x0, #%d]", ir.FileStat.Size)
+	// The statbuf is still live at [x29+96]; the rest of the record is
+	// copied out field by field, widening each to the FileStat slot.
+	for _, f := range g.statFields() {
+		switch f.load {
+		case "h":
+			g.emit("ldrh w9, [x29, #%d]", 96+f.src)
+			g.emit("str w9, [x0, #%d]", f.box)
+		case "w":
+			g.emit("ldr w9, [x29, #%d]", 96+f.src)
+			g.emit("str w9, [x0, #%d]", f.box)
+		case "sw":
+			g.emit("ldrsw x9, [x29, #%d]", 96+f.src)
+			g.emit("str x9, [x0, #%d]", f.box)
+		default:
+			g.emit("ldr x9, [x29, #%d]", 96+f.src)
+			g.emit("str x9, [x0, #%d]", f.box)
+		}
+	}
 	g.emit("mov x21, x0")
 	g.emit("mov x0, #16")
 	g.emit("bl __fern_alloc_box")
@@ -9294,6 +9330,161 @@ func (g *generator) emitStatLikeRuntime(sym string, atFlags int, lp string) {
 	g.emit("ldp x21, x22, [sp, #32]")
 	g.emit("ldp x19, x20, [sp, #16]")
 	g.emit("ldp x29, x30, [sp], #288")
+	g.emit("ret")
+	g.sizeDirective(sym)
+	g.line(".ltorg")
+}
+
+// statField projects one kernel `struct stat` field onto its FileStat
+// slot. `load` is how wide the source is and whether it sign-extends:
+// "h" a u16, "w" a u32, "sw" an i32 widened to 64 bits, "x" a 64-bit
+// word.
+type statField struct {
+	box, src int32
+	load     string
+}
+
+// statFields is the whole of what differs between the two arm64
+// environments once fstatat has run. Linux's asm-generic `struct stat`
+// is 128 bytes with 32-bit mode / nlink / uid / gid up front and the
+// three timestamps as pairs of 64-bit words from offset 72; Darwin's
+// 64-bit-inode `struct stat` is 144 bytes and shares almost none of
+// that — mode and nlink are 16-bit, dev / rdev / blksize are signed
+// 32-bit, the timestamps are `struct timespec` pairs starting at 32
+// (with st_birthtimespec occupying 80..96, which FileStat has no field
+// for), and size and blocks sit near the end at 96 and 104.
+//
+// Getting one of these wrong is silent: every offset here is inside a
+// buffer the kernel filled, so a bad one reads a real number from the
+// wrong field. TestStatFieldsMatchTheKernelLayouts pins both tables.
+func (g *generator) statFields() []statField {
+	if g.darwin {
+		return []statField{
+			{ir.FileStat.Mode, 4, "h"},
+			{ir.FileStat.Nlink, 6, "h"},
+			{ir.FileStat.UID, 16, "w"},
+			{ir.FileStat.GID, 20, "w"},
+			{ir.FileStat.Dev, 0, "sw"},
+			{ir.FileStat.Rdev, 24, "sw"},
+			{ir.FileStat.Ino, 8, "x"},
+			{ir.FileStat.Blksize, 112, "sw"},
+			{ir.FileStat.Blocks, 104, "x"},
+			{ir.FileStat.Atime, 32, "x"},
+			{ir.FileStat.AtimeNsec, 40, "x"},
+			{ir.FileStat.Mtime, 48, "x"},
+			{ir.FileStat.MtimeNsec, 56, "x"},
+			{ir.FileStat.Ctime, 64, "x"},
+			{ir.FileStat.CtimeNsec, 72, "x"},
+		}
+	}
+	return []statField{
+		{ir.FileStat.Mode, 16, "w"},
+		{ir.FileStat.Nlink, 20, "w"},
+		{ir.FileStat.UID, 24, "w"},
+		{ir.FileStat.GID, 28, "w"},
+		{ir.FileStat.Dev, 0, "x"},
+		{ir.FileStat.Rdev, 32, "x"},
+		{ir.FileStat.Ino, 8, "x"},
+		{ir.FileStat.Blksize, 56, "sw"},
+		{ir.FileStat.Blocks, 64, "x"},
+		{ir.FileStat.Atime, 72, "x"},
+		{ir.FileStat.AtimeNsec, 80, "x"},
+		{ir.FileStat.Mtime, 88, "x"},
+		{ir.FileStat.MtimeNsec, 96, "x"},
+		{ir.FileStat.Ctime, 104, "x"},
+		{ir.FileStat.CtimeNsec, 112, "x"},
+	}
+}
+
+// atEaccess materialises AT_EACCESS into reg: 0x200 on Linux, 0x10 on
+// Darwin. Same flag, same meaning, different number — the shape that
+// silently asks a different question when it is assumed rather than
+// looked up.
+func (g *generator) atEaccess(reg string) {
+	if g.darwin {
+		g.emit("mov %s, #16", reg)
+	} else {
+		g.emit("mov %s, #512", reg)
+	}
+}
+
+// emitAccessRuntime emits `__fern_access(path_data, path_len, mode)` in
+// (x0, x1, w2) -> Result[void, IoError] — faccessat(AT_FDCWD, path,
+// mode, AT_EACCESS).
+//
+// AT_EACCESS is the whole point: the question `test -r` asks is about
+// the EFFECTIVE ids, and Linux's older flagless faccessat cannot express
+// it, which is why this routes to faccessat2 there. A kernel without
+// that call (before 5.8) answers ENOSYS and the caller sees it as an
+// IoError, rather than the real-id answer quietly standing in.
+//
+// Box shapes match create_dir_all: Ok = 16-byte box tag=0 with the unit
+// payload @+8; Err = 16-byte box tag=1 with the IoError box @+8.
+func (g *generator) emitAccessRuntime() {
+	g.line("")
+	g.line(".global __fern_access")
+	g.typeDirective("__fern_access")
+	g.label("__fern_access")
+	// Frame: fp/lr (16) + x19..x23 (48, half of the last pair unused) +
+	// 16-byte inline-spill scratch at [x29+64] = 80.
+	g.emit("stp x29, x30, [sp, #-80]!")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	g.emit("stp x21, x22, [sp, #32]")
+	g.emit("str x23, [sp, #48]")
+	g.emit("mov x19, x0") // path_data (original, for io_error)
+	g.emit("mov x20, x1") // path_len (original, for io_error)
+	g.emit("mov w23, w2") // mode
+	g.emitStrDataPtr2W("x21", "x19", "x20", 64)
+	g.emitStrLen2W("w22", "x20")
+	g.emitNulTermPath2W("x21", "x21", "x22")
+	g.atFdcwd("x0")
+	g.emit("mov x1, x21")
+	g.emit("mov w2, w23")
+	g.atEaccess("x3")
+	g.syscall("faccessat")
+	g.emit("tbnz x0, #63, .Lacc2w_err")
+	g.emit("mov x0, #16")
+	g.emit("bl __fern_alloc_box")
+	g.emit("str wzr, [x0]")     // tag = 0 (Ok)
+	g.emit("str xzr, [x0, #8]") // unit payload
+	g.emit("b .Lacc2w_return")
+
+	g.label(".Lacc2w_err")
+	g.emit("neg x22, x0")
+	g.emit("mov x0, x22")
+	g.emit("mov x1, x19")
+	g.emit("mov x2, x20")
+	g.emit("bl __fern_io_error")
+	g.emit("mov x19, x0")
+	g.emit("mov x0, #16")
+	g.emit("bl __fern_alloc_box")
+	g.emit("mov w9, #1")
+	g.emit("str w9, [x0]") // tag = 1 (Err)
+	g.emit("str x19, [x0, #8]")
+
+	g.label(".Lacc2w_return")
+	g.emit("ldr x23, [sp, #48]")
+	g.emit("ldp x21, x22, [sp, #32]")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #80")
+	g.emit("ret")
+	g.sizeDirective("__fern_access")
+	g.line(".ltorg")
+}
+
+// emitIdRuntime emits a leaf that is one argument-free syscall returning
+// a 32-bit id: `__fern_geteuid` and `__fern_getegid`. Neither can fail,
+// so there is no errno path to normalise.
+func (g *generator) emitIdRuntime(sym, sysname string) {
+	g.line("")
+	g.line(".global " + sym)
+	g.typeDirective(sym)
+	g.label(sym)
+	g.emit("stp x29, x30, [sp, #-16]!")
+	g.emit("mov x29, sp")
+	g.syscall(sysname)
+	g.emit("ldp x29, x30, [sp], #16")
 	g.emit("ret")
 	g.sizeDirective(sym)
 	g.line(".ltorg")
@@ -10648,6 +10839,9 @@ type generator struct {
 	usesReadDir      bool
 	usesStat         bool
 	usesLstat        bool
+	usesAccess       bool
+	usesEuid         bool
+	usesEgid         bool
 	usesRemoveDirAll bool
 	// usesCreateDirAll pulls in the `mkdir -p` runtime — the only
 	// builtin that can BUILD a directory tree (#6749).
@@ -14760,6 +14954,18 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			// a symlink reports itself rather than its target.
 			target = "__fern_lstat"
 			g.usesLstat = true
+		case "access":
+			// access(path, mode): Result[void, IoError] —
+			// faccessat with AT_EACCESS, so the answer is about
+			// the effective ids.
+			target = "__fern_access"
+			g.usesAccess = true
+		case "geteuid":
+			target = "__fern_geteuid"
+			g.usesEuid = true
+		case "getegid":
+			target = "__fern_getegid"
+			g.usesEgid = true
 		case "remove_dir_all":
 			// remove_dir_all(path): Option[IoError] — recursive
 			// rm -rf (openat + getdents64 + unlinkat, self-

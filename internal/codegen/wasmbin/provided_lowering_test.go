@@ -58,8 +58,16 @@ var providedRefusedByPlatform = map[string]bool{
 	// already serves.
 	"timer_fd": true,
 	// `fsmode` — permission bits on a filesystem entry, which neither
-	// preview1 nor the component-model filesystem has (#6133).
+	// preview1 nor the component-model filesystem has (#6133). `access`
+	// is the READ of the same property: "do the mode bits permit this
+	// for my effective ids" is unanswerable where there are no mode bits.
 	"write_file_exec": true,
+	"access":          true,
+	// `userid` — an effective user / group id. Neither WASI preview has
+	// a notion of a user at all, and FileStat's uid / gid are zero
+	// there for the same reason.
+	"geteuid": true,
+	"getegid": true,
 	// `cabi` — a C calling convention to hand a function pointer to.
 	"__c_call0": true, "__c_call0_f32": true, "__c_call0_f64": true,
 	"__c_call1": true, "__c_call1_f32": true, "__c_call1_f64": true,

@@ -1060,6 +1060,9 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__slice_range":                 emitSliceRangeHelper,
 	"stat":                          emitStatHelper,
 	"lstat":                         emitLstatHelper,
+	"access":                        emitAccessHelper,
+	"geteuid":                       emitIdHelper("geteuid", 175),
+	"getegid":                       emitIdHelper("getegid", 177),
 	"monotonic_ns":                  emitClockHelper("monotonic_ns", clockMonotonic, 1_000_000_000, 1),
 	"now_unix_ms":                   emitClockHelper("now_unix_ms", clockRealtime, 1_000, 1_000_000),
 	"sleep_ms":                      emitSleepMsHelper,
@@ -1760,6 +1763,109 @@ func emitIsattyHelper(w func(string, ...any)) {
 	w("\tcset w0, eq")
 	w("\tadd sp, sp, #80")
 	w("\tret")
+}
+
+// emitAccessHelper writes access(path, mode) -> Result[void, IoError]:
+// faccessat2(AT_FDCWD, path, mode, AT_EACCESS). x0 = path (single-word
+// string), w1 = mode.
+//
+// faccessat2 (439) and not faccessat (48): only the newer call takes a
+// flags word, and AT_EACCESS is the point — `test -r` asks about the
+// EFFECTIVE ids. A kernel without it (before 5.8) answers ENOSYS, which
+// the caller sees as an IoError rather than silently getting the real-id
+// answer instead.
+func emitAccessHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("access"))
+	w("\tstp x29, x30, [sp, #-48]!")
+	w("\tmov x29, sp")
+	w("\tstp x19, x20, [sp, #16]")
+	w("\tstr x21, [sp, #32]")
+	w("\tmov x19, x0") // path
+	w("\tmov w21, w1") // mode — callee-saved: the heap guard is a bl
+	// NUL-terminate the path into a fresh heap buffer (x20).
+	w("\tldur w2, [x19, #-4]")
+	w("\tadrp x3, %s", heapPtrSym)
+	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
+	w("\tldr x4, [x3]")
+	w("\tadd x4, x4, #15")
+	w("\tand x4, x4, #-16")
+	w("\tadd x5, x2, #1")
+	w("\tadd x6, x4, x5")
+	w("\tstr x6, [x3]")
+	emitHeapGuardCall(w)
+	w("\tmov w7, #0")
+	w(".Lssa_acc_cp:")
+	w("\tcmp w7, w2")
+	w("\tb.hs .Lssa_acc_cpd")
+	w("\tldrb w8, [x19, x7]")
+	w("\tstrb w8, [x4, x7]")
+	w("\tadd w7, w7, #1")
+	w("\tb .Lssa_acc_cp")
+	w(".Lssa_acc_cpd:")
+	w("\tstrb wzr, [x4, x2]")
+	w("\tmov x20, x4")
+	// faccessat2(AT_FDCWD, path_nul, mode, AT_EACCESS).
+	w("\tmov x0, #100")
+	w("\tneg x0, x0")
+	w("\tmov x1, x20")
+	w("\tmov w2, w21")
+	w("\tmov x3, #512") // AT_EACCESS
+	w("\tmov x8, #439") // faccessat2
+	w("\tsvc #0")
+	w("\ttbnz x0, #63, .Lssa_acc_err")
+	// Ok(()): box {rc=1, tag=0, unit@+8}.
+	w("\tadrp x3, %s", heapPtrSym)
+	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
+	w("\tldr x4, [x3]")
+	w("\tadd x4, x4, #15")
+	w("\tand x4, x4, #-16")
+	w("\tadd x5, x4, #24")
+	w("\tstr x5, [x3]")
+	emitHeapGuardCall(w)
+	w("\tmov w6, #1")
+	w("\tstr w6, [x4]")
+	w("\tadd x0, x4, #8")
+	w("\tstr wzr, [x0]")
+	w("\tstr xzr, [x0, #8]")
+	w("\tb .Lssa_acc_ret")
+	w(".Lssa_acc_err:")
+	w("\tneg x0, x0")
+	w("\tmov x1, x19")
+	w("\tbl %s", fnLabel("__fern_io_error"))
+	w("\tmov x20, x0")
+	// Err(IoError): box {rc=1, tag=1, ioerr@+8}.
+	w("\tadrp x3, %s", heapPtrSym)
+	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
+	w("\tldr x4, [x3]")
+	w("\tadd x4, x4, #15")
+	w("\tand x4, x4, #-16")
+	w("\tadd x5, x4, #24")
+	w("\tstr x5, [x3]")
+	emitHeapGuardCall(w)
+	w("\tmov w6, #1")
+	w("\tstr w6, [x4]")
+	w("\tadd x0, x4, #8")
+	w("\tstr w6, [x0]")
+	w("\tstr x20, [x0, #8]")
+	w(".Lssa_acc_ret:")
+	w("\tldr x21, [sp, #32]")
+	w("\tldp x19, x20, [sp, #16]")
+	w("\tldp x29, x30, [sp], #48")
+	w("\tret")
+}
+
+// emitIdHelper writes a leaf that is one argument-free syscall returning
+// a 32-bit id — geteuid (175) and getegid (177). Neither can fail, so
+// there is no errno path.
+func emitIdHelper(name string, sysno int) func(func(string, ...any)) {
+	return func(w func(string, ...any)) {
+		w("")
+		w("%s:", fnLabel(name))
+		w("\tmov x8, #%d", sysno)
+		w("\tsvc #0")
+		w("\tret")
+	}
 }
 
 // emitRandomBytesHelper writes random_bytes(n) → a fresh u8[] of n
@@ -2521,6 +2627,7 @@ var runtimeHelperDeps = map[string][]string{
 	"read_file":                     {"__fern_io_error", "__fern_utf8_valid"},
 	"stat":                          {"__fern_io_error"},
 	"lstat":                         {"__fern_io_error"},
+	"access":                        {"__fern_io_error"},
 	"__method_string_as_bytes":      {"__slice_make"},
 	"read_file_bytes":               {"__fern_io_error", "__alloc_u8"},
 	"remove_file":                   {"__fern_io_error"},
@@ -2562,6 +2669,7 @@ var heapUsingHelpers = map[string]bool{
 	"__slice_make":                  true,
 	"stat":                          true,
 	"lstat":                         true,
+	"access":                        true,
 	"string_from_bytes_unchecked":   true,
 	"__str_slice":                   true,
 	"args":                          true,
@@ -5578,20 +5686,47 @@ func emitArrPushGrowElemHelper(name, tag string, moveForm bool) func(w func(stri
 	}
 }
 
+// linuxStatFields projects Linux's asm-generic `struct stat` — the arm64
+// one, where mode / nlink / uid / gid are 32-bit up front and st_blksize
+// is a signed 32-bit word at 56 — onto FileStat. `narrow` loads a 32-bit
+// field into a 32-bit slot; `sext` sign-extends a signed 32-bit field
+// into a 64-bit slot; neither means a full 64-bit load.
+//
+// `size` is stored separately, before this table runs, because the kind
+// classification already has it in a register.
+var linuxStatFields = []struct {
+	box, src     int32
+	narrow, sext bool
+}{
+	{ir.FileStat.Mode, 16, true, false},
+	{ir.FileStat.Nlink, 20, true, false},
+	{ir.FileStat.UID, 24, true, false},
+	{ir.FileStat.GID, 28, true, false},
+	{ir.FileStat.Dev, 0, false, false},
+	{ir.FileStat.Rdev, 32, false, false},
+	{ir.FileStat.Ino, 8, false, false},
+	{ir.FileStat.Blksize, 56, false, true},
+	{ir.FileStat.Blocks, 64, false, false},
+	{ir.FileStat.Atime, 72, false, false},
+	{ir.FileStat.AtimeNsec, 80, false, false},
+	{ir.FileStat.Mtime, 88, false, false},
+	{ir.FileStat.MtimeNsec, 96, false, false},
+	{ir.FileStat.Ctime, 104, false, false},
+	{ir.FileStat.CtimeNsec, 112, false, false},
+}
+
 // emitStatHelper writes stat(path) -> Result[FileStat, IoError]: fstatat the
 // path and report its kind and size. x0 = path (single-word string).
 //
 // Linux-only, like the rest of this emitter, so there are none of the flat
 // backend's darwin branches: fstatat is syscall 79, AT_FDCWD is -100, and the
-// two fields read out of the 128-byte struct stat are st_mode (u32 @ +16) and
-// st_size (i64 @ +48).
+// 128-byte asm-generic struct stat is projected onto FileStat by
+// linuxStatFields.
 //
 // Shape follows read_file exactly — the NUL-terminated path copy, the frame
 // statbuf, and the two boxed results — because they are the same contract:
 // a Result box is {rc=1, tag, payload@+8} with the payload one word, and Err
-// dispatches errno + path through __fern_io_error. The Ok payload here is a
-// FileStat box laid out {is_file@+0, is_dir@+4, size@+8}, matching the flat
-// backend's.
+// dispatches errno + path through __fern_io_error.
 func emitStatHelper(w func(string, ...any)) {
 	emitStatLikeHelper(w, "stat", 0, "stat")
 }
@@ -5661,13 +5796,13 @@ func emitStatLikeHelper(w func(string, ...any), name string, atFlags int, lp str
 	w("\tb.ne .Lssa%s_nd", lp)
 	w("\tmov x21, #1")
 	w(".Lssa%s_nd:", lp)
-	// FileStat box: {rc=1, is_file@+0, is_dir@+4, size@+8}.
+	// FileStat box: {rc=1, then the field area}.
 	w("\tadrp x3, %s", heapPtrSym)
 	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
 	w("\tldr x4, [x3]")
 	w("\tadd x4, x4, #15")
 	w("\tand x4, x4, #-16")
-	w("\tadd x5, x4, #24")
+	w("\tadd x5, x4, #%d", 8+ir.FileStat.Bytes)
 	w("\tstr x5, [x3]")
 	emitHeapGuardCall(w)
 	w("\tmov w6, #1")
@@ -5675,7 +5810,21 @@ func emitStatLikeHelper(w func(string, ...any), name string, atFlags int, lp str
 	w("\tadd x23, x4, #8") // FileStat data
 	w("\tstr w20, [x23]")
 	w("\tstr w21, [x23, #4]")
-	w("\tstr x22, [x23, #8]")
+	w("\tstr x22, [x23, #%d]", ir.FileStat.Size)
+	for _, f := range linuxStatFields {
+		if f.sext {
+			w("\tldrsw x9, [sp, #%d]", 64+f.src)
+			w("\tstr x9, [x23, #%d]", f.box)
+			continue
+		}
+		if f.narrow {
+			w("\tldr w9, [sp, #%d]", 64+f.src)
+			w("\tstr w9, [x23, #%d]", f.box)
+			continue
+		}
+		w("\tldr x9, [sp, #%d]", 64+f.src)
+		w("\tstr x9, [x23, #%d]", f.box)
+	}
 	// Result.Ok(FileStat): box {rc=1, tag=0, filestat@+8}.
 	w("\tadrp x3, %s", heapPtrSym)
 	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)

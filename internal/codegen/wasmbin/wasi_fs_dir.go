@@ -17,24 +17,26 @@
 // --invoke main` — while `bin/fern -target wasm32-wasi` builds with
 // Preview2WASI and composes a component.
 //
-// Two of these five have both halves: `remove_file` (unlink-file-at)
-// and `temp_dir` (create-directory-at). `stat`, `read_dir` and
-// `remove_dir_all` are still preview-1 only — they need `stat-at` and
-// the `read-directory` / `directory-entry-stream` pair, which is a
-// second resource in an instance type that has only ever exported one.
-// Under Preview2WASI those three emit preview-1 imports, which the
-// composer rejects by name rather than mis-composing.
+// All five now have both halves. The two previews disagree about more
+// than the import names: preview 1's `filestat` and preview 2's
+// `descriptor-stat` carry different SUBSETS of `stat(2)`, and the
+// directory walk is a flat dirent buffer on one side and a
+// `directory-entry-stream` resource on the other.
 //
 // Shared shapes, all matching the checker's declarations:
 //
 //	Result[T, IoError]  8-byte box: tag@0 (0=Ok, 1=Err), payload@4.
 //	Ok(())              tag 0, unit payload 0 — same as write_file.
-//	FileStat            struct { is_file, is_dir: boolean, size: i32 }
-//	                    behind an 8-byte rc sentinel header.
+//	FileStat            the checker's struct, laid out by ir.FileStat,
+//	                    behind an 8-byte rc sentinel header. Each preview
+//	                    reports a different subset of it, and what it does
+//	                    not report reads zero — see zeroFileStatFields.
 
 package wasmbin
 
 import (
+	"github.com/jakechampion/lang/internal/ir"
+	"github.com/jakechampion/lang/internal/wasm/convert"
 	"github.com/jakechampion/lang/internal/wasm/encode"
 	"github.com/jakechampion/lang/internal/wasm/inst"
 	"github.com/jakechampion/lang/internal/wasm/memory"
@@ -51,13 +53,93 @@ const (
 	wasiFiletypeRegular   int32 = 4
 )
 
-// Offsets into the preview-1 `filestat` record path_filestat_get
-// writes. The record is 64 bytes; these are the two fields `stat`
-// surfaces.
+// Offsets into the preview-1 `filestat` record path_filestat_get writes.
+// The record is 64 bytes, and this is all of it: dev and ino are u64
+// ids, filetype the one-byte kind, nlink a u64 count, size a u64 byte
+// count, and the three timestamps are u64 NANOSECONDS since the epoch —
+// not the seconds-plus-remainder pair `stat(2)` reports, so FileStat's
+// halves are a divide and a remainder rather than two loads.
 const (
+	filestatDevOff      = 0  // u64
+	filestatInoOff      = 8  // u64
 	filestatFiletypeOff = 16 // u8
+	filestatNlinkOff    = 24 // u64
 	filestatSizeOff     = 32 // u64
+	filestatAtimOff     = 40 // u64 ns
+	filestatMtimOff     = 48 // u64 ns
+	filestatCtimOff     = 56 // u64 ns
 )
+
+// nsPerSecond splits a WASI nanosecond timestamp into the seconds and
+// nanosecond remainder FileStat carries.
+const nsPerSecond int64 = 1_000_000_000
+
+// storeI32At / storeI64At append `mem[fs + off] = value`, with the value
+// left on the stack by `push`. `fs` is the local holding the FileStat
+// data pointer.
+func storeI32At(body []byte, fs uint32, off int32, push func([]byte) []byte) []byte {
+	body = inst.InstLocalGet(body, fs)
+	body = push(body)
+	return memory.InstI32Store(body, 2, uint32(off))
+}
+
+func storeI64At(body []byte, fs uint32, off int32, push func([]byte) []byte) []byte {
+	body = inst.InstLocalGet(body, fs)
+	body = push(body)
+	return memory.InstI64Store(body, 3, uint32(off))
+}
+
+// zeroFileStatFields writes 0 to every FileStat field the preview in
+// question does not report. The checker's `stat` documentation is the
+// contract these two lists implement: a field WASI has no answer for
+// reads zero rather than being absent from the type, and a zero `mode`
+// (an S_IFMT of 0, which no real file has) is how a caller distinguishes
+// "not reported" from a mode that happens to be restrictive.
+func zeroFileStatFields(body []byte, fs uint32, narrow, wide []int32) []byte {
+	for _, off := range narrow {
+		body = storeI32At(body, fs, off, func(b []byte) []byte {
+			return inst.InstI32Const(b, 0)
+		})
+	}
+	for _, off := range wide {
+		body = storeI64At(body, fs, off, func(b []byte) []byte {
+			return inst.InstI64Const(b, 0)
+		})
+	}
+	return body
+}
+
+// allocFileStat appends the FileStat allocation — rc sentinel header plus
+// the field area — and leaves the DATA pointer in local `fs`.
+func allocFileStat(body []byte, alloc, fs uint32) []byte {
+	body = inst.InstI32Const(body, 8+ir.FileStat.Bytes)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstLocalTee(body, fs)
+	body = inst.InstI32Const(body, -0x80000000) // static rc sentinel
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, fs)
+	body = inst.InstI32Const(body, 8)
+	body = numeric.InstI32Add(body)
+	return inst.InstLocalSet(body, fs)
+}
+
+// splitNsTimestamp writes one WASI nanosecond timestamp into FileStat's
+// seconds / nanoseconds pair, reading `src` twice rather than spending an
+// i64 local on the intermediate.
+func splitNsTimestamp(body []byte, fs, buf uint32, srcOff uint32, secOff, nsecOff int32) []byte {
+	body = storeI64At(body, fs, secOff, func(b []byte) []byte {
+		b = inst.InstLocalGet(b, buf)
+		b = memory.InstI64Load(b, 3, srcOff)
+		b = inst.InstI64Const(b, nsPerSecond)
+		return numeric.InstI64DivU(b)
+	})
+	return storeI64At(body, fs, nsecOff, func(b []byte) []byte {
+		b = inst.InstLocalGet(b, buf)
+		b = memory.InstI64Load(b, 3, srcOff)
+		b = inst.InstI64Const(b, nsPerSecond)
+		return numeric.InstI64RemU(b)
+	})
+}
 
 // Offsets into a preview-1 `dirent` header, and its size. Each
 // header is followed by d_namlen unterminated name bytes.
@@ -442,11 +524,9 @@ func buildCreateDirAllBody(idxs map[string]uint32) []byte {
 // Result[FileStat, IoError].
 //
 // path_filestat_get with SYMLINK_FOLLOW into a 64-byte record, then
-// project filetype and size into the FileStat struct. `size` is
-// declared i32 in the checker while WASI reports a u64, so the low
-// word is what lands — the same narrowing every other size-carrying
-// builtin does, and files past 2 GiB are outside what the rest of
-// the string/array surface can hold anyway.
+// project it onto FileStat. Preview 1 answers dev, ino, nlink, size and
+// the three timestamps; mode, uid, gid, rdev, blksize and blocks it has
+// no field for, and those read zero (see zeroFileStatFields).
 //
 // Locals after the two params:
 //
@@ -504,34 +584,46 @@ func buildStatLikeBody(idxs map[string]uint32, lookupflags int32) []byte {
 	body = memory.InstI32Load8U(body, 0, filestatFiletypeOff)
 	body = inst.InstLocalSet(body, 7)
 
-	// FileStat: 8-byte rc sentinel header + { is_file, is_dir, size }.
-	body = inst.InstI32Const(body, 8+12)
-	body = inst.InstCall(body, alloc)
-	body = inst.InstLocalTee(body, 8)
-	body = inst.InstI32Const(body, -0x80000000) // static rc sentinel
-	body = memory.InstI32Store(body, 2, 0)
-	body = inst.InstLocalGet(body, 8)
-	body = inst.InstI32Const(body, 8)
-	body = numeric.InstI32Add(body)
-	body = inst.InstLocalSet(body, 8)
+	body = allocFileStat(body, alloc, 8)
 
 	// is_file = filetype == REGULAR
-	body = inst.InstLocalGet(body, 8)
-	body = inst.InstLocalGet(body, 7)
-	body = inst.InstI32Const(body, wasiFiletypeRegular)
-	body = numeric.InstI32Eq(body)
-	body = memory.InstI32Store(body, 2, 0)
+	body = storeI32At(body, 8, ir.FileStat.IsFile, func(b []byte) []byte {
+		b = inst.InstLocalGet(b, 7)
+		b = inst.InstI32Const(b, wasiFiletypeRegular)
+		return numeric.InstI32Eq(b)
+	})
 	// is_dir = filetype == DIRECTORY
-	body = inst.InstLocalGet(body, 8)
-	body = inst.InstLocalGet(body, 7)
-	body = inst.InstI32Const(body, wasiFiletypeDirectory)
-	body = numeric.InstI32Eq(body)
-	body = memory.InstI32Store(body, 2, 4)
-	// size = low word of the u64 at +32
-	body = inst.InstLocalGet(body, 8)
-	body = inst.InstLocalGet(body, 6)
-	body = memory.InstI32Load(body, 2, filestatSizeOff)
-	body = memory.InstI32Store(body, 2, 8)
+	body = storeI32At(body, 8, ir.FileStat.IsDir, func(b []byte) []byte {
+		b = inst.InstLocalGet(b, 7)
+		b = inst.InstI32Const(b, wasiFiletypeDirectory)
+		return numeric.InstI32Eq(b)
+	})
+	for _, f := range []struct {
+		box int32
+		src uint32
+	}{
+		{ir.FileStat.Size, filestatSizeOff},
+		{ir.FileStat.Dev, filestatDevOff},
+		{ir.FileStat.Ino, filestatInoOff},
+	} {
+		body = storeI64At(body, 8, f.box, func(b []byte) []byte {
+			b = inst.InstLocalGet(b, 6)
+			return memory.InstI64Load(b, 3, f.src)
+		})
+	}
+	// nlink is a u64 in the WASI record and a u32 in FileStat; a link
+	// count past 4 billion is not something a filesystem produces.
+	body = storeI32At(body, 8, ir.FileStat.Nlink, func(b []byte) []byte {
+		b = inst.InstLocalGet(b, 6)
+		b = memory.InstI64Load(b, 3, filestatNlinkOff)
+		return convert.InstI32WrapI64(b)
+	})
+	body = splitNsTimestamp(body, 8, 6, filestatAtimOff, ir.FileStat.Atime, ir.FileStat.AtimeNsec)
+	body = splitNsTimestamp(body, 8, 6, filestatMtimOff, ir.FileStat.Mtime, ir.FileStat.MtimeNsec)
+	body = splitNsTimestamp(body, 8, 6, filestatCtimOff, ir.FileStat.Ctime, ir.FileStat.CtimeNsec)
+	body = zeroFileStatFields(body, 8,
+		[]int32{ir.FileStat.Mode, ir.FileStat.UID, ir.FileStat.GID},
+		[]int32{ir.FileStat.Rdev, ir.FileStat.Blksize, ir.FileStat.Blocks})
 
 	body = emitResultOkPtr(body, allocBox, 8, 9)
 
@@ -1657,8 +1749,16 @@ func buildTempDirBodyP2(idxs map[string]uint32) []byte {
 // the instance type — the record would not match the host's without
 // them — and read by nobody: Fern's FileStat has no timestamp fields.
 const (
-	statAtTypeOff  = 8
-	statAtSizeOff  = 24
+	statAtTypeOff      = 8
+	statAtLinkCountOff = 16
+	statAtSizeOff      = 24
+	// Each timestamp is an `option<datetime>`: a discriminant byte at
+	// the offset below, the u64 seconds 8 bytes on, and the u32
+	// nanoseconds 8 after that. `datetime` is 8-aligned, so the option's
+	// payload starts at +8 rather than +1.
+	statAtAtimeOff = 32
+	statAtMtimeOff = 56
+	statAtCtimeOff = 80
 	statAtRetBytes = 104
 )
 
@@ -1669,6 +1769,29 @@ const (
 	descriptorTypeDirectory int32 = 3
 	descriptorTypeRegular   int32 = 6
 )
+
+// p2Timestamp writes one `option<datetime>` into FileStat's seconds /
+// nanoseconds pair. A `none` leaves both zero — the same contract every
+// other field this preview cannot answer follows — which also matters
+// because the return area is a fresh allocation whose bytes are not
+// otherwise defined.
+func p2Timestamp(body []byte, fs, rb uint32, discOff uint32, secOff, nsecOff int32) []byte {
+	body = zeroFileStatFields(body, fs, nil, []int32{secOff, nsecOff})
+	body = inst.InstLocalGet(body, rb)
+	body = memory.InstI32Load8U(body, 0, discOff)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	{
+		body = storeI64At(body, fs, secOff, func(b []byte) []byte {
+			b = inst.InstLocalGet(b, rb)
+			return memory.InstI64Load(b, 3, discOff+8)
+		})
+		body = storeI64At(body, fs, nsecOff, func(b []byte) []byte {
+			b = inst.InstLocalGet(b, rb)
+			return memory.InstI64Load32U(b, 2, discOff+16)
+		})
+	}
+	return inst.InstEnd(body)
+}
 
 // buildStatBodyP2 is the preview-2 buildStatBody: get-directories →
 // stat-at, then the same FileStat struct the preview-1 body builds, so
@@ -1740,31 +1863,37 @@ func buildStatLikeBodyP2(idxs map[string]uint32, pathFlags int32) []byte {
 	body = memory.InstI32Load8U(body, 0, statAtTypeOff)
 	body = inst.InstLocalSet(body, 7)
 
-	// FileStat: 8-byte rc sentinel header + { is_file, is_dir, size }.
-	body = inst.InstI32Const(body, 8+12)
-	body = inst.InstCall(body, alloc)
-	body = inst.InstLocalTee(body, 8)
-	body = inst.InstI32Const(body, -0x80000000) // static rc sentinel
-	body = memory.InstI32Store(body, 2, 0)
-	body = inst.InstLocalGet(body, 8)
-	body = inst.InstI32Const(body, 8)
-	body = numeric.InstI32Add(body)
-	body = inst.InstLocalSet(body, 8)
+	body = allocFileStat(body, alloc, 8)
 
-	body = inst.InstLocalGet(body, 8)
-	body = inst.InstLocalGet(body, 7)
-	body = inst.InstI32Const(body, descriptorTypeRegular)
-	body = numeric.InstI32Eq(body)
-	body = memory.InstI32Store(body, 2, 0)
-	body = inst.InstLocalGet(body, 8)
-	body = inst.InstLocalGet(body, 7)
-	body = inst.InstI32Const(body, descriptorTypeDirectory)
-	body = numeric.InstI32Eq(body)
-	body = memory.InstI32Store(body, 2, 4)
-	body = inst.InstLocalGet(body, 8)
-	body = inst.InstLocalGet(body, 2)
-	body = memory.InstI32Load(body, 2, statAtSizeOff)
-	body = memory.InstI32Store(body, 2, 8)
+	body = storeI32At(body, 8, ir.FileStat.IsFile, func(b []byte) []byte {
+		b = inst.InstLocalGet(b, 7)
+		b = inst.InstI32Const(b, descriptorTypeRegular)
+		return numeric.InstI32Eq(b)
+	})
+	body = storeI32At(body, 8, ir.FileStat.IsDir, func(b []byte) []byte {
+		b = inst.InstLocalGet(b, 7)
+		b = inst.InstI32Const(b, descriptorTypeDirectory)
+		return numeric.InstI32Eq(b)
+	})
+	body = storeI64At(body, 8, ir.FileStat.Size, func(b []byte) []byte {
+		b = inst.InstLocalGet(b, 2)
+		return memory.InstI64Load(b, 3, statAtSizeOff)
+	})
+	body = storeI32At(body, 8, ir.FileStat.Nlink, func(b []byte) []byte {
+		b = inst.InstLocalGet(b, 2)
+		b = memory.InstI64Load(b, 3, statAtLinkCountOff)
+		return convert.InstI32WrapI64(b)
+	})
+	body = p2Timestamp(body, 8, 2, statAtAtimeOff, ir.FileStat.Atime, ir.FileStat.AtimeNsec)
+	body = p2Timestamp(body, 8, 2, statAtMtimeOff, ir.FileStat.Mtime, ir.FileStat.MtimeNsec)
+	body = p2Timestamp(body, 8, 2, statAtCtimeOff, ir.FileStat.Ctime, ir.FileStat.CtimeNsec)
+	// `descriptor-stat` carries no device, inode, mode, owner or block
+	// accounting at all — the 0.2 record dropped the device / inode pair
+	// preview 1 still has — so every one of those reads zero.
+	body = zeroFileStatFields(body, 8,
+		[]int32{ir.FileStat.Mode, ir.FileStat.UID, ir.FileStat.GID},
+		[]int32{ir.FileStat.Dev, ir.FileStat.Rdev, ir.FileStat.Ino,
+			ir.FileStat.Blksize, ir.FileStat.Blocks})
 
 	body = emitResultOkPtr(body, allocBox, 8, 9)
 
