@@ -206,6 +206,11 @@ func tacCases(t *testing.T) []invocation {
 		// Operands.
 		{name: "two files", args: []string{abc, abc}},
 		{name: "three files", args: []string{abc, nonl, empty}},
+		// The output buffer carries ACROSS operands, so a second file
+		// starts mid-block whenever the first did not end on one.
+		{name: "two files that straddle the output block", args: []string{w12000, b8191}},
+		{name: "two files that fill the output block exactly", args: []string{w4096, b16385}},
+		{name: "two files, separator before", args: []string{"-b", w4000, b8193}},
 		{name: "no operand reads stdin", stdin: "a\nb\nc\n"},
 		{name: "lone dash is stdin", args: []string{"-"}, stdin: "a\nb\n"},
 		{name: "dashdash alone", args: []string{"--"}, stdin: "a\nb\n"},
