@@ -37,10 +37,15 @@ func X86_64Tooling(t testing.TB) (gcc string, exec_ []string) {
 // LookupX86_64Tooling is X86_64Tooling's discovery half without the skip. See
 // LookupArm64Tooling for why a caller would want it.
 func LookupX86_64Tooling() (gcc string, exec_ []string, ok bool) {
-	for _, c := range []string{"x86_64-linux-gnu-gcc", "gcc"} {
-		if p, err := exec.LookPath(c); err == nil {
+	if p, err := exec.LookPath("x86_64-linux-gnu-gcc"); err == nil {
+		gcc = p
+	} else if runtime.GOOS == "linux" && runtime.GOARCH == "amd64" {
+		// Bare `gcc` is x86-64 tooling only on an x86-64 host. Anywhere else
+		// it produces the HOST's binaries, and handing it x86-64 asm gets
+		// "unknown mnemonic" from the host assembler rather than a link.
+		// LookupArm64Tooling gates its own bare-gcc fallback the same way.
+		if p, err := exec.LookPath("gcc"); err == nil {
 			gcc = p
-			break
 		}
 	}
 	if gcc == "" {
@@ -152,3 +157,7 @@ func CompileX86_64Bin(t testing.TB, src string) (binPath string, runner []string
 	}
 	return binPath, runner
 }
+
+// x86MachinePrefix is what `gcc -dumpmachine` starts with for a compiler that
+// targets x86-64: `x86_64-linux-gnu`, `x86_64-pc-linux-gnu`, and so on.
+const x86MachinePrefix = "x86_64-"
