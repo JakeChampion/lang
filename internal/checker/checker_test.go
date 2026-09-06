@@ -524,6 +524,165 @@ func TestUnannotatedBigLiteralDefaultsToI64(t *testing.T) {
 	}
 }
 
+// TestUnannotatedCompoundWithBigLiteralDefaultsToI64 covers #8668: the #3676
+// widening reads through a literal-only init, not only a bare literal. Before
+// it, `var t = 3 - 4611686018427387904` left the binary polymorphic, nothing
+// settled it, and the literal lowered at the i32 default as 0 — so `t` was 3
+// with no diagnostic, where the bare literal widens and an operand already
+// committed to i32 gets E047. The width is asserted through assignability as
+// in the bare-literal test: an i64 slot accepts the binding, an i32 slot
+// refuses it.
+func TestUnannotatedCompoundWithBigLiteralDefaultsToI64(t *testing.T) {
+	const big = "4611686018427387904"
+	widened := []string{
+		`var t = 3 - ` + big + `;`,
+		`var t = ` + big + ` - 3;`,
+		`var t = -` + big + ` + 1;`,
+		`var t = (1 + 2) * ` + big + `;`,
+		`var t = if (true) { 3 - ` + big + ` } else { 0 };`,
+	}
+	for _, decl := range widened {
+		if err := checkSource(t, "function main(): i32 { "+decl+" var u: i64 = t; return 0; }"); err != nil {
+			t.Errorf("%s: should be i64 (assignable to i64), got: %v", decl, err)
+		}
+		err := checkSource(t, "function main(): i32 { "+decl+" var u: i32 = t; return 0; }")
+		if err == nil || !strings.Contains(err.Error(), "cannot assign i64") {
+			t.Errorf("%s: into an i32 slot should be E003 naming i64, got: %v", decl, err)
+		}
+	}
+	// The compound is settled at i64, so its wide literal passes the range
+	// check there instead of being judged against i32.
+	if err := checkSource(t, "function main(): i32 { var t = 3 - "+big+"; var f = (3 - "+big+") as f64; return 0; }"); err != nil {
+		t.Errorf("compound with a wide literal should check clean, got: %v", err)
+	}
+	// A compound of small literals keeps the i32 default.
+	if err := checkSource(t, "function main(): i32 { var t = 3 - 4; var u: i32 = t; return u; }"); err != nil {
+		t.Errorf("small compound should stay i32, got: %v", err)
+	}
+	// A literal too wide even for i64 is refused against the i64 the compound
+	// settles at, not silently wrapped.
+	err := checkSource(t, "function main(): i32 { var t = 3 - 18446744073709551616; return 0; }")
+	if err == nil || !strings.Contains(err.Error(), "does not fit in i64") {
+		t.Errorf("past-u64 literal in a compound should be E047 naming i64, got: %v", err)
+	}
+	// An operand already committed to i32 is not widened behind its back.
+	err = checkSource(t, "function main(): i32 { var a: i32 = 3; var t = a - "+big+"; return 0; }")
+	if err == nil || !strings.Contains(err.Error(), "does not fit in i32") {
+		t.Errorf("wide literal beside an i32 operand should stay E047 naming i32, got: %v", err)
+	}
+	// A generic call whose T is pinned by nothing but the literal is still
+	// polymorphic here, so its T-typed arguments are part of the tree — the
+	// annotated `var t: i64 = id(...)` already settles them the same way.
+	const id = "function id[T](v: T): T { return v; } "
+	if err := checkSource(t, id+"function main(): i32 { var t = id("+big+"); var u: i64 = t; return 0; }"); err != nil {
+		t.Errorf("generic call on a wide literal should be i64, got: %v", err)
+	}
+	err = checkSource(t, id+"function main(): i32 { var t = id("+big+"); var u: i32 = t; return 0; }")
+	if err == nil || !strings.Contains(err.Error(), "cannot assign i64") {
+		t.Errorf("generic call on a wide literal into an i32 slot should be E003 naming i64, got: %v", err)
+	}
+	if err := checkSource(t, id+"function main(): i32 { var t = id(5); var u: i32 = t; return u; }"); err != nil {
+		t.Errorf("generic call on a small literal should stay i32, got: %v", err)
+	}
+}
+
+// A generic call's result can carry T anywhere — `pair[A, B](a: A, b: B):
+// (A, B)` — so the widening restamps the TypeArgs entry a wide literal pins
+// and re-derives the result from it (#8668): the binding is `(i64, string)`,
+// not a tuple whose first element the monomorphiser defaults to i32 while a
+// comparison against the same literal widens its own side to i64 (that was
+// E041 "cannot compare i32 and i64" on `p.0 == 4611686018427387904`).
+func TestGenericCallResultCarryingWideLiteralTWidens(t *testing.T) {
+	const big = "4611686018427387904"
+	const decls = "function pair[A, B](a: A, b: B): (A, B) { return (a, b); } function both[T](a: T, b: T): (T, T) { return (a, b); } "
+	accepted := []string{
+		`var p = pair(` + big + `, "hello"); var q: i64 = p.0;`,
+		`var p = pair(` + big + `, "hello"); if (p.0 == ` + big + ` && p.1 == "hello") { return 1; }`,
+		`var p = pair("hello", ` + big + `); var q: i64 = p.1;`,
+		// Every literal bound to the same T settles with it.
+		`var q = both(1, ` + big + `); var a: i64 = q.0; var b: i64 = q.1;`,
+		// A small literal keeps the default.
+		`var p = pair(5, "x"); var q: i32 = p.0;`,
+	}
+	for _, src := range accepted {
+		if err := checkSource(t, decls+"function main(): i32 { "+src+" return 0; }"); err != nil {
+			t.Errorf("%s: rejected, want accepted: %v", src, err)
+		}
+	}
+	rejected := []struct{ src, want string }{
+		{`var p = pair(` + big + `, "hello"); var q: i32 = p.0;`, "cannot assign i64"},
+		{`var q = both(1, ` + big + `); var a: i32 = q.0;`, "cannot assign i64"},
+		// An argument with a type of its own pins T; the literal is judged there.
+		{`var a: i32 = 1; var q = both(a, ` + big + `);`, "does not fit in i32"},
+	}
+	for _, c := range rejected {
+		err := checkSource(t, decls+"function main(): i32 { "+c.src+" return 0; }")
+		if err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: want an error containing %q, got: %v", c.src, c.want, err)
+		}
+	}
+}
+
+// A comparison's result is a boolean, so nothing outside it ever settles its
+// operands: two polymorphic sides take the default at the comparison itself,
+// and a wide literal on either side makes that default i64 (#8668) instead of
+// truncating to the i32 both sides lowered at — `4611686018427387904 > 1` was
+// false on native and true on the interpreter.
+func TestPolymorphicComparisonWithBigLiteralSettlesAtI64(t *testing.T) {
+	const big = "4611686018427387904"
+	cases := []struct {
+		name      string
+		init      string
+		wantWidth int
+	}{
+		{"ordering", big + " > 1", 64},
+		{"ordering, wide on the right", "1 < " + big, 64},
+		{"equality", big + " != 0", 64},
+		{"ordering of a compound", "3 - " + big + " < 0", 64},
+		{"small literals keep the default", "3 > 1", 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			prog, err := parser.Parse("function main(): i32 { var b = " + tc.init + "; if (b) { return 1; } return 0; }")
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			if _, err := Check(prog); err != nil {
+				t.Fatalf("check: %v", err)
+			}
+			bin, ok := varInit(t, prog, "b").(*ast.Binary)
+			if !ok {
+				t.Fatalf("init of b is %T, want *ast.Binary", varInit(t, prog, "b"))
+			}
+			if bin.IntWidth != tc.wantWidth {
+				t.Errorf("comparison settled at width %d, want %d", bin.IntWidth, tc.wantWidth)
+			}
+		})
+	}
+	// A committed i32 side still refuses the literal it cannot hold.
+	err := checkSource(t, "function main(): i32 { var a: i32 = 1; if (a < "+big+") { return 1; } return 0; }")
+	if err == nil || !strings.Contains(err.Error(), "does not fit in i32") {
+		t.Errorf("wide literal beside an i32 operand should stay E047 naming i32, got: %v", err)
+	}
+}
+
+// varInit returns the initialiser of `var <name> = …;` in main.
+func varInit(t *testing.T, prog *ast.Program, name string) ast.Expr {
+	t.Helper()
+	for _, fn := range prog.Funcs {
+		if fn.Name != "main" {
+			continue
+		}
+		for _, st := range fn.Body.Stmts {
+			if v, ok := st.(*ast.Var); ok && v.Name == name {
+				return v.Init
+			}
+		}
+	}
+	t.Fatalf("no `var %s` in main", name)
+	return nil
+}
+
 // The wasm reactor builtins (wasm_timer_pollable / wasm_block) are
 // registered as FuncSigs and type-check: wasm_timer_pollable takes an
 // i64 duration and returns an i32 pollable handle; wasm_block takes a

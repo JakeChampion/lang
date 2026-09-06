@@ -28,6 +28,12 @@ func TestCastSettlesPolymorphicOperandAtSignedI32(t *testing.T) {
 		// A committed operand keeps its own type; the i32 stand-in is only
 		// for one that nothing has settled yet.
 		{"i64 operand stays i64", "var v: f64 = (x - 4611686018427387904) as f64;", 64},
+		// An unsettled operand holding a literal past i32 range takes the
+		// i64 default instead — the reading `var t = 3 - 4611686018427387904`
+		// gets (#8668) — rather than an E047 the bare `4611686018427387904 as
+		// f64` never got.
+		{"wide literal widens the operand", "var v: f64 = (3 - 4611686018427387904) as f64;", 64},
+		{"wide literal widens a narrowing operand", "var v: u8 = (4611686018427387904 % 256) as u8;", 64},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -50,11 +56,11 @@ func TestCastSettlesPolymorphicOperandAtSignedI32(t *testing.T) {
 }
 
 // The range check on a compound operand's literal judges it against the type
-// the operand computes in. A literal only i64 can hold is an E047 naming i32
-// — the same verdict `var a: i32 = 3; (a - 4611686018427387904)` gets — and
-// never u32.
+// the operand computes in. Beside an operand already committed to i32, a
+// literal only i64 can hold is an E047 naming i32 — never u32, and never a
+// widening of the variable behind its back.
 func TestCastOperandLiteralRangeIsJudgedAtI32(t *testing.T) {
-	err := checkSource(t, "function main(): i32 {\n    var v: f64 = (3 - 4611686018427387904) as f64;\n    return 0;\n}\n")
+	err := checkSource(t, "function main(): i32 {\n    var a: i32 = 3;\n    var v: f64 = (a - 4611686018427387904) as f64;\n    return 0;\n}\n")
 	if err == nil {
 		t.Fatal("accepted, want E047")
 	}
