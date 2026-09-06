@@ -1368,11 +1368,9 @@ pub function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDec
             s = s.write("    bl __fern_args\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 210) {  // arg_at
             // [i] -> push argv[i] as a fresh rc-headered string box
-            // (asm_arm64.emit_runtime's __fern_arg_at_rc, in the same args block).
-            // The rc variant, not __fern_arg_at: the result is a bare string the
-            // program holds directly, so it takes the string reclaim path.
-            s = s.need("heap"); s = s.need("args"); s = s.need("arg_at");
-            s = s.write("    ldr x0, [sp], #16\n    bl __fern_arg_at_rc\n    str x0, [sp, #-16]!\n");
+            // (asm_arm64.emit_runtime's __fern_arg_at, in the same args block).
+            s = s.need("heap"); s = s.need("args");
+            s = s.write("    ldr x0, [sp], #16\n    bl __fern_arg_at\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 164) {  // eprint_str
             // [strbox] IS param[0]; call the Fern-compiled __fn___fern_eprint_str
             // (#2649) via the stack ABI. Push x0 for the drop.
@@ -5806,6 +5804,12 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
         s = s.write("    .align 8\n");
         s = s.write("__fern_argv: .quad 0\n");
         s = s.write("    .section .text\n");
+        // __fern_arg_at: x0 = i32 index -> rc-headered string box of argv[i], the
+        // separate-buffer __fern_str_box form (the bytes stay in the initial-stack
+        // argv area, which __fn___fern_str_free's arena guard skips). The elements of
+        // the args() array need the header too: one the program reads out is a value
+        // the rc pass incs and decs, and on a headerless box laid back to back with
+        // its neighbours that inc lands on the previous argument's length word.
         s = s.write("__fern_arg_at:\n");
         s = s.write("    stp x29, x30, [sp, #-16]!\n");
         s = s.write("    mov x29, sp\n");
@@ -5823,52 +5827,15 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
         s = s.write("    add x20, x20, #1\n");
         s = s.write("    b .Larg_strlen\n");
         s = s.write(".Larg_done:\n");
-        s = s.write("    mov x0, #16\n");
-        s = s.write("    bl __fern_alloc\n");
-        s = s.write("    str x19, [x0]\n");
-        s = s.write("    str x20, [x0, #8]\n");
-        s = s.write("    ldp x19, x20, [sp], #16\n");
-        s = s.write("    ldp x29, x30, [sp], #16\n");
-        s = s.write("    ret\n");
-        // __fern_arg_at_rc: x0 = i32 index → rc-HEADERED string box of argv[i].
-        // The IR path's arg_at, boxed by __fern_str_box so it carries the rc
-        // header at box-8 that __fern_str_free reads. __fern_arg_at above keeps
-        // its headerless raw-16 box: that shape is fine for the elements of the
-        // string[] __fern_args builds (the array owns them; they are never
-        // str-freed individually), but a bare `arg_at(i)` on the IR path is a
-        // reclaimable string the program holds DIRECTLY. Two symbols for one
-        // accessor — the last such pair, now that read_all_stdin's has collapsed
-        // to a single Fern helper. Gated on its own
-        // need INSIDE the args block (it reads __fern_argv, declared here), so a
-        // program that only calls args() emits exactly what it did before.
-        if (s.has_need("arg_at")) {
-        s = s.write("__fern_arg_at_rc:\n");
-        s = s.write("    stp x29, x30, [sp, #-16]!\n");
-        s = s.write("    mov x29, sp\n");
-        s = s.write("    stp x19, x20, [sp, #-16]!\n");
-        s = s.write("    adrp x1, __fern_argv\n");
-        s = s.write("    add x1, x1, :lo12:__fern_argv\n");
-        s = s.write("    ldr x1, [x1]\n");
-        s = s.write("    ldr x19, [x1, x0, lsl #3]\n");   // argv[i]
-        s = s.write("    mov x2, x19\n");
-        s = s.write("    mov x20, #0\n");
-        s = s.write(".Largrc_strlen:\n");
-        s = s.write("    ldrb w0, [x2]\n");
-        s = s.write("    cbz w0, .Largrc_done\n");
-        s = s.write("    add x2, x2, #1\n");
-        s = s.write("    add x20, x20, #1\n");
-        s = s.write("    b .Largrc_strlen\n");
-        s = s.write(".Largrc_done:\n");
         s = s.write("    mov x0, x19\n");
         s = s.write("    mov x1, x20\n");
         s = s.write("    bl __fern_str_box\n");           // rc-headered string box
         s = s.write("    ldp x19, x20, [sp], #16\n");
         s = s.write("    ldp x29, x30, [sp], #16\n");
         s = s.write("    ret\n");
-        }
         // __fern_args: → string[] of all argv entries. Builds the
         // cap-header array layout ([cap, len, e0…] at base B, returned
-        // B+8) and fills it with one __fern_arg_at box per argument.
+        // B+8) and fills it with one rc-headered __fern_arg_at box per argument.
         s = s.write("__fern_args:\n");
         s = s.write("    stp x29, x30, [sp, #-16]!\n");
         s = s.write("    mov x29, sp\n");

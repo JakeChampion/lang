@@ -851,10 +851,7 @@ pub function lift_lambdas_parts(mods: parser.Module[]): parser.Module[] {
 // silent miscompile.
 pub function all_runtime_need_roots(): string[] {
     return [
-        // "arg_at" gates __fern_arg_at_rc, which lives inside the "args" block
-        // (it reads __fern_argv) — both roots are listed so the per-module entry
-        // emits the helper for a sibling unit that calls it.
-        "alloc_u8", "arg_at", "args", "arr_i32_index_of", "arr_i32_index_of_opt", "arr_i32_min_max", "arr_i32_min_max_opt",
+        "alloc_u8", "args", "arr_i32_index_of", "arr_i32_index_of_opt", "arr_i32_min_max", "arr_i32_min_max_opt",
         "arr_i32_product", "arr_i32_sum", "arr_push", "arr_push_owned", "arr_slice",
         "arr_str_join", "arrarr_free", "chr", "env", "eprint", "heap", "i32_gcd",
         "i32_lcm", "i32_pow",
@@ -875,7 +872,7 @@ pub function all_runtime_need_roots(): string[] {
         "stat", "lstat", "access", "read_dir", "remove_file", "create_dir_all", "remove_dir_all", "write_file", "write_file_exec",
         "temp_dir", "open_file", "reader", "writer_write", "subprocess",
         // stdin / argv:
-        "read_all_stdin", "arg_at",
+        "read_all_stdin",
         // sockets + readiness (the edge-handler serve loop):
         "tcp_listen", "tcp_accept", "tcp_connect", "tcp_send", "tcp_recv", "udp_send",
         "tcp_close", "tcp_pollable", "poll", "timer_fd",

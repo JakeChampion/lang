@@ -20,15 +20,11 @@ import (
 // `args()[i]` in a loop would allocate all of argv per iteration. It gets a
 // real op (kind 210) instead, which is O(1).
 //
-// The register backends call __fern_arg_at_rc rather than the existing
-// __fern_arg_at. The latter builds a headerless __fern_alloc(16) box, which is
-// fine for the elements of the string[] __fern_args builds (the array owns them
-// and they are never str-freed individually) but wrong for a bare `arg_at(i)`:
-// on the IR path that is a reclaimable string the program holds directly, and
-// __fern_str_free reads the rc word at box-8, which a headerless box does not
-// have. Same split as __fern_read_all_stdin / __fern_read_all_stdin_rc. wasm
-// gets $__fern_arg_at, sharing the wasi args_sizes_get / args_get imports with
-// $__fern_args but copying only the one entry.
+// The register backends call __fern_arg_at, which boxes argv[i] through
+// __fern_str_box so the result carries the rc word at box-8 that
+// __fern_str_free reads — it is the same box __fern_args builds its elements
+// from. wasm gets $__fern_arg_at, sharing the wasi args_sizes_get / args_get
+// imports with $__fern_args but copying only the one entry.
 
 // argAtIRProg exercises the result as a real string, not just its length: a
 // concat, a comparison, and a loop that calls arg_at repeatedly (the shape the
@@ -55,7 +51,7 @@ const argAtIRProg = `function main(): i32 {
 }
 `
 
-// argAtChurnProg calls arg_at in a long loop. Under the headerless box the
+// argAtChurnProg calls arg_at in a long loop. Were the box headerless, the
 // string reclaim path would read an rc word out of whatever precedes the
 // allocation; this runs enough iterations that a corrupted freelist shows up as
 // a crash or a wrong answer rather than passing by luck.
@@ -99,10 +95,8 @@ func runArgAtIR(t *testing.T, target, src string, argv ...string) int {
 	t.Helper()
 	var runner, runPrefix, extra []string
 	var driverBin, linkGcc string
-	// The runtime symbol only the IR path emits: the AST path keeps the
-	// headerless __fern_arg_at, so the _rc sibling's presence proves the routing
-	// on both register backends.
-	const wantSym = "__fern_arg_at_rc"
+	// The accessor the arg_at op calls on both register backends.
+	const wantSym = "__fern_arg_at"
 	if target == "arm64-linux" {
 		var qemu string
 		_, runner, driverBin = buildModloadArm64DriverX86(t)
@@ -121,7 +115,7 @@ func runArgAtIR(t *testing.T, target, src string, argv ...string) int {
 		t.Fatal("self-host emitter produced 0 bytes")
 	}
 	if !strings.Contains(progAsm, wantSym) {
-		t.Fatalf("emitted asm has no %s — arg_at did not take the IR path", wantSym)
+		t.Fatalf("emitted asm has no %s — the arg_at op did not emit its accessor", wantSym)
 	}
 	progBin := buildBin(t, linkGcc, progDir, "arg_at_ir", progAsm)
 
