@@ -1,0 +1,8 @@
+// Pins P006. `function` introduces a named declaration and nothing else:
+// the anonymous `function (…) { … }` expression built the same node as the
+// arrow lambda and was retired in #2673, so the spelling below is a parse
+// error naming the surviving form rather than a second way to write one.
+function main(): i32 {
+    var f = function (x: i32): i32 { return x + 1; };
+    return f(41);
+}
