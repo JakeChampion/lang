@@ -21,12 +21,28 @@ func perfHistoryScript(t *testing.T) string {
 	return p
 }
 
+// gitEnv is ciEnv with every inherited GIT_* variable dropped.
+//
+// GIT_DIR is the one that bites: with it set, the fixture repositories below
+// are never touched and every command runs against the caller's own checkout
+// instead — including the `add` and `commit` that build the fixture.
+func gitEnv(extra ...string) []string {
+	var env []string
+	for _, kv := range ciEnv() {
+		if strings.HasPrefix(kv, "GIT_") {
+			continue
+		}
+		env = append(env, kv)
+	}
+	return append(env, extra...)
+}
+
 // gitIn runs git in dir with a fixed identity and fails the test on error.
 func gitIn(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
-	cmd.Env = append(ciEnv(),
+	cmd.Env = gitEnv(
 		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t",
 		"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
 	out, err := cmd.CombinedOutput()
@@ -41,7 +57,7 @@ func runPerfHistory(t *testing.T, dir string, args ...string) (int, string) {
 	t.Helper()
 	cmd := exec.Command("bash", append([]string{perfHistoryScript(t)}, args...)...)
 	cmd.Dir = dir
-	cmd.Env = append(ciEnv(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
+	cmd.Env = gitEnv("GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
 	out, err := cmd.CombinedOutput()
 	code := 0
 	if err != nil {
@@ -172,5 +188,28 @@ func TestPerfHistorySurvivesAConcurrentLane(t *testing.T) {
 		if !strings.Contains(note, want) {
 			t.Errorf("origin note lost a lane; missing %q:\n%s", want, note)
 		}
+	}
+}
+
+// A GIT_DIR in the ambient environment must not reach the fixtures.
+//
+// Every git command below names its repository by working directory, and
+// GIT_DIR outranks that: with one set, `perfRepo` builds nothing, the `add`
+// and `commit` land in whatever repository the variable names, and the script
+// records its note there too. The decoy here is a path that does not exist, so
+// a leak is a failure rather than a write into someone else's checkout.
+func TestPerfHistoryIgnoresAnInheritedGitDir(t *testing.T) {
+	t.Setenv("GIT_DIR", filepath.Join(t.TempDir(), "decoy.git"))
+	t.Setenv("GIT_WORK_TREE", t.TempDir())
+
+	origin, clone := perfRepo(t)
+	r := writeReport(t, t.TempDir(), "x86.txt", "x86_64/a.text\t100\n")
+	if code, out := runPerfHistory(t, clone, "record", "perf-x86_64", r); code != 0 {
+		t.Fatalf("record: exit %d\n%s", code, out)
+	}
+	head := strings.TrimSpace(gitIn(t, clone, "rev-parse", "HEAD"))
+	note := gitIn(t, origin, "notes", "--ref=refs/notes/perf", "show", head)
+	if !strings.Contains(note, "x86_64/a.text\t100\n") {
+		t.Errorf("the note did not reach the fixture origin:\n%s", note)
 	}
 }

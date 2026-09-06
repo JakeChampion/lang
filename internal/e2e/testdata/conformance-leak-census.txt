@@ -14,10 +14,14 @@
 # it being visible; a row going DOWN is progress and also fails, so the
 # improvement gets recorded rather than absorbed.
 #
-# Measured 2026-09-06: 492 fixtures, 420 clean, 72 leaking, 7514
+# Measured 2026-09-06: 493 fixtures, 422 clean, 71 leaking, 7513
 # unpaired allocations. The distribution is heavily skewed — the median
 # leaking fixture is 2, and regex_captures_assert alone is 5987 of the
 # total.
+#
+# fstring_reassign_releases_old is #8697's fixture: an f-string RHS now
+# releases the destination's superseded string, so the row registers a
+# clean fixture rather than banking a leak.
 #
 # match_expr_binder_body and shadow_tuple_binder_over_const arrive at 0 with
 # their fixtures, which landed without rows — the same clean registration,
@@ -157,7 +161,7 @@ chained_array_methods                                50
 chained_methods                                      0
 char_byte_literals                                   0
 char_cast_receiver                                   0
-closure_adder                                        1
+closure_adder                                        0
 closure_capture_shared_cell                          0
 closure_captures_defining_scope                      0
 closure_field_match                                  600
@@ -234,6 +238,7 @@ format_placeholders                                  0
 format_specs                                         0
 fresh_local_return                                   0
 from_empty_bytes                                     0
+fstring_reassign_releases_old                        0
 functional_base_unchanged                            0
 gcd_euclid                                           0
 general_reuse_crossblock                             0

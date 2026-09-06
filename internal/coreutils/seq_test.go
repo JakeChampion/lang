@@ -541,7 +541,11 @@ func seqCases(t *testing.T) []invocation {
 		{name: "just past sixty four bits by a hundred", args: []string{"18446744073709551617", "100", "18446744073709551617"}},
 		{name: "just past sixty four bits by a thousand", args: []string{"18446744073709551617", "1000", "18446744073709551617"}},
 		{name: "ten to the twenty nine", args: []string{"100000000000000000000000000000", "100", "100000000000000000000000000000"}},
-		{name: "ten to the twenty nine by a thousand", args: []string{"100000000000000000000000000000", "1000", "100000000000000000000000000000"}},
+		// At 1e29 the long double's ulp is far past 1000, so the increment
+		// vanishes and the same line comes back 4.29 million times — 128 MB,
+		// which the unbounded read buffers whole on both sides. Bounded like
+		// every other case here whose output the arithmetic does not stop.
+		{name: "ten to the twenty nine by a thousand", args: []string{"100000000000000000000000000000", "1000", "100000000000000000000000000000"}, limit: 4096},
 		{name: "either side of sixty four bits", args: []string{"18446744073709551614", "18446744073709551618"}},
 		{name: "either side of sixty three bits", args: []string{"9223372036854775806", "9223372036854775810"}},
 		{name: "equal width either side of sixty three bits", args: []string{"-w", "9223372036854775806", "9223372036854775810"}},
