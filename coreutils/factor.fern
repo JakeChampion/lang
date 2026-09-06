@@ -104,9 +104,11 @@ function help_text(): string {
 }
 
 // ---- 64-bit helpers --------------------------------------------------------
-// `mul64(x, y)` — the full 128-bit product as (high, low). Fern has no
-// 128-bit integer; every wide step below is built from this.
-function mul64(x: u64, y: u64): (u64, u64) {
+// `mul_hi(x, y)` — the high word of the 128-bit product; the low word is
+// the wrapping `x * y`. Fern has no 128-bit integer, and a (hi, lo) tuple
+// would be a heap box per modular multiply, so the two halves are asked
+// for separately.
+function mul_hi(x: u64, y: u64): u64 {
   var mask: u64 = 4294967295 as u64;
   var sh: u64 = 32 as u64;
   var a: u64 = x >> sh;
@@ -117,8 +119,7 @@ function mul64(x: u64, y: u64): (u64, u64) {
   var ad: u64 = a * d;
   var bc: u64 = b * c;
   var mid: u64 = (bd >> sh) + (ad & mask) + (bc & mask);
-  var hi: u64 = a * c + (mid >> sh) + (ad >> sh) + (bc >> sh);
-  return (hi, (mid & mask) << sh | bd & mask);
+  return a * c + (mid >> sh) + (ad >> sh) + (bc >> sh);
 }
 
 // ---- Montgomery arithmetic -------------------------------------------------
@@ -155,13 +156,14 @@ function mont_new(n: u64): Mont {
 // REDC of a 128-bit product.
 function mont_redc(m: Mont, hi: u64, lo: u64): u64 {
   var q: u64 = lo * m.n_prime;
-  var p: (u64, u64) = mul64(q, m.n);
-  var t: u64 = hi + p.0;
+  var p_hi: u64 = mul_hi(q, m.n);
+  var p_lo: u64 = q * m.n;
+  var t: u64 = hi + p_hi;
   var carry: boolean = t < hi;
-  if (lo != 0 as u64 && p.1 != 0 as u64) {
-    // lo + p.1 is exactly 2^64 whenever the low words are non-zero, so
+  if (lo != 0 as u64 && p_lo != 0 as u64) {
+    // lo + p_lo is exactly 2^64 whenever the low words are non-zero, so
     // the carry out of the low half is the only part that matters.
-    if (lo + p.1 < lo) {
+    if (lo + p_lo < lo) {
       t = t + 1 as u64;
       if (t == 0 as u64) {
         carry = true;
@@ -175,8 +177,7 @@ function mont_redc(m: Mont, hi: u64, lo: u64): u64 {
 }
 
 function mont_mul(m: Mont, a: u64, b: u64): u64 {
-  var p: (u64, u64) = mul64(a, b);
-  return mont_redc(m, p.0, p.1);
+  return mont_redc(m, mul_hi(a, b), a * b);
 }
 
 // Into and out of Montgomery form.
@@ -386,6 +387,11 @@ function factor_u64(f: Factors, n0: u64, primes: SmallPrime[]): Factors {
   }
   if (n == 1 as u64) {
     return out;
+  }
+  // Every prime below the trial limit has been divided out, so a
+  // remainder under the limit's square has no divisor left to find.
+  if (n < trial_limit() * trial_limit()) {
+    return Factors { ...out, primes: out.primes.append(n) };
   }
   return split_u64(out, n);
 }
@@ -645,41 +651,110 @@ function push_term(out: Term[], text: string): Term[] {
 // to the descriptor while the buffered ones wait for exit, so
 // `printf '15\n<2^128-1>\n21\n' | factor` prints the big one first. The
 // boundary is the value, not the engine used to factor it.
-function report(o: io_buffered.BufWriter, n: string, f: Factors, exponents: boolean, unbuffered: boolean): (io_buffered.BufWriter, boolean) {
-  var line: string = n + ":";
-  var terms: Term[] = terms_of(f);
-  var i: i32 = 0;
-  while (i < terms.len()) {
-    var t: Term = terms[i];
-    if (exponents) {
-      line = line + " " + t.text;
-      if (t.count > 1) {
-        line = line + "^" + (t.count as i64).to_string();
-      }
-    } else {
-      var k: i32 = 0;
-      while (k < t.count) {
-        line = line + " " + t.text;
-        k = k + 1;
-      }
-    }
-    i = i + 1;
-  }
+// `State` — the buffered stdout and whether any number was rejected. It is
+// threaded whole through `report` (rebind: `st = report(st, …)`): handing
+// `st.o` over on its own left the writer shared between the field and the
+// callee's result, and every append after the first copied the buffer
+// (#8755).
+struct State { o: io_buffered.BufWriter, status: i32, failed: boolean }
+
+function report(st: State, n: string, f: Factors, exponents: boolean, unbuffered: boolean): State {
   if (unbuffered) {
     // The failure is remembered rather than reported: it is the stream's
     // error flag, which close_stdout reports at exit as a bare
     // `write error`, with no strerror text after it.
+    var line: string = n + ":";
+    var terms: Term[] = terms_of(f);
+    var i: i32 = 0;
+    while (i < terms.len()) {
+      line = line + term_text(terms[i], exponents);
+      i = i + 1;
+    }
     var w: Writer = stdout();
     match (w.write(line + "\n")) {
       Some(_) => {
-        return (o, true);
+        return State { ...st, failed: true };
       },
       None => {
-        return (o, false);
+        return st;
       }
     }
   }
-  return (gnu.put(o, line + "\n"), false);
+  // The buffered line is written piecewise — a factor is a run of digits
+  // appended in place, never a string — which is what keeps a bulk run
+  // off the allocator. One call per statement: a writer returned by a
+  // call and used as a receiver in the same expression copies its
+  // buffer and leaks the old one (#8755).
+  var out: io_buffered.BufWriter = st.o;
+  out = out.write_string(n);
+  out = out.write_string(":");
+  var small: u64[] = sort_u64(f.primes);
+  var k: i32 = 0;
+  while (k < small.len()) {
+    var p: u64 = small[k];
+    var count: i32 = 1;
+    while (k + count < small.len() && small[k + count] == p) {
+      count = count + 1;
+    }
+    out = write_run_u64(out, p, count, exponents);
+    k = k + count;
+  }
+  if (f.big.len() > 0) {
+    var wide: Term[] = [];
+    var wsorted: bigint.BigInt[] = sort_big(f.big);
+    var j: i32 = 0;
+    while (j < wsorted.len()) {
+      wide = push_term(wide, wsorted[j].to_string());
+      j = j + 1;
+    }
+    j = 0;
+    while (j < wide.len()) {
+      out = out.write_string(term_text(wide[j], exponents));
+      j = j + 1;
+    }
+  }
+  out = out.write_string("\n");
+  return State { ...st, o: out };
+}
+
+// One prime `p` occurring `count` times: ` p^count` under -h, else ` p`
+// repeated.
+function write_run_u64(o: io_buffered.BufWriter, p: u64, count: i32, exponents: boolean): io_buffered.BufWriter {
+  var out: io_buffered.BufWriter = o;
+  if (exponents) {
+    out = out.write_string(" ");
+    out = out.write_u64(p);
+    if (count > 1) {
+      out = out.write_string("^");
+      out = out.write_u64(count as u64);
+    }
+    return out;
+  }
+  var k: i32 = 0;
+  while (k < count) {
+    out = out.write_string(" ");
+    out = out.write_u64(p);
+    k = k + 1;
+  }
+  return out;
+}
+
+// A term's text as the line carries it: ` p^count` under -h, else ` p`
+// repeated.
+function term_text(t: Term, exponents: boolean): string {
+  if (exponents) {
+    if (t.count > 1) {
+      return " " + t.text + "^" + (t.count as i64).to_string();
+    }
+    return " " + t.text;
+  }
+  var s: string = "";
+  var k: i32 = 0;
+  while (k < t.count) {
+    s = s + " " + t.text;
+    k = k + 1;
+  }
+  return s;
 }
 
 // ---- reading a number ------------------------------------------------------
@@ -723,9 +798,6 @@ function parse_number(s: string): Option[Number] {
 }
 
 // ---- the program -----------------------------------------------------------
-// `State` — the buffered stdout and whether any number was rejected.
-struct State { o: io_buffered.BufWriter, status: i32, failed: boolean }
-
 function handle(st: State, token: string, exponents: boolean, primes: SmallPrime[]): State {
   var s: string = cut_at_nul(token);
   match (parse_number(s)) {
@@ -747,8 +819,7 @@ function handle(st: State, token: string, exponents: boolean, primes: SmallPrime
       } else {
         f = factor_u64(f, num.small, primes);
       }
-      var r: (io_buffered.BufWriter, boolean) = report(st.o, num.digits, f, exponents, unbuffered);
-      return State { ...st, o: r.0, failed: st.failed || r.1 };
+      return report(st, num.digits, f, exponents, unbuffered);
     },
     None => {
       // Not flushed first: GNU's stdout stays block-buffered across the
