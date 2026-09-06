@@ -78,11 +78,17 @@ Same allocation count, one scope change, and 20,000 leaked blocks become 600.
 So the hand-off is real and it is the loop-scoped owner that drops it: its own
 release is box-only too, so the deep work happens for nobody.
 
-Two things this does NOT settle. The **residual** — 600 blocks still leak where
-native is at 0, so this is a mechanism rather than necessarily the only one. And
-**where the fix belongs**: a loop-scoped struct binding could deep-drop at scope
-exit, or the shared arm could stop handing off deep work it cannot prove anyone
-will do. Both fit the evidence; neither is established.
+The residual is a SEPARATE defect, and bounded. Doubling the loop bound doubles
+allocations (40,200 -> 80,200) and frees (39,600 -> 79,600) while `live_bytes`
+stays at exactly 28,800 — so the hoisted version's leak is constant per CALL
+(six array buffers per `run`), not per iteration. The hand-off failure therefore
+accounts for the whole of the iteration-scaling leak; what is left is a fixed
+per-call cost of a different origin, unchased.
+
+What this does NOT settle is **where a fix belongs**: a loop-scoped struct
+binding could deep-drop at scope exit, or the shared arm could stop handing off
+deep work it cannot prove anyone will do. Both fit the evidence; neither is
+established.
 
 ## Method note
 
