@@ -2871,14 +2871,36 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movq %r14, %rcx\n");
     s = s.write("    incq %rcx\n");
     s = s.write("    movq %rcx, (%rax)\n");      // new len = old+1 (overwrite helper's len)
-    s = s.write("    movq $1, %rcx\n");
-    s = s.write(".Larr_push_copy:\n");
-    s = s.write("    cmpq %r14, %rcx\n");
-    s = s.write("    jg .Larr_push_copy_done\n");
-    s = s.write("    movq (%r12,%rcx,8), %rdx\n");
-    s = s.write("    movq %rdx, (%rax,%rcx,8)\n");
-    s = s.write("    incq %rcx\n");
-    s = s.write("    jmp .Larr_push_copy\n");
+    // Copy old elements (slots 1..len) from old arr to new, four to the
+    // iteration through a pair of 16-byte SSE2 moves: 2.25 instructions per
+    // element against the six a one-element-per-branch loop costs. SSE2 is
+    // below the Haswell baseline, so the moves need no dispatch. %rsi / %rdi /
+    // %rcx / %rdx and xmm0-1 are the scratch; %rax (the new buffer, the return
+    // value), %r12, %r13 and %r14 all outlive this and are untouched.
+    s = s.write("    leaq 8(%r12), %rsi\n");    // src cursor
+    s = s.write("    leaq 8(%rax), %rdi\n");    // dst cursor
+    s = s.write("    movq %r14, %rcx\n");       // elements remaining
+    s = s.write(".Larr_push_copy4:\n");
+    s = s.write("    cmpq $4, %rcx\n");
+    s = s.write("    jl .Larr_push_copy1\n");
+    s = s.write("    movdqu (%rsi), %xmm0\n");
+    s = s.write("    movdqu 16(%rsi), %xmm1\n");
+    s = s.write("    movdqu %xmm0, (%rdi)\n");
+    s = s.write("    movdqu %xmm1, 16(%rdi)\n");
+    s = s.write("    addq $32, %rsi\n");
+    s = s.write("    addq $32, %rdi\n");
+    s = s.write("    subq $4, %rcx\n");
+    s = s.write("    jmp .Larr_push_copy4\n");
+    s = s.write(".Larr_push_copy1:\n");
+    s = s.write("    testq %rcx, %rcx\n");
+    s = s.write("    jz .Larr_push_copy_done\n");
+    s = s.write(".Larr_push_copy1_loop:\n");
+    s = s.write("    movq (%rsi), %rdx\n");
+    s = s.write("    movq %rdx, (%rdi)\n");
+    s = s.write("    addq $8, %rsi\n");
+    s = s.write("    addq $8, %rdi\n");
+    s = s.write("    decq %rcx\n");
+    s = s.write("    jnz .Larr_push_copy1_loop\n");
     s = s.write(".Larr_push_copy_done:\n");
     s = s.write("    movq %r14, %rcx\n");
     s = s.write("    incq %rcx\n");
