@@ -1,0 +1,9 @@
+// Pins P006: `function` introduces a named declaration and is not an
+// expression. The anonymous function is the arrow lambda, `(x: T): R => …`;
+// the `function (…) { … }` expression form was retired by #2673, and a
+// program still spelling one is told what to write instead of being
+// parsed as something else.
+function main(): i32 {
+    var f = function (x: i32): i32 { return x + 1; };
+    return f(41);
+}

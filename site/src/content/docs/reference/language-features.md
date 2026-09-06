@@ -199,10 +199,11 @@ function area(w @ Point { x, y }: Point): i32 { … }   // `w` is the whole valu
 ```
 
 `{ x: local }` renames a field and `{ x, .. }` documents the fields left
-unbound, as in a match arm. Both lambda forms take the same grammar:
+unbound, as in a match arm. A lambda takes the same grammar, whether its
+body is a block or a bare expression:
 
 ```fern
-var verbose = function(Point { x, y }: Point): i32 { return x + y; };
+var verbose = (Point { x, y }: Point): i32 => { return x + y; };
 var arrow = (Point { x, y }: Point) => x + y;
 ```
 
@@ -286,14 +287,17 @@ use b <- maybe_double(a);
 return Some(b + 1);
 ```
 
-desugars at parse time to:
+desugars at parse time to a named nested function per `use`, each one
+returning what the enclosing function returns:
 
 ```fern
-maybe_double(start, function (a: i32) {
-    maybe_double(a, function (b: i32) {
+function __use_2(a: i32): Option[i32] {
+    function __use_1(b: i32): Option[i32] {
         return Some(b + 1);
-    });
-});
+    }
+    return maybe_double(a, __use_1);
+}
+return maybe_double(start, __use_2);
 ```
 
 Each `use` peels one level of nesting off what would otherwise be a
