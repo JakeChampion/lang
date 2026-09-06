@@ -2887,17 +2887,6 @@ function emit_arm64_struct_drop_one(s: asmcore.EmitState, sty: string): asmcore.
             s = s.write("    bl __fn___struct_arr_elems_drop_" + esan + "\n");
             s = s.write("    add sp, sp, #16\n");
             s = s.write("    ldr x10, [sp, #16]\n");                // reload box (helper clobbered x10)
-        } else if (op.kind == "deep_enum_drop") {
-            // A DIRECT enum field: release the live variant's rc payloads before
-            // the box dec that follows (#8567). Sole-ownership is gated inside
-            // the helper.
-            var edsan: string = asmcore.sanitize_label(op.ty);
-            s = s.need("enum_drop:" + op.ty);
-            s = s.write("    ldr x0, [x10, #" + off + "]\n");       // enum box
-            s = s.write("    str x0, [sp, #-16]!\n");
-            s = s.write("    bl __fn___enum_drop_" + edsan + "\n");
-            s = s.write("    add sp, sp, #16\n");
-            s = s.write("    ldr x10, [sp, #16]\n");                // reload box (helper clobbered x10)
         } else if (op.kind == "elems_drop_enum") {
             // The ENUM-array sibling: shape-dispatch each element and dec its
             // leak-safe-array payloads before the box decs below.
