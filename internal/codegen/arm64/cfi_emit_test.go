@@ -248,7 +248,7 @@ func TestRuntimeUsesFusedForms(t *testing.T) {
 	for _, want := range []string{
 		"madd x0, x22, x20, x19", // &elem[i] in the array walks
 		"madd x5, x4, x1, x3",    // __fern_arr_box: size = cap*stride + headerBytes
-		"madd w0, w23, w21, w24", // arr_push allocSize
+		"madd x0, x23, x21, x24", // arr_push allocSize, in 64 bits (#8587)
 	} {
 		if !strings.Contains(asm, want) {
 			t.Errorf("runtime asm no longer contains %q", want)
