@@ -1,0 +1,447 @@
+import "std/test";
+import "std/string";
+import "std/array";
+import "../../coreutils/lib/resolv" as resolv;
+
+// examples/tests/coreutils_resolv_test.fern — coreutils/lib/resolv, the
+// NSS lookup gethostid makes, over fixture files and RFC 1035 messages.
+//
+// Every expectation is what glibc does with the same input: the files
+// backend's case-insensitive match and first-line-wins, nsswitch's
+// default `files dns` and bracketed actions, res_init's defaults and
+// caps, res_search's candidate order, and a resolver's reading of a
+// reply carrying a CNAME ahead of its A record.
+function word(o: Option[i32]): i32 {
+  match (o) {
+    Some(v) => {
+      return v;
+    },
+    None => {
+      return -1;
+    }
+  }
+}
+
+function bytes(xs: i32[]): u8[] {
+  var out: u8[] = [];
+  var i: i32 = 0;
+  while (i < xs.len()) {
+    out = out.append(xs[i] as u8);
+    i = i + 1;
+  }
+  return out;
+}
+
+function loopback(): i32 {
+  return 16777343;  // 0x0100007f: 127.0.0.1 as the in_addr word
+}
+
+function test_ipv4_word(): test.TestOutcome {
+  if (resolv.ipv4_word(127, 0, 0, 1) != loopback()) {
+    return test.fail("127.0.0.1");
+  }
+  if (resolv.ipv4_word(192, 168, 1, 5) != 83994816) {
+    return test.fail("192.168.1.5 is 0x0501a8c0");
+  }
+  if (resolv.ipv4_word(255, 255, 255, 255) != -1) {
+    return test.fail("all ones is the word -1");
+  }
+  return test.pass();
+}
+
+function test_parse_ipv4(): test.TestOutcome {
+  if (word(resolv.parse_ipv4("127.0.0.1")) != loopback()) {
+    return test.fail("dotted quad");
+  }
+  if (word(resolv.parse_ipv4("0.0.0.0")) != 0) {
+    return test.fail("zero is an address");
+  }
+  if (word(resolv.parse_ipv4("256.0.0.1")) != -1) {
+    return test.fail("octet over 255");
+  }
+  if (word(resolv.parse_ipv4("1.2.3")) != -1) {
+    return test.fail("three octets");
+  }
+  if (word(resolv.parse_ipv4("1.2.3.4.5")) != -1) {
+    return test.fail("five octets");
+  }
+  if (word(resolv.parse_ipv4("1..2.3")) != -1) {
+    return test.fail("empty octet");
+  }
+  if (word(resolv.parse_ipv4("1.2.3.")) != -1) {
+    return test.fail("trailing dot");
+  }
+  if (word(resolv.parse_ipv4("")) != -1) {
+    return test.fail("empty");
+  }
+  if (word(resolv.parse_ipv4("::1")) != -1) {
+    return test.fail("IPv6");
+  }
+  if (word(resolv.parse_ipv4("10.0.0.5x")) != -1) {
+    return test.fail("trailing letter");
+  }
+  return test.pass();
+}
+
+function hosts_fixture(): string {
+  var s: string = "";
+  s = s + "# The hosts file\n";
+  s = s + "\n";
+  s = s + "127.0.0.1\tlocalhost\n";
+  s = s + "::1     localhost ip6-localhost ip6-loopback\n";
+  s = s + "fe00::0 ip6-localnet\n";
+  s = s + "10.0.0.5   build.example.com build   # the CI box\n";
+  s = s + "192.168.1.5 VM\n";
+  s = s + "10.0.0.9 build\n";
+  s = s + "   \n";
+  s = s + "nonsense line here\n";
+  return s;
+}
+
+function test_hosts_canonical_name(): test.TestOutcome {
+  return test.assert_eq(word(resolv.hosts_lookup(hosts_fixture(), "localhost")), loopback());
+}
+
+function test_hosts_alias_and_first_line_wins(): test.TestOutcome {
+  if (word(resolv.hosts_lookup(hosts_fixture(), "build")) != resolv.ipv4_word(10, 0, 0, 5)) {
+    return test.fail("alias on the first line");
+  }
+  if (word(resolv.hosts_lookup(hosts_fixture(), "build.example.com")) != resolv.ipv4_word(10, 0, 0, 5)) {
+    return test.fail("canonical name");
+  }
+  return test.pass();
+}
+
+function test_hosts_case_insensitive(): test.TestOutcome {
+  if (word(resolv.hosts_lookup(hosts_fixture(), "vm")) != resolv.ipv4_word(192, 168, 1, 5)) {
+    return test.fail("VM matches vm");
+  }
+  if (word(resolv.hosts_lookup(hosts_fixture(), "LOCALHOST")) != loopback()) {
+    return test.fail("LOCALHOST matches localhost");
+  }
+  return test.pass();
+}
+
+function test_hosts_ipv6_lines_are_skipped(): test.TestOutcome {
+  if (word(resolv.hosts_lookup(hosts_fixture(), "ip6-localhost")) != -1) {
+    return test.fail("an IPv6-only name has no AF_INET answer");
+  }
+  if (word(resolv.hosts_lookup(hosts_fixture(), "ip6-localnet")) != -1) {
+    return test.fail("fe00::0 line");
+  }
+  return test.pass();
+}
+
+function test_hosts_misses(): test.TestOutcome {
+  if (word(resolv.hosts_lookup(hosts_fixture(), "nothere")) != -1) {
+    return test.fail("absent name");
+  }
+  if (word(resolv.hosts_lookup(hosts_fixture(), "")) != -1) {
+    return test.fail("empty name");
+  }
+  if (word(resolv.hosts_lookup(hosts_fixture(), "#")) != -1) {
+    return test.fail("a comment is not a name");
+  }
+  if (word(resolv.hosts_lookup(hosts_fixture(), "line")) != -1) {
+    return test.fail("a line with no address");
+  }
+  if (word(resolv.hosts_lookup("", "localhost")) != -1) {
+    return test.fail("empty file");
+  }
+  return test.pass();
+}
+
+function names(ss: resolv.Source[]): string {
+  var out: string = "";
+  var i: i32 = 0;
+  while (i < ss.len()) {
+    if (i > 0) {
+      out = out + " ";
+    }
+    out = out + ss[i].name;
+    i = i + 1;
+  }
+  return out;
+}
+
+function test_nsswitch_default(): test.TestOutcome {
+  if (names(resolv.default_sources()) != "files dns") {
+    return test.fail("compiled-in default");
+  }
+  if (names(resolv.nsswitch_hosts("passwd: files\ngroup: files\n")) != "files dns") {
+    return test.fail("no hosts line");
+  }
+  if (names(resolv.nsswitch_hosts("")) != "files dns") {
+    return test.fail("empty file");
+  }
+  return test.pass();
+}
+
+function test_nsswitch_plain(): test.TestOutcome {
+  var ss: resolv.Source[] = resolv.nsswitch_hosts("# comment\npasswd: files systemd\nhosts:   files dns   # trailing\n");
+  if (names(ss) != "files dns") {
+    return test.fail("sources: " + names(ss));
+  }
+  if (!ss[0].stops(resolv.success())) {
+    return test.fail("success returns by default");
+  }
+  if (ss[0].stops(resolv.notfound())) {
+    return test.fail("notfound continues by default");
+  }
+  if (ss[0].stops(resolv.unavail())) {
+    return test.fail("unavail continues by default");
+  }
+  return test.pass();
+}
+
+function test_nsswitch_actions(): test.TestOutcome {
+  var ss: resolv.Source[] = resolv.nsswitch_hosts("hosts: files mdns4_minimal [NOTFOUND=return] dns myhostname\n");
+  if (names(ss) != "files mdns4_minimal dns myhostname") {
+    return test.fail("sources: " + names(ss));
+  }
+  if (!ss[1].stops(resolv.notfound())) {
+    return test.fail("[NOTFOUND=return] on mdns4_minimal");
+  }
+  if (ss[1].stops(resolv.unavail())) {
+    return test.fail("unavail still continues");
+  }
+  if (ss[2].stops(resolv.notfound())) {
+    return test.fail("the action does not leak onto dns");
+  }
+  return test.pass();
+}
+
+function test_nsswitch_negated_action(): test.TestOutcome {
+  var ss: resolv.Source[] = resolv.nsswitch_hosts("hosts: dns [!UNAVAIL=return] files\n");
+  if (names(ss) != "dns files") {
+    return test.fail("sources: " + names(ss));
+  }
+  if (!ss[0].stops(resolv.notfound())) {
+    return test.fail("!UNAVAIL covers notfound");
+  }
+  if (!ss[0].stops(resolv.success())) {
+    return test.fail("!UNAVAIL covers success");
+  }
+  if (ss[0].stops(resolv.unavail())) {
+    return test.fail("!UNAVAIL leaves unavail continuing");
+  }
+  return test.pass();
+}
+
+function test_nsswitch_spaced_bracket_and_empty(): test.TestOutcome {
+  var ss: resolv.Source[] = resolv.nsswitch_hosts("hosts: files [ success=continue notfound=RETURN ] dns\n");
+  if (names(ss) != "files dns") {
+    return test.fail("sources: " + names(ss));
+  }
+  if (ss[0].stops(resolv.success())) {
+    return test.fail("success=continue");
+  }
+  if (!ss[0].stops(resolv.notfound())) {
+    return test.fail("notfound=RETURN, any case");
+  }
+  if (resolv.nsswitch_hosts("hosts:\n").len() != 0) {
+    return test.fail("a present, empty hosts line names no source");
+  }
+  return test.pass();
+}
+
+function resolv_fixture(): string {
+  var s: string = "";
+  s = s + "# Generated by hand\n";
+  s = s + "; and this is a comment too\n";
+  s = s + "nameserver 10.0.0.53\n";
+  s = s + "nameserver fd00::53\n";
+  s = s + "nameserver 10.0.0.54 # secondary\n";
+  s = s + "search corp.example lab.example.\n";
+  s = s + "options timeout:2 ndots:2 attempts:3\n";
+  return s;
+}
+
+function test_resolv_conf_fixture(): test.TestOutcome {
+  var rc: resolv.ResolvConf = resolv.parse_resolv_conf(resolv_fixture(), "vm.corp.example");
+  if (rc.nameservers.len() != 2) {
+    return test.fail("two IPv4 nameservers; the IPv6 one is skipped");
+  }
+  if (rc.nameservers[0] != resolv.ipv4_word(10, 0, 0, 53)) {
+    return test.fail("first nameserver");
+  }
+  if (rc.nameservers[1] != resolv.ipv4_word(10, 0, 0, 54)) {
+    return test.fail("second nameserver");
+  }
+  if (rc.search.len() != 2 || rc.search[0] != "corp.example" || rc.search[1] != "lab.example") {
+    return test.fail("search list, trailing dot dropped");
+  }
+  return test.assert_eq(rc.ndots, 2);
+}
+
+function test_resolv_conf_defaults(): test.TestOutcome {
+  var rc: resolv.ResolvConf = resolv.parse_resolv_conf("", "vm.corp.example");
+  if (rc.nameservers.len() != 1 || rc.nameservers[0] != loopback()) {
+    return test.fail("no nameserver means 127.0.0.1");
+  }
+  if (rc.search.len() != 1 || rc.search[0] != "corp.example") {
+    return test.fail("the search list is the hostname's domain");
+  }
+  if (rc.ndots != 1) {
+    return test.fail("ndots defaults to 1");
+  }
+  var bare: resolv.ResolvConf = resolv.parse_resolv_conf("", "vm");
+  if (bare.search.len() != 0) {
+    return test.fail("a hostname without a domain gives no search list");
+  }
+  return test.pass();
+}
+
+function test_resolv_conf_domain_and_caps(): test.TestOutcome {
+  var rc: resolv.ResolvConf = resolv.parse_resolv_conf("search a.example b.example\ndomain corp.\noptions ndots:99\n", "vm");
+  if (rc.search.len() != 1 || rc.search[0] != "corp") {
+    return test.fail("the last of domain / search wins");
+  }
+  if (rc.ndots != 15) {
+    return test.fail("ndots caps at 15");
+  }
+  var many: resolv.ResolvConf = resolv.parse_resolv_conf("nameserver 1.1.1.1\nnameserver 2.2.2.2\nnameserver 3.3.3.3\nnameserver 4.4.4.4\n", "vm");
+  if (many.nameservers.len() != 3) {
+    return test.fail("at most three nameservers");
+  }
+  return test.pass();
+}
+
+function joined(ss: string[]): string {
+  return ss.join(" ");
+}
+
+function test_search_candidates(): test.TestOutcome {
+  var rc: resolv.ResolvConf = resolv.ResolvConf { nameservers: [loopback()], search: ["a.example", "b.example"], ndots: 1 };
+  if (joined(resolv.search_candidates("vm", rc)) != "vm.a.example vm.b.example vm") {
+    return test.fail("fewer dots than ndots: search first");
+  }
+  if (joined(resolv.search_candidates("vm.local", rc)) != "vm.local vm.local.a.example vm.local.b.example") {
+    return test.fail("at least ndots: as-is first");
+  }
+  if (joined(resolv.search_candidates("vm.", rc)) != "vm") {
+    return test.fail("a trailing dot is absolute");
+  }
+  var two: resolv.ResolvConf = resolv.ResolvConf { ...rc, ndots: 2 };
+  if (joined(resolv.search_candidates("vm.local", two)) != "vm.local.a.example vm.local.b.example vm.local") {
+    return test.fail("ndots 2 sends a one-dot name through the search list first");
+  }
+  var none: resolv.ResolvConf = resolv.ResolvConf { ...rc, search: [] };
+  if (joined(resolv.search_candidates("vm", none)) != "vm") {
+    return test.fail("no search list");
+  }
+  return test.pass();
+}
+
+function test_dns_query(): test.TestOutcome {
+  var q: u8[] = resolv.dns_query_a(4660, "vm.example.com");  // 0x1234
+  if (q.len() != 32) {
+    return test.fail("12 header + 20 question bytes");
+  }
+  var head: u8[] = bytes([18, 52, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0]);
+  if (!q.take(12).equal(head)) {
+    return test.fail("id 0x1234, RD, one question");
+  }
+  var qname: u8[] = bytes([2, 118, 109, 7, 101, 120, 97, 109, 112, 108, 101, 3, 99, 111, 109, 0, 0, 1, 0, 1]);
+  if (!q.drop(12).equal(qname)) {
+    return test.fail("labels, then A IN");
+  }
+  if (resolv.dns_query_a(1, "a..b").len() != 0) {
+    return test.fail("an empty label cannot be encoded");
+  }
+  return test.pass();
+}
+
+// A reply to a query for vm.example.com: a CNAME first, then the A record
+// its name points at, both names compressed back to the question.
+function reply(rcode: i32, id: i32): u8[] {
+  var m: i32[] = [id / 256, id % 256, 129, 128 + rcode, 0, 1, 0, 2, 0, 0, 0, 0];
+  m = m.concat([2, 118, 109, 7, 101, 120, 97, 109, 112, 108, 101, 3, 99, 111, 109, 0, 0, 1, 0, 1]);
+  m = m.concat([192, 12, 0, 5, 0, 1, 0, 0, 0, 60, 0, 6, 3, 119, 119, 119, 192, 15]);
+  m = m.concat([192, 44, 0, 1, 0, 1, 0, 0, 0, 60, 0, 4, 93, 184, 216, 34]);
+  return bytes(m);
+}
+
+function test_dns_answer_after_cname(): test.TestOutcome {
+  var r: (i32, i32) = resolv.dns_answer_a(reply(0, 4660), 4660);
+  if (r.0 != resolv.success()) {
+    return test.fail("found");
+  }
+  return test.assert_eq(r.1, resolv.ipv4_word(93, 184, 216, 34));
+}
+
+function test_dns_answer_statuses(): test.TestOutcome {
+  if (resolv.dns_answer_a(reply(3, 4660), 4660).0 != resolv.notfound()) {
+    return test.fail("NXDOMAIN is notfound");
+  }
+  if (resolv.dns_answer_a(reply(2, 4660), 4660).0 != resolv.unavail()) {
+    return test.fail("SERVFAIL is unavail");
+  }
+  if (resolv.dns_answer_a(reply(0, 4660), 4661).0 != resolv.unavail()) {
+    return test.fail("a reply to another id is unavail");
+  }
+  if (resolv.dns_answer_a(resolv.dns_query_a(4660, "vm.example.com"), 4660).0 != resolv.unavail()) {
+    return test.fail("a query echoed back (QR clear) is unavail");
+  }
+  if (resolv.dns_answer_a(reply(0, 4660).take(40), 4660).0 != resolv.unavail()) {
+    return test.fail("a reply cut short is unavail");
+  }
+  if (resolv.dns_answer_a(bytes([18, 52]), 4660).0 != resolv.unavail()) {
+    return test.fail("shorter than a header is unavail");
+  }
+  return test.pass();
+}
+
+function test_dns_answer_without_a_record(): test.TestOutcome {
+  // NOERROR with one AAAA answer and no A: glibc's NO_DATA, which the
+  // search list continues past exactly as it does NXDOMAIN.
+  var m: i32[] = [18, 52, 129, 128, 0, 1, 0, 1, 0, 0, 0, 0];
+  m = m.concat([2, 118, 109, 7, 101, 120, 97, 109, 112, 108, 101, 3, 99, 111, 109, 0, 0, 1, 0, 1]);
+  m = m.concat([192, 12, 0, 28, 0, 1, 0, 0, 0, 60, 0, 16, 32, 1, 13, 184, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]);
+  return test.assert_eq(resolv.dns_answer_a(bytes(m), 4660).0, resolv.notfound());
+}
+
+// The live cases: this machine's own /etc/hosts and the whole lookup.
+// Every system this runs on maps localhost to 127.0.0.1 in its hosts
+// file, and `files` comes before `dns` on every default nsswitch line.
+function test_live_hosts_file(): test.TestOutcome {
+  match (read_file("/etc/hosts")) {
+    Ok(c) => {
+      return test.assert_eq(word(resolv.hosts_lookup(c, "localhost")), loopback());
+    },
+    Err(_) => {
+      return test.fail("no /etc/hosts");
+    }
+  }
+}
+
+function test_live_resolve_localhost(): test.TestOutcome {
+  return test.assert_eq(word(resolv.resolve("localhost")), loopback());
+}
+
+function main(): i32 {
+  var r: test.TestRunner = test.test_new("coreutils/lib/resolv");
+  r = r.it("ipv4_word packs the in_addr word", test_ipv4_word);
+  r = r.it("parse_ipv4 takes a dotted quad only", test_parse_ipv4);
+  r = r.it("hosts: canonical name", test_hosts_canonical_name);
+  r = r.it("hosts: aliases, first line wins", test_hosts_alias_and_first_line_wins);
+  r = r.it("hosts: names compare caselessly", test_hosts_case_insensitive);
+  r = r.it("hosts: IPv6 lines are skipped", test_hosts_ipv6_lines_are_skipped);
+  r = r.it("hosts: misses", test_hosts_misses);
+  r = r.it("nsswitch: the default is files dns", test_nsswitch_default);
+  r = r.it("nsswitch: a plain hosts line", test_nsswitch_plain);
+  r = r.it("nsswitch: bracketed actions", test_nsswitch_actions);
+  r = r.it("nsswitch: a negated action", test_nsswitch_negated_action);
+  r = r.it("nsswitch: spaced brackets, empty line", test_nsswitch_spaced_bracket_and_empty);
+  r = r.it("resolv.conf: a full file", test_resolv_conf_fixture);
+  r = r.it("resolv.conf: defaults", test_resolv_conf_defaults);
+  r = r.it("resolv.conf: domain, ndots and MAXNS", test_resolv_conf_domain_and_caps);
+  r = r.it("search list order", test_search_candidates);
+  r = r.it("an A query on the wire", test_dns_query);
+  r = r.it("an A record behind a CNAME", test_dns_answer_after_cname);
+  r = r.it("reply statuses", test_dns_answer_statuses);
+  r = r.it("NOERROR without an A record", test_dns_answer_without_a_record);
+  r = r.it("live: this machine's /etc/hosts", test_live_hosts_file);
+  r = r.it("live: resolve localhost", test_live_resolve_localhost);
+  return r.finish();
+}
