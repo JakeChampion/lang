@@ -1285,10 +1285,24 @@ func emitLogF64Helper(w func(string, ...any)) {
 	w("\tfmov d1, x14")
 	w("\tfcmp d0, d1")
 	w("\tb.eq .Lssa_log_ret")
+	// A subnormal stores exponent 0 — its magnitude is in the mantissa's
+	// leading zeros — so the field below reports the smallest normal
+	// exponent for every one of them. Scale into the normal range and take
+	// the 54 back off k. x13 carries the adjustment; it is dead until the
+	// mantissa mask below.
+	w("\tmov x13, #0")
+	ldc("d1", ".Lfc_minnorm")
+	w("\tfcmp d0, d1")
+	w("\tb.ge .Lssa_log_noscale")
+	ldc("d1", ".Lfc_two54")
+	w("\tfmul d0, d0, d1")
+	w("\tmov x13, #54")
+	w(".Lssa_log_noscale:")
 	w("\tfmov x10, d0")
 	w("\tlsr x11, x10, #52")
 	w("\tand x11, x11, #0x7ff")
 	w("\tsub x11, x11, #1023")
+	w("\tsub x11, x11, x13")
 	w("\tmov x13, #1")
 	w("\tlsl x13, x13, #52")
 	w("\tsub x13, x13, #1")

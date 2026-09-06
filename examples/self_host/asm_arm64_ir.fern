@@ -6484,6 +6484,11 @@ function emit_rt_float_transcendentals(s: asmcore.EmitState): asmcore.EmitState 
     s = s.write(".Lfc_lg5: .double 1.818357216161805012e-01\n");
     s = s.write(".Lfc_lg6: .double 1.531383769920937332e-01\n");
     s = s.write(".Lfc_lg7: .double 1.479819860511658591e-01\n");
+    // log's subnormal prescale. A subnormal stores exponent 0 — its magnitude
+    // is in the mantissa's leading zeros — so the reduction x = 2^k*m has to
+    // scale it into the normal range first and take the 54 back off k.
+    s = s.write(".Lfc_two54: .double 1.80143985094819840000e+16\n");
+    s = s.write(".Lfc_minnorm: .double 2.2250738585072014e-308\n");
     s = s.write(".Lfc_expovf: .double 709.782712893383973096\n");
     s = s.write(".Lfc_expunf: .double -745.133219101941108420\n");
     s = s.write("    .text\n");
@@ -6791,10 +6796,21 @@ function emit_rt_float_transcendentals(s: asmcore.EmitState): asmcore.EmitState 
     s = s.write("    fmov d1, x14\n");
     s = s.write("    fcmp d0, d1\n");
     s = s.write("    b.eq .Llog_ret\n");
+    // Subnormal prescale; x13 carries the k adjustment, dead until the
+    // mantissa mask below.
+    s = s.write("    mov x13, #0\n");
+    s = emit_ldc(s, "d1", ".Lfc_minnorm");
+    s = s.write("    fcmp d0, d1\n");
+    s = s.write("    b.ge .Llog_noscale\n");
+    s = emit_ldc(s, "d1", ".Lfc_two54");
+    s = s.write("    fmul d0, d0, d1\n");
+    s = s.write("    mov x13, #54\n");
+    s = s.write(".Llog_noscale:\n");
     s = s.write("    fmov x10, d0\n");
     s = s.write("    lsr x11, x10, #52\n");
     s = s.write("    and x11, x11, #0x7ff\n");
     s = s.write("    sub x11, x11, #1023\n");
+    s = s.write("    sub x11, x11, x13\n");
     s = s.write("    mov x13, #1\n");
     s = s.write("    lsl x13, x13, #52\n");
     s = s.write("    sub x13, x13, #1\n");

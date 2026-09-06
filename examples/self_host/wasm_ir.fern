@@ -4736,13 +4736,17 @@ pub function exp_func(): string {
 // w = z^2, so they evaluate in parallel rather than as one 7-deep Horner.
 pub function log_func(): string {
     var o: string = "";    o = o + "  (func $__fern_log_f64 (param $x f64) (result f64)\n";
-    o = o + "    (local $k i64) (local $bits i64) (local $m f64) (local $f f64) (local $s f64) (local $z f64) (local $w f64) (local $t1 f64) (local $t2 f64) (local $hfsq f64) (local $kf f64)\n";
+    o = o + "    (local $k i64) (local $bits i64) (local $kadj i64) (local $m f64) (local $f f64) (local $s f64) (local $z f64) (local $w f64) (local $t1 f64) (local $t2 f64) (local $hfsq f64) (local $kf f64)\n";
     o = o + "    (if (f64.ne (local.get $x) (local.get $x)) (then (return (local.get $x))))\n";
     o = o + "    (if (f64.lt (local.get $x) (f64.const 0.0)) (then (return (f64.reinterpret_i64 (i64.const 9221120237041090560)))))\n";
     o = o + "    (if (f64.eq (local.get $x) (f64.const 0.0)) (then (return (f64.reinterpret_i64 (i64.const -4503599627370496)))))\n";
     o = o + "    (if (f64.eq (local.get $x) (f64.reinterpret_i64 (i64.const 9218868437227405312))) (then (return (local.get $x))))\n";
+    // Subnormal prescale: a subnormal stores exponent 0 — its magnitude is in
+    // the mantissa's leading zeros — so scale into the normal range and take
+    // the 54 back off k.
+    o = o + "    (if (f64.lt (local.get $x) (f64.const 2.2250738585072014e-308)) (then (local.set $x (f64.mul (local.get $x) (f64.const 1.80143985094819840000e+16))) (local.set $kadj (i64.const 54))))\n";
     o = o + "    (local.set $bits (i64.reinterpret_f64 (local.get $x)))\n";
-    o = o + "    (local.set $k (i64.sub (i64.and (i64.shr_u (local.get $bits) (i64.const 52)) (i64.const 2047)) (i64.const 1023)))\n";
+    o = o + "    (local.set $k (i64.sub (i64.sub (i64.and (i64.shr_u (local.get $bits) (i64.const 52)) (i64.const 2047)) (i64.const 1023)) (local.get $kadj)))\n";
     o = o + "    (local.set $m (f64.reinterpret_i64 (i64.or (i64.and (local.get $bits) (i64.const 4503599627370495)) (i64.const 4607182418800017408))))\n";
     o = o + "    (if (f64.ge (local.get $m) (f64.const 1.4142135623730951)) (then (local.set $m (f64.mul (local.get $m) (f64.const 0.5))) (local.set $k (i64.add (local.get $k) (i64.const 1)))))\n";
     o = o + "    (local.set $f (f64.sub (local.get $m) (f64.const 1.0)))\n";

@@ -1389,6 +1389,23 @@ return 0;
 }
 function main(): i32 { return chain(1); }
 `},
+	// An arrow lambda's return annotation is followed by the lambda's own
+	// `=>`, so the type parser reserves the top-level function-type arrow
+	// there (#8706, #8717). Both printers must put the grouping parens back
+	// around a function-typed return, or `-fmt` writes a program that
+	// re-parses with the wrong split. A tuple return and a single-element
+	// grouping ride along, since those are the shapes the reservation exists
+	// for.
+	{"lambda-return-annotation", `function main(): i32 {
+var tup = (): (string, i32) => { return ("ab", 7); };
+var grp = (): (i32) => { return 7; };
+var fnp = (p: i32): ((i32) => i32) => (q: i32) => p + q;
+var fnb = (p: i32): (i32) => i32 => (q: i32) => p + q;
+var fnt = (p: i32): ((i32) => (i32, i32)) => (q: i32) => (p, q);
+var r = fnt(1)(2);
+return tup().1 + grp() + fnp(1)(2) + fnb(1)(2) + r.0 + r.1;
+}
+`},
 }
 
 // typeChecks reports whether src is a program the checker accepts, running the

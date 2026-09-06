@@ -866,8 +866,9 @@ function apply_suffix(text: string, s: string, at: i32, val0: ld.LD, prec: i32, 
 
 // ---- formatting ------------------------------------------------------------
 // `Human` — a formatted value: the number, the scale letter that goes
-// after it, and the reason there is neither.
-struct Human { text: string, unit: string, err: string }
+// after it, and the reason there is neither. `fatal` marks a refusal
+// that ends the run whatever --invalid says.
+struct Human { text: string, unit: string, err: string, fatal: boolean }
 
 // GNU's `double_to_human`. Without a scale the value is rounded at the
 // precision it was written with and printed there. With one it is
@@ -876,7 +877,7 @@ struct Human { text: string, unit: string, err: string }
 // scaled once more when the rounding carried it up to the base.
 function to_human(val0: ld.LD, prec: i32, o: Opts): Human {
   if (o.to == scale_none()) {
-    return Human { text: scale_none_text(val0, prec, o), unit: "", err: "" };
+    return Human { text: scale_none_text(val0, prec, o), unit: "", err: "", fatal: false };
   }
   var base: i32 = 1000;
   if (o.to == scale_iec() || o.to == scale_iec_i()) {
@@ -892,7 +893,7 @@ function to_human(val0: ld.LD, prec: i32, o: Opts): Human {
     power = power + 1;
   }
   if (val.cmp_abs(b) >= 0) {
-    return Human { text: "", unit: "", err: "value too large to be printed: " + gnu.quote(f.to_g(val0)) + " (cannot handle values > 999Q)" };
+    return Human { text: "", unit: "", err: "value too large to be printed: " + gnu.quote(f.to_g(val0)) + " (cannot handle values > 999Q)", fatal: false };
   }
   var adjust: i32 = 0;
   if (o.fmt.prec >= 0 as i64) {
@@ -915,34 +916,73 @@ function to_human(val0: ld.LD, prec: i32, o: Opts): Human {
     val = f.div(val, b);
     power = power + 1;
   }
-  var out_prec: i32 = 0;
+  var out_prec: i64 = 0 as i64;
   if (power > 0 && val.cmp_abs(ten) < 0) {
-    out_prec = 1;
+    out_prec = 1 as i64;
   }
   if (o.fmt.prec >= 0 as i64) {
-    out_prec = o.fmt.prec as i32;
+    out_prec = o.fmt.prec;
   }
-  return Human { text: f.to_fixed(val, out_prec), unit: unit_suffix(power, o.to), err: "" };
+  if (scaled_width(val, out_prec, power, o) >= scaled_buf_len()) {
+    return Human { text: "", unit: "", err: "failed to prepare value " + gnu.quote(f.to_fixed(val, 6)) + " for printing", fatal: true };
+  }
+  return Human { text: f.to_fixed(val, out_prec as i32), unit: unit_suffix(power, o.to), err: "", fatal: false };
+}
+
+// GNU formats the scaled number into a 128-byte buffer, holding one
+// byte back for the `i` of --to=iec-i, and refuses anything longer.
+// The buffer is its own, so unlike the unscaled path's LDBL_DIG limit
+// this number is the same on every target.
+function scaled_buf_len(): i64 {
+  return 127 as i64;
+}
+
+// How many characters `%[0width].precf` writes for `val` and the scale
+// letter after it. --suffix and --padding are written around the
+// conversion rather than into its buffer, so they do not count.
+function scaled_width(val: ld.LD, prec: i64, power: i32, o: Opts): i64 {
+  var d: ld.Dec = val.dec();
+  var n: i64 = 1 as i64;
+  if (d.dp >= 1) {
+    n = d.dp as i64;
+  }
+  if (val.neg) {
+    n = n + 1 as i64;
+  }
+  if (prec > 0 as i64) {
+    n = n + 1 as i64 + prec;
+  }
+  var zw: i64 = zero_pad_width(o) as i64;
+  if (zw > n) {
+    n = zw;
+  }
+  return n + suffix_power_char(power).len() as i64;
 }
 
 function unit_suffix(power: i32, to: i32): string {
-  if (power == 0) {
-    return "";
-  }
-  // Rounding can carry a value past the last letter — `--to=si` of
-  // 999999999999999999999999999999999 divides ten times and then rounds
-  // up to 1000 — and GNU names that with a sentinel rather than a unit:
-  // `1.0(error)`. Only a long double wide enough to keep the digits
-  // reaches it, so this is an aarch64 and wasm answer, not an x86-64
-  // one.
-  if (power > unit_letters().len()) {
-    return "(error)";
-  }
-  var s: string = slice_unchecked(unit_letters(), power - 1, power) + "";
-  if (to == scale_iec_i()) {
+  var s: string = suffix_power_char(power);
+  if (to == scale_iec_i() && power > 0) {
     return s + "i";
   }
   return s;
+}
+
+// GNU's `suffix_power_char`, which is what the conversion itself
+// writes; the `i` of --to=iec-i goes on afterwards.
+//
+// Rounding can carry a value past the last letter — `--to=si` of
+// 999999999999999999999999999999999 divides ten times and then rounds
+// up to 1000 — and GNU names that with a sentinel rather than a unit:
+// `1.0(error)`. Only a long double wide enough to keep the digits
+// reaches it, so this is an aarch64 and wasm answer, not an x86-64 one.
+function suffix_power_char(power: i32): string {
+  if (power == 0) {
+    return "";
+  }
+  if (power > unit_letters().len()) {
+    return "(error)";
+  }
+  return slice_unchecked(unit_letters(), power - 1, power) + "";
 }
 
 // The unscaled path, which is where a value with too many digits for a
@@ -999,7 +1039,7 @@ function pad_text(text: string, o: Opts, auto: i32): string {
     width = o.fmt.width;
   }
   // A zero-padded format width has already padded the number itself.
-  if (o.fmt.given && o.fmt.zero && o.fmt.width > 0) {
+  if (zero_pad_width(o) > 0) {
     return text;
   }
   if (width == 0 || text.len() >= abs_i32(width)) {
@@ -1010,6 +1050,16 @@ function pad_text(text: string, o: Opts, auto: i32): string {
     return text + " ".repeat(fill);
   }
   return " ".repeat(fill) + text;
+}
+
+// The width `%0Nf` zero-pads the number to, which sits inside the
+// conversion rather than around the field, or 0 when the format asks
+// for no such padding.
+function zero_pad_width(o: Opts): i32 {
+  if (o.fmt.given && o.fmt.zero && o.fmt.width > 0) {
+    return o.fmt.width;
+  }
+  return 0;
 }
 
 // `%0Nf` pads with zeros, after any minus sign.
@@ -1055,14 +1105,19 @@ function convert(text: string, raw: string, o: Opts, out0: Out, auto: i32): Out 
     return fail_field(raw, n.err, o, out);
   }
   var h: Human = to_human(val, n.prec, o);
+  if (h.fatal) {
+    gnu.error(h.err);
+    gnu.finish(out.w);
+    exit(1);
+  }
   if (h.err.len() > 0) {
     return fail_field(raw, h.err, o, out);
   }
   // `%0Nf` pads the NUMBER, before the scale letter, because the width
   // is inside the conversion there; every other width pads the field.
   var body_text: string = h.text;
-  if (o.fmt.given && o.fmt.zero && o.fmt.width > 0) {
-    body_text = zero_pad_to(h.text, o.fmt.width);
+  if (zero_pad_width(o) > 0) {
+    body_text = zero_pad_to(h.text, zero_pad_width(o));
   }
   if (h.unit.len() > 0) {
     body_text = body_text + h.unit;
@@ -1319,7 +1374,7 @@ function check_options(o: Opts, operands: string[]): Opts {
   }
   // A width in --format replaces --padding rather than adding to it,
   // except that a zero-padded width leaves --padding to do the field.
-  if (o.debug && o.padding != 0 && o.fmt.width != 0 && !(o.fmt.zero && o.fmt.width > 0)) {
+  if (o.debug && o.padding != 0 && o.fmt.width != 0 && zero_pad_width(o) == 0) {
     gnu.error("--format padding overriding --padding");
   }
   if (o.debug && o.header > 0 && operands.len() > 0) {

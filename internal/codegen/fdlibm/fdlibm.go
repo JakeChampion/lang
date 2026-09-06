@@ -106,6 +106,13 @@ var Coeffs = []Coeff{
 	def("lg6", "1.531383769920937332e-01"),
 	def("lg7", "1.479819860511658591e-01"),
 
+	// log's subnormal prescale. A subnormal's STORED exponent is 0 — its
+	// magnitude lives in the mantissa's leading zeros — so the reduction
+	// x = 2^k*m has to scale it into the normal range first and take the 54
+	// back off k afterwards. Without it every subnormal answered ln(2^-1022).
+	def("two54", "1.80143985094819840000e+16"),
+	def("minnorm", "2.2250738585072014e-308"),
+
 	// exp's finite range.
 	def("expovf", "709.782712893383973096"),
 	def("expunf", "-745.133219101941108420"),
@@ -161,6 +168,8 @@ var (
 	Lg5     = at("lg5")
 	Lg6     = at("lg6")
 	Lg7     = at("lg7")
+	Two54   = at("two54")
+	MinNorm = at("minnorm")
 	ExpOvf  = at("expovf")
 	ExpUnf  = at("expunf")
 )

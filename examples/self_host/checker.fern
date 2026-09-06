@@ -3272,6 +3272,13 @@ function check_expr(e: ast.Expr, s: Scope): Type {
       if (n.suffix == "u8") {
         return t_u8();
       }
+      // An `i32` suffix names i32 even past i32-max, where the magnitude rule
+      // below would call the literal i64 and the assignment would fail E003
+      // instead of the range check's E047. parser.if_expr_rt and
+      // parser.mono_infer read ANY suffix before that rule for the same reason.
+      if (n.suffix == "i32") {
+        return t_i32();
+      }
       // `'x'` — the lexer tags a character literal with the type name
       // rather than a numeric suffix, since `char` has no suffix form.
       if (n.suffix == "char") {
@@ -7296,32 +7303,121 @@ function match_diags(stmts: ast.Stmt[], structs: StructSig[], unions: UnionTable
 // a fresh name set, so shadowing across nested blocks / over a parameter
 // is allowed, matching the Go checker), and E020 for an un-annotated
 // `var x = []` whose empty-array initializer can't infer an element type.
-// digits_fit_i32 reports whether a non-negative decimal digit string is
-// <= i32's max (2147483647). Equal-length digit strings compare
-// lexicographically the same as numerically, so the 10-digit case is a
-// char-by-char compare against the max.
-function digits_fit_i32(text: string): boolean {
-  var n: i32 = text.len();
-  if (n < 10) {
-    return true;
+// is_hex_lit reports whether an integer literal's spelling is a `0x` numeral.
+function is_hex_lit(text: string): boolean {
+  return text.len() > 2 && (text[0] as i32) == 48
+    && ((text[1] as i32) == 120 || (text[1] as i32) == 88);
+}
+
+// lower_hex_byte folds an ASCII hex digit to lower case; any other byte is
+// returned unchanged.
+function lower_hex_byte(b: i32): i32 {
+  if (b >= 65 && b <= 70) {
+    return b + 32;
   }
-  if (n > 10) {
-    return false;
-  }
-  var maxs: string = "2147483647";
-  var i: i32 = 0;
-  while (i < 10) {
-    var tc: i32 = text[i] as i32;
-    var mc: i32 = maxs[i] as i32;
-    if (tc < mc) {
-      return true;
-    }
-    if (tc > mc) {
-      return false;
-    }
+  return b;
+}
+
+// magnitude_is_zero reports whether the numeral from `start` is all zeros.
+function magnitude_is_zero(text: string, start: i32): boolean {
+  var i: i32 = start;
+  while (i < text.len() && (text[i] as i32) == 48) {
     i = i + 1;
   }
+  return i == text.len();
+}
+
+// magnitude_fits compares the literal's digits — from `start`, leading zeros
+// skipped, hex letters lower-cased — against `max`, written in the same base.
+// Equal-length numerals compare lexicographically the same as numerically, so
+// the bound is a character compare.
+function magnitude_fits(text: string, start: i32, max: string): boolean {
+  var i: i32 = start;
+  while (i < text.len() && (text[i] as i32) == 48) {
+    i = i + 1;
+  }
+  var n: i32 = text.len() - i;
+  if (n != max.len()) {
+    return n < max.len();
+  }
+  var k: i32 = 0;
+  while (k < n) {
+    var tc: i32 = lower_hex_byte(text[i + k] as i32);
+    var mc: i32 = max[k] as i32;
+    if (tc != mc) {
+      return tc < mc;
+    }
+    k = k + 1;
+  }
   return true;
+}
+
+function is_unsigned_int_ty(ty: string): boolean {
+  return ty == "u8" || ty == "u32" || ty == "u64";
+}
+
+// int_ty_max_dec / int_ty_max_hex are the largest magnitude each integer type
+// holds, in decimal and in hex. A negated signed literal reaches one further
+// down than up — i32 MIN is -2147483648 — so the sign selects the bound. A
+// name that is not an integer type has no bound and returns "".
+function int_ty_max_dec(ty: string, negated: boolean): string {
+  if (ty == "i32") {
+    if (negated) { return "2147483648"; }
+    return "2147483647";
+  }
+  if (ty == "i64") {
+    if (negated) { return "9223372036854775808"; }
+    return "9223372036854775807";
+  }
+  if (ty == "u8") { return "255"; }
+  if (ty == "u32") { return "4294967295"; }
+  if (ty == "u64") { return "18446744073709551615"; }
+  return "";
+}
+
+function int_ty_max_hex(ty: string, negated: boolean): string {
+  if (ty == "i32") {
+    if (negated) { return "80000000"; }
+    return "7fffffff";
+  }
+  if (ty == "i64") {
+    if (negated) { return "8000000000000000"; }
+    return "7fffffffffffffff";
+  }
+  if (ty == "u8") { return "ff"; }
+  if (ty == "u32") { return "ffffffff"; }
+  if (ty == "u64") { return "ffffffffffffffff"; }
+  return "";
+}
+
+// int_lit_fits reports whether the magnitude `text` — a decimal or `0x`
+// numeral — is inside `ty`'s range when the source wrote it with the given
+// sign. Zero has no sign, an unsigned type has no negative values at all, and
+// a `ty` naming no integer type has no rule to apply.
+function int_lit_fits(text: string, ty: string, negated: boolean): boolean {
+  var hex: boolean = is_hex_lit(text);
+  var start: i32 = 0;
+  if (hex) { start = 2; }
+  var neg: boolean = negated && !magnitude_is_zero(text, start);
+  if (neg && is_unsigned_int_ty(ty)) { return false; }
+  var max: string = int_ty_max_dec(ty, neg);
+  if (hex) { max = int_ty_max_hex(ty, neg); }
+  if (max.len() == 0) { return true; }
+  return magnitude_fits(text, start, max);
+}
+
+// int_lit_as_written is the numeral the diagnostic quotes: hex as the source
+// spelled it, decimal with leading zeros dropped, and a `-` when the source
+// wrote one.
+function int_lit_as_written(text: string, negated: boolean): string {
+  var out: string = text;
+  if (!is_hex_lit(text)) {
+    var i: i32 = 0;
+    while (i + 1 < text.len() && (text[i] as i32) == 48) { i = i + 1; }
+    out = slice_unchecked(text, i, text.len()) + "";
+  }
+  if (negated && !magnitude_is_zero(text, 0)) { return "-" + out; }
+  return out;
 }
 
 // dupvar_stmt_own_lambdas checks the blocks inside any lambda sitting in `st`'s
@@ -7378,7 +7474,7 @@ function dupvar_diags(stmts: ast.Stmt[]): util.Diag[] {
         if (v.type_name == "i32") {
           match (v.init) {
             ast.ExprNumber(num) => {
-              if (!num.is_float && num.suffix.len() == 0 && !digits_fit_i32(num.text)) {
+              if (!num.is_float && num.suffix.len() == 0 && !int_lit_fits(num.text, "i32", false)) {
                 out = out.append(dg_at("E047", "literal " + num.text + " does not fit in i32", num.line, num.col));
               }
             },
@@ -7408,6 +7504,86 @@ function dupvar_diags(stmts: ast.Stmt[]): util.Diag[] {
       _ => {}
     }
     out = util.append_diags(out, dupvar_stmt_own_lambdas(stmt));
+  }
+  return out;
+}
+
+// LitSign records one integer literal written under a `-`/`+` chain: where it
+// sits and how many minuses stand over it.
+struct LitSign { line: i32, col: i32, minuses: i32 }
+
+// lit_sign_chain walks the `-`/`+` chain rooted at `e` and records the literal
+// it ends at with the number of minuses above it. A literal carries only its
+// magnitude — the sign is the enclosing unary — so the range rule reads the
+// sign from here. Every unary in a chain is visited by the fold below and
+// contributes its own count, so the LARGEST count for a position is the whole
+// chain's: `- -5` is positive.
+function lit_sign_chain(e: ast.Expr, minuses: i32, acc: LitSign[]): LitSign[] {
+  match (e) {
+    ast.ExprUnary(u) => {
+      if (u.op == "-") { return lit_sign_chain(u.operand, minuses + 1, acc); }
+      if (u.op == "+") { return lit_sign_chain(u.operand, minuses, acc); }
+      return acc;
+    },
+    ast.ExprNumber(n) => {
+      if (minuses == 0) { return acc; }
+      return acc.append(LitSign { line: n.line, col: n.col, minuses: minuses });
+    },
+    _ => { return acc; }
+  }
+}
+
+function lit_signs_stmts(stmts: ast.Stmt[]): LitSign[] {
+  function at_unary(n: ast.Expr, acc: LitSign[]): LitSign[] {
+    match (n) {
+      ast.ExprUnary(_) => { return lit_sign_chain(n, 0, acc); },
+      _ => { return acc; }
+    }
+  }
+  var signs: LitSign[] = [];
+  for st in stmts {
+    signs = astwalk.fold_stmt(st, signs, at_unary);
+  }
+  return signs;
+}
+
+function lit_negated(signs: LitSign[], line: i32, col: i32): boolean {
+  var deepest: i32 = 0;
+  for s in signs {
+    if (s.line == line && s.col == col && s.minuses > deepest) { deepest = s.minuses; }
+  }
+  return deepest % 2 == 1;
+}
+
+// suffix_range_diag: E047 for a typed-suffix integer literal outside its own
+// type's range. A suffix pins the type in the parser, so no destination ever
+// settles the literal and no other rule judges it. A quoted literal (`'a'`,
+// `b'0'`) rides the same node with its spelling in `raw` and is not a written
+// numeral, so it is left alone.
+function suffix_range_diag(num: ast.ExprNumber, negated: boolean): util.Diag[] {
+  var out: util.Diag[] = [];
+  if (num.is_float || num.raw.len() > 0 || num.suffix.len() == 0) { return out; }
+  if (int_lit_fits(num.text, num.suffix, negated)) { return out; }
+  var msg: string = "literal " + int_lit_as_written(num.text, negated) + " does not fit in " + num.suffix;
+  if (negated && is_unsigned_int_ty(num.suffix)) {
+    msg = msg + ": unsigned types have no negative values";
+  }
+  return out.append(dg_at("E047", msg, num.line, num.col));
+}
+
+function suffix_range_stmts(stmts: ast.Stmt[]): util.Diag[] {
+  var signs: LitSign[] = lit_signs_stmts(stmts);
+  function at_number(n: ast.Expr, acc: util.Diag[]): util.Diag[] {
+    match (n) {
+      ast.ExprNumber(num) => {
+        return util.append_diags(acc, suffix_range_diag(num, lit_negated(signs, num.line, num.col)));
+      },
+      _ => { return acc; }
+    }
+  }
+  var out: util.Diag[] = [];
+  for st in stmts {
+    out = astwalk.fold_stmt(st, out, at_number);
   }
   return out;
 }
@@ -13232,6 +13408,8 @@ pub function check_module(raw_mod: parser.Module): ModuleTypes {
     body_diags = util.append_diags(body_diags, loop_diags(dbody, false, []));
     // E013: duplicate `var` in the same block (structural, no scope).
     body_diags = util.append_diags(body_diags, dupvar_diags(dbody));
+    // E047: a typed-suffix integer literal outside its suffix's range.
+    body_diags = util.append_diags(body_diags, suffix_range_stmts(dbody));
     // E026 / E028: structural match-arm errors (wildcard order, dup
     // variant).
     body_diags = util.append_diags(body_diags, match_diags(dbody, structs, ut));
@@ -13285,6 +13463,7 @@ pub function check_module(raw_mod: parser.Module): ModuleTypes {
   }
   body_diags = util.append_diags(body_diags, loop_diags(dtop, false, []));
   body_diags = util.append_diags(body_diags, dupvar_diags(dtop));
+  body_diags = util.append_diags(body_diags, suffix_range_stmts(dtop));
   body_diags = util.append_diags(body_diags, match_diags(dtop, structs, ut));
   // E019: generic-struct type-argument arity in struct field types.
   for sd in mod.structs {

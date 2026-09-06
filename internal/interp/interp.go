@@ -975,7 +975,7 @@ func New() *Interp {
 	i.Builtins["__round_f64"] = mkUnaryF64Builtin("__round_f64", math.Round)
 	i.Builtins["__trunc_f64"] = mkUnaryF64Builtin("__trunc_f64", math.Trunc)
 	i.Builtins["__abs_f64"] = mkUnaryF64Builtin("__abs_f64", math.Abs)
-	i.Builtins["__log_f64"] = mkUnaryF64Builtin("__log_f64", math.Log)
+	i.Builtins["__log_f64"] = mkUnaryF64Builtin("__log_f64", fernLog)
 	i.Builtins["__exp_f64"] = mkUnaryF64Builtin("__exp_f64", fernExp)
 	// sin/cos carry their own fdlibm reduction (trig.go) rather than Go's:
 	// math.Sin's argument reduction is unboundedly wrong in ulp terms near

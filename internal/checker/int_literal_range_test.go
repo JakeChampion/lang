@@ -353,3 +353,97 @@ function main(): i32 {
 		t.Errorf("var z: u8 = NEG: got %v, want E047 naming -5", err)
 	}
 }
+
+// A typed suffix pins the literal's width in the parser, so no settling hint
+// ever reaches it — and the range rule, which lived on the settle path, judged
+// nothing. `300u8` type-checked and reached codegen wrapped, where the same
+// literal without its suffix is E047 (#8639). The sign still comes from the
+// enclosing unary, so the most negative value of each signed width keeps its
+// only spelling.
+func TestSuffixedIntLiteralRange(t *testing.T) {
+	cases := []struct {
+		src       string
+		accepted  bool
+		wantInMsg string
+	}{
+		// In range at the boundary, in every suffix the language has.
+		{`var x: u8 = 255u8;`, true, ""},
+		{`var x: u8 = 0u8;`, true, ""},
+		{`var x: u32 = 4294967295u32;`, true, ""},
+		{`var x: u64 = 18446744073709551615u64;`, true, ""},
+		{`var x: i32 = 2147483647i32;`, true, ""},
+		{`var x: i32 = -2147483648i32;`, true, ""},
+		{`var x: i64 = 9223372036854775807i64;`, true, ""},
+		{`var x: i64 = -9223372036854775808i64;`, true, ""},
+		// Two minuses cancel, so the magnitude is judged as positive again.
+		{`var x: i64 = - -9223372036854775807i64;`, true, ""},
+		// Zero has no sign, so a written one is not an unsigned negative.
+		{`var x: u32 = -0u32;`, true, ""},
+		// Hex spellings reach the same bounds.
+		{`var x: u32 = 0xFFFFFFFFu32;`, true, ""},
+		{`var x: i64 = -0x8000000000000000i64;`, true, ""},
+		// One past each bound.
+		{`var x: u8 = 300u8;`, false, "literal 300 does not fit in u8"},
+		{`var x: u8 = 256u8;`, false, "literal 256 does not fit in u8"},
+		{`var x: u32 = 4294967296u32;`, false, "literal 4294967296 does not fit in u32"},
+		{`var x: i32 = 2147483648i32;`, false, "literal 2147483648 does not fit in i32"},
+		{`var x: i64 = 9223372036854775808i64;`, false, "literal 9223372036854775808 does not fit in i64"},
+		{`var x: u32 = 0x100000000u32;`, false, "literal 0x100000000 does not fit in u32"},
+		// The negated side of each signed width is one further down, and one
+		// past THAT is still refused, quoted as written.
+		{`var x: i32 = -2147483649i32;`, false, "literal -2147483649 does not fit in i32"},
+		{`var x: i64 = -9223372036854775809i64;`, false, "literal -9223372036854775809 does not fit in i64"},
+		// A negative literal has no unsigned reading, suffix or not.
+		{`var x: u8 = -1u8;`, false, "unsigned types have no negative values"},
+		{`var x: u64 = -1u64;`, false, "unsigned types have no negative values"},
+		// Double negation is positive, so this one is out of range as written.
+		{`var x: i64 = - -9223372036854775808i64;`, false, "literal 9223372036854775808 does not fit in i64"},
+	}
+	for _, c := range cases {
+		err := checkSource(t, "function main(): i32 { "+c.src+" return 0; }")
+		if c.accepted {
+			if err != nil {
+				t.Errorf("%s: rejected, want accepted: %v", c.src, err)
+			}
+			continue
+		}
+		if err == nil {
+			t.Errorf("%s: accepted, want rejected", c.src)
+			continue
+		}
+		if !strings.Contains(err.Error(), c.wantInMsg) {
+			t.Errorf("%s: message %v does not contain %q", c.src, err, c.wantInMsg)
+		}
+	}
+}
+
+// The suffix rule has to reach every position a literal can be written in, not
+// only a var initialiser: nothing settles a suffixed literal, so there is no
+// settle path to inherit the coverage from.
+func TestSuffixedIntLiteralRangeInEveryPosition(t *testing.T) {
+	rejected := []string{
+		`function take(v: u8): i32 { return 0; }
+function main(): i32 { return take(300u8); }`,
+		`function big(): u8 { return 300u8; }
+function main(): i32 { return 0; }`,
+		`function main(): i32 { var xs = [300u8, 1u8]; return 0; }`,
+		`struct S { v: u8 }
+function main(): i32 { var s = S { v: 300u8 }; return 0; }`,
+		`function main(): i32 { var t = (300u8, 1); return 0; }`,
+		`function main(): i32 { var x = 300u8 + 1u8; return 0; }`,
+		// No annotation to settle against at all.
+		`function main(): i32 { var x = 300u8; return 0; }`,
+	}
+	for _, src := range rejected {
+		errs := checkErrors(t, src)
+		found := false
+		for _, e := range errs {
+			if e.ErrCode == "E047" && strings.Contains(e.Msg, "does not fit in u8") {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("%s: no E047 for the out-of-range u8 literal, got %v", src, errs)
+		}
+	}
+}
