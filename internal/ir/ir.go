@@ -15468,6 +15468,48 @@ func (b *builder) callBody(n *ast.Call) error {
 		pos := b.consumedArrayArgPos[id.Name]
 		return ai < len(pos) && pos[ai]
 	}
+	// The fourth admission, guarded like the third: a FRESH struct / enum
+	// box returned by a user function and handed straight on as an argument
+	// — `id_w(o).put(s)`, a writer threaded through a helper and then
+	// written to — under a POINTER-typed result. resultCannotAliasArg
+	// refuses the whole call, so nothing released the temp: at rc 2 (the
+	// return transfer plus the local it came from) the overwrite of the
+	// local could only dec it, and the box and its buffer were stranded on
+	// every iteration (#8755). The identity guard covers the callee handing
+	// the temp back; a callee that stores it in its result inc'd it at
+	// construction, so the rc-gated drop leaves that owner's count alone.
+	boxTempUnderPointerResult := func(ai int, a ast.Expr) bool {
+		if !ast.RcFreeEnabled || !calleeIsFunc || calleeIsLocal ||
+			b.pairForm[id.Name] || id.Name == "map_new" || calleeRetainsAnyArg(id.Name) {
+			return false
+		}
+		if !ast.IsPointerType(b.exprType(n)) {
+			return false
+		}
+		c, isCall := a.(*ast.Call)
+		if !isCall {
+			return false
+		}
+		if _, named := c.Callee.(*ast.Ident); !named {
+			return false
+		}
+		at := b.exprType(a)
+		switch at.(type) {
+		case ast.StructType, ast.EnumType:
+		default:
+			return false
+		}
+		// The release below is emitOwnedSlotDrop's deep drop, so the type
+		// needs a complete one — the question typeSelfDropSafe already
+		// answers, and the reason a Map is refused: its handle is COW-shared
+		// and reclaimed by emitMapSlotDrop, so dropping it here freed the
+		// table a `for (k, v) in makeMap(3)` was still reading.
+		if !typeSelfDropSafe(at, b.info, map[string]bool{}) {
+			return false
+		}
+		_, owned := b.ownedCallResultType(a)
+		return owned
+	}
 	// The same reclaim for a call THROUGH a function-typed local or param
 	// (#6460). `h([1, 2])` leaked its argument outright — frees=0, not one
 	// short — where the identical literal handed to a named function is
@@ -15500,8 +15542,11 @@ func (b *builder) callBody(n *ast.Call) error {
 	// question — typeCannotCarrySlice, not resultCannotAliasArg.
 	var lentViewSlots []int32
 	// Parallel to argTempSlots: true where the drop must be gated on the
-	// call's result not BEING this temp (consumedArrayArgTemp).
+	// call's result not BEING this temp (consumedArrayArgTemp,
+	// boxTempUnderPointerResult), and where the identity case still owes
+	// the return transfer's count (boxTempUnderPointerResult only).
 	var argTempGuarded []bool
+	var argTempIdentityDec []bool
 	// An `own` (consuming) parameter takes ownership of its argument, so the
 	// callee — not the caller — reclaims a fresh temp passed there. Suppress the
 	// stage-(b) post-call dec at those positions (else the temp is freed twice).
@@ -15534,8 +15579,10 @@ func (b *builder) callBody(n *ast.Call) error {
 			lentViewSlots = append(lentViewSlots, slot)
 			continue
 		}
+		boxTemp := !toOwnParam && !reclaimArgTemps && !reclaimIndirectArgTemps &&
+			!countedArgTemp(ai) && !consumedArrayArgTemp(ai) && boxTempUnderPointerResult(ai, a)
 		guardArgTemp := !toOwnParam && !reclaimArgTemps && !reclaimIndirectArgTemps &&
-			!countedArgTemp(ai) && consumedArrayArgTemp(ai)
+			!countedArgTemp(ai) && (consumedArrayArgTemp(ai) || boxTemp)
 		if (reclaimArgTemps || reclaimIndirectArgTemps || countedArgTemp(ai) ||
 			guardArgTemp) && !toOwnParam {
 			// An owned-temp arg is either a fresh-allocating literal shape
@@ -15555,6 +15602,7 @@ func (b *builder) callBody(n *ast.Call) error {
 				argTempSlots = append(argTempSlots, slot)
 				argTempTypes = append(argTempTypes, tt)
 				argTempGuarded = append(argTempGuarded, guardArgTemp)
+				argTempIdentityDec = append(argTempIdentityDec, boxTemp)
 				continue
 			}
 		}
@@ -15702,7 +15750,7 @@ func (b *builder) callBody(n *ast.Call) error {
 			// path left each buffer untouched, so this returns it to the
 			// incoming count (the inc preceded it; never frees).
 			b.emitGrowBracket(growBracket, OpRcDec, "__fern_rc_dec")
-			b.emitArgTempDropsGuarded(argTempSlots, argTempTypes, argTempGuarded, b.exprType(n))
+			b.emitArgTempDropsGuarded(argTempSlots, argTempTypes, argTempGuarded, argTempIdentityDec, b.exprType(n))
 			b.emitLentViewDrops(lentViewSlots)
 			return nil
 		}
@@ -15844,7 +15892,15 @@ func (b *builder) emitArgTempDrop(slot int32, t ast.Type) {
 // be a pointer cannot be the temp, so it needs no test at all. Unguarded
 // slots drop unconditionally, as before — emitOwnedSlotDrop is net-zero on the
 // operand stack either way.
-func (b *builder) emitArgTempDropsGuarded(slots []int32, types []ast.Type, guarded []bool, resultType ast.Type) {
+//
+// identityDec marks the guarded temps whose callee hands them back WITH a
+// return-transfer inc (a struct / enum box returned through `return b`):
+// there the identity case owes one flat dec — the transfer's count — rather
+// than nothing, or a helper that threads a writer through and returns it
+// at its base case hands every caller a box one count too high (#8755). A
+// consumed-threaded array is handed back bare, so its identity case stays a
+// no-op.
+func (b *builder) emitArgTempDropsGuarded(slots []int32, types []ast.Type, guarded []bool, identityDec []bool, resultType ast.Type) {
 	needGuard := false
 	for i := range slots {
 		if i < len(guarded) && guarded[i] && ast.IsPointerType(resultType) {
@@ -15865,6 +15921,12 @@ func (b *builder) emitArgTempDropsGuarded(slots []int32, types []ast.Type, guard
 			b.emit(Op{Kind: OpNe, Width: WidthPtr})
 			b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
 			b.emitArgTempDrop(slot, types[i])
+			if i < len(identityDec) && identityDec[i] {
+				b.emit(Op{Kind: OpElse})
+				b.emit(Op{Kind: OpLoadLocal, I32: slot})
+				b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
+				b.emit(Op{Kind: OpDrop})
+			}
 			b.emit(Op{Kind: OpEnd})
 			continue
 		}
@@ -19426,6 +19488,14 @@ func typeSelfDropSafeNoStrings(t ast.Type, info *checker.Info, seen map[string]b
 		}
 		return true
 	case ast.EnumType:
+		if ty.Name == "Option" || ty.Name == "Result" {
+			for _, a := range ty.Args {
+				if !typeSelfDropSafeNoStrings(a, info, seen) {
+					return false
+				}
+			}
+			return true
+		}
 		if seen[ty.Name] {
 			return true
 		}
@@ -19482,6 +19552,17 @@ func typeSelfDropSafe(t ast.Type, info *checker.Info, seen map[string]bool) bool
 		}
 		return true
 	case ast.EnumType:
+		// Option / Result are the builtin generics: info.Enums has no
+		// declaration for them, so they are judged by their type arguments
+		// — an `Option[string]` field is as droppable as a string one.
+		if ty.Name == "Option" || ty.Name == "Result" {
+			for _, a := range ty.Args {
+				if !typeSelfDropSafe(a, info, seen) {
+					return false
+				}
+			}
+			return true
+		}
 		if seen[ty.Name] {
 			return true
 		}
