@@ -10,10 +10,14 @@
 // A second arm whose body has a derivable type (a literal, a local) sizes
 // the slot correctly and hides the defect, so every probe here keeps every
 // arm body a bare binder.
+//
+// The TUPLE and payload-SUB-PATTERN spellings of the same shape are pinned
+// by internal/e2e/match_expr_binder_width_test.go rather than here: the
+// self-host types either one's result i32 whatever the binder is (#8657),
+// so a corpus case in those spellings would measure that gap rather than
+// this rule.
 enum One { Only(string) }
 enum Two { Left(string), Right(string) }
-enum Res { Ok1(string), Err1(string) }
-enum Wrap { Box(Res) }
 
 function one_arm(): string {
     var o: One = Only("elem");
@@ -30,33 +34,8 @@ function two_arms(): string {
     };
 }
 
-function tuple_arm(): string {
-    var t: (string, i32) = ("elem", 4);
-    return match (t) {
-        (q, n) => q
-    };
-}
-
-function nested_tuple_arm(): string {
-    var t: (i32, (string, i32)) = (1, ("elem", 4));
-    return match (t) {
-        (a, (q, n)) => q
-    };
-}
-
-function payload_sub_arm(): string {
-    var w: Wrap = Box(Ok1("elem"));
-    return match (w) {
-        Box(Ok1(q)) => q,
-        Box(Err1(r)) => r
-    };
-}
-
 function main(): i32 {
     if (one_arm() != "elem") { return 1; }
     if (two_arms() != "elem") { return 2; }
-    if (tuple_arm() != "elem") { return 3; }
-    if (nested_tuple_arm() != "elem") { return 4; }
-    if (payload_sub_arm() != "elem") { return 5; }
     return 0;
 }

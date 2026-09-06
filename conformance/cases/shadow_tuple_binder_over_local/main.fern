@@ -58,15 +58,18 @@ function variant_binder(): i32 {
     return 0;
 }
 
-// The expression form has the same three gaps.
+// The expression form has the same three gaps. Everything here is `i32`
+// deliberately: same-shape binders share the outer slot just as a string
+// would, so the collision is still observable, and the self-host cannot yet
+// give a tuple match-EXPRESSION a non-i32 result type (#8657).
 function match_expr_tuple_binder(): i32 {
-    var s: string = "outer";
-    var t: (string, i32) = ("elem", 4);
-    var got: string = match (t) {
-        (s, n) => s
+    var n: i32 = 7;
+    var t: (i32, i32) = (3, 4);
+    var got: i32 = match (t) {
+        (n, b) => n + b
     };
-    if (got != "elem") { return 13; }
-    if (s != "outer") { return 14; }
+    if (got != 7) { return 13; }
+    if (n != 7) { return 14; }
     return 0;
 }
 
