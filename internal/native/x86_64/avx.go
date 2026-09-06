@@ -80,7 +80,8 @@ func vexRXB(reg int, rm Operand) (r, x, b bool) {
 // vMovdqu encodes `vmovdqu ymm, ymm/m256` (VEX.256.F3.0F.WIG 6F /r): the
 // unaligned 32-byte load the AVX2 kernels use in place of SSE2's movdqu.
 func (a *Assembler) vMovdqu(ops []Operand) error {
-	if len(ops) != 2 || ops[0].kind != opReg || ops[0].size != 256 {
+	if len(ops) != 2 || ops[0].kind != opReg || ops[0].size != 256 ||
+		!(ops[1].kind == opMem || (ops[1].kind == opReg && ops[1].size == 256)) {
 		return fmt.Errorf("vmovdqu expects ymm, ymm/m256")
 	}
 	dst, src := ops[0], ops[1]
