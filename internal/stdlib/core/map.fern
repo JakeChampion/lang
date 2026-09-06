@@ -640,17 +640,8 @@ function __map_val_cell_bytes(buf: usize): i32 {
 // the cell — the same order __drop_map_str_keys uses. `k as string` is the
 // two-word load on a boxing target, and cellBytes is only ever non-zero
 // there, so one spelling covers every case that reaches it.
-// __map_key_cell_bytes is __map_val_cell_bytes's key-side twin: the size of
-// the cell each key slot points at, or 0 when the slot IS the key. Whether a
-// key boxes is an ABI fact — a string key is a cell on a two-word-string
-// target and the data pointer itself elsewhere — so a caller deciding whether
-// a column needs reclaiming must ask both sides, not just the value's.
-function __map_key_cell_bytes(buf: usize): i32 {
-    return __load_i32(buf + 20);
-}
-
 function __map_free_key_cell(buf: usize, k: usize): void {
-    var cellBytes: i32 = __map_key_cell_bytes(buf);
+    var cellBytes: i32 = __load_i32(buf + 20);
     if (cellBytes == 0) { return; }
     if (k == 0) { return; }
     if (__load_i32(buf + 8) == 1) {
@@ -1038,11 +1029,8 @@ pub function __map_delete_impl(m: usize, k: usize): boolean {
 pub function __map_clear_impl(m: usize): void {
     var buf: usize = __load_ptr(m);
     var cap: i32 = __load_i32(buf);
-    // The loop below frees the key cell as well as the value cell, so it has
-    // to run when EITHER column boxes. Gating on the value alone stranded
-    // every key cell of a Map[string, scalar] on the targets where a string
-    // key IS a cell (#8634).
-    if (__map_val_cell_bytes(buf) != 0 || __map_key_cell_bytes(buf) != 0) {
+    var cellBytes: i32 = __map_val_cell_bytes(buf);
+    if (cellBytes != 0) {
         var len_: i32 = __load_i32(buf + 4);
         var ptrW: i32 = __ptr_width();
         var entryStride: i32 = 2 * ptrW;

@@ -1557,6 +1557,11 @@ function main(): i32 {
 		// The keys are runtime concats, not literals: a literal's data-8
 		// sentinel makes the dec a no-op, so a folded key allocates
 		// nothing and would leave the case green against the bug.
+		//
+		// The receiver is counted BEFORE the clear. `cleared()` reuses the
+		// receiver's buffer, so `m` reads as empty afterwards on all three
+		// engines alike (#8764) — reading it after would pin a semantics
+		// this case has no business deciding.
 		name: "map_string_keys_cleared_frees_key_cells",
 		src: `
 import "core/map";
@@ -1568,8 +1573,9 @@ function round(n: i32): i32 {
     m = m.insert(b, n + 1);
     m = m.insert("gamma" + "-longer-than-sso", n + 2);
     m = m.insert("delta" + "-longer-than-sso", n + 3);
+    var before: i32 = m.len();
     var c: Map[string, i32] = m.cleared();
-    return c.len() + m.len();
+    return before + c.len();
 }
 function main(): i32 {
     var t: i32 = 0;
