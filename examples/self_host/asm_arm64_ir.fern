@@ -644,6 +644,7 @@ pub function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDec
     // Methods get the receiver-type-qualified label `__fn_<Type>.<name>`.
     var label_name: string = fd.name;
     if (fd.receiver_type.len() > 0) { label_name = util.base_type_name(fd.receiver_type) + "." + fd.name; }
+    ircore.lower_failed_refuse(label_name, r);
     irverifygate.verify_or_refuse(label_name, r.ops, r.n_params, r.n_locals, vsigs);
     s = s.write("__fn_" + asmcore.sanitize_label(label_name) + ":\n");
     // Unwind rules for the frame this prologue builds (#7901), the native

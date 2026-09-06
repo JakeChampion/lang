@@ -953,6 +953,22 @@ pub function unsupported_op_refuse(tag: i32, backend: string): string {
     return "";
 }
 
+// lower_failed_refuse ends compilation for a function whose lowering bailed,
+// naming the function and the construct that refused (LowerResult.why). Every
+// backend calls it at the top of its per-function emit: the gated routes
+// (lower_gated) never get this far, but `-assume-eligible` skips the gate by
+// design and the wasm per-unit route has none, so this is where their bails
+// surface. A failed result still carries the PARTIAL op stream up to the bail
+// with n_locals 0, and letting that reach the IR verify gate reports the bail
+// as malformed IR with every local "outside the frame" (#8590) — or on wasm
+// as an elem entry naming a `$<fd>$clo` nothing defines (#7215).
+pub function lower_failed_refuse(name: string, r: irlower.LowerResult): i32 {
+    if (r.ok) { return 0; }
+    eprint("error: " + name + " did not lower: " + r.why + " — the IR path bailed in this function and there is no AST emitter to fall back to (#8590)\n");
+    exit(3);
+    return 0;
+}
+
 // wp_fn_sigs derives the whole-program FnSigs base once. These are the
 // pre-`append_dyn` registries (the expensive O(all_funcs) part); a caller folds
 // in its own module's trait_reqs via irlower.fn_sigs_with_dyn, which is cheap,
