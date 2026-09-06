@@ -14,7 +14,7 @@
 # it being visible; a row going DOWN is progress and also fails, so the
 # improvement gets recorded rather than absorbed.
 #
-# Measured 2026-09-06: 490 fixtures, 419 clean, 71 leaking, 7513
+# Measured 2026-09-06: 492 fixtures, 421 clean, 71 leaking, 7513
 # unpaired allocations. The distribution is heavily skewed — the median
 # leaking fixture is 2, and regex_captures_assert alone is 5987 of the
 # total.
@@ -327,6 +327,7 @@ map_values_str                                       0
 match_arm_tuple                                      0
 match_expr_arm_width                                 1
 match_expr_array                                     0
+match_expr_binder_body                               0
 match_expr_lambda_arm                                0
 match_expr_u32_payload_capturing_arm                 1
 match_multi_arm                                      0
@@ -436,6 +437,7 @@ shadow_rc_binder_forin                               0
 shadow_rc_loop_carried_redecl                        0
 shadow_rc_struct_sibling_scopes                      0
 shadow_rhs_reads_outer                               0
+shadow_tuple_binder_over_const                       0
 shadowed_builtin_variant                             2
 shared_variant_name                                  0
 shared_variant_payload                               0
