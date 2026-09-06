@@ -186,6 +186,7 @@ cross_module_bounded_method                          0
 csv_fields                                           0
 date_iso                                             0
 default_args                                         0
+default_args_const                                   0
 defer_block_form                                     0
 defer_control_flow                                   0
 defer_in_loop                                        0
