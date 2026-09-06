@@ -922,8 +922,8 @@ pub function all_runtime_need_roots(): string[] {
         // Filesystem + process:
         "stat", "lstat", "access", "read_dir", "remove_file", "create_dir_all", "remove_dir_all", "write_file", "write_file_exec",
         "temp_dir", "open_file", "reader", "fd_stat", "reader_seek", "writer_write", "subprocess",
-        // stdin / argv:
-        "read_all_stdin",
+        // stdin / argv / the host's name:
+        "read_all_stdin", "hostname",
         // sockets + readiness (the edge-handler serve loop):
         "tcp_listen", "tcp_accept", "tcp_connect", "tcp_send", "tcp_recv", "udp_send",
         "tcp_close", "tcp_pollable", "poll", "timer_fd",

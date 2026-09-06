@@ -1147,6 +1147,11 @@ pub function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDec
             // same shuffle write_file does.
             s = s.need("heap"); s = s.need("access");
             s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_access\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind_tag == 240) {  // hostname
+            // no args -> __fn___fern_hostname: the node name in ONE fresh
+            // rc-headered string box, pushed in x0.
+            s = s.write("    bl __fn___fern_hostname\n    str x0, [sp, #-16]!\n");
+            s = s.need("heap"); s = s.need("hostname");
         } else if (o.kind_tag == 238) {  // geteuid
             s = s.write("    bl __fn___fern_geteuid\n    str x0, [sp, #-16]!\n");
             s = s.need("geteuid");
@@ -1400,12 +1405,12 @@ pub function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDec
             // (#2649), which pushes a fresh Option[IoError] (always None).
             s = s.need("heap"); s = s.need("reader");
             s = s.write("    bl __fn___fern_reader_close\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
-        } else if (o.kind_tag == 240) {  // fd_stat
+        } else if (o.kind_tag == 241) {  // fd_stat
             // [fd] IS param[0]; the Fern-compiled __fn___fern_fd_stat pushes a
             // fresh Result[FileStat, IoError].
             s = s.need("heap"); s = s.need("reader"); s = s.need("fd_stat");
             s = s.write("    bl __fn___fern_fd_stat\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
-        } else if (o.kind_tag == 241) {  // reader_seek
+        } else if (o.kind_tag == 242) {  // reader_seek
             // [fd][offset][whence] (whence on top) -> Result[i64, IoError]:
             // pop all three and re-push with param[0] (fd) on top, as
             // subprocess does.
@@ -3363,6 +3368,68 @@ function emit_rt_clock_and_print(s: asmcore.EmitState, darwin: boolean): asmcore
             s = emit_ir_runtime_fern_fn(asmcore.rt_src_clock("monotonic_ns", ctgt), s.struct_decls, s);
         }
     }
+    return s;
+}
+
+// emit_rt_hostname_darwin is `hostname()` on arm64-darwin, under the __fn___
+// name the Fern-compiled Linux body carries so the call site cannot tell
+// them apart. XNU has no uname syscall — libc builds one out of sysctl — so
+// this asks sysctl({CTL_KERN, KERN_HOSTNAME}) (BSD 202) directly, six
+// arguments and the carry flag for failure, which is why it is not a
+// __syscallN body: the widest intrinsic takes five. The name lands in a
+// stack buffer; the box is built exactly as `__raw_alloc` + `__raw_string`
+// compile — one 24-byte-headed block from __fern_alloc, bytes copied in,
+// __fern_str_box_hdr stamping the fused header. A refused sysctl is an
+// empty name.
+//
+// Frame: mib (8) + oldlen (8) + 400 bytes of name = 416 below the saved
+// callee registers.
+function emit_rt_hostname_darwin(s: asmcore.EmitState): asmcore.EmitState {
+    s = s.write("__fn___fern_hostname:\n");
+    s = s.write("    stp x29, x30, [sp, #-16]!\n");
+    s = s.write("    mov x29, sp\n");
+    s = s.write("    stp x19, x20, [sp, #-16]!\n");
+    s = s.write("    sub sp, sp, #416\n");
+    s = s.write("    mov w0, #1\n");                 // CTL_KERN
+    s = s.write("    mov w1, #10\n");                // KERN_HOSTNAME
+    s = s.write("    stp w0, w1, [sp]\n");           // mib[2]
+    s = s.write("    mov x0, #384\n");
+    s = s.write("    str x0, [sp, #8]\n");           // oldlen = buffer room
+    s = s.write("    mov x0, sp\n");                 // name
+    s = s.write("    mov x1, #2\n");                 // namelen
+    s = s.write("    add x2, sp, #16\n");            // oldp
+    s = s.write("    add x3, sp, #8\n");             // oldlenp
+    s = s.write("    mov x4, #0\n");                 // newp
+    s = s.write("    mov x5, #0\n");                 // newlen
+    s = s.write("    mov x16, #202\n");
+    s = s.write("    svc #0x80\n");
+    s = s.write("    mov x20, #0\n");                // length
+    s = s.write("    b.cs .Lhostname_box\n");        // carry set = error: empty
+    s = s.write("    add x19, sp, #16\n");           // name bytes
+    s = s.write(".Lhostname_strlen:\n");
+    s = s.write("    ldrb w0, [x19, x20]\n");
+    s = s.write("    cbz w0, .Lhostname_box\n");
+    s = s.write("    add x20, x20, #1\n");
+    s = s.write("    b .Lhostname_strlen\n");
+    s = s.write(".Lhostname_box:\n");
+    s = s.write("    add x0, x20, #24\n");
+    s = s.write("    bl __fern_alloc\n");
+    s = s.write("    add x0, x0, #24\n");            // data (raw_alloc's shape)
+    s = s.write("    mov x1, #0\n");
+    s = s.write(".Lhostname_copy:\n");
+    s = s.write("    cmp x1, x20\n");
+    s = s.write("    b.hs .Lhostname_copied\n");
+    s = s.write("    ldrb w2, [x19, x1]\n");
+    s = s.write("    strb w2, [x0, x1]\n");
+    s = s.write("    add x1, x1, #1\n");
+    s = s.write("    b .Lhostname_copy\n");
+    s = s.write(".Lhostname_copied:\n");
+    s = s.write("    mov x1, x20\n");
+    s = s.write("    bl __fern_str_box_hdr\n");       // x0 = box
+    s = s.write("    add sp, sp, #416\n");
+    s = s.write("    ldp x19, x20, [sp], #16\n");
+    s = s.write("    ldp x29, x30, [sp], #16\n");
+    s = s.write("    ret\n");
     return s;
 }
 
@@ -6250,6 +6317,13 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     if (s.has_need("getegid")) {
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_getid(tgt, "getegid"), s.struct_decls, s);
     }
+    if (s.has_need("hostname")) {
+        if (darwin) {
+            s = emit_rt_hostname_darwin(s);
+        } else {
+            s = emit_ir_runtime_fern_fn(asmcore.rt_src_hostname(tgt), s.struct_decls, s);
+        }
+    }
     if (s.has_need("isatty")) {
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_isatty(tgt), s.struct_decls, s);
     }
@@ -6498,6 +6572,11 @@ function emit_rt_float_transcendentals(s: asmcore.EmitState): asmcore.EmitState 
     s = s.write(".Lfc_lg5: .double 1.818357216161805012e-01\n");
     s = s.write(".Lfc_lg6: .double 1.531383769920937332e-01\n");
     s = s.write(".Lfc_lg7: .double 1.479819860511658591e-01\n");
+    // log's subnormal prescale. A subnormal stores exponent 0 — its magnitude
+    // is in the mantissa's leading zeros — so the reduction x = 2^k*m has to
+    // scale it into the normal range first and take the 54 back off k.
+    s = s.write(".Lfc_two54: .double 1.80143985094819840000e+16\n");
+    s = s.write(".Lfc_minnorm: .double 2.2250738585072014e-308\n");
     s = s.write(".Lfc_expovf: .double 709.782712893383973096\n");
     s = s.write(".Lfc_expunf: .double -745.133219101941108420\n");
     s = s.write("    .text\n");
@@ -6805,10 +6884,21 @@ function emit_rt_float_transcendentals(s: asmcore.EmitState): asmcore.EmitState 
     s = s.write("    fmov d1, x14\n");
     s = s.write("    fcmp d0, d1\n");
     s = s.write("    b.eq .Llog_ret\n");
+    // Subnormal prescale; x13 carries the k adjustment, dead until the
+    // mantissa mask below.
+    s = s.write("    mov x13, #0\n");
+    s = emit_ldc(s, "d1", ".Lfc_minnorm");
+    s = s.write("    fcmp d0, d1\n");
+    s = s.write("    b.ge .Llog_noscale\n");
+    s = emit_ldc(s, "d1", ".Lfc_two54");
+    s = s.write("    fmul d0, d0, d1\n");
+    s = s.write("    mov x13, #54\n");
+    s = s.write(".Llog_noscale:\n");
     s = s.write("    fmov x10, d0\n");
     s = s.write("    lsr x11, x10, #52\n");
     s = s.write("    and x11, x11, #0x7ff\n");
     s = s.write("    sub x11, x11, #1023\n");
+    s = s.write("    sub x11, x11, x13\n");
     s = s.write("    mov x13, #1\n");
     s = s.write("    lsl x13, x13, #52\n");
     s = s.write("    sub x13, x13, #1\n");

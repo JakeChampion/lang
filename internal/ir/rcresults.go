@@ -135,6 +135,9 @@ var rcResultOwned = map[string]bool{
 	// Snapshots the string builder into a fresh rc=1 string and rewinds
 	// it, so the result aliases nothing the builder goes on to overwrite.
 	"strbuf_take": true,
+	// The kernel's node name copied into a fresh rc=1 string; the empty
+	// answer is the same sentinel / inline form the string helpers use.
+	"hostname": true,
 
 	// Byte buffers in the __alloc_u8 box shape.
 	"__fern_random_bytes": true,

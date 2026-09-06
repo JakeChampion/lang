@@ -138,6 +138,13 @@ var gatedBuiltins = map[string]string{
 	"geteuid": "userid",
 	"getegid": "userid",
 
+	// The host's own name — the kernel node name gethostname(2) reports.
+	// A hosted target asks its kernel; WASI has no host identity and
+	// answers the empty string, which is a fact about a component rather
+	// than a fiction (see docs/FREESTANDING-CORE.md on why that differs
+	// from `userid`'s 0). A freestanding artifact has nothing to ask.
+	"hostname": "host",
+
 	// The C-ABI FFI shims (#4375). Enumerated rather than matched by
 	// prefix so this table stays the one place the classification lives —
 	// the checker registers exactly these fifteen names.

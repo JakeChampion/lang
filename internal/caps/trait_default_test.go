@@ -34,6 +34,7 @@ type traitDefaultCase struct {
 
 var traitDefaultCases = []traitDefaultCase{
 	{"env", "env", `env("HOME");`},
+	{"env", "hostname", `hostname();`},
 	{"fs", "read_file", `read_file("/etc/hostname");`},
 	{"net", "tcp_connect", `tcp_connect(1, 80);`},
 	{"random", "random_i32", `random_i32();`},

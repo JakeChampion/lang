@@ -797,6 +797,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesEgid {
 		g.emitIdRuntime("__fern_getegid", "getegid")
 	}
+	if g.usesHostname {
+		g.emitHostnameRuntime()
+	}
 	if g.usesRemoveDirAll {
 		g.emitRemoveDirAllRuntime()
 	}
@@ -6915,6 +6918,7 @@ func (g *generator) emitFloatTranscendentalsRuntime() {
 	//   ln x = k·ln2_hi - ((hfsq - (s·(hfsq+R) + k·ln2_lo)) - f)
 	fn("__fern_log_f64")
 	logRet, logNaN, logNegInf := g.freshLabel("logRet"), g.freshLabel("logNaN"), g.freshLabel("logNegInf")
+	logNoScale := g.freshLabel("logNoScale")
 	// Domain guards. The bit-twiddling below happily extracts an exponent
 	// from 0 or +Inf and carries on, so log(0) returned -709.09 and
 	// log(+Inf) returned 709.78 — finite garbage. log(-0) == log(0) ==
@@ -6929,10 +6933,24 @@ func (g *generator) emitFloatTranscendentalsRuntime() {
 	g.emit("fcmp d0, d1")
 	g.emit("b.eq %s", logRet) // x == +Inf → itself
 	base()
+	// A subnormal stores exponent 0 — its magnitude is in the mantissa's
+	// leading zeros — so the field below reports the smallest normal
+	// exponent for every one of them. Scale into the normal range and take
+	// the 54 back off k. x13 carries the adjustment; it is dead until the
+	// mantissa mask below.
+	g.emit("mov x13, #0")
+	ldc("d1", "minnorm")
+	g.emit("fcmp d0, d1")
+	g.emit("b.ge %s", logNoScale)
+	ldc("d1", "two54")
+	g.emit("fmul d0, d0, d1")
+	g.emit("mov x13, #54")
+	g.label(logNoScale)
 	g.emit("fmov x10, d0")
 	g.emit("lsr x11, x10, #52")
 	g.emit("and x11, x11, #0x7ff")
 	g.emit("sub x11, x11, #1023") // k
+	g.emit("sub x11, x11, x13")
 	g.emit("mov x13, #1")
 	g.emit("lsl x13, x13, #52")
 	g.emit("sub x13, x13, #1")
@@ -9581,6 +9599,92 @@ func (g *generator) emitIdRuntime(sym, sysname string) {
 	g.line(".ltorg")
 }
 
+// emitHostnameRuntime emits `__fern_hostname()` → a fresh rc string
+// holding the kernel's node name.
+//
+// Linux: uname(2) into a stack buffer; the 390-byte struct utsname is
+// six 65-byte fields and nodename is the second, NUL-terminated within
+// it. Darwin has no uname syscall — libc builds it from sysctl — so it
+// asks sysctl({CTL_KERN, KERN_HOSTNAME}) directly, which copies the
+// NUL-terminated name and its length out. A refused call or an empty
+// name answers the empty string.
+//
+// Frame: fp/lr (16) + x19/x20 (16) + 400 bytes of buffer = 432. On
+// Darwin the buffer holds the two-int mib at +32, the size_t length at
+// +40 and the name from +48.
+func (g *generator) emitHostnameRuntime() {
+	const ctlKern, kernHostname, darSysctl = 1, 10, 202
+	const linuxUname = 160
+	g.line("")
+	g.line(".global __fern_hostname")
+	g.typeDirective("__fern_hostname")
+	g.label("__fern_hostname")
+	g.emit("stp x29, x30, [sp, #-432]!")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	if g.darwin {
+		g.emit("mov w0, #%d", ctlKern)
+		g.emit("mov w1, #%d", kernHostname)
+		g.emit("stp w0, w1, [sp, #32]") // mib[2]
+		g.emit("mov x0, #384")
+		g.emit("str x0, [sp, #40]") // oldlen = buffer room
+		g.emit("add x0, sp, #32")   // name
+		g.emit("mov x1, #2")        // namelen
+		g.emit("add x2, sp, #48")   // oldp
+		g.emit("add x3, sp, #40")   // oldlenp
+		g.emit("mov x4, #0")        // newp
+		g.emit("mov x5, #0")        // newlen
+		g.emit("mov x16, #%d", darSysctl)
+		g.emit("svc #0x80")
+		g.emit("b.cs .Lhn_empty") // carry set = error
+		g.emit("add x19, sp, #48")
+	} else {
+		g.emit("add x0, sp, #32")
+		g.emit("mov x8, #%d", linuxUname)
+		g.emit("svc #0")
+		g.emit("cbnz x0, .Lhn_empty") // 0 on success, -errno otherwise
+		g.emit("add x19, sp, #97")    // buffer + 65 = nodename
+	}
+	g.emit("mov x20, #0")
+	g.label(".Lhn_strlen")
+	g.emit("ldrb w1, [x19, x20]")
+	g.emit("cbz w1, .Lhn_len")
+	g.emit("add x20, x20, #1")
+	g.emit("b .Lhn_strlen")
+	g.label(".Lhn_len")
+	g.emit("cbz x20, .Lhn_empty")
+	// Heap form via the rc-headered allocator, payload + NUL, the same
+	// shape __fern_env builds on each ABI.
+	g.emit("add w0, w20, #1")
+	g.emit("bl __fern_alloc_rc1") // x0 = data
+	if !ast.UseTwoWordStrings(8) {
+		g.emitStrLenStore("w20", "x0")
+	}
+	g.emit("strb wzr, [x0, x20]")
+	g.emit("mov x1, x19") // src
+	g.emit("mov x19, x0") // keep dst across the copy
+	g.emit("mov x2, x20")
+	g.emit("bl __fern_memcpy")
+	g.emit("mov x0, x19")
+	if ast.UseTwoWordStrings(8) {
+		g.emit("mov w1, w20")
+	}
+	g.emit("b .Lhn_done")
+	g.label(".Lhn_empty")
+	if ast.UseTwoWordStrings(8) {
+		g.emit("mov x0, xzr")
+		g.emit("movz x1, #0x8000, lsl #48")
+	} else {
+		g.emitStrEmpty("x0")
+	}
+	g.label(".Lhn_done")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #432")
+	g.emit("ret")
+	g.sizeDirective("__fern_hostname")
+	g.line(".ltorg")
+}
+
 // emitRemoveDirAllRuntime emits `__fern_remove_dir_all(
 // path_data, path_len)` in (x0, x1) → Option[IoError] — a
 // recursive `rm -rf`, the arm64 sibling of the x86-64 helper of
@@ -10970,6 +11074,7 @@ type generator struct {
 	usesAccess       bool
 	usesEuid         bool
 	usesEgid         bool
+	usesHostname     bool
 	usesRemoveDirAll bool
 	// usesCreateDirAll pulls in the `mkdir -p` runtime — the only
 	// builtin that can BUILD a directory tree (#6749).
@@ -12156,7 +12261,7 @@ func returnIsString(g *generator, name string) bool {
 		// (e.g. for OpReturn of an aliased string). __fern_str_dec
 		// is deliberately absent — it returns only `data` (x0).
 		return true
-	case "string_from_bytes_unchecked", "__str_slice", "strbuf_take":
+	case "string_from_bytes_unchecked", "__str_slice", "strbuf_take", "hostname":
 		// Built-in runtime helpers that return string directly.
 		// NOT in this list: `env` / `read_file` / `read_line` /
 		// `__method_Reader_read_line` / etc — those return
@@ -15103,6 +15208,11 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		case "getegid":
 			target = "__fern_getegid"
 			g.usesEgid = true
+		case "hostname":
+			target = "__fern_hostname"
+			g.usesHostname = true
+			g.usesAlloc = true
+			g.usesMemcpy = true
 		case "remove_dir_all":
 			// remove_dir_all(path): Option[IoError] — recursive
 			// rm -rf (openat + getdents64 + unlinkat, self-

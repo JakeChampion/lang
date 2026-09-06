@@ -1890,6 +1890,14 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		Params: nil,
 		Result: ast.NumberType{Width: 32, Signed: false},
 	}
+	// hostname(): the kernel's node name — what gethostname(2)
+	// answers: uname(2)'s nodename on Linux, kern.hostname on
+	// Darwin. A fresh string each call. Empty where the target
+	// has no host identity (WASI) or the kernel refuses to say.
+	c.info.FuncSigs["hostname"] = &ast.FuncType{
+		Params: nil,
+		Result: ast.StringType{},
+	}
 	// remove_file(path): Result[void, IoError] — unlink the file.
 	// `Ok(())` on success, `Err(e)` on failure (mirrors
 	// `write_file`). Removing a non-existent file is an
@@ -5714,10 +5722,13 @@ type checker struct {
 	seenDiags map[diagKey]bool
 	// wideLits are the integer literals past i64 max seen so far, each once
 	// — see checkUnsettledWideLiterals.
-	wideLits  []wideLit
-	wideSeen  map[*ast.NumberLit]bool
-	current   *ast.FuncDecl
-	loopDepth int
+	wideLits []wideLit
+	wideSeen map[*ast.NumberLit]bool
+	// negatedLits records, per integer literal, whether the source wrote it
+	// under an odd number of unary minuses — see markLiteralSign.
+	negatedLits map[*ast.NumberLit]bool
+	current     *ast.FuncDecl
+	loopDepth   int
 	// tryConvN uniquifies the temp-var name in the error-converting `?`
 	// desugar (TryOp.Lowered). See #3234.
 	tryConvN int
@@ -13420,13 +13431,19 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				c.wideSeen = map[*ast.NumberLit]bool{}
 			}
 			c.wideSeen[n] = true
-			c.wideLits = append(c.wideLits, wideLit{lit: n, path: c.currentModule(), suffixed: n.Width != 0})
+			c.wideLits = append(c.wideLits, wideLit{lit: n, path: c.currentModule()})
 		}
 		if n.IsFloat {
 			return ast.FloatType{Width: n.FloatWidth}
 		}
 		if n.Width != 0 {
-			return ast.NumberType{Width: n.Width, Signed: !n.IsUnsigned}
+			// A typed suffix pins the width in the parser, so no settling
+			// hint ever reaches this literal and nothing else would judge
+			// its range. The sign lives on the enclosing unary, recorded by
+			// markLiteralSign before the descent that got here.
+			t := ast.NumberType{Width: n.Width, Signed: !n.IsUnsigned}
+			c.checkLiteralFits(n, t, c.negatedLits[n])
+			return t
 		}
 		return ast.NumberType{Polymorphic: true}
 	case *ast.DowncastExpr:
@@ -15208,6 +15225,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		c.errfCode(n.P, "E041", "unknown binary operator %q", n.Op)
 		return nil
 	case *ast.Unary:
+		c.markLiteralSign(n, false)
 		t := c.checkExpr(n.Operand, s)
 		switch n.Op {
 		case "-":
@@ -17131,6 +17149,30 @@ func (c *checker) unsettledIntLitExceedsI32(e ast.Expr, negated bool) bool {
 	return false
 }
 
+// markLiteralSign records the sign the source wrote for the literal at the end
+// of a `-`/`+` chain. A NumberLit holds only its magnitude, and checkExpr sees
+// it with no view of its parent, so the range check reads the bit from here.
+// The outermost unary is checked first, so an entry already present is the
+// whole chain's verdict and `- -5` stays positive.
+func (c *checker) markLiteralSign(e ast.Expr, negated bool) {
+	switch x := e.(type) {
+	case *ast.Unary:
+		switch x.Op {
+		case "-":
+			c.markLiteralSign(x.Operand, !negated)
+		case "+":
+			c.markLiteralSign(x.Operand, negated)
+		}
+	case *ast.NumberLit:
+		if c.negatedLits == nil {
+			c.negatedLits = map[*ast.NumberLit]bool{}
+		}
+		if _, seen := c.negatedLits[x]; !seen {
+			c.negatedLits[x] = negated
+		}
+	}
+}
+
 // checkLiteralFits reports E047 when the literal, as the source wrote it, is
 // outside the range of the integer type it has settled to.
 func (c *checker) checkLiteralFits(lit *ast.NumberLit, t ast.NumberType, negated bool) {
@@ -17144,28 +17186,19 @@ func (c *checker) checkLiteralFits(lit *ast.NumberLit, t ast.NumberType, negated
 // so it is valid only once some context has settled it: one still unsettled
 // after every body is checked would lower as the i32 default and has to be
 // refused instead — a tuple element, an array element or a comparison operand
-// gets no settling hint. A literal typed by its suffix never settles, so it is
-// judged against that type; only one past u64 can fail there.
+// gets no settling hint.
 type wideLit struct {
-	lit      *ast.NumberLit
-	path     string
-	suffixed bool
+	lit  *ast.NumberLit
+	path string
 }
 
 func (c *checker) checkUnsettledWideLiterals() {
 	for _, w := range c.wideLits {
 		lit := w.lit
-		t := ast.NumberType{Width: 32, Signed: true}
-		switch {
-		case w.suffixed:
-			if !lit.ExceedsU64 {
-				continue
-			}
-			t = ast.NumberType{Width: lit.Width, Signed: !lit.IsUnsigned}
-		case lit.Width != 0 || lit.IsFloat:
+		if lit.Width != 0 || lit.IsFloat {
 			continue
 		}
-		if msg := ast.IntLitOutOfRange(lit, false, t); msg != "" {
+		if msg := ast.IntLitOutOfRange(lit, c.negatedLits[lit], ast.NumberType{Width: 32, Signed: true}); msg != "" {
 			c.report(w.path, lit.P, "E047", msg)
 		}
 	}

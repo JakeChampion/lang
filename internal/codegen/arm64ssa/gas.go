@@ -1063,6 +1063,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"access":                        emitAccessHelper,
 	"geteuid":                       emitIdHelper("geteuid", 175),
 	"getegid":                       emitIdHelper("getegid", 177),
+	"hostname":                      emitHostnameHelper,
 	"monotonic_ns":                  emitClockHelper("monotonic_ns", clockMonotonic, 1_000_000_000, 1),
 	"now_unix_ms":                   emitClockHelper("now_unix_ms", clockRealtime, 1_000, 1_000_000),
 	"sleep_ms":                      emitSleepMsHelper,
@@ -1288,10 +1289,24 @@ func emitLogF64Helper(w func(string, ...any)) {
 	w("\tfmov d1, x14")
 	w("\tfcmp d0, d1")
 	w("\tb.eq .Lssa_log_ret")
+	// A subnormal stores exponent 0 — its magnitude is in the mantissa's
+	// leading zeros — so the field below reports the smallest normal
+	// exponent for every one of them. Scale into the normal range and take
+	// the 54 back off k. x13 carries the adjustment; it is dead until the
+	// mantissa mask below.
+	w("\tmov x13, #0")
+	ldc("d1", ".Lfc_minnorm")
+	w("\tfcmp d0, d1")
+	w("\tb.ge .Lssa_log_noscale")
+	ldc("d1", ".Lfc_two54")
+	w("\tfmul d0, d0, d1")
+	w("\tmov x13, #54")
+	w(".Lssa_log_noscale:")
 	w("\tfmov x10, d0")
 	w("\tlsr x11, x10, #52")
 	w("\tand x11, x11, #0x7ff")
 	w("\tsub x11, x11, #1023")
+	w("\tsub x11, x11, x13")
 	w("\tmov x13, #1")
 	w("\tlsl x13, x13, #52")
 	w("\tsub x13, x13, #1")
@@ -1869,6 +1884,57 @@ func emitIdHelper(name string, sysno int) func(func(string, ...any)) {
 		w("\tsvc #0")
 		w("\tret")
 	}
+}
+
+// emitHostnameHelper writes hostname() → a fresh single-word rc string
+// (rc=1@base, len@base+4, data@base+8, +NUL) holding the kernel's node
+// name: uname(2) (160) into a stack buffer, nodename at offset 65 of the
+// 390-byte struct utsname. A refused uname answers a zero-length string,
+// built the same way. x9 = source bytes, x10 = length, both held across
+// the heap guard, which preserves everything but x29/x30.
+func emitHostnameHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("hostname"))
+	w("\tsub sp, sp, #400")
+	w("\tmov x0, sp")
+	w("\tmov x8, #160") // uname
+	w("\tsvc #0")
+	w("\tmov x9, sp")
+	w("\tmov x10, #0")
+	w("\tcbnz x0, .Lssa_hn_alloc") // refused: an empty name
+	w("\tadd x9, sp, #65")         // nodename
+	w(".Lssa_hn_slen:")
+	w("\tldrb w11, [x9, x10]")
+	w("\tcbz w11, .Lssa_hn_alloc")
+	w("\tadd x10, x10, #1")
+	w("\tb .Lssa_hn_slen")
+	w(".Lssa_hn_alloc:")
+	w("\tadrp x12, %s", heapPtrSym)
+	w("\tadd x12, x12, #:lo12:%s", heapPtrSym)
+	w("\tldr x13, [x12]")
+	w("\tadd x13, x13, #15")
+	w("\tand x13, x13, #-16") // base
+	w("\tadd x14, x10, #9")   // header(8) + len + NUL(1)
+	w("\tadd x15, x13, x14")
+	w("\tstr x15, [x12]") // bump
+	emitHeapGuardCall(w)
+	w("\tmov w14, #1")
+	w("\tstr w14, [x13]")     // rc = 1
+	w("\tstr w10, [x13, #4]") // len
+	w("\tadd x16, x13, #8")   // data
+	w("\tmov w6, #0")
+	w(".Lssa_hn_cp:")
+	w("\tcmp w6, w10")
+	w("\tb.hs .Lssa_hn_cpdone")
+	w("\tldrb w7, [x9, x6]")
+	w("\tstrb w7, [x16, x6]")
+	w("\tadd w6, w6, #1")
+	w("\tb .Lssa_hn_cp")
+	w(".Lssa_hn_cpdone:")
+	w("\tstrb wzr, [x16, x10]") // NUL
+	w("\tmov x0, x16")
+	w("\tadd sp, sp, #400")
+	w("\tret")
 }
 
 // emitRandomBytesHelper writes random_bytes(n) → a fresh u8[] of n
@@ -2697,6 +2763,7 @@ var heapUsingHelpers = map[string]bool{
 	"stat":                          true,
 	"lstat":                         true,
 	"access":                        true,
+	"hostname":                      true,
 	"string_from_bytes_unchecked":   true,
 	"__str_slice":                   true,
 	"args":                          true,

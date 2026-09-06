@@ -466,13 +466,15 @@ func checkLiteralRange(cd *ast.ConstDecl) []error {
 	walkIntLits(cd.Value, false, true, func(lit *ast.NumberLit, negated, typed bool) {
 		t := declared
 		switch {
-		case typed && hasType && lit.Width == 0:
+		case lit.Width != 0 && !lit.IsFloat:
+			// A typed suffix pins the width in the parser, so the const's
+			// declared type never applies to the literal: judge it against
+			// the type its suffix names.
+			t = ast.NumberType{Width: lit.Width, Signed: !lit.IsUnsigned}
+		case typed && hasType:
 		case lit.ExceedsU64:
 			// Nothing holds it; name the type it would otherwise fold at.
 			t = ast.NumberType{Width: 64, Signed: true}
-			if lit.Width != 0 {
-				t = ast.NumberType{Width: lit.Width, Signed: !lit.IsUnsigned}
-			}
 		default:
 			return
 		}

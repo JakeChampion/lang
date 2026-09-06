@@ -911,6 +911,36 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"literal-i32-max-ok", "function main(): i32 { var x: i32 = 2147483647; return 0; }\n", nil},
 		{"literal-i32-maxplus1", "function main(): i32 { var x: i32 = 2147483648; return 0; }\n", []string{"E047"}},
 		{"literal-fits-i32-ok", "function main(): i32 { var x: i32 = 2000000000; return 0; }\n", nil},
+		// A typed suffix pins the width in the parser, so nothing settles the
+		// literal and neither checker judged its range (#8639). The sign comes
+		// from the enclosing unary, so the most negative value of each signed
+		// width keeps its only spelling and a `-` on an unsigned one is refused.
+		{"literal-suffix-u8-over", "function main(): i32 { var x: u8 = 300u8; return 0; }\n", []string{"E047"}},
+		{"literal-suffix-u8-max-ok", "function main(): i32 { var x: u8 = 255u8; return 0; }\n", nil},
+		{"literal-suffix-u8-negative", "function main(): i32 { var x: u8 = -1u8; return 0; }\n", []string{"E047"}},
+		{"literal-suffix-u32-over", "function main(): i32 { var x: u32 = 4294967296u32; return 0; }\n", []string{"E047"}},
+		{"literal-suffix-u32-max-ok", "function main(): i32 { var x: u32 = 4294967295u32; return 0; }\n", nil},
+		{"literal-suffix-u64-max-ok", "function main(): i32 { var x: u64 = 18446744073709551615u64; return 0; }\n", nil},
+		{"literal-suffix-u64-negative", "function main(): i32 { var x: u64 = -1u64; return 0; }\n", []string{"E047"}},
+		{"literal-suffix-i32-over", "function main(): i32 { var x: i32 = 2147483648i32; return 0; }\n", []string{"E047"}},
+		{"literal-suffix-i32-min-ok", "function main(): i32 { var x: i32 = -2147483648i32; return 0; }\n", nil},
+		{"literal-suffix-i32-under", "function main(): i32 { var x: i32 = -2147483649i32; return 0; }\n", []string{"E047"}},
+		{"literal-suffix-i64-over", "function main(): i32 { var x: i64 = 9223372036854775808i64; return 0; }\n", []string{"E047"}},
+		{"literal-suffix-i64-min-ok", "function main(): i32 { var x: i64 = -9223372036854775808i64; return 0; }\n", nil},
+		// Two minuses cancel, so the magnitude is judged as positive again.
+		{"literal-suffix-double-neg", "function main(): i32 { var x: i64 = - -9223372036854775808i64; return 0; }\n", []string{"E047"}},
+		{"literal-suffix-double-neg-ok", "function main(): i32 { var x: i64 = - -5i64; return 0; }\n", nil},
+		// Hex spellings reach the same bounds.
+		{"literal-suffix-hex-u32-over", "function main(): i32 { var x: u32 = 0x100000000u32; return 0; }\n", []string{"E047"}},
+		{"literal-suffix-hex-u32-max-ok", "function main(): i32 { var x: u32 = 0xFFFFFFFFu32; return 0; }\n", nil},
+		// Nothing settles a suffixed literal, so the rule has to reach every
+		// position one can be written in — not only a var initialiser.
+		{"literal-suffix-arg", "function take(v: u8): i32 { return 0; }\nfunction main(): i32 { return take(300u8); }\n", []string{"E047"}},
+		{"literal-suffix-struct-field", "struct S { v: u8 }\nfunction main(): i32 { var s = S { v: 300u8 }; return 0; }\n", []string{"E047"}},
+		{"literal-suffix-unannotated", "function main(): i32 { var x = 300u8; return 0; }\n", []string{"E047"}},
+		// A quoted literal rides the same node with its spelling in `raw`; it is
+		// not a written numeral and no range rule applies to it.
+		{"literal-byte-quoted-ok", "function main(): i32 { var b: u8 = b'0'; return b as i32; }\n", nil},
 		// A wide literal inside an unannotated binding's arithmetic, or a cast
 		// operand, widens the whole expression to i64 rather than being judged
 		// against the i32 default (#8668) — both checkers are silent.

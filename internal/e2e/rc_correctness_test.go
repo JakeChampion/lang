@@ -1541,6 +1541,50 @@ function main(): i32 {
 		// ("value") + key.len()=3 ("key") + other.len()=3 ("xyz") = 11; 200x
 		// churn → 2200. A double-free / UAF on a key or value buffer trips
 		// the checksum or the underflow detector.
+		// #8634: `.cleared()` frees the key cell as well as the value
+		// cell, but __map_clear_impl gated the whole loop on
+		// __map_val_cell_bytes alone. A Map[string, scalar] has an
+		// UNBOXED value column, so that size is 0 and the loop never ran
+		// — every boxed key cell was stranded.
+		//
+		// It shows only where a string key IS a cell. On the native
+		// single-word ABI the key slot holds the string's own data
+		// pointer and there is no cell to leak, which is why x86-64 was
+		// clean throughout and the row is an arm64 + wasm one. Measured
+		// before the fix: arm64 leaked 6400 bytes in 400 blocks over this
+		// case (400 key cells at 16 bytes), x86-64 zero.
+		//
+		// The keys are runtime concats, not literals: a literal's data-8
+		// sentinel makes the dec a no-op, so a folded key allocates
+		// nothing and would leave the case green against the bug.
+		//
+		// The receiver is counted BEFORE the clear. `cleared()` reuses the
+		// receiver's buffer, so `m` reads as empty afterwards on all three
+		// engines alike (#8764) — reading it after would pin a semantics
+		// this case has no business deciding.
+		name: "map_string_keys_cleared_frees_key_cells",
+		src: `
+import "core/map";
+function round(n: i32): i32 {
+    var m: Map[string, i32] = map_new(16);
+    var a: string = "alpha" + "-longer-than-sso";
+    var b: string = "beta" + "-longer-than-sso";
+    m = m.insert(a, n);
+    m = m.insert(b, n + 1);
+    m = m.insert("gamma" + "-longer-than-sso", n + 2);
+    m = m.insert("delta" + "-longer-than-sso", n + 3);
+    var before: i32 = m.len();
+    var c: Map[string, i32] = m.cleared();
+    return before + c.len();
+}
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 50) { t = t + round(i); i = i + 1; }
+    return (t - 200) + __rc_underflow_count();
+}`,
+	},
+	{
 		name: "map_string_keys_churn_free",
 		src: `
 import "core/int";

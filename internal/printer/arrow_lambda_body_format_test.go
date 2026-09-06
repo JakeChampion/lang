@@ -65,3 +65,54 @@ func TestFormatArrowLambdaBodyShapes(t *testing.T) {
 		})
 	}
 }
+
+// An arrow lambda's return annotation is followed by the lambda's own `=>`, so
+// the type parser reserves the top-level function-type arrow there (#8706,
+// #8717). A function-typed return therefore has to be reprinted with its
+// grouping parens: without them `(p: i32): (i32) => (i32, i32) => …` re-parses
+// with the wrong split, which is #7338's class.
+func TestFormatArrowLambdaReturnTypeParens(t *testing.T) {
+	for _, tc := range []struct{ name, in, want string }{
+		{
+			"tuple return", `function main(): i32 { var g = (): (string, i32) => { return ("ab", 7); }; var t = g(); return t.1; }`,
+			"  var g = (): (string, i32) => (\"ab\", 7);\n",
+		},
+		{
+			// A single-element annotation is grouping, and prints as the type
+			// it groups.
+			"grouped scalar return", `function main(): i32 { var g = (): (i32) => { return 7; }; return g(); }`,
+			"  var g = (): i32 => 7;\n",
+		},
+		{
+			"function return keeps its parens", `function main(): i32 { var h = (p: i32): ((i32) => i32) => (q: i32) => p + q; return h(1)(2); }`,
+			"  var h = (p: i32): ((i32) => i32) => (q: i32) => p + q;\n",
+		},
+		{
+			// Written bare, it parses — the greedy read finds the lambda's
+			// arrow after the result — but it must not print back bare.
+			"function return gains parens", `function main(): i32 { var h = (p: i32): (i32) => i32 => (q: i32) => p + q; return h(1)(2); }`,
+			"  var h = (p: i32): ((i32) => i32) => (q: i32) => p + q;\n",
+		},
+		{
+			"function returning a tuple", `function main(): i32 { var m = (p: i32): ((i32) => (i32, i32)) => (q: i32) => (p, q); var r = m(1)(2); return r.0 + r.1; }`,
+			"  var m = (p: i32): ((i32) => (i32, i32)) => (q: i32) => (p, q);\n",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := formatSrc(t, tc.in)
+			if !strings.Contains(got, tc.want) {
+				t.Errorf("formatted output is missing\n%q\ngot:\n%s", tc.want, got)
+			}
+			prog, err := parser.Parse(got)
+			if err != nil {
+				t.Fatalf("reparse: %v", err)
+			}
+			if _, err := checker.Check(prog); err != nil {
+				t.Errorf("formatted program no longer checks: %v", err)
+			}
+			if second := formatSrc(t, got); second != got {
+				t.Errorf("format not idempotent:\nfirst:\n%s\nsecond:\n%s", got, second)
+			}
+		})
+	}
+}

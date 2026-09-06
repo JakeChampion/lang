@@ -25,18 +25,17 @@ on:
     paths:
       - "cmd/fern-wasm/**"
       - "web/**"
-      - "internal/ast/**"
-      - "internal/checker/**"
-      - "internal/constfold/**"
-      - "internal/diag/**"
-      - "internal/interp/**"
-      - "internal/lexer/**"
-      - "internal/lsp/**"
-      - "internal/modload/**"
-      - "internal/monomorph/**"
-      - "internal/parser/**"
-      - "internal/prelude/**"
-      - "internal/treeshake/**"
+      # EVERY internal package, not an enumeration of the ones somebody
+      # thought mattered. The enumeration listed `internal/prelude/**`,
+      # gone since the injector was removed, and covered 13 of the 50+
+      # packages the wasm build actually links, so a change to any of the
+      # rest landed with this lane never firing (#8627). A prefix cannot
+      # go stale the way a list of leaves does.
+      - "internal/**"
+      # The lane installs its toolchain from the pins, so both change
+      # what it actually executes.
+      - "mise.toml"
+      - "mise.lock"
       - "go.mod"
       - ".github/workflows/playground-e2e.yml"
   # Also on main: a rebase-merge replays commits onto a main their PR's CI never
@@ -47,18 +46,9 @@ on:
     paths:
       - "cmd/fern-wasm/**"
       - "web/**"
-      - "internal/ast/**"
-      - "internal/checker/**"
-      - "internal/constfold/**"
-      - "internal/diag/**"
-      - "internal/interp/**"
-      - "internal/lexer/**"
-      - "internal/lsp/**"
-      - "internal/modload/**"
-      - "internal/monomorph/**"
-      - "internal/parser/**"
-      - "internal/prelude/**"
-      - "internal/treeshake/**"
+      - "internal/**"
+      - "mise.toml"
+      - "mise.lock"
       - "go.mod"
       - ".github/workflows/playground-e2e.yml"
   workflow_dispatch:

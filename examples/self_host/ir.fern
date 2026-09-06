@@ -570,6 +570,10 @@ pub function op_access(): Op { return op0("access"); }
 // and group id. One argument-free syscall each; neither can fail.
 pub function op_geteuid(): Op { return op0("geteuid"); }
 pub function op_getegid(): Op { return op0("getegid"); }
+// `hostname` takes no operands and pushes ONE fresh string box holding the
+// kernel's node name (uname(2) on Linux, kern.hostname on Darwin); the empty
+// string on wasm, which has no host identity.
+pub function op_hostname(): Op { return op0("hostname"); }
 // `wasm_timer_pollable` takes one operand [ns] and pushes an i32. On native it
 // is -1 (no pollable; deadlines ride poll(2)'s timeout arg); on wasm it is a
 // real wasi timer pollable. Portability shim for std/async's with_deadline.
@@ -1459,10 +1463,10 @@ pub function kind_count(): i32 { return 196; }
 // 1..kind_count() sweep requires the id space to stay dense, and moving the
 // last entry into the hole beats renumbering every id above it.
 //
-// Extension tags beyond kind_count() (struct_copy=198 … reader_seek=241): not
+// Extension tags beyond kind_count() (struct_copy=198 … reader_seek=242): not
 // in the 1..kind_count() bijection sweep (ir_kind_run sweeps them separately
 // by name), but nameable so module_emits_op_cached / the backends see them.
-// NEXT FREE EXTENSION ID: 242 (re-grep rather than trusting this line — it has
+// NEXT FREE EXTENSION ID: 243 (re-grep rather than trusting this line — it has
 // been stale before, which is the drift the paragraph below is about).
 // ADDING AN EXTENSION TAG: take the next id here AND register it in
 // kind_name + ir_kind_run's two sweep lists, then re-grep the whole tree
@@ -1638,7 +1642,7 @@ function kind_id_len7(name: string): i32 {
     var c: u8 = name[0];
     if (c == b'a') { return kind_id_len7_a(name); }
     if (c == b'd' && name == "dyn_box") { return 146; }
-    if (c == b'f' && name == "fd_stat") { return 240; }
+    if (c == b'f' && name == "fd_stat") { return 241; }
     if (c == b'g' && name == "geteuid") { return 238; }
     if (c == b'g' && name == "getegid") { return 239; }
     if (c == b'm') { return kind_id_len7_m(name); }
@@ -1671,6 +1675,7 @@ function kind_id_len8(name: string): i32 {
     if (c == b'a') { return kind_id_len8_a(name); }
     if (c == b'f' && name == "f32_bits") { return 14; }
     if (c == b'f' && name == "f64_bits") { return 16; }
+    if (c == b'h' && name == "hostname") { return 240; }
     if (c == b'i' && name == "int_wrap") { return 8; }
     if (c == b'i' && name == "int_cast") { return 9; }
     if (c == b'l') { return kind_id_len8_l(name); }
@@ -1854,7 +1859,7 @@ function kind_id_len11_r(name: string): i32 {
     if (name == "raw_scratch") { return 205; }
     if (name == "raw_environ") { return 207; }
     if (name == "raw_arr_box") { return 224; }
-    if (name == "reader_seek") { return 241; }
+    if (name == "reader_seek") { return 242; }
     return 0;
 }
 
@@ -2210,15 +2215,16 @@ function kind_name_4(id: i32): string {
     if (id == 237) { return "access"; }
     if (id == 238) { return "geteuid"; }
     if (id == 239) { return "getegid"; }
-    if (id == 240) { return "fd_stat"; }
-    if (id == 241) { return "reader_seek"; }
+    if (id == 240) { return "hostname"; }
+    if (id == 241) { return "fd_stat"; }
+    if (id == 242) { return "reader_seek"; }
     return "invalid";
 }
 
 // kind_name maps an integer id back to its op-kind tag ("invalid" for an
 // out-of-range / KIND_INVALID id). The inverse of kind_id. A cheap range
 // check routes to the owning chunk; everything past 160 — including the
-// extension tags beyond kind_count() (struct_copy=198 … isatty=232)
+// extension tags beyond kind_count() (struct_copy=198 … reader_seek=242)
 // — lives in kind_name_4, whose fallthrough is the "invalid" sentinel.
 pub function kind_name(id: i32): string {
     if (id <= 40) { return kind_name_0(id); }
@@ -2271,7 +2277,7 @@ function pops0(t: i32): boolean {
         || t == 207 || t == 209 || t == 211                              // raw_environ, read_all_stdin, proc_fork
         || t == 216 || t == 217 || t == 218                              // arr_push_shared_*, const_struct
         || t == 222                                                      // map_hash_seed
-        || t == 238 || t == 239;                                         // geteuid, getegid
+        || t == 238 || t == 239 || t == 240;                             // geteuid, getegid, hostname
 }
 
 function pops1_conv(t: i32): boolean {
@@ -2312,7 +2318,7 @@ function pops1_io(t: i32): boolean {
         || t == 174 || t == 175 || t == 176 || t == 179 || t == 181      // temp_dir, stat, env, reader_close, sleep_ms
         || t == 168                                                      // read_line (fd)
         || t == 231 || t == 232                                          // create_dir_all, isatty
-        || t == 240                                                      // fd_stat
+        || t == 241                                                      // fd_stat
         || t == 185 || t == 210 || t == 212                              // random_bytes, arg_at, proc_waitpid
         || t == 188 || t == 189 || t == 190 || t == 191 || t == 192      // timer_fd, wasm_*
         || t == 196 || t == 112 || t == 200 || t == 201 || t == 203;     // tcp_close, tcp_pollable(112), tcp_listen/accept, open_file
@@ -2352,7 +2358,7 @@ function pops3(t: i32): boolean {
         || t == 89 || t == 96 || t == 102 || t == 111                    // arr_set, arr_slice, str_slice, str_replace
         || t == 125 || t == 129                                          // map_set, map_get_or
         || t == 177 || t == 208 || t == 225 || t == 234                  // subprocess, udp_send, memchr, rmemchr
-        || t == 241;                                                     // reader_seek (fd, offset, whence)
+        || t == 242;                                                     // reader_seek (fd, offset, whence)
 }
 
 // op_pops is how many operand slots `o` consumes, or -1 when the op is not
@@ -3968,7 +3974,7 @@ pub function op_allocates(tag: i32): boolean {
     // stat boxes a fresh FileStat struct + a Result wrapper, so it needs the heap.
     if (tag == 175) { return true; }
     // fd_stat boxes the same pair; reader_seek boxes its Result[i64, IoError].
-    if (tag == 240 || tag == 241) { return true; }
+    if (tag == 241 || tag == 242) { return true; }
     // subprocess boxes a fresh ProcessResult struct + its two stdout/stderr
     // string blocks, so it needs the heap runtime.
     if (tag == 177) { return true; }
@@ -3978,6 +3984,8 @@ pub function op_allocates(tag: i32): boolean {
     if (tag == 168) { return true; }
     // read_all_stdin allocates the whole-input buffer plus its string box.
     if (tag == 209) { return true; }
+    // hostname boxes the node name into a fresh string block.
+    if (tag == 240) { return true; }
     if (tag == 106 || tag == 107) { return true; }
     if (tag == 108 || tag == 109 || tag == 110) { return true; }
     if (tag == 111 || tag == 113) { return true; }

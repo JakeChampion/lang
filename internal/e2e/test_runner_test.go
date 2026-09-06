@@ -4513,6 +4513,28 @@ function main(): i32 {
 // LDBL_DIG, and the whole-number conversion sleep reads a millisecond
 // count out of. Which format a target selects is pinned separately by
 // internal/coreutils/longdouble_test.go. Passing suite -> exit 0.
+// `examples/tests/coreutils_resolv_test.fern` covers coreutils/lib/resolv —
+// the NSS lookup gethostid makes, written in Fern on read_file and the tcp
+// builtins: /etc/hosts (comments, aliases, IPv6 lines to skip, caseless
+// match, first line wins), nsswitch's `hosts:` line with its bracketed
+// actions and compiled-in default, resolv.conf's defaults and caps, the
+// res_search candidate order, and RFC 1035 A queries and replies (a CNAME
+// ahead of its A record, every status). Two live cases run against this
+// machine's own /etc/hosts. Passing suite -> exit 0.
+func TestRunnerCoreutilsResolvExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/coreutils_resolv_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: coreutils/lib/resolv", "1..22", "# pass 22", "# fail 0"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 func TestRunnerCoreutilsLongDoubleExamplePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := langSrcAbs(t, "examples/tests/coreutils_ld_test.fern")

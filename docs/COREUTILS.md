@@ -170,6 +170,11 @@ coreutils/
   lib/ld.fern       C's `long double` as the TARGET has it, for the
                     utilities that convert and compute in one
                     (printf, numfmt, seq, sleep)
+  lib/resolv.fern   glibc's IPv4 name lookup — /etc/hosts, the
+                    `hosts:` line of nsswitch.conf, resolv.conf and an
+                    RFC 1035 A query — for the utilities that resolve
+                    the machine's own name (hostid; hostname, uname
+                    and who reach for the same pieces)
   <util>.fern       one program per utility
 internal/coreutils/
   harness_test.go   the oracle harness (this file's "How parity is enforced")
@@ -309,6 +314,32 @@ macOS arm64 (Apple M-series; GNU coreutils 9.10; uutils 0.6.0):
 | `yes` | yes | head -c 1G | 674.49 ± 38.15 | 507.69 ± 42.98 | 687.22 ± 106.51 | 0.75× | 1.02× |
 | `yes` | yes 70000-byte line | head -c 1G | 590.85 ± 40.52 | 641.59 ± 121.13 | 658.07 ± 114.40 | 1.09× | 1.11× |
 
+Linux x86-64 (a 4-core dev container, 2026-09-06, with two other agents'
+builds running on the same cores at the time — the σ is theirs; GNU
+coreutils 9.4; uutils 0.0.24 as the Debian multi-call binary, which the
+script now detects):
+
+| utility | workload | fern (ms) | gnu (ms) | uutils (ms) | gnu / fern | uutils / fern |
+|---|---|---|---|---|---|---|
+| `hostid` | hostid | 0.23 ± 0.08 | 1.09 ± 0.13 | 1.93 ± 0.18 | 4.69× | 8.30× |
+
+Reading it: `true`, `false` and `echo` are startup-bound, and a Fern binary
+is a static executable with no dynamic loader and no libc initialisation —
+that is the whole margin, and it is larger on macOS where the loader costs
+more. `yes` is pipe-bound and its number is the write block size, which was
+measured, not chosen: a C `write(2)` loop through the same pipe puts the
+optimum at 4 KiB on Linux (138 ms median; GNU's 8 KiB, 163) and 1 KiB on
+macOS (482 ms; GNU writes 1 KiB there, 477), with every size from 2 KiB up
+costing 570–680 ms on macOS because a write that overfills the 64 KiB pipe
+puts writer and reader into lockstep. `yes.fern` selects the block with
+`target_os()` — 4 KiB compiled for Linux, 1 KiB for macOS — so it is 1.06×
+GNU on Linux and writes the same 1 KiB GNU does on macOS. The sweeps are
+recorded in `yes.fern`. `hostid` is startup plus three file reads
+(`/etc/hostid`, `/etc/nsswitch.conf`, `/etc/hosts`) and one uname(2); GNU
+pays the dynamic loader and then dlopens the NSS modules named on the
+`hosts:` line, which is the whole 4.7×, and uutils' multi-call dispatch
+costs it another millisecond.
+
 Group B's first two, 2026-09-06, Linux x86-64 (GNU coreutils 9.4; no
 uutils in the image). The file is 62 MiB / 8 000 000 lines of `seq`:
 
@@ -340,18 +371,29 @@ per chunk (0.17×). Both now decide a whole chunk with one `__count_byte` and
 walk only the chunk that reaches the count — backwards, with `__rmemchr`, for
 the elision.
 
-Reading it: `true`, `false` and `echo` are startup-bound, and a Fern binary
-is a static executable with no dynamic loader and no libc initialisation —
-that is the whole margin, and it is larger on macOS where the loader costs
-more. `yes` is pipe-bound and its number is the write block size, which was
-measured, not chosen: a C `write(2)` loop through the same pipe puts the
-optimum at 4 KiB on Linux (138 ms median; GNU's 8 KiB, 163) and 1 KiB on
-macOS (482 ms; GNU writes 1 KiB there, 477), with every size from 2 KiB up
-costing 570–680 ms on macOS because a write that overfills the 64 KiB pipe
-puts writer and reader into lockstep. `yes.fern` selects the block with
-`target_os()` — 4 KiB compiled for Linux, 1 KiB for macOS — so it is 1.06×
-GNU on Linux and writes the same 1 KiB GNU does on macOS. The sweeps are
-recorded in `yes.fern`.
+## Known divergences
+
+**`hostid` asks DNS over TCP.** The id is glibc's `gethostid`: `/etc/hostid`
+if it holds four bytes, else the hostname's IPv4 address with its halves
+swapped, else 0 — and the address comes from NSS, which `lib/resolv.fern`
+reimplements: the `hosts:` line of `/etc/nsswitch.conf` with its bracketed
+actions, `/etc/hosts` as the `files` backend reads it, and `/etc/resolv.conf`
+with res_search's search-list order. The DNS leg is where it parts from
+glibc, in one way: glibc asks over UDP and retries over TCP only on a
+truncated reply, while this resolver asks over TCP from the start, because
+Fern has no UDP receive. RFC 1035 obliges every nameserver to answer the
+same query over TCP, so the A records — and the id — are the same; a
+nameserver that refuses TCP altogether is the one host where GNU prints an
+address-derived id and this prints `00000000`. UDP is deliberately NOT
+added for this: one utility's resolver is not the reason to grow the
+runtime's socket surface, and the record here is what keeps that decision
+visible. Two smaller edges in the same leg: only the `files` and `dns`
+sources are implemented (any other, `myhostname` included, reports UNAVAIL
+as a source with no module does, so a name in neither file nor DNS prints
+`00000000` where nss-myhostname would answer 127.0.0.2), and a nameserver
+that black-holes the connection holds `hostid` for the kernel's connect
+timeout where glibc gives up after resolv.conf's `timeout` × `attempts`.
+Neither changes the bytes on a host whose name resolves.
 
 ## Open gaps
 
@@ -374,6 +416,14 @@ Two earlier gaps are closed and each is now exercised by the corpus:
 (`yes >&-`, `> /dev/full`) — and source unable to learn its compile target
 (#8338) — `yes.fern`'s per-target block. A gap met later gets an issue and a
 fix, never a corpus carve-out.
+None. Both Fern gaps the first utilities met — `IoError.Other` carrying no
+strerror text (#8265) and source unable to learn its compile target
+(#8338) — are closed, and each is exercised by the corpus: the
+write-failure cases (`yes >&-`, `> /dev/full`) and `yes.fern`'s per-target
+block. `hostid` needed a runtime primitive rather than a fix — `hostname()`,
+gethostname(2) on every backend (#8529) — and got it under its own
+capability rather than a one-off syscall on one backend. A gap met later
+gets an issue and a fix, never a corpus carve-out.
 
 ## Staging
 
@@ -407,7 +457,8 @@ groups are the order of work. Each sub-issue names its group.
   `chgrp` `chcon` `runcon`, `stat` `ls` `dir` `vdir` `du` `df` `dircolors`
   (full stat, statfs, d_type), `date` (strftime, timezone), `timeout` `nice`
   `nohup` `kill` `stdbuf` `chroot` (signals, setpriority, exec), `dd`
-  `shred` `stty` `uptime` `hostid` `pathchk`. Each primitive is a builtin,
+  `shred` `stty` `uptime` `pathchk`, and `hostid` (done: `hostname()`
+  plus the resolver in `lib/resolv.fern`). Each primitive is a builtin,
   which is four classifications (`docs/FREESTANDING-CORE.md`,
   `docs/PACKAGE-CAPABILITIES-BRIEF.md`) and the self-host mirror. The
   sub-issue for each utility names the primitives it is blocked on; the

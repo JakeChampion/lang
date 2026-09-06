@@ -3571,8 +3571,10 @@ func TestArrowLambdaTupleReturnType(t *testing.T) {
 	prog, err := Parse(`function f(): i32 {
   var tup = (n: i32): (string, i32) => { return ("ab", n); };
   var arr = (): (string, i32)[] => { return [("a", 1)]; };
+  var group = (): (i32) => { return 7; };
   var fnParen = (): ((i32) => i32) => { return (x: i32): i32 => x; };
   var fnBare = (): (i32) => i32 => { return (x: i32): i32 => x; };
+  var fnTupleResult = (): ((i32) => (i32, i32)) => { return (x: i32): (i32, i32) => (x, x); };
   return 0;
 }`)
 	if err != nil {
@@ -3585,8 +3587,14 @@ func TestArrowLambdaTupleReturnType(t *testing.T) {
 	}{
 		{"tup", "(string, i32)"},
 		{"arr", "(string, i32)[]"},
+		// A single-element parenthesised annotation is grouping, not a
+		// one-element tuple (#8717) — no such type exists.
+		{"group", "i32"},
 		{"fnParen", "(i32) => i32"},
 		{"fnBare", "(i32) => i32"},
+		// A function returning a tuple has only the parenthesised spelling:
+		// bare, its result's `(i32, i32)` would claim the lambda's `=>`.
+		{"fnTupleResult", "(i32) => (i32, i32)"},
 	}
 	for i, w := range want {
 		v, ok := stmts[i].(*ast.Var)

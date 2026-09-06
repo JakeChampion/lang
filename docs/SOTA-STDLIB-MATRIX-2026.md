@@ -41,7 +41,9 @@ Every row carries a verdict, and the verdict vocabulary is deliberately small:
   so a row that wanted it is now either SHIPPED, `KERNEL` or DEFERRED.
 - **KERNEL** — reachable today by writing one fused kernel to
   `ATLAS-PLATFORM-PLAN.md` §3's contract. Mechanical rather than a project, but
-  it is seven lowerings and an assembler check per backend, so it is not free.
+  it is eight lowerings and an assembler check per instruction set, so it is
+  not free — though the assembler half is per-INSTRUCTION-SET rather than
+  per-kernel, and `__count_byte` needed none of it.
 - **DEFERRED:*reason*** — reachable and decided against for now, with the reason
   stated. Distinct from BLOCKED, which nobody has the option to start.
 - **DECIDE:*x*** — the obstacle is a policy question, not an implementation
@@ -63,8 +65,8 @@ is not a transcription of the published list.
 read "There is no SIMD — anywhere", verified rather than assumed, and it deleted
 the top item from most published shortlists. It was right, and it has since been
 paid off: `ATLAS-PLATFORM-PLAN.md` §3's fused-kernel contract shipped
-`__memchr`, `__ascii_run` and `__rmemchr`, vector on all **seven** backends for
-the first two and on the three native ones for the third.
+`__memchr`, `__ascii_run`, `__rmemchr` and `__count_byte`, all four vector on
+all **eight** backends.
 
 So the rows below no longer collapse into "one project with one payoff". They
 are independent build items again, and the question per row is no longer
@@ -135,10 +137,10 @@ to make an algorithmic claim measurable end-to-end.
 | 13 | arbitrary division | compiler | Hardware divide | Hardware divide | **SHIPPED** | — |
 | 14 | mul_wide | compiler | Present (Dragonbox uses it) | `MUL`/`MULH` | **SHIPPED** | — |
 | 15 | mul_high | compiler | Present | `MULH` | **SHIPPED** | — |
-| 16 | popcount | `std/{i32,i64,u32,u64}` | `OpPopcount`; inline SWAR on native, `i32.popcnt` on wasm | Hardware popcount | **SHIPPED** — DECIDE:cpu-baseline for the instruction | 1 |
+| 16 | popcount | `std/{i32,i64,u32,u64}` | `OpPopcount` — `popcnt` on x86-64, `cnt`+`addv` on arm64, `i32.popcnt` on wasm | Hardware popcount | **SHIPPED**, hardware everywhere | — |
 | 17 | clz | same | `OpClz` | `LZCNT`/`CLZ` | **SHIPPED** | — |
 | 18 | ctz | same | `OpCtz` | `TZCNT`/`RBIT+CLZ` | **SHIPPED** | — |
-| 19 | bit reverse | — | Absent | `RBIT` / table | GAP, narrow | 3 |
+| 19 | bit reverse | — | Absent as a primitive; `RBIT` is emitted inside `OpCtz` | `RBIT` / table | GAP, narrow — the assembler blocker is gone, it wants a caller | 3 |
 | 20 | rotate | — | Absent; `std/crypto` hand-rolls `__rotr` with two shifts and an or | `ROL`/`ROR`/`i32.rotl` | **GAP — best value in this section** | 1 |
 
 **Rows 8 / 11 / 12 are one row.** Integer→string is five divisions per ten
@@ -154,13 +156,16 @@ that follows will do the same. `i32.rotl`/`rotr` exist in wasm and both native
 ISAs have the instruction, so this is the same shape as the `clz`/`ctz` work
 that already landed and can reuse its scaffolding.
 
-**Row 16's asterisk.** `POPCNT` is SSE4.2 and Fern emits static binaries with
-no runtime dispatch, so selecting it turns a sub-baseline CPU into a SIGILL,
-not a slow binary. The project baseline is already stated as Haswell-class in
-`CLAUDE.md`/`docs/BACKEND-PARITY.md` — so this is a matter of taking the
-baseline at its word in codegen, not a new decision. On arm64 the blocker is
-different and concrete: `cnt`/`addv`/`rbit` are not implemented in the
-in-process assembler, which is also what row 19 needs.
+**Row 16's asterisk is spent.** It said `POPCNT` was a matter of taking the
+Haswell baseline at its word in codegen rather than a new decision, and that on
+arm64 the concrete blocker was `cnt`/`addv`/`rbit` being absent from the
+in-process assembler. Both have since happened, and the arm64 half happened as a
+side effect of the SIMD kernels (#6198) rather than for popcount's sake — the
+assembler gained the NEON surface those needed. `OpPopcount` emits `popcnt` on
+x86-64 and `cnt`+`addv` on arm64, `OpClz` emits `lzcnt`/`clz`, and `OpCtz` emits
+`tzcnt`/`rbit`+`clz`: hardware on both register backends, no SWAR left. Row 19
+(`RBIT` for bit reverse) is therefore not waiting on the assembler either — it
+is waiting on a caller.
 
 ## B. Elementary floating-point math
 
@@ -217,7 +222,7 @@ answers**, which makes them the ones to start with.
 
 | # | Primitive | Site | Today | Target | Verdict | Phase |
 | --- | --- | --- | --- | --- | --- | --- |
-| 33 | HashMap | `core/map` | Open addressing, split key/value columns | SwissTable | KERNEL as designed; **the SWAR group probe is still the cheaper first move** | 1 |
+| 33 | HashMap | `core/map` | **SwissTable-style ctrl bytes + SWAR group probe**, home-bucket fast path | SwissTable | **SHIPPED (SWAR)** — 1.45x miss-heavy / 1.15x hit-heavy near the load ceiling; the 16-wide vector probe is a further KERNEL, wanting a workload | 5 |
 | 34 | Large hash map | `core/map` | Same path at every size | F14-style grouped probing | Folds into #33 | 1 |
 | 35 | Small hash map | `core/map` | **Linear scan at ≤ 8 entries** | Inline scan | **SHIPPED** | — |
 | 36 | Ordered map | `std/ordmap` | Weight-balanced tree, join-based algebra, rank access (#6794) | B-tree | SHIPPED | — |
@@ -236,13 +241,18 @@ entries `core/map` scans the entry array instead of hashing, measured 213 ms →
 165 ms on a 6-entry string-keyed lookup benchmark. That is sound rather than
 heuristic, because delete is swap-with-last so `[0, len)` is tombstone-free.
 
-The remaining structural win is **SWAR group probing**: a SwissTable's
-advantage is mostly cache behaviour, not the vector compare, and a 64-bit word
-of control bytes tests 8 slots per iteration with
-`(x - 0x0101…) & ~x & 0x8080…`. That captures the majority of the benefit with
-no compiler work, and it is still the row to do first — not because the SIMD
-surface is missing (it shipped), but because a group-probe kernel would be the
-seven-lowering kind and SWAR gets most of the win for none of it.
+The structural win named here was **SWAR group probing**, and it landed: a
+SwissTable's advantage is mostly cache behaviour rather than the vector compare,
+and a 64-bit word of control bytes tests 8 slots per iteration with
+`(x - 0x0101…) & ~x & 0x8080…`. It needed no compiler work and no kernel, over
+the UNCHANGED linear-probe order, so placement, tombstone reuse and delete's
+back-pointer walk stayed byte-identical. Two things it taught: the group scan
+has to sit behind a scalar home-bucket check or it loses 12% on the short chains
+that dominate at typical load, and the SWAR match written as a FUNCTION cost
+2–3 calls per group and made hit-heavy lookups slower than the scalar probe —
+inlining it is what made the row a win. That second one is a live constraint on
+the eventual vector group probe, whose §3.1 rule 3 already forbids a call seam
+inside the loop.
 
 Rows 42–44 get **N/A:no-consumer** rather than GAP on purpose. They are
 excellent data structures with no caller in Fern's workloads; adding them is
@@ -296,7 +306,7 @@ it is a standing constraint on how stdlib generics can be written at all.
 | --- | --- | --- | --- | --- | --- | --- |
 | 55 | `find_byte` | `std/string` | **`__memchr` / `__rmemchr`** | SIMD `memchr` | **SHIPPED** — both directions; ~43x forward, 8.8x backward | — |
 | 56 | `find` | `std/string` | **Two-Way (Crochemore–Perrin)** | Two-Way + SIMD fast path | **SHIPPED** | — |
-| 57 | `count_byte` | `std/string` | Routed through the search core, which is now vector | SIMD | **SHIPPED via row 55** — a dedicated counting kernel (popcount over the mask, no early exit) is a further KERNEL | 5 |
+| 57 | `count_byte` | `std/string` | **`__count_byte`** — the dedicated counting kernel | SIMD | **SHIPPED** — 10.2x native x86-64; popcount over the mask, no early exit, and the first TOTAL adoption (the function IS the kernel) | — |
 | 58 | `starts_with` | `std/string` | Anchored `__substr_eq` | Vector compare | **SHIPPED** (correct shape scalar) | — |
 | 59 | `ends_with` | `std/string` | Anchored `__substr_eq` | Vector compare | **SHIPPED** | — |
 | 60 | `memcmp` | runtime helper | Byte loop | Word-at-a-time, then SIMD | DEFERRED:needle-length — its favourable shape is the uncommon one (ATLAS §4); SWAR viable | 2 |
@@ -608,7 +618,7 @@ over small integer domains, for the sieve-shaped code in `std/fuzz` and
 `std/sim`, and for row 160. It is also the structure that gains the most from
 the bit intrinsics that already landed — `count_ones` / `trailing_zeros` are
 exactly what iteration over a bitset needs, and they are already single IR ops
-on all six backends. The prerequisite is done; the consumer is not written.
+on every backend. The prerequisite is done; the consumer is not written.
 
 Rows 167/168 are a **promotion**, not an implementation: the self-host compiler
 already has interning (`docs/SELFHOST-SYMBOL-INTERNING.md`). Lifting it into
@@ -648,36 +658,50 @@ If incremental reparsing is ever adopted, these come back as GAP together.
 
 | # | Primitive | Verdict |
 | --- | --- | --- |
-| 180 | Portable vectors | **BLOCKED:the-project-itself** — this is the prerequisite |
-| 181 | Vector load/store | Same |
+| 180 | Portable vectors | **DEFERRED:fused-kernels-instead** — the surface that shipped is §3's fused-kernel ABI, not a vector type |
+| 181 | Vector load/store | Present inside kernels; not a user-visible op |
 | 182 | Vector compare | Same |
-| 183 | Vector min/max | Same |
-| 184 | Vector shuffle | Same |
-| 185 | Vector lookup | Same |
-| 186 | Vector compress/expand | Same, and the least portable |
-| 187 | Vector popcount | Same |
-| 188 | Runtime dispatch | **DECIDE:static-binaries** — see below |
+| 183 | Vector min/max | Unbuilt — no kernel has wanted it |
+| 184 | Vector shuffle | Unbuilt, and constant-time-hostile where it touches secrets |
+| 185 | Vector lookup | Unbuilt |
+| 186 | Vector compress/expand | Unbuilt, and the least portable |
+| 187 | Vector popcount | Present inside `__count_byte` |
+| 188 | Runtime dispatch | **DECIDED:none** — every kernel sits inside the declared baseline (SSE2 / NEON / v128), so there is nothing to dispatch on |
 
 The published list ranks the portable SIMD layer at P0 and says the stdlib
-should be written against it. **For Fern that is a single project, and it is the
-single highest-leverage item in the entire matrix** — it is the named
-prerequisite on 19 rows above.
+should be written against it. This section argued that for Fern it is a single
+project, the highest-leverage item in the matrix, and that it must never be
+attempted piecemeal — that "a half-vector-surface that unblocks `memchr` and
+nothing else is the worst outcome available".
 
-Its scope is honest to state: vector types in `internal/ir`, plus lowering in
-three native backends *and* three self-host backends (constraint 4), plus
-SSE2/AVX2, NEON and wasm `v128` instruction selection, plus the assembler work
-on the arm64 side where `cnt`/`addv`/`rbit` are not yet implemented. It should
-be evaluated **as one project with that whole blocked tier as its payoff**, and
-never attempted piecemeal — a half-vector-surface that unblocks `memchr` and
-nothing else is the worst outcome available.
+**That last judgement was wrong, and the way it was wrong is the useful part.**
+What shipped instead is `ATLAS-PLATFORM-PLAN.md` §3's fused-kernel ABI: a kernel
+is one IR op taking scalars and returning a scalar with its whole vector
+lifetime inside its own emitted sequence, so it needs no vector type, no second
+register class, no regalloc change and no ABI change. Four of them now run 16
+bytes an iteration on all eight backends, and they carry `std/string`'s
+single-byte search (~43x), `std/utf8`'s validation (~63x) and `count_byte`
+(10.2x). The rows above that named the portable layer as their prerequisite
+mostly did not need it; they needed one kernel each.
 
-Row 188 carries a decision that has to be made *before* the project, not
-during: Fern emits **static binaries with no runtime CPU dispatch**, which is
-why `POPCNT` is not selected on x86-64 today. A vector layer either (a) targets
-the stated Haswell baseline statically, which is simple and leaves AVX-512 on
-the table forever, or (b) introduces runtime dispatch, which is a change to how
-Fern links and starts up — and startup time is one of the two workloads the
-language is built around. That trade is a language decision, not a codegen one.
+So this table's verdict stands for the rows it actually covers, and its scope
+paragraph does not. A portable vector TYPE is still unbuilt and still a project
+— the register-class work is real, and the argument for it is now weaker rather
+than stronger, because the payoff list it was meant to unblock keeps resolving
+without it. The remaining consumers are the ones whose shape genuinely cannot
+be a fused kernel: anything producing vector-width OUTPUT rather than one
+scalar (sorting networks, SIMD transcoding, base64 codecs, simdjson stage 1's
+index array). That is the case to re-evaluate the type against — not `memchr`,
+which is done.
+
+Row 188 was filed as a decision to make *before* the project, and the kernels
+made it by taking option (a): Fern emits **static binaries with no runtime CPU
+dispatch**, and every shipped kernel selects only instructions inside the
+declared baseline — SSE2 on x86-64, NEON on aarch64, `v128` on wasm — so nothing
+needs probing at startup. That leaves AVX-512 (and AVX2) on the table, which is
+the cost, and it is a cost paid deliberately: option (b) changes how Fern links
+and starts up, and startup time is one of the two workloads the language grew up
+around. Reopening it is a language decision, not a codegen one.
 
 ---
 

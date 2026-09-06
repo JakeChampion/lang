@@ -18,6 +18,7 @@ import "./ast";
 import "./lexer";
 import "./parser";
 import "./util";
+import "core/map";
 
 // =================== EXPRESSIONS ====================
 
@@ -141,6 +142,15 @@ function print_expr(e: ast.Expr, depth: i32): string {
 // print_lit prints a pattern literal, which has no body to indent.
 function print_lit(e: ast.Expr): string {
     return print_expr(e, 0);
+}
+
+// arrow_return_type renders an arrow lambda's return annotation. The lambda's
+// own `=>` follows it, so the type parser reserves the top-level function-type
+// arrow there: a function-typed return needs its grouping parens back, or
+// `(p: i32): (i32) => (i32, i32) => …` re-parses with the wrong split.
+function arrow_return_type(ret: string): string {
+    if (parser.top_arrow_at(ret) >= 0) { return "(" + ret + ")"; }
+    return ret;
 }
 
 // print_lambda_params renders a lambda's `(p: T, …)` list — shared by the
@@ -607,7 +617,7 @@ function print_expr_prec(e: ast.Expr, parent_prec: i32, depth: i32): string {
             // parameter has the same body shape as one without (#7338).
             var (pats, npre) = param_patterns_for(lm.params, lm.body);
             var out: string = print_params_with(lm.params, pats);
-            if (lm.ret_type.len() > 0) { out = out + ": " + lm.ret_type; }
+            if (lm.ret_type.len() > 0) { out = out + ": " + arrow_return_type(lm.ret_type); }
             out = out + " => ";
             var body: ast.Stmt[] = drop_prelude(lm.body, npre);
             var av: string = print_return_only(body, depth);
@@ -2999,6 +3009,31 @@ function check_lambdas(): i32 {
         _ => { return 163; }
     }
 
+    // #8706 / #8717: an arrow lambda's return annotation is followed by the
+    // lambda's own `=>`, so the type parser reserves the top-level
+    // function-type arrow there. A parenthesised annotation is a tuple, and a
+    // function-typed return has to be reprinted with its grouping parens —
+    // bare, `(p: i32): (i32) => i32 => …` re-parses with the wrong split.
+    var srcR: string = "function main(): i32 { var g = (): (string, i32) => { return (\"ab\", 7); }; var h = (p: i32): (i32) => i32 => (q: i32) => p + q; return 0; }";
+    var pfR: parser.ParsedFmt = parser.parse_module_verbatim(lexer.tokenize(srcR));
+    var outR: string = format_module(pfR.pmod, pfR.ptraits, pfR.pimpls, pfR.pflines, [], []);
+    if (!util.contains(outR, "var g = (): (string, i32) => (\"ab\", 7);")) { return 371; }
+    if (!util.contains(outR, "var h = (p: i32): ((i32) => i32) => (q: i32) => p + q;")) { return 372; }
+    // The parens the reprint added are grouping, so a second pass adds no more.
+    var pfR2: parser.ParsedFmt = parser.parse_module_verbatim(lexer.tokenize(outR));
+    if (format_module(pfR2.pmod, pfR2.ptraits, pfR2.pimpls, pfR2.pflines, [], []) != outR) { return 373; }
+    match (pfR2.pmod.funcs[0].body[0]) {
+        ast.StmtVar(vr) => {
+            match (vr.init) {
+                ast.ExprLambda(lr) => {
+                    if (lr.ret_type != "(string, i32)") { return 374; }
+                },
+                _ => { return 375; }
+            }
+        },
+        _ => { return 376; }
+    }
+
     return 0;
 }
 
@@ -3468,6 +3503,11 @@ function check_traits_and_impls(): i32 {
     if (dl.len() != 2) { return 345; }
     if (dl[0] != "é\n" || dl[1] != "ü") { return 346; }
 
+    // The linear-space alignment (#8611): the properties the byte-parity gates
+    // against native cannot state, since a shortest edit script is not unique.
+    var dcode: i32 = diff_selftest();
+    if (dcode != 0) { return dcode; }
+
     return 0;
 }
 
@@ -3492,12 +3532,8 @@ function func_index(funcs: parser.FuncDecl[], name: string): i32 {
 }
 
 // Unified-diff half of `-fmt -d`. The two drivers' `-d` output is compared
-// byte-for-byte, so the tie-breaks and the three-line context window here are
-// internal/printer/diff.go's rather than a re-derivation.
-//
-// The alignment underneath them is not: native computes it with Myers' O(ND)
-// diff in linear space, while this still builds the O(m*n) LCS table and so
-// cannot diff a source the size of irlower.fern. Porting it is #8611.
+// byte-for-byte, so the alignment, the tie-breaks and the three-line context
+// window here are internal/printer/diff.go's rather than a re-derivation.
 
 // diff_split_lines breaks s on '\n' with the newline kept on each line, so the
 // hunk emitter reproduces a "no newline at end of file" tail verbatim. The
@@ -3522,60 +3558,345 @@ function diff_split_lines(s: string): string[] {
 // line both sides share, 1 for one only `a` has, 2 for one only `b` has.
 struct DiffScript { kinds: i32[], lines: string[] }
 
-// diff_edit_script runs an LCS over the two line lists, preferring the deletion
-// when the two suffix scores are equal, and merges the two sides into one
-// script.
+// diff_max_search_cost caps how far the middle-snake search looks for its two
+// halves to meet before giving up on minimality and splitting at the
+// furthest-reaching diagonal instead. The halves meet after about D/2 rounds
+// each, so edit distances up to twice the cap come out minimal; past that the
+// script is still correct, just not guaranteed shortest.
+function diff_max_search_cost(): i32 { return 16384; }
+
+// DiffIds is the two line lists with each distinct line replaced by a small
+// integer, plus how many distinct lines there were. The snake loops compare
+// ints rather than strings, and `distinct` sizes the occurrence flags.
+struct DiffIds { ia: i32[], ib: i32[], distinct: i32 }
+
+// diff_intern numbers the lines of both sides in order of first appearance.
+function diff_intern(a: string[], b: string[]): DiffIds {
+    var ids: Map[string, i32] = map_new(a.len() + b.len() + 1);
+    var ia: i32[] = [];
+    var ib: i32[] = [];
+    var next: i32 = 0;
+    var i: i32 = 0;
+    while (i < a.len()) {
+        var ida: i32 = ids.get_or(a[i], 0 - 1);
+        if (ida < 0) {
+            ida = next;
+            ids = ids.insert(a[i], ida);
+            next = next + 1;
+        }
+        ia = ia.append(ida);
+        i = i + 1;
+    }
+    var j: i32 = 0;
+    while (j < b.len()) {
+        var idb: i32 = ids.get_or(b[j], 0 - 1);
+        if (idb < 0) {
+            idb = next;
+            ids = ids.insert(b[j], idb);
+            next = next + 1;
+        }
+        ib = ib.append(idb);
+        j = j + 1;
+    }
+    return DiffIds { ia: ia, ib: ib, distinct: next };
+}
+
+// diff_furthest picks the split point for a subproblem whose edit distance
+// exceeded the cost cap. The forward search's best point is the one that
+// consumed most of both inputs from the front and the reverse search's is the
+// one that consumed most from the back, so the two are scored on their own
+// progress and the deeper one wins. Progress is at least the budget either
+// way, so the recursion terminates.
+function diff_furthest(vf: i32[], vr: i32[], off: i32, size: i32, alo: i32, ahi: i32, blo: i32, bhi: i32): (i32, i32) {
+    var na: i32 = ahi - alo;
+    var nb: i32 = bhi - blo;
+    var best_f: i32 = 0;
+    var fx: i32 = 0;
+    var fy: i32 = 0;
+    var best_r: i32 = 0;
+    var rx: i32 = 0;
+    var ry: i32 = 0;
+    var o: i32 = 0;
+    while (o < size) {
+        var j: i32 = o - off;
+        var xf: i32 = vf[o];
+        if (xf >= 0) {
+            var yf: i32 = xf - j;
+            if (xf <= na && yf >= 0 && yf <= nb && xf + yf > best_f) {
+                best_f = xf + yf;
+                fx = xf;
+                fy = yf;
+            }
+        }
+        var xr: i32 = vr[o];
+        if (xr >= 0) {
+            var yr: i32 = xr - j;
+            if (xr <= na && yr >= 0 && yr <= nb && xr + yr > best_r) {
+                best_r = xr + yr;
+                rx = na - xr;
+                ry = nb - yr;
+            }
+        }
+        o = o + 1;
+    }
+    if (best_f >= best_r) {
+        if (best_f > 0 && (fx < na || fy < nb)) { return (alo + fx, blo + fy); }
+    } else if (rx > 0 || ry > 0) {
+        return (alo + rx, blo + ry);
+    }
+    // No usable split. Halve both sides so the recursion still shrinks;
+    // diff_compare's guard turns a truly degenerate range into a replace.
+    return (alo + na / 2, blo + nb / 2);
+}
+
+// diff_bisect finds a point (x, y) on a shortest edit path between ia[alo:ahi]
+// and ib[blo:bhi] by growing the forward search from the top left and the
+// reverse search from the bottom right until they meet on a common diagonal.
+// Past the cost cap it stops waiting for them to meet and returns the
+// furthest-reaching point either search has found.
+function diff_bisect(ia: i32[], ib: i32[], alo: i32, ahi: i32, blo: i32, bhi: i32, max_cost: i32): (i32, i32) {
+    var na: i32 = ahi - alo;
+    var nb: i32 = bhi - blo;
+    // The searches meet after at most ceil(D/2) rounds each, and D is at most
+    // na+nb; the extra round leaves room for the odd-delta case.
+    var maxd: i32 = (na + nb + 3) / 2;
+    var budget: i32 = maxd;
+    if (budget > max_cost) { budget = max_cost; }
+    // vf and vr hold each search's furthest-reaching x per diagonal, with
+    // diagonal 0 at `off`. Only diagonals within `budget` of 0 are ever
+    // written, so the budget sizes them: a diagonal outside that window reads
+    // as "not reached", which is what an unwritten slot says too.
+    var off: i32 = budget + 1;
+    var size: i32 = 2 * budget + 4;
+    var vf: i32[] = [];
+    var vr: i32[] = [];
+    var z: i32 = 0;
+    while (z < size) {
+        vf = vf.append(0 - 1);
+        vr = vr.append(0 - 1);
+        z = z + 1;
+    }
+    vf = vf.with(off + 1, 0);
+    vr = vr.with(off + 1, 0);
+    var delta: i32 = na - nb;
+    // The two searches can only meet on a forward step when delta is odd, and
+    // only on a reverse step when it is even.
+    var meet_forward: boolean = delta % 2 != 0;
+    // Diagonals that have run off the grid stop being extended.
+    var flo: i32 = 0;
+    var fhi: i32 = 0;
+    var rlo: i32 = 0;
+    var rhi: i32 = 0;
+    var k: i32 = 0;
+    while (k < budget) {
+        var jf: i32 = 0 - k + flo;
+        while (jf <= k - fhi) {
+            var o: i32 = off + jf;
+            var x: i32 = 0;
+            if (jf == 0 - k || (jf != k && vf[o - 1] < vf[o + 1])) {
+                x = vf[o + 1];
+            } else {
+                x = vf[o - 1] + 1;
+            }
+            var y: i32 = x - jf;
+            while (x < na && y < nb && ia[alo + x] == ib[blo + y]) {
+                x = x + 1;
+                y = y + 1;
+            }
+            vf = vf.with(o, x);
+            if (x > na) {
+                fhi = fhi + 2;
+            } else if (y > nb) {
+                flo = flo + 2;
+            } else if (meet_forward) {
+                var ro: i32 = off + delta - jf;
+                if (ro >= 0 && ro < size && vr[ro] >= 0 && x >= na - vr[ro]) {
+                    return (alo + x, blo + y);
+                }
+            }
+            jf = jf + 2;
+        }
+        var jr: i32 = 0 - k + rlo;
+        while (jr <= k - rhi) {
+            var o2: i32 = off + jr;
+            var x2: i32 = 0;
+            if (jr == 0 - k || (jr != k && vr[o2 - 1] < vr[o2 + 1])) {
+                x2 = vr[o2 + 1];
+            } else {
+                x2 = vr[o2 - 1] + 1;
+            }
+            var y2: i32 = x2 - jr;
+            while (x2 < na && y2 < nb && ia[ahi - 1 - x2] == ib[bhi - 1 - y2]) {
+                x2 = x2 + 1;
+                y2 = y2 + 1;
+            }
+            vr = vr.with(o2, x2);
+            if (x2 > na) {
+                rhi = rhi + 2;
+            } else if (y2 > nb) {
+                rlo = rlo + 2;
+            } else if (!meet_forward) {
+                var fo: i32 = off + delta - jr;
+                if (fo >= 0 && fo < size && vf[fo] >= 0 && vf[fo] >= na - x2) {
+                    return (alo + vf[fo], blo + vf[fo] - (delta - jr));
+                }
+            }
+            jr = jr + 2;
+        }
+        k = k + 1;
+    }
+    return diff_furthest(vf, vr, off, size, alo, ahi, blo, bhi);
+}
+
+// diff_compare appends the alignment of ia[alo:ahi] against ib[blo:bhi] to
+// `anchors` as (a, b) index pairs, in increasing order.
+function diff_compare(anchors: i32[], ia: i32[], ib: i32[], alo: i32, ahi: i32, blo: i32, bhi: i32, max_cost: i32): i32[] {
+    // Peeling the shared ends off every subproblem is not just a shortcut: it
+    // is what guarantees the bisect below splits strictly inside the range, so
+    // the recursion terminates.
+    var lo_a: i32 = alo;
+    var lo_b: i32 = blo;
+    while (lo_a < ahi && lo_b < bhi && ia[lo_a] == ib[lo_b]) {
+        anchors = anchors.append(lo_a);
+        anchors = anchors.append(lo_b);
+        lo_a = lo_a + 1;
+        lo_b = lo_b + 1;
+    }
+    var suffix: i32 = 0;
+    while (ahi - suffix > lo_a && bhi - suffix > lo_b && ia[ahi - 1 - suffix] == ib[bhi - 1 - suffix]) {
+        suffix = suffix + 1;
+    }
+    var hi_a: i32 = ahi - suffix;
+    var hi_b: i32 = bhi - suffix;
+    if (lo_a < hi_a && lo_b < hi_b) {
+        var (x, y) = diff_bisect(ia, ib, lo_a, hi_a, lo_b, hi_b, max_cost);
+        // A split that makes no progress would not terminate. The end peeling
+        // above rules that out; the guard keeps a bug in the bisect from
+        // becoming a hang.
+        if ((x != lo_a || y != lo_b) && (x != hi_a || y != hi_b)) {
+            anchors = diff_compare(anchors, ia, ib, lo_a, x, lo_b, y, max_cost);
+            anchors = diff_compare(anchors, ia, ib, x, hi_a, y, hi_b, max_cost);
+        }
+    }
+    var s: i32 = 0;
+    while (s < suffix) {
+        anchors = anchors.append(hi_a + s);
+        anchors = anchors.append(hi_b + s);
+        s = s + 1;
+    }
+    return anchors;
+}
+
+// diff_edit_script diffs a against b and returns the merge of the two as one
+// ordered script. The alignment is Myers' O(ND) greedy diff in its
+// linear-space divide-and-conquer form: memory is O(m+n), which is what lets
+// `-fmt -d` run on a source the size of irlower.fern at all — an O(m*n) table
+// is 48 GB there.
 function diff_edit_script(a: string[], b: string[]): DiffScript {
     var m: i32 = a.len();
     var n: i32 = b.len();
-    var w: i32 = n + 1;
-    var dp: i32[] = [];
+    var ids: DiffIds = diff_intern(a, b);
+    var ia: i32[] = ids.ia;
+    var ib: i32[] = ids.ib;
+
+    // Shared ends belong to every optimal alignment, so peel them off before
+    // searching. The usual case — a handful of reformatted lines in an
+    // otherwise untouched file — then costs about what the change costs.
+    var pre: i32 = 0;
+    while (pre < m && pre < n && ia[pre] == ib[pre]) { pre = pre + 1; }
+    var suf: i32 = 0;
+    while (suf < m - pre && suf < n - pre && ia[m - 1 - suf] == ib[n - 1 - suf]) { suf = suf + 1; }
+
+    // A line occurring on only one side cannot be part of any common
+    // subsequence, so it is an edit in every alignment and the search never
+    // needs to see it. On a wholly reformatted source that is most of the
+    // file, and the search cost scales with the edit distance.
+    var in_a: boolean[] = [];
+    var in_b: boolean[] = [];
     var z: i32 = 0;
-    while (z < (m + 1) * w) { dp = dp.append(0); z = z + 1; }
-    var i: i32 = m - 1;
-    while (i >= 0) {
-        var j: i32 = n - 1;
-        while (j >= 0) {
-            if (a[i] == b[j]) {
-                dp = dp.with(i * w + j, dp[(i + 1) * w + (j + 1)] + 1);
-            } else if (dp[(i + 1) * w + j] >= dp[i * w + (j + 1)]) {
-                dp = dp.with(i * w + j, dp[(i + 1) * w + j]);
-            } else {
-                dp = dp.with(i * w + j, dp[i * w + (j + 1)]);
-            }
-            j = j - 1;
-        }
-        i = i - 1;
+    while (z < ids.distinct) {
+        in_a = in_a.append(false);
+        in_b = in_b.append(false);
+        z = z + 1;
     }
+    var i: i32 = pre;
+    while (i < m - suf) {
+        in_a = in_a.with(ia[i], true);
+        i = i + 1;
+    }
+    var j: i32 = pre;
+    while (j < n - suf) {
+        in_b = in_b.with(ib[j], true);
+        j = j + 1;
+    }
+    var fa: i32[] = [];
+    var map_a: i32[] = [];
+    var fb: i32[] = [];
+    var map_b: i32[] = [];
+    i = pre;
+    while (i < m - suf) {
+        if (in_b[ia[i]]) {
+            fa = fa.append(ia[i]);
+            map_a = map_a.append(i);
+        }
+        i = i + 1;
+    }
+    j = pre;
+    while (j < n - suf) {
+        if (in_a[ib[j]]) {
+            fb = fb.append(ib[j]);
+            map_b = map_b.append(j);
+        }
+        j = j + 1;
+    }
+    var anchors: i32[] = [];
+    anchors = diff_compare(anchors, fa, fb, 0, fa.len(), 0, fb.len(), diff_max_search_cost());
+
+    // Everything between two matched lines is an edit; deletions come before
+    // insertions within each such run.
     var kinds: i32[] = [];
     var lines: string[] = [];
     var p: i32 = 0;
-    var q: i32 = 0;
-    while (p < m && q < n) {
-        if (a[p] == b[q]) {
-            kinds = kinds.append(0);
-            lines = lines.append(a[p]);
-            p = p + 1;
-            q = q + 1;
-        } else if (dp[(p + 1) * w + q] >= dp[p * w + (q + 1)]) {
+    while (p < pre) {
+        kinds = kinds.append(0);
+        lines = lines.append(a[p]);
+        p = p + 1;
+    }
+    var q: i32 = pre;
+    var t: i32 = 0;
+    while (t < anchors.len()) {
+        var ai: i32 = map_a[anchors[t]];
+        var bj: i32 = map_b[anchors[t + 1]];
+        while (p < ai) {
             kinds = kinds.append(1);
             lines = lines.append(a[p]);
             p = p + 1;
-        } else {
+        }
+        while (q < bj) {
             kinds = kinds.append(2);
             lines = lines.append(b[q]);
             q = q + 1;
         }
+        kinds = kinds.append(0);
+        lines = lines.append(a[p]);
+        p = p + 1;
+        q = q + 1;
+        t = t + 2;
     }
-    while (p < m) {
+    while (p < m - suf) {
         kinds = kinds.append(1);
         lines = lines.append(a[p]);
         p = p + 1;
     }
-    while (q < n) {
+    while (q < n - suf) {
         kinds = kinds.append(2);
         lines = lines.append(b[q]);
         q = q + 1;
+    }
+    while (p < m) {
+        kinds = kinds.append(0);
+        lines = lines.append(a[p]);
+        p = p + 1;
     }
     return DiffScript { kinds: kinds, lines: lines };
 }
@@ -3650,4 +3971,143 @@ pub function unified_diff(before: string, after: string, path_before: string, pa
         h = h + 1;
     }
     return out;
+}
+
+// ---- diff self-test ----------------------------------------------------
+//
+// A shortest edit script is not unique, so the byte-parity gates against
+// native can only pin the alignment where the script is forced. These state
+// the two properties that hold whatever the tie-breaks are: the script
+// reproduces both of its inputs, and it is as short as an LCS table says the
+// shortest is.
+
+// diff_replay rebuilds one side of an edit script — `keep` is 1 for `a` and 2
+// for `b`; a shared line belongs to both.
+function diff_replay(sc: DiffScript, keep: i32): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < sc.kinds.len()) {
+        if (sc.kinds[i] == 0 || sc.kinds[i] == keep) { out = out + sc.lines[i]; }
+        i = i + 1;
+    }
+    return out;
+}
+
+// diff_edits counts the lines the script does not share.
+function diff_edits(sc: DiffScript): i32 {
+    var n: i32 = 0;
+    var i: i32 = 0;
+    while (i < sc.kinds.len()) {
+        if (sc.kinds[i] != 0) { n = n + 1; }
+        i = i + 1;
+    }
+    return n;
+}
+
+// diff_lcs_edits is the shortest edit-script length for a and b, straight from
+// an LCS table. Quadratic in time and memory, which is exactly why
+// diff_edit_script may not use one — but it is the ground truth the search is
+// checked against on inputs small enough to afford it.
+function diff_lcs_edits(a: string[], b: string[]): i32 {
+    var m: i32 = a.len();
+    var n: i32 = b.len();
+    var prev: i32[] = [];
+    var cur: i32[] = [];
+    var z: i32 = 0;
+    while (z <= n) {
+        prev = prev.append(0);
+        cur = cur.append(0);
+        z = z + 1;
+    }
+    var i: i32 = m - 1;
+    while (i >= 0) {
+        // `cur` is rewritten at every j below, so aliasing the finished row is
+        // safe: the first write copies it away from `prev`, which then holds
+        // the row this one reads.
+        prev = cur;
+        var j: i32 = n - 1;
+        while (j >= 0) {
+            if (a[i] == b[j]) {
+                cur = cur.with(j, prev[j + 1] + 1);
+            } else if (prev[j] >= cur[j + 1]) {
+                cur = cur.with(j, prev[j]);
+            } else {
+                cur = cur.with(j, cur[j + 1]);
+            }
+            j = j - 1;
+        }
+        i = i - 1;
+    }
+    return m + n - 2 * cur[0];
+}
+
+// diff_rand is a deterministic 31-bit Lehmer generator, so a failing case is
+// reproducible.
+function diff_rand(s: i64): i64 { return (s * 48271i64) % 2147483647i64; }
+
+// diff_lines_from draws `n` lines from the first `alphabet` entries of a fixed
+// vocabulary. The vocabulary is tiny on purpose: ties between equally short
+// scripts are then the common case rather than a rarity.
+function diff_lines_from(seed: i64, n: i32, alphabet: i32): string[] {
+    var vocab: string[] = ["a\n", "b\n", "c\n", "d\n", "e\n"];
+    var out: string[] = [];
+    var s: i64 = seed;
+    var i: i32 = 0;
+    while (i < n) {
+        s = diff_rand(s);
+        out = out.append(vocab[(s % (alphabet as i64)) as i32]);
+        i = i + 1;
+    }
+    return out;
+}
+
+// diff_selftest returns 0 when every property holds, or the failing case's
+// code. Called from main.
+function diff_selftest(): i32 {
+    // The script reproduces both inputs and is minimal, over inputs small
+    // enough for the LCS table to answer.
+    var s: i64 = 12345i64;
+    var iter: i32 = 0;
+    while (iter < 300) {
+        s = diff_rand(s);
+        var alphabet: i32 = 2 + (s % 4i64) as i32;
+        s = diff_rand(s);
+        var na: i32 = (s % 14i64) as i32;
+        s = diff_rand(s);
+        var nb: i32 = (s % 14i64) as i32;
+        s = diff_rand(s);
+        var a: string[] = diff_lines_from(s, na, alphabet);
+        s = diff_rand(s);
+        var b: string[] = diff_lines_from(s, nb, alphabet);
+        var sc: DiffScript = diff_edit_script(a, b);
+        if (diff_replay(sc, 1) != util.str_join_chunks(a)) { return 350; }
+        if (diff_replay(sc, 2) != util.str_join_chunks(b)) { return 351; }
+        if (diff_edits(sc) != diff_lcs_edits(a, b)) { return 352; }
+        iter = iter + 1;
+    }
+
+    // Same two properties over an input long enough to drive the recursive
+    // split several levels deep, which the small cases never reach.
+    var la: string[] = diff_lines_from(777i64, 400, 3);
+    var lb: string[] = diff_lines_from(999i64, 400, 3);
+    var lsc: DiffScript = diff_edit_script(la, lb);
+    if (diff_replay(lsc, 1) != util.str_join_chunks(la)) { return 353; }
+    if (diff_replay(lsc, 2) != util.str_join_chunks(lb)) { return 354; }
+    if (diff_edits(lsc) != diff_lcs_edits(la, lb)) { return 355; }
+
+    // A file with a shared head and tail costs what the change costs: the
+    // peeling leaves one line on each side for the search.
+    var pa: string[] = diff_split_lines("one\ntwo\nthree\nfour\nfive\n");
+    var pb: string[] = diff_split_lines("one\ntwo\nTHREE\nfour\nfive\n");
+    var psc: DiffScript = diff_edit_script(pa, pb);
+    if (diff_edits(psc) != 2) { return 356; }
+    if (diff_replay(psc, 1) != "one\ntwo\nthree\nfour\nfive\n") { return 357; }
+    if (diff_replay(psc, 2) != "one\ntwo\nTHREE\nfour\nfive\n") { return 358; }
+
+    // The unified-diff wrapper's layout: header rows, one hunk, the changed
+    // pair between context lines.
+    var ud: string = unified_diff("one\ntwo\nthree\nfour\nfive\n", "one\ntwo\nTHREE\nfour\nfive\n", "x.fern", "x.fern");
+    if (ud != "--- x.fern\n+++ x.fern\n@@ -1,5 +1,5 @@\n one\n two\n-three\n+THREE\n four\n five\n") { return 359; }
+    if (unified_diff("a\n", "a\n", "x", "y") != "") { return 360; }
+    return 0;
 }

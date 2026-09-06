@@ -36,16 +36,21 @@ to open "There is no SIMD — anywhere", and that was the audit's single most
 important finding. It is no longer true, and the change is what reorders
 everything below it.
 
-Three fused kernels have shipped through `docs/ATLAS-PLATFORM-PLAN.md` §3's
+Four fused kernels have shipped through `docs/ATLAS-PLATFORM-PLAN.md` §3's
 contract — a kernel is one IR op taking scalars and returning a scalar, with
 its whole vector lifetime inside its own emitted sequence, so it needs no
 vector register class, no regalloc change and no ABI change:
 
 | Kernel | State |
 | --- | --- |
-| `__memchr` | Vector on all **seven** backends; `std/string`'s single-byte search routes through it (~43x) |
-| `__ascii_run` | Vector on all seven; `std/utf8`'s `is_valid_utf8` routes through it (0.22 → 13.8 GB/s) |
-| `__rmemchr` | Total on all seven, vector on the three native ones (8.8x); `last_index_of` routes through it |
+| `__memchr` | Vector on all **eight** backends; `std/string`'s single-byte search routes through it (~43x) |
+| `__ascii_run` | Vector on all eight; `std/utf8`'s `is_valid_utf8` routes through it (0.22 → 13.8 GB/s) |
+| `__rmemchr` | Vector on all eight (8.8x native x86-64); `last_index_of` routes through it |
+| `__count_byte` | Vector on all eight (10.2x native x86-64); `std/string`'s `count_byte` IS the kernel — the first TOTAL adoption rather than a needle-length tier |
+
+Eight, not seven: both `-backend ssa` legs carry the kernels, and the x86-64 one
+went uncounted through three of the four builds. `docs/ATLAS-PLATFORM-PLAN.md`
+§3.4 records what that cost and why no gate saw it.
 
 So the rows below no longer split into "implementable" and "not". They split
 three ways, and the distinction matters because two of them are cheap and one
@@ -54,20 +59,23 @@ is a decision:
 | Technique | Status in Fern |
 | --- | --- |
 | SIMD `memchr` | **DONE**, forward and backward |
+| SIMD byte counting | **DONE** — `__count_byte`, and `wc -l` / `wc -c` route through it |
 | simdutf-style block UTF-8 validation | **PARTLY DONE** — `__ascii_run` is the ASCII-skip half, which is what dominates real text |
-| simdjson-style stage 1/2 parsing | Needs a kernel, not a surface |
-| SwissTable SIMD group probing | Needs a kernel; the SWAR variant is still the cheaper first move |
-| Sorting networks over vector registers | Needs a kernel |
+| simdjson-style stage 1/2 parsing | Needs a kernel, not a surface — and stage 1 as written fails §3.1's rule 2, since it produces an index array rather than a scalar |
+| SwissTable SIMD group probing | **SWAR VARIANT DONE** (below); the 16-wide vector probe needs a kernel and a workload to justify it |
+| Sorting networks over vector registers | Fails §3.1's rule 2 — a network permutes its input, so it produces output rather than a scalar. It wants the first-class vector type §1.2 defers, not another fused kernel |
 | SIMD `memcmp` | **DEFERRED, not blocked** — see the input-vs-needle rule below |
 
 **What actually costs, now that the surface exists.** Not the vector body: the
 ASSEMBLERS. §3.3a's rule is to check the assembler for every target a kernel is
 about to be emitted on and land the encodings first, and the count is higher
-than it looks — there are **seven backends and six assemblers**, because each
+than it looks — there are **eight backends and six assemblers**, because each
 self-host backend has one of its own in Fern (`x86_native.fern`,
-`arm64_native.fern`, `watbin.fern`) alongside the three in `internal/native`.
-Every one of the three kernels above paid that cost separately, and it was the
-dominant cost each time.
+`arm64_native.fern`, `watbin.fern`) alongside the three in `internal/native`,
+and the two `-backend ssa` legs read the `internal/native` pair. The first three
+kernels each paid that cost separately and it was the dominant cost each time;
+`__count_byte` paid nothing, because the encoding debt is per-INSTRUCTION-SET
+rather than per-kernel and it is assembled from shapes the others bought.
 
 **Which kernels are worth building** is answered by the rule §4 of that document
 names: *a fused kernel pays when its vector length is the INPUT; it does not pay
@@ -212,7 +220,8 @@ seed, so nothing outside it depends on how the seed is used.
 | Primitive | Today | Best known | Verdict |
 | --- | --- | --- | --- |
 | Substring search | **Two-Way (Crochemore–Perrin)** | Two-Way; SIMD/`memchr` for short needles | **DONE (this pass)** |
-| Single-byte search | **`__memchr` / `__rmemchr`, vector on the native tier** | SIMD `memchr` | **DONE (both directions)** — forward ~43x through `index_of`, backward 8.8x through `last_index_of` |
+| Single-byte search | **`__memchr` / `__rmemchr`, vector on every backend** | SIMD `memchr` | **DONE (both directions)** — forward ~43x through `index_of`, backward 8.8x through `last_index_of` |
+| Byte counting | **`__count_byte`, vector on every backend** | SIMD `memchr`-shaped count | **DONE** — 10.2x native x86-64. Adoption is TOTAL rather than a needle-length tier: with no cursor and no needle length there is no shape where the intrinsic and the loop differ |
 | Backward search (`last_index_of`, `rsplit_once`, `rpartition`) | **Metered naive scan escalating to reverse Two-Way** | Reverse Two-Way | **DONE (this pass)** |
 | `split` / `replace` / `find_all` / `count` | Routed through the Two-Way core | — | **DONE (this pass)** |
 | Case-insensitive search | Naive | Case-folded Two-Way | GAP |
@@ -222,7 +231,7 @@ seed, so nothing outside it depends on how the seed is used.
 
 | Primitive | Today | Best known | Verdict |
 | --- | --- | --- | --- |
-| UTF-8 validation | **`__ascii_run` skips each ASCII run 16 bytes at a time**; the multi-byte arms stay a branch ladder in Fern | Höhrmann table DFA, then simdutf | **PARTLY DONE** — 0.22 → 13.8 GB/s on ASCII-heavy text. The split is deliberate: the per-length overlong and surrogate rules are branchy logic that would be duplicated across seven backends, and only the run BETWEEN sequences vectorises. The table DFA for the remaining arms is still unblocked |
+| UTF-8 validation | **`__ascii_run` skips each ASCII run 16 bytes at a time**; the multi-byte arms stay a branch ladder in Fern | Höhrmann table DFA, then simdutf | **PARTLY DONE** — 0.22 → 13.8 GB/s on ASCII-heavy text. The split is deliberate: the per-length overlong and surrogate rules are branchy logic that would be duplicated across eight backends, and only the run BETWEEN sequences vectorises. The table DFA for the remaining arms is still unblocked |
 | UTF-8 length / decode | Scalar | Scalar is fine below SIMD | OK |
 | UTF-8 ↔ UTF-16 | `std/utf8` | simdutf | BLOCKED |
 
@@ -242,26 +251,24 @@ survives without SIMD, and the compiler's own lexer is the beneficiary.
 
 | Primitive | Today | Best known | Verdict |
 | --- | --- | --- | --- |
-| `count_ones` | **Intrinsic** (`i32.popcnt` on wasm; inline SWAR on the register backends) | `POPCNT` / NEON `CNT` / wasm `i32.popcnt` | **DONE**; hardware popcount needs a baseline decision |
-| `leading_zeros` | **Intrinsic** — `i32.clz` / arm64 `clz` / x86 `bsr` | `LZCNT` / `CLZ` / `i32.clz` | **DONE (this pass)** |
-| `trailing_zeros` | **Intrinsic** — `i32.ctz` / clz-derived / x86 `bsf` | `TZCNT` / `RBIT`+`CLZ` / `i32.ctz` | **DONE (this pass)** |
+| `count_ones` | **Intrinsic** — `popcnt` / `cnt`+`addv` / `i32.popcnt` | `POPCNT` / NEON `CNT` / wasm `i32.popcnt` | **DONE**, hardware on all three |
+| `leading_zeros` | **Intrinsic** — `lzcnt` / `clz` / `i32.clz` | `LZCNT` / `CLZ` / `i32.clz` | **DONE**, hardware on all three |
+| `trailing_zeros` | **Intrinsic** — `tzcnt` / `rbit`+`clz` / `i32.ctz` | `TZCNT` / `RBIT`+`CLZ` / `i32.ctz` | **DONE**, hardware on all three |
 | `byte_swap` | Software | `BSWAP` / `REV` | GAP |
 | `rotate_left/right` | Software | `ROL`/`ROR` / wasm `rotl` | GAP |
 
 These were 32- and 64-iteration software loops in all four integer modules —
-the source comment gave the reason plainly: "no intrinsics surface in lang".
-They are now branchless SWAR, which needs no compiler work at all and is
-**measured 4.3x faster** on x86-64 (3M iterations of all three ops: 1250-1282 ms
-before, 278-299 ms after; the loop overhead is inside both figures, so the
-speedup on the bit ops alone is larger).
+the source comment gave the reason plainly: "no intrinsics surface in lang" —
+and they got to hardware in two steps, each measured on x86-64. Branchless SWAR
+first, needing no compiler work at all, at **4.3x** (3M iterations of all three
+ops: 1250-1282 ms down to 278-299 ms, loop overhead inside both figures). Then
+the `OpPopcount` / `OpClz` / `OpCtz` family and its lowerings, at a further
+**3.9x** over the SWAR — the compiler project this row once called the endpoint,
+now done. Details and the per-backend instruction table are below.
 
-The hardware intrinsics are still the endpoint and still worth doing — a single
-instruction beats eight or ten. But that needs a new IR op family plus lowerings
-in three native backends AND three self-host backends to avoid a parity gap, so
-it is a compiler project, not the one-line change this row used to imply. The
-SWAR versions capture most of the win in the meantime, and anything built on
-them (hash mixing, bit-set iteration, `bit_length`, a future SWAR layer
-elsewhere) gets it for free.
+Anything built on them (hash mixing, bit-set iteration, `bit_length`) gets it
+for free, which is what makes `byte_swap` and `rotate` the two rows still worth
+taking: they are the same shape, and the op family they would join exists.
 
 ### Random numbers
 
@@ -321,16 +328,15 @@ constraints above.
 
 **Tier 1 — unblocked, high value**
 
-1. **Hardware bit intrinsics.** An IR op family plus lowerings in three native
-   and three self-host backends — a compiler project, not a one-liner. The SWAR
-   implementations now in the stdlib capture most of the win, so this is no
-   longer urgent.
+1. ~~**Hardware bit intrinsics.**~~ Done — the IR op family landed and lowers on
+   every backend, 3.9x over the SWAR it replaced. `byte_swap` and `rotate` are
+   the same shape and are what is left of this row.
 2. **Eisel–Lemire `parse_float`.** The sibling of the Dragonbox work; needs a
    128-bit high-multiply.
 3. ~~Move `std/fuzz` onto the seeded generator~~ — done, see below.
-4. ~~Small-map linear-scan path~~, ~~per-process hash seed~~ — done, see
-   below. What remains on `core/map` is the SWAR group probe, and SipHash for
-   the seeded path (the seed closes offline precomputation; an online timing
+4. ~~Small-map linear-scan path~~, ~~per-process hash seed~~, ~~SWAR group
+   probe~~ — done, see below. What remains on `core/map` is SipHash for the
+   seeded path (the seed closes offline precomputation; an online timing
    oracle can still recover an invertible FNV).
 5. ~~Adaptive sort~~, ~~`random_int` modulo bias~~, ~~SWAR bit counting~~,
    ~~bit-counting intrinsics~~,
@@ -339,7 +345,10 @@ constraints above.
 **Tier 2 — unblocked, narrower**
 
 6. ~~Reverse Two-Way for the backward-search family~~ — done, see below.
-7. SWAR group probing for `Map` (the SwissTable idea, minus the vectors).
+7. ~~SWAR group probing for `Map`~~ (the SwissTable idea, minus the vectors) —
+   done: ctrl bytes plus an 8-bucket SWAR scan over the unchanged linear-probe
+   order, behind a scalar home-bucket check. 1.45x miss-heavy / 1.15x hit-heavy
+   near the load ceiling, parity at typical load.
 8. ~~2-digit integer→string~~ — done, see below. SWAR string→int is blocked with #6200.
 9. Table-driven lexer classification.
 10. Magic-number constant division in the compiler.
@@ -351,11 +360,19 @@ simdjson-style parsing, simdutf validation, true SwissTable probing, vectorised
 `memchr`/`memcmp`, and sorting networks — one project with the whole tier as its
 payoff, not to be attempted piecemeal.
 
-That framing was right and it has been paid off. Three kernels now ship on all
-seven backends (constraint 1 above), so nothing on that list is blocked on the
-surface any more: `memchr` is done in both directions, `memcmp` is deferred by
-the input-vs-needle rule rather than blocked, and the other three each want a
-kernel — a build item now, not a project.
+That framing was right and it has been paid off. Four kernels now ship on all
+eight backends (constraint 1 above), so nothing on that list is blocked on the
+surface any more, and what is left has sorted itself into three different
+answers rather than one queue:
+
+- **Done.** `memchr` in both directions, plus `__ascii_run` and `__count_byte`.
+- **Decided against, with a measurement.** `memcmp` by the input-vs-needle rule;
+  SwissTable's vector group probe, because the SWAR variant took most of the win
+  and no map-bound workload has asked for the rest; sorting networks, which fail
+  §3.1's rule 2 outright and want the deferred vector *type*, not a kernel.
+- **A build item.** simdjson stage 1 and the remaining simdutf arms — each wants
+  a kernel through the surface that exists, which is a different and much
+  smaller kind of blocked than the one this tier was filed under.
 
 **That evaluation has since happened — see `docs/ATLAS-PLATFORM-PLAN.md` §1.2
 and §3.** Its conclusion changes this tier's cost, not its payoff: a
@@ -530,7 +547,11 @@ reverted.
 SWAR sequences — 12-15 ALU ops each, portable and correct, and the right answer
 while the language had no intrinsic surface. They are now one-line wrappers over
 `__popcount*` / `__clz*` / `__ctz*`, each lowering to a SINGLE IR op
-(`OpPopcount` / `OpClz` / `OpCtz`) across all six backends plus the interpreter.
+(`OpPopcount` / `OpClz` / `OpCtz`) across all NINE backends plus the
+interpreter. Nine rather than the eight the fused SIMD kernels reach, and the
+difference is instructive: `internal/codegen/wasmssa` consumes `ssa.Func`
+directly and has no string-helper table, so a kernel cannot reach it — but a
+plain scalar op family lowers there like anywhere else.
 
 **Measured, because the estimate mattered.** On x86-64, 20M `count_ones()`
 calls: **0.489s → 0.127s (3.9x)**. `leading_zeros` lands at 0.108s against a
@@ -545,17 +566,20 @@ measuring the three variants separately showed why.
 | | clz | ctz | popcount |
 | --- | --- | --- | --- |
 | wasm | `i32.clz` | `i32.ctz` | `i32.popcnt` |
-| arm64 | `clz` | `x & -x` then `clz` + `csel` | inline SWAR |
-| x86-64 | `bsr` + zero branch | `bsf` + zero branch | inline SWAR |
+| arm64 | `clz` | `rbit` + `clz` | `cnt` + `addv` |
+| x86-64 | `lzcnt` | `tzcnt` | `popcnt` |
 
-The two popcount gaps are **not** oversights. On x86-64, `POPCNT` requires
-SSE4.2 and Fern emits static binaries with no runtime CPU dispatch, so using it
-would turn a pre-2008 CPU into a SIGILL at the first bit operation rather than
-a slow binary — raising the baseline is a project decision, not a codegen one.
-On arm64 the hardware popcount lives on the SIMD side (`cnt` per byte, `addv`
-to sum), and neither `cnt`, `addv`, nor `rbit` is implemented by the in-process
-assembler `cmd/fern -target arm64-linux` uses by default; emitting them fails at
-assemble time. Both still gain from being inline on the IR path rather than
+All three are hardware on all three backends now, and the two that were not are
+worth recording because of what closed them. On x86-64 the blocker was the
+baseline: `POPCNT` is SSE4.2 and Fern emits static binaries with no runtime CPU
+dispatch, so selecting it is a promise the whole binary makes — taking the
+declared Haswell baseline at its word, not a new decision. On arm64 the hardware
+popcount lives on the SIMD side (`cnt` per byte, `addv` to sum), and the
+in-process assembler `cmd/fern -target arm64-linux` uses by default could encode
+none of `cnt`, `addv` or `rbit`. That gap closed as a **side effect of the SIMD
+kernels** (#6198), which had to teach the same assembler its NEON surface for
+`__memchr` — the encoding debt being per-instruction-set rather than per-caller
+cuts both ways. Both still gain from being inline on the IR path rather than
 behind a Fern-level call, which is where the 3.9x comes from.
 
 Zero is defined: clz/ctz of 0 return the operand width, matching wasm's

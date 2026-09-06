@@ -44,8 +44,6 @@ on:
     paths-ignore:
       - "docs/**"
       - "*.md"
-      - "LICENSE"
-      - ".github/ISSUE_TEMPLATE/**"
   # The unit half of #7319's main smoke (check-sources.yml is the type half):
   # rebase-merge replays commits onto a main their PR's CI never saw, so a
   # semantic coupling between two individually-green PRs only exists in the
@@ -56,8 +54,6 @@ on:
     paths-ignore:
       - "docs/**"
       - "*.md"
-      - "LICENSE"
-      - ".github/ISSUE_TEMPLATE/**"
   workflow_dispatch:
 
 # Supersede an in-flight run for the same ref: a new push to the

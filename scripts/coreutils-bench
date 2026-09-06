@@ -246,6 +246,11 @@ PY
       printf 'sleep 0\tn\t{} 0\n'
       printf 'sleep 0 four operands\tn\t{} 0 0s 0m 0h\n'
       ;;
+    hostid)
+      # Startup plus the NSS walk: /etc/hostid, /etc/nsswitch.conf and
+      # /etc/hosts, read on every call.
+      printf 'hostid\tn\t{}\n'
+      ;;
     head)
       # head's shapes are: stop early on a big file (the count is small,
       # so the cost is startup plus one read), copy a lot of it, and the

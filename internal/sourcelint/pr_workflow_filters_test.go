@@ -15,8 +15,6 @@ import (
 var docOnlyPathsIgnore = []string{
 	"docs/**",
 	"*.md",
-	"LICENSE",
-	".github/ISSUE_TEMPLATE/**",
 }
 
 // alwaysRunOnPR names the lane that must NEVER carry the filter. A doc-only PR
