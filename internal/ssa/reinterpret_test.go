@@ -4,6 +4,7 @@ import (
 	"math"
 	"testing"
 
+	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/ir"
 )
 
@@ -120,6 +121,44 @@ func TestReinterpretOpKindStrings(t *testing.T) {
 	for _, c := range cases {
 		if got := c.k.String(); got != c.want {
 			t.Errorf("%v.String() = %q, want %q", c.k, got, c.want)
+		}
+	}
+}
+
+// The lift stamps Width 64 on f64→i64: the result is 64 bits by definition,
+// and the IR does not annotate the op. The constant folder keeps that width
+// on the ConstInt it rewrites the op into, which is what stops a backend's
+// integer maskFix from sign-extending the low half of a folded bit pattern —
+// `f64_bits(NaN)` came back as its low 32 bits on x86-64 without it. The
+// f32→i32 direction is an i32 result and keeps the integer default.
+func TestLiftReinterpretF64ToI64IsWide(t *testing.T) {
+	for _, c := range []struct {
+		irKind  ir.OpKind
+		ssaKind OpKind
+		want    int8
+	}{
+		{ir.OpReinterpretI64F64, OpReinterpretF64ToI64, 64},
+		{ir.OpReinterpretI32F32, OpReinterpretF32ToI32, 0},
+	} {
+		in := &ir.Func{
+			Name:   "f",
+			Params: []ast.Param{{Name: "a"}},
+			Ops: []ir.Op{
+				{Kind: ir.OpLoadLocal, I32: 0},
+				{Kind: c.irKind},
+				{Kind: ir.OpReturn},
+			},
+		}
+		out, err := LiftFromIR(in)
+		if err != nil {
+			t.Fatalf("LiftFromIR: %v", err)
+		}
+		op := out.Blocks[0].Ops[0]
+		if op.Kind != c.ssaKind {
+			t.Fatalf("%v lifted to %v, want %v", c.irKind, op.Kind, c.ssaKind)
+		}
+		if op.Width != c.want {
+			t.Errorf("%v: Width = %d, want %d", c.ssaKind, op.Width, c.want)
 		}
 	}
 }

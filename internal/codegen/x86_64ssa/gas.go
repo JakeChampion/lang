@@ -416,7 +416,9 @@ func emitFuncBlocks(w func(string, ...any), label string, p *Program, numAlloc, 
 			if err != nil {
 				return err
 			}
-			w("\t%s", line)
+			if line != "" {
+				w("\t%s", line)
+			}
 		}
 		if cmpLine != "" {
 			w("\t%s", cmpLine)
@@ -1333,6 +1335,17 @@ func fConvSeq(in Inst, scratch int) (string, error) {
 		// consumed only by arm64ssa for its Inst type — so no program can reach
 		// the wrong sequence today.
 		return fmt.Sprintf("movq xmm0, %s\n\tcvttsd2si %s, xmm0", d, d) + maskFix(in.Dst, in.W), nil
+	case ssa.OpReinterpretF64ToI64, ssa.OpReinterpretI64ToF64:
+		// Identity: the register already holds the f64 bit pattern.
+		return "", nil
+	case ssa.OpReinterpretF32ToI32:
+		// cvtsd2ss leaves bits 63:32 of xmm0 stale; the movsxd sign-extends
+		// the f32 pattern out of the low half into the i32 storage convention.
+		return fmt.Sprintf("movq xmm0, %s\n\tcvtsd2ss xmm0, xmm0\n\tmovq %s, xmm0", d, d) + maskFix(in.Dst, 32), nil
+	case ssa.OpReinterpretI32ToF32:
+		// cvtss2sd reads only the low 32 bits, so the i32's sign-extension
+		// above them is ignored.
+		return fmt.Sprintf("movq xmm0, %s\n\tcvtss2sd xmm0, xmm0\n\tmovq %s, xmm0", d, d), nil
 	default:
 		return "", fmt.Errorf("x86_64ssa: float conversion %v unsupported", in.K)
 	}
