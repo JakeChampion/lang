@@ -2023,6 +2023,25 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	registerStructMethod("Reader", "read_chunk", []ast.Type{ast.NumberType{}},
 		ast.EnumType{Name: "Result", Args: []ast.Type{ast.StringType{}, ioErrType}})
 	registerStructMethod("Reader", "close", nil, optionIoErr)
+	// stat asks fstat(2) of the handle itself — the same record `stat(path)`
+	// fills, for a stream the program did not open by name (stdin, stdout,
+	// an inherited descriptor). A method rather than an `fstat(fd)` free
+	// function because a handle is not a number everywhere: on wasi
+	// preview 2 a Reader is an input-stream plus the descriptor it was
+	// opened on, and only the descriptor can answer. A stdio handle there
+	// has no descriptor and answers Err(Unsupported) (#8713).
+	fileStatResult := ast.EnumType{Name: "Result", Args: []ast.Type{
+		ast.StructType{Name: "FileStat"}, ioErrType}}
+	registerStructMethod("Reader", "stat", nil, fileStatResult)
+	registerStructMethod("Writer", "stat", nil, fileStatResult)
+	// seek(offset, whence) is lseek(2): whence 0 / 1 / 2 for SEEK_SET /
+	// SEEK_CUR / SEEK_END, the new offset back. A pipe answers ESPIPE
+	// (`Other("Illegal seek")`), which is how a utility learns it must
+	// stream rather than jump to the end.
+	registerStructMethod("Reader", "seek",
+		[]ast.Type{ast.NumberType{Width: 64, Signed: true}, ast.NumberType{}},
+		ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.NumberType{Width: 64, Signed: true}, ioErrType}})
 	registerStructMethod("Writer", "write", []ast.Type{ast.StringType{}}, optionIoErr)
 	registerStructMethod("Writer", "close", nil, optionIoErr)
 

@@ -97,6 +97,8 @@ func ClassifyCore(bin []byte) (ComposeRequest, []string) {
 			req.File.Mkdir = true
 		case m == "wasi:filesystem/types@0.2.0" && n == "[method]descriptor.stat-at":
 			req.File.Stat = true
+		case m == "wasi:filesystem/types@0.2.0" && n == "[method]descriptor.stat":
+			req.File.StatSelf = true
 		case m == "wasi:filesystem/types@0.2.0" && n == "[method]descriptor.remove-directory-at":
 			req.File.Rmdir = true
 		case m == "wasi:filesystem/types@0.2.0" && n == "[method]descriptor.read-directory",

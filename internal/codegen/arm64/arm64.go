@@ -141,9 +141,13 @@ const (
 // in `linuxOnlySysno` below or get branched inline in their
 // emitter.
 var linuxDarwinSysno = map[string][2]int{
-	"read":    {sysRead, darRead},
-	"write":   {sysWrite, darWrite},
-	"close":   {sysClose, darClose},
+	"read":  {sysRead, darRead},
+	"write": {sysWrite, darWrite},
+	"close": {sysClose, darClose},
+	// lseek(2) — Linux asm-generic 62, Darwin BSD 199. Same
+	// (fd, off_t, whence) shape and the same carry-flag error
+	// convention every other Darwin row normalises.
+	"lseek":   {62, 199},
 	"socket":  {sysSocket, darSocket},
 	"bind":    {sysBind, darBind},
 	"listen":  {sysListen, darListen},
@@ -481,6 +485,7 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	// without the Reader API.
 	if g.usesReadFile || g.usesReadFileBytes || g.usesWriteFile || g.usesWriteFileExec ||
 		g.usesRemoveFile || g.usesTempDir || g.usesReadDir || g.usesStat || g.usesLstat ||
+		g.usesFdStat || g.usesReaderSeek ||
 		g.usesAccess || g.usesRemoveDirAll || g.usesCreateDirAll {
 		g.usesAlloc = true
 		g.usesMemcpy = true
@@ -776,6 +781,12 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	}
 	if g.usesLstat {
 		g.emitLstatRuntime()
+	}
+	if g.usesFdStat {
+		g.emitFdStatRuntime()
+	}
+	if g.usesReaderSeek {
+		g.emitReaderSeekRuntime()
 	}
 	if g.usesAccess {
 		g.emitAccessRuntime()
@@ -9252,7 +9263,15 @@ func (g *generator) emitReadDirRuntime() {
 // boxes). Ok = 16-byte box {tag=0, FileStat ptr @8}; Err =
 // 16-byte box {tag=1, IoError @8}.
 func (g *generator) emitStatRuntime() {
-	g.emitStatLikeRuntime("__fern_stat", 0, "st2w")
+	g.emitStatLikeRuntime("__fern_stat", 0, "st2w", false)
+}
+
+// emitFdStatRuntime emits `__fern_fd_stat(handle_ptr)` in x0 →
+// Result[FileStat, IoError]: fstat(2) of the fd the handle holds,
+// projected onto FileStat by the same body the path helpers use.
+// The errno is classified against an empty path, as a failed read is.
+func (g *generator) emitFdStatRuntime() {
+	g.emitStatLikeRuntime("__fern_fd_stat", 0, "fst2w", true)
 }
 
 // emitLstatRuntime emits `__fern_lstat`, the same helper with
@@ -9262,14 +9281,15 @@ func (g *generator) emitStatRuntime() {
 // a directory walk needs to choose between recursing, reading and
 // skipping (#7982).
 func (g *generator) emitLstatRuntime() {
-	g.emitStatLikeRuntime("__fern_lstat", 256, "lst2w")
+	g.emitStatLikeRuntime("__fern_lstat", 256, "lst2w", false)
 }
 
 // emitStatLikeRuntime is the shared body. `atFlags` is fstatat's
 // flags word — 0 to follow, AT_SYMLINK_NOFOLLOW (0x100) not to —
-// and `lp` prefixes the local labels so both helpers can be
-// emitted into one object.
-func (g *generator) emitStatLikeRuntime(sym string, atFlags int, lp string) {
+// and `lp` prefixes the local labels so the helpers can all be
+// emitted into one object. `byFd` selects fstat of the fd at [x0]
+// over fstatat of a path.
+func (g *generator) emitStatLikeRuntime(sym string, atFlags int, lp string, byFd bool) {
 	g.line("")
 	g.line(".global " + sym)
 	g.typeDirective(sym)
@@ -9283,17 +9303,24 @@ func (g *generator) emitStatLikeRuntime(sym string, atFlags int, lp string) {
 	g.emit("stp x21, x22, [sp, #32]")
 	g.emit("stp x23, x24, [sp, #48]")
 	g.emit("str x25, [sp, #64]")
-	g.emit("mov x19, x0") // path_data (original, for io_error)
-	g.emit("mov x20, x1") // path_len (original, for io_error)
-	g.emitStrDataPtr2W("x21", "x19", "x20", 72)
-	g.emitStrLen2W("w22", "x20")
-	g.emitNulTermPath2W("x21", "x21", "x22")
-	// fstatat(AT_FDCWD, pathz, statbuf, atFlags)
-	g.atFdcwd("x0")
-	g.emit("mov x1, x21")
-	g.emit("add x2, x29, #96")
-	g.emit("mov x3, #%d", atFlags)
-	g.syscallFstatat()
+	if byFd {
+		// fstat(fd, statbuf)
+		g.emit("ldr w0, [x0]")
+		g.emit("add x1, x29, #96")
+		g.syscallFstat()
+	} else {
+		g.emit("mov x19, x0") // path_data (original, for io_error)
+		g.emit("mov x20, x1") // path_len (original, for io_error)
+		g.emitStrDataPtr2W("x21", "x19", "x20", 72)
+		g.emitStrLen2W("w22", "x20")
+		g.emitNulTermPath2W("x21", "x21", "x22")
+		// fstatat(AT_FDCWD, pathz, statbuf, atFlags)
+		g.atFdcwd("x0")
+		g.emit("mov x1, x21")
+		g.emit("add x2, x29, #96")
+		g.emit("mov x3, #%d", atFlags)
+		g.syscallFstatat()
+	}
 	g.emit("tbnz x0, #63, .L%s_err", lp)
 	if g.darwin {
 		g.emit("ldrh w9, [x29, #100]") // st_mode (u16 @ +4)
@@ -9339,8 +9366,12 @@ func (g *generator) emitStatLikeRuntime(sym string, atFlags int, lp string) {
 	g.label(".L" + lp + "_err")
 	g.emit("neg x22, x0")
 	g.emit("mov x0, x22")
-	g.emit("mov x1, x19")
-	g.emit("mov x2, x20")
+	if byFd {
+		g.emitEmptyPathArgs()
+	} else {
+		g.emit("mov x1, x19")
+		g.emit("mov x2, x20")
+	}
 	g.emit("bl __fern_io_error")
 	g.emit("mov x19, x0")
 	g.emit("mov x0, #16")
@@ -9357,6 +9388,59 @@ func (g *generator) emitStatLikeRuntime(sym string, atFlags int, lp string) {
 	g.emit("ldp x29, x30, [sp], #288")
 	g.emit("ret")
 	g.sizeDirective(sym)
+	g.line(".ltorg")
+}
+
+// emitEmptyPathArgs loads the empty path `__fern_io_error` classifies a
+// path-less failure against — a read, a write, an fstat — into x1 / x2,
+// in whichever string ABI the emit is using.
+func (g *generator) emitEmptyPathArgs() {
+	if ast.UseTwoWordStrings(8) {
+		g.emit("mov x1, xzr")
+		g.emit("movz x2, #0x8000, lsl #48")
+	} else {
+		g.adrpAdd("x1", ".LStr_ioerr_empty")
+	}
+}
+
+// emitReaderSeekRuntime emits `__fern_reader_seek(handle_ptr, offset,
+// whence)` in (x0, x1, w2) → Result[i64, IoError]: lseek(2) on the
+// handle's fd, the new offset back. A pipe answers ESPIPE, classified
+// against an empty path. Ok = 16-byte box {tag=0, offset @8}; Err =
+// {tag=1, IoError @8}.
+func (g *generator) emitReaderSeekRuntime() {
+	g.line("")
+	g.line(".global __fern_reader_seek")
+	g.typeDirective("__fern_reader_seek")
+	g.label("__fern_reader_seek")
+	g.emit("stp x29, x30, [sp, #-32]!")
+	g.emit("mov x29, sp")
+	g.emit("str x19, [sp, #16]")
+	g.emit("ldr w0, [x0]") // fd; offset and whence are in place
+	g.syscall("lseek")
+	g.emit("tbnz x0, #63, .Lrsk2w_err")
+	g.emit("mov x19, x0")
+	g.emit("mov x0, #16")
+	g.emit("bl __fern_alloc_box")
+	g.emit("str wzr, [x0]") // tag = 0 (Ok)
+	g.emit("str x19, [x0, #8]")
+	g.emit("b .Lrsk2w_ret")
+	g.label(".Lrsk2w_err")
+	g.emit("neg x19, x0")
+	g.emit("mov x0, x19")
+	g.emitEmptyPathArgs()
+	g.emit("bl __fern_io_error")
+	g.emit("mov x19, x0")
+	g.emit("mov x0, #16")
+	g.emit("bl __fern_alloc_box")
+	g.emit("mov w1, #1")
+	g.emit("str w1, [x0]") // tag = 1 (Err)
+	g.emit("str x19, [x0, #8]")
+	g.label(".Lrsk2w_ret")
+	g.emit("ldr x19, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #32")
+	g.emit("ret")
+	g.sizeDirective("__fern_reader_seek")
 	g.line(".ltorg")
 }
 
@@ -10985,6 +11069,8 @@ type generator struct {
 	usesReadDir      bool
 	usesStat         bool
 	usesLstat        bool
+	usesFdStat       bool
+	usesReaderSeek   bool
 	usesAccess       bool
 	usesEuid         bool
 	usesEgid         bool
@@ -15001,6 +15087,15 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			g.usesReaderWriter = true
 			g.usesAlloc = true
 			g.usesIoError = true
+		case "__method_Reader_stat", "__method_Writer_stat":
+			// fstat(2) of the handle's fd, the FileStat the path
+			// helpers build.
+			target = "__fern_fd_stat"
+			g.usesFdStat = true
+		case "__method_Reader_seek":
+			// lseek(2) on the handle's fd → Result[i64, IoError].
+			target = "__fern_reader_seek"
+			g.usesReaderSeek = true
 		case "__method_Writer_write":
 			target = "__fern_writer_write"
 			g.usesReaderWriter = true

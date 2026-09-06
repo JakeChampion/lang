@@ -354,3 +354,55 @@ func TestFsStatFieldsPreview1(t *testing.T) {
 		t.Fatalf("got %q, want 42", got)
 	}
 }
+
+// TestFsHandleStatSeekPreview1 — `Reader.stat()` is fd_filestat_get on the
+// Reader's fd, projected onto the same FileStat path_filestat_get builds, and
+// `Reader.seek()` is fd_seek with the three whence values. The reads after each
+// seek are the assertion that the position moved, not only that a number came
+// back.
+func TestFsHandleStatSeekPreview1(t *testing.T) {
+	src := `function main(): i32 {
+    match (write_file("probe.txt", "hello")) { Err(e) => { return 1; }, Ok(_) => {} }
+    match (open_reader("probe.txt")) {
+        Err(e) => { return 2; },
+        Ok(r) => {
+            match (r.stat()) {
+                Err(e) => { return 3; },
+                Ok(fs) => {
+                    if (!fs.is_file) { return 4; }
+                    if (fs.size != 5 as i64) { return 5; }
+                }
+            }
+            match (r.seek(0 - 2 as i64, 2)) {
+                Err(e) => { return 6; },
+                Ok(pos) => { if (pos != 3 as i64) { return 7; } }
+            }
+            match (r.read_chunk(10)) {
+                Err(e) => { return 8; },
+                Ok(s) => { if (s != "lo") { return 9; } }
+            }
+            match (r.seek(0 as i64, 1)) {
+                Err(e) => { return 10; },
+                Ok(pos) => { if (pos != 5 as i64) { return 11; } }
+            }
+            match (r.seek(1 as i64, 0)) {
+                Err(e) => { return 12; },
+                Ok(pos) => { if (pos != 1 as i64) { return 13; } }
+            }
+            match (r.read_chunk(2)) {
+                Err(e) => { return 14; },
+                Ok(s) => { if (s != "el") { return 15; } }
+            }
+            match (r.seek(0 - 9 as i64, 0)) {
+                Ok(pos) => { return 16; },
+                Err(e) => {}
+            }
+            r.close();
+        }
+    }
+    return 42;
+}`
+	if got := runFsDirProgram(t, src); got != "42" {
+		t.Fatalf("got %q, want 42", got)
+	}
+}

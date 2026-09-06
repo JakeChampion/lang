@@ -279,6 +279,8 @@ pub function needs_of(cache: irlower.LowerResult[]): string[] {
         out = out.append("random_i32");   // map_hash_seed's lazy draw calls it
     }
     if (module_emits_op_cached(cache, "read_chunk")) { out = out.append("read_chunk"); }
+    if (module_emits_op_cached(cache, "fd_stat")) { out = out.append("fd_stat"); }
+    if (module_emits_op_cached(cache, "reader_seek")) { out = out.append("reader_seek"); }
     if (module_emits_op_cached(cache, "read_dir")) { out = out.append("read_dir"); }
     if (module_emits_op_cached(cache, "read_file")) { out = out.append("read_file"); }
     if (module_emits_op_cached(cache, "read_file_bytes")) { out = out.append("read_file_bytes"); }
@@ -3869,6 +3871,14 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
         // $__fern_reader_close calls preview1 fd_close and boxes None. Emitted
         // caller-side in wasm_ir_run. Mirrors asm_ir's reader_close op.
         parts = parts.append("    call $__fern_reader_close\n");
+    } else if (o.kind_tag == 241) {  // fd_stat
+        // r.stat() -> Result[FileStat, IoError]: fd on the stack, then the
+        // FileStat type id the struct box needs, as the stat op pushes it.
+        parts = parts.append(tid_get("FileStat") + "    call $__fern_fd_stat\n");
+    } else if (o.kind_tag == 242) {  // reader_seek
+        // r.seek(offset, whence) -> Result[i64, IoError]: fd, i64 offset and
+        // whence are on the stack in param order.
+        parts = parts.append("    call $__fern_reader_seek\n");
     } else if (is_map_op_kind(o.kind_tag)) {
         parts = parts.append(emit_map_op_wat(o));
     } else if (o.kind_tag == 181) {  // sleep_ms
@@ -4589,7 +4599,7 @@ function io_err_field_off(i: i32, slot: i32): string {
 // needs_io_error reports whether the module carries any fs op — the gate on
 // $__fern_build_io_error and on the strerror texts it selects from.
 pub function needs_io_error(needs: string[]): boolean {
-    return need(needs, "stat") || need(needs, "lstat") || need(needs, "remove_file") || need(needs, "create_dir_all") || need(needs, "read_dir") || need(needs, "remove_dir_all") || need(needs, "temp_dir") || need(needs, "read_file") || need(needs, "read_file_bytes") || need(needs, "write_file") || need(needs, "open_file") || need(needs, "writer_write") || need(needs, "reader_close") || need(needs, "read_chunk");
+    return need(needs, "stat") || need(needs, "lstat") || need(needs, "remove_file") || need(needs, "create_dir_all") || need(needs, "read_dir") || need(needs, "remove_dir_all") || need(needs, "temp_dir") || need(needs, "read_file") || need(needs, "read_file_bytes") || need(needs, "write_file") || need(needs, "open_file") || need(needs, "writer_write") || need(needs, "reader_close") || need(needs, "read_chunk") || need(needs, "fd_stat") || need(needs, "reader_seek");
 }
 
 // with_strerror_texts adds the strerror texts and the "Unknown error " prefix
@@ -5036,6 +5046,15 @@ pub function temp_dir_import(): string {
 pub function sleep_ms_import(): string {
     return "  (import \"wasi_snapshot_preview1\" \"poll_oneoff\" (func $poll_oneoff (param i32 i32 i32 i32) (result i32)))\n";
 }
+// fd_stat_import / fd_seek_import emit the preview1 imports behind
+// $__fern_fd_stat and $__fern_reader_seek. Neither is shared with any other
+// bundle, so each is emitted exactly once, by its own op's need.
+pub function fd_stat_import(): string {
+    return "  (import \"wasi_snapshot_preview1\" \"fd_filestat_get\" (func $fd_filestat_get (param i32 i32) (result i32)))\n";
+}
+pub function fd_seek_import(): string {
+    return "  (import \"wasi_snapshot_preview1\" \"fd_seek\" (func $fd_seek (param i32 i64 i32 i32) (result i32)))\n";
+}
 // stdin_fd_read_import emits the standalone wasi fd_read import that read_line /
 // read_int use to read stdin (fd 0). file_imports ALSO imports fd_read for
 // read_file, so the caller (wasm_ir_run) must emit only one of the two — this
@@ -5174,6 +5193,60 @@ function stat_like_func(name: string, lookupflags: string): string {
     o = o + "      (i32.store (local.get $res) (i32.const 1))\n";
     o = o + "      (i32.store (i32.add (local.get $res) (i32.const 4)) (call $__fern_build_io_error (local.get $err) (local.get $path)))\n";
     o = o + "      (return (local.get $res))))\n";
+    o = o + filestat_project_wat();
+    return o;
+}
+
+// fd_stat_func emits $__fern_fd_stat(fd, fstype) -> Result[FileStat, IoError]
+// box: fd_filestat_get into the same 64-byte record path_filestat_get
+// writes, projected by the same tail. A handle carries no path, so the
+// error is classified against a fresh empty string, as reader_close's is.
+pub function fd_stat_func(): string {
+    var o: string = "";
+    o = o + "  (func $__fern_fd_stat (param $fd i32) (param $fstype i32) (result i32)\n";
+    o = o + "    (local $err i32) (local $buf i32) (local $ft i32) (local $fs i32) (local $res i32) (local $path i32)\n";
+    o = o + "    (local.set $buf (call $__fern_alloc (i32.const 64)))\n";
+    o = o + "    (local.set $err (call $fd_filestat_get (local.get $fd) (local.get $buf)))\n";
+    o = o + "    (if (i32.ne (local.get $err) (i32.const 0)) (then\n";
+    o = o + "      (local.set $path (call $__fern_str_box (i32.const 4)))\n";
+    o = o + "      (i32.store (local.get $path) (i32.const 0))\n";
+    o = o + "      (local.set $res (call $__fern_str_box (i32.const 8)))\n";
+    o = o + "      (i32.store (local.get $res) (i32.const 1))\n";
+    o = o + "      (i32.store (i32.add (local.get $res) (i32.const 4)) (call $__fern_build_io_error (local.get $err) (local.get $path)))\n";
+    o = o + "      (return (local.get $res))))\n";
+    o = o + filestat_project_wat();
+    return o;
+}
+
+// reader_seek_func emits $__fern_reader_seek(fd, offset, whence) ->
+// Result[i64, IoError] box: one fd_seek, the new offset read back out of
+// an 8-byte return area into a 16-byte box — tag at 0, the i64 at 8, where
+// opt_make_w puts an 8-byte payload.
+pub function reader_seek_func(): string {
+    var o: string = "";
+    o = o + "  (func $__fern_reader_seek (param $fd i32) (param $off i64) (param $whence i32) (result i32)\n";
+    o = o + "    (local $err i32) (local $rb i32) (local $res i32) (local $path i32)\n";
+    o = o + "    (local.set $rb (call $__fern_alloc (i32.const 8)))\n";
+    o = o + "    (local.set $err (call $fd_seek (local.get $fd) (local.get $off) (local.get $whence) (local.get $rb)))\n";
+    o = o + "    (if (i32.ne (local.get $err) (i32.const 0)) (then\n";
+    o = o + "      (local.set $path (call $__fern_str_box (i32.const 4)))\n";
+    o = o + "      (i32.store (local.get $path) (i32.const 0))\n";
+    o = o + "      (local.set $res (call $__fern_str_box (i32.const 8)))\n";
+    o = o + "      (i32.store (local.get $res) (i32.const 1))\n";
+    o = o + "      (i32.store (i32.add (local.get $res) (i32.const 4)) (call $__fern_build_io_error (local.get $err) (local.get $path)))\n";
+    o = o + "      (return (local.get $res))))\n";
+    o = o + "    (local.set $res (call $__fern_str_box (i32.const 16)))\n";
+    o = o + "    (i32.store (local.get $res) (i32.const 0))\n";
+    o = o + "    (i64.store (i32.add (local.get $res) (i32.const 8)) (i64.load (local.get $rb)))\n";
+    o = o + "    (local.get $res))\n";
+    return o;
+}
+
+// filestat_project_wat is the tail every stat-shaped helper shares: the
+// 64-byte record in $buf read into a fresh FileStat box (its type id in
+// $fstype), wrapped in Ok and returned.
+function filestat_project_wat(): string {
+    var o: string = "";
     o = o + "    (local.set $ft (i32.load8_u (i32.add (local.get $buf) (i32.const 16))))\n";
     o = o + "    (local.set $fs (call $__fern_str_box (i32.const " + util.i32_to_string(filestat_bytes()) + ")))\n";
     o = o + "    (i32.store (local.get $fs) (local.get $fstype))\n";
@@ -8575,6 +8648,8 @@ function preview1_imports(needs: string[]): string {
     // stat(path) uses the preview1 path_filestat_get import (must precede the
     // function section), emitted when the module stats a file.
     if (need(needs, "stat") || need(needs, "lstat")) { parts = parts.append(stat_import()); }
+    if (need(needs, "fd_stat")) { parts = parts.append(fd_stat_import()); }
+    if (need(needs, "reader_seek")) { parts = parts.append(fd_seek_import()); }
     // remove_file / remove_dir_all use the preview1 path_unlink_file import
     // (remove_dir_all unlinks the regular files it finds) — emit it once across
     // both (must precede the function section).
@@ -8851,7 +8926,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     // is emitted from the module's declarations. A program whose only allocation
     // is a wrapper's return area / lifted string block (module_extern_needs_heap)
     // would otherwise emit `call $__fern_alloc` against nothing.
-    if (mode == 2 || module_extern_needs_heap(mod) || need(needs, "@allocates") || need(needs, "@uses_arr_i32_helpers") || need(needs, "@uses_i32_to_string") || need(needs, "@uses_i64_to_string") || need(needs, "@uses_u64_to_string") || need(needs, "@uses_u32_to_string") || need(needs, "@uses_chr") || need(needs, "@uses_strbuf") || need(needs, "env") || need(needs, "stat") || need(needs, "lstat") || need(needs, "remove_file") || need(needs, "create_dir_all") || need(needs, "read_dir") || need(needs, "remove_dir_all") || need(needs, "temp_dir") || need(needs, "sleep_ms") || need(needs, "read_chunk") || need(needs, "reader_close") || need(needs, "open_file") || need(needs, "writer_write") || need(needs, "wasm_poll") || need(needs, "tcp_connect") || need(needs, "tcp_send") || need(needs, "tcp_recv") || need(needs, "tcp_listen") || need(needs, "tcp_accept") || need(needs, "udp_send") || need(needs, "poll")) {
+    if (mode == 2 || module_extern_needs_heap(mod) || need(needs, "@allocates") || need(needs, "@uses_arr_i32_helpers") || need(needs, "@uses_i32_to_string") || need(needs, "@uses_i64_to_string") || need(needs, "@uses_u64_to_string") || need(needs, "@uses_u32_to_string") || need(needs, "@uses_chr") || need(needs, "@uses_strbuf") || need(needs, "env") || need(needs, "stat") || need(needs, "lstat") || need(needs, "remove_file") || need(needs, "create_dir_all") || need(needs, "read_dir") || need(needs, "remove_dir_all") || need(needs, "temp_dir") || need(needs, "sleep_ms") || need(needs, "read_chunk") || need(needs, "reader_close") || need(needs, "fd_stat") || need(needs, "reader_seek") || need(needs, "open_file") || need(needs, "writer_write") || need(needs, "wasm_poll") || need(needs, "tcp_connect") || need(needs, "tcp_send") || need(needs, "tcp_recv") || need(needs, "tcp_listen") || need(needs, "tcp_accept") || need(needs, "udp_send") || need(needs, "poll")) {
         parts = parts.append(heap_alloc_helpers(heap_base_for_strs(sv, cv), fl_base_for_strs(sv, cv), fl_cells(), large_fl_base_for_strs(sv, cv)));
         parts = parts.append(rc_runtime_helpers(heap_base_for_strs(sv, cv)));
     }
@@ -9041,6 +9116,8 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     // via fd_close (imports emitted above). Backs std/io read_all_stdin on wasm.
     if (need(needs, "read_chunk")) { parts = parts.append(reader_read_chunk_func()); }
     if (need(needs, "reader_close")) { parts = parts.append(reader_close_func()); }
+    if (need(needs, "fd_stat")) { parts = parts.append(fd_stat_func()); }
+    if (need(needs, "reader_seek")) { parts = parts.append(reader_seek_func()); }
     // $__fern_str_to_i32 backs str_to_i32(s); allocation-free, own gate.
     if (need(needs, "@uses_str_to_i32")) { parts = parts.append(str_to_i32_helper()); }
     // $__fern_chr backs chr(n); allocates (heap gate ORs in module_uses_chr).

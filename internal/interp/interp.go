@@ -634,6 +634,9 @@ func New() *Interp {
 	i.Builtins["__method_Reader_read_line"] = &Builtin{Fn: builtinReaderReadLine}
 	i.Builtins["__method_Reader_read_chunk"] = &Builtin{Fn: builtinReaderReadChunk}
 	i.Builtins["__method_Reader_close"] = &Builtin{Fn: builtinReaderClose}
+	i.Builtins["__method_Reader_stat"] = &Builtin{Fn: builtinFdStat}
+	i.Builtins["__method_Writer_stat"] = &Builtin{Fn: builtinFdStat}
+	i.Builtins["__method_Reader_seek"] = &Builtin{Fn: builtinReaderSeek}
 	i.Builtins["__method_Writer_write"] = &Builtin{Fn: builtinWriterWrite}
 	i.Builtins["__method_Writer_close"] = &Builtin{Fn: builtinWriterClose}
 	i.Builtins["__method_Array_push"] = &Builtin{Fn: builtinArrayPush}
@@ -2360,8 +2363,13 @@ func statLike(name string, resolve func(string) (os.FileInfo, error), args []Val
 	if err != nil {
 		return resultErr(classifyIoError(string(path), err)), nil
 	}
+	return resultOk(fileStatValue(info)), nil
+}
+
+// fileStatValue projects an os.FileInfo onto the FileStat struct.
+func fileStatValue(info os.FileInfo) *Struct {
 	raw := statFields(info)
-	st := &Struct{
+	return &Struct{
 		TypeName: "FileStat",
 		Fields: map[string]Value{
 			"is_file":    Bool(info.Mode().IsRegular()),
@@ -2384,7 +2392,84 @@ func statLike(name string, resolve func(string) (os.FileInfo, error), args []Val
 			"ctime_nsec": Number(raw.ctimeNsec),
 		},
 	}
-	return resultOk(st), nil
+}
+
+// streamFile is the *os.File behind a Reader / Writer: the stdio streams
+// while they are still the process's own, else the open-file table. A
+// stdio stream a test replaced with a buffer is no file, and the methods
+// below answer for it the way a host with no descriptor does.
+func streamFile(i *Interp, v Value) (*os.File, error) {
+	fd, err := streamFd(v)
+	if err != nil {
+		return nil, err
+	}
+	var s any
+	switch fd {
+	case 0:
+		s = i.Stdin
+	case 1:
+		s = i.Stdout
+	case 2:
+		s = i.Stderr
+	default:
+		f, ok := i.openFiles[fd]
+		if !ok {
+			return nil, fmt.Errorf("handle with fd=%d not registered (closed already?)", fd)
+		}
+		return f, nil
+	}
+	f, _ := s.(*os.File)
+	return f, nil
+}
+
+// builtinFdStat answers `r.stat()` / `w.stat()`: fstat(2) of the handle,
+// the same record `stat(path)` fills. A stdio stream that is not a real
+// file answers Unsupported, as a wasi preview-2 stream does.
+func builtinFdStat(i *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("stat: expected 1 arg")
+	}
+	f, err := streamFile(i, args[0])
+	if err != nil {
+		return nil, err
+	}
+	if f == nil {
+		return resultErr(&Enum{EnumName: "IoError", VariantName: "Unsupported", Index: 5}), nil
+	}
+	info, serr := f.Stat()
+	if serr != nil {
+		return resultErr(classifyIoError("", serr)), nil
+	}
+	return resultOk(fileStatValue(info)), nil
+}
+
+// builtinReaderSeek answers `r.seek(offset, whence)`: lseek(2), with the
+// new offset back. A pipe answers ESPIPE, which reaches the caller as
+// `Other("Illegal seek")`, exactly as the compiled backends report it.
+func builtinReaderSeek(i *Interp, args []Value) (Value, error) {
+	if len(args) != 3 {
+		return nil, fmt.Errorf("Reader.seek: expected 3 args")
+	}
+	f, err := streamFile(i, args[0])
+	if err != nil {
+		return nil, err
+	}
+	off, ok := args[1].(Number)
+	if !ok {
+		return nil, fmt.Errorf("Reader.seek: offset must be a number")
+	}
+	whence, ok := args[2].(Number)
+	if !ok {
+		return nil, fmt.Errorf("Reader.seek: whence must be a number")
+	}
+	if f == nil {
+		return resultErr(ioErrorOther("", syscall.ESPIPE)), nil
+	}
+	pos, serr := f.Seek(int64(off), int(whence))
+	if serr != nil {
+		return resultErr(classifyIoError("", serr)), nil
+	}
+	return resultOk(Number(pos)), nil
 }
 
 // builtinAccess answers `access(path, mode)` against the EFFECTIVE ids,

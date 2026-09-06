@@ -296,6 +296,16 @@ var importSpecs = map[string]importSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
 		results: nil,
 	},
+	"wasi_descriptor_stat_p2": {
+		// Preview-2: [method]descriptor.stat lowered to (self, retptr)
+		// -> (). The return area is stat-at's exactly — the same
+		// result<descriptor-stat, error-code> — for the descriptor
+		// itself rather than a path under it.
+		module:  "wasi:filesystem/types@0.2.0",
+		name:    "[method]descriptor.stat",
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: nil,
+	},
 	"wasi_descriptor_stat_at_p2": {
 		// Preview-2: [method]descriptor.stat-at lowered to
 		//   (self, path-flags, path_ptr, path_len, retptr) -> ().
@@ -417,6 +427,23 @@ var importSpecs = map[string]importSpec{
 		name:    "[method]output-stream.blocking-write-and-flush",
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
 		results: nil,
+	},
+	"wasi_fd_filestat_get": {
+		// (fd i32, buf i32) -> errno i32. Writes the same 64-byte
+		// `filestat` record path_filestat_get does, for an open fd.
+		module:  "wasi_snapshot_preview1",
+		name:    "fd_filestat_get",
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+	},
+	"wasi_fd_seek": {
+		// (fd i32, offset i64, whence i32, newoffset_ptr i32) -> errno
+		// i32. lseek(2): whence 0 / 1 / 2 for set / cur / end, the new
+		// offset written as a u64 at newoffset_ptr.
+		module:  "wasi_snapshot_preview1",
+		name:    "fd_seek",
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI64, encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
 	},
 	"wasi_fd_fdstat_get": {
 		// (fd i32, retptr i32) -> errno i32. Writes a 24-byte `fdstat`
@@ -1904,6 +1931,24 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 			in.add("wasi_fd_read")
 		}
 	}
+	if helpers.set["__fern_fd_stat"] {
+		if opts.Preview2WASI {
+			in.add("wasi_descriptor_stat_p2")
+		} else {
+			in.add("wasi_fd_filestat_get")
+		}
+	}
+	if helpers.set["__fern_reader_seek"] {
+		if opts.Preview2WASI {
+			// SEEK_END needs the size, and the seek itself is a fresh
+			// read-via-stream at the target replacing the old stream.
+			in.add("wasi_descriptor_stat_p2")
+			in.add("wasi_descriptor_read_via_stream_p2")
+			in.add("wasi_io_input_stream_drop")
+		} else {
+			in.add("wasi_fd_seek")
+		}
+	}
 	if helpers.set["__fern_writer_write"] {
 		if opts.Preview2WASI {
 			in.add("wasi_blocking_write_and_flush_p2")
@@ -2383,6 +2428,8 @@ var preview2HelperBodyOverrides = map[string]func(map[string]uint32) []byte{
 	"__fern_stdin":               buildStdinBodyP2,
 	"__fern_reader_read_line_fd": buildReaderReadLineFdBodyP2,
 	"__fern_reader_read_chunk":   buildReaderReadChunkBodyP2,
+	"__fern_fd_stat":             buildFdStatBodyP2,
+	"__fern_reader_seek":         buildReaderSeekBodyP2,
 	"__fern_open_reader":         buildOpenReaderBodyP2,
 	"__fern_open_writer":         buildOpenWriterBodyP2,
 	"__fern_open_appender":       buildOpenAppenderBodyP2,

@@ -223,10 +223,12 @@ func fsViaStream(b *instTypeBuilder, v fsVocab, method string, result uint32) {
 		"[method]descriptor."+method)
 }
 
-// fsStat emits the `stat-at` method and the four types its result
-// needs. It is the only filesystem method whose signature is not
+// fsStat emits the `stat-at` and / or `stat` methods — `atPath` and
+// `self` select which — and the four types their shared result needs.
+// stat-at is the only filesystem method whose signature is not
 // expressible in the vocabulary fsPrelude already has, which is why it
-// carries its own type block rather than taking typeidxs from fsVocab.
+// carries its own type block rather than taking typeidxs from fsVocab;
+// `stat` differs from it only in taking no path.
 //
 // The record has to be declared IN FULL even though Fern's `stat`
 // surfaces only two of its six fields: an imported instance type is
@@ -240,7 +242,7 @@ func fsViaStream(b *instTypeBuilder, v fsVocab, method string, result uint32) {
 // Record types match structurally, so an inline declaration of the same
 // shape is accepted — and it keeps a program that calls `stat` from
 // having to import a clock it never reads.
-func fsStat(b *instTypeBuilder, v fsVocab) {
+func fsStat(b *instTypeBuilder, v fsVocab, atPath, self bool) {
 	datetime := b.defExport(InnerTypeRecord([]RecordField{
 		{Name: "seconds", Valtype: CValtypeU64},
 		{Name: "nanoseconds", Valtype: CValtypeU32},
@@ -255,11 +257,18 @@ func fsStat(b *instTypeBuilder, v fsVocab) {
 		{Name: "status-change-timestamp", Valtype: byte(optDatetime)},
 	}), "descriptor-stat")
 	rStat := b.def(InnerTypeResultOkErr(stat, v.errC))
-	b.funcExport(tcpMethodFuncDecl("stat-at",
-		[]string{"self", "path-flags", "path"},
-		[]byte{byte(v.bDesc), byte(v.pathFlags), CValtypeString},
-		byte(rStat)),
-		"[method]descriptor.stat-at")
+	if atPath {
+		b.funcExport(tcpMethodFuncDecl("stat-at",
+			[]string{"self", "path-flags", "path"},
+			[]byte{byte(v.bDesc), byte(v.pathFlags), CValtypeString},
+			byte(rStat)),
+			"[method]descriptor.stat-at")
+	}
+	if self {
+		b.funcExport(tcpMethodFuncDecl("stat",
+			[]string{"self"}, []byte{byte(v.bDesc)}, byte(rStat)),
+			"[method]descriptor.stat")
+	}
 }
 
 // fsReadDir emits the directory-listing surface: `read-directory` on

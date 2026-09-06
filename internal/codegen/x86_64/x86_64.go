@@ -226,9 +226,13 @@ func (g *generator) emitSyscallPreloaded(n int) {
 // Linux x86-64 syscall numbers. See the asm-generic table
 // for the full set.
 const (
-	sysRead      = 0
-	sysWrite     = 1
-	sysClose     = 3
+	sysRead  = 0
+	sysWrite = 1
+	sysClose = 3
+	// fstat(2) / lseek(2): x86-64 syscalls 5 / 8, backing the Reader /
+	// Writer `stat` and `seek` methods.
+	sysFstat     = 5
+	sysLseek     = 8
 	sysMmap      = 9
 	sysSocket    = 41
 	sysConnect   = 42
@@ -833,6 +837,12 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	if g.usesLstat {
 		g.emitLstatRuntime()
 	}
+	if g.usesFdStat {
+		g.emitFdStatRuntime()
+	}
+	if g.usesReaderSeek {
+		g.emitReaderSeekRuntime()
+	}
 	if g.usesAccess {
 		g.emitAccessRuntime()
 	}
@@ -1261,6 +1271,8 @@ type generator struct {
 	usesReadDir    bool
 	usesStat       bool
 	usesLstat      bool
+	usesFdStat     bool
+	usesReaderSeek bool
 	usesAccess     bool
 	usesEuid       bool
 	usesEgid       bool
@@ -1627,6 +1639,14 @@ func (g *generator) recordUse(target string) {
 		"open_reader", "open_writer", "open_appender",
 		"stdin", "stdout", "stderr":
 		g.usesReaderWriter = true
+	case "__method_Reader_stat", "__method_Writer_stat":
+		g.usesFdStat = true
+		g.usesAlloc = true
+		g.usesIoError = true
+	case "__method_Reader_seek":
+		g.usesReaderSeek = true
+		g.usesAlloc = true
+		g.usesIoError = true
 	case "__memset":
 		// Byte-grain fill used by the Map clear path.
 		g.usesMemset = true
@@ -3207,6 +3227,10 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_reader_read_line"
 		case "__method_Reader_read_chunk":
 			target = "__fern_reader_read_chunk"
+		case "__method_Reader_stat", "__method_Writer_stat":
+			target = "__fern_fd_stat"
+		case "__method_Reader_seek":
+			target = "__fern_reader_seek"
 		case "__method_Reader_close",
 			"__method_Writer_close":
 			target = "__fern_close_fd_box"
@@ -13095,7 +13119,16 @@ var linuxStatFields = []struct {
 // (immortal, same class as the Result boxes).
 // System V: rdi = path string value.
 func (g *generator) emitStatRuntime() {
-	g.emitStatLikeRuntime("__fern_stat", 0, "st")
+	g.emitStatLikeRuntime("__fern_stat", 0, "st", false)
+}
+
+// emitFdStatRuntime emits `__fern_fd_stat(handle_ptr)` — fstat(2) of the
+// fd a Reader / Writer holds, projected onto the same FileStat the path
+// helpers build. It is the same body with the path copy replaced by a
+// load of the fd, and the errno classified against an empty path, as a
+// failed read or write is.
+func (g *generator) emitFdStatRuntime() {
+	g.emitStatLikeRuntime("__fern_fd_stat", 0, "fst", true)
 }
 
 // emitLstatRuntime emits `__fern_lstat(path)`, which is the same helper with
@@ -13104,13 +13137,14 @@ func (g *generator) emitStatRuntime() {
 // is_dir. That three-way answer is what a directory walk needs to choose
 // between recursing, reading and skipping (#7982).
 func (g *generator) emitLstatRuntime() {
-	g.emitStatLikeRuntime("__fern_lstat", 256, "lst")
+	g.emitStatLikeRuntime("__fern_lstat", 256, "lst", false)
 }
 
 // emitStatLikeRuntime is the shared body. `atFlags` is newfstatat's flags word
 // — 0 to follow, AT_SYMLINK_NOFOLLOW (0x100) not to — and `lp` prefixes the
-// local labels so the two helpers can both be emitted into one object.
-func (g *generator) emitStatLikeRuntime(sym string, atFlags int, lp string) {
+// local labels so the helpers can all be emitted into one object. `byFd`
+// selects fstat(2) of the fd at [rdi] over newfstatat of a path.
+func (g *generator) emitStatLikeRuntime(sym string, atFlags int, lp string, byFd bool) {
 	g.line("")
 	g.line(".globl " + sym)
 	g.line(".type " + sym + ", @function")
@@ -13127,33 +13161,40 @@ func (g *generator) emitStatLikeRuntime(sym string, atFlags int, lp string) {
 	//   [rbp-56] emitStrDataPtr inline-spill scratch
 	//   [rbp-64] original path string value (io_error arg)
 	g.emit("sub rsp, 168")
-	g.emit("mov [rbp - 64], rdi")
-	g.emitStrLen("r13d", "rdi")
-	g.emitStrDataPtr("r12", "rdi", "[rbp - 56]")
-	// pathz = NUL-terminated heap copy.
-	g.emit("lea edi, [r13 + 1]")
-	g.emit("call __fern_alloc")
-	g.emit("mov rbx, rax")
-	g.emit("xor ecx, ecx")
-	g.label(".L" + lp + "_cp")
-	g.emit("cmp rcx, r13")
-	g.emit("jae .L" + lp + "_cpd")
-	g.emit("mov al, [r12 + rcx]")
-	g.emit("mov [rbx + rcx], al")
-	g.emit("add rcx, 1")
-	g.emit("jmp .L" + lp + "_cp")
-	g.label(".L" + lp + "_cpd")
-	g.emit("mov byte ptr [rbx + r13], 0")
-	// newfstatat(AT_FDCWD=-100, pathz, statbuf, atFlags)
-	g.emit("mov edi, -100")
-	g.emit("mov rsi, rbx")
-	g.emit("mov rdx, rsp")
-	if atFlags == 0 {
-		g.emit("xor r10d, r10d")
+	if byFd {
+		// fstat(fd, statbuf)
+		g.emit("mov edi, [rdi]")
+		g.emit("mov rsi, rsp")
+		g.emitSyscall(sysFstat)
 	} else {
-		g.emit(fmt.Sprintf("mov r10d, %d", atFlags))
+		g.emit("mov [rbp - 64], rdi")
+		g.emitStrLen("r13d", "rdi")
+		g.emitStrDataPtr("r12", "rdi", "[rbp - 56]")
+		// pathz = NUL-terminated heap copy.
+		g.emit("lea edi, [r13 + 1]")
+		g.emit("call __fern_alloc")
+		g.emit("mov rbx, rax")
+		g.emit("xor ecx, ecx")
+		g.label(".L" + lp + "_cp")
+		g.emit("cmp rcx, r13")
+		g.emit("jae .L" + lp + "_cpd")
+		g.emit("mov al, [r12 + rcx]")
+		g.emit("mov [rbx + rcx], al")
+		g.emit("add rcx, 1")
+		g.emit("jmp .L" + lp + "_cp")
+		g.label(".L" + lp + "_cpd")
+		g.emit("mov byte ptr [rbx + r13], 0")
+		// newfstatat(AT_FDCWD=-100, pathz, statbuf, atFlags)
+		g.emit("mov edi, -100")
+		g.emit("mov rsi, rbx")
+		g.emit("mov rdx, rsp")
+		if atFlags == 0 {
+			g.emit("xor r10d, r10d")
+		} else {
+			g.emit(fmt.Sprintf("mov r10d, %d", atFlags))
+		}
+		g.emitSyscall(262)
 	}
-	g.emitSyscall(262)
 	g.emit("test rax, rax")
 	g.emit("js .L" + lp + "_err")
 	g.emit("mov eax, [rsp + 24]") // st_mode
@@ -13192,7 +13233,11 @@ func (g *generator) emitStatLikeRuntime(sym string, atFlags int, lp string) {
 	g.emit("neg rax")
 	g.emit("mov r13, rax")
 	g.emit("mov edi, r13d")
-	g.emit("mov rsi, [rbp - 64]")
+	if byFd {
+		g.emit("lea rsi, [rip + .LStr_ioerr_empty]")
+	} else {
+		g.emit("mov rsi, [rbp - 64]")
+	}
 	g.emit("call __fern_io_error")
 	g.emit("mov r13, rax")
 	g.emit("mov edi, 16")
@@ -13210,6 +13255,47 @@ func (g *generator) emitStatLikeRuntime(sym string, atFlags int, lp string) {
 	g.emit("pop rbp")
 	g.emit("ret")
 	g.line(".size " + sym + ", .-" + sym)
+}
+
+// emitReaderSeekRuntime emits `__fern_reader_seek(handle_ptr, offset,
+// whence) → Result[i64, IoError]` — lseek(2) on the Reader's fd, the new
+// offset back. A pipe answers ESPIPE, classified against an empty path.
+// System V: rdi = handle ptr, rsi = offset, edx = whence.
+func (g *generator) emitReaderSeekRuntime() {
+	g.line("")
+	g.line(".globl __fern_reader_seek")
+	g.line(".type __fern_reader_seek, @function")
+	g.label("__fern_reader_seek")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx")
+	g.emit("sub rsp, 8")
+	g.emit("mov edi, [rdi]") // fd; offset and whence are in place
+	g.emitSyscall(sysLseek)
+	g.emit("test rax, rax")
+	g.emit("js .Lrsk_err")
+	g.emit("mov rbx, rax")
+	g.emit("mov edi, 16")
+	g.emit("call __fern_alloc_box")
+	g.emit("mov dword ptr [rax], 0") // Ok
+	g.emit("mov [rax + 8], rbx")
+	g.emit("jmp .Lrsk_ret")
+	g.label(".Lrsk_err")
+	g.emit("neg rax")
+	g.emit("mov edi, eax")
+	g.emit("lea rsi, [rip + .LStr_ioerr_empty]")
+	g.emit("call __fern_io_error")
+	g.emit("mov rbx, rax")
+	g.emit("mov edi, 16")
+	g.emit("call __fern_alloc_box")
+	g.emit("mov dword ptr [rax], 1") // Err
+	g.emit("mov [rax + 8], rbx")
+	g.label(".Lrsk_ret")
+	g.emit("add rsp, 8")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_reader_seek, .-__fern_reader_seek")
 }
 
 // emitAccessRuntime emits `__fern_access(path, mode) →

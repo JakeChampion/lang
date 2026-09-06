@@ -221,7 +221,10 @@ Built-ins:
 - `read_file` / `write_file` — slurp / truncate-write whole files.
 - `open_reader` / `open_writer` / `open_appender` —
   `Result[Reader|Writer, IoError]` with `.read_line()` / `.read_chunk(size)` /
-  `.write(s)` / `.close()` for streaming.
+  `.write(s)` / `.close()` for streaming, `.stat()` for the handle's own
+  `FileStat` (fstat), and `Reader.seek(offset, whence)` for lseek — a pipe
+  answers `Other("Illegal seek")`, which is how a utility learns it must
+  stream.
 
 WASM builds need a preopened directory — pass `wasmtime --dir=...`; paths are
 relative to that preopen.
