@@ -17813,6 +17813,20 @@ function main(): i32 {
     return 0;
 }
 `},
+		{"inline-arrow-lambda", `
+function main(): i32 {
+    var sink: i32 = 0;
+    ((x: i32) => { sink = sink + x; })(4);
+    return sink - 4;
+}
+`},
+		{"inline-arrow-lambda-discarded-value", `
+function main(): i32 {
+    var sink: i32 = 0;
+    ((x: i32) => { sink = sink + x; return sink; })(4);
+    return sink - 4;
+}
+`},
 		{"pvec-for-each", `
 import "std/pvec";
 function main(): i32 {
