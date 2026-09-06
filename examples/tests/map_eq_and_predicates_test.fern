@@ -102,7 +102,7 @@ function test_assert_all_i32_pass(): test.TestOutcome {
 
 function test_assert_all_i32_inline_lambda(): test.TestOutcome {
     return test.assert_all_i32([1, 2, 3],
-                          function(n: i32): boolean { return n > 0; });
+                          (n: i32): boolean => { return n > 0; });
 }
 
 function test_assert_all_i32_fails_with_index(): test.TestOutcome {

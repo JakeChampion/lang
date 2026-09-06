@@ -4976,6 +4976,69 @@ func appendArrPushCliffTally(body []byte) []byte {
 	return body
 }
 
+// appendArrGrowAlloc emits the copy-path sizing every __fern_arr_push_grow*
+// body shares: newLen (local 3), headerBytes (local 5), newCap (local 4), then
+// base = __fern_alloc(headerBytes + newCap*stride) + headerBytes (local 6).
+//
+// The total is checked in i64 first. A 32-bit doubling goes negative past 2^30
+// elements — the floor to 4 would then pick cap = 4 under a length near 1e9 —
+// and the product wraps past 4 GiB (#8587). wasm32 has no wider size to hand
+// the allocator, so a total past 2^31 - 1 traps here instead, the way the
+// natives abort with `allocation size out of range`. The unfloored product
+// decides the check: the floor only raises a total that is already tiny.
+func appendArrGrowAlloc(body []byte, alloc uint32) []byte {
+	// newLen = oldLen + 1
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstI32Const(body, 1)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalSet(body, 3)
+	// headerBytes = max(16, stride)
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstI32Const(body, 16)
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstI32Const(body, 16)
+	body = numeric.InstI32GeS(body)
+	body = inst.InstSelect(body)
+	body = inst.InstLocalSet(body, 5)
+	// if (i64)newLen * 2 * stride + headerBytes > maxAllocRequest { unreachable }
+	body = inst.InstLocalGet(body, 3)
+	body = convert.InstI64ExtendI32U(body)
+	body = inst.InstI64Const(body, 1)
+	body = numeric.InstI64Shl(body)
+	body = inst.InstLocalGet(body, 2)
+	body = convert.InstI64ExtendI32U(body)
+	body = numeric.InstI64Mul(body)
+	body = inst.InstLocalGet(body, 5)
+	body = convert.InstI64ExtendI32U(body)
+	body = numeric.InstI64Add(body)
+	body = inst.InstI64Const(body, maxAllocRequest)
+	body = numeric.InstI64GtU(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstUnreachable(body)
+	body = inst.InstEnd(body)
+	// newCap = max(2 * newLen, 4)
+	body = inst.InstLocalGet(body, 3)
+	body = inst.InstI32Const(body, 1)
+	body = numeric.InstI32Shl(body)
+	body = inst.InstLocalTee(body, 4)
+	body = inst.InstI32Const(body, 4)
+	body = inst.InstLocalGet(body, 4)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32GeS(body)
+	body = inst.InstSelect(body)
+	body = inst.InstLocalSet(body, 4)
+	// base = __fern_alloc(headerBytes + newCap*stride) + headerBytes
+	body = inst.InstLocalGet(body, 5)
+	body = inst.InstLocalGet(body, 4)
+	body = inst.InstLocalGet(body, 2)
+	body = numeric.InstI32Mul(body)
+	body = numeric.InstI32Add(body)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstLocalGet(body, 5)
+	body = numeric.InstI32Add(body)
+	return inst.InstLocalSet(body, 6)
+}
+
 // buildArrPushGrowBody — (arr, oldLen, stride) → new_data.
 // Wasm32 counterpart of arm64.go's emitArrPushGrowRuntime /
 // x86_64.go's emitArrPushGrowRuntime. Decides between in-place
@@ -5027,40 +5090,7 @@ func buildArrPushGrowBody(helperIdxs map[string]uint32) []byte {
 	body = inst.InstEnd(body)
 	body = appendArrPushCliffTally(body)
 	// Copy path. newLen = oldLen + 1.
-	body = inst.InstLocalGet(body, 1)
-	body = inst.InstI32Const(body, 1)
-	body = numeric.InstI32Add(body)
-	body = inst.InstLocalSet(body, 3) // $newLen
-	// newCap = max(2 * newLen, 4). Use a select.
-	body = inst.InstLocalGet(body, 3)
-	body = inst.InstI32Const(body, 1)
-	body = numeric.InstI32Shl(body)
-	body = inst.InstLocalTee(body, 4) // $newCap = 2 * newLen
-	body = inst.InstI32Const(body, 4)
-	body = inst.InstLocalGet(body, 4)
-	body = inst.InstI32Const(body, 4)
-	body = numeric.InstI32GeS(body)
-	body = inst.InstSelect(body)
-	body = inst.InstLocalSet(body, 4)
-	// headerBytes = max(16, stride).
-	body = inst.InstLocalGet(body, 2)
-	body = inst.InstI32Const(body, 16)
-	body = inst.InstLocalGet(body, 2)
-	body = inst.InstI32Const(body, 16)
-	body = numeric.InstI32GeS(body)
-	body = inst.InstSelect(body)
-	body = inst.InstLocalSet(body, 5) // $headerBytes
-	// allocSize = headerBytes + newCap * stride.
-	// base = __fern_alloc(allocSize) + headerBytes.
-	body = inst.InstLocalGet(body, 5)
-	body = inst.InstLocalGet(body, 4)
-	body = inst.InstLocalGet(body, 2)
-	body = numeric.InstI32Mul(body)
-	body = numeric.InstI32Add(body)
-	body = inst.InstCall(body, alloc)
-	body = inst.InstLocalGet(body, 5)
-	body = numeric.InstI32Add(body)
-	body = inst.InstLocalSet(body, 6) // $base = new data ptr
+	body = appendArrGrowAlloc(body, alloc)
 	// mem[base - 12] = newCap
 	body = inst.InstLocalGet(body, 6)
 	body = inst.InstI32Const(body, 12)
@@ -5152,39 +5182,7 @@ func arrPushGrowPtrBody(helperIdxs map[string]uint32, moveForm bool) []byte {
 	body = inst.InstEnd(body)
 	body = appendArrPushCliffTally(body)
 	// Copy path. newLen = oldLen + 1.
-	body = inst.InstLocalGet(body, 1)
-	body = inst.InstI32Const(body, 1)
-	body = numeric.InstI32Add(body)
-	body = inst.InstLocalSet(body, 3)
-	// newCap = max(2 * newLen, 4).
-	body = inst.InstLocalGet(body, 3)
-	body = inst.InstI32Const(body, 1)
-	body = numeric.InstI32Shl(body)
-	body = inst.InstLocalTee(body, 4)
-	body = inst.InstI32Const(body, 4)
-	body = inst.InstLocalGet(body, 4)
-	body = inst.InstI32Const(body, 4)
-	body = numeric.InstI32GeS(body)
-	body = inst.InstSelect(body)
-	body = inst.InstLocalSet(body, 4)
-	// headerBytes = max(16, stride).
-	body = inst.InstLocalGet(body, 2)
-	body = inst.InstI32Const(body, 16)
-	body = inst.InstLocalGet(body, 2)
-	body = inst.InstI32Const(body, 16)
-	body = numeric.InstI32GeS(body)
-	body = inst.InstSelect(body)
-	body = inst.InstLocalSet(body, 5)
-	// base = __fern_alloc(headerBytes + newCap*stride) + headerBytes.
-	body = inst.InstLocalGet(body, 5)
-	body = inst.InstLocalGet(body, 4)
-	body = inst.InstLocalGet(body, 2)
-	body = numeric.InstI32Mul(body)
-	body = numeric.InstI32Add(body)
-	body = inst.InstCall(body, alloc)
-	body = inst.InstLocalGet(body, 5)
-	body = numeric.InstI32Add(body)
-	body = inst.InstLocalSet(body, 6)
+	body = appendArrGrowAlloc(body, alloc)
 	// mem[base - 12] = newCap
 	body = inst.InstLocalGet(body, 6)
 	body = inst.InstI32Const(body, 12)
@@ -5315,36 +5313,7 @@ func arrPushGrowStrBody(helperIdxs map[string]uint32, moveForm bool) []byte {
 	body = inst.InstEnd(body)
 	body = appendArrPushCliffTally(body)
 	// Copy path — identical to buildArrPushGrowPtrBody up to the walk.
-	body = inst.InstLocalGet(body, 1)
-	body = inst.InstI32Const(body, 1)
-	body = numeric.InstI32Add(body)
-	body = inst.InstLocalSet(body, 3)
-	body = inst.InstLocalGet(body, 3)
-	body = inst.InstI32Const(body, 1)
-	body = numeric.InstI32Shl(body)
-	body = inst.InstLocalTee(body, 4)
-	body = inst.InstI32Const(body, 4)
-	body = inst.InstLocalGet(body, 4)
-	body = inst.InstI32Const(body, 4)
-	body = numeric.InstI32GeS(body)
-	body = inst.InstSelect(body)
-	body = inst.InstLocalSet(body, 4)
-	body = inst.InstLocalGet(body, 2)
-	body = inst.InstI32Const(body, 16)
-	body = inst.InstLocalGet(body, 2)
-	body = inst.InstI32Const(body, 16)
-	body = numeric.InstI32GeS(body)
-	body = inst.InstSelect(body)
-	body = inst.InstLocalSet(body, 5)
-	body = inst.InstLocalGet(body, 5)
-	body = inst.InstLocalGet(body, 4)
-	body = inst.InstLocalGet(body, 2)
-	body = numeric.InstI32Mul(body)
-	body = numeric.InstI32Add(body)
-	body = inst.InstCall(body, alloc)
-	body = inst.InstLocalGet(body, 5)
-	body = numeric.InstI32Add(body)
-	body = inst.InstLocalSet(body, 6)
+	body = appendArrGrowAlloc(body, alloc)
 	body = inst.InstLocalGet(body, 6)
 	body = inst.InstI32Const(body, 12)
 	body = numeric.InstI32Sub(body)

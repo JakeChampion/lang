@@ -51,7 +51,8 @@ costs a silent failure on the first target that lacks it.
 | `args` | `args` | argv, which exists only because something exec'd you |
 | `random` | `random_bytes`, `random_i32` | entropy: a syscall or a host import, never computed |
 | `fs` | `read_file`, `write_file`, `open_reader`, … | a filesystem |
-| `fsmode` | `write_file_exec` | permission bits on a filesystem entry |
+| `fsmode` | `write_file_exec`, `access` | permission bits on a filesystem entry |
+| `userid` | `geteuid`, `getegid` | a user the process can be |
 | `cabi` | `__c_call0..4` (+ `_f32` / `_f64`) | a C calling convention to call a function pointer through |
 | `tcp` | `tcp_*`, `udp_send` | a network stack |
 | `proc` | `proc_fork`, `proc_exec`, `proc_waitpid` | processes |
@@ -105,6 +106,29 @@ that can only ever be answered "no" is not authority — it is a constant.
 
 Note this is why the `std/` partition table below is unchanged by it: `isatty`
 adds no reach, so `std/cli` stays on `env` alone.
+
+**`access` is on `fsmode`, not `fs`.** `write_file_exec` SETS a permission bit
+and `access` READS one — "do the mode bits permit this, for my effective ids"
+is the same property from the other side, and a host with files and no
+permission model can answer neither. Putting it on `fs` would make the question
+askable on a target that has no bits to answer it from, which is the failure
+`fsmode` exists to convert into an E066.
+
+**`userid` is a capability, where `isatty` is core** — and the pair is the
+clearest illustration of where that line runs. Both are host-shaped questions
+about the ambient environment, and the argument for `isatty` is that a target
+with no terminal can answer "no" CORRECTLY. `geteuid` has no such answer.
+Neither WASI preview has a notion of a user at all, so the only constant
+available is 0, which claims to be root; and preview 1 reports a file's uid and
+gid as 0 for the same reason, so `test -O file` would report that every file is
+owned by the caller. A wrong answer presented as a right one is exactly what
+the capability system exists to turn into a compile-time refusal. `isatty`'s
+"no" is a fact; `geteuid`'s "0" would be a fiction.
+
+Note the second capability system disagrees, and correctly: `internal/caps`
+leaves `geteuid` / `getegid` UNGATED, because the question it asks is different
+— not "can this target answer" but "should a dependency be allowed to ask", and
+reading the identity the invoker already chose grants no reach.
 
 **`pollfd`, `fsmode` and `cabi` split three builtins off the capability that
 otherwise carried them** (#7947). Each is a property of the target, not a gap in a

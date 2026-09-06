@@ -327,22 +327,80 @@ func elideClosurePairFunc(fn *Func, pairEnvOffset int32) {
 		}
 	}
 
+	// A closure slot that did NOT elide — one passed to a function, the
+	// ordinary callback — still holds a {fn, env, drop_fn, env} PAIR, and
+	// both drops emitDec can have chosen for it release only part of that.
 	// A per-closure __closure_drop_<name> thunk reads captures at
-	// [env+offset], so it's only correct when the closure is a BARE
-	// ENV — i.e. the slot was elided above. For a closure that did
-	// NOT elide — one passed to a function, the ordinary callback —
-	// the slot still holds a {fn, env} PAIR, so route its drop through
-	// __drop_closure_value, which is_unique-gates the pair, dispatches
-	// through the drop-fn pointer the pair carries at 2*ptrW (that
-	// pointer IS the thunk, reached with the env rather than the pair)
-	// and then frees the pair block.
+	// [env+offset], so it is only correct on a BARE ENV; the generic
+	// __fern_closure_drop frees the block it is handed, which on a pair is
+	// the pair and never the env behind it.
+	//
+	// __drop_closure_value is the one that fits a pair: it is_unique-gates,
+	// dispatches through the drop-fn pointer the pair carries at 2*ptrW
+	// (that pointer IS the thunk, reached with the env rather than the
+	// pair), then frees the pair block. Route BOTH drops there.
+	//
+	// The generic arm matters on its own: emitDec picks it whenever the
+	// closure has no rc-tracked capture, so a lambda capturing one scalar
+	// by value leaked its whole env box on every call that took it as an
+	// argument (#8546) even once the thunk arm was routed (#8545).
+	// __drop_closure_value is safe for the targets that arm also covers —
+	// a static OpConstFunc cell carries the immortal rc sentinel, so the
+	// is_unique gate skips it, and a zero-capture closure's drop-fn slot is
+	// 0, which the inner guard skips.
+	// pairSlot names the slots that provably hold a {fn, env, drop_fn, env}
+	// pair: an OpMakeClosure wrote them directly. The generic arm below is
+	// gated on it because `__fern_closure_drop` is NOT closure-specific —
+	// genArrOfArrDropFn reuses it as the per-element drop for an
+	// array-of-arrays, and several generated helpers call it on an env they
+	// have already dispatched through. Rewriting by helper NAME alone
+	// therefore reached values that are not pairs: it recursed the
+	// pair-dropper into itself (every closure program segfaulted) and
+	// dispatched through a non-pair's word 2 (`slice_views`, which contains
+	// no closure at all, trapped with `indirect call type mismatch`). A
+	// slot reached only through an alias has makeClosureIdx -1 and is left
+	// alone, which loses a release rather than inventing one.
+	pairSlot := map[int32]bool{}
+	for slot, ws := range writers {
+		for _, w := range ws {
+			if w.makeClosureIdx >= 0 {
+				pairSlot[slot] = true
+			}
+		}
+	}
+	// An alias of a pair is a pair. `var g = f;` writes the slot through
+	// OpLoadLocal (or OpRcInc over one), which carries no OpMakeClosure of
+	// its own, so without this the drop on the alias is left alone — a
+	// missed release rather than a wrong one, but it is most of the shapes
+	// the corpus holds. Fixpoint because an alias can name an alias.
+	for changed := true; changed; {
+		changed = false
+		for slot, ws := range writers {
+			if pairSlot[slot] {
+				continue
+			}
+			for _, w := range ws {
+				if w.aliasOk && pairSlot[w.aliasSrc] {
+					pairSlot[slot] = true
+					changed = true
+					break
+				}
+			}
+		}
+	}
 	for i := 0; i+1 < len(fn.Ops); i++ {
 		if fn.Ops[i].Kind != OpLoadLocal || elidedSlot[fn.Ops[i].I32] {
 			continue
 		}
 		n := fn.Ops[i+1]
-		if n.Kind == OpCallDirect && strings.HasPrefix(n.Str, "__closure_drop_") {
+		if n.Kind != OpCallDirect {
+			continue
+		}
+		thunk := strings.HasPrefix(n.Str, "__closure_drop_")
+		generic := n.Str == "__fern_closure_drop" && pairSlot[fn.Ops[i].I32]
+		if thunk || generic {
 			fn.Ops[i+1].Str = "__drop_closure_value"
+			fn.Ops[i+1].Runtime = false
 			fn.Ops[i+1].Width = 0
 		}
 	}

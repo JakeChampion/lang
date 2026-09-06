@@ -307,3 +307,50 @@ func TestFsCreateDirAll(t *testing.T) {
 		t.Fatalf("got %q, want 42", got)
 	}
 }
+
+// TestFsStatFieldsPreview1 pins the whole of what preview 1 can and cannot
+// answer about a file.
+//
+// `filestat` carries dev, ino, nlink, size and the three timestamps; it has no
+// mode, uid, gid, rdev, blksize or blocks at all. Those read ZERO, which is the
+// contract the checker's `stat` documentation states — so the zeros here are
+// the assertion, not the absence of one: a body that left the tail of the
+// struct uninitialised would fail this exactly as a wrong value would.
+//
+// The timestamps are the other half. Preview 1 reports NANOSECONDS since the
+// epoch in one u64, where `stat(2)` reports whole seconds plus a remainder, so
+// FileStat's pair is a divide and a remainder rather than two loads. Asserting
+// that mtime is a plausible SECONDS count (and that the remainder is inside one
+// second) is what catches a body that stored the nanosecond word straight into
+// the seconds slot.
+func TestFsStatFieldsPreview1(t *testing.T) {
+	src := `function main(): i32 {
+    match (write_file("probe.txt", "hello")) { Err(e) => { return 1; }, Ok(_) => {} }
+    match (stat("probe.txt")) {
+        Err(e) => { return 2; },
+        Ok(fs) => {
+            if (fs.size != (5 as i64)) { return 3; }
+            // Not reported by preview 1.
+            if (fs.mode != (0 as u32)) { return 4; }
+            if (fs.uid != (0 as u32)) { return 5; }
+            if (fs.gid != (0 as u32)) { return 6; }
+            if (fs.rdev != (0 as i64)) { return 7; }
+            if (fs.blksize != (0 as i64)) { return 8; }
+            if (fs.blocks != (0 as i64)) { return 9; }
+            // Reported: one link, and an mtime in seconds with the
+            // sub-second part carried separately.
+            if (fs.nlink != (1 as u32)) { return 10; }
+            if (fs.mtime < (1000000000 as i64)) { return 11; }
+            if (fs.mtime > (10000000000 as i64)) { return 12; }
+            if (fs.mtime_nsec < (0 as i64)) { return 13; }
+            if (fs.mtime_nsec > (999999999 as i64)) { return 14; }
+            if (fs.ctime < (1000000000 as i64)) { return 15; }
+            if (fs.atime < (1000000000 as i64)) { return 16; }
+        }
+    }
+    return 42;
+}`
+	if got := runFsDirProgram(t, src); got != "42" {
+		t.Fatalf("got %q, want 42", got)
+	}
+}

@@ -91,15 +91,25 @@ func TestReapStaleRunsCancelsSafely(t *testing.T) {
 		}
 	}
 
-	// The sweep is itself an action: a cancelled run is a sweep that did not
-	// happen, and the next one is a schedule interval away.
-	block, ok := topLevelBlock(src, "concurrency")
-	if !ok {
-		t.Fatalf("%s has no top-level `concurrency:` block", reapFile)
-	}
-	if !strings.Contains(block, "cancel-in-progress: false") {
-		t.Errorf("%s cancels its own runs. It exists because the event-driven "+
-			"reapers cannot get a runner on a full queue; one that cancels itself "+
-			"on the same queue is the same bug again", reapFile)
+	// The sweep must carry NO concurrency group.
+	//
+	// `cancel-in-progress: false` protects the run holding a RUNNER; a run still
+	// waiting for one counts as pending, and GitHub keeps only the newest pending
+	// run per group. On a queue this deep nothing reaches a runner before the next
+	// merge arrives, so a group does not bound the sweep's cost — it guarantees it
+	// never finishes. That is what happened: with a group, runs 3 through 8 were
+	// each cancelled within seconds of the next trigger, having done nothing at
+	// all, and the workflow that exists to drain the queue had never once drained
+	// it.
+	//
+	// A slot per merge is affordable here for the same reason check-sources.yml
+	// gives for going without one: the job is seconds of API calls. Two sweeps
+	// overlapping is harmless — both list the open pull requests before the runs,
+	// and a cancel the other already made returns 409, which is handled above.
+	if _, ok := topLevelBlock(src, "concurrency"); ok {
+		t.Errorf("%s has a concurrency group again. A pending run is not protected by "+
+			"`cancel-in-progress: false`: the newest pending run replaces it, so on a "+
+			"busy queue the sweep is cancelled before it ever starts. It went eight "+
+			"runs without completing once that way", reapFile)
 	}
 }

@@ -11,19 +11,19 @@ import "std/array";
 
 function test_flat_map(): test.TestOutcome {
     var xs: i32[] = [1, 2, 3];
-    var out = xs.flat_map(function (x: i32): i32[] { return [x, x * 10]; });
+    var out = xs.flat_map((x: i32): i32[] => { return [x, x * 10]; });
     return test.assert_eq_array(out, [1, 10, 2, 20, 3, 30]);
 }
 
 function test_flat_map_empty(): test.TestOutcome {
     var xs: i32[] = [];
-    var out = xs.flat_map(function (x: i32): i32[] { return [x]; });
+    var out = xs.flat_map((x: i32): i32[] => { return [x]; });
     return test.assert_eq(out.len(), 0);
 }
 
 function test_reduce_sum(): test.TestOutcome {
     var xs: i32[] = [1, 2, 3, 4];
-    match (xs.reduce(function (a: i32, b: i32): i32 { return a + b; })) {
+    match (xs.reduce((a: i32, b: i32): i32 => { return a + b; })) {
         Some(v) => { return test.assert_eq(v, 10); },
         None => { return test.fail("reduce of non-empty expected Some"); }
     }
@@ -31,7 +31,7 @@ function test_reduce_sum(): test.TestOutcome {
 
 function test_reduce_single(): test.TestOutcome {
     var xs: i32[] = [5];
-    match (xs.reduce(function (a: i32, b: i32): i32 { return a + b; })) {
+    match (xs.reduce((a: i32, b: i32): i32 => { return a + b; })) {
         Some(v) => { return test.assert_eq(v, 5); },
         None => { return test.fail("reduce of single expected Some"); }
     }
@@ -39,7 +39,7 @@ function test_reduce_single(): test.TestOutcome {
 
 function test_reduce_empty(): test.TestOutcome {
     var xs: i32[] = [];
-    match (xs.reduce(function (a: i32, b: i32): i32 { return a + b; })) {
+    match (xs.reduce((a: i32, b: i32): i32 => { return a + b; })) {
         Some(v) => { return test.fail("reduce of empty expected None"); },
         None => { return test.pass(); }
     }
@@ -47,7 +47,7 @@ function test_reduce_empty(): test.TestOutcome {
 
 function test_reduce_max(): test.TestOutcome {
     var xs: i32[] = [3, 7, 2, 9, 4];
-    match (xs.reduce(function (a: i32, b: i32): i32 { if (a > b) { return a; } return b; })) {
+    match (xs.reduce((a: i32, b: i32): i32 => { if (a > b) { return a; } return b; })) {
         Some(v) => { return test.assert_eq(v, 9); },
         None => { return test.fail("expected Some"); }
     }
@@ -55,13 +55,13 @@ function test_reduce_max(): test.TestOutcome {
 
 function test_sort_by_asc(): test.TestOutcome {
     var xs: i32[] = [3, 1, 2, 5, 4];
-    var out = xs.sort_by(function (a: i32, b: i32): i32 { return a - b; });
+    var out = xs.sort_by((a: i32, b: i32): i32 => { return a - b; });
     return test.assert_eq_array(out, [1, 2, 3, 4, 5]);
 }
 
 function test_sort_by_desc(): test.TestOutcome {
     var xs: i32[] = [3, 1, 2, 5, 4];
-    var out = xs.sort_by(function (a: i32, b: i32): i32 { return b - a; });
+    var out = xs.sort_by((a: i32, b: i32): i32 => { return b - a; });
     return test.assert_eq_array(out, [5, 4, 3, 2, 1]);
 }
 

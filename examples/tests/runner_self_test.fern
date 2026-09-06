@@ -300,29 +300,31 @@ function test_fail_returns_fail(): test.TestOutcome {
     return expect_fail_containing(test.fail("custom message"), "custom message");
 }
 
-// The tally a run reports from is shared by every handle
-// derived from one `test_new`, so a recorded outcome survives
-// the caller dropping the handle `it` / `subsuite` returned.
-// These three pin that: without it a suite whose author forgot
-// an assignment printed `not ok` and still reported `1..0`,
-// `# fail 0`, exit 0 (#8466).
+// A TestRunner is a value: `it()` returns a new one, and a caller that
+// forgets to assign it back loses the counts on its own handle after
+// the TAP line was already printed. The runner therefore also counts
+// what reached the stream, in cells every handle derived from one
+// `test_new` shares (`emitted` / `emitted_failed`); `finish()` takes
+// the plan and the fail count from those, names the dropped results,
+// and exits 1 — a suite that lost a result is not passing (#8466).
+// These three pin that.
 //
-// Each uses an isolated child runner so the failing cases don't
-// poison this suite's own exit code — the same shape
+// Each uses an isolated quiet child runner so its `not ok` lines and
+// summary do not decide this suite's own exit code — the same shape
 // fail_fast_test.fern uses.
 
 function test_dropped_it_result_still_counts(): test.TestOutcome {
     var sub: test.TestRunner = test.test_new_quiet("dropped-it");
     // Both results are DISCARDED — the mistake the runner has to
     // survive. The passing path and the failing path are covered
-    // in one child so the tally has to get both right.
+    // in one child so the stream count has to get both right.
     sub.it("dropped pass", test_pass_returns_pass);
     sub.it("dropped fail", test_fail_returns_fail_case);
-    if (sub.passed.get() != 1) {
-        return test.fail("dropped pass lost: passed=" + sub.passed.get().to_string());
+    if (sub.emitted.get() != 2) {
+        return test.fail("dropped cases lost: emitted=" + sub.emitted.get().to_string());
     }
-    if (sub.failed.get() != 1) {
-        return test.fail("dropped fail lost: failed=" + sub.failed.get().to_string());
+    if (sub.emitted_failed.get() != 1) {
+        return test.fail("dropped fail lost: emitted_failed=" + sub.emitted_failed.get().to_string());
     }
     return test.pass();
 }
@@ -330,32 +332,94 @@ function test_dropped_it_result_still_counts(): test.TestOutcome {
 function test_unused_subsuite_handle_still_counts(): test.TestOutcome {
     var sub: test.TestRunner = test.test_new_quiet("unused-subsuite");
     sub = sub.it("parent pass", test_pass_returns_pass);
-    // A subsuite handle that is never folded back — there is
-    // nothing to fold, the child writes the parent's tally.
+    // A subsuite handle that is never merged back: the child shares
+    // the parent's cells, so its cases still reach the parent's plan.
     var child: test.TestRunner = sub.subsuite("child");
     child = child.it("child pass", test_pass_returns_pass);
     child = child.it("child fail", test_fail_returns_fail_case);
-    if (sub.passed.get() != 2) {
-        return test.fail("subsuite passes lost: passed=" + sub.passed.get().to_string());
+    if (sub.emitted.get() != 3) {
+        return test.fail("subsuite cases lost: emitted=" + sub.emitted.get().to_string());
     }
-    if (sub.failed.get() != 1) {
-        return test.fail("subsuite fail lost: failed=" + sub.failed.get().to_string());
+    if (sub.emitted_failed.get() != 1) {
+        return test.fail("subsuite fail lost: emitted_failed=" + sub.emitted_failed.get().to_string());
     }
     return test.pass();
 }
 
-function test_finish_exits_nonzero_for_dropped_failure(): test.TestOutcome {
-    // finish()'s exit code comes from the same tally, so the
-    // dropped failure decides it. Quiet keeps the child's `ok`
-    // lines out of this suite's stream; its `not ok` still prints.
-    var sub: test.TestRunner = test.test_new_quiet("dropped-exit");
-    sub.it("dropped pass", test_pass_returns_pass);
-    if (sub.finish() != 0) {
-        return test.fail("all-passing child exited non-zero");
+function test_finish_exits_nonzero_for_dropped_result(): test.TestOutcome {
+    // finish() compares the stream against the counters, so a dropped
+    // result is exit 1 even when it passed; a dropped failure is exit 1
+    // through the fail count as well. An assigned-back child stays 0.
+    var kept: test.TestRunner = test.test_new_quiet("kept");
+    kept = kept.it("kept pass", test_pass_returns_pass);
+    if (kept.finish() != 0) {
+        return test.fail("assigned all-passing child exited non-zero");
+    }
+    var dropped: test.TestRunner = test.test_new_quiet("dropped-exit");
+    dropped.it("dropped pass", test_pass_returns_pass);
+    if (dropped.finish() != 1) {
+        return test.fail("a dropped passing result exited 0");
     }
     var bad: test.TestRunner = test.test_new_quiet("dropped-exit-fail");
     bad.it("dropped fail", test_fail_returns_fail_case);
     return test.assert_eq(bad.finish(), 1);
+}
+
+// NaN and the generic assertion helpers (#8588). These four are bounded by
+// `[T: cmp.Ord]` / `[T: cmp.Eq]`, so they cannot NaN-check `T` themselves —
+// the answer has to come from core/cmp's instances, and before the total order
+// landed every one of these PASSED while asserting nothing: `cmp` answered 0
+// for any NaN comparison, and 0 satisfies both `<= 0` and `>= 0`.
+
+function nan_f64(): f64 {
+    var z: f64 = 0.0;
+    return z / z;
+}
+
+function test_le_nan_fails(): test.TestOutcome {
+    return expect_fail_containing(test.assert_le(nan_f64(), 1.0), "assert_le");
+}
+
+function test_le_nan_bound_passes(): test.TestOutcome {
+    // The mirror of the `assert_ge` case below: NaN is the top of the order,
+    // so `1.0 <= nan` HOLDS. What matters is that each of the four now asserts
+    // something — before, both directions passed for the same empty reason.
+    return expect_pass(test.assert_le(1.0, nan_f64()));
+}
+
+function test_le_pass_still_passes(): test.TestOutcome {
+    return expect_pass(test.assert_le(1.0, 2.0));
+}
+
+function test_ge_nan_fails(): test.TestOutcome {
+    return expect_fail_containing(test.assert_ge(1.0, nan_f64()), "assert_ge");
+}
+
+function test_ge_nan_lhs_passes(): test.TestOutcome {
+    // NaN sorts after every number, so `nan >= 1.0` is TRUE under the total
+    // order — the assertion holds rather than being vacuous.
+    return expect_pass(test.assert_ge(nan_f64(), 1.0));
+}
+
+function test_sorted_asc_nan_middle_fails(): test.TestOutcome {
+    return expect_fail_containing(
+        test.assert_sorted_asc([3.0, nan_f64(), 1.0]),
+        "assert_sorted_asc");
+}
+
+function test_sorted_asc_nan_last_passes(): test.TestOutcome {
+    // The order NaN actually has: after every number.
+    return expect_pass(test.assert_sorted_asc([1.0, 3.0, nan_f64()]));
+}
+
+function test_unique_two_nans_fails(): test.TestOutcome {
+    return expect_fail_containing(
+        test.assert_unique([nan_f64(), nan_f64()]),
+        "assert_unique");
+}
+
+function test_unique_one_nan_passes(): test.TestOutcome {
+    return expect_pass(test.assert_unique([1.0, nan_f64(), 2.0]));
 }
 
 function main(): i32 {
@@ -403,7 +467,16 @@ function main(): i32 {
     r = r.it("fail(msg) returns Fail(msg)", test_fail_returns_fail);
     r = r.it("dropped it() result still counts", test_dropped_it_result_still_counts);
     r = r.it("unused subsuite handle still counts", test_unused_subsuite_handle_still_counts);
-    r = r.it("finish() exit code follows the shared tally",
-             test_finish_exits_nonzero_for_dropped_failure);
+    r = r.it("finish() exits 1 for a dropped result",
+             test_finish_exits_nonzero_for_dropped_result);
+    r = r.it("assert_le rejects a NaN actual", test_le_nan_fails);
+    r = r.it("assert_le holds against a NaN bound", test_le_nan_bound_passes);
+    r = r.it("assert_le still passes on numbers", test_le_pass_still_passes);
+    r = r.it("assert_ge rejects a NaN bound", test_ge_nan_fails);
+    r = r.it("assert_ge holds for a NaN actual", test_ge_nan_lhs_passes);
+    r = r.it("assert_sorted_asc rejects a NaN inversion", test_sorted_asc_nan_middle_fails);
+    r = r.it("assert_sorted_asc accepts NaN last", test_sorted_asc_nan_last_passes);
+    r = r.it("assert_unique rejects two NaNs", test_unique_two_nans_fails);
+    r = r.it("assert_unique accepts one NaN", test_unique_one_nan_passes);
     return r.finish();
 }

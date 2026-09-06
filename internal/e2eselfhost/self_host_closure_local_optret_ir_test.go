@@ -41,7 +41,7 @@ var closureLocalOptRetCases = []struct {
 	// recorded return type.
 	{"alias", `
 function main(): i32 {
-    var f: () => Option[i32] = function (): Option[i32] { return Some(7); };
+    var f: () => Option[i32] = (): Option[i32] => { return Some(7); };
     var g: () => Option[i32] = f;
     match (g()) { Some(v) => { return v; }, None => { return 1; } }
 }
@@ -51,7 +51,7 @@ function main(): i32 {
 function call(f: () => Option[i32]): i32 {
     match (f()) { Some(v) => { return v; }, None => { return 1; } }
 }
-function main(): i32 { return call(function (): Option[i32] { return Some(6); }); }
+function main(): i32 { return call((): Option[i32] => { return Some(6); }); }
 `, 6, ""},
 	// Guard: a local bound to a NAMED function, which try_opt_type already
 	// resolved via opt_ret_type.
@@ -67,7 +67,7 @@ function main(): i32 {
 	// footer), so it must keep working.
 	{"split-call", `
 function main(): i32 {
-    var f: () => Option[i32] = function (): Option[i32] { return Some(5); };
+    var f: () => Option[i32] = (): Option[i32] => { return Some(5); };
     var o: Option[i32] = f();
     match (o) { Some(v) => { return v; }, None => { return 1; } }
 }
@@ -76,14 +76,14 @@ function main(): i32 {
 	// the Option recovery.
 	{"non-option-closure-array", `
 function main(): i32 {
-    var fs: (() => i32)[] = [function (): i32 { return 9; }];
+    var fs: (() => i32)[] = [(): i32 => { return 9; }];
     return fs[0]();
 }
 `, 9, ""},
 	// Guard: a closure local returning a non-Option composite.
 	{"string-closure-local", `
 function main(): i32 {
-    var f: () => string = function (): string { return "abcde"; };
+    var f: () => string = (): string => { return "abcde"; };
     return f().len();
 }
 `, 5, ""},

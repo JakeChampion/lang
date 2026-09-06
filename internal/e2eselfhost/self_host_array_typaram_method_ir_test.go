@@ -29,17 +29,17 @@ var arrayTyparamMethodIRCases = []struct {
 }{
 	// map: i32 -> i32 (same width).
 	{"map", `import "std/array";
-function main(): i32 { var xs: i32[] = [1, 2, 3]; var ys: i32[] = xs.map(function (n: i32): i32 { return n * 10; }); return ys[2]; }`},
+function main(): i32 { var xs: i32[] = [1, 2, 3]; var ys: i32[] = xs.map((n: i32): i32 => { return n * 10; }); return ys[2]; }`},
 	// map: i32 -> string (the result element width changes — erasure + call-site
 	// annotation must drive it).
 	{"map-widen", `import "std/array";
-function main(): i32 { var xs: i32[] = [1, 22, 333]; var ys: string[] = xs.map(function (n: i32): string { return n.to_string(); }); return ys[2].len() * 10 + ys.len(); }`},
+function main(): i32 { var xs: i32[] = [1, 22, 333]; var ys: string[] = xs.map((n: i32): string => { return n.to_string(); }); return ys[2].len() * 10 + ys.len(); }`},
 	// flat_map: T -> U[] then flatten.
 	{"flat_map", `import "std/array";
-function main(): i32 { var xs: i32[] = [1, 2, 3]; var ys: i32[] = xs.flat_map(function (x: i32): i32[] { return [x, x * 10]; }); return ys.len() * 100 + ys[1]; }`},
+function main(): i32 { var xs: i32[] = [1, 2, 3]; var ys: i32[] = xs.flat_map((x: i32): i32[] => { return [x, x * 10]; }); return ys.len() * 100 + ys[1]; }`},
 	// fold: string accumulator (A differs from T, and is pointer-width).
 	{"fold-widen", `import "std/array";
-function main(): i32 { var xs: i32[] = [1, 2, 3]; var s: string = xs.fold("", function (a: string, n: i32): string { return a + n.to_string(); }); return s.len(); }`},
+function main(): i32 { var xs: i32[] = [1, 2, 3]; var s: string = xs.fold("", (a: string, n: i32): string => { return a + n.to_string(); }); return s.len(); }`},
 	// zip: pairs into a (T, U)[] tuple array.
 	{"zip", `import "std/array";
 function main(): i32 { var a: i32[] = [1, 2, 3]; var b: i32[] = [9, 8]; var z: (i32, i32)[] = a.zip(b); return z.len() * 10 + z[0].0; }`},

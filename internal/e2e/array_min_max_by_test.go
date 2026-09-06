@@ -83,7 +83,7 @@ function main(): i32 {
     var rs: Rec[] = [Rec { id: 1, name: "bravo" }, Rec { id: 2, name: "alpha" }, Rec { id: 3, name: "delta" }, Rec { id: 4, name: "charlie" }];
     match (arr.max_by(rs, by_name)) { Some(x) => { if (x.id == 3) { r = r + 1; } }, None => {} }
     match (rs.min_by(by_name)) { Some(x) => { if (x.id == 2) { r = r + 2; } }, None => {} }
-    match (rs.max_by(function (a: Rec, b: Rec): i32 { return b.id - a.id; })) { Some(x) => { if (x.id == 1) { r = r + 4; } }, None => {} }
+    match (rs.max_by((a: Rec, b: Rec): i32 => { return b.id - a.id; })) { Some(x) => { if (x.id == 1) { r = r + 4; } }, None => {} }
     var e: Rec[] = [];
     match (arr.min_by(e, by_name)) { Some(x) => {}, None => { r = r + 8; } }
     return r;

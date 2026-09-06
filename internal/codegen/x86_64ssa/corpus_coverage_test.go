@@ -42,7 +42,7 @@ var corpusPrograms = []string{
 	// Closures: a returned closure over a capture, and a closure passed as an
 	// argument then called indirectly.
 	`function adder(n: i32): (i32) => i32 { function add(x: i32): i32 { return x + n; } return add; } function useit(): i32 { var f = adder(3); return f(4); }`,
-	`function apply(f: (i32) => i32, x: i32): i32 { return f(x); } function callit(): i32 { return apply(function(y: i32): i32 { return y * 2; }, 21); }`,
+	`function apply(f: (i32) => i32, x: i32): i32 { return f(x); } function callit(): i32 { return apply((y: i32): i32 => { return y * 2; }, 21); }`,
 
 	// Option construction + match (the pair-return path).
 	`function half(n: i32): Option[i32] { if (n % 2 == 0) { return Some(n / 2); } return None; } function opt(): i32 { return match (half(10)) { Some(v) => v, None => 0 }; }`,

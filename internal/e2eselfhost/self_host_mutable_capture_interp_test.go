@@ -50,22 +50,22 @@ func TestSelfHostMutableScalarCaptureInterp(t *testing.T) {
 		// The audit's exact repro: a WRITE-ONLY capture. The lambda assigns `x`
 		// without ever reading it, so a free-variable collector that only walks
 		// an assignment's VALUE (not its TARGET) never sees `x` as free.
-		{"write-only-capture", `function main(): i32 { var x = 1; var f = function (): i32 { x = 42; return 7; }; var r = f(); return r + x; }`},
+		{"write-only-capture", `function main(): i32 { var x = 1; var f = (): i32 => { x = 42; return 7; }; var r = f(); return r + x; }`},
 		// The counter — read AND write. Captured by value this yields 0.
-		{"counter", `function main(): i32 { var x = 0; var inc = function (): i32 { x = x + 1; return x; }; inc(); inc(); return x; }`},
+		{"counter", `function main(): i32 { var x = 0; var inc = (): i32 => { x = x + 1; return x; }; inc(); inc(); return x; }`},
 		// TWO closures over the SAME variable must share one cell, not get one
 		// each. This is the case a copy-in/copy-out fix would get wrong.
-		{"two-closures-share", `function main(): i32 { var n: i32 = 0; var a: () => i32 = function (): i32 { n = n + 1; return n; }; var b: () => i32 = function (): i32 { n = n + 10; return n; }; a(); b(); return n; }`},
+		{"two-closures-share", `function main(): i32 { var n: i32 = 0; var a: () => i32 = (): i32 => { n = n + 1; return n; }; var b: () => i32 = (): i32 => { n = n + 10; return n; }; a(); b(); return n; }`},
 		// A boolean capture — the other scalar the language admits.
-		{"bool-capture", `function main(): i32 { var b: boolean = false; var f: () => i32 = function (): i32 { b = true; return 0; }; f(); if (b) { return 7; } return 0; }`},
+		{"bool-capture", `function main(): i32 { var b: boolean = false; var f: () => i32 = (): i32 => { b = true; return 0; }; f(); if (b) { return 7; } return 0; }`},
 
 		// CONTROLS. A lambda-local `var x` shadows the outer one, so the outer
 		// must NOT be celled or written; a read-only capture must be unaffected;
 		// and reference captures (string / array) stay read-only per E049.
-		{"inner-shadow-control", `function main(): i32 { var x: i32 = 1; var f: () => i32 = function (): i32 { var x: i32 = 5; x = x + 1; return x; }; var r = f(); return r + x; }`},
-		{"read-only-capture-control", `function main(): i32 { var k: i32 = 40; var f: () => i32 = function (): i32 { return k + 2; }; return f(); }`},
-		{"string-capture-control", `function main(): i32 { var s: string = "abcd"; var f: () => i32 = function (): i32 { return s.len(); }; return f(); }`},
-		{"array-capture-control", `function main(): i32 { var xs: i32[] = [1,2,3]; var f: () => i32 = function (): i32 { return xs[2]; }; return f(); }`},
+		{"inner-shadow-control", `function main(): i32 { var x: i32 = 1; var f: () => i32 = (): i32 => { var x: i32 = 5; x = x + 1; return x; }; var r = f(); return r + x; }`},
+		{"read-only-capture-control", `function main(): i32 { var k: i32 = 40; var f: () => i32 = (): i32 => { return k + 2; }; return f(); }`},
+		{"string-capture-control", `function main(): i32 { var s: string = "abcd"; var f: () => i32 = (): i32 => { return s.len(); }; return f(); }`},
+		{"array-capture-control", `function main(): i32 { var xs: i32[] = [1,2,3]; var f: () => i32 = (): i32 => { return xs[2]; }; return f(); }`},
 		// Plain assignment and a loop counter: neither involves a lambda, so the
 		// cell path must stay entirely out of the way.
 		{"no-lambda-assign-control", `function main(): i32 { var x: i32 = 1; x = 41; return x + 1; }`},
@@ -109,18 +109,18 @@ func TestSelfHostMutableScalarCaptureInterp(t *testing.T) {
 		// A statement's own expressions are a fact about the Stmt union, so the
 		// scan reads them from astwalk (fold_stmt_own) rather than from a
 		// hand-written match that can be short by a variant.
-		{"outer-write-for-iter", `function main(): i32 { var n: i32 = 1; var total: i32 = 0; for f in [function (): i32 { return n; }] { n = 9; total = total + f(); } return total; }`},
-		{"lambda-write-for-iter", `function main(): i32 { var n: i32 = 1; var total: i32 = 0; for f in [function (): i32 { n = 9; return 0; }] { total = f(); } return n; }`},
-		{"lambda-write-if-cond", `function id(x: i32): i32 { return x; } function main(): i32 { var n: i32 = 1; if (id((function (): i32 { n = 9; return 1; })()) == 1) { return n; } return 0; }`},
-		{"lambda-write-while-cond", `function id(x: i32): i32 { return x; } function main(): i32 { var n: i32 = 1; var i: i32 = 0; while (i < 1 && id((function (): i32 { n = 9; return 1; })()) == 1) { i = i + 1; } return n; }`},
-		{"lambda-write-match-scrutinee", `enum W { One(i32) } function main(): i32 { var n: i32 = 1; match (W.One((function (): i32 { n = 9; return 1; })())) { W.One(_) => { return n; }, } return 0; }`},
+		{"outer-write-for-iter", `function main(): i32 { var n: i32 = 1; var total: i32 = 0; for f in [(): i32 => { return n; }] { n = 9; total = total + f(); } return total; }`},
+		{"lambda-write-for-iter", `function main(): i32 { var n: i32 = 1; var total: i32 = 0; for f in [(): i32 => { n = 9; return 0; }] { total = f(); } return n; }`},
+		{"lambda-write-if-cond", `function id(x: i32): i32 { return x; } function main(): i32 { var n: i32 = 1; if (id(((): i32 => { n = 9; return 1; })()) == 1) { return n; } return 0; }`},
+		{"lambda-write-while-cond", `function id(x: i32): i32 { return x; } function main(): i32 { var n: i32 = 1; var i: i32 = 0; while (i < 1 && id(((): i32 => { n = 9; return 1; })()) == 1) { i = i + 1; } return n; }`},
+		{"lambda-write-match-scrutinee", `enum W { One(i32) } function main(): i32 { var n: i32 = 1; match (W.One(((): i32 => { n = 9; return 1; })())) { W.One(_) => { return n; }, } return 0; }`},
 
 		// The two positions the whole-subtree fold reaches that the hand-written
 		// lambda-body walk's wildcard tail swallowed: a write through a `defer`
 		// action inside the lambda, and a write from a lambda nested in a
 		// match-arm GUARD inside the lambda.
-		{"lambda-write-via-defer", `function main(): i32 { var x: i32 = 0; var f = function (): i32 { defer x = 9; return 0; }; f(); return x; }`},
-		{"lambda-write-in-guard", `function main(): i32 { var x: i32 = 0; var f = function (): i32 { match (1) { 1 when (function (): boolean { x = 7; return true; })() => { return 1; }, _ => {}, } return 0; }; f(); return x; }`},
+		{"lambda-write-via-defer", `function main(): i32 { var x: i32 = 0; var f = (): i32 => { defer x = 9; return 0; }; f(); return x; }`},
+		{"lambda-write-in-guard", `function main(): i32 { var x: i32 = 0; var f = (): i32 => { match (1) { 1 when ((): boolean => { x = 7; return true; })() => { return 1; }, _ => {}, } return 0; }; f(); return x; }`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			src := []byte(tc.src + "\n")

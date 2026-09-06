@@ -78,7 +78,7 @@ function main(): i32 {
     var rs: Rec[] = [Rec { id: 1, ts: 30 }, Rec { id: 2, ts: 10 }, Rec { id: 3, ts: 50 }, Rec { id: 4, ts: 20 }];
     match (arr.max_by_i32_key(rs, ts_of)) { Some(x) => { if (x.id == 3) { r = r + 1; } }, None => {} }
     match (arr.min_by_i32_key(rs, ts_of)) { Some(x) => { if (x.id == 2) { r = r + 2; } }, None => {} }
-    match (arr.min_by_i32_key(rs, function (x: Rec): i32 { return 0 - x.ts; })) { Some(x) => { if (x.id == 3) { r = r + 4; } }, None => {} }
+    match (arr.min_by_i32_key(rs, (x: Rec): i32 => { return 0 - x.ts; })) { Some(x) => { if (x.id == 3) { r = r + 4; } }, None => {} }
     var e: Rec[] = [];
     match (arr.max_by_i32_key(e, ts_of)) { Some(x) => {}, None => { r = r + 8; } }
     return r;

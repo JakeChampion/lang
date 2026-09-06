@@ -1968,6 +1968,25 @@ func genClosureDropThunk(name string, caps []ast.Param, ptrW int, info *checker.
 		// the offset it was written to.
 		off = ast.CaptureAlign(off, c.Type, ptrW)
 		slot := irCaptureSlotSize(c.Type, ptrW)
+		// A capture that IS or CONTAINS a closure is left alone. This thunk
+		// runs from the drop-fn pointer a closure pair carries, so releasing
+		// another closure from inside it re-enters a closure release — and
+		// on a cyclic graph, re-enters THIS thunk. `var f = () => g(); g = f;`
+		// boxes the mutated capture into a one-element closure array whose
+		// element becomes the pair under release: dispatching there recursed
+		// until the stack ran out, and the flat per-element dec instead
+		// reported an rc over-release, because on a cycle the counts are
+		// already wrong (#8637).
+		//
+		// A cycle is uncollectable by refcount and is supposed to LEAK —
+		// what #8440 documents, and what the generic env-only drop did
+		// before this thunk became reachable for such closures (#8545).
+		// Skipping the capture restores that: the env block is still freed
+		// by the tail below, the captured closure is simply not touched.
+		if capturesAClosure(c.Type) {
+			off += slot
+			continue
+		}
 		if _, isStr := c.Type.(ast.StringType); isStr && ast.UseTwoWordStrings(ptrW) {
 			// Two-word string capture (wasm + arm64-TwoWordOverride):
 			// load (data, len) from [env+off] and reclaim via
@@ -4124,4 +4143,20 @@ func (b *builder) emitFieldOwnMove(fa *ast.FieldAccess) {
 	b.emit(Op{Kind: OpDrop})
 	b.emit(Op{Kind: OpEnd})
 	b.emit(Op{Kind: OpLoadLocal, I32: tmp})
+}
+
+// capturesAClosure reports whether a capture slot's type is a closure, or an
+// array whose elements are. Those are the captures genClosureDropThunk must
+// not release: the thunk runs from a closure pair's own drop-fn pointer, so
+// following one leads back into a closure release and, on a cyclic graph,
+// into this thunk again (#8637).
+func capturesAClosure(t ast.Type) bool {
+	switch x := t.(type) {
+	case *ast.FuncType:
+		return true
+	case ast.ArrayType:
+		_, isFn := x.Elem.(*ast.FuncType)
+		return isFn
+	}
+	return false
 }

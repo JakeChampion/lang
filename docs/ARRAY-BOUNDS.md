@@ -59,6 +59,19 @@ and stays one: the allocation succeeds at the wrapped size and the copy
 is stopped by the element bounds check above, so it aborts with `array
 index out of range` rather than this cause.
 
+The array grow helpers (`__fern_arr_push_grow` and its element-retaining
+siblings) had the same shape on every emitter (#8587): the capacity
+doubling went negative past 2^30 elements — the `max(.., 4)` floor then
+set cap = 4 under a length near 1e9 — and `cap * stride` wrapped past a
+4 GiB payload, so every later append stored far outside the buffer. Both
+natives and both SSA emitters now size the request in 64 bits and refuse
+one past 2^31 - 1 with this cause (the SSA emitters exit 134 without a
+message, their bounds-trap shape); wasm32 checks the doubled total in i64
+and traps. The ceiling is the same one `__alloc_u8` enforces: an array's
+byte size is an i32. The copy-on-write helpers read their capacity from a
+header that already passed this guard, so they widen the arithmetic and
+need no check of their own.
+
 ## What an abort prints (#5538)
 
 The natives do not exit silently. Every abort site — bounds, slice

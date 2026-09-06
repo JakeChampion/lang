@@ -426,24 +426,24 @@ pub function apply(f: (i32) => i32, x: i32): i32 { return f(x); }
 pub function via_bare(x: i32): i32 { return apply(add_one, x); }
 
 pub function via_lambda(x: i32): i32 {
-    return apply(function (v: i32): i32 { return add_one(v) + 10; }, x);
+    return apply((v: i32): i32 => { return add_one(v) + 10; }, x);
 }
 
 pub function via_lambda_ref(x: i32): i32 {
-    return apply(function (v: i32): i32 { return apply(add_one, v) + 100; }, x);
+    return apply((v: i32): i32 => { return apply(add_one, v) + 100; }, x);
 }
 
 pub function shadow_param(x: i32): i32 {
-    return apply(function (add_one: i32): i32 { return add_one * 2; }, x);
+    return apply((add_one: i32): i32 => { return add_one * 2; }, x);
 }
 
 pub function shadow_local(x: i32): i32 {
-    return apply(function (v: i32): i32 { var add_one: i32 = 7; return v + add_one; }, x);
+    return apply((v: i32): i32 => { var add_one: i32 = 7; return v + add_one; }, x);
 }
 
 pub function shadow_capture(x: i32): i32 {
     var add_one: i32 = 50;
-    return apply(function (v: i32): i32 { return v + add_one; }, x);
+    return apply((v: i32): i32 => { return v + add_one; }, x);
 }
 `
 	main := `import "./lamlib";

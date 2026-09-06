@@ -63,7 +63,7 @@ func TestLoopVarDropSkipsClosure(t *testing.T) {
     var acc: i32 = 0;
     var i: i32 = 0;
     while (i < n) {
-        var f: (i32) => i32 = function (x: i32): i32 { return x + 1; };
+        var f: (i32) => i32 = (x: i32): i32 => { return x + 1; };
         acc = acc + f(i);
         i = i + 1;
     }

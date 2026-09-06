@@ -25,25 +25,25 @@ function test_unwrap_or(): test.TestOutcome {
 function test_unwrap_or_else(): test.TestOutcome {
     // (E) => T : recover the value from the error.
     var er: Result[i32, string] = Err("bad");
-    return test.assert_eq(er.unwrap_or_else(function (e: string): i32 { return e.len(); }), 3);
+    return test.assert_eq(er.unwrap_or_else((e: string): i32 => { return e.len(); }), 3);
 }
 
 function test_map(): test.TestOutcome {
     var ok: Result[i32, string] = Ok(5);
-    var m = ok.map(function (x: i32): i32 { return x * 2; });
+    var m = ok.map((x: i32): i32 => { return x * 2; });
     return test.assert_eq(m.unwrap_or(0), 10);
 }
 
 function test_and_then(): test.TestOutcome {
     var ok: Result[i32, string] = Ok(5);
-    var r = ok.and_then(function (x: i32): Result[i32, string] { return Ok(x + 1); });
+    var r = ok.and_then((x: i32): Result[i32, string] => { return Ok(x + 1); });
     return test.assert_eq(r.unwrap_or(0), 6);
 }
 
 function test_map_err(): test.TestOutcome {
     // Err("bad").map_err(len) => Err(3); read it back via err().
     var er: Result[i32, string] = Err("bad");
-    var r = er.map_err(function (e: string): i32 { return e.len(); });
+    var r = er.map_err((e: string): i32 => { return e.len(); });
     return test.assert_eq(r.err().unwrap_or(0), 3);
 }
 
@@ -62,19 +62,19 @@ function test_err(): test.TestOutcome {
 function test_map_or(): test.TestOutcome {
     var ok: Result[i32, string] = Ok(5);
     var er: Result[i32, string] = Err("bad");
-    var a = ok.map_or(0, function (x: i32): i32 { return x * 10; });
-    var b = er.map_or(0, function (x: i32): i32 { return x * 10; });
+    var a = ok.map_or(0, (x: i32): i32 => { return x * 10; });
+    var b = er.map_or(0, (x: i32): i32 => { return x * 10; });
     return test.assert_true(a == 50 && b == 0);
 }
 
 function test_is_ok_and(): test.TestOutcome {
     var ok: Result[i32, string] = Ok(5);
-    return test.assert_true(ok.is_ok_and(function (x: i32): boolean { return x > 3; }));
+    return test.assert_true(ok.is_ok_and((x: i32): boolean => { return x > 3; }));
 }
 
 function test_is_err_and(): test.TestOutcome {
     var er: Result[i32, string] = Err("bad");
-    return test.assert_true(er.is_err_and(function (e: string): boolean { return e.len() > 2; }));
+    return test.assert_true(er.is_err_and((e: string): boolean => { return e.len() > 2; }));
 }
 
 function test_or(): test.TestOutcome {
@@ -98,9 +98,9 @@ function test_or_else(): test.TestOutcome {
     var er: Result[i32, string] = Err("bad");
     // Ok passes through untouched; Err routes through the recovery fn,
     // which sees the error ("bad" -> len 3) and produces a fresh Ok.
-    var recovered: Result[i32, string] = er.or_else(function (e: string): Result[i32, string] { return Ok(e.len()); });
+    var recovered: Result[i32, string] = er.or_else((e: string): Result[i32, string] => { return Ok(e.len()); });
     if (recovered.unwrap_or(0) != 3) { return test.fail("or_else recovery wrong"); }
-    return test.assert_true(ok.or_else(function (e: string): Result[i32, string] { return Ok(0); }).unwrap_or(0) == 5);
+    return test.assert_true(ok.or_else((e: string): Result[i32, string] => { return Ok(0); }).unwrap_or(0) == 5);
 }
 
 function test_map_or_else(): test.TestOutcome {
@@ -108,8 +108,8 @@ function test_map_or_else(): test.TestOutcome {
     var er: Result[i32, string] = Err("bad");
     // Ok routes through `f` (x*2); Err computes the default from the
     // error ("bad" -> len 3).
-    var a: i32 = ok.map_or_else(function (e: string): i32 { return 0; }, function (x: i32): i32 { return x * 2; });
-    var b: i32 = er.map_or_else(function (e: string): i32 { return e.len(); }, function (x: i32): i32 { return x * 2; });
+    var a: i32 = ok.map_or_else((e: string): i32 => { return 0; }, (x: i32): i32 => { return x * 2; });
+    var b: i32 = er.map_or_else((e: string): i32 => { return e.len(); }, (x: i32): i32 => { return x * 2; });
     return test.assert_true(a == 10 && b == 3);
 }
 

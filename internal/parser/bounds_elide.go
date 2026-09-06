@@ -1,6 +1,10 @@
 package parser
 
-import "github.com/jakechampion/lang/internal/ast"
+import (
+	"slices"
+
+	"github.com/jakechampion/lang/internal/ast"
+)
 
 // elideLenBoundedChecks is #4380 lever 3: a purely syntactic pass that marks
 // array-index READS `arr[i]` inside a `while (i < arr.len())` / C-style `for`
@@ -304,13 +308,13 @@ func bindsIdent(n ast.Node, name string) bool {
 			}
 		case *ast.Match:
 			for _, a := range x.Arms {
-				if armBinds(a.Bindings, a.TupleElems, a.Payloads, name) {
+				if slices.Contains(a.Binders(), name) {
 					found = true
 				}
 			}
 		case *ast.MatchExpr:
 			for _, a := range x.Arms {
-				if armBinds(a.Bindings, a.TupleElems, a.Payloads, name) {
+				if slices.Contains(a.Binders(), name) {
 					found = true
 				}
 			}
@@ -318,48 +322,6 @@ func bindsIdent(n ast.Node, name string) bool {
 		return !found
 	})
 	return found
-}
-
-// armBinds reports whether a match-arm's payload bindings or tuple-pattern
-// element binders include `name`.
-func armBinds(bindings []string, tupleElems []ast.TuplePatElem, payloads []*ast.TuplePatElem, name string) bool {
-	for _, b := range bindings {
-		if b == name {
-			return true
-		}
-	}
-	for _, sub := range payloads {
-		if sub != nil && tupleElemsBind([]ast.TuplePatElem{*sub}, name) {
-			return true
-		}
-	}
-	return tupleElemsBind(tupleElems, name)
-}
-
-// tupleElemsBind reports whether any position of a tuple pattern binds name, at
-// ANY depth — a nested tuple element and a variant payload sub-pattern both
-// introduce binders, and missing one leaves the loop's index or array looking
-// invariant while the arm has rebound it.
-func tupleElemsBind(elems []ast.TuplePatElem, name string) bool {
-	for _, te := range elems {
-		if te.Name == name {
-			return true
-		}
-		for _, vb := range te.VariantBindings {
-			if vb == name {
-				return true
-			}
-		}
-		if tupleElemsBind(te.Nested, name) {
-			return true
-		}
-		for _, sub := range te.VariantPayloads {
-			if sub != nil && tupleElemsBind([]ast.TuplePatElem{*sub}, name) {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 // markIndexReads sets Unchecked on every `arr[idx]` Index node in s's subtree

@@ -1,0 +1,125 @@
+import "std/test";
+import "std/float";
+import "core/cmp" as cmp;
+// examples/tests/cmp_nan_total_order_test.fern — core/cmp's float instances
+// are a TOTAL order: every NaN sorts after every number, all NaNs are one
+// value, and `cmp(a, b) == 0` exactly when `eq(a, b)` (#8588).
+//
+// IEEE leaves NaN unordered, and reading "neither less nor greater" as "equal"
+// is what the instances used to do. That answer is not merely imprecise: 0
+// satisfies both `<= 0` and `>= 0`, so every generic range assertion built on
+// `Ord` passed for a NaN while asserting nothing, and `distinct` / `contains`
+// could not see two NaNs as the same value. The helpers are bounded by
+// `[T: Ord]` and have no NaN predicate, so this file is where the placement is
+// pinned.
+//
+// The operators are untouched and still IEEE: `nan == nan` is false, `nan <
+// 1.0` is false. Only the trait instances are total.
+
+function nan64(): f64 {
+    var z: f64 = 0.0;
+    return z / z;
+}
+
+function nan32(): f32 {
+    var z: f32 = 0.0;
+    return z / z;
+}
+
+function inf64(): f64 {
+    var z: f64 = 0.0;
+    return 1.0 / z;
+}
+
+// ---- the placement itself ----
+
+function test_nan_after_every_number(): test.TestOutcome {
+    if (nan64().cmp(1.0) != 1) { return test.fail("nan should sort after 1.0"); }
+    if ((1.0).cmp(nan64()) != 0 - 1) { return test.fail("1.0 should sort before nan"); }
+    if (nan64().cmp(inf64()) != 1) { return test.fail("nan should sort after +Inf"); }
+    return test.assert_eq(nan64().cmp(0.0 - inf64()), 1);
+}
+
+function test_nans_are_one_value(): test.TestOutcome {
+    return test.assert_eq(nan64().cmp(nan64()), 0);
+}
+
+// cmp == 0 exactly when eq — the law every generic helper leans on. An Eq that
+// says a value differs from itself is not an equivalence relation, and it is
+// what let `assert_unique([nan, nan])` pass.
+function test_eq_agrees_with_cmp(): test.TestOutcome {
+    if (!nan64().eq(nan64())) { return test.fail("nan should equal nan under Eq"); }
+    if (nan64().eq(1.0)) { return test.fail("nan should not equal 1.0"); }
+    if (!(0.0).eq(0.0 - 0.0)) { return test.fail("-0.0 and 0.0 stay equal"); }
+    return test.assert_eq((0.0).cmp(0.0 - 0.0), 0);
+}
+
+// The operators keep IEEE semantics — the total order lives in the instances,
+// not in `==` / `<`.
+function test_operators_stay_ieee(): test.TestOutcome {
+    var n: f64 = nan64();
+    if (n == n) { return test.fail("the == operator must stay IEEE (false for NaN)"); }
+    if (n < 1.0) { return test.fail("the < operator must stay IEEE (false for NaN)"); }
+    return test.assert_true(n != n);
+}
+
+// ---- what the placement buys the helpers ----
+
+function test_sort_is_deterministic(): test.TestOutcome {
+    var s: f64[] = cmp.sort([3.0, nan64(), 1.0, 2.0]);
+    if (s[0].is_nan()) { return test.fail("nan must not sort first"); }
+    if (s[0] != 1.0 || s[1] != 2.0 || s[2] != 3.0) {
+        return test.fail("the numbers must be in order ahead of the NaN");
+    }
+    return test.assert_true(s[3].is_nan());
+}
+
+function test_is_sorted_sees_the_inversion(): test.TestOutcome {
+    if (cmp.is_sorted([3.0, nan64(), 1.0])) {
+        return test.fail("an array with a NaN in the middle is not sorted");
+    }
+    return test.assert_true(cmp.is_sorted([1.0, 3.0, nan64()]));
+}
+
+function test_min_max(): test.TestOutcome {
+    if (cmp.min(nan64(), 1.0) != 1.0) { return test.fail("min should pick the number"); }
+    return test.assert_true(cmp.max(nan64(), 1.0).is_nan());
+}
+
+function test_distinct_dedupes_nans(): test.TestOutcome {
+    return test.assert_eq(cmp.distinct([nan64(), 1.0, nan64()]).len(), 2);
+}
+
+function test_contains_finds_a_nan(): test.TestOutcome {
+    return test.assert_true(cmp.contains([1.0, nan64()], nan64()));
+}
+
+// ---- f32 carries the same instances ----
+
+function test_f32_placement(): test.TestOutcome {
+    if (nan32().cmp(1.0) != 1) { return test.fail("f32 nan should sort after 1.0"); }
+    if (nan32().cmp(nan32()) != 0) { return test.fail("f32 nans are one value"); }
+    return test.assert_true(nan32().eq(nan32()));
+}
+
+function test_f32_sort(): test.TestOutcome {
+    var s: f32[] = cmp.sort([2.0, nan32(), 1.0]);
+    if (s[0] != 1.0 || s[1] != 2.0) { return test.fail("f32 numbers ahead of the NaN"); }
+    return test.assert_true(s[2].is_nan());
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("core/cmp NaN total order");
+    r = r.it("NaN sorts after every number", test_nan_after_every_number);
+    r = r.it("every NaN is one value", test_nans_are_one_value);
+    r = r.it("Eq agrees with cmp", test_eq_agrees_with_cmp);
+    r = r.it("the operators stay IEEE", test_operators_stay_ieee);
+    r = r.it("sorting a NaN array is deterministic", test_sort_is_deterministic);
+    r = r.it("is_sorted sees a NaN inversion", test_is_sorted_sees_the_inversion);
+    r = r.it("min and max", test_min_max);
+    r = r.it("distinct dedupes NaNs", test_distinct_dedupes_nans);
+    r = r.it("contains finds a NaN", test_contains_finds_a_nan);
+    r = r.it("f32 carries the same placement", test_f32_placement);
+    r = r.it("f32 sorts the same way", test_f32_sort);
+    return r.finish();
+}

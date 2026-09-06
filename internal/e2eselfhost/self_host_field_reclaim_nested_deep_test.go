@@ -24,11 +24,11 @@ import (
 // that three backends emit; the LEAKCHECK leg is the gate, with native as the
 // oracle.
 //
-// NOT covered, and deliberately absent rather than pinned as a known
-// divergence: a direct ENUM field with an rc payload leaks the same way and
-// still does — no backend has a variant-walk helper for one, which is a wider
-// change. The scalar-payload enum row below is the boundary: nothing heap sits
-// under that box, so the shallow dec is already complete and it must stay clean.
+// A direct ENUM field with an rc payload leaked the same way; #8567 fixed it by
+// giving all three backends a single-box variant walk (__enum_drop_) and calling
+// it from both this helper and __struct_drop_. The scalar-payload enum row below
+// is the boundary and predates that: nothing heap sits under that box, so the
+// shallow dec is already complete and it must stay clean either way.
 var selfHostFieldReclaimNestedCases = []struct {
 	name string
 	src  string

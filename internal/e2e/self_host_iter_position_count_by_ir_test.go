@@ -42,13 +42,13 @@ var iterPositionCountByCases = []struct {
 	want int
 }{
 	// position_by: first x with x*x > 8 over [0,10) is 3.
-	{"position-hit", `function main(): i32 { return position_by(range(0, 10), function (x: i32): boolean { return x * x > 8; }); }`, 3},
+	{"position-hit", `function main(): i32 { return position_by(range(0, 10), (x: i32): boolean => { return x * x > 8; }); }`, 3},
 	// position_by: no match → -1; +6 = 5.
-	{"position-miss", `function main(): i32 { return position_by(range(0, 4), function (x: i32): boolean { return x > 99; }) + 6; }`, 5},
+	{"position-miss", `function main(): i32 { return position_by(range(0, 4), (x: i32): boolean => { return x > 99; }) + 6; }`, 5},
 	// count_by: multiples of 3 in [0,10): 0,3,6,9 → 4.
-	{"count", `function main(): i32 { return count_by(range(0, 10), function (x: i32): boolean { return x % 3 == 0; }); }`, 4},
+	{"count", `function main(): i32 { return count_by(range(0, 10), (x: i32): boolean => { return x % 3 == 0; }); }`, 4},
 	// count_by: none match → 0; +7 = 7.
-	{"count-none", `function main(): i32 { return count_by(range(0, 5), function (x: i32): boolean { return x > 99; }) + 7; }`, 7},
+	{"count-none", `function main(): i32 { return count_by(range(0, 5), (x: i32): boolean => { return x > 99; }) + 7; }`, 7},
 }
 
 func iterPositionCountByProg(mainBody string) string {
@@ -91,9 +91,9 @@ func TestNativeIterPositionCountByArm64(t *testing.T) {
 func TestNativeIterPositionCountByModule(t *testing.T) {
 	src := `import "core/iter" as iter;
 function main(): i32 {
-    var p = iter.position_by(iter.range(0, 10), function (x: i32): boolean { return x * x > 8; });  // 3
-    var c = iter.count_by(iter.range(0, 10), function (x: i32): boolean { return x % 3 == 0; });     // 4
-    var m = iter.position_by(iter.range(0, 4), function (x: i32): boolean { return x > 99; });        // -1
+    var p = iter.position_by(iter.range(0, 10), (x: i32): boolean => { return x * x > 8; });  // 3
+    var c = iter.count_by(iter.range(0, 10), (x: i32): boolean => { return x % 3 == 0; });     // 4
+    var m = iter.position_by(iter.range(0, 4), (x: i32): boolean => { return x > 99; });        // -1
     return p * 10 + c + (m + 1);                                                                      // 30+4+0 = 34
 }
 `

@@ -3,6 +3,11 @@ package checker
 import (
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/ast"
+	"github.com/jakechampion/lang/internal/constfold"
+	"github.com/jakechampion/lang/internal/diag"
+	"github.com/jakechampion/lang/internal/parser"
 )
 
 // The most negative number of a width had no literal spelling. A NumberLit
@@ -170,5 +175,175 @@ func TestHexLiteralTopBitSet(t *testing.T) {
 	// The same value that overflows i64 is still refused for a signed slot.
 	if err := checkSource(t, `function main(): i32 { var x: i64 = 0xFFFFFFFFFFFFFFFF; return 0; }`); err == nil {
 		t.Error("0xFFFFFFFFFFFFFFFF accepted for i64; it exceeds the signed range")
+	}
+}
+
+// checkErrors runs the checker and returns every diagnostic it recorded, so a
+// test can assert the code and the position and not only the words.
+func checkErrors(t *testing.T, src string) []*Error {
+	t.Helper()
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	_, err = Check(prog)
+	if err == nil {
+		return nil
+	}
+	es, ok := err.(diag.Errors)
+	if !ok {
+		t.Fatalf("checker returned %T, want diag.Errors: %v", err, err)
+	}
+	var out []*Error
+	for _, e := range es {
+		ce, ok := e.(*Error)
+		if !ok {
+			t.Fatalf("diagnostic %T is not a checker Error: %v", e, e)
+		}
+		out = append(out, ce)
+	}
+	return out
+}
+
+// A literal no 64-bit type can hold used to die in the parser as P002, quoting
+// strconv's own words. The parser keeps it now (ExceedsU64) and the checker
+// refuses it as E047 against the type the context asked for, at the literal's
+// own column — the report every other over-range literal gets (#8563). With no
+// context to name, the refusal names the type the literal would otherwise
+// default to: i64 for a bare binding (the #3676 widening), i32 anywhere else.
+func TestIntLiteralPastU64IsE047(t *testing.T) {
+	const lit = "18446744073709551616"
+	cases := []struct {
+		src     string
+		wantLit string
+		wantIn  string
+		wantCol int
+	}{
+		{`var a: u64 = ` + lit + `;`, lit, "u64", 37},
+		{`var a: i64 = ` + lit + `;`, lit, "i64", 37},
+		{`var a: i32 = ` + lit + `;`, lit, "i32", 37},
+		{`var a: u8 = ` + lit + `;`, lit, "u8", 36},
+		{`var a = ` + lit + `;`, lit, "i64", 32},
+		{`var a = -` + lit + `;`, "-" + lit, "i64", 33},
+		{`var a = ` + lit + ` as u64;`, lit, "u64", 32},
+		// Typed by its suffix, so it never settles: judged against that type.
+		{`var a = ` + lit + `u64;`, lit, "u64", 32},
+		// Nothing settles these; they would lower as the i32 default.
+		{`var b = ` + lit + ` + 1;`, lit, "i32", 32},
+		{`var t = (` + lit + `, 1);`, lit, "i32", 33},
+		{`var xs = [` + lit + `];`, lit, "i32", 34},
+		{`var b: boolean = ` + lit + ` > 1;`, lit, "i32", 41},
+		// Hex is quoted as written.
+		{`var a: u64 = 0xFFFFFFFFFFFFFFFFFFFF;`, "0xFFFFFFFFFFFFFFFFFFFF", "u64", 37},
+		// Float context has no integer to promote.
+		{`var f: f64 = ` + lit + `;`, lit, "any integer type", 37},
+	}
+	for _, c := range cases {
+		errs := checkErrors(t, "function main(): i32 { "+c.src+" return 0; }")
+		if len(errs) != 1 {
+			t.Errorf("%s: %d diagnostics, want exactly one: %v", c.src, len(errs), errs)
+			continue
+		}
+		e := errs[0]
+		if e.ErrCode != "E047" {
+			t.Errorf("%s: code %q, want E047", c.src, e.ErrCode)
+		}
+		if e.Pos.Line != 1 || e.Pos.Col != c.wantCol {
+			t.Errorf("%s: reported at %d:%d, want the literal at 1:%d", c.src, e.Pos.Line, e.Pos.Col, c.wantCol)
+		}
+		want := "literal " + c.wantLit + " does not fit in " + c.wantIn
+		if !strings.Contains(e.Msg, want) {
+			t.Errorf("%s: message %q does not contain %q", c.src, e.Msg, want)
+		}
+		if strings.Contains(e.Msg, "strconv") {
+			t.Errorf("%s: message leaks a Go library name: %q", c.src, e.Msg)
+		}
+	}
+}
+
+// A literal past i64 max fits only u64 (or i64 as its minimum), so it is valid
+// only where a context settles it. One left unsettled — a tuple or array
+// element, an operand of a comparison or of an arithmetic expression with no
+// typed side — lowered as the i32 default and wrapped silently (the #8449
+// family). It is refused against that default now; a settled one is untouched.
+func TestWideIntLiteralLeftUnsettledIsE047(t *testing.T) {
+	rejected := []struct {
+		src     string
+		wantCol int
+	}{
+		{`var b = 9223372036854775808 + 1;`, 32},
+		{`var t = (9223372036854775808, 1);`, 33},
+		{`var xs = [18446744073709551615];`, 34},
+		{`var b: boolean = 9223372036854775808 > 1;`, 41},
+	}
+	for _, c := range rejected {
+		errs := checkErrors(t, "function main(): i32 { "+c.src+" return 0; }")
+		if len(errs) != 1 {
+			t.Errorf("%s: %d diagnostics, want exactly one: %v", c.src, len(errs), errs)
+			continue
+		}
+		e := errs[0]
+		if e.ErrCode != "E047" || e.Pos.Col != c.wantCol || !strings.Contains(e.Msg, "does not fit in i32") {
+			t.Errorf("%s: got %s at %d:%d %q, want E047 at 1:%d naming i32", c.src, e.ErrCode, e.Pos.Line, e.Pos.Col, e.Msg, c.wantCol)
+		}
+	}
+	accepted := []string{
+		`var q: i64 = -9223372036854775808; var t = (q, 1);`,
+		`var u: u64 = 18446744073709551615; var t = (u, 1);`,
+		`var u: u64 = 18446744073709551615 - 1;`,
+		`var f: f64 = 9223372036854775808;`,
+		`var big = 9223372036854775807;`,
+	}
+	for _, src := range accepted {
+		if errs := checkErrors(t, "function main(): i32 { "+src+" return 0; }"); len(errs) != 0 {
+			t.Errorf("%s: rejected, want accepted: %v", src, errs)
+		}
+	}
+}
+
+// constfold substitutes an untyped negative const as a literal whose Value
+// carries the sign (`const NEG = -5` arrives as a NumberLit holding -5, with
+// no width). Read as a magnitude that is 2^64-5: `var x = NEG` widened to i64
+// and `var y: i32 = NEG` drew E047. The folded sign is judged as a sign.
+func TestFoldedNegativeConstIsJudgedBySign(t *testing.T) {
+	src := `const NEG = -5;
+const MIN = 0 - 2147483647 - 1;
+function main(): i32 {
+	var x = NEG;
+	var y: i32 = NEG;
+	var m: i32 = MIN;
+	var q: i64 = NEG;
+	if (x == y && y == 0 - 5 && m < 0 && q < 0) { return 0; }
+	return 1;
+}`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := constfold.Fold(prog, nil); err != nil {
+		t.Fatalf("fold: %v", err)
+	}
+	info, err := Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	for v, ty := range info.VarTypes {
+		if v.Name == "x" {
+			if n, ok := ty.(ast.NumberType); !ok || n.NormalWidth() != 32 {
+				t.Errorf("var x = NEG has type %v, want the i32 default: a folded -5 is in i32 range", ty)
+			}
+		}
+	}
+	// The unsigned refusal still applies to the folded value.
+	prog, err = parser.Parse("const NEG = -5;\nfunction main(): i32 { var z: u8 = NEG; return 0; }")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := constfold.Fold(prog, nil); err != nil {
+		t.Fatalf("fold: %v", err)
+	}
+	_, err = Check(prog)
+	if err == nil || !strings.Contains(err.Error(), "literal -5 does not fit in u8") {
+		t.Errorf("var z: u8 = NEG: got %v, want E047 naming -5", err)
 	}
 }

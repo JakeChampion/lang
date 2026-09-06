@@ -79,26 +79,26 @@ function test_count_value(): test.TestOutcome {
 }
 
 function test_fold(): test.TestOutcome {
-  var s = iter.fold(iter.range(1, 5), 0, function(a: i32, x: i32): i32 { return a + x; });
+  var s = iter.fold(iter.range(1, 5), 0, (a: i32, x: i32): i32 => { return a + x; });
   return test.assert_eq(s, 10);
 }
 
 function test_any(): test.TestOutcome {
-  return test.assert_true(iter.any(iter.range(0, 5), function(x: i32): boolean { return x == 3; }));
+  return test.assert_true(iter.any(iter.range(0, 5), (x: i32): boolean => { return x == 3; }));
 }
 
 function test_all(): test.TestOutcome {
-  return test.assert_true(iter.all(iter.range(0, 5), function(x: i32): boolean { return x < 10; }));
+  return test.assert_true(iter.all(iter.range(0, 5), (x: i32): boolean => { return x < 10; }));
 }
 
 function test_any_miss(): test.TestOutcome {
-  return test.assert_false(iter.any(iter.range(0, 5), function(x: i32): boolean { return x > 99; }));
+  return test.assert_false(iter.any(iter.range(0, 5), (x: i32): boolean => { return x > 99; }));
 }
 
 function test_map_filter(): test.TestOutcome {
   var xs: i32[] = [1, 2, 3, 4, 5, 6];
-  var evens = iter.filter(iter.of(xs), function(x: i32): boolean { return x % 2 == 0; });
-  var doubled = iter.map(iter.of(evens), function(x: i32): i32 { return x * 2; });
+  var evens = iter.filter(iter.of(xs), (x: i32): boolean => { return x % 2 == 0; });
+  var doubled = iter.map(iter.of(evens), (x: i32): i32 => { return x * 2; });
   return test.assert_eq(iter.sum(iter.of(doubled)), 24);  // (2+4+6)*2
 }
 

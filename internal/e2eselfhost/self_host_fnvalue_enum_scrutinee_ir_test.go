@@ -42,25 +42,25 @@ func TestSelfHostFnValueEnumScrutineeIRX86_64(t *testing.T) {
 	}{
 		// Fn-value PARAM returning a generic enum, matched directly (the bug).
 		{"fn-param-generic-enum-scrutinee",
-			`enum Opt[T] { Non, Has(T) } function run(f: (i32) => Opt[i32]): i32 { match (f(7)) { Has(v) => { return v; }, Non => { return 0; } } } function main(): i32 { return run(function (k: i32): Opt[i32] { return Has(k * 6); }); }`,
+			`enum Opt[T] { Non, Has(T) } function run(f: (i32) => Opt[i32]): i32 { match (f(7)) { Has(v) => { return v; }, Non => { return 0; } } } function main(): i32 { return run((k: i32): Opt[i32] => { return Has(k * 6); }); }`,
 			42, true},
 		// Fn-value param, string-payload generic enum.
 		{"fn-param-string-payload-scrutinee",
-			`enum Opt[T] { Non, Has(T) } function run(f: (i32) => Opt[string]): i32 { match (f(1)) { Has(s) => { return s.len() + 40; }, Non => { return 0; } } } function main(): i32 { return run(function (k: i32): Opt[string] { return Has("xx"); }); }`,
+			`enum Opt[T] { Non, Has(T) } function run(f: (i32) => Opt[string]): i32 { match (f(1)) { Has(s) => { return s.len() + 40; }, Non => { return 0; } } } function main(): i32 { return run((k: i32): Opt[string] => { return Has("xx"); }); }`,
 			42, true},
 		// Fn-value param, Non branch taken.
 		{"fn-param-non-branch-scrutinee",
-			`enum Opt[T] { Non, Has(T) } function run(f: (i32) => Opt[i32], k: i32): i32 { match (f(k)) { Has(v) => { return v; }, Non => { return 42; } } } function main(): i32 { return run(function (k: i32): Opt[i32] { if (k > 0) { return Has(k); } return Non; }, 0); }`,
+			`enum Opt[T] { Non, Has(T) } function run(f: (i32) => Opt[i32], k: i32): i32 { match (f(k)) { Has(v) => { return v; }, Non => { return 42; } } } function main(): i32 { return run((k: i32): Opt[i32] => { if (k > 0) { return Has(k); } return Non; }, 0); }`,
 			42, true},
 		// Fn-value LOCAL (closure) returning a generic enum, matched directly.
 		// The local closure still bails the module, but the fix
 		// restores the correct value there.
 		{"fn-local-generic-enum-scrutinee",
-			`enum Opt[T] { Non, Has(T) } function main(): i32 { var f: (i32) => Opt[i32] = function (k: i32): Opt[i32] { if (k > 0) { return Has(k * 6); } return Non; }; match (f(7)) { Has(v) => { return v; }, Non => { return 0; } } }`,
+			`enum Opt[T] { Non, Has(T) } function main(): i32 { var f: (i32) => Opt[i32] = (k: i32): Opt[i32] => { if (k > 0) { return Has(k * 6); } return Non; }; match (f(7)) { Has(v) => { return v; }, Non => { return 0; } } }`,
 			42, false},
 		// Regression: var-bind the closure result then match.
 		{"fn-value-result-var-bound",
-			`enum Opt[T] { Non, Has(T) } function main(): i32 { var f: (i32) => Opt[i32] = function (k: i32): Opt[i32] { return Has(k * 6); }; var r: Opt[i32] = f(7); match (r) { Has(v) => { return v; }, Non => { return 0; } } }`,
+			`enum Opt[T] { Non, Has(T) } function main(): i32 { var f: (i32) => Opt[i32] = (k: i32): Opt[i32] => { return Has(k * 6); }; var r: Opt[i32] = f(7); match (r) { Has(v) => { return v; }, Non => { return 0; } } }`,
 			42, false},
 	}
 	for _, tc := range cases {

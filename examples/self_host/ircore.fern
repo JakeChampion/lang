@@ -872,7 +872,7 @@ pub function all_runtime_need_roots(): string[] {
         // edge-handler — linked its library units against undefined
         // __fern_tcp_listen / __fern_tcp_send / __fern_poll / … (#5686).
         // Filesystem + process:
-        "stat", "lstat", "read_dir", "remove_file", "create_dir_all", "remove_dir_all", "write_file", "write_file_exec",
+        "stat", "lstat", "access", "read_dir", "remove_file", "create_dir_all", "remove_dir_all", "write_file", "write_file_exec",
         "temp_dir", "open_file", "reader", "writer_write", "subprocess",
         // stdin / argv:
         "read_all_stdin", "arg_at",
@@ -951,6 +951,22 @@ pub function unsupported_op_refuse(tag: i32, backend: string): string {
     eprint("error: no instruction selection for IR op " + ir.kind_name(tag) + " (kind " + util.i32_to_string(tag) + ") on the " + backend + " backend — refusing to emit a silently dropped operation (#6917)\n");
     exit(3);
     return "";
+}
+
+// lower_failed_refuse ends compilation for a function whose lowering bailed,
+// naming the function and the construct that refused (LowerResult.why). Every
+// backend calls it at the top of its per-function emit: the gated routes
+// (lower_gated) never get this far, but `-assume-eligible` skips the gate by
+// design and the wasm per-unit route has none, so this is where their bails
+// surface. A failed result still carries the PARTIAL op stream up to the bail
+// with n_locals 0, and letting that reach the IR verify gate reports the bail
+// as malformed IR with every local "outside the frame" (#8590) — or on wasm
+// as an elem entry naming a `$<fd>$clo` nothing defines (#7215).
+pub function lower_failed_refuse(name: string, r: irlower.LowerResult): i32 {
+    if (r.ok) { return 0; }
+    eprint("error: " + name + " did not lower: " + r.why + " — the IR path bailed in this function and there is no AST emitter to fall back to (#8590)\n");
+    exit(3);
+    return 0;
 }
 
 // wp_fn_sigs derives the whole-program FnSigs base once. These are the

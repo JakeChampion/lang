@@ -61,6 +61,7 @@ var BuiltinCaps = map[string]string{
 	"open_appender":   "fs",
 	"stat":            "fs",
 	"lstat":           "fs",
+	"access":          "fs",
 	"read_dir":        "fs",
 	"remove_file":     "fs",
 	"remove_dir_all":  "fs",
@@ -96,15 +97,25 @@ var BuiltinCaps = map[string]string{
 // overrides. A builtin absent from both this set and BuiltinCaps
 // fails the inventory-completeness tests.
 var Ungated = map[string]bool{
-	"putchar":                     true,
-	"print":                       true,
-	"write":                       true,
-	"eprint":                      true,
-	"read_line":                   true,
-	"stdin":                       true,
-	"stdout":                      true,
-	"stderr":                      true,
-	"isatty":                      true,
+	"putchar":   true,
+	"print":     true,
+	"write":     true,
+	"eprint":    true,
+	"read_line": true,
+	"stdin":     true,
+	"stdout":    true,
+	"stderr":    true,
+	"isatty":    true,
+	// The process's own effective ids. Reading them reaches nothing:
+	// the identity was chosen by whoever exec'd the program, and a
+	// dependency that learns it gains no authority it did not have —
+	// the same argument that leaves `isatty` ungated. Note this is
+	// where the two capability systems part company: `internal/
+	// platforms` DOES gate these, because there the question is
+	// whether the target can answer at all (WASI cannot), not
+	// whether a dependency should be allowed to ask.
+	"geteuid":                     true,
+	"getegid":                     true,
 	"target_os":                   true,
 	"target_arch":                 true,
 	"args":                        true,

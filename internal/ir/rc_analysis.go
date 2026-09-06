@@ -765,23 +765,6 @@ func freshLocalsIn(fn *ast.FuncDecl, q *summaryTable[bool], ctorFresh func(*ast.
 	return fresh
 }
 
-// tuplePatBinders lists every name a tuple pattern binds, nested elements
-// and `@` binders included.
-func tuplePatBinders(elems []ast.TuplePatElem) []string {
-	var out []string
-	for _, el := range elems {
-		out = append(out, el.Name, el.AtBinding)
-		out = append(out, el.VariantBindings...)
-		out = append(out, tuplePatBinders(el.Nested)...)
-		for _, vp := range el.VariantPayloads {
-			if vp != nil {
-				out = append(out, tuplePatBinders([]ast.TuplePatElem{*vp})...)
-			}
-		}
-	}
-	return out
-}
-
 // findReturnsFreshPairPayload reports, per function, whether every value
 // return hands back a variant whose payload box is NEWLY ALLOCATED rather
 // than a pointer the function received.
@@ -1183,15 +1166,11 @@ func shadowingNames(fn *ast.FuncDecl, info *checker.Info) map[string]bool {
 			bind(x.Name)
 		case *ast.Match:
 			for _, arm := range x.Arms {
-				bind(arm.Bindings...)
-				bind(arm.AtBinding)
-				bind(tuplePatBinders(arm.TupleElems)...)
+				bind(arm.Binders()...)
 			}
 		case *ast.MatchExpr:
 			for _, arm := range x.Arms {
-				bind(arm.Bindings...)
-				bind(arm.AtBinding)
-				bind(tuplePatBinders(arm.TupleElems)...)
+				bind(arm.Binders()...)
 			}
 		case *ast.ForEach:
 			bind(x.Var)
@@ -3598,7 +3577,7 @@ func (b *builder) computeMovedLocals() map[string]bool {
 				rhs, _ = s.Init.(*ast.Ident)
 				site = s
 			}
-			if rhs != nil && b.isOwnedRcLocal(rhs.Name) && order.isLast(rhs) {
+			if rhs != nil && b.movableAliasSource(rhs.Name) && order.isLast(rhs) {
 				moved[rhs.Name] = true
 				b.rc.moveSites[site] = true
 			}
@@ -5321,6 +5300,26 @@ func (b *builder) isOwnedRcLocal(name string) bool {
 	return false
 }
 
+// movableAliasSource reports whether `name` holds a reference this frame will
+// release at exit, so an alias taking its LAST occurrence can move it: the
+// alias skips its transfer inc and the sweep skips the dec, a net-zero pair.
+//
+// Both roles qualify, and the parameter half is the one that matters for a
+// cursor threaded through a function. `var c: C = c0;` on an owned parameter
+// used to inc, leaving c0's reference alive to the exit sweep for the whole
+// body — so the container's array field sat at rc 2 and every field append
+// after it copied the buffer instead of growing in place. Three appends around
+// one call went quadratic on that alone (#8498): 2990 ms against 2 ms for the
+// same work written without the alias.
+//
+// A BORROWED parameter is excluded, and must be: moving it would hand away a
+// reference the caller still owns. isOwnedRcParam is the same predicate the
+// sweep's owned-param pass releases on, so "will this frame dec it?" has one
+// answer for both.
+func (b *builder) movableAliasSource(name string) bool {
+	return b.isOwnedRcLocal(name) || b.isOwnedRcParam(name)
+}
+
 // isOwnedRcParam reports whether `name` is a parameter the CALLEE owns and so
 // must release at exit — `own`-annotated, owned by default for its type, or
 // proven consumed. It is the param-side sibling of isOwnedRcLocal (which only
@@ -6836,6 +6835,58 @@ func (g *growParam) merge(o growParam) bool {
 	return changed
 }
 
+// renameRoots maps a local that RENAMES another binding — `var c: C = c0;`,
+// where c0 is named nowhere else in the body — to the name it renames, chased
+// through chained renames to the root.
+//
+// A rename is one binding spelled twice: nothing after it can read the source,
+// so the two names share every buffer with no second live reader. Every
+// analysis that asks "which binding is this name?" has to agree on that, or
+// the answer splits — callArgDeaths admitting the rename on its source's
+// footing while computeGrowParams stopped propagating at it withdrew the
+// caller-side bracket from a buffer the caller still read (#8498).
+//
+// A name declared twice is excluded: the occurrence census cannot tell its two
+// bindings apart.
+func renameRoots(body ast.Node) map[string]string {
+	occurrences := map[string]int{}
+	declCount := map[string]int{}
+	ast.Walk(body, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.Ident:
+			occurrences[x.Name]++
+		case *ast.Var:
+			declCount[x.Name]++
+		}
+		return true
+	})
+	direct := map[string]string{}
+	ast.Walk(body, func(n ast.Node) bool {
+		v, isVar := n.(*ast.Var)
+		if !isVar || declCount[v.Name] != 1 {
+			return true
+		}
+		if src, isID := v.Init.(*ast.Ident); isID && occurrences[src.Name] == 1 {
+			direct[v.Name] = src.Name
+		}
+		return true
+	})
+	out := make(map[string]string, len(direct))
+	for name := range direct {
+		root := direct[name]
+		seen := map[string]bool{name: true, root: true}
+		for {
+			next, chained := direct[root]
+			if !chained || seen[next] {
+				break
+			}
+			root, seen[next] = next, true
+		}
+		out[name] = root
+	}
+	return out
+}
+
 // callArgDeaths marks, per call node, the ident arguments whose value can
 // no longer be observed through that binding in this function after the
 // call, so the #4873 bracket may skip them. Four shapes qualify:
@@ -6865,7 +6916,10 @@ func (g *growParam) merge(o growParam) bool {
 //     where every receiver is at its last use. Each of those was paying a
 //     full-buffer copy per link, which is O(n²) bytes over a chain: the
 //     self-host lowering threads its LowerState this way and one 400-arm
-//     `else if` chain bumped 40 MB in `emit` alone.
+//     `else if` chain bumped 40 MB in `emit` alone. A local that RENAMES
+//     an admitted name at that name's only occurrence — `var c: C = c0;`
+//     on a parameter — is the same binding spelled twice, so it is
+//     admitted on the source's footing.
 //
 // The last-occurrence test needs the no-loop gate to be sound at all:
 // inside a loop the "last" occurrence re-executes, and an unbracketed
@@ -6885,6 +6939,10 @@ func (g *growParam) merge(o growParam) bool {
 // closure in computeGrowParams consults this map, so a buffer passed on
 // unbracketed propagates as a growable position of the enclosing
 // function's own parameter.
+//
+// A rename is not that alias either, for the plainer reason that its source is
+// never named again — and computeGrowParams resolves through it (renameRoots)
+// so the closure does not stop at the new name.
 func callArgDeaths(fn *ast.FuncDecl, info *checker.Info, obs map[string][]fieldObs) map[*ast.Call]map[string]bool {
 	body := fn.Body
 	out := map[*ast.Call]map[string]bool{}
@@ -6986,6 +7044,23 @@ func callArgDeaths(fn *ast.FuncDecl, info *checker.Info, obs map[string][]fieldO
 		}
 		return true
 	})
+	// A local RENAMED from an already-admitted name — `var c: C = c0;` on a
+	// parameter, the line every state-threading function in the self-host
+	// lowering opens with — is admitted on that name's footing. The alias
+	// exclusion asks whether another live name in this frame reads the same
+	// buffers, and a rename taking the source's ONLY occurrence leaves none.
+	// Without this the rename withheld the death from every call in the chain
+	// below it, so the container reaching each field append was at rc 2 and
+	// copied the whole buffer (#8498).
+	aliasInitLocal := map[string]bool{}
+	for name, root := range renameRoots(body) {
+		if isParam[root] || callInitLocal[root] || unpackInitLocal[root] {
+			aliasInitLocal[name] = true
+		}
+	}
+	admitted := func(name string) bool {
+		return isParam[name] || callInitLocal[name] || unpackInitLocal[name] || aliasInitLocal[name]
+	}
 	markOnce := func(c *ast.Call, name string) {
 		direct := 0
 		for _, a := range c.Args {
@@ -7051,6 +7126,60 @@ func callArgDeaths(fn *ast.FuncDecl, info *checker.Info, obs map[string][]fieldO
 		}
 		return true
 	})
+	// The TWO-STATEMENT spelling of the self-reassign shape. `x = f(…, x, …)`
+	// is one statement and matched above; a step that hands something back
+	// beside the cursor — a label id, an offset, a slot number — or that just
+	// names the result before storing it, spells the same thing as two:
+	//
+	//	let (c2, p) = emit(c, op);   var c2 = emit(c, op);
+	//	c = c2;                      c = c2;
+	//
+	// The store still supersedes x before any other statement runs, so no
+	// later read can reach the old buffer through it, exactly as in the
+	// one-statement form. Neither half matched on its own: the binding
+	// statement stores to a new name, and `c = c2` names no call. Inside a
+	// loop the last-occurrence shapes are out too (`repeating`), so nothing
+	// marked the argument dead and every call paid a full-buffer copy — 920 ms
+	// against 0 ms for the same emit written as one statement, over 20000
+	// appends (#8633).
+	//
+	// The store's value must not READ x: `var y = f(x); x = g(x);` would hand
+	// g the buffer the callee just grew.
+	ast.Walk(body, func(n ast.Node) bool {
+		blk, isBlk := n.(*ast.Block)
+		if !isBlk {
+			return true
+		}
+		for i := 0; i+1 < len(blk.Stmts); i++ {
+			var init ast.Expr
+			switch st := blk.Stmts[i].(type) {
+			case *ast.Var:
+				init = st.Init
+			case *ast.Destructure:
+				init = st.Init
+			default:
+				continue
+			}
+			c, isCall := init.(*ast.Call)
+			if !isCall {
+				continue
+			}
+			es, isExpr := blk.Stmts[i+1].(*ast.ExprStmt)
+			if !isExpr {
+				continue
+			}
+			asn, isAsn := es.Expr.(*ast.Assign)
+			if !isAsn || asn.Value == nil {
+				continue
+			}
+			t, isID := asn.Target.(*ast.Ident)
+			if !isID || stmtReferencesName(asn.Value, t.Name) {
+				continue
+			}
+			markOnce(c, t.Name)
+		}
+		return true
+	})
 	// Sole-occurrence shape. `repeating` is every call reachable from a
 	// loop or lambda body — a single textual read there is still many
 	// dynamic reads, so those calls are excluded.
@@ -7102,7 +7231,7 @@ func callArgDeaths(fn *ast.FuncDecl, info *checker.Info, obs map[string][]fieldO
 			if !ok || escaping[aid.Name] || !order.isLast(aid) {
 				continue
 			}
-			if !isParam[aid.Name] && !callInitLocal[aid.Name] && !unpackInitLocal[aid.Name] {
+			if !admitted(aid.Name) {
 				continue
 			}
 			markOnce(c, aid.Name)
@@ -7130,7 +7259,7 @@ func callArgDeaths(fn *ast.FuncDecl, info *checker.Info, obs map[string][]fieldO
 			if !ok || escaping[aid.Name] || order.isLast(aid) {
 				continue
 			}
-			if !isParam[aid.Name] && !callInitLocal[aid.Name] && !unpackInitLocal[aid.Name] {
+			if !admitted(aid.Name) {
 				continue
 			}
 			// An ARRAY position is excluded. The death withdraws the bracket
@@ -7728,7 +7857,20 @@ func computeGrowParams(prog *ast.Program, info *checker.Info, obs map[string][]f
 			grow.vals[fn.Name] = make([]growParam, len(fn.Params))
 		}
 	}
+	// A rename resolves to the binding it renames, so a parameter threaded
+	// through `var c: C = c0;` still propagates as a growable position of c0.
+	renames := map[*ast.FuncDecl]map[string]string{}
 	paramIdx := func(fn *ast.FuncDecl, name string) int {
+		if fn.Body != nil {
+			r, ok := renames[fn]
+			if !ok {
+				r = renameRoots(fn.Body)
+				renames[fn] = r
+			}
+			if root, isRename := r[name]; isRename {
+				name = root
+			}
+		}
 		for i, p := range fn.Params {
 			if p.Name == name {
 				return i

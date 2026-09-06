@@ -170,10 +170,13 @@ var capabilityProfiles = map[string]capabilityProfile{
 	//   - `cabi` — a C calling convention to hand a function pointer to.
 	//     Wasm reaches an unknown callee through a typed table, not
 	//     System V or AAPCS64.
+	//   - `userid` — an effective user / group id for the process.
+	//     Neither WASI preview has a notion of a user at all, so there
+	//     is nothing to report and no honest constant to report instead.
 	//
 	// The `none` profile grants none of them either: a freestanding
 	// artifact reaches platforms.coreBuiltins and nothing else.
-	"hosted-native": {"log", "now", "env", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi"},
+	"hosted-native": {"log", "now", "env", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid"},
 
 	// CLI-world wasm wires fs (the preview1 fd helpers) and tcp
 	// (wasi:sockets — wasmbin/wasi_tcp.go) but NOT subprocess:

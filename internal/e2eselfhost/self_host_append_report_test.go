@@ -104,3 +104,59 @@ func TestSelfHostAppendReport(t *testing.T) {
 		}
 	}
 }
+
+// FERN_APPEND_REPORT's EXPRESSION-position arm: `xs.append(v)` that is not a
+// self-reassign — a call argument, a var-init, a return.
+//
+// The axis differs from the self-reassign arm's and that is deliberate. There
+// the question is whether the superseded buffer LEAKS; here it is whether the
+// push COPIES, because a bracketed receiver cannot take the grow helper's
+// in-place path (append_copy_recv_slot) and so always reallocates. Both print
+// under one prefix so a single grep sees every append a program makes.
+const exprAppendSrc = `function sink(xs: i32[]): i32 { return xs.len(); }
+function main(): i32 {
+    var a: i32[] = [1, 2, 3];
+    var t: i32 = sink(a.append(20));
+    var b: i32[] = a.append(30);
+    exit((t + b.len()) % 7);
+    return 0;
+}
+`
+
+func TestSelfHostAppendReportExprPosition(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	dir := t.TempDir()
+	copySelfHostDriver(t, dir, "asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+
+	if quiet := compileCaptureStderr(t, runner, driverBin, exprAppendSrc, nil); strings.Contains(quiet, "append-report:") {
+		t.Fatalf("report printed without FERN_APPEND_REPORT set:\n%s", quiet)
+	}
+
+	got := compileCaptureStderr(t, runner, driverBin, exprAppendSrc,
+		[]string{"FERN_APPEND_REPORT=1"})
+
+	var lines []string
+	for _, ln := range strings.Split(got, "\n") {
+		if strings.HasPrefix(ln, "append-report:") {
+			lines = append(lines, ln)
+		}
+	}
+	// Both appends are expression-position; neither is a self-reassign, so the
+	// leak arm contributes nothing and these two are the whole report.
+	if len(lines) != 2 {
+		t.Fatalf("want 2 report lines, got %d:\n%s", len(lines), got)
+	}
+	for _, ln := range lines {
+		for _, want := range []string{"main:", "COPIES", "  a  ", "bracketed receiver"} {
+			if !strings.Contains(ln, want) {
+				t.Errorf("line %q missing %q", ln, want)
+			}
+		}
+	}
+	// The two sites are told apart by position — a report that collapsed them
+	// would pass every assertion above and locate nothing.
+	if lines[0] == lines[1] {
+		t.Errorf("both appends reported identically (%q); the line:col must separate them", lines[0])
+	}
+}

@@ -59,13 +59,13 @@ function main(): i32 {
     // update: word-count in one pass (insert-or-modify), absent key seeds from init.
     var uc: Map[string, i32] = map_new(8);
     for w2 in words {
-        uc = uc.update(w2, 0, function (c: i32): i32 { return c + 1; });
+        uc = uc.update(w2, 0, (c: i32): i32 => { return c + 1; });
     }
     if (uc.get_or("a", 0) != 3 || uc.get_or("b", 0) != 2 || uc.get_or("c", 0) != 1) { return 10; }
     // update on an i32 map, present and absent paths.
     var nm: Map[i32, i32] = map_new(4);
-    nm = nm.update(1, 100, function (v: i32): i32 { return v + 1; }); // absent -> init 100 + 1
-    nm = nm.update(1, 100, function (v: i32): i32 { return v + 1; }); // present 101 -> 102
+    nm = nm.update(1, 100, (v: i32): i32 => { return v + 1; }); // absent -> init 100 + 1
+    nm = nm.update(1, 100, (v: i32): i32 => { return v + 1; }); // present 101 -> 102
     if (nm.get_or(1, 0) != 102) { return 11; }
 
     // contains_value: value membership (the value counterpart of has()).

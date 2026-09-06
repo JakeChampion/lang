@@ -42,7 +42,7 @@ func TestDeferInBlockExpr(t *testing.T) {
 		// a plain Block rather than a block expression.
 		{"function_form_lambda", `function main(): i32 {
     var a: Cell[i32] = cell_new(0);
-    var f = function (n: i32): i32 { defer a.set(a.get() + 1); return n; };
+    var f = (n: i32): i32 => { defer a.set(a.get() + 1); return n; };
     var inside: i32 = f(5);
     return inside * 10 + a.get();
 }`, 51},

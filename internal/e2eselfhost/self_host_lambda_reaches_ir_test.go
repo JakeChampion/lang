@@ -38,7 +38,7 @@ func TestSelfHostLambdaReachesIR(t *testing.T) {
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
 
 	// A no-capture lambda passed as a callback — the uniform env-box shape.
-	src := `function apply(f: (i32) => i32, v: i32): i32 { return f(v); } function main(): i32 { return apply(function(x: i32): i32 { return x + 1; }, 41); }`
+	src := `function apply(f: (i32) => i32, v: i32): i32 { return f(v); } function main(): i32 { return apply((x: i32): i32 => { return x + 1; }, 41); }`
 	var cmd *exec.Cmd
 	if len(runner) == 0 {
 		cmd = exec.Command(driverBin, "-ir")
@@ -65,7 +65,7 @@ func TestSelfHostLambdaReachesIR(t *testing.T) {
 	// reach the IR path: the lift hoists it to __lam_<k> and rewrites `f(a)` to
 	// a direct call, rather than bailing. (Before, only
 	// lambdas in argument position were lifted.)
-	src2 := `function main(): i32 { var f = function(x: i32): i32 { return x * 2; }; return f(21); }`
+	src2 := `function main(): i32 { var f = (x: i32): i32 => { return x * 2; }; return f(21); }`
 	var cmd2 *exec.Cmd
 	if len(runner) == 0 {
 		cmd2 = exec.Command(driverBin, "-ir")

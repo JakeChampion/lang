@@ -2912,10 +2912,10 @@ function check_loops_and_tuples(): i32 {
 }
 
 function check_lambdas(): i32 {
-    // Lambda round-trip: `var f = function (x: i32): i32 { return
+    // Lambda round-trip: `var f = (x: i32): i32 => { return
     // x + 1; }; return f(41);` — print should emit a re-parseable
     // `function (...)` literal.
-    var srcF: string = "function main(): i32 { var f = function (x: i32): i32 { return x + 1; }; return f(41); }";
+    var srcF: string = "function main(): i32 { var f = (x: i32): i32 => { return x + 1; }; return f(41); }";
     var rtF: parser.Module = roundtrip_module(srcF);
     if (rtF.funcs.len() != 1) { return 150; }
     if (rtF.funcs[0].body.len() != 2) { return 151; }
@@ -2936,10 +2936,10 @@ function check_lambdas(): i32 {
         _ => { return 159; }
     }
 
-    // IIFE round-trip: `function () { return 7; }()` — printer
+    // IIFE round-trip: `(): i32 => { return 7; }()` — printer
     // wraps the lambda the same way and the re-parse sees an
     // ExprCall whose callee is an ExprLambda.
-    var srcG: string = "function main(): i32 { return function (): i32 { return 7; }(); }";
+    var srcG: string = "function main(): i32 { return (): i32 => { return 7; }(); }";
     var rtG: parser.Module = roundtrip_module(srcG);
     match (rtG.funcs[0].body[0]) {
         ast.StmtReturn(r) => {

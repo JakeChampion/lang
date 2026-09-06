@@ -80,7 +80,7 @@ func TestSelfHostUndefinedCallGate(t *testing.T) {
 		{
 			"undefined-in-lambda",
 			"function apply(f: (i32) => i32, n: i32): i32 { return f(n); }\n" +
-				"function main(): i32 { return apply(function (n: i32): i32 { return missing_helper(n); }, 1); }\n",
+				"function main(): i32 { return apply((n: i32): i32 => { return missing_helper(n); }, 1); }\n",
 			[]string{"E001", "missing_helper"},
 		},
 		// Unresolved import (#5644 comment 2): `std/jni` resolves to no file

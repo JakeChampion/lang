@@ -36,7 +36,7 @@ function g(): i32 {
 	var t: ((i32, i32), i32) = ((3, 4), 5);
 	var (p, c) = t;
 	var (a, b) = p;
-	var h: H = H { f: function (x: i32): i32 { return x + a + b + c; }, id: a };
+	var h: H = H { f: (x: i32): i32 => { return x + a + b + c; }, id: a };
 	return h.f(1) + h.id;
 }
 function main(): i32 { return g(); }`},
@@ -46,7 +46,7 @@ function main(): i32 { return g(); }`},
 function g(): i32 {
 	var t: ((i32, i32), i32) = ((3, 4), 5);
 	var (p, c) = t;
-	var h: H = H { f: function (x: i32): i32 { return x + p.0 + p.1 + c; }, id: c };
+	var h: H = H { f: (x: i32): i32 => { return x + p.0 + p.1 + c; }, id: c };
 	return h.f(1) + h.id;
 }
 function main(): i32 { return g(); }`},
@@ -57,7 +57,7 @@ function g(): i32 {
 	var (q, d) = t;
 	var (p, c) = q;
 	var (a, b) = p;
-	var h: H = H { f: function (x: i32): i32 { return x + a + b + c + d; }, id: a };
+	var h: H = H { f: (x: i32): i32 => { return x + a + b + c + d; }, id: a };
 	return h.f(1) + h.id;
 }
 function main(): i32 { return g(); }`},

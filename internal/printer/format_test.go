@@ -857,8 +857,8 @@ return Ok(0);
 	}
 }
 
-// An anonymous function expression (lambda) used as a call argument
-// must survive formatting. Before the fix formatExpr had no
+// A lambda used as a call argument must survive formatting. Before the fix
+// formatExpr had no
 // `*ast.Lambda` case, so it fell through to the empty default and
 // dropped the lambda entirely — when the lambda was the last argument
 // the output was `f(xs, )`, which then failed to re-parse. Regression
@@ -867,15 +867,15 @@ return Ok(0);
 func TestFormatLambdaArgumentRoundTrip(t *testing.T) {
 	srcs := []string{
 		// last-argument lambda — the dangling-comma case
-		`function f(): Option[string] { return check([1, 2, 3], function(n: i32): boolean { return n > 0; }); }`,
+		`function f(): Option[string] { return check([1, 2, 3], (n: i32): boolean => { return n > 0; }); }`,
 		// lambda bound to a local
-		`function f(): i32 { var g = function(x: i32): i32 { return x + 1; }; return g(41); }`,
+		`function f(): i32 { var g = (x: i32): i32 => { return x + 1; }; return g(41); }`,
 		// multi-statement body (block form, not inlined)
-		`function f(): i32 { var g = function(x: i32): i32 { var y = x * 2; return y + 1; }; return g(20); }`,
+		`function f(): i32 { var g = (x: i32): i32 => { var y = x * 2; return y + 1; }; return g(20); }`,
 	}
 	for _, src := range srcs {
 		got := formatSrc(t, src)
-		if !strings.Contains(got, "function(") {
+		if !strings.Contains(got, " => ") {
 			t.Errorf("lambda dropped from formatted output for input %q:\n%s", src, got)
 		}
 		if _, err := parser.Parse(got); err != nil {
@@ -1288,7 +1288,7 @@ func TestFormatKeepsDiscardBindingAsUnderscore(t *testing.T) {
 		{"both_discarded", "function t(): (i32, i32) { return (1, 2); }\nfunction f(): i32 { let (_, _) = t(); return 0; }", "let (_, _) = t();"},
 		{"var", "function f(): i32 { var _ = 1; return 0; }", "var _ = 1;"},
 		{"param", "function f(_: i32): i32 { return 0; }", "function f(_: i32): i32 {"},
-		{"lambda_param", "function f(): i32 { var g = function(_: i32): i32 { return 0; }; return g(1); }", "function(_: i32): i32"},
+		{"lambda_param", "function f(): i32 { var g = (_: i32): i32 => { return 0; }; return g(1); }", "(_: i32): i32 =>"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := formatSrc(t, tc.src)
@@ -1336,7 +1336,7 @@ func TestFormatKeepsArrowLambda(t *testing.T) {
 		{"no_params", "function g(f: () => i32): i32 { return f(); }\nfunction main(): i32 { return g(() => 7); }", "g(() => 7)"},
 		{"one_param", "function g(f: (i32) => i32): i32 { return f(1); }\nfunction main(): i32 { return g((x: i32) => x + 1); }", "g((x: i32) => x + 1)"},
 		{"annotated_return", "function g(f: (i32) => i32): i32 { return f(1); }\nfunction main(): i32 { return g((x: i32): i32 => x + 1); }", "g((x: i32): i32 => x + 1)"},
-		{"function_form_unchanged", "function g(f: (i32) => i32): i32 { return f(1); }\nfunction main(): i32 { return g(function(x: i32): i32 { return x + 1; }); }", "function(x: i32): i32 { return x + 1; }"},
+		{"braced_body", "function g(f: (i32) => i32): i32 { return f(1); }\nfunction main(): i32 { return g((x: i32): i32 => { return x + 1; }); }", "(x: i32): i32 => x + 1"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := formatSrc(t, tc.src)

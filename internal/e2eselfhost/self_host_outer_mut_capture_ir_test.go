@@ -34,14 +34,14 @@ var outerMutCaptureIRCases = []struct {
 	{"array-reassign",
 		`function main(): i32 {
     var a: i32[] = [10, 1];
-    var f: () => i32 = function (): i32 { return a[0]; };
+    var f: () => i32 = (): i32 => { return a[0]; };
     a = [42, 1];
     return f();
 }`, 42},
 	{"string-reassign",
 		`function main(): i32 {
     var s: string = "aa";
-    var f: () => i32 = function (): i32 { return s.len(); };
+    var f: () => i32 = (): i32 => { return s.len(); };
     s = "abcdef";
     return f() + 36;
 }`, 42},
@@ -49,7 +49,7 @@ var outerMutCaptureIRCases = []struct {
 		`struct B { v: i32 }
 function main(): i32 {
     var b: B = B { v: 10 };
-    var f: () => i32 = function (): i32 { return b.v; };
+    var f: () => i32 = (): i32 => { return b.v; };
     b = B { v: 42 };
     return f();
 }`, 42},
@@ -57,7 +57,7 @@ function main(): i32 {
 	{"i32-outer-reassign",
 		`function main(): i32 {
     var n: i32 = 10;
-    var f: () => i32 = function (): i32 { return n; };
+    var f: () => i32 = (): i32 => { return n; };
     n = 42;
     return f();
 }`, 42},
@@ -69,14 +69,14 @@ function main(): i32 {
 		`function main(): i32 {
     var total: i32 = 0;
     total = total + 15;
-    var f: () => i32 = function (): i32 { return total + 27; };
+    var f: () => i32 = (): i32 => { return total + 27; };
     return f();
 }`, 42},
 	{"loop-accumulator",
 		`function main(): i32 {
     var s: i32 = 0;
     var i: i32 = 0;
-    var add: () => i32 = function (): i32 { s = s + i; return 0; };
+    var add: () => i32 = (): i32 => { s = s + i; return 0; };
     while (i < 4) {
         i = i + 1;
         var r: i32 = add();
@@ -88,7 +88,7 @@ function main(): i32 {
 	{"outer-and-inner-write",
 		`function main(): i32 {
     var x: i32 = 0;
-    var f: () => i32 = function (): i32 { x = x + 4; return 0; };
+    var f: () => i32 = (): i32 => { x = x + 4; return 0; };
     x = 3;
     var r: i32 = f();
     return x + 35;
@@ -99,7 +99,7 @@ function main(): i32 {
 		`function main(): i32 {
     var a: i32[] = [0, 1];
     a = a.with(0, 42);
-    var f: () => i32 = function (): i32 { return a[0]; };
+    var f: () => i32 = (): i32 => { return a[0]; };
     return f();
 }`, 42},
 	// RC guard: reassign the captured array to another still-live local and
@@ -108,7 +108,7 @@ function main(): i32 {
 		`function main(): i32 {
     var keep: i32[] = [40, 7];
     var a: i32[] = [10, 1];
-    var f: () => i32 = function (): i32 { return a[0]; };
+    var f: () => i32 = (): i32 => { return a[0]; };
     a = keep;
     a = [1, 2];
     a = keep;
@@ -121,7 +121,7 @@ function main(): i32 {
 	{"loop-string-grow",
 		`function main(): i32 {
     var s: string = "x";
-    var f: () => i32 = function (): i32 { return s.len(); };
+    var f: () => i32 = (): i32 => { return s.len(); };
     var i: i32 = 0;
     while (i < 40) {
         s = s + "y";
@@ -136,7 +136,7 @@ function main(): i32 {
 	{"escape-array-reassign",
 		`function mk(): () => i32 {
     var a: i32[] = [10, 1];
-    var f: () => i32 = function (): i32 { return a[0]; };
+    var f: () => i32 = (): i32 => { return a[0]; };
     a = [42, 1];
     return f;
 }
@@ -147,7 +147,7 @@ function main(): i32 {
 	{"escape-string-reassign",
 		`function mk(): () => i32 {
     var s: string = "aa";
-    var f: () => i32 = function (): i32 { return s.len(); };
+    var f: () => i32 = (): i32 => { return s.len(); };
     s = "abcdef";
     return f;
 }
@@ -159,7 +159,7 @@ function main(): i32 {
 		`struct B { v: i32 }
 function mk(): () => i32 {
     var b: B = B { v: 10 };
-    var f: () => i32 = function (): i32 { return b.v; };
+    var f: () => i32 = (): i32 => { return b.v; };
     b = B { v: 42 };
     return f;
 }
@@ -170,7 +170,7 @@ function main(): i32 {
 	{"escape-i32-reassign",
 		`function mk(): () => i32 {
     var n: i32 = 10;
-    var f: () => i32 = function (): i32 { return n; };
+    var f: () => i32 = (): i32 => { return n; };
     n = 42;
     return f;
 }
@@ -184,7 +184,7 @@ function main(): i32 {
 	{"escape-mixed-write",
 		`function mk(): () => i32 {
     var n: i32 = 0;
-    var f: () => i32 = function (): i32 { n = n + 2; return n; };
+    var f: () => i32 = (): i32 => { n = n + 2; return n; };
     n = 38;
     return f;
 }
@@ -200,7 +200,7 @@ function main(): i32 {
 	{"escape-container-reassign",
 		`function main(): i32 {
     var a: i32[] = [10, 1];
-    var f: () => i32 = function (): i32 { return a[0]; };
+    var f: () => i32 = (): i32 => { return a[0]; };
     var fs: (() => i32)[] = [f];
     a = [42, 1];
     return fs[0]();
@@ -210,8 +210,8 @@ function main(): i32 {
 	{"escape-two-closures-shared-capture",
 		`function main(): i32 {
     var a: i32[] = [10, 1];
-    var direct: () => i32 = function (): i32 { return a[0]; };
-    var esc: () => i32 = function (): i32 { return a[0] + 1; };
+    var direct: () => i32 = (): i32 => { return a[0]; };
+    var esc: () => i32 = (): i32 => { return a[0] + 1; };
     var keep: (() => i32)[] = [esc];
     a = [20, 1];
     return direct() + keep[0]();

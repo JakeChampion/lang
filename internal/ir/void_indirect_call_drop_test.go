@@ -56,6 +56,26 @@ function main(): i32 {
 }`,
 		},
 		{
+			// A closure literal called where it is written has no FuncSigs
+			// entry under its own name either; its result type comes from
+			// the hoisted signature closureconv stamped (#8551).
+			name: "void closure literal called inline", wantDrop: false,
+			src: `
+function main(): i32 {
+    var seen: i32 = 0;
+    ((x: i32) => { seen = seen + x; })(4);
+    return seen - 4;
+}`,
+		},
+		{
+			name: "value-returning closure literal called inline", wantDrop: true,
+			src: `
+function main(): i32 {
+    ((x: i32) => x * 2)(4);
+    return 0;
+}`,
+		},
+		{
 			// The other direction: a discarded value-yielding call through the
 			// same seam still needs its drop, or the stack grows unbalanced.
 			name: "value-returning closure parameter", wantDrop: true,

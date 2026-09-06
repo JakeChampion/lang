@@ -1839,8 +1839,9 @@ type NumberLit struct {
 	Value int64
 	// Raw is the literal exactly as the source spelled it, suffix
 	// excluded, and is set only when that spelling is not the decimal
-	// rendering of Value — today, a `0x…` hex literal. Only the
-	// formatter reads it, so a literal's base survives `-fmt`; every
+	// rendering of Value: a `0x…` hex literal, or one past u64 max
+	// (ExceedsU64), whose Value holds nothing. The formatter reads it so
+	// a literal's base survives `-fmt`, and diagnostics quote it; every
 	// other consumer works from Value.
 	Raw string
 	// Width is set by the checker once the literal's type has
@@ -1874,6 +1875,12 @@ type NumberLit struct {
 	// tell `9223372036854775808` from the `-9223372036854775808` it wraps
 	// to. Read the magnitude back with uint64(Value).
 	ExceedsI64 bool
+	// ExceedsU64 records a magnitude no 64-bit type can hold. The parser
+	// keeps the literal (Value is 0, Raw the spelling) so the checker can
+	// refuse it as E047 against the type the context asked for, the way
+	// every other out-of-range literal is refused, instead of the parser
+	// failing on a number it merely cannot store.
+	ExceedsU64 bool
 }
 
 // CastExpr is `expr as Type`. The checker requires Target to be a
@@ -3333,6 +3340,126 @@ type MatchExprArm struct {
 	Body    Expr
 }
 
+// Binders lists every name the arm's pattern binds: the payload binders,
+// the `@` whole-value binder, and every binder inside a tuple pattern or a
+// payload sub-pattern, at any depth. Empty slots (a payload position held
+// by a sub-pattern, a wildcard or literal tuple element) are skipped.
+func (a *MatchArm) Binders() []string {
+	return armBinders(a.Bindings, a.AtBinding, a.TupleElems, a.Payloads)
+}
+
+// Binders mirrors MatchArm.Binders for the expression form.
+func (a *MatchExprArm) Binders() []string {
+	return armBinders(a.Bindings, a.AtBinding, a.TupleElems, a.Payloads)
+}
+
+func armBinders(bindings []string, atBinding string, tupleElems []TuplePatElem, payloads []*TuplePatElem) []string {
+	out := appendNonEmpty(nil, bindings...)
+	out = appendNonEmpty(out, atBinding)
+	out = tuplePatBinders(out, tupleElems)
+	for _, p := range payloads {
+		if p != nil {
+			out = tuplePatBinders(out, []TuplePatElem{*p})
+		}
+	}
+	return out
+}
+
+// tuplePatBinders appends every name a tuple pattern binds, recursing into
+// nested tuples and variant / struct sub-patterns.
+func tuplePatBinders(acc []string, elems []TuplePatElem) []string {
+	for _, el := range elems {
+		acc = appendNonEmpty(acc, el.Name, el.AtBinding)
+		acc = appendNonEmpty(acc, el.VariantBindings...)
+		acc = tuplePatBinders(acc, el.Nested)
+		for _, vp := range el.VariantPayloads {
+			if vp != nil {
+				acc = tuplePatBinders(acc, []TuplePatElem{*vp})
+			}
+		}
+	}
+	return acc
+}
+
+// BinderType is Binders' sibling: the type this arm binds `name` to, or nil
+// when the arm does not bind it. `scrutinee` types the `@` whole-value
+// binder, the one position no list beside the pattern can supply.
+//
+// It lives here so the two answers cannot drift: the walk that says WHICH
+// names an arm binds and the walk that says what each one HOLDS read the
+// same fields. The IR needs the second when it sizes a match expression's
+// result slot, which happens before any arm is lowered — at that point a
+// binder is not yet a local, so resolving its name against the function's
+// locals answers i32 and a wider value goes through a one-word slot.
+func (a *MatchExprArm) BinderType(name string, scrutinee Type) Type {
+	if a == nil || name == "" {
+		return nil
+	}
+	if a.AtBinding == name {
+		return scrutinee
+	}
+	for i, bn := range a.Bindings {
+		if bn == name && i < len(a.BindingTypes) {
+			return a.BindingTypes[i]
+		}
+	}
+	for i, p := range a.Payloads {
+		if t := p.binderType(name, nthType(a.BindingTypes, i)); t != nil {
+			return t
+		}
+	}
+	for i := range a.TupleElems {
+		if t := a.TupleElems[i].binderType(name, nthType(a.BindingTypes, i)); t != nil {
+			return t
+		}
+	}
+	return nil
+}
+
+// binderType is BinderType for ONE pattern position — a tuple element or a
+// payload slot, which are the same node — and everything nested inside it.
+// elT is the type of the value at that position.
+func (el *TuplePatElem) binderType(name string, elT Type) Type {
+	if el == nil {
+		return nil
+	}
+	if el.Name == name || el.AtBinding == name {
+		return elT
+	}
+	for i, bn := range el.VariantBindings {
+		if bn == name && i < len(el.VariantBindingTypes) {
+			return el.VariantBindingTypes[i]
+		}
+	}
+	for i, p := range el.VariantPayloads {
+		if t := p.binderType(name, nthType(el.VariantBindingTypes, i)); t != nil {
+			return t
+		}
+	}
+	for i := range el.Nested {
+		if t := el.Nested[i].binderType(name, nthType(el.NestedTypes, i)); t != nil {
+			return t
+		}
+	}
+	return nil
+}
+
+func nthType(ts []Type, i int) Type {
+	if i < len(ts) {
+		return ts[i]
+	}
+	return nil
+}
+
+func appendNonEmpty(acc []string, names ...string) []string {
+	for _, n := range names {
+		if n != "" {
+			acc = append(acc, n)
+		}
+	}
+	return acc
+}
+
 func (s *Block) Pos() Position                  { return s.P }
 func (s *If) Pos() Position                     { return s.P }
 func (s *While) Pos() Position                  { return s.P }
@@ -4145,6 +4272,10 @@ type ConstDecl struct {
 	Type   Type
 	Value  Expr
 	Public bool
+	// SourceModule is the path of the module that declared the const,
+	// stamped by modload like FuncDecl.SourceModule, so a diagnostic on
+	// the initialiser names the right file.
+	SourceModule string
 	// PackageScoped marks a `pub(package)` declaration — visible to other
 	// modules in the same package (same directory; the stdlib is one
 	// package) but not exported to outside consumers. Mutually exclusive

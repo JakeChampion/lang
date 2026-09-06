@@ -197,7 +197,7 @@ function main(): i32 {
 		src: `
 import "core/int";
 function mk(prefix: string, xs: i32[]): (i32) => i32 {
-    return function(i: i32): i32 { return prefix.len() + xs[i]; };
+    return (i: i32): i32 => { return prefix.len() + xs[i]; };
 }
 function main(): i32 {
     var f: (i32) => i32 = mk("captured-prefix-padpadpad" + "!", [10, 20, 30]);

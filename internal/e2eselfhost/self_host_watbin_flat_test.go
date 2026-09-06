@@ -115,8 +115,8 @@ function main(): i32 {
 		// enc_instr path had it), so the indirect call was DROPPED — the module
 		// validated but computed garbage. Pins the flat call_indirect encoding
 		// (#4801).
-		{"closure-capture-return", "function adder(n: i32): fn { return function(x: i32): i32 { return x + n; }; } function main(): i32 { var a = adder(10); return a(5); }", 15},
-		{"lambda-as-arg", "function apply(f: fn, v: i32): i32 { return f(v); } function main(): i32 { return apply(function(x: i32): i32 { return x * 7; }, 6); }", 42},
+		{"closure-capture-return", "function adder(n: i32): fn { return (x: i32): i32 => { return x + n; }; } function main(): i32 { var a = adder(10); return a(5); }", 15},
+		{"lambda-as-arg", "function apply(f: fn, v: i32): i32 { return f(v); } function main(): i32 { return apply((x: i32): i32 => { return x * 7; }, 6); }", 42},
 	}
 
 	for _, tc := range cases {

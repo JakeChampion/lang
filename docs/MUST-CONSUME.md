@@ -141,7 +141,8 @@ Adopting it here therefore needs the follow-up the Rules section
 already names — E055-style checking of a discarded result whose
 type is marked — plus a way for a receiver to be a non-consuming
 borrow. Until both exist, the runner's guarantee comes from
-`finish()` reading a shared tally rather than a threaded value
+`finish()` counting the TAP lines that reached the stream, not
+only the results threaded back through the value
 (`docs/TEST-RUNNER-MIGRATION.md`).
 
 ## Deliberately deferred

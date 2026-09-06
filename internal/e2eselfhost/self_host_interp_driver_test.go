@@ -98,17 +98,17 @@ var interpProgs = []struct {
 	// interpreter, which has no such function (#7174). Native answers 6 on all
 	// four shapes.
 	{"range-in-lambda", "function run(f: () => i32): i32 { return f(); }\n" +
-		"function main(): i32 { return run(function(): i32 { var s = 0; for i in 0..4 { s = s + i; } return s; }); }", 6},
-	{"range-in-lambda-var", "function main(): i32 { var f = function(): i32 { var s = 0; for i in 0..4 { s = s + i; } return s; }; return f(); }", 6},
+		"function main(): i32 { return run((): i32 => { var s = 0; for i in 0..4 { s = s + i; } return s; }); }", 6},
+	{"range-in-lambda-var", "function main(): i32 { var f = (): i32 => { var s = 0; for i in 0..4 { s = s + i; } return s; }; return f(); }", 6},
 	{"range-in-lambda-nested", "function run(f: () => i32): i32 { return f(); }\n" +
-		"function main(): i32 { return run(function(): i32 { return run(function(): i32 { var s = 0; for i in 0..4 { s = s + i; } return s; }); }); }", 6},
+		"function main(): i32 { return run((): i32 => { return run((): i32 => { var s = 0; for i in 0..4 { s = s + i; } return s; }); }); }", 6},
 	// A LABELED break/continue inside a lambda. resolve_labels_stmt had no
 	// expression recursion at all, so a labeled loop in a lambda body never had
 	// its tag resolved and the jump degraded to tag 0 — the innermost loop.
 	// `break outer` silently broke the wrong loop; `continue outer` re-entered
 	// the inner `while (true)` forever, hanging the COMPILED binary (#7199).
 	{"labeled-break-in-lambda", "function main(): i32 {\n" +
-		"    var f: () => i32 = function (): i32 {\n" +
+		"    var f: () => i32 = (): i32 => {\n" +
 		"        var n: i32 = 0;\n" +
 		"        outer: while (n < 100) {\n" +
 		"            inner: while (true) { n = n + 1; break outer; }\n" +
@@ -118,7 +118,7 @@ var interpProgs = []struct {
 		"    };\n" +
 		"    return f() + 41; }", 42},
 	{"labeled-continue-in-lambda", "function main(): i32 {\n" +
-		"    var f: () => i32 = function (): i32 {\n" +
+		"    var f: () => i32 = (): i32 => {\n" +
 		"        var n: i32 = 0;\n" +
 		"        outer: while (n < 3) {\n" +
 		"            n = n + 1;\n" +
@@ -133,7 +133,7 @@ var interpProgs = []struct {
 		"    var acc: i32 = 0;\n" +
 		"    outer: while (acc < 1) {\n" +
 		"        acc = acc + 1;\n" +
-		"        var f: () => i32 = function (): i32 {\n" +
+		"        var f: () => i32 = (): i32 => {\n" +
 		"            var n: i32 = 0;\n" +
 		"            outer: while (n < 100) { n = n + 1; break outer; }\n" +
 		"            return n;\n" +
@@ -148,20 +148,20 @@ var interpProgs = []struct {
 	// sees no StmtDefer, dropped it (#7174). A lambda is its own scope: the
 	// action runs when the LAMBDA returns.
 	{"defer-in-lambda", "function run(f: () => i32): i32 { return f(); }\n" +
-		"function main(): i32 { return run(function(): i32 { var n = 0; defer { n = n + 7; } return n; }); }", 0},
+		"function main(): i32 { return run((): i32 => { var n = 0; defer { n = n + 7; } return n; }); }", 0},
 	{"defer-in-lambda-runs", "function run(f: () => i32): i32 { return f(); }\n" +
-		"function main(): i32 { var out = 0; var r = run(function(): i32 { defer { out = out + 7; } return 1; }); return out + r; }", 8},
+		"function main(): i32 { var out = 0; var r = run((): i32 => { defer { out = out + 7; } return 1; }); return out + r; }", 8},
 	// The enclosing function ALSO defers: the two scopes must not merge, and the
 	// lambda's action must run at the lambda's exit, before main's.
 	{"defer-in-lambda-and-fn", "function run(f: () => i32): i32 { return f(); }\n" +
 		"function main(): i32 { var log = 0; defer { log = log * 10; }\n" +
-		"    var r = run(function(): i32 { defer { log = log + 3; } return 1; });\n" +
+		"    var r = run((): i32 => { defer { log = log + 3; } return 1; });\n" +
 		"    if (log != 3) { return 90; } return r; }", 1},
 	// The lambda hangs off a match arm's statement, which the arm walk reaches
 	// but the expression descent has to finish.
 	{"range-in-lambda-match-arm", "enum E { A(i32) }\n" +
 		"function run(f: () => i32): i32 { return f(); }\n" +
-		"function main(): i32 { var e: E = E.A(1); match (e) { E.A(v) => { return run(function(): i32 { var s = 0; for i in 0..4 { s = s + i; } return s; }); }, _ => { return 0; } } return 0; }", 6},
+		"function main(): i32 { var e: E = E.A(1); match (e) { E.A(v) => { return run((): i32 => { var s = 0; for i in 0..4 { s = s + i; } return s; }); }, _ => { return 0; } } return 0; }", 6},
 	// Generic trait declaration header `trait Name[T]` with a default
 	// method (#4340): parse_trait_decl walked name -> `:` supertraits ->
 	// `{` and never consumed the `[T]` type-param list, so `[T] { … }`

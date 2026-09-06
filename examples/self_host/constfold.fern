@@ -631,7 +631,7 @@ function main(): i32 {
     }
 
     var mod18: parser.Module = elide_asserts(fold_source(
-        "function main(): i32 { var f = function(): i32 { assert(1 > 2); return 1; }; return 0; }"));
+        "function main(): i32 { var f = (): i32 => { assert(1 > 2); return 1; }; return 0; }"));
     match (mod18.funcs[0].body[0]) {
         ast.StmtVar(v) => {
             match (v.init) {
@@ -652,7 +652,7 @@ function main(): i32 {
     // A lambda nested in a lambda: the splice must reach it, and reach it
     // ONCE — a body visited twice would splice an expanding rewrite twice.
     var mod20: parser.Module = elide_asserts(fold_source(
-        "function main(): i32 { var f = function(): i32 { var g = function(): i32 { assert(1 > 2); return 1; }; return 2; }; return 0; }"));
+        "function main(): i32 { var f = (): i32 => { var g = (): i32 => { assert(1 > 2); return 1; }; return 2; }; return 0; }"));
     match (mod20.funcs[0].body[0]) {
         ast.StmtVar(v) => {
             match (v.init) {
@@ -680,7 +680,7 @@ function main(): i32 {
     if (!has_asserts(fold_source("function main(): i32 { assert(1 > 2); return 0; }"))) { return 196; }
     if (has_asserts(fold_source("function main(): i32 { if (1 > 2) { return 3; } return 0; }"))) { return 197; }
     if (!has_asserts(fold_source("function main(): i32 { while (false) { assert(1 > 2); } return 0; }"))) { return 198; }
-    if (!has_asserts(fold_source("function main(): i32 { var f = function(): i32 { assert(1 > 2); return 1; }; return 0; }"))) { return 199; }
+    if (!has_asserts(fold_source("function main(): i32 { var f = (): i32 => { assert(1 > 2); return 1; }; return 0; }"))) { return 199; }
     if (!has_asserts(fold_source("enum E { A(i32) } function main(): i32 { var e: E = E.A(1); match (e) { E.A(v) => { assert(v > 2); }, _ => { return 9; } } return 0; }"))) { return 202; }
     if (has_asserts(elide_asserts(fold_source("function main(): i32 { while (false) { assert(1 > 2); } return 0; }")))) { return 203; }
 

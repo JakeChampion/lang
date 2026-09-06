@@ -1,2 +1,2 @@
 // A boolean captured scalar, toggled in the closure (#2850) -> 1.
-function main(): i32 { var b = false; var t = function (): i32 { b = true; return 0; }; var r = t(); if (b) { return 1; } return 0; }
+function main(): i32 { var b = false; var t = (): i32 => { b = true; return 0; }; var r = t(); if (b) { return 1; } return 0; }

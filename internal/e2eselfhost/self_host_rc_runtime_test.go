@@ -665,9 +665,9 @@ func TestSelfHostRcClosureX86_64(t *testing.T) {
 		exit int
 	}{
 		// Local closure capturing an array local.
-		{"closure-captures-array", "function main(): i32 { var xs: i32[] = [3, 4, 5]; var f = function (): i32 { return xs[1] + xs[2]; }; return f() + __rc_underflow(); }", 9},
+		{"closure-captures-array", "function main(): i32 { var xs: i32[] = [3, 4, 5]; var f = (): i32 => { return xs[1] + xs[2]; }; return f() + __rc_underflow(); }", 9},
 		// Closure escaping its defining function, capturing an array.
-		{"closure-escapes-with-array", "function mk(xs: i32[]): () => i32 { return function (): i32 { return xs[0] + xs[1]; }; } function main(): i32 { var a: i32[] = [3, 4]; var f = mk(a); return f() + __rc_underflow(); }", 7},
+		{"closure-escapes-with-array", "function mk(xs: i32[]): () => i32 { return (): i32 => { return xs[0] + xs[1]; }; } function main(): i32 { var a: i32[] = [3, 4]; var f = mk(a); return f() + __rc_underflow(); }", 7},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
