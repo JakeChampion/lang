@@ -33,7 +33,11 @@
 // arguments; the self-host spells it as a call to `__fern_rc_is_unique`
 // and calls `__fern_alloc_reuse` with two; emitReuseToken zeroes the
 // donor slot after the select where the two overwrite emitters do not.
-// None of that is what makes a site safe. One donor is.
+// When donor and construction share a size class, native takes the
+// branch in the IR (emitReuseBox): the reuse arm stores the donor's box
+// straight into the slot the site builds into, and the allocator call
+// sits on the decline arm with a null token. None of that is what makes
+// a site safe. One donor is.
 //
 // # Fail-soft, and why
 //
@@ -231,6 +235,28 @@ func skipToMatchingEnd(ops []Op, elseAt int) (int, bool) {
 	return 0, false
 }
 
+// enclosingElse returns the OpElse of the scope that op index at sits
+// directly inside — at its own nesting depth, on the else arm.
+func enclosingElse(ops []Op, at int) (int, bool) {
+	depth := 0
+	for i := at - 1; i >= 0; i-- {
+		switch ops[i].Kind {
+		case OpEnd:
+			depth++
+		case OpBlock, OpLoop, OpIf:
+			if depth == 0 {
+				return 0, false
+			}
+			depth--
+		case OpElse:
+			if depth == 0 {
+				return i, true
+			}
+		}
+	}
+	return 0, false
+}
+
 // site checks the one reuse site whose allocator call is at op index
 // call, and returns the donor it took when the shape was recognised.
 func (c *rcChecker) site(call int) (int32, bool) {
@@ -238,27 +264,50 @@ func (c *rcChecker) site(call int) (int32, bool) {
 
 	// The token is the allocator's first argument. Every later argument
 	// is a size constant, so walking back over the constant run reaches
-	// the load that pushed the token whatever the arity is.
+	// the load that pushed the token whatever the arity is — or, on the
+	// inline form, the decline arm the call sits in.
 	j := call - 1
 	for j >= 0 && ops[j].Kind == OpConstI32 {
 		j--
 	}
-	if j < 0 || ops[j].Kind != OpLoadLocal {
+	var tokenSlot int32
+	// The select's closing OpEnd, and where the decline arm ends.
+	var k, declineTo int
+	switch {
+	case j >= 0 && ops[j].Kind == OpLoadLocal:
+		tokenSlot = ops[j].I32
+		// emitReuseToken zeroes the donor's slot between the select and
+		// the call ("D consumed — zero its slot"); the two overwrite
+		// emitters leave the slot alone. Step over the zeroing when it
+		// is there.
+		k = j - 1
+		if k >= 1 && ops[k].Kind == OpStoreLocal &&
+			ops[k-1].Kind == OpConstI32 && ops[k-1].I32 == 0 {
+			k -= 2
+		}
+		if k < 0 || ops[k].Kind != OpEnd {
+			c.cov.skip("no token select before the reuse call")
+			return 0, false
+		}
+		declineTo = k
+	case call-3 >= 0 && j == call-4 && ops[call-3].I32 == 0 &&
+		call+1 < len(ops) && ops[call+1].Kind == OpStoreLocal:
+		// The inline form: a null token, and the call's result stored into
+		// the box slot the reuse arm fills from the donor. The select is
+		// the if this arm belongs to.
+		tokenSlot = ops[call+1].I32
+		elseAt, ok := enclosingElse(ops, call)
+		if !ok {
+			c.cov.skip("no token select before the reuse call")
+			return 0, false
+		}
+		if k, ok = skipToMatchingEnd(ops, elseAt); !ok {
+			c.cov.skip("token select is not a well-formed if")
+			return 0, false
+		}
+		declineTo = call
+	default:
 		c.cov.skip("token argument is not a local load")
-		return 0, false
-	}
-	tokenSlot := ops[j].I32
-
-	// emitReuseToken zeroes the donor's slot between the select and the
-	// call ("D consumed — zero its slot"); the two overwrite emitters
-	// leave the slot alone. Step over the zeroing when it is there.
-	k := j - 1
-	if k >= 1 && ops[k].Kind == OpStoreLocal &&
-		ops[k-1].Kind == OpConstI32 && ops[k-1].I32 == 0 {
-		k -= 2
-	}
-	if k < 0 || ops[k].Kind != OpEnd {
-		c.cov.skip("no token select before the reuse call")
 		return 0, false
 	}
 	ifAt, elseAt, ok := matchIfBackwards(ops, k)
@@ -297,7 +346,7 @@ func (c *rcChecker) site(call int) (int32, bool) {
 	// absent release is therefore not a defect — there is simply no third
 	// name to disagree. TWO releases are a different matter: nothing can say
 	// which one the protocol meant, so the site is skipped.
-	dec, decAt, haveDec, ok := soleDecline(ops, elseAt+1, k)
+	dec, decAt, haveDec, ok := soleDecline(ops, elseAt+1, declineTo)
 	if !ok {
 		c.cov.skip("decline arm releases more than one local")
 		return 0, false
