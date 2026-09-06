@@ -15,16 +15,16 @@ import (
 
 // TestSelfHostReaderArm64 is the ARM64 counterpart of
 // TestSelfHostReaderX86_64: it exercises the self-hosted ARM64
-// emitter's Reader / Option lowering (stdin, Reader.read_chunk,
-// Reader.close, Some/None construction, match on an Option binding
-// the Some payload).
+// emitter's Reader lowering (stdin, Reader.read_chunk,
+// Reader.close, Ok/Err construction, match on a Result binding
+// the Ok payload).
 //
 // The asm_ir_run (-target arm64-linux) driver is built as an x86 host binary (it runs
 // on the test host; only its OUTPUT is aarch64 asm). It compiles a
 // read-all-of-stdin echo program to aarch64 asm, which is assembled
 // with the aarch64 cross-gcc and run under qemu-aarch64 against
 // several stdin inputs — including a >4096-byte input that forces
-// the read_chunk loop through multiple Some iterations before None.
+// the read_chunk loop through multiple non-empty chunks before Ok("").
 //
 // SKIPs cleanly when the aarch64 cross-toolchain / qemu-aarch64
 // aren't installed (see arm64Tooling); CI provides them.
@@ -60,8 +60,11 @@ func TestSelfHostReaderArm64(t *testing.T) {
 		"    var out: string = \"\";\n" +
 		"    while (true) {\n" +
 		"        match (r.read_chunk(4096)) {\n" +
-		"            Some(chunk) => { out = out + chunk; },\n" +
-		"            None => { r.close(); write(out); return 0; },\n" +
+		"            Ok(chunk) => {\n" +
+		"                if (chunk.len() == 0) { r.close(); write(out); return 0; }\n" +
+		"                out = out + chunk;\n" +
+		"            },\n" +
+		"            Err(e) => { r.close(); write(out); return 0; },\n" +
 		"        }\n" +
 		"    }\n" +
 		"    return 0;\n" +

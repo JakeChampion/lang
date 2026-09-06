@@ -11866,8 +11866,11 @@ func (g *generator) emitIoErrorRuntime() {
 	g.emit("jmp .Lioe_done")
 
 	g.label(".Lioe_with_path")
+	// A headered box like the other arms (and arm64): the enum drop
+	// reads the rc at data-8 and frees from there, so a bare block
+	// makes it read the preceding block's tail as a refcount.
 	g.emit("mov edi, 16")
-	g.emit("call __fern_alloc")
+	g.emit("call __fern_alloc_box")
 	g.emit("mov [rax], ebx")     // tag
 	g.emit("mov [rax + 8], r12") // path
 
@@ -13342,15 +13345,45 @@ func (g *generator) emitReaderWriterRuntime() {
 		g.label(e.sym)
 		g.emit("push rbp")
 		g.emit("mov rbp, rsp")
-		g.emit("push rbx")     // path
-		g.emit("push r12")     // handle / errno scratch
-		g.emit("mov rbx, rdi") // path
-		// openat(AT_FDCWD, path, flags, mode)
+		g.emit("push rbx") // NUL-terminated path copy
+		g.emit("push r12") // handle / errno scratch
+		g.emit("push r13") // path byte length
+		g.emit("push r14") // path byte pointer
+		// 5 pushes ⇒ rsp ≡ 8 mod 16; sub 24 realigns and buys:
+		//   [rbp-40] emitStrDataPtr inline-spill scratch
+		//   [rbp-48] the original path string value (io_error arg)
+		g.emit("sub rsp, 24")
+		g.emit("mov [rbp - 48], rdi")
+		// openat wants a NUL-terminated C string, and an SSO path is
+		// seven bytes in the register rather than a pointer at all, so
+		// the bytes are copied out before the syscall sees them.
+		g.emitStrLen("r13d", "rdi")
+		g.emitStrDataPtr("r14", "rdi", "[rbp - 40]")
+		g.emit("lea edi, [r13 + 1]")
+		g.emit("call __fern_alloc")
+		g.emit("mov rbx, rax")
+		g.emit("xor ecx, ecx")
+		g.label(".Lorw_cp_" + e.sym)
+		g.emit("cmp rcx, r13")
+		g.emit("jae .Lorw_cpd_" + e.sym)
+		g.emit("mov al, [r14 + rcx]")
+		g.emit("mov [rbx + rcx], al")
+		g.emit("add rcx, 1")
+		g.emit("jmp .Lorw_cp_" + e.sym)
+		g.label(".Lorw_cpd_" + e.sym)
+		g.emit("mov byte ptr [rbx + r13], 0")
+		// openat(AT_FDCWD, pathz, flags, mode)
 		g.emit("mov edi, -100")
 		g.emit("mov rsi, rbx")
 		g.emit(fmt.Sprintf("mov edx, %d", e.flags))
 		g.emit(fmt.Sprintf("mov r10d, %d", e.mode))
 		g.emitSyscall(257)
+		// The syscall has read pathz; return it before either result box.
+		g.emit("mov r12, rax")
+		g.emit("mov rdi, rbx")
+		g.emit("lea esi, [r13 + 1]")
+		g.emit("call __fern_free")
+		g.emit("mov rax, r12")
 		g.emit("test rax, rax")
 		g.emit("js .Lorw_err_" + e.sym)
 		// Success: alloc handle, store fd, wrap in Ok box.
@@ -13364,8 +13397,8 @@ func (g *generator) emitReaderWriterRuntime() {
 		g.emit("jmp .Lorw_ret_" + e.sym)
 		g.label(".Lorw_err_" + e.sym)
 		g.emit("neg rax")
-		g.emit("mov edi, eax") // errno
-		g.emit("mov rsi, rbx") // path
+		g.emit("mov edi, eax")        // errno
+		g.emit("mov rsi, [rbp - 48]") // the path as a Fern string
 		g.emit("call __fern_io_error")
 		g.emit("mov r12, rax") // IoError ptr
 		g.emit("mov edi, 16")
@@ -13373,6 +13406,9 @@ func (g *generator) emitReaderWriterRuntime() {
 		g.emit("mov dword ptr [rax], 1") // Err
 		g.emit("mov [rax + 8], r12")
 		g.label(".Lorw_ret_" + e.sym)
+		g.emit("add rsp, 24")
+		g.emit("pop r14")
+		g.emit("pop r13")
 		g.emit("pop r12")
 		g.emit("pop rbx")
 		g.emit("pop rbp")
@@ -13443,7 +13479,10 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("ret")
 	g.line(".size __fern_reader_read_line, .-__fern_reader_read_line")
 
-	// __fern_reader_read_chunk(reader_ptr, n) → Option[string].
+	// __fern_reader_read_chunk(reader_ptr, n) → Result[string, IoError]:
+	// the bytes read, Ok("") at end of input, Err(e) when read(2) failed
+	// (a directory reads EISDIR, and a streaming caller has to tell that
+	// from EOF — #8700).
 	g.line("")
 	g.line(".globl __fern_reader_read_chunk")
 	g.line(".type __fern_reader_read_chunk, @function")
@@ -13468,7 +13507,8 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("xor eax, eax")
 	g.emitSyscallPreloaded(sysRead)
 	g.emit("test rax, rax")
-	g.emit("jle .Lrrc_none")
+	g.emit("js .Lrrc_err")
+	g.emit("jz .Lrrc_eof")
 	g.emit("cmp rax, r12")
 	g.emit("je .Lrrc_some")
 	// Short read (a pipe hands back at most 64 KiB): __fern_str_dec frees
@@ -13496,14 +13536,34 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("mov dword ptr [rax], 0")
 	g.emit("mov [rax + 8], r13")
 	g.emit("jmp .Lrrc_ret")
-	g.label(".Lrrc_none")
-	// EOF / error: nothing owns the buffer, so give it back.
+	g.label(".Lrrc_eof")
+	// End of input: nothing owns the buffer, so give it back, and
+	// answer Ok("") — read(2) returning 0 is what EOF is (#8700).
 	g.emit("mov rdi, r13")
 	g.emit("lea esi, [r12 + 1]")
 	g.emit("call __fern_box_free")
-	g.emit("mov edi, 4")
+	g.emit("mov edi, 16")
+	g.emit("call __fern_alloc_box")
+	g.emit("mov dword ptr [rax], 0")
+	g.emit("lea rcx, [rip + .LStr_ioerr_empty]")
+	g.emit("mov [rax + 8], rcx")
+	g.emit("jmp .Lrrc_ret")
+	g.label(".Lrrc_err")
+	// The read failed: give the buffer back and report the errno. A
+	// read carries no path, so it is classified against an empty one.
+	g.emit("neg rax")
+	g.emit("mov ebx, eax") // errno; the fd in rbx is done with
+	g.emit("mov rdi, r13")
+	g.emit("lea esi, [r12 + 1]")
+	g.emit("call __fern_box_free")
+	g.emit("mov edi, ebx")
+	g.emit("lea rsi, [rip + .LStr_ioerr_empty]")
+	g.emit("call __fern_io_error")
+	g.emit("mov r12, rax")
+	g.emit("mov edi, 16")
 	g.emit("call __fern_alloc_box")
 	g.emit("mov dword ptr [rax], 1")
+	g.emit("mov [rax + 8], r12")
 	g.label(".Lrrc_ret")
 	g.emit("pop r14")
 	g.emit("pop r13")

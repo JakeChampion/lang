@@ -492,12 +492,15 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 				case "__fern_reader_read_chunk":
 					// (r, n) → i32 — single fd_read of up to n
 					// bytes into a fresh n-byte heap buffer,
-					// returned as Some(chunk) string → rc1. The
+					// returned as Ok(chunk) string → rc1. The
 					// scratch, an EOF'd buffer and (preview 2)
 					// the host's raw list go back through __free.
+					// A failing read classifies its errno, so the
+					// IoError constructor comes with it.
 					needs.add("__fern_alloc") // rc1 calls it
 					needs.add("__fern_alloc_rc1")
 					needs.add("__free")
+					needs.add("__build_io_error")
 					needs.add("__fern_reader_read_chunk")
 				case "__fern_reader_close_fd":
 					// (r) → i32 — fd_close on r.fd; returns
@@ -2299,7 +2302,7 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		body:    buildReaderReadLineFdBody,
 	},
 	"__fern_reader_read_chunk": {
-		// (r, n: i32) → i32 — heap-form Option[string].
+		// (r, n: i32) → i32 — heap-form Result[string, IoError].
 		// Single fd_read into an n-byte buffer.
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},

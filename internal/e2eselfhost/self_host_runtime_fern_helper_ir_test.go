@@ -359,7 +359,7 @@ func TestSelfHostRuntimeHelperStrToI32IsFernIR(t *testing.T) {
 			// __fn___fern_reader_read_chunk. Migrating it also gave the Some box a
 			// real refcount header, which the bare-__fern_alloc hand-asm never wrote.
 			"reader_read_chunk",
-			`function main(): i32 { var r: Reader = stdin(); return match (r.read_chunk(4096)) { Some(c) => c.len(), None => 0 }; }`,
+			`function main(): i32 { var r: Reader = stdin(); return match (r.read_chunk(4096)) { Ok(c) => c.len(), Err(e) => 0 }; }`,
 			"__fn___fern_reader_read_chunk",
 			[]string{"\n__fern_reader_read_chunk:", ".Lirc_none", ".Lirc_ret"},
 		},

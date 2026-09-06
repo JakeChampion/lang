@@ -6299,7 +6299,7 @@ func TestWASMStreamingRoundtrip(t *testing.T) {
 
 // `Reader.read_chunk(size)` reads up to `size` bytes; the
 // first call gets up to a full chunk, the next call gets
-// the remainder, and a third call returns None.
+// the remainder, and a third call returns Ok("").
 func TestWASMReaderReadChunk(t *testing.T) {
 	src := `function main(): i32 {
 		match (open_writer("rc.txt")) {
@@ -6312,16 +6312,16 @@ func TestWASMReaderReadChunk(t *testing.T) {
 		match (open_reader("rc.txt")) {
 			Ok(r) => {
 				match (r.read_chunk(5)) {
-					Some(s) => { write(s); write(":"); },
-					None => { return 4; }
+					Ok(s) => { write(s); write(":"); },
+					Err(_) => { return 4; }
 				}
 				match (r.read_chunk(20)) {
-					Some(s) => { write(s); },
-					None => { return 5; }
+					Ok(s) => { write(s); },
+					Err(_) => { return 5; }
 				}
 				match (r.read_chunk(20)) {
-					Some(_) => { return 6; },
-					None => { return 0; }
+					Ok(s) => { if (s.len() > 0) { return 6; } return 0; },
+					Err(_) => { return 8; }
 				}
 			},
 			Err(_) => { return 7; }
@@ -10965,8 +10965,8 @@ func TestCmdLangComponentWrapCliWithOpenReader(t *testing.T) {
     match (open_reader("data.txt")) {
         Ok(r) => {
             match (r.read_chunk(4)) {
-                Some(chunk) => { if (chunk.len() == 4) { return 0; } return 2; },
-                None => { return 3; }
+                Ok(chunk) => { if (chunk.len() == 4) { return 0; } return 2; },
+                Err(e) => { return 3; }
             }
             return 4;
         },

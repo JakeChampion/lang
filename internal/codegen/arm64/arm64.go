@@ -9967,11 +9967,14 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.line(".ltorg")
 
 	// __fern_reader_read_chunk(reader_ptr, n) →
-	// Option[string]. Single read of up to n bytes; None if
-	// the read returns 0 (EOF). Allocates the n-byte string
-	// buffer first; the Some box's len field records the
-	// actual byte count, and the block frees at the size word
-	// __fern_alloc_rc1 wrote, so a short read keeps its class.
+	// Result[string, IoError]. Single read of up to n bytes:
+	// Ok(bytes), Ok("") when the read returns 0 (EOF), and
+	// Err(e) when it fails — a directory reads EISDIR, and a
+	// streaming caller has to tell that from EOF (#8700).
+	// Allocates the n-byte string buffer first; the Ok box's
+	// len field records the actual byte count, and the block
+	// frees at the size word __fern_alloc_rc1 wrote, so a
+	// short read keeps its class.
 	// Two-word string ABI (ast.TwoWordOverride is set for the
 	// whole arm64 emit).
 	g.line("")
@@ -9992,24 +9995,56 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("mov x2, x20")
 	g.syscall("read")
 	g.emit("cmp x0, #0")
-	g.emit("ble .Lrrc2w_none")
+	g.emit("blt .Lrrc2w_err")
+	g.emit("beq .Lrrc2w_eof")
 	g.emit("mov x20, x0") // x20 = bytes read
-	// Some(string) 24-byte box.
+	// Ok(string) 24-byte box.
 	g.emit("mov x0, #24")
 	g.emit("bl __fern_alloc_box")
 	g.emit("str wzr, [x0]")
 	g.emit("str x21, [x0, #8]")
 	g.emit("str x20, [x0, #16]")
 	g.emit("b .Lrrc2w_ret")
-	g.label(".Lrrc2w_none")
-	// EOF / error: nothing owns the buffer, so give it back.
+	g.label(".Lrrc2w_eof")
+	// End of input: nothing owns the buffer, so give it back;
+	// Ok(""), the empty string as the ABI in force spells it.
 	g.emit("mov x0, x21")
 	g.emit("mov x1, x20")
 	g.emit("bl __fern_box_free")
-	g.emit("mov x0, #4")
+	g.emit("mov x0, #24")
+	g.emit("bl __fern_alloc_box")
+	g.emit("str wzr, [x0]")
+	if ast.UseTwoWordStrings(8) {
+		g.emit("str xzr, [x0, #8]")
+		g.emit("movz x1, #0x8000, lsl #48")
+		g.emit("str x1, [x0, #16]")
+	} else {
+		g.adrpAdd("x1", ".LStr_ioerr_empty")
+		g.emit("str x1, [x0, #8]")
+		g.emit("str xzr, [x0, #16]")
+	}
+	g.emit("b .Lrrc2w_ret")
+	g.label(".Lrrc2w_err")
+	// The read failed: give the buffer back and classify the
+	// errno against an empty path, as a failed write does.
+	g.emit("neg x19, x0") // errno; the fd in x19 is done with
+	g.emit("mov x0, x21")
+	g.emit("mov x1, x20")
+	g.emit("bl __fern_box_free")
+	g.emit("mov x0, x19")
+	if ast.UseTwoWordStrings(8) {
+		g.emit("mov x1, xzr")
+		g.emit("movz x2, #0x8000, lsl #48")
+	} else {
+		g.adrpAdd("x1", ".LStr_ioerr_empty")
+	}
+	g.emit("bl __fern_io_error")
+	g.emit("mov x19, x0")
+	g.emit("mov x0, #16")
 	g.emit("bl __fern_alloc_box")
 	g.emit("mov w1, #1")
 	g.emit("str w1, [x0]")
+	g.emit("str x19, [x0, #8]")
 	g.label(".Lrrc2w_ret")
 	g.emit("ldr x21, [sp, #32]")
 	g.emit("ldp x19, x20, [sp, #16]")
