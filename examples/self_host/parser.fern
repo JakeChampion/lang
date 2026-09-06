@@ -1041,14 +1041,14 @@ pub function resolve_labels_module(mod: Module): Module {
 // flat `fn` tag (#6773). Only `-fmt` sets it: those canonicalisations are what
 // every downstream `== "string"` / `== "fn"` dispatch site reads, and the
 // formatter is the one consumer that parses without compiling.
-struct Par { toks: lexer.Token[], pos: i32, no_struct: boolean, map_kind: i32, structnames: string[], verbatim: boolean, depth: i32 }
+struct Par { toks: lexer.Token[], pos: i32, no_struct: boolean, map_kind: i32, structnames: string[], verbatim: boolean, depth: i32, no_fn_arrow: boolean }
 
 // scan_struct_names walks the token stream for `struct N` / `pub struct N`
 // declarations and returns the names. A shape scan, not a parse: `struct` is a
 // keyword, so the ident that follows one is always a declared struct name.
 function scan_struct_names(toks: lexer.Token[]): string[] {
     var out: string[] = [];
-    var q: Par = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1, structnames: out, verbatim: false , depth: 0 };
+    var q: Par = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1, structnames: out, verbatim: false, depth: 0, no_fn_arrow: false };
     while (!q.at_end()) {
         if (q.peek_keyword() != "struct") { q = q.advance(); continue; }
         q = q.advance();
@@ -1106,15 +1106,15 @@ function (p: Par) peek_col(): i32 {
 }
 
 function (p: Par) advance(): Par {
-    return Par { toks: p.toks, pos: p.pos + 1, no_struct: p.no_struct, map_kind: p.map_kind, structnames: p.structnames, verbatim: p.verbatim, depth: p.depth };
+    return Par { toks: p.toks, pos: p.pos + 1, no_struct: p.no_struct, map_kind: p.map_kind, structnames: p.structnames, verbatim: p.verbatim, depth: p.depth, no_fn_arrow: p.no_fn_arrow };
 }
 // with_no_struct returns a cursor with the struct-literal-suppression
 // flag set as given (position unchanged).
 function (p: Par) with_no_struct(v: boolean): Par {
-    return Par { toks: p.toks, pos: p.pos, no_struct: v, map_kind: p.map_kind, structnames: p.structnames, verbatim: p.verbatim, depth: p.depth };
+    return Par { toks: p.toks, pos: p.pos, no_struct: v, map_kind: p.map_kind, structnames: p.structnames, verbatim: p.verbatim, depth: p.depth, no_fn_arrow: p.no_fn_arrow };
 }
 function (p: Par) with_map_kind(v: i32): Par {
-    return Par { toks: p.toks, pos: p.pos, no_struct: p.no_struct, map_kind: v, structnames: p.structnames, verbatim: p.verbatim, depth: p.depth };
+    return Par { toks: p.toks, pos: p.pos, no_struct: p.no_struct, map_kind: v, structnames: p.structnames, verbatim: p.verbatim, depth: p.depth, no_fn_arrow: p.no_fn_arrow };
 }
 
 // MAX_NEST_DEPTH bounds recursive descent. Past it the parse stops with a
@@ -1130,7 +1130,16 @@ function (p: Par) with_map_kind(v: i32): Par {
 const MAX_NEST_DEPTH: i32 = 5000;
 
 function (p: Par) with_depth(v: i32): Par {
-    return Par { toks: p.toks, pos: p.pos, no_struct: p.no_struct, map_kind: p.map_kind, structnames: p.structnames, verbatim: p.verbatim, depth: v };
+    return Par { toks: p.toks, pos: p.pos, no_struct: p.no_struct, map_kind: p.map_kind, structnames: p.structnames, verbatim: p.verbatim, depth: v, no_fn_arrow: p.no_fn_arrow };
+}
+
+// with_no_fn_arrow sets the flag that disables the top-level function-type
+// arrow for the ONE type parse_type_name reads next: in an arrow lambda's
+// return-type position the `=>` after a parenthesised type is the lambda's
+// own, so `(A, B)` there is a tuple and `(A)` a grouping. parse_type_name
+// clears it on entry, so a nested `=>` still spells a function type (#8706).
+function (p: Par) with_no_fn_arrow(v: boolean): Par {
+    return Par { toks: p.toks, pos: p.pos, no_struct: p.no_struct, map_kind: p.map_kind, structnames: p.structnames, verbatim: p.verbatim, depth: p.depth, no_fn_arrow: v };
 }
 
 // too_deep reports whether entering one more recursive-descent level would
@@ -1144,7 +1153,7 @@ function (p: Par) too_deep(): boolean { return p.depth > MAX_NEST_DEPTH; }
 function (p: Par) bail(): Par {
     var last: i32 = p.toks.len() - 1;
     if (last < p.pos) { last = p.pos; }
-    return Par { toks: p.toks, pos: last, no_struct: p.no_struct, map_kind: p.map_kind, structnames: p.structnames, verbatim: p.verbatim, depth: p.depth };
+    return Par { toks: p.toks, pos: last, no_struct: p.no_struct, map_kind: p.map_kind, structnames: p.structnames, verbatim: p.verbatim, depth: p.depth, no_fn_arrow: p.no_fn_arrow };
 }
 
 // Token-shape queries: each returns "" when the token isn't of
@@ -1492,7 +1501,8 @@ function parse_arrow_lambda(p: Par): (ast.Expr, Par) {
     var ret_type: string = "";
     if (p.peek_punct() == ":") {
         p = p.advance();
-        var (rtr_name, rtr_ret_arr, rtr_fn_ret, rtr_p) = parse_type_name(p);
+        // The `=>` after the return type is the lambda's own.
+        var (rtr_name, rtr_ret_arr, rtr_fn_ret, rtr_p) = parse_type_name(p.with_no_fn_arrow(true));
         p = rtr_p;
         ret_type = rtr_name;
     }
@@ -2070,7 +2080,7 @@ function parse_postfix(p: Par, base: ast.Expr): (ast.Expr, Par) {
 // before parsing and every node the parse produces names the file.
 function parse_expr_from_text(text: string, base_line: i32, base_col: i32): ast.Expr {
     var toks: lexer.Token[] = lexer.rebase_tokens(lexer.tokenize(text), base_line, base_col);
-    var sub: Par = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1, structnames: scan_struct_names(toks), verbatim: false , depth: 0 };
+    var sub: Par = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1, structnames: scan_struct_names(toks), verbatim: false, depth: 0, no_fn_arrow: false };
     var (r_expr, r_p) = parse_expr(sub);
     return r_expr;
 }
@@ -6180,7 +6190,7 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
 }
 
 pub function parse_program(toks: lexer.Token[]): ast.Stmt[] {
-    var p: Par = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1, structnames: scan_struct_names(toks), verbatim: false , depth: 0 };
+    var p: Par = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1, structnames: scan_struct_names(toks), verbatim: false, depth: 0, no_fn_arrow: false };
     var out: ast.Stmt[] = [];
     while (!p.at_end()) {
         var (r_stmt, r_p) = parse_stmt(p);
@@ -6368,8 +6378,10 @@ function parse_type_handle(p: Par, base: string): (string, boolean, string, Par)
 // `(T1, T2, …)`, which the self-host stores coarsely as "tuple", and a
 // parenthesised single trait object `(dyn T)` / `(dyn A + B)`, where the
 // parens are redundant grouping that has to be unwrapped rather than folded
-// into the name.
-function parse_type_paren(p: Par): (string, boolean, string, Par) {
+// into the name. Under no_fn_arrow a `=>` AFTER the parens is not looked
+// for: it belongs to the enclosing arrow lambda, and a function type there
+// is written grouped, `((A) => B)`.
+function parse_type_paren(p: Par, no_fn_arrow: boolean): (string, boolean, string, Par) {
     // A parenthesized SINGLE trait-object type — `(dyn T)`,
     // `(dyn A + B)`, optionally arrayed `(dyn T)[]`. The parens are
     // redundant grouping (source needs them so a trailing `[]` binds to
@@ -6394,7 +6406,7 @@ function parse_type_paren(p: Par): (string, boolean, string, Par) {
             // arrow + return type are dropped and `(dyn T) => R` params
             // fail to parse (#5267 regressed this shape).
             var dpw_after: Par = dpw_p.advance();   // past `)`
-            if (dpw_after.peek_punct() != "=>") {
+            if (no_fn_arrow || dpw_after.peek_punct() != "=>") {
                 return consume_array_suffix(dpw_after, dpw_name);
             }
         }
@@ -6474,7 +6486,7 @@ function parse_type_paren(p: Par): (string, boolean, string, Par) {
     // the emitter needs is that a value of this type is a
     // closure box). Without consuming `=> R` the arrow + return
     // type are left on the cursor and the decl loop spins (OOM).
-    if (p.peek_punct() == "=>") {
+    if (!no_fn_arrow && p.peek_punct() == "=>") {
         p = p.advance();  // consume `=>`
         var (rr_name, rr_ret_arr, rr_fn_ret, rr_p) = parse_type_name(p);
         p = rr_p;
@@ -6520,17 +6532,23 @@ function parse_type_paren(p: Par): (string, boolean, string, Par) {
     // "function value" and the result type is what lets the
     // checker type a call through it (#7961). Consumers ask
     // parser.ref_is_fn_value rather than matching a spelling.
+    // A single element with no top-level comma is a GROUPING, not a
+    // one-tuple: `(i32)` names i32 and `((A, B))` the tuple `(A, B)`, as
+    // native reads them. `()` is the unit type and stays.
+    if (!is_fn && !top_comma && tbuf.len() > 2) {
+        tbuf = slice_unchecked(tbuf, 1, tbuf.len() - 1) + "";
+    }
     return consume_array_suffix(p, tbuf);
 }
 
-function parse_type_punct_led(p: Par): (string, boolean, string, Par) {
+function parse_type_punct_led(p: Par, no_fn_arrow: boolean): (string, boolean, string, Par) {
     // Tuple type `(T1, T2, …)`. The self-host stores types
     // coarsely, so consume the balanced parens and return a
     // placeholder "tuple" rather than the precise shape. Without
     // this the leading `(` is left on the cursor and the decl
     // loop spins (OOM). std/string's split_at / split_once use
     // `(string, string)` and `Option[(string, string)]`.
-    if (p.peek_punct() == "(") { return parse_type_paren(p); }
+    if (p.peek_punct() == "(") { return parse_type_paren(p, no_fn_arrow); }
     // Prefix-bracket type `[T]` (e.g. `var ab: [u8] = ...`).
     // Without consuming it the surrounding decl loop spins on the
     // `[` (OOMs the compiler). Reduce to the canonical postfix
@@ -6662,11 +6680,13 @@ function parse_type_name(p: Par): (string, boolean, string, Par) {
 }
 
 function parse_type_name_nested(p: Par): (string, boolean, string, Par) {
+    var no_fn_arrow: boolean = p.no_fn_arrow;
+    p = p.with_no_fn_arrow(false);
     var base: string = p.peek_ident();
     if (base.len() == 0) { base = p.peek_keyword(); }
     if (base == "dyn") { return parse_type_dyn(p); }
     if (base == "own" || base == "borrow") { return parse_type_handle(p, base); }
-    if (base.len() == 0) { return parse_type_punct_led(p); }
+    if (base.len() == 0) { return parse_type_punct_led(p, no_fn_arrow); }
     return parse_type_ident_led(p, base);
 }
 
@@ -18658,7 +18678,7 @@ function record_field_lines(acc: FieldLines[], verbatim: boolean, name: string, 
 }
 
 function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, TraitDecl[], ImplDecl[], FieldLines[]) {
-    var p: Par = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1, structnames: scan_struct_names(toks), verbatim: verbatim , depth: 0 };
+    var p: Par = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1, structnames: scan_struct_names(toks), verbatim: verbatim, depth: 0, no_fn_arrow: false };
     var funcs: FuncDecl[] = [];
     var trait_defaults: TraitDefault[] = [];
     var trait_reqs: TraitReq[] = [];

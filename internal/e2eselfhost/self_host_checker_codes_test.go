@@ -1389,6 +1389,24 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"lambda-arg-mismatch", "function run(fn: () => i32): i32 { return fn(); }\nfunction main(): i32 { return run((): i32 => { return \"x\"; }); }\n", []string{"E002"}},
 		{"lambda-nested-lambda-mismatch", "function main(): i32 { var f = (): i32 => { var g = (): i32 => { return \"x\"; }; return g(); }; return f(); }\n", []string{"E002"}},
 		{"lambda-no-rettype-ok", "function main(): i32 { var f = () => { return; }; return 0; }\n", nil},
+		// A written TUPLE return type on an arrow lambda (#8706): in return
+		// position the top-level function-type arrow is off, so `(i32, i32)`
+		// there is the tuple and the `=>` after it the lambda's own. Before
+		// the rule the self-host coarsened the return to `fn` and drew E002
+		// against a body native could not even parse. A function-type return
+		// is written grouped, `((i32) => i32)`, and a nested `=>` inside the
+		// parens still spells a function type. The two mismatch rows keep the
+		// declared type real: a scalar body against a tuple return, and
+		// against a grouped function return, both draw E002 as natively.
+		{"arrow-tuple-return-braced-ok", "function main(): i32 { var id = (p: (i32, i32)): (i32, i32) => { return p; }; var t = id((3, 4)); return t.0 * 10 + t.1 - 34; }\n", nil},
+		{"arrow-tuple-return-expr-ok", "function main(): i32 { var id = (p: (i32, i32)): (i32, i32) => p; var t = id((3, 4)); return t.0 * 10 + t.1 - 34; }\n", nil},
+		{"arrow-tuple-return-string-ok", "function main(): i32 { var g = (): (string, i32) => (\"abcd\", 7); var t = g(); return t.0.len() + t.1 - 11; }\n", nil},
+		{"arrow-grouped-return-ok", "function main(): i32 { var g = (): (i32) => { return 7; }; return g() - 7; }\n", nil},
+		{"arrow-grouped-fn-return-expr-ok", "function main(): i32 { var mk = (p: i32): ((i32) => i32) => (q: i32) => p + q; var add1 = mk(1); return add1(2) - 3; }\n", nil},
+		{"arrow-grouped-fn-return-braced-ok", "function main(): i32 { var mk = (p: i32): ((i32) => i32) => { return (q: i32): i32 => { return p + q; }; }; var add1: (i32) => i32 = mk(1); return add1(2) - 3; }\n", nil},
+		{"arrow-tuple-return-fn-elem-ok", "function main(): i32 { var pair = (): ((i32) => i32, i32) => ((n: i32) => n + 1, 5); var pr = pair(); return pr.1 - 5; }\n", nil},
+		{"arrow-tuple-return-mismatch", "function main(): i32 { var bad = (p: (i32, i32)): (i32, i32) => { return 3; }; return 0; }\n", []string{"E002"}},
+		{"arrow-grouped-fn-return-mismatch", "function main(): i32 { var bad = (p: i32): ((i32) => i32) => { return p; }; return 0; }\n", []string{"E002"}},
 		{"rec-local-capture-ret-mismatch", "function main(): i32 { var base: string = \"x\"; function f(n: i32): i32 { if (n <= 0) { return base; } return f(n - 1); } return f(3); }\n", []string{"E002"}},
 		// A `match` / `if` used in value position is desugared by the parser
 		// into an IIFE — ((): RT => { … })() — whose RT is a coarse

@@ -42,6 +42,14 @@ func TestGrammarDerivesConstruct(t *testing.T) {
 		// so the differential could not have found it either.
 		{"arrow lambda with a return type", `function main(): i32 { var f = (x: i32): i32 => x + 1; return 0; }`},
 		{"nullary arrow lambda with a return type", `function main(): i32 { var f = (): i32 => 1; return 0; }`},
+		// In return position the top-level function-type arrow is off (#8706):
+		// `(i32, i32)` there is a tuple and `(i32)` a grouping, a function
+		// type is written grouped, and a nested `=>` still spells one.
+		{"arrow lambda with a tuple return type", `function main(): i32 { var id = (p: (i32, i32)): (i32, i32) => { return p; }; return 0; }`},
+		{"arrow lambda with a tuple return type, expression body", `function main(): i32 { var id = (p: (i32, i32)): (i32, i32) => p; return 0; }`},
+		{"arrow lambda with a grouped return type", `function main(): i32 { var g = (): (i32) => { return 7; }; return 0; }`},
+		{"arrow lambda with a grouped function return type", `function main(): i32 { var mk = (p: i32): ((i32) => i32) => (q: i32) => p + q; return 0; }`},
+		{"arrow lambda with a function-typed tuple element return", `function main(): i32 { var pair = (): ((i32) => i32, i32) => ((n: i32) => n + 1, 5); return 0; }`},
 		{"slice", `function main(): i32 { return xs[0:n]; }`},
 		{"explicit type args", `function main(): i32 { return pick[i32](xs, 0); }`},
 		{"type args, trailing comma", `function main(): i32 { return pick[i32,](xs, 0,); }`},
@@ -144,6 +152,9 @@ func TestGrammarRejects(t *testing.T) {
 		// structurally unable to notice.
 		{"arrow lambda, untyped param", `function main(): i32 { var f = (x) => x + 1; return 0; }`},
 		{"arrow lambda, untyped params", `function main(): i32 { var f = (x, y) => x; return 0; }`},
+		// The bare function-type return went with the rule: `(i32)` is the
+		// grouped return type and the body then starts at `i32` (#8706).
+		{"arrow lambda, bare function-type return", `function main(): i32 { var g = (): (i32) => i32 => { return (n: i32) => n; }; return 0; }`},
 	}
 
 	for _, tc := range cases {

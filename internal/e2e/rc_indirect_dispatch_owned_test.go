@@ -198,13 +198,14 @@ var rcIndirectDispatchDefaultCorpus = []struct {
 	src  string
 }{
 	{
-		// A lambda that returns its parameter. The caller's local and the
-		// result alias one tuple; the callee's exit dec freed it while both
-		// were still live, and the two later tuples reuse the block.
+		// A lambda that returns its parameter, with the tuple return type
+		// written (#8706). The caller's local and the result alias one
+		// tuple; the callee's exit dec freed it while both were still live,
+		// and the two later tuples reuse the block.
 		name: "identity_return_lambda",
 		src: `
 function main(): i32 {
-    var id = (p: (i32, i32)) => { return p; };
+    var id = (p: (i32, i32)): (i32, i32) => { return p; };
     var t = (3, 4);
     var u = id(t);
     var j1 = (91, 92);

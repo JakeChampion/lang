@@ -42,7 +42,7 @@ var closureEscapeCases = []struct {
 	{"transitive-factory", "function makeAdder(): (i32) => i32 { var g = (x: i32): i32 => { return x + 1; }; return g; } function outer(): (i32) => i32 { return makeAdder(); } function main(): i32 { var f = outer(); return f(41); }", 42},
 	// Nested: a factory whose body defines and calls a LOCAL closure that
 	// itself returns a closure, then forwards the result (`return inner();`).
-	{"nested-factory", "function outer(): (i32) => i32 { var inner = (): (i32) => i32 => { var g = (x: i32): i32 => { return x + 1; }; return g; }; return inner(); } function main(): i32 { var f = outer(); return f(41); }", 42},
+	{"nested-factory", "function outer(): (i32) => i32 { var inner = (): ((i32) => i32) => { var g = (x: i32): i32 => { return x + 1; }; return g; }; return inner(); } function main(): i32 { var f = outer(); return f(41); }", 42},
 	// Captured-fn-value escape: a closure that CAPTURES a fn-value and
 	// ESCAPES must dispatch the captured closure env-first when it calls it
 	// inside its body (the synthesized `var base: fn = __env[i]` capture read

@@ -1980,7 +1980,7 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 		f.b.WriteByte(')')
 		if !x.ReturnUnannotated && x.ReturnType != nil {
 			f.b.WriteString(": ")
-			f.b.WriteString(formatType(x.ReturnType))
+			f.b.WriteString(arrowReturnType(x.ReturnType))
 		}
 		f.b.WriteString(" => ")
 		if ret, _, ok := arrowReturn(x); ok {
@@ -2060,6 +2060,16 @@ func desugarPreludeLen(params []ast.Param, body *ast.Block) (n int, ok bool) {
 		n++
 	}
 	return n, len(holders) == 0
+}
+
+// arrowReturnType spells an arrow lambda's written return type. A function
+// type there keeps its grouping parens: printed bare, its `=>` would be read
+// as the lambda's own arrow (#8706).
+func arrowReturnType(t ast.Type) string {
+	if _, isFn := t.(*ast.FuncType); isFn {
+		return "(" + formatType(t) + ")"
+	}
+	return formatType(t)
 }
 
 // arrowReturn reports whether x has an EXPRESSION body, and if so yields the

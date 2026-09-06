@@ -1389,6 +1389,28 @@ return 0;
 }
 function main(): i32 { return chain(1); }
 `},
+	// An arrow lambda's written return type (#8706): a tuple, a grouping (which
+	// both printers unwrap to the inner type), a function type (which keeps its
+	// grouping parens — printed bare, its `=>` would be read as the lambda's
+	// own), and a tuple with a function-typed element.
+	{"lambda-return-type-shapes", `function main(): i32 {
+var id = (p: (i32, i32)): (i32, i32) => { return p; };
+var id2 = (p: (i32, i32)): (i32, i32) => p;
+var one = (): (i32) => { return 7; };
+var mk = (p: i32): ((i32) => i32) => (q: i32) => p + q;
+var mk2 = (p: i32): ((i32) => i32) => {
+var q = (r: i32): i32 => p + r;
+return q;
+};
+var pair = (): ((i32) => i32, i32) => ((n: i32) => n + 1, 5);
+var t = id((3, 4));
+var u = id2(t);
+var add1: (i32) => i32 = mk(1);
+var add2: (i32) => i32 = mk2(2);
+var pr = pair();
+return u.0 * 10 + u.1 + one() + add1(2) + add2(3) + pr.1;
+}
+`},
 }
 
 // typeChecks reports whether src is a program the checker accepts, running the

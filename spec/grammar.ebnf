@@ -114,9 +114,10 @@ DynType     = 'dyn' Bound { '+' Bound }
 
 # `(A, B) => C` is a function type; `(A, B)` a tuple; `(A)` a grouping.
 FnOrTupleType
-            = '(' [ Type { ',' Type } [ ',' ] ] ')' ( '=>' Type | { TypeSuffix } )
+            = ParenType ( '=>' Type | { TypeSuffix } )
             | SliceType
             ;
+ParenType   = '(' [ Type { ',' Type } [ ',' ] ] ')' ;
 SliceType   = '[' Type ']' { TypeSuffix }
             | PrimaryType { TypeSuffix }
             ;
@@ -343,7 +344,18 @@ MatchExprArm
 # Fern (the parser reports P001), and admitting it here would swallow
 # the `=>` of a match arm: `when x == y => x + y` would read `y => x + y`
 # as a lambda and leave the arm with no arrow.
-ArrowLambda = '(' [ LambdaParams ] ')' [ ':' Type ] '=>' Expr ;
+ArrowLambda = '(' [ LambdaParams ] ')' [ ':' LambdaReturnType ] '=>' Expr ;
+# In the return position the top-level function-type arrow is off — the
+# `=>` after a parenthesised type is the lambda's own — so `(A, B)` there is
+# a tuple and `(A)` a grouping. A function-type return is written grouped,
+# `((A) => B)`, its arrow consumed inside the parens; nested positions take
+# the full Type.
+LambdaReturnType
+            = ( 'own' | 'borrow' ) Type
+            | 'dyn' Bound { '+' Bound }
+            | ParenType { TypeSuffix }
+            | SliceType
+            ;
 LambdaParams
             = LambdaParam { ',' LambdaParam } [ ',' ] ;
 # The type annotation is REQUIRED, not optional. It is what tells the

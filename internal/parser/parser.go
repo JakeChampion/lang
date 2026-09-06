@@ -178,6 +178,12 @@ type parser struct {
 	// where `obj` is a method call returning a Foo, NOT a
 	// struct literal) still work correctly.
 	noStructLit bool
+	// noFnArrow disables the top-level function-type arrow for the ONE
+	// type parseType reads next: in an arrow lambda's return-type position
+	// the `=>` after a parenthesised type is the lambda's own, so `(A, B)`
+	// there is a tuple and `(A)` a grouping. parseType clears it on entry,
+	// so a nested `=>` still spells a function type (#8706).
+	noFnArrow bool
 	// returnTypeStack tracks the return type of the function
 	// currently being parsed. Pushed by parseFunction on entry,
 	// popped on exit. The `use` desugar uses the top of stack
@@ -2118,6 +2124,8 @@ func (p *parser) parseType() (ast.Type, error) {
 		return nil, err
 	}
 	defer p.leave()
+	noFnArrow := p.noFnArrow
+	p.noFnArrow = false
 	t := p.peek()
 	var base ast.Type
 	switch {
@@ -2184,7 +2192,10 @@ func (p *parser) parseType() (ast.Type, error) {
 		// "tuples" don't exist; empty parens are still reserved
 		// for the function-type-of-no-args case). This shape lets
 		// `function f(): (i32, string)` parse as a multi-return
-		// tuple without a trailing-comma rule.
+		// tuple without a trailing-comma rule. Under noFnArrow the
+		// `=>` is not looked for: it belongs to the enclosing arrow
+		// lambda, and a function type there is written grouped,
+		// `((A) => B)`.
 		p.advance()
 		var elems []ast.Type
 		if !p.match(lexer.Punct, ")") {
@@ -2202,7 +2213,8 @@ func (p *parser) parseType() (ast.Type, error) {
 		if _, err := p.expect(lexer.Punct, ")"); err != nil {
 			return nil, err
 		}
-		if _, isArrow := p.accept(lexer.Punct, "=>"); isArrow {
+		if !noFnArrow && p.match(lexer.Punct, "=>") {
+			p.advance()
 			ret, err := p.parseType()
 			if err != nil {
 				return nil, err
@@ -2880,6 +2892,8 @@ func (p *parser) parseArrowLambda() (ast.Expr, error) {
 	var ret ast.Type = ast.VoidType{}
 	unannotated := true
 	if _, ok := p.accept(lexer.Punct, ":"); ok {
+		// The `=>` after the return type is the lambda's own.
+		p.noFnArrow = true
 		t, err := p.parseType()
 		if err != nil {
 			return nil, err

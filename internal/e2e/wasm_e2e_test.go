@@ -17805,7 +17805,7 @@ function main(): i32 {
 		{"higher-order-result", `
 function main(): i32 {
     var seen: i32 = 0;
-    var pick: () => (i32) => void = (): (i32) => void => {
+    var pick: () => (i32) => void = (): ((i32) => void) => {
         return (n: i32): void => { seen = n; };
     };
     pick()(7);

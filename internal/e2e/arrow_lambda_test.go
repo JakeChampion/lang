@@ -58,3 +58,41 @@ func TestWASMArrowLambda(t *testing.T) {
 		t.Errorf("wasm exit = %d, want 27", code)
 	}
 }
+
+// An arrow lambda annotating a TUPLE return type (#8706): `(i32, i32) =>` in
+// return position is the tuple followed by the lambda's own arrow, not a
+// function type. The identity shape returns its `(3, 4)` argument, so the
+// caller's local and the result alias one tuple; exit 34 says both reads
+// saw it intact.
+const arrowLambdaTupleReturnSrc = `function main(): i32 {
+    var id = (p: (i32, i32)): (i32, i32) => { return p; };
+    var t = id((3, 4));
+    return t.0 * 10 + t.1;
+}
+`
+
+func TestInterpArrowLambdaTupleReturn(t *testing.T) {
+	if code := runInterpByte(t, arrowLambdaTupleReturnSrc); code != 34 {
+		t.Errorf("exit = %d, want 34", code)
+	}
+}
+
+func TestX86_64ArrowLambdaTupleReturn(t *testing.T) {
+	out, code := compileAndRunX86_64(t, arrowLambdaTupleReturnSrc)
+	if code != 34 {
+		t.Errorf("exit = %d, want 34\n%s", code, out)
+	}
+}
+
+func TestArm64ArrowLambdaTupleReturn(t *testing.T) {
+	out, code := compileAndRunArm64(t, arrowLambdaTupleReturnSrc)
+	if code != 34 {
+		t.Errorf("exit = %d, want 34\n%s", code, out)
+	}
+}
+
+func TestWASMArrowLambdaTupleReturn(t *testing.T) {
+	if code := runWasm(t, arrowLambdaTupleReturnSrc); code != 34 {
+		t.Errorf("wasm exit = %d, want 34", code)
+	}
+}
