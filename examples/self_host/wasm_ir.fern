@@ -3880,6 +3880,8 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
         parts = parts.append("    call $__fern_sleep_ms\n");
     } else if (o.kind_tag == 232) {  // isatty
         parts = emit_wasm_isatty(parts);
+    } else if (o.kind_tag == 240) {  // hostname
+        parts = emit_wasm_hostname(bctmp, parts);
     } else if (o.kind_tag == 189) {  // wasm_timer_pollable
         parts = emit_wasm_wasm_timer_pollable(parts);
     } else if (o.kind_tag == 190) {  // wasm_pollable_drop
@@ -11874,6 +11876,16 @@ function emit_wasm_isatty(parts: string[]): string[] {
     // on the stack and unused.
     parts = parts.append("    drop\n    i32.const 0\n");
 
+    return parts;
+}
+
+function emit_wasm_hostname(bctmp: i32, parts: string[]): string[] {
+    // hostname() -> "". A component has no node name, so the empty string
+    // is the answer rather than a stand-in — the same shape as native's
+    // wasm helper. A fresh zero-length block ([len@0] = 0) from the heap
+    // runtime, since every string consumer expects a block pointer; the
+    // scratch local parks it across the length store.
+    parts = parts.append("    i32.const 4\n    call $__fern_str_box\n    local.tee " + util.i32_to_string(bctmp) + "\n    i32.const 0\n    i32.store\n    local.get " + util.i32_to_string(bctmp) + "\n");
     return parts;
 }
 

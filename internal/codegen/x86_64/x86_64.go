@@ -245,6 +245,9 @@ const (
 	// geteuid(2) / getegid(2): x86-64 syscalls 107 / 108.
 	sysGeteuid = 107
 	sysGetegid = 108
+	// uname(2): x86-64 syscall 63. Backs `__fern_hostname`, which reads
+	// the nodename field out of the 390-byte struct utsname.
+	sysUname = 63
 	// prctl(2) / seccomp(2): x86-64 syscalls 157 / 317. Used only by
 	// __fern_seccomp_install under ast.SandboxEnabled (#6071).
 	sysPrctl   = 157
@@ -839,6 +842,9 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	if g.usesEgid {
 		g.emitIdRuntime("__fern_getegid", sysGetegid)
 	}
+	if g.usesHostname {
+		g.emitHostnameRuntime()
+	}
 	if g.usesReaderWriter {
 		// Bundle: open_reader/writer/appender + stdin/stdout/
 		// stderr handle constructors + Reader.read_line /
@@ -1258,6 +1264,7 @@ type generator struct {
 	usesAccess     bool
 	usesEuid       bool
 	usesEgid       bool
+	usesHostname   bool
 	usesIoError    bool
 	// usesCreateDirAll pulls in the `mkdir -p` runtime
 	// (`__fern_create_dir_all(path) → Result[void, IoError]`), the
@@ -1678,6 +1685,10 @@ func (g *generator) recordUse(target string) {
 		g.usesEuid = true
 	case "getegid":
 		g.usesEgid = true
+	case "hostname":
+		g.usesHostname = true
+		g.usesAlloc = true
+		g.usesMemcpy = true
 	}
 }
 
@@ -3184,6 +3195,8 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_geteuid"
 		case "getegid":
 			target = "__fern_getegid"
+		case "hostname":
+			target = "__fern_hostname"
 		case "random_bytes":
 			target = "__fern_random_bytes"
 		case "random_i32":
@@ -5720,7 +5733,7 @@ func (g *generator) emitDataSections() {
 			g.line("\t.quad 0")
 		}
 	}
-	needsEmpty := g.usesStrcat || g.usesStrSlice || g.usesStringFromBytes || g.usesRemoveDirAll
+	needsEmpty := g.usesStrcat || g.usesStrSlice || g.usesStringFromBytes || g.usesRemoveDirAll || g.usesHostname
 	needsEnumSentinels := len(g.enumSentinelTags) > 0
 	if len(g.stringOrder) > 0 || g.usesPuts || g.usesEprint || needsEmpty || needsEnumSentinels || g.usesArrEmpty || ast.LeakCheckEnabled || ast.RcTrace || len(g.coverSites) > 0 {
 		g.line("")
@@ -13290,6 +13303,58 @@ func (g *generator) emitIdRuntime(sym string, sysno int) {
 	g.emitSyscall(sysno)
 	g.emit("ret")
 	g.line(".size " + sym + ", .-" + sym)
+}
+
+// emitHostnameRuntime emits `__fern_hostname()` → a fresh rc string
+// holding the kernel's node name. uname(2) fills a 390-byte struct
+// utsname of six 65-byte fields; nodename is the second, NUL-terminated
+// within its field. A refused uname or an empty name answers the shared
+// empty-string sentinel.
+func (g *generator) emitHostnameRuntime() {
+	g.line("")
+	g.line(".globl __fern_hostname")
+	g.line(".type __fern_hostname, @function")
+	g.label("__fern_hostname")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx")     // nodename byte ptr
+	g.emit("push r12")     // its length
+	g.emit("sub rsp, 400") // struct utsname (390), rounded to keep rsp 16-aligned
+	g.emit("mov rdi, rsp")
+	g.emitSyscall(sysUname)
+	g.emit("test rax, rax")
+	g.emit("jnz .Lhn_empty")
+	g.emit("lea rbx, [rsp + 65]")
+	g.emit("xor r12d, r12d")
+	g.label(".Lhn_strlen")
+	g.emit("cmp r12d, 65")
+	g.emit("jae .Lhn_len")
+	g.emit("cmp byte ptr [rbx + r12], 0")
+	g.emit("je .Lhn_len")
+	g.emit("inc r12d")
+	g.emit("jmp .Lhn_strlen")
+	g.label(".Lhn_len")
+	g.emit("test r12d, r12d")
+	g.emit("jz .Lhn_empty")
+	// L2 rc-header layout (see __fern_strcat): payload = N data + 1 NUL.
+	g.emit("lea edi, [r12 + 1]")
+	g.emit("call __fern_alloc_rc1")
+	g.emit("mov rdi, rax")
+	g.emitStrLenStore("r12d", "rdi")
+	g.emit("mov byte ptr [rdi + r12], 0")
+	g.emit("mov rsi, rbx")
+	g.emit("mov rdx, r12")
+	g.emit("call __fern_memcpy") // rax = dst
+	g.emit("jmp .Lhn_done")
+	g.label(".Lhn_empty")
+	g.emitStrEmpty("rax")
+	g.label(".Lhn_done")
+	g.emit("add rsp, 400")
+	g.emit("pop r12")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_hostname, .-__fern_hostname")
 }
 
 // emitReaderWriterRuntime emits the full Reader / Writer

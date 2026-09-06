@@ -53,6 +53,7 @@ costs a silent failure on the first target that lacks it.
 | `fs` | `read_file`, `write_file`, `open_reader`, … | a filesystem |
 | `fsmode` | `write_file_exec`, `access` | permission bits on a filesystem entry |
 | `userid` | `geteuid`, `getegid` | a user the process can be |
+| `host` | `hostname` | a node name: uname(2) on Linux, kern.hostname on Darwin; `""` on WASI, which has none |
 | `cabi` | `__c_call0..4` (+ `_f32` / `_f64`) | a C calling convention to call a function pointer through |
 | `tcp` | `tcp_*`, `udp_send` | a network stack |
 | `proc` | `proc_fork`, `proc_exec`, `proc_waitpid` | processes |
@@ -129,6 +130,20 @@ Note the second capability system disagrees, and correctly: `internal/caps`
 leaves `geteuid` / `getegid` UNGATED, because the question it asks is different
 — not "can this target answer" but "should a dependency be allowed to ask", and
 reading the identity the invoker already chose grants no reach.
+
+**`host` sits between the two.** `hostname` is gethostname(2): the kernel's
+node name, which only a kernel can supply — so it is gated, not core, and a
+freestanding artifact has nothing to ask. But unlike `userid` it HAS an honest
+constant where there is no kernel to ask: a WASI component has no node name,
+and `""` says exactly that, the way `isatty`'s "no" does. So `wasi-cli` grants
+`host` and answers the empty string on both previews, where it refuses
+`userid`. `wasi-http` grants neither, for the same reason it grants neither
+`args` nor `env`: a proxy component has no process identity at all. It is not
+`env`, either — envp is handed to the process by whoever exec'd it, while the
+node name is a property of the machine, and the two part company on exactly
+the proxy world. `internal/caps` files it under `env` all the same, since for a
+dependency grant the question is only whether reading ambient facts about the
+host should be visible, and it should.
 
 **`pollfd`, `fsmode` and `cabi` split three builtins off the capability that
 otherwise carried them** (#7947). Each is a property of the target, not a gap in a

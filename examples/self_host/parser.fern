@@ -7980,8 +7980,8 @@ pub function builtin_function_names(): string[] {
         "read_file", "read_file_bytes", "write_file", "write_file_exec", "read_dir", "remove_dir_all", "remove_file",
         "create_dir_all", "stat", "lstat", "access", "temp_dir",
         // the process's own effective ids, which `test -O` / `-G` compare a
-        // file's owner against
-        "geteuid", "getegid",
+        // file's owner against, and the machine's node name
+        "geteuid", "getegid", "hostname",
         // clocks + randomness + sleep + reactor readiness
         "now_unix_ms", "now_ns", "monotonic_ns", "sleep_ms", "random_bytes",
         "random_i32", "poll", "timer_fd", "wasm_timer_pollable",

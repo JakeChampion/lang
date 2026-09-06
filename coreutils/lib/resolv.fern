@@ -1,0 +1,642 @@
+// coreutils/lib/resolv.fern — the IPv4 name lookup glibc's gethostid makes.
+//
+// gethostid resolves the machine's own hostname through NSS: the `hosts:`
+// line of /etc/nsswitch.conf names the sources in order — `files`
+// (/etc/hosts) and `dns` (the nameservers of /etc/resolv.conf, walked
+// with its search list) — and the first AF_INET answer wins. This module
+// is that lookup, written on the runtime that exists: `read_file` for the
+// three files and the tcp builtins for the DNS leg. hostid(1) is the
+// consumer today; `hostname`, `uname` and `who` reach for the same pieces.
+//
+// An address is carried as the in_addr WORD: the four octets in memory
+// order read as a little-endian integer, `a | b<<8 | c<<16 | d<<24`. That
+// is the form `tcp_connect` takes and the one gethostid shifts.
+//
+// Where this differs from glibc, and why (docs/COREUTILS.md):
+//   - DNS goes over TCP. glibc asks over UDP first and retries over TCP
+//     only on a truncated reply; Fern has no UDP receive, and RFC 1035
+//     obliges every nameserver to answer the same query over TCP, so the
+//     A records are the same. A resolver that refuses TCP altogether is
+//     the one host this diverges on.
+//   - Only `files` and `dns` are implemented. Any other source on the
+//     hosts line (mdns4_minimal, myhostname, resolve, …) reports UNAVAIL,
+//     as glibc does for a source with no module installed.
+//   - RES_OPTIONS, LOCALDOMAIN and HOSTALIASES are not read, and a
+//     nameserver given as an IPv6 address is skipped.
+import "std/string";
+import "std/array";
+
+// ---- statuses ---------------------------------------------------------------
+//
+// What a source says about a name, in glibc's vocabulary. Every lookup
+// below returns one of these beside its address.
+pub function success(): i32 {
+  return 0;
+}
+
+pub function notfound(): i32 {
+  return 1;
+}
+
+pub function unavail(): i32 {
+  return 2;
+}
+
+// ---- addresses --------------------------------------------------------------
+// `ipv4_word(a, b, c, d)` — the in_addr word of `a.b.c.d`.
+pub function ipv4_word(a: i32, b: i32, c: i32, d: i32): i32 {
+  return a & 255 | (b & 255) << 8 | (c & 255) << 16 | (d & 255) << 24;
+}
+
+// `parse_ipv4(s)` — the in_addr word of a dotted quad, or None for
+// anything else, an IPv6 address included.
+pub function parse_ipv4(s: string): Option[i32] {
+  var octets: i32[] = [];
+  var cur: i32 = 0;
+  var digits: i32 = 0;
+  var i: i32 = 0;
+  while (i < s.len()) {
+    var ch: i32 = s[i] as i32;
+    if (ch == 46) {
+      if (digits == 0) {
+        return None;
+      }
+      octets = octets.append(cur);
+      cur = 0;
+      digits = 0;
+    } else if (ch >= 48 && ch <= 57) {
+      cur = cur * 10 + (ch - 48);
+      digits = digits + 1;
+      if (cur > 255 || digits > 3) {
+        return None;
+      }
+    } else {
+      return None;
+    }
+    i = i + 1;
+  }
+  if (digits == 0) {
+    return None;
+  }
+  octets = octets.append(cur);
+  if (octets.len() != 4) {
+    return None;
+  }
+  return Some(ipv4_word(octets[0], octets[1], octets[2], octets[3]));
+}
+
+// ---- /etc/hosts -------------------------------------------------------------
+// `hosts_lookup(contents, name)` — the first line of an /etc/hosts file
+// whose address is IPv4 and whose canonical name or any alias is `name`,
+// compared without regard to ASCII case, as glibc's files backend does.
+// `#` starts a comment; a line that is not an address followed by names
+// is skipped, which is what happens to the IPv6 lines.
+pub function hosts_lookup(contents: string, name: string): Option[i32] {
+  var lines: string[] = contents.lines();
+  var i: i32 = 0;
+  while (i < lines.len()) {
+    var f: string[] = strip_comment(lines[i]).fields();
+    i = i + 1;
+    if (f.len() < 2) {
+      continue;
+    }
+    match (parse_ipv4(f[0])) {
+      Some(addr) => {
+        var j: i32 = 1;
+        while (j < f.len()) {
+          if (f[j].eq_ignore_ascii_case(name)) {
+            return Some(addr);
+          }
+          j = j + 1;
+        }
+      },
+      None => {}
+    }
+  }
+  return None;
+}
+
+// The line up to its `#`, if any.
+function strip_comment(line: string): string {
+  var h: i32 = line.index_of("#");
+  if (h < 0) {
+    return line;
+  }
+  return slice_unchecked(line, 0, h) + "";
+}
+
+// ---- /etc/nsswitch.conf -----------------------------------------------------
+// `Source` — one entry of the `hosts:` line: its name and, for each
+// status it can report, whether that status ENDS the lookup. glibc's
+// defaults are success=return and everything else continue; a bracketed
+// action after the source (`[NOTFOUND=return]`, `[!UNAVAIL=return]`)
+// overrides them.
+pub struct Source { name: string, success_return: boolean, notfound_return: boolean, unavail_return: boolean }
+
+pub function source(name: string): Source {
+  return Source { name: name, success_return: true, notfound_return: false, unavail_return: false };
+}
+
+// `default_sources()` — glibc's compiled-in `hosts:` line, used when
+// /etc/nsswitch.conf is missing: `files dns`.
+pub function default_sources(): Source[] {
+  return [source("files"), source("dns")];
+}
+
+// `nsswitch_hosts(contents)` — the sources of the `hosts:` line, in order,
+// with their actions. No `hosts:` line means the compiled-in default; a
+// present but empty one means no sources at all.
+pub function nsswitch_hosts(contents: string): Source[] {
+  var lines: string[] = contents.lines();
+  var i: i32 = 0;
+  while (i < lines.len()) {
+    var line: string = strip_comment(lines[i]).trim() + "";
+    i = i + 1;
+    if (!line.starts_with("hosts:")) {
+      continue;
+    }
+    return parse_sources(slice_unchecked(line, 6, line.len()) + "");
+  }
+  return default_sources();
+}
+
+// The tokens after `hosts:`: a bare word is a source, and a bracketed
+// group applies its `STATUS=action` pairs to the source before it.
+function parse_sources(rest: string): Source[] {
+  var out: Source[] = [];
+  var toks: string[] = rest.fields();
+  var in_bracket: boolean = false;
+  var i: i32 = 0;
+  while (i < toks.len()) {
+    var t: string = toks[i];
+    i = i + 1;
+    if (t.starts_with("[")) {
+      in_bracket = true;
+      t = slice_unchecked(t, 1, t.len()) + "";
+    }
+    var closes: boolean = t.ends_with("]");
+    if (closes) {
+      t = slice_unchecked(t, 0, t.len() - 1) + "";
+    }
+    if (in_bracket) {
+      if (t.len() > 0 && out.len() > 0) {
+        out = out.with(out.len() - 1, apply_action(out[out.len() - 1], t));
+      }
+    } else if (t.len() > 0) {
+      out = out.append(source(t));
+    }
+    if (closes) {
+      in_bracket = false;
+    }
+  }
+  return out;
+}
+
+// One `[!]STATUS=action` pair applied to `s`. Case-insensitive; `!`
+// negates the status, so the action lands on every OTHER status. An
+// action other than `return` is `continue` (`merge` continues too).
+function apply_action(s: Source, pair: string): Source {
+  var eq: i32 = pair.index_of("=");
+  if (eq < 0) {
+    return s;
+  }
+  var status: string = (slice_unchecked(pair, 0, eq) + "").to_ascii_lower();
+  var ret: boolean = (slice_unchecked(pair, eq + 1, pair.len()) + "").eq_ignore_ascii_case("return");
+  var negate: boolean = status.starts_with("!");
+  if (negate) {
+    status = slice_unchecked(status, 1, status.len()) + "";
+  }
+  var on_success: boolean = status == "success";
+  var on_notfound: boolean = status == "notfound";
+  var on_unavail: boolean = status == "unavail" || status == "tryagain";
+  if (!on_success && !on_notfound && !on_unavail) {
+    return s;
+  }
+  var r: Source = s;
+  if (on_success != negate) {
+    r = Source { ...r, success_return: ret };
+  }
+  if (on_notfound != negate) {
+    r = Source { ...r, notfound_return: ret };
+  }
+  if (on_unavail != negate) {
+    r = Source { ...r, unavail_return: ret };
+  }
+  return r;
+}
+
+// `(s).stops(status)` — whether a source reporting `status` ends the
+// lookup, per its actions.
+pub function (s: Source) stops(status: i32): boolean {
+  if (status == success()) {
+    return s.success_return;
+  }
+  if (status == notfound()) {
+    return s.notfound_return;
+  }
+  return s.unavail_return;
+}
+
+// ---- /etc/resolv.conf -------------------------------------------------------
+// `ResolvConf` — what the DNS leg reads off resolv.conf: the nameservers
+// (in_addr words, at most three as glibc keeps), the search list, and
+// `ndots`.
+pub struct ResolvConf { nameservers: i32[], search: string[], ndots: i32 }
+
+// `parse_resolv_conf(contents, host)` — glibc's res_init over the file.
+// `host` is the machine's own name, whose domain part is the search list
+// when the file names none; no `nameserver` means 127.0.0.1. `#` and `;`
+// start comments. `domain` and `search` each replace the list, so the
+// last one wins.
+pub function parse_resolv_conf(contents: string, host: string): ResolvConf {
+  var ns: i32[] = [];
+  var search: string[] = [];
+  var have_search: boolean = false;
+  var ndots: i32 = 1;
+  var lines: string[] = contents.lines();
+  var i: i32 = 0;
+  while (i < lines.len()) {
+    var f: string[] = strip_resolv_comment(lines[i]).fields();
+    i = i + 1;
+    if (f.len() < 2) {
+      continue;
+    }
+    if (f[0] == "nameserver") {
+      match (parse_ipv4(f[1])) {
+        Some(a) => {
+          if (ns.len() < 3) {
+            ns = ns.append(a);
+          }
+        },
+        None => {}
+      }
+    } else if (f[0] == "domain" || f[0] == "search") {
+      have_search = true;
+      search = search_domains(f);
+    } else if (f[0] == "options") {
+      ndots = options_ndots(f, ndots);
+    }
+  }
+  if (!have_search) {
+    search = host_domain(host);
+  }
+  if (ns.len() == 0) {
+    ns = ns.append(ipv4_word(127, 0, 0, 1));
+  }
+  return ResolvConf { nameservers: ns, search: search, ndots: ndots };
+}
+
+function strip_resolv_comment(line: string): string {
+  var s: string = strip_comment(line);
+  var h: i32 = s.index_of(";");
+  if (h < 0) {
+    return s;
+  }
+  return slice_unchecked(s, 0, h) + "";
+}
+
+// The domains of a `search` or `domain` line: `domain` takes one, `search`
+// takes all; a trailing dot is dropped and an entry that is only a dot is
+// the root and contributes nothing.
+function search_domains(f: string[]): string[] {
+  var out: string[] = [];
+  var n: i32 = f.len();
+  if (f[0] == "domain") {
+    n = 2;
+  }
+  var i: i32 = 1;
+  while (i < n) {
+    var d: string = f[i];
+    if (d.ends_with(".")) {
+      d = slice_unchecked(d, 0, d.len() - 1) + "";
+    }
+    if (d.len() > 0) {
+      out = out.append(d);
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+// `ndots:N` on an `options` line, capped at 15 as glibc caps it.
+function options_ndots(f: string[], current: i32): i32 {
+  var v: i32 = current;
+  var i: i32 = 1;
+  while (i < f.len()) {
+    if (f[i].starts_with("ndots:")) {
+      match ((slice_unchecked(f[i], 6, f[i].len()) + "").parse_int()) {
+        Some(n) => {
+          v = n;
+          if (v > 15) {
+            v = 15;
+          }
+          if (v < 0) {
+            v = 0;
+          }
+        },
+        None => {}
+      }
+    }
+    i = i + 1;
+  }
+  return v;
+}
+
+// The search list glibc derives from the local hostname: everything after
+// its first dot, or nothing.
+function host_domain(host: string): string[] {
+  var out: string[] = [];
+  var dot: i32 = host.index_of(".");
+  if (dot < 0 || dot + 1 >= host.len()) {
+    return out;
+  }
+  return out.append(slice_unchecked(host, dot + 1, host.len()) + "");
+}
+
+// `search_candidates(name, rc)` — the names glibc's res_search asks for,
+// in order. A name ending in a dot is asked for as it is and nothing
+// else. Otherwise a name with at least `ndots` dots is tried as it is
+// first and then under each search domain; one with fewer goes through
+// the search domains first and is tried as it is last.
+pub function search_candidates(name: string, rc: ResolvConf): string[] {
+  var out: string[] = [];
+  if (name.ends_with(".")) {
+    return out.append(slice_unchecked(name, 0, name.len() - 1) + "");
+  }
+  var dots: i32 = 0;
+  var i: i32 = 0;
+  while (i < name.len()) {
+    if (name[i] == 46) {
+      dots = dots + 1;
+    }
+    i = i + 1;
+  }
+  if (dots >= rc.ndots) {
+    out = out.append(name);
+  }
+  var j: i32 = 0;
+  while (j < rc.search.len()) {
+    out = out.append(name + "." + rc.search[j]);
+    j = j + 1;
+  }
+  if (dots < rc.ndots) {
+    out = out.append(name);
+  }
+  return out;
+}
+
+// ---- DNS, RFC 1035 ----------------------------------------------------------
+// `dns_query_a(id, name)` — a recursion-desired query for the A records of
+// `name`, without the two-byte length TCP prefixes. A label that is empty
+// or longer than 63 bytes cannot be encoded, so the query is empty.
+pub function dns_query_a(id: i32, name: string): u8[] {
+  var q: u8[] = [];
+  q = put16(q, id);
+  q = put16(q, 256);  // RD
+  q = put16(q, 1);  // QDCOUNT
+  q = put16(q, 0);
+  q = put16(q, 0);
+  q = put16(q, 0);
+  var labels: string[] = name.split(".");
+  var i: i32 = 0;
+  while (i < labels.len()) {
+    var l: string = labels[i];
+    if (l.len() == 0 || l.len() > 63) {
+      var none: u8[] = [];
+      return none;
+    }
+    q = q.append(l.len() as u8);
+    var j: i32 = 0;
+    while (j < l.len()) {
+      q = q.append(l[j]);
+      j = j + 1;
+    }
+    i = i + 1;
+  }
+  q = q.append(0 as u8);
+  q = put16(q, 1);  // QTYPE A
+  q = put16(q, 1);  // QCLASS IN
+  return q;
+}
+
+function put16(b: u8[], v: i32): u8[] {
+  var out: u8[] = b.append((v >> 8 & 255) as u8);
+  return out.append((v & 255) as u8);
+}
+
+function be16(m: u8[], i: i32): i32 {
+  return m[i] as i32 << 8 | m[i + 1] as i32;
+}
+
+// The offset past the name at `pos`: labels up to a zero, or a
+// compression pointer, which is two bytes wherever it points. Past the end
+// of the message the answer is the message length, which every caller
+// then finds too short.
+function skip_name(m: u8[], pos: i32): i32 {
+  var p: i32 = pos;
+  while (p < m.len()) {
+    var l: i32 = m[p] as i32;
+    if (l == 0) {
+      return p + 1;
+    }
+    if ((l & 192) == 192) {
+      return p + 2;
+    }
+    p = p + 1 + l;
+  }
+  return m.len();
+}
+
+// `dns_answer_a(msg, id)` — the first A record in a response, as
+// (status, word). A response that is not a reply to `id`, is malformed,
+// or carries an error other than NXDOMAIN is UNAVAIL — the server is
+// tried no further, the next one is; NXDOMAIN and a clean answer with no
+// A record are both NOTFOUND, which lets the search list go on.
+pub function dns_answer_a(msg: u8[], id: i32): (i32, i32) {
+  if (msg.len() < 12 || be16(msg, 0) != id) {
+    return (unavail(), 0);
+  }
+  var flags: i32 = be16(msg, 2);
+  if ((flags & 32768) == 0) {
+    return (unavail(), 0);
+  }
+  var rcode: i32 = flags & 15;
+  if (rcode == 3) {
+    return (notfound(), 0);
+  }
+  if (rcode != 0) {
+    return (unavail(), 0);
+  }
+  var pos: i32 = 12;
+  var qd: i32 = be16(msg, 4);
+  while (qd > 0) {
+    pos = skip_name(msg, pos) + 4;
+    qd = qd - 1;
+  }
+  var an: i32 = be16(msg, 6);
+  while (an > 0) {
+    pos = skip_name(msg, pos);
+    if (pos + 10 > msg.len()) {
+      return (unavail(), 0);
+    }
+    var ty: i32 = be16(msg, pos);
+    var cls: i32 = be16(msg, pos + 2);
+    var rdlen: i32 = be16(msg, pos + 8);
+    pos = pos + 10;
+    if (pos + rdlen > msg.len()) {
+      return (unavail(), 0);
+    }
+    if (ty == 1 && cls == 1 && rdlen == 4) {
+      return (success(), ipv4_word(msg[pos] as i32, msg[pos + 1] as i32, msg[pos + 2] as i32, msg[pos + 3] as i32));
+    }
+    pos = pos + rdlen;
+    an = an - 1;
+  }
+  return (notfound(), 0);
+}
+
+// One query to one nameserver over TCP: the message behind a two-byte
+// big-endian length, the reply read until its own length prefix is
+// satisfied. Anything short of a whole reply is UNAVAIL.
+function dns_exchange(ns: i32, qname: string): (i32, i32) {
+  var id: i32 = random_i32() & 65535;
+  var q: u8[] = dns_query_a(id, qname);
+  if (q.len() == 0) {
+    return (notfound(), 0);
+  }
+  var framed: u8[] = [];
+  framed = put16(framed, q.len());
+  framed = framed.concat(q);
+  var c: i32 = tcp_connect(ns, 53);
+  if (c < 0) {
+    return (unavail(), 0);
+  }
+  if (tcp_send(c, string_from_bytes_unchecked(framed)) < 0) {
+    tcp_close(c);
+    return (unavail(), 0);
+  }
+  var reply: u8[] = read_framed(c);
+  tcp_close(c);
+  if (reply.len() == 0) {
+    return (unavail(), 0);
+  }
+  return dns_answer_a(reply, id);
+}
+
+// The reply body, once its length prefix says it is all there; empty when
+// the peer closes first.
+function read_framed(c: i32): u8[] {
+  var buf: u8[] = [];
+  var want: i32 = -1;
+  while (want < 0 || buf.len() < want) {
+    var chunk: u8[] = tcp_recv(c, 4096);
+    if (chunk.len() == 0) {
+      break;
+    }
+    buf = buf.concat(chunk);
+    if (want < 0 && buf.len() >= 2) {
+      want = 2 + be16(buf, 0);
+    }
+  }
+  var none: u8[] = [];
+  if (want < 2 || buf.len() < want) {
+    return none;
+  }
+  return buf.drop(2).take(want - 2);
+}
+
+// `dns_lookup(rc, name)` — glibc's res_search over the nameservers: each
+// candidate name is put to the servers in order until one answers, and a
+// definite answer — an address or NXDOMAIN — from any server is final for
+// that candidate. A candidate no server could answer ends the whole
+// search as UNAVAIL, as glibc's TRY_AGAIN does.
+pub function dns_lookup(rc: ResolvConf, name: string): (i32, i32) {
+  var cands: string[] = search_candidates(name, rc);
+  var i: i32 = 0;
+  while (i < cands.len()) {
+    var r: (i32, i32) = dns_lookup_one(rc, cands[i]);
+    if (r.0 != notfound()) {
+      return r;
+    }
+    i = i + 1;
+  }
+  return (notfound(), 0);
+}
+
+function dns_lookup_one(rc: ResolvConf, qname: string): (i32, i32) {
+  var j: i32 = 0;
+  while (j < rc.nameservers.len()) {
+    var r: (i32, i32) = dns_exchange(rc.nameservers[j], qname);
+    if (r.0 != unavail()) {
+      return r;
+    }
+    j = j + 1;
+  }
+  return (unavail(), 0);
+}
+
+// ---- the lookup -------------------------------------------------------------
+// `lookup(name, sources)` — the NSS walk: each source in turn, stopping on
+// the first address or on a status the source's actions make final.
+pub function lookup(name: string, sources: Source[]): Option[i32] {
+  var i: i32 = 0;
+  while (i < sources.len()) {
+    var s: Source = sources[i];
+    var r: (i32, i32) = lookup_source(s.name, name);
+    if (r.0 == success()) {
+      return Some(r.1);
+    }
+    if (s.stops(r.0)) {
+      return None;
+    }
+    i = i + 1;
+  }
+  return None;
+}
+
+// One source's answer. A source this module does not implement is
+// UNAVAIL, as a source whose module is not installed is to glibc.
+function lookup_source(src: string, name: string): (i32, i32) {
+  if (src == "files") {
+    match (read_file("/etc/hosts")) {
+      Ok(c) => {
+        match (hosts_lookup(c, name)) {
+          Some(a) => {
+            return (success(), a);
+          },
+          None => {
+            return (notfound(), 0);
+          }
+        }
+      },
+      Err(_) => {
+        return (unavail(), 0);
+      }
+    }
+  }
+  if (src == "dns") {
+    var contents: string = "";
+    match (read_file("/etc/resolv.conf")) {
+      Ok(c) => {
+        contents = c;
+      },
+      Err(_) => {}
+    }
+    return dns_lookup(parse_resolv_conf(contents, hostname()), name);
+  }
+  return (unavail(), 0);
+}
+
+// `resolve(name)` — the IPv4 address of `name` as gethostbyname would
+// find it on this machine, through /etc/nsswitch.conf, /etc/hosts and
+// /etc/resolv.conf.
+pub function resolve(name: string): Option[i32] {
+  var sources: Source[] = default_sources();
+  match (read_file("/etc/nsswitch.conf")) {
+    Ok(c) => {
+      sources = nsswitch_hosts(c);
+    },
+    Err(_) => {}
+  }
+  return lookup(name, sources);
+}

@@ -788,6 +788,8 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_wasm_poll")
 				case "isatty":
 					needs.add("isatty")
+				case "hostname":
+					needs.add("hostname")
 				case "strbuf_reset", "strbuf_append", "strbuf_take":
 					// The string builder. Its callees come from
 					// unconditionalHelperCalls below.
@@ -1742,6 +1744,15 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildIsattyBody,
+	},
+	"hostname": {
+		// () → (data, len): the kernel's node name. Neither WASI
+		// preview has a host identity, so the answer is the empty
+		// string in its inline form, on both previews. See
+		// buildHostnameBody.
+		params:  nil,
+		results: []byte{encode.ValtypeI32, encode.ValtypeI32},
+		body:    buildHostnameBody,
 	},
 	"__alloc": {
 		// (size) → i32 — same as __fern_alloc. Lives in the

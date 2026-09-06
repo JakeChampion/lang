@@ -1890,6 +1890,14 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		Params: nil,
 		Result: ast.NumberType{Width: 32, Signed: false},
 	}
+	// hostname(): the kernel's node name — what gethostname(2)
+	// answers: uname(2)'s nodename on Linux, kern.hostname on
+	// Darwin. A fresh string each call. Empty where the target
+	// has no host identity (WASI) or the kernel refuses to say.
+	c.info.FuncSigs["hostname"] = &ast.FuncType{
+		Params: nil,
+		Result: ast.StringType{},
+	}
 	// remove_file(path): Result[void, IoError] — unlink the file.
 	// `Ok(())` on success, `Err(e)` on failure (mirrors
 	// `write_file`). Removing a non-existent file is an

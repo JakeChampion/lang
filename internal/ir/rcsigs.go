@@ -288,7 +288,7 @@ var rcInertBuiltins = map[string]bool{
 	// rather than as a wasm runtime helper.
 	"access": true,
 	// No arguments at all, so there is nothing to move.
-	"geteuid": true, "getegid": true,
+	"geteuid": true, "getegid": true, "hostname": true,
 }
 
 // rcUnmodelled are helpers that do move counts, and whose movement one

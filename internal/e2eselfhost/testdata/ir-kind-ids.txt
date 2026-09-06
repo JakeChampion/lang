@@ -234,3 +234,4 @@ lstat=236
 access=237
 geteuid=238
 getegid=239
+hostname=240

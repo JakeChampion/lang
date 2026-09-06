@@ -464,6 +464,7 @@ pub function sysno(t: string, name: string): string {
         if (name == "faccessat") { return "439"; }
         if (name == "geteuid") { return "107"; }
         if (name == "getegid") { return "108"; }
+        if (name == "uname") { return "63"; }
         return "-1";
     }
     if (t == "arm64-darwin") {
@@ -547,6 +548,9 @@ pub function sysno(t: string, name: string): string {
     if (name == "faccessat") { return "439"; }
     if (name == "geteuid") { return "175"; }
     if (name == "getegid") { return "177"; }
+    // No Darwin row: XNU has no uname syscall (libc builds it from sysctl),
+    // so asm_arm64_ir keeps a hand-written kern.hostname body for that target.
+    if (name == "uname") { return "160"; }
     return "-1";
 }
 
@@ -1722,6 +1726,15 @@ function stat_fields_src(t: string): string {
 // AT_FDCWD constant and the AT_EACCESS constant come from `t`.
 pub function rt_src_access(t: string): string {
     return "function __fern_access(path: string, mode: i32): Result[void, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var rc: i32 = __syscall4(" + sysno(t, "faccessat") + ", " + at_fdcwd(t) + ", pathz, mode, " + at_eaccess(t) + "); if (rc < 0) { return Err(__fern_io_error(0 - rc, __raw_string(pathz, plen))); } return Ok(()); }";
+}
+
+// rt_src_hostname backs `hostname()` on Linux → the kernel's node name as a
+// fresh string. uname(2) fills a 390-byte struct utsname of six 65-byte fields;
+// nodename is the second, NUL-terminated within its field. A refused uname is
+// an empty name. The buffer is a heap block rather than __raw_scratch, which
+// is 256 bytes.
+pub function rt_src_hostname(t: string): string {
+    return "function __fern_hostname(): string { var buf: i32 = __raw_alloc(390); var n: i32 = 0; if (__syscall3(" + sysno(t, "uname") + ", buf, 0, 0) == 0) { while (n < 65 && __raw_load8(buf, 65 + n) != 0) { n = n + 1; } } var p: i32 = __raw_alloc(n); __memcpy(p, __raw_addr(buf, 65), n); return __raw_string(p, n); }";
 }
 
 // rt_src_getid backs `geteuid()` / `getegid()` — one argument-free syscall
@@ -3422,6 +3435,7 @@ function builtin_i32_names(): string[] {
 function builtin_string_names(): string[] {
     return [
         "read_all_stdin",
+        "hostname",
         // target_os() / target_arch() are literals by emit time on the
         // compile path (constfold.fold_target_name); the types are for
         // -check, which keeps the calls.
@@ -5387,6 +5401,7 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
         // #5623: the IR path's whole-stdin reader, emitted in the entry module's
         // runtime — .globl so a per-module sibling's `call` resolves against it.
         "__fn___fern_read_all_stdin",
+        "__fn___fern_hostname",
         "__fern_strbuf_reset", "__fern_strbuf_take",
         // crash-only supervision (#5686): the entry owns fork / wait4.
         "__fn___fern_proc_fork", "__fn___fern_proc_waitpid", "__fn___fern_proc_exec",

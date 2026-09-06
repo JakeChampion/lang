@@ -176,13 +176,19 @@ var capabilityProfiles = map[string]capabilityProfile{
 	//
 	// The `none` profile grants none of them either: a freestanding
 	// artifact reaches platforms.coreBuiltins and nothing else.
-	"hosted-native": {"log", "now", "env", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid"},
+	//
+	// `host` — the machine's own name (`hostname`). A kernel answers it;
+	// wasi-cli grants it too and answers the empty string, since a
+	// component has no node name and saying so is the truth, not a
+	// stand-in. wasi-http gets neither this nor `args` / `env`: a proxy
+	// component has no process identity at all.
+	"hosted-native": {"log", "now", "env", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host"},
 
 	// CLI-world wasm wires fs (the preview1 fd helpers) and tcp
 	// (wasi:sockets — wasmbin/wasi_tcp.go) but NOT subprocess:
 	// wasi:cli/exec-process isn't in the runtime helpers (the standing
 	// gap wasmbin's TestBuildReportsUnsupported pins).
-	"wasi-cli": {"log", "now", "env", "args", "random", "stdin", "stdout", "fs", "tcp"},
+	"wasi-cli": {"log", "now", "env", "args", "random", "stdin", "stdout", "fs", "tcp", "host"},
 
 	// The proxy world: an HTTP handler and nothing else. No stdout
 	// stream and no filesystem — which is what gives `stdout` its teeth
