@@ -10,7 +10,7 @@ import (
 
 // A field-receiver append gives up its in-place grow when the container is
 // also read into a binding that could still name it afterwards
-// (fieldPlaceAppendCopies, #6665). "Could" is the whole question: reading the
+// (fieldPlaceMutationCopies, #6665). "Could" is the whole question: reading the
 // container into a CALL ARGUMENT names it only if the callee lets it out, and
 // inferParamEscapes already answers that per parameter.
 //
@@ -94,12 +94,12 @@ function main(): i32 { return 0; }`
 			continue
 		}
 		seen[fn.Name] = true
-		if got := len(fieldPlaceAppendCopies(fn.Body, noEsc)); got != n {
+		if got := len(fieldPlaceMutationCopies(fn.Body, noEsc)); got != n {
 			t.Errorf("%s: %d appends forced to copy, want %d", fn.Name, got, n)
 		}
 		// Without the summary every one of them copies, which is what says
 		// the difference above comes from the summary and not from the shape.
-		if got := len(fieldPlaceAppendCopies(fn.Body, nil)); got != 1 {
+		if got := len(fieldPlaceMutationCopies(fn.Body, nil)); got != 1 {
 			t.Errorf("%s: %d appends forced to copy with no summary, want 1", fn.Name, got)
 		}
 	}

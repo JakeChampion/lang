@@ -868,13 +868,25 @@ answer, these are the tools, in the order they are usually reached for:
   `docs/LOCAL-DEV-LOOP.md` both record two earlier rounds falling into.
 
   `.with` is deliberately absent: it lowers to a copy-on-write helper that
-  reads the refcount at run time, so it has no compile-time decision to
-  report — and the cliff counters miss it too, so nothing measures a
-  quadratic `.with` today.
+  reads the refcount at run time. A FIELD-place `.with` does have a
+  compile-time decision since #8523 — the same admission this reports for
+  `.append`, plus the move-out that pairs with it — and it is still not listed
+  here; nor do the cliff counters see it, so nothing measures a quadratic
+  `.with` today.
 - **`FERN_LEAKCHECK=1`** — alloc/free counts and live bytes at exit. The other
   direction: what the rc detector cannot see. Under `-sanitize` the same
   counters also produce a one-line verdict (`fern-sanitizer: leak <K> bytes in
   <N> blocks`) when the balance is positive, so a leak needs no number read.
+
+  **`-backend ssa` on arm64 reports the same line but counts differently, and
+  its live_bytes has a floor.** Allocation there is inline bump sites rather
+  than one `__fern_alloc`, so the count is taken where every allocation passes —
+  the heap guard on the bump path, the freelist pop in `__alloc` — and the bytes
+  are read off the arena at exit (16-rounded cursor − base, plus popped bytes,
+  less freed bytes). `__fern_str_dec` on that backend does not reclaim (its
+  producers disagree on where the block base is), so every heap string a program
+  makes is counted live: read live_bytes there as a DELTA between two runs of
+  the same program, not as an absolute leak.
 
   **A probe of a call-boundary shape needs `@noinline` on the callee AND on
   whatever produces the argument.** `internal/ir/inline.go` inlines a

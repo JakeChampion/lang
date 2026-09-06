@@ -123,6 +123,12 @@ type rcPlan struct {
 	// A field receiver computeFieldOwnMoves claims is cleared back to false:
 	// the move out of the box replaces the inc.
 	arraySetInc map[*ast.Call]bool
+	// fieldSetMoves marks the field-place `.with` calls the mutation
+	// analysis admitted for the in-place store (fieldSetInPlaceOK): the CoW
+	// takes the field's own buffer at rc == 1 and the result is its only
+	// name afterwards, so emitCowInplaceFieldMove nulls the field on that
+	// branch. Filled by computeArraySetIncs.
+	fieldSetMoves map[*ast.Call]bool
 	// arraySetConsumed holds the names of bare-ident `.with` receivers whose
 	// reference __fern_arr_cow_inplace CONSUMES, and arraySetConsumedSites
 	// the calls that do it. It is exactly the complement of arraySetInc for
@@ -3925,9 +3931,11 @@ func (b *builder) computeArraySetIncs() map[*ast.Call]bool {
 	incs := map[*ast.Call]bool{}
 	b.rc.arraySetConsumed = map[string]bool{}
 	b.rc.arraySetConsumedSites = map[*ast.Call]bool{}
+	b.rc.fieldSetMoves = map[*ast.Call]bool{}
 	if b.fn.Body == nil {
 		return incs
 	}
+	structLocals := b.structLiteralLocalRoots()
 	order := b.curIdentOrder()
 	// reassign-to-self: `A = A.with(...)` — the receiver's old value is
 	// overwritten by the result, so reuse is sound (no inc).
@@ -4065,6 +4073,14 @@ func (b *builder) computeArraySetIncs() map[*ast.Call]bool {
 			// `mk_box().items.with(…)` cost 64 B a round, unbounded.
 			switch c.Args[0].(type) {
 			case *ast.Index, *ast.FieldAccess, *ast.SliceExpr:
+				// A field PLACE the mutation analysis admits stores into
+				// the field's own buffer, on the same terms the append
+				// beside it grows in place (#8523).
+				if b.fieldSetInPlaceOK(c, structLocals) {
+					incs[c] = false
+					b.rc.fieldSetMoves[c] = true
+					return true
+				}
 				incs[c] = !b.isOwnedContainerRead(c.Args[0])
 			default:
 				incs[c] = false
@@ -4091,6 +4107,142 @@ func (b *builder) computeArraySetIncs() map[*ast.Call]bool {
 		return true
 	})
 	return incs
+}
+
+// fieldSetInPlaceOK reports whether `c` — a `<root>.<field>.with(i, v)` — may
+// store into the field's OWN buffer rather than a copy of it (#8523). The
+// mutation analysis (fieldPlaceMutationCopies) proves no later read can observe
+// the store; this adds what the MOVE needs, since the CoW's rc==1 arm hands the
+// field's buffer to the call's result and the field is emptied behind it
+// (emitCowInplaceFieldMove):
+//
+//   - a depth-1 place off an IDENT root, so the null store has a slot, a
+//     struct layout and a field offset to resolve. A deeper chain (`o.a.b`)
+//     keeps the copy: the caller-side bracket names one field of a position;
+//   - a root the frame may hand the buffer away from — the receiver or a
+//     parameter, whose box is the CALLER's and whose fields the #4873 grow
+//     bracket covers (computeGrowParams seeds a field-receiver `.with`), or a
+//     local this function BUILDS (structLiteralLocalRoots). Anything else — a
+//     match-arm payload binding, a `for` element, a local bound from a field
+//     read — names a box some other live value owns, where emptying the field
+//     would take the buffer out from under it.
+//
+// Free-off keeps the copy: nothing reclaims there, so the move buys nothing
+// and the caller-side bracket's rc pair is the only thing the store could
+// race.
+func (b *builder) fieldSetInPlaceOK(c *ast.Call, structLocals map[string]bool) bool {
+	if !ast.RcFreeEnabled {
+		return false
+	}
+	fa, isField := c.Args[0].(*ast.FieldAccess)
+	if !isField || b.fieldMutationCopies()[c] {
+		return false
+	}
+	base, isIdent := fa.Target.(*ast.Ident)
+	if !isIdent {
+		return false
+	}
+	if _, isLocalSlot := b.locals[base.Name]; !isLocalSlot {
+		return false
+	}
+	if !b.isParamName(base.Name) && !structLocals[base.Name] {
+		return false
+	}
+	sd, ok := b.info.Structs[b.fieldOwner(fa.Target)]
+	if !ok || fieldType(sd.Fields, fa.Field) == nil {
+		return false
+	}
+	offs, _ := structFieldLayout(sd.Fields, b.ptrW)
+	_, laidOut := offs[fa.Field]
+	return laidOut
+}
+
+// isParamName reports whether `name` is one of this function's parameters —
+// the receiver included, which the checker passes as parameter 0.
+func (b *builder) isParamName(name string) bool {
+	for _, p := range b.fn.Params {
+		if p.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// structLiteralLocalRoots names the locals a function BUILDS: declared as a
+// direct statement of the body from a struct literal, bound exactly once
+// anywhere in it, and assigned nothing but struct literals afterwards. Such a
+// local names a box this frame allocated, so a field moved out of it is a
+// buffer the frame may give away.
+//
+// Every other binding form can name someone else's box — `var t = o.inner`
+// reads a container's field, a call result may be one of the callee's own
+// parameters — and a name bound twice cannot be told apart from a second
+// variable by an analysis that matches roots by NAME over the whole body.
+func (b *builder) structLiteralLocalRoots() map[string]bool {
+	fn := b.fn
+	if fn.Body == nil {
+		return nil
+	}
+	cand := map[string]bool{}
+	for _, st := range fn.Body.Stmts {
+		if v, isVar := st.(*ast.Var); isVar {
+			if _, isLit := v.Init.(*ast.StructLit); isLit {
+				cand[v.Name] = true
+			}
+		}
+	}
+	if len(cand) == 0 {
+		return cand
+	}
+	binds := map[string]int{}
+	bind := func(name string) {
+		if name != "" && name != "_" {
+			binds[name]++
+		}
+	}
+	ast.Walk(fn.Body, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.Var:
+			bind(x.Name)
+		case *ast.ForEach:
+			bind(x.Var)
+		case *ast.Destructure:
+			for _, nm := range x.Names {
+				bind(nm)
+			}
+			bind(x.AtName)
+			bind(x.TempName)
+		case *ast.Match:
+			for _, arm := range x.Arms {
+				for _, nm := range arm.Bindings {
+					bind(nm)
+				}
+				bind(arm.AtBinding)
+			}
+		case *ast.Assign:
+			t, isID := x.Target.(*ast.Ident)
+			if !isID || !cand[t.Name] {
+				return true
+			}
+			if _, isLit := x.Value.(*ast.StructLit); !isLit {
+				delete(cand, t.Name)
+			}
+		}
+		return true
+	})
+	// The checker's own local table is the second net: a binder form this
+	// walk does not know still registers a local there, so a name it holds
+	// twice is two variables whatever the walk saw.
+	declared := map[string]int{}
+	for _, v := range b.info.Locals[fn] {
+		declared[v.Name]++
+	}
+	for name := range cand {
+		if binds[name] != 1 || declared[name] != 1 {
+			delete(cand, name)
+		}
+	}
+	return cand
 }
 
 // computeBorrowedBindings collects the arm bindings of every non-consuming
@@ -6140,17 +6292,145 @@ func isArrayPushCall(c *ast.Call) bool {
 	return ok && id.Name == "__method_Array_push" && len(c.Args) == 2
 }
 
-// fieldPlaceAppendCopies returns the appends whose receiver is a field PLACE
-// (`o.xs`, `o.a.b`) and whose rc==1 in-place grow would still be observable
-// through the container, so emitArrayPush must force the copy path (#6665).
+// isFieldPlaceMutation reports whether c is one of the two in-place-capable
+// array mutations the field-place analysis decides: `.append(v)`, whose grow
+// helper mutates at rc == 1, and `.with(i, v)`, whose CoW helper stores at
+// rc == 1. Both take their receiver in Args[0].
+func isFieldPlaceMutation(c *ast.Call) bool {
+	return isArrayPushCall(c) || isArraySetCall(c)
+}
+
+// hasFieldPlaceMutation reports whether the body holds any `.append` / `.with`
+// on a field place at all — the pre-test that keeps the decision walks off
+// every function that has none.
+func hasFieldPlaceMutation(body ast.Node) bool {
+	found := false
+	ast.Walk(body, func(n ast.Node) bool {
+		if found {
+			return false
+		}
+		c, isCall := n.(*ast.Call)
+		if !isCall || !isFieldPlaceMutation(c) {
+			return true
+		}
+		if _, isFA := c.Args[0].(*ast.FieldAccess); isFA {
+			found = true
+			return false
+		}
+		return true
+	})
+	return found
+}
+
+// isArrayLenCall reports whether `name` is a mangled `.len()` — the only call
+// shape that reads a container and yields a scalar without binding it.
+func isArrayLenCall(name string) bool {
+	switch name {
+	case "__method_Array_len", "__method_slice_len", "__method_string_len":
+		return true
+	}
+	return false
+}
+
+// scalarPlaceReads collects the place nodes read in LENGTH or INDEX position —
+// `o.xs.len()`, `o.xs[i]`. Both consume the place and yield a scalar computed
+// on the spot, so a read that is SEQUENCED BEFORE a mutation of the same place
+// observes neither the store nor the field's move-out. Every other position can
+// bind the buffer itself to a name that outlives the site, which is why the
+// excusal names exactly these two.
+func scalarPlaceReads(body ast.Node) map[ast.Node]bool {
+	out := map[ast.Node]bool{}
+	ast.Walk(body, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.Call:
+			if id, ok := x.Callee.(*ast.Ident); ok && len(x.Args) == 1 && isArrayLenCall(id.Name) {
+				out[x.Args[0]] = true
+			}
+		case *ast.Index:
+			out[x.Array] = true
+		}
+		return true
+	})
+	return out
+}
+
+// topLevelStmtIndex maps every node of a function body to the index of the
+// top-level statement it sits under. Statement i completes before statement
+// i+1 begins — including every nested statement of a loop at index i, which is
+// what makes "the site is sequenced after the first n statements" a fact about
+// the whole prefix rather than about one nesting level.
+func topLevelStmtIndex(body ast.Node) map[ast.Node]int {
+	out := map[ast.Node]int{}
+	blk, ok := body.(*ast.Block)
+	if !ok {
+		return out
+	}
+	for i, st := range blk.Stmts {
+		ast.Walk(st, func(n ast.Node) bool {
+			out[n] = i
+			return true
+		})
+	}
+	return out
+}
+
+// loopBodyNodes collects the nodes that run once per iteration of some loop in
+// the body. A `.with` the analysis admits MOVES the field out of its root, so a
+// site that runs again against the same root is refused: the next iteration
+// would read the moved-out field. A return leaves the loop and a rebind of the
+// root replaces it, so those two keep their sites (see the scope arms).
+func loopBodyNodes(body ast.Node) map[ast.Node]bool {
+	out := map[ast.Node]bool{}
+	ast.Walk(body, func(n ast.Node) bool {
+		var loopBody ast.Stmt
+		switch x := n.(type) {
+		case *ast.While:
+			loopBody = x.Body
+		case *ast.Loop:
+			loopBody = x.Body
+		case *ast.For:
+			loopBody = x.Body
+		case *ast.ForEach:
+			loopBody = x.Body
+		}
+		if loopBody == nil {
+			return true
+		}
+		ast.Walk(loopBody, func(m ast.Node) bool {
+			out[m] = true
+			return true
+		})
+		return true
+	})
+	return out
+}
+
+// samePlace reports whether q names exactly the place p does — the same root
+// and the same field chain, not merely an overlapping one.
+func (p place) samePlace(q place) bool {
+	if p.root != q.root || len(p.path) != len(q.path) {
+		return false
+	}
+	for i := range p.path {
+		if p.path[i] != q.path[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// fieldPlaceMutationCopies returns the `.append` / `.with` calls whose receiver
+// is a field PLACE (`o.xs`, `o.a.b`) and whose rc==1 in-place mutation would
+// still be observable through the container, so emitArrayPush / emitArraySet
+// must force the copy path (#6665).
 //
 // A field receiver carries none of the uniqueness information a bare ident
 // does: rc==1 says the container holds the only reference to the buffer, not
 // that nobody reads it again — the container is still named, and reading its
 // field again yields the same pointer. So an overlapping read of the place —
 // the same field chain, a prefix of it, or a bare read of the root, which
-// hands the whole container over — forces the copy unless one of three things
-// puts every such read out of the grow's reach:
+// hands the whole container over — forces the copy unless one of four things
+// puts every such read out of the mutation's reach:
 //
 //   - REBIND. The append feeds the literal that REPLACES the container
 //     (`o = S { xs: o.xs.append(v), ys: o.ys }`), so later reads of `o.xs`
@@ -6169,6 +6449,15 @@ func isArrayPushCall(c *ast.Call) bool {
 //     #4873 caller-side grow bracket's job; a name captured by a defer or a
 //     lambda is excluded because those run after the return expression.
 //   - NO OVERLAP at all in the body.
+//   - SEQUENCED BEFORE. A read of the site's own place in LENGTH or INDEX
+//     position (`o.xs.len()`, `o.xs[i]`) from a top-level statement the site
+//     runs after: it yields a scalar computed before the mutation, so it
+//     observes neither the store nor the field's move-out. Only those two
+//     positions — any other read can bind the buffer to a name that outlives
+//     the site — and only for a root no defer or lambda mentions, since those
+//     run after the statement that spells them. This is the hash-index shape
+//     (`var bk = hash(o.head.len()); … o.head.with(bk, n)`), where the reads
+//     that force the copy all precede the write.
 //
 // A struct-update SPREAD base does not count as an overlapping read of the
 // field the same literal overrides — `A { ...a, code: a.code.append(v) }`
@@ -6211,7 +6500,12 @@ func shieldedPlaces(root ast.Expr, noEsc argNoEscape) map[ast.Node]bool {
 	return shielded
 }
 
-func fieldPlaceAppendCopies(body ast.Node, noEsc argNoEscape) map[*ast.Call]bool {
+func fieldPlaceMutationCopies(body ast.Node, noEsc argNoEscape) map[*ast.Call]bool {
+	// One cheap walk first: most functions hold no field-place mutation at
+	// all, and the tables below are per-NODE.
+	if !hasFieldPlaceMutation(body) {
+		return nil
+	}
 	// The container-replacing assignment, and the return expression, each
 	// field append sits under.
 	rebind := map[*ast.Call]*ast.Assign{}
@@ -6235,7 +6529,7 @@ func fieldPlaceAppendCopies(body ast.Node, noEsc argNoEscape) map[*ast.Call]bool
 				return false // runs when the closure is called, not here
 			}
 			c, isCall := m.(*ast.Call)
-			if !isCall || !isArrayPushCall(c) {
+			if !isCall || !isFieldPlaceMutation(c) {
 				return true
 			}
 			if fa, isFA := c.Args[0].(*ast.FieldAccess); isFA {
@@ -6303,10 +6597,13 @@ func fieldPlaceAppendCopies(body ast.Node, noEsc argNoEscape) map[*ast.Call]bool
 		byRoot[q.root] = append(byRoot[q.root], q)
 	}
 	esc := deferOrLambdaNames(body)
+	stmtIdx := topLevelStmtIndex(body)
+	scalarRead := scalarPlaceReads(body)
+	inLoop := loopBodyNodes(body)
 	out := map[*ast.Call]bool{}
 	ast.Walk(body, func(n ast.Node) bool {
 		c, isCall := n.(*ast.Call)
-		if !isCall || !isArrayPushCall(c) {
+		if !isCall || !isFieldPlaceMutation(c) {
 			return true
 		}
 		fa, isFA := c.Args[0].(*ast.FieldAccess)
@@ -6332,9 +6629,24 @@ func fieldPlaceAppendCopies(body ast.Node, noEsc argNoEscape) map[*ast.Call]bool
 				inScope[q.node] = true
 			}
 		}
+		// The `.with` store hands the field's buffer to its result and moves
+		// the field out (emitCowInplaceFieldMove), so a body-scope host that
+		// RUNS AGAIN against the same root would read the moved-out field.
+		// The two scoped arms survive a loop: a return leaves it, a rebind
+		// replaces the root.
+		if isArraySetCall(c) && scope == nil && inLoop[c] {
+			out[c] = true
+			return true
+		}
+		siteIdx, siteOrdered := stmtIdx[fa]
 		for _, q := range byRoot[root] {
 			if q.node == fa || !p.overlaps(q) || overriddenSpread(spreadOf[q.node], q, p) {
 				continue
+			}
+			if scope == nil && siteOrdered && !esc[root] && scalarRead[q.node] && p.samePlace(q) {
+				if qi, ok := stmtIdx[q.node]; ok && qi < siteIdx {
+					continue
+				}
 			}
 			if scope == nil || inScope[q.node] || (len(q.path) == 0 && capturing[q.node]) {
 				out[c] = true
@@ -8402,6 +8714,9 @@ func (b *builder) computeFieldOwnMoves() map[*ast.FieldAccess]bool {
 		}
 		if fa, isField := c.Args[0].(*ast.FieldAccess); isField && out[fa] {
 			b.rc.arraySetInc[c] = false
+			// The superseded-field move empties the slot itself; the two
+			// move-outs are alternatives, never both.
+			delete(b.rc.fieldSetMoves, c)
 		}
 		return true
 	})

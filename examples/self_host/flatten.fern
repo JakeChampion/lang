@@ -61,7 +61,7 @@ import "./astwalk";
 // occurrence. This reduces the allocation the mangle pass performs at its dominant
 // churn site (#4394 lever 1 names mangle_bare as such a site — see
 // docs/SELFHOST-SYMBOL-INTERNING.md); the emitted bytes are unchanged.
-pub struct RewriteCtx { modnames: string[], modprefixes: string[], prefix: string, declnames: string[], declnames_mangled: string[], dn_head: i32[], dn_next: i32[], locals: string[], ivar_names: string[], ivar_mangled: string[], reexport_keys: string[], reexport_targets: string[] }
+pub struct RewriteCtx { modnames: string[], modprefixes: string[], prefix: string, declnames: string[], declnames_mangled: string[], dn_head: i32[], dn_next: i32[], locals: string[], enumnames: string[], ivar_names: string[], ivar_mangled: string[], reexport_keys: string[], reexport_targets: string[] }
 
 // declname_buckets sizes the own-decl index. A module's decl count is in the
 // hundreds, so a prime a few times that keeps the chains at one or two.
@@ -375,6 +375,15 @@ pub function rewrite_type_name(tn: string, ctx: RewriteCtx): string {
             var rbase: str = slice_unchecked(rest, 0, rb);
             return lookup_reexport(prefix + "__" + rbase, ctx) + slice_unchecked(rest, rb, rest.len());
         }
+        // `E.Wrap` where THIS module declares `enum E`: the qualifier names a
+        // TYPE, not a module, so both halves take the module's mangle prefix —
+        // the same mangle_bare mangle_enum_decls applies to the enum's own name
+        // and variant list, so the two cannot drift. An imported module wins the
+        // spelling when a name is somehow both, since only that reading can
+        // reach across modules at all.
+        if (is_in(qual, ctx.enumnames)) {
+            return mangle_bare(qual + "", ctx) + "." + mangle_bare(slice_unchecked(tn, dot + 1, tn.len()) + "", ctx);
+        }
         return tn;
     }
     // No qualifier — maybe a bare own-module type (possibly with a
@@ -424,6 +433,22 @@ pub function rewrite_expr(e: ast.Expr, ctx: RewriteCtx): ast.Expr {
                         // `ty: ""` and not `id.ty`: the result names a module-qualified
                         // FUNCTION, so the module ident's own tag says nothing about it.
                         return ast.ExprIdent { name: mangled, line: id.line, col: id.col, ty: "" };
+                    }
+                    // `E.Wrap(3)` where THIS module declares `enum E`: an
+                    // ENUM-qualified variant reference, not a module-qualified
+                    // value. It stays a field access (the checker resolves the
+                    // qualifier through the union table) but both halves mangle,
+                    // as rewrite_type_name does for the pattern spelling. A local
+                    // of the same name shadows the enum, so the reference is then
+                    // an ordinary field access.
+                    if (!is_in(id.name, ctx.locals) && is_in(id.name, ctx.enumnames)) {
+                        return ast.ExprFieldAccess {
+                            obj: ast.ExprIdent { name: mangle_bare(id.name, ctx), line: id.line, col: id.col, ty: id.ty },
+                            field: mangle_bare(fa.field, ctx),
+                            line: fa.line,
+                            col: fa.col,
+                            ty: fa.ty
+                        };
                     }
                 },
                 _ => { }
@@ -544,7 +569,7 @@ pub function rewrite_expr(e: ast.Expr, ctx: RewriteCtx): ast.Expr {
                 lctx = RewriteCtx {
                     modnames: ctx.modnames, modprefixes: ctx.modprefixes, prefix: ctx.prefix,
                     declnames: ctx.declnames, declnames_mangled: ctx.declnames_mangled, dn_head: ctx.dn_head, dn_next: ctx.dn_next, locals: inner,
-                    ivar_names: ctx.ivar_names, ivar_mangled: ctx.ivar_mangled,
+                    enumnames: ctx.enumnames, ivar_names: ctx.ivar_names, ivar_mangled: ctx.ivar_mangled,
                     reexport_keys: ctx.reexport_keys, reexport_targets: ctx.reexport_targets
                 };
             }
@@ -712,7 +737,7 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
         var bctx: RewriteCtx = RewriteCtx {
             modnames: ctx.modnames, modprefixes: ctx.modprefixes, prefix: ctx.prefix,
             declnames: ctx.declnames, declnames_mangled: ctx.declnames_mangled, dn_head: ctx.dn_head, dn_next: ctx.dn_next, locals: collect_local_names(fd),
-            ivar_names: ctx.ivar_names, ivar_mangled: ctx.ivar_mangled,
+            enumnames: ctx.enumnames, ivar_names: ctx.ivar_names, ivar_mangled: ctx.ivar_mangled,
             reexport_keys: ctx.reexport_keys, reexport_targets: ctx.reexport_targets
         };
         funcs = funcs.append(parser.FuncDecl { ...fd, name: new_name, receiver_type: rewrite_type_name(fd.receiver_type, ctx), params: rewrite_params(fd.params, bctx), ret_type: rewrite_type_name(fd.ret_type, ctx), ret_fn_ret: rewrite_type_name(fd.ret_fn_ret, ctx), ret_fn_param_types: rewrite_type_name_list(fd.ret_fn_param_types, ctx), body: rewrite_block(fd.body, bctx), is_pub: true });
@@ -753,7 +778,7 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
         });
         k = k + 1;
     }
-    return parser.Module { ...mod, funcs: funcs, structs: structs, aliases: aliases, top_stmts: rewrite_block(mod.top_stmts, RewriteCtx { modnames: ctx.modnames, modprefixes: ctx.modprefixes, prefix: ctx.prefix, declnames: ctx.declnames, declnames_mangled: ctx.declnames_mangled, dn_head: ctx.dn_head, dn_next: ctx.dn_next, locals: astwalk.collect_bound_stmts(mod.top_stmts, []), ivar_names: ctx.ivar_names, ivar_mangled: ctx.ivar_mangled, reexport_keys: ctx.reexport_keys, reexport_targets: ctx.reexport_targets }), enums: mangle_enum_decls(mod.enums, ctx), impls: mangle_impls(mod.impls, ctx) };
+    return parser.Module { ...mod, funcs: funcs, structs: structs, aliases: aliases, top_stmts: rewrite_block(mod.top_stmts, RewriteCtx { modnames: ctx.modnames, modprefixes: ctx.modprefixes, prefix: ctx.prefix, declnames: ctx.declnames, declnames_mangled: ctx.declnames_mangled, dn_head: ctx.dn_head, dn_next: ctx.dn_next, locals: astwalk.collect_bound_stmts(mod.top_stmts, []), enumnames: ctx.enumnames, ivar_names: ctx.ivar_names, ivar_mangled: ctx.ivar_mangled, reexport_keys: ctx.reexport_keys, reexport_targets: ctx.reexport_targets }), enums: mangle_enum_decls(mod.enums, ctx), impls: mangle_impls(mod.impls, ctx) };
 }
 
 // mangle_impls rewrites an impl block's TARGET type the same way every other
@@ -824,7 +849,7 @@ function mangle_enum_decls(enums: parser.EnumDecl[], ctx: RewriteCtx): parser.En
 // the entry module (whose own decls keep their bare names).
 pub function flatten_qualified(mod: parser.Module, ivar_names: string[], ivar_mangled: string[], reexport_keys: string[], reexport_targets: string[]): parser.Module {
     var empty: string[] = [];
-    var ctx: RewriteCtx = RewriteCtx { modnames: mod_names(mod), modprefixes: mod_prefixes(mod), prefix: "", declnames: empty, declnames_mangled: empty, dn_head: [], dn_next: [], locals: empty, ivar_names: ivar_names, ivar_mangled: ivar_mangled, reexport_keys: reexport_keys, reexport_targets: reexport_targets };
+    var ctx: RewriteCtx = RewriteCtx { modnames: mod_names(mod), modprefixes: mod_prefixes(mod), prefix: "", declnames: empty, declnames_mangled: empty, dn_head: [], dn_next: [], locals: empty, enumnames: empty, ivar_names: ivar_names, ivar_mangled: ivar_mangled, reexport_keys: reexport_keys, reexport_targets: reexport_targets };
     return rewrite_module_bodies(mod, ctx);
 }
 
@@ -868,6 +893,23 @@ pub function collect_decl_names(mod: parser.Module): string[] {
     return names;
 }
 
+// collect_enum_names returns the names of the `enum` decls the module makes.
+// It is what tells an ENUM-qualified reference — `E.Wrap`, where the module
+// itself declares `enum E` — from a MODULE-qualified one: both are spelled
+// `<qual>.<name>`, and once the module is prefix-mangled neither half of
+// `E.Wrap` lines up with the mangled `lib__E` / `lib__Wrap` the decl now
+// carries unless the qualifier is recognised as a type. Native asks the same
+// question of `ownEnums` (internal/modload).
+pub function collect_enum_names(mod: parser.Module): string[] {
+    var names: string[] = [];
+    var i: i32 = 0;
+    while (i < mod.enums.len()) {
+        names = names.append(mod.enums[i].name);
+        i = i + 1;
+    }
+    return names;
+}
+
 // mangle_module renames a non-entry module's own decls to
 // `prefix__name` and rewrites every internal reference to match, plus
 // flattens any qualified refs it makes to other modules.
@@ -882,6 +924,7 @@ pub function mangle_module(mod: parser.Module, prefix: string, ivar_names: strin
         dn_head: build_declname_head(decls),
         dn_next: build_declname_next(decls),
         locals: [],
+        enumnames: collect_enum_names(mod),
         ivar_names: ivar_names,
         ivar_mangled: ivar_mangled,
         reexport_keys: reexport_keys,
@@ -1302,7 +1345,7 @@ function main(): i32 {
     ivm = ivm.append("test__Fail");
     var rxk: string[] = [];
     var rxt: string[] = [];
-    var ctx: RewriteCtx = RewriteCtx { modnames: mn, modprefixes: mn, prefix: "lx", declnames: dn, declnames_mangled: build_mangled_names("lx", dn), dn_head: build_declname_head(dn), dn_next: build_declname_next(dn), locals: [], ivar_names: ivn, ivar_mangled: ivm, reexport_keys: rxk, reexport_targets: rxt };
+    var ctx: RewriteCtx = RewriteCtx { modnames: mn, modprefixes: mn, prefix: "lx", declnames: dn, declnames_mangled: build_mangled_names("lx", dn), dn_head: build_declname_head(dn), dn_next: build_declname_next(dn), locals: [], enumnames: [], ivar_names: ivn, ivar_mangled: ivm, reexport_keys: rxk, reexport_targets: rxt };
     if (rewrite_type_name("lexer.Token[]", ctx) != "lexer__Token[]") { return 90; }
     if (rewrite_type_name("Token[]", ctx) != "lx__Token[]") { return 91; }
     if (rewrite_type_name("Token", ctx) != "lx__Token") { return 92; }
@@ -1351,11 +1394,29 @@ function main(): i32 {
     rxk2 = rxk2.append("lexer__Token");
     var rxt2: string[] = [];
     rxt2 = rxt2.append("orig__Token");
-    var rctx: RewriteCtx = RewriteCtx { modnames: mn, modprefixes: mn, prefix: "lx", declnames: dn, declnames_mangled: build_mangled_names("lx", dn), dn_head: build_declname_head(dn), dn_next: build_declname_next(dn), locals: [], ivar_names: ivn, ivar_mangled: ivm, reexport_keys: rxk2, reexport_targets: rxt2 };
+    var rctx: RewriteCtx = RewriteCtx { modnames: mn, modprefixes: mn, prefix: "lx", declnames: dn, declnames_mangled: build_mangled_names("lx", dn), dn_head: build_declname_head(dn), dn_next: build_declname_next(dn), locals: [], enumnames: [], ivar_names: ivn, ivar_mangled: ivm, reexport_keys: rxk2, reexport_targets: rxt2 };
     if (rewrite_type_name("lexer.Token", rctx) != "orig__Token") { return 97; }
     if (rewrite_type_name("lexer.Token[]", rctx) != "orig__Token[]") { return 98; }
     // A non-re-exported qualified type still mangles normally.
     if (rewrite_type_name("lexer.Span", rctx) != "lexer__Span") { return 99; }
+
+    // --- ENUM-qualified references in a mangled module (#8650) ---
+    // `E.Wrap` inside a module being prefix-mangled is a variant of the
+    // module's OWN enum, not `<module>.<name>`: both halves take the prefix,
+    // so the pattern lines up with the mangled EnumDecl mangle_enum_decls
+    // produces. An imported module still wins a colliding qualifier, and an
+    // enum-shaped spelling whose qualifier is not an own enum is left alone.
+    var edn: string[] = [];
+    edn = edn.append("E");
+    edn = edn.append("Wrap");
+    var een: string[] = [];
+    een = een.append("E");
+    var ectx: RewriteCtx = RewriteCtx { modnames: mn, modprefixes: mn, prefix: "lx", declnames: edn, declnames_mangled: build_mangled_names("lx", edn), dn_head: build_declname_head(edn), dn_next: build_declname_next(edn), locals: [], enumnames: een, ivar_names: ivn, ivar_mangled: ivm, reexport_keys: rxk, reexport_targets: rxt };
+    if (rewrite_type_name("E.Wrap", ectx) != "lx__E.lx__Wrap") { return 220; }
+    if (rewrite_type_name("E", ectx) != "lx__E") { return 221; }
+    if (rewrite_type_name("Wrap", ectx) != "lx__Wrap") { return 222; }
+    if (rewrite_type_name("lexer.Token", ectx) != "lexer__Token") { return 223; }
+    if (rewrite_type_name("Other.Wrap", ectx) != "Other.Wrap") { return 224; }
 
     // --- Brick 3: bundle (merge entry + mangled imports) ---
     var amod: parser.Module = parser.parse_module(lexer.tokenize(

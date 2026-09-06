@@ -38,6 +38,10 @@ func TestHeapReservationFitsTheAddressRange(t *testing.T) {
 // unmapped memory. A site that skips the call allocates past the end silently,
 // and nothing else in the suite notices until a program large enough to reach
 // the end runs — so check the emitted text of every runtime helper directly.
+//
+// A store carrying heapRewindComment is a cursor LOWERED back over space
+// nothing owns; it moves the arena end no closer, so it is exempt — and being
+// marked is what keeps the exemption from covering a bump that lost its guard.
 func TestEveryHeapBumpPublishesThroughTheGuard(t *testing.T) {
 	names := make([]string, 0, len(runtimeHelperEmitters))
 	for name := range runtimeHelperEmitters {
@@ -78,6 +82,13 @@ func unguardedBumps(asm string) []string {
 	}
 	var bad []string
 	for i, in := range instrs {
+		if strings.HasSuffix(in, heapRewindComment) {
+			store := plainStoreRe.FindStringSubmatch(strings.TrimSuffix(in, heapRewindComment))
+			if store == nil || !cursorReg[store[1]] {
+				bad = append(bad, in+" (marked a rewind but does not store through &"+heapPtrSym+")")
+			}
+			continue
+		}
 		if m := cursorAddrRe.FindStringSubmatch(in); m != nil {
 			cursorReg[m[1]] = true
 			continue

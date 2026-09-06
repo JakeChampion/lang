@@ -938,6 +938,12 @@ function to_human(val0: ld.LD, prec: i32, o: Opts): Human {
 // appended into whatever room the conversion leaves, and --padding is
 // applied outside it. The buffer is GNU's own, so unlike the unscaled
 // path's LDBL_DIG limit these lengths are the same on every target.
+//
+// GNU <= 9.4 only (docs/COREUTILS.md's version rule). Measured against
+// 9.4; from 9.5 `prepare_padded_number` grows a `padding_buffer` with
+// xpalloc instead, so the length refusal is unreachable there and a
+// precision this side of an allocation failure prints. #8765 carries
+// the question of which behaviour Fern should keep.
 function out_buf_len(): i32 {
   return 128;
 }

@@ -2230,12 +2230,22 @@ function variant_payload_type_at(s: Scope, type_name: string, idx: i32): Type {
 // this only pv.binding was bound, so a multi-binding payload pattern
 // (`Rect(w, h)`) rejected the 2nd+ name as an undefined E001 (#4345).
 function bind_variant_payloads(arm: Scope, look: Scope, pvin: ast.PatVariant): Scope {
+  // The payload TYPE is resolved through the enum, not the variant struct:
+  // variant decls are keyed by the bare name, so `A.W` and `C.W` leave two
+  // decls called `W` and a bare lookup answers for whichever was declared
+  // first. The qualifier is what tells them apart, so it is kept here and
+  // dropped only at the individual lookups that are genuinely keyed bare.
   var pv: ast.PatVariant = pvin;
   // A record pattern that named every field but renamed one binds the DECLARED
   // names, as native does after rejecting the rename — so the body's reference
   // to the renamed local is the undefined-name error native also reports.
   if (pv.field_names.len() > 0) {
-    var rss: StructSig = look.lookup_struct(pv.type_name);
+    // The struct table IS keyed bare, unlike the payload-type lookups below,
+    // so this one strips. Handed a qualified `E.Wrap` it would miss, leave
+    // rss.variant_field_names empty, and record_fields_cover would answer
+    // false — silently skipping the rebind and the E015 native reports for a
+    // renamed or positional-variant record pattern.
+    var rss: StructSig = look.lookup_struct(variant_pattern_name(pv.type_name));
     if (parser.record_fields_cover(rss.variant_field_names, pv.field_names)) {
       pv = parser.rebind_record_positional(pv, rss.variant_field_names);
     }
@@ -3917,7 +3927,8 @@ pub function check_stmt(st: ast.Stmt, s: Scope): CheckResult {
         match (arm.pattern) {
           ast.PatWildcard(_) => {},
           ast.PatVariant(pv) => {
-            var ss: StructSig = s.lookup_struct(pv.type_name);
+            var pvn: string = variant_pattern_name(pv.type_name);
+            var ss: StructSig = s.lookup_struct(pvn);
             if (ss.name.len() == 0) {
               ok = false;
             } else {
@@ -3928,11 +3939,11 @@ pub function check_stmt(st: ast.Stmt, s: Scope): CheckResult {
               // scrutinee: variant must match the
               // struct's name.
               if (union_name.len() > 0) {
-                if (!is_variant_of(pv.type_name, union_name, s.unions.unions)) {
+                if (!is_variant_of(pvn, union_name, s.unions.unions)) {
                   ok = false;
                 }
               } else if (struct_name.len() > 0) {
-                if (struct_name != pv.type_name) {
+                if (struct_name != pvn) {
                   ok = false;
                 }
               }
@@ -7051,6 +7062,20 @@ function dot_index(s: string): i32 {
   return 0 - 1;
 }
 
+// variant_pattern_name is the variant a pattern names, with any ENUM qualifier
+// stripped: `E.Wrap` -> `Wrap`, and in a prefix-mangled module
+// `lib__E.lib__Wrap` -> `lib__Wrap`. That suffix is the name the enum's variant
+// list and the variant struct are both keyed by — the same strip irlower does
+// when it lowers the arm. A module qualifier never survives to here (flatten
+// mangles it to `__`), so a dot at this point is always the enum spelling.
+function variant_pattern_name(name: string): string {
+  var d: i32 = dot_index(name);
+  if (d < 0) {
+    return name;
+  }
+  return slice_unchecked(name, d + 1, name.len()) + "";
+}
+
 // type_arity_diag checks one type annotation: if it supplies an explicit
 // `[...]` argument list whose count doesn't match the named struct's
 // declared type-parameter count, it's E019. Checked at param + struct-
@@ -7107,7 +7132,12 @@ function variant_payload_count(name: string, structs: StructSig[]): i32 {
 // does not declare, named one twice, or missed one — or the variant carries
 // positional payloads and cannot be matched by name at all. Mirrors native's
 // resolveVariantBindings (checker.go:9363-9397).
-function record_pattern_diags(pv: ast.PatVariant, structs: StructSig[], line: i32, col: i32): util.Diag[] {
+function record_pattern_diags(pvin: ast.PatVariant, structs: StructSig[], line: i32, col: i32): util.Diag[] {
+  // Both the sig table and native's wording use the BARE variant name, and
+  // nothing here resolves a payload TYPE, so unlike bind_variant_payloads this
+  // function strips at entry. Handed a qualified `E.Wrap` it used to miss the
+  // sig, return empty, and let a record pattern on a positional variant pass.
+  var pv: ast.PatVariant = ast.PatVariant { ...pvin, type_name: variant_pattern_name(pvin.type_name) };
   var out: util.Diag[] = [];
   var ss: StructSig = find_struct_sig(structs, pv.type_name);
   if (ss.name.len() == 0) {
@@ -9440,7 +9470,7 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
               match (mst) {
                 TypeUnion(amu) => {
                   var ausig: UnionSig = cur.lookup_union(amu.name);
-                  if (ausig.name.len() > 0 && !util.has_str(ausig.variants, apv.type_name)) {
+                  if (ausig.name.len() > 0 && !util.has_str(ausig.variants, variant_pattern_name(apv.type_name))) {
                     foreign = true;
                   }
                 },
@@ -14734,11 +14764,9 @@ function annotate_for_scope(fr: ast.StmtFor, s: Scope): Scope {
 }
 
 // annotate_variant_struct resolves a match pattern's variant name to the name its
-// struct sig is registered under, or "" when none is. A pattern that still carries
-// a dot here is qualified by its ENUM (`E.A` — flatten mangled module qualifiers
-// to `__` long before this), and parse_enum_decl registers the variant struct
-// under the BARE name, so the suffix is what resolves — the same strip irlower
-// does when it lowers the arm. The qualifier must actually name an enum owning
+// struct sig is registered under, or "" when none is. parse_enum_decl registers
+// a variant struct under the BARE name, so an enum-qualified pattern resolves
+// through variant_pattern_name. The qualifier must actually name an enum owning
 // that variant, so a dotted name that is not an enum-qualified variant resolves
 // to "" (its payloads stay unbound) rather than to a same-named plain struct.
 function annotate_variant_struct(name: string, s: Scope): string {
@@ -14749,7 +14777,7 @@ function annotate_variant_struct(name: string, s: Scope): string {
   if (d < 0) {
     return "";
   }
-  var bare: string = slice_unchecked(name, d + 1, name.len()) + "";
+  var bare: string = variant_pattern_name(name);
   if (!is_variant_of(bare, slice_unchecked(name, 0, d) + "", s.unions.unions)) {
     return "";
   }
