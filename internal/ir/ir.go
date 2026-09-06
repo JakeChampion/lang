@@ -16143,6 +16143,52 @@ func (b *builder) enumReuseLoads(ed *ast.EnumDecl) (loads []enumDropLoad, size i
 	return nil, sz, true
 }
 
+// sameAllocClass reports whether two allocation sizes land in the same size
+// class — the test __alloc_reuse makes at runtime to decide whether a donor
+// token can be handed straight back. Both sizes are compile-time constants at
+// every reuse site, so the answer is known before emit.
+func sameAllocClass(a, b int32) bool { return (a+15)&^15 == (b+15)&^15 }
+
+// emitReuseBox picks the box a constructor-reuse site builds into and leaves
+// it in boxSlot: the donor's own storage when the donor is uniquely held, a
+// fresh block otherwise. reusedSlot holds the is_unique result the caller has
+// already taken for srcSlot; decline, when non-nil, emits the extra work the
+// shared branch owes before it releases the donor.
+//
+// The branch is taken here rather than inside __alloc_reuse so the reuse path
+// — the whole point of the optimisation — does not pay a call to be handed
+// its own donor back; the helper is left the one case it is needed for, where
+// there is no donor. The caller must have established that the two sizes share
+// a class (sameAllocClass), which is what makes the donor's block usable
+// without the runtime check the helper would otherwise make.
+//
+// The fresh arm stays on __alloc_reuse rather than a bare OpAlloc: an OpAlloc
+// in the op stream is what verifyFipAllocs reads as an UN-paired allocation,
+// and a reuse site is precisely a paired one. Its shared-input fallback is
+// exempt by design, which is what a null token selects.
+func (b *builder) emitReuseBox(reusedSlot, srcSlot, boxSlot, allocBytes int32, decline func()) {
+	const rcHeaderBytes = 8
+	b.emit(Op{Kind: OpLoadLocal, I32: reusedSlot})
+	b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
+	b.emit(Op{Kind: OpLoadLocal, I32: srcSlot})
+	b.emit(Op{Kind: OpConstI32, I32: rcHeaderBytes})
+	b.emit(Op{Kind: OpSub})
+	b.emit(Op{Kind: OpStoreLocal, I32: boxSlot})
+	b.emit(Op{Kind: OpElse})
+	if decline != nil {
+		decline()
+	}
+	b.emit(Op{Kind: OpLoadLocal, I32: srcSlot})
+	b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
+	b.emit(Op{Kind: OpDrop})
+	b.emit(Op{Kind: OpConstI32, I32: 0})
+	b.emit(Op{Kind: OpConstI32, I32: allocBytes})
+	b.emit(Op{Kind: OpConstI32, I32: allocBytes})
+	b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__alloc_reuse", Width: ResAddr, I32: 3})
+	b.emit(Op{Kind: OpStoreLocal, I32: boxSlot})
+	b.emit(Op{Kind: OpEnd})
+}
+
 // emitReuseToken lowers the general-FBIP reuse allocation for a construction C
 // paired with the dead, owned source local D. It emits the runtime is_unique
 // gate, the token select (`reused ? base(D) : 0`; the shared/null branch dec's
@@ -16165,6 +16211,24 @@ func (b *builder) emitReuseToken(dName string, dAlloc, cAlloc int32, declineDups
 	b.emit(Op{Kind: OpLoadLocal, I32: dSlot})
 	b.emit(Op{Kind: OpRcIsUnique, Str: "__fern_rc_is_unique", I32: 1})
 	b.emit(Op{Kind: OpStoreLocal, I32: reusedSlot})
+	decline := func() { b.emitOwnMatchSharedPayloadDups(declineDups) }
+	if sameAllocClass(dAlloc, cAlloc) {
+		// D's block fits C exactly, so the runtime class check inside
+		// __alloc_reuse can only ever agree with what is already known
+		// here: take the branch in the IR and leave the call to the
+		// fresh path (emitReuseBox).
+		boxSlot := b.allocSlot()
+		b.locals[fmt.Sprintf("__reuse_src_box_%d", boxSlot)] = boxSlot
+		b.emitReuseBox(reusedSlot, dSlot, boxSlot, cAlloc, decline)
+		// D consumed (box taken or dec'd) — zero its slot.
+		b.emit(Op{Kind: OpConstI32, I32: 0})
+		b.emit(Op{Kind: OpStoreLocal, I32: dSlot})
+		b.emit(Op{Kind: OpLoadLocal, I32: boxSlot})
+		return reusedSlot
+	}
+	// Different size classes: the reuse branch's block has to be freed to
+	// ITS class before C's is allocated, which is what __alloc_reuse's
+	// token protocol is for. Hand it the token and let it decide.
 	tokenSlot := b.allocSlot()
 	b.locals[fmt.Sprintf("__reuse_src_tok_%d", tokenSlot)] = tokenSlot
 	b.emit(Op{Kind: OpLoadLocal, I32: reusedSlot})
@@ -16174,7 +16238,7 @@ func (b *builder) emitReuseToken(dName string, dAlloc, cAlloc int32, declineDups
 	b.emit(Op{Kind: OpSub})
 	b.emit(Op{Kind: OpStoreLocal, I32: tokenSlot})
 	b.emit(Op{Kind: OpElse})
-	b.emitOwnMatchSharedPayloadDups(declineDups)
+	decline()
 	b.emit(Op{Kind: OpLoadLocal, I32: dSlot})
 	b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
 	b.emit(Op{Kind: OpDrop})
@@ -16347,41 +16411,19 @@ func (b *builder) emitStructUpdateReuse(sl *ast.StructLit, sd *ast.StructDecl, t
 		hasPtr = hasPtr || isPtr
 	}
 
-	// 2. reused = is_unique(old) (an i32 0/1, captured so both the token
-	//    select and the old-field-dec branch can read it). token =
-	//    reused ? base(old) : 0; the aliased / null / sentinel branch
-	//    dec's the old box (the alias keeps it) and yields 0 so
-	//    __alloc_reuse allocates a fresh box.
+	// 2. reused = is_unique(old) (an i32 0/1, captured so both the box
+	//    select and the old-field-dec branch can read it).
+	// 3. box = reused ? base(old) : a fresh block; the aliased / null /
+	//    sentinel branch dec's the old box first, so the alias keeps it.
 	reusedSlot := b.allocSlot()
 	b.locals[fmt.Sprintf("__reuse_uniq_%d", reusedSlot)] = reusedSlot
 	b.emit(Op{Kind: OpLoadLocal, I32: idx})
 	b.emit(Op{Kind: OpRcIsUnique, Str: "__fern_rc_is_unique", I32: 1})
 	b.emit(Op{Kind: OpStoreLocal, I32: reusedSlot})
 
-	tokenSlot := b.allocSlot()
-	b.locals[fmt.Sprintf("__reuse_tok_%d", tokenSlot)] = tokenSlot
-	b.emit(Op{Kind: OpLoadLocal, I32: reusedSlot})
-	b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
-	b.emit(Op{Kind: OpLoadLocal, I32: idx})
-	b.emit(Op{Kind: OpConstI32, I32: rcHeaderBytes})
-	b.emit(Op{Kind: OpSub})
-	b.emit(Op{Kind: OpStoreLocal, I32: tokenSlot})
-	b.emit(Op{Kind: OpElse})
-	b.emit(Op{Kind: OpLoadLocal, I32: idx})
-	b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
-	b.emit(Op{Kind: OpDrop})
-	b.emit(Op{Kind: OpConstI32, I32: 0})
-	b.emit(Op{Kind: OpStoreLocal, I32: tokenSlot})
-	b.emit(Op{Kind: OpEnd})
-
-	// 3. base = __alloc_reuse(token, size+hdr, size+hdr).
 	boxSlot := b.allocSlot()
 	b.locals[fmt.Sprintf("__reuse_box_%d", boxSlot)] = boxSlot
-	b.emit(Op{Kind: OpLoadLocal, I32: tokenSlot})
-	b.emit(Op{Kind: OpConstI32, I32: size + rcHeaderBytes})
-	b.emit(Op{Kind: OpConstI32, I32: size + rcHeaderBytes})
-	b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__alloc_reuse", Width: ResAddr, I32: 3})
-	b.emit(Op{Kind: OpStoreLocal, I32: boxSlot})
+	b.emitReuseBox(reusedSlot, idx, boxSlot, size+rcHeaderBytes, nil)
 
 	// 4. REUSE branch only: release the box's OLD pointer-field values
 	//    before the new ones overwrite them. On a fresh box (reused==0)
@@ -16637,30 +16679,10 @@ func (b *builder) tryEnumReuseOverwrite(n *ast.Assign, t *ast.Ident, idx int32) 
 	b.emit(Op{Kind: OpRcIsUnique, Str: "__fern_rc_is_unique", I32: 1})
 	b.emit(Op{Kind: OpStoreLocal, I32: reusedSlot})
 
-	tokenSlot := b.allocSlot()
-	b.locals[fmt.Sprintf("__ereuse_tok_%d", tokenSlot)] = tokenSlot
-	b.emit(Op{Kind: OpLoadLocal, I32: reusedSlot})
-	b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
-	b.emit(Op{Kind: OpLoadLocal, I32: idx})
-	b.emit(Op{Kind: OpConstI32, I32: rcHeaderBytes})
-	b.emit(Op{Kind: OpSub})
-	b.emit(Op{Kind: OpStoreLocal, I32: tokenSlot})
-	b.emit(Op{Kind: OpElse})
-	b.emit(Op{Kind: OpLoadLocal, I32: idx})
-	b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
-	b.emit(Op{Kind: OpDrop})
-	b.emit(Op{Kind: OpConstI32, I32: 0})
-	b.emit(Op{Kind: OpStoreLocal, I32: tokenSlot})
-	b.emit(Op{Kind: OpEnd})
-
-	// 3. base = __alloc_reuse(token, size+hdr, size+hdr).
+	// 3. box = reused ? base(old) : a fresh block.
 	boxSlot := b.allocSlot()
 	b.locals[fmt.Sprintf("__ereuse_box_%d", boxSlot)] = boxSlot
-	b.emit(Op{Kind: OpLoadLocal, I32: tokenSlot})
-	b.emit(Op{Kind: OpConstI32, I32: size + rcHeaderBytes})
-	b.emit(Op{Kind: OpConstI32, I32: size + rcHeaderBytes})
-	b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__alloc_reuse", Width: ResAddr, I32: 3})
-	b.emit(Op{Kind: OpStoreLocal, I32: boxSlot})
+	b.emitReuseBox(reusedSlot, idx, boxSlot, size+rcHeaderBytes, nil)
 
 	// 3b. REUSE branch only: free the box's OLD payload(s) before the new
 	//     ones overwrite them. On a fresh box (reused==0) those slots are
@@ -20527,6 +20549,41 @@ func outerArrIdxHelper(stride int32) string {
 	}
 }
 
+// emitCowInplace consumes the receiver buffer on the operand stack and leaves
+// the buffer to write through in bufSlot, taking the mutate-or-copy decision
+// in the IR instead of inside `helper`:
+//
+//	if is_unique(arr) { buf = arr } else { buf = helper(arr, stride) }
+//
+// The condition is the SAME uniqueness test the helper makes — its fast path
+// is `[arr-8] == 1 → return arr` — so the two paths are interchangeable and
+// nothing about ownership is being assumed statically. is_unique is the
+// stricter of the pair (it also rejects a below-heap pointer and a static
+// sentinel, both of which the helper's plain rc load would take to its copy
+// path or fault on), so a receiver it declines still reaches the helper and
+// behaves exactly as before.
+//
+// What this buys is the whole call: on the unique path — the accumulator
+// threading a buffer through `a = a.with(i, v)`, which is what byte-at-a-time
+// output is made of — the write becomes straight-line code with no call, no
+// argument marshalling and no spill around it (#8530).
+func (b *builder) emitCowInplace(bufSlot, stride int32, helper string) {
+	// One slot for both roles: the unique path's buffer IS the receiver, so
+	// it needs no move, and only the copy path overwrites the slot. The
+	// then-arm is deliberately empty — inverting the condition would cost
+	// the fast path the very instructions this is removing.
+	b.emit(Op{Kind: OpStoreLocal, I32: bufSlot})
+	b.emit(Op{Kind: OpLoadLocal, I32: bufSlot})
+	b.emit(Op{Kind: OpRcIsUnique, Str: "__fern_rc_is_unique", I32: 1})
+	b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
+	b.emit(Op{Kind: OpElse})
+	b.emit(Op{Kind: OpLoadLocal, I32: bufSlot})
+	b.emit(Op{Kind: OpConstI32, I32: stride})
+	b.emit(Op{Kind: OpCallDirect, Str: helper, Width: ResAddr, I32: 2})
+	b.emit(Op{Kind: OpStoreLocal, I32: bufSlot})
+	b.emit(Op{Kind: OpEnd})
+}
+
 // emitArraySet lowers `arr.set(i, v)` inline — Phase 2b's
 // explicit value-returning sister to `arr[i] = v`. Same shape
 // as the IR-level CoW desugar but expression-position: leaves
@@ -20615,7 +20672,6 @@ func (b *builder) emitArraySet(n *ast.Call) error {
 			}
 		}
 	}
-	b.emit(Op{Kind: OpConstI32, I32: stride})
 	// Element-retain on the CoW copy, keyed like emitArrayPush's grow-helper
 	// selection: a two-word (data, len) string element walks through
 	// __fern_str_inc, everything else is a single word __fern_rc_inc guards.
@@ -20626,10 +20682,17 @@ func (b *builder) emitArraySet(n *ast.Call) error {
 			cowHelper = "__fern_arr_cow_inplace_str"
 		}
 	}
-	b.emit(Op{Kind: OpCallDirect, Str: cowHelper, Width: ResAddr, I32: 2})
 	bufSlot := b.allocSlot()
 	b.locals[fmt.Sprintf("__set_buf_%d", bufSlot)] = bufSlot
-	b.emit(Op{Kind: OpStoreLocal, I32: bufSlot})
+	if b.rc.arraySetInc[n] {
+		// Just inc'd above: rc >= 2, so the helper's rc==1 arm is
+		// unreachable and testing for it inline would only cost.
+		b.emit(Op{Kind: OpConstI32, I32: stride})
+		b.emit(Op{Kind: OpCallDirect, Str: cowHelper, Width: ResAddr, I32: 2})
+		b.emit(Op{Kind: OpStoreLocal, I32: bufSlot})
+	} else {
+		b.emitCowInplace(bufSlot, stride, cowHelper)
+	}
 	// Element address: buf + i*stride via the per-stride
 	// bounds-check helper.
 	b.emit(Op{Kind: OpLoadLocal, I32: bufSlot})
