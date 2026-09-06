@@ -393,6 +393,11 @@ as a source with no module does, so a name in neither file nor DNS prints
 `00000000` where nss-myhostname would answer 127.0.0.2), and a nameserver
 that black-holes the connection holds `hostid` for the kernel's connect
 timeout where glibc gives up after resolv.conf's `timeout` × `attempts`.
+The search loop itself is `__res_context_search`'s and reacts to three
+failures separately, which is not obvious and was got wrong once: a
+SERVFAIL rcode records itself and moves to the NEXT candidate, a refused
+connection returns at once trying nothing further, and any other failure
+ends the candidate list but still asks the bare name.
 Neither changes the bytes on a host whose name resolves.
 
 ## Open gaps

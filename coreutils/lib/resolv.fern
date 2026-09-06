@@ -42,6 +42,18 @@ pub function unavail(): i32 {
   return 2;
 }
 
+// Two statuses the DNS leg uses internally and never lets escape, because
+// glibc's search loop reacts to each differently: a SERVFAIL rcode moves on
+// to the next candidate, a refused connection abandons the search outright,
+// and a timeout stops the candidates but still tries the bare name.
+pub function servfail(): i32 {
+  return 3;
+}
+
+pub function refused(): i32 {
+  return 4;
+}
+
 // ---- addresses --------------------------------------------------------------
 // `ipv4_word(a, b, c, d)` — the in_addr word of `a.b.c.d`.
 pub function ipv4_word(a: i32, b: i32, c: i32, d: i32): i32 {
@@ -464,6 +476,9 @@ pub function dns_answer_a(msg: u8[], id: i32): (i32, i32) {
   if (rcode == 3) {
     return (notfound(), 0);
   }
+  if (rcode == 2) {
+    return (servfail(), 0);
+  }
   if (rcode != 0) {
     return (unavail(), 0);
   }
@@ -509,7 +524,7 @@ function dns_exchange(ns: i32, qname: string): (i32, i32) {
   framed = framed.concat(q);
   var c: i32 = tcp_connect(ns, 53);
   if (c < 0) {
-    return (unavail(), 0);
+    return (refused(), 0);
   }
   if (tcp_send(c, string_from_bytes_unchecked(framed)) < 0) {
     tcp_close(c);
@@ -546,31 +561,90 @@ function read_framed(c: i32): u8[] {
 }
 
 // `dns_lookup(rc, name)` — glibc's res_search over the nameservers: each
-// candidate name is put to the servers in order until one answers, and a
-// definite answer — an address or NXDOMAIN — from any server is final for
-// that candidate. A candidate no server could answer ends the whole
-// search as UNAVAIL, as glibc's TRY_AGAIN does.
+// candidate name is put to the servers in order until one answers, and an
+// address or NXDOMAIN from any server is final for that candidate.
+//
+// How a candidate's failure ends the search is __res_context_search's,
+// which reacts to three cases rather than one:
+//
+//   - a SERVFAIL rcode records itself and moves to the NEXT candidate, so
+//     one broken zone does not hide a name the search list would reach;
+//   - a refused connection returns at once, trying nothing further;
+//   - any other failure — a timeout, a malformed reply — ends the search
+//     LIST but still asks the bare name, which is the tail of `cands`
+//     exactly when glibc's post-loop as-is retry would fire (the bare name
+//     leads instead when ndots is already satisfied, and is then the
+//     candidate that failed).
+//
+// Only an address escapes as SUCCESS; the failures collapse back to the
+// three NSS statuses, with a recorded SERVFAIL reported as UNAVAIL the way
+// glibc reports its TRY_AGAIN.
 pub function dns_lookup(rc: ResolvConf, name: string): (i32, i32) {
-  var cands: string[] = search_candidates(name, rc);
+  return dns_search(search_candidates(name, rc), (q: string): (i32, i32) => dns_lookup_one(rc, q));
+}
+
+// The loop above, over an `ask` that answers one candidate. Separated so
+// the policy can be driven with scripted answers rather than a nameserver:
+// which candidate is asked next is as much of the behaviour as what is
+// returned, and only a stub can see that.
+pub function dns_search(cands: string[], ask: (string) => (i32, i32)): (i32, i32) {
+  var last: i32 = cands.len() - 1;
+  var got_servfail: boolean = false;
   var i: i32 = 0;
   while (i < cands.len()) {
-    var r: (i32, i32) = dns_lookup_one(rc, cands[i]);
-    if (r.0 != notfound()) {
+    var r: (i32, i32) = ask(cands[i]);
+    if (r.0 == success()) {
       return r;
     }
+    if (r.0 == refused()) {
+      return (unavail(), 0);
+    }
+    if (r.0 == servfail()) {
+      got_servfail = true;
+    } else if (r.0 == unavail()) {
+      if (i == last) {
+        break;
+      }
+      var bare: (i32, i32) = ask(cands[last]);
+      if (bare.0 == success()) {
+        return bare;
+      }
+      if (bare.0 == notfound() && !got_servfail) {
+        return (notfound(), 0);
+      }
+      return (unavail(), 0);
+    }
     i = i + 1;
+  }
+  if (got_servfail) {
+    return (unavail(), 0);
+  }
+  if (i < cands.len()) {
+    return (unavail(), 0);
   }
   return (notfound(), 0);
 }
 
+// One candidate against every nameserver in order. A server that answers
+// anything at all — an address, NXDOMAIN, SERVFAIL — settles the candidate;
+// only a server that could not be reached or did not reply moves to the
+// next. Every server exhausted is the timeout case, not the refused one,
+// unless every one of them refused the connection.
 function dns_lookup_one(rc: ResolvConf, qname: string): (i32, i32) {
+  var all_refused: boolean = true;
   var j: i32 = 0;
   while (j < rc.nameservers.len()) {
     var r: (i32, i32) = dns_exchange(rc.nameservers[j], qname);
-    if (r.0 != unavail()) {
+    if (r.0 != unavail() && r.0 != refused()) {
       return r;
     }
+    if (r.0 != refused()) {
+      all_refused = false;
+    }
     j = j + 1;
+  }
+  if (all_refused && rc.nameservers.len() > 0) {
+    return (refused(), 0);
   }
   return (unavail(), 0);
 }
