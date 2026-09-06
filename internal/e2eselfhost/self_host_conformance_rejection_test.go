@@ -35,9 +35,9 @@ import (
 //
 // This gate pins the verdict per case, exactly in both directions:
 //
-//   - a case NOT in the gap file must be rejected — the 58 that work today
-//     (70 cases, less the 7 gaps and the 5 `parse:` rows) can never silently
-//     regress to accepted;
+//   - a case NOT in the gap file must be rejected — every case that works
+//     today (the corpus, less the gaps and the `parse:` rows) can never
+//     silently regress to accepted;
 //   - a case IN the gap file must still be accepted — closing a gap fails here
 //     until its line is deleted, so the file cannot rot into a list of
 //     already-fixed things.
