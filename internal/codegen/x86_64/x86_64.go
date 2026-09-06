@@ -13317,7 +13317,10 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("ret")
 	g.line(".size __fern_reader_read_line, .-__fern_reader_read_line")
 
-	// __fern_reader_read_chunk(reader_ptr, n) → Option[string].
+	// __fern_reader_read_chunk(reader_ptr, n) → Result[string, IoError]:
+	// the bytes read, Ok("") at end of input, Err(e) when read(2) failed
+	// (a directory reads EISDIR, and a streaming caller has to tell that
+	// from EOF — #8700).
 	g.line("")
 	g.line(".globl __fern_reader_read_chunk")
 	g.line(".type __fern_reader_read_chunk, @function")
@@ -13342,7 +13345,8 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("xor eax, eax")
 	g.emitSyscallPreloaded(sysRead)
 	g.emit("test rax, rax")
-	g.emit("jle .Lrrc_none")
+	g.emit("js .Lrrc_err")
+	g.emit("jz .Lrrc_eof")
 	g.emit("cmp rax, r12")
 	g.emit("je .Lrrc_some")
 	// Short read (a pipe hands back at most 64 KiB): __fern_str_dec frees
@@ -13370,14 +13374,34 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("mov dword ptr [rax], 0")
 	g.emit("mov [rax + 8], r13")
 	g.emit("jmp .Lrrc_ret")
-	g.label(".Lrrc_none")
-	// EOF / error: nothing owns the buffer, so give it back.
+	g.label(".Lrrc_eof")
+	// End of input: nothing owns the buffer, so give it back, and
+	// answer Ok("") — read(2) returning 0 is what EOF is (#8700).
 	g.emit("mov rdi, r13")
 	g.emit("lea esi, [r12 + 1]")
 	g.emit("call __fern_box_free")
-	g.emit("mov edi, 4")
+	g.emit("mov edi, 16")
+	g.emit("call __fern_alloc_box")
+	g.emit("mov dword ptr [rax], 0")
+	g.emit("lea rcx, [rip + .LStr_ioerr_empty]")
+	g.emit("mov [rax + 8], rcx")
+	g.emit("jmp .Lrrc_ret")
+	g.label(".Lrrc_err")
+	// The read failed: give the buffer back and report the errno. A
+	// read carries no path, so it is classified against an empty one.
+	g.emit("neg rax")
+	g.emit("mov ebx, eax") // errno; the fd in rbx is done with
+	g.emit("mov rdi, r13")
+	g.emit("lea esi, [r12 + 1]")
+	g.emit("call __fern_box_free")
+	g.emit("mov edi, ebx")
+	g.emit("lea rsi, [rip + .LStr_ioerr_empty]")
+	g.emit("call __fern_io_error")
+	g.emit("mov r12, rax")
+	g.emit("mov edi, 16")
 	g.emit("call __fern_alloc_box")
 	g.emit("mov dword ptr [rax], 1")
+	g.emit("mov [rax + 8], r12")
 	g.label(".Lrrc_ret")
 	g.emit("pop r14")
 	g.emit("pop r13")

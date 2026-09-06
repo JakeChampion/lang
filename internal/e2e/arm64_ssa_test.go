@@ -745,15 +745,15 @@ function main(): i32 {
 		},
 		{
 			// Reader read-path round-trip: write a file, open_reader it, read_chunk(4)
-			// returns Some("abcd") (len 4), then r.close(). Exercises the Reader handle,
-			// Result[Reader, IoError] Ok box, and the Option[string] Some box.
+			// returns Ok("abcd") (len 4), then r.close(). Exercises the Reader handle
+			// and both Result[T, IoError] Ok boxes.
 			name: "reader_roundtrip",
 			src: `function main(): i32 {
   var w = write_file("/tmp/fern_ssa_e2e_rdr.txt", "abcdefg");
   return match (open_reader("/tmp/fern_ssa_e2e_rdr.txt")) {
     Ok(r) => match (r.read_chunk(4)) {
-      Some(s) => match (r.close()) { Some(e) => 40, None => s.len() },
-      None => 30
+      Ok(s) => match (r.close()) { Some(e) => 40, None => s.len() },
+      Err(e) => 30
     },
     Err(e) => 50
   };
@@ -761,17 +761,30 @@ function main(): i32 {
 			want: 4,
 		},
 		{
-			// read_chunk at EOF (an empty file) yields None. Exercises the read <= 0
-			// -> None branch of the Option[string] box.
+			// read_chunk at EOF (an empty file) yields Ok(""). Exercises the
+			// read == 0 branch of the Result[string, IoError] box.
 			name: "reader_read_chunk_eof",
 			src: `function main(): i32 {
   var w = write_file("/tmp/fern_ssa_e2e_rdeof.txt", "");
   return match (open_reader("/tmp/fern_ssa_e2e_rdeof.txt")) {
-    Ok(r) => match (r.read_chunk(8)) { Some(s) => 1, None => 7 },
+    Ok(r) => match (r.read_chunk(8)) { Ok(s) => 7 + s.len(), Err(e) => 1 },
     Err(e) => 50
   };
 }`,
 			want: 7,
+		},
+		{
+			// read_chunk on a DIRECTORY: open(2) succeeds, read(2) fails EISDIR,
+			// and the Err arm is the only thing that can tell that from an empty
+			// file (#8700).
+			name: "reader_read_chunk_eisdir",
+			src: `function main(): i32 {
+  return match (open_reader("/tmp")) {
+    Ok(r) => match (r.read_chunk(8)) { Ok(s) => 1, Err(e) => 9 },
+    Err(e) => 50
+  };
+}`,
+			want: 9,
 		},
 		{
 			// open_reader failure: a nonexistent path yields Err(NotFound).

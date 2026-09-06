@@ -99,7 +99,7 @@ func TestSelfHostOpenFileWasmIR(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(dir, "or.txt"), []byte("hello world"), 0o644); err != nil {
 			t.Fatalf("seed or.txt: %v", err)
 		}
-		src := `function main(): i32 { match (open_reader("or.txt")) { Ok(r) => { match (r.read_chunk(64)) { Some(s) => { r.close(); return s.len(); }, None => { r.close(); return 98; } } }, Err(_) => { return 95; } } return 99; }`
+		src := `function main(): i32 { match (open_reader("or.txt")) { Ok(r) => { match (r.read_chunk(64)) { Ok(s) => { r.close(); return s.len(); }, Err(e) => { r.close(); return 98; } } }, Err(_) => { return 95; } } return 99; }`
 		if code := run(t, src); code != 11 {
 			t.Fatalf("reader exit %d, want 11", code)
 		}

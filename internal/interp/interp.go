@@ -2769,11 +2769,11 @@ func builtinReaderReadChunk(i *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("Reader.read_chunk: size must be a number")
 	}
 	buf := make([]byte, int(size))
-	n, _ := r.Read(buf)
-	if n == 0 {
-		return optionNone(), nil
+	n, rerr := r.Read(buf)
+	if n == 0 && rerr != nil && !errors.Is(rerr, io.EOF) {
+		return resultErr(classifyIoError("", rerr)), nil
 	}
-	return optionSome(String(string(buf[:n]))), nil
+	return resultOk(String(string(buf[:n]))), nil
 }
 
 func builtinReaderClose(i *Interp, args []Value) (Value, error) {

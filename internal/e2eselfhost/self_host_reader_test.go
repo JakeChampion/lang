@@ -12,18 +12,18 @@ import (
 // support for the Reader / Option machinery:
 //
 //   - stdin() → a Reader,
-//   - Reader.read_chunk(n) → Some(string) / None,
+//   - Reader.read_chunk(n) → Ok(string) / Err(IoError),
 //   - Reader.close(),
-//   - Some(x) / None construction,
-//   - match on an Option binding the Some payload.
+//   - Ok(x) / Err(e) construction,
+//   - match on a Result binding the Ok payload.
 //
 // These are the building blocks std/io.read_all_stdin is written in.
 // The test builds the asm_run single-file self-host compiler (Go-built
 // x86 host binary), feeds it a hand-written read-all-of-stdin echo
 // program, assembles the EMITTED asm into a binary, then runs that
 // binary against several stdin inputs — including a >4096-byte input
-// that forces the read_chunk loop through multiple Some iterations
-// before None — asserting the program echoes its stdin verbatim.
+// that forces the read_chunk loop through multiple non-empty chunks
+// before Ok("") — asserting the program echoes its stdin verbatim.
 func TestSelfHostReaderX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -47,8 +47,11 @@ func TestSelfHostReaderX86_64(t *testing.T) {
 		"    var out: string = \"\";\n" +
 		"    while (true) {\n" +
 		"        match (r.read_chunk(4096)) {\n" +
-		"            Some(chunk) => { out = out + chunk; },\n" +
-		"            None => { r.close(); write(out); return 0; },\n" +
+		"            Ok(chunk) => {\n" +
+		"                if (chunk.len() == 0) { r.close(); write(out); return 0; }\n" +
+		"                out = out + chunk;\n" +
+		"            },\n" +
+		"            Err(e) => { r.close(); write(out); return 0; },\n" +
 		"        }\n" +
 		"    }\n" +
 		"    return 0;\n" +

@@ -89,12 +89,12 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 		// machine is irrelevant — this only has to make the ops lower.
 		"    if (read_int() < (0 as i64)) { return 24; }\n" +
 		"    if (read_all_stdin().len() != 0) { return 25; }\n" +
-		// The three Option-returning Reader leaves. read_line gates on
+		// The three boxed-return Reader leaves. read_line gates on
 		// `str_read_line`; read_chunk and close share the `reader` need, so the
 		// Reader has to be both read from and closed for both to be reachable.
 		"    match (read_line()) { Some(_) => {}, None => {} }\n" +
 		"    var rd: Reader = stdin();\n" +
-		"    match (rd.read_chunk(64)) { Some(_) => {}, None => {} }\n" +
+		"    match (rd.read_chunk(64)) { Ok(_) => {}, Err(_) => {} }\n" +
 		"    rd.close();\n" +
 		"    return b.len();\n" +
 		"}\n"
@@ -176,7 +176,7 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 		// __fern_read_all_stdin body and its __fern_read_all_stdin_rc IR twin both
 		// went with the migration.
 		"read_int", "read_all_stdin",
-		// The three Option-returning Reader leaves (#2649). read_chunk and close
+		// The three boxed-return Reader leaves (#2649). read_chunk and close
 		// were emitted UNCONDITIONALLY inside the arm64 heap block before the
 		// migration — `has_need("reader")` was never consulted on this backend —
 		// so every heap program carried two helpers it could not reach. They ride

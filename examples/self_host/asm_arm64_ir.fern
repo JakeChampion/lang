@@ -3270,11 +3270,6 @@ function emit_rt_clock_and_print(s: asmcore.EmitState, darwin: boolean): asmcore
     if (s.has_need("str_read_line")) {
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_read_line(ctgt), s.struct_decls, s);
     }
-    if (s.has_need("reader")) {
-        // read_chunk only: reader_close calls __fern_io_error, so it is
-        // emitted with the fs bundle rather than here.
-        s = emit_ir_runtime_fern_fn(asmcore.rt_src_reader_read_chunk(ctgt), s.struct_decls, s);
-    }
     if (s.has_need("str_print")) {
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_print_str(ctgt), s.struct_decls, s);
     }
@@ -6163,7 +6158,7 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
         if (s.has_need("remove_dir_all")) { fs_src = fs_src + " " + asmcore.rt_src_remove_dir_all(tgt); }
         if (s.has_need("open_file")) { fs_src = fs_src + " " + asmcore.rt_src_open_res(tgt); }
         if (s.has_need("writer_write")) { fs_src = fs_src + " " + asmcore.rt_src_writer_write(tgt); }
-        if (s.has_need("reader")) { fs_src = fs_src + " " + asmcore.rt_src_reader_close(tgt); }
+        if (s.has_need("reader")) { fs_src = fs_src + " " + asmcore.rt_src_reader_read_chunk(tgt) + " " + asmcore.rt_src_reader_close(tgt); }
         s = emit_ir_runtime_fern_fn(fs_src, s.struct_decls, s);
     }
     // env is the odd one out: no syscall at all, so it needs none of `tgt` and

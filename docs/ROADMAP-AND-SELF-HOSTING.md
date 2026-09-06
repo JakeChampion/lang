@@ -187,10 +187,11 @@ emitter reproduces itself byte-for-byte too.
 The driver no longer relies on any compiler-injected I/O shortcut:
 the bundle carries the **unmodified** `internal/stdlib/std/io.fern`,
 and the self-hosted compiler reads its own stdin through the real
-`std/io.read_all_stdin` (`stdin` + `Reader.read_chunk` + `Some`/`None`
-+ `match`). Both emitters lower that Reader / Option machinery
-(`__fern_reader_read_chunk` / `__fern_reader_close`, Option boxes
-`[tag@0, payload@8]`, tag-discriminated `match` with payload binding).
+`std/io.read_all_stdin` (`stdin` + `Reader.read_chunk` + `Ok`/`Err`
++ `match`). Both emitters lower that Reader machinery
+(`__fern_reader_read_chunk` / `__fern_reader_close`, Option / Result
+boxes `[tag@0, payload@8]`, tag-discriminated `match` with payload
+binding).
 
 The walls cleared to get here (all in `examples/self_host/`, gated by
 `internal/e2e/self_host_*_test.go`): O(N²) output build → `strbuf`;
