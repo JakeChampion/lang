@@ -7739,7 +7739,7 @@ func TestNonBreakingLoopStillDiverges(t *testing.T) {
 		}`},
 		{"lambda-break-inside-block-expr", `function f(): i32 {
 			loop {
-				var z: i32 = { var g: () => i32 = function (): i32 { while (true) { break; } return 1; }; g() };
+				var z: i32 = { var g: () => i32 = (): i32 => { while (true) { break; } return 1; }; g() };
 			}
 		}`},
 	}

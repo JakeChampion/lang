@@ -9,7 +9,7 @@ import (
 )
 
 // Arrow lambdas `(params): R => expr` are concise anonymous functions
-// (desugared to `function (params): R { return expr; }`). Exercised here as
+// (desugared to `(params): R => { return expr; }`). Exercised here as
 // closures passed to (non-generic, so every backend's helper handles them
 // without the monomorph pass) higher-order functions: apply(10, n=>n*2)=20
 // + combine(3,4,(x,y)=>x+y)=7 → 27. See #2701.

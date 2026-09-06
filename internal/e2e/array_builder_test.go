@@ -3,7 +3,7 @@ package e2e
 import "testing"
 
 // Array.build — the scoped linear builder (docs/ARRAY-BUILDER-PLAN.md).
-// `Array.build(function(b: ArrayBuilder[T]): void { ... b.append(x) ... })`
+// `Array.build((b: ArrayBuilder[T]): void => { ... b.append(x) ... })`
 // desugars (parser) to a unique-local IIFE: `b` is a fresh non-escaping
 // array, `b.append`/`b.with` become in-place reassignments, and the array
 // is returned frozen. Pure desugar, so every Go backend gets it; verified

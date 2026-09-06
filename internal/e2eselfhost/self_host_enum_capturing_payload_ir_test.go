@@ -7,7 +7,7 @@ import (
 )
 
 // capturingEnumProgram constructs a user enum whose variant carries a CAPTURING
-// closure as its function-typed payload (`Wrap(function(x){ x + base })` captures
+// closure as its function-typed payload (`Wrap((x) => { x + base })` captures
 // base), matches it, and indirect-calls the bound continuation. make(40) builds
 // Wrap(λx. x+40); k(2) -> 42.
 //

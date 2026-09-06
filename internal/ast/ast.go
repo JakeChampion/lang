@@ -2481,10 +2481,9 @@ type FieldAccess struct {
 	PathSep bool
 }
 
-// Lambda is an anonymous function expression: `function (x: i32):
-// i32 { return x; }`. It's the expression-position counterpart to
-// the FuncDecl statement form — same params / return type / body
-// shape, no Name. The checker treats it like a local FuncDecl:
+// Lambda is an anonymous function expression: `(x: i32): i32 => x`. It's
+// the expression-position counterpart to the FuncDecl statement form —
+// same params / return type / body shape, no Name. The checker treats it like a local FuncDecl:
 // runs capture analysis against the enclosing scope and fills
 // `Captures` with the names this lambda reads from outer-scope.
 // The closureconv pass synthesises a hoisted top-level FuncDecl
@@ -2500,12 +2499,7 @@ type Lambda struct {
 	// from the body expression instead of defaulting to void. Mirrors
 	// FuncDecl.ReturnUnannotated; see checker.inferReturns.
 	ReturnUnannotated bool
-	// Arrow records that the source wrote the arrow form `(x) => expr`
-	// rather than `function(x) { … }`. Both parse to the same node, so
-	// only the formatter reads this — without it a formatted arrow lambda
-	// comes back as a `function` whose return type had to be invented.
-	Arrow bool
-	Body  *Block
+	Body              *Block
 	// Captures gets filled by the checker, same shape as
 	// FuncDecl.Captures. closureconv reads it to size the env
 	// block.

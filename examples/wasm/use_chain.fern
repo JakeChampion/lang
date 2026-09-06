@@ -2,7 +2,7 @@
 // fallible operations, plus the closure-factory pattern.
 //
 // `use n: i32 <- f(arg);` desugars at parse time to:
-//   f(arg, function (n: i32) { <rest of block> });
+//   f(arg, (n: i32) => { <rest of block> });
 // flattening the pyramid that `match` / `if-let` would
 // otherwise force on right-leaning chains.
 //

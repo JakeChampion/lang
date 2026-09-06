@@ -515,7 +515,7 @@ function print_expr_prec(e: ast.Expr, parent_prec: i32): string {
             // parse_primary desugars it to. Printing that back is not a style
             // choice: the IIFE's return type is a TAG the desugar guessed from
             // one branch's shape (if_expr_rt), so `match (o) { … }` yielding a
-            // string came back as `function(): i32 { … }()`, which no longer
+            // string came back as `(): i32 => { … }()`, which no longer
             // type-checks.
             // A value-position `{ … }` block expression is a 0-arg IIFE too,
             // but a TAGGED one — a hand-written IIFE is not interchangeable
@@ -589,7 +589,7 @@ function print_expr_prec(e: ast.Expr, parent_prec: i32): string {
             // An arrow lambda parses to this same node with its expression
             // wrapped in a one-statement `return` and NO return type, since the
             // arrow form does not have to state one. The `function` spelling
-            // does, so printing that shape as `function(x: i32) { return e; }`
+            // does, so printing that shape as `(x: i32) => { return e; }`
             // emitted a lambda with no return type at all, which the checker
             // then refuses (19 corpus files). An annotated `function` form
             // already prints valid source and is left as written.

@@ -3726,7 +3726,7 @@ pub function check_stmt(st: ast.Stmt, s: Scope): CheckResult {
     },
     ast.StmtVar(v) => {
       // A local function `function f(...) { ... }` desugars to
-      // `var f = function(...) { ... }`; its own name must be in
+      // `var f = (...) => { ... }`; its own name must be in
       // scope within the body so a recursive self-call resolves
       // (matching the Go checker's recursive-local handling, and the
       // hoist pass that lifts it). Bind f to its function type before
@@ -4031,7 +4031,7 @@ pub function bind_stmt(st: ast.Stmt, s: Scope): Scope {
       if (v.type_name.len() > 0) {
         return s.bind(v.name, var_declared_type(v, s));
       }
-      // The recursive-local self-binding: `var f = function(...) { ... }` must
+      // The recursive-local self-binding: `var f = (...) => { ... }` must
       // have `f` in scope while its own body is inferred, as check_stmt does.
       var init_scope: Scope = s;
       match (v.init) {
@@ -5632,7 +5632,7 @@ function mc_call_consumes(c: ast.ExprCall, name: string, tname: string, report: 
     }
   }
   // An immediately-invoked lambda — the parser's desugar of a
-  // value-position `match` / `if` expression, `(function(): RT { … })()`
+  // value-position `match` / `if` expression, `((): RT => { … })()`
   // — runs its body exactly once inline, so a consuming use in the body
   // counts (the native MatchExpr-tag rule), NOT as a closure capture.
   // Consumption must hold on all body paths (mc_seq), which covers the
@@ -6008,7 +6008,7 @@ function must_consume_diags(fn: parser.FuncDecl, s: Scope, structs: parser.Struc
 // the lambda-body counterpart of the top-level ret_diags pass: ret_diags
 // itself recurses through if/while/for/match/defer sub-bodies but stops at
 // a lambda boundary (a nested function has its own return contract), so
-// without this pass a `var f = function(): i32 { return "x"; }` would go
+// without this pass a `var f = (): i32 => { return "x"; }` would go
 // unflagged. The lambda's scope is the surrounding scope plus its params
 // (lexical capture keeps free idents resolving outward); when `self_name`
 // is non-empty the lambda is a recursive local (`var f = function…`) and
@@ -6045,7 +6045,7 @@ function lret_expr(e: ast.Expr, cur: Scope, unions: UnionSig[], self_name: strin
       out = lret_expr(u.operand, cur, unions, "");
     },
     ast.ExprCall(c) => {
-      // An immediately-invoked lambda — (function(): RT { … })() — is
+      // An immediately-invoked lambda — ((): RT => { … })() — is
       // how the parser desugars a `match` / `if` used in value
       // position. Its RT is a COARSE heuristic tag (if_expr_rt picks it
       // from the first arm's literal shape, defaulting to "i32"), NOT a
@@ -6157,7 +6157,7 @@ function lret_stmts(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]): util.Diag[
 // ============ E031: match/if-expression arm-type unification ============
 //
 // A `match` / `if` used in VALUE position is desugared by the parser into
-// an immediately-invoked closure — (function(): RT { <match|if with
+// an immediately-invoked closure — ((): RT => { <match|if with
 // returning arms> })() — so the type system never sees a real
 // match/if-expression node and the arm-type consistency check the Go
 // checker performs (E031) was missing. These passes recognise that IIFE
@@ -6810,7 +6810,7 @@ function loop_can_break(stmts: ast.Stmt[], label: string, nested: boolean): bool
       },
       ast.StmtDefer(_) => {},
       _ => {
-        if (astwalk.fold_stmt_pruned(stmt, false, function (e: ast.Expr, a: boolean): boolean {
+        if (astwalk.fold_stmt_pruned(stmt, false, (e: ast.Expr, a: boolean): boolean => {
           return a || value_block_can_break(e, label, nested);
         }, not_a_scope_root)) {
           return true;
@@ -6823,7 +6823,7 @@ function loop_can_break(stmts: ast.Stmt[], label: string, nested: boolean): bool
 
 // expr_can_break is loop_can_break over the value blocks one expression holds.
 function expr_can_break(e: ast.Expr, label: string, nested: boolean): boolean {
-  return astwalk.fold_expr_pruned(e, false, function (x: ast.Expr, a: boolean): boolean {
+  return astwalk.fold_expr_pruned(e, false, (x: ast.Expr, a: boolean): boolean => {
     return a || value_block_can_break(x, label, nested);
   }, not_a_scope_root);
 }
@@ -8999,7 +8999,7 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
   for st in stmts {
     match (st) {
       ast.StmtVar(v) => {
-        // A function-valued local (`var f = function(...) {...}`,
+        // A function-valued local (`var f = (...) => {...}`,
         // including a desugared local function declaration) must be
         // in scope inside its own body — so a recursive self-call
         // resolves rather than reporting E001 — and for the
@@ -10903,7 +10903,7 @@ function e049_nt_names(nts: NameTy[]): string[] {
 // Descends into control blocks but not nested lambdas (those are checked
 // separately from the enclosing function's scope).
 // e049_stmt_own_lambdas checks the lambdas sitting in a statement's OWN
-// expressions — the `var g = function() { … }` inside another lambda's body.
+// expressions — the `var g = () => { … }` inside another lambda's body.
 // Nothing used to look there: e049_check_assigns walks statements for
 // StmtAssign and descends into if/while/for/match/defer bodies, but a nested
 // lambda arrives as a StmtVar INITIALISER and fell to its `_ => {}` arm, while

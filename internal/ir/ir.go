@@ -14031,7 +14031,7 @@ func (b *builder) call(n *ast.Call) error {
 			return nil
 		}
 	}
-	// Immediate lambda call: `(function (x) { ... })(arg)`. The
+	// Immediate lambda call: `((x) => { ... })(arg)`. The
 	// A closure literal called right where it is written — a Lambda, or
 	// the MakeClosure closureconv rewrites it to — lowers to a closure
 	// pair pointer and dispatches through OpCallIndirect like any other

@@ -12,7 +12,7 @@ import (
 //
 // A braced body is the lambda's own body, spliced in statement for statement:
 // a trailing value written without a `;` is the returned value, and a body that
-// yields nothing is void — the shape `function (x) { … }` has always had. When
+// yields nothing is void — the shape `(x) => { … }` has always had. When
 // `=>` instead wrapped whatever followed it in a `return`, a block that always
 // returns contributed its own `never` to inference (read as an E002 conflict
 // against the inner return's type) and a block that yielded nothing at all was

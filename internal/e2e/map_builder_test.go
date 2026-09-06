@@ -3,7 +3,7 @@ package e2e
 import "testing"
 
 // Map.build — the map sibling of Array.build (docs/ARRAY-BUILDER-PLAN.md).
-// `Map.build(function(b: MapBuilder[K, V]): void { ... b.insert(k, v) ... })`
+// `Map.build((b: MapBuilder[K, V]): void => { ... b.insert(k, v) ... })`
 // desugars (parser) to a unique-local IIFE: `b` is a fresh non-escaping
 // map, `b.insert` becomes an in-place reassignment, and the map is returned
 // frozen. Pure desugar, so every Go backend gets it; verified on x86-64,

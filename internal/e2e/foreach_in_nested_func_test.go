@@ -13,7 +13,7 @@ import (
 // an *ast.FuncDecl statement whose body is a separate block — it had no arm in
 // that switch, so the ForEach survived to IR and every such program failed to
 // compile with "ir: unsupported statement *ast.ForEach". Nothing reached it:
-// the lambda arm covers `var f = function() {...}`, which is an EXPRESSION.
+// the lambda arm covers `var f = () => {...}`, which is an EXPRESSION.
 //
 // sum over [1,2,3] = 6, plus the same loop one level deeper inside a lambda in
 // the nested function = 12.

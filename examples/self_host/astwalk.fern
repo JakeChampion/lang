@@ -737,7 +737,7 @@ function ident_of(e: ast.Expr, acc: string[]): string[] {
             // it, not read from outside. Collect the inner body's idents, subtract
             // the inner lambda's params + locals, and append the remainder.
             // Without this an inner lambda's params (e.g. the `y` of
-            // `function(y){…}`) leak as spurious references of the outer scope,
+            // `(y) => {…}`) leak as spurious references of the outer scope,
             // which makes the enclosing lambda's capture analysis treat `y` as an
             // unresolvable capture and decline the lift (nested closures bail).
             //

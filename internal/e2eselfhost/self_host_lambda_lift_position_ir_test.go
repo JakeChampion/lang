@@ -13,10 +13,10 @@ import (
 // that the lambda-lift pre-pass now hoists to top-level `__lam_N` functions, so
 // they lower through the self-host IR path on x86-64 + wasm:
 //
-//   - IIFE callee: `(function(b){...})(args)` -> `__lam_N(args)` (a direct call).
-//   - tuple element: `(function(x){...}, 10)` -> a fn-pointer tuple element, so
+//   - IIFE callee: `((b) => {...})(args)` -> `__lam_N(args)` (a direct call).
+//   - tuple element: `((x) => {...}, 10)` -> a fn-pointer tuple element, so
 //     `t.0(t.1)` rides the tuple-element call_indirect path.
-//   - assignment RHS: `f = function(x){...}` -> `f = __lam_N` (a fn-pointer store).
+//   - assignment RHS: `f = (x) => {...}` -> `f = __lam_N` (a fn-pointer store).
 //
 // `lift_lambdas` already hoisted no-capture lambdas in call-argument /
 // array-element / struct-field / return positions; these add the IIFE-callee,

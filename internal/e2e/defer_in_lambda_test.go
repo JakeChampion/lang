@@ -38,7 +38,7 @@ func TestDeferInBlockExpr(t *testing.T) {
     var inside: i32 = f(5);
     return inside * 10 + a.get();
 }`, 51},
-		// The `function (…) { … }` spelling of the same lambda, whose body is
+		// The `(…) => { … }` spelling of the same lambda, whose body is
 		// a plain Block rather than a block expression.
 		{"function_form_lambda", `function main(): i32 {
     var a: Cell[i32] = cell_new(0);

@@ -3663,7 +3663,7 @@ func TestWASMMutualRecursionThreeWay(t *testing.T) {
 	}
 }
 
-// `(function (x) { … })(arg)` — calling a lambda immediately at
+// `((x) => { … })(arg)` — calling a lambda immediately at
 // the definition site. The Lambda lowers via closureconv to a
 // MakeClosure expression; the IR's `call()` dispatch now
 // recognises *ast.Lambda AND *ast.MakeClosure callees (the

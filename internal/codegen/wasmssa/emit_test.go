@@ -10,7 +10,7 @@ import (
 	"github.com/jakechampion/lang/internal/ssa"
 )
 
-// TestEmitConstReturn — `function() { return 42 }` emits a
+// TestEmitConstReturn — `() => { return 42 }` emits a
 // valid module whose `main` export returns 42.
 func TestEmitConstReturn(t *testing.T) {
 	f := ssa.NewFunc("main")
@@ -33,7 +33,7 @@ func TestEmitConstReturn(t *testing.T) {
 	}
 }
 
-// TestEmitAddTwoParams — `function(a, b) { return a + b }`
+// TestEmitAddTwoParams — `(a, b) => { return a + b }`
 // emits a module whose `main` export takes 2 i32 params,
 // adds them, and returns i32.
 func TestEmitAddTwoParams(t *testing.T) {
@@ -115,7 +115,7 @@ func TestEmitLinearChain(t *testing.T) {
 	validateModule(t, mod)
 }
 
-// TestEmitIfElseDiamond — `function(c, a, b) { return c ? a : b }`
+// TestEmitIfElseDiamond — `(c, a, b) => { return c ? a : b }`
 // compiled to an if-else diamond with a phi at the merge.
 // Emits a valid module.
 func TestEmitIfElseDiamond(t *testing.T) {
@@ -170,7 +170,7 @@ func TestEmitIfElseDiamondWithOps(t *testing.T) {
 	validateModule(t, mod)
 }
 
-// TestEmitIfOnlyTrueArmIsBody — `function(c, a, b) { x = b; if (c) { x = a; } return x; }`
+// TestEmitIfOnlyTrueArmIsBody — `(c, a, b) => { x = b; if (c) { x = a; } return x; }`
 // shape: entry's True branch goes to body, False falls
 // straight through to merge.
 func TestEmitIfOnlyTrueArmIsBody(t *testing.T) {
@@ -220,7 +220,7 @@ func TestEmitIfOnlyFalseArmIsBody(t *testing.T) {
 	validateModule(t, mod)
 }
 
-// TestEmitDualReturn — `function(c, a, b) { if (c) return a; else return b; }`
+// TestEmitDualReturn — `(c, a, b) => { if (c) return a; else return b; }`
 // shape: 3 blocks, entry's brif → T (ret a) and F (ret b).
 // No merge.
 func TestEmitDualReturn(t *testing.T) {

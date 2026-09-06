@@ -448,7 +448,7 @@ function try_ssa(funcs: parser.FuncDecl[], structs: parser.StructDecl[], target:
     if (target == "wasm32-wasi" && emit != "asm") { return SsaResult { asm: "", ok: false }; }
     // The set of user-defined function names the SSA backend can `call`, and
     // the subset that return a pointer (so their call results are 64-bit).
-    // Lambda bindings `var f = function(...){...}` lift to top-level functions
+    // Lambda bindings `var f = (...) => {...}` lift to top-level functions
     // (collect_lambdas); they're built like user functions and join the known /
     // ptr_ret sets. A capturing lambda's lifted body references an enclosing
     // local and fails to build (or a call lands on an unbuilt name), so the
