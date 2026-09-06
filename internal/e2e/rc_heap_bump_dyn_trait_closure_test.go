@@ -5,7 +5,7 @@
 // A captured `dyn` is move-only (needsRcIncOnAlias declines it, so there
 // is NO inc at MakeEnv). The standalone-`dyn` reclaim (slices 4b/4c)
 // sweeps a `dyn` LOCAL at scope exit through emitDec's DynTraitType arm —
-// but a `dyn` captured by an ESCAPING closure (`return function () { …
+// but a `dyn` captured by an ESCAPING closure (`return () => { …
 // d.m() … }`) was NOT excluded from that sweep, so the source local's
 // drop freed the boxed cell while the returned closure still held (and
 // later dereferenced) it: a use-after-free that SEGFAULTED on the natives.

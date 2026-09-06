@@ -141,7 +141,7 @@ func TestShakeNoOpOnEmptyProgram(t *testing.T) {
 	}
 }
 
-// TestShakeWalksLambdaBody — anonymous `function (...) { ... }`
+// TestShakeWalksLambdaBody — anonymous `(...) => { ... }`
 // expressions live inline at treeshake time (closureconv hoists
 // them later, after treeshake runs). Without a Lambda case in
 // walkExpr, any top-level function referenced only from inside

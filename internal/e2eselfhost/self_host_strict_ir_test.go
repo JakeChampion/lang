@@ -406,7 +406,7 @@ function main(): i32 {
     return t;
 }
 `, 22},
-	// A DIRECT, hand-written IIFE — `(function (): i32 { return 7; })()`.
+	// A DIRECT, hand-written IIFE — `((): i32 => { return 7; })()`.
 	// lower_iife handled only the if/match-EXPRESSION desugars (a StmtIf or
 	// StmtMatch body); a single-`return` body fell through its catch-all and
 	// bailed the module (#3457 slice 5). Only the shapes the

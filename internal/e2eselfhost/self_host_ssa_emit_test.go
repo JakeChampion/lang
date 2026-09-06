@@ -150,7 +150,7 @@ func TestSelfHostSSAEmitX86_64(t *testing.T) {
 		// return.
 		{"tuple-destructure", "function main(): i32 { var (a, b) = (5, 6); return a + b; }", 11},
 		{"tuple-destructure-call", "function pair(): (i32, i32) { return (7, 8); } function main(): i32 { var (lo, hi) = pair(); return hi - lo; }", 1},
-		// No-capture lambdas: `var f = function(...){...}` lifts to a top-level
+		// No-capture lambdas: `var f = (...) => {...}` lifts to a top-level
 		// function (collect_lambdas) and `f(...)` is a direct call to it.
 		{"lambda-call", "function main(): i32 { var f = (x: i32): i32 => { return x + 1; }; return f(5); }", 6},
 		{"lambda-compose", "function main(): i32 { var inc = (x: i32): i32 => { return x + 1; }; var dbl = (x: i32): i32 => { return x * 2; }; return inc(dbl(10)); }", 21},

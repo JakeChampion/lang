@@ -11,7 +11,7 @@ import (
 // `=>` takes an expression, so a `{ … }` body first parses as a block
 // EXPRESSION — but wrapping that in a `return` is what made a body with no
 // value of its own (`(x) => { f(x); }`) a value-less block in value position
-// (E061) rather than the void lambda `function (x) { f(x); }` has always been.
+// (E061) rather than the void lambda `(x) => { f(x); }` has always been.
 // Splicing the block in instead makes every body shape mean what the same
 // statements mean in a named function's body, with a trailing value written
 // without a `;` becoming the returned value.

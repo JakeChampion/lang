@@ -19,6 +19,10 @@
 # leaking fixture is 2, and regex_captures_assert alone is 5987 of the
 # total.
 #
+# match_expr_binder_body and shadow_tuple_binder_over_const arrive at 0 with
+# their fixtures, which landed without rows — the same clean registration,
+# which the sourcelint row-per-fixture gate now asks for up front.
+#
 # cast_int_arith_to_float arrives at 0 with #8456's fixture, which landed
 # without a row — a new fixture needs a verdict, and a clean one is the
 # registration the census asks for rather than a pin being moved.

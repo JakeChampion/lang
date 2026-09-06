@@ -10,7 +10,7 @@ import (
 )
 
 // TestSelfHostClosureX86IR is the x86-64 gate for closures slice 3a: first-class
-// (escaping) capturing closures — a `return function(x){ … cap … }` returned as
+// (escaping) capturing closures — a `return (x) => { … cap … }` returned as
 // a value, bound to a local, and called. lift_lambdas hoists the body to
 // `<fn>$clo(__env, params…)`; irlower lowers the lambda to an i32[] env box
 // [funcval, caps…] (make_closure via const_func + arr_make), and a call through

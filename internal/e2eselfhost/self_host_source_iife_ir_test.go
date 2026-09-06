@@ -31,7 +31,7 @@ import (
 // The unmarked IIFE then needs something to call, and the lift walk only ever
 // looked at a `var` initialiser. Rather than teach it a second shape,
 // name_source_iifes normalises the one it does not know into the one it does:
-// `(function(){B})()` becomes `var $iife$f$0 = function(){B}; $iife$f$0()`, and
+// `(() => {B})()` becomes `var $iife$f$0 = () => {B}; $iife$f$0()`, and
 // try_lift_binding takes it from there. Only the binding is hoisted — building a
 // lambda literal has no side effects, so evaluation order is untouched.
 //

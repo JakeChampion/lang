@@ -1080,7 +1080,7 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"missing-return-loop-breaks-in-if-expr", "function f(n: i32): i32 { loop { var z: i32 = if (n > 0) { break; 1 } else { 2 }; } }\nfunction main(): i32 { return 0; }\n", []string{"E052"}},
 		{"missing-return-loop-breaks-in-match-expr", "function f(n: i32): i32 { loop { var z: i32 = match (n) { 0 => { break; 1 }, _ => 2 }; } }\nfunction main(): i32 { return 0; }\n", []string{"E052"}},
 		{"loop-inner-break-ok", "function f(): i32 { loop { while (true) { break; } } }\nfunction main(): i32 { return 0; }\n", nil},
-		{"loop-lambda-break-ok", "function f(): i32 { loop { var g: () => i32 = function (): i32 { while (true) { break; } return 1; }; var x: i32 = g(); } }\nfunction main(): i32 { return 0; }\n", nil},
+		{"loop-lambda-break-ok", "function f(): i32 { loop { var g: () => i32 = (): i32 => { while (true) { break; } return 1; }; var x: i32 = g(); } }\nfunction main(): i32 { return 0; }\n", nil},
 		{"return-if-else-ok", "function f(c: boolean): i32 { if (c) { return 1; } else { return 2; } }\nfunction main(): i32 { return 0; }\n", nil},
 		// void return type: an empty body is fine (no E052 — falling off the
 		// end is the normal exit), a bare `return;` is fine, and returning a
@@ -1377,7 +1377,7 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"lambda-no-rettype-ok", "function main(): i32 { var f = () => { return; }; return 0; }\n", nil},
 		{"rec-local-capture-ret-mismatch", "function main(): i32 { var base: string = \"x\"; function f(n: i32): i32 { if (n <= 0) { return base; } return f(n - 1); } return f(3); }\n", []string{"E002"}},
 		// A `match` / `if` used in value position is desugared by the parser
-		// into an IIFE — (function(): RT { … })() — whose RT is a coarse
+		// into an IIFE — ((): RT => { … })() — whose RT is a coarse
 		// heuristic tag (if_expr_rt, defaulting to "i32"). The lambda-body
 		// E002 pass must NOT check those synthesized returns against that
 		// tag, or a valid string-valued match/if-expression (whose first arm

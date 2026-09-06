@@ -1,6 +1,6 @@
 // An arrow lambda with a BLOCK body, on every backend (#2673).
 //
-// `(x) => { ...; return e; }` means what `function (x) { ...; return e; }`
+// `(x) => { ...; return e; }` means what `(x) => { ...; return e; }`
 // means. It parsed and ran before; what it could not do was INFER its return
 // type, because the arrow desugar wraps the body in a `return` and the block
 // — which always returns — has no trailing value, so its own type is `never`.

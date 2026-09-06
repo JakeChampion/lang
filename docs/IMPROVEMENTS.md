@@ -262,16 +262,20 @@ The items below would change the language surface. Listed for
 completeness; not picked up by the work-through below without
 agreement.
 
-## 14. 🎨 `function` keyword overloaded
+## 14. ✅ `function` keyword overloaded — RESOLVED (#2673)
 
-Top-level decl, local decl, and anonymous expression all use
-`function`. Parser tests have to spell out which form they're
-testing. Local + anonymous look indistinguishable until the
-parser reaches the name slot.
+`function` used to introduce a top-level decl, a local decl AND an
+anonymous expression, and the local and anonymous forms looked
+indistinguishable until the parser reached the name slot.
 
-**Sketch**: `fn` for the expression form, `function` for the
-named decl. Or use the keyword for both but require a name in
-decl positions (parser disambiguates earlier).
+**Resolved by deleting the anonymous form.** The arrow lambda
+`(x: T): R => …` was already building the same node, so the language was
+carrying two spellings for one construct; `function` now always
+introduces a name and the parser knows which form it is reading at the
+keyword. The retired spelling is a P006 diagnostic naming its
+replacement. The second half of the sketch — `fn` for the named decl —
+was not taken: renaming the surviving keyword is a whole-surface
+migration and a separate proposal.
 
 ## 15. 🎨 Variant names are globally unique
 

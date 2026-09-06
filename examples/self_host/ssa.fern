@@ -587,7 +587,7 @@ function build_stmt(st: ast.Stmt, s: BState): BState {
                 }
                 return s;
             }
-            // A lambda binding `var f = function(...){...}` — lifted to a
+            // A lambda binding `var f = (...) => {...}` — lifted to a
             // top-level function <parent>$lam$<i> (collect_lambdas, body order;
             // the index is the running count of fn: markers, which matches).
             // A NO-CAPTURE lambda just records the marker "fn:<name>" and is
@@ -1354,7 +1354,7 @@ function resolve_capture_type(name: string, fd: parser.FuncDecl): string {
     return "";
 }
 
-// collect_lambdas lifts each top-level `var f = function(...){...}` binding in
+// collect_lambdas lifts each top-level `var f = (...) => {...}` binding in
 // every module function to a synthesized top-level FuncDecl named
 // `<parent>$lam$<i>` (i = body order, matching build_func's fn: marker count).
 // The driver builds these alongside the user functions; build_func rewrites a

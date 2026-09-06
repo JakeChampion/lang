@@ -4980,7 +4980,7 @@ func (i *Interp) callClosure(c *Closure, args []Value) (Value, error) {
 		// A `?` that short-circuits inside a lambda returns from the LAMBDA,
 		// so the sentinel has to be absorbed here rather than re-raised after
 		// the errdefers fire. Re-raising unwinds a `None` / `Err` out of the
-		// whole program: `function (o: Option[i32]): Option[i32] { var v: i32
+		// whole program: `(o: Option[i32]): Option[i32] => { var v: i32
 		// = o?; return Some(v + 1); }` applied to None then terminates the
 		// interpreter with exit 0 instead of answering None. This engine is
 		// the differential ORACLE the cross-validation suite grades the

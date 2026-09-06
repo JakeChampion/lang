@@ -8,7 +8,7 @@ import (
 )
 
 // TestSelfHostOptionLambdaIR pins the lambda_captures fix: a no-capture lambda
-// whose body constructs an Option/Result (`function(x){ return Some(x+1); }`)
+// whose body constructs an Option/Result (`(x) => { return Some(x+1); }`)
 // passed as a fn-value argument. lambda_captures excluded `None`/`true`/`false`
 // but NOT the call-style variant constructors `Some`/`Ok`/`Err`, so it miscounted
 // `Some` as a captured free variable, misrouted the lambda to the capturing-

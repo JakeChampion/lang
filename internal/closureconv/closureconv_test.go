@@ -126,7 +126,7 @@ func TestConvertRewritesCapturedRefsAsCaptureRef(t *testing.T) {
 	}
 }
 
-// TestConvertLambdaExpression — `var f = function (x): T { ... }`
+// TestConvertLambdaExpression — `var f = (x): T => { ... }`
 // is a Lambda expression form; closureconv should hoist it to
 // a top-level decl just like a named local function.
 func TestConvertLambdaExpression(t *testing.T) {

@@ -7115,8 +7115,8 @@ function main(): i32 {
 		src: `
 @noinline
 function round(n: i32): i32 {
-    var g: () => i32 = function (): i32 { return 1; };
-    var f: () => i32 = function (): i32 { return g() + n; };
+    var g: () => i32 = (): i32 => { return 1; };
+    var f: () => i32 = (): i32 => { return g() + n; };
     g = f;
     return n;
 }

@@ -11,7 +11,7 @@ import (
 
 // TestSelfHostClosureWasmIR is the wasm gate for closures slice 3a (the x86
 // sibling is TestSelfHostClosureX86IR): first-class (escaping) capturing
-// closures — `return function(x){ … cap … }` bound to a local and called. The
+// closures — `return (x) => { … cap … }` bound to a local and called. The
 // env box is an i32[] [funcval, caps…]; const_func + arr_make build it,
 // call_indirect dispatches env-first. Asserts the oracle exit code AND that the
 // IR closure path was taken (`$clo` in the WAT). Exit codes <= 125.
