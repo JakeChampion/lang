@@ -520,6 +520,8 @@ trmc_map                                             0
 try_op_in_closure                                    2
 try_result_struct_payload                            6
 tuple_basics                                         0
+tuple_binder_shadows_module_decl                     0
+tuple_binder_shadows_outer_var                       0
 tuple_destructure                                    0
 tuple_elem_variant_pattern                           1
 tuple_element_field_access                           0
