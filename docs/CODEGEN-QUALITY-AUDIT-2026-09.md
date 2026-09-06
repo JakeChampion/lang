@@ -795,7 +795,14 @@ Stated plainly so the gaps are not mistaken for clean bills of health.
   A1 fed on are ~3% of the self-host emit, which is dominated by the
   stack-argument rc calls and the string helpers that tier A never touched
   — the inline rc guards and the string kernels (#8192) are where the next
-  order of magnitude is. The arm64 twin has not taken the port yet.
+  order of magnitude is. The arm64 twin has not taken the constant-operand
+  port yet. Both have since taken compare-and-branch fusion (#8425), which
+  native has carried since #4378: `checker.fern`'s x86-64 emit is 274,320 ->
+  258,072 instruction lines (-5.9%) and the stage-2 compiler retires 16.18 ->
+  14.17 G instructions producing it (-12.4%, callgrind). arm64 gains less
+  (-2.0% on `examples/bench` against x86-64's -4.9%) because its unfused form
+  was already `cmp; cset; cbz` rather than x86-64's five-instruction
+  materialisation.
 - **Whether `gcc -O2` is the right target.** A language with bounds checks,
   reference counting and a zero-divisor guard cannot reach C's numbers on
   array code and should not pretend to. The right frame is probably Go — same

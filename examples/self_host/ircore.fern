@@ -16,7 +16,7 @@
 //     `__struct_drop_<T>` / `__field_reclaim_<T>` name<->type pair, plus the
 //     C-call classifier;
 //   * label naming and control-flow resolution — br_target, str_lit_label,
-//     str_box_label;
+//     str_box_label, and the compare-and-branch run flag_branch resolves;
 //   * the AST pre-passes each backend runs before it emits — lift_lambdas and
 //     script_normalized;
 //   * wp_fn_sigs, the whole-program lowering side-tables every emit path
@@ -778,6 +778,57 @@ pub function br_target(ops: ir.Op[], lp: string, i: i32, d: i32): string {
     if (op < 0) { return lp + util.i32_to_string(ops.len()); }
     if (ops[op].kind_tag == 153) { return lp + util.i32_to_string(op); }  // loop
     return lp + util.i32_to_string(ir.find_matching_end(ops, op + 1));
+}
+
+// ---- compare-and-branch fusion --------------------------------------------
+//
+// The stack IR has no flags: a comparison pushes 0/1, `not` pops that and
+// pushes its inverse, and `if` / `br_if` pops the result and tests it again. On
+// a flags machine the comparison sets the flags the branch reads, so the whole
+// run is one compare and one conditional jump. These two scans resolve the run
+// over the op stream; which mnemonic comes out is the backend's (#4378, #8194).
+//
+// Sound because the IR is single-use: what a comparison pushes is popped by the
+// op that follows it, so the branch is the run's only consumer.
+
+// is_int_cmp_kind reports whether `id` is an integer comparison — eq, ne and
+// the signed/unsigned orderings. Float compares are excluded: NaN breaks the
+// negation identity (`!(a < b)` is not `a >= b` when either operand is NaN), so
+// their 0/1 materialisation stays.
+pub function is_int_cmp_kind(id: i32): boolean {
+    return id >= 35 && id <= 44;  // eq, ne, lt_s..ge_s, lt_u..ge_u
+}
+
+// flag_branch_consumer gives the index of the `if` / `br_if` that consumes what
+// ops[i] pushes, reached over a run of `not`s alone, and -1 when anything else
+// consumes it. An op that answers >= 0 emits no value: a comparison leaves the
+// flags set, a `not` emits nothing at all, and the branch emits the jump.
+pub function flag_branch_consumer(ops: ir.Op[], i: i32): i32 {
+    var j: i32 = i + 1;
+    while (j < ops.len() && ops[j].kind_tag == 34) { j = j + 1; }  // not
+    if (j >= ops.len()) { return 0 - 1; }
+    if (ops[j].kind_tag == 154 || ops[j].kind_tag == 158) { return j; }  // if, br_if
+    return 0 - 1;
+}
+
+// FlagBranch resolves an `if` / `br_if` back to the op producing its condition.
+// `producer` is that op's index (-1 when the branch opens the stream), `nots`
+// how many `not`s sit between the two, and `when_true` whether the jump is
+// taken when the producer's value is non-zero: `br_if` jumps when the condition
+// holds and `if` jumps to its else when it does not, and each `not` flips that.
+pub struct FlagBranch {
+    producer: i32,
+    nots: i32,
+    when_true: boolean,
+}
+
+pub function flag_branch(ops: ir.Op[], j: i32): FlagBranch {
+    var k: i32 = j - 1;
+    var nots: i32 = 0;
+    while (k >= 0 && ops[k].kind_tag == 34) { nots = nots + 1; k = k - 1; }  // not
+    var wt: boolean = (ops[j].kind_tag == 158);  // br_if
+    if (nots % 2 == 1) { wt = !wt; }
+    return FlagBranch { producer: k, nots: nots, when_true: wt };
 }
 
 // lift_lambdas re-exports irlower's lambda-lift pre-pass so the dispatch sites
