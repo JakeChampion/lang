@@ -1,0 +1,95 @@
+// hostid.fern — GNU-compatible `hostid`.
+//
+//   hostid    print the numeric identifier for the current host, in hex
+//
+// The number is glibc's gethostid: the four bytes of /etc/hostid if that
+// file holds four, else the machine's IPv4 address with its halves
+// swapped — `addr << 16 | addr >> 16` over the in_addr word, so the
+// low-order host part of the address leads — else 0. The address is the
+// hostname resolved through NSS (lib/resolv), which is why a box whose
+// name maps to 127.0.0.1 in /etc/hosts prints `007f0100`. Eight hex
+// digits, unsigned; there are no options and no operands, and any operand
+// is `extra operand`.
+import "std/string";
+import "std/array";
+import "./lib/gnu";
+import "./lib/resolv";
+
+function help_text(): string {
+  var out: string = "";
+  out = out + "Usage: " + gnu.prog() + " [OPTION]\n";
+  out = out + "Print the numeric identifier (in hexadecimal) for the current host.\n";
+  out = out + "\n";
+  out = out + "      --help        display this help and exit\n";
+  out = out + "      --version     output version information and exit\n";
+  return out;
+}
+
+// The word stored by sethostid, if /etc/hostid holds one: read(2) of four
+// bytes must return all four, so a shorter file is the same as none.
+function stored_id(): Option[i64] {
+  match (read_file_bytes("/etc/hostid")) {
+    Ok(bs) => {
+      if (bs.len() < 4) {
+        return None;
+      }
+      return Some(resolv.ipv4_word(bs[0] as i32, bs[1] as i32, bs[2] as i32, bs[3] as i32) as i64 & 4294967295);
+    },
+    Err(_) => {
+      return None;
+    }
+  }
+}
+
+// gethostid's derivation from the address: the in_addr word rotated by
+// sixteen bits, kept to 32.
+function address_id(word: i32): i64 {
+  var w: i64 = word as i64 & 4294967295;
+  return (w << 16 | w >> 16) & 4294967295;
+}
+
+function host_id(): i64 {
+  match (stored_id()) {
+    Some(id) => {
+      return id;
+    },
+    None => {}
+  }
+  var name: string = hostname();
+  if (name.len() == 0) {
+    return 0;
+  }
+  match (resolv.resolve(name)) {
+    Some(word) => {
+      return address_id(word);
+    },
+    None => {
+      return 0;
+    }
+  }
+}
+
+// `%08x`: at least eight lowercase hex digits.
+function hex8(v: i64): string {
+  var digits: string = "0123456789abcdef";
+  var out: string = "";
+  var x: i64 = v;
+  while (x > 0) {
+    var d: i32 = (x & 15) as i32;
+    out = slice_unchecked(digits, d, d + 1) + out;
+    x = x >> 4;
+  }
+  while (out.len() < 8) {
+    out = "0" + out;
+  }
+  return out;
+}
+
+function main(): i32 {
+  var operands: string[] = gnu.parse_standard_options_only(args(), "hostid", help_text(), 1);
+  if (operands.len() > 0) {
+    gnu.die_usage("extra operand " + gnu.quote(operands[0]), 1);
+  }
+  gnu.write_out(hex8(host_id()) + "\n");
+  return 0;
+}

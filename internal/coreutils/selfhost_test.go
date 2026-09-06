@@ -42,6 +42,7 @@ func corpusByUtil() map[string]func(*testing.T) []invocation {
 		"expr":     exprCases,
 		"factor":   factorCases,
 		"false":    trueFalseCases,
+		"hostid":   hostidCases,
 		"numfmt":   numfmtCases,
 		"printf":   printfCases,
 		"seq":      seqCases,
