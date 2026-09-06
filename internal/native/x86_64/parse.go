@@ -57,6 +57,12 @@ func parseOperand(s string) (Operand, error) {
 			return Operand{kind: opReg, reg: n, size: 128}, nil
 		}
 	}
+	if strings.HasPrefix(low, "ymm") {
+		if n, err := strconv.Atoi(low[3:]); err == nil && n >= 0 && n < 16 {
+			// AVX register; size 256 marks it as a ymm operand.
+			return Operand{kind: opReg, reg: n, size: 256}, nil
+		}
+	}
 	if strings.Contains(s, "[") {
 		// All memory operands carry brackets; a size prefix ("qword ptr")
 		// only ever precedes them. (Checking for the bare substring "ptr"
