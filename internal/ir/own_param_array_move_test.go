@@ -45,12 +45,23 @@ function main(): i32 { var b: i32[] = [1, 2, 3]; b = wr(b, 0, 9); return b.len()
 	if got, want := rcOpTrace(wr), "arr_cow_inplace arr_dec"; got != want {
 		t.Errorf("wr rc trace = %q, want %q", got, want)
 	}
+	// The receiver reaches the CoW through the buffer slot the mutate-or-copy
+	// decision writes, so the hand-off is the store that binds that slot.
 	nulled := false
 	for i, op := range wr.Ops {
-		if op.Kind == ir.OpCallDirect && op.Str == "__fern_arr_cow_inplace" && i >= 4 &&
-			wr.Ops[i-4].Kind == ir.OpLoadLocal && wr.Ops[i-3].Kind == ir.OpConstI32 && wr.Ops[i-3].I32 == 0 &&
-			wr.Ops[i-2].Kind == ir.OpStoreLocal && wr.Ops[i-2].I32 == wr.Ops[i-4].I32 {
-			nulled = true
+		if op.Kind != ir.OpCallDirect || op.Str != "__fern_arr_cow_inplace" ||
+			i+1 >= len(wr.Ops) || wr.Ops[i+1].Kind != ir.OpStoreLocal {
+			continue
+		}
+		buf := wr.Ops[i+1].I32
+		for j := i - 1; j >= 3; j-- {
+			if wr.Ops[j].Kind != ir.OpStoreLocal || wr.Ops[j].I32 != buf {
+				continue
+			}
+			nulled = wr.Ops[j-1].Kind == ir.OpStoreLocal &&
+				wr.Ops[j-2].Kind == ir.OpConstI32 && wr.Ops[j-2].I32 == 0 &&
+				wr.Ops[j-3].Kind == ir.OpLoadLocal && wr.Ops[j-3].I32 == wr.Ops[j-1].I32
+			break
 		}
 	}
 	if !nulled {

@@ -1,0 +1,29 @@
+// array_with — write bytes one at a time into a uniquely-owned `u8[]` through
+// the `buf = buf.with(i, v)` accumulator, the shape every Fern program that
+// assembles its own output bytes is made of (#8530). The buffer is allocated
+// once and rewritten in place every round, so this measures the per-element
+// cost of `.with` — the uniqueness decision, the bounds check and the store —
+// and not allocation or growth.
+//
+// Its sibling record_update wraps the same writes in a struct update; the
+// difference between the two is what a threaded record costs on top.
+function main(): i32 {
+  var buf: u8[] = [];
+  var n: i32 = 0;
+  while (n < 4096) {
+    buf = buf.append(0u8);
+    n = n + 1;
+  }
+  var total: i64 = 0i64;
+  var r: i32 = 0;
+  while (r < 400) {
+    var i: i32 = 0;
+    while (i < 4096) {
+      buf = buf.with(i, ((i + r) % 251) as u8);
+      i = i + 1;
+    }
+    total = total + buf[r % 4096] as i64;
+    r = r + 1;
+  }
+  return (total % 97i64) as i32;
+}
