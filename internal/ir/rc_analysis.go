@@ -7061,26 +7061,54 @@ func callArgDeaths(fn *ast.FuncDecl, info *checker.Info, obs map[string][]fieldO
 	admitted := func(name string) bool {
 		return isParam[name] || callInitLocal[name] || unpackInitLocal[name] || aliasInitLocal[name]
 	}
-	markOnce := func(c *ast.Call, name string) {
-		direct := 0
-		for _, a := range c.Args {
-			if aid, ok := a.(*ast.Ident); ok && aid.Name == name {
-				direct++
-			}
-		}
+	// markOnce marks `name` dead at the call inside `scope` that takes it,
+	// when scope names it exactly once and that occurrence is a direct
+	// argument. Every shape below hands it the expression whose evaluation is
+	// the name's last chance to be read — an assignment's value, a returned
+	// expression, or the call itself.
+	//
+	// The call taking the name need not be scope's OUTERMOST:
+	// `c = emit(emit(c, v), v)` hands c to the inner one, and the store
+	// supersedes c either way, so the death belongs where the argument is.
+	// Stopping at the top level left that spelling — and the method chain
+	// `c = c.emit(v).emit(v)` that desugars to it — paying a full-buffer copy
+	// per link inside a loop, where the last-occurrence shapes cannot help
+	// (#8696).
+	//
+	// Naming it exactly once is the whole guard, and it is also what makes the
+	// site unambiguous: a second read anywhere in scope would see the buffer
+	// the callee grew, so `c = emit(emit(c, v), c.insts.len())` declines.
+	markOnce := func(scope ast.Expr, name string) {
 		total := 0
-		ast.Walk(c, func(m ast.Node) bool {
+		ast.Walk(scope, func(m ast.Node) bool {
 			if id, ok := m.(*ast.Ident); ok && id.Name == name {
 				total++
 			}
 			return true
 		})
-		if direct == 1 && total == 1 {
-			if out[c] == nil {
-				out[c] = map[string]bool{}
-			}
-			out[c][name] = true
+		if total != 1 {
+			return
 		}
+		var site *ast.Call
+		ast.Walk(scope, func(m ast.Node) bool {
+			c, isCall := m.(*ast.Call)
+			if !isCall {
+				return true
+			}
+			for _, a := range c.Args {
+				if aid, ok := a.(*ast.Ident); ok && aid.Name == name {
+					site = c
+				}
+			}
+			return true
+		})
+		if site == nil {
+			return
+		}
+		if out[site] == nil {
+			out[site] = map[string]bool{}
+		}
+		out[site][name] = true
 	}
 	ast.Walk(body, func(n ast.Node) bool {
 		switch st := n.(type) {
