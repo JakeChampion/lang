@@ -66725,10 +66725,10 @@ function rc_ml_owned_rc_local(name: string, fn: parser.FuncDecl, types_n: string
 // "will this frame dec it?" has one answer for both roles.
 //
 // Each alias limb decides from its own slot facts whether to ACT on a param
-// move: the array limb does (the alias takes the param's one release), the
-// credited tuple / string / struct limbs read credits a param never holds,
-// and the destructure never consults the plan. TestSelfHostRcParamMoveX86_64
-// pins both outcomes.
+// move: the array limb does (the alias takes the param's one release); the
+// string, struct and tuple limbs refuse a param slot outright (their slot
+// predicates gate on n_params); the destructure never consults the plan.
+// TestSelfHostRcParamMoveX86_64 pins both outcomes.
 function rc_ml_owned_rc_param(name: string, fn: parser.FuncDecl, consumed: string[], structs: StructTab): boolean {
     var pi: i32 = 0;
     while (pi < fn.params.len()) {
