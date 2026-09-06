@@ -44,6 +44,18 @@ func TestFormatArrowLambdaBodyShapes(t *testing.T) {
 			"annotated return type", `function main(): i32 { var n: i32 = 0; var f = (x: i32): void => { n = n + x; }; f(1); return n; }`,
 			"  var f = (x: i32): void => { n = n + x; };\n",
 		},
+		{
+			// A tuple return type stays a tuple.
+			"tuple return type", `function main(): i32 { var f = (p: (i32, i32)): (i32, i32) => { return p; }; return 0; }`,
+			"  var f = (p: (i32, i32)): (i32, i32) => p;\n",
+		},
+		{
+			// A function-type return needs its GROUPING parens back, or the
+			// re-parse reads `(i32) => i32 => …` as a lambda returning `i32`
+			// and fails on the leftover arrow (#8706).
+			"function-type return keeps its parens", `function main(): i32 { var f = (p: i32): ((i32) => i32) => (q: i32) => p + q; return 0; }`,
+			"  var f = (p: i32): ((i32) => i32) => (q: i32) => p + q;\n",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := formatSrc(t, tc.in)

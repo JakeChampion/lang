@@ -7200,7 +7200,7 @@ function returning(): i32 {
 @noinline
 function statement(): i32 {
     var sink: i32 = 0;
-    var log = function (x: i32): void { sink = sink + x * 2; };
+    var log = (x: i32): void => { sink = sink + x * 2; };
     run(log, 4);
     return sink - 8;
 }

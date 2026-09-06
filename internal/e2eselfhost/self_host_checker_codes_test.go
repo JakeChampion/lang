@@ -1341,6 +1341,12 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// — a value-block scanner has no remainder to give them.
 		{"arrow-block-body-use-ok", "function give(x: i32, cb: (i32) => i32): i32 { return cb(x); }\nfunction main(): i32 {\n    var f = (): i32 => {\n        use n <- give(41);\n        return n + 1;\n    };\n    return f() - 42;\n}\n", nil},
 		{"arrow-block-body-letelse-ok", "enum O { Has(i32), Nil }\nfunction main(): i32 {\n    var f = (): i32 => {\n        var o: O = Nil;\n        let Has(v) = o else { return 0; };\n        return v;\n    };\n    return f();\n}\n", nil},
+		// #8706: an arrow lambda's declared return type may be a TUPLE. In
+		// that position the `=>` that follows is the lambda's own, so a
+		// parenthesised type there is never `(…) => R`; a function-type
+		// return takes grouping parens.
+		{"arrow-tuple-return-ok", "function main(): i32 {\n    var id = (p: (i32, i32)): (i32, i32) => { return p; };\n    var (a, b) = id((40, 2));\n    return a + b - 42;\n}\n", nil},
+		{"arrow-fn-return-parens-ok", "function main(): i32 {\n    var mk = (p: i32): ((i32) => i32) => (q: i32) => p + q;\n    return mk(40)(2) - 42;\n}\n", nil},
 		// The other direction: a trailing `match` written without a `;` is
 		// still the block's value.
 		{"arrow-block-body-match-tail-ok", "function apply(f: (i32) => i32, v: i32): i32 { return f(v); }\nfunction main(): i32 {\n    var g = (x: i32) => {\n        var y: i32 = x + 1;\n        match (y) { 0 => 100, _ => y * 2 }\n    };\n    return apply(g, 3) - 8;\n}\n", nil},

@@ -1932,7 +1932,7 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 		f.b.WriteByte(')')
 		if !x.ReturnUnannotated && x.ReturnType != nil {
 			f.b.WriteString(": ")
-			f.b.WriteString(formatType(x.ReturnType))
+			f.b.WriteString(arrowReturnType(x.ReturnType))
 		}
 		f.b.WriteString(" => ")
 		if ret, _, ok := arrowReturn(x); ok {
@@ -2035,6 +2035,19 @@ func arrowReturn(x *ast.Lambda) (ret *ast.Return, prelude int, ok bool) {
 		return nil, 0, false
 	}
 	return r, n, true
+}
+
+// arrowReturnType renders an arrow lambda's declared return type. A
+// function-type return needs GROUPING parens there: the `=>` after the return
+// type is the lambda's own, so the parser reads a parenthesised type in that
+// position as a tuple and never as `(…) => R` (#8706). Printing
+// `(p: i32): (i32) => i32 => …` re-parses as a lambda returning `i32` and then
+// fails on the leftover arrow, which is #7338's class of formatter bug.
+func arrowReturnType(t ast.Type) string {
+	if _, isFn := t.(*ast.FuncType); isFn {
+		return "(" + formatType(t) + ")"
+	}
+	return formatType(t)
 }
 
 // formatArrowBody prints an arrow lambda's BRACED body — the shape whose

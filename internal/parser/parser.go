@@ -178,6 +178,13 @@ type parser struct {
 	// where `obj` is a method call returning a Foo, NOT a
 	// struct literal) still work correctly.
 	noStructLit bool
+	// noFnTypeArrow suppresses the top-level function-type arrow while parsing
+	// ONE type: after an arrow lambda's parameter list, `: (i32, i32) => …` has
+	// to read the parenthesised type as the return TUPLE, not as a function
+	// type that then eats the lambda's own `=>`. Read-and-cleared at the top of
+	// parseType so only that outermost type is affected — a `=>` inside the
+	// parens still spells a function type (#8706).
+	noFnTypeArrow bool
 	// returnTypeStack tracks the return type of the function
 	// currently being parsed. Pushed by parseFunction on entry,
 	// popped on exit. The `use` desugar uses the top of stack
@@ -2118,6 +2125,8 @@ func (p *parser) parseType() (ast.Type, error) {
 		return nil, err
 	}
 	defer p.leave()
+	noArrow := p.noFnTypeArrow
+	p.noFnTypeArrow = false
 	t := p.peek()
 	var base ast.Type
 	switch {
@@ -2180,6 +2189,10 @@ func (p *parser) parseType() (ast.Type, error) {
 	case t.Kind == lexer.Punct && t.Text == "(":
 		// `(T1, T2, ...)` followed by `=>` is a function type; the
 		// same shape NOT followed by `=>` is a tuple type, but only
+		// — except in an arrow lambda's RETURN-TYPE position, where the
+		// `=>` that follows is the lambda's own and a parenthesised type
+		// is therefore always a tuple or a grouping (noFnTypeArrow,
+		// #8706); a function-type return takes grouping parens there —
 		// when there are at least 2 elements (single-element
 		// "tuples" don't exist; empty parens are still reserved
 		// for the function-type-of-no-args case). This shape lets
@@ -2202,7 +2215,8 @@ func (p *parser) parseType() (ast.Type, error) {
 		if _, err := p.expect(lexer.Punct, ")"); err != nil {
 			return nil, err
 		}
-		if _, isArrow := p.accept(lexer.Punct, "=>"); isArrow {
+		if isArrow := !noArrow && p.match(lexer.Punct, "=>"); isArrow {
+			p.advance() // `=>`
 			ret, err := p.parseType()
 			if err != nil {
 				return nil, err
@@ -2880,7 +2894,11 @@ func (p *parser) parseArrowLambda() (ast.Expr, error) {
 	var ret ast.Type = ast.VoidType{}
 	unannotated := true
 	if _, ok := p.accept(lexer.Punct, ":"); ok {
+		// The `=>` after this type is the LAMBDA's, so a parenthesised return
+		// type here is a tuple, never `(…) => R` (#8706).
+		p.noFnTypeArrow = true
 		t, err := p.parseType()
+		p.noFnTypeArrow = false
 		if err != nil {
 			return nil, err
 		}
