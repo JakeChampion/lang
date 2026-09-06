@@ -251,6 +251,11 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 		w("\tmov %s, #%d", xreg(i), v)
 	}
 	w("\tbl %s", fnLabel(entry))
+	if ast.LeakCheckEnabled {
+		w("\tmov x9, x0") // park the exit status across the census
+		w("\tbl %s", lcReportSym)
+		w("\tmov x0, x9")
+	}
 	// exit_group(status): status is the function's return value in x0; the kernel
 	// keeps the low byte. x8 = 94 (exit_group on AArch64 Linux).
 	w("\tmov x8, #94")
@@ -268,6 +273,9 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 	if heap {
 		emitHeapGuard(w)
 		emitAllocPres(w)
+	}
+	if ast.LeakCheckEnabled {
+		emitLcReport(w, heap)
 	}
 	if usesBcopy(helpers) {
 		emitBcopy(w)
@@ -400,6 +408,16 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 		w("%s:", freelistSym)
 		w("\t.space 2048")
 	}
+	if ast.LeakCheckEnabled {
+		// The census counters. Emitted whatever the module allocates, so a
+		// no-heap program still reports its (zero) line rather than nothing.
+		w(".section .bss")
+		w(".align 8")
+		for _, sym := range []string{lcAllocCountSym, lcPopBytesSym, lcFreeCountSym, lcFreeBytesSym} {
+			w("%s:", sym)
+			w("\t.quad 0")
+		}
+	}
 	if withArgs {
 		// argc / argv snapshot + the memoised args() container pointer.
 		w(".section .bss")
@@ -531,6 +549,27 @@ const (
 	// lines are truncated (matching the native backend).
 	readlineBufSym = "__ssa_readline_buf"
 	readlineBytes  = 4096
+
+	// The FERN_LEAKCHECK census (#5362 slice 1, #8698 on this backend). Every
+	// allocation either moves the bump cursor — the guard every bump site calls
+	// counts those — or pops the freelist, which __alloc counts here; __free
+	// counts every reclamation. Bytes are read off the arena at exit rather than
+	// summed per allocation: a bump site aligns the cursor to 16 before adding
+	// its size, so the 16-rounded cursor less the arena base is exactly the sum
+	// of the rounded sizes __free counts with, and only a pop leaves the cursor
+	// alone.
+	lcAllocCountSym = "__ssa_lc_alloc_count"
+	lcPopBytesSym   = "__ssa_lc_pop_bytes"
+	lcFreeCountSym  = "__ssa_lc_free_count"
+	lcFreeBytesSym  = "__ssa_lc_free_bytes"
+	lcReportSym     = "__ssa_lc_report"
+)
+
+// The census line, split at the numbers the report writes between the pieces.
+const (
+	lcMsgAllocs = "leakcheck: allocs="
+	lcMsgFrees  = " frees="
+	lcMsgLive   = " live_bytes="
 )
 
 // Where _start resumes once the reservation succeeded. The failure path
@@ -586,10 +625,21 @@ func emitHeapReserve(w func(string, ...any)) {
 // caller — and the condition flags with it: it compares by subtracting and
 // testing the sign bit rather than with `cmp`, because the sites it is spliced
 // into are hand-written helpers that may keep flags live across an allocation.
+//
+// Being on every bump also makes it the one place a bump-allocated block can be
+// counted, so under FERN_LEAKCHECK it ticks the census's allocation count.
 func emitHeapGuard(w func(string, ...any)) {
 	w("")
 	w("%s:", heapGuardSym)
 	w("\tstp x0, x1, [sp, #-16]!")
+	if ast.LeakCheckEnabled {
+		// Flag-safe (no cmp / no s-form), like the rest of the guard.
+		w("\tadrp x0, %s", lcAllocCountSym)
+		w("\tadd x0, x0, #:lo12:%s", lcAllocCountSym)
+		w("\tldr x1, [x0]")
+		w("\tadd x1, x1, #1")
+		w("\tstr x1, [x0]")
+	}
 	w("\tadrp x0, %s", heapPtrSym)
 	w("\tadd x0, x0, #:lo12:%s", heapPtrSym)
 	w("\tldr x1, [x0]")
@@ -864,6 +914,148 @@ func emitHeapGuardCall(w func(string, ...any)) {
 	for _, l := range heapGuardCallLines() {
 		w("\t%s", l)
 	}
+}
+
+// heapRewindComment marks a cursor store that LOWERS the cursor: a site handing
+// back space nothing owns, which needs no guard because the arena end moves no
+// closer. It is the only legitimate unguarded cursor store, so
+// TestEveryHeapBumpPublishesThroughTheGuard reads the marker rather than
+// exempting the shape.
+const heapRewindComment = " // heap rewind"
+
+// emitHeapRewind writes the marked cursor store. `cursorAddrReg` holds
+// &__ssa_heap_ptr and `valueReg` the cursor value to publish, which must be at
+// or below the current one.
+func emitHeapRewind(w func(string, ...any), cursorAddrReg, valueReg string) {
+	w("\tstr %s, [%s]%s", valueReg, cursorAddrReg, heapRewindComment)
+}
+
+// emitLcAdd adds `addend` (or 1, when it is empty) to the census counter at
+// `sym`, through the two scratch registers. Flag-safe.
+func emitLcAdd(w func(string, ...any), sym, addend, addrReg, valReg string) {
+	w("\tadrp %s, %s", addrReg, sym)
+	w("\tadd %s, %s, #:lo12:%s", addrReg, addrReg, sym)
+	w("\tldr %s, [%s]", valReg, addrReg)
+	if addend == "" {
+		w("\tadd %s, %s, #1", valReg, valReg)
+	} else {
+		w("\tadd %s, %s, %s", valReg, valReg, addend)
+	}
+	w("\tstr %s, [%s]", valReg, addrReg)
+}
+
+// emitLcReport emits __ssa_lc_report(), the FERN_LEAKCHECK census this backend
+// prints on the way out — the arm64ssa sibling of the flat backend's
+// __fern_lc_report, and the same one line on stderr:
+//
+//	leakcheck: allocs=<N> frees=<M> live_bytes=<K>
+//
+// K is signed, so an over-free reads negative rather than wrapping. Where the
+// counts come from is the lc*Sym block's comment. Called from the two paths a
+// program leaves by — _start's epilogue and the exit() builtin — which park the
+// exit status in x9 across it: this clobbers x0..x7 and nothing else.
+// `heap` is false for a module that never allocates: then there is no arena to
+// read and every number is zero.
+func emitLcReport(w func(string, ...any), heap bool) {
+	msg := func(sym, text string) {
+		w(".section .rodata")
+		w("%s:", sym)
+		bytes := make([]string, len(text))
+		for i := 0; i < len(text); i++ {
+			bytes[i] = strconv.Itoa(int(text[i]))
+		}
+		w("\t.byte %s", strings.Join(bytes, ", "))
+		w(".text")
+	}
+	write := func(sym, text string) {
+		w("\tadrp x1, %s", sym)
+		w("\tadd x1, x1, #:lo12:%s", sym)
+		w("\tmov x2, #%d", len(text))
+		w("\tbl .Lssa_lc_write")
+	}
+	num := func(sym string) {
+		w("\tadrp x0, %s", sym)
+		w("\tadd x0, x0, #:lo12:%s", sym)
+		w("\tldr x0, [x0]")
+		w("\tbl .Lssa_lc_wrnum")
+	}
+	w("")
+	w("%s:", lcReportSym)
+	w("\tstp x29, x30, [sp, #-16]!")
+	w("\tmov x29, sp")
+	write("__ssa_lc_msg_allocs", lcMsgAllocs)
+	num(lcAllocCountSym)
+	write("__ssa_lc_msg_frees", lcMsgFrees)
+	num(lcFreeCountSym)
+	write("__ssa_lc_msg_live", lcMsgLive)
+	if heap {
+		// Bumped bytes: the 16-rounded cursor less the arena base.
+		w("\tadrp x0, %s", heapPtrSym)
+		w("\tadd x0, x0, #:lo12:%s", heapPtrSym)
+		w("\tldr x0, [x0]")
+		w("\tadd x0, x0, #15")
+		w("\tand x0, x0, #-16")
+		w("\tadrp x1, %s", heapBaseSym)
+		w("\tadd x1, x1, #:lo12:%s", heapBaseSym)
+		w("\tldr x1, [x1]")
+		w("\tsub x0, x0, x1")
+	} else {
+		w("\tmov x0, #0")
+	}
+	w("\tadrp x1, %s", lcPopBytesSym)
+	w("\tadd x1, x1, #:lo12:%s", lcPopBytesSym)
+	w("\tldr x1, [x1]")
+	w("\tadd x0, x0, x1")
+	w("\tadrp x1, %s", lcFreeBytesSym)
+	w("\tadd x1, x1, #:lo12:%s", lcFreeBytesSym)
+	w("\tldr x1, [x1]")
+	w("\tsub x0, x0, x1")
+	w("\tbl .Lssa_lc_wrnum")
+	write("__ssa_lc_msg_nl", "\n")
+	w("\tldp x29, x30, [sp], #16")
+	w("\tret")
+	// .Lssa_lc_write(x1 = buf, x2 = len): one write(2) to stderr. Leaf, so x30
+	// (the return into the report) survives.
+	w(".Lssa_lc_write:")
+	w("\tmov x0, #2") // stderr
+	w("\tmov x8, #64")
+	w("\tsvc #0")
+	w("\tret")
+	// .Lssa_lc_wrnum(x0 = signed i64): decimal itoa, digits built backwards from
+	// the end of a 32-byte stack buffer (an i64 is 19 digits + sign at most),
+	// then one write(2) to stderr. Leaf.
+	w(".Lssa_lc_wrnum:")
+	w("\tsub sp, sp, #48")
+	w("\tadd x3, sp, #32")
+	w("\tmov x4, #10")
+	w("\tcmp x0, #0")
+	w("\tcneg x0, x0, lt") // |value|
+	w("\tcset x5, lt")     // sign flag
+	w(".Lssa_lc_wrnum_loop:")
+	w("\tudiv x6, x0, x4")
+	w("\tmsub x7, x6, x4, x0") // remainder
+	w("\tadd x7, x7, #48")     // → ASCII
+	w("\tsub x3, x3, #1")
+	w("\tstrb w7, [x3]")
+	w("\tmov x0, x6")
+	w("\tcbnz x0, .Lssa_lc_wrnum_loop")
+	w("\tcbz x5, .Lssa_lc_wrnum_emit")
+	w("\tmov x7, #45") // '-'
+	w("\tsub x3, x3, #1")
+	w("\tstrb w7, [x3]")
+	w(".Lssa_lc_wrnum_emit:")
+	w("\tadd x2, sp, #32")
+	w("\tsub x2, x2, x3") // len
+	w("\tmov x1, x3")
+	w("\tmov x0, #2") // stderr
+	w("\tmov x8, #64")
+	w("\tsvc #0")
+	w("\tadd sp, sp, #48")
+	w("\tret")
+	msg("__ssa_lc_msg_allocs", lcMsgAllocs)
+	msg("__ssa_lc_msg_frees", lcMsgFrees)
+	msg("__ssa_lc_msg_live", lcMsgLive)
+	msg("__ssa_lc_msg_nl", "\n")
 }
 
 // usesReadLine reports whether the module references Reader.read_line, so the
@@ -2449,6 +2641,14 @@ func emitStdHandleHelper(name string, fd int) func(w func(string, ...any)) {
 // failed — a directory reads EISDIR, and a streaming caller has to tell that from
 // EOF (#8700). The read svc preserves every register but x0, so fd/n/data survive
 // without spills on the two paths that do not classify an errno.
+//
+// The buffer has to be sized before the read but is only owned after it, so
+// every exit trims the bump cursor back to what the result actually holds: to
+// the read's byte count on Ok, and to the pre-call cursor on Ok("")/Err, where
+// nothing owns the buffer at all. Nothing allocates between the bump and those
+// exits, so the trim is a plain store — the freelist is not involved, and a
+// __fern_box_free here would push a block whose extent is n + 9 onto the class
+// of n + 8, which for n above 2 KiB rounds up well past it.
 // x0=reader handle, x1=n.
 func emitReaderReadChunkHelper(w func(string, ...any)) {
 	w("")
@@ -2458,8 +2658,8 @@ func emitReaderReadChunkHelper(w func(string, ...any)) {
 	// Allocate a single-word rc string: 8-byte header + n + 1 NUL.
 	w("\tadrp x3, %s", heapPtrSym)
 	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
-	w("\tldr x4, [x3]")
-	w("\tadd x4, x4, #15")
+	w("\tldr x12, [x3]") // cursor before the bump = the rewind target
+	w("\tadd x4, x12, #15")
 	w("\tand x4, x4, #-16")
 	w("\tadd x5, x10, #9")
 	w("\tadd x6, x4, x5")
@@ -2480,14 +2680,20 @@ func emitReaderReadChunkHelper(w func(string, ...any)) {
 	w("\tstur w0, [x11, #-4]") // len = bytes read
 	w("\tadd x1, x11, x0")
 	w("\tstrb wzr, [x1]") // trailing NUL
+	// A short read (a pipe hands back at most 64 KiB) keeps only the bytes
+	// it produced; the unread tail of the buffer goes back to the cursor.
+	w("\tadd x1, x1, #1")
+	emitHeapRewind(w, "x3", "x1")
 	// Ok(string): box {rc=1, tag=0, string@8}.
 	emitOptionBox(w, 0, "x11")
 	w("\tret")
 	w(".Lssa_rrc_eof:")
+	emitHeapRewind(w, "x3", "x12") // nothing owns the buffer
 	emitEmptyString(w, "x11")
 	emitOptionBox(w, 0, "x11")
 	w("\tret")
 	w(".Lssa_rrc_err:")
+	emitHeapRewind(w, "x3", "x12") // nothing owns the buffer
 	// A read carries no path, so the errno is classified against an empty
 	// one, exactly as a failed write is. x19 survives the two calls.
 	w("\tstp x29, x30, [sp, #-32]!")
@@ -3106,6 +3312,13 @@ func emitAllocHelper(w func(string, ...any)) {
 	w("\tcbz x3, .Lssa_alloc_bump")
 	w("\tldr x4, [x3]")             // head.next
 	w("\tstr x4, [x2, x1, lsl #3]") // heads[idx] = next
+	if ast.LeakCheckEnabled {
+		// The one allocation shape that leaves the cursor alone, so the guard
+		// cannot see it. x0 still holds the class-rounded size __free counted
+		// this block with.
+		emitLcAdd(w, lcAllocCountSym, "", "x5", "x6")
+		emitLcAdd(w, lcPopBytesSym, "x0", "x5", "x6")
+	}
 	w("\tmov x0, x3")
 	w("\tret")
 	w(".Lssa_alloc_bump:")
@@ -3277,6 +3490,13 @@ func emitFreeHelper(w func(string, ...any)) {
 	w("%s:", fnLabel("__free"))
 	w("\tmov w1, w1") // size is an i32
 	emitFreelistClass(w, "free", "x1", "x2", "x3", "x4", "x5", "x6", "x7", "x8", ".Lssa_free_ret")
+	if ast.LeakCheckEnabled {
+		// After the class computation, so the census counts only what is really
+		// pushed: a block above the largest class returns unreclaimed, and its
+		// bytes stay live for the rest of the process.
+		emitLcAdd(w, lcFreeCountSym, "", "x3", "x4")
+		emitLcAdd(w, lcFreeBytesSym, "x1", "x3", "x4")
+	}
 	w("\tadrp x3, %s", freelistSym)
 	w("\tadd x3, x3, #:lo12:%s", freelistSym)
 	w("\tldr x4, [x3, x2, lsl #3]") // old head
@@ -6420,6 +6640,12 @@ func emitPutcharHelper(w func(string, ...any)) {
 func emitExitHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("exit"))
+	if ast.LeakCheckEnabled {
+		// exit() bypasses _start's epilogue, so the census runs here too.
+		w("\tmov x9, x0") // park the exit status across the census
+		w("\tbl %s", lcReportSym)
+		w("\tmov x0, x9")
+	}
 	w("\tmov x8, #94") // exit_group; status already in x0
 	w("\tsvc #0")
 }
