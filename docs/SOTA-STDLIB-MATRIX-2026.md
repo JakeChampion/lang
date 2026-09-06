@@ -137,10 +137,10 @@ to make an algorithmic claim measurable end-to-end.
 | 13 | arbitrary division | compiler | Hardware divide | Hardware divide | **SHIPPED** | — |
 | 14 | mul_wide | compiler | Present (Dragonbox uses it) | `MUL`/`MULH` | **SHIPPED** | — |
 | 15 | mul_high | compiler | Present | `MULH` | **SHIPPED** | — |
-| 16 | popcount | `std/{i32,i64,u32,u64}` | `OpPopcount`; inline SWAR on native, `i32.popcnt` on wasm | Hardware popcount | **SHIPPED** — DECIDE:cpu-baseline for the instruction | 1 |
+| 16 | popcount | `std/{i32,i64,u32,u64}` | `OpPopcount` — `popcnt` on x86-64, `cnt`+`addv` on arm64, `i32.popcnt` on wasm | Hardware popcount | **SHIPPED**, hardware everywhere | — |
 | 17 | clz | same | `OpClz` | `LZCNT`/`CLZ` | **SHIPPED** | — |
 | 18 | ctz | same | `OpCtz` | `TZCNT`/`RBIT+CLZ` | **SHIPPED** | — |
-| 19 | bit reverse | — | Absent | `RBIT` / table | GAP, narrow | 3 |
+| 19 | bit reverse | — | Absent as a primitive; `RBIT` is emitted inside `OpCtz` | `RBIT` / table | GAP, narrow — the assembler blocker is gone, it wants a caller | 3 |
 | 20 | rotate | — | Absent; `std/crypto` hand-rolls `__rotr` with two shifts and an or | `ROL`/`ROR`/`i32.rotl` | **GAP — best value in this section** | 1 |
 
 **Rows 8 / 11 / 12 are one row.** Integer→string is five divisions per ten
@@ -156,13 +156,16 @@ that follows will do the same. `i32.rotl`/`rotr` exist in wasm and both native
 ISAs have the instruction, so this is the same shape as the `clz`/`ctz` work
 that already landed and can reuse its scaffolding.
 
-**Row 16's asterisk.** `POPCNT` is SSE4.2 and Fern emits static binaries with
-no runtime dispatch, so selecting it turns a sub-baseline CPU into a SIGILL,
-not a slow binary. The project baseline is already stated as Haswell-class in
-`CLAUDE.md`/`docs/BACKEND-PARITY.md` — so this is a matter of taking the
-baseline at its word in codegen, not a new decision. On arm64 the blocker is
-different and concrete: `cnt`/`addv`/`rbit` are not implemented in the
-in-process assembler, which is also what row 19 needs.
+**Row 16's asterisk is spent.** It said `POPCNT` was a matter of taking the
+Haswell baseline at its word in codegen rather than a new decision, and that on
+arm64 the concrete blocker was `cnt`/`addv`/`rbit` being absent from the
+in-process assembler. Both have since happened, and the arm64 half happened as a
+side effect of the SIMD kernels (#6198) rather than for popcount's sake — the
+assembler gained the NEON surface those needed. `OpPopcount` emits `popcnt` on
+x86-64 and `cnt`+`addv` on arm64, `OpClz` emits `lzcnt`/`clz`, and `OpCtz` emits
+`tzcnt`/`rbit`+`clz`: hardware on both register backends, no SWAR left. Row 19
+(`RBIT` for bit reverse) is therefore not waiting on the assembler either — it
+is waiting on a caller.
 
 ## B. Elementary floating-point math
 
@@ -698,8 +701,7 @@ declared baseline — SSE2 on x86-64, NEON on aarch64, `v128` on wasm — so not
 needs probing at startup. That leaves AVX-512 (and AVX2) on the table, which is
 the cost, and it is a cost paid deliberately: option (b) changes how Fern links
 and starts up, and startup time is one of the two workloads the language grew up
-around. Reopening it is a language decision, not a codegen one, and it is the
-same decision `POPCNT` is waiting on.
+around. Reopening it is a language decision, not a codegen one.
 
 ---
 

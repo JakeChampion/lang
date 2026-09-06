@@ -89,10 +89,16 @@ func TestAsmRunRmemchrAcrossLengths(t *testing.T) {
 	}
 }
 
-// Two needles, so the forward kernel must return the FIRST and the backward one
-// the LAST — a kernel that returns any match passes the single-needle sweep.
+// Two matches, so the forward kernels must return the FIRST and the backward one
+// the LAST — a kernel that returns ANY match passes the single-match sweeps
+// above. `__fern_ascii_run` is in here for the same reason the two search
+// kernels are, and it is not hypothetical: swapping its `bsf` for `bsr` makes it
+// answer with the last high byte of a block and the sweep does not notice, while
+// `utf8_ingest_validated` consumes the run as [from, result) and would take a
+// non-ASCII byte for an ASCII one.
 func TestAsmRunScanPicksTheRightEndAcrossBlocks(t *testing.T) {
 	const needle = 'x'
+	const high = '\xc3'
 	for _, n := range []int{16, 17, 31, 32, 33, 40} {
 		for _, lo := range []int{0, 1, 15, 16} {
 			for _, hi := range []int{n - 1, n - 2, 16, 17} {
@@ -108,6 +114,10 @@ func TestAsmRunScanPicksTheRightEndAcrossBlocks(t *testing.T) {
 				}
 				if got := scanResult(t, "__fern_rmemchr", s, needle, int64(n)); got != hi {
 					t.Errorf("%s: rmemchr got %d, want %d", name, got, hi)
+				}
+				b[lo], b[hi] = high, high
+				if got := scanResult(t, "__fern_ascii_run", string(b), 0); got != lo {
+					t.Errorf("%s: ascii_run got %d, want %d", name, got, lo)
 				}
 			}
 		}
@@ -126,6 +136,9 @@ func TestAsmRunAsciiRunAcrossLengths(t *testing.T) {
 		if got := scanResult(t, "__fern_ascii_run", base, 0); got != n {
 			t.Errorf("len %d, all ascii: got %d, want %d (the length)", n, got, n)
 		}
+		// One high byte per string, so this cannot tell the FIRST high byte in a
+		// block from the last — TestAsmRunScanPicksTheRightEndAcrossBlocks is
+		// what pins that.
 		for pos := 0; pos < n; pos++ {
 			s := base[:pos] + high + base[pos+1:]
 			if got := scanResult(t, "__fern_ascii_run", s, 0); got != pos {

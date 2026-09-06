@@ -251,9 +251,9 @@ survives without SIMD, and the compiler's own lexer is the beneficiary.
 
 | Primitive | Today | Best known | Verdict |
 | --- | --- | --- | --- |
-| `count_ones` | **Intrinsic** (`i32.popcnt` on wasm; inline SWAR on the register backends) | `POPCNT` / NEON `CNT` / wasm `i32.popcnt` | **DONE**; hardware popcount needs a baseline decision |
-| `leading_zeros` | **Intrinsic** — `i32.clz` / arm64 `clz` / x86 `bsr` | `LZCNT` / `CLZ` / `i32.clz` | **DONE (this pass)** |
-| `trailing_zeros` | **Intrinsic** — `i32.ctz` / clz-derived / x86 `bsf` | `TZCNT` / `RBIT`+`CLZ` / `i32.ctz` | **DONE (this pass)** |
+| `count_ones` | **Intrinsic** — `popcnt` / `cnt`+`addv` / `i32.popcnt` | `POPCNT` / NEON `CNT` / wasm `i32.popcnt` | **DONE**, hardware on all three |
+| `leading_zeros` | **Intrinsic** — `lzcnt` / `clz` / `i32.clz` | `LZCNT` / `CLZ` / `i32.clz` | **DONE**, hardware on all three |
+| `trailing_zeros` | **Intrinsic** — `tzcnt` / `rbit`+`clz` / `i32.ctz` | `TZCNT` / `RBIT`+`CLZ` / `i32.ctz` | **DONE**, hardware on all three |
 | `byte_swap` | Software | `BSWAP` / `REV` | GAP |
 | `rotate_left/right` | Software | `ROL`/`ROR` / wasm `rotl` | GAP |
 
@@ -565,17 +565,20 @@ measuring the three variants separately showed why.
 | | clz | ctz | popcount |
 | --- | --- | --- | --- |
 | wasm | `i32.clz` | `i32.ctz` | `i32.popcnt` |
-| arm64 | `clz` | `x & -x` then `clz` + `csel` | inline SWAR |
-| x86-64 | `bsr` + zero branch | `bsf` + zero branch | inline SWAR |
+| arm64 | `clz` | `rbit` + `clz` | `cnt` + `addv` |
+| x86-64 | `lzcnt` | `tzcnt` | `popcnt` |
 
-The two popcount gaps are **not** oversights. On x86-64, `POPCNT` requires
-SSE4.2 and Fern emits static binaries with no runtime CPU dispatch, so using it
-would turn a pre-2008 CPU into a SIGILL at the first bit operation rather than
-a slow binary — raising the baseline is a project decision, not a codegen one.
-On arm64 the hardware popcount lives on the SIMD side (`cnt` per byte, `addv`
-to sum), and neither `cnt`, `addv`, nor `rbit` is implemented by the in-process
-assembler `cmd/fern -target arm64-linux` uses by default; emitting them fails at
-assemble time. Both still gain from being inline on the IR path rather than
+All three are hardware on all three backends now, and the two that were not are
+worth recording because of what closed them. On x86-64 the blocker was the
+baseline: `POPCNT` is SSE4.2 and Fern emits static binaries with no runtime CPU
+dispatch, so selecting it is a promise the whole binary makes — taking the
+declared Haswell baseline at its word, not a new decision. On arm64 the hardware
+popcount lives on the SIMD side (`cnt` per byte, `addv` to sum), and the
+in-process assembler `cmd/fern -target arm64-linux` uses by default could encode
+none of `cnt`, `addv` or `rbit`. That gap closed as a **side effect of the SIMD
+kernels** (#6198), which had to teach the same assembler its NEON surface for
+`__memchr` — the encoding debt being per-instruction-set rather than per-caller
+cuts both ways. Both still gain from being inline on the IR path rather than
 behind a Fern-level call, which is where the 3.9x comes from.
 
 Zero is defined: clz/ctz of 0 return the operand width, matching wasm's
