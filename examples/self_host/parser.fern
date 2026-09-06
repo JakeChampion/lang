@@ -14871,7 +14871,13 @@ pub function default_nonconst_reason(e: ast.Expr): (string, boolean) {
         ast.ExprSlice(sl) => { return ("is not a constant expression", true); },
         ast.ExprMapLit(ml) => { return ("is not a constant expression", true); },
         ast.ExprFString(fs) => { return ("is not a constant expression", true); },
-        ast.ExprUnknown(uk) => { return ("is not a constant expression", true); }
+        // An ExprUnknown is a node the parser already refused — an
+        // out-of-range float literal rides one (see parse_primary_nested), and
+        // so does every `;`/`@` sentinel. The P001/P002 pre-check reports it,
+        // so E076 must not complain about the same token a second time.
+        // Native has no equivalent arm because its bad float stays a FloatLit,
+        // which its nonConstReason accepts as constant.
+        ast.ExprUnknown(uk) => { return ("", false); }
     }
     return ("is not a constant expression", true);
 }

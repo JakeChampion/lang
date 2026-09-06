@@ -186,18 +186,27 @@ func TestSelfHostParseUnknownDiagSequence(t *testing.T) {
 			"function main(): i32 {\n  defer print(;);\n  return 0;\n}\n",
 			"error[P001]: in fn 'main': parser-side unknown: punct:; (2:15)"},
 		// A sentinel inside a lambda body, reachable only through expression
-		// descent.
+		// descent. Column 37 is the sentinel `;` itself, which is where native
+		// points and where every sibling row above points; the 42 this pinned
+		// until the braced arrow-lambda body became a function body (#8593) was
+		// inside the following `return`.
 		{"lambda-body-sentinel",
 			"function main(): i32 {\n  var f = (): i32 => { var z: i32 = ;; return 0; };\n  return f();\n}\n",
-			"error[P001]: in fn 'main': parser-side unknown: punct:; (2:42)"},
+			"error[P001]: in fn 'main': parser-side unknown: punct:; (2:37)"},
 		// The one shape that maps to P002 rather than P001 (#6842).
 		{"float-range-p002",
 			"function main(): i32 {\n  var big: f64 = 1e999;\n  return 0;\n}\n",
 			"error[P002]: in fn 'main': invalid float literal \"1e999\": value out of range (2:18)"},
 		// The nameless-function P001 raised by parse_unknown_errors_module
 		// itself, before any walk, followed by the top-level residue.
+		//
+		// `function (…)` here is a malformed DECLARATION, not the anonymous
+		// function expression #2673 retired, so it does not migrate to an
+		// arrow lambda: `(): i32 => {…}` at top level parses cleanly into
+		// top_stmts and raises neither diagnostic. Native still rejects this
+		// source with `expected "Ident", got "("`.
 		{"malformed-fn-decl",
-			"(): i32 => {\n  return 1;\n}\nfunction main(): i32 {\n  return 0;\n}\n",
+			"function (): i32 {\n  return 1;\n}\nfunction main(): i32 {\n  return 0;\n}\n",
 			"error[P001]: malformed function declaration (1:1)\n" +
 				"error[P001]: at top level: parser-side unknown: punct:: (1:12)"},
 	}
