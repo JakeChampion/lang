@@ -79,12 +79,46 @@ func nativeReuse(gate, token, dec int32) *Func {
 	}}
 }
 
+// nativeReuseInline builds emitReuseBox's shape, which native emits when
+// the donor and the construction share a size class: the reuse arm stores
+// the donor's box base straight into the slot the site builds into, and
+// the allocator call sits on the decline arm with a null token, its result
+// stored into that same slot. The donor's three roles are the same three
+// parameters.
+func nativeReuseInline(gate, token, dec int32) *Func {
+	return &Func{Name: "native-inline", Ops: []Op{
+		{Kind: OpLoadLocal, I32: gate},
+		{Kind: OpRcIsUnique, Str: "__fern_rc_is_unique", I32: 1},
+		{Kind: OpStoreLocal, I32: uniq},
+		{Kind: OpLoadLocal, I32: uniq},
+		{Kind: OpIf, I32: BlockTypeVoid},
+		{Kind: OpLoadLocal, I32: token},
+		{Kind: OpConstI32, I32: hdrLen},
+		{Kind: OpSub},
+		{Kind: OpStoreLocal, I32: tok},
+		{Kind: OpElse},
+		{Kind: OpLoadLocal, I32: dec},
+		{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1},
+		{Kind: OpDrop},
+		{Kind: OpConstI32, I32: 0},
+		{Kind: OpConstI32, I32: 24},
+		{Kind: OpConstI32, I32: 24},
+		{Kind: OpCallDirect, Runtime: true, Str: "__alloc_reuse", I32: 3},
+		{Kind: OpStoreLocal, I32: tok},
+		{Kind: OpEnd},
+		{Kind: OpConstI32, I32: 0},
+		{Kind: OpStoreLocal, I32: gate},
+		{Kind: OpLoadLocal, I32: tok},
+	}}
+}
+
 func TestVerifyRcAcceptsBothCompilersReuseShapes(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		f    *Func
 	}{
 		{"native", nativeReuse(donor, donor, donor)},
+		{"native-inline", nativeReuseInline(donor, donor, donor)},
 		{"self-host", selfHostReuse(donor, donor)},
 	} {
 		problems, cov := verifyRc(tc.f)
@@ -107,6 +141,7 @@ func TestVerifyRcCatchesTokenTakenFromAnUntestedDonor(t *testing.T) {
 		f    *Func
 	}{
 		{"native", nativeReuse(donor, other, donor)},
+		{"native-inline", nativeReuseInline(donor, other, donor)},
 		{"self-host", selfHostReuse(donor, other)},
 	} {
 		problems, cov := verifyRc(tc.f)
@@ -126,15 +161,23 @@ func TestVerifyRcCatchesDeclineReleasingAnotherLocal(t *testing.T) {
 	// The mirror failure: the gate and the token agree, but the shared
 	// arm releases something else, so the tested donor leaks whenever the
 	// site declines.
-	problems, cov := verifyRc(nativeReuse(donor, donor, other))
-	if cov.Checked != 1 {
-		t.Fatalf("the site must be modelled, not skipped (skips %v)", cov.Skipped)
-	}
-	if len(problems) != 1 {
-		t.Fatalf("want one problem, got %d: %v", len(problems), problems)
-	}
-	if !strings.Contains(problems[0].Msg, "leaks on the decline path") {
-		t.Errorf("problem must name the leak, got %q", problems[0].Msg)
+	for _, tc := range []struct {
+		name string
+		f    *Func
+	}{
+		{"native", nativeReuse(donor, donor, other)},
+		{"native-inline", nativeReuseInline(donor, donor, other)},
+	} {
+		problems, cov := verifyRc(tc.f)
+		if cov.Checked != 1 {
+			t.Fatalf("%s: the site must be modelled, not skipped (skips %v)", tc.name, cov.Skipped)
+		}
+		if len(problems) != 1 {
+			t.Fatalf("%s: want one problem, got %d: %v", tc.name, len(problems), problems)
+		}
+		if !strings.Contains(problems[0].Msg, "leaks on the decline path") {
+			t.Errorf("%s: problem must name the leak, got %q", tc.name, problems[0].Msg)
+		}
 	}
 }
 
