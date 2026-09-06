@@ -120,6 +120,27 @@ func TestEnforceProcByTarget(t *testing.T) {
 	}
 }
 
+// `host` — the machine's own name. Every hosted target grants it,
+// wasi-cli included: a component has no node name and `hostname()`
+// answering "" there is a fact, not a stand-in, which is what separates
+// it from `userid`'s refused 0. wasi-http grants no process identity at
+// all, so it refuses, the same way it refuses `args` and `env`.
+func TestEnforceHostByTarget(t *testing.T) {
+	src := `function main(): i32 {
+    var h: string = hostname();
+    return 0;
+}`
+	for _, target := range []string{"x86-64-linux", "arm64-linux", "arm64-darwin", "arm64-android", "wasm32-wasi"} {
+		if vs := platforms.Enforce(prepared(t, src, false), target); len(vs) != 0 {
+			t.Errorf("%s: unexpected violations: %+v", target, vs)
+		}
+	}
+	vs := platforms.Enforce(prepared(t, src, false), "wasm32-wasi-http")
+	if len(vs) != 1 || vs[0].Builtin != "hostname" || vs[0].Capability != "host" {
+		t.Fatalf("wasm32-wasi-http: violations = %+v, want one hostname/host", vs)
+	}
+}
+
 // The same fs-touching program is fine on targets granting `fs` and a
 // violation under wasi-http.
 func TestEnforceFsByTarget(t *testing.T) {

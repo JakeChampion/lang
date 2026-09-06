@@ -80,6 +80,9 @@ pub function builtin_caps(): BuiltinCap[] {
         BuiltinCap { builtin: "temp_dir", capability: "fs" },
 
         BuiltinCap { builtin: "env", capability: "env" },
+        // The machine's name is ambient information about where the
+        // process runs, like its environment.
+        BuiltinCap { builtin: "hostname", capability: "env" },
 
         BuiltinCap { builtin: "subprocess", capability: "subprocess" },
         BuiltinCap { builtin: "proc_fork", capability: "subprocess" },

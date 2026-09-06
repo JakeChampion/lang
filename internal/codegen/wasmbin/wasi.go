@@ -2223,6 +2223,18 @@ func buildIsattyBodyP2(map[string]uint32) []byte {
 	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
 }
 
+// buildHostnameBody assembles hostname() on both previews: the empty
+// string as a (data, len) pair in the inline form — data 0, len with only
+// the inline flag set, which LengthWasm reads as 0 and __fern_str_dec
+// short-circuits on. A component has no node name, so "" is the honest
+// answer rather than a stand-in (compare isatty's constant no).
+func buildHostnameBody(map[string]uint32) []byte {
+	var body []byte
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstI32Const(body, int32(-0x80000000))
+	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+}
+
 // buildExitBody assembles the wasm bytes for __fern_exit.
 //
 // Signature: (param $code i32) (result)

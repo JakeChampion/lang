@@ -270,6 +270,7 @@ var providedSigs = map[string]providedSig{
 	"access":                        {2, rWord},
 	"geteuid":                       {0, rWord},
 	"getegid":                       {0, rWord},
+	"hostname":                      {0, rString},
 	"map_new":                       {-1, rWord},
 	"monotonic_ns":                  {-1, rWord},
 	"now_ns":                        {-1, rWord},

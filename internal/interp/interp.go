@@ -1007,6 +1007,7 @@ func New() *Interp {
 	i.Builtins["access"] = &Builtin{Fn: builtinAccess}
 	i.Builtins["geteuid"] = &Builtin{Fn: builtinGeteuid}
 	i.Builtins["getegid"] = &Builtin{Fn: builtinGetegid}
+	i.Builtins["hostname"] = &Builtin{Fn: builtinHostname}
 	i.Builtins["remove_file"] = &Builtin{Fn: builtinRemoveFile}
 	i.Builtins["create_dir_all"] = &Builtin{Fn: builtinCreateDirAll}
 	i.Builtins["remove_dir_all"] = &Builtin{Fn: builtinRemoveDirAll}
@@ -2419,6 +2420,19 @@ func builtinGetegid(_ *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("getegid: expected 0 args, got %d", len(args))
 	}
 	return Number(os.Getegid()), nil
+}
+
+// builtinHostname reports the kernel's node name; a kernel that cannot
+// say answers the empty string, as the compiled backends do.
+func builtinHostname(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 0 {
+		return nil, fmt.Errorf("hostname: expected 0 args, got %d", len(args))
+	}
+	h, err := os.Hostname()
+	if err != nil {
+		return String(""), nil
+	}
+	return String(h), nil
 }
 
 // builtinRemoveFile unlinks `path`. `Option[IoError]` mirrors

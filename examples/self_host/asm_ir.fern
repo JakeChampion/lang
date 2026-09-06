@@ -4565,6 +4565,11 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             s = s.write("    popq %rsi\n    popq %rdi\n");
             s = s.write("    pushq %rsi\n    pushq %rdi\n    call __fn___fern_access\n    addq $16, %rsp\n    pushq %rax\n");
             s = s.need("heap"); s = s.need("access");
+        } else if (o.kind_tag == 240) {  // hostname
+            // no args -> the Fern-compiled __fn___fern_hostname: the node name
+            // in ONE fresh rc-headered string box, pushed in %rax.
+            s = s.write("    call __fn___fern_hostname\n    pushq %rax\n");
+            s = s.need("heap"); s = s.need("hostname");
         } else if (o.kind_tag == 238) {  // geteuid
             s = s.write("    call __fn___fern_geteuid\n    pushq %rax\n");
             s = s.need("geteuid");
@@ -8030,6 +8035,10 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
     if (s.has_need("getegid")) {
         s = s.write("    .text\n");
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_getid("x86_64", "getegid"), all_structs, s);
+    }
+    if (s.has_need("hostname")) {
+        s = s.write("    .text\n");
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_hostname("x86_64"), all_structs, s);
     }
     if (s.has_need("wasm_timer_pollable")) { s = emit_ir_wasm_timer_pollable(s); }
     if (s.has_need("wasm_pollable_drop")) { s = emit_ir_wasm_pollable_drop(s); }

@@ -69,6 +69,10 @@ var BuiltinCaps = map[string]string{
 	"temp_dir":        "fs",
 
 	"env": "env",
+	// The machine's name is ambient information about where the
+	// process runs, in the same way its environment is: a dependency
+	// that reads it should be seen to.
+	"hostname": "env",
 
 	"subprocess":   "subprocess",
 	"proc_fork":    "subprocess",
