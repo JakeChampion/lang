@@ -155,19 +155,8 @@ func TestAsmRunCountByte(t *testing.T) {
 // Requiring MORE is merely slower — the scalar tail picks the rest up. So the
 // two constants are checked against each other rather than against a run.
 func TestCountByteVectorGuardMatchesStride(t *testing.T) {
-	f := ssa.NewFunc("main")
-	e := f.NewBlock()
-	f.SetRet(e, callOp(f, e, "__fern_count_byte", constStr(f, e, "banana"), constOp(f, e, 'a')))
-	asm, err := EmitAsmModule(map[string]*ssa.Func{"main": f}, "main", 8, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	start := strings.Index(asm, ".Lssa_count_vec:")
-	end := strings.Index(asm, ".Lssa_count_loop:")
-	if start < 0 || end < 0 || end < start {
-		t.Fatalf("no vector body between .Lssa_count_vec and .Lssa_count_loop in the emitted helper")
-	}
-	body := asm[start:end]
+	body := emittedBetween(t, ".Lssa_count_vec:", ".Lssa_count_loop:",
+		"__fern_count_byte", "banana", 'a')
 	if !strings.Contains(body, "movdqu") {
 		t.Fatal("the vector body has no 16-byte load, so this test checked nothing")
 	}
@@ -178,6 +167,31 @@ func TestCountByteVectorGuardMatchesStride(t *testing.T) {
 			"requiring fewer than it consumes reads past the end of the string\n%s",
 			guard, stride, body)
 	}
+}
+
+// emittedBetween assembles main() = <helper>(literal, args...) and returns the
+// slice of the emitted module between two labels — the vector body of one scan
+// kernel, for the assertions that read constants off the page rather than
+// running the code.
+func emittedBetween(t *testing.T, startLabel, endLabel, helper, lit string, args ...int64) string {
+	t.Helper()
+	f := ssa.NewFunc("main")
+	e := f.NewBlock()
+	vals := []ssa.Value{constStr(f, e, lit)}
+	for _, a := range args {
+		vals = append(vals, constOp(f, e, a))
+	}
+	f.SetRet(e, callOp(f, e, helper, vals...))
+	asm, err := EmitAsmModule(map[string]*ssa.Func{"main": f}, "main", 8, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := strings.Index(asm, startLabel)
+	end := strings.Index(asm, endLabel)
+	if start < 0 || end < 0 || end < start {
+		t.Fatalf("no body between %s and %s in the emitted helper", startLabel, endLabel)
+	}
+	return asm[start:end]
 }
 
 // operandAfter returns the rest of the first line in body that starts with

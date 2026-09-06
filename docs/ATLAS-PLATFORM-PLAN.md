@@ -558,24 +558,38 @@ into a nonexistent field emits a compare-against-zero that reads correct at
 the call site, so `internal/native/arm64` rejects a non-zero immediate rather
 than encoding it.
 
-### 3.4 Ordering across seven backends
+### 3.4 Ordering across eight backends
 
-**Seven, not six.** This section said six through the whole of `__memchr`'s
-build, and the miscount was not free: `-backend ssa` (arm64)
-(`internal/codegen/arm64ssa`, reached via `ssa.LiftFromIR`, with its own
-hand-written `runtimeHelperEmitters` table) was adopted-past rather than
-ported, and CI reported it as `branch to undefined label
-"fn___fern_memchr"`. The full list is three native
-(`internal/codegen/{x86_64,arm64,wasmbin}`), three self-host
-(`asm_ir.fern` / `asm_arm64_ir.fern` / `wasm_ir.fern`), and `arm64ssa`.
+**Eight, not seven, and this section has now undercounted twice.** It said six
+through the whole of `__memchr`'s build, and the miscount was not free:
+`-backend ssa` (arm64) (`internal/codegen/arm64ssa`, reached via
+`ssa.LiftFromIR`, with its own hand-written `runtimeHelperEmitters` table) was
+adopted-past rather than ported, and CI reported it as `branch to undefined
+label "fn___fern_memchr"`. Corrected to seven, it then named `arm64ssa` alone
+and left out its x86-64 twin — `internal/codegen/x86_64ssa`, which `-backend
+ssa -target x86-64-linux` reaches and which carries the same table. The full
+list is three native (`internal/codegen/{x86_64,arm64,wasmbin}`), three
+self-host (`asm_ir.fern` / `asm_arm64_ir.fern` / `wasm_ir.fern`), and BOTH SSA
+legs (`arm64ssa`, `x86_64ssa`). `internal/codegen/wasmssa` is not a ninth: it
+consumes `ssa.Func` directly, has no string-helper table at all, and refuses a
+program that reaches one rather than emitting a scalar body for it.
 
-The kernel must exist in all seven before `std/string` may call it,
+The way each undercount surfaced is worth stating together, because they are
+different failures and only the first is loud. A backend missing the op ENTIRELY
+breaks the build, so `arm64ssa` announced itself. A backend that has the op but
+lowers it SCALAR is silent: it compiles, it agrees with every differential, and
+it is simply slow — which is why `x86_64ssa`'s `__ascii_run` sat byte-at-a-time
+through three subsequent kernels while the section reported step 3 complete.
+Enumerate the `runtimeHelperEmitters` tables; a green differential does not
+count the legs for you.
+
+The kernel must exist in all eight before `std/string` may call it,
 because the self-hosted compiler compiles the stdlib and a missing lowering is
 a hard compile error, not a fallback — the AST emitters are gone and every
 backend routes IR-or-error (`docs/SELFHOST-AST-RETIREMENT.md`). The sequence
 is therefore:
 
-1. IR op + interpreter reference + scalar-only lowering in all seven backends
+1. IR op + interpreter reference + scalar-only lowering in all eight backends
    (correct, not yet fast) + differential tests.
 2. `std/string` adoption behind the now-total intrinsic.
 3. Vectorise the lowerings one backend at a time, each with a measurement.
@@ -620,7 +634,7 @@ instruction than for one scalar one, so it systematically understates a vector
 kernel. The architecture-independent claim is the instruction count, ~80 scalar
 ops per 16 bytes down to 8.
 
-Its ABI is the simplest of the seven — one-word strings with the length at
+Its ABI is the simplest of the eight — one-word strings with the length at
 [ptr-4], so the arguments land in x0/x1/x2 with no slot arithmetic — and it is a
 leaf, so the kernel needs no frame. Floats on this backend live as their f64 bit
 pattern in a GPR, which is what makes v0/v1 free scratch: no vector register is
@@ -638,21 +652,21 @@ refusal to compile is still a break, so the rule to carry forward widens: **a
 self-host backend has an assembler of its own, and it needs checking
 separately from the native one for the same target.**
 
-One thing the seven lowerings did *not* end up sharing is a string
+One thing the eight lowerings did *not* end up sharing is a string
 representation, and it is worth recording because it is what made four of the
-seven non-trivial. Native x86-64 uses a one-word `string`; native arm64 and
+eight non-trivial. Native x86-64 uses a one-word `string`; native arm64 and
 native wasm use two words with small-string optimisation (and wasm's SSO form
 has no address at all, so its kernel needs a second scalar path); the self-host
 backends use a `[data@0, len@8]` box on the register targets and a
-`[len@0][bytes@4]` block on wasm; `-backend ssa` (arm64) uses one word with the length at
-`[ptr-4]`. The op is the same op in all seven; nothing below it is.
+`[len@0][bytes@4]` block on wasm; both `-backend ssa` legs use one word with the
+length at `[ptr-4]`. The op is the same op in all eight; nothing below it is.
 
-**`__ascii_run`, the second kernel.** Total across all seven, and — unlike
+**`__ascii_run`, the second kernel.** Total across every backend, and — unlike
 `__memchr` — made total *before* any caller adopts it, which is the one
-process change the miscount above bought. Both kernels are now vectorised on
-**all seven** — x86-64 native and self-host (SSE2), arm64 native, self-host and
-`-backend ssa` (NEON), wasm native and self-host (v128). `__ascii_run`'s vector
-form is cheaper than
+process change the miscount above bought. Both kernels are vectorised on
+x86-64 native and self-host (SSE2), arm64 native, self-host and `-backend ssa`
+(NEON), and wasm native and self-host (v128); `-backend ssa` on x86-64 is the
+eighth leg and came later, below. `__ascii_run`'s vector form is cheaper than
 `__memchr`'s on every target, and interestingly for two different reasons:
 
 - x86-64 and wasm save the **compare**. `pmovmskb` / `i8x16.bitmask` gather the
@@ -711,13 +725,14 @@ through `wasm-tools print` and asserts the mnemonics came back, because a wrong
 sub-opcode is usually another valid instruction and a module that validates and
 runs proves nothing about which one was emitted.
 
-**Step 3 is therefore complete: the kernels are vector on all seven backends.**
+**Step 3 was therefore reported complete here** — on the seven backends this
+section counted at the time. It missed the eighth; see the x86-64 SSA leg below.
 
 **`__rmemchr`, the third kernel**, is §3.3's nominated sibling and followed the
-same sequence from the top: total and SCALAR on all seven backends first, so
+same sequence from the top: total and SCALAR on every backend first, so
 nothing could depend on a lowering that did not exist. Steps 2 and 3 followed —
 `__str_rfind_from`'s `nLen == 1` tier ("the overwhelmingly common case") routes
-through it, and all seven backends are vectorised, so it stands where the two
+through it, and all eight backends are vectorised, so it stands where the two
 forward kernels do rather than partway.
 
 Its vector body is `__memchr`'s read backwards, and the whole difference is
@@ -775,7 +790,7 @@ good — the same effect that made self-host x86-64's 15x wider than native's
 
 It earns the slot by the input-vs-needle rule below: like `__memchr` its vector
 length is the HAYSTACK. The one thing that is not a mirror image of the forward
-scan — and so the one thing each of the seven ports can get wrong — is the
+scan — and so the one thing each of the eight ports can get wrong — is the
 clamp. A forward scan clamps `from` UP to 0; a backward scan clamps it DOWN to
 len-1, so a negative `from` finds nothing here where in `__memchr` it means "the
 whole string". Its corpus therefore pins both ends explicitly rather than
@@ -870,7 +885,7 @@ exercised rather than the scan):
 | self-host arm64 (qemu) | 1,789 ms | 524 ms | 3.4x |
 | self-host wasm (wasmtime) | 258 ms | 28 ms | 9.2x |
 
-**Step 3 is complete: this kernel is vector on all seven backends**, and it got
+**Step 3 is complete: this kernel is vector on all eight backends**, and it got
 there in one pass rather than the two the two search kernels each needed,
 precisely because §3.3a cost nothing. The three arm64 rows land within 5% of
 each other (571 / 571 / 524 ms) because they are the same instruction sequence;
@@ -903,6 +918,40 @@ and no needle length there is no shape where the intrinsic and the loop differ.
 `count_matches` gains the tier its siblings have, since at length 1
 non-overlapping and every-occurrence agree.
 
+**The eighth leg: `-backend ssa` on x86-64.** `internal/codegen/x86_64ssa` has
+carried all four kernels since each was made total, and three of them were
+vectorised as their ratio gates named them — `__memchr` at the 20x flat-vs-ssa
+divergence #8069 exists to report, `__count_byte` at 12.6x, `__rmemchr` with
+them. `__ascii_run` was the one left byte-at-a-time, and nothing pointed at it:
+its only corpus caller, `examples/bench/ascii_scan`, sits under the gate's 8x
+ratio because the flat backend runs the same 64 KB body in 7 ms and the absolute
+floor is 250 ms. It is now SSE2 like the rest — `movdqu` / `pmovmskb` / `bsf`,
+no splat and no compare, the same three-instruction block the native x86-64
+kernel runs — measured on `examples/bench/ascii_scan` at **700.8M → 74.6M
+retired (9.4x)**, 58 ms → 7 ms wall, which puts the leg level with the flat
+backend on that program. No assembler work: every encoding was already there
+from the forward kernel, §3.3a's per-instruction-set debt behaving as predicted
+for the second time.
+
+Its `from` also arrived unmasked. The cursor is scaled into `[rdi + rsi]` and
+`from` is an i32 the caller owes nothing about above bit 31, so the scalar body
+indexed on whatever sat in the top half of `rsi` — the exact hazard `__memchr`
+guards on this backend with a `mov edx, edx` and comments as such. Fixed with
+the same one instruction. It is not reachable from the corpus, because every
+caller today materialises the cursor with a 32-bit write that zeroes the top
+half; that makes it a latent bug rather than a live one, which is the kind a
+sibling kernel's comment is best placed to catch.
+
+**What this leg says about counting backends.** Step 3 was reported complete
+three separate times while one leg of one kernel was still scalar, and every
+gate agreed: the differentials compare ANSWERS, the ratio gate needs a 250 ms
+absolute gap that a 58 ms program cannot reach, and §3.5's throughput gate runs
+the default backend only. A scalar lowering is invisible to all three by
+construction. The check that would have caught it is the one this section keeps
+learning: enumerate the `runtimeHelperEmitters` tables and read what each entry
+emits — the same "enumerate, do not grep" rule §3.4 already states for the
+assemblers' mnemonic surfaces, applied one layer up.
+
 ### 3.5 Testing
 
 Per rule 5, each kernel ships with:
@@ -918,7 +967,7 @@ Per rule 5, each kernel ships with:
   unconditional, because that lane exists: `examples/bench/string_find_byte`
   and `examples/bench/ascii_scan` put each kernel's VECTOR path under
   `scripts/perf-bench`, whose retired-instruction counts repeat to the digit.
-  A kernel that returned to a byte-at-a-time loop — on any of the seven
+  A kernel that returned to a byte-at-a-time loop — on any of the eight
   backends, or through an assembler that stopped encoding the vector body —
   moves them by 10.1x and 8.9x against a 1% tolerance. Nothing else in the
   corpus reaches those paths: the only other caller, `utf8_ingest_validated`,
@@ -987,7 +1036,7 @@ the ordering here implied.
 length is the input. It shipped as the ASCII skip inside UTF-8 validation
 rather than as a whole `__utf8_validate`, for a separate reason worth keeping:
 the per-length, overlong-and-surrogate rules are branchy logic that would be
-duplicated across all seven backends, and the readable place for them is Fern.
+duplicated across all eight backends, and the readable place for them is Fern.
 Only the run between multi-byte sequences vectorises, and any other scanner
 wanting "first high byte" reuses it.
 
