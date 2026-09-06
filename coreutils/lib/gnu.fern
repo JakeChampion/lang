@@ -139,6 +139,245 @@ pub function write_out_with(s: string, status: i32): void {
   }
 }
 
+// ---- counts ----------------------------------------------------------------
+//
+// The multiplier a gnulib suffix stands for, or None. `b` is 512 flat;
+// every other letter is a power of 1024 bare or with `iB`, and of 1000
+// with a bare `B`.
+function suffix_power(c: i32): i32 {
+  if (c == 75 || c == 107) {
+    return 1;
+  }
+  if (c == 77) {
+    return 2;
+  }
+  if (c == 71) {
+    return 3;
+  }
+  if (c == 84) {
+    return 4;
+  }
+  if (c == 80) {
+    return 5;
+  }
+  if (c == 69) {
+    return 6;
+  }
+  if (c == 90) {
+    return 7;
+  }
+  if (c == 89) {
+    return 8;
+  }
+  if (c == 82) {
+    return 9;
+  }
+  if (c == 81) {
+    return 10;
+  }
+  return 0;
+}
+
+pub function is_digit(c: i32): boolean {
+  return c >= 48 && c <= 57;
+}
+
+pub function is_blank(c: i32): boolean {
+  return c == 32 || c >= 9 && c <= 13;
+}
+
+// `parse_units(s)` — glibc's strtoumax over `s` followed by a gnulib
+// multiplier suffix (xstrtoumax with "bkKmMGTPEZYRQ0"): leading blanks
+// and a `+` are accepted, `1b` is 512, `1kB` is 1000 and `1KiB` is
+// 1024. Returns (value, status): 0 accepted, 1 malformed, 2 the digits
+// themselves past uintmax_t, 3 the suffix multiply past it.
+//
+// The two overflows are separate because glibc's are: strtoumax sets
+// ERANGE for 2 and leaves errno alone for 3, and tail's obsolete form
+// prints the raw errno, so `-36028797018963968b` gets no strerror text
+// while `-18446744073709551616b` gets `Numerical result out of range`.
+// A caller that reaches xstrtol_fatal instead — head's and tail's `-n`
+// and `-c` — words both as `: Value too large for defined data type`,
+// so it tests `status >= 2` rather than flattening the two here.
+//
+// `parse_number` is the same without the suffixes (xstrtoumax with ""),
+// for tail's `--max-unchanged-stats` and `--pid`; with no suffix to
+// multiply by it never returns 3.
+pub function parse_units(s: string): (u64, i32) {
+  return parse_count(s, true);
+}
+
+pub function parse_number(s: string): (u64, i32) {
+  return parse_count(s, false);
+}
+
+function parse_count(s: string, suffixes: boolean): (u64, i32) {
+  var i: i32 = 0;
+  while (i < s.len() && is_blank(s[i] as i32)) {
+    i = i + 1;
+  }
+  if (i < s.len() && s[i] as i32 == 43) {
+    i = i + 1;
+  }
+  if (i >= s.len() || !is_digit(s[i] as i32)) {
+    return (0 as u64, 1);
+  }
+  var v: u64 = 0 as u64;
+  var over: boolean = false;
+  var digits_over: boolean = false;
+  while (i < s.len() && is_digit(s[i] as i32)) {
+    var d: u64 = (s[i] as i32 - 48) as u64;
+    match (v.checked_mul(10 as u64)) {
+      Some(m) => {
+        match (m.checked_add(d)) {
+          Some(a) => {
+            v = a;
+          },
+          None => {
+            digits_over = true;
+          }
+        }
+      },
+      None => {
+        digits_over = true;
+      }
+    }
+    i = i + 1;
+  }
+  var mul: u64 = 1 as u64;
+  if (i < s.len() && suffixes) {
+    var c: i32 = s[i] as i32;
+    if (c == 98) {
+      mul = 512 as u64;
+      i = i + 1;
+    } else {
+      var p: i32 = suffix_power(c);
+      if (p == 0) {
+        return (0 as u64, 1);
+      }
+      i = i + 1;
+      var base: u64 = 1024 as u64;
+      if (i < s.len() && s[i] as i32 == 66) {
+        base = 1000 as u64;
+        i = i + 1;
+      } else if (i + 1 < s.len() && s[i] as i32 == 105 && s[i + 1] as i32 == 66) {
+        i = i + 2;
+      }
+      var k: i32 = 0;
+      while (k < p) {
+        match (mul.checked_mul(base)) {
+          Some(m) => {
+            mul = m;
+          },
+          None => {
+            over = true;
+          }
+        }
+        k = k + 1;
+      }
+    }
+  }
+  if (i != s.len()) {
+    return (0 as u64, 1);
+  }
+  if (!over && !digits_over) {
+    match (v.checked_mul(mul)) {
+      Some(m) => {
+        v = m;
+      },
+      None => {
+        over = true;
+      }
+    }
+  }
+  if (digits_over) {
+    return (0 as u64, 2);
+  }
+  if (over) {
+    return (0 as u64, 3);
+  }
+  return (v, 0);
+}
+
+// `digit_option(argv)` — the digit byte a digit declared as an option
+// stood for, for `option used in invalid context -- 5` (tail) and
+// `invalid trailing option -- 5` (head). The scan reports the id only,
+// so the tokens are re-read: a digit reaches this only as an option
+// byte, which is always in a short cluster.
+pub function digit_option(argv: string[]): string {
+  var i: i32 = 1;
+  while (i < argv.len()) {
+    var a: string = argv[i];
+    if (a.len() >= 2 && a[0] as i32 == 45) {
+      var k: i32 = 1;
+      while (k < a.len()) {
+        if (is_digit(a[k] as i32)) {
+          return slice_unchecked(a, k, k + 1) + "";
+        }
+        k = k + 1;
+      }
+    }
+    i = i + 1;
+  }
+  return "0";
+}
+
+// ---- a streamed stdout ------------------------------------------------------
+//
+// `Stream` — the buffered stdout of a utility that copies input through
+// (head, tail): the writer, whether anything has been written yet (the
+// blank line between `==> NAME <==` headers), and whether any input
+// failed.
+pub struct Stream { w: io_buffered.BufWriter, first: boolean, ok: boolean }
+
+pub function stream_new(): Stream {
+  return Stream { w: out_new(), first: true, ok: true };
+}
+
+// gnulib's xwrite_stdout: a write that fails while the output is still
+// STREAMING is reported as `error writing 'standard output'`, where a
+// failure found only at the final flush is close_stdout's `write
+// error:`. Which one a run gets is the stdio buffer: output under one
+// block never reaches the fd until close.
+pub function stream_put(o: Stream, s: string): Stream {
+  var w: io_buffered.BufWriter = o.w.write_string(s);
+  match (w.error()) {
+    Some(e) => {
+      error("error writing " + quotea("standard output") + ": " + io_error_text(e));
+      exit(1);
+    },
+    None => {}
+  }
+  return Stream { ...o, w: w };
+}
+
+// One diagnostic, with the pending output flushed ahead of it and the
+// exit status turned to 1.
+pub function stream_fail(o: Stream, msg: string): Stream {
+  return Stream { ...o, w: error_out(o.w, msg), ok: false };
+}
+
+// One `==> NAME <==` header, with the blank line every header after the
+// first carries. A file that failed to OPEN never reaches this, so it
+// does not consume the first-file slot.
+pub function stream_header(o: Stream, name: string): Stream {
+  var lead: string = "\n";
+  if (o.first) {
+    lead = "";
+  }
+  return Stream { ...stream_put(o, lead + "==> " + name + " <==\n"), first: false };
+}
+
+// `stream_flush(o)` — what is buffered goes out now; a failure is
+// close_stdout's `write error:`.
+pub function stream_flush(o: Stream): Stream {
+  return Stream { ...o, w: flush(o.w) };
+}
+
+pub function stream_finish(o: Stream): void {
+  finish(o.w);
+}
+
 // ---- quoting ---------------------------------------------------------------
 //
 // GNU quotes the strings it embeds in diagnostics, and two styles are
@@ -366,6 +605,14 @@ pub function put_with(o: io_buffered.BufWriter, s: string, status: i32): io_buff
   return w;
 }
 
+// `flush(o)` — write what is buffered now; dies like `put` when that
+// fails. Rebind: `o = gnu.flush(o);`.
+pub function flush(o: io_buffered.BufWriter): io_buffered.BufWriter {
+  var w: io_buffered.BufWriter = o.flush();
+  die_on_write_error(w, 1);
+  return w;
+}
+
 // `finish(o)` — the end of the program: gnulib's close_stdout.
 pub function finish(o: io_buffered.BufWriter): void {
   close_stdout(o, false);
@@ -472,29 +719,40 @@ function print_version(name: string, status: i32, fail_status: i32): void {
 // unknown byte is `invalid option -- 'x'`. A required value is the
 // rest of the cluster if any (`-n5`), else the NEXT argv token
 // whatever it looks like (`-n -5`, `-n --`), else `option requires
-// an argument -- 'n'`. An optional value is only ever the rest of the
-// cluster. Long options match by unique prefix with an exact match
+// an argument -- 'n'`. A short optional value is only ever the rest of
+// the cluster. Long options match by unique prefix with an exact match
 // winning; a glued `=value` is the value, or a fault for an option
 // that takes none.
 // `Opt` — one declared option. `short` is the option byte (0 for a
 // long-only option), `long` the name without dashes ("" for a
-// short-only one), `arg` 0 / 1 / 2 for none / required / optional,
-// `id` the tag `next()` reports it as.
-pub struct Opt { short: i32, long: string, arg: i32, id: i32 }
+// short-only one), `id` the tag `next()` reports it as. The two
+// spellings carry their arity separately — `short_arg` and `arg`,
+// each 0 / 1 / 2 for none / required / optional — because glibc keeps
+// two tables: the `short_options` string and the `struct option`
+// array. `tail` declares plain `f` in the first and
+// `{"follow", optional_argument}` in the second, so `-fname` is `-f`
+// followed by `-n ame` while `--follow=name` carries a value.
+pub struct Opt { short: i32, long: string, short_arg: i32, arg: i32, id: i32 }
 
 // `flag(short, long, id)` — an option taking no value; `valued` takes
 // a required one; `optional` takes one only when glued (`-cX`,
-// `--color=X`). `short` is "" or a single byte.
+// `--color=X`), in both spellings. `optional_long` is the split shape
+// above: nothing after the short letter, an optional `=value` after
+// the long name. `short` is "" or a single byte.
 pub function flag(short: string, long: string, id: i32): Opt {
-  return Opt { short: short_byte(short), long: long, arg: 0, id: id };
+  return Opt { short: short_byte(short), long: long, short_arg: 0, arg: 0, id: id };
 }
 
 pub function valued(short: string, long: string, id: i32): Opt {
-  return Opt { short: short_byte(short), long: long, arg: 1, id: id };
+  return Opt { short: short_byte(short), long: long, short_arg: 1, arg: 1, id: id };
 }
 
 pub function optional(short: string, long: string, id: i32): Opt {
-  return Opt { short: short_byte(short), long: long, arg: 2, id: id };
+  return Opt { short: short_byte(short), long: long, short_arg: 2, arg: 2, id: id };
+}
+
+pub function optional_long(short: string, long: string, id: i32): Opt {
+  return Opt { short: short_byte(short), long: long, short_arg: 0, arg: 2, id: id };
 }
 
 function short_byte(short: string): i32 {
@@ -528,8 +786,8 @@ function version_id(): i32 {
 // `status` is the utility's usage-error exit code.
 pub function getopt_new(argv: string[], opts: Opt[], name: string, help_text: string, status: i32): Getopt {
   var all: Opt[] = opts;
-  all = all.append(Opt { short: 0, long: "help", arg: 0, id: help_id() });
-  all = all.append(Opt { short: 0, long: "version", arg: 0, id: version_id() });
+  all = all.append(flag("", "help", help_id()));
+  all = all.append(flag("", "version", version_id()));
   var in_order: boolean = false;
   match (env("POSIXLY_CORRECT")) {
     Some(_) => {
@@ -630,10 +888,10 @@ function short_option(g: Getopt): (Option[OptMatch], Getopt) {
     die_usage("invalid option -- '" + slice_unchecked(g.cluster, 0, 1) + "'", g.status);
   }
   var o: Opt = g.opts[k];
-  if (o.arg == 0) {
+  if (o.short_arg == 0) {
     return (Some(OptMatch { id: o.id, value: "", has_value: false }), Getopt { ...g, cluster: rest });
   }
-  if (o.arg == 2) {
+  if (o.short_arg == 2) {
     return (Some(OptMatch { id: o.id, value: rest, has_value: rest.len() > 0 }), Getopt { ...g, cluster: "" });
   }
   if (rest.len() > 0) {

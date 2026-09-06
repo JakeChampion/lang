@@ -20,7 +20,6 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -29,6 +28,7 @@ import (
 	"sync"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/jakechampion/lang/internal/e2eharness"
 )
@@ -42,6 +42,23 @@ type invocation struct {
 	args []string
 	// stdin is fed to both processes and closed.
 	stdin string
+	// stdinPath, when set, is opened and handed to the child as fd 0
+	// instead of a pipe — `prog < file`. A regular file there is what
+	// lets a utility seek or fstat its input, and a directory is how
+	// `cat < dir` reaches EISDIR on stdin.
+	stdinPath string
+	// stdoutPath, when set, is opened O_APPEND as the child's fd 1 —
+	// `prog >> file` — and its content after the run is what the
+	// harness compares as stdout, restoring the file for the other
+	// side. It is how `cat f >> f` meets `input file is output file`.
+	stdoutPath string
+	// follow drives a case whose child never exits on its own — a
+	// `tail -f`. The harness plays the writer: each step fires once
+	// `after` bytes of stdout have arrived, exactly `limit` bytes are
+	// read in all, then the child is sent SIGTERM, which both sides die
+	// of. A step that never fires or bytes that never arrive end in
+	// followDeadline and a diff.
+	follow []followStep
 	// env are KEY=VALUE entries added to the fixed base environment.
 	env []string
 	// limit bounds the stdout read for a utility that does not stop on
@@ -58,6 +75,46 @@ type invocation struct {
 	// are pipes here, so this is the one descriptor on which `test -t`
 	// can answer true.
 	tty bool
+}
+
+// followStep is one thing the harness does to a followed file, once
+// `after` bytes of stdout have been read.
+type followStep struct {
+	after int
+	// act is "append" (data onto path), "truncate" (path to data),
+	// "remove" (unlink path) or "rename" (data, a path, over path).
+	act  string
+	path string
+	data string
+}
+
+// followDeadline bounds a follow case: a side that stops producing
+// output before `limit` is reported with what it produced.
+const followDeadline = 8 * time.Second
+
+func (st followStep) run(t *testing.T) {
+	t.Helper()
+	var err error
+	switch st.act {
+	case "append":
+		var f *os.File
+		f, err = os.OpenFile(st.path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o644)
+		if err == nil {
+			_, err = f.WriteString(st.data)
+			f.Close()
+		}
+	case "truncate":
+		err = os.WriteFile(st.path, []byte(st.data), 0o644)
+	case "remove":
+		err = os.Remove(st.path)
+	case "rename":
+		err = os.Rename(st.data, st.path)
+	default:
+		t.Fatalf("follow step %q is not one the harness knows", st.act)
+	}
+	if err != nil {
+		t.Fatalf("follow step %s %s: %v", st.act, st.path, err)
+	}
 }
 
 type stdoutMode int
@@ -310,12 +367,26 @@ func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 		defer pty.Close()
 		cmd.ExtraFiles = []*os.File{pty}
 	}
+	if inv.stdinPath != "" {
+		f, err := os.Open(inv.stdinPath)
+		if err != nil {
+			t.Fatalf("open stdin %s: %v", inv.stdinPath, err)
+		}
+		defer f.Close()
+		cmd.Stdin = f
+	}
 
 	var errBuf bytes.Buffer
 	cmd.Stderr = &errBuf
 
 	var out []byte
 	switch inv.stdout {
+	case stdoutCaptured:
+		if inv.stdoutPath != "" {
+			out = inv.runToFile(t, cmd)
+		} else if len(inv.follow) > 0 {
+			out = inv.runFollow(t, cmd)
+		}
 	case stdoutClosed:
 		// A typed nil *os.File reaches os.StartProcess as a nil entry
 		// in its Files, which closes that descriptor in the child —
@@ -334,9 +405,9 @@ func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 		cmd.Stdout = f
 		_ = cmd.Run()
 	}
-	if inv.stdout != stdoutCaptured {
-		// Nothing to read back: the point is the reaction on stderr and
-		// in the exit status.
+	if inv.stdout != stdoutCaptured || inv.stdoutPath != "" || len(inv.follow) > 0 {
+		// Nothing more to read back: either the point is the reaction
+		// on stderr and in the exit status, or a runner above did it.
 	} else if inv.limit > 0 {
 		// A utility that never stops: read a bounded prefix, then close
 		// the read end so the process meets a closed pipe. How it reacts
@@ -351,12 +422,12 @@ func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 			t.Fatalf("start %s: %v", bin, err)
 		}
 		w.Close()
-		buf := make([]byte, inv.limit)
-		n, rerr := io.ReadFull(r, buf)
-		if rerr != nil && !errors.Is(rerr, io.EOF) && !errors.Is(rerr, io.ErrUnexpectedEOF) {
-			t.Fatalf("read %s: %v", bin, rerr)
+		var timedOut bool
+		out, timedOut = readUpTo(r, inv.limit, nil)
+		if timedOut {
+			t.Errorf("%s %s: %d of %d bytes arrived before the deadline", bin, quoteArgs(inv.args), len(out), inv.limit)
+			_ = cmd.Process.Kill()
 		}
-		out = buf[:n]
 		r.Close()
 		_ = cmd.Wait()
 	} else {
@@ -377,6 +448,189 @@ func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 		res.signal = ws.Signal().String()
 	}
 	return res
+}
+
+// runToFile runs cmd with fd 1 appended to inv.stdoutPath and returns
+// the bytes the run added to the file, with the file put back as it
+// was for the other side.
+func (inv invocation) runToFile(t *testing.T, cmd *exec.Cmd) []byte {
+	t.Helper()
+	before, err := os.ReadFile(inv.stdoutPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", inv.stdoutPath, err)
+	}
+	f, err := os.OpenFile(inv.stdoutPath, os.O_WRONLY|os.O_APPEND, 0)
+	if err != nil {
+		t.Fatalf("open stdout %s: %v", inv.stdoutPath, err)
+	}
+	cmd.Stdout = f
+	_ = cmd.Run()
+	f.Close()
+	after, err := os.ReadFile(inv.stdoutPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", inv.stdoutPath, err)
+	}
+	if err := os.WriteFile(inv.stdoutPath, before, 0o644); err != nil {
+		t.Fatalf("restore %s: %v", inv.stdoutPath, err)
+	}
+	if !bytes.HasPrefix(after, before) {
+		t.Fatalf("%s was rewritten rather than appended to", inv.stdoutPath)
+	}
+	return after[len(before):]
+}
+
+// runFollow runs a case that follows a file: the steps fire as the
+// output reaches each one's threshold, `limit` bytes are read, and the
+// child is then terminated. The bytes read are the case's stdout.
+// followPaths is every file a case's steps touch: each step's target,
+// and a rename's source as well.
+func (inv invocation) followPaths() []string {
+	seen := map[string]bool{}
+	var out []string
+	add := func(p string) {
+		if p != "" && !seen[p] {
+			seen[p] = true
+			out = append(out, p)
+		}
+	}
+	for _, st := range inv.follow {
+		add(st.path)
+		if st.act == "rename" {
+			add(st.data)
+		}
+	}
+	return out
+}
+
+// snapshotFollowFiles records the files the steps are about to change
+// and gives back the restore. Both implementations have to meet the
+// same starting state, and the steps rewrite it: without this the
+// second side reads a file the first side already appended to,
+// truncated, or renamed away.
+func (inv invocation) snapshotFollowFiles(t *testing.T) func() {
+	t.Helper()
+	type shot struct {
+		path    string
+		data    []byte
+		existed bool
+	}
+	var shots []shot
+	for _, p := range inv.followPaths() {
+		b, err := os.ReadFile(p)
+		switch {
+		case err == nil:
+			shots = append(shots, shot{path: p, data: b, existed: true})
+		case os.IsNotExist(err):
+			shots = append(shots, shot{path: p})
+		default:
+			t.Fatalf("snapshot %s: %v", p, err)
+		}
+	}
+	return func() {
+		for _, s := range shots {
+			if !s.existed {
+				if err := os.Remove(s.path); err != nil && !os.IsNotExist(err) {
+					t.Fatalf("restore (remove) %s: %v", s.path, err)
+				}
+				continue
+			}
+			if err := os.WriteFile(s.path, s.data, 0o644); err != nil {
+				t.Fatalf("restore %s: %v", s.path, err)
+			}
+		}
+	}
+}
+
+// readUpTo reads at most limit bytes from r, calling onData after each
+// chunk arrives, and gives up at followDeadline. The deadline is what
+// keeps a child that has stopped writing without exiting — a `tail -f`
+// with nothing left to say — from blocking the whole package instead of
+// failing its own case.
+func readUpTo(r *os.File, limit int, onData func()) ([]byte, bool) {
+	type piece struct {
+		b   []byte
+		err error
+	}
+	// Buffered so a read still in flight at the deadline can finish
+	// its send and let the goroutine exit rather than stranding it.
+	pieces := make(chan piece, 1)
+	// want is how much is still owed, so a read never overshoots: the
+	// two sides are compared byte for byte, and a chunk read past the
+	// limit would make them differ on where an endless stream was cut.
+	want := make(chan int, 1)
+	want <- limit
+	go func() {
+		for n := range want {
+			buf := make([]byte, n)
+			got, rerr := r.Read(buf)
+			pieces <- piece{buf[:got], rerr}
+			if rerr != nil {
+				return
+			}
+		}
+	}()
+	var out []byte
+	deadline := time.After(followDeadline)
+	for len(out) < limit {
+		select {
+		case p := <-pieces:
+			out = append(out, p.b...)
+			if p.err != nil {
+				close(want)
+				return out, false
+			}
+			if onData != nil {
+				onData()
+			}
+			if len(out) < limit {
+				want <- limit - len(out)
+			} else {
+				close(want)
+			}
+		case <-deadline:
+			close(want)
+			return out, true
+		}
+	}
+	return out, false
+}
+
+func (inv invocation) runFollow(t *testing.T, cmd *exec.Cmd) []byte {
+	t.Helper()
+	if inv.limit <= 0 {
+		t.Fatal("a follow case needs a limit: the byte count after which the child is terminated")
+	}
+	defer inv.snapshotFollowFiles(t)()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	cmd.Stdout = w
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start %s: %v", cmd.Path, err)
+	}
+	w.Close()
+	var out []byte
+	step := 0
+	fire := func() {
+		for step < len(inv.follow) && len(out) >= inv.follow[step].after {
+			inv.follow[step].run(t)
+			step++
+		}
+	}
+	fire()
+	rest, timedOut := readUpTo(r, inv.limit, func() { fire() })
+	out = append(out, rest...)
+	_ = cmd.Process.Signal(syscall.SIGTERM)
+	r.Close()
+	_ = cmd.Wait()
+	if timedOut {
+		t.Logf("follow case %q: %d of %d bytes arrived before the deadline", inv.name, len(out), inv.limit)
+	}
+	if len(out) > inv.limit {
+		out = out[:inv.limit]
+	}
+	return out
 }
 
 // requireParity runs every case against both implementations and
