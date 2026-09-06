@@ -19,8 +19,13 @@
 import "std/array";
 
 // `read_all_stdin()` — read until EOF and return the result
-// as a single string. Loops `Reader.read_chunk(4096)` until
-// None.
+// as a single string. Loops `Reader.read_chunk(4096)` until the
+// read comes back empty.
+//
+// The return type has no error channel, so a failed read ends the
+// read with the bytes already in hand. A caller that has to tell a
+// truncated read from a complete one drives `read_chunk` itself and
+// matches on its `Err`.
 //
 // Chunks are collected into an array and joined once at EOF
 // rather than folded with `out = out + chunk` per iteration.
@@ -35,8 +40,14 @@ pub function read_all_stdin(): string {
     var chunks: string[] = [];
     while (true) {
         match (r.read_chunk(4096)) {
-            Some(chunk) => { chunks = chunks.append(chunk); },
-            None => {
+            Ok(chunk) => {
+                if (chunk.len() == 0) {
+                    r.close();
+                    return chunks.join("");
+                }
+                chunks = chunks.append(chunk);
+            },
+            Err(e) => {
                 r.close();
                 return chunks.join("");
             },

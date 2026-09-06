@@ -1,0 +1,675 @@
+// head.fern — GNU-compatible `head`.
+//
+//   head [-c NUM | -n NUM] [-qvz] [FILE]...
+//
+// The first NUM lines (10 by default) or bytes of each FILE, `-` and
+// no operand both meaning stdin. A LEADING MINUS on the count inverts
+// it: `-n -3` prints all but the last three lines, `-c -3` all but the
+// last three bytes. With more than one FILE each is introduced by
+// `==> NAME <==`, and every header after the first is preceded by a
+// blank line; -v forces the header for one file and -q suppresses it.
+//
+// Two pieces of this are older than the option syntax and are still
+// exactly reproduced:
+//
+//   - The obsolete `-NUM[bkmclqvz]` form, accepted ONLY as argv[1]:
+//     `head -5c f` is five bytes. The suffix letters are read left to
+//     right, each one re-deriving the count from the digits, so `-1bc`
+//     is one byte and `-1cb` is 512 (`b` multiplies AND selects bytes).
+//     A digit reached anywhere else — `head f -5`, `head -q5` — is
+//     `invalid trailing option -- 5`, which is why the ten digits are
+//     declared as options here.
+//   - The count itself is glibc's strtoumax plus gnulib's suffixes, so
+//     leading blanks and a `+` are accepted, `1b` is 512, `1kB` is
+//     1000 and `1KiB` is 1024, and an out-of-range value reports
+//     `Value too large for defined data type`. The ceiling differs by
+//     mode: elided BYTES must fit in off_t, everything else in
+//     uintmax_t.
+//
+// A count error prints one line and exits 1 with NO `Try …` line —
+// unlike an option error, which prints one.
+import "std/string";
+import "std/array";
+import "std/u64";
+import "std/io_buffered";
+import "./lib/gnu";
+
+// Option ids. The declaration order below is GNU's, because the
+// ambiguity list prints candidates in it — `head --=x` names
+// `---presume-input-pipe`, the hidden option whose long name starts
+// with a dash of its own.
+function opt_bytes(): i32 {
+  return 1;
+}
+
+function opt_lines(): i32 {
+  return 2;
+}
+
+function opt_presume(): i32 {
+  return 3;
+}
+
+function opt_quiet(): i32 {
+  return 4;
+}
+
+function opt_verbose(): i32 {
+  return 5;
+}
+
+function opt_zero(): i32 {
+  return 6;
+}
+
+// The ten digits share one id; `next()` reports only the id, so the
+// digit itself is read back off the argv token by digit_char().
+function opt_digit(): i32 {
+  return 7;
+}
+
+function help_text(): string {
+  var out: string = "";
+  out = out + "Usage: " + gnu.prog() + " [OPTION]... [FILE]...\n";
+  out = out + "Print the first 10 lines of each FILE to standard output.\n";
+  out = out + "With more than one FILE, precede each with a header giving the file name.\n";
+  out = out + "\n";
+  out = out + "With no FILE, or when FILE is -, read standard input.\n";
+  out = out + "\n";
+  out = out + "  -c, --bytes=[-]NUM       print the first NUM bytes of each file;\n";
+  out = out + "                             with the leading '-', print all but the last\n";
+  out = out + "                             NUM bytes of each file\n";
+  out = out + "  -n, --lines=[-]NUM       print the first NUM lines instead of the first 10;\n";
+  out = out + "                             with the leading '-', print all but the last\n";
+  out = out + "                             NUM lines of each file\n";
+  out = out + "  -q, --quiet, --silent    never print headers giving file names\n";
+  out = out + "  -v, --verbose            always print headers giving file names\n";
+  out = out + "  -z, --zero-terminated    line delimiter is NUL, not newline\n";
+  out = out + "      --help        display this help and exit\n";
+  out = out + "      --version     output version information and exit\n";
+  out = out + "\n";
+  out = out + "NUM may have a multiplier suffix:\n";
+  out = out + "b 512, kB 1000, K 1024, MB 1000*1000, M 1024*1024,\n";
+  out = out + "GB 1000*1000*1000, G 1024*1024*1024, and so on for T, P, E, Z, Y, R, Q.\n";
+  out = out + "Binary prefixes can be used, too: KiB=K, MiB=M, and so on.\n";
+  return out;
+}
+
+// ---- counts ---------------------------------------------------------------
+// `Count` — one parsed `-c` / `-n` value: `n` units, `elide` when the
+// operand carried a leading minus.
+struct Count { n: u64, elide: boolean }
+
+// The multiplier a gnulib suffix stands for, or None. `b` is 512 flat;
+// every other letter is a power of 1024 bare or with `iB`, and of 1000
+// with a bare `B`.
+function suffix_power(c: i32): i32 {
+  if (c == 75 || c == 107) {
+    return 1;
+  }
+  if (c == 77) {
+    return 2;
+  }
+  if (c == 71) {
+    return 3;
+  }
+  if (c == 84) {
+    return 4;
+  }
+  if (c == 80) {
+    return 5;
+  }
+  if (c == 69) {
+    return 6;
+  }
+  if (c == 90) {
+    return 7;
+  }
+  if (c == 89) {
+    return 8;
+  }
+  if (c == 82) {
+    return 9;
+  }
+  if (c == 81) {
+    return 10;
+  }
+  return 0;
+}
+
+function is_digit(c: i32): boolean {
+  return c >= 48 && c <= 57;
+}
+
+function is_blank(c: i32): boolean {
+  return c == 32 || c >= 9 && c <= 13;
+}
+
+// `parse_units(s)` — glibc's strtoumax over `s` followed by a gnulib
+// multiplier suffix. Returns (value, status): status 0 accepted, 1
+// malformed, 2 out of range. Out of range keeps its own status because
+// GNU words it differently (`: Value too large for defined data type`).
+function parse_units(s: string): (u64, i32) {
+  var i: i32 = 0;
+  while (i < s.len() && is_blank(s[i] as i32)) {
+    i = i + 1;
+  }
+  if (i < s.len() && s[i] as i32 == 43) {
+    i = i + 1;
+  }
+  if (i >= s.len() || !is_digit(s[i] as i32)) {
+    return (0 as u64, 1);
+  }
+  var v: u64 = 0 as u64;
+  var over: boolean = false;
+  while (i < s.len() && is_digit(s[i] as i32)) {
+    var d: u64 = (s[i] as i32 - 48) as u64;
+    match (v.checked_mul(10 as u64)) {
+      Some(m) => {
+        match (m.checked_add(d)) {
+          Some(a) => {
+            v = a;
+          },
+          None => {
+            over = true;
+          }
+        }
+      },
+      None => {
+        over = true;
+      }
+    }
+    i = i + 1;
+  }
+  var mul: u64 = 1 as u64;
+  if (i < s.len()) {
+    var c: i32 = s[i] as i32;
+    if (c == 98) {
+      mul = 512 as u64;
+      i = i + 1;
+    } else {
+      var p: i32 = suffix_power(c);
+      if (p == 0) {
+        return (0 as u64, 1);
+      }
+      i = i + 1;
+      var base: u64 = 1024 as u64;
+      if (i < s.len() && s[i] as i32 == 66) {
+        base = 1000 as u64;
+        i = i + 1;
+      } else if (i + 1 < s.len() && s[i] as i32 == 105 && s[i + 1] as i32 == 66) {
+        i = i + 2;
+      }
+      var k: i32 = 0;
+      while (k < p) {
+        match (mul.checked_mul(base)) {
+          Some(m) => {
+            mul = m;
+          },
+          None => {
+            over = true;
+          }
+        }
+        k = k + 1;
+      }
+    }
+  }
+  if (i != s.len()) {
+    return (0 as u64, 1);
+  }
+  if (!over) {
+    match (v.checked_mul(mul)) {
+      Some(m) => {
+        v = m;
+      },
+      None => {
+        over = true;
+      }
+    }
+  }
+  if (over) {
+    return (0 as u64, 2);
+  }
+  return (v, 0);
+}
+
+// OFF_T_MAX: the ceiling gnulib puts on an ELIDED byte count, because
+// the elision is computed as a file offset. Every other count is held
+// to uintmax_t, which parse_units already enforces.
+function off_t_max(): u64 {
+  return 9223372036854775807 as u64;
+}
+
+// `count_of(value, lines)` — the value of a `-n` / `-c` operand, or the
+// diagnostic and exit(1) GNU gives it. Note the leading minus is read
+// off the FIRST byte, before blanks: `-n ' -3'` is malformed, not an
+// elision.
+function count_of(value: string, lines: boolean): Count {
+  var body: string = value;
+  var elide: boolean = false;
+  if (value.len() > 0 && value[0] as i32 == 45) {
+    elide = true;
+    body = slice_unchecked(value, 1, value.len()) + "";
+  }
+  var noun: string = "bytes";
+  if (lines) {
+    noun = "lines";
+  }
+  var r: (u64, i32) = parse_units(body);
+  var status: i32 = r.1;
+  if (status == 0 && elide && !lines && r.0 > off_t_max()) {
+    status = 2;
+  }
+  if (status == 1) {
+    gnu.error("invalid number of " + noun + ": " + gnu.quote(body));
+    exit(1);
+  }
+  if (status == 2) {
+    gnu.error("invalid number of " + noun + ": " + gnu.quote(body) + ": Value too large for defined data type");
+    exit(1);
+  }
+  return Count { n: r.0, elide: elide };
+}
+
+// ---- the obsolete -NUM form ------------------------------------------------
+// `Settings` — everything the option scan decides.
+struct Settings { count: Count, lines: boolean, header: i32, term: i32 }
+
+// header: 0 auto (one file bare, several with headers), 1 never, 2 always.
+function header_auto(): i32 {
+  return 0;
+}
+
+function header_never(): i32 {
+  return 1;
+}
+
+function header_always(): i32 {
+  return 2;
+}
+
+// `obsolete(tok, s)` — apply `-NUM[bkmclqvz]`. Each letter re-derives
+// the count from the digits, so the LAST unit letter wins outright
+// rather than compounding with an earlier multiplier.
+function obsolete(tok: string, s: Settings): Settings {
+  var i: i32 = 1;
+  var digits: i32 = i;
+  while (i < tok.len() && is_digit(tok[i] as i32)) {
+    i = i + 1;
+  }
+  var num: string = slice_unchecked(tok, digits, i) + "";
+  var out: Settings = Settings { ...s, count: count_of(num, true), lines: true };
+  while (i < tok.len()) {
+    var c: i32 = tok[i] as i32;
+    if (c == 98 || c == 107 || c == 109) {
+      var mult: string = "b";
+      if (c == 107) {
+        mult = "K";
+      }
+      if (c == 109) {
+        mult = "M";
+      }
+      out = Settings { ...out, count: count_of(num + mult, false), lines: false };
+    } else if (c == 99) {
+      out = Settings { ...out, count: count_of(num, false), lines: false };
+    } else if (c == 108) {
+      out = Settings { ...out, count: count_of(num, true), lines: true };
+    } else if (c == 113) {
+      out = Settings { ...out, header: header_never() };
+    } else if (c == 118) {
+      out = Settings { ...out, header: header_always() };
+    } else if (c == 122) {
+      out = Settings { ...out, term: 0 };
+    } else {
+      gnu.die_usage("invalid trailing option -- " + slice_unchecked(tok, i, i + 1), 1);
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+// The digit byte an `opt_digit()` match stood for. The scan reports the
+// id only, so the token is re-read: a digit reaches this only as an
+// option byte, which is always a short cluster.
+function digit_char(argv: string[], g: gnu.Getopt): string {
+  var i: i32 = 1;
+  while (i < argv.len()) {
+    var a: string = argv[i];
+    if (a.len() >= 2 && a[0] as i32 == 45) {
+      var k: i32 = 1;
+      while (k < a.len()) {
+        if (is_digit(a[k] as i32)) {
+          return slice_unchecked(a, k, k + 1) + "";
+        }
+        k = k + 1;
+      }
+    }
+    i = i + 1;
+  }
+  return "0";
+}
+
+// ---- output ----------------------------------------------------------------
+// `Out` — the buffered stdout every path writes through, plus whether
+// anything has been written to it yet (the blank line between headers).
+struct Out { w: io_buffered.BufWriter, first: boolean, ok: boolean }
+
+// gnulib's xwrite_stdout: a write that fails while the output is still
+// STREAMING is reported with head's own wording, where a failure found
+// only at the final flush is close_stdout's `write error:`. Which one a
+// run gets is the stdio buffer: output under one block never reaches
+// the fd until close.
+function put(o: Out, s: string): Out {
+  var w: io_buffered.BufWriter = o.w.write_string(s);
+  match (w.error()) {
+    Some(e) => {
+      gnu.error("error writing " + gnu.quotea("standard output") + ": " + gnu.io_error_text(e));
+      exit(1);
+    },
+    None => {}
+  }
+  return Out { ...o, w: w };
+}
+
+// One diagnostic, with the pending output flushed ahead of it and the
+// exit status turned to 1.
+function fail(o: Out, msg: string): Out {
+  return Out { ...o, w: gnu.error_out(o.w, msg), ok: false };
+}
+
+// One `==> NAME <==` header, with the blank line every header after the
+// first carries. A file that failed to OPEN never reaches this, so it
+// does not consume the first-file slot.
+function header(o: Out, name: string): Out {
+  var lead: string = "\n";
+  if (o.first) {
+    lead = "";
+  }
+  return Out { ...put(o, lead + "==> " + name + " <==\n"), first: false };
+}
+
+// `read_size()` — bytes per read(2). GNU's head reads its input in
+// BUFSIZ-sized pieces; this is the block that measured fastest through
+// a pipe on the same sweep yes.fern records.
+function read_size(): i32 {
+  return 65536;
+}
+
+// `copy_head(r, o, s, name)` — the first `n` lines or bytes.
+function copy_head(r: Reader, o: Out, s: Settings, name: string): Out {
+  var out: Out = o;
+  var left: u64 = s.count.n;
+  if (left == 0 as u64) {
+    return out;
+  }
+  while (true) {
+    match (r.read_chunk(read_size())) {
+      Ok(chunk) => {
+        if (chunk.len() == 0) {
+          return out;
+        }
+        if (!s.lines) {
+          if (chunk.len() as u64 >= left) {
+            out = put(out, slice_unchecked(chunk, 0, left as i32) + "");
+            return out;
+          }
+          out = put(out, chunk);
+          left = left - chunk.len() as u64;
+        } else {
+          // One SIMD tally decides the whole chunk: fewer terminators
+          // in it than are still wanted and it goes out unsplit, so
+          // only the chunk that reaches the count is walked line by
+          // line.
+          var here: u64 = __count_byte(chunk, s.term) as u64;
+          if (here < left) {
+            out = put(out, chunk);
+            left = left - here;
+          } else {
+            var i: i32 = 0;
+            while (left > 0 as u64) {
+              i = __memchr(chunk, s.term, i) + 1;
+              left = left - 1 as u64;
+            }
+            out = put(out, slice_unchecked(chunk, 0, i) + "");
+            return out;
+          }
+        }
+      },
+      Err(e) => {
+        return fail(out, "error reading " + gnu.quotea(name) + ": " + gnu.io_error_text(e));
+      }
+    }
+  }
+  return out;
+}
+
+// `copy_elide_bytes(r, o, s, name)` — everything but the last `n`
+// bytes. The tail is held back in `hold`, which stays `n` bytes long
+// once the stream is longer than that.
+function copy_elide_bytes(r: Reader, o: Out, s: Settings, name: string): Out {
+  var out: Out = o;
+  var hold: string = "";
+  while (true) {
+    match (r.read_chunk(read_size())) {
+      Ok(chunk) => {
+        if (chunk.len() == 0) {
+          return out;
+        }
+        hold = hold + chunk;
+        if (hold.len() as u64 > s.count.n) {
+          var keep: i32 = hold.len() - s.count.n as i32;
+          out = put(out, slice_unchecked(hold, 0, keep) + "");
+          hold = slice_unchecked(hold, keep, hold.len()) + "";
+        }
+      },
+      Err(e) => {
+        return fail(out, "error reading " + gnu.quotea(name) + ": " + gnu.io_error_text(e));
+      }
+    }
+  }
+  return out;
+}
+
+// `copy_elide_lines(r, o, s, name)` — everything but the last `n`
+// lines. `hold` keeps every byte after the last released terminator
+// plus the `n` withheld lines, and `pending` counts the terminators in
+// it, so the release scan runs once per chunk rather than once per line.
+function copy_elide_lines(r: Reader, o: Out, s: Settings, name: string): Out {
+  var out: Out = o;
+  var hold: string = "";
+  var pending: u64 = 0 as u64;
+  while (true) {
+    match (r.read_chunk(read_size())) {
+      Ok(chunk) => {
+        if (chunk.len() == 0) {
+          // An unterminated tail is a line of its own, so it joins the
+          // count only once the input has ended.
+          var total: u64 = pending;
+          if (hold.len() > 0 && hold[hold.len() - 1] as i32 != s.term) {
+            total = total + 1 as u64;
+          }
+          if (total > s.count.n) {
+            out = put(out, release_lines(hold, total - s.count.n, s.term));
+          }
+          return out;
+        }
+        var here: u64 = __count_byte(chunk, s.term) as u64;
+        if (here >= s.count.n) {
+          // The chunk alone carries every line that has to be withheld,
+          // so everything before them goes out and none of it is
+          // scanned forward: the boundary is n + 1 terminators back
+          // from the end.
+          var start: i32 = tail_start(chunk, s.count.n, s.term);
+          out = put(out, hold);
+          out = put(out, slice_unchecked(chunk, 0, start) + "");
+          hold = slice_unchecked(chunk, start, chunk.len()) + "";
+          pending = s.count.n;
+        } else {
+          hold = hold + chunk;
+          pending = pending + here;
+          if (pending > s.count.n) {
+            var cut: i32 = line_cut(hold, pending - s.count.n, s.term);
+            out = put(out, slice_unchecked(hold, 0, cut) + "");
+            hold = slice_unchecked(hold, cut, hold.len()) + "";
+            pending = s.count.n;
+          }
+        }
+      },
+      Err(e) => {
+        return fail(out, "error reading " + gnu.quotea(name) + ": " + gnu.io_error_text(e));
+      }
+    }
+  }
+  return out;
+}
+
+// The byte offset just past the `n`-th terminator in `hold`, or its whole
+// length when it holds fewer than that (the last line is unterminated).
+function line_cut(hold: string, n: u64, term: i32): i32 {
+  var cut: i32 = 0;
+  var left: u64 = n;
+  while (left > 0 as u64) {
+    var j: i32 = __memchr(hold, term, cut);
+    if (j < 0) {
+      return hold.len();
+    }
+    cut = j + 1;
+    left = left - 1 as u64;
+  }
+  return cut;
+}
+
+function release_lines(hold: string, n: u64, term: i32): string {
+  return slice_unchecked(hold, 0, line_cut(hold, n, term)) + "";
+}
+
+// The offset in `s` at which the last `n` terminated lines begin, found
+// by walking `n + 1` terminators back from the end. 0 when `s` holds
+// exactly `n` of them and nothing precedes the first.
+function tail_start(s: string, n: u64, term: i32): i32 {
+  var pos: i32 = s.len();
+  var left: u64 = n + 1 as u64;
+  while (left > 0 as u64) {
+    pos = __rmemchr(s, term, pos - 1);
+    if (pos < 0) {
+      return 0;
+    }
+    left = left - 1 as u64;
+  }
+  return pos + 1;
+}
+
+// `head_file(path, o, s, show)` — one operand: its header when `show`,
+// then its content. `-` is stdin, whose header names it `standard input`.
+function head_file(path: string, o: Out, s: Settings, show: boolean): Out {
+  var out: Out = o;
+  var stdin_input: boolean = path == "-";
+  var name: string = path;
+  if (stdin_input) {
+    name = "standard input";
+  }
+  var r: Reader = stdin();
+  if (!stdin_input) {
+    match (open_reader(path)) {
+      Ok(f) => {
+        r = f;
+      },
+      Err(e) => {
+        return fail(out, "cannot open " + gnu.quotea(path) + " for reading: " + gnu.io_error_text(e));
+      }
+    }
+  }
+  if (show) {
+    out = header(out, name);
+  }
+  if (s.count.elide) {
+    if (s.lines) {
+      out = copy_elide_lines(r, out, s, name);
+    } else {
+      out = copy_elide_bytes(r, out, s, name);
+    }
+  } else {
+    out = copy_head(r, out, s, name);
+  }
+  if (!stdin_input) {
+    r.close();
+  }
+  return out;
+}
+
+function main(): i32 {
+  var argv: string[] = args();
+  var opts: gnu.Opt[] = [];
+  opts = opts.append(gnu.valued("c", "bytes", opt_bytes()));
+  opts = opts.append(gnu.valued("n", "lines", opt_lines()));
+  opts = opts.append(gnu.flag("", "-presume-input-pipe", opt_presume()));
+  opts = opts.append(gnu.flag("q", "quiet", opt_quiet()));
+  opts = opts.append(gnu.flag("", "silent", opt_quiet()));
+  opts = opts.append(gnu.flag("v", "verbose", opt_verbose()));
+  opts = opts.append(gnu.flag("z", "zero-terminated", opt_zero()));
+  var d: i32 = 0;
+  while (d < 10) {
+    opts = opts.append(gnu.flag(slice_unchecked("0123456789", d, d + 1) + "", "", opt_digit()));
+    d = d + 1;
+  }
+
+  var s: Settings = Settings { count: Count { n: 10 as u64, elide: false }, lines: true, header: header_auto(), term: 10 };
+
+  // The obsolete form is argv[1] and nowhere else; the rest of the
+  // scan then runs over argv with that token removed.
+  var scan: string[] = argv;
+  if (argv.len() > 1 && argv[1].len() >= 2 && argv[1][0] as i32 == 45 && is_digit(argv[1][1] as i32)) {
+    s = obsolete(argv[1], s);
+    scan = [];
+    scan = scan.append(argv[0]);
+    var k: i32 = 2;
+    while (k < argv.len()) {
+      scan = scan.append(argv[k]);
+      k = k + 1;
+    }
+  }
+
+  var g: gnu.Getopt = gnu.getopt_new(scan, opts, "head", help_text(), 1);
+  while (true) {
+    var r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    g = r.1;
+    match (r.0) {
+      Some(m) => {
+        if (m.id == opt_bytes()) {
+          s = Settings { ...s, count: count_of(m.value, false), lines: false };
+        } else if (m.id == opt_lines()) {
+          s = Settings { ...s, count: count_of(m.value, true), lines: true };
+        } else if (m.id == opt_quiet()) {
+          s = Settings { ...s, header: header_never() };
+        } else if (m.id == opt_verbose()) {
+          s = Settings { ...s, header: header_always() };
+        } else if (m.id == opt_zero()) {
+          s = Settings { ...s, term: 0 };
+        } else if (m.id == opt_digit()) {
+          gnu.die_usage("invalid trailing option -- " + digit_char(scan, g), 1);
+        }
+      },
+      None => {
+        break;
+      }
+    }
+  }
+
+  var files: string[] = g.operands();
+  if (files.len() == 0) {
+    files = files.append("-");
+  }
+  var show: boolean = s.header == header_always() || s.header == header_auto() && files.len() > 1;
+
+  var out: Out = Out { w: gnu.out_new(), first: true, ok: true };
+  var i: i32 = 0;
+  while (i < files.len()) {
+    out = head_file(files[i], out, s, show);
+    i = i + 1;
+  }
+  gnu.finish(out.w);
+  if (!out.ok) {
+    return 1;
+  }
+  return 0;
+}

@@ -3859,7 +3859,7 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
         // cos(x): same as fsin, calling $__fern_cos_f64.
         parts = parts.append("    call $__fern_cos_f64\n");
     } else if (o.kind_tag == 178) {  // read_chunk
-        // r.read_chunk(n) -> Option[string]. A Reader is just its fd (stdin =
+        // r.read_chunk(n) -> Result[string, IoError]. A Reader is just its fd (stdin =
         // fd 0), so fd + n are on the stack; $__fern_reader_read_chunk reads up
         // to n bytes via preview1 fd_read and boxes Some(chunk) / None at EOF.
         // Emitted caller-side in wasm_ir_run. Mirrors asm_ir's read_chunk op.
@@ -4589,7 +4589,7 @@ function io_err_field_off(i: i32, slot: i32): string {
 // needs_io_error reports whether the module carries any fs op — the gate on
 // $__fern_build_io_error and on the strerror texts it selects from.
 pub function needs_io_error(needs: string[]): boolean {
-    return need(needs, "stat") || need(needs, "lstat") || need(needs, "remove_file") || need(needs, "create_dir_all") || need(needs, "read_dir") || need(needs, "remove_dir_all") || need(needs, "temp_dir") || need(needs, "read_file") || need(needs, "read_file_bytes") || need(needs, "write_file") || need(needs, "open_file") || need(needs, "writer_write") || need(needs, "reader_close");
+    return need(needs, "stat") || need(needs, "lstat") || need(needs, "remove_file") || need(needs, "create_dir_all") || need(needs, "read_dir") || need(needs, "remove_dir_all") || need(needs, "temp_dir") || need(needs, "read_file") || need(needs, "read_file_bytes") || need(needs, "write_file") || need(needs, "open_file") || need(needs, "writer_write") || need(needs, "reader_close") || need(needs, "read_chunk");
 }
 
 // with_strerror_texts adds the strerror texts and the "Unknown error " prefix
@@ -7160,28 +7160,35 @@ pub function read_all_stdin_func(): string {
     o = o + "    (local.get $blk))\n";
     return o;
 }
-// reader_read_chunk_func emits $__fern_reader_read_chunk(fd, n) -> Option[string]
-// — the wasm sibling of asm_ir's __fern_reader_read_chunk (x86 uses sys_read;
-// wasm uses preview1 fd_read). A Reader is just its fd (an i32; stdin() = fd 0).
-// Reads up to n bytes from fd via fd_read (iovec {ptr,len} at addr 0, byte count
-// at addr 8 — the same scratch idiom as read_line) directly into a fresh string
-// block [len:i32][bytes], then wraps it in an Option box [tag@0, payload@4]:
-// Some(chunk) (tag 0) when bytes were read, None (tag 1) at EOF / no bytes. Same
-// string + Option layout env_func builds. Needs the heap runtime (str_box/alloc).
+// reader_read_chunk_func emits $__fern_reader_read_chunk(fd, n) ->
+// Result[string, IoError] — the wasm sibling of asm_ir's
+// __fern_reader_read_chunk (x86 uses sys_read; wasm uses preview1 fd_read). A
+// Reader is just its fd (an i32; stdin() = fd 0). Reads up to n bytes from fd
+// via fd_read (iovec {ptr,len} at addr 0, byte count at addr 8 — the same
+// scratch idiom as read_line) directly into a fresh string block
+// [len:i32][bytes], then wraps it in a box [tag@0, payload@4]: Ok(chunk)
+// (tag 0), which at end of input is that same block with length 0, or Err
+// (tag 1) carrying the classified errno. A read carries no PATH, so it is
+// classified against a FRESH empty string box for the same reason
+// reader_close's error path builds one. Same string + box layout env_func
+// builds. Needs the heap runtime (str_box/alloc), and needs_io_error folds
+// "read_chunk" in so the classifier reaches a module that only reads (#8700).
 pub function reader_read_chunk_func(): string {
     var o: string = "";
     o = o + "  (func $__fern_reader_read_chunk (param $fd i32) (param $n i32) (result i32)\n";
-    o = o + "    (local $blk i32) (local $nread i32) (local $opt i32)\n";
+    o = o + "    (local $blk i32) (local $nread i32) (local $opt i32) (local $err i32) (local $path i32)\n";
     o = o + "    (local.set $blk (call $__fern_str_box (i32.add (i32.const 4) (local.get $n))))\n";
     o = o + "    (i32.store (i32.const 0) (i32.add (local.get $blk) (i32.const 4)))\n";
     o = o + "    (i32.store (i32.const 4) (local.get $n))\n";
-    o = o + "    (drop (call $fd_read (local.get $fd) (i32.const 0) (i32.const 1) (i32.const 8)))\n";
-    o = o + "    (local.set $nread (i32.load (i32.const 8)))\n";
-    o = o + "    (if (i32.eqz (local.get $nread)) (then\n";
+    o = o + "    (local.set $err (call $fd_read (local.get $fd) (i32.const 0) (i32.const 1) (i32.const 8)))\n";
+    o = o + "    (if (i32.ne (local.get $err) (i32.const 0)) (then\n";
+    o = o + "      (local.set $path (call $__fern_str_box (i32.const 4)))\n";
+    o = o + "      (i32.store (local.get $path) (i32.const 0))\n";
     o = o + "      (local.set $opt (call $__fern_str_box (i32.const 8)))\n";
     o = o + "      (i32.store (local.get $opt) (i32.const 1))\n";
-    o = o + "      (i32.store (i32.add (local.get $opt) (i32.const 4)) (i32.const 0))\n";
+    o = o + "      (i32.store (i32.add (local.get $opt) (i32.const 4)) (call $__fern_build_io_error (local.get $err) (local.get $path)))\n";
     o = o + "      (return (local.get $opt))))\n";
+    o = o + "    (local.set $nread (i32.load (i32.const 8)))\n";
     o = o + "    (i32.store (local.get $blk) (local.get $nread))\n";
     o = o + "    (local.set $opt (call $__fern_str_box (i32.const 8)))\n";
     o = o + "    (i32.store (local.get $opt) (i32.const 0))\n";

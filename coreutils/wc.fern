@@ -1,0 +1,636 @@
+// wc.fern — GNU-compatible `wc`.
+//
+//   wc [-clmwL] [--total=WHEN] [--files0-from=F] [FILE]...
+//
+// Newlines, words, characters, bytes and the longest line, printed in
+// THAT order whatever order the options were given in, one line per
+// operand and a `total` line when there is more than one.
+//
+// Two things about this are not obvious from the synopsis:
+//
+//   - The column WIDTH is computed before anything is counted, from
+//     the sizes of the operands that stat as regular files: `wc big`
+//     pads to five columns because the file is 12345 bytes long, and
+//     `wc f1 -` pads to seven because a stream has no size to read.
+//     Nothing is statted at all when there is one input and one count
+//     to print, which is why `wc -l f` never pads.
+//   - Words and the longest line are C-locale ISPRINT, not ISSPACE:
+//     a NUL or a byte over 0x7f neither starts a word nor ends one and
+//     adds nothing to the line's width, so `a\0b c` is two words and
+//     `a\bb` is two columns wide. A tab advances to the next multiple
+//     of eight; a carriage return or form feed starts the line over.
+//
+// A failed read still prints the counts reached before it (`wc DIR`
+// reports the directory and then a line of zeros), and the exit status
+// is 1 if any operand failed.
+import "std/string";
+import "std/array";
+import "std/i64";
+import "std/io_buffered";
+import "./lib/gnu";
+
+function opt_bytes(): i32 {
+  return 1;
+}
+
+function opt_chars(): i32 {
+  return 2;
+}
+
+function opt_lines(): i32 {
+  return 3;
+}
+
+function opt_words(): i32 {
+  return 4;
+}
+
+function opt_debug(): i32 {
+  return 5;
+}
+
+function opt_files0(): i32 {
+  return 6;
+}
+
+function opt_maxlen(): i32 {
+  return 7;
+}
+
+function opt_total(): i32 {
+  return 8;
+}
+
+function help_text(): string {
+  var out: string = "";
+  out = out + "Usage: " + gnu.prog() + " [OPTION]... [FILE]...\n";
+  out = out + "  or:  " + gnu.prog() + " [OPTION]... --files0-from=F\n";
+  out = out + "Print newline, word, and byte counts for each FILE, and a total line if\n";
+  out = out + "more than one FILE is specified.  A word is a non-zero-length sequence of\n";
+  out = out + "printable characters delimited by white space.\n";
+  out = out + "\n";
+  out = out + "With no FILE, or when FILE is -, read standard input.\n";
+  out = out + "\n";
+  out = out + "The options below may be used to select which counts are printed, always in\n";
+  out = out + "the following order: newline, word, character, byte, maximum line length.\n";
+  out = out + "  -c, --bytes            print the byte counts\n";
+  out = out + "  -m, --chars            print the character counts\n";
+  out = out + "  -l, --lines            print the newline counts\n";
+  out = out + "      --files0-from=F    read input from the files specified by\n";
+  out = out + "                           NUL-terminated names in file F;\n";
+  out = out + "                           If F is - then read names from standard input\n";
+  out = out + "  -L, --max-line-length  print the maximum display width\n";
+  out = out + "  -w, --words            print the word counts\n";
+  out = out + "      --total=WHEN       when to print a line with total counts;\n";
+  out = out + "                           WHEN can be: auto, always, only, never\n";
+  out = out + "      --help        display this help and exit\n";
+  out = out + "      --version     output version information and exit\n";
+  return out;
+}
+
+// ---- counts ---------------------------------------------------------------
+struct Counts { lines: i64, words: i64, chars: i64, bytes: i64, maxlen: i64 }
+
+function zero_counts(): Counts {
+  return Counts { lines: 0 as i64, words: 0 as i64, chars: 0 as i64, bytes: 0 as i64, maxlen: 0 as i64 };
+}
+
+function add_counts(a: Counts, b: Counts): Counts {
+  var m: i64 = a.maxlen;
+  if (b.maxlen > m) {
+    m = b.maxlen;
+  }
+  return Counts { lines: a.lines + b.lines, words: a.words + b.words, chars: a.chars + b.chars, bytes: a.bytes + b.bytes, maxlen: m };
+}
+
+// `Show` — which counts this run prints. The order they print in is
+// fixed and is not the order the options were given in.
+struct Show { lines: boolean, words: boolean, chars: boolean, bytes: boolean, maxlen: boolean }
+
+function show_count(s: Show): i32 {
+  var n: i32 = 0;
+  if (s.lines) {
+    n = n + 1;
+  }
+  if (s.words) {
+    n = n + 1;
+  }
+  if (s.chars) {
+    n = n + 1;
+  }
+  if (s.bytes) {
+    n = n + 1;
+  }
+  if (s.maxlen) {
+    n = n + 1;
+  }
+  return n;
+}
+
+// A byte's display width in the C locale: printable ASCII is one
+// column, everything else is none. The three characters that MOVE the
+// cursor rather than occupying it — tab, carriage return, form feed —
+// are handled by the scan.
+function is_print(b: i32): boolean {
+  return b >= 32 && b < 127;
+}
+
+// `Scan` — the state a per-byte count carries across chunks.
+struct Scan { in_word: boolean, linepos: i64 }
+
+// One chunk counted the way GNU's single-byte-locale loop counts it.
+function scan_chunk(c: Counts, st: Scan, s: string): (Counts, Scan) {
+  var lines: i64 = c.lines;
+  var words: i64 = c.words;
+  var maxlen: i64 = c.maxlen;
+  var in_word: boolean = st.in_word;
+  var pos: i64 = st.linepos;
+  var i: i32 = 0;
+  while (i < s.len()) {
+    var b: i32 = s[i] as i32;
+    if (b == 10) {
+      lines = lines + 1 as i64;
+      if (pos > maxlen) {
+        maxlen = pos;
+      }
+      pos = 0 as i64;
+      if (in_word) {
+        words = words + 1 as i64;
+      }
+      in_word = false;
+    } else if (b == 13 || b == 12) {
+      if (pos > maxlen) {
+        maxlen = pos;
+      }
+      pos = 0 as i64;
+      if (in_word) {
+        words = words + 1 as i64;
+      }
+      in_word = false;
+    } else if (b == 9) {
+      pos = pos + 8 as i64 - pos % (8 as i64);
+      if (in_word) {
+        words = words + 1 as i64;
+      }
+      in_word = false;
+    } else if (b == 32) {
+      pos = pos + 1 as i64;
+      if (in_word) {
+        words = words + 1 as i64;
+      }
+      in_word = false;
+    } else if (b == 11) {
+      if (in_word) {
+        words = words + 1 as i64;
+      }
+      in_word = false;
+    } else if (is_print(b)) {
+      pos = pos + 1 as i64;
+      in_word = true;
+    }
+    i = i + 1;
+  }
+  return (Counts { ...c, lines: lines, words: words, maxlen: maxlen }, Scan { in_word: in_word, linepos: pos });
+}
+
+// `count_stream(r, show)` — every count `show` asks for, over `r`.
+// Returns the counts and the read failure that ended the stream, if
+// one did: GNU prints the counts it reached either way.
+function count_stream(r: Reader, show: Show): (Counts, Option[IoError]) {
+  var c: Counts = zero_counts();
+  var st: Scan = Scan { in_word: false, linepos: 0 as i64 };
+  // Words and the longest line need every byte; lines and bytes alone
+  // are a SIMD count and a length, which is the `wc -l` hot path.
+  var per_byte: boolean = show.words || show.maxlen;
+  while (true) {
+    match (r.read_chunk(read_size())) {
+      Ok(chunk) => {
+        if (chunk.len() == 0) {
+          if (st.linepos > c.maxlen) {
+            c = Counts { ...c, maxlen: st.linepos };
+          }
+          if (st.in_word) {
+            c = Counts { ...c, words: c.words + 1 as i64 };
+          }
+          return (c, None);
+        }
+        c = Counts { ...c, bytes: c.bytes + chunk.len() as i64 };
+        if (per_byte) {
+          var r2: (Counts, Scan) = scan_chunk(c, st, chunk);
+          c = r2.0;
+          st = r2.1;
+        } else if (show.lines) {
+          c = Counts { ...c, lines: c.lines + __count_byte(chunk, 10) as i64 };
+        }
+      },
+      Err(e) => {
+        if (st.linepos > c.maxlen) {
+          c = Counts { ...c, maxlen: st.linepos };
+        }
+        if (st.in_word) {
+          c = Counts { ...c, words: c.words + 1 as i64 };
+        }
+        return (c, Some(e));
+      }
+    }
+  }
+  return (c, None);
+}
+
+// Bytes per read(2). Measured against `wc -l` over a 62 MiB file: 16 KiB
+// costs 5.2 ms of user time to 64 KiB's 3.8, and 256 KiB buys nothing
+// back.
+function read_size(): i32 {
+  return 65536;
+}
+
+// ---- output ----------------------------------------------------------------
+// `field(n, width)` — one count right-aligned in `width` columns.
+function field(n: i64, width: i32): string {
+  var s: string = n.to_string();
+  var pad: i32 = width - s.len();
+  if (pad <= 0) {
+    return s;
+  }
+  return " ".repeat(pad) + s;
+}
+
+// One output line: the selected counts in their fixed order, then the
+// name when there is one.
+function line_for(c: Counts, show: Show, width: i32, name: string, named: boolean): string {
+  var out: string = "";
+  var first: boolean = true;
+  if (show.lines) {
+    out = out + field(c.lines, width);
+    first = false;
+  }
+  if (show.words) {
+    if (!first) {
+      out = out + " ";
+    }
+    out = out + field(c.words, width);
+    first = false;
+  }
+  if (show.chars) {
+    if (!first) {
+      out = out + " ";
+    }
+    out = out + field(c.chars, width);
+    first = false;
+  }
+  if (show.bytes) {
+    if (!first) {
+      out = out + " ";
+    }
+    out = out + field(c.bytes, width);
+    first = false;
+  }
+  if (show.maxlen) {
+    if (!first) {
+      out = out + " ";
+    }
+    out = out + field(c.maxlen, width);
+  }
+  if (named) {
+    out = out + " " + name;
+  }
+  return out + "\n";
+}
+
+// ---- --total=WHEN ----------------------------------------------------------
+function total_auto(): i32 {
+  return 0;
+}
+
+function total_always(): i32 {
+  return 1;
+}
+
+function total_only(): i32 {
+  return 2;
+}
+
+function total_never(): i32 {
+  return 3;
+}
+
+// gnulib's argmatch: a unique abbreviation wins, an ambiguous one and
+// an unmatched one each get their own wording, and both print the
+// valid list before the `Try …` line.
+function total_of(v: string): i32 {
+  var names: string[] = ["auto", "always", "only", "never"];
+  var found: i32 = 0 - 1;
+  var ambiguous: boolean = false;
+  var i: i32 = 0;
+  while (i < names.len()) {
+    if (names[i] == v) {
+      return i;
+    }
+    if (names[i].starts_with(v)) {
+      if (found < 0) {
+        found = i;
+      } else {
+        ambiguous = true;
+      }
+    }
+    i = i + 1;
+  }
+  if (found >= 0 && !ambiguous) {
+    return found;
+  }
+  var what: string = "invalid";
+  if (ambiguous) {
+    what = "ambiguous";
+  }
+  var msg: string = what + " argument " + gnu.quote(v) + " for '--total'\n";
+  msg = msg + "Valid arguments are:\n";
+  i = 0;
+  while (i < names.len()) {
+    msg = msg + "  - " + gnu.quote(names[i]) + "\n";
+    i = i + 1;
+  }
+  eprint(gnu.prog() + ": " + slice_unchecked(msg, 0, msg.len() - 1));
+  gnu.try_help(1);
+  return 0;
+}
+
+// ---- operands --------------------------------------------------------------
+// `Job` — one input: its path, the name its line carries, and where the
+// name came from (`--files0-from` reports a zero-length one with the
+// list file and the position in it).
+struct Job { path: string, name: string, origin: string }
+
+// `read_names(file)` — the NUL-terminated names in `--files0-from=F`.
+// `-` reads them from stdin, and a name of `-` is then refused because
+// the names and the data would come from the same stream.
+function read_names(file: string): Job[] {
+  var text: string = "";
+  var from_stdin: boolean = file == "-";
+  if (from_stdin) {
+    var r: Reader = stdin();
+    var chunks: string[] = [];
+    while (true) {
+      match (r.read_chunk(read_size())) {
+        Ok(chunk) => {
+          if (chunk.len() == 0) {
+            break;
+          }
+          chunks = chunks.append(chunk);
+        },
+        Err(e) => {
+          gnu.error(gnu.quotef(file) + ": read error: " + gnu.io_error_text(e));
+          exit(1);
+        }
+      }
+    }
+    text = chunks.join("");
+  } else {
+    match (open_reader(file)) {
+      Ok(r) => {
+        var chunks: string[] = [];
+        while (true) {
+          match (r.read_chunk(read_size())) {
+            Ok(chunk) => {
+              if (chunk.len() == 0) {
+                break;
+              }
+              chunks = chunks.append(chunk);
+            },
+            Err(e) => {
+              gnu.error(gnu.quotef(file) + ": read error: " + gnu.io_error_text(e));
+              exit(1);
+            }
+          }
+        }
+        r.close();
+        text = chunks.join("");
+      },
+      Err(e) => {
+        gnu.error("cannot open " + gnu.quotea(file) + " for reading: " + gnu.io_error_text(e));
+        exit(1);
+      }
+    }
+  }
+  var jobs: Job[] = [];
+  var start: i32 = 0;
+  var n: i32 = 0;
+  while (start < text.len()) {
+    var end: i32 = __memchr(text, 0, start);
+    if (end < 0) {
+      end = text.len();
+    }
+    var name: string = slice_unchecked(text, start, end) + "";
+    n = n + 1;
+    if (name == "-" && from_stdin) {
+      gnu.error("when reading file names from stdin, no file name of '-' allowed");
+      exit(1);
+    }
+    jobs = jobs.append(Job { path: name, name: name, origin: gnu.quotef(file) + ":" + n.to_string() });
+    start = end + 1;
+  }
+  return jobs;
+}
+
+// `width_for(jobs, show, total)` — the column width, which is fixed
+// before the first count is taken.
+//
+// One input printing one count is never statted at all, so it never
+// pads; otherwise the sizes of the operands that ARE regular files are
+// summed and the width is that total's digits. An operand that stats
+// but is not a regular file has no size to contribute and forces the
+// 7-column default; one that fails to stat contributes nothing.
+function width_for(jobs: Job[], show: Show, total: i32): i32 {
+  if (total == total_only()) {
+    return 1;
+  }
+  if (jobs.len() <= 1 && show_count(show) == 1) {
+    return 1;
+  }
+  var sum: i64 = 0 as i64;
+  var i: i32 = 0;
+  while (i < jobs.len()) {
+    if (jobs[i].path == "-") {
+      return 7;
+    }
+    match (stat(jobs[i].path)) {
+      Ok(st) => {
+        if (!st.is_file) {
+          return 7;
+        }
+        sum = sum + st.size;
+      },
+      Err(_) => {}
+    }
+    i = i + 1;
+  }
+  var w: i32 = 1;
+  var v: i64 = sum;
+  while (v >= 10 as i64) {
+    w = w + 1;
+    v = v / (10 as i64);
+  }
+  return w;
+}
+
+// `Done` — what one input produced: its counts, whether it was read at
+// all (a name that never opened prints no line), whether it failed, and
+// the writer the diagnostic was flushed through.
+struct Done { counts: Counts, counted: boolean, failed: boolean, w: io_buffered.BufWriter }
+
+// `count_job(job, show, o)` — one input counted, its diagnostic
+// reported.
+function count_job(job: Job, show: Show, o: io_buffered.BufWriter): Done {
+  var w: io_buffered.BufWriter = o;
+  if (job.path.len() == 0) {
+    var where: string = "";
+    if (job.origin.len() > 0) {
+      where = job.origin + ": ";
+    }
+    w = gnu.error_out(w, where + "invalid zero-length file name");
+    return Done { counts: zero_counts(), counted: false, failed: true, w: w };
+  }
+  var r: Reader = stdin();
+  if (job.path != "-") {
+    match (open_reader(job.path)) {
+      Ok(f) => {
+        r = f;
+      },
+      Err(e) => {
+        w = gnu.error_out(w, gnu.quotef(job.path) + ": " + gnu.io_error_text(e));
+        return Done { counts: zero_counts(), counted: false, failed: true, w: w };
+      }
+    }
+    // Only the byte count of a regular file is knowable without
+    // reading it, and GNU takes that shortcut only when the byte count
+    // is the ONLY count asked for.
+    if (show.bytes && !show.lines && !show.words && !show.chars && !show.maxlen) {
+      match (stat(job.path)) {
+        Ok(st) => {
+          if (st.is_file) {
+            r.close();
+            return Done { counts: Counts { ...zero_counts(), bytes: st.size }, counted: true, failed: false, w: w };
+          }
+        },
+        Err(_) => {}
+      }
+    }
+  }
+  var res: (Counts, Option[IoError]) = count_stream(r, show);
+  if (job.path != "-") {
+    r.close();
+  }
+  var c: Counts = Counts { ...res.0, chars: res.0.bytes };
+  match (res.1) {
+    Some(e) => {
+      w = gnu.error_out(w, gnu.quotef(job.path) + ": " + gnu.io_error_text(e));
+      return Done { counts: c, counted: true, failed: true, w: w };
+    },
+    None => {}
+  }
+  return Done { counts: c, counted: true, failed: false, w: w };
+}
+
+function main(): i32 {
+  var argv: string[] = args();
+  var opts: gnu.Opt[] = [];
+  opts = opts.append(gnu.flag("c", "bytes", opt_bytes()));
+  opts = opts.append(gnu.flag("m", "chars", opt_chars()));
+  opts = opts.append(gnu.flag("l", "lines", opt_lines()));
+  opts = opts.append(gnu.flag("w", "words", opt_words()));
+  opts = opts.append(gnu.flag("", "debug", opt_debug()));
+  opts = opts.append(gnu.valued("", "files0-from", opt_files0()));
+  opts = opts.append(gnu.flag("L", "max-line-length", opt_maxlen()));
+  opts = opts.append(gnu.valued("", "total", opt_total()));
+
+  var show: Show = Show { lines: false, words: false, chars: false, bytes: false, maxlen: false };
+  var any: boolean = false;
+  var total_when: i32 = total_auto();
+  var files0: string = "";
+  var have_files0: boolean = false;
+
+  var g: gnu.Getopt = gnu.getopt_new(argv, opts, "wc", help_text(), 1);
+  while (true) {
+    var r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    g = r.1;
+    match (r.0) {
+      Some(m) => {
+        if (m.id == opt_bytes()) {
+          show = Show { ...show, bytes: true };
+          any = true;
+        } else if (m.id == opt_chars()) {
+          show = Show { ...show, chars: true };
+          any = true;
+        } else if (m.id == opt_lines()) {
+          show = Show { ...show, lines: true };
+          any = true;
+        } else if (m.id == opt_words()) {
+          show = Show { ...show, words: true };
+          any = true;
+        } else if (m.id == opt_maxlen()) {
+          show = Show { ...show, maxlen: true };
+          any = true;
+        } else if (m.id == opt_files0()) {
+          files0 = m.value;
+          have_files0 = true;
+        } else if (m.id == opt_total()) {
+          total_when = total_of(m.value);
+        }
+      },
+      None => {
+        break;
+      }
+    }
+  }
+  if (!any) {
+    show = Show { lines: true, words: true, chars: false, bytes: true, maxlen: false };
+  }
+
+  var operands: string[] = g.operands();
+  var jobs: Job[] = [];
+  if (have_files0) {
+    if (operands.len() > 0) {
+      gnu.error("extra operand " + gnu.quote(operands[0]) + "\nfile operands cannot be combined with --files0-from");
+      gnu.try_help(1);
+    }
+    jobs = read_names(files0);
+  } else if (operands.len() == 0) {
+    jobs = jobs.append(Job { path: "-", name: "", origin: "" });
+  } else {
+    var i: i32 = 0;
+    while (i < operands.len()) {
+      jobs = jobs.append(Job { path: operands[i], name: operands[i], origin: "" });
+      i = i + 1;
+    }
+  }
+
+  var width: i32 = width_for(jobs, show, total_when);
+  var out: io_buffered.BufWriter = gnu.out_new();
+  var total: Counts = zero_counts();
+  var ok: boolean = true;
+  var i: i32 = 0;
+  while (i < jobs.len()) {
+    var res: Done = count_job(jobs[i], show, out);
+    out = res.w;
+    if (res.failed) {
+      ok = false;
+    }
+    if (res.counted) {
+      total = add_counts(total, res.counts);
+      if (total_when != total_only()) {
+        out = gnu.put(out, line_for(res.counts, show, width, jobs[i].name, jobs[i].name.len() > 0));
+      }
+    }
+    i = i + 1;
+  }
+  var show_total: boolean = total_when == total_always() || total_when == total_only() || total_when == total_auto() && jobs.len() > 1;
+  if (show_total) {
+    var named: boolean = total_when != total_only();
+    out = gnu.put(out, line_for(total, show, width, "total", named));
+  }
+  out = out.flush();
+  gnu.close_stdout(out, false);
+  if (!ok) {
+    return 1;
+  }
+  return 0;
+}

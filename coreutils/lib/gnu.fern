@@ -53,6 +53,16 @@ pub function error(msg: string): void {
   eprint(prog() + ": " + msg);
 }
 
+// `error_out(o, msg)` — `error` with the buffered stdout flushed
+// first, which is what gnulib's error() does. Without it a
+// diagnostic overtakes the output written before it whenever both
+// streams are the same pipe. Rebind: `o = gnu.error_out(o, msg);`.
+pub function error_out(o: io_buffered.BufWriter, msg: string): io_buffered.BufWriter {
+  var w: io_buffered.BufWriter = o.flush();
+  error(msg);
+  return w;
+}
+
 // `try_help(status)` — the trailing line of every usage error, then
 // exit. Split out because a few utilities emit it with no preceding
 // message of their own.
@@ -224,6 +234,18 @@ function double_quote_unsafe(b: i32, leading: boolean): boolean {
     return !leading;
   }
   return b == 34 || b == 92 || b == 36 || b == 96 || b == 33 || b == 42 || b == 63 || b == 91 || b == 40 || b == 41 || b == 38 || b == 124 || b == 60 || b == 62 || b == 59 || b == 61 || b == 94 || b == 123 || b == 125;
+}
+
+// `quotea(name)` — gnulib's quoteaf: `quotef` with the bare form
+// quoted too, for the diagnostics that always show quotes
+// (`head: cannot open 'plain' for reading`) rather than only when
+// the name needs them (`wc: plain: No such file or directory`).
+pub function quotea(s: string): string {
+  var q: string = quotef(s);
+  if (q == s) {
+    return "'" + s + "'";
+  }
+  return q;
 }
 
 // `quotef(name)` — the file name as a shell would need it typed: bare
@@ -637,7 +659,7 @@ function long_option(g: Getopt, a: string): (Option[OptMatch], Getopt) {
   var found: i32 = 0 - 1;
   var k: i32 = 0;
   while (k < g.opts.len()) {
-    if (g.opts[k].long == name) {
+    if (g.opts[k].long.len() > 0 && g.opts[k].long == name) {
       found = k;
       break;
     }

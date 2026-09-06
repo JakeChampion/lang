@@ -207,13 +207,23 @@ function __buf_writer_put(b: BufWriter, s: string): BufWriter {
 // all care. The terminator is a parameter because `-z` (NUL-
 // terminated lines) is common in coreutils.
 //
+// A failed read ends the input the way EOF does and is held in `err`
+// for the caller to read back with `.error()` — the same sticky-error
+// contract BufWriter has for writes, and the reason a directory
+// operand is distinguishable from an empty file (#8700).
+//
 // Cursor idiom (docs/CURSOR-IDIOM.md): `var (line, lr) = lr.next_line();`.
-pub struct LineReader { r: Reader, chunk: string, pos: i32, eof: boolean, term: i32, chunk_size: i32 }
+pub struct LineReader { r: Reader, chunk: string, pos: i32, eof: boolean, term: i32, chunk_size: i32, err: Option[IoError] }
 
 // `line_reader_new(r, term, chunk_size)` — read lines from `r`
 // ending in byte `term`.
 pub function line_reader_new(r: Reader, term: i32, chunk_size: i32): LineReader {
-  return LineReader { r: r, chunk: "", pos: 0, eof: false, term: term, chunk_size: chunk_size };
+  return LineReader { r: r, chunk: "", pos: 0, eof: false, term: term, chunk_size: chunk_size, err: None };
+}
+
+// `(lr).error()` — the read failure that ended the input, if one did.
+pub function (lr: LineReader) error(): Option[IoError] {
+  return lr.err;
 }
 
 // `(lr).next_line()` — the next line, or None at end of input.
@@ -237,11 +247,15 @@ pub function (lr: LineReader) next_line(): (Option[string], LineReader) {
       return (Some(tail), s);
     }
     match (s.r.read_chunk(s.chunk_size)) {
-      Some(c) => {
-        s = LineReader { ...s, chunk: c, pos: 0 };
+      Ok(c) => {
+        if (c.len() == 0) {
+          s = LineReader { ...s, chunk: "", pos: 0, eof: true };
+        } else {
+          s = LineReader { ...s, chunk: c, pos: 0 };
+        }
       },
-      None => {
-        s = LineReader { ...s, chunk: "", pos: 0, eof: true };
+      Err(e) => {
+        s = LineReader { ...s, chunk: "", pos: 0, eof: true, err: Some(e) };
       }
     }
   }
@@ -262,11 +276,14 @@ pub function (lr: LineReader) next_chunk(): (Option[string], LineReader) {
     return (None, s);
   }
   match (s.r.read_chunk(s.chunk_size)) {
-    Some(c) => {
+    Ok(c) => {
+      if (c.len() == 0) {
+        return (None, LineReader { ...s, eof: true });
+      }
       return (Some(c), s);
     },
-    None => {
-      return (None, LineReader { ...s, eof: true });
+    Err(e) => {
+      return (None, LineReader { ...s, eof: true, err: Some(e) });
     }
   }
 }

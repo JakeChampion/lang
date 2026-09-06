@@ -11,12 +11,11 @@
 #   FERN_GNU_COREUTILS  directory holding the GNU binaries. Default: the
 #                       directory `yes` resolves to on PATH, if it is GNU.
 #   FERN_UUTILS         directory holding uutils binaries, named either
-#                       `<util>` or `uutils-<util>`, or the path of the
-#                       uutils MULTI-CALL binary (`coreutils <util>`).
-#                       Default: search PATH for `uutils-yes`, then the nix
-#                       store, then a `coreutils` on PATH that announces
-#                       itself as a multi-call binary (the Debian package).
-#                       Optional — the column is dropped when there is none.
+#                       `<util>` or `uutils-<util>`. Default: search PATH
+#                       for `uutils-yes`, then for a `coreutils` multi-call
+#                       binary that is uutils (Debian's rust-coreutils), then
+#                       the nix store. Optional — the column is dropped when
+#                       there is none, and the header names what was found.
 #   FERN_TARGET         the -target to build for. Default: the host.
 #
 # WALL TIME, deliberately. `scripts/perf-bench` counts retired instructions
@@ -70,39 +69,46 @@ fi
 [ -n "$gnu" ] && is_gnu "$gnu" || {
   echo "coreutils-bench: no GNU coreutils; set FERN_GNU_COREUTILS=/path/to/bin" >&2; exit 1; }
 
-is_multicall() { [ -f "$1" ] && [ -x "$1" ] && { "$1" 2>&1 || true; } | head -1 | grep -q 'multi-call binary'; }
+# is_uutils_multicall BIN — Debian's rust-coreutils: one binary dispatching
+# on argv[0]. Invoked bare it names itself "(multi-call binary)" and exits
+# non-zero; `--version` is refused as an unknown utility; GNU's own
+# multi-call prints a usage line. Output is captured rather than piped
+# because under pipefail the non-zero exit would mask the match.
+is_uutils_multicall() {
+  case "$("$1" 2>&1 || true)" in *"multi-call binary"*) return 0 ;; esac
+  return 1
+}
 
 uu="${FERN_UUTILS:-}"
+uu_multicall=""
 if [ -z "$uu" ]; then
   if p=$(command -v uutils-yes 2>/dev/null); then
     uu=$(dirname "$p")
+  elif p=$(command -v coreutils 2>/dev/null) && is_uutils_multicall "$p"; then
+    # Per-utility names go under $out (made below, removed on exit) on
+    # demand by uutils_bin.
+    uu_multicall="$p"
   else
     for d in /nix/store/*-uutils-coreutils-*/bin; do
       [ -x "$d/uutils-yes" ] && { uu="$d"; break; }
     done
   fi
-  if [ -z "$uu" ] && p=$(command -v coreutils 2>/dev/null) && is_multicall "$p"; then
-    uu="$p"
-  fi
 fi
-uu_multi=""
-if [ -n "$uu" ] && is_multicall "$uu"; then
-  uu_multi="$uu"
-  echo "coreutils-bench: uutils: $uu_multi" >&2
-fi
+echo "coreutils-bench: uutils: ${uu_multicall:-${uu:-none — the column is dropped}}" >&2
 
-# uutils_bin UTIL — the uutils command for UTIL, or nothing. For the
-# multi-call binary it is two words, which hyperfine splits itself under
-# -N and the shell splits otherwise.
+# uutils_bin UTIL — the uutils binary for UTIL, or nothing.
 uutils_bin() {
   [ -n "$uu" ] || return 0
-  if [ -n "$uu_multi" ]; then echo "$uu_multi $1"; return 0; fi
+  if [ -n "$uu_multicall" ] && [ ! -e "$uu/$1" ]; then
+    # `<name>: function/utility not found` is the multi-call's own refusal;
+    # anything else (a version line, or test/[ treating --version as an
+    # expression) means the name is carried.
+    case "$("$uu_multicall" "$1" --version 2>&1 || true)" in
+      *"function/utility not found"*) ;;
+      *) ln -s "$uu_multicall" "$uu/$1" ;;
+    esac
+  fi
   if [ -x "$uu/uutils-$1" ]; then echo "$uu/uutils-$1"; elif [ -x "$uu/$1" ]; then echo "$uu/$1"; fi
-}
-
-# uutils_version — the line the uutils build identifies itself by.
-uutils_version() {
-  if [ -n "$uu_multi" ]; then { "$uu_multi" 2>&1 || true; } | head -1; else "$(uutils_bin yes)" --version | head -1; fi
 }
 
 # --- build ------------------------------------------------------------------
@@ -119,6 +125,10 @@ fi
 
 go build -o bin/fern ./cmd/fern
 out=$(mktemp -d)
+if [ -n "$uu_multicall" ]; then
+  uu="$out/uutils"
+  mkdir -p "$uu"
+fi
 trap 'rm -rf "$out"' EXIT
 mkdir -p "$out/fern"
 
@@ -241,6 +251,31 @@ PY
       # /etc/hosts, read on every call.
       printf 'hostid\tn\t{}\n'
       ;;
+    head)
+      # head's shapes are: stop early on a big file (the count is small,
+      # so the cost is startup plus one read), copy a lot of it, and the
+      # two elisions, which have to buffer the tail rather than seek.
+      big="$out/text-64m.txt"
+      [ -f "$big" ] || "$gnu/seq" 1 8000000 > "$big"
+      printf 'head -n 10 of a 62 MiB file\tn\t{} -n 10 %s\n' "$big"
+      printf 'head -n 4000000 of a 62 MiB file\ty\t{} -n 4000000 %s > /dev/null\n' "$big"
+      printf 'head -c 32M of a 62 MiB file\ty\t{} -c 33554432 %s > /dev/null\n' "$big"
+      printf 'head -n 10 from a pipe\ty\t{gnu}/cat %s | {} -n 10 > /dev/null\n' "$big"
+      printf 'head -n -10 of a 62 MiB file\ty\t{} -n -10 %s > /dev/null\n' "$big"
+      printf 'head -c -10 of a 62 MiB file\ty\t{} -c -10 %s > /dev/null\n' "$big"
+      ;;
+    wc)
+      # wc -l is the SIMD count, wc -c is fstat and no read at all, and
+      # -w / -L are the byte-at-a-time scan the C locale asks for.
+      big="$out/text-64m.txt"
+      [ -f "$big" ] || "$gnu/seq" 1 8000000 > "$big"
+      printf 'wc -l of a 62 MiB file\tn\t{} -l %s\n' "$big"
+      printf 'wc -c of a 62 MiB file\tn\t{} -c %s\n' "$big"
+      printf 'wc of a 62 MiB file\tn\t{} %s\n' "$big"
+      printf 'wc -w of a 62 MiB file\tn\t{} -w %s\n' "$big"
+      printf 'wc -L of a 62 MiB file\tn\t{} -L %s\n' "$big"
+      printf 'wc -l from a pipe\ty\t{gnu}/cat %s | {} -l\n' "$big"
+      ;;
     test|\[)
       # Startup-bound like sleep: what a script pays per condition. The
       # bracket form carries its `]`; a string compare, an integer compare
@@ -333,7 +368,9 @@ PY
 )
 
 header="coreutils-bench: $(date -u +%Y-%m-%d) $(uname -s)/$(uname -m), fern $(git rev-parse --short HEAD) (-O, $target), $("$gnu/yes" --version | head -1)"
-[ -n "$uu" ] && header="$header, $(uutils_version)"
+# uutils prints argv[0] before its version, which for a symlink dir is a
+# scratch path; name the implementation instead.
+[ -n "$uu" ] && header="$header, uutils $("$(uutils_bin yes)" --version | head -1 | awk '{print $NF}')"
 header="$header. mean ± σ over ≥20 runs; a ratio above 1 means Fern is faster."
 
 printf '%s\n\n%s\n' "$header" "$table"

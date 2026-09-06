@@ -340,6 +340,37 @@ pays the dynamic loader and then dlopens the NSS modules named on the
 `hosts:` line, which is the whole 4.7×, and uutils' multi-call dispatch
 costs it another millisecond.
 
+Group B's first two, 2026-09-06, Linux x86-64 (GNU coreutils 9.4; no
+uutils in the image). The file is 62 MiB / 8 000 000 lines of `seq`:
+
+| utility | workload | fern (ms) | gnu (ms) | gnu / fern |
+|---|---|---|---|---|
+| `head` | `-n 10` of a 62 MiB file | 0.48 ± 0.59 | 1.63 ± 0.82 | 3.42× |
+| `head` | `-n 4000000` of a 62 MiB file | 7.84 ± 1.46 | 27.33 ± 2.32 | 3.48× |
+| `head` | `-c 32M` of a 62 MiB file | 6.56 ± 0.57 | 12.40 ± 0.89 | 1.89× |
+| `head` | `-n 10` from a pipe | 1.84 ± 0.56 | 1.85 ± 0.55 | 1.01× |
+| `head` | `-n -10` of a 62 MiB file | 21.64 ± 1.26 | 21.05 ± 1.17 | 0.97× |
+| `head` | `-c -10` of a 62 MiB file | 17.96 ± 1.69 | 20.29 ± 0.71 | 1.13× |
+| `wc` | `-l` of a 62 MiB file | 17.06 ± 1.01 | 17.09 ± 0.90 | 1.00× |
+| `wc` | `-c` of a 62 MiB file | 0.34 ± 0.31 | 1.53 ± 0.44 | 4.47× |
+| `wc` | (default) of a 62 MiB file | 356.59 ± 9.72 | 1465.41 ± 17.49 | 4.11× |
+| `wc` | `-w` of a 62 MiB file | 350.04 ± 2.92 | 1467.80 ± 15.79 | 4.19× |
+| `wc` | `-L` of a 62 MiB file | 351.76 ± 3.67 | 1471.15 ± 14.96 | 4.18× |
+| `wc` | `-l` from a pipe | 65.26 ± 30.37 | 68.91 ± 13.86 | 1.06× |
+
+Reading THAT one: the 4× rows are the per-byte scan, where GNU spends 1.4 s of
+user time on 62 MiB and Fern spends 0.34; `wc -c` never reads at all, taking
+the size off `stat` as GNU does. The two rows that only tie are the ones that
+are already at memory bandwidth — `wc -l` is one `__count_byte` per read and
+nothing else, and the last 25% of ITS user time is the SSE2 kernel's 16 bytes
+an iteration against glibc's AVX2 32 (#8716).
+
+The counting shapes were where the first draft lost: `head -n 4000000` called
+`__memchr` once per line (0.73×) and `head -n -10` rebuilt its withheld tail
+per chunk (0.17×). Both now decide a whole chunk with one `__count_byte` and
+walk only the chunk that reaches the count — backwards, with `__rmemchr`, for
+the elision.
+
 ## Known divergences
 
 **`hostid` asks DNS over TCP.** The id is glibc's `gethostid`: `/etc/hostid`
@@ -366,6 +397,25 @@ Neither changes the bytes on a host whose name resolves.
 
 ## Open gaps
 
+**fstat(2) on a descriptor (#8713).** `stat(path)` is the only way into a
+`struct stat`, and two behaviours ask the same question of a DESCRIPTOR
+instead. `wc` fixes its column width from the sizes of its operands, taking
+GNU's `fstat(STDIN_FILENO)` for a `-` or absent one, so `wc < f` pads to the
+file's digits where `wc.fern` pads to seven; the single-count form is
+unaffected because GNU skips the stat there too. `cat` fstats fd 1 before it
+reads anything and dies `cat: standard output: Bad file descriptor` when that
+fails, which is unreachable by writing because it has nothing to write —
+`cat` is not implementable to parity until the primitive exists.
+
+Neither is visible to this corpus: the harness always hands the child a pipe
+for stdin, so the width is 7 on both sides, and `cat` is not in the tree. That
+is what makes them worth writing down here rather than leaving to a gate.
+
+Two earlier gaps are closed and each is now exercised by the corpus:
+`IoError.Other` carrying no strerror text (#8265) — the write-failure cases
+(`yes >&-`, `> /dev/full`) — and source unable to learn its compile target
+(#8338) — `yes.fern`'s per-target block. A gap met later gets an issue and a
+fix, never a corpus carve-out.
 None. Both Fern gaps the first utilities met — `IoError.Other` carrying no
 strerror text (#8265) and source unable to learn its compile target
 (#8338) — are closed, and each is exercised by the corpus: the
@@ -387,8 +437,11 @@ groups are the order of work. Each sub-issue names its group.
   `join` `comm` `uniq` `sort` `tr` `fold` `fmt` `pr` `ptx` `expand`
   `unexpand` `split` `csplit` `shuf` `od` `base32` `base64` `basenc` `cksum`
   `sum` `md5sum` `sha1sum` `sha224sum` `sha256sum` `sha384sum` `sha512sum`
-  `b2sum` `tee`. Needs a buffered stdout writer in `std/io_buffered` (its
-  own header already promises one) and a streaming stdin reader. The hash
+  `b2sum` `tee`. `head` and `wc` are done. Needs a buffered stdout writer in
+  `std/io_buffered` (its own header already promises one) and a streaming
+  stdin reader whose reads can FAIL: every one of these reaches a read error
+  through a directory operand, and `Reader.read_chunk` answered None to EOF
+  and to EISDIR alike until #8700 gave it `Result[string, IoError]`. The hash
   utilities have their digests: `std/crypto` streams MD5, SHA-1,
   SHA-224/256/384/512 and BLAKE2b (`h = h.update(chunk)` per `read_chunk`
   piece), and `std/hash` has cksum's CRC-32 and both sum(1) checksums with

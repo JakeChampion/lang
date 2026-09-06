@@ -2208,10 +2208,12 @@ func emitOptionBox(w func(string, ...any), tag int, payloadReg string) {
 	w("\tadd x0, x4, #8") // box data
 	if tag == 1 {
 		w("\tmov w6, #1")
-		w("\tstr w6, [x0]") // tag = 1 (None)
+		w("\tstr w6, [x0]") // tag = 1 (None / Err)
 	} else {
-		w("\tstr wzr, [x0]")                // tag = 0 (Some)
-		w("\tstr %s, [x0, #8]", payloadReg) // IoError payload
+		w("\tstr wzr, [x0]") // tag = 0 (Some / Ok)
+	}
+	if payloadReg != "" {
+		w("\tstr %s, [x0, #8]", payloadReg) // payload
 	}
 }
 
@@ -2424,10 +2426,12 @@ func emitStdHandleHelper(name string, fd int) func(w func(string, ...any)) {
 }
 
 // emitReaderReadChunkHelper writes __method_Reader_read_chunk(reader, n) ->
-// Option[string]: a single read(2) of up to n bytes from the handle's fd (loaded
-// from [reader+8]) into a fresh single-word rc string. Returns None on EOF/error
-// (read <= 0) or Some(string) with the actual byte count as its length. Leaf: the
-// read svc preserves every register but x0, so fd/n/data survive without spills.
+// Result[string, IoError]: a single read(2) of up to n bytes from the handle's fd
+// (loaded from [reader+8]) into a fresh single-word rc string. Ok(string) with the
+// actual byte count as its length, Ok("") at end of input, Err(e) when the read
+// failed — a directory reads EISDIR, and a streaming caller has to tell that from
+// EOF (#8700). The read svc preserves every register but x0, so fd/n/data survive
+// without spills on the two paths that do not classify an errno.
 // x0=reader handle, x1=n.
 func emitReaderReadChunkHelper(w func(string, ...any)) {
 	w("")
@@ -2454,16 +2458,32 @@ func emitReaderReadChunkHelper(w func(string, ...any)) {
 	w("\tmov x8, #63") // read
 	w("\tsvc #0")
 	w("\tcmp x0, #0")
-	w("\tble .Lssa_rrc_none")  // EOF or error → None
+	w("\tblt .Lssa_rrc_err")   // read(2) failed → Err(e)
+	w("\tbeq .Lssa_rrc_eof")   // read(2) returned 0 → Ok("")
 	w("\tstur w0, [x11, #-4]") // len = bytes read
 	w("\tadd x1, x11, x0")
 	w("\tstrb wzr, [x1]") // trailing NUL
-	// Some(string): box {rc=1, tag=0, string@8}.
+	// Ok(string): box {rc=1, tag=0, string@8}.
 	emitOptionBox(w, 0, "x11")
 	w("\tret")
-	w(".Lssa_rrc_none:")
-	// None: box {rc=1, tag=1}.
-	emitOptionBox(w, 1, "")
+	w(".Lssa_rrc_eof:")
+	emitEmptyString(w, "x11")
+	emitOptionBox(w, 0, "x11")
+	w("\tret")
+	w(".Lssa_rrc_err:")
+	// A read carries no path, so the errno is classified against an empty
+	// one, exactly as a failed write is. x19 survives the two calls.
+	w("\tstp x29, x30, [sp, #-32]!")
+	w("\tmov x29, sp")
+	w("\tstr x19, [sp, #16]")
+	w("\tneg x19, x0") // errno
+	emitEmptyString(w, "x1")
+	w("\tmov x0, x19")
+	w("\tbl %s", fnLabel("__fern_io_error"))
+	w("\tmov x19, x0")
+	emitOptionBox(w, 1, "x19")
+	w("\tldr x19, [sp, #16]")
+	w("\tldp x29, x30, [sp], #32")
 	w("\tret")
 }
 
@@ -2692,6 +2712,7 @@ var runtimeHelperDeps = map[string][]string{
 	"__method_Writer_close":         {"__fern_io_error"},
 	"open_reader":                   {"__fern_io_error"},
 	"__method_Reader_close":         {"__fern_io_error"},
+	"__method_Reader_read_chunk":    {"__fern_io_error"},
 	"open_appender":                 {"__fern_io_error"},
 	"__pow_f64":                     {"__log_f64", "__exp_f64"},
 	"__sin_f64":                     {"__rem_pio2_large"},

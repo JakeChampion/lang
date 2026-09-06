@@ -11372,9 +11372,9 @@ func TestArm64ReaderWriter(t *testing.T) {
     }
     match (open_reader("rc.txt")) {
         Ok(r) => {
-            match (r.read_chunk(5)) { Some(s) => { write(s); write(":"); }, None => { return 4; } }
-            match (r.read_chunk(20)) { Some(s) => { write(s); }, None => { return 5; } }
-            match (r.read_chunk(20)) { Some(_) => { return 6; }, None => { return 0; } }
+            match (r.read_chunk(5)) { Ok(s) => { write(s); write(":"); }, Err(_) => { return 4; } }
+            match (r.read_chunk(20)) { Ok(s) => { write(s); }, Err(_) => { return 5; } }
+            match (r.read_chunk(20)) { Ok(s) => { if (s.len() > 0) { return 6; } return 0; }, Err(_) => { return 8; } }
         },
         Err(_) => { return 7; }
     }

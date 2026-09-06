@@ -2017,7 +2017,11 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	}
 	optionString := ast.EnumType{Name: "Option", Args: []ast.Type{ast.StringType{}}}
 	registerStructMethod("Reader", "read_line", nil, optionString)
-	registerStructMethod("Reader", "read_chunk", []ast.Type{ast.NumberType{}}, optionString)
+	// read_chunk reports what read(2) reports: the bytes, an empty
+	// string at end of input, or the failure. `Option` could not tell
+	// EOF from EISDIR, and a streaming utility needs to (#8700).
+	registerStructMethod("Reader", "read_chunk", []ast.Type{ast.NumberType{}},
+		ast.EnumType{Name: "Result", Args: []ast.Type{ast.StringType{}, ioErrType}})
 	registerStructMethod("Reader", "close", nil, optionIoErr)
 	registerStructMethod("Writer", "write", []ast.Type{ast.StringType{}}, optionIoErr)
 	registerStructMethod("Writer", "close", nil, optionIoErr)

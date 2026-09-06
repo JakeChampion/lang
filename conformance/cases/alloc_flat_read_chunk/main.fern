@@ -1,14 +1,14 @@
 // spec: AL-01
 //
-// The streaming-reader shape: `match (r.read_chunk(n)) { Some(chunk) => … }`
-// in a loop. The runtime hands back an Option box whose payload is a fresh
+// The streaming-reader shape: `match (r.read_chunk(n)) { Ok(chunk) => … }`
+// in a loop. The runtime hands back a Result box whose payload is a fresh
 // rc=1 string built for the caller, and the binding is the only owner of
 // that string — so each iteration's chunk must be released as the next one
 // is bound, and the last one at function exit (#8396).
 //
 // The observable is that fresh memory does NOT scale with the chunk size:
 // the same number of reads at 1024 bytes must cost no more fresh bytes than
-// at 16 bytes, up to a factor that tolerates the per-call Option box (a
+// at 16 bytes, up to a factor that tolerates the per-call Result box (a
 // constant, independent of the chunk). With the chunks leaking, the wide
 // round costs ~19x the narrow one; with them recycled, the two are equal.
 // One warm-up read at each size precedes its measured round, so the first
@@ -25,8 +25,11 @@ function rounds(r: Reader, size: i32, n: i32): i32 {
     var i: i32 = 0;
     while (i < n) {
         match (r.read_chunk(size)) {
-            Some(chunk) => { acc = acc + chunk.len(); },
-            None => { return acc; }
+            Ok(chunk) => {
+                if (chunk.len() == 0) { return acc; }
+                acc = acc + chunk.len();
+            },
+            Err(e) => { return acc; }
         }
         i = i + 1;
     }

@@ -40,8 +40,8 @@ function chunks(path: string, size: i32): i32 {
             var acc: i32 = 0;
             while (true) {
                 match (r.read_chunk(size)) {
-                    Some(c) => { acc = acc + c.len(); },
-                    None => { break; }
+                    Ok(c) => { if (c.len() == 0) { break; } acc = acc + c.len(); },
+                    Err(e) => { break; }
                 }
             }
             match (r.close()) { Some(_) => { return -3; }, None => {} }

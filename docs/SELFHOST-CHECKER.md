@@ -74,7 +74,7 @@ results for the constructs that produce them —
 - `Some(x)` → `"option:" + infer(x)`; `None` → `"option:unknown"`
 - `Ok(x)` → `"result:" + infer(x)`; `Err(_)` → `"result:unknown"`
 - map `.get(k)` → `"option:" + value_part(map)` (currently unhandled)
-- reader `.read_chunk(n)` → `"option:string"`; `read_file(p)` →
+- reader `.read_chunk(n)` → `"result:string"`; `read_file(p)` →
   `"result:string"`
 
 ### 2. `assignable(want, got) -> bool` (conservative)
