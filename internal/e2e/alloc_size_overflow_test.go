@@ -3,6 +3,8 @@ package e2e
 import (
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/e2eharness"
 )
 
 // Two string-construction sites compute a byte count in i32 and hand the
@@ -127,5 +129,94 @@ func checkAbort(t *testing.T, backend, out string, code int, cause, src string) 
 	}
 	if trimOut(withoutAbortDiag(out)) != "" {
 		t.Errorf("%s printed %q before aborting\nsrc:\n%s", backend, out, src)
+	}
+}
+
+// The array half of the same defect (#8587). `__fern_arr_push_grow` doubled
+// the capacity and sized `cap * stride` in 32 bits on every emitter. A u8[] of
+// 2^30 elements is the smallest array whose grow trips the doubling: newLen =
+// 2^30 + 1 shifted left goes negative, the max(.., 4) floor then picked cap = 4
+// under a length of ~1e9, and the copy memcpy'd a gibibyte into a 20-byte
+// block — a silent heap overrun on the natives, an out-of-bounds trap on wasm.
+//
+// The request is now computed in 64 bits (checked in i64 on wasm) and refused
+// before anything is allocated, so the run holds only the 1 GiB `__alloc_u8`
+// zero-fill, never the copy. That footprint is still budgeted against
+// concurrent heavy builds.
+func TestArrayGrowSizeOverflowAborts(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping allocation-size e2e in -short mode")
+	}
+	src := `function main(): i32 {
+  var a: u8[] = __alloc_u8(1073741824);
+  a = a.append(7 as u8);
+  return a.len();
+}
+`
+	holdingMemoryMB(t, 1200, func() {
+		assertAbortsWithCause(t, src, "allocation size out of range")
+	})
+	t.Run("wasm32-wasi", func(t *testing.T) {
+		holdingMemoryMB(t, 1200, func() {
+			out, stderr, code := runComponent(t, buildNumComponent(t, src), runOpts{})
+			if code == 0 {
+				t.Errorf("wasm did not trap (exit 0); stdout=%q", out)
+			}
+			// wasm has no cause line, so pin the trap's origin instead: the
+			// size check's own `unreachable`, not the out-of-bounds copy the
+			// wrapped size used to fall into.
+			if !strings.Contains(stderr, "unreachable") {
+				t.Errorf("wasm trapped somewhere other than the size check; stderr=%q", stderr)
+			}
+			if trimOut(out) != "" {
+				t.Errorf("wasm printed %q before trapping", out)
+			}
+		})
+	})
+}
+
+// A grow whose request stays under the ceiling still succeeds — the guard
+// rejects an overflowed size, not a large one. 300 MB doubles to a 600 MB
+// request, and the appended element reads back from past the old length.
+func TestLargeButRepresentableArrayGrowStillWorks(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping allocation-size e2e in -short mode")
+	}
+	src := `function main(): i32 {
+  var a: u8[] = __alloc_u8(300000000);
+  a = a.append(7 as u8);
+  if (a.len() != 300000001) { return 1; }
+  return (a[300000000] as i32) - 7;
+}
+`
+	holdingMemoryMB(t, 1000, func() {
+		t.Run("x86_64", func(t *testing.T) {
+			if out, code := compileAndRunX86_64(t, src); code != 0 {
+				t.Errorf("x86_64 exited %d, want 0; out=%q", code, out)
+			}
+		})
+		t.Run("arm64-linux", func(t *testing.T) {
+			if out, code := compileAndRunArm64(t, src); code != 0 {
+				t.Errorf("arm64 exited %d, want 0; out=%q", code, out)
+			}
+		})
+		t.Run("wasm32-wasi", func(t *testing.T) {
+			if got := runWasm(t, src); got != 0 {
+				t.Errorf("wasm returned %d, want 0", got)
+			}
+		})
+	})
+}
+
+// holdingMemoryMB runs fn with weightMB reserved against the process-wide
+// heavy-build budget, so a program whose own RSS runs to a gigabyte cannot
+// stack its peak on a concurrent driver build's.
+func holdingMemoryMB(t *testing.T, weightMB int, fn func()) {
+	t.Helper()
+	if err := e2eharness.WithBuildMemoryMB(weightMB, func() error {
+		fn()
+		return nil
+	}); err != nil {
+		t.Fatal(err)
 	}
 }
