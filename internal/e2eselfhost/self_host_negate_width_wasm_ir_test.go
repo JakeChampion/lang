@@ -67,6 +67,25 @@ function main(): i32 { var b: i64 = 0 - 9223372036854775807 - 1; print((-b).to_s
 			want: "-9223372036854775808\n",
 		},
 		{
+			// `0 - 2147483647 - 1` is how std/i32 spells i32::MIN, and constfold
+			// folds it to unary minus over the magnitude 2147483648 — a literal
+			// too big for i32 until the sign is applied. Deciding the width from
+			// the operand alone made the negation 64-bit, and the i32 compare
+			// against it failed validation in every module that kept
+			// i32.to_string (#8656). The rows avoid to_string on purpose: the
+			// value is pinned by comparisons the driver can lower without it.
+			name: "i32 min literal",
+			src: `function main(): i32 {
+  var n: i32 = 0 - 2147483647 - 1;
+  var m: i32 = 7;
+  if (m == 0 - 2147483647 - 1) { print("eq-bad"); } else { print("eq-ok"); }
+  if (n < 0) { print("neg-ok"); } else { print("neg-bad"); }
+  if (n == -2147483648) { print("min-ok"); } else { print("min-bad"); }
+  return 0;
+}`,
+			want: "eq-ok\nneg-ok\nmin-ok\n",
+		},
+		{
 			name: "i32 control",
 			src: `import "std/i32";
 function main(): i32 { var b: i32 = 5; print((-b).to_string()); return 0; }`,
