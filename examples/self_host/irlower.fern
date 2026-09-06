@@ -7335,7 +7335,7 @@ pub function expr_is_str(e: ast.Expr, s: LowerState): boolean {
             // get->c[0] desugar, so `c.get()[0]` / `.len()` see a string.
             if (cell_get_elem(e, s) == "string") { return true; }
             // A string-valued if/match-EXPRESSION desugars to a 0-arg IIFE
-            // `(function(): string { if (c) { return "a"; } … })()`. Classify it
+            // `((): string => { if (c) { return "a"; } … })()`. Classify it
             // by its first branch's returned value, so `var s = if (…) { … }`
             // tracks s as a string (and `lower_iife` admits the string temp).
             if (c.args.len() == 0) {
@@ -14855,7 +14855,7 @@ function lower_expr_call(c: ast.ExprCall, e: ast.Expr, s: LowerState): LowerStat
         },
         ast.ExprFieldAccess(fa) => { return lower_call_method(c, fa, s); },
         // Inline 0-arg IIFE — the shape parse_if_chain emits for an
-        // if-EXPRESSION in value position: `(function(): i32 { if (c) {
+        // if-EXPRESSION in value position: `((): i32 => { if (c) {
         // return E1; } else { return E2; } })()`. Lower it INLINE (no
         // closure box / function call) as a value-producing void `if`
         // that stores each branch's result into a temp (#2938). Bails to
@@ -17005,7 +17005,7 @@ function try_opt_type(inner: ast.Expr, s: LowerState): string {
 }
 
 // lower_iife lowers the 0-arg IIFE the if-expression desugar (parse_if_chain)
-// emits — `(function(): i32 { if (c) { return E1; } else { return E2; } })()`
+// emits — `((): i32 => { if (c) { return E1; } else { return E2; } })()`
 // — INLINE, with no closure box or function call: a value-producing void `if`
 // whose branches store their result into a fresh temp local, then a load of
 // that temp leaves the if-expression's value on the rt-stack (the same
@@ -17208,7 +17208,7 @@ function lower_value_stmt(st: ast.Stmt, s: LowerState, force_i64: boolean): Lowe
             return lower_iife_match(mm, s, force_i64);
         },
         // A single `return E` body is the DIRECT, hand-written IIFE —
-        // `(function (): i32 { return 7; })()` — as opposed to the if/match
+        // `((): i32 => { return 7; })()` — as opposed to the if/match
         // desugars above, which is why it reached the catch-all and bailed the
         // whole module (#3457 slice 5). Its value simply IS
         // E, evaluated here: the lambda is invoked immediately in this scope, so
@@ -50561,16 +50561,77 @@ function arrenum_lit_enum(e: ast.Expr, structs: StructTab): string {
     return "";
 }
 
+// arrenum_scrut_elem_read: `e` is exactly `name[<idx>]`, an element read of the
+// candidate array, with `name` appearing nowhere in the index. That is the one
+// shape the match-scrutinee widening below admits.
+function arrenum_scrut_elem_read(e: ast.Expr, name: string, borrowable: string[]): boolean {
+    match (e) {
+        ast.ExprIndex(ix) => {
+            if (ident_name_or_empty(ix.array) != name) { return false; }
+            return !arrenum_esc_expr(ix.index, name, borrowable);
+        },
+        _ => { return false; }
+    }
+}
+
+// arrenum_binding_confined: the arm binding `bnd`, which names payload field `fi`
+// of variant `vname`, cannot outlive its arm. A SCALAR payload is a value copy —
+// storing it aliases nothing, so it is confined whatever the arm does with it,
+// the same reading arrtup_elem_esc_shape gives a scalar tuple element. A POINTER
+// payload has to prove itself borrow-only through binding_escapes_arm.
+function arrenum_binding_confined(arm: ast.MatchArm, bnd: string, vname: string, fi: i32, structs: StructTab, borrowable: string[]): boolean {
+    if (bnd == "" || bnd == "_") { return true; }
+    if (is_scalar_type_name(decl_field_type_at(structs, vname, fi))) { return true; }
+    return !binding_escapes_arm(arm, bnd, borrowable);
+}
+
+// arrenum_match_arms_borrow_only: every arm of `m` confines its pattern bindings
+// to the arm, per arrenum_binding_confined.
+//
+// This is what makes `match (name[i])` safe to treat as a borrow (#8610). The
+// element boxes are freed by the reclaim that runs AFTER the whole match, so a
+// binding whose last use is inside its arm is already dead by then; a POINTER
+// binding that is stored, returned or passed on outlives the arm and would
+// dangle. An `@` binding names the whole element box rather than a payload, so it
+// is refused outright rather than reasoned about.
+function arrenum_match_arms_borrow_only(m: ast.StmtMatch, structs: StructTab, borrowable: string[]): boolean {
+    for arm in m.arms {
+        match (arm.pattern) {
+            ast.PatVariant(pv) => {
+                if (pv.at_binding.len() > 0) { return false; }
+                // Strip a qualified `Payload.Some` to the bare variant name the
+                // struct table records the payload fields under.
+                var vname: string = pv.type_name;
+                var vc: i32 = 0;
+                while (vc < pv.type_name.len()) {
+                    if (pv.type_name[vc] == b'.') { vname = slice_unchecked(pv.type_name, vc + 1, pv.type_name.len()) + ""; }
+                    vc = vc + 1;
+                }
+                if (!arrenum_binding_confined(arm, pv.binding, vname, 0, structs, borrowable)) { return false; }
+                var ebi: i32 = 0;
+                while (ebi < pv.extra_bindings.len()) {
+                    if (!arrenum_binding_confined(arm, pv.extra_bindings[ebi], vname, ebi + 1, structs, borrowable)) { return false; }
+                    ebi = ebi + 1;
+                }
+            },
+            _ => {}
+        }
+    }
+    return true;
+}
+
 // arrenum_esc_expr reports whether `e` uses `name` in ANY way other than as the
 // receiver of `name.len()`.
 //
-// This is the maximally-conservative first cut the issue asks for, and the reason
-// is that the hazard here is a double-free rather than a leak: `match (xs[i])` reads
-// an element box as a borrowed indexed value and an arm may bind its payload, so
-// freeing that element while a binding aliases it corrupts the self-compile. Every
-// extraction — `xs[i]` bare, as a match subject, or a payload binding — therefore
-// falls back to the existing leak-safe shallow dec. Widening this to admit indexed
-// reads is the follow-up, and it needs the arm-binding escape analysis ARRTUP grew.
+// The hazard is a double-free rather than a leak: freeing an element while a
+// binding still aliases its payload corrupts the self-compile. So every extraction
+// — `xs[i]` bare, or a payload binding that outlives its arm — falls back to the
+// leak-safe shallow dec.
+//
+// One extraction is admitted, and NOT here: `match (xs[i])` is vetted at the
+// statement level by arrenum_append_escapes, which pairs it with
+// arrenum_match_arms_borrow_only (#8610). This expression scan never sees that
+// scrutinee, so it stays strict.
 function arrenum_esc_expr(e: ast.Expr, name: string, borrowable: string[]): boolean {
     match (e) {
         ast.ExprIdent(id) => { return id.name == name; },
@@ -51086,7 +51147,14 @@ function arrenum_append_escapes(stmts: ast.Stmt[], name: string, structs: Struct
                 if (arrenum_append_escapes(fo.body, name, structs, ename, msites, allow_ret, borrowable)) { return true; }
             },
             ast.StmtMatch(m) => {
-                if (arrenum_esc_expr(m.scrutinee, name, borrowable)) { return true; }
+                // `match (name[i])` reads an element box as a BORROW, admitted when
+                // every arm's bindings stay inside their arm (#8610). Without this
+                // the whole class fell back to the shallow dec and leaked every
+                // element box, per round.
+                var aem_elem: boolean = arrenum_scrut_elem_read(m.scrutinee, name, borrowable);
+                if (aem_elem) {
+                    if (!arrenum_match_arms_borrow_only(m, structs, borrowable)) { return true; }
+                } else if (arrenum_esc_expr(m.scrutinee, name, borrowable)) { return true; }
                 for arm in m.arms {
                     if (arm.has_guard && arrenum_esc_expr(arm.guard, name, borrowable)) { return true; }
                     if (arrenum_append_escapes(arm.body, name, structs, ename, msites, allow_ret, borrowable)) { return true; }
@@ -61978,7 +62046,7 @@ pub function closure_ret_fns_of(funcs: parser.FuncDecl[], structs: StructTab): s
     //   (a) `return <capturing lambda>` — a fresh box built at the return.
     //   (b) `return <ident>` where the ident is a top-level local bound to a
     //       closure box (a lambda, `__mkclo$`, or a closure-returning call) —
-    //       e.g. `var f = function (b) { … }; return f;`. Form (b) is gated on
+    //       e.g. `var f = (b) => { … }; return f;`. Form (b) is gated on
     //       a declared `fn` return type so it only fires for genuine
     //       higher-order factories, never the compiler's own no-fn-return
     //       sources — keeping the self-compile fixpoint byte-identical. The
@@ -69197,7 +69265,7 @@ function lift_expr_walk(e: ast.Expr, acc: LiftAcc, gfns: string[]): LiftExpr {
         ast.ExprCall(c) => {
             var a: LiftAcc = acc;
             // Lift the CALLEE too: a no-capture lambda in call position — an IIFE
-            // `(function(b){...})(args)` — hoists to a bare `__lam_N` fn-name, so
+            // `((b) => {...})(args)` — hoists to a bare `__lam_N` fn-name, so
             // the call becomes a direct `__lam_N(args)`. lift_call_arg recurses for
             // a non-lambda callee (ident / `mk()` / etc.), leaving it unchanged, so
             // a normal call's numbering is untouched (an ident callee consumes no
@@ -69212,7 +69280,7 @@ function lift_expr_walk(e: ast.Expr, acc: LiftAcc, gfns: string[]): LiftExpr {
             }
             return LiftExpr { expr: ast.ExprCall { callee: ce.expr, args: nargs, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty }, acc: a };
         },
-        // A no-capture lambda in a TUPLE-element position (`(function(x){...}, 10)`)
+        // A no-capture lambda in a TUPLE-element position (`((x) => {...}, 10)`)
         // hoists the same way — lift_call_arg turns it into a bare `__lam_N` fn-name
         // (which lowers to a fn pointer), so `t.0(t.1)` rides the existing
         // tuple-element fn-value call_indirect path. A capturing lambda element is
@@ -69229,7 +69297,7 @@ function lift_expr_walk(e: ast.Expr, acc: LiftAcc, gfns: string[]): LiftExpr {
             }
             return LiftExpr { expr: ast.ExprTuple { elements: nte, line: tu.line, col: tu.col }, acc: ta };
         },
-        // An array literal of NO-CAPTURE lambdas (`var fs = [function(x){...}, ...]`):
+        // An array literal of NO-CAPTURE lambdas (`var fs = [(x) => {...}, ...]`):
         // hoist each lambda element to a top-level `__lam_N` (the same lift a
         // no-capture lambda ARGUMENT gets), so the array becomes one of bare
         // function-name idents -- which lower to a function-pointer array, and
@@ -69249,7 +69317,7 @@ function lift_expr_walk(e: ast.Expr, acc: LiftAcc, gfns: string[]): LiftExpr {
             return LiftExpr { expr: ast.ExprArray { ...arr, elements: nelems }, acc: aa };
         },
         // A no-capture lambda in a STRUCT-FIELD value position (`Box { f:
-        // function(x){...} }`) hoists the same way — lift_call_arg turns it into
+        // (x) => {...} }`) hoists the same way — lift_call_arg turns it into
         // a bare `__lam_N` fn-name (which lowers to const_func, like `Box { f:
         // inc }`). A capturing lambda field is left in place (stays on AST).
         ast.ExprStructLit(sl) => {
@@ -69269,8 +69337,8 @@ function lift_expr_walk(e: ast.Expr, acc: LiftAcc, gfns: string[]): LiftExpr {
             return LiftExpr { expr: ast.ExprStructLit { type_name: sl.type_name, field_names: sl.field_names, field_values: nvals, has_base: sl.has_base, base: nbase, line: sl.line, col: sl.col }, acc: sa };
         },
         // Recurse into the compound expression forms so a no-capture lambda CALL
-        // nested inside them is still hoisted: `(function(x){...})(5) + 1` (binary),
-        // `0 - (function(){...})()` (unary), `a[(function(){...})()]` (index). The
+        // nested inside them is still hoisted: `((x) => {...})(5) + 1` (binary),
+        // `0 - (() => {...})()` (unary), `a[(() => {...})()]` (index). The
         // operands rarely hold a BARE lambda (that wouldn't type-check), so these
         // recurse via lift_expr_walk (which lifts an IIFE callee / a lambda call
         // argument inside), not lift_call_arg. An operand with nothing to lift is
@@ -69419,7 +69487,7 @@ function desugar_nontail_lambda_returns(body: ast.Stmt[]): ast.Stmt[] {
 function lift_stmt(st: ast.Stmt, acc: LiftAcc, gfns: string[]): LiftStmts {
     match (st) {
         ast.StmtReturn(r) => {
-            // `return function(x){...}` of a NO-CAPTURE lambda hoists to a
+            // `return (x) => {...}` of a NO-CAPTURE lambda hoists to a
             // top-level `__lam_N` (via lift_call_arg, the same lift a no-capture
             // lambda argument / array element / struct-field value gets), so the
             // return becomes a bare fn-name -> const_func, riding the existing
@@ -69443,7 +69511,7 @@ function lift_stmt(st: ast.Stmt, acc: LiftAcc, gfns: string[]): LiftStmts {
             var ns: ast.Stmt = ast.StmtExpr { value: e.expr, line: 0 };
             return LiftStmts { stmts: [ns], acc: e.acc };
         },
-        // `f = function(x){...}` of a NO-CAPTURE lambda hoists to `f = __lam_N`
+        // `f = (x) => {...}` of a NO-CAPTURE lambda hoists to `f = __lam_N`
         // (via lift_call_arg, like the StmtReturn case) — a bare fn-name the assign
         // lowers as a fn-pointer store. A capturing lambda RHS is left in place
         // (stays on AST); a non-lambda RHS recurses through lift_expr_walk.
@@ -69514,7 +69582,7 @@ function lift_stmts(stmts: ast.Stmt[], acc: LiftAcc, gfns: string[]): LiftStmts 
 // --- Capturing lambdas via classic lambda-lifting (closures slice 2c) ---
 //
 // A capturing lambda bound to a local and used ONLY as a direct call —
-// `var f = function(x){ … base … }; … f(a) … f(b) …` — needs no closure box:
+// `var f = (x) => { … base … }; … f(a) … f(b) …` — needs no closure box:
 // hoist it to __lam_<k>(origparams…, captures…) and rewrite each `f(args)` to
 // `__lam_<k>(args…, captures…)`, threading the captured values as ordinary
 // arguments. Pure AST rewrite: the lifted body is unchanged (its free vars are
@@ -70502,7 +70570,7 @@ struct ClosureLift { body: ast.Stmt[], acc: LiftAcc, changed: boolean }
 // every guard holds, else the inputs unchanged.
 function try_lift_binding(body: ast.Stmt[], idx: i32, fname: string, lam: ast.ExprLambda, fd: parser.FuncDecl, acc: LiftAcc, gfns: string[], assigns: string[], structs: StructTab, mfuncs: MFuncs): ClosureLift {
     var caps: string[] = lambda_captures(lam, fd);
-    // A capture-FREE lambda binding (`var f = function(x){…}; f(a)`) is lifted
+    // A capture-FREE lambda binding (`var f = (x) => {…}; f(a)`) is lifted
     // the same way, with no capture args — `f(a)` becomes a direct call to the
     // hoisted `__lam_N(a)`. (Previously declined here, so it fell through to the
     // first-class-closure lowering, which emits const_func(<fn>$clo) with no
@@ -70600,7 +70668,7 @@ function cl_replace_at(body: ast.Stmt[], at: i32, ns: ast.Stmt): ast.Stmt[] {
 // is param-lifted to a hoisted `__lam_N` + direct call sites — whether it sits
 // at the top level OR inside a `while` / `for` / `if` / `match` body. Before
 // the nested recursion only top-level bindings lifted, so a loop-local
-// capturing closure (`while (…) { var f = function(n){ return n + base; }; …
+// capturing closure (`while (…) { var f = (n) => { return n + base; }; …
 // f(i) … }`) was never lifted, taking the whole module off the IR path (the
 // loop-local capturing-closure IR gap).
 function closure_lift_one(body: ast.Stmt[], fd: parser.FuncDecl, acc: LiftAcc, gfns: string[], structs: StructTab, mfuncs: MFuncs): ClosureLift {
@@ -70785,8 +70853,8 @@ function hoist_escaping_closure(fd: parser.FuncDecl, gfns: string[], structs: St
 
 // ---- inline capturing closures in aggregate position (#2994) -----------
 //
-// A CAPTURING inline lambda in an array-element (`[function(x){ x+n }]`) or a
-// struct-field value (`Box { f: function(x){ x+n } }`) is a first-class closure
+// A CAPTURING inline lambda in an array-element (`[(x) => { x+n }]`) or a
+// struct-field value (`Box { f: (x) => { x+n } }`) is a first-class closure
 // that does NOT come from a `return <lambda>` or a `mk()` call, so neither the
 // param-lift (call-only bindings) nor hoist_escaping_closure (return position)
 // reaches it — it stayed an ExprLambda and bailed the module to AST. This pass
@@ -74462,7 +74530,7 @@ function box_nested_lambdas(e: ast.Expr, acc: ast.ExprLambda[]): ast.ExprLambda[
 // name_source_iifes gives a hand-written IIFE a name, so the ordinary
 // bound-lambda lift handles it.
 //
-// `(function(){ B })()` is exactly `var $iife$N = function(){ B }; $iife$N()`,
+// `(() => { B })()` is exactly `var $iife$N = () => { B }; $iife$N()`,
 // and try_lift_binding already lifts a bound lambda that is only called. So
 // rather than teach the lift walk a second shape — it only ever looks at a
 // StmtVar initialiser — this normalises the shape it does not know into the one

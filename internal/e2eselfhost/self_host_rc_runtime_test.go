@@ -645,7 +645,7 @@ func TestSelfHostRcConstructContainersX86_64(t *testing.T) {
 
 // Phase 1d (closure capture): a lambda capturing an rc-tracked array
 // retains the buffer (the closure box owns the reference). Uses the
-// block-form lambda (`function (): T { ... }`); the arrow form
+// block-form lambda (`(): T => { ... }`); the arrow form
 // `() => e` capturing a local is a separate pre-existing self-host
 // limitation. inc-only / detector-clean / safe (free off).
 func TestSelfHostRcClosureX86_64(t *testing.T) {

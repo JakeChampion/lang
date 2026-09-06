@@ -23,6 +23,18 @@
 # releases the destination's superseded string, so the row registers a
 # clean fixture rather than banking a leak.
 #
+# match_expr_binder_body and shadow_tuple_binder_over_const arrive at 0 with
+# their fixtures, which landed without rows — the same clean registration,
+# which the sourcelint row-per-fixture gate now asks for up front.
+#
+# cast_int_arith_to_float arrives at 0 with #8456's fixture, which landed
+# without a row — a new fixture needs a verdict, and a clean one is the
+# registration the census asks for rather than a pin being moved.
+# tuple_binder_shadows_module_decl and tuple_binder_shadows_outer_var are
+# the same registration for #8607's two, and the second time in a day that
+# a fixture reached main without one. Nothing but this gate notices, so it
+# fails on main until someone here adds the row.
+#
 # arrow_lambda_block_body is back to 0, and #8550's diagnosis was right:
 # #2673 extended the fixture with capturing void lambdas, and the three
 # allocations were the closure env boxes. #8545 removed the leak — a

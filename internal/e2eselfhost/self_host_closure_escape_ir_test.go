@@ -6,11 +6,11 @@ import (
 )
 
 // closureEscapeCases exercise a closure that ESCAPES its defining function
-// through a local variable binding — `var f = function (…) { … }; return f;` —
+// through a local variable binding — `var f = (…) => { … }; return f;` —
 // and is then called by the caller (`var g = factory(); g(args)`). This is
 // distinct from the already-covered shapes:
 //
-//   - `return function (…) { … }` returned DIRECTLY (higher_order), and
+//   - `return (…) => { … }` returned DIRECTLY (higher_order), and
 //   - a closure passed DOWN as an argument (`apply(g, …)`, closure-arg).
 //
 // A var-bound lambda is always materialised as a heap closure BOX

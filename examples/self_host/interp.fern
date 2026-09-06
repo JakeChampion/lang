@@ -1610,7 +1610,7 @@ function eval_expr_call(c: ast.ExprCall, env: Env): Value {
             // If the name is bound in scope to a VFunc,
             // it's a closure call. Plain function names
             // shadow ident bindings via call_func's
-            // walk, but a `var f = function (...) {…}`
+            // walk, but a `var f = (...) => {…}`
             // binding is observable here.
             var bound: Value = env.lookup(id.name);
             match (bound) {
@@ -1710,7 +1710,7 @@ function eval_expr_call(c: ast.ExprCall, env: Env): Value {
         },
         _ => {
             // Treat as a value-producing expression
-            // (e.g. immediate `function () { … }()`).
+            // (e.g. immediate `() => { … }()`).
             var cv: Value = eval_expr(c.callee, env);
             if (is_err(cv)) { return cv; }
             match (cv) {

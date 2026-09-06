@@ -685,7 +685,7 @@ function rewrite_builder_stmts(stmts: ast.Stmt[], b: string): ast.Stmt[] {
     return out;
 }
 
-// maybe_desugar_array_build lowers `Array.build(function(b: ArrayBuilder[T]):
+// maybe_desugar_array_build lowers `Array.build((b: ArrayBuilder[T]):
 // void { BODY })` into a unique-local IIFE — the self-host mirror of the Go
 // parser desugar (docs/ARRAY-BUILDER-PLAN.md). Returns `base` unchanged when
 // it isn't a well-formed Array.build call.
@@ -748,7 +748,7 @@ function map_builder_inner(t: string): string {
     return slice_unchecked(t, pl, t.len() - 1) + "";
 }
 
-// maybe_desugar_map_build lowers `Map.build(function(b: MapBuilder[K, V]):
+// maybe_desugar_map_build lowers `Map.build((b: MapBuilder[K, V]):
 // void { BODY })` into a unique-local IIFE — the map sibling of
 // maybe_desugar_array_build (docs/ARRAY-BUILDER-PLAN.md). `b` is a fresh
 // non-escaping map so every `b.insert(k, v)` (rewritten to `b = b.insert(...)`)
@@ -1434,7 +1434,7 @@ function (p: Par) arrow_lambda_at(): boolean {
 }
 
 // parse_arrow_lambda parses `(params) [: R] => body` into an ExprLambda,
-// producing the same AST the verbose `function (params): R { … }` form does,
+// producing the same AST the verbose `(params): R => { … }` form does,
 // so the lambda-lift + IR-lowering machinery handles it with no further
 // changes. An expression body becomes the single statement `[return expr]`; a
 // braced body becomes the block's own statements, plus a `return` of its
@@ -2128,61 +2128,13 @@ function parse_primary_nested(p: Par): (ast.Expr, Par) {
                 return parse_postfix(p, e_bool(false));
             }
             if (x.name == "function") {
-                // Anonymous function expression: `function (a:
-                // T, …): RT { body }`. Same grammar as the
-                // top-level FuncDecl minus the name and the
-                // optional receiver clause.
-                var fnl_line: i32 = p.peek_line();
-                var fnl_col: i32 = p.peek_col();
-                p = p.advance();  // consume `function`
-                if (p.peek_punct() != "(") {
-                    return (e_unknown_at("lambda: missing (", p.peek_line(), p.peek_col()), p);
-                }
-                p = p.advance();
-                var params: ast.ParamDecl[] = [];
-                var lpd: ParamDestr[] = [];
-                if (p.peek_punct() != ")") {
-                    while (true) {
-                        if (at_pattern_head(p)) {
-                            var (ltpr_param, ltpr_destr, ltpr_p) = parse_pattern_param(p);
-                            p = ltpr_p;
-                            if (ltpr_destr.names.len() == 0) {
-                                return (e_unknown_at("lambda: bad destructuring param", p.peek_line(), p.peek_col()), p);
-                            }
-                            params = params.append(ltpr_param);
-                            lpd = lpd.append(ltpr_destr);
-                            if (p.peek_punct() == ",") {
-                                p = p.advance();
-                                if (p.peek_punct() == ")") { break; }
-                                continue;
-                            }
-                            break;
-                        }
-                        var (pr_param, pr_p) = parse_param(p);
-                        p = pr_p;
-                        params = params.append(pr_param);
-                        // Trailing comma before `)` — see the note in the arrow-lambda
-                        // parameter loop (#6354).
-                        if (p.peek_punct() == ",") {
-                            p = p.advance();
-                            if (p.peek_punct() == ")") { break; }
-                            continue;
-                        }
-                        break;
-                    }
-                }
-                if (p.peek_punct() == ")") { p = p.advance(); }
-                var lret: string = "";
-                if (p.peek_punct() == ":") {
-                    p = p.advance();
-                    var (ltr_name, ltr_ret_arr, ltr_fn_ret, ltr_p) = parse_type_name(p);
-                    p = ltr_p;
-                    lret = ltr_name;
-                }
-                var (lblk_body, lblk_p) = parse_block(p);
-                p = lblk_p;
-                var lbody: ast.Stmt[] = prepend_param_destrs(lblk_body, lpd);
-                return parse_postfix(p, e_lambda_at(params, lret, lbody, "", fnl_line, fnl_col));
+                // `function` introduces a NAMED declaration and nothing
+                // else (#2673). parse_stmt routes the named form before
+                // primary parsing sees it, so reaching here means the
+                // keyword appeared mid-expression — the retired anonymous
+                // form. Name the arrow lambda that replaced it rather than
+                // reporting an unknown token. Mirrors native P006.
+                return (e_unknown_at("`function` introduces a named declaration; write an anonymous function as an arrow lambda — `(x: T): R => …`", p.peek_line(), p.peek_col()), p.advance());
             }
             if (x.name == "match") {
                 // match-expression in value position: desugar to an
@@ -2292,7 +2244,7 @@ function parse_primary_nested(p: Par): (ast.Expr, Par) {
             if (x.text == "(") {
                 // Arrow lambda `(params) [: R] => expr` — a concise anonymous
                 // function whose body is a single expression (desugared to
-                // `function (params): R { return expr; }`, the same ExprLambda
+                // `(params): R => { return expr; }`, the same ExprLambda
                 // the verbose form produces). Checked before the grouping /
                 // tuple parse: an arrow lambda's parens hold a parameter list
                 // (`IDENT : TYPE`, or empty), which a grouping (`(e)`) or tuple
@@ -2598,7 +2550,7 @@ function if_expr_rt(e: ast.Expr): string {
         // had already worked out: `match (…) { Some(v) => v, None => (if (c)
         // { id(803i64) } else { 421i64 }) }` labelled its IIFE i32 and bailed
         // the module, while the same if-expression unnested was fine. Reading
-        // the lambda covers a hand-written `(function (): T { … })()` too, where
+        // the lambda covers a hand-written `((): T => { … })()` too, where
         // the annotation is the author's. #6276.
         ast.ExprCall(c) => {
             if (c.args.len() != 0) { return "i32"; }
@@ -3592,7 +3544,7 @@ function parse_branch_body(p: Par): (ast.Stmt[], string, Par) {
 // parse_if_chain parses `if (c) { E1 } else { E2 }` (and `else if`
 // chains, via recursion through the else arm) into a StmtIf whose arms
 // `return` the branch expressions. parse_primary wraps the result in an
-// IIFE `(function(): RT { <stmt> })()`, so it lowers to the ExprCall +
+// IIFE `((): RT => { <stmt> })()`, so it lowers to the ExprCall +
 // ExprLambda the rest of the pipeline already handles — no new AST node,
 // so every backend supports if-expressions at once. The IIFE captures
 // any referenced locals automatically (the lambda machinery computes
@@ -3631,7 +3583,7 @@ function parse_if_chain(p: Par): IfChain {
 // parse_match_expr parses `match (e) { Pat => E, Pat when C => E, … }` in value
 // position into a StmtMatch whose arms `return` their (bare) expression, plus a
 // return-type tag for the IIFE. parse_primary wraps the result in an IIFE
-// (`(function(): RT { <stmt> })()`), so it reuses the statement-match + lambda
+// (`((): RT => { <stmt> })()`), so it reuses the statement-match + lambda
 // codegen every backend already supports — no new AST node, so all backends
 // get match-expressions at once (mirrors parse_if_chain).
 function parse_match_expr(p: Par): IfChain {
@@ -5474,7 +5426,7 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
     }
     if (kw == "function") {
         // Local (nested) function declaration: desugar to a closure-valued
-        // local `var name = function(params): ret { body };`. Calls resolve
+        // local `var name = (params): ret => { body };`. Calls resolve
         // through the closure-call path, and references to enclosing locals
         // are captured by the lambda machinery. Mirrors the Go parser
         // marking it IsLocal + the closureconv hoist. (Self-reference /
@@ -5493,7 +5445,7 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
         // `-fmt` records which of the two spellings was written, the way a
         // struct destructure rides on the same field ("@sd:…"): both parse to a
         // lambda-valued local, so without the marker a nested declaration came
-        // back as `var f = function(…) { … };`.
+        // back as `var f = (…) => { … };`.
         if (p.verbatim) { return (s_var_at(fr_func.name, "@fndecl", lam, fr_func.line, fr_func.col), p); }
         return (s_var(fr_func.name, "", lam), p);
     }
@@ -17913,7 +17865,7 @@ function settle_float_expr(e: ast.Expr): ast.Expr {
 }
 
 // A value-position if / match is desugared by the parser into an immediately-
-// invoked closure — `(function(): RT { … })()` — with RT read off the arms, so
+// invoked closure — `((): RT => { … })()` — with RT read off the arms, so
 // the literal in `var x: f64 = if (c) { 1 } else { 2 }` sits one level below the
 // destination with nothing to settle against. Settling the BRANCHES is enough
 // for both readers: the checker types the arms, and irlower's expr_is_f64 reads

@@ -13,12 +13,12 @@ import (
 // self-host IR path on x86-64 + wasm.
 //
 // The gap this closes: a function returning a NO-CAPTURE lambda
-// (`function mk(): (i32) => i32 { return function(b) { ... }; }`) bailed to the
+// (`function mk(): (i32) => i32 { return (b) => { ... }; }`) bailed to the
 // AST path, even though returning a *capturing* lambda and returning a *named*
 // function both already lowered. `lift_lambdas` hoisted no-capture lambdas in
 // call-argument / array-element / struct-field positions but not in RETURN
 // position, so the bare lambda survived to lowering and tripped the bail. The fix
-// lifts the return value via lift_call_arg, turning `return function(b){...}`
+// lifts the return value via lift_call_arg, turning `return (b) => {...}`
 // into `return __lam_N` — the already-working named-function-return path.
 //
 // The capturing-return and named-return cases are included as regression guards

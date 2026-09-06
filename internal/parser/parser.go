@@ -2723,13 +2723,6 @@ func (p *parser) parseLoop(label string) (ast.Stmt, error) {
 	return &ast.Loop{P: kw.Pos, Body: body, Label: label}, nil
 }
 
-// parseLambda parses `function (params): R { body }` in
-// expression position. The `function` keyword has already been
-// peeked (not yet consumed) by parsePrimary; parseLambda
-// consumes it and reads the unnamed-function shape. The body is
-// parsed inside the parser's standard return-type stack so
-// `use` desugaring inside the lambda body picks up the right
-// callback return type.
 // looksLikeArrowLambda reports whether the `(` at the cursor begins an
 // arrow lambda — `() => …`, `(): R => …`, or `(IDENT: TYPE, …) [: R] => …`.
 // The disambiguator from a grouping/tuple is the parameter shape: an arrow
@@ -2842,10 +2835,10 @@ func (p *parser) closerFollowedBy(idx int, open, close string, wants ...string) 
 	return false
 }
 
-// parseArrowLambda parses `(params) [: R] => expr` into an ast.Lambda whose
-// body is `{ return expr; }`. Parameter types are required (as in the
-// verbose `function (…)` form); the return type is optional and defaults to
-// void. See #2701.
+// parseArrowLambda parses `(params) [: R] => body` into an ast.Lambda.
+// Parameter types are required; the return type is optional. An expression
+// body becomes `{ return expr; }`, a braced one is a function body. See #2701
+// — the only lambda form since #2673.
 func (p *parser) parseArrowLambda() (ast.Expr, error) {
 	open := p.advance() // "("
 	var params []ast.Param
@@ -2904,7 +2897,7 @@ func (p *parser) parseArrowLambda() (ast.Expr, error) {
 		return nil, err
 	}
 	prependParamDestructures(body, paramDestrs)
-	return &ast.Lambda{P: open.Pos, Params: params, ReturnType: ret, ReturnUnannotated: unannotated, Arrow: true, Body: body}, nil
+	return &ast.Lambda{P: open.Pos, Params: params, ReturnType: ret, ReturnUnannotated: unannotated, Body: body}, nil
 }
 
 // parseArrowBody turns what follows `=>` into the lambda's body block. A
@@ -2921,65 +2914,6 @@ func (p *parser) parseArrowBody(pos ast.Position) (*ast.Block, error) {
 		return nil, err
 	}
 	return &ast.Block{P: pos, Stmts: []ast.Stmt{&ast.Return{P: pos, Value: e}}}, nil
-}
-
-func (p *parser) parseLambda() (ast.Expr, error) {
-	kw := p.advance() // function
-	if _, err := p.expect(lexer.Punct, "("); err != nil {
-		return nil, err
-	}
-	var params []ast.Param
-	var paramDestrs []*ast.Destructure
-	if !p.match(lexer.Punct, ")") {
-		for {
-			if p.atParamPattern() {
-				prm, d, err := p.parseParamPattern()
-				if err != nil {
-					return nil, err
-				}
-				params = append(params, prm)
-				paramDestrs = append(paramDestrs, d)
-				if !p.moreElems(")") {
-					break
-				}
-				continue
-			}
-			pname, err := p.expect(lexer.Ident, "")
-			if err != nil {
-				return nil, err
-			}
-			if _, err := p.expect(lexer.Punct, ":"); err != nil {
-				return nil, err
-			}
-			ptype, err := p.parseType()
-			if err != nil {
-				return nil, err
-			}
-			params = append(params, ast.Param{Name: discardName(pname.Text, pname.Pos, len(params)), Type: ptype})
-			if !p.moreElems(")") {
-				break
-			}
-		}
-	}
-	if _, err := p.expect(lexer.Punct, ")"); err != nil {
-		return nil, err
-	}
-	var ret ast.Type = ast.VoidType{}
-	if _, ok := p.accept(lexer.Punct, ":"); ok {
-		t, err := p.parseType()
-		if err != nil {
-			return nil, err
-		}
-		ret = t
-	}
-	p.returnTypeStack = append(p.returnTypeStack, ret)
-	body, err := p.parseBlock()
-	p.returnTypeStack = p.returnTypeStack[:len(p.returnTypeStack)-1]
-	if err != nil {
-		return nil, err
-	}
-	prependParamDestructures(body, paramDestrs)
-	return &ast.Lambda{P: kw.Pos, Params: params, ReturnType: ret, Body: body}, nil
 }
 
 // parseIfExpr parses the expression form `if (cond) { e1 } else
@@ -5106,8 +5040,8 @@ func (p *parser) parseParamPattern() (ast.Param, *ast.Destructure, error) {
 	}
 	d.Init = &ast.Ident{P: pos, Name: holder}
 	// Retain the written pattern so the formatter can put it back; without it
-	// an arrow lambda reprints as a `function(…)` whose return type has to be
-	// invented, and the holder + prelude `let` leak into the output (#7338).
+	// the holder + prelude `let` leak into the formatted output, and the
+	// expression body reprints braced because the prelude hides it (#7338).
 	return ast.Param{Name: holder, NamePos: pos, Type: ptype, Pattern: d}, d, nil
 }
 
@@ -5860,12 +5794,12 @@ func (p *parser) parseStructLit(pos ast.Position, typeName string, typeArgs []as
 // allowed. Empty `Map {}` is also valid and produces an empty
 // map. Lowering happens at IR-build time — no runtime difference
 // from `var m = map_new(N); m.set(k, v); ...`.
-// maybeDesugarArrayBuild lowers `Array.build(function(b: ArrayBuilder[T]):
+// maybeDesugarArrayBuild lowers `Array.build((b: ArrayBuilder[T]):
 // void { BODY })` — the scoped linear builder (docs/ARRAY-BUILDER-PLAN.md)
 // — into an immediately-invoked function that builds a unique local array
 // and returns it:
 //
-//	(function(): T[] {
+//	((): T[] => {
 //	    var b: T[] = [];
 //	    BODY'                 // each statement `b.append(x);`  → `b = b.append(x);`
 //	                          //              `b.with(i, x);`  → `b = b.with(i, x);`
@@ -5893,11 +5827,11 @@ func (p *parser) maybeDesugarArrayBuild(call *ast.Call) (ast.Expr, error) {
 	// It's `Array.build(...)` — from here on, a malformed call is an error
 	// (otherwise it would fall through to a confusing "undefined Array").
 	if len(call.Args) != 1 {
-		return nil, p.errorf(call.P, "Array.build expects a single function(b: ArrayBuilder[T]) argument")
+		return nil, p.errorf(call.P, "Array.build expects a single (b: ArrayBuilder[T]) => … argument")
 	}
 	lam, ok := call.Args[0].(*ast.Lambda)
 	if !ok {
-		return nil, p.errorf(call.P, "Array.build's argument must be a function(b: ArrayBuilder[T]) literal")
+		return nil, p.errorf(call.P, "Array.build's argument must be a (b: ArrayBuilder[T]) => … lambda")
 	}
 	if len(lam.Params) != 1 {
 		return nil, p.errorf(lam.P, "Array.build's function must take exactly one parameter (the builder)")
@@ -6012,11 +5946,11 @@ func (p *parser) maybeDesugarBuild(call *ast.Call) (ast.Expr, error) {
 	return p.maybeDesugarMapBuild(call)
 }
 
-// maybeDesugarMapBuild lowers `Map.build(function(b: MapBuilder[K, V]):
+// maybeDesugarMapBuild lowers `Map.build((b: MapBuilder[K, V]):
 // void { BODY })` into a unique-local IIFE — the map sibling of
 // maybeDesugarArrayBuild (docs/ARRAY-BUILDER-PLAN.md):
 //
-//	(function(): Map[K, V] {
+//	((): Map[K, V] => {
 //	    var b: Map[K, V] = map_new(8);
 //	    BODY'                 // `b.insert(k, v);` → `b = b.insert(k, v);`
 //	    return b;
@@ -6035,11 +5969,11 @@ func (p *parser) maybeDesugarMapBuild(call *ast.Call) (ast.Expr, error) {
 		return nil, nil
 	}
 	if len(call.Args) != 1 {
-		return nil, p.errorf(call.P, "Map.build expects a single function(b: MapBuilder[K, V]) argument")
+		return nil, p.errorf(call.P, "Map.build expects a single (b: MapBuilder[K, V]) => … argument")
 	}
 	lam, ok := call.Args[0].(*ast.Lambda)
 	if !ok {
-		return nil, p.errorf(call.P, "Map.build's argument must be a function(b: MapBuilder[K, V]) literal")
+		return nil, p.errorf(call.P, "Map.build's argument must be a (b: MapBuilder[K, V]) => … lambda")
 	}
 	if len(lam.Params) != 1 {
 		return nil, p.errorf(lam.P, "Map.build's function must take exactly one parameter (the builder)")
@@ -6258,19 +6192,14 @@ func (p *parser) parsePrimary() (ast.Expr, error) {
 			// fires from a true expression context.
 			return p.parseMatchExpr()
 		case "function":
-			// Anonymous function literal: `function (x: T): R { body }`.
-			// Produces a Lambda expression — same shape as a named
-			// local FuncDecl, sans the name. The checker runs
-			// capture analysis; closureconv hoists the body to a
-			// top-level synthesised name and replaces the Lambda
-			// with a MakeClosure at this position.
-			//
-			// Dispatch story: parseStmt routes `function` to
-			// parseFuncDecl (statement) before primary parsing
-			// ever sees it for the named form. parsePrimary fires
-			// only when `function` appears mid-expression — RHS
-			// of `var x = ...`, an argument, a return value, etc.
-			return p.parseLambda()
+			// `function` introduces a NAMED declaration and nothing else
+			// (#2673). parseStmt routes the named form to parseFuncDecl before
+			// primary parsing sees it, so reaching here means the keyword
+			// appeared mid-expression — the retired anonymous form. Point at
+			// the arrow lambda that replaced it rather than at the token,
+			// which would say only that a name was expected.
+			return nil, p.errorfCode(t.Pos, "P006",
+				"`function` introduces a named declaration; write an anonymous function as an arrow lambda — `(x: T): R => …`")
 		}
 		// A builtin type-name keyword in expression position followed
 		// by `.` is a *module* qualifier, not a type. The std modules
@@ -6308,7 +6237,7 @@ func (p *parser) parsePrimary() (ast.Expr, error) {
 		case "(":
 			// Arrow lambda `(params): R => expr` / `(params) => expr` — a
 			// concise anonymous function whose body is a single expression
-			// (desugared to `function (params): R { return expr; }`). Checked
+			// (desugared to `(params): R => { return expr; }`). Checked
 			// before the grouping/tuple parse: an arrow lambda's parens hold a
 			// parameter list (`IDENT : TYPE`, or empty), which a grouping
 			// (`(e)`) or tuple (`(e1, e2)`) never does. See #2701.

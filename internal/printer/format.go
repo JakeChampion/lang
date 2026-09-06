@@ -1900,71 +1900,28 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 		}
 		f.b.WriteString(x.Field)
 	case *ast.Lambda:
-		// Anonymous function expression: `function(p: T): R { ... }`.
-		// Mirrors formatFunc minus the name / receiver / pub prefix.
-		// Without this case formatExpr fell through to the empty
-		// default and silently dropped the lambda — leaving a
-		// dangling comma when it was the last call argument
-		// (`f(xs, )`, which then fails to re-parse). A single-
-		// statement body renders inline so short predicate lambdas
-		// stay on one line; anything longer uses the normal
-		// multi-line block.
-		//
-		// An arrow lambda parses to this same node, and reprints as an
-		// arrow whatever its body shape: the `function` rendering has to
-		// invent a return type, and `void` is a lie for every body that
-		// yields a value. An expression body is recovered from the
-		// one-statement `return` it desugars to; anything else stays braced.
-		if x.Arrow {
-			// The body runs as far right as it can, so any context
-			// that continues with a tighter operator needs parens.
-			// An assignment's RHS is terminal, hence `>` not `>=`.
-			needsParens := parentPrec > precAssign
-			if needsParens {
-				f.b.WriteByte('(')
-			}
+		// A lambda: `(p: T): R => …`. Without this case formatExpr fell
+		// through to the empty default and silently dropped the lambda —
+		// leaving a dangling comma when it was the last call argument
+		// (`f(xs, )`, which then fails to re-parse). An expression body is
+		// recovered from the one-statement `return` it desugars to; anything
+		// else stays braced, and a single-statement braced body renders inline
+		// so short predicate lambdas stay on one line.
+		// The body runs as far right as it can, so any context
+		// that continues with a tighter operator needs parens.
+		// An assignment's RHS is terminal, hence `>` not `>=`.
+		needsParens := parentPrec > precAssign
+		if needsParens {
 			f.b.WriteByte('(')
-			for i, p := range x.Params {
-				if i > 0 {
-					f.b.WriteString(", ")
-				}
-				// A destructuring parameter prints the pattern it was
-				// written with, not the holder the desugar minted.
-				if p.Pattern != nil {
-					f.formatParamPattern(p)
-				} else {
-					f.b.WriteString(writtenName(p.Name))
-				}
-				f.b.WriteString(": ")
-				f.b.WriteString(formatType(p.Type))
-			}
-			f.b.WriteByte(')')
-			if !x.ReturnUnannotated && x.ReturnType != nil {
-				f.b.WriteString(": ")
-				f.b.WriteString(formatType(x.ReturnType))
-			}
-			f.b.WriteString(" => ")
-			if ret, _, ok := arrowReturn(x); ok {
-				f.formatExpr(ret.Value, precLowest)
-			} else {
-				f.formatArrowBody(x)
-			}
-			if needsParens {
-				f.b.WriteByte(')')
-			}
-			break
 		}
-		f.b.WriteString("function(")
-		lamPrelude, lamPreludeOK := desugarPreludeLen(x.Params, x.Body)
+		f.b.WriteByte('(')
 		for i, p := range x.Params {
 			if i > 0 {
 				f.b.WriteString(", ")
 			}
-			// A destructuring parameter prints its written pattern here too:
-			// a lambda that states a return type never reaches the arrow
-			// branch above, and printing the holder there left the two
-			// spellings disagreeing about the same parameter (#7338).
-			if p.Pattern != nil && lamPreludeOK {
+			// A destructuring parameter prints the pattern it was
+			// written with, not the holder the desugar minted.
+			if p.Pattern != nil {
 				f.formatParamPattern(p)
 			} else {
 				f.b.WriteString(writtenName(p.Name))
@@ -1973,26 +1930,18 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 			f.b.WriteString(formatType(p.Type))
 		}
 		f.b.WriteByte(')')
-		if x.ReturnType != nil {
+		if !x.ReturnUnannotated && x.ReturnType != nil {
 			f.b.WriteString(": ")
 			f.b.WriteString(formatType(x.ReturnType))
 		}
-		f.b.WriteByte(' ')
-		if !lamPreludeOK {
-			lamPrelude = 0
-		}
-		// The parameter list carries the patterns now, so the prelude `let`s
-		// would bind the same names a second time.
-		lamStmts := x.Body
-		if lamPrelude > 0 && x.Body != nil {
-			lamStmts = &ast.Block{Stmts: x.Body.Stmts[lamPrelude:]}
-		}
-		if lamStmts != nil && len(lamStmts.Stmts) == 1 && isSingleLineStmt(lamStmts.Stmts[0]) {
-			f.b.WriteString("{ ")
-			f.formatStmt(lamStmts.Stmts[0], 0)
-			f.b.WriteString(" }")
+		f.b.WriteString(" => ")
+		if ret, _, ok := arrowReturn(x); ok {
+			f.formatExpr(ret.Value, precLowest)
 		} else {
-			f.formatBlock(lamStmts, 0)
+			f.formatArrowBody(x)
+		}
+		if needsParens {
+			f.b.WriteByte(')')
 		}
 	case *ast.BlockExpr:
 		// Reached only if a BlockExpr appears outside an if/match branch
@@ -2065,18 +2014,16 @@ func desugarPreludeLen(params []ast.Param, body *ast.Block) (n int, ok bool) {
 	return n, len(holders) == 0
 }
 
-// arrowReturn reports whether x can be reprinted in the arrow form, and if so
-// yields the `return expr` that becomes the arrow's body.
+// arrowReturn reports whether x has an EXPRESSION body, and if so yields the
+// `return expr` that carries it — so `(x) => e` reprints that way rather than
+// as the braced body it parses to.
 //
-// An arrow lambda parses to a one-statement body wrapping its expression in a
-// return — except when a parameter was DESTRUCTURED, where the desugar's
-// prelude sits in front of it. Without accounting for that prelude the arrow
-// form was unreachable and the printer fell back to `function(…)`, which needs
-// a return type nobody wrote and the printer (running before the checker)
-// cannot infer. Native wrote `: void` and the self-host wrote nothing; both
-// make the formatted program fail to compile, which is #7338.
+// The body is one statement wrapping the expression in a return, except when a
+// parameter was DESTRUCTURED, where the desugar's prelude sits in front of it.
+// Without accounting for that prelude the expression form was unreachable and
+// every lambda reprinted braced (#7338).
 func arrowReturn(x *ast.Lambda) (ret *ast.Return, prelude int, ok bool) {
-	if !x.Arrow || x.Body == nil {
+	if x.Body == nil {
 		return nil, 0, false
 	}
 	n, okPrelude := desugarPreludeLen(x.Params, x.Body)

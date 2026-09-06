@@ -10,7 +10,7 @@ package modload_test
 //   - a bare module-local function reference in ARG position
 //     (`apply(add_one, x)` — a function value, not a call), handled by
 //     rewriteExpr's Ident case;
-//   - anything inside a LAMBDA body (`function (v: i32): i32 {
+//   - anything inside a LAMBDA body (`(v: i32): i32 => {
 //     return add_one(v); }`) — rewriteExpr had no Lambda case at all,
 //     so module-local calls/refs inside lambda bodies survived
 //     unmangled and failed E001 in every importing program.

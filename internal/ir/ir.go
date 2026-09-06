@@ -12056,27 +12056,8 @@ func (b *builder) exprType(e ast.Expr) ast.Type {
 		// off `info.FuncSigs` (populated by the checker for
 		// every user fn + every stdlib / builtin signature).
 		if id, ok := x.Callee.(*ast.Ident); ok {
-			// Generic Map methods carry TypeArgs (K, V) on the
-			// Call. The FuncSigs entry stores the generic
-			// signature whose Result is a ParamType (V); we
-			// substitute V from TypeArgs so callers consuming
-			// the result (`len(m.get_or(...))`) see the
-			// concrete type rather than the unresolved param.
-			switch id.Name {
-			case "__method_Map_get_or", "__method_MapIter_value":
-				if len(x.TypeArgs) >= 2 {
-					return x.TypeArgs[1]
-				}
-			case "__method_Map_get":
-				// Returns Option[V] — but the inner V is what
-				// matters for the boxing-aware load. Caller's
-				// match-arm reads the payload directly; this
-				// path is only consulted for `len()` etc.
-				// applied to V, which isn't the typical shape.
-				// Leave the generic for now.
-			}
-			if sig, ok := b.info.FuncSigs[id.Name]; ok && sig != nil {
-				return sig.Result
+			if rt, ok := b.sigResultFor(x, id.Name); ok {
+				return rt
 			}
 			// Variant constructor call (`Some(42)`, `Ok(x)`,
 			// `Red(...)`). Not in FuncSigs, so resolve via the
@@ -12420,6 +12401,28 @@ func (b *builder) exprStaticType(e ast.Expr) ast.Type {
 // and `foo().0` patterns where the call returns a struct /
 // tuple — and crucially when `foo` is a closure value, not a
 // top-level function.
+// sigResultFor is the result type of a call to the registered signature
+// `name`, made concrete for a Map / MapIter method: those are registered once
+// over the type variables K and V, and the call's TypeArgs (stamped [K, V] by
+// the checker) are what the result is really typed at. A bare `V` from
+// `m.get_or(k, d).field` otherwise resolves to no struct at all, and the
+// `(Map[K, V], boolean)` from `m.without(k)` named a tuple drop nothing could
+// generate (#8707).
+func (b *builder) sigResultFor(c *ast.Call, name string) (ast.Type, bool) {
+	if b.info == nil {
+		return nil, false
+	}
+	sig, ok := b.info.FuncSigs[name]
+	if !ok || sig == nil {
+		return nil, false
+	}
+	if len(c.TypeArgs) >= 2 &&
+		(strings.HasPrefix(name, "__method_Map_") || strings.HasPrefix(name, "__method_MapIter_")) {
+		return substituteTypeParamsDeep(sig.Result, []string{"K", "V"}, c.TypeArgs[:2]), true
+	}
+	return sig.Result, true
+}
+
 func (b *builder) callReturnType(c *ast.Call) ast.Type {
 	if cr, ok := c.Callee.(*ast.CaptureRef); ok {
 		if ft, ok := cr.Type.(*ast.FuncType); ok {
@@ -12431,27 +12434,8 @@ func (b *builder) callReturnType(c *ast.Call) ast.Type {
 	if !ok {
 		return nil
 	}
-	// Map / MapIter accessors return a bare K / V whose CONCRETE type is
-	// the call's TypeArg, not the generic FuncSig result (`__method_Map_*`
-	// is registered with a type-variable result). Without this, a struct
-	// value flowing into `m.get_or(k, d).field` — or `it.value().field` /
-	// `it.key().field` — resolves to an empty struct name and codegen
-	// aborts with "field access on unresolved struct". The checker stamps
-	// TypeArgs = [K, V] on every map method call.
-	switch id.Name {
-	case "__method_Map_get_or", "__method_MapIter_value":
-		if len(c.TypeArgs) >= 2 {
-			return c.TypeArgs[1]
-		}
-	case "__method_MapIter_key":
-		if len(c.TypeArgs) >= 1 {
-			return c.TypeArgs[0]
-		}
-	}
-	if b.info != nil {
-		if sig, ok := b.info.FuncSigs[id.Name]; ok && sig != nil {
-			return sig.Result
-		}
+	if rt, ok := b.sigResultFor(c, id.Name); ok {
+		return rt
 	}
 	// Function-typed local / param: `foo` is bound as a
 	// closure value (a Var of FuncType) or arrived as a param
@@ -14031,7 +14015,7 @@ func (b *builder) call(n *ast.Call) error {
 			return nil
 		}
 	}
-	// Immediate lambda call: `(function (x) { ... })(arg)`. The
+	// Immediate lambda call: `((x) => { ... })(arg)`. The
 	// A closure literal called right where it is written — a Lambda, or
 	// the MakeClosure closureconv rewrites it to — lowers to a closure
 	// pair pointer and dispatches through OpCallIndirect like any other

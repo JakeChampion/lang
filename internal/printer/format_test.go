@@ -1327,9 +1327,9 @@ func TestFormatKeepsHexLiteralBase(t *testing.T) {
 	}
 }
 
-// An arrow lambda parses to the same node as `function(…) { … }`, so Format
+// An arrow lambda parses to the same node as `(…) => { … }`, so Format
 // re-emitted it in that form and had to supply a return type it does not know:
-// `() => e` became `function(): void { return e; }`, asserting `void` over an
+// `() => e` became `(): void => { return e; }`, asserting `void` over an
 // expression that has a value (#6803).
 func TestFormatKeepsArrowLambda(t *testing.T) {
 	for _, tc := range []struct{ name, src, want string }{

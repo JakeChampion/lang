@@ -1522,7 +1522,7 @@ pub function (m: Map[K, V]) get_or_insert(k: K, fallback: V): (Map[K, V], V) {
 // stored under `k`. Returns the fresh map (map ops yield a new value). The
 // classic word-count loop collapses to:
 //
-//     for w in words { counts = counts.update(w, 0, function (c: i32): i32 { return c + 1; }); }
+//     for w in words { counts = counts.update(w, 0, (c: i32): i32 => { return c + 1; }); }
 pub function (m: Map[K, V]) update(k: K, init: V, fn: (V) => V): Map[K, V] {
     var cur: V = m.get_or(k, init);
     return m.insert(k, fn(cur));

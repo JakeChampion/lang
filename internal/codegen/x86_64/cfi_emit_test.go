@@ -223,7 +223,7 @@ func TestRuntimeUsesConditionalMoves(t *testing.T) {
 	for _, want := range []string{
 		"cmova r8, rsi",    // __fern_arr_dec: headerBytes = max(16, stride)
 		"cmovg ecx, r13d",  // arr_push: headerBytes
-		"cmovl r15, rcx",   // arr_push: newCap = max(2n, 4), 64-bit since #8587
+		"cmovl r15, rcx",   // arr_push: newCap = max(2n, 4), doubled in 64 bits (#8587)
 		"cmovg r15d, r12d", // copy-on-write clone
 		"cmovb r8d, edx",   // __fern_str_order: min(la, lb)
 		"btc rax, 63",      // f64 → u64 saturation

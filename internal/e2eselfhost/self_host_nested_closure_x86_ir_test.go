@@ -15,7 +15,7 @@ import (
 //
 //  1. Capture analysis (astwalk.collect_idents_expr's ExprLambda case) recursed
 //     into the inner lambda's body and collected the inner lambda's OWN params
-//     (e.g. the `y` of `function(y){…}`) as references of the outer scope, so the
+//     (e.g. the `y` of `(y) => {…}`) as references of the outer scope, so the
 //     outer lambda's capture analysis saw an unresolvable capture and declined
 //     the lift. It now contributes only the inner lambda's FREE variables.
 //

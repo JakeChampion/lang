@@ -13,7 +13,7 @@ import (
 // `(params): ret => expr` — specifically the CAPTURING-closure shapes through the
 // self-hosted compiler's IR path. The self-host parser desugars an arrow lambda
 // (arrow_lambda_at lookahead → parse_arrow_lambda, see parser.fern / #2701) to the
-// SAME ExprLambda the verbose `function(params): ret { body }` form produces (an
+// SAME ExprLambda the verbose `(params): ret => { body }` form produces (an
 // expression body becomes `[return expr]`), so the existing lambda-lift +
 // closure-box machinery (lift_lambdas / closure_lift_one) lowers it unchanged.
 //
@@ -37,7 +37,7 @@ var arrowLambdaIRCases = []struct {
 	{"two-params-cap", `function main(): i32 { var k = 3; var f = (a: i32, b: i32): i32 => a + b + k; return f(4, 5); }`},
 	// Capture used twice in the body expression.
 	{"capture-twice", `function main(): i32 { var n = 6; var f = (x: i32): i32 => x * n + n; return f(4); }`},
-	// Regression: the function(){} closure form still lowers.
+	// Regression: the () => {} closure form still lowers.
 	{"fn-form-regress", `function main(): i32 { var n = 10; var f = (x: i32): i32 => { return x + n; }; return f(5); }`},
 }
 

@@ -9941,7 +9941,7 @@ func unifyReturnType(a, b ast.Type) (ast.Type, bool) {
 	// so inference saw e's type from the inner return and the block's own
 	// `never` from the outer one and called them a conflict — E002 on code
 	// that is plainly fine, and the reason the form needed an explicit return
-	// type while `function (x) { return e; }` did not (#2673).
+	// type while `(x) => { return e; }` did not (#2673).
 	if _, ok := a.(ast.NeverType); ok {
 		return b, true
 	}

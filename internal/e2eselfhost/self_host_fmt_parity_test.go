@@ -54,7 +54,7 @@ import (
 // correctly: the files carrying one also carry the LAST structural divergence,
 // `else { if … }` collapsing to `else if` (#6779) — `core/cmp.fern` differs by
 // nothing else at all. The other remaining cause is an ARROW lambda: native
-// reprints `() => e` as `function(): T { return e; }`, filling in a return type
+// reprints `() => e` as `(): T => { return e; }`, filling in a return type
 // from the callee's signature that the self-host printer has no way to know.
 var fmtParityCases = []struct {
 	name string
@@ -89,7 +89,7 @@ return t1 + t2 + t3 + t4 + t5 + t6;
 	// something else — a two-arm match with a wildcard else, and a 0-arg IIFE
 	// — and the self-host reprinted those lowerings: the `if let` came back as
 	// `match (o) { Sm(n) => {…}, _ => {} }`, and an expression match whose arms
-	// nest came back as the whole `function(): i32 { … }()`. Nothing in the
+	// nest came back as the whole `(): i32 => { … }()`. Nothing in the
 	// parity CORPUS spells either (`if let` appears only inside string
 	// literals and comments in the compiler's own sources), so these fixtures
 	// are the only thing covering them.
@@ -1201,7 +1201,7 @@ return grade(3).len() + words("a") + pick(0);
 `},
 	// A value-position `{ … }` is a block EXPRESSION, which the self-host parse
 	// turns into a 0-arg IIFE — so `-fmt` reprinted the whole
-	// `function(): i32 { … }()` (#7072). The tag on the synthesised lambda is
+	// `(): i32 => { … }()` (#7072). The tag on the synthesised lambda is
 	// what tells it apart from `real_lambda` below, which is a hand-written
 	// IIFE and must survive as one: its `return` stays inside the lambda, where
 	// a block expression's escapes to the enclosing function.
@@ -1275,7 +1275,7 @@ return variant(Col.R, 1) + guarded(Col.R, 1) + lits(3) + strs("b") + tup((3, 4))
 	// values through a local instead of a `return` (IfChain.value_local), so
 	// the IIFE body is three statements and the one-statement shape
 	// print_expr_iife recognises did not fit it — `-fmt` reprinted the whole
-	// `function(): i32 { var __tm4_18_r = 0; … }()`, synthesised name and all
+	// `(): i32 => { var __tm4_18_r = 0; … }()`, synthesised name and all
 	// (#7089). #7065 fixed only the statement form.
 	//
 	// A TUPLE sub-pattern in an arm payload (`Pr((a, b))`) is the same leak one

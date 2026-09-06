@@ -57,7 +57,7 @@ function main(): i32 {
         if (ssa.is_ptr_type(hmod.funcs[hi0].ret_type)) { ptr_ret = ptr_ret.append(hmod.funcs[hi0].name); }
         hi0 = hi0 + 1;
     }
-    // Lambdas bound as `var f = function(...){...}` are lifted to top-level
+    // Lambdas bound as `var f = (...) => {...}` are lifted to top-level
     // functions (collect_lambdas); build them like any user function. A
     // pointer-returning lambda joins ptr_ret before the build loop so callers
     // mark its result 64-bit.

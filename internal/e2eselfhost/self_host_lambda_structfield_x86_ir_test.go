@@ -19,7 +19,7 @@ import (
 // element to a top-level __lam_N (leaving a bare fn-name → const_func), exactly
 // like a no-capture call arg.
 //
-// A CAPTURING lambda in a struct field (`Box { f: function(x){ return x + n; } }`)
+// A CAPTURING lambda in a struct field (`Box { f: (x) => { return x + n; } }`)
 // is the env-box fn-value shape from #3445 — the capturing lambda hoists to a
 // `$cloN` env box `[funcval, caps…]` and `(b.f)(x)` dispatches env-first. The
 // `capturing-*` cases below pin it (it was the last of #3445's three shapes

@@ -120,7 +120,7 @@ function main(): i32 {
 		minCompared: 21,
 	},
 	{
-		// The recursive-local self-binding: `var f = function(…) { … }` must
+		// The recursive-local self-binding: `var f = (…) => { … }` must
 		// have `f` in scope while its own initialiser is inferred, or the
 		// self-call inside it resolves to nothing.
 		name: "lambdas and recursive locals",
