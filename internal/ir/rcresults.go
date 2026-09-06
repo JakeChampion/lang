@@ -174,6 +174,8 @@ var rcResultImmortal = map[string]bool{
 	"__fern_writer_write":        true,
 	"__fern_reader_read_line_fd": true,
 	"__fern_reader_read_chunk":   true,
+	"__fern_fd_stat":             true,
+	"__fern_reader_seek":         true,
 	"__fern_remove_file":         true,
 	"__fern_stat":                true,
 	"__fern_lstat":               true,

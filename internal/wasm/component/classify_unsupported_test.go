@@ -59,12 +59,13 @@ func TestClassifyCoreAcceptsKnownImports(t *testing.T) {
 	req, unsupported := component.ClassifyCore(coreModuleWithImports([][2]string{
 		{"wasi:filesystem/preopens@0.2.0", "get-directories"},
 		{"wasi:filesystem/types@0.2.0", "[method]descriptor.stat-at"},
+		{"wasi:filesystem/types@0.2.0", "[method]descriptor.stat"},
 	}))
 	if len(unsupported) != 0 {
 		t.Errorf("unsupported = %q, want none", unsupported)
 	}
-	if !req.File.Stat || req.File.OpenAt {
-		t.Errorf("File = %+v, want Stat set and OpenAt clear", req.File)
+	if !req.File.Stat || !req.File.StatSelf || req.File.OpenAt {
+		t.Errorf("File = %+v, want Stat and StatSelf set and OpenAt clear", req.File)
 	}
 }
 

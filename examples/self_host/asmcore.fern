@@ -1681,7 +1681,29 @@ pub function rt_src_lstat(t: string): string {
 }
 
 function rt_src_stat_like(t: string, name: string, at_flags: string): string {
-    return "function " + name + "(path: string): Result[FileStat, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var buf: i32 = __raw_scratch(160); var rc: i32 = __syscall4(" + sysno(t, "fstatat") + ", " + at_fdcwd(t) + ", pathz, buf, " + at_flags + "); if (rc < 0) { return Err(__fern_io_error(0 - rc, __raw_string(pathz, plen))); } var mode: i32 = " + stat_load(t, "mode") + "; var mfmt: i32 = mode & 61440; var isf: boolean = mfmt == 32768; var isd: boolean = mfmt == 16384; return Ok(FileStat { is_file: isf, is_dir: isd, size: " + stat_i64(t, "size") + ", mode: (mode as u32), " + stat_fields_src(t) + " }); }";
+    return "function " + name + "(path: string): Result[FileStat, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var buf: i32 = __raw_scratch(160); var rc: i32 = __syscall4(" + sysno(t, "fstatat") + ", " + at_fdcwd(t) + ", pathz, buf, " + at_flags + "); if (rc < 0) { return Err(__fern_io_error(0 - rc, __raw_string(pathz, plen))); } " + stat_project_src(t) + " }";
+}
+
+// stat_project_src is the tail every stat-shaped leaf shares: the record in
+// `buf` read into an Ok(FileStat { ... }) return.
+function stat_project_src(t: string): string {
+    return "var mode: i32 = " + stat_load(t, "mode") + "; var mfmt: i32 = mode & 61440; var isf: boolean = mfmt == 32768; var isd: boolean = mfmt == 16384; return Ok(FileStat { is_file: isf, is_dir: isd, size: " + stat_i64(t, "size") + ", mode: (mode as u32), " + stat_fields_src(t) + " });";
+}
+
+// rt_src_fd_stat backs `r.stat()` / `w.stat()` -> Result[FileStat, IoError]:
+// fstat(2) of the handle's fd into the same record, projected by the same
+// tail. A handle carries no path, so the errno is classified against an
+// empty one, as a failed read is.
+pub function rt_src_fd_stat(t: string): string {
+    return "function __fern_fd_stat(fd: i32): Result[FileStat, IoError] { var buf: i32 = __raw_scratch(160); var rc: i32 = __syscall3(" + sysno(t, "fstat") + ", fd, buf, 0); if (rc < 0) { return Err(__fern_io_error(0 - rc, \"\")); } " + stat_project_src(t) + " }";
+}
+
+// rt_src_reader_seek backs `r.seek(offset, whence)` -> Result[i64, IoError]:
+// lseek(2), the new offset back. The result is bound to an i64 rather than
+// cast from an i32: the register backends' `as i64` sign-extends the low 32
+// bits, which would fold an offset past 2 GiB.
+pub function rt_src_reader_seek(t: string): string {
+    return "function __fern_reader_seek(fd: i32, off: i64, whence: i32): Result[i64, IoError] { var r: i64 = __syscall3(" + sysno(t, "lseek") + ", fd, off, whence); if (r < (0 as i64)) { return Err(__fern_io_error(((0 as i64) - r) as i32, \"\")); } return Ok(r); }";
 }
 
 // stat_fields_src is the tail of the FileStat literal: everything past the
@@ -2181,6 +2203,9 @@ pub function match_payload_type(scrut: ast.Expr, s: EmitState): Ty {
                             && (fa.field == "read_chunk" || fa.field == "read_line")) {
                         return ty_string();
                     }
+                    // Reader.seek is Result[i64, IoError]; the integer payload
+                    // lives in a 64-bit slot like every other integer here.
+                    if (ty_struct_name(rcv) == "Reader" && fa.field == "seek") { return ty_i32(); }
                     if (fa.field == "get" && is_map(rcv)) { return map_val(rcv); }
                     if ((fa.field == "min" || fa.field == "max") && ty_is_array_i32(rcv)) {
                         return ty_i32();
@@ -3163,6 +3188,13 @@ function infer_call_method_type(fa: ast.ExprFieldAccess, c: ast.ExprCall, s: Emi
     if (ty_struct_name(rt) == "Reader" && (fa.field == "read_chunk" || fa.field == "read_line")) {
         return ty_option(ty_string());
     }
+    // Reader.stat / Writer.stat -> Result[FileStat, IoError] (the struct
+    // resolves through the shape pointer, as stat(path)'s does); Reader.seek
+    // -> Result[i64, IoError].
+    if ((ty_struct_name(rt) == "Reader" || ty_struct_name(rt) == "Writer") && fa.field == "stat") {
+        return ty_result(ty_unknown());
+    }
+    if (ty_struct_name(rt) == "Reader" && fa.field == "seek") { return ty_result(ty_i32()); }
     if (ty_struct_name(rt) == "Writer" && fa.field == "write") { return ty_option(ty_unknown()); }
     if (is_cell(rt) && fa.field == "get") { return cell_val(rt); }
     if (is_map(rt) && fa.field == "get") {

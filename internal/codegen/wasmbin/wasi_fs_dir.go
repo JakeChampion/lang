@@ -584,17 +584,30 @@ func buildStatLikeBody(idxs map[string]uint32, lookupflags int32) []byte {
 	body = memory.InstI32Load8U(body, 0, filestatFiletypeOff)
 	body = inst.InstLocalSet(body, 7)
 
-	body = allocFileStat(body, alloc, 8)
+	body = projectFilestatP1(body, alloc, 6, 7, 8)
+	body = emitResultOkPtr(body, allocBox, 8, 9)
+
+	locals := inst.PutLocalsOneGroup(nil, 8, encode.ValtypeI32)
+	return inst.PutFunctionBody(nil, locals, body)
+}
+
+// projectFilestatP1 appends the projection of a preview-1 `filestat`
+// record (at `bufLocal`, its filetype byte already in `ftLocal`) onto a
+// fresh FileStat, whose data pointer is left in `fsLocal`. Shared by the
+// path helpers and `__fern_fd_stat`, which differ only in how the record
+// was obtained.
+func projectFilestatP1(body []byte, alloc, bufLocal, ftLocal, fsLocal uint32) []byte {
+	body = allocFileStat(body, alloc, fsLocal)
 
 	// is_file = filetype == REGULAR
-	body = storeI32At(body, 8, ir.FileStat.IsFile, func(b []byte) []byte {
-		b = inst.InstLocalGet(b, 7)
+	body = storeI32At(body, fsLocal, ir.FileStat.IsFile, func(b []byte) []byte {
+		b = inst.InstLocalGet(b, ftLocal)
 		b = inst.InstI32Const(b, wasiFiletypeRegular)
 		return numeric.InstI32Eq(b)
 	})
 	// is_dir = filetype == DIRECTORY
-	body = storeI32At(body, 8, ir.FileStat.IsDir, func(b []byte) []byte {
-		b = inst.InstLocalGet(b, 7)
+	body = storeI32At(body, fsLocal, ir.FileStat.IsDir, func(b []byte) []byte {
+		b = inst.InstLocalGet(b, ftLocal)
 		b = inst.InstI32Const(b, wasiFiletypeDirectory)
 		return numeric.InstI32Eq(b)
 	})
@@ -606,29 +619,24 @@ func buildStatLikeBody(idxs map[string]uint32, lookupflags int32) []byte {
 		{ir.FileStat.Dev, filestatDevOff},
 		{ir.FileStat.Ino, filestatInoOff},
 	} {
-		body = storeI64At(body, 8, f.box, func(b []byte) []byte {
-			b = inst.InstLocalGet(b, 6)
+		body = storeI64At(body, fsLocal, f.box, func(b []byte) []byte {
+			b = inst.InstLocalGet(b, bufLocal)
 			return memory.InstI64Load(b, 3, f.src)
 		})
 	}
 	// nlink is a u64 in the WASI record and a u32 in FileStat; a link
 	// count past 4 billion is not something a filesystem produces.
-	body = storeI32At(body, 8, ir.FileStat.Nlink, func(b []byte) []byte {
-		b = inst.InstLocalGet(b, 6)
+	body = storeI32At(body, fsLocal, ir.FileStat.Nlink, func(b []byte) []byte {
+		b = inst.InstLocalGet(b, bufLocal)
 		b = memory.InstI64Load(b, 3, filestatNlinkOff)
 		return convert.InstI32WrapI64(b)
 	})
-	body = splitNsTimestamp(body, 8, 6, filestatAtimOff, ir.FileStat.Atime, ir.FileStat.AtimeNsec)
-	body = splitNsTimestamp(body, 8, 6, filestatMtimOff, ir.FileStat.Mtime, ir.FileStat.MtimeNsec)
-	body = splitNsTimestamp(body, 8, 6, filestatCtimOff, ir.FileStat.Ctime, ir.FileStat.CtimeNsec)
-	body = zeroFileStatFields(body, 8,
+	body = splitNsTimestamp(body, fsLocal, bufLocal, filestatAtimOff, ir.FileStat.Atime, ir.FileStat.AtimeNsec)
+	body = splitNsTimestamp(body, fsLocal, bufLocal, filestatMtimOff, ir.FileStat.Mtime, ir.FileStat.MtimeNsec)
+	body = splitNsTimestamp(body, fsLocal, bufLocal, filestatCtimOff, ir.FileStat.Ctime, ir.FileStat.CtimeNsec)
+	return zeroFileStatFields(body, fsLocal,
 		[]int32{ir.FileStat.Mode, ir.FileStat.UID, ir.FileStat.GID},
 		[]int32{ir.FileStat.Rdev, ir.FileStat.Blksize, ir.FileStat.Blocks})
-
-	body = emitResultOkPtr(body, allocBox, 8, 9)
-
-	locals := inst.PutLocalsOneGroup(nil, 8, encode.ValtypeI32)
-	return inst.PutFunctionBody(nil, locals, body)
 }
 
 // buildOpenDirBody assembles __fern_open_dir — the shared "open a
@@ -1863,42 +1871,49 @@ func buildStatLikeBodyP2(idxs map[string]uint32, pathFlags int32) []byte {
 	body = memory.InstI32Load8U(body, 0, statAtTypeOff)
 	body = inst.InstLocalSet(body, 7)
 
-	body = allocFileStat(body, alloc, 8)
-
-	body = storeI32At(body, 8, ir.FileStat.IsFile, func(b []byte) []byte {
-		b = inst.InstLocalGet(b, 7)
-		b = inst.InstI32Const(b, descriptorTypeRegular)
-		return numeric.InstI32Eq(b)
-	})
-	body = storeI32At(body, 8, ir.FileStat.IsDir, func(b []byte) []byte {
-		b = inst.InstLocalGet(b, 7)
-		b = inst.InstI32Const(b, descriptorTypeDirectory)
-		return numeric.InstI32Eq(b)
-	})
-	body = storeI64At(body, 8, ir.FileStat.Size, func(b []byte) []byte {
-		b = inst.InstLocalGet(b, 2)
-		return memory.InstI64Load(b, 3, statAtSizeOff)
-	})
-	body = storeI32At(body, 8, ir.FileStat.Nlink, func(b []byte) []byte {
-		b = inst.InstLocalGet(b, 2)
-		b = memory.InstI64Load(b, 3, statAtLinkCountOff)
-		return convert.InstI32WrapI64(b)
-	})
-	body = p2Timestamp(body, 8, 2, statAtAtimeOff, ir.FileStat.Atime, ir.FileStat.AtimeNsec)
-	body = p2Timestamp(body, 8, 2, statAtMtimeOff, ir.FileStat.Mtime, ir.FileStat.MtimeNsec)
-	body = p2Timestamp(body, 8, 2, statAtCtimeOff, ir.FileStat.Ctime, ir.FileStat.CtimeNsec)
-	// `descriptor-stat` carries no device, inode, mode, owner or block
-	// accounting at all — the 0.2 record dropped the device / inode pair
-	// preview 1 still has — so every one of those reads zero.
-	body = zeroFileStatFields(body, 8,
-		[]int32{ir.FileStat.Mode, ir.FileStat.UID, ir.FileStat.GID},
-		[]int32{ir.FileStat.Dev, ir.FileStat.Rdev, ir.FileStat.Ino,
-			ir.FileStat.Blksize, ir.FileStat.Blocks})
-
+	body = projectDescriptorStatP2(body, alloc, 2, 7, 8)
 	body = emitResultOkPtr(body, allocBox, 8, 9)
 
 	locals := inst.PutLocalsOneGroup(nil, 10, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
+}
+
+// projectDescriptorStatP2 appends the projection of a preview-2
+// `descriptor-stat` return area (at `rbLocal`, its type byte already in
+// `ftLocal`) onto a fresh FileStat, whose data pointer is left in
+// `fsLocal`. Shared by stat-at's callers and `__fern_fd_stat`.
+func projectDescriptorStatP2(body []byte, alloc, rbLocal, ftLocal, fsLocal uint32) []byte {
+	body = allocFileStat(body, alloc, fsLocal)
+
+	body = storeI32At(body, fsLocal, ir.FileStat.IsFile, func(b []byte) []byte {
+		b = inst.InstLocalGet(b, ftLocal)
+		b = inst.InstI32Const(b, descriptorTypeRegular)
+		return numeric.InstI32Eq(b)
+	})
+	body = storeI32At(body, fsLocal, ir.FileStat.IsDir, func(b []byte) []byte {
+		b = inst.InstLocalGet(b, ftLocal)
+		b = inst.InstI32Const(b, descriptorTypeDirectory)
+		return numeric.InstI32Eq(b)
+	})
+	body = storeI64At(body, fsLocal, ir.FileStat.Size, func(b []byte) []byte {
+		b = inst.InstLocalGet(b, rbLocal)
+		return memory.InstI64Load(b, 3, statAtSizeOff)
+	})
+	body = storeI32At(body, fsLocal, ir.FileStat.Nlink, func(b []byte) []byte {
+		b = inst.InstLocalGet(b, rbLocal)
+		b = memory.InstI64Load(b, 3, statAtLinkCountOff)
+		return convert.InstI32WrapI64(b)
+	})
+	body = p2Timestamp(body, fsLocal, rbLocal, statAtAtimeOff, ir.FileStat.Atime, ir.FileStat.AtimeNsec)
+	body = p2Timestamp(body, fsLocal, rbLocal, statAtMtimeOff, ir.FileStat.Mtime, ir.FileStat.MtimeNsec)
+	body = p2Timestamp(body, fsLocal, rbLocal, statAtCtimeOff, ir.FileStat.Ctime, ir.FileStat.CtimeNsec)
+	// `descriptor-stat` carries no device, inode, mode, owner or block
+	// accounting at all — the 0.2 record dropped the device / inode pair
+	// preview 1 still has — so every one of those reads zero.
+	return zeroFileStatFields(body, fsLocal,
+		[]int32{ir.FileStat.Mode, ir.FileStat.UID, ir.FileStat.GID},
+		[]int32{ir.FileStat.Dev, ir.FileStat.Rdev, ir.FileStat.Ino,
+			ir.FileStat.Blksize, ir.FileStat.Blocks})
 }
 
 // ---- preview-2 directory listing ------------------------------------

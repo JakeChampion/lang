@@ -13567,7 +13567,8 @@ function lower_call_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerSta
     // struct still routes to struct-method dispatch below (the AST
     // backend intercepts unconditionally; this is strictly safer). No
     // wasm stdin, so wasm_eligible rejects read_chunk/reader_close.
-    if ((fa.field == "read_chunk" || fa.field == "close" || fa.field == "write" || fa.field == "read_line")
+    if ((fa.field == "read_chunk" || fa.field == "close" || fa.field == "write" || fa.field == "read_line"
+            || fa.field == "stat" || fa.field == "seek")
         && !decl_is_struct(s.frame.structs, expr_struct_type(fa.obj, s)) && expr_enum_type(fa.obj, s) == ""
         && !expr_is_str(fa.obj, s) && !expr_is_arr_src(fa.obj, s)) {
         // Reader.read_line() (#4369) -> Option[string] (Some(line incl.
@@ -13591,6 +13592,32 @@ function lower_call_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerSta
             var rcl: LowerState = lower_expr(fa.obj, s);
             if (!rcl.ok) { return rcl; }
             return rcl.emit(ir.op_reader_close());
+        }
+        // Reader.stat() / Writer.stat() -> Result[FileStat, IoError]: fstat of
+        // the handle's fd. Reader.seek(offset, whence) -> Result[i64,
+        // IoError]: lseek. Both are asked of the bare fd, like close.
+        if (fa.field == "stat" && c.args.len() == 0) {
+            var fst: LowerState = lower_expr(fa.obj, s);
+            if (!fst.ok) { return fst; }
+            return fst.emit(ir.op_fd_stat());
+        }
+        if (fa.field == "seek" && c.args.len() == 2) {
+            var sks: LowerState = lower_expr(fa.obj, s);
+            if (!sks.ok) { return sks; }
+            // The offset is an i64 parameter: a 64-bit expression takes the
+            // i64 path (lower_expr has no `as i64` arm), a 32-bit one is
+            // widened so the wasm call sees the i64 its signature declares.
+            if (infer_expr_width(c.args[0], sks) == 64) {
+                sks = lower_i64(c.args[0], sks);
+                if (!sks.ok) { return sks; }
+            } else {
+                sks = lower_expr(c.args[0], sks);
+                if (!sks.ok) { return sks; }
+                sks = sks.emit(ir.op_int_extend(false));
+            }
+            sks = lower_expr(c.args[1], sks);
+            if (!sks.ok) { return sks; }
+            return sks.emit(ir.op_reader_seek());
         }
         // Writer.write(s) (#4372): a Writer is a bare fd; lower the
         // receiver (fd) then the string arg (box), then write(2) the
@@ -16845,7 +16872,7 @@ function lower_try(inner: ast.Expr, s: LowerState): LowerState {
 function resource_method_opt_ret_type(field: string, obj: ast.Expr, s: LowerState): string {
     if (decl_is_struct(s.frame.structs, expr_struct_type(obj, s)) || expr_enum_type(obj, s) != ""
         || expr_is_str(obj, s) || expr_is_arr_src(obj, s)) { return ""; }
-    if (field == "read_line" || field == "read_chunk" || field == "close") {
+    if (field == "read_line" || field == "read_chunk" || field == "close" || field == "stat" || field == "seek") {
         return s.opt_ret_type("Reader." + field);
     }
     if (field == "write") { return s.opt_ret_type("Writer.write"); }
@@ -68961,6 +68988,8 @@ pub function (s: LowerState) opt_ret_type(name: string): string {
     // here; Writer.close shares Reader.close's op and answer.
     if (name == "Reader.read_line") { return "Option[string]"; }
     if (name == "Reader.read_chunk") { return "Result[string, IoError]"; }
+    if (name == "Reader.stat" || name == "Writer.stat") { return "Result[FileStat, IoError]"; }
+    if (name == "Reader.seek") { return "Result[i64, IoError]"; }
     if (name == "Reader.close" || name == "Writer.close" || name == "Writer.write") { return "Option[IoError]"; }
     return "";
 }

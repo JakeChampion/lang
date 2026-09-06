@@ -1098,6 +1098,9 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__method_Reader_read_chunk":    emitReaderReadChunkHelper,
 	"__method_Reader_read_line":     emitReaderReadLineHelper,
 	"__method_Reader_close":         emitReaderCloseHelper,
+	"__method_Reader_stat":          emitFdStatHelper("__method_Reader_stat", "rst"),
+	"__method_Writer_stat":          emitFdStatHelper("__method_Writer_stat", "wst"),
+	"__method_Reader_seek":          emitReaderSeekHelper,
 	"open_appender":                 emitOpenAppenderHelper,
 	"stdin":                         emitStdHandleHelper("stdin", 0),
 	"stdout":                        emitStdHandleHelper("stdout", 1),
@@ -2661,6 +2664,9 @@ var runtimeHelperDeps = map[string][]string{
 	"open_reader":                   {"__fern_io_error"},
 	"__method_Reader_close":         {"__fern_io_error"},
 	"__method_Reader_read_chunk":    {"__fern_io_error"},
+	"__method_Reader_stat":          {"__fern_io_error"},
+	"__method_Writer_stat":          {"__fern_io_error"},
+	"__method_Reader_seek":          {"__fern_io_error"},
 	"open_appender":                 {"__fern_io_error"},
 	"__pow_f64":                     {"__log_f64", "__exp_f64"},
 	"__sin_f64":                     {"__rem_pio2_large"},
@@ -2714,6 +2720,9 @@ var heapUsingHelpers = map[string]bool{
 	"__method_Reader_read_chunk":    true,
 	"__method_Reader_read_line":     true,
 	"__method_Reader_close":         true,
+	"__method_Reader_stat":          true,
+	"__method_Writer_stat":          true,
+	"__method_Reader_seek":          true,
 	"open_appender":                 true,
 	"stdin":                         true,
 	"stdout":                        true,
@@ -5749,19 +5758,59 @@ var linuxStatFields = []struct {
 // a Result box is {rc=1, tag, payload@+8} with the payload one word, and Err
 // dispatches errno + path through __fern_io_error.
 func emitStatHelper(w func(string, ...any)) {
-	emitStatLikeHelper(w, "stat", 0, "stat")
+	emitStatLikeHelper(w, "stat", 0, "stat", false)
+}
+
+// emitFdStatHelper writes `__method_Reader_stat` / `__method_Writer_stat`
+// (handle) -> Result[FileStat, IoError]: fstat(2) of the fd at [handle+8],
+// projected by the same body as stat(path). The errno is classified
+// against an empty path, as a failed read is.
+func emitFdStatHelper(name, lp string) func(w func(string, ...any)) {
+	return func(w func(string, ...any)) {
+		emitStatLikeHelper(w, name, 0, lp, true)
+	}
+}
+
+// emitReaderSeekHelper writes __method_Reader_seek(handle, offset, whence)
+// -> Result[i64, IoError]: lseek(2) on the handle's fd, the new offset
+// back. A pipe answers ESPIPE, classified against an empty path.
+// x0=handle, x1=offset, x2=whence.
+func emitReaderSeekHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__method_Reader_seek"))
+	w("\tstp x29, x30, [sp, #-32]!")
+	w("\tmov x29, sp")
+	w("\tstr x19, [sp, #16]")
+	w("\tldr w0, [x0, #8]") // fd @ ptr+8; offset and whence are in place
+	w("\tmov x8, #62")      // lseek
+	w("\tsvc #0")
+	w("\ttbnz x0, #63, .Lssa_rsk_err")
+	w("\tmov x19, x0")
+	emitOptionBox(w, 0, "x19")
+	w("\tb .Lssa_rsk_ret")
+	w(".Lssa_rsk_err:")
+	w("\tneg x19, x0") // errno
+	emitEmptyString(w, "x1")
+	w("\tmov x0, x19")
+	w("\tbl %s", fnLabel("__fern_io_error"))
+	w("\tmov x19, x0")
+	emitOptionBox(w, 1, "x19")
+	w(".Lssa_rsk_ret:")
+	w("\tldr x19, [sp, #16]")
+	w("\tldp x29, x30, [sp], #32")
+	w("\tret")
 }
 
 // emitLstatHelper writes lstat(path): emitStatHelper with AT_SYMLINK_NOFOLLOW
 // in fstatat's flags word, so a symlink reports its own st_mode and comes back
 // neither is_file nor is_dir (#7982).
 func emitLstatHelper(w func(string, ...any)) {
-	emitStatLikeHelper(w, "lstat", 256, "lstat")
+	emitStatLikeHelper(w, "lstat", 256, "lstat", false)
 }
 
 // emitStatLikeHelper is the shared body. `atFlags` is fstatat's flags word and
 // `lp` prefixes the local labels so both helpers can live in one object.
-func emitStatLikeHelper(w func(string, ...any), name string, atFlags int, lp string) {
+func emitStatLikeHelper(w func(string, ...any), name string, atFlags int, lp string, byFd bool) {
 	w("")
 	w("%s:", fnLabel(name))
 	w("\tstp x29, x30, [sp, #-256]!")
@@ -5769,6 +5818,29 @@ func emitStatLikeHelper(w func(string, ...any), name string, atFlags int, lp str
 	w("\tstp x19, x20, [sp, #16]")
 	w("\tstp x21, x22, [sp, #32]")
 	w("\tstp x23, x24, [sp, #48]")
+	if byFd {
+		// fstat(fd @ handle+8, statbuf@sp+64)
+		w("\tldr w0, [x0, #8]")
+		w("\tadd x1, sp, #64")
+		w("\tmov x8, #80") // fstat
+		w("\tsvc #0")
+		w("\ttbnz x0, #63, .Lssa%s_err", lp)
+		emitStatProjection(w, lp)
+		w("\tb .Lssa%s_ret", lp)
+		w(".Lssa%s_err:", lp)
+		w("\tneg x19, x0") // errno
+		emitEmptyString(w, "x1")
+		w("\tmov x0, x19")
+		w("\tbl %s", fnLabel("__fern_io_error"))
+		emitStatErrBox(w)
+		w(".Lssa%s_ret:", lp)
+		w("\tldp x23, x24, [sp, #48]")
+		w("\tldp x21, x22, [sp, #32]")
+		w("\tldp x19, x20, [sp, #16]")
+		w("\tldp x29, x30, [sp], #256")
+		w("\tret")
+		return
+	}
 	w("\tmov x19, x0") // path
 	// NUL-terminate the path into a heap buffer (x24).
 	w("\tldur w2, [x19, #-4]")
@@ -5801,6 +5873,25 @@ func emitStatLikeHelper(w func(string, ...any), name string, atFlags int, lp str
 	w("\tmov x8, #79") // fstatat
 	w("\tsvc #0")
 	w("\ttbnz x0, #63, .Lssa%s_err", lp)
+	emitStatProjection(w, lp)
+	w("\tb .Lssa%s_ret", lp)
+	w(".Lssa%s_err:", lp)
+	w("\tneg x0, x0")  // errno
+	w("\tmov x1, x19") // path
+	w("\tbl %s", fnLabel("__fern_io_error"))
+	emitStatErrBox(w)
+	w(".Lssa%s_ret:", lp)
+	w("\tldp x23, x24, [sp, #48]")
+	w("\tldp x21, x22, [sp, #32]")
+	w("\tldp x19, x20, [sp, #16]")
+	w("\tldp x29, x30, [sp], #256")
+	w("\tret")
+}
+
+// emitStatProjection is the tail every stat-shaped helper shares: the
+// statbuf at sp+64 read into a fresh FileStat box, wrapped in Ok, with the
+// Result pointer left in x0.
+func emitStatProjection(w func(string, ...any), lp string) {
 	w("\tldr w9, [sp, #80]")   // st_mode (u32 @ statbuf+16)
 	w("\tldr x22, [sp, #112]") // st_size (i64 @ statbuf+48)
 	w("\tmov w11, #61440")     // S_IFMT
@@ -5860,13 +5951,12 @@ func emitStatLikeHelper(w func(string, ...any), name string, atFlags int, lp str
 	w("\tadd x0, x4, #8")
 	w("\tstr wzr, [x0]") // tag = 0 (Ok)
 	w("\tstr x23, [x0, #8]")
-	w("\tb .Lssa%s_ret", lp)
-	w(".Lssa%s_err:", lp)
-	w("\tneg x0, x0")  // errno
-	w("\tmov x1, x19") // path
-	w("\tbl %s", fnLabel("__fern_io_error"))
+}
+
+// emitStatErrBox wraps the IoError in x0 as Result.Err, the pointer left in
+// x0: box {rc=1, tag=1, ioerr@+8}.
+func emitStatErrBox(w func(string, ...any)) {
 	w("\tmov x19, x0") // IoError box
-	// Result.Err(IoError): box {rc=1, tag=1, ioerr@+8}.
 	w("\tadrp x3, %s", heapPtrSym)
 	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
 	w("\tldr x4, [x3]")
@@ -5881,12 +5971,6 @@ func emitStatLikeHelper(w func(string, ...any), name string, atFlags int, lp str
 	w("\tmov w6, #1")
 	w("\tstr w6, [x0]") // tag = 1 (Err)
 	w("\tstr x19, [x0, #8]")
-	w(".Lssa%s_ret:", lp)
-	w("\tldp x23, x24, [sp, #48]")
-	w("\tldp x21, x22, [sp, #32]")
-	w("\tldp x19, x20, [sp, #16]")
-	w("\tldp x29, x30, [sp], #256")
-	w("\tret")
 }
 
 // emitSliceIdxHelper writes __slice_idx / _1 / _8 / _16 (slice, idx) -> address:

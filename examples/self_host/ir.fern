@@ -963,6 +963,12 @@ pub function op_subprocess(): Op { return op0("subprocess"); }
 // wasm stdin here, so a read_chunk module is wasm-ineligible (wasm_eligible) and
 // is refused there.
 pub function op_read_chunk(): Op { return op0("read_chunk"); }
+// `fd_stat` pops [fd] and pushes Result[FileStat, IoError]: fstat(2) of the
+// handle, the same record `stat` builds. Backs `r.stat()` / `w.stat()`.
+pub function op_fd_stat(): Op { return op0("fd_stat"); }
+// `reader_seek` pops [fd, offset, whence] and pushes Result[i64, IoError]:
+// lseek(2), the new offset back. Backs `r.seek(offset, whence)`.
+pub function op_reader_seek(): Op { return op0("reader_seek"); }
 // `reader_close` pops an i32 Reader fd and closes it (`close(fd)`), pushing a
 // fresh Option[IoError] (None on success). A VALUE op — one arg consumed. Lowers
 // to each backend's __fern_reader_close helper. wasm-ineligible like read_chunk.
@@ -1453,10 +1459,10 @@ pub function kind_count(): i32 { return 196; }
 // 1..kind_count() sweep requires the id space to stay dense, and moving the
 // last entry into the hole beats renumbering every id above it.
 //
-// Extension tags beyond kind_count() (struct_copy=198 … getegid=239): not in
-// the 1..kind_count() bijection sweep (ir_kind_run sweeps them separately by
-// name), but nameable so module_emits_op_cached / the backends see them.
-// NEXT FREE EXTENSION ID: 240 (re-grep rather than trusting this line — it has
+// Extension tags beyond kind_count() (struct_copy=198 … reader_seek=241): not
+// in the 1..kind_count() bijection sweep (ir_kind_run sweeps them separately
+// by name), but nameable so module_emits_op_cached / the backends see them.
+// NEXT FREE EXTENSION ID: 242 (re-grep rather than trusting this line — it has
 // been stale before, which is the drift the paragraph below is about).
 // ADDING AN EXTENSION TAG: take the next id here AND register it in
 // kind_name + ir_kind_run's two sweep lists, then re-grep the whole tree
@@ -1632,6 +1638,7 @@ function kind_id_len7(name: string): i32 {
     var c: u8 = name[0];
     if (c == b'a') { return kind_id_len7_a(name); }
     if (c == b'd' && name == "dyn_box") { return 146; }
+    if (c == b'f' && name == "fd_stat") { return 240; }
     if (c == b'g' && name == "geteuid") { return 238; }
     if (c == b'g' && name == "getegid") { return 239; }
     if (c == b'm') { return kind_id_len7_m(name); }
@@ -1847,6 +1854,7 @@ function kind_id_len11_r(name: string): i32 {
     if (name == "raw_scratch") { return 205; }
     if (name == "raw_environ") { return 207; }
     if (name == "raw_arr_box") { return 224; }
+    if (name == "reader_seek") { return 241; }
     return 0;
 }
 
@@ -2202,6 +2210,8 @@ function kind_name_4(id: i32): string {
     if (id == 237) { return "access"; }
     if (id == 238) { return "geteuid"; }
     if (id == 239) { return "getegid"; }
+    if (id == 240) { return "fd_stat"; }
+    if (id == 241) { return "reader_seek"; }
     return "invalid";
 }
 
@@ -2302,6 +2312,7 @@ function pops1_io(t: i32): boolean {
         || t == 174 || t == 175 || t == 176 || t == 179 || t == 181      // temp_dir, stat, env, reader_close, sleep_ms
         || t == 168                                                      // read_line (fd)
         || t == 231 || t == 232                                          // create_dir_all, isatty
+        || t == 240                                                      // fd_stat
         || t == 185 || t == 210 || t == 212                              // random_bytes, arg_at, proc_waitpid
         || t == 188 || t == 189 || t == 190 || t == 191 || t == 192      // timer_fd, wasm_*
         || t == 196 || t == 112 || t == 200 || t == 201 || t == 203;     // tcp_close, tcp_pollable(112), tcp_listen/accept, open_file
@@ -2340,7 +2351,8 @@ function pops3(t: i32): boolean {
         || t == 82 || t == 84                                            // raw_store8, raw_store_ptr
         || t == 89 || t == 96 || t == 102 || t == 111                    // arr_set, arr_slice, str_slice, str_replace
         || t == 125 || t == 129                                          // map_set, map_get_or
-        || t == 177 || t == 208 || t == 225 || t == 234;                 // subprocess, udp_send, memchr, rmemchr
+        || t == 177 || t == 208 || t == 225 || t == 234                  // subprocess, udp_send, memchr, rmemchr
+        || t == 241;                                                     // reader_seek (fd, offset, whence)
 }
 
 // op_pops is how many operand slots `o` consumes, or -1 when the op is not
@@ -3955,6 +3967,8 @@ pub function op_allocates(tag: i32): boolean {
     if (tag == 176) { return true; }
     // stat boxes a fresh FileStat struct + a Result wrapper, so it needs the heap.
     if (tag == 175) { return true; }
+    // fd_stat boxes the same pair; reader_seek boxes its Result[i64, IoError].
+    if (tag == 240 || tag == 241) { return true; }
     // subprocess boxes a fresh ProcessResult struct + its two stdout/stderr
     // string blocks, so it needs the heap runtime.
     if (tag == 177) { return true; }

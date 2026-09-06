@@ -1603,23 +1603,9 @@ func buildOpenReaderBodyP2(idxs map[string]uint32) []byte {
 	body = memory.InstI32Load(body, 2, 4)
 	body = inst.InstLocalSet(body, 7)
 
-	// Reader struct: 16 bytes (rc sentinel @ +0, {stream handle} @ +8,
-	// descriptor @ +12) — close drops both.
-	body = inst.InstI32Const(body, 16)
-	body = inst.InstCall(body, alloc)
-	body = inst.InstLocalTee(body, 8)
-	body = inst.InstI32Const(body, -0x80000000) // static rc sentinel
-	body = memory.InstI32Store(body, 2, 0)
-	body = inst.InstLocalGet(body, 8)
-	body = inst.InstI32Const(body, 8)
-	body = numeric.InstI32Add(body)
-	body = inst.InstLocalSet(body, 8) // data pointer = base + 8
-	body = inst.InstLocalGet(body, 8)
-	body = inst.InstLocalGet(body, 7) // stream handle
-	body = memory.InstI32Store(body, 2, 0)
-	body = inst.InstLocalGet(body, 8)
-	body = inst.InstLocalGet(body, 6)
-	body = memory.InstI32Store(body, 2, 4)
+	// Reader struct: {stream, descriptor, pos} behind the rc sentinel —
+	// close drops the first two, seek moves the third.
+	body = emitReaderBoxP2(body, alloc, 7, 6, 8)
 
 	// Result.Ok: 8 bytes, tag=0 @ +0, Reader ptr @ +4.
 	body = inst.InstI32Const(body, 8)
@@ -2559,6 +2545,7 @@ func buildReaderReadLineFdBodyP2(idxs map[string]uint32) []byte {
 	}
 	body = inst.InstEnd(body)
 
+	body = emitReaderAdvanceP2(body, 0, 5)
 	// Some(string): strbuf = alloc(cur); copy; box(16) tag0 data@8 len@12.
 	body = inst.InstLocalGet(body, 5)
 	body = inst.InstCall(body, alloc)
@@ -2851,6 +2838,7 @@ func buildReaderReadChunkBodyP2(idxs map[string]uint32) []byte {
 	body = memory.InstI32Load(body, 2, 4)
 	body = inst.InstLocalSet(body, 4)
 	body = freeRetbuf(body)
+	body = emitReaderAdvanceP2(body, 0, 5)
 	// data = alloc_rc1(chunk_len); memory.copy(data, chunk_ptr, chunk_len);
 	// __free(chunk_ptr, chunk_len) — cabi_realloc bumped exactly that.
 	body = inst.InstLocalGet(body, 5)

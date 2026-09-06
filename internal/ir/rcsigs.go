@@ -266,8 +266,10 @@ var rcInertBuiltins = map[string]bool{
 	"__method_MapIter_key": true, "__method_MapIter_value": true,
 
 	"__method_Reader_close": true, "__method_Reader_read_chunk": true,
-	"__method_Reader_read_line": true,
-	"__method_Writer_close":     true, "__method_Writer_write": true,
+	"__method_Reader_read_line": true, "__method_Reader_seek": true,
+	"__method_Reader_stat":  true,
+	"__method_Writer_close": true, "__method_Writer_stat": true,
+	"__method_Writer_write": true,
 
 	"strbuf_append": true, "strbuf_reset": true, "strbuf_take": true,
 	"string_from_bytes_unchecked": true,
@@ -361,6 +363,7 @@ var rcInert = map[string]bool{
 	"__fern_read_dir_raw": true, "__fern_read_file": true,
 	"__fern_read_file_bytes": true, "__fern_read_line": true,
 	"__fern_reader_close": true, "__fern_reader_close_fd": true,
+	"__fern_fd_stat": true, "__fern_reader_seek": true,
 	"__fern_reader_read_chunk": true, "__fern_reader_read_line": true,
 	"__fern_reader_read_line_fd": true, "__fern_remove_dir_all": true,
 	"__fern_remove_file": true, "__fern_rmdir_rec": true,

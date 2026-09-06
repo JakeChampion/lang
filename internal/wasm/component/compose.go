@@ -44,6 +44,7 @@ const (
 	composeUnlinkAtName   = "[method]descriptor.unlink-file-at"
 	composeMkdirAtName    = "[method]descriptor.create-directory-at"
 	composeStatAtName     = "[method]descriptor.stat-at"
+	composeStatName       = "[method]descriptor.stat"
 	composeRmdirAtName    = "[method]descriptor.remove-directory-at"
 	composeReadDirName    = "[method]descriptor.read-directory"
 	composeDirEntryName   = "[method]directory-entry-stream.read-directory-entry"

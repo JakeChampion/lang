@@ -508,6 +508,20 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_alloc")
 					needs.add("__build_io_error")
 					needs.add("__fern_reader_close_fd")
+				case "__fern_fd_stat":
+					// (r) → i32 — fstat of the handle, the same
+					// Result[FileStat, IoError] box `stat` builds.
+					needs.add("__fern_alloc")
+					needs.add("__fern_alloc_box")
+					needs.add("__build_io_error")
+					needs.add("__fern_fd_stat")
+				case "__fern_reader_seek":
+					// (r, offset, whence) → i32 — lseek of the
+					// handle; Result[i64, IoError].
+					needs.add("__fern_alloc")
+					needs.add("__fern_alloc_box")
+					needs.add("__build_io_error")
+					needs.add("__fern_reader_seek")
 				case "__fern_writer_close":
 					// Same shape as reader_close — Writer struct
 					// has identical { fd: i32 } layout.
@@ -1030,6 +1044,8 @@ var preview2HelperCalls = map[string][]string{
 	"__fern_open_writer":       {"__wasi_errno_of_code"},
 	"__fern_open_appender":     {"__wasi_errno_of_code"},
 	"__fern_reader_read_chunk": {"__wasi_errno_of_code"},
+	"__fern_fd_stat":           {"__wasi_errno_of_code"},
+	"__fern_reader_seek":       {"__wasi_errno_of_code"},
 	"__fern_remove_file":       {"__wasi_errno_of_code"},
 	"__fern_create_dir_all":    {"__wasi_errno_of_code"},
 	"__fern_temp_dir":          {"__wasi_errno_of_code"},
@@ -1064,7 +1080,7 @@ var helperAllocBoxCallers = []string{
 	"__fern_open_reader", "__fern_open_writer", "__fern_open_appender",
 	"__fern_reader_close_fd", "__fern_writer_close",
 	"__fern_writer_write", "__fern_reader_read_line_fd",
-	"__fern_reader_read_chunk",
+	"__fern_reader_read_chunk", "__fern_fd_stat", "__fern_reader_seek",
 	"__fern_remove_file", "__fern_stat", "__fern_lstat", "__fern_read_dir",
 	"__fern_remove_dir_all", "__fern_temp_dir",
 	"__fern_create_dir_all",
@@ -2307,6 +2323,21 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildReaderReadChunkBody,
+	},
+	"__fern_fd_stat": {
+		// (r) → i32 — heap-form Result[FileStat, IoError]: fstat of
+		// the handle's fd. Shared by Reader.stat and Writer.stat, whose
+		// handles have the same layout. See wasi_fs_handle.go.
+		params:  []byte{encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildFdStatBody,
+	},
+	"__fern_reader_seek": {
+		// (r, offset: i64, whence) → i32 — heap-form
+		// Result[i64, IoError]: lseek of the handle's fd.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI64, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildReaderSeekBody,
 	},
 	"__str_idx": {
 		// (base_data, base_len, i) → i32 (byte address). For
@@ -6966,28 +6997,17 @@ func buildStdinBodyP2(idxs map[string]uint32) []byte {
 	alloc := idxs["__fern_alloc"]
 	getStdin := idxs["wasi_get_stdin_p2"]
 	var body []byte
-	// 16-byte Reader struct: rc sentinel @ +0, {handle} @ +8,
-	// noDescriptor @ +12 — matching the file Reader
-	// (buildOpenReaderBodyP2). The leading static rc
-	// sentinel keeps __fern_retain / __fern_drop (which mutate mem[ptr-8])
-	// off the preceding static data segment — see issue #2550.
-	body = inst.InstI32Const(body, 16)
-	body = inst.InstCall(body, alloc)
-	body = inst.InstLocalTee(body, 0)
-	body = inst.InstI32Const(body, -0x80000000) // static rc sentinel
-	body = memory.InstI32Store(body, 2, 0)
-	body = inst.InstLocalGet(body, 0)
-	body = inst.InstI32Const(body, 8)
-	body = numeric.InstI32Add(body)
-	body = inst.InstLocalSet(body, 0) // data pointer = base + 8
-	body = inst.InstLocalGet(body, 0)
+	// The same {handle, noDescriptor, pos} Reader the file opener
+	// builds (buildOpenReaderBodyP2). The leading static rc sentinel
+	// keeps __fern_retain / __fern_drop (which mutate mem[ptr-8]) off
+	// the preceding static data segment — see issue #2550.
 	body = inst.InstCall(body, getStdin) // handle = get-stdin()
-	body = memory.InstI32Store(body, 2, 0)
-	body = inst.InstLocalGet(body, 0)
+	body = inst.InstLocalSet(body, 1)
 	body = inst.InstI32Const(body, noDescriptor)
-	body = memory.InstI32Store(body, 2, 4)
+	body = inst.InstLocalSet(body, 2)
+	body = emitReaderBoxP2(body, alloc, 1, 2, 0)
 	body = inst.InstLocalGet(body, 0)
-	locals := inst.PutLocalsOneGroup(nil, 1, encode.ValtypeI32)
+	locals := inst.PutLocalsOneGroup(nil, 3, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
 }
 

@@ -297,6 +297,11 @@ func Compose(coreBytes []byte, req ComposeRequest, coreExportName string) []byte
 		if req.File.Stat {
 			g.add(gImport{iface: fsTypes, name: composeStatAtName, kind: gMem, params: composeStatAtParams})
 		}
+		if req.File.StatSelf {
+			// (self, ret_ptr) -> (): the same return area as stat-at,
+			// for the descriptor itself.
+			g.add(gImport{iface: fsTypes, name: composeStatName, kind: gMem, params: composeSelfRetParams})
+		}
 		if req.File.ReadDir {
 			// read-directory-entry hands back an entry NAME, which the
 			// host allocates into our memory — hence realloc, where

@@ -234,3 +234,5 @@ lstat=236
 access=237
 geteuid=238
 getegid=239
+fd_stat=240
+reader_seek=241
