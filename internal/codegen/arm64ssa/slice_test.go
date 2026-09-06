@@ -314,10 +314,12 @@ func TestArmRunAccessAndIds(t *testing.T) {
 		f.SetRet(e, callOp(f, e, callee))
 		return assembleRunArmModule(t, map[string]*ssa.Func{"main": f}, "main", 12)
 	}
-	if got, want := id("geteuid"), os.Geteuid(); got != want {
-		t.Errorf("geteuid() = %d, want %d", got, want)
+	// The value comes back as the process's exit status, which is one byte:
+	// a runner whose uid is 1001 reads back as 233.
+	if got, want := id("geteuid"), os.Geteuid()&0xFF; got != want {
+		t.Errorf("geteuid() = %d, want %d (uid %d truncated to the exit byte)", got, want, os.Geteuid())
 	}
-	if got, want := id("getegid"), os.Getegid(); got != want {
-		t.Errorf("getegid() = %d, want %d", got, want)
+	if got, want := id("getegid"), os.Getegid()&0xFF; got != want {
+		t.Errorf("getegid() = %d, want %d (gid %d truncated to the exit byte)", got, want, os.Getegid())
 	}
 }
