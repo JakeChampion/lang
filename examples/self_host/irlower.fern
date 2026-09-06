@@ -12842,6 +12842,44 @@ function lower_call_clamp(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerStat
     return emit_i32_minmax_slots(pcl, ctslot, chslot, false);
 }
 
+// report_expr_append is FERN_APPEND_REPORT's expression-position arm: one line
+// per `xs.append(v)` that is NOT a self-reassign, naming whether the receiver
+// was bracketed against the grow helper's in-place path.
+//
+// The self-reassign arm (#8511) reports the LEAK axis — plain arr_push abandons
+// the superseded buffer. This one reports the COPY axis, because that is the
+// decision this site makes: a bracketed receiver cannot take the rc==1 in-place
+// path, so the push always reallocates and copies the whole buffer. Both axes
+// print under one prefix so a single grep sees every append the program makes.
+//
+// It exists because this shape was invisible. The compiler's own hottest append
+// is `S { ...s, ops: s.ops.append(op) }` — an expression-position append inside
+// a struct spread — and no diagnostic said which path it took, so the only way
+// to find out was to read emitted assembly and guess at the lowering.
+function report_expr_append(s: LowerState, fa: ast.ExprFieldAccess, c: ast.ExprCall, apcs: i32): LowerState {
+    var verdict: string = "in-place";
+    var why: string = "unbracketed receiver: the grow helper may append into the receiver's own buffer";
+    if (apcs >= 0) {
+        verdict = "COPIES";
+        why = "bracketed receiver: value semantics forbid the in-place path, so the push reallocates";
+    }
+    eprint("append-report: " + s.frame.cur_fn + ":"
+        + util.i32_to_string(c.line) + ":" + util.i32_to_string(c.col)
+        + "  " + verdict + "  " + expr_append_recv_label(fa.obj) + "  " + why + "\n");
+    return s;
+}
+
+// expr_append_recv_label names the receiver for the report: the identifier or
+// `base.field` an append reads, and a bare kind otherwise. Report-only, so an
+// unnamed shape degrades to its kind rather than refusing the line.
+function expr_append_recv_label(o: ast.Expr): string {
+    match (o) {
+        ast.ExprIdent(id) => { return id.name; },
+        ast.ExprFieldAccess(f) => { return expr_append_recv_label(f.obj) + "." + f.field; },
+        _ => { return "<expr>"; },
+    }
+}
+
 // lower_call_append lowers `arr.append(e)` in EXPRESSION position (a return, a
 // var-init, an argument): the receiver and element are lowered, then grown
 // through the width-matched arr_push, leaving the array on the stack.
@@ -12850,6 +12888,7 @@ function lower_call_append(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerSta
     // the grow helper's rc==1 in-place path cannot fire (append_copy_recv_slot).
     var apcs: i32 = append_copy_recv_slot(fa.obj, s);
     var aps0: LowerState = s;
+    if (append_report_on()) { aps0 = report_expr_append(aps0, fa, c, apcs); }
     if (apcs >= 0) { aps0 = emit_arr_share(aps0, apcs, "__fern_arr_share_inc"); }
     if (expr_is_f64arr(fa.obj, s)) {
         var apf: LowerState = lower_expr(fa.obj, aps0);
