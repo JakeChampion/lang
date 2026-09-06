@@ -771,26 +771,6 @@ function drain_before(f: Fmt, limit: i32, depth: i32): (string, Fmt) {
     return drain_leading(f, limit, depth);
 }
 
-// stmt_line reports the source line a statement starts on, or 0 for one the
-// compiler synthesised (no source position, so nothing can attach to it).
-function stmt_line(st: ast.Stmt): i32 {
-    match (st) {
-        ast.StmtVar(v) => { return v.line; },
-        ast.StmtReturn(r) => { return r.line; },
-        ast.StmtAssign(a) => { return a.line; },
-        ast.StmtExpr(x) => { return x.line; },
-        ast.StmtIf(f) => { return f.line; },
-        ast.StmtWhile(w) => { return w.line; },
-        ast.StmtFor(fo) => { return fo.line; },
-        ast.StmtMatch(m) => { return m.line; },
-        ast.StmtDefer(d) => { return d.line; },
-        ast.StmtBreak(b) => { return b.line; },
-        ast.StmtContinue(c) => { return c.line; },
-        _ => { return 0; }
-    }
-    return 0;
-}
-
 // print_block renders `{ … }` and is the one place statements are drained
 // against: a comment above a statement, a blank line the author left before
 // it, and whatever is still queued when the block ends.
@@ -804,7 +784,7 @@ function print_block(body: ast.Stmt[], depth: i32, f: Fmt): (string, Fmt) {
     var i: i32 = 0;
     var last_line: i32 = 0;
     while (i < body.len()) {
-        var ln: i32 = stmt_line(body[i]);
+        var ln: i32 = ast.stmt_line(body[i]);
         // Never a blank just inside the opening brace.
         if (i > 0 && ln > 0 && g.blank_before(ln)) { out = out + "\n"; }
         if (ln > 0) {
@@ -1175,7 +1155,7 @@ function print_sugared_let_else(sg: ast.MatchSugar, depth: i32, f: Fmt): (string
     var rest: ast.Stmt[] = arms[0].body;
     var i: i32 = 0;
     while (i < rest.len()) {
-        var ln: i32 = stmt_line(rest[i]);
+        var ln: i32 = ast.stmt_line(rest[i]);
         out = out + "\n";
         if (ln > 0 && g.blank_before(ln)) { out = out + "\n"; }
         if (ln > 0) {
@@ -1319,7 +1299,7 @@ function print_let_else(m: ast.StmtMatch, depth: i32, f: Fmt): (string, Fmt) {
     var rest: ast.Stmt[] = arms[0].body;
     var i: i32 = 0;
     while (i < rest.len()) {
-        var ln: i32 = stmt_line(rest[i]);
+        var ln: i32 = ast.stmt_line(rest[i]);
         out = out + "\n";
         if (ln > 0 && g.blank_before(ln)) { out = out + "\n"; }
         if (ln > 0) {
@@ -1373,7 +1353,7 @@ function print_use(us: UseSugar, line: i32, depth: i32, f: Fmt): (string, Fmt) {
     }
     var i: i32 = 0;
     while (i < us.body.len()) {
-        var ln: i32 = stmt_line(us.body[i]);
+        var ln: i32 = ast.stmt_line(us.body[i]);
         out = out + "\n";
         if (ln > 0 && g.blank_before(ln)) { out = out + "\n"; }
         if (ln > 0) {
@@ -1718,7 +1698,7 @@ function print_stmt_line(st: ast.Stmt, depth: i32, f: Fmt): (string, Fmt) {
     // one the same-line comment sits against the header, not the body, and
     // native does not attach it either.
     if (stmt_is_single_line(st)) {
-        var ln: i32 = stmt_line(st);
+        var ln: i32 = ast.stmt_line(st);
         if (ln > 0) {
             var (tr, g2) = emit_trailing(g, ln);
             return (out + tr, g2);

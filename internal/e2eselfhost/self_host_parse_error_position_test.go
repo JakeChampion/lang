@@ -193,6 +193,31 @@ func TestSelfHostParseUnknownDiagSequence(t *testing.T) {
 		{"lambda-body-sentinel",
 			"function main(): i32 {\n  var f = (): i32 => { var z: i32 = ;; return 0; };\n  return f();\n}\n",
 			"error[P001]: in fn 'main': parser-side unknown: punct:; (2:37)"},
+		// A sentinel in a parameter DEFAULT. Defaults hang off the
+		// declaration, not off any statement, so neither the body walk nor the
+		// top-level one reaches them: until #8739 the only thing refusing this
+		// was E076's non-constant rule, which named a rule the author had not
+		// broken. Reported under the declaring function's `where`, like a body
+		// sentinel, because that is where the author has to go and edit.
+		{"param-default-sentinel",
+			"function f(x: i32 = ;): i32 {\n  return x;\n}\nfunction main(): i32 {\n  return 0;\n}\n",
+			"error[P001]: in fn 'f': parser-side unknown: punct:; (1:21)"},
+		// Nested inside the default rather than being the whole of it, so the
+		// fold is held to descending a default and not merely to testing its
+		// root node.
+		{"param-default-nested-sentinel",
+			"function f(x: i32 = 1 + ;): i32 {\n  return x;\n}\nfunction main(): i32 {\n  return 0;\n}\n",
+			"error[P001]: in fn 'f': parser-side unknown: punct:; (1:25)"},
+		// A default is not a body: the bare-`return;` exemption that
+		// unknown_error_stmt_at arms must not leak across into one, and a
+		// second parameter's default is reached as well as the first.
+		{"param-default-two-params",
+			"function f(a: i32 = 1, b: i32 = @): i32 {\n  return a + b;\n}\nfunction main(): i32 {\n  return 0;\n}\n",
+			"error[P001]: in fn 'f': parser-side unknown: punct:@ (1:33)"},
+		// A clean default stays clean — the walk adds no diagnostic of its own.
+		{"param-default-clean",
+			"function f(x: i32 = 41): i32 {\n  return x;\n}\nfunction main(): i32 {\n  return f();\n}\n",
+			""},
 		// The one shape that maps to P002 rather than P001 (#6842).
 		{"float-range-p002",
 			"function main(): i32 {\n  var big: f64 = 1e999;\n  return 0;\n}\n",

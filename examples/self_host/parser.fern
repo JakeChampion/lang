@@ -14904,17 +14904,15 @@ pub function default_nonconst_reason(e: ast.Expr): (string, boolean) {
         ast.ExprSlice(sl) => { return ("is not a constant expression", true); },
         ast.ExprMapLit(ml) => { return ("is not a constant expression", true); },
         ast.ExprFString(fs) => { return ("is not a constant expression", true); },
-        // An out-of-range float literal rides an ExprUnknown, because the
-        // parser has no error list to write P002 to (parse_primary_nested).
-        // It still stands for a LITERAL, and native — which keeps it a
-        // FloatLit — counts it as constant, so E076 has nothing to say: the
-        // checker already reports the P002. Every other unknown kind stands
-        // for nothing at all and stays refused, so a default the parser could
-        // not read is still rejected rather than waved through.
-        ast.ExprUnknown(uk) => {
-            if (util.is_f64_range_kind(uk.kind)) { return ("", false); }
-            return ("is not a constant expression", true);
-        }
+        // An ExprUnknown is a node the parser already refused — an
+        // out-of-range float literal rides one, and so does every `;` / `@`
+        // sentinel. parse_unknown_errors_module walks parameter defaults and
+        // reports each with its own P001 / P002 / P005, so E076 has nothing
+        // left to say: a second complaint about the same token would name a
+        // rule the author did not break. Native agrees by a different route —
+        // its bad float stays a FloatLit, which nonConstReason counts as
+        // constant.
+        ast.ExprUnknown(uk) => { return ("", false); }
     }
     return ("is not a constant expression", true);
 }
