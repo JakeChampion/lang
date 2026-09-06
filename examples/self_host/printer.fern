@@ -180,7 +180,7 @@ function print_return_only(body: ast.Stmt[]): string {
     if (body.len() != 1) { return ""; }
     match (body[0]) {
         ast.StmtReturn(r) => {
-            if (expr_is_missing(r.value)) { return ""; }
+            if (expr_is_missing(r.value) || as_use(r.value).ok) { return ""; }
             return print_expr(r.value);
         },
         _ => { return ""; }
@@ -1331,6 +1331,60 @@ function print_let_else(m: ast.StmtMatch, depth: i32, f: Fmt): (string, Fmt) {
     return (out, g);
 }
 
+// UseSugar is the `use NAME[: TYPE] <- CALL;` a `return CALL(…, cb);` was
+// desugared from — ok when CALL's last argument is the ORIGIN_USE callback,
+// whose one parameter is the binding and whose body is the rest of the block.
+struct UseSugar { ok: boolean, name: string, type_name: string, call: ast.Expr, body: ast.Stmt[] }
+
+function as_use(e: ast.Expr): UseSugar {
+    var none: UseSugar = UseSugar { ok: false, name: "", type_name: "", call: e, body: [] };
+    if let ast.ExprCall(c) = e {
+        if (c.args.len() == 0) { return none; }
+        if let ast.ExprLambda(lm) = c.args[c.args.len() - 1] {
+            if (lm.origin != parser.ORIGIN_USE || lm.params.len() != 1) { return none; }
+            var written: ast.Expr[] = [];
+            var i: i32 = 0;
+            while (i + 1 < c.args.len()) { written = written.append(c.args[i]); i = i + 1; }
+            var call: ast.Expr = ast.ExprCall { ...c, args: written };
+            return UseSugar { ok: true, name: lm.params[0].name, type_name: lm.params[0].type_name, call: call, body: lm.body };
+        }
+    }
+    return none;
+}
+
+// print_use reprints `use NAME[: TYPE] <- CALL;` plus the statements that
+// followed it, which the desugar moved into the callback body. They re-emit as
+// the siblings they were written as, at the same depth — the shape
+// print_let_else recovers for the other rest-of-block desugar. The type prints
+// only when the source wrote one; otherwise the checker infers it.
+function print_use(us: UseSugar, line: i32, depth: i32, f: Fmt): (string, Fmt) {
+    var out: string = "use " + us.name;
+    if (us.type_name.len() > 0) { out = out + ": " + us.type_name; }
+    out = out + " <- " + print_expr(us.call) + ";";
+    var g: Fmt = f;
+    if (line > 0) {
+        var (tr, g0) = emit_trailing(g, line);
+        out = out + tr;
+        g = g0;
+    }
+    var i: i32 = 0;
+    while (i < us.body.len()) {
+        var ln: i32 = stmt_line(us.body[i]);
+        out = out + "\n";
+        if (ln > 0 && g.blank_before(ln)) { out = out + "\n"; }
+        if (ln > 0) {
+            var (lead, gl) = drain_leading(g, ln, depth);
+            out = out + lead;
+            g = gl;
+        }
+        var (stext, g2) = print_stmt_line(us.body[i], depth, g);
+        out = out + stext;
+        g = g2;
+        i = i + 1;
+    }
+    return (out, g);
+}
+
 // expr_is_missing reports an expression slot the parser never filled — a void
 // `return;`, whose value is the unknown-token placeholder for the `;`.
 function expr_is_missing(e: ast.Expr): boolean {
@@ -1345,7 +1399,7 @@ function expr_is_missing(e: ast.Expr): boolean {
 // the ones a one-statement lambda body may keep inline.
 function stmt_is_single_line(st: ast.Stmt): boolean {
     match (st) {
-        ast.StmtReturn(_) => { return true; },
+        ast.StmtReturn(r) => { return !as_use(r.value).ok; },
         ast.StmtVar(_) => { return true; },
         ast.StmtExpr(_) => { return true; },
         ast.StmtAssign(_) => { return true; },
@@ -1883,6 +1937,11 @@ function print_stmt_body(st: ast.Stmt, depth: i32, f: Fmt): (string, Fmt) {
             // followed. Printing that placeholder emits a comment INTO the
             // source; the statement is just `return;`.
             if (expr_is_missing(r.value)) { return ("return;", f); }
+            // A `use` reaches the printer as the return of the call it
+            // appended its callback to; printing that call rewrites the
+            // rest of the block into a lambda.
+            var us: UseSugar = as_use(r.value);
+            if (us.ok) { return print_use(us, r.line, depth, f); }
             return ("return " + print_expr(r.value) + ";", f);
         },
         ast.StmtExpr(x) => { return (print_expr(x.value) + ";", f); },

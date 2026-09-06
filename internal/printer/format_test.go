@@ -1531,3 +1531,63 @@ func TestFormatKeepsAssertSugar(t *testing.T) {
 		t.Fatalf("not idempotent:\n%s\n---\n%s", got, again)
 	}
 }
+
+// `use n[: T] <- call(…);` is a parse-time desugar into a synthesised
+// `__use_N` callback plus the return that passes it, so the formatter has to
+// read it back — printing the desugar rewrote the source, and left an
+// unannotated binding as `(n: )`, which does not parse (#8729). Each case
+// must print exactly as written, re-parse, and format to itself; the
+// synthesised name never reaches the output.
+func TestFormatKeepsUseSugar(t *testing.T) {
+	const prelude = "function maybe_double(n: i32, cb: (i32) => Option[i32]): Option[i32] {\n  return cb(n + n);\n}\n\n"
+	cases := []struct{ name, src string }{
+		{"unannotated", prelude +
+			"function chain(start: i32): Option[i32] {\n" +
+			"  use a <- maybe_double(start);\n" +
+			"  return Some(a + 1);\n" +
+			"}\n"},
+		{"annotated", prelude +
+			"function chain(start: i32): Option[i32] {\n" +
+			"  use a: i32 <- maybe_double(start);\n" +
+			"  return Some(a + 1);\n" +
+			"}\n"},
+		{"nested-two-deep", prelude +
+			"function chain(start: i32): Option[i32] {\n" +
+			"  use a <- maybe_double(start);\n" +
+			"  use b: i32 <- maybe_double(a);\n" +
+			"  return Some(b + 1);\n" +
+			"}\n"},
+		{"comments-and-blank-lines", prelude +
+			"function chain(start: i32): Option[i32] {\n" +
+			"  // bind the doubled value\n" +
+			"  use a <- maybe_double(start);  // trailing\n" +
+			"\n" +
+			"  var k: i32 = a * 2;\n" +
+			"  use b <- maybe_double(k);\n" +
+			"  return Some(b + 1);\n" +
+			"}\n"},
+		{"in-lambda-body", prelude +
+			"function chain(start: i32): Option[i32] {\n" +
+			"  var f = (n: i32): Option[i32] => {\n" +
+			"    use a <- maybe_double(n);\n" +
+			"    return Some(a);\n" +
+			"  };\n" +
+			"  return f(start);\n" +
+			"}\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := formatSrc(t, tc.src)
+			if got != tc.src {
+				t.Errorf("formatting rewrote the source:\n--- want ---\n%s\n--- got ---\n%s", tc.src, got)
+			}
+			if strings.Contains(got, "__use_") {
+				t.Errorf("formatted output leaks the desugar's synthesised callback:\n%s", got)
+			}
+			again := formatSrc(t, got)
+			if again != got {
+				t.Errorf("formatter is not idempotent on use:\n--- first ---\n%s\n--- second ---\n%s", got, again)
+			}
+		})
+	}
+}

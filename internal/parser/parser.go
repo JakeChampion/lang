@@ -4823,9 +4823,9 @@ func (p *parser) parseVar() (ast.Stmt, error) {
 //
 // The synthesised callback's return type is read from
 // `parser.returnTypeStack` — every `use` chain ultimately
-// returns through the surrounding function. Type annotation
-// on the binding is required for now; an inference pass can
-// peek at EXPR's callback parameter type as a follow-up.
+// returns through the surrounding function. The binding's type
+// annotation is optional: without it the callback's parameter
+// has no type and the checker infers one from EXPR's callee.
 func (p *parser) parseUse(parent *ast.Block) error {
 	kw := p.advance() // use
 	nameTok, err := p.expect(lexer.Ident, "")
@@ -4888,12 +4888,7 @@ func (p *parser) parseUse(parent *ast.Block) error {
 		ReturnType: rt,
 		Body:       body,
 		IsLocal:    true,
-	}
-	if bindType == nil {
-		// Defer param-type inference to the checker: it'll peek
-		// at srcCall's callee, find the trailing function-typed
-		// param, and stamp this callback's first param accordingly.
-		cb.UseInferSource = srcCall
+		UseSource:  srcCall,
 	}
 	parent.Stmts = append(parent.Stmts, cb)
 	// Append the callback as the last argument of the source call
