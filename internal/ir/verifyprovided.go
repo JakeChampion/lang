@@ -165,6 +165,7 @@ var providedSigs = map[string]providedSig{
 	"__fern_stdin":                  {0, rWord},
 	"__fern_stdout":                 {0, rWord},
 	"__fern_str_append":             {4, rString},
+	"__fern_str_append_range":       {6, rString},
 	"__fern_str_byte":               {3, rWord},
 	"__fern_str_copy":               {2, rString},
 	"__fern_str_dec":                {2, rWord},

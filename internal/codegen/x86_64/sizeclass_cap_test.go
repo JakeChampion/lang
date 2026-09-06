@@ -126,10 +126,27 @@ func TestStrAppendTakesOneCapacityComputation(t *testing.T) {
     while (i < 4) { s = s + "ab"; i = i + 1; }
     return s.len();
 }`
-	body := helperBody(t, compile(t, src), "__fern_str_append")
-	if n := strings.Count(body, "bsr rcx,"); n != 1 {
-		t.Errorf("__fern_str_append expands the size-class round-up %d time(s), want 1 (the old request's; the grown one is compared against its capacity):\n%s", n, body)
+	for _, helper := range []string{"__fern_str_append", "__fern_str_append_range"} {
+		body := helperBody(t, compile(t, srcUsing(helper, src)), helper)
+		if n := strings.Count(body, "bsr rcx,"); n != 1 {
+			t.Errorf("%s expands the size-class round-up %d time(s), want 1 (the old request's; the grown one is compared against its capacity):\n%s", helper, n, body)
+		}
 	}
+}
+
+// srcUsing returns a program that reaches `helper`: the plain append for
+// __fern_str_append, and the fused range form for its range sibling.
+func srcUsing(helper, plain string) string {
+	if helper == "__fern_str_append" {
+		return plain
+	}
+	return `function main(): i32 {
+    var src: string = "abcdefgh";
+    var s: string = "";
+    var i: i32 = 0;
+    while (i < 4) { s = s + slice_unchecked(src, 0, 3); i = i + 1; }
+    return s.len();
+}`
 }
 
 // helperBody returns the emitted text of one runtime helper, from its label

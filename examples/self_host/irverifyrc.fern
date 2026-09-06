@@ -136,6 +136,7 @@ function rc_release_helpers(): string[] {
         "__fern_arr_cow_inplace_ptr",
         "__fern_arr_cow_inplace_str",
         "__fern_str_append",
+        "__fern_str_append_range",
     ];
 }
 

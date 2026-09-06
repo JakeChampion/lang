@@ -660,6 +660,9 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	if g.usesStrAppend {
 		g.emitStrAppendRuntime()
 	}
+	if g.usesStrAppendRange {
+		g.emitStrAppendRangeRuntime()
+	}
 	if g.usesStrcmp {
 		g.emitStrcmpRuntime()
 	}
@@ -963,8 +966,14 @@ type generator struct {
 	// __fern_strcat (its copy path) and __fern_str_dec (the release it
 	// takes over from the assignment's dec-on-overwrite).
 	usesStrAppend bool
-	usesStrcmp    bool
-	usesStrord    bool
+	// usesStrAppendRange gates `__fern_str_append_range` — the same append
+	// with a byte range of a second string as its piece, so the range is
+	// copied straight out of the source instead of through a materialised
+	// `__str_slice` buffer. Pulls in that slice helper for its own fallback
+	// path, alongside everything __fern_str_append needs.
+	usesStrAppendRange bool
+	usesStrcmp         bool
+	usesStrord         bool
 	// usesAsciiRun gates the SSE2 high-bit scan kernel (__fern_ascii_run).
 	usesAsciiRun bool
 	// usesMemchr gates the SSE2 byte-search kernel (__fern_memchr).
@@ -1418,6 +1427,16 @@ func (g *generator) recordUse(target string) {
 		g.usesAlloc = true   // strcat's fresh buffer + the freelist BSS
 		g.usesStrDec = true  // releases the consumed accumulator
 		g.usesBoxFree = true // str_dec → box_free at rc==1
+		g.usesFree = true
+		g.usesRcDec = true
+	case "__fern_str_append_range":
+		g.usesStrAppendRange = true
+		g.usesStrSlice = true // the copy path materialises the range
+		g.usesStrcat = true   // and joins it
+		g.usesMemcpy = true
+		g.usesAlloc = true
+		g.usesStrDec = true // releases both the accumulator and the slice
+		g.usesBoxFree = true
 		g.usesFree = true
 		g.usesRcDec = true
 	case "__fern_rc_underflow_count":
@@ -8641,6 +8660,134 @@ func (g *generator) emitStrAppendRuntime() {
 	g.emit("pop rbp")
 	g.emit("ret")
 	g.line(".size __fern_str_append, .-__fern_str_append")
+}
+
+// emitStrAppendRangeRuntime emits
+// `__fern_str_append_range(a, s, lo, hi) -> data` — `__fern_str_append` whose
+// piece is a byte range of `s` rather than a whole string.
+//
+// It is the fusion of `a + slice_unchecked(s, lo, hi)`: the unfused pair
+// allocates a slice buffer, copies `hi - lo` bytes into it, copies them again
+// into `a`'s slack and frees it. Here the range is memcpy'd straight out of
+// the source. Same guards, same consumption of `a`, same fallback.
+//
+//   - Fast path — `a` is a uniquely-held heap buffer whose grown length still
+//     fits the block: one memcpy from `s + lo`, restamp the length prefix and
+//     the trailing NUL, hand the same buffer back.
+//   - Slow path — anything else: materialise the range through __str_slice
+//     exactly as the unfused lowering did, __fern_strcat it on, then release
+//     both the consumed accumulator and the slice.
+//
+// The bounds are checked UP FRONT and trap through __str_slice's own message,
+// so a range the unfused form would have rejected is still rejected here — the
+// fast path must not be reachable with a range __str_slice would refuse.
+//
+// System V: rdi = a, rsi = s, edx = lo, ecx = hi. Returns the data pointer in
+// rax.
+func (g *generator) emitStrAppendRangeRuntime() {
+	g.line("")
+	g.line(".globl __fern_str_append_range")
+	g.line(".type __fern_str_append_range, @function")
+	g.label("__fern_str_append_range")
+	// Frame: rbp + 4 saves, then 16 bytes of scratch —
+	//   [rbp - 40]: emitStrDataPtr spill slot for an inline `s`
+	//   [rbp - 48]: total length, held across the __fern_memcpy call
+	// 8 (ret) + 8 (rbp) + 32 (saves) + 16 (scratch) = 64, so rsp is
+	// 16-aligned at every call below.
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx")
+	g.emit("push r12")
+	g.emit("push r13")
+	g.emit("push r14")
+	g.emit("sub rsp, 16")
+	g.emit("mov rbx, rdi")    // rbx = a
+	g.emit("mov r12, rsi")    // r12 = s
+	g.emit("movsxd r13, edx") // lo, sign-extended from i32 (#5294)
+	g.emit("movsxd r14, ecx") // hi
+	// --- bounds, in __str_slice's own order and with its trap ---
+	g.emitStrLen("eax", "r12") // src_len
+	g.emit("test r13, r13")
+	g.emit("js .Lsarange_trap")
+	g.emit("cmp r14, rax")
+	g.emit("ja .Lsarange_trap")
+	g.emit("cmp r13, r14")
+	g.emit("jg .Lsarange_trap")
+	g.emit("sub r14, r13") // r14 = lb = hi - lo
+	// --- in-place eligibility on `a` (mirrors __fern_str_append) ---
+	g.emit("test bl, 1") // inline SSO packed value → not a heap buffer
+	g.emit("jnz .Lsarange_copy")
+	g.emit("cmp rbx, 0x10000000") // below the heap base → .rodata literal
+	g.emit("jb .Lsarange_copy")
+	g.emit("mov eax, dword ptr [rbx - 8]") // rc
+	g.emit("cmp eax, 1")
+	g.emit("jne .Lsarange_copy") // shared, sentinel, or already released
+	g.emitStrLen("rcx", "rbx")   // la
+	g.emit("mov r8d, ecx")
+	g.emit("add r8d, r14d") // total = la + lb
+	g.emit("mov r11, rcx")  // la, kept across the class arithmetic
+	// Still the same block? The same monotone-and-idempotent capacity test
+	// __fern_str_append uses.
+	g.emit("lea r9, [rcx + 24]")
+	g.emit("and r9, -16")
+	g.emit("lea r10, [r8 + 24]")
+	g.emit("and r10, -16")
+	g.emit("cmp r10, 0x40000000")
+	g.emit("ja .Lsarange_copy")
+	if ast.LeakCheckEnabled {
+		// The block was charged at its 16-rounded request and __fern_free
+		// will charge the grown one; the difference keeps the pair exact.
+		g.emit("mov rsi, r10")
+		g.emit("sub rsi, r9")
+	}
+	g.emitSizeClassCap("r9", "rax", "rdx")
+	g.emit("cmp r10, r9")
+	g.emit("ja .Lsarange_copy")
+	// --- in place: memcpy(a + la, s_data + lo, lb) ---
+	if ast.LeakCheckEnabled {
+		g.emit("add qword ptr [rip + __fern_lc_alloc_bytes], rsi")
+	}
+	g.emit("mov [rbp - 48], r8") // total survives the call
+	g.emitStrDataPtr("rsi", "r12", "[rbp - 40]")
+	g.emit("add rsi, r13")         // src = s_data + lo
+	g.emit("lea rdi, [rbx + r11]") // dst = a + la
+	g.emit("mov rdx, r14")         // lb
+	// The source can only be `a` itself when the range lies inside a's
+	// current length, which ends where the destination begins — so the two
+	// never overlap and memcpy is enough.
+	g.emit("call __fern_memcpy")
+	g.emit("mov r8, [rbp - 48]")
+	g.emitStrLenStore("r8d", "rbx") // [a - 4] = total
+	g.emit("lea rdi, [rbx + r8]")
+	g.emit("mov byte ptr [rdi], 0") // trailing NUL
+	g.emit("mov rax, rbx")
+	g.emit("jmp .Lsarange_ret")
+	g.label(".Lsarange_copy")
+	g.emit("mov rdi, r12")
+	g.emit("mov esi, r13d")
+	g.emit("lea edx, [r13 + r14]") // hi = lo + lb
+	g.emit("call __str_slice")
+	g.emit("mov r12, rax") // the materialised range
+	g.emit("mov rdi, rbx")
+	g.emit("mov rsi, r12")
+	g.emit("call __fern_strcat")
+	g.emit("mov r13, rax") // out
+	g.emit("mov rdi, rbx")
+	g.emit("call __fern_str_dec") // release the consumed accumulator
+	g.emit("mov rdi, r12")
+	g.emit("call __fern_str_dec") // and the slice the fused form never built
+	g.emit("mov rax, r13")
+	g.label(".Lsarange_ret")
+	g.emit("add rsp, 16")
+	g.emit("pop r14")
+	g.emit("pop r13")
+	g.emit("pop r12")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.label(".Lsarange_trap")
+	g.emitAbort("__fern_msg_str_slice")
+	g.line(".size __fern_str_append_range, .-__fern_str_append_range")
 }
 
 // emitFloatTranscendentalsRuntime emits the f64 transcendental bundle —

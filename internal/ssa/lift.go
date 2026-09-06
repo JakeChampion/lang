@@ -22,6 +22,44 @@ func ssaHelperName(name string) string {
 	return name
 }
 
+// liftStrAppendRange expands `__fern_str_append_range(a, s, lo, hi)` back
+// into the pair it fuses — `__str_concat(a, __str_slice(s, lo, hi))` — and
+// pushes the result.
+//
+// Same reasoning as ssaHelperName above: these backends bump-allocate and
+// never reclaim, so the unfused pair satisfies the same contract with the
+// consumed operand and the intermediate slice simply left behind. The fusion
+// only pays where a buffer can be grown in place, which is the reclaiming
+// runtime's property, not this one's.
+func (l *lifter) liftStrAppendRange(args []Value) {
+	w := l.strWords()
+	acc, slice := args[:w], args[w:]
+	var sliceVals []Value
+	if w == 2 {
+		a, b := l.out.AddCallPair(l.cur, slice...)
+		l.cur.Ops[len(l.cur.Ops)-1].Str = "__str_slice"
+		sliceVals = []Value{a, b}
+	} else {
+		v := l.out.AddOp(l.cur, OpCall, slice...)
+		o := l.cur.Ops[len(l.cur.Ops)-1]
+		o.Str = "__str_slice"
+		o.Width, o.Addr = 64, true
+		sliceVals = []Value{v}
+	}
+	joined := append(append([]Value(nil), acc...), sliceVals...)
+	if w == 2 {
+		a, b := l.out.AddCallPair(l.cur, joined...)
+		l.cur.Ops[len(l.cur.Ops)-1].Str = "__str_concat"
+		l.stack = append(l.stack, a, b)
+		return
+	}
+	v := l.out.AddOp(l.cur, OpCall, joined...)
+	o := l.cur.Ops[len(l.cur.Ops)-1]
+	o.Str = "__str_concat"
+	o.Width, o.Addr = 64, true
+	l.stack = append(l.stack, v)
+}
+
 // applyCallResultWidth transfers an ir call's result classification onto the
 // lifted OpCall. Only a backend-provided callee carries one — a callee the
 // module defines is left to ResolveWidths, which reads the answer off its
@@ -945,6 +983,10 @@ func (l *lifter) handle(i int, op ir.Op) error {
 		}
 		args := append([]Value(nil), l.stack[len(l.stack)-argc:]...)
 		l.stack = l.stack[:len(l.stack)-argc]
+		if op.Str == "__fern_str_append_range" {
+			l.liftStrAppendRange(args)
+			break
+		}
 		if shaped && results == 2 {
 			// A callee returning a two-word value leaves a pair.
 			a, b := l.out.AddCallPair(l.cur, args...)
