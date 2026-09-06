@@ -1,0 +1,59 @@
+// A match binder shadowing a module CONST. Const substitution runs before
+// the checker over its own scope stack, and a binder it does not see is a
+// name it substitutes the const's value into — so the arm body reads 100
+// where the program says it reads the bound element, and nothing reports
+// anything. Only the payload-binder form was bound (#8607).
+const helper: i32 = 100;
+
+enum Inner { Some1(i32), None1 }
+enum Outer2 { Holds(Inner), Empty }
+
+function tuple_binder(): i32 {
+    var t: (i32, i32) = (3, 4);
+    match (t) {
+        (helper, b) => { return helper + b; }
+    }
+}
+
+function nested_tuple_binder(): i32 {
+    var t: (i32, (i32, i32)) = (1, (2, 4));
+    match (t) {
+        (a, (helper, c)) => { return a + helper + c; }
+    }
+}
+
+function payload_sub_binder(): i32 {
+    var o: Outer2 = Holds(Some1(3));
+    match (o) {
+        Holds(Some1(helper)) => { return helper + 4; },
+        Holds(None1()) => { return 0; },
+        Empty => { return 0; }
+    }
+}
+
+// Control: the plain payload binder, bound since the walk was written.
+function variant_binder(): i32 {
+    var i: Inner = Some1(3);
+    match (i) {
+        Some1(helper) => { return helper + 4; },
+        None1 => { return 0; }
+    }
+}
+
+function match_expr_tuple_binder(): i32 {
+    var t: (i32, i32) = (3, 4);
+    return match (t) {
+        (helper, b) => helper + b
+    };
+}
+
+function main(): i32 {
+    if (tuple_binder() != 7) { return 1; }
+    if (nested_tuple_binder() != 7) { return 2; }
+    if (payload_sub_binder() != 7) { return 3; }
+    if (variant_binder() != 7) { return 4; }
+    if (match_expr_tuple_binder() != 7) { return 5; }
+    // The const itself still reads 100 where nothing shadows it.
+    if (helper != 100) { return 6; }
+    return 0;
+}

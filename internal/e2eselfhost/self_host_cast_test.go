@@ -26,6 +26,10 @@ var castCases = []struct {
 	{"u8-in-range", "function main(): i32 { return (15 as u8) as i32; }", 15},
 	{"u32-passthrough", "function main(): i32 { var x: i32 = 42; return (x as u32) as i32; }", 42},
 	{"cast-with-bitwise", "function main(): i32 { var b: i32 = 171; return ((b >> 4) & 15) as u8 as i32; }", 10},
+	// A literal-only operand computes SIGNED: native once settled it at u32
+	// and `(3 - 4) as f64` came out 4294967295 while `((0 - 7) / 2) as u8`
+	// divided as u32 to 252.
+	{"literal-arith-operand-is-signed", "function main(): i32 { var f: f64 = (3 - 4) as f64; if (f != 0.0 - 1.0) { return 1; } return (((0 - 7) / 2) as u8) as i32; }", 253},
 	// Bitwise / shift operators. Absent from the parser's precedence table
 	// they are silently dropped, with a parser runaway inside parens.
 	{"bit-and", "function main(): i32 { return 5 & 3; }", 1},

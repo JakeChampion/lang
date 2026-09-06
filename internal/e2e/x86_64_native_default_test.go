@@ -12,16 +12,28 @@ import (
 // or the path to qemu-x86_64 on a cross host. Skips when neither applies.
 func x86QemuOrEmpty(t *testing.T) string {
 	t.Helper()
+	runner, ok := x86Runner()
+	if !ok {
+		t.Skip("no qemu-x86_64 to run x86-64 binaries")
+	}
+	return runner
+}
+
+// x86Runner is x86QemuOrEmpty without the skip: ("", true) on a native amd64
+// Linux host, (qemuPath, true) on a cross host with an emulator, and
+// ("", false) when there is no way to run an x86-64 binary at all. Mirrors
+// arm64Runner, for callers that decide for themselves what a missing emulator
+// means.
+func x86Runner() (string, bool) {
 	if runtime.GOOS == "linux" && runtime.GOARCH == "amd64" {
-		return ""
+		return "", true
 	}
 	for _, c := range []string{"qemu-x86_64", "qemu-x86_64-static"} {
 		if p, err := exec.LookPath(c); err == nil {
-			return p
+			return p, true
 		}
 	}
-	t.Skip("no qemu-x86_64 to run x86-64 binaries")
-	return ""
+	return "", false
 }
 
 func runX86Bin(qemu, binPath string, args ...string) *exec.Cmd {

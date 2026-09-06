@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -56,49 +57,63 @@ func TestArgsParityInterpVsCompiled(t *testing.T) {
 	// Each engine reports what it ran as, so the argv0 line can be checked
 	// against the right expectation while args()[1:] is compared across all
 	// of them.
-	engines := []struct {
+	type engine struct {
 		name string
 		// run returns the program's stdout for one command tail.
 		run func(t *testing.T, tail []string) string
 		// argv0 checks the engine's own argv[0] convention.
 		argv0 func(t *testing.T, got string)
+	}
+	engines := []engine{{
+		name: "interp",
+		run: func(t *testing.T, tail []string) string {
+			return runFernProgram(t, bin, append([]string{"-interp", src}, tail...))
+		},
+		argv0: func(t *testing.T, got string) {
+			if got != src {
+				t.Errorf("interp args()[0] = %q, want the source path %q", got, src)
+			}
+		},
+	}}
+
+	// One compiled engine per register target `--run` can execute here. The
+	// host's own target always runs (natively, no emulator involved); the
+	// foreign one runs under its user-mode emulator when that is on PATH and
+	// skips otherwise. The per-arch CI matrix runs this test on both hosts, so
+	// each target is covered natively somewhere and a skip is only ever the
+	// foreign leg — a test that named one target unconditionally failed on
+	// the other arch's runner for want of an emulator it does not ship.
+	compiledArgv0 := func(t *testing.T, got string) {
+		if got == "" || strings.HasSuffix(got, ".fern") {
+			t.Errorf("compiled args()[0] = %q, want the executable's path", got)
+		}
+	}
+	runnable := 0
+	for _, ct := range []struct {
+		target string
+		runner func() (string, bool)
 	}{
-		{
-			name: "interp",
+		{"x86-64-linux", x86Runner},
+		{"arm64-linux", arm64Runner},
+	} {
+		_, ok := ct.runner()
+		if ok {
+			runnable++
+		}
+		target := ct.target
+		engines = append(engines, engine{
+			name: target,
 			run: func(t *testing.T, tail []string) string {
-				return runFernProgram(t, bin, append([]string{"-interp", src}, tail...))
-			},
-			argv0: func(t *testing.T, got string) {
-				if got != src {
-					t.Errorf("interp args()[0] = %q, want the source path %q", got, src)
+				if !ok {
+					t.Skipf("no way to run %s binaries on this host", target)
 				}
+				return runFernProgram(t, bin, append([]string{"--run", "-target", target, src}, tail...))
 			},
-		},
-		{
-			name: "x86-64",
-			run: func(t *testing.T, tail []string) string {
-				return runFernProgram(t, bin, append([]string{"--run", "-target", "x86-64-linux", src}, tail...))
-			},
-			argv0: func(t *testing.T, got string) {
-				if got == "" || strings.HasSuffix(got, ".fern") {
-					t.Errorf("compiled args()[0] = %q, want the executable's path", got)
-				}
-			},
-		},
-		{
-			name: "arm64",
-			run: func(t *testing.T, tail []string) string {
-				if _, ok := arm64Runner(); !ok {
-					t.Skip("no qemu-aarch64 to run arm64 binaries")
-				}
-				return runFernProgram(t, bin, append([]string{"--run", "-target", "arm64-linux", src}, tail...))
-			},
-			argv0: func(t *testing.T, got string) {
-				if got == "" || strings.HasSuffix(got, ".fern") {
-					t.Errorf("compiled args()[0] = %q, want the executable's path", got)
-				}
-			},
-		},
+			argv0: compiledArgv0,
+		})
+	}
+	if runnable == 0 {
+		t.Skipf("no register target is runnable on %s/%s: nothing to compare -interp against", runtime.GOOS, runtime.GOARCH)
 	}
 
 	for _, tc := range tails {

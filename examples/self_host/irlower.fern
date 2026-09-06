@@ -12878,6 +12878,44 @@ function lower_call_clamp(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerStat
     return emit_i32_minmax_slots(pcl, ctslot, chslot, false);
 }
 
+// report_expr_append is FERN_APPEND_REPORT's expression-position arm: one line
+// per `xs.append(v)` that is NOT a self-reassign, naming whether the receiver
+// was bracketed against the grow helper's in-place path.
+//
+// The self-reassign arm (#8511) reports the LEAK axis — plain arr_push abandons
+// the superseded buffer. This one reports the COPY axis, because that is the
+// decision this site makes: a bracketed receiver cannot take the rc==1 in-place
+// path, so the push always reallocates and copies the whole buffer. Both axes
+// print under one prefix so a single grep sees every append the program makes.
+//
+// It exists because this shape was invisible. The compiler's own hottest append
+// is `S { ...s, ops: s.ops.append(op) }` — an expression-position append inside
+// a struct spread — and no diagnostic said which path it took, so the only way
+// to find out was to read emitted assembly and guess at the lowering.
+function report_expr_append(s: LowerState, fa: ast.ExprFieldAccess, c: ast.ExprCall, apcs: i32): LowerState {
+    var verdict: string = "in-place";
+    var why: string = "unbracketed receiver: the grow helper may append into the receiver's own buffer";
+    if (apcs >= 0) {
+        verdict = "COPIES";
+        why = "bracketed receiver: value semantics forbid the in-place path, so the push reallocates";
+    }
+    eprint("append-report: " + s.frame.cur_fn + ":"
+        + util.i32_to_string(c.line) + ":" + util.i32_to_string(c.col)
+        + "  " + verdict + "  " + expr_append_recv_label(fa.obj) + "  " + why + "\n");
+    return s;
+}
+
+// expr_append_recv_label names the receiver for the report: the identifier or
+// `base.field` an append reads, and a bare kind otherwise. Report-only, so an
+// unnamed shape degrades to its kind rather than refusing the line.
+function expr_append_recv_label(o: ast.Expr): string {
+    match (o) {
+        ast.ExprIdent(id) => { return id.name; },
+        ast.ExprFieldAccess(f) => { return expr_append_recv_label(f.obj) + "." + f.field; },
+        _ => { return "<expr>"; },
+    }
+}
+
 // lower_call_append lowers `arr.append(e)` in EXPRESSION position (a return, a
 // var-init, an argument): the receiver and element are lowered, then grown
 // through the width-matched arr_push, leaving the array on the stack.
@@ -12886,6 +12924,7 @@ function lower_call_append(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerSta
     // the grow helper's rc==1 in-place path cannot fire (append_copy_recv_slot).
     var apcs: i32 = append_copy_recv_slot(fa.obj, s);
     var aps0: LowerState = s;
+    if (append_report_on()) { aps0 = report_expr_append(aps0, fa, c, apcs); }
     if (apcs >= 0) { aps0 = emit_arr_share(aps0, apcs, "__fern_arr_share_inc"); }
     if (expr_is_f64arr(fa.obj, s)) {
         var apf: LowerState = lower_expr(fa.obj, aps0);
@@ -27168,8 +27207,10 @@ function struct_is_scalar_only(structs: StructTab, sty: string): boolean {
 // arbitrary acyclic depth: `A { b: B }` / `B { c: C }` / `C { xs: i32[] }` now
 // deep-drops all the way down (A's drop releases B's box AND, transitively, C's xs
 // buffer), reusing the per-level rc_is_unique guard the leaf case already applied.
-// Strings / enum / Option / tuple inner fields are still not reclaimed (decl_is_struct
-// is false for them), so a struct reaching only those (no array) returns false.
+// A `string` field counts as reclaimable (#4297 A2), and so does an enum field whose
+// variants the walk admits (#8567) — `__struct_drop_`'s deep_enum_drop releases its
+// live variant's payloads. Option / tuple inner fields are still not reclaimed, so a
+// struct reaching only those returns false.
 pub function nested_field_deep_drop_ok(structs: StructTab, sty: string): boolean {
     if (sty.len() == 0) { return false; }
     var visiting: string[] = [];
@@ -27207,6 +27248,8 @@ function nddo_reach(structs: StructTab, sty: string, visiting: string[]): i32 {
             has_arr = true;
         } else if (fdt == "string") {
             has_arr = true;   // #4297 A2: a string field is reclaimable (k_str drop)
+        } else if (decl_is_enum(structs, fdt) && enum_arr_elems_walk_ok(structs, fdt)) {
+            has_arr = true;   // #8567: __struct_drop_'s deep_enum_drop reclaims the live variant's payloads
         }
         fi = fi + 1;
     }

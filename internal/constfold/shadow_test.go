@@ -44,6 +44,45 @@ func TestShadowedNameIsNotSubstituted(t *testing.T) {
 				"    match (e) {\n        A(N) => { return N; },\n        B => { return 0; },\n    }\n}\n",
 		},
 		{
+			name: "tuple-match-binding",
+			// A tuple pattern's binders ride TupleElems, which the scope
+			// walk did not read at all — so `(N, b)` bound nothing as far as
+			// it was concerned and the arm body's N became the const's value
+			// (#8607).
+			src: "function main(): i32 {\n    var t: (i32, i32) = (7, 1);\n" +
+				"    match (t) {\n        (N, b) => { return N; }\n    }\n}\n",
+		},
+		{
+			name: "nested-tuple-match-binding",
+			src: "function main(): i32 {\n    var t: (i32, (i32, i32)) = (1, (7, 2));\n" +
+				"    match (t) {\n        (a, (N, c)) => { return N; }\n    }\n}\n",
+		},
+		{
+			name: "payload-sub-pattern-binding",
+			// A payload SUB-PATTERN's binders ride Payloads, the same node a
+			// tuple element is, and were missed with them.
+			src: "enum I { S(i32), Z }\nenum O { H(I), E }\n" +
+				"function main(): i32 {\n    var o: O = H(S(7));\n" +
+				"    match (o) {\n        H(S(N)) => { return N; },\n" +
+				"        H(Z()) => { return 0; },\n        E => { return 0; },\n    }\n}\n",
+		},
+		{
+			name: "at-binding",
+			// The `@` whole-value name is not in Bindings either. The body
+			// has to READ it for the count to mean anything — an arm that
+			// binds a name it never mentions leaves no Ident behind whether
+			// the walk saw the binder or not.
+			src: "enum E { A(i32), B }\nfunction take(e: E): i32 { match (e) { A(v) => { return v; }, B => { return 0; } } }\n" +
+				"function main(): i32 {\n    var e: E = E.A(7);\n" +
+				"    match (e) {\n        N @ A(v) => { return take(N); },\n        B => { return 0; },\n    }\n}\n",
+		},
+		{
+			name: "match-expr-tuple-binding",
+			// The expression form carries the same pattern fields.
+			src: "function main(): i32 {\n    var t: (i32, i32) = (7, 1);\n" +
+				"    return match (t) {\n        (N, b) => N\n    };\n}\n",
+		},
+		{
 			name: "for-each-var",
 			src:  "function main(): i32 { var t: i32 = 0; for N in [1, 2] { t = t + N; } return t; }\n",
 		},

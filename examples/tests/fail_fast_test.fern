@@ -45,14 +45,14 @@ function test_fail_fast_short_circuits_post_fail(): test.TestOutcome {
                  trivial_pass);
     // Expectations: 1 pass, 1 fail, 1 skip. Any deviation
     // means fail-fast didn't behave as documented.
-    if (sub.passed.get() != 1) {
-        return test.fail("expected 1 pass, got " + sub.passed.get().to_string());
+    if (sub.passed != 1) {
+        return test.fail("expected 1 pass, got " + sub.passed.to_string());
     }
-    if (sub.failed.get() != 1) {
-        return test.fail("expected 1 fail, got " + sub.failed.get().to_string());
+    if (sub.failed != 1) {
+        return test.fail("expected 1 fail, got " + sub.failed.to_string());
     }
-    if (sub.skipped.get() != 1) {
-        return test.fail("expected 1 skip, got " + sub.skipped.get().to_string());
+    if (sub.skipped != 1) {
+        return test.fail("expected 1 skip, got " + sub.skipped.to_string());
     }
     return test.pass();
 }
@@ -65,11 +65,11 @@ function test_fail_fast_off_runs_every_case(): test.TestOutcome {
     sub = sub.it("c1 pass", trivial_pass);
     sub = sub.it("c2 fail", intentional_fail);
     sub = sub.it("c3 still runs", trivial_pass);
-    if (sub.passed.get() != 2 || sub.failed.get() != 1 || sub.skipped.get() != 0) {
+    if (sub.passed != 2 || sub.failed != 1 || sub.skipped != 0) {
         return test.fail("default mode counters off: passed=" +
-                    sub.passed.get().to_string() + " failed=" +
-                    sub.failed.get().to_string() + " skipped=" +
-                    sub.skipped.get().to_string());
+                    sub.passed.to_string() + " failed=" +
+                    sub.failed.to_string() + " skipped=" +
+                    sub.skipped.to_string());
     }
     return test.pass();
 }

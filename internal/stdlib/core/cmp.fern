@@ -120,11 +120,26 @@ impl Eq for string {
 impl Eq for boolean {
     function eq(self: Self, other: Self): boolean { return self == other; }
 }
+// Float equality is IEEE `==` with ONE correction: a NaN equals itself.
+//
+// The operator cannot make that concession — `nan == nan` is false and has to
+// stay false — but a trait instance where `x.eq(x)` is false is not an
+// equivalence relation, and generic code written against `Eq` assumes one.
+// `assert_unique([nan, nan])` is what that costs: two NaNs are never duplicates
+// under IEEE, so the assertion passes on an array that has the same value
+// twice (#8588). Every NaN is one value here, payload and sign ignored, which
+// is the same choice `Ord` below makes.
 impl Eq for f64 {
-    function eq(self: Self, other: Self): boolean { return self == other; }
+    function eq(self: Self, other: Self): boolean {
+        if (self != self) { return other != other; }
+        return self == other;
+    }
 }
 impl Eq for f32 {
-    function eq(self: Self, other: Self): boolean { return self == other; }
+    function eq(self: Self, other: Self): boolean {
+        if (self != self) { return other != other; }
+        return self == other;
+    }
 }
 
 // ---- Ord -------------------------------------------------------
@@ -167,13 +182,36 @@ impl Ord for u8 {
         return 0;
     }
 }
-// Float ordering is IEEE `< / >`. NaN compares false on both, so it falls
-// through to `return 0` (treated equal) — fine for the assertion helpers and
-// sorting a NaN-free array; a NaN-aware total order is a follow-up.
+// Float ordering is IEEE `< / >` extended to a TOTAL order: every NaN sorts
+// after every number, and NaNs are equal to each other.
+//
+// IEEE leaves NaN unordered — `<` and `>` are both false against it — and
+// reading that as "equal" is what a bare `return 0` does. It is not a harmless
+// simplification: `cmp(a, b) <= 0` and `>= 0` are BOTH satisfied by 0, so
+// `assert_le(nan, 1.0)`, `assert_ge(nan, 1.0)` and
+// `assert_sorted_asc([3.0, nan, 1.0])` all passed while asserting nothing
+// (#8588). The generic helpers cannot fix that themselves: they are bounded by
+// `[T: Ord]` and have no predicate to ask whether a `T` is NaN, so the answer
+// has to be correct here.
+//
+// NaN last rather than first is arbitrary between the two ends, and matches
+// what IEEE 754's own totalOrder does with a positive NaN and what
+// `Double.compare` has done for decades. The one thing it must NOT be is
+// inconsistent with `Eq` above: `cmp(a, b) == 0` exactly when `a.eq(b)`, so a
+// sorted array with NaN in it is deterministic and `distinct` sees the NaNs as
+// one value.
+//
+// -0.0 and 0.0 stay equal, as IEEE `==` and the `Eq` instance have them.
 impl Ord for f64 {
     function cmp(self: Self, other: Self): i32 {
         if (self < other) { return 0 - 1; }
         if (self > other) { return 1; }
+        if (self != self) {
+            // self is NaN: after every number, level with another NaN.
+            if (other != other) { return 0; }
+            return 1;
+        }
+        if (other != other) { return 0 - 1; }
         return 0;
     }
 }
@@ -181,6 +219,11 @@ impl Ord for f32 {
     function cmp(self: Self, other: Self): i32 {
         if (self < other) { return 0 - 1; }
         if (self > other) { return 1; }
+        if (self != self) {
+            if (other != other) { return 0; }
+            return 1;
+        }
+        if (other != other) { return 0 - 1; }
         return 0;
     }
 }

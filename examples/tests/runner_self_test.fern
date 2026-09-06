@@ -365,6 +365,63 @@ function test_finish_exits_nonzero_for_dropped_result(): test.TestOutcome {
     return test.assert_eq(bad.finish(), 1);
 }
 
+// NaN and the generic assertion helpers (#8588). These four are bounded by
+// `[T: cmp.Ord]` / `[T: cmp.Eq]`, so they cannot NaN-check `T` themselves —
+// the answer has to come from core/cmp's instances, and before the total order
+// landed every one of these PASSED while asserting nothing: `cmp` answered 0
+// for any NaN comparison, and 0 satisfies both `<= 0` and `>= 0`.
+
+function nan_f64(): f64 {
+    var z: f64 = 0.0;
+    return z / z;
+}
+
+function test_le_nan_fails(): test.TestOutcome {
+    return expect_fail_containing(test.assert_le(nan_f64(), 1.0), "assert_le");
+}
+
+function test_le_nan_bound_passes(): test.TestOutcome {
+    // The mirror of the `assert_ge` case below: NaN is the top of the order,
+    // so `1.0 <= nan` HOLDS. What matters is that each of the four now asserts
+    // something — before, both directions passed for the same empty reason.
+    return expect_pass(test.assert_le(1.0, nan_f64()));
+}
+
+function test_le_pass_still_passes(): test.TestOutcome {
+    return expect_pass(test.assert_le(1.0, 2.0));
+}
+
+function test_ge_nan_fails(): test.TestOutcome {
+    return expect_fail_containing(test.assert_ge(1.0, nan_f64()), "assert_ge");
+}
+
+function test_ge_nan_lhs_passes(): test.TestOutcome {
+    // NaN sorts after every number, so `nan >= 1.0` is TRUE under the total
+    // order — the assertion holds rather than being vacuous.
+    return expect_pass(test.assert_ge(nan_f64(), 1.0));
+}
+
+function test_sorted_asc_nan_middle_fails(): test.TestOutcome {
+    return expect_fail_containing(
+        test.assert_sorted_asc([3.0, nan_f64(), 1.0]),
+        "assert_sorted_asc");
+}
+
+function test_sorted_asc_nan_last_passes(): test.TestOutcome {
+    // The order NaN actually has: after every number.
+    return expect_pass(test.assert_sorted_asc([1.0, 3.0, nan_f64()]));
+}
+
+function test_unique_two_nans_fails(): test.TestOutcome {
+    return expect_fail_containing(
+        test.assert_unique([nan_f64(), nan_f64()]),
+        "assert_unique");
+}
+
+function test_unique_one_nan_passes(): test.TestOutcome {
+    return expect_pass(test.assert_unique([1.0, nan_f64(), 2.0]));
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("runner self-test");
     r = r.it("assert_true pass", test_assert_true_pass);
@@ -412,5 +469,14 @@ function main(): i32 {
     r = r.it("unused subsuite handle still counts", test_unused_subsuite_handle_still_counts);
     r = r.it("finish() exits 1 for a dropped result",
              test_finish_exits_nonzero_for_dropped_result);
+    r = r.it("assert_le rejects a NaN actual", test_le_nan_fails);
+    r = r.it("assert_le holds against a NaN bound", test_le_nan_bound_passes);
+    r = r.it("assert_le still passes on numbers", test_le_pass_still_passes);
+    r = r.it("assert_ge rejects a NaN bound", test_ge_nan_fails);
+    r = r.it("assert_ge holds for a NaN actual", test_ge_nan_lhs_passes);
+    r = r.it("assert_sorted_asc rejects a NaN inversion", test_sorted_asc_nan_middle_fails);
+    r = r.it("assert_sorted_asc accepts NaN last", test_sorted_asc_nan_last_passes);
+    r = r.it("assert_unique rejects two NaNs", test_unique_two_nans_fails);
+    r = r.it("assert_unique accepts one NaN", test_unique_one_nan_passes);
     return r.finish();
 }
