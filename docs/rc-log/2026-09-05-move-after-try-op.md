@@ -39,3 +39,36 @@ drift apart". That would have been wrong in the other direction: `stmtDiverges`
 is consulted for statements that always leave, and a `?` that takes its Ok arm
 falls through. Reading a MAY predicate and a MUST predicate as the same
 question is how the blind spot reads symmetrical when it is not.
+
+## Self-host mirror (2026-09-06)
+
+`rc_ml_stmt_has_return` had the same blind spot from the other side: it walked
+statement kinds only, so a `?` — which the parser desugars to the unary
+`try_`, an expression — was invisible to it, while the loop-body gate two
+functions down (`rc_ml_stmt_has_early_exit`) already looked inside expressions
+for exactly that operator. The two were one question with one flag's
+difference — whether `break` / `continue` count — and are now
+`rc_ml_stmt_exits(st, loop_jumps)`; the top-level scan asks it with
+`loop_jumps` false, matching native's `stmtCanLeaveFunction` /
+`stmtHasEarlyExit` pair.
+
+The wrong verdict was inert at runtime: the self-host's exit sweep skips
+`moved_elided` (the slots whose retain the emitter actually dropped), not
+`moved_names`, and the bare-alias emitter does not elide from the table, so
+the Err path released the local anyway. What diverged was the `-rc-plan`
+`movedLocals` line, which `TestSelfHostRcPlanDiff` now pins for both the
+after-`?` and before-`?` placements.
+
+## Not this bug: the operand stack at the `?` edge
+
+A move in the SAME statement as the `?` — `Pair { a: x, b: g(c)? }`,
+`h(x, g(c)?)` with `h` taking `own` — still leaks on Err, and so does the
+same statement with a plain temporary and no move at all
+(`Pair { a: [1, 2, 3], b: g(c)? }`): identical `allocs=3 frees=1` with 64
+bytes live on x86-64 and arm64, 48 on wasm, and 48 B/round on the self-host.
+The `?` lowering sweeps named locals; whatever the enclosing expression has
+already pushed for its consumer — the pending field value or argument, and
+the struct box — is abandoned on the failure edge. A moved reference on that
+stack would be released by a stack-aware exit exactly like an unmoved one,
+so refusing the claim would add an inc/dec pair and fix nothing. #8719
+tracks it; the analysis is not the place.

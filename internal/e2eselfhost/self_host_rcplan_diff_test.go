@@ -1415,6 +1415,49 @@ function main(): i32 { var k: string = "abcdefghij"; return f(k); }`,
 				},
 			},
 		},
+		{
+			// A `?` leaves the function on its Err arm, so a bare-ident alias
+			// placed textually AFTER one no longer dominates every exit and
+			// must not be claimed as a move: the Err path's sweep skips moved
+			// locals (#8442). The self-host's scan stopped only at a `return`,
+			// and the `?` is an expression it never looked inside. The control
+			// moves BEFORE the `?` and keeps its claim on both sides, so a scan
+			// that refused every function containing a `?` would not pass.
+			name: "move-after-try-op",
+			src: `function g(c: i32): Result[i32, i32] {
+	if (c == 0) { return Err(7); }
+	return Ok(c * 2);
+}
+function after(c: i32): Result[i32, i32] {
+	var x: i32[] = [1, 2, 3];
+	var r: i32 = g(c)?;
+	var y: i32[] = x;
+	return Ok(y[0] + r);
+}
+function before(c: i32): Result[i32, i32] {
+	var x: i32[] = [1, 2, 3];
+	var y: i32[] = x;
+	var r: i32 = g(c)?;
+	return Ok(y[0] + r);
+}
+function main(): i32 {
+	var acc: i32 = 0;
+	match (after(0)) { Ok(v) => { acc = acc + v; }, Err(e) => { acc = acc + e; } }
+	match (before(3)) { Ok(v) => { acc = acc + v; }, Err(e) => { acc = acc + e; } }
+	return acc;
+}`,
+			anchor: map[string]map[string]string{
+				"after":  {"movedLocals": ""},
+				"before": {"movedLocals": "x"},
+			},
+			// With the move refused, `x` is a retained alias source whose
+			// last use is the alias: native precise-drops it there, the
+			// self-host leaves it to the sweep (the known placement class
+			// dead-alias-source-reassigned-excluded pins).
+			diverge: map[string]map[string]divergence{
+				"after": {"preciseDrops": {native: "2=x", selfhost: ""}},
+			},
+		},
 	}
 
 	for _, tc := range cases {

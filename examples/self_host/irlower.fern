@@ -66508,28 +66508,6 @@ function rc_ml_count_in_stmts(stmts: ast.Stmt[], name: string): i32 {
     return n;
 }
 
-// rc_ml_stmt_has_return: the statement contains a `return` anywhere (native's
-// stmtContainsReturn) — the moved-site scan stops at the first such statement.
-function rc_ml_stmt_has_return(st: ast.Stmt): boolean {
-    match (st) {
-        ast.StmtReturn(_) => { return true; },
-        ast.StmtIf(f) => { return rc_ml_stmts_have_return(f.then_body) || rc_ml_stmts_have_return(f.else_body); },
-        ast.StmtWhile(w) => { return rc_ml_stmts_have_return(w.body); },
-        ast.StmtFor(fr) => { return rc_ml_stmts_have_return(fr.body); },
-        ast.StmtMatch(m) => {
-            for arm in m.arms { if (rc_ml_stmts_have_return(arm.body)) { return true; } }
-            return false;
-        },
-        _ => { return false; }
-    }
-    return false;
-}
-
-function rc_ml_stmts_have_return(stmts: ast.Stmt[]): boolean {
-    for stmt in stmts { if (rc_ml_stmt_has_return(stmt)) { return true; } }
-    return false;
-}
-
 // rc_ml_owned_rc_local: `name` is a declared LOCAL (params excluded — native
 // isOwnedRcLocal reads info.Locals) whose type carries an rc box: array /
 // user struct / enum / tuple / string. (Closures are excluded — scoping cut.)
@@ -66641,89 +66619,92 @@ function rc_ml_move_ok(name: string, allow: string[], restrict: boolean): boolea
     return util.index_of_str(allow, name) >= 0;
 }
 
-// rc_ml_expr_has_try: a `?` anywhere in `e`. The parser desugars `expr?` to the
-// unary op `try_`, so the operator is an EXPRESSION and a scan over statement
-// kinds alone cannot see it — which is what let a `?` sit between an element's
-// declaration and its push unnoticed.
-function rc_ml_expr_has_try(e: ast.Expr): boolean {
+// rc_ml_expr_exits: a `?` anywhere in `e`, or — inside a lambda body — any
+// statement rc_ml_stmt_exits counts. The parser desugars `expr?` to the unary
+// op `try_`, so the operator is an EXPRESSION and a scan over statement kinds
+// alone cannot see it: that is what let a `?` sit between an element's
+// declaration and its push unnoticed, and what let one sit before a top-level
+// alias while the moved-locals scan claimed the alias for every exit (#8442).
+function rc_ml_expr_exits(e: ast.Expr, loop_jumps: boolean): boolean {
     match (e) {
-        ast.ExprUnary(u) => { return u.op == "try_" || rc_ml_expr_has_try(u.operand); },
-        ast.ExprBinary(b) => { return rc_ml_expr_has_try(b.left) || rc_ml_expr_has_try(b.right); },
+        ast.ExprUnary(u) => { return u.op == "try_" || rc_ml_expr_exits(u.operand, loop_jumps); },
+        ast.ExprBinary(b) => { return rc_ml_expr_exits(b.left, loop_jumps) || rc_ml_expr_exits(b.right, loop_jumps); },
         ast.ExprCall(c) => {
-            if (rc_ml_expr_has_try(c.callee)) { return true; }
-            for arg in c.args { if (rc_ml_expr_has_try(arg)) { return true; } }
+            if (rc_ml_expr_exits(c.callee, loop_jumps)) { return true; }
+            for arg in c.args { if (rc_ml_expr_exits(arg, loop_jumps)) { return true; } }
             return false;
         },
         ast.ExprArray(a) => {
             var i: i32 = 0;
-            while (i < a.elements.len()) { if (rc_ml_expr_has_try(a.elements[i])) { return true; } i = i + 1; }
+            while (i < a.elements.len()) { if (rc_ml_expr_exits(a.elements[i], loop_jumps)) { return true; } i = i + 1; }
             return false;
         },
         ast.ExprTuple(t) => {
-            for el in t.elements { if (rc_ml_expr_has_try(el)) { return true; } }
+            for el in t.elements { if (rc_ml_expr_exits(el, loop_jumps)) { return true; } }
             return false;
         },
-        ast.ExprIndex(ix) => { return rc_ml_expr_has_try(ix.array) || rc_ml_expr_has_try(ix.index); },
-        ast.ExprSlice(sl) => { return rc_ml_expr_has_try(sl.array) || rc_ml_expr_has_try(sl.start) || rc_ml_expr_has_try(sl.end); },
-        ast.ExprFieldAccess(fa) => { return rc_ml_expr_has_try(fa.obj); },
+        ast.ExprIndex(ix) => { return rc_ml_expr_exits(ix.array, loop_jumps) || rc_ml_expr_exits(ix.index, loop_jumps); },
+        ast.ExprSlice(sl) => { return rc_ml_expr_exits(sl.array, loop_jumps) || rc_ml_expr_exits(sl.start, loop_jumps) || rc_ml_expr_exits(sl.end, loop_jumps); },
+        ast.ExprFieldAccess(fa) => { return rc_ml_expr_exits(fa.obj, loop_jumps); },
         ast.ExprStructLit(s) => {
-            if (s.has_base && rc_ml_expr_has_try(s.base)) { return true; }
+            if (s.has_base && rc_ml_expr_exits(s.base, loop_jumps)) { return true; }
             var i: i32 = 0;
-            while (i < s.field_values.len()) { if (rc_ml_expr_has_try(s.field_values[i])) { return true; } i = i + 1; }
+            while (i < s.field_values.len()) { if (rc_ml_expr_exits(s.field_values[i], loop_jumps)) { return true; } i = i + 1; }
             return false;
         },
         ast.ExprMapLit(ml) => {
             var i: i32 = 0;
-            while (i < ml.keys.len()) { if (rc_ml_expr_has_try(ml.keys[i])) { return true; } i = i + 1; }
+            while (i < ml.keys.len()) { if (rc_ml_expr_exits(ml.keys[i], loop_jumps)) { return true; } i = i + 1; }
             var j: i32 = 0;
-            while (j < ml.vals.len()) { if (rc_ml_expr_has_try(ml.vals[j])) { return true; } j = j + 1; }
+            while (j < ml.vals.len()) { if (rc_ml_expr_exits(ml.vals[j], loop_jumps)) { return true; } j = j + 1; }
             return false;
         },
         ast.ExprFString(fs) => {
             var i: i32 = 0;
-            while (i < fs.exprs.len()) { if (rc_ml_expr_has_try(fs.exprs[i])) { return true; } i = i + 1; }
+            while (i < fs.exprs.len()) { if (rc_ml_expr_exits(fs.exprs[i], loop_jumps)) { return true; } i = i + 1; }
             return false;
         },
-        ast.ExprLambda(lm) => { return rc_ml_stmts_have_early_exit(lm.body); },
+        ast.ExprLambda(lm) => { return rc_ml_stmts_exit(lm.body, loop_jumps); },
         _ => { return false; }
     }
 }
 
-// rc_ml_stmt_has_early_exit: can `st` leave the enclosing loop body early — a
-// `return` / `break` / `continue`, or a `?`, which returns the failure variant
-// from the enclosing function and so exits the body exactly as `return` does.
-// Native stmtHasEarlyExit.
+// rc_ml_stmt_exits: can `st` leave the enclosing body early. With loop_jumps
+// false it asks native stmtCanLeaveFunction's question — a `return`, or a `?`,
+// which returns the failure variant from the enclosing function; with it true,
+// native stmtHasEarlyExit's, where `break` and `continue` count too, since a
+// loop body ends at either. Both are MAY questions: a `?` leaves only on Err.
 //
 // Coarse in two directions, both of which only forgo a move: a `break`
 // belonging to a nested loop counts, and so does a `return` inside a nested
 // lambda.
-function rc_ml_stmt_has_early_exit(st: ast.Stmt): boolean {
+function rc_ml_stmt_exits(st: ast.Stmt, loop_jumps: boolean): boolean {
     match (st) {
         ast.StmtReturn(_) => { return true; },
-        ast.StmtBreak(_) => { return true; },
-        ast.StmtContinue(_) => { return true; },
-        ast.StmtVar(v) => { return rc_ml_expr_has_try(v.init); },
-        ast.StmtAssign(a) => { return rc_ml_expr_has_try(a.value); },
-        ast.StmtExpr(e) => { return rc_ml_expr_has_try(e.value); },
-        ast.StmtIf(f) => { return rc_ml_expr_has_try(f.cond) || rc_ml_stmts_have_early_exit(f.then_body) || rc_ml_stmts_have_early_exit(f.else_body); },
-        ast.StmtWhile(w) => { return rc_ml_expr_has_try(w.cond) || rc_ml_stmts_have_early_exit(w.body); },
-        ast.StmtFor(fo) => { return rc_ml_expr_has_try(fo.iter) || rc_ml_stmts_have_early_exit(fo.body); },
+        ast.StmtBreak(_) => { return loop_jumps; },
+        ast.StmtContinue(_) => { return loop_jumps; },
+        ast.StmtVar(v) => { return rc_ml_expr_exits(v.init, loop_jumps); },
+        ast.StmtAssign(a) => { return rc_ml_expr_exits(a.value, loop_jumps); },
+        ast.StmtExpr(e) => { return rc_ml_expr_exits(e.value, loop_jumps); },
+        ast.StmtIf(f) => { return rc_ml_expr_exits(f.cond, loop_jumps) || rc_ml_stmts_exit(f.then_body, loop_jumps) || rc_ml_stmts_exit(f.else_body, loop_jumps); },
+        ast.StmtWhile(w) => { return rc_ml_expr_exits(w.cond, loop_jumps) || rc_ml_stmts_exit(w.body, loop_jumps); },
+        ast.StmtFor(fo) => { return rc_ml_expr_exits(fo.iter, loop_jumps) || rc_ml_stmts_exit(fo.body, loop_jumps); },
         ast.StmtMatch(m) => {
-            if (rc_ml_expr_has_try(m.scrutinee)) { return true; }
+            if (rc_ml_expr_exits(m.scrutinee, loop_jumps)) { return true; }
             for arm in m.arms {
-                if (arm.has_guard && rc_ml_expr_has_try(arm.guard)) { return true; }
-                if (rc_ml_stmts_have_early_exit(arm.body)) { return true; }
+                if (arm.has_guard && rc_ml_expr_exits(arm.guard, loop_jumps)) { return true; }
+                if (rc_ml_stmts_exit(arm.body, loop_jumps)) { return true; }
             }
             return false;
         },
-        ast.StmtDefer(d) => { return rc_ml_stmt_has_early_exit(d.action); },
+        ast.StmtDefer(d) => { return rc_ml_stmt_exits(d.action, loop_jumps); },
         _ => { return false; }
     }
 }
 
-function rc_ml_stmts_have_early_exit(stmts: ast.Stmt[]): boolean {
+function rc_ml_stmts_exit(stmts: ast.Stmt[], loop_jumps: boolean): boolean {
     for stmt in stmts {
-        if (rc_ml_stmt_has_early_exit(stmt)) { return true; }
+        if (rc_ml_stmt_exits(stmt, loop_jumps)) { return true; }
     }
     return false;
 }
@@ -66980,7 +66961,7 @@ function rc_ml_one_loop_body(blk: ast.Stmt[], fn: parser.FuncDecl, types_n: stri
             },
             _ => {}
         }
-        if (rc_ml_stmt_has_early_exit(blk[i])) { exits = exits + 1; }
+        if (rc_ml_stmt_exits(blk[i], true)) { exits = exits + 1; }
         i = i + 1;
     }
     return out;
@@ -67009,10 +66990,10 @@ function rc_ml_compute_toplevel(fn: parser.FuncDecl, structs: StructTab): MlOut 
     // locals), so an empty function table is passed — this keeps rc_ml_compute
     // free of the module funcs thread without changing its behaviour.
     st = rc_fe_collect_types(fn.body, st, structs, sig_reg_empty());
-    var saw_return: boolean = false;
+    var saw_exit: boolean = false;
     var k: i32 = 0;
     while (k < fn.body.len()) {
-        if (!saw_return) {
+        if (!saw_exit) {
             match (fn.body[k]) {
                 ast.StmtVar(v) => {
                     match (v.init) {
@@ -67047,7 +67028,7 @@ function rc_ml_compute_toplevel(fn: parser.FuncDecl, structs: StructTab): MlOut 
                 _ => {}
             }
         }
-        if (rc_ml_stmt_has_return(fn.body[k])) { saw_return = true; }
+        if (rc_ml_stmt_exits(fn.body[k], false)) { saw_exit = true; }
         k = k + 1;
     }
     return moved;
