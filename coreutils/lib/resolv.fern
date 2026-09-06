@@ -365,15 +365,24 @@ function host_domain(host: string): string[] {
   return out.append(slice_unchecked(host, dot + 1, host.len()) + "");
 }
 
-// `search_candidates(name, rc)` — the names glibc's res_search asks for,
-// in order. A name ending in a dot is asked for as it is and nothing
-// else. Otherwise a name with at least `ndots` dots is tried as it is
-// first and then under each search domain; one with fewer goes through
-// the search domains first and is tried as it is last.
-pub function search_candidates(name: string, rc: ResolvConf): string[] {
-  var out: string[] = [];
+// `SearchPlan` — the three pieces __res_context_search works in, which
+// are NOT interchangeable with a flat candidate list. `as_is` is the name
+// as it stands, `suffixes` the search-list names, and `leads` says whether
+// the as-is query runs BEFORE the suffixes (glibc's `tried_as_is`) or is
+// the retry after them. Which of the two it is decides both whether that
+// retry happens at all and whose status is reported, so a search cannot
+// be driven from the order alone.
+pub struct SearchPlan { as_is: string, suffixes: string[], leads: boolean }
+
+// `search_plan(name, rc)` — res_search's plan for `name`. A name ending
+// in a dot is asked for as it stands and nothing else. Otherwise a name
+// with at least `ndots` dots leads with the as-is query and then tries
+// each search domain; one with fewer tries the search domains first and
+// the as-is name after them.
+pub function search_plan(name: string, rc: ResolvConf): SearchPlan {
+  var none: string[] = [];
   if (name.ends_with(".")) {
-    return out.append(slice_unchecked(name, 0, name.len() - 1) + "");
+    return SearchPlan { as_is: slice_unchecked(name, 0, name.len() - 1) + "", suffixes: none, leads: true };
   }
   var dots: i32 = 0;
   var i: i32 = 0;
@@ -383,16 +392,30 @@ pub function search_candidates(name: string, rc: ResolvConf): string[] {
     }
     i = i + 1;
   }
-  if (dots >= rc.ndots) {
-    out = out.append(name);
-  }
+  var sfx: string[] = [];
   var j: i32 = 0;
   while (j < rc.search.len()) {
-    out = out.append(name + "." + rc.search[j]);
+    sfx = sfx.append(name + "." + rc.search[j]);
     j = j + 1;
   }
-  if (dots < rc.ndots) {
-    out = out.append(name);
+  return SearchPlan { as_is: name, suffixes: sfx, leads: dots >= rc.ndots };
+}
+
+// `search_candidates(name, rc)` — the plan flattened into the order the
+// names are asked in, for reading and for the order test.
+pub function search_candidates(name: string, rc: ResolvConf): string[] {
+  var p: SearchPlan = search_plan(name, rc);
+  var out: string[] = [];
+  if (p.leads) {
+    out = out.append(p.as_is);
+  }
+  var j: i32 = 0;
+  while (j < p.suffixes.len()) {
+    out = out.append(p.suffixes[j]);
+    j = j + 1;
+  }
+  if (!p.leads) {
+    out = out.append(p.as_is);
   }
   return out;
 }
@@ -561,38 +584,55 @@ function read_framed(c: i32): u8[] {
 }
 
 // `dns_lookup(rc, name)` — glibc's res_search over the nameservers: each
-// candidate name is put to the servers in order until one answers, and an
-// address or NXDOMAIN from any server is final for that candidate.
-//
-// How a candidate's failure ends the search is __res_context_search's,
-// which reacts to three cases rather than one:
-//
-//   - a SERVFAIL rcode records itself and moves to the NEXT candidate, so
-//     one broken zone does not hide a name the search list would reach;
-//   - a refused connection returns at once, trying nothing further;
-//   - any other failure — a timeout, a malformed reply — ends the search
-//     LIST but still asks the bare name, which is the tail of `cands`
-//     exactly when glibc's post-loop as-is retry would fire (the bare name
-//     leads instead when ndots is already satisfied, and is then the
-//     candidate that failed).
-//
-// Only an address escapes as SUCCESS; the failures collapse back to the
-// three NSS statuses, with a recorded SERVFAIL reported as UNAVAIL the way
-// glibc reports its TRY_AGAIN.
+// name is put to the servers in order until one answers, and an address
+// from any server ends the search.
 pub function dns_lookup(rc: ResolvConf, name: string): (i32, i32) {
-  return dns_search(search_candidates(name, rc), (q: string): (i32, i32) => dns_lookup_one(rc, q));
+  return dns_search(search_plan(name, rc), (q: string): (i32, i32) => dns_lookup_one(rc, q));
 }
 
-// The loop above, over an `ask` that answers one candidate. Separated so
-// the policy can be driven with scripted answers rather than a nameserver:
-// which candidate is asked next is as much of the behaviour as what is
-// returned, and only a stub can see that.
-pub function dns_search(cands: string[], ask: (string) => (i32, i32)): (i32, i32) {
-  var last: i32 = cands.len() - 1;
+// `dns_search(plan, ask)` — __res_context_search over an `ask` that
+// answers one name. Separated from the nameserver so it can be driven
+// with scripted answers: WHICH name is asked next is as much of the
+// behaviour as what comes back, and only a stub can see that.
+//
+// The as-is query is not one candidate among the others, and treating it
+// as one gets two things wrong. It sits OUTSIDE the loop's stop rules —
+// however it fails, the search list is still tried — and its status is
+// SAVED and reported in preference to anything the suffixes produce, so
+// an as-is NXDOMAIN reports NOTFOUND even when a later suffix hit a
+// SERVFAIL. When it leads, there is no retry afterwards; when it trails,
+// it is the retry, and it runs whether the suffix loop finished or was
+// cut short.
+//
+// Inside the suffix loop, three failures read differently:
+//
+//   - a SERVFAIL rcode records itself and moves to the NEXT suffix, so
+//     one broken zone does not hide a name a later suffix would reach;
+//   - a refused connection returns at once, before any saved status is
+//     consulted, and nothing further is asked;
+//   - NXDOMAIN moves on; anything else — a timeout, a malformed reply —
+//     ends the loop.
+//
+// Only an address escapes as SUCCESS. The failures collapse to the three
+// NSS statuses, a recorded SERVFAIL reporting as UNAVAIL the way glibc
+// reports its TRY_AGAIN.
+pub function dns_search(plan: SearchPlan, ask: (string) => (i32, i32)): (i32, i32) {
+  var saved: i32 = 0 - 1;
+  if (plan.leads) {
+    var lead: (i32, i32) = ask(plan.as_is);
+    if (lead.0 == success()) {
+      return lead;
+    }
+    if (lead.0 == refused()) {
+      return (unavail(), 0);
+    }
+    saved = lead.0;
+  }
   var got_servfail: boolean = false;
+  var last: i32 = notfound();
   var i: i32 = 0;
-  while (i < cands.len()) {
-    var r: (i32, i32) = ask(cands[i]);
+  while (i < plan.suffixes.len()) {
+    var r: (i32, i32) = ask(plan.suffixes[i]);
     if (r.0 == success()) {
       return r;
     }
@@ -601,28 +641,39 @@ pub function dns_search(cands: string[], ask: (string) => (i32, i32)): (i32, i32
     }
     if (r.0 == servfail()) {
       got_servfail = true;
-    } else if (r.0 == unavail()) {
-      if (i == last) {
-        break;
+    } else {
+      last = r.0;
+      if (r.0 != notfound()) {
+        i = plan.suffixes.len();
       }
-      var bare: (i32, i32) = ask(cands[last]);
-      if (bare.0 == success()) {
-        return bare;
-      }
-      if (bare.0 == notfound() && !got_servfail) {
-        return (notfound(), 0);
-      }
-      return (unavail(), 0);
     }
     i = i + 1;
+  }
+  if (!plan.leads) {
+    var bare: (i32, i32) = ask(plan.as_is);
+    if (bare.0 == success()) {
+      return bare;
+    }
+    if (bare.0 == refused()) {
+      return (unavail(), 0);
+    }
+    last = bare.0;
+  }
+  if (saved >= 0) {
+    return (nss_status(saved), 0);
   }
   if (got_servfail) {
     return (unavail(), 0);
   }
-  if (i < cands.len()) {
-    return (unavail(), 0);
+  return (nss_status(last), 0);
+}
+
+// The DNS leg's two extra statuses collapsed back to the three NSS ones.
+function nss_status(s: i32): i32 {
+  if (s == success() || s == notfound()) {
+    return s;
   }
-  return (notfound(), 0);
+  return unavail();
 }
 
 // One candidate against every nameserver in order. A server that answers
