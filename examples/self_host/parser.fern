@@ -14867,6 +14867,59 @@ pub function default_nonconst_reason(e: ast.Expr): (string, boolean) {
     return ("is not a constant expression", true);
 }
 
+// fda_const_value is the value expression of the top-level const `name`, with
+// ok false when the module declares no such const.
+function fda_const_value(name: string, funcs: FuncDecl[]): (ast.Expr, boolean) {
+    for fd in funcs {
+        if (fd.is_const && fd.receiver_type.len() == 0 && fd.name == name && fd.body.len() == 1) {
+            match (fd.body[0]) {
+                ast.StmtReturn(r) => { return (r.value, true); },
+                _ => {}
+            }
+        }
+    }
+    return (ast.ExprBool { value: false }, false);
+}
+
+// fda_fold_consts substitutes every top-level const a default names with the
+// const's value, as native's constfold does ahead of Fill, so `= LIMIT`
+// reaches the E076 whitelist and the call site as the literal it stands for
+// rather than as a name the caller's scope resolves. Only the shapes the
+// whitelist admits are entered; a const naming another const is followed to a
+// bounded depth, past which the name is left for E076 to refuse.
+function fda_fold_consts(e: ast.Expr, funcs: FuncDecl[], depth: i32): ast.Expr {
+    if (depth > 16) { return e; }
+    match (e) {
+        ast.ExprIdent(id) => {
+            var (v, ok) = fda_const_value(id.name, funcs);
+            if (ok) { return fda_fold_consts(v, funcs, depth + 1); }
+            return e;
+        },
+        ast.ExprUnary(u) => { return ast.ExprUnary { ...u, operand: fda_fold_consts(u.operand, funcs, depth) }; },
+        ast.ExprBinary(b) => { return ast.ExprBinary { ...b, left: fda_fold_consts(b.left, funcs, depth), right: fda_fold_consts(b.right, funcs, depth) }; },
+        _ => { return e; }
+    }
+    return e;
+}
+
+// fda_fold_default_consts is fda_fold_consts over every parameter default in
+// the module.
+function fda_fold_default_consts(mod: Module): Module {
+    var funcs: FuncDecl[] = [];
+    for fd in mod.funcs {
+        var params: ast.ParamDecl[] = [];
+        for param in fd.params {
+            if (param.has_default) {
+                params = params.append(ast.ParamDecl { ...param, default_value: fda_fold_consts(param.default_value, mod.funcs, 0) });
+            } else {
+                params = params.append(param);
+            }
+        }
+        funcs = funcs.append(FuncDecl { ...fd, params: params });
+    }
+    return Module { ...mod, funcs: funcs };
+}
+
 // fda_decl_diags is E076 for every parameter default that is not a constant
 // expression, reported at the declaration, where the author can act on it.
 function fda_decl_diags(mod: Module): util.Diag[] {
@@ -14983,17 +15036,26 @@ function fda_call_diags(mod: Module): util.Diag[] {
     return acc.diags;
 }
 
-// fill_default_args_with_diags is native Fill: the E076 declaration check
-// first, and a module holding one is returned as written — a default carrying
-// a free name must not be pasted anywhere; then every call's named arguments
-// reordered and its omitted trailing defaults filled, with the calls that do
-// not resolve left as written and named by their diagnostic.
-pub function fill_default_args_with_diags(mod: Module): (Module, util.Diag[]) {
-    var decl_diags: util.Diag[] = fda_decl_diags(mod);
-    if (decl_diags.len() > 0) { return (mod, decl_diags); }
+// fill_default_args_with_diags is native constfold-then-Fill over parameter
+// defaults: every top-level const a default names is replaced by its value,
+// then the E076 declaration check runs, and a module holding one is returned
+// as written — a default carrying a free name must not be pasted anywhere;
+// then every call's named arguments are reordered and its omitted trailing
+// defaults filled, with the calls that do not resolve left as written and
+// named by their diagnostic.
+pub function fill_default_args_with_diags(raw: Module): (Module, util.Diag[]) {
     var none: util.Diag[] = [];
-    if (!module_has_default_params(mod) && !module_has_named_args(mod)) { return (mod, none); }
-    var call_diags: util.Diag[] = fda_call_diags(mod);
+    if (!module_has_default_params(raw)) {
+        if (!module_has_named_args(raw)) { return (raw, none); }
+        return (fda_fill(raw), fda_call_diags(raw));
+    }
+    var mod: Module = fda_fold_default_consts(raw);
+    var decl_diags: util.Diag[] = fda_decl_diags(mod);
+    if (decl_diags.len() > 0) { return (raw, decl_diags); }
+    return (fda_fill(mod), fda_call_diags(mod));
+}
+
+function fda_fill(mod: Module): Module {
     var funcs: FuncDecl[] = [];
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
@@ -15001,7 +15063,7 @@ pub function fill_default_args_with_diags(mod: Module): (Module, util.Diag[]) {
         funcs = funcs.append(FuncDecl { ...fd, body: fda_stmts(fd.body, mod.funcs) });
         i = i + 1;
     }
-    return (Module { ...mod, funcs: funcs, top_stmts: fda_stmts(mod.top_stmts, mod.funcs) }, call_diags);
+    return Module { ...mod, funcs: funcs, top_stmts: fda_stmts(mod.top_stmts, mod.funcs) };
 }
 
 pub function fill_default_args_module(mod: Module): Module {

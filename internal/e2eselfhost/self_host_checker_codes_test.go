@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/jakechampion/lang/internal/checker"
+	"github.com/jakechampion/lang/internal/constfold"
 	"github.com/jakechampion/lang/internal/diag"
 	"github.com/jakechampion/lang/internal/modload"
 )
@@ -32,7 +33,12 @@ func goCheckerCodes(t *testing.T, dir, src string) []string {
 		// A parse/load failure isn't a checker code; treat as none.
 		return nil
 	}
-	_, err = checker.Check(prog)
+	// `fern -check` folds top-level consts ahead of the checker, and a
+	// parameter default naming one is folded with them (E076 otherwise
+	// refuses the name as a free one), so the oracle folds too.
+	if err = constfold.Fold(prog, nil); err == nil {
+		_, err = checker.Check(prog)
+	}
 	if err == nil {
 		return nil
 	}
@@ -1745,6 +1751,14 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"default-arithmetic-ok", "function scale(x: i32, factor: i32 = 2 * 3): i32 { return x * factor; }\nfunction main(): i32 { return scale(1); }\n", nil},
 		{"default-negative-ok", "function off(x: i32, delta: i32 = -1): i32 { return x + delta; }\nfunction main(): i32 { return off(1); }\n", nil},
 		{"default-two-one-supplied-ok", "function f(a: i32, b: i32 = 2, c: i32 = 3): i32 { return a + b + c; }\nfunction main(): i32 { return f(1); }\n", nil},
+		// A default may name a top-level const: both compilers fold consts
+		// into defaults ahead of the E076 check, so the name never reaches
+		// the whitelist, and never reaches a call site where a caller local
+		// of the same name would capture it.
+		{"default-names-const-ok", "const LIMIT: i32 = 128;\nfunction listen(port: i32, backlog: i32 = LIMIT): i32 { return port + backlog; }\nfunction main(): i32 { return listen(80); }\n", nil},
+		{"default-names-const-caller-shadows-ok", "const LIMIT: i32 = 128;\nfunction listen(port: i32, backlog: i32 = LIMIT): i32 { return port + backlog; }\nfunction main(): i32 { var LIMIT: i32 = 1; return listen(80) + LIMIT; }\n", nil},
+		{"default-const-of-const-in-arithmetic-ok", "const LIMIT: i32 = 128;\nconst STEP: i32 = LIMIT / 2;\nfunction advance(n: i32, by: i32 = STEP + 1): i32 { return n + by; }\nfunction main(): i32 { return advance(1); }\n", nil},
+		{"default-names-string-const-ok", "const GREETING: string = \"hello\";\nfunction greet(name: string, greeting: string = GREETING): string { return greeting + name; }\nfunction main(): i32 { var s: string = greet(\"x\"); return s.len(); }\n", nil},
 		// E077: named arguments that do not resolve — a callee that is not a
 		// named free function, a positional after a named one, a name no
 		// parameter has, a parameter given twice — and E004 for a required
