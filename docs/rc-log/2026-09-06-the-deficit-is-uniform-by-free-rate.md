@@ -67,3 +67,50 @@ Both sides remain EXIT-LIVE sets, so a phase whose output outlives it (the
 lexer's tokens, the IR) legitimately retains. That is exactly why the rate
 comparison against native is the number to read: it holds that confound fixed on
 both sides.
+
+## Calibrating the two instruments against each other
+
+The trace and `FERN_LEAKCHECK` disagree by exactly one thing:
+
+| | bytes |
+|---|--:|
+| trace `live_bytes` | 272,733,408 |
+| leakcheck `live_bytes` | 264,410,336 |
+| difference | **8,323,072** |
+
+The five `__fern_strbuf_grow` survivor rows sum to 4,194,304 + 2,490,368 +
+1,048,576 + 524,288 + 65,536 = **8,323,072**. Exact.
+
+The emitted `__fern_strbuf_grow` un-counts itself:
+
+```
+call __fern_alloc
+movq __fern_lc_alloc_count(%rip), %rcx
+subq $1, %rcx                     # un-count this allocation
+movq __fern_lc_alloc_bytes(%rip), %rcx
+subq %r12, %rcx                   # un-count these bytes
+```
+
+so leakcheck excludes the string builder deliberately and the rctrace hook does
+not. Both are right; they agree once that is known. Anything quoting figures
+from both — as this investigation has throughout — should say which.
+
+The strbuf buffers ARE leaked: `strbuf_grow` allocates the new buffer, copies,
+and never frees the old, which is why the survivor set holds the doubling
+sequence 64 KB / 512 KB / 1 MB / 2.5 MB / 4 MB. It is bounded — log-many
+generations, about 2x the final buffer — which is presumably why it is excluded
+rather than fixed. Worth stating explicitly because at 8.3 MB in SEVEN blocks it
+is the largest per-block retention in the trace and reads as a prize until the
+un-counting is seen.
+
+### What that corrects
+
+The `asmcore` byte total quoted from this trace, 17.09 MB across 82 sites,
+includes that 8.3 MB. By leakcheck's accounting `asmcore` retains about 8.8 MB —
+mostly `add_string_lit` (3.67 MB in 448 blocks via `arr_slice`, 3.30 MB in 906
+via the owned-append path) and a long tail.
+
+The per-phase RATE table above is unaffected: seven blocks out of `asmcore`'s
+35,259 allocations does not move 31.4%. Only the byte totals were inflated, and
+only for `asmcore`. It stays the sharpest small case — native reclaims 100% of
+the same source — but the target inside it is `add_string_lit`, not the builder.
