@@ -114,11 +114,14 @@ pub function (w: BytesWriter) reset(): BytesWriter {
 // with `.error()` — the C stdio contract, where a failed flush is
 // found at the next write or at close.
 //
-// The buffer is grown INSIDE the struct literal (`{ ...b, buf: b.buf
-// + s }`) on purpose: that is the shape the IR grows in place when the
-// writer is the sole owner. Reading the field into a local first
-// shares the buffer between the local and the field, and every append
-// then copies the whole buffer — quadratic.
+// The buffer does NOT grow in place: `{ ...b, buf: b.buf + s }` copies
+// the whole of `buf` on every write, and so does the same append behind
+// any function call — only a bare local appended to inline in the
+// function that owns it grows in place (#8785, with the shapes timed).
+// So a write costs `cap / 2` bytes of memcpy on average, not `s.len()`.
+// It is bounded rather than quadratic because the buffer flushes at
+// `cap`, which is why a caller that writes whole blocks does not notice
+// and one that writes per line pays it per line.
 pub struct BufWriter { w: Writer, buf: string, cap: i32, err: Option[IoError] }
 
 // `buf_writer_new(w, cap)` — buffer `w` with a `cap`-byte threshold.
