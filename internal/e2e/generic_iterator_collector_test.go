@@ -52,7 +52,7 @@ function main(): i32 { var xs = to_array(RangeIter { cur: 0, end: 4 }); var s = 
 struct RangeIter { cur: i32, end: i32 }
 impl Iterator[i32] for RangeIter { function next(self: Self): Option[(i32, Self)] { if (self.cur >= self.end) { return None; } return Some((self.cur, RangeIter { cur: self.cur + 1, end: self.end })); } }
 function fold[T, A, I: Iterator[T]](it: I, init: A, f: (A, T) => A): A { var acc = init; var cur = it; var go = true; while (go) { match (cur.next()) { Some(t) => { acc = f(acc, t.0); cur = t.1; }, None => { go = false; }, } } return acc; }
-function main(): i32 { return fold(RangeIter { cur: 0, end: 5 }, 0, function (a: i32, x: i32): i32 { return a + x; }); }`, 10},
+function main(): i32 { return fold(RangeIter { cur: 0, end: 5 }, 0, (a: i32, x: i32): i32 => { return a + x; }); }`, 10},
 	// nth: index into a generic iterator → Option[T]. nth(0..9, 4) = Some(4).
 	{"nth-i32", `pub trait Iterator[T] { function next(self: Self): Option[(T, Self)]; }
 struct RangeIter { cur: i32, end: i32 }
@@ -113,7 +113,7 @@ const foldCrossTypeProg = `pub trait Iterator[T] { function next(self: Self): Op
 struct RangeIter { cur: i32, end: i32 }
 impl Iterator[i32] for RangeIter { function next(self: Self): Option[(i32, Self)] { if (self.cur >= self.end) { return None; } return Some((self.cur, RangeIter { cur: self.cur + 1, end: self.end })); } }
 function fold[T, A, I: Iterator[T]](it: I, init: A, f: (A, T) => A): A { var acc = init; var cur = it; var go = true; while (go) { match (cur.next()) { Some(t) => { acc = f(acc, t.0); cur = t.1; }, None => { go = false; }, } } return acc; }
-function main(): i32 { if (fold(RangeIter { cur: 0, end: 4 }, true, function (a: boolean, x: i32): boolean { if (x < 10) { return a; } return false; })) { return 5; } return 0; }
+function main(): i32 { if (fold(RangeIter { cur: 0, end: 4 }, true, (a: boolean, x: i32): boolean => { if (x < 10) { return a; } return false; })) { return 5; } return 0; }
 `
 
 // TestNativeGenericFoldCrossType pins the A≠T closure-accumulator fold on the

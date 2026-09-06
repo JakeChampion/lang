@@ -173,7 +173,7 @@ function main(): i32 {
     // A lambda body is part of what the artifact executes, so a gated call
     // inside one counts. Free-variable analysis subtracts a lambda's
     // bindings; this walk descends into it instead.
-    var in_lambda: string = "function main(): i32 { var f: fn(): i32 = function(): i32 { return proc_fork(); }; return f(); }\n";
+    var in_lambda: string = "function main(): i32 { var f: fn(): i32 = (): i32 => { return proc_fork(); }; return f(); }\n";
     if (count(in_lambda, "wasm32-wasi") != 1) { return 50; }
 
     // A call nested in an argument, a condition, or a match arm is still a

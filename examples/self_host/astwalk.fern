@@ -681,7 +681,7 @@ pub function map_stmts_acc[T](stmts: ast.Stmt[], acc: T, visit_stmt: (ast.Stmt, 
 // visited exactly once: map_expr is bottom-up, so an inner lambda is spliced
 // before the outer one, and splice_own never re-enters an expression.
 pub function splice_stmts(stmts: ast.Stmt[], visit: (ast.Stmt) => ast.Stmt[]): ast.Stmt[] {
-    var mapped: ast.Stmt[] = map_stmts(stmts, function(x: ast.Expr): ast.Expr {
+    var mapped: ast.Stmt[] = map_stmts(stmts, (x: ast.Expr): ast.Expr => {
         match (x) {
             ast.ExprLambda(lm) => { return ast.ExprLambda { ...lm, body: splice_own(lm.body, visit) }; },
             _ => { return x; }

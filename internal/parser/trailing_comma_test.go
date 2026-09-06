@@ -37,7 +37,7 @@ function main(): i32 { return f(1, 2); }`},
     return f(1, 2,);
 }`},
 		{"function-keyword lambda parameters", `function main(): i32 {
-    var f: (i32) => i32 = function (a: i32,): i32 { return a; };
+    var f: (i32) => i32 = (a: i32,): i32 => { return a; };
     return f(1,);
 }`},
 		{"type parameters", `function id[T,](x: T): T { return x; }

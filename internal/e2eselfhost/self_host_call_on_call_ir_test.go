@@ -29,19 +29,19 @@ var callOnCallIRCases = []struct {
 	main string
 }{
 	// mk() returns `b -> b+1`; calling it inline with 4 = 5.
-	{"nocap", `function mk(): (i32) => i32 { return function(b: i32): i32 { return b + 1; }; }
+	{"nocap", `function mk(): (i32) => i32 { return (b: i32): i32 => { return b + 1; }; }
 function main(): i32 { return mk()(4); }`},
 	// Result fed into arithmetic: (5*3) + 1 = 16.
-	{"in-expr", `function mk(): (i32) => i32 { return function(b: i32): i32 { return b * 3; }; }
+	{"in-expr", `function mk(): (i32) => i32 { return (b: i32): i32 => { return b * 3; }; }
 function main(): i32 { return mk()(5) + 1; }`},
 	// Two-argument returned lambda, called inline: 5 + 6 = 11.
-	{"two-arg", `function mk(): (i32, i32) => i32 { return function(a: i32, b: i32): i32 { return a + b; }; }
+	{"two-arg", `function mk(): (i32, i32) => i32 { return (a: i32, b: i32): i32 => { return a + b; }; }
 function main(): i32 { return mk()(5, 6); }`},
 	// Returned lambda called inline twice: (4+1) + (10+1) = 16.
-	{"twice", `function mk(): (i32) => i32 { return function(b: i32): i32 { return b + 1; }; }
+	{"twice", `function mk(): (i32) => i32 { return (b: i32): i32 => { return b + 1; }; }
 function main(): i32 { return mk()(4) + mk()(10); }`},
 	// Regression: binding the result first still lowers (4 + 1 = 5).
-	{"bind-regress", `function mk(): (i32) => i32 { return function(b: i32): i32 { return b + 1; }; }
+	{"bind-regress", `function mk(): (i32) => i32 { return (b: i32): i32 => { return b + 1; }; }
 function main(): i32 { var g = mk(); return g(4); }`},
 	// Regression: calling a fn-pointer array element still lowers (4 + 1 = 5).
 	{"fnarr-regress", `function inc(b: i32): i32 { return b + 1; }

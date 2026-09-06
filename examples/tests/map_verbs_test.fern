@@ -106,7 +106,7 @@ function test_update_word_count(): test.TestOutcome {
     var counts: Map[string, i32] = map_new(8);
     var words: string[] = ["a", "b", "a", "c", "a", "b"];
     for w in words {
-        counts = counts.update(w, 0, function (c: i32): i32 { return c + 1; });
+        counts = counts.update(w, 0, (c: i32): i32 => { return c + 1; });
     }
     if (counts.get_or("a", 0) != 3) { return test.fail("count(a) should be 3"); }
     if (counts.get_or("b", 0) != 2) { return test.fail("count(b) should be 2"); }
@@ -116,10 +116,10 @@ function test_update_word_count(): test.TestOutcome {
 function test_update_present_and_absent(): test.TestOutcome {
     var m: Map[i32, i32] = map_new(4);
     // absent: seed from init (100), then apply fn -> 101.
-    m = m.update(1, 100, function (v: i32): i32 { return v + 1; });
+    m = m.update(1, 100, (v: i32): i32 => { return v + 1; });
     if (m.get_or(1, 0) != 101) { return test.fail("absent update should seed from init"); }
     // present: 101 -> 102.
-    m = m.update(1, 100, function (v: i32): i32 { return v + 1; });
+    m = m.update(1, 100, (v: i32): i32 => { return v + 1; });
     return test.assert_eq(m.get_or(1, 0), 102);
 }
 

@@ -400,7 +400,7 @@ func TestUnknownTypeReachesLambdaAnnotations(t *testing.T) {
 		"lambda param":         `function main(): i32 { var f = ((x: Wibble) => 1); return 0; }`,
 		"lambda return":        `function main(): i32 { var f = ((x: i32): Wibble => x); return 0; }`,
 		"lambda param array":   `function main(): i32 { var f = ((x: Wibble[]) => 1); return 0; }`,
-		"function-form lambda": `function main(): i32 { var f = function(x: Wibble): i32 { return 1; }; return 0; }`,
+		"function-form lambda": `function main(): i32 { var f = (x: Wibble): i32 => { return 1; }; return 0; }`,
 		"nested in a lambda":   `function main(): i32 { var f = (() => { var g = ((y: Wibble) => 2); return 1; }); return 0; }`,
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -1554,7 +1554,7 @@ func TestNestedFieldAssignmentRejected(t *testing.T) {
 func TestPointerCaptureWriteBackRejected(t *testing.T) {
 	src := `function main(): i32 {
 		var name: string = "a";
-		var f = function (): i32 {
+		var f = (): i32 => {
 			name = "b";
 			return name.len();
 		};
@@ -1570,8 +1570,8 @@ func TestPointerCaptureWriteBackRejected(t *testing.T) {
 func TestNestedPointerCaptureWriteBackRejected(t *testing.T) {
 	src := `function main(): i32 {
 		var acc: i32[] = [];
-		var outer = function (): i32 {
-			var inner = function (): i32 {
+		var outer = (): i32 => {
+			var inner = (): i32 => {
 				acc = acc.append(1);
 				return acc.len();
 			};
@@ -1611,7 +1611,7 @@ func TestScalarCaptureWriteBackAllowed(t *testing.T) {
 func TestCaptureReadAndLocalAssignStillAllowed(t *testing.T) {
 	src := `function main(): i32 {
 		var n: i32 = 5;
-		var f = function (x: i32): i32 {
+		var f = (x: i32): i32 => {
 			var local: i32 = x;
 			local = local + n;
 			return local;
@@ -7725,7 +7725,7 @@ func TestNonBreakingLoopStillDiverges(t *testing.T) {
 		}`},
 		{"break-inside-a-lambda-body", `function f(n: i32): i32 {
 			loop {
-				var g: () => i32 = function (): i32 { while (true) { break; } return 1; };
+				var g: () => i32 = (): i32 => { while (true) { break; } return 1; };
 				var x: i32 = g();
 			}
 		}`},

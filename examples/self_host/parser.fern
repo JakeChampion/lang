@@ -971,7 +971,7 @@ function rl_expr(e: ast.Expr, labels: string[]): ast.Expr {
 }
 
 function rl_expr_kids(e: ast.Expr, labels: string[]): ast.Expr {
-    return map_expr_kids(e, function (k: ast.Expr): ast.Expr { return rl_expr(k, labels); });
+    return map_expr_kids(e, (k: ast.Expr): ast.Expr => { return rl_expr(k, labels); });
 }
 
 function resolve_labels_block(stmts: ast.Stmt[], labels: string[]): ast.Stmt[] {
@@ -15935,7 +15935,7 @@ function cf_inline_expr(e: ast.Expr, funcs: FuncDecl[]): ast.Expr {
         ast.ExprLambda(lm) => { return ast.ExprLambda { ...lm, body: cf_inline_fn_body(lm.body, funcs) }; },
         _ => {}
     }
-    return map_expr_kids(e, function (k: ast.Expr): ast.Expr { return cf_inline_expr(k, funcs); });
+    return map_expr_kids(e, (k: ast.Expr): ast.Expr => { return cf_inline_expr(k, funcs); });
 }
 
 function cf_inline_fn_body(body: ast.Stmt[], funcs: FuncDecl[]): ast.Stmt[] {
@@ -19765,8 +19765,8 @@ function check_generics(): i32 {
 }
 
 function check_lambdas(): i32 {
-    // Lambda expression: `function (x: i32): i32 { return x + 1; }`.
-    var srcLm: string = "var f = function (x: i32): i32 { return x + 1; }; return 0;";
+    // Lambda expression: `(x: i32): i32 => { return x + 1; }`.
+    var srcLm: string = "var f = (x: i32): i32 => { return x + 1; }; return 0;";
     var progLm: ast.Stmt[] = parse_program(lexer.tokenize(srcLm));
     match (progLm[0]) {
         ast.StmtVar(v) => {
@@ -19975,10 +19975,10 @@ function check_struct_patterns(): i32 {
         _ => { return 1176; }
     }
 
-    // The LAMBDA spelling — verbose `function (…)` and the arrow form, which
-    // needs first_param_looks_typed to tell `(Point { x, y }: Point) => …`
-    // from a parenthesised struct literal.
-    var srcSPL: string = "function main(): i32 { var f = function (Point { x, y }: Point): i32 { return x * 10 + y; }; var g = (Point { x, y }: Point) => x + y; return 0; }";
+    // The LAMBDA spelling with a struct-destructuring parameter, in both
+    // body forms. It needs first_param_looks_typed to tell
+    // `(Point { x, y }: Point) => …` from a parenthesised struct literal.
+    var srcSPL: string = "function main(): i32 { var f = (Point { x, y }: Point): i32 => { return x * 10 + y; }; var g = (Point { x, y }: Point) => x + y; return 0; }";
     var modSPL: Module = parse_module(lexer.tokenize(srcSPL));
     if (modSPL.funcs.len() != 1) { return 1180; }
     if (modSPL.funcs[0].body.len() != 3) { return 1181; }

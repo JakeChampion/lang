@@ -66,7 +66,7 @@ function main(): i32 { return g(); }`},
 function g(): i32 {
     var t: (string, i32) = ("hi", 4);
     var (s, b) = t;
-    var h: H = H { f: function (x: i32): string { return s; }, id: b };
+    var h: H = H { f: (x: i32): string => { return s; }, id: b };
     return h.f(1).len() + h.id;
 }
 function main(): i32 { return g(); }`},
@@ -74,21 +74,21 @@ function main(): i32 { return g(); }`},
 	{"fnfield-captured-str", `struct H { f: (i32) => string, id: i32 }
 function g(): i32 {
     var s: string = "hi";
-    var h: H = H { f: function (x: i32): string { return s; }, id: 4 };
+    var h: H = H { f: (x: i32): string => { return s; }, id: 4 };
     return h.f(1).len() + h.id;
 }
 function main(): i32 { return g(); }`},
 	// Gap 2, no capture — a literal string return through the fn field. 6.
 	{"fnfield-literal-str", `struct H { f: (i32) => string, id: i32 }
 function g(): i32 {
-    var h: H = H { f: function (x: i32): string { return "hi"; }, id: 4 };
+    var h: H = H { f: (x: i32): string => { return "hi"; }, id: 4 };
     return h.f(1).len() + h.id;
 }
 function main(): i32 { return g(); }`},
 	// Gap 2 concat shape: the fn-field call result feeds `+` as a string. 8.
 	{"fnfield-str-concat", `struct H { f: (i32) => string, id: i32 }
 function g(): i32 {
-    var h: H = H { f: function (x: i32): string { return "hi"; }, id: 4 };
+    var h: H = H { f: (x: i32): string => { return "hi"; }, id: 4 };
     return (h.f(1) + "!!").len() + h.id;
 }
 function main(): i32 { return g(); }`},
@@ -97,7 +97,7 @@ function main(): i32 { return g(); }`},
 	{"fnfield-i32-regress", `struct H { f: (i32) => i32, id: i32 }
 function g(): i32 {
     var n: i32 = 7;
-    var h: H = H { f: function (x: i32): i32 { return n + x; }, id: 4 };
+    var h: H = H { f: (x: i32): i32 => { return n + x; }, id: 4 };
     return h.f(1) + h.id;
 }
 function main(): i32 { return g(); }`},
@@ -105,7 +105,7 @@ function main(): i32 { return g(); }`},
 	{"fnfield-rebind-regress", `struct H { f: (i32) => string, id: i32 }
 function g(): i32 {
     var s: string = "hi";
-    var h: H = H { f: function (x: i32): string { return s; }, id: 4 };
+    var h: H = H { f: (x: i32): string => { return s; }, id: 4 };
     var r: string = h.f(1);
     return r.len() + h.id;
 }

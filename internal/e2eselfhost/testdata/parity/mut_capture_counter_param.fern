@@ -1,2 +1,2 @@
 // Counter taking a param (#2850), mutating across two calls -> 10+5+3 = 18.
-function main(): i32 { var n = 10; var add = function (d: i32): i32 { n = n + d; return n; }; var a = add(5); var b = add(3); return n; }
+function main(): i32 { var n = 10; var add = (d: i32): i32 => { n = n + d; return n; }; var a = add(5); var b = add(3); return n; }

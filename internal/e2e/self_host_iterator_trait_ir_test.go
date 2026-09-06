@@ -181,7 +181,7 @@ function main(): i32 {
     var bs = iter.to_array(BoolSeq { n: 2 });        // [true, true]
     var k = 0;
     for b in bs { if (b) { k = k + 1; } }            // 2
-    var f = iter.fold(iter.range(1, 5), 1, function (a: i32, x: i32): i32 { return a * x; });  // 1*1*2*3*4 = 24
+    var f = iter.fold(iter.range(1, 5), 1, (a: i32, x: i32): i32 => { return a * x; });  // 1*1*2*3*4 = 24
     return c + k + bs.len() + f - 24;                // 3+2+2+24-24 = 7
 }
 `
@@ -207,17 +207,17 @@ func TestNativeIteratorTraitModulePredicates(t *testing.T) {
 	src := `import "core/iter" as iter;
 function main(): i32 {
     var a = 0;
-    if (iter.any(iter.range(0, 5), function (x: i32): boolean { return x == 3; })) { a = 1; }      // 1
+    if (iter.any(iter.range(0, 5), (x: i32): boolean => { return x == 3; })) { a = 1; }      // 1
     var b = 0;
-    if (!iter.any(iter.range(0, 5), function (x: i32): boolean { return x > 9; })) { b = 2; }       // 2
+    if (!iter.any(iter.range(0, 5), (x: i32): boolean => { return x > 9; })) { b = 2; }       // 2
     var c = 0;
-    if (iter.all(iter.range(0, 5), function (x: i32): boolean { return x < 10; })) { c = 4; }       // 4
+    if (iter.all(iter.range(0, 5), (x: i32): boolean => { return x < 10; })) { c = 4; }       // 4
     var d = 0;
-    if (!iter.all(iter.range(0, 5), function (x: i32): boolean { return x % 2 == 0; })) { d = 8; }   // 8
+    if (!iter.all(iter.range(0, 5), (x: i32): boolean => { return x % 2 == 0; })) { d = 8; }   // 8
     var e = 0;
-    match (iter.find(iter.range(0, 9), function (x: i32): boolean { return x >= 2 && x % 2 == 0; })) { Some(v) => { e = v; }, None => {} }  // 2
+    match (iter.find(iter.range(0, 9), (x: i32): boolean => { return x >= 2 && x % 2 == 0; })) { Some(v) => { e = v; }, None => {} }  // 2
     var f = 0;
-    match (iter.find(iter.range(0, 3), function (x: i32): boolean { return x > 100; })) { Some(v) => { f = v; }, None => { f = 16; } }      // 16
+    match (iter.find(iter.range(0, 3), (x: i32): boolean => { return x > 100; })) { Some(v) => { f = v; }, None => { f = 16; } }      // 16
     return a + b + c + d + e + f;                                                                   // 1+2+4+8+2+16 = 33
 }
 `

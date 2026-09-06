@@ -18,10 +18,10 @@ var closureCases = []struct {
 	src  string
 	exit int
 }{
-	{"capture-local", "function main(): i32 { var n: i32 = 5; var f = function (x: i32): i32 { return x + n; }; return f(37); }", 42},
-	{"multi-capture", "function main(): i32 { var a: i32 = 30; var b: i32 = 12; var f = function (): i32 { return a + b; }; return f(); }", 42},
-	{"capture-string", "function main(): i32 { var s: string = \"hello\"; var f = function (): i32 { return s.len(); }; return f() + 37; }", 42},
-	{"return-closure", "function adder(a: i32): (i32) => i32 { return function (b: i32): i32 { return a + b; }; } function main(): i32 { var add10 = adder(10); var add20 = adder(20); return add10(5) + add20(7); }", 42},
+	{"capture-local", "function main(): i32 { var n: i32 = 5; var f = (x: i32): i32 => { return x + n; }; return f(37); }", 42},
+	{"multi-capture", "function main(): i32 { var a: i32 = 30; var b: i32 = 12; var f = (): i32 => { return a + b; }; return f(); }", 42},
+	{"capture-string", "function main(): i32 { var s: string = \"hello\"; var f = (): i32 => { return s.len(); }; return f() + 37; }", 42},
+	{"return-closure", "function adder(a: i32): (i32) => i32 { return (b: i32): i32 => { return a + b; }; } function main(): i32 { var add10 = adder(10); var add20 = adder(20); return add10(5) + add20(7); }", 42},
 	{"zero-arg-fn-value", "function run(fn: () => i32): i32 { return fn(); } function work(): i32 { return 42; } function main(): i32 { return run(work); }", 42},
 	{"predicate", "function count_if(arr: i32[], pred: (i32) => boolean): i32 { var c: i32 = 0; for x in arr { if (pred(x)) { c = c + 1; } } return c; } function is_big(n: i32): boolean { return n > 10; } function main(): i32 { var a: i32[] = [5, 20, 8, 30, 15]; return count_if(a, is_big) * 14; }", 42},
 }

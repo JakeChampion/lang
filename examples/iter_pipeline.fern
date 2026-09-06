@@ -12,8 +12,8 @@ function main(): i32 {
   var xs: i32[] = [5, 2, 8, 1, 4, 7, 6];
 
   // Keep the evens, square them, sum the squares: 2² + 8² + 4² + 6² = 120.
-  var evens = iter.filter(iter.of(xs), function(x: i32): boolean { return x % 2 == 0; });
-  var squares = iter.map(iter.of(evens), function(x: i32): i32 { return x * x; });
+  var evens = iter.filter(iter.of(xs), (x: i32): boolean => x % 2 == 0);
+  var squares = iter.map(iter.of(evens), (x: i32): i32 => x * x);
   var total = iter.sum(iter.of(squares));
 
   // Sort the evens ascending: [2, 4, 6, 8].

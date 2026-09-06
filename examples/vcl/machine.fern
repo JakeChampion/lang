@@ -127,7 +127,7 @@ pub function backends_of(decls: ast.Decl[]): Backend[] {
 // interpreting builds a Driver that walks the parsed tree.
 pub function interpreting(decls: ast.Decl[]): Driver {
   var ctx: eval.Ctx = eval.Ctx { decls: decls };
-  var runner: (string, runtime.Txn) => eval.ExecOut = function(name: string, t: runtime.Txn): eval.ExecOut { return eval.run_sub(ctx, t, name); };
+  var runner: (string, runtime.Txn) => eval.ExecOut = (name: string, t: runtime.Txn): eval.ExecOut => { return eval.run_sub(ctx, t, name); };
   return Driver { run_sub: runner, backends: backends_of(decls), fetch: mock_fetch };
 }
 

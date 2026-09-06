@@ -131,7 +131,7 @@ function main(): i32 {
 
 	"closure_capture": `
 function adder(n: i32): (i32) => i32 {
-	return function (x: i32): i32 { return x + n; };
+	return (x: i32): i32 => { return x + n; };
 }
 function main(): i32 {
 	var add10: (i32) => i32 = adder(10);
@@ -141,7 +141,7 @@ function main(): i32 {
 
 	"closure_string_capture": `
 function greeter(name: string): () => string {
-	return function (): string { return "hello, " + name; };
+	return (): string => { return "hello, " + name; };
 }
 function main(): i32 {
 	var g: () => string = greeter("world");

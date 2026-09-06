@@ -235,7 +235,7 @@ function main(): i32 {
 	// Pre-fix: 104.
 	run(t, `function main(): i32 {
     var k: i32 = 5;
-    var g: (i32[]) => i32 = function (a: i32[]): i32 { a = a.with(0, 9); return a[0] + k; };
+    var g: (i32[]) => i32 = (a: i32[]): i32 => { a = a.with(0, 9); return a[0] + k; };
     var b: i32[] = [1, 2];
     var r: i32 = g(b);
     return b[0] * 10 + r;
@@ -248,7 +248,7 @@ function main(): i32 {
 	// returns 38 here.
 	run(t, `function main(): i32 {
     var x: i32 = 0;
-    var f: () => i32 = function (): i32 { x = x + 4; return 0; };
+    var f: () => i32 = (): i32 => { x = x + 4; return 0; };
     x = 3;
     var r: i32 = f();
     return x + 35;

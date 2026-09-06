@@ -26,14 +26,14 @@ function test_skip(): test.TestOutcome {
 }
 
 function test_find(): test.TestOutcome {
-    match (iter.find(iter.range(0, 10), function (x: i32): boolean { return x > 5; })) {
+    match (iter.find(iter.range(0, 10), (x: i32): boolean => { return x > 5; })) {
         Some(v) => { return test.assert_eq(v, 6); },
         None => { return test.fail("find expected Some(6)"); }
     }
 }
 
 function test_find_miss(): test.TestOutcome {
-    match (iter.find(iter.range(0, 5), function (x: i32): boolean { return x > 99; })) {
+    match (iter.find(iter.range(0, 5), (x: i32): boolean => { return x > 99; })) {
         Some(v) => { return test.fail("expected None"); },
         None => { return test.pass(); }
     }
@@ -48,12 +48,12 @@ function test_position(): test.TestOutcome {
 
 function test_position_by(): test.TestOutcome {
     var xs: i32[] = [10, 20, 30];
-    return test.assert_eq(iter.position_by(iter.of(xs), function (x: i32): boolean { return x == 20; }), 1);
+    return test.assert_eq(iter.position_by(iter.of(xs), (x: i32): boolean => { return x == 20; }), 1);
 }
 
 function test_count_by(): test.TestOutcome {
     var xs: i32[] = [1, 2, 3, 4, 5, 6];
-    return test.assert_eq(iter.count_by(iter.of(xs), function (x: i32): boolean { return x % 2 == 0; }), 3);
+    return test.assert_eq(iter.count_by(iter.of(xs), (x: i32): boolean => { return x % 2 == 0; }), 3);
 }
 
 

@@ -153,7 +153,7 @@ function tup((a, b): (i32, i32)): i32 {
 return a - b;
 }
 function main(): i32 {
-var f = function (P { x, y }: P): i32 { return x * 10 + y; };
+var f = (P { x, y }: P): i32 => { return x * 10 + y; };
 return add(P { x: 1, y: 2 }) + ren(P { x: 3, y: 4 }) + part(R { w: 1, h: 2 }) + whole(P { x: 1, y: 1 }) + tup((9, 4)) + f(P { x: 1, y: 1 });
 }
 `},
@@ -1217,7 +1217,7 @@ var arg: i32 = id({ var t: i32 = n; t + 1 });
 return stmts + tail + operand + nested + arg;
 }
 function real_lambda(n: i32): i32 {
-var f: fn = function(): i32 { var t: i32 = n; return t + 1; };
+var f: fn = (): i32 => { var t: i32 = n; return t + 1; };
 return f();
 }
 function main(): i32 {

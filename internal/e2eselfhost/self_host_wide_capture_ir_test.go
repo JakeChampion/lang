@@ -55,45 +55,45 @@ func TestSelfHostWideCaptureIR(t *testing.T) {
 		exit int
 	}{
 		// Returned closure (hoist_escaping_closure), one wide capture, each width.
-		{"escaping-i64-capture", "function make(n: i64): (i32) => i32 { return function(x: i32): i32 { return x + (n as i32); }; }\nfunction main(): i32 { var f = make(100 as i64); return f(5); }", 105},
-		{"escaping-u64-capture", "function make(n: u64): (i32) => i32 { return function(x: i32): i32 { return x + (n as i32); }; }\nfunction main(): i32 { var f = make(100 as u64); return f(5); }", 105},
-		{"escaping-f64-capture", "function make(d: f64): (i32) => i32 { return function(x: i32): i32 { return x + (d as i32); }; }\nfunction main(): i32 { var f = make(100.0); return f(5); }", 105},
-		{"escaping-i32-capture-control", "function make(n: i32): (i32) => i32 { return function(x: i32): i32 { return x + n; }; }\nfunction main(): i32 { var f = make(100); return f(5); }", 105},
+		{"escaping-i64-capture", "function make(n: i64): (i32) => i32 { return (x: i32): i32 => { return x + (n as i32); }; }\nfunction main(): i32 { var f = make(100 as i64); return f(5); }", 105},
+		{"escaping-u64-capture", "function make(n: u64): (i32) => i32 { return (x: i32): i32 => { return x + (n as i32); }; }\nfunction main(): i32 { var f = make(100 as u64); return f(5); }", 105},
+		{"escaping-f64-capture", "function make(d: f64): (i32) => i32 { return (x: i32): i32 => { return x + (d as i32); }; }\nfunction main(): i32 { var f = make(100.0); return f(5); }", 105},
+		{"escaping-i32-capture-control", "function make(n: i32): (i32) => i32 { return (x: i32): i32 => { return x + n; }; }\nfunction main(): i32 { var f = make(100); return f(5); }", 105},
 
 		// The capture is a LOCAL rather than a param, so the cell decl has to be
 		// placed after the local's own decl, not at the top of the body.
-		{"escaping-i64-local-capture", "function make(): (i32) => i32 { var n: i64 = 100 as i64; return function(x: i32): i32 { return x + (n as i32); }; }\nfunction main(): i32 { var f = make(); return f(5); }", 105},
+		{"escaping-i64-local-capture", "function make(): (i32) => i32 { var n: i64 = 100 as i64; return (x: i32): i32 => { return x + (n as i32); }; }\nfunction main(): i32 { var f = make(); return f(5); }", 105},
 
 		// Lambda as a CALL ARGUMENT — never bound to a local, so no direct-call
 		// param-lift applies and the env box is the only route.
-		{"callarg-i64-capture", outcome + "function check(): i32 { var b: i64 = 42 as i64; return run(function(): Outcome { return Fail(b as i32); }); }\nfunction main(): i32 { return check(); }", 42},
-		{"callarg-i64-param-capture", outcome + "function check(b: i64): i32 { return run(function(): Outcome { return Fail(b as i32); }); }\nfunction main(): i32 { return check(42 as i64); }", 42},
-		{"callarg-f64-capture", outcome + "function check(): i32 { var d: f64 = 10.5; return run(function(): Outcome { return Fail((d * 4.0) as i32); }); }\nfunction main(): i32 { return check(); }", 42},
-		{"callarg-i32-capture-control", outcome + "function check(): i32 { var b: i32 = 42; return run(function(): Outcome { return Fail(b); }); }\nfunction main(): i32 { return check(); }", 42},
+		{"callarg-i64-capture", outcome + "function check(): i32 { var b: i64 = 42 as i64; return run((): Outcome => { return Fail(b as i32); }); }\nfunction main(): i32 { return check(); }", 42},
+		{"callarg-i64-param-capture", outcome + "function check(b: i64): i32 { return run((): Outcome => { return Fail(b as i32); }); }\nfunction main(): i32 { return check(42 as i64); }", 42},
+		{"callarg-f64-capture", outcome + "function check(): i32 { var d: f64 = 10.5; return run((): Outcome => { return Fail((d * 4.0) as i32); }); }\nfunction main(): i32 { return check(); }", 42},
+		{"callarg-i32-capture-control", outcome + "function check(): i32 { var b: i32 = 42; return run((): Outcome => { return Fail(b); }); }\nfunction main(): i32 { return check(); }", 42},
 
 		// Two wide captures in one closure — the cells are distinct locals and the
 		// env box carries both, in lambda_captures order.
-		{"two-wide-captures", outcome + "function check(): i32 { var a: i64 = 20 as i64; var b: i64 = 22 as i64; return run(function(): Outcome { return Fail((a + b) as i32); }); }\nfunction main(): i32 { return check(); }", 42},
+		{"two-wide-captures", outcome + "function check(): i32 { var a: i64 = 20 as i64; var b: i64 = 22 as i64; return run((): Outcome => { return Fail((a + b) as i32); }); }\nfunction main(): i32 { return check(); }", 42},
 
 		// Wide and narrow and pointer-shaped together: only the wide one is
 		// cellared, the rest ride the box slot directly as before.
-		{"mixed-wide-narrow-pointer", outcome + "function check(): i32 { var a: i64 = 40 as i64; var n: i32 = 2; var s: string = \"xy\"; return run(function(): Outcome { return Fail((a as i32) + n + s.len() - 2); }); }\nfunction main(): i32 { return check(); }", 42},
+		{"mixed-wide-narrow-pointer", outcome + "function check(): i32 { var a: i64 = 40 as i64; var n: i32 = 2; var s: string = \"xy\"; return run((): Outcome => { return Fail((a as i32) + n + s.len() - 2); }); }\nfunction main(): i32 { return check(); }", 42},
 
 		// The captured local is declared INSIDE an if-block, so its cell must be
 		// emitted inside that block too — hoisting it to the top of the function
 		// would reference the local before its decl.
-		{"wide-capture-declared-in-if-block", outcome + "function check(k: i32): i32 {\n    if (k > 0) { var a: i64 = 42 as i64; return run(function(): Outcome { return Fail(a as i32); }); }\n    return 7;\n}\nfunction main(): i32 { return check(1); }", 42},
+		{"wide-capture-declared-in-if-block", outcome + "function check(k: i32): i32 {\n    if (k > 0) { var a: i64 = 42 as i64; return run((): Outcome => { return Fail(a as i32); }); }\n    return 7;\n}\nfunction main(): i32 { return check(1); }", 42},
 
 		// The capture is read more than once in the body — one cell, two reads of
 		// the re-bound local, not two cells.
-		{"wide-capture-read-twice", outcome + "function check(): i32 { var a: i64 = 21 as i64; return run(function(): Outcome { return Fail((a + a) as i32); }); }\nfunction main(): i32 { return check(); }", 42},
+		{"wide-capture-read-twice", outcome + "function check(): i32 { var a: i64 = 21 as i64; return run((): Outcome => { return Fail((a + a) as i32); }); }\nfunction main(): i32 { return check(); }", 42},
 
 		// A wide capture the enclosing body REASSIGNS is deliberately NOT snapshot
 		// into one of these cells: box_mutated_scalar_captures already boxes it
 		// into a SHARED cell (#5394), which is what it needs — the closure has to
 		// observe the post-write value. 42 proves the shared cell is still in
 		// play; a creation-time snapshot would answer 1.
-		{"reassigned-wide-capture-stays-shared", outcome + "function main(): i32 { var a: i64 = 1 as i64; var g = function(): Outcome { return Fail(a as i32); }; a = 42 as i64; return run(g); }", 42},
+		{"reassigned-wide-capture-stays-shared", outcome + "function main(): i32 { var a: i64 = 1 as i64; var g = (): Outcome => { return Fail(a as i32); }; a = 42 as i64; return run(g); }", 42},
 
 		// Direct-called bindings: no env box is built at all — the param-lift
 		// threads the captures as call arguments (#5301), which carries a wide
@@ -132,7 +132,7 @@ func TestSelfHostWideCaptureIR(t *testing.T) {
 		// over wide locals. The IIFE is exempt, the escaper must still be
 		// cellared — so this answers correctly only if the exemption stayed
 		// scoped to the callee it applies to.
-		{"iife-beside-escaping-closure", outcome + "function check(): i32 {\n    var b: i64 = 20 as i64;\n    var v: i64 = if (b > 4i64) { b | b } else { 7i64 };\n    return run(function(): Outcome { return Fail((v + 22i64) as i32); });\n}\nfunction main(): i32 { return check(); }", 42},
+		{"iife-beside-escaping-closure", outcome + "function check(): i32 {\n    var b: i64 = 20 as i64;\n    var v: i64 = if (b > 4i64) { b | b } else { 7i64 };\n    return run((): Outcome => { return Fail((v + 22i64) as i32); });\n}\nfunction main(): i32 { return check(); }", 42},
 	}
 
 	for _, tc := range cases {

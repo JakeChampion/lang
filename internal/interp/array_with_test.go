@@ -127,7 +127,7 @@ var withAliasingCases = []struct {
 	{
 		name: "write through a closure parameter",
 		src: `function main(): i32 {
-			var f: (i32[]) => i32 = function(p: i32[]): i32 { p = p.with(0, 9); return p[0]; };
+			var f: (i32[]) => i32 = (p: i32[]): i32 => { p = p.with(0, 9); return p[0]; };
 			var a: i32[] = [1, 2, 3];
 			var r: i32 = f(a);
 			return a[0] * 10 + r;
@@ -138,7 +138,7 @@ var withAliasingCases = []struct {
 		name: "captured by a closure",
 		src: `function main(): i32 {
 			var a: i32[] = [1, 2, 3];
-			var g: () => i32 = function(): i32 { return a[0]; };
+			var g: () => i32 = (): i32 => { return a[0]; };
 			var b: i32[] = a;
 			a = a.with(0, 9);
 			return b[0] * 10 + g();

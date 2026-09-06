@@ -22,7 +22,7 @@ var higherOrderCases = []struct {
 }{
 	{"apply-fn-value", hoDblHelper + "function apply(f: (i32) => i32, x: i32): i32 { return f(x); } function main(): i32 { return apply(dbl, 21); }", 42},
 	{"multi-arg", hoDblHelper + "function combine(f: (i32) => i32, a: i32, b: i32): i32 { return f(a) + f(b); } function main(): i32 { return combine(dbl, 13, 8); }", 42},
-	{"closure-arg", "function apply(f: (i32) => i32, x: i32): i32 { return f(x); } function main(): i32 { var n: i32 = 7; var g = function (x: i32): i32 { return x + n; }; return apply(g, 35); }", 42},
+	{"closure-arg", "function apply(f: (i32) => i32, x: i32): i32 { return f(x); } function main(): i32 { var n: i32 = 7; var g = (x: i32): i32 => { return x + n; }; return apply(g, 35); }", 42},
 	{"twice", hoDblHelper + "function twice(f: (i32) => i32, x: i32): i32 { return f(f(x)); } function main(): i32 { return twice(dbl, 10) + 2; }", 42},
 }
 

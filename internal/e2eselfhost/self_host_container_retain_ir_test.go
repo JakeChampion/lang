@@ -60,7 +60,7 @@ func TestSelfHostContainerRetainIR(t *testing.T) {
 		// reports (a scalar-capture closure). rc_runtime_helpers rides the heap
 		// gate, so without pulling it in for a counter read the emitted core
 		// called a function it never defined.
-		{"scalar-closure-reads-counter", `function main(): i32 { var n: i32 = 5; var f = function (x: i32): i32 { return x + n; }; return f(37) + __rc_underflow_count(); }`, 42},
+		{"scalar-closure-reads-counter", `function main(): i32 { var n: i32 = 5; var f = (x: i32): i32 => { return x + n; }; return f(37) + __rc_underflow_count(); }`, 42},
 	}
 
 	for _, tc := range cases {

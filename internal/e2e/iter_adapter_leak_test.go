@@ -65,14 +65,14 @@ const (
 import "core/iter" as iter;
 function main(): i32 {
     var xs: i32[] = [5, 2, 8, 1, 4, 9, 6];
-    return iter.filter(iter.of(xs), function(x: i32): boolean { return x % 2 == 0; }).len();
+    return iter.filter(iter.of(xs), (x: i32): boolean => { return x % 2 == 0; }).len();
 }
 `
 	iterMapSrc = `
 import "core/iter" as iter;
 function main(): i32 {
     var xs: i32[] = [5, 2, 8, 1, 4, 9, 6];
-    return iter.map(iter.of(xs), function(x: i32): i32 { return x + 1; }).len();
+    return iter.map(iter.of(xs), (x: i32): i32 => { return x + 1; }).len();
 }
 `
 	iterSumSrc = `

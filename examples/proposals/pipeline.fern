@@ -50,7 +50,7 @@ function note(c: Ctx, name: string): Ctx {
 
 // Adds `n`, always succeeds.
 function adder(name: string, n: i32): Stage {
-    return Stage { name: name, run: function (c: Ctx): Result[Ctx, Fault] {
+    return Stage { name: name, run: (c: Ctx): Result[Ctx, Fault] => {
         var t: Ctx = note(c, name);
         return Ok(Ctx { value: t.value + n, ran: t.ran });
     } };
@@ -58,7 +58,7 @@ function adder(name: string, n: i32): Stage {
 
 // Doubles, always succeeds.
 function doubler(name: string): Stage {
-    return Stage { name: name, run: function (c: Ctx): Result[Ctx, Fault] {
+    return Stage { name: name, run: (c: Ctx): Result[Ctx, Fault] => {
         var t: Ctx = note(c, name);
         return Ok(Ctx { value: t.value * 2, ran: t.ran });
     } };
@@ -66,7 +66,7 @@ function doubler(name: string): Stage {
 
 // Always fails. Notes itself first: a stage that ran and failed did run.
 function failer(name: string, why: string): Stage {
-    return Stage { name: name, run: function (c: Ctx): Result[Ctx, Fault] {
+    return Stage { name: name, run: (c: Ctx): Result[Ctx, Fault] => {
         var t: Ctx = note(c, name);
         return Err(Fault { step: name, why: why, ran: t.ran });
     } };
@@ -74,7 +74,7 @@ function failer(name: string, why: string): Stage {
 
 // Fails only when the value has grown past `limit`.
 function guard(name: string, limit: i32): Stage {
-    return Stage { name: name, run: function (c: Ctx): Result[Ctx, Fault] {
+    return Stage { name: name, run: (c: Ctx): Result[Ctx, Fault] => {
         var t: Ctx = note(c, name);
         if (t.value > limit) {
             return Err(Fault { step: name, why: "over " + limit.to_string(), ran: t.ran });
@@ -86,7 +86,7 @@ function guard(name: string, limit: i32): Stage {
 // Does nothing at all, and does not even record itself — the identity the
 // composition law below is stated against.
 function nop(name: string): Stage {
-    return Stage { name: name, run: function (c: Ctx): Result[Ctx, Fault] { return Ok(c); } };
+    return Stage { name: name, run: (c: Ctx): Result[Ctx, Fault] => { return Ok(c); } };
 }
 
 // ----------------------------------------------------------- the pipeline

@@ -37,16 +37,16 @@ func TestSelfHostClosureOfClosureIRX86_64(t *testing.T) {
 		// Double-nested factory: inner closure captures `base` through two
 		// levels; called via `outer()` then `inner(12)`.
 		{"closure-of-closure-captured",
-			`function make(base: i32): () => (i32) => i32 { return function (): (i32) => i32 { return function (x: i32): i32 { return x + base; }; }; } function main(): i32 { var outer: () => (i32) => i32 = make(30); var inner: (i32) => i32 = outer(); return inner(12); }`,
+			`function make(base: i32): () => (i32) => i32 { return (): (i32) => i32 => { return (x: i32): i32 => { return x + base; }; }; } function main(): i32 { var outer: () => (i32) => i32 = make(30); var inner: (i32) => i32 = outer(); return inner(12); }`,
 			42},
 		// Triple-nested factory with captures at each level.
 		{"closure-of-closure-triple-captured",
-			`function make(base: i32): (i32) => (i32) => i32 { return function (a: i32): (i32) => i32 { return function (b: i32): i32 { return a + b + base; }; }; } function main(): i32 { var f: (i32) => (i32) => i32 = make(10); var g: (i32) => i32 = f(12); return g(20); }`,
+			`function make(base: i32): (i32) => (i32) => i32 { return (a: i32): (i32) => i32 => { return (b: i32): i32 => { return a + b + base; }; }; } function main(): i32 { var f: (i32) => (i32) => i32 = make(10); var g: (i32) => i32 = f(12); return g(20); }`,
 			42},
 		// The inner closure also captures the middle-level parameter, exercised
 		// through the two-arg chain.
 		{"closure-of-closure-middle-capture",
-			`function make(base: i32): (i32) => (i32) => i32 { return function (a: i32): (i32) => i32 { return function (b: i32): i32 { return a * b + base; }; }; } function main(): i32 { var f: (i32) => (i32) => i32 = make(2); var g: (i32) => i32 = f(8); return g(5); }`,
+			`function make(base: i32): (i32) => (i32) => i32 { return (a: i32): (i32) => i32 => { return (b: i32): i32 => { return a * b + base; }; }; } function main(): i32 { var f: (i32) => (i32) => i32 = make(2); var g: (i32) => i32 = f(8); return g(5); }`,
 			42},
 	}
 	for _, tc := range cases {
