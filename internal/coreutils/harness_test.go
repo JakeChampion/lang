@@ -58,6 +58,12 @@ type invocation struct {
 	// read in all, then the child is sent SIGTERM, which both sides die
 	// of. A step that never fires or bytes that never arrive end in
 	// followDeadline and a diff.
+	//
+	// `limit` decides WHEN the child dies, and stderr is compared
+	// whatever it wrote before that — so a limit that lands inside the
+	// child's startup output makes any diagnostic it prints there a race
+	// between the two implementations rather than a comparison. Set it
+	// past the whole initial pass and let the deadline stop the read.
 	follow []followStep
 	// env are KEY=VALUE entries added to the fixed base environment.
 	env []string
