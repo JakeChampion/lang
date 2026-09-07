@@ -1994,6 +1994,42 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		Params: nil,
 		Result: ast.StringType{},
 	}
+	// uname_field(i): one field of the utsname record the kernel
+	// fills, by its position in `struct utsname`: 0 sysname,
+	// 1 nodename, 2 release, 3 version, 4 machine. A fresh string
+	// each call, NUL-trimmed within its 65-byte field. Empty when
+	// the kernel refuses or `i` names no field.
+	//
+	// An index rather than five argument-free builtins, and a
+	// string rather than a record: `hostname()` beside it is the
+	// same shape, one field wide, and five copies of it would be
+	// five IR kinds and twenty classifications for one syscall.
+	// Callers name the fields (coreutils/lib/sys.fern).
+	c.info.FuncSigs["uname_field"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{Width: 32, Signed: true}},
+		Result: ast.StringType{},
+	}
+	// getcwd(): the absolute path of the process's working
+	// directory, as getcwd(2) reports it. A fresh string each
+	// call. EMPTY when the kernel refuses — the working directory
+	// was unlinked, or an ancestor is unreadable — which a caller
+	// can tell from a success because a real answer always begins
+	// with `/`.
+	c.info.FuncSigs["getcwd"] = &ast.FuncType{
+		Params: nil,
+		Result: ast.StringType{},
+	}
+	// cpu_count(): how many processing units this process may run
+	// on — the affinity mask's population count on Linux
+	// (sched_getaffinity(2)), `hw.activecpu` on Darwin. That is
+	// what a scheduler will actually give the process, which is
+	// less than the machine holds under `taskset` or a cpuset.
+	// Zero when the target cannot say, so a caller decides its own
+	// fallback rather than being handed a fabricated 1.
+	c.info.FuncSigs["cpu_count"] = &ast.FuncType{
+		Params: nil,
+		Result: ast.NumberType{Width: 32, Signed: true},
+	}
 	// remove_file(path): Result[void, IoError] — unlink the file.
 	// `Ok(())` on success, `Err(e)` on failure (mirrors
 	// `write_file`). Removing a non-existent file is an

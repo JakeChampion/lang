@@ -1068,6 +1068,9 @@ func New() *Interp {
 	i.Builtins["getgid"] = &Builtin{Fn: builtinGetgid}
 	i.Builtins["getgroups"] = &Builtin{Fn: builtinGetgroups}
 	i.Builtins["hostname"] = &Builtin{Fn: builtinHostname}
+	i.Builtins["uname_field"] = &Builtin{Fn: builtinUnameField}
+	i.Builtins["getcwd"] = &Builtin{Fn: builtinGetcwd}
+	i.Builtins["cpu_count"] = &Builtin{Fn: builtinCPUCount}
 	i.Builtins["remove_file"] = &Builtin{Fn: builtinRemoveFile}
 	i.Builtins["create_dir_all"] = &Builtin{Fn: builtinCreateDirAll}
 	i.Builtins["remove_dir_all"] = &Builtin{Fn: builtinRemoveDirAll}
@@ -2651,6 +2654,49 @@ func builtinHostname(_ *Interp, args []Value) (Value, error) {
 		return String(""), nil
 	}
 	return String(h), nil
+}
+
+// builtinUnameField reports one field of the kernel's utsname record by
+// its position in the struct; an index naming no field, and a kernel
+// that cannot say, both answer the empty string.
+func builtinUnameField(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("uname_field: expected 1 arg, got %d", len(args))
+	}
+	n, ok := args[0].(Number)
+	if !ok {
+		return nil, fmt.Errorf("uname_field: expected a number, got %T", args[0])
+	}
+	i := int(n)
+	fields := unameFields()
+	if i < 0 || i >= len(fields) {
+		return String(""), nil
+	}
+	return String(fields[i]), nil
+}
+
+// builtinGetcwd reports the process's working directory; a kernel that
+// refuses answers the empty string, as the compiled backends do.
+func builtinGetcwd(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 0 {
+		return nil, fmt.Errorf("getcwd: expected 0 args, got %d", len(args))
+	}
+	wd, err := os.Getwd()
+	if err != nil {
+		return String(""), nil
+	}
+	return String(wd), nil
+}
+
+// builtinCPUCount reports how many processing units the process may run
+// on. runtime.NumCPU is that same number on Linux — the Go runtime sets
+// it from sched_getaffinity(2) at startup, which is what the compiled
+// backends read.
+func builtinCPUCount(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 0 {
+		return nil, fmt.Errorf("cpu_count: expected 0 args, got %d", len(args))
+	}
+	return Number(runtime.NumCPU()), nil
 }
 
 // builtinRemoveFile unlinks `path`. `Option[IoError]` mirrors

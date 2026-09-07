@@ -61,6 +61,7 @@ var BuiltinCaps = map[string]string{
 	"open_appender":   "fs",
 	"open_exclusive":  "fs",
 	"stat":            "fs",
+	"getcwd":          "fs",
 	"lstat":           "fs",
 	"access":          "fs",
 	"read_dir":        "fs",
@@ -75,6 +76,11 @@ var BuiltinCaps = map[string]string{
 	// process runs, in the same way its environment is: a dependency
 	// that reads it should be seen to.
 	"hostname": "env",
+	// The kernel's utsname record and the machine's usable processor
+	// count are the same kind of ambient fact about where the process
+	// runs, and are seen to the same way.
+	"uname_field": "env",
+	"cpu_count":   "env",
 
 	"subprocess":   "subprocess",
 	"proc_fork":    "subprocess",

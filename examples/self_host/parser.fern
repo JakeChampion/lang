@@ -8051,6 +8051,9 @@ pub function builtin_function_names(): string[] {
         // The REAL ids and the supplementary group set, which `id -r` /
         // `id -G` ask for, plus the whole environment as a list.
         "getuid", "getgid", "getgroups", "environ",
+        // the kernel's utsname record, the working directory and how many
+        // processing units the process may use
+        "uname_field", "getcwd", "cpu_count",
         // clocks + randomness + sleep + reactor readiness
         "now_unix_ms", "now_ns", "monotonic_ns", "sleep_ms", "random_bytes",
         "random_i32", "poll", "timer_fd", "wasm_timer_pollable",

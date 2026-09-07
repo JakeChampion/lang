@@ -1257,6 +1257,9 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"geteuid":                       emitIdHelper("geteuid", 175),
 	"getegid":                       emitIdHelper("getegid", 177),
 	"hostname":                      emitHostnameHelper,
+	"uname_field":                   emitUnameFieldHelper,
+	"getcwd":                        emitGetcwdHelper,
+	"cpu_count":                     emitCPUCountHelper,
 	"monotonic_ns":                  emitClockHelper("monotonic_ns", clockMonotonic, 1_000_000_000, 1),
 	"now_unix_ms":                   emitClockHelper("now_unix_ms", clockRealtime, 1_000, 1_000_000),
 	"sleep_ms":                      emitSleepMsHelper,
@@ -2131,6 +2134,137 @@ func emitHostnameHelper(w func(string, ...any)) {
 	w("\tret")
 }
 
+// emitUnameFieldHelper writes uname_field(i) → a fresh single-word rc string
+// holding one field of the utsname record uname(2) fills: six 65-byte fields,
+// each NUL-terminated within its own, indexed 0 sysname through 4 machine. An
+// index naming no field, a refused uname and an empty field all take the
+// zero-length path. x0 = the index on entry; x9 = source bytes, x10 = length,
+// both held across the heap guard, which preserves everything but x29/x30.
+func emitUnameFieldHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("uname_field"))
+	w("\tmov x3, x0") // the field index
+	w("\tsub sp, sp, #400")
+	w("\tmov x9, sp")
+	w("\tmov x10, #0")
+	w("\tcmp x3, #0")
+	w("\tb.lt .Lssa_uf_alloc")
+	w("\tcmp x3, #5")
+	w("\tb.ge .Lssa_uf_alloc")
+	w("\tmov x0, sp")
+	w("\tmov x8, #160") // uname
+	w("\tsvc #0")
+	w("\tcbnz x0, .Lssa_uf_alloc") // refused: an empty field
+	w("\tmov x11, #65")
+	w("\tmadd x9, x3, x11, x9") // buffer + 65 * index
+	w(".Lssa_uf_slen:")
+	w("\tldrb w11, [x9, x10]")
+	w("\tcbz w11, .Lssa_uf_alloc")
+	w("\tadd x10, x10, #1")
+	w("\tb .Lssa_uf_slen")
+	w(".Lssa_uf_alloc:")
+	emitStrFromBytesTail(w, "uf")
+	w("\tadd sp, sp, #400")
+	w("\tret")
+}
+
+// emitGetcwdHelper writes getcwd() → a fresh single-word rc string holding the
+// process's working directory. The kernel fills a caller's buffer and answers
+// the length including the NUL; a refusal — an unlinked working directory, an
+// unreadable ancestor, a path past the page the kernel builds it in — takes
+// the zero-length path and answers the empty string.
+func emitGetcwdHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("getcwd"))
+	w("\tsub sp, sp, #4096") // PATH_MAX
+	w("\tmov x9, sp")
+	w("\tmov x10, #0")
+	w("\tmov x0, sp")
+	w("\tmov x1, #4096")
+	w("\tmov x8, #17") // getcwd
+	w("\tsvc #0")
+	w("\tcmp x0, #0")
+	w("\tb.le .Lssa_cwd_alloc")
+	w(".Lssa_cwd_slen:")
+	w("\tldrb w11, [x9, x10]")
+	w("\tcbz w11, .Lssa_cwd_alloc")
+	w("\tadd x10, x10, #1")
+	w("\tb .Lssa_cwd_slen")
+	w(".Lssa_cwd_alloc:")
+	emitStrFromBytesTail(w, "cwd")
+	w("\tadd sp, sp, #4096")
+	w("\tret")
+}
+
+// emitStrFromBytesTail writes the shared tail of the two helpers above: x10
+// bytes at x9 into a fresh single-word rc string (rc=1@base, len@base+4,
+// data@base+8, +NUL), bump-allocated inline and returned in x0. `lp` prefixes
+// the local labels so both can be emitted into one object.
+func emitStrFromBytesTail(w func(string, ...any), lp string) {
+	w("\tadrp x12, %s", heapPtrSym)
+	w("\tadd x12, x12, #:lo12:%s", heapPtrSym)
+	w("\tldr x13, [x12]")
+	w("\tadd x13, x13, #15")
+	w("\tand x13, x13, #-16") // base
+	w("\tadd x14, x10, #9")   // header(8) + len + NUL(1)
+	w("\tadd x15, x13, x14")
+	w("\tstr x15, [x12]") // bump
+	emitHeapGuardCall(w)
+	w("\tmov w14, #1")
+	w("\tstr w14, [x13]")     // rc = 1
+	w("\tstr w10, [x13, #4]") // len
+	w("\tadd x16, x13, #8")   // data
+	w("\tmov w6, #0")
+	w(".Lssa_%s_cp:", lp)
+	w("\tcmp w6, w10")
+	w("\tb.hs .Lssa_%s_cpdone", lp)
+	w("\tldrb w7, [x9, x6]")
+	w("\tstrb w7, [x16, x6]")
+	w("\tadd w6, w6, #1")
+	w("\tb .Lssa_%s_cp", lp)
+	w(".Lssa_%s_cpdone:", lp)
+	w("\tstrb wzr, [x16, x10]") // NUL
+	w("\tmov x0, x16")
+}
+
+// emitCPUCountHelper writes cpu_count() → how many processing units the
+// process may run on: sched_getaffinity(2) writes the mask and answers its
+// size in bytes, rounded to whole longs, and the answer is that mask's
+// population count (`cnt` + `addv` — AArch64 has no scalar popcount). A
+// refused call answers 0, the builtin's "cannot say". Leaf: no allocation,
+// so no heap guard.
+func emitCPUCountHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("cpu_count"))
+	w("\tsub sp, sp, #128") // 1024 CPUs' worth of mask
+	w("\tmov x0, #0")       // pid 0 = this thread
+	w("\tmov x1, #128")
+	w("\tmov x2, sp")
+	w("\tmov x8, #123") // sched_getaffinity
+	w("\tsvc #0")
+	w("\tmov w9, #0")
+	w("\tcmp x0, #0")
+	w("\tb.le .Lssa_cpu_done")
+	w("\tmov x1, x0") // bytes the kernel wrote
+	w("\tmov x2, #0") // byte offset
+	w("\tmov x4, sp")
+	w(".Lssa_cpu_word:")
+	w("\tcmp x2, x1")
+	w("\tb.hs .Lssa_cpu_done")
+	w("\tldr x3, [x4, x2]")
+	w("\tfmov d0, x3")
+	w("\tcnt v0.8b, v0.8b")
+	w("\taddv b0, v0.8b")
+	w("\tfmov w5, s0")
+	w("\tadd w9, w9, w5")
+	w("\tadd x2, x2, #8")
+	w("\tb .Lssa_cpu_word")
+	w(".Lssa_cpu_done:")
+	w("\tmov w0, w9")
+	w("\tadd sp, sp, #128")
+	w("\tret")
+}
+
 // emitRandomBytesHelper writes random_bytes(n) → a fresh u8[] of n
 // kernel-CSPRNG bytes (getrandom(2), flags=0), in the __alloc_u8 box shape
 // (16-byte header; cap@-12, rc=1@-8, len@-4). Returns the data pointer in x0.
@@ -2982,6 +3116,8 @@ var heapUsingHelpers = map[string]bool{
 	"lstat":                         true,
 	"access":                        true,
 	"hostname":                      true,
+	"uname_field":                   true,
+	"getcwd":                        true,
 	"string_from_bytes_unchecked":   true,
 	"__str_slice":                   true,
 	"args":                          true,

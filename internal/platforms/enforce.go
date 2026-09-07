@@ -156,6 +156,22 @@ var gatedBuiltins = map[string]string{
 	// from `userid`'s 0). A freestanding artifact has nothing to ask.
 	"hostname": "host",
 
+	// The MACHINE the process runs on: the kernel's utsname record
+	// (`uname_field`) and how many processing units it may use
+	// (`cpu_count`). Neither WASI preview has either — there is no
+	// utsname to read and no processor count to report — and a
+	// component that guessed would name a kernel it is not running
+	// on, so this is a capability of its own rather than a corner of
+	// `host` (which wasi-cli grants and answers honestly empty).
+	"uname_field": "sysinfo",
+	"cpu_count":   "sysinfo",
+
+	// The process's working directory (`getcwd`). Separate from `fs`
+	// for the same reason: WASI resolves every path against a
+	// preopened descriptor and has no current directory at all, so
+	// the question has no answer there rather than an empty one.
+	"getcwd": "cwd",
+
 	// The C-ABI FFI shims (#4375). Enumerated rather than matched by
 	// prefix so this table stays the one place the classification lives —
 	// the checker registers exactly these fifteen names.
