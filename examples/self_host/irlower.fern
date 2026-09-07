@@ -71574,6 +71574,17 @@ function lift_iife_arm_values(stmts: ast.Stmt[], fd: parser.FuncDecl, funcs: par
     function vs(s: ast.Stmt, a: InlineCloAcc): (ast.Stmt, InlineCloAcc, boolean) {
         match (s) {
             ast.StmtReturn(r) => {
+                // An arm returning an array of fn VALUES is box_iife_arm_array_elems'
+                // to claim, and it claims every arm's elements or none of them.
+                // Walking one here boxed a capturing lambda in THIS arm while a
+                // sibling arm kept raw fn pointers, so the binding carried two
+                // dispatch ABIs and `xs[i](…)` called a box pointer as code
+                // (#8163). Left unwalked, the capturing lambda stays raw and the
+                // module bails at it — what the uniformity gate promises when it
+                // declines.
+                if let ast.ExprArray(ra) = r.value {
+                    if (array_holds_fn_value(ra, mfuncs)) { return (s, a, true); }
+                }
                 var vr: InlineCloRes = lift_inline_closures_expr(r.value, fd, a.funcs, a.counter, gfns, structs, mfuncs);
                 return (ast.StmtReturn { value: vr.expr, line: r.line, col: r.col }, InlineCloAcc { funcs: vr.funcs, counter: vr.counter }, true);
             },
@@ -71814,6 +71825,54 @@ function idx_bound_name_at(st: ast.Stmt, acc: string[]): string[] {
         _ => {}
     }
     return acc;
+}
+
+// fd_arr_lit_bound_names collects the names `body` binds to an ARRAY LITERAL, at
+// any statement depth. Those declarations are the ones the fd-wide env-box rule
+// can reach and rewrite, so an IIFE arm that merely NAMES one still has its
+// elements brought onto the same dispatch ABI as its sibling arms (#8163). A
+// name bound to anything else — a parameter, a call's result — is out of reach.
+function fd_arr_lit_bound_names(body: ast.Stmt[]): string[] {
+    var out: string[] = [];
+    for st in body {
+        out = astwalk.fold_stmt_spine(st, out, arr_lit_bound_name_at);
+    }
+    return out;
+}
+
+function arr_lit_bound_name_at(st: ast.Stmt, acc: string[]): string[] {
+    if let ast.StmtVar(v) = st {
+        if let ast.ExprArray(_) = v.init { return acc.append(v.name); }
+    }
+    return acc;
+}
+
+// fd_binds_iife_boxed_fn_array reports whether `fd` holds a value-position
+// if/match whose arms the uniform-box rule claims — one arm an array literal
+// with an env-boxed element, the rest array literals or names of local ones.
+// The arms share ONE binding and so one dispatch ABI (#5071 one container out),
+// and a NAMED arm's literal sits elsewhere in the function, out of reach of the
+// in-place arm boxing. Answering yes puts every fn-value array literal in `fd`
+// on the env-box ABI, so the named arm and the boxed one agree by construction.
+// The fd_returns_boxed_fn_array sibling for a value-position if/match.
+function fd_binds_iife_boxed_fn_array(fd: parser.FuncDecl, structs: StructTab, mfuncs: MFuncs): boolean {
+    var calls: ast.Expr[] = [];
+    var si: i32 = 0;
+    while (si < fd.body.len()) {
+        calls = astwalk.fold_stmt(fd.body[si], calls, call_exprs_of);
+        si = si + 1;
+    }
+    var ci: i32 = 0;
+    while (ci < calls.len()) {
+        if let ast.ExprCall(c) = calls[ci] {
+            if let ast.ExprLambda(il) = c.callee {
+                if (c.args.len() == 0 && il.params.len() == 0
+                        && iife_arms_are_arrays_with_boxed_elem(il.body, fd, structs, mfuncs)) { return true; }
+            }
+        }
+        ci = ci + 1;
+    }
+    return false;
 }
 
 // call_exprs_of collects every call node an expression holds.
@@ -72512,14 +72571,23 @@ function iife_stmts_all_closurearr(stmts: ast.Stmt[], s: LowerState, seen: i32):
 }
 
 // expr_is_closure_array reports whether an arm value yields an array of closure
-// boxes: an array LITERAL with a boxed element, a call to a closurearr-returning
-// fn, or a nested value-position if/match whose own arms all are.
+// boxes: an array LITERAL with a boxed element, a NAME already bound to a
+// closure array, a call to a closurearr-returning fn, or a nested value-position
+// if/match whose own arms all are.
 function expr_is_closure_array(e: ast.Expr, s: LowerState): boolean {
     match (e) {
         ast.ExprArray(arr) => {
             if (arr.elements.len() == 0) { return false; }
             return arr_elem_is_closure_box(arr.elements[0], s);
         },
+        // `(if (c) { [<lambda>] } else { ys })` — an arm that NAMES a local
+        // array. Its slot already records the element ABI, which is the same
+        // answer the literal arm computes from its element; without this arm the
+        // name read as "not a closure array", the destination stayed on plain
+        // fn-pointer dispatch, and `xs[0](…)` called the box pointer as code
+        // (#8163). The lift's arm-uniformity gate is what makes the two arms
+        // agree, so this only ever reports what that gate already arranged.
+        ast.ExprIdent(aid) => { return s.is_closurearr_slot(s.slot_of(aid.name)); },
         ast.ExprCall(c) => {
             match (c.callee) {
                 ast.ExprIdent(cid) => {
@@ -72730,14 +72798,15 @@ function iife_arms_hold_fn_value(stmts: ast.Stmt[], fd: parser.FuncDecl, structs
 // lambda reading `Ok(a) => [(x) => x + a]` looks capture-free, the gate answers
 // 0, and the lambda stays raw for a `<fd>$clo` nobody built.
 function iife_arms_are_arrays_with_boxed_elem(stmts: ast.Stmt[], fd: parser.FuncDecl, structs: StructTab, mfuncs: MFuncs): boolean {
-    var seen: i32 = iife_arm_arrays_boxed_elems(stmts, iife_scope_fd(fd, stmts), 0, structs, mfuncs);
+    var seen: i32 = iife_arm_arrays_boxed_elems(stmts, iife_scope_fd(fd, stmts), 0, fd_arr_lit_bound_names(fd.body), structs, mfuncs);
     return seen > 0;
 }
 
 // Returns the number of env-boxed elements found, or -1 as soon as an arm
-// returns something that is neither an array literal nor a nested value-position
-// if/match whose own arms satisfy the same test.
-function iife_arm_arrays_boxed_elems(stmts: ast.Stmt[], fd: parser.FuncDecl, seen: i32, structs: StructTab, mfuncs: MFuncs): i32 {
+// returns something that is neither an array literal, nor a name from `names`
+// (a local bound to one), nor a nested value-position if/match whose own arms
+// satisfy the same test.
+function iife_arm_arrays_boxed_elems(stmts: ast.Stmt[], fd: parser.FuncDecl, seen: i32, names: string[], structs: StructTab, mfuncs: MFuncs): i32 {
     var n: i32 = seen;
     for stmt in stmts {
         match (stmt) {
@@ -72758,7 +72827,7 @@ function iife_arm_arrays_boxed_elems(stmts: ast.Stmt[], fd: parser.FuncDecl, see
                         match (rc.callee) {
                             ast.ExprLambda(ril) => {
                                 if (rc.args.len() != 0 || ril.params.len() != 0) { return 0 - 1; }
-                                n = iife_arm_arrays_boxed_elems(ril.body, iife_scope_fd(fd, ril.body), n, structs, mfuncs);
+                                n = iife_arm_arrays_boxed_elems(ril.body, iife_scope_fd(fd, ril.body), n, names, structs, mfuncs);
                                 if (n < 0) { return 0 - 1; }
                             },
                             // `id([<lambda>, …])` — a generic passthrough hands the
@@ -72781,19 +72850,28 @@ function iife_arm_arrays_boxed_elems(stmts: ast.Stmt[], fd: parser.FuncDecl, see
                             _ => { return 0 - 1; }
                         }
                     },
+                    // An arm that NAMES a local bound to an array literal in the
+                    // enclosing function. Nothing can box it where it sits, so
+                    // fd_binds_iife_boxed_fn_array puts that declaration's
+                    // literal on the env-box ABI too and the arms still agree.
+                    // A name bound to anything else — a parameter, a call's
+                    // result — is out of this pass's reach and declines the
+                    // whole IIFE, which leaves a capturing arm lambda raw for
+                    // the module to bail at (#8163).
+                    ast.ExprIdent(aid) => { if (util.index_of_str(names, aid.name) < 0) { return 0 - 1; } },
                     _ => { return 0 - 1; }
                 }
             },
             ast.StmtIf(iff) => {
-                n = iife_arm_arrays_boxed_elems(iff.then_body, fd, n, structs, mfuncs);
+                n = iife_arm_arrays_boxed_elems(iff.then_body, fd, n, names, structs, mfuncs);
                 if (n < 0) { return 0 - 1; }
-                n = iife_arm_arrays_boxed_elems(iff.else_body, fd, n, structs, mfuncs);
+                n = iife_arm_arrays_boxed_elems(iff.else_body, fd, n, names, structs, mfuncs);
                 if (n < 0) { return 0 - 1; }
             },
             ast.StmtMatch(mm) => {
                 var a: i32 = 0;
                 while (a < mm.arms.len()) {
-                    n = iife_arm_arrays_boxed_elems(mm.arms[a].body, fd, n, structs, mfuncs);
+                    n = iife_arm_arrays_boxed_elems(mm.arms[a].body, fd, n, names, structs, mfuncs);
                     if (n < 0) { return 0 - 1; }
                     a = a + 1;
                 }
@@ -73093,14 +73171,17 @@ function ilc_expr_at(e: ast.Expr, acc: InlineCloAcc, fd: parser.FuncDecl, gfns: 
                     //
                     // Boxing that one element is not enough, and the two extra
                     // requirements are why this is gated on EVERY arm being an
-                    // array literal rather than done element by element. The
-                    // binding gets ONE dispatch ABI, so a sibling arm whose array
-                    // holds a raw fn pointer (a no-capture lambda the later lift
-                    // hoists to `__lam_N`) would be env-first-dispatched as a box —
-                    // #5071's problem, one container out. And the DESTINATION has
-                    // to read as a closure array (expr_is_closure_array below),
-                    // which it only can when every arm answers the same way.
-                    // Anything else is left to bail exactly as before.
+                    // array this pass can put on the env-box ABI — a literal, or
+                    // a name bound to one in this function — rather than done
+                    // element by element. The binding gets ONE dispatch ABI, so a
+                    // sibling arm whose array holds a raw fn pointer (a
+                    // no-capture lambda the later lift hoists to `__lam_N`) would
+                    // be env-first-dispatched as a box — #5071's problem, one
+                    // container out. And the DESTINATION has to read as a closure
+                    // array (expr_is_closure_array below), which it only can when
+                    // every arm answers the same way. Anything else — an arm
+                    // naming a PARAMETER, or yielding a call's result — is left to
+                    // bail exactly as before (#8795).
                     if (call.args.len() == 0 && ielam.params.len() == 0
                         && iife_arms_are_arrays_with_boxed_elem(ielam.body, fd, structs, mfuncs)) {
                         var (ibrs, ibra) = box_iife_arm_array_elems(ielam.body, iife_scope_fd(fd, ielam.body), fs, ct, gfns, structs, mfuncs);
@@ -73187,10 +73268,14 @@ function ilc_expr_at(e: ast.Expr, acc: InlineCloAcc, fd: parser.FuncDecl, gfns: 
             // binding and a binding gets one dispatch ABI. A `.with`/`.append`
             // storing a fn value into an array forces the same promotion, one
             // container further out again: the store boxes its value, and the
-            // array it clones is this literal.
+            // array it clones is this literal. A value-position if/match
+            // binding whose arms the uniform-box rule claims is the third such
+            // site: an arm that merely NAMES a local array still shares the
+            // binding's one dispatch ABI, and this literal is where that
+            // declaration lives (#8163).
             if (!has_cap_lam && afnval
                     && (fd_returns_boxed_fn_array(fd, structs, mfuncs) || fd_stores_fn_value_array(fd, mfuncs, abound)
-                        || fd_passes_fn_array_elem(fd, mfuncs))) {
+                        || fd_passes_fn_array_elem(fd, mfuncs) || fd_binds_iife_boxed_fn_array(fd, structs, mfuncs))) {
                 has_cap_lam = true;
             }
             var i: i32 = 0;
