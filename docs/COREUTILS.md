@@ -781,6 +781,34 @@ path. What is left there is a per-line cache of the first key's span, which is
 what GNU's `struct line` carries and what would close most of the `-k` rows;
 #8822 has the shape.
 
+`tee`, 2026-09-07, Linux x86-64, the same 62 MiB file, GNU 9.4 and uutils
+0.0.24:
+
+| utility | workload | fern (ms) | gnu (ms) | uutils (ms) | gnu / fern | uutils / fern |
+|---|---|---|---|---|---|---|
+| `tee` | to stdout alone | 6.78 ± 2.26 | 10.48 ± 4.32 | 11.80 ± 2.10 | 1.55× | 1.74× |
+| `tee` | to one file | 58.15 ± 6.56 | 73.38 ± 12.87 | 69.51 ± 7.26 | 1.26× | 1.20× |
+| `tee` | to four files | 226.49 ± 42.66 | 397.84 ± 37.02 | 379.17 ± 53.67 | 1.76× | 1.67× |
+| `tee` | from a pipe to one file | 62.22 ± 5.93 | 91.84 ± 8.02 | 96.34 ± 19.21 | 1.48× | 1.55× |
+| `tee` | down a pipe | 61.87 ± 5.51 | 97.24 ± 4.07 | 105.35 ± 9.67 | 1.57× | 1.70× |
+
+`tee` does no per-byte work at all, so the whole margin is the syscall
+count: the read block is 64 KiB where GNU and uutils both read 8 KiB
+(measured under strace), which is eight times fewer `read(2)`s and eight
+times fewer `write(2)`s per output. The sweep that chose
+it is in `read_size()` in `tee.fern` — 62 MiB to a file costs 106 ms at
+4 KiB and 58.6 at 64 KiB, and past 64 KiB the pipe case stops improving
+because a write bigger than the pipe buffer puts writer and reader in
+lockstep, the same effect `yes.fern` measured.
+
+**Read a single bench run's ratios with the σ next to them.** An earlier
+run of this same table, on a busier machine, put the four-file row at
+298.50 ± 119.91 against uutils' 270.02 and would have recorded `tee` as
+0.90× uutils there. The σ was 40% of the mean and the row was noise; a
+second run with σ at 19% has it at 1.67×. Neither number is wrong about
+the machine it ran on, which is why every table here says to compare
+only within one run.
+
 Group C's `link` and `unlink`, 2026-09-07, Linux x86-64 (GNU coreutils 9.4; uutils
 0.0.24 as the Debian multi-call binary). Both are one syscall, so the whole
 number is process startup — which is why the 200-operand rows, where that cost
@@ -1006,6 +1034,20 @@ supported on this system`, and it follows without it. That is a real
 degraded path in GNU rather than a divergence invented here, so the corpus
 compares equal — but the option is not implemented until the primitive is.
 
+**An opened handle can land on fd 0/1/2 (#8823).** `open_writer` calls
+`openat(2)`, which returns the lowest free descriptor, so a utility exec'd
+with a standard descriptor closed — `prog >&-`, which this harness has a
+mode for — takes that number for the next file it opens, and `stdout()`
+silently aliases it. glibc refuses to hand back a stream on 0/1/2 for
+exactly this reason (`fcntl (fd, F_DUPFD, 3)`, visible under strace), which
+is what makes `tee FILE >&-` say `tee: 'standard output': Bad file
+descriptor` and exit 1 where a Fern `tee` writes the input to the file twice
+and exits 0. It is not specific to `tee`: any utility that opens a file
+while a standard descriptor is closed has the same hole. The fix is in the
+open helpers on each backend, so it is its own change; until it lands `tee`
+has no `>&-`-with-an-operand case, which is the one invocation its corpus
+cannot hold.
+
 **A string append costs 8-16 ns whatever its size (#8770).** Every
 line-oriented utility assembles its output by appending to a local, and the
 floor is per append rather than per byte, so `cat -n` is 0.22× GNU and
@@ -1091,8 +1133,10 @@ groups are the order of work. Each sub-issue names its group.
   `sum` `md5sum` `sha1sum` `sha224sum` `sha256sum` `sha384sum` `sha512sum`
   `b2sum` `tee`. Done: `cat`, `tac`, `head`, `tail`, `wc`, `nl`, `cut`,
   `paste`, `join`, `comm`, `uniq`, `sort`, `tr`, `fold`, `expand`, `unexpand`,
-  `split`, `csplit`, `od`, `base32`, `base64`, `basenc` and the seven
-  checksum utilities. Needs a buffered stdout writer in `std/io_buffered`
+  `split`, `csplit`, `od`, `base32`, `base64`, `basenc`, `tee` and the seven
+  checksum utilities. `tee` wanted signal dispositions (#8792) for `-i`
+  and its `--output-error` family: SIG_IGN on SIGINT and SIGPIPE.
+  Needs a buffered stdout writer in `std/io_buffered`
   (its own header already promises one) and a streaming stdin reader whose
   reads can FAIL: every one of these reaches a read error through a directory
   operand, and `Reader.read_chunk` answered None to EOF and to EISDIR alike

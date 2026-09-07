@@ -82,6 +82,15 @@ type invocation struct {
 	// are pipes here, so this is the one descriptor on which `test -t`
 	// can answer true.
 	tty bool
+	// sigint sends SIGINT to the child once `limit` bytes of stdout
+	// have been read, before the read end closes. It needs `limit` and
+	// a stdin long enough to outlast it, which together make the case
+	// deterministic: the child is blocked writing into the full pipe
+	// when the signal lands, and the stdout compared is exactly the
+	// `limit` bytes read before it. The signal disposition is then the
+	// whole observable — `tee` dies of SIGINT, `tee -i` ignores it and
+	// dies of the SIGPIPE that the closing read end delivers instead.
+	sigint bool
 	// dir is the working directory the child runs in; the default is the
 	// harness's own. A case needs one when an operand has to be
 	// RELATIVE, which is the only way to spell uniq's output operand as
@@ -142,6 +151,11 @@ type followStep struct {
 // followDeadline bounds a follow case: a side that stops producing
 // output before `limit` is reported with what it produced.
 const followDeadline = 8 * time.Second
+
+// sigintSettle is how long a `sigint` case waits after the signal
+// before closing the read end, so a child that dies of SIGINT has done
+// so before the SIGPIPE that would otherwise be the cause of death.
+const sigintSettle = 250 * time.Millisecond
 
 func (st followStep) run(t *testing.T) {
 	t.Helper()
@@ -339,7 +353,7 @@ func gnuVersion(dir string) (string, error) {
 	if _, err := os.Stat(bin); err != nil {
 		return "", err
 	}
-	argv := append(crossPrefix(), bin, "--version")
+	argv := crossArgv(bin, "--version")
 	out, err := exec.Command(argv[0], argv[1:]...).Output()
 	if err != nil {
 		return "", err
@@ -450,6 +464,16 @@ func crossPrefix() []string {
 	return strings.Fields(os.Getenv("FERN_COREUTILS_QEMU"))
 }
 
+// crossArgv is the argv for running a binary built for FERN_COREUTILS_TARGET:
+// the binary alone when the host is that target, and the emulator in front of
+// it when it is not. Every target binary needs this, the self-host COMPILER
+// included — it is built for the target like the utilities it compiles, so
+// exec'ing it directly is an exec-format error the moment the target is not
+// the host's.
+func crossArgv(bin string, args ...string) []string {
+	return append(append(crossPrefix(), bin), args...)
+}
+
 // run executes `bin` with argv[0] = argv0 and reports what happened.
 func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 	t.Helper()
@@ -544,6 +568,13 @@ func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 		if timedOut {
 			t.Errorf("%s %s: %d of %d bytes arrived before the deadline", bin, quoteArgs(inv.args), len(out), inv.limit)
 			_ = cmd.Process.Kill()
+		}
+		if inv.sigint && !timedOut {
+			_ = cmd.Process.Signal(syscall.SIGINT)
+			// The child is blocked writing into the full pipe until the
+			// read end closes below, so the signal is delivered while it
+			// is still running whatever it does about SIGINT.
+			time.Sleep(sigintSettle)
 		}
 		r.Close()
 		_ = cmd.Wait()

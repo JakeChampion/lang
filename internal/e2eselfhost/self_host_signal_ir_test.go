@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -28,24 +29,37 @@ const signalDispositionProg = `function main(): i32 {
 
 // runWithClosedStdout runs prog (with extra argv) reading one byte of its
 // output and then closing the pipe, and reports the exit status the shell saw
-// for prog itself rather than for the reader.
-func runWithClosedStdout(t *testing.T, prog string, argv ...string) int {
+// for prog itself rather than for the reader. `runner` is the emulator prefix
+// an aarch64 binary needs on an x86 host — qemu-user re-raises the guest's
+// fatal signal on itself, so the disposition still reaches the shell — and is
+// empty for a binary that runs natively.
+func runWithClosedStdout(t *testing.T, runner []string, prog string, argv ...string) int {
 	t.Helper()
-	script := `"$0" "$@" | head -c 1 >/dev/null; exit ${PIPESTATUS[0]}`
-	cmd := exec.Command("bash", append([]string{"-c", script, prog}, argv...)...)
+	script := `"$@" | head -c 1 >/dev/null; exit ${PIPESTATUS[0]}`
+	full := append([]string{"-c", script, "bash"}, runner...)
+	cmd := exec.Command("bash", append(append(full, prog), argv...)...)
 	cmd.Stderr = os.Stderr
 	_ = cmd.Run()
 	return cmd.ProcessState.ExitCode()
 }
 
+// signalDispositionCases is the three-run contract both legs below assert: the
+// default disposition still kills the process, ignoring SIGPIPE lets it run to
+// its own exit, and signal_default puts the killing disposition back. The
+// middle run alone would pass against an emitter that ignored the signal
+// number and ignored everything, which is why the third is here.
+var signalDispositionCases = []struct {
+	name string
+	argv []string
+	want int
+}{
+	{"default disposition kills the writer", nil, 141},
+	{"signal_ignore drops the failing writes", []string{"ignore"}, 7},
+	{"signal_default restores the kill", []string{"ignore", "restore"}, 141},
+}
+
 // #8792: signal_ignore / signal_default must lower on the self-host x86-64 IR
 // path, with native's shape — one i32 in, nothing a caller reads out.
-//
-// The three runs pin the whole contract: the default disposition still kills
-// the process, ignoring SIGPIPE lets it run to its own exit, and
-// signal_default puts the killing disposition back. The middle run alone would
-// pass against an emitter that ignored the signal number and ignored
-// everything, which is why the third is here.
 func TestSelfHostSignalDispositionIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -67,17 +81,66 @@ func TestSelfHostSignalDispositionIRX86_64(t *testing.T) {
 	}
 	progBin := buildBin(t, gcc, dir, "signal_disposition", string(asm))
 
-	for _, tc := range []struct {
-		name string
-		argv []string
-		want int
-	}{
-		{"default disposition kills the writer", nil, 141},
-		{"signal_ignore drops the failing writes", []string{"ignore"}, 7},
-		{"signal_default restores the kill", []string{"ignore", "restore"}, 141},
-	} {
-		if got := runWithClosedStdout(t, progBin, tc.argv...); got != tc.want {
+	for _, tc := range signalDispositionCases {
+		if got := runWithClosedStdout(t, nil, progBin, tc.argv...); got != tc.want {
 			t.Errorf("%s: exit = %d, want %d (#8792)", tc.name, got, tc.want)
+		}
+	}
+}
+
+// #8827: the arm64 sibling. Both dispositions reach aarch64 through
+// asmcore.rt_src_signal_disposition, whose syscall number comes from
+// asmcore.sysno — and that table had no arm64-linux `sigaction` row, so the
+// helper issued -1, every sigaction failed with ENOSYS, and both dispositions
+// were silent no-ops. Nothing upstream could see it: the helper was emitted,
+// the op called it, and only the effect was missing. That is why this leg runs
+// the binary instead of only reading the asm, and why the x86-64 test above
+// stayed green throughout.
+//
+// It surfaced as tee(1): the self-host build died of SIGPIPE in every
+// --output-error mode and of SIGINT under -i, where the native build did not.
+func TestSelfHostSignalDispositionIRArm64(t *testing.T) {
+	gcc, qemu := arm64Tooling(t)
+	x86gcc, x86runner := x86_64Tooling(t)
+	if len(x86runner) != 0 {
+		t.Skip("needs a native x86 host to run the aarch64-emitting driver")
+	}
+	dir := writeSelfHostAsmProject(t)
+	copySelfHostDriver(t, dir, "asm_load_run.fern")
+	mmc := buildSelfHostBin(t, x86gcc, dir, "asm_load_run.fern", "signal_arm64_mmc")
+
+	srcFile := filepath.Join(t.TempDir(), "signal_disposition.fern")
+	if err := os.WriteFile(srcFile, []byte(signalDispositionProg+"\n"), 0o644); err != nil {
+		t.Fatalf("write probe: %v", err)
+	}
+	out, err := exec.Command(mmc, srcFile, "-target", "arm64-linux").Output()
+	if err != nil {
+		t.Fatalf("self-host arm64 emit failed: %v", err)
+	}
+	asm := string(out)
+
+	// The number reaches the trap as a value pushed for __syscall4 rather than
+	// the `mov x8, #N` a reader (or darwinize) would look for, so a wrong
+	// sysno row is invisible everywhere but here and in the run below. Scope
+	// it to each helper's own body: `mov x0, #134` proves nothing file-wide.
+	for _, sym := range []string{"__fn___fern_signal_ignore", "__fn___fern_signal_default"} {
+		body := extractFuncBody(asm, sym)
+		if body == "" {
+			t.Fatalf("%s not defined — the Fern helper did not lower for arm64", sym)
+		}
+		if !strings.Contains(body, "    mov x0, #134\n    str x0, [sp, #-16]!\n") {
+			t.Errorf("%s does not push Linux's rt_sigaction number (134)", sym)
+		}
+	}
+
+	progBin := buildBinArm64(t, gcc, dir, "signal_disposition", asm)
+	var runner []string
+	if qemu != "" {
+		runner = []string{qemu}
+	}
+	for _, tc := range signalDispositionCases {
+		if got := runWithClosedStdout(t, runner, progBin, tc.argv...); got != tc.want {
+			t.Errorf("%s: exit = %d, want %d (#8827)", tc.name, got, tc.want)
 		}
 	}
 }
