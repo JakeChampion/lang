@@ -3477,6 +3477,12 @@ function builtin_i32_names(): string[] {
         // are real counts rather than sentinels — an out-of-range
         // byte and an empty string both genuinely count 0.
         "__count_byte",
+        // __mismatch(a, ao, b, bo, n): the offset of the first byte where
+        // a[ao..ao+n) and b[bo..bo+n) differ, or the CLAMPED n when the
+        // two ranges are equal (#8791, fifth kernel). i32 like its four
+        // siblings, and the only one of them reading two strings, so the
+        // answer is an offset into both ranges rather than into one.
+        "__mismatch",
         "__load_i32",
         "exit",
         "args_count",

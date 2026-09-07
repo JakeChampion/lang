@@ -14890,6 +14890,23 @@ func (b *builder) callBody(n *ast.Call) error {
 			return nil
 		}
 	}
+	// __mismatch(a, ao, b, bo, n) — the same runtime-helper-call shape as its
+	// four siblings, with TWO strings. ArgTypes is doubly load-bearing here:
+	// under the two-word ABI this call is seven operand slots, not five, and
+	// the two strings are not adjacent, so a backend popping I32=5 reads the
+	// second string's length as `n`.
+	if id.Name == "__mismatch" && len(n.Args) == 5 {
+		if _, isLocal := b.locals[id.Name]; !isLocal {
+			for _, a := range n.Args {
+				if err := b.expr(a); err != nil {
+					return err
+				}
+			}
+			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_mismatch", Width: ResNarrow, I32: 5,
+				Ext: &OpExt{ArgTypes: []ast.Type{ast.StringType{}, ast.NumberType{}, ast.StringType{}, ast.NumberType{}, ast.NumberType{}}}})
+			return nil
+		}
+	}
 	// __heap_mark() / __heap_release_to(mark) — the one-level arena
 	// checkpoint pair. Same runtime-helper shape as __heap_bump_bytes so each
 	// backend rewinds its own cursor and snapshots its own freelist heads.

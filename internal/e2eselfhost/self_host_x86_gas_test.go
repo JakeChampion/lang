@@ -374,6 +374,22 @@ function main(): i32 {
         if (vk.code[vi] != want[vi]) { return 37; }
         vi = vi + 1;
     }
+    // The COMPARISON kernel's front end (#8791). It adds three shapes the
+    // three scan kernels never emit: a second movdqu into %xmm1, the
+    // cmpl-then-notl pair that reads the mask as EQUAL rather than
+    // FOUND, and the 64-bit SIB-indexed load/xor its overlapping trailing
+    // window addresses with. GNU as output for this exact text.
+    var mm: X86Asm = x86_gas_assemble("\tmovdqu (%rsi,%rdx), %xmm0\n\tmovdqu (%rcx,%rdx), %xmm1\n\tpcmpeqb %xmm1, %xmm0\n\tpmovmskb %xmm0, %eax\n\tcmpl $65535, %eax\n\tnotl %eax\n\tbsfl %eax, %eax\n\tmovq (%rsi,%rdi), %rax\n\txorq (%rcx,%rdi), %rax\n\tbsfq %rax, %rax\n\tshrq $3, %rax\n");
+    if (mm.unknown.len() != 0) { return 54; }
+    var mw: i32[] = [243, 15, 111, 4, 22, 243, 15, 111, 12, 17, 102, 15, 116, 193,
+        102, 15, 215, 192, 61, 255, 255, 0, 0, 247, 208, 15, 188, 192,
+        72, 139, 4, 62, 72, 51, 4, 57, 72, 15, 188, 192, 72, 193, 232, 3];
+    if (mm.code.len() != mw.len()) { return 55; }
+    var mi: i32 = 0;
+    while (mi < mw.len()) {
+        if (mm.code[mi] != mw[mi]) { return 56; }
+        mi = mi + 1;
+    }
     // The backward kernel's tail differs from the forward one's by exactly one
     // instruction, so the front end is checked on that one: bsrl, not bsfl.
     // 0F BD C8 / 45 0F BD C9, GNU as output for this text.
