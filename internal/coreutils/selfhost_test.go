@@ -70,6 +70,7 @@ func corpusByUtil() map[string]func(*testing.T) []invocation {
 		"sha384sum": sha384sumCases,
 		"sha512sum": sha512sumCases,
 		"sleep":     sleepCases,
+		"sort":      sortCases,
 		"split":     splitCases,
 		"tac":       tacCases,
 		"tail":      tailCases,

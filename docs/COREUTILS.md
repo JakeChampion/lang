@@ -631,6 +631,44 @@ group names are resolved in ONE pass over /etc/group rather than a pass
 per gid — the shape that would otherwise be quadratic in the group
 count.
 
+`sort`, 2026-09-07, Linux x86-64 (GNU coreutils 9.4, uutils 0.0.24). 500 000
+lines of eleven lowercase letters, and for `-n` the same many signed ten-digit
+integers:
+
+| utility | workload | fern (ms) | gnu (ms) | uutils (ms) | gnu / fern | uutils / fern |
+|---|---|---|---|---|---|---|
+| `sort` | 500k lines | 369.47 ± 13.85 | 114.92 ± 7.06 | 112.37 ± 10.43 | 0.31× | 0.30× |
+| `sort` | `-n` 500k numbers | 1061.38 ± 45.26 | 143.24 ± 15.83 | 190.42 ± 7.72 | 0.13× | 0.18× |
+| `sort` | `-k2,2n` 500k lines | 2649.59 ± 79.30 | 138.27 ± 5.51 | 196.55 ± 7.14 | 0.05× | 0.07× |
+| `sort` | `-k1,1` 500k lines | 1013.66 ± 31.01 | 112.99 ± 3.90 | 140.78 ± 6.86 | 0.11× | 0.14× |
+| `sort` | `-u` 500k lines | 381.77 ± 21.53 | 110.85 ± 4.74 | 127.34 ± 27.82 | 0.29× | 0.33× |
+| `sort` | `-r` 500k lines | 371.89 ± 24.12 | 97.47 ± 5.33 | 89.35 ± 4.63 | 0.26× | 0.24× |
+| `sort` | `-s` 500k lines | 371.55 ± 21.99 | 97.01 ± 6.07 | 101.17 ± 8.78 | 0.26× | 0.27× |
+| `sort` | 500k lines from a pipe | 365.45 ± 17.17 | 162.16 ± 9.46 | 100.13 ± 12.54 | 0.44× | 0.27× |
+| `sort` | a sorted 500k-line file | 200.78 ± 10.00 | 37.49 ± 1.82 | 31.97 ± 2.39 | 0.19× | 0.16× |
+| `sort` | `-c` a sorted 500k-line file | 45.65 ± 2.62 | 8.13 ± 0.96 | 16.26 ± 3.01 | 0.18× | 0.36× |
+| `sort` | `-m` two sorted files | 242.28 ± 11.61 | 31.43 ± 2.70 | 95.14 ± 7.61 | 0.13× | 0.39× |
+
+**This is the first utility here that is slower than GNU everywhere, and the
+reason is not in the utility (#8822).** The algorithm is GNU's — a stable merge
+over packed line offsets — and the cost is the price of one Fern instruction on
+the x86-64 emitter: locals live in memory, a boolean goes through push/pop, and
+one `text[i]` is thirteen instructions because the small-string check and the
+bounds check are redone per access. On top of that `ir.Inline` does nothing at
+all above 20 000 whole-program ops, which a coreutil with `lib/gnu.fern` and
+`lib/ld.fern` clears easily, so a one-line predicate is a real call: expanding
+the digit test by hand inside `magcompare` was worth a third of `sort -n`.
+Roughly half of GNU's lead on the first row is threads (`--parallel=1` puts GNU
+at 810 ms there); the rest, and all of the `-n` gap, is per-instruction cost.
+
+Two changes inside the utility paid before that floor was reached, both
+measured: holding a line as one packed i64 rather than two parallel offset
+arrays (2.85 s to 1.95 s on 2M lines — two scattered reads per comparison
+became one sequential one), and dropping a redundant NUL scan from the numeric
+path. What is left there is a per-line cache of the first key's span, which is
+what GNU's `struct line` carries and what would close most of the `-k` rows;
+#8822 has the shape.
+
 ## Known divergences
 
 **`tac` holds a non-seekable input in memory.** tac reads its input
@@ -740,6 +778,16 @@ BOTH ways, which nothing did before the self-host leg: `.bytes()` is an
 intrinsic there, so the one stdlib site never reaches the self-host's
 lowering. `base64` wanted it — raw scratch buffers run the encode at 165 ms
 against the 460 ms `u8[]` with `.with()` costs — and ships without it.
+**A process cannot read its own resource limits (#8819).** GNU `sort` caps
+`--batch-size` at what `getrlimit (RLIMIT_NOFILE, …)` reports minus the three
+standard descriptors, and names that number when a value exceeds it:
+`maximum --batch-size argument with current rlimit is 19997`. Fern has no way
+to ask, so `sort.fern` reproduces the option's other two diagnostics exactly
+and accepts any value at or above the minimum of 2. `--batch-size` changes no
+byte of output on either side — it is an external-merge fan-in, and this sort
+holds the whole input in memory — so the gap is one diagnostic pair, and the
+corpus carries no case above the cap until the primitive exists.
+
 
 **A process-liveness query (#8767).** `tail --pid=PID` stops following once
 that process exits, which GNU asks as `kill (pid, 0)`. Fern can run a child
@@ -830,7 +878,7 @@ groups are the order of work. Each sub-issue names its group.
   `unexpand` `split` `csplit` `shuf` `od` `base32` `base64` `basenc` `cksum`
   `sum` `md5sum` `sha1sum` `sha224sum` `sha256sum` `sha384sum` `sha512sum`
   `b2sum` `tee`. Done: `cat`, `tac`, `head`, `tail`, `wc`, `nl`, `cut`,
-  `paste`, `join`, `comm`, `uniq`, `tr`, `fold`, `expand`, `unexpand`,
+  `paste`, `join`, `comm`, `uniq`, `sort`, `tr`, `fold`, `expand`, `unexpand`,
   `split`, `base32`, `base64`, `basenc` and the seven checksum utilities.
   Needs a buffered stdout writer in `std/io_buffered` (its own header
   already promises one) and a streaming stdin reader whose reads can FAIL:
