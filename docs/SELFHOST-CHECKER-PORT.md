@@ -1648,3 +1648,71 @@ The stdin-fed `checker_codes_run.fern` driver does not resolve imports, so no
 row here can exercise an imported method surface. The import-dependent halves
 (the string list with `std/string` present, the array fallback with `std/array`
 present) are reachable only through the modload driver and are unpinned.
+
+## 2026-09-07 — the exclusion list drops from eighteen to two (#8461)
+
+The list was not a set of unimplemented rules. Every one of the eighteen codes
+was reported by the self-host checker under `-check`; the exclusion only kept
+the verdict away from `-target`, so the two front ends of ONE compiler
+disagreed about whether a program was legal and the permissive one produced the
+binary.
+
+Two of those disagreements were miscompiles rather than missing diagnostics:
+
+| program | native | self-host `-check` | self-host `-o` before | after |
+|---|---|---|---|---|
+| `xs == ys` on `i32[]` | E041 | E041 | compiled to a POINTER compare, exit 0 | E041, refused |
+| `var (a, _) = pair(); return _;` | E001 | E001 | compiled, returned **2** — the discarded element | E001, refused |
+
+### What had to be fixed first
+
+A code leaves the list when the checker stops reporting it on programs native
+accepts, so the sweep below had to reach zero for each. Six rules were wrong,
+and each was wrong about a shape the SELF-HOST parser produces and native's
+does not — which is why the native checker never had the corresponding bug.
+
+| rule | what it read | why native has no counterpart |
+|---|---|---|
+| E021 / E064 | every use of `Platform`, `Zoned`, `Writer`, … | native registers `builtinStructDecls()` before typing; the self-host had the reserved NAMES and no declarations, so `import "std/time"` alone drew 18 E021 + 24 E064 |
+| E052 | a tuple / struct / literal `match` as fall-through | the match is REPLACED at parse time by a done-flag if/else chain, which falls through by construction; the `if` carries the arms as written and `block_exits` now reads those |
+| E044 | an if-expression's branches as closure captures | the if-expression is an IIFE here and has no node in the native AST; only a lambda the PROGRAMMER wrote is a capture site |
+| E001 | `a` and `b` in `for ((a, b), s) in xs` | the binder encoding carries a nested position as a parenthesised group and the split ran over every comma, binding `(a` and `b)` |
+| E001 | the `@` whole-value binder | `PatVariant.at_binding` was bound nowhere in the checker |
+| E001 / E036 | `Wrap.default()`, `User.from_json(s)`, `Opt.empty()` | an associated function is a FuncDecl with a receiver TYPE and no receiver NAME; a `@derive` records it nowhere else, and `from_json` is not a requirement of the `Json` trait |
+
+`assoc_func_impls` is the general form of the last row: every associated
+function in the module becomes an impl-table entry under a blank trait name, so
+inherent impls and derives resolve through one path. `build_func_scope` also
+takes the receiver STRUCT's type parameters when the receiver spelling carries
+none, which is how a derived body reaches `T.default()`.
+
+### Measured outcome
+
+Same four-corpus sweep as #6961, re-run whole:
+
+| corpus | programs native accepts | files drawing a code the self-host should not |
+|---|---|---|
+| `conformance/cases` | 496 of 570 | 1 (`underscore_discard`, E013 + E018) |
+| `examples/` + `coreutils/` + `spec/` + `internal/stdlib` | 445 of 448 | 0 |
+| `examples/self_host` via `fern.fern` | accepted | 0 — only the uncoded #4346 hint |
+
+The list is now two codes:
+
+```
+E013 E018
+```
+
+Both are the same bug and **#8852 owns it**: the self-host parser never renames
+`_`, so a repeated discard (`function f(_: i32, _: string)`, `var _ = 1; var _
+= 2;`) reads as a redeclared name. Native renames each occurrence
+(`discardName`), and its comment claims a `discard_name` mirror in
+`examples/self_host/parser.fern` that was never written.
+
+### Gate
+
+`TestSelfHostFormerlyExemptCodesGateX86_64` (`internal/e2eselfhost`) is the
+three-way matrix the issue asked for: one program per code through native
+`-check`, self-host `-check` and self-host `-target`, asserting all three
+agree. A row that is still exempt carries the issue that owns it, and goes RED
+if the build starts refusing it — so an exemption cannot outlive its cause, and
+one cannot come back unowned.
