@@ -9348,7 +9348,12 @@ func (b *builder) stmt(s ast.Stmt) error {
 				bts = append(bts, arm.BindingTypes)
 				regions = append(regions, armConfinementRegion(arm.AtBinding, arm.Guard, arm.Body))
 			}
-			scrutEnum, reclaimScrut = b.reclaimableMatchScrutinee(n.Tag, bns, bts, regions, nil)
+			// An owned-payload match releases the box inside each arm
+			// (emitOwnedPayloadArmBoxFree); a join reclaim on top of that
+			// would free it twice.
+			if !b.rc.ownedPayloadMatches[n] {
+				scrutEnum, reclaimScrut = b.reclaimableMatchScrutinee(n.Tag, bns, bts, regions, nil)
+			}
 		}
 		// The join release below is only reached by falling out of the
 		// match, so an arm that returns / breaks / continues has to emit it
@@ -9536,6 +9541,18 @@ func (b *builder) stmt(s ast.Stmt) error {
 				armRestores = append(armRestores, atRestore)
 				b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
 				b.emit(Op{Kind: OpStoreLocal, I32: atSlot})
+			}
+			// Owned-payload match (#8405): the helper's Option / Result box
+			// is one fresh rc=1 block per call, and its payload has just been
+			// extracted — into a binding that owns it (consumingBindings) or
+			// into a drop above. Free the box SHALLOW here, at THIS arm's
+			// variant size (the layout need not be uniform: Option[string]'s
+			// Some and None differ on a two-word-string target), so the block
+			// goes back to the class it was taken from. is_unique-gated, so an
+			// aliased box is only dec'd. An `@` binding keeps the box pointer
+			// alive into the body, so it opts out.
+			if ownedPayloadArm && !pairFormScrutinee && arm.AtBinding == "" {
+				b.emitOwnedPayloadArmBoxFree(ptrSlot, n.Tag, arm.VariantName)
 			}
 			// Consuming match: the bindings are now copied into their own slots,
 			// so the scrutinee box is dead (its pointer payloads were MOVED into

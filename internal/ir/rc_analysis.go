@@ -211,9 +211,10 @@ type rcPlan struct {
 	// Filled by computeConsumingOwnedMatches.
 	consumingBindings map[string]ast.Type
 	// ownedPayloadMatches marks a `match` whose scrutinee is a direct call to
-	// an rcOwnedPayloadBuiltins builtin: the box is immortal and needs no
-	// release, but its success payload is a fresh rc=1 value the caller owns
-	// and nothing else ever releases. Its qualifying arms' owned-payload
+	// an rcOwnedPayloadBuiltins builtin: the box is a fresh rc=1 block the
+	// arm frees shallow once the bindings are out
+	// (emitOwnedPayloadArmBoxFree), and its success payload is a fresh rc=1
+	// value the caller owns. Its qualifying arms' owned-payload
 	// bindings are counted owners in consumingBindings; the bind site drops
 	// the slot's previous value first so a loop releases every iteration's
 	// payload, and a `_` at an owned position drops the payload at once.
@@ -1364,9 +1365,8 @@ func pureReadReceiverBuiltin(name string) bool {
 //     and returns void (its runtime doc, all three implementations);
 //   - print / write / eprint write the bytes to an fd, void result;
 //   - `w.write(s)` (__fern_writer_write) writes the bytes to the
-//     Writer's fd and returns an immortal Option[IoError] box built
-//     by __build_io_error / the None sentinel, which cannot name the
-//     string;
+//     Writer's fd and returns a fresh Option[IoError] box holding an
+//     immortal IoError, neither of which can name the string;
 //   - string_from_bytes_unchecked memcpys the u8[] into a fresh string
 //     (inline-packed, the empty sentinel, or an rc1 heap copy — never
 //     the input buffer);
@@ -5681,8 +5681,9 @@ func (b *builder) computeConsumingMatchReuse() map[*ast.Call]bool {
 //
 // The same binding role serves a second scrutinee shape, returned as the
 // second map: a direct call to an rcOwnedPayloadBuiltins builtin
-// (ownedPayloadMatches). There the box is immortal and released by nobody,
-// so the only question is who owns the fresh payload; its qualifying arms'
+// (ownedPayloadMatches). There the box is one fresh rc=1 block per call,
+// released by the arm itself once the payload is out, so the question this
+// answers is who owns that payload; its qualifying arms'
 // string / array bindings become counted owners under the same name gates,
 // with no loop restriction (each iteration reads a fresh box — the bind site
 // drops the previous value) and no sibling poisoning (an unadmitted binding

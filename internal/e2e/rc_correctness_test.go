@@ -8488,6 +8488,40 @@ function main(): i32 {
     return bad + __rc_underflow_count();
 }`,
 	},
+	{
+		// #8398 / #8405: the I/O helpers' per-call Option / Result box is a
+		// counted rc=1 block, so every site that consumes one releases it.
+		// The four shapes, all of which leaked one box a round before:
+		// the match scrutinee (the arm frees the box shallow once its
+		// payload is out), a `var` local, an argument temp, and a bare
+		// discarded statement. `env` of a name nothing sets answers None
+		// every round, which is the arm whose box the runtime had been
+		// allocating BELOW the enum's uniform size — freeing that one at
+		// the uniform size is what would push a short block onto a class
+		// its extent does not cover, so this is the case that pins the
+		// sizing as much as the classification.
+		name: "io_option_box_reclaimed_per_call",
+		src: `
+function sink(o: Option[string]): i32 {
+    match (o) { Some(_) => { return 1; }, None => { return 0; } }
+}
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 200) {
+        match (env("FERN_RC_CORPUS_NEVER_SET_A")) {
+            Some(v) => { acc = acc + v.len(); },
+            None => { acc = acc + 1; }
+        }
+        var o: Option[string] = env("FERN_RC_CORPUS_NEVER_SET_B");
+        match (o) { Some(_) => { acc = acc + 1000; }, None => {} }
+        acc = acc + sink(env("FERN_RC_CORPUS_NEVER_SET_C"));
+        env("FERN_RC_CORPUS_NEVER_SET_D");
+        i = i + 1;
+    }
+    return (acc - 200) + __rc_underflow_count();
+}`,
+	},
 }
 
 func TestX86_64RcCorrectnessCorpus(t *testing.T) {
