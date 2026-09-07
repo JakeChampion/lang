@@ -1,0 +1,8 @@
+// md5sum.fern — GNU-compatible `md5sum`: print or check MD5
+// checksums. The whole program is `lib/digest.fern`, which the seven
+// checksum utilities share; this file names the digest.
+import "./lib/digest";
+
+function main(): i32 {
+  return digest.run(digest.algo_md5());
+}
