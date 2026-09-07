@@ -37,6 +37,7 @@ func corpusByUtil() map[string]func(*testing.T) []invocation {
 	return map[string]func(*testing.T) []invocation{
 		"[":        bracketCases,
 		"basename": basenameCases,
+		"comm":     commCases,
 		"dirname":  dirnameCases,
 		"echo":     echoCases,
 		"expr":     exprCases,
