@@ -37,6 +37,7 @@ func corpusByUtil() map[string]func(*testing.T) []invocation {
 	return map[string]func(*testing.T) []invocation{
 		"[":        bracketCases,
 		"basename": basenameCases,
+		"cat":      catCases,
 		"comm":     commCases,
 		"dirname":  dirnameCases,
 		"echo":     echoCases,
@@ -49,6 +50,7 @@ func corpusByUtil() map[string]func(*testing.T) []invocation {
 		"printf":   printfCases,
 		"seq":      seqCases,
 		"sleep":    sleepCases,
+		"tail":     tailCases,
 		"test":     testCases,
 		"true":     trueFalseCases,
 		"tsort":    tsortCases,
@@ -176,8 +178,16 @@ func TestSelfHostCoreutilsParity(t *testing.T) {
 					// this leg would otherwise double the package's wall
 					// time on its own. Each case is its own pair of
 					// processes with no shared state; the two binary
-					// caches they read are mutex-guarded.
-					t.Parallel()
+					// caches they read are mutex-guarded. A case that
+					// writes a corpus file — appending stdout to it,
+					// playing the writer a follow watches, or preparing a
+					// tree and reading it back — is the exception: two of
+					// them on one file would see each other's bytes, so
+					// those run one at a time.
+					if inv.stdoutPath == "" && len(inv.follow) == 0 &&
+						inv.prepare == nil && len(inv.artifacts) == 0 {
+						t.Parallel()
+					}
 					inv.prep(t)
 					want := inv.run(t, native, util)
 					wantFiles := inv.readArtifacts(t)
