@@ -292,6 +292,11 @@ pub function needs_of(cache: irlower.LowerResult[]): string[] {
     if (module_emits_op_cached(cache, "remove_dir_all")) { out = out.append("remove_dir_all"); }
     if (module_emits_op_cached(cache, "remove_file")) { out = out.append("remove_file"); }
     if (module_emits_op_cached(cache, "create_dir_all")) { out = out.append("create_dir_all"); }
+    if (module_emits_op_cached(cache, "create_dir")) { out = out.append("create_dir"); }
+    if (module_emits_op_cached(cache, "remove_dir")) { out = out.append("remove_dir"); }
+    if (module_emits_op_cached(cache, "create_link")) { out = out.append("create_link"); }
+    if (module_emits_op_cached(cache, "create_symlink")) { out = out.append("create_symlink"); }
+    if (module_emits_op_cached(cache, "read_link")) { out = out.append("read_link"); }
     if (module_emits_op_cached(cache, "sleep_ms")) { out = out.append("sleep_ms"); }
     if (module_emits_op_cached(cache, "stat")) { out = out.append("stat"); }
     if (module_emits_op_cached(cache, "lstat")) { out = out.append("lstat"); }
@@ -3509,7 +3514,8 @@ function is_host_op_kind(tag: i32): boolean {
     return tag == 161 || tag == 162 || tag == 163 || tag == 164 || tag == 182 || tag == 184 ||
         tag == 183 || tag == 209 || tag == 168 || tag == 167 || tag == 169 || tag == 233 || tag == 170 ||
         tag == 203 || tag == 202 || tag == 176 || tag == 175 || tag == 236 || tag == 173 || tag == 231 ||
-        tag == 171 || tag == 172 || tag == 180 || tag == 210 || tag == 166;
+        tag == 171 || tag == 172 || tag == 180 || tag == 210 || tag == 166 ||
+        tag == 260 || tag == 261 || tag == 262 || tag == 263 || tag == 264;
 }
 
 // emit_host_op_wat renders one host op as WAT. Every arm is a fixed call to
@@ -3643,6 +3649,34 @@ function emit_host_op_wat(o: ir.Op): string {
         // path_unlink_file import + heap) when the module removes a file. No
         // struct payload, so unlike stat it needs no type-id.
         return "    call $__fern_remove_file\n";
+    }
+    if (o.kind_tag == 260) {  // create_dir
+        // stack: path strblock, mode -> ONE path_create_directory under the
+        // preopen, push a Result[(), IoError] box. WASI's call carries no
+        // mode, so $__fern_create_dir drops it (docs/FREESTANDING-CORE.md);
+        // EEXIST reaches the caller, which is the whole difference from
+        // create_dir_all.
+        return "    call $__fern_create_dir\n";
+    }
+    if (o.kind_tag == 261) {  // remove_dir
+        // stack: path strblock -> path_remove_directory, push a
+        // Result[(), IoError] box. A non-empty directory is ENOTEMPTY.
+        return "    call $__fern_remove_dir\n";
+    }
+    if (o.kind_tag == 262) {  // create_link
+        // stack: target strblock, path strblock -> path_link with the
+        // lookupflags word 0, push a Result[(), IoError] box.
+        return "    call $__fern_create_link\n";
+    }
+    if (o.kind_tag == 263) {  // create_symlink
+        // stack: target strblock, path strblock -> path_symlink; the target
+        // is stored verbatim and never resolved.
+        return "    call $__fern_create_symlink\n";
+    }
+    if (o.kind_tag == 264) {  // read_link
+        // stack: path strblock -> path_readlink into a PATH_MAX buffer, push
+        // a Result[string, IoError] box holding the target.
+        return "    call $__fern_read_link\n";
     }
     if (o.kind_tag == 231) {  // create_dir_all
         // stack: path strblock ptr -> create the directory and every missing
@@ -4675,7 +4709,7 @@ function io_err_field_off(i: i32, slot: i32): string {
 // needs_io_error reports whether the module carries any fs op — the gate on
 // $__fern_build_io_error and on the strerror texts it selects from.
 pub function needs_io_error(needs: string[]): boolean {
-    return need(needs, "stat") || need(needs, "lstat") || need(needs, "remove_file") || need(needs, "create_dir_all") || need(needs, "read_dir") || need(needs, "remove_dir_all") || need(needs, "temp_dir") || need(needs, "read_file") || need(needs, "read_file_bytes") || need(needs, "write_file") || need(needs, "open_file") || need(needs, "writer_write") || need(needs, "reader_close") || need(needs, "read_chunk") || need(needs, "fd_stat") || need(needs, "reader_seek");
+    return need(needs, "stat") || need(needs, "lstat") || need(needs, "remove_file") || need(needs, "create_dir_all") || need(needs, "create_dir") || need(needs, "remove_dir") || need(needs, "create_link") || need(needs, "create_symlink") || need(needs, "read_link") || need(needs, "read_dir") || need(needs, "remove_dir_all") || need(needs, "temp_dir") || need(needs, "read_file") || need(needs, "read_file_bytes") || need(needs, "write_file") || need(needs, "open_file") || need(needs, "writer_write") || need(needs, "reader_close") || need(needs, "read_chunk") || need(needs, "fd_stat") || need(needs, "reader_seek");
 }
 
 // with_strerror_texts adds the strerror texts and the "Unknown error " prefix
@@ -5096,6 +5130,19 @@ pub function stat_import(): string {
 pub function remove_file_import(): string {
     return "  (import \"wasi_snapshot_preview1\" \"path_unlink_file\" (func $path_unlink_file (param i32 i32 i32) (result i32)))\n";
 }
+// link_import / symlink_import / readlink_import emit the preview1 imports
+// behind $__fern_create_link / $__fern_create_symlink / $__fern_read_link.
+// None is shared with another bundle, so each is emitted exactly once, by its
+// own op's need — a duplicate import is an invalid module.
+pub function link_import(): string {
+    return "  (import \"wasi_snapshot_preview1\" \"path_link\" (func $path_link (param i32 i32 i32 i32 i32 i32 i32) (result i32)))\n";
+}
+pub function symlink_import(): string {
+    return "  (import \"wasi_snapshot_preview1\" \"path_symlink\" (func $path_symlink (param i32 i32 i32 i32 i32) (result i32)))\n";
+}
+pub function readlink_import(): string {
+    return "  (import \"wasi_snapshot_preview1\" \"path_readlink\" (func $path_readlink (param i32 i32 i32 i32 i32 i32) (result i32)))\n";
+}
 // readdir_fd_import emits the preview1 fd_readdir import that $__fern_read_dir
 // uses. path_open / fd_close come from file_imports (emitted once for any module
 // doing path-based file I/O OR read_dir — an unused fd_read import there is valid
@@ -5375,6 +5422,121 @@ pub function remove_file_func(): string {
     o = o + "    (local.get $res))\n";
     return o;
 }
+// The single-step directory and link primitives (#8883). Each is ONE WASI
+// call under the preopen (fd 3), and each answers with the same rc-boxed
+// [tag@0, payload@4] Result the fs family beside them builds: Ok = 0, Err = 1
+// with the IoError box at +4.
+//
+// Two honest gaps, both WASI's rather than this emitter's, and both recorded
+// in docs/FREESTANDING-CORE.md: path_create_directory carries no mode, so
+// create_dir's is dropped (and `umask` is refused outright on this target),
+// and every path resolves under the preopen, so one that escapes it is
+// ENOTCAPABLE where a kernel would resolve it.
+
+// create_dir_func emits $__fern_create_dir(path, mode) -> Result[(), IoError].
+// The mode is accepted and dropped; EEXIST is an ERROR here, unlike
+// create_dir_all's leaf.
+pub function create_dir_func(): string {
+    var o: string = "";
+    o = o + "  (func $__fern_create_dir (param $path i32) (param $mode i32) (result i32)\n";
+    o = o + "    (local $err i32) (local $res i32)\n";
+    o = o + "    (local.set $err (call $path_create_directory (i32.const 3) (i32.add (local.get $path) (i32.const 4)) (i32.load (local.get $path))))\n";
+    o = o + path_result_tail("$path");
+    return o;
+}
+
+// remove_dir_func emits $__fern_remove_dir(path) -> Result[(), IoError]:
+// path_remove_directory, with ENOTEMPTY reaching the caller.
+pub function remove_dir_func(): string {
+    var o: string = "";
+    o = o + "  (func $__fern_remove_dir (param $path i32) (result i32)\n";
+    o = o + "    (local $err i32) (local $res i32)\n";
+    o = o + "    (local.set $err (call $path_remove_directory (i32.const 3) (i32.add (local.get $path) (i32.const 4)) (i32.load (local.get $path))))\n";
+    o = o + path_result_tail("$path");
+    return o;
+}
+
+// create_link_func emits $__fern_create_link(target, path) ->
+// Result[(), IoError]: path_link with the lookupflags word 0, so the target's
+// own final symlink is not followed. The IoError names the LINK, which is the
+// operand ln(1) and link(1) report.
+pub function create_link_func(): string {
+    var o: string = "";
+    o = o + "  (func $__fern_create_link (param $target i32) (param $path i32) (result i32)\n";
+    o = o + "    (local $err i32) (local $res i32)\n";
+    o = o + "    (local.set $err (call $path_link (i32.const 3) (i32.const 0) (i32.add (local.get $target) (i32.const 4)) (i32.load (local.get $target)) (i32.const 3) (i32.add (local.get $path) (i32.const 4)) (i32.load (local.get $path))))\n";
+    o = o + path_result_tail("$path");
+    return o;
+}
+
+// create_symlink_func emits $__fern_create_symlink(target, path) ->
+// Result[(), IoError]: path_symlink, with the target stored verbatim and
+// never resolved — so it takes no dirfd of its own.
+pub function create_symlink_func(): string {
+    var o: string = "";
+    o = o + "  (func $__fern_create_symlink (param $target i32) (param $path i32) (result i32)\n";
+    o = o + "    (local $err i32) (local $res i32)\n";
+    o = o + "    (local.set $err (call $path_symlink (i32.add (local.get $target) (i32.const 4)) (i32.load (local.get $target)) (i32.const 3) (i32.add (local.get $path) (i32.const 4)) (i32.load (local.get $path))))\n";
+    o = o + path_result_tail("$path");
+    return o;
+}
+
+// path_result_tail is the shared ending of the four void-result helpers: a
+// fresh 8-byte Result box, Ok(()) when the errno is 0, else
+// Err(build_io_error(errno, pathvar)).
+function path_result_tail(pathvar: string): string {
+    var o: string = "";
+    o = o + "    (local.set $res (call $__fern_str_box (i32.const 8)))\n";
+    o = o + "    (if (i32.eq (local.get $err) (i32.const 0)) (then\n";
+    o = o + "      (i32.store (local.get $res) (i32.const 0))\n";
+    o = o + "      (i32.store (i32.add (local.get $res) (i32.const 4)) (i32.const 0))\n";
+    o = o + "      (return (local.get $res))))\n";
+    o = o + "    (i32.store (local.get $res) (i32.const 1))\n";
+    o = o + "    (i32.store (i32.add (local.get $res) (i32.const 4)) (call $__fern_build_io_error (local.get $err) (local.get " + pathvar + ")))\n";
+    o = o + "    (local.get $res))\n";
+    return o;
+}
+
+// read_link_func emits $__fern_read_link(path) -> Result[string, IoError]:
+// path_readlink into a PATH_MAX buffer, then the target copied into its own
+// string block.
+//
+// path_readlink TRUNCATES silently into a buffer that is too small and reports
+// no error, so a FULL buffer is answered with ENAMETOOLONG (37 in WASI's errno
+// numbering) rather than a target missing its tail.
+pub function read_link_func(): string {
+    var o: string = "";
+    o = o + "  (func $__fern_read_link (param $path i32) (result i32)\n";
+    o = o + "    (local $err i32) (local $res i32) (local $buf i32) (local $used i32) (local $blk i32) (local $i i32)\n";
+    // The used-count cell and the 4096-byte target buffer, both out of the
+    // string-block allocator (over-headering scratch is harmless).
+    o = o + "    (local.set $used (call $__fern_str_box (i32.const 4)))\n";
+    o = o + "    (local.set $buf (call $__fern_str_box (i32.const 4096)))\n";
+    o = o + "    (local.set $err (call $path_readlink (i32.const 3) (i32.add (local.get $path) (i32.const 4)) (i32.load (local.get $path)) (local.get $buf) (i32.const 4096) (local.get $used)))\n";
+    o = o + "    (if (i32.eqz (local.get $err)) (then\n";
+    o = o + "      (if (i32.ge_u (i32.load (local.get $used)) (i32.const 4096)) (then (local.set $err (i32.const 37))))))\n";
+    o = o + "    (if (i32.ne (local.get $err) (i32.const 0)) (then\n";
+    o = o + "      (local.set $res (call $__fern_str_box (i32.const 8)))\n";
+    o = o + "      (i32.store (local.get $res) (i32.const 1))\n";
+    o = o + "      (i32.store (i32.add (local.get $res) (i32.const 4)) (call $__fern_build_io_error (local.get $err) (local.get $path)))\n";
+    o = o + "      (return (local.get $res))))\n";
+    // The target in its own [len][bytes] block, copied out of the scratch
+    // buffer because the caller keeps it past this call.
+    o = o + "    (local.set $blk (call $__fern_str_box (i32.add (i32.const 4) (i32.load (local.get $used)))))\n";
+    o = o + "    (i32.store (local.get $blk) (i32.load (local.get $used)))\n";
+    o = o + "    (local.set $i (i32.const 0))\n";
+    o = o + "    (block $rd (loop $rl\n";
+    o = o + "      (br_if $rd (i32.ge_u (local.get $i) (i32.load (local.get $used))))\n";
+    o = o + "      (i32.store8 (i32.add (i32.add (local.get $blk) (i32.const 4)) (local.get $i)) (i32.load8_u (i32.add (local.get $buf) (local.get $i))))\n";
+    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
+    o = o + "      (br $rl)))\n";
+    o = o + "    (local.set $res (call $__fern_str_box (i32.const 8)))\n";
+    o = o + "    (i32.store (local.get $res) (i32.const 0))\n";
+    o = o + "    (i32.store (i32.add (local.get $res) (i32.const 4)) (local.get $blk))\n";
+    o = o + "    (local.get $res))\n";
+    return o;
+}
+
 // create_dir_all_func emits $__fern_create_dir_all(path) -> Result[(), IoError]
 // box. path_create_directory(preopen fd 3, ...) is issued for every '/' in the
 // path and then for the whole path — WASI takes an explicit length, so a parent
@@ -5484,7 +5646,7 @@ pub function read_dir_func(): string {
     o = o + "    (local.get $res))\n";
     return o;
 }
-// remove_dir_func emits $__fern_remove_dir_all(path) -> Result[(), IoError] box — a
+// remove_dir_all_func emits $__fern_remove_dir_all(path) -> Result[(), IoError] box — a
 // recursive rm -rf, the wasm sibling of asm_ir's __fern_remove_dir_all. It first
 // path_open(oflags = O_DIRECTORY 2, FD_READDIR right)s the path: success => it's a
 // directory; ENOTDIR (54) => it's a file, path_unlink_file it; ENOENT (44) => it
@@ -5499,7 +5661,7 @@ pub function read_dir_func(): string {
 // phase, which finishes before any recursive call. Two tiny $__rda_ok /
 // $__rda_err helpers build the Result box (Ok = tag0, Err = tag1, matching
 // remove_file). Needs the heap runtime + $__fern_arr_push.
-pub function remove_dir_func(): string {
+pub function remove_dir_all_func(): string {
     var o: string = "";
     // Result-box constructors (shared by every return site).
     o = o + "  (func $__rda_ok (result i32)\n";
@@ -8878,7 +9040,14 @@ function preview1_imports(needs: string[]): string {
     // path_create_directory, and create_dir_all issues the same import per
     // component — one gate across both, since a duplicate import is an invalid
     // module (must precede the function section).
-    if (need(needs, "temp_dir") || need(needs, "create_dir_all")) { parts = parts.append(temp_dir_import()); }
+    if (need(needs, "temp_dir") || need(needs, "create_dir_all") || need(needs, "create_dir")) { parts = parts.append(temp_dir_import()); }
+    // remove_dir rmdirs one directory through the same path_remove_directory
+    // import remove_dir_all uses — one gate across both, since a duplicate
+    // import is an invalid module.
+    if (need(needs, "remove_dir") && !need(needs, "remove_dir_all")) { parts = parts.append(remove_dir_import()); }
+    if (need(needs, "create_link")) { parts = parts.append(link_import()); }
+    if (need(needs, "create_symlink")) { parts = parts.append(symlink_import()); }
+    if (need(needs, "read_link")) { parts = parts.append(readlink_import()); }
     // sleep_ms blocks on a monotonic-clock timeout via poll_oneoff.
     if (need(needs, "sleep_ms")) { parts = parts.append(sleep_ms_import()); }
     // Preview-2 timer-pollable ops (#4317): direct component-model imports.
@@ -9255,6 +9424,11 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     // -> Result[(), IoError] box. Heap-backed (allocates the box), so folded
     // into the heap gate above.
     if (need(needs, "create_dir_all")) { parts = parts.append(create_dir_all_func()); }
+    if (need(needs, "create_dir")) { parts = parts.append(create_dir_func()); }
+    if (need(needs, "remove_dir")) { parts = parts.append(remove_dir_func()); }
+    if (need(needs, "create_link")) { parts = parts.append(create_link_func()); }
+    if (need(needs, "create_symlink")) { parts = parts.append(create_symlink_func()); }
+    if (need(needs, "read_link")) { parts = parts.append(read_link_func()); }
     // $__fern_read_dir(path): path_open + fd_readdir loop -> Result[string[],
     // IoError] box. Heap-backed (allocates names + array + box) and uses
     // $__fern_arr_push (emitted by the arr_push gate below, which folds
@@ -9262,7 +9436,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     if (need(needs, "read_dir")) { parts = parts.append(read_dir_func()); }
     // $__fern_remove_dir_all(path): recursive rm -rf -> Result[(), IoError] box.
     // Heap-backed + uses $__fern_arr_push (both folded into the gates above).
-    if (need(needs, "remove_dir_all")) { parts = parts.append(remove_dir_func()); }
+    if (need(needs, "remove_dir_all")) { parts = parts.append(remove_dir_all_func()); }
     // $__fern_temp_dir(prefix): mkdir a unique `<prefix>-<ns>` dir under the
     // preopen -> Result[string, IoError]. Heap-backed + uses the clock helper.
     if (need(needs, "temp_dir")) { parts = parts.append(temp_dir_func()); }

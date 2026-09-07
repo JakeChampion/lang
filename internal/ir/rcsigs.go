@@ -294,6 +294,11 @@ var rcInertBuiltins = map[string]bool{
 	// rather than as a wasm runtime helper.
 	"access": true,
 	// No arguments at all, so there is nothing to move.
+	// (mask) → the previous mask. A scalar in, a scalar out, and
+	// process state in between: nothing to move. Native-only — E066
+	// refuses it on both wasm worlds, which have no file-mode creation
+	// mask — so it is classified here under the builtin name.
+	"umask":   true,
 	"geteuid": true, "getegid": true, "hostname": true,
 	"getuid": true, "getgid": true,
 	// `getgroups` has no arguments either, and it is classified here
@@ -388,6 +393,9 @@ var rcInert = map[string]bool{
 	"__fern_reader_read_chunk": true, "__fern_reader_read_line": true,
 	"__fern_reader_read_line_fd": true, "__fern_remove_dir_all": true,
 	"__fern_remove_file": true, "__fern_rmdir_rec": true,
+	"__fern_create_dir": true, "__fern_remove_dir": true,
+	"__fern_create_link": true, "__fern_create_symlink": true,
+	"__fern_read_link": true,
 	"__fern_round_f64": true, "__fern_sin_f64": true,
 	"__fern_sleep_ms": true,
 	"__fern_sqrt_f64": true, "__fern_stat": true, "__fern_lstat": true,

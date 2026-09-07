@@ -355,6 +355,49 @@ var importSpecs = map[string]importSpec{
 		params:  []byte{encode.ValtypeI32},
 		results: nil,
 	},
+	"wasi_descriptor_link_at_p2": {
+		// Preview-2: [method]descriptor.link-at lowered to
+		//   (self, old-path-flags, old_ptr, old_len, new-descriptor,
+		//    new_ptr, new_len, retptr) -> ().
+		// retptr holds `result<_, error-code>` — the empty-ok shape,
+		// discriminant at +0 and error-code at emptyOkErrorCodeOff.
+		module: "wasi:filesystem/types@0.2.0",
+		name:   "[method]descriptor.link-at",
+		params: []byte{
+			encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32,
+			encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32,
+			encode.ValtypeI32, encode.ValtypeI32,
+		},
+		results: nil,
+	},
+	"wasi_descriptor_symlink_at_p2": {
+		// Preview-2: [method]descriptor.symlink-at lowered to
+		//   (self, old_ptr, old_len, new_ptr, new_len, retptr) -> (),
+		// the same empty-ok result area as the other path mutators.
+		module: "wasi:filesystem/types@0.2.0",
+		name:   "[method]descriptor.symlink-at",
+		params: []byte{
+			encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32,
+			encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32,
+		},
+		results: nil,
+	},
+	"wasi_descriptor_readlink_at_p2": {
+		// Preview-2: [method]descriptor.readlink-at lowered to
+		//   (self, path_ptr, path_len, retptr) -> ().
+		// retptr holds `result<string, error-code>`: disc @ +0, then
+		// the string's (ptr, len) at +4 / +8 on the ok arm or the
+		// error-code at +4 on the err arm. The bytes are already in
+		// this module's memory, allocated through cabi_realloc, so
+		// there is no buffer to size and no truncation to detect.
+		module: "wasi:filesystem/types@0.2.0",
+		name:   "[method]descriptor.readlink-at",
+		params: []byte{
+			encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32,
+			encode.ValtypeI32,
+		},
+		results: nil,
+	},
 	"wasi_descriptor_remove_directory_at_p2": {
 		// Preview-2: [method]descriptor.remove-directory-at, the same
 		// (self, path_ptr, path_len, retptr) -> () lowering as the
@@ -562,6 +605,46 @@ var importSpecs = map[string]importSpec{
 		module:  "wasi_snapshot_preview1",
 		name:    "path_create_directory",
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+	},
+	"wasi_path_link": {
+		// (old_fd, old_flags, old_path_ptr, old_path_len, new_fd,
+		// new_path_ptr, new_path_len) → errno. A HARD link.
+		// old_flags is the lookupflags word: 0 leaves the target's own
+		// final symlink unfollowed, which is what link(1) does.
+		module: "wasi_snapshot_preview1",
+		name:   "path_link",
+		params: []byte{
+			encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32,
+			encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32,
+			encode.ValtypeI32,
+		},
+		results: []byte{encode.ValtypeI32},
+	},
+	"wasi_path_symlink": {
+		// (old_path_ptr, old_path_len, fd, new_path_ptr, new_path_len)
+		// → errno. The target is stored verbatim and never resolved,
+		// so it takes no dirfd of its own — only the link does.
+		module: "wasi_snapshot_preview1",
+		name:   "path_symlink",
+		params: []byte{
+			encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32,
+			encode.ValtypeI32, encode.ValtypeI32,
+		},
+		results: []byte{encode.ValtypeI32},
+	},
+	"wasi_path_readlink": {
+		// (fd, path_ptr, path_len, buf_ptr, buf_len, bufused_ptr) →
+		// errno. Writes the target into the caller's buffer and the
+		// byte count at bufused_ptr; like readlink(2) it TRUNCATES
+		// rather than reporting a buffer that is too small, so a full
+		// buffer is not a complete answer.
+		module: "wasi_snapshot_preview1",
+		name:   "path_readlink",
+		params: []byte{
+			encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32,
+			encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32,
+		},
 		results: []byte{encode.ValtypeI32},
 	},
 	"wasi_path_filestat_get": {
@@ -1880,6 +1963,46 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 			in.add("wasi_path_create_directory")
 		}
 	}
+	if helpers.set["__fern_create_dir"] {
+		if opts.Preview2WASI {
+			in.add("wasi_get_directories_p2")
+			in.add("wasi_descriptor_create_directory_at_p2")
+		} else {
+			in.add("wasi_path_create_directory")
+		}
+	}
+	if helpers.set["__fern_remove_dir"] {
+		if opts.Preview2WASI {
+			in.add("wasi_get_directories_p2")
+			in.add("wasi_descriptor_remove_directory_at_p2")
+		} else {
+			in.add("wasi_path_remove_directory")
+		}
+	}
+	if helpers.set["__fern_create_link"] {
+		if opts.Preview2WASI {
+			in.add("wasi_get_directories_p2")
+			in.add("wasi_descriptor_link_at_p2")
+		} else {
+			in.add("wasi_path_link")
+		}
+	}
+	if helpers.set["__fern_create_symlink"] {
+		if opts.Preview2WASI {
+			in.add("wasi_get_directories_p2")
+			in.add("wasi_descriptor_symlink_at_p2")
+		} else {
+			in.add("wasi_path_symlink")
+		}
+	}
+	if helpers.set["__fern_read_link"] {
+		if opts.Preview2WASI {
+			in.add("wasi_get_directories_p2")
+			in.add("wasi_descriptor_readlink_at_p2")
+		} else {
+			in.add("wasi_path_readlink")
+		}
+	}
 	if helpers.set["__fern_open_reader"] {
 		if opts.Preview2WASI {
 			// open_reader opens via the get-directories → open-at →
@@ -2477,6 +2600,11 @@ var preview2HelperBodyOverrides = map[string]func(map[string]uint32) []byte{
 	"__fern_stderr":              buildStderrBodyP2,
 	"__fern_remove_file":         buildRemoveFileBodyP2,
 	"__fern_create_dir_all":      buildCreateDirAllBodyP2,
+	"__fern_create_dir":          buildCreateDirBodyP2,
+	"__fern_remove_dir":          buildRemoveDirBodyP2,
+	"__fern_create_link":         buildCreateLinkBodyP2,
+	"__fern_create_symlink":      buildCreateSymlinkBodyP2,
+	"__fern_read_link":           buildReadLinkBodyP2,
 	"__fern_temp_dir":            buildTempDirBodyP2,
 	"__fern_stat":                buildStatBodyP2,
 	"__fern_lstat":               buildLstatBodyP2,

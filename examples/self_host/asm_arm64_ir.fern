@@ -1478,6 +1478,33 @@ pub function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDec
             // via the stack ABI.
             s = s.need("heap"); s = s.need("create_dir_all");
             s = s.write("    bl __fn___fern_create_dir_all\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind_tag == 260) {  // create_dir
+            // [pathbox][mode] -> Result[void, IoError]. The same
+            // two-operand shuffle `access` does: the stack ABI wants
+            // param[0] on top, so re-push the popped pair in reverse.
+            s = s.need("heap"); s = s.need("create_dir");
+            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_create_dir\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind_tag == 261) {  // remove_dir
+            // [pathbox] IS param[0] — one rmdir(2), ENOTEMPTY included.
+            s = s.need("heap"); s = s.need("remove_dir");
+            s = s.write("    bl __fn___fern_remove_dir\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind_tag == 262) {  // create_link
+            // [targetbox][pathbox] -> Result[void, IoError].
+            s = s.need("heap"); s = s.need("create_link");
+            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_create_link\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind_tag == 263) {  // create_symlink
+            s = s.need("heap"); s = s.need("create_symlink");
+            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_create_symlink\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind_tag == 264) {  // read_link
+            // [pathbox] IS param[0] — pushes a fresh Result[string, IoError]
+            // holding the link's target.
+            s = s.need("heap"); s = s.need("read_link");
+            s = s.write("    bl __fn___fern_read_link\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind_tag == 265) {  // umask
+            // [mask] IS param[0] — one syscall, the previous mask in x0.
+            // Nothing is boxed, so no heap need.
+            s = s.need("umask");
+            s = s.write("    bl __fn___fern_umask\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 174) {  // temp_dir
             // [prefixbox] IS param[0]; call the Fern-compiled __fn___fern_temp_dir
             // (asmcore.rt_src_temp_dir, #2649) via the stack ABI. Its body calls
@@ -6487,7 +6514,7 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     // writer_write joined for the same reason once its own result became an
     // Option[IoError] (#7926), and reader_close once it started reporting a
     // failing close instead of discarding it.
-    if (s.has_need("read_file") || s.has_need("read_file_bytes") || s.has_need("write_file") || s.has_need("write_file_exec") || s.has_need("remove_file") || s.has_need("create_dir_all") || s.has_need("temp_dir") || s.has_need("stat") || s.has_need("lstat") || s.has_need("access") || s.has_need("read_dir") || s.has_need("remove_dir_all") || s.has_need("open_file") || s.has_need("writer_write") || s.has_need("reader")) {
+    if (s.has_need("read_file") || s.has_need("read_file_bytes") || s.has_need("write_file") || s.has_need("write_file_exec") || s.has_need("remove_file") || s.has_need("create_dir_all") || s.has_need("create_dir") || s.has_need("remove_dir") || s.has_need("create_link") || s.has_need("create_symlink") || s.has_need("read_link") || s.has_need("umask") || s.has_need("temp_dir") || s.has_need("stat") || s.has_need("lstat") || s.has_need("access") || s.has_need("read_dir") || s.has_need("remove_dir_all") || s.has_need("open_file") || s.has_need("writer_write") || s.has_need("reader")) {
         var fs_src: string = asmcore.rt_src_io_error(tgt);
         if (s.has_need("stat")) { fs_src = fs_src + " " + asmcore.rt_src_stat(tgt); }
         if (s.has_need("access")) { fs_src = fs_src + " " + asmcore.rt_src_access(tgt); }
@@ -6498,6 +6525,12 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
         if (s.has_need("write_file_exec")) { fs_src = fs_src + " " + asmcore.rt_src_write_file_exec(tgt); }
         if (s.has_need("remove_file")) { fs_src = fs_src + " " + asmcore.rt_src_remove_file(tgt); }
         if (s.has_need("create_dir_all")) { fs_src = fs_src + " " + asmcore.rt_src_create_dir_all(tgt); }
+        if (s.has_need("create_dir")) { fs_src = fs_src + " " + asmcore.rt_src_create_dir(tgt); }
+        if (s.has_need("remove_dir")) { fs_src = fs_src + " " + asmcore.rt_src_remove_dir(tgt); }
+        if (s.has_need("create_link")) { fs_src = fs_src + " " + asmcore.rt_src_create_link(tgt); }
+        if (s.has_need("create_symlink")) { fs_src = fs_src + " " + asmcore.rt_src_create_symlink(tgt); }
+        if (s.has_need("read_link")) { fs_src = fs_src + " " + asmcore.rt_src_read_link(tgt); }
+        if (s.has_need("umask")) { fs_src = fs_src + " " + asmcore.rt_src_umask(tgt); }
         if (s.has_need("temp_dir")) { fs_src = fs_src + " " + asmcore.rt_src_temp_dir(tgt); }
         if (s.has_need("read_dir")) { fs_src = fs_src + " " + asmcore.rt_src_read_dir(tgt); }
         if (s.has_need("remove_dir_all")) { fs_src = fs_src + " " + asmcore.rt_src_remove_dir_all(tgt); }

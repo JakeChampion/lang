@@ -1272,6 +1272,12 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"read_file_bytes":               emitReadFileBytesHelper,
 	"remove_file":                   emitRemoveFileHelper,
 	"create_dir_all":                emitCreateDirAllHelper,
+	"create_dir":                    emitCreateDirHelper,
+	"remove_dir":                    emitRemoveDirHelper,
+	"create_link":                   emitCreateLinkHelper,
+	"create_symlink":                emitCreateSymlinkHelper,
+	"read_link":                     emitReadLinkHelper,
+	"umask":                         emitUmaskHelper,
 	"remove_dir_all":                emitRemoveDirAllHelper,
 	"temp_dir":                      emitTempDirHelper,
 	"read_dir":                      emitReadDirHelper,
@@ -3105,6 +3111,11 @@ var runtimeHelperDeps = map[string][]string{
 	"read_file_bytes":               {"__fern_io_error", "__alloc_u8"},
 	"remove_file":                   {"__fern_io_error"},
 	"create_dir_all":                {"__fern_io_error"},
+	"create_dir":                    {"__fern_io_error"},
+	"remove_dir":                    {"__fern_io_error"},
+	"create_link":                   {"__fern_io_error"},
+	"create_symlink":                {"__fern_io_error"},
+	"read_link":                     {"__fern_io_error"},
 	"remove_dir_all":                {"__fern_io_error"},
 	"temp_dir":                      {"__fern_io_error"},
 	"read_dir":                      {"__fern_io_error"},
@@ -3161,6 +3172,11 @@ var heapUsingHelpers = map[string]bool{
 	"read_file_bytes":               true,
 	"remove_file":                   true,
 	"create_dir_all":                true,
+	"create_dir":                    true,
+	"remove_dir":                    true,
+	"create_link":                   true,
+	"create_symlink":                true,
+	"read_link":                     true,
 	"remove_dir_all":                true,
 	"temp_dir":                      true,
 	"read_dir":                      true,
@@ -5143,6 +5159,252 @@ func emitReadFileBytesHelper(w func(string, ...any)) {
 	w("\tldp x21, x22, [sp, #32]")
 	w("\tldp x19, x20, [sp, #16]")
 	w("\tldp x29, x30, [sp], #256")
+	w("\tret")
+}
+
+// emitSsaPathz appends the preamble every path-taking helper shares:
+// NUL-terminate the counted string in `srcX` into a fresh heap block and
+// leave the pointer in `dstX`. `tag` makes the copy-loop labels unique.
+// Clobbers x2..x8 and the heap cursor.
+func emitSsaPathz(w func(string, ...any), dstX, srcX, tag string) {
+	w("\tldur w2, [%s, #-4]", srcX)
+	w("\tadrp x3, %s", heapPtrSym)
+	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
+	w("\tldr x4, [x3]")
+	w("\tadd x4, x4, #15")
+	w("\tand x4, x4, #-16")
+	w("\tadd x5, x2, #1")
+	w("\tadd x6, x4, x5")
+	w("\tstr x6, [x3]")
+	emitHeapGuardCall(w)
+	w("\tmov w7, #0")
+	w(".Lssa_%s_cp:", tag)
+	w("\tcmp w7, w2")
+	w("\tb.hs .Lssa_%s_cpd", tag)
+	w("\tldrb w8, [%s, x7]", srcX)
+	w("\tstrb w8, [x4, x7]")
+	w("\tadd w7, w7, #1")
+	w("\tb .Lssa_%s_cp", tag)
+	w(".Lssa_%s_cpd:", tag)
+	w("\tstrb wzr, [x4, x2]")
+	w("\tmov %s, x4", dstX)
+}
+
+// emitSsaResultBox appends "allocate a 24-byte rc box and leave its DATA
+// pointer in x0", the shape both arms of a Result[_, IoError] use:
+// {rc@0, tag@8, payload@16} with x0 pointing at the tag.
+func emitSsaResultBox(w func(string, ...any)) {
+	w("\tadrp x3, %s", heapPtrSym)
+	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
+	w("\tldr x4, [x3]")
+	w("\tadd x4, x4, #15")
+	w("\tand x4, x4, #-16")
+	w("\tadd x5, x4, #24")
+	w("\tstr x5, [x3]")
+	emitHeapGuardCall(w)
+	w("\tmov w6, #1")
+	w("\tstr w6, [x4]")   // rc = 1
+	w("\tadd x0, x4, #8") // box data
+}
+
+// emitPathOpHelper writes one of the single-syscall path helpers: the
+// path operands NUL-terminated, one syscall, and Result[void, IoError]
+// — Ok = tag 0 with the unit payload @+8, Err = tag 1 with the IoError
+// box @+8, the shapes remove_file already uses.
+//
+// `args` places the syscall arguments with the NUL-terminated copies in
+// x20 (the first path) and x22 (the second) and the mode in x21. The
+// IoError names the operand in x23, which for the two-operand helpers is
+// the SECOND one: `ln` and `link` both report the link they failed to
+// create, not the file it was to point at.
+func emitPathOpHelper(name, tag string, sysno, paths int, args func(w func(string, ...any))) func(func(string, ...any)) {
+	return func(w func(string, ...any)) {
+		w("")
+		w("%s:", fnLabel(name))
+		w("\tstp x29, x30, [sp, #-64]!")
+		w("\tmov x29, sp")
+		w("\tstp x19, x20, [sp, #16]")
+		w("\tstp x21, x22, [sp, #32]")
+		w("\tstr x23, [sp, #48]")
+		w("\tmov x19, x0") // first path
+		w("\tmov x23, x0") // the operand the IoError names
+		if paths == 2 {
+			w("\tmov x21, x1") // second path
+			w("\tmov x23, x1")
+		} else {
+			w("\tmov w21, w1") // mode (unused by the flag-only helpers)
+		}
+		emitSsaPathz(w, "x20", "x19", tag+"1")
+		if paths == 2 {
+			emitSsaPathz(w, "x22", "x21", tag+"2")
+		}
+		args(w)
+		w("\tmov x8, #%d", sysno)
+		w("\tsvc #0")
+		w("\ttbnz x0, #63, .Lssa_%s_err", tag)
+		emitSsaResultBox(w)
+		w("\tstr wzr, [x0]")     // tag = 0 (Ok)
+		w("\tstr xzr, [x0, #8]") // unit payload
+		w("\tb .Lssa_%s_ret", tag)
+		w(".Lssa_%s_err:", tag)
+		w("\tneg x0, x0")
+		w("\tmov x1, x23")
+		w("\tbl %s", fnLabel("__fern_io_error"))
+		w("\tmov x19, x0") // IoError box
+		emitSsaResultBox(w)
+		w("\tmov w6, #1")
+		w("\tstr w6, [x0]") // tag = 1 (Err)
+		w("\tstr x19, [x0, #8]")
+		w(".Lssa_%s_ret:", tag)
+		w("\tldr x23, [sp, #48]")
+		w("\tldp x21, x22, [sp, #32]")
+		w("\tldp x19, x20, [sp, #16]")
+		w("\tldp x29, x30, [sp], #64")
+		w("\tret")
+	}
+}
+
+// emitCreateDirHelper writes create_dir(path, mode) -> Result[void,
+// IoError]: mkdirat(AT_FDCWD, path, mode). One directory, no parents,
+// and EEXIST reaches the caller — the whole difference from
+// create_dir_all.
+func emitCreateDirHelper(w func(string, ...any)) {
+	emitPathOpHelper("create_dir", "cdir", 34, 1, func(w func(string, ...any)) {
+		w("\tmov x0, #100")
+		w("\tneg x0, x0") // AT_FDCWD
+		w("\tmov x1, x20")
+		w("\tand x2, x21, #4095")
+	})(w)
+}
+
+// emitRemoveDirHelper writes remove_dir(path) -> Result[void, IoError]:
+// unlinkat(AT_FDCWD, path, AT_REMOVEDIR), which is rmdir(2). A non-empty
+// directory is ENOTEMPTY and reaches the caller.
+func emitRemoveDirHelper(w func(string, ...any)) {
+	emitPathOpHelper("remove_dir", "rdir", 35, 1, func(w func(string, ...any)) {
+		w("\tmov x0, #100")
+		w("\tneg x0, x0")
+		w("\tmov x1, x20")
+		w("\tmov x2, #512") // AT_REMOVEDIR
+	})(w)
+}
+
+// emitCreateLinkHelper writes create_link(target, path) -> Result[void,
+// IoError]: linkat(AT_FDCWD, target, AT_FDCWD, path, 0). No
+// AT_SYMLINK_FOLLOW, so a symlink named as the target is linked to
+// itself.
+func emitCreateLinkHelper(w func(string, ...any)) {
+	emitPathOpHelper("create_link", "clink", 37, 2, func(w func(string, ...any)) {
+		w("\tmov x0, #100")
+		w("\tneg x0, x0")
+		w("\tmov x1, x20")
+		w("\tmov x2, #100")
+		w("\tneg x2, x2")
+		w("\tmov x3, x22")
+		w("\tmov x4, #0")
+	})(w)
+}
+
+// emitCreateSymlinkHelper writes create_symlink(target, path) ->
+// Result[void, IoError]: symlinkat(target, AT_FDCWD, path). `target` is
+// stored verbatim and never resolved.
+func emitCreateSymlinkHelper(w func(string, ...any)) {
+	emitPathOpHelper("create_symlink", "csym", 36, 2, func(w func(string, ...any)) {
+		w("\tmov x0, x20")
+		w("\tmov x1, #100")
+		w("\tneg x1, x1")
+		w("\tmov x2, x22")
+	})(w)
+}
+
+// emitReadLinkHelper writes read_link(path) -> Result[string, IoError]:
+// readlinkat(AT_FDCWD, path, buf, 4096).
+//
+// readlinkat truncates silently into a buffer that is too small and
+// reports no error, so the answer is only trustworthy when it is SHORTER
+// than the buffer. PATH_MAX is the kernel's own bound on a stored link
+// target, so a full buffer means ENAMETOOLONG rather than a truncated
+// answer.
+func emitReadLinkHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("read_link"))
+	w("\tstp x29, x30, [sp, #-64]!")
+	w("\tmov x29, sp")
+	w("\tstp x19, x20, [sp, #16]")
+	w("\tstp x21, x22, [sp, #32]")
+	w("\tsub sp, sp, #4096")
+	w("\tmov x19, x0") // path
+	emitSsaPathz(w, "x20", "x19", "rlnkp")
+	w("\tmov x0, #100")
+	w("\tneg x0, x0") // AT_FDCWD
+	w("\tmov x1, x20")
+	w("\tmov x2, sp")
+	w("\tmov x3, #4096")
+	w("\tmov x8, #78") // readlinkat
+	w("\tsvc #0")
+	w("\ttbnz x0, #63, .Lssa_rlnk_err")
+	w("\tmov x21, x0") // target length
+	w("\tcmp x21, #4096")
+	w("\tb.lo .Lssa_rlnk_fits")
+	w("\tmov x0, #36") // ENAMETOOLONG
+	w("\tb .Lssa_rlnk_dispatch")
+	w(".Lssa_rlnk_fits:")
+	// The target string in its own rc block: {rc@0, len@4, data@8},
+	// data NUL-terminated so a C consumer can read it back.
+	w("\tadrp x3, %s", heapPtrSym)
+	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
+	w("\tldr x4, [x3]")
+	w("\tadd x4, x4, #15")
+	w("\tand x4, x4, #-16")
+	w("\tadd x5, x21, #9")
+	w("\tadd x6, x4, x5")
+	w("\tstr x6, [x3]")
+	emitHeapGuardCall(w)
+	w("\tmov w6, #1")
+	w("\tstr w6, [x4]")      // rc = 1
+	w("\tstr w21, [x4, #4]") // len
+	w("\tadd x22, x4, #8")   // data
+	w("\tmov w7, #0")
+	w(".Lssa_rlnk_cp:")
+	w("\tcmp w7, w21")
+	w("\tb.hs .Lssa_rlnk_cpd")
+	w("\tldrb w8, [sp, x7]")
+	w("\tstrb w8, [x22, x7]")
+	w("\tadd w7, w7, #1")
+	w("\tb .Lssa_rlnk_cp")
+	w(".Lssa_rlnk_cpd:")
+	w("\tstrb wzr, [x22, x21]")
+	emitSsaResultBox(w)
+	w("\tstr wzr, [x0]")     // tag = 0 (Ok)
+	w("\tstr x22, [x0, #8]") // the target string
+	w("\tb .Lssa_rlnk_ret")
+	w(".Lssa_rlnk_err:")
+	w("\tneg x0, x0")
+	w(".Lssa_rlnk_dispatch:")
+	w("\tmov x1, x19")
+	w("\tbl %s", fnLabel("__fern_io_error"))
+	w("\tmov x19, x0")
+	emitSsaResultBox(w)
+	w("\tmov w6, #1")
+	w("\tstr w6, [x0]") // tag = 1 (Err)
+	w("\tstr x19, [x0, #8]")
+	w(".Lssa_rlnk_ret:")
+	w("\tadd sp, sp, #4096")
+	w("\tldp x21, x22, [sp, #32]")
+	w("\tldp x19, x20, [sp, #16]")
+	w("\tldp x29, x30, [sp], #64")
+	w("\tret")
+}
+
+// emitUmaskHelper writes umask(mask) -> the previous mask. umask(2)
+// cannot fail and returns the mask it replaced, so the syscall's own
+// return value is the whole answer.
+func emitUmaskHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("umask"))
+	w("\tand x0, x0, #4095")
+	w("\tmov x8, #166") // umask
+	w("\tsvc #0")
 	w("\tret")
 }
 

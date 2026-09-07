@@ -2796,6 +2796,11 @@ var CallDirectAliases = mergeCodegenAliases(map[string]string{
 	// wasm. See wasi_fs_dir.go.
 	"remove_file":    "__fern_remove_file",
 	"create_dir_all": "__fern_create_dir_all",
+	"create_dir":     "__fern_create_dir",
+	"remove_dir":     "__fern_remove_dir",
+	"create_link":    "__fern_create_link",
+	"create_symlink": "__fern_create_symlink",
+	"read_link":      "__fern_read_link",
 	"stat":           "__fern_stat",
 	"lstat":          "__fern_lstat",
 	"read_dir":       "__fern_read_dir",

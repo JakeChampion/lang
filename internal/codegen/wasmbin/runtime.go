@@ -678,6 +678,19 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_str_byte")
 					needs.add("__build_io_error")
 					needs.add("__fern_create_dir_all")
+				case "__fern_create_dir", "__fern_remove_dir",
+					"__fern_create_link", "__fern_create_symlink",
+					"__fern_read_link":
+					// The single-step directory and link
+					// primitives (#8883). Each is one WASI call
+					// behind the same path-normalize chain
+					// remove_file needs; the two-operand ones run
+					// it twice and add nothing else.
+					needs.add("__fern_alloc")
+					needs.add("__fern_str_len")
+					needs.add("__fern_str_byte")
+					needs.add("__build_io_error")
+					needs.add(callDirectAlias(op.Str))
 				case "__fern_stat":
 					// (path) → Result[FileStat, IoError]. Same
 					// path-normalize chain as remove_file, plus the
@@ -1108,6 +1121,11 @@ var preview2HelperCalls = map[string][]string{
 	"__fern_reader_seek":       {"__wasi_errno_of_code"},
 	"__fern_remove_file":       {"__wasi_errno_of_code"},
 	"__fern_create_dir_all":    {"__wasi_errno_of_code"},
+	"__fern_create_dir":        {"__wasi_errno_of_code"},
+	"__fern_remove_dir":        {"__wasi_errno_of_code"},
+	"__fern_create_link":       {"__wasi_errno_of_code"},
+	"__fern_create_symlink":    {"__wasi_errno_of_code"},
+	"__fern_read_link":         {"__wasi_errno_of_code"},
 	"__fern_temp_dir":          {"__wasi_errno_of_code"},
 	"__fern_stat":              {"__wasi_errno_of_code"},
 	"__fern_lstat":             {"__wasi_errno_of_code"},
@@ -1153,6 +1171,8 @@ var helperResultBoxCallers = []string{
 	"__fern_remove_file", "__fern_stat", "__fern_lstat", "__fern_read_dir",
 	"__fern_remove_dir_all", "__fern_temp_dir",
 	"__fern_create_dir_all",
+	"__fern_create_dir", "__fern_remove_dir", "__fern_create_link",
+	"__fern_create_symlink", "__fern_read_link",
 }
 
 // emitPayloadlessResultBox appends the arm of a helper in
@@ -2258,6 +2278,53 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildCreateDirAllBody,
+	},
+	"__fern_create_dir": {
+		// (path_data, path_len, mode) → i32 — heap-form
+		// Result[void, IoError]. ONE path_create_directory under the
+		// fd-3 preopen, EEXIST included; the mode is dropped because
+		// WASI's call has none. See wasi_links.go.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildCreateDirBody,
+	},
+	"__fern_remove_dir": {
+		// (path_data, path_len) → i32 — heap-form
+		// Result[void, IoError]. path_remove_directory under the fd-3
+		// preopen; ENOTEMPTY reaches the caller. See wasi_links.go.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildRemoveDirBody,
+	},
+	"__fern_create_link": {
+		// (target_data, target_len, path_data, path_len) → i32 —
+		// heap-form Result[void, IoError]. path_link with the
+		// lookupflags word 0. See wasi_links.go.
+		params: []byte{
+			encode.ValtypeI32, encode.ValtypeI32,
+			encode.ValtypeI32, encode.ValtypeI32,
+		},
+		results: []byte{encode.ValtypeI32},
+		body:    buildCreateLinkBody,
+	},
+	"__fern_create_symlink": {
+		// (target_data, target_len, path_data, path_len) → i32 —
+		// heap-form Result[void, IoError]. path_symlink; the target is
+		// stored verbatim. See wasi_links.go.
+		params: []byte{
+			encode.ValtypeI32, encode.ValtypeI32,
+			encode.ValtypeI32, encode.ValtypeI32,
+		},
+		results: []byte{encode.ValtypeI32},
+		body:    buildCreateSymlinkBody,
+	},
+	"__fern_read_link": {
+		// (path_data, path_len) → i32 — heap-form Result[string,
+		// IoError]. path_readlink into a PATH_MAX buffer; a full
+		// buffer is ENAMETOOLONG. See wasi_links.go.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildReadLinkBody,
 	},
 	"__fern_stat": {
 		// (path_data, path_len) → i32 — heap-form
