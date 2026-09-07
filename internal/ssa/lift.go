@@ -639,7 +639,7 @@ func (l *lifter) handle(i int, op ir.Op) error {
 	case ir.OpAdd, ir.OpSub, ir.OpMul,
 		ir.OpDivS, ir.OpRemS,
 		ir.OpAnd, ir.OpOr, ir.OpXor,
-		ir.OpShl, ir.OpShrS,
+		ir.OpShl, ir.OpShrS, ir.OpRotr,
 		ir.OpEq, ir.OpNe,
 		ir.OpLtS, ir.OpLeS, ir.OpGtS, ir.OpGeS,
 		ir.OpFAdd, ir.OpFSub, ir.OpFMul, ir.OpFDiv,
@@ -1829,6 +1829,8 @@ func mapBinaryArith(k ir.OpKind) OpKind {
 		return OpShl
 	case ir.OpShrS:
 		return OpShr
+	case ir.OpRotr:
+		return OpRotr
 	case ir.OpEq:
 		return OpEq
 	case ir.OpNe:

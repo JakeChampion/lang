@@ -1117,7 +1117,7 @@ func asmInst(in Inst, scratch int) (string, error) {
 		return fmt.Sprintf("mov %s, %s", slotMem(int(in.Imm)), reg(in.Src)), nil
 	case BinOp:
 		switch in.K {
-		case ssa.OpShl, ssa.OpShr, ssa.OpShrU:
+		case ssa.OpShl, ssa.OpShr, ssa.OpShrU, ssa.OpRotr:
 			return shiftSeq(in) + maskFix(in.Dst, in.W), nil
 		case ssa.OpDiv, ssa.OpDivU, ssa.OpRem, ssa.OpRemU:
 			return divSeq(in, scratch) + maskFix(in.Dst, in.W), nil
@@ -3505,7 +3505,7 @@ var (
 	rdxReg = gpIndex("rdx")
 )
 
-// shiftSeq renders a variable shift (count in cl). dst holds the value, src the
+// shiftSeq renders a variable shift or rotate (count in cl). dst holds the value, src the
 // count. rcx is preserved with push/pop so a live value there survives; the
 // count is copied into rcx and the shift reads cl. dst is a scratch reg (never
 // rcx), so `<op> dst, cl` is safe.
@@ -3518,6 +3518,8 @@ func shiftSeq(in Inst) string {
 		mnem = "sar" // arithmetic (signed) right shift
 	case ssa.OpShrU:
 		mnem = "shr" // logical (unsigned) right shift
+	case ssa.OpRotr:
+		mnem = "ror"
 	}
 	// EVERY shift at 32-bit width must operate on the 32-bit register, for two
 	// independent reasons.

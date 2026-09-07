@@ -2323,6 +2323,14 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			g.emit(fmt.Sprintf("sar %s, cl", reg))
 		}
 		g.push()
+	case ir.OpRotr:
+		// Same count-in-cl shape as the shifts, and the same width
+		// rule: `ror eax` rotates within the i32 lane an i32 rides
+		// zero-extended in, where `ror rax` would drag the cleared
+		// high half through the low bits.
+		g.binPop()
+		g.emit(fmt.Sprintf("ror %s, cl", g.aRegForWidth(op.Width)))
+		g.push()
 
 	// -------- comparison (i32) --------
 	//
@@ -4790,8 +4798,8 @@ func (g *generator) peepholeTail() bool {
 	//
 	// The hardware masks an imm8 count exactly as it masks cl — five bits
 	// for a 32-bit operand, six for a 64-bit one — so the two forms shift
-	// by the same amount and leave the same flags for every count that
-	// fits the immediate. Dropping the write to rcx is sound for P4's
+	// (or rotate: `ror` is the same group 2 encoding) by the same amount
+	// and leave the same flags for every count that fits the immediate. Dropping the write to rcx is sound for P4's
 	// reason: every consumer of rcx in this backend writes it before
 	// reading it.
 	if n >= 2 {
@@ -4961,7 +4969,7 @@ func foldConstShift(mov, shift string) (string, bool) {
 	if err != nil || k < 0 || k > math.MaxUint8 {
 		return "", false
 	}
-	for _, m := range [...]string{"shl", "shr", "sar"} {
+	for _, m := range [...]string{"shl", "shr", "sar", "ror"} {
 		pfx := "\t" + m + " "
 		if !strings.HasPrefix(shift, pfx) {
 			continue

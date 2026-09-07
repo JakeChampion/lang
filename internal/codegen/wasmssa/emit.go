@@ -19,7 +19,8 @@
 //     the branch. Supports multiple sequential + nested loops
 //     with single back-edges.
 //   - Op kinds: OpConstInt, OpAdd, OpSub, OpMul, OpAnd, OpOr,
-//     OpXor, OpShl, OpShr, OpShrU, OpDiv, OpDivU, OpRem, OpRemU,
+//     OpXor, OpShl, OpShr, OpShrU, OpRotr, OpDiv, OpDivU, OpRem,
+//     OpRemU,
 //     OpEq, OpNe, OpLt, OpLtU, OpLe, OpLeU, OpGt, OpGtU, OpGe,
 //     OpGeU, OpNeg, OpNot, OpExtend8S, OpExtend16S, OpPhi,
 //     OpCall (self-recursion + calls to declared imports),
@@ -559,7 +560,7 @@ func inferResultType(op *ssa.Op, widthOf map[int32]int8, floatOf map[int32]bool)
 	case ssa.OpAdd, ssa.OpSub, ssa.OpMul,
 		ssa.OpDiv, ssa.OpDivU, ssa.OpRem, ssa.OpRemU,
 		ssa.OpAnd, ssa.OpOr, ssa.OpXor,
-		ssa.OpShl, ssa.OpShr, ssa.OpShrU,
+		ssa.OpShl, ssa.OpShr, ssa.OpShrU, ssa.OpRotr,
 		ssa.OpNeg:
 		if op.Width == 64 {
 			return 64, false
@@ -993,6 +994,8 @@ func binaryIntOpcode(k ssa.OpKind, width int8) (byte, bool) {
 			return 0x87, true // i64.shr_s
 		case ssa.OpShrU:
 			return 0x88, true // i64.shr_u
+		case ssa.OpRotr:
+			return 0x8a, true // i64.rotr
 		case ssa.OpEq:
 			return 0x51, true
 		case ssa.OpNe:
@@ -1049,6 +1052,8 @@ func binaryI32Opcode(k ssa.OpKind) (byte, bool) {
 		return 0x75, true // i32.shr_s
 	case ssa.OpShrU:
 		return 0x76, true // i32.shr_u
+	case ssa.OpRotr:
+		return 0x78, true // i32.rotr
 	case ssa.OpEq:
 		return 0x46, true
 	case ssa.OpNe:
