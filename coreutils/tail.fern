@@ -1,0 +1,1438 @@
+// tail.fern — GNU-compatible `tail`.
+//
+//   tail [-c NUM | -n NUM] [-fFqvz] [--follow[=HOW]] [--retry]
+//        [-s SECONDS] [--max-unchanged-stats=N] [--pid=PID] [FILE]...
+//
+// The last NUM lines (10 by default) or bytes of each FILE, `-` and
+// no operand both meaning stdin. A LEADING PLUS on the count starts
+// at that line or byte instead: `-n +3` is everything from the third
+// line on. With more than one FILE each is introduced by
+// `==> NAME <==` (`standard input` for `-`), every header after the
+// first preceded by a blank line; -v forces the header for one file,
+// -q suppresses it, and the last of the two wins.
+//
+// A regular file is read from its END — the last NUM bytes seek
+// straight there, the last NUM lines are found walking 8 KiB blocks
+// backwards — and anything else (a pipe, or a file under
+// `---presume-input-pipe`) is streamed through a hold of the last NUM.
+//
+// Following. `-f` (`--follow=descriptor`) keeps reading the open
+// descriptors: every interval each file is fstat'ed, one whose size
+// or mtime moved is copied to its end, a shrunk one is `file
+// truncated` and re-read from the start, and a `-` that is a pipe is
+// left out entirely. `--follow=name` (`-F` with `--retry`) watches the
+// NAME instead: after `--max-unchanged-stats` quiet intervals it is
+// reopened, and a file that vanished, reappeared or was replaced is
+// reported in GNU's words. This implementation polls; GNU's inotify
+// path exists only where the kernel offers it and prints the same
+// diagnostics, so `---disable-inotify` is accepted and changes nothing.
+// `--pid` is parsed and checked as GNU does, but its liveness test is
+// kill(2), which the language does not offer (#8767): the warning GNU
+// gives on a system without it is printed and the option is ignored.
+//
+// Two pieces are older than the option syntax and still reproduced:
+//
+//   - The obsolete `[+-]NUM[bcl][f]` form, `tail -5c f` or `tail +2 f`,
+//     accepted when it is the only argument, or is followed by one
+//     operand that is not an option (`-` is not), or by `--` and at
+//     most one more. `_POSIX2_VERSION` in the environment says which
+//     shapes: below 200112 everything, `-c` and `-` alone included;
+//     from 200809 (the default) the leading plus and the multi-digit
+//     minus; between the two the minus form only. A digit reaching
+//     the option scan any other way is `option used in invalid
+//     context -- 5`, which is why the ten digits are declared as
+//     options.
+//   - Counts are glibc's strtoumax plus gnulib's suffixes, as head's.
+//
+// A count, a PID, an interval or a stats count that does not parse
+// prints one line and exits 1 with NO `Try …` line; an unknown
+// `--follow` value lists the valid ones and adds it.
+import "std/string";
+import "std/array";
+import "std/i64";
+import "std/u64";
+import "std/io_buffered";
+import "./lib/gnu";
+
+// Option ids. The declaration order below is GNU's, because the
+// ambiguity list prints candidates in it.
+function opt_bytes(): i32 {
+  return 1;
+}
+
+function opt_follow(): i32 {
+  return 2;
+}
+
+function opt_lines(): i32 {
+  return 3;
+}
+
+function opt_max_unchanged(): i32 {
+  return 4;
+}
+
+function opt_disable_inotify(): i32 {
+  return 5;
+}
+
+function opt_pid(): i32 {
+  return 6;
+}
+
+function opt_presume(): i32 {
+  return 7;
+}
+
+function opt_quiet(): i32 {
+  return 8;
+}
+
+function opt_retry(): i32 {
+  return 9;
+}
+
+function opt_sleep(): i32 {
+  return 10;
+}
+
+function opt_verbose(): i32 {
+  return 11;
+}
+
+function opt_zero(): i32 {
+  return 12;
+}
+
+function opt_big_f(): i32 {
+  return 13;
+}
+
+// The ten digits share one id; `next()` reports only the id, so the
+// digit itself is read back off the argv token by gnu.digit_option().
+function opt_digit(): i32 {
+  return 14;
+}
+
+function help_text(): string {
+  var out: string = "";
+  out = out + "Usage: " + gnu.prog() + " [OPTION]... [FILE]...\n";
+  out = out + "Print the last 10 lines of each FILE to standard output.\n";
+  out = out + "With more than one FILE, precede each with a header giving the file name.\n";
+  out = out + "\n";
+  out = out + "With no FILE, or when FILE is -, read standard input.\n";
+  out = out + "\n";
+  out = out + "Mandatory arguments to long options are mandatory for short options too.\n";
+  out = out + "  -c, --bytes=[+]NUM       output the last NUM bytes; or use -c +NUM to\n";
+  out = out + "                             output starting with byte NUM of each file\n";
+  out = out + "  -f, --follow[={name|descriptor}]\n";
+  out = out + "                           output appended data as the file grows;\n";
+  out = out + "                             an absent option argument means 'descriptor'\n";
+  out = out + "  -F                       same as --follow=name --retry\n";
+  out = out + "  -n, --lines=[+]NUM       output the last NUM lines, instead of the last 10;\n";
+  out = out + "                             or use -n +NUM to skip NUM-1 lines at the start\n";
+  out = out + "      --max-unchanged-stats=N\n";
+  out = out + "                           with --follow=name, reopen a FILE which has not\n";
+  out = out + "                             changed size after N (default 5) iterations\n";
+  out = out + "                             to see if it has been unlinked or renamed\n";
+  out = out + "                             (this is the usual case of rotated log files);\n";
+  out = out + "                             with inotify, this option is rarely useful\n";
+  out = out + "      --pid=PID            with -f, terminate after process ID, PID dies\n";
+  out = out + "  -q, --quiet, --silent    never output headers giving file names\n";
+  out = out + "      --retry              keep trying to open a file if it is inaccessible\n";
+  out = out + "  -s, --sleep-interval=N   with -f, sleep for approximately N seconds\n";
+  out = out + "                             (default 1.0) between iterations;\n";
+  out = out + "                             with inotify and --pid=P, check process P at\n";
+  out = out + "                             least once every N seconds\n";
+  out = out + "  -v, --verbose            always output headers giving file names\n";
+  out = out + "  -z, --zero-terminated    line delimiter is NUL, not newline\n";
+  out = out + "      --help        display this help and exit\n";
+  out = out + "      --version     output version information and exit\n";
+  out = out + "\n";
+  out = out + "NUM may have a multiplier suffix:\n";
+  out = out + "b 512, kB 1000, K 1024, MB 1000*1000, M 1024*1024,\n";
+  out = out + "GB 1000*1000*1000, G 1024*1024*1024, and so on for T, P, E, Z, Y, R, Q.\n";
+  out = out + "Binary prefixes can be used, too: KiB=K, MiB=M, and so on.\n";
+  out = out + "\n";
+  out = out + "With --follow (-f), tail defaults to following the file descriptor, which\n";
+  out = out + "means that even if a tail'ed file is renamed, tail will continue to track\n";
+  out = out + "its end.  This default behavior is not desirable when you really want to\n";
+  out = out + "track the actual name of the file, not the file descriptor (e.g., log\n";
+  out = out + "rotation).  Use --follow=name in that case.  That causes tail to track the\n";
+  out = out + "named file in a way that accommodates renaming, removal and creation.\n";
+  return out;
+}
+
+// ---- settings --------------------------------------------------------------
+// `Settings` — everything the option scan decides. `count` is lines or
+// bytes as `lines` says, from the end unless `from_start`; `header` is
+// 0 auto, 1 never, 2 always; `term` the line terminator.
+struct Settings { count: u64, lines: boolean, from_start: boolean, forever: boolean, by_name: boolean, retry: boolean, header: i32, term: i32, sleep_ms: i64, max_unchanged: u64, pid: u64, presume_pipe: boolean }
+
+function header_auto(): i32 {
+  return 0;
+}
+
+function header_never(): i32 {
+  return 1;
+}
+
+function header_always(): i32 {
+  return 2;
+}
+
+// `count_of(value, lines, s)` — a `-n` / `-c` value applied to `s`. A
+// leading `+` selects from-start and stays part of the number GNU
+// parses (`+ 3` is malformed); a leading `-` is dropped. From-start,
+// once selected, is never unselected by a later count.
+function count_of(value: string, lines: boolean, s: Settings): Settings {
+  var body: string = value;
+  var from_start: boolean = s.from_start;
+  if (value.len() > 0 && value[0] as i32 == 43) {
+    from_start = true;
+  } else if (value.len() > 0 && value[0] as i32 == 45) {
+    body = slice_unchecked(value, 1, value.len()) + "";
+  }
+  var noun: string = "bytes";
+  if (lines) {
+    noun = "lines";
+  }
+  var r: (u64, i32) = gnu.parse_units(body);
+  if (r.1 == 1) {
+    gnu.error("invalid number of " + noun + ": " + gnu.quote(body));
+    exit(1);
+  }
+  if (r.1 >= 2) {
+    gnu.error("invalid number of " + noun + ": " + gnu.quote(body) + ": Value too large for defined data type");
+    exit(1);
+  }
+  return Settings { ...s, count: r.0, lines: lines, from_start: from_start };
+}
+
+// `plain_of(value, what, max)` — xdectoumax with no suffixes: a value
+// that does not parse is `<what>: 'value'`, one out of range says so.
+function plain_of(value: string, what: string, max: u64): u64 {
+  var r: (u64, i32) = gnu.parse_number(value);
+  if (r.1 == 1) {
+    gnu.error(what + ": " + gnu.quote(value));
+    exit(1);
+  }
+  if (r.1 >= 2 || r.0 > max) {
+    gnu.error(what + ": " + gnu.quote(value) + ": Value too large for defined data type");
+    exit(1);
+  }
+  return r.0;
+}
+
+function pid_max(): u64 {
+  return 2147483647 as u64;
+}
+
+// `follow_by_name(value)` — argmatch over `descriptor` / `name`: a
+// unique prefix selects, an empty value is ambiguous, anything else
+// invalid; both list the valid arguments and the `Try` line.
+function follow_by_name(value: string): boolean {
+  var d: string = "descriptor";
+  var n: string = "name";
+  var descriptor: boolean = d.starts_with(value);
+  var name: boolean = n.starts_with(value);
+  if (descriptor && !name) {
+    return false;
+  }
+  if (name && !descriptor) {
+    return true;
+  }
+  if (descriptor && name) {
+    gnu.error("ambiguous argument " + gnu.quote(value) + " for '--follow'");
+  } else {
+    gnu.error("invalid argument " + gnu.quote(value) + " for '--follow'");
+  }
+  eprint("Valid arguments are:");
+  eprint("  - 'descriptor'");
+  eprint("  - 'name'");
+  gnu.try_help(1);
+  return false;
+}
+
+// ---- the sleep interval ----------------------------------------------------
+// `seconds_of(text)` — `-s`: C-locale strtod over the whole string,
+// which must be at least zero. Accepted, so, are leading blanks, a
+// sign, a decimal with an exponent, a hex float, `inf`; rejected are
+// `nan`, a trailing byte and a negative. The value only sizes a sleep,
+// so a hex float is read to nearest and infinity is a very long one.
+function seconds_of(text: string): i64 {
+  var secs: f64 = 0.0 - 1.0;
+  match (parse_seconds(text)) {
+    Some(v) => {
+      secs = v;
+    },
+    None => {}
+  }
+  if (secs < 0.0) {
+    gnu.error("invalid number of seconds: " + gnu.quote(text));
+    exit(1);
+  }
+  var ms: f64 = secs * 1000.0;
+  if (ms > 1000000000000.0) {
+    ms = 1000000000000.0;
+  }
+  return ms as i64;
+}
+
+function parse_seconds(text: string): Option[f64] {
+  var i: i32 = 0;
+  while (i < text.len() && gnu.is_blank(text[i] as i32)) {
+    i = i + 1;
+  }
+  var neg: boolean = false;
+  if (i < text.len() && (text[i] as i32 == 43 || text[i] as i32 == 45)) {
+    neg = text[i] as i32 == 45;
+    i = i + 1;
+  }
+  var rest: string = slice_unchecked(text, i, text.len()) + "";
+  if (rest.len() == 0) {
+    return None;
+  }
+  var lower: string = rest.to_ascii_lower();
+  var v: f64 = 0.0;
+  if (lower == "inf" || lower == "infinity") {
+    v = 1.0e300;
+  } else if (lower.starts_with("0x")) {
+    match (parse_hex_float(slice_unchecked(lower, 2, lower.len()) + "")) {
+      Some(h) => {
+        v = h;
+      },
+      None => {
+        return None;
+      }
+    }
+  } else {
+    if (!decimal_float_syntax(rest)) {
+      return None;
+    }
+    match (rest.parse_float()) {
+      Some(d) => {
+        v = d;
+      },
+      None => {
+        return None;
+      }
+    }
+  }
+  if (neg) {
+    return Some(0.0 - v);
+  }
+  return Some(v);
+}
+
+// strtod's decimal grammar: digits with an optional point, at least
+// one digit somewhere, then an optional exponent with at least one
+// digit of its own.
+function decimal_float_syntax(s: string): boolean {
+  var i: i32 = 0;
+  var digits: i32 = 0;
+  while (i < s.len() && gnu.is_digit(s[i] as i32)) {
+    i = i + 1;
+    digits = digits + 1;
+  }
+  if (i < s.len() && s[i] as i32 == 46) {
+    i = i + 1;
+    while (i < s.len() && gnu.is_digit(s[i] as i32)) {
+      i = i + 1;
+      digits = digits + 1;
+    }
+  }
+  if (digits == 0) {
+    return false;
+  }
+  if (i < s.len() && (s[i] as i32 == 101 || s[i] as i32 == 69)) {
+    i = i + 1;
+    if (i < s.len() && (s[i] as i32 == 43 || s[i] as i32 == 45)) {
+      i = i + 1;
+    }
+    var exp_digits: i32 = 0;
+    while (i < s.len() && gnu.is_digit(s[i] as i32)) {
+      i = i + 1;
+      exp_digits = exp_digits + 1;
+    }
+    if (exp_digits == 0) {
+      return false;
+    }
+  }
+  return i == s.len();
+}
+
+function hex_digit(c: i32): i32 {
+  if (c >= 48 && c <= 57) {
+    return c - 48;
+  }
+  if (c >= 97 && c <= 102) {
+    return c - 87;
+  }
+  return 0 - 1;
+}
+
+// `parse_hex_float(s)` — the part after `0x`, lower-cased: hex digits
+// with an optional point, then an optional binary exponent `p[+-]N`.
+function parse_hex_float(s: string): Option[f64] {
+  var i: i32 = 0;
+  var v: f64 = 0.0;
+  var digits: i32 = 0;
+  var scale: f64 = 1.0;
+  while (i < s.len() && hex_digit(s[i] as i32) >= 0) {
+    v = v * 16.0 + hex_digit(s[i] as i32) as f64;
+    i = i + 1;
+    digits = digits + 1;
+  }
+  if (i < s.len() && s[i] as i32 == 46) {
+    i = i + 1;
+    while (i < s.len() && hex_digit(s[i] as i32) >= 0) {
+      scale = scale / 16.0;
+      v = v + hex_digit(s[i] as i32) as f64 * scale;
+      i = i + 1;
+      digits = digits + 1;
+    }
+  }
+  if (digits == 0) {
+    return None;
+  }
+  if (i < s.len() && s[i] as i32 == 112) {
+    i = i + 1;
+    var eneg: boolean = false;
+    if (i < s.len() && (s[i] as i32 == 43 || s[i] as i32 == 45)) {
+      eneg = s[i] as i32 == 45;
+      i = i + 1;
+    }
+    var e: i32 = 0;
+    var exp_digits: i32 = 0;
+    while (i < s.len() && gnu.is_digit(s[i] as i32)) {
+      if (e < 100000) {
+        e = e * 10 + (s[i] as i32 - 48);
+      }
+      i = i + 1;
+      exp_digits = exp_digits + 1;
+    }
+    if (exp_digits == 0) {
+      return None;
+    }
+    while (e > 0) {
+      if (eneg) {
+        v = v / 2.0;
+      } else {
+        v = v * 2.0;
+      }
+      e = e - 1;
+    }
+  }
+  if (i != s.len()) {
+    return None;
+  }
+  return Some(v);
+}
+
+// ---- the obsolete form -----------------------------------------------------
+// `posix2_version()` — gnulib's: `_POSIX2_VERSION` in the environment
+// when it is a whole strtol number, else 200809.
+function posix2_version(): i64 {
+  match (env("_POSIX2_VERSION")) {
+    Some(v) => {
+      match (strtol_all(v)) {
+        Some(n) => {
+          return n;
+        },
+        None => {}
+      }
+    },
+    None => {}
+  }
+  return 200809 as i64;
+}
+
+// strtol over the whole string: leading blanks, a sign, digits and
+// nothing after them; more than eighteen digits is out of range.
+function strtol_all(s: string): Option[i64] {
+  var i: i32 = 0;
+  while (i < s.len() && gnu.is_blank(s[i] as i32)) {
+    i = i + 1;
+  }
+  var neg: boolean = false;
+  if (i < s.len() && (s[i] as i32 == 43 || s[i] as i32 == 45)) {
+    neg = s[i] as i32 == 45;
+    i = i + 1;
+  }
+  var v: i64 = 0 as i64;
+  var digits: i32 = 0;
+  while (i < s.len() && gnu.is_digit(s[i] as i32)) {
+    v = v * (10 as i64) + (s[i] as i32 - 48) as i64;
+    i = i + 1;
+    digits = digits + 1;
+  }
+  if (digits == 0 || digits > 18 || i != s.len()) {
+    return None;
+  }
+  if (neg) {
+    return Some(0 as i64 - v);
+  }
+  return Some(v);
+}
+
+// `obsolete(argv, s)` — GNU's parse_obsolete_option: whether argv[1]
+// is the `[+-]NUM[bcl][f]` form in this argv shape and environment,
+// and the settings it selects when it is.
+function obsolete(argv: string[], s: Settings): (boolean, Settings) {
+  var argc: i32 = argv.len();
+  var shape: boolean = argc == 2;
+  if (argc == 3) {
+    var a2: string = argv[2];
+    shape = !(a2.len() > 1 && a2[0] as i32 == 45);
+  }
+  if (argc >= 3 && argc <= 4 && argv[2] == "--") {
+    shape = true;
+  }
+  if (!shape) {
+    return (false, s);
+  }
+  var posix: i64 = posix2_version();
+  var obsolete_usage: boolean = posix < 200112 as i64;
+  var traditional: boolean = obsolete_usage || posix >= 200809 as i64;
+  var p: string = argv[1];
+  if (p.len() == 0) {
+    return (false, s);
+  }
+  var from_start: boolean = false;
+  var c: i32 = p[0] as i32;
+  if (c == 43) {
+    if (!traditional) {
+      return (false, s);
+    }
+    from_start = true;
+  } else if (c == 45) {
+    // `-` is stdin and `-c` needs a value in the standard usage; the
+    // multi-digit form is a GNU extension whatever the version.
+    if (!obsolete_usage) {
+      var need: i32 = 2;
+      if (p.len() > 1 && p[1] as i32 == 99) {
+        need = 3;
+      }
+      if (p.len() < need) {
+        return (false, s);
+      }
+    }
+  } else {
+    return (false, s);
+  }
+  var i: i32 = 1;
+  while (i < p.len() && gnu.is_digit(p[i] as i32)) {
+    i = i + 1;
+  }
+  var digits: string = slice_unchecked(p, 1, i) + "";
+  var lines: boolean = true;
+  var default_count: u64 = 10 as u64;
+  var mult: string = "";
+  if (i < p.len() && p[i] as i32 == 98) {
+    default_count = 5120 as u64;
+    mult = "b";
+    lines = false;
+    i = i + 1;
+  } else if (i < p.len() && p[i] as i32 == 99) {
+    lines = false;
+    i = i + 1;
+  } else if (i < p.len() && p[i] as i32 == 108) {
+    i = i + 1;
+  }
+  var forever: boolean = s.forever;
+  if (i < p.len() && p[i] as i32 == 102) {
+    forever = true;
+    i = i + 1;
+  }
+  if (i != p.len()) {
+    return (false, s);
+  }
+  var count: u64 = default_count;
+  if (digits.len() > 0) {
+    var r: (u64, i32) = gnu.parse_units(digits + mult);
+    if (r.1 != 0) {
+      // error(…, errno, …): ERANGE only when strtoumax itself overflowed.
+      var why: string = "";
+      if (r.1 == 2) {
+        why = ": Numerical result out of range";
+      }
+      gnu.error("invalid number: " + gnu.quote(p) + why);
+      exit(1);
+    }
+    count = r.0;
+  }
+  return (true, Settings { ...s, count: count, lines: lines, from_start: from_start, forever: forever });
+}
+
+// ---- the files -------------------------------------------------------------
+// `File` — one operand across the initial copy and the follow loop:
+// the open descriptor when `has_fd`, how much of it has been copied
+// (`size`), the fstat fields a change is detected against, the error
+// the last attempt ended in (`errnum`: 0 none, -1 untailable, else
+// an errno), and GNU's two flags — `ignore`, never looked at again,
+// and `tailable`, cleared for a name that could not be opened under
+// `--retry`.
+struct File { name: string, pretty: string, r: Reader, has_fd: boolean, is_stdin: boolean, size: i64, mtime: i64, mtime_nsec: i64, mode: u32, dev: i64, ino: i64, errnum: i32, err_text: string, ignore: boolean, tailable: boolean, unchanged: u64 }
+
+function enoent(): i32 {
+  return 2;
+}
+
+function errno_of(e: IoError): i32 {
+  match (e) {
+    NotFound(_) => {
+      return enoent();
+    },
+    PermissionDenied(_) => {
+      return 13;
+    },
+    AlreadyExists(_) => {
+      return 17;
+    },
+    InvalidUtf8(_) => {
+      return 84;
+    },
+    Interrupted => {
+      return 4;
+    },
+    Unsupported => {
+      return 95;
+    },
+    Other(_, _) => {
+      return 1000;
+    }
+  }
+}
+
+// S_IFMT classes: regular, FIFO, socket and character device can be
+// followed to their end; a directory or block device cannot.
+function is_regular(mode: u32): boolean {
+  return (mode & 61440 as u32) == 32768 as u32;
+}
+
+function is_fifo(mode: u32): boolean {
+  return (mode & 61440 as u32) == 4096 as u32;
+}
+
+function is_tailable(mode: u32): boolean {
+  var fmt: u32 = mode & 61440 as u32;
+  return fmt == 32768 as u32 || fmt == 4096 as u32 || fmt == 49152 as u32 || fmt == 8192 as u32;
+}
+
+// `read_size()` — bytes per read(2), GNU's BUFSIZ.
+function read_size(): i32 {
+  return 8192;
+}
+
+// ---- copying ---------------------------------------------------------------
+// `Copy` — the output and what a copy reports back: how far the
+// descriptor was read (`pos`, the follow loop's starting size) and
+// whether it succeeded.
+struct Copy { o: gnu.Stream, pos: i64, ok: boolean }
+
+// `dump_rest(c, r, pretty, one, fatal)` — GNU's dump_remainder: copy
+// from the current position to the end of input, or one read of it
+// when `one`. A read error is reported; under `fatal` it ends the
+// program, as dump_remainder's does.
+function dump_rest(c: Copy, r: Reader, pretty: string, one: boolean, fatal: boolean): Copy {
+  var out: Copy = c;
+  while (true) {
+    match (r.read_chunk(read_size())) {
+      Ok(chunk) => {
+        if (chunk.len() == 0) {
+          return out;
+        }
+        out = Copy { ...out, o: gnu.stream_put(out.o, chunk), pos: out.pos + chunk.len() as i64 };
+        if (one) {
+          return out;
+        }
+      },
+      Err(e) => {
+        var o: gnu.Stream = gnu.stream_fail(out.o, "error reading " + gnu.quotea(pretty) + ": " + gnu.io_error_text(e));
+        if (fatal) {
+          gnu.stream_finish(o);
+          exit(1);
+        }
+        return Copy { ...out, o: o, ok: false };
+      }
+    }
+  }
+  return out;
+}
+
+// The position `r` is at, or -1 when it cannot say (a pipe).
+function tell(r: Reader): i64 {
+  match (r.seek(0 as i64, 1)) {
+    Ok(p) => {
+      return p;
+    },
+    Err(_) => {
+      return 0 as i64 - 1 as i64;
+    }
+  }
+}
+
+function seek_to(r: Reader, pos: i64): void {
+  match (r.seek(pos, 0)) {
+    Ok(_) => {},
+    Err(_) => {}
+  }
+}
+
+// `size_of(r, s)` — the size a from-end copy may seek against: a
+// regular file's, unless the input is presumed a pipe.
+function size_of(r: Reader, s: Settings): i64 {
+  if (s.presume_pipe) {
+    return 0 as i64 - 1 as i64;
+  }
+  match (r.stat()) {
+    Ok(st) => {
+      if (is_regular(st.mode)) {
+        return st.size;
+      }
+    },
+    Err(_) => {}
+  }
+  return 0 as i64 - 1 as i64;
+}
+
+// `copy_from_start(c, r, pretty, s)` — `-n +N` / `-c +N`: skip N-1
+// units, seeking over bytes in a regular file, then copy the rest.
+function copy_from_start(c: Copy, r: Reader, pretty: string, s: Settings): Copy {
+  var out: Copy = c;
+  var skip: u64 = s.count;
+  if (skip > 0 as u64) {
+    skip = skip - 1 as u64;
+  }
+  if (!s.lines) {
+    if (size_of(r, s) >= 0 as i64 && skip <= 9223372036854775807 as u64) {
+      var here: i64 = tell(r);
+      if (here >= 0 as i64) {
+        seek_to(r, here + skip as i64);
+        out = Copy { ...out, pos: here + skip as i64 };
+        return dump_rest(out, r, pretty, false, true);
+      }
+    }
+  }
+  while (skip > 0 as u64) {
+    match (r.read_chunk(read_size())) {
+      Ok(chunk) => {
+        if (chunk.len() == 0) {
+          return out;
+        }
+        out = Copy { ...out, pos: out.pos + chunk.len() as i64 };
+        if (!s.lines) {
+          if (chunk.len() as u64 > skip) {
+            out = Copy { ...out, o: gnu.stream_put(out.o, slice_unchecked(chunk, skip as i32, chunk.len()) + "") };
+            skip = 0 as u64;
+          } else {
+            skip = skip - chunk.len() as u64;
+          }
+        } else {
+          var here: u64 = __count_byte(chunk, s.term) as u64;
+          if (here < skip) {
+            skip = skip - here;
+          } else {
+            var i: i32 = 0;
+            while (skip > 0 as u64) {
+              i = __memchr(chunk, s.term, i) + 1;
+              skip = skip - 1 as u64;
+            }
+            out = Copy { ...out, o: gnu.stream_put(out.o, slice_unchecked(chunk, i, chunk.len()) + "") };
+          }
+        }
+      },
+      Err(e) => {
+        var o: gnu.Stream = gnu.stream_fail(out.o, "error reading " + gnu.quotea(pretty) + ": " + gnu.io_error_text(e));
+        return Copy { ...out, o: o, ok: false };
+      }
+    }
+  }
+  return dump_rest(out, r, pretty, false, true);
+}
+
+// `copy_last_bytes(c, r, pretty, s)` — the last N bytes: seek there
+// in a regular file, else keep the last N of a stream.
+function copy_last_bytes(c: Copy, r: Reader, pretty: string, s: Settings): Copy {
+  var out: Copy = c;
+  var end: i64 = size_of(r, s);
+  if (end >= 0 as i64) {
+    var here: i64 = tell(r);
+    if (here >= 0 as i64) {
+      if (end - here > s.count as i64 && s.count <= 9223372036854775807 as u64) {
+        seek_to(r, end - s.count as i64);
+        out = Copy { ...out, pos: end - s.count as i64 };
+      } else {
+        out = Copy { ...out, pos: here };
+      }
+      return dump_rest(out, r, pretty, false, false);
+    }
+  }
+  var hold: string = "";
+  while (true) {
+    match (r.read_chunk(read_size())) {
+      Ok(chunk) => {
+        if (chunk.len() == 0) {
+          return Copy { ...out, o: gnu.stream_put(out.o, hold) };
+        }
+        out = Copy { ...out, pos: out.pos + chunk.len() as i64 };
+        if (chunk.len() as u64 >= s.count) {
+          hold = slice_unchecked(chunk, chunk.len() - s.count as i32, chunk.len()) + "";
+        } else {
+          hold = hold + chunk;
+          if (hold.len() as u64 > s.count) {
+            hold = slice_unchecked(hold, hold.len() - s.count as i32, hold.len()) + "";
+          }
+        }
+      },
+      Err(e) => {
+        var o: gnu.Stream = gnu.stream_fail(out.o, "error reading " + gnu.quotea(pretty) + ": " + gnu.io_error_text(e));
+        return Copy { ...out, o: o, ok: false };
+      }
+    }
+  }
+  return out;
+}
+
+// `copy_last_lines(c, r, pretty, s)` — the last N lines: a regular
+// file with bytes ahead of the position is walked backwards from its
+// end (`file_lines`); anything else is streamed through a hold.
+function copy_last_lines(c: Copy, r: Reader, pretty: string, s: Settings): Copy {
+  var end: i64 = size_of(r, s);
+  if (end >= 0 as i64) {
+    var start: i64 = tell(r);
+    if (start >= 0 as i64 && start < end) {
+      return file_lines(c, r, pretty, s, start, end);
+    }
+  }
+  return pipe_lines(c, r, pretty, s);
+}
+
+// GNU's file_lines: read 8 KiB blocks backwards from the end counting
+// terminators; a file that does not end in one has a last line to
+// count too. The block holding the boundary is written from there,
+// and the rest of the file copied forward.
+function file_lines(c: Copy, r: Reader, pretty: string, s: Settings, start: i64, end: i64): Copy {
+  var out: Copy = Copy { ...c, pos: end };
+  var left: u64 = s.count;
+  if (left == 0 as u64) {
+    seek_to(r, end);
+    return out;
+  }
+  var bufsize: i64 = read_size() as i64;
+  var pos: i64 = end;
+  var want: i64 = (pos - start) % bufsize;
+  if (want == 0 as i64) {
+    want = bufsize;
+  }
+  pos = pos - want;
+  seek_to(r, pos);
+  var chunk: string = "";
+  match (r.read_chunk(want as i32)) {
+    Ok(ch) => {
+      chunk = ch;
+    },
+    Err(e) => {
+      return Copy { ...out, o: gnu.stream_fail(out.o, "error reading " + gnu.quotea(pretty) + ": " + gnu.io_error_text(e)), ok: false };
+    }
+  }
+  if (chunk.len() > 0 && chunk[chunk.len() - 1] as i32 != s.term) {
+    left = left - 1 as u64;
+  }
+  while (true) {
+    var n: i32 = chunk.len();
+    while (n > 0) {
+      var nl: i32 = __rmemchr(chunk, s.term, n - 1);
+      if (nl < 0) {
+        break;
+      }
+      n = nl;
+      if (left == 0 as u64) {
+        out = Copy { ...out, o: gnu.stream_put(out.o, slice_unchecked(chunk, nl + 1, chunk.len()) + ""), pos: pos + chunk.len() as i64 };
+        return dump_rest(out, r, pretty, false, false);
+      }
+      left = left - 1 as u64;
+    }
+    if (pos == start) {
+      seek_to(r, start);
+      return dump_rest(Copy { ...out, pos: start }, r, pretty, false, false);
+    }
+    pos = pos - bufsize;
+    seek_to(r, pos);
+    match (r.read_chunk(bufsize as i32)) {
+      Ok(ch) => {
+        chunk = ch;
+      },
+      Err(e) => {
+        return Copy { ...out, o: gnu.stream_fail(out.o, "error reading " + gnu.quotea(pretty) + ": " + gnu.io_error_text(e)), ok: false };
+      }
+    }
+    if (chunk.len() == 0) {
+      return out;
+    }
+  }
+  return out;
+}
+
+// The offset just past the `n`-th terminator in `hold`, or its whole
+// length when it holds fewer.
+function line_cut(hold: string, n: u64, term: i32): i32 {
+  var cut: i32 = 0;
+  var left: u64 = n;
+  while (left > 0 as u64) {
+    var j: i32 = __memchr(hold, term, cut);
+    if (j < 0) {
+      return hold.len();
+    }
+    cut = j + 1;
+    left = left - 1 as u64;
+  }
+  return cut;
+}
+
+// The offset in `s` at which the last `n` terminated lines begin, found
+// by walking `n + 1` terminators back from the end. 0 when `s` holds
+// exactly `n` of them and nothing precedes the first.
+function tail_start(s: string, n: u64, term: i32): i32 {
+  var pos: i32 = s.len();
+  var left: u64 = n + 1 as u64;
+  while (left > 0 as u64) {
+    pos = __rmemchr(s, term, pos - 1);
+    if (pos < 0) {
+      return 0;
+    }
+    left = left - 1 as u64;
+  }
+  return pos + 1;
+}
+
+// GNU's pipe_lines: the last N lines of a stream. `hold` keeps the
+// bytes after the last dropped terminator, `pending` the terminators
+// in it, so the drop scan runs once per chunk rather than per line.
+function pipe_lines(c: Copy, r: Reader, pretty: string, s: Settings): Copy {
+  var out: Copy = c;
+  var hold: string = "";
+  var pending: u64 = 0 as u64;
+  while (true) {
+    match (r.read_chunk(read_size())) {
+      Ok(chunk) => {
+        if (chunk.len() == 0) {
+          var total: u64 = pending;
+          if (hold.len() > 0 && hold[hold.len() - 1] as i32 != s.term) {
+            total = total + 1 as u64;
+          }
+          if (total > s.count) {
+            hold = slice_unchecked(hold, line_cut(hold, total - s.count, s.term), hold.len()) + "";
+          }
+          return Copy { ...out, o: gnu.stream_put(out.o, hold) };
+        }
+        out = Copy { ...out, pos: out.pos + chunk.len() as i64 };
+        var here: u64 = __count_byte(chunk, s.term) as u64;
+        if (here >= s.count) {
+          // The chunk alone carries the lines to keep: the hold
+          // restarts at the last N terminated lines, an unterminated
+          // tail after them counted only once the input has ended.
+          hold = slice_unchecked(chunk, tail_start(chunk, s.count, s.term), chunk.len()) + "";
+          pending = s.count;
+        } else {
+          hold = hold + chunk;
+          pending = pending + here;
+          if (pending > s.count) {
+            var cut: i32 = line_cut(hold, pending - s.count, s.term);
+            hold = slice_unchecked(hold, cut, hold.len()) + "";
+            pending = s.count;
+          }
+        }
+      },
+      Err(e) => {
+        var o: gnu.Stream = gnu.stream_fail(out.o, "error reading " + gnu.quotea(pretty) + ": " + gnu.io_error_text(e));
+        return Copy { ...out, o: o, ok: false };
+      }
+    }
+  }
+  return out;
+}
+
+// `copy_tail(c, r, pretty, s)` — the initial copy of one input.
+function copy_tail(c: Copy, r: Reader, pretty: string, s: Settings): Copy {
+  if (s.from_start) {
+    return copy_from_start(c, r, pretty, s);
+  }
+  if (s.lines) {
+    return copy_last_lines(c, r, pretty, s);
+  }
+  return copy_last_bytes(c, r, pretty, s);
+}
+
+// ---- one operand -----------------------------------------------------------
+function file_new(path: string): File {
+  var pretty: string = path;
+  if (path == "-") {
+    pretty = "standard input";
+  }
+  return File { name: path, pretty: pretty, r: stdin(), has_fd: false, is_stdin: path == "-", size: 0 as i64, mtime: 0 as i64, mtime_nsec: 0 as i64, mode: 0 as u32, dev: 0 as i64, ino: 0 as i64, errnum: 0, err_text: "", ignore: false, tailable: true, unchanged: 0 as u64 };
+}
+
+// `record(f, r, pos, st)` — the descriptor to follow, and the fstat
+// fields the next change is measured from.
+function record(f: File, r: Reader, pos: i64, st: FileStat): File {
+  return File { ...f, r: r, has_fd: true, size: pos, mtime: st.mtime, mtime_nsec: st.mtime_nsec, mode: st.mode, dev: st.dev, ino: st.ino, errnum: 0, unchanged: 0 as u64 };
+}
+
+function close_file(f: File): File {
+  if (f.has_fd && !f.is_stdin) {
+    f.r.close();
+  }
+  return File { ...f, has_fd: false };
+}
+
+// `tail_file(f, o, s, show)` — GNU's tail_file: open, header, the
+// initial copy, and in follow mode the fstat that decides whether the
+// descriptor can be followed at all.
+function tail_file(f: File, o: gnu.Stream, s: Settings, show: boolean): (File, gnu.Stream) {
+  var spec: File = f;
+  var r: Reader = stdin();
+  if (!spec.is_stdin) {
+    match (open_reader(spec.name)) {
+      Ok(fd) => {
+        r = fd;
+      },
+      Err(e) => {
+        var text: string = gnu.io_error_text(e);
+        spec = File { ...spec, errnum: errno_of(e), err_text: text, tailable: false, ignore: !(s.retry && s.by_name) };
+        return (spec, gnu.stream_fail(o, "cannot open " + gnu.quotea(spec.pretty) + " for reading: " + text));
+      }
+    }
+  }
+  var out: gnu.Stream = o;
+  if (show) {
+    out = gnu.stream_header(out, spec.pretty);
+  }
+  var c: Copy = copy_tail(Copy { o: out, pos: 0 as i64, ok: true }, r, spec.pretty, s);
+  out = c.o;
+  var ok: boolean = c.ok;
+  if (!ok) {
+    out = gnu.Stream { ...out, ok: false };
+  }
+  if (!s.forever) {
+    if (!spec.is_stdin) {
+      r.close();
+    }
+    return (spec, out);
+  }
+  spec = File { ...spec, errnum: 0 };
+  if (!ok) {
+    spec = File { ...spec, errnum: 0 - 1 };
+  }
+  match (r.stat()) {
+    Ok(st) => {
+      if (!is_tailable(st.mode)) {
+        ok = false;
+        var giving_up: boolean = !(s.retry && s.by_name);
+        var suffix: string = "";
+        if (giving_up) {
+          suffix = "; giving up on this name";
+        }
+        spec = File { ...spec, errnum: 0 - 1, tailable: false, ignore: giving_up };
+        out = gnu.stream_fail(out, spec.pretty + ": cannot follow end of this type of file" + suffix);
+      }
+      if (ok) {
+        spec = record(spec, r, c.pos, st);
+        return (spec, out);
+      }
+    },
+    Err(e) => {
+      ok = false;
+      spec = File { ...spec, errnum: errno_of(e), err_text: gnu.io_error_text(e) };
+      out = gnu.stream_fail(out, "error reading " + gnu.quotea(spec.pretty) + ": " + gnu.io_error_text(e));
+    }
+  }
+  spec = File { ...spec, ignore: !(s.retry && s.by_name) };
+  if (!spec.is_stdin) {
+    r.close();
+  }
+  return (spec, out);
+}
+
+// ---- following -------------------------------------------------------------
+// `note(o, msg)` — a diagnostic of the follow loop: printed behind the
+// output written so far, and no verdict on the exit status.
+function note(o: gnu.Stream, msg: string): gnu.Stream {
+  return gnu.Stream { ...o, w: gnu.error_out(o.w, msg) };
+}
+
+// `recheck(f, s)` — GNU's recheck: reopen a name and decide what the
+// descriptor found there is — the same file, a new one to follow from
+// its start, or nothing to follow — in GNU's words.
+function recheck(f: File, s: Settings): File {
+  var spec: File = f;
+  var was_tailable: boolean = spec.tailable;
+  var prev_errnum: i32 = spec.errnum;
+  var opened: boolean = true;
+  var nr: Reader = stdin();
+  if (!spec.is_stdin) {
+    match (open_reader(spec.name)) {
+      Ok(fd) => {
+        nr = fd;
+      },
+      Err(e) => {
+        opened = false;
+        spec = File { ...spec, errnum: errno_of(e), err_text: gnu.io_error_text(e) };
+      }
+    }
+  }
+  spec = File { ...spec, tailable: !(s.retry && !opened) };
+  var ok: boolean = true;
+  var st: FileStat = FileStat { is_file: false, is_dir: false, size: 0 as i64, mode: 0 as u32, nlink: 0 as u32, uid: 0 as u32, gid: 0 as u32, dev: 0 as i64, rdev: 0 as i64, ino: 0 as i64, blksize: 0 as i64, blocks: 0 as i64, atime: 0 as i64, atime_nsec: 0 as i64, mtime: 0 as i64, mtime_nsec: 0 as i64, ctime: 0 as i64, ctime_nsec: 0 as i64 };
+  var stat_failed: boolean = !opened;
+  if (opened) {
+    match (nr.stat()) {
+      Ok(got) => {
+        st = got;
+      },
+      Err(e) => {
+        stat_failed = true;
+        spec = File { ...spec, errnum: errno_of(e), err_text: gnu.io_error_text(e) };
+      }
+    }
+  }
+  if (stat_failed) {
+    ok = false;
+    if (!spec.tailable) {
+      if (was_tailable) {
+        gnu.error(gnu.quotea(spec.pretty) + " has become inaccessible: " + spec.err_text);
+      }
+    } else if (prev_errnum != spec.errnum) {
+      gnu.error(gnu.quotef(spec.pretty) + ": " + spec.err_text);
+    }
+  } else if (!is_tailable(st.mode)) {
+    ok = false;
+    var giving_up: boolean = !(s.retry && s.by_name);
+    var suffix: string = "";
+    if (giving_up) {
+      suffix = "; giving up on this name";
+    }
+    spec = File { ...spec, errnum: 0 - 1, tailable: false, ignore: giving_up };
+    if (was_tailable || prev_errnum != 0 - 1) {
+      gnu.error(gnu.quotea(spec.pretty) + " has been replaced with an untailable file" + suffix);
+    }
+  } else {
+    spec = File { ...spec, errnum: 0 };
+  }
+  var new_file: boolean = false;
+  if (!ok) {
+    if (opened && !spec.is_stdin) {
+      nr.close();
+    }
+    spec = close_file(spec);
+  } else if (prev_errnum != 0 && prev_errnum != enoent()) {
+    new_file = true;
+    gnu.error(gnu.quotea(spec.pretty) + " has become accessible");
+  } else if (!spec.has_fd) {
+    new_file = true;
+    if (prev_errnum == enoent()) {
+      gnu.error(gnu.quotea(spec.pretty) + " has appeared;  following new file");
+    } else {
+      gnu.error(gnu.quotea(spec.pretty) + " has become accessible");
+    }
+  } else if (spec.ino != st.ino || spec.dev != st.dev) {
+    spec = close_file(spec);
+    new_file = true;
+    gnu.error(gnu.quotea(spec.pretty) + " has been replaced;  following new file");
+  } else {
+    if (!spec.is_stdin) {
+      nr.close();
+    }
+  }
+  if (new_file) {
+    spec = record(spec, nr, 0 as i64, st);
+    seek_to(nr, 0 as i64);
+  }
+  return spec;
+}
+
+// `any_live(files, s)` — whether anything is left to follow: under
+// `-F` always, else a file with a descriptor or one still worth
+// retrying.
+function any_live(files: File[], s: Settings): boolean {
+  if (s.retry && s.by_name) {
+    return true;
+  }
+  var i: i32 = 0;
+  while (i < files.len()) {
+    if (files[i].has_fd) {
+      return true;
+    }
+    if (!files[i].ignore && s.retry) {
+      return true;
+    }
+    i = i + 1;
+  }
+  return false;
+}
+
+// `changed(f, st)` — whether a poll found the file moved on: a
+// different mode, size (a regular file) or mtime.
+function changed(f: File, st: FileStat): boolean {
+  if (f.mode != st.mode) {
+    return true;
+  }
+  if (is_regular(st.mode) && f.size != st.size) {
+    return true;
+  }
+  return f.mtime != st.mtime || f.mtime_nsec != st.mtime_nsec;
+}
+
+// `tail_forever(files, o, s, show)` — GNU's tail_forever, polling.
+function tail_forever(files: File[], o: gnu.Stream, s: Settings, show: boolean): gnu.Stream {
+  var fs: File[] = files;
+  var out: gnu.Stream = o;
+  var last: i32 = fs.len() - 1;
+  var blocking: boolean = s.pid == 0 as u64 && !s.by_name && fs.len() == 1 && fs[0].has_fd && !is_regular(fs[0].mode);
+  while (true) {
+    var any_input: boolean = false;
+    var i: i32 = 0;
+    while (i < fs.len()) {
+      var f: File = fs[i];
+      if (f.ignore) {
+        i = i + 1;
+        continue;
+      }
+      if (!f.has_fd) {
+        fs = fs.with(i, recheck(f, s));
+        i = i + 1;
+        continue;
+      }
+      var read_it: boolean = true;
+      if (!blocking) {
+        match (f.r.stat()) {
+          Ok(st) => {
+            if (!changed(f, st)) {
+              read_it = false;
+              f = File { ...f, unchanged: f.unchanged + 1 as u64 };
+              if (s.max_unchanged < f.unchanged && s.by_name) {
+                f = recheck(f, s);
+                f = File { ...f, unchanged: 0 as u64 };
+              }
+            } else {
+              f = File { ...f, mtime: st.mtime, mtime_nsec: st.mtime_nsec, mode: st.mode, unchanged: 0 as u64 };
+              if (is_regular(st.mode) && st.size < f.size) {
+                out = note(out, gnu.quotef(f.pretty) + ": file truncated");
+                seek_to(f.r, 0 as i64);
+                f = File { ...f, size: 0 as i64 };
+              }
+            }
+          },
+          Err(e) => {
+            read_it = false;
+            out = note(out, gnu.quotef(f.pretty) + ": " + gnu.io_error_text(e));
+            f = File { ...close_file(f), errnum: errno_of(e), err_text: gnu.io_error_text(e) };
+          }
+        }
+      }
+      if (read_it) {
+        if (i != last) {
+          if (show) {
+            out = gnu.stream_header(out, f.pretty);
+          }
+          last = i;
+        }
+        var c: Copy = dump_rest(Copy { o: out, pos: f.size, ok: true }, f.r, f.pretty, blocking, false);
+        out = c.o;
+        if (c.pos != f.size) {
+          any_input = true;
+        }
+        f = File { ...f, size: c.pos };
+      }
+      fs = fs.with(i, f);
+      i = i + 1;
+    }
+    if (!any_live(fs, s)) {
+      return note(out, "no files remaining");
+    }
+    if (!any_input || blocking) {
+      out = gnu.stream_flush(out);
+    }
+    if (!any_input) {
+      sleep_ms(s.sleep_ms);
+    }
+  }
+  return out;
+}
+
+// `drop_piped_stdin(files)` — GNU's ignore_fifo_and_pipe: a `-` that is
+// a pipe cannot be followed and is left out; the count of what remains.
+function drop_piped_stdin(files: File[]): (File[], i32) {
+  var fs: File[] = files;
+  var viable: i32 = 0;
+  var i: i32 = 0;
+  while (i < fs.len()) {
+    var f: File = fs[i];
+    if (f.is_stdin && !f.ignore && f.has_fd && is_fifo(f.mode)) {
+      fs = fs.with(i, File { ...f, has_fd: false, ignore: true });
+    } else {
+      viable = viable + 1;
+    }
+    i = i + 1;
+  }
+  return (fs, viable);
+}
+
+function main(): i32 {
+  var argv: string[] = args();
+  // GNU asks fstat(1) only once it knows it will follow, but its opens
+  // never hand out descriptor 1 (gnulib's open_safer), so the answer is
+  // about the stdout it started with. Ours can reuse a closed 1 for the
+  // first operand, so the question is asked now and answered then.
+  var stdout_err: string = "";
+  match (stdout().stat()) {
+    Ok(_) => {},
+    Err(e) => {
+      stdout_err = gnu.io_error_text(e);
+    }
+  }
+  var opts: gnu.Opt[] = [];
+  opts = opts.append(gnu.valued("c", "bytes", opt_bytes()));
+  opts = opts.append(gnu.optional_long("f", "follow", opt_follow()));
+  opts = opts.append(gnu.valued("n", "lines", opt_lines()));
+  opts = opts.append(gnu.valued("", "max-unchanged-stats", opt_max_unchanged()));
+  opts = opts.append(gnu.flag("", "-disable-inotify", opt_disable_inotify()));
+  opts = opts.append(gnu.valued("", "pid", opt_pid()));
+  opts = opts.append(gnu.flag("", "-presume-input-pipe", opt_presume()));
+  opts = opts.append(gnu.flag("q", "quiet", opt_quiet()));
+  opts = opts.append(gnu.flag("", "retry", opt_retry()));
+  opts = opts.append(gnu.flag("", "silent", opt_quiet()));
+  opts = opts.append(gnu.valued("s", "sleep-interval", opt_sleep()));
+  opts = opts.append(gnu.flag("v", "verbose", opt_verbose()));
+  opts = opts.append(gnu.flag("z", "zero-terminated", opt_zero()));
+  opts = opts.append(gnu.flag("F", "", opt_big_f()));
+  var d: i32 = 0;
+  while (d < 10) {
+    opts = opts.append(gnu.flag(slice_unchecked("0123456789", d, d + 1) + "", "", opt_digit()));
+    d = d + 1;
+  }
+
+  var s: Settings = Settings { count: 10 as u64, lines: true, from_start: false, forever: false, by_name: false, retry: false, header: header_auto(), term: 10, sleep_ms: 1000 as i64, max_unchanged: 5 as u64, pid: 0 as u64, presume_pipe: false };
+
+  // The obsolete form is argv[1] and nowhere else; the scan then runs
+  // over argv with that token removed.
+  var scan: string[] = argv;
+  var ob: (boolean, Settings) = obsolete(argv, s);
+  if (ob.0) {
+    s = ob.1;
+    scan = [];
+    scan = scan.append(argv[0]);
+    var k: i32 = 2;
+    while (k < argv.len()) {
+      scan = scan.append(argv[k]);
+      k = k + 1;
+    }
+  }
+
+  var g: gnu.Getopt = gnu.getopt_new(scan, opts, "tail", help_text(), 1);
+  while (true) {
+    var r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    g = r.1;
+    match (r.0) {
+      Some(m) => {
+        if (m.id == opt_bytes()) {
+          s = count_of(m.value, false, s);
+        } else if (m.id == opt_lines()) {
+          s = count_of(m.value, true, s);
+        } else if (m.id == opt_follow()) {
+          var by_name: boolean = false;
+          if (m.has_value || m.value.len() > 0) {
+            by_name = follow_by_name(m.value);
+          }
+          s = Settings { ...s, forever: true, by_name: by_name };
+        } else if (m.id == opt_big_f()) {
+          s = Settings { ...s, forever: true, by_name: true, retry: true };
+        } else if (m.id == opt_retry()) {
+          s = Settings { ...s, retry: true };
+        } else if (m.id == opt_max_unchanged()) {
+          s = Settings { ...s, max_unchanged: plain_of(m.value, "invalid maximum number of unchanged stats between opens", 18446744073709551615 as u64) };
+        } else if (m.id == opt_pid()) {
+          s = Settings { ...s, pid: plain_of(m.value, "invalid PID", pid_max()) };
+        } else if (m.id == opt_presume()) {
+          s = Settings { ...s, presume_pipe: true };
+        } else if (m.id == opt_quiet()) {
+          s = Settings { ...s, header: header_never() };
+        } else if (m.id == opt_verbose()) {
+          s = Settings { ...s, header: header_always() };
+        } else if (m.id == opt_zero()) {
+          s = Settings { ...s, term: 0 };
+        } else if (m.id == opt_sleep()) {
+          s = Settings { ...s, sleep_ms: seconds_of(m.value) };
+        } else if (m.id == opt_digit()) {
+          gnu.error("option used in invalid context -- " + gnu.digit_option(scan));
+          exit(1);
+        }
+      },
+      None => {
+        break;
+      }
+    }
+  }
+
+  if (s.retry) {
+    if (!s.forever) {
+      s = Settings { ...s, retry: false };
+      gnu.error("warning: --retry ignored; --retry is useful only when following");
+    } else if (!s.by_name) {
+      gnu.error("warning: --retry only effective for the initial open");
+    }
+  }
+  if (s.pid != 0 as u64 && !s.forever) {
+    gnu.error("warning: PID ignored; --pid=PID is useful only when following");
+  } else if (s.pid != 0 as u64) {
+    // GNU's own words for a kill(2) that answers ENOSYS; here the
+    // liveness test is what the language lacks (#8767).
+    gnu.error("warning: --pid=PID is not supported on this system");
+    s = Settings { ...s, pid: 0 as u64 };
+  }
+
+  var names: string[] = g.operands();
+  if (names.len() == 0) {
+    names = names.append("-");
+  }
+  if (s.forever && s.by_name) {
+    var k2: i32 = 0;
+    while (k2 < names.len()) {
+      if (names[k2] == "-") {
+        gnu.error("cannot follow " + gnu.quotea("-") + " by name");
+        exit(1);
+      }
+      k2 = k2 + 1;
+    }
+  }
+  var show: boolean = s.header == header_always() || s.header == header_auto() && names.len() > 1;
+
+  var out: gnu.Stream = gnu.stream_new();
+  var files: File[] = [];
+  var i: i32 = 0;
+  while (i < names.len()) {
+    var t: (File, gnu.Stream) = tail_file(file_new(names[i]), out, s, show);
+    files = files.append(t.0);
+    out = t.1;
+    i = i + 1;
+  }
+
+  if (s.forever) {
+    var dp: (File[], i32) = drop_piped_stdin(files);
+    files = dp.0;
+    if (dp.1 > 0) {
+      if (stdout_err.len() > 0) {
+        gnu.error("standard output: " + stdout_err);
+        gnu.stream_finish(out);
+        exit(1);
+      }
+      out = tail_forever(files, out, s, show);
+    }
+  }
+  gnu.stream_finish(out);
+  if (!out.ok) {
+    return 1;
+  }
+  return 0;
+}

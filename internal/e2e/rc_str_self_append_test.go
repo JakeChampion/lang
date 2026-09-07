@@ -268,3 +268,82 @@ func TestX86_64StrConcatChainCorrect(t *testing.T) {
 		t.Errorf("frees=%d > allocs=%d — the chain over-released an intermediate", frees, allocs)
 	}
 }
+
+// strAppendClassBoundarySrc grows an accumulator two bytes at a time from
+// nothing to 4200 bytes, so the in-place grow crosses out of the small tier
+// at 2048 and through several large-tier classes, and then verifies every
+// byte by POSITION — an alternating a/b fill, so a copy that landed at the
+// wrong offset or a length prefix restamped wrong is visible where a uniform
+// fill would not be.
+const strAppendClassBoundarySrc = `function main(): i32 {
+    var s: string = "";
+    var i: i32 = 0;
+    while (i < 2100) {
+        s = s + "ab";
+        i = i + 1;
+    }
+    if (s.len() != 4200) { return 1; }
+    var j: i32 = 0;
+    while (j < 4200) {
+        var want: i32 = 97;
+        if (j % 2 == 1) { want = 98; }
+        if ((s[j] as i32) != want) { return 2; }
+        j = j + 1;
+    }
+    if (slice_unchecked(s, 2046, 2050) != "abab") { return 3; }
+    if (slice_unchecked(s, 4196, 4200) != "abab") { return 4; }
+    return 0;
+}`
+
+// The in-place grow's guard asks whether the grown request still lands in the
+// block the old one reserved. That is ONE capacity computation — `req_new <=
+// cap(req_old)` — where it used to be two compared for equality; the algebra
+// is proved in internal/codegen/x86_64/sizeclass_cap_test.go, and this is the
+// emitted code agreeing with it.
+//
+// The allocation COUNT is the assertion, because the count is the guard's
+// decision sequence: 2100 appends against 132 allocations means the guard said
+// "grow in place" 1968 times and "allocate" 132 times, at exactly the lengths
+// the size classes fall on. A predicate that differed anywhere across the
+// 0..4200 span — including at the 2048 tier change — moves this number. A
+// change that legitimately moves it (a different rounding, a different header)
+// should re-bank it rather than loosen it.
+func TestX86_64StrAppendClassBoundary(t *testing.T) {
+	prev := ast.RcFreeEnabled
+	ast.RcFreeEnabled = true
+	defer func() { ast.RcFreeEnabled = prev }()
+
+	stdout, stderr, code := runLeakCheckX86_64(t, strAppendClassBoundarySrc)
+	if code != 0 {
+		t.Fatalf("exited %d, want 0 (1 = wrong length, 2 = a byte at the wrong position, 3/4 = a boundary slice); stdout=%q stderr=%q", code, stdout, stderr)
+	}
+	allocs, frees, live := parseLeakCheckLine(t, stderr)
+	if allocs != 132 {
+		t.Errorf("allocs = %d for 2100 appends across the 2048 tier change, want 132 — the in-place guard fires at different lengths than the size classes fall on", allocs)
+	}
+	if allocs != frees || live != 0 {
+		t.Errorf("heap unbalanced: allocs=%d frees=%d live_bytes=%d", allocs, frees, live)
+	}
+}
+
+// TestWASMStrAppendClassBoundary is the two-word sibling, whose guard is
+// emitFreelistBin rather than emitSizeClassCap and had the same doubled
+// computation. One more allocation than the natives: wasm has no inline
+// small-string form, so the first append heap-allocates where x86-64 packs.
+func TestWASMStrAppendClassBoundary(t *testing.T) {
+	prev := ast.RcFreeEnabled
+	ast.RcFreeEnabled = true
+	defer func() { ast.RcFreeEnabled = prev }()
+
+	_, stderr, code := runLeakCheckWasm(t, strAppendClassBoundarySrc, false)
+	if code != 0 {
+		t.Fatalf("exited %d, want 0; stderr=%q", code, stderr)
+	}
+	allocs, frees, live := parseLeakCheckLine(t, stderr)
+	if allocs != 133 {
+		t.Errorf("allocs = %d for 2100 appends across the 2048 tier change, want 133", allocs)
+	}
+	if allocs != frees || live != 0 {
+		t.Errorf("heap unbalanced: allocs=%d frees=%d live_bytes=%d", allocs, frees, live)
+	}
+}

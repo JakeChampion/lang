@@ -171,11 +171,12 @@ function main(): i32 { return 0; }`
 
 // The caller-side half for the method form: a string accumulator declared
 // inside a match arm and handed to `Writer.write` stays OWNED, so its
-// self-append takes the in-place `__fern_str_append` path and its scope-exit
-// release frees. `__method_Writer_write` writes the bytes to the fd and
-// retains nothing; without its table entry the accumulator was
-// borrow-tainted, every `out = out + piece` copied the whole prefix afresh,
-// and the superseded copy was decremented without being freed (#8394).
+// self-append takes the in-place path — here its fused range form, the piece
+// being a slice — and its scope-exit release frees.
+// `__method_Writer_write` writes the bytes to the fd and retains nothing;
+// without its table entry the accumulator was borrow-tainted, every
+// `out = out + piece` copied the whole prefix afresh, and the superseded copy
+// was decremented without being freed (#8394).
 func TestAccumulatorWrittenToWriterStaysInPlace(t *testing.T) {
 	src := `function main(): i32 {
     var w: Writer = stdout();
@@ -201,8 +202,11 @@ func TestAccumulatorWrittenToWriterStaysInPlace(t *testing.T) {
 		t.Errorf("out is not freeEligible — the Writer.write argument taints it; plan:\n%s", dumps["main"])
 	}
 	fn := findFunc(p, "main")
-	if n := countCallDirect(fn.Ops, "__fern_str_append"); n != 1 {
-		t.Errorf("main calls __fern_str_append %d times, want 1 — the self-append fell back to the copying concat; ops:\n%s", n, p)
+	if n := countCallDirect(fn.Ops, "__fern_str_append_range"); n != 1 {
+		t.Errorf("main calls __fern_str_append_range %d times, want 1 — the self-append fell back to the copying concat; ops:\n%s", n, p)
+	}
+	if n := countCallDirect(fn.Ops, "__str_slice"); n != 0 {
+		t.Errorf("main materialises the slice %d times, want 0 (the append reads the range out of `chunk`); ops:\n%s", n, p)
 	}
 }
 
