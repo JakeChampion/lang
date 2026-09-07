@@ -207,12 +207,12 @@ function set_mode(s: Settings, m: i32): Settings {
 // for a byte count, which is GNU's wording, not a slip here.
 function size_operand(value: string, noun: string): u64 {
   var r: (u64, i32) = gnu.parse_units(value);
-  if (r.1 == 1) {
+  if (gnu.count_malformed(r.1)) {
     gnu.error("invalid number of " + noun + ": " + gnu.quote(value));
     exit(1);
   }
   var n: u64 = r.0;
-  if (r.1 >= 2) {
+  if (gnu.count_overflow(r.1)) {
     n = u64_max();
   }
   if (n == 0 as u64) {
@@ -226,12 +226,12 @@ function size_operand(value: string, noun: string): u64 {
 // the one place `-l` and `-b` part.
 function lines_operand(value: string): u64 {
   var r: (u64, i32) = gnu.parse_number(value);
-  if (r.1 == 1) {
+  if (gnu.count_malformed(r.1)) {
     gnu.error("invalid number of lines: " + gnu.quote(value));
     exit(1);
   }
   var n: u64 = r.0;
-  if (r.1 >= 2) {
+  if (gnu.count_overflow(r.1)) {
     n = u64_max();
   }
   if (n == 0 as u64) {
@@ -250,7 +250,7 @@ function u64_max(): u64 {
 // uintmax_t — two different strerror texts for what looks like one fault.
 function suffix_length_operand(value: string): i32 {
   var r: (u64, i32) = gnu.parse_number(value);
-  if (r.1 == 1) {
+  if (gnu.count_malformed(r.1)) {
     if (negated_number(value)) {
       gnu.error("invalid suffix length: " + gnu.quote(value) + ": Numerical result out of range");
       exit(1);
@@ -258,7 +258,7 @@ function suffix_length_operand(value: string): i32 {
     gnu.error("invalid suffix length: " + gnu.quote(value));
     exit(1);
   }
-  if (r.1 >= 2) {
+  if (gnu.count_overflow(r.1)) {
     gnu.error("invalid suffix length: " + gnu.quote(value) + ": Value too large for defined data type");
     exit(1);
   }
@@ -281,7 +281,7 @@ function negated_number(value: string): boolean {
   }
   var rest: string = slice_unchecked(value, i + 1, value.len()) + "";
   var r: (u64, i32) = gnu.parse_number(rest);
-  return r.1 != 1;
+  return !gnu.count_malformed(r.1);
 }
 
 // `--numeric-suffixes=FROM` / `--hex-suffixes=FROM`. `alpha` names the
@@ -390,12 +390,12 @@ function chunk_operand(value: string, s: Settings): Settings {
 // quotes, which is not always what failed to parse.
 function chunk_count(value: string, blame: string): u64 {
   var r: (u64, i32) = gnu.parse_number(value);
-  if (r.1 == 1) {
+  if (gnu.count_malformed(r.1)) {
     gnu.error("invalid number of chunks: " + gnu.quote(blame));
     exit(1);
   }
   var n: u64 = r.0;
-  if (r.1 >= 2) {
+  if (gnu.count_overflow(r.1)) {
     n = u64_max();
   }
   if (n == 0 as u64) {
