@@ -55,12 +55,20 @@ var rcCorpusLeakBaselineX86_64 = map[string]int64{
 	// REFUSED parameter has no owner left to free it — the residual class
 	// #7867 tracks. This one watches the #7914 push credit's refusal half.
 	"string_pushed_then_returned_bare_stays_refused": 320,
-	"closure_array_capture_churn":                    4752,
-	"closure_call_arg_handed_back_is_not_reclaimed":  1920,
-	"closure_captures_arr_of_struct_churn_free":      14256,
-	"closure_captures_struct_churn_free":             6336,
-	"closure_churn_free":                             1584,
-	"closure_capture_passed_to_owned_param":          64,
+	// A boxcapture cell holding a Map strands that map at exit: the cell is
+	// a one-element array and the array ladder flat-dec's a Map element,
+	// which frees neither its columns nor its buf (#8845). The number is
+	// the ONE map the cell still holds — the loop's other 50 are released
+	// by the store, which is what #8833's guard preserved, and the same for
+	// the identity-call case that pins the guard's other arm.
+	"closure_capture_rebind_map_in_place_not_over_released": 144,
+	"closure_capture_rebind_identity_call_not_stranded":     144,
+	"closure_array_capture_churn":                           4752,
+	"closure_call_arg_handed_back_is_not_reclaimed":         1920,
+	"closure_captures_arr_of_struct_churn_free":             14256,
+	"closure_captures_struct_churn_free":                    6336,
+	"closure_churn_free":                                    1584,
+	"closure_capture_passed_to_owned_param":                 64,
 	// The `m.without(k)` shapes, split out of one case so a fix to one
 	// can bank its own zero (#8276). They are NOT four times the old single
 	// entry gone wrong: each now runs its own 500-round loop over its own map,
@@ -91,12 +99,20 @@ var rcCorpusLeakBaselineArm64 = map[string]int64{
 	// deliberate refusal class; the own-string case is clean here (the
 	// two-word ABI reclaims it).
 	"string_pushed_then_returned_bare_stays_refused": 448,
-	"closure_array_capture_churn":                    4752,
-	"closure_call_arg_handed_back_is_not_reclaimed":  1920,
-	"closure_captures_arr_of_struct_churn_free":      14256,
-	"closure_captures_struct_churn_free":             6336,
-	"closure_churn_free":                             1584,
-	"closure_capture_passed_to_owned_param":          80,
+	// A boxcapture cell holding a Map strands that map at exit: the cell is
+	// a one-element array and the array ladder flat-dec's a Map element,
+	// which frees neither its columns nor its buf (#8845). The number is
+	// the ONE map the cell still holds — the loop's other 50 are released
+	// by the store, which is what #8833's guard preserved, and the same for
+	// the identity-call case that pins the guard's other arm.
+	"closure_capture_rebind_map_in_place_not_over_released": 160,
+	"closure_capture_rebind_identity_call_not_stranded":     144,
+	"closure_array_capture_churn":                           4752,
+	"closure_call_arg_handed_back_is_not_reclaimed":         1920,
+	"closure_captures_arr_of_struct_churn_free":             14256,
+	"closure_captures_struct_churn_free":                    6336,
+	"closure_churn_free":                                    1584,
+	"closure_capture_passed_to_owned_param":                 80,
 	// The `m.without(k)` shapes, split out of one case so a fix to one
 	// can bank its own zero (#8276). They are NOT four times the old single
 	// entry gone wrong: each now runs its own 500-round loop over its own map,
@@ -141,13 +157,21 @@ var rcCorpusLeakBaselineArm64 = map[string]int64{
 // Cases the correctness corpus skips on wasm (`skipWasm`) are skipped
 // here too — a case that cannot run cannot be weighed.
 var rcCorpusLeakBaselineWasm = map[string]int64{
-	"closure_array_capture_churn":                   4752,
-	"closure_call_arg_handed_back_is_not_reclaimed": 1920,
-	"closure_capture_passed_to_owned_param":         64,
-	"closure_captures_arr_of_struct_churn_free":     14256,
-	"closure_captures_struct_churn_free":            6336,
-	"closure_churn_free":                            1584,
-	"consumed_array_arg_temp_released_and_guarded":  128,
+	// A boxcapture cell holding a Map strands that map at exit: the cell is
+	// a one-element array and the array ladder flat-dec's a Map element,
+	// which frees neither its columns nor its buf (#8845). The number is
+	// the ONE map the cell still holds — the loop's other 50 are released
+	// by the store, which is what #8833's guard preserved, and the same for
+	// the identity-call case that pins the guard's other arm.
+	"closure_capture_rebind_map_in_place_not_over_released": 128,
+	"closure_capture_rebind_identity_call_not_stranded":     112,
+	"closure_array_capture_churn":                           4752,
+	"closure_call_arg_handed_back_is_not_reclaimed":         1920,
+	"closure_capture_passed_to_owned_param":                 64,
+	"closure_captures_arr_of_struct_churn_free":             14256,
+	"closure_captures_struct_churn_free":                    6336,
+	"closure_churn_free":                                    1584,
+	"consumed_array_arg_temp_released_and_guarded":          128,
 	// The `m.without(k)` shapes, split out of one case so a fix to one
 	// can bank its own zero (#8276). They are NOT four times the old single
 	// entry gone wrong: each now runs its own 500-round loop over its own map,

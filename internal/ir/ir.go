@@ -21401,10 +21401,33 @@ func (b *builder) emitCellSet(n *ast.Call) error {
 // superseded pointer on the floor (32 bytes an iteration, unbounded, #8441)
 // and left an aliased value in the slot under a count nobody had taken.
 //
+// One RHS shape breaks that: a cow-in-place map mutator (`m = m.insert(k, v)`)
+// hands the receiver straight back when it finds it uniquely held, so the
+// expression yields the cell's OWN element and the unconditional release took
+// the map it was about to store from 1 to 0 (#8833 — both natives then read a
+// map with no entries where `-interp` read the new one, and `-sanitize` called
+// it a use-after-free). The retain half cannot compensate: the RHS is a call,
+// whose result needsRcIncOnAlias correctly declines, and a Map read out of the
+// cell is borrowed, so no count arrives with it at all. That shape — and only
+// that shape — takes the store-first, release-second form under a pointer
+// identity test, the same test the plain-local Map overwrite uses: the cow's
+// OTHER path returns a fresh copy, and there the superseded handle really did
+// lose this binding's claim and is released as before.
+//
+// Every other RHS delivers an OWNED reference on both paths and keeps the
+// unconditional release: a user function that returns its argument takes the
+// return-transfer inc, and `.append`'s in-place grow pairs with the buffer
+// dec. Guarding those on pointer identity strands one value per rebind
+// (measured: 50 maps for `m = id(m)`, 50 buffers for `a = a.append(i)`).
+//
 // The new value is evaluated and stashed BEFORE the old one is released, for
 // emitCellSet's reason: `s = s + "x"` reads the slot inside the value
 // expression, so releasing first would free the buffer the read is standing
-// on.
+// on. In the guarded shape the OLD element is stashed before that expression
+// too, and twice: the whole payload, which the release consumes, and its first
+// word, which the guard compares against the word the store left in the slot.
+// One word is enough on a two-word string ABI — the data word is the buffer's
+// identity, and an inline / immortal payload releases to a no-op on either arm.
 //
 // A cycle still leaks. A closure element takes decValueOnStack's flat
 // `__fern_rc_dec` (dropFnNameFor declines a FuncType), which decrements
@@ -21440,6 +21463,29 @@ func (b *builder) emitBoxedCellStore(t *ast.Index, n *ast.Assign, storeOp OpKind
 	}
 	b.emit(Op{Kind: OpCallDirect, Str: idxHelper, Width: ResAddr, I32: 2})
 	b.emit(Op{Kind: OpStoreLocal, I32: addrSlot})
+	// A cow-in-place map mutator may hand the cell's own element back, so it
+	// stashes the element the store supersedes before the value expression
+	// can reach the slot: the whole payload the release consumes, and its
+	// first word the guard compares.
+	cellName := ""
+	if id, isIdent := t.Array.(*ast.Ident); isIdent {
+		cellName = id.Name
+	}
+	guarded := isCellSelfMapCow(n.Value, cellName)
+	var oldSlot, oldPtrSlot int32
+	if guarded {
+		oldSlot = b.allocSlot()
+		b.locals[fmt.Sprintf("__cell_box_old_%d", oldSlot)] = oldSlot
+		b.scratchType[oldSlot] = elem
+		b.emit(Op{Kind: OpLoadLocal, I32: addrSlot})
+		b.emit(payloadLoadOpFor(elem, b.ptrW))
+		b.emit(Op{Kind: OpStoreLocal, I32: oldSlot})
+		oldPtrSlot = b.allocSlot()
+		b.locals[fmt.Sprintf("__cell_box_oldptr_%d", oldPtrSlot)] = oldPtrSlot
+		b.emit(Op{Kind: OpLoadLocal, I32: addrSlot})
+		b.emit(Op{Kind: OpLoad, Width: WidthPtr})
+		b.emit(Op{Kind: OpStoreLocal, I32: oldPtrSlot})
+	}
 	// The new value, retained when it is an alias the writer still holds.
 	valSlot := b.allocSlot()
 	b.locals[fmt.Sprintf("__cell_box_val_%d", valSlot)] = valSlot
@@ -21455,13 +21501,59 @@ func (b *builder) emitBoxedCellStore(t *ast.Index, n *ast.Assign, storeOp OpKind
 	b.emit(Op{Kind: OpStoreLocal, I32: valSlot})
 	// Release the superseded element through the same ladder a container
 	// slot's replacement takes.
-	b.emit(Op{Kind: OpLoadLocal, I32: addrSlot})
-	b.emit(payloadLoadOpFor(elem, b.ptrW))
-	b.dropStructField(elem)
+	if !guarded {
+		b.emit(Op{Kind: OpLoadLocal, I32: addrSlot})
+		b.emit(payloadLoadOpFor(elem, b.ptrW))
+		b.dropStructField(elem)
+	}
 	b.emit(Op{Kind: OpLoadLocal, I32: addrSlot})
 	b.emit(Op{Kind: OpLoadLocal, I32: valSlot})
 	b.emit(Op{Kind: storeOp, Width: storeWidth})
+	if guarded {
+		// The cow returned a fresh copy: the old handle lost this binding's
+		// claim. Returning the receiver leaves the slot naming what it
+		// already named, and nothing is owed.
+		b.emit(Op{Kind: OpLoadLocal, I32: addrSlot})
+		b.emit(Op{Kind: OpLoad, Width: WidthPtr})
+		b.emit(Op{Kind: OpLoadLocal, I32: oldPtrSlot})
+		b.emit(Op{Kind: OpNe, Width: WidthPtr})
+		b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
+		b.emit(Op{Kind: OpLoadLocal, I32: oldSlot})
+		b.dropStructField(elem)
+		b.emit(Op{Kind: OpEnd})
+	}
 	return nil
+}
+
+// isCellSelfMapCow reports whether `value` is a value-returning map mutator
+// whose receiver is a read of the boxcapture cell `cellName` — the RHS of
+// `m = m.insert(k, v)` once BoxMutatedCaptures has rewritten both sides into
+// the `m[0]` cell spelling. isSelfMapMutation asks the same question of a
+// plain local and matches an *ast.Ident receiver, which that rewrite has
+// already replaced, so the two predicates cannot be shared.
+//
+// __map_cow_inplace returns the receiver unchanged when it mutates in place,
+// so on that path the call's result is the cell's own element, borrowed. It is
+// the only RHS shape reaching emitBoxedCellStore that can deliver a reference
+// without a count on it (#8833).
+func isCellSelfMapCow(value ast.Expr, cellName string) bool {
+	if cellName == "" {
+		return false
+	}
+	call, isCall := value.(*ast.Call)
+	if !isCall || len(call.Args) == 0 {
+		return false
+	}
+	callee, isIdent := call.Callee.(*ast.Ident)
+	if !isIdent || (callee.Name != "__method_Map_set" && callee.Name != "__method_Map_clear") {
+		return false
+	}
+	idx, isIdx := call.Args[0].(*ast.Index)
+	if !isIdx {
+		return false
+	}
+	recv, isRecvIdent := idx.Array.(*ast.Ident)
+	return isRecvIdent && recv.Name == cellName
 }
 
 // sliceUncheckedArgs returns the (source, low, high) of a
