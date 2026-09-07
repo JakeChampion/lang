@@ -166,7 +166,12 @@ coreutils/
   README.md         build / run / test / bench, for a reader who wants a binary
   lib/gnu.fern      what every utility shares with GNU: argv[0] verbatim,
                     the usage-error path, --help/--version handling,
-                    strerror text, checked stdout writes
+                    strerror text, checked stdout writes, and glibc's
+                    stdio buffering for the utilities whose write-error
+                    wording depends on it (tac)
+  lib/bre.fern      regular expressions as glibc compiles them —
+                    POSIX basic for expr, syntax 0 (Emacs) for tac -r,
+                    with glibc's regerror texts as the diagnostics
   lib/ld.fern       C's `long double` as the TARGET has it, for the
                     utilities that convert and compute in one
                     (printf, numfmt, seq, sleep)
@@ -371,7 +376,69 @@ per chunk (0.17×). Both now decide a whole chunk with one `__count_byte` and
 walk only the chunk that reaches the count — backwards, with `__rmemchr`, for
 the elision.
 
+`tac`, 2026-09-06, the same container and the same 62 MiB file, with
+uutils 0.0.24 (the Debian multi-call binary the script now finds) and a
+588 KiB file — 100 000 lines of `seq` — for the regular-expression row.
+Another agent was building on the same four cores for part of the run, so
+read the ratios rather than the absolute numbers; GNU's own figure for the
+plain copy moved 85 → 100 ms between two runs an hour apart:
+
+| utility | workload | fern (ms) | gnu (ms) | uutils (ms) | gnu / fern | uutils / fern |
+|---|---|---|---|---|---|---|
+| `tac` | a 62 MiB file | 380.18 ± 24.13 | 100.27 ± 3.85 | 85.11 ± 4.41 | **0.26×** | **0.22×** |
+| `tac` | `-b` of a 62 MiB file | 388.17 ± 11.12 | 95.56 ± 4.16 | 84.14 ± 4.24 | **0.25×** | **0.22×** |
+| `tac` | `-s 5` of a 62 MiB file | 296.30 ± 9.47 | 87.29 ± 4.98 | 67.00 ± 2.99 | **0.29×** | **0.23×** |
+| `tac` | a 62 MiB file from a pipe | 633.36 ± 38.48 | 185.29 ± 11.46 | 146.55 ± 13.84 | **0.29×** | **0.23×** |
+| `tac` | `-r -s "[0-9]"` of a 588 KiB file | 193.42 ± 11.41 | 33.49 ± 2.52 | 13.11 ± 1.08 | **0.17×** | **0.07×** |
+| `tac` | a one-line file | 0.28 ± 0.24 | 1.12 ± 0.34 | 2.11 ± 0.39 | 3.97× | 7.51× |
+
+**tac does not meet the epic's bar.** It wins startup and loses every
+throughput row by three to four times, and the cause is per-record rather
+than algorithmic: both sides read the same 8 KiB blocks backwards and copy
+each record once, and Fern's copy costs more. Measured on 8 000 000
+records, one at a time:
+
+- **the emit, ~22 ns a record.** `buf = buf + slice_unchecked(w, lo, hi)`
+  into a buffer that resets at 8 KiB: 12 ns for the append and 10 more for
+  materialising the slice as its own string first. That is #8770's floor,
+  not something tac can arrange around.
+- **the scan, ~21 ns a record.** `__rmemchr` itself is 4.5 ns; the rest is
+  the call returning `(i32, i32)`, which costs 8 ns against 1.3 for a
+  scalar return.
+- **the read, negligible.** 62 MiB backwards in 8 KiB blocks is 25 ms.
+
+GNU's whole per-record cost — memrchr, memcpy, and the share of the
+write(2) — is about 12 ns, so each of Fern's two halves alone is more than
+GNU spends in total.
+
+The first draft was 12× rather than 4×, and that part WAS arrangeable:
+the 8 KiB buffer lived in a struct field and was appended to through a
+helper, and neither shape keeps a string's in-place growth, so every
+record copied the whole buffer (#8785 — `io_buffered.fern`'s BufWriter
+documents that shape as the fast one and is wrong about it). The buffer is
+a local in `tac_backward` appended to inline, which is the only shape that
+grows in place today: 1.13 s → 0.39 s.
+
+The `-r` row is a third engine again: a backward `re_search` runs the
+thread simulation once per candidate start, with only the fastmap to skip
+positions.
+
 ## Known divergences
+
+**`tac` holds a non-seekable input in memory.** tac reads its input
+backwards, so a pipe has to be stored before the first record can be
+written. GNU spools it to an unlinked `$TMPDIR/cutmpXXXXXX` and keeps one
+8 KiB block resident; `tac.fern` holds the whole stream instead, because
+creating that temporary safely needs a file created EXCLUSIVELY at a
+chosen path and `open_writer` truncates whatever the name reaches
+(#8776; `temp_dir()` is exclusive but chooses the directory itself, so it
+cannot take gnulib's `$TMPDIR`-only-if-it-is-a-directory rule). Nothing
+in the bytes differs: the held stream is handed back in the SAME 8 KiB
+windows the temporary file would be read in, so `-r` meets the same
+buffer boundaries and `^` anchors in the same places. What differs is
+memory — the input's size rather than a block — and that GNU's
+`failed to create temporary file` is unreachable here, so an unwritable
+`$TMPDIR` under an unprivileged user fails on GNU and succeeds on this.
 
 **`hostid` asks DNS over TCP.** The id is glibc's `gethostid`: `/etc/hostid`
 if it holds four bytes, else the hostname's IPv4 address with its halves
@@ -437,7 +504,7 @@ groups are the order of work. Each sub-issue names its group.
   `join` `comm` `uniq` `sort` `tr` `fold` `fmt` `pr` `ptx` `expand`
   `unexpand` `split` `csplit` `shuf` `od` `base32` `base64` `basenc` `cksum`
   `sum` `md5sum` `sha1sum` `sha224sum` `sha256sum` `sha384sum` `sha512sum`
-  `b2sum` `tee`. `head` and `wc` are done. Needs a buffered stdout writer in
+  `b2sum` `tee`. `head`, `wc` and `tac` are done. Needs a buffered stdout writer in
   `std/io_buffered` (its own header already promises one) and a streaming
   stdin reader whose reads can FAIL: every one of these reaches a read error
   through a directory operand, and `Reader.read_chunk` answered None to EOF

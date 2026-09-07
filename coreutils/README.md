@@ -78,12 +78,13 @@ they are not on PATH. Wall time, so compare within one run only.
 | `factor` | done — Montgomery arithmetic to 2^64, `core/bigint` beyond it, `-h`, numbers from stdin, and GNU's unbuffered line for a number at or above 2^127 |
 | `sleep` | done — `s` `m` `h` `d`, floats and hex floats, `inf`, the sum of the operands, every operand validated before it pauses (intervals are rounded up to the millisecond until #8528) |
 | `head` | done — `-c` `-n` with the leading-minus elisions and gnulib's multiplier suffixes, `-q` `-v` `-z`, the obsolete `-NUM[bkmclqvz]` form, and the hidden `---presume-input-pipe` |
+| `tac` | done — `-b` `-r` `-s`, the input read BACKWARDS in 8 KiB blocks that double when a record outgrows one, and `-r` in glibc's syntax 0 (Emacs), which is what a program that never calls `re_set_syntax` gets. Startup beats GNU by 4×; throughput loses by 3-4×, and `docs/COREUTILS.md` measures where it goes |
 | `wc` | done — `-c` `-l` `-m` `-w` `-L`, `--total=WHEN`, `--files0-from`, the column width taken from the operands' sizes, and the C-locale ISPRINT rule for words and display width. A REGULAR-FILE stdin still widens to seven columns, which needs fstat on a descriptor (#8713) |
 | `hostid` | done — glibc's gethostid: `/etc/hostid`, else the hostname's IPv4 address through NSS (`lib/resolv.fern`: nsswitch's `hosts:` line, `/etc/hosts`, `/etc/resolv.conf`, an RFC 1035 A query over TCP) with its halves swapped, else 0; `extra operand` for anything. Needs `hostname()`, so it is a native-target utility: WASI has no host identity |
 | `test` `[` | done — POSIX's one-to-four-argument table and GNU's parser beyond it, every string, integer (any length, compared as digit strings), file and file-pair primary, `-l STRING`, `-t` via isatty, `-r -w -x` against the effective ids; `[` adds the closing `]` and honours `--help` / `--version` as the sole argument where `test` does not. Needs `stat`, `access`, `geteuid` and `isatty`, so it is a native-target utility: WASI reports no mode, owner or effective ids |
 | `lib/gnu.fern` | the GNU conventions every utility shares |
 | `lib/cond.fern` | the conditional expression `test` and `[` evaluate |
-| `lib/bre.fern` | POSIX basic regular expressions as glibc compiles them |
+| `lib/bre.fern` | regular expressions as glibc compiles them: POSIX basic for `expr`, syntax 0 (Emacs) for `tac -r` |
 | `lib/ld.fern` | C's `long double` at the TARGET's format — strtold, arithmetic, rounding and the `%f` `%e` `%g` `%a` conversions — shared by `printf`, `numfmt`, `seq` and `sleep` |
 
 The tracking epic (#8278) lists every other utility and its status.

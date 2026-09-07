@@ -1,16 +1,25 @@
 // coreutils/lib/bre.fern — POSIX basic regular expressions, as glibc
 // compiles them under `RE_SYNTAX_POSIX_BASIC`.
 //
-// expr(1) matches with glibc's `re_search` anchored at the start of the
-// string, so this module reproduces that dialect rather than a modern
-// one: the operators are `\(` `\)` `\|` `\+` `\?` `\{m,n\}`, a bare `*`
-// where no atom precedes it is a literal asterisk, `^` is an anchor only
-// where a branch begins and `$` only where one ends, and backreferences
-// `\1`…`\9` are part of the language. The GNU word operators glibc adds
-// (`\<` `\>` `\b` `\B` `\w` `\W` `\s` `\S` `` \` `` `\'`) are here too,
-// because expr users get them from glibc whether POSIX blesses them or
-// not. Diagnostics are glibc's `regerror` texts verbatim, since that is
-// what expr prints.
+// expr(1) compiles with `RE_SYNTAX_POSIX_BASIC`, so that is the main
+// dialect here rather than a modern one: the operators are `\(
+// `\)` `\|` `\+` `\?` `\{m,n\}`, a bare `*` where no atom precedes it is
+// a literal asterisk, `^` is an anchor only where a branch begins and
+// `$` only where one ends, and backreferences `\1`…`\9` are part of the
+// language. The GNU word operators glibc adds (`\<` `\>` `\b` `\B` `\w`
+// `\W` `\s` `\S` `` \` `` `\'`) are here too, because expr users get them
+// from glibc whether POSIX blesses them or not. Diagnostics are glibc's
+// `regerror` texts verbatim, since that is what the utilities print.
+//
+// tac(1) never sets a syntax at all, which leaves glibc's default —
+// syntax 0, `RE_SYNTAX_EMACS` — and `emacs_syntax()` selects that
+// dialect: `+` and `?` are bare operators and `\+` `\?` `\{` `\}` are
+// the plain characters, there are no intervals, `[:alpha:]` inside a
+// bracket is six ordinary members, `.` matches NUL but not newline, and
+// an empty range like `[z-a]` is allowed. Whether `^` holds after a
+// newline and `$` before one is a third setting again, decided at match
+// time by `newline_anchor`: `re_compile_pattern` sets it, tac leaves it
+// set, and expr clears it.
 //
 // MATCHING is POSIX leftmost-longest at a fixed start, and the pattern
 // is run as a program of the usual `Char` / `Split` / `Save` shape. The
@@ -18,7 +27,9 @@
 // with every thread in step for the regular ones, and a backtracking
 // search for the ones carrying a backreference, which is not a regular
 // language. `exec` and the two below say what each costs and why the
-// captures come out where glibc puts them.
+// captures come out where glibc puts them. `search_back` is glibc's
+// `re_search` with a negative range, which is the shape tac scans a
+// buffer with.
 import "std/string";
 import "std/array";
 
@@ -106,8 +117,27 @@ function assert_buf_end(): i32 {
 //
 // `classes` is one 256-byte membership table per bracket expression, laid
 // end to end. `err` is glibc's regerror text when compilation failed and
-// empty otherwise; nothing else is valid then.
-pub struct Bre { insts: Inst[], classes: u8[], ngroups: i32, nmarks: i32, backref: boolean, err: string }
+// empty otherwise; nothing else is valid then. `first` is glibc's
+// fastmap — the bytes a match can begin with — and `empty_ok` whether
+// the pattern can match nothing at all, which together let a search
+// skip the positions where no match can start.
+pub struct Bre { insts: Inst[], classes: u8[], ngroups: i32, nmarks: i32, backref: boolean, err: string, newline_anchor: boolean, first: u8[], empty_ok: boolean }
+
+// `Syntax` — which glibc dialect a pattern is read in, and whether a
+// newline anchors `$` at match time (the header has the three cases).
+pub struct Syntax { emacs: boolean, newline_anchor: boolean }
+
+// `posix_basic()` — `RE_SYNTAX_POSIX_BASIC`, with the newline anchor
+// `re_compile_pattern` sets and expr then clears back off.
+pub function posix_basic(): Syntax {
+  return Syntax { emacs: false, newline_anchor: false };
+}
+
+// `emacs_syntax()` — glibc's syntax 0, which is what a program gets
+// when it never calls `re_set_syntax`.
+pub function emacs_syntax(): Syntax {
+  return Syntax { emacs: true, newline_anchor: true };
+}
 
 // `BreMatch` — `end` is the end of the match, `starts`/`ends` the span of
 // each group (-1 where the group did not take part). Group 0 is the whole
@@ -229,7 +259,7 @@ function nd_assert(): i32 {
 // `P` — the parser: the pattern, the cursor, the nodes built so far, the
 // group counter, and the first error met (parsing stops reporting after
 // one, the way glibc reports only the first).
-struct P { pat: string, i: i32, nodes: Node[], classes: u8[], ngroups: i32, err: string }
+struct P { pat: string, i: i32, nodes: Node[], classes: u8[], ngroups: i32, err: string, emacs: boolean }
 
 function add_node(p: P, n: Node): (P, i32) {
   var out: P = P { ...p, nodes: p.nodes.append(n) };
@@ -383,6 +413,11 @@ function bracket_item(p: P, k: i32): BItem {
   var none: u8[] = [];
   if (byte_at(p, k) == 91) {
     var kind: i32 = byte_at(p, k + 1);
+    // `[:` opens a class only under RE_CHAR_CLASSES, which the Emacs
+    // syntax lacks; `[.` and `[=` are recognised in every dialect.
+    if (kind == 58 && p.emacs) {
+      kind = 0;
+    }
     if (kind == 58 || kind == 46 || kind == 61) {
       var close: i32 = find_close(p, k + 2, kind);
       if (close < 0) {
@@ -558,13 +593,23 @@ function shorthand_has(which: i32, b: i32): boolean {
   return !is_space_byte(b);
 }
 
-// The class table matching every byte, for `.`.
+// The class table for `.`: every byte but NUL under POSIX
+// (`RE_DOT_NOT_NULL`), every byte but newline under Emacs, where it is
+// `RE_DOT_NEWLINE` that is missing instead.
 function any_table(p0: P): (P, i32) {
   var idx: i32 = p0.classes.len() / 256;
   var cs: u8[] = p0.classes;
+  var skip: i32 = 0;
+  if (p0.emacs) {
+    skip = 10;
+  }
   var j: i32 = 0;
   while (j < 256) {
-    cs = cs.append(1 as u8);
+    if (j == skip) {
+      cs = cs.append(0 as u8);
+    } else {
+      cs = cs.append(1 as u8);
+    }
     j = j + 1;
   }
   return (P { ...p0, classes: cs }, idx);
@@ -627,13 +672,15 @@ function empty_node(p: P, cur: i32): i32 {
   return 0;
 }
 
-// One atom with its postfix operators. A `^` anchor takes none: in
-// `^*a` the star has no atom to repeat, so it is a literal asterisk.
+// One atom with its postfix operators. A zero-width atom takes none —
+// `^` and the GNU word operators alike: in `^*a` and in `\<\?a` the
+// operator has nothing to repeat, so it is the literal asterisk and the
+// literal question mark.
 function parse_piece(p0: P, first: boolean): (P, i32) {
   var r: (P, i32) = parse_atom(p0, first);
   var p: P = r.0;
   var node: i32 = r.1;
-  if (p.err.len() > 0 || p.nodes[node].kind == nd_bol()) {
+  if (p.err.len() > 0 || p.nodes[node].kind == nd_bol() || p.nodes[node].kind == nd_assert()) {
     return (p, node);
   }
   while (true) {
@@ -644,21 +691,23 @@ function parse_piece(p0: P, first: boolean): (P, i32) {
       node = s.1;
       continue;
     }
-    if (esc_at(p, p.i, 43)) {
-      p = P { ...p, i: p.i + 2 };
+    // `+` and `?` are spelled bare under Emacs (`RE_BK_PLUS_QM` off) and
+    // backslashed under POSIX; the other spelling is a literal in each.
+    if (plus_at(p, p.i)) {
+      p = P { ...p, i: p.i + op_width(p) };
       var pl: (P, i32) = add_node(p, Node { kind: nd_rep(), a: node, b: 1, c: 0 - 1 });
       p = pl.0;
       node = pl.1;
       continue;
     }
-    if (esc_at(p, p.i, 63)) {
-      p = P { ...p, i: p.i + 2 };
+    if (query_at(p, p.i)) {
+      p = P { ...p, i: p.i + op_width(p) };
       var q: (P, i32) = add_node(p, Node { kind: nd_rep(), a: node, b: 0, c: 1 });
       p = q.0;
       node = q.1;
       continue;
     }
-    if (esc_at(p, p.i, 123)) {
+    if (!p.emacs && esc_at(p, p.i, 123)) {
       var iv: (P, i32) = parse_interval(p, node);
       p = iv.0;
       node = iv.1;
@@ -672,7 +721,31 @@ function parse_piece(p0: P, first: boolean): (P, i32) {
   return (p, node);
 }
 
-// `\{m,n\}` after the atom in `node`.
+function plus_at(p: P, k: i32): boolean {
+  if (p.emacs) {
+    return byte_at(p, k) == 43;
+  }
+  return esc_at(p, k, 43);
+}
+
+function query_at(p: P, k: i32): boolean {
+  if (p.emacs) {
+    return byte_at(p, k) == 63;
+  }
+  return esc_at(p, k, 63);
+}
+
+// How many pattern bytes a `+` or `?` operator occupies.
+function op_width(p: P): i32 {
+  if (p.emacs) {
+    return 1;
+  }
+  return 2;
+}
+
+// `\{m,n\}` after the atom in `node`. Emacs syntax has no intervals
+// (`RE_INTERVALS` off), so `\{` never reaches here from that dialect and
+// parse_escape reads it as a plain brace.
 function parse_interval(p0: P, node: i32): (P, i32) {
   var p: P = P { ...p0, i: p0.i + 2 };
   var lo: (i32, i32) = read_count(p, p.i);
@@ -1095,12 +1168,19 @@ function has_backref(nodes: Node[]): boolean {
   return false;
 }
 
-// `bre_compile(pat)` — the pattern as a program, or a `Bre` whose `err`
-// carries glibc's text for what is wrong with it.
+// `bre_compile(pat)` — the pattern as a program in expr's dialect
+// (POSIX basic, `$` blind to newlines), or a `Bre` whose `err` carries
+// glibc's text for what is wrong with it.
 pub function bre_compile(pat: string): Bre {
+  return bre_compile_syntax(pat, posix_basic());
+}
+
+// `bre_compile_syntax(pat, syntax)` — the same in the dialect asked for.
+pub function bre_compile_syntax(pat: string, syntax: Syntax): Bre {
   var nodes: Node[] = [Node { kind: nd_empty(), a: 0, b: 0, c: 0 }];
   var cls: u8[] = [];
-  var p: P = P { pat: pat, i: 0, nodes: nodes, classes: cls, ngroups: 0, err: "" };
+  var none_first: u8[] = [];
+  var p: P = P { pat: pat, i: 0, nodes: nodes, classes: cls, ngroups: 0, err: "", emacs: syntax.emacs };
   var r: (P, i32) = parse_alt(p);
   p = r.0;
   if (p.err.len() == 0 && !at_end(p)) {
@@ -1108,7 +1188,7 @@ pub function bre_compile(pat: string): Bre {
   }
   if (p.err.len() > 0) {
     var no_insts: Inst[] = [];
-    return Bre { insts: no_insts, classes: p.classes, ngroups: 0, nmarks: 0, backref: false, err: p.err };
+    return Bre { insts: no_insts, classes: p.classes, ngroups: 0, nmarks: 0, backref: false, err: p.err, newline_anchor: syntax.newline_anchor, first: none_first, empty_ok: true };
   }
   var empty: Inst[] = [];
   var c: C = C { insts: empty, nmarks: 0, err: "" };
@@ -1119,9 +1199,85 @@ pub function bre_compile(pat: string): Bre {
   c = emit(c, Inst { op: op_match(), a: 0, b: 0 });
   if (c.err.len() > 0) {
     var none: Inst[] = [];
-    return Bre { insts: none, classes: p.classes, ngroups: 0, nmarks: 0, backref: false, err: c.err };
+    return Bre { insts: none, classes: p.classes, ngroups: 0, nmarks: 0, backref: false, err: c.err, newline_anchor: syntax.newline_anchor, first: none_first, empty_ok: true };
   }
-  return Bre { insts: c.insts, classes: p.classes, ngroups: p.ngroups, nmarks: c.nmarks, backref: has_backref(p.nodes), err: "" };
+  var fm: (u8[], boolean) = fastmap(c.insts, p.classes);
+  var first: u8[] = fm.0;
+  var empty_ok: boolean = fm.1;
+  return Bre { insts: c.insts, classes: p.classes, ngroups: p.ngroups, nmarks: c.nmarks, backref: has_backref(p.nodes), err: "", newline_anchor: syntax.newline_anchor, first: first, empty_ok: empty_ok };
+}
+
+// ---- the fastmap -----------------------------------------------------------
+// The bytes a match can begin with, and whether one can be empty: the
+// closure of the entry point over every instruction that consumes
+// nothing, with each zero-width test assumed to pass. A backreference
+// stands for any byte or none, since what it repeats is not known yet.
+function fastmap(insts: Inst[], classes: u8[]): (u8[], boolean) {
+  var t: u8[] = __alloc_u8(256);
+  var seen: i32[] = fill(insts.len(), 0);
+  var work: i32[] = [0];
+  var empty_ok: boolean = false;
+  // `work` is a stack read by index: an array has no pop, and `take`
+  // would copy it on every step.
+  var top: i32 = 1;
+  while (top > 0) {
+    top = top - 1;
+    var pc: i32 = work[top];
+    if (seen[pc] != 0) {
+      continue;
+    }
+    seen = seen.with(pc, 1);
+    var in: Inst = insts[pc];
+    if (in.op == op_char()) {
+      t = t.with(in.a, 1 as u8);
+    } else if (in.op == op_class()) {
+      t = union_table(t, class_table(classes, in.a));
+    } else if (in.op == op_match()) {
+      empty_ok = true;
+    } else if (in.op == op_backref()) {
+      t = union_table(t, all_bytes());
+      empty_ok = true;
+    } else if (in.op == op_jmp()) {
+      work = push_at(work, top, in.a);
+      top = top + 1;
+    } else if (in.op == op_split()) {
+      work = push_at(work, top, in.a);
+      work = push_at(work, top + 1, in.b);
+      top = top + 2;
+    } else {
+      work = push_at(work, top, pc + 1);
+      top = top + 1;
+    }
+  }
+  return (t, empty_ok);
+}
+
+// Store `v` at `at`, growing the array when `at` is its length.
+function push_at(a: i32[], at: i32, v: i32): i32[] {
+  if (at < a.len()) {
+    return a.with(at, v);
+  }
+  return a.append(v);
+}
+
+function class_table(classes: u8[], idx: i32): u8[] {
+  var t: u8[] = __alloc_u8(256);
+  var b: i32 = 0;
+  while (b < 256) {
+    t = t.with(b, classes[idx * 256 + b]);
+    b = b + 1;
+  }
+  return t;
+}
+
+function all_bytes(): u8[] {
+  var t: u8[] = __alloc_u8(256);
+  var b: i32 = 0;
+  while (b < 256) {
+    t = t.with(b, 1 as u8);
+    b = b + 1;
+  }
+  return t;
 }
 
 // ---- matching --------------------------------------------------------------
@@ -1141,23 +1297,45 @@ pub function bre_compile(pat: string): Bre {
 // the same program counter. Those patterns take the second engine, a
 // backtracking search asked for one end position at a time, longest
 // first. `M` is its state.
-struct M { text: string, re: Bre, target: i32, caps: i32[], marks: i32[] }
+// Every engine sees the string as `text[0, hi)` — a bounded prefix,
+// because glibc's `re_search` is handed a length and `$` and `\'` hold
+// at that end whatever follows it in the buffer — and starts its match
+// at `lo`, with the bytes before `lo` still visible to `^` and the word
+// tests, exactly as a start position inside a buffer is.
+struct M { text: string, hi: i32, re: Bre, target: i32, caps: i32[], marks: i32[] }
 
 function class_has_byte(re: Bre, idx: i32, b: i32): boolean {
   return re.classes[idx * 256 + b] as i32 != 0;
 }
 
-function is_word_at(text: string, k: i32): boolean {
-  if (k < 0 || k >= text.len()) {
+function is_word_at(text: string, k: i32, hi: i32): boolean {
+  if (k < 0 || k >= hi) {
     return false;
   }
   var b: i32 = text[k] as i32;
   return is_alpha(b) || is_digit(b) || b == 95;
 }
 
-function assert_holds(text: string, which: i32, pos: i32): boolean {
-  var before: boolean = is_word_at(text, pos - 1);
-  var after: boolean = is_word_at(text, pos);
+// `^`: the start of the buffer, or just after a newline when the buffer
+// anchors there.
+function bol_holds(re: Bre, text: string, pos: i32): boolean {
+  if (pos == 0) {
+    return true;
+  }
+  return re.newline_anchor && text[pos - 1] as i32 == 10;
+}
+
+// `$`: the end, or just before a newline when the buffer anchors there.
+function eol_holds(re: Bre, text: string, pos: i32, hi: i32): boolean {
+  if (pos >= hi) {
+    return true;
+  }
+  return re.newline_anchor && text[pos] as i32 == 10;
+}
+
+function assert_holds(text: string, which: i32, pos: i32, hi: i32): boolean {
+  var before: boolean = is_word_at(text, pos - 1, hi);
+  var after: boolean = is_word_at(text, pos, hi);
   if (which == assert_wordb()) {
     return before != after;
   }
@@ -1173,7 +1351,7 @@ function assert_holds(text: string, which: i32, pos: i32): boolean {
   if (which == assert_buf_start()) {
     return pos == 0;
   }
-  return pos == text.len();
+  return pos == hi;
 }
 
 // Whether one byte satisfies a consuming instruction.
@@ -1192,7 +1370,7 @@ function step(m0: M, pc0: i32, pos0: i32): (boolean, M) {
   while (true) {
     var in: Inst = m.re.insts[pc];
     if (in.op == op_char()) {
-      if (pos >= m.text.len() || m.text[pos] as i32 != in.a) {
+      if (pos >= m.hi || m.text[pos] as i32 != in.a) {
         return (false, m);
       }
       pc = pc + 1;
@@ -1200,7 +1378,7 @@ function step(m0: M, pc0: i32, pos0: i32): (boolean, M) {
       continue;
     }
     if (in.op == op_class()) {
-      if (pos >= m.text.len() || !class_has_byte(m.re, in.a, m.text[pos] as i32)) {
+      if (pos >= m.hi || !class_has_byte(m.re, in.a, m.text[pos] as i32)) {
         return (false, m);
       }
       pc = pc + 1;
@@ -1215,21 +1393,21 @@ function step(m0: M, pc0: i32, pos0: i32): (boolean, M) {
       return (pos == m.target, m);
     }
     if (in.op == op_bol()) {
-      if (pos != 0) {
+      if (!bol_holds(m.re, m.text, pos)) {
         return (false, m);
       }
       pc = pc + 1;
       continue;
     }
     if (in.op == op_eol()) {
-      if (pos != m.text.len()) {
+      if (!eol_holds(m.re, m.text, pos, m.hi)) {
         return (false, m);
       }
       pc = pc + 1;
       continue;
     }
     if (in.op == op_assert()) {
-      if (!assert_holds(m.text, in.a, pos)) {
+      if (!assert_holds(m.text, in.a, pos, m.hi)) {
         return (false, m);
       }
       pc = pc + 1;
@@ -1249,7 +1427,7 @@ function step(m0: M, pc0: i32, pos0: i32): (boolean, M) {
         return (false, m);
       }
       var n: i32 = e - s;
-      if (pos + n > m.text.len() || slice_unchecked(m.text, pos, pos + n) != slice_unchecked(m.text, s, e)) {
+      if (pos + n > m.hi || slice_unchecked(m.text, pos, pos + n) != slice_unchecked(m.text, s, e)) {
         return (false, m);
       }
       pc = pc + 1;
@@ -1303,22 +1481,64 @@ function fresh_caps(n: i32): i32[] {
 // `(re).exec(text)` — the longest match starting at the beginning of
 // `text`, with every group's span.
 pub function (re: Bre) exec(text: string): BreMatch {
-  if (re.backref) {
-    return exec_backtrack(re, text);
+  return exec_at(re, text, 0, text.len());
+}
+
+// `(re).match_at(text, lo, hi)` — the end of the longest match starting
+// at `lo` in `text[0, hi)`, or -1.
+function (re: Bre) match_at(text: string, lo: i32, hi: i32): i32 {
+  var m: BreMatch = exec_at(re, text, lo, hi);
+  if (!m.matched) {
+    return 0 - 1;
   }
-  return exec_threads(re, text);
+  return m.end;
+}
+
+// `(re).search_back(text, hi)` — glibc's `re_search` over `text[0, hi)`
+// with a negative range: the match starting nearest the end, tried from
+// `hi - 1` down to 0, as (start, end), or (-1, -1). The position `hi`
+// itself is never a start, which is what keeps tac's backward scan
+// from finding the same empty match twice.
+pub function (re: Bre) search_back(text: string, hi: i32): (i32, i32) {
+  var start: i32 = hi - 1;
+  while (start >= 0) {
+    if (may_start(re, text, start, hi)) {
+      var end: i32 = re.match_at(text, start, hi);
+      if (end >= 0) {
+        return (start, end);
+      }
+    }
+    start = start - 1;
+  }
+  return (0 - 1, 0 - 1);
+}
+
+// The fastmap test: a match can start at `pos` only if the pattern can
+// be empty or the byte there can begin one.
+function may_start(re: Bre, text: string, pos: i32, hi: i32): boolean {
+  if (re.empty_ok) {
+    return true;
+  }
+  return pos < hi && re.first[text[pos] as i32] as i32 != 0;
+}
+
+function exec_at(re: Bre, text: string, lo: i32, hi: i32): BreMatch {
+  if (re.backref) {
+    return exec_backtrack(re, text, lo, hi);
+  }
+  return exec_threads(re, text, lo, hi);
 }
 
 // The backtracking engine: ask for one end position at a time, longest
 // first, and take the first that answers yes.
-function exec_backtrack(re: Bre, text: string): BreMatch {
+function exec_backtrack(re: Bre, text: string, lo: i32, hi: i32): BreMatch {
   var no: i32[] = [];
-  var end: i32 = text.len();
-  while (end >= 0) {
-    var m: M = M { text: text, re: re, target: end, caps: fresh_caps(re.ngroups * 2), marks: fresh_caps(re.nmarks) };
-    var r: (boolean, M) = step(m, 0, 0);
+  var end: i32 = hi;
+  while (end >= lo) {
+    var m: M = M { text: text, hi: hi, re: re, target: end, caps: fresh_caps(re.ngroups * 2), marks: fresh_caps(re.nmarks) };
+    var r: (boolean, M) = step(m, 0, lo);
     if (r.0) {
-      return caps_to_match(r.1.caps, re, end);
+      return caps_to_match(r.1.caps, re, lo, end);
     }
     end = end - 1;
   }
@@ -1338,30 +1558,30 @@ struct Threads { pcs: i32[], caps: i32[][], seen: i32[] }
 // array, and each stamp would then copy it (#8498) — one copy per
 // instruction of the closure, which a pattern like `\(a*\)\{3200\}`
 // walks in full at every position.
-function add_thread(re: Bre, t0: Threads, gen: i32, pc: i32, caps: i32[], pos: i32, text: string): Threads {
+function add_thread(re: Bre, t0: Threads, gen: i32, pc: i32, caps: i32[], pos: i32, text: string, hi: i32): Threads {
   if (t0.seen[pc] == gen) {
     return t0;
   }
   var in: Inst = re.insts[pc];
   if (in.op == op_jmp()) {
-    return add_thread(re, stamp(t0, pc, gen), gen, in.a, caps, pos, text);
+    return add_thread(re, stamp(t0, pc, gen), gen, in.a, caps, pos, text, hi);
   }
   if (in.op == op_split()) {
-    return add_thread(re, add_thread(re, stamp(t0, pc, gen), gen, in.a, caps, pos, text), gen, in.b, caps, pos, text);
+    return add_thread(re, add_thread(re, stamp(t0, pc, gen), gen, in.a, caps, pos, text, hi), gen, in.b, caps, pos, text, hi);
   }
   if (in.op == op_save()) {
-    return add_thread(re, stamp(t0, pc, gen), gen, pc + 1, caps.with(in.a, pos), pos, text);
+    return add_thread(re, stamp(t0, pc, gen), gen, pc + 1, caps.with(in.a, pos), pos, text, hi);
   }
   // `Mark` and `Progress` guard the backtracker's empty star loops; the
   // generation stamp already does that job here.
   if (in.op == op_mark() || in.op == op_progress()) {
-    return add_thread(re, stamp(t0, pc, gen), gen, pc + 1, caps, pos, text);
+    return add_thread(re, stamp(t0, pc, gen), gen, pc + 1, caps, pos, text, hi);
   }
   if (in.op == op_bol() || in.op == op_eol() || in.op == op_assert()) {
-    if (!zero_width_holds(text, in, pos)) {
+    if (!zero_width_holds(re, text, in, pos, hi)) {
       return stamp(t0, pc, gen);
     }
-    return add_thread(re, stamp(t0, pc, gen), gen, pc + 1, caps, pos, text);
+    return add_thread(re, stamp(t0, pc, gen), gen, pc + 1, caps, pos, text, hi);
   }
   return append_thread(stamp(t0, pc, gen), pc, caps);
 }
@@ -1374,26 +1594,28 @@ function append_thread(t: Threads, pc: i32, caps: i32[]): Threads {
   return Threads { ...t, pcs: t.pcs.append(pc), caps: t.caps.append(caps) };
 }
 
-function zero_width_holds(text: string, in: Inst, pos: i32): boolean {
+function zero_width_holds(re: Bre, text: string, in: Inst, pos: i32, hi: i32): boolean {
   if (in.op == op_bol()) {
-    return pos == 0;
+    return bol_holds(re, text, pos);
   }
   if (in.op == op_eol()) {
-    return pos == text.len();
+    return eol_holds(re, text, pos, hi);
   }
-  return assert_holds(text, in.a, pos);
+  return assert_holds(text, in.a, pos, hi);
 }
 
-// The Thompson simulation: one pass, every thread in step.
-function exec_threads(re: Bre, text: string): BreMatch {
+// The Thompson simulation: one pass, every thread in step. The
+// generation stamp is the position, so it starts at `lo` and the
+// stamps are seeded below it.
+function exec_threads(re: Bre, text: string, lo: i32, hi: i32): BreMatch {
   var ncap: i32 = re.ngroups * 2;
   var no_pcs: i32[] = [];
   var no_caps: i32[][] = [];
-  var t: Threads = Threads { pcs: no_pcs, caps: no_caps, seen: fill(re.insts.len(), 0 - 1) };
-  t = add_thread(re, t, 0, 0, fresh_caps(ncap), 0, text);
+  var t: Threads = Threads { pcs: no_pcs, caps: no_caps, seen: fill(re.insts.len(), lo - 1) };
+  t = add_thread(re, t, lo, 0, fresh_caps(ncap), lo, text, hi);
   var best: i32 = 0 - 1;
   var best_caps: i32[] = fresh_caps(ncap);
-  var pos: i32 = 0;
+  var pos: i32 = lo;
   while (true) {
     // The list being stepped is held apart from `t`, so `t` keeps sole
     // ownership of the stamp array and updates it in place.
@@ -1412,12 +1634,12 @@ function exec_threads(re: Bre, text: string): BreMatch {
           best_caps = caps[k];
           found = true;
         }
-      } else if (pos < text.len() && byte_matches(re, in, text[pos] as i32)) {
-        t = add_thread(re, t, pos + 1, pcs[k] + 1, caps[k], pos + 1, text);
+      } else if (pos < hi && byte_matches(re, in, text[pos] as i32)) {
+        t = add_thread(re, t, pos + 1, pcs[k] + 1, caps[k], pos + 1, text, hi);
       }
       k = k + 1;
     }
-    if (pos >= text.len() || t.pcs.len() == 0) {
+    if (pos >= hi || t.pcs.len() == 0) {
       break;
     }
     pos = pos + 1;
@@ -1425,7 +1647,7 @@ function exec_threads(re: Bre, text: string): BreMatch {
   if (best < 0) {
     return BreMatch { matched: false, end: 0, starts: no_pcs, ends: no_pcs };
   }
-  return caps_to_match(best_caps, re, best);
+  return caps_to_match(best_caps, re, lo, best);
 }
 
 function fill(n: i32, v: i32): i32[] {
@@ -1440,8 +1662,8 @@ function fill(n: i32, v: i32): i32[] {
 
 // Group 0 is the whole match, which an anchored search always knows;
 // `caps` holds only the groups the pattern wrote.
-function caps_to_match(caps: i32[], re: Bre, end: i32): BreMatch {
-  var starts: i32[] = [0];
+function caps_to_match(caps: i32[], re: Bre, start: i32, end: i32): BreMatch {
+  var starts: i32[] = [start];
   var ends: i32[] = [end];
   var g: i32 = 0;
   while (g < re.ngroups) {

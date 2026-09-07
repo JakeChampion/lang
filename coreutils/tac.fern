@@ -1,0 +1,429 @@
+// tac.fern — GNU-compatible `tac`.
+//
+//   tac [-br] [-s SEP] [FILE]...
+//
+// Each FILE written to stdout with its records in reverse order. A
+// record ends at the separator — a newline unless `-s` names another
+// string — and the separator is ATTACHED to the record it ends, so a
+// file whose last record has none is printed with none: `a\nb\nc`
+// comes back as `cb\na\n`. `-b` attaches the separator to the record
+// that FOLLOWS it instead, and `-r` reads SEP as a regular expression in
+// the dialect glibc gives a program that never calls `re_set_syntax`:
+// syntax 0, which is Emacs, not POSIX basic (lib/bre.fern).
+//
+// The input is read from its END in 8 KiB blocks, doubling whenever one
+// record outgrows a block. The window is the block just read followed by
+// the record still pending in front of it; it is searched backwards and
+// each separator found ends a record that is written at once, so only
+// that window is ever resident. The window is also all a regular
+// expression sees, which is what makes `^x` match an `x` at the start of
+// a block whatever precedes it in the file — GNU's behaviour, and the
+// reason the block size is reproduced rather than chosen. It is not free
+// in the other direction either: a directory answers lseek(SEEK_END)
+// with LLONG_MAX, and the read that follows fails EINVAL for the
+// offset-plus-count overflow at 8 KiB where a larger block would reach
+// the descriptor and say EISDIR.
+//
+// Output goes through GNU's own 8 KiB buffer and then glibc's stdio,
+// both emulated (lib/gnu.fern's Stdio), because tac never checks an
+// fwrite: whether a failed write is reported as `write error: No space
+// left on device` or as a bare `write error` is decided entirely by
+// which bytes stdio still had pending when fclose ran.
+import "./lib/gnu";
+import "./lib/bre";
+
+function opt_before(): i32 {
+  return 1;
+}
+
+function opt_regex(): i32 {
+  return 2;
+}
+
+function opt_separator(): i32 {
+  return 3;
+}
+
+function help_text(): string {
+  var out: string = "";
+  out = out + "Usage: " + gnu.prog() + " [OPTION]... [FILE]...\n";
+  out = out + "Write each FILE to standard output, last line first.\n";
+  out = out + "\n";
+  out = out + "With no FILE, or when FILE is -, read standard input.\n";
+  out = out + "\n";
+  out = out + "  -b, --before             attach the separator before instead of after\n";
+  out = out + "  -r, --regex              interpret the separator as a regular expression\n";
+  out = out + "  -s, --separator=STRING   use STRING as the separator instead of newline\n";
+  out = out + "      --help        display this help and exit\n";
+  out = out + "      --version     output version information and exit\n";
+  return out;
+}
+
+// `Settings` — the separator, whether it precedes its record, and its
+// compiled form when it is a regular expression.
+struct Settings { sep: string, before: boolean, regex: boolean, re: bre.Bre }
+
+// ---- output ----------------------------------------------------------------
+// `Out` — glibc's stdio, GNU's own 8 KiB buffer in front of it, and
+// whether any operand failed. The buffer reaches stdio as one fwrite
+// per full block, which is the call sequence the write-error wording
+// is decided by; `tac_backward` says why it is appended to as a local.
+struct Out { st: gnu.Stdio, buf: string, ok: boolean }
+
+// GNU's WRITESIZE: the bytes it accumulates before each fwrite.
+function write_size(): i32 {
+  return 8192;
+}
+
+// One diagnostic, with stdout flushed ahead of it as gnulib's error()
+// does, and the exit status turned to 1.
+function fail(o: Out, msg: string): Out {
+  return Out { ...o, st: o.st.report(msg), ok: false };
+}
+
+// ---- the separator search --------------------------------------------------
+// `find_sep(s, w, bound)` — the separator occurrence nearest the end of
+// `w` that ends at or before `bound`, as (start, end), or (-1, -1).
+function find_sep(s: Settings, w: string, bound: i32): (i32, i32) {
+  if (s.regex) {
+    return s.re.search_back(w, bound);
+  }
+  var n: i32 = s.sep.len();
+  var first: i32 = s.sep[0] as i32;
+  var k: i32 = bound - n;
+  while (k >= 0) {
+    var j: i32 = __rmemchr(w, first, k);
+    if (j < 0) {
+      break;
+    }
+    if (n == 1 || slice_unchecked(w, j, j + n) == s.sep) {
+      return (j, j + n);
+    }
+    k = j - 1;
+  }
+  return (0 - 1, 0 - 1);
+}
+
+// ---- reading backwards -----------------------------------------------------
+// Bytes per read of a seekable file, doubled whenever a record outgrows
+// it. The block is not free to choose: it is the length of the read(2)
+// the window is filled by, and a directory answers lseek(SEEK_END) with
+// LLONG_MAX, so the first read lands at `LLONG_MAX - LLONG_MAX % block`
+// and fails EINVAL for the offset-plus-count overflow at 8 KiB where a
+// larger block would reach the descriptor and fail EISDIR instead.
+function initial_read_size(): i64 {
+  return 8192 as i64;
+}
+
+// `Src` — where the bytes of one operand come from: a descriptor that
+// seeks, or the whole stream held in memory because it did not.
+struct Src { r: Reader, held: string, seekable: boolean }
+
+// `read_block(src, name, at, n)` — up to `n` bytes at offset `at`,
+// short at end of input, or the diagnostic GNU gives the failure.
+function read_block(src: Src, name: string, at: i64, n: i64, o: Out): (Out, string, boolean) {
+  var out: Out = o;
+  if (!src.seekable) {
+    var lo: i32 = at as i32;
+    var hi: i32 = lo + n as i32;
+    if (hi > src.held.len()) {
+      hi = src.held.len();
+    }
+    return (out, slice_unchecked(src.held, lo, hi) + "", true);
+  }
+  match (src.r.seek(at, 0)) {
+    Ok(_) => {},
+    Err(e) => {
+      return (fail(out, gnu.quotef(name) + ": seek failed: " + gnu.io_error_text(e)), "", false);
+    }
+  }
+  var got: string = "";
+  while (got.len() as i64 < n) {
+    match (src.r.read_chunk((n - got.len() as i64) as i32)) {
+      Ok(c) => {
+        if (c.len() == 0) {
+          break;
+        }
+        if (got.len() == 0) {
+          got = c;
+        } else {
+          got = got + c;
+        }
+      },
+      Err(e) => {
+        return (fail(out, gnu.quotef(name) + ": read error: " + gnu.io_error_text(e)), "", false);
+      }
+    }
+  }
+  return (out, got, true);
+}
+
+// `tac_backward(src, name, size, o, s)` — one input read from its end.
+//
+// `w` is the window: the block just read followed by the pending
+// partial record. `past_end` is where unwritten data ends in it and
+// `bound` where the next separator search may end — the start of the
+// separator found last, so a match is never found twice. When the
+// window is exhausted the block before it is read and `w` is rebuilt
+// with the pending bytes behind it.
+//
+// The 8 KiB output buffer is a LOCAL here, taken out of `Out` for the
+// duration and put back at the end, and each record is appended to it
+// inline rather than through a helper. That is the only shape the IR
+// grows a string in place: the same append behind a function call, or
+// held in a struct field, copies the whole buffer every time and makes
+// the loop quadratic in the buffer (#8785).
+function tac_backward(src: Src, name: string, size: i64, o: Out, s: Settings): Out {
+  var out: Out = Out { ...o, buf: "" };
+  var buf: string = o.buf;
+  if (size < 1 as i64) {
+    return Out { ...out, buf: buf };
+  }
+  var block: i64 = initial_read_size();
+  var saved: i64 = size % block;
+  if (saved == 0 as i64) {
+    saved = block;
+  }
+  var file_pos: i64 = size - saved;
+  var rb: (Out, string, boolean) = read_block(src, name, file_pos, block, out);
+  out = rb.0;
+  if (!rb.2) {
+    return Out { ...out, buf: buf };
+  }
+  var w: string = rb.1;
+  var past_end: i32 = w.len();
+  var bound: i32 = past_end;
+  var first_time: boolean = true;
+  while (true) {
+    var m: (i32, i32) = find_sep(s, w, bound);
+    var lo: i32 = 0;
+    var last: boolean = true;
+    var emit: boolean = true;
+    if (m.0 >= 0) {
+      last = false;
+      lo = m.1;
+      if (s.before) {
+        lo = m.0;
+      } else if (first_time && m.1 == past_end) {
+        emit = false;
+      }
+    } else if (file_pos > 0 as i64) {
+      if (past_end as i64 > block) {
+        block = block * (2 as i64);
+      }
+      if (file_pos >= block) {
+        file_pos = file_pos - block;
+      } else {
+        block = file_pos;
+        file_pos = 0 as i64;
+      }
+      var next: (Out, string, boolean) = read_block(src, name, file_pos, block, out);
+      out = next.0;
+      if (!next.2) {
+        return Out { ...out, buf: buf };
+      }
+      var n: i32 = next.1.len();
+      w = next.1 + slice_unchecked(w, 0, past_end);
+      // A regular expression is re-run over the pending bytes, which is
+      // what lets `^` match at the old window's start; a plain
+      // separator can only straddle the join.
+      var straddle: i32 = n + s.sep.len() - 1;
+      if (s.regex) {
+        bound = n + past_end;
+      } else if (n + bound < straddle) {
+        bound = n + bound;
+      } else {
+        bound = straddle;
+      }
+      past_end = n + past_end;
+      continue;
+    }
+    if (emit && lo < past_end) {
+      var avail: i32 = write_size() - buf.len();
+      if (past_end - lo < avail) {
+        buf = buf + slice_unchecked(w, lo, past_end);
+      } else {
+        buf = buf + slice_unchecked(w, lo, lo + avail);
+        out = Out { ...out, st: out.st.fwrite(buf) };
+        buf = "";
+        var from: i32 = lo + avail;
+        while (past_end - from >= write_size()) {
+          out = Out { ...out, st: out.st.fwrite(slice_unchecked(w, from, from + write_size()) + "") };
+          from = from + write_size();
+        }
+        if (from < past_end) {
+          buf = slice_unchecked(w, from, past_end) + "";
+        }
+      }
+    }
+    if (last) {
+      return Out { ...out, buf: buf };
+    }
+    past_end = lo;
+    bound = m.0;
+    first_time = false;
+  }
+  return Out { ...out, buf: buf };
+}
+
+// ---- input that cannot seek ------------------------------------------------
+// A pipe or a terminal cannot be read backwards, so the whole stream is
+// held before the first record is written. GNU spools it to an unlinked
+// `$TMPDIR/cutmpXXXXXX` instead and keeps one block resident, which
+// needs a file created EXCLUSIVELY at a chosen path — `open_writer`
+// truncates whatever the name reaches, so a temporary in a shared
+// directory would be a name an attacker can plant (#8776). What the
+// record scan sees is the same either way: the held bytes are handed
+// back in the same 8 KiB windows the temporary file would be read in,
+// so a regular expression meets the same buffer boundaries.
+function hold_stream(r: Reader, name: string, o: Out): (Out, string, boolean) {
+  var held: string = "";
+  while (true) {
+    match (r.read_chunk(8192)) {
+      Ok(c) => {
+        if (c.len() == 0) {
+          return (o, held, true);
+        }
+        if (held.len() == 0) {
+          held = c;
+        } else {
+          held = held + c;
+        }
+      },
+      Err(e) => {
+        return (fail(o, gnu.quotef(name) + ": read error: " + gnu.io_error_text(e)), "", false);
+      }
+    }
+  }
+  return (o, held, true);
+}
+
+// `tac_file(path, o, s)` — one operand. `-` is stdin, which the
+// diagnostics call `standard input`; whether it seeks decides the path.
+function tac_file(path: string, o: Out, s: Settings): Out {
+  var out: Out = o;
+  var is_stdin: boolean = path == "-";
+  var name: string = path;
+  var r: Reader = stdin();
+  if (is_stdin) {
+    name = "standard input";
+  } else {
+    match (open_reader(path)) {
+      Ok(f) => {
+        r = f;
+      },
+      Err(e) => {
+        return fail(out, "failed to open " + gnu.quotea(path) + " for reading: " + gnu.io_error_text(e));
+      }
+    }
+  }
+  var size: i64 = 0 as i64;
+  var seekable: boolean = false;
+  match (r.seek(0 as i64, 2)) {
+    Ok(n) => {
+      size = n;
+      seekable = true;
+    },
+    Err(_) => {}
+  }
+  var src: Src = Src { r: r, held: "", seekable: true };
+  if (!seekable) {
+    var h: (Out, string, boolean) = hold_stream(r, name, out);
+    out = h.0;
+    if (!h.2) {
+      return out;
+    }
+    src = Src { r: r, held: h.1, seekable: false };
+    size = h.1.len() as i64;
+  }
+  out = tac_backward(src, name, size, out, s);
+  if (!is_stdin) {
+    match (r.close()) {
+      Some(e) => {
+        out = fail(out, gnu.quotef(path) + ": read error: " + gnu.io_error_text(e));
+      },
+      None => {}
+    }
+  }
+  return out;
+}
+
+function main(): i32 {
+  var argv: string[] = args();
+  var opts: gnu.Opt[] = [];
+  opts = opts.append(gnu.flag("b", "before", opt_before()));
+  opts = opts.append(gnu.flag("r", "regex", opt_regex()));
+  opts = opts.append(gnu.valued("s", "separator", opt_separator()));
+
+  var sep: string = "\n";
+  var before: boolean = false;
+  var regex: boolean = false;
+  var g: gnu.Getopt = gnu.getopt_new(argv, opts, "tac", help_text(), 1);
+  while (true) {
+    var r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    g = r.1;
+    match (r.0) {
+      Some(m) => {
+        if (m.id == opt_before()) {
+          before = true;
+        } else if (m.id == opt_regex()) {
+          regex = true;
+        } else if (m.id == opt_separator()) {
+          sep = m.value;
+        }
+      },
+      None => {
+        break;
+      }
+    }
+  }
+
+  // An empty separator is refused as a regular expression and is the
+  // NUL byte otherwise: GNU takes the length of `""` to be one.
+  var re: bre.Bre = bre.bre_compile("");
+  if (regex) {
+    if (sep.len() == 0) {
+      gnu.error("separator cannot be empty");
+      exit(1);
+    }
+    re = bre.bre_compile_syntax(sep, bre.emacs_syntax());
+    if (re.err.len() > 0) {
+      gnu.error(re.err);
+      exit(1);
+    }
+  } else if (sep.len() == 0) {
+    sep = string_from_bytes_unchecked([0 as u8]);
+  }
+  var s: Settings = Settings { sep: sep, before: before, regex: regex, re: re };
+
+  var files: string[] = g.operands();
+  if (files.len() == 0) {
+    files = files.append("-");
+  }
+  var out: Out = Out { st: gnu.stdio_new(), buf: "", ok: true };
+  var read_stdin: boolean = false;
+  var i: i32 = 0;
+  while (i < files.len()) {
+    if (files[i] == "-") {
+      read_stdin = true;
+    }
+    out = tac_file(files[i], out, s);
+    i = i + 1;
+  }
+  if (out.buf.len() > 0) {
+    out = Out { ...out, st: out.st.fwrite(out.buf), buf: "" };
+  }
+  if (read_stdin) {
+    match (stdin().close()) {
+      Some(e) => {
+        out = fail(out, "-: " + gnu.io_error_text(e));
+      },
+      None => {}
+    }
+  }
+  out.st.close_stdout();
+  if (!out.ok) {
+    return 1;
+  }
+  return 0;
+}
