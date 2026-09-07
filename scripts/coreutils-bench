@@ -289,6 +289,19 @@ PY
       printf 'tail -n 10 from a pipe\ty\t{gnu}/cat %s | {} -n 10 > /dev/null\n' "$big"
       printf 'tail -n +4000000 of a 62 MiB file\ty\t{} -n +4000000 %s > /dev/null\n' "$big"
       ;;
+    tr)
+      # tr's whole cost is one table lookup per byte, so the shapes are:
+      # a pure translation, a deletion (which also compacts), a squeeze
+      # (which carries a run across the block boundary), and the
+      # complemented delete, whose table is built by inversion.
+      big="$out/text-64m.txt"
+      [ -f "$big" ] || "$gnu/seq" 1 8000000 > "$big"
+      printf 'tr 0-9 a-j over a 62 MiB file\ty\t{} 0-9 a-j < %s > /dev/null\n' "$big"
+      printf 'tr -d 0-4 over a 62 MiB file\ty\t{} -d 0-4 < %s > /dev/null\n' "$big"
+      printf 'tr -s 0-9 over a 62 MiB file\ty\t{} -s 0-9 < %s > /dev/null\n' "$big"
+      printf 'tr -cd digits over a 62 MiB file\ty\t{} -cd "[:digit:]" < %s > /dev/null\n' "$big"
+      printf 'tr from a pipe\ty\t{gnu}/cat %s | {} 0-9 a-j > /dev/null\n' "$big"
+      ;;
     wc)
       # wc -l is the SIMD count, wc -c is fstat and no read at all, and
       # -w / -L are the byte-at-a-time scan the C locale asks for.

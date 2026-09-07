@@ -52,6 +52,7 @@ func corpusByUtil() map[string]func(*testing.T) []invocation {
 		"tail":     tailCases,
 		"test":     testCases,
 		"true":     trueFalseCases,
+		"tr":       trCases,
 		"tsort":    tsortCases,
 		"wc":       wcCases,
 		"yes":      yesCases,
