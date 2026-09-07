@@ -2,11 +2,24 @@ package e2eselfhost
 
 import (
 	"bytes"
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
 )
+
+// childFailure renders a failed exec.Command with the child's stderr, which
+// exec.Cmd.Output stores on ExitError.Stderr and `%v` alone discards — leaving
+// "exit status 1" as the whole report of a compiler diagnostic (#8885).
+func childFailure(err error) string {
+	var ee *exec.ExitError
+	if errors.As(err, &ee) && len(ee.Stderr) > 0 {
+		return fmt.Sprintf("%v\n%s", err, ee.Stderr)
+	}
+	return err.Error()
+}
 
 // TestSelfHostStage2FixpointArm64 restores the arm64 stage-2 fixpoint that
 // #5972 removed without a successor (#6327).
@@ -58,7 +71,7 @@ func TestSelfHostStage2FixpointArm64(t *testing.T) {
 	// examples/self_host keeps the two generations on identical bytes.
 	stage1Asm, err := exec.Command(mmc, driverSrc, "-target", "arm64-linux").Output()
 	if err != nil {
-		t.Fatalf("stage 1: mmc could not emit aarch64 for its own source: %v", err)
+		t.Fatalf("stage 1: mmc could not emit aarch64 for its own source: %s", childFailure(err))
 	}
 	if len(stage1Asm) == 0 {
 		t.Fatal("stage 1: emitted 0 bytes for the self-hosted arm64 compiler")
@@ -105,14 +118,14 @@ func TestSelfHostStage2FixpointArm64(t *testing.T) {
 
 			gen1, err := exec.Command(mmc, args...).Output()
 			if err != nil {
-				t.Fatalf("gen1 (x86 host): %v", err)
+				t.Fatalf("gen1 (x86 host): %s", childFailure(err))
 			}
 			if len(gen1) == 0 {
 				t.Fatal("gen1 emitted 0 bytes")
 			}
 			gen2, err := runArm64Bin(qemu, mmcArm64, args...).Output()
 			if err != nil {
-				t.Fatalf("gen2 (self-host-built aarch64, under qemu): %v", err)
+				t.Fatalf("gen2 (self-host-built aarch64, under qemu): %s", childFailure(err))
 			}
 			if !bytes.Equal(gen1, gen2) {
 				t.Errorf("stage-2 fixpoint broken: gen1 %d bytes, gen2 %d bytes; first divergent line: %d",
