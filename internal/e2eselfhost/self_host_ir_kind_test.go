@@ -40,7 +40,7 @@ func TestSelfHostIRKindRegistry(t *testing.T) {
 	// ids, and every classifier predicate's answer on representative kinds.
 	//
 	// The two sweeps together name EVERY tag kind_id knows — the 196 dense ids
-	// via kind_name, the 44 extension tags by name — so the round trip this
+	// via kind_name, the 50 extension tags by name — so the round trip this
 	// pins is exhaustive. An id that moved would fail here whatever else went
 	// green.
 	//
@@ -51,7 +51,7 @@ func TestSelfHostIRKindRegistry(t *testing.T) {
 	const want = "kind_count=196\n" +
 		"bijection_ok=196\n" +
 		"bijection_failures=0\n" +
-		"ext_ok=44\n" +
+		"ext_ok=50\n" +
 		"ext_failures=0\n" +
 		"neg_ok=14\n" +
 		"neg_failures=0\n" +
@@ -66,7 +66,7 @@ func TestSelfHostIRKindRegistry(t *testing.T) {
 		"is_term return=1 br=1 exit=1 brif=0\n" +
 		"is_fold add=1 div_s=1 ge_s=1 fadd=0\n" +
 		"is_commute add=1 xor=1 sub=0 shl=0\n" +
-		"tag_consistency ok=43 bad=0\n"
+		"tag_consistency ok=49 bad=0\n"
 
 	// The report ends with every registered tag's id in id order, pinned by
 	// testdata/ir-kind-ids.txt. The backends dispatch on literal ids, so this
@@ -86,7 +86,7 @@ func TestSelfHostIRKindRegistry(t *testing.T) {
 	}
 	// Exit code totals the failures of all four sweeps — bijection over the
 	// dense ids, over the ext ids, the negative sweep, and the tag census. 0
-	// proves every one of the 240 tags round-tripped AND that no near miss
+	// proves every one of the 246 tags round-tripped AND that no near miss
 	// resolved, an independent check of the report's own _ok flags.
 	if code := cmd.ProcessState.ExitCode(); code != 0 {
 		t.Errorf("ir_kind_run exit code = %d, want 0 (total failures across the four sweeps)", code)
