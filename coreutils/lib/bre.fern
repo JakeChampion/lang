@@ -1455,6 +1455,12 @@ function exec_threads_from(re: Bre, text: string, start: i32, unanchored: boolea
     }
     pos = pos + 1;
     if (unanchored) {
+      // This seed shares generation `pos` with the byte-children added
+      // above, so a pc the byte-chain already stamped is skipped here. That
+      // costs the seed's captures at that pc, never a thread: the chain
+      // expanded the same split itself, so the set of pcs waiting on the
+      // next byte is identical. `search` reads only `.matched`, which is
+      // why it is sound to share the stamps rather than pay a second array.
       t = add_thread(re, t, pos, 0, fresh_caps(ncap), pos, text);
     }
     if (t.pcs.len() == 0) {
