@@ -156,11 +156,13 @@ ordering rules above; the sweep's own findings, for whoever wires the next one:
 
 - **The checker's tag vocabulary is wider than the walks' spelling set, and
   guards written for one do not hold for the other.** `is_enum_like_name`'s
-  scalar exclusion list holds only the spellings declarations use — feed it a
-  checker tag and `"u64"` reads as a nominal enum, which typed every
-  `x as u64` as a struct value and bailed every stdlib `checked_mul`.
-  `struct_tag_from_ty` is the admission helper that rejects the scalar tag
-  vocabulary first; route struct/enum tag admissions through it.
+  scalar exclusion list then held only the spellings declarations use — feed it
+  a checker tag and `"u64"` read as a nominal enum, which typed every
+  `x as u64` as a struct value and bailed every stdlib `checked_mul`. (#8428
+  later made that list the whole primitive set, `is_prim_type_name`.)
+  `struct_tag_from_ty` is the admission helper: it asks `decl_is_enum`, so it
+  admits only a declared struct, a declared enum or a `dyn Trait` box. Route
+  struct/enum tag admissions through it.
 - **A walk that answers "" on purpose is not a hole.** `some_opt_type` returns
   "" for a `Some(x)` whose payload kind the tuple-element machinery cannot
   carry; a tag fallback that "fixed" that rejection lowered the payload down a

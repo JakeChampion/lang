@@ -4510,13 +4510,15 @@ pub function is_scalar_array_type(t: string): boolean {
 // reclamation. u32[] / the sub-word array ride the i32[] 4-byte element read
 // unchanged (each element lives in a full 32-bit slot, pre-wrapped by the `as
 // u8` cast at the producing site); their narrowness only affects arithmetic ON
-// a read element, not the field round-trip. NOT here: u64[] (its 8-byte element
-// read needs the i64-width dispatch routed through the "u64[]" field tag — like
-// the u64 tuple element slice — a separate increment). NOT used for enum
-// payloads (those need the element-width mark, not a plain mark_arr).
+// a read element, not the field round-trip. char[] rides that same 4-byte read —
+// a char IS an i32 value in an i32 slot (its element-kind dispatch is #7763,
+// separate from the field round-trip). u64[] rides the i64-width element
+// dispatch through the "u64[]" field tag, like the u64 tuple element slice. NOT
+// used for enum payloads (those need the element-width mark, not a plain
+// mark_arr).
 pub function is_leaksafe_array_field(t: string): boolean {
     return is_scalar_array_type(t) || is_float_array_type_name(t) || t == "i64[]" || t == "u64[]" || t == "u32[]"
-        || is_subword_array_type(t);
+        || t == "char[]" || is_subword_array_type(t);
 }
 
 // is_float_array_type_name reports whether the declared type name `t` is a
@@ -5353,10 +5355,9 @@ function decl_is_leaksafe_at_d(structs: StructTab, decl_index: i32, depth: i32, 
         // A nominal-enum field (Color, Expr, …) is leak-only on the IR
         // path — the exit sweep never frees an enum box — so it leaks
         // with the struct like a string / Option / tuple field: no RC, no
-        // aliasing bail. is_enum_like_name can over-match a bare nominal
-        // that is not really an enum, but the only consequence is an AST
-        // fallback at the construction / match site (never a miscompile),
-        // and the stage-2 fixpoint guards byte-stability.
+        // aliasing bail. is_enum_like_name can still over-match a bare type
+        // VARIABLE, but the only consequence is the construction / match site
+        // bailing on an absent symbol (never a miscompile).
         if (is_enum_like_name(t, structs)) {
             fi = fi + 1;
             continue;
@@ -5395,19 +5396,35 @@ function decl_is_leaksafe_at_d(structs: StructTab, decl_index: i32, depth: i32, 
     return true;
 }
 
+// is_prim_type_name reports whether `t` is a PRIMITIVE type spelling — one that
+// can never name a struct or an enum. The same set checker.e060_is_primitive_name
+// gates `as?` on, plus `str` (the borrowed-string view: the parser erases a BARE
+// `str` to "string", but the spelling survives verbatim inside a generic
+// argument) and `void`. asmcore.is_enum_recv asks the same question of the Ty
+// decoding (is_int_tag); this is the spelling-level form irlower works in.
+function is_prim_type_name(t: string): boolean {
+    return t == "i32" || t == "i64" || t == "u8" || t == "u32" || t == "u64" || t == "usize"
+        || t == "f32" || t == "f64" || t == "float"
+        || t == "boolean" || t == "bool"
+        || t == "string" || t == "str" || t == "char" || t == "void";
+}
+
 // is_enum_like_name reports whether type name `t` denotes a (nominal) enum:
 // not a primitive, struct, array, or bracketed/tuple generic. Mirrors the AST
 // emitter's is_enum_recv heuristic (asmcore.is_enum_recv) — a bare nominal that
 // isn't anything else is an enum. Used to carry an enum-typed local / param /
 // receiver's type name in local_struct_type, so `x.method()` on an enum value
-// dispatches to `<Enum>.<method>` (the enum-receiver-method path). A name that
-// is really a scalar type alias would be mis-marked, but the only consequence
-// is a method-dispatch label that calls_only_known finds absent → the module
-// bails; never a miscompile.
+// dispatches to `<Enum>.<method>` (the enum-receiver-method path).
+//
+// It stays SYNTACTIC rather than asking decl_is_enum: at the leak-safety and
+// param/receiver gates the enum's variant decls are frequently not in the
+// `structs` handed down, so decl_is_enum answers false for a genuine enum
+// (ast.Expr, checker.Type, lexer.Token …) and the gate would bail every module
+// that names one. A bare type VARIABLE (`T`) still over-matches; the sites that
+// care exclude it themselves (enum_ret_recordable).
 pub function is_enum_like_name(t: string, structs: StructTab): boolean {
     if (t.len() == 0) { return false; }
-    if (t == "i32" || t == "boolean" || t == "bool" || t == "string"
-        || t == "i64" || t == "f64" || t == "f32" || t == "float" || t == "void") { return false; }
+    if (is_prim_type_name(t)) { return false; }
     // "clo" is the compiler's closure-BOX tag spelling (a boxed fn-valued
     // tuple element / Option payload) — never a user enum name. Without this
     // exclusion an Option[clo] payload's match bind was claimed by the enum
@@ -5439,7 +5456,6 @@ pub function decl_is_prim_recv(structs: StructTab, name: string): boolean {
     if (name.len() == 0) { return false; }
     if (is_array_type_name(name)) { return false; }
     if (decl_is_struct(structs, name)) { return false; }
-    if (is_enum_like_name(name, structs)) { return false; }
     if (name == "i32" || name == "i64" || name == "u32" || name == "u64" || name == "usize"
         || name == "f64" || name == "f32" || name == "float"
         || name == "boolean" || name == "bool" || name == "string") { return true; }
@@ -5995,10 +6011,7 @@ function iife_lambda_composite_tuple_tags(lam: ast.ExprLambda, s: LowerState): s
 // "" — a struct literal's type, or a struct-tracked local/param slot.
 // struct_tag_from_ty admits a checker-stamped tag when it names a known struct
 // or nominal enum — the same guard every structural case of expr_struct_type
-// applies. The scalar tag vocabulary is rejected FIRST: is_enum_like_name's
-// exclusion list holds only the spellings declarations use, so a checker tag
-// like "u64" (which no declaration walk ever produced here) would read as
-// enum-like and type a cast/overload result as a struct (#5986).
+// applies.
 // is_dyn_value_name reports whether `t` is the coarse `dyn Trait` spelling of a
 // single boxed trait object — not an ARRAY of them, whose element is what a
 // consumer wants and which reads as a value here otherwise.
@@ -9140,7 +9153,8 @@ pub function arr_index_is_i64(arr: ast.Expr, s: LowerState): boolean {
         // `p.vals[i]` where p's field `vals` is an i64[] struct field.
         ast.ExprFieldAccess(fa) => {
             if (util.is_all_digits(fa.field)) {
-                return tuple_elem_arr_tag(fa.obj, util.digits_to_i32(fa.field), s) == "i64[]";
+                var tet: string = tuple_elem_arr_tag(fa.obj, util.digits_to_i32(fa.field), s);
+                return tet == "i64[]" || tet == "u64[]";
             }
             var oty: string = expr_struct_type(fa.obj, s);
             if (oty == "") { return false; }
@@ -9230,7 +9244,8 @@ pub function expr_is_i64arr(e: ast.Expr, s: LowerState): boolean {
         // above). #3353.
         ast.ExprFieldAccess(fa) => {
             if (util.is_all_digits(fa.field)) {
-                return tuple_elem_arr_tag(fa.obj, util.digits_to_i32(fa.field), s) == "i64[]";
+                var tea: string = tuple_elem_arr_tag(fa.obj, util.digits_to_i32(fa.field), s);
+                return tea == "i64[]" || tea == "u64[]";
             }
             // A NAMED struct field declared i64[] / u64[]. Only the tuple case
             // above was handled, so `p.vals.append(v)` on an `i64[]` field
@@ -22316,6 +22331,12 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
     // enum name in local_struct_type too, so `a.method()` dispatches to
     // `<Enum>.<method>` (enum-receiver methods).
     else if (struct_ty == "" && is_enum_like_name(v.type_name, se.frame.structs)) { struct_ty = v.type_name; }
+    // `var c: char = 97 as char` — not a struct or an enum, but std/unicode's
+    // methods are keyed by the spelling, so the slot carries "char" for dispatch
+    // the same way an enum local carries its enum name. Dispatch-only: a char is
+    // an i32 value in an i32 slot (expr_is_char says the same for the inline
+    // cast form, which never reaches a slot).
+    else if (struct_ty == "" && v.type_name == "char") { struct_ty = "char"; }
     // A struct- or enum-ARRAY annotation (`var ps: P[]` / `var cs: C[]`)
     // carries the ELEMENT type (the slot is is_arr, so it reads as the
     // element type for `ps[i]` / `for x in ps`, not the slot's own type).
@@ -22915,7 +22936,14 @@ function lower_stmt_var_destructure(v: ast.StmtVar, s: LowerState): LowerState {
         // (f64/i64) or the string read (string[]) — the read-side twin
         // of the f64[]/i64[]/string[] admission in tuple_elems_lowerable.
         else if (is_float_array_type_name(dtag)) { dt = dt.mark_arr(dkslot, true); dt = dt.mark_f64arr(dkslot, true); }
-        else if (dtag == "i64[]") { dt = dt.mark_arr(dkslot, true); dt = dt.mark_i64arr(dkslot, true); }
+        else if (dtag == "i64[]" || dtag == "u64[]") {
+            dt = dt.mark_arr(dkslot, true);
+            dt = dt.mark_i64arr(dkslot, true);
+            // u64[] rides the i64[] 8-byte storage/read path; the extra u64 mark
+            // drives UNSIGNED arithmetic on a read element (the same pair the
+            // annotated `var xs: u64[]` binding stamps).
+            if (dtag == "u64[]") { dt = dt.mark_u64(dkslot, true); }
+        }
         else if (dtag == "string[]") { dt = dt.mark_arr(dkslot, true); dt = dt.mark_strarr(dkslot, true); }
         // A struct-array (X[]) or enum-array (E[]) element binds the slot
         // as an array AND carries the element struct/enum name (strip the
@@ -24676,7 +24704,7 @@ function lower_stmt_match(m: ast.StmtMatch, s: LowerState): LowerState {
                         // (clone) / `xs.len()` resolve. The 8-byte-element and
                         // string/struct/enum-element arrays all ride one slot.
                         var ptag_is_array: boolean = ptag == "i32[]" || ptag == "boolean[]" || ptag == "u32[]" || is_subword_array_type(ptag)
-                            || is_float_array_type_name(ptag) || ptag == "i64[]" || ptag == "string[]"
+                            || is_float_array_type_name(ptag) || ptag == "i64[]" || ptag == "u64[]" || ptag == "string[]"
                             || is_struct_array_field_type(ms.frame.structs, ptag) || is_enum_array_field_type(ms.frame.structs, ptag);
                         // A NESTED-array payload (`Ok(seeds)` where the payload
                         // is a `T[][]` — the fuzz-corpus shape). The outer
@@ -24723,7 +24751,17 @@ function lower_stmt_match(m: ast.StmtMatch, s: LowerState): LowerState {
                         // so it also matches `Map[K, V][]` — the array branch owns
                         // that spelling.
                         var ptag_is_map: boolean = is_map_type_name(ptag) && !is_array_type_name(ptag);
-                        if (ptag != "i32" && ptag != "boolean" && ptag != "string" && ptag != "i64" && !elem_ty_is_f64slot(ptag) && !ptag_is_struct && !ptag_is_enum && !ptag_is_opt && !ptag_is_tuple && !ptag_is_array && !ptag_is_arrarr && !ptag_is_dyn && !ptag_is_fn && !ptag_is_void && !ptag_is_map) { return s.fail(); }
+                        // The by-value payload spellings whose bind is written
+                        // below: the i32 slot (i32 / boolean / u32 / char), the
+                        // 8-byte slot (i64 / u64 / the f64 widths) and the string
+                        // views (string / str). u32, u64, `char` and `str` are
+                        // named here rather than reaching the arm through
+                        // ptag_is_enum, which used to accept every unsigned
+                        // spelling as a bare nominal enum (#8428).
+                        var ptag_is_scalar: boolean = ptag == "i32" || ptag == "boolean" || ptag == "u32" || ptag == "char"
+                            || ptag == "i64" || ptag == "u64" || elem_ty_is_f64slot(ptag)
+                            || ptag == "string" || ptag == "str";
+                        if (!ptag_is_scalar && !ptag_is_struct && !ptag_is_enum && !ptag_is_opt && !ptag_is_tuple && !ptag_is_array && !ptag_is_arrarr && !ptag_is_dyn && !ptag_is_fn && !ptag_is_void && !ptag_is_map) { return s.fail(); }
                     }
                     var want: i32 = 0;
                     if (pv.type_name == "None" || pv.type_name == "Err") { want = 1; }
@@ -24754,7 +24792,7 @@ function lower_stmt_match(m: ast.StmtMatch, s: LowerState): LowerState {
                         else if (elem_ty_is_f64slot(ptag)) { ms = ms.emit(ir.op_opt_payload_w(64, false)); }
                         else { ms = ms.emit(ir.op_opt_payload()); }
                         ms = ms.emit(ir.op_store_local(pbslot));
-                        if (ptag == "string") { ms = ms.mark_str(pbslot, true); }
+                        if (ptag == "string" || ptag == "str") { ms = ms.mark_str(pbslot, true); }
                         else if (ptag == "i64") { ms = ms.mark_i64(pbslot, true); }
                         // A u64 payload rode the 8-byte op_opt_payload_w(64)
                         // load above; mark the slot u64 (its own 8-byte domain,
@@ -24777,6 +24815,12 @@ function lower_stmt_match(m: ast.StmtMatch, s: LowerState): LowerState {
                         // the binding site). Sub-word payloads are not
                         // leak-safe payloads (see is_leaksafe_payload).
                         else if (ptag == "u32") { ms = ms.mark_u32(pbslot, true); }
+                        // A `char` payload (std/utf8's Option[char]) is an i32
+                        // value in an i32 slot, so the default load above already
+                        // bound it; the slot carries the spelling only so
+                        // `c.to_upper()` keys "char.<m>" — dispatch-only, exactly
+                        // like expr_is_char at an inline cast.
+                        else if (ptag == "char") { ms = ms.mark_struct_type(pbslot, ptag); }
                         // A fn-typed payload (`Some(f)` / `Ok(g)` where T is
                         // `() => i32` / `(i32) => i32`, slice #3445 match-fn):
                         // the payload read above is the env box the constructor
@@ -24816,7 +24860,11 @@ function lower_stmt_match(m: ast.StmtMatch, s: LowerState): LowerState {
                             if (ptag == "u32[]") { ms = ms.mark_u32(pbslot, true); }
                         }
                         else if (is_float_array_type_name(ptag)) { ms = ms.mark_arr(pbslot, true); ms = ms.mark_f64arr(pbslot, true); if (ptag == "f32[]") { ms = ms.mark_f32arr(pbslot, true); } }
-                        else if (ptag == "i64[]") { ms = ms.mark_arr(pbslot, true); ms = ms.mark_i64arr(pbslot, true); }
+                        else if (ptag == "i64[]" || ptag == "u64[]") {
+                            ms = ms.mark_arr(pbslot, true);
+                            ms = ms.mark_i64arr(pbslot, true);
+                            if (ptag == "u64[]") { ms = ms.mark_u64(pbslot, true); }
+                        }
                         else if (ptag == "string[]") { ms = ms.mark_arr(pbslot, true); ms = ms.mark_strarr(pbslot, true); }
                         else if (is_struct_array_field_type(ms.frame.structs, ptag) || is_enum_array_field_type(ms.frame.structs, ptag)) {
                             ms = ms.mark_arr(pbslot, true);
@@ -56892,6 +56940,10 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
         var pty: string = "";
         if (decl_is_struct(structs, fn.params[i].type_name)) { pty = fn.params[i].type_name; }
         else if (is_enum_like_name(fn.params[i].type_name, structs)) { pty = fn.params[i].type_name; }
+        // A `char` param carries its spelling for the same reason a `var c: char`
+        // local does: std/unicode's methods are keyed "char.<m>". Dispatch-only —
+        // a char is an i32 value in an i32 slot.
+        else if (fn.params[i].type_name == "char") { pty = "char"; }
         // A struct-array param `a: P[]` carries the ELEMENT struct type, so
         // `a[i].field` / `for x in a` over the borrowed array resolve.
         else if (is_array_type_name(fn.params[i].type_name)
@@ -61473,14 +61525,13 @@ pub function tuple_elems_lowerable(rt: string, structs: StructTab): boolean {
             // op_tuple_get and the bind marks the slot an array (mark_arr), after
             // which `t.N[i]` rides the 4-byte arr_get.
             if (!ok_elem && (t == "i32[]" || t == "boolean[]" || t == "u32[]" || is_subword_array_type(t))) { ok_elem = true; }
-            // The 8-byte-element arrays (f64[]/i64[]) and string[] are ALSO just a
-            // heap pointer in the tuple slot — the element WIDTH/kind only matters
-            // when reading an element (`t.N[i]`), not the tuple slot itself. The
-            // destructure / `.N` bind marks the slot f64arr / i64arr / strarr so
-            // `t.N[i]` rides the width-marked arr_get(64) / arr_get_i64 / str read.
-            // (u64[] stays deferred: it needs the "u64[]" field-tag plumbing, like
-            // the u64 tuple scalar, a separate increment.)
-            if (!ok_elem && (is_float_array_type_name(t) || t == "i64[]" || t == "string[]")) { ok_elem = true; }
+            // The 8-byte-element arrays (f64[]/i64[]/u64[]) and string[] are ALSO
+            // just a heap pointer in the tuple slot — the element WIDTH/kind only
+            // matters when reading an element (`t.N[i]`), not the tuple slot itself.
+            // The destructure / `.N` bind marks the slot f64arr / i64arr (+ u64 for
+            // the unsigned spelling) / strarr so `t.N[i]` rides the width-marked
+            // arr_get(64) / arr_get_i64 / str read.
+            if (!ok_elem && (is_float_array_type_name(t) || t == "i64[]" || t == "u64[]" || t == "string[]")) { ok_elem = true; }
             // A struct-array (X[]) or enum-array (E[]) element is a heap pointer in
             // one tuple slot, like any other array element — leak mode: the buffer
             // AND its struct/enum-box elements leak with the (leak-only) tuple, so
