@@ -158,15 +158,29 @@ const cpuCountProbeSource = `function main(): i32 {
 }
 `
 
+// wantCPUCount is the count the probe must report. An exit status is one
+// byte, so a machine with 256 processing units or more cannot carry the
+// answer out — say so rather than compare a truncated number.
+func wantCPUCount(t *testing.T) int {
+	t.Helper()
+	n := runtime.NumCPU()
+	if n < 1 || n > 255 {
+		t.Skipf("%d CPUs does not fit an exit status; the probe cannot report it", n)
+	}
+	return n
+}
+
 func TestX86_64CPUCount(t *testing.T) {
-	if _, code := compileAndRunX86_64(t, cpuCountProbeSource); code != runtime.NumCPU() {
-		t.Errorf("cpu_count() = %d, want %d", code, runtime.NumCPU())
+	want := wantCPUCount(t)
+	if _, code := compileAndRunX86_64(t, cpuCountProbeSource); code != want {
+		t.Errorf("cpu_count() = %d, want %d", code, want)
 	}
 }
 
 func TestArm64CPUCount(t *testing.T) {
-	if _, code := compileAndRunArm64(t, cpuCountProbeSource); code != runtime.NumCPU() {
-		t.Errorf("cpu_count() = %d, want %d", code, runtime.NumCPU())
+	want := wantCPUCount(t)
+	if _, code := compileAndRunArm64(t, cpuCountProbeSource); code != want {
+		t.Errorf("cpu_count() = %d, want %d", code, want)
 	}
 }
 
