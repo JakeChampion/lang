@@ -46,7 +46,10 @@
 
 package ir
 
-import "math"
+import (
+	"math"
+	"math/bits"
+)
 
 // foldProgram rewrites every function in prog to its constant-folded
 // form, iterating each to a fixed point (constant arithmetic cascades —
@@ -420,7 +423,7 @@ func isFoldableBinary(k OpKind) bool {
 	case OpAdd, OpSub, OpMul,
 		OpDivS, OpRemS,
 		OpAnd, OpOr, OpXor,
-		OpShl, OpShrS,
+		OpShl, OpShrS, OpRotr,
 		OpEq, OpNe,
 		OpLtS, OpLeS, OpGtS, OpGeS:
 		return true
@@ -502,6 +505,8 @@ func foldBinary(k OpKind, unsigned bool, a, b int32) (int32, bool) {
 			return int32(uint32(a) >> (uint32(b) & 31)), true
 		}
 		return a >> (uint32(b) & 31), true
+	case OpRotr:
+		return int32(bits.RotateLeft32(uint32(a), -int(uint32(b)&31))), true
 	case OpEq:
 		if a == b {
 			return 1, true
@@ -607,6 +612,8 @@ func foldBinary64(k OpKind, unsigned bool, a, b int64) (int64, bool, bool) {
 			return int64(uint64(a) >> (uint64(b) & 63)), false, true
 		}
 		return a >> (uint64(b) & 63), false, true
+	case OpRotr:
+		return int64(bits.RotateLeft64(uint64(a), -int(uint64(b)&63))), false, true
 	case OpEq:
 		if a == b {
 			return 1, true, true

@@ -8194,7 +8194,7 @@ func asmInst(in x86.Inst, left, scratch int, fr frameLayout) ([]string, error) {
 		return []string{fmt.Sprintf("str %s, [sp, #%d]", xreg(in.Src), fr.slot(int(in.Imm)))}, nil
 	case x86.BinOp:
 		switch in.K {
-		case ssa.OpShl, ssa.OpShr, ssa.OpShrU, ssa.OpDiv, ssa.OpDivU, ssa.OpRem, ssa.OpRemU:
+		case ssa.OpShl, ssa.OpShr, ssa.OpShrU, ssa.OpRotr, ssa.OpDiv, ssa.OpDivU, ssa.OpRem, ssa.OpRemU:
 			return divShiftSeq(in, left, scratch), nil
 		}
 		mnem, ok := binMnemonic(in.K)
@@ -8283,6 +8283,12 @@ func divShiftSeq(in x86.Inst, left, scratch int) []string {
 			out = []string{fmt.Sprintf("lsr %s, %s, %s", dw, aw, sw)} // logical, 32-bit
 		} else {
 			out = []string{fmt.Sprintf("lsr %s, %s, %s", d, a, s)} // logical, 64-bit
+		}
+	case ssa.OpRotr:
+		if width32 {
+			out = []string{fmt.Sprintf("ror %s, %s, %s", dw, aw, sw)} // RORV, 32-bit
+		} else {
+			out = []string{fmt.Sprintf("ror %s, %s, %s", d, a, s)} // RORV, 64-bit
 		}
 	case ssa.OpDiv:
 		out = []string{fmt.Sprintf("sdiv %s, %s, %s", d, a, s)}

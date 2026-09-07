@@ -13183,6 +13183,8 @@ func shiftImmForm(op ir.Op, k int64) (string, bool) {
 			return "lsr", true
 		}
 		return "asr", true
+	case ir.OpRotr:
+		return "ror", true
 	}
 	return "", false
 }
@@ -13840,6 +13842,15 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		} else {
 			g.emit("asr %s0, %s1, %s0", r, r, r)
 		}
+		g.push()
+	case ir.OpRotr:
+		// RORV, the fourth member of the LSLV/LSRV/ASRV family. Width
+		// picks the same lane the shifts use: the w-form rotates
+		// within bits 0..31, where the x-form would pull the cleared
+		// high half of a zero-extended i32 into the low bits.
+		g.binPop()
+		r := g.regForWidth(op.Width)
+		g.emit("ror %s0, %s1, %s0", r, r, r)
 		g.push()
 
 	// -------- comparison (i32) --------

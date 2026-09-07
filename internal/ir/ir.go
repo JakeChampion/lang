@@ -103,6 +103,18 @@ const (
 	OpXor
 	OpShl
 	OpShrS
+	// OpRotr rotates the first operand right by the second, modulo
+	// `Width`. Every target has it as one instruction — wasm as
+	// i32.rotr / i64.rotr, arm64 as ror (RORV, or the EXTR alias for a
+	// constant count), x86-64 as ror — against the three the
+	// shift/shift/or spelling costs. Produced by FuseRotates; nothing
+	// lowers to it directly.
+	//
+	// There is no rotate-LEFT op: a left rotate by n is a right rotate
+	// by Width-n, and the fusion only ever sees a constant count, so
+	// normalising to one direction keeps eight emitters from carrying
+	// two.
+	OpRotr
 	OpNot // logical ! (i32.eqz)
 
 	// Bit-counting intrinsics. Each consumes one integer of `Width`
@@ -465,6 +477,8 @@ func (k OpKind) String() string {
 		return "shl"
 	case OpShrS:
 		return "shr_s"
+	case OpRotr:
+		return "rotr"
 	case OpNot:
 		return "not"
 	case OpClz:
