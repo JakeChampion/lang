@@ -571,6 +571,25 @@ against a struct return's ~3 ns. It is a different shape from #8425
 (per-byte) and #8770 (per-append), and every remaining group-B utility with
 two cursors will meet it.
 
+**Signal disposition control (#8792).** `tee` is blocked on it and is not
+written yet. `-i` is `signal (SIGINT, SIG_IGN)`, and the whole `-p` /
+`--output-error` family turns on whether SIGPIPE is ignored: GNU leaves it
+at its default so `tee` DIES of SIGPIPE, and the moment either option is
+given it ignores it so the write returns EPIPE and the mode picks one of
+four behaviours. Four of those five rows are unreachable without the
+primitive, and a `tee` that accepted the options and did nothing would be
+exactly the carve-out this document forbids.
+
+**A byte-range comparison costs a copy (#8791).** This one is performance,
+not parity. `slice_unchecked` lowers to `__str_slice`, which COPIES —
+`docs/STR-VIEW-CONTRACT.md` §1 records that native is safe from the
+dangling-view class precisely by not implementing the view — and an indexed
+byte loop runs at ~2.8 ns a byte against memcmp's ~0.35. There is no third
+option: the builtin surface carries every SIMD kernel except the comparison
+one. It is the whole of `uniq`'s remaining distance from GNU and most of
+`comm`'s (with the order check off, `comm` is within noise of it), and it
+will be `sort`'s and `join`'s too.
+
 Gaps that are closed, each now exercised by the corpus rather than carved
 out of it: `IoError.Other` carrying no strerror text (#8265), in the
 write-failure cases (`yes >&-`, `> /dev/full`); source unable to learn its
