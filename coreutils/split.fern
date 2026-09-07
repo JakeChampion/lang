@@ -1,0 +1,1533 @@
+// split.fern — GNU-compatible `split`.
+//
+//   split [OPTION]... [FILE [PREFIX]]
+//
+// Pieces of FILE, written to PREFIXaa, PREFIXab, … — 1000 lines each by
+// default, PREFIX `x`. `-` and no operand both mean stdin. The size of a
+// piece is chosen four mutually exclusive ways (`cannot split in more
+// than one way` when two are given): `-l` lines, `-b` bytes, `-C` whole
+// records up to a byte budget, `-n` a chunk count.
+//
+// Three things here are older or stranger than they look:
+//
+//   - The suffix is a base-N counter that WIDENS rather than wrapping,
+//     and the widening reserves a digit: `xaa` … `xyz`, then `xzaaa` …
+//     `xzyzz`, then `xzzaaaa`. The leading `z` is what marks a widened
+//     suffix, so it is never a counting digit — which is why `xza` is
+//     not a name and 650, not 676, two-letter names exist. `-a N` fixes
+//     the width instead, and running out is then
+//     `output file suffixes exhausted`.
+//   - `-n` sizes the suffix up front from the chunk count (`-n 700`
+//     writes `xaaa`), because it knows how many names it needs; `-a`
+//     too small for that count is refused rather than widened.
+//   - `-n` needs the input's SIZE, and a pipe cannot answer. GNU spools
+//     a non-seekable input to `$TMPDIR/cutmpXXXXXX`, opened
+//     `O_CREAT|O_EXCL` and unlinked at once, then reads it back; this
+//     does the same through `open_exclusive` (#8776). `-n r/…` is the
+//     exception — round robin needs no size and streams.
+//
+// `--filter=COMMAND` is DECLARED but not implemented: it needs a child
+// process whose stdin is a pipe the parent writes, which Fern has no
+// primitive for (#8810). Using it reports that and exits 1, so the
+// option's getopt behaviour — its place in the ambiguity list, its
+// required argument — is still GNU's.
+import "std/string";
+import "std/array";
+import "std/io_buffered";
+import "./lib/gnu";
+
+// ---- options ---------------------------------------------------------------
+// Ids in GNU's DECLARATION order, which is visible: the ambiguity list
+// prints candidates in it, so `--s` names '--suffix-length' before
+// '--separator' and `--n` '--number' before '--numeric-suffixes'.
+function opt_bytes(): i32 {
+  return 1;
+}
+
+function opt_lines(): i32 {
+  return 2;
+}
+
+function opt_line_bytes(): i32 {
+  return 3;
+}
+
+function opt_number(): i32 {
+  return 4;
+}
+
+function opt_elide(): i32 {
+  return 5;
+}
+
+function opt_unbuffered(): i32 {
+  return 6;
+}
+
+function opt_suffix_length(): i32 {
+  return 7;
+}
+
+function opt_additional(): i32 {
+  return 8;
+}
+
+function opt_numeric(): i32 {
+  return 9;
+}
+
+function opt_hex(): i32 {
+  return 10;
+}
+
+function opt_filter(): i32 {
+  return 11;
+}
+
+function opt_verbose(): i32 {
+  return 12;
+}
+
+function opt_separator(): i32 {
+  return 13;
+}
+
+function help_text(): string {
+  var out: string = "";
+  out = out + "Usage: " + gnu.prog() + " [OPTION]... [FILE [PREFIX]]\n";
+  out = out + "Output pieces of FILE to PREFIXaa, PREFIXab, ...;\n";
+  out = out + "default size is 1000 lines, and default PREFIX is 'x'.\n";
+  out = out + "\n";
+  out = out + "With no FILE, or when FILE is -, read standard input.\n";
+  out = out + "\n";
+  out = out + "  -a, --suffix-length=N   generate suffixes of length N (default 2)\n";
+  out = out + "      --additional-suffix=SUFFIX  append an additional SUFFIX to file names\n";
+  out = out + "  -b, --bytes=SIZE        put SIZE bytes per output file\n";
+  out = out + "  -C, --line-bytes=SIZE   put at most SIZE bytes of records per output file\n";
+  out = out + "  -d                      use numeric suffixes starting at 0, not alphabetic\n";
+  out = out + "      --numeric-suffixes[=FROM]  same as -d, but allow setting the start value\n";
+  out = out + "  -x                      use hex suffixes starting at 0, not alphabetic\n";
+  out = out + "      --hex-suffixes[=FROM]  same as -x, but allow setting the start value\n";
+  out = out + "  -e, --elide-empty-files  do not generate empty output files with '-n'\n";
+  out = out + "      --filter=COMMAND    write to shell COMMAND; file name is $FILE\n";
+  out = out + "  -l, --lines=NUMBER      put NUMBER lines/records per output file\n";
+  out = out + "  -n, --number=CHUNKS     generate CHUNKS output files; see explanation below\n";
+  out = out + "  -t, --separator=SEP     use SEP instead of newline as the record separator;\n";
+  out = out + "                            '\\0' (zero) specifies the NUL character\n";
+  out = out + "  -u, --unbuffered        immediately copy input to output with '-n r/...'\n";
+  out = out + "      --verbose           print a diagnostic just before each\n";
+  out = out + "                            output file is opened\n";
+  out = out + "      --help        display this help and exit\n";
+  out = out + "      --version     output version information and exit\n";
+  out = out + "\n";
+  out = out + "The SIZE argument is an integer and optional unit (example: 10K is 10*1024).\n";
+  out = out + "Units are K,M,G,T,P,E,Z,Y,R,Q (powers of 1024) or KB,MB,... (powers of 1000).\n";
+  out = out + "Binary prefixes can be used, too: KiB=K, MiB=M, and so on.\n";
+  out = out + "\n";
+  out = out + "CHUNKS may be:\n";
+  out = out + "  N       split into N files based on size of input\n";
+  out = out + "  K/N     output Kth of N to stdout\n";
+  out = out + "  l/N     split into N files without splitting lines/records\n";
+  out = out + "  l/K/N   output Kth of N to stdout without splitting lines/records\n";
+  out = out + "  r/N     like 'l' but use round robin distribution\n";
+  out = out + "  r/K/N   likewise but only output Kth of N to stdout\n";
+  return out;
+}
+
+// ---- settings --------------------------------------------------------------
+// mode: which of the four ways the input is cut.
+function mode_none(): i32 {
+  return 0;
+}
+
+function mode_lines(): i32 {
+  return 1;
+}
+
+function mode_bytes(): i32 {
+  return 2;
+}
+
+function mode_line_bytes(): i32 {
+  return 3;
+}
+
+function mode_chunks(): i32 {
+  return 4;
+}
+
+// chunk style: how `-n` divides the input.
+function style_bytes(): i32 {
+  return 0;
+}
+
+function style_lines(): i32 {
+  return 1;
+}
+
+function style_round(): i32 {
+  return 2;
+}
+
+// `Settings` — everything the option scan decides. `units` is lines,
+// bytes or chunks by `mode`; `chunk_k` is 0 unless `-n K/N` asked for one
+// chunk on stdout.
+struct Settings { mode: i32, units: u64, chunk_k: u64, style: i32, alpha: string, suffix_len: i32, start: u64, have_start: boolean, add_suffix: string, sep: i32, elide: boolean, verbose: boolean, filter: boolean, prefix: string }
+
+function alpha_alpha(): string {
+  return "abcdefghijklmnopqrstuvwxyz";
+}
+
+function alpha_decimal(): string {
+  return "0123456789";
+}
+
+function alpha_hex(): string {
+  return "0123456789abcdef";
+}
+
+function settings_new(): Settings {
+  return Settings { mode: mode_none(), units: 1000 as u64, chunk_k: 0 as u64, style: style_bytes(), alpha: alpha_alpha(), suffix_len: 0, start: 0 as u64, have_start: false, add_suffix: "", sep: 10, elide: false, verbose: false, filter: false, prefix: "x" };
+}
+
+// One split mode may be chosen; a second is GNU's `cannot split in more
+// than one way`, which is a USAGE error (it carries the `Try …` line).
+function set_mode(s: Settings, m: i32): Settings {
+  if (s.mode != mode_none()) {
+    gnu.die_usage("cannot split in more than one way", 1);
+  }
+  return Settings { ...s, mode: m };
+}
+
+// ---- number operands -------------------------------------------------------
+// `size_of(value, noun)` — a `-b` / `-C` SIZE: gnulib's multiplier
+// suffixes, and a value past uintmax_t saturates rather than failing
+// (xstrtoumax hands back UINTMAX_MAX on ERANGE and split takes it). Zero
+// is refused. `noun` is the word the diagnostic uses — `-C` says "lines"
+// for a byte count, which is GNU's wording, not a slip here.
+function size_operand(value: string, noun: string): u64 {
+  var r: (u64, i32) = gnu.parse_units(value);
+  if (r.1 == 1) {
+    gnu.error("invalid number of " + noun + ": " + gnu.quote(value));
+    exit(1);
+  }
+  var n: u64 = r.0;
+  if (r.1 >= 2) {
+    n = u64_max();
+  }
+  if (n == 0 as u64) {
+    gnu.error("invalid number of " + noun + ": " + gnu.quote(value));
+    exit(1);
+  }
+  return n;
+}
+
+// `-l NUMBER` takes no multiplier suffix (`-l 1K` is invalid), which is
+// the one place `-l` and `-b` part.
+function lines_operand(value: string): u64 {
+  var r: (u64, i32) = gnu.parse_number(value);
+  if (r.1 == 1) {
+    gnu.error("invalid number of lines: " + gnu.quote(value));
+    exit(1);
+  }
+  var n: u64 = r.0;
+  if (r.1 >= 2) {
+    n = u64_max();
+  }
+  if (n == 0 as u64) {
+    gnu.error("invalid number of lines: " + gnu.quote(value));
+    exit(1);
+  }
+  return n;
+}
+
+function u64_max(): u64 {
+  return 18446744073709551615 as u64;
+}
+
+// `-a N`. A negative operand is strtoumax's wrap rather than a parse
+// failure, so gnulib reports ERANGE for it and EOVERFLOW for digits past
+// uintmax_t — two different strerror texts for what looks like one fault.
+function suffix_length_operand(value: string): i32 {
+  var r: (u64, i32) = gnu.parse_number(value);
+  if (r.1 == 1) {
+    if (negated_number(value)) {
+      gnu.error("invalid suffix length: " + gnu.quote(value) + ": Numerical result out of range");
+      exit(1);
+    }
+    gnu.error("invalid suffix length: " + gnu.quote(value));
+    exit(1);
+  }
+  if (r.1 >= 2) {
+    gnu.error("invalid suffix length: " + gnu.quote(value) + ": Value too large for defined data type");
+    exit(1);
+  }
+  if (r.0 > 1000000 as u64) {
+    gnu.error("invalid suffix length: " + gnu.quote(value) + ": Value too large for defined data type");
+    exit(1);
+  }
+  return r.0 as i32;
+}
+
+// Blanks, then `-`, then a number and nothing else: what strtoumax reads
+// as a negation.
+function negated_number(value: string): boolean {
+  var i: i32 = 0;
+  while (i < value.len() && gnu.is_blank(value[i] as i32)) {
+    i = i + 1;
+  }
+  if (i >= value.len() || value[i] as i32 != 45) {
+    return false;
+  }
+  var rest: string = slice_unchecked(value, i + 1, value.len()) + "";
+  var r: (u64, i32) = gnu.parse_number(rest);
+  return r.1 != 1;
+}
+
+// `--numeric-suffixes=FROM` / `--hex-suffixes=FROM`. `alpha` names the
+// wording: "numerical" for decimal, "hexadecimal" for hex.
+function start_operand(value: string, hex: boolean): u64 {
+  var word: string = "numerical";
+  var base: i32 = 10;
+  if (hex) {
+    word = "hexadecimal";
+    base = 16;
+  }
+  if (value.len() == 0) {
+    return 0 as u64;
+  }
+  var v: u64 = 0 as u64;
+  var i: i32 = 0;
+  while (i < value.len()) {
+    var d: i32 = digit_value(value[i] as i32, base);
+    if (d < 0) {
+      gnu.die_usage(gnu.quote(value) + ": invalid start value for " + word + " suffix", 1);
+    }
+    match (v.checked_mul(base as u64)) {
+      Some(m) => {
+        match (m.checked_add(d as u64)) {
+          Some(a) => {
+            v = a;
+          },
+          None => {
+            gnu.die_usage(gnu.quote(value) + ": invalid start value for " + word + " suffix", 1);
+          }
+        }
+      },
+      None => {
+        gnu.die_usage(gnu.quote(value) + ": invalid start value for " + word + " suffix", 1);
+      }
+    }
+    i = i + 1;
+  }
+  return v;
+}
+
+function digit_value(c: i32, base: i32): i32 {
+  var v: i32 = 0 - 1;
+  if (c >= 48 && c <= 57) {
+    v = c - 48;
+  } else if (base == 16 && c >= 97 && c <= 102) {
+    // Lower case only: GNU refuses `--hex-suffixes=A`.
+    v = c - 87;
+  }
+  if (v >= base) {
+    return 0 - 1;
+  }
+  return v;
+}
+
+// `-t SEP`. One byte, or the two characters `\0` for NUL — the only
+// escape the option reads, so `-t '\n'` is a two-character separator and
+// refused as one.
+function separator_operand(value: string): i32 {
+  if (value == "\\0") {
+    return 0;
+  }
+  if (value.len() == 0) {
+    gnu.error("empty record separator");
+    exit(1);
+  }
+  if (value.len() > 1) {
+    gnu.error("multi-character separator " + gnu.quote(value));
+    exit(1);
+  }
+  return value[0] as i32;
+}
+
+// `-n CHUNKS`: `N`, `K/N`, and each with an `l/` or `r/` style prefix.
+// The diagnostic names what is left to parse at the point it fails, so
+// `-n 2/3/4` reports '3/4' while `-n r/l/3` reports the whole 'l/3'.
+function chunk_operand(value: string, s: Settings): Settings {
+  var body: string = value;
+  var style: i32 = style_bytes();
+  if (body.len() >= 2 && body[0] as i32 == 108 && body[1] as i32 == 47) {
+    style = style_lines();
+    body = slice_unchecked(body, 2, body.len()) + "";
+  } else if (body.len() >= 2 && body[0] as i32 == 114 && body[1] as i32 == 47) {
+    style = style_round();
+    body = slice_unchecked(body, 2, body.len()) + "";
+  }
+  var slash: i32 = __memchr(body, 47, 0);
+  var k: u64 = 0 as u64;
+  var n: u64 = 0 as u64;
+  if (slash < 0) {
+    n = chunk_count(body, body);
+  } else {
+    var kstr: string = slice_unchecked(body, 0, slash) + "";
+    var nstr: string = slice_unchecked(body, slash + 1, body.len()) + "";
+    k = chunk_count(kstr, body);
+    n = chunk_count(nstr, nstr);
+    if (k > n) {
+      gnu.error("invalid chunk number: " + gnu.quote(kstr));
+      exit(1);
+    }
+  }
+  return Settings { ...set_mode(s, mode_chunks()), units: n, chunk_k: k, style: style };
+}
+
+// One number inside a `-n` operand. `blame` is what the diagnostic
+// quotes, which is not always what failed to parse.
+function chunk_count(value: string, blame: string): u64 {
+  var r: (u64, i32) = gnu.parse_number(value);
+  if (r.1 == 1) {
+    gnu.error("invalid number of chunks: " + gnu.quote(blame));
+    exit(1);
+  }
+  var n: u64 = r.0;
+  if (r.1 >= 2) {
+    n = u64_max();
+  }
+  if (n == 0 as u64) {
+    if (blame == value) {
+      gnu.error("invalid number of chunks: " + gnu.quote(blame));
+    } else {
+      gnu.error("invalid chunk number: " + gnu.quote(value));
+    }
+    exit(1);
+  }
+  return n;
+}
+
+// ---- the suffix counter ----------------------------------------------------
+// `Suffix` — the output-name counter. `idx` is one alphabet index per
+// position; the first `reserved` of them are pinned at the alphabet's
+// LAST character, which is what marks a widened suffix. `auto` widens on
+// overflow instead of failing, and is off whenever the width was decided
+// rather than defaulted (an explicit `-a`, a `-n` count, a start value).
+struct Suffix { alpha: string, idx: i32[], reserved: i32, auto: boolean, done: boolean }
+
+function suffix_new(alpha: string, width: i32, auto: boolean, start: u64): Suffix {
+  var idx: i32[] = [];
+  var i: i32 = 0;
+  while (i < width) {
+    idx = idx.append(0);
+    i = i + 1;
+  }
+  var base: u64 = alpha.len() as u64;
+  var v: u64 = start;
+  var p: i32 = width - 1;
+  while (v > 0 as u64) {
+    if (p < 0) {
+      gnu.die_usage("numerical suffix start value is too large for the suffix length", 1);
+    }
+    idx = idx.with(p, (v % base) as i32);
+    v = v / base;
+    p = p - 1;
+  }
+  return Suffix { alpha: alpha, idx: idx, reserved: 0, auto: auto, done: false };
+}
+
+function suffix_name(x: Suffix): string {
+  var bs: u8[] = [];
+  var i: i32 = 0;
+  while (i < x.idx.len()) {
+    bs = bs.append(x.alpha[x.idx[i]]);
+    i = i + 1;
+  }
+  return string_from_bytes_unchecked(bs);
+}
+
+// The next name, or `done` when the width is fixed and every name in it
+// has been used. Widening triggers one position EARLY: the leading
+// counting digit reaching the alphabet's last character is what says the
+// space is nearly spent, and that character then becomes the reserved
+// marker of the wider suffix rather than a name of its own.
+function suffix_next(x: Suffix): Suffix {
+  var idx: i32[] = x.idx;
+  var last: i32 = x.alpha.len() - 1;
+  var i: i32 = idx.len() - 1;
+  while (i >= x.reserved) {
+    var v: i32 = idx[i] + 1;
+    if (i == x.reserved && x.auto && v == last) {
+      return suffix_widen(x);
+    }
+    if (v <= last) {
+      return Suffix { ...x, idx: idx.with(i, v) };
+    }
+    idx = idx.with(i, 0);
+    i = i - 1;
+  }
+  return Suffix { ...x, idx: idx, done: true };
+}
+
+function suffix_widen(x: Suffix): Suffix {
+  var reserved: i32 = x.reserved + 1;
+  var width: i32 = x.idx.len() + 2;
+  var last: i32 = x.alpha.len() - 1;
+  var idx: i32[] = [];
+  var i: i32 = 0;
+  while (i < width) {
+    if (i < reserved) {
+      idx = idx.append(last);
+    } else {
+      idx = idx.append(0);
+    }
+    i = i + 1;
+  }
+  return Suffix { ...x, idx: idx, reserved: reserved };
+}
+
+// The narrowest suffix that can name `n` files in `base` characters.
+function suffix_needed(n: u64, base: i32): i32 {
+  var w: i32 = 1;
+  var cap: u64 = base as u64;
+  while (cap < n) {
+    match (cap.checked_mul(base as u64)) {
+      Some(m) => {
+        cap = m;
+      },
+      None => {
+        return w + 1;
+      }
+    }
+    w = w + 1;
+  }
+  return w;
+}
+
+// ---- the output cursor -----------------------------------------------------
+// `Out` — where pieces go: a lazily opened output file (so an empty piece
+// costs no file unless one is due), or stdout for `-n K/N`. `w` is the
+// buffered file and `so` the buffered stdout, which `--verbose` also
+// writes to.
+struct Out { s: Settings, sfx: Suffix, w: io_buffered.BufWriter, open: boolean, name: string, so: io_buffered.BufWriter, to_stdout: boolean }
+
+// `w` starts as a placeholder over stdout that is never written to:
+// `open` is what says whether it is a real piece, and every writer here
+// calls `out_begin` before `out_put`.
+function out_new(s: Settings, sfx: Suffix, to_stdout: boolean): Out {
+  return Out { s: s, sfx: sfx, w: io_buffered.buf_writer_new(stdout(), 1), open: false, name: "", so: gnu.out_with(65536), to_stdout: to_stdout };
+}
+
+// The name a piece would take, and the counter moved on. Running out of
+// names is fatal — GNU has already written the pieces before it.
+function out_name(o: Out): (string, Out) {
+  if (o.sfx.done) {
+    // gnulib's error() flushes stdout first, so a --verbose line already
+    // buffered is not overtaken by the diagnostic.
+    gnu.flush(o.so);
+    gnu.error("output file suffixes exhausted");
+    exit(1);
+  }
+  var name: string = o.s.prefix + suffix_name(o.sfx) + o.s.add_suffix;
+  return (name, Out { ...o, sfx: suffix_next(o.sfx) });
+}
+
+// Start the next piece. A piece that is never written to is still a file
+// when the caller asks for one (`-n` without `-e`), so opening is
+// explicit rather than implied by the first write.
+function out_begin(o: Out): Out {
+  if (o.to_stdout) {
+    return o;
+  }
+  var closed: Out = out_end(o);
+  var r: (string, Out) = out_name(closed);
+  var name: string = r.0;
+  var next: Out = r.1;
+  if (next.s.verbose) {
+    // Flushed per line rather than at the end: GNU prints the line before
+    // the open, so a piece whose open FAILS has still announced itself,
+    // and the diagnostic below exits without a chance to flush.
+    next = Out { ...next, so: gnu.put(next.so, "creating file " + gnu.quote(name) + "\n") };
+    next = Out { ...next, so: gnu.flush(next.so) };
+  }
+  match (open_writer(name)) {
+    Ok(f) => {
+      return Out { ...next, w: io_buffered.buf_writer_new(f, 65536), open: true, name: name };
+    },
+    Err(e) => {
+      gnu.error(name + ": " + gnu.io_error_text(e));
+      exit(1);
+    }
+  }
+  return next;
+}
+
+function out_put(o: Out, data: string): Out {
+  if (data.len() == 0) {
+    return o;
+  }
+  if (o.to_stdout) {
+    return Out { ...o, so: gnu.put(o.so, data) };
+  }
+  var w: io_buffered.BufWriter = o.w.write_string(data);
+  match (w.error()) {
+    Some(e) => {
+      gnu.error(o.name + ": " + gnu.io_error_text(e));
+      exit(1);
+    },
+    None => {}
+  }
+  return Out { ...o, w: w };
+}
+
+function out_end(o: Out): Out {
+  if (!o.open) {
+    return o;
+  }
+  match (o.w.close()) {
+    Some(e) => {
+      gnu.error(o.name + ": " + gnu.io_error_text(e));
+      exit(1);
+    },
+    None => {}
+  }
+  return Out { ...o, open: false };
+}
+
+function out_finish(o: Out): void {
+  var done: Out = out_end(o);
+  gnu.finish(done.so);
+}
+
+// ---- the input -------------------------------------------------------------
+// `Src` — the input as a stream of blocks. `mem` is what has already been
+// read (the size probe's prefix, or a whole small input); the Reader
+// supplies the rest once it is drained.
+struct Src { r: Reader, name: string, mem: string, pos: i32, eof: boolean }
+
+function src_new(r: Reader, name: string): Src {
+  return Src { r: r, name: name, mem: "", pos: 0, eof: false };
+}
+
+function src_mem(r: Reader, name: string, mem: string): Src {
+  return Src { r: r, name: name, mem: mem, pos: 0, eof: true };
+}
+
+function read_size(): i32 {
+  return 65536;
+}
+
+// Up to `n` more bytes, or "" at end of input. A read failure is GNU's
+// `split: NAME: <strerror>` and exit 1 — the same shape whether NAME is
+// an operand or the `-` that stands for stdin.
+function src_read(s: Src, n: i32): (string, Src) {
+  if (s.pos < s.mem.len()) {
+    var end: i32 = s.pos + n;
+    if (end > s.mem.len()) {
+      end = s.mem.len();
+    }
+    var got: string = slice_unchecked(s.mem, s.pos, end) + "";
+    var rest: Src = Src { ...s, pos: end };
+    if (end >= s.mem.len()) {
+      rest = Src { ...rest, mem: "", pos: 0 };
+    }
+    return (got, rest);
+  }
+  if (s.eof) {
+    return ("", s);
+  }
+  match (s.r.read_chunk(n)) {
+    Ok(chunk) => {
+      if (chunk.len() == 0) {
+        return ("", Src { ...s, eof: true });
+      }
+      return (chunk, s);
+    },
+    Err(e) => {
+      gnu.error(s.name + ": " + gnu.io_error_text(e));
+      exit(1);
+    }
+  }
+  return ("", s);
+}
+
+// ---- the temporary spool ---------------------------------------------------
+// gnulib's path_search: $TMPDIR when it names a directory, else /tmp.
+// `temp_dir()` cannot serve here — it chooses the directory itself.
+function tmp_root(): string {
+  match (env("TMPDIR")) {
+    Some(d) => {
+      if (d.len() > 0) {
+        match (stat(d)) {
+          Ok(st) => {
+            if (st.is_dir) {
+              return d;
+            }
+          },
+          Err(_) => {}
+        }
+      }
+    },
+    None => {}
+  }
+  return "/tmp";
+}
+
+function temp_name(root: string): string {
+  var bs: u8[] = [];
+  var letters: string = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+  var i: i32 = 0;
+  while (i < 6) {
+    var v: i32 = random_i32();
+    if (v < 0) {
+      v = 0 - v;
+    }
+    bs = bs.append(letters[v % letters.len()]);
+    i = i + 1;
+  }
+  return root + "/cutmp" + string_from_bytes_unchecked(bs);
+}
+
+// `spool(s)` — copy a non-seekable input to an unlinked temporary file
+// and hand back a Reader over it plus its size. `open_exclusive` is what
+// makes the name safe to choose: a name an attacker planted comes back
+// as AlreadyExists and the loop tries another, where `open_writer` would
+// truncate their file instead (#8776).
+function spool(s: Src, first: string): (Src, i64) {
+  var root: string = tmp_root();
+  var path: string = "";
+  var w: Writer = stdout();
+  var tries: i32 = 0;
+  while (true) {
+    path = temp_name(root);
+    match (open_exclusive(path)) {
+      Ok(f) => {
+        w = f;
+        break;
+      },
+      Err(e) => {
+        match (e) {
+          AlreadyExists(_) => {
+            tries = tries + 1;
+            if (tries > 100) {
+              gnu.error("cannot create temporary file in " + gnu.quote(root) + ": File exists");
+              exit(1);
+            }
+          },
+          _ => {
+            gnu.error("cannot create temporary file in " + gnu.quote(root) + ": " + gnu.io_error_text(e));
+            exit(1);
+          }
+        }
+      }
+    }
+  }
+  var total: i64 = 0 as i64;
+  var buf: io_buffered.BufWriter = io_buffered.buf_writer_new(w, 65536);
+  var block: string = first;
+  var src: Src = s;
+  while (block.len() > 0) {
+    total = total + block.len() as i64;
+    buf = buf.write_string(block);
+    match (buf.error()) {
+      Some(e) => {
+        drop_spool(path);
+        gnu.error(path + ": " + gnu.io_error_text(e));
+        exit(1);
+      },
+      None => {}
+    }
+    var r: (string, Src) = src_read(src, read_size());
+    block = r.0;
+    src = r.1;
+  }
+  match (buf.close()) {
+    Some(e) => {
+      drop_spool(path);
+      gnu.error(path + ": " + gnu.io_error_text(e));
+      exit(1);
+    },
+    None => {}
+  }
+  match (open_reader(path)) {
+    Ok(r) => {
+      match (remove_file(path)) {
+        Ok(_) => {},
+        Err(_) => {}
+      }
+      return (src_new(r, s.name), total);
+    },
+    Err(e) => {
+      drop_spool(path);
+      gnu.error(path + ": " + gnu.io_error_text(e));
+      exit(1);
+    }
+  }
+  return (s, total);
+}
+
+// `drop_spool(path)` — best-effort unlink of the spool file, for the exits
+// that leave `spool` without one. GNU never needs this: create_temp_file
+// unlinks at creation and keeps only the fd, so the input has no name to
+// leave behind. This one has a name until the reopen, so every failing
+// path removes it rather than leaving a copy of the input in $TMPDIR.
+// A signal still leaks it — closing that needs the unlink-at-creation
+// shape (#8814).
+function drop_spool(path: string): void {
+  match (remove_file(path)) {
+    Ok(_) => {},
+    Err(_) => {}
+  }
+}
+
+// `sized(s, r)` — the input's byte count, with the input still readable
+// from its start. A regular file answers from fstat; anything else is
+// read once, and spooled only if it does not end inside the first block
+// (which is where GNU's `$TMPDIR/cutmpXXXXXX` comes from).
+function sized(s: Src, r: Reader): (Src, i64) {
+  match (r.stat()) {
+    Ok(st) => {
+      if (st.is_file) {
+        var at: i64 = 0 as i64;
+        match (r.seek(0 as i64, 1)) {
+          Ok(p) => {
+            at = p;
+          },
+          Err(_) => {}
+        }
+        var size: i64 = st.size - at;
+        if (size < 0 as i64) {
+          size = 0 as i64;
+        }
+        return (s, size);
+      }
+    },
+    Err(_) => {}
+  }
+  var head: (string, Src) = src_read(s, read_size());
+  var first: string = head.0;
+  var rest: Src = head.1;
+  if (rest.eof) {
+    return (src_mem(rest.r, rest.name, first), first.len() as i64);
+  }
+  return spool(rest, first);
+}
+
+// ---- the split modes -------------------------------------------------------
+// `-l N`: N records per file. One `__count_byte` decides a whole block —
+// fewer separators in it than are still wanted and it goes out unsplit —
+// so only the block that reaches the count is walked.
+function split_lines(s: Settings, o: Out, src: Src): Out {
+  var out: Out = o;
+  var input: Src = src;
+  var left: u64 = s.units;
+  var started: boolean = false;
+  while (true) {
+    var r: (string, Src) = src_read(input, read_size());
+    var block: string = r.0;
+    input = r.1;
+    if (block.len() == 0) {
+      return out;
+    }
+    var at: i32 = 0;
+    while (at < block.len()) {
+      var rest: string = block;
+      if (at > 0) {
+        rest = slice_unchecked(block, at, block.len()) + "";
+      }
+      var here: u64 = __count_byte(rest, s.sep) as u64;
+      if (!started) {
+        out = out_begin(out);
+        started = true;
+      }
+      if (here < left) {
+        out = out_put(out, rest);
+        left = left - here;
+        at = block.len();
+      } else {
+        var cut: i32 = at;
+        var want: u64 = left;
+        while (want > 0 as u64) {
+          cut = __memchr(block, s.sep, cut) + 1;
+          want = want - 1 as u64;
+        }
+        out = out_put(out, slice_unchecked(block, at, cut) + "");
+        at = cut;
+        left = s.units;
+        started = false;
+      }
+    }
+  }
+  return out;
+}
+
+// `-b N`: N bytes per file, the last piece short.
+function split_bytes(s: Settings, o: Out, src: Src): Out {
+  var out: Out = o;
+  var input: Src = src;
+  var left: u64 = s.units;
+  var started: boolean = false;
+  while (true) {
+    var r: (string, Src) = src_read(input, read_size());
+    var block: string = r.0;
+    input = r.1;
+    if (block.len() == 0) {
+      return out;
+    }
+    var at: i32 = 0;
+    while (at < block.len()) {
+      if (!started) {
+        out = out_begin(out);
+        started = true;
+      }
+      var have: u64 = (block.len() - at) as u64;
+      if (have < left) {
+        if (at == 0) {
+          out = out_put(out, block);
+        } else {
+          out = out_put(out, slice_unchecked(block, at, block.len()) + "");
+        }
+        left = left - have;
+        at = block.len();
+      } else {
+        var take: i32 = left as i32;
+        out = out_put(out, slice_unchecked(block, at, at + take) + "");
+        at = at + take;
+        left = s.units;
+        started = false;
+      }
+    }
+  }
+  return out;
+}
+
+// `-C N`: whole records, up to N bytes per file. The last separator
+// inside the remaining budget is found with one `__rmemchr`, so a file is
+// filled in one write rather than one per record; a record longer than N
+// on its own is cut at exactly N, which is the only way a `-C` piece ends
+// mid-record.
+function split_line_bytes(s: Settings, o: Out, src: Src): Out {
+  var out: Out = o;
+  var input: Src = src;
+  var buf: string = "";
+  var used: u64 = 0 as u64;
+  var started: boolean = false;
+  var eof: boolean = false;
+  while (true) {
+    var avail: u64 = s.units - used;
+    var hi: i32 = buf.len();
+    if (avail < hi as u64) {
+      hi = avail as i32;
+    }
+    // The last record that ends inside what is left of this file's
+    // budget: everything up to it goes out in one write. Scanning BEFORE
+    // reading more is what keeps the buffer one record long instead of
+    // `-C SIZE` long — with `-C 8M` the other order copies a growing
+    // 8 MiB buffer once per read.
+    var j: i32 = __rmemchr(buf, s.sep, hi - 1);
+    if (j >= 0) {
+      if (!started) {
+        out = out_begin(out);
+        started = true;
+      }
+      out = out_put(out, slice_unchecked(buf, 0, j + 1) + "");
+      buf = slice_unchecked(buf, j + 1, buf.len()) + "";
+      used = used + (j + 1) as u64;
+      if (used >= s.units) {
+        used = 0 as u64;
+        started = false;
+      }
+      continue;
+    }
+    if (!eof && buf.len() as u64 < avail) {
+      var want: i32 = read_size();
+      if (avail - buf.len() as u64 < want as u64) {
+        want = (avail - buf.len() as u64) as i32;
+      }
+      var r: (string, Src) = src_read(input, want);
+      input = r.1;
+      if (r.0.len() == 0) {
+        eof = true;
+      } else if (buf.len() == 0) {
+        buf = r.0;
+      } else {
+        buf = buf + r.0;
+      }
+      continue;
+    }
+    if (buf.len() == 0) {
+      return out;
+    }
+    if (eof && buf.len() as u64 <= avail) {
+      // The tail is a final unterminated record that fits.
+      if (!started) {
+        out = out_begin(out);
+        started = true;
+      }
+      out = out_put(out, buf);
+      return out;
+    }
+    // No record ends inside the budget: start a new file if this one has
+    // anything in it, else cut the over-long record at exactly SIZE.
+    if (used > 0 as u64) {
+      used = 0 as u64;
+      started = false;
+      continue;
+    }
+    if (!started) {
+      out = out_begin(out);
+      started = true;
+    }
+    out = out_put(out, slice_unchecked(buf, 0, hi) + "");
+    buf = slice_unchecked(buf, hi, buf.len()) + "";
+    used = 0 as u64;
+    started = false;
+  }
+  return out;
+}
+
+// ---- `-n` ------------------------------------------------------------------
+// The end offset of chunk `k` of `n` over `size` bytes: every chunk gets
+// `size / n`, and the first `size % n` of them one byte more. Not
+// `k * size / n`, which distributes the remainder differently and puts
+// the short chunk in the wrong place.
+function chunk_end(k: u64, n: u64, size: u64): u64 {
+  var each: u64 = size / n;
+  var extra: u64 = size % n;
+  var bonus: u64 = k;
+  if (bonus > extra) {
+    bonus = extra;
+  }
+  return k * each + bonus;
+}
+
+// `-n N` and `-n K/N`: chunks by byte count.
+function split_chunk_bytes(s: Settings, o: Out, src: Src, size: i64): Out {
+  var out: Out = o;
+  var input: Src = src;
+  var total: u64 = size as u64;
+  var pos: u64 = 0 as u64;
+  var k: u64 = 1 as u64;
+  while (k <= s.units) {
+    var end: u64 = chunk_end(k, s.units, total);
+    var want: u64 = end - pos;
+    var wanted: boolean = s.chunk_k == 0 as u64 || s.chunk_k == k;
+    if (wanted && (want > 0 as u64 || !s.elide)) {
+      out = out_begin(out);
+    }
+    while (want > 0 as u64) {
+      var n: i32 = read_size();
+      if (want < n as u64) {
+        n = want as i32;
+      }
+      var r: (string, Src) = src_read(input, n);
+      input = r.1;
+      if (r.0.len() == 0) {
+        want = 0 as u64;
+      } else {
+        if (wanted) {
+          out = out_put(out, r.0);
+        }
+        want = want - r.0.len() as u64;
+      }
+    }
+    pos = end;
+    k = k + 1 as u64;
+  }
+  return out_end(out);
+}
+
+// `-n l/N` and `-n l/K/N`: chunks that never cut a record. A chunk runs
+// to the first record boundary at or after its byte end, so the bytes
+// before that end need no scanning at all — one `__memchr` per chunk
+// finds the boundary.
+//
+// GNU asserts `n <= file_size` here and, with the assertion compiled out,
+// keeps opening pieces past N when it does not hold AND the input ends on
+// a record boundary — until the suffixes run out. An input whose last
+// record is unterminated, an empty one, and the `K/N` form (a different
+// extraction path) all stop where they should. That is reproduced rather
+// than corrected: it is what the reference does with the same argv.
+function split_chunk_lines(s: Settings, o: Out, src: Src, size: i64): Out {
+  var out: Out = o;
+  var input: Src = src;
+  var total: u64 = size as u64;
+  var pos: u64 = 0 as u64;
+  var k: u64 = 1 as u64;
+  // Whether the byte before `pos` ended a record. A chunk stops at the
+  // first boundary at or after its byte end, so one that lands exactly on
+  // a boundary takes nothing more. `ends_sep` is the same question about
+  // the last byte CONSUMED, which is what decides whether the piece loop
+  // runs away past N.
+  var at_boundary: boolean = true;
+  var ends_sep: boolean = false;
+  while (true) {
+    var end: u64 = chunk_end(k, s.units, total);
+    if (end < pos) {
+      end = pos;
+    }
+    var wanted: boolean = s.chunk_k == 0 as u64 || s.chunk_k == k;
+    var opened: boolean = false;
+    if (wanted && !s.elide) {
+      out = out_begin(out);
+      opened = true;
+    }
+    // Everything before the chunk's byte end belongs to it whatever is
+    // in it; only from there on does a record boundary have to be found.
+    while (pos < end) {
+      var n: i32 = read_size();
+      if (end - pos < n as u64) {
+        n = (end - pos) as i32;
+      }
+      var r: (string, Src) = src_read(input, n);
+      input = r.1;
+      if (r.0.len() == 0) {
+        pos = end;
+        break;
+      }
+      if (wanted) {
+        if (!opened) {
+          out = out_begin(out);
+          opened = true;
+        }
+        out = out_put(out, r.0);
+      }
+      at_boundary = r.0[r.0.len() - 1] as i32 == s.sep;
+      ends_sep = at_boundary;
+      pos = pos + r.0.len() as u64;
+    }
+    // Then the tail of the record the byte end landed inside.
+    while (!at_boundary && pos < total) {
+      var rr: (string, Src) = src_read(input, read_size());
+      input = rr.1;
+      var block: string = rr.0;
+      if (block.len() == 0) {
+        pos = total;
+        at_boundary = true;
+      } else {
+        var j: i32 = __memchr(block, s.sep, 0);
+        var take: i32 = block.len();
+        if (j >= 0) {
+          take = j + 1;
+          at_boundary = true;
+        }
+        if (wanted) {
+          if (!opened) {
+            out = out_begin(out);
+            opened = true;
+          }
+          out = out_put(out, slice_unchecked(block, 0, take) + "");
+        }
+        ends_sep = block[take - 1] as i32 == s.sep;
+        pos = pos + take as u64;
+        if (take < block.len()) {
+          input = src_pushback(input, slice_unchecked(block, take, block.len()) + "");
+        }
+      }
+    }
+    if (k >= s.units) {
+      var runaway: boolean = s.chunk_k == 0 as u64 && s.units > total && total > 0 as u64 && ends_sep;
+      if (!runaway) {
+        break;
+      }
+    }
+    k = k + 1 as u64;
+  }
+  return out_end(out);
+}
+
+// Give back bytes read past a record boundary, so the next chunk sees
+// them. The block a `read_chunk` hands over is the only place they can
+// live; `mem` is empty here because the scan drained it first.
+function src_pushback(s: Src, rest: string): Src {
+  if (s.pos < s.mem.len()) {
+    return Src { ...s, mem: rest + slice_unchecked(s.mem, s.pos, s.mem.len()), pos: 0 };
+  }
+  return Src { ...s, mem: rest, pos: 0 };
+}
+
+// `-n r/N` and `-n r/K/N`: records dealt round robin. No size is needed
+// — record i goes to file i mod N — so this is the one `-n` form that
+// streams a pipe without spooling it.
+//
+// A block at a time, not a record at a time. The record ends in the block
+// are found once, and then each output file takes its share in ONE write
+// built through the shared string buffer. Dealing record by record into
+// per-file buffers is the obvious shape and is 200x slower: a BufWriter
+// read out of an array is aliased by the array, so appending to it copies
+// the whole buffer instead of growing it in place (#8770 is the same cost
+// one level down).
+function split_round(s: Settings, o: Out, src: Src): Out {
+  var out: Out = o;
+  var input: Src = src;
+  if (s.chunk_k != 0 as u64) {
+    return split_round_one(s, out, input);
+  }
+  // Every file exists up front unless -e says an unused one should not,
+  // which is also the order GNU opens them in.
+  var ws: Writer[] = [];
+  var names: string[] = [];
+  var live: boolean[] = [];
+  var i: u64 = 0 as u64;
+  while (i < s.units) {
+    var r: (string, Out) = out_name(out);
+    var name: string = r.0;
+    out = r.1;
+    names = names.append(name);
+    if (s.elide) {
+      ws = ws.append(stdout());
+      live = live.append(false);
+    } else {
+      out = out_verbose(out, name);
+      ws = ws.append(open_out(name));
+      live = live.append(true);
+    }
+    i = i + 1 as u64;
+  }
+  var n: i32 = names.len();
+  var slot: i32 = 0;
+  var buf: string = "";
+  var eof: boolean = false;
+  while (true) {
+    if (!eof) {
+      var rd: (string, Src) = src_read(input, round_block());
+      input = rd.1;
+      if (rd.0.len() == 0) {
+        eof = true;
+      } else if (buf.len() == 0) {
+        buf = rd.0;
+      } else {
+        buf = buf + rd.0;
+      }
+      if (!eof) {
+        continue;
+      }
+    }
+    if (buf.len() == 0) {
+      break;
+    }
+    // Record ends inside the buffer. At EOF an unterminated tail is a
+    // record of its own, so it joins the list.
+    var ends: i32[] = [];
+    var at: i32 = 0;
+    while (at < buf.len()) {
+      var j: i32 = __memchr(buf, s.sep, at);
+      if (j < 0) {
+        break;
+      }
+      ends = ends.append(j + 1);
+      at = j + 1;
+    }
+    if (eof && at < buf.len()) {
+      ends = ends.append(buf.len());
+      at = buf.len();
+    }
+    var k: i32 = 0;
+    while (k < n && k < ends.len()) {
+      strbuf_reset();
+      var e: i32 = k;
+      while (e < ends.len()) {
+        var from: i32 = 0;
+        if (e > 0) {
+          from = ends[e - 1];
+        }
+        strbuf_append(slice_unchecked(buf, from, ends[e]) + "");
+        e = e + n;
+      }
+      var share: string = strbuf_take();
+      var target: i32 = (slot + k) % n;
+      if (!live[target]) {
+        out = out_verbose(out, names[target]);
+        ws = ws.with(target, open_out(names[target]));
+        live = live.with(target, true);
+      }
+      write_fd(ws[target], names[target], share);
+      k = k + 1;
+    }
+    slot = (slot + ends.len()) % n;
+    if (at < buf.len()) {
+      buf = slice_unchecked(buf, at, buf.len()) + "";
+    } else {
+      buf = "";
+    }
+    if (eof) {
+      break;
+    }
+  }
+  var c: i32 = 0;
+  while (c < n) {
+    if (live[c]) {
+      match (ws[c].close()) {
+        Some(e) => {
+          gnu.error(names[c] + ": " + gnu.io_error_text(e));
+          exit(1);
+        },
+        None => {}
+      }
+    }
+    c = c + 1;
+  }
+  return out;
+}
+
+// The read block for round robin: bigger than the streaming one, so each
+// output file's share of a block is still a write worth making.
+function round_block(): i32 {
+  return 262144;
+}
+
+// `-n r/K/N`: only the Kth share, on stdout.
+function split_round_one(s: Settings, o: Out, src: Src): Out {
+  var out: Out = o;
+  var input: Src = src;
+  var slot: u64 = 1 as u64;
+  var buf: string = "";
+  var eof: boolean = false;
+  while (true) {
+    if (!eof) {
+      var rd: (string, Src) = src_read(input, read_size());
+      input = rd.1;
+      if (rd.0.len() == 0) {
+        eof = true;
+      } else {
+        buf = buf + rd.0;
+      }
+    }
+    var at: i32 = 0;
+    while (at < buf.len()) {
+      var j: i32 = __memchr(buf, s.sep, at);
+      if (j < 0) {
+        break;
+      }
+      if (slot == s.chunk_k) {
+        out = out_put(out, slice_unchecked(buf, at, j + 1) + "");
+      }
+      at = j + 1;
+      slot = slot + 1 as u64;
+      if (slot > s.units) {
+        slot = 1 as u64;
+      }
+    }
+    if (at > 0) {
+      buf = slice_unchecked(buf, at, buf.len()) + "";
+    }
+    if (eof) {
+      break;
+    }
+  }
+  if (buf.len() > 0 && slot == s.chunk_k) {
+    out = out_put(out, buf);
+  }
+  return out;
+}
+
+function out_verbose(o: Out, name: string): Out {
+  if (!o.s.verbose) {
+    return o;
+  }
+  var so: io_buffered.BufWriter = gnu.put(o.so, "creating file " + gnu.quote(name) + "\n");
+  return Out { ...o, so: gnu.flush(so) };
+}
+
+function open_out(name: string): Writer {
+  match (open_writer(name)) {
+    Ok(f) => {
+      return f;
+    },
+    Err(e) => {
+      gnu.error(name + ": " + gnu.io_error_text(e));
+      exit(1);
+    }
+  }
+  return stdout();
+}
+
+function write_fd(w: Writer, name: string, data: string): void {
+  if (data.len() == 0) {
+    return;
+  }
+  match (w.write(data)) {
+    Some(e) => {
+      gnu.error(name + ": " + gnu.io_error_text(e));
+      exit(1);
+    },
+    None => {}
+  }
+}
+
+// ---- main ------------------------------------------------------------------
+function declare_options(): gnu.Opt[] {
+  var opts: gnu.Opt[] = [];
+  opts = opts.append(gnu.valued("b", "bytes", opt_bytes()));
+  opts = opts.append(gnu.valued("l", "lines", opt_lines()));
+  opts = opts.append(gnu.valued("C", "line-bytes", opt_line_bytes()));
+  opts = opts.append(gnu.valued("n", "number", opt_number()));
+  opts = opts.append(gnu.flag("e", "elide-empty-files", opt_elide()));
+  // -u says WHEN `-n r/…` copies, not what it copies, so nothing reads
+  // its id back: the option is declared for the scan and does nothing.
+  opts = opts.append(gnu.flag("u", "unbuffered", opt_unbuffered()));
+  opts = opts.append(gnu.valued("a", "suffix-length", opt_suffix_length()));
+  opts = opts.append(gnu.valued("", "additional-suffix", opt_additional()));
+  opts = opts.append(gnu.optional_long("d", "numeric-suffixes", opt_numeric()));
+  opts = opts.append(gnu.optional_long("x", "hex-suffixes", opt_hex()));
+  opts = opts.append(gnu.valued("", "filter", opt_filter()));
+  opts = opts.append(gnu.flag("", "verbose", opt_verbose()));
+  opts = opts.append(gnu.valued("t", "separator", opt_separator()));
+  return opts;
+}
+
+function scan(argv: string[]): (Settings, string[]) {
+  var s: Settings = settings_new();
+  var have_sep: boolean = false;
+  var g: gnu.Getopt = gnu.getopt_new(argv, declare_options(), "split", help_text(), 1);
+  while (true) {
+    var r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    g = r.1;
+    match (r.0) {
+      Some(m) => {
+        if (m.id == opt_bytes()) {
+          s = Settings { ...set_mode(s, mode_bytes()), units: size_operand(m.value, "bytes") };
+        } else if (m.id == opt_lines()) {
+          s = Settings { ...set_mode(s, mode_lines()), units: lines_operand(m.value) };
+        } else if (m.id == opt_line_bytes()) {
+          s = Settings { ...set_mode(s, mode_line_bytes()), units: size_operand(m.value, "lines") };
+        } else if (m.id == opt_number()) {
+          s = chunk_operand(m.value, s);
+        } else if (m.id == opt_elide()) {
+          s = Settings { ...s, elide: true };
+        } else if (m.id == opt_suffix_length()) {
+          s = Settings { ...s, suffix_len: suffix_length_operand(m.value) };
+        } else if (m.id == opt_additional()) {
+          if (__memchr(m.value, 47, 0) >= 0) {
+            gnu.die_usage("invalid suffix " + gnu.quote(m.value) + ", contains directory separator", 1);
+          }
+          s = Settings { ...s, add_suffix: m.value };
+        } else if (m.id == opt_numeric()) {
+          s = Settings { ...s, alpha: alpha_decimal(), start: 0 as u64, have_start: false };
+          if (m.has_value) {
+            s = Settings { ...s, start: start_operand(m.value, false), have_start: true };
+          }
+        } else if (m.id == opt_hex()) {
+          s = Settings { ...s, alpha: alpha_hex(), start: 0 as u64, have_start: false };
+          if (m.has_value) {
+            s = Settings { ...s, start: start_operand(m.value, true), have_start: true };
+          }
+        } else if (m.id == opt_filter()) {
+          s = Settings { ...s, filter: true };
+        } else if (m.id == opt_verbose()) {
+          s = Settings { ...s, verbose: true };
+        } else if (m.id == opt_separator()) {
+          var sep: i32 = separator_operand(m.value);
+          if (have_sep && sep != s.sep) {
+            gnu.error("multiple separator characters specified");
+            exit(1);
+          }
+          have_sep = true;
+          s = Settings { ...s, sep: sep };
+        }
+      },
+      None => {
+        break;
+      }
+    }
+  }
+  return (s, g.operands());
+}
+
+// The suffix width: 2 and widening on overflow unless something fixed
+// it — an explicit `-a`, a start value, or a `-n` count that says how
+// many names are needed. `-a` too small for that count is refused; GNU
+// will not widen a width it was given.
+function make_suffix(s: Settings): Suffix {
+  var width: i32 = 2;
+  var auto: boolean = true;
+  if (s.suffix_len > 0) {
+    width = s.suffix_len;
+    auto = false;
+  }
+  if (s.mode == mode_chunks()) {
+    var needed: i32 = suffix_needed(s.units, s.alpha.len());
+    if (s.suffix_len > 0 && s.suffix_len < needed) {
+      gnu.error("the suffix length needs to be at least " + needed.to_string());
+      exit(1);
+    }
+    if (width < needed) {
+      width = needed;
+    }
+    auto = false;
+  }
+  if (s.have_start) {
+    auto = false;
+  }
+  return suffix_new(s.alpha, width, auto, s.start);
+}
+
+function open_input(path: string): Reader {
+  if (path == "-") {
+    return stdin();
+  }
+  match (open_reader(path)) {
+    Ok(r) => {
+      return r;
+    },
+    Err(e) => {
+      gnu.error("cannot open " + gnu.quote(path) + " for reading: " + gnu.io_error_text(e));
+      exit(1);
+    }
+  }
+  return stdin();
+}
+
+function main(): i32 {
+  var argv: string[] = args();
+  var r: (Settings, string[]) = scan(argv);
+  var s: Settings = r.0;
+  var operands: string[] = r.1;
+  if (operands.len() > 2) {
+    gnu.die_usage("extra operand " + gnu.quote(operands[2]), 1);
+  }
+  var path: string = "-";
+  if (operands.len() >= 1) {
+    path = operands[0];
+  }
+  if (operands.len() >= 2) {
+    s = Settings { ...s, prefix: operands[1] };
+  }
+  if (s.mode == mode_none()) {
+    s = Settings { ...s, mode: mode_lines(), units: 1000 as u64 };
+  }
+  if (s.filter) {
+    gnu.error("--filter is not supported on this system");
+    exit(1);
+  }
+
+  var reader: Reader = open_input(path);
+  var name: string = path;
+  var src: Src = src_new(reader, name);
+  var to_stdout: boolean = s.mode == mode_chunks() && s.chunk_k != 0 as u64;
+  var out: Out = out_new(s, make_suffix(s), to_stdout);
+
+  if (s.mode == mode_lines()) {
+    out = split_lines(s, out, src);
+  } else if (s.mode == mode_bytes()) {
+    out = split_bytes(s, out, src);
+  } else if (s.mode == mode_line_bytes()) {
+    out = split_line_bytes(s, out, src);
+  } else if (s.style == style_round()) {
+    out = split_round(s, out, src);
+  } else {
+    var sz: (Src, i64) = sized(src, reader);
+    if (s.style == style_lines()) {
+      out = split_chunk_lines(s, out, sz.0, sz.1);
+    } else {
+      out = split_chunk_bytes(s, out, sz.0, sz.1);
+    }
+  }
+  out_finish(out);
+  if (path != "-") {
+    reader.close();
+  }
+  return 0;
+}

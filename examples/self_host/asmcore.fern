@@ -736,18 +736,21 @@ pub function oflag(t: string, name: string): string {
     if (t == "arm64-darwin") {
         if (name == "wr_creat_trunc") { return "1537"; }
         if (name == "wr_creat_append") { return "521"; }
+        if (name == "wr_creat_excl") { return "2561"; }
         if (name == "rd_directory") { return "1048576"; }
         return "0";
     }
     if (t == "x86_64") {
         if (name == "wr_creat_trunc") { return "577"; }
         if (name == "wr_creat_append") { return "1089"; }
+        if (name == "wr_creat_excl") { return "193"; }
         if (name == "rd_directory") { return "65536"; }
         return "0";
     }
     // arm64 (Linux).
     if (name == "wr_creat_trunc") { return "577"; }
     if (name == "wr_creat_append") { return "1089"; }
+    if (name == "wr_creat_excl") { return "193"; }
     if (name == "rd_directory") { return "16384"; }
     return "0";
 }
@@ -820,7 +823,8 @@ pub function rt_src_random_i32(t: string): string {
 
 // rt_src_open_res backs the file half of the streaming Reader/Writer surface
 // (#4372, #2649 syscall-leaf) — one helper for open_reader (flags 0) /
-// open_writer / open_appender, returning `Result[Reader, IoError]`.
+// open_writer / open_appender / open_exclusive, returning
+// `Result[Reader, IoError]`.
 // NUL-terminate the path, openat(AT_FDCWD, pathz, flags, mode), then wrap:
 // Ok(fd) on success, Err(io_error) on a negative return.
 //
@@ -834,16 +838,17 @@ pub function rt_src_random_i32(t: string): string {
 // The flags arrive as a PARAMETER, not a per-target constant, because irlower
 // picks them and has no target: the op site passes the Linux value on every
 // target. So Darwin translates at run time, exactly as the hand-asm did — XNU's
-// O_CREAT/O_TRUNC/O_APPEND (0x200/0x400/0x8) match none of Linux's
-// 64/512/1024. Untranslated, open_writer asks XNU for O_CREAT-without-O_TRUNC
-// and an overwrite leaves the old file's trailing bytes (#6042). The two live
-// combinations are the only ones the op site can produce, and the Linux targets
-// get no branches at all.
+// O_CREAT/O_TRUNC/O_APPEND/O_EXCL (0x200/0x400/0x8/0x800) match none of
+// Linux's 64/512/1024/128. Untranslated, open_writer asks XNU for
+// O_CREAT-without-O_TRUNC and an overwrite leaves the old file's trailing
+// bytes (#6042). The three live combinations are the only ones the op site
+// can produce, and the Linux targets get no branches at all.
 pub function rt_src_open_res(t: string): string {
     var xlate: string = "";
     if (t == "arm64-darwin") {
         xlate = "if (f == " + oflag("x86_64", "wr_creat_trunc") + ") { f = " + oflag(t, "wr_creat_trunc") + "; } "
-              + "if (f == " + oflag("x86_64", "wr_creat_append") + ") { f = " + oflag(t, "wr_creat_append") + "; } ";
+              + "if (f == " + oflag("x86_64", "wr_creat_append") + ") { f = " + oflag(t, "wr_creat_append") + "; } "
+              + "if (f == " + oflag("x86_64", "wr_creat_excl") + ") { f = " + oflag(t, "wr_creat_excl") + "; } ";
     }
     return "function __fern_open_res(path: string, flags: i32, mode: i32): Result[i32, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var f: i32 = flags; " + xlate + "var fd: i32 = __syscall4(" + sysno(t, "openat") + ", " + at_fdcwd(t) + ", pathz, f, mode); var pathz_own: string = __raw_string(pathz, plen + 1); if (fd < 0) { return Err(__fern_io_error(0 - fd, __fern_path_copy(pathz, plen))); } return Ok(fd); }";
 }
@@ -3575,14 +3580,14 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
     // variable is set (including empty), None otherwise.
     if (id.name == "env") { return ty_option(ty_string()); }
     // The streaming-I/O constructors, typed as native types them
-    // (#7758): open_reader/open_writer/open_appender(path) ->
+    // (#7758): open_reader/open_writer/open_appender/open_exclusive(path) ->
     // Result[Reader|Writer, IoError], stdin() -> Reader, stdout() /
     // stderr() -> Writer. A Reader/Writer is REPRESENTED by its bare
     // fd — `r.read_chunk` / `w.write` / `.close` take it directly —
     // but the TYPE is nominal, so `var r: i32 = open_reader(p)` is
     // the E003 native reports rather than a silently-accepted box.
     if (id.name == "open_reader") { return ty_result(ty_named("Reader")); }
-    if (id.name == "open_writer" || id.name == "open_appender") { return ty_result(ty_named("Writer")); }
+    if (id.name == "open_writer" || id.name == "open_appender" || id.name == "open_exclusive") { return ty_result(ty_named("Writer")); }
     if (id.name == "stdin") { return ty_named("Reader"); }
     if (id.name == "stdout" || id.name == "stderr") { return ty_named("Writer"); }
     // read_line() -> Option[string]: line INCLUDING '\n', None at EOF

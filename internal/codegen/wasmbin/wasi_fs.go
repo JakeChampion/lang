@@ -76,8 +76,21 @@ const (
 
 // WASI preview-1 `oflags` bits for path_open.
 const (
-	wasiOflagCreate   int32 = 0x01
-	wasiOflagTruncate int32 = 0x08
+	wasiOflagCreate    int32 = 0x01
+	wasiOflagExclusive int32 = 0x04
+	wasiOflagTruncate  int32 = 0x08
+)
+
+// WASI preview-2 `open-flags` bits for descriptor.open-at, and the
+// `descriptor-flags` bits the fs bundle asks for. The open-flags layout is
+// preview-1's oflags exactly — create bit0, directory bit1, exclusive bit2,
+// truncate bit3 — so the words match across the two ABIs.
+const (
+	wasiP2OpenFlagCreate    int32 = 0x01
+	wasiP2OpenFlagExclusive int32 = 0x04
+	wasiP2OpenFlagTruncate  int32 = 0x08
+
+	wasiP2DescFlagWrite int32 = 0x02
 )
 
 // WASI preview-1 `fdflags` bits for path_open.
@@ -1399,7 +1412,7 @@ func buildWriteFileErr(body []byte, buildIoErr, allocRc1, errnoLocal uint32) []b
 }
 
 // buildOpenBody is the shared body builder for open_reader /
-// open_writer / open_appender. They differ only in the
+// open_writer / open_appender / open_exclusive. They differ only in the
 // path_open immediate flags + the rights bitset; the rest of
 // the pipeline (path normalize → path_open → Result wrap) is
 // identical.
@@ -1647,6 +1660,21 @@ func buildOpenWriterBody(idxs map[string]uint32) []byte {
 // 8=writer base/data, 9=Ok box, 13/15/16 used by the err helper,
 // 14=normalize scratch.
 func buildOpenWriterBodyP2(idxs map[string]uint32) []byte {
+	return buildOpenWriteViaStreamBodyP2(idxs, wasiP2OpenFlagCreate|wasiP2OpenFlagTruncate)
+}
+
+// buildOpenExclusiveBodyP2 is the preview-2 variant of open_exclusive:
+// buildOpenWriterBodyP2 with EXCLUSIVE in place of TRUNCATE, so a name
+// already there comes back as the host's already-exists error code rather
+// than an emptied file.
+func buildOpenExclusiveBodyP2(idxs map[string]uint32) []byte {
+	return buildOpenWriteViaStreamBodyP2(idxs, wasiP2OpenFlagCreate|wasiP2OpenFlagExclusive)
+}
+
+// buildOpenWriteViaStreamBodyP2 is the shared body of the preview-2
+// write-side openers: open-at with `openFlags` then write-via-stream at
+// offset 0.
+func buildOpenWriteViaStreamBodyP2(idxs map[string]uint32, openFlags int32) []byte {
 	alloc := idxs["__fern_alloc"]
 	allocRc1 := idxs["__fern_alloc_rc1"]
 	buildIoErr := idxs["__build_io_error"]
@@ -1655,23 +1683,19 @@ func buildOpenWriterBodyP2(idxs map[string]uint32) []byte {
 	writeVia := idxs["wasi_descriptor_write_via_stream_p2"]
 	descDrop := idxs["wasi_descriptor_drop_p2"]
 
-	// open-flags: create(bit0)|truncate(bit3) = 9; descriptor-flags: write = 2.
-	const openFlagsCreateTrunc = 9
-	const descFlagsWrite = 2
-
 	var body []byte
 	body = inst.InstI32Const(body, 16)
 	body = inst.InstCall(body, alloc)
 	body = inst.InstLocalSet(body, 2)
 	body = emitStrNormalize(body, idxs, 0, 1, 3, 4, 14)
 	body = emitPreopenCachedP2(body, getDirs, 2, 5)
-	// open-at(preopen, 1, path_buf, path_byte_len, create|trunc, write, rb).
+	// open-at(preopen, 1, path_buf, path_byte_len, openFlags, write, rb).
 	body = inst.InstLocalGet(body, 5)
 	body = inst.InstI32Const(body, 1)
 	body = inst.InstLocalGet(body, 3)
 	body = inst.InstLocalGet(body, 4)
-	body = inst.InstI32Const(body, openFlagsCreateTrunc)
-	body = inst.InstI32Const(body, descFlagsWrite)
+	body = inst.InstI32Const(body, openFlags)
+	body = inst.InstI32Const(body, wasiP2DescFlagWrite)
 	body = inst.InstLocalGet(body, 2)
 	body = inst.InstCall(body, openAt)
 	body = inst.InstLocalGet(body, 2)
@@ -1756,10 +1780,6 @@ func buildOpenAppenderBodyP2(idxs map[string]uint32) []byte {
 	appendVia := idxs["wasi_descriptor_append_via_stream_p2"]
 	descDrop := idxs["wasi_descriptor_drop_p2"]
 
-	// open-flags: create(bit0) only = 1; descriptor-flags: write = 2.
-	const openFlagsCreate = 1
-	const descFlagsWrite = 2
-
 	var body []byte
 	body = inst.InstI32Const(body, 16)
 	body = inst.InstCall(body, alloc)
@@ -1771,8 +1791,8 @@ func buildOpenAppenderBodyP2(idxs map[string]uint32) []byte {
 	body = inst.InstI32Const(body, 1)
 	body = inst.InstLocalGet(body, 3)
 	body = inst.InstLocalGet(body, 4)
-	body = inst.InstI32Const(body, openFlagsCreate)
-	body = inst.InstI32Const(body, descFlagsWrite)
+	body = inst.InstI32Const(body, wasiP2OpenFlagCreate)
+	body = inst.InstI32Const(body, wasiP2DescFlagWrite)
 	body = inst.InstLocalGet(body, 2)
 	body = inst.InstCall(body, openAt)
 	body = inst.InstLocalGet(body, 2)
@@ -1839,6 +1859,18 @@ func buildOpenAppenderBodyP2(idxs map[string]uint32) []byte {
 
 	locals := inst.PutLocalsOneGroup(nil, 15, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
+}
+
+// buildOpenExclusiveBody — open with CREATE|EXCLUSIVE + write
+// rights. Returns Result[Writer, IoError]; a name that is already
+// there fails with EEXIST, which __build_io_error turns into
+// AlreadyExists. No TRUNCATE: with EXCLUSIVE the file cannot
+// already exist.
+func buildOpenExclusiveBody(idxs map[string]uint32) []byte {
+	return buildOpenBody(idxs,
+		wasiOflagCreate|wasiOflagExclusive,
+		wasiRightFdWrite|wasiRightFdSeek,
+		0)
 }
 
 // buildOpenAppenderBody — open with CREATE + write rights +

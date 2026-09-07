@@ -1751,7 +1751,8 @@ pub function wasm_ir_deferrals_ok(cache: irlower.LowerResult[]): boolean {
         // the `ip-socket-address` variant used by start-bind) carries the world
         // payload `component new` resolves. No tcp exclusion here — same route as
         // wasm_poll (#4316) proved.
-        // open_file (open_reader/open_writer/open_appender) + writer_write NOW lower
+        // open_file (open_reader/open_writer/open_appender/open_exclusive) +
+        // writer_write NOW lower
         // on the wasm IR path (#4372): $__fern_open_file does path_open under preopen
         // fd 3 (openat-flags -> WASI oflags/rights/fdflags), boxing the outcome as a
         // Result[Reader|Writer, IoError] (#7758), and $__fern_writer_write fd_writes
@@ -7155,7 +7156,9 @@ pub function writefile_func(): string {
 // open_file_func emits $__fern_open_file(path_box, openat_flags) → a fresh
 // Result[Reader|Writer, IoError] box (#4372 file half, #7758): open `path` under
 // preopen fd 3 via path_open, mapping the openat flags the register backends pass
-// (0 = O_RDONLY, 577 = O_WRONLY|O_CREAT|O_TRUNC, 1089 = O_WRONLY|O_CREAT|O_APPEND)
+// (0 = O_RDONLY, 577 = O_WRONLY|O_CREAT|O_TRUNC, 1089 = O_WRONLY|O_CREAT|O_APPEND,
+// 193 = O_WRONLY|O_CREAT|O_EXCL; WASI's oflags declare only Create 0x01,
+// Directory 0x02, Exclusive 0x04 and Truncate 0x08, so the words are 1, 9 and 5)
 // to WASI oflags / rights_base / fdflags. The new fd lands at scratch addr 16 (the
 // same slot write_file uses) and becomes the Ok payload — a Reader/Writer IS its
 // fd; a non-zero WASI errno becomes Err($__fern_build_io_error). Result box shape
@@ -7168,8 +7171,10 @@ pub function open_file_func(): string {
     o = o + "      (local.set $oflags (i32.const 0)) (local.set $rights (i64.const 6)) (local.set $fdflags (i32.const 0)))\n";
     o = o + "    (else (if (i32.eq (local.get $flags) (i32.const 1089)) (then\n";
     o = o + "      (local.set $oflags (i32.const 1)) (local.set $rights (i64.const 68)) (local.set $fdflags (i32.const 1)))\n";
+    o = o + "    (else (if (i32.eq (local.get $flags) (i32.const 193)) (then\n";
+    o = o + "      (local.set $oflags (i32.const 5)) (local.set $rights (i64.const 68)) (local.set $fdflags (i32.const 0)))\n";
     o = o + "    (else\n";
-    o = o + "      (local.set $oflags (i32.const 9)) (local.set $rights (i64.const 68)) (local.set $fdflags (i32.const 0))))))\n";
+    o = o + "      (local.set $oflags (i32.const 9)) (local.set $rights (i64.const 68)) (local.set $fdflags (i32.const 0))))))))\n";
     o = o + "    (local.set $err (call $path_open (i32.const 3) (i32.const 1) (i32.add (local.get $np) (i32.const 4)) (i32.load (local.get $np)) (local.get $oflags) (local.get $rights) (i64.const 0) (local.get $fdflags) (i32.const 16)))\n";
     o = o + "    (local.set $res (call $__fern_str_box (i32.const 8)))\n";
     o = o + "    (if (i32.ne (local.get $err) (i32.const 0)) (then\n";

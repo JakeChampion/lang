@@ -113,6 +113,12 @@ harness runs GNU and Fern and diffs. A case costs one line, and a case cannot
 record a wrong expectation, which is what makes the corpus cheap to grow and
 hard to get wrong. See the package doc in `harness_test.go`.
 
+A case may also ask for a working directory of its own — a fresh one per
+SIDE, seeded by a function it names — and the TREE it leaves behind is then
+compared alongside the streams, name by name and byte by byte. `split` is
+what needs it: its whole output is the files it writes, so the streams alone
+would compare two silences.
+
 A utility that reads the filesystem is asked about a tree its corpus builds
 under `t.TempDir()` — `test`'s has every file kind it can tell apart, the
 three special bits, pinned timestamps that differ below the second, a hard
@@ -421,6 +427,38 @@ The one row where BOTH lose to uutils is the plain copy, 3.6 ms against 7.1:
 uutils reaches for `copy_file_range(2)` and moves the bytes without a
 round trip through user space, where Fern and GNU both read and write.
 
+Group B's fifth, 2026-09-07, Linux x86-64, the same 62 MiB / 8 000 000-line
+file, GNU 9.4 and uutils 0.0.24. The same 4-core container with other agents'
+builds on it — the σ is mostly theirs, and the rows within 20% of parity are
+not separable from the noise:
+
+| utility | workload | fern (ms) | gnu (ms) | uutils (ms) | gnu / fern | uutils / fern |
+|---|---|---|---|---|---|---|
+| `split` | `-l 100000` of a 62 MiB file | 46.40 ± 20.48 | 90.30 ± 27.16 | 109.02 ± 23.28 | 1.95× | 2.35× |
+| `split` | `-b 8M` of a 62 MiB file | 32.06 ± 19.54 | 18.85 ± 5.88 | 63.40 ± 31.07 | 0.59× | 1.98× |
+| `split` | `-C 8M` of a 62 MiB file | 50.03 ± 37.38 | 43.71 ± 33.89 | 91.33 ± 25.84 | 0.87× | 1.83× |
+| `split` | `-n 8` of a 62 MiB file | 41.79 ± 26.29 | 40.42 ± 29.02 | 88.17 ± 62.82 | 0.97× | 2.11× |
+| `split` | `-n l/8` of a 62 MiB file | 34.64 ± 21.56 | 41.02 ± 27.84 | 319.98 ± 41.05 | 1.18× | 9.24× |
+| `split` | `-n r/8` of a 62 MiB file | 1058.74 ± 178.33 | 317.38 ± 72.02 | 418.23 ± 83.65 | 0.30× | 0.40× |
+| `split` | `-l 100000` from a pipe | 66.00 ± 29.74 | 112.12 ± 32.75 | 149.03 ± 39.35 | 1.70× | 2.26× |
+| `split` | `-n 8` from a pipe | 86.40 ± 44.42 | 95.24 ± 38.26 | 102.48 ± 39.30 | 1.10× | 1.19× |
+
+Reading it: every row that decides a whole BLOCK at a time is at or ahead of
+GNU — `-l` with one `__count_byte` per block, `-C` with one `__rmemchr` per
+piece, and the two `-n` divisions that need no record boundaries before the
+chunk end. `-n 8 from a pipe` carries the spool to `$TMPDIR` and still wins,
+because the spool is a copy at memory bandwidth and GNU pays it too.
+
+`-n r/8` is the one row that loses, and it loses to #8770: round robin is the
+only mode with per-RECORD work, and a record has to be copied into its file's
+share one append at a time. Two shapes were measured before this one. Dealing
+records into an array of `BufWriter` is 0.04× — a writer read out of an array
+is aliased by the array, so appending to it copies the whole buffer instead of
+growing it in place, which is quadratic per block. Batching a block's share
+per file through the shared string buffer (`strbuf_append`) is what is here,
+and it is 10x better and still 3x off GNU: what remains is 8 million
+`slice_unchecked(...) + ""` materialisations, one per record, which is exactly
+the append #8770 wants to fuse.
 `tac`, 2026-09-06, the same container and the same 62 MiB file, with
 uutils 0.0.24 (the Debian multi-call binary the script now finds) and a
 588 KiB file — 100 000 lines of `seq` — for the regular-expression row.
@@ -602,6 +640,29 @@ connection returns at once trying nothing further, NXDOMAIN moves on, and
 anything else ends the loop.
 Neither changes the bytes on a host whose name resolves.
 
+**`split --filter=COMMAND` is refused.** GNU forks per piece, hands the child
+the read end of a pipe as its stdin, and streams the piece into the write
+end. Fern has `proc_fork` / `proc_exec` / `proc_waitpid` but no `pipe(2)`, no
+`dup2(2)` and no way to set a variable in a child's environment, and
+`subprocess()` is interp-only and takes the child's whole stdin as a string
+built in advance — which a piece that may be gigabytes is not. So the option
+is DECLARED, because its getopt behaviour is observable whether or not it
+runs (a required argument, a place in the `--f` prefix space, a position in
+the ambiguity list), and using it prints `split: --filter is not supported on
+this system` and exits 1 where GNU would run the command. The primitive is
+#8810; unlike `tail --pid`, GNU has no degraded path of its own here to
+borrow, so this one is a real divergence rather than a shared one.
+
+**`split --hex-suffixes=FROM` where FROM holds a hex LETTER is not
+reproduced.** GNU 9.4 seeds its suffix counter with `FROM[i] - '0'`, which is
+right for the decimal digits and 39 too large for `a`–`f`, and then indexes
+its 16-character alphabet with the result. The names that come back are the
+bytes that follow that string literal in the binary: `--hex-suffixes=a` gives
+`x0a`, `x0e`, `x10`, `x11`, …, and `--hex-suffixes=c` gives `x0c`, `x00`,
+`x01`, … — non-monotonic, repeating, and a property of one build's `.rodata`
+rather than of split. Fern counts in hex from FROM. FROM written in decimal
+digits (`--hex-suffixes=10`) agrees byte for byte and is in the corpus; a
+FROM with a letter is not, because there is nothing to agree with.
 **What `tac`'s write-failure cases assume about the host.** Whether a
 failed stdout write is reported as `write error: No space left on device`
 or as a bare `write error` is decided by which bytes glibc's stdio still
@@ -718,10 +779,10 @@ groups are the order of work. Each sub-issue names its group.
   `sum` `md5sum` `sha1sum` `sha224sum` `sha256sum` `sha384sum` `sha512sum`
   `b2sum` `tee`. Done: `cat`, `tac`, `head`, `tail`, `wc`, `nl`, `cut`,
   `paste`, `join`, `comm`, `uniq`, `tr`, `fold`, `expand`, `unexpand`,
-  `base32`, `base64`, `basenc` and the seven checksum utilities. Needs a
-  buffered stdout writer in `std/io_buffered` (its own header already
-  promises one) and a streaming stdin reader whose reads can FAIL: every one
-  of these reaches a read error through a directory operand, and
+  `split`, `base32`, `base64`, `basenc` and the seven checksum utilities.
+  Needs a buffered stdout writer in `std/io_buffered` (its own header
+  already promises one) and a streaming stdin reader whose reads can FAIL:
+  every one of these reaches a read error through a directory operand, and
   `Reader.read_chunk` answered None to EOF and to EISDIR alike until #8700
   gave it `Result[string, IoError]`. The hash
   utilities have their digests: `std/crypto` streams MD5, SHA-1,

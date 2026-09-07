@@ -1301,7 +1301,7 @@ type generator struct {
 
 	// usesReaderWriter pulls in the full Reader / Writer
 	// runtime bundle (stdin/stdout/stderr + open_reader /
-	// open_writer / open_appender + Reader/Writer method
+	// open_writer / open_appender / open_exclusive + Reader/Writer method
 	// helpers). Mirrors the arm64 generator's flag.
 	usesReaderWriter bool
 }
@@ -1664,7 +1664,7 @@ func (g *generator) recordUse(target string) {
 		"__method_Reader_close",
 		"__method_Writer_write",
 		"__method_Writer_close",
-		"open_reader", "open_writer", "open_appender",
+		"open_reader", "open_writer", "open_appender", "open_exclusive",
 		"stdin", "stdout", "stderr":
 		g.usesReaderWriter = true
 	case "__method_Reader_stat", "__method_Writer_stat":
@@ -3278,6 +3278,8 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_open_writer"
 		case "open_appender":
 			target = "__fern_open_appender"
+		case "open_exclusive":
+			target = "__fern_open_exclusive"
 		case "stdin":
 			target = "__fern_stdin"
 		case "stdout":
@@ -12592,9 +12594,21 @@ func (g *generator) emitReadFileBytesRuntime() {
 	g.line(".size __fern_read_file_bytes, .-__fern_read_file_bytes")
 }
 
+// The open(2) flag words the fs bundle writes with, named so a call site
+// cannot spell a raw number. There is no Darwin x86-64 backend
+// (docs/BACKEND-PARITY.md), so each is Linux's word and no target fork is
+// needed — unlike arm64, where the same three bits mean something else on
+// XNU (#8786). O_TRUNC is absent from the EXCL word by construction: with
+// O_EXCL the file cannot already exist.
+const (
+	oflagCreatTrunc  = 577  // O_WRONLY|O_CREAT|O_TRUNC
+	oflagCreatAppend = 1089 // O_WRONLY|O_CREAT|O_APPEND
+	oflagCreatExcl   = 193  // O_WRONLY|O_CREAT|O_EXCL
+)
+
 // emitWriteFileRuntime emits `__fern_write_file(path, content)
 // → Option[IoError]`. Pipeline: openat(AT_FDCWD, path,
-// O_WRONLY|O_CREAT|O_TRUNC=577, 0644) → write-loop → close →
+// O_WRONLY|O_CREAT|O_TRUNC, 0644) → write-loop → close →
 // None. Errors → Some(IoError).
 //
 // Option[IoError] layout:
@@ -12632,10 +12646,10 @@ func (g *generator) emitWriteFileRuntimeMode(sym, mode, sfx, fixupMode string) {
 	g.emitStrDataPtr("rbx", "rdi", "[rbp - 48]") // path byte ptr
 	g.emitStrDataPtr("r12", "rsi", "[rbp - 56]") // content byte ptr
 
-	// openat(AT_FDCWD, path, O_WRONLY|O_CREAT|O_TRUNC=577, 0644)
+	// openat(AT_FDCWD, path, O_WRONLY|O_CREAT|O_TRUNC, 0644)
 	g.emit("mov edi, -100")
 	g.emit("mov rsi, rbx")
-	g.emit("mov edx, 577")
+	g.emit(fmt.Sprintf("mov edx, %d", oflagCreatTrunc))
 	g.emit("mov r10d, " + mode)
 	g.emitSyscall(257)
 	g.emit("test rax, rax")
@@ -13877,15 +13891,16 @@ func (g *generator) emitReaderWriterRuntime() {
 		g.line(".size " + e.sym + ", .-" + e.sym)
 	}
 
-	// open_reader / open_writer / open_appender.
+	// open_reader / open_writer / open_appender / open_exclusive.
 	for _, e := range []struct {
 		sym   string
 		flags int
 		mode  int
 	}{
 		{"__fern_open_reader", 0, 0},
-		{"__fern_open_writer", 577, 0644},
-		{"__fern_open_appender", 1089, 0644},
+		{"__fern_open_writer", oflagCreatTrunc, 0644},
+		{"__fern_open_appender", oflagCreatAppend, 0644},
+		{"__fern_open_exclusive", oflagCreatExcl, 0600},
 	} {
 		g.line("")
 		g.line(".globl " + e.sym)

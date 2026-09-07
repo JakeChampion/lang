@@ -24,6 +24,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"syscall"
@@ -96,6 +97,23 @@ type invocation struct {
 	// docs/COREUTILS.md's "the same resulting tree". A path that does
 	// not exist compares equal to a path that does not exist.
 	artifacts []string
+	// seedTree is the same requirement for a utility whose output names
+	// cannot be listed in advance: `split` chooses `xaa`, `xab`, … from
+	// the input's length. It gets a fresh working directory per SIDE,
+	// seeded by this function, and EVERYTHING left under it joins the
+	// comparison — so a file neither side was expected to write fails
+	// too, which an `artifacts` list cannot express. Takes precedence
+	// over dir.
+	seedTree func(t *testing.T, dir string)
+}
+
+// treeEntry is one path under a seedTree case's working directory, as the
+// comparison sees it: the name relative to that directory, whether it is
+// a directory, and a regular file's bytes.
+type treeEntry struct {
+	name    string
+	isDir   bool
+	content string
 }
 
 // followStep is one thing the harness does to a followed file, once
@@ -159,6 +177,9 @@ type outcome struct {
 	exit int
 	// signal is the signal name when one killed the process, else "".
 	signal string
+	// tree is the working directory the run left behind, for a case
+	// that asked for one.
+	tree []treeEntry
 }
 
 func (o outcome) how() string {
@@ -434,7 +455,14 @@ func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 		cmd.Args = append(append(append([]string{pre[0]}, pre[1:]...), "-0", argv0, bin), inv.args...)
 	}
 	cmd.Env = append(baseEnv(), inv.env...)
-	cmd.Dir = inv.dir
+	var workDir string
+	if inv.seedTree != nil {
+		workDir = t.TempDir()
+		inv.seedTree(t, workDir)
+		cmd.Dir = workDir
+	} else {
+		cmd.Dir = inv.dir
+	}
 	cmd.Stdin = strings.NewReader(inv.stdin)
 	if inv.tty {
 		pty, err := os.OpenFile("/dev/ptmx", os.O_RDWR, 0)
@@ -524,7 +552,49 @@ func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 	if ws, ok := cmd.ProcessState.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
 		res.signal = ws.Signal().String()
 	}
+	if workDir != "" {
+		res.tree = readTree(t, workDir)
+	}
 	return res
+}
+
+// readTree lists everything under root, deepest paths included, with each
+// regular file's bytes. A file too large to hold is summarised by its size
+// instead, which still differs when the two sides disagree.
+func readTree(t *testing.T, root string) []treeEntry {
+	t.Helper()
+	var out []treeEntry
+	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		if rel == "." {
+			return nil
+		}
+		e := treeEntry{name: rel, isDir: info.IsDir()}
+		if !info.IsDir() {
+			if info.Size() > 1<<22 {
+				e.content = fmt.Sprintf("<%d bytes>", info.Size())
+			} else {
+				b, err := os.ReadFile(path)
+				if err != nil {
+					return err
+				}
+				e.content = string(b)
+			}
+		}
+		out = append(out, e)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("read the tree under %s: %v", root, err)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].name < out[j].name })
+	return out
 }
 
 // runToFile runs cmd with fd 1 appended to inv.stdoutPath and returns
@@ -736,6 +806,9 @@ func requireParity(t *testing.T, util string, cases []invocation) {
 			if want.how() != got.how() {
 				t.Errorf("status differs for %s %s: gnu %s, fern %s", util, quoteArgs(inv.args), want.how(), got.how())
 			}
+			if diff := treeDiff(want.tree, got.tree); diff != "" {
+				t.Errorf("the files left behind differ for %s %s\n%s", util, quoteArgs(inv.args), diff)
+			}
 		})
 	}
 }
@@ -828,4 +901,48 @@ func requireVersion(t *testing.T, util string, args []string, wantExit int) {
 func requireHelp(t *testing.T, util string, args []string, wantExit int) {
 	t.Helper()
 	requireHelpVersion(t, util, args, wantExit, "Usage: "+util)
+}
+
+// treeDiff reports the first few ways two trees differ, or "" when they
+// agree. Naming the path and the content that differs is what makes a
+// failure actionable: a `split` case that gets the suffix sequence wrong
+// otherwise reports only that something changed.
+func treeDiff(want, got []treeEntry) string {
+	byName := func(es []treeEntry) map[string]treeEntry {
+		m := make(map[string]treeEntry, len(es))
+		for _, e := range es {
+			m[e.name] = e
+		}
+		return m
+	}
+	w, g := byName(want), byName(got)
+	var names []string
+	seen := map[string]bool{}
+	for _, e := range append(append([]treeEntry{}, want...), got...) {
+		if !seen[e.name] {
+			seen[e.name] = true
+			names = append(names, e.name)
+		}
+	}
+	sort.Strings(names)
+	var lines []string
+	for _, n := range names {
+		we, wok := w[n]
+		ge, gok := g[n]
+		switch {
+		case wok && !gok:
+			lines = append(lines, fmt.Sprintf("  %s: gnu wrote it, fern did not", n))
+		case !wok && gok:
+			lines = append(lines, fmt.Sprintf("  %s: fern wrote it, gnu did not", n))
+		case we.isDir != ge.isDir:
+			lines = append(lines, fmt.Sprintf("  %s: gnu dir=%v, fern dir=%v", n, we.isDir, ge.isDir))
+		case we.content != ge.content:
+			lines = append(lines, fmt.Sprintf("  %s: gnu %s, fern %s", n, quote([]byte(we.content)), quote([]byte(ge.content))))
+		}
+		if len(lines) == 8 {
+			lines = append(lines, "  … more")
+			break
+		}
+	}
+	return strings.Join(lines, "\n")
 }

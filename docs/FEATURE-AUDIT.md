@@ -158,6 +158,7 @@ programs through the self-hosted x86-64 driver + CI-gated arm64); native
 | `stdin()/stdout()/stderr()` | | | | | | ⬜ | Reader/Writer |
 | `read_file` / `read_file_bytes` / `write_file` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | native: BACKEND-PARITY ReadFile/WriteFile + ReadFileBytes tests; self-host: fs tests + probe; `read_file_bytes(path): Result[u8[], IoError]` is the raw sibling (#5714) |
 | `open_reader/open_writer/open_appender` | | | | | | ⬜ | |
+| `open_exclusive` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | #8776. interp: `internal/interp/open_exclusive_test.go`; x86-64 / arm64 / arm64-ssa: the `open_exclusive_refuses_existing` case in each backend's e2e table; wasm: both WASI ABIs; self-host: lowered in irlower + asmcore's `wr_creat_excl`, with its own open-file IR tests. Creates 0600, pinned as `mode & 0o077 == 0` — a umask only clears bits, so that holds under any umask where `== 0600` would pin the runner's — by the `open_exclusive_is_not_world_readable` case in the x86-64 and arm64 e2e tables and by `TestOpenExclusiveIsNotReadableByGroupOrOther` on the interp path, which the compiled cases cannot see. Its three siblings are NOT audited here — this row was split off rather than ticked for all four |
 | Reader `.read_line()/.read_chunk(n)/.close()` | | | | | | ⬜ | |
 | Writer `.write(s)/.close()` | | | | | | ⬜ | |
 | `read_line()` (free) | | | | | | ⬜ | |

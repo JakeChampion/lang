@@ -865,6 +865,27 @@ function main(): i32 {
 			want: 4,
 		},
 		{
+			// open_exclusive is O_WRONLY|O_CREAT|O_EXCL: the first open
+			// creates, the second meets EEXIST and comes back as
+			// AlreadyExists rather than truncating what is there. 2 is the
+			// "created then refused" answer; the file still holds "AB".
+			name: "open_exclusive_refuses_existing",
+			src: `function main(): i32 {
+  var t = remove_file("/tmp/fern_ssa_e2e_excl.txt");
+  var w1 = match (open_exclusive("/tmp/fern_ssa_e2e_excl.txt")) {
+    Ok(w) => match (w.write("AB")) { Some(e) => 9, None => match (w.close()) { Some(e2) => 8, None => 0 } },
+    Err(e) => 7
+  };
+  var w2 = match (open_exclusive("/tmp/fern_ssa_e2e_excl.txt")) {
+    Ok(w) => 50,
+    Err(e) => match (e) { AlreadyExists(p) => 0, _ => 40 }
+  };
+  if (w1 + w2 != 0) { return 90; }
+  return match (read_file("/tmp/fern_ssa_e2e_excl.txt")) { Ok(s) => s.len(), Err(e) => 60 };
+}`,
+			want: 2,
+		},
+		{
 			// Integer to_string — the full digit-formatting chain: __alloc_u8
 			// (byte buffer), __fern_arr_cow_inplace (arr[i] = digit), and
 			// string_from_bytes_unchecked (u8[] -> string). len("123456") = 6.

@@ -1330,11 +1330,17 @@ pub function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDec
             s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n");
             s = s.write("    bl __fn___fern_writer_write\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 203) {  // open_file (#4372)
-            // [path box] -> __fern_open_res(x0=path, x1=flags(imm), x2=0644) -> a
+            // [path box] -> __fern_open_res(x0=path, x1=flags(imm), x2=mode) -> a
             // fresh Result[Reader|Writer, IoError] box. Body emitted in the fs
             // bundle below, gated on open_file.
+            //
+            // 0600 for the EXCLUSIVE opener, 0644 for the rest — see the
+            // x86-64 emitter for why. 193 is the canonical x86-64 flag word
+            // the helper translates per target.
             s = s.need("heap"); s = s.need("open_file");
-            s = s.write("    ldr x0, [sp], #16\n    mov x1, #" + util.i32_to_string(o.i32_imm) + "\n    mov x2, #420\n");
+            var open_mode: i32 = 420;
+            if (o.i32_imm == 193) { open_mode = 384; }
+            s = s.write("    ldr x0, [sp], #16\n    mov x1, #" + util.i32_to_string(o.i32_imm) + "\n    mov x2, #" + util.i32_to_string(open_mode) + "\n");
             s = s.write("    str x2, [sp, #-16]!\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_open_res\n    add sp, sp, #48\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 120) {  // opt_make
             // Option/Result box [tag@0, payload@8], 2 words. rc-HEADERED via

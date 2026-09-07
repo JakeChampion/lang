@@ -11791,21 +11791,25 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
     if (cid.name == "stderr" && c.args.len() == 0) {
         return s.emit(ir.op_const_i32(2));
     }
-    // Built-in `open_reader`/`open_writer`/`open_appender(path)` —
+    // Built-in `open_reader`/`open_writer`/`open_appender`/
+    // `open_exclusive(path)` —
     // open a file, push a fresh Result[Reader|Writer, IoError] box
     // (#4372 file half, #7758): Ok(fd) — a Reader/Writer IS its fd —
     // or Err(io_error). One op_open_file carries the openat flags:
     // O_RDONLY=0, O_WRONLY|O_CREAT|O_TRUNC=577, O_WRONLY|O_CREAT|
-    // O_APPEND=1089. The Result type is resolved by opt_ret_type so
+    // O_APPEND=1089, O_WRONLY|O_CREAT|O_EXCL=193. The Result type is
+    // resolved by opt_ret_type so
     // `match (open_reader(p)) { Ok(r) => .., Err(e) => .. }` lowers
     // like any other Result.
     if ((cid.name == "open_reader" || cid.name == "open_writer"
-            || cid.name == "open_appender") && c.args.len() == 1) {
+            || cid.name == "open_appender" || cid.name == "open_exclusive")
+            && c.args.len() == 1) {
         var ofs: LowerState = lower_expr(c.args[0], s);
         if (!ofs.ok) { return ofs; }
         var oflags: i32 = 0;
         if (cid.name == "open_writer") { oflags = 577; }
         if (cid.name == "open_appender") { oflags = 1089; }
+        if (cid.name == "open_exclusive") { oflags = 193; }
         return ofs.emit(ir.op_open_file(oflags));
     }
     // Built-in `read_line()` — read one line from stdin, return a fresh
@@ -69539,12 +69543,13 @@ function builtin_opt_ret_type(name: string): string {
     if (name == "lstat") { return "Result[FileStat, IoError]"; }
     if (name == "access") { return "Result[void, IoError]"; }
     // The streaming-I/O constructors (#7758): open_reader -> Result[Reader,
-    // IoError], open_writer / open_appender -> Result[Writer, IoError], so
+    // IoError], open_writer / open_appender / open_exclusive ->
+    // Result[Writer, IoError], so
     // `match (open_reader(p)) { Ok(r) => .., Err(e) => .. }` recovers both
     // payload types. Reader / Writer are represented by the bare fd, so the
     // Ok binder is an i32 slot the resource intrinsics dispatch off.
     if (name == "open_reader") { return "Result[Reader, IoError]"; }
-    if (name == "open_writer" || name == "open_appender") { return "Result[Writer, IoError]"; }
+    if (name == "open_writer" || name == "open_appender" || name == "open_exclusive") { return "Result[Writer, IoError]"; }
     // read_line → Option[string] (#4369): so a `match (read_line()) { Some(s) =>
     // .., None => .. }` scrutinee (or a `var o = read_line()` binding) recovers the
     // payload type and str-tracks the Some binder `s` for `.len()` / write dispatch.

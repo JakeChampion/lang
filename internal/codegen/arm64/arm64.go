@@ -8973,8 +8973,6 @@ func (g *generator) emitReadFileBytesRuntime() {
 //
 //	tag=0 → Some(IoError), payload = IoError box ptr @ +8
 //	tag=1 → None (8-byte box, no payload)
-//
-// The flag word is the target's, not a constant — see oflagWrite.
 func (g *generator) emitWriteFileRuntime() {
 	g.emitWriteFileRuntimeMode("__fern_write_file", "0644", "", "")
 }
@@ -9007,7 +9005,8 @@ func (g *generator) emitWriteFileRuntimeMode(sym, mode, sfx, fixupMode string) {
 	g.emitStrDataPtr("x20", "x1", 72)  // x20 = content byte ptr
 	g.emitStrDataPtr("x24", "x19", 64) // x24 = path byte ptr (preserves x19 = original)
 
-	// openat(AT_FDCWD, path, the target's O_WRONLY|O_CREAT|O_TRUNC, 0644)
+	// openat(AT_FDCWD, path, O_WRONLY|O_CREAT|O_TRUNC, mode) — the
+	// flag word is the target's, not a constant; see oflagWrite.
 	g.emit("mov x0, #%d", g.atFdCwd())
 	g.emit("mov x1, x24")
 	g.emit("mov x2, #%d", g.oflagWrite(oflagCreatTrunc))
@@ -9113,7 +9112,8 @@ func (g *generator) emitWriteFileRuntime2W(sym, mode, sfx, fixupMode string) {
 	g.emitStrDataPtr2W("x25", "x19", "x20", 88) // x25 = path byte ptr; scratch at [x29+88]
 	// NUL-terminate for openat (see emitNulTermPath2W).
 	g.emitNulTermPath2W("x25", "x25", "x20")
-	// openat(AT_FDCWD, path, the target's O_WRONLY|O_CREAT|O_TRUNC, 0644)
+	// openat(AT_FDCWD, path, O_WRONLY|O_CREAT|O_TRUNC, mode) — the
+	// flag word is the target's, not a constant; see oflagWrite.
 	g.emit("mov x0, #%d", g.atFdCwd())
 	g.emit("mov x1, x25")
 	g.emit("mov x2, #%d", g.oflagWrite(oflagCreatTrunc))
@@ -9251,31 +9251,41 @@ func (g *generator) direntNameOff() int {
 	return 19
 }
 
-// oflagKind names the two open(2) modes the fs bundle writes with, so a
-// call site cannot pick the flag word by spelling a raw number.
+// oflagKind names the open(2) modes the fs bundle writes with, so a call
+// site cannot pick the flag word by spelling a raw number.
 type oflagKind int
 
 const (
 	oflagCreatTrunc oflagKind = iota
 	oflagCreatAppend
+	oflagCreatExcl
 )
 
 // oflagWrite returns the target's open(2) flag word for one of those modes.
-// Linux and XNU share none of the three bits — O_CREAT is 0100 vs 0x200,
-// O_TRUNC 01000 vs 0x400, O_APPEND 02000 vs 0x8 — so the Linux words mean
-// something else entirely on Darwin: 577 asks XNU for O_ASYNC|O_CREAT, which
-// creates without truncating and leaves a shortened file's old tail behind,
-// and 1089 sets XNU's O_TRUNC, so an APPEND empties the file it opens.
-// #6042 translated these on the self-host path only.
+// Linux and XNU share none of the bits — O_CREAT is 0100 vs 0x200, O_TRUNC
+// 01000 vs 0x400, O_APPEND 02000 vs 0x8, O_EXCL 0200 vs 0x800 — so the Linux
+// words mean something else entirely on Darwin: 577 asks XNU for
+// O_ASYNC|O_CREAT, which creates without truncating and leaves a shortened
+// file's old tail behind, and 1089 sets XNU's O_TRUNC, so an APPEND empties
+// the file it opens (#8786).
+//
+// O_TRUNC is absent from the EXCL word on both: with O_EXCL the file cannot
+// already exist, so there is nothing to truncate.
 func (g *generator) oflagWrite(k oflagKind) int {
 	if g.darwin {
-		if k == oflagCreatAppend {
+		switch k {
+		case oflagCreatAppend:
 			return 521 // O_WRONLY|O_CREAT|O_APPEND
+		case oflagCreatExcl:
+			return 2561 // O_WRONLY|O_CREAT|O_EXCL
 		}
 		return 1537 // O_WRONLY|O_CREAT|O_TRUNC
 	}
-	if k == oflagCreatAppend {
+	switch k {
+	case oflagCreatAppend:
 		return 1089
+	case oflagCreatExcl:
+		return 193
 	}
 	return 577
 }
@@ -10497,7 +10507,8 @@ func (g *generator) emitReaderWriterRuntime() {
 	}
 
 	// __fern_open_reader(path) / __fern_open_writer(path) /
-	// __fern_open_appender(path) → Result[Reader|Writer, IoError].
+	// __fern_open_appender(path) / __fern_open_exclusive(path) →
+	// Result[Reader|Writer, IoError].
 	// Each is a thin wrapper around `openat` + handle alloc + the
 	// Result-box build. Flags + mode differ per kind.
 	twoWord := ast.UseTwoWordStrings(8)
@@ -10509,6 +10520,7 @@ func (g *generator) emitReaderWriterRuntime() {
 		{"__fern_open_reader", "open_reader", 0, 0},
 		{"__fern_open_writer", "open_writer", g.oflagWrite(oflagCreatTrunc), 0644},
 		{"__fern_open_appender", "open_appender", g.oflagWrite(oflagCreatAppend), 0644},
+		{"__fern_open_exclusive", "open_exclusive", g.oflagWrite(oflagCreatExcl), 0600},
 	} {
 		_ = e.name
 		g.line("")
@@ -11627,7 +11639,7 @@ type generator struct {
 	usesIoError bool
 
 	// usesReaderWriter pulls in the open_reader / open_writer
-	// / open_appender entry points plus the Reader / Writer
+	// / open_appender / open_exclusive entry points plus the Reader / Writer
 	// method runtimes (read_line / read_chunk / close /
 	// write). stdin / stdout / stderr also live behind this
 	// flag since they now return real Reader / Writer struct
@@ -15727,6 +15739,11 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			g.usesIoError = true
 		case "open_appender":
 			target = "__fern_open_appender"
+			g.usesReaderWriter = true
+			g.usesAlloc = true
+			g.usesIoError = true
+		case "open_exclusive":
+			target = "__fern_open_exclusive"
 			g.usesReaderWriter = true
 			g.usesAlloc = true
 			g.usesIoError = true

@@ -11401,6 +11401,53 @@ func TestArm64ReaderWriter(t *testing.T) {
     }
     return 0 - 1;
 }`, "line 1\nline 2\n", 0},
+		{"open_exclusive_refuses_existing", `function main(): i32 {
+    match (open_exclusive("ex.txt")) {
+        Ok(w) => {
+            match (w.write("new")) { Some(_) => { return 1; }, None => {} }
+            match (w.close()) { Some(_) => { return 2; }, None => {} }
+        },
+        Err(_) => { return 3; }
+    }
+    match (open_exclusive("ex.txt")) {
+        Ok(_) => { return 4; },
+        Err(e) => {
+            match (e) {
+                AlreadyExists(p) => { write("exists:" + p); },
+                _ => { return 5; }
+            }
+        }
+    }
+    match (read_file("ex.txt")) {
+        Ok(s) => { write(":" + s); return 0; },
+        Err(_) => { return 6; }
+    }
+    return 0 - 1;
+}`, "exists:ex.txt:new", 0},
+		{"open_exclusive_is_not_world_readable", `function main(): i32 {
+    // The whole point of the primitive is a file only its creator holds
+    // (#8776), and split -n writes the user's piped input into one. The
+    // assertion is that nobody else can read it, NOT that the mode is
+    // exactly 0600: a umask can only clear bits, so no-group-no-other
+    // holds for a 0600 request under every umask while a 0644 one fails
+    // it under all of them. Exact equality would pin the runner's umask.
+    // A non-zero exit IS the leaked permission bits: 36 is the group- and
+    // other-read of a 0644 create.
+    match (open_exclusive("mode.txt")) {
+        Ok(w) => { match (w.close()) { Some(_) => { return 1; }, None => {} } },
+        Err(_) => { return 2; }
+    }
+    match (stat("mode.txt")) {
+        Ok(st) => {
+            var others: i32 = (st.mode & (63 as u32)) as i32;
+            if (others != 0) { return others; }
+            write("private");
+            return 0;
+        },
+        Err(_) => { return 3; }
+    }
+    return 0 - 1;
+}`, "private", 0},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			stdout, code, _ := compileArm64InDir(t, c.src, nil)

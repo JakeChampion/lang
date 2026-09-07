@@ -8,18 +8,20 @@ import (
 	"testing"
 )
 
-// #4372 (file half) / #7758: open_reader / open_writer / open_appender must lower
-// on the self-host x86-64 IR path, with NATIVE's signature — Result[Reader, IoError]
-// / Result[Writer, IoError], matched rather than sign-tested. All three lower to one
-// op_open_file carrying the openat flags (O_RDONLY=0 / O_WRONLY|O_CREAT|O_TRUNC=577 /
-// O_WRONLY|O_CREAT|O_APPEND=1089), backed by the __fern_open_res runtime
+// #4372 (file half) / #7758 / #8776: open_reader / open_writer / open_appender /
+// open_exclusive must lower on the self-host x86-64 IR path, with NATIVE's
+// signature — Result[Reader, IoError] / Result[Writer, IoError], matched rather
+// than sign-tested. All four lower to one op_open_file carrying the openat flags
+// (O_RDONLY=0 / O_WRONLY|O_CREAT|O_TRUNC=577 / O_WRONLY|O_CREAT|O_APPEND=1089 /
+// O_WRONLY|O_CREAT|O_EXCL=193), backed by the __fern_open_res runtime
 // (NUL-terminate the path, openat, then Ok(fd) / Err(io_error)). The Ok payload is
 // the bare fd a Reader/Writer is represented by, so the bound name dispatches the
 // resource intrinsics directly.
 //
 // This program creates a file with open_writer, appends with open_appender, re-opens
-// with open_reader, and finally opens a path that does not exist and matches the
-// IoError variant — proving all three openat flag paths, Writer.write, close, and
+// with open_reader, creates a second file with open_exclusive and then meets EEXIST
+// on it, and finally opens a path that does not exist and matches the
+// IoError variant — proving all four openat flag paths, Writer.write, close, and
 // BOTH Result arms (including the Err payload being a real matchable IoError, not a
 // raw errno) work end-to-end through the IR backend. Byte-identical to what the
 // native compiler runs: `bin/fern -interp` on this source also exits 42.
@@ -39,6 +41,7 @@ func TestSelfHostOpenFileIRX86_64(t *testing.T) {
 	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
 
 	target := filepath.Join(t.TempDir(), "openfile_out.txt")
+	excl := filepath.Join(t.TempDir(), "openfile_excl.txt")
 	prog := fmt.Sprintf(`function main(): i32 {
     match (open_writer("%s")) {
         Ok(w) => { w.write("hello "); w.close(); },
@@ -52,6 +55,19 @@ func TestSelfHostOpenFileIRX86_64(t *testing.T) {
         Ok(r) => { r.close(); },
         Err(_) => { return 95; }
     }
+    match (open_exclusive("%s")) {
+        Ok(x) => { x.write("EX"); x.close(); },
+        Err(_) => { return 98; }
+    }
+    match (open_exclusive("%s")) {
+        Ok(x2) => { x2.close(); return 99; },
+        Err(ex) => {
+            match (ex) {
+                AlreadyExists(_) => {},
+                _ => { return 100; }
+            }
+        }
+    }
     match (open_reader("%s")) {
         Ok(r2) => { r2.close(); return 96; },
         Err(e) => {
@@ -62,7 +78,7 @@ func TestSelfHostOpenFileIRX86_64(t *testing.T) {
         }
     }
     return 42;
-}`, target, target, target, filepath.Join(t.TempDir(), "no_such_file.txt"))
+}`, target, target, target, excl, excl, filepath.Join(t.TempDir(), "no_such_file.txt"))
 
 	asm := runCapture(t, gcc, runner, driverBin, []byte(prog+"\n"))
 	if len(asm) == 0 {
@@ -73,7 +89,7 @@ func TestSelfHostOpenFileIRX86_64(t *testing.T) {
 	cmd := exec.Command(progBin)
 	_ = cmd.Run()
 	if code := cmd.ProcessState.ExitCode(); code != 42 {
-		t.Fatalf("open-file program exit = %d, want 42 (open_writer/appender/reader steps; #4372, #7758)", code)
+		t.Fatalf("open-file program exit = %d, want 42 (open_writer/appender/reader/exclusive steps; #4372, #7758, #8776)", code)
 	}
 
 	got, err := os.ReadFile(target)

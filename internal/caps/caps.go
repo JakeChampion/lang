@@ -59,6 +59,7 @@ var BuiltinCaps = map[string]string{
 	"open_reader":     "fs",
 	"open_writer":     "fs",
 	"open_appender":   "fs",
+	"open_exclusive":  "fs",
 	"stat":            "fs",
 	"lstat":           "fs",
 	"access":          "fs",

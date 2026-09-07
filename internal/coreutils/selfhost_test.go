@@ -66,6 +66,7 @@ func corpusByUtil() map[string]func(*testing.T) []invocation {
 		"sha384sum": sha384sumCases,
 		"sha512sum": sha512sumCases,
 		"sleep":     sleepCases,
+		"split":     splitCases,
 		"tac":       tacCases,
 		"tail":      tailCases,
 		"test":      testCases,
@@ -221,6 +222,9 @@ func TestSelfHostCoreutilsParity(t *testing.T) {
 					}
 					if want.how() != got.how() {
 						t.Errorf("status differs for %s %s: native %s, selfhost %s", util, quoteArgs(inv.args), want.how(), got.how())
+					}
+					if diff := treeDiff(want.tree, got.tree); diff != "" {
+						t.Errorf("the files left behind differ for %s %s\n%s", util, quoteArgs(inv.args), diff)
 					}
 				})
 			}

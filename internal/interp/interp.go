@@ -631,6 +631,7 @@ func New() *Interp {
 	i.Builtins["open_reader"] = &Builtin{Fn: builtinOpenReader}
 	i.Builtins["open_writer"] = &Builtin{Fn: builtinOpenWriter}
 	i.Builtins["open_appender"] = &Builtin{Fn: builtinOpenAppender}
+	i.Builtins["open_exclusive"] = &Builtin{Fn: builtinOpenExclusive}
 	i.Builtins["__method_Reader_read_line"] = &Builtin{Fn: builtinReaderReadLine}
 	i.Builtins["__method_Reader_read_chunk"] = &Builtin{Fn: builtinReaderReadChunk}
 	i.Builtins["__method_Reader_close"] = &Builtin{Fn: builtinReaderClose}
@@ -2788,6 +2789,20 @@ func builtinOpenWriter(i *Interp, args []Value) (Value, error) {
 
 func builtinOpenAppender(i *Interp, args []Value) (Value, error) {
 	return openHelper(i, args, "Writer", os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
+}
+
+// builtinOpenExclusive is the O_EXCL create: EEXIST comes back as
+// `IoError::AlreadyExists(path)` so a caller retrying with a fresh
+// random name can tell it from a real failure.
+//
+// 0600, not the 0644 its two neighbours use. A caller reaches for this
+// primitive because the CONTENT is not to be disclosed — a spool of piped
+// input, a temporary at a path it chose — so a mode letting group and other
+// read it defeats what the exclusivity was for. The compiled backends all
+// pass 0600 and this is the oracle they are diffed against, so a divergence
+// here is one the fixpoint cannot see.
+func builtinOpenExclusive(i *Interp, args []Value) (Value, error) {
+	return openHelper(i, args, "Writer", os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 }
 
 func openHelper(i *Interp, args []Value, structName string, flag int, perm os.FileMode) (Value, error) {
