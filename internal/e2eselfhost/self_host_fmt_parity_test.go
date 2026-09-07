@@ -1442,6 +1442,10 @@ function nested(p: Result[Option[(i32)], i32]): i32 { return 0; }
 function fnarg(p: Result[((i32) => i32), i32]): i32 { return 0; }
 function fnsuf(p: Result[((i32) => i32)[], i32]): i32 { return 0; }
 function tup(p: Result[(i32, i32), i32]): i32 { return 0; }
+function multi(p: Result[(Result[i32, i32]), i32]): i32 { return 0; }
+function multifn(p: Result[((Result[i32, i32]) => i32), i32]): i32 { return 0; }
+function nestedfn(p: Result[(Option[(i32) => i32])[], i32]): i32 { return 0; }
+function generictup(p: Result[(Option[i32], i32), i32]): i32 { return 0; }
 function main(): i32 { return 0; }
 `},
 }

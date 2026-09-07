@@ -6660,9 +6660,9 @@ function group_has_top_comma(s: string, start: i32, close: i32): boolean {
     var i: i32 = start + 1;
     while (i < close) {
         var c: i32 = s[i] as i32;
-        if (c == b'(' as i32) {
+        if (c == b'(' as i32 || c == b'[' as i32) {
             depth = depth + 1;
-        } else if (c == b')' as i32) {
+        } else if (c == b')' as i32 || c == b']' as i32) {
             depth = depth - 1;
         } else if (c == b',' as i32 && depth == 0) {
             return true;
@@ -6681,9 +6681,9 @@ function group_inner_is_fn(s: string, start: i32, close: i32): boolean {
     var i: i32 = start + 1;
     while (i < close - 1) {
         var c: i32 = s[i] as i32;
-        if (c == b'(' as i32) {
+        if (c == b'(' as i32 || c == b'[' as i32) {
             depth = depth + 1;
-        } else if (c == b')' as i32) {
+        } else if (c == b')' as i32 || c == b']' as i32) {
             depth = depth - 1;
         } else if (c == b'=' as i32 && s[i + 1] == b'>' && depth == 0) {
             return true;
