@@ -1837,7 +1837,15 @@ type FsFeatures struct {
 	Unlink bool // unlink-file-at
 	Mkdir  bool // create-directory-at
 	Rmdir  bool // remove-directory-at
-	Stat   bool // stat-at
+	// The link family. Link is link-at (a hard link, and the one method
+	// here that takes a SECOND descriptor); Symlink is symlink-at, whose
+	// target is a string stored verbatim rather than a path resolved
+	// against a descriptor; Readlink is readlink-at, the only path method
+	// whose ok arm carries a value.
+	Link     bool // link-at
+	Symlink  bool // symlink-at
+	Readlink bool // readlink-at
+	Stat     bool // stat-at
 	// StatSelf is `stat` on the descriptor itself — the fstat behind a
 	// Reader / Writer's `.stat()`. It shares stat-at's result record, so
 	// the two are declared together.
@@ -1854,7 +1862,8 @@ type FsFeatures struct {
 // Any reports whether the request touches the filesystem at all.
 func (f FsFeatures) Any() bool {
 	return f.OpenAt || f.Read || f.Write || f.Append ||
-		f.Unlink || f.Mkdir || f.Rmdir || f.Stat || f.StatSelf || f.ReadDir || f.DropDesc
+		f.Unlink || f.Mkdir || f.Rmdir || f.Link || f.Symlink || f.Readlink ||
+		f.Stat || f.StatSelf || f.ReadDir || f.DropDesc
 }
 
 // WasiFilesystemTypesPathInstanceTypeBody is the wasi:filesystem/types
@@ -1865,7 +1874,7 @@ func (f FsFeatures) Any() bool {
 // the corresponding direction is unused.
 //
 // Emission order is fixed (via-streams read/write/append, then the path
-// mutators unlink/mkdir/rmdir) rather than following the order the core
+// mutators unlink/mkdir/rmdir, then the link family) rather than following the order the core
 // module happened to import them, so a method set maps to exactly one
 // byte sequence.
 func WasiFilesystemTypesPathInstanceTypeBody(inT, outT uint32, f FsFeatures) []byte {
@@ -1874,7 +1883,7 @@ func WasiFilesystemTypesPathInstanceTypeBody(inT, outT uint32, f FsFeatures) []b
 		in: inT, out: outT,
 		needIn:       f.Read,
 		needOut:      f.Write || f.Append,
-		needUnit:     f.Unlink || f.Mkdir || f.Rmdir,
+		needUnit:     f.Unlink || f.Mkdir || f.Rmdir || f.Link || f.Symlink,
 		needDescType: f.Stat || f.StatSelf || f.ReadDir,
 	})
 	if f.OpenAt {
@@ -1897,6 +1906,15 @@ func WasiFilesystemTypesPathInstanceTypeBody(inT, outT uint32, f FsFeatures) []b
 	}
 	if f.Rmdir {
 		fsPathMutator(b, v, "remove-directory-at")
+	}
+	if f.Link {
+		fsLinkAt(b, v)
+	}
+	if f.Symlink {
+		fsSymlinkAt(b, v)
+	}
+	if f.Readlink {
+		fsReadlinkAt(b, v)
 	}
 	if f.Stat || f.StatSelf {
 		fsStat(b, v, f.Stat, f.StatSelf)

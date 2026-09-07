@@ -58,6 +58,7 @@ func corpusByUtil() map[string]func(*testing.T) []invocation {
 		"hostid":    hostidCases,
 		"id":        idCases,
 		"join":      joinCases,
+		"link":      linkCases,
 		"logname":   lognameCases,
 		"md5sum":    md5sumCases,
 		"nl":        nlCases,
@@ -85,6 +86,7 @@ func corpusByUtil() map[string]func(*testing.T) []invocation {
 		"tsort":     tsortCases,
 		"uname":     unameCases,
 		"unexpand":  unexpandCases,
+		"unlink":    unlinkCases,
 		"uniq":      uniqCases,
 		"wc":        wcCases,
 		"whoami":    whoamiCases,
@@ -238,7 +240,7 @@ func TestSelfHostCoreutilsParity(t *testing.T) {
 					// A utility whose output IS the files it writes
 					// (csplit) would otherwise have the two compilers
 					// compared on two silences.
-					if diff := treeDiff(want.tree, got.tree); diff != "" {
+					if diff := treeDiff(want.tree, got.tree, "native", "selfhost"); diff != "" {
 						t.Errorf("the files left behind differ for %s %s\n%s", util, quoteArgs(inv.args), diff)
 					}
 				})

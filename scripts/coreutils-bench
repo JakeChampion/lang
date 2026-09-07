@@ -246,6 +246,26 @@ PY
       printf 'sleep 0\tn\t{} 0\n'
       printf 'sleep 0 four operands\tn\t{} 0 0s 0m 0h\n'
       ;;
+    link)
+      # One link(2) and nothing else, so the whole cost is process startup —
+      # and the 200-operand row is that cost 200 times, which is where the
+      # margin is visible above the noise. The `rm` that clears the previous
+      # run's links comes from the GNU directory, so it is the same constant
+      # term for all three implementations, exactly as `yes`'s `head` is.
+      d="$out/linkbench"
+      mkdir -p "$d"; : > "$d/src"
+      printf 'link one hard link\ty\t{gnu}/rm -f %s/l; {} %s/src %s/l\n' "$d" "$d" "$d"
+      printf 'link 200 hard links\ty\t{gnu}/rm -f %s/l.*; for n in %s; do {} %s/src %s/l.$n; done\n' "$d" "$(seq 200 | tr '\n' ' ')" "$d" "$d"
+      ;;
+    unlink)
+      # The same shape from the other side. `: > f` is a shell redirection
+      # rather than a fork, so seeding the operands costs an open and a close
+      # each and does not swamp the 200 process startups being measured.
+      d="$out/unlinkbench"
+      mkdir -p "$d"
+      printf 'unlink one file\ty\t: > %s/v; {} %s/v\n' "$d" "$d"
+      printf 'unlink 200 files\ty\tfor n in %s; do : > %s/v.$n; done; for n in %s; do {} %s/v.$n; done\n' "$(seq 200 | tr '\n' ' ')" "$d" "$(seq 200 | tr '\n' ' ')" "$d"
+      ;;
     hostid)
       # Startup plus the NSS walk: /etc/hostid, /etc/nsswitch.conf and
       # /etc/hosts, read on every call.

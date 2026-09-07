@@ -11908,6 +11908,10 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
         if (!cdas.ok) { return cdas; }
         return cdas.emit(ir.op_create_dir_all());
     }
+    // The single-step directory and link primitives (#8883) — see
+    // lower_call_dirlink, split out so this dispatch does not grow six
+    // more arms of the same shape.
+    if (is_dirlink_call(cid.name, c.args.len())) { return lower_call_dirlink(c, cid, s); }
     // Built-in `temp_dir(prefix)` — make a uniquely-named /tmp
     // directory, push a fresh Result[string, IoError] box
     // (Ok(path) / Err(_)). The Result type is resolved by
@@ -12327,6 +12331,34 @@ function lower_call_os_query(c: ast.ExprCall, cid: ast.ExprIdent, s: LowerState)
     var a1: LowerState = lower_expr(c.args[1], a0);
     if (!a1.ok) { return a1; }
     return a1.emit(ir.op_access());
+}
+
+// is_dirlink_call recognises the six single-step directory and link
+// primitives. The ARITY is part of the test so a call with the wrong number
+// of arguments falls through to the ordinary named-call path.
+function is_dirlink_call(name: string, argc: i32): boolean {
+    if (name == "create_dir") { return argc == 2; }
+    if (name == "remove_dir" || name == "read_link" || name == "umask") { return argc == 1; }
+    if (name == "create_link" || name == "create_symlink") { return argc == 2; }
+    return false;
+}
+
+// lower_call_dirlink lowers what is_dirlink_call selects: the operands in
+// argv order, then the op. Every one of them is a single syscall behind a
+// backend helper of the same name, and each pushes one value — a
+// Result[void, IoError] box, read_link's Result[string, IoError] box, or
+// umask's plain previous mask.
+function lower_call_dirlink(c: ast.ExprCall, cid: ast.ExprIdent, s: LowerState): LowerState {
+    var a0: LowerState = lower_expr(c.args[0], s);
+    if (!a0.ok) { return a0; }
+    if (cid.name == "remove_dir") { return a0.emit(ir.op_remove_dir()); }
+    if (cid.name == "read_link") { return a0.emit(ir.op_read_link()); }
+    if (cid.name == "umask") { return a0.emit(ir.op_umask()); }
+    var a1: LowerState = lower_expr(c.args[1], a0);
+    if (!a1.ok) { return a1; }
+    if (cid.name == "create_dir") { return a1.emit(ir.op_create_dir()); }
+    if (cid.name == "create_link") { return a1.emit(ir.op_create_link()); }
+    return a1.emit(ir.op_create_symlink());
 }
 
 // is_byte_kernel_call selects the five allocation-free byte-scan intrinsics
@@ -69593,6 +69625,11 @@ function builtin_opt_ret_type(name: string): string {
     if (name == "remove_dir_all") { return "Result[void, IoError]"; }
     if (name == "remove_file") { return "Result[void, IoError]"; }
     if (name == "create_dir_all") { return "Result[void, IoError]"; }
+    if (name == "create_dir") { return "Result[void, IoError]"; }
+    if (name == "remove_dir") { return "Result[void, IoError]"; }
+    if (name == "create_link") { return "Result[void, IoError]"; }
+    if (name == "create_symlink") { return "Result[void, IoError]"; }
+    if (name == "read_link") { return "Result[string, IoError]"; }
     if (name == "temp_dir") { return "Result[string, IoError]"; }
     if (name == "read_dir") { return "Result[string[], IoError]"; }
     if (name == "env") { return "Option[string]"; }
