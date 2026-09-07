@@ -3670,7 +3670,7 @@ function emit_host_op_wat(o: ir.Op): string {
         // matching the register backends.
         return "    call $__fern_args\n";
     }
-    if (o.kind_tag == 246) {  // environ
+    if (o.kind_tag == 249) {  // environ
         // 0-arg -> build a fresh string[] of the whole environment as raw
         // NAME=VALUE entries and push its block ptr. The helper
         // ($__fern_environ, result i32) shares the environ imports with

@@ -1158,18 +1158,18 @@ pub function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDec
         } else if (o.kind_tag == 239) {  // getegid
             s = s.write("    bl __fn___fern_getegid\n    str x0, [sp, #-16]!\n");
             s = s.need("getegid");
-        } else if (o.kind_tag == 243) {  // getuid
+        } else if (o.kind_tag == 246) {  // getuid
             s = s.write("    bl __fn___fern_getuid\n    str x0, [sp, #-16]!\n");
             s = s.need("getuid");
-        } else if (o.kind_tag == 244) {  // getgid
+        } else if (o.kind_tag == 247) {  // getgid
             s = s.write("    bl __fn___fern_getgid\n    str x0, [sp, #-16]!\n");
             s = s.need("getgid");
-        } else if (o.kind_tag == 245) {  // getgroups
+        } else if (o.kind_tag == 248) {  // getgroups
             // no args -> __fn___fern_getgroups: a fresh i64[] of the
             // supplementary group set, pushed in x0.
             s = s.write("    bl __fn___fern_getgroups\n    str x0, [sp, #-16]!\n");
             s = s.need("heap"); s = s.need("getgroups");
-        } else if (o.kind_tag == 246) {  // environ
+        } else if (o.kind_tag == 249) {  // environ
             // no args -> __fn___fern_environ: a fresh string[] of the whole
             // environment, read off the same __fern_envp global env walks.
             s = s.write("    bl __fn___fern_environ\n    str x0, [sp, #-16]!\n");

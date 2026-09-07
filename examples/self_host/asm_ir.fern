@@ -4587,18 +4587,18 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
         } else if (o.kind_tag == 239) {  // getegid
             s = s.write("    call __fn___fern_getegid\n    pushq %rax\n");
             s = s.need("getegid");
-        } else if (o.kind_tag == 243) {  // getuid
+        } else if (o.kind_tag == 246) {  // getuid
             s = s.write("    call __fn___fern_getuid\n    pushq %rax\n");
             s = s.need("getuid");
-        } else if (o.kind_tag == 244) {  // getgid
+        } else if (o.kind_tag == 247) {  // getgid
             s = s.write("    call __fn___fern_getgid\n    pushq %rax\n");
             s = s.need("getgid");
-        } else if (o.kind_tag == 245) {  // getgroups
+        } else if (o.kind_tag == 248) {  // getgroups
             // no args -> the Fern-compiled __fn___fern_getgroups: a fresh i64[]
             // of the supplementary group set, pushed in %rax.
             s = s.write("    call __fn___fern_getgroups\n    pushq %rax\n");
             s = s.need("heap"); s = s.need("getgroups");
-        } else if (o.kind_tag == 246) {  // environ
+        } else if (o.kind_tag == 249) {  // environ
             // no args -> the Fern-compiled __fn___fern_environ: a fresh string[]
             // of the whole environment. Reads the same __fern_envp global env
             // does, which is why the envp need below covers this op too.

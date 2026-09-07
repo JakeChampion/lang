@@ -33,7 +33,7 @@ func TestSelfHostIRKindRegistry(t *testing.T) {
 
 	// Golden report — locks kind_count, the full-table bijection (all 196 ids
 	// round-trip), the extension-tag sweep (the 47 registered ids beyond
-	// kind_count(), struct_copy=198 … environ=246 — #5452's skew
+	// kind_count(), struct_copy=198 … environ=249 — #5452's skew
 	// left them unrendered by kind_name), the negative sweep (14 near-miss tags
 	// that must all be KIND_INVALID, probing kind_id's (length, first byte)
 	// narrowing from the other side), the KIND_INVALID sentinels, a few stable
