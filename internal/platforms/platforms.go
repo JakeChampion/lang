@@ -188,13 +188,19 @@ var capabilityProfiles = map[string]capabilityProfile{
 	// component has no node name and saying so is the truth, not a
 	// stand-in. wasi-http gets neither this nor `args` / `env`: a proxy
 	// component has no process identity at all.
-	"hosted-native": {"log", "now", "env", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd"},
+	//
+	// `signal` — setting a signal's disposition (`signal_ignore` /
+	// `signal_default`). wasi-cli grants it as a no-op for the same
+	// reason it grants `host`: a component is never sent a signal, so
+	// there is nothing to ignore and doing nothing is the whole truth.
+	// wasi-http has no process identity, so it does not get it.
+	"hosted-native": {"log", "now", "env", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal"},
 
 	// CLI-world wasm wires fs (the preview1 fd helpers) and tcp
 	// (wasi:sockets — wasmbin/wasi_tcp.go) but NOT subprocess:
 	// wasi:cli/exec-process isn't in the runtime helpers (the standing
 	// gap wasmbin's TestBuildReportsUnsupported pins).
-	"wasi-cli": {"log", "now", "env", "args", "random", "stdin", "stdout", "fs", "tcp", "host"},
+	"wasi-cli": {"log", "now", "env", "args", "random", "stdin", "stdout", "fs", "tcp", "host", "signal"},
 
 	// The proxy world: an HTTP handler and nothing else. No stdout
 	// stream and no filesystem — which is what gives `stdout` its teeth

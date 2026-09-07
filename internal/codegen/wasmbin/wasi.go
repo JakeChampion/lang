@@ -2413,6 +2413,19 @@ func buildIsattyBodyP2(map[string]uint32) []byte {
 	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
 }
 
+// buildSignalDispositionBody assembles signal_ignore(sig) and
+// signal_default(sig) on both previews: an empty body, leaving the
+// argument unread.
+//
+// Neither WASI preview has signals — nothing in either world can deliver
+// one — so there is no disposition to change and doing nothing is the
+// whole behaviour, not a stub standing in for a missing import. The same
+// reasoning that makes hostname() answer "" rather than fail
+// (docs/FREESTANDING-CORE.md).
+func buildSignalDispositionBody(map[string]uint32) []byte {
+	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), nil)
+}
+
 // buildHostnameBody assembles hostname() on both previews: the empty
 // string as a (data, len) pair in the inline form — data 0, len with only
 // the inline flag set, which LengthWasm reads as 0 and __fern_str_dec

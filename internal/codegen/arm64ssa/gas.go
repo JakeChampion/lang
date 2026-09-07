@@ -1290,6 +1290,8 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"tcp_pollable":                  emitTcpPollableHelper,
 	"poll":                          emitPollHelper,
 	"isatty":                        emitIsattyHelper,
+	"signal_ignore":                 emitSignalDispositionHelper("signal_ignore", 1),
+	"signal_default":                emitSignalDispositionHelper("signal_default", 0),
 	"wasm_timer_pollable":           emitWasmTimerPollableHelper,
 	"wasm_poll":                     emitWasmPollHelper,
 	"wasm_pollable_drop":            emitWasmPollableDropHelper,
@@ -1984,6 +1986,37 @@ func emitIsattyHelper(w func(string, ...any)) {
 	w("\tcset w0, eq")
 	w("\tadd sp, sp, #80")
 	w("\tret")
+}
+
+// emitSignalDispositionHelper writes signal_ignore(sig) / signal_default(sig):
+// one rt_sigaction setting `sa_handler` to `handler` — SIG_IGN (1) or
+// SIG_DFL (0) — and leaving every other field zero.
+//
+// `struct kernel_sigaction` is {handler, flags, mask} on arm64, and only
+// the handler is non-zero here. SA_RESTORER is a DELIVERY requirement and
+// neither disposition ever builds a signal frame, so a zero sa_flags is
+// correct rather than a shortcut. x3 carries the `sigsetsize` the call
+// wants: 8, the width of the kernel's sigset_t.
+//
+// A signal number the kernel rejects is the caller's error, the same as it
+// is through libc's signal(3); there is no return value to report it in.
+func emitSignalDispositionHelper(name string, handler int) func(func(string, ...any)) {
+	return func(w func(string, ...any)) {
+		w("")
+		w("%s:", fnLabel(name))
+		w("\tsub sp, sp, #32")
+		w("\tstp xzr, xzr, [sp]")
+		w("\tstp xzr, xzr, [sp, #16]")
+		w("\tmov x9, #%d", handler)
+		w("\tstr x9, [sp]")
+		w("\tmov x1, sp")
+		w("\tmov x2, #0")
+		w("\tmov x3, #8")
+		w("\tmov x8, #134") // rt_sigaction
+		w("\tsvc #0")
+		w("\tadd sp, sp, #32")
+		w("\tret")
+	}
 }
 
 // emitAccessHelper writes access(path, mode) -> Result[void, IoError]:

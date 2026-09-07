@@ -313,6 +313,8 @@ var providedSigs = map[string]providedSig{
 	"read_line":                     {-1, rWord},
 	"remove_dir_all":                {-1, rWord},
 	"remove_file":                   {-1, rWord},
+	"signal_default":                {1, rVoid},
+	"signal_ignore":                 {1, rVoid},
 	"create_dir":                    {3, rWord},
 	"remove_dir":                    {2, rWord},
 	"create_link":                   {4, rWord},

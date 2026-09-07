@@ -474,6 +474,7 @@ pub function sysno(t: string, name: string): string {
         if (name == "uname") { return "63"; }
         if (name == "getcwd") { return "79"; }
         if (name == "sched_getaffinity") { return "204"; }
+        if (name == "sigaction") { return "13"; }
         if (name == "linkat") { return "265"; }
         if (name == "symlinkat") { return "266"; }
         if (name == "readlinkat") { return "267"; }
@@ -529,6 +530,10 @@ pub function sysno(t: string, name: string): string {
         // differs (0 here, the length there), which rt_src_getcwd sidesteps by
         // measuring the buffer instead.
         if (name == "getcwd") { return "296"; }
+        // XNU's sigaction is 3-argument where Linux's rt_sigaction is 4; the
+        // extra `sigsetsize` is ignored here, so one body serves both (see
+        // rt_src_signal_disposition).
+        if (name == "sigaction") { return "46"; }
         if (name == "linkat") { return "471"; }
         if (name == "symlinkat") { return "474"; }
         if (name == "readlinkat") { return "473"; }
@@ -586,6 +591,8 @@ pub function sysno(t: string, name: string): string {
     // No Darwin row: XNU has no affinity mask, so asm_arm64_ir keeps a
     // hand-written hw.activecpu body for that target.
     if (name == "sched_getaffinity") { return "123"; }
+    // rt_sigaction(2), matching the native arm64 syscall table.
+    if (name == "sigaction") { return "134"; }
     return "-1";
 }
 
@@ -1120,6 +1127,26 @@ pub function rt_src_isatty(t: string): string {
     var req: string = "21505";
     if (t == "arm64-darwin") { req = "1078490131"; }
     return "function __fern_isatty(fd: i32): i32 { var buf: i32 = __raw_scratch(80); if (__syscall3(" + sysno(t, "ioctl") + ", fd, " + req + ", buf) == 0) { return 1; } return 0; }";
+}
+
+// rt_src_signal_disposition backs `signal_ignore(sig)` / `signal_default(sig)`
+// (syscall-leaf) -> the sigaction return, dropped by the caller.
+//
+// `handler` is the whole difference between the two: SIG_IGN is 1, SIG_DFL 0.
+//
+// One 32-byte scratch serves all three targets. Linux's kernel sigaction is
+// {handler, flags, restorer, mask} on x86-64 and {handler, flags, mask} on
+// arm64; XNU's is {handler, tramp, mask, flags}. Only `sa_handler`, at offset 0
+// on all three, is non-zero for a plain disposition, so the other three words
+// are stored as zero rather than branched on — __raw_scratch does not hand back
+// cleared memory. SA_RESTORER is a DELIVERY requirement and neither disposition
+// ever builds a signal frame, so a zero sa_flags is correct here.
+//
+// The fourth argument is Linux's `sigsetsize` (8, the kernel sigset_t's width);
+// XNU's three-argument sigaction ignores it, which is why both go through
+// __syscall4.
+pub function rt_src_signal_disposition(t: string, name: string, handler: string): string {
+    return "function __fern_" + name + "(sig: i32): i32 { var act: i32 = __raw_scratch(32); __raw_store_ptr(act, 0, " + handler + "); __raw_store_ptr(act, 1, 0); __raw_store_ptr(act, 2, 0); __raw_store_ptr(act, 3, 0); return __syscall4(" + sysno(t, "sigaction") + ", sig, act, 0, 8); }";
 }
 
 // sockaddr_head writes the first two bytes of a `sockaddr_in`, which is the one
@@ -3590,6 +3617,11 @@ function builtin_i32_names(): string[] {
         "tcp_pollable",
         // See asm.fern for rationale.
         "sleep_ms",
+        // signal_ignore(sig) / signal_default(sig) are void to a caller, but
+        // their op pushes the syscall return so a statement-level drop
+        // balances — the same shape as sleep_ms above.
+        "signal_ignore",
+        "signal_default",
         // proc_fork() → 0 in the child / child pid in the parent /
         // -errno; proc_waitpid(pid) → the child's exit status
         // (shell convention: 128 + signal on a signal death).
@@ -5680,6 +5712,7 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
         // runtime — .globl so a per-module sibling's `call` resolves against it.
         "__fn___fern_read_all_stdin",
         "__fn___fern_hostname",
+        "__fn___fern_signal_ignore", "__fn___fern_signal_default",
         "__fern_strbuf_reset", "__fern_strbuf_take",
         // crash-only supervision (#5686): the entry owns fork / wait4.
         "__fn___fern_proc_fork", "__fn___fern_proc_waitpid", "__fn___fern_proc_exec",

@@ -20,6 +20,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"os/signal"
 	"runtime"
 	"sort"
 	"strconv"
@@ -1071,6 +1072,8 @@ func New() *Interp {
 	i.Builtins["uname_field"] = &Builtin{Fn: builtinUnameField}
 	i.Builtins["getcwd"] = &Builtin{Fn: builtinGetcwd}
 	i.Builtins["cpu_count"] = &Builtin{Fn: builtinCPUCount}
+	i.Builtins["signal_ignore"] = &Builtin{Fn: builtinSignalIgnore}
+	i.Builtins["signal_default"] = &Builtin{Fn: builtinSignalDefault}
 	i.Builtins["remove_file"] = &Builtin{Fn: builtinRemoveFile}
 	i.Builtins["create_dir"] = &Builtin{Fn: builtinCreateDir}
 	i.Builtins["remove_dir"] = &Builtin{Fn: builtinRemoveDir}
@@ -2703,6 +2706,78 @@ func builtinCPUCount(_ *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("cpu_count: expected 0 args, got %d", len(args))
 	}
 	return Number(runtime.NumCPU()), nil
+}
+
+// signalArg reads the one signal-number argument the two disposition
+// builtins take. The number is the caller's — the compiled backends pass
+// it straight to rt_sigaction, so a value the kernel rejects is the
+// caller's error there and is rejected here for the same reason.
+func signalArg(name string, args []Value) (syscall.Signal, bool, error) {
+	if len(args) != 1 {
+		return 0, false, fmt.Errorf("%s: expected 1 arg, got %d", name, len(args))
+	}
+	n, ok := args[0].(Number)
+	if !ok {
+		return 0, false, fmt.Errorf("%s: expected number arg, got %T", name, args[0])
+	}
+	v := int64(n)
+	return syscall.Signal(int32(v)), v >= 1 && v <= maxSignal, nil
+}
+
+// maxSignal is the highest number these builtins will hand to os/signal.
+//
+// It is a guard against a HANG, not a validity check. Go's runtime indexes a
+// 65-entry sigtable, and `signal.Stop` on anything outside it never returns —
+// measured here: 0..64 return, -1 / 65 / 99 deadlock. The compiled backends
+// pass the number straight to rt_sigaction, which answers EINVAL, which they
+// ignore; so out of range they do nothing, and without this the interpreter
+// would hang where they no-op. 64 rather than 31 because Linux's realtime
+// signals run to 64 and are perfectly real dispositions to set.
+const maxSignal = 64
+
+// builtinSignalIgnore sets one signal's disposition to SIG_IGN.
+//
+// The interpreter shares its process with the Go runtime, so this moves
+// the disposition of `fern` itself for as long as the program runs —
+// which is the same scope a compiled program has, one process. The
+// difference to know about is SIGPIPE: the Go runtime already forces
+// EPIPE rather than death for writes to a descriptor above 2, so an
+// interpreted program survives a broken pipe whether or not it asked
+// to. Ignoring it here still narrows the gap rather than widening it.
+func builtinSignalIgnore(_ *Interp, args []Value) (Value, error) {
+	sig, ok, err := signalArg("signal_ignore", args)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return Void{}, nil
+	}
+	signal.Ignore(sig)
+	return Void{}, nil
+}
+
+// builtinSignalDefault restores one signal's default disposition, so a
+// utility that ignored a signal for one stretch of work can put it back.
+//
+// `signal.Reset` alone does not undo `signal.Ignore`: Ignore sets a per-signal
+// "ignored" bit that the runtime consults BEFORE the OS disposition matters —
+// runtime.sigpipe() returns early on it — and only Notify clears that bit,
+// which Reset's documentation says by naming Notify as the only thing it
+// undoes. Resetting alone therefore left an ignored SIGPIPE ignored, where
+// every compiled backend put the kill back.
+func builtinSignalDefault(_ *Interp, args []Value) (Value, error) {
+	sig, ok, err := signalArg("signal_default", args)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return Void{}, nil
+	}
+	ch := make(chan os.Signal, 1)
+	signal.Notify(ch, sig)
+	signal.Stop(ch)
+	signal.Reset(sig)
+	return Void{}, nil
 }
 
 // builtinRemoveFile unlinks `path`. `Option[IoError]` mirrors

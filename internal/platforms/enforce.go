@@ -159,6 +159,16 @@ var gatedBuiltins = map[string]string{
 	"getgid":    "userid",
 	"getgroups": "userid",
 
+	// Signal dispositions. A signal is something a HOST delivers to a
+	// process, so a target that runs no process cannot have one
+	// ignored: wasi-cli grants this and answers with a no-op — a
+	// component has no signals, and doing nothing is the whole truth
+	// about ignoring one there — while a freestanding artifact has no
+	// process to deliver to and does not get it at all
+	// (docs/FREESTANDING-CORE.md).
+	"signal_ignore":  "signal",
+	"signal_default": "signal",
+
 	// The host's own name — the kernel node name gethostname(2) reports.
 	// A hosted target asks its kernel; WASI has no host identity and
 	// answers the empty string, which is a fact about a component rather

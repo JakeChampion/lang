@@ -87,6 +87,7 @@ var stdModuleReach = map[string]string{
 	"std/result":        "",
 	"std/semver":        "",
 	"std/set":           "",
+	"std/signal":        "signal",
 	"std/sim":           "now,random",
 	"std/sort":          "",
 	"std/strdist":       "",

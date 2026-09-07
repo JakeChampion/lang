@@ -310,6 +310,9 @@ var rcInertBuiltins = map[string]bool{
 	// getcwd / cpu_count take nothing either; uname_field's one
 	// argument is a scalar index.
 	"getcwd": true, "cpu_count": true, "uname_field": true,
+	// One i32 in, nothing out — the disposition lives in the kernel,
+	// not in anything counted.
+	"signal_ignore": true, "signal_default": true,
 }
 
 // rcUnmodelled are helpers that do move counts, and whose movement one
@@ -351,6 +354,7 @@ var rcInert = map[string]bool{
 	"__fern_idiv_u64": true, "__fern_irem_s32": true, "__fern_irem_s64": true,
 	"__fern_irem_u32": true, "__fern_irem_u64": true,
 	"cabi_realloc": true, "isatty": true, "poll": true,
+	"signal_default": true, "signal_ignore": true,
 	"__wasi_errno_of_code": true,
 
 	"__alloc": true, "__alloc_u8": true, "__arr_idx": true,

@@ -54,6 +54,7 @@ costs a silent failure on the first target that lacks it.
 | `fsmode` | `write_file_exec`, `access`, `umask` | permission bits on a filesystem entry, and the mask a creation keeps them through |
 | `userid` | `geteuid`, `getegid` | a user the process can be |
 | `host` | `hostname` | a node name: uname(2) on Linux, kern.hostname on Darwin; `""` on WASI, which has none |
+| `signal` | `signal_ignore`, `signal_default` | a host that can deliver a signal to a process; a no-op on WASI, which cannot |
 | `cabi` | `__c_call0..4` (+ `_f32` / `_f64`) | a C calling convention to call a function pointer through |
 | `tcp` | `tcp_*`, `udp_send` | a network stack |
 | `proc` | `proc_fork`, `proc_exec`, `proc_waitpid` | processes |
@@ -171,6 +172,29 @@ node name is a property of the machine, and the two part company on exactly
 the proxy world. `internal/caps` files it under `env` all the same, since for a
 dependency grant the question is only whether reading ambient facts about the
 host should be visible, and it should.
+
+**`signal` follows `host`'s shape exactly.** A signal is something a host
+DELIVERS to a process, so setting a disposition needs one — gated, not core,
+and a freestanding artifact has no process to deliver to. And like `host` it
+has an honest answer where there is no host to ask: nothing in either WASI
+world can deliver a signal, so ignoring one is a no-op and doing nothing is
+the whole truth about it, not a stub standing in for a missing import. So
+`wasi-cli` grants `signal` on both previews, and `wasi-http` does not, for the
+same reason it has neither `args` nor `env`.
+
+`internal/caps` disagrees here too, and again correctly: it leaves both
+UNGATED, next to `exit`. A disposition reconfigures how THIS process reacts to
+something delivered to it — it reaches nothing outside the process and confers
+no authority a dependency could escalate through, which is the only question
+that side asks.
+
+There is deliberately no handler-installing form. A handler runs as a second
+context against non-atomic reference counts, which is the same problem
+docs/BARE-METAL-PLAN.md records for interrupt handlers, so installing one is a
+memory-model question rather than a capability one. The two dispositions are
+what a utility needs: `tee -i` is SIG_IGN on SIGINT, and its `--output-error`
+family is SIG_IGN on SIGPIPE so a write to a vanished reader returns EPIPE
+instead of killing the process.
 
 **`pollfd`, `fsmode` and `cabi` split three builtins off the capability that
 otherwise carried them** (#7947). Each is a property of the target, not a gap in a

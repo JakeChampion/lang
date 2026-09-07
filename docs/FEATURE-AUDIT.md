@@ -155,6 +155,7 @@ programs through the self-hosted x86-64 driver + CI-gated arm64); native
 | `args(): string[]` | | | | | ✅ | ⚠️ | self-host ✓; native arg-passing via CLI e2e tests |
 | `env(name): Option[string]` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | unset → `None` |
 | `exit(code)` | ✅ | ✅ | ✅ | ⚠️ | ✅ | ✅ | native interp/x86/arm + self-host; wasm proc_exit vs result-line harness |
+| `signal_ignore(sig)` / `signal_default(sig)` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | one signal's disposition set to SIG_IGN / SIG_DFL ([#8792](https://github.com/JakeChampion/lang/issues/8792)), which `tee`'s `-i` and `--output-error` family need. One rt_sigaction on the natives, sharing a zeroed 32-byte `act` across all three kernel layouts; a no-op on wasm, where nothing can deliver a signal. No handler-installing form: a handler is a second context racing non-atomic refcounts. Tests assert SIGPIPE's observable — 141 by default, the program's own exit when ignored, 141 again after `signal_default` — on x86-64, arm64, arm64-ssa, the interpreter and both self-host paths |
 | `stdin()/stdout()/stderr()` | | | | | | ⬜ | Reader/Writer |
 | `read_file` / `read_file_bytes` / `write_file` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | native: BACKEND-PARITY ReadFile/WriteFile + ReadFileBytes tests; self-host: fs tests + probe; `read_file_bytes(path): Result[u8[], IoError]` is the raw sibling (#5714) |
 | `open_reader/open_writer/open_appender` | | | | | | ⬜ | |

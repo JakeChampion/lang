@@ -139,15 +139,24 @@ var Ungated = map[string]bool{
 	// platforms` DOES gate these, because there the question is
 	// whether the target can answer at all (WASI cannot), not
 	// whether a dependency should be allowed to ask.
-	"geteuid":                     true,
-	"getegid":                     true,
-	"getuid":                      true,
-	"getgid":                      true,
-	"getgroups":                   true,
-	"target_os":                   true,
-	"target_arch":                 true,
-	"args":                        true,
-	"exit":                        true,
+	"geteuid":     true,
+	"getegid":     true,
+	"getuid":      true,
+	"getgid":      true,
+	"getgroups":   true,
+	"target_os":   true,
+	"target_arch": true,
+	"args":        true,
+	"exit":        true,
+	// A signal disposition reconfigures how THIS process reacts to
+	// something delivered to it. It reaches nothing outside the
+	// process and confers no authority a dependency could escalate
+	// through — the same argument that leaves `exit` here, which is
+	// also process-wide and also irreversible from a caller's view.
+	// `internal/platforms` DOES gate these, because there the
+	// question is whether the target has signals at all.
+	"signal_ignore":               true,
+	"signal_default":              true,
 	"strbuf_reset":                true,
 	"strbuf_append":               true,
 	"strbuf_take":                 true,

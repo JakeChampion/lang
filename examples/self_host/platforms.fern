@@ -65,7 +65,7 @@ pub struct Descriptor {
 // native's own note claims for it.
 function capability_profile(profile: string): string[] {
     if (profile == "hosted-native") {
-        return ["log", "now", "env", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "subprocess"];
+        return ["log", "now", "env", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "subprocess"];
     }
     if (profile == "wasi-cli") {
         // fs is preview1's fd helpers and tcp is wasi:sockets; there is no
@@ -76,8 +76,10 @@ function capability_profile(profile: string): string[] {
         // the component-model filesystem has permission bits), `cabi`
         // (an unknown callee is reached through a typed table, not System V
         // or AAPCS64) and `userid` (no notion of a user at all). `host` IS
-        // granted: a component's node name is the empty string, truthfully.
-        return ["log", "now", "env", "args", "random", "stdin", "stdout", "fs", "tcp", "host"];
+        // granted: a component's node name is the empty string, truthfully,
+        // and so is `signal`: nothing can deliver a signal to a component,
+        // so ignoring one is a no-op rather than a missing import.
+        return ["log", "now", "env", "args", "random", "stdin", "stdout", "fs", "tcp", "host", "signal"];
     }
     if (profile == "wasi-proxy") {
         // The proxy world: an HTTP handler and nothing else. No stdout
@@ -316,6 +318,14 @@ pub function gated_builtins(): Gate[] {
         // reason: WASI resolves every path against a preopened descriptor
         // and has no current directory to report.
         Gate { builtin: "getcwd", capability: "cwd" },
+
+        // Signal dispositions. A signal is something a HOST delivers to a
+        // process; wasi-cli grants these and answers with a no-op, since a
+        // component is never sent one and doing nothing is the whole truth
+        // about ignoring it. A freestanding target has no process to
+        // deliver to and does not get them at all.
+        Gate { builtin: "signal_ignore", capability: "signal" },
+        Gate { builtin: "signal_default", capability: "signal" },
 
         // The C-ABI FFI shims. Enumerated rather than matched with
         // ircore.is_c_call so this table stays the one place the

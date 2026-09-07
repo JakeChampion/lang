@@ -31,18 +31,22 @@ func TestSelfHostIRKindRegistry(t *testing.T) {
 	copySelfHostDriver(t, dir, "ir_kind_run.fern")
 	bin := buildSelfHostBin(t, gcc, dir, "ir_kind_run.fern", "ir_kind_run")
 
-	// Golden report — locks kind_count, the full-table bijection (all 196 ids
-	// round-trip), the extension-tag sweep (registered ids beyond
-	// kind_count(), struct_copy=198 through umask=265: #5452's skew
-	// left them unrendered by kind_name), the negative sweep (14 near-miss tags
-	// that must all be KIND_INVALID, probing kind_id's (length, first byte)
+	// Golden report — locks kind_count, the full-table bijection (every dense
+	// id round-trips), the extension-tag sweep (the registered ids beyond
+	// kind_count(), running from struct_copy=198 upward — #5452's skew left
+	// them unrendered by kind_name), the negative sweep (near-miss tags that
+	// must all be KIND_INVALID, probing kind_id's (length, first byte)
 	// narrowing from the other side), the KIND_INVALID sentinels, a few stable
 	// ids, and every classifier predicate's answer on representative kinds.
 	//
-	// The two sweeps together name EVERY tag kind_id knows — the 196 dense ids
-	// via kind_name, the extension tags by name, so the round trip this
-	// pins is exhaustive. An id that moved would fail here whatever else went
-	// green.
+	// The two sweeps together name EVERY tag kind_id knows — the dense ids via
+	// kind_name, the extension tags by name — so the round trip this pins is
+	// exhaustive. An id that moved would fail here whatever else went green.
+	//
+	// Each sweep's size is the count `want` already asserts (kind_count,
+	// ext_ok, neg_ok, tag_consistency), and testdata/ir-kind-ids.txt carries
+	// one line per registered tag. Restating those totals in prose only rots
+	// them: registering one op moves several at once.
 	//
 	// ext_ok and tag_consistency move together whenever an extension op is
 	// added: both count entries in ir_kind_run.fern's sweep lists, and the
@@ -51,7 +55,7 @@ func TestSelfHostIRKindRegistry(t *testing.T) {
 	const want = "kind_count=196\n" +
 		"bijection_ok=196\n" +
 		"bijection_failures=0\n" +
-		"ext_ok=57\n" +
+		"ext_ok=59\n" +
 		"ext_failures=0\n" +
 		"neg_ok=14\n" +
 		"neg_failures=0\n" +
@@ -66,7 +70,7 @@ func TestSelfHostIRKindRegistry(t *testing.T) {
 		"is_term return=1 br=1 exit=1 brif=0\n" +
 		"is_fold add=1 div_s=1 ge_s=1 fadd=0\n" +
 		"is_commute add=1 xor=1 sub=0 shl=0\n" +
-		"tag_consistency ok=56 bad=0\n"
+		"tag_consistency ok=58 bad=0\n"
 
 	// The report ends with every registered tag's id in id order, pinned by
 	// testdata/ir-kind-ids.txt. The backends dispatch on literal ids, so this

@@ -1,0 +1,53 @@
+// std/signal — the two signal dispositions a program can set, and names for
+// the signals worth naming.
+//
+// There is no handler-installing form. A handler runs as a second context
+// against non-atomic reference counts — the same problem
+// docs/BARE-METAL-PLAN.md records for interrupt handlers — so installing one
+// is a memory-model question, not a stdlib one. What a utility actually needs
+// is the disposition: `tee -i` is SIG_IGN on SIGINT, and its whole
+// `--output-error` family is SIG_IGN on SIGPIPE so a write to a vanished
+// reader returns an error the program can report instead of killing it.
+//
+// Needs the `signal` target capability (`internal/platforms`). A wasi-cli
+// component grants it and both calls do nothing there: nothing in either WASI
+// world can deliver a signal, so there is no disposition to change. A
+// freestanding target has no process to deliver to and does not get it at all.
+
+// SIGINT — the terminal's interrupt (^C). 2 on Linux and Darwin alike.
+pub const SIGINT: i32 = 2;
+
+// SIGPIPE — a write whose reader is gone. 13 on Linux and Darwin alike.
+//
+// Its DEFAULT disposition kills the process, which is what makes a shell
+// pipeline stop early rather than run to completion writing into nothing:
+// `yes | head -c 10` ends because `yes` dies of this. A program that wants to
+// report the broken pipe instead of dying ignores it first, after which the
+// failing write returns EPIPE.
+pub const SIGPIPE: i32 = 13;
+
+// SIGHUP / SIGQUIT / SIGTERM — the other three a long-running program
+// usually has an opinion about. Same numbers on Linux and Darwin.
+pub const SIGHUP: i32 = 1;
+pub const SIGQUIT: i32 = 3;
+pub const SIGTERM: i32 = 15;
+
+// `ignore(sig)` — set `sig` to SIG_IGN, so delivering it does nothing.
+//
+//     import "std/signal";
+//     signal.ignore(signal.SIGPIPE);
+//
+// A signal number the kernel rejects is silently no-op: sigaction reports it
+// through a return value there is nothing here to hand back, which matches
+// libc's `signal(3)` being routinely called for effect. The five constants
+// above are the numbers this is meant for.
+pub function ignore(sig: i32): void {
+    signal_ignore(sig);
+}
+
+// `default(sig)` — put `sig` back to SIG_DFL, undoing an earlier `ignore`.
+// A utility that suppresses a signal for one stretch of work restores it
+// with this rather than leaving the whole process changed.
+pub function default(sig: i32): void {
+    signal_default(sig);
+}

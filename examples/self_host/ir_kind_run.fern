@@ -70,7 +70,7 @@ function main(): i32 {
         "rmemchr", "count_byte", "lstat", "access", "geteuid", "getegid",
         "hostname", "fd_stat", "reader_seek", "mismatch",
         "getuid", "getgid", "getgroups", "environ", "uname_field",
-        "getcwd", "cpu_count",
+        "getcwd", "cpu_count", "signal_ignore", "signal_default",
         "create_dir", "remove_dir", "create_link", "create_symlink",
         "read_link", "umask"
     ];
@@ -172,6 +172,7 @@ function main(): i32 {
         ir.op_fd_stat(), ir.op_reader_seek(), ir.op_mismatch(),
         ir.op_getuid(), ir.op_getgid(), ir.op_getgroups(), ir.op_environ(),
         ir.op_uname_field(), ir.op_getcwd(), ir.op_cpu_count(),
+        ir.op_signal_ignore(), ir.op_signal_default(),
         ir.op_create_dir(), ir.op_remove_dir(), ir.op_create_link(),
         ir.op_create_symlink(), ir.op_read_link(), ir.op_umask()
     ];
@@ -189,7 +190,7 @@ function main(): i32 {
         "create_dir_all", "isatty", "rmemchr", "count_byte", "lstat",
         "access", "geteuid", "getegid", "hostname", "fd_stat", "reader_seek",
         "mismatch", "getuid", "getgid", "getgroups", "environ",
-        "uname_field", "getcwd", "cpu_count",
+        "uname_field", "getcwd", "cpu_count", "signal_ignore", "signal_default",
         "create_dir", "remove_dir", "create_link", "create_symlink",
         "read_link", "umask"
     ];

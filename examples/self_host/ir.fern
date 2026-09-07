@@ -1060,6 +1060,13 @@ pub function op_args(): Op { return op0("args"); }
 // Lowers to each backend's __fern_putchar helper — the byte-level twin of
 // print_str. Mirrors the native compiler's `putchar` builtin (issue #2839).
 pub function op_putchar(): Op { return op0("putchar"); }
+// `signal_ignore` / `signal_default` each pop an i32 signal number and set that
+// signal's disposition to SIG_IGN or SIG_DFL, pushing the syscall return as a
+// dummy so a statement-level drop balances — the same shape as putchar. Lower
+// to each backend's __fern_signal_ignore / __fern_signal_default helper; on
+// wasm both are a no-op, since nothing there can deliver a signal (#8792).
+pub function op_signal_ignore(): Op { return op0("signal_ignore"); }
+pub function op_signal_default(): Op { return op0("signal_default"); }
 // The global string-builder primitives — the amortised-O(1) output accumulator
 // the self-host emitters write through (asmcore.EmitState.write → strbuf_append;
 // emit_module_ir → strbuf_reset / strbuf_take). A single .bss buffer + length:
@@ -2005,6 +2012,7 @@ function kind_id_len13(name: string): i32 {
     if (c == b'r' && name == "raw_store_ptr") { return 84; }
     if (c == b's' && name == "str_ends_with") { return 115; }
     if (c == b's' && name == "strbuf_append") { return 118; }
+    if (c == b's' && name == "signal_ignore") { return 243; }
     return 0;
 }
 
@@ -2017,6 +2025,7 @@ function kind_id_len14(name: string): i32 {
     if (c == b'r' && name == "remove_dir_all") { return 172; }
     if (c == b'r' && name == "read_all_stdin") { return 209; }
     if (c == b's' && name == "str_from_bytes") { return 103; }
+    if (c == b's' && name == "signal_default") { return 244; }
     return 0;
 }
 
@@ -2310,6 +2319,8 @@ function kind_name_4(id: i32): string {
     if (id == 240) { return "hostname"; }
     if (id == 241) { return "fd_stat"; }
     if (id == 242) { return "reader_seek"; }
+    if (id == 243) { return "signal_ignore"; }
+    if (id == 244) { return "signal_default"; }
     if (id == 245) { return "mismatch"; }
     if (id == 246) { return "getuid"; }
     if (id == 247) { return "getgid"; }
@@ -2426,6 +2437,7 @@ function pops1_io(t: i32): boolean {
         || t == 174 || t == 175 || t == 176 || t == 179 || t == 181      // temp_dir, stat, env, reader_close, sleep_ms
         || t == 168                                                      // read_line (fd)
         || t == 231 || t == 232                                          // create_dir_all, isatty
+        || t == 243 || t == 244                                          // signal_ignore, signal_default
         || t == 241 || t == 250                                          // fd_stat, uname_field
         || t == 261 || t == 264 || t == 265                              // remove_dir, read_link, umask
         || t == 185 || t == 210 || t == 212                              // random_bytes, arg_at, proc_waitpid
