@@ -31,18 +31,22 @@ func TestSelfHostIRKindRegistry(t *testing.T) {
 	copySelfHostDriver(t, dir, "ir_kind_run.fern")
 	bin := buildSelfHostBin(t, gcc, dir, "ir_kind_run.fern", "ir_kind_run")
 
-	// Golden report — locks kind_count, the full-table bijection (all 196 ids
-	// round-trip), the extension-tag sweep (the 48 registered ids beyond
-	// kind_count(), struct_copy=198 … environ=249 — #5452's skew
-	// left them unrendered by kind_name), the negative sweep (14 near-miss tags
-	// that must all be KIND_INVALID, probing kind_id's (length, first byte)
+	// Golden report — locks kind_count, the full-table bijection (every dense
+	// id round-trips), the extension-tag sweep (the registered ids beyond
+	// kind_count(), running from struct_copy=198 upward — #5452's skew left
+	// them unrendered by kind_name), the negative sweep (near-miss tags that
+	// must all be KIND_INVALID, probing kind_id's (length, first byte)
 	// narrowing from the other side), the KIND_INVALID sentinels, a few stable
 	// ids, and every classifier predicate's answer on representative kinds.
 	//
-	// The two sweeps together name EVERY tag kind_id knows — the 196 dense ids
-	// via kind_name, the 48 extension tags by name — so the round trip this
-	// pins is exhaustive. An id that moved would fail here whatever else went
-	// green.
+	// The two sweeps together name EVERY tag kind_id knows — the dense ids via
+	// kind_name, the extension tags by name — so the round trip this pins is
+	// exhaustive. An id that moved would fail here whatever else went green.
+	//
+	// Each sweep's size is the count `want` already asserts (kind_count,
+	// ext_ok, neg_ok, tag_consistency), and testdata/ir-kind-ids.txt carries
+	// one line per registered tag. Restating those totals in prose only rots
+	// them: registering one op moves several at once.
 	//
 	// ext_ok and tag_consistency move together whenever an extension op is
 	// added: both count entries in ir_kind_run.fern's sweep lists, and the
@@ -86,7 +90,7 @@ func TestSelfHostIRKindRegistry(t *testing.T) {
 	}
 	// Exit code totals the failures of all four sweeps — bijection over the
 	// dense ids, over the ext ids, the negative sweep, and the tag census. 0
-	// proves every one of the 244 tags round-tripped AND that no near miss
+	// proves every registered tag round-tripped AND that no near miss
 	// resolved, an independent check of the report's own _ok flags.
 	if code := cmd.ProcessState.ExitCode(); code != 0 {
 		t.Errorf("ir_kind_run exit code = %d, want 0 (total failures across the four sweeps)", code)
