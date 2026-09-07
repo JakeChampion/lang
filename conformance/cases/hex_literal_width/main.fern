@@ -1,0 +1,64 @@
+function identity[T](value: T): T {
+  return value;
+}
+
+function mask(): u32 {
+  return 0xffffffff;
+}
+
+function main(): i32 {
+  var wide = 0xFFFFFFFF;
+  var typed: i64 = wide;
+  if (typed / 65536 != 65535) {
+    return 1;
+  }
+  var upper = 0X80000000;
+  if (upper <= 0) {
+    return 2;
+  }
+  var small = 0x000000000000007f;
+  var narrow: i32 = small;
+  if (narrow != 127) {
+    return 3;
+  }
+  var decimal = 127;
+  var decimal_narrow: i32 = decimal;
+  if (decimal_narrow != 127) {
+    return 4;
+  }
+  var generic = identity(0xFFFFFFFF);
+  if (generic / 65536 != 65535) {
+    return 5;
+  }
+  var values = [0xFFFFFFFF];
+  if (values[0] / 65536 != 65535) {
+    return 6;
+  }
+  var word: u32 = 1;
+  if (word + 0xffffffff != 0u32) {
+    return 7;
+  }
+  if (0xffffffff + word != 0u32) {
+    return 8;
+  }
+  if (word + (0xfffffffe + 1) != 0u32) {
+    return 9;
+  }
+  if (word >= 0xffffffff) {
+    return 10;
+  }
+  if (0xffffffff <= word) {
+    return 11;
+  }
+  if ((word ^ 0xffffffff) != 0xfffffffe) {
+    return 12;
+  }
+  if (word + (0xfffffffe | 1) != 0u32) {
+    return 13;
+  }
+  word = 0xffffffff;
+  if (word != mask()) {
+    return 14;
+  }
+  return 0;
+}

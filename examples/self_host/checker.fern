@@ -502,7 +502,8 @@ function mixed_int_diag(op: string, lt: Type, rt: Type, line: i32, col: i32): ut
 // at the other operand's width, so `n + 1` stays i64 when `n` is; when both
 // sides are settled the operator rules have already required them to agree, so
 // either side names the result.
-function int_result(lt: Type, rt: Type, le: ast.Expr): Type {
+function int_result(lt: Type, rt: Type, le: ast.Expr, re: ast.Expr): Type {
+  if (int_literal_tree(le) && !int_literal_tree(re)) { return rt; }
   if (unsettled_int_literal(le)) {
     return rt;
   }
@@ -3485,7 +3486,7 @@ function check_expr(e: ast.Expr, s: Scope): Type {
           return t_string();
         }
         if (is_integer(lt) && is_integer(rt)) {
-          return int_result(lt, rt, b.left);
+          return int_result(lt, rt, b.left, b.right);
         }
         if (type_eq(lt, t_float()) && type_eq(rt, t_float())) {
           return t_float();
@@ -3503,7 +3504,7 @@ function check_expr(e: ast.Expr, s: Scope): Type {
       // the shift member — same operand rule as `<<`.
       if (b.op == "+|" || b.op == "-|" || b.op == "*|" || b.op == "<<|") {
         if (is_integer(lt) && is_integer(rt)) {
-          return int_result(lt, rt, b.left);
+          return int_result(lt, rt, b.left, b.right);
         }
         return t_unknown("`" + b.op + "` operands must both be integers");
       }
@@ -3512,14 +3513,14 @@ function check_expr(e: ast.Expr, s: Scope): Type {
       // width, so `a %? b` on i64 is `Option[i64]`.
       if (b.op == "+?" || b.op == "-?" || b.op == "*?" || b.op == "/?" || b.op == "%?" || b.op == "<<?" || b.op == ">>?") {
         if (is_integer(lt) && is_integer(rt)) {
-          var chkoa: Type[] = [int_result(lt, rt, b.left)];
+          var chkoa: Type[] = [int_result(lt, rt, b.left, b.right)];
           return t_union_g("Option", chkoa);
         }
         return t_unknown("`" + b.op + "` operands must both be integers");
       }
       if (b.op == "-" || b.op == "*" || b.op == "/" || b.op == "%") {
         if (is_integer(lt) && is_integer(rt)) {
-          return int_result(lt, rt, b.left);
+          return int_result(lt, rt, b.left, b.right);
         }
         // `%` on floats isn't supported — interp surfaces
         // VErr; checker is lenient and just rejects it.
@@ -3532,6 +3533,18 @@ function check_expr(e: ast.Expr, s: Scope): Type {
           return aovt;
         }
         return t_unknown("arithmetic op `" + b.op + "` requires matching i32 or f64 operands");
+      }
+      // Bitwise expressions retain their operand type. Without this a u32
+      // mask becomes unknown and a following wide literal loses its context.
+      if (b.op == "&" || b.op == "|" || b.op == "^") {
+        if (is_integer(lt) && is_integer(rt)) {
+          return int_result(lt, rt, b.left, b.right);
+        }
+        return t_unknown("bitwise operands must both be integers");
+      }
+      if (b.op == "<<" || b.op == ">>") {
+        if (is_integer(lt) && is_integer(rt)) { return lt; }
+        return t_unknown("shift operands must both be integers");
       }
       if (b.op == "<" || b.op == "<=" || b.op == ">" || b.op == ">=") {
         if (is_integer(lt) && is_integer(rt)) {
@@ -7512,21 +7525,6 @@ function match_diags(stmts: ast.Stmt[], structs: StructSig[], unions: UnionTable
   return out;
 }
 
-// is_hex_lit reports whether an integer literal's spelling is a `0x` numeral.
-function is_hex_lit(text: string): boolean {
-  return text.len() > 2 && (text[0] as i32) == 48
-    && ((text[1] as i32) == 120 || (text[1] as i32) == 88);
-}
-
-// lower_hex_byte folds an ASCII hex digit to lower case; any other byte is
-// returned unchanged.
-function lower_hex_byte(b: i32): i32 {
-  if (b >= 65 && b <= 70) {
-    return b + 32;
-  }
-  return b;
-}
-
 // magnitude_is_zero reports whether the numeral from `start` is all zeros.
 function magnitude_is_zero(text: string, start: i32): boolean {
   var i: i32 = start;
@@ -7534,31 +7532,6 @@ function magnitude_is_zero(text: string, start: i32): boolean {
     i = i + 1;
   }
   return i == text.len();
-}
-
-// magnitude_fits compares the literal's digits — from `start`, leading zeros
-// skipped, hex letters lower-cased — against `max`, written in the same base.
-// Equal-length numerals compare lexicographically the same as numerically, so
-// the bound is a character compare.
-function magnitude_fits(text: string, start: i32, max: string): boolean {
-  var i: i32 = start;
-  while (i < text.len() && (text[i] as i32) == 48) {
-    i = i + 1;
-  }
-  var n: i32 = text.len() - i;
-  if (n != max.len()) {
-    return n < max.len();
-  }
-  var k: i32 = 0;
-  while (k < n) {
-    var tc: i32 = lower_hex_byte(text[i + k] as i32);
-    var mc: i32 = max[k] as i32;
-    if (tc != mc) {
-      return tc < mc;
-    }
-    k = k + 1;
-  }
-  return true;
 }
 
 function is_unsigned_int_ty(ty: string): boolean {
@@ -7604,7 +7577,7 @@ function int_ty_max_hex(ty: string, negated: boolean): string {
 // sign. Zero has no sign, an unsigned type has no negative values at all, and
 // a `ty` naming no integer type has no rule to apply.
 function int_lit_fits(text: string, ty: string, negated: boolean): boolean {
-  var hex: boolean = is_hex_lit(text);
+  var hex: boolean = parser.is_hex_lit(text);
   var start: i32 = 0;
   if (hex) { start = 2; }
   var neg: boolean = negated && !magnitude_is_zero(text, start);
@@ -7612,14 +7585,14 @@ function int_lit_fits(text: string, ty: string, negated: boolean): boolean {
   var max: string = int_ty_max_dec(ty, neg);
   if (hex) { max = int_ty_max_hex(ty, neg); }
   if (max.len() == 0) { return true; }
-  return magnitude_fits(text, start, max);
+  return parser.magnitude_fits(text, start, max);
 }
 
 // int_lit_as_written is the numeral the diagnostic quotes: hex as the source
 // spelled it, decimal with leading zeros dropped, and a `-` when the source
 // wrote one.
 function int_lit_as_written(text: string, negated: boolean): string {
-  var hex: boolean = is_hex_lit(text);
+  var hex: boolean = parser.is_hex_lit(text);
   var start: i32 = 0;
   var out: string = text;
   if (hex) {
@@ -7889,25 +7862,7 @@ function unsettled_int_literal(e: ast.Expr): boolean {
 // "does this tree have an i32 reading of its own" — so a width DEFAULT (the
 // type a binary yields, the arm of a comparison) still reads the magnitude.
 function int_literal_tree(e: ast.Expr): boolean {
-  match (e) {
-    ast.ExprNumber(n) => {
-      return !n.is_float && n.suffix.len() == 0 && !parser.is_unit_literal(n);
-    },
-    ast.ExprUnary(u) => {
-      if (u.op == "-" || u.op == "+") { return int_literal_tree(u.operand); }
-      return false;
-    },
-    ast.ExprBinary(b) => {
-      if (b.op == "+" || b.op == "-" || b.op == "*" || b.op == "/") {
-        return int_literal_tree(b.left) && int_literal_tree(b.right);
-      }
-      return false;
-    },
-    _ => {
-      return false;
-    }
-  }
-  return false;
+  return parser.int_literal_tree(e);
 }
 
 // int_range_diags: E047 for every literal in `e` that the type it is READ at
@@ -15187,6 +15142,13 @@ function annotate_advance(st: ast.Stmt, s: Scope): Scope {
   return s;
 }
 
+// settle_int_tree records a contextual integer type on the compile-only AST.
+// Number nodes have no type tag, so their suffix carries the settled width.
+// Formatting uses the original parser tree, never this annotated copy.
+function settle_int_tree(e: ast.Expr, tag: string): ast.Expr {
+  return parser.settle_int_tree(e, tag);
+}
+
 // annotate_expr rebuilds `e`, stamping ExprCall.ty, ExprIdent.ty,
 // ExprBinary.ty, ExprUnary.ty, ExprFieldAccess.ty and ExprIndex.ty with the
 // checker-inferred result tag.
@@ -15197,7 +15159,22 @@ function annotate_expr(e: ast.Expr, s: Scope): ast.Expr {
       return ast.ExprIdent { name: id.name, line: id.line, col: id.col, ty: type_to_irtag(check_expr(e, s)) };
     },
     ast.ExprBinary(b) => {
-      return ast.ExprBinary { op: b.op, left: annotate_expr(b.left, s), right: annotate_expr(b.right, s), line: b.line, col: b.col, ty: type_to_irtag(check_expr(e, s)) };
+      var left: ast.Expr = annotate_expr(b.left, s);
+      var right: ast.Expr = annotate_expr(b.right, s);
+      var lt: Type = check_expr(b.left, s);
+      var rt: Type = check_expr(b.right, s);
+      // A wide bare literal is i64 only in the absence of a context. Beside
+      // a u32 operand, 0xffffffff is a u32, including in comparisons and
+      // checked arithmetic whose result tag is not the operand type.
+      if (is_integer(lt) && is_integer(rt)) {
+        if (int_literal_tree(b.left) && !int_literal_tree(b.right)) {
+          left = settle_int_tree(left, type_to_irtag(rt));
+        }
+        if (int_literal_tree(b.right) && !int_literal_tree(b.left)) {
+          right = settle_int_tree(right, type_to_irtag(lt));
+        }
+      }
+      return ast.ExprBinary { op: b.op, left: left, right: right, line: b.line, col: b.col, ty: type_to_irtag(check_expr(e, s)) };
     },
     ast.ExprUnary(u) => {
       return ast.ExprUnary { op: u.op, operand: annotate_expr(u.operand, s), line: u.line, col: u.col, ty: type_to_irtag(check_expr(e, s)) };

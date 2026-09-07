@@ -344,28 +344,35 @@ function node_head(n: SExpr): string {
     return "";
 }
 
-// parse_dec parses a (possibly negative) decimal integer.
+// Parse WAT integer immediates, including signed hexadecimal spellings.
+// Keep the historical names because decimal indices use the same helpers.
 function parse_dec(s: string): i32 {
     var neg: boolean = false;
     var i: i32 = 0;
     if (s.len() > 0 && s[0] == b'-') { neg = true; i = 1; }
+    else if (s.len() > 0 && s[0] == b'+') { i = 1; }
+    var base: i32 = 10;
+    if (s.len() > i + 2 && s[i] == b'0' && (s[i + 1] == b'x' || s[i + 1] == b'X')) { base = 16; i = i + 2; }
     var v: i32 = 0;
     while (i < s.len()) {
-        v = v * 10 + ((s[i] as i32) - 48);
+        if (s[i] != b'_') { v = v * base + hexval(s[i] as i32); }
         i = i + 1;
     }
     if (neg) { return 0 - v; }
     return v;
 }
 
-// parse_dec_i64 parses a (possibly negative) decimal integer as i64.
+// The i64 counterpart preserves the full immediate before LEB encoding.
 function parse_dec_i64(s: string): i64 {
     var neg: boolean = false;
     var i: i32 = 0;
     if (s.len() > 0 && s[0] == b'-') { neg = true; i = 1; }
+    else if (s.len() > 0 && s[0] == b'+') { i = 1; }
+    var base: i64 = 10;
+    if (s.len() > i + 2 && s[i] == b'0' && (s[i + 1] == b'x' || s[i + 1] == b'X')) { base = 16; i = i + 2; }
     var v: i64 = 0;
     while (i < s.len()) {
-        v = v * 10 + ((s[i] - 48) as i64);
+        if (s[i] != b'_') { v = v * base + (hexval(s[i] as i32) as i64); }
         i = i + 1;
     }
     var z: i64 = 0;

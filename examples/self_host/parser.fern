@@ -9375,11 +9375,8 @@ function assoc_ret_of(funcs: FuncDecl[], tyname: string, method: string): string
     return "";
 }
 
-// mono_infer computes a coarse type-name for an expression, enough to
-// pick the right clone. Unknown shapes return "" (the call stays
-// generic — fine for non-primitive receivers).
 // is_hex_lit reports whether an integer literal's spelling is a `0x` numeral.
-function is_hex_lit(text: string): boolean {
+pub function is_hex_lit(text: string): boolean {
     return text.len() > 2 && (text[0] as i32) == 48
         && ((text[1] as i32) == 120 || (text[1] as i32) == 88);
 }
@@ -9397,9 +9394,9 @@ function lower_hex_byte(b: i32): i32 {
 // magnitude_fits compares the literal's digits — from `start`, leading zeros
 // skipped, hex letters lower-cased — against `max`, written in the same base.
 // Equal-length numerals compare lexicographically the same as numerically, so
-// the bound is a character compare. The same predicate rules the checker's
-// int_lit_fits; the two can't share it (the dependency runs checker -> parser).
-function magnitude_fits(text: string, start: i32, max: string): boolean {
+// the bound is a character compare. The checker shares this predicate when
+// range-checking a literal against its contextual type.
+pub function magnitude_fits(text: string, start: i32, max: string): boolean {
     var i: i32 = start;
     while (i < text.len() && (text[i] as i32) == 48) {
         i = i + 1;
@@ -9435,6 +9432,50 @@ pub function literal_is_i64(text: string): boolean {
     if (hex) { m = "7fffffff"; }
     return !magnitude_fits(text, start, m);
 }
+// Unsuffixed integer trees can take a contextual type without changing
+// explicitly typed operands. Shared by the checker and unannotated IR drivers.
+pub function int_literal_tree(e: ast.Expr): boolean {
+  match (e) {
+    ast.ExprNumber(n) => {
+      return !n.is_float && n.suffix.len() == 0 && !is_unit_literal(n);
+    },
+    ast.ExprUnary(u) => {
+      if (u.op == "-" || u.op == "+") { return int_literal_tree(u.operand); }
+      return false;
+    },
+    ast.ExprBinary(b) => {
+      if (b.op == "+" || b.op == "-" || b.op == "*" || b.op == "/" || b.op == "%"
+          || b.op == "&" || b.op == "|" || b.op == "^" || b.op == "<<" || b.op == ">>"
+          || b.op == "+|" || b.op == "-|" || b.op == "*|" || b.op == "<<|") {
+        return int_literal_tree(b.left) && int_literal_tree(b.right);
+      }
+      return false;
+    },
+    _ => {
+      return false;
+    }
+  }
+  return false;
+}
+
+// Settle only a tree accepted by int_literal_tree. This is a compile-only
+// copy: source formatting never reads the suffixes introduced here.
+pub function settle_int_tree(e: ast.Expr, tag: string): ast.Expr {
+  match (e) {
+    ast.ExprNumber(n) => { return ast.ExprNumber { ...n, suffix: tag }; },
+    ast.ExprUnary(u) => {
+      return ast.ExprUnary { ...u, operand: settle_int_tree(u.operand, tag), ty: tag };
+    },
+    ast.ExprBinary(b) => {
+      return ast.ExprBinary { ...b, left: settle_int_tree(b.left, tag), right: settle_int_tree(b.right, tag), ty: tag };
+    },
+    _ => { return e; }
+  }
+  return e;
+}
+
+// mono_infer computes a coarse type-name for an expression, enough to pick
+// the right clone. Unknown shapes return "", leaving the call generic.
 function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
     match (e) {
         ast.ExprNumber(n) => {
