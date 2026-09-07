@@ -7159,41 +7159,6 @@ function main(): i32 {
 }`,
 	},
 	{
-		// A closure CYCLE must leak, not crash. `var f = () => g(); g = f;`
-		// makes the mutated capture's boxed cell hold the very pair that is
-		// being released, and refcounts cannot collect that — leaking is the
-		// correct outcome, and the one #8440 documents while the checker hole
-		// that admits the cycle stays open.
-		//
-		// #8545 made the per-closure thunk reachable for such a local, and
-		// the thunk dispatched into __drop_arr_closure, which dispatched back
-		// into the thunk: unbounded recursion, SIGSEGV on all three backends
-		// (#8637). Routing that arm through the flat per-element dec instead
-		// traded the crash for `rc over-release (double free)` — on a cycle
-		// the counts are already wrong, so ANY release is. The thunk now
-		// leaves a closure-typed capture alone and frees only the env.
-		//
-		// Against the #8545 compiler this case dies with a signal, which the
-		// corpus reads as a crash rather than a verdict; before #8545 it
-		// leaked 3200 bytes where it now leaks 1600.
-		name: "closure_cycle_leaks_without_crashing",
-		src: `
-@noinline
-function round(n: i32): i32 {
-    var g: () => i32 = (): i32 => { return 1; };
-    var f: () => i32 = (): i32 => { return g() + n; };
-    g = f;
-    return n;
-}
-
-function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
-    while (i < 50) { t = t + round(i); i = i + 1; }
-    return (t - 1225) + __rc_underflow_count();
-}`,
-	},
-	{
 		// #8441: every outer rebind of a captured reference stranded the
 		// value it superseded. BoxMutatedCaptures rewrites `s` into a
 		// shared one-element cell and the store went through it raw — no

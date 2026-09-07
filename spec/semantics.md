@@ -103,7 +103,7 @@ of them.
 | `FS-07` | `docs/FLOAT-SEMANTICS.md` | Ordinary `+ - * /` and comparisons are portable across backends | `float_pythagoras` |
 | `CC-01` | `docs/CLOSURE-CAPTURE.md` | A mutation of a captured scalar inside a closure is visible outside | `closure_capture_shared_cell` |
 | `CC-02` | `docs/CLOSURE-CAPTURE.md` | A write to the outer variable is visible inside the closure | `closure_capture_shared_cell` |
-| `CC-03` | `docs/CLOSURE-CAPTURE.md` | Assigning a reference-typed capture is rejected (`E049`) | `diag_e049` |
+| `CC-03` | `docs/CLOSURE-CAPTURE.md` | Assigning a reference-typed capture is rejected, inside the closure and from the enclosing scope when the stored value can reach a closure (`E049`) | `diag_e049` |
 | `ML-01` | `docs/MODE-LATTICE.md` | A borrowed value cannot be passed to an `own` parameter (`E051`) | `diag_e051` |
 | `ML-02` | `docs/MODE-LATTICE.md` | A `fip` function may not allocate (`E053`) | `diag_e053` |
 | `ML-03` | `docs/MODE-LATTICE.md` | A `[T]` view of function-local storage may not be returned (`E063`) | `diag_e063` |

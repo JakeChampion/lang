@@ -4,8 +4,10 @@ Date: 2026-06-01.
 Status: **shipped (Go reference compiler); self-host enforcement partial.**
 The immutability rules described here are live and tested in the native
 checker — `E048` (struct fields immutable after construction), `E056`
-(`arr[i] = v` subscripts read-only), `E049` (reference-typed closure-capture
-write-back rejected), `E055` (discarded value-returning collection result),
+(`arr[i] = v` subscripts read-only), `E049` (a reference-typed closure
+capture is read-only on both sides of the shared cell — the closure's
+write-back, and the enclosing scope's store of a value that can reach a
+closure), `E055` (discarded value-returning collection result),
 `E057` (`Cell[T]` restricted to cycle-free scalar/string `T`). The
 sanctioned mutable escape hatch is `Cell[T]` (see `docs/CELL-TYPE-PLAN.md`).
 Remaining work is **self-host parity**: not all self-host drivers gate on
@@ -39,7 +41,10 @@ The decision's 4-step sequencing is:
      enum / slice / tuple / closure. Scalar captures stay mutable, so
      the cycle-safe counter closure still works; only the actual
      cycle vector is closed). The detection keys off the
-     `captureChain` + `ast.IsPointerType`.
+     `captureChain` + `ast.IsPointerType`. The enclosing scope writes
+     the same shared cell, so its store is refused too when the stored
+     value's type can reach a function (#8440,
+     `docs/CLOSURE-CAPTURE.md`); that half is native-only so far.
 
    **Self-host enforcement — error-reporting groundwork now in place,
    compile-driver wiring still to come.** The self-host *checker*

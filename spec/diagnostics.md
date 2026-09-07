@@ -93,7 +93,7 @@ language does not have. It is deleted.
 | `E046` | Tuple field access error | `diag_e046` |
 | `E047` | Integer literal out of range | `diag_e047` |
 | `E048` | Field is immutable after construction | `compound_field_assign` |
-| `E049` | Reference-typed captured variable is read-only | `diag_e049` |
+| `E049` | A captured reference is read-only, on both sides of the capture | `diag_e049` |
 | `E050` | Use of an owned parameter after it was consumed | `diag_e050` |
 | `E051` | Argument to an owned parameter must be an owned value | `diag_e051` |
 | `E052` | missing return in a value-returning function | `diag_e052` |

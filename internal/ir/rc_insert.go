@@ -1990,11 +1990,12 @@ func genClosureDropThunk(name string, caps []ast.Param, ptrW int, info *checker.
 		// reported an rc over-release, because on a cycle the counts are
 		// already wrong (#8637).
 		//
-		// A cycle is uncollectable by refcount and is supposed to LEAK —
-		// what #8440 documents, and what the generic env-only drop did
-		// before this thunk became reachable for such closures (#8545).
-		// Skipping the capture restores that: the env block is still freed
-		// by the tail below, the captured closure is simply not touched.
+		// A cycle is uncollectable by refcount and is supposed to LEAK
+		// rather than crash — what the generic env-only drop did before this
+		// thunk became reachable for such closures (#8545). E049 now refuses
+		// the store that builds one (#8440), so this arm is a belt on top of
+		// the checker's braces: the env block is still freed by the tail
+		// below, the captured closure is simply not touched.
 		if capturesAClosure(c.Type) {
 			off += slot
 			continue
