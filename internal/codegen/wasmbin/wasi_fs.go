@@ -2137,13 +2137,8 @@ func buildWriterWriteBody(idxs map[string]uint32) []byte {
 	body = inst.InstEnd(body) // end loop
 	body = inst.InstEnd(body) // end block
 
-	// Return None.
-	body = inst.InstI32Const(body, 8)
-	body = inst.InstCall(body, allocRc1)
-	body = inst.InstLocalTee(body, 7)
-	body = inst.InstI32Const(body, 1)
-	body = memory.InstI32Store(body, 2, 0)
-	body = inst.InstLocalGet(body, 7)
+	// Return None, at Option[IoError]'s uniform box size.
+	body = emitPayloadlessResultBox(body, allocRc1, 7, 8, 1)
 
 	// 10 i32 locals after the 3 params (slots 3..12).
 	locals := inst.PutLocalsOneGroup(nil, 10, encode.ValtypeI32)
