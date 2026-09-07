@@ -1,0 +1,1119 @@
+// coreutils/lib/digest.fern — md5sum, sha1sum, sha224sum, sha256sum,
+// sha384sum, sha512sum and b2sum, which are one program.
+//
+//   <util> [-bt] [--tag] [-z] [FILE]...
+//   <util> -c [--ignore-missing] [--quiet|--status|-w] [--strict] [FILE]...
+//   b2sum  [-l BITS] ...
+//
+// The seven differ in four things and nothing else — which digest they
+// run, its length in bits, the word their BSD tag and their diagnostics
+// use, and whether `-l` may resize the digest — so each of the seven
+// files names an `Algo` holding those four and calls `run`.
+//
+// Two parts of this are worth reading before changing them, because
+// both were measured off the reference binary rather than reasoned out:
+//
+//   - FILE NAMES ARE ESCAPED, in both directions. A name holding a
+//     backslash, a newline or a carriage return makes the whole line
+//     start with `\` and the three bytes are written `\\`, `\n` and
+//     `\r` — before the `MD5 (` of a tagged line, not after it. `-z`
+//     turns the escaping off along with the newline. Reading a
+//     checksum line reverses exactly those three escapes and NOTHING
+//     else: a `\t` in an escaped name is an improperly formatted line.
+//   - THE CHECK-LINE GRAMMAR is looser than what this program writes.
+//     Leading blanks are skipped; a `#` in column one is a comment; an
+//     empty line is ignored but a blank one is not; a trailing CR is
+//     dropped; the line is a C string, so it ends at a NUL while the
+//     length rule below still counts the bytes after it. The digest is
+//     either `HEX<blank>[ *]NAME` or `TAG (NAME) = HEX`, and in the
+//     first form the mode character is only consumed when a byte
+//     follows it — `HEX␣␣` names the file `␣`, `HEX␣␣x` names `x`.
+//     b2sum takes its digest length from the line: the hex run for the
+//     first form, the `-NNN` of `BLAKE2b-NNN` for the second, where
+//     NNN is C's strtoumax base 0, so `-020` is 16 bits.
+//
+// Nothing here was copied from GNU sources.
+import "std/string";
+import "std/array";
+import "std/crypto";
+import "std/io_buffered";
+import "./gnu";
+
+// ---- the algorithm --------------------------------------------------------
+// `Algo` — everything one of the seven utilities does not share.
+// `kind` selects the crypto state, `bits` is the digest length nothing
+// overrides, `tag` is the BSD prefix and the word in `improperly
+// formatted %s checksum line`, and `variable` is b2sum's alone.
+pub struct Algo { name: string, tag: string, bits: i32, kind: i32, variable: boolean, rfc: string }
+
+function k_md5(): i32 {
+  return 0;
+}
+
+function k_sha1(): i32 {
+  return 1;
+}
+
+function k_sha224(): i32 {
+  return 2;
+}
+
+function k_sha256(): i32 {
+  return 3;
+}
+
+function k_sha384(): i32 {
+  return 4;
+}
+
+function k_sha512(): i32 {
+  return 5;
+}
+
+function k_blake2b(): i32 {
+  return 6;
+}
+
+pub function algo_md5(): Algo {
+  return Algo { name: "md5sum", tag: "MD5", bits: 128, kind: k_md5(), variable: false, rfc: "RFC 1321" };
+}
+
+pub function algo_sha1(): Algo {
+  return Algo { name: "sha1sum", tag: "SHA1", bits: 160, kind: k_sha1(), variable: false, rfc: "FIPS-180-1" };
+}
+
+pub function algo_sha224(): Algo {
+  return Algo { name: "sha224sum", tag: "SHA224", bits: 224, kind: k_sha224(), variable: false, rfc: "RFC 3874" };
+}
+
+pub function algo_sha256(): Algo {
+  return Algo { name: "sha256sum", tag: "SHA256", bits: 256, kind: k_sha256(), variable: false, rfc: "FIPS-180-2" };
+}
+
+pub function algo_sha384(): Algo {
+  return Algo { name: "sha384sum", tag: "SHA384", bits: 384, kind: k_sha384(), variable: false, rfc: "FIPS-180-2" };
+}
+
+pub function algo_sha512(): Algo {
+  return Algo { name: "sha512sum", tag: "SHA512", bits: 512, kind: k_sha512(), variable: false, rfc: "FIPS-180-2" };
+}
+
+pub function algo_blake2b(): Algo {
+  return Algo { name: "b2sum", tag: "BLAKE2b", bits: 512, kind: k_blake2b(), variable: true, rfc: "RFC 7693" };
+}
+
+// `Ctx` — the running digest. One variant per crypto state rather than
+// one per utility: SHA-224 and SHA-256 share a state, as do SHA-384
+// and SHA-512.
+enum Ctx { CMd5(crypto.Md5), CSha1(crypto.Sha1), CSha2(crypto.Sha256), CSha5(crypto.Sha512), CB2(crypto.Blake2b) }
+
+function ctx_new(kind: i32, bits: i32): Ctx {
+  if (kind == k_md5()) {
+    return CMd5(crypto.md5_new());
+  }
+  if (kind == k_sha1()) {
+    return CSha1(crypto.sha1_new());
+  }
+  if (kind == k_sha224()) {
+    return CSha2(crypto.sha224_new());
+  }
+  if (kind == k_sha256()) {
+    return CSha2(crypto.sha256_new());
+  }
+  if (kind == k_sha384()) {
+    return CSha5(crypto.sha384_new());
+  }
+  if (kind == k_sha512()) {
+    return CSha5(crypto.sha512_new());
+  }
+  return CB2(crypto.blake2b_new(bits / 8));
+}
+
+function ctx_update(c: Ctx, chunk: string): Ctx {
+  match (c) {
+    CMd5(h) => {
+      return CMd5(h.update(chunk));
+    },
+    CSha1(h) => {
+      return CSha1(h.update(chunk));
+    },
+    CSha2(h) => {
+      return CSha2(h.update(chunk));
+    },
+    CSha5(h) => {
+      return CSha5(h.update(chunk));
+    },
+    CB2(h) => {
+      return CB2(h.update(chunk));
+    }
+  }
+}
+
+function ctx_hex(c: Ctx): string {
+  match (c) {
+    CMd5(h) => {
+      return h.final_hex();
+    },
+    CSha1(h) => {
+      return h.final_hex();
+    },
+    CSha2(h) => {
+      return h.final_hex();
+    },
+    CSha5(h) => {
+      return h.final_hex();
+    },
+    CB2(h) => {
+      return h.final_hex();
+    }
+  }
+}
+
+// Bytes per read(2). The digest kernels are the cost here, not the
+// syscalls, so this only has to be large enough that the per-read
+// overhead disappears: 64 KiB is where `wc` measured that on the same
+// machine and nothing above it buys anything back.
+function read_size(): i32 {
+  return 65536;
+}
+
+// ---- settings -------------------------------------------------------------
+// `Settings` — the option state. `binary` is tri-state as GNU's is:
+// -1 until `-b` / `-t` / `--tag` names one, because `--binary and
+// --text are meaningless when verifying` fires on having been named
+// at all, not on the value.
+struct Settings { binary: i32, check: boolean, tag: boolean, zero: boolean, ignore_missing: boolean, status: boolean, warn: boolean, quiet: boolean, strict: boolean, bits: i32 }
+
+function opt_binary(): i32 {
+  return 1;
+}
+
+function opt_check(): i32 {
+  return 2;
+}
+
+function opt_length(): i32 {
+  return 3;
+}
+
+function opt_tag(): i32 {
+  return 4;
+}
+
+function opt_text(): i32 {
+  return 5;
+}
+
+function opt_zero(): i32 {
+  return 6;
+}
+
+function opt_ignore_missing(): i32 {
+  return 7;
+}
+
+function opt_quiet(): i32 {
+  return 8;
+}
+
+function opt_status(): i32 {
+  return 9;
+}
+
+function opt_strict(): i32 {
+  return 10;
+}
+
+function opt_warn(): i32 {
+  return 11;
+}
+
+function help_text(a: Algo): string {
+  var out: string = "";
+  out = out + "Usage: " + gnu.prog() + " [OPTION]... [FILE]...\n";
+  out = out + "Print or check " + a.tag + " (" + a.bits.to_string() + "-bit) checksums.\n";
+  out = out + "\n";
+  out = out + "With no FILE, or when FILE is -, read standard input.\n";
+  out = out + "\n";
+  out = out + "  -b, --binary          read in binary mode\n";
+  out = out + "  -c, --check           read checksums from the FILEs and check them\n";
+  if (a.variable) {
+    out = out + "  -l, --length=BITS     digest length in bits; must not exceed the max for\n";
+    out = out + "                          the blake2 algorithm and must be a multiple of 8\n";
+  }
+  out = out + "      --tag             create a BSD-style checksum\n";
+  out = out + "  -t, --text            read in text mode (default)\n";
+  out = out + "  -z, --zero            end each output line with NUL, not newline,\n";
+  out = out + "                          and disable file name escaping\n";
+  out = out + "\n";
+  out = out + "The following five options are useful only when verifying checksums:\n";
+  out = out + "      --ignore-missing  don't fail or report status for missing files\n";
+  out = out + "      --quiet           don't print OK for each successfully verified file\n";
+  out = out + "      --status          don't output anything, status code shows success\n";
+  out = out + "      --strict          exit non-zero for improperly formatted checksum lines\n";
+  out = out + "  -w, --warn            warn about improperly formatted checksum lines\n";
+  out = out + "\n";
+  out = out + "      --help        display this help and exit\n";
+  out = out + "      --version     output version information and exit\n";
+  out = out + "\n";
+  out = out + "The sums are computed as described in " + a.rfc + ".\n";
+  out = out + "When checking, the input should be a former output of this program.\n";
+  out = out + "The default mode is to print a line with: checksum, a space,\n";
+  out = out + "a character indicating input mode ('*' for binary, ' ' for text\n";
+  out = out + "or where binary is insignificant), and name for each FILE.\n";
+  return out;
+}
+
+// ---- byte helpers ---------------------------------------------------------
+// A check line is a C string: `at` answers NUL past its end, which is
+// what every test below wants for "there is nothing there".
+function at(s: string, i: i32): i32 {
+  if (i < 0 || i >= s.len()) {
+    return 0;
+  }
+  return s[i] as i32;
+}
+
+// gnulib's ISWHITE, which is not isspace(): only a space and a tab
+// separate the fields of a checksum line.
+function iswhite(b: i32): boolean {
+  return b == 32 || b == 9;
+}
+
+function isdigit(b: i32): boolean {
+  return b >= 48 && b <= 57;
+}
+
+// C's isspace, which strtoumax skips ahead of a number. Wider than
+// ISWHITE, and only the number parsers want it.
+function isspace(b: i32): boolean {
+  return b == 32 || b >= 9 && b <= 13;
+}
+
+function isxdigit(b: i32): boolean {
+  return isdigit(b) || b >= 97 && b <= 102 || b >= 65 && b <= 70;
+}
+
+function hex_value(b: i32): i32 {
+  if (isdigit(b)) {
+    return b - 48;
+  }
+  if (b >= 97) {
+    return b - 87;
+  }
+  return b - 55;
+}
+
+// The digest as it is compared: lower case, because a checksum file may
+// hold either case and the computed side is always lower.
+function lower_hex(s: string): string {
+  var bs: u8[] = [];
+  var i: i32 = 0;
+  while (i < s.len()) {
+    var b: i32 = s[i] as i32;
+    if (b >= 65 && b <= 70) {
+      b = b + 32;
+    }
+    bs = bs.append(b as u8);
+    i = i + 1;
+  }
+  return string_from_bytes_unchecked(bs);
+}
+
+// ---- file name escaping ---------------------------------------------------
+function needs_escape(name: string): boolean {
+  var i: i32 = 0;
+  while (i < name.len()) {
+    var b: i32 = name[i] as i32;
+    if (b == 92 || b == 10 || b == 13) {
+      return true;
+    }
+    i = i + 1;
+  }
+  return false;
+}
+
+function escape_name(name: string): string {
+  var bs: u8[] = [];
+  var i: i32 = 0;
+  while (i < name.len()) {
+    var b: i32 = name[i] as i32;
+    if (b == 92) {
+      bs = bs.append(92 as u8);
+      bs = bs.append(92 as u8);
+    } else if (b == 10) {
+      bs = bs.append(92 as u8);
+      bs = bs.append(110 as u8);
+    } else if (b == 13) {
+      bs = bs.append(92 as u8);
+      bs = bs.append(114 as u8);
+    } else {
+      bs = bs.append(b as u8);
+    }
+    i = i + 1;
+  }
+  return string_from_bytes_unchecked(bs);
+}
+
+// `shown_name(name)` — the name as a line carries it: escaped, with the
+// leading `\` that marks the line, or bare when nothing needs escaping.
+function shown_name(name: string): string {
+  if (!needs_escape(name)) {
+    return name;
+  }
+  return "\\" + escape_name(name);
+}
+
+// `unescape(name)` — the reverse, for a line that began with `\`. Only
+// `\\`, `\n` and `\r` exist; anything else, a trailing lone backslash
+// included, makes the line improperly formatted.
+function unescape(name: string): (boolean, string) {
+  var bs: u8[] = [];
+  var i: i32 = 0;
+  while (i < name.len()) {
+    var b: i32 = name[i] as i32;
+    if (b != 92) {
+      bs = bs.append(b as u8);
+      i = i + 1;
+      continue;
+    }
+    var n: i32 = at(name, i + 1);
+    if (n == 92) {
+      bs = bs.append(92 as u8);
+    } else if (n == 110) {
+      bs = bs.append(10 as u8);
+    } else if (n == 114) {
+      bs = bs.append(13 as u8);
+    } else {
+      return (false, "");
+    }
+    i = i + 2;
+  }
+  return (true, string_from_bytes_unchecked(bs));
+}
+
+// ---- digesting one input --------------------------------------------------
+// `Sum` — one input's digest, or the failure that stopped it.
+struct Sum { hex: string, err: Option[IoError], failed: boolean }
+
+function digest_reader(r: Reader, kind: i32, bits: i32, owned: boolean): Sum {
+  var c: Ctx = ctx_new(kind, bits);
+  while (true) {
+    match (r.read_chunk(read_size())) {
+      Ok(chunk) => {
+        if (chunk.len() == 0) {
+          break;
+        }
+        c = ctx_update(c, chunk);
+      },
+      Err(e) => {
+        if (owned) {
+          r.close();
+        }
+        return Sum { hex: "", err: Some(e), failed: true };
+      }
+    }
+  }
+  if (owned) {
+    r.close();
+  }
+  return Sum { hex: ctx_hex(c), err: None, failed: false };
+}
+
+// `digest_path(path, kind, bits)` — one operand digested. `-` is
+// standard input, which is never closed.
+function digest_path(path: string, kind: i32, bits: i32): Sum {
+  if (path == "-") {
+    return digest_reader(stdin(), kind, bits, false);
+  }
+  match (open_reader(path)) {
+    Ok(r) => {
+      return digest_reader(r, kind, bits, true);
+    },
+    Err(e) => {
+      return Sum { hex: "", err: Some(e), failed: true };
+    }
+  }
+}
+
+function sum_error_text(s: Sum): string {
+  match (s.err) {
+    Some(e) => {
+      return gnu.io_error_text(e);
+    },
+    None => {
+      return "";
+    }
+  }
+}
+
+// Whether the failure was ENOENT, the one `--ignore-missing` skips: a
+// directory operand still reports `Is a directory` under it.
+function sum_is_missing(s: Sum): boolean {
+  match (s.err) {
+    Some(e) => {
+      match (e) {
+        NotFound(_) => {
+          return true;
+        },
+        _ => {
+          return false;
+        }
+      }
+    },
+    None => {
+      return false;
+    }
+  }
+}
+
+// ---- writing a checksum ---------------------------------------------------
+// `tag_prefix(a, bits)` — the BSD tag. b2sum names its length in it,
+// but only when the length is not the default 512.
+function tag_prefix(a: Algo, bits: i32): string {
+  if (a.variable && bits != a.bits) {
+    return a.tag + "-" + bits.to_string();
+  }
+  return a.tag;
+}
+
+// The `\` that marks an escaped line goes before the whole line — ahead
+// of the digest, and ahead of the `MD5 (` of a tagged one.
+function sum_line(a: Algo, s: Settings, hex: string, name: string): string {
+  var shown: string = name;
+  var out: string = "";
+  if (!s.zero && needs_escape(name)) {
+    shown = escape_name(name);
+    out = "\\";
+  }
+  if (s.tag) {
+    out = out + tag_prefix(a, s.bits) + " (" + shown + ") = " + hex;
+  } else {
+    var mark: string = " ";
+    if (s.binary == 1) {
+      mark = "*";
+    }
+    out = out + hex + " " + mark + shown;
+  }
+  if (s.zero) {
+    return out + "\x00";
+  }
+  return out + "\n";
+}
+
+// ---- the check-line grammar -----------------------------------------------
+// `Line` — one parsed checksum line: the digest in lower case and the
+// unescaped name, or `ok: false` for a line that is not one.
+struct Line { ok: boolean, hex: string, name: string }
+
+function bad_line(): Line {
+  return Line { ok: false, hex: "", name: "" };
+}
+
+// `strtou_base0(s, i)` — C's strtoumax with base 0 over `s` from `i`:
+// leading blanks, an optional `+`, then hex behind `0x`, octal behind a
+// leading `0`, else decimal. Returns the value and the index just past
+// it, or an index of `i` when there were no digits at all. b2sum's
+// `BLAKE2b-NNN` is parsed with it, so `-020` is sixteen bits.
+function strtou_base0(s: string, i: i32): (i32, i32) {
+  var p: i32 = i;
+  while (isspace(at(s, p))) {
+    p = p + 1;
+  }
+  if (at(s, p) == 43) {
+    p = p + 1;
+  }
+  var pick: (i32, i32) = base_of(s, p);
+  var base: i32 = pick.0;
+  p = pick.1;
+  // A `0x` with no hex digit after it is the number zero and a
+  // pointer left on the `x`, which is what makes `-0x` not a length.
+  if (base == 0) {
+    return (0, p);
+  }
+  var v: i32 = 0;
+  var digits: i32 = 0;
+  while (in_base(at(s, p), base)) {
+    v = v * base + hex_value(at(s, p));
+    // Nothing this parses is used above 512; saturating keeps a long
+    // run of digits from wrapping into a value that would be accepted.
+    if (v > 1000000) {
+      v = 1000000;
+    }
+    digits = digits + 1;
+    p = p + 1;
+  }
+  if (digits > 0) {
+    return (v, p);
+  }
+  // An octal `0` has already consumed its only digit.
+  if (base == 8) {
+    return (0, p);
+  }
+  return (0, i);
+}
+
+// The base `strtoumax` would infer at `p`, and where its digits start.
+// A base of 0 means the run is over before it began: `0x` with nothing
+// usable behind it.
+function base_of(s: string, p: i32): (i32, i32) {
+  if (at(s, p) != 48) {
+    return (10, p);
+  }
+  var n: i32 = at(s, p + 1);
+  if (n != 120 && n != 88) {
+    return (8, p + 1);
+  }
+  if (isxdigit(at(s, p + 2))) {
+    return (16, p + 2);
+  }
+  return (0, p + 1);
+}
+
+function in_base(b: i32, base: i32): boolean {
+  if (base == 16) {
+    return isxdigit(b);
+  }
+  if (base == 8) {
+    return b >= 48 && b <= 55;
+  }
+  return isdigit(b);
+}
+
+// `tag_open(a, cs, i)` — the index just past the `(` of a BSD-style
+// line, with the digest length that line declares, or -1 when the line
+// does not open one.
+function tag_open(a: Algo, cs: string, i: i32): (i32, i32) {
+  var bits: i32 = a.bits;
+  var k: i32 = 0;
+  while (k < a.tag.len()) {
+    if (at(cs, i + k) != a.tag[k] as i32) {
+      return (0 - 1, bits);
+    }
+    k = k + 1;
+  }
+  var j: i32 = i + a.tag.len();
+  // b2sum's `-NNN`, and the blank that stands in for it when the digest
+  // is the default length: `BLAKE2b\t (` opens a line, `BLAKE2b-8\t (`
+  // does not, and neither does `MD5\t(`.
+  if (a.variable) {
+    if (at(cs, j) == 45) {
+      var n: (i32, i32) = strtou_base0(cs, j + 1);
+      if (n.1 == j + 1) {
+        return (0 - 1, bits);
+      }
+      bits = n.0;
+      j = n.1;
+    } else if (iswhite(at(cs, j))) {
+      j = j + 1;
+    }
+  }
+  if (at(cs, j) == 32) {
+    j = j + 1;
+  }
+  if (at(cs, j) != 40) {
+    return (0 - 1, bits);
+  }
+  return (j + 1, bits);
+}
+
+// `bsd_split(a, cs, start, bits, escaped)` — `NAME) = HEX` from just
+// after the `(`. The name runs to the LAST `)` in the line, so a name
+// holding one is read correctly.
+function bsd_split(a: Algo, cs: string, start: i32, bits: i32, escaped: boolean): Line {
+  if (bits == 0 || bits % 8 != 0 || bits > a.bits) {
+    return bad_line();
+  }
+  var i: i32 = cs.len() - 1;
+  while (i > start && at(cs, i) != 41) {
+    i = i - 1;
+  }
+  if (i < start || at(cs, i) != 41) {
+    return bad_line();
+  }
+  var name: string = slice_unchecked(cs, start, i) + "";
+  i = i + 1;
+  while (iswhite(at(cs, i))) {
+    i = i + 1;
+  }
+  if (at(cs, i) != 61) {
+    return bad_line();
+  }
+  i = i + 1;
+  while (iswhite(at(cs, i))) {
+    i = i + 1;
+  }
+  if (cs.len() - i != bits / 4) {
+    return bad_line();
+  }
+  var k: i32 = i;
+  while (k < cs.len()) {
+    if (!isxdigit(at(cs, k))) {
+      return bad_line();
+    }
+    k = k + 1;
+  }
+  return finish_line(slice_unchecked(cs, i, cs.len()) + "", name, escaped);
+}
+
+// `raw_split(a, cs, i, full_len, escaped)` — `HEX<blank>[ *]NAME`.
+//
+// `full_len` is the line's byte length, which is not `cs.len()` when
+// the line holds a NUL: the too-short rule counts the bytes and the
+// mode character is consumed against them, while everything else stops
+// at the NUL as a C string does.
+function raw_split(a: Algo, cs: string, i: i32, full_len: i32, escaped: boolean): Line {
+  var n: i32 = 0;
+  if (a.variable) {
+    while (isxdigit(at(cs, i + n))) {
+      n = n + 1;
+    }
+    if (n < 2 || n > a.bits / 4 || n % 2 != 0) {
+      return bad_line();
+    }
+  } else {
+    n = a.bits / 4;
+    if (full_len - i < n + 2) {
+      return bad_line();
+    }
+    var k: i32 = 0;
+    while (k < n) {
+      if (!isxdigit(at(cs, i + k))) {
+        return bad_line();
+      }
+      k = k + 1;
+    }
+  }
+  if (!iswhite(at(cs, i + n))) {
+    return bad_line();
+  }
+  var hex: string = slice_unchecked(cs, i, i + n) + "";
+  var p: i32 = i + n + 1;
+  var c: i32 = at(cs, p);
+  if (p + 1 < full_len && (c == 32 || c == 42)) {
+    p = p + 1;
+  }
+  var name: string = "";
+  if (p < cs.len()) {
+    name = slice_unchecked(cs, p, cs.len()) + "";
+  }
+  return finish_line(hex, name, escaped);
+}
+
+function finish_line(hex: string, raw_name: string, escaped: boolean): Line {
+  var name: string = raw_name;
+  if (escaped) {
+    var u: (boolean, string) = unescape(raw_name);
+    if (!u.0) {
+      return bad_line();
+    }
+    name = u.1;
+  }
+  return Line { ok: true, hex: lower_hex(hex), name: name };
+}
+
+// `parse_line(a, cs, full_len)` — one checksum line in either shape.
+function parse_line(a: Algo, cs: string, full_len: i32): Line {
+  var i: i32 = 0;
+  while (iswhite(at(cs, i))) {
+    i = i + 1;
+  }
+  var escaped: boolean = false;
+  if (at(cs, i) == 92) {
+    i = i + 1;
+    escaped = true;
+  }
+  var t: (i32, i32) = tag_open(a, cs, i);
+  if (t.0 >= 0) {
+    return bsd_split(a, cs, t.0, t.1, escaped);
+  }
+  return raw_split(a, cs, i, full_len, escaped);
+}
+
+// ---- check mode -----------------------------------------------------------
+// `Check` — one checksum file's tallies, threaded through its lines.
+struct Check { properly: i64, improper: i64, openfail: i64, mismatch: i64, matched: boolean, out: io_buffered.BufWriter }
+
+function plural(n: i64, one: string, many: string): string {
+  if (n == 1 as i64) {
+    return one;
+  }
+  return many;
+}
+
+// One verified line: the file digested and the verdict reported.
+function check_one(a: Algo, s: Settings, ln: Line, c: Check): Check {
+  var st: Check = c;
+  var bits: i32 = ln.hex.len() * 4;
+  var sum: Sum = digest_path(ln.name, a.kind, bits);
+  var shown: string = shown_name(ln.name);
+  if (sum.failed) {
+    if (s.ignore_missing && sum_is_missing(sum)) {
+      return st;
+    }
+    var w: io_buffered.BufWriter = gnu.error_out(st.out, gnu.quotef(ln.name) + ": " + sum_error_text(sum));
+    st = Check { ...st, out: w, openfail: st.openfail + 1 as i64 };
+    if (!s.status) {
+      st = Check { ...st, out: gnu.put(st.out, shown + ": FAILED open or read\n") };
+    }
+    return st;
+  }
+  if (sum.hex == ln.hex) {
+    st = Check { ...st, matched: true };
+    if (!s.status && !s.quiet) {
+      st = Check { ...st, out: gnu.put(st.out, shown + ": OK\n") };
+    }
+    return st;
+  }
+  st = Check { ...st, mismatch: st.mismatch + 1 as i64 };
+  if (!s.status) {
+    st = Check { ...st, out: gnu.put(st.out, shown + ": FAILED\n") };
+  }
+  return st;
+}
+
+// `strip_line(line)` — one line as the grammar sees it: its terminating
+// newline dropped, then a carriage return before it.
+function strip_line(line: string): string {
+  var end: i32 = line.len();
+  if (end > 0 && line[end - 1] as i32 == 10) {
+    end = end - 1;
+  }
+  if (end > 0 && line[end - 1] as i32 == 13) {
+    end = end - 1;
+  }
+  return slice_unchecked(line, 0, end) + "";
+}
+
+// `cstring(s)` — `s` up to its first NUL, which is where every C string
+// operation on a checksum line stops.
+function cstring(s: string): string {
+  var i: i32 = __memchr(s, 0, 0);
+  if (i < 0) {
+    return s;
+  }
+  return slice_unchecked(s, 0, i) + "";
+}
+
+// `check_lines(a, s, r, file, o)` — every line of one checksum file.
+function check_lines(a: Algo, s: Settings, r: Reader, file: string, o: io_buffered.BufWriter): Check {
+  var st: Check = Check { properly: 0 as i64, improper: 0 as i64, openfail: 0 as i64, mismatch: 0 as i64, matched: false, out: o };
+  var lr: io_buffered.LineReader = io_buffered.line_reader_new(r, 10, read_size());
+  var no: i64 = 0 as i64;
+  while (true) {
+    var nx: (Option[string], io_buffered.LineReader) = lr.next_line();
+    lr = nx.1;
+    match (nx.0) {
+      Some(raw) => {
+        no = no + 1 as i64;
+        var full: string = strip_line(raw);
+        if (full.len() == 0 || full[0] as i32 == 35) {
+          continue;
+        }
+        var ln: Line = parse_line(a, cstring(full), full.len());
+        if (!ln.ok) {
+          st = Check { ...st, improper: st.improper + 1 as i64 };
+          if (s.warn) {
+            st = Check { ...st, out: gnu.error_out(st.out, gnu.quotef(file) + ": " + no.to_string() + ": improperly formatted " + a.tag + " checksum line") };
+          }
+          continue;
+        }
+        st = Check { ...st, properly: st.properly + 1 as i64 };
+        st = check_one(a, s, ln, st);
+      },
+      None => {
+        break;
+      }
+    }
+  }
+  match (lr.error()) {
+    Some(_) => {
+      return Check { ...st, properly: 0 - 1 as i64 };
+    },
+    None => {}
+  }
+  return st;
+}
+
+// `report(s, st, file)` — one checksum file's summary, and whether
+// it verified. A read error on the file itself is reported instead of
+// the tallies and is `properly: -1` from `check_lines`.
+function report(s: Settings, st: Check, file: string): (boolean, io_buffered.BufWriter) {
+  var w: io_buffered.BufWriter = st.out;
+  if (st.properly < 0 as i64) {
+    w = gnu.error_out(w, gnu.quotef(file) + ": read error");
+    return (false, w);
+  }
+  if (st.properly == 0 as i64) {
+    w = gnu.error_out(w, gnu.quotef(file) + ": no properly formatted checksum lines found");
+    return (false, w);
+  }
+  if (!s.status) {
+    if (st.improper > 0 as i64) {
+      w = gnu.error_out(w, "WARNING: " + st.improper.to_string() + plural(st.improper, " line is", " lines are") + " improperly formatted");
+    }
+    if (st.openfail > 0 as i64) {
+      w = gnu.error_out(w, "WARNING: " + st.openfail.to_string() + plural(st.openfail, " listed file could not be read", " listed files could not be read"));
+    }
+    if (st.mismatch > 0 as i64) {
+      w = gnu.error_out(w, "WARNING: " + st.mismatch.to_string() + plural(st.mismatch, " computed checksum did NOT match", " computed checksums did NOT match"));
+    }
+    if (s.ignore_missing && !st.matched) {
+      w = gnu.error_out(w, gnu.quotef(file) + ": no file was verified");
+    }
+  }
+  var ok: boolean = st.mismatch == 0 as i64 && st.openfail == 0 as i64;
+  if (s.strict && st.improper > 0 as i64) {
+    ok = false;
+  }
+  if (s.ignore_missing && !st.matched) {
+    ok = false;
+  }
+  return (ok, w);
+}
+
+// `check_file(a, s, file, o)` — one `-c` operand.
+function check_file(a: Algo, s: Settings, file: string, o: io_buffered.BufWriter): (boolean, io_buffered.BufWriter) {
+  if (file == "-") {
+    var st: Check = check_lines(a, s, stdin(), "standard input", o);
+    return report(s, st, "standard input");
+  }
+  match (open_reader(file)) {
+    Ok(r) => {
+      var st: Check = check_lines(a, s, r, file, o);
+      r.close();
+      return report(s, st, file);
+    },
+    Err(e) => {
+      return (false, gnu.error_out(o, gnu.quotef(file) + ": " + gnu.io_error_text(e)));
+    }
+  }
+}
+
+// ---- b2sum's -l -----------------------------------------------------------
+// `parse_bits(a, v)` — `-l BITS`: gnulib's xstrtoumax in base 10, then
+// the two range rules, each of which names itself on a second line.
+// Zero selects the default. No `Try …` line follows any of them.
+function parse_bits(a: Algo, v: string): i32 {
+  var i: i32 = 0;
+  while (i < v.len() && isspace(v[i] as i32)) {
+    i = i + 1;
+  }
+  if (i < v.len() && v[i] as i32 == 43) {
+    i = i + 1;
+  }
+  var digits: i32 = 0;
+  var over: boolean = false;
+  // uintmax_t's real ceiling, because passing it is what chooses the
+  // `Value too large` wording over the plain one.
+  var acc: u64 = 0 as u64;
+  while (i < v.len() && isdigit(v[i] as i32)) {
+    var d: u64 = (v[i] as i32 - 48) as u64;
+    if (over || acc > 1844674407370955161 as u64 || acc == 1844674407370955161 as u64 && d > 5 as u64) {
+      over = true;
+    } else {
+      acc = acc * (10 as u64) + d;
+    }
+    digits = digits + 1;
+    i = i + 1;
+  }
+  if (digits == 0 || i != v.len()) {
+    gnu.error("invalid length: " + gnu.quote(v));
+    exit(1);
+  }
+  if (over) {
+    gnu.error("invalid length: " + gnu.quote(v) + ": Value too large for defined data type");
+    exit(1);
+  }
+  // The range rules read the value at its full width: 2^64-1 is not a
+  // multiple of 8, and saying so is not the same as saying it is over
+  // the maximum.
+  if (acc % (8 as u64) != 0 as u64) {
+    gnu.error("invalid length: " + gnu.quote(v));
+    gnu.error("length is not a multiple of 8");
+    exit(1);
+  }
+  if (acc > a.bits as u64) {
+    gnu.error("invalid length: " + gnu.quote(v));
+    gnu.error("maximum digest length for " + gnu.quote(a.tag) + " is " + a.bits.to_string() + " bits");
+    exit(1);
+  }
+  if (acc == 0 as u64) {
+    return a.bits;
+  }
+  return acc as i32;
+}
+
+// ---- the driver -----------------------------------------------------------
+// The option table in GNU's declaration order, which is visible rather
+// than a matter of taste: the ambiguity list prints candidates in it,
+// so `--t` names `'--tag'` before `'--text'` and `--=x` names all
+// twelve in the order below. It is not the order the help text lists
+// them in, and `-l` leads it for b2sum.
+function options(a: Algo): gnu.Opt[] {
+  var opts: gnu.Opt[] = [];
+  if (a.variable) {
+    opts = opts.append(gnu.valued("l", "length", opt_length()));
+  }
+  opts = opts.append(gnu.flag("c", "check", opt_check()));
+  opts = opts.append(gnu.flag("", "ignore-missing", opt_ignore_missing()));
+  opts = opts.append(gnu.flag("", "quiet", opt_quiet()));
+  opts = opts.append(gnu.flag("", "status", opt_status()));
+  opts = opts.append(gnu.flag("w", "warn", opt_warn()));
+  opts = opts.append(gnu.flag("", "strict", opt_strict()));
+  opts = opts.append(gnu.flag("", "tag", opt_tag()));
+  opts = opts.append(gnu.flag("z", "zero", opt_zero()));
+  opts = opts.append(gnu.flag("b", "binary", opt_binary()));
+  opts = opts.append(gnu.flag("t", "text", opt_text()));
+  return opts;
+}
+
+// One option applied. `--status`, `--warn` and `--quiet` are one
+// setting with three values, not three flags: each clears the other
+// two, so `--quiet -w` warns and `-w --quiet` is quiet.
+function apply(a: Algo, s: Settings, m: gnu.OptMatch): Settings {
+  if (m.id == opt_binary()) {
+    return Settings { ...s, binary: 1 };
+  }
+  if (m.id == opt_text()) {
+    return Settings { ...s, binary: 0 };
+  }
+  if (m.id == opt_tag()) {
+    return Settings { ...s, tag: true, binary: 1 };
+  }
+  if (m.id == opt_check()) {
+    return Settings { ...s, check: true };
+  }
+  if (m.id == opt_zero()) {
+    return Settings { ...s, zero: true };
+  }
+  if (m.id == opt_length()) {
+    return Settings { ...s, bits: parse_bits(a, m.value) };
+  }
+  if (m.id == opt_ignore_missing()) {
+    return Settings { ...s, ignore_missing: true };
+  }
+  if (m.id == opt_status()) {
+    return Settings { ...s, status: true, warn: false, quiet: false };
+  }
+  if (m.id == opt_warn()) {
+    return Settings { ...s, status: false, warn: true, quiet: false };
+  }
+  if (m.id == opt_quiet()) {
+    return Settings { ...s, status: false, warn: false, quiet: true };
+  }
+  return Settings { ...s, strict: true };
+}
+
+// The combinations GNU refuses, in the order it tests them: `-z --tag
+// -t -c` reports the text one and `-z -t -c` the zero one, so this
+// sequence is observable rather than a choice.
+function validate(s: Settings): void {
+  if (s.tag && s.binary == 0) {
+    gnu.die_usage("--tag does not support --text mode", 1);
+  }
+  if (s.zero && s.check) {
+    gnu.die_usage("the --zero option is not supported when verifying checksums", 1);
+  }
+  if (s.tag && s.check) {
+    gnu.die_usage("the --tag option is meaningless when verifying checksums", 1);
+  }
+  if (s.binary >= 0 && s.check) {
+    gnu.die_usage("the --binary and --text options are meaningless when verifying checksums", 1);
+  }
+  if (s.check) {
+    return;
+  }
+  if (s.ignore_missing) {
+    gnu.die_usage("the --ignore-missing option is meaningful only when verifying checksums", 1);
+  }
+  if (s.status) {
+    gnu.die_usage("the --status option is meaningful only when verifying checksums", 1);
+  }
+  if (s.warn) {
+    gnu.die_usage("the --warn option is meaningful only when verifying checksums", 1);
+  }
+  if (s.quiet) {
+    gnu.die_usage("the --quiet option is meaningful only when verifying checksums", 1);
+  }
+  if (s.strict) {
+    gnu.die_usage("the --strict option is meaningful only when verifying checksums", 1);
+  }
+}
+
+// Every operand digested and printed.
+function compute(a: Algo, s: Settings, names: string[], o: io_buffered.BufWriter): (boolean, io_buffered.BufWriter) {
+  var out: io_buffered.BufWriter = o;
+  var ok: boolean = true;
+  var i: i32 = 0;
+  while (i < names.len()) {
+    var name: string = names[i];
+    var sum: Sum = digest_path(name, a.kind, s.bits);
+    if (sum.failed) {
+      out = gnu.error_out(out, gnu.quotef(name) + ": " + sum_error_text(sum));
+      ok = false;
+    } else {
+      out = gnu.put(out, sum_line(a, s, sum.hex, name));
+    }
+    i = i + 1;
+  }
+  return (ok, out);
+}
+
+// Every operand verified.
+function verify(a: Algo, s: Settings, names: string[], o: io_buffered.BufWriter): (boolean, io_buffered.BufWriter) {
+  var out: io_buffered.BufWriter = o;
+  var ok: boolean = true;
+  var i: i32 = 0;
+  while (i < names.len()) {
+    var r: (boolean, io_buffered.BufWriter) = check_file(a, s, names[i], out);
+    out = r.1;
+    if (!r.0) {
+      ok = false;
+    }
+    i = i + 1;
+  }
+  return (ok, out);
+}
+
+// `run(a)` — the whole program for one algorithm.
+pub function run(a: Algo): i32 {
+  var argv: string[] = args();
+  var s: Settings = Settings { binary: 0 - 1, check: false, tag: false, zero: false, ignore_missing: false, status: false, warn: false, quiet: false, strict: false, bits: a.bits };
+  var g: gnu.Getopt = gnu.getopt_new(argv, options(a), a.name, help_text(a), 1);
+  while (true) {
+    var r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    g = r.1;
+    match (r.0) {
+      Some(m) => {
+        s = apply(a, s, m);
+      },
+      None => {
+        break;
+      }
+    }
+  }
+  validate(s);
+
+  var names: string[] = g.operands();
+  if (names.len() == 0) {
+    names = ["-"];
+  }
+  var out: io_buffered.BufWriter = gnu.out_new();
+  var ok: boolean = true;
+  if (s.check) {
+    var rv: (boolean, io_buffered.BufWriter) = verify(a, s, names, out);
+    ok = rv.0;
+    out = rv.1;
+  } else {
+    var rc: (boolean, io_buffered.BufWriter) = compute(a, s, names, out);
+    ok = rc.0;
+    out = rc.1;
+  }
+  out = out.flush();
+  gnu.close_stdout(out, false);
+  if (!ok) {
+    return 1;
+  }
+  return 0;
+}
