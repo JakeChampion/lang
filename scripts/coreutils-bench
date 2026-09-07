@@ -264,6 +264,31 @@ PY
       printf 'head -n -10 of a 62 MiB file\ty\t{} -n -10 %s > /dev/null\n' "$big"
       printf 'head -c -10 of a 62 MiB file\ty\t{} -c -10 %s > /dev/null\n' "$big"
       ;;
+    cat)
+      # cat's fast path is a straight copy with no per-byte work; the
+      # numbered and squeezed forms are the byte-at-a-time scans, and
+      # -A adds an escape decision per byte.
+      big="$out/text-64m.txt"
+      [ -f "$big" ] || "$gnu/seq" 1 8000000 > "$big"
+      printf 'cat a 62 MiB file\ty\t{} %s > /dev/null\n' "$big"
+      printf 'cat two 62 MiB files\ty\t{} %s %s > /dev/null\n' "$big" "$big"
+      printf 'cat from a pipe\ty\t{gnu}/cat %s | {} > /dev/null\n' "$big"
+      printf 'cat -n a 62 MiB file\ty\t{} -n %s > /dev/null\n' "$big"
+      printf 'cat -s a 62 MiB file\ty\t{} -s %s > /dev/null\n' "$big"
+      printf 'cat -A a 62 MiB file\ty\t{} -A %s > /dev/null\n' "$big"
+      ;;
+    tail)
+      # tail -n 10 of a seekable file reads one block from the end, so it
+      # is startup-bound; from a pipe it has to stream the whole input.
+      # A large count and -c walk backwards over many blocks.
+      big="$out/text-64m.txt"
+      [ -f "$big" ] || "$gnu/seq" 1 8000000 > "$big"
+      printf 'tail -n 10 of a 62 MiB file\tn\t{} -n 10 %s\n' "$big"
+      printf 'tail -n 4000000 of a 62 MiB file\ty\t{} -n 4000000 %s > /dev/null\n' "$big"
+      printf 'tail -c 32M of a 62 MiB file\ty\t{} -c 33554432 %s > /dev/null\n' "$big"
+      printf 'tail -n 10 from a pipe\ty\t{gnu}/cat %s | {} -n 10 > /dev/null\n' "$big"
+      printf 'tail -n +4000000 of a 62 MiB file\ty\t{} -n +4000000 %s > /dev/null\n' "$big"
+      ;;
     wc)
       # wc -l is the SIMD count, wc -c is fstat and no read at all, and
       # -w / -L are the byte-at-a-time scan the C locale asks for.

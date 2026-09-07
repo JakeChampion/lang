@@ -1,0 +1,487 @@
+// cat.fern — GNU-compatible `cat`.
+//
+//   cat [-AbeEnstTuv] [FILE]...
+//
+// Every FILE in order, `-` and no operand both meaning stdin. With no
+// formatting option the bytes are copied as read, one write per read;
+// with one they are rewritten line by line:
+//
+//   -n  number every line, `%6d\t` (the field widens past a million)
+//   -b  number the non-blank lines only; -n is then ignored
+//   -s  squeeze runs of blank lines to one
+//   -E  `$` before each newline
+//   -T  tab as `^I`
+//   -v  every other control byte as `^X`, DEL as `^?`, a high byte
+//       as `M-` and then the same rule on the low seven bits
+//   -A = -vET, -e = -vE, -t = -vT, -u nothing at all.
+//
+// Line state runs ACROSS files: a file that ends without a newline
+// continues its line into the next, and -s remembers a blank line
+// over the boundary.
+//
+// Two checks are made before a byte moves. stdout is fstat'ed first —
+// a closed one is `standard output: Bad file descriptor` even when
+// there is nothing to copy — and each input is fstat'ed against it:
+// a regular file that is also the output, with bytes left to read, is
+// refused as `input file is output file`, because copying it onto
+// itself would never finish.
+import "std/string";
+import "std/array";
+import "std/io_buffered";
+import "./lib/gnu";
+
+function opt_number_nonblank(): i32 {
+  return 1;
+}
+
+function opt_e(): i32 {
+  return 2;
+}
+
+function opt_show_ends(): i32 {
+  return 3;
+}
+
+function opt_number(): i32 {
+  return 4;
+}
+
+function opt_squeeze(): i32 {
+  return 5;
+}
+
+function opt_t(): i32 {
+  return 6;
+}
+
+function opt_show_tabs(): i32 {
+  return 7;
+}
+
+function opt_u(): i32 {
+  return 8;
+}
+
+function opt_show_nonprinting(): i32 {
+  return 9;
+}
+
+function opt_show_all(): i32 {
+  return 10;
+}
+
+function help_text(): string {
+  var out: string = "";
+  out = out + "Usage: " + gnu.prog() + " [OPTION]... [FILE]...\n";
+  out = out + "Concatenate FILE(s) to standard output.\n";
+  out = out + "\n";
+  out = out + "With no FILE, or when FILE is -, read standard input.\n";
+  out = out + "\n";
+  out = out + "  -A, --show-all           equivalent to -vET\n";
+  out = out + "  -b, --number-nonblank    number nonempty output lines, overrides -n\n";
+  out = out + "  -e                       equivalent to -vE\n";
+  out = out + "  -E, --show-ends          display $ at end of each line\n";
+  out = out + "  -n, --number             number all output lines\n";
+  out = out + "  -s, --squeeze-blank      suppress repeated empty output lines\n";
+  out = out + "  -t                       equivalent to -vT\n";
+  out = out + "  -T, --show-tabs          display TAB characters as ^I\n";
+  out = out + "  -u                       (ignored)\n";
+  out = out + "  -v, --show-nonprinting   use ^ and M- notation, except for LFD and TAB\n";
+  out = out + "      --help        display this help and exit\n";
+  out = out + "      --version     output version information and exit\n";
+  out = out + "\n";
+  out = out + "Examples:\n";
+  out = out + "  " + gnu.prog() + " f - g  Output f's contents, then standard input, then g's contents.\n";
+  out = out + "  " + gnu.prog() + "        Copy standard input to standard output.\n";
+  return out;
+}
+
+// `Fmt` — the formatting the option scan selected. `plain` is the
+// fast path: none of it. `spell` is the -v / -T spelling by byte,
+// built once by `spell_table`, and `spell_len` its length: zero for a
+// byte copied through as it is.
+struct Fmt { number: boolean, nonblank: boolean, squeeze: boolean, ends: boolean, tabs: boolean, np: boolean, spell: string[], spell_len: u8[] }
+
+function is_plain(f: Fmt): boolean {
+  return !f.number && !f.nonblank && !f.squeeze && !f.ends && !f.tabs && !f.np;
+}
+
+function is_squeeze_only(f: Fmt): boolean {
+  return f.squeeze && !f.number && !f.nonblank && !f.ends && !f.tabs && !f.np;
+}
+
+// `spelling(b, f)` — one byte in -v notation: `^X` for a control, `^?`
+// for DEL, `M-` and then the same rule on the low seven bits above
+// 127; a tab is `^I` only under -T, and without -v nothing else is
+// touched. Empty when the byte is copied as it is.
+function spelling(b: i32, f: Fmt): string {
+  if (b == 9) {
+    if (f.tabs) {
+      return "^I";
+    }
+    return "";
+  }
+  if (!f.np || b >= 32 && b < 127 || b == 10) {
+    return "";
+  }
+  var out: string = "";
+  var c: i32 = b;
+  if (c >= 128) {
+    out = "M-";
+    c = c - 128;
+  }
+  if (c < 32) {
+    return out + "^" + string_from_bytes_unchecked([(c + 64) as u8]);
+  }
+  if (c == 127) {
+    return out + "^?";
+  }
+  return out + string_from_bytes_unchecked([c as u8]);
+}
+
+function spell_table(f: Fmt): Fmt {
+  var tab: string[] = [];
+  var lens: u8[] = __alloc_u8(256);
+  var b: i32 = 0;
+  while (b < 256) {
+    var s: string = spelling(b, f);
+    tab = tab.append(s);
+    lens = lens.with(b, s.len() as u8);
+    b = b + 1;
+  }
+  return Fmt { ...f, spell: tab, spell_len: lens };
+}
+
+// `State` — what carries across files: the buffered stdout, the
+// output being built for it, the line-number field, whether the next
+// byte begins a line, whether the line before it was blank (for -s),
+// and whether any input failed.
+//
+// `num` is GNU's line_buf: the `%6d\t` field as bytes, incremented in
+// place, so a line number costs one byte store and a seven-byte copy
+// rather than a formatting of the count.
+struct State { w: io_buffered.BufWriter, out: string, num: u8[], at_start: boolean, prev_blank: boolean, ok: boolean }
+
+// `read_size()` — bytes per read(2). GNU reads 128 KiB; measured
+// against `cat` of a 62 MiB file, that block is what the pipe and
+// the file both want.
+function read_size(): i32 {
+  return 131072;
+}
+
+// The output built by the line rewriter is handed to stdout's buffer
+// once it holds this much: GNU's stdio block. Kept small because an
+// append that cannot grow the accumulator in place copies it whole.
+// stdout's own buffer is a read wide, so a whole read goes to
+// write(2) directly rather than through a copy.
+function drain_bytes(): i32 {
+  return 8192;
+}
+
+function state_new(): State {
+  var num: u8[] = [];
+  num = num.append(32 as u8).append(32 as u8).append(32 as u8).append(32 as u8).append(32 as u8).append(48 as u8).append(9 as u8);
+  return State { w: gnu.out_with(read_size()), out: "", num: num, at_start: true, prev_blank: false, ok: true };
+}
+
+// `next_num(num)` — GNU's next_line_num: carry from the last digit
+// leftwards, a blank becoming `1`, a new digit in front past 999999.
+function next_num(num: u8[]): u8[] {
+  var i: i32 = num.len() - 2;
+  while (i >= 0 && num[i] as i32 == 57) {
+    num = num.with(i, 48 as u8);
+    i = i - 1;
+  }
+  if (i >= 0) {
+    var c: i32 = num[i] as i32;
+    if (c == 32) {
+      c = 49;
+    } else {
+      c = c + 1;
+    }
+    return num.with(i, c as u8);
+  }
+  var wider: u8[] = [];
+  wider = wider.append(49 as u8);
+  var j: i32 = 0;
+  while (j < num.len()) {
+    wider = wider.append(num[j]);
+    j = j + 1;
+  }
+  return wider;
+}
+
+// `drain(s)` — hand what is built to stdout.
+function drain(s: State): State {
+  if (s.out.len() == 0) {
+    return s;
+  }
+  return State { ...s, w: gnu.put(s.w, s.out), out: "" };
+}
+
+// `format_chunk(st, chunk, f)` — one read of input through the line
+// rewriter. The output string is taken out of the state for the loop
+// — appended to as a local it grows in place, as a field it would be
+// copied — and put back at the end. The scan is one memchr per line;
+// a body is appended whole, with its newline, unless -v / -T has bytes
+// to spell out or -E puts a `$` before the newline.
+function format_chunk(st: State, chunk: string, f: Fmt): State {
+  var s: State = st;
+  var out: string = s.out;
+  var num: u8[] = s.num;
+  var at_start: boolean = s.at_start;
+  var prev_blank: boolean = s.prev_blank;
+  s = State { ...s, out: "", num: [] };
+  var pos: i32 = 0;
+  var len: i32 = chunk.len();
+  var spell: boolean = f.np || f.tabs;
+  while (pos < len) {
+    var nl: i32 = __memchr(chunk, 10, pos);
+    var end: i32 = nl;
+    if (nl < 0) {
+      end = len;
+    }
+    if (at_start) {
+      var blank: boolean = nl == pos;
+      if (blank && f.squeeze && prev_blank) {
+        pos = nl + 1;
+        continue;
+      }
+      if (f.nonblank && !blank || !f.nonblank && f.number) {
+        num = next_num(num);
+        out = out + string_from_bytes_unchecked(num);
+      }
+      at_start = false;
+      prev_blank = blank;
+    }
+    if (spell) {
+      var i: i32 = pos;
+      while (i < end) {
+        var b: i32 = chunk[i] as i32;
+        if (f.spell_len[b] as i32 == 0) {
+          i = i + 1;
+          continue;
+        }
+        out = out + slice_unchecked(chunk, pos, i);
+        out = out + f.spell[b];
+        i = i + 1;
+        pos = i;
+      }
+    }
+    if (nl < 0) {
+      out = out + slice_unchecked(chunk, pos, len);
+      pos = len;
+    } else {
+      if (f.ends) {
+        out = out + slice_unchecked(chunk, pos, nl);
+        out = out + "$\n";
+      } else {
+        out = out + slice_unchecked(chunk, pos, nl + 1);
+      }
+      at_start = true;
+      pos = nl + 1;
+    }
+    if (out.len() >= drain_bytes()) {
+      s = State { ...s, w: gnu.put(s.w, out) };
+      out = "";
+    }
+  }
+  return State { ...s, out: out, num: num, at_start: at_start, prev_blank: prev_blank };
+}
+
+// `squeeze_chunk(st, chunk)` — -s with nothing else: a run of
+// non-blank lines is one append, and a blank line is dropped when the
+// one before it was blank too.
+function squeeze_chunk(st: State, chunk: string): State {
+  var s: State = st;
+  var out: string = s.out;
+  var at_start: boolean = s.at_start;
+  var prev_blank: boolean = s.prev_blank;
+  s = State { ...s, out: "" };
+  var pos: i32 = 0;
+  var len: i32 = chunk.len();
+  while (pos < len) {
+    if (at_start && chunk[pos] as i32 == 10) {
+      if (!prev_blank) {
+        out = out + "\n";
+        prev_blank = true;
+      }
+      pos = pos + 1;
+      continue;
+    }
+    // The run ends with the newline a blank line follows, or the chunk.
+    var q: i32 = __memchr(chunk, 10, pos);
+    while (q >= 0 && q + 1 < len && chunk[q + 1] as i32 != 10) {
+      q = __memchr(chunk, 10, q + 1);
+    }
+    var end: i32 = len;
+    at_start = false;
+    if (q >= 0) {
+      end = q + 1;
+      at_start = true;
+    }
+    out = out + slice_unchecked(chunk, pos, end);
+    prev_blank = false;
+    pos = end;
+    if (out.len() >= drain_bytes()) {
+      s = State { ...s, w: gnu.put(s.w, out) };
+      out = "";
+    }
+  }
+  return State { ...s, out: out, at_start: at_start, prev_blank: prev_blank };
+}
+
+// `fail(st, msg)` — one diagnostic with the output flushed ahead of
+// it; the exit status becomes 1.
+function fail(st: State, msg: string): State {
+  var s: State = drain(st);
+  return State { ...s, w: gnu.error_out(s.w, msg), ok: false };
+}
+
+// `cat_file(path, st, f, out_stat)` — one operand. `out_stat` is
+// stdout's record, for the input-is-output check.
+function cat_file(path: string, st: State, f: Fmt, out_stat: FileStat): State {
+  var s: State = st;
+  var stdin_input: boolean = path == "-";
+  var r: Reader = stdin();
+  if (!stdin_input) {
+    match (open_reader(path)) {
+      Ok(fd) => {
+        r = fd;
+      },
+      Err(e) => {
+        return fail(s, gnu.quotef(path) + ": " + gnu.io_error_text(e));
+      }
+    }
+  }
+  match (r.stat()) {
+    Ok(in_stat) => {
+      if (out_stat.is_file && in_stat.dev == out_stat.dev && in_stat.ino == out_stat.ino) {
+        match (r.seek(0 as i64, 1)) {
+          Ok(pos) => {
+            if (pos < in_stat.size) {
+              if (!stdin_input) {
+                r.close();
+              }
+              return fail(s, gnu.quotef(path) + ": input file is output file");
+            }
+          },
+          Err(_) => {}
+        }
+      }
+    },
+    Err(e) => {
+      if (!stdin_input) {
+        r.close();
+      }
+      return fail(s, gnu.quotef(path) + ": " + gnu.io_error_text(e));
+    }
+  }
+  var plain: boolean = is_plain(f);
+  var squeeze_only: boolean = is_squeeze_only(f);
+  while (true) {
+    match (r.read_chunk(read_size())) {
+      Ok(chunk) => {
+        if (chunk.len() == 0) {
+          break;
+        }
+        if (plain) {
+          s = State { ...s, w: gnu.put(s.w, chunk) };
+        } else if (squeeze_only) {
+          s = squeeze_chunk(s, chunk);
+        } else {
+          s = format_chunk(s, chunk, f);
+        }
+      },
+      Err(e) => {
+        s = fail(s, gnu.quotef(path) + ": " + gnu.io_error_text(e));
+        break;
+      }
+    }
+  }
+  if (!stdin_input) {
+    r.close();
+  }
+  // GNU writes what is pending at the end of every file, so a full
+  // stdout is reported before the next operand is opened.
+  s = drain(s);
+  return State { ...s, w: gnu.flush(s.w) };
+}
+
+function main(): i32 {
+  var argv: string[] = args();
+  var opts: gnu.Opt[] = [];
+  // GNU's long_options order: it is the order an ambiguity lists them in.
+  opts = opts.append(gnu.flag("b", "number-nonblank", opt_number_nonblank()));
+  opts = opts.append(gnu.flag("n", "number", opt_number()));
+  opts = opts.append(gnu.flag("s", "squeeze-blank", opt_squeeze()));
+  opts = opts.append(gnu.flag("v", "show-nonprinting", opt_show_nonprinting()));
+  opts = opts.append(gnu.flag("E", "show-ends", opt_show_ends()));
+  opts = opts.append(gnu.flag("T", "show-tabs", opt_show_tabs()));
+  opts = opts.append(gnu.flag("A", "show-all", opt_show_all()));
+  opts = opts.append(gnu.flag("e", "", opt_e()));
+  opts = opts.append(gnu.flag("t", "", opt_t()));
+  opts = opts.append(gnu.flag("u", "", opt_u()));
+
+  var f: Fmt = Fmt { number: false, nonblank: false, squeeze: false, ends: false, tabs: false, np: false, spell: [], spell_len: [] };
+  var g: gnu.Getopt = gnu.getopt_new(argv, opts, "cat", help_text(), 1);
+  while (true) {
+    var r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    g = r.1;
+    match (r.0) {
+      Some(m) => {
+        if (m.id == opt_number_nonblank()) {
+          f = Fmt { ...f, nonblank: true };
+        } else if (m.id == opt_e()) {
+          f = Fmt { ...f, np: true, ends: true };
+        } else if (m.id == opt_show_ends()) {
+          f = Fmt { ...f, ends: true };
+        } else if (m.id == opt_number()) {
+          f = Fmt { ...f, number: true };
+        } else if (m.id == opt_squeeze()) {
+          f = Fmt { ...f, squeeze: true };
+        } else if (m.id == opt_t()) {
+          f = Fmt { ...f, np: true, tabs: true };
+        } else if (m.id == opt_show_tabs()) {
+          f = Fmt { ...f, tabs: true };
+        } else if (m.id == opt_show_nonprinting()) {
+          f = Fmt { ...f, np: true };
+        } else if (m.id == opt_show_all()) {
+          f = Fmt { ...f, np: true, ends: true, tabs: true };
+        }
+      },
+      None => {
+        break;
+      }
+    }
+  }
+
+  f = spell_table(f);
+
+  var out_stat: FileStat = FileStat { is_file: false, is_dir: false, size: 0 as i64, mode: 0 as u32, nlink: 0 as u32, uid: 0 as u32, gid: 0 as u32, dev: 0 as i64, rdev: 0 as i64, ino: 0 as i64, blksize: 0 as i64, blocks: 0 as i64, atime: 0 as i64, atime_nsec: 0 as i64, mtime: 0 as i64, mtime_nsec: 0 as i64, ctime: 0 as i64, ctime_nsec: 0 as i64 };
+  match (stdout().stat()) {
+    Ok(o) => {
+      out_stat = o;
+    },
+    Err(e) => {
+      gnu.error("standard output: " + gnu.io_error_text(e));
+      exit(1);
+    }
+  }
+
+  var files: string[] = g.operands();
+  if (files.len() == 0) {
+    files = files.append("-");
+  }
+  var st: State = state_new();
+  var i: i32 = 0;
+  while (i < files.len()) {
+    st = cat_file(files[i], st, f, out_stat);
+    i = i + 1;
+  }
+  gnu.finish(st.w);
+  if (!st.ok) {
+    return 1;
+  }
+  return 0;
+}

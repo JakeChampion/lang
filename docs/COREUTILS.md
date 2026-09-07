@@ -371,6 +371,38 @@ per chunk (0.17×). Both now decide a whole chunk with one `__count_byte` and
 walk only the chunk that reaches the count — backwards, with `__rmemchr`, for
 the elision.
 
+Group B's next two, 2026-09-06, Linux x86-64, same 62 MiB file, GNU 9.4 and
+uutils 0.0.24 both present:
+
+| utility | workload | fern (ms) | gnu (ms) | uutils (ms) | gnu / fern | uutils / fern |
+|---|---|---|---|---|---|---|
+| `cat` | a 62 MiB file | 7.11 ± 0.75 | 7.08 ± 0.47 | 3.62 ± 0.35 | 1.00× | 0.51× |
+| `cat` | two 62 MiB files | 13.74 ± 0.96 | 12.77 ± 0.96 | 4.85 ± 0.48 | 0.93× | 0.35× |
+| `cat` | from a pipe | 59.81 ± 39.78 | 52.78 ± 23.74 | 39.74 ± 5.65 | 0.88× | 0.66× |
+| `cat` | `-n` of a 62 MiB file | 549.91 ± 46.46 | 122.45 ± 13.05 | 1223.18 ± 80.48 | 0.22× | 2.22× |
+| `cat` | `-s` of a 62 MiB file | 68.04 ± 5.67 | 60.50 ± 4.60 | 1042.84 ± 79.02 | 0.89× | 15.33× |
+| `cat` | `-A` of a 62 MiB file | 380.59 ± 36.87 | 74.33 ± 6.69 | 1527.29 ± 135.14 | 0.20× | 4.01× |
+| `tail` | `-n 10` of a 62 MiB file | 0.26 ± 0.08 | 1.07 ± 0.13 | 2.07 ± 0.23 | 4.15× | 8.03× |
+| `tail` | `-n 4000000` of a 62 MiB file | 40.12 ± 3.30 | 36.11 ± 3.30 | 20.04 ± 2.22 | 0.90× | 0.50× |
+| `tail` | `-c 32M` of a 62 MiB file | 5.48 ± 0.59 | 6.37 ± 0.54 | 2.73 ± 0.28 | 1.16× | 0.50× |
+| `tail` | `-n 10` from a pipe | 58.05 ± 3.02 | 110.10 ± 8.45 | 68.51 ± 37.19 | 1.90× | 1.18× |
+| `tail` | `-n +4000000` of a 62 MiB file | 10.21 ± 1.26 | 33.96 ± 3.07 | 40.99 ± 2.86 | 3.32× | 4.01× |
+
+Reading it: `tail` wins where the answer is a seek — `-n 10` reads one block
+from the end instead of the file, and `-n +4000000` skips forward rather
+than holding lines — and ties where it is a copy. `cat` ties on the copy and
+LOSES on every formatting mode, and the modes step up in proportion to how
+many appends they do rather than how many bytes they move: plain 7 ms, `-s`
+68 (one append per run of lines), `-A` 381 (two per line plus a per-byte
+table lookup), `-n` 550 (four per line). That is #8770 — a string append
+costs 8-16 ns whatever its size — measured there rather than guessed, and it
+is below the utility: two rewrites of `cat -n` around it each came out a
+wash and were reverted. uutils loses the same shapes far worse.
+
+The one row where BOTH lose to uutils is the plain copy, 3.6 ms against 7.1:
+uutils reaches for `copy_file_range(2)` and moves the bytes without a
+round trip through user space, where Fern and GNU both read and write.
+
 ## Known divergences
 
 **`hostid` asks DNS over TCP.** The id is glibc's `gethostid`: `/etc/hostid`
@@ -397,33 +429,36 @@ Neither changes the bytes on a host whose name resolves.
 
 ## Open gaps
 
-**fstat(2) on a descriptor (#8713).** `stat(path)` is the only way into a
-`struct stat`, and two behaviours ask the same question of a DESCRIPTOR
-instead. `wc` fixes its column width from the sizes of its operands, taking
-GNU's `fstat(STDIN_FILENO)` for a `-` or absent one, so `wc < f` pads to the
-file's digits where `wc.fern` pads to seven; the single-count form is
-unaffected because GNU skips the stat there too. `cat` fstats fd 1 before it
-reads anything and dies `cat: standard output: Bad file descriptor` when that
-fails, which is unreachable by writing because it has nothing to write —
-`cat` is not implementable to parity until the primitive exists.
+**A process-liveness query (#8767).** `tail --pid=PID` stops following once
+that process exits, which GNU asks as `kill (pid, 0)`. Fern can run a child
+and wait for it, but cannot ask whether an ARBITRARY pid is still alive, so
+`tail.fern` validates the operand exactly as GNU does and then takes GNU's
+own not-supported-on-this-system path: `tail: warning: --pid=PID is not
+supported on this system`, and it follows without it. That is a real
+degraded path in GNU rather than a divergence invented here, so the corpus
+compares equal — but the option is not implemented until the primitive is.
 
-Neither is visible to this corpus: the harness always hands the child a pipe
-for stdin, so the width is 7 on both sides, and `cat` is not in the tree. That
-is what makes them worth writing down here rather than leaving to a gate.
+**A string append costs 8-16 ns whatever its size (#8770).** Every
+line-oriented utility assembles its output by appending to a local, and the
+floor is per append rather than per byte, so `cat -n` is 0.22× GNU and
+`cat -A` 0.18× while plain `cat` is at parity. The shape that wants fusing
+is `acc = acc + slice_unchecked(s, a, b)`, which today materialises the
+slice as its own string before copying it again. Two rewrites of `cat -n`
+measured as a wash and were reverted rather than kept, which is what
+located the cost. Neighbours: #8530 (`array.with`, struct updates) and
+#8532 (small value structs boxed).
 
-Two earlier gaps are closed and each is now exercised by the corpus:
-`IoError.Other` carrying no strerror text (#8265) — the write-failure cases
-(`yes >&-`, `> /dev/full`) — and source unable to learn its compile target
-(#8338) — `yes.fern`'s per-target block. A gap met later gets an issue and a
-fix, never a corpus carve-out.
-None. Both Fern gaps the first utilities met — `IoError.Other` carrying no
-strerror text (#8265) and source unable to learn its compile target
-(#8338) — are closed, and each is exercised by the corpus: the
-write-failure cases (`yes >&-`, `> /dev/full`) and `yes.fern`'s per-target
-block. `hostid` needed a runtime primitive rather than a fix — `hostname()`,
-gethostname(2) on every backend (#8529) — and got it under its own
-capability rather than a one-off syscall on one backend. A gap met later
-gets an issue and a fix, never a corpus carve-out.
+Gaps that are closed, each now exercised by the corpus rather than carved
+out of it: `IoError.Other` carrying no strerror text (#8265), in the
+write-failure cases (`yes >&-`, `> /dev/full`); source unable to learn its
+compile target (#8338), in `yes.fern`'s per-target block; and fstat/lseek on
+a DESCRIPTOR (#8713), which `cat` needs to refuse a closed fd 1 before it
+reads anything and `tail` needs to read a regular file from its end — landed
+as `r.stat()` / `w.stat()` / `r.seek()` on every backend. `hostid` wanted a
+primitive rather than a fix — `hostname()`, gethostname(2) on every backend
+(#8529) — and got it under its own capability rather than a one-off syscall
+on one backend. A gap met later gets an issue and a fix, never a corpus
+carve-out.
 
 ## Staging
 
