@@ -2471,6 +2471,7 @@ function main(): i32 {
 			stdlib bool
 		}{
 			{"no-io", "function main(): i32 { var s = 0; var i = 0; while (i < 7) { s = s + i; i = i + 1; } return s - 21; }\n", "", false},
+			{"hex-immediates", "function main(): i32 { var wide = 0xFFFFFFFF; var upper = 0X80000000; var word: u32 = 0xffffffff; if (wide / 65536 == 65535 && upper > 0 && word + 1 == 0u32) { return 0; } return 1; }\n", "", false},
 			{"stdout", "function main(): i32 { print(\"hi from component\"); return 0; }\n", "hi from component\n", false},
 			// core/map seeds its string hash from the same CSPRNG as random_i32,
 			// so a Map pulls wasi:random/random's get-random-u64 into the core

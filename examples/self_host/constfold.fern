@@ -40,7 +40,7 @@ import "./astwalk";
 
 // A folded literal is built in the shape the PARSER produces. A number
 // literal's TEXT never carries a sign — irlower.literal_is_i64 classifies by
-// its LENGTH and says so — so a negative result is unary minus over the
+// MAGNITUDE alone — so a negative result is unary minus over the
 // magnitude, exactly as `-5` is parsed. Emitting the sign inline made an
 // 11-character "-2147483648", which literal_is_i64 read as an i64 and the i32
 // return path then declined: `return 0 - 2147483647 - 1`, which is how std/i32
@@ -66,11 +66,12 @@ function num_lit(text: string, suffix: string): ast.Expr {
 // answered -677 (#6261's fixture, which this predicate is what keeps green).
 //
 // i64 / u64 are declined rather than folded in range. Downstream, a literal's
-// width is re-derived from its text LENGTH (irlower.literal_is_i64), so a
-// folded 64-bit result would be re-read at whatever width its digit count
-// implies — an answer this pass cannot control. Floats are not integers, and a
-// char literal carries its source spelling in `raw`, which a rebuilt literal
-// would lose. Declining leaves the runtime op, which is always right.
+// width is re-derived from its text MAGNITUDE (irlower.literal_is_i64), which
+// for a decimal spelling can only answer i32 or i64 — and the FOLDED result
+// carries no suffix to declare otherwise — so an i64/u64 value would be re-read
+// at a width the folding cannot control. Floats are not integers, and a char
+// literal carries its source spelling in `raw`, which a rebuilt literal would
+// lose. Declining leaves the runtime op, which is always right.
 function fits(v: i64, suffix: string): boolean {
     if (suffix == "" || suffix == "i32") { return v >= 0 - 2147483648i64 && v <= 2147483647i64; }
     if (suffix == "u32") { return v >= 0 && v <= 4294967295i64; }
@@ -588,8 +589,8 @@ function main(): i32 {
 
     // i32::MIN: the one magnitude with no i32 representation, so it is spelled
     // `0 - 2147483647 - 1`. The chain folds all the way, and the sign lands on
-    // a unary minus rather than in the literal's text — where its 11 characters
-    // would read as an i64 (irlower.literal_is_i64 classifies by LENGTH).
+    // a unary minus rather than in the literal's text, whose 10-digit
+    // "2147483648" reads as an i64 (irlower.literal_is_i64 measures magnitude).
     var mod14: parser.Module = fold_source("var a = 0 - 2147483647 - 1; return 0;");
     match (mod14.top_stmts[0]) {
         ast.StmtVar(v) => {

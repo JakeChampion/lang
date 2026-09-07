@@ -3870,6 +3870,16 @@ struct WasmOpCtx {
     base: i32,
 }
 
+function wat_integer_text(text: string): string {
+    // Fern accepts either hex prefix; WAT requires a lowercase x.
+    var start: i32 = 0;
+    if (text.len() > 0 && (text[0] == b'-' || text[0] == b'+')) { start = 1; }
+    if (text.len() > start + 2 && text[start] == b'0' && text[start + 1] == b'X') {
+        return slice_unchecked(text, 0, start) + "0x" + slice_unchecked(text, start + 2, text.len());
+    }
+    return text;
+}
+
 // emit_ir_op renders one IR op as WAT.
 //
 // The ladder moved here VERBATIM: the names it reads are rebound from the
@@ -3904,12 +3914,12 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
     } else if (o.kind_tag == 2) {  // const_i32_text
         // Integer literal source text — the wasm text parser handles the base
         // (hex `0x..`) and the full i32/u32 immediate range.
-        parts = parts.append("    i32.const " + o.str + "\n");
+        parts = parts.append("    i32.const " + wat_integer_text(o.str) + "\n");
     } else if (o.kind_tag == 3) {  // const_i64
         // 64-bit immediate (source text). load_local / store_local on i64
         // slots use the same local.get/local.set — the local's declared i64
         // type carries the stack type.
-        parts = parts.append("    i64.const " + o.str + "\n");
+        parts = parts.append("    i64.const " + wat_integer_text(o.str) + "\n");
     } else if (o.kind_tag == 4) {  // const_f64
         // Float literal: wasm assembles the source text directly. f64 locals
         // are declared (local f64), so local.get/set carry the stack type.

@@ -76,6 +76,7 @@ function main(): i32 {
 		exit int
 	}{
 		{"const", "function main(): i32 { return 42; }", 42},
+		{"hex-immediates", "function main(): i32 { var wide = 0xFFFFFFFF; var upper = 0X80000000; var word: u32 = 0xffffffff; if (wide / 65536 == 65535 && upper > 0 && word + 1 == 0u32) { return 42; } return 1; }", 42},
 		{"arith", "function main(): i32 { return 2 + 3 * 4; }", 14},
 		{"while-sum", "function main(): i32 { var i = 1; var s = 0; while (i <= 5) { s = s + i; i = i + 1; } return s; }", 15},
 		{"if-else", "function main(): i32 { var x = 0; if (2 < 1) { x = 3; } else { x = 9; } return x; }", 9},

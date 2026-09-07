@@ -69,6 +69,10 @@ function main(): i32 {
     var n1: i64 = 0 - 1;       b = leb_i64([], n1);  if (b.len() != 1 || b[0] != 127) { return 12; }
     var p64: i64 = 64;         b = leb_i64([], p64); if (b.len() != 2 || b[0] != 192 || b[1] != 0) { return 13; }
     var big: i64 = 5000000000; b = leb_i64([], big); if (b.len() != 5) { return 14; }
+    if (parse_dec("+0x7f") != 127 || parse_dec("-0X80") != -128) { return 15; }
+    if (parse_dec("0xffff_ffff") != -1 || parse_dec("+123") != 123) { return 16; }
+    if (parse_dec_i64("0xFFFFFFFF") != 4294967295 || parse_dec_i64("-0X80000000") != -2147483648) { return 17; }
+    if (parse_dec_i64("0xffff_ffff_ffff_ffff") != -1 || parse_dec_i64("+123") != 123) { return 18; }
     return 0;
 }
 `

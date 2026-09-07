@@ -2980,10 +2980,14 @@ pub function expr_is_result(e: ast.Expr, s: LowerState): boolean {
     return false;
 }
 
-// literal_is_i64 reports whether a non-negative integer literal text is too big
-// for i32 (so it is an i64 value): >10 digits always, exactly 10 digits if it
-// exceeds i32-max "2147483647". (Negative literals are unary minus over a
-// positive literal, so the sign is handled separately.)
+// literal_is_i64 is parser's magnitude rule, read across the module boundary
+// (irlower imports parser, so the two sides share one implementation rather
+// than drifting). Whether a literal is too big for i32 decides the width the
+// lowering gives a bare literal (#8879).
+pub function literal_is_i64(text: string): boolean {
+    return parser.literal_is_i64(text);
+}
+
 // lit_has_i64_suffix reports whether `e` is a number literal carrying an
 // EXPLICIT `i64` / `u64` suffix. literal_is_i64 classifies by MAGNITUDE only,
 // so a small suffixed literal (`7i64`) reads as i32 — fine for a scalar, which
@@ -3022,20 +3026,6 @@ pub function lit_is_i32_min_magnitude(e: ast.Expr): boolean {
             return num.text == "2147483648";
         },
         _ => { return false; }
-    }
-    return false;
-}
-
-pub function literal_is_i64(text: string): boolean {
-    var n: i32 = text.len();
-    if (n > 10) { return true; }
-    if (n < 10) { return false; }
-    var m: string = "2147483647";
-    var i: i32 = 0;
-    while (i < 10) {
-        if (text[i] > m[i]) { return true; }
-        if (text[i] < m[i]) { return false; }
-        i = i + 1;
     }
     return false;
 }
@@ -9963,11 +9953,22 @@ function neg_width(u: ast.ExprUnary, s: LowerState): i32 {
     return 32;
 }
 
-// infer_expr_width returns 64 if `e` evaluates to an i64 value, else 32.
-// Comparisons / equality / logical-not yield an i32 bool regardless of operand
-// width; arithmetic widens to i64 if either operand is i64. Bare literals are
-// i32 here — they only become i64 from an i64 context (see lower_i64), which is
-// what makes `var x: i64 = 5000000000` work without value-based parsing.
+function settle_u32_literal(e: ast.Expr): ast.Expr {
+    if (parser.int_literal_tree(e)) { return parser.settle_int_tree(e, "u32"); }
+    return e;
+}
+
+// Parser-only drivers have no checker annotation. Recover the same u32
+// literal context from the known operand before choosing an instruction width.
+function contextual_binary(b: ast.ExprBinary, s: LowerState): ast.ExprBinary {
+    if (expr_is_u32(b.left, s)) { b = ast.ExprBinary { ...b, right: settle_u32_literal(b.right) }; }
+    if (expr_is_u32(b.right, s)) { b = ast.ExprBinary { ...b, left: settle_u32_literal(b.left) }; }
+    return b;
+}
+
+// infer_expr_width returns the integer value's width. Bare literals default
+// by magnitude; a known u32 operand supplies context before that default.
+// Comparisons yield a 32-bit boolean regardless of operand width.
 pub function infer_expr_width(e: ast.Expr, s: LowerState): i32 {
     // A Cell[i64/u64] get() is width 64 (#5510).
     var cwe: string = cell_get_elem(e, s);
@@ -10008,6 +10009,7 @@ pub function infer_expr_width(e: ast.Expr, s: LowerState): i32 {
         },
         ast.ExprBinary(b) => {
             if (b.op == "==" || b.op == "!=" || b.op == "<" || b.op == ">" || b.op == "<=" || b.op == ">=") { return 32; }
+            b = contextual_binary(b, s);
             if (infer_expr_width(b.left, s) == 64 || infer_expr_width(b.right, s) == 64) { return 64; }
             // A composite overload returning i64 / u64 (#5986). Additive only:
             // the operand walk decides width wherever it resolves, so an
@@ -15611,6 +15613,7 @@ function lower_expr_unary(u: ast.ExprUnary, s: LowerState): LowerState {
 // lower_expr_binary lowers a binary operator — the short-circuiting pair, and the width- and
 // signedness-directed integer and float forms.
 function lower_expr_binary(b: ast.ExprBinary, e: ast.Expr, s: LowerState): LowerState {
+    b = contextual_binary(b, s);
     // Saturating arithmetic (#5542) is integer-only — no string concat,
     // no float form, no composite overload — so it precedes every other
     // dispatch and carries its own width-aware clamp lowering.
@@ -19341,6 +19344,7 @@ function lower_stmt_inner(st: ast.Stmt, s: LowerState): LowerState {
         },
         ast.StmtAssign(a) =>{ return lower_stmt_assign(a, s); },
         ast.StmtReturn(r) => {
+            if (s.frame.cur_ret == "u32") { r = ast.StmtReturn { ...r, value: settle_u32_literal(r.value) }; }
             // A bare `return;` in a VOID function — parse_expr yields an
             // ExprUnknown for the missing value, which lower_expr can't lower (so
             // the whole module bailed to AST; every void helper with an early
@@ -23245,6 +23249,7 @@ function refine_map_struct_val(a: ast.StmtAssign, slot: i32, s: LowerState): Low
 function lower_stmt_assign(a: ast.StmtAssign, s: LowerState): LowerState {
     var slot: i32 = s.slot_of(a.target);
     if (slot < 0) { return s.fail(); }
+    if (s.is_u32_slot(slot)) { a = ast.StmtAssign { ...a, value: settle_u32_literal(a.value) }; }
     // SCENRB (#6127): rebinding an admitted all-scalar enum / scalar Option local
     // orphans the box it currently holds, so release it before the new value is
     // stored. Safe to emit ahead of the RHS: admission requires the name never

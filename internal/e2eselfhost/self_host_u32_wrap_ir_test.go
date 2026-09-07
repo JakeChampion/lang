@@ -188,6 +188,8 @@ func TestSelfHostU32WrapIR(t *testing.T) {
 		{"large-lit-div", `function main(): i32 { var x: u32 = 4000000000; x = x + 1000000000; return ((x / 1000000) % 100) as i32; }`},
 		// 5-term wrapping add (the SHA round shape).
 		{"add5-wrap", `function main(): i32 { var a: u32 = 0xffffffff; var s: u32 = a + a + a + a + a; return ((s >> 24) & 255) as i32; }`},
+		{"bare-hex-context", `function mask(): u32 { return 0XFFFFFFFF; }
+function main(): i32 { var a: u32 = 1; var b: u32 = a + (0xfffffffe + 1); var c: u32 = a + (0xfffffffe | 1); a = 0xffffffff; if (a == mask() && b == 0u32 && c == 0u32 && 0xffffffff > b) { return 42; } return 0; }`},
 		// u32 mul overflow.
 		{"mul-wrap", `function main(): i32 { var a: u32 = 0x10001; var s: u32 = a * a * a; return ((s >> 16) & 255) as i32; }`},
 		// u32 left-shift past bit 31 must drop the high bits.
