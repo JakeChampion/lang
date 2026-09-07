@@ -162,23 +162,15 @@ function enc_chars(c: Codec, n: i32): i32 {
   return out;
 }
 
-// `enc_block(c, bs, at, nb)` — the `nb` bytes at `bs[at]` as characters.
-// `nb` is the whole block except at end of input, where a short one is
-// zero-extended to the characters its bits need and then `=` padded
-// where the encoding pads.
-function enc_block(c: Codec, bs: [u8], at: i32, nb: i32): Chars {
-  var acc: i64 = 0;
-  var t: i32 = 0;
-  while (t < nb) {
-    acc = acc << 8 | bs[at + t] as i64;
-    t = t + 1;
-  }
-  if (c.rev) {
-    acc = rev8(acc);
-  }
-  if (c.bits == 0) {
-    return Chars { v: z85_digits(c.alpha, acc), n: 5 };
-  }
+// `enc_tail(c, acc, nb)` — the SHORT final block, `nb` bytes held
+// big-endian in `acc`, as the characters its bits need plus `=` to the
+// block where the encoding pads.
+//
+// Only base64 and the two base32s ever reach this: a one-byte block
+// cannot be short, and z85 refuses a length that is not a multiple of
+// four before the loop starts.
+function enc_tail(c: Codec, acc0: i64, nb: i32): Chars {
+  var acc: i64 = acc0;
   var chars: i32 = (nb * 8 + c.bits - 1) / c.bits;
   acc = acc << chars * c.bits - nb * 8;
   var mask: i64 = ((1 << c.bits) - 1) as i64;
@@ -489,7 +481,7 @@ function encode(r: Reader, c: Codec, wrap: i64, o: io_buffered.BufWriter): void 
       var pn: i32 = 0;
       if (nb < inb) {
         // The one short block a stream can have, at its end.
-        var tail: Chars = enc_block(c, bs, i, nb);
+        var tail: Chars = enc_tail(c, acc, nb);
         pv = tail.v;
         pn = tail.n;
       } else if (bits == 0) {
