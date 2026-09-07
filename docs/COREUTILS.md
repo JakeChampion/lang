@@ -113,6 +113,12 @@ harness runs GNU and Fern and diffs. A case costs one line, and a case cannot
 record a wrong expectation, which is what makes the corpus cheap to grow and
 hard to get wrong. See the package doc in `harness_test.go`.
 
+A case may also ask for a working directory of its own — a fresh one per
+SIDE, seeded by a function it names — and the TREE it leaves behind is then
+compared alongside the streams, name by name and byte by byte. `split` is
+what needs it: its whole output is the files it writes, so the streams alone
+would compare two silences.
+
 A utility that reads the filesystem is asked about a tree its corpus builds
 under `t.TempDir()` — `test`'s has every file kind it can tell apart, the
 three special bits, pinned timestamps that differ below the second, a hard
@@ -442,6 +448,30 @@ connection returns at once trying nothing further, NXDOMAIN moves on, and
 anything else ends the loop.
 Neither changes the bytes on a host whose name resolves.
 
+**`split --filter=COMMAND` is refused.** GNU forks per piece, hands the child
+the read end of a pipe as its stdin, and streams the piece into the write
+end. Fern has `proc_fork` / `proc_exec` / `proc_waitpid` but no `pipe(2)`, no
+`dup2(2)` and no way to set a variable in a child's environment, and
+`subprocess()` is interp-only and takes the child's whole stdin as a string
+built in advance — which a piece that may be gigabytes is not. So the option
+is DECLARED, because its getopt behaviour is observable whether or not it
+runs (a required argument, a place in the `--f` prefix space, a position in
+the ambiguity list), and using it prints `split: --filter is not supported on
+this system` and exits 1 where GNU would run the command. The primitive is
+#8810; unlike `tail --pid`, GNU has no degraded path of its own here to
+borrow, so this one is a real divergence rather than a shared one.
+
+**`split --hex-suffixes=FROM` where FROM holds a hex LETTER is not
+reproduced.** GNU 9.4 seeds its suffix counter with `FROM[i] - '0'`, which is
+right for the decimal digits and 39 too large for `a`–`f`, and then indexes
+its 16-character alphabet with the result. The names that come back are the
+bytes that follow that string literal in the binary: `--hex-suffixes=a` gives
+`x0a`, `x0e`, `x10`, `x11`, …, and `--hex-suffixes=c` gives `x0c`, `x00`,
+`x01`, … — non-monotonic, repeating, and a property of one build's `.rodata`
+rather than of split. Fern counts in hex from FROM. FROM written in decimal
+digits (`--hex-suffixes=10`) agrees byte for byte and is in the corpus; a
+FROM with a letter is not, because there is nothing to agree with.
+
 ## Open gaps
 
 **`X as usize` means different addresses in the two compilers (#8799).**
@@ -511,13 +541,14 @@ groups are the order of work. Each sub-issue names its group.
   `sleep`. No new runtime surface; the full getopt emulation lands here.
 - **B. streaming text** — `cat` `tac` `head` `tail` `wc` `nl` `cut` `paste`
   `join` `comm` `uniq` `sort` `tr` `fold` `fmt` `pr` `ptx` `expand`
-  `unexpand` `split` `csplit` `shuf` `od` `base32` `base64` `basenc` `cksum`
+  `unexpand` `csplit` `shuf` `od` `base32` `base64` `basenc` `cksum`
   `sum` `md5sum` `sha1sum` `sha224sum` `sha256sum` `sha384sum` `sha512sum`
-  `b2sum` `tee`. `head` and `wc` are done. Needs a buffered stdout writer in
-  `std/io_buffered` (its own header already promises one) and a streaming
-  stdin reader whose reads can FAIL: every one of these reaches a read error
-  through a directory operand, and `Reader.read_chunk` answered None to EOF
-  and to EISDIR alike until #8700 gave it `Result[string, IoError]`. The hash
+  `b2sum` `tee`. `cat`, `head`, `split`, `tail` and `wc` are done. Needs a
+  buffered stdout writer in `std/io_buffered` (its own header already
+  promises one) and a streaming stdin reader whose reads can FAIL: every one
+  of these reaches a read error through a directory operand, and
+  `Reader.read_chunk` answered None to EOF and to EISDIR alike until #8700
+  gave it `Result[string, IoError]`. The hash
   utilities have their digests: `std/crypto` streams MD5, SHA-1,
   SHA-224/256/384/512 and BLAKE2b (`h = h.update(chunk)` per `read_chunk`
   piece), and `std/hash` has cksum's CRC-32 and both sum(1) checksums with
