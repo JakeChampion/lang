@@ -10,11 +10,17 @@
 // the verifier's model, and proves nothing about whether any Fern
 // program ever produces the instruction.
 //
-// So the corpus is lowered and the emitted instructions are tallied. An
+// So the corpus is compiled and the emitted instructions are tallied. An
 // op the corpus never reaches has to be listed, with a reason, in
 // core.md's "Instructions the corpus does not reach" table — and an
 // entry there that the corpus HAS started reaching is reported too, so
 // the list shrinks as cases are added rather than silently going stale.
+//
+// The tally is taken AFTER the optimisation battery, on the op stream a
+// backend is handed: `rotr`, `local.tee`, `call_closure_direct` and
+// `make_env` do not exist until a pass creates them, so a tally taken at
+// lowering calls four instructions unreachable that every compiled
+// program contains.
 package e2e
 
 import (
@@ -72,7 +78,7 @@ func TestCoreOpsAreReachedByTheCorpus(t *testing.T) {
 	all, unreached := readCoreOps(t)
 
 	emitted := map[string]int{}
-	corpusPrograms(t, func(_ string, _ verifyConfig, ip *ir.Program) {
+	optimizedCorpusPrograms(t, func(_ string, _ verifyConfig, ip *ir.Program) {
 		for _, f := range ip.Funcs {
 			for _, op := range f.Ops {
 				emitted[op.Kind.String()]++

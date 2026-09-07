@@ -313,13 +313,20 @@ vocabulary. The sentences are not written yet.
 
 ## Instructions the corpus does not reach
 
-`TestCoreOpsAreReachedByTheCorpus` lowers every conformance case and
-tallies the instructions that come out. This is the check
-`spec/README.md` calls the one that matters most for a normative
+`TestCoreOpsAreReachedByTheCorpus` compiles every conformance case —
+lowering it and then running `ir.OptimizeProgram`, the battery every
+backend runs — and tallies the instructions that come out. This is the
+check `spec/README.md` calls the one that matters most for a normative
 document and the one that is easy to leave out: the effects gate above
 proves a row agrees with the verifier's model, and proves nothing about
 whether any Fern program produces the instruction at all. An invented
 row would read exactly like a true one.
+
+The tally is taken on the op stream a backend is handed, not on the one
+`LowerWith` returns, because several instructions do not exist until a
+pass creates one. Stopping at lowering reports those unreached while
+every compiled program contains them — and this table is where such a
+reading would be recorded as a fact about the language.
 
 Run for the first time it found **19** unreached instructions. Fifteen
 were a corpus gap rather than a language fact, and closed by five cases
@@ -330,15 +337,17 @@ register-form `Ok` / `Err`, and every `dyn Trait` dispatch had **no**
 conformance coverage; `dyn` had two compile-error cases and nothing that
 ran one.
 
-Four remain, and all four are unreachable by construction: they are
-produced by IR passes that run *after* lowering, so no source program
-can be written that makes `LowerWith` emit them.
+Four more were a measurement gap: `local.tee`, `call_closure_direct`,
+`make_env` and `rotr` are created by `FuseTee`, `Defunctionalise` and
+`FuseRotates`, and the corpus reaches all four — the tally stopped at
+lowering and could not see them. Running the battery closed them.
+
+Two remain, and both are unreachable because an ordinary build never
+asks for them: each is emitted only under a lower option the corpus does
+not set.
 
 | Op | Why |
 | --- | --- |
-| `local.tee` | Introduced by the tee pass, which fuses a store and a following load. Lowering emits the pair. |
-| `call_closure_direct` | Introduced by the defunctionalisation pass when a `call_indirect`'s receiver is provably monomorphic. |
-| `make_env` | Introduced by the same pass, when every reader of a closure became a `call_closure_direct` and the `{fn_idx, env_ptr}` pair is dead. |
 | `line` | Emitted only under the `EmitLineMarkers` lower option, which is native `-g`. The byte-identical self-host fixpoint depends on ordinary builds never seeing one. |
 | `cover` | Emitted only under the `CoverPoints` lower option, which is `-cover`. The byte-identical self-host fixpoint depends on ordinary builds never seeing one. |
 

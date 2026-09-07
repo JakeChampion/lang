@@ -123,6 +123,33 @@ func corpusPrograms(t *testing.T, fn func(name string, cfg verifyConfig, ip *ir.
 	}
 }
 
+// optimizedCorpusPrograms is corpusPrograms carried the rest of the way a
+// backend carries a program: `ir.OptimizeProgram` runs the whole battery
+// before fn sees it, so fn observes the op stream an emitter is handed
+// rather than the one lowering produced.
+//
+// The two stages are different programs, and which one a gate wants is a
+// real choice. The gates above want the LOWERED form — they are about
+// lowering (TestCorpusLowersForVerification), about the shape a lowering
+// bug takes (TestIRVerifierCatchesLoweringDamage), or about an analysis
+// docs/SSA-CUTOVER-PLAN.md places before the optimiser
+// (TestSSALiftProvenanceIsTotal). A gate making a claim about what the
+// compiler EMITS wants this one: several instructions exist only after a
+// pass creates them — `rotr` from FuseRotates, `local.tee` from FuseTee,
+// `call_closure_direct` and `make_env` from Defunctionalise — and a tally
+// taken before the battery cannot see any of them.
+//
+// The battery is run under the config's `ast.TwoWordOverride`, inside
+// lowerAndVerify's lock, because passes that size a closure pair or a
+// string read the same flag the lowering did.
+func optimizedCorpusPrograms(t *testing.T, fn func(name string, cfg verifyConfig, ip *ir.Program)) {
+	t.Helper()
+	corpusPrograms(t, func(name string, cfg verifyConfig, ip *ir.Program) {
+		ir.OptimizeProgram(ip, int32(cfg.ptrW))
+		fn(name, cfg, ip)
+	})
+}
+
 // lowerAndVerify holds `ast.TwoWordOverride` across BOTH the lowering and
 // fn, because the verifier reads the same flag: `ir.Verify`'s stack half
 // asks `ast.UseTwoWordStrings` to decide how many slots a string occupies,
