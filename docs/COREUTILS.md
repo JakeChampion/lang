@@ -170,6 +170,9 @@ coreutils/
   lib/ld.fern       C's `long double` as the TARGET has it, for the
                     utilities that convert and compute in one
                     (printf, numfmt, seq, sleep)
+  lib/base.fern     the encoder / decoder base64, base32 and basenc
+                    share: one codec parameterised by alphabet, block
+                    and padding, plus every decode rule and diagnostic
   lib/resolv.fern   glibc's IPv4 name lookup — /etc/hosts, the
                     `hosts:` line of nsswitch.conf, resolv.conf and an
                     RFC 1035 A query — for the utilities that resolve

@@ -36,7 +36,10 @@ import (
 func corpusByUtil() map[string]func(*testing.T) []invocation {
 	return map[string]func(*testing.T) []invocation{
 		"[":        bracketCases,
+		"base32":   base32Cases,
+		"base64":   base64Cases,
 		"basename": basenameCases,
+		"basenc":   basencCases,
 		"dirname":  dirnameCases,
 		"echo":     echoCases,
 		"expr":     exprCases,

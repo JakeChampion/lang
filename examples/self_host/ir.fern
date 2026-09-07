@@ -332,6 +332,8 @@ pub function op_free(): Op { return op0("free"); }
 // discarded). i32 loads sign-extend (movslq); ptr is heap-pointer-width
 // (8 bytes on x86-64/arm64, 4 on wasm32). Unblocks core/map's __map_hash /
 // __map_dec_value (and the wider Map subsystem) on the IR path.
+// `__load_u8(addr)` is the byte member of the family and has no op of its
+// own: irlower emits `raw_load8` with a constant zero offset.
 pub function op_load_i32(): Op { return op0("load_i32"); }
 pub function op_load_i64(): Op { return op0("load_i64"); }
 pub function op_load_ptr(): Op { return op0("load_ptr"); }
