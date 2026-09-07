@@ -690,12 +690,14 @@ func (inv invocation) snapshotFollowFiles(t *testing.T) func() {
 	}
 }
 
-// readUpTo reads at most limit bytes from r, calling onData after each
-// chunk arrives, and gives up at followDeadline. The deadline is what
-// keeps a child that has stopped writing without exiting — a `tail -f`
-// with nothing left to say — from blocking the whole package instead of
-// failing its own case.
-func readUpTo(r *os.File, limit int, onData func()) ([]byte, bool) {
+// readUpTo reads at most limit bytes from r, calling onData with the running
+// total after each chunk arrives, and gives up at followDeadline. The total
+// is the caller's only honest view of how much has arrived — a callback that
+// tracks its own accumulator cannot see what readUpTo has already bufferered.
+// The deadline is what keeps a child that has stopped writing without exiting
+// — a `tail -f` with nothing left to say — from blocking the whole package
+// instead of failing its own case.
+func readUpTo(r *os.File, limit int, onData func(total int)) ([]byte, bool) {
 	type piece struct {
 		b   []byte
 		err error
@@ -729,7 +731,7 @@ func readUpTo(r *os.File, limit int, onData func()) ([]byte, bool) {
 				return out, false
 			}
 			if onData != nil {
-				onData()
+				onData(len(out))
 			}
 			if len(out) < limit {
 				want <- limit - len(out)
@@ -761,20 +763,31 @@ func (inv invocation) runFollow(t *testing.T, cmd *exec.Cmd) []byte {
 	w.Close()
 	var out []byte
 	step := 0
-	fire := func() {
-		for step < len(inv.follow) && len(out) >= inv.follow[step].after {
+	fire := func(total int) {
+		for step < len(inv.follow) && total >= inv.follow[step].after {
 			inv.follow[step].run(t)
 			step++
 		}
 	}
-	fire()
-	rest, timedOut := readUpTo(r, inv.limit, func() { fire() })
+	rest, timedOut := readUpTo(r, inv.limit, fire)
 	out = append(out, rest...)
+	// Terminate the child and do NOT let a SIGTERM it ignores hang the
+	// package: escalate to Kill after the follow deadline.
 	_ = cmd.Process.Signal(syscall.SIGTERM)
+	waited := make(chan error, 1)
+	go func() { waited <- cmd.Wait() }()
+	select {
+	case <-waited:
+	case <-time.After(followDeadline):
+		_ = cmd.Process.Kill()
+		<-waited
+	}
 	r.Close()
-	_ = cmd.Wait()
 	if timedOut {
-		t.Logf("follow case %q: %d of %d bytes arrived before the deadline", inv.name, len(out), inv.limit)
+		t.Errorf("follow case %q: %d of %d bytes arrived before the deadline — a step never fired or the child started with the wrong file state", inv.name, len(out), inv.limit)
+	}
+	if step != len(inv.follow) {
+		t.Errorf("follow case %q: %d of %d follow steps fired — a step that never ran is a case that tested nothing", inv.name, step, len(inv.follow))
 	}
 	if len(out) > inv.limit {
 		out = out[:inv.limit]
