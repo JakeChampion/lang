@@ -70,18 +70,22 @@ function main(): i32 { return churn(3); }`)
 // A REPLACED string field is excluded — strings are two-word on wasm / boxed
 // on arm64, which the single-word reuse temps + flat-dec release don't handle.
 // Falls back to the normal fresh alloc.
+//
+// The self-append `name: p.name + "x"` is the one exception (#8785): the
+// helper consumes the box's own reference, so that field needs neither a
+// temp-side retain nor a displaced-value release — rc_str_field_append_test.go.
 func TestStructReuseSkipsReplacedStringField(t *testing.T) {
 	ip := lowerForTest(t, `struct Named { id: i32, name: string }
-function churn(n: i32): i32 {
+function churn(n: i32, other: string): i32 {
     var p: Named = Named { id: 0, name: "a" };
     var i: i32 = 0;
     while (i < n) {
-        p = Named { id: p.id + 1, name: p.name + "x" };
+        p = Named { id: p.id + 1, name: other };
         i = i + 1;
     }
     return p.id;
 }
-function main(): i32 { return churn(3); }`)
+function main(): i32 { return churn(3, "x"); }`)
 	f := funcByName(ip, "churn")
 	if f == nil {
 		t.Fatal("no func churn")
