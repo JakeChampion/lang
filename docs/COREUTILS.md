@@ -504,6 +504,19 @@ that black-holes the connection holds `hostid` for the kernel's connect
 timeout where glibc gives up after resolv.conf's `timeout` × `attempts`.
 Neither changes the bytes on a host whose name resolves.
 
+**What `tac`'s write-failure cases assume about the host.** Whether a
+failed stdout write is reported as `write error: No space left on device`
+or as a bare `write error` is decided by which bytes glibc's stdio still
+had pending at fclose, so the four corpus cases that pin the boundary
+(4000 and 4096 bytes, 12000 and 13192) are reading a specific buffer size:
+BUFSIZ 8192, or `st_blksize` when fstat reports something smaller, which
+every pipe, device and ordinary file on Linux does at 4096. `lib/gnu.fern`'s
+`Stdio` reproduces that choice from the descriptor rather than assuming
+4096, so the cases hold wherever GNU's own do — but a host whose stdout
+reported a different `st_blksize` would move the boundary for BOTH
+binaries, and these four sizes would stop being the interesting ones. They
+pin an algorithm, not a constant.
+
 ## Open gaps
 
 **A process-liveness query (#8767).** `tail --pid=PID` stops following once
