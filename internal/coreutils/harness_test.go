@@ -110,12 +110,22 @@ type invocation struct {
 }
 
 // treeEntry is one path under a seedTree case's working directory, as the
-// comparison sees it: the name relative to that directory, whether it is
-// a directory, and a regular file's bytes.
+// comparison sees it: the name relative to that directory, its kind, its
+// twelve-bit mode (setuid / setgid / sticky included, which `mkdir -m`
+// sets), a symlink's target verbatim, and for a regular file its bytes and
+// which hard-link group it belongs to. Timestamps are deliberately absent:
+// the two sides run seconds apart and nothing in the corpus sets one.
 type treeEntry struct {
 	name    string
-	isDir   bool
+	kind    string
+	mode    uint32
+	target  string
 	content string
+	// group numbers the (dev, ino) equivalence classes in walk order, so
+	// two names sharing an inode share a number on both sides while the
+	// inodes themselves — which differ between the runs — never reach the
+	// comparison. That is what separates `ln a b` from `cp a b`.
+	group int
 }
 
 // followStep is one thing the harness does to a followed file, once
@@ -562,10 +572,12 @@ func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 
 // readTree lists everything under root, deepest paths included, with each
 // regular file's bytes. A file too large to hold is summarised by its size
-// instead, which still differs when the two sides disagree.
+// instead, which still differs when the two sides disagree. Symlinks are
+// recorded, not followed.
 func readTree(t *testing.T, root string) []treeEntry {
 	t.Helper()
 	var out []treeEntry
+	groups := map[[2]uint64]int{}
 	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -577,8 +589,17 @@ func readTree(t *testing.T, root string) []treeEntry {
 		if rel == "." {
 			return nil
 		}
-		e := treeEntry{name: rel, isDir: info.IsDir()}
-		if !info.IsDir() {
+		mode := info.Mode()
+		e := treeEntry{name: rel, kind: treeKind(mode), mode: permBits(mode)}
+		switch {
+		case mode&os.ModeSymlink != 0:
+			target, err := os.Readlink(path)
+			if err != nil {
+				return err
+			}
+			e.target = target
+		case mode.IsRegular():
+			e.group = linkGroup(info, groups)
 			if info.Size() > 1<<22 {
 				e.content = fmt.Sprintf("<%d bytes>", info.Size())
 			} else {
@@ -826,11 +847,63 @@ func requireParity(t *testing.T, util string, cases []invocation) {
 			if want.how() != got.how() {
 				t.Errorf("status differs for %s %s: gnu %s, fern %s", util, quoteArgs(inv.args), want.how(), got.how())
 			}
-			if diff := treeDiff(want.tree, got.tree); diff != "" {
+			if diff := treeDiff(want.tree, got.tree, "gnu", "fern"); diff != "" {
 				t.Errorf("the files left behind differ for %s %s\n%s", util, quoteArgs(inv.args), diff)
 			}
 		})
 	}
+}
+
+// treeKind names the entry kind in one word.
+func treeKind(mode os.FileMode) string {
+	switch {
+	case mode.IsDir():
+		return "dir"
+	case mode&os.ModeSymlink != 0:
+		return "symlink"
+	case mode.IsRegular():
+		return "file"
+	case mode&os.ModeNamedPipe != 0:
+		return "fifo"
+	case mode&os.ModeSocket != 0:
+		return "socket"
+	case mode&os.ModeDevice != 0:
+		return "device"
+	}
+	return "other"
+}
+
+// permBits is the twelve-bit mode word `chmod` speaks, rebuilt out of Go's
+// portable FileMode: the nine permission bits plus setuid / setgid / sticky.
+func permBits(mode os.FileMode) uint32 {
+	bits := uint32(mode.Perm())
+	if mode&os.ModeSetuid != 0 {
+		bits |= 0o4000
+	}
+	if mode&os.ModeSetgid != 0 {
+		bits |= 0o2000
+	}
+	if mode&os.ModeSticky != 0 {
+		bits |= 0o1000
+	}
+	return bits
+}
+
+// linkGroup numbers the (dev, ino) equivalence classes in walk order, so two
+// names sharing an inode share a number on both sides while the inodes
+// themselves — which differ between the runs — never reach the comparison.
+func linkGroup(info os.FileInfo, groups map[[2]uint64]int) int {
+	st, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return 0
+	}
+	key := [2]uint64{uint64(st.Dev), uint64(st.Ino)}
+	if n, seen := groups[key]; seen {
+		return n
+	}
+	n := len(groups) + 1
+	groups[key] = n
+	return n
 }
 
 // quote renders bytes readably: printable ASCII as itself, everything
@@ -924,10 +997,11 @@ func requireHelp(t *testing.T, util string, args []string, wantExit int) {
 }
 
 // treeDiff reports the first few ways two trees differ, or "" when they
-// agree. Naming the path and the content that differs is what makes a
-// failure actionable: a `split` case that gets the suffix sequence wrong
-// otherwise reports only that something changed.
-func treeDiff(want, got []treeEntry) string {
+// agree. Naming the path and what differs is what makes a failure
+// actionable: a `split` case that gets the suffix sequence wrong otherwise
+// reports only that something changed. wantWho and gotWho name the two
+// sides in the report.
+func treeDiff(want, got []treeEntry, wantWho, gotWho string) string {
 	byName := func(es []treeEntry) map[string]treeEntry {
 		m := make(map[string]treeEntry, len(es))
 		for _, e := range es {
@@ -951,13 +1025,19 @@ func treeDiff(want, got []treeEntry) string {
 		ge, gok := g[n]
 		switch {
 		case wok && !gok:
-			lines = append(lines, fmt.Sprintf("  %s: gnu wrote it, fern did not", n))
+			lines = append(lines, fmt.Sprintf("  %s: %s wrote it, %s did not", n, wantWho, gotWho))
 		case !wok && gok:
-			lines = append(lines, fmt.Sprintf("  %s: fern wrote it, gnu did not", n))
-		case we.isDir != ge.isDir:
-			lines = append(lines, fmt.Sprintf("  %s: gnu dir=%v, fern dir=%v", n, we.isDir, ge.isDir))
+			lines = append(lines, fmt.Sprintf("  %s: %s wrote it, %s did not", n, gotWho, wantWho))
+		case we.kind != ge.kind:
+			lines = append(lines, fmt.Sprintf("  %s: %s %s, %s %s", n, wantWho, we.kind, gotWho, ge.kind))
+		case we.mode != ge.mode:
+			lines = append(lines, fmt.Sprintf("  %s: %s mode %04o, %s mode %04o", n, wantWho, we.mode, gotWho, ge.mode))
+		case we.target != ge.target:
+			lines = append(lines, fmt.Sprintf("  %s: %s -> %s, %s -> %s", n, wantWho, quote([]byte(we.target)), gotWho, quote([]byte(ge.target))))
 		case we.content != ge.content:
-			lines = append(lines, fmt.Sprintf("  %s: gnu %s, fern %s", n, quote([]byte(we.content)), quote([]byte(ge.content))))
+			lines = append(lines, fmt.Sprintf("  %s: %s %s, %s %s", n, wantWho, quote([]byte(we.content)), gotWho, quote([]byte(ge.content))))
+		case we.group != ge.group:
+			lines = append(lines, fmt.Sprintf("  %s: %s hard-link group %d, %s hard-link group %d", n, wantWho, we.group, gotWho, ge.group))
 		}
 		if len(lines) == 8 {
 			lines = append(lines, "  … more")

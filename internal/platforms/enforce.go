@@ -122,6 +122,11 @@ var gatedBuiltins = map[string]string{
 	"remove_file":     "fs",
 	"remove_dir_all":  "fs",
 	"create_dir_all":  "fs",
+	"create_dir":      "fs",
+	"remove_dir":      "fs",
+	"create_link":     "fs",
+	"create_symlink":  "fs",
+	"read_link":       "fs",
 	"temp_dir":        "fs",
 
 	// Permission bits on a filesystem entry, which is a separate
@@ -133,6 +138,11 @@ var gatedBuiltins = map[string]string{
 	// wrongly.
 	"write_file_exec": "fsmode",
 	"access":          "fsmode",
+	// The umask is the same property from the other side: the mode
+	// bits a creation is allowed to keep. A host with files and no
+	// permission model has no mask to set, and answering 0 would claim
+	// every bit survives.
+	"umask": "fsmode",
 
 	// The process's own identity — the effective pair, the real pair,
 	// and the supplementary group set. A host with no users cannot

@@ -63,6 +63,10 @@ var providedRefusedByPlatform = map[string]bool{
 	// for my effective ids" is unanswerable where there are no mode bits.
 	"write_file_exec": true,
 	"access":          true,
+	// `umask` is the process's own half of the same property: the mode
+	// bits a creation is allowed to keep. WASI has no creation mask, and
+	// answering 0 would claim every bit survives.
+	"umask": true,
 	// `userid` — a user / group id, effective or real, and the
 	// supplementary group set. Neither WASI preview has a notion of a
 	// user at all, and FileStat's uid / gid are zero there for the same

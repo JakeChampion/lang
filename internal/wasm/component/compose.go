@@ -31,6 +31,16 @@ var (
 	// read-directory and read-directory-entry both take just a handle
 	// and a return area: (self, ret_ptr) -> ().
 	composeSelfRetParams = []byte{0x7f, 0x7f}
+
+	// link-at carries a path-flags word AND a second descriptor:
+	// (self, old-path-flags, old_ptr, old_len, new_desc, new_ptr,
+	// new_len, ret_ptr) -> ().
+	composeLinkAtParams = []byte{0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0x7f}
+
+	// symlink-at takes two strings and no flags — the target is stored
+	// verbatim, so it has no descriptor of its own:
+	// (self, old_ptr, old_len, new_ptr, new_len, ret_ptr) -> ().
+	composeSymlinkAtParams = []byte{0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0x7f}
 )
 
 const (
@@ -49,6 +59,9 @@ const (
 	composeReadDirName    = "[method]descriptor.read-directory"
 	composeDirEntryName   = "[method]directory-entry-stream.read-directory-entry"
 	composeDirStreamDrop  = "[resource-drop]directory-entry-stream"
+	composeLinkAtName     = "[method]descriptor.link-at"
+	composeSymlinkAtName  = "[method]descriptor.symlink-at"
+	composeReadlinkAtName = "[method]descriptor.readlink-at"
 )
 
 type p2composer struct {
