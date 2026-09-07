@@ -16899,6 +16899,56 @@ function resource_method_opt_ret_type(field: string, obj: ast.Expr, s: LowerStat
     return "";
 }
 
+// owned_payload_builtin_ptype: the SUCCESS payload type of a scrutinee that is
+// a direct call to a builtin whose Option / Result BOX is immortal (bump-only,
+// released by nobody) but whose success payload is a fresh, sole-owned value
+// built for this caller — native's rcOwnedPayloadBuiltins (rcresults.go), read
+// off the same runtime bodies here (asmcore.rt_src_reader_read_chunk /
+// rt_src_read_line / rt_src_read_file / rt_src_read_file_bytes / rt_src_env,
+// each of which boxes a block it just allocated). "" for anything else.
+//
+// The box needing no release is what left the payload with no owner at all: a
+// match arm binds it like any other enum payload — a borrow of a box nothing
+// sweeps — so every chunk of a `while` reader loop leaked (#8402). The binding
+// is the payload's owner; see lower_stmt_match for what that costs it.
+//
+// A user-declared function of the same name is NOT the builtin: fn_names is the
+// gate lower_call applies before intercepting a bare-ident builtin, so the two
+// cannot disagree.
+function owned_payload_builtin_ptype(e: ast.Expr, s: LowerState): string {
+    match (e) {
+        ast.ExprCall(c) => {
+            match (c.callee) {
+                ast.ExprIdent(cid) => {
+                    if (sig_reg_has_name(s.frame.sigs.fn_names, cid.name)) { return ""; }
+                    if (cid.name == "read_line" && c.args.len() == 0) { return "string"; }
+                    if (cid.name == "env" && c.args.len() == 1) { return "string"; }
+                    if (cid.name == "read_file" && c.args.len() == 1) { return "string"; }
+                    if (cid.name == "read_file_bytes" && c.args.len() == 1) { return "u8[]"; }
+                    return "";
+                },
+                ast.ExprFieldAccess(fa) => {
+                    if (fa.field != "read_chunk" && fa.field != "read_line") { return ""; }
+                    if (resource_method_opt_ret_type(fa.field, fa.obj, s) == "") { return ""; }
+                    return "string";
+                },
+                _ => { return ""; }
+            }
+        },
+        _ => {}
+    }
+    return "";
+}
+
+// owned_payload_free_helper: the release symbol for an owned builtin payload —
+// the memory-layout choice the release choke points insist stays with the site.
+// A string box's block starts at value-8 (__fern_str_free); an array buffer's at
+// data-16 (__fern_rc_dec).
+function owned_payload_free_helper(ptype: string): string {
+    if (ptype == "string") { return "__fern_str_free"; }
+    return "__fern_rc_dec";
+}
+
 // builtin_arr_opt_ret_type returns the Option type of a built-in array method
 // whose result is an Option — `xs.min()` / `xs.max()` / `xs.index_of(x)` on an
 // i32 array, which lower to the Option-returning Fern helpers
@@ -24426,6 +24476,11 @@ function lower_stmt_match(m: ast.StmtMatch, s: LowerState): LowerState {
     // patterns, and non-scalar payloads bail.
     var ms: LowerState = lower_expr(m.scrutinee, s);
     if (!ms.ok) { return ms; }
+    // #8402: the scrutinee's owned payload, if this is a match over a builtin
+    // whose box is immortal and whose success payload is a fresh, sole-owned
+    // value nobody else releases (owned_payload_builtin_ptype). "" for every
+    // other scrutinee, which is every match that was here before.
+    var owned_pay: string = owned_payload_builtin_ptype(m.scrutinee, ms);
     var scrut: string = "$mscrut" + util.i32_to_string(ms.locals.len());
     ms = ms.add_local(scrut);
     var scrut_slot: i32 = ms.slot_of(scrut);
@@ -24481,6 +24536,25 @@ function lower_stmt_match(m: ast.StmtMatch, s: LowerState): LowerState {
                         continue;
                     }
                     var hb: boolean = pv.binding.len() > 0 && pv.binding != "_";
+                    // #8402: the SUCCESS arm of a match over an owned-payload
+                    // builtin. The box is immortal, so the payload's unit is
+                    // this frame's and nothing else will ever release it. A
+                    // guard, an alternation continuation or a sub-pattern keeps
+                    // today's leak rather than guessing which arm reads the
+                    // payload (native's ownedPayloadMatches makes the same three
+                    // exclusions).
+                    var vbare: string = variant_pattern_bare_name(pv.type_name);
+                    var owned_arm: boolean = owned_pay.len() > 0 && !arm.has_guard && !arm.alt_cont
+                        && pv.nested.len() == 0 && !pv.has_lit_cond && pv.extra_bindings.len() == 0
+                        && (vbare == "Ok" || vbare == "Some");
+                    // …and the binding owns it only while the arm keeps it: an
+                    // escaping binding (returned, stored, aliased, or passed at a
+                    // position the callee retains) leaves ownership with the
+                    // destination, so releasing here would dangle. The frame's
+                    // real borrowability registry is what admits `w.write(chunk)`
+                    // — a copying builtin — as the borrow it is.
+                    var owned_bound: boolean = owned_arm && hb
+                        && !binding_escapes_arm(arm, pv.binding, ms.frame.sigs.borrowable_params);
                     // A payload binding needs the payload's type. Only a
                     // direct-call scrutinee `f()` whose ret_type is recorded
                     // (opt_ret_fns) lets us recover it: T for Some/Ok, E for
@@ -24763,6 +24837,11 @@ function lower_stmt_match(m: ast.StmtMatch, s: LowerState): LowerState {
                             || ptag == "string" || ptag == "str";
                         if (!ptag_is_scalar && !ptag_is_struct && !ptag_is_enum && !ptag_is_opt && !ptag_is_tuple && !ptag_is_array && !ptag_is_arrarr && !ptag_is_dyn && !ptag_is_fn && !ptag_is_void && !ptag_is_map) { return s.fail(); }
                     }
+                    // The binding really is at the builtin's owned payload
+                    // position: its recovered type is the one the runtime built
+                    // fresh. A `Result[string, IoError]`'s Err(e) binds the
+                    // IMMORTAL error box and never reaches here.
+                    var owned_here: boolean = owned_bound && ptag == owned_pay;
                     var want: i32 = 0;
                     if (pv.type_name == "None" || pv.type_name == "Err") { want = 1; }
                     ms = ms.emit(ir.op_block(0));   // arm block: br 0 = skip arm
@@ -24791,7 +24870,16 @@ function lower_stmt_match(m: ast.StmtMatch, s: LowerState): LowerState {
                         if (ptag == "i64" || ptag == "u64") { ms = ms.emit(ir.op_opt_payload_w(64, true)); }
                         else if (elem_ty_is_f64slot(ptag)) { ms = ms.emit(ir.op_opt_payload_w(64, false)); }
                         else { ms = ms.emit(ir.op_opt_payload()); }
-                        ms = ms.emit(ir.op_store_local(pbslot));
+                        // #8402: an owned payload is stored through the reclaim
+                        // store, which releases what the slot held from the
+                        // PREVIOUS iteration before overwriting it — a reader
+                        // loop otherwise strands every chunk but the last. The
+                        // first pass sees the prologue's zero, which both helpers
+                        // null-guard. Every other payload takes the bare store it
+                        // always did.
+                        if (owned_here && ptag == "string") { ms = emit_str_reclaim_store(ms, pbslot, false); }
+                        else if (owned_here) { ms = emit_arr_store(ms, pbslot, false, true); }
+                        else { ms = ms.emit(ir.op_store_local(pbslot)); }
                         if (ptag == "string" || ptag == "str") { ms = ms.mark_str(pbslot, true); }
                         else if (ptag == "i64") { ms = ms.mark_i64(pbslot, true); }
                         // A u64 payload rode the 8-byte op_opt_payload_w(64)
@@ -24895,7 +24983,29 @@ function lower_stmt_match(m: ast.StmtMatch, s: LowerState): LowerState {
                         // own buffer once per entry — the box is never swept, so
                         // nothing ever balanced that. Same defect as the user-enum
                         // arm binding, same opt-out (#6049; LocalInfo.borrowed_arr).
-                        if (ms.is_arr_slot(pbslot)) { ms = ms.mark_borrowed_arr(pbslot, true); }
+                        // An OWNED array payload is the exception the opt-out
+                        // exists to exclude: nothing else holds it, so it takes
+                        // the ordinary is_arr sweep (#8402).
+                        if (ms.is_arr_slot(pbslot) && !owned_here) { ms = ms.mark_borrowed_arr(pbslot, true); }
+                        // An owned STRING payload joins the "STR:" reclaim class
+                        // the fresh-producer bindings hold: the exit sweep frees
+                        // the LAST payload the loop bound, the reclaim store above
+                        // freed every earlier one, and str_own records the class on
+                        // the slot. Keyed on the ARM's site, so two arms binding one
+                        // spelling resolve their own credit.
+                        if (owned_here && ptag == "string") {
+                            var opkey: string = reclaim_site_key_of(pv.binding, arm.line, arm.col);
+                            ms = ms.mark_reclaim_site(pbslot, opkey);
+                            ms = LowerState { ...ms, frame: LowerFrame { ...ms.frame, reclaimable_names: ms.frame.reclaimable_names.append("STR:" + opkey) } };
+                            ms = ms.mark_str_own(pbslot, 0);
+                        }
+                    } else if (owned_arm) {
+                        // `Ok(_)` / `Some(_)` at an owned payload position: there
+                        // is no binding to own the payload, so release it here.
+                        ms = ms.emit(ir.op_load_local(scrut_slot));
+                        ms = ms.emit(ir.op_opt_payload());
+                        ms = ms.emit(ir.op_call_direct(owned_payload_free_helper(owned_pay), 1));
+                        ms = ms.emit(ir.op_drop());
                     }
                     if (arm.has_guard) {
                         ms = lower_expr(arm.guard, ms);
