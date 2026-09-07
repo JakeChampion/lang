@@ -143,3 +143,55 @@ func mustGetwd(t *testing.T) string {
 	}
 	return wd
 }
+
+// The arm64-darwin leg is an EMIT check, not a run: XNU has no uname
+// syscall and no affinity mask, so `uname_field` and `cpu_count` are
+// hand-written sysctl bodies there rather than the Fern sources the
+// Linux targets compile, and nothing on this host can execute a Mach-O.
+// What it pins is that the darwin fork is taken at all — the failure it
+// exists to catch is a helper added on the Linux side only, which emits
+// a `__syscall3` of the -1 `sysno` returns for a call XNU does not have.
+// `getcwd` is deliberately NOT in the darwin list: XNU's `__getcwd` has
+// the same shape as Linux's, so one Fern body serves both.
+func TestSelfHostSysinfoIRArm64Darwin(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	if len(runner) != 0 {
+		t.Skip("the driver runs natively; skipping under an exec runner")
+	}
+	dir := t.TempDir()
+	copySelfHostDriver(t, dir, "asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+
+	const src = `function main(): i32 {
+    print(uname_field(4));
+    print(getcwd());
+    return cpu_count();
+}
+`
+	cmd := exec.Command(driverBin, "-target", "arm64-darwin", "-ir")
+	cmd.Stdin = bytes.NewReader([]byte(src))
+	asm, err := cmd.Output()
+	if err != nil || len(asm) == 0 {
+		t.Fatalf("driver failed: %v", err)
+	}
+	text := string(asm)
+	for _, want := range []string{
+		"__fn___fern_uname_field:",
+		"__fn___fern_getcwd:",
+		"__fn___fern_cpu_count:",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("arm64-darwin emit is missing %s", want)
+		}
+	}
+	// BSD sysctl is 202, and both hand-written bodies issue it. A Fern
+	// body compiled for darwin instead would carry neither.
+	if n := strings.Count(text, "mov x16, #202"); n != 2 {
+		t.Errorf("arm64-darwin emit issues sysctl %d times, want 2 (uname_field and cpu_count)", n)
+	}
+	// The one syscall number XNU does not have. `sysno` answers -1 for
+	// it, so its appearance is a Linux body reaching a darwin build.
+	if strings.Contains(text, "__syscall3(-1") || strings.Contains(text, "mov x8, #-1") {
+		t.Error("arm64-darwin emit issues syscall -1, so a Linux-only body reached this target")
+	}
+}
