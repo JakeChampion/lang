@@ -1,0 +1,600 @@
+// nl.fern — GNU-compatible `nl`.
+//
+//   nl [-b STYLE] [-d CC] [-f STYLE] [-h STYLE] [-i N] [-l N]
+//      [-n FORMAT] [-p] [-s STRING] [-v N] [-w N] [FILE]...
+//
+// Each line of each FILE with a line number in front of it. What makes
+// nl more than `cat -n` is that the input is divided into logical
+// PAGES, each with a header, a body and a footer, and each of the three
+// carries its own numbering style:
+//
+//   - A line consisting of exactly the delimiter repeated three, two or
+//     one times — `\:\:\:`, `\:\:`, `\:` by default — starts the
+//     header, the body or the footer. It is not itself printed: an
+//     empty line goes out in its place, and the line number restarts
+//     unless -p says otherwise.
+//   - A style is `a` (every line), `t` (every non-empty line), `n`
+//     (none), or `p` followed by a BASIC REGULAR EXPRESSION, which is
+//     glibc's dialect and so `lib/bre.fern`.
+//
+// The line number is an intmax_t and the overflow is reported LAZILY:
+// the line whose number is INTMAX_MAX is printed in full, and only the
+// next line that wants a number is refused.
+import "std/string";
+import "std/array";
+import "std/i64";
+import "std/io_buffered";
+import "./lib/gnu";
+import "./lib/bre";
+
+// Option ids, declared in GNU's order because the ambiguity list prints
+// candidates in it (`nl --=x`).
+function opt_header(): i32 {
+  return 1;
+}
+
+function opt_body(): i32 {
+  return 2;
+}
+
+function opt_footer(): i32 {
+  return 3;
+}
+
+function opt_start(): i32 {
+  return 4;
+}
+
+function opt_incr(): i32 {
+  return 5;
+}
+
+function opt_norenumber(): i32 {
+  return 6;
+}
+
+function opt_join(): i32 {
+  return 7;
+}
+
+function opt_sep(): i32 {
+  return 8;
+}
+
+function opt_width(): i32 {
+  return 9;
+}
+
+function opt_format(): i32 {
+  return 10;
+}
+
+function opt_delim(): i32 {
+  return 11;
+}
+
+function help_text(): string {
+  var out: string = "";
+  out = out + "Usage: " + gnu.prog() + " [OPTION]... [FILE]...\n";
+  out = out + "Write each FILE to standard output, with line numbers added.\n";
+  out = out + "\n";
+  out = out + "With no FILE, or when FILE is -, read standard input.\n";
+  out = out + "\n";
+  out = out + "Mandatory arguments to long options are mandatory for short options too.\n";
+  out = out + "  -b, --body-numbering=STYLE      use STYLE for numbering body lines\n";
+  out = out + "  -d, --section-delimiter=CC      use CC for logical page delimiters\n";
+  out = out + "  -f, --footer-numbering=STYLE    use STYLE for numbering footer lines\n";
+  out = out + "  -h, --header-numbering=STYLE    use STYLE for numbering header lines\n";
+  out = out + "  -i, --line-increment=NUMBER     line number increment at each line\n";
+  out = out + "  -l, --join-blank-lines=NUMBER   group of NUMBER empty lines counted as one\n";
+  out = out + "  -n, --number-format=FORMAT      insert line numbers according to FORMAT\n";
+  out = out + "  -p, --no-renumber               do not reset line numbers for each section\n";
+  out = out + "  -s, --number-separator=STRING   add STRING after (possible) line number\n";
+  out = out + "  -v, --starting-line-number=NUMBER  first line number for each section\n";
+  out = out + "  -w, --number-width=NUMBER       use NUMBER columns for line numbers\n";
+  out = out + "      --help        display this help and exit\n";
+  out = out + "      --version     output version information and exit\n";
+  out = out + "\n";
+  out = out + "Default options are: -bt -d'\\:' -fn -hn -i1 -l1 -n'rn' -s<TAB> -v1 -w6\n";
+  out = out + "\n";
+  out = out + "CC are two delimiter characters used to construct logical page delimiters;\n";
+  out = out + "a missing second character implies ':'.  As a GNU extension one can specify\n";
+  out = out + "more than two characters, and also specifying the empty string (-d '')\n";
+  out = out + "disables section matching.\n";
+  out = out + "\n";
+  out = out + "STYLE is one of:\n";
+  out = out + "\n";
+  out = out + "  a      number all lines\n";
+  out = out + "  t      number only nonempty lines\n";
+  out = out + "  n      number no lines\n";
+  out = out + "  pBRE   number only lines that contain a match for the basic regular\n";
+  out = out + "         expression, BRE\n";
+  out = out + "\n";
+  out = out + "FORMAT is one of:\n";
+  out = out + "\n";
+  out = out + "  ln     left justified, no leading zeros\n";
+  out = out + "  rn     right justified, no leading zeros\n";
+  out = out + "  rz     right justified, leading zeros\n";
+  return out;
+}
+
+// ---- numbering styles -------------------------------------------------------
+// 0 every line, 1 every non-empty line, 2 none, 3 the lines a regular
+// expression matches.
+function style_all(): i32 {
+  return 0;
+}
+
+function style_nonempty(): i32 {
+  return 1;
+}
+
+function style_none(): i32 {
+  return 2;
+}
+
+function style_regex(): i32 {
+  return 3;
+}
+
+// `Style` — one of -b / -h / -f: which of the four, and the compiled
+// pattern when it is the fourth.
+struct Style { kind: i32, re: bre.Bre }
+
+function empty_style(kind: i32): Style {
+  return Style { kind: kind, re: bre.bre_compile("") };
+}
+
+// `parse_style(arg, what)` — GNU reads only the FIRST byte for `a`, `t`
+// and `n`, so `-bax` is `-ba`; `p` takes everything after it as the
+// pattern, and an empty one matches every line.
+function parse_style(arg: string, what: string): Style {
+  var c: i32 = 0;
+  if (arg.len() > 0) {
+    c = arg[0] as i32;
+  }
+  if (c == 97) {
+    return empty_style(style_all());
+  }
+  if (c == 116) {
+    return empty_style(style_nonempty());
+  }
+  if (c == 110) {
+    return empty_style(style_none());
+  }
+  if (c == 112) {
+    var re: bre.Bre = bre.bre_compile(slice_unchecked(arg, 1, arg.len()) + "");
+    if (re.err.len() > 0) {
+      gnu.error(re.err);
+      exit(1);
+    }
+    return Style { kind: style_regex(), re: re };
+  }
+  gnu.die_usage("invalid " + what + " numbering style: " + gnu.quote(arg), 1);
+  return empty_style(style_none());
+}
+
+// ---- number formats ---------------------------------------------------------
+function fmt_ln(): i32 {
+  return 0;
+}
+
+function fmt_rn(): i32 {
+  return 1;
+}
+
+function fmt_rz(): i32 {
+  return 2;
+}
+
+// ---- numeric options --------------------------------------------------------
+// gnulib's xdectoimax: strtoimax over the whole operand, with the two
+// suffix texts glibc's errno strings give the two ways it can fail.
+// Returns (value, status): 0 accepted, 1 malformed, 2 out of intmax_t.
+function parse_imax(s: string): (i64, i32) {
+  var i: i32 = 0;
+  while (i < s.len() && gnu.is_blank(s[i] as i32)) {
+    i = i + 1;
+  }
+  var neg: boolean = false;
+  if (i < s.len() && (s[i] as i32 == 43 || s[i] as i32 == 45)) {
+    neg = s[i] as i32 == 45;
+    i = i + 1;
+  }
+  if (i >= s.len() || !gnu.is_digit(s[i] as i32)) {
+    return (0 as i64, 1);
+  }
+  var mag: u64 = 0 as u64;
+  var over: boolean = false;
+  // The magnitude a negative value may reach is one more than a
+  // positive one, which is the whole reason it is accumulated unsigned.
+  var limit: u64 = 9223372036854775807 as u64;
+  if (neg) {
+    limit = 9223372036854775808 as u64;
+  }
+  while (i < s.len() && gnu.is_digit(s[i] as i32)) {
+    var d: u64 = (s[i] as i32 - 48) as u64;
+    match (mag.checked_mul(10 as u64)) {
+      Some(m) => {
+        match (m.checked_add(d)) {
+          Some(a) => {
+            mag = a;
+          },
+          None => {
+            over = true;
+          }
+        }
+      },
+      None => {
+        over = true;
+      }
+    }
+    if (mag > limit) {
+      over = true;
+    }
+    i = i + 1;
+  }
+  if (i != s.len()) {
+    return (0 as i64, 1);
+  }
+  if (over) {
+    return (0 as i64, 2);
+  }
+  if (neg) {
+    if (mag == 9223372036854775808 as u64) {
+      return (0 as i64 - 9223372036854775807 as i64 - 1 as i64, 0);
+    }
+    return (0 as i64 - (mag as i64), 0);
+  }
+  return (mag as i64, 0);
+}
+
+// `number_option(value, what, min, has_min)` — the whole diagnostic for
+// one of -v -i -l -w: no suffix when the operand is malformed, glibc's
+// ERANGE text when it is under the minimum, and its overflow text when
+// it is past intmax_t. No `Try …` line on any of them.
+function number_option(value: string, what: string, min: i64, has_min: boolean, max: i64, has_max: boolean): i64 {
+  var r: (i64, i32) = parse_imax(value);
+  if (r.1 == 1) {
+    gnu.error("invalid " + what + ": " + gnu.quote(value));
+    exit(1);
+  }
+  if (r.1 == 2 || has_max && r.0 > max) {
+    gnu.error("invalid " + what + ": " + gnu.quote(value) + ": Value too large for defined data type");
+    exit(1);
+  }
+  if (has_min && r.0 < min) {
+    gnu.error("invalid " + what + ": " + gnu.quote(value) + ": Numerical result out of range");
+    exit(1);
+  }
+  return r.0;
+}
+
+// ---- settings ---------------------------------------------------------------
+struct Opts {
+  header: Style,
+  body: Style,
+  footer: Style,
+  sep: string,
+  fmt: i32,
+  width: i32,
+  start: i64,
+  incr: i64,
+  join_blank: i64,
+  renumber: boolean,
+  del1: string,
+  del2: string,
+  del3: string
+}
+
+// ---- output -----------------------------------------------------------------
+function spaces(n: i32): string {
+  var out: string = "";
+  var i: i32 = 0;
+  while (i < n) {
+    out = out + " ";
+    i = i + 1;
+  }
+  return out;
+}
+
+// The three FORMATs. A number wider than the field overflows it rather
+// than being truncated, and `rz` puts its zeros after the sign.
+function format_lineno(n: i64, width: i32, fmt: i32): string {
+  var digits: string = n.to_string();
+  if (digits.len() >= width) {
+    return digits;
+  }
+  var pad: i32 = width - digits.len();
+  if (fmt == fmt_ln()) {
+    return digits + spaces(pad);
+  }
+  if (fmt == fmt_rn()) {
+    return spaces(pad) + digits;
+  }
+  var sign: string = "";
+  var body: string = digits;
+  if (digits.len() > 0 && digits[0] as i32 == 45) {
+    sign = "-";
+    body = slice_unchecked(digits, 1, digits.len()) + "";
+  }
+  var zeros: string = "";
+  var i: i32 = 0;
+  while (i < pad) {
+    zeros = zeros + "0";
+    i = i + 1;
+  }
+  return sign + zeros + body;
+}
+
+// ---- the running state ------------------------------------------------------
+// `State` — everything that survives from one line to the next: which
+// section is current, the line number, the run of blank lines -l is
+// counting, and the overflow that has been noticed but not yet
+// reported.
+struct State { section: i32, line_no: i64, blanks: i64, over: boolean, status: i32 }
+
+function section_header(): i32 {
+  return 0;
+}
+
+function section_body(): i32 {
+  return 1;
+}
+
+function section_footer(): i32 {
+  return 2;
+}
+
+function style_of(s: State, o: Opts): Style {
+  if (s.section == section_header()) {
+    return o.header;
+  }
+  if (s.section == section_footer()) {
+    return o.footer;
+  }
+  return o.body;
+}
+
+// `check_section(line, o)` — which delimiter the line is, exactly: -1
+// for an ordinary line, else the section it starts. The match is on the
+// WHOLE line, so `\:\:\:x` is text.
+function check_section(line: string, o: Opts): i32 {
+  if (o.del1.len() == 0) {
+    return 0 - 1;
+  }
+  if (line == o.del3) {
+    return section_header();
+  }
+  if (line == o.del2) {
+    return section_body();
+  }
+  if (line == o.del1) {
+    return section_footer();
+  }
+  return 0 - 1;
+}
+
+// `numbered(line, st, s, o)` — whether this line takes a number, and
+// the blank-line run -l is counting carried forward.
+function numbered(line: string, st: State, sty: Style, o: Opts): (boolean, i64) {
+  if (sty.kind == style_none()) {
+    return (false, st.blanks);
+  }
+  if (sty.kind == style_nonempty()) {
+    return (line.len() > 0, st.blanks);
+  }
+  if (sty.kind == style_regex()) {
+    return (sty.re.search(line), st.blanks);
+  }
+  // style_all with -l: a run of `join_blank` empty lines is numbered
+  // once, at its last line.
+  if (o.join_blank <= 1 as i64) {
+    return (true, st.blanks);
+  }
+  if (line.len() > 0) {
+    return (true, 0 as i64);
+  }
+  var run: i64 = st.blanks + 1 as i64;
+  if (run == o.join_blank) {
+    return (true, 0 as i64);
+  }
+  return (false, run);
+}
+
+// ---- the per-line work ------------------------------------------------------
+struct Emit { st: State, w: io_buffered.BufWriter }
+
+function proc_line(line: string, st0: State, o: Opts, w0: io_buffered.BufWriter): Emit {
+  var st: State = st0;
+  var w: io_buffered.BufWriter = w0;
+  var sec: i32 = check_section(line, o);
+  if (sec >= 0) {
+    var next: State = State { ...st, section: sec, blanks: 0 as i64 };
+    if (o.renumber) {
+      next = State { ...next, line_no: o.start, over: false };
+    }
+    return Emit { st: next, w: gnu.put(w, "\n") };
+  }
+  var sty: Style = style_of(st, o);
+  var r: (boolean, i64) = numbered(line, st, sty, o);
+  st = State { ...st, blanks: r.1 };
+  if (!r.0) {
+    return Emit { st: st, w: gnu.put(w, spaces(o.width + o.sep.len()) + line + "\n") };
+  }
+  // The overflow noticed while numbering the PREVIOUS line is reported
+  // here, so that line still goes out in full and a file whose last
+  // line reaches INTMAX_MAX is not an error at all.
+  if (st.over) {
+    w = gnu.flush(w);
+    gnu.error("line number overflow");
+    exit(1);
+  }
+  w = gnu.put(w, format_lineno(st.line_no, o.width, o.fmt) + o.sep + line + "\n");
+  match (st.line_no.checked_add(o.incr)) {
+    Some(v) => {
+      st = State { ...st, line_no: v };
+    },
+    None => {
+      st = State { ...st, over: true };
+    }
+  }
+  return Emit { st: st, w: w };
+}
+
+// ---- input ------------------------------------------------------------------
+function read_size(): i32 {
+  return 65536;
+}
+
+function proc_reader(r: Reader, name: string, st0: State, o: Opts, w0: io_buffered.BufWriter): Emit {
+  var st: State = st0;
+  var w: io_buffered.BufWriter = w0;
+  var buf: string = "";
+  var pos: i32 = 0;
+  var eof: boolean = false;
+  while (true) {
+    var j: i32 = __memchr(buf, 10, pos);
+    if (j >= 0) {
+      var e: Emit = proc_line(slice_unchecked(buf, pos, j) + "", st, o, w);
+      st = e.st;
+      w = e.w;
+      pos = j + 1;
+      continue;
+    }
+    if (eof) {
+      if (pos < buf.len()) {
+        var e: Emit = proc_line(slice_unchecked(buf, pos, buf.len()) + "", st, o, w);
+        st = e.st;
+        w = e.w;
+      }
+      return Emit { st: st, w: w };
+    }
+    var rest: string = slice_unchecked(buf, pos, buf.len()) + "";
+    match (r.read_chunk(read_size())) {
+      Ok(chunk) => {
+        if (chunk.len() == 0) {
+          buf = rest;
+          eof = true;
+        } else {
+          buf = rest + chunk;
+        }
+        pos = 0;
+      },
+      Err(err) => {
+        w = gnu.error_out(w, gnu.quotef(name) + ": " + gnu.io_error_text(err));
+        return Emit { st: State { ...st, status: 1 }, w: w };
+      }
+    }
+  }
+  return Emit { st: st, w: w };
+}
+
+function proc_file(path: string, st: State, o: Opts, w: io_buffered.BufWriter): Emit {
+  if (path == "-") {
+    return proc_reader(stdin(), path, st, o, w);
+  }
+  match (open_reader(path)) {
+    Ok(f) => {
+      var e: Emit = proc_reader(f, path, st, o, w);
+      f.close();
+      return e;
+    },
+    Err(err) => {
+      var w2: io_buffered.BufWriter = gnu.error_out(w, gnu.quotef(path) + ": " + gnu.io_error_text(err));
+      return Emit { st: State { ...st, status: 1 }, w: w2 };
+    }
+  }
+  return Emit { st: st, w: w };
+}
+
+// `delimiters(cc)` — the three page delimiters. One character implies a
+// second `:`, the empty string turns section matching off, and anything
+// longer is taken whole (a GNU extension).
+function delimiters(cc: string): (string, string, string) {
+  var d: string = cc;
+  if (d.len() == 1) {
+    d = d + ":";
+  }
+  return (d, d + d, d + d + d);
+}
+
+function main(): i32 {
+  var argv: string[] = args();
+  var opts: gnu.Opt[] = [];
+  opts = opts.append(gnu.valued("h", "header-numbering", opt_header()));
+  opts = opts.append(gnu.valued("b", "body-numbering", opt_body()));
+  opts = opts.append(gnu.valued("f", "footer-numbering", opt_footer()));
+  opts = opts.append(gnu.valued("v", "starting-line-number", opt_start()));
+  opts = opts.append(gnu.valued("i", "line-increment", opt_incr()));
+  opts = opts.append(gnu.flag("p", "no-renumber", opt_norenumber()));
+  opts = opts.append(gnu.valued("l", "join-blank-lines", opt_join()));
+  opts = opts.append(gnu.valued("s", "number-separator", opt_sep()));
+  opts = opts.append(gnu.valued("w", "number-width", opt_width()));
+  opts = opts.append(gnu.valued("n", "number-format", opt_format()));
+  opts = opts.append(gnu.valued("d", "section-delimiter", opt_delim()));
+
+  var dels: (string, string, string) = delimiters("\\:");
+  var o: Opts = Opts { header: empty_style(style_none()), body: empty_style(style_nonempty()), footer: empty_style(style_none()), sep: "\t", fmt: fmt_rn(), width: 6, start: 1 as i64, incr: 1 as i64, join_blank: 1 as i64, renumber: true, del1: dels.0, del2: dels.1, del3: dels.2 };
+
+  var g: gnu.Getopt = gnu.getopt_new(argv, opts, "nl", help_text(), 1);
+  while (true) {
+    var r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    g = r.1;
+    match (r.0) {
+      Some(m) => {
+        if (m.id == opt_header()) {
+          o = Opts { ...o, header: parse_style(m.value, "header") };
+        } else if (m.id == opt_body()) {
+          o = Opts { ...o, body: parse_style(m.value, "body") };
+        } else if (m.id == opt_footer()) {
+          o = Opts { ...o, footer: parse_style(m.value, "footer") };
+        } else if (m.id == opt_start()) {
+          o = Opts { ...o, start: number_option(m.value, "starting line number", 0 as i64, false, 0 as i64, false) };
+        } else if (m.id == opt_incr()) {
+          o = Opts { ...o, incr: number_option(m.value, "line number increment", 0 as i64, false, 0 as i64, false) };
+        } else if (m.id == opt_norenumber()) {
+          o = Opts { ...o, renumber: false };
+        } else if (m.id == opt_join()) {
+          o = Opts { ...o, join_blank: number_option(m.value, "line number of blank lines", 1 as i64, true, 0 as i64, false) };
+        } else if (m.id == opt_sep()) {
+          o = Opts { ...o, sep: m.value };
+        } else if (m.id == opt_width()) {
+          o = Opts { ...o, width: number_option(m.value, "line number field width", 1 as i64, true, 2147483647 as i64, true) as i32 };
+        } else if (m.id == opt_format()) {
+          if (m.value == "ln") {
+            o = Opts { ...o, fmt: fmt_ln() };
+          } else if (m.value == "rn") {
+            o = Opts { ...o, fmt: fmt_rn() };
+          } else if (m.value == "rz") {
+            o = Opts { ...o, fmt: fmt_rz() };
+          } else {
+            gnu.die_usage("invalid line numbering format: " + gnu.quote(m.value), 1);
+          }
+        } else if (m.id == opt_delim()) {
+          var d: (string, string, string) = delimiters(m.value);
+          o = Opts { ...o, del1: d.0, del2: d.1, del3: d.2 };
+        }
+      },
+      None => {
+        break;
+      }
+    }
+  }
+
+  var files: string[] = g.operands();
+  if (files.len() == 0) {
+    files = files.append("-");
+  }
+  var st: State = State { section: section_body(), line_no: o.start, blanks: 0 as i64, over: false, status: 0 };
+  var w: io_buffered.BufWriter = gnu.out_new();
+  var i: i32 = 0;
+  while (i < files.len()) {
+    var e: Emit = proc_file(files[i], st, o, w);
+    st = e.st;
+    w = e.w;
+    i = i + 1;
+  }
+  gnu.finish(w);
+  return st.status;
+}

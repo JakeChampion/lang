@@ -1304,19 +1304,42 @@ function fresh_caps(n: i32): i32[] {
 // `text`, with every group's span.
 pub function (re: Bre) exec(text: string): BreMatch {
   if (re.backref) {
-    return exec_backtrack(re, text);
+    return exec_backtrack(re, text, 0);
   }
-  return exec_threads(re, text);
+  return exec_threads(re, text, 0);
+}
+
+// `(re).search(text)` — glibc's `re_search` reduced to the question a
+// line-selecting utility asks of it: does the pattern match ANYWHERE in
+// `text`? nl(1) is the caller.
+//
+// The scan hands the engines the WHOLE string with a starting offset
+// rather than a suffix of it, so `^` still means the start of the line
+// and `$` its end however far in the scan has reached — `nl -bp'^a'`
+// numbers a line beginning with `a`, not every line containing one.
+pub function (re: Bre) search(text: string): boolean {
+  var i: i32 = 0;
+  while (i <= text.len()) {
+    if (re.backref) {
+      if (exec_backtrack(re, text, i).matched) {
+        return true;
+      }
+    } else if (exec_threads(re, text, i).matched) {
+      return true;
+    }
+    i = i + 1;
+  }
+  return false;
 }
 
 // The backtracking engine: ask for one end position at a time, longest
 // first, and take the first that answers yes.
-function exec_backtrack(re: Bre, text: string): BreMatch {
+function exec_backtrack(re: Bre, text: string, start: i32): BreMatch {
   var no: i32[] = [];
   var end: i32 = text.len();
-  while (end >= 0) {
+  while (end >= start) {
     var m: M = M { text: text, re: re, target: end, caps: fresh_caps(re.ngroups * 2), marks: fresh_caps(re.nmarks) };
-    var r: (boolean, M) = step(m, 0, 0);
+    var r: (boolean, M) = step(m, 0, start);
     if (r.0) {
       return caps_to_match(r.1.caps, re, end);
     }
@@ -1385,15 +1408,15 @@ function zero_width_holds(text: string, in: Inst, pos: i32): boolean {
 }
 
 // The Thompson simulation: one pass, every thread in step.
-function exec_threads(re: Bre, text: string): BreMatch {
+function exec_threads(re: Bre, text: string, start: i32): BreMatch {
   var ncap: i32 = re.ngroups * 2;
   var no_pcs: i32[] = [];
   var no_caps: i32[][] = [];
-  var t: Threads = Threads { pcs: no_pcs, caps: no_caps, seen: fill(re.insts.len(), 0 - 1) };
-  t = add_thread(re, t, 0, 0, fresh_caps(ncap), 0, text);
+  var t: Threads = Threads { pcs: no_pcs, caps: no_caps, seen: fill(re.insts.len(), 0 - 2) };
+  t = add_thread(re, t, start, 0, fresh_caps(ncap), start, text);
   var best: i32 = 0 - 1;
   var best_caps: i32[] = fresh_caps(ncap);
-  var pos: i32 = 0;
+  var pos: i32 = start;
   while (true) {
     // The list being stepped is held apart from `t`, so `t` keeps sole
     // ownership of the stamp array and updates it in place.

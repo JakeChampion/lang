@@ -201,12 +201,15 @@ function check_off(): i32 {
 
 // ---- lines ------------------------------------------------------------------
 // `Line` — one input line without its terminator, its field bounds as
-// start/end pairs, and the join field's text.
-struct Line { text: string, fs: i32[], key: string }
+// start/end pairs, and the join field's bounds. The key is held as a
+// RANGE rather than a string: a line is compared with its neighbour and
+// with the other file's, and slicing it out for that would allocate
+// once per line for nothing.
+struct Line { text: string, fs: i32[], k0: i32, k1: i32 }
 
 function blank_line(): Line {
   var none: i32[] = [];
-  return Line { text: "", fs: none, key: "" };
+  return Line { text: "", fs: none, k0: 0, k1: 0 };
 }
 
 function nfields(l: Line): u64 {
@@ -292,8 +295,14 @@ function field_text(l: Line, n: u64): string {
 
 function make_line(text: string, tab: i32, jf: u64): Line {
   var fs: i32[] = split_fields(text, tab);
-  var l: Line = Line { text: text, fs: fs, key: "" };
-  return Line { ...l, key: field_text(l, jf) };
+  var a: i32 = 0;
+  var b: i32 = 0;
+  if (jf < (fs.len() / 2) as u64) {
+    var i: i32 = (jf as i32) * 2;
+    a = fs[i];
+    b = fs[i + 1];
+  }
+  return Line { text: text, fs: fs, k0: a, k1: b };
 }
 
 function fold(c: i32): i32 {
@@ -305,15 +314,21 @@ function fold(c: i32): i32 {
 
 // gnulib's keycmp: memcmp in the C locale, memcasecmp under -i, with a
 // shorter key that is a prefix sorting first. Only the sign is used.
-function keycmp(a: string, b: string, ic: boolean): i32 {
-  var n: i32 = a.len();
-  if (b.len() < n) {
-    n = b.len();
+function keycmp(a: Line, b: Line, ic: boolean): i32 {
+  return range_cmp(a.text, a.k0, a.k1, b.text, b.k0, b.k1, ic);
+}
+
+function range_cmp(at: string, a0: i32, a1: i32, bt: string, b0: i32, b1: i32, ic: boolean): i32 {
+  var la: i32 = a1 - a0;
+  var lb: i32 = b1 - b0;
+  var n: i32 = la;
+  if (lb < n) {
+    n = lb;
   }
   var i: i32 = 0;
   while (i < n) {
-    var x: i32 = a[i] as i32;
-    var y: i32 = b[i] as i32;
+    var x: i32 = at[a0 + i] as i32;
+    var y: i32 = bt[b0 + i] as i32;
     if (ic) {
       x = fold(x);
       y = fold(y);
@@ -326,10 +341,10 @@ function keycmp(a: string, b: string, ic: boolean): i32 {
     }
     i = i + 1;
   }
-  if (a.len() == b.len()) {
+  if (la == lb) {
     return 0;
   }
-  if (a.len() < b.len()) {
+  if (la < lb) {
     return 0 - 1;
   }
   return 1;
@@ -347,7 +362,7 @@ struct In {
   eof: boolean,
   name: string,
   no: u64,
-  prevkey: string,
+  prev: Line,
   hasprev: boolean,
   warned: boolean,
   which: i32
@@ -406,17 +421,17 @@ struct Run { unpairable: boolean, disorder: boolean }
 // the very line that follows the first unpairable one is still exempt.
 // --check-order drops all of that and dies on the first disorder.
 // Either way a file is warned about once.
-function check_order(inp: In, l: Line, o: Opts, run: Run, w: io_buffered.BufWriter): (In, Run, io_buffered.BufWriter) {
-  if (o.check == check_off() || !inp.hasprev) {
-    return (inp, run, w);
+// The check runs on almost no line, so the cheap half is asked first
+// and `check_order` is only entered when it can still report something.
+function needs_order_check(inp: In, o: Opts, run: Run): boolean {
+  if (o.check == check_off() || inp.warned) {
+    return false;
   }
-  if (o.check != check_on() && !run.unpairable) {
-    return (inp, run, w);
-  }
-  if (inp.warned) {
-    return (inp, run, w);
-  }
-  if (keycmp(inp.prevkey, l.key, o.ignore_case) <= 0) {
+  return o.check == check_on() || run.unpairable;
+}
+
+function check_order(inp: In, prev: Line, l: Line, o: Opts, run: Run, w: io_buffered.BufWriter): (In, Run, io_buffered.BufWriter) {
+  if (keycmp(prev, l, o.ignore_case) <= 0) {
     return (inp, run, w);
   }
   var msg: string = inp.name + ":" + inp.no.to_string() + ": is not sorted: " + l.text;
@@ -444,10 +459,19 @@ function next_line(inp: In, o: Opts, run: Run, w: io_buffered.BufWriter): (boole
     return (false, blank_line(), cur, run, w);
   }
   var l: Line = make_line(r.1, o.tab, jf);
-  cur = In { ...cur, no: cur.no + 1 as u64 };
-  var c: (In, Run, io_buffered.BufWriter) = check_order(cur, l, o, run, w);
-  cur = In { ...c.0, prevkey: l.key, hasprev: true };
-  return (true, l, cur, c.1, c.2);
+  var check: boolean = cur.hasprev && needs_order_check(cur, o, run);
+  var prev: Line = blank_line();
+  if (check) {
+    prev = cur.prev;
+  }
+  // One struct rebuild per line, not three: the cursor crosses a tuple
+  // boundary on every call and each rebuild retains every field again.
+  cur = In { ...cur, no: cur.no + 1 as u64, prev: l, hasprev: true };
+  if (check) {
+    var c: (In, Run, io_buffered.BufWriter) = check_order(cur, prev, l, o, run, w);
+    return (true, l, c.0, c.1, c.2);
+  }
+  return (true, l, cur, run, w);
 }
 
 // ---- output -----------------------------------------------------------------
@@ -850,7 +874,7 @@ function main(): i32 {
 
   var blank: Line = blank_line();
   while (have1 && have2) {
-    var d: i32 = keycmp(l1.key, l2.key, o.ignore_case);
+    var d: i32 = keycmp(l1, l2, o.ignore_case);
     if (d < 0) {
       if (o.unpair1) {
         w = gnu.put(w, prjoin(l1, blank, false, o, ac1, ac2));
@@ -879,10 +903,17 @@ function main(): i32 {
       run = Run { ...run, unpairable: true };
       continue;
     }
-    // Equal keys: every line with this key on each side, then the
-    // cross product of the two groups.
+    // Equal keys. Both sides are read forward to the first line with a
+    // different key and the cross product of the two groups is printed.
+    // One line on each side is the overwhelmingly common shape and is
+    // kept off the group arrays entirely, because allocating two of
+    // them per matched key is most of what this loop costs.
+    var head1: Line = l1;
+    var head2: Line = l2;
     var g1: Line[] = [];
-    g1 = g1.append(l1);
+    var g2: Line[] = [];
+    var many1: boolean = false;
+    var many2: boolean = false;
     while (true) {
       var c: (boolean, Line, In, Run, io_buffered.BufWriter) = next_line(in1, o, run, w);
       have1 = c.0;
@@ -890,13 +921,15 @@ function main(): i32 {
       in1 = c.2;
       run = c.3;
       w = c.4;
-      if (!have1 || keycmp(l1.key, g1[0].key, o.ignore_case) != 0) {
+      if (!have1 || keycmp(l1, head1, o.ignore_case) != 0) {
         break;
+      }
+      if (!many1) {
+        g1 = g1.append(head1);
+        many1 = true;
       }
       g1 = g1.append(l1);
     }
-    var g2: Line[] = [];
-    g2 = g2.append(l2);
     while (true) {
       var c: (boolean, Line, In, Run, io_buffered.BufWriter) = next_line(in2, o, run, w);
       have2 = c.0;
@@ -904,20 +937,34 @@ function main(): i32 {
       in2 = c.2;
       run = c.3;
       w = c.4;
-      if (!have2 || keycmp(l2.key, g2[0].key, o.ignore_case) != 0) {
+      if (!have2 || keycmp(l2, head2, o.ignore_case) != 0) {
         break;
+      }
+      if (!many2) {
+        g2 = g2.append(head2);
+        many2 = true;
       }
       g2 = g2.append(l2);
     }
     if (o.pairs) {
-      var i: i32 = 0;
-      while (i < g1.len()) {
-        var j: i32 = 0;
-        while (j < g2.len()) {
-          w = gnu.put(w, prjoin(g1[i], g2[j], false, o, ac1, ac2));
-          j = j + 1;
+      if (!many1 && !many2) {
+        w = gnu.put(w, prjoin(head1, head2, false, o, ac1, ac2));
+      } else {
+        if (!many1) {
+          g1 = g1.append(head1);
         }
-        i = i + 1;
+        if (!many2) {
+          g2 = g2.append(head2);
+        }
+        var i: i32 = 0;
+        while (i < g1.len()) {
+          var j: i32 = 0;
+          while (j < g2.len()) {
+            w = gnu.put(w, prjoin(g1[i], g2[j], false, o, ac1, ac2));
+            j = j + 1;
+          }
+          i = i + 1;
+        }
       }
     }
   }
@@ -1000,16 +1047,16 @@ function glued(argv: string[], g: gnu.Getopt, value: string): boolean {
 function open_input(path: string, which: i32): In {
   var name: string = path;
   if (path == "-") {
-    return In { r: stdin(), is_stdin: true, buf: "", pos: 0, eof: false, name: name, no: 0 as u64, prevkey: "", hasprev: false, warned: false, which: which };
+    return In { r: stdin(), is_stdin: true, buf: "", pos: 0, eof: false, name: name, no: 0 as u64, prev: blank_line(), hasprev: false, warned: false, which: which };
   }
   match (open_reader(path)) {
     Ok(f) => {
-      return In { r: f, is_stdin: false, buf: "", pos: 0, eof: false, name: name, no: 0 as u64, prevkey: "", hasprev: false, warned: false, which: which };
+      return In { r: f, is_stdin: false, buf: "", pos: 0, eof: false, name: name, no: 0 as u64, prev: blank_line(), hasprev: false, warned: false, which: which };
     },
     Err(e) => {
       gnu.error(gnu.quotef(path) + ": " + gnu.io_error_text(e));
       exit(1);
     }
   }
-  return In { r: stdin(), is_stdin: true, buf: "", pos: 0, eof: false, name: name, no: 0 as u64, prevkey: "", hasprev: false, warned: false, which: which };
+  return In { r: stdin(), is_stdin: true, buf: "", pos: 0, eof: false, name: name, no: 0 as u64, prev: blank_line(), hasprev: false, warned: false, which: which };
 }
