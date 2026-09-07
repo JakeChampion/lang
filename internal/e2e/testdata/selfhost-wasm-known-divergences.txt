@@ -107,10 +107,8 @@
 # #8403 while the self-host's own RC implementation has not caught up. Every
 # ANSWER line matches native; only the shape word differs. Measured with
 # bin/fern-selfhost -target wasm32-wasi -emit asm under wasmtime on 424744d,
-# identically on the x86-64 and arm64 legs. Its sibling
-# `alloc_flat_read_chunk` (#8402) diverges the same way on those two legs
-# and is not listed here only because this leg skips stdin fixtures. Before
-# this the section was EMPTY: the last row,
+# identically on the x86-64 and arm64 legs. Before this the section was
+# EMPTY: the last row,
 # `alloc_flat_method_identity_return`, went with the guarded chain-receiver
 # release (#6544).
 alloc_flat_bytes_roundtrip #8412 native prints constant, self-host prints scales: the bytes() / string_from_bytes_unchecked copies are not released; answers 2080 / 1600 / 102400 match

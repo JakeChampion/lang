@@ -1,0 +1,662 @@
+// base.fern — the one encoder and decoder `base64`, `base32` and
+// `basenc` share.
+//
+// Every encoding basenc offers is the same machine with different
+// numbers: `bits` bits per character, a block of `in_block` bytes
+// standing for `out_block` characters, and either `=` padding of a
+// short final block or none. z85 is the one that is not a bit codec —
+// four bytes are a base-85 numeral of five digits — and it is a branch
+// rather than a second implementation.
+//
+// The GNU behaviours reproduced here, each measured from the reference
+// binary rather than read off the manual:
+//
+//   - Decoding ignores newlines and NOTHING else; `-i` widens that to
+//     every byte outside the alphabet, but `=` survives the filter for
+//     every encoding, base16 and base2 included, and then fails as an
+//     invalid character.
+//   - A group is validated left to right and the bytes it has already
+//     completed are written before the fault is reported, so `AA=A`
+//     writes one byte and then fails.
+//   - A short FINAL group is an error everywhere, but base64 alone
+//     writes the whole bytes it holds first (`aGVsbG8` writes five);
+//     base32, base16, base2 and z85 write nothing from theirs.
+//   - The character count a padded final block may carry is fixed by
+//     the arithmetic: 2, 3 or 4 for base64 and 2, 4, 5, 7 or 8 for
+//     base32. Anything else is `invalid input` even when every
+//     character is in the alphabet.
+//   - Encoding reads in 30 KiB blocks, which is what makes z85's
+//     `length must be multiple of 4` observable: the whole blocks
+//     before the short one are already on stdout when it fires.
+//   - `-w` takes a signed decimal with glibc's leading blanks and sign;
+//     a negative is an error, but a value past INTMAX_MAX is not — it
+//     turns wrapping OFF, which is a different output from the largest
+//     accepted value.
+//
+// The lookup tables are raw `__alloc` memory read with `__load_u8` /
+// `__load_i32`; the input and output buffers are ordinary strings and
+// `u8[]`. A raw pointer INTO a counted buffer (`buf as usize`) is what a
+// byte-at-a-time codec wants and is not available here: native reads
+// that cast as the data pointer and the self-host as the box, so the two
+// compilers would disagree about where the bytes are (#8799). A `u8[]`
+// written with `.with()` is a third slower and is the same program under
+// both.
+import "std/string";
+import "std/io_buffered";
+import "./gnu";
+
+// `Codec` — one encoding.
+pub struct Codec { bits: i32, in_block: i32, out_block: i32, pad: boolean, short_tail: boolean, rev: boolean, alpha: usize, dec: usize }
+
+// `Chars` — the characters one input block encodes to, packed one per
+// byte with the first in the low byte. No block is more than eight
+// characters, so they always fit.
+struct Chars { v: i64, n: i32 }
+
+// `Grp` — what one group of characters decodes to: the bytes packed
+// big-endian, how many there are, and whether the group was valid. A
+// fault still carries the bytes the group completed before it, which is
+// what GNU writes before it reports.
+struct Grp { v: i64, n: i32, ok: boolean }
+
+// `block_bytes()` — the input block. GNU encodes 30 KiB at a time, a
+// common multiple of every encoding's block (1, 3, 4 and 5), and z85's
+// length error makes the number observable rather than internal: the
+// bytes of every whole block before the short one are already written
+// when it fires.
+pub function block_bytes(): i32 {
+  return 30720;
+}
+
+// The two lookup tables for an alphabet: value → character byte, and
+// character byte → value (-1 for a byte outside the alphabet).
+//
+// The character table is written a byte at a time with `__store_i32`,
+// whose upper three bytes the next entry overwrites; the trailing slack
+// absorbs the last one.
+function tables(alphabet: string): (usize, usize) {
+  var n: i32 = alphabet.len();
+  var a: usize = __alloc(n + 8);
+  var d: usize = __alloc(256 * 4);
+  var i: i32 = 0;
+  while (i < 256) {
+    __store_i32(d + (i * 4) as usize, 0 - 1);
+    i = i + 1;
+  }
+  i = 0;
+  while (i < n) {
+    var ch: i32 = alphabet[i] as i32;
+    __store_i32(a + i as usize, ch);
+    __store_i32(d + (ch * 4) as usize, i);
+    i = i + 1;
+  }
+  return (a, d);
+}
+
+function bit_codec(alphabet: string, bits: i32, in_block: i32, out_block: i32, pad: boolean, short_tail: boolean, rev: boolean): Codec {
+  var t: (usize, usize) = tables(alphabet);
+  return Codec { bits: bits, in_block: in_block, out_block: out_block, pad: pad, short_tail: short_tail, rev: rev, alpha: t.0, dec: t.1 };
+}
+
+pub function base64(): Codec {
+  return bit_codec("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/", 6, 3, 4, true, true, false);
+}
+
+pub function base64url(): Codec {
+  return bit_codec("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_", 6, 3, 4, true, true, false);
+}
+
+pub function base32(): Codec {
+  return bit_codec("ABCDEFGHIJKLMNOPQRSTUVWXYZ234567", 5, 5, 8, true, false, false);
+}
+
+pub function base32hex(): Codec {
+  return bit_codec("0123456789ABCDEFGHIJKLMNOPQRSTUV", 5, 5, 8, true, false, false);
+}
+
+pub function base16(): Codec {
+  return bit_codec("0123456789ABCDEF", 4, 1, 2, false, false, false);
+}
+
+pub function base2msbf(): Codec {
+  return bit_codec("01", 1, 1, 8, false, false, false);
+}
+
+// base2lsbf differs from base2msbf only in which end of the byte the
+// first character comes from, which for a one-byte block is the byte
+// reversed. `rev` is that reversal, applied to the block on the way out
+// and to the byte on the way back in.
+pub function base2lsbf(): Codec {
+  return bit_codec("01", 1, 1, 8, false, false, true);
+}
+
+// z85 (ZeroMQ RFC 32): four bytes are a big-endian u32 written as five
+// base-85 digits. `bits` is 0, which is what marks the codec as not a
+// bit codec at all.
+pub function z85(): Codec {
+  return bit_codec("0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.-:+=^!/*?&<>()[]{}@%$#", 0, 4, 5, false, false, false);
+}
+
+// The eight bits of `b`, reversed.
+function rev8(b: i64): i64 {
+  var v: i64 = b;
+  v = (v & 170 as i64) >> 1 | (v & 85 as i64) << 1;
+  v = (v & 204 as i64) >> 2 | (v & 51 as i64) << 2;
+  return (v & 240 as i64) >> 4 | (v & 15 as i64) << 4;
+}
+
+// ---- encoding --------------------------------------------------------------
+// `enc_chars(c, n)` — how many characters `n` bytes encode to, padding
+// included. The caller sizes its buffer with this before filling it.
+function enc_chars(c: Codec, n: i32): i32 {
+  var full: i32 = n / c.in_block;
+  var out: i32 = full * c.out_block;
+  var rem: i32 = n - full * c.in_block;
+  if (rem > 0) {
+    var k: i32 = (rem * 8 + c.bits - 1) / c.bits;
+    if (c.pad) {
+      k = (k + c.out_block - 1) / c.out_block * c.out_block;
+    }
+    out = out + k;
+  }
+  return out;
+}
+
+// `enc_tail(c, acc, nb)` — the SHORT final block, `nb` bytes held
+// big-endian in `acc`, as the characters its bits need plus `=` to the
+// block where the encoding pads.
+//
+// Only base64 and the two base32s ever reach this: a one-byte block
+// cannot be short, and z85 refuses a length that is not a multiple of
+// four before the loop starts.
+function enc_tail(c: Codec, acc0: i64, nb: i32): Chars {
+  var acc: i64 = acc0;
+  var chars: i32 = (nb * 8 + c.bits - 1) / c.bits;
+  acc = acc << chars * c.bits - nb * 8;
+  var mask: i64 = ((1 << c.bits) - 1) as i64;
+  var out: i64 = 0;
+  var sh: i32 = chars * c.bits;
+  var u: i32 = 0;
+  while (u < chars) {
+    sh = sh - c.bits;
+    out = out | __load_u8(c.alpha + (acc >> sh & mask) as usize) as i64 << u * 8;
+    u = u + 1;
+  }
+  var w: i32 = chars;
+  if (c.pad) {
+    while (w % c.out_block != 0) {
+      out = out | 61 as i64 << w * 8;
+      w = w + 1;
+    }
+  }
+  return Chars { v: out, n: w };
+}
+
+// Four bytes as five base-85 digits, most significant first.
+function z85_digits(alpha: usize, value: i64): i64 {
+  var v: i64 = value;
+  var out: i64 = 0;
+  var u: i32 = 4;
+  while (u >= 0) {
+    out = out | __load_u8(alpha + (v % (85 as i64)) as usize) as i64 << u * 8;
+    v = v / (85 as i64);
+    u = u - 1;
+  }
+  return out;
+}
+
+// ---- decoding --------------------------------------------------------------
+// `dec_pairs(c)` — the decode table for TWO characters at a time,
+// indexed by the pair as one little-endian 16-bit read and holding both
+// values packed (`v0 << bits | v1`), or -1 when either character is
+// outside the alphabet.
+//
+// Cheap despite its size: every entry starts -1 from one memset, and
+// only `n * n` of the 65536 are then written — 4096 for base64.
+function dec_pairs(c: Codec): usize {
+  var t: usize = __alloc(65536 * 4);
+  __memset(t, 255, 65536 * 4);
+  var n: i32 = 1 << c.bits;
+  var i: i32 = 0;
+  while (i < n) {
+    var c0: i32 = __load_u8(c.alpha + i as usize);
+    var j: i32 = 0;
+    while (j < n) {
+      var c1: i32 = __load_u8(c.alpha + j as usize);
+      __store_i32(t + ((c0 | c1 << 8) << 2) as usize, i << c.bits | j);
+      j = j + 1;
+    }
+    i = i + 1;
+  }
+  return t;
+}
+
+// `dec_group(c, g, gn)` — one group of `gn` characters at `g` as bytes.
+function dec_group(c: Codec, g: usize, gn: i32): Grp {
+  if (c.bits == 0) {
+    return z85_group(c, g, gn);
+  }
+  var full: boolean = gn == c.out_block;
+  if (!full && !c.short_tail) {
+    return Grp { v: 0, n: 0, ok: false };
+  }
+  var acc: i32 = 0;
+  var held: i32 = 0;
+  var out: i64 = 0;
+  var w: i32 = 0;
+  var d: i32 = 0;
+  var bad: boolean = false;
+  while (d < gn) {
+    var ch: i32 = __load_i32(g + (d * 4) as usize);
+    if (c.pad && ch == 61) {
+      break;
+    }
+    var v: i32 = __load_i32(c.dec + (ch * 4) as usize);
+    if (v < 0) {
+      bad = true;
+      break;
+    }
+    acc = acc << c.bits | v;
+    held = held + c.bits;
+    if (held >= 8) {
+      held = held - 8;
+      var byte: i32 = acc >> held & 255;
+      if (c.rev) {
+        byte = rev8(byte as i64) as i32;
+      }
+      out = out << 8 | byte as i64;
+      acc = acc & (1 << held) - 1;
+      w = w + 1;
+    }
+    d = d + 1;
+  }
+  if (bad) {
+    return Grp { v: out, n: w, ok: false };
+  }
+  var k: i32 = d;
+  while (k < gn) {
+    if (__load_i32(g + (k * 4) as usize) != 61) {
+      return Grp { v: out, n: w, ok: false };
+    }
+    k = k + 1;
+  }
+  if (!full || d == 0) {
+    return Grp { v: out, n: w, ok: false };
+  }
+  // The data characters must be exactly as many as some whole number of
+  // bytes needs: any leftover worth a character of its own is a count no
+  // encoder produces.
+  if (d * c.bits - d * c.bits / 8 * 8 >= c.bits) {
+    return Grp { v: out, n: w, ok: false };
+  }
+  return Grp { v: out, n: w, ok: true };
+}
+
+function z85_group(c: Codec, g: usize, gn: i32): Grp {
+  if (gn != 5) {
+    return Grp { v: 0, n: 0, ok: false };
+  }
+  var v: i64 = 0;
+  var k: i32 = 0;
+  while (k < 5) {
+    var d: i32 = __load_i32(c.dec + (__load_i32(g + (k * 4) as usize) * 4) as usize);
+    if (d < 0) {
+      return Grp { v: 0, n: 0, ok: false };
+    }
+    v = v * (85 as i64) + d as i64;
+    k = k + 1;
+  }
+  if (v > 4294967295 as i64) {
+    return Grp { v: 0, n: 0, ok: false };
+  }
+  return Grp { v: v, n: 4, ok: true };
+}
+
+// ---- the wrap column -------------------------------------------------------
+// `parse_wrap(arg)` — `-w`'s value, as glibc's strtoimax reads it plus
+// GNU's two rules on top: a negative is refused, and a magnitude past
+// INTMAX_MAX turns wrapping off rather than failing, so `-w 2**63` and
+// `-w 2**63-1` differ by the trailing newline.
+pub function parse_wrap(arg: string): i64 {
+  var n: i32 = arg.len();
+  var i: i32 = 0;
+  while (i < n && is_space(arg[i] as i32)) {
+    i = i + 1;
+  }
+  var neg: boolean = false;
+  if (i < n && (arg[i] as i32 == 43 || arg[i] as i32 == 45)) {
+    neg = arg[i] as i32 == 45;
+    i = i + 1;
+  }
+  if (i == n) {
+    bad_wrap(arg);
+  }
+  var v: i64 = 0;
+  var over: boolean = false;
+  while (i < n) {
+    var ch: i32 = arg[i] as i32;
+    if (ch < 48 || ch > 57) {
+      bad_wrap(arg);
+    }
+    if (!over) {
+      if (v > 922337203685477580 as i64) {
+        over = true;
+      } else {
+        v = v * (10 as i64) + (ch - 48) as i64;
+        if (v < 0 as i64) {
+          over = true;
+        }
+      }
+    }
+    i = i + 1;
+  }
+  if (neg && (over || v != 0 as i64)) {
+    bad_wrap(arg);
+  }
+  if (over) {
+    return 0 as i64;
+  }
+  return v;
+}
+
+function is_space(b: i32): boolean {
+  return b == 32 || b >= 9 && b <= 13;
+}
+
+// A bad `-w` prints one line and exits, with no `Try …` line: it is not
+// a usage error in GNU's sense.
+function bad_wrap(arg: string): void {
+  gnu.error("invalid wrap size: " + gnu.quote(arg));
+  exit(1);
+}
+
+// ---- the program -----------------------------------------------------------
+// A diagnostic raised after output has started: GNU's error() flushes
+// stdout before it writes to stderr, so a write that fails there is on
+// the stream when close_stdout looks, and the exit carries its second
+// line. Reproducing that order is what makes `invalid input` and
+// `write error` come out together.
+function fail(o: io_buffered.BufWriter, msg: string): void {
+  var w: io_buffered.BufWriter = o.flush();
+  gnu.error(msg);
+  gnu.close_stdout(w, false);
+  exit(1);
+}
+
+// `read_block(r, o, cap)` — up to `cap` bytes, reading until the block
+// is full or the input ends. Only a SHORT block may be the last one,
+// which is what z85's length check reads as end of input.
+function read_block(r: Reader, o: io_buffered.BufWriter, cap: i32): string {
+  var chunk: string = "";
+  match (r.read_chunk(cap)) {
+    Ok(s) => {
+      chunk = s;
+    },
+    Err(e) => {
+      fail(o, "read error: " + gnu.io_error_text(e));
+    }
+  }
+  while (chunk.len() > 0 && chunk.len() < cap) {
+    match (r.read_chunk(cap - chunk.len())) {
+      Ok(s) => {
+        if (s.len() == 0) {
+          break;
+        }
+        chunk = chunk + s;
+      },
+      Err(e) => {
+        fail(o, "read error: " + gnu.io_error_text(e));
+      }
+    }
+  }
+  return chunk;
+}
+
+// `open_input(has_file, file)` — the operand's reader; stdin for no
+// operand and for `-`.
+function open_input(has_file: boolean, file: string): Reader {
+  if (!has_file || file == "-") {
+    return stdin();
+  }
+  match (open_reader(file)) {
+    Ok(f) => {
+      return f;
+    },
+    Err(e) => {
+      gnu.error(gnu.quotef(file) + ": " + gnu.io_error_text(e));
+      exit(1);
+    }
+  }
+  return stdin();
+}
+
+// `encode(r, c, wrap, o)` — the encode side, buffer and all. The output
+// is filled here rather than in a helper: `.with()` writes in place only
+// while the buffer's count is one, and handing it to a call is what
+// takes it past that.
+function encode(r: Reader, c: Codec, wrap: i64, o: io_buffered.BufWriter): void {
+  var out: io_buffered.BufWriter = o;
+  var cap: i32 = block_bytes();
+  var bits: i32 = c.bits;
+  var inb: i32 = c.in_block;
+  var outb: i32 = c.out_block;
+  var alpha: usize = c.alpha;
+  var rev: boolean = c.rev;
+  var mask: i64 = 0;
+  if (bits > 0) {
+    mask = ((1 << bits) - 1) as i64;
+  }
+  var wrapping: boolean = wrap > 0 as i64;
+  var col: i64 = 0;
+  while (true) {
+    var chunk: string = read_block(r, out, cap);
+    var n: i32 = chunk.len();
+    if (n == 0) {
+      break;
+    }
+    if (bits == 0 && n % inb != 0) {
+      fail(out, "invalid input (length must be multiple of 4 characters)");
+    }
+    var bs: [u8] = chunk.as_bytes();
+    var chars: i32 = enc_chars(c, n);
+    var nl: i32 = 0;
+    if (wrapping) {
+      nl = ((col + chars as i64) / wrap) as i32;
+    }
+    var buf: u8[] = __alloc_u8(chars + nl);
+    var i: i32 = 0;
+    var j: i32 = 0;
+    while (i < n) {
+      var nb: i32 = inb;
+      if (n - i < nb) {
+        nb = n - i;
+      }
+      var acc: i64 = 0;
+      var t: i32 = 0;
+      while (t < nb) {
+        acc = acc << 8 | bs[i + t] as i64;
+        t = t + 1;
+      }
+      var pv: i64 = 0;
+      var pn: i32 = 0;
+      if (nb < inb) {
+        // The one short block a stream can have, at its end.
+        var tail: Chars = enc_tail(c, acc, nb);
+        pv = tail.v;
+        pn = tail.n;
+      } else if (bits == 0) {
+        pv = z85_digits(alpha, acc);
+        pn = 5;
+      } else {
+        if (rev) {
+          acc = rev8(acc);
+        }
+        var sh: i32 = inb * 8;
+        var u: i32 = 0;
+        while (u < outb) {
+          sh = sh - bits;
+          buf = buf.with(j, __load_u8(alpha + (acc >> sh & mask) as usize) as u8);
+          j = j + 1;
+          u = u + 1;
+          if (wrapping) {
+            col = col + 1 as i64;
+            if (col == wrap) {
+              buf = buf.with(j, 10 as u8);
+              j = j + 1;
+              col = 0 as i64;
+            }
+          }
+        }
+      }
+      var e: i32 = 0;
+      while (e < pn) {
+        buf = buf.with(j, (pv >> e * 8 & 255 as i64) as u8);
+        j = j + 1;
+        e = e + 1;
+        if (wrapping) {
+          col = col + 1 as i64;
+          if (col == wrap) {
+            buf = buf.with(j, 10 as u8);
+            j = j + 1;
+            col = 0 as i64;
+          }
+        }
+      }
+      i = i + nb;
+    }
+    out = gnu.put(out, string_from_bytes_unchecked(buf));
+    if (n < cap) {
+      break;
+    }
+  }
+  if (wrapping && col > 0 as i64) {
+    out = gnu.put(out, "\n");
+  }
+  gnu.finish(out);
+}
+
+// `decode(r, c, ignore, o)` — the decode side.
+//
+// A group whose characters are all in the alphabet — every group of a
+// well-formed stream — is taken two characters at a time straight out of
+// the input and never touches the group buffer. Anything else (a
+// newline, a `=`, a byte `-i` drops, a group split across two blocks)
+// falls to the character-at-a-time path below, which is the one that
+// decides whether the input is valid.
+function decode(r: Reader, c: Codec, ignore: boolean, o: io_buffered.BufWriter): void {
+  var out: io_buffered.BufWriter = o;
+  var cap: i32 = block_bytes();
+  var fast: boolean = c.bits > 0 && !c.rev;
+  var pairs: usize = 0 as usize;
+  if (fast) {
+    pairs = dec_pairs(c);
+  }
+  var gbuf: usize = __alloc(64);
+  var gn: i32 = 0;
+  var inb: i32 = c.in_block;
+  var outb: i32 = c.out_block;
+  var pbits: i32 = c.bits * 2;
+  while (true) {
+    var chunk: string = read_block(r, out, cap);
+    var n: i32 = chunk.len();
+    if (n == 0) {
+      break;
+    }
+    var bs: [u8] = chunk.as_bytes();
+    var buf: u8[] = __alloc_u8(n + 8);
+    var w: i32 = 0;
+    var bad: boolean = false;
+    var i: i32 = 0;
+    while (i < n) {
+      if (fast && gn == 0 && i + outb <= n) {
+        var acc: i64 = 0;
+        var t: i32 = 0;
+        while (t < outb) {
+          var pv: i32 = __load_i32(pairs + ((bs[i + t] as i32 | bs[i + t + 1] as i32 << 8) << 2) as usize);
+          if (pv < 0) {
+            break;
+          }
+          acc = acc << pbits | pv as i64;
+          t = t + 2;
+        }
+        if (t == outb) {
+          var u: i32 = inb;
+          while (u > 0) {
+            u = u - 1;
+            buf = buf.with(w + u, (acc & 255 as i64) as u8);
+            acc = acc >> 8;
+          }
+          i = i + outb;
+          w = w + inb;
+          continue;
+        }
+      }
+      var b: i32 = bs[i] as i32;
+      i = i + 1;
+      if (ignore) {
+        if (b != 61 && __load_i32(c.dec + (b * 4) as usize) < 0) {
+          continue;
+        }
+      } else if (b == 10) {
+        continue;
+      }
+      __store_i32(gbuf + (gn * 4) as usize, b);
+      gn = gn + 1;
+      if (gn == outb) {
+        var g: Grp = dec_group(c, gbuf, gn);
+        gn = 0;
+        var v: i64 = g.v;
+        var k: i32 = g.n;
+        while (k > 0) {
+          k = k - 1;
+          buf = buf.with(w + k, (v & 255 as i64) as u8);
+          v = v >> 8;
+        }
+        w = w + g.n;
+        if (!g.ok) {
+          bad = true;
+          break;
+        }
+      }
+    }
+    if (w > 0) {
+      out = gnu.put(out, slice_unchecked(string_from_bytes_unchecked(buf), 0, w) + "");
+    }
+    if (bad) {
+      fail(out, "invalid input");
+    }
+    if (n < cap) {
+      break;
+    }
+  }
+  if (gn > 0) {
+    var last: Grp = dec_group(c, gbuf, gn);
+    if (last.n > 0) {
+      var tail: u8[] = __alloc_u8(last.n);
+      var v: i64 = last.v;
+      var k: i32 = last.n;
+      while (k > 0) {
+        k = k - 1;
+        tail = tail.with(k, (v & 255 as i64) as u8);
+        v = v >> 8;
+      }
+      out = gnu.put(out, string_from_bytes_unchecked(tail));
+    }
+    if (!last.ok) {
+      fail(out, "invalid input");
+    }
+  }
+  gnu.finish(out);
+}
+
+// `run(c, decoding, ignore, wrap, has_file, file)` — the whole program
+// below the option scan. Exits; never returns normally on a fault.
+pub function run(c: Codec, decoding: boolean, ignore: boolean, wrap: i64, has_file: boolean, file: string): void {
+  var r: Reader = open_input(has_file, file);
+  var o: io_buffered.BufWriter = gnu.out_new();
+  if (decoding) {
+    decode(r, c, ignore, o);
+  } else {
+    encode(r, c, wrap, o);
+  }
+}

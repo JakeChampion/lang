@@ -363,11 +363,11 @@ func buildReadFileBytesBody(idxs map[string]uint32) []byte {
 }
 
 func buildReadFileBodyCommon(idxs map[string]uint32, asBytes bool) []byte {
-	// Reused for path_open scratch / str-normalize temps AND the file
-	// content string buffer → rc1 so the returned string reclaims
-	// (over-headering the temps is harmless carrier-side).
+	// Reused for path_open scratch / str-normalize temps, the file
+	// content string buffer AND the result box — all rc1, so the returned
+	// string and its box both reclaim (over-headering the temps is
+	// harmless carrier-side).
 	alloc := idxs["__fern_alloc_rc1"]
-	allocBox := idxs["__fern_alloc_box"]
 	buildIoErr := idxs["__build_io_error"]
 	pathOpen := idxs["wasi_path_open"]
 	fdRead := idxs["wasi_fd_read"]
@@ -418,7 +418,7 @@ func buildReadFileBodyCommon(idxs map[string]uint32, asBytes bool) []byte {
 		b = inst.InstCall(b, buildIoErr)
 		b = inst.InstLocalSet(b, 9)
 		b = inst.InstI32Const(b, 8)
-		b = inst.InstCall(b, allocBox)
+		b = inst.InstCall(b, alloc)
 		b = inst.InstLocalTee(b, 12) // $result
 		b = inst.InstI32Const(b, 1)  // tag = 1 (Err)
 		b = memory.InstI32Store(b, 2, 0)
@@ -574,7 +574,7 @@ func buildReadFileBodyCommon(idxs map[string]uint32, asBytes bool) []byte {
 		// @ +4 (single-word payload, same slot rule as the Err
 		// arm).
 		body = inst.InstI32Const(body, 8)
-		body = inst.InstCall(body, allocBox)
+		body = inst.InstCall(body, alloc)
 		body = inst.InstLocalTee(body, 12) // $result
 		body = inst.InstI32Const(body, 0)
 		body = memory.InstI32Store(body, 2, 0) // tag = 0 (Ok)
@@ -595,7 +595,7 @@ func buildReadFileBodyCommon(idxs map[string]uint32, asBytes bool) []byte {
 
 		// Build Ok(string) — 16 bytes: tag=0 @ 0, data @ +8, len @ +12.
 		body = inst.InstI32Const(body, 16)
-		body = inst.InstCall(body, allocBox)
+		body = inst.InstCall(body, alloc)
 		body = inst.InstLocalTee(body, 12) // $result
 		body = inst.InstI32Const(body, 0)
 		body = memory.InstI32Store(body, 2, 0) // tag = 0 (Ok)
@@ -656,10 +656,10 @@ func buildReadFileBytesBodyP2(idxs map[string]uint32) []byte {
 }
 
 func buildReadFileBodyP2Common(idxs map[string]uint32, asBytes bool) []byte {
-	// Reused for acc/chunk scratch AND the file content string buffer →
-	// rc1 for reclamation (over-headering the temps is harmless).
+	// Reused for acc/chunk scratch, the file content string buffer AND
+	// the result box — all rc1 for reclamation (over-headering the temps
+	// is harmless).
 	alloc := idxs["__fern_alloc_rc1"]
-	allocBox := idxs["__fern_alloc_box"]
 	buildIoErr := idxs["__build_io_error"]
 	getDirs := idxs["wasi_get_directories_p2"]
 	openAt := idxs["wasi_descriptor_open_at_p2"]
@@ -695,7 +695,7 @@ func buildReadFileBodyP2Common(idxs map[string]uint32, asBytes bool) []byte {
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	{
 		body = appendErrnoFromErrorCode(body, idxs, 2, 16)
-		body = buildReadFileErr(body, idxs, buildIoErr, allocBox, 16)
+		body = buildReadFileErr(body, idxs, buildIoErr, alloc, 16)
 	}
 	body = inst.InstEnd(body)
 	// fd = mem[rb+4]
@@ -715,7 +715,7 @@ func buildReadFileBodyP2Common(idxs map[string]uint32, asBytes bool) []byte {
 		body = inst.InstLocalGet(body, 6)
 		body = inst.InstCall(body, descDrop)
 		body = appendErrnoFromErrorCode(body, idxs, 2, 16)
-		body = buildReadFileErr(body, idxs, buildIoErr, allocBox, 16)
+		body = buildReadFileErr(body, idxs, buildIoErr, alloc, 16)
 	}
 	body = inst.InstEnd(body)
 	// stream = mem[rb+4]
@@ -825,7 +825,7 @@ func buildReadFileBodyP2Common(idxs map[string]uint32, asBytes bool) []byte {
 		{
 			body = inst.InstI32Const(body, errnoIlseq)
 			body = inst.InstLocalSet(body, 16)
-			body = buildReadFileErr(body, idxs, buildIoErr, allocBox, 16)
+			body = buildReadFileErr(body, idxs, buildIoErr, alloc, 16)
 		}
 		body = inst.InstEnd(body)
 	}
@@ -840,7 +840,7 @@ func buildReadFileBodyP2Common(idxs map[string]uint32, asBytes bool) []byte {
 		body = memory.InstMemoryCopy(body)
 		// Build Ok(u8[]): box(8) tag=0 @0, array data ptr @+4.
 		body = inst.InstI32Const(body, 8)
-		body = inst.InstCall(body, allocBox)
+		body = inst.InstCall(body, alloc)
 		body = inst.InstLocalTee(body, 13)
 		body = inst.InstI32Const(body, 0)
 		body = memory.InstI32Store(body, 2, 0)
@@ -860,7 +860,7 @@ func buildReadFileBodyP2Common(idxs map[string]uint32, asBytes bool) []byte {
 		body = memory.InstMemoryCopy(body)
 		// Build Ok(string): box(16) tag=0 @0, data @+8, len @+12.
 		body = inst.InstI32Const(body, 16)
-		body = inst.InstCall(body, allocBox)
+		body = inst.InstCall(body, alloc)
 		body = inst.InstLocalTee(body, 13)
 		body = inst.InstI32Const(body, 0)
 		body = memory.InstI32Store(body, 2, 0)
@@ -912,7 +912,7 @@ func appendErrnoFromErrorCodeAt(body []byte, idxs map[string]uint32, rbLocal, er
 	body = inst.InstLocalSet(body, errnoLocal)
 	return body
 }
-func buildReadFileErr(body []byte, idxs map[string]uint32, buildIoErr, allocBox, errnoLocal uint32) []byte {
+func buildReadFileErr(body []byte, idxs map[string]uint32, buildIoErr, allocRc1, errnoLocal uint32) []byte {
 	body = inst.InstLocalGet(body, errnoLocal)
 	// __build_io_error(errno, path_data, path_len)
 	body = inst.InstLocalGet(body, 0)
@@ -920,7 +920,7 @@ func buildReadFileErr(body []byte, idxs map[string]uint32, buildIoErr, allocBox,
 	body = inst.InstCall(body, buildIoErr)
 	body = inst.InstLocalSet(body, 15)
 	body = inst.InstI32Const(body, 8)
-	body = inst.InstCall(body, allocBox)
+	body = inst.InstCall(body, allocRc1)
 	body = inst.InstLocalTee(body, 13)
 	body = inst.InstI32Const(body, 1)
 	body = memory.InstI32Store(body, 2, 0)
@@ -1041,7 +1041,7 @@ func emitStrNormalize(body []byte, idxs map[string]uint32, dataLocal, lenLocal, 
 //	16: $result         (heap-form Option pointer)
 func buildWriteFileBody(idxs map[string]uint32) []byte {
 	alloc := idxs["__fern_alloc"]
-	allocBox := idxs["__fern_alloc_box"]
+	allocRc1 := idxs["__fern_alloc_rc1"]
 	buildIoErr := idxs["__build_io_error"]
 	pathOpen := idxs["wasi_path_open"]
 	fdWrite := idxs["wasi_fd_write"]
@@ -1095,7 +1095,7 @@ func buildWriteFileBody(idxs map[string]uint32) []byte {
 		// runtime helpers return heap-form via OpCallDirect):
 		// 8 bytes, tag=0 @ +0, IoError ptr @ +4.
 		body = inst.InstI32Const(body, 8)
-		body = inst.InstCall(body, allocBox)
+		body = inst.InstCall(body, allocRc1)
 		body = inst.InstLocalTee(body, 16) // $result
 		body = inst.InstI32Const(body, 1)  // tag = 1 (Err)
 		body = memory.InstI32Store(body, 2, 0)
@@ -1186,7 +1186,7 @@ func buildWriteFileBody(idxs map[string]uint32) []byte {
 	// The unit occupies a payload slot like any other value — not the
 	// 4-byte tag-only box Option uses.
 	body = inst.InstI32Const(body, 8)
-	body = inst.InstCall(body, allocBox)
+	body = inst.InstCall(body, allocRc1)
 	body = inst.InstLocalTee(body, 16)
 	body = inst.InstI32Const(body, 0) // tag = 0 (Ok)
 	body = memory.InstI32Store(body, 2, 0)
@@ -1220,7 +1220,7 @@ func buildWriteFileBody(idxs map[string]uint32) []byte {
 // 15=box, 16=ioerr.
 func buildWriteFileBodyP2(idxs map[string]uint32) []byte {
 	alloc := idxs["__fern_alloc"]
-	allocBox := idxs["__fern_alloc_box"]
+	allocRc1 := idxs["__fern_alloc_rc1"]
 	buildIoErr := idxs["__build_io_error"]
 	getDirs := idxs["wasi_get_directories_p2"]
 	openAt := idxs["wasi_descriptor_open_at_p2"]
@@ -1257,7 +1257,7 @@ func buildWriteFileBodyP2(idxs map[string]uint32) []byte {
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	{
 		body = appendErrnoFromErrorCode(body, idxs, 4, 17)
-		body = buildWriteFileErr(body, buildIoErr, allocBox, 17)
+		body = buildWriteFileErr(body, buildIoErr, allocRc1, 17)
 	}
 	body = inst.InstEnd(body)
 	// fd = mem[rb+4]
@@ -1277,7 +1277,7 @@ func buildWriteFileBodyP2(idxs map[string]uint32) []byte {
 		body = inst.InstLocalGet(body, 10)
 		body = inst.InstCall(body, descDrop)
 		body = appendErrnoFromErrorCode(body, idxs, 4, 17)
-		body = buildWriteFileErr(body, buildIoErr, allocBox, 17)
+		body = buildWriteFileErr(body, buildIoErr, allocRc1, 17)
 	}
 	body = inst.InstEnd(body)
 	// stream = mem[rb+4]
@@ -1333,7 +1333,7 @@ func buildWriteFileBodyP2(idxs map[string]uint32) []byte {
 			body = inst.InstCall(body, descDrop)
 			body = inst.InstI32Const(body, 0)
 			body = inst.InstLocalSet(body, 17)
-			body = buildWriteFileErr(body, buildIoErr, allocBox, 17)
+			body = buildWriteFileErr(body, buildIoErr, allocRc1, 17)
 		}
 		body = inst.InstEnd(body)
 		// cur += chunk_len
@@ -1355,7 +1355,7 @@ func buildWriteFileBodyP2(idxs map[string]uint32) []byte {
 
 	// Success → Ok(()): box(8), tag=0 @ +0, unit payload @ +4.
 	body = inst.InstI32Const(body, 8)
-	body = inst.InstCall(body, allocBox)
+	body = inst.InstCall(body, allocRc1)
 	body = inst.InstLocalTee(body, 15)
 	body = inst.InstI32Const(body, 0) // tag = 0 (Ok)
 	body = memory.InstI32Store(body, 2, 0)
@@ -1376,7 +1376,7 @@ func buildWriteFileBodyP2(idxs map[string]uint32) []byte {
 // return" tail for buildWriteFileBodyP2's failure paths. Uses local
 // 16 for the IoError ptr, local 15 for the Option box (Some: tag=0
 // @0, IoError ptr @+4 — the heap-form Option[IoError] layout).
-func buildWriteFileErr(body []byte, buildIoErr, allocBox, errnoLocal uint32) []byte {
+func buildWriteFileErr(body []byte, buildIoErr, allocRc1, errnoLocal uint32) []byte {
 	body = inst.InstLocalGet(body, errnoLocal)
 	// __build_io_error(errno, path_data, path_len)
 	body = inst.InstLocalGet(body, 0)
@@ -1384,7 +1384,7 @@ func buildWriteFileErr(body []byte, buildIoErr, allocBox, errnoLocal uint32) []b
 	body = inst.InstCall(body, buildIoErr)
 	body = inst.InstLocalSet(body, 16)
 	body = inst.InstI32Const(body, 8)
-	body = inst.InstCall(body, allocBox)
+	body = inst.InstCall(body, allocRc1)
 	body = inst.InstLocalTee(body, 15)
 	body = inst.InstI32Const(body, 1) // tag = 1 (Err)
 	body = memory.InstI32Store(body, 2, 0)
@@ -1426,7 +1426,7 @@ func buildWriteFileErr(body []byte, buildIoErr, allocBox, errnoLocal uint32) []b
 //	10: $i_path           str-normalize loop counter
 func buildOpenBody(idxs map[string]uint32, oflags int32, rights int64, fdflags int32) []byte {
 	alloc := idxs["__fern_alloc"]
-	allocBox := idxs["__fern_alloc_box"]
+	allocRc1 := idxs["__fern_alloc_rc1"]
 	buildIoErr := idxs["__build_io_error"]
 	pathOpen := idxs["wasi_path_open"]
 
@@ -1465,7 +1465,7 @@ func buildOpenBody(idxs map[string]uint32, oflags int32, rights int64, fdflags i
 
 		// Result.Err layout: 8 bytes, tag=1 @ +0, IoError ptr @ +4.
 		body = inst.InstI32Const(body, 8)
-		body = inst.InstCall(body, allocBox)
+		body = inst.InstCall(body, allocRc1)
 		body = inst.InstLocalTee(body, 7)
 		body = inst.InstI32Const(body, 1) // tag = 1 (Err)
 		body = memory.InstI32Store(body, 2, 0)
@@ -1507,7 +1507,7 @@ func buildOpenBody(idxs map[string]uint32, oflags int32, rights int64, fdflags i
 
 	// Result.Ok layout: 8 bytes, tag=0 @ +0, struct ptr @ +4.
 	body = inst.InstI32Const(body, 8)
-	body = inst.InstCall(body, allocBox)
+	body = inst.InstCall(body, allocRc1)
 	body = inst.InstLocalTee(body, 7)
 	body = inst.InstI32Const(body, 0) // tag = 0 (Ok)
 	body = memory.InstI32Store(body, 2, 0)
@@ -1546,7 +1546,7 @@ func buildOpenReaderBody(idxs map[string]uint32) []byte {
 // 14=normalize scratch.
 func buildOpenReaderBodyP2(idxs map[string]uint32) []byte {
 	alloc := idxs["__fern_alloc"]
-	allocBox := idxs["__fern_alloc_box"]
+	allocRc1 := idxs["__fern_alloc_rc1"]
 	buildIoErr := idxs["__build_io_error"]
 	getDirs := idxs["wasi_get_directories_p2"]
 	openAt := idxs["wasi_descriptor_open_at_p2"]
@@ -1576,7 +1576,7 @@ func buildOpenReaderBodyP2(idxs map[string]uint32) []byte {
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	{
 		body = appendErrnoFromErrorCode(body, idxs, 2, 16)
-		body = buildReadFileErr(body, idxs, buildIoErr, allocBox, 16)
+		body = buildReadFileErr(body, idxs, buildIoErr, allocRc1, 16)
 	}
 	body = inst.InstEnd(body)
 	// fd = mem[rb+4].
@@ -1595,7 +1595,7 @@ func buildOpenReaderBodyP2(idxs map[string]uint32) []byte {
 		body = inst.InstLocalGet(body, 6)
 		body = inst.InstCall(body, descDrop)
 		body = appendErrnoFromErrorCode(body, idxs, 2, 16)
-		body = buildReadFileErr(body, idxs, buildIoErr, allocBox, 16)
+		body = buildReadFileErr(body, idxs, buildIoErr, allocRc1, 16)
 	}
 	body = inst.InstEnd(body)
 	// stream = mem[rb+4].
@@ -1609,7 +1609,7 @@ func buildOpenReaderBodyP2(idxs map[string]uint32) []byte {
 
 	// Result.Ok: 8 bytes, tag=0 @ +0, Reader ptr @ +4.
 	body = inst.InstI32Const(body, 8)
-	body = inst.InstCall(body, allocBox)
+	body = inst.InstCall(body, allocRc1)
 	body = inst.InstLocalTee(body, 9)
 	body = inst.InstI32Const(body, 0)
 	body = memory.InstI32Store(body, 2, 0)
@@ -1648,7 +1648,7 @@ func buildOpenWriterBody(idxs map[string]uint32) []byte {
 // 14=normalize scratch.
 func buildOpenWriterBodyP2(idxs map[string]uint32) []byte {
 	alloc := idxs["__fern_alloc"]
-	allocBox := idxs["__fern_alloc_box"]
+	allocRc1 := idxs["__fern_alloc_rc1"]
 	buildIoErr := idxs["__build_io_error"]
 	getDirs := idxs["wasi_get_directories_p2"]
 	openAt := idxs["wasi_descriptor_open_at_p2"]
@@ -1679,7 +1679,7 @@ func buildOpenWriterBodyP2(idxs map[string]uint32) []byte {
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	{
 		body = appendErrnoFromErrorCode(body, idxs, 2, 16)
-		body = buildReadFileErr(body, idxs, buildIoErr, allocBox, 16)
+		body = buildReadFileErr(body, idxs, buildIoErr, allocRc1, 16)
 	}
 	body = inst.InstEnd(body)
 	// fd = mem[rb+4].
@@ -1698,7 +1698,7 @@ func buildOpenWriterBodyP2(idxs map[string]uint32) []byte {
 		body = inst.InstLocalGet(body, 6)
 		body = inst.InstCall(body, descDrop)
 		body = appendErrnoFromErrorCode(body, idxs, 2, 16)
-		body = buildReadFileErr(body, idxs, buildIoErr, allocBox, 16)
+		body = buildReadFileErr(body, idxs, buildIoErr, allocRc1, 16)
 	}
 	body = inst.InstEnd(body)
 	// stream = mem[rb+4].
@@ -1726,7 +1726,7 @@ func buildOpenWriterBodyP2(idxs map[string]uint32) []byte {
 
 	// Result.Ok: 8 bytes, tag=0 @ +0, Writer ptr @ +4.
 	body = inst.InstI32Const(body, 8)
-	body = inst.InstCall(body, allocBox)
+	body = inst.InstCall(body, allocRc1)
 	body = inst.InstLocalTee(body, 9)
 	body = inst.InstI32Const(body, 0)
 	body = memory.InstI32Store(body, 2, 0)
@@ -1749,7 +1749,7 @@ func buildOpenWriterBodyP2(idxs map[string]uint32) []byte {
 // Result[Writer, IoError]. Locals mirror buildOpenWriterBodyP2.
 func buildOpenAppenderBodyP2(idxs map[string]uint32) []byte {
 	alloc := idxs["__fern_alloc"]
-	allocBox := idxs["__fern_alloc_box"]
+	allocRc1 := idxs["__fern_alloc_rc1"]
 	buildIoErr := idxs["__build_io_error"]
 	getDirs := idxs["wasi_get_directories_p2"]
 	openAt := idxs["wasi_descriptor_open_at_p2"]
@@ -1780,7 +1780,7 @@ func buildOpenAppenderBodyP2(idxs map[string]uint32) []byte {
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	{
 		body = appendErrnoFromErrorCode(body, idxs, 2, 16)
-		body = buildReadFileErr(body, idxs, buildIoErr, allocBox, 16)
+		body = buildReadFileErr(body, idxs, buildIoErr, allocRc1, 16)
 	}
 	body = inst.InstEnd(body)
 	// fd = mem[rb+4].
@@ -1798,7 +1798,7 @@ func buildOpenAppenderBodyP2(idxs map[string]uint32) []byte {
 		body = inst.InstLocalGet(body, 6)
 		body = inst.InstCall(body, descDrop)
 		body = appendErrnoFromErrorCode(body, idxs, 2, 16)
-		body = buildReadFileErr(body, idxs, buildIoErr, allocBox, 16)
+		body = buildReadFileErr(body, idxs, buildIoErr, allocRc1, 16)
 	}
 	body = inst.InstEnd(body)
 	// stream = mem[rb+4].
@@ -1826,7 +1826,7 @@ func buildOpenAppenderBodyP2(idxs map[string]uint32) []byte {
 
 	// Result.Ok: 8 bytes, tag=0 @ +0, Writer ptr @ +4.
 	body = inst.InstI32Const(body, 8)
-	body = inst.InstCall(body, allocBox)
+	body = inst.InstCall(body, allocRc1)
 	body = inst.InstLocalTee(body, 9)
 	body = inst.InstI32Const(body, 0)
 	body = memory.InstI32Store(body, 2, 0)
@@ -1880,7 +1880,7 @@ func buildWriterCloseBody(idxs map[string]uint32) []byte {
 // both Reader.close and Writer.close — the struct layout is
 // identical.
 func buildCloseBody(idxs map[string]uint32) []byte {
-	allocBox := idxs["__fern_alloc_box"]
+	allocRc1 := idxs["__fern_alloc_rc1"]
 	buildIoErr := idxs["__build_io_error"]
 	fdClose := idxs["wasi_fd_close"]
 
@@ -1903,7 +1903,7 @@ func buildCloseBody(idxs map[string]uint32) []byte {
 
 		// Some(IoError): 8 bytes, tag=0 @ +0, IoError ptr @ +4.
 		body = inst.InstI32Const(body, 8)
-		body = inst.InstCall(body, allocBox)
+		body = inst.InstCall(body, allocRc1)
 		body = inst.InstLocalTee(body, 3)
 		body = inst.InstI32Const(body, 0)
 		body = memory.InstI32Store(body, 2, 0)
@@ -1917,9 +1917,9 @@ func buildCloseBody(idxs map[string]uint32) []byte {
 	}
 	body = inst.InstEnd(body)
 
-	// Return None (4-byte alloc, tag=1).
-	body = inst.InstI32Const(body, 4)
-	body = inst.InstCall(body, allocBox)
+	// Return None, at Option[IoError]'s uniform box size.
+	body = inst.InstI32Const(body, 8)
+	body = inst.InstCall(body, allocRc1)
 	body = inst.InstLocalTee(body, 3)
 	body = inst.InstI32Const(body, 1)
 	body = memory.InstI32Store(body, 2, 0)
@@ -1956,7 +1956,7 @@ func buildWriterCloseBodyP2(idxs map[string]uint32) []byte {
 // stream resource. A stdio handle owns no descriptor and carries
 // noDescriptor there.
 func buildStreamCloseBodyP2(idxs map[string]uint32, drop uint32) []byte {
-	allocBox := idxs["__fern_alloc_box"]
+	allocRc1 := idxs["__fern_alloc_rc1"]
 
 	var body []byte
 	// resource.drop(mem[$self+0]) — the own<…stream> handle.
@@ -1978,9 +1978,9 @@ func buildStreamCloseBodyP2(idxs map[string]uint32, drop uint32) []byte {
 		body = inst.InstEnd(body)
 	}
 
-	// Return None (4-byte alloc, tag=1).
-	body = inst.InstI32Const(body, 4)
-	body = inst.InstCall(body, allocBox)
+	// Return None, at Option[IoError]'s uniform box size.
+	body = inst.InstI32Const(body, 8)
+	body = inst.InstCall(body, allocRc1)
 	body = inst.InstLocalTee(body, 1)
 	body = inst.InstI32Const(body, 1)
 	body = memory.InstI32Store(body, 2, 0)
@@ -2014,7 +2014,7 @@ func buildStreamCloseBodyP2(idxs map[string]uint32, drop uint32) []byte {
 //	12: $nwritten
 func buildWriterWriteBody(idxs map[string]uint32) []byte {
 	alloc := idxs["__fern_alloc"]
-	allocBox := idxs["__fern_alloc_box"]
+	allocRc1 := idxs["__fern_alloc_rc1"]
 	buildIoErr := idxs["__build_io_error"]
 	fdWrite := idxs["wasi_fd_write"]
 
@@ -2080,7 +2080,7 @@ func buildWriterWriteBody(idxs map[string]uint32) []byte {
 			body = inst.InstCall(body, buildIoErr)
 			body = inst.InstLocalSet(body, 6)
 			body = inst.InstI32Const(body, 8)
-			body = inst.InstCall(body, allocBox)
+			body = inst.InstCall(body, allocRc1)
 			body = inst.InstLocalTee(body, 7)
 			body = inst.InstI32Const(body, 0)
 			body = memory.InstI32Store(body, 2, 0)
@@ -2116,8 +2116,8 @@ func buildWriterWriteBody(idxs map[string]uint32) []byte {
 	body = inst.InstEnd(body) // end block
 
 	// Return None.
-	body = inst.InstI32Const(body, 4)
-	body = inst.InstCall(body, allocBox)
+	body = inst.InstI32Const(body, 8)
+	body = inst.InstCall(body, allocRc1)
 	body = inst.InstLocalTee(body, 7)
 	body = inst.InstI32Const(body, 1)
 	body = memory.InstI32Store(body, 2, 0)
@@ -2142,7 +2142,7 @@ func buildWriterWriteBody(idxs map[string]uint32) []byte {
 // 9=errptr, 10=box, 14=normalize scratch.
 func buildWriterWriteBodyP2(idxs map[string]uint32) []byte {
 	alloc := idxs["__fern_alloc"]
-	allocBox := idxs["__fern_alloc_box"]
+	allocRc1 := idxs["__fern_alloc_rc1"]
 	buildIoErr := idxs["__build_io_error"]
 	blockingWrite := idxs["wasi_blocking_write_and_flush_p2"]
 
@@ -2202,7 +2202,7 @@ func buildWriterWriteBodyP2(idxs map[string]uint32) []byte {
 			body = inst.InstCall(body, buildIoErr)
 			body = inst.InstLocalSet(body, 9)
 			body = inst.InstI32Const(body, 8)
-			body = inst.InstCall(body, allocBox)
+			body = inst.InstCall(body, allocRc1)
 			body = inst.InstLocalTee(body, 10)
 			body = inst.InstI32Const(body, 0) // tag = 0 (Some)
 			body = memory.InstI32Store(body, 2, 0)
@@ -2226,9 +2226,9 @@ func buildWriterWriteBodyP2(idxs map[string]uint32) []byte {
 	body = inst.InstEnd(body)
 	body = inst.InstEnd(body)
 
-	// Success → None (box(4), tag=1).
-	body = inst.InstI32Const(body, 4)
-	body = inst.InstCall(body, allocBox)
+	// Success → None, at Option[IoError]'s uniform box size.
+	body = inst.InstI32Const(body, 8)
+	body = inst.InstCall(body, allocRc1)
 	body = inst.InstLocalTee(body, 10)
 	body = inst.InstI32Const(body, 1)
 	body = memory.InstI32Store(body, 2, 0)
@@ -2261,11 +2261,10 @@ func buildWriterWriteBodyP2(idxs map[string]uint32) []byte {
 //	9: $strbuf
 //	10: $result
 func buildReaderReadLineFdBody(idxs map[string]uint32) []byte {
-	// Reused for the iov scratch AND the line accumulation buffer that
-	// becomes the returned Some(line) string data → rc1 so the string
-	// reclaims (scratch over-headering is harmless carrier-side).
+	// Reused for the iov scratch, the line accumulation buffer that
+	// becomes the returned Some(line) string data AND the Option box —
+	// all rc1 so both reclaim (scratch over-headering is harmless).
 	alloc := idxs["__fern_alloc_rc1"]
-	allocBox := idxs["__fern_alloc_box"]
 	fdRead := idxs["wasi_fd_read"]
 
 	var body []byte
@@ -2384,8 +2383,8 @@ func buildReaderReadLineFdBody(idxs map[string]uint32) []byte {
 	body = numeric.InstI32Eqz(body)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	{
-		body = inst.InstI32Const(body, 4)
-		body = inst.InstCall(body, allocBox)
+		body = inst.InstI32Const(body, 16)
+		body = inst.InstCall(body, alloc)
 		body = inst.InstLocalTee(body, 10)
 		body = inst.InstI32Const(body, 1)
 		body = memory.InstI32Store(body, 2, 0)
@@ -2404,7 +2403,7 @@ func buildReaderReadLineFdBody(idxs map[string]uint32) []byte {
 
 	// Build Some(string): 16 bytes, tag=0, padding, data@8, len@12.
 	body = inst.InstI32Const(body, 16)
-	body = inst.InstCall(body, allocBox)
+	body = inst.InstCall(body, alloc)
 	body = inst.InstLocalTee(body, 10)
 	body = inst.InstI32Const(body, 0)
 	body = memory.InstI32Store(body, 2, 0)
@@ -2437,11 +2436,10 @@ func buildReaderReadLineFdBody(idxs map[string]uint32) []byte {
 // Locals (after 1 param r): 1=retbuf(12), 2=handle, 3=buf,
 // 4=buf_size, 5=cur, 6=byte, 7=newbuf, 8=newsize, 9=strbuf, 10=box.
 func buildReaderReadLineFdBodyP2(idxs map[string]uint32) []byte {
-	// Reused for retbuf/buf scratch AND the strbuf that becomes the
-	// returned string data → rc1 for reclamation (over-headering the
-	// scratch is harmless carrier-side).
+	// Reused for retbuf/buf scratch, the strbuf that becomes the returned
+	// string data AND the Option box — all rc1 for reclamation
+	// (over-headering the scratch is harmless carrier-side).
 	alloc := idxs["__fern_alloc_rc1"]
-	allocBox := idxs["__fern_alloc_box"]
 	blockingRead := idxs["wasi_io_blocking_read"]
 
 	var body []byte
@@ -2535,8 +2533,8 @@ func buildReaderReadLineFdBodyP2(idxs map[string]uint32) []byte {
 	body = numeric.InstI32Eqz(body)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	{
-		body = inst.InstI32Const(body, 4)
-		body = inst.InstCall(body, allocBox)
+		body = inst.InstI32Const(body, 16)
+		body = inst.InstCall(body, alloc)
 		body = inst.InstLocalTee(body, 10)
 		body = inst.InstI32Const(body, 1)
 		body = memory.InstI32Store(body, 2, 0)
@@ -2554,7 +2552,7 @@ func buildReaderReadLineFdBodyP2(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 5)
 	body = memory.InstMemoryCopy(body)
 	body = inst.InstI32Const(body, 16)
-	body = inst.InstCall(body, allocBox)
+	body = inst.InstCall(body, alloc)
 	body = inst.InstLocalTee(body, 10)
 	body = inst.InstI32Const(body, 0)
 	body = memory.InstI32Store(body, 2, 0)
@@ -2593,11 +2591,10 @@ func buildReaderReadLineFdBodyP2(idxs map[string]uint32) []byte {
 //	6: $result
 //	8: $errno
 func buildReaderReadChunkBody(idxs map[string]uint32) []byte {
-	// $buf (the n-byte chunk) is returned as the Some(chunk) string data
-	// → rc1 for reclamation. The scratch is rc1 too (the same allocator)
-	// and freed once the syscall has been read back.
+	// $buf (the n-byte chunk) is returned as the Ok(chunk) string data
+	// → rc1 for reclamation, and so is the Result box. The scratch is rc1
+	// too (the same allocator) and freed once the syscall has been read back.
 	alloc := idxs["__fern_alloc_rc1"]
-	allocBox := idxs["__fern_alloc_box"]
 	buildIoErr := idxs["__build_io_error"]
 	fdRead := idxs["wasi_fd_read"]
 	free := idxs["__free"]
@@ -2680,7 +2677,7 @@ func buildReaderReadChunkBody(idxs map[string]uint32) []byte {
 		body = inst.InstCall(body, buildIoErr)
 		body = inst.InstLocalSet(body, 7)
 		body = inst.InstI32Const(body, 8)
-		body = inst.InstCall(body, allocBox)
+		body = inst.InstCall(body, alloc)
 		body = inst.InstLocalTee(body, 6)
 		body = inst.InstI32Const(body, 1)
 		body = memory.InstI32Store(body, 2, 0)
@@ -2719,7 +2716,7 @@ func buildReaderReadChunkBody(idxs map[string]uint32) []byte {
 	// Build Ok(string): 16 bytes, tag=0, data@8, len@12. A zero-length
 	// read lands here too, as Ok("") — read(2) returning 0 is EOF.
 	body = inst.InstI32Const(body, 16)
-	body = inst.InstCall(body, allocBox)
+	body = inst.InstCall(body, alloc)
 	body = inst.InstLocalTee(body, 6)
 	body = inst.InstI32Const(body, 0)
 	body = memory.InstI32Store(body, 2, 0)
@@ -2758,9 +2755,9 @@ func buildReaderReadChunkBody(idxs map[string]uint32) []byte {
 // Locals (after 2 params r, n): 2=retbuf(12), 3=handle,
 // 4=chunk_ptr, 5=chunk_len, 6=box, 7=data (the rc1 copy).
 func buildReaderReadChunkBodyP2(idxs map[string]uint32) []byte {
-	// chunk buffer returned as Ok(chunk) string data → rc1.
+	// chunk buffer returned as Ok(chunk) string data → rc1, and the
+	// Result box with it.
 	alloc := idxs["__fern_alloc_rc1"]
-	allocBox := idxs["__fern_alloc_box"]
 	blockingRead := idxs["wasi_io_blocking_read"]
 	free := idxs["__free"]
 
@@ -2770,7 +2767,7 @@ func buildReaderReadChunkBodyP2(idxs map[string]uint32) []byte {
 		body = inst.InstCall(body, alloc)
 		body = inst.InstLocalSet(body, 7)
 		body = inst.InstI32Const(body, 16)
-		body = inst.InstCall(body, allocBox)
+		body = inst.InstCall(body, alloc)
 		body = inst.InstLocalTee(body, 6)
 		body = inst.InstI32Const(body, 0)
 		body = memory.InstI32Store(body, 2, 0)
@@ -2852,7 +2849,7 @@ func buildReaderReadChunkBodyP2(idxs map[string]uint32) []byte {
 	body = inst.InstCall(body, free)
 	// Ok(string): box(16) tag=0 @0, data @+8, len @+12.
 	body = inst.InstI32Const(body, 16)
-	body = inst.InstCall(body, allocBox)
+	body = inst.InstCall(body, alloc)
 	body = inst.InstLocalTee(body, 6)
 	body = inst.InstI32Const(body, 0)
 	body = memory.InstI32Store(body, 2, 0)

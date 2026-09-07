@@ -2,18 +2,18 @@
 //
 // The streaming-reader shape: `match (r.read_chunk(n)) { Ok(chunk) => … }`
 // in a loop. The runtime hands back a Result box whose payload is a fresh
-// rc=1 string built for the caller, and the binding is the only owner of
-// that string — so each iteration's chunk must be released as the next one
-// is bound, and the last one at function exit (#8396).
+// rc=1 string built for the caller; the binding is the only owner of that
+// string (#8396) and the arm is the only owner of the box (#8405), so each
+// iteration's pair must be released as the next one is bound.
 //
-// The observable is that fresh memory does NOT scale with the chunk size:
-// the same number of reads at 1024 bytes must cost no more fresh bytes than
-// at 16 bytes, up to a factor that tolerates the per-call Result box (a
-// constant, independent of the chunk). With the chunks leaking, the wide
-// round costs ~19x the narrow one; with them recycled, the two are equal.
-// One warm-up read at each size precedes its measured round, so the first
-// allocation of each chunk class — fresh however well it recycles — is not
-// in the comparison.
+// The observable is that a SECOND round identical to the first costs no
+// fresh memory at all: the first round of a size bumps the two chunks that
+// are alive at its peak — read_chunk allocates the next buffer before the
+// arm releases the current binding — and every round after it recycles
+// them. With either owner leaking, the second round bumps as much as the
+// first. Run at two chunk sizes so a per-CALL cost that scales with the
+// chunk cannot hide behind one that does not; one warm-up read at each
+// size precedes its rounds, so entering a new size class is not measured.
 //
 // stdin is 41 x 16 bytes followed by 41 x 1024 bytes, so every read returns
 // a full chunk.
@@ -40,17 +40,21 @@ function main(): i32 {
     var r: Reader = stdin();
     var warm: i32 = rounds(r, 16, 1);
     var b0: i64 = __heap_bump_bytes();
-    var x: i32 = rounds(r, 16, 40);
+    var x1: i32 = rounds(r, 16, 20);
     var b1: i64 = __heap_bump_bytes();
-    warm = warm + rounds(r, 1024, 1);
+    var x2: i32 = rounds(r, 16, 20);
     var b2: i64 = __heap_bump_bytes();
-    var y: i32 = rounds(r, 1024, 40);
+    warm = warm + rounds(r, 1024, 1);
     var b3: i64 = __heap_bump_bytes();
+    var y1: i32 = rounds(r, 1024, 20);
+    var b4: i64 = __heap_bump_bytes();
+    var y2: i32 = rounds(r, 1024, 20);
+    var b5: i64 = __heap_bump_bytes();
 
     print(warm.to_string());
-    print(x.to_string());
-    print(y.to_string());
-    // Sixty-four times the bytes must not cost more than twice the fresh memory.
-    if ((b3 - b2) > 2 * (b1 - b0)) { print("scales"); } else { print("constant"); }
+    print((x1 + x2).to_string());
+    print((y1 + y2).to_string());
+    // The repeat round must be free at BOTH sizes.
+    if ((b2 - b1) > 0 || (b5 - b4) > 0) { print("scales"); } else { print("constant"); }
     return 0;
 }

@@ -540,14 +540,14 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					// (r) → i32 — fstat of the handle, the same
 					// Result[FileStat, IoError] box `stat` builds.
 					needs.add("__fern_alloc")
-					needs.add("__fern_alloc_box")
+					needs.add("__fern_alloc_rc1")
 					needs.add("__build_io_error")
 					needs.add("__fern_fd_stat")
 				case "__fern_reader_seek":
 					// (r, offset, whence) → i32 — lseek of the
 					// handle; Result[i64, IoError].
 					needs.add("__fern_alloc")
-					needs.add("__fern_alloc_box")
+					needs.add("__fern_alloc_rc1")
 					needs.add("__build_io_error")
 					needs.add("__fern_reader_seek")
 				case "__fern_writer_close":
@@ -1036,7 +1036,9 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 var unconditionalHelperCalls = map[string][]string{
 	"__fern_read_file": {"__fern_utf8_valid"},
 	"__fern_str_copy":  {"__fern_alloc_rc1"},
-	"__build_io_error": {"__fern_alloc_rc1"},
+	// The IoError box keeps the static-sentinel header; its Other
+	// variant's message string is an rc1 block.
+	"__build_io_error": {"__fern_alloc_rc1", "__fern_alloc_box"},
 	"__http_entry": {
 		"__fern_alloc", "__alloc_u8", "__bytes_to_lang_string",
 		// emitStrNormalize, for the outgoing body's SSO pair.
@@ -1100,12 +1102,20 @@ func closePreview2HelperCalls(needs *runtimeNeeds) {
 	closeUnconditionalHelperCalls(needs)
 }
 
-// helperAllocBoxCallers are the helpers that build an Option / Result
-// / IoError box through __fern_alloc_box, which prepends the 8-byte
-// static-sentinel rc header so an rc_inc/dec on a box is safe (it
-// short-circuits on the high bit).
-var helperAllocBoxCallers = []string{
-	"__fern_env", "__fern_read_line", "__build_io_error",
+// helperResultBoxCallers are the helpers that build their per-call
+// Option / Result box through __fern_alloc_rc1, which prepends the
+// 8-byte header carrying a LIVE rc=1: the caller holds that unit and
+// releases it, so `rcresults.go` classifies every name here as
+// RcResultOwned and a gate beside this list checks that it does
+// (#8398 / #8405). Each arm allocates its variant's box size — a
+// payloadless arm the enum's uniform size — so the reclaim returns
+// the block to the class it was taken from.
+//
+// `__build_io_error` is deliberately absent: an IoError is per-stream
+// rather than per-call and keeps the static-sentinel header from
+// __fern_alloc_box.
+var helperResultBoxCallers = []string{
+	"__fern_env", "__fern_read_line",
 	"__fern_read_file", "__fern_read_file_bytes", "__fern_write_file",
 	"__fern_open_reader", "__fern_open_writer", "__fern_open_appender",
 	"__fern_reader_close_fd", "__fern_writer_close",
@@ -1169,9 +1179,9 @@ func injectFernHelpers(prog *ir.Program, needs *runtimeNeeds, opts EmitOptions) 
 // entries and the edge map is tiny — and it runs unconditionally so a
 // new helper picks up its callee's callees for free.
 func closeUnconditionalHelperCalls(needs *runtimeNeeds) {
-	for _, h := range helperAllocBoxCallers {
+	for _, h := range helperResultBoxCallers {
 		if needs.set[h] {
-			needs.add("__fern_alloc_box")
+			needs.add("__fern_alloc_rc1")
 			break
 		}
 	}
@@ -7088,7 +7098,6 @@ func buildReadLineBody(helperIdxs map[string]uint32) []byte {
 	// reclamation. Grown copies are also rc1 (abandoned intermediates
 	// leak as before — harmless).
 	alloc := helperIdxs["__fern_alloc_rc1"]
-	allocBox := helperIdxs["__fern_alloc_box"]
 	readByte := helperIdxs["__fern_read_byte"]
 	var body []byte
 	// Initial buf: alloc(64), cap=64, n=0
@@ -7160,20 +7169,19 @@ func buildReadLineBody(helperIdxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 2)
 	body = numeric.InstI32Eqz(body)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-	// Phase 1e-runtime: alloc_box prepends the static-sentinel rc
-	// header so enum-ii's inc/dec no-op on this Option box.
-	body = inst.InstI32Const(body, 4)
-	body = inst.InstCall(body, allocBox)
+	// None takes Option[string]'s uniform box size, not the tag alone:
+	// a caller that reclaims the box frees it in that size class.
+	body = inst.InstI32Const(body, 16)
+	body = inst.InstCall(body, alloc)
 	body = inst.InstLocalTee(body, 5)
 	body = inst.InstI32Const(body, 1)
 	body = memory.InstI32Store(body, 2, 0)
 	body = inst.InstLocalGet(body, 5)
 	body = inst.InstReturn(body)
 	body = inst.InstEnd(body)
-	// Build Some(line) box: alloc(16), tag=0, data, len. Phase
-	// 1e-runtime: alloc_box prepends the static-sentinel rc header.
+	// Build Some(line) box: 16 bytes, tag=0, data, len.
 	body = inst.InstI32Const(body, 16)
-	body = inst.InstCall(body, allocBox)
+	body = inst.InstCall(body, alloc)
 	body = inst.InstLocalSet(body, 5)
 	// tag = 0
 	body = inst.InstLocalGet(body, 5)

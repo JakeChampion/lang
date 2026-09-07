@@ -42,6 +42,12 @@ func TestGrammarDerivesConstruct(t *testing.T) {
 		// so the differential could not have found it either.
 		{"arrow lambda with a return type", `function main(): i32 { var f = (x: i32): i32 => x + 1; return 0; }`},
 		{"nullary arrow lambda with a return type", `function main(): i32 { var f = (): i32 => 1; return 0; }`},
+		// The two readings of a return annotation that ends where the
+		// lambda's own arrow begins. The first is a tuple return, the
+		// second a function-typed one; a grammar that commits to either
+		// reading derives one and fails the other.
+		{"arrow lambda returning a tuple", `function main(): i32 { var f = (x: i32): (i32, i32) => g(x); return 0; }`},
+		{"arrow lambda returning a function type", `function main(): i32 { var f = (x: i32): (i32) => i32 => g(x); return 0; }`},
 		{"slice", `function main(): i32 { return xs[0:n]; }`},
 		{"explicit type args", `function main(): i32 { return pick[i32](xs, 0); }`},
 		{"type args, trailing comma", `function main(): i32 { return pick[i32,](xs, 0,); }`},

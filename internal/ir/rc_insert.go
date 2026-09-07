@@ -378,12 +378,23 @@ func (b *builder) ownedCallResultType(e ast.Expr) (ast.Type, bool) {
 	// without a `__` prefix — e.g. `strbuf_take`, whose result may alias
 	// runtime-owned storage. A builtin's allocation contract is per-helper,
 	// not the user-fn return-transfer model this reclaim's safety argument
-	// rests on.
-	if _, isUserFn := b.returnsNoParamEscape[id.Name]; !isUserFn {
-		return nil, false
-	}
+	// rests on — so a builtin qualifies only where that contract was read
+	// off the runtime body and recorded: rcOwnedResultBuiltins, the I/O
+	// family whose per-call Option / Result box is one fresh rc=1 block
+	// (#8398 / #8405). A user-declared function of the same name shadows
+	// the builtin and takes the ordinary path.
 	if b.pairForm[id.Name] {
 		return nil, false
+	}
+	if _, isUserFn := b.returnsNoParamEscape[id.Name]; !isUserFn {
+		if !rcOwnedResultBuiltins[id.Name] {
+			return nil, false
+		}
+		t := b.exprType(e)
+		if t == nil || !ast.IsPointerType(t) {
+			return nil, false
+		}
+		return t, true
 	}
 	t := b.exprType(e)
 	if t == nil {
@@ -2070,6 +2081,16 @@ func genClosureDropThunk(name string, caps []ast.Param, ptrW int, info *checker.
 					helper := "__fern_arr_dec"
 					if arrElemIsRcTracked(at.Elem) {
 						helper = "__fern_drop_arr_ptr"
+					} else if _, isStr := at.Elem.(ast.StringType); isStr {
+						// string[]: walk + __fern_str_dec each element
+						// before freeing the buffer, exactly as
+						// dropStructField does for a string-array field.
+						// __fern_arr_dec frees the buffer alone, so the
+						// captured array's last generation of element
+						// buffers was stranded — including the one live
+						// element of a boxcapture cell, whose store now
+						// leaves the cell owning it (#8441).
+						helper = "__fern_drop_arr_str"
 					}
 					ops = append(ops,
 						Op{Kind: OpConstI32, I32: int32(ast.ElemSizeBytesFor(at.Elem, ptrW))},
@@ -4160,4 +4181,33 @@ func capturesAClosure(t ast.Type) bool {
 		return isFn
 	}
 	return false
+}
+
+// emitOwnedPayloadArmBoxFree releases the Option / Result box of an
+// owned-payload match arm (#8405). `tag` is the scrutinee — a direct call to
+// an rcOwnedPayloadBuiltins helper, which hands back one `__fern_alloc_rc1`
+// block per call — and `variant` the arm that matched, so the free uses that
+// variant's box size rather than a uniform one.
+//
+// SHALLOW: the payload was extracted a few ops above, into a counted binding
+// or into an immediate drop, so walking it here would release it twice. The
+// is_unique gate inside emitFreshBoxFreeSized keeps an aliased box (or a
+// static sentinel, if a future helper ever hands one back) to a plain dec.
+func (b *builder) emitOwnedPayloadArmBoxFree(ptrSlot int32, tag ast.Expr, variant string) {
+	et, ok := b.exprStaticType(tag).(ast.EnumType)
+	if !ok {
+		return
+	}
+	ed, ok := b.info.Enums[et.Name]
+	if !ok {
+		return
+	}
+	if len(et.Args) > 0 {
+		ed = substituteEnumDecl(ed, et.Args)
+	}
+	size, sized := enumVariantBoxSize(ed, variant, b.ptrW)
+	if !sized {
+		return
+	}
+	b.emitFreshBoxFreeSized(ptrSlot, size)
 }

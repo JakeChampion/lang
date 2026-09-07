@@ -42,6 +42,18 @@ pub function unavail(): i32 {
   return 2;
 }
 
+// Two statuses the DNS leg uses internally and never lets escape, because
+// glibc's search loop reacts to each differently: a SERVFAIL rcode moves on
+// to the next candidate, a refused connection abandons the search outright,
+// and a timeout stops the candidates but still tries the bare name.
+pub function servfail(): i32 {
+  return 3;
+}
+
+pub function refused(): i32 {
+  return 4;
+}
+
 // ---- addresses --------------------------------------------------------------
 // `ipv4_word(a, b, c, d)` — the in_addr word of `a.b.c.d`.
 pub function ipv4_word(a: i32, b: i32, c: i32, d: i32): i32 {
@@ -353,15 +365,24 @@ function host_domain(host: string): string[] {
   return out.append(slice_unchecked(host, dot + 1, host.len()) + "");
 }
 
-// `search_candidates(name, rc)` — the names glibc's res_search asks for,
-// in order. A name ending in a dot is asked for as it is and nothing
-// else. Otherwise a name with at least `ndots` dots is tried as it is
-// first and then under each search domain; one with fewer goes through
-// the search domains first and is tried as it is last.
-pub function search_candidates(name: string, rc: ResolvConf): string[] {
-  var out: string[] = [];
+// `SearchPlan` — the three pieces __res_context_search works in, which
+// are NOT interchangeable with a flat candidate list. `as_is` is the name
+// as it stands, `suffixes` the search-list names, and `leads` says whether
+// the as-is query runs BEFORE the suffixes (glibc's `tried_as_is`) or is
+// the retry after them. Which of the two it is decides both whether that
+// retry happens at all and whose status is reported, so a search cannot
+// be driven from the order alone.
+pub struct SearchPlan { as_is: string, suffixes: string[], leads: boolean }
+
+// `search_plan(name, rc)` — res_search's plan for `name`. A name ending
+// in a dot is asked for as it stands and nothing else. Otherwise a name
+// with at least `ndots` dots leads with the as-is query and then tries
+// each search domain; one with fewer tries the search domains first and
+// the as-is name after them.
+pub function search_plan(name: string, rc: ResolvConf): SearchPlan {
+  var none: string[] = [];
   if (name.ends_with(".")) {
-    return out.append(slice_unchecked(name, 0, name.len() - 1) + "");
+    return SearchPlan { as_is: slice_unchecked(name, 0, name.len() - 1) + "", suffixes: none, leads: true };
   }
   var dots: i32 = 0;
   var i: i32 = 0;
@@ -371,16 +392,30 @@ pub function search_candidates(name: string, rc: ResolvConf): string[] {
     }
     i = i + 1;
   }
-  if (dots >= rc.ndots) {
-    out = out.append(name);
-  }
+  var sfx: string[] = [];
   var j: i32 = 0;
   while (j < rc.search.len()) {
-    out = out.append(name + "." + rc.search[j]);
+    sfx = sfx.append(name + "." + rc.search[j]);
     j = j + 1;
   }
-  if (dots < rc.ndots) {
-    out = out.append(name);
+  return SearchPlan { as_is: name, suffixes: sfx, leads: dots >= rc.ndots };
+}
+
+// `search_candidates(name, rc)` — the plan flattened into the order the
+// names are asked in, for reading and for the order test.
+pub function search_candidates(name: string, rc: ResolvConf): string[] {
+  var p: SearchPlan = search_plan(name, rc);
+  var out: string[] = [];
+  if (p.leads) {
+    out = out.append(p.as_is);
+  }
+  var j: i32 = 0;
+  while (j < p.suffixes.len()) {
+    out = out.append(p.suffixes[j]);
+    j = j + 1;
+  }
+  if (!p.leads) {
+    out = out.append(p.as_is);
   }
   return out;
 }
@@ -464,6 +499,9 @@ pub function dns_answer_a(msg: u8[], id: i32): (i32, i32) {
   if (rcode == 3) {
     return (notfound(), 0);
   }
+  if (rcode == 2) {
+    return (servfail(), 0);
+  }
   if (rcode != 0) {
     return (unavail(), 0);
   }
@@ -509,7 +547,7 @@ function dns_exchange(ns: i32, qname: string): (i32, i32) {
   framed = framed.concat(q);
   var c: i32 = tcp_connect(ns, 53);
   if (c < 0) {
-    return (unavail(), 0);
+    return (refused(), 0);
   }
   if (tcp_send(c, string_from_bytes_unchecked(framed)) < 0) {
     tcp_close(c);
@@ -546,31 +584,112 @@ function read_framed(c: i32): u8[] {
 }
 
 // `dns_lookup(rc, name)` — glibc's res_search over the nameservers: each
-// candidate name is put to the servers in order until one answers, and a
-// definite answer — an address or NXDOMAIN — from any server is final for
-// that candidate. A candidate no server could answer ends the whole
-// search as UNAVAIL, as glibc's TRY_AGAIN does.
+// name is put to the servers in order until one answers, and an address
+// from any server ends the search.
 pub function dns_lookup(rc: ResolvConf, name: string): (i32, i32) {
-  var cands: string[] = search_candidates(name, rc);
+  return dns_search(search_plan(name, rc), (q: string): (i32, i32) => dns_lookup_one(rc, q));
+}
+
+// `dns_search(plan, ask)` — __res_context_search over an `ask` that
+// answers one name. Separated from the nameserver so it can be driven
+// with scripted answers: WHICH name is asked next is as much of the
+// behaviour as what comes back, and only a stub can see that.
+//
+// The as-is query is not one candidate among the others, and treating it
+// as one gets two things wrong. It sits OUTSIDE the loop's stop rules —
+// however it fails, the search list is still tried — and its status is
+// SAVED and reported in preference to anything the suffixes produce, so
+// an as-is NXDOMAIN reports NOTFOUND even when a later suffix hit a
+// SERVFAIL. When it leads, there is no retry afterwards; when it trails,
+// it is the retry, and it runs whether the suffix loop finished or was
+// cut short.
+//
+// Inside the suffix loop, three failures read differently:
+//
+//   - a SERVFAIL rcode records itself and moves to the NEXT suffix, so
+//     one broken zone does not hide a name a later suffix would reach;
+//   - a refused connection returns at once, before any saved status is
+//     consulted, and nothing further is asked;
+//   - NXDOMAIN moves on; anything else — a timeout, a malformed reply —
+//     ends the loop.
+//
+// Only an address escapes as SUCCESS. The failures collapse to the three
+// NSS statuses, a recorded SERVFAIL reporting as UNAVAIL the way glibc
+// reports its TRY_AGAIN.
+pub function dns_search(plan: SearchPlan, ask: (string) => (i32, i32)): (i32, i32) {
+  var saved: i32 = 0 - 1;
+  if (plan.leads) {
+    var lead: (i32, i32) = ask(plan.as_is);
+    if (lead.0 == success()) {
+      return lead;
+    }
+    saved = lead.0;
+  }
+  var got_servfail: boolean = false;
+  var last: i32 = notfound();
   var i: i32 = 0;
-  while (i < cands.len()) {
-    var r: (i32, i32) = dns_lookup_one(rc, cands[i]);
-    if (r.0 != notfound()) {
+  while (i < plan.suffixes.len()) {
+    var r: (i32, i32) = ask(plan.suffixes[i]);
+    if (r.0 == success()) {
       return r;
+    }
+    if (r.0 == refused()) {
+      return (unavail(), 0);
+    }
+    if (r.0 == servfail()) {
+      got_servfail = true;
+    } else {
+      last = r.0;
+      if (r.0 != notfound()) {
+        i = plan.suffixes.len();
+      }
     }
     i = i + 1;
   }
-  return (notfound(), 0);
+  if (!plan.leads) {
+    var bare: (i32, i32) = ask(plan.as_is);
+    if (bare.0 == success()) {
+      return bare;
+    }
+    last = bare.0;
+  }
+  if (saved >= 0) {
+    return (nss_status(saved), 0);
+  }
+  if (got_servfail) {
+    return (unavail(), 0);
+  }
+  return (nss_status(last), 0);
 }
 
+// The DNS leg's two extra statuses collapsed back to the three NSS ones.
+function nss_status(s: i32): i32 {
+  if (s == success() || s == notfound()) {
+    return s;
+  }
+  return unavail();
+}
+
+// One candidate against every nameserver in order. A server that answers
+// anything at all — an address, NXDOMAIN, SERVFAIL — settles the candidate;
+// only a server that could not be reached or did not reply moves to the
+// next. Every server exhausted is the timeout case, not the refused one,
+// unless every one of them refused the connection.
 function dns_lookup_one(rc: ResolvConf, qname: string): (i32, i32) {
+  var all_refused: boolean = true;
   var j: i32 = 0;
   while (j < rc.nameservers.len()) {
     var r: (i32, i32) = dns_exchange(rc.nameservers[j], qname);
-    if (r.0 != unavail()) {
+    if (r.0 != unavail() && r.0 != refused()) {
       return r;
     }
+    if (r.0 != refused()) {
+      all_refused = false;
+    }
     j = j + 1;
+  }
+  if (all_refused && rc.nameservers.len() > 0) {
+    return (refused(), 0);
   }
   return (unavail(), 0);
 }

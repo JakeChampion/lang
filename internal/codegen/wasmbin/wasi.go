@@ -3709,7 +3709,7 @@ func buildRandomBytesBody(idxs map[string]uint32) []byte {
 //	10: $name_real_len — strlen of name (via __fern_str_len)
 func buildEnvBody(idxs map[string]uint32) []byte {
 	alloc := idxs["__fern_alloc"]
-	allocBox := idxs["__fern_alloc_box"]
+	allocRc1 := idxs["__fern_alloc_rc1"]
 	strLen := idxs["__fern_str_len"]
 	strByte := idxs["__fern_str_byte"]
 	strCopy := idxs["__fern_str_copy"]
@@ -3841,12 +3841,11 @@ func buildEnvBody(idxs map[string]uint32) []byte {
 					body = inst.InstCall(body, strCopy)
 					body = inst.InstLocalSet(body, 8) // $vlen := clen
 					body = inst.InstLocalSet(body, 7) // $value := cdata
-					// Build Some box: alloc(16), tag=0, data, len.
-					// Phase 1e-runtime: alloc_box adds the 8-byte
-					// static-sentinel rc header so enum-ii's inc/dec
-					// no-op on this runtime-built Option box.
+					// Build Some box: 16 bytes, tag=0, data, len.
+					// alloc_rc1 adds the 8-byte rc=1 header the
+					// caller's release reads.
 					body = inst.InstI32Const(body, 16)
-					body = inst.InstCall(body, allocBox)
+					body = inst.InstCall(body, allocRc1)
 					body = inst.InstLocalSet(body, 9)
 					body = inst.InstLocalGet(body, 9)
 					body = inst.InstI32Const(body, 0)
@@ -3904,10 +3903,9 @@ func buildEnvBody(idxs map[string]uint32) []byte {
 	}
 	body = inst.InstEnd(body) // end outer loop
 	body = inst.InstEnd(body) // end outer block
-	// No match: return None. alloc(4), tag=1. Phase 1e-runtime:
-	// alloc_box prepends the static-sentinel rc header.
-	body = inst.InstI32Const(body, 4)
-	body = inst.InstCall(body, allocBox)
+	// No match: return None, at Option[string]'s uniform box size.
+	body = inst.InstI32Const(body, 16)
+	body = inst.InstCall(body, allocRc1)
 	body = inst.InstLocalTee(body, 9)
 	body = inst.InstI32Const(body, 1)
 	body = memory.InstI32Store(body, 2, 0)
@@ -3935,7 +3933,7 @@ func buildEnvBody(idxs map[string]uint32) []byte {
 // 6=$j, 7=$matched, 8=$name_len, 9=$rb/$box.
 func buildEnvBodyP2(idxs map[string]uint32) []byte {
 	alloc := idxs["__fern_alloc"]
-	allocBox := idxs["__fern_alloc_box"]
+	allocRc1 := idxs["__fern_alloc_rc1"]
 	strLen := idxs["__fern_str_len"]
 	strByte := idxs["__fern_str_byte"]
 	strCopy := idxs["__fern_str_copy"]
@@ -4046,7 +4044,7 @@ func buildEnvBodyP2(idxs map[string]uint32) []byte {
 			body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 			{
 				body = inst.InstI32Const(body, 16)
-				body = inst.InstCall(body, allocBox)
+				body = inst.InstCall(body, allocRc1)
 				body = inst.InstLocalSet(body, 9)
 				body = inst.InstLocalGet(body, 9)
 				body = inst.InstI32Const(body, 0)
@@ -4088,9 +4086,9 @@ func buildEnvBodyP2(idxs map[string]uint32) []byte {
 	}
 	body = inst.InstEnd(body) // outer loop
 	body = inst.InstEnd(body) // outer block
-	// No match: None box. alloc_box(4), tag=1.
-	body = inst.InstI32Const(body, 4)
-	body = inst.InstCall(body, allocBox)
+	// No match: None box at Option[string]'s uniform size, tag=1.
+	body = inst.InstI32Const(body, 16)
+	body = inst.InstCall(body, allocRc1)
 	body = inst.InstLocalTee(body, 9)
 	body = inst.InstI32Const(body, 1)
 	body = memory.InstI32Store(body, 2, 0)

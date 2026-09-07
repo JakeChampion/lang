@@ -71,11 +71,11 @@ func BoxMutatedCaptures(prog *ast.Program, info *checker.Info) {
 // reassign them after the closure is created — the interpreter (the oracle,
 // #2896) sees that new binding, so a compiled capture must share the cell by
 // reference too (#5301). The boxed pointer rides one cell slot exactly like a
-// scalar: `x = v` becomes an in-place `x[0] = v` raw store through the shared
-// cell. The superseded element is deliberately NOT released there — a captured
-// value is reclaim-ineligible (rc.freeEligible=false skips it at overwrite AND
-// exit, keeping the two balanced), so the store safe-leaks the old pointer
-// rather than risking an over-release of a value the outer scope still holds.
+// scalar: `x = v` becomes an in-place `x[0] = v` store through the shared
+// cell, and the cell OWNS that element: the IR's emitBoxedCellStore retains an
+// alias-shaped new value and releases the one it supersedes, so a rebinding
+// loop reclaims each generation instead of stranding it (#8441) and every path
+// that frees the cell is free to walk the slot.
 func boxableCapture(t ast.Type) bool {
 	switch t.(type) {
 	case ast.NumberType, ast.BoolType, ast.FloatType:
