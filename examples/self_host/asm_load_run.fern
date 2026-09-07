@@ -350,7 +350,14 @@ function main(): i32 {
     // bloats past the IR budget); `-treeshake` forces it on even without a root.
     // A program with no stdlib imports (the bootstrap self-compile, root == "")
     // is left exactly as before.
-    if ((do_treeshake || root.len() > 0) && !no_treeshake) { merged = treeshake.treeshake(merged); }
+    //
+    // The prune lands in `shaken` rather than over `merged`, because the build
+    // gate below has to read the module AS WRITTEN — the same ordering
+    // fern.fern states for its own gates. The prune drops mod.funcs while
+    // leaving mod.impls whole, so an empty `impl Trait for T { }` whose adopted
+    // method is unreachable reads to the checker as a missing method (#8885).
+    var shaken: parser.Module = merged;
+    if ((do_treeshake || root.len() > 0) && !no_treeshake) { shaken = treeshake.treeshake(merged); }
 
     // `-decide`: print the path the merged module routes through (ir / ast) —
     // the same all_eligible decision emit_module makes — and stop. Annotates
@@ -363,7 +370,7 @@ function main(): i32 {
     // of that divergence: a script's `main` is synthesised inside the emit, so
     // judging the raw module reported "ast" for a program that in fact lowers IR.
     if (do_decide) {
-        var dm: parser.Module = ircore.lift_lambdas(parser.module_with_builtins(checker.annotate_module(merged)));
+        var dm: parser.Module = ircore.lift_lambdas(parser.module_with_builtins(checker.annotate_module(shaken)));
         if (ircore.all_eligible(ircore.script_normalized(dm))) { print("ir\n"); } else { print("ast\n"); }
         return 0;
     }
@@ -379,7 +386,7 @@ function main(): i32 {
     // program that in fact routes IR once monomorphise drops those templates
     // (#4374). Lambda-lifted last, matching what the emitter routes on.
     if (probe) {
-        var lifted: parser.Module = ircore.lift_lambdas(parser.module_with_builtins(merged));
+        var lifted: parser.Module = ircore.lift_lambdas(parser.module_with_builtins(shaken));
         if (probe_start >= 0) {
             write(ircore.eligibility_report_range(lifted, probe_start, probe_count));
         } else {
@@ -398,6 +405,7 @@ function main(): i32 {
         eprint(util.format_diags(gated));
         return 1;
     }
+    merged = shaken;
 
     // typed-IR (#5531): stamp each call expression with its checker-inferred
     // result type so the IR lowering READS the type instead of re-deriving it
