@@ -614,6 +614,17 @@ pub function op_environ(): Op { return op0("environ"); }
 // kernel's node name (uname(2) on Linux, kern.hostname on Darwin); the empty
 // string on wasm, which has no host identity.
 pub function op_hostname(): Op { return op0("hostname"); }
+// `uname_field` takes one operand [index] and pushes ONE fresh string box
+// holding that field of the kernel's utsname record — 0 sysname, 1 nodename,
+// 2 release, 3 version, 4 machine. Native only: neither WASI preview has a
+// utsname to read, so `sysinfo` is refused there before lowering.
+pub function op_uname_field(): Op { return op0("uname_field"); }
+// `getcwd` takes no operands and pushes ONE fresh string box holding the
+// process's working directory; the empty string when the kernel refuses.
+pub function op_getcwd(): Op { return op0("getcwd"); }
+// `cpu_count` takes no operands and pushes an i32: how many processing units
+// the process may run on, or 0 where the kernel will not say.
+pub function op_cpu_count(): Op { return op0("cpu_count"); }
 // `wasm_timer_pollable` takes one operand [ns] and pushes an i32. On native it
 // is -1 (no pollable; deadlines ride poll(2)'s timeout arg); on wasm it is a
 // real wasi timer pollable. Portability shim for std/async's with_deadline.
@@ -1504,10 +1515,10 @@ pub function kind_count(): i32 { return 196; }
 // 1..kind_count() sweep requires the id space to stay dense, and moving the
 // last entry into the hole beats renumbering every id above it.
 //
-// Extension tags beyond kind_count() (struct_copy=198 … environ=249): not
+// Extension tags beyond kind_count() (struct_copy=198 … cpu_count=252): not
 // in the 1..kind_count() bijection sweep (ir_kind_run sweeps them separately
 // by name), but nameable so module_emits_op_cached / the backends see them.
-// NEXT FREE EXTENSION ID: 250 (re-grep rather than trusting this line — it has
+// NEXT FREE EXTENSION ID: 253 (re-grep rather than trusting this line — it has
 // been stale before, which is the drift the paragraph below is about).
 // ADDING AN EXTENSION TAG: take the next id here AND register it in
 // kind_name + ir_kind_run's two sweep lists, then re-grep the whole tree
@@ -1659,6 +1670,7 @@ function kind_id_len6(name: string): i32 {
     if (c == b'f') { return kind_id_len6_f(name); }
     if (c == b'g' && name == "getuid") { return 246; }
     if (c == b'g' && name == "getgid") { return 247; }
+    if (c == b'g' && name == "getcwd") { return 251; }
     if (c == b'i' && name == "isatty") { return 232; }
     if (c == b'm') { return kind_id_len6_m(name); }
     if (c == b'n' && name == "now_ns") { return 183; }
@@ -1797,6 +1809,7 @@ function kind_id_len9(name: string): i32 {
 }
 
 function kind_id_len9_c(name: string): i32 {
+    if (name == "cpu_count") { return 252; }
     if (name == "const_i32") { return 1; }
     if (name == "const_i64") { return 3; }
     if (name == "const_f64") { return 4; }
@@ -1902,6 +1915,7 @@ function kind_id_len11(name: string): i32 {
     if (c == b'r') { return kind_id_len11_r(name); }
     if (c == b's') { return kind_id_len11_s(name); }
     if (c == b't' && name == "tcp_connect") { return 193; }
+    if (c == b'u' && name == "uname_field") { return 250; }
     return 0;
 }
 
@@ -2274,13 +2288,16 @@ function kind_name_4(id: i32): string {
     if (id == 247) { return "getgid"; }
     if (id == 248) { return "getgroups"; }
     if (id == 249) { return "environ"; }
+    if (id == 250) { return "uname_field"; }
+    if (id == 251) { return "getcwd"; }
+    if (id == 252) { return "cpu_count"; }
     return "invalid";
 }
 
 // kind_name maps an integer id back to its op-kind tag ("invalid" for an
 // out-of-range / KIND_INVALID id). The inverse of kind_id. A cheap range
 // check routes to the owning chunk; everything past 160 — including the
-// extension tags beyond kind_count() (struct_copy=198 … environ=249)
+// extension tags beyond kind_count() (struct_copy=198 … cpu_count=252)
 // — lives in kind_name_4, whose fallthrough is the "invalid" sentinel.
 pub function kind_name(id: i32): string {
     if (id <= 40) { return kind_name_0(id); }
@@ -2334,7 +2351,8 @@ function pops0(t: i32): boolean {
         || t == 216 || t == 217 || t == 218                              // arr_push_shared_*, const_struct
         || t == 222                                                      // map_hash_seed
         || t == 238 || t == 239 || t == 240                              // geteuid, getegid, hostname
-        || t == 246 || t == 247 || t == 248 || t == 249;                 // getuid, getgid, getgroups, environ
+        || t == 246 || t == 247 || t == 248 || t == 249                  // getuid, getgid, getgroups, environ
+        || t == 251 || t == 252;                                         // getcwd, cpu_count
 }
 
 function pops1_conv(t: i32): boolean {
@@ -2375,7 +2393,7 @@ function pops1_io(t: i32): boolean {
         || t == 174 || t == 175 || t == 176 || t == 179 || t == 181      // temp_dir, stat, env, reader_close, sleep_ms
         || t == 168                                                      // read_line (fd)
         || t == 231 || t == 232                                          // create_dir_all, isatty
-        || t == 241                                                      // fd_stat
+        || t == 241 || t == 250                                          // fd_stat, uname_field
         || t == 185 || t == 210 || t == 212                              // random_bytes, arg_at, proc_waitpid
         || t == 188 || t == 189 || t == 190 || t == 191 || t == 192      // timer_fd, wasm_*
         || t == 196 || t == 112 || t == 200 || t == 201 || t == 203;     // tcp_close, tcp_pollable(112), tcp_listen/accept, open_file
@@ -4042,8 +4060,9 @@ pub function op_allocates(tag: i32): boolean {
     if (tag == 168) { return true; }
     // read_all_stdin allocates the whole-input buffer plus its string box.
     if (tag == 209) { return true; }
-    // hostname boxes the node name into a fresh string block.
-    if (tag == 240) { return true; }
+    // hostname boxes the node name into a fresh string block; uname_field
+    // and getcwd box their answers the same way.
+    if (tag == 240 || tag == 250 || tag == 251) { return true; }
     // getgroups boxes a fresh i64[] and environ a fresh string[] (the arr box
     // plus a string block per entry), so both need the heap runtime. The four
     // scalar id ops (238 / 239 / 246 / 247) do not — they return a register.

@@ -1243,6 +1243,17 @@ pub function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDec
             // rc-headered string box, pushed in x0.
             s = s.write("    bl __fn___fern_hostname\n    str x0, [sp, #-16]!\n");
             s = s.need("heap"); s = s.need("hostname");
+        } else if (o.kind_tag == 250) {  // uname_field
+            // [index] -> __fn___fern_uname_field: one utsname field in ONE
+            // fresh rc-headered string box, pushed in x0.
+            s = s.write("    bl __fn___fern_uname_field\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
+            s = s.need("heap"); s = s.need("uname_field");
+        } else if (o.kind_tag == 251) {  // getcwd
+            s = s.write("    bl __fn___fern_getcwd\n    str x0, [sp, #-16]!\n");
+            s = s.need("heap"); s = s.need("getcwd");
+        } else if (o.kind_tag == 252) {  // cpu_count
+            s = s.write("    bl __fn___fern_cpu_count\n    str x0, [sp, #-16]!\n");
+            s = s.need("heap"); s = s.need("cpu_count");
         } else if (o.kind_tag == 238) {  // geteuid
             s = s.write("    bl __fn___fern_geteuid\n    str x0, [sp, #-16]!\n");
             s = s.need("geteuid");
@@ -3541,6 +3552,126 @@ function emit_rt_hostname_darwin(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    bl __fern_str_box_hdr\n");       // x0 = box
     s = s.write("    add sp, sp, #416\n");
     s = s.write("    ldp x19, x20, [sp], #16\n");
+    s = s.write("    ldp x29, x30, [sp], #16\n");
+    s = s.write("    ret\n");
+    return s;
+}
+
+// emit_rt_uname_field_darwin is `uname_field(i)` on arm64-darwin, the sibling
+// of emit_rt_hostname_darwin: XNU has no uname syscall, so the record is five
+// sysctl names and the index picks one. Six arguments and the carry flag for
+// failure, which is why it is not a __syscallN body. The argument arrives on
+// the operand stack, at #48 once the three callee-saved slots are pushed. An
+// index naming no field leaves the length at zero, so the copy is skipped and
+// the answer is the empty string — the same answer a refused sysctl gets.
+//
+// Frame: mib (8) + oldlen (8) + 400 bytes of value = 416 below the saved
+// callee registers.
+function emit_rt_uname_field_darwin(s: asmcore.EmitState): asmcore.EmitState {
+    s = s.write("__fn___fern_uname_field:\n");
+    s = s.write("    stp x29, x30, [sp, #-16]!\n");
+    s = s.write("    mov x29, sp\n");
+    s = s.write("    stp x19, x20, [sp, #-16]!\n");
+    s = s.write("    str x21, [sp, #-16]!\n");
+    s = s.write("    ldr x21, [sp, #48]\n");        // the field index
+    s = s.write("    sub sp, sp, #416\n");
+    s = s.write("    mov x20, #0\n");               // length
+    s = s.write("    cmp w21, #0\n");
+    s = s.write("    b.lt .Lunamef_box\n");
+    s = s.write("    cmp w21, #5\n");
+    s = s.write("    b.ge .Lunamef_box\n");
+    s = s.write("    mov w0, #1\n");                // CTL_KERN
+    s = s.write("    mov w1, #1\n");                // 0: kern.ostype
+    s = s.write("    cmp w21, #1\n");
+    s = s.write("    b.ne .Lunamef_m2\n");
+    s = s.write("    mov w1, #10\n");               // 1: kern.hostname
+    s = s.write("    b .Lunamef_mib\n");
+    s = s.write(".Lunamef_m2:\n");
+    s = s.write("    cmp w21, #2\n");
+    s = s.write("    b.ne .Lunamef_m3\n");
+    s = s.write("    mov w1, #2\n");                // 2: kern.osrelease
+    s = s.write("    b .Lunamef_mib\n");
+    s = s.write(".Lunamef_m3:\n");
+    s = s.write("    cmp w21, #3\n");
+    s = s.write("    b.ne .Lunamef_m4\n");
+    s = s.write("    mov w1, #4\n");                // 3: kern.version
+    s = s.write("    b .Lunamef_mib\n");
+    s = s.write(".Lunamef_m4:\n");
+    s = s.write("    cmp w21, #4\n");
+    s = s.write("    b.ne .Lunamef_mib\n");
+    s = s.write("    mov w0, #6\n");                // 4: hw.machine
+    s = s.write("    mov w1, #1\n");
+    s = s.write(".Lunamef_mib:\n");
+    s = s.write("    stp w0, w1, [sp]\n");          // mib[2]
+    s = s.write("    mov x0, #384\n");
+    s = s.write("    str x0, [sp, #8]\n");          // oldlen = buffer room
+    s = s.write("    mov x0, sp\n");                // name
+    s = s.write("    mov x1, #2\n");                // namelen
+    s = s.write("    add x2, sp, #16\n");           // oldp
+    s = s.write("    add x3, sp, #8\n");            // oldlenp
+    s = s.write("    mov x4, #0\n");                // newp
+    s = s.write("    mov x5, #0\n");                // newlen
+    s = s.write("    mov x16, #202\n");
+    s = s.write("    svc #0x80\n");
+    s = s.write("    b.cs .Lunamef_box\n");         // carry set = error: empty
+    s = s.write("    add x19, sp, #16\n");
+    s = s.write(".Lunamef_strlen:\n");
+    s = s.write("    ldrb w0, [x19, x20]\n");
+    s = s.write("    cbz w0, .Lunamef_box\n");
+    s = s.write("    add x20, x20, #1\n");
+    s = s.write("    b .Lunamef_strlen\n");
+    s = s.write(".Lunamef_box:\n");
+    s = s.write("    add x0, x20, #24\n");
+    s = s.write("    bl __fern_alloc\n");
+    s = s.write("    add x0, x0, #24\n");           // data (raw_alloc's shape)
+    s = s.write("    mov x1, #0\n");
+    s = s.write(".Lunamef_copy:\n");
+    s = s.write("    cmp x1, x20\n");
+    s = s.write("    b.hs .Lunamef_copied\n");
+    s = s.write("    ldrb w2, [x19, x1]\n");
+    s = s.write("    strb w2, [x0, x1]\n");
+    s = s.write("    add x1, x1, #1\n");
+    s = s.write("    b .Lunamef_copy\n");
+    s = s.write(".Lunamef_copied:\n");
+    s = s.write("    mov x1, x20\n");
+    s = s.write("    bl __fern_str_box_hdr\n");     // x0 = box
+    s = s.write("    add sp, sp, #416\n");
+    s = s.write("    ldr x21, [sp], #16\n");
+    s = s.write("    ldp x19, x20, [sp], #16\n");
+    s = s.write("    ldp x29, x30, [sp], #16\n");
+    s = s.write("    ret\n");
+    return s;
+}
+
+// emit_rt_cpu_count_darwin is `cpu_count()` on arm64-darwin. XNU has no
+// affinity mask; `hw.activecpu` is the same question there, and is what
+// sysconf(_SC_NPROCESSORS_ONLN) reads. A refused sysctl answers 0, which is
+// the builtin's "cannot say".
+//
+// Frame: mib (8) + oldlen (8) + the int (4, padded) = 32.
+function emit_rt_cpu_count_darwin(s: asmcore.EmitState): asmcore.EmitState {
+    s = s.write("__fn___fern_cpu_count:\n");
+    s = s.write("    stp x29, x30, [sp, #-16]!\n");
+    s = s.write("    mov x29, sp\n");
+    s = s.write("    sub sp, sp, #32\n");
+    s = s.write("    mov w0, #6\n");                // CTL_HW
+    s = s.write("    mov w1, #25\n");               // HW_AVAILCPU
+    s = s.write("    stp w0, w1, [sp]\n");          // mib[2]
+    s = s.write("    mov x0, #4\n");
+    s = s.write("    str x0, [sp, #8]\n");          // oldlen = sizeof(int)
+    s = s.write("    mov x0, sp\n");                // name
+    s = s.write("    mov x1, #2\n");                // namelen
+    s = s.write("    add x2, sp, #16\n");           // oldp
+    s = s.write("    add x3, sp, #8\n");            // oldlenp
+    s = s.write("    mov x4, #0\n");                // newp
+    s = s.write("    mov x5, #0\n");                // newlen
+    s = s.write("    mov x16, #202\n");
+    s = s.write("    svc #0x80\n");
+    s = s.write("    mov w0, #0\n");
+    s = s.write("    b.cs .Lcpucount_done\n");      // carry set = error: 0
+    s = s.write("    ldr w0, [sp, #16]\n");
+    s = s.write(".Lcpucount_done:\n");
+    s = s.write("    add sp, sp, #32\n");
     s = s.write("    ldp x29, x30, [sp], #16\n");
     s = s.write("    ret\n");
     return s;
@@ -6449,6 +6580,23 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
             s = emit_rt_hostname_darwin(s);
         } else {
             s = emit_ir_runtime_fern_fn(asmcore.rt_src_hostname(tgt), s.struct_decls, s);
+        }
+    }
+    if (s.has_need("uname_field")) {
+        if (darwin) {
+            s = emit_rt_uname_field_darwin(s);
+        } else {
+            s = emit_ir_runtime_fern_fn(asmcore.rt_src_uname_field(tgt), s.struct_decls, s);
+        }
+    }
+    if (s.has_need("getcwd")) {
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_getcwd(tgt), s.struct_decls, s);
+    }
+    if (s.has_need("cpu_count")) {
+        if (darwin) {
+            s = emit_rt_cpu_count_darwin(s);
+        } else {
+            s = emit_ir_runtime_fern_fn(asmcore.rt_src_cpu_count(tgt), s.struct_decls, s);
         }
     }
     if (s.has_need("isatty")) {

@@ -1,0 +1,225 @@
+// pwd.fern — GNU-compatible `pwd`.
+//
+//   pwd [-L | -P]    print the working directory
+//
+// Two answers, and they differ whenever a symbolic link was walked to
+// get here: `-P` is the PHYSICAL path, every link resolved, which is
+// what getcwd(2) reports; `-L` is the LOGICAL one the shell recorded in
+// $PWD, which keeps the link names. POSIX specifies `-L` as the default
+// and every standalone pwd defaults to `-P` anyway, so the default here
+// is `-P` unless POSIXLY_CORRECT is set.
+//
+// $PWD is not trusted on sight: it has to be absolute, carry no `.` or
+// `..` component, and name the same directory `.` does, dev and inode
+// both. Otherwise the physical answer stands.
+//
+// Operands are not an error — they are ignored with a diagnostic, and
+// the directory is still printed.
+import "std/string";
+import "./lib/gnu";
+
+function help_text(): string {
+  var out: string = "";
+  out = out + "Usage: " + gnu.prog() + " [OPTION]...\n";
+  out = out + "Print the full filename of the current working directory.\n";
+  out = out + "\n";
+  out = out + "  -L, --logical   use PWD from environment, even if it contains symlinks\n";
+  out = out + "  -P, --physical  avoid all symlinks\n";
+  out = out + "      --help        display this help and exit\n";
+  out = out + "      --version     output version information and exit\n";
+  out = out + "\n";
+  out = out + "If no option is specified, -P is assumed.\n";
+  return out;
+}
+
+function opt_logical(): i32 {
+  return 1;
+}
+
+function opt_physical(): i32 {
+  return 2;
+}
+
+// Whether `wd` carries a `.` or `..` COMPONENT — a `/.` or `/..` that
+// ends the string or is followed by another `/`. A name like `/a/.hidden`
+// or `/a/..b` has neither and is fine.
+function has_dot_component(wd: string): boolean {
+  var i: i32 = 0;
+  while (i + 1 < wd.len()) {
+    if (wd[i] as i32 == 47 && wd[i + 1] as i32 == 46) {
+      var after: i32 = i + 2;
+      if (after >= wd.len() || wd[after] as i32 == 47) {
+        return true;
+      }
+      if (wd[after] as i32 == 46) {
+        var after2: i32 = after + 1;
+        if (after2 >= wd.len() || wd[after2] as i32 == 47) {
+          return true;
+        }
+      }
+    }
+    i = i + 1;
+  }
+  return false;
+}
+
+// $PWD when it is fit to print as the logical directory, else None.
+function logical_cwd(): Option[string] {
+  var wd: string = "";
+  match (env("PWD")) {
+    Some(v) => {
+      wd = v;
+    },
+    None => {
+      return None;
+    }
+  }
+  if (wd.len() == 0 || wd[0] as i32 != 47) {
+    return None;
+  }
+  if (has_dot_component(wd)) {
+    return None;
+  }
+  match (stat(wd)) {
+    Ok(named) => {
+      match (stat(".")) {
+        Ok(here) => {
+          if (named.dev == here.dev && named.ino == here.ino) {
+            return Some(wd);
+          }
+        },
+        Err(_) => {}
+      }
+    },
+    Err(_) => {}
+  }
+  return None;
+}
+
+// One diagnostic and exit 1, gnulib's `error (EXIT_FAILURE, ...)`.
+function die(msg: string): void {
+  gnu.error(msg);
+  exit(1);
+}
+
+function die_errno(msg: string, e: IoError): void {
+  die(msg + ": " + gnu.io_error_text(e));
+}
+
+// The path built by walking up from `.`, for the case getcwd(2) will not
+// answer: at each level, find the entry of `..` whose inode is the
+// directory we are standing in, prepend its name, and step up. It ends
+// at the root, which is the one directory whose dev and inode `/` also
+// has.
+//
+// GNU chdirs its way up and reads `..`; this walks a growing `../..`
+// prefix instead, which asks the same questions of the same directories
+// without moving the process. The diagnostics name the prefix, as GNU's
+// do, so a failure says how far up it got.
+function walked_cwd(): string {
+  var root: FileStat = stat_or_die(stat("/"), "failed to get attributes of " + gnu.quotea("/"));
+  var here: FileStat = stat_or_die(stat("."), "failed to stat " + gnu.quotea("."));
+  var name: string = "";
+  var prefix: string = "..";
+  while (!(here.dev == root.dev && here.ino == root.ino)) {
+    var entries: string[] = [];
+    match (read_dir(prefix)) {
+      Ok(es) => {
+        entries = es;
+      },
+      Err(e) => {
+        die_errno("cannot open directory " + gnu.quote(prefix), e);
+      }
+    }
+    var parent: FileStat = stat_or_die(stat(prefix), "failed to stat " + gnu.quote(prefix));
+    var found: string = "";
+    var matched: boolean = false;
+    var i: i32 = 0;
+    while (i < entries.len()) {
+      match (lstat(prefix + "/" + entries[i])) {
+        Ok(st) => {
+          if (st.ino == here.ino && st.dev == here.dev) {
+            found = entries[i];
+            matched = true;
+            i = entries.len();
+          }
+        },
+        Err(_) => {}
+      }
+      i = i + 1;
+    }
+    if (!matched) {
+      die("couldn't find directory entry in " + gnu.quote(prefix) + " with matching i-node");
+    }
+    name = "/" + found + name;
+    here = parent;
+    prefix = prefix + "/..";
+  }
+  if (name.len() == 0) {
+    return "/";
+  }
+  return name;
+}
+
+function stat_or_die(r: Result[FileStat, IoError], msg: string): FileStat {
+  match (r) {
+    Ok(st) => {
+      return st;
+    },
+    Err(e) => {
+      die_errno(msg, e);
+    }
+  }
+  return FileStat { is_file: false, is_dir: false, size: 0, mode: 0 as u32, nlink: 0 as u32, uid: 0 as u32, gid: 0 as u32, dev: 0, rdev: 0, ino: 0, blksize: 0, blocks: 0, atime: 0, atime_nsec: 0, mtime: 0, mtime_nsec: 0, ctime: 0, ctime_nsec: 0 };
+}
+
+function main(): i32 {
+  var opts: gnu.Opt[] = [];
+  opts = opts.append(gnu.flag("L", "logical", opt_logical()));
+  opts = opts.append(gnu.flag("P", "physical", opt_physical()));
+
+  // POSIX wants -L; standalone implementations want -P. GNU splits the
+  // difference on POSIXLY_CORRECT, and the last option on the line wins
+  // over both.
+  var logical: boolean = false;
+  match (env("POSIXLY_CORRECT")) {
+    Some(_) => {
+      logical = true;
+    },
+    None => {}
+  }
+
+  var g: gnu.Getopt = gnu.getopt_new(args(), opts, "pwd", help_text(), 1);
+  while (true) {
+    var res: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    g = res.1;
+    match (res.0) {
+      Some(m) => {
+        logical = m.id == opt_logical();
+      },
+      None => {
+        break;
+      }
+    }
+  }
+  if (g.operands().len() > 0) {
+    gnu.error("ignoring non-option arguments");
+  }
+
+  if (logical) {
+    match (logical_cwd()) {
+      Some(wd) => {
+        gnu.write_out(wd + "\n");
+        return 0;
+      },
+      None => {}
+    }
+  }
+  var wd: string = getcwd();
+  if (wd.len() > 0) {
+    gnu.write_out(wd + "\n");
+    return 0;
+  }
+  gnu.write_out(walked_cwd() + "\n");
+  return 0;
+}

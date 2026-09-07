@@ -183,7 +183,12 @@ var linuxDarwinSysno = map[string][2]int{
 	"getuid": {174, 24},
 	"getgid": {176, 47},
 	// getgroups(2) — Linux asm-generic 158, Darwin BSD 79.
-	"getgroups":  {158, 79},
+	"getgroups": {158, 79},
+	// getcwd(2) — Linux asm-generic 17, Darwin's `__getcwd` BSD 296.
+	// Same (buf, size) shape; the RETURN differs (Linux answers the
+	// length including the NUL, Darwin 0), so `__fern_getcwd` measures
+	// the string itself rather than trusting either.
+	"getcwd":     {17, 296},
 	"exit":       {sysExit, darExit},
 	"exit_group": {sysExitGroup, darExit},
 	"mmap":       {sysMmap, darMmap},
@@ -826,6 +831,15 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	}
 	if g.usesHostname {
 		g.emitHostnameRuntime()
+	}
+	if g.usesUnameField {
+		g.emitUnameFieldRuntime()
+	}
+	if g.usesGetcwd {
+		g.emitGetcwdRuntime()
+	}
+	if g.usesCPUCount {
+		g.emitCPUCountRuntime()
 	}
 	if g.usesRemoveDirAll {
 		g.emitRemoveDirAllRuntime()
@@ -10356,6 +10370,266 @@ func (g *generator) emitHostnameRuntime() {
 	g.line(".ltorg")
 }
 
+// emitUnameFieldRuntime emits `__fern_uname_field(i)` → a fresh rc
+// string holding one field of the utsname record, indexed by its
+// position in the struct: 0 sysname, 1 nodename, 2 release, 3 version,
+// 4 machine.
+//
+// Linux: uname(2) into a stack buffer, six 65-byte fields each
+// NUL-terminated within its own. Darwin has no uname syscall — libc
+// builds the record from five sysctl names, and so does this, selecting
+// the mib from the index. An index naming no field, a refused call and
+// an empty field all answer the empty string.
+//
+// Frame: fp/lr (16) + x19/x20 (16) + x21 (16, the index) + the mib and
+// its length word (16, Darwin only) + 408 bytes of buffer = 464.
+func (g *generator) emitUnameFieldRuntime() {
+	const ctlKern, ctlHw, darSysctl = 1, 6, 202
+	const linuxUname = 160
+	// The Darwin sysctl leaf for each utsname field, in struct order.
+	// kern.ostype, kern.hostname, kern.osrelease, kern.version and
+	// hw.machine are the five libc reads to fill the record.
+	darwinLeaf := []struct {
+		ctl, leaf int
+	}{
+		{ctlKern, 1},  // KERN_OSTYPE
+		{ctlKern, 10}, // KERN_HOSTNAME
+		{ctlKern, 2},  // KERN_OSRELEASE
+		{ctlKern, 4},  // KERN_VERSION
+		{ctlHw, 1},    // HW_MACHINE
+	}
+	g.line("")
+	g.line(".global __fern_uname_field")
+	g.typeDirective("__fern_uname_field")
+	g.label("__fern_uname_field")
+	g.emit("stp x29, x30, [sp, #-464]!")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	g.emit("str x21, [sp, #32]")
+	g.emit("mov w21, w0")
+	g.emit("cmp w21, #0")
+	g.emit("b.lt .Luf_empty")
+	g.emit("cmp w21, #5")
+	g.emit("b.ge .Luf_empty")
+	if g.darwin {
+		for i, m := range darwinLeaf {
+			if i < len(darwinLeaf)-1 {
+				g.emit("cmp w21, #%d", i)
+				g.emit("b.ne .Luf_mib%d", i+1)
+			}
+			g.emit("mov w0, #%d", m.ctl)
+			g.emit("mov w1, #%d", m.leaf)
+			if i < len(darwinLeaf)-1 {
+				g.emit("b .Luf_mib")
+				g.label(fmt.Sprintf(".Luf_mib%d", i+1))
+			}
+		}
+		g.label(".Luf_mib")
+		g.emit("stp w0, w1, [sp, #40]") // mib[2]
+		g.emit("mov x0, #408")
+		g.emit("str x0, [sp, #48]") // oldlen = buffer room
+		g.emit("add x0, sp, #40")   // name
+		g.emit("mov x1, #2")        // namelen
+		g.emit("add x2, sp, #56")   // oldp
+		g.emit("add x3, sp, #48")   // oldlenp
+		g.emit("mov x4, #0")        // newp
+		g.emit("mov x5, #0")        // newlen
+		g.emit("mov x16, #%d", darSysctl)
+		g.emit("svc #0x80")
+		g.emit("b.cs .Luf_empty") // carry set = error
+		g.emit("add x19, sp, #56")
+	} else {
+		g.emit("add x0, sp, #56")
+		g.emit("mov x8, #%d", linuxUname)
+		g.emit("svc #0")
+		g.emit("cbnz x0, .Luf_empty") // 0 on success, -errno otherwise
+		g.emit("add x19, sp, #56")
+		g.emit("mov x1, #65")
+		g.emit("madd x19, x21, x1, x19") // buffer + 65 * index
+	}
+	g.emit("mov x20, #0")
+	g.label(".Luf_strlen")
+	g.emit("ldrb w1, [x19, x20]")
+	g.emit("cbz w1, .Luf_len")
+	g.emit("add x20, x20, #1")
+	g.emit("b .Luf_strlen")
+	g.label(".Luf_len")
+	g.emit("cbz x20, .Luf_empty")
+	g.emit("add w0, w20, #1")
+	g.emit("bl __fern_alloc_rc1") // x0 = data
+	if !ast.UseTwoWordStrings(8) {
+		g.emitStrLenStore("w20", "x0")
+	}
+	g.emit("strb wzr, [x0, x20]")
+	g.emit("mov x1, x19") // src
+	g.emit("mov x19, x0") // keep dst across the copy
+	g.emit("mov x2, x20")
+	g.emit("bl __fern_memcpy")
+	g.emit("mov x0, x19")
+	if ast.UseTwoWordStrings(8) {
+		g.emit("mov w1, w20")
+	}
+	g.emit("b .Luf_done")
+	g.label(".Luf_empty")
+	if ast.UseTwoWordStrings(8) {
+		g.emit("mov x0, xzr")
+		g.emit("movz x1, #0x8000, lsl #48")
+	} else {
+		g.emitStrEmpty("x0")
+	}
+	g.label(".Luf_done")
+	g.emit("ldr x21, [sp, #32]")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #464")
+	g.emit("ret")
+	g.sizeDirective("__fern_uname_field")
+	g.line(".ltorg")
+}
+
+// emitGetcwdRuntime emits `__fern_getcwd()` → a fresh rc string holding
+// the process's working directory. Both kernels fill a caller's buffer
+// and NUL-terminate it; only the return differs (Linux answers the
+// length including the NUL, Darwin 0), so the length is measured from
+// the bytes rather than taken from the syscall. A refusal — an unlinked
+// working directory, an unreadable ancestor, a path past the page the
+// kernel builds it in — answers the empty string.
+//
+// Frame: fp/lr (16) + x19/x20 (16) + PATH_MAX of buffer = 4128.
+func (g *generator) emitGetcwdRuntime() {
+	g.line("")
+	g.line(".global __fern_getcwd")
+	g.typeDirective("__fern_getcwd")
+	g.label("__fern_getcwd")
+	// 4128 is past the 12-bit immediate a single `sub sp` takes, so the
+	// frame is opened (and closed) in two steps.
+	g.emit("sub sp, sp, #4096")
+	g.emit("sub sp, sp, #32")
+	g.emit("stp x29, x30, [sp]")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	g.emit("add x0, sp, #32")
+	g.emit("mov x1, #4096")
+	g.syscall("getcwd")
+	if g.darwin {
+		g.emit("b.cs .Lcwd_empty") // carry set = error
+	} else {
+		g.emit("cmp x0, #0")
+		g.emit("b.le .Lcwd_empty")
+	}
+	g.emit("add x19, sp, #32")
+	g.emit("mov x20, #0")
+	g.label(".Lcwd_strlen")
+	g.emit("ldrb w1, [x19, x20]")
+	g.emit("cbz w1, .Lcwd_len")
+	g.emit("add x20, x20, #1")
+	g.emit("b .Lcwd_strlen")
+	g.label(".Lcwd_len")
+	g.emit("cbz x20, .Lcwd_empty")
+	g.emit("add w0, w20, #1")
+	g.emit("bl __fern_alloc_rc1") // x0 = data
+	if !ast.UseTwoWordStrings(8) {
+		g.emitStrLenStore("w20", "x0")
+	}
+	g.emit("strb wzr, [x0, x20]")
+	g.emit("mov x1, x19")
+	g.emit("mov x19, x0")
+	g.emit("mov x2, x20")
+	g.emit("bl __fern_memcpy")
+	g.emit("mov x0, x19")
+	if ast.UseTwoWordStrings(8) {
+		g.emit("mov w1, w20")
+	}
+	g.emit("b .Lcwd_done")
+	g.label(".Lcwd_empty")
+	if ast.UseTwoWordStrings(8) {
+		g.emit("mov x0, xzr")
+		g.emit("movz x1, #0x8000, lsl #48")
+	} else {
+		g.emitStrEmpty("x0")
+	}
+	g.label(".Lcwd_done")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x29, x30, [sp]")
+	g.emit("add sp, sp, #32")
+	g.emit("add sp, sp, #4096")
+	g.emit("ret")
+	g.sizeDirective("__fern_getcwd")
+	g.line(".ltorg")
+}
+
+// emitCPUCountRuntime emits `__fern_cpu_count()` → how many processing
+// units the process may run on, or 0 where the kernel will not say.
+//
+// Linux: sched_getaffinity(2) writes the mask and answers its size in
+// bytes, rounded to whole longs, so the population count reads 8 bytes
+// at a time with nothing left over. `cnt` + `addv` is the population
+// count — AArch64 has no scalar form (see OpPopcount). Darwin has no
+// affinity mask; `hw.activecpu` is the same question there, and is what
+// sysconf(_SC_NPROCESSORS_ONLN) reads.
+//
+// Frame: fp/lr (16) + 128 bytes of mask (1024 CPUs) = 144.
+func (g *generator) emitCPUCountRuntime() {
+	const ctlHw, hwAvailCPU, darSysctl = 6, 25, 202
+	const linuxSchedGetaffinity = 123
+	g.line("")
+	g.line(".global __fern_cpu_count")
+	g.typeDirective("__fern_cpu_count")
+	g.label("__fern_cpu_count")
+	g.emit("stp x29, x30, [sp, #-144]!")
+	g.emit("mov x29, sp")
+	if g.darwin {
+		g.emit("mov w0, #%d", ctlHw)
+		g.emit("mov w1, #%d", hwAvailCPU)
+		g.emit("stp w0, w1, [sp, #16]") // mib[2]
+		g.emit("mov x0, #4")
+		g.emit("str x0, [sp, #24]") // oldlen = sizeof(int)
+		g.emit("add x0, sp, #16")   // name
+		g.emit("mov x1, #2")        // namelen
+		g.emit("add x2, sp, #32")   // oldp
+		g.emit("add x3, sp, #24")   // oldlenp
+		g.emit("mov x4, #0")
+		g.emit("mov x5, #0")
+		g.emit("mov x16, #%d", darSysctl)
+		g.emit("svc #0x80")
+		g.emit("b.cs .Lcpu_zero")
+		g.emit("ldr w0, [sp, #32]")
+		g.emit("b .Lcpu_done")
+	} else {
+		g.emit("mov x0, #0") // pid 0 = this thread
+		g.emit("mov x1, #128")
+		g.emit("add x2, sp, #16")
+		g.emit("mov x8, #%d", linuxSchedGetaffinity)
+		g.emit("svc #0")
+		g.emit("cmp x0, #0")
+		g.emit("b.le .Lcpu_zero")
+		g.emit("mov x1, x0") // bytes the kernel wrote
+		g.emit("mov x2, #0") // byte offset
+		g.emit("mov x3, #0") // running total
+		g.label(".Lcpu_word")
+		g.emit("cmp x2, x1")
+		g.emit("b.hs .Lcpu_sum")
+		g.emit("add x4, sp, #16")
+		g.emit("ldr x5, [x4, x2]")
+		g.emit("fmov d0, x5")
+		g.emit("cnt v0.8b, v0.8b")
+		g.emit("addv b0, v0.8b")
+		g.emit("fmov w6, s0")
+		g.emit("add x3, x3, x6")
+		g.emit("add x2, x2, #8")
+		g.emit("b .Lcpu_word")
+		g.label(".Lcpu_sum")
+		g.emit("mov w0, w3")
+		g.emit("b .Lcpu_done")
+	}
+	g.label(".Lcpu_zero")
+	g.emit("mov w0, #0")
+	g.label(".Lcpu_done")
+	g.emit("ldp x29, x30, [sp], #144")
+	g.emit("ret")
+	g.sizeDirective("__fern_cpu_count")
+	g.line(".ltorg")
+}
+
 // emitRemoveDirAllRuntime emits `__fern_remove_dir_all(
 // path_data, path_len)` in (x0, x1) → Option[IoError] — a
 // recursive `rm -rf`, the arm64 sibling of the x86-64 helper of
@@ -11762,6 +12036,9 @@ type generator struct {
 	usesGetgroups    bool
 	usesEnviron      bool
 	usesHostname     bool
+	usesUnameField   bool
+	usesGetcwd       bool
+	usesCPUCount     bool
 	usesRemoveDirAll bool
 	// usesCreateDirAll pulls in the `mkdir -p` runtime — the only
 	// builtin that can BUILD a directory tree (#6749).
@@ -12983,7 +13260,8 @@ func returnIsString(g *generator, op ir.Op, name string) bool {
 		// both hand back a (data, len) pair: the same buffer with a longer
 		// length on the fast path, __fern_strcat's fresh one otherwise.
 		return true
-	case "string_from_bytes_unchecked", "__str_slice", "strbuf_take", "hostname":
+	case "string_from_bytes_unchecked", "__str_slice", "strbuf_take", "hostname",
+		"uname_field", "getcwd":
 		// Built-in runtime helpers that return string directly.
 		// NOT in this list: `env` / `read_file` / `read_line` /
 		// `__method_Reader_read_line` / etc — those return
@@ -15998,6 +16276,21 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			g.usesHostname = true
 			g.usesAlloc = true
 			g.usesMemcpy = true
+		case "uname_field":
+			// uname_field(i): one field of the utsname record,
+			// by its position in the struct.
+			target = "__fern_uname_field"
+			g.usesUnameField = true
+			g.usesAlloc = true
+			g.usesMemcpy = true
+		case "getcwd":
+			target = "__fern_getcwd"
+			g.usesGetcwd = true
+			g.usesAlloc = true
+			g.usesMemcpy = true
+		case "cpu_count":
+			target = "__fern_cpu_count"
+			g.usesCPUCount = true
 		case "remove_dir_all":
 			// remove_dir_all(path): Option[IoError] — recursive
 			// rm -rf (openat + getdents64 + unlinkat, self-

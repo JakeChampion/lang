@@ -198,6 +198,9 @@ coreutils/
   lib/utmp.fern     the login-accounting record: the fixed-size utmp
                     entry and the scans over it, for logname today and
                     users / who / pinky next
+  lib/sys.fern      the five fields of the kernel's utsname record, by
+                    name, for the utilities that print the record
+                    (uname) or one field of it (arch)
   lib/resolv.fern   glibc's IPv4 name lookup — /etc/hosts, the
                     `hosts:` line of nsswitch.conf, resolv.conf and an
                     RFC 1035 A query — for the utilities that resolve
@@ -596,6 +599,34 @@ The startup rows are the same static-binary margin `true` and `echo` measure,
 widened: GNU pays the dynamic loader AND `dlopen`s libcrypto before it hashes
 a hundred bytes.
 
+Group C's first four, 2026-09-07, Linux x86-64 (GNU coreutils 9.4; uutils
+0.0.24 as the Debian multi-call binary; other agents' builds were running on
+the same four cores, which is the whole of the σ):
+
+| utility | workload | fern (ms) | gnu (ms) | uutils (ms) | gnu / fern | uutils / fern |
+|---|---|---|---|---|---|---|
+| `uname` | uname | 0.61 ± 1.28 | 2.56 ± 5.88 | 4.01 ± 4.89 | 4.21× | 6.60× |
+| `uname` | uname -a | 0.91 ± 2.51 | 1.42 ± 1.02 | 2.43 ± 2.28 | 1.56× | 2.68× |
+| `arch` | arch | 0.32 ± 0.98 | 1.89 ± 2.20 | 3.17 ± 2.52 | 5.83× | 9.77× |
+| `nproc` | nproc | 0.36 ± 0.89 | 1.48 ± 1.40 | 2.77 ± 2.93 | 4.12× | 7.74× |
+| `nproc` | nproc --all | 0.35 ± 1.33 | 1.88 ± 3.70 | 2.10 ± 0.85 | 5.38× | 6.00× |
+| `nproc` | nproc --ignore=1 | 0.25 ± 0.60 | 1.46 ± 1.58 | 2.02 ± 0.65 | 5.86× | 8.11× |
+| `pwd` | pwd | 0.23 ± 0.53 | 1.07 ± 0.79 | 2.47 ± 2.56 | 4.75× | 10.93× |
+| `pwd` | pwd -L | 0.52 ± 1.39 | 2.61 ± 2.83 | 2.88 ± 1.83 | 5.05× | 5.57× |
+
+All four are startup-bound, so the margin is the same static-binary one
+`true` and `echo` measure, and `strace -c` says where it comes from: each of
+these runs **four syscalls** — execve, the one the utility is about, write,
+exit_group — against GNU's 38, which is the dynamic loader before main. The
+one row that only reaches 1.56× is `uname -a`, where the extra work is
+Fern's: eight string concatenations to build the line against GNU's eight
+`fputs` into one stdio buffer. That is #8770 (a string append costs 8-16 ns
+whatever its size) showing up in a program short enough for eight of them to
+be a fifth of the run.
+
+`nproc --all` is the only one whose syscall is not a single question: it
+reads the per-CPU directories out of /sys with one openat + getdents, which
+is what glibc's `_SC_NPROCESSORS_CONF` does, and still lands at 5.38×.
 Group C's identity slice, 2026-09-07, Linux x86-64 (GNU coreutils 9.4;
 uutils 0.0.24 as the Debian multi-call binary). All five are
 startup-bound, so the whole table is one comparison made five ways:
@@ -647,6 +678,20 @@ buffer boundaries and `^` anchors in the same places. What differs is
 memory — the input's size rather than a block — and that GNU's
 `failed to create temporary file` is unreachable here, so an unwritable
 `$TMPDIR` under an unprivileged user fails on GNU and succeeds on this.
+**`uname -p` and `-i` print the machine name, as Linux distributions'
+GNU does.** Upstream coreutils can answer neither on Linux — the two
+`#if`s in uname.c are a Solaris `sysinfo(2)` and a BSD `sysctl`, and glibc
+has neither — so an upstream build prints `unknown` for both and `-a`
+omits them. Every distribution patches that to the machine name: Debian,
+Ubuntu, Fedora and RHEL all ship it, `setarch linux32 uname -p` follows
+`-m` to `i686`, and the binaries this corpus is compared against on the
+Ubuntu runners are among them. So that is what `uname.fern` prints, and
+the `-a` omission rule is live only on Darwin, where upstream's own
+answers stand: `-p` is the CPU family (`arm`, not `arm64`) and `-i` is
+genuinely unknown, so `-a` drops it. The one environment where this
+diverges is a distribution shipping unpatched coreutils — Arch is the
+example — where the corpus fails loudly on the `-p` / `-i` / `-a` cases
+rather than passing something wrong.
 
 **`hostid` asks DNS over TCP.** The id is glibc's `gethostid`: `/etc/hostid`
 if it holds four bytes, else the hostname's IPv4 address with its halves
@@ -805,7 +850,11 @@ reads anything and `tail` needs to read a regular file from its end — landed
 as `r.stat()` / `w.stat()` / `r.seek()` on every backend. `hostid` wanted a
 primitive rather than a fix — `hostname()`, gethostname(2) on every backend
 (#8529) — and got it under its own capability rather than a one-off syscall
-on one backend. A gap met later gets an issue and a fix, never a corpus
+on one backend. Group C's first four wanted three more the same way:
+`uname_field(i)` and `cpu_count()` under `sysinfo`, `getcwd()` under `cwd`,
+each refused on both wasm worlds by E066 rather than answered with a
+fiction — neither WASI preview has a utsname record, a processor count or a
+current directory. A gap met later gets an issue and a fix, never a corpus
 carve-out.
 
 None. Both Fern gaps the first utilities met — `IoError.Other` carrying no
@@ -843,7 +892,9 @@ groups are the order of work. Each sub-issue names its group.
   their block counts. `tail -f` waits for group C.
 - **C. needs a runtime primitive first** — everything that reads the process
   or the filesystem beyond `read_file` / `stat` / `read_dir`: `pwd`
-  (getcwd), `tty` (ttyname), `nproc` (affinity), `uname` `arch` (uname),
+  (getcwd), `tty` (ttyname), `nproc` (affinity), `uname` `arch` (uname)
+  — those four done, on `getcwd()`, `cpu_count()` and `uname_field(i)`
+  under the new `cwd` and `sysinfo` target capabilities —
   `whoami` `id` `groups` `logname` (done) `users` `who`
   `pinky` (uid, passwd, utmp), `printenv` (done) `env` (the whole
   environ, exec), `link` `ln` `readlink`

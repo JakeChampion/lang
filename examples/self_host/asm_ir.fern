@@ -4668,6 +4668,17 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             // in ONE fresh rc-headered string box, pushed in %rax.
             s = s.write("    call __fn___fern_hostname\n    pushq %rax\n");
             s = s.need("heap"); s = s.need("hostname");
+        } else if (o.kind_tag == 250) {  // uname_field
+            // [index] -> __fn___fern_uname_field: one utsname field in ONE
+            // fresh rc-headered string box, pushed in %rax.
+            s = s.write("    call __fn___fern_uname_field\n    addq $8, %rsp\n    pushq %rax\n");
+            s = s.need("heap"); s = s.need("uname_field");
+        } else if (o.kind_tag == 251) {  // getcwd
+            s = s.write("    call __fn___fern_getcwd\n    pushq %rax\n");
+            s = s.need("heap"); s = s.need("getcwd");
+        } else if (o.kind_tag == 252) {  // cpu_count
+            s = s.write("    call __fn___fern_cpu_count\n    pushq %rax\n");
+            s = s.need("heap"); s = s.need("cpu_count");
         } else if (o.kind_tag == 238) {  // geteuid
             s = s.write("    call __fn___fern_geteuid\n    pushq %rax\n");
             s = s.need("geteuid");
@@ -8188,6 +8199,18 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
     if (s.has_need("hostname")) {
         s = s.write("    .text\n");
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_hostname("x86_64"), all_structs, s);
+    }
+    if (s.has_need("uname_field")) {
+        s = s.write("    .text\n");
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_uname_field("x86_64"), all_structs, s);
+    }
+    if (s.has_need("getcwd")) {
+        s = s.write("    .text\n");
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_getcwd("x86_64"), all_structs, s);
+    }
+    if (s.has_need("cpu_count")) {
+        s = s.write("    .text\n");
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_cpu_count("x86_64"), all_structs, s);
     }
     if (s.has_need("wasm_timer_pollable")) { s = emit_ir_wasm_timer_pollable(s); }
     if (s.has_need("wasm_pollable_drop")) { s = emit_ir_wasm_pollable_drop(s); }

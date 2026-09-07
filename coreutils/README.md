@@ -92,6 +92,10 @@ they are not on PATH. Wall time, so compare within one run only.
 | `groups` | done — the process's own group names or one `USER : g1 g2` line per operand, with a failed operand costing the status and not the run, and an unnamed gid diagnosed and printed as its number. Needs `getgroups()` |
 | `logname` | done — getlogin(3) in glibc's two steps: `/proc/self/loginuid` and then the utmp user-process entry for the controlling terminal, whose name comes from fd 0's rdev walked against `/dev` and `/dev/pts`. No login is `no login name` and exit 1, never the euid's name |
 | `printenv` | done — the whole environment in the vector's own order (so a duplicate name is visible), named variables, `-0`, the in-order option scan, an `=` in a name refused by rule, and gnulib's `exit_failure` of 2. Needs `environ()` |
+| `uname` | done — `-a -s -n -r -v -m -p -i -o` and their long spellings including the obsolescent `--sysname` / `--release`, printed in the record's order whatever order they were asked in, and `-a`'s rule that an unknown processor or hardware platform is DROPPED where naming all eight prints `unknown`. `-p` / `-i` are the machine name on Linux, as every distribution's build of GNU reports them |
+| `arch` | done — `uname -m` with uname's own option table replaced by the two standard options; every operand is `extra operand` |
+| `nproc` | done — the affinity mask by default (so `taskset` changes the answer), the installed count for `--all`, OMP_NUM_THREADS / OMP_THREAD_LIMIT with OpenMP's lenient parse and strtoul's saturation, and `--ignore=N` with its floor of 1 and its non-usage `invalid number` diagnostic |
+| `pwd` | done — `-L` `-P`, POSIXLY_CORRECT choosing the default, the three tests $PWD has to pass before `-L` trusts it (absolute, no `.` or `..` component, same dev and inode as `.`), the ignored-operand diagnostic, and the walk up through `..` for a working directory getcwd(2) will not name |
 | `base64` `base32` | done — `-d` `-i` `-w`, gnulib's group rules (a fault still writes the bytes the group completed), and the `-w` value's two GNU quirks: a negative is refused, a magnitude past INTMAX_MAX turns wrapping off |
 | `basenc` | done — `--base64` `--base64url` `--base32` `--base32hex` `--base16` `--base2msbf` `--base2lsbf` `--z85`, `missing encoding type`, and z85's block requirement on both sides |
 | `uniq` | done — `-c` `-d` `-D` `-u` `-i` `-z`, `-f` / `-s` / `-w` and how they compose, `--all-repeated` and `--group` with every separator method, the obsolete `-N` / `+N` operands and the `_POSIX2_VERSION` window that retires the second of them, and the OUTPUT operand, which is a file opened truncating before the input is read. Slower than GNU per line while a substring comparison costs a copy (#8791) |
@@ -108,6 +112,7 @@ they are not on PATH. Wall time, so compare within one run only.
 | `lib/gnu.fern` | the GNU conventions every utility shares |
 | `lib/pwdb.fern` | `/etc/passwd` and `/etc/group` as glibc's `files` backend reads them: the lookups by name and id, getgrouplist's ordering, and the process's own group set |
 | `lib/utmp.fern` | the login-accounting record, for the utilities that read it — `logname` today, `users` / `who` / `pinky` next |
+| `lib/sys.fern` | the five fields of the kernel's utsname record, by name, for `uname` and `arch` |
 | `lib/base.fern` | the one encoder / decoder `base64`, `base32` and `basenc` drive, parameterised by alphabet, block and padding |
 | `lib/cond.fern` | the conditional expression `test` and `[` evaluate |
 | `lib/tabs.fern` | the `-t` tab-stop list `expand` and `unexpand` share: the grammar, its faults, and the next stop past a column |

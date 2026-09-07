@@ -925,6 +925,7 @@ pub function all_runtime_need_roots(): string[] {
         // stdin / argv / the host's name / the process's own identity:
         "read_all_stdin", "hostname", "environ",
         "geteuid", "getegid", "getuid", "getgid", "getgroups",
+        "uname_field", "getcwd", "cpu_count",
         // sockets + readiness (the edge-handler serve loop):
         "tcp_listen", "tcp_accept", "tcp_connect", "tcp_send", "tcp_recv", "udp_send",
         "tcp_close", "tcp_pollable", "poll", "timer_fd",

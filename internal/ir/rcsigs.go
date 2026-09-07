@@ -302,6 +302,9 @@ var rcInertBuiltins = map[string]bool{
 	// no such helper exists there to alias through. Same door
 	// `write_file_exec` and `access` come in by.
 	"getgroups": true,
+	// getcwd / cpu_count take nothing either; uname_field's one
+	// argument is a scalar index.
+	"getcwd": true, "cpu_count": true, "uname_field": true,
 }
 
 // rcUnmodelled are helpers that do move counts, and whose movement one

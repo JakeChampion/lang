@@ -1,0 +1,252 @@
+// uname.fern — GNU-compatible `uname`.
+//
+//   uname [-asnrvmpio]    print system information
+//
+// The five fields come out of `uname(2)` in the order the record holds
+// them, and are printed in that order, space separated, with a single
+// trailing newline. Two more are computed rather than read — `-p` the
+// processor and `-i` the hardware platform (see `processor` below) — and
+// `-o` is the operating system the build targets.
+//
+// `-a` is not "every bit set": GNU's `-a` is a distinct value that the
+// omission rule tests, so `-a` DROPS a processor or hardware platform it
+// could not determine while `-s -n -r -v -m -p -i -o` prints `unknown`
+// for the same field. `all` below is that distinction.
+import "./lib/gnu";
+import "./lib/sys";
+
+function help_text(): string {
+  var out: string = "";
+  out = out + "Usage: " + gnu.prog() + " [OPTION]...\n";
+  out = out + "Print certain system information.  With no OPTION, same as -s.\n";
+  out = out + "\n";
+  out = out + "  -a, --all                print all information, in the following order,\n";
+  out = out + "                             except omit -p and -i if unknown:\n";
+  out = out + "  -s, --kernel-name        print the kernel name\n";
+  out = out + "  -n, --nodename           print the network node hostname\n";
+  out = out + "  -r, --kernel-release     print the kernel release\n";
+  out = out + "  -v, --kernel-version     print the kernel version\n";
+  out = out + "  -m, --machine            print the machine hardware name\n";
+  out = out + "  -p, --processor          print the processor type (non-portable)\n";
+  out = out + "  -i, --hardware-platform  print the hardware platform (non-portable)\n";
+  out = out + "  -o, --operating-system   print the operating system\n";
+  out = out + "      --help        display this help and exit\n";
+  out = out + "      --version     output version information and exit\n";
+  return out;
+}
+
+function opt_all(): i32 {
+  return 1;
+}
+
+function opt_kernel_name(): i32 {
+  return 2;
+}
+
+function opt_nodename(): i32 {
+  return 3;
+}
+
+function opt_kernel_release(): i32 {
+  return 4;
+}
+
+function opt_kernel_version(): i32 {
+  return 5;
+}
+
+function opt_machine(): i32 {
+  return 6;
+}
+
+function opt_processor(): i32 {
+  return 7;
+}
+
+function opt_hardware_platform(): i32 {
+  return 8;
+}
+
+function opt_operating_system(): i32 {
+  return 9;
+}
+
+// `Selection` — which elements to print. `all` is `-a`, which selects
+// everything AND enables the omission rule below; the eight booleans are
+// the individually named options.
+struct Selection {
+  all: boolean,
+  kernel_name: boolean,
+  nodename: boolean,
+  kernel_release: boolean,
+  kernel_version: boolean,
+  machine: boolean,
+  processor: boolean,
+  hardware_platform: boolean,
+  operating_system: boolean
+}
+
+function empty_selection(): Selection {
+  return Selection { all: false, kernel_name: false, nodename: false, kernel_release: false, kernel_version: false, machine: false, processor: false, hardware_platform: false, operating_system: false };
+}
+
+function nothing_selected(s: Selection): boolean {
+  return !s.all && !s.kernel_name && !s.nodename && !s.kernel_release && !s.kernel_version && !s.machine && !s.processor && !s.hardware_platform && !s.operating_system;
+}
+
+// `Element` — one printable field and whether the system could say what
+// it is. An element whose value could not be determined reads `unknown`
+// and is dropped from `-a`; that is the only thing `known` decides, and
+// it is not the same test as the text, since a machine legitimately
+// named `unknown` would still print under `-a`.
+struct Element { text: string, known: boolean }
+
+function known(text: string): Element {
+  return Element { text: text, known: true };
+}
+
+function unknown(): Element {
+  return Element { text: "unknown", known: false };
+}
+
+// `-p`, the processor type.
+//
+// Upstream GNU can answer this only where a sysctl or `sysinfo(2)`
+// supplies it, and prints `unknown` on Linux; every Linux distribution
+// patches that to the machine name, which is what the binaries this
+// corpus is compared against print. Darwin's answer is upstream's: the
+// CPU FAMILY rather than the machine, so an Apple-silicon box says `arm`
+// where `-m` says `arm64`.
+function processor(): Element {
+  if (target_os() == "darwin") {
+    return known("arm");
+  }
+  return known(sys.machine());
+}
+
+// `-i`, the hardware platform. Same story as `-p` on Linux; Darwin has
+// no sysctl for it, so upstream's `unknown` stands and `-a` omits it.
+function hardware_platform(): Element {
+  if (target_os() == "darwin") {
+    return unknown();
+  }
+  return known(sys.machine());
+}
+
+// `-o`, the operating system: the name of the whole system rather than
+// the kernel, which is what makes it differ from `-s` on Linux.
+function operating_system(): Element {
+  if (target_os() == "darwin") {
+    return known("Darwin");
+  }
+  return known("GNU/Linux");
+}
+
+// One element appended to the line, space separated. `all` is `-a`,
+// under which an element nobody could determine is dropped rather than
+// printed as `unknown`.
+function append_element(line: string, first: boolean, e: Element, all: boolean): (string, boolean) {
+  if (all && !e.known) {
+    return (line, first);
+  }
+  if (first) {
+    return (line + e.text, false);
+  }
+  return (line + " " + e.text, false);
+}
+
+function scan(argv: string[]): Selection {
+  var opts: gnu.Opt[] = [];
+  opts = opts.append(gnu.flag("a", "all", opt_all()));
+  opts = opts.append(gnu.flag("s", "kernel-name", opt_kernel_name()));
+  // `--sysname` and `--release` are obsolescent aliases GNU still
+  // declares. They are what makes `--s` and `--r` unambiguous while
+  // `--k` lists three possibilities.
+  opts = opts.append(gnu.flag("s", "sysname", opt_kernel_name()));
+  opts = opts.append(gnu.flag("n", "nodename", opt_nodename()));
+  opts = opts.append(gnu.flag("r", "kernel-release", opt_kernel_release()));
+  opts = opts.append(gnu.flag("r", "release", opt_kernel_release()));
+  opts = opts.append(gnu.flag("v", "kernel-version", opt_kernel_version()));
+  opts = opts.append(gnu.flag("m", "machine", opt_machine()));
+  opts = opts.append(gnu.flag("p", "processor", opt_processor()));
+  opts = opts.append(gnu.flag("i", "hardware-platform", opt_hardware_platform()));
+  opts = opts.append(gnu.flag("o", "operating-system", opt_operating_system()));
+
+  var s: Selection = empty_selection();
+  var g: gnu.Getopt = gnu.getopt_new(argv, opts, "uname", help_text(), 1);
+  while (true) {
+    var res: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    g = res.1;
+    match (res.0) {
+      Some(m) => {
+        if (m.id == opt_all()) {
+          s = Selection { ...s, all: true };
+        } else if (m.id == opt_kernel_name()) {
+          s = Selection { ...s, kernel_name: true };
+        } else if (m.id == opt_nodename()) {
+          s = Selection { ...s, nodename: true };
+        } else if (m.id == opt_kernel_release()) {
+          s = Selection { ...s, kernel_release: true };
+        } else if (m.id == opt_kernel_version()) {
+          s = Selection { ...s, kernel_version: true };
+        } else if (m.id == opt_machine()) {
+          s = Selection { ...s, machine: true };
+        } else if (m.id == opt_processor()) {
+          s = Selection { ...s, processor: true };
+        } else if (m.id == opt_hardware_platform()) {
+          s = Selection { ...s, hardware_platform: true };
+        } else if (m.id == opt_operating_system()) {
+          s = Selection { ...s, operating_system: true };
+        }
+      },
+      None => {
+        break;
+      }
+    }
+  }
+  var operands: string[] = g.operands();
+  if (operands.len() > 0) {
+    gnu.die_usage("extra operand " + gnu.quote(operands[0]), 1);
+  }
+  return s;
+}
+
+function line_for(s: Selection): string {
+  var line: string = "";
+  var first: boolean = true;
+  var step: (string, boolean) = (line, first);
+  if (s.all || s.kernel_name) {
+    step = append_element(step.0, step.1, known(sys.sysname()), s.all);
+  }
+  if (s.all || s.nodename) {
+    step = append_element(step.0, step.1, known(sys.nodename()), s.all);
+  }
+  if (s.all || s.kernel_release) {
+    step = append_element(step.0, step.1, known(sys.release()), s.all);
+  }
+  if (s.all || s.kernel_version) {
+    step = append_element(step.0, step.1, known(sys.version()), s.all);
+  }
+  if (s.all || s.machine) {
+    step = append_element(step.0, step.1, known(sys.machine()), s.all);
+  }
+  if (s.all || s.processor) {
+    step = append_element(step.0, step.1, processor(), s.all);
+  }
+  if (s.all || s.hardware_platform) {
+    step = append_element(step.0, step.1, hardware_platform(), s.all);
+  }
+  if (s.all || s.operating_system) {
+    step = append_element(step.0, step.1, operating_system(), s.all);
+  }
+  return step.0 + "\n";
+}
+
+function main(): i32 {
+  var s: Selection = scan(args());
+  if (nothing_selected(s)) {
+    s = Selection { ...s, kernel_name: true };
+  }
+  gnu.write_out(line_for(s));
+  return 0;
+}
