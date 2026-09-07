@@ -18751,9 +18751,9 @@ func (b *builder) assign(n *ast.Assign) error {
 				// the outer scope alias it deliberately), so its `cell[0] = v`
 				// write must store IN PLACE — never CoW, which would fork the
 				// cell whenever a closure also holds it (rc > 1) and silently
-				// drop the sharing. Fall through to the direct in-place store.
+				// drop the sharing.
 				if b.info != nil && b.info.BoxedCells[arrIdent.Name] {
-					// (skip the CoW dispatch below)
+					return b.emitBoxedCellStore(t, n, storeOp, storeWidth, helper)
 				} else if slot, isLocal := b.locals[arrIdent.Name]; isLocal && isArrayTypeOfLocal(arrIdent.Name, b) && !isParamName(arrIdent.Name, b) {
 					return b.emitArrayIndexAssignCoW(arrIdent, slot, t, n, stride, storeOp, storeWidth, helper)
 				}
@@ -21174,6 +21174,86 @@ func (b *builder) emitCellSet(n *ast.Call) error {
 	b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
 	b.emit(Op{Kind: OpLoadLocal, I32: valSlot})
 	b.emit(arrayElemStoreOpFor(elemType, b.ptrW))
+	return nil
+}
+
+// emitBoxedCellStore lowers `cell[0] = v` for a boxcapture cell — the shared
+// one-element box BoxMutatedCaptures rewrites a captured-and-assigned local
+// into (#5301). It is the Cell.set shape with an array spelling, and it
+// carries the same rc bookkeeping: retain an alias-shaped new value, then
+// release the element it supersedes.
+//
+// The release is sound because the cell OWNS its element. Nothing else may
+// write the slot: `x` reads and writes only ever lower here or through the
+// closure's env, the cell is never a CoW receiver, and computeFreeEligible
+// already reads the cell as an owned array-literal local — so the exit sweep
+// emits the DEEP `__fern_drop_arr_str` / `__drop_arr_*` for it, which walks
+// the element on the cell's last reference. That walk is only correct if the
+// slot holds a reference the cell took, which is exactly what the retain here
+// establishes and what the raw store did not: every outer rebind dropped the
+// superseded pointer on the floor (32 bytes an iteration, unbounded, #8441)
+// and left an aliased value in the slot under a count nobody had taken.
+//
+// The new value is evaluated and stashed BEFORE the old one is released, for
+// emitCellSet's reason: `s = s + "x"` reads the slot inside the value
+// expression, so releasing first would free the buffer the read is standing
+// on.
+//
+// A cycle still leaks. A closure element takes decValueOnStack's flat
+// `__fern_rc_dec` (dropFnNameFor declines a FuncType), which decrements
+// without re-entering a closure release, so `g = f` supersedes an element on
+// a cyclic graph without the recursion #8637 traced.
+func (b *builder) emitBoxedCellStore(t *ast.Index, n *ast.Assign, storeOp OpKind, storeWidth int, idxHelper string) error {
+	elem := t.ElemType
+	counted := elem != nil && ast.RcFreeEnabled && ast.IsPointerType(elem)
+	if !counted {
+		// A scalar cell carries no rc traffic: address, value, store.
+		if err := b.expr(t.Array); err != nil {
+			return err
+		}
+		if err := b.expr(t.Idx); err != nil {
+			return err
+		}
+		b.emit(Op{Kind: OpCallDirect, Str: idxHelper, Width: ResAddr, I32: 2})
+		if err := b.expr(n.Value); err != nil {
+			return err
+		}
+		b.emit(Op{Kind: storeOp, Width: storeWidth})
+		return nil
+	}
+	// addr = &cell[0], evaluated once so the load of the old element and the
+	// store of the new one hit the same slot.
+	addrSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__cell_box_addr_%d", addrSlot)] = addrSlot
+	if err := b.expr(t.Array); err != nil {
+		return err
+	}
+	if err := b.expr(t.Idx); err != nil {
+		return err
+	}
+	b.emit(Op{Kind: OpCallDirect, Str: idxHelper, Width: ResAddr, I32: 2})
+	b.emit(Op{Kind: OpStoreLocal, I32: addrSlot})
+	// The new value, retained when it is an alias the writer still holds.
+	valSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__cell_box_val_%d", valSlot)] = valSlot
+	// Typed so a two-word string ABI declares a slot wide enough for both
+	// words; an untyped slot keeps only the data word.
+	b.scratchType[valSlot] = elem
+	if err := b.expr(n.Value); err != nil {
+		return err
+	}
+	if needsRcIncOnAlias(n.Value, b) && !b.rc.moveSites[n.Value] {
+		b.emitAliasInc(n.Value)
+	}
+	b.emit(Op{Kind: OpStoreLocal, I32: valSlot})
+	// Release the superseded element through the same ladder a container
+	// slot's replacement takes.
+	b.emit(Op{Kind: OpLoadLocal, I32: addrSlot})
+	b.emit(payloadLoadOpFor(elem, b.ptrW))
+	b.dropStructField(elem)
+	b.emit(Op{Kind: OpLoadLocal, I32: addrSlot})
+	b.emit(Op{Kind: OpLoadLocal, I32: valSlot})
+	b.emit(Op{Kind: storeOp, Width: storeWidth})
 	return nil
 }
 

@@ -137,6 +137,32 @@ function main(): i32 { var r: R = R { n: 1 }; return r.greet(); }
 	}
 }
 
+// A default body reaches its own module's opaque fields. `pub opaque`
+// hides the fields from other modules, and the body is the trait
+// module's own source, so the rule keys on where the body was WRITTEN
+// rather than on the impl that inherited it.
+func TestTraitDefaultBodyReachesOwnModuleOpaqueFields(t *testing.T) {
+	err, _ := checkFiles(t, map[string]string{
+		"lib.fern": `pub opaque struct Email { addr: i32 }
+pub function mk(): Email { return Email { addr: 41 }; }
+pub trait Greet {
+    function tag(self: Self): i32;
+    function greet(self: Self): i32 { var e: Email = mk(); return e.addr + 1; }
+}
+`,
+		"main.fern": `import "./lib";
+struct R { n: i32 }
+impl lib.Greet for R {
+    function tag(self: Self): i32 { return self.n; }
+}
+function main(): i32 { var r: R = R { n: 1 }; return r.greet(); }
+`,
+	}, "main.fern")
+	if err != nil {
+		t.Errorf("a default body must reach its own module's opaque fields:\n%v", err)
+	}
+}
+
 // A diagnostic raised inside a materialised default names the TRAIT's
 // file and line. Before this it was blamed on the impl's file at the
 // trait's line:column — a line that does not mention the identifier.
