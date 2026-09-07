@@ -1,0 +1,233 @@
+// tabs.fern — the `-t` tab-stop list expand(1) and unexpand(1) share.
+//
+// Both take the same grammar and answer the same question of it: given a
+// column, where is the next tab stop? The grammar is comma- or
+// blank-separated numbers, with two prefixes allowed on the LAST value of
+// one `-t` operand:
+//
+//   /N   past the explicit stops, a stop every N columns from column 0
+//   +N   past the explicit stops, a stop every N columns from the last
+//        explicit stop
+//
+// Three details are measured from the reference binaries rather than
+// assumed:
+//
+//   - A prefix latches for the rest of the OPERAND it appears in, so every
+//     later value in that operand is committed as a size of the same kind
+//     and the second one reports "only allowed with the last value". That
+//     is why `-t /4,8` is a fault and `-t /4 -t 8` is not.
+//   - A malformed list is reported as it is parsed, but an ASCENDING or
+//     zero-size fault is reported after the whole option scan: `expand
+//     -t 0 -x` says `invalid option -- 'x'`, and `expand --tabs=0 --help`
+//     prints the help and exits 0.
+//   - An overflowing value and a misplaced prefix both report and carry
+//     on rather than stopping, so `-t 99999999999999999999x` and
+//     `-t 9+/0` each report twice; only an invalid byte ends the parse.
+import "std/array";
+import "std/u64";
+import "./gnu";
+
+// `Tabs` — the parsed `-t` state. `list` is the explicit stops in the
+// order given, `extend` / `increment` the `/N` and `+N` sizes (0 when
+// unset), and `size` the uniform stop spacing `finish()` derives when
+// the list does not need walking.
+pub struct Tabs { list: u64[], extend: u64, increment: u64, size: u64 }
+
+// `tabs_new()` — no `-t` seen yet.
+pub function tabs_new(): Tabs {
+  var none: u64[] = [];
+  return Tabs { list: none, extend: 0 as u64, increment: 0 as u64, size: 0 as u64 };
+}
+
+function is_digit(c: i32): boolean {
+  return c >= 48 && c <= 57;
+}
+
+// The C locale's isblank: space and tab, the two bytes that separate
+// stops as a comma does.
+function is_blank(c: i32): boolean {
+  return c == 32 || c == 9;
+}
+
+// `(t).parse(stops)` — one `-t` operand. Faults that are about the TEXT
+// are reported here; faults about the resulting stops wait for
+// `finish()`. A `/` or `+` seen once holds for the REST of the operand,
+// which is what makes `-t /4,8` a fault and `-t /4 -t 8` not: the second
+// value in one operand is still committed as an extend size, and the
+// stored one is already set.
+pub function (t: Tabs) parse(stops: string): Tabs {
+  var out: Tabs = t;
+  var i: i32 = 0;
+  var have: boolean = false;
+  var value: u64 = 0 as u64;
+  var want_extend: boolean = false;
+  var want_increment: boolean = false;
+  var ok: boolean = true;
+  while (i < stops.len()) {
+    var c: i32 = stops[i] as i32;
+    if (c == 44 || is_blank(c)) {
+      if (have) {
+        out = commit(out, value, want_extend, want_increment);
+        have = false;
+      }
+    } else if (c == 47) {
+      if (have) {
+        gnu.error("'/' specifier not at start of number: " + gnu.quote(slice_unchecked(stops, i, stops.len()) + ""));
+        ok = false;
+      }
+      want_extend = true;
+      want_increment = false;
+    } else if (c == 43) {
+      if (have) {
+        gnu.error("'+' specifier not at start of number: " + gnu.quote(slice_unchecked(stops, i, stops.len()) + ""));
+        ok = false;
+      }
+      want_increment = true;
+      want_extend = false;
+    } else if (is_digit(c)) {
+      if (!have) {
+        value = 0 as u64;
+        have = true;
+      }
+      var over: boolean = false;
+      match (value.checked_mul(10 as u64)) {
+        Some(m) => {
+          match (m.checked_add((c - 48) as u64)) {
+            Some(a) => {
+              value = a;
+            },
+            None => {
+              over = true;
+            }
+          }
+        },
+        None => {
+          over = true;
+        }
+      }
+      if (over) {
+        // The whole digit run is named, and the run is then skipped so
+        // the parse resumes at whatever follows it.
+        var from: i32 = digits_start(stops, i);
+        var end: i32 = i;
+        while (end < stops.len() && is_digit(stops[end] as i32)) {
+          end = end + 1;
+        }
+        gnu.error("tab stop is too large " + gnu.quote(slice_unchecked(stops, from, end) + ""));
+        ok = false;
+        have = false;
+        i = end - 1;
+      }
+    } else {
+      gnu.error("tab size contains invalid character(s): " + gnu.quote(slice_unchecked(stops, i, stops.len()) + ""));
+      exit(1);
+    }
+    i = i + 1;
+  }
+  // A value left over at the end of a WELL-FORMED operand is committed;
+  // one left over after a fault is not, which is why `-t '2/ 0'` reports
+  // once and `-t '2/ 0 '` — the same values with a trailing separator —
+  // reports the second commit as well.
+  if (have && ok) {
+    out = commit(out, value, want_extend, want_increment);
+  }
+  if (!ok) {
+    exit(1);
+  }
+  return out;
+}
+
+// Where the digit run containing `i` starts.
+function digits_start(stops: string, i: i32): i32 {
+  var from: i32 = i;
+  while (from > 0 && is_digit(stops[from - 1] as i32)) {
+    from = from - 1;
+  }
+  return from;
+}
+
+// One finished value, with whichever prefix is in force. A second one of
+// the same kind is the "only allowed with the last value" fault, and it
+// abandons the rest of the operand.
+function commit(t: Tabs, value: u64, want_extend: boolean, want_increment: boolean): Tabs {
+  if (want_extend) {
+    if (t.extend != 0 as u64) {
+      gnu.error("'/' specifier only allowed with the last value");
+      exit(1);
+    }
+    return Tabs { ...t, extend: value };
+  }
+  if (want_increment) {
+    if (t.increment != 0 as u64) {
+      gnu.error("'+' specifier only allowed with the last value");
+      exit(1);
+    }
+    return Tabs { ...t, increment: value };
+  }
+  return Tabs { ...t, list: t.list.append(value) };
+}
+
+// `(t).finish()` — check the stops and pick the uniform spacing. A list
+// of one with no `/` or `+` is a WIDTH, not a single stop, so `-t 4` has
+// a stop every four columns rather than one at column 4 and none after.
+pub function (t: Tabs) finish(): Tabs {
+  var prev: u64 = 0 as u64;
+  var i: i32 = 0;
+  while (i < t.list.len()) {
+    if (t.list[i] == 0 as u64) {
+      gnu.error("tab size cannot be 0");
+      exit(1);
+    }
+    if (t.list[i] <= prev) {
+      gnu.error("tab sizes must be ascending");
+      exit(1);
+    }
+    prev = t.list[i];
+    i = i + 1;
+  }
+  if (t.extend != 0 as u64 && t.increment != 0 as u64) {
+    gnu.error("'/' specifier is mutually exclusive with '+'");
+    exit(1);
+  }
+  if (t.list.len() == 0) {
+    var uniform: u64 = 8 as u64;
+    if (t.extend != 0 as u64) {
+      uniform = t.extend;
+    } else if (t.increment != 0 as u64) {
+      uniform = t.increment;
+    }
+    return Tabs { ...t, size: uniform };
+  }
+  if (t.list.len() == 1 && t.extend == 0 as u64 && t.increment == 0 as u64) {
+    return Tabs { ...t, size: t.list[0] };
+  }
+  return Tabs { ...t, size: 0 as u64 };
+}
+
+// `(t).next_column(column, idx)` — the first tab stop past `column`, and
+// the list cursor to carry to the next call. A result of 0 means there
+// is no stop past `column` at all: expand turns a tab there into one
+// space and unexpand stops converting for the rest of the line.
+pub function (t: Tabs) next_column(column: u64, idx: i32): (u64, i32) {
+  if (t.size != 0 as u64) {
+    return (column + (t.size - column % t.size), idx);
+  }
+  var i: i32 = idx;
+  while (i < t.list.len()) {
+    if (column < t.list[i]) {
+      return (t.list[i], i);
+    }
+    i = i + 1;
+  }
+  if (t.extend != 0 as u64) {
+    return (column + (t.extend - column % t.extend), i);
+  }
+  if (t.increment != 0 as u64) {
+    var last: u64 = 0 as u64;
+    if (t.list.len() > 0) {
+      last = t.list[t.list.len() - 1];
+    }
+    return (column + (t.increment - (column - last) % t.increment), i);
+  }
+  return (0 as u64, i);
+}

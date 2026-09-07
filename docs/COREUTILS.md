@@ -193,6 +193,8 @@ coreutils/
   lib/base.fern     the encoder / decoder base64, base32 and basenc
                     share: one codec parameterised by alphabet, block
                     and padding, plus every decode rule and diagnostic
+  lib/tabs.fern     the `-t` tab-stop grammar and lookup expand and
+                    unexpand share
   lib/digest.fern   md5sum, sha1sum, sha224sum, sha256sum, sha384sum,
                     sha512sum and b2sum, which GNU also builds from one
                     source: the option surface, the file-name escaping
@@ -778,17 +780,14 @@ groups are the order of work. Each sub-issue names its group.
   `join` `comm` `uniq` `sort` `tr` `fold` `fmt` `pr` `ptx` `expand`
   `unexpand` `split` `csplit` `shuf` `od` `base32` `base64` `basenc` `cksum`
   `sum` `md5sum` `sha1sum` `sha224sum` `sha256sum` `sha384sum` `sha512sum`
-  `b2sum` `tee`. `cat`, `head`, `tail`, `wc` and `tac` are done. Needs a
+  `b2sum` `tee`. Done: `cat`, `tac`, `head`, `tail`, `wc`, `nl`, `cut`,
+  `paste`, `join`, `comm`, `uniq`, `tr`, `fold`, `expand`, `unexpand`,
+  `base32`, `base64`, `basenc` and the seven checksum utilities. Needs a
   buffered stdout writer in `std/io_buffered` (its own header already
   promises one) and a streaming stdin reader whose reads can FAIL: every one
   of these reaches a read error through a directory operand, and
   `Reader.read_chunk` answered None to EOF and to EISDIR alike until #8700
   gave it `Result[string, IoError]`. The hash
-  `b2sum` `tee`. `head`, `wc` and the seven checksum utilities are done. Needs a buffered stdout writer in
-  `std/io_buffered` (its own header already promises one) and a streaming
-  stdin reader whose reads can FAIL: every one of these reaches a read error
-  through a directory operand, and `Reader.read_chunk` answered None to EOF
-  and to EISDIR alike until #8700 gave it `Result[string, IoError]`. The hash
   utilities have their digests: `std/crypto` streams MD5, SHA-1,
   SHA-224/256/384/512 and BLAKE2b (`h = h.update(chunk)` per `read_chunk`
   piece), and `std/hash` has cksum's CRC-32 and both sum(1) checksums with
