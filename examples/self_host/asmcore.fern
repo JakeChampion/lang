@@ -1280,10 +1280,24 @@ pub function rt_src_read_all_stdin(t: string): string {
 // (#8700). Like rt_src_reader_close it classifies against an empty path — a read
 // carries none — which is why it belongs inside the fs bundle.
 //
-// The buffer is allocated at n and boxed at the SHORT length, so the block is
-// wider than the string thinks it is — what the hand-asm did.
+// A read that fills the buffer boxes it whole and hands it over. Anything else
+// binds `full`, the string that owns the WHOLE n-byte block, and lets the frame's
+// own reclaim give it back — there is no raw free intrinsic, and a fused string
+// over the block is the language's way of saying who owns it. That is what makes
+// the two non-full paths sound (#8402):
+//
+//   - a SHORT read is copied into an exact-size block. Boxing the oversized one
+//     at the short length hands the freelist a block bigger than the class it
+//     lands in, so a pipe (64 KiB a read against a 128 KiB request) recycled
+//     nothing and bumped a fresh chunk per iteration — 20 MB through the
+//     pass-through loop stayed at live_bytes=20,263,624 with every payload
+//     already freed.
+//   - an ERROR path returned Err with the block simply lost.
+//
+// EOF answers the .rodata empty literal rather than allocating a zero-length
+// block for it.
 pub function rt_src_reader_read_chunk(t: string): string {
-    return "function __fern_reader_read_chunk(fd: i32, n: i32): Result[string, IoError] { var p: i32 = __raw_alloc(n); var r: i32 = __syscall3(" + sysno(t, "read") + ", fd, p, n); if (r < 0) { return Err(__fern_io_error(0 - r, \"\")); } return Ok(__raw_string(p, r)); }";
+    return "function __fern_reader_read_chunk(fd: i32, n: i32): Result[string, IoError] { var p: i32 = __raw_alloc(n); var r: i32 = __syscall3(" + sysno(t, "read") + ", fd, p, n); if (r == n) { return Ok(__raw_string(p, n)); } var full: string = __raw_string(p, n); if (r < 0) { return Err(__fern_io_error(0 - r, \"\")); } if (r == 0) { return Ok(\"\"); } var q: i32 = __raw_alloc(r); __memcpy(q, p, r); return Ok(__raw_string(q, r)); }";
 }
 
 // rt_src_reader_close backs `r.close()` and `w.close()` → close(fd), Some on a
@@ -1315,8 +1329,14 @@ pub function rt_src_reader_close(t: string): string {
 //
 // The 256-byte cap is observable — a longer line comes back truncated, with the
 // remainder left on the stream — so it is preserved exactly.
+//
+// `full` owns the whole 256-byte block and the frame's reclaim gives it back, so
+// the line handed to the caller is an exact-size copy (#8402). Boxing the block
+// at the line length instead left 256 - len bytes stranded below the freelist
+// class the block landed in, and the EOF path returned None with the block simply
+// lost.
 pub function rt_src_read_line(t: string): string {
-    return "function __fern_read_line(fd: i32): Option[string] { var buf: i32 = __raw_alloc(256); var len: i32 = 0; var go: i32 = 1; while (go == 1) { if (len >= 256) { go = 0; } else { var r: i32 = __syscall3(" + sysno(t, "read") + ", fd, __raw_addr(buf, len), 1); if (r < 1) { go = 0; } else { var c: i32 = __raw_load8(buf, len); len = len + 1; if (c == 10) { go = 0; } } } } if (len == 0) { return None; } return Some(__raw_string(buf, len)); }";
+    return "function __fern_read_line(fd: i32): Option[string] { var buf: i32 = __raw_alloc(256); var len: i32 = 0; var go: i32 = 1; while (go == 1) { if (len >= 256) { go = 0; } else { var r: i32 = __syscall3(" + sysno(t, "read") + ", fd, __raw_addr(buf, len), 1); if (r < 1) { go = 0; } else { var c: i32 = __raw_load8(buf, len); len = len + 1; if (c == 10) { go = 0; } } } } var full: string = __raw_string(buf, 256); if (len == 0) { return None; } var q: i32 = __raw_alloc(len); __memcpy(q, buf, len); return Some(__raw_string(q, len)); }";
 }
 
 // The strerror table (#8265): glibc's text per errno and the errno's number on

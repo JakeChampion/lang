@@ -1,0 +1,1063 @@
+// tr.fern — GNU-compatible `tr`.
+//
+//   tr [-cCdst] SET1 [SET2]
+//
+// Bytes of stdin translated, deleted or squeezed on their way to
+// stdout. What each operand means is decided entirely by which of
+// -d and -s are present: two sets and no -d is a translation, one
+// set and -d is a deletion, one set and -s alone is a squeeze, and
+// -ds is a deletion by SET1 followed by a squeeze by SET2. That is
+// also why the operand-count diagnostics differ per combination.
+//
+// A SET is not a string of bytes but a lazily expanded sequence, and
+// three of its constructs decide the shape of the whole program:
+//
+//   - `[c*n]` repeats a byte n times, n octal when it starts with 0.
+//     `[c*]` repeats it until SET1 runs out, so SET2's length is not
+//     known until SET1's is; it may appear once, in SET2 only.
+//   - `[:class:]` expands in ascending byte order. When one appears
+//     in SET2 while translating it must be `upper` or `lower`, and
+//     the byte it is paired with in SET1 must itself come from a
+//     `upper`/`lower` class — otherwise the constructs are
+//     "misaligned". A paired class is a CASE CONVERSION rather than a
+//     positional mapping: the SET2 byte is discarded and each SET1
+//     byte is folded, which is why `[:upper:]`→`[:upper:]` is the
+//     identity and not a mapping onto 'A'.
+//   - `[=c=]` is an equivalence class; in the C locale it is the one
+//     byte, and it is refused in SET2 while translating.
+//
+// SET2 is extended to SET1's length by repeating its LAST element's
+// final byte, unless -t says to leave SET1 truncated instead. An
+// extension whose last element is a character class has no final byte
+// to repeat and is refused.
+//
+// -c replaces SET1 with its complement in ascending byte order. That
+// path never case-folds: the complement is paired with SET2
+// positionally, so `tr -c a '[:upper:]x'` maps byte 0 to 'A'.
+import "std/string";
+import "std/array";
+import "std/io_buffered";
+import "./lib/gnu";
+
+// Option ids, declared in GNU's order because the ambiguity list
+// prints candidates in it (`tr --=x`).
+function opt_complement(): i32 {
+  return 1;
+}
+
+function opt_delete(): i32 {
+  return 2;
+}
+
+function opt_squeeze(): i32 {
+  return 3;
+}
+
+function opt_truncate(): i32 {
+  return 4;
+}
+
+function help_text(): string {
+  var out: string = "";
+  out = out + "Usage: " + gnu.prog() + " [OPTION]... STRING1 [STRING2]\n";
+  out = out + "Translate, squeeze, and/or delete characters from standard input,\n";
+  out = out + "writing to standard output.  STRING1 and STRING2 specify arrays of\n";
+  out = out + "characters ARRAY1 and ARRAY2 that control the action.\n";
+  out = out + "\n";
+  out = out + "  -c, -C, --complement    use the complement of ARRAY1\n";
+  out = out + "  -d, --delete            delete characters in ARRAY1, do not translate\n";
+  out = out + "  -s, --squeeze-repeats   replace each sequence of a repeated character\n";
+  out = out + "                            that is listed in the last specified ARRAY,\n";
+  out = out + "                            with a single occurrence of that character\n";
+  out = out + "  -t, --truncate-set1     first truncate ARRAY1 to length of ARRAY2\n";
+  out = out + "      --help        display this help and exit\n";
+  out = out + "      --version     output version information and exit\n";
+  out = out + "\n";
+  out = out + "ARRAYs are specified as strings of characters.  Most represent themselves.\n";
+  out = out + "Interpreted sequences are:\n";
+  out = out + "\n";
+  out = out + "  \\NNN            character with octal value NNN (1 to 3 octal digits)\n";
+  out = out + "  \\\\              backslash\n";
+  out = out + "  \\a              audible BEL\n";
+  out = out + "  \\b              backspace\n";
+  out = out + "  \\f              form feed\n";
+  out = out + "  \\n              new line\n";
+  out = out + "  \\r              return\n";
+  out = out + "  \\t              horizontal tab\n";
+  out = out + "  \\v              vertical tab\n";
+  out = out + "  CHAR1-CHAR2     all characters from CHAR1 to CHAR2 in ascending order\n";
+  out = out + "  [CHAR*]         in ARRAY2, copies of CHAR until length of ARRAY1\n";
+  out = out + "  [CHAR*REPEAT]   REPEAT copies of CHAR, REPEAT octal if starting with 0\n";
+  out = out + "  [:alnum:]       all letters and digits\n";
+  out = out + "  [:alpha:]       all letters\n";
+  out = out + "  [:blank:]       all horizontal whitespace\n";
+  out = out + "  [:cntrl:]       all control characters\n";
+  out = out + "  [:digit:]       all digits\n";
+  out = out + "  [:graph:]       all printable characters, not including space\n";
+  out = out + "  [:lower:]       all lower case letters\n";
+  out = out + "  [:print:]       all printable characters, including space\n";
+  out = out + "  [:punct:]       all punctuation characters\n";
+  out = out + "  [:space:]       all horizontal or vertical whitespace\n";
+  out = out + "  [:upper:]       all upper case letters\n";
+  out = out + "  [:xdigit:]      all hexadecimal digits\n";
+  out = out + "  [=CHAR=]        all characters which are equivalent to CHAR\n";
+  out = out + "\n";
+  out = out + "Translation occurs if -d is not given and both STRING1 and STRING2 appear.\n";
+  out = out + "-t is only significant when translating.  ARRAY2 is extended to length of\n";
+  out = out + "ARRAY1 by repeating its last character as necessary.  Excess characters\n";
+  out = out + "of ARRAY2 are ignored.  Character classes expand in unspecified order;\n";
+  out = out + "while translating, [:lower:] and [:upper:] may be used in pairs to\n";
+  out = out + "specify case conversion.  Squeezing occurs after translation or deletion.\n";
+  return out;
+}
+
+// ---- bytes ------------------------------------------------------------------
+function chr(b: i32): string {
+  return string_from_bytes_unchecked([b as u8]);
+}
+
+function is_octal(c: i32): boolean {
+  return c >= 48 && c <= 55;
+}
+
+// `printable_char(c)` — gnulib's make_printable_char: the byte itself
+// when ISPRINT says so, three octal digits otherwise. Used for the
+// endpoints of a reversed range.
+function printable_char(c: i32): string {
+  if (c >= 32 && c < 127) {
+    return chr(c);
+  }
+  return "\\" + octal3(c);
+}
+
+function octal3(c: i32): string {
+  return chr(48 + c / 64 % 8) + chr(48 + c / 8 % 8) + chr(48 + c % 8);
+}
+
+// `printable_str(s)` — gnulib's make_printable_str: the same, except
+// that the seven bytes with a named C escape take it.
+function printable_str(s: string): string {
+  var out: string = "";
+  var i: i32 = 0;
+  while (i < s.len()) {
+    var c: i32 = s[i] as i32;
+    if (c == 7) {
+      out = out + "\\a";
+    } else if (c == 8) {
+      out = out + "\\b";
+    } else if (c == 12) {
+      out = out + "\\f";
+    } else if (c == 10) {
+      out = out + "\\n";
+    } else if (c == 13) {
+      out = out + "\\r";
+    } else if (c == 9) {
+      out = out + "\\t";
+    } else if (c == 11) {
+      out = out + "\\v";
+    } else if (c >= 32 && c < 127) {
+      out = out + chr(c);
+    } else {
+      out = out + "\\" + octal3(c);
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+// ---- character classes ------------------------------------------------------
+// Ids in the order `[:name:]` is looked up. 6 and 10 are `lower` and
+// `upper`, the two the translation path treats specially.
+function class_id(name: string): i32 {
+  if (name == "alnum") {
+    return 0;
+  }
+  if (name == "alpha") {
+    return 1;
+  }
+  if (name == "blank") {
+    return 2;
+  }
+  if (name == "cntrl") {
+    return 3;
+  }
+  if (name == "digit") {
+    return 4;
+  }
+  if (name == "graph") {
+    return 5;
+  }
+  if (name == "lower") {
+    return 6;
+  }
+  if (name == "print") {
+    return 7;
+  }
+  if (name == "punct") {
+    return 8;
+  }
+  if (name == "space") {
+    return 9;
+  }
+  if (name == "upper") {
+    return 10;
+  }
+  if (name == "xdigit") {
+    return 11;
+  }
+  return 0 - 1;
+}
+
+// C-locale membership: the classes are fixed by the locale, and this
+// corpus is asserted in C.
+function in_class(cls: i32, c: i32): boolean {
+  var lower: boolean = c >= 97 && c <= 122;
+  var upper: boolean = c >= 65 && c <= 90;
+  var digit: boolean = c >= 48 && c <= 57;
+  var alpha: boolean = lower || upper;
+  var alnum: boolean = alpha || digit;
+  var graph: boolean = c >= 33 && c <= 126;
+  if (cls == 0) {
+    return alnum;
+  }
+  if (cls == 1) {
+    return alpha;
+  }
+  if (cls == 2) {
+    return c == 32 || c == 9;
+  }
+  if (cls == 3) {
+    return c < 32 || c == 127;
+  }
+  if (cls == 4) {
+    return digit;
+  }
+  if (cls == 5) {
+    return graph;
+  }
+  if (cls == 6) {
+    return lower;
+  }
+  if (cls == 7) {
+    return c >= 32 && c <= 126;
+  }
+  if (cls == 8) {
+    return graph && !alnum;
+  }
+  if (cls == 9) {
+    return c == 32 || c >= 9 && c <= 13;
+  }
+  if (cls == 10) {
+    return upper;
+  }
+  return digit || c >= 65 && c <= 70 || c >= 97 && c <= 102;
+}
+
+function class_first(cls: i32): i32 {
+  return class_next(cls, 0 - 1);
+}
+
+function class_next(cls: i32, after: i32): i32 {
+  var i: i32 = after + 1;
+  while (i < 256) {
+    if (in_class(cls, i)) {
+      return i;
+    }
+    i = i + 1;
+  }
+  return 0 - 1;
+}
+
+function class_size(cls: i32): u64 {
+  var n: u64 = 0 as u64;
+  var i: i32 = 0;
+  while (i < 256) {
+    if (in_class(cls, i)) {
+      n = n + 1 as u64;
+    }
+    i = i + 1;
+  }
+  return n;
+}
+
+// ---- the unquoted operand ---------------------------------------------------
+// `ES` — one operand with its escapes applied: the bytes, and for each
+// one whether a backslash produced it. The flag is what keeps `\[`,
+// `\-` and `\*` from opening a construct that the same byte unescaped
+// would.
+struct ES { s: string, esc: u8[] }
+
+function es_is(e: ES, i: i32, b: i32): boolean {
+  return i < e.s.len() && e.s[i] as i32 == b && e.esc[i] as i32 == 0;
+}
+
+// `unquote(raw)` — glibc-style escape processing, with GNU's two
+// warnings: a trailing backslash stands for itself, and a three-digit
+// octal escape over \377 keeps only two digits and leaves the third as
+// a byte of its own.
+function unquote(raw: string): ES {
+  var bs: u8[] = [];
+  var fl: u8[] = [];
+  var n: i32 = raw.len();
+  var i: i32 = 0;
+  while (i < n) {
+    var c: i32 = raw[i] as i32;
+    if (c != 92) {
+      bs = bs.append(c as u8);
+      fl = fl.append(0 as u8);
+      i = i + 1;
+      continue;
+    }
+    if (i + 1 >= n) {
+      gnu.error("warning: an unescaped backslash at end of string is not portable");
+      bs = bs.append(92 as u8);
+      fl = fl.append(0 as u8);
+      i = i + 1;
+      continue;
+    }
+    var d: i32 = raw[i + 1] as i32;
+    var val: i32 = d;
+    var adv: i32 = 2;
+    if (d == 92) {
+      val = 92;
+    } else if (d == 97) {
+      val = 7;
+    } else if (d == 98) {
+      val = 8;
+    } else if (d == 102) {
+      val = 12;
+    } else if (d == 110) {
+      val = 10;
+    } else if (d == 114) {
+      val = 13;
+    } else if (d == 116) {
+      val = 9;
+    } else if (d == 118) {
+      val = 11;
+    } else if (is_octal(d)) {
+      val = d - 48;
+      if (i + 2 < n && is_octal(raw[i + 2] as i32)) {
+        val = 8 * val + (raw[i + 2] as i32 - 48);
+        adv = 3;
+        if (i + 3 < n && is_octal(raw[i + 3] as i32)) {
+          var wide: i32 = 8 * val + (raw[i + 3] as i32 - 48);
+          if (wide < 256) {
+            val = wide;
+            adv = 4;
+          } else {
+            var d1: string = chr(raw[i + 1] as i32);
+            var d2: string = chr(raw[i + 2] as i32);
+            var d3: string = chr(raw[i + 3] as i32);
+            gnu.error("warning: the ambiguous octal escape \\" + d1 + d2 + d3 + " is being\n\tinterpreted as the 2-byte sequence \\0" + d1 + d2 + ", " + d3);
+          }
+        }
+      }
+    }
+    bs = bs.append(val as u8);
+    fl = fl.append(1 as u8);
+    i = i + adv;
+  }
+  return ES { s: string_from_bytes_unchecked(bs), esc: fl };
+}
+
+// ---- the spec list ----------------------------------------------------------
+// `Item` — one construct. kind 0 a byte, 1 a range a..b, 2 the class
+// `a`, 3 an equivalence class (one byte in the C locale), 4 `a`
+// repeated `n` times, n == 0 meaning "until SET1 runs out".
+struct Item { kind: i32, a: i32, b: i32, n: u64 }
+
+function die(msg: string): void {
+  gnu.error(msg);
+  exit(1);
+}
+
+// The bracketed constructs are recognised only when the whole shape is
+// present: `[:up` and `[x*1` are five and four ordinary bytes. The one
+// exception is a repeat whose count is malformed, which is a fault
+// rather than a fall-through, because `*` and `]` already fixed the
+// shape.
+function build_spec(e: ES): Item[] {
+  var items: Item[] = [];
+  var n: i32 = e.s.len();
+  var i: i32 = 0;
+  while (i < n) {
+    if (es_is(e, i, 91)) {
+      var handled: boolean = false;
+      if (es_is(e, i + 1, 58) || es_is(e, i + 1, 61)) {
+        var delim: i32 = e.s[i + 1] as i32;
+        var j: i32 = i + 2;
+        var close: i32 = 0 - 1;
+        while (j + 1 < n) {
+          if (e.s[j] as i32 == delim && e.s[j + 1] as i32 == 93 && e.esc[j] as i32 == 0 && e.esc[j + 1] as i32 == 0) {
+            close = j;
+            break;
+          }
+          j = j + 1;
+        }
+        if (close >= 0) {
+          var body: string = slice_unchecked(e.s, i + 2, close) + "";
+          if (delim == 58) {
+            if (body.len() == 0) {
+              die("missing character class name " + gnu.quote("[::]"));
+            }
+            var cls: i32 = class_id(body);
+            if (cls < 0) {
+              die("invalid character class " + gnu.quote(printable_str(body)));
+            }
+            items = items.append(Item { kind: 2, a: cls, b: 0, n: 0 as u64 });
+          } else {
+            if (body.len() == 0) {
+              die("missing equivalence class character " + gnu.quote("[==]"));
+            }
+            if (body.len() != 1) {
+              die(printable_str(body) + ": equivalence class operand must be a single character");
+            }
+            items = items.append(Item { kind: 3, a: body[0] as i32, b: 0, n: 0 as u64 });
+          }
+          i = close + 2;
+          handled = true;
+        }
+      }
+      if (!handled && i + 2 < n && es_is(e, i + 2, 42)) {
+        var k: i32 = i + 3;
+        var end: i32 = 0 - 1;
+        while (k < n && e.esc[k] as i32 == 0) {
+          if (e.s[k] as i32 == 93) {
+            end = k;
+            break;
+          }
+          k = k + 1;
+        }
+        if (end >= 0) {
+          var digits: string = slice_unchecked(e.s, i + 3, end) + "";
+          items = items.append(Item { kind: 4, a: e.s[i + 1] as i32, b: 0, n: repeat_count(digits) });
+          i = end + 1;
+          handled = true;
+        }
+      }
+      if (handled) {
+        continue;
+      }
+    }
+    if (es_is(e, i + 1, 45) && i + 2 < n) {
+      var lo: i32 = e.s[i] as i32;
+      var hi: i32 = e.s[i + 2] as i32;
+      if (hi < lo) {
+        die("range-endpoints of '" + printable_char(lo) + "-" + printable_char(hi) + "' are in reverse collating sequence order");
+      }
+      items = items.append(Item { kind: 1, a: lo, b: hi, n: 0 as u64 });
+      i = i + 3;
+      continue;
+    }
+    items = items.append(Item { kind: 0, a: e.s[i] as i32, b: 0, n: 0 as u64 });
+    i = i + 1;
+  }
+  return items;
+}
+
+// The count in `[c*n]`: strtoumax's grammar, base 8 when it starts
+// with a zero, and everything up to the `]` has to be consumed.
+// UINTMAX_MAX itself is out of range, which is what refuses a `-1`
+// that wrapped.
+function repeat_count(digits: string): u64 {
+  if (digits.len() == 0) {
+    return 0 as u64;
+  }
+  var i: i32 = 0;
+  while (i < digits.len() && (digits[i] as i32 == 32 || digits[i] as i32 >= 9 && digits[i] as i32 <= 13)) {
+    i = i + 1;
+  }
+  var neg: boolean = false;
+  if (i < digits.len() && (digits[i] as i32 == 43 || digits[i] as i32 == 45)) {
+    neg = digits[i] as i32 == 45;
+    i = i + 1;
+  }
+  var base: u64 = 10 as u64;
+  if (i < digits.len() && digits[i] as i32 == 48) {
+    base = 8 as u64;
+  }
+  var start: i32 = i;
+  var v: u64 = 0 as u64;
+  var over: boolean = false;
+  var limit: u64 = 18446744073709551615 as u64;
+  while (i < digits.len()) {
+    var c: i32 = digits[i] as i32;
+    if (c < 48 || c > 57) {
+      break;
+    }
+    var d: u64 = (c - 48) as u64;
+    if (d >= base) {
+      break;
+    }
+    if (v > (limit - d) / base) {
+      over = true;
+      v = 0 as u64;
+    } else {
+      v = v * base + d;
+    }
+    i = i + 1;
+  }
+  if (i == start || i != digits.len() || over) {
+    die("invalid repeat count " + gnu.quote(printable_str(digits)) + " in [c*n] construct");
+  }
+  if (neg) {
+    v = 0 as u64 - v;
+  }
+  // REPEAT_COUNT_MAXIMUM is UINTMAX_MAX - 1.
+  if (v >= limit) {
+    die("invalid repeat count " + gnu.quote(printable_str(digits)) + " in [c*n] construct");
+  }
+  return v;
+}
+
+// ---- expansion --------------------------------------------------------------
+// `Cur` — a cursor over a spec list. The expansion is lazy because a
+// `[c*n]` count is a uintmax: `[x*4000000000]` in SET2 costs nothing
+// when SET1 is three bytes long.
+struct Cur { i: i32, st: i32, fresh: boolean, k: u64 }
+
+function cur_new(): Cur {
+  return Cur { i: 0, st: 0, fresh: true, k: 0 as u64 };
+}
+
+function cur_step(i: i32): Cur {
+  return Cur { i: i + 1, st: 0, fresh: true, k: 0 as u64 };
+}
+
+// `spec_next(items, c)` — the next byte, -1 past the end, with the
+// upper/lower marker (0 none, 1 lower, 2 upper) the translation loop
+// pairs against.
+function spec_next(items: Item[], c: Cur): (i32, i32, Cur) {
+  var cur: Cur = c;
+  while (cur.i < items.len()) {
+    var it: Item = items[cur.i];
+    if (it.kind == 0 || it.kind == 3) {
+      return (it.a, 0, cur_step(cur.i));
+    }
+    if (it.kind == 1) {
+      var v: i32 = it.a;
+      if (!cur.fresh) {
+        v = cur.st + 1;
+      }
+      if (v >= it.b) {
+        return (v, 0, cur_step(cur.i));
+      }
+      return (v, 0, Cur { i: cur.i, st: v, fresh: false, k: 0 as u64 });
+    }
+    if (it.kind == 2) {
+      var m: i32 = class_first(it.a);
+      if (!cur.fresh) {
+        m = class_next(it.a, cur.st);
+      }
+      var ul: i32 = 0;
+      if (it.a == 6) {
+        ul = 1;
+      }
+      if (it.a == 10) {
+        ul = 2;
+      }
+      if (class_next(it.a, m) < 0) {
+        return (m, ul, cur_step(cur.i));
+      }
+      return (m, ul, Cur { i: cur.i, st: m, fresh: false, k: 0 as u64 });
+    }
+    var done: u64 = cur.k;
+    if (cur.fresh) {
+      done = 0 as u64;
+    }
+    if (done >= it.n) {
+      cur = cur_step(cur.i);
+      continue;
+    }
+    return (it.a, 0, Cur { i: cur.i, st: 0, fresh: false, k: done + 1 as u64 });
+  }
+  return (0 - 1, 0, cur);
+}
+
+function spec_len(items: Item[]): u64 {
+  var total: u64 = 0 as u64;
+  var i: i32 = 0;
+  while (i < items.len()) {
+    var it: Item = items[i];
+    if (it.kind == 0 || it.kind == 3) {
+      total = total + 1 as u64;
+    } else if (it.kind == 1) {
+      total = total + (it.b - it.a + 1) as u64;
+    } else if (it.kind == 2) {
+      total = total + class_size(it.a);
+    } else {
+      total = total + it.n;
+    }
+    i = i + 1;
+  }
+  return total;
+}
+
+function count_indefinite(items: Item[]): i32 {
+  var n: i32 = 0;
+  var i: i32 = 0;
+  while (i < items.len()) {
+    if (items[i].kind == 4 && items[i].n == 0 as u64) {
+      n = n + 1;
+    }
+    i = i + 1;
+  }
+  return n;
+}
+
+function has_equiv(items: Item[]): boolean {
+  var i: i32 = 0;
+  while (i < items.len()) {
+    if (items[i].kind == 3) {
+      return true;
+    }
+    i = i + 1;
+  }
+  return false;
+}
+
+// A class other than `upper` or `lower`: the ones SET2 may not carry
+// while translating.
+function has_restricted_class(items: Item[]): boolean {
+  var i: i32 = 0;
+  while (i < items.len()) {
+    if (items[i].kind == 2 && items[i].a != 6 && items[i].a != 10) {
+      return true;
+    }
+    i = i + 1;
+  }
+  return false;
+}
+
+// `members(items)` — the 256-entry membership of a fully expanded
+// spec, and with `flip` its complement.
+function members(items: Item[], flip: boolean): u8[] {
+  var set: u8[] = __alloc_u8(256);
+  var i: i32 = 0;
+  while (i < 256) {
+    set = set.with(i, 0 as u8);
+    i = i + 1;
+  }
+  var cur: Cur = cur_new();
+  while (true) {
+    var r: (i32, i32, Cur) = spec_next(items, cur);
+    cur = r.2;
+    if (r.0 < 0) {
+      break;
+    }
+    set = set.with(r.0, 1 as u8);
+  }
+  if (flip) {
+    i = 0;
+    while (i < 256) {
+      var v: i32 = 1;
+      if (set[i] as i32 == 1) {
+        v = 0;
+      }
+      set = set.with(i, v as u8);
+      i = i + 1;
+    }
+  }
+  return set;
+}
+
+function member_count(set: u8[]): u64 {
+  var n: u64 = 0 as u64;
+  var i: i32 = 0;
+  while (i < 256) {
+    if (set[i] as i32 != 0) {
+      n = n + 1 as u64;
+    }
+    i = i + 1;
+  }
+  return n;
+}
+
+// ---- the translation table --------------------------------------------------
+function identity_table(): u8[] {
+  var t: u8[] = __alloc_u8(256);
+  var i: i32 = 0;
+  while (i < 256) {
+    t = t.with(i, i as u8);
+    i = i + 1;
+  }
+  return t;
+}
+
+function to_upper(c: i32): i32 {
+  if (c >= 97 && c <= 122) {
+    return c - 32;
+  }
+  return c;
+}
+
+function to_lower(c: i32): i32 {
+  if (c >= 65 && c <= 90) {
+    return c + 32;
+  }
+  return c;
+}
+
+// The paired walk over SET1 and SET2. A byte from a `[:upper:]` or
+// `[:lower:]` in SET2 is not a target but an instruction to fold, and
+// a SET2 class paired with a SET1 byte that came from neither is the
+// misalignment GNU refuses. The walk runs one step past the end of the
+// shorter set so that a trailing class in SET2 is still met.
+function build_xlate(s1: Item[], s2: Item[], truncate: boolean): u8[] {
+  var t: u8[] = identity_table();
+  var c1: Cur = cur_new();
+  var c2: Cur = cur_new();
+  while (true) {
+    var r1: (i32, i32, Cur) = spec_next(s1, c1);
+    c1 = r1.2;
+    var r2: (i32, i32, Cur) = spec_next(s2, c2);
+    c2 = r2.2;
+    if (r1.1 == 0 && r2.1 != 0) {
+      die("misaligned [:upper:] and/or [:lower:] construct");
+    }
+    var to: i32 = r2.0;
+    if (to < 0 && r1.0 >= 0 && !truncate) {
+      to = extend_byte(s2);
+    }
+    if (r1.0 < 0 || to < 0) {
+      break;
+    }
+    if (r2.1 == 1) {
+      t = t.with(r1.0, to_lower(r1.0) as u8);
+    } else if (r2.1 == 2) {
+      t = t.with(r1.0, to_upper(r1.0) as u8);
+    } else {
+      t = t.with(r1.0, to as u8);
+    }
+  }
+  return t;
+}
+
+// With -c the domain is the complement of SET1 in ascending byte
+// order, paired positionally with SET2 and sticking at its last byte
+// once it runs out. No case folding: the complement has no classes to
+// align with.
+function build_xlate_complement(s1: Item[], s2: Item[], truncate: boolean): u8[] {
+  var t: u8[] = identity_table();
+  var in1: u8[] = members(s1, false);
+  var cur: Cur = cur_new();
+  var last: i32 = 0 - 1;
+  var i: i32 = 0;
+  while (i < 256) {
+    if (in1[i] as i32 == 0) {
+      var r: (i32, i32, Cur) = spec_next(s2, cur);
+      cur = r.2;
+      if (r.0 >= 0) {
+        last = r.0;
+      } else {
+        if (truncate) {
+          return t;
+        }
+        last = extend_byte(s2);
+      }
+      t = t.with(i, last as u8);
+    }
+    i = i + 1;
+  }
+  return t;
+}
+
+// ---- the streams ------------------------------------------------------------
+function read_size(): i32 {
+  return 65536;
+}
+
+function xf_translate(chunk: string, t: u8[]): string {
+  var n: i32 = chunk.len();
+  var buf: u8[] = __alloc_u8(n);
+  var i: i32 = 0;
+  while (i < n) {
+    buf = buf.with(i, t[chunk[i] as i32]);
+    i = i + 1;
+  }
+  return string_from_bytes_unchecked(buf);
+}
+
+function xf_delete(chunk: string, del: u8[]): string {
+  var n: i32 = chunk.len();
+  var buf: u8[] = __alloc_u8(n);
+  var j: i32 = 0;
+  var i: i32 = 0;
+  while (i < n) {
+    var c: i32 = chunk[i] as i32;
+    if (del[c] as i32 == 0) {
+      buf = buf.with(j, c as u8);
+      j = j + 1;
+    }
+    i = i + 1;
+  }
+  return slice_unchecked(string_from_bytes_unchecked(buf), 0, j) + "";
+}
+
+// `last` is the previously emitted byte, carried across chunks so a run
+// that straddles a read is still one byte.
+function xf_squeeze(chunk: string, sq: u8[], last: i32): (string, i32) {
+  var n: i32 = chunk.len();
+  var buf: u8[] = __alloc_u8(n);
+  var j: i32 = 0;
+  var prev: i32 = last;
+  var i: i32 = 0;
+  while (i < n) {
+    var c: i32 = chunk[i] as i32;
+    if (c != prev || sq[c] as i32 == 0) {
+      buf = buf.with(j, c as u8);
+      j = j + 1;
+    }
+    prev = c;
+    i = i + 1;
+  }
+  return (slice_unchecked(string_from_bytes_unchecked(buf), 0, j) + "", prev);
+}
+
+function xf_translate_squeeze(chunk: string, t: u8[], sq: u8[], last: i32): (string, i32) {
+  var n: i32 = chunk.len();
+  var buf: u8[] = __alloc_u8(n);
+  var j: i32 = 0;
+  var prev: i32 = last;
+  var i: i32 = 0;
+  while (i < n) {
+    var c: i32 = t[chunk[i] as i32] as i32;
+    if (c != prev || sq[c] as i32 == 0) {
+      buf = buf.with(j, c as u8);
+      j = j + 1;
+    }
+    prev = c;
+    i = i + 1;
+  }
+  return (slice_unchecked(string_from_bytes_unchecked(buf), 0, j) + "", prev);
+}
+
+function xf_delete_squeeze(chunk: string, del: u8[], sq: u8[], last: i32): (string, i32) {
+  var n: i32 = chunk.len();
+  var buf: u8[] = __alloc_u8(n);
+  var j: i32 = 0;
+  var prev: i32 = last;
+  var i: i32 = 0;
+  while (i < n) {
+    var c: i32 = chunk[i] as i32;
+    if (del[c] as i32 == 0) {
+      if (c != prev || sq[c] as i32 == 0) {
+        buf = buf.with(j, c as u8);
+        j = j + 1;
+      }
+      prev = c;
+    }
+    i = i + 1;
+  }
+  return (slice_unchecked(string_from_bytes_unchecked(buf), 0, j) + "", prev);
+}
+
+// ---- the operand-count diagnostics ------------------------------------------
+// Each combination of -d and -s takes a different number of operands
+// and words the fault differently; the extra line is GNU's and is
+// printed before the `Try …` line.
+function check_operands(ops: string[], deleting: boolean, squeezing: boolean): void {
+  var n: i32 = ops.len();
+  if (n == 0) {
+    gnu.die_usage("missing operand", 1);
+  }
+  if (deleting && !squeezing) {
+    if (n > 1) {
+      gnu.error("extra operand " + gnu.quote(ops[1]));
+      if (n == 2) {
+        eprint("Only one string may be given when deleting without squeezing repeats.");
+      }
+      gnu.try_help(1);
+    }
+    return;
+  }
+  if (n == 1 && !squeezing) {
+    gnu.error("missing operand after " + gnu.quote(ops[0]));
+    eprint("Two strings must be given when translating.");
+    gnu.try_help(1);
+  }
+  if (n == 1 && deleting) {
+    gnu.error("missing operand after " + gnu.quote(ops[0]));
+    eprint("Two strings must be given when both deleting and squeezing repeats.");
+    gnu.try_help(1);
+  }
+  if (n > 2) {
+    gnu.die_usage("extra operand " + gnu.quote(ops[2]), 1);
+  }
+}
+
+// `resolve_indefinite(s2, len1, len2)` — the one `[c*]` in SET2 gets
+// its count here, because that is the first point at which SET1's
+// length is known.
+function resolve_indefinite(s2: Item[], len1: u64, len2: u64): Item[] {
+  var out: Item[] = s2;
+  var fill: u64 = 0 as u64;
+  if (len1 > len2) {
+    fill = len1 - len2;
+  }
+  var i: i32 = 0;
+  while (i < out.len()) {
+    var it: Item = out[i];
+    if (it.kind == 4 && it.n == 0 as u64) {
+      out = out.with(i, Item { kind: 4, a: it.a, b: it.b, n: fill });
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+// `fill_byte(items)` — the byte an exhausted SET2 goes on repeating:
+// -2 when SET2 is empty and -1 when its last element is a character
+// class, the two shapes with nothing to repeat.
+function fill_byte(items: Item[]): i32 {
+  if (items.len() == 0) {
+    return 0 - 2;
+  }
+  var last: Item = items[items.len() - 1];
+  if (last.kind == 2) {
+    return 0 - 1;
+  }
+  if (last.kind == 1) {
+    return last.b;
+  }
+  return last.a;
+}
+
+// The extension is reached only when SET2 actually runs out, which is
+// what puts the misalignment ahead of it: `tr [:alpha:] [:upper:]` is
+// refused for the class pairing at the FIRST byte, never getting as far
+// as the class tail that `tr [:lower:]0 [:upper:]` is refused for.
+function extend_byte(s2: Item[]): i32 {
+  var fb: i32 = fill_byte(s2);
+  if (fb == 0 - 2) {
+    die("when not truncating set1, string2 must be non-empty");
+  }
+  if (fb == 0 - 1) {
+    die("when translating with string1 longer than string2,\nthe latter string must not end with a character class");
+  }
+  return fb;
+}
+
+function main(): i32 {
+  var argv: string[] = args();
+  var opts: gnu.Opt[] = [];
+  opts = opts.append(gnu.flag("c", "complement", opt_complement()));
+  opts = opts.append(gnu.flag("C", "", opt_complement()));
+  opts = opts.append(gnu.flag("d", "delete", opt_delete()));
+  opts = opts.append(gnu.flag("s", "squeeze-repeats", opt_squeeze()));
+  opts = opts.append(gnu.flag("t", "truncate-set1", opt_truncate()));
+
+  // tr's optstring starts with `+`: the first operand ends the option
+  // scan, so `tr a b -d` is three operands and not two with a flag.
+  var g: gnu.Getopt = gnu.getopt_new(argv, opts, "tr", help_text(), 1).in_order();
+  var complement: boolean = false;
+  var deleting: boolean = false;
+  var squeezing: boolean = false;
+  var truncate: boolean = false;
+  while (true) {
+    var r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    g = r.1;
+    match (r.0) {
+      Some(m) => {
+        if (m.id == opt_complement()) {
+          complement = true;
+        } else if (m.id == opt_delete()) {
+          deleting = true;
+        } else if (m.id == opt_squeeze()) {
+          squeezing = true;
+        } else if (m.id == opt_truncate()) {
+          truncate = true;
+        }
+      },
+      None => {
+        break;
+      }
+    }
+  }
+
+  var ops: string[] = g.operands();
+  check_operands(ops, deleting, squeezing);
+  var translating: boolean = ops.len() == 2 && !deleting;
+
+  var s1: Item[] = build_spec(unquote(ops[0]));
+  var s2: Item[] = [];
+  if (ops.len() == 2) {
+    s2 = build_spec(unquote(ops[1]));
+  }
+
+  if (count_indefinite(s1) > 0) {
+    die("the [c*] repeat construct may not appear in string1");
+  }
+  if (ops.len() == 2 && count_indefinite(s2) > 1) {
+    die("only one [c*] repeat construct may appear in string2");
+  }
+
+  var xlate: u8[] = [];
+  var del: u8[] = [];
+  var sq: u8[] = [];
+  if (translating) {
+    if (has_equiv(s2)) {
+      die("[=c=] expressions may not appear in string2 when translating");
+    }
+    if (has_restricted_class(s2)) {
+      die("when translating, the only character classes that may appear in\nstring2 are 'upper' and 'lower'");
+    }
+    var len1: u64 = spec_len(s1);
+    if (complement) {
+      len1 = 256 as u64 - member_count(members(s1, false));
+    }
+    s2 = resolve_indefinite(s2, len1, spec_len(s2));
+    if (complement) {
+      xlate = build_xlate_complement(s1, s2, truncate);
+    } else {
+      xlate = build_xlate(s1, s2, truncate);
+    }
+  }
+  if (deleting) {
+    del = members(s1, complement);
+  }
+  if (squeezing) {
+    if (ops.len() == 2) {
+      sq = members(s2, false);
+    } else {
+      sq = members(s1, complement);
+    }
+  }
+
+  var o: io_buffered.BufWriter = gnu.out_new();
+  var r: Reader = stdin();
+  var last: i32 = 0 - 1;
+  while (true) {
+    match (r.read_chunk(read_size())) {
+      Ok(chunk) => {
+        if (chunk.len() == 0) {
+          break;
+        }
+        if (translating && squeezing) {
+          var t2: (string, i32) = xf_translate_squeeze(chunk, xlate, sq, last);
+          last = t2.1;
+          o = gnu.put(o, t2.0);
+        } else if (translating) {
+          o = gnu.put(o, xf_translate(chunk, xlate));
+        } else if (deleting && squeezing) {
+          var d2: (string, i32) = xf_delete_squeeze(chunk, del, sq, last);
+          last = d2.1;
+          o = gnu.put(o, d2.0);
+        } else if (deleting) {
+          o = gnu.put(o, xf_delete(chunk, del));
+        } else {
+          var q2: (string, i32) = xf_squeeze(chunk, sq, last);
+          last = q2.1;
+          o = gnu.put(o, q2.0);
+        }
+      },
+      Err(e) => {
+        o = gnu.flush(o);
+        gnu.error("read error: " + gnu.io_error_text(e));
+        exit(1);
+      }
+    }
+  }
+  gnu.finish(o);
+  return 0;
+}

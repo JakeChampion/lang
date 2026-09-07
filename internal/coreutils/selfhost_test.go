@@ -36,7 +36,10 @@ import (
 func corpusByUtil() map[string]func(*testing.T) []invocation {
 	return map[string]func(*testing.T) []invocation{
 		"[":        bracketCases,
+		"base32":   base32Cases,
+		"base64":   base64Cases,
 		"basename": basenameCases,
+		"basenc":   basencCases,
 		"cat":      catCases,
 		"cut":      cutCases,
 		"dirname":  dirnameCases,
@@ -48,6 +51,8 @@ func corpusByUtil() map[string]func(*testing.T) []invocation {
 		"fold":     foldCases,
 		"head":     headCases,
 		"hostid":   hostidCases,
+		"join":     joinCases,
+		"nl":       nlCases,
 		"numfmt":   numfmtCases,
 		"paste":    pasteCases,
 		"printf":   printfCases,
@@ -56,6 +61,7 @@ func corpusByUtil() map[string]func(*testing.T) []invocation {
 		"tail":     tailCases,
 		"test":     testCases,
 		"true":     trueFalseCases,
+		"tr":       trCases,
 		"tsort":    tsortCases,
 		"unexpand": unexpandCases,
 		"wc":       wcCases,

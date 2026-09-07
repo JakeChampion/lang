@@ -170,6 +170,9 @@ coreutils/
   lib/ld.fern       C's `long double` as the TARGET has it, for the
                     utilities that convert and compute in one
                     (printf, numfmt, seq, sleep)
+  lib/base.fern     the encoder / decoder base64, base32 and basenc
+                    share: one codec parameterised by alphabet, block
+                    and padding, plus every decode rule and diagnostic
   lib/tabs.fern     the `-t` tab-stop grammar and lookup expand and
                     unexpand share
   lib/resolv.fern   glibc's IPv4 name lookup — /etc/hosts, the
@@ -427,9 +430,32 @@ as a source with no module does, so a name in neither file nor DNS prints
 `00000000` where nss-myhostname would answer 127.0.0.2), and a nameserver
 that black-holes the connection holds `hostid` for the kernel's connect
 timeout where glibc gives up after resolv.conf's `timeout` × `attempts`.
+The search loop itself is `__res_context_search`'s, and the shape that
+matters is that **the as-is query is not one candidate among the others**
+— reading it as one gets two things wrong, and both were got wrong once.
+It sits outside the loop's stop rules, so however it fails the search
+list is still tried; and its status is saved and reported in preference
+to anything the suffixes produce, so an as-is NXDOMAIN reports NOTFOUND
+even when a later suffix hit a SERVFAIL. When ndots is satisfied it LEADS
+and there is no retry afterwards; otherwise it TRAILS and is the retry,
+which runs whether the suffix loop finished or was cut short. Within the
+suffixes, a SERVFAIL records itself and moves to the next, a refused
+connection returns at once trying nothing further, NXDOMAIN moves on, and
+anything else ends the loop.
 Neither changes the bytes on a host whose name resolves.
 
 ## Open gaps
+
+**`X as usize` means different addresses in the two compilers (#8799).**
+Native reads the cast as a counted buffer's DATA pointer, which is what
+`std/string`'s `bytes()` is written against; the self-host reads it as the
+BOX, whose first word is the length. Code that reads or writes through it is
+therefore correct under one compiler and off by a header under the other,
+with no diagnostic either way. Invisible until something compiles such code
+BOTH ways, which nothing did before the self-host leg: `.bytes()` is an
+intrinsic there, so the one stdlib site never reaches the self-host's
+lowering. `base64` wanted it — raw scratch buffers run the encode at 165 ms
+against the 460 ms `u8[]` with `.with()` costs — and ships without it.
 
 **A process-liveness query (#8767).** `tail --pid=PID` stops following once
 that process exits, which GNU asks as `kill (pid, 0)`. Fern can run a child
@@ -449,6 +475,21 @@ slice as its own string before copying it again. Two rewrites of `cat -n`
 measured as a wash and were reverted rather than kept, which is what
 located the cost. Neighbours: #8530 (`array.with`, struct updates) and
 #8532 (small value structs boxed).
+
+**A line RECORD costs ~365 ns to build and thread (#8815).** `join` is the
+first utility here that holds TWO input cursors at once and carries a parsed
+line — text, field bounds, join-field range — from one loop iteration to the
+next, and it is 0.10x GNU on every workload. Of 1.05 s on the input side of a
+2M-line run, ~0.32 s is reading and splitting and ~0.73 s is the record and
+the cursor crossing three call boundaries per line, because a threaded cursor
+has to come back through a tuple where C would mutate in place. Three rounds
+of shaving (the join field held as a range rather than a sliced string, the
+matched group off its arrays in the one-line case, the cursor rebuilt once
+instead of three times) were worth 3-8% each and located the floor rather
+than removing it: `array.append` at ~19 ns and a tuple return at ~20 ns
+against a struct return's ~3 ns. It is a different shape from #8425
+(per-byte) and #8770 (per-append), and every remaining group-B utility with
+two cursors will meet it.
 
 Gaps that are closed, each now exercised by the corpus rather than carved
 out of it: `IoError.Other` carrying no strerror text (#8265), in the

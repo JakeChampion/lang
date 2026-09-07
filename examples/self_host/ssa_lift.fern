@@ -471,9 +471,9 @@ pub function lift_from_ir(name: string, nparams: i32, nslots: i32, ops: ir.Op[],
             stack = stack.append(agv);
         } else if (k == "print_str") {
             // Raw stdout write of a string's bytes (NO newline) → the SSA `write`
-            // inst; `print(s)` is desugared to print_str(s + "\n") upstream, so
-            // print_str itself never adds one. Like strbuf, the op pushes a dummy
-            // result its statement `drop` discards.
+            // inst; `print(s)` is two print_str upstream (payload then a "\n"
+            // literal), so print_str itself never adds one. Like strbuf, the op
+            // pushes a dummy result its statement `drop` discards.
             if (stack.len() < 1) { ok = false; }
             else {
                 var pv: i32 = stack[stack.len() - 1];

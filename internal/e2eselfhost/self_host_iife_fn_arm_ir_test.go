@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -133,11 +134,12 @@ var iifeFnArmCases = []struct {
 	// The arms hold an ARRAY of fn values rather than one. Same root cause — a
 	// capturing lambda in an un-hoisted arm is unreachable — but two more things
 	// have to hold for the result to be usable, which is why the rewrite is gated
-	// on EVERY arm being an array literal: the arms share one binding and so one
-	// dispatch ABI (a sibling arm's raw `__lam_N` pointer env-first-dispatched as
-	// a box is #5071 one container out), and the destination has to read as a
-	// closure array or `xs[i](…)` bare-calls the box pointer as code. Boxing just
-	// the capturing element turned the bail into a SIGSEGV both ways.
+	// on EVERY arm being an array the pass can put on the env-box ABI: the arms
+	// share one binding and so one dispatch ABI (a sibling arm's raw `__lam_N`
+	// pointer env-first-dispatched as a box is #5071 one container out), and the
+	// destination has to read as a closure array or `xs[i](…)` bare-calls the box
+	// pointer as code. Boxing just the capturing element turned the bail into a
+	// SIGSEGV both ways.
 	//
 	// else-branch-taken runs the OTHER arm, whose lambda does not capture and is
 	// wrapped in a `$wrap` trampoline box purely to match; mixed-cap-and-name has
@@ -146,6 +148,34 @@ var iifeFnArmCases = []struct {
 	{"arm-array-else-branch-taken", "function main(): i32 { var v1: i32 = 3i32; var c: boolean = false; var xs: ((i32) => i32)[] = (if (c) { [((x: i32) => (x + v1))] } else { [((y: i32) => (y + 10i32))] }); return xs[0i32](1i32) & 63i32; }", 11},
 	{"matchexpr-arm-array-capturing", "enum S { A, B } function main(): i32 { var v1: i32 = 3i32; var e: S = S.B; var xs: ((i32) => i32)[] = (match (e) { A => [((x: i32) => (x + v1))], B => [((y: i32) => (y * v1))] }); return xs[0i32](2i32) & 63i32; }", 6},
 	{"arm-array-mixed-cap-and-fnname", "function inc(x: i32): i32 { return x + 1i32; } function main(): i32 { var v1: i32 = 3i32; var xs: ((i32) => i32)[] = (if (true) { [((x: i32) => (x + v1)), inc] } else { [inc, inc] }); return (xs[0i32](1i32) + xs[1i32](1i32)) & 63i32; }", 6},
+	// An arm spelled as a NAME rather than an array literal (#8163). The
+	// binding's other arm boxes, so this one has to as well — but the named
+	// local's literal sits elsewhere in the function, out of reach of the
+	// in-place arm boxing, so fd_binds_iife_boxed_fn_array puts every fn-value
+	// array literal in the function on the env-box ABI instead. Left
+	// unclassified the binding kept plain fn-pointer dispatch over an env-box
+	// array and `xs[0](1)` called the box pointer as code: accepted, linked,
+	// SIGSEGV, where native runs the same program to 4.
+	//
+	// named-local-then-arm has the name in the TAKEN arm, and
+	// named-local-both-arrays-used calls the named array itself — which is what
+	// proves the promoted `ys` still dispatches through its own `$wrap` box.
+	// nested-iife-arm-array-named-local puts the name one IIFE deeper, where the
+	// gate's recursion has to carry the name set too.
+	{"arm-array-named-local-sibling", "function main(): i32 { var v1: i32 = 3i32; var ys: ((i32) => i32)[] = [((z: i32) => z)]; var xs: ((i32) => i32)[] = (if (true) { [((x: i32) => (x + v1))] } else { ys }); return xs[0i32](1i32) & 63i32; }", 4},
+	{"arm-array-named-local-else-taken", "function main(): i32 { var v1: i32 = 3i32; var c: boolean = false; var ys: ((i32) => i32)[] = [((z: i32) => (z + 10i32))]; var xs: ((i32) => i32)[] = (if (c) { [((x: i32) => (x + v1))] } else { ys }); return xs[0i32](1i32) & 63i32; }", 11},
+	{"arm-array-named-local-then-arm", "function main(): i32 { var v1: i32 = 3i32; var c: boolean = true; var ys: ((i32) => i32)[] = [((z: i32) => (z + 10i32))]; var xs: ((i32) => i32)[] = (if (c) { ys } else { [((x: i32) => (x + v1))] }); return xs[0i32](1i32) & 63i32; }", 11},
+	{"arm-array-named-local-both-arrays-used", "function main(): i32 { var v1: i32 = 3i32; var ys: ((i32) => i32)[] = [((z: i32) => z)]; var xs: ((i32) => i32)[] = (if (true) { [((x: i32) => (x + v1))] } else { ys }); return ((xs[0i32](1i32) * 10i32) + ys[0i32](2i32)) & 63i32; }", 42},
+	{"matchexpr-arm-array-named-local", "enum S { A, B } function main(): i32 { var v1: i32 = 3i32; var e: S = S.A; var ys: ((i32) => i32)[] = [((z: i32) => (z + 10i32))]; var xs: ((i32) => i32)[] = (match (e) { A => [((x: i32) => (x + v1))], B => ys }); return xs[0i32](1i32) & 63i32; }", 4},
+	{"nested-iife-arm-array-named-local", "function main(): i32 { var v1: i32 = 3i32; var ys: ((i32) => i32)[] = [((z: i32) => (z + 10i32))]; var zs: ((i32) => i32)[] = [((w: i32) => (w * 2i32))]; var c: boolean = true; var xs: ((i32) => i32)[] = (if (c) { [((x: i32) => (x + v1))] } else { (if (c) { ys } else { zs }) }); return xs[0i32](1i32) & 63i32; }", 4},
+	// The fd-wide promotion reaches EVERY fn-value array literal in the
+	// function, including one the IIFE never touches. `ps` holds bare fn names,
+	// so it moves from the #3574 fn-pointer classification onto env boxes — a
+	// representation change that has to keep answering the same.
+	{"arm-array-named-local-unrelated-fnptr-array", "function inc(x: i32): i32 { return x + 1i32; } function main(): i32 { var v1: i32 = 3i32; var ps: ((i32) => i32)[] = [inc]; var ys: ((i32) => i32)[] = [((z: i32) => z)]; var xs: ((i32) => i32)[] = (if (true) { [((x: i32) => (x + v1))] } else { ys }); return ((xs[0i32](1i32) * 10i32) + ps[0i32](1i32)) & 63i32; }", 42},
+	{"arm-array-named-local-foreach-over-name", "function main(): i32 { var v1: i32 = 3i32; var ys: ((i32) => i32)[] = [((z: i32) => (z + 1i32))]; var xs: ((i32) => i32)[] = (if (true) { [((x: i32) => (x + v1))] } else { ys }); var t: i32 = 0i32; for f in ys { t = t + f(1i32); } return (xs[0i32](1i32) + t) & 63i32; }", 6},
+	{"arm-array-named-local-append-to-name", "function main(): i32 { var v1: i32 = 3i32; var ys: ((i32) => i32)[] = [((z: i32) => (z + 1i32))]; var ws: ((i32) => i32)[] = ys.append(((q: i32) => (q + 5i32))); var xs: ((i32) => i32)[] = (if (true) { [((x: i32) => (x + v1))] } else { ys }); return (xs[0i32](1i32) + ws[1i32](1i32)) & 63i32; }", 10},
+
 	// Regression guards for the two representations the rewrite must not touch:
 	// an all-no-capture arm array keeps its bare `__lam_N` pointers, and an
 	// all-bare-fn-name one keeps the #3574 fn-pointer-array classification.
@@ -212,6 +242,51 @@ var iifeFnArmCases = []struct {
 	// clo_init marking, and nested bare fn-name arms stay plain fn pointers.
 	{"nested-iife-closure-local-arms-unchanged", "function main(): i32 { var v0: (i32) => i32 = ((a: i32) => 41i32); var c: boolean = true; var f: (i32) => i32 = (if (c) { (if (c) { v0 } else { v0 }) } else { (if (c) { v0 } else { v0 }) }); return f(3i32) & 63i32; }", 41},
 	{"nested-iife-bare-fnname-arms-unchanged", "function inc(x: i32): i32 { return x + 1i32; } function dbl(x: i32): i32 { return x * 2i32; } function main(): i32 { var c: boolean = true; var f: (i32) => i32 = (if (c) { (if (c) { inc } else { dbl }) } else { (if (c) { dbl } else { inc }) }); return f(40i32) & 63i32; }", 41},
+}
+
+// iifeArmArrayUnreachableName are the value-position if/match bindings whose
+// arms hold fn-value arrays the uniform-box rule CANNOT bring onto one dispatch
+// ABI: an arm naming a PARAMETER, and an arm yielding a call's result. Neither
+// array is a literal this function can rewrite, so the two arms would carry
+// different element representations and whichever one the binding's
+// classification picked would be wrong for the other.
+//
+// The refusal is the whole point of the gate. These shapes used to be accepted
+// — the capturing arm lambda boxed, the sibling arm's raw fn pointers left
+// alone — and the emitted code linked and segfaulted (#8163). Lowering them
+// needs a fn-array ABI that does not depend on the caller, which is #8795.
+var iifeArmArrayUnreachableName = []struct {
+	name   string
+	src    string
+	fn     string
+	reason string
+}{
+	{"arm-array-param-name", "function pick(ys: ((i32) => i32)[], c: boolean): i32 { var v1: i32 = 3i32; var xs: ((i32) => i32)[] = (if (c) { [((x: i32) => (x + v1))] } else { ys }); return xs[0i32](1i32) & 63i32; } function main(): i32 { var zs: ((i32) => i32)[] = [((z: i32) => z)]; return pick(zs, true); }",
+		"pick", "did not lower: lambda: no lifted `pick$clo` for the escaping closure"},
+	{"arm-array-call-result", "function mk(): ((i32) => i32)[] { return [((z: i32) => z)]; } function main(): i32 { var v1: i32 = 3i32; var xs: ((i32) => i32)[] = (if (true) { [((x: i32) => (x + v1))] } else { mk() }); return xs[0i32](1i32) & 63i32; }",
+		"main", "did not lower: lambda: no lifted `main$clo` for the escaping closure"},
+}
+
+// TestSelfHostIIFEArmArrayUnreachableNameRefuses asserts those shapes REFUSE
+// under FERN_STRICT_IR rather than emitting code. A bail here is a diagnostic
+// naming the construct at its own site; the alternative this replaces was a
+// clean compile, a successful link, and a SIGSEGV at run time.
+func TestSelfHostIIFEArmArrayUnreachableNameRefuses(t *testing.T) {
+	_, runner, driverBin := strictIRDriver(t)
+	for _, tc := range iifeArmArrayUnreachableName {
+		t.Run(tc.name, func(t *testing.T) {
+			out, stderr, code := runDriver(t, runner, driverBin, []byte(tc.src), true)
+			if code != 3 {
+				t.Fatalf("driver exited %d with %d bytes, want a strict-IR refusal (3)\n%s", code, len(out), stderr)
+			}
+			if !strings.Contains(stderr, "FERN_STRICT_IR: "+tc.fn+" ") {
+				t.Errorf("refusal did not name %q as the bailing function:\n%s", tc.fn, stderr)
+			}
+			if !strings.Contains(stderr, tc.reason) {
+				t.Errorf("refusal did not carry the reason %q:\n%s", tc.reason, stderr)
+			}
+		})
+	}
 }
 
 // TestSelfHostIIFEFnArmIRX86_64 — fn-valued value-position if/match arms
