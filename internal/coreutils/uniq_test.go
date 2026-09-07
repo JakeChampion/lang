@@ -142,7 +142,7 @@ func uniqCases(t *testing.T) []invocation {
 		}
 	}
 
-	return []invocation{
+	cases := []invocation{
 		// The four output modes and every combination of them.
 		{name: "default", args: []string{d1}},
 		{name: "count", args: []string{"-c", d1}},
@@ -401,6 +401,47 @@ func uniqCases(t *testing.T) []invocation {
 		{name: "stdin all unique", args: []string{"-u"}, stdin: "a\nb\nc\n"},
 		{name: "stdin all the same", args: []string{"-c"}, stdin: "a\na\na\n"},
 	}
+	return append(cases, uniqRangeComparisonCases()...)
+}
+
+// Keep the last byte equal so the cheap discriminator does not hide a
+// mismatch inside the range. Prefixes and duplicate pairs exercise both
+// answers around the block-comparison boundaries, in both compiler legs.
+func uniqRangeComparisonCases() []invocation {
+	var lines []string
+	for _, n := range []int{0, 1, 3, 4, 7, 8, 15, 16, 17, 31, 32, 33, 63, 64, 65} {
+		base := strings.Repeat("a", n)
+		lines = append(lines, base, base, base+"a", base)
+		for i := 0; i+1 < n; i++ {
+			for _, b := range []byte{0, 1, 128, 255} {
+				other := base[:i] + string([]byte{b}) + base[i+1:]
+				lines = append(lines, base, other, other, base)
+			}
+		}
+	}
+	for _, n := range []int{65535, 65536, 65537} {
+		base := strings.Repeat("a", n)
+		lines = append(lines, base, base, "b"+base[1:], base)
+	}
+	plain := strings.Join(lines, "\n") + "\n"
+	var fields strings.Builder
+	for i, line := range lines {
+		fields.WriteString(itoa(i))
+		fields.WriteByte(' ')
+		fields.WriteString(line)
+		fields.WriteByte('\n')
+	}
+	cases := []invocation{
+		{name: "range comparison boundaries", stdin: plain},
+		{name: "range comparison boundaries counts", args: []string{"-c"}, stdin: plain},
+		{name: "range comparison boundaries repeated", args: []string{"-d"}, stdin: plain},
+		{name: "range comparison boundaries zero terminated", args: []string{"-zc"}, stdin: strings.ReplaceAll(strings.ReplaceAll(plain, "\x00", "\x01"), "\n", "\x00")},
+		{name: "range comparison field boundaries", args: []string{"-f1", "-c"}, stdin: fields.String()},
+	}
+	for _, width := range []string{"0", "1", "7", "8", "15", "16", "31", "32", "63", "64"} {
+		cases = append(cases, invocation{name: "range comparison width " + width, args: []string{"-f1", "-w" + width, "-c"}, stdin: fields.String()})
+	}
+	return cases
 }
 
 func TestUniqParity(t *testing.T) {
