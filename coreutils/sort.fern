@@ -244,6 +244,14 @@ function is_print_b(c: i32): boolean {
   return c >= 32 && c < 127;
 }
 
+// The C-locale digit test the numeric comparisons ask once per byte.
+// Local rather than gnu.fern's, and spelled out again inside the two
+// hottest loops below: nothing is inlined in a program this size
+// (#8822), so a call there is a third of what `sort -n` spends.
+function is_digit_b(c: i32): boolean {
+  return c >= 48 && c <= 57;
+}
+
 function is_alnum_b(c: i32): boolean {
   return c >= 48 && c <= 57 || c >= 65 && c <= 90 || c >= 97 && c <= 122;
 }
@@ -566,8 +574,10 @@ function limfield(text: string, lo: i32, hi: i32, k: Key, tab: i32): i32 {
   return ptr + echar;
 }
 
-// The half-open span key `k` selects out of the line at [lo, hi).
-function key_span(text: string, lo: i32, hi: i32, k: Key, tab: i32): (i32, i32) {
+// The half-open span key `k` selects out of the line at [lo, hi),
+// packed the way a line is: a tuple here would be a heap pair per key
+// per comparison, which is most of what an ordering mode costs.
+function key_span(text: string, lo: i32, hi: i32, k: Key, tab: i32): i64 {
   var lim: i32 = hi;
   if (k.eword != 0 - 1) {
     lim = limfield(text, lo, hi, k, tab);
@@ -583,7 +593,7 @@ function key_span(text: string, lo: i32, hi: i32, k: Key, tab: i32): (i32, i32) 
   if (lim < beg) {
     lim = beg;
   }
-  return (beg, lim);
+  return pack_line(beg, lim - beg);
 }
 
 // The comparisons that GNU makes over a NUL-terminated copy of the key
@@ -620,19 +630,19 @@ function fraccompare(text: string, ai: i32, aend: i32, bi: i32, bend: i32): i32 
     a = a + 1;
     b = b + 1;
     while (byte_at(text, a, aend) == byte_at(text, b, bend)) {
-      if (!gnu.is_digit(byte_at(text, a, aend))) {
+      if (!is_digit_b(byte_at(text, a, aend))) {
         return 0;
       }
       a = a + 1;
       b = b + 1;
     }
-    if (gnu.is_digit(byte_at(text, a, aend)) && gnu.is_digit(byte_at(text, b, bend))) {
+    if (is_digit_b(byte_at(text, a, aend)) && is_digit_b(byte_at(text, b, bend))) {
       return byte_at(text, a, aend) - byte_at(text, b, bend);
     }
-    if (gnu.is_digit(byte_at(text, a, aend))) {
+    if (is_digit_b(byte_at(text, a, aend))) {
       return trailing_nonzero(text, a, aend);
     }
-    if (gnu.is_digit(byte_at(text, b, bend))) {
+    if (is_digit_b(byte_at(text, b, bend))) {
       return 0 - trailing_nonzero(text, b, bend);
     }
     return 0;
@@ -653,7 +663,7 @@ function trailing_nonzero(text: string, from: i32, end: i32): i32 {
   while (byte_at(text, i, end) == 48) {
     i = i + 1;
   }
-  if (gnu.is_digit(byte_at(text, i, end))) {
+  if (is_digit_b(byte_at(text, i, end))) {
     return 1;
   }
   return 0;
@@ -661,28 +671,53 @@ function trailing_nonzero(text: string, from: i32, end: i32): i32 {
 
 // The sign-free half of strnumcmp: two magnitudes, leading zeros
 // already skipped.
+// The digit test and the byte read are written out rather than called
+// here and in `numcompare`: this is the loop `sort -n` lives in, and
+// see is_digit_b above for why a call costs what it does.
 function magcompare(text: string, ai: i32, aend: i32, bi: i32, bend: i32): i32 {
   var a: i32 = ai;
   var b: i32 = bi;
-  var ca: i32 = byte_at(text, a, aend);
-  var cb: i32 = byte_at(text, b, bend);
-  while (ca == cb && gnu.is_digit(ca)) {
+  var ca: i32 = 0;
+  if (a < aend) {
+    ca = text[a] as i32;
+  }
+  var cb: i32 = 0;
+  if (b < bend) {
+    cb = text[b] as i32;
+  }
+  while (ca == cb && ca >= 48 && ca <= 57) {
     a = a + 1;
     b = b + 1;
-    ca = byte_at(text, a, aend);
-    cb = byte_at(text, b, bend);
+    ca = 0;
+    if (a < aend) {
+      ca = text[a] as i32;
+    }
+    cb = 0;
+    if (b < bend) {
+      cb = text[b] as i32;
+    }
   }
-  if (ca == 46 && !gnu.is_digit(cb) || cb == 46 && !gnu.is_digit(ca)) {
+  var da: boolean = ca >= 48 && ca <= 57;
+  var db: boolean = cb >= 48 && cb <= 57;
+  if (ca == 46 && !db || cb == 46 && !da) {
     return fraccompare(text, a, aend, b, bend);
   }
   var tmp: i32 = ca - cb;
   var log_a: i32 = 0;
-  while (gnu.is_digit(byte_at(text, a, aend))) {
+  while (a < aend) {
+    var x: i32 = text[a] as i32;
+    if (x < 48 || x > 57) {
+      break;
+    }
     log_a = log_a + 1;
     a = a + 1;
   }
   var log_b: i32 = 0;
-  while (gnu.is_digit(byte_at(text, b, bend))) {
+  while (b < bend) {
+    var y: i32 = text[b] as i32;
+    if (y < 48 || y > 57) {
+      break;
+    }
     log_b = log_b + 1;
     b = b + 1;
   }
@@ -702,7 +737,7 @@ function magcompare(text: string, ai: i32, aend: i32, bi: i32, bend: i32): i32 {
 // before it can compare anything.
 function skip_zeros(text: string, from: i32, end: i32): i32 {
   var i: i32 = from;
-  while (byte_at(text, i, end) == 48) {
+  while (i < end && text[i] as i32 == 48) {
     i = i + 1;
   }
   return i;
@@ -716,20 +751,28 @@ function nonzero_after(text: string, from: i32, end: i32): boolean {
   if (byte_at(text, i, end) == 46) {
     i = skip_zeros(text, i + 1, end);
   }
-  return gnu.is_digit(byte_at(text, i, end));
+  return is_digit_b(byte_at(text, i, end));
 }
 
 function numcompare(text: string, ai: i32, aend: i32, bi: i32, bend: i32): i32 {
   var a: i32 = ai;
   var b: i32 = bi;
-  while (is_blank_b(byte_at(text, a, aend))) {
+  while (a < aend) {
+    var ba: i32 = text[a] as i32;
+    if (ba != 32 && ba != 9 && ba != 10) {
+      break;
+    }
     a = a + 1;
   }
-  while (is_blank_b(byte_at(text, b, bend))) {
+  while (b < bend) {
+    var bb: i32 = text[b] as i32;
+    if (bb != 32 && bb != 9 && bb != 10) {
+      break;
+    }
     b = b + 1;
   }
-  var nega: boolean = byte_at(text, a, aend) == 45;
-  var negb: boolean = byte_at(text, b, bend) == 45;
+  var nega: boolean = a < aend && text[a] as i32 == 45;
+  var negb: boolean = b < bend && text[b] as i32 == 45;
   if (nega && !negb) {
     if (nonzero_after(text, a + 1, aend)) {
       return 0 - 1;
@@ -806,7 +849,7 @@ function find_unit_order(text: string, from: i32, end: i32): i32 {
   var nonzero: boolean = false;
   while (true) {
     var c: i32 = byte_at(text, p, end);
-    if (gnu.is_digit(c)) {
+    if (is_digit_b(c)) {
       if (c != 48) {
         nonzero = true;
       }
@@ -881,8 +924,9 @@ function month_name(i: i32): string {
   return "DEC";
 }
 
-// The month at the start of [from, end), and where its name ended.
-function getmonth(text: string, from: i32, end: i32): (i32, i32) {
+// The month at the start of [from, end), packed with the offset its
+// name ended at: the value in the high half, the end in the low one.
+function getmonth(text: string, from: i32, end: i32): i64 {
   var p: i32 = from;
   while (p < end && is_blank_b(text[p] as i32)) {
     p = p + 1;
@@ -895,11 +939,11 @@ function getmonth(text: string, from: i32, end: i32): (i32, i32) {
       k = k + 1;
     }
     if (k == name.len()) {
-      return (m + 1, p + k);
+      return pack_line(m + 1, p + k);
     }
     m = m + 1;
   }
-  return (0, p);
+  return pack_line(0, p);
 }
 
 // ---- version comparison -----------------------------------------------------
@@ -1084,6 +1128,26 @@ function compare_random(seed: crypto.Md5, text: string, a0: i32, a1: i32, b0: i3
   return cmp_bytes(text, a0, a1, b0, b1);
 }
 
+// ---- lines ------------------------------------------------------------------
+//
+// A line is one i64: the byte it starts at in `text` in the high half,
+// its length without the terminator in the low half. Ordering moves
+// those, so reaching a line's text costs one SEQUENTIAL read of the
+// array being merged rather than two scattered reads of an offset
+// table — and over a file too large for the last-level cache that
+// difference is most of the sort.
+function pack_line(start: i32, len: i32): i64 {
+  return start as i64 << 32 as i64 | len as i64;
+}
+
+function line_start(v: i64): i32 {
+  return (v >> 32 as i64) as i32;
+}
+
+function line_len(v: i64): i32 {
+  return (v & 4294967295 as i64) as i32;
+}
+
 // ---- the comparison ---------------------------------------------------------
 //
 // A plain byte comparison of two spans, with the shorter one first when
@@ -1194,23 +1258,23 @@ function key_diff(c: Conf, k: Key, text: string, a0: i32, a1: i32, b0: i32, b1: 
     return compare_random(c.seed, text, a0, a1, b0, b1);
   }
   if (key_numeric(k)) {
-    var ae: i32 = nul_end(text, a0, a1);
-    var be: i32 = nul_end(text, b0, b1);
+    // The number scans stop at any byte that is not part of a number,
+    // and a NUL is one, so the key's own end is the only bound they
+    // need — GNU's NUL terminator is already what `byte_at` answers
+    // past it.
     if (k.human) {
-      return human_numcompare(text, a0, ae, b0, be);
+      return human_numcompare(text, a0, a1, b0, b1);
     }
     if (k.general) {
-      return general_numcompare(text, a0, ae, b0, be);
+      return general_numcompare(text, a0, nul_end(text, a0, a1), b0, nul_end(text, b0, b1));
     }
-    return numcompare(text, a0, ae, b0, be);
+    return numcompare(text, a0, a1, b0, b1);
   }
   if (k.version) {
     return filevercmp(text, a0, nul_end(text, a0, a1), b0, nul_end(text, b0, b1));
   }
   if (k.month) {
-    var ma: (i32, i32) = getmonth(text, a0, nul_end(text, a0, a1));
-    var mb: (i32, i32) = getmonth(text, b0, nul_end(text, b0, b1));
-    return ma.0 - mb.0;
+    return line_start(getmonth(text, a0, nul_end(text, a0, a1))) - line_start(getmonth(text, b0, nul_end(text, b0, b1)));
   }
   if (k.ignore != ignore_none()) {
     return cmp_ignoring(k, text, a0, a1, b0, b1);
@@ -1266,9 +1330,11 @@ function keycompare(c: Conf, text: string, alo: i32, ahi: i32, blo: i32, bhi: i3
   var i: i32 = 0;
   while (i < c.keys.len()) {
     var k: Key = c.keys[i];
-    var sa: (i32, i32) = key_span(text, alo, ahi, k, c.tab);
-    var sb: (i32, i32) = key_span(text, blo, bhi, k, c.tab);
-    var d: i32 = key_diff(c, k, text, sa.0, sa.1, sb.0, sb.1);
+    var sa: i64 = key_span(text, alo, ahi, k, c.tab);
+    var sb: i64 = key_span(text, blo, bhi, k, c.tab);
+    var a0: i32 = (sa >> 32 as i64) as i32;
+    var b0: i32 = (sb >> 32 as i64) as i32;
+    var d: i32 = key_diff(c, k, text, a0, a0 + (sa & 4294967295 as i64) as i32, b0, b0 + (sb & 4294967295 as i64) as i32);
     if (d != 0) {
       if (k.reverse) {
         return 0 - d;
@@ -1283,7 +1349,11 @@ function keycompare(c: Conf, text: string, alo: i32, ahi: i32, blo: i32, bhi: i3
 // The whole comparison: the keys, then the line itself unless -u or -s
 // dropped that last resort. The global -r applies only here once a key
 // exists.
-function compare(c: Conf, text: string, alo: i32, ahi: i32, blo: i32, bhi: i32): i32 {
+function compare(c: Conf, text: string, a: i64, b: i64): i32 {
+  var alo: i32 = (a >> 32 as i64) as i32;
+  var ahi: i32 = alo + (a & 4294967295 as i64) as i32;
+  var blo: i32 = (b >> 32 as i64) as i32;
+  var bhi: i32 = blo + (b & 4294967295 as i64) as i32;
   if (c.keys.len() > 0) {
     var d: i32 = keycompare(c, text, alo, ahi, blo, bhi);
     if (d != 0 || c.unique || c.stable) {
@@ -1301,7 +1371,7 @@ function compare(c: Conf, text: string, alo: i32, ahi: i32, blo: i32, bhi: i32):
 // as already sorted, and the smallest head across them is emitted each
 // time, a tie going to the earlier operand. Nothing is compared within
 // one input, so `sort -m` over an unsorted file reproduces it.
-function merge_files(c: Conf, text: string, lo: i32[], hi: i32[], bounds: i32[]): i32[] {
+function merge_files(c: Conf, text: string, lines: i64[], bounds: i32[]): i64[] {
   var n: i32 = bounds.len();
   var head: i32[] = [];
   var f: i32 = 0;
@@ -1311,8 +1381,8 @@ function merge_files(c: Conf, text: string, lo: i32[], hi: i32[], bounds: i32[])
     start = bounds[f];
     f = f + 1;
   }
-  var out: i32[] = [];
-  var total: i32 = lo.len();
+  var out: i64[] = [];
+  var total: i32 = lines.len();
   var emitted: i32 = 0;
   while (emitted < total) {
     var best: i32 = 0 - 1;
@@ -1321,17 +1391,13 @@ function merge_files(c: Conf, text: string, lo: i32[], hi: i32[], bounds: i32[])
       if (head[f] < bounds[f]) {
         if (best < 0) {
           best = f;
-        } else {
-          var x: i32 = head[f];
-          var y: i32 = head[best];
-          if (compare(c, text, lo[x], hi[x], lo[y], hi[y]) < 0) {
-            best = f;
-          }
+        } else if (compare(c, text, lines[head[f]], lines[head[best]]) < 0) {
+          best = f;
         }
       }
       f = f + 1;
     }
-    out = out.append(head[best]);
+    out = out.append(lines[head[best]]);
     head = head.with(best, head[best] + 1);
     emitted = emitted + 1;
   }
@@ -1344,13 +1410,17 @@ function merge_files(c: Conf, text: string, lo: i32[], hi: i32[], bounds: i32[])
 // and equal lines keep their input order, which is what -u and -s both
 // rely on. Each pass writes a fresh destination rather than merging
 // through an alias.
-function sort_lines(c: Conf, text: string, lo: i32[], hi: i32[], idx: i32[]): i32[] {
-  var n: i32 = idx.len();
-  var src: i32[] = idx;
+function sort_lines(c: Conf, text: string, lines: i64[]): i64[] {
+  var n: i32 = lines.len();
+  if (n < 2) {
+    return lines;
+  }
+  var src: i64[] = lines;
+  var dst: i64[] = scratch_of(n);
   var width: i32 = 1;
   while (width < n) {
-    var dst: i32[] = [];
     var start: i32 = 0;
+    var at: i32 = 0;
     while (start < n) {
       var mid: i32 = start + width;
       if (mid > n) {
@@ -1363,30 +1433,48 @@ function sort_lines(c: Conf, text: string, lo: i32[], hi: i32[], idx: i32[]): i3
       var a: i32 = start;
       var b: i32 = mid;
       while (a < mid && b < end) {
-        var ia: i32 = src[a];
-        var ib: i32 = src[b];
-        if (compare(c, text, lo[ib], hi[ib], lo[ia], hi[ia]) < 0) {
-          dst = dst.append(ib);
+        var la: i64 = src[a];
+        var lb: i64 = src[b];
+        if (compare(c, text, lb, la) < 0) {
+          dst = dst.with(at, lb);
           b = b + 1;
         } else {
-          dst = dst.append(ia);
+          dst = dst.with(at, la);
           a = a + 1;
         }
+        at = at + 1;
       }
       while (a < mid) {
-        dst = dst.append(src[a]);
+        dst = dst.with(at, src[a]);
         a = a + 1;
+        at = at + 1;
       }
       while (b < end) {
-        dst = dst.append(src[b]);
+        dst = dst.with(at, src[b]);
         b = b + 1;
+        at = at + 1;
       }
       start = end;
     }
+    var swap: i64[] = src;
     src = dst;
+    dst = swap;
     width = width * 2;
   }
   return src;
+}
+
+// The second buffer the merge writes into. The two buffers alternate
+// rather than each pass allocating one, and they are always distinct,
+// so no pass ever reads a slot it has already overwritten.
+function scratch_of(n: i32): i64[] {
+  var out: i64[] = [];
+  var i: i32 = 0;
+  while (i < n) {
+    out = out.append(0 as i64);
+    i = i + 1;
+  }
+  return out;
 }
 
 // ---- input ------------------------------------------------------------------
@@ -1511,22 +1599,19 @@ function out_finish(o: Out): void {
 //
 // The line boundaries of `text`: [lo, hi) excludes the terminator, and
 // a final line without one still counts. An empty input has no lines.
-function split_lines(text: string, term: i32): (i32[], i32[]) {
-  var lo: i32[] = [];
-  var hi: i32[] = [];
+function split_lines(text: string, term: i32): i64[] {
+  var lines: i64[] = [];
   var start: i32 = 0;
   while (start < text.len()) {
     var end: i32 = __memchr(text, term, start);
     if (end < 0) {
-      lo = lo.append(start);
-      hi = hi.append(text.len());
+      lines = lines.append(pack_line(start, text.len() - start));
       break;
     }
-    lo = lo.append(start);
-    hi = hi.append(end);
+    lines = lines.append(pack_line(start, end - start));
     start = end + 1;
   }
-  return (lo, hi);
+  return lines;
 }
 
 // ---- argmatch ---------------------------------------------------------------
@@ -1865,8 +1950,7 @@ function debug_key(o: Out, c: Conf, text: string, lo: i32, hi: i32, k: Key, has_
       }
       var tighter: i32 = beg;
       if (k.month) {
-        var m: (i32, i32) = getmonth(text, beg, lim);
-        tighter = m.1;
+        tighter = line_len(getmonth(text, beg, lim));
       } else if (k.general) {
         var f: ld.Format = ld.format();
         var parsed: ld.Parse = f.strtold(slice_unchecked(text, beg, lim) + "");
@@ -2065,10 +2149,10 @@ function numeric_locale_warnings(tab: i32, span: boolean): void {
 //
 // `-c` reports the first line that is out of order and exits 1; `-C`
 // exits 1 in silence. With -u, equal adjacent lines are disorder too.
-function check_order(c: Conf, name: string, text: string, lo: i32[], hi: i32[], quiet: boolean): i32 {
+function check_order(c: Conf, name: string, text: string, lines: i64[], quiet: boolean): i32 {
   var i: i32 = 1;
-  while (i < lo.len()) {
-    var d: i32 = compare(c, text, lo[i - 1], hi[i - 1], lo[i], hi[i]);
+  while (i < lines.len()) {
+    var d: i32 = compare(c, text, lines[i - 1], lines[i]);
     var bad: boolean = d > 0;
     if (c.unique && d == 0) {
       bad = true;
@@ -2076,7 +2160,8 @@ function check_order(c: Conf, name: string, text: string, lo: i32[], hi: i32[], 
     if (bad) {
       if (!quiet) {
         var w: Writer = stderr();
-        w.write(gnu.prog() + ": " + name + ":" + (i + 1).to_string() + ": disorder: " + slice_unchecked(text, lo[i], hi[i]) + term_string(c.term));
+        var at: i32 = line_start(lines[i]);
+        w.write(gnu.prog() + ": " + name + ":" + (i + 1).to_string() + ": disorder: " + slice_unchecked(text, at, at + line_len(lines[i])) + term_string(c.term));
       }
       return 1;
     }
@@ -2594,8 +2679,7 @@ function run(a0: Args): i32 {
 
   if (a.checkonly != 0) {
     var text: string = slurp(files[0], "open failed");
-    var parts: (i32[], i32[]) = split_lines(text, term);
-    return check_order(c, files[0], text, parts.0, parts.1, a.checkonly == 67);
+    return check_order(c, files[0], text, split_lines(text, term), a.checkonly == 67);
   }
 
   check_inputs(files);
@@ -2619,38 +2703,33 @@ function run(a0: Args): i32 {
   } else if (chunks.len() > 1) {
     all = chunks.join("");
   }
-  var lines: (i32[], i32[]) = split_lines(all, term);
-  var lo: i32[] = lines.0;
-  var hi: i32[] = lines.1;
-  var idx: i32[] = [];
+  var lines: i64[] = split_lines(all, term);
   if (a.merge) {
-    idx = merge_files(c, all, lo, hi, line_bounds(lo, ends));
+    lines = merge_files(c, all, lines, line_bounds(lines, ends));
   } else {
-    i = 0;
-    while (i < lo.len()) {
-      idx = idx.append(i);
-      i = i + 1;
-    }
-    idx = sort_lines(c, all, lo, hi, idx);
+    lines = sort_lines(c, all, lines);
   }
 
   var out: Out = out_open(a.outfile, !a.have_out);
   var tstr: string = term_string(term);
-  var prev: i32 = 0 - 1;
+  var prev: i64 = 0 as i64;
+  var have_prev: boolean = false;
   i = 0;
-  while (i < idx.len()) {
-    var j: i32 = idx[i];
+  while (i < lines.len()) {
+    var v: i64 = lines[i];
     var keep: boolean = true;
-    if (a.unique && prev >= 0) {
-      keep = compare(c, all, lo[prev], hi[prev], lo[j], hi[j]) != 0;
+    if (a.unique && have_prev) {
+      keep = compare(c, all, prev, v) != 0;
     }
     if (keep) {
+      var at: i32 = line_start(v);
       if (c.debug) {
-        out = debug_line(out, c, all, lo[j], hi[j]);
+        out = debug_line(out, c, all, at, at + line_len(v));
       } else {
-        out = out_put(out, slice_unchecked(all, lo[j], hi[j]) + tstr);
+        out = out_put(out, slice_unchecked(all, at, at + line_len(v)) + tstr);
       }
-      prev = j;
+      prev = v;
+      have_prev = true;
     }
     i = i + 1;
   }
@@ -2673,12 +2752,12 @@ function chunk_bytes(chunks: string[]): i32 {
 // The line index each operand's text ends at, from the byte offset it
 // ends at. Lines never straddle an operand: every operand's text is
 // terminated before the next is appended.
-function line_bounds(lo: i32[], ends: i32[]): i32[] {
+function line_bounds(lines: i64[], ends: i32[]): i32[] {
   var bounds: i32[] = [];
   var line: i32 = 0;
   var f: i32 = 0;
   while (f < ends.len()) {
-    while (line < lo.len() && lo[line] < ends[f]) {
+    while (line < lines.len() && line_start(lines[line]) < ends[f]) {
       line = line + 1;
     }
     bounds = bounds.append(line);
