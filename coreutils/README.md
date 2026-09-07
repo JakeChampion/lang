@@ -80,6 +80,7 @@ they are not on PATH. Wall time, so compare within one run only.
 | `head` | done — `-c` `-n` with the leading-minus elisions and gnulib's multiplier suffixes, `-q` `-v` `-z`, the obsolete `-NUM[bkmclqvz]` form, and the hidden `---presume-input-pipe` |
 | `cat` | done — `-A` `-b` `-e` `-E` `-n` `-s` `-t` `-T` `-u` `-v`, line state carried across files, and the two fstat checks GNU makes before a byte moves: a closed stdout is reported even with nothing to copy, and an input that is also the output is `input file is output file` |
 | `tail` | done — `-c` `-n` with the leading-plus form and gnulib's multiplier suffixes, `-q` `-v` `-z`, the obsolete `[+-]NUM[bcl][f]` form under all three `_POSIX2_VERSION` regimes, and following: `-f` `-F` `--follow[=HOW]` `--retry` `-s` `--max-unchanged-stats`, with file truncated / appeared / replaced / no files remaining in GNU's words. A regular file is read from its end by seeking. `--pid` needs a process-liveness primitive (#8767), so it takes GNU's own not-supported-on-this-system path |
+| `tac` | done — `-b` `-r` `-s`, the input read BACKWARDS in 8 KiB blocks that double when a record outgrows one, and `-r` in glibc's syntax 0 (Emacs), which is what a program that never calls `re_set_syntax` gets. Startup beats GNU by 4×; throughput loses by 3-4×, and `docs/COREUTILS.md` measures where it goes |
 | `wc` | done — `-c` `-l` `-m` `-w` `-L`, `--total=WHEN`, `--files0-from`, the column width taken from the operands' sizes, and the C-locale ISPRINT rule for words and display width. A REGULAR-FILE stdin still widens to seven columns, which needs fstat on a descriptor (#8713) |
 | `nl` | done — `-b` `-h` `-f` with the `a` / `t` / `n` / `pBRE` styles, `-d` in all three delimiter forms, `-i` `-l` `-n` `-p` `-s` `-v` `-w`, and the line-number overflow reported one line after it happens |
 | `join` | done — `-1` `-2` `-j` `-a` `-v` `-e` `-o` `-t` `-i` `--check-order` `--nocheck-order` `--header` `-z`, the obsolete `-j1` / `-j2` and multi-argument `-o` forms with the counting that tells an option argument from a file, and GNU's order check with its default weakness |
@@ -96,7 +97,7 @@ they are not on PATH. Wall time, so compare within one run only.
 | `lib/gnu.fern` | the GNU conventions every utility shares |
 | `lib/base.fern` | the one encoder / decoder `base64`, `base32` and `basenc` drive, parameterised by alphabet, block and padding |
 | `lib/cond.fern` | the conditional expression `test` and `[` evaluate |
-| `lib/bre.fern` | POSIX basic regular expressions as glibc compiles them |
+| `lib/bre.fern` | regular expressions as glibc compiles them: POSIX basic for `expr`, syntax 0 (Emacs) for `tac -r` |
 | `lib/ld.fern` | C's `long double` at the TARGET's format — strtold, arithmetic, rounding and the `%f` `%e` `%g` `%a` conversions — shared by `printf`, `numfmt`, `seq` and `sleep` |
 
 The tracking epic (#8278) lists every other utility and its status.
