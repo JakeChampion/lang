@@ -233,7 +233,7 @@ func emitCopyBytes(body []byte, dstLocal, srcLocal, lenLocal, iLocal uint32) []b
 // caller picks where the directory lands, and a nested one survives
 // where the other backends refuse it. iLocal is scratch; errnoLocal,
 // errPtrLocal and boxLocal are emitResultErr's.
-func emitRejectSeparator(body []byte, buildIoErr, allocBox, bufLocal, lenLocal, iLocal, errnoLocal, errPtrLocal, boxLocal uint32) []byte {
+func emitRejectSeparator(body []byte, buildIoErr, allocRc1, bufLocal, lenLocal, iLocal, errnoLocal, errPtrLocal, boxLocal uint32) []byte {
 	body = inst.InstI32Const(body, 0)
 	body = inst.InstLocalSet(body, iLocal)
 	body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
@@ -253,7 +253,7 @@ func emitRejectSeparator(body []byte, buildIoErr, allocBox, bufLocal, lenLocal, 
 		{
 			body = inst.InstI32Const(body, errnoInval)
 			body = inst.InstLocalSet(body, errnoLocal)
-			body = emitResultErr(body, buildIoErr, allocBox, errnoLocal, errPtrLocal, boxLocal)
+			body = emitResultErr(body, buildIoErr, allocRc1, errnoLocal, errPtrLocal, boxLocal)
 		}
 		body = inst.InstEnd(body)
 		body = inst.InstLocalGet(body, iLocal)
@@ -327,14 +327,14 @@ func emitHexSuffix(body []byte, random, bufLocal, offLocal, iLocal, rndLocal, ni
 // buildReadFileErr uses (tag=1 @0, IoError ptr @+4); this sibling
 // exists because these helpers have their own local numbering rather
 // than buildReadFileBodyP2's.
-func emitResultErr(body []byte, buildIoErr, allocBox, errnoLocal, errPtrLocal, boxLocal uint32) []byte {
+func emitResultErr(body []byte, buildIoErr, allocRc1, errnoLocal, errPtrLocal, boxLocal uint32) []byte {
 	body = inst.InstLocalGet(body, errnoLocal)
 	body = inst.InstLocalGet(body, 0) // path_data
 	body = inst.InstLocalGet(body, 1) // path_len
 	body = inst.InstCall(body, buildIoErr)
 	body = inst.InstLocalSet(body, errPtrLocal)
 	body = inst.InstI32Const(body, 8)
-	body = inst.InstCall(body, allocBox)
+	body = inst.InstCall(body, allocRc1)
 	body = inst.InstLocalTee(body, boxLocal)
 	body = inst.InstI32Const(body, 1) // tag = Err
 	body = memory.InstI32Store(body, 2, 0)
@@ -351,9 +351,9 @@ func emitResultErr(body []byte, buildIoErr, allocBox, errnoLocal, errPtrLocal, b
 // emitResultOkPtr appends "wrap `payloadLocal` in Ok and leave the
 // box on the stack". Used for Ok(()) with a 0 payload as well —
 // the unit occupies a payload slot like any other value.
-func emitResultOkPtr(body []byte, allocBox, payloadLocal, boxLocal uint32) []byte {
+func emitResultOkPtr(body []byte, allocRc1, payloadLocal, boxLocal uint32) []byte {
 	body = inst.InstI32Const(body, 8)
-	body = inst.InstCall(body, allocBox)
+	body = inst.InstCall(body, allocRc1)
 	body = inst.InstLocalTee(body, boxLocal)
 	body = inst.InstI32Const(body, 0) // tag = Ok
 	body = memory.InstI32Store(body, 2, 0)
@@ -381,7 +381,7 @@ func emitResultOkPtr(body []byte, allocBox, payloadLocal, boxLocal uint32) []byt
 //	2: $path_buf   3: $path_byte_len   4: $i (normalize scratch)
 //	5: $errno      6: $err_ptr         7: $box
 func buildRemoveFileBody(idxs map[string]uint32) []byte {
-	allocBox := idxs["__fern_alloc_box"]
+	allocRc1 := idxs["__fern_alloc_rc1"]
 	buildIoErr := idxs["__build_io_error"]
 	unlink := idxs["wasi_path_unlink_file"]
 
@@ -398,14 +398,14 @@ func buildRemoveFileBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 5)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	{
-		body = emitResultErr(body, buildIoErr, allocBox, 5, 6, 7)
+		body = emitResultErr(body, buildIoErr, allocRc1, 5, 6, 7)
 	}
 	body = inst.InstEnd(body)
 
 	// Ok(()) — payload 0 via a zeroed local.
 	body = inst.InstI32Const(body, 0)
 	body = inst.InstLocalSet(body, 6)
-	body = emitResultOkPtr(body, allocBox, 6, 7)
+	body = emitResultOkPtr(body, allocRc1, 6, 7)
 
 	locals := inst.PutLocalsOneGroup(nil, 6, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
@@ -433,7 +433,7 @@ func buildRemoveFileBody(idxs map[string]uint32) []byte {
 //	5: $errno     6: $err_ptr        7: $box
 //	8: $cursor    9: $addr
 func buildCreateDirAllBody(idxs map[string]uint32) []byte {
-	allocBox := idxs["__fern_alloc_box"]
+	allocRc1 := idxs["__fern_alloc_rc1"]
 	buildIoErr := idxs["__build_io_error"]
 	mkdir := idxs["wasi_path_create_directory"]
 
@@ -505,14 +505,14 @@ func buildCreateDirAllBody(idxs map[string]uint32) []byte {
 	body = numeric.InstI32And(body)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	{
-		body = emitResultErr(body, buildIoErr, allocBox, 5, 6, 7)
+		body = emitResultErr(body, buildIoErr, allocRc1, 5, 6, 7)
 	}
 	body = inst.InstEnd(body)
 
 	// Ok(()) — payload 0 via a zeroed local.
 	body = inst.InstI32Const(body, 0)
 	body = inst.InstLocalSet(body, 6)
-	body = emitResultOkPtr(body, allocBox, 6, 7)
+	body = emitResultOkPtr(body, allocRc1, 6, 7)
 
 	locals := inst.PutLocalsOneGroup(nil, 8, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
@@ -550,7 +550,7 @@ func buildLstatBody(idxs map[string]uint32) []byte {
 // symlink_follow bit.
 func buildStatLikeBody(idxs map[string]uint32, lookupflags int32) []byte {
 	alloc := idxs["__fern_alloc"]
-	allocBox := idxs["__fern_alloc_box"]
+	allocRc1 := idxs["__fern_alloc_rc1"]
 	buildIoErr := idxs["__build_io_error"]
 	filestatGet := idxs["wasi_path_filestat_get"]
 
@@ -575,7 +575,7 @@ func buildStatLikeBody(idxs map[string]uint32, lookupflags int32) []byte {
 	body = inst.InstLocalGet(body, 5)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	{
-		body = emitResultErr(body, buildIoErr, allocBox, 5, 7, 9)
+		body = emitResultErr(body, buildIoErr, allocRc1, 5, 7, 9)
 	}
 	body = inst.InstEnd(body)
 
@@ -585,7 +585,7 @@ func buildStatLikeBody(idxs map[string]uint32, lookupflags int32) []byte {
 	body = inst.InstLocalSet(body, 7)
 
 	body = projectFilestatP1(body, alloc, 6, 7, 8)
-	body = emitResultOkPtr(body, allocBox, 8, 9)
+	body = emitResultOkPtr(body, allocRc1, 8, 9)
 
 	locals := inst.PutLocalsOneGroup(nil, 8, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
@@ -829,7 +829,7 @@ func emitIsDotName(body []byte, nameLocal, namlenLocal uint32) []byte {
 //	13: $arr      14: $errno         15: $err_ptr  16: $box
 func buildReadDirBody(idxs map[string]uint32) []byte {
 	alloc := idxs["__fern_alloc"]
-	allocBox := idxs["__fern_alloc_box"]
+	allocRc1 := idxs["__fern_alloc_rc1"]
 	buildIoErr := idxs["__build_io_error"]
 	openDir := idxs["__fern_open_dir"]
 	readRaw := idxs["__fern_read_dir_raw"]
@@ -852,7 +852,7 @@ func buildReadDirBody(idxs map[string]uint32) []byte {
 		body = inst.InstLocalGet(body, 5)
 		body = numeric.InstI32Sub(body)
 		body = inst.InstLocalSet(body, 14)
-		body = emitResultErr(body, buildIoErr, allocBox, 14, 15, 16)
+		body = emitResultErr(body, buildIoErr, allocRc1, 14, 15, 16)
 	}
 	body = inst.InstEnd(body)
 
@@ -871,7 +871,7 @@ func buildReadDirBody(idxs map[string]uint32) []byte {
 		body = inst.InstLocalGet(body, 6)
 		body = numeric.InstI32Sub(body)
 		body = inst.InstLocalSet(body, 14)
-		body = emitResultErr(body, buildIoErr, allocBox, 14, 15, 16)
+		body = emitResultErr(body, buildIoErr, allocRc1, 14, 15, 16)
 	}
 	body = inst.InstEnd(body)
 	body = inst.InstLocalGet(body, 5)
@@ -958,7 +958,7 @@ func buildReadDirBody(idxs map[string]uint32) []byte {
 		return b
 	})
 
-	body = emitResultOkPtr(body, allocBox, 13, 16)
+	body = emitResultOkPtr(body, allocRc1, 13, 16)
 
 	locals := inst.PutLocalsOneGroup(nil, 15, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
@@ -1237,7 +1237,7 @@ func buildRmdirRecBody(idxs map[string]uint32) []byte {
 //	2: $path_buf  3: $path_byte_len  4: $i
 //	5: $errno     6: $err_ptr        7: $box
 func buildRemoveDirAllBody(idxs map[string]uint32) []byte {
-	allocBox := idxs["__fern_alloc_box"]
+	allocRc1 := idxs["__fern_alloc_rc1"]
 	buildIoErr := idxs["__build_io_error"]
 	rec := idxs["__fern_rmdir_rec"]
 
@@ -1257,13 +1257,13 @@ func buildRemoveDirAllBody(idxs map[string]uint32) []byte {
 	body = numeric.InstI32And(body)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	{
-		body = emitResultErr(body, buildIoErr, allocBox, 5, 6, 7)
+		body = emitResultErr(body, buildIoErr, allocRc1, 5, 6, 7)
 	}
 	body = inst.InstEnd(body)
 
 	body = inst.InstI32Const(body, 0)
 	body = inst.InstLocalSet(body, 6)
-	body = emitResultOkPtr(body, allocBox, 6, 7)
+	body = emitResultOkPtr(body, allocRc1, 6, 7)
 
 	locals := inst.PutLocalsOneGroup(nil, 6, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
@@ -1297,7 +1297,7 @@ func buildRemoveDirAllBody(idxs map[string]uint32) []byte {
 //	10: $err_ptr 11: $box     12: $data 13: $slen
 func buildTempDirBody(idxs map[string]uint32) []byte {
 	alloc := idxs["__fern_alloc"]
-	allocBox := idxs["__fern_alloc_box"]
+	allocRc1 := idxs["__fern_alloc_rc1"]
 	buildIoErr := idxs["__build_io_error"]
 	mkdir := idxs["wasi_path_create_directory"]
 	random := idxs["__fern_random_i32"]
@@ -1305,7 +1305,7 @@ func buildTempDirBody(idxs map[string]uint32) []byte {
 
 	var body []byte
 	body = emitStrNormalize(body, idxs, 0, 1, 2, 3, 4)
-	body = emitRejectSeparator(body, buildIoErr, allocBox, 2, 3, 4, 9, 10, 11)
+	body = emitRejectSeparator(body, buildIoErr, allocRc1, 2, 3, 4, 9, 10, 11)
 
 	// buf = alloc(pfx_len + 1 + 8); len = pfx_len + 9.
 	body = inst.InstLocalGet(body, 3)
@@ -1351,7 +1351,7 @@ func buildTempDirBody(idxs map[string]uint32) []byte {
 		body = numeric.InstI32Ne(body)
 		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 		{
-			body = emitResultErr(body, buildIoErr, allocBox, 9, 10, 11)
+			body = emitResultErr(body, buildIoErr, allocRc1, 9, 10, 11)
 		}
 		body = inst.InstEnd(body)
 
@@ -1368,7 +1368,7 @@ func buildTempDirBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 9)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	{
-		body = emitResultErr(body, buildIoErr, allocBox, 9, 10, 11)
+		body = emitResultErr(body, buildIoErr, allocRc1, 9, 10, 11)
 	}
 	body = inst.InstEnd(body)
 
@@ -1383,7 +1383,7 @@ func buildTempDirBody(idxs map[string]uint32) []byte {
 	// single-word shape emitResultOkPtr builds for a pointer payload;
 	// read_file's Ok is the reference.
 	body = inst.InstI32Const(body, 16)
-	body = inst.InstCall(body, allocBox)
+	body = inst.InstCall(body, allocRc1)
 	body = inst.InstLocalTee(body, 11)
 	body = inst.InstI32Const(body, 0) // tag = Ok
 	body = memory.InstI32Store(body, 2, 0)
@@ -1480,7 +1480,7 @@ func emitPreopenCachedP2(body []byte, getDirs, rbLocal, preopenLocal uint32) []b
 //	6: $errno     7: $err_ptr   8: $box            9: $i
 func buildRemoveFileBodyP2(idxs map[string]uint32) []byte {
 	alloc := idxs["__fern_alloc"]
-	allocBox := idxs["__fern_alloc_box"]
+	allocRc1 := idxs["__fern_alloc_rc1"]
 	buildIoErr := idxs["__build_io_error"]
 	getDirs := idxs["wasi_get_directories_p2"]
 	unlink := idxs["wasi_descriptor_unlink_file_at_p2"]
@@ -1500,13 +1500,13 @@ func buildRemoveFileBodyP2(idxs map[string]uint32) []byte {
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	{
 		body = appendErrnoFromErrorCodeAt(body, idxs, 2, 6, emptyOkErrorCodeOff)
-		body = emitResultErr(body, buildIoErr, allocBox, 6, 7, 8)
+		body = emitResultErr(body, buildIoErr, allocRc1, 6, 7, 8)
 	}
 	body = inst.InstEnd(body)
 
 	body = inst.InstI32Const(body, 0)
 	body = inst.InstLocalSet(body, 7)
-	body = emitResultOkPtr(body, allocBox, 7, 8)
+	body = emitResultOkPtr(body, allocRc1, 7, 8)
 
 	locals := inst.PutLocalsOneGroup(nil, 8, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
@@ -1525,7 +1525,7 @@ func buildRemoveFileBodyP2(idxs map[string]uint32) []byte {
 //	10: $cursor  11: $addr
 func buildCreateDirAllBodyP2(idxs map[string]uint32) []byte {
 	alloc := idxs["__fern_alloc"]
-	allocBox := idxs["__fern_alloc_box"]
+	allocRc1 := idxs["__fern_alloc_rc1"]
 	buildIoErr := idxs["__build_io_error"]
 	getDirs := idxs["wasi_get_directories_p2"]
 	mkdir := idxs["wasi_descriptor_create_directory_at_p2"]
@@ -1595,7 +1595,7 @@ func buildCreateDirAllBodyP2(idxs map[string]uint32) []byte {
 		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 		{
 			body = appendErrnoFromErrorCodeAt(body, idxs, 2, 6, emptyOkErrorCodeOff)
-			body = emitResultErr(body, buildIoErr, allocBox, 6, 7, 8)
+			body = emitResultErr(body, buildIoErr, allocRc1, 6, 7, 8)
 		}
 		body = inst.InstEnd(body)
 	}
@@ -1603,7 +1603,7 @@ func buildCreateDirAllBodyP2(idxs map[string]uint32) []byte {
 
 	body = inst.InstI32Const(body, 0)
 	body = inst.InstLocalSet(body, 7)
-	body = emitResultOkPtr(body, allocBox, 7, 8)
+	body = emitResultOkPtr(body, allocRc1, 7, 8)
 
 	locals := inst.PutLocalsOneGroup(nil, 10, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
@@ -1630,7 +1630,7 @@ func buildCreateDirAllBodyP2(idxs map[string]uint32) []byte {
 //	14: $rb      15: $preopen  16: $failed
 func buildTempDirBodyP2(idxs map[string]uint32) []byte {
 	alloc := idxs["__fern_alloc"]
-	allocBox := idxs["__fern_alloc_box"]
+	allocRc1 := idxs["__fern_alloc_rc1"]
 	buildIoErr := idxs["__build_io_error"]
 	getDirs := idxs["wasi_get_directories_p2"]
 	mkdir := idxs["wasi_descriptor_create_directory_at_p2"]
@@ -1639,7 +1639,7 @@ func buildTempDirBodyP2(idxs map[string]uint32) []byte {
 
 	var body []byte
 	body = emitStrNormalize(body, idxs, 0, 1, 2, 3, 4)
-	body = emitRejectSeparator(body, buildIoErr, allocBox, 2, 3, 4, 9, 10, 11)
+	body = emitRejectSeparator(body, buildIoErr, allocRc1, 2, 3, 4, 9, 10, 11)
 	body = emitPreopenP2(body, alloc, getDirs, 14, 15)
 
 	// buf = alloc(pfx_len + 1 + 8); len = pfx_len + 9.
@@ -1691,7 +1691,7 @@ func buildTempDirBodyP2(idxs map[string]uint32) []byte {
 		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 		{
 			body = appendErrnoFromErrorCodeAt(body, idxs, 14, 9, emptyOkErrorCodeOff)
-			body = emitResultErr(body, buildIoErr, allocBox, 9, 10, 11)
+			body = emitResultErr(body, buildIoErr, allocRc1, 9, 10, 11)
 		}
 		body = inst.InstEnd(body)
 
@@ -1709,7 +1709,7 @@ func buildTempDirBodyP2(idxs map[string]uint32) []byte {
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	{
 		body = appendErrnoFromErrorCodeAt(body, idxs, 14, 9, emptyOkErrorCodeOff)
-		body = emitResultErr(body, buildIoErr, allocBox, 9, 10, 11)
+		body = emitResultErr(body, buildIoErr, allocRc1, 9, 10, 11)
 	}
 	body = inst.InstEnd(body)
 
@@ -1722,7 +1722,7 @@ func buildTempDirBodyP2(idxs map[string]uint32) []byte {
 	body = inst.InstLocalSet(body, 13)
 	body = inst.InstLocalSet(body, 12)
 	body = inst.InstI32Const(body, 16)
-	body = inst.InstCall(body, allocBox)
+	body = inst.InstCall(body, allocRc1)
 	body = inst.InstLocalTee(body, 11)
 	body = inst.InstI32Const(body, 0)
 	body = memory.InstI32Store(body, 2, 0)
@@ -1830,7 +1830,7 @@ func buildLstatBodyP2(idxs map[string]uint32) []byte {
 // symlink-follow bit.
 func buildStatLikeBodyP2(idxs map[string]uint32, pathFlags int32) []byte {
 	alloc := idxs["__fern_alloc"]
-	allocBox := idxs["__fern_alloc_box"]
+	allocRc1 := idxs["__fern_alloc_rc1"]
 	buildIoErr := idxs["__build_io_error"]
 	getDirs := idxs["wasi_get_directories_p2"]
 	statAt := idxs["wasi_descriptor_stat_at_p2"]
@@ -1863,7 +1863,7 @@ func buildStatLikeBodyP2(idxs map[string]uint32, pathFlags int32) []byte {
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	{
 		body = appendErrnoFromErrorCodeAt(body, idxs, 2, 6, statAtTypeOff)
-		body = emitResultErr(body, buildIoErr, allocBox, 6, 10, 9)
+		body = emitResultErr(body, buildIoErr, allocRc1, 6, 10, 9)
 	}
 	body = inst.InstEnd(body)
 
@@ -1872,7 +1872,7 @@ func buildStatLikeBodyP2(idxs map[string]uint32, pathFlags int32) []byte {
 	body = inst.InstLocalSet(body, 7)
 
 	body = projectDescriptorStatP2(body, alloc, 2, 7, 8)
-	body = emitResultOkPtr(body, allocBox, 8, 9)
+	body = emitResultOkPtr(body, allocRc1, 8, 9)
 
 	locals := inst.PutLocalsOneGroup(nil, 10, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
@@ -2212,7 +2212,7 @@ func emitDirRecWalk(body []byte, bufLocal, countLocal, iLocal, recLocal uint32, 
 //	14: $errno   15: $err_ptr       16: $box
 func buildReadDirBodyP2(idxs map[string]uint32) []byte {
 	alloc := idxs["__fern_alloc"]
-	allocBox := idxs["__fern_alloc_box"]
+	allocRc1 := idxs["__fern_alloc_rc1"]
 	buildIoErr := idxs["__build_io_error"]
 	openDir := idxs["__fern_open_dir"]
 	readRaw := idxs["__fern_read_dir_raw"]
@@ -2221,7 +2221,7 @@ func buildReadDirBodyP2(idxs map[string]uint32) []byte {
 
 	var body []byte
 	body = emitStrNormalize(body, idxs, 0, 1, 2, 3, 4)
-	body = emitOpenDirOrErr(body, idxs, openDir, buildIoErr, allocBox, 5, 14, 15, 16)
+	body = emitOpenDirOrErr(body, idxs, openDir, buildIoErr, allocRc1, 5, 14, 15, 16)
 
 	body = inst.InstLocalGet(body, 5)
 	body = inst.InstCall(body, readRaw)
@@ -2238,7 +2238,7 @@ func buildReadDirBodyP2(idxs map[string]uint32) []byte {
 		body = inst.InstLocalGet(body, 6)
 		body = numeric.InstI32Sub(body)
 		body = inst.InstLocalSet(body, 14)
-		body = emitResultErr(body, buildIoErr, allocBox, 14, 15, 16)
+		body = emitResultErr(body, buildIoErr, allocRc1, 14, 15, 16)
 	}
 	body = inst.InstEnd(body)
 
@@ -2289,7 +2289,7 @@ func buildReadDirBodyP2(idxs map[string]uint32) []byte {
 		return b
 	})
 
-	body = emitResultOkPtr(body, allocBox, 10, 16)
+	body = emitResultOkPtr(body, allocRc1, 10, 16)
 
 	locals := inst.PutLocalsOneGroup(nil, 15, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
@@ -2299,7 +2299,7 @@ func buildReadDirBodyP2(idxs map[string]uint32) []byte {
 // path_byte_len); if it came back negative, turn -errno into an Err and
 // return". Shared by the read_dir and remove_dir_all halves, which
 // differ only in what they do with the fd.
-func emitOpenDirOrErr(body []byte, idxs map[string]uint32, openDir, buildIoErr, allocBox, fdLocal, errnoLocal, errPtrLocal, boxLocal uint32) []byte {
+func emitOpenDirOrErr(body []byte, idxs map[string]uint32, openDir, buildIoErr, allocRc1, fdLocal, errnoLocal, errPtrLocal, boxLocal uint32) []byte {
 	body = inst.InstLocalGet(body, 2)
 	body = inst.InstLocalGet(body, 3)
 	body = inst.InstCall(body, openDir)
@@ -2312,7 +2312,7 @@ func emitOpenDirOrErr(body []byte, idxs map[string]uint32, openDir, buildIoErr, 
 		body = inst.InstLocalGet(body, fdLocal)
 		body = numeric.InstI32Sub(body)
 		body = inst.InstLocalSet(body, errnoLocal)
-		body = emitResultErr(body, buildIoErr, allocBox, errnoLocal, errPtrLocal, boxLocal)
+		body = emitResultErr(body, buildIoErr, allocRc1, errnoLocal, errPtrLocal, boxLocal)
 	}
 	body = inst.InstEnd(body)
 	return body

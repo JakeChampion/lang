@@ -37,7 +37,11 @@ func corpusByUtil() map[string]func(*testing.T) []invocation {
 	return map[string]func(*testing.T) []invocation{
 		"[":         bracketCases,
 		"b2sum":     b2sumCases,
+		"base32":    base32Cases,
+		"base64":    base64Cases,
 		"basename":  basenameCases,
+		"basenc":    basencCases,
+		"cat":       catCases,
 		"dirname":   dirnameCases,
 		"echo":      echoCases,
 		"expr":      exprCases,
@@ -45,7 +49,9 @@ func corpusByUtil() map[string]func(*testing.T) []invocation {
 		"false":     trueFalseCases,
 		"head":      headCases,
 		"hostid":    hostidCases,
+		"join":      joinCases,
 		"md5sum":    md5sumCases,
+		"nl":        nlCases,
 		"numfmt":    numfmtCases,
 		"printf":    printfCases,
 		"seq":       seqCases,
@@ -55,7 +61,9 @@ func corpusByUtil() map[string]func(*testing.T) []invocation {
 		"sha384sum": sha384sumCases,
 		"sha512sum": sha512sumCases,
 		"sleep":     sleepCases,
+		"tail":      tailCases,
 		"test":      testCases,
+		"tr":        trCases,
 		"true":      trueFalseCases,
 		"tsort":     tsortCases,
 		"wc":        wcCases,
@@ -181,8 +189,14 @@ func TestSelfHostCoreutilsParity(t *testing.T) {
 					// this leg would otherwise double the package's wall
 					// time on its own. Each case is its own pair of
 					// processes with no shared state; the two binary
-					// caches they read are mutex-guarded.
-					t.Parallel()
+					// caches they read are mutex-guarded. A case that
+					// writes a corpus file — appending stdout to it, or
+					// playing the writer a follow watches — is the
+					// exception: two of them on one file would see each
+					// other's bytes, so those run one at a time.
+					if inv.stdoutPath == "" && len(inv.follow) == 0 {
+						t.Parallel()
+					}
 					want := inv.run(t, native, util)
 					got := inv.run(t, ours, util)
 					if !bytes.Equal(want.stdout, got.stdout) {

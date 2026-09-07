@@ -4894,7 +4894,7 @@ func (g *generator) emitEnvRuntime() {
 		// Build Option[string]: 24-byte box {tag@0, data@8,
 		// len@16}.
 		g.emit("mov x0, #24")
-		g.emit("bl __fern_alloc_box")
+		g.emit("bl __fern_alloc_rc1")
 		g.emit("str wzr, [x0]")      // tag = 0 (Some)
 		g.emit("str x22, [x0, #8]")  // data
 		g.emit("str x20, [x0, #16]") // len
@@ -4910,7 +4910,7 @@ func (g *generator) emitEnvRuntime() {
 		g.emit("mov x2, x20")
 		g.emit("bl __fern_memcpy")
 		g.emit("mov x0, #16")
-		g.emit("bl __fern_alloc_box")
+		g.emit("bl __fern_alloc_rc1")
 		g.emit("str wzr, [x0]")
 		g.emit("str x22, [x0, #8]")
 		g.emit("b .Lenv_done")
@@ -4919,9 +4919,14 @@ func (g *generator) emitEnvRuntime() {
 	g.emit("add x21, x21, #8")
 	g.emit("b .Lenv_loop")
 	g.label(".Lenv_none")
-	// None: heap [tag=1].
-	g.emit("mov x0, #8")
-	g.emit("bl __fern_alloc_box")
+	// None: a box at the enum's uniform size, so a caller that
+	// reclaims it frees it in its own size class.
+	if twoWord {
+		g.emit("mov x0, #24")
+	} else {
+		g.emit("mov x0, #16")
+	}
+	g.emit("bl __fern_alloc_rc1")
 	g.emit("mov w1, #1")
 	g.emit("str w1, [x0]")
 	g.label(".Lenv_done")
@@ -7171,8 +7176,12 @@ func (g *generator) emitReadLineRuntime() {
 	g.label(".Lrl_done")
 	// EOF before any byte → return None.
 	g.emit("cbnz x20, .Lrl_some")
-	g.emit("mov x0, #4")
-	g.emit("bl __fern_alloc_box")
+	if twoWord {
+		g.emit("mov x0, #24")
+	} else {
+		g.emit("mov x0, #16")
+	}
+	g.emit("bl __fern_alloc_rc1")
 	g.emit("mov w1, #1")
 	g.emit("str w1, [x0]") // tag = 1
 	g.emit("b .Lrl_ret")
@@ -7196,7 +7205,7 @@ func (g *generator) emitReadLineRuntime() {
 		// data@8, len@16.
 		g.emit("mov x19, x21") // stash data ptr
 		g.emit("mov x0, #24")
-		g.emit("bl __fern_alloc_box")
+		g.emit("bl __fern_alloc_rc1")
 		g.emit("str wzr, [x0]")      // tag = 0 (Some)
 		g.emit("str x19, [x0, #8]")  // data
 		g.emit("str x20, [x0, #16]") // len
@@ -7215,7 +7224,7 @@ func (g *generator) emitReadLineRuntime() {
 		g.emit("strb wzr, [x0]")
 		g.emit("mov x19, x21")
 		g.emit("mov x0, #16")
-		g.emit("bl __fern_alloc_box")
+		g.emit("bl __fern_alloc_rc1")
 		g.emit("str wzr, [x0]")
 		g.emit("str x19, [x0, #8]")
 	}
@@ -8182,7 +8191,7 @@ func (g *generator) emitReadFileRuntime() {
 	g.label(".Lrf_ok")
 	// Build Result.Ok(string).
 	g.emit("mov x0, #16")
-	g.emit("bl __fern_alloc_box")
+	g.emit("bl __fern_alloc_rc1")
 	g.emit("str wzr, [x0]")     // tag=0 (Ok)
 	g.emit("str x21, [x0, #8]") // payload @ +8 — x21 is already the string data ptr
 	g.emit("b .Lrf_return")
@@ -8206,7 +8215,7 @@ func (g *generator) emitReadFileRuntime() {
 	// needed). x1 would NOT survive the next __fern_alloc call.
 	g.emit("mov x19, x0")
 	g.emit("mov x0, #16")
-	g.emit("bl __fern_alloc_box")
+	g.emit("bl __fern_alloc_rc1")
 	g.emit("mov w1, #1")
 	g.emit("str w1, [x0]")
 	g.emit("str x19, [x0, #8]")
@@ -8315,7 +8324,7 @@ func (g *generator) emitReadFileRuntime2W() {
 	// Build Result.Ok(string) box: 24 bytes — {tag@0,
 	// pad@4, data@8, len@16}.
 	g.emit("mov x0, #24")
-	g.emit("bl __fern_alloc_box")
+	g.emit("bl __fern_alloc_rc1")
 	g.emit("str wzr, [x0]")      // tag = 0 (Ok)
 	g.emit("str x22, [x0, #8]")  // payload data
 	g.emit("str x23, [x0, #16]") // payload len
@@ -8336,7 +8345,7 @@ func (g *generator) emitReadFileRuntime2W() {
 	g.emit("bl __fern_io_error")
 	g.emit("mov x19, x0") // stash IoError box across alloc
 	g.emit("mov x0, #16")
-	g.emit("bl __fern_alloc_box")
+	g.emit("bl __fern_alloc_rc1")
 	g.emit("mov w1, #1")
 	g.emit("str w1, [x0]") // tag = 1 (Err)
 	g.emit("str x19, [x0, #8]")
@@ -8427,7 +8436,7 @@ func (g *generator) emitReadFileBytesRuntime() {
 	g.syscall("close")
 	// Build Result.Ok(u8[]): 16-byte box {tag=0 @0, data @8}.
 	g.emit("mov x0, #16")
-	g.emit("bl __fern_alloc_box")
+	g.emit("bl __fern_alloc_rc1")
 	g.emit("str wzr, [x0]")     // tag = 0 (Ok)
 	g.emit("str x22, [x0, #8]") // payload — array data ptr
 	g.emit("b .Lrfb_return")
@@ -8446,7 +8455,7 @@ func (g *generator) emitReadFileBytesRuntime() {
 	g.emit("bl __fern_io_error")
 	g.emit("mov x19, x0") // stash IoError box across alloc
 	g.emit("mov x0, #16")
-	g.emit("bl __fern_alloc_box")
+	g.emit("bl __fern_alloc_rc1")
 	g.emit("mov w1, #1")
 	g.emit("str w1, [x0]") // tag = 1 (Err)
 	g.emit("str x19, [x0, #8]")
@@ -8471,8 +8480,7 @@ func (g *generator) emitReadFileBytesRuntime() {
 //	tag=0 → Some(IoError), payload = IoError box ptr @ +8
 //	tag=1 → None (8-byte box, no payload)
 //
-// O_WRONLY = 1, O_CREAT = 0100 (octal) = 64, O_TRUNC = 01000
-// (octal) = 512. Combined flags = 577.
+// The flag word is the target's, not a constant — see oflagWrite.
 func (g *generator) emitWriteFileRuntime() {
 	g.emitWriteFileRuntimeMode("__fern_write_file", "0644", "", "")
 }
@@ -8505,10 +8513,10 @@ func (g *generator) emitWriteFileRuntimeMode(sym, mode, sfx, fixupMode string) {
 	g.emitStrDataPtr("x20", "x1", 72)  // x20 = content byte ptr
 	g.emitStrDataPtr("x24", "x19", 64) // x24 = path byte ptr (preserves x19 = original)
 
-	// openat(AT_FDCWD, path, O_WRONLY|O_CREAT|O_TRUNC=577, 0644)
+	// openat(AT_FDCWD, path, the target's O_WRONLY|O_CREAT|O_TRUNC, 0644)
 	g.emit("mov x0, #%d", g.atFdCwd())
 	g.emit("mov x1, x24")
-	g.emit("mov x2, #577")
+	g.emit("mov x2, #%d", g.oflagWrite(oflagCreatTrunc))
 	g.emit("mov x3, #%s", mode)
 	g.syscall("openat")
 	g.emit("tbnz x0, #63, .Lwf_err_open%s", sfx)
@@ -8546,7 +8554,7 @@ func (g *generator) emitWriteFileRuntimeMode(sym, mode, sfx, fixupMode string) {
 	// loads it by the declared layout — so the success arm cannot be
 	// the 8-byte tag-only box the Option shape used.
 	g.emit("mov x0, #16")
-	g.emit("bl __fern_alloc_box")
+	g.emit("bl __fern_alloc_rc1")
 	g.emit("str wzr, [x0]")
 	g.emit("str xzr, [x0, #8]")
 	g.emit("b .Lwf_return%s", sfx)
@@ -8568,7 +8576,7 @@ func (g *generator) emitWriteFileRuntimeMode(sym, mode, sfx, fixupMode string) {
 	// longer needed) — x1 would NOT survive the next alloc call.
 	g.emit("mov x19, x0")
 	g.emit("mov x0, #16")
-	g.emit("bl __fern_alloc_box")
+	g.emit("bl __fern_alloc_rc1")
 	g.emit("mov w1, #1")
 	g.emit("str w1, [x0]") // tag = 1 (Err)
 	g.emit("str x19, [x0, #8]")
@@ -8611,10 +8619,10 @@ func (g *generator) emitWriteFileRuntime2W(sym, mode, sfx, fixupMode string) {
 	g.emitStrDataPtr2W("x25", "x19", "x20", 88) // x25 = path byte ptr; scratch at [x29+88]
 	// NUL-terminate for openat (see emitNulTermPath2W).
 	g.emitNulTermPath2W("x25", "x25", "x20")
-	// openat(AT_FDCWD, path, O_WRONLY|O_CREAT|O_TRUNC=577, 0644)
+	// openat(AT_FDCWD, path, the target's O_WRONLY|O_CREAT|O_TRUNC, 0644)
 	g.emit("mov x0, #%d", g.atFdCwd())
 	g.emit("mov x1, x25")
-	g.emit("mov x2, #577")
+	g.emit("mov x2, #%d", g.oflagWrite(oflagCreatTrunc))
 	g.emit("mov x3, #%s", mode)
 	g.syscall("openat")
 	g.emit("tbnz x0, #63, .Lwf2w_err_open%s", sfx)
@@ -8653,7 +8661,7 @@ func (g *generator) emitWriteFileRuntime2W(sym, mode, sfx, fixupMode string) {
 	// loads it by the declared layout — so the success arm cannot be
 	// the 8-byte tag-only box the Option shape used.
 	g.emit("mov x0, #16")
-	g.emit("bl __fern_alloc_box")
+	g.emit("bl __fern_alloc_rc1")
 	g.emit("str wzr, [x0]")
 	g.emit("str xzr, [x0, #8]")
 	g.emit("b .Lwf2w_return%s", sfx)
@@ -8672,7 +8680,7 @@ func (g *generator) emitWriteFileRuntime2W(sym, mode, sfx, fixupMode string) {
 	g.emit("bl __fern_io_error")
 	g.emit("mov x19, x0") // stash IoError box
 	g.emit("mov x0, #16")
-	g.emit("bl __fern_alloc_box")
+	g.emit("bl __fern_alloc_rc1")
 	g.emit("mov w1, #1")
 	g.emit("str w1, [x0]")      // tag = 1 (Err)
 	g.emit("str x19, [x0, #8]") // payload
@@ -8749,6 +8757,35 @@ func (g *generator) direntNameOff() int {
 	return 19
 }
 
+// oflagKind names the two open(2) modes the fs bundle writes with, so a
+// call site cannot pick the flag word by spelling a raw number.
+type oflagKind int
+
+const (
+	oflagCreatTrunc oflagKind = iota
+	oflagCreatAppend
+)
+
+// oflagWrite returns the target's open(2) flag word for one of those modes.
+// Linux and XNU share none of the three bits — O_CREAT is 0100 vs 0x200,
+// O_TRUNC 01000 vs 0x400, O_APPEND 02000 vs 0x8 — so the Linux words mean
+// something else entirely on Darwin: 577 asks XNU for O_ASYNC|O_CREAT, which
+// creates without truncating and leaves a shortened file's old tail behind,
+// and 1089 sets XNU's O_TRUNC, so an APPEND empties the file it opens.
+// #6042 translated these on the self-host path only.
+func (g *generator) oflagWrite(k oflagKind) int {
+	if g.darwin {
+		if k == oflagCreatAppend {
+			return 521 // O_WRONLY|O_CREAT|O_APPEND
+		}
+		return 1537 // O_WRONLY|O_CREAT|O_TRUNC
+	}
+	if k == oflagCreatAppend {
+		return 1089
+	}
+	return 577
+}
+
 // emitODirectory materialises the platform O_DIRECTORY flag into
 // reg: 0o40000 = 16384 on arm64 Linux (an arch-specific override
 // — x86-64's 65536 is O_DIRECT here), 0x100000 on Darwin.
@@ -8795,7 +8832,7 @@ func (g *generator) emitRemoveFileRuntime() {
 	// loads it by the declared layout — so the success arm cannot be
 	// the 8-byte tag-only box the Option shape used.
 	g.emit("mov x0, #16")
-	g.emit("bl __fern_alloc_box")
+	g.emit("bl __fern_alloc_rc1")
 	g.emit("str wzr, [x0]")     // tag = 0 (Ok)
 	g.emit("str xzr, [x0, #8]") // unit payload
 	g.emit("b .Lrmf2w_return")
@@ -8808,7 +8845,7 @@ func (g *generator) emitRemoveFileRuntime() {
 	g.emit("bl __fern_io_error")
 	g.emit("mov x19, x0") // stash IoError box across the alloc
 	g.emit("mov x0, #16")
-	g.emit("bl __fern_alloc_box")
+	g.emit("bl __fern_alloc_rc1")
 	g.emit("mov w1, #1")
 	g.emit("str w1, [x0]") // tag = 1 (Err)
 	g.emit("str x19, [x0, #8]")
@@ -8892,7 +8929,7 @@ func (g *generator) emitCreateDirAllRuntime() {
 
 	g.label(".Lcda2w_ok")
 	g.emit("mov x0, #16")
-	g.emit("bl __fern_alloc_box")
+	g.emit("bl __fern_alloc_rc1")
 	g.emit("str wzr, [x0]")     // tag = 0 (Ok)
 	g.emit("str xzr, [x0, #8]") // unit payload
 	g.emit("b .Lcda2w_return")
@@ -8905,7 +8942,7 @@ func (g *generator) emitCreateDirAllRuntime() {
 	g.emit("bl __fern_io_error")
 	g.emit("mov x19, x0") // stash IoError box across the alloc
 	g.emit("mov x0, #16")
-	g.emit("bl __fern_alloc_box")
+	g.emit("bl __fern_alloc_rc1")
 	g.emit("mov w1, #1")
 	g.emit("str w1, [x0]") // tag = 1 (Err)
 	g.emit("str x19, [x0, #8]")
@@ -9033,7 +9070,7 @@ func (g *generator) emitTempDirRuntime() {
 	g.emit("bl __fern_memcpy")
 	g.emit("strb wzr, [x24, x22]")
 	g.emit("mov x0, #24")
-	g.emit("bl __fern_alloc_box")
+	g.emit("bl __fern_alloc_rc1")
 	g.emit("str wzr, [x0]")      // tag = 0 (Ok)
 	g.emit("str x24, [x0, #8]")  // payload data
 	g.emit("str x22, [x0, #16]") // payload len (heap form)
@@ -9052,7 +9089,7 @@ func (g *generator) emitTempDirRuntime() {
 	g.emit("bl __fern_io_error")
 	g.emit("mov x19, x0")
 	g.emit("mov x0, #16")
-	g.emit("bl __fern_alloc_box")
+	g.emit("bl __fern_alloc_rc1")
 	g.emit("mov w9, #1")
 	g.emit("str w9, [x0]") // tag = 1 (Err)
 	g.emit("str x19, [x0, #8]")
@@ -9223,7 +9260,7 @@ func (g *generator) emitReadDirRuntime() {
 	g.emit("b .Lrdd2w_p2")
 	g.label(".Lrdd2w_p2d")
 	g.emit("mov x0, #16")
-	g.emit("bl __fern_alloc_box")
+	g.emit("bl __fern_alloc_rc1")
 	g.emit("str wzr, [x0]") // tag = 0 (Ok)
 	g.emit("str x25, [x0, #8]")
 	g.emit("b .Lrdd2w_return")
@@ -9236,7 +9273,7 @@ func (g *generator) emitReadDirRuntime() {
 	g.emit("bl __fern_io_error")
 	g.emit("mov x19, x0")
 	g.emit("mov x0, #16")
-	g.emit("bl __fern_alloc_box")
+	g.emit("bl __fern_alloc_rc1")
 	g.emit("mov w9, #1")
 	g.emit("str w9, [x0]") // tag = 1 (Err)
 	g.emit("str x19, [x0, #8]")
@@ -9358,7 +9395,7 @@ func (g *generator) emitStatLikeRuntime(sym string, atFlags int, lp string, byFd
 	}
 	g.emit("mov x21, x0")
 	g.emit("mov x0, #16")
-	g.emit("bl __fern_alloc_box")
+	g.emit("bl __fern_alloc_rc1")
 	g.emit("str wzr, [x0]") // tag = 0 (Ok)
 	g.emit("str x21, [x0, #8]")
 	g.emit("b .L%s_return", lp)
@@ -9375,7 +9412,7 @@ func (g *generator) emitStatLikeRuntime(sym string, atFlags int, lp string, byFd
 	g.emit("bl __fern_io_error")
 	g.emit("mov x19, x0")
 	g.emit("mov x0, #16")
-	g.emit("bl __fern_alloc_box")
+	g.emit("bl __fern_alloc_rc1")
 	g.emit("mov w9, #1")
 	g.emit("str w9, [x0]") // tag = 1 (Err)
 	g.emit("str x19, [x0, #8]")
@@ -9421,7 +9458,7 @@ func (g *generator) emitReaderSeekRuntime() {
 	g.emit("tbnz x0, #63, .Lrsk2w_err")
 	g.emit("mov x19, x0")
 	g.emit("mov x0, #16")
-	g.emit("bl __fern_alloc_box")
+	g.emit("bl __fern_alloc_rc1")
 	g.emit("str wzr, [x0]") // tag = 0 (Ok)
 	g.emit("str x19, [x0, #8]")
 	g.emit("b .Lrsk2w_ret")
@@ -9432,7 +9469,7 @@ func (g *generator) emitReaderSeekRuntime() {
 	g.emit("bl __fern_io_error")
 	g.emit("mov x19, x0")
 	g.emit("mov x0, #16")
-	g.emit("bl __fern_alloc_box")
+	g.emit("bl __fern_alloc_rc1")
 	g.emit("mov w1, #1")
 	g.emit("str w1, [x0]") // tag = 1 (Err)
 	g.emit("str x19, [x0, #8]")
@@ -9554,7 +9591,7 @@ func (g *generator) emitAccessRuntime() {
 	g.syscall("faccessat")
 	g.emit("tbnz x0, #63, .Lacc2w_err")
 	g.emit("mov x0, #16")
-	g.emit("bl __fern_alloc_box")
+	g.emit("bl __fern_alloc_rc1")
 	g.emit("str wzr, [x0]")     // tag = 0 (Ok)
 	g.emit("str xzr, [x0, #8]") // unit payload
 	g.emit("b .Lacc2w_return")
@@ -9567,7 +9604,7 @@ func (g *generator) emitAccessRuntime() {
 	g.emit("bl __fern_io_error")
 	g.emit("mov x19, x0")
 	g.emit("mov x0, #16")
-	g.emit("bl __fern_alloc_box")
+	g.emit("bl __fern_alloc_rc1")
 	g.emit("mov w9, #1")
 	g.emit("str w9, [x0]") // tag = 1 (Err)
 	g.emit("str x19, [x0, #8]")
@@ -9868,7 +9905,7 @@ func (g *generator) emitRemoveDirAllRuntime() {
 	// loads it by the declared layout — so the success arm cannot be
 	// the 8-byte tag-only box the Option shape used.
 	g.emit("mov x0, #16")
-	g.emit("bl __fern_alloc_box")
+	g.emit("bl __fern_alloc_rc1")
 	g.emit("str wzr, [x0]")     // tag = 0 (Ok)
 	g.emit("str xzr, [x0, #8]") // unit payload
 	g.emit("b .Lrda2w_return")
@@ -9881,7 +9918,7 @@ func (g *generator) emitRemoveDirAllRuntime() {
 	g.emit("bl __fern_io_error")
 	g.emit("mov x22, x0")
 	g.emit("mov x0, #16")
-	g.emit("bl __fern_alloc_box")
+	g.emit("bl __fern_alloc_rc1")
 	g.emit("mov w1, #1")
 	g.emit("str w1, [x0]") // tag = 1 (Err)
 	g.emit("str x22, [x0, #8]")
@@ -9976,8 +10013,8 @@ func (g *generator) emitReaderWriterRuntime() {
 		mode      int
 	}{
 		{"__fern_open_reader", "open_reader", 0, 0},
-		{"__fern_open_writer", "open_writer", 577, 0644},
-		{"__fern_open_appender", "open_appender", 1089, 0644},
+		{"__fern_open_writer", "open_writer", g.oflagWrite(oflagCreatTrunc), 0644},
+		{"__fern_open_appender", "open_appender", g.oflagWrite(oflagCreatAppend), 0644},
 	} {
 		_ = e.name
 		g.line("")
@@ -10007,7 +10044,7 @@ func (g *generator) emitReaderWriterRuntime() {
 			g.emit("bl __fern_make_handle")
 			g.emit("mov x21, x0") // handle ptr
 			g.emit("mov x0, #16")
-			g.emit("bl __fern_alloc_box")
+			g.emit("bl __fern_alloc_rc1")
 			g.emit("str wzr, [x0]")
 			g.emit("str x21, [x0, #8]")
 			g.emit("b %s", ".Lorw2w_ret_"+e.sym)
@@ -10019,7 +10056,7 @@ func (g *generator) emitReaderWriterRuntime() {
 			g.emit("bl __fern_io_error")
 			g.emit("mov x21, x0")
 			g.emit("mov x0, #16")
-			g.emit("bl __fern_alloc_box")
+			g.emit("bl __fern_alloc_rc1")
 			g.emit("mov w1, #1")
 			g.emit("str w1, [x0]")
 			g.emit("str x21, [x0, #8]")
@@ -10047,7 +10084,7 @@ func (g *generator) emitReaderWriterRuntime() {
 		g.emit("bl __fern_make_handle")
 		g.emit("mov x19, x0") // handle ptr (in callee-save)
 		g.emit("mov x0, #16")
-		g.emit("bl __fern_alloc_box")
+		g.emit("bl __fern_alloc_rc1")
 		g.emit("str wzr, [x0]")     // tag=0 (Ok)
 		g.emit("str x19, [x0, #8]") // handle ptr
 		g.emit("b %s", ".Lorw_ret_"+e.sym)
@@ -10058,7 +10095,7 @@ func (g *generator) emitReaderWriterRuntime() {
 		g.emit("bl __fern_io_error")
 		g.emit("mov x19, x0") // stash IoError ptr (callee-save)
 		g.emit("mov x0, #16")
-		g.emit("bl __fern_alloc_box")
+		g.emit("bl __fern_alloc_rc1")
 		g.emit("mov w1, #1")
 		g.emit("str w1, [x0]")
 		g.emit("str x19, [x0, #8]")
@@ -10102,9 +10139,13 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("b .Lrrl_loop")
 	g.label(".Lrrl_done")
 	g.emit("cbnz x20, .Lrrl_some")
-	// None: tag=1 4-byte box.
-	g.emit("mov x0, #4")
-	g.emit("bl __fern_alloc_box")
+	// None: a box at the enum's uniform size (see __fern_read_line).
+	if twoWord {
+		g.emit("mov x0, #24")
+	} else {
+		g.emit("mov x0, #16")
+	}
+	g.emit("bl __fern_alloc_rc1")
 	g.emit("mov w1, #1")
 	g.emit("str w1, [x0]")
 	g.emit("b .Lrrl_ret")
@@ -10123,7 +10164,7 @@ func (g *generator) emitReaderWriterRuntime() {
 		// Some(string) box: 24 bytes — {tag@0, data@8, len@16}.
 		g.emit("mov x19, x21")
 		g.emit("mov x0, #24")
-		g.emit("bl __fern_alloc_box")
+		g.emit("bl __fern_alloc_rc1")
 		g.emit("str wzr, [x0]")
 		g.emit("str x19, [x0, #8]")
 		g.emit("str x20, [x0, #16]")
@@ -10142,7 +10183,7 @@ func (g *generator) emitReaderWriterRuntime() {
 		g.emit("strb wzr, [x0]")
 		g.emit("mov x19, x21")
 		g.emit("mov x0, #16")
-		g.emit("bl __fern_alloc_box")
+		g.emit("bl __fern_alloc_rc1")
 		g.emit("str wzr, [x0]")
 		g.emit("str x19, [x0, #8]")
 	}
@@ -10188,7 +10229,7 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("mov x20, x0") // x20 = bytes read
 	// Ok(string) 24-byte box.
 	g.emit("mov x0, #24")
-	g.emit("bl __fern_alloc_box")
+	g.emit("bl __fern_alloc_rc1")
 	g.emit("str wzr, [x0]")
 	g.emit("str x21, [x0, #8]")
 	g.emit("str x20, [x0, #16]")
@@ -10200,7 +10241,7 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("mov x1, x20")
 	g.emit("bl __fern_box_free")
 	g.emit("mov x0, #24")
-	g.emit("bl __fern_alloc_box")
+	g.emit("bl __fern_alloc_rc1")
 	g.emit("str wzr, [x0]")
 	if ast.UseTwoWordStrings(8) {
 		g.emit("str xzr, [x0, #8]")
@@ -10229,7 +10270,7 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("bl __fern_io_error")
 	g.emit("mov x19, x0")
 	g.emit("mov x0, #16")
-	g.emit("bl __fern_alloc_box")
+	g.emit("bl __fern_alloc_rc1")
 	g.emit("mov w1, #1")
 	g.emit("str w1, [x0]")
 	g.emit("str x19, [x0, #8]")
@@ -10275,9 +10316,9 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("add x21, x21, x0")
 	g.emit("b .Lww_loop")
 	g.label(".Lww_done")
-	// None: 4-byte tag=1.
-	g.emit("mov x0, #4")
-	g.emit("bl __fern_alloc_box")
+	// None: tag=1, at Option[IoError]'s uniform 16-byte size.
+	g.emit("mov x0, #16")
+	g.emit("bl __fern_alloc_rc1")
 	g.emit("mov w1, #1")
 	g.emit("str w1, [x0]")
 	g.emit("b .Lww_ret")
@@ -10295,7 +10336,7 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("bl __fern_io_error")
 	g.emit("mov x19, x0")
 	g.emit("mov x0, #16")
-	g.emit("bl __fern_alloc_box")
+	g.emit("bl __fern_alloc_rc1")
 	g.emit("str wzr, [x0]")
 	g.emit("str x19, [x0, #8]")
 	g.label(".Lww_ret")
@@ -10318,8 +10359,8 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.syscall("close")
 	g.emit("tbnz x0, #63, .Lcfb_err")
 	// None.
-	g.emit("mov x0, #4")
-	g.emit("bl __fern_alloc_box")
+	g.emit("mov x0, #16")
+	g.emit("bl __fern_alloc_rc1")
 	g.emit("mov w1, #1")
 	g.emit("str w1, [x0]")
 	g.emit("b .Lcfb_ret")
@@ -10335,7 +10376,7 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("bl __fern_io_error")
 	g.emit("mov x19, x0")
 	g.emit("mov x0, #16")
-	g.emit("bl __fern_alloc_box")
+	g.emit("bl __fern_alloc_rc1")
 	g.emit("str wzr, [x0]")
 	g.emit("str x19, [x0, #8]")
 	g.label(".Lcfb_ret")

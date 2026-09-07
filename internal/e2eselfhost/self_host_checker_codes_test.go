@@ -1811,6 +1811,16 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"named-too-many-positional", "function f(a: i32, b: i32 = 2): i32 { return a + b; }\nfunction main(): i32 { return f(1, 2, b = 3); }\n", []string{"E004", "E077"}},
 		{"named-reorder-ok", "function f(a: i32, b: i32 = 2): i32 { return a - b; }\nfunction main(): i32 { return f(b = 1, a = 3); }\n", nil},
 		{"named-fills-default-ok", "function f(a: i32, b: i32 = 2, c: i32 = 3): i32 { return a + b + c; }\nfunction main(): i32 { return f(1, c = 5); }\n", nil},
+		// The unit `()` is void's one value, so every destination spelled
+		// void takes it: a local, a variant payload, a tuple element, a
+		// parameter (#8759). The self-host records it as the constant 0 it
+		// lowers to, which is why it typed i32 and drew E003 at each of them.
+		{"unit-value-destinations-ok", "function sink(u: ()): i32 { return 0; }\nfunction main(): i32 { var u: () = (); var v = (); var r: Result[(), i32] = Ok(()); var t: ((), i32) = ((), 1); return sink(u) + sink(v) + sink(t.0) + t.1; }\n", nil},
+		// And a void-returning CALL is still not a value: it produced nothing
+		// to store, which is the whole reason the unit has a spelling.
+		{"e072-void-call-payload", "function nothing(): void { return; }\nfunction main(): i32 { var r: Result[(), i32] = Ok(nothing()); return 0; }\n", []string{"E072"}},
+		// The unit is not a numeral: it settles at no destination width.
+		{"unit-not-a-number", "function main(): i32 { var f: f64 = (); return 0; }\n", []string{"E003"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

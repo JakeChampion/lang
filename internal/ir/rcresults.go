@@ -20,9 +20,10 @@
 //   - no header: the release reads whatever bytes precede the block,
 //     which is a neighbouring object's payload.
 //
-// Nineteen of the twenty-one Result / Option / IoError-returning
-// helpers are in the second class. Calling them "owned" would emit a
-// dec at every call site that cannot possibly reclaim.
+// The three classes are still live even though the I/O family moved
+// out of the second one in #8398 / #8405: an IoError box and a
+// Reader / Writer handle stay sentinel-headered, and calling either
+// "owned" would emit a dec at every call site that cannot reclaim.
 //
 // # Read the body, not the name
 //
@@ -129,7 +130,8 @@ var rcResultOwned = map[string]bool{
 	// CONSUMES its receiver and hands back one owned string, in place
 	// when unique and freshly concatenated otherwise. Either path
 	// leaves the caller holding exactly one unit.
-	"__fern_str_append": true,
+	"__fern_str_append":       true,
+	"__fern_str_append_range": true,
 	// Copies through __fern_str_copy — unlike __fern_arg_at beside it.
 	"__fern_env_at": true,
 	// Snapshots the string builder into a fresh rc=1 string and rewinds
@@ -151,21 +153,20 @@ var rcResultOwned = map[string]bool{
 	// backends' as_bytes helpers), the header is still the caller's unit.
 	"__slice_make":             true,
 	"__method_string_as_bytes": true,
-}
 
-// rcResultImmortal: fresh, pointer-shaped, static-sentinel header. The
-// caller holds nothing and a release reclaims nothing.
-//
-// `__fern_alloc_box` plus the closed set of its callers, which
-// `runtime.go`'s own `helperAllocBoxCallers` maintains — this list is
-// checked against it rather than kept in step by hand.
-var rcResultImmortal = map[string]bool{
-	"__fern_alloc_box": true,
-
+	// The I/O family's per-CALL Option / Result boxes (#8398, #8405).
+	// Each is one `__fern_alloc_rc1` block per call, allocated at the
+	// matched variant's box size, so the caller's release reclaims it
+	// and returns it to the class it came from. The wasm backend's
+	// `helperResultBoxCallers` is the second record of this set and a
+	// gate there checks the two agree.
+	//
+	// What is INSIDE the box is a separate answer: a success payload
+	// the helper built fresh is the caller's (rcOwnedPayloadBuiltins),
+	// while the IoError of a failure arm stays immortal.
 	"__fern_env":                 true,
 	"__fern_read_line":           true,
 	"__fern_reader_read_line":    true, // delegates to __fern_read_line
-	"__build_io_error":           true,
 	"__fern_read_file":           true,
 	"__fern_read_file_bytes":     true,
 	"__fern_write_file":          true,
@@ -182,14 +183,30 @@ var rcResultImmortal = map[string]bool{
 	"__fern_remove_file":         true,
 	"__fern_stat":                true,
 	"__fern_lstat":               true,
-	// `access` has no `__fern_access` entry in rcsigs to alias through —
-	// it is native-only, so it is classified there under the builtin
-	// name — which is why this one is spelled the builtin's way too.
-	"access":                true,
-	"__fern_read_dir":       true,
-	"__fern_remove_dir_all": true,
-	"__fern_temp_dir":       true,
-	"__fern_create_dir_all": true,
+	"__fern_read_dir":            true,
+	"__fern_remove_dir_all":      true,
+	"__fern_temp_dir":            true,
+	"__fern_create_dir_all":      true,
+	// `access` and `write_file_exec` have no `__fern_*` entry in rcsigs
+	// to alias through — both are native-only (E066 refuses them on the
+	// wasm worlds), so they are classified there under the builtin name,
+	// which is why these two are spelled the builtin's way too.
+	"access":          true,
+	"write_file_exec": true,
+}
+
+// rcResultImmortal: fresh, pointer-shaped, static-sentinel header. The
+// caller holds nothing and a release reclaims nothing.
+//
+// `__fern_alloc_box` itself, the IoError it still builds, and the
+// per-stream Reader / Writer handles. The per-CALL Option / Result
+// boxes left this class in #8398 / #8405 — see rcResultOwned's I/O
+// section — but these three shapes are not per-call: an IoError is
+// reachable from a result the caller may keep, and a handle outlives
+// every call made through it.
+var rcResultImmortal = map[string]bool{
+	"__fern_alloc_box": true,
+	"__build_io_error": true,
 
 	// Sentinel-headered Writer / Reader structs.
 	"__fern_stdout": true,
@@ -199,12 +216,14 @@ var rcResultImmortal = map[string]bool{
 
 // rcOwnedPayloadBuiltins names the builtins — by the callee spelling the IR
 // sees, which every backend maps to the runtime helper in the comment —
-// whose rcResultImmortal Option / Result box carries a SUCCESS payload the
+// whose per-call Option / Result box carries a SUCCESS payload the
 // caller owns: a fresh rc=1 string (`__fern_alloc_rc1`) or u8[]
-// (`__alloc_u8`) built for this call, on every backend. The box needs no
-// release; the payload's unit is the caller's, and a match that binds it
-// takes ownership (computeConsumingOwnedMatches → consumingBindings). A
-// failure payload (`IoError`) is an immortal box and is not owned.
+// (`__alloc_u8`) built for this call, on every backend. The BOX is the
+// caller's too since #8405 (rcResultOwned), and the arm frees it shallow;
+// this list answers the separate question of what is inside it. The
+// payload's unit is the caller's, and a match that binds it takes ownership
+// (computeConsumingOwnedMatches → consumingBindings). A failure payload
+// (`IoError`) is an immortal box and is not owned.
 var rcOwnedPayloadBuiltins = map[string]bool{
 	"__method_Reader_read_chunk": true, // __fern_reader_read_chunk
 	"__method_Reader_read_line":  true, // __fern_reader_read_line
@@ -212,6 +231,47 @@ var rcOwnedPayloadBuiltins = map[string]bool{
 	"env":                        true, // __fern_env
 	"read_file":                  true, // __fern_read_file
 	"read_file_bytes":            true, // __fern_read_file_bytes
+}
+
+// rcOwnedResultBuiltins names the builtins — by the callee spelling the IR
+// sees — whose Option / Result BOX the caller owns: the I/O family that
+// moved to rcResultOwned in #8398 / #8405, each of which allocates one
+// `__fern_alloc_rc1` block per call.
+//
+// It is the admission `ownedCallResultType` needs. That predicate's own
+// safety argument is the user function's return-transfer inc ("an aliased
+// return is rc>=2, so the is_unique gate only decs it"), which a builtin
+// cannot offer — so a builtin qualifies only by being on this list, where
+// the runtime body was read and every arm allocates a fresh box.
+//
+// The `Reader` / `Writer` constructors are absent by design: their handle
+// is per-stream, not per-call, and keeps the static sentinel.
+var rcOwnedResultBuiltins = map[string]bool{
+	"env":                        true, // __fern_env
+	"read_line":                  true, // __fern_read_line
+	"__method_Reader_read_line":  true, // __fern_reader_read_line
+	"__method_Reader_read_chunk": true, // __fern_reader_read_chunk
+	"__method_Reader_close":      true, // __fern_reader_close_fd
+	"__method_Writer_close":      true, // __fern_writer_close
+	"__method_Writer_write":      true, // __fern_writer_write
+	"__method_Reader_seek":       true, // __fern_reader_seek
+	"__method_Reader_stat":       true, // __fern_fd_stat
+	"__method_Writer_stat":       true, // __fern_fd_stat
+	"read_file":                  true,
+	"read_file_bytes":            true,
+	"write_file":                 true,
+	"write_file_exec":            true,
+	"open_reader":                true,
+	"open_writer":                true,
+	"open_appender":              true,
+	"remove_file":                true,
+	"remove_dir_all":             true,
+	"create_dir_all":             true,
+	"temp_dir":                   true,
+	"read_dir":                   true,
+	"stat":                       true,
+	"lstat":                      true,
+	"access":                     true,
 }
 
 // ownedPayloadType reports whether a binding of type `t` extracted from an

@@ -77,23 +77,38 @@ func TestRcResultPointerBucketsHoldOnlyI32Returns(t *testing.T) {
 	}
 }
 
-// The immortal list is `__fern_alloc_box` plus the helpers that call
-// it, and runtime.go maintains that caller set for its own reasons
-// (emitting the helper). Checking against it rather than trusting this
-// file to be kept in step is the same argument verifyprovided.go makes
-// for being a second record: a new box caller fails here instead of
-// silently reading as owned.
-func TestRcResultImmortalCoversEveryAllocBoxCaller(t *testing.T) {
-	for _, name := range helperAllocBoxCallers {
+// The owned I/O family is `helperResultBoxCallers`, and runtime.go
+// maintains that caller set for its own reasons (pulling the allocator
+// into the helper set). Checking against it rather than trusting
+// rcresults.go to be kept in step is the same argument
+// verifyprovided.go makes for being a second record: a helper that
+// starts or stops building a counted result box fails here instead of
+// silently reading as the other class (#8398 / #8405).
+func TestRcResultOwnedCoversEveryResultBoxCaller(t *testing.T) {
+	for _, name := range helperResultBoxCallers {
 		r, ok := ir.RcHelperResult(name)
-		if !ok || r != ir.RcResultImmortal {
-			t.Errorf("%s calls __fern_alloc_box, so its result carries the static "+
-				"sentinel header and cannot be released — classified %v (known=%v), "+
-				"want immortal", name, r, ok)
+		if !ok || r != ir.RcResultOwned {
+			t.Errorf("%s builds its result box with __fern_alloc_rc1, so the caller "+
+				"holds a unit and must release it — classified %v (known=%v), "+
+				"want owned", name, r, ok)
 		}
 	}
-	if len(helperAllocBoxCallers) == 0 {
-		t.Fatal("helperAllocBoxCallers is empty — this gate is vacuous")
+	if len(helperResultBoxCallers) == 0 {
+		t.Fatal("helperResultBoxCallers is empty — this gate is vacuous")
+	}
+	// The two shapes that stay sentinel-headered, and why: an IoError is
+	// reachable from a result the caller may keep, and a Reader / Writer
+	// handle outlives every call made through it. Releasing either would
+	// be a no-op today and a use-after-free the moment the header went
+	// live, so the class is pinned rather than left to drift.
+	for _, name := range []string{
+		"__build_io_error", "__fern_stdin", "__fern_stdout", "__fern_stderr",
+	} {
+		r, ok := ir.RcHelperResult(name)
+		if !ok || r != ir.RcResultImmortal {
+			t.Errorf("%s carries the static-sentinel rc header — classified %v "+
+				"(known=%v), want immortal", name, r, ok)
+		}
 	}
 }
 

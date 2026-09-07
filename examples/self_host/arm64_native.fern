@@ -2410,20 +2410,21 @@ function arm64_str_indexof(s: string, sub: string): i32 {
     var m: i32 = sub.len();
     if (m == 0) { return 0; }
     if (m > n) { return 0 - 1; }
-    // The needle's first byte is hoisted out and tested before the inner loop
-    // is entered at all. The assembler's hot searches are single characters
-    // (`:`, ` `, `(`) over lines that mostly do not hold them, so nearly every
-    // position is a mismatch and has to cost a compare and a bump rather than
-    // a loop set-up.
+    // The assembler's hot searches are single characters (`:`, ` `, `(`) over
+    // lines that mostly do not hold them, which IS __memchr's shape
+    // (docs/ATLAS-PLATFORM-PLAN.md §3), so both paths below locate the
+    // needle's first byte with it rather than a compare and a bump per
+    // position.
     var c0: u8 = sub[0];
+    if (m == 1) { return __memchr(s, c0 as i32, 0); }
     var last: i32 = n - m;
     var i: i32 = 0;
     while (i <= last) {
-        if (s[i] == c0) {
-            var j: i32 = 1;
-            while (j < m && s[i + j] == sub[j]) { j = j + 1; }
-            if (j == m) { return i; }
-        }
+        i = __memchr(s, c0 as i32, i);
+        if (i < 0 || i > last) { return 0 - 1; }
+        var j: i32 = 1;
+        while (j < m && s[i + j] == sub[j]) { j = j + 1; }
+        if (j == m) { return i; }
         i = i + 1;
     }
     return 0 - 1;

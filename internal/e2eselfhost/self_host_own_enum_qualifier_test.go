@@ -207,4 +207,166 @@ pub function probe(n: i32): i32 {
 			t.Errorf("want E015 for `E.Wrap { x: k, y: j }` on a positional variant, got codes %q", out)
 		}
 	})
+
+	// #8783: the payload TYPE lookups are keyed by the bare variant name too,
+	// so a qualified `E.Wrap` missed and the payload bound as UNKNOWN — every
+	// downstream check on it was skipped and the arm passed in silence. The
+	// bare spelling of the same program is E038, and so is native on both.
+	// Resolution is scoped through the enum owner, not a bare strip, so
+	// shared-name variants (below) still each answer for their own decl.
+	payloadMismatchLib := func(pat string) string {
+		return `enum E { Wrap(i32), Nil }
+
+function want_str(s: string): i32 { return s.len(); }
+
+pub function probe(n: i32): i32 {
+    var v: E = E.Wrap(7);
+    match (v) {
+        ` + pat + ` => { return want_str(k); },
+        E.Nil => { return 0; }
+    }
+    return n;
+}
+`
+	}
+
+	t.Run("qualified-payload-type-is-checked", func(t *testing.T) {
+		out, code := check(t, payloadMismatchLib("E.Wrap(k)"))
+		if code != 1 || !strings.Contains(out, "E038") {
+			t.Errorf("qualified `E.Wrap(k)`: exit %d codes %q; want exit 1 with E038 — "+
+				"an i32 payload passed to a string parameter, exactly as the bare "+
+				"spelling and native both report", code, out)
+		}
+	})
+
+	t.Run("bare-payload-type-is-checked", func(t *testing.T) {
+		out, code := check(t, payloadMismatchLib("Wrap(k)"))
+		if code != 1 || !strings.Contains(out, "E038") {
+			t.Errorf("bare `Wrap(k)`: exit %d codes %q; want exit 1 with E038", code, out)
+		}
+	})
+
+	// The 2nd+ payload goes through variant_payload_type_at rather than
+	// variant_binding_type; it missed on a qualified name the same way.
+	t.Run("qualified-extra-payload-type-is-checked", func(t *testing.T) {
+		out, code := check(t, `enum E { Pair(i32, i32), Nil }
+
+function want_str(s: string): i32 { return s.len(); }
+
+pub function probe(n: i32): i32 {
+    var v: E = E.Pair(1, 2);
+    match (v) {
+        E.Pair(a, b) => { return a + want_str(b); },
+        E.Nil => { return 0; }
+    }
+    return n;
+}
+`)
+		if code != 1 || !strings.Contains(out, "E038") {
+			t.Errorf("qualified `E.Pair(a, b)`: exit %d codes %q; want exit 1 with E038 "+
+				"on the SECOND payload binding", code, out)
+		}
+	})
+
+	// The other direction, and the one a naive strip breaks: two enums each
+	// declaring a variant `W` with a different payload type. Resolution has to
+	// answer per OWNER — a bare lookup answers for whichever `W` was declared
+	// first, which is conformance/cases/shared_variant_payload's regression.
+	// `B.W`'s payload is a string, so `want_i32(s)` is E038 while `A.W`'s i32
+	// payload through the same helper is clean.
+	t.Run("shared-variant-name-resolves-per-owner", func(t *testing.T) {
+		const sharedLib = `enum A { W(i32), P }
+enum B { W(string), Q }
+
+function want_i32(v: i32): i32 { return v; }
+
+pub function probe(n: i32): i32 {
+    var a: A = A.W(1);
+    var b: B = B.W("hi");
+    var t: i32 = 0;
+    match (a) {
+        A.W(k) => { t = t + want_i32(k); },
+        A.P => { t = t + 1; }
+    }
+    match (b) {
+        B.W(s) => { t = t + PROBE; },
+        B.Q => { t = t + 2; }
+    }
+    return t + n;
+}
+`
+		t.Run("second-owner-payload-is-its-own-type", func(t *testing.T) {
+			out, code := check(t, strings.Replace(sharedLib, "PROBE", "s.len()", 1))
+			if code != 0 {
+				t.Errorf("checker exited %d, want 0: `B.W(s)` binds a string, so "+
+					"`s.len()` resolves; codes %q", code, out)
+			}
+		})
+		t.Run("second-owner-payload-is-not-the-first-owners", func(t *testing.T) {
+			out, code := check(t, strings.Replace(sharedLib, "PROBE", "want_i32(s)", 1))
+			if code != 1 || !strings.Contains(out, "E038") {
+				t.Errorf("`B.W(s)` passed to an i32 parameter: exit %d codes %q; want "+
+					"exit 1 with E038 — reading A's i32 for B's `W` is the "+
+					"shared_variant_payload regression", code, out)
+			}
+		})
+	})
+
+	// The payload COUNT is resolved off the same decl as the payload types, so
+	// it failed open on a qualified name exactly as the types did: a binding
+	// count that does not match the variant's payload count is E015 for the
+	// bare spelling and for native, and was accepted in silence when the
+	// pattern carried its enum qualifier.
+	arityLib := func(pat string) string {
+		return `enum E { Pair(i32, i32), Nil }
+
+pub function probe(n: i32): i32 {
+    var v: E = E.Pair(1, 2);
+    match (v) {
+        ` + pat + ` => { return a; },
+        E.Nil => { return 0; }
+    }
+    return n;
+}
+`
+	}
+
+	t.Run("qualified-payload-arity-is-checked", func(t *testing.T) {
+		out, code := check(t, arityLib("E.Pair(a)"))
+		if code != 1 || !strings.Contains(out, "E015") {
+			t.Errorf("qualified `E.Pair(a)`: exit %d codes %q; want exit 1 with E015 — "+
+				"one binding for two payloads, exactly as the bare spelling and "+
+				"native both report", code, out)
+		}
+	})
+
+	t.Run("bare-payload-arity-is-checked", func(t *testing.T) {
+		out, code := check(t, arityLib("Pair(a)"))
+		if code != 1 || !strings.Contains(out, "E015") {
+			t.Errorf("bare `Pair(a)`: exit %d codes %q; want exit 1 with E015", code, out)
+		}
+	})
+
+	// And the other direction for the count: two enums whose same-named
+	// variants have DIFFERENT arities. Reading the first-declared decl made
+	// `B.W(1, 2)` an E036 "expects 1 argument(s), got 2" against A's arity,
+	// on a program native accepts.
+	t.Run("shared-variant-name-arity-resolves-per-owner", func(t *testing.T) {
+		out, code := check(t, `enum A { W(i32), P }
+enum B { W(i32, i32), Q }
+
+pub function probe(n: i32): i32 {
+    var b: B = B.W(1, 2);
+    match (b) {
+        B.W(x, y) => { return x + y + n; },
+        B.Q => { return 0; }
+    }
+    return n;
+}
+`)
+		if code != 0 {
+			t.Errorf("checker exited %d, want 0: `B.W` takes two payloads whatever "+
+				"arity A's `W` was declared with; codes %q", code, out)
+		}
+	})
 }

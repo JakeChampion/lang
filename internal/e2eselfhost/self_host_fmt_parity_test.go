@@ -1407,6 +1407,27 @@ var r = fnt(1)(2);
 return tup().1 + grp() + fnp(1)(2) + fnb(1)(2) + r.0 + r.1;
 }
 `},
+	// The unit, in both its halves (#8759). The self-host parser records the
+	// VALUE `()` as the constant 0 it lowers to, and had nothing left to
+	// reprint but that constant — so `Ok(())` came back as `Ok(0)` and
+	// `var u: () = ();` as `var u: () = 0;`, which is E003. The TYPE is the
+	// byte-parity half: native's type parser folds the empty parens to void
+	// and writes `void`, and the self-host kept the written parens.
+	//
+	// `() => i32` is here because it is what the type fold must NOT claim: an
+	// empty PARAMETER list, not the unit, and folding it drops the arrow.
+	{"unit-value-and-type", `function sink(u: ()): i32 { return 0; }
+function fallible(): Result[(), i32] { return Ok(()); }
+function thunk(): () => i32 { return (): i32 => { return 1; }; }
+function main(): i32 {
+var u: () = ();
+var v = ();
+var r: Result[(), i32] = fallible();
+var o: Option[()] = None;
+var t: ((), i32) = ((), 1);
+return sink(u) + sink(v) + sink(t.0) + thunk()() + t.1;
+}
+`},
 }
 
 // typeChecks reports whether src is a program the checker accepts, running the

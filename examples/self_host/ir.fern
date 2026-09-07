@@ -332,6 +332,8 @@ pub function op_free(): Op { return op0("free"); }
 // discarded). i32 loads sign-extend (movslq); ptr is heap-pointer-width
 // (8 bytes on x86-64/arm64, 4 on wasm32). Unblocks core/map's __map_hash /
 // __map_dec_value (and the wider Map subsystem) on the IR path.
+// `__load_u8(addr)` is the byte member of the family and has no op of its
+// own: irlower emits `raw_load8` with a constant zero offset.
 pub function op_load_i32(): Op { return op0("load_i32"); }
 pub function op_load_i64(): Op { return op0("load_i64"); }
 pub function op_load_ptr(): Op { return op0("load_ptr"); }
@@ -833,9 +835,9 @@ pub function op_print_int(): Op { return op0("print_int"); }
 // lowering picks it over print_int when the argument is i64-typed.
 pub function op_print_i64(): Op { return op0("print_i64"); }
 // `print_str` pops a string value and writes its bytes to stdout (no newline),
-// pushing a dummy result so a statement-level drop balances. `print(s)` desugars
-// to `print_str(s + "\n")` (str_concat with a "\n" literal); `write(s)` is a bare
-// print_str. Lowers to each backend's __fern_print_str helper.
+// pushing a dummy result so a statement-level drop balances. `write(s)` is a bare
+// print_str; `print(s)` is two of them, the payload then a "\n" literal.
+// Lowers to each backend's __fern_print_str helper.
 pub function op_print_str(): Op { return op0("print_str"); }
 // `read_int` reads a line from stdin and parses a leading optional-sign decimal,
 // pushing the i32 (a VALUE op — no args, leaves the result on the stack). Lowers
