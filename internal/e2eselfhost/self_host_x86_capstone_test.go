@@ -99,6 +99,13 @@ func TestSelfHostX86Capstone(t *testing.T) {
 		// two-entry-path shape, exercised end to end through this backend's
 		// own assembler rather than through gcc.
 		{"rmemchr", "function main(): i32 { var s = \"aa*aaaaaaaaaaaaaaaaaaaaa\"; return __rmemchr(s, 42, 23) + 40; }\n", 42, ""},
+		// The comparison kernel (#8791), whose two bands are separate bodies.
+		// The first pair is 24 bytes, so the SSE2 loop runs and the answer is
+		// past the first block; the second is 13, which never reaches a
+		// 16-byte load and takes the OVERLAPPING 8-byte windows instead —
+		// SIB-indexed 64-bit loads no scan kernel emits.
+		{"mismatch", "function main(): i32 { var a = \"aaaaaaaaaaaaaaaaaaaabaaa\"; var b = \"aaaaaaaaaaaaaaaaaaaacaaa\"; return __mismatch(a, 0, b, 0, 24) + 22; }\n", 42, ""},
+		{"mismatchwindow", "function main(): i32 { var a = \"abcdefghijklm\"; var b = \"abcdefghijXlm\"; return __mismatch(a, 0, b, 0, 13) + 32; }\n", 42, ""},
 		// NOTE: f64 `.sqrt()`/`.floor()`/`.ceil()`/`.trunc()` are an asm.fern
 		// gap — it emits `call __fn_f64__sqrt` etc. without emitting those
 		// method bodies (an undefined reference even for gcc), so they aren't

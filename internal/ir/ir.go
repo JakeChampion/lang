@@ -103,6 +103,18 @@ const (
 	OpXor
 	OpShl
 	OpShrS
+	// OpRotr rotates the first operand right by the second, modulo
+	// `Width`. Every target has it as one instruction — wasm as
+	// i32.rotr / i64.rotr, arm64 as ror (RORV, or the EXTR alias for a
+	// constant count), x86-64 as ror — against the three the
+	// shift/shift/or spelling costs. Produced by FuseRotates; nothing
+	// lowers to it directly.
+	//
+	// There is no rotate-LEFT op: a left rotate by n is a right rotate
+	// by Width-n, and the fusion only ever sees a constant count, so
+	// normalising to one direction keeps eight emitters from carrying
+	// two.
+	OpRotr
 	OpNot // logical ! (i32.eqz)
 
 	// Bit-counting intrinsics. Each consumes one integer of `Width`
@@ -465,6 +477,8 @@ func (k OpKind) String() string {
 		return "shl"
 	case OpShrS:
 		return "shr_s"
+	case OpRotr:
+		return "rotr"
 	case OpNot:
 		return "not"
 	case OpClz:
@@ -14177,31 +14191,35 @@ func resultCannotAliasArg(t ast.Type) bool {
 	return false
 }
 
-// pairPayloadsCannotAliasArg answers resultCannotAliasArg for a pair-form
-// callee's enum result: true when every variant's payload is a concrete
-// scalar, so neither word of the (tag, payload) pair can be a caller's
-// argument. `Option[string]` answers false — `Some(s)` returns s.
-func (b *builder) pairPayloadsCannotAliasArg(t ast.Type) bool {
+// pairResultCannotAliasArg is resultCannotAliasArg for a PAIR-FORM callee.
+//
+// A pair-form call hands back one tag word and one payload word, but its
+// static type is the enum (`Option[i32]`), which resultCannotAliasArg reads as
+// aliasing-capable — so that predicate answers false for the whole family and
+// every argument-temp admission excluded it. The question the safety argument
+// actually asks is about the PAYLOAD: when every variant carries a concrete
+// scalar (or nothing), neither the pair nor the box emitRepackPairAsHeapBox
+// packs it into can BE or CONTAIN an argument, and the post-call dec is as
+// sound as it is for a scalar result.
+//
+// Payloads are read off the enum declaration after substituting the type
+// arguments, so an unresolved `ParamType` payload keeps the prior safe-leak
+// exactly as an unresolved scalar result does.
+func (b *builder) pairResultCannotAliasArg(t ast.Type) bool {
 	et, ok := t.(ast.EnumType)
-	if !ok {
+	if !ok || b.info == nil {
 		return false
-	}
-	switch et.Name {
-	case "Option", "Result":
-		for _, a := range et.Args {
-			if !resultCannotAliasArg(a) {
-				return false
-			}
-		}
-		return len(et.Args) > 0
 	}
 	ed := b.info.Enums[et.Name]
 	if ed == nil {
 		return false
 	}
+	if len(et.Args) > 0 {
+		ed = substituteEnumDecl(ed, et.Args)
+	}
 	for _, v := range ed.Variants {
-		for _, p := range v.Payloads {
-			if !resultCannotAliasArg(resolveTypeParam(p, ed.TypeParams, et.Args)) {
+		for _, pt := range v.Payloads {
+			if !resultCannotAliasArg(pt) {
 				return false
 			}
 		}
@@ -14872,6 +14890,23 @@ func (b *builder) callBody(n *ast.Call) error {
 			return nil
 		}
 	}
+	// __mismatch(a, ao, b, bo, n) — the same runtime-helper-call shape as its
+	// four siblings, with TWO strings. ArgTypes is doubly load-bearing here:
+	// under the two-word ABI this call is seven operand slots, not five, and
+	// the two strings are not adjacent, so a backend popping I32=5 reads the
+	// second string's length as `n`.
+	if id.Name == "__mismatch" && len(n.Args) == 5 {
+		if _, isLocal := b.locals[id.Name]; !isLocal {
+			for _, a := range n.Args {
+				if err := b.expr(a); err != nil {
+					return err
+				}
+			}
+			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_mismatch", Width: ResNarrow, I32: 5,
+				Ext: &OpExt{ArgTypes: []ast.Type{ast.StringType{}, ast.NumberType{}, ast.StringType{}, ast.NumberType{}, ast.NumberType{}}}})
+			return nil
+		}
+	}
 	// __heap_mark() / __heap_release_to(mark) — the one-level arena
 	// checkpoint pair. Same runtime-helper shape as __heap_bump_bytes so each
 	// backend rewinds its own cursor and snapshots its own freelist heads.
@@ -15492,21 +15527,23 @@ func (b *builder) callBody(n *ast.Call) error {
 	// value/key into the map with no inc (see the set-retain block above —
 	// "transfer their rc=1 to the map"), so dec'ing it would free the stored
 	// element (UAF); __method_Array_push is the array analogue.
-	//
-	// A pair-form callee returns (tag, payload) rather than a box, and the
-	// payload can be pointer-shaped — `Some(s)` hands the argument straight
-	// back — so the enum's spelling alone does not answer. Its PAYLOADS do:
-	// when every variant carries a concrete scalar or nothing, the result
-	// cannot be or contain the argument any more than a bare i32 can, and
-	// the receiver temp of `line.trim().parse_int()` is dead once the call
-	// returns. Left unadmitted it leaked the trimmed copy per call.
 	_, calleeIsLocal := b.locals[id.Name]
 	_, calleeIsFunc := b.info.FuncSigs[id.Name]
+	// A pair-form callee is admitted on the payload rather than on the enum
+	// its static type names — pairResultCannotAliasArg. Excluding the family
+	// outright stranded every fresh temp handed to one: `line.trim()` is a
+	// fresh `__str_slice` buffer and `parse_int` is pair-form, so
+	// `line.trim().parse_int()` leaked one string per call above the inline
+	// threshold (#8846). The other three admissions below stay closed to it:
+	// each ends in a guarded drop that stashes the call's result in a slot,
+	// and a pair leaves two values on the operand stack.
+	pairArgTempsSafe := b.pairForm[id.Name] && b.pairResultCannotAliasArg(b.exprType(n))
 	reclaimArgTemps := ast.RcFreeEnabled && calleeIsFunc && !calleeIsLocal &&
-		(resultCannotAliasArg(b.exprType(n)) || b.returnsNoParamEscape[id.Name] ||
-			b.resultIsCountedStringAlias(id.Name, b.exprType(n)) ||
-			(b.pairForm[id.Name] && b.pairPayloadsCannotAliasArg(b.exprType(n)))) &&
-		id.Name != "map_new" && !calleeRetainsAnyArg(id.Name)
+		id.Name != "map_new" && !calleeRetainsAnyArg(id.Name) &&
+		(pairArgTempsSafe ||
+			(!b.pairForm[id.Name] &&
+				(resultCannotAliasArg(b.exprType(n)) || b.returnsNoParamEscape[id.Name] ||
+					b.resultIsCountedStringAlias(id.Name, b.exprType(n)))))
 	// Per-ARGUMENT admission, where the call-level gate above says no. That
 	// gate is whole-call: one pointer-shaped result disqualifies every
 	// argument at once, so `node(name, no_deps(), k)` — a constructor whose
@@ -15850,11 +15887,10 @@ func (b *builder) callBody(n *ast.Call) error {
 			}
 			// Stage (b): dec each stashed owned-temp arg now that the
 			// call has consumed (borrowed) it. emitOwnedSlotDrop is
-			// net-zero on the operand stack, so the call's result —
-			// one value, or a pair-form callee's (tag, payload) with
-			// the rebox suppressed — sitting underneath is left
-			// untouched; the guarded drops, which do read the result,
-			// are not admitted for a pair-form callee.
+			// net-zero on the operand stack, so the call's result (if
+			// any) sitting underneath is left untouched. reclaimArgTemps
+			// required kind == OpCallDirect (not pair-form), so the
+			// result is a single value / void — never the rebox'd pair.
 			// #4873: restore the bracketed args' rc — the callee's copy
 			// path left each buffer untouched, so this returns it to the
 			// incoming count (the inc preceded it; never frees).
@@ -21443,10 +21479,33 @@ func (b *builder) emitCellSet(n *ast.Call) error {
 // superseded pointer on the floor (32 bytes an iteration, unbounded, #8441)
 // and left an aliased value in the slot under a count nobody had taken.
 //
+// One RHS shape breaks that: a cow-in-place map mutator (`m = m.insert(k, v)`)
+// hands the receiver straight back when it finds it uniquely held, so the
+// expression yields the cell's OWN element and the unconditional release took
+// the map it was about to store from 1 to 0 (#8833 — both natives then read a
+// map with no entries where `-interp` read the new one, and `-sanitize` called
+// it a use-after-free). The retain half cannot compensate: the RHS is a call,
+// whose result needsRcIncOnAlias correctly declines, and a Map read out of the
+// cell is borrowed, so no count arrives with it at all. That shape — and only
+// that shape — takes the store-first, release-second form under a pointer
+// identity test, the same test the plain-local Map overwrite uses: the cow's
+// OTHER path returns a fresh copy, and there the superseded handle really did
+// lose this binding's claim and is released as before.
+//
+// Every other RHS delivers an OWNED reference on both paths and keeps the
+// unconditional release: a user function that returns its argument takes the
+// return-transfer inc, and `.append`'s in-place grow pairs with the buffer
+// dec. Guarding those on pointer identity strands one value per rebind
+// (measured: 50 maps for `m = id(m)`, 50 buffers for `a = a.append(i)`).
+//
 // The new value is evaluated and stashed BEFORE the old one is released, for
 // emitCellSet's reason: `s = s + "x"` reads the slot inside the value
 // expression, so releasing first would free the buffer the read is standing
-// on.
+// on. In the guarded shape the OLD element is stashed before that expression
+// too, and twice: the whole payload, which the release consumes, and its first
+// word, which the guard compares against the word the store left in the slot.
+// One word is enough on a two-word string ABI — the data word is the buffer's
+// identity, and an inline / immortal payload releases to a no-op on either arm.
 //
 // A cycle still leaks. A closure element takes decValueOnStack's flat
 // `__fern_rc_dec` (dropFnNameFor declines a FuncType), which decrements
@@ -21482,6 +21541,29 @@ func (b *builder) emitBoxedCellStore(t *ast.Index, n *ast.Assign, storeOp OpKind
 	}
 	b.emit(Op{Kind: OpCallDirect, Str: idxHelper, Width: ResAddr, I32: 2})
 	b.emit(Op{Kind: OpStoreLocal, I32: addrSlot})
+	// A cow-in-place map mutator may hand the cell's own element back, so it
+	// stashes the element the store supersedes before the value expression
+	// can reach the slot: the whole payload the release consumes, and its
+	// first word the guard compares.
+	cellName := ""
+	if id, isIdent := t.Array.(*ast.Ident); isIdent {
+		cellName = id.Name
+	}
+	guarded := isCellSelfMapCow(n.Value, cellName)
+	var oldSlot, oldPtrSlot int32
+	if guarded {
+		oldSlot = b.allocSlot()
+		b.locals[fmt.Sprintf("__cell_box_old_%d", oldSlot)] = oldSlot
+		b.scratchType[oldSlot] = elem
+		b.emit(Op{Kind: OpLoadLocal, I32: addrSlot})
+		b.emit(payloadLoadOpFor(elem, b.ptrW))
+		b.emit(Op{Kind: OpStoreLocal, I32: oldSlot})
+		oldPtrSlot = b.allocSlot()
+		b.locals[fmt.Sprintf("__cell_box_oldptr_%d", oldPtrSlot)] = oldPtrSlot
+		b.emit(Op{Kind: OpLoadLocal, I32: addrSlot})
+		b.emit(Op{Kind: OpLoad, Width: WidthPtr})
+		b.emit(Op{Kind: OpStoreLocal, I32: oldPtrSlot})
+	}
 	// The new value, retained when it is an alias the writer still holds.
 	valSlot := b.allocSlot()
 	b.locals[fmt.Sprintf("__cell_box_val_%d", valSlot)] = valSlot
@@ -21497,13 +21579,59 @@ func (b *builder) emitBoxedCellStore(t *ast.Index, n *ast.Assign, storeOp OpKind
 	b.emit(Op{Kind: OpStoreLocal, I32: valSlot})
 	// Release the superseded element through the same ladder a container
 	// slot's replacement takes.
-	b.emit(Op{Kind: OpLoadLocal, I32: addrSlot})
-	b.emit(payloadLoadOpFor(elem, b.ptrW))
-	b.dropStructField(elem)
+	if !guarded {
+		b.emit(Op{Kind: OpLoadLocal, I32: addrSlot})
+		b.emit(payloadLoadOpFor(elem, b.ptrW))
+		b.dropStructField(elem)
+	}
 	b.emit(Op{Kind: OpLoadLocal, I32: addrSlot})
 	b.emit(Op{Kind: OpLoadLocal, I32: valSlot})
 	b.emit(Op{Kind: storeOp, Width: storeWidth})
+	if guarded {
+		// The cow returned a fresh copy: the old handle lost this binding's
+		// claim. Returning the receiver leaves the slot naming what it
+		// already named, and nothing is owed.
+		b.emit(Op{Kind: OpLoadLocal, I32: addrSlot})
+		b.emit(Op{Kind: OpLoad, Width: WidthPtr})
+		b.emit(Op{Kind: OpLoadLocal, I32: oldPtrSlot})
+		b.emit(Op{Kind: OpNe, Width: WidthPtr})
+		b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
+		b.emit(Op{Kind: OpLoadLocal, I32: oldSlot})
+		b.dropStructField(elem)
+		b.emit(Op{Kind: OpEnd})
+	}
 	return nil
+}
+
+// isCellSelfMapCow reports whether `value` is a value-returning map mutator
+// whose receiver is a read of the boxcapture cell `cellName` — the RHS of
+// `m = m.insert(k, v)` once BoxMutatedCaptures has rewritten both sides into
+// the `m[0]` cell spelling. isSelfMapMutation asks the same question of a
+// plain local and matches an *ast.Ident receiver, which that rewrite has
+// already replaced, so the two predicates cannot be shared.
+//
+// __map_cow_inplace returns the receiver unchanged when it mutates in place,
+// so on that path the call's result is the cell's own element, borrowed. It is
+// the only RHS shape reaching emitBoxedCellStore that can deliver a reference
+// without a count on it (#8833).
+func isCellSelfMapCow(value ast.Expr, cellName string) bool {
+	if cellName == "" {
+		return false
+	}
+	call, isCall := value.(*ast.Call)
+	if !isCall || len(call.Args) == 0 {
+		return false
+	}
+	callee, isIdent := call.Callee.(*ast.Ident)
+	if !isIdent || (callee.Name != "__method_Map_set" && callee.Name != "__method_Map_clear") {
+		return false
+	}
+	idx, isIdx := call.Args[0].(*ast.Index)
+	if !isIdx {
+		return false
+	}
+	recv, isRecvIdent := idx.Array.(*ast.Ident)
+	return isRecvIdent && recv.Name == cellName
 }
 
 // sliceUncheckedArgs returns the (source, low, high) of a

@@ -122,6 +122,7 @@ at the operand width — `docs/INTEGER-SEMANTICS.md`, claims `IS-01`–`IS-07`.
 | `xor` | `i i → i` | `Width` | |
 | `shl` | `i i → i` | `Width` | Count masked to `& 31` / `& 63`. |
 | `shr_s` | `i i → i` | `Width`, `Unsigned` | Arithmetic when signed, logical when `Unsigned`. |
+| `rotr` | `i i → i` | `Width` | Rotate right; count masked to `& 31` / `& 63`. No rotate-left op: a left rotate by `n` is `rotr` by `Width - n`. |
 | `not` | `i → i` | | Logical `!` — 1 iff the operand is zero. |
 | `clz` | `i → i` | `Width` | Defined at zero: yields the operand width. |
 | `ctz` | `i → i` | `Width` | Defined at zero: yields the operand width. |

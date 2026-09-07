@@ -249,7 +249,7 @@ func opStackEffect(op Op, sigs map[string]funcSig) (pops int, pushes int, ok boo
 		}
 		return 1, 1, true
 	// Binary arithmetic / comparison.
-	case OpAdd, OpSub, OpMul, OpDivS, OpRemS, OpAnd, OpOr, OpXor, OpShl, OpShrS,
+	case OpAdd, OpSub, OpMul, OpDivS, OpRemS, OpAnd, OpOr, OpXor, OpShl, OpShrS, OpRotr,
 		OpEq, OpNe, OpLtS, OpLeS, OpGtS, OpGeS,
 		OpFAdd, OpFSub, OpFMul, OpFDiv,
 		OpFEq, OpFNe, OpFLt, OpFLe, OpFGt, OpFGe:

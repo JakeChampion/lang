@@ -622,6 +622,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesMemchr {
 		g.emitMemchrRuntime()
 	}
+	if g.usesMismatch {
+		g.emitMismatchRuntime()
+	}
 	if g.usesRmemchr {
 		g.emitRmemchrRuntime()
 	}
@@ -3900,6 +3903,176 @@ func (g *generator) emitInlineIdxHelper(name string) error {
 //
 // No feature detection: Advanced SIMD is mandatory in the declared ARMv8-A
 // baseline, so these are hard requirements rather than a fast path (§1.1).
+
+// emitMismatchRuntime emits `__fern_mismatch(a, ao, b, bo, n) -> i32`: the
+// offset of the first byte where a[ao..ao+n) and b[bo..bo+n) differ, or n when
+// they are equal.
+//
+// __memchr's NEON kernel with the broadcast needle replaced by a second operand
+// stream. `eor` zeroes the lanes that match and `cmtst` turns the survivors into
+// all-ones, so the shrn/fmov/rbit/clz gather that finds __memchr's first hit
+// finds the first DIFFERENCE here unchanged — no inversion of the mask, and no
+// `cmeq`, because "differs" is what cmtst already reports.
+//
+// Sub-16 lengths do not fall into the scalar remainder: a line-oriented utility
+// compares SHORT ranges, and walking those a byte at a time is the cost this
+// kernel exists to remove. They get memcmp's overlapping-window treatment — the
+// leading and trailing 8 (or 4) bytes, whose windows overlap, so two loads per
+// operand cover any length in the band. The leading window proves its range
+// equal first, so a difference the trailing window reports is provably the
+// first one.
+//
+// The offsets and the length are clamped rather than trusted (see the checker's
+// signature comment), after which every load is inside both strings by
+// construction — including the inline SSO case, where a string holds at most 7
+// bytes so a clamped n reaches neither the vector loop nor the 8-byte window.
+func (g *generator) emitMismatchRuntime() {
+	g.line("")
+	g.line(".global __fern_mismatch")
+	g.typeDirective("__fern_mismatch")
+	g.label("__fern_mismatch")
+	// Two-word string ABI: x0/x1 = a, w2 = ao, x3/x4 = b, w5 = bo, w6 = n.
+	// Frame: fp/lr (16) + a 16-byte inline-SSO spill slot per operand = 48.
+	g.emit("stp x29, x30, [sp, #-48]!")
+	g.emit("mov x29, sp")
+	g.emitStrDataPtr2W("x9", "x0", "x1", 16)  // x9  = a's bytes
+	g.emitStrLen2W("w10", "x1")               // w10 = len(a)
+	g.emitStrDataPtr2W("x11", "x3", "x4", 32) // x11 = b's bytes
+	g.emitStrLen2W("w12", "x4")               // w12 = len(b)
+	// Clamp each offset into [0, len].
+	g.emit("tbz w2, #31, .Lmm_ao_pos")
+	g.emit("mov w2, #0")
+	g.label(".Lmm_ao_pos")
+	g.emit("cmp w2, w10")
+	g.emit("csel w2, w10, w2, gt")
+	g.emit("tbz w5, #31, .Lmm_bo_pos")
+	g.emit("mov w5, #0")
+	g.label(".Lmm_bo_pos")
+	g.emit("cmp w5, w12")
+	g.emit("csel w5, w12, w5, gt")
+	// n = min(n, len(a) - ao, len(b) - bo), floored at 0.
+	g.emit("sub w10, w10, w2")
+	g.emit("sub w12, w12, w5")
+	g.emit("cmp w6, w10")
+	g.emit("csel w6, w10, w6, gt")
+	g.emit("cmp w6, w12")
+	g.emit("csel w6, w12, w6, gt")
+	g.emit("tbz w6, #31, .Lmm_n_ok")
+	g.emit("mov w6, #0")
+	g.label(".Lmm_n_ok")
+	// x9 / x11 become cursors; x15 remembers a's range start so the answer
+	// is one subtraction, x16 is its end, w13 the clamped n.
+	g.emit("add x9, x9, w2, uxtw")
+	g.emit("add x11, x11, w5, uxtw")
+	g.emit("mov w13, w6")
+	g.emit("mov x15, x9")
+	g.emit("add x16, x9, w13, uxtw")
+	// NEON loop: 16 bytes of each operand per iteration.
+	g.label(".Lmm_vec")
+	g.emit("sub x7, x16, x9")
+	g.emit("cmp x7, #16")
+	g.emit("b.lt .Lmm_short")
+	// Unaligned loads are deliberate, as on x86-64: NEON has no alignment
+	// requirement, and both pointers came from the allocator rather than the
+	// caller, so a 16-byte read starting inside a string cannot cross into an
+	// unmapped page.
+	g.emit("ld1 {v0.16b}, [x9]")
+	g.emit("ld1 {v1.16b}, [x11]")
+	g.emit("eor v0.16b, v0.16b, v1.16b")
+	g.emit("cmtst v0.16b, v0.16b, v0.16b")
+	g.emit("shrn v0.8b, v0.8h, #4")
+	g.emit("fmov x7, d0")
+	g.emit("cbz x7, .Lmm_next")
+	// Lowest set bit -> lane. Four mask bits per input byte, hence the >>2.
+	g.emit("rbit x8, x7")
+	g.emit("clz x8, x8")
+	g.emit("lsr x8, x8, #2")
+	g.emit("add x9, x9, x8")
+	g.emit("sub x0, x9, x15")
+	g.emit("b .Lmm_ret")
+	g.label(".Lmm_next")
+	g.emit("add x9, x9, #16")
+	g.emit("add x11, x11, #16")
+	g.emit("b .Lmm_vec")
+	// 8..15 bytes: the leading 8 and the trailing 8, which overlap.
+	g.label(".Lmm_short")
+	g.emit("cmp x7, #8")
+	g.emit("b.lt .Lmm_w4")
+	g.emit("ldr x8, [x9]")
+	g.emit("ldr x10, [x11]")
+	g.emit("eor x8, x8, x10")
+	g.emit("cbnz x8, .Lmm_w8_lead")
+	g.emit("sub x10, x7, #8")
+	g.emit("ldr x8, [x9, x10]")
+	g.emit("ldr x12, [x11, x10]")
+	g.emit("eor x8, x8, x12")
+	g.emit("cbz x8, .Lmm_eq")
+	// The leading window proved [0, 8) equal, so a difference the trailing
+	// window reports cannot land below 8 — its offset is the first one.
+	g.emit("add x9, x9, x10")
+	g.emit("rbit x8, x8")
+	g.emit("clz x8, x8")
+	g.emit("lsr x8, x8, #3")
+	g.emit("add x9, x9, x8")
+	g.emit("sub x0, x9, x15")
+	g.emit("b .Lmm_ret")
+	g.label(".Lmm_w8_lead")
+	// Lowest set bit of the xor >> 3 is the byte, little-endian.
+	g.emit("rbit x8, x8")
+	g.emit("clz x8, x8")
+	g.emit("lsr x8, x8, #3")
+	g.emit("add x9, x9, x8")
+	g.emit("sub x0, x9, x15")
+	g.emit("b .Lmm_ret")
+	// 4..7 bytes: the same pair of windows, four bytes wide.
+	g.label(".Lmm_w4")
+	g.emit("cmp x7, #4")
+	g.emit("b.lt .Lmm_tail")
+	g.emit("ldr w8, [x9]")
+	g.emit("ldr w10, [x11]")
+	g.emit("eor w8, w8, w10")
+	g.emit("cbnz w8, .Lmm_w4_lead")
+	g.emit("sub x10, x7, #4")
+	g.emit("ldr w8, [x9, x10]")
+	g.emit("ldr w12, [x11, x10]")
+	g.emit("eor w8, w8, w12")
+	g.emit("cbz w8, .Lmm_eq")
+	g.emit("add x9, x9, x10")
+	g.emit("rbit w8, w8")
+	g.emit("clz w8, w8")
+	g.emit("lsr w8, w8, #3")
+	g.emit("add x9, x9, w8, uxtw")
+	g.emit("sub x0, x9, x15")
+	g.emit("b .Lmm_ret")
+	g.label(".Lmm_w4_lead")
+	g.emit("rbit w8, w8")
+	g.emit("clz w8, w8")
+	g.emit("lsr w8, w8, #3")
+	g.emit("add x9, x9, w8, uxtw")
+	g.emit("sub x0, x9, x15")
+	g.emit("b .Lmm_ret")
+	// Scalar remainder: fewer than 4 bytes left.
+	g.label(".Lmm_tail")
+	g.emit("cmp x9, x16")
+	g.emit("b.ge .Lmm_eq")
+	g.emit("ldrb w8, [x9]")
+	g.emit("ldrb w10, [x11]")
+	g.emit("cmp w8, w10")
+	g.emit("b.ne .Lmm_tail_hit")
+	g.emit("add x9, x9, #1")
+	g.emit("add x11, x11, #1")
+	g.emit("b .Lmm_tail")
+	g.label(".Lmm_tail_hit")
+	g.emit("sub x0, x9, x15")
+	g.emit("b .Lmm_ret")
+	g.label(".Lmm_eq")
+	g.emit("mov w0, w13")
+	g.label(".Lmm_ret")
+	g.emit("ldp x29, x30, [sp], #48")
+	g.emit("ret")
+	g.sizeDirective("__fern_mismatch")
+}
+
 func (g *generator) emitMemchrRuntime() {
 	g.line("")
 	g.line(".global __fern_memchr")
@@ -10758,6 +10931,10 @@ type generator struct {
 	usesStrord   bool
 	// usesMemchr gates the NEON byte-search kernel (__fern_memchr).
 	usesMemchr bool
+	// usesMismatch gates the two-range comparison kernel
+	// (__fern_mismatch), __memchr's kernel over a pair of operand
+	// streams instead of a broadcast needle.
+	usesMismatch bool
 	// usesRmemchr gates its backward sibling (__fern_rmemchr).
 	usesRmemchr bool
 	// usesCountByte gates the byte-tally kernel (__fern_count_byte).
@@ -13183,6 +13360,8 @@ func shiftImmForm(op ir.Op, k int64) (string, bool) {
 			return "lsr", true
 		}
 		return "asr", true
+	case ir.OpRotr:
+		return "ror", true
 	}
 	return "", false
 }
@@ -13840,6 +14019,15 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		} else {
 			g.emit("asr %s0, %s1, %s0", r, r, r)
 		}
+		g.push()
+	case ir.OpRotr:
+		// RORV, the fourth member of the LSLV/LSRV/ASRV family. Width
+		// picks the same lane the shifts use: the w-form rotates
+		// within bits 0..31, where the x-form would pull the cleared
+		// high half of a zero-extended i32 into the low bits.
+		g.binPop()
+		r := g.regForWidth(op.Width)
+		g.emit("ror %s0, %s1, %s0", r, r, r)
 		g.push()
 
 	// -------- comparison (i32) --------
@@ -14784,6 +14972,8 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			g.usesRandomI32 = true // the lazy first-call draw
 		case "__fern_memchr":
 			g.usesMemchr = true
+		case "__fern_mismatch":
+			g.usesMismatch = true
 		case "__fern_rmemchr":
 			g.usesRmemchr = true
 		case "__fern_count_byte":

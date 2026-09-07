@@ -75,7 +75,9 @@ func BoxMutatedCaptures(prog *ast.Program, info *checker.Info) {
 // cell, and the cell OWNS that element: the IR's emitBoxedCellStore retains an
 // alias-shaped new value and releases the one it supersedes, so a rebinding
 // loop reclaims each generation instead of stranding it (#8441) and every path
-// that frees the cell is free to walk the slot.
+// that frees the cell is free to walk the slot. The one RHS that supersedes
+// nothing is a cow-in-place map mutator handing the cell's own element back,
+// which the store detects by pointer identity (#8833).
 func boxableCapture(t ast.Type) bool {
 	switch t.(type) {
 	case ast.NumberType, ast.BoolType, ast.FloatType:

@@ -5333,7 +5333,12 @@ function decl_is_leaksafe_at_d(structs: StructTab, decl_index: i32, depth: i32, 
         // carrying them is leaf-safe and lowers (construction stores / field
         // read loads at the default 32-bit width; a sub-word cast wraps the
         // value before the store). The 64-bit-slot scalars (i64 / u64 / f64 /
-        // f32 / float) are here too, on the same leak-only reasoning.
+        // f32 / float) are here too, on the same leak-only reasoning. `usize`
+        // likewise: it is a raw machine word (a bare address, never an rc box),
+        // so it rides the default pointer slot and leaks with nothing to free —
+        // is_scalar_field_type has always called it a scalar. `char` is a code
+        // point in one i32 slot, the same class the receiver gate already puts
+        // it in.
         // `string[][]` is spelled out because is_leaksafe_array_field bottoms
         // out in the scalar-element arrays, so neither it nor
         // is_nested_array_field_type reaches a nested STRING array — the same
@@ -5343,7 +5348,7 @@ function decl_is_leaksafe_at_d(structs: StructTab, decl_index: i32, depth: i32, 
         // `(Node, …)` field re-enters decl_is_leaksafe_d WITH the path — its
         // back-edge check then short-circuits the cycle instead of recursing
         // forever (was a SIGSEGV on any linked list / tree).
-        if (t == "i32" || t == "boolean" || t == "string" || t == "string[]" || t == "f64" || t == "i64" || t == "u32" || t == "u8" || t == "f32" || t == "float" || t == "u64" || t == "Reader" || t == "Writer" || is_leaksafe_array_field(t) || t == "string[][]" || is_leaksafe_opt_field_dv(structs, t, depth, nv) || is_leaksafe_tuple_field_dv(structs, t, depth, nv) || is_map_type_name(t) || (t.len() > 5 && slice_unchecked(t, 0, 5) == "Cell[")) {
+        if (t == "i32" || t == "boolean" || t == "string" || t == "string[]" || t == "f64" || t == "i64" || t == "u32" || t == "u8" || t == "f32" || t == "float" || t == "u64" || t == "usize" || t == "char" || t == "Reader" || t == "Writer" || is_leaksafe_array_field(t) || t == "string[][]" || is_leaksafe_opt_field_dv(structs, t, depth, nv) || is_leaksafe_tuple_field_dv(structs, t, depth, nv) || is_map_type_name(t) || (t.len() > 5 && slice_unchecked(t, 0, 5) == "Cell[")) {
             fi = fi + 1;
             continue;
         }
@@ -11591,52 +11596,12 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
             return ba.emit(ir.op_popcount(bw));
         }
     }
-    // __memchr(s, byte, from) → i32 (ATLAS-PLATFORM-PLAN §3). Three operands
-    // in source order, then one op — the native backends substitute a vector
-    // kernel for it, which is the whole reason it is an op and not a Fern
-    // function.
-    if (cid.name == "__memchr" && c.args.len() == 3) {
-        var mc0: LowerState = lower_expr(c.args[0], s);
-        if (!mc0.ok) { return mc0; }
-        var mc1: LowerState = lower_expr(c.args[1], mc0);
-        if (!mc1.ok) { return mc1; }
-        var mc2: LowerState = lower_expr(c.args[2], mc1);
-        if (!mc2.ok) { return mc2; }
-        return mc2.emit(ir.op_memchr());
-    }
-    // __rmemchr(s, byte, from) → i32 (ATLAS-PLATFORM-PLAN §3.3, memchr's
-    // nominated sibling). Identical three-operand substitutable-op shape; the
-    // difference is entirely inside the backends, where `from` clamps down to
-    // len-1 rather than up to 0.
-    if (cid.name == "__rmemchr" && c.args.len() == 3) {
-        var rm0: LowerState = lower_expr(c.args[0], s);
-        if (!rm0.ok) { return rm0; }
-        var rm1: LowerState = lower_expr(c.args[1], rm0);
-        if (!rm1.ok) { return rm1; }
-        var rm2: LowerState = lower_expr(c.args[2], rm1);
-        if (!rm2.ok) { return rm2; }
-        return rm2.emit(ir.op_rmemchr());
-    }
-    // __count_byte(s, byte) → i32 (ATLAS-PLATFORM-PLAN §3.3, fourth kernel).
-    // Two operands, same substitutable-op shape; it has no cursor at all, so
-    // nothing to clamp in either direction.
-    if (cid.name == "__count_byte" && c.args.len() == 2) {
-        var cb0: LowerState = lower_expr(c.args[0], s);
-        if (!cb0.ok) { return cb0; }
-        var cb1: LowerState = lower_expr(c.args[1], cb0);
-        if (!cb1.ok) { return cb1; }
-        return cb1.emit(ir.op_count_byte());
-    }
-    // __ascii_run(s, from) → i32 (ATLAS-PLATFORM-PLAN §3, second kernel). Two
-    // operands, same substitutable-op shape as __memchr; the miss value is the
-    // LENGTH rather than -1, so callers can skip a run branch-free.
-    if (cid.name == "__ascii_run" && c.args.len() == 2) {
-        var ar0: LowerState = lower_expr(c.args[0], s);
-        if (!ar0.ok) { return ar0; }
-        var ar1: LowerState = lower_expr(c.args[1], ar0);
-        if (!ar1.ok) { return ar1; }
-        return ar1.emit(ir.op_ascii_run());
-    }
+    // The five byte-scan kernels (docs/ATLAS-PLATFORM-PLAN.md §3, #8791) —
+    // one arm, since each lowers its operands in source order and then emits
+    // one substitutable op. Split out for lower_call_os_query's reason: this
+    // is the compiler's biggest dispatch and every inline arm costs the whole
+    // function's readability.
+    if (is_byte_kernel_call(cid.name, c.args.len())) { return lower_call_byte_kernel(c, cid, s); }
     // __arr_push_shared_count(): appends that copied a buffer
     // which still had spare capacity — the rc==1 cliff. Same
     // allocation-free introspection shape as heap_bump_bytes;
@@ -12334,6 +12299,48 @@ function lower_call_os_query(c: ast.ExprCall, cid: ast.ExprIdent, s: LowerState)
     var a1: LowerState = lower_expr(c.args[1], a0);
     if (!a1.ok) { return a1; }
     return a1.emit(ir.op_access());
+}
+
+// is_byte_kernel_call selects the five allocation-free byte-scan intrinsics
+// (docs/ATLAS-PLATFORM-PLAN.md §3 and §3.3, plus #8791's __mismatch). Each is
+// an OP rather than a Fern function because an op is what a backend can
+// SUBSTITUTE — the native tiers replace all five with vector kernels.
+//
+// The ARITY is part of the test, as in is_os_query_call: a call with the wrong
+// number of arguments falls through to the ordinary named-call path.
+function is_byte_kernel_call(name: string, argc: i32): boolean {
+    if (name == "__memchr" || name == "__rmemchr") { return argc == 3; }
+    if (name == "__count_byte" || name == "__ascii_run") { return argc == 2; }
+    if (name == "__mismatch") { return argc == 5; }
+    return false;
+}
+
+// lower_call_byte_kernel lowers the five is_byte_kernel_call selects: every
+// operand in source order, then the op. What differs between them lives
+// entirely inside the backends —
+//
+//   __memchr(s, byte, from)     → the first `byte` at or after `from`, or -1.
+//   __rmemchr(s, byte, from)    → the LAST at or before it; `from` clamps DOWN
+//                                 to len-1 where memchr's clamps UP to 0.
+//   __count_byte(s, byte)       → the tally; no cursor, so nothing to clamp.
+//   __ascii_run(s, from)        → the first high-bit byte, or the LENGTH, so a
+//                                 caller can skip a run branch-free.
+//   __mismatch(a, ao, b, bo, n) → the first differing offset of two ranges, or
+//                                 the clamped n. The only one with TWO string
+//                                 operands, at slots 0 and 2.
+function lower_call_byte_kernel(c: ast.ExprCall, cid: ast.ExprIdent, s: LowerState): LowerState {
+    var k: LowerState = s;
+    var i: i32 = 0;
+    while (i < c.args.len()) {
+        k = lower_expr(c.args[i], k);
+        if (!k.ok) { return k; }
+        i = i + 1;
+    }
+    if (cid.name == "__memchr") { return k.emit(ir.op_memchr()); }
+    if (cid.name == "__rmemchr") { return k.emit(ir.op_rmemchr()); }
+    if (cid.name == "__count_byte") { return k.emit(ir.op_count_byte()); }
+    if (cid.name == "__ascii_run") { return k.emit(ir.op_ascii_run()); }
+    return k.emit(ir.op_mismatch());
 }
 
 function lower_call_named_generic(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: LowerState): LowerState {
@@ -61970,8 +61977,15 @@ pub function tuple_elems_lowerable(rt: string, structs: StructTab): boolean {
             // rides the i64 8-byte slot: construction already tags it "i64"
             // (elem_type_tag's infer_expr_width==64 path), and the `.N` / destructure
             // reads route a "u64" type-annotation tag through tuple_get_w(64) below.
-            // f32 / usize are NOT here: they need float / pointer-width handling.
-            var ok_elem: boolean = (t == "i32" || t == "bool" || t == "boolean" || t == "u32" || t == "u8" || t == "string" || t == "i64" || t == "u64" || t == "f64" || t == "f32" || t == "float");
+            // `usize` rides the WIDTH-0 slot, the same one every pointer element
+            // (string / struct / array / …) uses: the register backends store and
+            // load 8 bytes for every element kind, and on wasm32 a pointer IS the
+            // i32 the width-0 store/load moves. So it needs no width plumbing of
+            // its own — elem_type_tag leaves a usize expression on the "i32"
+            // fallthrough and the `.N` / destructure reads take the plain
+            // op_tuple_get, which is what the value wants at either pointer width.
+            // `char` rides that same width-0 slot as a code point, like i32.
+            var ok_elem: boolean = (t == "i32" || t == "bool" || t == "boolean" || t == "u32" || t == "u8" || t == "usize" || t == "char" || t == "string" || t == "i64" || t == "u64" || t == "f64" || t == "f32" || t == "float");
             // A closure-box element ("clo" — a declared fn-typed element,
             // mapped by tuple_elem_tags) is a leak-only heap box in one
             // pointer slot, like a struct element: construction stores the
@@ -64070,9 +64084,20 @@ function borrow_reg_record(key: string, flags: string): string {
 // The method key is seeded only while no user receiver method is named `write`:
 // the escape walks see no receiver type, so the name alone must settle it.
 function copying_builtin_keys(funcs: parser.FuncDecl[]): string[] {
-    var keys: string[] = ["print", "write", "eprint", "strbuf_append", "__memchr", "__rmemchr", "__ascii_run", "__count_byte"];
+    var keys: string[] = ["print", "write", "eprint", "strbuf_append", "__memchr", "__rmemchr", "__ascii_run", "__count_byte", "__mismatch"];
     for fn in funcs { if (fn.receiver_type.len() > 0 && fn.name == "write") { return keys; } }
     return keys.append("Writer.write");
+}
+
+// copying_builtin_flags: the per-parameter borrowability flag string for one
+// copying-builtin key. Every key but __mismatch copies a single string at
+// position 0; __mismatch reads TWO ranges and retains neither, so positions 0
+// and 2 both carry the credit (native's copyingBuiltinArgs["__mismatch"] is
+// {0, 2}). A position past the string's end reads as not borrowable, which is
+// what the i32 parameters want.
+function copying_builtin_flags(key: string): string {
+    if (key == "__mismatch") { return "10100"; }
+    return "1";
 }
 
 // borrow_reg_bare_index re-buckets a registry's rows by the bare name after
@@ -64642,7 +64667,7 @@ pub function borrowable_params_of(funcs: parser.FuncDecl[]): string[] {
             if (elb.len() > 0) { out = borrow_reg_put(out, "ELB:" + borrowable_key(fn), elb); }
         }
     }
-    for ck in copying_builtin_keys(funcs) { out = borrow_reg_put(out, ck, "1"); }
+    for ck in copying_builtin_keys(funcs) { out = borrow_reg_put(out, ck, copying_builtin_flags(ck)); }
     return out;
 }
 // tuple_payload_borrow_flags: the "TUPB:" tier for one function — per-param
@@ -65165,7 +65190,7 @@ pub function borrowable_params_interproc(funcs: parser.FuncDecl[]): string[] {
     // The copying builtins ride the same rows so a rebuild keeps them; nothing
     // below rewrites an index past the function triples.
     for ck in copying_builtin_keys(funcs) {
-        rows = rows.append(borrow_reg_record(ck, "1"));
+        rows = rows.append(borrow_reg_record(ck, copying_builtin_flags(ck)));
         row_bucket = row_bucket.append(util.hash_bucket(ck, nb));
     }
     var reg: string[] = borrow_reg_rebuild(borrow_reg_new(), i32_filled(nb, 1), rows, row_bucket);

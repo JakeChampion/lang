@@ -394,7 +394,7 @@ opt_f32_payload                                      0
 option_is_none_or                                    0
 option_match                                         0
 option_result_and_then                               0
-option_result_combinators                            2
+option_result_combinators                            0
 option_str                                           0
 optresult_transpose                                  0
 ord_struct_enum                                      0
@@ -549,7 +549,7 @@ trailing_commas                                      0
 trait_method_bound_wins                              0
 trmc_map                                             0
 try_op_in_closure                                    2
-try_result_struct_payload                            6
+try_result_struct_payload                            3
 tuple_basics                                         0
 tuple_binder_shadows_module_decl                     0
 tuple_binder_shadows_outer_var                       0

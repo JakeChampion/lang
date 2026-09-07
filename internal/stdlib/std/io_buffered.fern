@@ -115,13 +115,10 @@ pub function (w: BytesWriter) reset(): BytesWriter {
 // found at the next write or at close.
 //
 // The buffer is grown inside the struct literal (`{ ...b, buf: b.buf
-// + s }`) because E048 leaves no other way to write it. That shape
-// grows the buffer in place when the frame OWNS the box being updated
-// (#8785); here it does not, because borrow inference makes the
-// receiver the caller's, so a write still copies what is buffered.
-// The cost is bounded rather than quadratic — the buffer flushes at
-// `cap` — so a 4 KiB writer pays about 2 KB of memcpy per write.
-// #8785's parameter half is what removes it.
+// + s }`) because E048 leaves no other way to write it, and that shape
+// grows in place when the frame owns the box (#8785). Reading the field
+// into a local first shares the buffer between the local and the field,
+// and every append then copies the whole of it.
 pub struct BufWriter { w: Writer, buf: string, cap: i32, err: Option[IoError] }
 
 // `buf_writer_new(w, cap)` — buffer `w` with a `cap`-byte threshold.

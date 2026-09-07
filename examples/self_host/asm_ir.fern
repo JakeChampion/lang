@@ -3756,6 +3756,90 @@ function ir_f2u_sat(width: i32, lb: string): string {
 // emit_function_via_ir's dispatch — see ir.is_str_op_kind). Each pops its box
 // operand(s), calls the matching __fern_str_* runtime, and pushes the result;
 // the mark_* needs pull in the helper bodies (emit_ir_runtime / emit_ir_str_search).
+// emit_mismatch_x86 emits the __mismatch kernel (#8791): operand stack
+// [a box, ao, b box, bo, n] (n on top) -> the offset of the first byte where
+// a[ao..ao+n) and b[bo..bo+n) differ, or the clamped n when they are equal.
+//
+// SSE2, 16 bytes of each operand an iteration: movdqu / pcmpeqb / pmovmskb,
+// where the mask means EQUAL rather than memchr's FOUND, so the loop runs
+// while it is all-ones and `not` precedes the bsf.
+//
+// Sub-16 ranges take memcmp's OVERLAPPING WINDOWS rather than the scalar
+// remainder — the leading and trailing 8 (or 4) bytes, which overlap, so two
+// loads per operand cover the whole band. A line-oriented caller compares
+// SHORT ranges, and walking those a byte at a time is the cost this kernel
+// exists to remove.
+//
+// The clamps are the op's contract, not defensive tidying: the value returned
+// on equality is the clamped n, so a caller asking for more than either range
+// holds gets the shorter answer and its `== n` test fails.
+//
+// %rsi and %rcx become the two range base POINTERS and %rdx the shared cursor
+// index, which keeps every memory operand on a low register; %r8 holds the
+// clamped n (also the answer on equality) and %rdi is the window offset.
+// This is a leaf body — no call, so every register it touches is free.
+function emit_mismatch_x86(s: asmcore.EmitState): asmcore.EmitState {
+    var mlo: asmcore.LabelOut = asmcore.fresh_label(s);
+    var lb: string = mlo.name;
+    s = mlo.state;
+    s = s.write("    popq %r8\n    popq %rcx\n    popq %rdx\n    popq %rsi\n    popq %rax\n");
+    s = s.write("    movq 8(%rax), %r9\n    movq (%rax), %rax\n");
+    s = s.write("    movq 8(%rdx), %r10\n    movq (%rdx), %rdx\n");
+    // Each offset clamps into [0, len] of its own string.
+    s = s.write("    cmpq $0, %rsi\n    jge " + lb + "_aop\n    xorq %rsi, %rsi\n");
+    s = s.write(lb + "_aop:\n    cmpq %r9, %rsi\n    jle " + lb + "_aok\n    movq %r9, %rsi\n");
+    s = s.write(lb + "_aok:\n    cmpq $0, %rcx\n    jge " + lb + "_bop\n    xorq %rcx, %rcx\n");
+    s = s.write(lb + "_bop:\n    cmpq %r10, %rcx\n    jle " + lb + "_bok\n    movq %r10, %rcx\n");
+    // n = min(n, len(a) - ao, len(b) - bo), floored at 0.
+    s = s.write(lb + "_bok:\n    subq %rsi, %r9\n    subq %rcx, %r10\n");
+    s = s.write("    cmpq %r9, %r8\n    jle " + lb + "_na\n    movq %r9, %r8\n");
+    s = s.write(lb + "_na:\n    cmpq %r10, %r8\n    jle " + lb + "_nb\n    movq %r10, %r8\n");
+    s = s.write(lb + "_nb:\n    cmpq $0, %r8\n    jge " + lb + "_nok\n    xorq %r8, %r8\n");
+    s = s.write(lb + "_nok:\n    addq %rax, %rsi\n    addq %rdx, %rcx\n    xorq %rdx, %rdx\n");
+    // Length dispatch: the sub-16 band never reaches the vector loop, so it
+    // gets its own windows rather than a byte walk.
+    s = s.write("    cmpq $16, %r8\n    jge " + lb + "_vec\n");
+    s = s.write("    cmpq $8, %r8\n    jge " + lb + "_w8\n");
+    s = s.write("    cmpq $4, %r8\n    jge " + lb + "_w4\n    jmp " + lb + "_tail\n");
+    // 8..15 bytes: the leading 8 and the trailing 8, which overlap.
+    s = s.write(lb + "_w8:\n    movq (%rsi), %rax\n    xorq (%rcx), %rax\n    jnz " + lb + "_w8l\n");
+    s = s.write("    movq %r8, %rdi\n    subq $8, %rdi\n");
+    s = s.write("    movq (%rsi,%rdi), %rax\n    xorq (%rcx,%rdi), %rax\n    jz " + lb + "_eq\n");
+    // The leading window proved [0, 8) equal, so a difference the trailing
+    // window reports cannot land below 8 — its offset is the first one.
+    s = s.write("    bsfq %rax, %rax\n    shrq $3, %rax\n    addq %rdi, %rax\n    jmp " + lb + "_done\n");
+    // bsf finds the lowest set BIT of the xor; >> 3 turns it into the byte,
+    // little-endian, so byte 0 is the low one.
+    s = s.write(lb + "_w8l:\n    bsfq %rax, %rax\n    shrq $3, %rax\n    jmp " + lb + "_done\n");
+    // 4..7 bytes: the same pair of windows, four bytes wide.
+    s = s.write(lb + "_w4:\n    movl (%rsi), %eax\n    xorl (%rcx), %eax\n    jnz " + lb + "_w4l\n");
+    s = s.write("    movq %r8, %rdi\n    subq $4, %rdi\n");
+    s = s.write("    movl (%rsi,%rdi), %eax\n    xorl (%rcx,%rdi), %eax\n    jz " + lb + "_eq\n");
+    s = s.write("    bsfl %eax, %eax\n    shrl $3, %eax\n    addq %rdi, %rax\n    jmp " + lb + "_done\n");
+    s = s.write(lb + "_w4l:\n    bsfl %eax, %eax\n    shrl $3, %eax\n    jmp " + lb + "_done\n");
+    // SSE2 loop, 16 bytes of each operand per iteration. The load runs only
+    // with a full block left in both ranges, so it never reads past either.
+    s = s.write(lb + "_vec:\n    movq %r8, %rax\n    subq %rdx, %rax\n    cmpq $16, %rax\n    jl " + lb + "_tail\n");
+    s = s.write("    movdqu (%rsi,%rdx), %xmm0\n    movdqu (%rcx,%rdx), %xmm1\n");
+    s = s.write("    pcmpeqb %xmm1, %xmm0\n    pmovmskb %xmm0, %eax\n");
+    s = s.write("    cmpl $65535, %eax\n    jne " + lb + "_hit\n");
+    s = s.write("    addq $16, %rdx\n    jmp " + lb + "_vec\n");
+    // pmovmskb writes only the low 16 bits, so `not` sets the top half; the
+    // branch above guarantees a clear bit below 16, which is the one bsf
+    // finds first.
+    s = s.write(lb + "_hit:\n    notl %eax\n    bsfl %eax, %eax\n    addq %rdx, %rax\n    jmp " + lb + "_done\n");
+    // Scalar remainder: fewer than 16 bytes left after the vector loop, or
+    // fewer than 4 from the dispatch above.
+    s = s.write(lb + "_tail:\n    cmpq %r8, %rdx\n    jge " + lb + "_eq\n");
+    s = s.write("    movzbq (%rsi,%rdx), %rax\n    movzbq (%rcx,%rdx), %rdi\n");
+    s = s.write("    cmpq %rdi, %rax\n    jne " + lb + "_th\n");
+    s = s.write("    addq $1, %rdx\n    jmp " + lb + "_tail\n");
+    s = s.write(lb + "_th:\n    movq %rdx, %rax\n    jmp " + lb + "_done\n");
+    s = s.write(lb + "_eq:\n    movq %r8, %rax\n");
+    s = s.write(lb + "_done:\n    pushq %rax\n");
+    return s;
+}
+
 function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     if (o.kind_tag == 97) {  // str_len
         // pop string box; length is at box+8.
@@ -4030,6 +4114,9 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         s = s.write(a_none + ":\n    movq %r8, %rdx\n");
         s = s.write(a_done + ":\n    pushq %rdx\n");
         return s;
+    }
+    if (o.kind_tag == 245) {  // mismatch
+        return emit_mismatch_x86(s);
     }
     if (o.kind_tag == 102) {  // str_slice
         // operand stack [src box, start, end] (end on top). Zero-copy view, but now

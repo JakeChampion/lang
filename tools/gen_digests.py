@@ -86,6 +86,17 @@ def sh(n, width):
 
 
 def rotr(x, n, width):
+    """`x` rotated right by `n`, spelled with two shifts because Fern has no
+    rotate operator.
+
+    `x` is deliberately written out on BOTH sides of the `|`, even when it is a
+    compound expression. internal/ir's FuseRotates matches the repeated form
+    and emits one rotate instruction, dropping the second evaluation with it;
+    binding `x` to a temporary first defeats nothing but costs a store and a
+    reload per rotate on the stack-machine backends, because naming a value is
+    what puts it in memory. Measured on __blake2b_blocks (x86-64, -O): 7088
+    instructions as written, 7856 with the operand bound, +768 = two movs per
+    rotate. Do not "fix" the duplication here (#8782 item 3)."""
     return f"(({x} >> {sh(n, width)}) | ({x} << {sh(width - n, width)}))"
 
 
