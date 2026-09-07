@@ -66,7 +66,19 @@ var BuiltinCaps = map[string]string{
 	"remove_file":     "fs",
 	"remove_dir_all":  "fs",
 	"create_dir_all":  "fs",
-	"temp_dir":        "fs",
+	"create_dir":      "fs",
+	"remove_dir":      "fs",
+	"create_link":     "fs",
+	"create_symlink":  "fs",
+	"read_link":       "fs",
+	// The process file-mode creation mask. Reading it is ambient
+	// information about the process, but SETTING it changes the mode of
+	// every file and directory anything creates afterwards — a
+	// dependency that reaches it reaches every later creation, so it
+	// sits with the rest of the filesystem surface rather than beside
+	// `geteuid` in Ungated.
+	"umask":    "fs",
+	"temp_dir": "fs",
 
 	"env": "env",
 	// The machine's name is ambient information about where the

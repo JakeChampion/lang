@@ -77,6 +77,16 @@ pub function builtin_caps(): BuiltinCap[] {
         BuiltinCap { builtin: "remove_file", capability: "fs" },
         BuiltinCap { builtin: "remove_dir_all", capability: "fs" },
         BuiltinCap { builtin: "create_dir_all", capability: "fs" },
+        BuiltinCap { builtin: "create_dir", capability: "fs" },
+        BuiltinCap { builtin: "remove_dir", capability: "fs" },
+        BuiltinCap { builtin: "create_link", capability: "fs" },
+        BuiltinCap { builtin: "create_symlink", capability: "fs" },
+        BuiltinCap { builtin: "read_link", capability: "fs" },
+        // The process file-mode creation mask. Reading it reaches nothing,
+        // but SETTING it changes the mode of every file and directory
+        // anything creates afterwards, so it sits with the rest of the
+        // filesystem surface rather than in ungated().
+        BuiltinCap { builtin: "umask", capability: "fs" },
         BuiltinCap { builtin: "temp_dir", capability: "fs" },
 
         BuiltinCap { builtin: "env", capability: "env" },

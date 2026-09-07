@@ -267,6 +267,11 @@ pub function gated_builtins(): Gate[] {
         Gate { builtin: "remove_file", capability: "fs" },
         Gate { builtin: "remove_dir_all", capability: "fs" },
         Gate { builtin: "create_dir_all", capability: "fs" },
+        Gate { builtin: "create_dir", capability: "fs" },
+        Gate { builtin: "remove_dir", capability: "fs" },
+        Gate { builtin: "create_link", capability: "fs" },
+        Gate { builtin: "create_symlink", capability: "fs" },
+        Gate { builtin: "read_link", capability: "fs" },
         Gate { builtin: "temp_dir", capability: "fs" },
 
         // Permission bits on a filesystem entry, which is a separate
@@ -275,6 +280,9 @@ pub function gated_builtins(): Gate[] {
         // property, so it sits here rather than on `fs`.
         Gate { builtin: "write_file_exec", capability: "fsmode" },
         Gate { builtin: "access", capability: "fsmode" },
+        // The umask is the same property from the other side: the mode
+        // bits a creation is allowed to keep. WASI has no creation mask.
+        Gate { builtin: "umask", capability: "fsmode" },
 
         // The process's own effective identity. Neither WASI preview has a
         // notion of a user, and there is no honest constant to answer with:
