@@ -487,11 +487,24 @@ func (CharType) String() string   { return "char" }
 func (f FloatType) String() string {
 	return fmt.Sprintf("f%d", f.NormalWidth())
 }
+
+// typeString renders t as a postfix `[]` element. Only a FuncType needs
+// grouping: without the parens, `(i32) => i32` swallows the `[]` as its own
+// result type, turning an array of functions into a function returning an
+// array. Every other element spelling — `i32`, `(i32, string)`, `[i32]` —
+// round-trips unparenthesised, so only this one case is wrapped.
+func typeString(t Type) string {
+	if _, ok := t.(*FuncType); ok {
+		return "(" + t.String() + ")"
+	}
+	return t.String()
+}
+
 func (a ArrayType) String() string {
 	if a.Elem == nil {
 		return "[]"
 	}
-	return a.Elem.String() + "[]"
+	return typeString(a.Elem) + "[]"
 }
 func (s SliceType) String() string {
 	if s.Elem == nil {
