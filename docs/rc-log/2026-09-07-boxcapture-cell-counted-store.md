@@ -64,7 +64,7 @@ comparable; the real runner still has the last word in CI.
 | --- | --- | --- | --- |
 | `closure_capture_rebind_churn_free` | 16000 → **0** | 16000 → **0** | 16000 → **0** |
 | `closure_capture_rebind_alias_not_over_released` | 16000 → **0** | 16000 → **0** | 16000 → **0** |
-| `closure_cycle_leaks_without_crashing` | 1600 → 5600 | 1600 → 5600 | 1600 → 4000 |
+| `closure_cycle_leaks_without_crashing` (retired by #8440) | 1600 → 5600 | 1600 → 5600 | 1600 → 4000 |
 
 The issue's own 100k loop: 3,200,000 → 0 on x86-64.
 

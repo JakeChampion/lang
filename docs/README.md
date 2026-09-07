@@ -31,7 +31,7 @@ freeze tracker is [#4451](https://github.com/JakeChampion/lang/issues/4451).
 | `BLOCK-EXPRESSIONS.md` | [reference] | Block-expression syntax + value rules. |
 | `ASSOCIATED-TYPES.md` | [reference] | Trait associated types (`Self::Item`). |
 | `NAMED-FIELD-VARIANTS.md` | [reference] | Named-field enum variants. |
-| `CLOSURE-CAPTURE.md` | [reference] | Capture-by-value contract + E049 enforcement (shipped). |
+| `CLOSURE-CAPTURE.md` | [reference] | Capture-by-reference contract + E049 enforcement on both sides of the shared cell (shipped). |
 | `TRAITS.md` | [reference] | Trait system; phases 1–3 shipped. |
 | `DYN-TRAITS.md` | [reference] | `dyn Trait` objects; slices 1–4 shipped. |
 | `PUB-PACKAGE.md` | [reference] | `pub(package)` visibility. |

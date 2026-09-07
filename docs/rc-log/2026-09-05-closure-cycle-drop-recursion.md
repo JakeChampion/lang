@@ -67,7 +67,9 @@ still leaking.
 ## Gated
 
 `closure_cycle_leaks_without_crashing` — 50 rounds, pinned at 1600 bytes on
-x86-64, arm64 and wasm alike. Against the #8545 compiler it dies with a
+x86-64, arm64 and wasm alike. (Retired when #8440 made the cycle
+unconstructible: the case no longer type-checks. The checker table in
+`internal/checker/checker_test.go` is the gate now.) Against the #8545 compiler it dies with a
 signal, which the corpus reads as a crash rather than a verdict; before #8545
 it leaked 3200 where it now leaks 1600.
 
