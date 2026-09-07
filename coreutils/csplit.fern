@@ -663,15 +663,39 @@ function compact(st: St): St {
 
 // Move the scan cursor forward to line `n`, reading as it goes. False
 // when the input ends first.
+//
+// The cursor walks whole buffers at a time with the two counters in
+// locals, and the state is rebuilt once per read rather than once per
+// line: a struct update per line over eight million of them is what the
+// first draft spent a third of this workload on.
 function scan_to(st: St, n: i64): (boolean, St) {
   var s: St = st;
   while (s.sline < n) {
-    var r: (i32, St) = line_end(s);
-    s = r.1;
-    if (r.0 < 0) {
+    var off: i32 = s.soff;
+    var ln: i64 = s.sline;
+    while (ln < n) {
+      var j: i32 = __memchr(s.buf, 10, off);
+      if (j < 0) {
+        break;
+      }
+      off = j + 1;
+      ln = ln + 1;
+    }
+    s = St { ...s, soff: off, sline: ln };
+    if (s.sline >= n) {
+      return (true, s);
+    }
+    if (s.eof) {
+      // A last line with no terminator is still a line.
+      if (s.soff < s.buf.len()) {
+        s = St { ...s, soff: s.buf.len(), sline: s.sline + 1 as i64 };
+        if (s.sline >= n) {
+          return (true, s);
+        }
+      }
       return (false, s);
     }
-    s = drain(St { ...s, soff: r.0, sline: s.sline + 1 as i64 });
+    s = fill(drain(s));
   }
   return (true, s);
 }
@@ -934,19 +958,30 @@ function run_regexp(st: St, p: Pat, rep: i64): St {
 function find_match(st: St, p: Pat): (boolean, St) {
   var s: St = st;
   while (true) {
-    var r: (i32, St) = line_end(s);
-    s = r.1;
-    if (r.0 < 0) {
+    var off: i32 = s.soff;
+    var ln: i64 = s.sline;
+    while (true) {
+      var j: i32 = __memchr(s.buf, 10, off);
+      if (j < 0) {
+        break;
+      }
+      if (p.re.search_range(s.buf, off, j)) {
+        return (true, St { ...s, soff: off, sline: ln });
+      }
+      off = j + 1;
+      ln = ln + 1;
+    }
+    s = St { ...s, soff: off, sline: ln };
+    if (s.eof) {
+      if (s.soff < s.buf.len()) {
+        if (p.re.search_range(s.buf, s.soff, s.buf.len())) {
+          return (true, s);
+        }
+        s = St { ...s, soff: s.buf.len(), sline: s.sline + 1 as i64 };
+      }
       return (false, s);
     }
-    var stop: i32 = r.0;
-    if (stop > s.soff && s.buf[stop - 1] as i32 == 10) {
-      stop = stop - 1;
-    }
-    if (p.re.search(slice_unchecked(s.buf, s.soff, stop) + "")) {
-      return (true, s);
-    }
-    s = drain(St { ...s, soff: r.0, sline: s.sline + 1 as i64 });
+    s = fill(drain(s));
   }
   return (false, s);
 }
