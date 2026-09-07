@@ -171,11 +171,12 @@ function installed_count(): u64 {
 // name has to start the line, so a `model name` mentioning the word is
 // not counted.
 function count_processor_lines(text: string): i32 {
+  var word: string = "processor";
   var n: i32 = 0;
   var i: i32 = 0;
   var at_line_start: boolean = true;
   while (i < text.len()) {
-    if (at_line_start && slice_unchecked(text, i, min_i32(i + 9, text.len())) == "processor") {
+    if (at_line_start && starts_word(text, i, word)) {
       n = n + 1;
     }
     at_line_start = text[i] as i32 == 10;
@@ -184,11 +185,21 @@ function count_processor_lines(text: string): i32 {
   return n;
 }
 
-function min_i32(a: i32, b: i32): i32 {
-  if (a < b) {
-    return a;
+// Whether `text` holds `word` at `at`. A byte compare rather than a
+// slice: `slice_unchecked` copies, and this runs once per byte of the
+// file.
+function starts_word(text: string, at: i32, word: string): boolean {
+  if (at + word.len() > text.len()) {
+    return false;
   }
-  return b;
+  var k: i32 = 0;
+  while (k < word.len()) {
+    if (text[at + k] != word[k]) {
+      return false;
+    }
+    k = k + 1;
+  }
+  return true;
 }
 
 function min_u64(a: u64, b: u64): u64 {
