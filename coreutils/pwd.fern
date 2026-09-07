@@ -136,12 +136,15 @@ function walked_cwd(): string {
     var matched: boolean = false;
     var i: i32 = 0;
     while (i < entries.len()) {
+      // An entry that will not stat is skipped rather than fatal: it
+      // cannot be the directory we are standing in, since that one we
+      // already stat'd.
       match (lstat(prefix + "/" + entries[i])) {
         Ok(st) => {
           if (st.ino == here.ino && st.dev == here.dev) {
             found = entries[i];
             matched = true;
-            i = entries.len();
+            break;
           }
         },
         Err(_) => {}
@@ -161,6 +164,8 @@ function walked_cwd(): string {
   return name;
 }
 
+// `stat` or a diagnostic and exit. The unreachable return past the match
+// is what the checker asks for: `exit` is an ordinary call to it.
 function stat_or_die(r: Result[FileStat, IoError], msg: string): FileStat {
   match (r) {
     Ok(st) => {
