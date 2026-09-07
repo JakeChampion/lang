@@ -261,6 +261,7 @@ pub function gated_builtins(): Gate[] {
         Gate { builtin: "open_reader", capability: "fs" },
         Gate { builtin: "open_writer", capability: "fs" },
         Gate { builtin: "open_appender", capability: "fs" },
+        Gate { builtin: "open_exclusive", capability: "fs" },
         Gate { builtin: "stat", capability: "fs" },
         Gate { builtin: "lstat", capability: "fs" },
         Gate { builtin: "read_dir", capability: "fs" },

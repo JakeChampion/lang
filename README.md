@@ -219,12 +219,14 @@ Built-ins:
   streams with `.read_line()` / `.write(s)` methods.
 - `env(name): Option[string]` — environment lookup.
 - `read_file` / `write_file` — slurp / truncate-write whole files.
-- `open_reader` / `open_writer` / `open_appender` —
+- `open_reader` / `open_writer` / `open_appender` / `open_exclusive` —
   `Result[Reader|Writer, IoError]` with `.read_line()` / `.read_chunk(size)` /
   `.write(s)` / `.close()` for streaming, `.stat()` for the handle's own
   `FileStat` (fstat), and `Reader.seek(offset, whence)` for lseek — a pipe
   answers `Other("Illegal seek")`, which is how a utility learns it must
-  stream.
+  stream. `open_exclusive` is `O_CREAT|O_EXCL`: it creates the file or
+  answers `AlreadyExists(path)`, never opening a name someone else made,
+  which is what a temporary file at a chosen path needs.
 
 WASM builds need a preopened directory — pass `wasmtime --dir=...`; paths are
 relative to that preopen.

@@ -173,6 +173,7 @@ var rcResultOwned = map[string]bool{
 	"__fern_open_reader":         true,
 	"__fern_open_writer":         true,
 	"__fern_open_appender":       true,
+	"__fern_open_exclusive":      true,
 	"__fern_reader_close_fd":     true,
 	"__fern_writer_close":        true,
 	"__fern_writer_write":        true,

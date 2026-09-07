@@ -582,6 +582,12 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_str_byte")
 					needs.add("__build_io_error")
 					needs.add("__fern_open_appender")
+				case "__fern_open_exclusive":
+					needs.add("__fern_alloc")
+					needs.add("__fern_str_len")
+					needs.add("__fern_str_byte")
+					needs.add("__build_io_error")
+					needs.add("__fern_open_exclusive")
 				case "__fern_string_from_bytes":
 					// (bs: u8[]) → (data, len) — copies the byte
 					// array's payload into a fresh string. Inline
@@ -1075,6 +1081,7 @@ var preview2HelperCalls = map[string][]string{
 	"__fern_open_reader":       {"__wasi_errno_of_code"},
 	"__fern_open_writer":       {"__wasi_errno_of_code"},
 	"__fern_open_appender":     {"__wasi_errno_of_code"},
+	"__fern_open_exclusive":    {"__wasi_errno_of_code"},
 	"__fern_reader_read_chunk": {"__wasi_errno_of_code"},
 	"__fern_fd_stat":           {"__wasi_errno_of_code"},
 	"__fern_reader_seek":       {"__wasi_errno_of_code"},
@@ -1118,6 +1125,7 @@ var helperResultBoxCallers = []string{
 	"__fern_env", "__fern_read_line",
 	"__fern_read_file", "__fern_read_file_bytes", "__fern_write_file",
 	"__fern_open_reader", "__fern_open_writer", "__fern_open_appender",
+	"__fern_open_exclusive",
 	"__fern_reader_close_fd", "__fern_writer_close",
 	"__fern_writer_write", "__fern_reader_read_line_fd",
 	"__fern_reader_read_chunk", "__fern_fd_stat", "__fern_reader_seek",
@@ -2329,6 +2337,14 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildOpenAppenderBody,
+	},
+	"__fern_open_exclusive": {
+		// (path_data, path_len) → i32 — heap-form
+		// Result[Writer, IoError]. Opens with CREATE + EXCLUSIVE, so a
+		// name already there comes back as AlreadyExists.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildOpenExclusiveBody,
 	},
 	"__fern_reader_close_fd": {
 		// (r: i32) → i32 — heap-form Option[IoError]. Calls

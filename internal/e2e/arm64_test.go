@@ -11401,6 +11401,29 @@ func TestArm64ReaderWriter(t *testing.T) {
     }
     return 0 - 1;
 }`, "line 1\nline 2\n", 0},
+		{"open_exclusive_refuses_existing", `function main(): i32 {
+    match (open_exclusive("ex.txt")) {
+        Ok(w) => {
+            match (w.write("new")) { Some(_) => { return 1; }, None => {} }
+            match (w.close()) { Some(_) => { return 2; }, None => {} }
+        },
+        Err(_) => { return 3; }
+    }
+    match (open_exclusive("ex.txt")) {
+        Ok(_) => { return 4; },
+        Err(e) => {
+            match (e) {
+                AlreadyExists(p) => { write("exists:" + p); },
+                _ => { return 5; }
+            }
+        }
+    }
+    match (read_file("ex.txt")) {
+        Ok(s) => { write(":" + s); return 0; },
+        Err(_) => { return 6; }
+    }
+    return 0 - 1;
+}`, "exists:ex.txt:new", 0},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			stdout, code, _ := compileArm64InDir(t, c.src, nil)

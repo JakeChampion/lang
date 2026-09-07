@@ -9,7 +9,8 @@ import (
 )
 
 // TestSelfHostOpenFileWasmIR covers the streaming file-I/O intrinsics
-// open_writer / open_appender / open_reader (op_open_file) + Writer.write
+// open_writer / open_appender / open_reader / open_exclusive (op_open_file) +
+// Writer.write
 // (op_writer_write) on the self-host WASM IR path (#4372 file half, #7758, #7926).
 // wasm_ir emits $__fern_open_file (path_open under preopen fd 3, mapping the openat
 // flags to WASI oflags/rights/fdflags, then boxing Ok(fd) / Err($__fern_build_io_error))
@@ -90,6 +91,25 @@ func TestSelfHostOpenFileWasmIR(t *testing.T) {
 		}
 		if string(got) != "ABCD" {
 			t.Errorf("appender produced %q, want %q", got, "ABCD")
+		}
+	})
+
+	// open_exclusive (O_EXCL): the first open creates, the second meets EEXIST and
+	// comes back as AlreadyExists rather than truncating. WASI puts EXCLUSIVE in
+	// path_open's oflags (Create|Exclusive = 5), so this is the third flag word
+	// $__fern_open_file maps (#8776).
+	t.Run("exclusive", func(t *testing.T) {
+		_ = os.Remove(filepath.Join(dir, "ox.txt"))
+		src := `function main(): i32 { match (open_exclusive("ox.txt")) { Ok(w) => { w.write("EX"); w.close(); }, Err(_) => { return 91; } } match (open_exclusive("ox.txt")) { Ok(w2) => { w2.close(); return 92; }, Err(e) => { match (e) { AlreadyExists(_) => {}, _ => { return 93; } } } } return 0; }`
+		if code := run(t, src); code != 0 {
+			t.Fatalf("exclusive exit %d, want 0 (92 = the second open succeeded, 93 = EEXIST was not AlreadyExists)", code)
+		}
+		got, err := os.ReadFile(filepath.Join(dir, "ox.txt"))
+		if err != nil {
+			t.Fatalf("read ox.txt: %v", err)
+		}
+		if string(got) != "EX" {
+			t.Errorf("exclusive produced %q, want %q — the refused open truncated it", got, "EX")
 		}
 	})
 

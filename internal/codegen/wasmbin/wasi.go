@@ -1899,6 +1899,19 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 			in.add("wasi_path_open")
 		}
 	}
+	if helpers.set["__fern_open_exclusive"] {
+		if opts.Preview2WASI {
+			// open_exclusive opens via get-directories → open-at(create,
+			// exclusive) → write-via-stream, the same chain open_writer
+			// uses with a different open-flags word.
+			in.add("wasi_get_directories_p2")
+			in.add("wasi_descriptor_open_at_p2")
+			in.add("wasi_descriptor_write_via_stream_p2")
+			in.add("wasi_descriptor_drop_p2")
+		} else {
+			in.add("wasi_path_open")
+		}
+	}
 	if helpers.set["__fern_open_appender"] {
 		if opts.Preview2WASI {
 			// open_appender opens via get-directories → open-at(create,
@@ -1982,9 +1995,10 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 	}
 	if helpers.set["__fern_writer_close"] {
 		if opts.Preview2WASI {
-			// Same as the Reader: only open_writer / open_appender make a
-			// Writer that owns a descriptor.
-			if helpers.set["__fern_open_writer"] || helpers.set["__fern_open_appender"] {
+			// Same as the Reader: only open_writer / open_appender /
+			// open_exclusive make a Writer that owns a descriptor.
+			if helpers.set["__fern_open_writer"] || helpers.set["__fern_open_appender"] ||
+				helpers.set["__fern_open_exclusive"] {
 				in.add("wasi_descriptor_drop_p2")
 			}
 			// The Writer holds an own<output-stream> handle; close drops it.
@@ -2433,6 +2447,7 @@ var preview2HelperBodyOverrides = map[string]func(map[string]uint32) []byte{
 	"__fern_open_reader":         buildOpenReaderBodyP2,
 	"__fern_open_writer":         buildOpenWriterBodyP2,
 	"__fern_open_appender":       buildOpenAppenderBodyP2,
+	"__fern_open_exclusive":      buildOpenExclusiveBodyP2,
 	"__fern_writer_write":        buildWriterWriteBodyP2,
 	"__fern_reader_close_fd":     buildReaderCloseFdBodyP2,
 	"__fern_writer_close":        buildWriterCloseBodyP2,

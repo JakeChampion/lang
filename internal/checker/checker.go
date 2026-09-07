@@ -342,7 +342,8 @@ func builtinEnumDecls() []*ast.EnumDecl {
 // builtinStructDecls returns the synthetic struct declarations
 // the checker injects on every program: `Reader` and `Writer`.
 // Both are opaque-by-convention — the user never constructs
-// them directly; `open_reader` / `open_writer` / `open_appender`
+// them directly; `open_reader` / `open_writer` / `open_appender` /
+// `open_exclusive`
 // (and the future `stdin()` / `stdout()` / `stderr()`) are the
 // canonical entry points. The single `fd` field is exposed
 // because we don't have opaque types yet, and because users
@@ -1647,7 +1648,7 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		}},
 	}
 	// Streaming I/O constructors. open_reader / open_writer /
-	// open_appender all return `Result[Reader|Writer, IoError]`
+	// open_appender / open_exclusive all return `Result[Reader|Writer, IoError]`
 	// — the runtime helpers do the path_open / open(2) and
 	// wrap the resulting fd in a Reader or Writer struct.
 	readerType := ast.StructType{Name: "Reader"}
@@ -1663,6 +1664,19 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		Result: ast.EnumType{Name: "Result", Args: []ast.Type{writerType, ioErrType}},
 	}
 	c.info.FuncSigs["open_appender"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{writerType, ioErrType}},
+	}
+	// open_exclusive(path): Result[Writer, IoError] — O_WRONLY|O_CREAT|
+	// O_EXCL. The caller is the file's sole creator or it gets
+	// `IoError::AlreadyExists(path)` back, which is what a
+	// retry-with-a-fresh-name loop needs to tell apart from a real
+	// failure. O_TRUNC is absent by construction: with O_EXCL the file
+	// cannot already exist. This is what a temporary file at a CHOSEN
+	// path needs — `open_writer` truncates whatever name it is handed,
+	// so an attacker who plants the name turns the temporary into a
+	// clobber of their target (#8776).
+	c.info.FuncSigs["open_exclusive"] = &ast.FuncType{
 		Params: []ast.Type{ast.StringType{}},
 		Result: ast.EnumType{Name: "Result", Args: []ast.Type{writerType, ioErrType}},
 	}

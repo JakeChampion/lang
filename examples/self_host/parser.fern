@@ -8019,7 +8019,7 @@ pub function builtin_function_names(): string[] {
         "stdin", "stdout", "stderr", "isatty", "read_line", "read_int", "read_all_stdin",
         // the two halves of the compile target's name, literals once compiled
         "target_os", "target_arch",
-        "open_reader", "open_writer", "open_appender",
+        "open_reader", "open_writer", "open_appender", "open_exclusive",
         // filesystem
         "read_file", "read_file_bytes", "write_file", "write_file_exec", "read_dir", "remove_dir_all", "remove_file",
         "create_dir_all", "stat", "lstat", "access", "temp_dir",

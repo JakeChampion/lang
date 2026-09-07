@@ -1295,6 +1295,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__method_Writer_stat":          emitFdStatHelper("__method_Writer_stat", "wst"),
 	"__method_Reader_seek":          emitReaderSeekHelper,
 	"open_appender":                 emitOpenAppenderHelper,
+	"open_exclusive":                emitOpenExclusiveHelper,
 	"stdin":                         emitStdHandleHelper("stdin", 0),
 	"stdout":                        emitStdHandleHelper("stdout", 1),
 	"stderr":                        emitStdHandleHelper("stderr", 2),
@@ -2445,7 +2446,8 @@ func emitEmptyString(w func(string, ...any), dst string) {
 	w("\tstrb wzr, [%s]", dst) // NUL
 }
 
-// emitOpenHandleHelper writes an open_reader / open_writer / open_appender
+// emitOpenHandleHelper writes an open_reader / open_writer / open_appender /
+// open_exclusive
 // builtin -> Result[Reader|Writer, IoError]: NUL-terminate the path, openat it
 // with the given flags/mode, wrap the fd in a handle (fd at [ptr+8], immortal
 // rc), and return Ok(handle), or map -errno through __fern_io_error and return
@@ -2542,6 +2544,14 @@ func emitOpenWriterHelper(w func(string, ...any)) {
 // 0644. Opens (creating if needed) for appending rather than truncating.
 func emitOpenAppenderHelper(w func(string, ...any)) {
 	emitOpenHandleHelper(w, "open_appender", "oa", 1089, 420)
+}
+
+// emitOpenExclusiveHelper: open_exclusive(path) — O_WRONLY|O_CREAT|O_EXCL
+// (193), 0644. Fails with EEXIST rather than opening a file that is already
+// there, which reaches the caller as IoError::AlreadyExists. No O_TRUNC: with
+// O_EXCL the file cannot already exist.
+func emitOpenExclusiveHelper(w func(string, ...any)) {
+	emitOpenHandleHelper(w, "open_exclusive", "ox", 193, 420)
 }
 
 // emitWriterWriteHelper writes __method_Writer_write(writer, data) ->
@@ -2940,6 +2950,7 @@ var runtimeHelperDeps = map[string][]string{
 	"__method_Writer_stat":          {"__fern_io_error"},
 	"__method_Reader_seek":          {"__fern_io_error"},
 	"open_appender":                 {"__fern_io_error"},
+	"open_exclusive":                {"__fern_io_error"},
 	"__pow_f64":                     {"__log_f64", "__exp_f64"},
 	"__sin_f64":                     {"__rem_pio2_large"},
 	"__cos_f64":                     {"__rem_pio2_large"},
@@ -2997,6 +3008,7 @@ var heapUsingHelpers = map[string]bool{
 	"__method_Writer_stat":          true,
 	"__method_Reader_seek":          true,
 	"open_appender":                 true,
+	"open_exclusive":                true,
 	"stdin":                         true,
 	"stdout":                        true,
 	"stderr":                        true,
