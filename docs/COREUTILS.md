@@ -764,6 +764,34 @@ path. What is left there is a per-line cache of the first key's span, which is
 what GNU's `struct line` carries and what would close most of the `-k` rows;
 #8822 has the shape.
 
+`tee`, 2026-09-07, Linux x86-64, the same 62 MiB file, GNU 9.4 and uutils
+0.0.24:
+
+| utility | workload | fern (ms) | gnu (ms) | uutils (ms) | gnu / fern | uutils / fern |
+|---|---|---|---|---|---|---|
+| `tee` | to stdout alone | 6.78 ± 2.26 | 10.48 ± 4.32 | 11.80 ± 2.10 | 1.55× | 1.74× |
+| `tee` | to one file | 58.15 ± 6.56 | 73.38 ± 12.87 | 69.51 ± 7.26 | 1.26× | 1.20× |
+| `tee` | to four files | 226.49 ± 42.66 | 397.84 ± 37.02 | 379.17 ± 53.67 | 1.76× | 1.67× |
+| `tee` | from a pipe to one file | 62.22 ± 5.93 | 91.84 ± 8.02 | 96.34 ± 19.21 | 1.48× | 1.55× |
+| `tee` | down a pipe | 61.87 ± 5.51 | 97.24 ± 4.07 | 105.35 ± 9.67 | 1.57× | 1.70× |
+
+`tee` does no per-byte work at all, so the whole margin is the syscall
+count: the read block is 64 KiB where GNU and uutils both read 8 KiB
+(measured under strace), which is eight times fewer `read(2)`s and eight
+times fewer `write(2)`s per output. The sweep that chose
+it is in `read_size()` in `tee.fern` — 62 MiB to a file costs 106 ms at
+4 KiB and 58.6 at 64 KiB, and past 64 KiB the pipe case stops improving
+because a write bigger than the pipe buffer puts writer and reader in
+lockstep, the same effect `yes.fern` measured.
+
+**Read a single bench run's ratios with the σ next to them.** An earlier
+run of this same table, on a busier machine, put the four-file row at
+298.50 ± 119.91 against uutils' 270.02 and would have recorded `tee` as
+0.90× uutils there. The σ was 40% of the mean and the row was noise; a
+second run with σ at 19% has it at 1.67×. Neither number is wrong about
+the machine it ran on, which is why every table here says to compare
+only within one run.
+
 ## Known divergences
 
 **`od -t fL` prints a canonical value for an encoding x87 never
