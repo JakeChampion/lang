@@ -14177,6 +14177,42 @@ func resultCannotAliasArg(t ast.Type) bool {
 	return false
 }
 
+// pairResultCannotAliasArg is resultCannotAliasArg for a PAIR-FORM callee.
+//
+// A pair-form call hands back one tag word and one payload word, but its
+// static type is the enum (`Option[i32]`), which resultCannotAliasArg reads as
+// aliasing-capable — so that predicate answers false for the whole family and
+// every argument-temp admission excluded it. The question the safety argument
+// actually asks is about the PAYLOAD: when every variant carries a concrete
+// scalar (or nothing), neither the pair nor the box emitRepackPairAsHeapBox
+// packs it into can BE or CONTAIN an argument, and the post-call dec is as
+// sound as it is for a scalar result.
+//
+// Payloads are read off the enum declaration after substituting the type
+// arguments, so an unresolved `ParamType` payload keeps the prior safe-leak
+// exactly as an unresolved scalar result does.
+func (b *builder) pairResultCannotAliasArg(t ast.Type) bool {
+	et, ok := t.(ast.EnumType)
+	if !ok || b.info == nil {
+		return false
+	}
+	ed := b.info.Enums[et.Name]
+	if ed == nil {
+		return false
+	}
+	if len(et.Args) > 0 {
+		ed = substituteEnumDecl(ed, et.Args)
+	}
+	for _, v := range ed.Variants {
+		for _, pt := range v.Payloads {
+			if !resultCannotAliasArg(pt) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 // typeCannotCarrySlice reports whether a value of type t provably cannot BE or
 // CONTAIN a `[T]` view header. An allow-list: only shapes whose contents are
 // fully known answer true, so a type variable, a trait object, a closure or a
@@ -15462,10 +15498,21 @@ func (b *builder) callBody(n *ast.Call) error {
 	// element (UAF); __method_Array_push is the array analogue.
 	_, calleeIsLocal := b.locals[id.Name]
 	_, calleeIsFunc := b.info.FuncSigs[id.Name]
+	// A pair-form callee is admitted on the payload rather than on the enum
+	// its static type names — pairResultCannotAliasArg. Excluding the family
+	// outright stranded every fresh temp handed to one: `line.trim()` is a
+	// fresh `__str_slice` buffer and `parse_int` is pair-form, so
+	// `line.trim().parse_int()` leaked one string per call above the inline
+	// threshold (#8846). The other three admissions below stay closed to it:
+	// each ends in a guarded drop that stashes the call's result in a slot,
+	// and a pair leaves two values on the operand stack.
+	pairArgTempsSafe := b.pairForm[id.Name] && b.pairResultCannotAliasArg(b.exprType(n))
 	reclaimArgTemps := ast.RcFreeEnabled && calleeIsFunc && !calleeIsLocal &&
-		(resultCannotAliasArg(b.exprType(n)) || b.returnsNoParamEscape[id.Name] ||
-			b.resultIsCountedStringAlias(id.Name, b.exprType(n))) &&
-		!b.pairForm[id.Name] && id.Name != "map_new" && !calleeRetainsAnyArg(id.Name)
+		id.Name != "map_new" && !calleeRetainsAnyArg(id.Name) &&
+		(pairArgTempsSafe ||
+			(!b.pairForm[id.Name] &&
+				(resultCannotAliasArg(b.exprType(n)) || b.returnsNoParamEscape[id.Name] ||
+					b.resultIsCountedStringAlias(id.Name, b.exprType(n)))))
 	// Per-ARGUMENT admission, where the call-level gate above says no. That
 	// gate is whole-call: one pointer-shaped result disqualifies every
 	// argument at once, so `node(name, no_deps(), k)` — a constructor whose
