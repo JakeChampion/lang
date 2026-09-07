@@ -3,7 +3,7 @@
 `coreutils/` reimplements GNU coreutils in Fern, one program per file, to two
 requirements that do not bend:
 
-1. **Byte-for-byte parity with GNU coreutils.** Same stdout, same stderr,
+1. **Byte-for-byte parity with GNU coreutils 9.4 or newer.** Same stdout, same stderr,
    same exit status, for every invocation. Not "compatible", not "the common
    cases": a divergence is a bug with the same standing as a miscompile.
 2. **Faster than GNU on every utility, and faster than uutils (the Rust
@@ -149,9 +149,10 @@ failure, not a skip.** On the Ubuntu CI runners it is the system coreutils;
 on macOS the system tools are BSD, so a nix or Homebrew GNU coreutils is
 needed and the failure message says so.
 
-Versions: the corpus is held to GNU coreutils **9.x**. Local development
-measured against 9.10; the Ubuntu runners carry the 9.x their release ships.
-A case whose behaviour changed within 9.x records the version it needs in a
+Versions: the corpus is held to GNU coreutils **9.4 or newer**. Benchmarks
+compare against both GNU coreutils and Rust uutils, recording their actual
+versions. Install missing comparison implementations before measuring.
+A case whose behaviour changed between versions records the version it needs in a
 comment and is the exception, not the pattern — the utilities done so far
 have no such case.
 
