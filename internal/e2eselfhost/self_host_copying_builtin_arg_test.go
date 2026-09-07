@@ -21,6 +21,10 @@ import (
 // reaching it, `out` would be released under the field (exit 139, or 250 when
 // the bytes had already been recycled).
 //
+// `__mismatch` is the one row with the string in TWO argument positions, so it
+// pins the per-POSITION half of the credit: a table keyed by name alone would
+// free `out` under position 0 and lose it under position 2.
+//
 // `print` and `Writer.write` used to leave one block per call whatever their
 // argument — print's newline-joined temp and write's Option[IoError] result box
 // (#8410). print now writes the payload and a "\n" literal without joining
@@ -63,6 +67,7 @@ func copyingBuiltinCases() []copyingBuiltinCase {
 		{name: "eprint", use: `eprint(out);`, pinCounts: true},
 		{name: "memchr", use: `var q: i32 = __memchr(out, 10, 0);`, pinCounts: true},
 		{name: "count_byte", use: `var q: i32 = __count_byte(out, 97);`, pinCounts: true},
+		{name: "mismatch", use: `var q: i32 = __mismatch(out, 0, out, 0, 24);`, pinCounts: true},
 		{name: "writer_write", use: `var w: Writer = stdout();
     match (w.write(out)) { Some(_) => { return -1; }, None => {} }`, pinCounts: true},
 		{

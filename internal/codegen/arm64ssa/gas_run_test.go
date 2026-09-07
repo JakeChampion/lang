@@ -378,6 +378,27 @@ func TestArmRunShifts(t *testing.T) {
 	}
 }
 
+// Rotate right — RORV, the fourth member of the lslv/lsrv/asrv family. The
+// operand is built as 0x80000005 from a=5 so bit 31 is set, and the count 28
+// rotates the top nibble down into the low byte: the w-form gives 0x58, while
+// the x-form would rotate through the cleared high half and give 0x50. The
+// exit code is the low byte, so the two answers are distinguishable.
+func TestArmRunRotr(t *testing.T) {
+	build := func() *ssa.Func {
+		f := ssa.NewFunc("main")
+		a := f.AddParam()
+		n := f.AddParam()
+		e := f.NewBlock()
+		hi := f.AddOp(e, ssa.OpShl, a, constOp(f, e, 31))
+		x := f.AddOp(e, ssa.OpOr, hi, a)
+		f.SetRet(e, f.AddOp(e, ssa.OpRotr, x, n))
+		return f
+	}
+	for _, nreg := range []int{2, 4, 8} {
+		runMatchesEval(t, build(), nreg, 5, 28)
+	}
+}
+
 // Arithmetic (signed) right shift on a negative value: with a=64, (0-a) asr 2 =
 // -16, then +80 = 64 -> exit 64. The param keeps the negative runtime (no
 // const-fold, no negative immediate in _start), validating asr's sign behaviour.

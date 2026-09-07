@@ -203,6 +203,94 @@ function ir_shift_imm_asm(tag: i32, width: i32, prev: ir.Op): string {
 // emit_str_op emits one string operand-stack op (the bodies factored out of
 // emit_function_via_ir's dispatch — see ir.is_str_op_kind). The runtime helpers
 // come from asm_arm64.emit_runtime, gated by the mark_* needs set here.
+// emit_mismatch_arm64 emits the __mismatch kernel (#8791): operand stack
+// [a box, ao, b box, bo, n] (n on top) -> the offset of the first byte where
+// a[ao..ao+n) and b[bo..bo+n) differ, or the clamped n when they are equal.
+//
+// emit_str_op's memchr kernel with the broadcast needle replaced by a second
+// operand stream: `eor` zeroes the lanes that match and `cmtst` turns the
+// survivors into all-ones, so the shrn / fmov / rbit / clz gather that finds
+// memchr's first hit finds the first DIFFERENCE here unchanged.
+//
+// Sub-16 ranges take memcmp's OVERLAPPING WINDOWS rather than the scalar
+// remainder — the leading and trailing 8 (or 4) bytes, which overlap, so two
+// loads per operand cover the whole band. A line-oriented caller compares
+// SHORT ranges, and walking those a byte at a time is the cost this kernel
+// exists to remove.
+//
+// The clamps are the op's contract, not defensive tidying: the value returned
+// on equality is the clamped n, so a caller asking for more than either range
+// holds gets the shorter answer and its `== n` test fails.
+//
+// x8 / x9 are the two cursors (ld1 has no indexed form), x12 remembers a's
+// range start so the answer is one subtraction and x13 its end; x4 keeps the
+// clamped n for the equal case. Leaf body — no call, so every register is free.
+function emit_mismatch_arm64(s: asmcore.EmitState): asmcore.EmitState {
+    var mlo: asmcore.LabelOut = asmcore.fresh_label(s);
+    var lb: string = mlo.name;
+    s = mlo.state;
+    s = s.write("    ldr x4, [sp], #16\n    ldr x3, [sp], #16\n    ldr x2, [sp], #16\n");
+    s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
+    s = s.write("    ldr x5, [x0, #8]\n    ldr x0, [x0]\n");
+    s = s.write("    ldr x6, [x2, #8]\n    ldr x2, [x2]\n");
+    // Each offset clamps into [0, len] of its own string.
+    s = s.write("    cmp x1, #0\n    b.ge " + lb + "_aop\n    mov x1, #0\n");
+    s = s.write(lb + "_aop:\n    cmp x1, x5\n    csel x1, x5, x1, gt\n");
+    s = s.write("    cmp x3, #0\n    b.ge " + lb + "_bop\n    mov x3, #0\n");
+    s = s.write(lb + "_bop:\n    cmp x3, x6\n    csel x3, x6, x3, gt\n");
+    // n = min(n, len(a) - ao, len(b) - bo), floored at 0.
+    s = s.write("    sub x5, x5, x1\n    sub x6, x6, x3\n");
+    s = s.write("    cmp x4, x5\n    csel x4, x5, x4, gt\n");
+    s = s.write("    cmp x4, x6\n    csel x4, x6, x4, gt\n");
+    s = s.write("    cmp x4, #0\n    b.ge " + lb + "_nok\n    mov x4, #0\n");
+    s = s.write(lb + "_nok:\n    add x8, x0, x1\n    add x9, x2, x3\n");
+    s = s.write("    mov x12, x8\n    add x13, x8, x4\n");
+    // NEON loop, 16 bytes of each operand an iteration. The load runs only
+    // with a full block left in both ranges, so it never reads past either
+    // and there is no alignment prologue to pay.
+    s = s.write(lb + "_vec:\n    sub x10, x13, x8\n    cmp x10, #16\n    b.lt " + lb + "_short\n");
+    s = s.write("    ld1 {v0.16b}, [x8]\n    ld1 {v1.16b}, [x9]\n");
+    s = s.write("    eor v0.16b, v0.16b, v1.16b\n    cmtst v0.16b, v0.16b, v0.16b\n");
+    s = s.write("    shrn v0.8b, v0.8h, #4\n    fmov x11, d0\n");
+    s = s.write("    cbz x11, " + lb + "_next\n");
+    // Lowest set bit -> lane. shrn leaves four mask bits per input byte,
+    // hence the >>2 — the same nibble arithmetic memchr pays.
+    s = s.write("    rbit x11, x11\n    clz x11, x11\n    lsr x11, x11, #2\n");
+    s = s.write("    add x8, x8, x11\n    sub x2, x8, x12\n    b " + lb + "_done\n");
+    s = s.write(lb + "_next:\n    add x8, x8, #16\n    add x9, x9, #16\n    b " + lb + "_vec\n");
+    // 8..15 bytes: the leading 8 and the trailing 8, which overlap.
+    s = s.write(lb + "_short:\n    cmp x10, #8\n    b.lt " + lb + "_w4\n");
+    s = s.write("    ldr x11, [x8]\n    ldr x14, [x9]\n    eor x11, x11, x14\n");
+    s = s.write("    cbnz x11, " + lb + "_w8l\n");
+    s = s.write("    sub x14, x10, #8\n    ldr x11, [x8, x14]\n    ldr x15, [x9, x14]\n");
+    s = s.write("    eor x11, x11, x15\n    cbz x11, " + lb + "_eq\n");
+    // The leading window proved [0, 8) equal, so a difference the trailing
+    // window reports cannot land below 8 — its offset is the first one.
+    s = s.write("    add x8, x8, x14\n");
+    // Lowest set bit of the xor >> 3 is the byte, little-endian.
+    s = s.write(lb + "_w8l:\n    rbit x11, x11\n    clz x11, x11\n    lsr x11, x11, #3\n");
+    s = s.write("    add x8, x8, x11\n    sub x2, x8, x12\n    b " + lb + "_done\n");
+    // 4..7 bytes: the same pair of windows, four bytes wide.
+    s = s.write(lb + "_w4:\n    cmp x10, #4\n    b.lt " + lb + "_tail\n");
+    s = s.write("    ldr w11, [x8]\n    ldr w14, [x9]\n    eor w11, w11, w14\n");
+    s = s.write("    cbnz w11, " + lb + "_w4l\n");
+    s = s.write("    sub x14, x10, #4\n    ldr w11, [x8, x14]\n    ldr w15, [x9, x14]\n");
+    s = s.write("    eor w11, w11, w15\n    cbz w11, " + lb + "_eq\n");
+    s = s.write("    add x8, x8, x14\n");
+    s = s.write(lb + "_w4l:\n    rbit w11, w11\n    clz w11, w11\n    lsr w11, w11, #3\n");
+    s = s.write("    add x8, x8, x11\n    sub x2, x8, x12\n    b " + lb + "_done\n");
+    // Scalar remainder: fewer than 4 bytes in the band, or fewer than 16 left
+    // after the vector loop.
+    s = s.write(lb + "_tail:\n    cmp x8, x13\n    b.ge " + lb + "_eq\n");
+    s = s.write("    ldrb w11, [x8]\n    ldrb w14, [x9]\n    cmp w11, w14\n");
+    s = s.write("    b.ne " + lb + "_th\n");
+    s = s.write("    add x8, x8, #1\n    add x9, x9, #1\n    b " + lb + "_tail\n");
+    s = s.write(lb + "_th:\n    sub x2, x8, x12\n    b " + lb + "_done\n");
+    s = s.write(lb + "_eq:\n    mov x2, x4\n");
+    s = s.write(lb + "_done:\n    str x2, [sp, #-16]!\n");
+    return s;
+}
+
 function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     if (o.kind_tag == 97) {  // str_len
         // pop string box; length is at box+8.
@@ -282,6 +370,9 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         s = s.write(l_none + ":\n    mov x2, #-1\n");
         s = s.write(l_done + ":\n    str x2, [sp, #-16]!\n");
         return s;
+    }
+    if (o.kind_tag == 245) {  // mismatch
+        return emit_mismatch_arm64(s);
     }
     if (o.kind_tag == 234) {  // rmemchr
         // operand stack [box, byte, from] (from on top) -> the index of the

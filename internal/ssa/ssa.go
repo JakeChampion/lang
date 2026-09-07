@@ -84,6 +84,10 @@ const (
 	OpShl
 	OpShr
 	OpShrU
+	// Rotate right by Args[1], modulo the operand width. There is no
+	// rotate-left counterpart: the IR normalises a left rotate by n to
+	// a right rotate by width-n before the lift sees it.
+	OpRotr
 
 	// Unary arithmetic — integer negation.
 	OpNeg
@@ -332,6 +336,8 @@ func (k OpKind) String() string {
 		return "shr"
 	case OpShrU:
 		return "shr_u"
+	case OpRotr:
+		return "rotr"
 	case OpNeg:
 		return "neg"
 	case OpTrunc:

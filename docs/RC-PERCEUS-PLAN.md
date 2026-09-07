@@ -95,10 +95,10 @@ designed-around but not built yet.
   ANALYSIS.md`), so a post-construction back-pointer — the only way
   to close a cycle when values are built bottom-up — can't be
   written. No cycle collector and no tracing fallback: cycles are
-  meant to be unconstructible rather than collected. They are not yet
-  — E049 rejects a reference-capture write-back inside the closure, but
-  the enclosing scope can still store the closure into the shared capture
-  box and close the cycle (#8440).
+  unconstructible rather than collected. E049 rejects a reference-capture
+  write-back inside the closure AND an enclosing-scope store of a value
+  that can reach a closure into the shared capture box, which was the last
+  open vector (#8440).
 - **Thread safety.** Refcounts are non-atomic. Single-threaded.
   When concurrency lands, either atomic ops (slower) or thread-
   local heaps with explicit sharing.

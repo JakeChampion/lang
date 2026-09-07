@@ -1,0 +1,982 @@
+// uniq.fern — GNU-compatible `uniq`.
+//
+//   uniq [OPTION]... [INPUT [OUTPUT]]
+//
+// Collapse runs of ADJACENT matching lines. Two things about the
+// synopsis are easy to read past:
+//
+//   - The second operand is an OUTPUT FILE, not a second input, and it
+//     is opened (truncating) before the first line is read. `uniq f f`
+//     therefore empties the file and prints nothing.
+//   - A line always ends in the delimiter: an input whose last line is
+//     unterminated gets one, so `printf 'a\na' | uniq -c` counts two.
+//     The comparison excludes that byte.
+//
+// What is compared is a FIELD of the line, not the line: `-f N` skips N
+// blank-separated fields, `-s N` then skips N more bytes, and `-w N`
+// compares at most N of what is left. Each skip stops at the end of the
+// line, so a count larger than the line leaves an empty field, and two
+// empty fields are equal — `uniq -w0` collapses everything.
+//
+// The option scan is glibc's with a leading `-` in the optstring, so
+// operands arrive interleaved with options (gnu.return_in_order): an
+// operand of `+N` is the obsolete skip-chars form until a file operand
+// has been seen, and a file name after that.
+import "std/string";
+import "std/array";
+import "std/u64";
+import "std/io_buffered";
+import "./lib/gnu";
+
+function opt_count(): i32 {
+  return 1;
+}
+
+function opt_repeated(): i32 {
+  return 2;
+}
+
+function opt_all_short(): i32 {
+  return 3;
+}
+
+function opt_all_long(): i32 {
+  return 4;
+}
+
+function opt_group(): i32 {
+  return 5;
+}
+
+function opt_ignore_case(): i32 {
+  return 6;
+}
+
+function opt_unique(): i32 {
+  return 7;
+}
+
+function opt_skip_fields(): i32 {
+  return 8;
+}
+
+function opt_skip_chars(): i32 {
+  return 9;
+}
+
+function opt_check_chars(): i32 {
+  return 10;
+}
+
+function opt_zero(): i32 {
+  return 11;
+}
+
+// The ten digit options `-0` … `-9`, which accumulate into the obsolete
+// skip-fields count. `-12` is one cluster of two of them, so the id has
+// to carry which digit it was.
+function opt_digit(d: i32): i32 {
+  return 20 + d;
+}
+
+function help_text(): string {
+  var out: string = "";
+  out = out + "Usage: " + gnu.prog() + " [OPTION]... [INPUT [OUTPUT]]\n";
+  out = out + "Filter adjacent matching lines from INPUT (or standard input),\n";
+  out = out + "writing to OUTPUT (or standard output).\n";
+  out = out + "\n";
+  out = out + "With no options, matching lines are merged to the first occurrence.\n";
+  out = out + "\n";
+  out = out + "  -c, --count           prefix lines by the number of occurrences\n";
+  out = out + "  -d, --repeated        only print duplicate lines, one for each group\n";
+  out = out + "  -D                    print all duplicate lines\n";
+  out = out + "      --all-repeated[=METHOD]  like -D, but allow separating groups\n";
+  out = out + "                          with an empty line;\n";
+  out = out + "                          METHOD={none(default),prepend,separate}\n";
+  out = out + "  -f, --skip-fields=N   avoid comparing the first N fields\n";
+  out = out + "      --group[=METHOD]  show all items, separating groups with an empty line;\n";
+  out = out + "                          METHOD={separate(default),prepend,append,both}\n";
+  out = out + "  -i, --ignore-case     ignore differences in case when comparing\n";
+  out = out + "  -s, --skip-chars=N    avoid comparing the first N characters\n";
+  out = out + "  -u, --unique          only print unique lines\n";
+  out = out + "  -z, --zero-terminated  line delimiter is NUL, not newline\n";
+  out = out + "  -w, --check-chars=N   compare no more than N characters in lines\n";
+  out = out + "      --help        display this help and exit\n";
+  out = out + "      --version     output version information and exit\n";
+  out = out + "\n";
+  out = out + "A field is a run of blanks (usually spaces and/or TABs), then non-blank\n";
+  out = out + "characters.  Fields are skipped before chars.\n";
+  return out;
+}
+
+// ---- numbers ---------------------------------------------------------------
+function is_digit(c: i32): boolean {
+  return c >= 48 && c <= 57;
+}
+
+function is_space(c: i32): boolean {
+  return c == 32 || c >= 9 && c <= 13;
+}
+
+// `parse_size(s)` — gnulib's `xstrtoumax(s, NULL, 10, &v, "")`: leading
+// whitespace, an optional plus, decimal digits, nothing else. Returns
+// (value, status): status 0 accepted, 1 malformed, 2 out of range. A
+// leading minus is malformed rather than a wrap, which is why `-f-1`
+// is a diagnostic and not a skip of everything.
+function parse_size(s: string): (u64, i32) {
+  var i: i32 = 0;
+  while (i < s.len() && is_space(s[i] as i32)) {
+    i = i + 1;
+  }
+  if (i < s.len() && s[i] as i32 == 43) {
+    i = i + 1;
+  }
+  if (i >= s.len() || !is_digit(s[i] as i32)) {
+    return (0 as u64, 1);
+  }
+  var v: u64 = 0 as u64;
+  var over: boolean = false;
+  while (i < s.len() && is_digit(s[i] as i32)) {
+    var d: u64 = (s[i] as i32 - 48) as u64;
+    match (v.checked_mul(10 as u64)) {
+      Some(m) => {
+        match (m.checked_add(d)) {
+          Some(a) => {
+            v = a;
+          },
+          None => {
+            over = true;
+          }
+        }
+      },
+      None => {
+        over = true;
+      }
+    }
+    i = i + 1;
+  }
+  if (i != s.len()) {
+    return (0 as u64, 1);
+  }
+  if (over) {
+    return (0 as u64, 2);
+  }
+  return (v, 0);
+}
+
+// `size_opt(v, msgid)` — gnulib's size_opt: a malformed count is one
+// line naming the operand and exit 1, with NO `Try …` line; one too
+// large for size_t saturates instead of failing.
+function size_opt(v: string, msgid: string): u64 {
+  var r: (u64, i32) = parse_size(v);
+  if (r.1 == 1) {
+    gnu.error(v + ": " + msgid);
+    exit(1);
+  }
+  if (r.1 == 2) {
+    return size_max();
+  }
+  return r.0;
+}
+
+function size_max(): u64 {
+  return 18446744073709551615 as u64;
+}
+
+// gnulib's posix2_version(): `_POSIX2_VERSION` when the whole variable
+// is a number, else the edition this build targets.
+function posix2_version(): i32 {
+  match (env("_POSIX2_VERSION")) {
+    Some(s) => {
+      if (s.len() > 0) {
+        match (parse_long(s)) {
+          Some(v) => {
+            return v;
+          },
+          None => {}
+        }
+      }
+    },
+    None => {}
+  }
+  return 200809;
+}
+
+// Whether `+N` is still the obsolete skip-chars operand rather than a
+// file name. POSIX withdrew the form in 1003.1-2001 and allowed it
+// again in 2008, so the window that refuses it is bounded at BOTH ends:
+// `_POSIX2_VERSION=200112` makes `uniq +2 f` read a file called `+2`
+// and `=200809` does not.
+function obsolete_plus_allowed(): boolean {
+  var v: i32 = posix2_version();
+  return v < 200112 || v >= 200809;
+}
+
+// strtol over the WHOLE string, saturating at the i32 ends the way
+// posix2_version clamps to INT_MIN/INT_MAX. None when anything is left
+// over, which is when gnulib keeps its default.
+function parse_long(s: string): Option[i32] {
+  var i: i32 = 0;
+  while (i < s.len() && is_space(s[i] as i32)) {
+    i = i + 1;
+  }
+  var neg: boolean = false;
+  if (i < s.len() && (s[i] as i32 == 43 || s[i] as i32 == 45)) {
+    neg = s[i] as i32 == 45;
+    i = i + 1;
+  }
+  if (i >= s.len() || !is_digit(s[i] as i32)) {
+    return None;
+  }
+  var v: i64 = 0 as i64;
+  var over: boolean = false;
+  while (i < s.len() && is_digit(s[i] as i32)) {
+    if (v > 999999999 as i64) {
+      over = true;
+    } else {
+      v = v * (10 as i64) + (s[i] as i32 - 48) as i64;
+    }
+    i = i + 1;
+  }
+  if (i != s.len()) {
+    return None;
+  }
+  if (over) {
+    if (neg) {
+      return Some(0 - 2147483647 - 1);
+    }
+    return Some(2147483647);
+  }
+  if (neg) {
+    return Some(0 - v as i32);
+  }
+  return Some(v as i32);
+}
+
+// ---- how a group is reported -----------------------------------------------
+function dm_none(): i32 {
+  return 0;
+}
+
+function dm_prepend(): i32 {
+  return 1;
+}
+
+function dm_separate(): i32 {
+  return 2;
+}
+
+function gm_none(): i32 {
+  return 0;
+}
+
+function gm_prepend(): i32 {
+  return 1;
+}
+
+function gm_append(): i32 {
+  return 2;
+}
+
+function gm_separate(): i32 {
+  return 3;
+}
+
+function gm_both(): i32 {
+  return 4;
+}
+
+// gnulib's argmatch, as `--group` and `--all-repeated` meet it: an
+// exact name, else a unique abbreviation; an ambiguous one and an
+// unmatched one are worded differently and both list the valid names
+// before the `Try …` line. The empty value matches everything, so
+// `--group=` is ambiguous rather than unrecognised.
+function argmatch(v: string, names: string[], opt: string): i32 {
+  var found: i32 = 0 - 1;
+  var ambiguous: boolean = false;
+  var i: i32 = 0;
+  while (i < names.len()) {
+    if (names[i] == v) {
+      return i;
+    }
+    if (names[i].starts_with(v)) {
+      if (found < 0) {
+        found = i;
+      } else {
+        ambiguous = true;
+      }
+    }
+    i = i + 1;
+  }
+  if (found >= 0 && !ambiguous) {
+    return found;
+  }
+  var what: string = "invalid";
+  if (ambiguous) {
+    what = "ambiguous";
+  }
+  var msg: string = what + " argument " + gnu.quote(v) + " for '" + opt + "'\n";
+  msg = msg + "Valid arguments are:\n";
+  i = 0;
+  while (i < names.len()) {
+    msg = msg + "  - " + gnu.quote(names[i]) + "\n";
+    i = i + 1;
+  }
+  eprint(gnu.prog() + ": " + slice_unchecked(msg, 0, msg.len() - 1));
+  gnu.try_help(1);
+  return 0;
+}
+
+// ---- comparing --------------------------------------------------------------
+// `Cfg` — everything the option scan settles, in the shape the line
+// loop reads it.
+struct Cfg { count: boolean, unique: boolean, first_repeated: boolean, later_repeated: boolean, delimit: i32, grouping: i32, skip_fields: u64, skip_chars: u64, check_chars: u64, ignore_case: boolean, term: i32, plain: boolean }
+
+// A field ends at a blank or at a newline, whatever the line delimiter
+// is: under `-z` a line can hold newlines and they still separate its
+// fields.
+function is_field_sep(c: i32): boolean {
+  return c == 32 || c == 9 || c == 10;
+}
+
+// `cap(v, hi)` — `v` as an i32 index, clamped to `hi`. Every skip
+// advances at least one byte per step, so clamping the COUNT by the
+// bytes available is the same walk as taking `v` steps and stopping at
+// the end, without a 64-bit loop counter.
+function cap(v: u64, hi: i32): i32 {
+  if (hi <= 0) {
+    return 0;
+  }
+  if (v > hi as u64) {
+    return hi;
+  }
+  return v as i32;
+}
+
+// The offset WITHIN a line at which the compared field starts:
+// `skip_fields` blank-separated fields, then `skip_chars` bytes. `at` is
+// where the line begins in `s` and `len` its length INCLUDING the
+// delimiter, which is not part of the content.
+function field_offset(s: string, at: i32, len: i32, cfg: Cfg): i32 {
+  var size: i32 = len - 1;
+  var i: i32 = 0;
+  var n: i32 = cap(cfg.skip_fields, size);
+  var c: i32 = 0;
+  while (c < n && i < size) {
+    while (i < size && is_field_sep(s[at + i] as i32)) {
+      i = i + 1;
+    }
+    while (i < size && !is_field_sep(s[at + i] as i32)) {
+      i = i + 1;
+    }
+    c = c + 1;
+  }
+  return i + cap(cfg.skip_chars, size - i);
+}
+
+function to_lower(c: i32): i32 {
+  if (c >= 65 && c <= 90) {
+    return c + 32;
+  }
+  return c;
+}
+
+// gnulib's memcasecmp, over the C locale's case pairs only: a byte over
+// 0x7f folds to itself, so the two encodings of one accented letter
+// stay different.
+function eq_fold(a: string, ao: i32, b: string, bo: i32, n: i32): boolean {
+  var i: i32 = 0;
+  while (i < n) {
+    if (to_lower(a[ao + i] as i32) != to_lower(b[bo + i] as i32)) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+// The compared field of a held line, cut out once when the line is
+// held rather than at every comparison against it: the field is a
+// SUB-range of the line, so comparing it in place would copy it out
+// again for each following line (#8791).
+function key_of(line: string, field: i32, cfg: Cfg): string {
+  var n: i32 = cap(cfg.check_chars, line.len() - 1 - field);
+  return slice_unchecked(line, field, field + n).to_string();
+}
+
+// GNU's `!different()` between a line still sitting in the read buffer
+// — `a` from `at` for `len` bytes, its field `af` in — and the held
+// line's key. Both are truncated to `check_chars`, and they are equal
+// only if the truncated LENGTHS match too: `uniq -w5` finds `ab` and
+// `a` different.
+function same_key(a: string, at: i32, len: i32, af: i32, key: string, cfg: Cfg): boolean {
+  var an: i32 = cap(cfg.check_chars, len - 1 - af);
+  if (an != key.len()) {
+    return false;
+  }
+  if (cfg.ignore_case) {
+    return eq_fold(a, at + af, key, 0, an);
+  }
+  return slice_unchecked(a, at + af, at + af + an) == key;
+}
+
+// ---- input ------------------------------------------------------------------
+function read_size(): i32 {
+  return 65536;
+}
+
+// Bytes accumulated before a write(2). Larger than `gnu.block_bytes()`,
+// which is the pipe optimum a saturating producer like yes(1) wants:
+// this is a line utility whose output is smaller than its input and
+// never the thing a reader waits on, and a bigger block costs fewer
+// re-growths of the accumulator. Measured over 4M lines here: 4 KiB
+// 132 ms, 64 KiB 121, 256 KiB no better. An early-exiting consumer
+// (`uniq f | head -c 1000`) is unaffected at 1.6 ms either way.
+function write_block(): i32 {
+  return 65536;
+}
+
+// `-c` prints `%7ju `, and all three of its pieces are STATIC strings so
+// the column costs no allocation: `n.to_string()` made one per line, and
+// that was most of what `uniq -c` spent. `digit_count` sizes the pad,
+// `pad` is the pad, and `digit` is one decimal digit.
+function digit_count(n: u64): i32 {
+  var d: i32 = 1;
+  var v: u64 = n;
+  while (v >= 10 as u64) {
+    d = d + 1;
+    v = v / (10 as u64);
+  }
+  return d;
+}
+
+function pow10(e: i32): u64 {
+  var p: u64 = 1 as u64;
+  var i: i32 = 0;
+  while (i < e) {
+    p = p * (10 as u64);
+    i = i + 1;
+  }
+  return p;
+}
+
+function pad(n: i32): string {
+  if (n <= 0) {
+    return "";
+  }
+  if (n == 1) {
+    return " ";
+  }
+  if (n == 2) {
+    return "  ";
+  }
+  if (n == 3) {
+    return "   ";
+  }
+  if (n == 4) {
+    return "    ";
+  }
+  if (n == 5) {
+    return "     ";
+  }
+  return "      ";
+}
+
+function digit(d: i32): string {
+  if (d == 0) {
+    return "0";
+  }
+  if (d == 1) {
+    return "1";
+  }
+  if (d == 2) {
+    return "2";
+  }
+  if (d == 3) {
+    return "3";
+  }
+  if (d == 4) {
+    return "4";
+  }
+  if (d == 5) {
+    return "5";
+  }
+  if (d == 6) {
+    return "6";
+  }
+  if (d == 7) {
+    return "7";
+  }
+  if (d == 8) {
+    return "8";
+  }
+  return "9";
+}
+
+// ---- the line loop ----------------------------------------------------------
+//
+// One read block at a time, scanned with __memchr, with the current line
+// left as a VIEW into the block: the only copy taken is the line held
+// for comparison against the next one, which in the default mode is one
+// per group rather than one per line. A line that spans two blocks is
+// joined into `carry` and read from there instead.
+//
+// Output accumulates in a bare local appended inline, which is the one
+// shape a `string` grows in place (#8785), and each full block is handed
+// to the writer whole, so the writer never copies a buffer of its own.
+function run(r: Reader, cfg: Cfg, w: Writer, name: string): i32 {
+  var out: io_buffered.BufWriter = io_buffered.buf_writer_new(w, write_block());
+  var buf: string = "";
+  var delim: string = string_from_bytes_unchecked([cfg.term as u8]);
+  var block: i32 = write_block();
+  // The three fields the per-line path reads every time, in locals: the
+  // loop below runs once per input line and a struct field is a load.
+  var term: i32 = cfg.term;
+  var plain: boolean = cfg.plain;
+  var grouped: boolean = cfg.grouping != gm_none();
+
+  var chunk: string = "";
+  var pos: i32 = 0;
+  var eof: boolean = false;
+  var carry: string = "";
+
+  var prev: string = "";
+  // The held line's compared field, kept alongside it for every mode
+  // but the plain one, where the field IS the line.
+  var prev_key: string = "";
+  var have_prev: boolean = false;
+  var match_count: u64 = 0 as u64;
+  var first_delimiter: boolean = true;
+  var first_group_printed: boolean = false;
+
+  while (true) {
+    // ---- the next line, as (chunk, at, len) or as `carry` -------------
+    var at: i32 = 0;
+    var len: i32 = 0;
+    var spanned: boolean = false;
+    var got: boolean = false;
+    carry = "";
+    while (true) {
+      var j: i32 = __memchr(chunk, term, pos);
+      if (j >= 0) {
+        at = pos;
+        len = j + 1 - pos;
+        pos = j + 1;
+        if (spanned) {
+          carry = carry + slice_unchecked(chunk, at, at + len);
+        }
+        got = true;
+        break;
+      }
+      if (pos < chunk.len()) {
+        carry = carry + slice_unchecked(chunk, pos, chunk.len());
+        pos = chunk.len();
+        spanned = true;
+      }
+      if (eof) {
+        // gnulib's readlinebuffer_delim gives an unterminated last line
+        // its delimiter, so it can still match the line before it.
+        if (carry.len() > 0) {
+          carry = carry + delim;
+          got = true;
+        }
+        break;
+      }
+      match (r.read_chunk(read_size())) {
+        Ok(c) => {
+          if (c.len() == 0) {
+            eof = true;
+          } else {
+            chunk = c;
+            pos = 0;
+          }
+        },
+        Err(e) => {
+          // The line in hand is dropped, as GNU drops it: a read error
+          // skips the final writeline and reports.
+          out = gnu.put(out, buf);
+          gnu.die(out, "error reading " + gnu.quotea(name) + ": " + gnu.io_error_text(e), 1);
+        }
+      }
+    }
+    if (!got) {
+      break;
+    }
+    if (spanned) {
+      at = 0;
+      len = carry.len();
+    }
+
+    // ---- compare it with the line held --------------------------------
+    var field: i32 = 0;
+    if (cfg.skip_fields > 0 as u64 || cfg.skip_chars > 0 as u64) {
+      if (spanned) {
+        field = field_offset(carry, at, len, cfg);
+      } else {
+        field = field_offset(chunk, at, len, cfg);
+      }
+    }
+    var matched: boolean = false;
+    if (have_prev) {
+      if (plain) {
+        // Nothing skipped, no width, no folding: the whole line INCLUDING
+        // its delimiter is the key, since both carry the same delimiter.
+        //
+        // The length and the last content byte come first because the
+        // comparison itself COPIES the line — `slice_unchecked` has no
+        // view to hand out (#8791) — where an indexed byte does not, and
+        // sorted input differs at the end far more often than at the
+        // start: consecutive numbers in their last digit, sorted paths
+        // in their last component.
+        if (len == prev.len() && (len < 2 || last_byte(chunk, carry, spanned, at, len) == prev[len - 2] as i32)) {
+          if (spanned) {
+            matched = carry == prev;
+          } else {
+            matched = slice_unchecked(chunk, at, at + len) == prev;
+          }
+        }
+      } else if (spanned) {
+        matched = same_key(carry, at, len, field, prev_key, cfg);
+      } else {
+        matched = same_key(chunk, at, len, field, prev_key, cfg);
+      }
+    }
+
+    if (grouped) {
+      if (!have_prev || !matched) {
+        if (cfg.grouping == gm_prepend() || cfg.grouping == gm_both() || first_group_printed && (cfg.grouping == gm_append() || cfg.grouping == gm_separate())) {
+          buf = buf + delim;
+        }
+      }
+      if (spanned) {
+        buf = buf + carry;
+      } else {
+        buf = buf + slice_unchecked(chunk, at, at + len);
+      }
+      first_group_printed = true;
+    } else if (have_prev) {
+      if (matched) {
+        // The counter is uintmax_t in GNU too; a run this long is not
+        // reachable, but wrapping it would miscount rather than say so.
+        if (match_count == size_max()) {
+          if (cfg.count) {
+            out = gnu.put(out, buf);
+            gnu.die(out, "too many repeated lines", 1);
+          }
+        } else {
+          match_count = match_count + 1 as u64;
+        }
+      }
+      if (cfg.delimit != dm_none()) {
+        if (!matched) {
+          if (match_count > 0 as u64) {
+            first_delimiter = false;
+          }
+        } else if (match_count == 1 as u64) {
+          if (cfg.delimit == dm_prepend() || cfg.delimit == dm_separate() && !first_delimiter) {
+            buf = buf + delim;
+          }
+        }
+      }
+      if (matched && !cfg.later_repeated) {
+        // The group carries on: the line held stays the FIRST of it, and
+        // nothing is copied.
+        if (buf.len() >= block) {
+          out = gnu.put(out, buf);
+          buf = "";
+        }
+        continue;
+      }
+      if (show(cfg, matched, match_count)) {
+        if (cfg.count) {
+          var v: u64 = match_count + 1 as u64;
+          var nd: i32 = digit_count(v);
+          buf = buf + pad(7 - nd);
+          var p: u64 = pow10(nd - 1);
+          while (p > 0 as u64) {
+            buf = buf + digit((v / p % (10 as u64)) as i32);
+            p = p / (10 as u64);
+          }
+          buf = buf + " ";
+        }
+        buf = buf + prev;
+      }
+      if (!matched) {
+        match_count = 0 as u64;
+      }
+    }
+
+    // ---- hold this line -----------------------------------------------
+    if (spanned) {
+      prev = carry;
+    } else {
+      prev = slice_unchecked(chunk, at, at + len).to_string();
+    }
+    if (!plain) {
+      prev_key = key_of(prev, field, cfg);
+    }
+    have_prev = true;
+    if (buf.len() >= block) {
+      out = gnu.put(out, buf);
+      buf = "";
+    }
+  }
+
+  if (cfg.grouping != gm_none()) {
+    if (first_group_printed && (cfg.grouping == gm_append() || cfg.grouping == gm_both())) {
+      buf = buf + delim;
+    }
+  } else if (have_prev) {
+    if (show(cfg, false, match_count)) {
+      if (cfg.count) {
+        var v: u64 = match_count + 1 as u64;
+        var nd: i32 = digit_count(v);
+        buf = buf + pad(7 - nd);
+        var p: u64 = pow10(nd - 1);
+        while (p > 0 as u64) {
+          buf = buf + digit((v / p % (10 as u64)) as i32);
+          p = p / (10 as u64);
+        }
+        buf = buf + " ";
+      }
+      buf = buf + prev;
+    }
+  }
+  out = gnu.put(out, buf);
+  match (r.close()) {
+    Some(e) => {
+      gnu.die(out, "error reading " + gnu.quotea(name) + ": " + gnu.io_error_text(e), 1);
+    },
+    None => {}
+  }
+  gnu.close_stdout(out, false);
+  return 0;
+}
+
+// The line's last byte before its delimiter, from whichever of the two
+// buffers holds it.
+function last_byte(chunk: string, carry: string, spanned: boolean, at: i32, len: i32): i32 {
+  if (spanned) {
+    return carry[len - 2] as i32;
+  }
+  return chunk[at + len - 2] as i32;
+}
+
+// GNU's writeline test: the first line of a group is printed when it is
+// unique or when the first of a repeated group is wanted, and the rest
+// of a group only under `-D`.
+function show(cfg: Cfg, matched: boolean, linecount: u64): boolean {
+  if (linecount == 0 as u64) {
+    return cfg.unique;
+  }
+  if (!matched) {
+    return cfg.first_repeated;
+  }
+  return cfg.later_repeated;
+}
+
+// ---- operands ---------------------------------------------------------------
+// `Files` — the input and output operands, and how many have been
+// taken: uniq accepts two, and a third is `extra operand`.
+struct Files { n: i32, in_name: string, out_name: string }
+
+function take_file(f: Files, tok: string): Files {
+  if (f.n == 2) {
+    gnu.error("extra operand " + gnu.quote(tok));
+    gnu.try_help(1);
+  }
+  if (f.n == 0) {
+    return Files { n: 1, in_name: tok, out_name: f.out_name };
+  }
+  return Files { n: 2, in_name: f.in_name, out_name: tok };
+}
+
+function main(): i32 {
+  var argv: string[] = args();
+  var opts: gnu.Opt[] = [];
+  opts = opts.append(gnu.flag("c", "count", opt_count()));
+  opts = opts.append(gnu.flag("d", "repeated", opt_repeated()));
+  // `-D` and `--all-repeated` are one option to GNU, and the two
+  // spellings take different arguments: the short one none, the long
+  // one an optional METHOD. They are two declarations here and one
+  // behaviour below.
+  opts = opts.append(gnu.flag("D", "", opt_all_short()));
+  opts = opts.append(gnu.optional("", "all-repeated", opt_all_long()));
+  opts = opts.append(gnu.optional("", "group", opt_group()));
+  opts = opts.append(gnu.flag("i", "ignore-case", opt_ignore_case()));
+  opts = opts.append(gnu.flag("u", "unique", opt_unique()));
+  opts = opts.append(gnu.valued("f", "skip-fields", opt_skip_fields()));
+  opts = opts.append(gnu.valued("s", "skip-chars", opt_skip_chars()));
+  opts = opts.append(gnu.valued("w", "check-chars", opt_check_chars()));
+  opts = opts.append(gnu.flag("z", "zero-terminated", opt_zero()));
+  var d: i32 = 0;
+  while (d < 10) {
+    opts = opts.append(gnu.flag(slice_unchecked("0123456789", d, d + 1) + "", "", opt_digit(d)));
+    d = d + 1;
+  }
+
+  var cfg: Cfg = Cfg { count: false, unique: true, first_repeated: true, later_repeated: false, delimit: dm_none(), grouping: gm_none(), skip_fields: 0 as u64, skip_chars: 0 as u64, check_chars: size_max(), ignore_case: false, term: 10, plain: true };
+  // gnulib tracks where the last skip-fields count came from, because a
+  // digit after `-f` starts a new number and a digit after a digit
+  // continues one: 0 nothing yet, 1 `-f`, 2 the obsolete digits.
+  var sfo: i32 = 0;
+
+  var files: Files = Files { n: 0, in_name: "-", out_name: "-" };
+  var posixly: boolean = false;
+  match (env("POSIXLY_CORRECT")) {
+    Some(_) => {
+      posixly = true;
+    },
+    None => {}
+  }
+  var obsolete_plus: boolean = obsolete_plus_allowed();
+
+  var g: gnu.Getopt = gnu.getopt_new(argv, opts, "uniq", help_text(), 1).return_in_order();
+  while (true) {
+    // POSIXLY_CORRECT ends the option scan at the first FILE operand,
+    // which is not the same as the first operand: `+2` before one is
+    // still the obsolete count.
+    if (posixly && files.n > 0) {
+      g = g.stop();
+      break;
+    }
+    var r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    g = r.1;
+    var done: boolean = false;
+    match (r.0) {
+      Some(m) => {
+        if (m.id == gnu.operand_id()) {
+          var used: boolean = false;
+          if (obsolete_plus && m.value.len() > 0 && m.value[0] as i32 == 43) {
+            var p: (u64, i32) = parse_size(m.value);
+            if (p.1 == 0) {
+              cfg = Cfg { ...cfg, skip_chars: p.0 };
+              used = true;
+            }
+          }
+          if (!used) {
+            files = take_file(files, m.value);
+          }
+        } else if (m.id == opt_count()) {
+          cfg = Cfg { ...cfg, count: true };
+        } else if (m.id == opt_repeated()) {
+          cfg = Cfg { ...cfg, unique: false };
+        } else if (m.id == opt_all_short()) {
+          cfg = Cfg { ...cfg, unique: false, later_repeated: true, delimit: dm_none() };
+        } else if (m.id == opt_all_long()) {
+          var dm: i32 = dm_none();
+          if (m.has_value) {
+            var names: string[] = ["none", "prepend", "separate"];
+            dm = argmatch(m.value, names, "--all-repeated");
+          }
+          cfg = Cfg { ...cfg, unique: false, later_repeated: true, delimit: dm };
+        } else if (m.id == opt_group()) {
+          var gm: i32 = gm_separate();
+          if (m.has_value) {
+            var gnames: string[] = ["prepend", "append", "separate", "both"];
+            var k: i32 = argmatch(m.value, gnames, "--group");
+            if (k == 0) {
+              gm = gm_prepend();
+            } else if (k == 1) {
+              gm = gm_append();
+            } else if (k == 3) {
+              gm = gm_both();
+            }
+          }
+          cfg = Cfg { ...cfg, grouping: gm };
+        } else if (m.id == opt_ignore_case()) {
+          cfg = Cfg { ...cfg, ignore_case: true };
+        } else if (m.id == opt_unique()) {
+          cfg = Cfg { ...cfg, first_repeated: false };
+        } else if (m.id == opt_skip_fields()) {
+          sfo = 1;
+          cfg = Cfg { ...cfg, skip_fields: size_opt(m.value, "invalid number of fields to skip") };
+        } else if (m.id == opt_skip_chars()) {
+          cfg = Cfg { ...cfg, skip_chars: size_opt(m.value, "invalid number of bytes to skip") };
+        } else if (m.id == opt_check_chars()) {
+          cfg = Cfg { ...cfg, check_chars: size_opt(m.value, "invalid number of bytes to compare") };
+        } else if (m.id == opt_zero()) {
+          cfg = Cfg { ...cfg, term: 0 };
+        } else {
+          var digit: u64 = (m.id - opt_digit(0)) as u64;
+          var acc: u64 = cfg.skip_fields;
+          if (sfo == 1) {
+            acc = 0 as u64;
+          }
+          cfg = Cfg { ...cfg, skip_fields: accumulate(acc, digit) };
+          sfo = 2;
+        }
+      },
+      None => {
+        done = true;
+      }
+    }
+    if (done) {
+      break;
+    }
+  }
+  // Whatever the scan stopped short of — the tail after `--`, or after
+  // POSIXLY_CORRECT ended it — is a plain file operand: the `+N` rule
+  // only ever applied to a token getopt itself handed back.
+  var rest: string[] = g.operands();
+  var i: i32 = 0;
+  while (i < rest.len()) {
+    files = take_file(files, rest[i]);
+    i = i + 1;
+  }
+
+  if (cfg.grouping != gm_none() && (cfg.count || cfg.later_repeated || !cfg.unique || !cfg.first_repeated)) {
+    gnu.error("--group is mutually exclusive with -c/-d/-D/-u");
+    gnu.try_help(1);
+  }
+  if (cfg.count && cfg.later_repeated) {
+    gnu.error("printing all duplicated lines and repeat counts is meaningless");
+    gnu.try_help(1);
+  }
+
+  cfg = Cfg { ...cfg, plain: cfg.skip_fields == 0 as u64 && cfg.skip_chars == 0 as u64 && cfg.check_chars == size_max() && !cfg.ignore_case };
+
+  var r: Reader = stdin();
+  if (files.in_name != "-") {
+    match (open_reader(files.in_name)) {
+      Ok(f) => {
+        r = f;
+      },
+      Err(e) => {
+        gnu.error(gnu.quotef(files.in_name) + ": " + gnu.io_error_text(e));
+        exit(1);
+      }
+    }
+  }
+  var w: Writer = stdout();
+  if (files.out_name != "-") {
+    match (open_writer(files.out_name)) {
+      Ok(f) => {
+        w = f;
+      },
+      Err(e) => {
+        gnu.error(gnu.quotef(files.out_name) + ": " + gnu.io_error_text(e));
+        exit(1);
+      }
+    }
+  }
+  return run(r, cfg, w, files.in_name);
+}
+
+// One more decimal digit onto the obsolete skip-fields count,
+// saturating: gnulib's DECIMAL_DIGIT_ACCUMULATE pins an overflowing
+// count at SIZE_MAX rather than refusing it.
+function accumulate(acc: u64, digit: u64): u64 {
+  match (acc.checked_mul(10 as u64)) {
+    Some(m) => {
+      match (m.checked_add(digit)) {
+        Some(a) => {
+          return a;
+        },
+        None => {}
+      }
+    },
+    None => {}
+  }
+  return size_max();
+}

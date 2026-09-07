@@ -69,7 +69,7 @@ func TestEmitArithmeticChain(t *testing.T) {
 	for _, k := range []ssa.OpKind{
 		ssa.OpAdd, ssa.OpSub, ssa.OpMul, ssa.OpDiv, ssa.OpDivU,
 		ssa.OpRem, ssa.OpRemU, ssa.OpAnd, ssa.OpOr, ssa.OpXor,
-		ssa.OpShl, ssa.OpShr, ssa.OpShrU,
+		ssa.OpShl, ssa.OpShr, ssa.OpShrU, ssa.OpRotr,
 		ssa.OpEq, ssa.OpNe,
 		ssa.OpLt, ssa.OpLtU, ssa.OpLe, ssa.OpLeU,
 		ssa.OpGt, ssa.OpGtU, ssa.OpGe, ssa.OpGeU,

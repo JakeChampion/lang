@@ -1,6 +1,9 @@
 package ssa
 
-import "math"
+import (
+	"math"
+	"math/bits"
+)
 
 // Width-aware constant folding for integer ops.
 //
@@ -80,6 +83,8 @@ func foldIntBinary32(k OpKind, lhs, rhs int64) (int64, bool, bool, bool) {
 		return int64(a >> (uint32(b) & 31)), false, false, true
 	case OpShrU:
 		return int64(int32(uint32(a) >> (uint32(b) & 31))), false, false, true
+	case OpRotr:
+		return int64(int32(bits.RotateLeft32(uint32(a), -int(uint32(b)&31)))), false, false, true
 	case OpEq:
 		return 0, true, a == b, true
 	case OpNe:
@@ -147,6 +152,8 @@ func foldIntBinary64(k OpKind, a, b int64) (int64, bool, bool, bool) {
 		return a >> (uint64(b) & 63), false, false, true
 	case OpShrU:
 		return int64(uint64(a) >> (uint64(b) & 63)), false, false, true
+	case OpRotr:
+		return int64(bits.RotateLeft64(uint64(a), -int(uint64(b)&63))), false, false, true
 	case OpEq:
 		return 0, true, a == b, true
 	case OpNe:

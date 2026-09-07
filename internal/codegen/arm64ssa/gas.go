@@ -1222,6 +1222,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__alloc_reuse":             emitAllocReuseHelper,
 	"__str_idx":                 emitStrIdxHelper,
 	"__fern_memchr":             emitMemchrHelper,
+	"__fern_mismatch":           emitMismatchHelper,
 	"__fern_rmemchr":            emitRmemchrHelper,
 	"__fern_count_byte":         emitCountByteHelper,
 	"__fern_ascii_run":          emitAsciiRunHelper,
@@ -3737,6 +3738,148 @@ func emitStrIdxHelper(w func(string, ...any)) {
 	w("\tsvc #0")
 	w(".Lssa_stridx_ok:")
 	w("\tadd x0, x0, x1") // base + idx (byte stride)
+	w("\tret")
+}
+
+// emitMismatchHelper writes __fern_mismatch(a, ao, b, bo, n) -> the offset of
+// the first byte where a[ao..ao+n) and b[bo..bo+n) differ, or n when they are
+// equal (#8791).
+//
+// emitMemchrHelper's NEON kernel with the broadcast needle replaced by a second
+// operand stream: `eor` zeroes the lanes that match and `cmtst` turns the
+// survivors into all-ones, so the shrn/fmov/rbit/clz gather that finds
+// __memchr's first hit finds the first DIFFERENCE here unchanged.
+//
+// Sub-16 lengths take memcmp's overlapping windows rather than the scalar
+// remainder — the leading and trailing 8 (or 4) bytes, which overlap, so two
+// loads per operand cover the whole band. A line-oriented utility compares
+// SHORT ranges, and walking those a byte at a time is the cost this kernel
+// exists to remove.
+//
+// Strings here are ONE word (the data pointer) with the length at [ptr-4], as
+// in emitMemchrHelper, so the five arguments land in x0..x4 with no slot
+// arithmetic and there is no inline form to spill. Leaf: no frame, and every
+// register it touches is caller-saved.
+func emitMismatchHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__fern_mismatch"))
+	w("\tldur w5, [x0, #-4]") // len(a)
+	w("\tldur w6, [x2, #-4]") // len(b)
+	// Clamp each offset into [0, len].
+	w("\tcmp w1, #0")
+	w("\tb.ge .Lssa_mm_ao_pos")
+	w("\tmov w1, #0")
+	w(".Lssa_mm_ao_pos:")
+	w("\tcmp w1, w5")
+	w("\tcsel w1, w5, w1, gt")
+	w("\tcmp w3, #0")
+	w("\tb.ge .Lssa_mm_bo_pos")
+	w("\tmov w3, #0")
+	w(".Lssa_mm_bo_pos:")
+	w("\tcmp w3, w6")
+	w("\tcsel w3, w6, w3, gt")
+	// n = min(n, len(a) - ao, len(b) - bo), floored at 0.
+	w("\tsub w5, w5, w1")
+	w("\tsub w6, w6, w3")
+	w("\tcmp w4, w5")
+	w("\tcsel w4, w5, w4, gt")
+	w("\tcmp w4, w6")
+	w("\tcsel w4, w6, w4, gt")
+	w("\tcmp w4, #0")
+	w("\tb.ge .Lssa_mm_n_ok")
+	w("\tmov w4, #0")
+	w(".Lssa_mm_n_ok:")
+	// x8 / x9 are the cursors, x12 remembers a's range start so the answer is
+	// one subtraction, x13 its end.
+	w("\tadd x8, x0, w1, uxtw")
+	w("\tadd x9, x2, w3, uxtw")
+	w("\tmov x12, x8")
+	w("\tadd x13, x8, w4, uxtw")
+	w(".Lssa_mm_vec:")
+	w("\tsub x10, x13, x8")
+	w("\tcmp x10, #16")
+	w("\tb.lt .Lssa_mm_short")
+	// Unaligned loads, and never a byte past either string: the branch above
+	// entered this only with a full block left in both.
+	w("\tld1 {v0.16b}, [x8]")
+	w("\tld1 {v1.16b}, [x9]")
+	w("\teor v0.16b, v0.16b, v1.16b")
+	w("\tcmtst v0.16b, v0.16b, v0.16b")
+	w("\tshrn v0.8b, v0.8h, #4")
+	w("\tfmov x11, d0")
+	w("\tcbz x11, .Lssa_mm_next")
+	// Lowest set bit -> lane. Four mask bits per input byte, hence the >>2.
+	w("\trbit x11, x11")
+	w("\tclz x11, x11")
+	w("\tlsr x11, x11, #2")
+	w("\tadd x8, x8, x11")
+	w("\tsub x0, x8, x12")
+	w("\tret")
+	w(".Lssa_mm_next:")
+	w("\tadd x8, x8, #16")
+	w("\tadd x9, x9, #16")
+	w("\tb .Lssa_mm_vec")
+	// 8..15 bytes: the leading 8 and the trailing 8, which overlap.
+	w(".Lssa_mm_short:")
+	w("\tcmp x10, #8")
+	w("\tb.lt .Lssa_mm_w4")
+	w("\tldr x11, [x8]")
+	w("\tldr x14, [x9]")
+	w("\teor x11, x11, x14")
+	w("\tcbnz x11, .Lssa_mm_w8_lead")
+	w("\tsub x14, x10, #8")
+	w("\tldr x11, [x8, x14]")
+	w("\tldr x15, [x9, x14]")
+	w("\teor x11, x11, x15")
+	w("\tcbz x11, .Lssa_mm_eq")
+	// The leading window proved [0, 8) equal, so a difference the trailing
+	// window reports cannot land below 8 — its offset is the first one.
+	w("\tadd x8, x8, x14")
+	w(".Lssa_mm_w8_lead:")
+	// Lowest set bit of the xor >> 3 is the byte, little-endian.
+	w("\trbit x11, x11")
+	w("\tclz x11, x11")
+	w("\tlsr x11, x11, #3")
+	w("\tadd x8, x8, x11")
+	w("\tsub x0, x8, x12")
+	w("\tret")
+	// 4..7 bytes: the same pair of windows, four bytes wide.
+	w(".Lssa_mm_w4:")
+	w("\tcmp x10, #4")
+	w("\tb.lt .Lssa_mm_tail")
+	w("\tldr w11, [x8]")
+	w("\tldr w14, [x9]")
+	w("\teor w11, w11, w14")
+	w("\tcbnz w11, .Lssa_mm_w4_lead")
+	w("\tsub x14, x10, #4")
+	w("\tldr w11, [x8, x14]")
+	w("\tldr w15, [x9, x14]")
+	w("\teor w11, w11, w15")
+	w("\tcbz w11, .Lssa_mm_eq")
+	w("\tadd x8, x8, x14")
+	w(".Lssa_mm_w4_lead:")
+	w("\trbit w11, w11")
+	w("\tclz w11, w11")
+	w("\tlsr w11, w11, #3")
+	w("\tadd x8, x8, w11, uxtw")
+	w("\tsub x0, x8, x12")
+	w("\tret")
+	// Scalar remainder: fewer than 4 bytes left.
+	w(".Lssa_mm_tail:")
+	w("\tcmp x8, x13")
+	w("\tb.ge .Lssa_mm_eq")
+	w("\tldrb w11, [x8]")
+	w("\tldrb w14, [x9]")
+	w("\tcmp w11, w14")
+	w("\tb.ne .Lssa_mm_tail_hit")
+	w("\tadd x8, x8, #1")
+	w("\tadd x9, x9, #1")
+	w("\tb .Lssa_mm_tail")
+	w(".Lssa_mm_tail_hit:")
+	w("\tsub x0, x8, x12")
+	w("\tret")
+	w(".Lssa_mm_eq:")
+	w("\tmov w0, w4")
 	w("\tret")
 }
 
@@ -8194,7 +8337,7 @@ func asmInst(in x86.Inst, left, scratch int, fr frameLayout) ([]string, error) {
 		return []string{fmt.Sprintf("str %s, [sp, #%d]", xreg(in.Src), fr.slot(int(in.Imm)))}, nil
 	case x86.BinOp:
 		switch in.K {
-		case ssa.OpShl, ssa.OpShr, ssa.OpShrU, ssa.OpDiv, ssa.OpDivU, ssa.OpRem, ssa.OpRemU:
+		case ssa.OpShl, ssa.OpShr, ssa.OpShrU, ssa.OpRotr, ssa.OpDiv, ssa.OpDivU, ssa.OpRem, ssa.OpRemU:
 			return divShiftSeq(in, left, scratch), nil
 		}
 		mnem, ok := binMnemonic(in.K)
@@ -8283,6 +8426,12 @@ func divShiftSeq(in x86.Inst, left, scratch int) []string {
 			out = []string{fmt.Sprintf("lsr %s, %s, %s", dw, aw, sw)} // logical, 32-bit
 		} else {
 			out = []string{fmt.Sprintf("lsr %s, %s, %s", d, a, s)} // logical, 64-bit
+		}
+	case ssa.OpRotr:
+		if width32 {
+			out = []string{fmt.Sprintf("ror %s, %s, %s", dw, aw, sw)} // RORV, 32-bit
+		} else {
+			out = []string{fmt.Sprintf("ror %s, %s, %s", d, a, s)} // RORV, 64-bit
 		}
 	case ssa.OpDiv:
 		out = []string{fmt.Sprintf("sdiv %s, %s, %s", d, a, s)}

@@ -154,6 +154,26 @@ func TestX86_64StrSelfAppendCorrect(t *testing.T) {
 	}
 }
 
+// TestArm64StrSelfAppendCorrect is the two-word NATIVE sibling: the pair is
+// carried in registers, the in-place path returns (a_data, la+lb), and
+// [data-4] — the payload size __fern_str_dec frees at — is left alone.
+func TestArm64StrSelfAppendCorrect(t *testing.T) {
+	prev := ast.RcFreeEnabled
+	ast.RcFreeEnabled = true
+	defer func() { ast.RcFreeEnabled = prev }()
+
+	stdout, stderr, code := runLeakCheckArm64(t, strSelfAppendCorrectnessSrc)
+	if code != 0 {
+		t.Fatalf("exited %d, want 0; stderr=%q", code, stderr)
+	}
+	if stdout != strSelfAppendWant+"\n" {
+		t.Errorf("arm64 string self-append output =\n%q\nwant\n%q", stdout, strSelfAppendWant+"\n")
+	}
+	if allocs, frees, _ := parseLeakCheckLine(t, stderr); frees > allocs {
+		t.Errorf("frees=%d > allocs=%d — the append over-released a buffer", frees, allocs)
+	}
+}
+
 // strConcatChainSrc builds a string through a CHAIN of joins per iteration —
 // `hdr_block = hdr_block + name + ": " + value + "\r\n"` is the shape, straight
 // from std/http's response assembly. Only the leftmost join has a borrowed left
@@ -320,6 +340,28 @@ func TestX86_64StrAppendClassBoundary(t *testing.T) {
 	allocs, frees, live := parseLeakCheckLine(t, stderr)
 	if allocs != 132 {
 		t.Errorf("allocs = %d for 2100 appends across the 2048 tier change, want 132 — the in-place guard fires at different lengths than the size classes fall on", allocs)
+	}
+	if allocs != frees || live != 0 {
+		t.Errorf("heap unbalanced: allocs=%d frees=%d live_bytes=%d", allocs, frees, live)
+	}
+}
+
+// TestArm64StrAppendClassBoundary is the two-word NATIVE sibling. Two more
+// allocations than x86-64: a two-word string is __fern_alloc_rc1(len) where
+// the single-word one asks for len+1 (its trailing NUL), so the 16-byte class
+// steps fall two lengths apart across the same 0..4200 span.
+func TestArm64StrAppendClassBoundary(t *testing.T) {
+	prev := ast.RcFreeEnabled
+	ast.RcFreeEnabled = true
+	defer func() { ast.RcFreeEnabled = prev }()
+
+	stdout, stderr, code := runLeakCheckArm64(t, strAppendClassBoundarySrc)
+	if code != 0 {
+		t.Fatalf("exited %d, want 0 (1 = wrong length, 2 = a byte at the wrong position, 3/4 = a boundary slice); stdout=%q stderr=%q", code, stdout, stderr)
+	}
+	allocs, frees, live := parseLeakCheckLine(t, stderr)
+	if allocs != 134 {
+		t.Errorf("allocs = %d for 2100 appends across the 2048 tier change, want 134 — the in-place guard fires at different lengths than the size classes fall on", allocs)
 	}
 	if allocs != frees || live != 0 {
 		t.Errorf("heap unbalanced: allocs=%d frees=%d live_bytes=%d", allocs, frees, live)

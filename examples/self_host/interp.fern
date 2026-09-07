@@ -275,6 +275,22 @@ function split_binding_names(csv: string): string[] {
 function is_i32_arg(v: Value): boolean {
     match (v) { VInt(_) => { return true; }, VUint(_) => { return true; }, _ => { return false; } }
 }
+// is_string_arg / vstr_of are the string-side pair of is_i32_arg / vint_bits:
+// guard, then read, so a builtin taking more than one string does not pay a
+// nested destructure per operand. vstr_of answers "" for every other carrier.
+function is_string_arg(v: Value): boolean {
+    match (v) { VString(_) => { return true; }, _ => { return false; } }
+}
+function vstr_of(v: Value): string {
+    match (v) { VString(s) => { return s.v; }, _ => { return ""; } }
+}
+// clamp_offset brings a caller's byte offset into [0, n], which is what every
+// range-taking kernel does with one rather than trapping.
+function clamp_offset(off: i32, n: i32): i32 {
+    if (off < 0) { return 0; }
+    if (off > n) { return n; }
+    return off;
+}
 // is_float_like / is_vfloat32 / vfloat_as_f64 are the float-side bridges:
 // a VFloat32's payload is already rounded, so reading it as f64 is exact.
 function is_float_like(v: Value): boolean {
@@ -2647,6 +2663,35 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
             },
             _ => { return v_err("__rmemchr: first arg must be a string"); }
         }
+    }
+    // `__mismatch(a, ao, b, bo, n)` — the offset of the first byte where
+    // a[ao..ao+n) and b[bo..bo+n) differ, or n when the two ranges are equal
+    // (#8791). The reference meaning for the kernel the compiled backends
+    // vectorise, and deliberately the dumbest correct implementation for the
+    // same reason __memchr's is.
+    //
+    // The clamps ARE the contract: `ao` and `bo` come into [0, len] and `n`
+    // down to what both ranges actually hold, so the value returned on
+    // equality is the CLAMPED n and a caller's `== n` test correctly fails
+    // when it asked to compare more than was there.
+    if (name == "__mismatch") {
+        if (args.len() != 5) { return v_err("__mismatch: expected 5 args (a, ao, b, bo, n)"); }
+        if (!is_string_arg(args[0]) || !is_string_arg(args[2])) { return v_err("__mismatch: first and third args must be strings"); }
+        if (!is_i32_arg(args[1]) || !is_i32_arg(args[3]) || !is_i32_arg(args[4])) { return v_err("__mismatch: offsets and length must be integers"); }
+        var ma: string = vstr_of(args[0]);
+        var mb: string = vstr_of(args[2]);
+        var mao: i32 = clamp_offset(vint_bits(args[1]), ma.len());
+        var mbo: i32 = clamp_offset(vint_bits(args[3]), mb.len());
+        var mn: i32 = vint_bits(args[4]);
+        if (mn > ma.len() - mao) { mn = ma.len() - mao; }
+        if (mn > mb.len() - mbo) { mn = mb.len() - mbo; }
+        if (mn < 0) { mn = 0; }
+        var mk: i32 = 0;
+        while (mk < mn) {
+            if (ma[mao + mk] != mb[mbo + mk]) { return v_int(mk); }
+            mk = mk + 1;
+        }
+        return v_int(mn);
     }
     if (name == "__ascii_run") {
         if (args.len() != 2) { return v_err("__ascii_run: expected 2 args (s, from)"); }
