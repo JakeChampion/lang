@@ -74,17 +74,7 @@ function opt_operating_system(): i32 {
 // `Selection` — which elements to print. `all` is `-a`, which selects
 // everything AND enables the omission rule below; the eight booleans are
 // the individually named options.
-struct Selection {
-  all: boolean,
-  kernel_name: boolean,
-  nodename: boolean,
-  kernel_release: boolean,
-  kernel_version: boolean,
-  machine: boolean,
-  processor: boolean,
-  hardware_platform: boolean,
-  operating_system: boolean
-}
+struct Selection { all: boolean, kernel_name: boolean, nodename: boolean, kernel_release: boolean, kernel_version: boolean, machine: boolean, processor: boolean, hardware_platform: boolean, operating_system: boolean }
 
 function empty_selection(): Selection {
   return Selection { all: false, kernel_name: false, nodename: false, kernel_release: false, kernel_version: false, machine: false, processor: false, hardware_platform: false, operating_system: false };

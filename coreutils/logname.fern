@@ -51,7 +51,7 @@ function login_uid(): Option[i64] {
     Ok(text) => {
       match (pwdb.parse_id(text.trim() + "")) {
         Some(uid) => {
-          if (uid == (4294967295 as i64)) {
+          if (uid == 4294967295 as i64) {
             return None;
           }
           return Some(uid);
@@ -90,7 +90,7 @@ function terminal_line(): Option[string] {
       return None;
     }
   }
-  if (want == (0 as i64)) {
+  if (want == 0 as i64) {
     return None;
   }
   var dirs: string[] = tty_dirs();
@@ -105,7 +105,7 @@ function terminal_line(): Option[string] {
             Ok(st) => {
               // S_IFCHR is 0o020000; a terminal is a character device
               // and nothing else can share its rdev.
-              if ((st.mode & (61440 as u32)) == (8192 as u32) && st.rdev == want) {
+              if ((st.mode & 61440 as u32) == 8192 as u32 && st.rdev == want) {
                 return Some(slice_unchecked(path, 5, path.len()) + "");
               }
             },
