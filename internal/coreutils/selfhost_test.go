@@ -51,6 +51,7 @@ func corpusByUtil() map[string]func(*testing.T) []invocation {
 		"head":      headCases,
 		"hostid":    hostidCases,
 		"join":      joinCases,
+		"link":      linkCases,
 		"md5sum":    md5sumCases,
 		"nl":        nlCases,
 		"numfmt":    numfmtCases,
@@ -68,6 +69,7 @@ func corpusByUtil() map[string]func(*testing.T) []invocation {
 		"tr":        trCases,
 		"true":      trueFalseCases,
 		"tsort":     tsortCases,
+		"unlink":    unlinkCases,
 		"uniq":      uniqCases,
 		"wc":        wcCases,
 		"yes":       yesCases,
@@ -217,6 +219,7 @@ func TestSelfHostCoreutilsParity(t *testing.T) {
 					if want.how() != got.how() {
 						t.Errorf("status differs for %s %s: native %s, selfhost %s", util, quoteArgs(inv.args), want.how(), got.how())
 					}
+					diffTrees(t, util, inv, want, got, "native", "selfhost")
 				})
 			}
 		})

@@ -121,6 +121,21 @@ the system has). Both sides see the same tree, so the answer on a machine
 where the suite runs as root (`-r` on a mode-0 file is true there) is still
 the same answer on both.
 
+A utility that MUTATES the filesystem needs the other shape, and a case gets it
+by naming a `tree` builder: a fresh empty directory PER SIDE, populated by that
+function, with the child's cwd set to it and its operands written relative to
+it. After both runs the two directories are compared entry for entry — kind,
+the twelve-bit mode, a symlink's target, a file's size and contents, and which
+names share an inode, rendered as link-group numbers so the equivalence is
+compared and the inodes themselves are not. That last field is what separates
+`ln a b` from `cp a b`, and it is the only thing `link`'s corpus has to compare
+at all: the utility writes nothing on stdout.
+
+Two directories rather than one is the point. The older `dir` / `prepare` /
+`artifacts` trio hands both sides one shared directory and compares named
+files' bytes, which is right for a utility whose output is a file it was told
+to write (`uniq f out`) and wrong for one whose answer is which entries exist.
+
 The reference is whatever GNU coreutils the harness finds:
 `$FERN_GNU_COREUTILS`, then the `yes` on PATH if its `--version` says GNU,
 then the fixed system paths, then a nix store glob. **Not finding one is a
@@ -190,7 +205,9 @@ coreutils/
                     and who reach for the same pieces)
   <util>.fern       one program per utility
 internal/coreutils/
-  harness_test.go   the oracle harness (this file's "How parity is enforced")
+  harness_test.go   the oracle harness (this file's "How parity is enforced"),
+                    including the per-case working directory and resulting-tree
+                    comparison a filesystem-MUTATING utility needs
   longdouble_test.go
                     the long double each target gets, which the
                     host-oracle corpus cannot see (#8513)
@@ -549,6 +566,53 @@ The startup rows are the same static-binary margin `true` and `echo` measure,
 widened: GNU pays the dynamic loader AND `dlopen`s libcrypto before it hashes
 a hundred bytes.
 
+Group C's first pair, 2026-09-07, Linux x86-64 (GNU coreutils 9.4; uutils
+0.0.24 as the Debian multi-call binary). Both are one syscall, so the whole
+number is process startup — which is why the 200-operand rows, where that cost
+is paid 200 times, separate the three implementations so much further than the
+one-operand rows do:
+
+| utility | workload | fern (ms) | gnu (ms) | uutils (ms) | gnu / fern | uutils / fern |
+|---|---|---|---|---|---|---|
+| `link` | link one hard link | 1.49 ± 0.29 | 2.28 ± 0.56 | 3.28 ± 0.68 | 1.53× | 2.19× |
+| `link` | link 200 hard links | 34.34 ± 2.51 | 210.93 ± 8.47 | 386.25 ± 11.11 | 6.14× | 11.25× |
+| `unlink` | unlink one file | 0.32 ± 0.23 | 1.33 ± 0.63 | 2.17 ± 0.30 | 4.12× | 6.73× |
+| `unlink` | unlink 200 files | 37.05 ± 4.66 | 214.35 ± 8.40 | 416.24 ± 11.96 | 5.79× | 11.23× |
+
+The one-operand rows carry a constant the others do not: the run has to undo
+what the previous one did, so the `rm` that clears the link (and the shell
+redirection that recreates the file) is inside the timed command. It comes from
+the GNU directory for all three implementations, exactly as `yes`'s `head`
+does, so it compresses every ratio equally rather than biasing one.
+
+## The primitives group C is built on
+
+A utility here is blocked on a builtin far more often than on anything about
+itself, and a builtin is four classifications plus a self-host mirror
+(`docs/FREESTANDING-CORE.md`, `docs/PACKAGE-CAPABILITIES-BRIEF.md`). The
+directory and link family landed as one set (#8883), because they share an
+emitter shape on every backend and splitting them would have paid the
+registry cost five times:
+
+    create_dir(path, mode)        mkdirat, with EEXIST reaching the caller
+    remove_dir(path)              unlinkat + AT_REMOVEDIR, i.e. rmdir(2)
+    create_link(target, path)     linkat, no AT_SYMLINK_FOLLOW
+    create_symlink(target, path)  symlinkat; the target is stored verbatim
+    read_link(path)               readlinkat into a PATH_MAX buffer
+    umask(mask)                   umask(2), which sets and reads in one step
+
+The five filesystem ones take `fs` and WASI implements every one of them, so
+they are provided on wasm rather than classified out. `umask` takes `fsmode`
+beside `access` and `write_file_exec` and is refused there — WASI has no
+file-mode creation mask, and `path_create_directory` has no mode either, which
+is the same fact twice. `docs/FREESTANDING-CORE.md` carries both.
+
+What is deliberately NOT here: `create_dir_all` and `remove_dir_all`, which
+already existed. Neither is the primitive `mkdir(1)` or `rmdir(1)` needs —
+the first folds every EEXIST into `Ok(())` and cannot say whether it created
+anything, the second drains a tree and ignores a missing target — and the
+errno they discard is the whole of what those two utilities report.
+
 ## Known divergences
 
 **`tac` holds a non-seekable input in memory.** tac reads its input
@@ -733,10 +797,12 @@ groups are the order of work. Each sub-issue names its group.
   or the filesystem beyond `read_file` / `stat` / `read_dir`: `pwd`
   (getcwd), `tty` (ttyname), `nproc` (affinity), `uname` `arch` (uname),
   `whoami` `id` `groups` `logname` `users` `who` `pinky` (uid, passwd,
-  utmp), `printenv` `env` (the whole environ, exec), `link` `ln` `readlink`
-  `realpath` (link, symlink, readlink), `mkdir` `rmdir` `rm` `mv` `cp`
-  `install` `touch` `truncate` `mkfifo` `mknod` `mktemp` `sync` (mkdir with
-  mode, rmdir, rename, utimensat, ftruncate, mknod, fsync), `chmod` `chown`
+  utmp), `printenv` `env` (the whole environ, exec), `ln` `readlink`
+  `realpath` (link, symlink, readlink; `link` and `unlink` are done),
+  `mkdir` `rmdir` `rm` `mv` `cp`
+  `install` `touch` `truncate` `mkfifo` `mknod` `mktemp` `sync` (rename,
+  utimensat, ftruncate, mknod, fsync; `mkdir` with a mode and `rmdir` are
+  primitives now), `chmod` `chown`
   `chgrp` `chcon` `runcon`, `stat` `ls` `dir` `vdir` `du` `df` `dircolors`
   (full stat, statfs, d_type), `date` (strftime, timezone), `timeout` `nice`
   `nohup` `kill` `stdbuf` `chroot` (signals, setpriority, exec), `dd`

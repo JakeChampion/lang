@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -96,6 +97,21 @@ type invocation struct {
 	// docs/COREUTILS.md's "the same resulting tree". A path that does
 	// not exist compares equal to a path that does not exist.
 	artifacts []string
+	// tree gives the case a working directory of its OWN — a fresh empty
+	// one per side, populated by this function, with the child's cwd set
+	// to it — and compares the two directories entry for entry afterwards.
+	//
+	// It is `artifacts` widened for a utility whose whole answer is the
+	// tree rather than a named file's bytes: `mkdir` and `ln` say almost
+	// nothing on stdout, and what they change is which entries exist,
+	// what kind each is, its mode, a symlink's target and which names
+	// share an inode. Two directories rather than one shared one is the
+	// point — neither side may see the other's work — and it is why such
+	// a case's argv is written with RELATIVE paths.
+	//
+	// Mutually exclusive with `dir` / `prepare` / `artifacts`, which serve
+	// the utilities that write ONE named output into a shared directory.
+	tree func(t *testing.T, dir string)
 }
 
 // followStep is one thing the harness does to a followed file, once
@@ -159,6 +175,9 @@ type outcome struct {
 	exit int
 	// signal is the signal name when one killed the process, else "".
 	signal string
+	// dir is the working directory a `tree` case ran in, so the caller
+	// can compare what the two sides left behind. Empty otherwise.
+	dir string
 }
 
 func (o outcome) how() string {
@@ -435,6 +454,15 @@ func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 	}
 	cmd.Env = append(baseEnv(), inv.env...)
 	cmd.Dir = inv.dir
+	workDir := ""
+	if inv.tree != nil {
+		if inv.dir != "" {
+			t.Fatalf("%s: a case has either its own `tree` directory or a shared `dir`, not both", inv.name)
+		}
+		workDir = t.TempDir()
+		inv.tree(t, workDir)
+		cmd.Dir = workDir
+	}
 	cmd.Stdin = strings.NewReader(inv.stdin)
 	if inv.tty {
 		pty, err := os.OpenFile("/dev/ptmx", os.O_RDWR, 0)
@@ -520,7 +548,7 @@ func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 	if cmd.ProcessState == nil {
 		t.Fatalf("%s %s never ran: the invocation is not one exec can deliver", bin, quoteArgs(inv.args))
 	}
-	res := outcome{stdout: out, stderr: errBuf.Bytes(), exit: cmd.ProcessState.ExitCode()}
+	res := outcome{stdout: out, stderr: errBuf.Bytes(), exit: cmd.ProcessState.ExitCode(), dir: workDir}
 	if ws, ok := cmd.ProcessState.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
 		res.signal = ws.Signal().String()
 	}
@@ -736,8 +764,137 @@ func requireParity(t *testing.T, util string, cases []invocation) {
 			if want.how() != got.how() {
 				t.Errorf("status differs for %s %s: gnu %s, fern %s", util, quoteArgs(inv.args), want.how(), got.how())
 			}
+			diffTrees(t, util, inv, want, got, "gnu", "fern")
 		})
 	}
+}
+
+// diffTrees compares what a `tree` case left behind on each side. A no-op
+// for every other case.
+func diffTrees(t *testing.T, util string, inv invocation, want, got outcome, wantWho, gotWho string) {
+	t.Helper()
+	if inv.tree == nil {
+		return
+	}
+	w, g := snapshotTree(t, want.dir), snapshotTree(t, got.dir)
+	if w != g {
+		t.Errorf("resulting tree differs for %s %s\n%s:\n%s%s:\n%s",
+			util, quoteArgs(inv.args), wantWho, w, gotWho, g)
+	}
+}
+
+// snapshotTree renders a directory as text a diff can show: one line per
+// entry in path order, carrying everything about it a utility in this group
+// can change.
+//
+// Per entry: its kind, its twelve-bit mode (setuid / setgid / sticky
+// included, which `mkdir -m` sets), a symlink's target verbatim, and for a
+// regular file its size, its contents and which HARD LINK GROUP it belongs
+// to. The group is a number assigned in walk order from the (dev, ino) pair
+// rather than the pair itself: the two sides run on different inodes and
+// only the equivalence matters, which is exactly what separates `ln a b`
+// from `cp a b`.
+//
+// Timestamps are deliberately absent — the two sides run seconds apart and
+// nothing in this group sets one.
+func snapshotTree(t *testing.T, dir string) string {
+	t.Helper()
+	if dir == "" {
+		return ""
+	}
+	groups := map[[2]uint64]int{}
+	var sb strings.Builder
+	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, rerr := filepath.Rel(dir, path)
+		if rerr != nil {
+			return rerr
+		}
+		if rel == "." {
+			return nil
+		}
+		info, ierr := os.Lstat(path)
+		if ierr != nil {
+			return ierr
+		}
+		mode := info.Mode()
+		fmt.Fprintf(&sb, "  %s\t%s\t%04o", rel, treeKind(mode), permBits(mode))
+		switch {
+		case mode&os.ModeSymlink != 0:
+			target, lerr := os.Readlink(path)
+			if lerr != nil {
+				return lerr
+			}
+			fmt.Fprintf(&sb, "\t-> %s", quote([]byte(target)))
+		case mode.IsRegular():
+			content, cerr := os.ReadFile(path)
+			if cerr != nil {
+				return cerr
+			}
+			fmt.Fprintf(&sb, "\tsize=%d\tcontent=%s\tgroup=%d",
+				len(content), quote(content), linkGroup(info, groups))
+		}
+		sb.WriteByte('\n')
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk %s: %v", dir, err)
+	}
+	return sb.String()
+}
+
+// treeKind names the entry kind in one word.
+func treeKind(mode os.FileMode) string {
+	switch {
+	case mode.IsDir():
+		return "dir"
+	case mode&os.ModeSymlink != 0:
+		return "symlink"
+	case mode.IsRegular():
+		return "file"
+	case mode&os.ModeNamedPipe != 0:
+		return "fifo"
+	case mode&os.ModeSocket != 0:
+		return "socket"
+	case mode&os.ModeDevice != 0:
+		return "device"
+	}
+	return "other"
+}
+
+// permBits is the twelve-bit mode word `chmod` speaks, rebuilt out of Go's
+// portable FileMode: the nine permission bits plus setuid / setgid / sticky.
+func permBits(mode os.FileMode) uint32 {
+	bits := uint32(mode.Perm())
+	if mode&os.ModeSetuid != 0 {
+		bits |= 0o4000
+	}
+	if mode&os.ModeSetgid != 0 {
+		bits |= 0o2000
+	}
+	if mode&os.ModeSticky != 0 {
+		bits |= 0o1000
+	}
+	return bits
+}
+
+// linkGroup numbers the (dev, ino) equivalence classes in walk order, so two
+// names sharing an inode share a number on both sides while the inodes
+// themselves — which differ between the runs — never reach the comparison.
+func linkGroup(info os.FileInfo, groups map[[2]uint64]int) int {
+	st, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return 0
+	}
+	key := [2]uint64{uint64(st.Dev), uint64(st.Ino)}
+	if n, seen := groups[key]; seen {
+		return n
+	}
+	n := len(groups) + 1
+	groups[key] = n
+	return n
 }
 
 // quote renders bytes readably: printable ASCII as itself, everything
