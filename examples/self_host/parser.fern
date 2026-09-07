@@ -8051,6 +8051,8 @@ pub function builtin_function_names(): string[] {
         // The REAL ids and the supplementary group set, which `id -r` /
         // `id -G` ask for, plus the whole environment as a list.
         "getuid", "getgid", "getgroups", "environ",
+        // signal dispositions — SIG_IGN / SIG_DFL for one signal
+        "signal_ignore", "signal_default",
         // clocks + randomness + sleep + reactor readiness
         "now_unix_ms", "now_ns", "monotonic_ns", "sleep_ms", "random_bytes",
         "random_i32", "poll", "timer_fd", "wasm_timer_pollable",

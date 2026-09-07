@@ -3959,6 +3959,8 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
         parts = parts.append("    call $__fern_sleep_ms\n");
     } else if (o.kind_tag == 232) {  // isatty
         parts = emit_wasm_isatty(parts);
+    } else if (o.kind_tag == 243 || o.kind_tag == 244) {  // signal_ignore / signal_default
+        parts = emit_wasm_signal_disposition(parts);
     } else if (o.kind_tag == 240) {  // hostname
         parts = emit_wasm_hostname(bctmp, parts);
     } else if (o.kind_tag == 189) {  // wasm_timer_pollable
@@ -12171,6 +12173,18 @@ function emit_wasm_isatty(parts: string[]): string[] {
     // embedder that captures the output — and FORCE_COLOR still asks for
     // escapes. Matches what native's preview-2 helper emits. The fd is
     // on the stack and unused.
+    parts = parts.append("    drop\n    i32.const 0\n");
+
+    return parts;
+}
+
+function emit_wasm_signal_disposition(parts: string[]): string[] {
+    // signal_ignore(sig) / signal_default(sig) -> 0. Nothing in either WASI
+    // world can deliver a signal to a component, so there is no disposition
+    // to change and doing nothing is the whole behaviour — not a stub for a
+    // missing import (compare hostname's ""). The signal number is on the
+    // stack and unused; the 0 stands in for the sigaction return the native
+    // helpers push, so the statement-level drop balances the same way.
     parts = parts.append("    drop\n    i32.const 0\n");
 
     return parts;

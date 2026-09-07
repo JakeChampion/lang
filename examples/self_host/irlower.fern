@@ -11468,6 +11468,16 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
     // isatty / access / geteuid / getegid — see lower_call_os_query, which is
     // split out so this dispatch does not grow four more arms.
     if (is_os_query_call(cid.name, c.args.len())) { return lower_call_os_query(c, cid, s); }
+    // signal_ignore(sig) / signal_default(sig): set one signal's disposition.
+    // Not an os_query — those ASK the OS about the process, these change it —
+    // so they lower here, on their own, rather than widening that arm's name
+    // past what it says.
+    if ((cid.name == "signal_ignore" || cid.name == "signal_default") && c.args.len() == 1) {
+        var sg: LowerState = lower_expr(c.args[0], s);
+        if (!sg.ok) { return sg; }
+        if (cid.name == "signal_ignore") { return sg.emit(ir.op_signal_ignore()); }
+        return sg.emit(ir.op_signal_default());
+    }
     // wasm_timer_pollable(ns) / wasm_pollable_drop(p): portability
     // shims (native: -1 / 0). Lower the arg, then emit the op.
     if (cid.name == "wasm_timer_pollable" && c.args.len() == 1) {

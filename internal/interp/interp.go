@@ -2691,11 +2691,21 @@ func builtinSignalIgnore(_ *Interp, args []Value) (Value, error) {
 
 // builtinSignalDefault restores one signal's default disposition, so a
 // utility that ignored a signal for one stretch of work can put it back.
+//
+// `signal.Reset` alone does not undo `signal.Ignore`: Ignore sets a per-signal
+// "ignored" bit that the runtime consults BEFORE the OS disposition matters —
+// runtime.sigpipe() returns early on it — and only Notify clears that bit,
+// which Reset's documentation says by naming Notify as the only thing it
+// undoes. Resetting alone therefore left an ignored SIGPIPE ignored, where
+// every compiled backend put the kill back.
 func builtinSignalDefault(_ *Interp, args []Value) (Value, error) {
 	sig, err := signalArg("signal_default", args)
 	if err != nil {
 		return nil, err
 	}
+	ch := make(chan os.Signal, 1)
+	signal.Notify(ch, sig)
+	signal.Stop(ch)
 	signal.Reset(sig)
 	return Void{}, nil
 }
