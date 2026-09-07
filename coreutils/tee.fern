@@ -1,0 +1,295 @@
+// tee.fern — GNU-compatible `tee`.
+//
+//   tee [-aip] [--output-error[=MODE]] [FILE]...
+//
+// Standard input to standard output and to every FILE, unbuffered:
+// one read(2), then one write(2) per output in order, stdout first.
+//
+//   -a  append to the FILEs instead of truncating them
+//   -i  ignore SIGINT, so ^C at the terminal does not end the copy
+//   -p  --output-error=warn-nopipe
+//
+// The FILEs are all opened BEFORE the first read, so `tee a dir b`
+// creates `a`, diagnoses `dir`, and creates `b` before a byte moves.
+//
+// ---- what --output-error selects ------------------------------------
+//
+// Every mode drops the output that failed and keeps writing the rest;
+// the loop ends when nothing is left to write to. What the modes
+// disagree about is whether a failure is DIAGNOSED and whether it ends
+// the program, and a broken pipe is the one error the `nopipe` pair
+// pass over in silence:
+//
+//   mode          EPIPE                 any other write error
+//   ------------  --------------------  ---------------------
+//   (none)        SIGPIPE kills us      diagnose, drop, go on
+//   warn          diagnose, drop, go on diagnose, drop, go on
+//   warn-nopipe   silent, drop, go on   diagnose, drop, go on
+//   exit          diagnose, exit 1      diagnose, exit 1
+//   exit-nopipe   silent, drop, go on   diagnose, exit 1
+//
+// The first row is a signal disposition and not a branch here: with
+// neither -p nor --output-error, SIGPIPE keeps its default and the
+// process dies of it inside write(2), so `tee | head -c 10` ends the
+// same way `yes | head -c 10` does. Every other mode ignores SIGPIPE
+// first (std/signal), which is what turns that death into an EPIPE the
+// table can decide about.
+//
+// Diagnosing and exiting coincide: a mode exits exactly when it had
+// something to say, so `exit-nopipe` passing over a broken pipe also
+// declines to exit for it.
+import "std/signal";
+import "./lib/gnu";
+
+function opt_append(): i32 {
+  return 1;
+}
+
+function opt_ignore_interrupts(): i32 {
+  return 2;
+}
+
+function opt_output_error(): i32 {
+  return 3;
+}
+
+// The `--output-error` modes, in the order the argmatch list prints
+// them. `mode_sigpipe` is the absence of the option, which is not one
+// of the four names.
+function mode_sigpipe(): i32 {
+  return 0 - 1;
+}
+
+function mode_warn(): i32 {
+  return 0;
+}
+
+function mode_warn_nopipe(): i32 {
+  return 1;
+}
+
+function mode_exit(): i32 {
+  return 2;
+}
+
+function mode_exit_nopipe(): i32 {
+  return 3;
+}
+
+function mode_names(): string[] {
+  return ["warn", "warn-nopipe", "exit", "exit-nopipe"];
+}
+
+// Whether `mode` ends the program at the first failure it reports.
+function mode_exits(mode: i32): boolean {
+  return mode == mode_exit() || mode == mode_exit_nopipe();
+}
+
+// Whether `mode` passes over a broken pipe without a word.
+function mode_quiet_on_pipe(mode: i32): boolean {
+  return mode == mode_warn_nopipe() || mode == mode_exit_nopipe();
+}
+
+function help_text(): string {
+  var out: string = "";
+  out = out + "Usage: " + gnu.prog() + " [OPTION]... [FILE]...\n";
+  out = out + "Copy standard input to each FILE, and also to standard output.\n";
+  out = out + "\n";
+  out = out + "  -a, --append              append to the given FILEs, do not overwrite\n";
+  out = out + "  -i, --ignore-interrupts   ignore interrupt signals\n";
+  out = out + "  -p                        operate in a more appropriate MODE with pipes.\n";
+  out = out + "      --output-error[=MODE]   set behavior on write error.  See MODE below\n";
+  out = out + "      --help        display this help and exit\n";
+  out = out + "      --version     output version information and exit\n";
+  out = out + "\n";
+  out = out + "MODE determines behavior with write errors on the outputs:\n";
+  out = out + "  warn           diagnose errors writing to any output\n";
+  out = out + "  warn-nopipe    diagnose errors writing to any output not a pipe\n";
+  out = out + "  exit           exit on error writing to any output\n";
+  out = out + "  exit-nopipe    exit on error writing to any output not a pipe\n";
+  out = out + "The default MODE for the -p option is 'warn-nopipe'.\n";
+  out = out + "With \"nopipe\" MODEs, exit immediately if all outputs become broken pipes.\n";
+  out = out + "The default operation when --output-error is not specified, is to\n";
+  out = out + "exit immediately on error writing to a pipe, and diagnose errors\n";
+  out = out + "writing to non pipe outputs.\n";
+  return out;
+}
+
+// `Out` — one output. `name` is what a diagnostic calls it: a file's
+// operand, or `standard output` for fd 1, which is a name and not a
+// path and so is quoted whatever it looks like. `live` goes false
+// once a write to it has failed and it is dropped.
+struct Out { w: Writer, name: string, live: boolean, is_file: boolean }
+
+// `Copy` — the copy in progress: the outputs, the selected mode, and
+// whether anything has gone wrong yet (the exit status).
+struct Copy { outs: Out[], mode: i32, live: i32, ok: boolean }
+
+// bytes per read(2). GNU reads 8 KiB; measured on this machine a
+// larger block is worth about 30% on a pipe-to-pipe copy, and the
+// bytes on every output are the same either way.
+function read_size(): i32 {
+  return 65536;
+}
+
+// `fail(c, i, e)` — output `i` failed with `e`: drop it, and report it
+// unless the mode passes over a broken pipe. A mode that exits does so
+// exactly when it had something to report.
+function fail(c: Copy, i: i32, e: IoError): Copy {
+  var out: Out = c.outs[i];
+  var quiet: boolean = gnu.is_broken_pipe(e) && mode_quiet_on_pipe(c.mode);
+  var s: Copy = Copy { ...c, outs: c.outs.with(i, Out { ...out, live: false }), live: c.live - 1 };
+  if (quiet) {
+    return s;
+  }
+  var shown: string = out.name;
+  if (!out.is_file) {
+    shown = gnu.quote(out.name);
+  }
+  gnu.error(shown + ": " + gnu.io_error_text(e));
+  s = Copy { ...s, ok: false };
+  if (mode_exits(s.mode)) {
+    close_files(s);
+    exit(1);
+  }
+  return s;
+}
+
+// `put(c, chunk)` — one read block to every output still alive, stdout
+// first, as GNU's descriptor array has it.
+function put(c: Copy, chunk: string): Copy {
+  var s: Copy = c;
+  var i: i32 = 0;
+  while (i < s.outs.len()) {
+    if (s.outs[i].live) {
+      match (s.outs[i].w.write(chunk)) {
+        Some(e) => {
+          s = fail(s, i, e);
+        },
+        None => {}
+      }
+    }
+    i = i + 1;
+  }
+  return s;
+}
+
+// The FILEs are closed at the end; stdout is not, because tee never
+// buffered it and gnulib's close_stdout has nothing left to flush.
+function close_files(c: Copy): void {
+  var i: i32 = 0;
+  while (i < c.outs.len()) {
+    if (c.outs[i].is_file) {
+      c.outs[i].w.close();
+    }
+    i = i + 1;
+  }
+}
+
+// `-a` is O_APPEND; without it an existing FILE is truncated.
+function open_out(name: string, append: boolean): Result[Writer, IoError] {
+  if (append) {
+    return open_appender(name);
+  }
+  return open_writer(name);
+}
+
+// `open_outs(files, append, mode)` — stdout, then each operand in
+// order. An operand that will not open is diagnosed and left out; a
+// mode that exits stops there, so the operands after it are never
+// created.
+function open_outs(files: string[], append: boolean, mode: i32): Copy {
+  var outs: Out[] = [];
+  outs = outs.append(Out { w: stdout(), name: "standard output", live: true, is_file: false });
+  var c: Copy = Copy { outs: outs, mode: mode, live: 1, ok: true };
+  var i: i32 = 0;
+  while (i < files.len()) {
+    var name: string = files[i];
+    match (open_out(name, append)) {
+      Ok(w) => {
+        c = Copy { ...c, outs: c.outs.append(Out { w: w, name: name, live: true, is_file: true }), live: c.live + 1 };
+      },
+      Err(e) => {
+        gnu.error(gnu.quotef(name) + ": " + gnu.io_error_text(e));
+        c = Copy { ...c, ok: false };
+        if (mode_exits(mode)) {
+          close_files(c);
+          exit(1);
+        }
+      }
+    }
+    i = i + 1;
+  }
+  return c;
+}
+
+function main(): i32 {
+  var argv: string[] = args();
+  var opts: gnu.Opt[] = [];
+  // GNU's long_options order, which is the order an ambiguity would
+  // list them in. `-p` is the short spelling of `--output-error` and
+  // carries no value of its own, so bare `--output-error` and `-p`
+  // are the same request: warn-nopipe.
+  opts = opts.append(gnu.flag("a", "append", opt_append()));
+  opts = opts.append(gnu.flag("i", "ignore-interrupts", opt_ignore_interrupts()));
+  opts = opts.append(gnu.optional_long("p", "output-error", opt_output_error()));
+
+  var append: boolean = false;
+  var ignore_interrupts: boolean = false;
+  var mode: i32 = mode_sigpipe();
+  var g: gnu.Getopt = gnu.getopt_new(argv, opts, "tee", help_text(), 1);
+  while (true) {
+    var r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    g = r.1;
+    match (r.0) {
+      Some(m) => {
+        if (m.id == opt_append()) {
+          append = true;
+        } else if (m.id == opt_ignore_interrupts()) {
+          ignore_interrupts = true;
+        } else if (m.id == opt_output_error()) {
+          if (m.has_value) {
+            mode = gnu.argmatch(m.value, mode_names(), "--output-error");
+          } else {
+            mode = mode_warn_nopipe();
+          }
+        }
+      },
+      None => {
+        break;
+      }
+    }
+  }
+
+  if (ignore_interrupts) {
+    signal.ignore(signal.SIGINT);
+  }
+  // Without a mode SIGPIPE keeps its default and kills us, which is
+  // the first row of the table above.
+  if (mode != mode_sigpipe()) {
+    signal.ignore(signal.SIGPIPE);
+  }
+
+  var c: Copy = open_outs(g.operands(), append, mode);
+  var r: Reader = stdin();
+  while (c.live > 0) {
+    match (r.read_chunk(read_size())) {
+      Ok(chunk) => {
+        if (chunk.len() == 0) {
+          break;
+        }
+        c = put(c, chunk);
+      },
+      Err(e) => {
+        gnu.error("read error: " + gnu.io_error_text(e));
+        c = Copy { ...c, ok: false };
+        break;
+      }
+    }
+  }
+  close_files(c);
+  if (!c.ok) {
+    return 1;
+  }
+  return 0;
+}

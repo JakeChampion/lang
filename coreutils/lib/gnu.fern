@@ -90,6 +90,56 @@ pub function die_usage(msg: string, status: i32): void {
   try_help(status);
 }
 
+// `argmatch(v, names, option)` — gnulib's ARGMATCH over a valued
+// option: an exact name, or a unique prefix of one, gives its index.
+// Anything else is the end of the program — `invalid` when the value
+// is a prefix of nothing, `ambiguous` when it is a prefix of several
+// (an empty value is a prefix of all of them) — with every valid name
+// listed under it and the usual `Try …` line:
+//
+//     tee: ambiguous argument 'w' for '--output-error'
+//     Valid arguments are:
+//       - 'warn'
+//       - 'warn-nopipe'
+//       …
+//
+// `option` is the name with its dashes and no quotes; the list is
+// printed in declaration order, which is the order it is passed in.
+pub function argmatch(v: string, names: string[], option: string): i32 {
+  var found: i32 = 0 - 1;
+  var ambiguous: boolean = false;
+  var i: i32 = 0;
+  while (i < names.len()) {
+    if (names[i] == v) {
+      return i;
+    }
+    if (names[i].starts_with(v)) {
+      if (found < 0) {
+        found = i;
+      } else {
+        ambiguous = true;
+      }
+    }
+    i = i + 1;
+  }
+  if (found >= 0 && !ambiguous) {
+    return found;
+  }
+  var what: string = "invalid";
+  if (ambiguous) {
+    what = "ambiguous";
+  }
+  error(what + " argument " + quote(v) + " for " + quote(option));
+  eprint("Valid arguments are:");
+  i = 0;
+  while (i < names.len()) {
+    eprint("  - " + quote(names[i]));
+    i = i + 1;
+  }
+  try_help(1);
+  return 0;
+}
+
 // `is_option(a)` — whether getopt would treat `a` as an option token.
 // A lone `-` is an operand (it names stdin); `--` is the terminator
 // and is handled by the caller before this is asked.
@@ -127,6 +177,15 @@ pub function io_error_text(e: IoError): string {
       return msg;
     }
   }
+}
+
+// `is_broken_pipe(e)` — whether `e` is EPIPE. An IoError carries the
+// strerror text rather than the number, so the text is what there is
+// to ask; `close_stdout` below reads `Bad file descriptor` the same
+// way. Only reachable at all once SIGPIPE is ignored, since the
+// default disposition kills the process instead.
+pub function is_broken_pipe(e: IoError): boolean {
+  return io_error_text(e) == "Broken pipe";
 }
 
 // `write_out(s)` — write `s` to stdout, reporting a failure the way
