@@ -170,6 +170,9 @@ coreutils/
   lib/ld.fern       C's `long double` as the TARGET has it, for the
                     utilities that convert and compute in one
                     (printf, numfmt, seq, sleep)
+  lib/base.fern     the encoder / decoder base64, base32 and basenc
+                    share: one codec parameterised by alphabet, block
+                    and padding, plus every decode rule and diagnostic
   lib/resolv.fern   glibc's IPv4 name lookup — /etc/hosts, the
                     `hosts:` line of nsswitch.conf, resolv.conf and an
                     RFC 1035 A query — for the utilities that resolve
@@ -428,6 +431,17 @@ timeout where glibc gives up after resolv.conf's `timeout` × `attempts`.
 Neither changes the bytes on a host whose name resolves.
 
 ## Open gaps
+
+**`X as usize` means different addresses in the two compilers (#8799).**
+Native reads the cast as a counted buffer's DATA pointer, which is what
+`std/string`'s `bytes()` is written against; the self-host reads it as the
+BOX, whose first word is the length. Code that reads or writes through it is
+therefore correct under one compiler and off by a header under the other,
+with no diagnostic either way. Invisible until something compiles such code
+BOTH ways, which nothing did before the self-host leg: `.bytes()` is an
+intrinsic there, so the one stdlib site never reaches the self-host's
+lowering. `base64` wanted it — raw scratch buffers run the encode at 165 ms
+against the 460 ms `u8[]` with `.with()` costs — and ships without it.
 
 **A process-liveness query (#8767).** `tail --pid=PID` stops following once
 that process exits, which GNU asks as `kill (pid, 0)`. Fern can run a child

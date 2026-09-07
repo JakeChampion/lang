@@ -11253,6 +11253,16 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
         if (!li.ok) { return li; }
         return li.emit(ir.op_load_i32());
     }
+    // __load_u8(addr) reads one zero-extended byte. `raw_load8` already
+    // does that, addressed as [ptr, off], so the offset is a constant 0
+    // — which is also the shape that keeps the address at full pointer
+    // width, unlike the one-argument loads (#6386).
+    if (cid.name == "__load_u8" && c.args.len() == 1) {
+        var lb: LowerState = lower_expr(c.args[0], s);
+        if (!lb.ok) { return lb; }
+        lb = lb.emit(ir.op_const_i32(0));
+        return lb.emit(ir.op_raw_load8());
+    }
     // __load_i64(addr) reads an 8-byte i64. Emitted here (pushing an
     // i64) like the clock builtins; lower_i64 / infer_expr_width /
     // expr_is_i64 recognise it so an i64 context routes through here.

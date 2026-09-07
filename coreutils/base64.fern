@@ -1,0 +1,85 @@
+// base64.fern — GNU-compatible `base64`.
+//
+//   base64 [-d] [-i] [-w COLS] [FILE]
+//
+// RFC 4648 base64, wrapped at 76 columns by default. The codec, the
+// decoder's rules and every diagnostic live in `lib/base.fern`, which
+// `base32` and `basenc` drive too; this file is the option scan and the
+// one alphabet.
+import "std/string";
+import "std/array";
+import "./lib/gnu";
+import "./lib/base";
+
+function opt_decode(): i32 {
+  return 1;
+}
+
+function opt_ignore(): i32 {
+  return 2;
+}
+
+function opt_wrap(): i32 {
+  return 3;
+}
+
+function help_text(): string {
+  var out: string = "";
+  out = out + "Usage: " + gnu.prog() + " [OPTION]... [FILE]\n";
+  out = out + "Write FILE, or standard input, to standard output as base64.\n";
+  out = out + "\n";
+  out = out + "With no FILE, or when FILE is -, read standard input.\n";
+  out = out + "\n";
+  out = out + "  -d, --decode          decode data\n";
+  out = out + "  -i, --ignore-garbage  when decoding, ignore non-alphabet characters\n";
+  out = out + "  -w, --wrap=COLS       wrap encoded lines after COLS characters (default 76);\n";
+  out = out + "                          0 disables wrapping\n";
+  out = out + "      --help        display this help and exit\n";
+  out = out + "      --version     output version information and exit\n";
+  out = out + "\n";
+  out = out + "The alphabet is the one RFC 4648 section 4 names. Decoding accepts\n";
+  out = out + "newlines in the encoded stream; -i accepts any other stray byte too.\n";
+  return out;
+}
+
+function main(): i32 {
+  var argv: string[] = args();
+  var opts: gnu.Opt[] = [];
+  opts = opts.append(gnu.flag("d", "decode", opt_decode()));
+  opts = opts.append(gnu.valued("w", "wrap", opt_wrap()));
+  opts = opts.append(gnu.flag("i", "ignore-garbage", opt_ignore()));
+  // The declaration order is GNU's, because the ambiguity list prints
+  // candidates in it: `--=x` names '--decode' '--wrap' '--ignore-garbage'.
+  var g: gnu.Getopt = gnu.getopt_new(argv, opts, "base64", help_text(), 1);
+  var decode: boolean = false;
+  var ignore: boolean = false;
+  var wrap: i64 = 76 as i64;
+  while (true) {
+    var res: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    g = res.1;
+    match (res.0) {
+      Some(m) => {
+        if (m.id == opt_decode()) {
+          decode = true;
+        } else if (m.id == opt_ignore()) {
+          ignore = true;
+        } else {
+          wrap = base.parse_wrap(m.value);
+        }
+      },
+      None => {
+        break;
+      }
+    }
+  }
+  var ops: string[] = g.operands();
+  if (ops.len() > 1) {
+    gnu.die_usage("extra operand " + gnu.quote(ops[1]), 1);
+  }
+  var file: string = "";
+  if (ops.len() == 1) {
+    file = ops[0];
+  }
+  base.run(base.base64(), decode, ignore, wrap, ops.len() == 1, file);
+  return 0;
+}
