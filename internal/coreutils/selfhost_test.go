@@ -181,9 +181,12 @@ func selfHostBin(t *testing.T, util string) string {
 	}
 	root := repoRoot(t)
 	bin := filepath.Join(selfHostBinDir, util)
-	cmd := exec.Command(selfHostCompiler(t), "-target", fernTarget(t),
+	// The compiler is itself a target binary, so it runs the same way the
+	// utilities do — under the emulator on a cross leg (docs/COREUTILS.md).
+	argv := crossArgv(selfHostCompiler(t), "-target", fernTarget(t),
 		filepath.Join(root, "coreutils", util+".fern"),
 		filepath.Join(root, "internal", "stdlib"), "-o", bin)
+	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Env = append(os.Environ(), "FERN_STRICT_IR=1")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("self-host compile coreutils/%s.fern: %v\n%s", util, err, out)

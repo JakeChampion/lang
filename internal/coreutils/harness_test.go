@@ -343,7 +343,7 @@ func gnuVersion(dir string) (string, error) {
 	if _, err := os.Stat(bin); err != nil {
 		return "", err
 	}
-	argv := append(crossPrefix(), bin, "--version")
+	argv := crossArgv(bin, "--version")
 	out, err := exec.Command(argv[0], argv[1:]...).Output()
 	if err != nil {
 		return "", err
@@ -452,6 +452,16 @@ func repoRoot(t *testing.T) string {
 // Fern ones do not. Empty when the corpus runs natively.
 func crossPrefix() []string {
 	return strings.Fields(os.Getenv("FERN_COREUTILS_QEMU"))
+}
+
+// crossArgv is the argv for running a binary built for FERN_COREUTILS_TARGET:
+// the binary alone when the host is that target, and the emulator in front of
+// it when it is not. Every target binary needs this, the self-host COMPILER
+// included — it is built for the target like the utilities it compiles, so
+// exec'ing it directly is an exec-format error the moment the target is not
+// the host's.
+func crossArgv(bin string, args ...string) []string {
+	return append(append(crossPrefix(), bin), args...)
 }
 
 // run executes `bin` with argv[0] = argv0 and reports what happened.
