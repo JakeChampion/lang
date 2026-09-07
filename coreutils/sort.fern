@@ -2460,7 +2460,7 @@ function parallel(a: Args, v: string): Args {
 
 // `--batch-size=NMERGE`: below 2 is refused with the minimum named.
 // The upper bound is the process's open-file limit, which Fern cannot
-// ask for yet (#8823), so a value above it is accepted here.
+// ask for yet (#8819), so a value above it is accepted here.
 function batch_size(a: Args, v: string): Args {
   var r: (i32, i32, boolean) = parse_count(v, 0);
   if (!r.2) {
@@ -2588,7 +2588,7 @@ function run(a0: Args): i32 {
     term = 0;
   }
   var c: Conf = Conf { keys: keys, tab: a.tab, reverse: a.gkey.reverse, unique: a.unique, stable: a.stable, term: term, seed: seed, debug: a.debug, gkey_only: gkey_only };
-  if (a.debug) {
+  if (c.debug) {
     key_warnings(c, a.gkey);
   }
 
@@ -2645,7 +2645,7 @@ function run(a0: Args): i32 {
       keep = compare(c, all, lo[prev], hi[prev], lo[j], hi[j]) != 0;
     }
     if (keep) {
-      if (a.debug) {
+      if (c.debug) {
         out = debug_line(out, c, all, lo[j], hi[j]);
       } else {
         out = out_put(out, slice_unchecked(all, lo[j], hi[j]) + tstr);

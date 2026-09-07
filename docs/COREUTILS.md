@@ -740,6 +740,16 @@ BOTH ways, which nothing did before the self-host leg: `.bytes()` is an
 intrinsic there, so the one stdlib site never reaches the self-host's
 lowering. `base64` wanted it — raw scratch buffers run the encode at 165 ms
 against the 460 ms `u8[]` with `.with()` costs — and ships without it.
+**A process cannot read its own resource limits (#8819).** GNU `sort` caps
+`--batch-size` at what `getrlimit (RLIMIT_NOFILE, …)` reports minus the three
+standard descriptors, and names that number when a value exceeds it:
+`maximum --batch-size argument with current rlimit is 19997`. Fern has no way
+to ask, so `sort.fern` reproduces the option's other two diagnostics exactly
+and accepts any value at or above the minimum of 2. `--batch-size` changes no
+byte of output on either side — it is an external-merge fan-in, and this sort
+holds the whole input in memory — so the gap is one diagnostic pair, and the
+corpus carries no case above the cap until the primitive exists.
+
 
 **A process-liveness query (#8767).** `tail --pid=PID` stops following once
 that process exits, which GNU asks as `kill (pid, 0)`. Fern can run a child
@@ -830,7 +840,7 @@ groups are the order of work. Each sub-issue names its group.
   `unexpand` `split` `csplit` `shuf` `od` `base32` `base64` `basenc` `cksum`
   `sum` `md5sum` `sha1sum` `sha224sum` `sha256sum` `sha384sum` `sha512sum`
   `b2sum` `tee`. Done: `cat`, `tac`, `head`, `tail`, `wc`, `nl`, `cut`,
-  `paste`, `join`, `comm`, `uniq`, `tr`, `fold`, `expand`, `unexpand`,
+  `paste`, `join`, `comm`, `uniq`, `sort`, `tr`, `fold`, `expand`, `unexpand`,
   `split`, `base32`, `base64`, `basenc` and the seven checksum utilities.
   Needs a buffered stdout writer in `std/io_buffered` (its own header
   already promises one) and a streaming stdin reader whose reads can FAIL:
