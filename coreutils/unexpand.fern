@@ -1,0 +1,397 @@
+// unexpand.fern — GNU-compatible `unexpand`.
+//
+//   unexpand [-a | --first-only] [-t LIST] [FILE]...
+//
+// Runs of blanks become tabs wherever a tab reaches the same column.
+// Only a line's LEADING blanks are converted unless `-a` or `-t` says
+// otherwise, and `--first-only` takes that back whichever order they are
+// written in. The tab stops are expand's, in `coreutils/lib/tabs.fern`.
+//
+// The rule for when a run becomes a tab is finer than "it reaches a
+// stop", and the four shapes below are the whole of it — each measured
+// against the reference binary:
+//
+//   - A single blank that lands on a stop DIRECTLY AFTER a non-blank is
+//     held, not converted: a tab there would be the same width and the
+//     same length, and GNU leaves it alone. `1234567 x` keeps its space
+//     where a blank opening a line, or one following a tab, does not.
+//   - It is only held, though. If another blank follows it, the held one
+//     becomes a tab after all: `1234567  x` is `1234567\t x`.
+//   - Past the last stop conversion STOPS for the rest of the line, and
+//     everything held at that moment is written as it stood. That is why
+//     `abcdefg  i` under `-t 4,8` keeps both spaces while the same input
+//     under the default stops becomes `abcdefg\t i`.
+//   - The obsolete `-NUM` form is not `-t NUM`: its digits and commas
+//     are options of their own spelling ONE list read after the scan
+//     (`-1 -2` is a tab size of 12), and it does not turn on `-a`.
+import "std/array";
+import "std/io_buffered";
+import "./lib/gnu";
+import "./lib/tabs";
+
+// Option ids, in GNU's declaration order — `unexpand --=x` lists
+// `--tabs` `--all` `--first-only`.
+function opt_tabs(): i32 {
+  return 1;
+}
+
+function opt_all(): i32 {
+  return 2;
+}
+
+function opt_first(): i32 {
+  return 3;
+}
+
+// The obsolete `-NUM` form. Unlike expand's, the digits AND the comma
+// are options in their own right taking no value, and what they spell is
+// collected across the whole scan into ONE list read at the end: `-1 -2`
+// is a tab size of 12, and `-4 -t8` is the descending pair 8,4 rather
+// than two separate settings.
+function opt_digit(d: i32): i32 {
+  return 10 + d;
+}
+
+function opt_comma(): i32 {
+  return 20;
+}
+
+function help_text(): string {
+  var out: string = "";
+  out = out + "Usage: " + gnu.prog() + " [OPTION]... [FILE]...\n";
+  out = out + "Convert blanks in each FILE to tabs, writing to standard output.\n";
+  out = out + "\n";
+  out = out + "With no FILE, or when FILE is -, read standard input.\n";
+  out = out + "\n";
+  out = out + "  -a, --all        convert all blanks, instead of just initial blanks\n";
+  out = out + "      --first-only  convert only leading sequences of blanks (overrides -a)\n";
+  out = out + "  -t, --tabs=N     have tabs N characters apart instead of 8 (enables -a)\n";
+  out = out + "  -t, --tabs=LIST  use comma separated list of tab positions\n";
+  out = out + "                     The last specified position can be prefixed with '/'\n";
+  out = out + "                     to specify a tab size to use after the last\n";
+  out = out + "                     explicitly specified tab stop.  Also a prefix of '+'\n";
+  out = out + "                     can be used to align remaining tab stops relative to\n";
+  out = out + "                     the last specified tab stop instead of the first column\n";
+  out = out + "      --help        display this help and exit\n";
+  out = out + "      --version     output version information and exit\n";
+  return out;
+}
+
+// Bytes per read(2), and the size of the block the accumulated output
+// is handed to the buffered writer in. The writer's threshold is the
+// same number, so a full block goes straight to the fd instead of being
+// copied into its buffer first.
+function read_size(): i32 {
+  return 65536;
+}
+
+function block_size(): i32 {
+  return 16384;
+}
+
+function digit_of(id: i32): string {
+  return slice_unchecked("0123456789", id - 10, id - 9) + "";
+}
+
+function main(): i32 {
+  var argv: string[] = args();
+  var opts: gnu.Opt[] = [];
+  opts = opts.append(gnu.valued("t", "tabs", opt_tabs()));
+  opts = opts.append(gnu.flag("a", "all", opt_all()));
+  opts = opts.append(gnu.flag("", "first-only", opt_first()));
+  opts = opts.append(gnu.flag(",", "", opt_comma()));
+  var d: i32 = 0;
+  while (d < 10) {
+    opts = opts.append(gnu.flag(slice_unchecked("0123456789", d, d + 1) + "", "", opt_digit(d)));
+    d = d + 1;
+  }
+
+  var stops: tabs.Tabs = tabs.tabs_new();
+  var all: boolean = false;
+  var first_only: boolean = false;
+  var obsolete: string = "";
+  var g: gnu.Getopt = gnu.getopt_new(argv, opts, "unexpand", help_text(), 1);
+  while (true) {
+    var r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    g = r.1;
+    match (r.0) {
+      Some(m) => {
+        if (m.id == opt_tabs()) {
+          stops = stops.parse(m.value);
+          all = true;
+        } else if (m.id == opt_all()) {
+          all = true;
+        } else if (m.id == opt_first()) {
+          first_only = true;
+        } else if (m.id == opt_comma()) {
+          obsolete = obsolete + ",";
+        } else {
+          // The obsolete form sets the stops and nothing else: unlike
+          // `-t`, it does not turn on `-a`.
+          obsolete = obsolete + digit_of(m.id);
+        }
+      },
+      None => {
+        break;
+      }
+    }
+  }
+  if (obsolete.len() > 0) {
+    stops = stops.parse(obsolete);
+  }
+  stops = stops.finish();
+
+  var files: string[] = g.operands();
+  if (files.len() == 0) {
+    files = files.append("-");
+  }
+  return run(files, stops, all && !first_only);
+}
+
+// `run(files, stops, convert_all)` — the whole conversion. One function
+// because `out` is the accumulator: a bare local appended to inline
+// grows in place, where the same appends through a helper copy the
+// buffer every time (#8785).
+function run(files: string[], stops: tabs.Tabs, convert_all: boolean): i32 {
+  var o: io_buffered.BufWriter = gnu.out_with(block_size());
+  var out: string = "";
+  var pad: string = "        ";
+  var ok: boolean = true;
+  // Non-zero when every stop is the same distance apart, which is the
+  // case for a default run and for `-t N`.
+  var step: u64 = stops.size;
+
+  var fi: i32 = 0;
+  var have_reader: boolean = false;
+  var is_stdin: boolean = false;
+  var name: string = "";
+  var r: Reader = stdin();
+  var chunk: string = "";
+  var pos: i32 = 0;
+  var carry: string = "";
+  var final: boolean = false;
+
+  while (true) {
+    if (pos >= chunk.len()) {
+      if (final) {
+        break;
+      }
+      chunk = "";
+      pos = 0;
+      var got: boolean = false;
+      while (!got) {
+        if (!have_reader) {
+          if (fi >= files.len()) {
+            chunk = carry;
+            carry = "";
+            final = true;
+            got = true;
+          } else {
+            name = files[fi];
+            fi = fi + 1;
+            is_stdin = name == "-";
+            if (is_stdin) {
+              r = stdin();
+              have_reader = true;
+            } else {
+              var opened: boolean = false;
+              match (open_reader(name)) {
+                Ok(f) => {
+                  r = f;
+                  opened = true;
+                },
+                Err(e) => {
+                  o = o.write_string(out);
+                  out = "";
+                  o = gnu.error_out(o, gnu.quotef(name) + ": " + gnu.io_error_text(e));
+                  ok = false;
+                }
+              }
+              have_reader = opened;
+            }
+          }
+        } else {
+          var piece: string = "";
+          var read_ok: boolean = true;
+          match (r.read_chunk(read_size())) {
+            Ok(c) => {
+              piece = c;
+            },
+            Err(e) => {
+              o = o.write_string(out);
+              out = "";
+              o = gnu.error_out(o, gnu.quotef(name) + ": " + gnu.io_error_text(e));
+              ok = false;
+              read_ok = false;
+            }
+          }
+          if (read_ok && piece.len() > 0) {
+            chunk = piece;
+            pos = 0;
+            got = true;
+          } else {
+            if (!is_stdin) {
+              r.close();
+            }
+            have_reader = false;
+          }
+        }
+      }
+      if (final && chunk.len() == 0) {
+        break;
+      }
+      continue;
+    }
+
+    var j: i32 = __memchr(chunk, 10, pos);
+    if (j < 0) {
+      if (!final) {
+        carry = carry + slice_unchecked(chunk, pos, chunk.len());
+        pos = chunk.len();
+        continue;
+      }
+      j = chunk.len() - 1;
+    }
+
+    var buf: string = chunk;
+    var lo: i32 = pos;
+    var hi: i32 = j + 1;
+    if (carry.len() > 0) {
+      buf = carry + slice_unchecked(chunk, pos, j + 1);
+      carry = "";
+      lo = 0;
+      hi = buf.len();
+    }
+    pos = j + 1;
+
+    var lead: i32 = buf[lo] as i32;
+    if (!convert_all && lead != 32 && lead != 9) {
+      // Nothing to convert: only leading blanks are candidates and this
+      // line has none, so it goes out as it stands.
+      out = out + slice_unchecked(buf, lo, hi);
+    } else {
+      // The line stays a view into the chunk: every scan below is
+      // bounded by `end`, so nothing here needs it copied out.
+      var end: i32 = hi;
+      var p: i32 = lo;
+      var column: u64 = 0 as u64;
+      var idx: i32 = 0;
+      var convert: boolean = true;
+      var pending: i32 = 0;
+      var held: boolean = false;
+      // Whether the pending run starts straight after a non-blank. A
+      // single blank is only held there; one that opens a line or
+      // follows a tab is converted as soon as it reaches the stop.
+      var after_nb: boolean = false;
+      while (p < end) {
+        var c: i32 = buf[p] as i32;
+        if (convert && (c == 32 || c == 9)) {
+          // The uniform case is most of them, and it is arithmetic:
+          // taking it here keeps the call and its tuple out of the
+          // inner loop.
+          var target: u64 = 0 as u64;
+          if (step != 0 as u64) {
+            target = column + (step - column % step);
+          } else {
+            var nx: (u64, i32) = stops.next_column(column, idx);
+            target = nx.0;
+            idx = nx.1;
+          }
+          if (target == 0 as u64) {
+            // Past the last stop: nothing more on this line converts,
+            // and what was held goes out as the blanks it was.
+            convert = false;
+            while (pad.len() < pending) {
+              pad = pad + "                                ";
+            }
+            out = out + slice_unchecked(pad, 0, pending);
+            pending = 0;
+            held = false;
+            out = out + slice_unchecked(buf, p, end);
+            p = end;
+          } else {
+            if (held) {
+              out = out + "\t";
+              pending = 0;
+              held = false;
+              after_nb = false;
+            }
+            if (c == 9) {
+              column = target;
+              pending = 0;
+              out = out + "\t";
+              after_nb = false;
+            } else {
+              column = column + 1 as u64;
+              pending = pending + 1;
+              if (column == target) {
+                if (pending > 1 || !after_nb) {
+                  out = out + "\t";
+                  pending = 0;
+                  after_nb = false;
+                } else {
+                  held = true;
+                }
+              }
+            }
+            p = p + 1;
+          }
+        } else {
+          while (pad.len() < pending) {
+            pad = pad + "                                ";
+          }
+          out = out + slice_unchecked(pad, 0, pending);
+          pending = 0;
+          held = false;
+          if (!convert) {
+            out = out + slice_unchecked(buf, p, end);
+            p = end;
+          } else if (!convert_all) {
+            // Default: the first byte that is not a blank ends the
+            // convertible part of the line.
+            out = out + slice_unchecked(buf, p, end);
+            p = end;
+            convert = false;
+          } else {
+            var q: i32 = p;
+            while (q < end) {
+              var b: i32 = buf[q] as i32;
+              if (b == 32 || b == 9) {
+                break;
+              }
+              if (b == 8) {
+                if (column > 0 as u64) {
+                  column = column - 1 as u64;
+                }
+                if (idx > 0) {
+                  idx = idx - 1;
+                }
+              } else {
+                column = column + 1 as u64;
+              }
+              q = q + 1;
+            }
+            out = out + slice_unchecked(buf, p, q);
+            p = q;
+            after_nb = true;
+          }
+        }
+      }
+      while (pad.len() < pending) {
+        pad = pad + "                                ";
+      }
+      out = out + slice_unchecked(pad, 0, pending);
+    }
+    if (out.len() >= block_size()) {
+      o = o.write_string(out);
+      out = "";
+    }
+  }
+
+  o = o.write_string(out);
+  gnu.finish(o);
+  if (!ok) {
+    return 1;
+  }
+  return 0;
+}
