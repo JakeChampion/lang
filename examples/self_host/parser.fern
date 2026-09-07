@@ -1146,9 +1146,19 @@ function (p: Par) with_map_kind(v: i32): Par {
 // nesting level), so the two front ends agree on which programs are legal.
 // Both count ~2 units per parenthesised level, so the same number here and in
 // native's maxNestDepth puts the two acceptance thresholds on top of each
-// other — pinned by TestSelfHostNestingBoundMatchesNative. The deepest source
-// in this repository nests 183 levels.
+// other — pinned by TestSelfHostDeepNestingMatchesNativeAndDoesNotCrash. The
+// deepest source in this repository nests 183 levels.
 const MAX_NEST_DEPTH: i32 = 5000;
+
+// BLOCK_NEST_UNITS is what one nested block costs against MAX_NEST_DEPTH. A
+// unit has to cost about the same stack whichever construct spends it, and a
+// block does not: its level runs through the statement machinery and costs
+// roughly four times the stack of a parenthesis level — on an 8 MiB stack the
+// compiled compiler crashed between 1000 and 1100 nested `{` (about 2100 units
+// at one unit a block) where 2400 nested `(` parsed. At 8 units the deepest
+// block nesting the bound admits (about 550 levels) sits under half of that
+// crash point. Native's blockNestUnits is the same number.
+const BLOCK_NEST_UNITS: i32 = 8;
 
 function (p: Par) with_depth(v: i32): Par {
     return Par { toks: p.toks, pos: p.pos, no_struct: p.no_struct, map_kind: p.map_kind, structnames: p.structnames, verbatim: p.verbatim, depth: v };
@@ -1157,6 +1167,8 @@ function (p: Par) with_depth(v: i32): Par {
 // too_deep reports whether entering one more recursive-descent level would
 // cross the bound.
 function (p: Par) too_deep(): boolean { return p.depth > MAX_NEST_DEPTH; }
+// too_deep_by is too_deep for a construct that costs `units` rather than one.
+function (p: Par) too_deep_by(units: i32): boolean { return p.depth + units - 1 > MAX_NEST_DEPTH; }
 
 // bail parks the cursor on the final token so every `while (!q.at_end())`
 // loop above the guard unwinds at once. Returning the cursor unmoved would
@@ -4099,8 +4111,8 @@ function parse_block(p: Par): (ast.Stmt[], Par) {
 // rewrites the REST of the block it appears in, and this is the only parser
 // that has that remainder to give it (#8593).
 function parse_block_body(p: Par, tail_value: boolean): (ast.Stmt[], Par) {
-    if (p.too_deep()) { return ([s_unknown_at("nest:too-deep", p.peek_line(), p.peek_col())], p.bail()); }
-    var (g0, gq) = parse_block_body_nested(p.with_depth(p.depth + 1), tail_value);
+    if (p.too_deep_by(BLOCK_NEST_UNITS)) { return ([s_unknown_at("nest:too-deep", p.peek_line(), p.peek_col())], p.bail()); }
+    var (g0, gq) = parse_block_body_nested(p.with_depth(p.depth + BLOCK_NEST_UNITS), tail_value);
     return (g0, gq.with_depth(p.depth));
 }
 
