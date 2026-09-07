@@ -464,7 +464,10 @@ The last row is the one that loses, and it is the regexp engine rather than
 csplit (#8820): a pattern that is entirely a literal, or that STARTS with
 one, is answered by a byte scan, and everything else runs the Thompson
 simulation over every byte at several heap operations per position. An
-alternation has no literal prefix, so nothing filters it.
+alternation has no literal prefix, so the only filter left is the fastmap
+— the set of bytes a match can begin with — which an alternation of
+ordinary words barely narrows. `nl -bp`, `expr` and `tac -r` reach the
+same engine, so the same work pays for all four.
 
 `od`, 2026-09-07, Linux x86-64, the same 62 MiB file (and a 1 MiB one for
 the float row), GNU 9.4:
