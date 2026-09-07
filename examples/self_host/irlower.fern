@@ -62921,7 +62921,7 @@ pub function closure_ret_fns_of(funcs: parser.FuncDecl[], structs: StructTab): s
                                 var arrok: boolean = false;
                                 match (nix.array) {
                                     ast.ExprIdent(naid) => {
-                                        if (body_binds_closurearr_local(b, naid.name, out, [])) { arrok = true; }
+                                        if (body_binds_closurearr_local(b, naid.name, b, out, [])) { arrok = true; }
                                     },
                                     _ => {}
                                 }
@@ -63139,11 +63139,54 @@ function expr_is_closure_elem(e: ast.Expr, closureset: string[]): boolean {
     return false;
 }
 
-function array_lit_is_closurearr(init: ast.Expr, closureset: string[]): boolean {
+// closure_elem_in_scope is expr_is_closure_elem plus the one form that needs
+// the enclosing body: an ident `scope` binds to a closure box (`var f = <lambda>;
+// … [f]`). Such a local is a box exactly as the lambda written inline would be,
+// so an array built from it is a closure array — without this the array read
+// as a fn-pointer array, the callee's param went unproven, and `a[0](x)` inside
+// it bare-called the box as code (SIGSEGV, nightly seed 24937).
+function closure_elem_in_scope(e: ast.Expr, scope: ast.Stmt[], closureset: string[]): boolean {
+    if (expr_is_closure_elem(e, closureset)) { return true; }
+    match (e) {
+        ast.ExprIdent(eid) => { return body_binds_closure_local(scope, eid.name, closureset); },
+        _ => {}
+    }
+    return false;
+}
+
+// expr_is_closurearr_in_scope reports whether `e` provably yields a closure
+// ARRAY: a literal whose element is a closure in `scope`, a call to a
+// closurearr-returning fn (`caset`), a call to a generic passthrough handing
+// such an argument straight back (`id([f, g])`, the array-shaped twin of
+// expr_is_closure_elem's PASSTHRU case), or a local `scope` binds to one.
+function expr_is_closurearr_in_scope(e: ast.Expr, scope: ast.Stmt[], closureset: string[], caset: string[]): boolean {
+    match (e) {
+        ast.ExprArray(_) => { return array_lit_is_closurearr(e, scope, closureset); },
+        ast.ExprIdent(eid) => { return body_binds_closurearr_local(scope, eid.name, scope, closureset, caset); },
+        ast.ExprCall(ec) => {
+            match (ec.callee) {
+                ast.ExprIdent(ecid) => {
+                    if (util.index_of_str(caset, ecid.name) >= 0) { return true; }
+                    var pi: i32 = 0;
+                    while (pi < ec.args.len()) {
+                        if (util.index_of_str(closureset, "PASSTHRU:" + ecid.name + ":" + util.i32_to_string(pi)) >= 0
+                                && expr_is_closurearr_in_scope(ec.args[pi], scope, closureset, caset)) { return true; }
+                        pi = pi + 1;
+                    }
+                },
+                _ => {}
+            }
+        },
+        _ => {}
+    }
+    return false;
+}
+
+function array_lit_is_closurearr(init: ast.Expr, scope: ast.Stmt[], closureset: string[]): boolean {
     match (init) {
         ast.ExprArray(a) => {
             if (a.elements.len() == 0) { return false; }
-            return expr_is_closure_elem(a.elements[0], closureset);
+            return closure_elem_in_scope(a.elements[0], scope, closureset);
         },
         _ => {}
     }
@@ -63154,8 +63197,8 @@ function array_lit_is_closurearr(init: ast.Expr, closureset: string[]): boolean 
 // makes `name` a closure array: either a closure-array literal, or an
 // `<arr>.append(<closure>)` / `.push(<closure>)` that adds a closure element —
 // the incremental build the initial `var fs = []` literal misses.
-function assign_builds_closurearr(value: ast.Expr, closureset: string[]): boolean {
-    if (array_lit_is_closurearr(value, closureset)) { return true; }
+function assign_builds_closurearr(value: ast.Expr, scope: ast.Stmt[], closureset: string[]): boolean {
+    if (array_lit_is_closurearr(value, scope, closureset)) { return true; }
     match (value) {
         ast.ExprCall(sac) => {
             match (sac.callee) {
@@ -63163,7 +63206,7 @@ function assign_builds_closurearr(value: ast.Expr, closureset: string[]): boolea
                     if (safa.field == "append" || safa.field == "push") {
                         var ai: i32 = 0;
                         while (ai < sac.args.len()) {
-                            if (expr_is_closure_elem(sac.args[ai], closureset)) { return true; }
+                            if (closure_elem_in_scope(sac.args[ai], scope, closureset)) { return true; }
                             ai = ai + 1;
                         }
                     }
@@ -63180,23 +63223,15 @@ function assign_builds_closurearr(value: ast.Expr, closureset: string[]): boolea
 // blocks, mirroring body_binds_closure_local) binds local `name` to a closure
 // ARRAY: a closure-array literal, or a call to a function already known to
 // return one (`caset`, resolved by closurearr_ret_fns_of's fixpoint).
-function body_binds_closurearr_local(body: ast.Stmt[], name: string, closureset: string[], caset: string[]): boolean {
+function body_binds_closurearr_local(body: ast.Stmt[], name: string, scope: ast.Stmt[], closureset: string[], caset: string[]): boolean {
     var i: i32 = 0;
     while (i < body.len()) {
         match (body[i]) {
             ast.StmtVar(sv) => {
                 if (sv.name == name) {
-                    if (array_lit_is_closurearr(sv.init, closureset)) { return true; }
                     match (sv.init) {
-                        ast.ExprCall(bcc) => {
-                            match (bcc.callee) {
-                                ast.ExprIdent(bcid) => {
-                                    if (util.index_of_str(caset, bcid.name) >= 0) { return true; }
-                                },
-                                _ => {}
-                            }
-                        },
-                        _ => {}
+                        ast.ExprIdent(_) => {},
+                        _ => { if (expr_is_closurearr_in_scope(sv.init, scope, closureset, caset)) { return true; } }
                     }
                 }
             },
@@ -63207,22 +63242,22 @@ function body_binds_closurearr_local(body: ast.Stmt[], name: string, closureset:
             // isn't classified closurearr-returning, so the CALLER dispatches
             // `fs[i](x)` as a bare fn pointer and SIGSEGVs on the env box.
             ast.StmtAssign(sasg) => {
-                if (sasg.target == name && assign_builds_closurearr(sasg.value, closureset)) { return true; }
+                if (sasg.target == name && assign_builds_closurearr(sasg.value, scope, closureset)) { return true; }
             },
             ast.StmtIf(bif) => {
-                if (body_binds_closurearr_local(bif.then_body, name, closureset, caset)) { return true; }
-                if (body_binds_closurearr_local(bif.else_body, name, closureset, caset)) { return true; }
+                if (body_binds_closurearr_local(bif.then_body, name, scope, closureset, caset)) { return true; }
+                if (body_binds_closurearr_local(bif.else_body, name, scope, closureset, caset)) { return true; }
             },
             ast.StmtWhile(bwh) => {
-                if (body_binds_closurearr_local(bwh.body, name, closureset, caset)) { return true; }
+                if (body_binds_closurearr_local(bwh.body, name, scope, closureset, caset)) { return true; }
             },
             ast.StmtFor(bfr) => {
-                if (body_binds_closurearr_local(bfr.body, name, closureset, caset)) { return true; }
+                if (body_binds_closurearr_local(bfr.body, name, scope, closureset, caset)) { return true; }
             },
             ast.StmtMatch(bmt) => {
                 var bmi: i32 = 0;
                 while (bmi < bmt.arms.len()) {
-                    if (body_binds_closurearr_local(bmt.arms[bmi].body, name, closureset, caset)) { return true; }
+                    if (body_binds_closurearr_local(bmt.arms[bmi].body, name, scope, closureset, caset)) { return true; }
                     bmi = bmi + 1;
                 }
             },
@@ -63239,14 +63274,14 @@ function body_binds_closurearr_local(body: ast.Stmt[], name: string, closureset:
 // as one yields anything else. The closureset-side twin of
 // iife_stmts_all_closurearr, for the registry pass that runs before any
 // LowerState exists.
-function iife_arms_closurearr(stmts: ast.Stmt[], closureset: string[], caset: string[], seen: i32): i32 {
+function iife_arms_closurearr(stmts: ast.Stmt[], scope: ast.Stmt[], closureset: string[], caset: string[], seen: i32): i32 {
     var n: i32 = seen;
     for stmt in stmts {
         match (stmt) {
             ast.StmtReturn(r) => {
                 match (r.value) {
                     ast.ExprArray(_) => {
-                        if (!array_lit_is_closurearr(r.value, closureset)) { return 0 - 1; }
+                        if (!array_lit_is_closurearr(r.value, scope, closureset)) { return 0 - 1; }
                         n = n + 1;
                     },
                     ast.ExprCall(rc) => {
@@ -63257,7 +63292,7 @@ function iife_arms_closurearr(stmts: ast.Stmt[], closureset: string[], caset: st
                             },
                             ast.ExprLambda(ril) => {
                                 if (rc.args.len() != 0 || ril.params.len() != 0) { return 0 - 1; }
-                                n = iife_arms_closurearr(ril.body, closureset, caset, n);
+                                n = iife_arms_closurearr(ril.body, scope, closureset, caset, n);
                                 if (n < 0) { return 0 - 1; }
                             },
                             _ => { return 0 - 1; }
@@ -63267,15 +63302,15 @@ function iife_arms_closurearr(stmts: ast.Stmt[], closureset: string[], caset: st
                 }
             },
             ast.StmtIf(iff) => {
-                n = iife_arms_closurearr(iff.then_body, closureset, caset, n);
+                n = iife_arms_closurearr(iff.then_body, scope, closureset, caset, n);
                 if (n < 0) { return 0 - 1; }
-                n = iife_arms_closurearr(iff.else_body, closureset, caset, n);
+                n = iife_arms_closurearr(iff.else_body, scope, closureset, caset, n);
                 if (n < 0) { return 0 - 1; }
             },
             ast.StmtMatch(mm) => {
                 var a: i32 = 0;
                 while (a < mm.arms.len()) {
-                    n = iife_arms_closurearr(mm.arms[a].body, closureset, caset, n);
+                    n = iife_arms_closurearr(mm.arms[a].body, scope, closureset, caset, n);
                     if (n < 0) { return 0 - 1; }
                     a = a + 1;
                 }
@@ -63312,10 +63347,10 @@ pub function closurearr_ret_fns_of(funcs: parser.FuncDecl[], structs: StructTab)
                 while (ri < rets.len()) {
                     match (rets[ri]) {
                         ast.ExprArray(_) => {
-                            if (array_lit_is_closurearr(rets[ri], closureset)) { hit = true; }
+                            if (array_lit_is_closurearr(rets[ri], fn.body, closureset)) { hit = true; }
                         },
                         ast.ExprIdent(rid) => {
-                            if (body_binds_closurearr_local(fn.body, rid.name, closureset, out)) { hit = true; }
+                            if (body_binds_closurearr_local(fn.body, rid.name, fn.body, closureset, out)) { hit = true; }
                         },
                         ast.ExprCall(rcc) => {
                             match (rcc.callee) {
@@ -63330,7 +63365,7 @@ pub function closurearr_ret_fns_of(funcs: parser.FuncDecl[], structs: StructTab)
                                 // exactly the same condition.
                                 ast.ExprLambda(ril) => {
                                     if (rcc.args.len() == 0 && ril.params.len() == 0
-                                            && iife_arms_closurearr(ril.body, closureset, out, 0) > 0) { hit = true; }
+                                            && iife_arms_closurearr(ril.body, fn.body, closureset, out, 0) > 0) { hit = true; }
                                 },
                                 _ => {}
                             }
@@ -63375,16 +63410,11 @@ pub function (s: LowerState) is_closurearr_ret_fn(name: string): boolean {
 // reads false, keeping the callee on the plain fn-pointer dispatch those need.
 function arg_is_closurearr(arg: ast.Expr, caller_body: ast.Stmt[], closureset: string[], caset: string[], caller_cparams: string[]): boolean {
     match (arg) {
-        ast.ExprArray(_) => { return array_lit_is_closurearr(arg, closureset); },
-        ast.ExprCall(ac) => {
-            match (ac.callee) {
-                ast.ExprIdent(acid) => { return util.index_of_str(caset, acid.name) >= 0; },
-                _ => {}
-            }
-        },
+        ast.ExprArray(_) => { return array_lit_is_closurearr(arg, caller_body, closureset); },
+        ast.ExprCall(_) => { return expr_is_closurearr_in_scope(arg, caller_body, closureset, caset); },
         ast.ExprIdent(aid) => {
             if (util.index_of_str(caller_cparams, aid.name) >= 0) { return true; }
-            return body_binds_closurearr_local(caller_body, aid.name, closureset, caset);
+            return body_binds_closurearr_local(caller_body, aid.name, caller_body, closureset, caset);
         },
         _ => {}
     }
@@ -77101,7 +77131,9 @@ match (v.init) {
     // arr-returning-call branch above.
     ast.ExprCall(cac) => {
         match (cac.callee) {
-            ast.ExprIdent(cacid) => { if (se.is_closurearr_ret_fn(cacid.name)) { is_closurearr = true; } },
+            // …or a generic passthrough handing a closure array straight back
+            // (`var v = id([f, g])`): expr_is_closure_array's PASSTHRU case.
+            ast.ExprIdent(cacid) => { if (se.is_closurearr_ret_fn(cacid.name) || expr_is_closure_array(v.init, se)) { is_closurearr = true; } },
             // A value-position if/match (an IIFE) whose every arm yields a
             // closure ARRAY. Same argument as the closure-returning call
             // above, one container out: leaving it unclassified made

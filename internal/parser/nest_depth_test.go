@@ -99,7 +99,7 @@ func TestRecursionGuardsCoverEveryCycle(t *testing.T) {
 				if id, ok := sel.X.(*goast.Ident); !ok || id.Name != "p" {
 					return true
 				}
-				if sel.Sel.Name == "enter" {
+				if sel.Sel.Name == "enter" || sel.Sel.Name == "enterUnits" {
 					guarded[name] = true
 				}
 				calls[name][sel.Sel.Name] = true

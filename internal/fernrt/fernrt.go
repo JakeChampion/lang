@@ -106,7 +106,9 @@ func Func(name string, ptrW int) (*ast.FuncDecl, *ir.Func, error) {
 		if err != nil {
 			return nil, nil, err
 		}
-		ip, err := ir.LowerWith(prog, info, ptrW)
+		// The helpers are not the program under measurement, and this
+		// lowering is cached across -cover and plain builds alike.
+		ip, err := ir.LowerWith(prog, info, ptrW, ir.CoverExempt())
 		if err != nil {
 			return nil, nil, fmt.Errorf("fernrt: lower runtime.fern: %w", err)
 		}

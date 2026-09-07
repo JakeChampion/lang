@@ -10262,10 +10262,61 @@ func (c *checker) inferReturnType(fn *ast.FuncDecl, rets []ast.Type) {
 	if hasVoid {
 		c.errfCode(fn.P, "E012", "function %q returns a value on some paths but not others; add an explicit return type", fn.Name)
 	}
+	sig := c.info.FuncSigs[fn.Name]
+	// `return A;` inside A: a bare function name is typed as its own
+	// signature, so installing that as the result would close a cycle
+	// through sig.Result, and every later walk of the type (String,
+	// Equal) recurses without end.
+	if sig != nil && typeMentionsSig(unified, sig) {
+		c.errfCode(fn.P, "E002", "cannot infer return type for %q: it returns itself; add an explicit return type", fn.Name)
+		return
+	}
 	fn.ReturnType = unified
-	if sig, ok := c.info.FuncSigs[fn.Name]; ok {
+	if sig != nil {
 		sig.Result = unified
 	}
+}
+
+// typeMentionsSig reports whether t is, or is built from, the signature
+// object sig — pointer identity, since that is what closes the cycle.
+func typeMentionsSig(t ast.Type, sig *ast.FuncType) bool {
+	switch x := t.(type) {
+	case *ast.FuncType:
+		if x == sig {
+			return true
+		}
+		for _, p := range x.Params {
+			if typeMentionsSig(p, sig) {
+				return true
+			}
+		}
+		return typeMentionsSig(x.Result, sig)
+	case ast.ArrayType:
+		return typeMentionsSig(x.Elem, sig)
+	case ast.SliceType:
+		return typeMentionsSig(x.Elem, sig)
+	case ast.StreamType:
+		return typeMentionsSig(x.Elem, sig)
+	case ast.TupleType:
+		for _, e := range x.Elems {
+			if typeMentionsSig(e, sig) {
+				return true
+			}
+		}
+	case ast.StructType:
+		for _, a := range x.Args {
+			if typeMentionsSig(a, sig) {
+				return true
+			}
+		}
+	case ast.EnumType:
+		for _, a := range x.Args {
+			if typeMentionsSig(a, sig) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // unifyReturnType merges two inferred return-expression types into one.

@@ -205,14 +205,34 @@ type parser struct {
 // nesting level costs more than one unit, since a level descends through
 // several of the guarded functions; the deepest source in this repository
 // peaks at 183 units.
+//
+// The self-host parser refuses at the same count (MAX_NEST_DEPTH), so the
+// two front ends accept the same programs, and its frames are what the
+// units have to measure: a unit must cost about the same stack whichever
+// construct spends it, or a bound that protects one shape lets another run
+// the stack out. That is what blockNestUnits is for.
 const maxNestDepth = 5000
+
+// blockNestUnits is what one nested block costs against maxNestDepth. A
+// block level runs the self-host through its statement machinery, which
+// costs it roughly four times the stack of a parenthesis level: on an 8 MiB
+// stack it crashed between 1000 and 1100 nested `{` (about 2100 units at one
+// unit a block) where 2400 nested `(` parsed. Charging 8 units keeps the
+// deepest block nesting the bound admits (about 550 levels) under half of
+// that crash point, and leaves the expression shapes exactly where they
+// were. The self-host's BLOCK_NEST_UNITS is the same number.
+const blockNestUnits = 8
 
 // enter records one level of recursive-descent nesting, reporting P005 once
 // the input nests past maxNestDepth. Every cycle in the parser's call graph
-// runs through a function that calls it, so no input can recurse without
-// bound — TestRecursionGuardsCoverEveryCycle pins that property.
-func (p *parser) enter() error {
-	p.depth++
+// runs through a function that calls it (or enterUnits), so no input can
+// recurse without bound — TestRecursionGuardsCoverEveryCycle pins that
+// property.
+func (p *parser) enter() error { return p.enterUnits(1) }
+
+// enterUnits is enter for a construct that costs more than one unit.
+func (p *parser) enterUnits(n int) error {
+	p.depth += n
 	if p.depth > maxNestDepth {
 		return p.errorfCode(p.peek().Pos, "P005", "input nests deeper than %d levels", maxNestDepth)
 	}
@@ -220,6 +240,8 @@ func (p *parser) enter() error {
 }
 
 func (p *parser) leave() { p.depth-- }
+
+func (p *parser) leaveUnits(n int) { p.depth -= n }
 
 func (p *parser) peek() lexer.Token { return p.tokens[p.i] }
 
@@ -2486,11 +2508,11 @@ func (p *parser) parseBlock() (*ast.Block, error) {
 // `use` and `let … else` rewrite the REST of the block they appear in, and
 // this is the only parser that has that remainder to give them (#8593).
 func (p *parser) parseBlockStmts(block *ast.Block, tailValue bool) {
-	if err := p.enter(); err != nil {
+	if err := p.enterUnits(blockNestUnits); err != nil {
 		p.errors = append(p.errors, err)
 		return
 	}
-	defer p.leave()
+	defer p.leaveUnits(blockNestUnits)
 	for !p.match(lexer.Punct, "}") && !p.match(lexer.EOF, "") {
 		before := p.i
 		// `use IDENT : TYPE <- EXPR;` is a statement-position
