@@ -1135,7 +1135,9 @@ function compare_random(seed: crypto.Md5, text: string, a0: i32, a1: i32, b0: i3
 // those, so reaching a line's text costs one SEQUENTIAL read of the
 // array being merged rather than two scattered reads of an offset
 // table — and over a file too large for the last-level cache that
-// difference is most of the sort.
+// difference is most of the sort. `compare` and `keycompare` write the
+// unpack out rather than calling these, for the reason is_digit_b
+// gives above.
 function pack_line(start: i32, len: i32): i64 {
   return start as i64 << 32 as i64 | len as i64;
 }
