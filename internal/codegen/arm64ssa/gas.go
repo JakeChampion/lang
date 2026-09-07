@@ -2547,7 +2547,7 @@ func emitOpenAppenderHelper(w func(string, ...any)) {
 }
 
 // emitOpenExclusiveHelper: open_exclusive(path) — O_WRONLY|O_CREAT|O_EXCL
-// (193), 0644. Fails with EEXIST rather than opening a file that is already
+// (193), 0600. Fails with EEXIST rather than opening a file that is already
 // there, which reaches the caller as IoError::AlreadyExists. No O_TRUNC: with
 // O_EXCL the file cannot already exist.
 func emitOpenExclusiveHelper(w func(string, ...any)) {
