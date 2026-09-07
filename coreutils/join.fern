@@ -549,15 +549,23 @@ function add_field_list(specs: Spec[], str: string): Spec[] {
     if (item == "0") {
       out = out.append(Spec { file: 0, field: 0 as u64 });
     } else {
-      var c: i32 = 0;
+      // The two faults are separate and in this order: a leading zero
+      // or a missing dot is the SPECIFIER's shape, anything else in the
+      // first byte is the file number.
+      if (item.len() > 0 && item[0] as i32 == 48) {
+        die_spec("invalid field specifier: ", item);
+      }
+      var fi: i32 = 0 - 1;
       if (item.len() > 0) {
-        c = item[0] as i32;
+        fi = item[0] as i32 - 48;
       }
-      if (item.len() < 2 || c < 49 || c > 50 || item[1] as i32 != 46) {
-        gnu.error("invalid file number in field spec: " + gnu.quote(item));
-        exit(1);
+      if (fi != 1 && fi != 2) {
+        die_spec("invalid file number in field spec: ", item);
       }
-      out = out.append(Spec { file: c - 48, field: field_number(slice_unchecked(item, 2, item.len()) + "") });
+      if (item.len() < 2 || item[1] as i32 != 46) {
+        die_spec("invalid field specifier: ", item);
+      }
+      out = out.append(Spec { file: fi, field: field_number(slice_unchecked(item, 2, item.len()) + "") });
     }
     if (j >= n) {
       return out;
@@ -565,6 +573,11 @@ function add_field_list(specs: Spec[], str: string): Spec[] {
     i = j + 1;
   }
   return out;
+}
+
+function die_spec(what: string, item: string): void {
+  gnu.error(what + gnu.quote(item));
+  exit(1);
 }
 
 // ---- the command line -------------------------------------------------------
