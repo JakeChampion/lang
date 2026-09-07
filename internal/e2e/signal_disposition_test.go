@@ -1,11 +1,13 @@
 package e2e
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"testing"
+	"time"
 
 	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/checker"
@@ -221,6 +223,51 @@ func TestArm64SSASignalDisposition(t *testing.T) {
 		argv = append(argv, bin)
 		if got := runWithStdoutClosed(t, append(argv, tc.argv...)...); got != tc.want {
 			t.Errorf("%s: exit = %d, want %d (#8792)", tc.name, got, tc.want)
+		}
+	}
+}
+
+// A signal number outside 1..64 must be a no-op in the interpreter, as it is on
+// every compiled backend, and must above all RETURN.
+//
+// This is a hang, not a wrong answer. Go's runtime indexes a 65-entry sigtable
+// and `signal.Stop` outside it never returns — measured: 0..64 return, -1 / 65
+// / 99 deadlock — and `signal_default` reaches Stop through the Notify/Stop/
+// Reset dance that undoes an earlier Ignore. The compiled backends hand the
+// number to rt_sigaction, get EINVAL and ignore it, which is the contract
+// `std/signal` documents. Found by review on #8792.
+//
+// It has to run the interpreter as a SUBPROCESS. An in-process version of this
+// test passes with the guard removed: by then the test binary has os/signal's
+// goroutine running, so Stop finds it and returns, while a fresh `fern -interp`
+// deadlocks. The bug is only visible where it actually happens.
+func TestInterpSignalDispositionOutOfRangeDoesNotHang(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX signal numbering")
+	}
+	dir := t.TempDir()
+	fern := filepath.Join(dir, "fern")
+	if out, err := exec.Command("go", "build", "-o", fern, "github.com/jakechampion/lang/cmd/fern").CombinedOutput(); err != nil {
+		t.Fatalf("go build fern: %v\n%s", err, out)
+	}
+	for _, sig := range []string{"0 - 1", "0", "65", "99", "1000000"} {
+		for _, fn := range []string{"signal_ignore", "signal_default"} {
+			src := filepath.Join(dir, "prog.fern")
+			body := "function main(): i32 { " + fn + "(" + sig + "); return 7; }\n"
+			if err := os.WriteFile(src, []byte(body), 0o644); err != nil {
+				t.Fatalf("write prog.fern: %v", err)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			err := exec.CommandContext(ctx, fern, "-interp", src).Run()
+			timedOut := ctx.Err() != nil
+			cancel()
+			if timedOut {
+				t.Errorf("%s(%s) HUNG — the out-of-range guard is gone (#8792)", fn, sig)
+				continue
+			}
+			if code := exitCodeOf(err); code != 7 {
+				t.Errorf("%s(%s) exit = %d, want 7", fn, sig, code)
+			}
 		}
 	}
 }

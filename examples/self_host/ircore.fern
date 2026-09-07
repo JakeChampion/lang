@@ -925,6 +925,14 @@ pub function all_runtime_need_roots(): string[] {
         // stdin / argv / the host's name / the process's own identity:
         "read_all_stdin", "hostname", "environ",
         "geteuid", "getegid", "getuid", "getgid", "getgroups",
+        // The terminal fact and the two signal dispositions. `isatty` was
+        // absent for the same reason the platform helpers above were —
+        // nothing in the per-module link fixtures reaches it from a
+        // library-only module, and std/cli's colour gate is exactly such a
+        // caller. The two signal roots are marked through a VARIABLE rather
+        // than a literal (`s.need(sig_fn)`), so a grep for `.need("` does not
+        // find them either.
+        "isatty", "signal_ignore", "signal_default",
         // sockets + readiness (the edge-handler serve loop):
         "tcp_listen", "tcp_accept", "tcp_connect", "tcp_send", "tcp_recv", "udp_send",
         "tcp_close", "tcp_pollable", "poll", "timer_fd",

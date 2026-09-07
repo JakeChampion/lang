@@ -2660,16 +2660,28 @@ func builtinHostname(_ *Interp, args []Value) (Value, error) {
 // builtins take. The number is the caller's — the compiled backends pass
 // it straight to rt_sigaction, so a value the kernel rejects is the
 // caller's error there and is rejected here for the same reason.
-func signalArg(name string, args []Value) (syscall.Signal, error) {
+func signalArg(name string, args []Value) (syscall.Signal, bool, error) {
 	if len(args) != 1 {
-		return 0, fmt.Errorf("%s: expected 1 arg, got %d", name, len(args))
+		return 0, false, fmt.Errorf("%s: expected 1 arg, got %d", name, len(args))
 	}
 	n, ok := args[0].(Number)
 	if !ok {
-		return 0, fmt.Errorf("%s: expected number arg, got %T", name, args[0])
+		return 0, false, fmt.Errorf("%s: expected number arg, got %T", name, args[0])
 	}
-	return syscall.Signal(int32(int64(n))), nil
+	v := int64(n)
+	return syscall.Signal(int32(v)), v >= 1 && v <= maxSignal, nil
 }
+
+// maxSignal is the highest number these builtins will hand to os/signal.
+//
+// It is a guard against a HANG, not a validity check. Go's runtime indexes a
+// 65-entry sigtable, and `signal.Stop` on anything outside it never returns —
+// measured here: 0..64 return, -1 / 65 / 99 deadlock. The compiled backends
+// pass the number straight to rt_sigaction, which answers EINVAL, which they
+// ignore; so out of range they do nothing, and without this the interpreter
+// would hang where they no-op. 64 rather than 31 because Linux's realtime
+// signals run to 64 and are perfectly real dispositions to set.
+const maxSignal = 64
 
 // builtinSignalIgnore sets one signal's disposition to SIG_IGN.
 //
@@ -2681,9 +2693,12 @@ func signalArg(name string, args []Value) (syscall.Signal, error) {
 // interpreted program survives a broken pipe whether or not it asked
 // to. Ignoring it here still narrows the gap rather than widening it.
 func builtinSignalIgnore(_ *Interp, args []Value) (Value, error) {
-	sig, err := signalArg("signal_ignore", args)
+	sig, ok, err := signalArg("signal_ignore", args)
 	if err != nil {
 		return nil, err
+	}
+	if !ok {
+		return Void{}, nil
 	}
 	signal.Ignore(sig)
 	return Void{}, nil
@@ -2699,9 +2714,12 @@ func builtinSignalIgnore(_ *Interp, args []Value) (Value, error) {
 // undoes. Resetting alone therefore left an ignored SIGPIPE ignored, where
 // every compiled backend put the kill back.
 func builtinSignalDefault(_ *Interp, args []Value) (Value, error) {
-	sig, err := signalArg("signal_default", args)
+	sig, ok, err := signalArg("signal_default", args)
 	if err != nil {
 		return nil, err
+	}
+	if !ok {
+		return Void{}, nil
 	}
 	ch := make(chan os.Signal, 1)
 	signal.Notify(ch, sig)
