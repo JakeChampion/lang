@@ -549,6 +549,12 @@ function limfield(text: string, lo: i32, hi: i32, k: Key, tab: i32): i32 {
       eword = eword - 1;
     }
   }
+  // `b` on the end position moves the character offset past the end
+  // field's blanks; with no offset to move, the key ends where the
+  // field does and the blanks after it belong to the next field.
+  if (echar == 0) {
+    return ptr;
+  }
   if (k.skipeblanks) {
     while (ptr < hi && is_blank_b(text[ptr] as i32)) {
       ptr = ptr + 1;
@@ -1742,38 +1748,6 @@ function inherit(k: Key, g: Key): Key {
 // orderings — -n, -g, -h, -M — exclude each other and also exclude -R,
 // -V and the -d / -i filters; those three are compatible among
 // themselves, so `sort -RVd` is fine and `sort -nV` is not.
-function key_to_opts(k: Key): string {
-  var out: string = "";
-  if (k.ignore == ignore_nondictionary()) {
-    out = out + "d";
-  }
-  if (k.translate) {
-    out = out + "f";
-  }
-  if (k.general) {
-    out = out + "g";
-  }
-  if (k.human) {
-    out = out + "h";
-  }
-  if (k.ignore == ignore_nonprinting()) {
-    out = out + "i";
-  }
-  if (k.month) {
-    out = out + "M";
-  }
-  if (k.numeric) {
-    out = out + "n";
-  }
-  if (k.random) {
-    out = out + "R";
-  }
-  if (k.version) {
-    out = out + "V";
-  }
-  return out;
-}
-
 function check_ordering_compatibility(keys: Key[]): void {
   var i: i32 = 0;
   while (i < keys.len()) {
@@ -1802,10 +1776,289 @@ function check_ordering_compatibility(keys: Key[]): void {
       others = others + 1;
     }
     if (value_orders > 0 && others > 1) {
-      die("options '-" + key_to_opts(k) + "' are incompatible");
+      die("options '-" + key_to_opts(Key { ...k, skipsblanks: false, skipeblanks: false, reverse: false }) + "' are incompatible");
     }
     i = i + 1;
   }
+}
+
+// ---- --debug ----------------------------------------------------------------
+//
+// Every line is echoed with the span each key selected underlined, and
+// the ordering options are audited against the keys first. Two things
+// about the echo: a tab is shown as `>` so the columns line up, and the
+// width a byte occupies is not its length — a control byte other than
+// tab occupies none, DEL none, and a byte over 0x7f one.
+function byte_width(b: i32): i32 {
+  if (b == 9 || b >= 32 && b != 127) {
+    return 1;
+  }
+  return 0;
+}
+
+function debug_width(text: string, from: i32, to: i32): i32 {
+  var w: i32 = 0;
+  var i: i32 = from;
+  while (i < to) {
+    w = w + byte_width(text[i] as i32);
+    i = i + 1;
+  }
+  return w;
+}
+
+function mark_key(o: Out, offset: i32, width: i32): Out {
+  var out: Out = o;
+  if (offset > 0) {
+    out = out_put(out, " ".repeat(offset));
+  }
+  if (width == 0) {
+    return out_put(out, "^ no match for key\n");
+  }
+  return out_put(out, "_".repeat(width) + "\n");
+}
+
+// The end of the number `-n` and `-h` would read at `beg`: an optional
+// minus, then digits and decimal points, and for -h the unit letter
+// after them. A run with no digit at all is no match.
+function raw_number_end(text: string, beg: i32, lim: i32, human: boolean): i32 {
+  var p: i32 = beg;
+  if (p < lim && text[p] as i32 == 45) {
+    p = p + 1;
+  }
+  var saw: boolean = false;
+  while (p < lim) {
+    var c: i32 = text[p] as i32;
+    if (gnu.is_digit(c)) {
+      saw = true;
+    } else if (c != 46) {
+      break;
+    }
+    p = p + 1;
+  }
+  if (!saw) {
+    return beg;
+  }
+  if (human && p < lim && unit_order(text[p] as i32) != 0) {
+    p = p + 1;
+  }
+  return p;
+}
+
+// One underline row: the span key `k` reads, narrowed to the part an
+// ordering mode would actually convert.
+function debug_key(o: Out, c: Conf, text: string, lo: i32, hi: i32, k: Key, has_key: boolean): Out {
+  var beg: i32 = lo;
+  var lim: i32 = hi;
+  if (has_key) {
+    if (k.sword != 0 - 1) {
+      beg = begfield(text, lo, hi, k, c.tab);
+    }
+    if (k.eword != 0 - 1) {
+      lim = limfield(text, lo, hi, k, c.tab);
+      if (lim < beg) {
+        lim = beg;
+      }
+    }
+    if (k.skipsblanks && k.sword == 0 - 1 || k.month || key_numeric(k)) {
+      while (beg < lim && is_blank_b(text[beg] as i32)) {
+        beg = beg + 1;
+      }
+      var tighter: i32 = beg;
+      if (k.month) {
+        var m: (i32, i32) = getmonth(text, beg, lim);
+        tighter = m.1;
+      } else if (k.general) {
+        var f: ld.Format = ld.format();
+        var parsed: ld.Parse = f.strtold(slice_unchecked(text, beg, lim) + "");
+        tighter = beg + parsed.end;
+      } else if (key_numeric(k)) {
+        tighter = raw_number_end(text, beg, lim, k.human);
+      } else {
+        tighter = lim;
+      }
+      lim = tighter;
+    }
+  }
+  return mark_key(o, debug_width(text, lo, beg), debug_width(text, beg, lim));
+}
+
+// The line itself, then one row per key, then the whole line for the
+// last-resort comparison unless -u or -s dropped it.
+function debug_line(o: Out, c: Conf, text: string, lo: i32, hi: i32): Out {
+  var bs: u8[] = [];
+  var i: i32 = lo;
+  while (i < hi) {
+    var b: i32 = text[i] as i32;
+    if (b == 9) {
+      b = 62;
+    }
+    bs = bs.append(b as u8);
+    i = i + 1;
+  }
+  bs = bs.append(10 as u8);
+  var out: Out = out_put(o, string_from_bytes_unchecked(bs));
+  i = 0;
+  while (i < c.keys.len()) {
+    out = debug_key(out, c, text, lo, hi, c.keys[i], true);
+    i = i + 1;
+  }
+  if (c.keys.len() == 0 || !c.unique && !c.stable) {
+    out = debug_key(out, c, text, lo, hi, key_new(), false);
+  }
+  return out;
+}
+
+// The letters a key stands for, in the order GNU lists them. The
+// incompatibility report clears `b` and `r` first; the ignored-option
+// report keeps `b`.
+function key_to_opts(k: Key): string {
+  var out: string = "";
+  if (k.skipsblanks || k.skipeblanks) {
+    out = out + "b";
+  }
+  if (k.ignore == ignore_nondictionary()) {
+    out = out + "d";
+  }
+  if (k.translate) {
+    out = out + "f";
+  }
+  if (k.general) {
+    out = out + "g";
+  }
+  if (k.human) {
+    out = out + "h";
+  }
+  if (k.ignore == ignore_nonprinting()) {
+    out = out + "i";
+  }
+  if (k.month) {
+    out = out + "M";
+  }
+  if (k.numeric) {
+    out = out + "n";
+  }
+  if (k.random) {
+    out = out + "R";
+  }
+  if (k.reverse) {
+    out = out + "r";
+  }
+  if (k.version) {
+    out = out + "V";
+  }
+  return out;
+}
+
+// `+A[.x] [-B[.y]]` rewritten as the -k it means: the end word gains
+// one back because the obsolete form counts it exclusively.
+function obsolete_advice(k: Key): string {
+  var sword: i32 = k.sword;
+  if (sword < 0) {
+    sword = 0;
+  }
+  var old: string = "+" + sword.to_string();
+  var fresh: string = "-k " + (sword + 1).to_string();
+  if (k.eword != 0 - 1) {
+    old = old + " -" + (k.eword + 1).to_string();
+    fresh = fresh + "," + (k.eword + 1).to_string();
+  }
+  return "obsolescent key " + gnu.quote(old) + " used; consider " + gnu.quote(fresh) + " instead";
+}
+
+// Whether a key reads more than one field as one number, which makes
+// the separator part of the number it reads.
+function spans_fields(k: Key): boolean {
+  var sfield: i32 = k.sword;
+  if (sfield < 0) {
+    sfield = 0;
+  }
+  var efield: i32 = k.eword;
+  if (efield < 0) {
+    efield = 2147483647;
+  }
+  return sfield < efield;
+}
+
+function key_warnings(c: Conf, gkey: Key): void {
+  gnu.error("text ordering performed using simple byte comparison");
+  var ugkey: Key = gkey;
+  var span: boolean = false;
+  var any_numeric: boolean = false;
+  var i: i32 = 0;
+  while (i < c.keys.len()) {
+    var k: Key = c.keys[i];
+    var num: boolean = key_numeric(k);
+    if (num) {
+      any_numeric = true;
+    }
+    if (k.obsolete) {
+      gnu.error(obsolete_advice(k));
+    }
+    var zero_width: boolean = k.sword != 0 - 1 && k.eword != 0 - 1 && k.eword < k.sword;
+    if (zero_width) {
+      gnu.error("key " + (i + 1).to_string() + " has zero width and will be ignored");
+    }
+    var line_offset: boolean = k.eword == 0 && k.echar != 0;
+    var significant: boolean = !k.skipsblanks && !(num || k.month) || !k.skipeblanks && k.echar != 0;
+    if (!zero_width && !c.gkey_only && c.tab == tab_default() && !line_offset && significant) {
+      gnu.error("leading blanks are significant in key " + (i + 1).to_string() + "; consider also specifying 'b'");
+    }
+    if (!c.gkey_only && num && spans_fields(k)) {
+      gnu.error("key " + (i + 1).to_string() + " is numeric and spans multiple fields");
+      span = true;
+    }
+    ugkey = unused_globals(ugkey, k);
+    i = i + 1;
+  }
+  if (any_numeric) {
+    numeric_locale_warnings(c.tab, span);
+  }
+  if (!default_key_compare(ugkey)) {
+    var shown: Key = ugkey;
+    if (!c.gkey_only) {
+      shown = Key { ...shown, reverse: false };
+    }
+    var opts: string = key_to_opts(shown);
+    if (opts.len() == 1) {
+      gnu.error("option '-" + opts + "' is ignored");
+    } else {
+      gnu.error("options '-" + opts + "' are ignored");
+    }
+  }
+  if (ugkey.reverse && !c.gkey_only && c.keys.len() > 0) {
+    gnu.error("option '-r' only applies to last-resort comparison");
+  }
+}
+
+// The global options key `k` did not take over, so that what is left
+// once every key has been asked is what the run ignores.
+function unused_globals(u: Key, k: Key): Key {
+  var out: Key = u;
+  if (out.ignore != ignore_none() && out.ignore == k.ignore) {
+    out = Key { ...out, ignore: ignore_none() };
+  }
+  if (out.translate && k.translate) {
+    out = Key { ...out, translate: false };
+  }
+  return Key { ...out, skipsblanks: out.skipsblanks && !k.skipsblanks, skipeblanks: out.skipeblanks && !k.skipeblanks, month: out.month && !k.month, numeric: out.numeric && !k.numeric, general: out.general && !k.general, human: out.human && !k.human, random: out.random && !k.random, version: out.version && !k.version, reverse: out.reverse && !k.reverse };
+}
+
+// The decimal point the numbers are read with, and what a separator
+// that IS the decimal point (or a minus) does to a number spanning
+// fields.
+function numeric_locale_warnings(tab: i32, span: boolean): void {
+  if (tab == 46) {
+    if (span) {
+      gnu.error("field separator " + gnu.quote(".") + " is treated as a decimal point in numbers");
+    } else {
+      gnu.error("numbers use " + gnu.quote(".") + " as a decimal point in this locale");
+    }
+    return;
+  }
+  if (span && tab == 45) {
+    gnu.error("field separator " + gnu.quote("-") + " is treated as a minus sign in numbers");
+  }
+  gnu.error("note numbers use " + gnu.quote(".") + " as a decimal point in this locale");
 }
 
 // ---- the check --------------------------------------------------------------
@@ -2335,6 +2588,9 @@ function run(a0: Args): i32 {
     term = 0;
   }
   var c: Conf = Conf { keys: keys, tab: a.tab, reverse: a.gkey.reverse, unique: a.unique, stable: a.stable, term: term, seed: seed, debug: a.debug, gkey_only: gkey_only };
+  if (a.debug) {
+    key_warnings(c, a.gkey);
+  }
 
   if (a.checkonly != 0) {
     var text: string = slurp(files[0], "open failed");
@@ -2389,7 +2645,11 @@ function run(a0: Args): i32 {
       keep = compare(c, all, lo[prev], hi[prev], lo[j], hi[j]) != 0;
     }
     if (keep) {
-      out = out_put(out, slice_unchecked(all, lo[j], hi[j]) + tstr);
+      if (a.debug) {
+        out = debug_line(out, c, all, lo[j], hi[j]);
+      } else {
+        out = out_put(out, slice_unchecked(all, lo[j], hi[j]) + tstr);
+      }
       prev = j;
     }
     i = i + 1;
