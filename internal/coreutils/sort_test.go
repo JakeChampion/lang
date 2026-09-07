@@ -55,10 +55,12 @@ func sortCases(t *testing.T) []invocation {
 	namesEmpty := catFile(t, dir, "names1", ab+"\x00\x00")
 	namesDash := catFile(t, dir, "names2", "-\x00")
 
-	// Enough lines to cross every merge pass, with duplicate keys so
-	// stability is observable.
-	big := catFile(t, dir, "big", shuffledLines(20000))
-	bigStdin := shuffledLines(20000)
+	// Enough lines to cross a dozen merge passes, with duplicate keys so
+	// stability is observable. Kept to five thousand because the
+	// self-host leg runs the same corpus over a build with no -O, where
+	// a comparison costs far more than it does natively.
+	big := catFile(t, dir, "big", shuffledLines(5000))
+	bigStdin := shuffledLines(5000)
 
 	return []invocation{
 		// The plain sort.

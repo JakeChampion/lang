@@ -321,7 +321,7 @@ function tab_default(): i32 {
 }
 
 // ---- the run's settings -----------------------------------------------------
-struct Conf { keys: Key[], tab: i32, reverse: boolean, unique: boolean, stable: boolean, term: i32, seed: crypto.Md5, debug: boolean, gkey_only: boolean }
+struct Conf { keys: Key[], tab: i32, reverse: boolean, unique: boolean, stable: boolean, term: i32, seed: string, debug: boolean, gkey_only: boolean }
 
 // ---- diagnostics ------------------------------------------------------------
 function die(msg: string): void {
@@ -1113,9 +1113,15 @@ function filevercmp(text: string, a0: i32, a1: i32, b0: i32, b1: i32): i32 {
 // `-R` groups equal keys and shuffles the groups: the key's MD5 digest
 // under a state seeded from --random-source decides the order, and the
 // raw bytes break a digest tie so that equal keys stay together.
-function compare_random(seed: crypto.Md5, text: string, a0: i32, a1: i32, b0: i32, b1: i32): i32 {
-  var da: u8[] = seed.update(slice_unchecked(text, a0, a1) + "").final_bytes();
-  var db: u8[] = seed.update(slice_unchecked(text, b0, b1) + "").final_bytes();
+//
+// The state is rebuilt from the seed bytes per key rather than held as
+// one Md5 and updated twice, which is the linear use `std/crypto`
+// documents. It costs nothing — a shared state's pending block is
+// copied by every update anyway — and the shape it avoids is one the
+// self-host compiler miscompiles (#8825).
+function compare_random(seed: string, text: string, a0: i32, a1: i32, b0: i32, b1: i32): i32 {
+  var da: u8[] = crypto.md5_new().update(seed).update(slice_unchecked(text, a0, a1) + "").final_bytes();
+  var db: u8[] = crypto.md5_new().update(seed).update(slice_unchecked(text, b0, b1) + "").final_bytes();
   var i: i32 = 0;
   while (i < da.len()) {
     var x: i32 = da[i] as i32;
@@ -2563,9 +2569,9 @@ function batch_size(a: Args, v: string): Args {
   return a;
 }
 
-// The MD5 state `-R` hashes each key under: sixteen bytes read from
+// The sixteen bytes `-R` seeds each key's MD5 with: read from
 // --random-source, or from the default source when none was named.
-function random_seed(a: Args): crypto.Md5 {
+function random_seed(a: Args): string {
   var src: string = default_random_source();
   if (a.have_rand) {
     src = a.randsource;
@@ -2589,13 +2595,13 @@ function random_seed(a: Args): crypto.Md5 {
         }
       }
       r.close();
-      return crypto.md5_new().update(got);
+      return got;
     },
     Err(e) => {
       die_file("open failed", src, e);
     }
   }
-  return crypto.md5_new();
+  return "";
 }
 
 // Where `-R` gets its sixteen bytes when --random-source names no
@@ -2666,7 +2672,7 @@ function run(a0: Args): i32 {
     }
     i = i + 1;
   }
-  var seed: crypto.Md5 = crypto.md5_new();
+  var seed: string = "";
   if (need_random) {
     seed = random_seed(a);
   }
