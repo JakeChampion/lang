@@ -249,6 +249,92 @@ func TestWASMStrAppendRangeAllocsCollapse(t *testing.T) {
 	}
 }
 
+// strAppendWidePieceSrc is the shape a 12-byte range does not reach: pieces
+// WIDER than the slack the block-fit test leaves behind, appended past the
+// 2048-byte tier change, with a live heap string allocated mid-loop.
+//
+// A fit test that compares the grown request against anything but the total —
+// an arm64 register collision put a size-class intermediate there — still says
+// "grow in place" while the piece runs off the end of the block, and the
+// overrun lands in whatever the bump cursor hands out next. The accumulator's
+// own LENGTH stays right (it is stored, not measured), so only reading the
+// bytes back and checking a neighbouring allocation catches it. Both the
+// fused range form and the plain append are exercised, each against its own
+// guard.
+const strAppendWidePieceSrc = `function main(): i32 {
+    var s: string = "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ!?";
+    var out: string = "";
+    var guard: string = "";
+    var i: i32 = 0;
+    while (i < 200) {
+        out = out + slice_unchecked(s, 0, 40);
+        if (i == 100) { guard = s + "|guard|"; }
+        i = i + 1;
+    }
+    if (out.len() != 8000) { return 1; }
+    if (guard != s + "|guard|") { return 2; }
+    var j: i32 = 0;
+    while (j < 8000) {
+        if (slice_unchecked(out, j, j + 40) != slice_unchecked(s, 0, 40)) { return 3; }
+        j = j + 40;
+    }
+
+    var acc: string = "";
+    var g2: string = "";
+    var k: i32 = 0;
+    var piece: string = slice_unchecked(s, 8, 56) + "";
+    while (k < 200) {
+        acc = acc + piece;
+        if (k == 100) { g2 = s + "|two|"; }
+        k = k + 1;
+    }
+    if (acc.len() != 9600) { return 4; }
+    if (g2 != s + "|two|") { return 5; }
+    var m: i32 = 0;
+    while (m < 9600) {
+        if (slice_unchecked(acc, m, m + 48) != piece) { return 6; }
+        m = m + 48;
+    }
+    return 0;
+}`
+
+func TestStrAppendWidePiece(t *testing.T) {
+	prev := ast.RcFreeEnabled
+	ast.RcFreeEnabled = true
+	defer func() { ast.RcFreeEnabled = prev }()
+
+	t.Run("x86_64", func(t *testing.T) {
+		_, stderr, code := runLeakCheckX86_64(t, strAppendWidePieceSrc)
+		if code != 0 {
+			t.Fatalf("exit %d, want 0 (1/4 = wrong length, 2/5 = the neighbouring allocation was overwritten, 3/6 = a chunk read back wrong); stderr=%q", code, stderr)
+		}
+		allocs, frees, live := parseLeakCheckLine(t, stderr)
+		if allocs != frees || live != 0 {
+			t.Errorf("heap unbalanced: allocs=%d frees=%d live_bytes=%d", allocs, frees, live)
+		}
+	})
+	t.Run("arm64", func(t *testing.T) {
+		_, stderr, code := runLeakCheckArm64(t, strAppendWidePieceSrc)
+		if code != 0 {
+			t.Fatalf("exit %d, want 0 (1/4 = wrong length, 2/5 = the neighbouring allocation was overwritten, 3/6 = a chunk read back wrong); stderr=%q", code, stderr)
+		}
+		allocs, frees, live := parseLeakCheckLine(t, stderr)
+		if allocs != frees || live != 0 {
+			t.Errorf("heap unbalanced: allocs=%d frees=%d live_bytes=%d", allocs, frees, live)
+		}
+	})
+	t.Run("wasm", func(t *testing.T) {
+		_, stderr, code := runLeakCheckWasm(t, strAppendWidePieceSrc, false)
+		if code != 0 {
+			t.Fatalf("exit %d, want 0; stderr=%q", code, stderr)
+		}
+		allocs, frees, live := parseLeakCheckLine(t, stderr)
+		if allocs != frees || live != 0 {
+			t.Errorf("heap unbalanced: allocs=%d frees=%d live_bytes=%d", allocs, frees, live)
+		}
+	})
+}
+
 // The trap contract: the fused helper must reject exactly the ranges
 // __str_slice rejects — a < 0 || b > s.len() || a > b — and it has to do so on
 // the FAST path too, where no __str_slice call is left to check them. Each

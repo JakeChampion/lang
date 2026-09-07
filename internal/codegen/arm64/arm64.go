@@ -3728,8 +3728,10 @@ func (g *generator) emitStrAppendEligible(dataX, lenX, bail string) {
 }
 
 // emitStrAppendFits emits the capacity half of that test: branch to `bail`
-// unless a string of `totalX` bytes still fits the block a `laX`-byte one was
-// allocated from. x9..x13 are scratch.
+// unless a `laX`-byte string grown by `lbX` bytes still fits the block it was
+// allocated from. It takes the two lengths rather than the total so that no
+// caller has to keep the total live across it: x9..x13 are scratch here, and a
+// total parked in one of them would be read back as a size-class intermediate.
 //
 // Same-class is the exact test rather than a heuristic. An owned two-word heap
 // string comes from __fern_alloc_rc1(payload) — `payload + 8` rounded to 16,
@@ -3748,13 +3750,20 @@ func (g *generator) emitStrAppendEligible(dataX, lenX, bail string) {
 // Past the i32 length ceiling there is no representable result and the
 // capacity test can still match, so the ceiling is checked here and the grow
 // declined; __fern_strcat then traps on the same total.
-func (g *generator) emitStrAppendFits(laX, totalX, bail string) {
-	g.emit("lsr x9, %s, #31", totalX)
-	g.emit("cbnz x9, %s", bail) // total past the i32 length ceiling
+func (g *generator) emitStrAppendFits(laX, lbX, bail string) {
+	for _, r := range []string{laX, lbX} {
+		switch r {
+		case "x9", "x10", "x11", "x12", "x13":
+			panic("arm64: __fern_str_append length in a scratch register: " + r)
+		}
+	}
+	g.emit("add x9, %s, %s", laX, lbX) // total, in 64 bits so it cannot wrap
+	g.emit("lsr x10, x9, #31")
+	g.emit("cbnz x10, %s", bail) // total past the i32 length ceiling
+	g.emit("add x10, x9, #23")
+	g.emit("and x10, x10, #-16") // req_new = round16(total + 8)
 	g.emit("add x9, %s, #23", laX)
 	g.emit("and x9, x9, #-16") // req_old = round16(la + 8)
-	g.emit("add x10, %s, #23", totalX)
-	g.emit("and x10, x10, #-16") // req_new = round16(total + 8)
 	g.emitSizeClassCap("x9", "x11", "x12", "x13")
 	g.emit("cmp x10, x9")
 	g.emit("b.hi %s", bail)
@@ -3806,19 +3815,18 @@ func (g *generator) emitStrAppendRuntime() {
 	g.emit("mov x22, x3") // b_len
 	// lb needs the resolving read — `b` is commonly an inline piece. a's
 	// length is its raw len word once the heap test below passes.
-	g.emitStrLen2W("w24", "x22")
+	g.emitStrLen2W("w24", "x22") // lb
 	g.emitStrAppendEligible("x19", "x20", ".Lstrapp_copy")
-	g.emit("mov w23, w20")      // la
-	g.emit("add x24, x23, x24") // total = la + lb, in 64 bits so it cannot wrap
+	g.emit("mov w23, w20") // la
 	g.emitStrAppendFits("x23", "x24", ".Lstrapp_copy")
 	// In place: memcpy(a_data + la, b_data, lb).
 	g.emitStrDataPtr2W("x9", "x21", "x22", 64)
 	g.emit("add x0, x19, x23")
 	g.emit("mov x1, x9")
-	g.emit("sub x2, x24, x23") // lb
+	g.emit("mov x2, x24") // lb
 	g.emit("bl __fern_memcpy")
 	g.emit("mov x0, x19")
-	g.emit("mov x1, x24") // the grown length, still heap form
+	g.emit("add x1, x23, x24") // the grown length, still heap form
 	g.emit("b .Lstrapp_ret")
 	g.label(".Lstrapp_copy")
 	g.emit("mov x0, x19")
@@ -3892,9 +3900,8 @@ func (g *generator) emitStrAppendRangeRuntime() {
 	g.emit("b.gt .Lsarange_trap")
 	g.emit("sub x25, x24, x23") // lb = hi - lo
 	g.emitStrAppendEligible("x19", "x20", ".Lsarange_copy")
-	g.emit("mov w26, w20")     // la
-	g.emit("add x9, x26, x25") // total = la + lb
-	g.emitStrAppendFits("x26", "x9", ".Lsarange_copy")
+	g.emit("mov w26, w20") // la
+	g.emitStrAppendFits("x26", "x25", ".Lsarange_copy")
 	// In place: memcpy(a_data + la, s_data + lo, lb). The source can only be
 	// `a` itself when the range lies inside a's current length, which ends
 	// where the destination begins, so the two never overlap.
