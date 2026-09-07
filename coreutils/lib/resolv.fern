@@ -623,9 +623,6 @@ pub function dns_search(plan: SearchPlan, ask: (string) => (i32, i32)): (i32, i3
     if (lead.0 == success()) {
       return lead;
     }
-    if (lead.0 == refused()) {
-      return (unavail(), 0);
-    }
     saved = lead.0;
   }
   var got_servfail: boolean = false;
@@ -653,9 +650,6 @@ pub function dns_search(plan: SearchPlan, ask: (string) => (i32, i32)): (i32, i3
     var bare: (i32, i32) = ask(plan.as_is);
     if (bare.0 == success()) {
       return bare;
-    }
-    if (bare.0 == refused()) {
-      return (unavail(), 0);
     }
     last = bare.0;
   }
