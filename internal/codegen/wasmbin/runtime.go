@@ -481,12 +481,14 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					// environ_ptrs comparing each entry's prefix
 					// up to '=' against name. The matched value is
 					// copied into a fresh owned string via
-					// __fern_str_copy.
+					// __fern_str_copy. Preview 2 returns the
+					// get-environment retbuf through __free.
 					needs.add("__fern_alloc")
 					needs.add("__fern_alloc_rc1")
 					needs.add("__fern_str_copy")
 					needs.add("__fern_str_len")
 					needs.add("__fern_str_byte")
+					needs.add("__free")
 					needs.add("__fern_env")
 				case "__fern_read_byte":
 					// wasi_fd_read on stdin (fd=0) + alloc for
