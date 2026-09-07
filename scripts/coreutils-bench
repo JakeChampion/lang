@@ -308,6 +308,20 @@ PY
       printf 'join -o 0,1.2,2.3 two 1M-line files\ty\t{} -o 0,1.2,2.3 %s %s > /dev/null\n' "$ja" "$jb"
       printf 'join -v1 two 1M-line files\ty\t{} -v1 %s %s > /dev/null\n' "$ja" "$jc"
       ;;
+    nl)
+      # nl's cost is one line number formatted and one line copied, so
+      # the shapes are the default (only non-empty lines numbered), -ba
+      # (every line), -bn (none, a straight copy with a fixed pad), and
+      # the regex style, which runs lib/bre.fern over every line.
+      big="$out/text-64m.txt"
+      [ -f "$big" ] || "$gnu/seq" 1 8000000 > "$big"
+      printf 'nl a 62 MiB file\ty\t{} %s > /dev/null\n' "$big"
+      printf 'nl -ba a 62 MiB file\ty\t{} -ba %s > /dev/null\n' "$big"
+      printf 'nl -bn a 62 MiB file\ty\t{} -bn %s > /dev/null\n' "$big"
+      printf 'nl -n rz -w12 a 62 MiB file\ty\t{} -n rz -w12 %s > /dev/null\n' "$big"
+      printf 'nl -bp7 a 62 MiB file\ty\t{} -bp7 %s > /dev/null\n' "$big"
+      printf 'nl from a pipe\ty\t{gnu}/cat %s | {} > /dev/null\n' "$big"
+      ;;
     tr)
       # tr's whole cost is one table lookup per byte, so the shapes are:
       # a pure translation, a deletion (which also compacts), a squeeze
