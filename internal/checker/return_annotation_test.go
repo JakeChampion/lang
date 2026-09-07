@@ -99,3 +99,24 @@ func TestUnannotatedFunctionReportsOnce(t *testing.T) {
 		}
 	}
 }
+
+// A bare function name is typed as its own signature, so inferring the
+// return type of `function A() { return A; }` would install that signature
+// as its own result and every later walk of the type would recurse without
+// end (FuzzCheck found it as a stack overflow in FuncType.String).
+func TestSelfReturningInferenceIsRefused(t *testing.T) {
+	for _, src := range []string{
+		`function A() { return A; }`,
+		`function A() { { return A; } }`,
+		`function A() { return [A]; }`,
+	} {
+		err := checkSource(t, src)
+		if err == nil {
+			t.Errorf("expected an error for %q", src)
+			continue
+		}
+		if !strings.Contains(err.Error(), "returns itself") {
+			t.Errorf("%q: want the self-returning inference error, got: %v", src, err)
+		}
+	}
+}
