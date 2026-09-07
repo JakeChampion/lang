@@ -114,11 +114,14 @@ pub function (w: BytesWriter) reset(): BytesWriter {
 // with `.error()` — the C stdio contract, where a failed flush is
 // found at the next write or at close.
 //
-// The buffer is grown INSIDE the struct literal (`{ ...b, buf: b.buf
-// + s }`) on purpose: that is the shape the IR grows in place when the
-// writer is the sole owner. Reading the field into a local first
-// shares the buffer between the local and the field, and every append
-// then copies the whole buffer — quadratic.
+// The buffer is grown inside the struct literal (`{ ...b, buf: b.buf
+// + s }`) because E048 leaves no other way to write it. That shape
+// grows the buffer in place when the frame OWNS the box being updated
+// (#8785); here it does not, because borrow inference makes the
+// receiver the caller's, so a write still copies what is buffered.
+// The cost is bounded rather than quadratic — the buffer flushes at
+// `cap` — so a 4 KiB writer pays about 2 KB of memcpy per write.
+// #8785's parameter half is what removes it.
 pub struct BufWriter { w: Writer, buf: string, cap: i32, err: Option[IoError] }
 
 // `buf_writer_new(w, cap)` — buffer `w` with a `cap`-byte threshold.
@@ -145,9 +148,9 @@ pub function (b: BufWriter) write_byte(byte: i32): BufWriter {
 }
 
 // `(b).write_u64(n)` — append `n` in decimal. Each digit is a static
-// one-byte literal appended in place, so formatting a number costs no
-// allocation — unlike `n.to_string()`, which makes a string per call
-// and is most of what a counting utility's output loop spends.
+// one-byte literal, so formatting a number allocates nothing per
+// digit — unlike `n.to_string()`, which makes a string per call and
+// is most of what a counting utility's output loop spends.
 pub function (b: BufWriter) write_u64(n: u64): BufWriter {
   var p: u64 = 1 as u64;
   while (n / p >= 10 as u64) {

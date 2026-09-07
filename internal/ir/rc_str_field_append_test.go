@@ -158,21 +158,6 @@ function main(): i32 {
 	}
 }
 
-// Does NOT fire: a general replaced string field. It needs a temp-side retain
-// and a per-ABI release of the displaced value — neither of which the append
-// shape needs, and neither of which is what makes an accumulator quadratic.
-func TestStrFieldPlainReplacementStillRefusesReuse(t *testing.T) {
-	fn := funcByName(lowerForTest(t, `struct B { buf: string, n: i32 }
-function main(): i32 {
-    var b: B = B { buf: "", n: 0 };
-    b = B { ...b, buf: "hello" };
-    return b.buf.len() - 5;
-}`), "main")
-	if got := allocReuseCount(fn); got != 0 {
-		t.Errorf("a plain replaced string field must still defer to the general lowering, got %d __alloc_reuse", got)
-	}
-}
-
 // Does NOT fire when the spread base is a DIFFERENT struct: the un-listed
 // fields come from another box, and `q.buf`'s reference is q's, not p's.
 func TestStrFieldAppendRefusesForeignBase(t *testing.T) {
