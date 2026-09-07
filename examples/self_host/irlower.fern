@@ -7413,8 +7413,11 @@ pub function expr_is_str(e: ast.Expr, s: LowerState): boolean {
                     // binding takes the string reclaim path). Unlike read_line it
                     // is a bare string, not an Option[string].
                     if (cid.name == "read_all_stdin" && c.args.len() == 0) { return true; }
-                    // hostname() boxes the node name the same way.
+                    // hostname() boxes the node name the same way, and so do
+                    // uname_field(i) and getcwd().
                     if (cid.name == "hostname" && c.args.len() == 0) { return true; }
+                    if (cid.name == "uname_field" && c.args.len() == 1) { return true; }
+                    if (cid.name == "getcwd" && c.args.len() == 0) { return true; }
                     // arg_at(i) boxes argv[i] into a fresh string, so it str-tracks
                     // the same way — the element of the string[] that args() builds.
                     if (cid.name == "arg_at" && c.args.len() == 1) { return true; }
@@ -12262,6 +12265,8 @@ function is_os_query_call(name: string, argc: i32): boolean {
     if (name == "geteuid" || name == "getegid" || name == "hostname") { return argc == 0; }
     if (name == "getuid" || name == "getgid") { return argc == 0; }
     if (name == "getgroups" || name == "environ") { return argc == 0; }
+    if (name == "getcwd" || name == "cpu_count") { return argc == 0; }
+    if (name == "uname_field") { return argc == 1; }
     return false;
 }
 
@@ -12281,6 +12286,9 @@ function is_os_query_call(name: string, argc: i32): boolean {
 //                         through expr_is_strarr's matching case).
 //   hostname()          → op_hostname → a fresh string box (the result
 //                         str-tracks through expr_is_str's matching case).
+//   uname_field(i)      → op_uname_field → one field of the utsname record,
+//                         boxed the same way; getcwd() the working directory.
+//   cpu_count()         → op_cpu_count → a bare i32, no operands.
 function lower_call_os_query(c: ast.ExprCall, cid: ast.ExprIdent, s: LowerState): LowerState {
     if (cid.name == "geteuid") { return s.emit(ir.op_geteuid()); }
     if (cid.name == "getegid") { return s.emit(ir.op_getegid()); }
@@ -12289,9 +12297,12 @@ function lower_call_os_query(c: ast.ExprCall, cid: ast.ExprIdent, s: LowerState)
     if (cid.name == "getgroups") { return s.emit(ir.op_getgroups()); }
     if (cid.name == "environ") { return s.emit(ir.op_environ()); }
     if (cid.name == "hostname") { return s.emit(ir.op_hostname()); }
+    if (cid.name == "getcwd") { return s.emit(ir.op_getcwd()); }
+    if (cid.name == "cpu_count") { return s.emit(ir.op_cpu_count()); }
     var a0: LowerState = lower_expr(c.args[0], s);
     if (!a0.ok) { return a0; }
     if (cid.name == "isatty") { return a0.emit(ir.op_isatty()); }
+    if (cid.name == "uname_field") { return a0.emit(ir.op_uname_field()); }
     var a1: LowerState = lower_expr(c.args[1], a0);
     if (!a1.ok) { return a1; }
     return a1.emit(ir.op_access());

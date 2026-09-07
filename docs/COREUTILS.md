@@ -177,7 +177,11 @@ coreutils/
                     wording depends on it (tac)
   lib/bre.fern      regular expressions as glibc compiles them —
                     POSIX basic for expr, syntax 0 (Emacs) for tac -r,
-                    with glibc's regerror texts as the diagnostics
+                    anchored or searched over a range of a buffer for
+                    nl and csplit, with a literal and a literal-prefix
+                    fast path ahead of glibc's fastmap and the
+                    simulation, and glibc's regerror texts as the
+                    diagnostics
   lib/ld.fern       C's `long double` as the TARGET has it, for the
                     utilities that convert and compute in one
                     (printf, numfmt, seq, sleep)
@@ -198,6 +202,9 @@ coreutils/
   lib/utmp.fern     the login-accounting record: the fixed-size utmp
                     entry and the scans over it, for logname today and
                     users / who / pinky next
+  lib/sys.fern      the five fields of the kernel's utsname record, by
+                    name, for the utilities that print the record
+                    (uname) or one field of it (arch)
   lib/resolv.fern   glibc's IPv4 name lookup — /etc/hosts, the
                     `hosts:` line of nsswitch.conf, resolv.conf and an
                     RFC 1035 A query — for the utilities that resolve
@@ -434,6 +441,60 @@ The one row where BOTH lose to uutils is the plain copy, 3.6 ms against 7.1:
 uutils reaches for `copy_file_range(2)` and moves the bytes without a
 round trip through user space, where Fern and GNU both read and write.
 
+`csplit`, 2026-09-07, Linux x86-64, same 62 MiB file, GNU 9.4 and uutils
+0.0.24:
+
+| utility | workload | fern (ms) | gnu (ms) | uutils (ms) | gnu / fern | uutils / fern |
+|---|---|---|---|---|---|---|
+| `csplit` | at line 4000000 | 73.84 ± 6.53 | 202.38 ± 14.60 | 307.41 ± 19.71 | 2.74× | 4.16× |
+| `csplit` | at `/4000000/` | 91.30 ± 7.62 | 438.14 ± 28.42 | 329.38 ± 22.80 | 4.80× | 3.61× |
+| `csplit` | at `/^4000000$/` | 82.12 ± 4.35 | 432.46 ± 27.22 | 353.35 ± 20.94 | 5.27× | 4.30× |
+| `csplit` | at a never-matching regexp | 95.23 ± 5.98 | 586.37 ± 21.36 | 304.75 ± 18.08 | 6.16× | 3.20× |
+| `csplit` | into 80 pieces | 107.52 ± 7.09 | 199.04 ± 19.22 | 325.51 ± 13.56 | 1.85× | 3.03× |
+| `csplit` | at a literal-prefixed class | 81.24 ± 7.54 | 429.90 ± 31.43 | 329.92 ± 28.81 | 5.29× | 4.06× |
+| `csplit` | at an alternation | 7189.63 ± 199.20 | 440.62 ± 23.76 | 327.17 ± 20.39 | 0.06× | 0.05× |
+
+Reading it: csplit never materialises a line. The break point is found by
+walking newlines with `__memchr` over whole read blocks, the piece is one
+write of a byte range, and `lib/bre.fern` is asked about a RANGE of the
+buffer rather than a string cut out of it — which is what the first draft
+did, at 8 000 000 allocations for the workload.
+
+The last row is the one that loses, and it is the regexp engine rather than
+csplit (#8820): a pattern that is entirely a literal, or that STARTS with
+one, is answered by a byte scan, and everything else runs the Thompson
+simulation over every byte at several heap operations per position. An
+alternation has no literal prefix, so the only filter left is the fastmap
+— the set of bytes a match can begin with — which an alternation of
+ordinary words barely narrows. `nl -bp`, `expr` and `tac -r` reach the
+same engine, so the same work pays for all four.
+
+`od`, 2026-09-07, Linux x86-64, the same 62 MiB file (and a 1 MiB one for
+the float row), GNU 9.4:
+
+| utility | workload | fern (ms) | gnu (ms) | gnu / fern |
+|---|---|---|---|---|
+| `od` | default (`-t o2`) | 6023 | 3252 | 0.54× |
+| `od` | `-t x1` | 5677 | 5588 | 0.98× |
+| `od` | `-t x1 -w64` | 4626 | 5394 | 1.17× |
+| `od` | `-t x8` | 4888 | 944 | 0.19× |
+| `od` | `-c` | 6405 | 5700 | 0.89× |
+| `od` | `-A n -t x1` | 4676 | 5635 | 1.21× |
+| `od` | `-S 4` | 568 | 515 | 0.91× |
+| `od` | `-t f8` of 1 MiB | 6685 | 160 | 0.02× |
+
+Reading it: od's cost splits into a per-FIELD part, which is close to
+GNU's, and a per-BLOCK part, which is not. The three `-t x1` rows are the
+same fields over 3.9 M, 977 K and 242 K blocks, and the ratio walks from
+0.98 to 1.17 as the block count falls; `-t x8` has two fields a block and
+is nearly all of the per-block cost. That cost is `u8[]`'s append, which
+allocates rather than growing, and a byte buffer handed to a function,
+which the callee's first write copies (#8498) — folding five call
+boundaries into one already took `-t x1` from 11.0 s to 5.7. The float row
+is a different gap: the shortest-round-trip search runs `lib/ld.fern`'s
+EXACT decimal expansion once per attempt, where glibc has a purpose-built
+dtoa. Both are #8828.
+
 Group B's fifth, 2026-09-07, Linux x86-64, the same 62 MiB / 8 000 000-line
 file, GNU 9.4 and uutils 0.0.24. The same 4-core container with other agents'
 builds on it — the σ is mostly theirs, and the rows within 20% of parity are
@@ -466,6 +527,7 @@ per file through the shared string buffer (`strbuf_append`) is what is here,
 and it is 10x better and still 3x off GNU: what remains is 8 million
 `slice_unchecked(...) + ""` materialisations, one per record, which is exactly
 the append #8770 wants to fuse.
+
 `tac`, 2026-09-06, the same container and the same 62 MiB file, with
 uutils 0.0.24 (the Debian multi-call binary the script now finds) and a
 588 KiB file — 100 000 lines of `seq` — for the regular-expression row.
@@ -520,8 +582,10 @@ a local in `tac_backward` appended to inline, which is the only shape that
 grows in place today: 1.13 s → 0.39 s.
 
 The `-r` row is a third engine again: a backward `re_search` runs the
-thread simulation once per candidate start, with only the fastmap to skip
-positions.
+thread simulation once per candidate start, with nothing but the
+start-position filter — the literal prefix where the pattern has one, the
+fastmap otherwise — to skip positions.
+
 The seven checksum utilities, 2026-09-06, Linux x86-64 (GNU coreutils 9.4;
 uutils 0.0.24 as the Debian multi-call binary; another agent's bench was
 running on the same four cores, which is where the wider σ comes from). The
@@ -596,6 +660,37 @@ The startup rows are the same static-binary margin `true` and `echo` measure,
 widened: GNU pays the dynamic loader AND `dlopen`s libcrypto before it hashes
 a hundred bytes.
 
+Group C's first four, 2026-09-07, Linux x86-64 (GNU coreutils 9.4; uutils
+0.0.24 as the Debian multi-call binary):
+
+| utility | workload | fern (ms) | gnu (ms) | uutils (ms) | gnu / fern | uutils / fern |
+|---|---|---|---|---|---|---|
+| `uname` | uname | 0.18 ± 0.36 | 0.99 ± 0.51 | 1.93 ± 0.48 | 5.60× | 10.89× |
+| `uname` | uname -a | 0.18 ± 0.36 | 1.03 ± 0.46 | 1.92 ± 0.77 | 5.58× | 10.44× |
+| `arch` | arch | 0.17 ± 0.36 | 1.09 ± 0.86 | 1.95 ± 0.65 | 6.46× | 11.52× |
+| `nproc` | nproc | 0.23 ± 0.38 | 1.22 ± 0.58 | 2.37 ± 0.78 | 5.27× | 10.23× |
+| `nproc` | nproc --all | 0.39 ± 0.61 | 1.27 ± 0.68 | 2.27 ± 0.71 | 3.26× | 5.81× |
+| `nproc` | nproc --ignore=1 | 0.35 ± 0.58 | 1.25 ± 0.73 | 2.48 ± 1.61 | 3.53× | 6.99× |
+| `pwd` | pwd | 0.21 ± 0.51 | 1.44 ± 1.36 | 2.05 ± 0.93 | 7.02× | 9.97× |
+| `pwd` | pwd -L | 0.29 ± 0.47 | 1.19 ± 0.56 | 2.18 ± 0.65 | 4.10× | 7.48× |
+
+All four are startup-bound, so the margin is the same static-binary one
+`true` and `echo` measure, and `strace -c` says where it comes from: each of
+these runs **four syscalls** — execve, the one the utility is about, write,
+exit_group — against GNU's 38, which is the dynamic loader before main.
+
+Nothing else in the table is signal. Every Fern row is 0.17–0.39 ms and every
+difference between two of them is inside its own σ, `uname` against `uname -a`
+included: one uname(2) fills the whole record whichever fields are asked for,
+and one write puts them out.
+
+**At this scale the σ is the machine, not the program.** A table taken while
+another agent's bench has the same four cores comes back with σ larger than
+the mean and these eight ratios spread over a factor of five — enough to
+invent an explanation for a row that is not there. That is what the "only
+comparable within one run on one machine" above costs when it is ignored, and
+a sub-millisecond utility is where it costs the most.
+
 Group C's identity slice, 2026-09-07, Linux x86-64 (GNU coreutils 9.4;
 uutils 0.0.24 as the Debian multi-call binary). All five are
 startup-bound, so the whole table is one comparison made five ways:
@@ -631,7 +726,80 @@ group names are resolved in ONE pass over /etc/group rather than a pass
 per gid — the shape that would otherwise be quadratic in the group
 count.
 
+`sort`, 2026-09-07, Linux x86-64 (GNU coreutils 9.4, uutils 0.0.24). 500 000
+lines of eleven lowercase letters, and for `-n` the same many signed ten-digit
+integers:
+
+| utility | workload | fern (ms) | gnu (ms) | uutils (ms) | gnu / fern | uutils / fern |
+|---|---|---|---|---|---|---|
+| `sort` | 500k lines | 369.47 ± 13.85 | 114.92 ± 7.06 | 112.37 ± 10.43 | 0.31× | 0.30× |
+| `sort` | `-n` 500k numbers | 1061.38 ± 45.26 | 143.24 ± 15.83 | 190.42 ± 7.72 | 0.13× | 0.18× |
+| `sort` | `-k2,2n` 500k lines | 2649.59 ± 79.30 | 138.27 ± 5.51 | 196.55 ± 7.14 | 0.05× | 0.07× |
+| `sort` | `-k1,1` 500k lines | 1013.66 ± 31.01 | 112.99 ± 3.90 | 140.78 ± 6.86 | 0.11× | 0.14× |
+| `sort` | `-u` 500k lines | 381.77 ± 21.53 | 110.85 ± 4.74 | 127.34 ± 27.82 | 0.29× | 0.33× |
+| `sort` | `-r` 500k lines | 371.89 ± 24.12 | 97.47 ± 5.33 | 89.35 ± 4.63 | 0.26× | 0.24× |
+| `sort` | `-s` 500k lines | 371.55 ± 21.99 | 97.01 ± 6.07 | 101.17 ± 8.78 | 0.26× | 0.27× |
+| `sort` | 500k lines from a pipe | 365.45 ± 17.17 | 162.16 ± 9.46 | 100.13 ± 12.54 | 0.44× | 0.27× |
+| `sort` | a sorted 500k-line file | 200.78 ± 10.00 | 37.49 ± 1.82 | 31.97 ± 2.39 | 0.19× | 0.16× |
+| `sort` | `-c` a sorted 500k-line file | 45.65 ± 2.62 | 8.13 ± 0.96 | 16.26 ± 3.01 | 0.18× | 0.36× |
+| `sort` | `-m` two sorted files | 242.28 ± 11.61 | 31.43 ± 2.70 | 95.14 ± 7.61 | 0.13× | 0.39× |
+
+**This is the first utility here that is slower than GNU everywhere, and the
+reason is not in the utility (#8822).** The algorithm is GNU's — a stable merge
+over packed line offsets — and the cost is the price of one Fern instruction on
+the x86-64 emitter: locals live in memory, a boolean goes through push/pop, and
+one `text[i]` is thirteen instructions because the small-string check and the
+bounds check are redone per access. On top of that `ir.Inline` does nothing at
+all above 20 000 whole-program ops, which a coreutil with `lib/gnu.fern` and
+`lib/ld.fern` clears easily, so a one-line predicate is a real call: expanding
+the digit test by hand inside `magcompare` was worth a third of `sort -n`.
+Roughly half of GNU's lead on the first row is threads (`--parallel=1` puts GNU
+at 810 ms there); the rest, and all of the `-n` gap, is per-instruction cost.
+
+Two changes inside the utility paid before that floor was reached, both
+measured: holding a line as one packed i64 rather than two parallel offset
+arrays (2.85 s to 1.95 s on 2M lines — two scattered reads per comparison
+became one sequential one), and dropping a redundant NUL scan from the numeric
+path. What is left there is a per-line cache of the first key's span, which is
+what GNU's `struct line` carries and what would close most of the `-k` rows;
+#8822 has the shape.
+
 ## Known divergences
+
+**`od -t fL` prints a canonical value for an encoding x87 never
+produces.** The 80-bit extended format has bit patterns that are not
+values: an unnormal (a non-zero exponent with the stored integer bit
+clear) and a pseudo-denormal (a zero exponent with it set). od.fern reads
+the first as NaN, which is what the FPU answers and what GNU prints, and
+the second as glibc's `__mpn_extract_long_double` does — the 63-bit
+fraction, normalised, with the integer bit contributing nothing. That
+agrees with GNU on every pseudo-denormal measured except one whose only
+set bit IS the integer bit, where GNU prints the value the bit would have
+carried, and it can differ in the last place for the others because
+GNU's shortest-round-trip search cannot round-trip a value `strtold` will
+not produce. Real data does not contain these: a pseudo-denormal needs a
+zero exponent field under a set integer bit, which no computation writes.
+
+**`csplit -w0` and `od -w0` are not in the corpus.** GNU 9.4 aborts on
+`csplit -b` with a zero-width block — `bytes_per_block` comes out 0 and a
+later assertion fires, with no diagnostic and a SIGABRT — and od's own
+width handling past INT_MAX prints integer-overflow artefacts rather than
+answers (`od -w2147483648` runs the fields together, `od -w4294967296`
+dumps nothing). Reproducing a crash is not a behaviour worth matching,
+and Fern has no `abort()` to match it with; od refuses a width past
+INT_MAX with GNU's own `memory exhausted`, which is what GNU says for a
+width of a terabyte.
+
+**`od -S` between the host's memory and PTRDIFF_MAX.** GNU sizes a buffer
+from the minimum string length and allocates it before it scans, so a
+length larger than the machine can allocate is `memory exhausted` rather
+than a run nothing reaches — on the dev container the break is somewhere
+between 8 GiB, which it accepts, and 64 GiB, which it does not. That
+boundary is the host's, so od.fern refuses only at PTRDIFF_MAX and above,
+where no host can serve the allocation and glibc's malloc always fails.
+Between the two it prints nothing and exits 0, as GNU does on a machine
+with the memory. The corpus covers both deterministic sides and nothing in
+the band.
 
 **`tac` holds a non-seekable input in memory.** tac reads its input
 backwards, so a pipe has to be stored before the first record can be
@@ -647,6 +815,20 @@ buffer boundaries and `^` anchors in the same places. What differs is
 memory — the input's size rather than a block — and that GNU's
 `failed to create temporary file` is unreachable here, so an unwritable
 `$TMPDIR` under an unprivileged user fails on GNU and succeeds on this.
+**`uname -p` and `-i` print the machine name, as Linux distributions'
+GNU does.** Upstream coreutils can answer neither on Linux — the two
+`#if`s in uname.c are a Solaris `sysinfo(2)` and a BSD `sysctl`, and glibc
+has neither — so an upstream build prints `unknown` for both and `-a`
+omits them. Every distribution patches that to the machine name: Debian,
+Ubuntu, Fedora and RHEL all ship it, `setarch linux32 uname -p` follows
+`-m` to `i686`, and the binaries this corpus is compared against on the
+Ubuntu runners are among them. So that is what `uname.fern` prints, and
+the `-a` omission rule is live only on Darwin, where upstream's own
+answers stand: `-p` is the CPU family (`arm`, not `arm64`) and `-i` is
+genuinely unknown, so `-a` drops it. The one environment where this
+diverges is a distribution shipping unpatched coreutils — Arch is the
+example — where the corpus fails loudly on the `-p` / `-i` / `-a` cases
+rather than passing something wrong.
 
 **`hostid` asks DNS over TCP.** The id is glibc's `gethostid`: `/etc/hostid`
 if it holds four bytes, else the hostname's IPv4 address with its halves
@@ -740,6 +922,16 @@ BOTH ways, which nothing did before the self-host leg: `.bytes()` is an
 intrinsic there, so the one stdlib site never reaches the self-host's
 lowering. `base64` wanted it — raw scratch buffers run the encode at 165 ms
 against the 460 ms `u8[]` with `.with()` costs — and ships without it.
+**A process cannot read its own resource limits (#8819).** GNU `sort` caps
+`--batch-size` at what `getrlimit (RLIMIT_NOFILE, …)` reports minus the three
+standard descriptors, and names that number when a value exceeds it:
+`maximum --batch-size argument with current rlimit is 19997`. Fern has no way
+to ask, so `sort.fern` reproduces the option's other two diagnostics exactly
+and accepts any value at or above the minimum of 2. `--batch-size` changes no
+byte of output on either side — it is an external-merge fan-in, and this sort
+holds the whole input in memory — so the gap is one diagnostic pair, and the
+corpus carries no case above the cap until the primitive exists.
+
 
 **A process-liveness query (#8767).** `tail --pid=PID` stops following once
 that process exits, which GNU asks as `kill (pid, 0)`. Fern can run a child
@@ -805,7 +997,11 @@ reads anything and `tail` needs to read a regular file from its end — landed
 as `r.stat()` / `w.stat()` / `r.seek()` on every backend. `hostid` wanted a
 primitive rather than a fix — `hostname()`, gethostname(2) on every backend
 (#8529) — and got it under its own capability rather than a one-off syscall
-on one backend. A gap met later gets an issue and a fix, never a corpus
+on one backend. Group C's first four wanted three more the same way:
+`uname_field(i)` and `cpu_count()` under `sysinfo`, `getcwd()` under `cwd`,
+each refused on both wasm worlds by E066 rather than answered with a
+fiction — neither WASI preview has a utsname record, a processor count or a
+current directory. A gap met later gets an issue and a fix, never a corpus
 carve-out.
 
 None. Both Fern gaps the first utilities met — `IoError.Other` carrying no
@@ -830,20 +1026,22 @@ groups are the order of work. Each sub-issue names its group.
   `unexpand` `split` `csplit` `shuf` `od` `base32` `base64` `basenc` `cksum`
   `sum` `md5sum` `sha1sum` `sha224sum` `sha256sum` `sha384sum` `sha512sum`
   `b2sum` `tee`. Done: `cat`, `tac`, `head`, `tail`, `wc`, `nl`, `cut`,
-  `paste`, `join`, `comm`, `uniq`, `tr`, `fold`, `expand`, `unexpand`,
-  `split`, `base32`, `base64`, `basenc` and the seven checksum utilities.
-  Needs a buffered stdout writer in `std/io_buffered` (its own header
-  already promises one) and a streaming stdin reader whose reads can FAIL:
-  every one of these reaches a read error through a directory operand, and
-  `Reader.read_chunk` answered None to EOF and to EISDIR alike until #8700
-  gave it `Result[string, IoError]`. The hash
+  `paste`, `join`, `comm`, `uniq`, `sort`, `tr`, `fold`, `expand`, `unexpand`,
+  `split`, `csplit`, `od`, `base32`, `base64`, `basenc` and the seven
+  checksum utilities. Needs a buffered stdout writer in `std/io_buffered`
+  (its own header already promises one) and a streaming stdin reader whose
+  reads can FAIL: every one of these reaches a read error through a directory
+  operand, and `Reader.read_chunk` answered None to EOF and to EISDIR alike
+  until #8700 gave it `Result[string, IoError]`. The hash
   utilities have their digests: `std/crypto` streams MD5, SHA-1,
   SHA-224/256/384/512 and BLAKE2b (`h = h.update(chunk)` per `read_chunk`
   piece), and `std/hash` has cksum's CRC-32 and both sum(1) checksums with
   their block counts. `tail -f` waits for group C.
 - **C. needs a runtime primitive first** — everything that reads the process
   or the filesystem beyond `read_file` / `stat` / `read_dir`: `pwd`
-  (getcwd), `tty` (ttyname), `nproc` (affinity), `uname` `arch` (uname),
+  (getcwd), `tty` (ttyname), `nproc` (affinity), `uname` `arch` (uname)
+  — those four done, on `getcwd()`, `cpu_count()` and `uname_field(i)`
+  under the new `cwd` and `sysinfo` target capabilities —
   `whoami` `id` `groups` `logname` (done) `users` `who`
   `pinky` (uid, passwd, utmp), `printenv` (done) `env` (the whole
   environ, exec), `link` `ln` `readlink`

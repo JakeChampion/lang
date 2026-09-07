@@ -65,7 +65,7 @@ pub struct Descriptor {
 // native's own note claims for it.
 function capability_profile(profile: string): string[] {
     if (profile == "hosted-native") {
-        return ["log", "now", "env", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "signal", "subprocess"];
+        return ["log", "now", "env", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "subprocess"];
     }
     if (profile == "wasi-cli") {
         // fs is preview1's fd helpers and tcp is wasi:sockets; there is no
@@ -297,6 +297,19 @@ pub function gated_builtins(): Gate[] {
         // component rather than a fiction, so wasi-cli grants it where it
         // refuses `userid`.
         Gate { builtin: "hostname", capability: "host" },
+
+        // The MACHINE: the kernel's utsname record (`uname_field`) and how
+        // many processing units the process may use (`cpu_count`). Neither
+        // WASI preview has either, and a guess would name a kernel the
+        // component is not running on, so this is its own capability rather
+        // than a corner of `host`.
+        Gate { builtin: "uname_field", capability: "sysinfo" },
+        Gate { builtin: "cpu_count", capability: "sysinfo" },
+
+        // The process's working directory. Separate from `fs` for the same
+        // reason: WASI resolves every path against a preopened descriptor
+        // and has no current directory to report.
+        Gate { builtin: "getcwd", capability: "cwd" },
 
         // Signal dispositions. A signal is something a HOST delivers to a
         // process; wasi-cli grants these and answers with a no-op, since a

@@ -36,14 +36,37 @@ import "std/io_buffered";
 import "./lib/gnu";
 import "./lib/pwdb";
 
-function opt_context(): i32 { return 1; }
-function opt_group(): i32 { return 2; }
-function opt_groups(): i32 { return 3; }
-function opt_name(): i32 { return 4; }
-function opt_real(): i32 { return 5; }
-function opt_user(): i32 { return 6; }
-function opt_zero(): i32 { return 7; }
-function opt_ignored(): i32 { return 8; }
+function opt_context(): i32 {
+  return 1;
+}
+
+function opt_group(): i32 {
+  return 2;
+}
+
+function opt_groups(): i32 {
+  return 3;
+}
+
+function opt_name(): i32 {
+  return 4;
+}
+
+function opt_real(): i32 {
+  return 5;
+}
+
+function opt_user(): i32 {
+  return 6;
+}
+
+function opt_zero(): i32 {
+  return 7;
+}
+
+function opt_ignored(): i32 {
+  return 8;
+}
 
 function help_text(): string {
   var out: string = "";
@@ -119,7 +142,6 @@ function process_context(): string {
 }
 
 // ---- the operand ------------------------------------------------------------
-
 function is_blank_byte(c: i32): boolean {
   return c == 32 || c == 9 || c == 10 || c == 11 || c == 12 || c == 13;
 }
@@ -146,13 +168,13 @@ function operand_uid(spec: string): Option[i64] {
     if (c < 48 || c > 57) {
       return None;
     }
-    v = v * (10 as i64) + ((c - 48) as i64);
-    if (v > (4294967295 as i64)) {
+    v = v * (10 as i64) + (c - 48) as i64;
+    if (v > 4294967295 as i64) {
       return None;
     }
     i = i + 1;
   }
-  if (v == (4294967295 as i64)) {
+  if (v == 4294967295 as i64) {
     return None;
   }
   return Some(v);
@@ -176,7 +198,6 @@ function lookup_user(spec: string): Option[pwdb.User] {
 }
 
 // ---- printing ---------------------------------------------------------------
-
 // One line's worth of output plus whether every name it wanted existed.
 pub struct Out { w: io_buffered.BufWriter, ok: boolean }
 
@@ -293,7 +314,6 @@ function print_full_info(o: Out, ruid: i64, rgid: i64, euid: i64, egid: i64, all
 }
 
 // ---- the run ----------------------------------------------------------------
-
 pub struct Mode { user: boolean, group: boolean, groups: boolean, context: boolean, name: boolean, real: boolean, zero: boolean }
 
 // One operand's (or the process's) output, terminator included.

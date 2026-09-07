@@ -201,26 +201,47 @@ pub function is_blank(c: i32): boolean {
 // `parse_units(s)` — glibc's strtoumax over `s` followed by a gnulib
 // multiplier suffix (xstrtoumax with "bkKmMGTPEZYRQ0"): leading blanks
 // and a `+` are accepted, `1b` is 512, `1kB` is 1000 and `1KiB` is
-// 1024. Returns (value, status): 0 accepted, 1 malformed, 2 the digits
-// themselves past uintmax_t, 3 the suffix multiply past it.
+// 1024. A suffix with NO digits in front of it is the number 1, which
+// is gnulib's rule and not an oversight — `head -c b` is 512 bytes.
+// Returns (value, status): 0 accepted, 1 nothing numeric at all, 2 the
+// digits themselves past uintmax_t, 3 the suffix multiply past it, 4 a
+// suffix that is not one (`1x`), which glibc reports separately from 1.
 //
 // The two overflows are separate because glibc's are: strtoumax sets
 // ERANGE for 2 and leaves errno alone for 3, and tail's obsolete form
 // prints the raw errno, so `-36028797018963968b` gets no strerror text
 // while `-18446744073709551616b` gets `Numerical result out of range`.
-// A caller that reaches xstrtol_fatal instead — head's and tail's `-n`
-// and `-c` — words both as `: Value too large for defined data type`,
-// so it tests `status >= 2` rather than flattening the two here.
+// The two malformed codes are separate because od's are: `od -j x` is
+// `invalid -j argument` and `od -j 1x` is `invalid suffix in -j
+// argument`. A caller with one wording for each pair asks
+// `count_malformed` and `count_overflow` rather than the numbers.
 //
 // `parse_number` is the same without the suffixes (xstrtoumax with ""),
 // for tail's `--max-unchanged-stats` and `--pid`; with no suffix to
-// multiply by it never returns 3.
+// multiply by it never returns 3, and a bare suffix is malformed there
+// because there are no valid ones.
 pub function parse_units(s: string): (u64, i32) {
   return parse_count(s, true);
 }
 
 pub function parse_number(s: string): (u64, i32) {
   return parse_count(s, false);
+}
+
+// Whether `c` starts a multiplier suffix, which is what lets a suffix
+// with no digits in front of it stand for 1.
+function is_suffix(c: i32): boolean {
+  return c == 98 || suffix_power(c) > 0;
+}
+
+// `count_malformed(status)` — the two ways parse_units refuses a string
+// as a number; `count_overflow` the two ways it refuses the value.
+pub function count_malformed(status: i32): boolean {
+  return status == 1 || status == 4;
+}
+
+pub function count_overflow(status: i32): boolean {
+  return status == 2 || status == 3;
 }
 
 function parse_count(s: string, suffixes: boolean): (u64, i32) {
@@ -231,10 +252,14 @@ function parse_count(s: string, suffixes: boolean): (u64, i32) {
   if (i < s.len() && s[i] as i32 == 43) {
     i = i + 1;
   }
-  if (i >= s.len() || !is_digit(s[i] as i32)) {
+  var starts: boolean = i < s.len() && is_digit(s[i] as i32);
+  if (!starts && !(suffixes && i < s.len() && is_suffix(s[i] as i32))) {
     return (0 as u64, 1);
   }
-  var v: u64 = 0 as u64;
+  var v: u64 = 1 as u64;
+  if (starts) {
+    v = 0 as u64;
+  }
   var over: boolean = false;
   var digits_over: boolean = false;
   while (i < s.len() && is_digit(s[i] as i32)) {
@@ -265,7 +290,7 @@ function parse_count(s: string, suffixes: boolean): (u64, i32) {
     } else {
       var p: i32 = suffix_power(c);
       if (p == 0) {
-        return (0 as u64, 1);
+        return (0 as u64, 4);
       }
       i = i + 1;
       var base: u64 = 1024 as u64;
@@ -290,7 +315,7 @@ function parse_count(s: string, suffixes: boolean): (u64, i32) {
     }
   }
   if (i != s.len()) {
-    return (0 as u64, 1);
+    return (0 as u64, 4);
   }
   if (!over && !digits_over) {
     match (v.checked_mul(mul)) {
@@ -309,6 +334,53 @@ function parse_count(s: string, suffixes: boolean): (u64, i32) {
     return (0 as u64, 3);
   }
   return (v, 0);
+}
+
+// `posix2_version()` — gnulib's: `_POSIX2_VERSION` in the environment
+// when it is a whole strtol number, else 200809. Which POSIX a utility
+// is asked for decides whether its obsolete syntax is still read:
+// tail's `+N`, sort's `+POS`.
+pub function posix2_version(): i64 {
+  match (env("_POSIX2_VERSION")) {
+    Some(v) => {
+      match (strtol_all(v)) {
+        Some(n) => {
+          return n;
+        },
+        None => {}
+      }
+    },
+    None => {}
+  }
+  return 200809 as i64;
+}
+
+// strtol over the whole string: leading blanks, a sign, digits and
+// nothing after them; more than eighteen digits is out of range.
+function strtol_all(s: string): Option[i64] {
+  var i: i32 = 0;
+  while (i < s.len() && is_blank(s[i] as i32)) {
+    i = i + 1;
+  }
+  var neg: boolean = false;
+  if (i < s.len() && (s[i] as i32 == 43 || s[i] as i32 == 45)) {
+    neg = s[i] as i32 == 45;
+    i = i + 1;
+  }
+  var v: i64 = 0 as i64;
+  var digits: i32 = 0;
+  while (i < s.len() && is_digit(s[i] as i32)) {
+    v = v * (10 as i64) + (s[i] as i32 - 48) as i64;
+    i = i + 1;
+    digits = digits + 1;
+  }
+  if (digits == 0 || digits > 18 || i != s.len()) {
+    return None;
+  }
+  if (neg) {
+    return Some(0 as i64 - v);
+  }
+  return Some(v);
 }
 
 // `digit_option(argv)` — the digit byte a digit declared as an option
@@ -960,6 +1032,14 @@ pub function optional_long(short: string, long: string, id: i32): Opt {
   return Opt { short: short_byte(short), long: long, short_arg: 0, arg: 2, id: id };
 }
 
+// `valued_optional_long(short, long, id)` — the other split shape, od's
+// `-S`: the short spelling REQUIRES a value and the long one takes it
+// only when glued, so `od -S 3 f` reads the 3 and `od --strings f`
+// takes the default.
+pub function valued_optional_long(short: string, long: string, id: i32): Opt {
+  return Opt { short: short_byte(short), long: long, short_arg: 1, arg: 2, id: id };
+}
+
 function short_byte(short: string): i32 {
   if (short.len() == 0) {
     return 0;
@@ -969,8 +1049,11 @@ function short_byte(short: string): i32 {
 
 // `OptMatch` — one option occurrence: its `id`, and the value when
 // the option took one. `has_value` separates "no value" from an
-// empty one for the `optional` shape.
-pub struct OptMatch { id: i32, value: string, has_value: boolean }
+// empty one for the `optional` shape, and `long_form` says which
+// spelling was typed: gnulib's xstrtol_fatal names the option the way
+// it was written, so `-S x` and `--buffer-size=x` word the same fault
+// differently.
+pub struct OptMatch { id: i32, value: string, has_value: boolean, long_form: boolean }
 
 // `Getopt` — the scan state. `cluster` is what is left of a short
 // cluster still being consumed (without its dash); `operands` are
@@ -1017,13 +1100,15 @@ pub function operand_id(): i32 {
   return 0 - 3;
 }
 
-// `(g).return_in_order()` — the `-` optstring prefix of uniq(1): every
-// operand is handed back by `next()` as `operand_id()` in argv order
-// instead of being permuted out, and POSIXLY_CORRECT no longer ends the
-// scan, because glibc lets the prefix outrank it. A utility asks for
-// this when an operand's MEANING depends on what came before it — uniq's
-// `+N` is a skip-chars count until a file operand has been seen and a
-// file name after that — and stops the scan itself with `stop()`.
+// `(g).return_in_order()` — the `-` optstring prefix of uniq(1) and
+// sort(1): every operand is handed back by `next()` as `operand_id()` in
+// argv order instead of being permuted out, and POSIXLY_CORRECT no
+// longer ends the scan, because glibc lets the prefix outrank it. A
+// utility asks for this when an operand's MEANING depends on what came
+// before it — uniq's `+N` is a skip-chars count until a file operand has
+// been seen and a file name after that, and sort's `-k` spans are
+// positional against the files around them — and stops the scan itself
+// with `stop()`.
 pub function (g: Getopt) return_in_order(): Getopt {
   return Getopt { ...g, report_operands: true, in_order: false };
 }
@@ -1043,7 +1128,7 @@ pub function (g: Getopt) next(): (Option[OptMatch], Getopt) {
     }
     if (!is_option(a)) {
       if (s.report_operands) {
-        return (Some(OptMatch { id: operand_id(), value: a, has_value: true }), Getopt { ...s, i: s.i + 1 });
+        return (Some(OptMatch { id: operand_id(), value: a, has_value: true, long_form: false }), Getopt { ...s, i: s.i + 1 });
       }
       if (s.in_order) {
         return (None, take_rest(s));
@@ -1075,7 +1160,7 @@ pub function (g: Getopt) operands(): string[] {
 // `m.value`. join(1) is the caller — `join -o 1.1 2.2 f1 f2` gives -o
 // two arguments, and only the count of what follows says so.
 pub function (g: Getopt) next_argv_order(): (i32, OptMatch, Getopt) {
-  var nil: OptMatch = OptMatch { id: 0, value: "", has_value: false };
+  var nil: OptMatch = OptMatch { id: 0, value: "", has_value: false, long_form: false };
   if (g.cluster.len() > 0) {
     var r: (Option[OptMatch], Getopt) = short_option(g);
     match (r.0) {
@@ -1095,7 +1180,7 @@ pub function (g: Getopt) next_argv_order(): (i32, OptMatch, Getopt) {
       continue;
     }
     if (s.past_dashdash || !is_option(a)) {
-      return (2, OptMatch { id: 0, value: a, has_value: true }, Getopt { ...s, i: s.i + 1 });
+      return (2, OptMatch { id: 0, value: a, has_value: true, long_form: false }, Getopt { ...s, i: s.i + 1 });
     }
     s = Getopt { ...s, i: s.i + 1 };
     if (a.starts_with("--")) {
@@ -1153,6 +1238,23 @@ pub function (g: Getopt) at_negative_number(): boolean {
   return b == 46 || b >= 48 && b <= 57;
 }
 
+// `(g).peek()` — the argv token the cursor is on, or None at the end,
+// and `(g).advance()` consumes it. Together they are getopt's
+// `argv[optind]` / `optind++`, which sort(1) reads directly: the
+// obsolete `+POS -POS` takes its second half off argv rather than
+// through the scan, so `-2` there is a key end and not
+// `invalid option -- '2'`.
+pub function (g: Getopt) peek(): Option[string] {
+  if (g.cluster.len() > 0 || g.i >= g.argv.len()) {
+    return None;
+  }
+  return Some(g.argv[g.i]);
+}
+
+pub function (g: Getopt) advance(): Getopt {
+  return Getopt { ...g, i: g.i + 1 };
+}
+
 // `(g).stop()` — end the scan: every remaining token is an operand.
 pub function (g: Getopt) stop(): Getopt {
   return take_rest(g);
@@ -1184,17 +1286,17 @@ function short_option(g: Getopt): (Option[OptMatch], Getopt) {
   }
   var o: Opt = g.opts[k];
   if (o.short_arg == 0) {
-    return (Some(OptMatch { id: o.id, value: "", has_value: false }), Getopt { ...g, cluster: rest });
+    return (Some(OptMatch { id: o.id, value: "", has_value: false, long_form: false }), Getopt { ...g, cluster: rest });
   }
   if (o.short_arg == 2) {
-    return (Some(OptMatch { id: o.id, value: rest, has_value: rest.len() > 0 }), Getopt { ...g, cluster: "" });
+    return (Some(OptMatch { id: o.id, value: rest, has_value: rest.len() > 0, long_form: false }), Getopt { ...g, cluster: "" });
   }
   if (rest.len() > 0) {
-    return (Some(OptMatch { id: o.id, value: rest, has_value: true }), Getopt { ...g, cluster: "" });
+    return (Some(OptMatch { id: o.id, value: rest, has_value: true, long_form: false }), Getopt { ...g, cluster: "" });
   }
   if (g.i < g.argv.len()) {
     var v: string = g.argv[g.i];
-    return (Some(OptMatch { id: o.id, value: v, has_value: true }), Getopt { ...g, cluster: "", i: g.i + 1 });
+    return (Some(OptMatch { id: o.id, value: v, has_value: true, long_form: false }), Getopt { ...g, cluster: "", i: g.i + 1 });
   }
   die_usage("option requires an argument -- '" + slice_unchecked(g.cluster, 0, 1) + "'", g.status);
   return (None, g);
@@ -1271,7 +1373,7 @@ function long_option(g: Getopt, a: string): (Option[OptMatch], Getopt) {
   if (o.id == version_id()) {
     print_version(g.name, 0, g.status);
   }
-  return (Some(OptMatch { id: o.id, value: value, has_value: has }), s);
+  return (Some(OptMatch { id: o.id, value: value, has_value: has, long_form: true }), s);
 }
 
 // `parse_standard_options_only(argv, name, help_text, status)` —

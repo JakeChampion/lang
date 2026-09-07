@@ -1,0 +1,285 @@
+// nproc.fern — GNU-compatible `nproc`.
+//
+//   nproc [--all] [--ignore=N]    print the number of processing units
+//
+// Two different questions, and the default is the narrower one: how many
+// units may THIS PROCESS run on (the affinity mask, so `taskset -c 0,2
+// nproc` says 2), against `--all`'s how many the machine has installed.
+//
+// The default is also overridable by the environment, which `--all` is
+// not: OMP_NUM_THREADS replaces the count outright and OMP_THREAD_LIMIT
+// caps it, both parsed the lenient way OpenMP specifies — leading and
+// trailing blanks allowed, and a nested-level list accepted for its
+// first element, since nothing here can tell which level it names.
+//
+// `--ignore=N` subtracts, with a floor of 1: asking to leave more units
+// free than exist still leaves one.
+import "std/u64";
+import "./lib/gnu";
+
+function help_text(): string {
+  var out: string = "";
+  out = out + "Usage: " + gnu.prog() + " [OPTION]...\n";
+  out = out + "Print the number of processing units available to the current process,\n";
+  out = out + "which may be less than the number of online processors\n";
+  out = out + "\n";
+  out = out + "      --all      print the number of installed processors\n";
+  out = out + "      --ignore=N  if possible, exclude N processing units\n";
+  out = out + "      --help        display this help and exit\n";
+  out = out + "      --version     output version information and exit\n";
+  return out;
+}
+
+function opt_all(): i32 {
+  return 1;
+}
+
+function opt_ignore(): i32 {
+  return 2;
+}
+
+// The largest `unsigned long`, which is the width GNU counts in. It is
+// the "no limit" value for OMP_THREAD_LIMIT and what an OMP variable
+// past the width saturates to, because strtoul saturates there and
+// nothing looks at the ERANGE it sets.
+function ulong_max(): u64 {
+  return 18446744073709551615 as u64;
+}
+
+function is_space(b: i32): boolean {
+  return b == 32 || b == 9 || b == 10 || b == 11 || b == 12 || b == 13;
+}
+
+// One OpenMP thread-count variable: leading blanks, decimal digits,
+// then either end of string or a `,` beginning the next nesting level,
+// with blanks allowed before it. Anything else — a missing variable, a
+// non-digit first byte, trailing junk — is 0, which means "not set" to
+// both callers.
+function parse_omp(name: string): u64 {
+  var raw: string = "";
+  match (env(name)) {
+    Some(v) => {
+      raw = v;
+    },
+    None => {
+      return 0 as u64;
+    }
+  }
+  var i: i32 = 0;
+  while (i < raw.len() && is_space(raw[i] as i32)) {
+    i = i + 1;
+  }
+  if (i >= raw.len() || !gnu.is_digit(raw[i] as i32)) {
+    return 0 as u64;
+  }
+  var v: u64 = 0 as u64;
+  var over: boolean = false;
+  while (i < raw.len() && gnu.is_digit(raw[i] as i32)) {
+    var d: u64 = (raw[i] as i32 - 48) as u64;
+    match (v.checked_mul(10 as u64)) {
+      Some(m) => {
+        match (m.checked_add(d)) {
+          Some(a) => {
+            v = a;
+          },
+          None => {
+            over = true;
+          }
+        }
+      },
+      None => {
+        over = true;
+      }
+    }
+    i = i + 1;
+  }
+  while (i < raw.len() && is_space(raw[i] as i32)) {
+    i = i + 1;
+  }
+  if (i < raw.len() && raw[i] as i32 != 44) {
+    return 0 as u64;
+  }
+  if (over) {
+    return ulong_max();
+  }
+  return v;
+}
+
+// How many units the process may run on: the affinity mask's population
+// count. A kernel that will not say leaves the caller with 1, which is
+// what every implementation of this question falls back to.
+function available_count(): u64 {
+  var n: i32 = cpu_count();
+  if (n <= 0) {
+    return 1 as u64;
+  }
+  return n as u64;
+}
+
+// Whether `name` is a per-CPU directory: `cpu` followed by at least one
+// digit and nothing else. `cpufreq` and `cpuidle` sit beside them and
+// are what the digit test excludes.
+function is_cpu_dir(name: string): boolean {
+  if (!name.starts_with("cpu") || name.len() < 4) {
+    return false;
+  }
+  var i: i32 = 3;
+  while (i < name.len()) {
+    if (!gnu.is_digit(name[i] as i32)) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+// How many units are INSTALLED, which no syscall reports: glibc counts
+// the per-CPU directories the kernel publishes under
+// /sys/devices/system/cpu, and falls back to the `processor` lines of
+// /proc/cpuinfo where that hierarchy is absent. This is that pair, and
+// then the same 1 as above.
+function installed_count(): u64 {
+  match (read_dir("/sys/devices/system/cpu")) {
+    Ok(entries) => {
+      var n: i32 = 0;
+      var i: i32 = 0;
+      while (i < entries.len()) {
+        if (is_cpu_dir(entries[i])) {
+          n = n + 1;
+        }
+        i = i + 1;
+      }
+      if (n > 0) {
+        return n as u64;
+      }
+    },
+    Err(_) => {}
+  }
+  match (read_file("/proc/cpuinfo")) {
+    Ok(text) => {
+      var n: i32 = count_processor_lines(text);
+      if (n > 0) {
+        return n as u64;
+      }
+    },
+    Err(_) => {}
+  }
+  return available_count();
+}
+
+// The `processor` lines of /proc/cpuinfo — one per installed unit. The
+// name has to start the line, so a `model name` mentioning the word is
+// not counted.
+function count_processor_lines(text: string): i32 {
+  var word: string = "processor";
+  var n: i32 = 0;
+  var i: i32 = 0;
+  var at_line_start: boolean = true;
+  while (i < text.len()) {
+    if (at_line_start && starts_word(text, i, word)) {
+      n = n + 1;
+    }
+    at_line_start = text[i] as i32 == 10;
+    i = i + 1;
+  }
+  return n;
+}
+
+// Whether `text` holds `word` at `at`. A byte compare rather than a
+// slice: `slice_unchecked` copies, and this runs once per byte of the
+// file.
+function starts_word(text: string, at: i32, word: string): boolean {
+  if (at + word.len() > text.len()) {
+    return false;
+  }
+  var k: i32 = 0;
+  while (k < word.len()) {
+    if (text[at + k] != word[k]) {
+      return false;
+    }
+    k = k + 1;
+  }
+  return true;
+}
+
+function min_u64(a: u64, b: u64): u64 {
+  if (a < b) {
+    return a;
+  }
+  return b;
+}
+
+function main(): i32 {
+  var opts: gnu.Opt[] = [];
+  opts = opts.append(gnu.flag("", "all", opt_all()));
+  opts = opts.append(gnu.valued("", "ignore", opt_ignore()));
+
+  var all: boolean = false;
+  var ignore: u64 = 0 as u64;
+  var g: gnu.Getopt = gnu.getopt_new(args(), opts, "nproc", help_text(), 1);
+  while (true) {
+    var res: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    g = res.1;
+    match (res.0) {
+      Some(m) => {
+        if (m.id == opt_all()) {
+          all = true;
+        } else if (m.id == opt_ignore()) {
+          ignore = parse_ignore(m.value);
+        }
+      },
+      None => {
+        break;
+      }
+    }
+  }
+  var operands: string[] = g.operands();
+  if (operands.len() > 0) {
+    gnu.die_usage("extra operand " + gnu.quote(operands[0]), 1);
+  }
+
+  var n: u64 = count_for(all);
+  if (ignore < n) {
+    n = n - ignore;
+  } else {
+    n = 1 as u64;
+  }
+  gnu.write_out(n.to_string() + "\n");
+  return 0;
+}
+
+// `--ignore=N`: a plain unsigned decimal, no suffixes. The diagnostic is
+// gnulib's xdectoumax, which is NOT a usage error — it names the value
+// and exits without the `Try …` line.
+function parse_ignore(v: string): u64 {
+  var r: (u64, i32) = gnu.parse_number(v);
+  if (r.1 == 0) {
+    return r.0;
+  }
+  var msg: string = "invalid number: " + gnu.quote(v);
+  if (r.1 >= 2) {
+    msg = msg + ": Value too large for defined data type";
+  }
+  gnu.error(msg);
+  exit(1);
+  return 0 as u64;
+}
+
+// The count before `--ignore` applies. `--all` asks the machine and
+// stops there; the default asks the affinity mask and lets the two
+// OpenMP variables override and cap it — which is why the limit is read
+// only on this side.
+function count_for(all: boolean): u64 {
+  if (all) {
+    return installed_count();
+  }
+  var limit: u64 = parse_omp("OMP_THREAD_LIMIT");
+  if (limit == 0 as u64) {
+    limit = ulong_max();
+  }
+  var threads: u64 = parse_omp("OMP_NUM_THREADS");
+  if (threads != 0 as u64) {
+    return min_u64(threads, limit);
+  }
+  return min_u64(available_count(), limit);
+}

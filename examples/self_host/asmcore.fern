@@ -472,6 +472,8 @@ pub function sysno(t: string, name: string): string {
         if (name == "getgid") { return "104"; }
         if (name == "getgroups") { return "115"; }
         if (name == "uname") { return "63"; }
+        if (name == "getcwd") { return "79"; }
+        if (name == "sched_getaffinity") { return "204"; }
         if (name == "sigaction") { return "13"; }
         return "-1";
     }
@@ -520,6 +522,10 @@ pub function sysno(t: string, name: string): string {
         if (name == "getuid") { return "24"; }
         if (name == "getgid") { return "47"; }
         if (name == "getgroups") { return "79"; }
+        // XNU's __getcwd. Same (buf, size) shape as Linux's; only the RETURN
+        // differs (0 here, the length there), which rt_src_getcwd sidesteps by
+        // measuring the buffer instead.
+        if (name == "getcwd") { return "296"; }
         // XNU's sigaction is 3-argument where Linux's rt_sigaction is 4; the
         // extra `sigsetsize` is ignored here, so one body serves both (see
         // rt_src_signal_disposition).
@@ -569,6 +575,10 @@ pub function sysno(t: string, name: string): string {
     // No Darwin row: XNU has no uname syscall (libc builds it from sysctl),
     // so asm_arm64_ir keeps a hand-written kern.hostname body for that target.
     if (name == "uname") { return "160"; }
+    if (name == "getcwd") { return "17"; }
+    // No Darwin row: XNU has no affinity mask, so asm_arm64_ir keeps a
+    // hand-written hw.activecpu body for that target.
+    if (name == "sched_getaffinity") { return "123"; }
     return "-1";
 }
 
@@ -1844,6 +1854,34 @@ pub function rt_src_access(t: string): string {
 // is 256 bytes.
 pub function rt_src_hostname(t: string): string {
     return "function __fern_hostname(): string { var buf: i32 = __raw_alloc(390); var n: i32 = 0; if (__syscall3(" + sysno(t, "uname") + ", buf, 0, 0) == 0) { while (n < 65 && __raw_load8(buf, 65 + n) != 0) { n = n + 1; } } var p: i32 = __raw_alloc(n); __memcpy(p, __raw_addr(buf, 65), n); return __raw_string(p, n); }";
+}
+
+// rt_src_uname_field backs `uname_field(i)` on Linux → one field of the
+// utsname record as a fresh string. Same 390-byte, six-by-65-byte record
+// rt_src_hostname reads; the index selects the field rather than pinning
+// nodename. An index naming no field leaves the length at zero, which is the
+// same empty answer a refused uname gets.
+pub function rt_src_uname_field(t: string): string {
+    return "function __fern_uname_field(idx: i32): string { var buf: i32 = __raw_alloc(390); var n: i32 = 0; var off: i32 = 0; if (idx >= 0 && idx < 5) { off = idx * 65; if (__syscall3(" + sysno(t, "uname") + ", buf, 0, 0) == 0) { while (n < 65 && __raw_load8(buf, off + n) != 0) { n = n + 1; } } } var p: i32 = __raw_alloc(n); __memcpy(p, __raw_addr(buf, off), n); return __raw_string(p, n); }";
+}
+
+// rt_src_getcwd backs `getcwd()` → the process's working directory as a fresh
+// string. The buffer's first byte is zeroed before the call and the length is
+// then measured from the bytes, so the two kernels' different SUCCESS returns
+// (Linux answers the length including the NUL, XNU 0) need no branch: a
+// refusal writes nothing, and the leading NUL reads back as the empty string.
+pub function rt_src_getcwd(t: string): string {
+    return "function __fern_getcwd(): string { var buf: i32 = __raw_alloc(4096); __raw_store8(buf, 0, 0); __syscall3(" + sysno(t, "getcwd") + ", buf, 4096, 0); var n: i32 = 0; while (n < 4096 && __raw_load8(buf, n) != 0) { n = n + 1; } var p: i32 = __raw_alloc(n); __memcpy(p, __raw_addr(buf, 0), n); return __raw_string(p, n); }";
+}
+
+// rt_src_cpu_count backs `cpu_count()` on Linux → the population count of the
+// affinity mask sched_getaffinity(2) writes, which is how many processing
+// units the process may actually run on. The syscall answers the mask's size
+// in bytes; a refusal answers 0, which is the builtin's "cannot say". The
+// count is byte-wise rather than a popcount op so the body stays inside the
+// runtime-function subset.
+pub function rt_src_cpu_count(t: string): string {
+    return "function __fern_cpu_count(): i32 { var buf: i32 = __raw_alloc(128); var i: i32 = 0; while (i < 128) { __raw_store8(buf, i, 0); i = i + 1; } var rc: i32 = __syscall3(" + sysno(t, "sched_getaffinity") + ", 0, 128, buf); if (rc <= 0) { return 0; } if (rc > 128) { rc = 128; } var total: i32 = 0; var k: i32 = 0; while (k < rc) { var b: i32 = __raw_load8(buf, k); while (b != 0) { total = total + (b & 1); b = b >> 1; } k = k + 1; } return total; }";
 }
 
 // rt_src_getid backs `geteuid()` / `getegid()` — one argument-free syscall

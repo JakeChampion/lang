@@ -58,6 +58,14 @@ pub function binary64(): Format {
   return Format { mant: 53, emax: 1023, explicit_bit: false };
 }
 
+// IEEE binary32: C's `float` everywhere Fern targets. Not a `long
+// double` anywhere, but a caller that reads floats out of a byte buffer
+// (`od -t f4`) wants the same conversions this module gives the wider
+// two, and a second copy of them is a second place for the same bug.
+pub function binary32(): Format {
+  return Format { mant: 24, emax: 127, explicit_bit: false };
+}
+
 // `format()` — the target's. Darwin is the only environment that
 // narrows the type to `double`, and x86-64 the only ISA that carries
 // x87; every other target is the AAPCS64 / clang quad. There is no

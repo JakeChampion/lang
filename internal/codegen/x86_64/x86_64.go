@@ -258,6 +258,12 @@ const (
 	// uname(2): x86-64 syscall 63. Backs `__fern_hostname`, which reads
 	// the nodename field out of the 390-byte struct utsname.
 	sysUname = 63
+	// getcwd(2): x86-64 syscall 79. Backs `__fern_getcwd`; the kernel
+	// answers the length INCLUDING the NUL, or -errno.
+	sysGetcwd = 79
+	// sched_getaffinity(2): x86-64 syscall 204. Backs `__fern_cpu_count`,
+	// which population-counts the mask the kernel writes back.
+	sysSchedGetaffinity = 204
 	// prctl(2) / seccomp(2): x86-64 syscalls 157 / 317. Used only by
 	// __fern_seccomp_install under ast.SandboxEnabled (#6071).
 	sysPrctl   = 157
@@ -895,6 +901,15 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	if g.usesHostname {
 		g.emitHostnameRuntime()
 	}
+	if g.usesUnameField {
+		g.emitUnameFieldRuntime()
+	}
+	if g.usesGetcwd {
+		g.emitGetcwdRuntime()
+	}
+	if g.usesCPUCount {
+		g.emitCPUCountRuntime()
+	}
 	if g.usesReaderWriter {
 		// Bundle: open_reader/writer/appender + stdin/stdout/
 		// stderr handle constructors + Reader.read_line /
@@ -1335,6 +1350,9 @@ type generator struct {
 	usesGetgroups  bool
 	usesEnviron    bool
 	usesHostname   bool
+	usesUnameField bool
+	usesGetcwd     bool
+	usesCPUCount   bool
 	usesIoError    bool
 	// usesCreateDirAll pulls in the `mkdir -p` runtime
 	// (`__fern_create_dir_all(path) → Result[void, IoError]`), the
@@ -1796,6 +1814,16 @@ func (g *generator) recordUse(target string) {
 		g.usesHostname = true
 		g.usesAlloc = true
 		g.usesMemcpy = true
+	case "uname_field":
+		g.usesUnameField = true
+		g.usesAlloc = true
+		g.usesMemcpy = true
+	case "getcwd":
+		g.usesGetcwd = true
+		g.usesAlloc = true
+		g.usesMemcpy = true
+	case "cpu_count":
+		g.usesCPUCount = true
 	}
 }
 
@@ -3324,6 +3352,12 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_environ"
 		case "hostname":
 			target = "__fern_hostname"
+		case "uname_field":
+			target = "__fern_uname_field"
+		case "getcwd":
+			target = "__fern_getcwd"
+		case "cpu_count":
+			target = "__fern_cpu_count"
 		case "random_bytes":
 			target = "__fern_random_bytes"
 		case "random_i32":
@@ -5866,7 +5900,7 @@ func (g *generator) emitDataSections() {
 			g.line("\t.quad 0")
 		}
 	}
-	needsEmpty := g.usesStrcat || g.usesStrSlice || g.usesStringFromBytes || g.usesRemoveDirAll || g.usesHostname
+	needsEmpty := g.usesStrcat || g.usesStrSlice || g.usesStringFromBytes || g.usesRemoveDirAll || g.usesHostname || g.usesUnameField || g.usesGetcwd
 	needsEnumSentinels := len(g.enumSentinelTags) > 0
 	if len(g.stringOrder) > 0 || g.usesPuts || g.usesEprint || needsEmpty || needsEnumSentinels || g.usesArrEmpty || ast.LeakCheckEnabled || ast.RcTrace || len(g.coverSites) > 0 {
 		g.line("")
@@ -14125,6 +14159,150 @@ func (g *generator) emitHostnameRuntime() {
 	g.emit("pop rbp")
 	g.emit("ret")
 	g.line(".size __fern_hostname, .-__fern_hostname")
+}
+
+// emitUnameFieldRuntime emits `__fern_uname_field(i)` → a fresh rc
+// string holding one field of the utsname record uname(2) fills: six
+// 65-byte fields, each NUL-terminated within its own, indexed 0 sysname
+// through 4 machine. An index naming no field, a refused uname and an
+// empty field all answer the shared empty-string sentinel.
+// System V: edi = the index.
+func (g *generator) emitUnameFieldRuntime() {
+	g.line("")
+	g.line(".globl __fern_uname_field")
+	g.line(".type __fern_uname_field, @function")
+	g.label("__fern_uname_field")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx")     // field byte ptr
+	g.emit("push r12")     // its length
+	g.emit("push r13")     // the index
+	g.emit("sub rsp, 408") // struct utsname (390), keeping rsp 16-aligned
+	g.emit("mov r13d, edi")
+	g.emit("cmp r13d, 0")
+	g.emit("jl .Luf_empty")
+	g.emit("cmp r13d, 5")
+	g.emit("jge .Luf_empty")
+	g.emit("mov rdi, rsp")
+	g.emitSyscall(sysUname)
+	g.emit("test rax, rax")
+	g.emit("jnz .Luf_empty")
+	g.emit("imul r13, r13, 65")
+	g.emit("lea rbx, [rsp + r13]")
+	g.emit("xor r12d, r12d")
+	g.label(".Luf_strlen")
+	g.emit("cmp r12d, 65")
+	g.emit("jae .Luf_len")
+	g.emit("cmp byte ptr [rbx + r12], 0")
+	g.emit("je .Luf_len")
+	g.emit("inc r12d")
+	g.emit("jmp .Luf_strlen")
+	g.label(".Luf_len")
+	g.emit("test r12d, r12d")
+	g.emit("jz .Luf_empty")
+	g.emit("lea edi, [r12 + 1]")
+	g.emit("call __fern_alloc_rc1")
+	g.emit("mov rdi, rax")
+	g.emitStrLenStore("r12d", "rdi")
+	g.emit("mov byte ptr [rdi + r12], 0")
+	g.emit("mov rsi, rbx")
+	g.emit("mov rdx, r12")
+	g.emit("call __fern_memcpy") // rax = dst
+	g.emit("jmp .Luf_done")
+	g.label(".Luf_empty")
+	g.emitStrEmpty("rax")
+	g.label(".Luf_done")
+	g.emit("add rsp, 408")
+	g.emit("pop r13")
+	g.emit("pop r12")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_uname_field, .-__fern_uname_field")
+}
+
+// emitGetcwdRuntime emits `__fern_getcwd()` → a fresh rc string holding
+// the process's working directory. getcwd(2) answers the length
+// including the NUL, or -errno; the kernel builds the path in a single
+// page, so a directory deeper than PATH_MAX is ENAMETOOLONG rather than
+// a longer answer, and that reaches the caller as the empty string —
+// the same answer an unlinked working directory gets.
+func (g *generator) emitGetcwdRuntime() {
+	g.line("")
+	g.line(".globl __fern_getcwd")
+	g.line(".type __fern_getcwd, @function")
+	g.label("__fern_getcwd")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx")      // path byte ptr
+	g.emit("push r12")      // its length
+	g.emit("sub rsp, 4096") // PATH_MAX, and rsp stays 16-aligned
+	g.emit("mov rdi, rsp")
+	g.emit("mov esi, 4096")
+	g.emitSyscall(sysGetcwd)
+	g.emit("cmp rax, 1")
+	g.emit("jle .Lcwd_empty")
+	g.emit("lea r12, [rax - 1]") // drop the NUL the kernel counted
+	g.emit("mov rbx, rsp")
+	g.emit("lea edi, [r12 + 1]")
+	g.emit("call __fern_alloc_rc1")
+	g.emit("mov rdi, rax")
+	g.emitStrLenStore("r12d", "rdi")
+	g.emit("mov byte ptr [rdi + r12], 0")
+	g.emit("mov rsi, rbx")
+	g.emit("mov rdx, r12")
+	g.emit("call __fern_memcpy") // rax = dst
+	g.emit("jmp .Lcwd_done")
+	g.label(".Lcwd_empty")
+	g.emitStrEmpty("rax")
+	g.label(".Lcwd_done")
+	g.emit("add rsp, 4096")
+	g.emit("pop r12")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_getcwd, .-__fern_getcwd")
+}
+
+// emitCPUCountRuntime emits `__fern_cpu_count()` → how many processing
+// units the process may run on: sched_getaffinity(2) writes the mask
+// and answers its size in bytes, and the answer is that mask's
+// population count. A refused call answers 0, which is the "cannot say"
+// the builtin is specified to give rather than a fabricated 1. The
+// kernel rounds the size it reports to whole longs, so the loop reads
+// 8 bytes at a time with nothing left over.
+func (g *generator) emitCPUCountRuntime() {
+	g.line("")
+	g.line(".globl __fern_cpu_count")
+	g.line(".type __fern_cpu_count, @function")
+	g.label("__fern_cpu_count")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("sub rsp, 128") // 1024 CPUs' worth of mask
+	g.emit("xor edi, edi") // pid 0 = this thread
+	g.emit("mov esi, 128")
+	g.emit("mov rdx, rsp")
+	g.emitSyscall(sysSchedGetaffinity)
+	g.emit("test rax, rax")
+	g.emit("jle .Lcpu_zero")
+	g.emit("xor ecx, ecx") // running total
+	g.emit("xor edx, edx") // byte offset
+	g.label(".Lcpu_word")
+	g.emit("cmp rdx, rax")
+	g.emit("jae .Lcpu_done")
+	g.emit("mov r8, [rsp + rdx]")
+	g.emit("popcnt r8, r8")
+	g.emit("add rcx, r8")
+	g.emit("add rdx, 8")
+	g.emit("jmp .Lcpu_word")
+	g.label(".Lcpu_zero")
+	g.emit("xor ecx, ecx")
+	g.label(".Lcpu_done")
+	g.emit("mov eax, ecx")
+	g.emit("add rsp, 128")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_cpu_count, .-__fern_cpu_count")
 }
 
 // emitReaderWriterRuntime emits the full Reader / Writer

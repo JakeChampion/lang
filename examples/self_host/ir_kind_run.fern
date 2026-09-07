@@ -69,8 +69,8 @@ function main(): i32 {
         "heap_release_to", "create_dir_all", "isatty", "read_file_bytes",
         "rmemchr", "count_byte", "lstat", "access", "geteuid", "getegid",
         "hostname", "fd_stat", "reader_seek", "mismatch",
-        "getuid", "getgid", "getgroups", "environ",
-        "signal_ignore", "signal_default"
+        "getuid", "getgid", "getgroups", "environ", "uname_field",
+        "getcwd", "cpu_count", "signal_ignore", "signal_default"
     ];
     var ext_max: i32 = n;
     var ext_ok: i32 = 0;
@@ -169,6 +169,7 @@ function main(): i32 {
         ir.op_access(), ir.op_geteuid(), ir.op_getegid(), ir.op_hostname(),
         ir.op_fd_stat(), ir.op_reader_seek(), ir.op_mismatch(),
         ir.op_getuid(), ir.op_getgid(), ir.op_getgroups(), ir.op_environ(),
+        ir.op_uname_field(), ir.op_getcwd(), ir.op_cpu_count(),
         ir.op_signal_ignore(), ir.op_signal_default()
     ];
     var names: string[] = [
@@ -185,7 +186,7 @@ function main(): i32 {
         "create_dir_all", "isatty", "rmemchr", "count_byte", "lstat",
         "access", "geteuid", "getegid", "hostname", "fd_stat", "reader_seek",
         "mismatch", "getuid", "getgid", "getgroups", "environ",
-        "signal_ignore", "signal_default"
+        "uname_field", "getcwd", "cpu_count", "signal_ignore", "signal_default"
     ];
     var tag_ok: i32 = 0;
     var tag_bad: i32 = 0;

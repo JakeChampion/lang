@@ -1,0 +1,37 @@
+// coreutils/lib/sys.fern — the kernel's utsname record, by name.
+//
+// `uname_field(i)` is indexed by position in `struct utsname`, which is
+// the shape the syscall has and the wrong shape to read at a call site.
+// These five are that index given its name once, for the utilities that
+// print the record (uname) or one field of it (arch).
+//
+// What the record does NOT carry is `uname -p` / `-i`, the processor and
+// hardware-platform strings — see uname.fern, where the choice of what
+// to print for them belongs.
+// `sysname()` — the operating system's name; `uname -s`, "Linux".
+pub function sysname(): string {
+  return uname_field(0);
+}
+
+// `nodename()` — the network node name; `uname -n`, and the same field
+// `hostname()` reads.
+pub function nodename(): string {
+  return uname_field(1);
+}
+
+// `release()` — the kernel release; `uname -r`.
+pub function release(): string {
+  return uname_field(2);
+}
+
+// `version()` — the kernel version, which on Linux is the build banner
+// rather than a number; `uname -v`.
+pub function version(): string {
+  return uname_field(3);
+}
+
+// `machine()` — the machine hardware name; `uname -m`, and the whole of
+// `arch`.
+pub function machine(): string {
+  return uname_field(4);
+}

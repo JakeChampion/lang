@@ -140,6 +140,10 @@ var rcResultOwned = map[string]bool{
 	// The kernel's node name copied into a fresh rc=1 string; the empty
 	// answer is the same sentinel / inline form the string helpers use.
 	"hostname": true,
+	// One utsname field and the working directory, each copied into a
+	// fresh rc=1 string the same way.
+	"uname_field": true,
+	"getcwd":      true,
 
 	// Byte buffers in the __alloc_u8 box shape.
 	"__fern_random_bytes": true,

@@ -79,6 +79,7 @@ pub function builtin_caps(): BuiltinCap[] {
         BuiltinCap { builtin: "remove_dir_all", capability: "fs" },
         BuiltinCap { builtin: "create_dir_all", capability: "fs" },
         BuiltinCap { builtin: "temp_dir", capability: "fs" },
+        BuiltinCap { builtin: "getcwd", capability: "fs" },
 
         BuiltinCap { builtin: "env", capability: "env" },
         // The whole list is the same capability as one lookup: a caller
@@ -87,6 +88,10 @@ pub function builtin_caps(): BuiltinCap[] {
         // The machine's name is ambient information about where the
         // process runs, like its environment.
         BuiltinCap { builtin: "hostname", capability: "env" },
+        // The kernel's utsname record and the machine's usable processor
+        // count are the same kind of ambient fact.
+        BuiltinCap { builtin: "uname_field", capability: "env" },
+        BuiltinCap { builtin: "cpu_count", capability: "env" },
 
         BuiltinCap { builtin: "subprocess", capability: "subprocess" },
         BuiltinCap { builtin: "proc_fork", capability: "subprocess" },

@@ -173,6 +173,12 @@ var capabilityProfiles = map[string]capabilityProfile{
 	//   - `userid` — an effective user / group id for the process.
 	//     Neither WASI preview has a notion of a user at all, so there
 	//     is nothing to report and no honest constant to report instead.
+	//   - `sysinfo` — the kernel's utsname record and the count of
+	//     processing units the process may run on. Neither WASI preview
+	//     exposes either; a guess would name a kernel the component is
+	//     not running on.
+	//   - `cwd` — a current working directory. WASI resolves every path
+	//     against a preopened descriptor, so there is none to report.
 	//
 	// The `none` profile grants none of them either: a freestanding
 	// artifact reaches platforms.coreBuiltins and nothing else.
@@ -188,7 +194,7 @@ var capabilityProfiles = map[string]capabilityProfile{
 	// reason it grants `host`: a component is never sent a signal, so
 	// there is nothing to ignore and doing nothing is the whole truth.
 	// wasi-http has no process identity, so it does not get it.
-	"hosted-native": {"log", "now", "env", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "signal"},
+	"hosted-native": {"log", "now", "env", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal"},
 
 	// CLI-world wasm wires fs (the preview1 fd helpers) and tcp
 	// (wasi:sockets — wasmbin/wasi_tcp.go) but NOT subprocess:

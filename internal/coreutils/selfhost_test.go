@@ -36,6 +36,7 @@ import (
 func corpusByUtil() map[string]func(*testing.T) []invocation {
 	return map[string]func(*testing.T) []invocation{
 		"[":         bracketCases,
+		"arch":      archCases,
 		"b2sum":     b2sumCases,
 		"base32":    base32Cases,
 		"base64":    base64Cases,
@@ -43,6 +44,7 @@ func corpusByUtil() map[string]func(*testing.T) []invocation {
 		"basenc":    basencCases,
 		"cat":       catCases,
 		"comm":      commCases,
+		"csplit":    csplitCases,
 		"cut":       cutCases,
 		"dirname":   dirnameCases,
 		"echo":      echoCases,
@@ -59,10 +61,13 @@ func corpusByUtil() map[string]func(*testing.T) []invocation {
 		"logname":   lognameCases,
 		"md5sum":    md5sumCases,
 		"nl":        nlCases,
+		"nproc":     nprocCases,
 		"numfmt":    numfmtCases,
+		"od":        odCases,
 		"paste":     pasteCases,
 		"printenv":  printenvCases,
 		"printf":    printfCases,
+		"pwd":       pwdCases,
 		"seq":       seqCases,
 		"sha1sum":   sha1sumCases,
 		"sha224sum": sha224sumCases,
@@ -70,6 +75,7 @@ func corpusByUtil() map[string]func(*testing.T) []invocation {
 		"sha384sum": sha384sumCases,
 		"sha512sum": sha512sumCases,
 		"sleep":     sleepCases,
+		"sort":      sortCases,
 		"split":     splitCases,
 		"tac":       tacCases,
 		"tail":      tailCases,
@@ -77,6 +83,7 @@ func corpusByUtil() map[string]func(*testing.T) []invocation {
 		"tr":        trCases,
 		"true":      trueFalseCases,
 		"tsort":     tsortCases,
+		"uname":     unameCases,
 		"unexpand":  unexpandCases,
 		"uniq":      uniqCases,
 		"wc":        wcCases,
@@ -228,6 +235,9 @@ func TestSelfHostCoreutilsParity(t *testing.T) {
 					if want.how() != got.how() {
 						t.Errorf("status differs for %s %s: native %s, selfhost %s", util, quoteArgs(inv.args), want.how(), got.how())
 					}
+					// A utility whose output IS the files it writes
+					// (csplit) would otherwise have the two compilers
+					// compared on two silences.
 					if diff := treeDiff(want.tree, got.tree); diff != "" {
 						t.Errorf("the files left behind differ for %s %s\n%s", util, quoteArgs(inv.args), diff)
 					}
