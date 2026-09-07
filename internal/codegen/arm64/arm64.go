@@ -4810,6 +4810,30 @@ func (g *generator) emitStrSliceRuntime2W() {
 	g.line(".ltorg")
 }
 
+// emitPayloadlessResultBox emits the arm of an I/O helper that carries NO
+// payload — an Option's `None`, a Result's unit `Ok`: an rc=1 box of the
+// enum's uniform `size` holding `tag` with every payload word ZEROED,
+// returned in x0.
+//
+// The zeroing is what makes the box safe to reclaim. The IR's branchless
+// enum drop (internal/ir's uniform tier) releases a box's payload words
+// WITHOUT testing the tag, so an unwritten word reaches __fern_str_dec as
+// if it were a live pointer — an arbitrary rc write here, an
+// out-of-bounds trap on wasm (#8843).
+func (g *generator) emitPayloadlessResultBox(size, tag int) {
+	g.emit("mov x0, #%d", size)
+	g.emit("bl __fern_alloc_rc1")
+	if tag == 0 {
+		g.emit("str wzr, [x0]")
+	} else {
+		g.emit("mov w1, #%d", tag)
+		g.emit("str w1, [x0]")
+	}
+	for off := 8; off < size; off += 8 {
+		g.emit("str xzr, [x0, #%d]", off)
+	}
+}
+
 // emitEnvRuntime emits `__fern_env(name)` — walks the envp
 // vector for `NAME=VALUE` and returns the value as a fresh
 // lang Option[string]. None is the heap-allocated Option
@@ -4922,13 +4946,10 @@ func (g *generator) emitEnvRuntime() {
 	// None: a box at the enum's uniform size, so a caller that
 	// reclaims it frees it in its own size class.
 	if twoWord {
-		g.emit("mov x0, #24")
+		g.emitPayloadlessResultBox(24, 1)
 	} else {
-		g.emit("mov x0, #16")
+		g.emitPayloadlessResultBox(16, 1)
 	}
-	g.emit("bl __fern_alloc_rc1")
-	g.emit("mov w1, #1")
-	g.emit("str w1, [x0]")
 	g.label(".Lenv_done")
 	g.emit("ldp x21, x22, [sp, #32]")
 	g.emit("ldp x19, x20, [sp, #16]")
@@ -7177,13 +7198,10 @@ func (g *generator) emitReadLineRuntime() {
 	// EOF before any byte → return None.
 	g.emit("cbnz x20, .Lrl_some")
 	if twoWord {
-		g.emit("mov x0, #24")
+		g.emitPayloadlessResultBox(24, 1)
 	} else {
-		g.emit("mov x0, #16")
+		g.emitPayloadlessResultBox(16, 1)
 	}
-	g.emit("bl __fern_alloc_rc1")
-	g.emit("mov w1, #1")
-	g.emit("str w1, [x0]") // tag = 1
 	g.emit("b .Lrl_ret")
 	g.label(".Lrl_some")
 	if twoWord {
@@ -10141,13 +10159,10 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("cbnz x20, .Lrrl_some")
 	// None: a box at the enum's uniform size (see __fern_read_line).
 	if twoWord {
-		g.emit("mov x0, #24")
+		g.emitPayloadlessResultBox(24, 1)
 	} else {
-		g.emit("mov x0, #16")
+		g.emitPayloadlessResultBox(16, 1)
 	}
-	g.emit("bl __fern_alloc_rc1")
-	g.emit("mov w1, #1")
-	g.emit("str w1, [x0]")
 	g.emit("b .Lrrl_ret")
 	g.label(".Lrrl_some")
 	if twoWord {
@@ -10317,10 +10332,7 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("b .Lww_loop")
 	g.label(".Lww_done")
 	// None: tag=1, at Option[IoError]'s uniform 16-byte size.
-	g.emit("mov x0, #16")
-	g.emit("bl __fern_alloc_rc1")
-	g.emit("mov w1, #1")
-	g.emit("str w1, [x0]")
+	g.emitPayloadlessResultBox(16, 1)
 	g.emit("b .Lww_ret")
 	g.label(".Lww_err")
 	g.emit("neg x22, x0") // errno
@@ -10359,10 +10371,7 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.syscall("close")
 	g.emit("tbnz x0, #63, .Lcfb_err")
 	// None.
-	g.emit("mov x0, #16")
-	g.emit("bl __fern_alloc_rc1")
-	g.emit("mov w1, #1")
-	g.emit("str w1, [x0]")
+	g.emitPayloadlessResultBox(16, 1)
 	g.emit("b .Lcfb_ret")
 	g.label(".Lcfb_err")
 	g.emit("neg x19, x0") // errno
