@@ -103,9 +103,14 @@ other's symbol table silently names the wrong functions.
 **Emitted-code SIZE is a compile-time cost here, which it is not for native.**
 The self-host assembles its own output in-process, so every line the codegen
 writes is a line the assembler then parses. Measured 2026-09-06 on a stage-2
-compile of `checker.fern`: `-emit asm` 15.86 G Ir, `-o` 21.82 G, so
-assemble + link is **5.96 G — 27.3% of a full compile — over 278,058 emitted
+compile of `checker.fern` **to x86-64**: `-emit asm` 15.86 G Ir, `-o` 21.82 G,
+so assemble + link is **5.96 G — 27.3% of a full compile — over 278,058 emitted
 lines, or ~21,425 Ir per line.**
+
+The per-line figure is per TARGET, and only x86-64's is measured: arm64 and wasm
+have their own assemblers (`arm64_native.fern`, `watbin.fern`) and their own emit
+sizes, so re-measure before pricing a change against one of them. The shape of
+the argument carries — all three assemble in-process — but the number does not.
 
 That number is the bar any size-increasing optimisation has to clear, and it is
 high enough to flip the sign on changes native adopts freely. Native's inline rc
