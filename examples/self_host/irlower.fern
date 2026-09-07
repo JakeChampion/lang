@@ -12555,11 +12555,14 @@ function lower_call_named_generic(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIde
         // shape E051 admits (#8186): moved out of its box when this statement
         // claimed it, retained for the callee otherwise. The same hand-over one
         // binding along — `var st = a.cfi; f(st)` — is retained at the BIND
-        // instead (emit_own_lift_retain, #8267).
+        // instead (emit_own_lift_retain, #8267). A bare IDENT there is the
+        // #4873 self-reassign admission, and when it names a borrowed
+        // parameter the frame has no reference to transfer (#8429).
         if (util.index_of_str(sc.frame.sigs.own_positions, cid.name + "|" + util.i32_to_string(ai)) >= 0
             && !sc.callee_param_is_typevar(cid.name, ai)) {
             match (c.args[ai]) {
                 ast.ExprFieldAccess(ofa) => { sc = emit_own_field_arg(ofa, sc); },
+                ast.ExprIdent(oid) => { sc = emit_own_borrowed_param_arg(oid, sc); },
                 _ => {}
             }
         }
@@ -79117,4 +79120,31 @@ function emit_own_field_arg(fa: ast.ExprFieldAccess, s: LowerState): LowerState 
     t = t.emit(ir.op_drop());
     t = t.emit(ir.op_end());
     return t.emit(ir.op_load_local(tslot));
+}
+
+// emit_own_borrowed_param_arg: a bare ident bound for a declared `own`
+// position, with its value on the stack. An `own` position CONSUMES one
+// reference. This compiler has no caller-side retain, so a parameter that is
+// not itself `own` is a BORROW the caller still holds (the ABI cut
+// rc_ml_owned_rc_param documents) and the frame holds no reference to hand
+// over. #4873's self-reassign admission is what lets such a name reach an
+// `own` position at all: `h = absorb(h, …)` kills THIS binding, not the
+// caller's. So buy the reference the callee is about to spend, the way
+// own_lift_retain_sites_of buys one for a lifted field (#8267). Without it
+// the callee's __fern_rc_is_unique gate reads the caller's sole count as its
+// own and rewrites the caller's box in place (#8429).
+//
+// Struct and tuple boxes only. An array parameter carries its borrow in the
+// "$ownflag_" sidecar and is bracketed at may-grow positions instead, and a
+// string parameter is exempt from the free-eligible taint seed; a retain here
+// would be a second claim over machinery that already holds one.
+function emit_own_borrowed_param_arg(id: ast.ExprIdent, s: LowerState): LowerState {
+    var sl: i32 = s.slot_of(id.name);
+    if (sl < 0 || sl >= s.frame.n_params) { return s; }
+    if (s.is_own_param(id.name)) { return s; }
+    // struct_type is stamped on a struct-ELEMENT array slot too, so the
+    // container kinds are refused by name before it is consulted.
+    if (s.is_arr_slot(sl) || s.is_str_slot(sl) || s.is_cell_slot(sl)) { return s; }
+    if (s.struct_type_of_slot(sl).len() == 0 && !s.slot_is_tuple_box(sl)) { return s; }
+    return s.emit(ir.op_call_direct("__fern_rc_inc", 1));
 }
