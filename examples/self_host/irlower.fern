@@ -11622,6 +11622,22 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
         if (!rm2.ok) { return rm2; }
         return rm2.emit(ir.op_rmemchr());
     }
+    // __mismatch(a, ao, b, bo, n) → i32 (#8791, fifth kernel). FIVE operands in
+    // source order, and the only kernel of the family with two string ones —
+    // the two boxes sit at slots 0 and 2 of the operand stack, not adjacent.
+    if (cid.name == "__mismatch" && c.args.len() == 5) {
+        var mm0: LowerState = lower_expr(c.args[0], s);
+        if (!mm0.ok) { return mm0; }
+        var mm1: LowerState = lower_expr(c.args[1], mm0);
+        if (!mm1.ok) { return mm1; }
+        var mm2: LowerState = lower_expr(c.args[2], mm1);
+        if (!mm2.ok) { return mm2; }
+        var mm3: LowerState = lower_expr(c.args[3], mm2);
+        if (!mm3.ok) { return mm3; }
+        var mm4: LowerState = lower_expr(c.args[4], mm3);
+        if (!mm4.ok) { return mm4; }
+        return mm4.emit(ir.op_mismatch());
+    }
     // __count_byte(s, byte) → i32 (ATLAS-PLATFORM-PLAN §3.3, fourth kernel).
     // Two operands, same substitutable-op shape; it has no cursor at all, so
     // nothing to clamp in either direction.
@@ -64082,9 +64098,20 @@ function borrow_reg_record(key: string, flags: string): string {
 // The method key is seeded only while no user receiver method is named `write`:
 // the escape walks see no receiver type, so the name alone must settle it.
 function copying_builtin_keys(funcs: parser.FuncDecl[]): string[] {
-    var keys: string[] = ["print", "write", "eprint", "strbuf_append", "__memchr", "__rmemchr", "__ascii_run", "__count_byte"];
+    var keys: string[] = ["print", "write", "eprint", "strbuf_append", "__memchr", "__rmemchr", "__ascii_run", "__count_byte", "__mismatch"];
     for fn in funcs { if (fn.receiver_type.len() > 0 && fn.name == "write") { return keys; } }
     return keys.append("Writer.write");
+}
+
+// copying_builtin_flags: the per-parameter borrowability flag string for one
+// copying-builtin key. Every key but __mismatch copies a single string at
+// position 0; __mismatch reads TWO ranges and retains neither, so positions 0
+// and 2 both carry the credit (native's copyingBuiltinArgs["__mismatch"] is
+// {0, 2}). A position past the string's end reads as not borrowable, which is
+// what the i32 parameters want.
+function copying_builtin_flags(key: string): string {
+    if (key == "__mismatch") { return "10100"; }
+    return "1";
 }
 
 // borrow_reg_bare_index re-buckets a registry's rows by the bare name after
@@ -64654,7 +64681,7 @@ pub function borrowable_params_of(funcs: parser.FuncDecl[]): string[] {
             if (elb.len() > 0) { out = borrow_reg_put(out, "ELB:" + borrowable_key(fn), elb); }
         }
     }
-    for ck in copying_builtin_keys(funcs) { out = borrow_reg_put(out, ck, "1"); }
+    for ck in copying_builtin_keys(funcs) { out = borrow_reg_put(out, ck, copying_builtin_flags(ck)); }
     return out;
 }
 // tuple_payload_borrow_flags: the "TUPB:" tier for one function — per-param
@@ -65177,7 +65204,7 @@ pub function borrowable_params_interproc(funcs: parser.FuncDecl[]): string[] {
     // The copying builtins ride the same rows so a rebuild keeps them; nothing
     // below rewrites an index past the function triples.
     for ck in copying_builtin_keys(funcs) {
-        rows = rows.append(borrow_reg_record(ck, "1"));
+        rows = rows.append(borrow_reg_record(ck, copying_builtin_flags(ck)));
         row_bucket = row_bucket.append(util.hash_bucket(ck, nb));
     }
     var reg: string[] = borrow_reg_rebuild(borrow_reg_new(), i32_filled(nb, 1), rows, row_bucket);
