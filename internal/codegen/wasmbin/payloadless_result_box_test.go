@@ -39,6 +39,7 @@ var payloadlessArmAbsent = map[string]bool{
 	"__fern_open_reader":       true,
 	"__fern_open_writer":       true,
 	"__fern_open_appender":     true,
+	"__fern_open_exclusive":    true,
 	"__fern_reader_read_chunk": true,
 	"__fern_fd_stat":           true,
 	"__fern_reader_seek":       true,
