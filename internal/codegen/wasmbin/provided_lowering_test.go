@@ -72,6 +72,15 @@ var providedRefusedByPlatform = map[string]bool{
 	"getuid":    true,
 	"getgid":    true,
 	"getgroups": true,
+	// The machine the process runs on — the kernel's utsname record and
+	// the number of processing units it may use. WASI has neither a
+	// utsname to read nor a processor count to report, and a component
+	// that guessed would name a kernel it is not running on.
+	"uname_field": true,
+	"cpu_count":   true,
+	// The process's working directory. WASI resolves every path against
+	// a preopened descriptor and has no current directory at all.
+	"getcwd": true,
 	// `cabi` — a C calling convention to hand a function pointer to.
 	"__c_call0": true, "__c_call0_f32": true, "__c_call0_f64": true,
 	"__c_call1": true, "__c_call1_f32": true, "__c_call1_f64": true,
