@@ -173,12 +173,10 @@ func TestSelfHostOptBoxReclaimX86_64(t *testing.T) {
 }
 
 // ioOpenCloseSrc is #8811's own reproducer: an open-and-close round, whose two
-// Result / Option boxes came back to nobody. The round's one REMAINING unfreed
-// block is __fern_open_res's NUL-terminated path buffer, which a successful open
-// strands (#8813) — a separate runtime leak this does not touch, and the reason
-// this leg pins a slope of exactly one block a round, not zero live bytes. Two
-// blocks a round is one box admitted, three is none. When #8813 closes, the
-// slope becomes zero and this leg becomes the ordinary allocs-equal-frees one.
+// Result / Option boxes came back to nobody. #8813 gave __fern_open_res's
+// NUL-terminated path buffer an owner too, so the round now leaves NOTHING and
+// this leg reads the ordinary allocs-equal-frees assertion: one box a round
+// unreleased shows as 200 unfreed blocks, both as 400.
 func ioOpenCloseSrc(rounds int) string {
 	return fmt.Sprintf(`function main(): i32 {
     var i: i32 = 0;
@@ -198,7 +196,7 @@ func ioOpenCloseSrc(rounds int) string {
 // credits of its own, so it is admitted by a different predicate
 // (opt_box_init_type) and needs its own leg: `Result[Reader, IoError]` carries
 // no payload either side that anything deep-drops, so the box-only release is
-// the whole of it. Same slope of one block a round (#8813).
+// the whole of it.
 func ioOpenCloseBoundSrc(rounds int) string {
 	return fmt.Sprintf(`function main(): i32 {
     var i: i32 = 0;
@@ -214,9 +212,9 @@ func ioOpenCloseBoundSrc(rounds int) string {
 }`, rounds)
 }
 
-// ioReadChunkSrc opens ONE reader outside the loop, so the path buffer above is
-// a one-time cost and the round-count independence is about the per-call boxes
-// alone: read_chunk's Result box and the string payload the arm binds.
+// ioReadChunkSrc opens ONE reader outside the loop, so the round-count
+// independence is about the per-call boxes alone: read_chunk's Result box and
+// the string payload the arm binds.
 func ioReadChunkSrc(rounds int) string {
 	return fmt.Sprintf(`function main(): i32 {
     var acc: i32 = 0;
@@ -264,23 +262,23 @@ func TestSelfHostIoResultBoxReclaimX86_64(t *testing.T) {
 	}
 
 	t.Run("open_close", func(t *testing.T) {
-		fa, ff, _ := measure("open_close", "few", ioOpenCloseSrc(few))
-		ma, mf, _ := measure("open_close", "many", ioOpenCloseSrc(many))
-		if got, want := (ma-mf)-(fa-ff), int64(many-few); got != want {
-			t.Errorf("unfreed blocks grew by %d over %d extra rounds, want %d "+
-				"(allocs %d/%d, frees %d/%d): each round must leave exactly one block, "+
-				"__fern_open_res's path buffer (#8813) — one box a round unreleased reads as 2, two as 3",
-				got, many-few, want, fa, ma, ff, mf)
+		fa, ff, fl := measure("open_close", "few", ioOpenCloseSrc(few))
+		ma, mf, ml := measure("open_close", "many", ioOpenCloseSrc(many))
+		if fl != ml || ma != mf || ml != 0 {
+			t.Errorf("allocs %d/%d, frees %d/%d, live_bytes %d/%d at %d and %d rounds: "+
+				"an open-and-close round must leave nothing — one box a round unreleased "+
+				"shows here as %d unfreed blocks, both as %d",
+				fa, ma, ff, mf, fl, ml, few, many, many, 2*many)
 		}
 	})
 
 	t.Run("open_close_bound", func(t *testing.T) {
-		fa, ff, _ := measure("open_close_bound", "few", ioOpenCloseBoundSrc(few))
-		ma, mf, _ := measure("open_close_bound", "many", ioOpenCloseBoundSrc(many))
-		if got, want := (ma-mf)-(fa-ff), int64(many-few); got != want {
-			t.Errorf("unfreed blocks grew by %d over %d extra rounds, want %d "+
-				"(allocs %d/%d, frees %d/%d): the bound open's Result box is not released",
-				got, many-few, want, fa, ma, ff, mf)
+		fa, ff, fl := measure("open_close_bound", "few", ioOpenCloseBoundSrc(few))
+		ma, mf, ml := measure("open_close_bound", "many", ioOpenCloseBoundSrc(many))
+		if fl != ml || ma != mf || ml != 0 {
+			t.Errorf("allocs %d/%d, frees %d/%d, live_bytes %d/%d at %d and %d rounds: "+
+				"the bound open's Result box is not released",
+				fa, ma, ff, mf, fl, ml, few, many)
 		}
 	})
 
