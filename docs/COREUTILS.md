@@ -411,19 +411,32 @@ Neither is visible to this corpus: the harness always hands the child a pipe
 for stdin, so the width is 7 on both sides, and `cat` is not in the tree. That
 is what makes them worth writing down here rather than leaving to a gate.
 
+**Signal disposition control (#8792).** `tee` is blocked on it and is not
+written yet. `-i` is `signal (SIGINT, SIG_IGN)`, and the whole `-p` /
+`--output-error` family turns on whether SIGPIPE is ignored: GNU leaves it
+at its default so `tee` DIES of SIGPIPE, and the moment either option is
+given it ignores it so the write returns EPIPE and the mode picks one of
+four behaviours. Four of those five rows are unreachable without the
+primitive, and a `tee` that accepted the options and did nothing would be
+exactly the carve-out this document forbids.
+
+**A byte-range comparison costs a copy (#8791).** This one is performance,
+not parity. `slice_unchecked` lowers to `__str_slice`, which COPIES —
+`docs/STR-VIEW-CONTRACT.md` §1 records that native is safe from the
+dangling-view class precisely by not implementing the view — and an indexed
+byte loop runs at ~2.8 ns a byte against memcmp's ~0.35. There is no third
+option: the builtin surface carries every SIMD kernel except the comparison
+one. It is the whole of `uniq`'s remaining distance from GNU and most of
+`comm`'s (with the order check off, `comm` is within noise of it), and it
+will be `sort`'s and `join`'s too.
+
 Two earlier gaps are closed and each is now exercised by the corpus:
 `IoError.Other` carrying no strerror text (#8265) — the write-failure cases
 (`yes >&-`, `> /dev/full`) — and source unable to learn its compile target
-(#8338) — `yes.fern`'s per-target block. A gap met later gets an issue and a
-fix, never a corpus carve-out.
-None. Both Fern gaps the first utilities met — `IoError.Other` carrying no
-strerror text (#8265) and source unable to learn its compile target
-(#8338) — are closed, and each is exercised by the corpus: the
-write-failure cases (`yes >&-`, `> /dev/full`) and `yes.fern`'s per-target
-block. `hostid` needed a runtime primitive rather than a fix — `hostname()`,
-gethostname(2) on every backend (#8529) — and got it under its own
-capability rather than a one-off syscall on one backend. A gap met later
-gets an issue and a fix, never a corpus carve-out.
+(#8338) — `yes.fern`'s per-target block. `hostid` needed a runtime primitive
+rather than a fix — `hostname()`, gethostname(2) on every backend (#8529) —
+and got it under its own capability rather than a one-off syscall on one
+backend. A gap met later gets an issue and a fix, never a corpus carve-out.
 
 ## Staging
 
