@@ -289,6 +289,57 @@ PY
       printf 'tail -n 10 from a pipe\ty\t{gnu}/cat %s | {} -n 10 > /dev/null\n' "$big"
       printf 'tail -n +4000000 of a 62 MiB file\ty\t{} -n +4000000 %s > /dev/null\n' "$big"
       ;;
+    join)
+      # Two sorted 1M-line files: the whole cost is splitting each line
+      # into fields and reassembling one output line, so the shapes are
+      # a plain pairing, one where half the lines are unpairable, an
+      # explicit -o format, and a single-character separator.
+      ja="$out/join-a.txt"
+      jb="$out/join-b.txt"
+      jc="$out/join-c.txt"
+      if [ ! -f "$ja" ]; then
+        "$gnu/seq" -f 'k%09.0f v1 v2' 1 1000000 > "$ja"
+        "$gnu/seq" -f 'k%09.0f w1 w2' 1 1000000 > "$jb"
+        "$gnu/seq" -f 'k%09.0f w1 w2' 500001 1500000 > "$jc"
+      fi
+      printf 'join two 1M-line files\ty\t{} %s %s > /dev/null\n' "$ja" "$jb"
+      printf 'join with half unpairable\ty\t{} %s %s > /dev/null\n' "$ja" "$jc"
+      printf 'join -a1 -a2 two 1M-line files\ty\t{} -a1 -a2 %s %s > /dev/null\n' "$ja" "$jc"
+      printf 'join -o 0,1.2,2.3 two 1M-line files\ty\t{} -o 0,1.2,2.3 %s %s > /dev/null\n' "$ja" "$jb"
+      printf 'join -v1 two 1M-line files\ty\t{} -v1 %s %s > /dev/null\n' "$ja" "$jc"
+      ;;
+    nl)
+      # nl's cost is one line number formatted and one line copied, so
+      # the shapes are the default (only non-empty lines numbered), -ba
+      # (every line), -bn (none, a straight copy with a fixed pad), and
+      # the regex style, which runs lib/bre.fern over every line.
+      big="$out/text-64m.txt"
+      [ -f "$big" ] || "$gnu/seq" 1 8000000 > "$big"
+      printf 'nl a 62 MiB file\ty\t{} %s > /dev/null\n' "$big"
+      printf 'nl -ba a 62 MiB file\ty\t{} -ba %s > /dev/null\n' "$big"
+      printf 'nl -bn a 62 MiB file\ty\t{} -bn %s > /dev/null\n' "$big"
+      printf 'nl -n rz -w12 a 62 MiB file\ty\t{} -n rz -w12 %s > /dev/null\n' "$big"
+      # The regex style runs a compiled BRE over every line, so it gets a
+      # smaller input than the copying styles: at 62 MiB it is a minute a
+      # run and the ratio is the same.
+      med="$out/text-3m.txt"
+      [ -f "$med" ] || "$gnu/seq" 1 500000 > "$med"
+      printf 'nl -bp7 a 3 MiB file\ty\t{} -bp7 %s > /dev/null\n' "$med"
+      printf 'nl from a pipe\ty\t{gnu}/cat %s | {} > /dev/null\n' "$big"
+      ;;
+    tr)
+      # tr's whole cost is one table lookup per byte, so the shapes are:
+      # a pure translation, a deletion (which also compacts), a squeeze
+      # (which carries a run across the block boundary), and the
+      # complemented delete, whose table is built by inversion.
+      big="$out/text-64m.txt"
+      [ -f "$big" ] || "$gnu/seq" 1 8000000 > "$big"
+      printf 'tr 0-9 a-j over a 62 MiB file\ty\t{} 0-9 a-j < %s > /dev/null\n' "$big"
+      printf 'tr -d 0-4 over a 62 MiB file\ty\t{} -d 0-4 < %s > /dev/null\n' "$big"
+      printf 'tr -s 0-9 over a 62 MiB file\ty\t{} -s 0-9 < %s > /dev/null\n' "$big"
+      printf 'tr -cd digits over a 62 MiB file\ty\t{} -cd "[:digit:]" < %s > /dev/null\n' "$big"
+      printf 'tr from a pipe\ty\t{gnu}/cat %s | {} 0-9 a-j > /dev/null\n' "$big"
+      ;;
     wc)
       # wc -l is the SIMD count, wc -c is fstat and no read at all, and
       # -w / -L are the byte-at-a-time scan the C locale asks for.
@@ -338,6 +389,32 @@ PY
           printf 'basenc --base16 -d a 128 MiB stream\ty\t{} --base16 -d %s > /dev/null\n' "$b16"
           ;;
       esac
+      ;;
+    md5sum|sha1sum|sha224sum|sha256sum|sha384sum|sha512sum|b2sum)
+      # Compute-bound on the digest kernel, so the shapes that matter are
+      # a big file (throughput), the same bytes through a pipe (the read
+      # path rather than the file one), a small file (startup), and -c
+      # over many names (one open and one digest each, plus the line
+      # grammar).
+      big="$out/text-64m.txt"
+      [ -f "$big" ] || "$gnu/seq" 1 8000000 > "$big"
+      small="$out/sum-small.txt"
+      [ -f "$small" ] || "$gnu/seq" 1 100 > "$small"
+      many="$out/sum-many"
+      if [ ! -d "$many" ]; then
+        mkdir -p "$many"
+        for i in $(seq 500); do "$gnu/seq" 1 "$i" > "$many/f$i"; done
+      fi
+      sums="$out/$1-many.txt"
+      [ -f "$sums" ] || (cd "$many" && "$gnu/$1" f* > "$sums")
+      printf '%s of a 62 MiB file\tn\t{} %s\n' "$1" "$big"
+      printf '%s of a 62 MiB file from a pipe\ty\t{gnu}/cat %s | {}\n' "$1" "$big"
+      printf '%s --tag of a 62 MiB file\tn\t{} --tag %s\n' "$1" "$big"
+      printf '%s of a small file\tn\t{} %s\n' "$1" "$small"
+      printf '%s -c over 500 small files\ty\tcd %s && {} -c %s > /dev/null\n' "$1" "$many" "$sums"
+      if [ "$1" = b2sum ]; then
+        printf 'b2sum -l 256 of a 62 MiB file\tn\t{} -l 256 %s\n' "$big"
+      fi
       ;;
     test|\[)
       # Startup-bound like sleep: what a script pays per condition. The

@@ -1,0 +1,10 @@
+// b2sum.fern — GNU-compatible `b2sum`: print or check BLAKE2b
+// checksums. The whole program is `lib/digest.fern`, which the seven
+// checksum utilities share; this file names the digest, and is the one
+// whose digest length is not fixed — `-l BITS` resizes it, and a
+// checksum line carries the length it was written at.
+import "./lib/digest";
+
+function main(): i32 {
+  return digest.run(digest.algo_blake2b());
+}

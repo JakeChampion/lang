@@ -3061,9 +3061,14 @@ func (b *builder) computeFreeEligible() map[string]bool {
 				elig[p.Name] = true
 			}
 		case ast.StringType:
-			if ast.UseTwoWordStrings(b.ptrW) {
-				elig[p.Name] = true
-			}
+			// Every ABI: the caller transferred its reference, so the exit
+			// sweep is the only thing that can release it. Admitting only
+			// the two-word ABIs left a single-word `own` string param
+			// unreleased on every path — one buffer per call, unbounded —
+			// and kept it out of isSelfStrAppendLocal, whose gate is this
+			// set, so its self-append allocated instead of growing in
+			// place (#8804).
+			elig[p.Name] = true
 		case ast.DynTraitType:
 			// An OWNED `dyn` param (one that escapes — stored / returned /
 			// retained, so paramOwnedByDefault held above) reclaims through
