@@ -96,7 +96,30 @@ STAGE 2 — the same source compiled once by each compiler — and time those:
 
 ~90 s and ~1.3 GB RSS each (measured 2026-09-04). Under callgrind, valgrind does
 not read the `-g` `.symtab`, so resolve the hot addresses through `nm -n` on the
-binary rather than reading `???:0x…` rows.
+binary rather than reading `???:0x…` rows — and `nm` the binary you PROFILED.
+Two builds do not share a layout, so resolving one run's addresses against the
+other's symbol table silently names the wrong functions.
+
+**Emitted-code SIZE is a compile-time cost here, which it is not for native.**
+The self-host assembles its own output in-process, so every line the codegen
+writes is a line the assembler then parses. Measured 2026-09-06 on a stage-2
+compile of `checker.fern`: `-emit asm` 15.86 G Ir, `-o` 21.82 G, so
+assemble + link is **5.96 G — 27.3% of a full compile — over 278,058 emitted
+lines, or ~21,425 Ir per line.**
+
+That number is the bar any size-increasing optimisation has to clear, and it is
+high enough to flip the sign on changes native adopts freely. Native's inline rc
+fast path (#4402 opt 2b) is the worked example: porting it to the self-host
+would save ~87 M Ir (21.7 M dynamic `__fern_rc_inc` / `__fern_rc_is_unique`
+calls at ~4 instructions of call overhead each) and cost ~325 M in the assembler
+(+9 lines at each of 1,688 sites) — **a net loss of ~1.1%**. Native measures the
+compiled program's speed and hands its text to a separate assembler; the
+self-host's headline metric includes assembling the text. Price a port against
+this figure before building it.
+
+The same arithmetic run backwards is why the peephole is worth investing in:
+`peephole_push_pop` costs ~1,100 Ir per line to run and saves ~21,425 for each
+line it deletes.
 
 This is what made it practical to run all 335 fixtures through the self-host
 compiler:
