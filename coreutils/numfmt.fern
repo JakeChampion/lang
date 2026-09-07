@@ -228,11 +228,7 @@ function parse_scale(v: string, which: string): i32 {
   if (which == "--to") {
     names = ["none", "si", "iec", "iec-i"];
   }
-  var k: i32 = match_prefix(v, names);
-  if (k < 0) {
-    arg_error(v, which, names);
-  }
-  return scale_of(names[k]);
+  return scale_of(names[gnu.argmatch(v, names, which)]);
 }
 
 function scale_of(name: string): i32 {
@@ -253,66 +249,12 @@ function scale_of(name: string): i32 {
 
 function parse_round(v: string): i32 {
   var names: string[] = ["up", "down", "from-zero", "towards-zero", "nearest"];
-  var k: i32 = match_prefix(v, names);
-  if (k < 0) {
-    arg_error(v, "--round", names);
-  }
-  return k;
+  return gnu.argmatch(v, names, "--round");
 }
 
 function parse_invalid(v: string): i32 {
   var names: string[] = ["abort", "fail", "warn", "ignore"];
-  var k: i32 = match_prefix(v, names);
-  if (k < 0) {
-    arg_error(v, "--invalid", names);
-  }
-  return k;
-}
-
-// gnulib's ARGMATCH: an exact name, or a unique prefix of one.
-function match_prefix(v: string, names: string[]): i32 {
-  if (v.len() == 0) {
-    return 0 - 1;
-  }
-  var found: i32 = 0 - 1;
-  var k: i32 = 0;
-  while (k < names.len()) {
-    if (names[k] == v) {
-      return k;
-    }
-    if (names[k].starts_with(v)) {
-      if (found >= 0) {
-        return 0 - 1;
-      }
-      found = k;
-    }
-    k = k + 1;
-  }
-  return found;
-}
-
-// gnulib's argmatch diagnostic: the value, the option, then every
-// name it could have been, then the usual `Try …` line.
-function arg_error(v: string, which: string, names: string[]): i32 {
-  // A value that is a prefix of several names is ambiguous; one that is
-  // a prefix of none is invalid.
-  var kind: string = "invalid";
-  var k: i32 = 0;
-  while (k < names.len()) {
-    if (names[k].starts_with(v)) {
-      kind = "ambiguous";
-    }
-    k = k + 1;
-  }
-  gnu.error(kind + " argument " + gnu.quote(v) + " for " + gnu.quote(which));
-  eprint("Valid arguments are:");
-  var j: i32 = 0;
-  while (j < names.len()) {
-    eprint("  - " + gnu.quote(names[j]));
-    j = j + 1;
-  }
-  gnu.try_help(1);
-  return 0;
+  return gnu.argmatch(v, names, "--invalid");
 }
 
 // `--from-unit` / `--to-unit`: a whole number, with an optional unit

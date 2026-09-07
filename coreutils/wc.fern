@@ -314,44 +314,8 @@ function total_never(): i32 {
   return 3;
 }
 
-// gnulib's argmatch: a unique abbreviation wins, an ambiguous one and
-// an unmatched one each get their own wording, and both print the
-// valid list before the `Try …` line.
 function total_of(v: string): i32 {
-  var names: string[] = ["auto", "always", "only", "never"];
-  var found: i32 = 0 - 1;
-  var ambiguous: boolean = false;
-  var i: i32 = 0;
-  while (i < names.len()) {
-    if (names[i] == v) {
-      return i;
-    }
-    if (names[i].starts_with(v)) {
-      if (found < 0) {
-        found = i;
-      } else {
-        ambiguous = true;
-      }
-    }
-    i = i + 1;
-  }
-  if (found >= 0 && !ambiguous) {
-    return found;
-  }
-  var what: string = "invalid";
-  if (ambiguous) {
-    what = "ambiguous";
-  }
-  var msg: string = what + " argument " + gnu.quote(v) + " for '--total'\n";
-  msg = msg + "Valid arguments are:\n";
-  i = 0;
-  while (i < names.len()) {
-    msg = msg + "  - " + gnu.quote(names[i]) + "\n";
-    i = i + 1;
-  }
-  eprint(gnu.prog() + ": " + slice_unchecked(msg, 0, msg.len() - 1));
-  gnu.try_help(1);
-  return 0;
+  return gnu.argmatch(v, ["auto", "always", "only", "never"], "--total");
 }
 
 // ---- operands --------------------------------------------------------------

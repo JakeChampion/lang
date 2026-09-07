@@ -228,30 +228,10 @@ function pid_max(): u64 {
   return 2147483647 as u64;
 }
 
-// `follow_by_name(value)` — argmatch over `descriptor` / `name`: a
-// unique prefix selects, an empty value is ambiguous, anything else
-// invalid; both list the valid arguments and the `Try` line.
+// `follow_by_name(value)` — `--follow`'s argmatch over `descriptor`
+// and `name`.
 function follow_by_name(value: string): boolean {
-  var d: string = "descriptor";
-  var n: string = "name";
-  var descriptor: boolean = d.starts_with(value);
-  var name: boolean = n.starts_with(value);
-  if (descriptor && !name) {
-    return false;
-  }
-  if (name && !descriptor) {
-    return true;
-  }
-  if (descriptor && name) {
-    gnu.error("ambiguous argument " + gnu.quote(value) + " for '--follow'");
-  } else {
-    gnu.error("invalid argument " + gnu.quote(value) + " for '--follow'");
-  }
-  eprint("Valid arguments are:");
-  eprint("  - 'descriptor'");
-  eprint("  - 'name'");
-  gnu.try_help(1);
-  return false;
+  return gnu.argmatch(value, ["descriptor", "name"], "--follow") == 1;
 }
 
 // ---- the sleep interval ----------------------------------------------------

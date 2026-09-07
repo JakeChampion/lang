@@ -454,6 +454,18 @@ PY
       printf 'tr -cd digits over a 62 MiB file\ty\t{} -cd "[:digit:]" < %s > /dev/null\n' "$big"
       printf 'tr from a pipe\ty\t{gnu}/cat %s | {} 0-9 a-j > /dev/null\n' "$big"
       ;;
+    tee)
+      # tee is a read and N writes with no per-byte work at all, so the
+      # shapes are the number of outputs and where they go. The outputs
+      # land under $out, which is removed when the run ends.
+      big="$out/text-64m.txt"
+      [ -f "$big" ] || "$gnu/seq" 1 8000000 > "$big"
+      printf 'tee 62 MiB to stdout alone\ty\t{} < %s > /dev/null\n' "$big"
+      printf 'tee 62 MiB to one file\ty\t{} %s/tee1 < %s > /dev/null\n' "$out" "$big"
+      printf 'tee 62 MiB to four files\ty\t{} %s/tee1 %s/tee2 %s/tee3 %s/tee4 < %s > /dev/null\n' "$out" "$out" "$out" "$out" "$big"
+      printf 'tee 62 MiB from a pipe to one file\ty\t{gnu}/cat %s | {} %s/tee1 > /dev/null\n' "$big" "$out"
+      printf 'tee 62 MiB down a pipe\ty\t{} %s/tee1 < %s | {gnu}/cat > /dev/null\n' "$out" "$big"
+      ;;
     wc)
       # wc -l is the SIMD count, wc -c is fstat and no read at all, and
       # -w / -L are the byte-at-a-time scan the C locale asks for.

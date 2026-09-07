@@ -125,9 +125,10 @@ struct Out { w: Writer, name: string, live: boolean, is_file: boolean }
 // whether anything has gone wrong yet (the exit status).
 struct Copy { outs: Out[], mode: i32, live: i32, ok: boolean }
 
-// bytes per read(2). GNU reads 8 KiB; measured on this machine a
-// larger block is worth about 30% on a pipe-to-pipe copy, and the
-// bytes on every output are the same either way.
+// Bytes per read(2), and so per write(2) to each output. GNU reads
+// 8 KiB. The sweep behind this number is in the PR that added the
+// utility; the block changes nothing an output receives, only how many
+// syscalls carry it.
 function read_size(): i32 {
   return 65536;
 }
@@ -149,7 +150,6 @@ function fail(c: Copy, i: i32, e: IoError): Copy {
   gnu.error(shown + ": " + gnu.io_error_text(e));
   s = Copy { ...s, ok: false };
   if (mode_exits(s.mode)) {
-    close_files(s);
     exit(1);
   }
   return s;
