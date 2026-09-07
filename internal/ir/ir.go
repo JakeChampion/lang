@@ -18751,7 +18751,13 @@ func (b *builder) assign(n *ast.Assign) error {
 			// held — nothing to release) or copied into a fresh one and ran
 			// the same __fern_str_dec this branch would have. Dec'ing again
 			// here would over-release. See isSelfStrAppendLocal.
-		} else if isStringTypeOfLocal(t.Name, b) && ast.RcFreeEnabled && b.rc.freeEligible[t.Name] {
+		} else if isStringTypeOfLocal(t.Name, b) && ast.RcFreeEnabled && b.rc.freeEligible[t.Name] &&
+			!b.callConsumesIdent(n.Value, t.Name) {
+			// `s = f(.., s, ..)` into an `own` parameter hands the callee
+			// this reference to reclaim, so releasing it here too is an
+			// over-release — the array branch above declines for the same
+			// reason.
+			//
 			// dec the OLD string buffer before the
 			// overwrite, mirroring the exit-sweep string branch (emitDec)
 			// and gated identically (RcFreeEnabled && freeEligible). A
