@@ -442,6 +442,97 @@ PY
           ;;
       esac
       ;;
+    cut)
+      # A field at a time out of a large table, the shape scripts use
+      # cut for, and the byte range, which is the same work with no
+      # delimiter scan at all.
+      csv="$out/table-5col.csv"
+      [ -f "$csv" ] || python3 -c '
+import sys
+with open(sys.argv[1], "w") as f:
+    for i in range(1500000):
+        f.write("alpha%d,beta%d,gamma%d,delta%d,epsilon%d\n" % (i, i, i, i, i))
+' "$csv"
+      printf 'cut -f2 -d, of a 90 MiB table\ty\t{} -f2 -d, %s > /dev/null\n' "$csv"
+      printf 'cut -f1,3-5 -d, of a 90 MiB table\ty\t{} -f1,3-5 -d, %s > /dev/null\n' "$csv"
+      printf 'cut --complement -f2 -d, of a 90 MiB table\ty\t{} --complement -f2 -d, %s > /dev/null\n' "$csv"
+      printf 'cut -s -f4 -d, of a 90 MiB table\ty\t{} -s -f4 -d, %s > /dev/null\n' "$csv"
+      printf 'cut -c1-10 of a 90 MiB table\ty\t{} -c1-10 %s > /dev/null\n' "$csv"
+      printf 'cut -f2 -d, from a pipe\ty\t{gnu}/cat %s | {} -f2 -d, > /dev/null\n' "$csv"
+      ;;
+    paste)
+      # Two files side by side is the parallel path; -s is the serial
+      # one, which is a join over one file.
+      pa="$out/paste-a.txt"
+      pb="$out/paste-b.txt"
+      [ -f "$pa" ] || "$gnu/seq" 1 4000000 > "$pa"
+      [ -f "$pb" ] || "$gnu/seq" 4000001 8000000 > "$pb"
+      printf 'paste two 27 MiB files\ty\t{} %s %s > /dev/null\n' "$pa" "$pb"
+      printf 'paste -d, two 27 MiB files\ty\t{} -d, %s %s > /dev/null\n' "$pa" "$pb"
+      printf 'paste -s a 27 MiB file\ty\t{} -s %s > /dev/null\n' "$pa"
+      printf 'paste one 27 MiB file\ty\t{} %s > /dev/null\n' "$pa"
+      ;;
+    fold)
+      # Column counting is the default and byte counting is -b; -s adds
+      # the backward scan for a blank.
+      prose="$out/prose.txt"
+      [ -f "$prose" ] || python3 -c '
+import sys
+line = "the quick brown fox jumps over the lazy dog " * 4
+with open(sys.argv[1], "w") as f:
+    for _ in range(400000):
+        f.write(line + "\n")
+' "$prose"
+      printf 'fold -w40 of a 68 MiB file\ty\t{} -w40 %s > /dev/null\n' "$prose"
+      printf 'fold -b -w40 of a 68 MiB file\ty\t{} -b -w40 %s > /dev/null\n' "$prose"
+      printf 'fold -s -w40 of a 68 MiB file\ty\t{} -s -w40 %s > /dev/null\n' "$prose"
+      printf 'fold (default 80) of a 68 MiB file\ty\t{} %s > /dev/null\n' "$prose"
+      ;;
+    expand)
+      # A tabbed file is the conversion proper; a file with no tabs at
+      # all is the path every line takes when there is nothing to do.
+      tabbed="$out/tabbed.txt"
+      [ -f "$tabbed" ] || python3 -c '
+import sys
+with open(sys.argv[1], "w") as f:
+    for i in range(1200000):
+        f.write("\tname%d\tvalue%d\tnote%d\n" % (i, i, i))
+' "$tabbed"
+      untabbed="$out/untabbed.txt"
+      [ -f "$untabbed" ] || python3 -c '
+import sys
+with open(sys.argv[1], "w") as f:
+    for i in range(1200000):
+        f.write("    name%d value%d note%d\n" % (i, i, i))
+' "$untabbed"
+      printf 'expand a 45 MiB tabbed file\ty\t{} %s > /dev/null\n' "$tabbed"
+      printf 'expand -t4 a 45 MiB tabbed file\ty\t{} -t4 %s > /dev/null\n' "$tabbed"
+      printf 'expand -i a 45 MiB tabbed file\ty\t{} -i %s > /dev/null\n' "$tabbed"
+      printf 'expand -t 4,8,16 a 45 MiB tabbed file\ty\t{} -t 4,8,16 %s > /dev/null\n' "$tabbed"
+      printf 'expand a 42 MiB file with no tabs\ty\t{} %s > /dev/null\n' "$untabbed"
+      ;;
+    unexpand)
+      # Leading blanks only is the default; -a walks every run on the
+      # line, and a file with no blanks is the do-nothing path.
+      indented="$out/indented.txt"
+      [ -f "$indented" ] || python3 -c '
+import sys
+with open(sys.argv[1], "w") as f:
+    for i in range(1200000):
+        f.write("        name%d        value%d\n" % (i, i))
+' "$indented"
+      noblank="$out/noblank.txt"
+      [ -f "$noblank" ] || python3 -c '
+import sys
+with open(sys.argv[1], "w") as f:
+    for i in range(1200000):
+        f.write("name%d-value%d-note%d\n" % (i, i, i))
+' "$noblank"
+      printf 'unexpand a 42 MiB indented file\ty\t{} %s > /dev/null\n' "$indented"
+      printf 'unexpand -a a 42 MiB indented file\ty\t{} -a %s > /dev/null\n' "$indented"
+      printf 'unexpand -t4 a 42 MiB indented file\ty\t{} -t4 %s > /dev/null\n' "$indented"
+      printf 'unexpand a 32 MiB file with no blanks\ty\t{} %s > /dev/null\n' "$noblank"
+      ;;
     uniq)
       # uniq's cost is per LINE, so the three shapes are: a run of
       # duplicates to collapse, lines that are all distinct (every line
