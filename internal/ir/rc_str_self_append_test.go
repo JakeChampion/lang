@@ -110,11 +110,79 @@ function main(): i32 { return build(3, "ab").len(); }`
 	}
 }
 
-// TestLowerStrSelfAppendSkipsBorrowedParam: a BORROWED string parameter is not
-// the callee's to grow — its buffer is the caller's still-live value, and
-// rc==1 does not prove uniqueness under the borrow model (no caller-side inc).
-// Such an accumulator keeps the plain concat.
-func TestLowerStrSelfAppendSkipsBorrowedParam(t *testing.T) {
+// paramEntryRetains counts the BALANCED consumed-threaded entry retains a
+// function's PROLOGUE takes on parameter slot `slot`
+// (insertConsumedParamEntryIncs): `local.load slot`, the retain for that
+// slot's ABI shape, and exactly as many discards as that retain hands back.
+//
+// Balance is part of the count on purpose, because the discard is the half
+// that is width-dependent and the two-word half cannot be RUN on a dev box:
+// `__fern_str_inc` returns the (data, len) PAIR — `returnIsString` lists it,
+// and `__fern_str_dec` sits deliberately beside it returning only `data` — so
+// the discard is two drops there and one on native single-word. With one, the
+// stray word shifts every later operand-stack position in the frame; the
+// operand-stack pass does not object (the value sits harmlessly below
+// everything in its model) and only the backend's slot numbering breaks, so
+// counting the drops here is the compile-time gate for it.
+//
+// Prologue-scoped, too. The entry incs are spliced immediately after the
+// rc-slot / defer-flag zero-init, so the scan skips that run of const/store
+// pairs and then reads retains until the first op that is not one — which
+// keeps a return-transfer alias inc on the same slot (`return acc`, an inc
+// this test's sources all emit) out of the count.
+func paramEntryRetains(p *Program, fnName string, slot int32, twoWordStr bool) int {
+	n := 0
+	for _, fn := range p.Funcs {
+		if fn.Name != fnName {
+			continue
+		}
+		i := 0
+		for i < len(fn.Ops) && (fn.Ops[i].Kind == OpConstI32 || fn.Ops[i].Kind == OpStoreLocal) {
+			i++
+		}
+		for i+1 < len(fn.Ops) && fn.Ops[i].Kind == OpLoadLocal {
+			want := 0
+			switch r := fn.Ops[i+1]; {
+			case r.Kind == OpRcInc:
+				want = 1
+			case isNamedCallKind(r.Kind) && r.Str == "__fern_str_inc":
+				want = 2
+				if !twoWordStr {
+					want = 1
+				}
+			default:
+				return n
+			}
+			drops := 0
+			for j := i + 2; j < len(fn.Ops) && fn.Ops[j].Kind == OpDrop; j++ {
+				drops++
+			}
+			if fn.Ops[i].I32 == slot && drops == want {
+				n++
+			}
+			i += 2 + drops
+		}
+	}
+	return n
+}
+
+// TestLowerStrSelfAppendThreadsConsumedParam: a string parameter the body
+// reassigns is consumed-threaded (#8785), so the accumulator IS grown in place
+// — and what keeps that sound is the entry retain, not a refusal.
+//
+// The retain puts the INCOMING buffer at rc >= 2 whatever the caller's own
+// count is and wherever the caller's reference lives, so the first append of
+// every call takes __fern_str_append's copy path and the caller's string is
+// never lengthened under it. From then on the slot holds a buffer this frame
+// allocated and solely names, and growing that in place is observable only
+// through the parameter. The frame therefore only ever grows a buffer of its
+// own — which is why no alias analysis is needed here.
+//
+// Both halves are asserted: without the append the accumulator is quadratic
+// (the issue's `loop_in_callee`), and without the retain it is a silent wrong
+// answer — `rcCorpus`'s str_param_append_leaves_the_callers_string_alone is
+// the runtime half of the same pair.
+func TestLowerStrSelfAppendThreadsConsumedParam(t *testing.T) {
 	prev := ast.RcFreeEnabled
 	ast.RcFreeEnabled = true
 	defer func() { ast.RcFreeEnabled = prev }()
@@ -131,11 +199,31 @@ function main(): i32 { return grow("a", 3).len(); }`
 
 	for _, ptrW := range []int{4, 8} {
 		prog := lowerSourceWith(t, src, ptrW)
-		if got := countFnCallDirect(prog, "grow", "__fern_str_append"); got != 0 {
-			t.Errorf("ptrW=%d: __fern_str_append calls in grow = %d, want 0 (a borrowed param must not be grown in place)", ptrW, got)
+		if got := countFnCallDirect(prog, "grow", "__fern_str_append"); got != 1 {
+			t.Errorf("ptrW=%d: __fern_str_append calls in grow = %d, want 1 (a consumed-threaded param IS the accumulator)", ptrW, got)
 		}
-		if got := countOpKind(prog, "grow", OpStrConcat); got != 1 {
-			t.Errorf("ptrW=%d: OpStrConcat in grow = %d, want 1", ptrW, got)
+		if got := countOpKind(prog, "grow", OpStrConcat); got != 0 {
+			t.Errorf("ptrW=%d: OpStrConcat in grow = %d, want 0", ptrW, got)
+		}
+		if got := paramEntryRetains(prog, "grow", 0, ptrW == 4); got != 1 {
+			t.Errorf("ptrW=%d: balanced entry retains on acc = %d, want 1 — without it the first append grows the CALLER's buffer in place", ptrW, got)
+		}
+		// The whole function has to be well-formed at BOTH widths, since a
+		// string slot fans out to two operand values on one of them. This
+		// does not subsume the drop count above: a stray word left by an
+		// unbalanced retain sits harmlessly below everything in the pass's
+		// model and only the backend's slot numbering breaks, so the pass
+		// stays green on exactly the mutation paramEntryRetains catches.
+		known := map[string]*Func{}
+		for _, fn := range prog.Funcs {
+			known[fn.Name] = fn
+		}
+		problems, bail := verifyStack(known["grow"], known, map[string]*ExternFunc{}, ptrW)
+		if bail != "" {
+			t.Errorf("ptrW=%d: the operand-stack pass skipped grow (%s), so it gates nothing here", ptrW, bail)
+		}
+		if len(problems) > 0 {
+			t.Errorf("ptrW=%d: %s", ptrW, FormatProblems(problems, 5))
 		}
 	}
 }
