@@ -192,6 +192,11 @@ var rcResultOwned = map[string]bool{
 	"__fern_remove_dir_all":      true,
 	"__fern_temp_dir":            true,
 	"__fern_create_dir_all":      true,
+	"__fern_create_dir":          true,
+	"__fern_remove_dir":          true,
+	"__fern_create_link":         true,
+	"__fern_create_symlink":      true,
+	"__fern_read_link":           true,
 	// `access` and `write_file_exec` have no `__fern_*` entry in rcsigs
 	// to alias through — both are native-only (E066 refuses them on the
 	// wasm worlds), so they are classified there under the builtin name,
@@ -272,6 +277,11 @@ var rcOwnedResultBuiltins = map[string]bool{
 	"remove_file":                true,
 	"remove_dir_all":             true,
 	"create_dir_all":             true,
+	"create_dir":                 true,
+	"remove_dir":                 true,
+	"create_link":                true,
+	"create_symlink":             true,
+	"read_link":                  true,
 	"temp_dir":                   true,
 	"read_dir":                   true,
 	"stat":                       true,

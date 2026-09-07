@@ -294,6 +294,17 @@ func Compose(coreBytes []byte, req ComposeRequest, coreExportName string) []byte
 		if req.File.Rmdir {
 			g.add(gImport{iface: fsTypes, name: composeRmdirAtName, kind: gMem, params: composePathMutatorParams})
 		}
+		if req.File.Link {
+			g.add(gImport{iface: fsTypes, name: composeLinkAtName, kind: gMem, params: composeLinkAtParams})
+		}
+		if req.File.Symlink {
+			g.add(gImport{iface: fsTypes, name: composeSymlinkAtName, kind: gMem, params: composeSymlinkAtParams})
+		}
+		if req.File.Readlink {
+			// The target comes back as a host-allocated string in our
+			// memory, so this one needs realloc where the mutators do not.
+			g.add(gImport{iface: fsTypes, name: composeReadlinkAtName, kind: gMemRealloc, params: composePathMutatorParams})
+		}
 		if req.File.Stat {
 			g.add(gImport{iface: fsTypes, name: composeStatAtName, kind: gMem, params: composeStatAtParams})
 		}

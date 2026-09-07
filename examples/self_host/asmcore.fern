@@ -474,6 +474,10 @@ pub function sysno(t: string, name: string): string {
         if (name == "uname") { return "63"; }
         if (name == "getcwd") { return "79"; }
         if (name == "sched_getaffinity") { return "204"; }
+        if (name == "linkat") { return "265"; }
+        if (name == "symlinkat") { return "266"; }
+        if (name == "readlinkat") { return "267"; }
+        if (name == "umask") { return "95"; }
         return "-1";
     }
     if (t == "arm64-darwin") {
@@ -525,6 +529,10 @@ pub function sysno(t: string, name: string): string {
         // differs (0 here, the length there), which rt_src_getcwd sidesteps by
         // measuring the buffer instead.
         if (name == "getcwd") { return "296"; }
+        if (name == "linkat") { return "471"; }
+        if (name == "symlinkat") { return "474"; }
+        if (name == "readlinkat") { return "473"; }
+        if (name == "umask") { return "60"; }
         // No pipe2 / dup3 rows: XNU has neither, and its pipe() reports the
         // second fd in x1, which no __syscall* intrinsic can see. That is why
         // subprocess keeps a hand-written body on this one target — the same
@@ -567,6 +575,10 @@ pub function sysno(t: string, name: string): string {
     if (name == "getuid") { return "174"; }
     if (name == "getgid") { return "176"; }
     if (name == "getgroups") { return "158"; }
+    if (name == "linkat") { return "37"; }
+    if (name == "symlinkat") { return "36"; }
+    if (name == "readlinkat") { return "78"; }
+    if (name == "umask") { return "166"; }
     // No Darwin row: XNU has no uname syscall (libc builds it from sysctl),
     // so asm_arm64_ir keeps a hand-written kern.hostname body for that target.
     if (name == "uname") { return "160"; }
@@ -583,6 +595,15 @@ pub function sysno(t: string, name: string): string {
 // looked up, since without it the answer is about the REAL ids.
 pub function at_eaccess(t: string): string {
     if (t == "arm64-darwin") { return "16"; }
+    return "512";
+}
+
+// at_removedir is unlinkat's "this is a directory" flag — the bit that turns
+// it into rmdir(2): 0x200 on Linux, 0x80 on XNU. Same flag, same meaning,
+// different number, and getting it wrong asks unlinkat to remove a directory
+// as a file, which is EISDIR rather than a wrong answer.
+pub function at_removedir(t: string): string {
+    if (t == "arm64-darwin") { return "128"; }
     return "512";
 }
 
@@ -1494,6 +1515,70 @@ pub function rt_src_remove_file(t: string): string {
 pub function rt_src_create_dir_all(t: string): string {
     var mk: string = "__syscall3(" + sysno(t, "mkdirat") + ", " + at_fdcwd(t) + ", pathz, 511)";
     return "function __fern_create_dir_all(path: string): Result[void, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var rc: i32 = 0; var j: i32 = 1; while (j < plen) { if (path[j] == 47) { if (path[j - 1] != 47) { __raw_store8(pathz, j, 0); rc = " + mk + "; __raw_store8(pathz, j, 47); } } j = j + 1; } rc = " + mk + "; var pathz_own: string = __raw_string(pathz, plen + 1); if (rc < 0) { if (rc != 0 - 17) { return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz, plen))); } } return Ok(()); }";
+}
+
+// rt_src_create_dir backs `create_dir(path, mode)` (#8883, syscall-leaf) →
+// Result[void, IoError]. NUL-terminate the path, mkdirat(AT_FDCWD, path, mode)
+// and report the errno as it came: EEXIST is an error here, not the silent
+// success create_dir_all folds it into, because `mkdir(1)` is entirely about
+// that distinction. The kernel masks `mode` with the process umask exactly as
+// POSIX says; a caller that wants the mode verbatim clears the umask around
+// the call. Same body on every native target; only the mkdirat number and
+// AT_FDCWD come from `t`.
+pub function rt_src_create_dir(t: string): string {
+    return "function __fern_create_dir(path: string, mode: i32): Result[void, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var rc: i32 = __syscall3(" + sysno(t, "mkdirat") + ", " + at_fdcwd(t) + ", pathz, mode); if (rc < 0) { return Err(__fern_io_error(0 - rc, __raw_string(pathz, plen))); } return Ok(()); }";
+}
+
+// rt_src_remove_dir backs `remove_dir(path)` (#8883, syscall-leaf) →
+// Result[void, IoError]. unlinkat(AT_FDCWD, path, AT_REMOVEDIR), which is
+// rmdir(2): a non-empty directory is ENOTEMPTY and a regular file ENOTDIR,
+// both reaching the caller rather than being folded away.
+pub function rt_src_remove_dir(t: string): string {
+    return "function __fern_remove_dir(path: string): Result[void, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var rc: i32 = __syscall3(" + sysno(t, "unlinkat") + ", " + at_fdcwd(t) + ", pathz, " + at_removedir(t) + "); if (rc < 0) { return Err(__fern_io_error(0 - rc, __raw_string(pathz, plen))); } return Ok(()); }";
+}
+
+// rt_two_pathz is the shared preamble of the two link builders:
+// NUL-terminated copies of both operands, with `plen` left naming the LINK's
+// length because that is the path the error arm reports — `ln` and `link`
+// both name the link they failed to create, not the file it was to point at.
+function rt_two_pathz(): string {
+    return "var tlen: i32 = target.len(); var targetz: i32 = __raw_alloc(tlen + 1); var j: i32 = 0; while (j < tlen) { __raw_store8(targetz, j, target[j]); j = j + 1; } __raw_store8(targetz, tlen, 0); var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0);";
+}
+
+// rt_src_create_link backs `create_link(target, path)` (#8883, syscall-leaf) →
+// Result[void, IoError]. linkat(AT_FDCWD, target, AT_FDCWD, path, 0) — five
+// arguments, so this is a __syscall5 user. The flags word is 0 rather than
+// AT_SYMLINK_FOLLOW, so a symlink named as the target is linked to itself,
+// which is what link(1) and ln(1) without -L do.
+pub function rt_src_create_link(t: string): string {
+    return "function __fern_create_link(target: string, path: string): Result[void, IoError] { " + rt_two_pathz() + " var rc: i32 = __syscall5(" + sysno(t, "linkat") + ", " + at_fdcwd(t) + ", targetz, " + at_fdcwd(t) + ", pathz, 0); if (rc < 0) { return Err(__fern_io_error(0 - rc, __raw_string(pathz, plen))); } return Ok(()); }";
+}
+
+// rt_src_create_symlink backs `create_symlink(target, path)` (#8883,
+// syscall-leaf) → Result[void, IoError]. symlinkat(target, AT_FDCWD, path);
+// the target is stored verbatim and never resolved, so it takes no dirfd of
+// its own and a link to something absent is created without complaint.
+pub function rt_src_create_symlink(t: string): string {
+    return "function __fern_create_symlink(target: string, path: string): Result[void, IoError] { " + rt_two_pathz() + " var rc: i32 = __syscall3(" + sysno(t, "symlinkat") + ", targetz, " + at_fdcwd(t) + ", pathz); if (rc < 0) { return Err(__fern_io_error(0 - rc, __raw_string(pathz, plen))); } return Ok(()); }";
+}
+
+// rt_src_read_link backs `read_link(path)` (#8883, syscall-leaf) →
+// Result[string, IoError]. readlinkat(AT_FDCWD, path, buf, 4096).
+//
+// readlinkat TRUNCATES silently into a buffer that is too small and reports no
+// error, so the answer is only trustworthy when it is SHORTER than the buffer.
+// PATH_MAX is the kernel's own bound on a stored target, so a full buffer
+// means ENAMETOOLONG (36) rather than a target missing its tail.
+pub function rt_src_read_link(t: string): string {
+    return "function __fern_read_link(path: string): Result[string, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var buf: i32 = __raw_alloc(4096); var n: i32 = __syscall4(" + sysno(t, "readlinkat") + ", " + at_fdcwd(t) + ", pathz, buf, 4096); if (n < 0) { return Err(__fern_io_error(0 - n, __raw_string(pathz, plen))); } if (n >= 4096) { return Err(__fern_io_error(36, __raw_string(pathz, plen))); } return Ok(__raw_string(buf, n)); }";
+}
+
+// rt_src_umask backs `umask(mask)` (#8883, syscall-leaf) → the previous mask.
+// umask(2) cannot fail and answers the mask it replaced, so the syscall's own
+// return value is the whole result and there is no Result to build. It takes
+// one argument; the two extra words __syscall3 passes are ignored.
+pub function rt_src_umask(t: string): string {
+    return "function __fern_umask(mask: i32): i32 { return __syscall3(" + sysno(t, "umask") + ", mask, 0, 0); }";
 }
 
 // rt_src_write_file backs `write_file(path, contents)` (#2649, syscall-leaf) →
@@ -3636,6 +3721,11 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
     if (id.name == "tcp_recv") { return ty_array_i32(); }
     if (id.name == "remove_file") { return ty_option(ty_unknown()); }
     if (id.name == "create_dir_all") { return ty_option(ty_unknown()); }
+    if (id.name == "create_dir") { return ty_option(ty_unknown()); }
+    if (id.name == "remove_dir") { return ty_option(ty_unknown()); }
+    if (id.name == "create_link") { return ty_option(ty_unknown()); }
+    if (id.name == "create_symlink") { return ty_option(ty_unknown()); }
+    if (id.name == "read_link") { return ty_result(ty_string()); }
     // subprocess(cmd, args, stdin) → ProcessResult struct.
     // See asm.fern: returns "unknown" because the struct's
     // fields resolve through the shape-pointer dispatch path
@@ -5584,6 +5674,9 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
         "__fn___fern_reader_read_chunk", "__fn___fern_reader_close", "__fn___fern_write_file",
         "__fern_remove_dir_all", "__fn___fern_remove_dir_all", "__fn___fern_temp_dir", "__fern_read_dir", "__fn___fern_read_dir", "__fn___fern_remove_file",
         "__fn___fern_create_dir_all",
+        "__fn___fern_create_dir", "__fn___fern_remove_dir",
+        "__fn___fern_create_link", "__fn___fern_create_symlink",
+        "__fn___fern_read_link", "__fn___fern_umask",
         "__fn___fern_env", "__fern_stat", "__fn___fern_stat", "__fn___fern_subprocess",
         "__fern_args", "__fern_arg_at", "__fern_strbuf_append",
         // #5623: the IR path's whole-stdin reader, emitted in the entry module's

@@ -2059,6 +2059,102 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 			ast.EnumType{Name: "IoError"},
 		}},
 	}
+	// create_dir(path, mode): Result[void, IoError] — create ONE
+	// directory, `mkdirat(AT_FDCWD, path, mode)` with nothing folded
+	// away. A missing parent is ENOENT and an existing `path` is
+	// EEXIST, both reaching the caller as the `IoError`.
+	//
+	// This is the primitive `create_dir_all` is NOT: that one walks
+	// the chain and folds every EEXIST into `Ok(())`, which cannot
+	// answer "did I create it" or "is what is there a directory" —
+	// the two questions `mkdir(1)` is entirely about.
+	//
+	// `mode` is the permission word the kernel then masks with the
+	// process umask, exactly as POSIX specifies; a caller that wants
+	// the mode applied verbatim clears the umask around the call
+	// (`umask`). WASI has no mode on `path_create_directory`, so on
+	// that target `mode` is ignored — docs/FREESTANDING-CORE.md.
+	c.info.FuncSigs["create_dir"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}, ast.NumberType{Width: 32, Signed: true}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.VoidType{},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
+	// remove_dir(path): Result[void, IoError] — remove ONE empty
+	// directory, `rmdir(2)`. A non-empty directory is ENOTEMPTY, a
+	// regular file ENOTDIR, and a missing one ENOENT: the errno
+	// reaches the caller rather than being folded into success, which
+	// is what separates this from `remove_dir_all`.
+	c.info.FuncSigs["remove_dir"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.VoidType{},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
+	// create_link(target, path): Result[void, IoError] — a HARD link
+	// at `path` to the existing file `target`, `link(2)`. The final
+	// component of `target` is NOT followed if it is a symlink
+	// (`linkat` with no AT_SYMLINK_FOLLOW), which is what `link(1)`
+	// and `ln(1)` without `-L` do.
+	//
+	// Argument order is the syscall's — existing file first, new name
+	// second — so a reader of the call site reads it as `ln` writes
+	// it.
+	c.info.FuncSigs["create_link"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}, ast.StringType{}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.VoidType{},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
+	// create_symlink(target, path): Result[void, IoError] — a
+	// symbolic link at `path` holding the bytes `target`,
+	// `symlink(2)`. `target` is stored verbatim and is never
+	// resolved, so a link to something that does not exist is created
+	// without complaint; only `path` itself has to be creatable.
+	c.info.FuncSigs["create_symlink"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}, ast.StringType{}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.VoidType{},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
+	// read_link(path): Result[string, IoError] — the target a
+	// symbolic link holds, `readlink(2)`. `path` is not followed:
+	// this asks about the link itself, the way `lstat` does, and a
+	// path that is not a symlink is EINVAL rather than an empty
+	// answer.
+	//
+	// The target is a byte string the kernel stores verbatim; like
+	// `read_dir`'s entries it inherits std/path's UTF-8-path
+	// assumption, and this is the boundary where a link target that
+	// is not valid UTF-8 enters a program.
+	c.info.FuncSigs["read_link"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.StringType{},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
+	// umask(mask): the process file-mode creation mask — `umask(2)`,
+	// which SETS the mask and returns the previous one in a single
+	// uninterruptible step. There is no read-only form in POSIX, so
+	// reading it is `umask(umask(0))`: set zero, take the answer, put
+	// it back.
+	//
+	// It cannot fail — POSIX gives it no error return — so it is a
+	// plain number rather than a Result. Only the low twelve bits are
+	// meaningful; the kernel ignores the rest.
+	//
+	// This is process-wide state that every subsequent file and
+	// directory creation reads, so a caller that clears it to apply a
+	// mode verbatim restores it immediately afterwards.
+	c.info.FuncSigs["umask"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{Width: 32, Signed: true}},
+		Result: ast.NumberType{Width: 32, Signed: true},
+	}
 	// remove_dir_all(path): Result[void, IoError] — recursively
 	// remove `path` (mirrors POSIX `rm -rf`). Used by tests
 	// to scrub `temp_dir` output. Same return shape as

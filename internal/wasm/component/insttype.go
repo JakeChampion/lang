@@ -310,6 +310,44 @@ func fsReadDir(b *instTypeBuilder, v fsVocab) {
 // result<_, error-code>. Note the absent path-flags parameter, which
 // open-at and stat-at both take; these three do not follow symlinks and
 // the WIT gives them no flags argument.
+// fsLinkAt declares `link-at: func(self: borrow<descriptor>, old-path-flags:
+// path-flags, old-path: string, new-descriptor: borrow<descriptor>, new-path:
+// string) -> result<_, error-code>`. It is the one path method with a SECOND
+// descriptor: a hard link can cross directories, so the new name is resolved
+// against its own.
+func fsLinkAt(b *instTypeBuilder, v fsVocab) {
+	b.funcExport(tcpMethodFuncDecl("link-at",
+		[]string{"self", "old-path-flags", "old-path", "new-descriptor", "new-path"},
+		[]byte{byte(v.bDesc), byte(v.pathFlags), CValtypeString, byte(v.bDesc), CValtypeString},
+		byte(v.rUnit)),
+		"[method]descriptor.link-at")
+}
+
+// fsSymlinkAt declares `symlink-at: func(self: borrow<descriptor>, old-path:
+// string, new-path: string) -> result<_, error-code>`. `old-path` is the
+// target STORED in the link, never resolved, which is why it takes no
+// descriptor and no path-flags.
+func fsSymlinkAt(b *instTypeBuilder, v fsVocab) {
+	b.funcExport(tcpMethodFuncDecl("symlink-at",
+		[]string{"self", "old-path", "new-path"},
+		[]byte{byte(v.bDesc), CValtypeString, CValtypeString},
+		byte(v.rUnit)),
+		"[method]descriptor.symlink-at")
+}
+
+// fsReadlinkAt declares `readlink-at: func(self: borrow<descriptor>, path:
+// string) -> result<string, error-code>` — the only path method whose ok arm
+// carries a value, so it defines its own result type rather than sharing the
+// mutators' `result<_, error-code>`.
+func fsReadlinkAt(b *instTypeBuilder, v fsVocab) {
+	rStr := b.def(InnerTypeResultOkErr(CValtypeString, v.errC))
+	b.funcExport(tcpMethodFuncDecl("readlink-at",
+		[]string{"self", "path"},
+		[]byte{byte(v.bDesc), CValtypeString},
+		byte(rStr)),
+		"[method]descriptor.readlink-at")
+}
+
 func fsPathMutator(b *instTypeBuilder, v fsVocab, method string) {
 	b.funcExport(tcpMethodFuncDecl(method,
 		[]string{"self", "path"}, []byte{byte(v.bDesc), CValtypeString}, byte(v.rUnit)),
