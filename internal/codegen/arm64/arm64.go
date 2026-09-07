@@ -8471,8 +8471,7 @@ func (g *generator) emitReadFileBytesRuntime() {
 //	tag=0 → Some(IoError), payload = IoError box ptr @ +8
 //	tag=1 → None (8-byte box, no payload)
 //
-// O_WRONLY = 1, O_CREAT = 0100 (octal) = 64, O_TRUNC = 01000
-// (octal) = 512. Combined flags = 577.
+// The flag word is the target's, not a constant — see oflagWrite.
 func (g *generator) emitWriteFileRuntime() {
 	g.emitWriteFileRuntimeMode("__fern_write_file", "0644", "", "")
 }
@@ -8505,10 +8504,10 @@ func (g *generator) emitWriteFileRuntimeMode(sym, mode, sfx, fixupMode string) {
 	g.emitStrDataPtr("x20", "x1", 72)  // x20 = content byte ptr
 	g.emitStrDataPtr("x24", "x19", 64) // x24 = path byte ptr (preserves x19 = original)
 
-	// openat(AT_FDCWD, path, O_WRONLY|O_CREAT|O_TRUNC=577, 0644)
+	// openat(AT_FDCWD, path, the target's O_WRONLY|O_CREAT|O_TRUNC, 0644)
 	g.emit("mov x0, #%d", g.atFdCwd())
 	g.emit("mov x1, x24")
-	g.emit("mov x2, #577")
+	g.emit("mov x2, #%d", g.oflagWrite(oflagCreatTrunc))
 	g.emit("mov x3, #%s", mode)
 	g.syscall("openat")
 	g.emit("tbnz x0, #63, .Lwf_err_open%s", sfx)
@@ -8611,10 +8610,10 @@ func (g *generator) emitWriteFileRuntime2W(sym, mode, sfx, fixupMode string) {
 	g.emitStrDataPtr2W("x25", "x19", "x20", 88) // x25 = path byte ptr; scratch at [x29+88]
 	// NUL-terminate for openat (see emitNulTermPath2W).
 	g.emitNulTermPath2W("x25", "x25", "x20")
-	// openat(AT_FDCWD, path, O_WRONLY|O_CREAT|O_TRUNC=577, 0644)
+	// openat(AT_FDCWD, path, the target's O_WRONLY|O_CREAT|O_TRUNC, 0644)
 	g.emit("mov x0, #%d", g.atFdCwd())
 	g.emit("mov x1, x25")
-	g.emit("mov x2, #577")
+	g.emit("mov x2, #%d", g.oflagWrite(oflagCreatTrunc))
 	g.emit("mov x3, #%s", mode)
 	g.syscall("openat")
 	g.emit("tbnz x0, #63, .Lwf2w_err_open%s", sfx)
@@ -8747,6 +8746,35 @@ func (g *generator) direntNameOff() int {
 		return 21
 	}
 	return 19
+}
+
+// oflagKind names the two open(2) modes the fs bundle writes with, so a
+// call site cannot pick the flag word by spelling a raw number.
+type oflagKind int
+
+const (
+	oflagCreatTrunc oflagKind = iota
+	oflagCreatAppend
+)
+
+// oflagWrite returns the target's open(2) flag word for one of those modes.
+// Linux and XNU share none of the three bits — O_CREAT is 0100 vs 0x200,
+// O_TRUNC 01000 vs 0x400, O_APPEND 02000 vs 0x8 — so the Linux words mean
+// something else entirely on Darwin: 577 asks XNU for O_ASYNC|O_CREAT, which
+// creates without truncating and leaves a shortened file's old tail behind,
+// and 1089 sets XNU's O_TRUNC, so an APPEND empties the file it opens.
+// #6042 translated these on the self-host path only.
+func (g *generator) oflagWrite(k oflagKind) int {
+	if g.darwin {
+		if k == oflagCreatAppend {
+			return 521 // O_WRONLY|O_CREAT|O_APPEND
+		}
+		return 1537 // O_WRONLY|O_CREAT|O_TRUNC
+	}
+	if k == oflagCreatAppend {
+		return 1089
+	}
+	return 577
 }
 
 // emitODirectory materialises the platform O_DIRECTORY flag into
@@ -9976,8 +10004,8 @@ func (g *generator) emitReaderWriterRuntime() {
 		mode      int
 	}{
 		{"__fern_open_reader", "open_reader", 0, 0},
-		{"__fern_open_writer", "open_writer", 577, 0644},
-		{"__fern_open_appender", "open_appender", 1089, 0644},
+		{"__fern_open_writer", "open_writer", g.oflagWrite(oflagCreatTrunc), 0644},
+		{"__fern_open_appender", "open_appender", g.oflagWrite(oflagCreatAppend), 0644},
 	} {
 		_ = e.name
 		g.line("")
