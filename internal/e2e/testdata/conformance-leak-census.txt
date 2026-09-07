@@ -178,7 +178,7 @@ char_cast_receiver                                   0
 closure_adder                                        0
 closure_capture_shared_cell                          0
 closure_captures_defining_scope                      0
-closure_field_match                                  600
+closure_field_match                                  550
 closure_field_rebind                                 0
 closure_returns_composite                            0
 cmp_float_traits                                     0
@@ -281,7 +281,7 @@ hex_literal                                          0
 hex_roundtrip                                        0
 higher_order                                         0
 http_content_type                                    5
-http_cookies                                         9
+http_cookies                                         8
 i32_methods                                          0
 i32_payload_rebind                                   0
 i32_to_i64_roundtrip                                 0

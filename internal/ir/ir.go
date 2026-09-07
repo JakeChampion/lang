@@ -14177,6 +14177,38 @@ func resultCannotAliasArg(t ast.Type) bool {
 	return false
 }
 
+// pairPayloadsCannotAliasArg answers resultCannotAliasArg for a pair-form
+// callee's enum result: true when every variant's payload is a concrete
+// scalar, so neither word of the (tag, payload) pair can be a caller's
+// argument. `Option[string]` answers false — `Some(s)` returns s.
+func (b *builder) pairPayloadsCannotAliasArg(t ast.Type) bool {
+	et, ok := t.(ast.EnumType)
+	if !ok {
+		return false
+	}
+	switch et.Name {
+	case "Option", "Result":
+		for _, a := range et.Args {
+			if !resultCannotAliasArg(a) {
+				return false
+			}
+		}
+		return len(et.Args) > 0
+	}
+	ed := b.info.Enums[et.Name]
+	if ed == nil {
+		return false
+	}
+	for _, v := range ed.Variants {
+		for _, p := range v.Payloads {
+			if !resultCannotAliasArg(resolveTypeParam(p, ed.TypeParams, et.Args)) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 // typeCannotCarrySlice reports whether a value of type t provably cannot BE or
 // CONTAIN a `[T]` view header. An allow-list: only shapes whose contents are
 // fully known answer true, so a type variable, a trait object, a closure or a
@@ -15460,12 +15492,21 @@ func (b *builder) callBody(n *ast.Call) error {
 	// value/key into the map with no inc (see the set-retain block above —
 	// "transfer their rc=1 to the map"), so dec'ing it would free the stored
 	// element (UAF); __method_Array_push is the array analogue.
+	//
+	// A pair-form callee returns (tag, payload) rather than a box, and the
+	// payload can be pointer-shaped — `Some(s)` hands the argument straight
+	// back — so the enum's spelling alone does not answer. Its PAYLOADS do:
+	// when every variant carries a concrete scalar or nothing, the result
+	// cannot be or contain the argument any more than a bare i32 can, and
+	// the receiver temp of `line.trim().parse_int()` is dead once the call
+	// returns. Left unadmitted it leaked the trimmed copy per call.
 	_, calleeIsLocal := b.locals[id.Name]
 	_, calleeIsFunc := b.info.FuncSigs[id.Name]
 	reclaimArgTemps := ast.RcFreeEnabled && calleeIsFunc && !calleeIsLocal &&
 		(resultCannotAliasArg(b.exprType(n)) || b.returnsNoParamEscape[id.Name] ||
-			b.resultIsCountedStringAlias(id.Name, b.exprType(n))) &&
-		!b.pairForm[id.Name] && id.Name != "map_new" && !calleeRetainsAnyArg(id.Name)
+			b.resultIsCountedStringAlias(id.Name, b.exprType(n)) ||
+			(b.pairForm[id.Name] && b.pairPayloadsCannotAliasArg(b.exprType(n)))) &&
+		id.Name != "map_new" && !calleeRetainsAnyArg(id.Name)
 	// Per-ARGUMENT admission, where the call-level gate above says no. That
 	// gate is whole-call: one pointer-shaped result disqualifies every
 	// argument at once, so `node(name, no_deps(), k)` — a constructor whose
@@ -15809,10 +15850,11 @@ func (b *builder) callBody(n *ast.Call) error {
 			}
 			// Stage (b): dec each stashed owned-temp arg now that the
 			// call has consumed (borrowed) it. emitOwnedSlotDrop is
-			// net-zero on the operand stack, so the call's result (if
-			// any) sitting underneath is left untouched. reclaimArgTemps
-			// required kind == OpCallDirect (not pair-form), so the
-			// result is a single value / void — never the rebox'd pair.
+			// net-zero on the operand stack, so the call's result —
+			// one value, or a pair-form callee's (tag, payload) with
+			// the rebox suppressed — sitting underneath is left
+			// untouched; the guarded drops, which do read the result,
+			// are not admitted for a pair-form callee.
 			// #4873: restore the bracketed args' rc — the callee's copy
 			// path left each buffer untouched, so this returns it to the
 			// incoming count (the inc preceded it; never frees).
