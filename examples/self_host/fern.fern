@@ -2404,10 +2404,11 @@ function run(): i32 {
     // assert that is the whole difference: `assert(nosuchname > 1)` takes the
     // undefined name away with it and the module lowers (#7170).
     //
-    // Ineligibility, not the checker, is what rejects that program on either
-    // build. Both checkers report E001 for it, but E001 — with every other code
-    // an ill-typed assert raises — is on is_partial_checker_gap_code's measured
-    // list, so its verdict does not reach the build here (#4346).
+    // The CHECKER is what rejects that program now, on either build: it
+    // reports E001 for the undefined name and E001 gates since #8461. The
+    // ineligibility refusal below is what rejected it while E001 sat on
+    // is_partial_checker_gap_code's list, naming neither the name nor the
+    // mistake.
     if (optimize) {
         if (constfold.has_asserts(merged) && !ircore.module_ir_eligible(parser.module_with_builtins(merged))) {
             ircore.eprint_ir_ineligible();

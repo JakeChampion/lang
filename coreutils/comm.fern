@@ -1,0 +1,603 @@
+// comm.fern — GNU-compatible `comm`.
+//
+//   comm [OPTION]... FILE1 FILE2
+//
+// A merge of two sorted inputs into three columns: lines only in FILE1,
+// lines only in FILE2, lines in both. `-1` / `-2` / `-3` suppress a
+// column, and the indentation of the ones that remain is one delimiter
+// per SUPPRESSED-or-not column to its left, so `comm -1` starts its
+// second column at the left margin.
+//
+// Two things are worth knowing before reading the loop:
+//
+//   - Lines are ordered by memcmp over the SHORTER line's content, and
+//     the lengths break the tie. The delimiter is outside that
+//     comparison on purpose: `a<TAB>x` sorts AFTER `a`, which comparing
+//     the delimiter byte would get backwards.
+//   - The default order check is not the same as `--check-order`. It
+//     stays quiet until an unpairable line has been seen, because
+//     input that pairs up completely never depends on the order; that
+//     is why `comm f f` on an unsorted f says nothing. It then warns
+//     once per file, keeps going, and fails at the end.
+import "std/string";
+import "std/array";
+import "std/u64";
+import "std/io_buffered";
+import "./lib/gnu";
+
+function opt_only1(): i32 {
+  return 1;
+}
+
+function opt_only2(): i32 {
+  return 2;
+}
+
+function opt_both(): i32 {
+  return 3;
+}
+
+function opt_check(): i32 {
+  return 4;
+}
+
+function opt_nocheck(): i32 {
+  return 5;
+}
+
+function opt_delim(): i32 {
+  return 6;
+}
+
+function opt_total(): i32 {
+  return 7;
+}
+
+function opt_zero(): i32 {
+  return 8;
+}
+
+function help_text(): string {
+  var out: string = "";
+  out = out + "Usage: " + gnu.prog() + " [OPTION]... FILE1 FILE2\n";
+  out = out + "Compare sorted files FILE1 and FILE2 line by line.\n";
+  out = out + "\n";
+  out = out + "When FILE1 or FILE2 (not both) is -, read standard input.\n";
+  out = out + "\n";
+  out = out + "With no options, produce three-column output.  Column one contains\n";
+  out = out + "lines unique to FILE1, column two contains lines unique to FILE2,\n";
+  out = out + "and column three contains lines common to both files.\n";
+  out = out + "\n";
+  out = out + "  -1                      suppress column 1 (lines unique to FILE1)\n";
+  out = out + "  -2                      suppress column 2 (lines unique to FILE2)\n";
+  out = out + "  -3                      suppress column 3 (lines that appear in both files)\n";
+  out = out + "\n";
+  out = out + "  --check-order           check that the input is correctly sorted, even\n";
+  out = out + "                            if all input lines are pairable\n";
+  out = out + "  --nocheck-order         do not check that the input is correctly sorted\n";
+  out = out + "  --output-delimiter=STR  separate columns with STR\n";
+  out = out + "  --total                 output a summary\n";
+  out = out + "  -z, --zero-terminated   line delimiter is NUL, not newline\n";
+  out = out + "      --help        display this help and exit\n";
+  out = out + "      --version     output version information and exit\n";
+  return out;
+}
+
+// ---- order ------------------------------------------------------------------
+function order_default(): i32 {
+  return 0;
+}
+
+function order_enabled(): i32 {
+  return 1;
+}
+
+function order_disabled(): i32 {
+  return 2;
+}
+
+// GNU's line order: memcmp over the shorter line's content, then the
+// lengths. Both lines carry the delimiter, so a whole-string equality
+// answers the equal case without walking anything.
+function cmp_lines(a: string, b: string): i32 {
+  if (a == b) {
+    return 0;
+  }
+  var n: i32 = a.len();
+  if (b.len() < n) {
+    n = b.len();
+  }
+  n = n - 1;
+  var i: i32 = 0;
+  while (i < n) {
+    var x: i32 = a[i] as i32;
+    var y: i32 = b[i] as i32;
+    if (x != y) {
+      if (x < y) {
+        return 0 - 1;
+      }
+      return 1;
+    }
+    i = i + 1;
+  }
+  if (a.len() > b.len()) {
+    return 1;
+  }
+  if (a.len() < b.len()) {
+    return 0 - 1;
+  }
+  return 0;
+}
+
+// ---- input ------------------------------------------------------------------
+function read_size(): i32 {
+  return 65536;
+}
+
+// Bytes accumulated before a write(2), as in uniq(1) and for the same
+// reason: `gnu.block_bytes()` is the pipe optimum for a saturating
+// producer, and a merge is not one. 4 KiB costs 375 ms over 3M lines
+// here, 64 KiB 336.
+function write_block(): i32 {
+  return 65536;
+}
+
+function status_line(): i32 {
+  return 0;
+}
+
+function status_eof(): i32 {
+  return 1;
+}
+
+function status_error(): i32 {
+  return 2;
+}
+
+// `next_line_slow(r, chunk, pos, eof, term)` — the next line when the
+// block in hand holds no complete one: carry its tail, read more, and
+// join. The line carries its delimiter, which gnulib's
+// readlinebuffer_delim adds when the input ended without one.
+//
+// The block itself is passed and returned here, which retains and
+// releases a 64 KiB string — affordable because this runs once per
+// READ, while the `__memchr` fast path in the merge loop runs once per
+// line and touches no block reference at all. Routing every line
+// through a helper like this one instead cost 130 ns a line, four times
+// the whole rest of the loop.
+//
+// Returns (line, chunk, pos, eof, status, error): status is a line, end
+// of input, or a read failure whose strerror text is `error`.
+function next_line_slow(r: Reader, chunk0: string, pos0: i32, eof0: boolean, term: i32): (string, string, i32, boolean, i32, string) {
+  var chunk: string = chunk0;
+  var pos: i32 = pos0;
+  var eof: boolean = eof0;
+  var carry: string = "";
+  while (true) {
+    var j: i32 = __memchr(chunk, term, pos);
+    if (j >= 0) {
+      carry = carry + slice_unchecked(chunk, pos, j + 1);
+      return (carry, chunk, j + 1, eof, status_line(), "");
+    }
+    if (pos < chunk.len()) {
+      carry = carry + slice_unchecked(chunk, pos, chunk.len());
+      pos = chunk.len();
+    }
+    if (eof) {
+      if (carry.len() > 0) {
+        carry = carry + string_from_bytes_unchecked([term as u8]);
+        return (carry, chunk, pos, eof, status_line(), "");
+      }
+      return ("", chunk, pos, eof, status_eof(), "");
+    }
+    match (r.read_chunk(read_size())) {
+      Ok(c) => {
+        if (c.len() == 0) {
+          eof = true;
+        } else {
+          chunk = c;
+          pos = 0;
+        }
+      },
+      Err(e) => {
+        return ("", chunk, pos, true, status_error(), gnu.io_error_text(e));
+      }
+    }
+  }
+  return ("", chunk, pos, eof, status_eof(), "");
+}
+
+// ---- the merge --------------------------------------------------------------
+//
+// `Cfg` — everything the option scan settles.
+struct Cfg { only1: boolean, only2: boolean, both: boolean, sep: string, check: i32, total: boolean, term: i32 }
+
+function main(): i32 {
+  var argv: string[] = args();
+  var opts: gnu.Opt[] = [];
+  opts = opts.append(gnu.flag("1", "", opt_only1()));
+  opts = opts.append(gnu.flag("2", "", opt_only2()));
+  opts = opts.append(gnu.flag("3", "", opt_both()));
+  opts = opts.append(gnu.flag("", "check-order", opt_check()));
+  opts = opts.append(gnu.flag("", "nocheck-order", opt_nocheck()));
+  opts = opts.append(gnu.valued("", "output-delimiter", opt_delim()));
+  opts = opts.append(gnu.flag("", "total", opt_total()));
+  opts = opts.append(gnu.flag("z", "zero-terminated", opt_zero()));
+
+  var cfg: Cfg = Cfg { only1: true, only2: true, both: true, sep: "\t", check: order_default(), total: false, term: 10 };
+  var delim_specified: boolean = false;
+  var delim_given: string = "";
+
+  var g: gnu.Getopt = gnu.getopt_new(argv, opts, "comm", help_text(), 1);
+  while (true) {
+    var r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    g = r.1;
+    var done: boolean = false;
+    match (r.0) {
+      Some(m) => {
+        if (m.id == opt_only1()) {
+          cfg = Cfg { ...cfg, only1: false };
+        } else if (m.id == opt_only2()) {
+          cfg = Cfg { ...cfg, only2: false };
+        } else if (m.id == opt_both()) {
+          cfg = Cfg { ...cfg, both: false };
+        } else if (m.id == opt_check()) {
+          cfg = Cfg { ...cfg, check: order_enabled() };
+        } else if (m.id == opt_nocheck()) {
+          cfg = Cfg { ...cfg, check: order_disabled() };
+        } else if (m.id == opt_total()) {
+          cfg = Cfg { ...cfg, total: true };
+        } else if (m.id == opt_zero()) {
+          cfg = Cfg { ...cfg, term: 0 };
+        } else {
+          // Given twice with different text it is a fault, not a
+          // last-one-wins; an empty STR is one NUL byte.
+          if (delim_specified && delim_given != m.value) {
+            gnu.error("multiple output delimiters specified");
+            exit(1);
+          }
+          delim_given = m.value;
+          delim_specified = true;
+          var sep: string = m.value;
+          if (sep.len() == 0) {
+            sep = string_from_bytes_unchecked([0 as u8]);
+          }
+          cfg = Cfg { ...cfg, sep: sep };
+        }
+      },
+      None => {
+        done = true;
+      }
+    }
+    if (done) {
+      break;
+    }
+  }
+
+  var operands: string[] = g.operands();
+  if (operands.len() < 1) {
+    gnu.error("missing operand");
+    gnu.try_help(1);
+  }
+  if (operands.len() < 2) {
+    gnu.error("missing operand after " + gnu.quote(operands[0]));
+    gnu.try_help(1);
+  }
+  if (operands.len() > 2) {
+    gnu.error("extra operand " + gnu.quote(operands[2]));
+    gnu.try_help(1);
+  }
+  var name1: string = operands[0];
+  var name2: string = operands[1];
+
+  var r1: Reader = stdin();
+  if (name1 != "-") {
+    match (open_reader(name1)) {
+      Ok(f) => {
+        r1 = f;
+      },
+      Err(e) => {
+        gnu.error(gnu.quotef(name1) + ": " + gnu.io_error_text(e));
+        exit(1);
+      }
+    }
+  }
+  var r2: Reader = stdin();
+  if (name2 != "-") {
+    match (open_reader(name2)) {
+      Ok(f) => {
+        r2 = f;
+      },
+      Err(e) => {
+        gnu.error(gnu.quotef(name2) + ": " + gnu.io_error_text(e));
+        exit(1);
+      }
+    }
+  }
+  return merge(r1, r2, name1, name2, cfg);
+}
+
+// `merge(r1, r2, name1, name2, cfg)` — the whole comparison.
+//
+// Output accumulates in a bare local appended inline, which is the one
+// shape a `string` grows in place (#8785); each full block is handed to
+// the writer whole so the writer never copies a buffer of its own.
+function merge(r1: Reader, r2: Reader, name1: string, name2: string, cfg: Cfg): i32 {
+  var out: io_buffered.BufWriter = gnu.out_with(write_block());
+  var buf: string = "";
+  var block: i32 = write_block();
+  var term: i32 = cfg.term;
+  // Both operands `-` is ONE stream in GNU, read alternately by the two
+  // sides; the scan state is copied across after each read so it stays
+  // one cursor here too.
+  var shared: boolean = name1 == "-" && name2 == "-";
+
+  var chunk1: string = "";
+  var pos1: i32 = 0;
+  var eof1: boolean = false;
+  var chunk2: string = "";
+  var pos2: i32 = 0;
+  var eof2: boolean = false;
+
+  var cur1: string = "";
+  var cur2: string = "";
+  var have1: boolean = false;
+  var have2: boolean = false;
+  // The two lines before the current one, for the order check GNU makes
+  // at end of input: an unpairable line seen late turns the check on
+  // after the last pair was already read, so that pair is re-examined.
+  var back1a: string = "";
+  var back1b: string = "";
+  var back2a: string = "";
+  var back2b: string = "";
+  var read1: i32 = 0;
+  var read2: i32 = 0;
+
+  // GNU's writeline: a column prints only if it was not suppressed, and
+  // carries one delimiter for each column to its LEFT that is printed,
+  // so `comm -1` starts its second column at the left margin. Built
+  // once, because joining them per line allocates per line.
+  var show1: boolean = cfg.only1;
+  var show2: boolean = cfg.only2;
+  var show3: boolean = cfg.both;
+  var pre2: string = "";
+  if (cfg.only1) {
+    pre2 = cfg.sep;
+  }
+  var pre3: string = "";
+  if (cfg.only1) {
+    pre3 = pre3 + cfg.sep;
+  }
+  if (cfg.only2) {
+    pre3 = pre3 + cfg.sep;
+  }
+
+  // The order-check state is shared between the two files: checking
+  // only starts once an unpairable line has been seen ANYWHERE, and
+  // each file warns at most once. Three locals rather than a struct
+  // because the unpairable flag is set once per unpaired line, and a
+  // struct update allocates.
+  var seen_unpairable: boolean = false;
+  var issued1: boolean = false;
+  var issued2: boolean = false;
+  var t0: u64 = 0 as u64;
+  var t1: u64 = 0 as u64;
+  var t2: u64 = 0 as u64;
+
+  // Each side is stepped at the TOP of the iteration that needs it,
+  // which is where GNU's check_order sees the same seen_unpairable it
+  // would have seen stepping at the bottom of the previous one.
+  var need1: boolean = true;
+  var need2: boolean = true;
+  while (true) {
+    if (need1) {
+      need1 = false;
+      var line: string = "";
+      var st: i32 = status_line();
+      var j: i32 = __memchr(chunk1, term, pos1);
+      if (j >= 0) {
+        line = slice_unchecked(chunk1, pos1, j + 1).to_string();
+        pos1 = j + 1;
+      } else {
+        var u: (string, string, i32, boolean, i32, string) = next_line_slow(r1, chunk1, pos1, eof1, term);
+        line = u.0;
+        chunk1 = u.1;
+        pos1 = u.2;
+        eof1 = u.3;
+        st = u.4;
+        if (st == status_error()) {
+          out = gnu.put(out, buf);
+          gnu.die(out, gnu.quotef(name1) + ": " + u.5, 1);
+        }
+      }
+      back1a = back1b;
+      back1b = cur1;
+      if (st == status_line()) {
+        cur1 = line;
+        have1 = true;
+        read1 = read1 + 1;
+      } else {
+        cur1 = "";
+        have1 = false;
+      }
+      if (read1 >= 2 && should_check(cfg, seen_unpairable, issued1)) {
+        var older: string = back1b;
+        var newer: string = cur1;
+        if (!have1) {
+          older = back1a;
+          newer = back1b;
+        }
+        if (cmp_lines(older, newer) > 0) {
+          out = gnu.put(out, buf);
+          buf = "";
+          out = disorder(out, cfg, 1);
+          issued1 = true;
+        }
+      }
+      if (shared) {
+        chunk2 = chunk1;
+        pos2 = pos1;
+        eof2 = eof1;
+      }
+    }
+    if (need2) {
+      need2 = false;
+      var line: string = "";
+      var st: i32 = status_line();
+      var j: i32 = __memchr(chunk2, term, pos2);
+      if (j >= 0) {
+        line = slice_unchecked(chunk2, pos2, j + 1).to_string();
+        pos2 = j + 1;
+      } else {
+        var u: (string, string, i32, boolean, i32, string) = next_line_slow(r2, chunk2, pos2, eof2, term);
+        line = u.0;
+        chunk2 = u.1;
+        pos2 = u.2;
+        eof2 = u.3;
+        st = u.4;
+        if (st == status_error()) {
+          out = gnu.put(out, buf);
+          gnu.die(out, gnu.quotef(name2) + ": " + u.5, 1);
+        }
+      }
+      back2a = back2b;
+      back2b = cur2;
+      if (st == status_line()) {
+        cur2 = line;
+        have2 = true;
+        read2 = read2 + 1;
+      } else {
+        cur2 = "";
+        have2 = false;
+      }
+      if (read2 >= 2 && should_check(cfg, seen_unpairable, issued2)) {
+        var older: string = back2b;
+        var newer: string = cur2;
+        if (!have2) {
+          older = back2a;
+          newer = back2b;
+        }
+        if (cmp_lines(older, newer) > 0) {
+          out = gnu.put(out, buf);
+          buf = "";
+          out = disorder(out, cfg, 2);
+          issued2 = true;
+        }
+      }
+      if (shared) {
+        chunk1 = chunk2;
+        pos1 = pos2;
+        eof1 = eof2;
+      }
+    }
+    if (!have1 && !have2) {
+      break;
+    }
+
+    var order: i32 = 0;
+    if (!have1) {
+      order = 1;
+    } else if (!have2) {
+      order = 0 - 1;
+    } else {
+      order = cmp_lines(cur1, cur2);
+    }
+    var class: i32 = 3;
+    if (order < 0) {
+      class = 1;
+    } else if (order > 0) {
+      class = 2;
+    }
+    if (order == 0) {
+      t2 = t2 + 1 as u64;
+    } else {
+      seen_unpairable = true;
+      if (order < 0) {
+        t0 = t0 + 1 as u64;
+      } else {
+        t1 = t1 + 1 as u64;
+      }
+    }
+    if (class == 1) {
+      if (show1) {
+        buf = buf + cur1;
+      }
+    } else if (class == 2) {
+      if (show2) {
+        buf = buf + pre2;
+        buf = buf + cur2;
+      }
+    } else if (show3) {
+      buf = buf + pre3;
+      buf = buf + cur2;
+    }
+    if (buf.len() >= block) {
+      out = gnu.put(out, buf);
+      buf = "";
+    }
+    if (order <= 0) {
+      need1 = true;
+    }
+    if (order >= 0) {
+      need2 = true;
+    }
+  }
+
+  // GNU closes both inputs before the summary, and both closes are
+  // reported: with `comm - -` the second one meets a descriptor the
+  // first already closed.
+  out = gnu.put(out, buf);
+  buf = "";
+  match (r1.close()) {
+    Some(e) => {
+      gnu.die(out, gnu.quotef(name1) + ": " + gnu.io_error_text(e), 1);
+    },
+    None => {}
+  }
+  match (r2.close()) {
+    Some(e) => {
+      gnu.die(out, gnu.quotef(name2) + ": " + gnu.io_error_text(e), 1);
+    },
+    None => {}
+  }
+  if (cfg.total) {
+    buf = buf + t0.to_string();
+    buf = buf + cfg.sep;
+    buf = buf + t1.to_string();
+    buf = buf + cfg.sep;
+    buf = buf + t2.to_string();
+    buf = buf + cfg.sep;
+    buf = buf + "total";
+    buf = buf + string_from_bytes_unchecked([term as u8]);
+    out = gnu.put(out, buf);
+  }
+  // The output is closed BEFORE the disorder status is reported, so a
+  // run whose stdout failed says so and says nothing about the order.
+  gnu.close_stdout(out, false);
+  if (issued1 || issued2) {
+    gnu.error("input is not in sorted order");
+    exit(1);
+  }
+  return 0;
+}
+
+// Whether check_order would look at this pair at all: never under
+// `--nocheck-order`, always under `--check-order`, and by default only
+// once an unpairable line has shown that the order matters — and never
+// twice for the same file.
+function should_check(cfg: Cfg, seen_unpairable: boolean, issued: boolean): boolean {
+  if (cfg.check == order_disabled() || issued) {
+    return false;
+  }
+  return cfg.check == order_enabled() || seen_unpairable;
+}
+
+// The out-of-order diagnostic: fatal under `--check-order`, a warning
+// by default that the exit status picks up at the end.
+function disorder(o: io_buffered.BufWriter, cfg: Cfg, which: i32): io_buffered.BufWriter {
+  var msg: string = "file " + which.to_string() + " is not in sorted order";
+  if (cfg.check == order_enabled()) {
+    gnu.die(o, msg, 1);
+  }
+  return gnu.error_out(o, msg);
+}

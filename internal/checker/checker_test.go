@@ -1743,6 +1743,259 @@ func TestNestedPointerCaptureWriteBackRejected(t *testing.T) {
 	}
 }
 
+// The ENCLOSING scope's store into a captured variable is E049 too when the
+// value can reach a closure (#8440). E049 used to guard only the inside of the
+// closure, but the capture is shared by reference — closureconv gives it a heap
+// cell — so `g = f` where `f` captures `g` closes cell -> closure -> env -> cell
+// with no diagnostic, and reference counting cannot collect that. The capture
+// cell is the last mutable heap slot in the language (E048 fields, E056
+// elements, E057 cell payloads), so this is the store that decides whether the
+// collector-free invariant holds.
+//
+// Every spelling here was confirmed to leak unboundedly before the rule: each
+// builds the cycle through a different container between the cell and the
+// closure.
+func TestOuterRebindReachingCapturedClosureRejected(t *testing.T) {
+	cases := []struct{ name, src string }{
+		{"direct", `function main(): i32 {
+			var g: () => i32 = (): i32 => { return 1; };
+			var f: () => i32 = (): i32 => { return g(); };
+			g = f;
+			return 0;
+		}`},
+		{"through_call", `function ident(x: () => i32): () => i32 { return x; }
+		function main(): i32 {
+			var g: () => i32 = (): i32 => { return 1; };
+			var f: () => i32 = (): i32 => { return g(); };
+			g = ident(f);
+			return 0;
+		}`},
+		{"local_func", `function main(): i32 {
+			var g: () => i32 = (): i32 => { return 1; };
+			function f(): i32 { return g(); }
+			g = f;
+			return 0;
+		}`},
+		{"mutual", `function main(): i32 {
+			var a: () => i32 = (): i32 => { return 1; };
+			var b: () => i32 = (): i32 => { return 2; };
+			var x: () => i32 = (): i32 => { return b(); };
+			var y: () => i32 = (): i32 => { return a(); };
+			a = x;
+			b = y;
+			return 0;
+		}`},
+		{"struct_field", `struct Holder { cb: () => i32 }
+		function main(): i32 {
+			var h: Holder = Holder { cb: (): i32 => { return 0; } };
+			var f: () => i32 = (): i32 => { return (h.cb)(); };
+			h = Holder { cb: f };
+			return 0;
+		}`},
+		{"nested_struct", `struct Inner { cb: () => i32 }
+		struct Outer { inner: Inner }
+		function main(): i32 {
+			var o: Outer = Outer { inner: Inner { cb: (): i32 => { return 0; } } };
+			var f: () => i32 = (): i32 => { return (o.inner.cb)(); };
+			o = Outer { inner: Inner { cb: f } };
+			return 0;
+		}`},
+		{"array_element", `function main(): i32 {
+			var arr: (() => i32)[] = [];
+			var f: () => i32 = (): i32 => { return arr.len(); };
+			arr = arr.append(f);
+			return 0;
+		}`},
+		{"tuple_element", `function main(): i32 {
+			var t: (i32, () => i32) = (1, (): i32 => { return 0; });
+			var f: () => i32 = (): i32 => { return t.0; };
+			t = (2, f);
+			return 0;
+		}`},
+		{"enum_payload", `enum Box { None, Some(() => i32) }
+		function main(): i32 {
+			var e: Box = Box.None;
+			var f: () => i32 = (): i32 => { return match (e) { Box.None => 1, Box.Some(_) => 2 }; };
+			e = Box.Some(f);
+			return 0;
+		}`},
+		{"dyn_object", `trait Runner { function run(self: Self): i32; }
+		struct Wrap { cb: () => i32 }
+		impl Runner for Wrap { function run(self: Self): i32 { return (self.cb)(); } }
+		function main(): i32 {
+			var d: dyn Runner = Wrap { cb: (): i32 => { return 0; } };
+			var f: () => i32 = (): i32 => { return d.run(); };
+			d = Wrap { cb: f };
+			return 0;
+		}`},
+	}
+	for _, tc := range cases {
+		err := checkSource(t, tc.src)
+		if err == nil || !strings.Contains(err.Error(), "would close a reference cycle") {
+			t.Errorf("%s: expected E049 for an outer rebind reaching a captured closure, got: %v", tc.name, err)
+		}
+	}
+}
+
+// The rule applies one level down too: a `var` local to a closure, captured by
+// a closure nested inside it, is the same shared cell one frame in.
+func TestNestedClosureLocalRebindRejected(t *testing.T) {
+	src := `function main(): i32 {
+		var outer: () => i32 = (): i32 => {
+			var g: () => i32 = (): i32 => { return 1; };
+			var inner: () => i32 = (): i32 => { return g(); };
+			g = inner;
+			return 0;
+		};
+		return outer();
+	}`
+	if err := checkSource(t, src); err == nil || !strings.Contains(err.Error(), "would close a reference cycle") {
+		t.Errorf("expected E049 for a rebind inside the declaring closure, got: %v", err)
+	}
+}
+
+// A captured variable declared AFTER the store that supersedes it is still
+// covered: the capture set is not complete until the whole function is
+// checked, so the rule cannot be decided at the store. Here the second
+// iteration stores the lambda that captures `g`.
+func TestOuterRebindRejectedWhenClosureIsDeclaredLater(t *testing.T) {
+	src := `function main(): i32 {
+		var g: () => i32 = (): i32 => { return 1; };
+		var f: () => i32 = (): i32 => { return 2; };
+		var i: i32 = 0;
+		while (i < 2) {
+			g = f;
+			f = (): i32 => { return g(); };
+			i = i + 1;
+		}
+		return 0;
+	}`
+	if err := checkSource(t, src); err == nil || !strings.Contains(err.Error(), "would close a reference cycle") {
+		t.Errorf("expected E049 for a store preceding the capturing closure, got: %v", err)
+	}
+}
+
+// The rule asks what the STORED value can reach, not whether the variable is
+// captured: a captured value that cannot name a function cannot be the
+// closure, so the by-reference rebinds #5301 / #2896 exist to support stay
+// legal. Each of these was confirmed to reclaim fully at run time.
+func TestOuterRebindOfFunctionFreeCaptureAllowed(t *testing.T) {
+	cases := []struct{ name, src string }{
+		{"string", `function main(): i32 {
+			var s: string = "a";
+			var f: () => i32 = (): i32 => { return s.len(); };
+			s = "bb";
+			return f();
+		}`},
+		{"array", `function main(): i32 {
+			var arr: i32[] = [1, 2];
+			var f: () => i32 = (): i32 => { return arr.len(); };
+			arr = arr.append(3);
+			return f();
+		}`},
+		{"struct", `struct P { a: i32 }
+		function main(): i32 {
+			var p: P = P { a: 1 };
+			var f: () => i32 = (): i32 => { return p.a; };
+			p = P { a: 2 };
+			return f();
+		}`},
+		{"scalar", `function main(): i32 {
+			var n: i32 = 1;
+			var f: () => i32 = (): i32 => { return n; };
+			n = 99;
+			return f();
+		}`},
+	}
+	for _, tc := range cases {
+		if err := checkSource(t, tc.src); err != nil {
+			t.Errorf("%s: an outer rebind that cannot reach a closure should compile, got: %v", tc.name, err)
+		}
+	}
+}
+
+// A closure LITERAL is the one right-hand side the rule reads by value flow
+// rather than by type: the checker just built it, so it knows what it
+// captures. One that captures neither the target nor anything that could hold
+// a closure has no edge back to the cell, and swapping a captured callback on
+// a flag stays legal — the shape `self_host_annotate_consumers_ir_test.go`
+// already relies on.
+func TestFreshClosureLiteralRebindOfCapturedVariableAllowed(t *testing.T) {
+	src := `function main(): i32 {
+		var flip: boolean = false;
+		var g = (): (string, i32) => { return ("abcd", 4); };
+		if (flip) { g = (): (string, i32) => { return ("z", 1); }; }
+		var h = () => g().1 + 38;
+		return h();
+	}`
+	if err := checkSource(t, src); err != nil {
+		t.Errorf("swapping a captured callback for a fresh closure literal should compile, got: %v", err)
+	}
+}
+
+// The literal exception is only as wide as the literal's captures. A literal
+// that captures the target itself, or captures anything whose type could hold
+// a closure leading back to it, is refused like any other value.
+func TestClosureLiteralThatCapturesIsStillRejected(t *testing.T) {
+	cases := []struct{ name, src string }{
+		{"captures_target", `function main(): i32 {
+			var g: () => i32 = (): i32 => { return 1; };
+			var f: () => i32 = (): i32 => { return g(); };
+			g = (): i32 => { return g() + 1; };
+			return 0;
+		}`},
+		{"captures_a_closure", `function main(): i32 {
+			var g: () => i32 = (): i32 => { return 1; };
+			var f: () => i32 = (): i32 => { return g(); };
+			g = (): i32 => { return f(); };
+			return 0;
+		}`},
+	}
+	for _, tc := range cases {
+		err := checkSource(t, tc.src)
+		if err == nil || !strings.Contains(err.Error(), "reference cycle") {
+			t.Errorf("%s: expected E049, got: %v", tc.name, err)
+		}
+	}
+}
+
+// A closure-typed variable NO closure captures has no shared cell, so
+// rebinding it closes nothing and stays legal — the rule is about the cell,
+// not about function-typed variables.
+func TestRebindOfUncapturedClosureVariableAllowed(t *testing.T) {
+	src := `function main(): i32 {
+		var g: () => i32 = (): i32 => { return 1; };
+		var h: () => i32 = (): i32 => { return 2; };
+		g = h;
+		return g();
+	}`
+	if err := checkSource(t, src); err != nil {
+		t.Errorf("rebinding an uncaptured closure variable should compile, got: %v", err)
+	}
+}
+
+// A closure body's own local that shadows a captured outer name is not the
+// captured variable, so storing a closure into it is legal. Names are not
+// unique until shadowrename (which runs after the checker), so the rule pairs
+// a store with a DECLARATION node rather than a spelling; matching on the name
+// would reject this.
+func TestShadowingLocalIsNotTheCapturedVariable(t *testing.T) {
+	src := `function main(): i32 {
+		var g: () => i32 = (): i32 => { return 1; };
+		var outer: () => i32 = (): i32 => { return g(); };
+		var pick: () => i32 = (): i32 => {
+			var g: () => i32 = (): i32 => { return 2; };
+			var h: () => i32 = (): i32 => { return 3; };
+			g = h;
+			return g();
+		};
+		return outer() + pick();
+	}`
+	if err := checkSource(t, src); err != nil {
+		t.Errorf("assigning a closure to a shadowing local should compile, got: %v", err)
+	}
+}
+
 // Scalar capture write-back stays legal — an i32/i64/f32/f64 capture
 // can't hold a reference, so it can't form a cycle. This is the
 // stateful "counter closure": each call increments the env's count.

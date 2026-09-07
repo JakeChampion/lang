@@ -2198,6 +2198,11 @@ func emitOp(body []byte, op ir.Op, ctx *emitCtx) ([]byte, error) {
 			return numeric.InstI32ShrU(body), nil
 		}
 		return numeric.InstI32ShrS(body), nil
+	case ir.OpRotr:
+		if op.Width == 64 {
+			return numeric.InstI64Rotr(body), nil
+		}
+		return numeric.InstI32Rotr(body), nil
 	case ir.OpNot:
 		// logical not — i32.eqz; only meaningful on i32.
 		return numeric.InstI32Eqz(body), nil

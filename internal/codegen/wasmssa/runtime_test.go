@@ -632,6 +632,9 @@ func TestRuntimeArithSweep(t *testing.T) {
 		{"shl", ssa.OpShl, 1, 3, 8},
 		{"shr_s", ssa.OpShr, 16, 2, 4},
 		{"shr_u", ssa.OpShrU, 16, 2, 4},
+		// i32.rotr, not a shift: the bits leaving the bottom re-enter at
+		// the top, so a shr lowering would answer 0 here.
+		{"rotr", ssa.OpRotr, 3, 4, 0x30000000},
 		{"eq", ssa.OpEq, 5, 5, 1},
 		{"ne", ssa.OpNe, 5, 5, 0},
 		{"lt_s", ssa.OpLt, 3, 5, 1},

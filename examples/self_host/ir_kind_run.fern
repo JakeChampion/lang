@@ -49,7 +49,7 @@ function main(): i32 {
     }
 
     // 1b. Extension-tag sweep — the registered ids BEYOND kind_count()
-    //     (struct_copy=198 … lstat=236). Each must sit past
+    //     (struct_copy=198 … mismatch=245). Each must sit past
     //     the dense table and round-trip through kind_name, so a tag reachable
     //     from kind_id but unrendered by kind_name (the #5452 skew, which made
     //     ssa_lift's struct_copy bail read "invalid") fails here.
@@ -68,7 +68,7 @@ function main(): i32 {
         "write_file_exec", "ascii_run", "syscall5", "heap_mark",
         "heap_release_to", "create_dir_all", "isatty", "read_file_bytes",
         "rmemchr", "count_byte", "lstat", "access", "geteuid", "getegid",
-        "hostname", "fd_stat", "reader_seek",
+        "hostname", "fd_stat", "reader_seek", "mismatch",
         "getuid", "getgid", "getgroups", "environ"
     ];
     var ext_max: i32 = n;
@@ -166,8 +166,8 @@ function main(): i32 {
         ir.op_syscall5(), ir.op_create_dir_all(), ir.op_isatty(),
         ir.op_rmemchr(), ir.op_count_byte(), ir.op_lstat(),
         ir.op_access(), ir.op_geteuid(), ir.op_getegid(), ir.op_hostname(),
-        ir.op_getuid(), ir.op_getgid(), ir.op_getgroups(), ir.op_environ(),
-        ir.op_fd_stat(), ir.op_reader_seek()
+        ir.op_fd_stat(), ir.op_reader_seek(), ir.op_mismatch(),
+        ir.op_getuid(), ir.op_getgid(), ir.op_getgroups(), ir.op_environ()
     ];
     var names: string[] = [
         "const_i32", "const_str", "load_local",
@@ -181,8 +181,8 @@ function main(): i32 {
         "map_hash_seed", "raw_addr", "raw_arr_box",
         "memchr", "write_file_exec", "ascii_run", "syscall5",
         "create_dir_all", "isatty", "rmemchr", "count_byte", "lstat",
-        "access", "geteuid", "getegid", "hostname",
-        "getuid", "getgid", "getgroups", "environ", "fd_stat", "reader_seek"
+        "access", "geteuid", "getegid", "hostname", "fd_stat", "reader_seek",
+        "mismatch", "getuid", "getgid", "getgroups", "environ"
     ];
     var tag_ok: i32 = 0;
     var tag_bad: i32 = 0;

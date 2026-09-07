@@ -39,8 +39,20 @@ func capsTestBuilder() *builder {
 				{Name: "A", Payloads: []ast.Type{i32}},
 				{Name: "B"},
 			}},
+			// Generic enums are NOT monomorphised: one decl with ParamType
+			// payloads serves every instantiation, and the concrete types
+			// live in EnumType.Args.
+			"Option": {Name: "Option", TypeParams: []string{"T"}, Variants: []ast.EnumVariant{
+				{Name: "Some", Payloads: []ast.Type{ast.ParamType{Name: "T"}}},
+				{Name: "None"},
+			}},
 		},
 	}}
+}
+
+// optionOf is the EnumType a source-level `Option[t]` lowers to.
+func optionOf(t ast.Type) ast.EnumType {
+	return ast.EnumType{Name: "Option", Args: []ast.Type{t}}
 }
 
 func TestRcTransitiveClassifierVerdicts(t *testing.T) {
@@ -78,6 +90,16 @@ func TestRcTransitiveClassifierVerdicts(t *testing.T) {
 		// Closures / unresolved generics: not free, no Map.
 		{"func type", &ast.FuncType{}, false, false},
 		{"param type", ast.ParamType{Name: "T"}, false, false},
+		// A generic enum INSTANTIATION answers about its type arguments, not
+		// about the ParamType its shared decl carries: Option[i32] holds no
+		// buffer, Option[string] does.
+		{"Option[i32]", optionOf(ast.NumberType{}), true, false},
+		{"Option[string]", optionOf(ast.StringType{}), false, false},
+		{"Option[i32[]]", optionOf(ast.ArrayType{Elem: ast.NumberType{}}), false, false},
+		{"Option[Point]", optionOf(ast.StructType{Name: "Point"}), true, false},
+		// Un-instantiated, so the payload stays a ParamType and each axis
+		// keeps its conservative answer.
+		{"bare Option", ast.EnumType{Name: "Option"}, false, false},
 	}
 	for _, tc := range cases {
 		free := b.typeIsStringArrayFree(tc.t, map[string]bool{})
@@ -111,6 +133,12 @@ func TestOwnedByDefaultShapeAdmitsWiredDrops(t *testing.T) {
 	b.info.Enums["Generic"] = &ast.EnumDecl{Name: "Generic", Variants: []ast.EnumVariant{
 		{Name: "Some", Payloads: []ast.Type{ast.ParamType{Name: "T"}}},
 	}}
+	b.info.Structs["Tagged"] = &ast.StructDecl{Name: "Tagged", Fields: []ast.Param{
+		{Name: "buf", Type: ast.StringType{}},
+		{Name: "tag", Type: optionOf(ast.StringType{})}}}
+	b.info.Structs["MapTagged"] = &ast.StructDecl{Name: "MapTagged", Fields: []ast.Param{
+		{Name: "buf", Type: ast.StringType{}},
+		{Name: "tag", Type: optionOf(ast.StructType{Name: "Map"})}}}
 	cases := []struct {
 		name      string
 		t         ast.Type
@@ -121,6 +149,8 @@ func TestOwnedByDefaultShapeAdmitsWiredDrops(t *testing.T) {
 		{"string-bearing struct", ast.StructType{Name: "Named"}, true, true},
 		{"Map-bearing struct", ast.StructType{Name: "Holder"}, false, false},
 		{"unknown struct", ast.StructType{Name: "Reader"}, false, false},
+		{"struct with Option[string] field", ast.StructType{Name: "Tagged"}, true, true},
+		{"struct with Option[Map] field", ast.StructType{Name: "MapTagged"}, false, false},
 		{"scalar enum", ast.EnumType{Name: "Scalar"}, true, true},
 		{"array-payload enum", ast.EnumType{Name: "Bag"}, true, true},
 		{"non-uniform enum", ast.EnumType{Name: "Shape"}, true, true},
@@ -136,6 +166,22 @@ func TestOwnedByDefaultShapeAdmitsWiredDrops(t *testing.T) {
 		{"string", ast.StringType{}, true, false},
 		{"slice", ast.SliceType{Elem: i32}, false, false},
 		{"closure", &ast.FuncType{}, false, false},
+		// A generic enum INSTANTIATION is wired: the drop emitter substitutes
+		// the type args (emitEnumSlotDrop), so the capability walk must ask
+		// about the same substituted payloads. Reading the shared decl
+		// directly saw a ParamType and answered "not wired" for every
+		// Option / Result in the language — and took every struct holding one
+		// out of the owned model with it (#8785 lost its in-place field
+		// append to exactly this).
+		{"Option[i32]", optionOf(i32), true, true},
+		{"Option[string]", optionOf(ast.StringType{}), true, true},
+		{"Option[i32[]]", optionOf(ast.ArrayType{Elem: i32}), true, true},
+		// The Map exclusion survives substitution: it is the ARGUMENT that
+		// carries the Map, so only the substituted walk can see it.
+		{"Option[Map]", optionOf(ast.StructType{Name: "Map"}), false, false},
+		{"Option[Map-bearing struct]", optionOf(ast.StructType{Name: "Holder"}), false, false},
+		// Un-instantiated: payload still a ParamType, still not wired.
+		{"bare Option", ast.EnumType{Name: "Option"}, false, false},
 	}
 	for _, tc := range cases {
 		wired := typeDeepDropWired(tc.t, b.info, map[string]bool{})

@@ -678,6 +678,9 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	if g.usesMemchr {
 		g.emitMemchrRuntime()
 	}
+	if g.usesMismatch {
+		g.emitMismatchRuntime()
+	}
 	if g.usesRmemchr {
 		g.emitRmemchrRuntime()
 	}
@@ -996,6 +999,10 @@ type generator struct {
 	usesAsciiRun bool
 	// usesMemchr gates the SSE2 byte-search kernel (__fern_memchr).
 	usesMemchr bool
+	// usesMismatch gates the two-range comparison kernel
+	// (__fern_mismatch), which is __memchr's kernel over a pair of
+	// operands instead of a broadcast needle.
+	usesMismatch bool
 	// usesRmemchr gates its backward sibling (__fern_rmemchr).
 	usesRmemchr bool
 	// usesCountByte gates the byte-tally kernel (__fern_count_byte).
@@ -1474,6 +1481,8 @@ func (g *generator) recordUse(target string) {
 		g.usesRandomI32 = true // the lazy first-call draw
 	case "__fern_memchr":
 		g.usesMemchr = true
+	case "__fern_mismatch":
+		g.usesMismatch = true
 	case "__fern_rmemchr":
 		g.usesRmemchr = true
 	case "__fern_count_byte":
@@ -2359,6 +2368,14 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		} else {
 			g.emit(fmt.Sprintf("sar %s, cl", reg))
 		}
+		g.push()
+	case ir.OpRotr:
+		// Same count-in-cl shape as the shifts, and the same width
+		// rule: `ror eax` rotates within the i32 lane an i32 rides
+		// zero-extended in, where `ror rax` would drag the cleared
+		// high half through the low bits.
+		g.binPop()
+		g.emit(fmt.Sprintf("ror %s, cl", g.aRegForWidth(op.Width)))
 		g.push()
 
 	// -------- comparison (i32) --------
@@ -4835,8 +4852,8 @@ func (g *generator) peepholeTail() bool {
 	//
 	// The hardware masks an imm8 count exactly as it masks cl — five bits
 	// for a 32-bit operand, six for a 64-bit one — so the two forms shift
-	// by the same amount and leave the same flags for every count that
-	// fits the immediate. Dropping the write to rcx is sound for P4's
+	// (or rotate: `ror` is the same group 2 encoding) by the same amount
+	// and leave the same flags for every count that fits the immediate. Dropping the write to rcx is sound for P4's
 	// reason: every consumer of rcx in this backend writes it before
 	// reading it.
 	if n >= 2 {
@@ -5006,7 +5023,7 @@ func foldConstShift(mov, shift string) (string, bool) {
 	if err != nil || k < 0 || k > math.MaxUint8 {
 		return "", false
 	}
-	for _, m := range [...]string{"shl", "shr", "sar"} {
+	for _, m := range [...]string{"shl", "shr", "sar", "ror"} {
 		pfx := "\t" + m + " "
 		if !strings.HasPrefix(shift, pfx) {
 			continue
@@ -9681,6 +9698,208 @@ func (g *generator) emitMemchrRuntime() {
 	g.emit("pop rbp")
 	g.emit("ret")
 	g.line(".size __fern_memchr, .-__fern_memchr")
+}
+
+// emitMismatchRuntime emits `__fern_mismatch(a, ao, b, bo, n) -> i32`: the
+// offset of the first byte where a[ao..ao+n) and b[bo..bo+n) differ, or n when
+// they are equal.
+//
+// __memchr's kernel with the broadcast needle replaced by a second operand
+// stream: the same AVX2 32-byte main loop, the same SSE2 16-byte tail loop, the
+// same scalar remainder, and the same `bsf` on the mask to find the lane. The
+// one inversion is that the mask means EQUAL here where __memchr's means FOUND,
+// so the loop continues while the mask is all-ones and `not` precedes the bsf.
+// `cmp eax, -1` / `cmp eax, 65535` rather than a mask-is-zero test: a byte that
+// matches is not the interesting one.
+//
+// The offsets and the length are clamped rather than trusted (see the checker's
+// signature comment) — with two ranges there are twice as many ways for a
+// caller to be wrong, and the clamp is a handful of instructions outside the
+// loop. After it, every load in the three loops is inside both strings by
+// construction, so the unaligned 32- and 16-byte reads cannot cross into an
+// unmapped page — the same argument __memchr makes, and it also covers the
+// inline SSO case: an inline string holds at most 7 bytes, so a clamped n never
+// reaches either vector loop and neither block is read out of the 8-byte
+// scratch the spill provides.
+func (g *generator) emitMismatchRuntime() {
+	g.line("")
+	g.line(".globl __fern_mismatch")
+	g.line(".type __fern_mismatch, @function")
+	g.label("__fern_mismatch")
+	// rdi = a, esi = ao, rdx = b, ecx = bo, r8d = n.
+	// Frame: two 16-byte emitStrDataPtr scratch slots, one per operand.
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("sub rsp, 32")
+	g.emitStrLen("r10d", "rdi") // r10d = len(a)
+	g.emitStrLen("r11d", "rdx") // r11d = len(b)
+	g.emitStrDataPtr("rdi", "rdi", "[rbp - 16]")
+	g.emitStrDataPtr("rdx", "rdx", "[rbp - 32]")
+	// Clamp each offset into [0, len].
+	g.emit("test esi, esi")
+	g.emit("jns .Lmm_ao_pos")
+	g.emit("xor esi, esi")
+	g.label(".Lmm_ao_pos")
+	g.emit("cmp esi, r10d")
+	g.emit("jle .Lmm_ao_ok")
+	g.emit("mov esi, r10d")
+	g.label(".Lmm_ao_ok")
+	g.emit("test ecx, ecx")
+	g.emit("jns .Lmm_bo_pos")
+	g.emit("xor ecx, ecx")
+	g.label(".Lmm_bo_pos")
+	g.emit("cmp ecx, r11d")
+	g.emit("jle .Lmm_bo_ok")
+	g.emit("mov ecx, r11d")
+	g.label(".Lmm_bo_ok")
+	// n = min(n, len(a) - ao, len(b) - bo), floored at 0.
+	g.emit("sub r10d, esi")
+	g.emit("sub r11d, ecx")
+	g.emit("cmp r8d, r10d")
+	g.emit("jle .Lmm_n_a")
+	g.emit("mov r8d, r10d")
+	g.label(".Lmm_n_a")
+	g.emit("cmp r8d, r11d")
+	g.emit("jle .Lmm_n_b")
+	g.emit("mov r8d, r11d")
+	g.label(".Lmm_n_b")
+	g.emit("test r8d, r8d")
+	g.emit("jns .Lmm_n_ok")
+	g.emit("xor r8d, r8d")
+	g.label(".Lmm_n_ok")
+	// rsi = a's range base, rcx = b's range base, r9 = the clamped n (also
+	// the answer when the ranges are equal), r10 = the cursor offset.
+	g.emit("add rsi, rdi")
+	g.emit("add rcx, rdx")
+	g.emit("mov r9d, r8d")
+	g.emit("xor r10d, r10d")
+	// Length dispatch. A line-oriented utility compares SHORT ranges — the
+	// 13-byte case #8791 measured is the shape — and falling into the scalar
+	// remainder for those is the very cost this kernel exists to remove, so
+	// the sub-16 lengths get memcmp's overlapping-word treatment rather than
+	// a byte walk. Two loads per operand cover any length in the band with
+	// one compare each, because the two windows overlap.
+	g.emit("cmp r9, 16")
+	g.emit("jge .Lmm_avx")
+	g.emit("cmp r9, 8")
+	g.emit("jge .Lmm_w8")
+	g.emit("cmp r9, 4")
+	g.emit("jge .Lmm_w4")
+	g.emit("jmp .Lmm_tail")
+	// 8..15 bytes: the leading 8 and the trailing 8, which overlap. rdi and
+	// rdx are dead by here — both were folded into the range bases above.
+	g.label(".Lmm_w8")
+	g.emit("mov rax, [rsi]")
+	g.emit("xor rax, [rcx]")
+	g.emit("jnz .Lmm_w8_lead")
+	g.emit("mov rdi, r9")
+	g.emit("sub rdi, 8")
+	g.emit("mov rax, [rsi + rdi]")
+	g.emit("xor rax, [rcx + rdi]")
+	g.emit("jz .Lmm_eq")
+	// The leading window proved [0, 8) equal, so a difference the trailing
+	// window reports cannot land below 8 — its offset is the first one.
+	g.emit("bsf rax, rax")
+	g.emit("shr rax, 3")
+	g.emit("add rax, rdi")
+	g.emit("jmp .Lmm_ret")
+	g.label(".Lmm_w8_lead")
+	// bsf finds the lowest set BIT of the xor; >> 3 turns it into the byte,
+	// little-endian, so byte 0 is the low one.
+	g.emit("bsf rax, rax")
+	g.emit("shr rax, 3")
+	g.emit("jmp .Lmm_ret")
+	// 4..7 bytes: the same pair of windows, four bytes wide.
+	g.label(".Lmm_w4")
+	g.emit("mov eax, [rsi]")
+	g.emit("xor eax, [rcx]")
+	g.emit("jnz .Lmm_w4_lead")
+	g.emit("mov rdi, r9")
+	g.emit("sub rdi, 4")
+	g.emit("mov eax, [rsi + rdi]")
+	g.emit("xor eax, [rcx + rdi]")
+	g.emit("jz .Lmm_eq")
+	g.emit("bsf eax, eax")
+	g.emit("shr eax, 3")
+	g.emit("add rax, rdi")
+	g.emit("jmp .Lmm_ret")
+	g.label(".Lmm_w4_lead")
+	g.emit("bsf eax, eax")
+	g.emit("shr eax, 3")
+	g.emit("jmp .Lmm_ret")
+	// AVX2 main loop: 32 bytes of each operand per iteration.
+	g.label(".Lmm_avx")
+	g.emit("mov rax, r9")
+	g.emit("sub rax, r10")
+	g.emit("cmp rax, 32")
+	g.emit("jl .Lmm_avx_done")
+	g.emit("vmovdqu ymm0, [rsi + r10]")
+	g.emit("vmovdqu ymm1, [rcx + r10]")
+	g.emit("vpcmpeqb ymm0, ymm0, ymm1")
+	g.emit("vpmovmskb eax, ymm0")
+	g.emit("cmp eax, -1")
+	g.emit("jne .Lmm_hit32")
+	g.emit("add r10, 32")
+	g.emit("jmp .Lmm_avx")
+	g.label(".Lmm_hit32")
+	// Leaving ymm state dirty here, and this path returns straight to the
+	// caller: vzeroupper before it might run legacy SSE.
+	g.emit("vzeroupper")
+	g.emit("not eax")
+	// bsf, not tzcnt: tzcnt is BMI1, and below the baseline its F3 prefix is
+	// ignored so it degrades silently to bsf rather than faulting.
+	g.emit("bsf eax, eax")
+	g.emit("add r10, rax")
+	g.emit("mov eax, r10d")
+	g.emit("jmp .Lmm_ret")
+	g.label(".Lmm_avx_done")
+	// Falling into the legacy-SSE (non-VEX) tail loop: vzeroupper once here
+	// rather than on every one of its exits.
+	g.emit("vzeroupper")
+	// SSE2 tail loop: 16 bytes per iteration.
+	g.label(".Lmm_vec")
+	g.emit("mov rax, r9")
+	g.emit("sub rax, r10")
+	g.emit("cmp rax, 16")
+	g.emit("jl .Lmm_tail")
+	g.emit("movdqu xmm0, [rsi + r10]")
+	g.emit("movdqu xmm1, [rcx + r10]")
+	g.emit("pcmpeqb xmm0, xmm1")
+	g.emit("pmovmskb eax, xmm0")
+	g.emit("cmp eax, 65535")
+	g.emit("jne .Lmm_hit16")
+	g.emit("add r10, 16")
+	g.emit("jmp .Lmm_vec")
+	g.label(".Lmm_hit16")
+	// pmovmskb writes only the low 16 bits, so `not` sets the top half; the
+	// branch above guarantees a clear bit below 16, which is the one bsf
+	// finds first.
+	g.emit("not eax")
+	g.emit("bsf eax, eax")
+	g.emit("add r10, rax")
+	g.emit("mov eax, r10d")
+	g.emit("jmp .Lmm_ret")
+	// Scalar remainder: fewer than 16 bytes left. Also the whole algorithm
+	// for the short ranges a line-oriented utility actually compares.
+	g.label(".Lmm_tail")
+	g.emit("cmp r10, r9")
+	g.emit("jge .Lmm_eq")
+	g.emit("movzx eax, byte ptr [rsi + r10]")
+	g.emit("movzx r11d, byte ptr [rcx + r10]")
+	g.emit("cmp eax, r11d")
+	g.emit("jne .Lmm_tail_hit")
+	g.emit("inc r10")
+	g.emit("jmp .Lmm_tail")
+	g.label(".Lmm_tail_hit")
+	g.emit("mov eax, r10d")
+	g.emit("jmp .Lmm_ret")
+	g.label(".Lmm_eq")
+	g.emit("mov eax, r9d")
+	g.label(".Lmm_ret")
+	g.emit("add rsp, 32")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_mismatch, .-__fern_mismatch")
 }
 
 // emitRmemchrRuntime emits `__fern_rmemchr(s, byte, from) -> i32`: the index

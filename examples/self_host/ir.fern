@@ -528,6 +528,26 @@ pub function op_count_byte(): Op { return op0("count_byte"); }
 // `i = __ascii_run(s, i)` has to be a branch-free skip.
 pub function op_ascii_run(): Op { return op0("ascii_run"); }
 
+// mismatch (#8791, fifth kernel): pops [a, ao, b, bo, n] -> the i32 offset of
+// the first byte where a[ao..ao+n) and b[bo..bo+n) differ, or n when the two
+// ranges are equal. Allocates nothing and reads only the two sources.
+//
+// An op for op_memchr's reason -- an op is what a backend can SUBSTITUTE --
+// and the only one of the family with TWO string operands, so it is also the
+// only one whose operand-stack pops span two boxes.
+//
+// ONE kernel serves both questions a caller can ask: equality is
+// `__mismatch(..) == n`, ordering is one indexed load at the returned offset.
+// A boolean `__memeq` could not say WHERE, which is what the ordering callers
+// need.
+//
+// The offsets and the length are CLAMPED rather than trusted: `ao` and `bo`
+// into [0, len] and `n` down to what both ranges actually hold, floored at 0.
+// The value returned on equality is therefore the CLAMPED n, so a caller
+// asking to compare more than exists gets the shorter answer and its `== n`
+// test correctly fails.
+pub function op_mismatch(): Op { return op0("mismatch"); }
+
 // Random / byte-source builtins (issue #2747) — the cross-backend byte source
 // uuid (#2682) and a future std/crypto build on. Each lowers to a runtime
 // helper the IR backends emit (no `__fn_` body), so the eligibility gate treats
@@ -1702,8 +1722,7 @@ function kind_id_len8(name: string): i32 {
     if (c == b'i' && name == "int_wrap") { return 8; }
     if (c == b'i' && name == "int_cast") { return 9; }
     if (c == b'l') { return kind_id_len8_l(name); }
-    if (c == b'm' && name == "map_keys") { return 131; }
-    if (c == b'm' && name == "map_iter") { return 133; }
+    if (c == b'm') { return kind_id_len8_m(name); }
     if (c == b'o' && name == "opt_make") { return 120; }
     if (c == b'o' && name == "opt_none") { return 121; }
     if (c == b'p' && name == "popcount") { return 221; }
@@ -1719,6 +1738,13 @@ function kind_id_len8_a(name: string): i32 {
     if (name == "alloc_u8") { return 77; }
     if (name == "arr_make") { return 87; }
     if (name == "arr_push") { return 92; }
+    return 0;
+}
+
+function kind_id_len8_m(name: string): i32 {
+    if (name == "map_keys") { return 131; }
+    if (name == "map_iter") { return 133; }
+    if (name == "mismatch") { return 245; }
     return 0;
 }
 
@@ -2240,12 +2266,13 @@ function kind_name_4(id: i32): string {
     if (id == 238) { return "geteuid"; }
     if (id == 239) { return "getegid"; }
     if (id == 240) { return "hostname"; }
+    if (id == 241) { return "fd_stat"; }
+    if (id == 242) { return "reader_seek"; }
+    if (id == 245) { return "mismatch"; }
     if (id == 246) { return "getuid"; }
     if (id == 247) { return "getgid"; }
     if (id == 248) { return "getgroups"; }
     if (id == 249) { return "environ"; }
-    if (id == 241) { return "fd_stat"; }
-    if (id == 242) { return "reader_seek"; }
     return "invalid";
 }
 
@@ -2405,6 +2432,7 @@ pub function op_pops(o: Op): i32 {
     if (pops3(t)) { return 3; }
     if (t == 204) { return 4; }                       // syscall3: nr + 3 args
     if (t == 206) { return 5; }                       // syscall4
+    if (t == 245) { return 5; }                       // mismatch: a, ao, b, bo, n
     if (t == 228) { return 6; }                       // syscall5
     // Variadic: the immediate is the count. arr_make / struct_make /
     // tuple_make pop their elements; call_direct pops its arguments.
@@ -4060,7 +4088,7 @@ pub function is_str_op_kind(tag: i32): boolean {
         || tag == 114
         || tag == 115 || tag == 116 || tag == 98
         || tag == 99 || tag == 100 || tag == 225 || tag == 227
-        || tag == 234 || tag == 235;
+        || tag == 234 || tag == 235 || tag == 245;
 }
 
 // --- Structured-scope navigation over an op stream ---

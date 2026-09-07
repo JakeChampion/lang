@@ -103,6 +103,18 @@ const (
 	OpXor
 	OpShl
 	OpShrS
+	// OpRotr rotates the first operand right by the second, modulo
+	// `Width`. Every target has it as one instruction — wasm as
+	// i32.rotr / i64.rotr, arm64 as ror (RORV, or the EXTR alias for a
+	// constant count), x86-64 as ror — against the three the
+	// shift/shift/or spelling costs. Produced by FuseRotates; nothing
+	// lowers to it directly.
+	//
+	// There is no rotate-LEFT op: a left rotate by n is a right rotate
+	// by Width-n, and the fusion only ever sees a constant count, so
+	// normalising to one direction keeps eight emitters from carrying
+	// two.
+	OpRotr
 	OpNot // logical ! (i32.eqz)
 
 	// Bit-counting intrinsics. Each consumes one integer of `Width`
@@ -465,6 +477,8 @@ func (k OpKind) String() string {
 		return "shl"
 	case OpShrS:
 		return "shr_s"
+	case OpRotr:
+		return "rotr"
 	case OpNot:
 		return "not"
 	case OpClz:
@@ -12731,7 +12745,7 @@ func (b *builder) binary(n *ast.Binary) error {
 		// arm64 and wasm once the order was corrected. Copy instead; the
 		// stash below releases the read's retain exactly as for any other
 		// borrowed operand.
-		consumeLeftTemp := ast.RcFreeEnabled && b.strAppendAvailable() &&
+		consumeLeftTemp := ast.RcFreeEnabled &&
 			b.isOwnedStringTemp(n.Left) && !isCellStringGetExpr(n.Left) &&
 			ast.Expr(n) != b.selfStrAppendBin
 		stash := func(e ast.Expr, consumed bool) (int32, error) {
@@ -14873,6 +14887,23 @@ func (b *builder) callBody(n *ast.Call) error {
 			}
 			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_ascii_run", Width: ResNarrow, I32: 2,
 				Ext: &OpExt{ArgTypes: []ast.Type{ast.StringType{}, ast.NumberType{}}}})
+			return nil
+		}
+	}
+	// __mismatch(a, ao, b, bo, n) — the same runtime-helper-call shape as its
+	// four siblings, with TWO strings. ArgTypes is doubly load-bearing here:
+	// under the two-word ABI this call is seven operand slots, not five, and
+	// the two strings are not adjacent, so a backend popping I32=5 reads the
+	// second string's length as `n`.
+	if id.Name == "__mismatch" && len(n.Args) == 5 {
+		if _, isLocal := b.locals[id.Name]; !isLocal {
+			for _, a := range n.Args {
+				if err := b.expr(a); err != nil {
+					return err
+				}
+			}
+			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_mismatch", Width: ResNarrow, I32: 5,
+				Ext: &OpExt{ArgTypes: []ast.Type{ast.StringType{}, ast.NumberType{}, ast.StringType{}, ast.NumberType{}, ast.NumberType{}}}})
 			return nil
 		}
 	}
@@ -19374,28 +19405,6 @@ func isStringTypeOfLocal(name string, b *builder) bool {
 	return false
 }
 
-// strAppendAvailable reports whether this target's backend emits the
-// __fern_str_append helper: wasm's two-word ABI (ptrW==4) and native
-// single-word x86_64 (ptrW==8 with TwoWordOverride off). arm64 (ptrW==8 +
-// TwoWordOverride) has no such helper yet, so it keeps plain OpStrConcat
-// and its codegen is byte-identical.
-//
-// These USED to be exactly the widths whose assign() string branch releases
-// the old buffer on overwrite, so the two sets coincided by construction.
-// They no longer do: since #6554 / #7446 that branch releases on every
-// width, arm64 included. The sets must now be kept apart deliberately.
-//
-// What balances the release is the marked self-append short-circuit
-// (isSelfStrAppendLocal, the `strAppended` arm ahead of it), not the width:
-// __fern_str_append writes back into the same box, so releasing after it
-// would over-release. Widening this predicate to arm64 without a helper
-// that arm64 does not have would therefore be the one change that turns
-// that release into a use-after-free — which is why arm64 keeps plain
-// OpStrConcat here even though it now reclaims on overwrite.
-func (b *builder) strAppendAvailable() bool {
-	return b.ptrW == 4 || (b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW))
-}
-
 // isSelfStrAppendLocal reports whether `value` is exactly `<name> + rhs` —
 // the string self-append that `__fern_str_append` lowers in place (#5637
 // option 3). `out = out + piece` is the stdlib's universal string builder
@@ -19412,12 +19421,18 @@ func (b *builder) strAppendAvailable() bool {
 // __fern_str_dec the overwrite would have emitted, so the reclaim is
 // unchanged — see the backends' __fern_str_append.
 //
-// The guards mirror that ownership transfer: RcFreeEnabled, an OWNED
+// The guards mirror that ownership transfer: RcFreeEnabled and an OWNED
 // (freeEligible) string local — a borrowed param's buffer is still the
-// caller's, so mutating it in place would corrupt a live value — and an ABI
-// that releases on overwrite at all.
+// caller's, so mutating it in place would corrupt a live value.
+//
+// This mark is also what BALANCES assign()'s release of the old buffer on
+// overwrite: __fern_str_append writes back into the same box, so releasing
+// after it would over-release, and the `strAppended` arm ahead of that
+// release is what stops it. A target whose backend did not emit the helper
+// would therefore turn that release into a use-after-free — which is why
+// every backend emits it and there is no width test left here.
 func (b *builder) isSelfStrAppendLocal(value ast.Expr, name string) bool {
-	if !ast.RcFreeEnabled || !b.strAppendAvailable() {
+	if !ast.RcFreeEnabled {
 		return false
 	}
 	bin, ok := value.(*ast.Binary)
@@ -19446,7 +19461,7 @@ func (b *builder) isSelfStrAppendLocal(value ast.Expr, name string) bool {
 // buffer at rc 1, since only the box holds that reference, so a gate on the
 // string would grow a buffer the second alias still reads through.
 func (b *builder) isSelfStrAppendField(value ast.Expr, ft ast.Type, baseName, fieldName string) bool {
-	if !ast.RcFreeEnabled || !b.strAppendAvailable() {
+	if !ast.RcFreeEnabled {
 		return false
 	}
 	if _, isStr := ft.(ast.StringType); !isStr {
@@ -21448,10 +21463,33 @@ func (b *builder) emitCellSet(n *ast.Call) error {
 // superseded pointer on the floor (32 bytes an iteration, unbounded, #8441)
 // and left an aliased value in the slot under a count nobody had taken.
 //
+// One RHS shape breaks that: a cow-in-place map mutator (`m = m.insert(k, v)`)
+// hands the receiver straight back when it finds it uniquely held, so the
+// expression yields the cell's OWN element and the unconditional release took
+// the map it was about to store from 1 to 0 (#8833 — both natives then read a
+// map with no entries where `-interp` read the new one, and `-sanitize` called
+// it a use-after-free). The retain half cannot compensate: the RHS is a call,
+// whose result needsRcIncOnAlias correctly declines, and a Map read out of the
+// cell is borrowed, so no count arrives with it at all. That shape — and only
+// that shape — takes the store-first, release-second form under a pointer
+// identity test, the same test the plain-local Map overwrite uses: the cow's
+// OTHER path returns a fresh copy, and there the superseded handle really did
+// lose this binding's claim and is released as before.
+//
+// Every other RHS delivers an OWNED reference on both paths and keeps the
+// unconditional release: a user function that returns its argument takes the
+// return-transfer inc, and `.append`'s in-place grow pairs with the buffer
+// dec. Guarding those on pointer identity strands one value per rebind
+// (measured: 50 maps for `m = id(m)`, 50 buffers for `a = a.append(i)`).
+//
 // The new value is evaluated and stashed BEFORE the old one is released, for
 // emitCellSet's reason: `s = s + "x"` reads the slot inside the value
 // expression, so releasing first would free the buffer the read is standing
-// on.
+// on. In the guarded shape the OLD element is stashed before that expression
+// too, and twice: the whole payload, which the release consumes, and its first
+// word, which the guard compares against the word the store left in the slot.
+// One word is enough on a two-word string ABI — the data word is the buffer's
+// identity, and an inline / immortal payload releases to a no-op on either arm.
 //
 // A cycle still leaks. A closure element takes decValueOnStack's flat
 // `__fern_rc_dec` (dropFnNameFor declines a FuncType), which decrements
@@ -21487,6 +21525,29 @@ func (b *builder) emitBoxedCellStore(t *ast.Index, n *ast.Assign, storeOp OpKind
 	}
 	b.emit(Op{Kind: OpCallDirect, Str: idxHelper, Width: ResAddr, I32: 2})
 	b.emit(Op{Kind: OpStoreLocal, I32: addrSlot})
+	// A cow-in-place map mutator may hand the cell's own element back, so it
+	// stashes the element the store supersedes before the value expression
+	// can reach the slot: the whole payload the release consumes, and its
+	// first word the guard compares.
+	cellName := ""
+	if id, isIdent := t.Array.(*ast.Ident); isIdent {
+		cellName = id.Name
+	}
+	guarded := isCellSelfMapCow(n.Value, cellName)
+	var oldSlot, oldPtrSlot int32
+	if guarded {
+		oldSlot = b.allocSlot()
+		b.locals[fmt.Sprintf("__cell_box_old_%d", oldSlot)] = oldSlot
+		b.scratchType[oldSlot] = elem
+		b.emit(Op{Kind: OpLoadLocal, I32: addrSlot})
+		b.emit(payloadLoadOpFor(elem, b.ptrW))
+		b.emit(Op{Kind: OpStoreLocal, I32: oldSlot})
+		oldPtrSlot = b.allocSlot()
+		b.locals[fmt.Sprintf("__cell_box_oldptr_%d", oldPtrSlot)] = oldPtrSlot
+		b.emit(Op{Kind: OpLoadLocal, I32: addrSlot})
+		b.emit(Op{Kind: OpLoad, Width: WidthPtr})
+		b.emit(Op{Kind: OpStoreLocal, I32: oldPtrSlot})
+	}
 	// The new value, retained when it is an alias the writer still holds.
 	valSlot := b.allocSlot()
 	b.locals[fmt.Sprintf("__cell_box_val_%d", valSlot)] = valSlot
@@ -21502,13 +21563,59 @@ func (b *builder) emitBoxedCellStore(t *ast.Index, n *ast.Assign, storeOp OpKind
 	b.emit(Op{Kind: OpStoreLocal, I32: valSlot})
 	// Release the superseded element through the same ladder a container
 	// slot's replacement takes.
-	b.emit(Op{Kind: OpLoadLocal, I32: addrSlot})
-	b.emit(payloadLoadOpFor(elem, b.ptrW))
-	b.dropStructField(elem)
+	if !guarded {
+		b.emit(Op{Kind: OpLoadLocal, I32: addrSlot})
+		b.emit(payloadLoadOpFor(elem, b.ptrW))
+		b.dropStructField(elem)
+	}
 	b.emit(Op{Kind: OpLoadLocal, I32: addrSlot})
 	b.emit(Op{Kind: OpLoadLocal, I32: valSlot})
 	b.emit(Op{Kind: storeOp, Width: storeWidth})
+	if guarded {
+		// The cow returned a fresh copy: the old handle lost this binding's
+		// claim. Returning the receiver leaves the slot naming what it
+		// already named, and nothing is owed.
+		b.emit(Op{Kind: OpLoadLocal, I32: addrSlot})
+		b.emit(Op{Kind: OpLoad, Width: WidthPtr})
+		b.emit(Op{Kind: OpLoadLocal, I32: oldPtrSlot})
+		b.emit(Op{Kind: OpNe, Width: WidthPtr})
+		b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
+		b.emit(Op{Kind: OpLoadLocal, I32: oldSlot})
+		b.dropStructField(elem)
+		b.emit(Op{Kind: OpEnd})
+	}
 	return nil
+}
+
+// isCellSelfMapCow reports whether `value` is a value-returning map mutator
+// whose receiver is a read of the boxcapture cell `cellName` — the RHS of
+// `m = m.insert(k, v)` once BoxMutatedCaptures has rewritten both sides into
+// the `m[0]` cell spelling. isSelfMapMutation asks the same question of a
+// plain local and matches an *ast.Ident receiver, which that rewrite has
+// already replaced, so the two predicates cannot be shared.
+//
+// __map_cow_inplace returns the receiver unchanged when it mutates in place,
+// so on that path the call's result is the cell's own element, borrowed. It is
+// the only RHS shape reaching emitBoxedCellStore that can deliver a reference
+// without a count on it (#8833).
+func isCellSelfMapCow(value ast.Expr, cellName string) bool {
+	if cellName == "" {
+		return false
+	}
+	call, isCall := value.(*ast.Call)
+	if !isCall || len(call.Args) == 0 {
+		return false
+	}
+	callee, isIdent := call.Callee.(*ast.Ident)
+	if !isIdent || (callee.Name != "__method_Map_set" && callee.Name != "__method_Map_clear") {
+		return false
+	}
+	idx, isIdx := call.Args[0].(*ast.Index)
+	if !isIdx {
+		return false
+	}
+	recv, isRecvIdent := idx.Array.(*ast.Ident)
+	return isRecvIdent && recv.Name == cellName
 }
 
 // sliceUncheckedArgs returns the (source, low, high) of a

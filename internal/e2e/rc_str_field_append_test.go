@@ -132,8 +132,7 @@ func TestWASMStrFieldAppendAliasedBoxIsNotMutated(t *testing.T) {
 	}
 }
 
-// arm64 keeps the plain concat (no __fern_str_append helper), so this leg
-// asserts the shape still behaves — the answers are ABI-independent.
+// The two-word NATIVE sibling, where the pair is carried in registers.
 func TestArm64StrFieldAppendAliasedBoxIsNotMutated(t *testing.T) {
 	prev := ast.RcFreeEnabled
 	ast.RcFreeEnabled = true
@@ -145,6 +144,10 @@ func TestArm64StrFieldAppendAliasedBoxIsNotMutated(t *testing.T) {
 	}
 	if stdout != strFieldAppendAliasWant+"\n" {
 		t.Errorf("arm64 aliased-box field append =\n%q\nwant\n%q", stdout, strFieldAppendAliasWant+"\n")
+	}
+	allocs, frees, live := parseLeakCheckLine(t, stderr)
+	if allocs != frees || live != 0 {
+		t.Errorf("heap unbalanced: allocs=%d frees=%d live_bytes=%d, want balanced at 0", allocs, frees, live)
 	}
 }
 
@@ -168,6 +171,27 @@ func TestX86_64StrFieldAppendAllocsBounded(t *testing.T) {
 	// 2000 appends over 4000 bytes cross ~250 16-byte classes; the 2000
 	// boxes collapse to one reused box. Anything near 4000 means the site
 	// went back to a fresh box and a full copy per update.
+	if allocs > 3000 {
+		t.Errorf("allocs = %d for 2000 field appends, want well under 3000; the in-place field append is not firing", allocs)
+	}
+	if allocs != frees || live != 0 {
+		t.Errorf("heap unbalanced after the field-append loop: allocs=%d frees=%d live_bytes=%d", allocs, frees, live)
+	}
+}
+
+// The arm64 half of the collapse, on the same program: without the helper the
+// site was not placeable at all, so every update allocated a fresh box AND
+// copied the whole buffer.
+func TestArm64StrFieldAppendAllocsBounded(t *testing.T) {
+	prev := ast.RcFreeEnabled
+	ast.RcFreeEnabled = true
+	defer func() { ast.RcFreeEnabled = prev }()
+
+	stdout, stderr, code := runLeakCheckArm64(t, strFieldAppendGrowSrc)
+	if code != 0 {
+		t.Fatalf("field-append accumulator exited %d (a check inside it failed); stdout=%q stderr=%q", code, stdout, stderr)
+	}
+	allocs, frees, live := parseLeakCheckLine(t, stderr)
 	if allocs > 3000 {
 		t.Errorf("allocs = %d for 2000 field appends, want well under 3000; the in-place field append is not firing", allocs)
 	}
