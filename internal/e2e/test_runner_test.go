@@ -4535,6 +4535,28 @@ func TestRunnerCoreutilsResolvExamplePasses(t *testing.T) {
 	}
 }
 
+// `examples/tests/coreutils_pwdb_test.fern` covers coreutils/lib/pwdb and
+// coreutils/lib/utmp — the two databases whoami, id, groups and logname
+// read. internal/coreutils compares those utilities against GNU on the
+// machine that runs them, which cannot reach the rules that depend on
+// what is IN the databases: a malformed line, a repeated name, a gid no
+// group entry claims, getgrouplist's ordering. Those take fixture text
+// here. The utmp half pins the record's byte offsets and widths, every
+// one of which is silent when wrong. Passing suite -> exit 0.
+func TestRunnerCoreutilsPwdbExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/coreutils_pwdb_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: coreutils/lib/pwdb + lib/utmp", "1..13", "# pass 13", "# fail 0"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 func TestRunnerCoreutilsLongDoubleExamplePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := langSrcAbs(t, "examples/tests/coreutils_ld_test.fern")

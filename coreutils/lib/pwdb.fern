@@ -1,0 +1,324 @@
+// coreutils/lib/pwdb.fern — /etc/passwd and /etc/group, as glibc's
+// `files` backend reads them.
+//
+// `whoami`, `id`, `groups` and `logname` all turn ids into names and
+// names into ids, and GNU does it through NSS. This module is the
+// `files` source of that lookup and nothing else: no nsswitch.conf, no
+// dlopened modules, no LDAP. On a machine whose users come from
+// somewhere else the answers differ, which is the same boundary
+// lib/resolv.fern draws for hosts.
+//
+// The rules that are not obvious and are all observable:
+//
+//   - The FIRST matching line wins, and a malformed line is skipped
+//     rather than fatal — a line with fewer than four colon-separated
+//     fields, or a uid field that is not a plain decimal, is simply not
+//     an entry. That is what the files backend does, and it is why a
+//     truncated passwd file degrades to "no such user" instead of an
+//     error.
+//   - A number that names no entry is NOT an entry. GNU prints the
+//     number instead of a name in the composite `id` line, and says
+//     `cannot find name for user ID N` where a name is what was asked
+//     for; both are the caller's decision, so the lookups here answer
+//     Option and never invent a name.
+//   - `group_list` is getgrouplist(3): the primary gid FIRST, then every
+//     /etc/group line naming the user as a member, in FILE order, with
+//     duplicates removed keeping the first. The order is visible in
+//     `id -G` and in `groups`.
+//
+// The files are read as BYTES. A GECOS field in some 8-bit encoding is
+// legal and common, and `read_file` rejects it as invalid UTF-8, which
+// would turn a real user into "no such user".
+import "std/string";
+import "std/array";
+
+// One /etc/passwd entry, reduced to the three fields these utilities
+// read. The gecos, home and shell fields are parsed past and dropped.
+pub struct User { name: string, uid: i64, gid: i64 }
+
+// One /etc/group entry: the gid and the name. `members` is not carried —
+// the only consumer walks the file itself (see `group_list`).
+pub struct Group { gid: i64, name: string }
+
+// Whole-file read that answers "" for a file that is missing or
+// unreadable, which is how a lookup with no database behaves: nothing
+// matches. Bytes, not text — see the header.
+function slurp(path: string): string {
+  match (read_file_bytes(path)) {
+    Ok(bs) => {
+      return string_from_bytes_unchecked(bs);
+    },
+    Err(_) => {
+      return "";
+    }
+  }
+}
+
+pub function passwd_path(): string {
+  return "/etc/passwd";
+}
+
+pub function group_path(): string {
+  return "/etc/group";
+}
+
+// A field's value as a non-negative decimal, or None. The files backend
+// accepts digits and nothing else here — no sign, no blanks, no empty
+// field — and a line whose id field is anything else is not an entry.
+pub function parse_id(s: string): Option[i64] {
+  if (s.len() == 0) {
+    return None;
+  }
+  var v: i64 = 0;
+  var i: i32 = 0;
+  while (i < s.len()) {
+    var c: i32 = s[i] as i32;
+    if (c < 48 || c > 57) {
+      return None;
+    }
+    v = v * (10 as i64) + ((c - 48) as i64);
+    if (v > (4294967295 as i64)) {
+      return None;
+    }
+    i = i + 1;
+  }
+  return Some(v);
+}
+
+// One /etc/passwd line as a User, or None when it is not an entry:
+// a comment, a blank line, too few fields, or a non-decimal id.
+function passwd_entry(line: string): Option[User] {
+  if (line.len() == 0) {
+    return None;
+  }
+  var f: string[] = line.split(":");
+  if (f.len() < 4) {
+    return None;
+  }
+  match (parse_id(f[2])) {
+    Some(uid) => {
+      match (parse_id(f[3])) {
+        Some(gid) => {
+          return Some(User { name: f[0], uid: uid, gid: gid });
+        },
+        None => {
+          return None;
+        }
+      }
+    },
+    None => {
+      return None;
+    }
+  }
+}
+
+// One /etc/group line as a Group plus its member list, or None.
+function group_entry(line: string): Option[(Group, string)] {
+  if (line.len() == 0) {
+    return None;
+  }
+  var f: string[] = line.split(":");
+  if (f.len() < 3) {
+    return None;
+  }
+  match (parse_id(f[2])) {
+    Some(gid) => {
+      var members: string = "";
+      if (f.len() > 3) {
+        members = f[3];
+      }
+      return Some((Group { gid: gid, name: f[0] }, members));
+    },
+    None => {
+      return None;
+    }
+  }
+}
+
+// The first /etc/passwd entry with this name.
+pub function user_by_name(name: string): Option[User] {
+  return user_by_name_in(slurp(passwd_path()), name);
+}
+
+// The lookups over a passwd / group file's TEXT rather than its path.
+// The database is a file the tests cannot write, so the parse is
+// reachable on its own: `examples/tests/coreutils_pwdb_test.fern` drives
+// these with fixtures for the rules the machine happens not to show —
+// a malformed line, a duplicate name, a gid no group entry claims.
+pub function user_by_name_in(text: string, name: string): Option[User] {
+  var lines: string[] = text.lines();
+  var i: i32 = 0;
+  while (i < lines.len()) {
+    match (passwd_entry(lines[i])) {
+      Some(u) => {
+        if (u.name == name) {
+          return Some(u);
+        }
+      },
+      None => {}
+    }
+    i = i + 1;
+  }
+  return None;
+}
+
+// The first /etc/passwd entry with this uid.
+pub function user_by_uid(uid: i64): Option[User] {
+  return user_by_uid_in(slurp(passwd_path()), uid);
+}
+
+pub function user_by_uid_in(text: string, uid: i64): Option[User] {
+  var lines: string[] = text.lines();
+  var i: i32 = 0;
+  while (i < lines.len()) {
+    match (passwd_entry(lines[i])) {
+      Some(u) => {
+        if (u.uid == uid) {
+          return Some(u);
+        }
+      },
+      None => {}
+    }
+    i = i + 1;
+  }
+  return None;
+}
+
+// The first /etc/group entry with this gid, as a name.
+pub function group_name(gid: i64): Option[string] {
+  var names: Option[string][] = group_names([gid]);
+  return names[0];
+}
+
+// Every gid's name, resolved in ONE pass over /etc/group. `id` and
+// `groups` name a whole list at once, and a lookup per gid would re-read
+// the file per element — quadratic in the group count on the one path
+// these utilities spend their time in.
+pub function group_names(gids: i64[]): Option[string][] {
+  return group_names_in(slurp(group_path()), gids);
+}
+
+pub function group_names_in(text: string, gids: i64[]): Option[string][] {
+  var out: Option[string][] = [];
+  var k: i32 = 0;
+  while (k < gids.len()) {
+    out = out.append(None);
+    k = k + 1;
+  }
+  if (gids.len() == 0) {
+    return out;
+  }
+  var lines: string[] = text.lines();
+  var i: i32 = 0;
+  while (i < lines.len()) {
+    match (group_entry(lines[i])) {
+      Some(e) => {
+        var j: i32 = 0;
+        while (j < gids.len()) {
+          if (gids[j] == e.0.gid) {
+            // The FIRST line with a gid wins, so a later duplicate
+            // never overwrites what an earlier one named.
+            match (out[j]) {
+              Some(_) => {},
+              None => {
+                out = out.with(j, Some(e.0.name));
+              }
+            }
+          }
+          j = j + 1;
+        }
+      },
+      None => {}
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+// Whether `name` appears in a comma-separated member list.
+function has_member(members: string, name: string): boolean {
+  if (members.len() == 0) {
+    return false;
+  }
+  var start: i32 = 0;
+  var i: i32 = 0;
+  while (i <= members.len()) {
+    if (i == members.len() || members[i] as i32 == 44) {
+      if (i - start == name.len()) {
+        var same: boolean = true;
+        var k: i32 = 0;
+        while (k < name.len()) {
+          if (members[start + k] != name[k]) {
+            same = false;
+            k = name.len();
+          }
+          k = k + 1;
+        }
+        if (same) {
+          return true;
+        }
+      }
+      start = i + 1;
+    }
+    i = i + 1;
+  }
+  return false;
+}
+
+// getgrouplist(name, gid): the primary gid first, then every /etc/group
+// line naming `name` as a member, in file order, deduped keeping the
+// first occurrence. This is what `id -G USER` and `groups USER` print,
+// and the order is part of the output.
+pub function group_list(name: string, gid: i64): i64[] {
+  return group_list_in(slurp(group_path()), name, gid);
+}
+
+pub function group_list_in(text: string, name: string, gid: i64): i64[] {
+  var out: i64[] = [gid];
+  var lines: string[] = text.lines();
+  var i: i32 = 0;
+  while (i < lines.len()) {
+    match (group_entry(lines[i])) {
+      Some(e) => {
+        if (has_member(e.1, name) && !contains_gid(out, e.0.gid)) {
+          out = out.append(e.0.gid);
+        }
+      },
+      None => {}
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+pub function contains_gid(gids: i64[], gid: i64): boolean {
+  var i: i32 = 0;
+  while (i < gids.len()) {
+    if (gids[i] == gid) {
+      return true;
+    }
+    i = i + 1;
+  }
+  return false;
+}
+
+// The group set of the CURRENT process, as gnulib's mgetgroups builds
+// it: the effective gid prepended to getgroups(2)'s answer, then
+// duplicates removed keeping the first.
+//
+// The prepend is not conditional on the gid being absent — it goes to
+// the FRONT and the later copy is what the dedupe drops, which is why
+// a process whose egid is 27 and whose supplementary set is [4, 27]
+// reports `27 4` rather than `4 27`.
+pub function process_groups(): i64[] {
+  var out: i64[] = [getegid() as i64];
+  var gs: i64[] = getgroups();
+  var i: i32 = 0;
+  while (i < gs.len()) {
+    if (!contains_gid(out, gs[i])) {
+      out = out.append(gs[i]);
+    }
+    i = i + 1;
+  }
+  return out;
+}

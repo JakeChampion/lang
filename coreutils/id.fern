@@ -1,0 +1,461 @@
+// id.fern — GNU-compatible `id`.
+//
+//   id [OPTION]... [USER]...
+//   -u --user    -g --group   -G --groups   -Z --context
+//   -n --name    -r --real    -z --zero     -a (accepted and ignored)
+//
+// With no "only" option the output is the composite line —
+// `uid=N(name) gid=N(name) groups=N(name),...`, with `euid=` / `egid=`
+// spliced in when the effective ids differ from the real ones — and the
+// option checks read oddly until you see that the composite has nowhere
+// to put a name-only or real-only answer:
+//
+//   -n / -r without one of -ugG  `cannot print only names or real IDs
+//                                 in default format`
+//   -z  without one of -ugGZ     `option --zero not permitted in
+//                                 default format`
+//   two of -ugGZ                 `cannot print "only" of more than one
+//                                 choice`
+//
+// The -Z check comes before all three: a kernel with no SELinux refuses
+// the option whatever else was asked for.
+//
+// A USER operand is looked up by NAME first and, only if that fails, as
+// a DECIMAL uid — which is why `id 0` is root and `groups 0` is
+// `'0': no such user`. The number is glibc's strtoumax as gnulib admits
+// it: leading blanks and a `+` are accepted, a trailing anything is not,
+// and (uid_t)-1 is rejected as the reserved value it is.
+//
+// An id no database claims is NOT an error in the composite line — it
+// prints as a bare number — while `-n` asks for a name and so reports
+// `cannot find name for user ID N`, prints the number in its place, and
+// turns the exit status 1.
+import "std/string";
+import "std/array";
+import "std/io_buffered";
+import "./lib/gnu";
+import "./lib/pwdb";
+
+function opt_context(): i32 { return 1; }
+function opt_group(): i32 { return 2; }
+function opt_groups(): i32 { return 3; }
+function opt_name(): i32 { return 4; }
+function opt_real(): i32 { return 5; }
+function opt_user(): i32 { return 6; }
+function opt_zero(): i32 { return 7; }
+function opt_ignored(): i32 { return 8; }
+
+function help_text(): string {
+  var out: string = "";
+  out = out + "Usage: " + gnu.prog() + " [OPTION]... [USER]...\n";
+  out = out + "Print user and group information for each specified USER,\n";
+  out = out + "or (when USER omitted) for the current process.\n";
+  out = out + "\n";
+  out = out + "  -a             ignore, for compatibility with other versions\n";
+  out = out + "  -Z, --context  print only the security context of the process\n";
+  out = out + "  -g, --group    print only the effective group ID\n";
+  out = out + "  -G, --groups   print all group IDs\n";
+  out = out + "  -n, --name     print a name instead of a number, for -ugG\n";
+  out = out + "  -r, --real     print the real ID instead of the effective ID, with -ugG\n";
+  out = out + "  -u, --user     print only the effective user ID\n";
+  out = out + "  -z, --zero     delimit entries with NUL characters, not whitespace;\n";
+  out = out + "                   not permitted in default format\n";
+  out = out + "      --help        display this help and exit\n";
+  out = out + "      --version     output version information and exit\n";
+  return out;
+}
+
+// ---- SELinux ----------------------------------------------------------------
+//
+// libselinux's is_selinux_enabled() finds the selinuxfs mount and checks
+// it; with no such mount there is no SELinux and every `-Z` is refused.
+// Reading /proc/self/mounts for the filesystem TYPE is that check — the
+// mount point is wherever the system put it, so the type is what to look
+// for rather than a hardcoded /sys/fs/selinux.
+//
+// Asked lazily: it costs an open and a read, and `id -u` — the shape a
+// script runs in a loop — never needs the answer.
+function selinux_enabled(): boolean {
+  match (read_file("/proc/self/mounts")) {
+    Ok(text) => {
+      var lines: string[] = text.lines();
+      var i: i32 = 0;
+      while (i < lines.len()) {
+        var f: string[] = lines[i].fields();
+        if (f.len() >= 3 && f[2] == "selinuxfs") {
+          return true;
+        }
+        i = i + 1;
+      }
+      return false;
+    },
+    Err(_) => {
+      return false;
+    }
+  }
+}
+
+// getcon(3): the process's own security context, which the kernel
+// exposes as this file. The value is NUL-terminated in the file.
+function process_context(): string {
+  match (read_file_bytes("/proc/self/attr/current")) {
+    Ok(bs) => {
+      var n: i32 = bs.len();
+      while (n > 0 && (bs[n - 1] as i32 == 0 || bs[n - 1] as i32 == 10)) {
+        n = n - 1;
+      }
+      var out: u8[] = [];
+      var i: i32 = 0;
+      while (i < n) {
+        out = out.append(bs[i]);
+        i = i + 1;
+      }
+      return string_from_bytes_unchecked(out);
+    },
+    Err(_) => {
+      return "";
+    }
+  }
+}
+
+// ---- the operand ------------------------------------------------------------
+
+function is_blank_byte(c: i32): boolean {
+  return c == 32 || c == 9 || c == 10 || c == 11 || c == 12 || c == 13;
+}
+
+// The operand as a uid, on gnulib's terms: leading blanks, an optional
+// `+`, then decimal digits and nothing else. (uid_t)-1 is refused — it
+// is the "no change" value every setuid-family call reserves — which is
+// why `id 4294967295` is `no such user` even where a passwd entry with
+// that id would be found.
+function operand_uid(spec: string): Option[i64] {
+  var i: i32 = 0;
+  while (i < spec.len() && is_blank_byte(spec[i] as i32)) {
+    i = i + 1;
+  }
+  if (i < spec.len() && spec[i] as i32 == 43) {
+    i = i + 1;
+  }
+  if (i >= spec.len()) {
+    return None;
+  }
+  var v: i64 = 0;
+  while (i < spec.len()) {
+    var c: i32 = spec[i] as i32;
+    if (c < 48 || c > 57) {
+      return None;
+    }
+    v = v * (10 as i64) + ((c - 48) as i64);
+    if (v > (4294967295 as i64)) {
+      return None;
+    }
+    i = i + 1;
+  }
+  if (v == (4294967295 as i64)) {
+    return None;
+  }
+  return Some(v);
+}
+
+function lookup_user(spec: string): Option[pwdb.User] {
+  match (pwdb.user_by_name(spec)) {
+    Some(u) => {
+      return Some(u);
+    },
+    None => {}
+  }
+  match (operand_uid(spec)) {
+    Some(uid) => {
+      return pwdb.user_by_uid(uid);
+    },
+    None => {
+      return None;
+    }
+  }
+}
+
+// ---- printing ---------------------------------------------------------------
+
+// One line's worth of output plus whether every name it wanted existed.
+pub struct Out { w: io_buffered.BufWriter, ok: boolean }
+
+function name_or_number(o: Out, id: i64, name: Option[string], kind: string): Out {
+  match (name) {
+    Some(n) => {
+      return Out { w: gnu.put(o.w, n), ok: o.ok };
+    },
+    None => {
+      var w: io_buffered.BufWriter = gnu.error_out(o.w, "cannot find name for " + kind + " ID " + id.to_string());
+      return Out { w: gnu.put(w, id.to_string()), ok: false };
+    }
+  }
+}
+
+function print_user(o: Out, uid: i64, use_name: boolean): Out {
+  if (!use_name) {
+    return Out { w: gnu.put(o.w, uid.to_string()), ok: o.ok };
+  }
+  var name: Option[string] = None;
+  match (pwdb.user_by_uid(uid)) {
+    Some(u) => {
+      name = Some(u.name);
+    },
+    None => {}
+  }
+  return name_or_number(o, uid, name, "user");
+}
+
+function print_group(o: Out, gid: i64, use_name: boolean): Out {
+  if (!use_name) {
+    return Out { w: gnu.put(o.w, gid.to_string()), ok: o.ok };
+  }
+  return name_or_number(o, gid, pwdb.group_name(gid), "group");
+}
+
+// The gids `-G` prints, in GNU's order: the real gid, the effective one
+// when it differs, and then everything else in the credential.
+function group_list_ids(rgid: i64, egid: i64, all: i64[]): i64[] {
+  var out: i64[] = [rgid];
+  if (egid != rgid) {
+    out = out.append(egid);
+  }
+  var i: i32 = 0;
+  while (i < all.len()) {
+    if (all[i] != rgid && all[i] != egid) {
+      out = out.append(all[i]);
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+function print_group_list(o: Out, ids: i64[], use_name: boolean, delim: string): Out {
+  var acc: Out = o;
+  var i: i32 = 0;
+  while (i < ids.len()) {
+    if (i > 0) {
+      acc = Out { w: gnu.put(acc.w, delim), ok: acc.ok };
+    }
+    acc = print_group(acc, ids[i], use_name);
+    i = i + 1;
+  }
+  return acc;
+}
+
+// `N(name)`, or a bare `N` for an id no database claims. The composite
+// line never diagnoses a missing name and never fails because of one.
+function id_with_name(id: i64, name: Option[string]): string {
+  match (name) {
+    Some(n) => {
+      return id.to_string() + "(" + n + ")";
+    },
+    None => {
+      return id.to_string();
+    }
+  }
+}
+
+function user_field(label: string, uid: i64): string {
+  var name: Option[string] = None;
+  match (pwdb.user_by_uid(uid)) {
+    Some(u) => {
+      name = Some(u.name);
+    },
+    None => {}
+  }
+  return label + id_with_name(uid, name);
+}
+
+function print_full_info(o: Out, ruid: i64, rgid: i64, euid: i64, egid: i64, all: i64[], context: string): Out {
+  var line: string = user_field("uid=", ruid);
+  line = line + " gid=" + id_with_name(rgid, pwdb.group_name(rgid));
+  if (euid != ruid) {
+    line = line + " " + user_field("euid=", euid);
+  }
+  if (egid != rgid) {
+    line = line + " egid=" + id_with_name(egid, pwdb.group_name(egid));
+  }
+  line = line + " groups=";
+  var names: Option[string][] = pwdb.group_names(all);
+  var i: i32 = 0;
+  while (i < all.len()) {
+    if (i > 0) {
+      line = line + ",";
+    }
+    line = line + id_with_name(all[i], names[i]);
+    i = i + 1;
+  }
+  if (context.len() > 0) {
+    line = line + " context=" + context;
+  }
+  return Out { w: gnu.put(o.w, line), ok: o.ok };
+}
+
+// ---- the run ----------------------------------------------------------------
+
+pub struct Mode { user: boolean, group: boolean, groups: boolean, context: boolean, name: boolean, real: boolean, zero: boolean }
+
+// One operand's (or the process's) output, terminator included.
+//
+// The second terminator is measured, not derived, and wants all three
+// of its conditions: `id -Gz a b` writes an extra NUL after each
+// operand's list, while `id -Gz a` (one operand), `id -G a b` (no -z)
+// and `id -zu a b` (not -G) each write none. It is the only place the
+// operand COUNT changes the bytes.
+function print_one(o: Out, m: Mode, ruid: i64, rgid: i64, euid: i64, egid: i64, all: i64[], context: string, term: string, extra: boolean): Out {
+  var acc: Out = o;
+  if (m.user) {
+    var uid: i64 = euid;
+    if (m.real) {
+      uid = ruid;
+    }
+    acc = print_user(acc, uid, m.name);
+  } else if (m.group) {
+    var gid: i64 = egid;
+    if (m.real) {
+      gid = rgid;
+    }
+    acc = print_group(acc, gid, m.name);
+  } else if (m.groups) {
+    var delim: string = " ";
+    if (m.zero) {
+      delim = term;
+    }
+    acc = print_group_list(acc, group_list_ids(rgid, egid, all), m.name, delim);
+  } else if (m.context) {
+    acc = Out { w: gnu.put(acc.w, context), ok: acc.ok };
+  } else {
+    acc = print_full_info(acc, ruid, rgid, euid, egid, all, context);
+  }
+  acc = Out { w: gnu.put(acc.w, term), ok: acc.ok };
+  if (m.groups && m.zero && extra) {
+    acc = Out { w: gnu.put(acc.w, term), ok: acc.ok };
+  }
+  return acc;
+}
+
+function parse_mode(argv: string[]): (Mode, string[]) {
+  var opts: gnu.Opt[] = [];
+  opts = opts.append(gnu.flag("Z", "context", opt_context()));
+  opts = opts.append(gnu.flag("g", "group", opt_group()));
+  opts = opts.append(gnu.flag("G", "groups", opt_groups()));
+  opts = opts.append(gnu.flag("n", "name", opt_name()));
+  opts = opts.append(gnu.flag("r", "real", opt_real()));
+  opts = opts.append(gnu.flag("u", "user", opt_user()));
+  opts = opts.append(gnu.flag("z", "zero", opt_zero()));
+  opts = opts.append(gnu.flag("a", "", opt_ignored()));
+  var g: gnu.Getopt = gnu.getopt_new(argv, opts, "id", help_text(), 1);
+  var m: Mode = Mode { user: false, group: false, groups: false, context: false, name: false, real: false, zero: false };
+  while (true) {
+    var r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    g = r.1;
+    match (r.0) {
+      Some(hit) => {
+        if (hit.id == opt_context()) {
+          m = Mode { ...m, context: true };
+        } else if (hit.id == opt_group()) {
+          m = Mode { ...m, group: true };
+        } else if (hit.id == opt_groups()) {
+          m = Mode { ...m, groups: true };
+        } else if (hit.id == opt_name()) {
+          m = Mode { ...m, name: true };
+        } else if (hit.id == opt_real()) {
+          m = Mode { ...m, real: true };
+        } else if (hit.id == opt_user()) {
+          m = Mode { ...m, user: true };
+        } else if (hit.id == opt_zero()) {
+          m = Mode { ...m, zero: true };
+        }
+      },
+      None => {
+        break;
+      }
+    }
+  }
+  return (m, g.operands());
+}
+
+function check_mode(m: Mode): string {
+  var only: i32 = 0;
+  if (m.user) {
+    only = only + 1;
+  }
+  if (m.group) {
+    only = only + 1;
+  }
+  if (m.groups) {
+    only = only + 1;
+  }
+  if (m.context) {
+    only = only + 1;
+  }
+  if (only > 1) {
+    gnu.error("cannot print \"only\" of more than one choice");
+    exit(1);
+  }
+  if (only == 0) {
+    if (m.name || m.real) {
+      gnu.error("cannot print only names or real IDs in default format");
+      exit(1);
+    }
+    if (m.zero) {
+      gnu.error("option --zero not permitted in default format");
+      exit(1);
+    }
+  }
+  // The context is read only where it can be printed: the composite
+  // line carries it, and -Z is nothing else.
+  if (only == 0 || m.context) {
+    return process_context();
+  }
+  return "";
+}
+
+function main(): i32 {
+  var parsed: (Mode, string[]) = parse_mode(args());
+  var m: Mode = parsed.0;
+  var operands: string[] = parsed.1;
+  if (m.context && !selinux_enabled()) {
+    gnu.error("--context (-Z) works only on an SELinux-enabled kernel");
+    return 1;
+  }
+  var context: string = check_mode(m);
+  var term: string = "\n";
+  if (m.zero) {
+    term = "\x00";
+  }
+  var o: Out = Out { w: gnu.out_new(), ok: true };
+  if (operands.len() == 0) {
+    o = print_one(o, m, getuid() as i64, getgid() as i64, geteuid() as i64, getegid() as i64, pwdb.process_groups(), context, term, false);
+  } else {
+    var extra: boolean = operands.len() > 1;
+    var i: i32 = 0;
+    while (i < operands.len()) {
+      match (lookup_user(operands[i])) {
+        Some(u) => {
+          // A named user's ids are all four the same, and the group
+          // list is the database's rather than the kernel's.
+          o = print_one(o, m, u.uid, u.gid, u.uid, u.gid, pwdb.group_list(u.name, u.gid), "", term, extra);
+        },
+        None => {
+          // The empty operand is the one that carries an errno:
+          // glibc's lookup answers ENOENT for a name that is not a
+          // name at all, where one that is merely absent leaves errno
+          // alone, and `id` reports errno when it is set.
+          var msg: string = gnu.quote(operands[i]) + ": no such user";
+          if (operands[i].len() == 0) {
+            msg = msg + ": No such file or directory";
+          }
+          o = Out { w: gnu.error_out(o.w, msg), ok: false };
+        }
+      }
+      i = i + 1;
+    }
+  }
+  gnu.finish(o.w);
+  if (o.ok) {
+    return 0;
+  }
+  return 1;
+}

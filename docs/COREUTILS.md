@@ -183,6 +183,13 @@ coreutils/
                     source: the option surface, the file-name escaping
                     and the check-line grammar, parameterised by the
                     digest each of the seven names
+  lib/pwdb.fern     /etc/passwd and /etc/group as glibc's `files`
+                    backend reads them — the lookups by name and by id,
+                    getgrouplist's ordering, and the process's own group
+                    set — for whoami, id, groups and logname
+  lib/utmp.fern     the login-accounting record: the fixed-size utmp
+                    entry and the scans over it, for logname today and
+                    users / who / pinky next
   lib/resolv.fern   glibc's IPv4 name lookup — /etc/hosts, the
                     `hosts:` line of nsswitch.conf, resolv.conf and an
                     RFC 1035 A query — for the utilities that resolve
@@ -549,6 +556,41 @@ The startup rows are the same static-binary margin `true` and `echo` measure,
 widened: GNU pays the dynamic loader AND `dlopen`s libcrypto before it hashes
 a hundred bytes.
 
+Group C's identity slice, 2026-09-07, Linux x86-64 (GNU coreutils 9.4;
+uutils 0.0.24 as the Debian multi-call binary). All five are
+startup-bound, so the whole table is one comparison made five ways:
+
+| utility | workload | fern (ms) | gnu (ms) | uutils (ms) | gnu / fern | uutils / fern |
+|---|---|---|---|---|---|---|
+| `whoami` | whoami | 0.33 ± 0.44 | 1.25 ± 0.56 | 2.20 ± 0.66 | 3.80× | 6.67× |
+| `id` | id -u | 0.38 ± 0.48 | 1.44 ± 0.60 | 2.21 ± 0.63 | 3.77× | 5.77× |
+| `id` | id -un | 0.34 ± 0.49 | 1.47 ± 0.59 | 2.37 ± 0.66 | 4.33× | 6.96× |
+| `id` | id | 0.52 ± 1.01 | 1.46 ± 1.06 | 2.18 ± 0.43 | 2.81× | 4.20× |
+| `id` | id -G | 0.23 ± 0.13 | 1.42 ± 0.17 | 2.18 ± 0.26 | 6.12× | 9.42× |
+| `id` | id root | 0.33 ± 0.17 | 1.42 ± 0.17 | 2.23 ± 0.30 | 4.32× | 6.76× |
+| `groups` | groups | 0.26 ± 0.32 | 1.31 ± 0.82 | 2.15 ± 0.28 | 4.94× | 8.12× |
+| `groups` | groups root | 0.29 ± 0.19 | 1.24 ± 0.26 | 2.15 ± 0.26 | 4.20× | 7.32× |
+| `logname` | logname | 0.24 ± 0.10 | 1.13 ± 0.18 | 2.58 ± 2.21 | 4.80× | 10.95× |
+| `printenv` | printenv | 0.51 ± 1.01 | 1.32 ± 1.06 | 2.06 ± 0.70 | 2.58× | 4.01× |
+| `printenv` | printenv -0 | 0.49 ± 1.05 | 1.23 ± 0.77 | 2.47 ± 1.01 | 2.49× | 5.01× |
+| `printenv` | printenv PATH | 0.28 ± 0.70 | 1.18 ± 0.84 | 2.12 ± 0.75 | 4.24× | 7.61× |
+| `printenv` | printenv four names | 0.25 ± 0.41 | 1.37 ± 1.09 | 2.54 ± 1.68 | 5.50× | 10.21× |
+
+Reading it: this is `hostid`'s margin again, and for the same reason —
+a static binary against a dynamic one that then dlopens NSS modules to
+answer a question two file reads answer. GNU's floor here is its loader,
+not its work: `id -u` reads nothing at all and still costs 1.4 ms, while
+`id` (two database scans, both names and the group list) costs Fern
+0.52. uutils pays the loader AND its multi-call dispatch.
+
+The one row worth watching is `id`, which is the only one that reads
+both databases: it is the slowest Fern column here and would be the
+first to feel a /etc/passwd of any size, since the lookups are linear
+scans with no index. Every one of them stops at its first match, and the
+group names are resolved in ONE pass over /etc/group rather than a pass
+per gid — the shape that would otherwise be quadratic in the group
+count.
+
 ## Known divergences
 
 **`tac` holds a non-seekable input in memory.** tac reads its input
@@ -612,6 +654,16 @@ every pipe, device and ordinary file on Linux does at 4096. `lib/gnu.fern`'s
 reported a different `st_blksize` would move the boundary for BOTH
 binaries, and these four sizes would stop being the interesting ones. They
 pin an algorithm, not a constant.
+
+**`id` on an SELinux-enabled kernel is untested.** `id -Z` and the
+` context=` suffix of the composite line are implemented — libselinux's
+own two steps, the selinuxfs mount in /proc/self/mounts and the context
+in /proc/self/attr/current — but no machine the corpus runs on has
+SELinux, so the only path the oracle has ever compared is the refusal
+(`--context (-Z) works only on an SELinux-enabled kernel`) that a kernel
+without it gives. The detection is what keeps that refusal honest rather
+than unconditional; what an SELinux host prints is reproduced from the
+documented behaviour and not from a reference binary.
 
 ## Open gaps
 
@@ -732,8 +784,9 @@ groups are the order of work. Each sub-issue names its group.
 - **C. needs a runtime primitive first** — everything that reads the process
   or the filesystem beyond `read_file` / `stat` / `read_dir`: `pwd`
   (getcwd), `tty` (ttyname), `nproc` (affinity), `uname` `arch` (uname),
-  `whoami` `id` `groups` `logname` `users` `who` `pinky` (uid, passwd,
-  utmp), `printenv` `env` (the whole environ, exec), `link` `ln` `readlink`
+  `whoami` `id` `groups` `logname` (done) `users` `who`
+  `pinky` (uid, passwd, utmp), `printenv` (done) `env` (the whole
+  environ, exec), `link` `ln` `readlink`
   `realpath` (link, symlink, readlink), `mkdir` `rmdir` `rm` `mv` `cp`
   `install` `touch` `truncate` `mkfifo` `mknod` `mktemp` `sync` (mkdir with
   mode, rmdir, rename, utimensat, ftruncate, mknod, fsync), `chmod` `chown`

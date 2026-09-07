@@ -1,0 +1,161 @@
+// logname.fern — GNU-compatible `logname`.
+//
+//   logname    the name the session was logged in under
+//
+// This is getlogin(3), not the effective user, which is the whole point
+// of the utility: after `su` it still says who logged in. There is no
+// option and no operand, and an operand is `extra operand`.
+//
+// getlogin has no answer on a system that keeps no record of logins,
+// and then GNU prints nothing at all and exits 1 with `no login name` —
+// not the euid's name, which would be the wrong answer rather than none.
+//
+// glibc answers it in two steps and this follows both, because they
+// disagree on real machines:
+//
+//   1. /proc/self/loginuid — the uid the kernel's audit subsystem
+//      recorded for the session's ancestor. `(uid_t)-1` means nothing
+//      was recorded; anything else is looked up in the passwd database.
+//      This is why logname works inside a login session that keeps no
+//      utmp.
+//   2. Failing that, the CONTROLLING TERMINAL: the name of the terminal
+//      on file descriptor 0, matched against the utmp database's
+//      user-process entry for that terminal. A descriptor that is not a
+//      terminal ends it here — there is no session to name.
+//
+// Naming the terminal is ttyname(0). glibc reads the /proc symlink for
+// the descriptor and falls back to walking /dev for a character device
+// with the same device number; without a readlink primitive this takes
+// the second route, which is glibc's own and answers the same name for
+// every terminal a login uses.
+import "std/string";
+import "std/array";
+import "./lib/gnu";
+import "./lib/pwdb";
+import "./lib/utmp";
+
+function help_text(): string {
+  var out: string = "";
+  out = out + "Usage: " + gnu.prog() + " [OPTION]\n";
+  out = out + "Print the user's login name.\n";
+  out = out + "\n";
+  out = out + "      --help        display this help and exit\n";
+  out = out + "      --version     output version information and exit\n";
+  return out;
+}
+
+// The audit login uid, or None when the kernel recorded none. The file
+// holds a decimal number and nothing else; `(uid_t)-1` is the sentinel.
+function login_uid(): Option[i64] {
+  match (read_file("/proc/self/loginuid")) {
+    Ok(text) => {
+      match (pwdb.parse_id(text.trim() + "")) {
+        Some(uid) => {
+          if (uid == (4294967295 as i64)) {
+            return None;
+          }
+          return Some(uid);
+        },
+        None => {
+          return None;
+        }
+      }
+    },
+    Err(_) => {
+      return None;
+    }
+  }
+}
+
+// The directories a terminal's device node lives in. /dev/pts first
+// because that is where every pseudo-terminal is, and a login on a real
+// console is the rarer case.
+function tty_dirs(): string[] {
+  return ["/dev/pts", "/dev"];
+}
+
+// ttyname(0) minus its /dev/ prefix — the form utmp's ut_line carries.
+// The descriptor's rdev names the device; the walk finds the entry that
+// has it. A directory that cannot be read contributes nothing.
+function terminal_line(): Option[string] {
+  if (!isatty(0)) {
+    return None;
+  }
+  var want: i64 = 0;
+  match (stdin().stat()) {
+    Ok(st) => {
+      want = st.rdev;
+    },
+    Err(_) => {
+      return None;
+    }
+  }
+  if (want == (0 as i64)) {
+    return None;
+  }
+  var dirs: string[] = tty_dirs();
+  var d: i32 = 0;
+  while (d < dirs.len()) {
+    match (read_dir(dirs[d])) {
+      Ok(names) => {
+        var i: i32 = 0;
+        while (i < names.len()) {
+          var path: string = dirs[d] + "/" + names[i];
+          match (stat(path)) {
+            Ok(st) => {
+              // S_IFCHR is 0o020000; a terminal is a character device
+              // and nothing else can share its rdev.
+              if ((st.mode & (61440 as u32)) == (8192 as u32) && st.rdev == want) {
+                return Some(slice_unchecked(path, 5, path.len()) + "");
+              }
+            },
+            Err(_) => {}
+          }
+          i = i + 1;
+        }
+      },
+      Err(_) => {}
+    }
+    d = d + 1;
+  }
+  return None;
+}
+
+function login_name(): Option[string] {
+  match (login_uid()) {
+    Some(uid) => {
+      match (pwdb.user_by_uid(uid)) {
+        Some(u) => {
+          return Some(u.name);
+        },
+        None => {}
+      }
+    },
+    None => {}
+  }
+  match (terminal_line()) {
+    Some(line) => {
+      return utmp.user_on_line(utmp.default_path(), line);
+    },
+    None => {
+      return None;
+    }
+  }
+}
+
+function main(): i32 {
+  var operands: string[] = gnu.parse_standard_options_only(args(), "logname", help_text(), 1);
+  if (operands.len() > 0) {
+    gnu.die_usage("extra operand " + gnu.quote(operands[0]), 1);
+  }
+  match (login_name()) {
+    Some(name) => {
+      gnu.write_out(name + "\n");
+      return 0;
+    },
+    None => {
+      gnu.error("no login name");
+      return 1;
+    }
+  }
+}

@@ -1,0 +1,336 @@
+import "std/test";
+import "std/string";
+import "std/array";
+import "std/i64";
+import "../../coreutils/lib/pwdb" as pwdb;
+import "../../coreutils/lib/utmp" as utmp;
+
+// examples/tests/coreutils_pwdb_test.fern — the two databases whoami,
+// id, groups and logname read.
+//
+// internal/coreutils compares the utilities against GNU on the machine
+// that runs them, which is the right oracle and cannot reach the rules
+// that depend on what is IN the databases: a malformed line, a
+// duplicate name, a gid no group entry claims. Those need a passwd file
+// a test can write, so the lookups take the file's TEXT here and the
+// utilities' own wrappers supply the path.
+//
+// The utmp half is the record layout, which is a table of byte offsets
+// and widths and therefore silent when it is wrong: every field lands
+// inside a buffer the kernel filled and reads a real value out of its
+// neighbour. The fixture is assembled here field by field, and the
+// offsets it writes to were checked against a database util-linux's
+// `utmpdump -r` produced — so a wrong row fails here rather than
+// agreeing with itself.
+
+// A passwd file with every shape the parse has to survive.
+function passwd_fixture(): string {
+    var s: string = "";
+    s = s + "root:x:0:0:root:/root:/bin/bash\n";
+    // A comment and a blank line are not entries.
+    s = s + "# a comment\n";
+    s = s + "\n";
+    // Too few fields.
+    s = s + "broken:x:7\n";
+    // A uid that is not a decimal, and a gid that is not.
+    s = s + "hex:x:0x10:10::/:/bin/sh\n";
+    s = s + "nogid:x:11:-1::/:/bin/sh\n";
+    s = s + "alice:x:1000:1000:Alice:/home/alice:/bin/sh\n";
+    // A second entry for a name and for a uid already seen: the first
+    // of each is the one a lookup finds.
+    s = s + "alice:x:2000:2000::/:/bin/sh\n";
+    s = s + "bob:x:1000:1000::/:/bin/sh\n";
+    // No trailing newline on the last line.
+    s = s + "carol:x:1001:1001::/:/bin/sh";
+    return s;
+}
+
+function group_fixture(): string {
+    var s: string = "";
+    s = s + "root:x:0:\n";
+    s = s + "adm:x:4:alice,bob\n";
+    s = s + "# a comment\n";
+    s = s + "malformed:x\n";
+    s = s + "alice:x:1000:\n";
+    s = s + "sudo:x:27:bob,alice\n";
+    // A member list whose entries are prefixes of the name asked for,
+    // and one that is a suffix: neither is a membership.
+    s = s + "trap:x:33:ali,alicia,malice\n";
+    s = s + "dup:x:4:alice\n";
+    s = s + "empty:x:99:\n";
+    return s;
+}
+
+function test_lookup_by_name(): test.TestOutcome {
+    match (pwdb.user_by_name_in(passwd_fixture(), "alice")) {
+        Some(u) => {
+            if (u.uid != (1000 as i64)) { return test.fail("first entry for a repeated name wins"); }
+            return test.assert_eq(u.gid, 1000 as i64);
+        },
+        None => { return test.fail("alice is in the fixture"); }
+    }
+}
+
+function test_lookup_by_uid(): test.TestOutcome {
+    match (pwdb.user_by_uid_in(passwd_fixture(), 1000 as i64)) {
+        Some(u) => { return test.assert_eq(u.name, "alice"); },
+        None => { return test.fail("uid 1000 is in the fixture"); }
+    }
+}
+
+function test_last_line_without_a_newline(): test.TestOutcome {
+    match (pwdb.user_by_name_in(passwd_fixture(), "carol")) {
+        Some(u) => { return test.assert_eq(u.uid, 1001 as i64); },
+        None => { return test.fail("a file with no trailing newline still ends in an entry"); }
+    }
+}
+
+// A malformed line is skipped, not fatal: the entries after it are
+// still found, which is what keeps a truncated database a lookup
+// failure rather than an error.
+function test_malformed_lines_are_not_entries(): test.TestOutcome {
+    if (!is_none_user(pwdb.user_by_name_in(passwd_fixture(), "broken"))) { return test.fail("too few fields"); }
+    if (!is_none_user(pwdb.user_by_name_in(passwd_fixture(), "hex"))) { return test.fail("a hex uid"); }
+    if (!is_none_user(pwdb.user_by_name_in(passwd_fixture(), "nogid"))) { return test.fail("a negative gid"); }
+    if (!is_none_user(pwdb.user_by_name_in(passwd_fixture(), "# a comment"))) { return test.fail("a comment"); }
+    return test.assert_true(is_none_user(pwdb.user_by_name_in(passwd_fixture(), "")));
+}
+
+function is_none_user(u: Option[pwdb.User]): boolean {
+    match (u) { Some(_) => { return false; }, None => { return true; } }
+}
+
+function joined(gids: i64[]): string {
+    var s: string = "";
+    var i: i32 = 0;
+    while (i < gids.len()) {
+        if (i > 0) { s = s + " "; }
+        s = s + gids[i].to_string();
+        i = i + 1;
+    }
+    return s;
+}
+
+// getgrouplist's order: the primary gid first, then the memberships in
+// FILE order, with a repeat of one already listed dropped.
+function test_group_list_order(): test.TestOutcome {
+    return test.assert_eq(joined(pwdb.group_list_in(group_fixture(), "alice", 1000 as i64)), "1000 4 27");
+}
+
+// A member list is compared entry by entry: a name that is a prefix,
+// an extension or a substring of a member is not a member.
+function test_membership_is_not_a_substring(): test.TestOutcome {
+    if (joined(pwdb.group_list_in(group_fixture(), "ali", 5 as i64)) != "5 33") { return test.fail("ali is a member of trap only"); }
+    if (joined(pwdb.group_list_in(group_fixture(), "malic", 5 as i64)) != "5") { return test.fail("malic is a member of nothing"); }
+    return test.assert_eq(joined(pwdb.group_list_in(group_fixture(), "nobody", 5 as i64)), "5");
+}
+
+// The primary gid leads even when a membership would have put it later,
+// and a membership equal to it is not repeated.
+function test_primary_gid_leads(): test.TestOutcome {
+    return test.assert_eq(joined(pwdb.group_list_in(group_fixture(), "alice", 27 as i64)), "27 4");
+}
+
+function named(names: Option[string][]): string {
+    var s: string = "";
+    var i: i32 = 0;
+    while (i < names.len()) {
+        if (i > 0) { s = s + " "; }
+        match (names[i]) { Some(n) => { s = s + n; }, None => { s = s + "?"; } }
+        i = i + 1;
+    }
+    return s;
+}
+
+// The whole point of resolving a list in one pass: a gid no entry
+// claims answers None rather than a name, and the FIRST line with a
+// gid names it — `dup` shares 4 with `adm` and never wins.
+function test_group_names(): test.TestOutcome {
+    var gids: i64[] = [0 as i64, 4 as i64, 99999 as i64, 1000 as i64, 99 as i64];
+    return test.assert_eq(named(pwdb.group_names_in(group_fixture(), gids)), "root adm ? alice empty");
+}
+
+function test_empty_gid_list(): test.TestOutcome {
+    var none: i64[] = [];
+    return test.assert_eq(pwdb.group_names_in(group_fixture(), none).len(), 0);
+}
+
+// parse_id is the files backend's id field: digits and nothing else,
+// and nothing past a 32-bit id.
+function test_parse_id(): test.TestOutcome {
+    if (!is_none_id(pwdb.parse_id(""))) { return test.fail("empty"); }
+    if (!is_none_id(pwdb.parse_id("+1"))) { return test.fail("a sign"); }
+    if (!is_none_id(pwdb.parse_id(" 1"))) { return test.fail("a leading blank"); }
+    if (!is_none_id(pwdb.parse_id("1 "))) { return test.fail("a trailing blank"); }
+    if (!is_none_id(pwdb.parse_id("4294967296"))) { return test.fail("past 32 bits"); }
+    match (pwdb.parse_id("4294967295")) {
+        Some(v) => { return test.assert_eq(v, 4294967295 as i64); },
+        None => { return test.fail("the largest id is an id"); }
+    }
+}
+
+function is_none_id(v: Option[i64]): boolean {
+    match (v) { Some(_) => { return false; }, None => { return true; } }
+}
+
+// ---- utmp -------------------------------------------------------------------
+
+// Two records built with `utmpdump -r`: a USER_PROCESS for alice on
+// pts/3 and a DEAD_PROCESS for tty1, whose fields are what a reader
+// that got an offset wrong would pick up instead.
+function utmp_fixture_path(): string {
+    return "coreutils_pwdb_test_utmp.bin";
+}
+
+function utmp_fixture_bytes(): u8[] {
+    var bs: u8[] = [];
+    // Record 1: ut_type=7, ut_pid=1234, ut_line="pts/3", ut_id="ts/1",
+    // ut_user="alice", ut_host="10.0.0.1", ut_tv.tv_sec=1788775872.
+    bs = put_u16(bs, 7);
+    bs = put_pad(bs, 2);
+    bs = put_i32(bs, 1234);
+    bs = put_field(bs, "pts/3", 32);
+    bs = put_field(bs, "ts/1", 4);
+    bs = put_field(bs, "alice", 32);
+    bs = put_field(bs, "10.0.0.1", 256);
+    bs = put_pad(bs, 8);
+    bs = put_i32(bs, 1788775872);
+    bs = put_pad(bs, 4);
+    bs = put_pad(bs, 36);
+    // Record 2: a DEAD_PROCESS with no user, which no lookup answers.
+    bs = put_u16(bs, 8);
+    bs = put_pad(bs, 2);
+    bs = put_i32(bs, 99);
+    bs = put_field(bs, "tty1", 32);
+    bs = put_field(bs, "", 4);
+    bs = put_field(bs, "", 32);
+    bs = put_field(bs, "", 256);
+    bs = put_pad(bs, 8);
+    bs = put_i32(bs, 1788775873);
+    bs = put_pad(bs, 4);
+    bs = put_pad(bs, 36);
+    return bs;
+}
+
+function put_u16(bs: u8[], v: i32): u8[] {
+    var out: u8[] = bs.append((v % 256) as u8);
+    return out.append(((v / 256) % 256) as u8);
+}
+
+function put_i32(bs: u8[], v: i64): u8[] {
+    var out: u8[] = bs;
+    var x: i64 = v;
+    var i: i32 = 0;
+    while (i < 4) {
+        out = out.append((x % (256 as i64)) as u8);
+        x = x / (256 as i64);
+        i = i + 1;
+    }
+    return out;
+}
+
+function put_pad(bs: u8[], n: i32): u8[] {
+    var out: u8[] = bs;
+    var i: i32 = 0;
+    while (i < n) {
+        out = out.append(0 as u8);
+        i = i + 1;
+    }
+    return out;
+}
+
+function put_field(bs: u8[], s: string, width: i32): u8[] {
+    var out: u8[] = bs;
+    var i: i32 = 0;
+    while (i < s.len() && i < width) {
+        out = out.append(s[i]);
+        i = i + 1;
+    }
+    while (i < width) {
+        out = out.append(0 as u8);
+        i = i + 1;
+    }
+    return out;
+}
+
+function write_utmp_fixture(): boolean {
+    match (write_file(utmp_fixture_path(), string_from_bytes_unchecked(utmp_fixture_bytes()))) {
+        Ok(_) => { return true; },
+        Err(_) => { return false; }
+    }
+}
+
+function test_utmp_record_fields(): test.TestOutcome {
+    if (!write_utmp_fixture()) { return test.fail("the fixture could not be written"); }
+    var es: utmp.Entry[] = utmp.read_all(utmp_fixture_path());
+    if (es.len() != 2) { return test.fail("two whole records"); }
+    if (es[0].kind != utmp.user_process()) { return test.fail("ut_type"); }
+    if (es[0].pid != 1234) { return test.fail("ut_pid"); }
+    if (es[0].line != "pts/3") { return test.fail("ut_line"); }
+    if (es[0].id != "ts/1") { return test.fail("ut_id"); }
+    if (es[0].user != "alice") { return test.fail("ut_user"); }
+    if (es[0].host != "10.0.0.1") { return test.fail("ut_host"); }
+    if (es[0].sec != (1788775872 as i64)) { return test.fail("ut_tv.tv_sec"); }
+    if (es[1].kind != utmp.dead_process()) { return test.fail("the second record's type"); }
+    return test.assert_eq(es[1].line, "tty1");
+}
+
+// A short tail is not a record, and a file that is not there is no
+// records rather than an error — which is how a container with no
+// login database reads.
+function test_utmp_partial_and_missing(): test.TestOutcome {
+    var bs: u8[] = utmp_fixture_bytes();
+    var short: u8[] = [];
+    var i: i32 = 0;
+    while (i < utmp.record_bytes() + 17) {
+        short = short.append(bs[i]);
+        i = i + 1;
+    }
+    match (write_file(utmp_fixture_path(), string_from_bytes_unchecked(short))) {
+        Ok(_) => {},
+        Err(_) => { return test.fail("the short fixture could not be written"); }
+    }
+    if (utmp.read_all(utmp_fixture_path()).len() != 1) { return test.fail("a partial record is not a record"); }
+    return test.assert_eq(utmp.read_all("coreutils_pwdb_test_absent.bin").len(), 0);
+}
+
+// getlogin's question: the USER_PROCESS entry for a terminal. A
+// DEAD_PROCESS on the line asked for is not an answer.
+function test_utmp_user_on_line(): test.TestOutcome {
+    if (!write_utmp_fixture()) { return test.fail("the fixture could not be written"); }
+    match (utmp.user_on_line(utmp_fixture_path(), "pts/3")) {
+        Some(u) => {
+            if (u != "alice") { return test.fail("the user on pts/3"); }
+        },
+        None => { return test.fail("pts/3 has a user-process entry"); }
+    }
+    match (utmp.user_on_line(utmp_fixture_path(), "tty1")) {
+        Some(_) => { return test.fail("a dead process names nobody"); },
+        None => {}
+    }
+    match (utmp.user_on_line(utmp_fixture_path(), "pts/9")) {
+        Some(_) => { return test.fail("a line with no entry names nobody"); },
+        None => {}
+    }
+    return test.assert_true(true);
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("coreutils/lib/pwdb + lib/utmp");
+    r = r.defer_cleanup(utmp_fixture_path());
+    r = r.it("lookup by name takes the first entry", test_lookup_by_name);
+    r = r.it("lookup by uid takes the first entry", test_lookup_by_uid);
+    r = r.it("a last line without a newline is an entry", test_last_line_without_a_newline);
+    r = r.it("a malformed line is not an entry", test_malformed_lines_are_not_entries);
+    r = r.it("group_list is getgrouplist's order", test_group_list_order);
+    r = r.it("membership is not a substring", test_membership_is_not_a_substring);
+    r = r.it("the primary gid leads", test_primary_gid_leads);
+    r = r.it("an unnamed gid resolves to nothing", test_group_names);
+    r = r.it("no gids resolve to no names", test_empty_gid_list);
+    r = r.it("parse_id is digits and nothing else", test_parse_id);
+    r = r.it("the utmp record's fields", test_utmp_record_fields);
+    r = r.it("a partial or missing utmp", test_utmp_partial_and_missing);
+    r = r.it("the user on a terminal", test_utmp_user_on_line);
+    r.finish();
+    return 0;
+}

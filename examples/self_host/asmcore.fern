@@ -3824,14 +3824,24 @@ pub function infer_expr_type(e: ast.Expr, s: EmitState): Ty {
             //   string → "u8"  (the byte type, #5629)
             //   array_string → "string"
             //   array_u64 → "u64" (so element compares pick unsigned)
-            //   array_u32 → "u32"; array_i64 → "i64"; else → "i32"
+            //   array_u32 → "u32"; array_i64 → "i64"; array_i32 → "i32"
+            //
+            // Everything else is the COARSE ty_array, which ty_from_ref
+            // builds for every array whose element is not one of those
+            // scalars — `Option[T][]`, `f64[]`, `S[]`, `T[][]`. That Ty
+            // does not record its element, so the honest answer is
+            // unknown: saying i32 was a guess that happened to hold for
+            // the word-sized cases and produced a false E002 on the rest
+            // (`return names[0]` from a function returning Option[string]
+            // "has type i32").
             var at: Ty = infer_expr_type(x.array, s);
             if (ty_is_string(at)) { return ty_u8(); }
             if (ty_is_array_string(at)) { return ty_string(); }
             if (ty_is_array_u64(at)) { return ty_u64(); }
             if (ty_is_array_u32(at)) { return ty_u32(); }
             if (ty_is_array_i64(at)) { return ty_i64(); }
-            return ty_i32();
+            if (ty_is_array_i32(at)) { return ty_i32(); }
+            return ty_unknown();
         },
         ast.ExprSlice(sl) => { return infer_expr_type(sl.array, s); },
         ast.ExprFieldAccess(fa) => {

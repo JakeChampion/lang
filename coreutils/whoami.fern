@@ -1,0 +1,44 @@
+// whoami.fern — GNU-compatible `whoami`.
+//
+//   whoami    the user name the EFFECTIVE user id belongs to
+//
+// `id -un` with a shorter spelling and one difference that matters: it
+// takes no options of its own, so an operand is `extra operand` rather
+// than a user to look up, and a lone `-` is an operand like any other.
+//
+// A uid no passwd entry claims is an error, not a number: `whoami`
+// prints nothing and says `cannot find name for user ID N`, where
+// `id -un` prints the number as well. The exit status is 1 either way.
+import "std/string";
+import "std/array";
+import "./lib/gnu";
+import "./lib/pwdb";
+
+function help_text(): string {
+  var out: string = "";
+  out = out + "Usage: " + gnu.prog() + " [OPTION]...\n";
+  out = out + "Print the user name associated with the current effective user ID.\n";
+  out = out + "Same as id -un.\n";
+  out = out + "\n";
+  out = out + "      --help        display this help and exit\n";
+  out = out + "      --version     output version information and exit\n";
+  return out;
+}
+
+function main(): i32 {
+  var operands: string[] = gnu.parse_standard_options_only(args(), "whoami", help_text(), 1);
+  if (operands.len() > 0) {
+    gnu.die_usage("extra operand " + gnu.quote(operands[0]), 1);
+  }
+  var uid: i64 = geteuid() as i64;
+  match (pwdb.user_by_uid(uid)) {
+    Some(u) => {
+      gnu.write_out(u.name + "\n");
+      return 0;
+    },
+    None => {
+      gnu.error("cannot find name for user ID " + uid.to_string());
+      return 1;
+    }
+  }
+}

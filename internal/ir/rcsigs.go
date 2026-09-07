@@ -296,6 +296,12 @@ var rcInertBuiltins = map[string]bool{
 	// No arguments at all, so there is nothing to move.
 	"geteuid": true, "getegid": true, "hostname": true,
 	"getuid": true, "getgid": true,
+	// `getgroups` has no arguments either, and it is classified here
+	// under the BUILTIN name rather than as `__fern_getgroups`: the
+	// runtime tables are the WASM registry's, and wasm has no users, so
+	// no such helper exists there to alias through. Same door
+	// `write_file_exec` and `access` come in by.
+	"getgroups": true,
 }
 
 // rcUnmodelled are helpers that do move counts, and whose movement one
@@ -345,7 +351,7 @@ var rcInert = map[string]bool{
 	"__bytes_to_lang_string": true, "__fern_abs_f64": true,
 	"__fern_alloc": true, "__fern_alloc_box": true, "__fern_alloc_rc1": true,
 	"__fern_arg_at": true, "__fern_arg_count": true, "__fern_args": true,
-	"__fern_environ": true, "__fern_getgroups": true,
+	"__fern_environ":               true,
 	"__fern_arr_push_shared_bytes": true,
 	"__fern_arr_push_shared_count": true, "__fern_ascii_run": true,
 	"__fern_rmemchr": true, "__fern_count_byte": true,

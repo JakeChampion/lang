@@ -1257,11 +1257,19 @@ function long_option(g: Getopt, a: string): (Option[OptMatch], Getopt) {
       die_usage("option '--" + o.long + "' requires an argument", g.status);
     }
   }
+  // The write-failure status is the utility's own `exit_failure`, and
+  // for a utility that declares options that is the SAME number as its
+  // usage-error status: gnulib calls usage() with exit_failure, so
+  // printenv's 2 is both, head's 1 is both, and sort's 2 is both. (The
+  // one coreutil where they differ — expr, whose exit_failure is 3
+  // against a usage error's 2 — declares no options and never reaches
+  // this scan; `sole_help_version_with` carries the pair separately for
+  // the utilities that need it.)
   if (o.id == help_id()) {
-    print_help(g.help, 0, 1);
+    print_help(g.help, 0, g.status);
   }
   if (o.id == version_id()) {
-    print_version(g.name, 0, 1);
+    print_version(g.name, 0, g.status);
   }
   return (Some(OptMatch { id: o.id, value: value, has_value: has }), s);
 }

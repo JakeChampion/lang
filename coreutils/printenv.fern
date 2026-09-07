@@ -1,0 +1,102 @@
+// printenv.fern — GNU-compatible `printenv`.
+//
+//   printenv              every entry, `NAME=VALUE`, in the order the
+//                         process received it
+//   printenv NAME...      each named variable's VALUE, one per operand
+//   -0, --null            end each entry with NUL rather than newline
+//
+// The whole list and a lookup are different questions, and printenv is
+// the utility that shows it: the dump prints the raw entries in the
+// vector's own order, so a name that appears twice — which execve
+// permits and the kernel preserves — appears twice, where a lookup only
+// ever finds the first. That is why this reaches for `environ()` and not
+// a loop of `env()`.
+//
+// Options are scanned in ARGV order (the `+` optstring), so an option
+// after the first operand is an operand: `printenv A -0` asks for a
+// variable named `-0`, does not find one, and exits 1. Every operand
+// that names nothing costs the exit status and nothing else — the ones
+// that do name something are still printed, in order. An operand with an
+// `=` in it names nothing by rule, never by lookup.
+//
+// printenv is one of the utilities whose FAILURE status is 2 rather than
+// 1: a usage error, a `--help` that cannot be written, and a failed
+// write all exit 2. An operand that names nothing is the exception —
+// that is the documented 1.
+import "std/string";
+import "std/array";
+import "std/io_buffered";
+import "./lib/gnu";
+
+function help_text(): string {
+  var out: string = "";
+  out = out + "Usage: " + gnu.prog() + " [OPTION]... [VARIABLE]...\n";
+  out = out + "Print the values of the specified environment VARIABLE(s).\n";
+  out = out + "If no VARIABLE is specified, print name=value pairs for them all.\n";
+  out = out + "\n";
+  out = out + "  -0, --null     end each output line with NUL, not newline\n";
+  out = out + "      --help        display this help and exit\n";
+  out = out + "      --version     output version information and exit\n";
+  return out;
+}
+
+function main(): i32 {
+  var opts: gnu.Opt[] = [gnu.flag("0", "null", 1)];
+  var g: gnu.Getopt = gnu.getopt_new(args(), opts, "printenv", help_text(), 2).in_order();
+  var zero: boolean = false;
+  while (true) {
+    var r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    g = r.1;
+    match (r.0) {
+      Some(_) => {
+        zero = true;
+      },
+      None => {
+        break;
+      }
+    }
+  }
+  var term: string = "\n";
+  if (zero) {
+    term = "\x00";
+  }
+  var operands: string[] = g.operands();
+  var o: io_buffered.BufWriter = gnu.out_new();
+  var ok: boolean = true;
+  if (operands.len() == 0) {
+    var all: string[] = environ();
+    var i: i32 = 0;
+    while (i < all.len()) {
+      o = gnu.put_with(o, all[i] + term, 2);
+      i = i + 1;
+    }
+  } else {
+    var k: i32 = 0;
+    while (k < operands.len()) {
+      // A name containing `=` names nothing, and printenv says so
+      // rather than letting the lookup answer: `FERN_EQ=a` against an
+      // entry `FERN_EQ=a=b` would otherwise match its first nine bytes
+      // and hand back `b`. POSIX rules the character out of a name, so
+      // the operand is refused before the environment is asked.
+      var found: boolean = false;
+      if (operands[k].index_of("=") < 0) {
+        match (env(operands[k])) {
+          Some(v) => {
+            o = gnu.put_with(o, v + term, 2);
+            found = true;
+          },
+          None => {}
+        }
+      }
+      if (!found) {
+        ok = false;
+      }
+      k = k + 1;
+    }
+  }
+  gnu.finish_with(o, 2);
+  if (ok) {
+    return 0;
+  }
+  return 1;
+}
