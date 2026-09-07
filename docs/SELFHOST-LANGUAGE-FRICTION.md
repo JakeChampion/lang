@@ -50,7 +50,7 @@ column says what `TestSelfHostFeatureCensus` holds the row to.
 | Closures / lambdas | ✅ `(x: T) => e`, escaping + capturing | **116** — 104 nested named fns (4 astwalk visitors, 19 `wasm_ir` helper-gate predicates behind `any_op`, 23 in `checker`'s collectors, 12 in `parser` — the mentions, fn-value-call, moves-handle, deep-defer-scan, elb-guard and hl families, the last two having lost their no-op expression visitors to `fold_stmt_spine` (#8180) — and 31 in `irlower` — the cap-family visitors, body_binds_lambda's, the closure-array family's four (the credit's two and the empty-`fn[]`-declaration scan's two, #4354), the five visit/descend pairs of the Perceus escape-scanner trio, the env-box lift's nine accumulator-spine wrappers, #6993, the superseded-field own move's three, #8186, and the own-lift scan's `pick`, #8267, plus #8639's `at_unary` and `at_number` in `checker` — the sign-chain collector and the E047 report for a suffixed integer literal — and #8657's `at` in `checker`'s value-block local retype, the `map_expr` visitor closing over the scope the rewritten block sits in); the visitors mostly capture, the gate predicates mostly do not — plus **12** arrow lambdas (3 no-op statement visitors, 3 in `constfold`'s assert probe, the 4 that were anonymous `function(…)` exprs until #2673 — `astwalk`'s splice, `checker`'s diag fold, two `parser` rewriters — and `checker`'s 2 break scans, #8562) | pinned |
 | `for x in xs` | ✅ arrays, strings, `Iterator[T]` | **1,150** in 8 modules — `irlower.fern` and `checker.fern` carry most of them | floor |
 | `?` error propagation | ✅ incl. `From`-converting widening | **0** | pinned |
-| Hash map (`Map[K, V]`) | ✅ i32/string/`@derive(Eq, Hash)` keys | **12** spellings in 4 modules (`irverify`'s `NameIndex`, `wasm_ir`'s call set, `builtins`' mirror of `JObject`, and `printer`'s line-id table for the linear-space diff, #8611) | pinned |
+| Hash map (`Map[K, V]`) | ✅ i32/string/`@derive(Eq, Hash)` keys | **7** spellings in 3 modules (`wasm_ir`'s call set, `builtins`' mirror of `JObject`, and `printer`'s line-id table for the linear-space diff, #8611) | pinned |
 | `astwalk` call sites (walkers on the shared spine) | — | **168** across 13 modules — `parser.fern` joins with the mentions, fn-value-call, moves-handle, deep-defer-scan, elb-guard and hl families, `interp.fern`'s cellify scans, `irlower.fern`'s cap-type, assign-targets, Perceus escape-scanner and env-box-lift families, `treeshake.fern`'s name collector, and `asmcore.fern`'s P001/P002 pre-check (#6993) | floor |
 | `enum` with payloads | ✅ multi-payload, named fields | **2 declarations** | — |
 | `Option[T]` / `Result[T, E]` in return position | ✅ | **20** of 4,676 functions (0.4%) | — |
@@ -153,14 +153,15 @@ means finishing `str` can never help RC without also un-erasing it.
 Every self-host module imports siblings and `std/io` (which exports exactly two
 functions). Nothing else. The consequences:
 
-- **A compiler that had almost no hash map.** Eleven `Map[K, V]` spellings in
-  175k lines, across three modules — `irverify`'s `NameIndex`, converted in
-  #6993 slice four, and `wasm_ir`'s call set. Everything else is still a linear
+- **A compiler that has almost no hash map.** Seven `Map[K, V]` spellings in
+  175k lines, across three modules — `wasm_ir`'s call set, `builtins`' mirror
+  of `JObject`, and `printer`'s line-id table. Everything else is still a linear
   scan over a `string[]` or a hand-rolled bucket table: 290 sites comparing an
   array element to a name, 114 hand-rolled
   `contains`/`index_of`/`find` helpers, and five hand-written hash tables
   (`checker.SigTable`, `irlower`'s borrow registry and `MFuncs`,
-  `x86_native`'s label table, and the one now deleted). The 65 string-tag
+  `x86_native`'s label table, and `irverify`'s `NameIndex`, back on a
+  head/next chain since #8541). The 65 string-tag
   namespaces of §2.1 are, structurally, a hash map implemented in the string
   type. `core/map` reaches the compiler as an ordinary external import, so the
   blocker this section names was the ratchet, not the module system.
@@ -390,10 +391,24 @@ What it cost, and none of it was visible from outside:
 **What the fourth adoption cost (#6993).** The feature was `Map[K, V]`, and the
 module `irverify.fern`. Its `NameIndex` — a hand-written 1024-bucket hash (a
 polynomial `bucket_of`, a counting pass, a prefix sum, a cursor, a placement
-pass, over three parallel flat arrays) — is now `Map[string, i32]`, with the
+pass, over three parallel flat arrays) — became `Map[string, i32]`, with the
 value doubling as the arity and `-1` reading as both "absent" and "membership
 only". **79 lines deleted against 25 added**, no public signature changed, no
 call site touched, and the fixed 1024-bucket cap gone with it.
+
+**#8541 reverted this one**, and the reason is a fact about the feature rather
+than about the module: the builtin `Map` is an association LIST — `asmcore`'s
+`__fern_map_find` walks the key column comparing keys one at a time — so the
+probes were still the linear scan the index exists to remove, and the pass they
+feed stayed quadratic through the fix meant to cure it. 19,932 lookups drove
+14.3M key comparisons over a 961-entry index on the stage-2 compiler; a
+head/next chain over `util.hash_bucket` (`checker.sig_table`'s idiom) took
+3.4% off the whole compile. What survives from this slice is the pair of
+invariants it named — first-declaration-wins and the never-iterated
+requirement — now carried by the chain's backward build. **Read the rest of
+this section as a record of what adopting the builtin `Map` costs, not as a
+description of `irverify` today**, and treat "replace a scan with a `Map`" as
+a conversion that needs the map's own complexity checked first.
 
 What made this the right first Map rather than a hotter one: the structure is
 **never iterated**, only probed, so no iteration order can reach the emitted
@@ -416,7 +431,7 @@ prunes it to **+8 KB** on the built compiler), and a `Map` in a struct field is
 never freed on the IR path, which here is a handful of boxes per compile because
 the index is built per module, not per function.
 
-**It is not a speed-up, and was never going to be** — it replaced a hash table
+**It was not a speed-up, and was never going to be** — it replaced a hash table
 with a hash table. Measured best-of-3 through the self-host CLI: 180 ms → 184 ms
 compiling `lexer.fern`, 3320 ms → 3305 ms compiling `parser.fern`. Both within
 noise. The win is 79 lines and a cap: the old build allocated two
