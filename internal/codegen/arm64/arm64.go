@@ -176,8 +176,14 @@ var linuxDarwinSysno = map[string][2]int{
 	"faccessat": {439, 467},
 	// geteuid(2) / getegid(2) — Linux asm-generic 175 / 177, Darwin BSD
 	// 25 / 43. Neither takes an argument and neither can fail.
-	"geteuid":    {175, 25},
-	"getegid":    {177, 43},
+	"geteuid": {175, 25},
+	"getegid": {177, 43},
+	// getuid(2) / getgid(2) — the REAL ids. Linux asm-generic 174 / 176,
+	// Darwin BSD 24 / 47.
+	"getuid": {174, 24},
+	"getgid": {176, 47},
+	// getgroups(2) — Linux asm-generic 158, Darwin BSD 79.
+	"getgroups":  {158, 79},
 	"exit":       {sysExit, darExit},
 	"exit_group": {sysExitGroup, darExit},
 	"mmap":       {sysMmap, darMmap},
@@ -797,6 +803,18 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesEgid {
 		g.emitIdRuntime("__fern_getegid", "getegid")
 	}
+	if g.usesRuid {
+		g.emitIdRuntime("__fern_getuid", "getuid")
+	}
+	if g.usesRgid {
+		g.emitIdRuntime("__fern_getgid", "getgid")
+	}
+	if g.usesGetgroups {
+		g.emitGetgroupsRuntime()
+	}
+	if g.usesEnviron {
+		g.emitEnvironRuntime()
+	}
 	if g.usesHostname {
 		g.emitHostnameRuntime()
 	}
@@ -1069,7 +1087,7 @@ func (g *generator) emitDataSections() {
 		}
 	}
 	g.emitCoverTable()
-	if g.usesAlloc || g.usesEnv || g.usesArgs || g.usesReadLine || g.usesStrIdx || g.usesRcDec || g.usesRcUnderflowCount || g.usesMapHashSeed || ast.LeakCheckEnabled || len(g.coverSites) > 0 {
+	if g.usesAlloc || g.usesEnv || g.usesArgs || g.usesEnviron || g.usesGetgroups || g.usesReadLine || g.usesStrIdx || g.usesRcDec || g.usesRcUnderflowCount || g.usesMapHashSeed || ast.LeakCheckEnabled || len(g.coverSites) > 0 {
 		g.line("")
 		if g.darwin {
 			// Mach-O zero-initialised data lives in
@@ -1132,6 +1150,16 @@ func (g *generator) emitDataSections() {
 	if g.usesEnv {
 		g.line(`.align 3`)
 		g.label("__fern_envp")
+		g.line(`	.quad 0`)
+	}
+	if g.usesEnviron {
+		g.line(`.align 3`)
+		g.label("__fern_environ_cache")
+		g.line(`	.quad 0`)
+	}
+	if g.usesGetgroups {
+		g.line(`.align 3`)
+		g.label("__fern_getgroups_cache")
 		g.line(`	.quad 0`)
 	}
 	if g.usesArgs {
@@ -6356,12 +6384,17 @@ func (g *generator) emitProcWaitpidRuntime() {
 	g.sizeDirective("__fern_proc_waitpid")
 }
 
-// emitArgsRuntime emits `__fern_args()` — returns a length-
-// prefixed `string[]` materialised from the argc/argv pair
-// captured by emitStartRuntime. Each entry is a fresh
-// length-prefixed string with a trailing NUL preserved (for
-// libc-shaped consumers like `puts`). Result is cached in
-// `__fern_args_cache` so repeat calls are O(1).
+// emitStrVecRuntime emits a helper that materialises a `string[]` from a
+// (count, char**) pair and caches the result: `__fern_args` over the argc /
+// argv captured by emitStartRuntime, `__fern_environ` over the envp vector.
+// `loadCountVec` is the only difference between them — it leaves the count in
+// x19 and the vector base in x20, and everything after is shared. `tag` names
+// the helper's private labels, and is handed to `loadCountVec` for any of its
+// own (the two string ABIs emit the same helper twice under different tags).
+//
+// Each entry is a fresh length-prefixed string with a trailing NUL preserved
+// (for libc-shaped consumers like `puts`). Repeat calls are O(1) off
+// `cacheSym`.
 //
 // The rc word is the static sentinel, not 1: the cache hands the same
 // pointer to every caller, so no single scope-exit dec can be the last
@@ -6372,13 +6405,13 @@ func (g *generator) emitProcWaitpidRuntime() {
 // __fern_alloc / __fern_memcpy calls; AAPCS64 mandates
 // preservation, so the saved-pair pattern at function entry
 // keeps them coherent across the bl chain.
-func (g *generator) emitArgsRuntime() {
+func (g *generator) emitStrVecRuntime(sym, cacheSym, tag string, loadCountVec func(tag string)) {
 	g.line("")
-	g.line(".global __fern_args")
-	g.typeDirective("__fern_args")
-	g.label("__fern_args")
+	g.line(".global " + sym)
+	g.typeDirective(sym)
+	g.label(sym)
 	if ast.UseTwoWordStrings(8) {
-		g.emitArgsRuntime2W()
+		g.emitStrVecRuntime2W(sym, cacheSym, tag+"2w", loadCountVec)
 		return
 	}
 	g.emit("stp x29, x30, [sp, #-64]!")
@@ -6387,19 +6420,16 @@ func (g *generator) emitArgsRuntime() {
 	g.emit("stp x21, x22, [sp, #32]")
 	g.emit("str x23, [sp, #48]")
 	// Fast path: cached pointer non-zero → return it.
-	g.adrpAdd("x0", "__fern_args_cache")
+	g.adrpAdd("x0", cacheSym)
 	g.emit("ldr x1, [x0]")
-	g.emit("cbz x1, .Largs_build")
+	g.emit("cbz x1, .L%s_build", tag)
 	g.emit("mov x0, x1")
-	g.emit("b .Largs_ret")
-	g.label(".Largs_build")
-	// x19 = argc, x20 = argv (pointer to char**)
-	g.adrpAdd("x19", "__fern_argc")
-	g.emit("ldr x19, [x19]")
-	g.adrpAdd("x20", "__fern_argv")
-	g.emit("ldr x20, [x20]")
+	g.emit("b .L%s_ret", tag)
+	g.label(fmt.Sprintf(".L%s_build", tag))
+	// x19 = count, x20 = vector base (char**).
+	loadCountVec(tag)
 	// Allocate the result string[] container: 16-byte header
-	// (pad + cap + rc + len, each 4 bytes) + argc * 8 bytes
+	// (pad + cap + rc + len, each 4 bytes) + count * 8 bytes
 	// for entry pointers. The 16-byte header keeps element 0
 	// at a 16-aligned offset so Apple Silicon's stricter
 	// alignment is satisfied; cap / rc / len sit at the
@@ -6408,26 +6438,26 @@ func (g *generator) emitArgsRuntime() {
 	g.emit("add x0, x0, #16")
 	g.emit("bl __fern_alloc")
 	g.emit("add x21, x0, #16")      // x21 = result data pointer (16-aligned)
-	g.emit("stur w19, [x21, #-12]") // cap = argc (Phase 2-prep)
+	g.emit("stur w19, [x21, #-12]") // cap = count (Phase 2-prep)
 	g.emit("mov w9, #1")
 	g.emit("lsl w9, w9, #31")      // w9 = 0x80000000 (static sentinel)
 	g.emit("stur w9, [x21, #-8]")  // rc: the cache is immortal (see the doc comment)
-	g.emit("stur w19, [x21, #-4]") // length prefix = argc
-	// for (i = 0; i < argc; i++)
+	g.emit("stur w19, [x21, #-4]") // length prefix = count
+	// for (i = 0; i < count; i++)
 	g.emit("mov x22, #0") // x22 = i
-	g.label(".Largs_loop")
+	g.label(fmt.Sprintf(".L%s_loop", tag))
 	g.emit("cmp x22, x19")
-	g.emit("bge .Largs_done")
-	// x23 = argv[i] (C string).
+	g.emit("bge .L%s_done", tag)
+	// x23 = vec[i] (C string).
 	g.emit("ldr x23, [x20, x22, lsl #3]")
 	// Inline strlen on the C string.
 	g.emit("mov x0, x23")
-	g.label(".Largs_strlen")
+	g.label(fmt.Sprintf(".L%s_strlen", tag))
 	g.emit("ldrb w1, [x0]")
-	g.emit("cbz w1, .Largs_strlen_done")
+	g.emit("cbz w1, .L%s_strlen_done", tag)
 	g.emit("add x0, x0, #1")
-	g.emit("b .Largs_strlen")
-	g.label(".Largs_strlen_done")
+	g.emit("b .L%s_strlen", tag)
+	g.label(fmt.Sprintf(".L%s_strlen_done", tag))
 	g.emit("sub x0, x0, x23") // x0 = strlen
 	g.emit("mov x9, x0")      // x9 = saved strlen (caller-save, not preserved across bl)
 	// L2 rc-header layout — see __fern_strcat. Payload = strlen + 1 NUL.
@@ -6450,24 +6480,24 @@ func (g *generator) emitArgsRuntime() {
 	g.emit("ldr x10, [sp, #56]")
 	g.emit("str x10, [x21, x22, lsl #3]")
 	g.emit("add x22, x22, #1")
-	g.emit("b .Largs_loop")
-	g.label(".Largs_done")
+	g.emit("b .L%s_loop", tag)
+	g.label(fmt.Sprintf(".L%s_done", tag))
 	// Cache + return.
-	g.adrpAdd("x0", "__fern_args_cache")
+	g.adrpAdd("x0", cacheSym)
 	g.emit("str x21, [x0]")
 	g.emit("mov x0, x21")
-	g.label(".Largs_ret")
+	g.label(fmt.Sprintf(".L%s_ret", tag))
 	g.emit("ldr x23, [sp, #48]")
 	g.emit("ldp x21, x22, [sp, #32]")
 	g.emit("ldp x19, x20, [sp, #16]")
 	g.emit("ldp x29, x30, [sp], #64")
 	g.emit("ret")
-	g.sizeDirective("__fern_args")
+	g.sizeDirective(sym)
 	g.line(".ltorg")
 }
 
-// emitArgsRuntime2W is the two-word-ABI variant of
-// emitArgsRuntime. Each `string[]` entry is now a 16-byte
+// emitStrVecRuntime2W is the two-word-ABI variant of
+// emitStrVecRuntime. Each `string[]` entry is now a 16-byte
 // `(data, len)` pair instead of an 8-byte single-pointer.
 // Layout matches the IR's two-word string[] stride:
 //
@@ -6476,7 +6506,7 @@ func (g *generator) emitArgsRuntime() {
 //     len at +8..+15
 //
 // Cached pointer mechanics unchanged.
-func (g *generator) emitArgsRuntime2W() {
+func (g *generator) emitStrVecRuntime2W(sym, cacheSym, tag string, loadCountVec func(tag string)) {
 	g.emit("stp x29, x30, [sp, #-80]!")
 	g.emit("mov x29, sp")
 	g.emit("stp x19, x20, [sp, #16]")
@@ -6484,42 +6514,39 @@ func (g *generator) emitArgsRuntime2W() {
 	g.emit("stp x23, x24, [sp, #48]")
 	g.emit("str x25, [sp, #64]")
 	// Cached?
-	g.adrpAdd("x0", "__fern_args_cache")
+	g.adrpAdd("x0", cacheSym)
 	g.emit("ldr x1, [x0]")
-	g.emit("cbz x1, .Largs2w_build")
+	g.emit("cbz x1, .L%s_build", tag)
 	g.emit("mov x0, x1")
-	g.emit("b .Largs2w_ret")
-	g.label(".Largs2w_build")
-	g.adrpAdd("x19", "__fern_argc")
-	g.emit("ldr x19, [x19]")
-	g.adrpAdd("x20", "__fern_argv")
-	g.emit("ldr x20, [x20]")
-	// Allocate: 16-byte header + argc * 16 (entries are 16-byte
+	g.emit("b .L%s_ret", tag)
+	g.label(fmt.Sprintf(".L%s_build", tag))
+	loadCountVec(tag)
+	// Allocate: 16-byte header + count * 16 (entries are 16-byte
 	// (data, len) pairs). Header is 16 bytes so element 0 sits
 	// at +16 = stride-aligned; length prefix at `[base + 12]`.
-	g.emit("lsl x0, x19, #4") // argc * 16
+	g.emit("lsl x0, x19, #4") // count * 16
 	g.emit("add x0, x0, #16") // + header
 	g.emit("bl __fern_alloc")
 	g.emit("add x21, x0, #16")      // x21 = data pointer (past header)
-	g.emit("stur w19, [x21, #-12]") // cap = argc (Phase 2-prep)
+	g.emit("stur w19, [x21, #-12]") // cap = count (Phase 2-prep)
 	g.emit("mov w9, #1")
 	g.emit("lsl w9, w9, #31")      // w9 = 0x80000000 (static sentinel)
 	g.emit("stur w9, [x21, #-8]")  // rc: the cache is immortal (see the doc comment)
-	g.emit("stur w19, [x21, #-4]") // length prefix = argc
+	g.emit("stur w19, [x21, #-4]") // length prefix = count
 	g.emit("mov x22, #0")          // loop counter i
-	g.label(".Largs2w_loop")
+	g.label(fmt.Sprintf(".L%s_loop", tag))
 	g.emit("cmp x22, x19")
-	g.emit("bge .Largs2w_done")
-	// argv[i] (C string).
+	g.emit("bge .L%s_done", tag)
+	// vec[i] (C string).
 	g.emit("ldr x23, [x20, x22, lsl #3]")
 	// Inline strlen.
 	g.emit("mov x0, x23")
-	g.label(".Largs2w_strlen")
+	g.label(fmt.Sprintf(".L%s_strlen", tag))
 	g.emit("ldrb w1, [x0]")
-	g.emit("cbz w1, .Largs2w_strlen_done")
+	g.emit("cbz w1, .L%s_strlen_done", tag)
 	g.emit("add x0, x0, #1")
-	g.emit("b .Largs2w_strlen")
-	g.label(".Largs2w_strlen_done")
+	g.emit("b .L%s_strlen", tag)
+	g.label(fmt.Sprintf(".L%s_strlen_done", tag))
 	g.emit("sub x0, x0, x23") // x0 = strlen
 	g.emit("mov x24, x0")     // x24 = strlen (callee-save, survives bl)
 	// Allocate via __fern_alloc_rc1 — the L2 rc-headed form, matching the
@@ -6550,20 +6577,47 @@ func (g *generator) emitArgsRuntime2W() {
 	g.emit("add x11, x11, #8")
 	g.emit("str x24, [x21, x11]") // len (= strlen, heap form, top bit clear)
 	g.emit("add x22, x22, #1")
-	g.emit("b .Largs2w_loop")
-	g.label(".Largs2w_done")
-	g.adrpAdd("x0", "__fern_args_cache")
+	g.emit("b .L%s_loop", tag)
+	g.label(fmt.Sprintf(".L%s_done", tag))
+	g.adrpAdd("x0", cacheSym)
 	g.emit("str x21, [x0]")
 	g.emit("mov x0, x21")
-	g.label(".Largs2w_ret")
+	g.label(fmt.Sprintf(".L%s_ret", tag))
 	g.emit("ldr x25, [sp, #64]")
 	g.emit("ldp x23, x24, [sp, #48]")
 	g.emit("ldp x21, x22, [sp, #32]")
 	g.emit("ldp x19, x20, [sp, #16]")
 	g.emit("ldp x29, x30, [sp], #80")
 	g.emit("ret")
-	g.sizeDirective("__fern_args")
+	g.sizeDirective(sym)
 	g.line(".ltorg")
+}
+
+// emitArgsRuntime emits `__fern_args()` over the argc / argv pair
+// emitStartRuntime captured.
+func (g *generator) emitArgsRuntime() {
+	g.emitStrVecRuntime("__fern_args", "__fern_args_cache", "args", func(string) {
+		g.adrpAdd("x19", "__fern_argc")
+		g.emit("ldr x19, [x19]")
+		g.adrpAdd("x20", "__fern_argv")
+		g.emit("ldr x20, [x20]")
+	})
+}
+
+// emitEnvironRuntime emits `__fern_environ()` over the envp vector. envp
+// carries no count word, so the length is a NULL scan before the build.
+func (g *generator) emitEnvironRuntime() {
+	g.emitStrVecRuntime("__fern_environ", "__fern_environ_cache", "environ", func(tag string) {
+		g.adrpAdd("x20", "__fern_envp")
+		g.emit("ldr x20, [x20]")
+		g.emit("mov x19, #0")
+		g.label(fmt.Sprintf(".L%s_count", tag))
+		g.emit("ldr x9, [x20, x19, lsl #3]")
+		g.emit("cbz x9, .L%s_counted", tag)
+		g.emit("add x19, x19, #1")
+		g.emit("b .L%s_count", tag)
+		g.label(fmt.Sprintf(".L%s_counted", tag))
+	})
 }
 
 // emitFloatTranscendentalsRuntime emits the f64 transcendental bundle —
@@ -9654,6 +9708,82 @@ func (g *generator) emitIdRuntime(sym, sysname string) {
 	g.line(".ltorg")
 }
 
+// emitGetgroupsRuntime emits `__fern_getgroups()` — the supplementary
+// group set as a cached `number[]`.
+//
+// getgroups(2) writes 32-bit gid_t; the array holds 8-byte slots. The
+// kernel fills the FRONT of the same buffer and the widening then runs
+// BACKWARDS, so no second allocation is needed: element i is read from
+// byte 4i and written to byte 8i, and every remaining read is below every
+// write already made.
+//
+// The size comes from a first `getgroups(0, NULL)`. The second call's
+// return sets the length rather than the first's, so a set that shrank
+// between the two reports what was actually written. A refused call
+// answers the empty list.
+func (g *generator) emitGetgroupsRuntime() {
+	g.line("")
+	g.line(".global __fern_getgroups")
+	g.typeDirective("__fern_getgroups")
+	g.label("__fern_getgroups")
+	g.emit("stp x29, x30, [sp, #-48]!")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	g.emit("str x21, [sp, #32]")
+	g.adrpAdd("x0", "__fern_getgroups_cache")
+	g.emit("ldr x1, [x0]")
+	g.emit("cbz x1, .Lgg_build")
+	g.emit("mov x0, x1")
+	g.emit("b .Lgg_ret")
+	g.label(".Lgg_build")
+	g.emit("mov x0, #0")
+	g.emit("mov x1, #0")
+	g.syscall("getgroups")
+	g.emit("mov x19, x0")
+	g.emit("cmp x19, #0")
+	g.emit("bgt .Lgg_alloc")
+	g.emit("mov x19, #0")
+	g.label(".Lgg_alloc")
+	g.emit("lsl x0, x19, #3")
+	g.emit("add x0, x0, #16")
+	g.emit("bl __fern_alloc")
+	g.emit("add x20, x0, #16")
+	g.emit("stur w19, [x20, #-12]") // cap
+	g.emit("mov w9, #1")
+	g.emit("lsl w9, w9, #31")
+	g.emit("stur w9, [x20, #-8]")  // rc = static sentinel (cached, immortal)
+	g.emit("stur w19, [x20, #-4]") // len
+	g.emit("cbz x19, .Lgg_done")
+	g.emit("mov x0, x19")
+	g.emit("mov x1, x20")
+	g.syscall("getgroups")
+	g.emit("cmp x0, #0")
+	g.emit("ble .Lgg_zero")
+	g.emit("mov x19, x0")
+	g.emit("stur w19, [x20, #-4]")
+	g.emit("mov x21, x19")
+	g.label(".Lgg_widen")
+	g.emit("sub x21, x21, #1")
+	g.emit("tbnz x21, #63, .Lgg_done")
+	g.emit("ldr w9, [x20, x21, lsl #2]")
+	g.emit("str x9, [x20, x21, lsl #3]")
+	g.emit("b .Lgg_widen")
+	g.label(".Lgg_zero")
+	g.emit("mov w9, #0")
+	g.emit("stur w9, [x20, #-4]")
+	g.label(".Lgg_done")
+	g.adrpAdd("x0", "__fern_getgroups_cache")
+	g.emit("str x20, [x0]")
+	g.emit("mov x0, x20")
+	g.label(".Lgg_ret")
+	g.emit("ldr x21, [sp, #32]")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #48")
+	g.emit("ret")
+	g.sizeDirective("__fern_getgroups")
+	g.line(".ltorg")
+}
+
 // emitHostnameRuntime emits `__fern_hostname()` → a fresh rc string
 // holding the kernel's node name.
 //
@@ -11124,6 +11254,10 @@ type generator struct {
 	usesAccess       bool
 	usesEuid         bool
 	usesEgid         bool
+	usesRuid         bool
+	usesRgid         bool
+	usesGetgroups    bool
+	usesEnviron      bool
 	usesHostname     bool
 	usesRemoveDirAll bool
 	// usesCreateDirAll pulls in the `mkdir -p` runtime — the only
@@ -11804,7 +11938,10 @@ func (g *generator) prescanOps(ops []ir.Op) {
 		switch op.Str {
 		case "args":
 			g.usesArgs = true
-		case "env":
+		case "env", "environ":
+			// Both walk `__fern_envp`, whose _start capture is
+			// emitted before the function bodies — so the flag has
+			// to be set in this pre-scan, not at the call site.
 			g.usesEnv = true
 		case "now_unix_ms":
 			g.usesNowUnixMs = true
@@ -15258,6 +15395,28 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		case "getegid":
 			target = "__fern_getegid"
 			g.usesEgid = true
+		case "getuid":
+			target = "__fern_getuid"
+			g.usesRuid = true
+		case "getgid":
+			target = "__fern_getgid"
+			g.usesRgid = true
+		case "getgroups":
+			// getgroups(): i64[] — the supplementary group
+			// set, widened from the kernel's 32-bit gid_t into
+			// the array's 8-byte slots.
+			target = "__fern_getgroups"
+			g.usesGetgroups = true
+			g.usesAlloc = true
+		case "environ":
+			// environ(): string[] — the whole envp vector. The
+			// capture that fills `__fern_envp` is gated on
+			// usesEnv, which this therefore pulls in.
+			target = "__fern_environ"
+			g.usesEnviron = true
+			g.usesEnv = true
+			g.usesAlloc = true
+			g.usesMemcpy = true
 		case "hostname":
 			target = "__fern_hostname"
 			g.usesHostname = true

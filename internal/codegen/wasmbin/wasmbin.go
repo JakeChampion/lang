@@ -2750,6 +2750,7 @@ var CallDirectAliases = mergeCodegenAliases(map[string]string{
 	"env_at":      "__fern_env_at",
 	"args":        "__fern_args",
 	"env":         "__fern_env",
+	"environ":     "__fern_environ",
 	"read_byte":   "__fern_read_byte",
 	"read_line":   "__fern_read_line",
 

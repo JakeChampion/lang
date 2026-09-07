@@ -38,10 +38,18 @@ const (
 	envSizesArgcAddr  = envPtrsAddr + 4       // count out from environ_sizes_get
 	envSizesBufAddr   = envSizesArgcAddr + 4  // bufsize out from environ_sizes_get
 
+	// __fern_environ's own cache: the built string[] data pointer and a
+	// flag saying it has been built. Slots of its own rather than the
+	// post-init env scratch, because `env(name)` does not clear that
+	// scratch after its init and a stale bufsize there would read as
+	// "already built".
+	environArrAddr   = envSizesBufAddr + 4
+	environBuiltAddr = environArrAddr + 4
+
 	// allocCursorAddr holds the bump cursor: the i32 LE pointer to the next
 	// free byte, seeded in wasmbin.go to max(allocMinStart, end-of-string-
 	// pool) rounded up to 8.
-	allocCursorAddr = envSizesBufAddr + 4
+	allocCursorAddr = environBuiltAddr + 4
 
 	// readByteScratchAddr holds the HEAP pointer to __fern_read_byte's
 	// per-call scratch region (iovec + 1-byte buffer + nread out). 0 means

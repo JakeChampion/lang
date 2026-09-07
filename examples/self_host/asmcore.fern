@@ -464,6 +464,9 @@ pub function sysno(t: string, name: string): string {
         if (name == "faccessat") { return "439"; }
         if (name == "geteuid") { return "107"; }
         if (name == "getegid") { return "108"; }
+        if (name == "getuid") { return "102"; }
+        if (name == "getgid") { return "104"; }
+        if (name == "getgroups") { return "115"; }
         if (name == "uname") { return "63"; }
         return "-1";
     }
@@ -509,6 +512,9 @@ pub function sysno(t: string, name: string): string {
         if (name == "faccessat") { return "467"; }
         if (name == "geteuid") { return "25"; }
         if (name == "getegid") { return "43"; }
+        if (name == "getuid") { return "24"; }
+        if (name == "getgid") { return "47"; }
+        if (name == "getgroups") { return "79"; }
         // No pipe2 / dup3 rows: XNU has neither, and its pipe() reports the
         // second fd in x1, which no __syscall* intrinsic can see. That is why
         // subprocess keeps a hand-written body on this one target — the same
@@ -548,6 +554,9 @@ pub function sysno(t: string, name: string): string {
     if (name == "faccessat") { return "439"; }
     if (name == "geteuid") { return "175"; }
     if (name == "getegid") { return "177"; }
+    if (name == "getuid") { return "174"; }
+    if (name == "getgid") { return "176"; }
+    if (name == "getgroups") { return "158"; }
     // No Darwin row: XNU has no uname syscall (libc builds it from sysctl),
     // so asm_arm64_ir keeps a hand-written kern.hostname body for that target.
     if (name == "uname") { return "160"; }
@@ -1786,6 +1795,28 @@ pub function rt_src_hostname(t: string): string {
 // arguments are what __syscall3 requires, and the kernel ignores them.
 pub function rt_src_getid(t: string, which: string): string {
     return "function __fern_" + which + "(): i32 { return __syscall3(" + sysno(t, which) + ", 0, 0, 0); }";
+}
+
+// rt_src_getgroups backs `getgroups()` -> i64[]: the supplementary group set
+// in the kernel's order. Two calls, as getgroups(2) is meant to be used — size
+// 0 asks how many there are, then again with a buffer. The SECOND call's
+// return sets the length, so a set that shrank between the two reports what
+// was actually written; a refused call answers the empty list.
+//
+// The gids come out of the buffer a byte at a time rather than through
+// __load_i32, because gid_t is 32-bit UNSIGNED and __load_i32 is signed: a gid
+// past 2^31 would sign-extend into a negative i64 on the way to the array.
+pub function rt_src_getgroups(t: string): string {
+    var nr: string = sysno(t, "getgroups");
+    return "function __fern_getgroups(): i64[] { var out: i64[] = []; var n: i32 = __syscall3(" + nr + ", 0, 0, 0); if (n <= 0) { return out; } var buf: i32 = __raw_alloc(n * 4); var m: i32 = __syscall3(" + nr + ", n, buf, 0); if (m <= 0) { return out; } var i: i32 = 0; while (i < m) { var b0: i64 = (__raw_load8(buf, i * 4) as i64); var b1: i64 = (__raw_load8(buf, i * 4 + 1) as i64); var b2: i64 = (__raw_load8(buf, i * 4 + 2) as i64); var b3: i64 = (__raw_load8(buf, i * 4 + 3) as i64); out = out.append(b0 + b1 * 256 + b2 * 65536 + b3 * 16777216); i = i + 1; } return out; }";
+}
+
+// rt_src_environ backs `environ()` -> string[]: the whole environment as raw
+// "NAME=VALUE" entries, in the order the vector holds them. Walks the saved
+// envp through the __raw_environ op — the same pointer __fern_env scans — so
+// it needs no syscall at all and is target-independent.
+pub function rt_src_environ(): string {
+    return "function __fern_environ(): string[] { var out: string[] = []; var envp: i32 = __raw_environ(); var idx: i32 = 0; var done: i32 = 0; while (done == 0) { var entry: i32 = __raw_load_ptr(envp, idx); if (entry == 0) { done = 1; } else { var n: i32 = 0; while (__raw_load8(entry, n) != 0) { n = n + 1; } var b: i32 = __raw_alloc(n + 1); var k: i32 = 0; while (k < n) { __raw_store8(b, k, __raw_load8(entry, k)); k = k + 1; } out = out.append(__raw_string(b, n)); idx = idx + 1; } } return out; }";
 }
 
 pub function (s: EmitState) mark_eprint(): EmitState {
@@ -3383,10 +3414,13 @@ function builtin_i32_names(): string[] {
         // isatty(fd) -> boolean, which the self-host carries in an
         // integer slot like every other 0/1 value.
         "isatty",
-        // geteuid() / getegid() -> the process's effective ids. u32 in
-        // native's signature; an integer slot here, like every other id.
+        // geteuid() / getegid() / getuid() / getgid() -> the process's
+        // effective and real ids. u32 in native's signature; an integer
+        // slot here, like every other id.
         "geteuid",
         "getegid",
+        "getuid",
+        "getgid",
         "wasm_timer_pollable",
         "wasm_pollable_drop",
         "wasm_block",
@@ -3532,6 +3566,7 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
     if (id.name == "subprocess") { return ty_unknown(); }
     if (id.name == "temp_dir") { return ty_result(ty_string()); }
     if (id.name == "read_dir") { return ty_result(ty_array_string()); }
+    if (id.name == "environ") { return ty_array_string(); }
     if (id.name == "stat") { return ty_result(ty_unknown()); }
     if (id.name == "access") { return ty_result(ty_unknown()); }
     if (id.name == "lstat") { return ty_result(ty_unknown()); }
@@ -3589,6 +3624,7 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
     // Matches native's FuncSigs.
     if (id.name == "__arr_push_shared_bytes") { return ty_i64(); }
     if (id.name == "args") { return ty_array_string(); }
+    if (id.name == "getgroups") { return ty_array_i64(); }
     if (id.name == "__alloc_u8") { return ty_array_i32(); }
     if (id.name == "random_bytes") { return ty_array_i32(); }
     if (id.name == "map_new") { return ty_map_str(ty_unknown()); }
@@ -4141,6 +4177,19 @@ pub function runtime_need_deps(name: string): string[] {
         // is not a need: io_error is emitted inside the fs bundle alongside read_dir.)
         var d9: string[] = ["heap", "arr_push", "arr_push_owned"];
         return d9;
+    }
+    if (name == "environ") {
+        // __fern_environ builds the result string[] with .append() — the same
+        // arr_push / arr_push_owned pairing read_dir needs. It calls no other
+        // helper: the envp walk is the __raw_environ op, not a syscall.
+        var d9e: string[] = ["heap", "arr_push", "arr_push_owned"];
+        return d9e;
+    }
+    if (name == "getgroups") {
+        // __fern_getgroups appends to an i64[], which is arr_push (and, for the
+        // sole-owner local the IR path sees, arr_push_owned).
+        var d9g: string[] = ["heap", "arr_push", "arr_push_owned"];
+        return d9g;
     }
     if (name == "remove_dir_all") {
         // __fern_remove_dir_all (#2649) is pure raw-memory (inline getdents64 + raw

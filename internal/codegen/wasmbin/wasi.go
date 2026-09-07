@@ -1772,6 +1772,14 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 			in.add("wasi_environ_get")
 		}
 	}
+	if helpers.set["__fern_environ"] {
+		if opts.Preview2WASI {
+			in.add("wasi_get_environment_p2")
+		} else {
+			in.add("wasi_environ_sizes_get")
+			in.add("wasi_environ_get")
+		}
+	}
 	if helpers.set["__fern_read_byte"] {
 		if opts.Preview2WASI {
 			in.add("wasi_get_stdin_p2")
@@ -2422,6 +2430,7 @@ var preview2HelperBodyOverrides = map[string]func(map[string]uint32) []byte{
 	"__fern_arg_at":              buildArgAtBodyP2,
 	"__fern_args":                buildArgsBodyP2,
 	"__fern_env":                 buildEnvBodyP2,
+	"__fern_environ":             buildEnvironBodyP2,
 	"__fern_read_file":           buildReadFileBodyP2,
 	"__fern_read_file_bytes":     buildReadFileBytesBodyP2,
 	"__fern_write_file":          buildWriteFileBodyP2,
@@ -3906,6 +3915,148 @@ func buildEnvBody(idxs map[string]uint32) []byte {
 	// No match: return None, at Option[string]'s uniform box size.
 	body = emitPayloadlessResultBox(body, allocRc1, 9, 16, 1)
 	locals := inst.PutLocalsOneGroup(nil, 9, encode.ValtypeI32)
+	return inst.PutFunctionBody(nil, locals, body)
+}
+
+// buildEnvironBodyP2 is the preview-2 variant of buildEnvironBody.
+//
+// The one real difference between the previews is here: preview 1 hands
+// over "NAME=VALUE" NUL strings, while get-environment returns
+// list<tuple<string, string>> — already split. `environ()` is defined as
+// the raw entries, so this JOINS each pair back with '=' into a fresh
+// buffer and copies that. Splitting is lossy in the other direction (a
+// value containing '=' is indistinguishable from a longer name), so the
+// joined form is the one both previews can produce.
+//
+// Locals: 0=$rb, 1=$count, 2=$result, 3=$list, 4=$i, 5=$tuple, 6=$buf,
+// 7=$total, 8=$cdata, 9=$clen, 10=$klen, 11=$vlen.
+func buildEnvironBodyP2(idxs map[string]uint32) []byte {
+	alloc := idxs["__fern_alloc"]
+	strCopy := idxs["__fern_str_copy"]
+	getEnv := idxs["wasi_get_environment_p2"]
+	var body []byte
+	// Lazy init: get-environment into an 8-byte retbuf ($rb = local 0).
+	body = inst.InstI32Const(body, envInitAddr)
+	body = memory.InstI32Load(body, 2, 0)
+	body = numeric.InstI32Eqz(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	{
+		body = inst.InstI32Const(body, 8)
+		body = inst.InstCall(body, alloc)
+		body = inst.InstLocalSet(body, 0)
+		body = inst.InstLocalGet(body, 0)
+		body = inst.InstCall(body, getEnv)
+		body = inst.InstI32Const(body, envCountAddr)
+		body = inst.InstLocalGet(body, 0)
+		body = memory.InstI32Load(body, 2, 4)
+		body = memory.InstI32Store(body, 2, 0)
+		body = inst.InstI32Const(body, envPtrsAddr)
+		body = inst.InstLocalGet(body, 0)
+		body = memory.InstI32Load(body, 2, 0)
+		body = memory.InstI32Store(body, 2, 0)
+		body = inst.InstI32Const(body, envInitAddr)
+		body = inst.InstI32Const(body, 1)
+		body = memory.InstI32Store(body, 2, 0)
+	}
+	body = inst.InstEnd(body)
+	// Built-array cache check.
+	body = inst.InstI32Const(body, environBuiltAddr)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstI32Const(body, environArrAddr)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+	body = inst.InstI32Const(body, envCountAddr)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstLocalSet(body, 1)
+	pushCount := func(b []byte) []byte { return inst.InstLocalGet(b, 1) }
+	body = emitArrHeaderAlloc(body, alloc, 2, arrRcStatic, pushCount, func(b []byte) []byte {
+		b = inst.InstLocalGet(b, 1)
+		b = inst.InstI32Const(b, 8)
+		return numeric.InstI32Mul(b)
+	})
+	body = inst.InstI32Const(body, envPtrsAddr)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstLocalSet(body, 3)
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstLocalSet(body, 4)
+	body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+	{
+		body = inst.InstLocalGet(body, 4)
+		body = inst.InstLocalGet(body, 1)
+		body = numeric.InstI32GeU(body)
+		body = inst.InstBrIf(body, 1)
+		// $tuple = $list + i*16
+		body = inst.InstLocalGet(body, 3)
+		body = inst.InstLocalGet(body, 4)
+		body = inst.InstI32Const(body, 16)
+		body = numeric.InstI32Mul(body)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalSet(body, 5)
+		// $klen = mem[tuple+4], $vlen = mem[tuple+12]
+		body = inst.InstLocalGet(body, 5)
+		body = memory.InstI32Load(body, 2, 4)
+		body = inst.InstLocalSet(body, 10)
+		body = inst.InstLocalGet(body, 5)
+		body = memory.InstI32Load(body, 2, 12)
+		body = inst.InstLocalSet(body, 11)
+		// $total = klen + 1 + vlen; $buf = alloc($total)
+		body = inst.InstLocalGet(body, 10)
+		body = inst.InstI32Const(body, 1)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalGet(body, 11)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalSet(body, 7)
+		body = inst.InstLocalGet(body, 7)
+		body = inst.InstCall(body, alloc)
+		body = inst.InstLocalSet(body, 6)
+		// memory.copy($buf, mem[tuple+0], $klen)
+		body = inst.InstLocalGet(body, 6)
+		body = inst.InstLocalGet(body, 5)
+		body = memory.InstI32Load(body, 2, 0)
+		body = inst.InstLocalGet(body, 10)
+		body = memory.InstMemoryCopy(body)
+		// mem[$buf + $klen] = '='
+		body = inst.InstLocalGet(body, 6)
+		body = inst.InstLocalGet(body, 10)
+		body = numeric.InstI32Add(body)
+		body = inst.InstI32Const(body, '=')
+		body = memory.InstI32Store8(body, 0, 0)
+		// memory.copy($buf + $klen + 1, mem[tuple+8], $vlen)
+		body = inst.InstLocalGet(body, 6)
+		body = inst.InstLocalGet(body, 10)
+		body = numeric.InstI32Add(body)
+		body = inst.InstI32Const(body, 1)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalGet(body, 5)
+		body = memory.InstI32Load(body, 2, 8)
+		body = inst.InstLocalGet(body, 11)
+		body = memory.InstMemoryCopy(body)
+		// ($cdata, $clen) = __fern_str_copy($buf, $total)
+		body = inst.InstLocalGet(body, 6)
+		body = inst.InstLocalGet(body, 7)
+		body = inst.InstCall(body, strCopy)
+		body = inst.InstLocalSet(body, 9)
+		body = inst.InstLocalSet(body, 8)
+		body = appendStrVecStore(body, 2, 4, 8, 9)
+		body = inst.InstLocalGet(body, 4)
+		body = inst.InstI32Const(body, 1)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalSet(body, 4)
+		body = inst.InstBr(body, 0)
+	}
+	body = inst.InstEnd(body)
+	body = inst.InstEnd(body)
+	body = inst.InstI32Const(body, environArrAddr)
+	body = inst.InstLocalGet(body, 2)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstI32Const(body, environBuiltAddr)
+	body = inst.InstI32Const(body, 1)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 2)
+	locals := inst.PutLocalsOneGroup(nil, 12, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
 }
 

@@ -21,6 +21,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -624,6 +625,7 @@ func New() *Interp {
 	i.Builtins["__method_slice_len"] = &Builtin{Fn: builtinLen}
 	i.Builtins["args"] = &Builtin{Fn: builtinArgs}
 	i.Builtins["env"] = &Builtin{Fn: builtinEnv}
+	i.Builtins["environ"] = &Builtin{Fn: builtinEnviron}
 	i.Builtins["read_file"] = &Builtin{Fn: builtinReadFile}
 	i.Builtins["read_file_bytes"] = &Builtin{Fn: builtinReadFileBytes}
 	i.Builtins["write_file"] = &Builtin{Fn: builtinWriteFile}
@@ -1013,6 +1015,9 @@ func New() *Interp {
 	i.Builtins["access"] = &Builtin{Fn: builtinAccess}
 	i.Builtins["geteuid"] = &Builtin{Fn: builtinGeteuid}
 	i.Builtins["getegid"] = &Builtin{Fn: builtinGetegid}
+	i.Builtins["getuid"] = &Builtin{Fn: builtinGetuid}
+	i.Builtins["getgid"] = &Builtin{Fn: builtinGetgid}
+	i.Builtins["getgroups"] = &Builtin{Fn: builtinGetgroups}
 	i.Builtins["hostname"] = &Builtin{Fn: builtinHostname}
 	i.Builtins["remove_file"] = &Builtin{Fn: builtinRemoveFile}
 	i.Builtins["create_dir_all"] = &Builtin{Fn: builtinCreateDirAll}
@@ -2508,6 +2513,70 @@ func builtinGetegid(_ *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("getegid: expected 0 args, got %d", len(args))
 	}
 	return Number(os.Getegid()), nil
+}
+
+// builtinGetuid / builtinGetgid report the REAL ids — the identity the
+// process was started under, which a set-uid binary keeps while its
+// effective ids change.
+func builtinGetuid(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 0 {
+		return nil, fmt.Errorf("getuid: expected 0 args, got %d", len(args))
+	}
+	return Number(os.Getuid()), nil
+}
+
+func builtinGetgid(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 0 {
+		return nil, fmt.Errorf("getgid: expected 0 args, got %d", len(args))
+	}
+	return Number(os.Getgid()), nil
+}
+
+// builtinGetgroups reports the supplementary group set in the kernel's
+// order. A kernel that refuses answers the empty list, which is what
+// the compiled backends do with a failed getgroups(2).
+func builtinGetgroups(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 0 {
+		return nil, fmt.Errorf("getgroups: expected 0 args, got %d", len(args))
+	}
+	gs, err := os.Getgroups()
+	if err != nil {
+		return newArray(0), nil
+	}
+	out := newArray(len(gs))
+	for k, g := range gs {
+		out.E[k] = Number(g)
+	}
+	return out, nil
+}
+
+// builtinEnviron reports the whole environment as raw `NAME=VALUE`
+// entries, in the order the process received them.
+//
+// The `i.Env` override is a map and therefore carries no order, so the
+// override path answers in name order rather than inventing one.
+func builtinEnviron(i *Interp, args []Value) (Value, error) {
+	if len(args) != 0 {
+		return nil, fmt.Errorf("environ: expected 0 args, got %d", len(args))
+	}
+	if i.Env != nil {
+		names := make([]string, 0, len(i.Env))
+		for k := range i.Env {
+			names = append(names, k)
+		}
+		sort.Strings(names)
+		out := newArray(len(names))
+		for k, n := range names {
+			out.E[k] = String(n + "=" + i.Env[n])
+		}
+		return out, nil
+	}
+	e := os.Environ()
+	out := newArray(len(e))
+	for k, entry := range e {
+		out.E[k] = String(entry)
+	}
+	return out, nil
 }
 
 // builtinHostname reports the kernel's node name; a kernel that cannot

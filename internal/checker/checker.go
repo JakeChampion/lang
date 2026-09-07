@@ -1150,6 +1150,17 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{},
 		Result: ast.ArrayType{Elem: ast.StringType{}},
 	}
+	// environ(): string[] — the whole environment in the order the
+	// process received it, each entry the raw `NAME=VALUE` bytes.
+	// `env(name)` answers one lookup; this is the list, which is a
+	// different question — printenv(1) prints it in order, and a
+	// duplicate name (which execve permits and the kernel preserves)
+	// is visible here and invisible to a lookup. Cached the way
+	// `args()` is: one materialisation, the same pointer after.
+	c.info.FuncSigs["environ"] = &ast.FuncType{
+		Params: []ast.Type{},
+		Result: ast.ArrayType{Elem: ast.StringType{}},
+	}
 	// env(name: string): Option[string] — looks up an environment
 	// variable. `Some(value)` for a present key, `None` for
 	// missing. (POSIX distinguishes "set to empty" from "not
@@ -1889,6 +1900,39 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	c.info.FuncSigs["getegid"] = &ast.FuncType{
 		Params: nil,
 		Result: ast.NumberType{Width: 32, Signed: false},
+	}
+	// getuid() / getgid(): the process's REAL user and group ids —
+	// the identity it was started under, which a set-uid binary
+	// keeps while its effective ids change. Every access decision is
+	// made against the effective pair, so those stay the default;
+	// these answer the separate question `id -r` asks.
+	//
+	// Neither can fail, for the same reason geteuid / getegid cannot.
+	c.info.FuncSigs["getuid"] = &ast.FuncType{
+		Params: nil,
+		Result: ast.NumberType{Width: 32, Signed: false},
+	}
+	c.info.FuncSigs["getgid"] = &ast.FuncType{
+		Params: nil,
+		Result: ast.NumberType{Width: 32, Signed: false},
+	}
+	// getgroups(): i64[] — the process's supplementary group
+	// ids, as getgroups(2) reports them, in the kernel's order.
+	// This is the set the kernel actually checks, which is not
+	// derivable from /etc/group: a process can be in groups no file
+	// names (a container's injected set) and out of ones that do
+	// (a group added since it started).
+	//
+	// The egid is NOT included here — getgroups(2) leaves whether
+	// it appears unspecified on Linux and it does not — so a caller
+	// wanting the full credential asks for both.
+	//
+	// i64 rather than u32: gid_t is 32-bit unsigned, and the widening
+	// keeps every value representable in the array's 8-byte slots
+	// without a gid past 2^31 reading as negative.
+	c.info.FuncSigs["getgroups"] = &ast.FuncType{
+		Params: nil,
+		Result: ast.ArrayType{Elem: ast.NumberType{Width: 64, Signed: true}},
 	}
 	// hostname(): the kernel's node name — what gethostname(2)
 	// answers: uname(2)'s nodename on Linux, kern.hostname on

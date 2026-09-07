@@ -86,9 +86,12 @@ var gatedBuiltins = map[string]string{
 	// The ambient invocation environment. argv and envp are adjacent on
 	// the process stack and `_start` captures them together, but they
 	// are separate capabilities because the proxy world has envp and no
-	// argv: `wasi-http` grants `env` and cannot answer `args`.
-	"env":  "env",
-	"args": "args",
+	// argv: `wasi-http` grants `env` and cannot answer `args`. The
+	// lookup and the whole list are one capability: a caller that can
+	// ask for a name can ask for every name it can guess.
+	"env":     "env",
+	"environ": "env",
+	"args":    "args",
 
 	// Entropy. A syscall on native (getrandom / getentropy) and a host
 	// import on wasm — never something the program can compute.
@@ -130,13 +133,20 @@ var gatedBuiltins = map[string]string{
 	"write_file_exec": "fsmode",
 	"access":          "fsmode",
 
-	// The process's own effective identity. A host with no users cannot
-	// answer this, and unlike `isatty` there is no correct constant to
-	// fall back on: answering 0 claims to be root, and WASI's FileStat
-	// uid/gid are also zero, so `-O` / `-G` would report that every file
-	// is owned by the caller. See docs/FREESTANDING-CORE.md.
-	"geteuid": "userid",
-	"getegid": "userid",
+	// The process's own identity — the effective pair, the real pair,
+	// and the supplementary group set. A host with no users cannot
+	// answer any of them, and unlike `isatty` there is no correct
+	// constant to fall back on: answering 0 claims to be root, and
+	// WASI's FileStat uid/gid are also zero, so `-O` / `-G` would
+	// report that every file is owned by the caller. An empty group
+	// list is the same fiction one level down — it reads as "in no
+	// groups", which is an answer rather than a refusal. See
+	// docs/FREESTANDING-CORE.md.
+	"geteuid":   "userid",
+	"getegid":   "userid",
+	"getuid":    "userid",
+	"getgid":    "userid",
+	"getgroups": "userid",
 
 	// The host's own name — the kernel node name gethostname(2) reports.
 	// A hosted target asks its kernel; WASI has no host identity and

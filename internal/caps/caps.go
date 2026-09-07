@@ -68,7 +68,8 @@ var BuiltinCaps = map[string]string{
 	"create_dir_all":  "fs",
 	"temp_dir":        "fs",
 
-	"env": "env",
+	"env":     "env",
+	"environ": "env",
 	// The machine's name is ambient information about where the
 	// process runs, in the same way its environment is: a dependency
 	// that reads it should be seen to.
@@ -110,7 +111,8 @@ var Ungated = map[string]bool{
 	"stdout":    true,
 	"stderr":    true,
 	"isatty":    true,
-	// The process's own effective ids. Reading them reaches nothing:
+	// The process's own ids — effective, real, and the supplementary
+	// group set. Reading them reaches nothing:
 	// the identity was chosen by whoever exec'd the program, and a
 	// dependency that learns it gains no authority it did not have —
 	// the same argument that leaves `isatty` ungated. Note this is
@@ -120,6 +122,9 @@ var Ungated = map[string]bool{
 	// whether a dependency should be allowed to ask.
 	"geteuid":                     true,
 	"getegid":                     true,
+	"getuid":                      true,
+	"getgid":                      true,
+	"getgroups":                   true,
 	"target_os":                   true,
 	"target_arch":                 true,
 	"args":                        true,

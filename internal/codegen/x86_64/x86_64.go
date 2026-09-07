@@ -249,6 +249,12 @@ const (
 	// geteuid(2) / getegid(2): x86-64 syscalls 107 / 108.
 	sysGeteuid = 107
 	sysGetegid = 108
+	// getuid(2) / getgid(2): x86-64 syscalls 102 / 104 — the REAL ids.
+	sysGetuid = 102
+	sysGetgid = 104
+	// getgroups(2): x86-64 syscall 115. Called twice: size 0 asks how
+	// many there are, then again with the buffer.
+	sysGetgroups = 115
 	// uname(2): x86-64 syscall 63. Backs `__fern_hostname`, which reads
 	// the nodename field out of the 390-byte struct utsname.
 	sysUname = 63
@@ -855,6 +861,18 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	if g.usesEgid {
 		g.emitIdRuntime("__fern_getegid", sysGetegid)
 	}
+	if g.usesRuid {
+		g.emitIdRuntime("__fern_getuid", sysGetuid)
+	}
+	if g.usesRgid {
+		g.emitIdRuntime("__fern_getgid", sysGetgid)
+	}
+	if g.usesGetgroups {
+		g.emitGetgroupsRuntime()
+	}
+	if g.usesEnviron {
+		g.emitEnvironRuntime()
+	}
 	if g.usesHostname {
 		g.emitHostnameRuntime()
 	}
@@ -1285,6 +1303,10 @@ type generator struct {
 	usesAccess     bool
 	usesEuid       bool
 	usesEgid       bool
+	usesRuid       bool
+	usesRgid       bool
+	usesGetgroups  bool
+	usesEnviron    bool
 	usesHostname   bool
 	usesIoError    bool
 	// usesCreateDirAll pulls in the `mkdir -p` runtime
@@ -1724,6 +1746,21 @@ func (g *generator) recordUse(target string) {
 		g.usesEuid = true
 	case "getegid":
 		g.usesEgid = true
+	case "getuid":
+		g.usesRuid = true
+	case "getgid":
+		g.usesRgid = true
+	case "getgroups":
+		g.usesGetgroups = true
+		g.usesAlloc = true
+	case "environ":
+		g.usesEnviron = true
+		g.usesAlloc = true
+		g.usesMemcpy = true
+		// `__fern_envp` — the .bss slot and the `_start` capture that
+		// fills it — is gated on usesEnv, and this walks the same
+		// vector. That pulls the env READER in as well.
+		g.usesEnv = true
 	case "hostname":
 		g.usesHostname = true
 		g.usesAlloc = true
@@ -3234,6 +3271,14 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_geteuid"
 		case "getegid":
 			target = "__fern_getegid"
+		case "getuid":
+			target = "__fern_getuid"
+		case "getgid":
+			target = "__fern_getgid"
+		case "getgroups":
+			target = "__fern_getgroups"
+		case "environ":
+			target = "__fern_environ"
 		case "hostname":
 			target = "__fern_hostname"
 		case "random_bytes":
@@ -5920,7 +5965,7 @@ func (g *generator) emitDataSections() {
 	// path spill is overwritten on each call, but the value
 	// is consumed immediately by OpLoadByte before the next
 	// __str_idx fires).
-	if g.usesAlloc || g.usesEnv || g.usesArgs || g.usesReadLine || g.usesReaderWriter || g.usesStrIdx || g.usesRcDec || g.usesRcUnderflowCount || g.usesMapHashSeed || ast.LeakCheckEnabled || len(g.coverSites) > 0 {
+	if g.usesAlloc || g.usesEnv || g.usesArgs || g.usesEnviron || g.usesGetgroups || g.usesReadLine || g.usesReaderWriter || g.usesStrIdx || g.usesRcDec || g.usesRcUnderflowCount || g.usesMapHashSeed || ast.LeakCheckEnabled || len(g.coverSites) > 0 {
 		g.line("")
 		g.line(".section .bss")
 		if n := len(g.coverSites); n > 0 {
@@ -5976,6 +6021,16 @@ func (g *generator) emitDataSections() {
 		if g.usesStrIdx {
 			g.line(".align 8")
 			g.label("__fern_str_idx_scratch")
+			g.line("\t.quad 0")
+		}
+		if g.usesEnviron {
+			g.line(".align 8")
+			g.label("__fern_environ_cache")
+			g.line("\t.quad 0")
+		}
+		if g.usesGetgroups {
+			g.line(".align 8")
+			g.label("__fern_getgroups_cache")
 			g.line("\t.quad 0")
 		}
 		if g.usesArgs {
@@ -11300,6 +11355,160 @@ func (g *generator) emitArgsRuntime() {
 	g.emit("pop rbp")
 	g.emit("ret")
 	g.line(".size __fern_args, .-__fern_args")
+}
+
+// emitEnvironRuntime emits `__fern_environ()` — the whole environment as
+// a `string[]` of raw `NAME=VALUE` entries, in the order the vector holds
+// them. Same array shape and same caching as `__fern_args`, over
+// `__fern_envp` instead of `__fern_argv`: envp has no count word, so the
+// length is a NULL scan before the build.
+func (g *generator) emitEnvironRuntime() {
+	g.line("")
+	g.line(".globl __fern_environ")
+	g.line(".type __fern_environ, @function")
+	g.label("__fern_environ")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx")   // envp base
+	g.emit("push r12")   // count
+	g.emit("push r13")   // i
+	g.emit("push r14")   // result data ptr
+	g.emit("push r15")   // current entry / strlen
+	g.emit("sub rsp, 8") // align
+	g.emit("mov rax, [rip + __fern_environ_cache]")
+	g.emit("test rax, rax")
+	g.emit("jnz .Lenviron_ret")
+	g.emit("mov rbx, [rip + __fern_envp]")
+	// count = index of the NULL terminator.
+	g.emit("xor r12d, r12d")
+	g.label(".Lenviron_count")
+	g.emit("mov rax, [rbx + r12*8]")
+	g.emit("test rax, rax")
+	g.emit("jz .Lenviron_counted")
+	g.emit("inc r12")
+	g.emit("jmp .Lenviron_count")
+	g.label(".Lenviron_counted")
+	g.emit("lea rdi, [r12*8 + 16]")
+	g.emit("call __fern_alloc")
+	g.emit("lea r14, [rax + 16]")
+	g.emit("mov dword ptr [r14 - 12], r12d")
+	g.emit("mov dword ptr [r14 - 8], 0x80000000") // rc = static sentinel
+	g.emitArrayLenStore("r12d", "r14")
+	g.emit("xor r13d, r13d")
+	g.label(".Lenviron_loop")
+	g.emit("cmp r13, r12")
+	g.emit("jge .Lenviron_done")
+	g.emit("mov r15, [rbx + r13*8]")
+	g.emit("xor ecx, ecx")
+	g.label(".Lenviron_strlen")
+	g.emit("mov al, [r15 + rcx]")
+	g.emit("test al, al")
+	g.emit("jz .Lenviron_strlen_done")
+	g.emit("inc rcx")
+	g.emit("jmp .Lenviron_strlen")
+	g.label(".Lenviron_strlen_done")
+	g.emit("mov rdx, rcx")
+	g.emit("lea edi, [rcx + 1]")
+	g.emit("push rdx")
+	g.emit("call __fern_alloc_rc1")
+	g.emit("pop rdx")
+	g.emit("mov rdi, rax")
+	g.emitStrLenStore("edx", "rdi")
+	g.emit("mov rsi, r15")
+	g.emit("lea rdx, [rdx + 1]")
+	g.emit("push rax")
+	g.emit("call __fern_memcpy")
+	g.emit("pop rax")
+	g.emit("mov [r14 + r13*8], rax")
+	g.emit("inc r13")
+	g.emit("jmp .Lenviron_loop")
+	g.label(".Lenviron_done")
+	g.emit("mov [rip + __fern_environ_cache], r14")
+	g.emit("mov rax, r14")
+	g.label(".Lenviron_ret")
+	g.emit("add rsp, 8")
+	g.emit("pop r15")
+	g.emit("pop r14")
+	g.emit("pop r13")
+	g.emit("pop r12")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_environ, .-__fern_environ")
+}
+
+// emitGetgroupsRuntime emits `__fern_getgroups()` — the supplementary
+// group set as a `number[]`, cached like `__fern_args`.
+//
+// getgroups(2) writes 32-bit gid_t; the array holds 8-byte slots. The
+// kernel fills the FRONT of the same buffer and the widening then runs
+// BACKWARDS, so no second allocation is needed: element i is read from
+// byte 4i and written to byte 8i, and every remaining read is below
+// every write already made.
+//
+// The count comes from a first `getgroups(0, NULL)`. The second call's
+// return is what sets the length rather than the first's, so a set that
+// shrank between the two reports what was actually written. A refused
+// call answers the empty list.
+func (g *generator) emitGetgroupsRuntime() {
+	g.line("")
+	g.line(".globl __fern_getgroups")
+	g.line(".type __fern_getgroups, @function")
+	g.label("__fern_getgroups")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx")   // n
+	g.emit("push r12")   // result data ptr
+	g.emit("push r13")   // widening index
+	g.emit("sub rsp, 8") // align
+	g.emit("mov rax, [rip + __fern_getgroups_cache]")
+	g.emit("test rax, rax")
+	g.emit("jnz .Lgetgroups_ret")
+	g.emit("xor edi, edi")
+	g.emit("xor esi, esi")
+	g.emit(fmt.Sprintf("mov eax, %d", sysGetgroups))
+	g.emit("syscall")
+	g.emit("mov rbx, rax")
+	g.emit("test rax, rax")
+	g.emit("jg .Lgetgroups_alloc")
+	g.emit("xor ebx, ebx") // none, or the kernel refused
+	g.label(".Lgetgroups_alloc")
+	g.emit("lea rdi, [rbx*8 + 16]")
+	g.emit("call __fern_alloc")
+	g.emit("lea r12, [rax + 16]")
+	g.emit("mov dword ptr [r12 - 12], ebx")
+	g.emit("mov dword ptr [r12 - 8], 0x80000000") // rc = static sentinel
+	g.emitArrayLenStore("ebx", "r12")
+	g.emit("test rbx, rbx")
+	g.emit("jz .Lgetgroups_done")
+	g.emit("mov rdi, rbx")
+	g.emit("mov rsi, r12")
+	g.emit(fmt.Sprintf("mov eax, %d", sysGetgroups))
+	g.emit("syscall")
+	g.emit("mov rbx, rax")
+	g.emit("test rax, rax")
+	g.emit("jg .Lgetgroups_widen")
+	g.emit("xor ebx, ebx")
+	g.label(".Lgetgroups_widen")
+	g.emitArrayLenStore("ebx", "r12")
+	g.emit("mov r13, rbx")
+	g.label(".Lgetgroups_widen_loop")
+	g.emit("dec r13")
+	g.emit("js .Lgetgroups_done")
+	g.emit("mov eax, [r12 + r13*4]")
+	g.emit("mov [r12 + r13*8], rax")
+	g.emit("jmp .Lgetgroups_widen_loop")
+	g.label(".Lgetgroups_done")
+	g.emit("mov [rip + __fern_getgroups_cache], r12")
+	g.emit("mov rax, r12")
+	g.label(".Lgetgroups_ret")
+	g.emit("add rsp, 8")
+	g.emit("pop r13")
+	g.emit("pop r12")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_getgroups, .-__fern_getgroups")
 }
 
 // emitRandomBytesRuntime emits `__fern_random_bytes(n)` —

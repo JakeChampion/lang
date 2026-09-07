@@ -270,11 +270,13 @@ func TestEnforceHeapCheckpointNativeOnly(t *testing.T) {
 // "write_file_exec"` mid-build for a program that type-checked (#7947) —
 // because each rode a capability the wasi profiles do grant.
 //
-// `access` and the effective-id pair are on this list for a sharper reason
-// than "the backend has no lowering": neither WASI preview has a permission
-// model or a user, and there is no honest constant to answer with. Answering
-// 0 for `geteuid` claims to be root, and FileStat's uid / gid are also zero
-// there, so `test -O` would report that every file is owned by the caller.
+// `access` and the id builtins are on this list for a sharper reason than
+// "the backend has no lowering": neither WASI preview has a permission model
+// or a user, and there is no honest constant to answer with. Answering 0 for
+// `geteuid` claims to be root, and FileStat's uid / gid are also zero there,
+// so `test -O` would report that every file is owned by the caller. An empty
+// `getgroups` is the same fiction one level down: it reads as "in no groups"
+// rather than "cannot say".
 func TestEnforceWasmInexpressibleBuiltins(t *testing.T) {
 	cases := []struct {
 		builtin    string
@@ -296,6 +298,12 @@ func TestEnforceWasmInexpressibleBuiltins(t *testing.T) {
 }`},
 		{"geteuid", "userid", `function main(): i32 { return (geteuid() as i32); }`},
 		{"getegid", "userid", `function main(): i32 { return (getegid() as i32); }`},
+		{"getuid", "userid", `function main(): i32 { return (getuid() as i32); }`},
+		{"getgid", "userid", `function main(): i32 { return (getgid() as i32); }`},
+		{"getgroups", "userid", `function main(): i32 {
+    var g: i64[] = getgroups();
+    return (g.len() as i32);
+}`},
 	}
 	for _, tc := range cases {
 		for _, target := range []string{"x86-64-linux", "arm64-linux", "arm64-darwin", "arm64-android"} {
