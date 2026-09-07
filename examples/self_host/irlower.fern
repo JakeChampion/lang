@@ -11724,9 +11724,12 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
         return pe1.emit(ir.op_proc_exec());
     }
     // Built-in `write(s)` / `print(s)` — write a string's bytes to
-    // stdout. `print` appends a newline (Fern's print == println):
-    // it desugars to `print_str(s + "\n")` via the existing str_concat
-    // op, so a single print_str op + helper serves both.
+    // stdout. `print` appends a newline (Fern's print == println), and
+    // it does so with a SECOND print_str of a "\n" literal rather than a
+    // joined buffer: both payloads go straight out of a box the caller
+    // already holds, so the pair allocates nothing. Native's __fern_puts
+    // and the self-host's own eprint are the same two writes (#8410 — the
+    // joined temp was a fresh box per call that nothing released).
     //
     // `write` and `print` take any Display type and stringify through
     // display_arg; `print_str` is the internal string-only spelling and
@@ -11744,8 +11747,9 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
     if (cid.name == "print" && c.args.len() == 1) {
         var prs: LowerState = lower_expr(display_arg(c.args[0], c.line, c.col, s), s);
         if (!prs.ok) { return prs; }
+        prs = prs.emit(ir.op_print_str());
+        prs = prs.emit(ir.op_drop());
         prs = prs.emit(ir.op_const_str("\n"));
-        prs = prs.emit(ir.op_str_concat());
         return prs.emit(ir.op_print_str());
     }
     // Built-in `read_int()` — read a line from stdin, parse a leading
@@ -24481,6 +24485,9 @@ function lower_stmt_match(m: ast.StmtMatch, s: LowerState): LowerState {
     // value nobody else releases (owned_payload_builtin_ptype). "" for every
     // other scrutinee, which is every match that was here before.
     var owned_pay: string = owned_payload_builtin_ptype(m.scrutinee, ms);
+    // #8410: the scrutinee's own BOX, when the call built it fresh for this
+    // caller and no other holder survives (match_scrut_owns_fresh_result_box).
+    var owns_box: boolean = match_scrut_owns_fresh_result_box(m, ms);
     var scrut: string = "$mscrut" + util.i32_to_string(ms.locals.len());
     ms = ms.add_local(scrut);
     var scrut_slot: i32 = ms.slot_of(scrut);
@@ -25007,6 +25014,16 @@ function lower_stmt_match(m: ast.StmtMatch, s: LowerState): LowerState {
                         ms = ms.emit(ir.op_call_direct(owned_payload_free_helper(owned_pay), 1));
                         ms = ms.emit(ir.op_drop());
                     }
+                    // #8410: this arm has its bindings, so the box they were
+                    // read out of is dead. Release it HERE rather than only at
+                    // the join, so an arm that `return`s gives it back too. A
+                    // guarded arm can still fall through to the next one and an
+                    // alternation continuation shares its predecessor's block,
+                    // so both wait for the join. The slot is zeroed, which makes
+                    // the join's release a null-safe no-op.
+                    if (owns_box && !arm.has_guard && !arm.alt_cont) {
+                        ms = emit_scalar_enum_box_free(ms, scrut_slot);
+                    }
                     if (arm.has_guard) {
                         ms = lower_expr(arm.guard, ms);
                         if (!ms.ok) { return ms; }
@@ -25287,18 +25304,62 @@ function lower_stmt_match(m: ast.StmtMatch, s: LowerState): LowerState {
         }
     }
     ms = ms.emit(ir.op_end());   // end outer block
-    if (match_scrut_is_map_get(m, ms)) { ms = emit_scalar_enum_box_free(ms, scrut_slot); }
+    if (match_scrut_is_map_get(m, ms) || owns_box) { ms = emit_scalar_enum_box_free(ms, scrut_slot); }
     return ms;
     return s.fail();
 }
 
-function match_scrut_is_map_get(m: ast.StmtMatch, s: LowerState): boolean {
-    for arm in m.arms {
-        match (arm.pattern) {
-            ast.PatVariant(pv) => { if (pv.at_binding.len() > 0) { return false; } },
-            _ => {}
+// match_scrut_owns_fresh_result_box: the scrutinee is a `w.write(s)`, whose
+// Option[IoError] box __fern_writer_write built fresh for this caller (`Some(
+// io_error)` / `None` in the helper's own Fern body, so an ordinary rc=1 box)
+// and handed over whole — nobody else holds it, so the frame that consumed the
+// match gives it back. Nothing did, and every write leaked its 40-byte answer:
+// the self-host half of #8405 for the write side (#8410).
+//
+// `r.close()` / `w.close()` and the `open_*` constructors answer the same shape
+// of box out of the same shape of helper and are the same bug — but an
+// open-and-close loop strands THREE boxes a round, so admitting one or two of
+// them cannot be measured as a fix. That family goes together, in the self-host
+// twin of #8405.
+//
+// The release is SHALLOW (emit_scalar_enum_box_free), and on the None path —
+// every write that succeeds — that is the whole block. A FAILED write also
+// builds a fresh IoError inside the box (__fern_io_error), and that one keeps
+// today's leak: a deep drop needs the variant walk plus a proof the Some arm's
+// binding does not outlive it, which is the payload-kind gap #8806 covers. One
+// per FAILED write, against one per write before.
+//
+// The receiver gate is resource_method_opt_ret_type's, the same one
+// lower_call_method applies, so this cannot claim a user `.write()` on a struct,
+// an enum, a string or an array — a user method's result is its own business.
+// An `@` binding aliases the whole box into a name that outlives the arm, so it
+// declines, exactly as the map-get release does.
+function match_scrut_owns_fresh_result_box(m: ast.StmtMatch, s: LowerState): boolean {
+    if (match_binds_whole_scrutinee(m)) { return false; }
+    if let ast.ExprCall(c) = m.scrutinee {
+        if let ast.ExprFieldAccess(fa) = c.callee {
+            if (fa.field == "write" && c.args.len() == 1) {
+                return resource_method_opt_ret_type("write", fa.obj, s) == "Option[IoError]";
+            }
         }
     }
+    return false;
+}
+
+// match_binds_whole_scrutinee: some arm's `n @ Variant(...)` aliases the whole
+// matched value into a name that outlives the arm, so the box is not this
+// statement's to release. The precondition both post-match box releases share.
+function match_binds_whole_scrutinee(m: ast.StmtMatch): boolean {
+    for arm in m.arms {
+        if let ast.PatVariant(pv) = arm.pattern {
+            if (pv.at_binding.len() > 0) { return true; }
+        }
+    }
+    return false;
+}
+
+function match_scrut_is_map_get(m: ast.StmtMatch, s: LowerState): boolean {
+    if (match_binds_whole_scrutinee(m)) { return false; }
     match (m.scrutinee) {
         ast.ExprCall(c) => {
             if (c.args.len() == 1) {

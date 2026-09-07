@@ -833,9 +833,9 @@ pub function op_print_int(): Op { return op0("print_int"); }
 // lowering picks it over print_int when the argument is i64-typed.
 pub function op_print_i64(): Op { return op0("print_i64"); }
 // `print_str` pops a string value and writes its bytes to stdout (no newline),
-// pushing a dummy result so a statement-level drop balances. `print(s)` desugars
-// to `print_str(s + "\n")` (str_concat with a "\n" literal); `write(s)` is a bare
-// print_str. Lowers to each backend's __fern_print_str helper.
+// pushing a dummy result so a statement-level drop balances. `write(s)` is a bare
+// print_str; `print(s)` is two of them, the payload then a "\n" literal.
+// Lowers to each backend's __fern_print_str helper.
 pub function op_print_str(): Op { return op0("print_str"); }
 // `read_int` reads a line from stdin and parses a leading optional-sign decimal,
 // pushing the i32 (a VALUE op — no args, leaves the result on the stack). Lowers

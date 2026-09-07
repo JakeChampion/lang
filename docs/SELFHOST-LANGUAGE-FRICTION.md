@@ -61,9 +61,17 @@ column says what `TestSelfHostFeatureCensus` holds the row to.
 | Magic ASCII byte constants (`== 91`, `== 44`) | — | **342** | — |
 | Explicit `as` casts | — | **715** | logged |
 | Hand-written AST walkers | — | **~130** over `Expr`, **~247** over `Stmt` | — |
-| Wildcard `_ =>` match arms | — | **2,863** of **10,089** arrow tokens (28%) | ceiling |
+| Wildcard `_ =>` match arms | — | **3,038** of **11,180** arrow tokens (27%) | ceiling |
 | Locals with a written type annotation | inference exists | **17,168** of 17,175 (99.9%) | logged |
 | Methods (`function (r: T) name(…)`) | ✅ | **289** in 9 modules | logged |
+
+The wildcard row last moved at #8410, and DOWN: the `@`-binding precondition
+the two post-match box releases in `irlower.fern` share became one `if let`
+helper (`match_binds_whole_scrutinee`), which is one arm fewer than the two
+`match (arm.pattern)` loops it replaced and none added for the new release's own
+probes. The ceiling moved with it, from 3039/3036 to 3041/3038 — the banked
+measurement had understated main by three, which is the failure mode
+`TestSelfHostFeatureCensus`'s own note keeps recording.
 
 **Method.** Every counted row is taken after `//` comments and string, f-string
 and char literals are stripped out. The self-host embeds whole test programs as
