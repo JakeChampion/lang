@@ -633,6 +633,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesMemchr {
 		g.emitMemchrRuntime()
 	}
+	if g.usesMismatch {
+		g.emitMismatchRuntime()
+	}
 	if g.usesRmemchr {
 		g.emitRmemchrRuntime()
 	}
@@ -644,6 +647,12 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	}
 	if g.usesStrcat {
 		g.emitStrcatRuntime()
+	}
+	if g.usesStrAppend {
+		g.emitStrAppendRuntime()
+	}
+	if g.usesStrAppendRange {
+		g.emitStrAppendRangeRuntime()
 	}
 	if g.usesMemset {
 		g.emitMemsetRuntime()
@@ -3702,6 +3711,303 @@ func (g *generator) emitStrcatRuntime2W() {
 	g.line(".ltorg")
 }
 
+// emitSizeClassCap rounds the 16-aligned request in reg — 16 B up to 1 GiB —
+// up to the capacity __fern_alloc reserves for its class: the request itself
+// in the small tier (16..2048 B, exact fit) and three significant bits above
+// it, so the waste is at most 25%. Past 1 GiB the allocator is bump-only and
+// bumps the 16-rounded request verbatim, so the cap is the request there too.
+// It is the one definition of a block's size: __fern_alloc bumps at it,
+// __fern_free bins by it, and __fern_str_append grows in place while it is
+// unchanged. t1..t3 are scratch. Mirrors the x86_64 helper of the same name.
+func (g *generator) emitSizeClassCap(reg, t1, t2, t3 string) {
+	if !ast.RcFreeEnabled {
+		// No freelist: __fern_alloc bumps the 16-rounded request as-is.
+		return
+	}
+	done := g.freshLabel("cap_done")
+	g.emit("cmp %s, #2048", reg)
+	g.emit("b.ls %s", done)
+	g.emit("mov %s, #1", t1)
+	g.emit("lsl %s, %s, #30", t1, t1)
+	g.emit("cmp %s, %s", reg, t1)
+	g.emit("b.hi %s", done) // >1 GiB stays bump-only, never rounded up
+	g.emit("clz %s, %s", t1, reg)
+	g.emit("mov %s, #63", t2)
+	g.emit("sub %s, %s, %s", t2, t2, t1) // e = bsr(size) >= 11
+	g.emit("sub %s, %s, #2", t2, t2)     // grid spacing at 2^e is 2^(e-2)
+	g.emit("mov %s, #1", t1)
+	g.emit("lsl %s, %s, %s", t1, t1, t2) // gran
+	g.emit("add %s, %s, %s", t3, reg, t1)
+	g.emit("sub %s, %s, #1", t3, t3)
+	g.emit("neg %s, %s", t1, t1)
+	g.emit("and %s, %s, %s", reg, t3, t1) // roundup(size, gran)
+	g.label(done)
+}
+
+// strAppendScratch are the registers the two __fern_str_append eligibility
+// helpers below clobber. A value the caller still needs must not live in one:
+// the first scratch write destroys it and the read back sees a size-class
+// intermediate, which reaches the fast path as a capacity test that passes for
+// a piece of any width and grows the accumulator off the end of its block.
+var strAppendScratch = []string{"x9", "x10", "x11", "x12", "x13"}
+
+// assertStrAppendOperands panics when a caller hands one of those helpers an
+// operand in a register it is about to use as scratch.
+func assertStrAppendOperands(regs ...string) {
+	for _, r := range regs {
+		for _, s := range strAppendScratch {
+			if r == s {
+				panic("arm64: __fern_str_append operand in a scratch register: " + r)
+			}
+		}
+	}
+}
+
+// emitStrAppendEligible emits the in-place-eligibility test __fern_str_append
+// and __fern_str_append_range share: branch to `bail` unless the accumulator
+// in (dataX, lenX) is a uniquely-owned heap buffer this frame may grow.
+// Inline/SSO pairs have no buffer to grow; anything below the heap floor is a
+// .rodata literal, refused whatever the rc word at [data-8] reads; rc != 1
+// means a second reference would observe the mutation.
+func (g *generator) emitStrAppendEligible(dataX, lenX, bail string) {
+	assertStrAppendOperands(dataX, lenX)
+	g.emit("tbnz %s, #63, %s", lenX, bail) // inline/SSO: no heap buffer
+	g.emit("lsr x9, %s, #28", dataX)
+	g.emit("cbz x9, %s", bail)           // below the heap floor (and null)
+	g.emit("ldur w10, [%s, #-8]", dataX) // rc
+	g.emit("cmp w10, #1")
+	g.emit("b.ne %s", bail) // shared, static sentinel, or already released
+}
+
+// emitStrAppendFits emits the capacity half of that test: branch to `bail`
+// unless a `laX`-byte string grown by `lbX` bytes still fits the block it was
+// allocated from. It takes the two lengths rather than the total so that no
+// caller has to keep the total live across strAppendScratch.
+//
+// Same-class is the exact test rather than a heuristic. An owned two-word heap
+// string comes from __fern_alloc_rc1(payload) — `payload + 8` rounded to 16,
+// then capacity-rounded by tier — with payload >= the string's byte length, so
+// cap(round16(la + 8)) is never above the block's real capacity. The capacity
+// function is monotone and idempotent, so the grown request classing the same
+// as the old one is exactly `req_new <= cap(req_old)`: one cap computation
+// rather than two compared for equality.
+//
+// Nothing else has to agree: unlike the single-word ABI, a two-word string
+// carries its length in the len word and leaves [data-4] — the payload size
+// __fern_str_dec frees the block at — untouched, so growing in place changes
+// neither the size the block is eventually freed at nor the bytes the leak
+// census charges for it.
+//
+// Past the i32 length ceiling there is no representable result and the
+// capacity test can still match, so the ceiling is checked here and the grow
+// declined; __fern_strcat then traps on the same total.
+//
+// A total that still fits the INLINE form is declined too, and that is not a
+// missed optimisation: __fern_strcat packs such a result into the (data, len)
+// pair with no allocation at all and the append's fallback then releases the
+// accumulator's buffer, so the copy path is strictly the cheaper of the two —
+// no allocation either way, one heap block fewer live afterwards. Declining
+// also keeps the append REPRESENTATION-PRESERVING, which is the property that
+// makes it an optimisation of `a + b` rather than a second meaning for it: a
+// short result is the inline form whether or not the accumulator happened to
+// be a growable heap buffer, so it drops, classes and compares the same way.
+// arm64's 15-byte inline cap makes that a wide class of strings.
+func (g *generator) emitStrAppendFits(laX, lbX, bail string) {
+	assertStrAppendOperands(laX, lbX)
+	g.emit("add x9, %s, %s", laX, lbX) // total, in 64 bits so it cannot wrap
+	g.emit("lsr x10, x9, #31")
+	g.emit("cbnz x10, %s", bail) // total past the i32 length ceiling
+	g.emit("cmp x9, #%d", fernstring.InlineCap(8))
+	g.emit("b.ls %s", bail) // __fern_strcat packs this without allocating
+	g.emit("add x10, x9, #23")
+	g.emit("and x10, x10, #-16") // req_new = round16(total + 8)
+	g.emit("add x9, %s, #23", laX)
+	g.emit("and x9, x9, #-16") // req_old = round16(la + 8)
+	g.emitSizeClassCap("x9", "x11", "x12", "x13")
+	g.emit("cmp x10, x9")
+	g.emit("b.hi %s", bail)
+}
+
+// emitStrAppendRuntime emits
+// `__fern_str_append(a_data, a_len, b_data, b_len) -> (data, len)` — the
+// in-place-when-unique string self-append behind `s = s + piece` (#5637),
+// two-word ABI. It CONSUMES `a`: the IR only emits it where the assignment
+// was about to overwrite and reclaim that slot, so its dec-on-overwrite is
+// suppressed.
+//
+//   - Fast path — `a` is a uniquely-held heap buffer whose grown length still
+//     fits the block it was allocated from: memcpy b's bytes into the slack
+//     past a's data and hand the same buffer back as (a_data, la + lb). No
+//     allocation, no re-copy of the accumulated prefix; the rc stays 1
+//     because the slot the caller is about to store into is still the sole
+//     owner.
+//   - Slow path — anything else (inline SSO / literal / shared / the class
+//     boundary crossed): plain __fern_strcat, then __fern_str_dec(a) to end
+//     the old binding. That is a real reclaim, the same authorisation the
+//     exit sweep already has for these locals (freeEligible, which the IR
+//     checks before emitting the call).
+//
+// The capacity is the growth schedule: 16-byte exact fit below 2048 B, so a
+// short accumulator absorbs ~8-16 short appends per allocation, and three
+// significant bits above it, so a long one grows in place until it has used
+// 12-25% more than it had and then copies once into a block that much larger
+// — amortised O(1) per byte with no capacity word in the [rc][payload] header.
+//
+// AAPCS64: (x0, x1) = a, (x2, x3) = b. Returns the pair in (x0, x1).
+func (g *generator) emitStrAppendRuntime() {
+	g.line("")
+	g.line(".global __fern_str_append")
+	g.typeDirective("__fern_str_append")
+	g.label("__fern_str_append")
+	// Frame, as offsets from x29:
+	//   [0..15]   fp / lr
+	//   [16..63]  x19..x24
+	//   [64..79]  emitStrDataPtr2W spill slot for an inline `b`
+	g.emit("stp x29, x30, [sp, #-80]!")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	g.emit("stp x21, x22, [sp, #32]")
+	g.emit("stp x23, x24, [sp, #48]")
+	g.emit("mov x19, x0") // a_data
+	g.emit("mov x20, x1") // a_len
+	g.emit("mov x21, x2") // b_data
+	g.emit("mov x22, x3") // b_len
+	// lb needs the resolving read — `b` is commonly an inline piece. a's
+	// length is its raw len word once the heap test below passes.
+	g.emitStrLen2W("w24", "x22") // lb
+	g.emitStrAppendEligible("x19", "x20", ".Lstrapp_copy")
+	g.emit("mov w23, w20") // la
+	g.emitStrAppendFits("x23", "x24", ".Lstrapp_copy")
+	// In place: memcpy(a_data + la, b_data, lb).
+	g.emitStrDataPtr2W("x9", "x21", "x22", 64)
+	g.emit("add x0, x19, x23")
+	g.emit("mov x1, x9")
+	g.emit("mov x2, x24") // lb
+	g.emit("bl __fern_memcpy")
+	g.emit("mov x0, x19")
+	g.emit("add x1, x23, x24") // the grown length, still heap form
+	g.emit("b .Lstrapp_ret")
+	g.label(".Lstrapp_copy")
+	g.emit("mov x0, x19")
+	g.emit("mov x1, x20")
+	g.emit("mov x2, x21")
+	g.emit("mov x3, x22")
+	g.emit("bl __fern_strcat")
+	g.emit("mov x23, x0") // out
+	g.emit("mov x24, x1")
+	g.emit("mov x0, x19")
+	g.emit("mov x1, x20")
+	g.emit("bl __fern_str_dec") // release the consumed accumulator
+	g.emit("mov x0, x23")
+	g.emit("mov x1, x24")
+	g.label(".Lstrapp_ret")
+	g.emit("ldp x23, x24, [sp, #48]")
+	g.emit("ldp x21, x22, [sp, #32]")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #80")
+	g.emit("ret")
+	g.sizeDirective("__fern_str_append")
+	g.line(".ltorg")
+}
+
+// emitStrAppendRangeRuntime emits
+// `__fern_str_append_range(a_data, a_len, s_data, s_len, lo, hi) -> (data, len)`
+// — __fern_str_append whose piece is a byte range of `s` rather than a whole
+// string (#8770).
+//
+// It is the fusion of `a + slice_unchecked(s, lo, hi)`: the unfused pair
+// allocates a slice buffer, copies `hi - lo` bytes into it, copies them again
+// into `a`'s slack and frees it. Here the range is memcpy'd straight out of
+// the source. Same guards, same consumption of `a`; the fallback materialises
+// the range through __str_slice exactly as the unfused lowering did and then
+// releases both the accumulator and the slice.
+//
+// The bounds are checked UP FRONT and trap through __str_slice's own message,
+// so a range the unfused form would have rejected is still rejected here — the
+// fast path must not be reachable with a range __str_slice would refuse.
+//
+// AAPCS64: (x0, x1) = a, (x2, x3) = s, w4 = lo, w5 = hi. Returns the pair in
+// (x0, x1).
+func (g *generator) emitStrAppendRangeRuntime() {
+	g.line("")
+	g.line(".global __fern_str_append_range")
+	g.typeDirective("__fern_str_append_range")
+	g.label("__fern_str_append_range")
+	// Frame, as offsets from x29:
+	//   [0..15]   fp / lr
+	//   [16..79]  x19..x26
+	//   [80..95]  emitStrDataPtr2W spill slot for an inline `s`
+	g.emit("stp x29, x30, [sp, #-96]!")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	g.emit("stp x21, x22, [sp, #32]")
+	g.emit("stp x23, x24, [sp, #48]")
+	g.emit("stp x25, x26, [sp, #64]")
+	g.emit("mov x19, x0")  // a_data
+	g.emit("mov x20, x1")  // a_len
+	g.emit("mov x21, x2")  // s_data
+	g.emit("mov x22, x3")  // s_len
+	g.emit("sxtw x23, w4") // lo, sign-extended from i32 (#5294)
+	g.emit("sxtw x24, w5") // hi
+	// Bounds, in __str_slice's own order and with its trap.
+	g.emitStrLen2W("w9", "x22") // src_len
+	g.emit("cmp x23, #0")
+	g.emit("b.lt .Lsarange_trap")
+	g.emit("cmp x24, x9")
+	g.emit("b.hi .Lsarange_trap")
+	g.emit("cmp x23, x24")
+	g.emit("b.gt .Lsarange_trap")
+	g.emit("sub x25, x24, x23") // lb = hi - lo
+	g.emitStrAppendEligible("x19", "x20", ".Lsarange_copy")
+	g.emit("mov w26, w20") // la
+	g.emitStrAppendFits("x26", "x25", ".Lsarange_copy")
+	// In place: memcpy(a_data + la, s_data + lo, lb). The source can only be
+	// `a` itself when the range lies inside a's current length, which ends
+	// where the destination begins, so the two never overlap.
+	g.emitStrDataPtr2W("x9", "x21", "x22", 80)
+	g.emit("add x1, x9, x23")
+	g.emit("add x0, x19, x26")
+	g.emit("mov x2, x25") // lb
+	g.emit("bl __fern_memcpy")
+	g.emit("mov x0, x19")
+	g.emit("add x1, x26, x25") // the grown length, still heap form
+	g.emit("b .Lsarange_ret")
+	g.label(".Lsarange_copy")
+	g.emit("mov x0, x21")
+	g.emit("mov x1, x22")
+	g.emit("mov x2, x23")
+	g.emit("mov x3, x24")
+	g.emit("bl __str_slice")
+	g.emit("mov x25, x0") // the materialised range
+	g.emit("mov x26, x1")
+	g.emit("mov x0, x19")
+	g.emit("mov x1, x20")
+	g.emit("mov x2, x25")
+	g.emit("mov x3, x26")
+	g.emit("bl __fern_strcat")
+	g.emit("mov x23, x0") // out
+	g.emit("mov x24, x1")
+	g.emit("mov x0, x19")
+	g.emit("mov x1, x20")
+	g.emit("bl __fern_str_dec") // release the consumed accumulator
+	g.emit("mov x0, x25")
+	g.emit("mov x1, x26")
+	g.emit("bl __fern_str_dec") // and the slice the fused form never built
+	g.emit("mov x0, x23")
+	g.emit("mov x1, x24")
+	g.label(".Lsarange_ret")
+	g.emit("ldp x25, x26, [sp, #64]")
+	g.emit("ldp x23, x24, [sp, #48]")
+	g.emit("ldp x21, x22, [sp, #32]")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #96")
+	g.emit("ret")
+	g.label(".Lsarange_trap")
+	g.emitAbort("__fern_msg_str_slice")
+	g.sizeDirective("__fern_str_append_range")
+	g.line(".ltorg")
+}
+
 // emitArrBoundsCheck emits the array index bounds check shared by
 // every `__arr_idx*` variant: with the element index in x0 and the
 // array base in x1, the length prefix at [base-4] is compared and
@@ -3929,6 +4235,176 @@ func (g *generator) emitInlineIdxHelper(name string) error {
 //
 // No feature detection: Advanced SIMD is mandatory in the declared ARMv8-A
 // baseline, so these are hard requirements rather than a fast path (§1.1).
+
+// emitMismatchRuntime emits `__fern_mismatch(a, ao, b, bo, n) -> i32`: the
+// offset of the first byte where a[ao..ao+n) and b[bo..bo+n) differ, or n when
+// they are equal.
+//
+// __memchr's NEON kernel with the broadcast needle replaced by a second operand
+// stream. `eor` zeroes the lanes that match and `cmtst` turns the survivors into
+// all-ones, so the shrn/fmov/rbit/clz gather that finds __memchr's first hit
+// finds the first DIFFERENCE here unchanged — no inversion of the mask, and no
+// `cmeq`, because "differs" is what cmtst already reports.
+//
+// Sub-16 lengths do not fall into the scalar remainder: a line-oriented utility
+// compares SHORT ranges, and walking those a byte at a time is the cost this
+// kernel exists to remove. They get memcmp's overlapping-window treatment — the
+// leading and trailing 8 (or 4) bytes, whose windows overlap, so two loads per
+// operand cover any length in the band. The leading window proves its range
+// equal first, so a difference the trailing window reports is provably the
+// first one.
+//
+// The offsets and the length are clamped rather than trusted (see the checker's
+// signature comment), after which every load is inside both strings by
+// construction — including the inline SSO case, where a string holds at most 7
+// bytes so a clamped n reaches neither the vector loop nor the 8-byte window.
+func (g *generator) emitMismatchRuntime() {
+	g.line("")
+	g.line(".global __fern_mismatch")
+	g.typeDirective("__fern_mismatch")
+	g.label("__fern_mismatch")
+	// Two-word string ABI: x0/x1 = a, w2 = ao, x3/x4 = b, w5 = bo, w6 = n.
+	// Frame: fp/lr (16) + a 16-byte inline-SSO spill slot per operand = 48.
+	g.emit("stp x29, x30, [sp, #-48]!")
+	g.emit("mov x29, sp")
+	g.emitStrDataPtr2W("x9", "x0", "x1", 16)  // x9  = a's bytes
+	g.emitStrLen2W("w10", "x1")               // w10 = len(a)
+	g.emitStrDataPtr2W("x11", "x3", "x4", 32) // x11 = b's bytes
+	g.emitStrLen2W("w12", "x4")               // w12 = len(b)
+	// Clamp each offset into [0, len].
+	g.emit("tbz w2, #31, .Lmm_ao_pos")
+	g.emit("mov w2, #0")
+	g.label(".Lmm_ao_pos")
+	g.emit("cmp w2, w10")
+	g.emit("csel w2, w10, w2, gt")
+	g.emit("tbz w5, #31, .Lmm_bo_pos")
+	g.emit("mov w5, #0")
+	g.label(".Lmm_bo_pos")
+	g.emit("cmp w5, w12")
+	g.emit("csel w5, w12, w5, gt")
+	// n = min(n, len(a) - ao, len(b) - bo), floored at 0.
+	g.emit("sub w10, w10, w2")
+	g.emit("sub w12, w12, w5")
+	g.emit("cmp w6, w10")
+	g.emit("csel w6, w10, w6, gt")
+	g.emit("cmp w6, w12")
+	g.emit("csel w6, w12, w6, gt")
+	g.emit("tbz w6, #31, .Lmm_n_ok")
+	g.emit("mov w6, #0")
+	g.label(".Lmm_n_ok")
+	// x9 / x11 become cursors; x15 remembers a's range start so the answer
+	// is one subtraction, x16 is its end, w13 the clamped n.
+	g.emit("add x9, x9, w2, uxtw")
+	g.emit("add x11, x11, w5, uxtw")
+	g.emit("mov w13, w6")
+	g.emit("mov x15, x9")
+	g.emit("add x16, x9, w13, uxtw")
+	// NEON loop: 16 bytes of each operand per iteration.
+	g.label(".Lmm_vec")
+	g.emit("sub x7, x16, x9")
+	g.emit("cmp x7, #16")
+	g.emit("b.lt .Lmm_short")
+	// Unaligned loads are deliberate, as on x86-64: NEON has no alignment
+	// requirement, and both pointers came from the allocator rather than the
+	// caller, so a 16-byte read starting inside a string cannot cross into an
+	// unmapped page.
+	g.emit("ld1 {v0.16b}, [x9]")
+	g.emit("ld1 {v1.16b}, [x11]")
+	g.emit("eor v0.16b, v0.16b, v1.16b")
+	g.emit("cmtst v0.16b, v0.16b, v0.16b")
+	g.emit("shrn v0.8b, v0.8h, #4")
+	g.emit("fmov x7, d0")
+	g.emit("cbz x7, .Lmm_next")
+	// Lowest set bit -> lane. Four mask bits per input byte, hence the >>2.
+	g.emit("rbit x8, x7")
+	g.emit("clz x8, x8")
+	g.emit("lsr x8, x8, #2")
+	g.emit("add x9, x9, x8")
+	g.emit("sub x0, x9, x15")
+	g.emit("b .Lmm_ret")
+	g.label(".Lmm_next")
+	g.emit("add x9, x9, #16")
+	g.emit("add x11, x11, #16")
+	g.emit("b .Lmm_vec")
+	// 8..15 bytes: the leading 8 and the trailing 8, which overlap.
+	g.label(".Lmm_short")
+	g.emit("cmp x7, #8")
+	g.emit("b.lt .Lmm_w4")
+	g.emit("ldr x8, [x9]")
+	g.emit("ldr x10, [x11]")
+	g.emit("eor x8, x8, x10")
+	g.emit("cbnz x8, .Lmm_w8_lead")
+	g.emit("sub x10, x7, #8")
+	g.emit("ldr x8, [x9, x10]")
+	g.emit("ldr x12, [x11, x10]")
+	g.emit("eor x8, x8, x12")
+	g.emit("cbz x8, .Lmm_eq")
+	// The leading window proved [0, 8) equal, so a difference the trailing
+	// window reports cannot land below 8 — its offset is the first one.
+	g.emit("add x9, x9, x10")
+	g.emit("rbit x8, x8")
+	g.emit("clz x8, x8")
+	g.emit("lsr x8, x8, #3")
+	g.emit("add x9, x9, x8")
+	g.emit("sub x0, x9, x15")
+	g.emit("b .Lmm_ret")
+	g.label(".Lmm_w8_lead")
+	// Lowest set bit of the xor >> 3 is the byte, little-endian.
+	g.emit("rbit x8, x8")
+	g.emit("clz x8, x8")
+	g.emit("lsr x8, x8, #3")
+	g.emit("add x9, x9, x8")
+	g.emit("sub x0, x9, x15")
+	g.emit("b .Lmm_ret")
+	// 4..7 bytes: the same pair of windows, four bytes wide.
+	g.label(".Lmm_w4")
+	g.emit("cmp x7, #4")
+	g.emit("b.lt .Lmm_tail")
+	g.emit("ldr w8, [x9]")
+	g.emit("ldr w10, [x11]")
+	g.emit("eor w8, w8, w10")
+	g.emit("cbnz w8, .Lmm_w4_lead")
+	g.emit("sub x10, x7, #4")
+	g.emit("ldr w8, [x9, x10]")
+	g.emit("ldr w12, [x11, x10]")
+	g.emit("eor w8, w8, w12")
+	g.emit("cbz w8, .Lmm_eq")
+	g.emit("add x9, x9, x10")
+	g.emit("rbit w8, w8")
+	g.emit("clz w8, w8")
+	g.emit("lsr w8, w8, #3")
+	g.emit("add x9, x9, w8, uxtw")
+	g.emit("sub x0, x9, x15")
+	g.emit("b .Lmm_ret")
+	g.label(".Lmm_w4_lead")
+	g.emit("rbit w8, w8")
+	g.emit("clz w8, w8")
+	g.emit("lsr w8, w8, #3")
+	g.emit("add x9, x9, w8, uxtw")
+	g.emit("sub x0, x9, x15")
+	g.emit("b .Lmm_ret")
+	// Scalar remainder: fewer than 4 bytes left.
+	g.label(".Lmm_tail")
+	g.emit("cmp x9, x16")
+	g.emit("b.ge .Lmm_eq")
+	g.emit("ldrb w8, [x9]")
+	g.emit("ldrb w10, [x11]")
+	g.emit("cmp w8, w10")
+	g.emit("b.ne .Lmm_tail_hit")
+	g.emit("add x9, x9, #1")
+	g.emit("add x11, x11, #1")
+	g.emit("b .Lmm_tail")
+	g.label(".Lmm_tail_hit")
+	g.emit("sub x0, x9, x15")
+	g.emit("b .Lmm_ret")
+	g.label(".Lmm_eq")
+	g.emit("mov w0, w13")
+	g.label(".Lmm_ret")
+	g.emit("ldp x29, x30, [sp], #48")
+	g.emit("ret")
+	g.sizeDirective("__fern_mismatch")
+}
+
 func (g *generator) emitMemchrRuntime() {
 	g.line("")
 	g.line(".global __fern_memchr")
@@ -11012,6 +11488,17 @@ type generator struct {
 	usesAlloc  bool
 	usesStrcat bool
 	usesMemcpy bool
+	// usesStrAppend gates `__fern_str_append` — the in-place-when-unique
+	// string self-append the IR emits for `s = s + piece` (#5637). Pulls in
+	// __fern_strcat (its copy path) and __fern_str_dec (the release it takes
+	// over from the assignment's dec-on-overwrite).
+	usesStrAppend bool
+	// usesStrAppendRange gates `__fern_str_append_range` — the same append
+	// with a byte range of a second string as its piece, so the range is
+	// copied straight out of the source instead of through a materialised
+	// `__str_slice` buffer. Pulls in that slice helper for its own fallback
+	// path, alongside everything __fern_str_append needs.
+	usesStrAppendRange bool
 	// usesCCall[n] gates the `__c_call<n>` FFI shim (call a C-ABI function
 	// pointer with n integer args). The F32/F64 variants gate byte-identical
 	// shims that differ only in the checker's declared FP result type, so the
@@ -11023,6 +11510,10 @@ type generator struct {
 	usesStrord   bool
 	// usesMemchr gates the NEON byte-search kernel (__fern_memchr).
 	usesMemchr bool
+	// usesMismatch gates the two-range comparison kernel
+	// (__fern_mismatch), __memchr's kernel over a pair of operand
+	// streams instead of a broadcast needle.
+	usesMismatch bool
 	// usesRmemchr gates its backward sibling (__fern_rmemchr).
 	usesRmemchr bool
 	// usesCountByte gates the byte-tally kernel (__fern_count_byte).
@@ -12033,22 +12524,42 @@ func (g *generator) sym(target string) string {
 	return target
 }
 
-// callSym is sym for an OpCallDirect, which is the one site where the two
-// namespaces genuinely overlap: the lowering calls its own helpers by plain
-// name (`__fern_str_append`, `__memcpy`, …) and a program may define a
+// callsRuntimeSymbol reports whether an OpCallDirect lands on the bare runtime
+// symbol rather than a Fern function's mangled one. This is the one site where
+// the two namespaces genuinely overlap: the lowering calls its own helpers by
+// plain name (`__fern_str_append`, `__memcpy`, …) and a program may define a
 // function called the same thing. `op.Runtime` records which the lowering
-// meant, so neither has to be guessed from the name.
+// meant, so neither has to be guessed from the name; a name the program does
+// not define is the helper either way.
+//
+// Everything keyed by that bare name has to ask this, not the name alone —
+// the two-word ABI's arity table and the return-shape lookups included.
+// `function __fern_str_append(x: i32): i32` beside the lowering's own append
+// otherwise reads the user's i32 signature onto the helper's call: one
+// operand-stack slot popped where four belong and one pushed where the (data,
+// len) pair belongs, which is an operand stack out of step for the rest of the
+// function.
 //
 // `target` is the callee after this backend's own rewrites (the
 // `__method_Map_*` → `__map_*_impl` family). A rewrite REPLACES the callee, so
 // the flag no longer describes it: `__map_set_impl` and friends are Fern
 // functions in internal/stdlib/core/map.fern and must be mangled like any
 // other. Only an unrewritten target is the one the lowering marked.
-func (g *generator) callSym(op ir.Op, target string) string {
+func (g *generator) callsRuntimeSymbol(op ir.Op, target string) bool {
 	if op.Runtime && target == op.Str {
-		return op.Str
+		return true
 	}
-	return g.sym(target)
+	_, defined := g.funcs[target]
+	return !defined
+}
+
+// callSym is sym for an OpCallDirect — the mangled symbol for a Fern function,
+// the bare name for a runtime helper.
+func (g *generator) callSym(op ir.Op, target string) string {
+	if g.callsRuntimeSymbol(op, target) {
+		return target
+	}
+	return AsmFnName(target)
 }
 
 // prescanOps sets the use-flags the prologue reads from one function's ops,
@@ -12535,10 +13046,13 @@ func (g *generator) slotIsString(idx int32) bool {
 // I32 arg count and no ArgTypes. The value is the total number of
 // operand-stack slots the helper's arguments occupy (each two-word
 // string counts as 2). __fern_str_inc / __fern_str_dec both take a
-// single (data, len) string → 2 slots.
+// single (data, len) string → 2 slots; __fern_str_append takes two
+// → 4. (__fern_str_append_range is absent: the IR stamps its
+// ArgTypes, so callArgTypes already sizes it.)
 var twoWordStrHelperArgSlots = map[string]int{
 	"__fern_str_inc":           2,
 	"__fern_str_dec":           2,
+	"__fern_str_append":        4,
 	"__method_string_as_bytes": 2,
 }
 
@@ -12573,8 +13087,12 @@ func callArgTypes(g *generator, op ir.Op, argc int) []ast.Type {
 // returns a string-typed value under the two-word ABI —
 // matters for OpCallDirect's post-call push (data, len)
 // instead of single-i32.
-func returnIsString(g *generator, name string) bool {
-	if callee, ok := g.funcs[name]; ok && callee != nil {
+func returnIsString(g *generator, op ir.Op, name string) bool {
+	if !g.callsRuntimeSymbol(op, name) {
+		callee := g.funcs[name]
+		if callee == nil {
+			return false
+		}
 		_, isStr := callee.ReturnType.(ast.StringType)
 		return isStr
 	}
@@ -12585,6 +13103,11 @@ func returnIsString(g *generator, name string) bool {
 		// words so the retained string stays on the operand stack
 		// (e.g. for OpReturn of an aliased string). __fern_str_dec
 		// is deliberately absent — it returns only `data` (x0).
+		return true
+	case "__fern_str_append", "__fern_str_append_range":
+		// The in-place-when-unique self-append and its fused range twin
+		// both hand back a (data, len) pair: the same buffer with a longer
+		// length on the fast path, __fern_strcat's fresh one otherwise.
 		return true
 	case "string_from_bytes_unchecked", "__str_slice", "strbuf_take", "hostname":
 		// Built-in runtime helpers that return string directly.
@@ -12612,8 +13135,12 @@ func returnIsString(g *generator, name string) bool {
 // literal field initialiser: the inner `__memcpy` left a
 // phantom slot that the outer struct-lit's OpStore consumed
 // instead of the field address.
-func returnIsVoid(g *generator, name string) bool {
-	if callee, ok := g.funcs[name]; ok && callee != nil {
+func returnIsVoid(g *generator, op ir.Op, name string) bool {
+	if !g.callsRuntimeSymbol(op, name) {
+		callee := g.funcs[name]
+		if callee == nil {
+			return false
+		}
 		_, isVoid := callee.ReturnType.(ast.VoidType)
 		return isVoid
 	}
@@ -13458,6 +13985,8 @@ func shiftImmForm(op ir.Op, k int64) (string, bool) {
 			return "lsr", true
 		}
 		return "asr", true
+	case ir.OpRotr:
+		return "ror", true
 	}
 	return "", false
 }
@@ -14115,6 +14644,15 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		} else {
 			g.emit("asr %s0, %s1, %s0", r, r, r)
 		}
+		g.push()
+	case ir.OpRotr:
+		// RORV, the fourth member of the LSLV/LSRV/ASRV family. Width
+		// picks the same lane the shifts use: the w-form rotates
+		// within bits 0..31, where the x-form would pull the cleared
+		// high half of a zero-extended i32 into the low bits.
+		g.binPop()
+		r := g.regForWidth(op.Width)
+		g.emit("ror %s0, %s1, %s0", r, r, r)
 		g.push()
 
 	// -------- comparison (i32) --------
@@ -14850,10 +15388,10 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		g.emitCallArgsLoad(slotCount)
 		g.emit("bl %s", g.callSym(op, op.Str))
 		g.emitCallArgsCleanup(slotCount)
-		if returnIsVoid(g, op.Str) {
+		if returnIsVoid(g, op, op.Str) {
 			break
 		}
-		if ast.UseTwoWordStrings(8) && returnIsString(g, op.Str) {
+		if ast.UseTwoWordStrings(8) && returnIsString(g, op, op.Str) {
 			g.push() // push data (x0)
 			g.emit("mov x0, x1")
 			g.push() // push len
@@ -15059,6 +15597,8 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			g.usesRandomI32 = true // the lazy first-call draw
 		case "__fern_memchr":
 			g.usesMemchr = true
+		case "__fern_mismatch":
+			g.usesMismatch = true
 		case "__fern_rmemchr":
 			g.usesRmemchr = true
 		case "__fern_count_byte":
@@ -15141,6 +15681,25 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			g.usesStrcat = true
 			g.usesAlloc = true
 			g.usesMemcpy = true
+		case "__fern_str_append":
+			g.usesStrAppend = true
+			g.usesStrcat = true  // the copy path calls it
+			g.usesMemcpy = true  // both paths copy bytes
+			g.usesAlloc = true   // strcat's fresh buffer + the freelist BSS
+			g.usesStrDec = true  // releases the consumed accumulator
+			g.usesBoxFree = true // str_dec → box_free at rc==1
+			g.usesFree = true
+			g.usesRcDec = true
+		case "__fern_str_append_range":
+			g.usesStrAppendRange = true
+			g.usesStrSlice = true // the copy path materialises the range
+			g.usesStrcat = true   // and joins it
+			g.usesMemcpy = true
+			g.usesAlloc = true
+			g.usesStrDec = true // releases both the accumulator and the slice
+			g.usesBoxFree = true
+			g.usesFree = true
+			g.usesRcDec = true
 		case "__alloc":
 			target = "__fern_alloc"
 			g.usesAlloc = true
@@ -15609,7 +16168,7 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		argc := int(op.I32)
 		slotCount := argc
 		if ast.UseTwoWordStrings(8) {
-			if sw, ok := twoWordStrHelperArgSlots[target]; ok {
+			if sw, ok := twoWordStrHelperArgSlots[target]; ok && g.callsRuntimeSymbol(op, target) {
 				// Built-in two-word string runtime helpers — emitted
 				// from many IR sites with a bare I32:1 arg count and no
 				// ArgTypes, so callArgTypes can't see that their single
@@ -15638,10 +16197,10 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		// both. Non-string returns push x0 only. Void-returning
 		// callees push NOTHING — see returnIsVoid for the
 		// rationale.
-		if returnIsVoid(g, op.Str) {
+		if returnIsVoid(g, op, op.Str) {
 			break
 		}
-		if ast.UseTwoWordStrings(8) && returnIsString(g, op.Str) {
+		if ast.UseTwoWordStrings(8) && returnIsString(g, op, op.Str) {
 			g.push() // push data (x0)
 			g.emit("mov x0, x1")
 			g.push() // push len

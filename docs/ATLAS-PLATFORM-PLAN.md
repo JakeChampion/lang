@@ -952,6 +952,62 @@ learning: enumerate the `runtimeHelperEmitters` tables and read what each entry
 emits — the same "enumerate, do not grep" rule §3.4 already states for the
 assemblers' mnemonic surfaces, applied one layer up.
 
+**`__mismatch(a, ao, b, bo, n)`, the fifth kernel**, is the comparison one the
+other four left out, and the first with TWO operand streams (#8791). It returns
+the offset of the first byte where the two ranges differ, or `n` when they are
+equal.
+
+**One kernel, not two, and that is the design.** The obvious shape is
+`__memeq(...) -> boolean`, and it is the wrong one: a boolean lifts `uniq` and
+leaves every ordering caller — `comm`, `sort`, `join` — back on an indexed byte
+loop, because it cannot say WHERE the difference is. The first differing offset
+answers both, since an equality test is a comparison against `n` and an ordering
+is one indexed load at that offset. It is also the shape §3.3 already nominates:
+"find the first position where a predicate holds".
+
+The kernel is `__memchr`'s with the broadcast needle replaced by a second load.
+On x86-64 the mask now means EQUAL, so the loop continues while it is all-ones
+and a `not` precedes the `bsf`; on arm64 `eor` then `cmtst` produces the
+differing lanes directly, so the shrn/fmov/rbit/clz gather is unchanged. §3.3a
+cost **nothing again** — every shape was already paid for by the forward
+kernels, on all six assemblers, which is the per-INSTRUCTION-SET debt behaving
+as predicted for the third time.
+
+Note this is NOT the fifth kernel the vector-OR survey above costs at four
+encodings. That paragraph prices a `trim`-shaped kernel, whose block test needs
+several compares OR'd together; the comparison kernel landed first and needed
+none of it, so the survey's four encodings are still owed by whoever writes
+that one. The survey was right about its own candidate and says nothing about
+this one — which is the paragraph's own point restated: a zero from one kernel
+does not carry to the next, and neither does a cost.
+
+**What it cost that this section did not predict: the sub-vector band.** The
+first draft was correct and no faster than what it replaced — 12 ns on the
+13-byte comparison #8791 measures, against 12 ns for `slice_unchecked(a, i, j)
+== b`. The reason is that 13 never reaches a 16-byte loop, so every real call
+fell into the scalar remainder. §3.1's rules are about the vector body and say
+nothing about what happens below one vector, and for a LINE-oriented kernel
+that band is not the tail — it is the whole workload. memcmp's overlapping
+windows fixed it: the leading and trailing 8 (or 4) bytes, whose ranges overlap,
+so two loads per operand cover any length in the band, and a difference the
+trailing window reports is provably the first one because the leading window
+already proved its own range equal.
+
+| how, 13 bytes, x86-64 `-O`, 4M iterations | ns |
+|---|---|
+| `slice_unchecked(a, i, j) == b` | 12 |
+| indexed byte loop | 33 |
+| `__mismatch`, first draft (scalar below 16) | 12 |
+| `__mismatch`, with the overlapping windows | **6** |
+
+which is the ~5 ns #8791 records for C `memcmp`, and it allocates nothing where
+the slice spelling allocates once per operand.
+
+**The rule this adds to §3.1**: a kernel whose callers work in SHORT ranges owes
+a sub-vector path, and its absence is invisible to a correctness suite and to
+any benchmark whose input is one long buffer. State the caller's length
+distribution before claiming a kernel is done.
+
 ### 3.5 Testing
 
 Per rule 5, each kernel ships with:

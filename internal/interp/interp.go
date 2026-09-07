@@ -804,6 +804,54 @@ func New() *Interp {
 		}
 		return Number(-1), nil
 	}}
+	// __mismatch(a, ao, b, bo, n) — the offset of the first differing byte
+	// in a[ao..ao+n) / b[bo..bo+n), or n when they are equal. The reference
+	// semantics for the comparison kernel the compiled backends vectorise
+	// (#8791), and deliberately the dumbest correct implementation for the
+	// same reason __memchr's is.
+	//
+	// The clamps ARE the contract, not defensive tidying: `n` is reduced to
+	// what both ranges actually hold, so the value returned on equality is
+	// the clamped length and a caller's `== n` test correctly fails when it
+	// asked to compare more than was there.
+	i.Builtins["__mismatch"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
+		if len(args) != 5 {
+			return nil, fmt.Errorf("__mismatch: expected 5 args, got %d", len(args))
+		}
+		as, ok := args[0].(String)
+		if !ok {
+			return nil, fmt.Errorf("__mismatch: expected a string, got %T", args[0])
+		}
+		bs, ok := args[2].(String)
+		if !ok {
+			return nil, fmt.Errorf("__mismatch: expected a string, got %T", args[2])
+		}
+		nums := [3]int{}
+		for k, at := range [3]int{1, 3, 4} {
+			v, ok := args[at].(Number)
+			if !ok {
+				return nil, fmt.Errorf("__mismatch: expected an integer at %d, got %T", at, args[at])
+			}
+			nums[k] = int(int64(v))
+		}
+		ab, bb := []byte(string(as)), []byte(string(bs))
+		ao, bo, n := clampOffset(nums[0], len(ab)), clampOffset(nums[1], len(bb)), nums[2]
+		if n > len(ab)-ao {
+			n = len(ab) - ao
+		}
+		if n > len(bb)-bo {
+			n = len(bb) - bo
+		}
+		if n < 0 {
+			n = 0
+		}
+		for idx := 0; idx < n; idx++ {
+			if ab[ao+idx] != bb[bo+idx] {
+				return Number(idx), nil
+			}
+		}
+		return Number(n), nil
+	}}
 	// __ascii_run(s, from) — the index of the first byte at or after `from`
 	// whose high bit is set, or len(s) if the rest is all ASCII.
 	//
@@ -2514,6 +2562,18 @@ func builtinGetegid(_ *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("getegid: expected 0 args, got %d", len(args))
 	}
 	return Number(os.Getegid()), nil
+}
+
+// clampOffset brings a caller's byte offset into [0, n], which is what every
+// range-taking kernel does with one rather than trapping.
+func clampOffset(off, n int) int {
+	if off < 0 {
+		return 0
+	}
+	if off > n {
+		return n
+	}
+	return off
 }
 
 // builtinHostname reports the kernel's node name; a kernel that cannot

@@ -308,6 +308,13 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_str_len")
 					needs.add("__fern_str_byte")
 					needs.add("__fern_memchr")
+				case "__fern_mismatch":
+					// The two-range comparison kernel. Scalar, so it
+					// reads every byte through str_byte and asks
+					// str_len for each operand's logical length.
+					needs.add("__fern_str_len")
+					needs.add("__fern_str_byte")
+					needs.add("__fern_mismatch")
 				case "__fern_ascii_run":
 					// The v128 high-bit scan. Same two dependencies
 					// and for the same two reasons.
@@ -481,12 +488,14 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					// environ_ptrs comparing each entry's prefix
 					// up to '=' against name. The matched value is
 					// copied into a fresh owned string via
-					// __fern_str_copy.
+					// __fern_str_copy. Preview 2 returns the
+					// get-environment retbuf through __free.
 					needs.add("__fern_alloc")
 					needs.add("__fern_alloc_rc1")
 					needs.add("__fern_str_copy")
 					needs.add("__fern_str_len")
 					needs.add("__fern_str_byte")
+					needs.add("__free")
 					needs.add("__fern_env")
 				case "__fern_read_byte":
 					// wasi_fd_read on stdin (fd=0) + alloc for
@@ -1414,6 +1423,13 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildMemchrBody,
+	},
+	"__fern_mismatch": {
+		// (a_data, a_len, ao, b_data, b_len, bo, n) → i32 offset of the
+		// first differing byte, or n. Two strings, so seven params.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildMismatchBody,
 	},
 	"__fern_ascii_run": {
 		// (data, len, from) → i32 index of the first high-bit byte, or len.
@@ -4708,6 +4724,143 @@ func buildCountByteBody(idxs map[string]uint32) []byte {
 
 	body = inst.InstLocalGet(body, lC)
 	locals := inst.PutLocalsOneGroup(nil, 3, encode.ValtypeI32) // $n, $i, $c
+	return inst.PutFunctionBody(nil, locals, body)
+}
+
+// buildMismatchBody assembles wasm bytes for __fern_mismatch (#8791).
+//
+// Signature: (param $a_data $a_len $ao $b_data $b_len $bo $n i32) (result i32)
+// — each string arrives as its two words, so this is seven params where the
+// x86-64 helper takes five registers.
+//
+// SCALAR, reading both operands through __fern_str_byte, which is the reader
+// that can see bytes living in the two words as well as in memory. __rmemchr
+// ships the same way. A v128 form would have to prove BOTH operands heap-form
+// before it could point v128.load at either, and then keep the scalar path for
+// every other combination — two kernels where the native backends need one —
+// and nothing measured here is on wasm: the coreutils benchmarks this exists
+// for run native. #8791 says as much ("the wasm backend can have the scalar
+// loop until it earns a vector one"), so this is the shipped answer and not a
+// stub, and it is still a call rather than an inlined loop so the vector
+// version, when it is earned, changes one body.
+//
+// The clamps are the contract rather than defensive tidying — see the
+// checker's signature comment. They also make the loop's own bound the only
+// bound it needs.
+//
+// Locals after the seven params: $na (7), $nb (8), $i (9).
+func buildMismatchBody(idxs map[string]uint32) []byte {
+	strLen := idxs["__fern_str_len"]
+	strByte := idxs["__fern_str_byte"]
+	const (
+		pAData = 0
+		pALen  = 1
+		pAo    = 2
+		pBData = 3
+		pBLen  = 4
+		pBo    = 5
+		pN     = 6
+		lNa    = 7
+		lNb    = 8
+		lI     = 9
+	)
+	var body []byte
+
+	// $na / $nb = the two logical lengths.
+	body = inst.InstLocalGet(body, pAData)
+	body = inst.InstLocalGet(body, pALen)
+	body = inst.InstCall(body, strLen)
+	body = inst.InstLocalSet(body, lNa)
+	body = inst.InstLocalGet(body, pBData)
+	body = inst.InstLocalGet(body, pBLen)
+	body = inst.InstCall(body, strLen)
+	body = inst.InstLocalSet(body, lNb)
+
+	// Clamp each offset into [0, len].
+	clampOff := func(b []byte, off, n int) []byte {
+		b = inst.InstLocalGet(b, uint32(off))
+		b = inst.InstI32Const(b, 0)
+		b = numeric.InstI32LtS(b)
+		b = inst.InstIfStart(b, inst.BlocktypeEmpty)
+		b = inst.InstI32Const(b, 0)
+		b = inst.InstLocalSet(b, uint32(off))
+		b = inst.InstEnd(b)
+		b = inst.InstLocalGet(b, uint32(off))
+		b = inst.InstLocalGet(b, uint32(n))
+		b = numeric.InstI32GtS(b)
+		b = inst.InstIfStart(b, inst.BlocktypeEmpty)
+		b = inst.InstLocalGet(b, uint32(n))
+		b = inst.InstLocalSet(b, uint32(off))
+		b = inst.InstEnd(b)
+		return b
+	}
+	body = clampOff(body, pAo, lNa)
+	body = clampOff(body, pBo, lNb)
+
+	// $n = min($n, $na - $ao, $nb - $bo), floored at 0. The two subtractions
+	// land back in $na / $nb, which have no other reader from here on.
+	body = inst.InstLocalGet(body, lNa)
+	body = inst.InstLocalGet(body, pAo)
+	body = numeric.InstI32Sub(body)
+	body = inst.InstLocalSet(body, lNa)
+	body = inst.InstLocalGet(body, lNb)
+	body = inst.InstLocalGet(body, pBo)
+	body = numeric.InstI32Sub(body)
+	body = inst.InstLocalSet(body, lNb)
+	for _, avail := range []uint32{lNa, lNb} {
+		body = inst.InstLocalGet(body, pN)
+		body = inst.InstLocalGet(body, avail)
+		body = numeric.InstI32GtS(body)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		body = inst.InstLocalGet(body, avail)
+		body = inst.InstLocalSet(body, pN)
+		body = inst.InstEnd(body)
+	}
+	body = inst.InstLocalGet(body, pN)
+	body = inst.InstI32Const(body, 0)
+	body = numeric.InstI32LtS(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstLocalSet(body, pN)
+	body = inst.InstEnd(body)
+
+	// for i in 0..n: return i at the first difference.
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstLocalSet(body, lI)
+	body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, lI)
+	body = inst.InstLocalGet(body, pN)
+	body = numeric.InstI32GeS(body)
+	body = inst.InstBrIf(body, 1)
+	body = inst.InstLocalGet(body, pAData)
+	body = inst.InstLocalGet(body, pALen)
+	body = inst.InstLocalGet(body, pAo)
+	body = inst.InstLocalGet(body, lI)
+	body = numeric.InstI32Add(body)
+	body = inst.InstCall(body, strByte)
+	body = inst.InstLocalGet(body, pBData)
+	body = inst.InstLocalGet(body, pBLen)
+	body = inst.InstLocalGet(body, pBo)
+	body = inst.InstLocalGet(body, lI)
+	body = numeric.InstI32Add(body)
+	body = inst.InstCall(body, strByte)
+	body = numeric.InstI32Ne(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, lI)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+	body = inst.InstLocalGet(body, lI)
+	body = inst.InstI32Const(body, 1)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalSet(body, lI)
+	body = inst.InstBr(body, 0)
+	body = inst.InstEnd(body) // loop
+	body = inst.InstEnd(body) // block
+
+	// Equal over the whole clamped range.
+	body = inst.InstLocalGet(body, pN)
+	locals := inst.PutLocalsOneGroup(nil, 3, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
 }
 

@@ -1364,6 +1364,44 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		},
 		Result: ast.NumberType{Width: 32, Signed: true},
 	}
+	// __mismatch(a, ao, b, bo, n) → i32: the offset of the first byte where
+	// a[ao..ao+n) and b[bo..bo+n) differ, or n when they are equal. The fifth
+	// fused SIMD kernel, and the comparison one the other four left out
+	// (#8791).
+	//
+	// ONE kernel, not two, and that is the design. `__memeq` would serve
+	// equality — `uniq` — and leave every ordering caller (`comm`, `sort`,
+	// `join`) back on an indexed byte loop, because a boolean cannot say
+	// WHERE the difference is. The first differing offset answers both: an
+	// equality test is `__mismatch(…) == n`, and an ordering is one indexed
+	// load at that offset. It is also the shape __memchr already has —
+	// "find the first position where a predicate holds".
+	//
+	// Comparing a range without this costs a copy or a walk. `slice_unchecked`
+	// is not a view: it lowers to __str_slice, which copies the bytes into a
+	// fresh string, so a comparison spelled with slices allocates once per
+	// operand even when the result never escapes. And an indexed byte is
+	// ~2.8 ns, so walking a 13-byte range by hand costs more than the copy.
+	//
+	// The offsets and the length are CLAMPED, not trusted: `ao` and `bo` into
+	// [0, len] and `n` down to whatever both ranges actually hold. A caller
+	// asking to compare more than is there gets the shorter answer rather
+	// than a read past the end, and its `== n` test correctly fails. This is
+	// the one place this family departs from `slice_unchecked`'s "unchecked"
+	// — reading two ranges at once doubles the ways a caller can be wrong,
+	// and the clamp is a handful of instructions outside the loop.
+	//
+	// Same string-not-pointer argument as __memchr's, for the same reason.
+	c.info.FuncSigs["__mismatch"] = &ast.FuncType{
+		Params: []ast.Type{
+			ast.StringType{},
+			ast.NumberType{Width: 32, Signed: true},
+			ast.StringType{},
+			ast.NumberType{Width: 32, Signed: true},
+			ast.NumberType{Width: 32, Signed: true},
+		},
+		Result: ast.NumberType{Width: 32, Signed: true},
+	}
 	// __heap_mark(): i64 / __heap_release_to(mark: i64) — one-level arena
 	// checkpoint. Mark captures the bump cursor (plus a freelist-head
 	// snapshot); release_to rewinds to it, reclaiming everything allocated
@@ -5930,6 +5968,18 @@ type checker struct {
 	// immediately-enclosing scope.
 	captureChain []captureEntry
 
+	// Capture-cycle plumbing (#8440). closureconv.BoxMutatedCaptures
+	// rewrites a local that is both captured and assigned into a shared
+	// one-element heap cell, and that cell is the ONE mutable heap slot in
+	// the language: struct fields (E048), array elements (E056) and
+	// `Cell[T]` payloads (E057) are all closed against reference cycles, so
+	// every constructible cycle passes through a capture cell. E049 rejects
+	// the store from INSIDE the closure; capturedVars + cellStores let
+	// checkCaptureCycleStores reject the enclosing scope's store too, which
+	// is the half that was missing. Both are reset per top-level function.
+	capturedVars map[*ast.Var]bool
+	cellStores   []cellStore
+
 	// mutualRecSiblings is the set of local FuncDecl names that
 	// form a mutual-recursion cycle in the current block (set by
 	// checkBlock's pre-pass after a Tarjan SCC walk). Only these
@@ -9319,6 +9369,14 @@ func (c *checker) isUserFuncOrLocal(name string, s *scope) bool {
 type scope struct {
 	parent *scope
 	names  map[string]ast.Type
+	// vars maps the subset of `names` introduced by a `var` statement to
+	// the declaration itself, so a binding can be identified by NODE
+	// rather than by name. Names are not unique until shadowrename, which
+	// runs after the checker, so the capture-cycle rule (#8440) — which
+	// has to pair a store with the declaration a closure captured — cannot
+	// match on the spelling. Nil for a scope that binds only parameters
+	// and pattern bindings.
+	vars map[string]*ast.Var
 }
 
 func newScope(parent *scope) *scope {
@@ -9332,6 +9390,29 @@ func (s *scope) lookup(name string) (ast.Type, bool) {
 		}
 	}
 	return nil, false
+}
+
+// bindVar binds a `var` declaration's name, recording the declaration node
+// alongside the type.
+func (s *scope) bindVar(name string, t ast.Type, decl *ast.Var) {
+	s.names[name] = t
+	if s.vars == nil {
+		s.vars = map[string]*ast.Var{}
+	}
+	s.vars[name] = decl
+}
+
+// lookupVarDecl resolves name to the `var` statement that declares it, or nil
+// when the nearest binding is a parameter, a pattern binding, or absent. It
+// stops at the first scope that binds the name so a nearer non-`var` binding
+// correctly shadows an outer `var`.
+func (s *scope) lookupVarDecl(name string) *ast.Var {
+	for cur := s; cur != nil; cur = cur.parent {
+		if _, ok := cur.names[name]; ok {
+			return cur.vars[name]
+		}
+	}
+	return nil
 }
 
 // poison binds a name whose type could not be worked out, its
@@ -9397,9 +9478,28 @@ func (c *checker) identValueBinding(name string, s *scope) (ast.Type, bool) {
 	return c.capturedType(name, s)
 }
 
+// cellStore is one enclosing-scope `x = v` whose target is a `var`-declared
+// pointer-shaped local — a candidate boxcapture-cell store. The value's type
+// is kept because the cycle rule asks what the STORED value can reach, not
+// what the slot is declared to hold: `d: dyn Runner = Wrap { cb: f }` closes a
+// cycle through a slot whose own type says nothing about closures.
+type cellStore struct {
+	pos      ast.Position
+	name     string
+	decl     *ast.Var
+	declType ast.Type
+	valType  ast.Type
+}
+
 func (c *checker) checkFunction(fn *ast.FuncDecl) {
 	c.current = fn
 	defer func() { c.current = nil }()
+	c.capturedVars = nil
+	c.cellStores = nil
+	defer func() {
+		c.capturedVars = nil
+		c.cellStores = nil
+	}()
 
 	// A body-less `@import` function (extern WIT binding) has no body to
 	// check; its signature is still registered so call sites resolve.
@@ -9468,6 +9568,159 @@ func (c *checker) checkFunction(fn *ast.FuncDecl) {
 	if fn.Body != nil && !isVoidReturn(fn.ReturnType) && !funcBodyExits(fn.Body) {
 		c.errfCode(fn.P, "E052", "missing return: %q has return type %s but can fall off the end without returning a value", fn.Name, fn.ReturnType.String())
 	}
+	c.checkCaptureCycleStores()
+}
+
+// checkCaptureCycleStores is the enclosing-scope half of E049 (#8440).
+//
+// A capture is shared BY REFERENCE — closureconv.BoxMutatedCaptures gives the
+// variable a heap cell the moment it is captured and assigned anywhere — so
+// the enclosing scope writes the same slot the closure does. E049's other half
+// refuses the closure's own write-back; this one refuses the enclosing scope's
+// store, without which `g = f` where `f` captures `g` closes
+// cell -> closure -> env -> cell.
+//
+// That cell is the only mutable heap slot in the language — fields are E048,
+// elements are E056, `Cell[T]` is scalar-or-string by E057 — so refusing the
+// stores through it that can reach a function value is what carries the
+// collector-free reference-counting invariant.
+//
+// The judgement is on the stored value's TYPE: a value whose type cannot name
+// a function can never be the closure, so `s = "b"` on a captured string and
+// `arr = arr.append(3)` on a captured `i32[]` stay legal. A closure literal is
+// the one shape read by value flow instead (freshLambdaCannotReach); every
+// other spelling is over-approximated in the conservative direction.
+//
+// It runs at the end of the function rather than at the store because the
+// capture set is not complete until then: a loop body may store the closure
+// that a later statement declares.
+func (c *checker) checkCaptureCycleStores() {
+	for _, st := range c.cellStores {
+		if !c.capturedVars[st.decl] {
+			continue
+		}
+		// A nil value type means the right-hand side already reported an
+		// error; a second diagnostic on the same statement is noise, and the
+		// program is rejected either way.
+		if st.valType == nil {
+			continue
+		}
+		if !c.typeReachesFunc(st.valType, map[string]bool{}) {
+			continue
+		}
+		c.errfCode(st.pos, "E049",
+			"cannot assign a value of type %s to captured %s %q: a captured variable is shared by reference, so storing a value that can reach a closure would close a reference cycle the runtime cannot collect; keep the closure in a variable it does not capture",
+			st.valType, st.declType, st.name)
+	}
+}
+
+// freshLambdaCannotReach reports whether v is a closure LITERAL that provably
+// cannot reach decl's capture cell, so storing it into that cell closes
+// nothing. A closure's only outward edges are its captures, so the literal is
+// safe when it captures neither decl itself nor anything whose type could hold
+// a closure that leads back to decl. Nested lambdas inside v are covered: the
+// capture chain forwards an inner body's outer-scope read into v's own capture
+// list.
+//
+// This is the one value-flow question the rule asks, and it is asked only of a
+// literal — the checker knows what a literal captures because it just built
+// it. Every other right-hand side (an identifier, a call result, a container
+// holding one) is a value from somewhere else, and is judged by its type
+// alone. It earns its keep on the `if (flip) { g = (): T => …; }` shape, a
+// callback swapped on a flag, which the type test alone refuses.
+func (c *checker) freshLambdaCannotReach(v ast.Expr, decl *ast.Var, s *scope) bool {
+	lam, ok := v.(*ast.Lambda)
+	if !ok {
+		return false
+	}
+	for _, capture := range lam.Captures {
+		if s.lookupVarDecl(capture.Name) == decl {
+			return false
+		}
+		if c.typeReachesFunc(capture.Type, map[string]bool{}) {
+			return false
+		}
+	}
+	return true
+}
+
+// typeReachesFunc reports whether a value of type t can transitively hold a
+// function value — the only kind of value that can point back at the closure
+// environment holding a capture cell, and therefore the only kind whose store
+// into that cell can close a cycle.
+//
+// Opaque types answer yes: `dyn` erases its concrete value, an unsubstituted
+// type parameter stands for anything, and an associated-type projection is not
+// resolved here. `seen` breaks the recursion on a self-referential struct or
+// enum; the key is the nominal name, so `Node` is visited once however deeply
+// it nests.
+func (c *checker) typeReachesFunc(t ast.Type, seen map[string]bool) bool {
+	switch v := t.(type) {
+	case nil:
+		return false
+	case *ast.FuncType:
+		return true
+	case ast.DynTraitType, ast.ParamType, ast.SelfType, ast.ProjType:
+		return true
+	case ast.ArrayType:
+		return c.typeReachesFunc(v.Elem, seen)
+	case ast.SliceType:
+		return c.typeReachesFunc(v.Elem, seen)
+	case ast.StreamType:
+		return c.typeReachesFunc(v.Elem, seen)
+	case ast.TupleType:
+		for _, e := range v.Elems {
+			if c.typeReachesFunc(e, seen) {
+				return true
+			}
+		}
+		return false
+	case ast.StructType:
+		if seen[v.Name] {
+			return false
+		}
+		seen[v.Name] = true
+		// The arguments are walked whether or not the name resolves to a
+		// declaration: a builtin generic container (`Map[string, () => i32]`)
+		// has no StructDecl, and a user generic's field types still name the
+		// parameter rather than the argument until monomorphisation.
+		for _, a := range v.Args {
+			if c.typeReachesFunc(a, seen) {
+				return true
+			}
+		}
+		if sd, ok := c.info.Structs[v.Name]; ok {
+			for _, f := range sd.Fields {
+				if c.typeReachesFunc(f.Type, seen) {
+					return true
+				}
+			}
+		}
+		return false
+	case ast.EnumType:
+		if seen[v.Name] {
+			return false
+		}
+		seen[v.Name] = true
+		for _, a := range v.Args {
+			if c.typeReachesFunc(a, seen) {
+				return true
+			}
+		}
+		if ed, ok := c.info.Enums[v.Name]; ok {
+			for _, variant := range ed.Variants {
+				for _, pt := range variant.Payloads {
+					if c.typeReachesFunc(pt, seen) {
+						return true
+					}
+				}
+			}
+		}
+		return false
+	}
+	// Scalars, `string` / `str`, `char`, `void`, `never` and resource
+	// handles hold no Fern reference at all.
+	return false
 }
 
 // checkEscapes runs the two view-escape rules — E063 (`[T]` slice) and
@@ -11371,7 +11624,7 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 				c.errfCode(n.P, "E003", "cannot assign %s to variable of type %s%s", got, n.Type, assignHint(n.Type, got))
 			}
 		}
-		s.names[n.Name] = n.Type
+		s.bindVar(n.Name, n.Type, n)
 		c.info.VarTypes[n] = n.Type
 		c.info.Locals[c.current] = append(c.info.Locals[c.current], n)
 	case *ast.Destructure:
@@ -13877,6 +14130,16 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 							c.captureChain[j].sink(n.Name, t)
 						}
 					}
+					// Note the DECLARATION, not the name: a store into a
+					// captured-and-assigned `var` goes through the shared
+					// boxcapture cell, which is where a reference cycle can
+					// be closed (#8440, checkCaptureCycleStores).
+					if decl := ent.scope.lookupVarDecl(n.Name); decl != nil {
+						if c.capturedVars == nil {
+							c.capturedVars = map[*ast.Var]bool{}
+						}
+						c.capturedVars[decl] = true
+					}
 					return t
 				}
 			}
@@ -15431,6 +15694,19 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				c.errfCode(id.Pos(), "E049",
 					"cannot assign to captured %s %q: a reference-typed closure capture is read-only (it could close a reference cycle); return the new value from the closure instead",
 					ct, id.Name)
+			} else if decl := s.lookupVarDecl(id.Name); decl != nil && lt != nil && ast.IsPointerType(lt) && !c.freshLambdaCannotReach(n.Value, decl, s) {
+				// An enclosing-scope store into a `var` that some closure
+				// also captures lands in the shared boxcapture cell. Whether
+				// that closes a cycle depends on the capture set, which is
+				// not complete until the whole function is checked, so the
+				// site is recorded and judged in checkCaptureCycleStores.
+				c.cellStores = append(c.cellStores, cellStore{
+					pos:      id.Pos(),
+					name:     id.Name,
+					decl:     decl,
+					declType: lt,
+					valType:  rt,
+				})
 			}
 		}
 		return lt

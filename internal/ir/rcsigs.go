@@ -362,6 +362,7 @@ var rcInert = map[string]bool{
 	"__fern_lc_report": true, "__fern_lc_wrnum": true,
 	"__fern_log_f64":       true,
 	"__fern_map_hash_seed": true, "__fern_memchr": true,
+	"__fern_mismatch":     true,
 	"__fern_monotonic_ns": true, "__fern_now_ns": true,
 	"__fern_now_unix_ms": true, "__fern_open_appender": true,
 	"__fern_open_dir": true, "__fern_open_reader": true,

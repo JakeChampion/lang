@@ -46,7 +46,7 @@ func tryFold(op *Op, defs map[int32]*Op) {
 	switch op.Kind {
 	case OpAdd, OpSub, OpMul, OpDiv, OpDivU, OpRem, OpRemU,
 		OpAnd, OpOr, OpXor,
-		OpShl, OpShr, OpShrU,
+		OpShl, OpShr, OpShrU, OpRotr,
 		OpEq, OpNe,
 		OpLt, OpLtU, OpLe, OpLeU,
 		OpGt, OpGtU, OpGe, OpGeU:

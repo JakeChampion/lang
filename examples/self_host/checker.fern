@@ -1507,18 +1507,19 @@ function split_pattern_names(encoded: string): string[] {
 // Types are unknown here — the E001 membership check only needs the names to
 // be in scope. A destructuring `var` / `let` goes through
 // bind_destructure_names instead, which types each binding.
+//
+// A nested position rides in the same encoding as a parenthesised group
+// ("(a,b),s" for `for ((a, b), s) in xs`), so the split is depth-aware and
+// recurses: splitting on every comma bound "(a" and "b)" and left `a` and `b`
+// undefined (#8461).
 function bind_names(s: Scope, name: string): Scope {
-  var start: i32 = 0;
-  var i: i32 = 0;
   var out: Scope = s;
-  while (i <= name.len()) {
-    if (i == name.len() || name[i] == b',') {
-      if (i > start) {
-        out = out.bind(slice_unchecked(name, start, i), t_unknown("binding"));
-      }
-      start = i + 1;
+  for nm in split_pattern_names(name) {
+    if (util.is_tuple_type_name(nm)) {
+      out = bind_names(out, slice_unchecked(nm, 1, nm.len() - 1) + "");
+    } else if (nm.len() > 0) {
+      out = out.bind(nm, t_unknown("binding"));
     }
-    i = i + 1;
   }
   return out;
 }
@@ -2252,6 +2253,24 @@ function variant_payload_type_at(s: Scope, type_name: string, idx: i32): Type {
   return t_struct(ss.name);
 }
 
+// variant_pattern_qualified reports whether an arm pattern spells its owning
+// enum (`B.W`) rather than the bare variant name.
+function variant_pattern_qualified(type_name: string): boolean {
+  var i: i32 = 0;
+  while (i < type_name.len()) {
+    if (type_name[i] == b'.') { return true; }
+    i = i + 1;
+  }
+  return false;
+}
+
+// match_scrut_enum names the enum a match scrutinee has, or "" when the
+// scrutinee is not enum-typed (or the partial checker cannot resolve it).
+function match_scrut_enum(scrutinee: ast.Expr, s: Scope): string {
+  if let TypeUnion(u) = check_expr(scrutinee, s) { return u.name; }
+  return "";
+}
+
 // bind_variant_payloads brings EVERY payload binding of a matched variant into
 // the arm scope `arm`: the first (pv.binding) typed as `__ev`, then each of
 // pv.extra_bindings typed as `__ev1`, `__ev2`, … . `look` is the scope carrying
@@ -2259,7 +2278,16 @@ function variant_payload_type_at(s: Scope, type_name: string, idx: i32): Type {
 // scope, each position independently (so `Rect(_, h)` binds only `h`). Before
 // this only pv.binding was bound, so a multi-binding payload pattern
 // (`Rect(w, h)`) rejected the 2nd+ name as an undefined E001 (#4345).
-function bind_variant_payloads(arm: Scope, look: Scope, pvin: ast.PatVariant): Scope {
+function bind_variant_payloads(arm: Scope, look: Scope, pvin0: ast.PatVariant, scrut_enum: string): Scope {
+  // An UNQUALIFIED arm pattern means the variant of ITS scrutinee, and two
+  // enums may declare the same variant name at different payload types — so
+  // the scrutinee's enum is what tells `B.W(f64)` from `A.W(i32)`. Without it
+  // the bare-keyed lookup below answers for whichever was declared first and
+  // the binding takes the other enum's type (#8461).
+  var pvin: ast.PatVariant = pvin0;
+  if (scrut_enum.len() > 0 && !variant_pattern_qualified(pvin0.type_name)) {
+    pvin = ast.PatVariant { ...pvin0, type_name: scrut_enum + "." + pvin0.type_name };
+  }
   // The pattern keeps its enum qualifier, because the payload-TYPE lookups
   // below resolve THROUGH the owning enum: variant decls are keyed by the
   // bare name, so `A.W` and `C.W` leave two decls called `W` and a bare
@@ -2283,6 +2311,16 @@ function bind_variant_payloads(arm: Scope, look: Scope, pvin: ast.PatVariant): S
     }
   }
   var sc: Scope = arm;
+  // `w @ Only(v)` names the SCRUTINEE alongside the payload, so its type is
+  // the enum rather than any payload slot. Nothing bound it, which made every
+  // use of the whole-value name an undefined E001 (#8461). With no scrutinee
+  // enum to hand — the annotate / value-block walks call in without one — it
+  // still enters scope, erased, which is what keeps the name resolvable.
+  if (pv.at_binding.len() > 0 && pv.at_binding != "_") {
+    var at_ty: Type = t_unknown("@ binding");
+    if (scrut_enum.len() > 0) { at_ty = t_union(scrut_enum); }
+    sc = sc.bind(pv.at_binding, at_ty);
+  }
   if (pv.binding.len() > 0 && pv.binding != "_") {
     sc = sc.bind(pv.binding, variant_binding_type(look, pv.type_name));
   }
@@ -2710,9 +2748,13 @@ function type_assignable(from: Type, to: Type, unions: UnionSig[]): boolean {
           // K / V from a literal's entries — so an unknown side is a
           // wildcard that flows into any concrete `Map[K, V]` slot
           // (mirroring the empty-array rule above). A concrete side
-          // must be assignable.
-          var kok: boolean = is_unknown(fm.key) || type_assignable(fm.key, tm.key, unions);
-          var vok: boolean = is_unknown(fm.value) || type_assignable(fm.value, tm.value, unions);
+          // must be assignable. Unknown on the DESTINATION side is the
+          // same wildcard for the same reason the array and tuple arms
+          // give it: a generic parameter erases to unknown there, so
+          // `assert_eq_map[K, V](Map[K, V], …)` takes a concrete
+          // `Map[i32, i32]`.
+          var kok: boolean = is_unknown(fm.key) || is_unknown(tm.key) || type_assignable(fm.key, tm.key, unions);
+          var vok: boolean = is_unknown(fm.value) || is_unknown(tm.value) || type_assignable(fm.value, tm.value, unions);
           return kok && vok;
         },
         _ => {
@@ -3998,7 +4040,7 @@ pub function check_stmt(st: ast.Stmt, s: Scope): CheckResult {
               // Bring the payload bindings into the arm's
               // scope, each typed as the matching `__ev` field.
               // Bare names and `_` bindings stay out of scope.
-              armScope = bind_variant_payloads(armScope, s, pv);
+              armScope = bind_variant_payloads(armScope, s, pv, union_name);
             }
           }
         }
@@ -4769,6 +4811,19 @@ function validate_union_sigs(unions: UnionSig[], struct_names: string[]): boolea
 function build_func_scope(fd: parser.FuncDecl, st: SigTable, structs: StructTable, unions: UnionTable, methods: MethodTable, imports: string[]): Scope {
   var s: Scope = new_scope_full(st, structs, unions, methods, imports);
   var tps: string[] = func_scope_tparams(fd);
+  // A DERIVED associated function spells its receiver BARE (`Pair`, never
+  // `Pair[T]`) so the struct-method monomorphiser keys on the plain name —
+  // and the spelling is all struct_receiver_typevars has to read, so the
+  // struct's own parameters have to come from its declaration instead.
+  // Without them `T.default()` in a `@derive(cmp.Default) struct Pair[T]`
+  // body read `T` as a value and drew an undefined-name E001 (#8461).
+  if (fd.receiver_type.len() > 0) {
+    for rtv in s.lookup_struct(util.base_type_name(fd.receiver_type)).type_params {
+      if (util.index_of_str(tps, rtv) < 0) {
+        tps = tps.append(rtv);
+      }
+    }
+  }
   var tbs: string[] = fd.bound_traits;
   while (tbs.len() < tps.len()) {
     tbs = tbs.append("");
@@ -6422,7 +6477,7 @@ function mx_match_arm_types(m: ast.StmtMatch, s: Scope): Type[] {
     var armScope: Scope = s;
     match (arm.pattern) {
       ast.PatVariant(pv) => {
-        armScope = bind_variant_payloads(armScope, s, pv);
+        armScope = bind_variant_payloads(armScope, s, pv, match_scrut_enum(m.scrutinee, s));
       },
       _ => {}
     }
@@ -6597,7 +6652,7 @@ function mx_stmts(stmts: ast.Stmt[], s: Scope, unions: UnionSig[], enums: parser
           var armScope: Scope = cur;
           match (arm.pattern) {
             ast.PatVariant(pv) => {
-              armScope = bind_variant_payloads(armScope, cur, pv);
+              armScope = bind_variant_payloads(armScope, cur, pv, match_scrut_enum(m.scrutinee, cur));
             },
             _ => {}
           }
@@ -6797,6 +6852,18 @@ function stmts_slit_diags(stmts: ast.Stmt[], structs: StructSig[]): util.Diag[] 
 // loop, and E058 for a labeled `break L` / `continue L` whose `L` names no
 // enclosing loop. It threads only the enclosing-loop label stack (no value
 // scope): `while` / `for` bodies recurse with in_loop = true.
+// sugar_arm_bodies collects the arm bodies a desugared match carries, or an
+// empty list when the `if` is one the programmer wrote. The four lists are
+// alternatives, not layers: one builder produced this chain.
+function sugar_arm_bodies(sugar: ast.MatchSugar): ast.Stmt[][] {
+  var out: ast.Stmt[][] = [];
+  for arm in sugar.tup { out = out.append(arm.body); }
+  for arm in sugar.strct { out = out.append(arm.body); }
+  for arm in sugar.lits { out = out.append(arm.body); }
+  for arm in sugar.arms { out = out.append(arm.body); }
+  return out;
+}
+
 // block_exits reports whether a statement block is guaranteed to leave
 // its function (return) on every path — an under-approximation mirroring
 // the Go checker's funcBodyExits, used by E052. Only the LAST statement
@@ -6814,6 +6881,29 @@ function block_exits(stmts: ast.Stmt[]): boolean {
       return true;
     },
     ast.StmtIf(f) => {
+      // A tuple / struct / literal / nested-variant match is replaced at parse
+      // time by a done-flag or if/else chain (build_tuple_match and friends),
+      // which falls through by construction — so reading the chain says every
+      // such function can fall off its end (#8461). The `if` carries the arms
+      // as written; apply the same rules the StmtMatch arm below applies.
+      var bodies: ast.Stmt[][] = sugar_arm_bodies(f.sugar);
+      if (bodies.len() > 0) {
+        // A `let … else` folds the rest of the enclosing block into its
+        // success arm; the else arm is required to diverge (E022), so the
+        // construct's only fall-through path is the success arm.
+        if (f.sugar.origin == "let_else") {
+          return block_exits(bodies[0]);
+        }
+        // An `if let` always carries a trailing wildcard arm holding the else
+        // block — empty when the source wrote none, which does not exit, so
+        // the one-armed form falls through the way native's `If` does.
+        for body in bodies {
+          if (!block_exits(body)) {
+            return false;
+          }
+        }
+        return true;
+      }
       return block_exits(f.then_body) && block_exits(f.else_body);
     },
     ast.StmtWhile(w) => {
@@ -8105,6 +8195,26 @@ function type_assoc_req(s: Scope, tyname: string, field: string): AssocHit {
   return assoc_miss();
 }
 
+// assoc_func_impls records the module's ASSOCIATED functions — a FuncDecl
+// with no receiver NAME but a receiver TYPE — as impl-table entries, which is
+// the record `Type.f()` resolution reads. An inherent `impl` already lands
+// there; a `@derive` does not, and its synthesised functions are not trait
+// requirements either (`@derive(json.Json)` supplies `from_json`, which the
+// `Json` trait never declares), so the declaration is the only trace of them.
+// Without this `Wrap.default()` and `User.from_json(s)` reported an undefined
+// name for their own type (#8461). The blank trait name matches no declared
+// trait, so conformance (e021_scope_has_impl) reads exactly what it did.
+function assoc_func_impls(impls: parser.ImplInfo[], funcs: parser.FuncDecl[]): parser.ImplInfo[] {
+  var out: parser.ImplInfo[] = impls;
+  for fd in funcs {
+    if (fd.receiver_name.len() == 0 && fd.receiver_type.len() > 0) {
+      var noargs: string[] = [];
+      out = out.append(parser.ImplInfo { trait_name: "", impl_type: util.base_type_name(fd.receiver_type), type_params: noargs, bounds: noargs, method_names: [fd.name], trait_spelling: "" });
+    }
+  }
+  return out;
+}
+
 // assoc_call_req resolves the callee `obj.field(…)` as an ASSOCIATED
 // (receiver-less) call on a TYPE rather than a method call on a value:
 // `T.zero()` through a bounded type parameter, or `i32.zero()` on a concrete
@@ -8122,7 +8232,21 @@ function assoc_call_req(obj: ast.Expr, field: string, s: Scope): AssocHit {
       if (h.found) {
         return h;
       }
-      return type_assoc_req(s, oid.name, field);
+      var ht: AssocHit = type_assoc_req(s, oid.name, field);
+      if (ht.found) {
+        return ht;
+      }
+      // A name that IS one of the enclosing function's type parameters is a
+      // type qualifier however the function is supplied — an UNBOUNDED `T`
+      // still gets one from its instantiation, which is the shape
+      // `@derive(cmp.Default) struct Pair[T]` reaches through `T.default()`.
+      // Only the qualifier position takes this: tp_assoc_req stays the
+      // bound-driven answer the E021 associated-vs-method rule reads. The
+      // return type is unrecoverable, as every erased parameter's is (#8461).
+      if (util.index_of_str(s.tparams, oid.name) >= 0) {
+        return AssocHit { found: true, ret: "", owner: "" };
+      }
+      return assoc_miss();
     },
     _ => {
       return assoc_miss();
@@ -8190,8 +8314,13 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
       // `Enum.Variant` reference uses, then routed to the same
       // argument checks as the bare constructor call, so the two
       // spellings cannot drift apart.
+      // An enum name also qualifies an ASSOCIATED function — `Opt.empty()`
+      // under `impl Empty for Opt`, `Status.default()` under a derive — so a
+      // field that is not a variant is only E036 once the associated
+      // resolution below has also missed. Ordered the other way this arm
+      // claimed every such call and reported a variant nobody wrote (#8461).
       var cqen: string = qual_enum_name(mfa.obj, s);
-      if (cqen.len() > 0) {
+      if (cqen.len() > 0 && !assoc_call_req(mfa.obj, mfa.field, s).found) {
         if (!qual_variant_exists(cqen, mfa.field, s)) {
           out = out.append(dg_at("E036", "enum " + cqen + " has no variant \"" + mfa.field + "\"", mfa.line, mfa.col));
         } else {
@@ -8630,13 +8759,14 @@ function call_diags_binary(b: ast.ExprBinary, s: Scope, out: util.Diag[]): util.
   if (b.op == "==" || b.op == "!=") {
     var elt: Type = check_expr(b.left, s);
     var ert: Type = check_expr(b.right, s);
-    // An unsuffixed literal on either side is read at the other
-    // operand's width, so `n == 3` holds for an `n` of any integer
-    // type. Two DIFFERENTLY-typed integers are still E041, matching
+    // An unsuffixed literal on either side is read at the other operand's
+    // type, so `n == 3` holds for an `n` of any integer width and
+    // `u32_valued == 4294967295` is not a u32/i64 mismatch. `settles_to` is
+    // the same predicate an assignment reads it through, magnitude rule
+    // included. Two DIFFERENTLY-typed integers are still E041, matching
     // native.
     var eq_widths: boolean = type_eq(elt, ert)
-      || (is_integer(elt) && is_integer(ert)
-          && (unsettled_int_literal(b.left) || unsettled_int_literal(b.right)));
+      || settles_to(b.left, ert, s) || settles_to(b.right, elt, s);
     if (!is_unknown(elt) && !is_unknown(ert) && !eq_widths) {
       out = out.append(dg_at("E041", "cannot compare " + type_label(elt) + " and " + type_label(ert), b.line, b.col));
     } else if (!is_unknown(elt) && eq_widths && is_composite_type(elt)) {
@@ -9564,7 +9694,7 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
                 _ => {}
               }
               if (!foreign) {
-                armScope = bind_variant_payloads(armScope, cur, apv);
+                armScope = bind_variant_payloads(armScope, cur, apv, match_scrut_enum(m.scrutinee, cur));
               }
             },
             _ => {}
@@ -9852,7 +9982,7 @@ function stmts_assign_diags(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]): ut
               // any payload binding type-checks the same way the
               // Go checker does (and a struct-union member still
               // binds its struct).
-              asc = bind_variant_payloads(asc, cur, apv);
+              asc = bind_variant_payloads(asc, cur, apv, match_scrut_enum(m.scrutinee, cur));
             },
             _ => {}
           }
@@ -9881,15 +10011,18 @@ pub struct ModuleTypes { sigs: FuncSig[], top_tys: Type[], all_well_typed: boole
 // is_partial_checker_gap_code reports whether `code` is one this checker still
 // raises on programs the native compiler accepts. The port is partial (#4346):
 // where it cannot model a type it guesses, and these are the rules measured to
-// guess wrong. Each is a bug, not a permanent carve-out — deleting a line here
-// is how one gets finished. The corpora and per-code counts behind the list are
-// in docs/SELFHOST-CHECKER-PORT.md; re-measure before adding or removing one.
+// guess wrong. Each is a bug, not a permanent carve-out, and every entry needs
+// an issue that owns closing it — a code exempted with nothing tracking it is
+// how `xs == ys` came to compile to a pointer compare (#8461). The corpora and
+// per-code counts behind the list are in docs/SELFHOST-CHECKER-PORT.md;
+// re-measure before adding or removing one.
+//
+// E013 / E018 (#8852): the self-host parser never renames `_`, so a repeated
+// discard — `function f(_: i32, _: string)`, `var _ = 1; var _ = 2;` — reads
+// as a redeclared name. Native renames each occurrence (`discardName`); the
+// mirror its comment claims in examples/self_host/parser.fern does not exist.
 function is_partial_checker_gap_code(code: string): boolean {
-  return code == "E001" || code == "E009" || code == "E013"
-      || code == "E018" || code == "E019" || code == "E021" || code == "E024"
-      || code == "E031" || code == "E034" || code == "E036" || code == "E038"
-      || code == "E040" || code == "E041" || code == "E042"
-      || code == "E044" || code == "E051" || code == "E052" || code == "E064";
+  return code == "E013" || code == "E018";
 }
 
 // is_build_gate_code reports whether `code` must reject a program before
@@ -10017,6 +10150,9 @@ function receiver_type_ok(rt: string, mod: parser.Module): boolean {
     return true;
   }
   var base: string = util.base_type_name(rt);
+  if (is_reserved_struct_name(base)) {
+    return true;
+  }
   for sd in mod.structs {
     if (sd.name == base) {
       return true;
@@ -10324,7 +10460,7 @@ struct OwnWalk { moved: MovedEntry[], diags: util.Diag[] }
 // keys admitted while walking `base = S { ...base, f: g(.., base.f, ..) }`
 // or the return of that literal (ow_field_move_fields). `borrowed` names
 // the parameters this frame does not own — never a base for that move.
-struct OwnCtx { owned: string[], borrowed: string[], ofuncs: OwnFunc[], structs: parser.StructDecl[], admit: string, admit_fields: string[] }
+struct OwnCtx { owned: string[], borrowed: string[], ofuncs: OwnFunc[], structs: parser.StructDecl[], admit: string, admit_fields: string[], fresh: string[] }
 
 function ow_moved_has(m: MovedEntry[], name: string): boolean {
   for elem in m {
@@ -10388,7 +10524,7 @@ function ow_nested_ctx(ctx: OwnCtx, params: ast.ParamDecl[]): OwnCtx {
       }
     }
   }
-  return OwnCtx { owned: names, borrowed: borrowed, ofuncs: ctx.ofuncs, structs: ctx.structs, admit: ctx.admit, admit_fields: ctx.admit_fields };
+  return OwnCtx { owned: names, borrowed: borrowed, ofuncs: ctx.ofuncs, structs: ctx.structs, admit: ctx.admit, admit_fields: ctx.admit_fields, fresh: ctx.fresh };
 }
 
 function ow_names_del(names: string[], name: string): string[] {
@@ -10457,6 +10593,9 @@ function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
     ast.ExprTuple(_) => {
       return true;
     },
+    ast.ExprMapLit(_) => {
+      return true;
+    },
     ast.ExprBinary(b) => {
       return b.op == "+";
     },
@@ -10472,7 +10611,14 @@ function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
     ast.ExprCall(c) => {
       match (c.callee) {
         ast.ExprIdent(cid) => {
-          return ow_struct_known(ctx.structs, cid.name);
+          return ow_struct_known(ctx.structs, cid.name) || util.has_str(ctx.fresh, cid.name);
+        },
+        ast.ExprFieldAccess(mfa) => {
+          // `s.to_owned()` materialises a borrowed view into a fresh owned
+          // string — native's whole freshOwnedProducers table
+          // (`__method_string_to_owned`), reached here through the method
+          // spelling because the self-host does not mangle at parse time.
+          return mfa.field == "to_owned";
         },
         _ => {
           return false;
@@ -10926,11 +11072,20 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
       return OwnWalk { moved: ri.moved, diags: util.append_diags(ri.diags, ld) };
     },
     ast.StmtMatch(m) => {
+      // Matching an OWNED scrutinee decomposes the box and MOVES its
+      // pointer-typed payloads into the arm bindings, so each is itself owned
+      // for that arm — the `map(own xs) => Cons(h + 1, map(t))` shape, where
+      // `t` is transferred onward. Scalar payloads are copied, not moved.
+      var scrut_owned: boolean = ow_is_owned_expr(m.scrutinee, ctx);
       var rs: OwnWalk = ru_expr(m.scrutinee, moved, ctx);
       var mv: MovedEntry[] = rs.moved;
       var d: util.Diag[] = rs.diags;
       for arm in m.arms {
-        var ra: OwnWalk = ow_stmts(arm.body, rs.moved, ctx);
+        var actx: OwnCtx = ctx;
+        if (scrut_owned) {
+          actx = ow_arm_payload_ctx(ctx, arm.pattern);
+        }
+        var ra: OwnWalk = ow_stmts(arm.body, rs.moved, actx);
         d = util.append_diags(d, ra.diags);
         mv = ow_moved_join(mv, ra.moved, block_exits(arm.body));
       }
@@ -10967,6 +11122,42 @@ function ow_moved_del(m: MovedEntry[], name: string): MovedEntry[] {
   return out;
 }
 
+// ow_arm_payload_ctx layers a match arm's pointer-typed payload bindings onto
+// the owned set. The payload types come from the variant's synthesised struct
+// decl (`__ev`, `__ev1`, …), which is where the self-host records them.
+function ow_arm_payload_ctx(ctx: OwnCtx, pat: ast.Pattern): OwnCtx {
+  if let ast.PatVariant(pv) = pat {
+    // `E.Cons` and a bare `Cons` name the same variant decl.
+    var vname: string = util.base_type_name(pv.type_name);
+    var di: i32 = 0;
+    var dot: i32 = 0 - 1;
+    while (di < vname.len()) {
+      if (vname[di] == b'.') { dot = di; }
+      di = di + 1;
+    }
+    if (dot >= 0) { vname = slice_unchecked(vname, dot + 1, vname.len()) + ""; }
+    var binds: string[] = [];
+    if (pv.binding.len() > 0) { binds = binds.append(pv.binding); }
+    for extra in pv.extra_bindings { binds = binds.append(extra); }
+    if (binds.len() == 0) { return ctx; }
+    var names: string[] = ctx.owned;
+    for sd in ctx.structs {
+      if (sd.name == vname && sd.enum_owner.len() > 0) {
+        var i: i32 = 0;
+        while (i < binds.len() && i < sd.fields.len()) {
+          if (binds[i].len() > 0 && ow_type_is_pointer_name(sd.fields[i].type_name, ctx.structs)
+              && !util.has_str(names, binds[i])) {
+            names = names.append(binds[i]);
+          }
+          i = i + 1;
+        }
+      }
+    }
+    return OwnCtx { ...ctx, owned: names };
+  }
+  return ctx;
+}
+
 // collect_own_funcs records every function that has at least one `own`
 // parameter, with a per-parameter owned-flag list (for the E051 guard).
 function collect_own_funcs(funcs: parser.FuncDecl[]): OwnFunc[] {
@@ -10988,6 +11179,83 @@ function collect_own_funcs(funcs: parser.FuncDecl[]): OwnFunc[] {
   return out;
 }
 
+// ow_type_is_pointer reports whether a declared type SPELLING is
+// pointer-shaped, native's ast.IsPointerType over the self-host's type text:
+// strings, arrays / slices, tuples, function values, trait objects, and
+// declared struct / enum names. Every scalar width, `boolean`, `char`, `void`
+// and an unresolved name (an erased type parameter) are not.
+function ow_type_is_pointer_name(tn: string, structs: parser.StructDecl[]): boolean {
+  if (tn.len() == 0 || tn == "void") { return false; }
+  if (tn == "string" || tn == "str" || tn == "fn") { return true; }
+  if (tn[tn.len() - 1] == b']') { return true; }
+  if (tn[0] == b'(') { return true; }
+  if (tn.len() >= 4 && slice_unchecked(tn, 0, 4) == "dyn ") { return true; }
+  var base: string = util.base_type_name(tn);
+  if (is_reserved_struct_name(base) || is_reserved_enum_name(base)) { return true; }
+  for sd in structs {
+    if (sd.name == base || sd.enum_owner == base) { return true; }
+  }
+  return false;
+}
+
+// The module form adds the names only a whole module carries: a declared enum
+// with no payload variants, and a union alias.
+function ow_type_is_pointer(tn: string, mod: parser.Module): boolean {
+  if (ow_type_is_pointer_name(tn, mod.structs)) { return true; }
+  var base: string = util.base_type_name(tn);
+  for ed in mod.enums {
+    if (ed.name == base) { return true; }
+  }
+  for alias in mod.aliases {
+    if (alias.name == base) { return true; }
+  }
+  return false;
+}
+
+// ow_fresh_owners names the functions whose RESULT the caller owns, so passing
+// a call to one into an `own` parameter transfers rather than borrows. Native's
+// rule (guardCallArgs' isOwnedExpr): a pointer-returning function that could
+// not be handing back a borrowed argument — either it takes no pointer
+// parameter at all, so the result is built fresh, or every pointer parameter is
+// `own`, so the callee already took ownership of each. `build_stmt(own ops, s)
+// -> Op[]` returning the grown `ops` is that second shape, and it is the one
+// this compiler's own sources are written in.
+//
+// Generic functions are skipped: an erased type parameter's spelling reads as a
+// nominal here, and native types it as a ParamType, which is not pointer-shaped.
+function ow_fresh_owners(mod: parser.Module, ofuncs: OwnFunc[]): string[] {
+  // The BUILTIN half of the same rule. Native registers builtins in the same
+  // FuncSigs table it reads user functions from, so `__alloc_u8(n)` is a fresh
+  // owner there; here they carry no declaration to derive it from, so the ones
+  // that pass the test (pointer result, no pointer parameter) are listed.
+  // TestSelfHostFreshOwnedBuiltinsMatchChecker recomputes the list from
+  // native's table and fails when the two drift.
+  var out: string[] = [
+    "__alloc_u8", "args", "cell_new", "hostname", "map_new", "random_bytes",
+    "read_line", "stderr", "stdin", "stdout", "strbuf_take", "target_arch",
+    "target_os", "tcp_recv"
+  ];
+  for fn in mod.funcs {
+    if (fn.receiver_name.len() > 0 || fn.type_params.len() > 0) { continue; }
+    if (!ow_type_is_pointer(fn.ret_type, mod)) { continue; }
+    var flags: boolean[] = ow_func_flags(ofuncs, fn.name);
+    var any_ptr: boolean = false;
+    var all_own: boolean = true;
+    var i: i32 = 0;
+    while (i < fn.params.len()) {
+      if (ow_type_is_pointer(fn.params[i].type_name, mod)) {
+        any_ptr = true;
+        if (i >= flags.len() || !flags[i]) { all_own = false; }
+      }
+      i = i + 1;
+    }
+    if (!any_ptr || all_own) {
+      out = out.append(fn.name);
+    }
+  }
+  return out;
+}
+
 // own_diags runs the affine move-check over every function whose body
 // could exercise it: those with owned params (the E050 walk) and — once
 // any owned-param function exists — every function (the E051 call-site
@@ -10995,6 +11263,7 @@ function collect_own_funcs(funcs: parser.FuncDecl[]): OwnFunc[] {
 // ordinary programs are untouched.
 pub function own_diags(mod: parser.Module): util.Diag[] {
   var ofuncs: OwnFunc[] = collect_own_funcs(mod.funcs);
+  var fresh: string[] = ow_fresh_owners(mod, ofuncs);
   var out: util.Diag[] = [];
   for fn in mod.funcs {
     var owned: string[] = [];
@@ -11007,7 +11276,7 @@ pub function own_diags(mod: parser.Module): util.Diag[] {
       }
     }
     if (owned.len() > 0 || ofuncs.len() > 0) {
-      var ctx: OwnCtx = OwnCtx { owned: owned, borrowed: borrowed, ofuncs: ofuncs, structs: mod.structs, admit: "", admit_fields: [] };
+      var ctx: OwnCtx = OwnCtx { owned: owned, borrowed: borrowed, ofuncs: ofuncs, structs: mod.structs, admit: "", admit_fields: [], fresh: fresh };
       var nomoved: MovedEntry[] = [];
       var r: OwnWalk = ow_stmts(fn.body, nomoved, ctx);
       out = util.append_diags(out, r.diags);
@@ -11361,6 +11630,15 @@ function e064_unknown_bare(type_name: string, struct_names: string[], union_name
   if (type_name == "fn" || type_name == "tuple") {
     return false;
   }
+  // The front end's built-in structs and enums are registered types natively
+  // (checker.go's builtinStructDecls / builtinEnumDecls), so naming one is not
+  // an unknown type. Reader / Writer / MapIter reach here even on a module
+  // carrying the injected decls: they are opaque handles whose methods the
+  // checker resolves as builtins, so declaring them would turn every
+  // `r.read_line()` into a field read (E043).
+  if (is_reserved_struct_name(type_name) || is_reserved_enum_name(type_name)) {
+    return false;
+  }
   for byte in type_name {
     var ch: i32 = byte as i32;
     var alpha: boolean = ch >= 65 && ch <= 90 || ch >= 97 && ch <= 122;
@@ -11411,12 +11689,12 @@ function e064_unknown_name_tref(tr: parser.TypeRef, struct_names: string[], unio
   // Go checker's checkTypeKnown flags an undeclared generic base
   // (`Statuus[i32]` → E064 "Statuus") exactly like a bare unknown name —
   // knownTypeName accepts any declared struct / enum / trait / resource.
-  // The builtin generic containers (Map / Cell) and the reserved builtin
-  // enums (Option / Result / …) are registered types natively, so they are
+  // The reserved builtin structs (Map / Cell / MapIter / …) and enums
+  // (Option / Result / …) are registered types natively, so they are
   // allowlisted here; declared traits and resources arrive via extra_known
   // (they aren't in the struct/union name sets this resolver models).
   if (tr.args.len() > 0) {
-    if (tr.base != "Map" && tr.base != "Cell" && !is_reserved_enum_name(tr.base)) {
+    if (!is_reserved_struct_name(tr.base) && !is_reserved_enum_name(tr.base)) {
       var kx: boolean = false;
       for elem in extra_known {
         if (elem == tr.base) {
@@ -11619,9 +11897,20 @@ function e044_expr(e: ast.Expr, line: i32, col: i32, suspects: string[], labels:
   var out: util.Diag[] = [];
   match (e) {
     ast.ExprLambda(lm) => {
+      // Only a lambda the PROGRAMMER wrote is a capture site. The IIFEs this
+      // parser synthesises — an if- / match-expression, a value block, a
+      // comprehension — have no counterpart in the native AST, so native
+      // draws nothing against them: `return if (c) { a } else { b };` inside
+      // `pick[T](…, a: T, b: T)` reported E044 for both arms against a
+      // program native accepts (#8461). Skipped rather than descended,
+      // keeping the rule's deliberate narrowness: a written lambda nested
+      // inside a synthesised one is under-reported, never false-reported.
+      //
       // Report and stop: stmts_mention already recursed into any
       // nested lambda, so descending again would double-report.
-      out = util.append_diags(out, e044_lambda_check(lm, line, col, suspects, labels));
+      if (lm.origin.len() == 0) {
+        out = util.append_diags(out, e044_lambda_check(lm, line, col, suspects, labels));
+      }
     },
     ast.ExprBinary(b) => {
       out = util.append_diags(out, e044_expr(b.left, line, col, suspects, labels));
@@ -13357,7 +13646,14 @@ pub function check_module(raw_mod: parser.Module): ModuleTypes {
   // anything is typed against it, or a legal `string` / `i64` arm value reads
   // as a store into an i32 (#8657). Lowering gets the same rewrite through
   // annotate_module.
-  var mod: parser.Module = retype_value_blocks(filled);
+  var revalued: parser.Module = retype_value_blocks(filled);
+  // The built-in struct declarations (Platform, Stream, HeaderMap, the
+  // std/time types, …) are injected into the struct table, not written in any
+  // source, so a checker reading `mod.structs` as parsed sees only the
+  // reserved NAMES and reports E064 / E021 against every use of one. Native
+  // registers the same decls before it types anything; this is that
+  // registration.
+  var mod: parser.Module = parser.Module { ...revalued, structs: parser.inject_builtin_enums(revalued.structs) };
   // Collect struct decls first; func sigs + union aliases
   // both use them to resolve names. Union aliases come next
   // so func sigs can reference union-typed params / returns.
@@ -13452,6 +13748,7 @@ pub function check_module(raw_mod: parser.Module): ModuleTypes {
       sj = sj + 1;
     }
   }
+  var call_impls: parser.ImplInfo[] = assoc_func_impls(mod.impls, mod.funcs);
   var i: i32 = 0;
   while (i < mod.funcs.len()) {
     if (derive_body_suppressed(mod.funcs[i], derive_keys)) {
@@ -13464,7 +13761,7 @@ pub function check_module(raw_mod: parser.Module): ModuleTypes {
     // is the same scope carrying the impl table, which only the call walk
     // (E021) and check_func_body may see — see Scope.impls.
     var fsc: Scope = build_func_scope(mod.funcs[i], st, stt, ut, methods, import_paths);
-    var csc: Scope = fsc.with_impls(mod.impls, mod.trait_reqs);
+    var csc: Scope = fsc.with_impls(call_impls, mod.trait_reqs);
     if (!check_func_body(mod.funcs[i], csc)) {
       well_typed = false;
     }
@@ -13836,8 +14133,9 @@ pub function module_scopes(mod: parser.Module): Scope[] {
 // module-level note.
 pub function ill_typed_hint(mod: parser.Module): util.Diag[] {
   var env: ModuleEnv = module_env(mod);
+  var hint_impls: parser.ImplInfo[] = assoc_func_impls(mod.impls, mod.funcs);
   for func in mod.funcs {
-    if (!check_func_body(func, build_func_scope(func, env.sigs, env.structs, env.unions, env.methods, env.imports).with_impls(mod.impls, mod.trait_reqs))) {
+    if (!check_func_body(func, build_func_scope(func, env.sigs, env.structs, env.unions, env.methods, env.imports).with_impls(hint_impls, mod.trait_reqs))) {
       return [dg_at("type", "\"" + func.name + "\": an expression has a type the self-host checker cannot represent yet (enum value, Option/Result, generic, or dyn); it type-checks under the native `fern` — see issue #4346", func.line, func.col)];
     }
   }
@@ -14885,14 +15183,14 @@ function annotate_variant_struct(name: string, s: Scope): string {
 // them. A wildcard arm, an unresolvable variant, and the `_` / bare-name bindings
 // bind_variant_payloads skips all keep the enclosing scope — their calls annotate
 // "" and take the structural fallback.
-function annotate_arm_scope(arm: ast.MatchArm, s: Scope): Scope {
+function annotate_arm_scope(arm: ast.MatchArm, s: Scope, scrut_enum: string): Scope {
   match (arm.pattern) {
     ast.PatVariant(pv) => {
       var vn: string = annotate_variant_struct(pv.type_name, s);
       if (vn.len() == 0) {
         return s;
       }
-      return bind_variant_payloads(s, s, ast.PatVariant { ...pv, type_name: vn });
+      return bind_variant_payloads(s, s, ast.PatVariant { ...pv, type_name: vn }, scrut_enum);
     },
     ast.PatWildcard(_) => {
       return s;
@@ -14924,7 +15222,7 @@ function annotate_stmt(st: ast.Stmt, s: Scope): ast.Stmt {
     ast.StmtMatch(m) => {
       var narms: ast.MatchArm[] = [];
       for arm in m.arms {
-        var asc: Scope = annotate_arm_scope(arm, s);
+        var asc: Scope = annotate_arm_scope(arm, s, match_scrut_enum(m.scrutinee, s));
         var g: ast.Expr = arm.guard;
         if (arm.has_guard) {
           g = annotate_expr(arm.guard, asc);
@@ -15044,7 +15342,7 @@ function vb_assigned_types(stmts: ast.Stmt[], name: string, s: Scope, acc: Type[
       },
       ast.StmtMatch(m) => {
         for arm in m.arms {
-          out = vb_assigned_types(arm.body, name, annotate_arm_scope(arm, cur), out);
+          out = vb_assigned_types(arm.body, name, annotate_arm_scope(arm, cur, match_scrut_enum(m.scrutinee, cur)), out);
         }
       },
       ast.StmtDefer(d) => {
@@ -15222,7 +15520,7 @@ function vb_stmt(st: ast.Stmt, s: Scope): ast.Stmt {
     ast.StmtMatch(m) => {
       var narms: ast.MatchArm[] = [];
       for arm in m.arms {
-        var asc: Scope = annotate_arm_scope(arm, s);
+        var asc: Scope = annotate_arm_scope(arm, s, match_scrut_enum(m.scrutinee, s));
         var g: ast.Expr = arm.guard;
         if (arm.has_guard) {
           g = vb_expr(arm.guard, asc);

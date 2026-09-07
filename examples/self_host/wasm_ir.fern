@@ -349,6 +349,7 @@ pub function needs_of(cache: irlower.LowerResult[]): string[] {
     if (module_uses_str_slice(cache)) { out = out.append("@uses_str_slice"); }
     if (module_uses_memchr(cache)) { out = out.append("@uses_memchr"); }
     if (module_uses_rmemchr(cache)) { out = out.append("@uses_rmemchr"); }
+    if (module_uses_mismatch(cache)) { out = out.append("@uses_mismatch"); }
     if (module_uses_count_byte(cache)) { out = out.append("@uses_count_byte"); }
     if (module_uses_ascii_run(cache)) { out = out.append("@uses_ascii_run"); }
     if (module_uses_str_to_i32(cache)) { out = out.append("@uses_str_to_i32"); }
@@ -671,6 +672,13 @@ pub function module_uses_maps(cache: irlower.LowerResult[]): boolean {
 pub function module_uses_memchr(cache: irlower.LowerResult[]): boolean {
     function is_memchr(o: ir.Op): boolean { return o.kind_tag == 225; }  // memchr
     return any_op(cache, is_memchr);
+}
+
+// module_uses_mismatch gates $__fern_mismatch, the two-range comparison kernel
+// of #8791. Same shape as module_uses_memchr above.
+pub function module_uses_mismatch(cache: irlower.LowerResult[]): boolean {
+    function is_mismatch(o: ir.Op): boolean { return o.kind_tag == 245; }  // mismatch
+    return any_op(cache, is_mismatch);
 }
 
 // module_uses_rmemchr gates $__fern_rmemchr, the backward byte search of
@@ -4306,6 +4314,11 @@ function emit_str_op_wat(o: ir.Op): string {
         // is the wasm value stack.
         return "    call $__fern_memchr\n";
     }
+    if (o.kind_tag == 245) {  // mismatch
+        // stack: a, ao, b, bo, n -> the first differing offset, or the clamped
+        // n. A call for memchr's reason: the body loops over its own locals.
+        return "    call $__fern_mismatch\n";
+    }
     if (o.kind_tag == 234) {  // rmemchr
         // stack: s, byte, from -> the LAST match at or before `from`, or -1.
         // A call for memchr's reason: the body loops over its own locals.
@@ -5904,6 +5917,62 @@ pub function memchr_helper(): string {
     o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
     o = o + "      (br $c)))\n";
     o = o + "    (i32.const -1))\n";
+    return o;
+}
+// mismatch_helper emits $__fern_mismatch(a, ao, b, bo, n) -> the offset of the
+// first byte where a[ao..ao+n) and b[bo..bo+n) differ, or the clamped n when
+// the two ranges are equal (#8791).
+//
+// v128, 16 bytes of each operand an iteration — memchr's kernel with the
+// splat needle replaced by a second load. The mask means EQUAL here where
+// memchr's means FOUND, so the loop continues while it is all-ones and the
+// lane comes from `i32.ctz` of the mask XORed with 0xffff.
+//
+// The clamps are the op's contract rather than defensive tidying: the value
+// returned on equality is the CLAMPED n, so a caller asking to compare more
+// than either range holds gets the shorter answer and its `== n` test fails.
+// They also make the loop's own bound the only bound it needs.
+//
+// The self-host wasm string is one [len@0][bytes@4] block, so both operands
+// always have an address and there is no inline-string path to get wrong —
+// the reason the native wasm backend keeps a scalar body here and this one
+// does not. The vector load runs only with a full block left in both ranges,
+// so it never reads past either block, and its alignment hint is 0 because
+// both cursors are arbitrary.
+//
+// Reads only the two source blocks — no allocation, no calls.
+pub function mismatch_helper(): string {
+    var o: string = "";
+    o = o + "  (func $__fern_mismatch (param $a i32) (param $ao i32) (param $b i32) (param $bo i32) (param $n i32) (result i32)\n";
+    o = o + "    (local $na i32) (local $nb i32) (local $pa i32) (local $pb i32) (local $i i32) (local $m i32)\n";
+    o = o + "    (local.set $na (i32.load (local.get $a)))\n";
+    o = o + "    (local.set $nb (i32.load (local.get $b)))\n";
+    // Each offset clamps into [0, len] of its own string.
+    o = o + "    (if (i32.lt_s (local.get $ao) (i32.const 0)) (then (local.set $ao (i32.const 0))))\n";
+    o = o + "    (if (i32.gt_s (local.get $ao) (local.get $na)) (then (local.set $ao (local.get $na))))\n";
+    o = o + "    (if (i32.lt_s (local.get $bo) (i32.const 0)) (then (local.set $bo (i32.const 0))))\n";
+    o = o + "    (if (i32.gt_s (local.get $bo) (local.get $nb)) (then (local.set $bo (local.get $nb))))\n";
+    // n = min(n, len(a) - ao, len(b) - bo), floored at 0.
+    o = o + "    (if (i32.gt_s (local.get $n) (i32.sub (local.get $na) (local.get $ao))) (then (local.set $n (i32.sub (local.get $na) (local.get $ao)))))\n";
+    o = o + "    (if (i32.gt_s (local.get $n) (i32.sub (local.get $nb) (local.get $bo))) (then (local.set $n (i32.sub (local.get $nb) (local.get $bo)))))\n";
+    o = o + "    (if (i32.lt_s (local.get $n) (i32.const 0)) (then (local.set $n (i32.const 0))))\n";
+    // Both byte bases fold their offset in once, so neither loop re-adds it.
+    o = o + "    (local.set $pa (i32.add (i32.add (local.get $a) (i32.const 4)) (local.get $ao)))\n";
+    o = o + "    (local.set $pb (i32.add (i32.add (local.get $b) (i32.const 4)) (local.get $bo)))\n";
+    o = o + "    (block $vd (loop $vc\n";
+    o = o + "      (br_if $vd (i32.lt_s (i32.sub (local.get $n) (local.get $i)) (i32.const 16)))\n";
+    o = o + "      (local.set $m (i8x16.bitmask (i8x16.eq (v128.load (i32.add (local.get $pa) (local.get $i))) (v128.load (i32.add (local.get $pb) (local.get $i))))))\n";
+    o = o + "      (if (i32.ne (local.get $m) (i32.const 65535)) (then (return (i32.add (local.get $i) (i32.ctz (i32.xor (local.get $m) (i32.const 65535)))))))\n";
+    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 16)))\n";
+    o = o + "      (br $vc)))\n";
+    // Scalar tail: fewer than 16 bytes left, and the whole algorithm for a
+    // range shorter than one vector.
+    o = o + "    (block $d (loop $c\n";
+    o = o + "      (br_if $d (i32.ge_s (local.get $i) (local.get $n)))\n";
+    o = o + "      (if (i32.ne (i32.load8_u (i32.add (local.get $pa) (local.get $i))) (i32.load8_u (i32.add (local.get $pb) (local.get $i)))) (then (return (local.get $i))))\n";
+    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
+    o = o + "      (br $c)))\n";
+    o = o + "    (local.get $n))\n";
     return o;
 }
 // rmemchr_helper emits $__fern_rmemchr(s, byte, from) -> the index of the LAST
@@ -9302,6 +9371,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     if (need(needs, "@uses_str_slice") || need(needs, "str_split") || need(needs, "@uses_str_lines")) { parts = parts.append(substr_helper()); }
     if (need(needs, "@uses_memchr")) { parts = parts.append(memchr_helper()); }
     if (need(needs, "@uses_rmemchr")) { parts = parts.append(rmemchr_helper()); }
+    if (need(needs, "@uses_mismatch")) { parts = parts.append(mismatch_helper()); }
     if (need(needs, "@uses_count_byte")) { parts = parts.append(count_byte_helper()); }
     if (need(needs, "@uses_ascii_run")) { parts = parts.append(ascii_run_helper()); }
     // $__fern_str_split (+ its private $__fern_arr_push) for the IR path.

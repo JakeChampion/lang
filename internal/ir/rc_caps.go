@@ -97,6 +97,38 @@ func isSliceType(t ast.Type) bool {
 	return ok
 }
 
+// enumPayloadsResolved returns every variant payload type of enum
+// instantiation `ty`, with the instantiation's type ARGUMENTS substituted for
+// the declaration's type parameters.
+//
+// Generic enums are not monomorphised — `Option[i32]` and `Option[string]`
+// share one EnumDecl whose payloads are `ParamType{T}`, and the concrete types
+// live in `EnumType.Args`. A capability walk that reads the decl directly
+// therefore meets a type parameter where the value has a concrete type, and
+// every predicate below falls through to its default answer: `Option[i32]`
+// read as "deep drop not wired", so a struct holding one dropped out of the
+// owned model entirely and lost the reuse paths with it (#8785's in-place
+// field append among them, which is what surfaced this). The drop EMITTER has
+// always substituted here (emitEnumSlotDrop), so the predicates were answering
+// about a shape the code generator never lowers.
+//
+// Un-instantiated (`len(Args) == 0` on a generic decl) stays unresolved: its
+// payloads are still ParamTypes and each caller's ParamType answer applies.
+func enumPayloadsResolved(info *checker.Info, ty ast.EnumType) ([]ast.Type, bool) {
+	ed, ok := info.Enums[ty.Name]
+	if !ok {
+		return nil, false
+	}
+	if len(ty.Args) > 0 {
+		ed = substituteEnumDecl(ed, ty.Args)
+	}
+	var out []ast.Type
+	for _, v := range ed.Variants {
+		out = append(out, v.Payloads...)
+	}
+	return out, true
+}
+
 // isMapType reports whether t is the runtime Map handle type. A
 // Map-typed field / payload / capture reclaims its structure (value
 // column + buf + handle) via __map_drop_values then __fern_map_drop,
@@ -151,19 +183,17 @@ func typeIsStringArrayFreeIn(info *checker.Info, t ast.Type, seen map[string]boo
 		}
 		return true
 	case ast.EnumType:
-		if seen[ty.Name] {
+		if seen["e:"+ty.String()] {
 			return true
 		}
-		seen[ty.Name] = true
-		ed, ok := info.Enums[ty.Name]
+		seen["e:"+ty.String()] = true
+		payloads, ok := enumPayloadsResolved(info, ty)
 		if !ok {
 			return false
 		}
-		for _, v := range ed.Variants {
-			for _, pl := range v.Payloads {
-				if !typeIsStringArrayFreeIn(info, pl, seen) {
-					return false
-				}
+		for _, pl := range payloads {
+			if !typeIsStringArrayFreeIn(info, pl, seen) {
+				return false
 			}
 		}
 		return true
@@ -211,19 +241,17 @@ func typeDeepDropWired(t ast.Type, info *checker.Info, seen map[string]bool) boo
 		}
 		return true
 	case ast.EnumType:
-		if seen["e:"+ty.Name] {
+		if seen["e:"+ty.String()] {
 			return true
 		}
-		seen["e:"+ty.Name] = true
-		ed, ok := info.Enums[ty.Name]
+		seen["e:"+ty.String()] = true
+		payloads, ok := enumPayloadsResolved(info, ty)
 		if !ok {
 			return false
 		}
-		for _, v := range ed.Variants {
-			for _, pl := range v.Payloads {
-				if !typeDeepDropWired(pl, info, seen) {
-					return false
-				}
+		for _, pl := range payloads {
+			if !typeDeepDropWired(pl, info, seen) {
+				return false
 			}
 		}
 		return true

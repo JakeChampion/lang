@@ -140,22 +140,21 @@ function main(): i32 { return grow("a", 3).len(); }`
 	}
 }
 
-// TestLowerStrSelfAppendSkipsArm64: arm64 (ptrW==8 + TwoWordOverride) does not
-// reclaim heap strings on overwrite — that is the deferred RC-perceus slice 5g
-// — so there is no reclaim for the helper to take over and its codegen stays
-// byte-identical.
-func TestLowerStrSelfAppendSkipsArm64(t *testing.T) {
+// TestLowerStrSelfAppendArm64: the ptrW==8 + TwoWordOverride ABI takes the
+// same in-place append — its own leg because the loops above cover ptrW 4 and
+// ptrW 8 single-word only.
+func TestLowerStrSelfAppendArm64(t *testing.T) {
 	prevFree, prevOverride := ast.RcFreeEnabled, ast.TwoWordOverride
 	ast.RcFreeEnabled = true
 	ast.TwoWordOverride = true
 	defer func() { ast.RcFreeEnabled, ast.TwoWordOverride = prevFree, prevOverride }()
 
 	prog := lowerSourceWith(t, strSelfAppendSrc, 8)
-	if got := countFnCallDirect(prog, "build", "__fern_str_append"); got != 0 {
-		t.Errorf("arm64 (two-word, ptrW=8): __fern_str_append calls = %d, want 0", got)
+	if got := countFnCallDirect(prog, "build", "__fern_str_append"); got != 1 {
+		t.Errorf("arm64 (two-word, ptrW=8): __fern_str_append calls = %d, want 1", got)
 	}
-	if got := countOpKind(prog, "build", OpStrConcat); got != 1 {
-		t.Errorf("arm64 (two-word, ptrW=8): OpStrConcat = %d, want 1", got)
+	if got := countOpKind(prog, "build", OpStrConcat); got != 0 {
+		t.Errorf("arm64 (two-word, ptrW=8): OpStrConcat = %d, want 0 (the append replaces it)", got)
 	}
 }
 
@@ -223,9 +222,9 @@ function main(): i32 { return j("a", "b", "c").len(); }`
 	}
 }
 
-// TestLowerConcatChainSkipsArm64: arm64 has no __fern_str_append helper, so a
-// chain keeps the copy-then-__fern_str_dec shape and its codegen is unchanged.
-func TestLowerConcatChainSkipsArm64(t *testing.T) {
+// TestLowerConcatChainArm64: the same chain on ptrW==8 + TwoWordOverride —
+// one allocating join and two appends into its intermediate.
+func TestLowerConcatChainArm64(t *testing.T) {
 	prevFree, prevOverride := ast.RcFreeEnabled, ast.TwoWordOverride
 	ast.RcFreeEnabled = true
 	ast.TwoWordOverride = true
@@ -235,11 +234,11 @@ func TestLowerConcatChainSkipsArm64(t *testing.T) {
 function main(): i32 { return j("a", "b", "c").len(); }`
 
 	prog := lowerSourceWith(t, src, 8)
-	if got := countFnCallDirect(prog, "j", "__fern_str_append"); got != 0 {
-		t.Errorf("arm64: __fern_str_append calls = %d, want 0", got)
+	if got := countFnCallDirect(prog, "j", "__fern_str_append"); got != 2 {
+		t.Errorf("arm64: __fern_str_append calls = %d, want 2 (the two joins above the leftmost)", got)
 	}
-	if got := countOpKind(prog, "j", OpStrConcat); got != 3 {
-		t.Errorf("arm64: OpStrConcat = %d, want 3 (one per join)", got)
+	if got := countOpKind(prog, "j", OpStrConcat); got != 1 {
+		t.Errorf("arm64: OpStrConcat = %d, want 1 (only the leftmost join allocates)", got)
 	}
 }
 
@@ -247,7 +246,7 @@ function main(): i32 { return j("a", "b", "c").len(); }`
 // old buffer through __fern_str_dec, which FREES at rc==1. It used
 // __fern_rc_dec, which only decrements — so every intermediate of a string
 // accumulator was orphaned (#5637). Both reclaiming ABIs now name the same
-// helper; the arm64 exclusion is covered above.
+// helper.
 func TestLowerStringOverwriteFrees(t *testing.T) {
 	prev := ast.RcFreeEnabled
 	ast.RcFreeEnabled = true

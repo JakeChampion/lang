@@ -90,8 +90,8 @@ func TestStrFieldAppendSelfOverwriteGrowsInPlace(t *testing.T) {
 	}
 }
 
-// The same on the two-word (wasm) ABI, which strAppendAvailable also covers:
-// the field load fans out to (data, len) and the helper takes both words.
+// The same on the two-word ABI: the field load fans out to (data, len) and
+// the helper takes both words.
 func TestStrFieldAppendSelfOverwriteGrowsInPlaceTwoWord(t *testing.T) {
 	fn := funcByName(lowerForTestPtrW(t, strFieldAppendSelfOverwriteSrc, 4), "main")
 	if got := strAppendCount(fn); got != 1 {
@@ -102,23 +102,20 @@ func TestStrFieldAppendSelfOverwriteGrowsInPlaceTwoWord(t *testing.T) {
 	}
 }
 
-// arm64 has no __fern_str_append helper (strAppendAvailable is false there),
-// and widening that predicate without one is the change its own comment calls
-// out as turning a release into a use-after-free. So the field append must
-// stay on the plain concat — and, with the field no longer placeable, the
-// whole site must fall back to the general StructLit lowering rather than
-// reusing a box around a copy.
-func TestStrFieldAppendRefusesWithoutTheHelper(t *testing.T) {
+// And on arm64 — ptrW 8 with the two-word override, the ABI that carries the
+// pair in registers rather than a memory pair. It is its own leg because
+// neither of the two above exercises that combination.
+func TestStrFieldAppendSelfOverwriteGrowsInPlaceArm64(t *testing.T) {
 	prev := ast.TwoWordOverride
 	defer func() { ast.TwoWordOverride = prev }()
 	ast.TwoWordOverride = true
 
 	fn := funcByName(lowerForTest(t, strFieldAppendSelfOverwriteSrc), "main")
-	if got := strAppendCount(fn); got != 0 {
-		t.Errorf("arm64 has no __fern_str_append helper, got %d calls to it", got)
+	if got := strAppendCount(fn); got != 1 {
+		t.Errorf("arm64: got %d __fern_str_append, want 1", got)
 	}
-	if got := allocReuseCount(fn); got != 0 {
-		t.Errorf("arm64: the site is not placeable without the helper, got %d __alloc_reuse", got)
+	if got := allocReuseCount(fn); got != 1 {
+		t.Errorf("arm64: got %d __alloc_reuse, want 1", got)
 	}
 }
 

@@ -24,7 +24,6 @@
 // RESOLUTION is irverifyprovided.fern (slice 4), which reports the callee this
 // file's arity check deliberately leaves alone.
 
-import "core/map";
 import "./ir";
 import "./util";
 
@@ -76,50 +75,98 @@ pub struct FnSig { name: string, n_params: i32 }
 // linear scan per call op makes a pass quadratic on the one program it most
 // needs to check.
 //
-// The value is the declared parameter count, or -1 where the caller only asked
+// It is a head/next chain over a name hash — checker.sig_table's idiom. The
+// builtin `Map` this replaced does not avoid the scan the paragraph above rules
+// out: that map is an association LIST (`__fern_map_find` in asmcore walks the
+// key column), so `has` and `get_or` WERE the linear scan, one layer down.
+//
+// params[i] is the declared parameter count, or -1 where the caller only asked
 // for membership — which is also what a miss reads as, so index_params answers
 // "absent" and "membership-only" the same way by construction.
-pub struct NameIndex { m: Map[string, i32] }
+pub struct NameIndex {
+    // head[b] is the first row in bucket b (-1 when empty); next[i] chains to
+    // the next row in the same bucket, ascending.
+    head: i32[],
+    next: i32[],
+    names: string[],
+    params: i32[],
+}
+
+// Fixed rather than sized from the input: the index is built once per module
+// and probed per call op, so the chains matter and the header does not.
+function name_index_buckets(): i32 { return 1021; }
+
+// chain_names builds the index over parallel `names` / `params` columns.
+// Walking BACKWARD pushes each row onto the front of its bucket, which leaves
+// every chain in ascending row order without a per-bucket tail — and that is
+// what makes index_row's forward walk answer with the FIRST declaration.
+function chain_names(names: string[], params: i32[]): NameIndex {
+    var nb: i32 = name_index_buckets();
+    var head: i32[] = [];
+    var b: i32 = 0;
+    while (b < nb) { head = head.append(0 - 1); b = b + 1; }
+    var next: i32[] = [];
+    var j: i32 = 0;
+    while (j < names.len()) { next = next.append(0 - 1); j = j + 1; }
+    var k: i32 = names.len() - 1;
+    while (k >= 0) {
+        var bk: i32 = util.hash_bucket(names[k], nb);
+        next = next.with(k, head[bk]);
+        head = head.with(bk, k);
+        k = k - 1;
+    }
+    return NameIndex { head: head, next: next, names: names, params: params };
+}
+
+// index_row is the row for `name`, or -1. The modulus comes from head.len()
+// rather than the constant, so a probe cannot pick a different bucket count
+// than the build did.
+function index_row(ix: NameIndex, name: string): i32 {
+    var i: i32 = ix.head[util.hash_bucket(name, ix.head.len())];
+    while (i >= 0) {
+        if (ix.names[i] == name) { return i; }
+        i = ix.next[i];
+    }
+    return 0 - 1;
+}
 
 // name_index builds a membership-only index: every entry's arity is -1, so
 // index_has answers and index_params declines. A name already present keeps its
 // first entry, so a duplicated name resolves to its first declaration.
 pub function name_index(names: string[]): NameIndex {
-    var m: Map[string, i32] = map_new(names.len() * 2 + 1);
+    var params: i32[] = [];
     var i: i32 = 0;
-    while (i < names.len()) {
-        if (!m.has(names[i])) { m = m.insert(names[i], 0 - 1); }
-        i = i + 1;
-    }
-    return NameIndex { m: m };
+    while (i < names.len()) { params = params.append(0 - 1); i = i + 1; }
+    return chain_names(names, params);
 }
 
 // sig_index builds the callee-arity index the call check consults. First
 // declaration wins, as in name_index: two entries can disagree about arity, and
 // the call check reads whichever the index kept.
 pub function sig_index(sigs: FnSig[]): NameIndex {
-    var m: Map[string, i32] = map_new(sigs.len() * 2 + 1);
+    var names: string[] = [];
+    var params: i32[] = [];
     var i: i32 = 0;
     while (i < sigs.len()) {
-        if (!m.has(sigs[i].name)) { m = m.insert(sigs[i].name, sigs[i].n_params); }
+        names = names.append(sigs[i].name);
+        params = params.append(sigs[i].n_params);
         i = i + 1;
     }
-    return NameIndex { m: m };
+    return chain_names(names, params);
 }
 
-// index_has reports membership. The local rebind is load-bearing: a map op
-// dispatches off the written Map type, which a bare field read does not carry.
+// index_has reports membership.
 pub function index_has(ix: NameIndex, name: string): boolean {
-    var m: Map[string, i32] = ix.m;
-    return m.has(name);
+    return index_row(ix, name) >= 0;
 }
 
 // index_params is the declared parameter count for `name`, or -1 when the
 // index does not carry it — either the name is absent or it was indexed for
 // membership only.
 pub function index_params(ix: NameIndex, name: string): i32 {
-    var m: Map[string, i32] = ix.m;
-    return m.get_or(name, 0 - 1);
+    var r: i32 = index_row(ix, name);
+    if (r < 0) { return 0 - 1; }
+    return ix.params[r];
 }
 
 // ---- the pass ----------------------------------------------------------
