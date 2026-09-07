@@ -125,7 +125,7 @@ var providedSigs = map[string]providedSig{
 	"__fern_now_unix_ms":            {0, rWord},
 	"__fern_open_appender":          {2, rWord},
 	"__fern_open_dir":               {2, rWord},
-	"__fern_open_exclusive":        {2, rWord},
+	"__fern_open_exclusive":         {2, rWord},
 	"__fern_open_reader":            {2, rWord},
 	"__fern_open_writer":            {2, rWord},
 	"__fern_print":                  {2, rVoid},
