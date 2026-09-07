@@ -42,6 +42,7 @@ func corpusByUtil() map[string]func(*testing.T) []invocation {
 		"basename":  basenameCases,
 		"basenc":    basencCases,
 		"cat":       catCases,
+		"comm":      commCases,
 		"cut":       cutCases,
 		"dirname":   dirnameCases,
 		"echo":      echoCases,
@@ -65,12 +66,14 @@ func corpusByUtil() map[string]func(*testing.T) []invocation {
 		"sha384sum": sha384sumCases,
 		"sha512sum": sha512sumCases,
 		"sleep":     sleepCases,
+		"tac":       tacCases,
 		"tail":      tailCases,
 		"test":      testCases,
 		"tr":        trCases,
 		"true":      trueFalseCases,
 		"tsort":     tsortCases,
 		"unexpand":  unexpandCases,
+		"uniq":      uniqCases,
 		"wc":        wcCases,
 		"yes":       yesCases,
 	}
@@ -195,15 +198,21 @@ func TestSelfHostCoreutilsParity(t *testing.T) {
 					// time on its own. Each case is its own pair of
 					// processes with no shared state; the two binary
 					// caches they read are mutex-guarded. A case that
-					// writes a corpus file — appending stdout to it, or
-					// playing the writer a follow watches — is the
-					// exception: two of them on one file would see each
-					// other's bytes, so those run one at a time.
-					if inv.stdoutPath == "" && len(inv.follow) == 0 {
+					// writes a corpus file — appending stdout to it,
+					// playing the writer a follow watches, or preparing a
+					// tree and reading it back — is the exception: two of
+					// them on one file would see each other's bytes, so
+					// those run one at a time.
+					if inv.stdoutPath == "" && len(inv.follow) == 0 &&
+						inv.prepare == nil && len(inv.artifacts) == 0 {
 						t.Parallel()
 					}
+					inv.prep(t)
 					want := inv.run(t, native, util)
+					wantFiles := inv.readArtifacts(t)
+					inv.prep(t)
 					got := inv.run(t, ours, util)
+					diffArtifacts(t, util, inv, wantFiles, inv.readArtifacts(t), "native", "selfhost")
 					if !bytes.Equal(want.stdout, got.stdout) {
 						t.Errorf("stdout differs for %s %s\n  native: %s\nselfhost: %s", util, quoteArgs(inv.args), quote(want.stdout), quote(got.stdout))
 					}

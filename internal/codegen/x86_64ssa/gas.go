@@ -1117,7 +1117,7 @@ func asmInst(in Inst, scratch int) (string, error) {
 		return fmt.Sprintf("mov %s, %s", slotMem(int(in.Imm)), reg(in.Src)), nil
 	case BinOp:
 		switch in.K {
-		case ssa.OpShl, ssa.OpShr, ssa.OpShrU:
+		case ssa.OpShl, ssa.OpShr, ssa.OpShrU, ssa.OpRotr:
 			return shiftSeq(in) + maskFix(in.Dst, in.W), nil
 		case ssa.OpDiv, ssa.OpDivU, ssa.OpRem, ssa.OpRemU:
 			return divSeq(in, scratch) + maskFix(in.Dst, in.W), nil
@@ -1906,6 +1906,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__arr_idx_16_nc":               emitArrIdxHelperNChecked("__arr_idx_16_nc", 4, false),
 	"__str_idx":                     emitArrIdxHelperN("__str_idx", 0),
 	"__fern_memchr":                 emitMemchrHelper,
+	"__fern_mismatch":               emitMismatchHelper,
 	"__fern_rmemchr":                emitRmemchrHelper,
 	"__fern_ascii_run":              emitAsciiRunHelper,
 	"__fern_count_byte":             emitCountByteHelper,
@@ -2665,6 +2666,161 @@ func emitArrCowInplaceElemHelper(name, elemInc, tag string) func(w func(string, 
 // so no iteration pays for it. And `from` CLAMPS rather than trapping, matching
 // the interpreter: a forward scan clamps it up to 0, a backward scan clamps it
 // down to len-1.
+
+// emitMismatchHelper writes __fern_mismatch(a, ao, b, bo, n) -> the offset of
+// the first byte where a[ao..ao+n) and b[bo..bo+n) differ, or n when they are
+// equal (#8791). Leaf.
+//
+// SSE2, mirroring the shipping backend's kernel
+// (x86_64.emitMismatchRuntime) minus its AVX2 main loop — this backend's
+// helpers stay in the SSE2 baseline the rest of the file uses. The mask means
+// EQUAL here where __memchr's means FOUND, so the loop continues while it is
+// all-ones and `not` precedes the bsf.
+//
+// Sub-16 lengths take memcmp's overlapping windows rather than the scalar
+// remainder — the leading and trailing 8 (or 4) bytes, which overlap, so two
+// loads per operand cover the whole band. A line-oriented utility compares
+// SHORT ranges, and walking those a byte at a time is the cost this kernel
+// exists to remove.
+//
+// Strings here are one word with the length at [ptr-4] and no inline form, so
+// the five arguments land in rdi/esi/rdx/ecx/r8d with no unpacking.
+func emitMismatchHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__fern_mismatch"))
+	w("\tmov r9d, %s", memRef("rdi", -4))  // len(a)
+	w("\tmov r10d, %s", memRef("rdx", -4)) // len(b)
+	// Clamp each offset into [0, len].
+	w("\ttest esi, esi")
+	w("\tjns .Lssa_mm_ao_pos")
+	w("\txor esi, esi")
+	w(".Lssa_mm_ao_pos:")
+	w("\tcmp esi, r9d")
+	w("\tjle .Lssa_mm_ao_ok")
+	w("\tmov esi, r9d")
+	w(".Lssa_mm_ao_ok:")
+	w("\ttest ecx, ecx")
+	w("\tjns .Lssa_mm_bo_pos")
+	w("\txor ecx, ecx")
+	w(".Lssa_mm_bo_pos:")
+	w("\tcmp ecx, r10d")
+	w("\tjle .Lssa_mm_bo_ok")
+	w("\tmov ecx, r10d")
+	w(".Lssa_mm_bo_ok:")
+	// n = min(n, len(a) - ao, len(b) - bo), floored at 0.
+	w("\tsub r9d, esi")
+	w("\tsub r10d, ecx")
+	w("\tcmp r8d, r9d")
+	w("\tjle .Lssa_mm_n_a")
+	w("\tmov r8d, r9d")
+	w(".Lssa_mm_n_a:")
+	w("\tcmp r8d, r10d")
+	w("\tjle .Lssa_mm_n_b")
+	w("\tmov r8d, r10d")
+	w(".Lssa_mm_n_b:")
+	w("\ttest r8d, r8d")
+	w("\tjns .Lssa_mm_n_ok")
+	w("\txor r8d, r8d")
+	w(".Lssa_mm_n_ok:")
+	// rsi / rcx become the range bases, r9 the clamped n (also the answer on
+	// equality), r10 the cursor offset.
+	w("\tmov esi, esi")
+	w("\tmov ecx, ecx")
+	w("\tadd rsi, rdi")
+	w("\tadd rcx, rdx")
+	w("\tmov r9d, r8d")
+	w("\txor r10d, r10d")
+	// Length dispatch: the sub-16 band never reaches the vector loop, so it
+	// gets its own windows rather than a byte walk.
+	w("\tcmp r9, 16")
+	w("\tjge .Lssa_mm_vec")
+	w("\tcmp r9, 8")
+	w("\tjge .Lssa_mm_w8")
+	w("\tcmp r9, 4")
+	w("\tjge .Lssa_mm_w4")
+	w("\tjmp .Lssa_mm_tail")
+	// 8..15 bytes: the leading 8 and the trailing 8, which overlap. rdi and
+	// rdx are dead by here — both were folded into the range bases above.
+	w(".Lssa_mm_w8:")
+	w("\tmov rax, [rsi]")
+	w("\txor rax, [rcx]")
+	w("\tjnz .Lssa_mm_w8_lead")
+	w("\tmov rdi, r9")
+	w("\tsub rdi, 8")
+	w("\tmov rax, [rsi + rdi]")
+	w("\txor rax, [rcx + rdi]")
+	w("\tjz .Lssa_mm_eq")
+	// The leading window proved [0, 8) equal, so a difference the trailing
+	// window reports cannot land below 8 — its offset is the first one.
+	w("\tbsf rax, rax")
+	w("\tshr rax, 3")
+	w("\tadd rax, rdi")
+	w("\tret")
+	w(".Lssa_mm_w8_lead:")
+	// bsf finds the lowest set BIT of the xor; >> 3 turns it into the byte,
+	// little-endian, so byte 0 is the low one.
+	w("\tbsf rax, rax")
+	w("\tshr rax, 3")
+	w("\tret")
+	// 4..7 bytes: the same pair of windows, four bytes wide.
+	w(".Lssa_mm_w4:")
+	w("\tmov eax, [rsi]")
+	w("\txor eax, [rcx]")
+	w("\tjnz .Lssa_mm_w4_lead")
+	w("\tmov rdi, r9")
+	w("\tsub rdi, 4")
+	w("\tmov eax, [rsi + rdi]")
+	w("\txor eax, [rcx + rdi]")
+	w("\tjz .Lssa_mm_eq")
+	w("\tbsf eax, eax")
+	w("\tshr eax, 3")
+	w("\tadd rax, rdi")
+	w("\tret")
+	w(".Lssa_mm_w4_lead:")
+	w("\tbsf eax, eax")
+	w("\tshr eax, 3")
+	w("\tret")
+	// SSE2 loop: 16 bytes of each operand per iteration.
+	w(".Lssa_mm_vec:")
+	w("\tmov rax, r9")
+	w("\tsub rax, r10")
+	w("\tcmp rax, 16")
+	w("\tjl .Lssa_mm_tail")
+	w("\tmovdqu xmm0, [rsi + r10]")
+	w("\tmovdqu xmm1, [rcx + r10]")
+	w("\tpcmpeqb xmm0, xmm1")
+	w("\tpmovmskb eax, xmm0")
+	w("\tcmp eax, 65535")
+	w("\tjne .Lssa_mm_hit16")
+	w("\tadd r10, 16")
+	w("\tjmp .Lssa_mm_vec")
+	w(".Lssa_mm_hit16:")
+	// pmovmskb writes only the low 16 bits, so `not` sets the top half; the
+	// branch above guarantees a clear bit below 16, which is the one bsf
+	// finds first.
+	w("\tnot eax")
+	w("\tbsf eax, eax")
+	w("\tadd r10, rax")
+	w("\tmov eax, r10d")
+	w("\tret")
+	// Scalar remainder: fewer than 16 bytes left after the vector loop, or
+	// fewer than 4 from the dispatch above.
+	w(".Lssa_mm_tail:")
+	w("\tcmp r10, r9")
+	w("\tjge .Lssa_mm_eq")
+	w("\tmovzx eax, byte ptr [rsi + r10]")
+	w("\tmovzx r11d, byte ptr [rcx + r10]")
+	w("\tcmp eax, r11d")
+	w("\tjne .Lssa_mm_tail_hit")
+	w("\tinc r10")
+	w("\tjmp .Lssa_mm_tail")
+	w(".Lssa_mm_tail_hit:")
+	w("\tmov eax, r10d")
+	w("\tret")
+	w(".Lssa_mm_eq:")
+	w("\tmov eax, r9d")
+	w("\tret")
+}
 
 // emitMemchrHelper writes __fern_memchr(s, byte, from) -> the index of the first
 // `byte` at or after `from`, or -1. Leaf.
@@ -3505,7 +3661,7 @@ var (
 	rdxReg = gpIndex("rdx")
 )
 
-// shiftSeq renders a variable shift (count in cl). dst holds the value, src the
+// shiftSeq renders a variable shift or rotate (count in cl). dst holds the value, src the
 // count. rcx is preserved with push/pop so a live value there survives; the
 // count is copied into rcx and the shift reads cl. dst is a scratch reg (never
 // rcx), so `<op> dst, cl` is safe.
@@ -3518,6 +3674,8 @@ func shiftSeq(in Inst) string {
 		mnem = "sar" // arithmetic (signed) right shift
 	case ssa.OpShrU:
 		mnem = "shr" // logical (unsigned) right shift
+	case ssa.OpRotr:
+		mnem = "ror"
 	}
 	// EVERY shift at 32-bit width must operate on the 32-bit register, for two
 	// independent reasons.

@@ -264,6 +264,23 @@ PY
       printf 'head -n -10 of a 62 MiB file\ty\t{} -n -10 %s > /dev/null\n' "$big"
       printf 'head -c -10 of a 62 MiB file\ty\t{} -c -10 %s > /dev/null\n' "$big"
       ;;
+    tac)
+      # tac reads its input BACKWARDS, so a file is 8 KiB blocks walked
+      # from the end and a pipe is the whole stream held first. `-r` is
+      # the separate engine: a backward regexp search per record.
+      big="$out/text-64m.txt"
+      [ -f "$big" ] || "$gnu/seq" 1 8000000 > "$big"
+      small="$out/text-600k.txt"
+      [ -f "$small" ] || "$gnu/seq" 1 100000 > "$small"
+      one="$out/tac-one-line.txt"
+      [ -f "$one" ] || printf 'x\n' > "$one"
+      printf 'tac a 62 MiB file\ty\t{} %s > /dev/null\n' "$big"
+      printf 'tac -b a 62 MiB file\ty\t{} -b %s > /dev/null\n' "$big"
+      printf 'tac -s a 62 MiB file\ty\t{} -s 5 %s > /dev/null\n' "$big"
+      printf 'tac a 62 MiB file from a pipe\ty\t{gnu}/cat %s | {} > /dev/null\n' "$big"
+      printf 'tac -r over a 588 KiB file\ty\t{} -r -s "[0-9]" %s > /dev/null\n' "$small"
+      printf 'tac a one-line file\tn\t{} %s\n' "$one"
+      ;;
     cat)
       # cat's fast path is a straight copy with no per-byte work; the
       # numbered and squeezed forms are the byte-at-a-time scans, and
@@ -480,6 +497,60 @@ with open(sys.argv[1], "w") as f:
       printf 'unexpand -a a 42 MiB indented file\ty\t{} -a %s > /dev/null\n' "$indented"
       printf 'unexpand -t4 a 42 MiB indented file\ty\t{} -t4 %s > /dev/null\n' "$indented"
       printf 'unexpand a 32 MiB file with no blanks\ty\t{} %s > /dev/null\n' "$noblank"
+      ;;
+    uniq)
+      # uniq's cost is per LINE, so the three shapes are: a run of
+      # duplicates to collapse, lines that are all distinct (every line
+      # becomes the one held for the next comparison), and long lines,
+      # where the comparison itself starts to dominate the fixed cost.
+      dup="$out/uniq-dup.txt"
+      [ -f "$dup" ] || python3 - "$dup" <<'PY2'
+import sys
+with open(sys.argv[1], "w") as f:
+    for i in range(4000000):
+        f.write("line %d\n" % (i // 4))
+PY2
+      distinct="$out/uniq-distinct.txt"
+      [ -f "$distinct" ] || "$gnu/seq" 1 4000000 > "$distinct"
+      paths="$out/uniq-paths.txt"
+      [ -f "$paths" ] || python3 - "$paths" <<'PY2'
+import sys
+with open(sys.argv[1], "w") as f:
+    for i in range(2000000):
+        f.write("/usr/lib/x86_64-linux-gnu/libfoo-%07d.so\n" % i)
+PY2
+      printf 'uniq over 4M lines in groups of 4\ty\t{} %s > /dev/null\n' "$dup"
+      printf 'uniq -c over 4M lines in groups of 4\ty\t{} -c %s > /dev/null\n' "$dup"
+      printf 'uniq -d over 4M lines in groups of 4\ty\t{} -d %s > /dev/null\n' "$dup"
+      printf 'uniq over 4M distinct lines\ty\t{} %s > /dev/null\n' "$distinct"
+      printf 'uniq -u over 4M distinct lines\ty\t{} -u %s > /dev/null\n' "$distinct"
+      printf 'uniq over 2M 44-byte distinct lines\ty\t{} %s > /dev/null\n' "$paths"
+      printf 'uniq -f1 -c over 4M lines\ty\t{} -f1 -c %s > /dev/null\n' "$dup"
+      printf 'uniq from a pipe\ty\t{gnu}/cat %s | {} > /dev/null\n' "$dup"
+      ;;
+    comm)
+      # Two sorted files where every other line is missing from the
+      # second, so all three columns are exercised; and the same file
+      # twice, where everything pairs and the order check therefore
+      # never turns on — the two halves of comm's cost.
+      ca="$out/comm-a.txt"
+      cb="$out/comm-b.txt"
+      if [ ! -f "$ca" ]; then
+        python3 - "$ca" "$cb" <<'PY2'
+import sys
+a = open(sys.argv[1], "w")
+b = open(sys.argv[2], "w")
+for i in range(2000000):
+    a.write("key-%09d\n" % i)
+    if i % 2 == 0:
+        b.write("key-%09d\n" % i)
+PY2
+      fi
+      printf 'comm over 2M + 1M sorted lines\ty\t{} %s %s > /dev/null\n' "$ca" "$cb"
+      printf 'comm -12 over 2M + 1M sorted lines\ty\t{} -12 %s %s > /dev/null\n' "$ca" "$cb"
+      printf 'comm --total over 2M + 1M sorted lines\ty\t{} --total %s %s > /dev/null\n' "$ca" "$cb"
+      printf 'comm of a 2M-line file with itself\ty\t{} %s %s > /dev/null\n' "$ca" "$ca"
+      printf 'comm -123 of a 2M-line file with itself\ty\t{} -123 %s %s > /dev/null\n' "$ca" "$ca"
       ;;
     md5sum|sha1sum|sha224sum|sha256sum|sha384sum|sha512sum|b2sum)
       # Compute-bound on the digest kernel, so the shapes that matter are

@@ -77,20 +77,63 @@ function f(): i32 {
 The fix for a reference capture is to **return the new value from the
 closure** instead of writing it back.
 
-`E049` closes that vector only from **inside** the closure. The enclosing
-scope may still store into the same shared box, and nothing checks what it
-stores, so a cycle is three lines with no `Cell` and no diagnostic (#8440):
+### The enclosing scope's store is `E049` too
+
+The capture is shared, so the *enclosing* scope writes the same box, and what
+it stores is checked there too (#8440). `g = f` where `f` captures `g` would
+close `box -> closure -> env -> box`:
 
 ```
 function main(): i32 {
-    var g: () => i32 = function (): i32 { return 1; };
-    var f: () => i32 = function (): i32 { return g(); };  // f's env holds g's box
-    g = f;                                                // accepted
+    var g: () => i32 = (): i32 => { return 1; };
+    var f: () => i32 = (): i32 => { return g(); };   // f's env holds g's box
+    g = f;                                           // error[E049]
     return 0;
 }
 ```
 
-Built with `-sanitize` that program reports `leak 48 bytes in 2 blocks`.
+The rule is a TYPE-REACHABILITY test on the stored value, not on the variable:
+a store is refused when its value's type can transitively hold a function —
+directly, through an array / slice / tuple element, a struct field, an enum
+payload, a `Map` value, or opaquely behind a `dyn`, a type parameter or an
+associated-type projection. A value whose type cannot name a function can never
+be the closure, so the by-reference rebinds this document exists to describe
+stay legal:
+
+```
+var s: string = "a";
+var f = (): i32 => { return s.len(); };
+s = "bb";                    // OK — a string reaches no closure
+```
+
+One right-hand side is read by value flow instead: a closure **literal**, whose
+captures the checker has just computed. A literal that captures neither the
+target nor anything whose type could hold a closure has no edge back to the
+cell, so swapping a captured callback on a flag stays legal:
+
+```
+var g = (): (string, i32) => { return ("abcd", 4); };
+if (flip) { g = (): (string, i32) => { return ("z", 1); }; }   // OK
+var h = () => g().1 + 38;
+```
+
+Every other spelling — an identifier, a call result, a container holding one —
+is judged by its type alone, which over-approximates in the safe direction.
+
+Measured against every `.fern` source in the repository — `examples/` (the
+self-host compiler included), the stdlib, `conformance/` and `coreutils/`,
+1128 files — and against the 11,810 inline Fern programs in the Go test
+sources, the rule refuses nothing that was accepted before. The blunter rule
+(refuse EVERY store into a boxed pointer capture) refuses 28 of those 1128,
+`examples/self_host/fern.fern` among them, so it would break the bootstrap.
+
+Only a `var`-declared local gets a box, so only a `var` can close a cycle. A
+captured **parameter**, a `let (a, b) = …` destructuring binding and a
+match-arm binding are captured BY VALUE (`collectBoxedCaptures` requires a
+`var` declaration), so rebinding one leaves the closure reading the value it
+snapshotted — confirmed by running each: after `g = f` the call `g()` returns
+the original closure's answer instead of diverging. They are not cycle vectors
+and the rule does not touch them.
 
 ## The classification is `ast.IsPointerType`
 
@@ -128,14 +171,23 @@ standalone pass to gain init-expression type inference — tracked
 separately, not a correctness hazard for the common annotated / literal
 forms.
 
+The enclosing-scope half of `E049` (#8440) is native-only for the same
+reason: deciding it needs the captured variable's declaration identity and
+the stored value's resolved type, neither of which the standalone walk
+threads. A self-host build therefore still ACCEPTS an outer rebind that
+closes a cycle, and leaks it. Native-only surface, so it is debt under
+#4451 rather than a free win; the checker-codes differential is unaffected
+because no `cap-assign-*` case rebinds from the enclosing scope.
+
 ## Related
 
 - `E048` (field immutability) and `E056` (array-element immutability)
   are the other two halves of the immutable-data-structures surface;
-  together with `E049` they were meant to make reference cycles
-  unconstructible, which is what the collector-free RC runtime rests on
-  (`docs/IMMUTABILITY-MIGRATION-PLAN.md`). The outer-rebind hole above
-  means that invariant does not hold today.
+  together with `E049` they make reference cycles unconstructible, which
+  is what the collector-free RC runtime rests on
+  (`docs/IMMUTABILITY-MIGRATION-PLAN.md`). With fields, elements and
+  `Cell[T]` payloads all closed, the capture box is the only mutable heap
+  slot left, so both halves of `E049` are what carries the invariant.
 - `E057` is the sibling rule for `Cell[T]` payloads (a cell over a
   reference type could likewise reconstruct a cycle).
 - The write-only-scalar-capture *miscompile* is tracked separately as

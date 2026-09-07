@@ -1371,7 +1371,9 @@ func pureReadReceiverBuiltin(name string) bool {
 //     (inline-packed, the empty sentinel, or an rc1 heap copy — never
 //     the input buffer);
 //   - __memchr / __rmemchr / __ascii_run / __count_byte scan the
-//     bytes and return a scalar;
+//     bytes and return a scalar, and __mismatch does the same for its
+//     TWO strings — both are read to the first difference and neither
+//     is retained;
 //   - a Map READ's KEY (position 1) is hashed and compared and nothing
 //     else — __map_lookup_keyed reaches only __map_hash_str /
 //     __map_eq_str, neither of which moves a count — and what the call
@@ -1395,6 +1397,7 @@ var copyingBuiltinArgs = map[string][]int{
 	"__rmemchr":                   {0},
 	"__ascii_run":                 {0},
 	"__count_byte":                {0},
+	"__mismatch":                  {0, 2},
 	"__method_Map_get":            {1},
 	"__method_Map_get_or":         {1},
 	"__method_Map_has":            {1},

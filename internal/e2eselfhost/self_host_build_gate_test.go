@@ -265,12 +265,131 @@ func TestSelfHostBuildGateX86_64(t *testing.T) {
 			wantDiag: "",
 		},
 		{
-			// E064 is excluded: the partial checker does not know every stdlib
-			// type, so "unknown type" fires on valid imports — including on the
-			// compiler's own sources, which is where gating it breaks the
-			// fixpoint.
-			name:     "excluded-unknown-stdlib-type-E064",
+			// E064 gates now (#8461), so this is a negative control rather than
+			// an exclusion: the checker registers the front end's built-in
+			// struct declarations before it types anything, the way native's
+			// builtinStructDecls does, so a valid stdlib import draws no
+			// "unknown type" at all. Before that, `import "std/platform"` drew
+			// 7 E021 + 2 E064 and `import "std/time"` 18 + 24, on programs
+			// whose only content was the import.
+			name:     "unknown-stdlib-type-not-reported-E064",
 			src:      "import \"std/io\";\nfunction main(): i32 { var r: i32 = 0; return r; }\n",
+			wantDiag: "",
+		},
+		{
+			name:     "builtin-struct-decls-registered-time",
+			src:      "import \"std/time\";\nfunction main(): i32 { return 0; }\n",
+			wantDiag: "",
+		},
+		{
+			name:     "builtin-struct-decls-registered-platform",
+			src:      "import \"std/platform\";\nfunction main(): i32 { return 0; }\n",
+			wantDiag: "",
+		},
+		{
+			// #8461's headline. E041 exists because array `==` is not
+			// structural equality; exempted from the gate, the comparison
+			// lowered to a POINTER compare and two equal arrays reported
+			// unequal — a plausible wrong answer where both checkers knew the
+			// error. `-check` reported it the whole time.
+			name:     "array-equality-E041",
+			src:      "function main(): i32 { var xs: i32[] = [1, 2, 3]; var ys: i32[] = [1, 2, 3]; if (xs == ys) { return 1; } return 0; }\n",
+			wantDiag: "error[E041]",
+		},
+		{
+			// The negative control: `==` on the ELEMENTS is what the E041
+			// message tells the author to write, so it must build.
+			name:     "array-element-equality-compiles",
+			src:      "function main(): i32 { var xs: i32[] = [1, 2, 3]; var ys: i32[] = [1, 2, 3]; if (xs[0] == ys[0]) { return 1; } return 0; }\n",
+			wantDiag: "",
+		},
+		{
+			// E001 through the discard. `_` introduces no name, so reading it
+			// back is an undefined identifier — native says so, this checker
+			// said so, and only the gate did not: the binary returned 2, the
+			// element the binding said to throw away
+			// (conformance/cases/underscore_not_readable).
+			name:     "discard-read-back-E001",
+			src:      "function pair(): (i32, i32) { return (1, 2); }\nfunction main(): i32 { var (a, _) = pair(); return _; }\n",
+			wantDiag: "error[E001]",
+		},
+		{
+			// E051: the `own`-param discipline. Passing the same value twice
+			// hands the callee a pointer it already consumed.
+			name:     "owned-arg-used-twice-E051",
+			src:      "struct B { items: i32[] }\nfunction consume(own p: B): i32 { return p.items.len(); }\nfunction main(): i32 { var a: B = B { items: [1] }; var n: i32 = consume(a); return n + consume(a); }\n",
+			wantDiag: "error[E051]",
+		},
+		{
+			// E052: a value-returning function that can fall off its end.
+			name:     "missing-return-E052",
+			src:      "function f(n: i32): i32 { if (n > 0) { return 1; } }\nfunction main(): i32 { return f(1); }\n",
+			wantDiag: "error[E052]",
+		},
+		{
+			// The E052 negative control that the gate turned live: a
+			// tuple / struct / literal match is REPLACED at parse time by a
+			// done-flag if/else chain, which falls through by construction, so
+			// reading the chain says every such function can fall off its end.
+			// The `if` carries the arms as written; block_exits reads those.
+			name:     "tuple-match-exhausts-so-no-E052",
+			src:      "function f(t: (i32, i32)): i32 { match (t) { (0, b) => { return b; }, (a, _) => { return a; } } }\nfunction main(): i32 { return f((0, 7)); }\n",
+			wantDiag: "",
+		},
+		{
+			// E013 / E018 are the two codes still exempt, and #8852 owns them:
+			// the self-host parser never renames `_`, so a repeated discard
+			// reads as a redeclared name. Native accepts this program; the
+			// self-host CHECKER rejects it, so the gate has to keep letting it
+			// build until the rename lands. When #8852 closes, this row's
+			// wantDiag stays "" — the checker will simply stop reporting.
+			name:     "repeated-discard-still-compiles-8852",
+			src:      "function constant(_: i32, _: string): i32 { return 7; }\nfunction main(): i32 { var _ = 99; var _ = 98; return constant(1, \"a\"); }\n",
+			wantDiag: "",
+		},
+		{
+			// Negative controls for the five false positives #8461 had to fix
+			// before the codes above could gate. Each is a program native
+			// accepts that the self-host checker refused, so each would now be
+			// a REJECTED BUILD rather than a stray diagnostic.
+			//
+			// A nested position in a `for` pattern: the binder encoding carries
+			// it as a parenthesised group, and splitting on every comma bound
+			// "(a" and "b)" — E001 for both `a` and `b`.
+			name:     "for-nested-tuple-pattern-compiles",
+			src:      "function main(): i32 { var deep: ((i32, i32), string)[] = [((2, 3), \"xy\")]; var s: i32 = 0; for ((a, b), c) in deep { s = s + a * b + c.len(); } return s; }\n",
+			wantDiag: "",
+		},
+		{
+			// The `@` whole-value binder names the scrutinee; nothing bound it.
+			name:     "at-binder-compiles",
+			src:      "enum One { Only(string) }\nfunction whole(o: One): i32 { return 1; }\nfunction main(): i32 { var o: One = Only(\"e\"); match (o) { w @ Only(v) => { return whole(w) + v.len(); } } }\n",
+			wantDiag: "",
+		},
+		{
+			// An if-EXPRESSION is an IIFE here and has no counterpart in the
+			// native AST, so the erased `T` operands read as closure captures
+			// with no runtime representation — E044 on a program native
+			// accepts.
+			name:     "if-expr-in-generic-compiles",
+			src:      "function pick[T](cond: boolean, a: T, b: T): T { return if (cond) { a } else { b }; }\nfunction main(): i32 { return pick(true, 1, 2); }\n",
+			wantDiag: "",
+		},
+		{
+			// An associated function reached through its ENUM: the qualified
+			// -variant arm claimed the call first and reported a variant
+			// nobody wrote (E036).
+			name:     "enum-associated-fn-compiles",
+			src:      "trait Empty { function empty(): Self; }\nenum Opt { Nothing, Just(i32) }\nimpl Empty for Opt { function empty(): Self { return Nothing; } }\nfunction main(): i32 { var o: Opt = Opt.empty(); match (o) { Nothing => { return 0; }, Just(n) => { return n; } } }\n",
+			wantDiag: "",
+		},
+		{
+			// An associated function a @derive supplies. A derive synthesises
+			// no impl-table entry and `from_json` is not a requirement of the
+			// `Json` trait either, so `User.from_json` resolved to nothing and
+			// its own type name drew E001.
+			name:     "derived-associated-fn-compiles",
+			src:      "import \"std/json\";\n@derive(json.Json) struct User { id: i32, name: string }\nfunction main(): i32 { match (User.from_json(\"{\\\"id\\\":7,\\\"name\\\":\\\"g\\\"}\")) { Ok(u) => { return u.id; }, Err(e) => { return 1; } } }\n",
 			wantDiag: "",
 		},
 		{
@@ -366,5 +485,135 @@ func TestSelfHostBuildGateMatchesCheckX86_64(t *testing.T) {
 			t.Errorf("case %d: -check rejected but -target built it (#6961).\nsrc: %s-check said: %s\n-target said: %s",
 				i, src, checkOut, buildOut)
 		}
+	}
+}
+
+// formerlyExemptCode is one row of the #8461 matrix: a program NATIVE rejects
+// with `code`, which `is_partial_checker_gap_code` used to hold off the
+// self-host compile path.
+type formerlyExemptCode struct {
+	code string
+	src  string
+	// stillExempt names the issue that owns the remaining divergence, empty
+	// when the code gates. A row with an issue number is a divergence someone
+	// is closing; a row without one is a promise the gate keeps.
+	stillExempt string
+}
+
+// TestSelfHostFormerlyExemptCodesGateX86_64 is the three-way parity matrix
+// #8461 asks for: the same program through native `-check`, self-host
+// `-check`, and self-host `-target`, asserting all three agree on
+// accept/reject.
+//
+// The eighteen codes below were exempted from the compile path by
+// `is_partial_checker_gap_code`, so the two front ends of ONE compiler
+// disagreed about whether a program was legal and the permissive one produced
+// the binary. That is invisible from any single path — both `-check` legs
+// reported E041 on `xs == ys` for as long as the exemption existed, while the
+// build lowered it to a pointer compare and answered "not equal" for two equal
+// arrays. Reading all three at once is what makes the disagreement visible.
+//
+// A code drops out of `is_partial_checker_gap_code` when the checker stops
+// false-positiving on it, so a row here that goes red means either a rule
+// regressed or an exemption came back. Every row that is still exempt carries
+// the issue that owns it: an exemption with nothing tracking it is exactly how
+// this list stood at eighteen.
+func TestSelfHostFormerlyExemptCodesGateX86_64(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	if len(runner) != 0 {
+		t.Skip("CLI driver test runs only natively (argv paths)")
+	}
+	dir := writeSelfHostAsmProject(t)
+	copySelfHostDriver(t, dir, "fern.fern")
+	fernBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
+
+	stdlibRoot, err := filepath.Abs("../../internal/stdlib")
+	if err != nil {
+		t.Fatalf("abs stdlib root: %v", err)
+	}
+
+	rows := []formerlyExemptCode{
+		{code: "E001", src: "function main(): i32 { var a: i32 = zz; return a; }\n"},
+		{code: "E009", src: "function main(): i32 { var s: string = \"x\"; if (s && true) { return 1; } return 0; }\n"},
+		{
+			code:        "E013",
+			src:         "function main(): i32 { var a: i32 = 1; var a: i32 = 2; return a; }\n",
+			stillExempt: "#8852",
+		},
+		{
+			code:        "E018",
+			src:         "function f(a: i32, a: i32): i32 { return a; }\nfunction main(): i32 { return f(1, 2); }\n",
+			stillExempt: "#8852",
+		},
+		{code: "E019", src: "struct Box[T] { v: T }\nfunction f(b: Box[i32, string]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n"},
+		{code: "E021", src: "trait Greet { function hello(): i32; }\nstruct Dog {}\nimpl Greet for Dog {}\nfunction main(): i32 { return 0; }\n"},
+		{code: "E024", src: "function pair(): (i32, i32) { return (1, 2); }\nfunction main(): i32 { var (a, b, c) = pair(); return a; }\n"},
+		{code: "E031", src: "enum O { Aa, Bb }\nfunction main(): i32 { var o: O = O.Aa; var r = match (o) { Aa => 1, Bb => \"x\" }; return 0; }\n"},
+		{code: "E034", src: "function main(): i32 { var xs: i32[] = [1, \"two\"]; return xs.len(); }\n"},
+		{code: "E036", src: "enum O { Aa, Bb }\nfunction main(): i32 { var o: O = O.Cc; return 0; }\n"},
+		{code: "E038", src: "function g(n: i32): i32 { return n; }\nfunction main(): i32 { return g(\"x\"); }\n"},
+		{code: "E040", src: "function pick[T](a: T): T { return a; }\nfunction main(): i32 { return pick[i32, string](1); }\n"},
+		{code: "E041", src: "function main(): i32 { var xs: i32[] = [1,2]; var ys: i32[] = [1,2]; if (xs == ys) { return 1; } return 0; }\n"},
+		{code: "E042", src: "function main(): i32 { var n: i32 = 5; var m: i32 = n?; return m; }\n"},
+		{code: "E044", src: "function nothing(): void { }\nfunction main(): i32 { var v = nothing(); var g = (): i32 => { v; return 2; }; return g(); }\n"},
+		{code: "E051", src: "struct B { items: i32[] }\nfunction consume(own p: B): i32 { return p.items.len(); }\nfunction main(): i32 { var a: B = B { items: [1] }; var n: i32 = consume(a); return n + consume(a); }\n"},
+		{code: "E052", src: "function f(n: i32): i32 { if (n > 0) { return 1; } }\nfunction main(): i32 { return f(1); }\n"},
+		{code: "E064", src: "function f(a: Wibble): i32 { return 0; }\nfunction main(): i32 { return 0; }\n"},
+	}
+	if len(rows) != 18 {
+		t.Fatalf("the exclusion list #8461 measured held 18 codes; matrix has %d", len(rows))
+	}
+
+	for _, row := range rows {
+		t.Run(row.code, func(t *testing.T) {
+			progDir := t.TempDir()
+			prog := filepath.Join(progDir, "prog.fern")
+			if err := os.WriteFile(prog, []byte(row.src), 0o644); err != nil {
+				t.Fatalf("write prog: %v", err)
+			}
+
+			// Leg 1 — native is the reference (docs/NATIVE-CONVERGENCE.md):
+			// the program must be one it rejects, with this code and no
+			// other, so a row cannot pass on a diagnostic it did not mean.
+			native := goCheckerCodes(t, progDir, row.src)
+			if len(native) != 1 || native[0] != row.code {
+				t.Fatalf("native reports %v, want exactly [%s] — the row no longer probes its code", native, row.code)
+			}
+
+			// Leg 2 — the self-host CHECKER. Every one of the eighteen was
+			// reported here the whole time; the exemption was never about
+			// the rule being absent.
+			checkCmd := exec.Command(fernBin, "-check", prog, stdlibRoot)
+			checkOut, _ := checkCmd.CombinedOutput()
+			if checkCmd.ProcessState.ExitCode() == 0 {
+				t.Fatalf("self-host -check accepted a program native rejects with %s:\n%s", row.code, checkOut)
+			}
+			if !strings.Contains(string(checkOut), "error["+row.code+"]") {
+				t.Fatalf("self-host -check rejected but not with %s:\n%s", row.code, checkOut)
+			}
+
+			// Leg 3 — the self-host COMPILE path, which is the one that
+			// disagreed.
+			buildCmd := exec.Command(fernBin, "-target", "x86-64-linux",
+				"-o", filepath.Join(progDir, "prog.bin"), prog, stdlibRoot)
+			buildOut, _ := buildCmd.CombinedOutput()
+			built := buildCmd.ProcessState.ExitCode() == 0
+
+			if row.stillExempt != "" {
+				if !built {
+					t.Errorf("%s is listed as still exempt (%s) but the build now REFUSES it.\n"+
+						"    Delete it from is_partial_checker_gap_code and drop stillExempt here —\n"+
+						"    an exemption that no longer applies hides the next one.", row.code, row.stillExempt)
+				}
+				return
+			}
+			if built {
+				t.Errorf("%s: -check rejects and -target builds it anyway — the exemption is back (#8461).\n"+
+					"src: %s-check said: %s", row.code, row.src, checkOut)
+			}
+			if !strings.Contains(string(buildOut), "error["+row.code+"]") {
+				t.Errorf("%s: the build refused but did not name the code:\n%s", row.code, buildOut)
+			}
+		})
 	}
 }

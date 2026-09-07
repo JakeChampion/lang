@@ -360,11 +360,14 @@ builder question has been measured (#5637): `s = s + chunk` in a loop no
 longer allocates per chunk. The IR recognises the self-append shape and
 lowers it to `__fern_str_append`, which grows the accumulator **in place**
 when its buffer is uniquely held (rc==1) and the new length still falls in
-the same allocator size class — so on x86-64 and wasm a chunk lands in the
-buffer's existing 16-byte slack ~8-15 times out of 16, and the intermediate
-buffers are now reclaimed rather than leaked (2000 two-byte appends:
-allocs 1997 → 250, live bytes 4 MB → 0). arm64 is excluded until its
-heap-string reclamation lands (RC-perceus slice 5g).
+the same allocator size class — so a chunk lands in the buffer's existing
+16-byte slack ~8-15 times out of 16, and the intermediate buffers are now
+reclaimed rather than leaked (2000 two-byte appends: allocs 1997 → 250,
+live bytes 4 MB → 0). Every backend emits it. On arm64 the two-word ABI
+makes the block-fit test cheaper still: the length lives in the len word,
+so the payload size at `[data-4]` that `__fern_str_dec` frees at is
+untouched by a grow and nothing has to be restamped (200k eight-byte
+appends: allocs 200001 → 168, 19.1 s → 0.02 s under qemu).
 
 The same helper covers **chains**: in `a + b + c`, the inner join's
 intermediate is an owned temp the outer join used to copy and then free, so

@@ -7159,41 +7159,6 @@ function main(): i32 {
 }`,
 	},
 	{
-		// A closure CYCLE must leak, not crash. `var f = () => g(); g = f;`
-		// makes the mutated capture's boxed cell hold the very pair that is
-		// being released, and refcounts cannot collect that — leaking is the
-		// correct outcome, and the one #8440 documents while the checker hole
-		// that admits the cycle stays open.
-		//
-		// #8545 made the per-closure thunk reachable for such a local, and
-		// the thunk dispatched into __drop_arr_closure, which dispatched back
-		// into the thunk: unbounded recursion, SIGSEGV on all three backends
-		// (#8637). Routing that arm through the flat per-element dec instead
-		// traded the crash for `rc over-release (double free)` — on a cycle
-		// the counts are already wrong, so ANY release is. The thunk now
-		// leaves a closure-typed capture alone and frees only the env.
-		//
-		// Against the #8545 compiler this case dies with a signal, which the
-		// corpus reads as a crash rather than a verdict; before #8545 it
-		// leaked 3200 bytes where it now leaks 1600.
-		name: "closure_cycle_leaks_without_crashing",
-		src: `
-@noinline
-function round(n: i32): i32 {
-    var g: () => i32 = (): i32 => { return 1; };
-    var f: () => i32 = (): i32 => { return g() + n; };
-    g = f;
-    return n;
-}
-
-function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
-    while (i < 50) { t = t + round(i); i = i + 1; }
-    return (t - 1225) + __rc_underflow_count();
-}`,
-	},
-	{
 		// #8441: every outer rebind of a captured reference stranded the
 		// value it superseded. BoxMutatedCaptures rewrites `s` into a
 		// shared one-element cell and the store went through it raw — no
@@ -7257,6 +7222,97 @@ function main(): i32 {
     }
     s = a;
     return (a.len() + f() - 36) + __rc_underflow_count();
+}`,
+	},
+	{
+		// #8833: the third state of that same store. #8441 released the
+		// superseded element UNCONDITIONALLY, and a consuming update that
+		// finds its receiver uniquely held mutates in place and hands the
+		// SAME reference back — so `m = m.insert(..)` through the cell
+		// released the map it was about to store. Both natives then read a
+		// map with no entries (the `-interp` oracle read the new one), and
+		// `-sanitize` called it what it was: `use-after-free (touched a
+		// quarantined block)`, exit 124 on x86-64 and arm64. wasm has no
+		// use-after-free detector, so there it showed only as the leak leg
+		// (30752 bytes against the 128 pinned below).
+		//
+		// The two string cases above cannot witness this: a string read out
+		// of the cell is retained, so `s = s + piece` and `s = mk(i)` both
+		// arrive as a reference of their own and the release is owed. A Map
+		// read is borrowed, so the in-place insert brings no count at all.
+		//
+		// Both arms are in the loop on purpose. `m = map_new(4)` supersedes
+		// a genuinely different handle and must still release it — that is
+		// #8441's property, and without it this case leaks 50 maps rather
+		// than one. `m = m.insert("k", i)` supersedes ITSELF and must not.
+		//
+		// The pinned leak is the map the cell still holds at exit: a cell
+		// whose element is a Map reclaims through the buffer-only array
+		// ladder, which flat-dec's the handle and strands its columns
+		// (#8845). Unrelated to the store — `m = map_new(4)` alone under a
+		// capture leaks the same 144 with this whole case reverted.
+		name: "closure_capture_rebind_map_in_place_not_over_released",
+		src: `
+import "core/map";
+function main(): i32 {
+    var m: Map[string, i32] = map_new(4);
+    var f: () => i32 = (): i32 => { return m.len(); };
+    var i: i32 = 0;
+    while (i < 50) {
+        m = map_new(4);
+        m = m.insert("k", i);
+        i = i + 1;
+    }
+    return (m.len() - 1) + (f() - 1) + __rc_underflow_count();
+}`,
+	},
+	{
+		// The other side of #8833's guard, and the reason it is narrow: a
+		// callee that hands its argument back leaves the slot naming the
+		// same pointer it already named, but the return-transfer inc means
+		// the reference DID change hands and the release is owed. Guarding
+		// the release on pointer identity alone reads this as a self-store
+		// and strands one map a round (7344 bytes here against the 144
+		// pinned below) — green on every other gate, which is how the wide
+		// guard nearly shipped.
+		//
+		// The pin is the map the cell still holds at exit (#8845), the same
+		// one closure_capture_rebind_map_in_place_not_over_released carries.
+		name: "closure_capture_rebind_identity_call_not_stranded",
+		src: `
+import "core/map";
+@noinline
+function idm(x: Map[string, i32]): Map[string, i32] { return x; }
+function main(): i32 {
+    var m: Map[string, i32] = map_new(4);
+    var f: () => i32 = (): i32 => { return m.len(); };
+    var i: i32 = 0;
+    while (i < 50) {
+        m = idm(m);
+        m = map_new(4);
+        i = i + 1;
+    }
+    return m.len() + f() + __rc_underflow_count();
+}`,
+	},
+	{
+		// Same hole, array spelling and no pin to hide behind: `.append`
+		// grows the captured cell's buffer IN PLACE, so the store sees the
+		// pointer it already held — and still owes the buffer dec that
+		// pairs with push's non-retaining copy. Zero at exit both before
+		// and after #8833; a pointer-identity guard applied to every RHS
+		// shape strands 6000 bytes.
+		name: "closure_capture_rebind_append_in_place_still_released",
+		src: `
+function main(): i32 {
+    var a: i32[] = [1, 2, 3];
+    var f: () => i32 = (): i32 => { return a.len(); };
+    var i: i32 = 0;
+    while (i < 50) {
+        a = a.append(i);
+        i = i + 1;
+    }
+    return (a.len() - 53) + (f() - 53) + __rc_underflow_count();
 }`,
 	},
 	{
@@ -8520,6 +8576,45 @@ function main(): i32 {
         i = i + 1;
     }
     return (acc - 200) + __rc_underflow_count();
+}`,
+	},
+	{
+		// #8846: a fresh owned temp handed to a PAIR-FORM callee had no
+		// owner. The four argument-temp admissions all read
+		// `resultCannotAliasArg` off the call's static type, which for a
+		// pair-form callee is the enum (`Option[i32]`) rather than the
+		// (tag, payload) it really returns, so the whole family was excluded
+		// and `s.trim().parse_int()` stranded one `__str_slice` buffer per
+		// call — 32 B a round on x86-64, and at ANY length on the two-word
+		// ABIs, which have no inline packing.
+		//
+		// The padding matters: `trim()` of a string whose result fits the
+		// 7-byte native inline form allocates nothing, which is why the two
+		// stdin conformance fixtures carrying this shape read clean and the
+		// certify walk was right about them and the census silent.
+		// Both consumer shapes, because they differ on the operand stack
+		// where the post-call dec is spliced in: the match scrutinee sets
+		// suppressPairRebox and leaves the bare (tag, payload) there, while
+		// the `var` binding reboxes it into one heap pointer first.
+		name: "pair_form_call_arg_temp_reclaimed",
+		src: `
+import "std/string";
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 200) {
+        match ("  12345678  ".trim().parse_int()) {
+            Some(n) => { acc = acc + (n / 12345678); },
+            None => { }
+        }
+        var o: Option[i32] = "  87654321  ".trim().parse_int();
+        match (o) {
+            Some(n) => { acc = acc + (n / 87654321); },
+            None => { }
+        }
+        i = i + 1;
+    }
+    return (acc - 400) + __rc_underflow_count();
 }`,
 	},
 }

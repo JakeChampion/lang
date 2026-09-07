@@ -45,16 +45,33 @@ function main(): i32 {
 
 // A fresh box returned by a user function and passed straight on under a
 // pointer-typed result is released after the call, behind the identity
-// guard (#8755): `id_w(o).put(s)` stashes id_w's result and drops it unless
+// guard (#8755): `put(id_w(o), s)` stashes id_w's result and drops it unless
 // put handed it back, in which case only the return transfer's count goes.
+//
+// The mechanism's domain is a callee that does NOT own its argument
+// (`ownedByCalleeAt` suppresses the whole stage-(b) reclaim), so the subject
+// has to be a callee whose pointer param is not owned-by-default. `put` is
+// reached here through a function VALUE as well as by name, which puts it on
+// paramVerdict's addressTaken rung: OpCallIndirect has no callee name, so the
+// call site emits no retain and the caller keeps owning the temp. That is the
+// mechanism, spelled as the reason it exists.
+//
+// This test used to reach it through an `Option[i32]` field instead, and that
+// worked for the wrong reason — the field made the struct read as "deep drop
+// not wired" and took it out of the owned model altogether (#8829). The field
+// stays in the struct: it must now change nothing, and a regression that put
+// the type back outside the owned model would show up as the sibling
+// TestOptFieldStructOverwriteDeepDrops rather than silently here.
 func TestBoxTempUnderPointerResultIsReleased(t *testing.T) {
 	src := `struct W { buf: string, err: Option[i32] }
-function (w: W) put(s: string): W { return W { ...w, buf: w.buf + s }; }
+function put(w: W, s: string): W { return W { ...w, buf: w.buf + s }; }
 function id_w(w: W): W { return w; }
+function apply(f: (W, string) => W, w: W): W { return f(w, "z"); }
 function main(): i32 {
     var o: W = W { buf: "", err: None };
-    o = id_w(o).put("a");
-    return o.buf.len();
+    o = put(id_w(o), "a");
+    var q: W = apply(put, W { buf: "q", err: None });
+    return o.buf.len() + q.buf.len();
 }`
 	prog := lowerSourceWith(t, src, 8)
 	for _, f := range prog.Funcs {
