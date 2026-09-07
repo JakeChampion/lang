@@ -60,6 +60,7 @@ func corpusByUtil() map[string]func(*testing.T) []invocation {
 		"numfmt":    numfmtCases,
 		"paste":     pasteCases,
 		"printf":    printfCases,
+		"rmdir":     rmdirCases,
 		"seq":       seqCases,
 		"sha1sum":   sha1sumCases,
 		"sha224sum": sha224sumCases,
