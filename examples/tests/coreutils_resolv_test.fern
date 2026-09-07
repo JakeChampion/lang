@@ -374,8 +374,11 @@ function test_dns_answer_statuses(): test.TestOutcome {
   if (resolv.dns_answer_a(reply(3, 4660), 4660).0 != resolv.notfound()) {
     return test.fail("NXDOMAIN is notfound");
   }
-  if (resolv.dns_answer_a(reply(2, 4660), 4660).0 != resolv.unavail()) {
-    return test.fail("SERVFAIL is unavail");
+  if (resolv.dns_answer_a(reply(2, 4660), 4660).0 != resolv.servfail()) {
+    return test.fail("SERVFAIL is its own status, not a bare unavail");
+  }
+  if (resolv.dns_answer_a(reply(1, 4660), 4660).0 != resolv.unavail()) {
+    return test.fail("FORMERR is unavail");
   }
   if (resolv.dns_answer_a(reply(0, 4660), 4661).0 != resolv.unavail()) {
     return test.fail("a reply to another id is unavail");
@@ -404,6 +407,137 @@ function test_dns_answer_without_a_record(): test.TestOutcome {
 // The live cases: this machine's own /etc/hosts and the whole lookup.
 // Every system this runs on maps localhost to 127.0.0.1 in its hosts
 // file, and `files` comes before `dns` on every default nsswitch line.
+// The scripted nameserver the search-loop cases run against: a name
+// answers by what it is called, so a case says what happens by choosing
+// the names in its plan, and no case needs to record what was asked — the
+// address that comes back says which name produced it.
+function scripted(qname: string): (i32, i32) {
+  if (qname == "ok1") {
+    return (resolv.success(), 1);
+  }
+  if (qname == "ok2") {
+    return (resolv.success(), 2);
+  }
+  if (qname == "servfail") {
+    return (resolv.servfail(), 0);
+  }
+  if (qname == "timeout") {
+    return (resolv.unavail(), 0);
+  }
+  if (qname == "refused") {
+    return (resolv.refused(), 0);
+  }
+  return (resolv.notfound(), 0);
+}
+
+// `lead` puts the as-is query first (ndots satisfied), `trail` after the
+// suffixes. The two are NOT the same search with the names reordered:
+// which one it is decides whether there is a retry at all and whose
+// status is reported.
+function lead(as_is: string, suffixes: string[]): (i32, i32) {
+  return resolv.dns_search(resolv.SearchPlan { as_is: as_is, suffixes: suffixes, leads: true },
+    (q: string): (i32, i32) => { return scripted(q); });
+}
+
+function trail(as_is: string, suffixes: string[]): (i32, i32) {
+  return resolv.dns_search(resolv.SearchPlan { as_is: as_is, suffixes: suffixes, leads: false },
+    (q: string): (i32, i32) => { return scripted(q); });
+}
+
+// __res_context_search's reactions to a name that did not answer.
+function test_search_servfail_continues(): test.TestOutcome {
+  // A SERVFAIL suffix records itself and the NEXT suffix is still tried,
+  // so a broken zone cannot hide a name a later one reaches.
+  if (trail("nx", ["servfail", "ok2"]).1 != 2) {
+    return test.fail("a SERVFAIL suffix must not end the search");
+  }
+  // Nothing found after one: TRY_AGAIN, not HOST_NOT_FOUND.
+  if (trail("nx", ["servfail", "nx2"]).0 != resolv.unavail()) {
+    return test.fail("a recorded SERVFAIL reports unavail, not notfound");
+  }
+  return test.pass();
+}
+
+function test_search_timeout_ends_the_suffixes(): test.TestOutcome {
+  // A non-SERVFAIL failure ends the suffix loop. With the as-is name
+  // trailing it is still asked, and `ok2` sitting after the timeout
+  // proves the loop stopped rather than carried on.
+  if (trail("ok1", ["timeout", "ok2"]).1 != 1) {
+    return test.fail("a timeout must end the suffixes and ask the as-is name");
+  }
+  if (trail("nx", ["timeout", "ok2"]).0 != resolv.notfound()) {
+    return test.fail("the trailing as-is name's NXDOMAIN is the answer");
+  }
+  if (trail("timeout", ["timeout"]).0 != resolv.unavail()) {
+    return test.fail("an as-is name that also times out is unavail");
+  }
+  return test.pass();
+}
+
+function test_search_leading_as_is_has_no_retry(): test.TestOutcome {
+  // glibc sets tried_as_is, so the post-loop retry is skipped: nothing is
+  // asked after the suffix that failed. `ok2` here would answer 2 if the
+  // loop wrongly fell back to the last suffix.
+  if (lead("timeout", ["timeout", "ok2"]).0 != resolv.unavail()) {
+    return test.fail("a leading as-is name must not gain a retry through a suffix");
+  }
+  // The saved as-is status is reported in preference to everything the
+  // suffixes produced — including a SERVFAIL, which would otherwise be
+  // unavail.
+  if (lead("nx", ["servfail", "nx2"]).0 != resolv.notfound()) {
+    return test.fail("the saved as-is status outranks a recorded SERVFAIL");
+  }
+  if (lead("timeout", ["nx", "nx2"]).0 != resolv.unavail()) {
+    return test.fail("a timed-out as-is name reports unavail however the suffixes went");
+  }
+  return test.pass();
+}
+
+function test_search_leading_as_is_failure_still_tries_suffixes(): test.TestOutcome {
+  // The as-is query sits OUTSIDE the loop's stop rules: whatever it fails
+  // with, every suffix is still tried.
+  if (lead("timeout", ["ok2"]).1 != 2) {
+    return test.fail("a timed-out as-is name must not stop the suffixes");
+  }
+  if (lead("nx", ["ok1"]).1 != 1) {
+    return test.fail("an NXDOMAIN as-is name must not stop the suffixes");
+  }
+  return test.pass();
+}
+
+function test_search_refused_suffix_stops_everything(): test.TestOutcome {
+  // The ECONNREFUSED hard-stop is the SUFFIX loop's rule, not res_search's:
+  // it returns at once, with no later name, no retry, and the saved as-is
+  // status not consulted.
+  if (trail("ok1", ["refused", "ok2"]).0 != resolv.unavail()) {
+    return test.fail("a refused connection must not fall through to a later name");
+  }
+  // The LEADING as-is query has no such rule — glibc classifies nothing
+  // there, it only saves h_errno — so a refused as-is still asks the
+  // suffixes, and one that answers wins.
+  if (lead("refused", ["ok1"]).1 != 1) {
+    return test.fail("a refused as-is query must still try the suffixes");
+  }
+  // With nothing to find there either, the saved refusal is what reports.
+  if (lead("refused", ["nx"]).0 != resolv.unavail()) {
+    return test.fail("a refused as-is query reports unavail once the suffixes miss");
+  }
+  return test.pass();
+}
+
+function test_search_all_nxdomain(): test.TestOutcome {
+  if (trail("nx", ["nx2", "nx3"]).0 != resolv.notfound()) {
+    return test.fail("every name NXDOMAIN is notfound");
+  }
+  if (lead("ok1", ["ok2"]).1 != 1) {
+    return test.fail("a leading as-is name that answers wins");
+  }
+  if (lead("nx", []).0 != resolv.notfound()) {
+    return test.fail("a trailing-dot plan is one query and its status");
+  }
+  return test.pass();
+}
+
 function test_live_hosts_file(): test.TestOutcome {
   match (read_file("/etc/hosts")) {
     Ok(c) => {
@@ -441,6 +575,12 @@ function main(): i32 {
   r = r.it("an A record behind a CNAME", test_dns_answer_after_cname);
   r = r.it("reply statuses", test_dns_answer_statuses);
   r = r.it("NOERROR without an A record", test_dns_answer_without_a_record);
+  r = r.it("search: a SERVFAIL suffix continues", test_search_servfail_continues);
+  r = r.it("search: a timeout ends the suffixes", test_search_timeout_ends_the_suffixes);
+  r = r.it("search: a leading as-is name has no retry", test_search_leading_as_is_has_no_retry);
+  r = r.it("search: a failed leading as-is still tries the suffixes", test_search_leading_as_is_failure_still_tries_suffixes);
+  r = r.it("search: a refused suffix stops everything", test_search_refused_suffix_stops_everything);
+  r = r.it("search: every name NXDOMAIN", test_search_all_nxdomain);
   r = r.it("live: this machine's /etc/hosts", test_live_hosts_file);
   r = r.it("live: resolve localhost", test_live_resolve_localhost);
   return r.finish();
