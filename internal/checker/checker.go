@@ -1364,6 +1364,44 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		},
 		Result: ast.NumberType{Width: 32, Signed: true},
 	}
+	// __mismatch(a, ao, b, bo, n) → i32: the offset of the first byte where
+	// a[ao..ao+n) and b[bo..bo+n) differ, or n when they are equal. The fifth
+	// fused SIMD kernel, and the comparison one the other four left out
+	// (#8791).
+	//
+	// ONE kernel, not two, and that is the design. `__memeq` would serve
+	// equality — `uniq` — and leave every ordering caller (`comm`, `sort`,
+	// `join`) back on an indexed byte loop, because a boolean cannot say
+	// WHERE the difference is. The first differing offset answers both: an
+	// equality test is `__mismatch(…) == n`, and an ordering is one indexed
+	// load at that offset. It is also the shape __memchr already has —
+	// "find the first position where a predicate holds".
+	//
+	// Comparing a range without this costs a copy or a walk. `slice_unchecked`
+	// is not a view: it lowers to __str_slice, which copies the bytes into a
+	// fresh string, so a comparison spelled with slices allocates once per
+	// operand even when the result never escapes. And an indexed byte is
+	// ~2.8 ns, so walking a 13-byte range by hand costs more than the copy.
+	//
+	// The offsets and the length are CLAMPED, not trusted: `ao` and `bo` into
+	// [0, len] and `n` down to whatever both ranges actually hold. A caller
+	// asking to compare more than is there gets the shorter answer rather
+	// than a read past the end, and its `== n` test correctly fails. This is
+	// the one place this family departs from `slice_unchecked`'s "unchecked"
+	// — reading two ranges at once doubles the ways a caller can be wrong,
+	// and the clamp is a handful of instructions outside the loop.
+	//
+	// Same string-not-pointer argument as __memchr's, for the same reason.
+	c.info.FuncSigs["__mismatch"] = &ast.FuncType{
+		Params: []ast.Type{
+			ast.StringType{},
+			ast.NumberType{Width: 32, Signed: true},
+			ast.StringType{},
+			ast.NumberType{Width: 32, Signed: true},
+			ast.NumberType{Width: 32, Signed: true},
+		},
+		Result: ast.NumberType{Width: 32, Signed: true},
+	}
 	// __heap_mark(): i64 / __heap_release_to(mark: i64) — one-level arena
 	// checkpoint. Mark captures the bump cursor (plus a freelist-head
 	// snapshot); release_to rewinds to it, reclaiming everything allocated

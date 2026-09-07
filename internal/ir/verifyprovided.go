@@ -203,6 +203,7 @@ var providedSigs = map[string]providedSig{
 	"__log_f64":                     {-1, rFloat},
 	"__map_hash_seed":               {-1, rWord},
 	"__memchr":                      {-1, rWord},
+	"__mismatch":                    {-1, rWord},
 	"__memcpy":                      {3, rVoid},
 	"__memset":                      {3, rVoid},
 	"__method_Array_len":            {-1, rWord},
