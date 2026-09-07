@@ -448,6 +448,21 @@ measured as a wash and were reverted rather than kept, which is what
 located the cost. Neighbours: #8530 (`array.with`, struct updates) and
 #8532 (small value structs boxed).
 
+**A line RECORD costs ~365 ns to build and thread (#8815).** `join` is the
+first utility here that holds TWO input cursors at once and carries a parsed
+line — text, field bounds, join-field range — from one loop iteration to the
+next, and it is 0.10x GNU on every workload. Of 1.05 s on the input side of a
+2M-line run, ~0.32 s is reading and splitting and ~0.73 s is the record and
+the cursor crossing three call boundaries per line, because a threaded cursor
+has to come back through a tuple where C would mutate in place. Three rounds
+of shaving (the join field held as a range rather than a sliced string, the
+matched group off its arrays in the one-line case, the cursor rebuilt once
+instead of three times) were worth 3-8% each and located the floor rather
+than removing it: `array.append` at ~19 ns and a tuple return at ~20 ns
+against a struct return's ~3 ns. It is a different shape from #8425
+(per-byte) and #8770 (per-append), and every remaining group-B utility with
+two cursors will meet it.
+
 Gaps that are closed, each now exercised by the corpus rather than carved
 out of it: `IoError.Other` carrying no strerror text (#8265), in the
 write-failure cases (`yes >&-`, `> /dev/full`); source unable to learn its

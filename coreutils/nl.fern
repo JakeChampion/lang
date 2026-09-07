@@ -284,47 +284,44 @@ struct Opts {
   renumber: boolean,
   del1: string,
   del2: string,
-  del3: string
+  del3: string,
+  // Padding cut from these rather than built per line: `pad` is
+  // `width` spaces, `zeros` is `width` zeros, and `blank` is what an
+  // unnumbered line carries in place of the number and the separator.
+  pad: string,
+  zeros: string,
+  blank: string
 }
 
 // ---- output -----------------------------------------------------------------
 function spaces(n: i32): string {
-  var out: string = "";
-  var i: i32 = 0;
-  while (i < n) {
-    out = out + " ";
-    i = i + 1;
-  }
-  return out;
+  return " ".repeat(n);
+}
+
+// The three padding strings, cut to size once the width and the
+// separator are known.
+function with_pads(o: Opts): Opts {
+  return Opts { ...o, pad: spaces(o.width), zeros: "0".repeat(o.width), blank: spaces(o.width + o.sep.len()) };
 }
 
 // The three FORMATs. A number wider than the field overflows it rather
 // than being truncated, and `rz` puts its zeros after the sign.
-function format_lineno(n: i64, width: i32, fmt: i32): string {
+function format_lineno(n: i64, o: Opts): string {
   var digits: string = n.to_string();
-  if (digits.len() >= width) {
+  if (digits.len() >= o.width) {
     return digits;
   }
-  var pad: i32 = width - digits.len();
-  if (fmt == fmt_ln()) {
-    return digits + spaces(pad);
+  var need: i32 = o.width - digits.len();
+  if (o.fmt == fmt_ln()) {
+    return digits + slice_unchecked(o.pad, 0, need);
   }
-  if (fmt == fmt_rn()) {
-    return spaces(pad) + digits;
+  if (o.fmt == fmt_rn()) {
+    return slice_unchecked(o.pad, 0, need) + digits;
   }
-  var sign: string = "";
-  var body: string = digits;
   if (digits.len() > 0 && digits[0] as i32 == 45) {
-    sign = "-";
-    body = slice_unchecked(digits, 1, digits.len()) + "";
+    return "-" + slice_unchecked(o.zeros, 0, need) + slice_unchecked(digits, 1, digits.len());
   }
-  var zeros: string = "";
-  var i: i32 = 0;
-  while (i < pad) {
-    zeros = zeros + "0";
-    i = i + 1;
-  }
-  return sign + zeros + body;
+  return slice_unchecked(o.zeros, 0, need) + digits;
 }
 
 // ---- the running state ------------------------------------------------------
@@ -420,7 +417,7 @@ function proc_line(line: string, st0: State, o: Opts, w0: io_buffered.BufWriter)
   var r: (boolean, i64) = numbered(line, st, sty, o);
   st = State { ...st, blanks: r.1 };
   if (!r.0) {
-    return Emit { st: st, w: gnu.put(w, spaces(o.width + o.sep.len()) + line + "\n") };
+    return Emit { st: st, w: gnu.put(w, o.blank + line + "\n") };
   }
   // The overflow noticed while numbering the PREVIOUS line is reported
   // here, so that line still goes out in full and a file whose last
@@ -430,7 +427,7 @@ function proc_line(line: string, st0: State, o: Opts, w0: io_buffered.BufWriter)
     gnu.error("line number overflow");
     exit(1);
   }
-  w = gnu.put(w, format_lineno(st.line_no, o.width, o.fmt) + o.sep + line + "\n");
+  w = gnu.put(w, format_lineno(st.line_no, o) + o.sep + line + "\n");
   match (st.line_no.checked_add(o.incr)) {
     Some(v) => {
       st = State { ...st, line_no: v };
@@ -535,7 +532,7 @@ function main(): i32 {
   opts = opts.append(gnu.valued("d", "section-delimiter", opt_delim()));
 
   var dels: (string, string, string) = delimiters("\\:");
-  var o: Opts = Opts { header: empty_style(style_none()), body: empty_style(style_nonempty()), footer: empty_style(style_none()), sep: "\t", fmt: fmt_rn(), width: 6, start: 1 as i64, incr: 1 as i64, join_blank: 1 as i64, renumber: true, del1: dels.0, del2: dels.1, del3: dels.2 };
+  var o: Opts = Opts { header: empty_style(style_none()), body: empty_style(style_nonempty()), footer: empty_style(style_none()), sep: "\t", fmt: fmt_rn(), width: 6, start: 1 as i64, incr: 1 as i64, join_blank: 1 as i64, renumber: true, del1: dels.0, del2: dels.1, del3: dels.2, pad: "", zeros: "", blank: "" };
 
   var g: gnu.Getopt = gnu.getopt_new(argv, opts, "nl", help_text(), 1);
   while (true) {
@@ -581,6 +578,8 @@ function main(): i32 {
       }
     }
   }
+
+  o = with_pads(o);
 
   var files: string[] = g.operands();
   if (files.len() == 0) {
