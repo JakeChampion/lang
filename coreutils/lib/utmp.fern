@@ -1,0 +1,137 @@
+// coreutils/lib/utmp.fern — the login-accounting database, as the
+// utilities that read it see it.
+//
+// `logname` needs one entry out of it; `users`, `who` and `pinky` need
+// the whole file, so the record and the scan live here rather than in
+// any one of them.
+//
+// The file is a flat array of fixed-size records with no header, so
+// reading it is a byte offset and a width per field — and the WIDTHS
+// are the whole of the per-system difference. Linux's `struct utmp` and
+// `struct utmpx` are the same 384-byte record:
+//
+//   ut_type     i16   @0    what the entry records (see the types below)
+//   ut_pid      i32   @4
+//   ut_line     [32]  @8    the terminal, with no `/dev/` prefix
+//   ut_id       [4]   @40
+//   ut_user     [32]  @44
+//   ut_host     [256] @76
+//   ut_exit           @332  two i16
+//   ut_session  i32   @336
+//   ut_tv             @340  two i32: seconds, microseconds
+//   ut_addr_v6  [16]  @348
+//   (reserved)  [20]  @364
+//
+// A char array is NUL-padded but NOT necessarily NUL-terminated: a name
+// exactly 32 bytes long fills the field, so a reader that stops at the
+// NUL has to stop at the field's end as well.
+//
+// The database is not always there. A container, and any system whose
+// init does not keep one, has no /var/run/utmp at all — and the callers
+// treat that as "nobody is logged in" rather than as an error, which is
+// what GNU does with a file it cannot read.
+import "std/string";
+import "std/array";
+
+// The record types this reads. USER_PROCESS is the only one that names
+// a logged-in user; the rest describe the run level, the boot time, an
+// init or login process that has not yet been claimed, and the tail of
+// one that has.
+pub function empty_type(): i32 { return 0; }
+pub function run_lvl(): i32 { return 1; }
+pub function boot_time(): i32 { return 2; }
+pub function new_time(): i32 { return 3; }
+pub function old_time(): i32 { return 4; }
+pub function init_process(): i32 { return 5; }
+pub function login_process(): i32 { return 6; }
+pub function user_process(): i32 { return 7; }
+pub function dead_process(): i32 { return 8; }
+
+pub function record_bytes(): i32 { return 384; }
+
+// One record, reduced to the fields a utility prints or matches on.
+pub struct Entry { kind: i32, pid: i32, line: string, id: string, user: string, host: string, sec: i64 }
+
+// The default database. GNU builds against `_PATH_UTMP`, which is
+// /var/run/utmp on Linux — a symlink into /run on any system with a
+// tmpfs /run, so opening the traditional name finds the live file.
+pub function default_path(): string {
+  return "/var/run/utmp";
+}
+
+// A little-endian unsigned 16-bit field.
+function u16_at(bs: u8[], off: i32): i32 {
+  return (bs[off] as i32) + (bs[off + 1] as i32) * 256;
+}
+
+// A little-endian signed 32-bit field.
+function i32_at(bs: u8[], off: i32): i32 {
+  var v: i64 = (bs[off] as i64) + (bs[off + 1] as i64) * (256 as i64)
+    + (bs[off + 2] as i64) * (65536 as i64) + (bs[off + 3] as i64) * (16777216 as i64);
+  if (v > (2147483647 as i64)) {
+    v = v - (4294967296 as i64);
+  }
+  return v as i32;
+}
+
+// A NUL-padded fixed-width char field, cut at the first NUL or at the
+// field's end, whichever comes first.
+function field_at(bs: u8[], off: i32, width: i32): string {
+  var n: i32 = 0;
+  while (n < width && (bs[off + n] as i32) != 0) {
+    n = n + 1;
+  }
+  var out: u8[] = [];
+  var i: i32 = 0;
+  while (i < n) {
+    out = out.append(bs[off + i]);
+    i = i + 1;
+  }
+  return string_from_bytes_unchecked(out);
+}
+
+function entry_at(bs: u8[], off: i32): Entry {
+  return Entry {
+    kind: u16_at(bs, off + 0),
+    pid: i32_at(bs, off + 4),
+    line: field_at(bs, off + 8, 32),
+    id: field_at(bs, off + 40, 4),
+    user: field_at(bs, off + 44, 32),
+    host: field_at(bs, off + 76, 256),
+    sec: i32_at(bs, off + 340) as i64,
+  };
+}
+
+// Every whole record in `path`, in file order. A missing or unreadable
+// file, and a trailing partial record, are both "no more entries".
+pub function read_all(path: string): Entry[] {
+  var out: Entry[] = [];
+  match (read_file_bytes(path)) {
+    Ok(bs) => {
+      var off: i32 = 0;
+      while (off + record_bytes() <= bs.len()) {
+        out = out.append(entry_at(bs, off));
+        off = off + record_bytes();
+      }
+      return out;
+    },
+    Err(_) => {
+      return out;
+    }
+  }
+}
+
+// The user logged in on terminal `line`, as getlogin(3) asks it: the
+// first USER_PROCESS record whose ut_line is that terminal, with a
+// non-empty name. `line` carries no `/dev/` prefix, matching the field.
+pub function user_on_line(path: string, line: string): Option[string] {
+  var entries: Entry[] = read_all(path);
+  var i: i32 = 0;
+  while (i < entries.len()) {
+    if (entries[i].kind == user_process() && entries[i].line == line && entries[i].user.len() > 0) {
+      return Some(entries[i].user);
+    }
+    i = i + 1;
+  }
+  return None;
+}

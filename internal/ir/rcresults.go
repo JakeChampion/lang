@@ -378,7 +378,12 @@ var rcResultUnmodelled = map[string]string{
 	// Fresh on the first call and the cached pointer on every later
 	// one. One name, two answers, and which one a given call site gets
 	// is not a static property.
-	"__fern_args": "built once and cached; the first call is fresh and the rest are borrows",
+	"__fern_args":    "built once and cached; the first call is fresh and the rest are borrows",
+	"__fern_environ": "built once and cached, exactly as __fern_args is",
+	// Spelled the builtin's way, as `access` and `write_file_exec` are
+	// above: wasm has no users, so there is no `__fern_getgroups` in the
+	// runtime registry for the rename rule to reach.
+	"getgroups": "built once and cached, exactly as __fern_args is",
 }
 
 // rcResultNonPointer: the result is not an address reference counting
@@ -423,7 +428,7 @@ var rcResultNonPointer = map[string]bool{
 	"__ptr_width":   true,
 	"__slice_range": true, "__fern_idiv_s32": true, "__fern_idiv_u32": true,
 	"__fern_irem_s32": true, "__fern_irem_u32": true, "isatty": true,
-	"geteuid": true, "getegid": true,
+	"geteuid": true, "getegid": true, "getuid": true, "getgid": true,
 	"__wasi_errno_of_code": true,
 
 	// The rc probes and the uniqueness test — counters and a boolean.

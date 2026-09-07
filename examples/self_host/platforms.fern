@@ -237,6 +237,7 @@ pub function gated_builtins(): Gate[] {
         // the process stack, but they are separate capabilities because the
         // proxy world has envp and no argv.
         Gate { builtin: "env", capability: "env" },
+        Gate { builtin: "environ", capability: "env" },
         Gate { builtin: "args", capability: "args" },
 
         // Entropy — a syscall on native, a host import on wasm, never
@@ -277,12 +278,17 @@ pub function gated_builtins(): Gate[] {
         Gate { builtin: "write_file_exec", capability: "fsmode" },
         Gate { builtin: "access", capability: "fsmode" },
 
-        // The process's own effective identity. Neither WASI preview has a
+        // The process's own identity — the effective pair, the real pair,
+        // and the supplementary group set. Neither WASI preview has a
         // notion of a user, and there is no honest constant to answer with:
         // 0 claims to be root while FileStat's uid/gid are also zero there,
-        // so every file would look like the caller's.
+        // so every file would look like the caller's. An empty group list
+        // is the same fiction one level down.
         Gate { builtin: "geteuid", capability: "userid" },
         Gate { builtin: "getegid", capability: "userid" },
+        Gate { builtin: "getuid", capability: "userid" },
+        Gate { builtin: "getgid", capability: "userid" },
+        Gate { builtin: "getgroups", capability: "userid" },
 
         // The host's own name. A kernel answers it; WASI has no host
         // identity and answers the empty string, which is a fact about a

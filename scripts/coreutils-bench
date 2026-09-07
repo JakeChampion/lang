@@ -251,6 +251,41 @@ PY
       # /etc/hosts, read on every call.
       printf 'hostid\tn\t{}\n'
       ;;
+    whoami)
+      # Startup plus one /etc/passwd scan. GNU pays the dynamic loader
+      # and then dlopens the NSS modules the passwd line names.
+      printf 'whoami\tn\t{}\n'
+      ;;
+    id)
+      # -u is the shape a script runs in a loop and reads nothing but
+      # the kernel; the composite line is the one that scans both
+      # databases, once for the names and once for the group list.
+      printf 'id -u\tn\t{} -u\n'
+      printf 'id -un\tn\t{} -un\n'
+      printf 'id\tn\t{}\n'
+      printf 'id -G\tn\t{} -G\n'
+      printf 'id root\tn\t{} root\n'
+      ;;
+    groups)
+      # The process form is getgroups(2) plus one /etc/group scan; the
+      # operand form adds an /etc/passwd scan and getgrouplist.
+      printf 'groups\tn\t{}\n'
+      printf 'groups root\tn\t{} root\n'
+      ;;
+    logname)
+      # Startup plus /proc/self/loginuid; on a build machine that is
+      # unset and stdin is not a terminal, so both sides stop there.
+      printf 'logname\tn\t{}\n'
+      ;;
+    printenv)
+      # The dump walks the whole vector and writes it; a named lookup
+      # is startup plus one scan. The pipeline partner keeps the
+      # environment the same size on both sides.
+      printf 'printenv\tn\t{}\n'
+      printf 'printenv -0\tn\t{} -0\n'
+      printf 'printenv PATH\tn\t{} PATH\n'
+      printf 'printenv four names\tn\t{} PATH HOME LANG TERM\n'
+      ;;
     head)
       # head's shapes are: stop early on a big file (the count is small,
       # so the cost is startup plus one read), copy a lot of it, and the

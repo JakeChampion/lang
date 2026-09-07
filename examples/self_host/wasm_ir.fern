@@ -254,6 +254,7 @@ pub function needs_of(cache: irlower.LowerResult[]): string[] {
     if (module_emits_op_cached(cache, "arr_push_i64")) { out = out.append("arr_push_i64"); }
     if (module_emits_op_cached(cache, "arr_push_owned")) { out = out.append("arr_push_owned"); }
     if (module_emits_op_cached(cache, "env")) { out = out.append("env"); }
+    if (module_emits_op_cached(cache, "environ")) { out = out.append("environ"); }
     if (module_emits_op_cached(cache, "eprint_str")) { out = out.append("eprint_str"); }
     // exit's `call $proc_exit` needs no import gate on the command core (mode 0
     // imports proc_exit unconditionally for _start), but a component core has
@@ -1818,7 +1819,7 @@ pub function component_needs_ok(needs: string[], io: boolean): boolean {
         // materialises the list into) — see the mode-2 gate in
         // emit_ir_module_units. arg_at shares args's get-arguments import
         // and copies one entry out of the list (arg_at_func_p2).
-        if (io && (n == "env" || n == "args" || n == "arg_at")) { i = i + 1; continue; }
+        if (io && (n == "env" || n == "environ" || n == "args" || n == "arg_at")) { i = i + 1; continue; }
         // The filesystem pair. Their bodies box a real IoError variant
         // (err_payload_p2) rather than storing the raw wasi error code, so an
         // `Err(e)` here matches like one from any other target (#5795).
@@ -2052,6 +2053,55 @@ pub function args_func_p2(): string {
     o = o + "        (i32.store8 (i32.add (i32.add (local.get $blk) (i32.const 4)) (local.get $j)) (i32.load8_u (i32.add (local.get $sp) (local.get $j))))\n";
     o = o + "        (local.set $j (i32.add (local.get $j) (i32.const 1)))\n";
     o = o + "        (br $cc)))\n";
+    o = o + "      (i32.store (i32.add (i32.add (local.get $arr) (i32.const 8)) (i32.mul (local.get $i) (i32.const 4))) (local.get $blk))\n";
+    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
+    o = o + "      (br $c)))\n";
+    o = o + "    (local.get $arr))\n";
+    return o;
+}
+
+// environ_func_p2 is the preview2 $__fern_environ. get-environment hands over
+// a list<tuple<string, string>> — already SPLIT — while `environ()` is defined
+// as the raw NAME=VALUE entries, so each pair is joined back with '=' into one
+// fresh string block. Splitting is lossy the other way (a value containing '='
+// is indistinguishable from a longer name), so the joined form is the one both
+// previews can produce.
+pub function environ_func_p2(): string {
+    var o: string = "";
+    o = o + "  (func $__fern_environ (result i32)\n";
+    o = o + "    (local $ra i32) (local $ptr i32) (local $count i32) (local $arr i32)\n";
+    o = o + "    (local $i i32) (local $tp i32) (local $kl i32) (local $vl i32) (local $blk i32) (local $j i32)\n";
+    // get-environment writes the (ptr, count) list header as two i32s, so the
+    // return area must be 4-aligned; over-allocate and round up to 8.
+    o = o + "    (local.set $ra (i32.and (i32.add (call $__fern_alloc (i32.const 16)) (i32.const 7)) (i32.const -8)))\n";
+    o = o + "    (call $get_environment (local.get $ra))\n";
+    o = o + "    (local.set $ptr (i32.load (local.get $ra)))\n";
+    o = o + "    (local.set $count (i32.load (i32.add (local.get $ra) (i32.const 4))))\n";
+    o = o + "    (local.set $arr (call $__fern_arr_box (i32.mul (local.get $count) (i32.const 4))))\n";
+    o = o + "    (i32.store (local.get $arr) (local.get $count))\n";
+    o = o + "    (i32.store (i32.add (local.get $arr) (i32.const 4)) (local.get $count))\n";
+    o = o + "    (local.set $i (i32.const 0))\n";
+    o = o + "    (block $d (loop $c\n";
+    o = o + "      (br_if $d (i32.ge_u (local.get $i) (local.get $count)))\n";
+    // Each element is a 16-byte tuple: key (ptr@0, len@4), value (ptr@8, len@12).
+    o = o + "      (local.set $tp (i32.add (local.get $ptr) (i32.mul (local.get $i) (i32.const 16))))\n";
+    o = o + "      (local.set $kl (i32.load (i32.add (local.get $tp) (i32.const 4))))\n";
+    o = o + "      (local.set $vl (i32.load (i32.add (local.get $tp) (i32.const 12))))\n";
+    o = o + "      (local.set $blk (call $__fern_str_box (i32.add (i32.const 5) (i32.add (local.get $kl) (local.get $vl)))))\n";
+    o = o + "      (i32.store (local.get $blk) (i32.add (i32.add (local.get $kl) (local.get $vl)) (i32.const 1)))\n";
+    o = o + "      (local.set $j (i32.const 0))\n";
+    o = o + "      (block $kd (loop $kc\n";
+    o = o + "        (br_if $kd (i32.ge_u (local.get $j) (local.get $kl)))\n";
+    o = o + "        (i32.store8 (i32.add (i32.add (local.get $blk) (i32.const 4)) (local.get $j)) (i32.load8_u (i32.add (i32.load (local.get $tp)) (local.get $j))))\n";
+    o = o + "        (local.set $j (i32.add (local.get $j) (i32.const 1)))\n";
+    o = o + "        (br $kc)))\n";
+    o = o + "      (i32.store8 (i32.add (i32.add (local.get $blk) (i32.const 4)) (local.get $kl)) (i32.const 61))\n";
+    o = o + "      (local.set $j (i32.const 0))\n";
+    o = o + "      (block $vd (loop $vc\n";
+    o = o + "        (br_if $vd (i32.ge_u (local.get $j) (local.get $vl)))\n";
+    o = o + "        (i32.store8 (i32.add (i32.add (i32.add (local.get $blk) (i32.const 5)) (local.get $kl)) (local.get $j)) (i32.load8_u (i32.add (i32.load (i32.add (local.get $tp) (i32.const 8))) (local.get $j))))\n";
+    o = o + "        (local.set $j (i32.add (local.get $j) (i32.const 1)))\n";
+    o = o + "        (br $vc)))\n";
     o = o + "      (i32.store (i32.add (i32.add (local.get $arr) (i32.const 8)) (i32.mul (local.get $i) (i32.const 4))) (local.get $blk))\n";
     o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
     o = o + "      (br $c)))\n";
@@ -2310,7 +2360,7 @@ pub function component_io_imports(needs: string[]): string {
         o = o + clock_imports_p2(needs_wall_clock(needs), need(needs, "monotonic_ns"));
     }
     if (need(needs, "args") || need(needs, "arg_at")) { o = o + args_imports_p2(); }
-    if (need(needs, "env")) { o = o + env_imports_p2(); }
+    if (need(needs, "env") || need(needs, "environ")) { o = o + env_imports_p2(); }
     // Filesystem last, which is where the AST path puts it and therefore the
     // slot component_full_io_fs / _fs_write / _fs_rw alias.
     if (need(needs, "read_file") || need(needs, "read_file_bytes") || need(needs, "write_file")) {
@@ -2385,6 +2435,7 @@ pub function component_io_shims(needs: string[]): string {
     }
     if (need(needs, "random_bytes") || need(needs, "random_i32")) { o = o + random_func_p2(); }
     if (need(needs, "env")) { o = o + env_func_p2(); }
+    if (need(needs, "environ")) { o = o + environ_func_p2(); }
     if (need(needs, "args")) { o = o + args_func_p2(); }
     if (need(needs, "arg_at")) { o = o + arg_at_func_p2(); }
     if (need(needs, "read_file") || need(needs, "read_file_bytes") || need(needs, "write_file")) { o = o + build_io_error_p2_func(); }
@@ -3627,6 +3678,15 @@ function emit_host_op_wat(o: ir.Op): string {
         // args (module_emits_op "args"). argv[0] is the program name,
         // matching the register backends.
         return "    call $__fern_args\n";
+    }
+    if (o.kind_tag == 249) {  // environ
+        // 0-arg -> build a fresh string[] of the whole environment as raw
+        // NAME=VALUE entries and push its block ptr. The helper
+        // ($__fern_environ, result i32) shares the environ imports with
+        // $__fern_env and allocates via the heap runtime; emitted caller-side
+        // in wasm_ir_run when the module reads the environment
+        // (module_emits_op "environ").
+        return "    call $__fern_environ\n";
     }
     if (o.kind_tag == 210) {  // arg_at
         // stack: i -> push a fresh string block holding argv[i]. The helper
@@ -6911,6 +6971,48 @@ pub function args_func(): string {
     o = o + "    (local.get $arr))\n";
     return o;
 }
+// environ_func emits $__fern_environ(): the whole environment as a string[]
+// of raw NAME=VALUE entries, built with the same preview-1 sizes-then-get
+// pattern args_func uses over the environ imports env_helpers declares. The
+// entries are NUL-terminated in the wasi buffer, so each one is a strlen and
+// a copy into a fresh string block, exactly as argv's are.
+pub function environ_func(): string {
+    var o: string = "";
+    o = o + "  (func $__fern_environ (result i32)\n";
+    o = o + "    (local $count i32) (local $bufsz i32) (local $ptrs i32) (local $buf i32)\n";
+    o = o + "    (local $arr i32) (local $i i32) (local $e i32) (local $len i32) (local $j i32) (local $blk i32)\n";
+    o = o + "    (drop (call $environ_sizes_get (i32.const 0) (i32.const 4)))\n";
+    o = o + "    (local.set $count (i32.load (i32.const 0)))\n";
+    o = o + "    (local.set $bufsz (i32.load (i32.const 4)))\n";
+    o = o + "    (local.set $ptrs (call $__fern_alloc (i32.mul (local.get $count) (i32.const 4))))\n";
+    o = o + "    (local.set $buf (call $__fern_alloc (local.get $bufsz)))\n";
+    o = o + "    (drop (call $environ_get (local.get $ptrs) (local.get $buf)))\n";
+    o = o + "    (local.set $arr (call $__fern_arr_box (i32.mul (local.get $count) (i32.const 4))))\n";
+    o = o + "    (i32.store (local.get $arr) (local.get $count))\n";
+    o = o + "    (i32.store (i32.add (local.get $arr) (i32.const 4)) (local.get $count))\n";
+    o = o + "    (local.set $i (i32.const 0))\n";
+    o = o + "    (block $d (loop $c\n";
+    o = o + "      (br_if $d (i32.ge_u (local.get $i) (local.get $count)))\n";
+    o = o + "      (local.set $e (i32.load (i32.add (local.get $ptrs) (i32.mul (local.get $i) (i32.const 4)))))\n";
+    o = o + "      (local.set $len (i32.const 0))\n";
+    o = o + "      (block $ld (loop $lc\n";
+    o = o + "        (br_if $ld (i32.eqz (i32.load8_u (i32.add (local.get $e) (local.get $len)))))\n";
+    o = o + "        (local.set $len (i32.add (local.get $len) (i32.const 1)))\n";
+    o = o + "        (br $lc)))\n";
+    o = o + "      (local.set $blk (call $__fern_str_box (i32.add (i32.const 4) (local.get $len))))\n";
+    o = o + "      (i32.store (local.get $blk) (local.get $len))\n";
+    o = o + "      (local.set $j (i32.const 0))\n";
+    o = o + "      (block $cd (loop $cc\n";
+    o = o + "        (br_if $cd (i32.ge_u (local.get $j) (local.get $len)))\n";
+    o = o + "        (i32.store8 (i32.add (i32.add (local.get $blk) (i32.const 4)) (local.get $j)) (i32.load8_u (i32.add (local.get $e) (local.get $j))))\n";
+    o = o + "        (local.set $j (i32.add (local.get $j) (i32.const 1)))\n";
+    o = o + "        (br $cc)))\n";
+    o = o + "      (i32.store (i32.add (i32.add (local.get $arr) (i32.const 8)) (i32.mul (local.get $i) (i32.const 4))) (local.get $blk))\n";
+    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
+    o = o + "      (br $c)))\n";
+    o = o + "    (local.get $arr))\n";
+    return o;
+}
 // arg_at_func emits $__fern_arg_at(i): the single-element sibling of
 // $__fern_args. Same sizes-then-get pattern, but it copies only argv[i] into
 // one fresh [len][bytes] block instead of building the whole string[] — the
@@ -8758,7 +8860,7 @@ function preview1_imports(needs: string[]): string {
     // env(name) scans the wasi environ vector — its environ_sizes_get /
     // environ_get imports must precede the function section, emitted when the
     // module reads an env var.
-    if (need(needs, "env")) { parts = parts.append(env_helpers()); }
+    if (need(needs, "env") || need(needs, "environ")) { parts = parts.append(env_helpers()); }
     // stat(path) uses the preview1 path_filestat_get import (must precede the
     // function section), emitted when the module stats a file.
     if (need(needs, "stat") || need(needs, "lstat")) { parts = parts.append(stat_import()); }
@@ -9130,6 +9232,9 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     // Option[string] (Some(value)/None). Heap-backed (allocates the value +
     // box), so the heap gate above folds env in.
     if (mode != 2 && need(needs, "env")) { parts = parts.append(env_func()); }
+    // $__fern_environ(): the whole environment as a string[] of raw
+    // NAME=VALUE entries, over the same environ imports env uses.
+    if (mode != 2 && need(needs, "environ")) { parts = parts.append(environ_func()); }
     // $__fern_build_io_error(errno, path): map a WASI errno to a real
     // IoError variant box, shared by every fs helper's error path (the wasm
     // sibling of native wasmbin's __build_io_error / asm_ir's

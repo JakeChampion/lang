@@ -1,0 +1,108 @@
+// groups.fern — GNU-compatible `groups`.
+//
+//   groups              the group names of the CURRENT process
+//   groups USERNAME...  `USERNAME : g1 g2 ...` per operand
+//
+// The two forms answer different questions, which is why the header of
+// GNU's own help says the process form "may differ if the groups
+// database has changed": with no operand the set comes from
+// getgroups(2) — what the kernel will actually check — while an operand
+// is looked up in the group database as it stands now.
+//
+// Three details are observable and easy to get wrong:
+//
+//   - An operand is looked up by NAME only. `groups 0` is
+//     `'0': no such user` where `id 0` is root, because groups(1) calls
+//     getpwnam and stops.
+//   - A failed operand does not end the run: the diagnostic goes out,
+//     the exit status turns 1, and the remaining operands are printed.
+//   - A gid no group entry claims is not silently skipped and not
+//     printed as a name: the diagnostic `cannot find name for group ID
+//     N` goes to stderr, the NUMBER is printed in the name's place, and
+//     the exit status turns 1.
+import "std/string";
+import "std/array";
+import "std/io_buffered";
+import "./lib/gnu";
+import "./lib/pwdb";
+
+function help_text(): string {
+  var out: string = "";
+  out = out + "Usage: " + gnu.prog() + " [OPTION]... [USERNAME]...\n";
+  out = out + "Print group memberships for each USERNAME or, if no USERNAME is specified, for\n";
+  out = out + "the current process (which may differ if the groups database has changed).\n";
+  out = out + "\n";
+  out = out + "      --help        display this help and exit\n";
+  out = out + "      --version     output version information and exit\n";
+  return out;
+}
+
+// One line of group names, space-separated. An unnamed gid costs a
+// diagnostic and prints as its number; `ok` says whether every one of
+// them had a name.
+pub struct Line { out: io_buffered.BufWriter, text: string, ok: boolean }
+
+function names_of(o: io_buffered.BufWriter, gids: i64[]): Line {
+  var names: Option[string][] = pwdb.group_names(gids);
+  var text: string = "";
+  var ok: boolean = true;
+  var w: io_buffered.BufWriter = o;
+  var i: i32 = 0;
+  while (i < gids.len()) {
+    if (i > 0) {
+      text = text + " ";
+    }
+    match (names[i]) {
+      Some(n) => {
+        text = text + n;
+      },
+      None => {
+        // The diagnostic goes out with what is buffered ahead of it, so
+        // a shared pipe sees the names before the complaint about the
+        // one that follows them.
+        w = gnu.put(w, text);
+        text = "";
+        w = gnu.error_out(w, "cannot find name for group ID " + gids[i].to_string());
+        text = gids[i].to_string();
+        ok = false;
+      }
+    }
+    i = i + 1;
+  }
+  return Line { out: w, text: text, ok: ok };
+}
+
+function main(): i32 {
+  var operands: string[] = gnu.parse_standard_options_only(args(), "groups", help_text(), 1);
+  var o: io_buffered.BufWriter = gnu.out_new();
+  var ok: boolean = true;
+  if (operands.len() == 0) {
+    var l: Line = names_of(o, pwdb.process_groups());
+    o = gnu.put(l.out, l.text + "\n");
+    ok = l.ok;
+  } else {
+    var i: i32 = 0;
+    while (i < operands.len()) {
+      match (pwdb.user_by_name(operands[i])) {
+        Some(u) => {
+          o = gnu.put(o, operands[i] + " : ");
+          var ul: Line = names_of(o, pwdb.group_list(u.name, u.gid));
+          o = gnu.put(ul.out, ul.text + "\n");
+          if (!ul.ok) {
+            ok = false;
+          }
+        },
+        None => {
+          o = gnu.error_out(o, gnu.quote(operands[i]) + ": no such user");
+          ok = false;
+        }
+      }
+      i = i + 1;
+    }
+  }
+  gnu.finish(o);
+  if (ok) {
+    return 0;
+  }
+  return 1;
+}

@@ -81,6 +81,9 @@ pub function builtin_caps(): BuiltinCap[] {
         BuiltinCap { builtin: "temp_dir", capability: "fs" },
 
         BuiltinCap { builtin: "env", capability: "env" },
+        // The whole list is the same capability as one lookup: a caller
+        // that can ask for a name can ask for every name it can guess.
+        BuiltinCap { builtin: "environ", capability: "env" },
         // The machine's name is ambient information about where the
         // process runs, like its environment.
         BuiltinCap { builtin: "hostname", capability: "env" },
@@ -109,15 +112,15 @@ pub function builtin_caps(): BuiltinCap[] {
 // bit casts,
 // the strbuf scratch buffer,
 // the in-heap constructors, and the readiness helpers whose authority lives on
-// the pollable constructors instead. `geteuid` / `getegid` join them: reading
-// the process's own effective ids reaches nothing, since the identity was
-// chosen by whoever exec'd the program. (platforms.fern DOES gate those two —
-// there the question is whether the target can answer at all, not whether a
-// dependency may ask.) Mirrors native's Ungated exactly.
+// the pollable constructors instead. The id builtins join them: reading the
+// process's own ids reaches nothing, since the identity was chosen by whoever
+// exec'd the program. (platforms.fern DOES gate them — there the question is
+// whether the target can answer at all, not whether a dependency may ask.)
+// Mirrors native's Ungated exactly.
 pub function ungated(): string[] {
     return ["putchar", "print", "write", "eprint", "read_line",
             "stdin", "stdout", "stderr", "isatty", "target_os", "target_arch", "args", "exit",
-            "geteuid", "getegid",
+            "geteuid", "getegid", "getuid", "getgid", "getgroups",
             "strbuf_reset", "strbuf_append", "strbuf_take",
             "f32_bits", "f32_from_bits", "f64_bits", "f64_from_bits",
             "poll", "wasm_block", "wasm_poll", "wasm_pollable_drop",

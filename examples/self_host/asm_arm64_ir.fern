@@ -1249,6 +1249,22 @@ pub function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDec
         } else if (o.kind_tag == 239) {  // getegid
             s = s.write("    bl __fn___fern_getegid\n    str x0, [sp, #-16]!\n");
             s = s.need("getegid");
+        } else if (o.kind_tag == 246) {  // getuid
+            s = s.write("    bl __fn___fern_getuid\n    str x0, [sp, #-16]!\n");
+            s = s.need("getuid");
+        } else if (o.kind_tag == 247) {  // getgid
+            s = s.write("    bl __fn___fern_getgid\n    str x0, [sp, #-16]!\n");
+            s = s.need("getgid");
+        } else if (o.kind_tag == 248) {  // getgroups
+            // no args -> __fn___fern_getgroups: a fresh i64[] of the
+            // supplementary group set, pushed in x0.
+            s = s.write("    bl __fn___fern_getgroups\n    str x0, [sp, #-16]!\n");
+            s = s.need("heap"); s = s.need("getgroups");
+        } else if (o.kind_tag == 249) {  // environ
+            // no args -> __fn___fern_environ: a fresh string[] of the whole
+            // environment, read off the same __fern_envp global env walks.
+            s = s.write("    bl __fn___fern_environ\n    str x0, [sp, #-16]!\n");
+            s = s.need("heap"); s = s.need("environ");
         } else if (o.kind_tag == 189) {  // wasm_timer_pollable
             // [ns] -> __fern_wasm_timer_pollable(x0=ns) -> -1 (native shim) in x0.
             s = s.write("    ldr x0, [sp], #16\n    bl __fern_wasm_timer_pollable\n    str x0, [sp, #-16]!\n");
@@ -3403,7 +3419,7 @@ function emit_rt_clock_and_print(s: asmcore.EmitState, darwin: boolean): asmcore
     // timing program referencing a slot nothing defined. Same gate as asm_ir's.
     var ctgt: string = "arm64-linux";
     if (darwin) { ctgt = "arm64-darwin"; }
-    if (s.has_need("monotonic_ns") || s.has_need("now_unix_ms") || s.has_need("now_ns") || s.has_need("stat") || s.has_need("lstat") || s.has_need("read_file") || s.has_need("read_file_bytes") || s.has_need("random_i32") || s.has_need("sleep_ms") || s.has_need("poll") || s.has_need("proc_waitpid") || s.has_need("timer_fd") || s.has_need("tcp_listen") || s.has_need("tcp_connect") || s.has_need("print_int") || s.has_need("putchar") || s.has_need("eprint") || s.has_need("read_int") || s.has_need("udp_send") || s.has_need("isatty") || s.has_need("access") || s.has_need("geteuid") || s.has_need("getegid") || s.has_need("fd_stat")) {
+    if (s.has_need("monotonic_ns") || s.has_need("now_unix_ms") || s.has_need("now_ns") || s.has_need("stat") || s.has_need("lstat") || s.has_need("read_file") || s.has_need("read_file_bytes") || s.has_need("random_i32") || s.has_need("sleep_ms") || s.has_need("poll") || s.has_need("proc_waitpid") || s.has_need("timer_fd") || s.has_need("tcp_listen") || s.has_need("tcp_connect") || s.has_need("print_int") || s.has_need("putchar") || s.has_need("eprint") || s.has_need("read_int") || s.has_need("udp_send") || s.has_need("isatty") || s.has_need("access") || s.has_need("geteuid") || s.has_need("getegid") || s.has_need("getuid") || s.has_need("getgid") || s.has_need("getgroups") || s.has_need("environ") || s.has_need("fd_stat")) {
         s = s.write("    .section .bss\n    .align 8\n__fern_scratch: .skip 256\n    .section .text\n");
     }
     if (s.has_need("read_int")) {
@@ -6360,6 +6376,11 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     if (s.has_need("env")) {
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_env(), s.struct_decls, s);
     }
+    // environ is env's whole-list sibling and reads the same slot the same way,
+    // so it is target-independent for the same reason.
+    if (s.has_need("environ")) {
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_environ(), s.struct_decls, s);
+    }
     // __fern_str_bytes is now a Fern runtime function (#2649): see
     // asmcore.rt_src_str_bytes, emitted (need-gated) in the migrated-helpers
     // section below. The single shared body serves both arm64 AST + IR. It builds
@@ -6413,6 +6434,15 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     }
     if (s.has_need("getegid")) {
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_getid(tgt, "getegid"), s.struct_decls, s);
+    }
+    if (s.has_need("getuid")) {
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_getid(tgt, "getuid"), s.struct_decls, s);
+    }
+    if (s.has_need("getgid")) {
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_getid(tgt, "getgid"), s.struct_decls, s);
+    }
+    if (s.has_need("getgroups")) {
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_getgroups(tgt), s.struct_decls, s);
     }
     if (s.has_need("hostname")) {
         if (darwin) {

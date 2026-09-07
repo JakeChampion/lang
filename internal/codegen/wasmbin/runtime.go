@@ -474,6 +474,16 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_alloc_rc1")
 					needs.add("__fern_str_copy")
 					needs.add("__fern_args")
+				case "__fern_environ":
+					// The whole environment as a string[].
+					// Shares the wasi_environ_* init path with
+					// __fern_env / __fern_env_at, and copies each
+					// entry into a fresh owned string via
+					// __fern_str_copy.
+					needs.add("__fern_alloc")
+					needs.add("__fern_alloc_rc1")
+					needs.add("__fern_str_copy")
+					needs.add("__fern_environ")
 				case "__fern_env_at":
 					// wasi_environ_sizes_get + wasi_environ_get
 					// + alloc for the environ_ptrs table + buf.
@@ -1672,6 +1682,14 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  nil,
 		results: []byte{encode.ValtypeI32},
 		body:    buildArgsBody,
+	},
+	"__fern_environ": {
+		// () → i32 — length-prefixed string[] of the whole
+		// environment, each entry the raw "NAME=VALUE" bytes.
+		// Same shape and same caching as __fern_args.
+		params:  nil,
+		results: []byte{encode.ValtypeI32},
+		body:    buildEnvironBody,
 	},
 	"__fern_env_at": {
 		// (i) → (data, len) — the i-th environ entry as a
@@ -7651,6 +7669,189 @@ func buildArgsBody(helperIdxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 4)
 	locals := inst.PutLocalsOneGroup(nil, 10, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
+}
+
+// buildEnvironBody — () → i32. The whole environment as a `string[]` of
+// raw "NAME=VALUE" entries, in the order preview 1 reports them. Same
+// array shape, same immortal header and same one-shot build as
+// buildArgsBody, over the environ_* imports rather than the args_* ones.
+//
+// The env cache (envInitAddr / envCountAddr / envPtrsAddr) is the one
+// __fern_env and __fern_env_at fill, so whichever runs first pays for it.
+// The BUILT array has slots of its own (environArrAddr / environBuiltAddr)
+// rather than the post-init env scratch — see memlayout.go.
+//
+// Locals (no params):
+//
+//	0: $count
+//	1: $bufsize
+//	2: $env_ptrs
+//	3: $env_buf
+//	4: $result
+//	5: $i
+//	6: $cstr
+//	7: $len
+//	8: $cdata
+//	9: $clen
+func buildEnvironBody(helperIdxs map[string]uint32) []byte {
+	alloc := helperIdxs["__fern_alloc"]
+	strCopy := helperIdxs["__fern_str_copy"]
+	envSizes := helperIdxs["wasi_environ_sizes_get"]
+	envGet := helperIdxs["wasi_environ_get"]
+	var body []byte
+	// Lazy init: same shape as __fern_env / __fern_env_at.
+	body = inst.InstI32Const(body, envInitAddr)
+	body = memory.InstI32Load(body, 2, 0)
+	body = numeric.InstI32Eqz(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	{
+		body = inst.InstI32Const(body, envSizesArgcAddr)
+		body = inst.InstI32Const(body, envSizesBufAddr)
+		body = inst.InstCall(body, envSizes)
+		body = inst.InstDrop(body)
+		body = inst.InstI32Const(body, envSizesArgcAddr)
+		body = memory.InstI32Load(body, 2, 0)
+		body = inst.InstLocalSet(body, 0)
+		body = inst.InstI32Const(body, envSizesBufAddr)
+		body = memory.InstI32Load(body, 2, 0)
+		body = inst.InstLocalSet(body, 1)
+		body = inst.InstLocalGet(body, 0)
+		body = inst.InstI32Const(body, 4)
+		body = numeric.InstI32Mul(body)
+		body = inst.InstCall(body, alloc)
+		body = inst.InstLocalSet(body, 2)
+		body = inst.InstLocalGet(body, 1)
+		body = inst.InstCall(body, alloc)
+		body = inst.InstLocalSet(body, 3)
+		body = inst.InstLocalGet(body, 2)
+		body = inst.InstLocalGet(body, 3)
+		body = inst.InstCall(body, envGet)
+		body = inst.InstDrop(body)
+		body = inst.InstI32Const(body, envCountAddr)
+		body = inst.InstLocalGet(body, 0)
+		body = memory.InstI32Store(body, 2, 0)
+		body = inst.InstI32Const(body, envPtrsAddr)
+		body = inst.InstLocalGet(body, 2)
+		body = memory.InstI32Store(body, 2, 0)
+		body = inst.InstI32Const(body, envInitAddr)
+		body = inst.InstI32Const(body, 1)
+		body = memory.InstI32Store(body, 2, 0)
+	}
+	body = inst.InstEnd(body)
+	body = appendEnvironBuild(body, alloc, strCopy)
+	locals := inst.PutLocalsOneGroup(nil, 10, encode.ValtypeI32)
+	return inst.PutFunctionBody(nil, locals, body)
+}
+
+// appendEnvironBuild is buildEnvironBody's second half: the cache check,
+// the array build over the (count, ptr-table) the env cache now holds,
+// and the store into the built-array cache. Preview 1 only — preview 2's
+// list carries split (key, value) pairs and has to join them.
+func appendEnvironBuild(body []byte, alloc, strCopy uint32) []byte {
+	// Cache check.
+	body = inst.InstI32Const(body, environBuiltAddr)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstI32Const(body, environArrAddr)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+	// $count = mem[envCountAddr]
+	body = inst.InstI32Const(body, envCountAddr)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstLocalSet(body, 0)
+	pushCount := func(b []byte) []byte { return inst.InstLocalGet(b, 0) }
+	body = emitArrHeaderAlloc(body, alloc, 4, arrRcStatic, pushCount, func(b []byte) []byte {
+		b = inst.InstLocalGet(b, 0)
+		b = inst.InstI32Const(b, 8)
+		return numeric.InstI32Mul(b)
+	})
+	// $env_ptrs = mem[envPtrsAddr]
+	body = inst.InstI32Const(body, envPtrsAddr)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstLocalSet(body, 2)
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstLocalSet(body, 5) // $i
+	body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+	{
+		body = inst.InstLocalGet(body, 5)
+		body = inst.InstLocalGet(body, 0)
+		body = numeric.InstI32GeU(body)
+		body = inst.InstBrIf(body, 1)
+		// $cstr = mem[env_ptrs + i*4]
+		body = inst.InstLocalGet(body, 2)
+		body = inst.InstLocalGet(body, 5)
+		body = inst.InstI32Const(body, 4)
+		body = numeric.InstI32Mul(body)
+		body = numeric.InstI32Add(body)
+		body = memory.InstI32Load(body, 2, 0)
+		body = inst.InstLocalSet(body, 6)
+		// $len = strlen($cstr)
+		body = inst.InstI32Const(body, 0)
+		body = inst.InstLocalSet(body, 7)
+		body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
+		body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+		{
+			body = inst.InstLocalGet(body, 6)
+			body = inst.InstLocalGet(body, 7)
+			body = numeric.InstI32Add(body)
+			body = memory.InstI32Load8U(body, 0, 0)
+			body = numeric.InstI32Eqz(body)
+			body = inst.InstBrIf(body, 1)
+			body = inst.InstLocalGet(body, 7)
+			body = inst.InstI32Const(body, 1)
+			body = numeric.InstI32Add(body)
+			body = inst.InstLocalSet(body, 7)
+			body = inst.InstBr(body, 0)
+		}
+		body = inst.InstEnd(body)
+		body = inst.InstEnd(body)
+		// ($cdata, $clen) = __fern_str_copy($cstr, $len)
+		body = inst.InstLocalGet(body, 6)
+		body = inst.InstLocalGet(body, 7)
+		body = inst.InstCall(body, strCopy)
+		body = inst.InstLocalSet(body, 9)
+		body = inst.InstLocalSet(body, 8)
+		body = appendStrVecStore(body, 4, 5, 8, 9)
+		body = inst.InstLocalGet(body, 5)
+		body = inst.InstI32Const(body, 1)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalSet(body, 5)
+		body = inst.InstBr(body, 0)
+	}
+	body = inst.InstEnd(body)
+	body = inst.InstEnd(body)
+	body = inst.InstI32Const(body, environArrAddr)
+	body = inst.InstLocalGet(body, 4)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstI32Const(body, environBuiltAddr)
+	body = inst.InstI32Const(body, 1)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 4)
+	return body
+}
+
+// appendStrVecStore writes the two-word (data, len) string entry in
+// locals $cdata / $clen into element $i of the string[] whose data
+// pointer is in local $result.
+func appendStrVecStore(body []byte, result, i, cdata, clen uint32) []byte {
+	body = inst.InstLocalGet(body, result)
+	body = inst.InstLocalGet(body, i)
+	body = inst.InstI32Const(body, 8)
+	body = numeric.InstI32Mul(body)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalGet(body, cdata)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, result)
+	body = inst.InstLocalGet(body, i)
+	body = inst.InstI32Const(body, 8)
+	body = numeric.InstI32Mul(body)
+	body = numeric.InstI32Add(body)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalGet(body, clen)
+	return memory.InstI32Store(body, 2, 0)
 }
 
 // buildArgsBodyP2 is the preview-2 variant of buildArgsBody —

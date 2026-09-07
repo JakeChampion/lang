@@ -63,11 +63,15 @@ var providedRefusedByPlatform = map[string]bool{
 	// for my effective ids" is unanswerable where there are no mode bits.
 	"write_file_exec": true,
 	"access":          true,
-	// `userid` — an effective user / group id. Neither WASI preview has
-	// a notion of a user at all, and FileStat's uid / gid are zero
-	// there for the same reason.
-	"geteuid": true,
-	"getegid": true,
+	// `userid` — a user / group id, effective or real, and the
+	// supplementary group set. Neither WASI preview has a notion of a
+	// user at all, and FileStat's uid / gid are zero there for the same
+	// reason.
+	"geteuid":   true,
+	"getegid":   true,
+	"getuid":    true,
+	"getgid":    true,
+	"getgroups": true,
 	// `cabi` — a C calling convention to hand a function pointer to.
 	"__c_call0": true, "__c_call0_f32": true, "__c_call0_f64": true,
 	"__c_call1": true, "__c_call1_f32": true, "__c_call1_f64": true,
