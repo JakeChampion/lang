@@ -1127,7 +1127,7 @@ pub function (g: Getopt) operands(): string[] {
 // `m.value`. join(1) is the caller — `join -o 1.1 2.2 f1 f2` gives -o
 // two arguments, and only the count of what follows says so.
 pub function (g: Getopt) next_argv_order(): (i32, OptMatch, Getopt) {
-  var nil: OptMatch = OptMatch { id: 0, value: "", has_value: false };
+  var nil: OptMatch = OptMatch { id: 0, value: "", has_value: false, long_form: false };
   if (g.cluster.len() > 0) {
     var r: (Option[OptMatch], Getopt) = short_option(g);
     match (r.0) {
@@ -1147,7 +1147,7 @@ pub function (g: Getopt) next_argv_order(): (i32, OptMatch, Getopt) {
       continue;
     }
     if (s.past_dashdash || !is_option(a)) {
-      return (2, OptMatch { id: 0, value: a, has_value: true }, Getopt { ...s, i: s.i + 1 });
+      return (2, OptMatch { id: 0, value: a, has_value: true, long_form: false }, Getopt { ...s, i: s.i + 1 });
     }
     s = Getopt { ...s, i: s.i + 1 };
     if (a.starts_with("--")) {
