@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/jakechampion/lang/internal/ast"
@@ -219,7 +220,14 @@ func TestOptionOfMapStaysOutOfTheOwnedModel(t *testing.T) {
 	ast.RcFreeEnabled = true
 	defer func() { ast.RcFreeEnabled = prev }()
 
-	const src = `import "core/map";
+	// The Map's own two allocations are stranded at exit (#8854) — identical on
+	// main, and one-time rather than per-append. Admitting Option[Map] to the
+	// owned model would make the loss scale with the append count, so running
+	// the same program at two loop counts and requiring an identical loss is
+	// the assertion that actually guards the exclusion. A flat balance check
+	// cannot be used here while #8854 stands.
+	src := func(n int) string {
+		return fmt.Sprintf(`import "core/map";
 
 struct H { buf: string, m: Option[Map[string, i32]], n: i32 }
 
@@ -232,13 +240,29 @@ function main(): i32 {
     mm = mm.insert("k", 3);
     var h: H = H { buf: "", m: Some(mm), n: 0 };
     var i: i32 = 0;
-    while (i < 50) { h = h.grow("cccc"); i = i + 1; }
-    if (h.buf.len() != 200) { return 1; }
-    if (h.n != 50) { return 2; }
+    while (i < %d) { h = h.grow("cccc"); i = i + 1; }
+    if (h.buf.len() != %d) { return 1; }
+    if (h.n != %d) { return 2; }
     match (h.m) { Some(m) => { if (m.len() != 1) { return 3; } }, None => { return 4; } }
     return 0;
-}`
-	if _, stderr, code := runLeakCheckX86_64(t, src); code != 0 {
-		t.Fatalf("Option[Map] program exited %d, want 0; stderr=%q", code, stderr)
+}`, n, n*4, n)
+	}
+
+	measure := func(n int) (unpaired int64, live int64) {
+		t.Helper()
+		_, stderr, code := runLeakCheckX86_64(t, src(n))
+		if code != 0 {
+			t.Fatalf("Option[Map] program (%d appends) exited %d, want 0; stderr=%q", n, code, stderr)
+		}
+		allocs, frees, liveBytes := parseLeakCheckLine(t, stderr)
+		return allocs - frees, liveBytes
+	}
+
+	shortUnpaired, shortLive := measure(50)
+	longUnpaired, longLive := measure(200)
+	if shortUnpaired != longUnpaired || shortLive != longLive {
+		t.Errorf("loss scales with the append count: 50 appends stranded %d allocations / %d bytes, "+
+			"200 stranded %d / %d — Option[Map] has reached the owned model",
+			shortUnpaired, shortLive, longUnpaired, longLive)
 	}
 }
