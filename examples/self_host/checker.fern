@@ -2149,6 +2149,36 @@ function (s: Scope) lookup_struct(name: string): StructSig {
   return StructSig { name: "", field_names: empty_n, field_types: empty_t, type_params: empty_tp, field_type_names: empty_ftn, variant_field_names: empty_n, derives: [], enum_owner: "" };
 }
 
+// lookup_owned_struct answers the variant struct `name` DECLARED BY enum
+// `owner`. The table is keyed by the bare variant name alone, so `A.W` and
+// `B.W` register two entries called `W` in one bucket and lookup_struct
+// answers for whichever was registered first — the owner is the only thing
+// that tells them apart (conformance/cases/shared_variant_payload). Falls
+// back to the name-only answer when nothing in the bucket claims `owner`.
+function (s: Scope) lookup_owned_struct(name: string, owner: string): StructSig {
+  var i: i32 = s.structs.head[sig_name_bucket(name)];
+  while (i >= 0) {
+    if (s.structs.structs[i].name == name && s.structs.structs[i].enum_owner == owner) {
+      return s.structs.structs[i];
+    }
+    i = s.structs.next[i];
+  }
+  return s.lookup_struct(name);
+}
+
+// variant_payload_struct resolves the struct sig carrying a variant's payload
+// types, from the possibly enum-QUALIFIED spelling a pattern or a qualified
+// constructor call writes (`E.Wrap`). The qualifier is not part of the table's
+// key — it names the enum the entry must be owned by — so resolution is
+// scoped through the owner, the way native resolves it and the way the
+// parser's variant_struct_index does.
+function variant_payload_struct(s: Scope, type_name: string): StructSig {
+  if (dot_index(type_name) < 0) {
+    return s.lookup_struct(type_name);
+  }
+  return s.lookup_owned_struct(variant_pattern_name(type_name), variant_pattern_owner(type_name));
+}
+
 // field_index returns the index of `name` in a struct sig's field list,
 // or -1 when absent. Used by the E043 field-value-type check to line a
 // provided field up with its declared type.
@@ -2184,7 +2214,7 @@ function field_index(ssig: StructSig, name: string): i32 {
 // unknown so those walks skip it, matching the Go checker's practical
 // outcome (no spurious diagnostic).
 function variant_binding_type(s: Scope, type_name: string): Type {
-  var ss: StructSig = s.lookup_struct(type_name);
+  var ss: StructSig = variant_payload_struct(s, type_name);
   if (ss.name.len() == 0) {
     return t_unknown("built-in variant payload `" + type_name + "`");
   }
@@ -2195,7 +2225,7 @@ function variant_binding_type(s: Scope, type_name: string): Type {
     }
     i = i + 1;
   }
-  return t_struct(type_name);
+  return t_struct(ss.name);
 }
 
 // variant_payload_type_at returns the type of a variant's idx-th payload —
@@ -2204,7 +2234,7 @@ function variant_binding_type(s: Scope, type_name: string): Type {
 // when the field is absent (a bare / struct-union variant), exactly like
 // variant_binding_type (which is the idx==0 case).
 function variant_payload_type_at(s: Scope, type_name: string, idx: i32): Type {
-  var ss: StructSig = s.lookup_struct(type_name);
+  var ss: StructSig = variant_payload_struct(s, type_name);
   if (ss.name.len() == 0) {
     return t_unknown("built-in variant payload `" + type_name + "`");
   }
@@ -2219,7 +2249,7 @@ function variant_payload_type_at(s: Scope, type_name: string, idx: i32): Type {
     }
     i = i + 1;
   }
-  return t_struct(type_name);
+  return t_struct(ss.name);
 }
 
 // bind_variant_payloads brings EVERY payload binding of a matched variant into
@@ -2230,11 +2260,13 @@ function variant_payload_type_at(s: Scope, type_name: string, idx: i32): Type {
 // this only pv.binding was bound, so a multi-binding payload pattern
 // (`Rect(w, h)`) rejected the 2nd+ name as an undefined E001 (#4345).
 function bind_variant_payloads(arm: Scope, look: Scope, pvin: ast.PatVariant): Scope {
-  // The payload TYPE is resolved through the enum, not the variant struct:
-  // variant decls are keyed by the bare name, so `A.W` and `C.W` leave two
-  // decls called `W` and a bare lookup answers for whichever was declared
-  // first. The qualifier is what tells them apart, so it is kept here and
-  // dropped only at the individual lookups that are genuinely keyed bare.
+  // The pattern keeps its enum qualifier, because the payload-TYPE lookups
+  // below resolve THROUGH the owning enum: variant decls are keyed by the
+  // bare name, so `A.W` and `C.W` leave two decls called `W` and a bare
+  // lookup answers for whichever was declared first, while the qualifier
+  // names the owner that tells them apart. Each lookup strips or scopes for
+  // itself — a qualified name handed to a bare-keyed table misses and fails
+  // open, which is how a qualified payload came to bind as unknown (#8783).
   var pv: ast.PatVariant = pvin;
   // A record pattern that named every field but renamed one binds the DECLARED
   // names, as native does after rejecting the rename — so the body's reference
@@ -6606,6 +6638,28 @@ function find_struct_sig(structs: StructSig[], name: string): StructSig {
   return StructSig { name: "", field_names: none, field_types: nonet, type_params: none_tp, field_type_names: none_ftn, variant_field_names: none, derives: [], enum_owner: "" };
 }
 
+// find_variant_sig is find_struct_sig for the possibly enum-QUALIFIED spelling
+// a match pattern or a qualified constructor writes (`E.Wrap`). Same rule as
+// lookup_owned_struct on the hash table: the qualifier is not part of the key,
+// it names the enum the decl must be owned by, so two enums declaring one
+// variant name each answer for their own decl. A qualifier nothing claims
+// falls back to the name-only match — which is also what an unqualified
+// spelling gets, its owner not being written down.
+function find_variant_sig(structs: StructSig[], name: string): StructSig {
+  var bare: string = variant_pattern_name(name);
+  var owner: string = variant_pattern_owner(name);
+  var fallback: StructSig = find_struct_sig(structs, bare);
+  if (fallback.enum_owner == owner) {
+    return fallback;
+  }
+  for sd in structs {
+    if (sd.name == bare && sd.enum_owner == owner) {
+      return sd;
+    }
+  }
+  return fallback;
+}
+
 // slit_diags recurses through an expression and emits E005 for every
 // non-update struct literal that omits a declared field. The struct table
 // is module-global, so this needs no scope — and recursing into field
@@ -7086,6 +7140,19 @@ function variant_pattern_name(name: string): string {
   return slice_unchecked(name, d + 1, name.len()) + "";
 }
 
+// variant_pattern_owner is the ENUM half of the same spelling — `E.Wrap` ->
+// `E`, `lib__E.lib__Wrap` -> `lib__E` — and "" for an unqualified pattern,
+// whose owner is not written down. It is what a variant struct's enum_owner
+// is compared against, so two enums declaring the same variant name each
+// answer for their own decl.
+function variant_pattern_owner(name: string): string {
+  var d: i32 = dot_index(name);
+  if (d < 0) {
+    return "";
+  }
+  return slice_unchecked(name, 0, d) + "";
+}
+
 // type_arity_diag checks one type annotation: if it supplies an explicit
 // `[...]` argument list whose count doesn't match the named struct's
 // declared type-parameter count, it's E019. Checked at param + struct-
@@ -7108,33 +7175,29 @@ function type_arity_diag(t: string, structs: parser.StructDecl[]): util.Diag[] {
 // needed): E026 when a wildcard `_` arm isn't the last arm, and E028 when
 // a variant pattern repeats one covered by an earlier arm. Recurses into
 // nested blocks + arm bodies.
-// variant_payload_count returns 1 for a payload-bearing enum variant — its
-// synthesized struct carries the `__ev` marker field — and -1 otherwise (skip
-// the E015 check). A struct WITHOUT `__ev` is ambiguous: it could be a
-// no-payload enum variant (`Nil`) OR a struct-union member (`type U = A | B`,
-// where `A(a)` binds the whole struct, not a payload), and the two aren't
-// distinguishable here, so we conservatively skip rather than risk a false
-// E015. The self-host models at most one payload per variant.
+// variant_payload_count returns the payload count of an enum variant — its
+// synthesized struct carries one `__ev` marker field per payload — and -1
+// otherwise (skip the E015 check). A struct WITHOUT `__ev` is ambiguous: it
+// could be a no-payload enum variant (`Nil`) OR a struct-union member
+// (`type U = A | B`, where `A(a)` binds the whole struct, not a payload), and
+// the two aren't distinguishable here, so we conservatively skip rather than
+// risk a false E015.
 function variant_payload_count(name: string, structs: StructSig[]): i32 {
-  for sd in structs {
-    if (sd.name == name) {
-      if (util.has_str(sd.field_names, "__ev")) {
-        // A multi-payload variant carries `__ev`, `__ev1`, … — count every
-        // `__ev`-prefixed field so the E015 arity check allows a matching
-        // multi-binding `V(a, b)`.
-        var c: i32 = 0;
-        for field_name in sd.field_names {
-          var fn: string = field_name;
-          if (fn.len() >= 4 && slice_unchecked(fn, 0, 4) == "__ev") {
-            c = c + 1;
-          }
-        }
-        return c;
-      }
-      return 0 - 1;
+  var sd: StructSig = find_variant_sig(structs, name);
+  if (sd.name.len() == 0 || !util.has_str(sd.field_names, "__ev")) {
+    return 0 - 1;
+  }
+  // A multi-payload variant carries `__ev`, `__ev1`, … — count every
+  // `__ev`-prefixed field so the E015 arity check allows a matching
+  // multi-binding `V(a, b)`.
+  var c: i32 = 0;
+  for field_name in sd.field_names {
+    var fn: string = field_name;
+    if (fn.len() >= 4 && slice_unchecked(fn, 0, 4) == "__ev") {
+      c = c + 1;
     }
   }
-  return 0 - 1;
+  return c;
 }
 
 // record_pattern_diags explains a record-form pattern (`Rect { h, x }`) that
@@ -7143,13 +7206,13 @@ function variant_payload_count(name: string, structs: StructSig[]): i32 {
 // positional payloads and cannot be matched by name at all. Mirrors native's
 // resolveVariantBindings (checker.go:9363-9397).
 function record_pattern_diags(pvin: ast.PatVariant, structs: StructSig[], line: i32, col: i32): util.Diag[] {
-  // Both the sig table and native's wording use the BARE variant name, and
-  // nothing here resolves a payload TYPE, so unlike bind_variant_payloads this
-  // function strips at entry. Handed a qualified `E.Wrap` it used to miss the
-  // sig, return empty, and let a record pattern on a positional variant pass.
+  // Native's wording uses the BARE variant name, so the pattern is stripped at
+  // entry and every message below reads off `pv`. The SIG is still resolved
+  // from the original spelling, whose qualifier names the owning enum — the
+  // one thing that tells two enums' same-named variants apart.
   var pv: ast.PatVariant = ast.PatVariant { ...pvin, type_name: variant_pattern_name(pvin.type_name) };
   var out: util.Diag[] = [];
-  var ss: StructSig = find_struct_sig(structs, pv.type_name);
+  var ss: StructSig = find_variant_sig(structs, pvin.type_name);
   if (ss.name.len() == 0) {
     return out;
   }
@@ -7815,13 +7878,16 @@ function settles_or_assignable(e: ast.Expr, want: Type, s: Scope): boolean {
 // variant_payload_count returns -1 for both and this skips them.
 // It takes the variant NAME rather than the callee node because both spellings
 // reach it: the bare `Wrap(1)` and the qualified `W.Wrap(1)` (#6657), whose
-// callee is an ExprFieldAccess.
-function variant_ctor_diags(vname: string, c: ast.ExprCall, s: Scope): util.Diag[] {
+// callee is an ExprFieldAccess. The qualified spelling arrives qualified, so
+// the payload type resolves through the owning enum — everything else here is
+// keyed by, and worded with, the bare name.
+function variant_ctor_diags(qname: string, c: ast.ExprCall, s: Scope): util.Diag[] {
+  var vname: string = variant_pattern_name(qname);
   var out: util.Diag[] = [];
   if (union_of_variant(vname, s.unions).len() == 0) {
     return out;
   }
-  var want: i32 = variant_payload_count(vname, s.structs.structs);
+  var want: i32 = variant_payload_count(qname, s.structs.structs);
   if (want < 0) {
     return out;
   }
@@ -7831,7 +7897,7 @@ function variant_ctor_diags(vname: string, c: ast.ExprCall, s: Scope): util.Diag
   var i: i32 = 0;
   while (i < c.args.len() && i < want) {
     var at: Type = check_expr(c.args[i], s);
-    var pt: Type = variant_payload_type_at(s, vname, i);
+    var pt: Type = variant_payload_type_at(s, qname, i);
     if (!is_unknown(at) && !is_unknown(pt) && !settles_to(c.args[i], pt, s) && !type_assignable(at, pt, s.unions.unions)) {
       out = out.append(dg_at("E036", "variant " + vname + " payload " + util.i32_to_string(i) + " type " + type_label(at) + ", expected " + type_label(pt), expr_line(c.args[i]), expr_col(c.args[i])));
     }
@@ -8121,7 +8187,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
         if (!qual_variant_exists(cqen, mfa.field, s)) {
           out = out.append(dg_at("E036", "enum " + cqen + " has no variant \"" + mfa.field + "\"", mfa.line, mfa.col));
         } else {
-          out = util.append_diags(out, variant_ctor_diags(mfa.field, c, s));
+          out = util.append_diags(out, variant_ctor_diags(cqen + "." + mfa.field, c, s));
         }
         for arg in c.args {
           out = util.append_diags(out, call_diags(arg, s));
