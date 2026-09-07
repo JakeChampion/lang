@@ -62,7 +62,7 @@ func sortCases(t *testing.T) []invocation {
 	big := catFile(t, dir, "big", shuffledLines(5000))
 	bigStdin := shuffledLines(5000)
 
-	return []invocation{
+	cases := []invocation{
 		// The plain sort.
 		{name: "stdin", args: nil, stdin: "b\na\nc\n"},
 		{name: "one file", args: []string{ba}},
@@ -549,6 +549,42 @@ func sortCases(t *testing.T) []invocation {
 		{name: "stdout closed", args: []string{ba}, stdout: stdoutClosed},
 		{name: "stdout closed with nothing to write", args: []string{empty}, stdout: stdoutClosed},
 		{name: "check stdout closed", args: []string{"-c", ba}, stdout: stdoutClosed},
+	}
+	return append(cases, sortByteComparisonCases()...)
+}
+
+// Exercise the short overlapping windows and SIMD boundaries of the byte
+// comparison, including equal spans and prefixes. Keep these in the shared
+// corpus so native and self-hosted sort both run against the same oracle.
+func sortByteComparisonCases() []invocation {
+	var lines []string
+	for _, n := range []int{0, 1, 3, 4, 7, 8, 15, 16, 17, 31, 32, 33, 63, 64, 65} {
+		base := strings.Repeat("a", n)
+		lines = append(lines, base, base, base+"a")
+		for i := 0; i < n; i++ {
+			for _, b := range []byte{0, 1, 127, 128, 255} {
+				lines = append(lines, base[:i]+string([]byte{b})+base[i+1:])
+			}
+		}
+	}
+	plain := strings.Join(lines, "\n") + "\n"
+	var keys strings.Builder
+	for i, line := range lines {
+		// A nonzero key offset and equal keys whose last-resort ordering
+		// differs from input order exercise both routes through cmp_bytes.
+		keys.WriteString(itoa(len(lines) - i))
+		keys.WriteByte(':')
+		keys.WriteString(line)
+		keys.WriteByte('\n')
+	}
+	return []invocation{
+		{name: "byte comparison boundaries", stdin: plain},
+		{name: "byte comparison boundaries reverse", args: []string{"-r"}, stdin: plain},
+		{name: "byte comparison boundaries unique", args: []string{"-u"}, stdin: plain},
+		{name: "byte comparison key boundaries", args: []string{"-t:", "-k2,2"}, stdin: keys.String()},
+		{name: "byte comparison stable key boundaries", args: []string{"-s", "-t:", "-k2,2"}, stdin: keys.String()},
+		{name: "byte comparison unique key boundaries", args: []string{"-u", "-t:", "-k2,2"}, stdin: keys.String()},
+		{name: "byte comparison zero terminated boundaries", args: []string{"-z"}, stdin: strings.ReplaceAll(plain, "\n", "\x00")},
 	}
 }
 
