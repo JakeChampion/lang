@@ -16904,17 +16904,18 @@ function resource_method_opt_ret_type(field: string, obj: ast.Expr, s: LowerStat
 }
 
 // owned_payload_builtin_ptype: the SUCCESS payload type of a scrutinee that is
-// a direct call to a builtin whose Option / Result BOX is immortal (bump-only,
-// released by nobody) but whose success payload is a fresh, sole-owned value
+// a direct call to a builtin whose success payload is a fresh, sole-owned value
 // built for this caller — native's rcOwnedPayloadBuiltins (rcresults.go), read
 // off the same runtime bodies here (asmcore.rt_src_reader_read_chunk /
 // rt_src_read_line / rt_src_read_file / rt_src_read_file_bytes / rt_src_env,
 // each of which boxes a block it just allocated). "" for anything else.
 //
-// The box needing no release is what left the payload with no owner at all: a
-// match arm binds it like any other enum payload — a borrow of a box nothing
-// sweeps — so every chunk of a `while` reader loop leaked (#8402). The binding
-// is the payload's owner; see lower_stmt_match for what that costs it.
+// This is the PAYLOAD's ownership and is independent of the box's: a match arm
+// bound the payload like any other enum payload — a borrow — so every chunk of a
+// `while` reader loop leaked (#8402). The binding is the payload's owner; see
+// lower_stmt_match for what that costs it. The BOX is
+// match_scrut_owns_fresh_result_box's, and its release is shallow, so the two
+// never touch the same block.
 //
 // A user-declared function of the same name is NOT the builtin: fn_names is the
 // gate lower_call applies before intercepting a bare-ident builtin, so the two
@@ -24481,9 +24482,9 @@ function lower_stmt_match(m: ast.StmtMatch, s: LowerState): LowerState {
     var ms: LowerState = lower_expr(m.scrutinee, s);
     if (!ms.ok) { return ms; }
     // #8402: the scrutinee's owned payload, if this is a match over a builtin
-    // whose box is immortal and whose success payload is a fresh, sole-owned
-    // value nobody else releases (owned_payload_builtin_ptype). "" for every
-    // other scrutinee, which is every match that was here before.
+    // whose success payload is a fresh, sole-owned value nobody else releases
+    // (owned_payload_builtin_ptype). "" for every other scrutinee, which is every
+    // match that was here before.
     var owned_pay: string = owned_payload_builtin_ptype(m.scrutinee, ms);
     // #8410: the scrutinee's own BOX, when the call built it fresh for this
     // caller and no other holder survives (match_scrut_owns_fresh_result_box).
@@ -24544,8 +24545,9 @@ function lower_stmt_match(m: ast.StmtMatch, s: LowerState): LowerState {
                     }
                     var hb: boolean = pv.binding.len() > 0 && pv.binding != "_";
                     // #8402: the SUCCESS arm of a match over an owned-payload
-                    // builtin. The box is immortal, so the payload's unit is
-                    // this frame's and nothing else will ever release it. A
+                    // builtin. The payload's unit is this frame's and nothing
+                    // else will ever release it — the box's own release below is
+                    // shallow and never reaches it. A
                     // guard, an alternation continuation or a sub-pattern keeps
                     // today's leak rather than guessing which arm reads the
                     // payload (native's ownedPayloadMatches makes the same three
@@ -25309,38 +25311,44 @@ function lower_stmt_match(m: ast.StmtMatch, s: LowerState): LowerState {
     return s.fail();
 }
 
-// match_scrut_owns_fresh_result_box: the scrutinee is a `w.write(s)`, whose
-// Option[IoError] box __fern_writer_write built fresh for this caller (`Some(
-// io_error)` / `None` in the helper's own Fern body, so an ordinary rc=1 box)
-// and handed over whole — nobody else holds it, so the frame that consumed the
-// match gives it back. Nothing did, and every write leaked its 40-byte answer:
-// the self-host half of #8405 for the write side (#8410).
+// match_scrut_owns_fresh_result_box: the scrutinee is a call to a built-in I/O
+// producer, whose Option / Result box the generated helper built fresh for this
+// caller (`Ok(..)` / `Err(..)` / `Some(..)` / `None` in the helper's own Fern
+// body, so an ordinary rc=1 box) and handed over whole — nobody else holds it,
+// so the frame that consumed the match gives it back. Nothing did, and every
+// call leaked its 40-byte answer: the self-host half of #8405 (#8410, #8811).
 //
-// `r.close()` / `w.close()` and the `open_*` constructors answer the same shape
-// of box out of the same shape of helper and are the same bug — but an
-// open-and-close loop strands THREE boxes a round, so admitting one or two of
-// them cannot be measured as a fix. That family goes together, in the self-host
-// twin of #8405.
+// The two admitted spellings are the two lower_call / lower_call_method
+// intercept: a RESOURCE METHOD (`r.read_chunk(n)`, `r.read_line()`, `r.close()`,
+// `w.write(s)`, `.stat()` / `.seek()`) behind resource_method_opt_ret_type's own
+// receiver gate, and a bare-ident BUILTIN (`open_reader(p)`, `env(k)`,
+// `read_file(p)`, `read_dir(p)`, `access(p)`, …) whose Option / Result return
+// comes from opt_ret_type's builtin table. Both gates are the ones the CALL
+// itself is lowered behind, so this cannot claim a user `.write()` on a struct,
+// an enum, a string or an array, nor a user function shadowing a builtin name
+// (fn_names) — a user producer's box is the binding analyses' business
+// (hoist_call_scrutinees puts a direct call to one into a `var` first).
 //
-// The release is SHALLOW (emit_scalar_enum_box_free), and on the None path —
-// every write that succeeds — that is the whole block. A FAILED write also
-// builds a fresh IoError inside the box (__fern_io_error), and that one keeps
-// today's leak: a deep drop needs the variant walk plus a proof the Some arm's
-// binding does not outlive it, which is the payload-kind gap #8806 covers. One
-// per FAILED write, against one per write before.
+// The release is SHALLOW (emit_scalar_enum_box_free), which is the whole block
+// for a payload that is a scalar or absent — `None`, `Ok(fd)`, a successful
+// write or close. A payload that is itself a box keeps its own owner: an owned
+// success payload is the arm binding's (owned_payload_builtin_ptype, #8402), and
+// a fresh `IoError` on an error path keeps today's leak, since deep-dropping it
+// needs the variant walk plus a proof the arm binding does not outlive it — the
+// payload-kind gap #8806 covers. One block per FAILING call, against one per
+// call before.
 //
-// The receiver gate is resource_method_opt_ret_type's, the same one
-// lower_call_method applies, so this cannot claim a user `.write()` on a struct,
-// an enum, a string or an array — a user method's result is its own business.
 // An `@` binding aliases the whole box into a name that outlives the arm, so it
 // declines, exactly as the map-get release does.
 function match_scrut_owns_fresh_result_box(m: ast.StmtMatch, s: LowerState): boolean {
     if (match_binds_whole_scrutinee(m)) { return false; }
     if let ast.ExprCall(c) = m.scrutinee {
         if let ast.ExprFieldAccess(fa) = c.callee {
-            if (fa.field == "write" && c.args.len() == 1) {
-                return resource_method_opt_ret_type("write", fa.obj, s) == "Option[IoError]";
-            }
+            return resource_method_opt_ret_type(fa.field, fa.obj, s) != "";
+        }
+        if let ast.ExprIdent(id) = c.callee {
+            if (sig_reg_has_name(s.frame.sigs.fn_names, id.name)) { return false; }
+            return builtin_opt_ret_type(id.name) != "";
         }
     }
     return false;
@@ -30392,7 +30400,7 @@ struct PreciseDrops { idxs: i32[], names: string[], kinds: string[] }
 // is its LAST top-level statement reference; releasing after that whole
 // statement completes is sound even when the last reference sits inside a
 // nested block.
-function precise_drop_names(body: ast.Stmt[], reassigned: string[], structs: StructTab, arr_ret: SigReg, strarr_ret: SigReg, borrowable: string[], opt_fresh_reg: SigReg, str_fresh: string[], msites: string[]): PreciseDrops {
+function precise_drop_names(body: ast.Stmt[], reassigned: string[], structs: StructTab, arr_ret: SigReg, strarr_ret: SigReg, borrowable: string[], opt_fresh_reg: SigReg, fn_names: SigReg, str_fresh: string[], msites: string[]): PreciseDrops {
     var idxs: i32[] = [];
     var names: string[] = [];
     var kinds: string[] = [];
@@ -30497,6 +30505,16 @@ function precise_drop_names(body: ast.Stmt[], reassigned: string[], structs: Str
                         }
                     }
                 }
+                // A fresh Option/Result whose payload NEITHER of the two above will
+                // release (a struct, a Reader/Writer, an IoError, a FileStat — see
+                // fresh_optbox_only_init). The box is freed shallow; the payload
+                // keeps today's leak, so this can only ever improve on the nothing
+                // that was released before (#8806). Same no-top-level-match
+                // disjointness rule as its siblings.
+                var is_optbox: boolean = false;
+                if (!is_lit && !is_opt && !is_rcopt && fresh_optbox_only_init(v, opt_fresh_reg, fn_names, structs)) {
+                    is_optbox = !body_has_top_level_match(body, v.name);
+                }
                 // A fresh SCALAR user-enum (`var x = Circle(7)` of an all-scalar-variant
                 // enum). Because the top-level-match case belongs to
                 // consumed_scalar_enum_frees, which also feeds the donor/reuse paths, a
@@ -30505,7 +30523,7 @@ function precise_drop_names(body: ast.Stmt[], reassigned: string[], structs: Str
                 // kind IS the witness, so the slot needs no struct_type: an unannotated
                 // `var x = Circle(7)` is reclaimed too.
                 var is_enum: boolean = false;
-                if (!is_lit && !is_opt && !is_rcopt && fresh_scalar_enum_init(v.init, structs) != "") {
+                if (!is_lit && !is_opt && !is_rcopt && !is_optbox && fresh_scalar_enum_init(v.init, structs) != "") {
                     is_enum = !body_has_top_level_match(body, v.name);
                 }
                 // A fresh rc-PAYLOAD user-enum (`var x = Poly([..])` — a variant carrying
@@ -30514,7 +30532,7 @@ function precise_drop_names(body: ast.Stmt[], reassigned: string[], structs: Str
                 // enum NAME rides in the kind ("enum-rcpayload:<Enum>") so
                 // emit_enum_variant_drops can dispatch the right variant deep-drop.
                 var rcenum_owner: string = "";
-                if (!is_lit && !is_opt && !is_rcopt && !is_enum) {
+                if (!is_lit && !is_opt && !is_rcopt && !is_optbox && !is_enum) {
                     var eo: string = fresh_rcpayload_enum_init(v.init, structs, str_fresh, msites, false);
                     if (eo != "") {
                         if (!body_has_top_level_match(body, v.name) && !enum_body_binds_rc_payload(body, v.name, structs)) { rcenum_owner = eo; }
@@ -30530,7 +30548,7 @@ function precise_drop_names(body: ast.Stmt[], reassigned: string[], structs: Str
                 // as the "MAP:" exit set: fresh init, not aliased, not iterated (the
                 // outer `if` adds not-reassigned + non-escaping).
                 var is_map: boolean = false;
-                if (!is_lit && !is_opt && !is_rcopt && !is_enum && !is_rcenum && is_fresh_map_init(v.init)) {
+                if (!is_lit && !is_opt && !is_rcopt && !is_optbox && !is_enum && !is_rcenum && is_fresh_map_init(v.init)) {
                     if (util.index_of_str(aliased_array_names_of(body), v.name) < 0 && !map_has_explicit_iter(body, v.name)
                         && !map_identity_escape(body, v.name)) { is_map = true; }
                 }
@@ -30548,8 +30566,8 @@ function precise_drop_names(body: ast.Stmt[], reassigned: string[], structs: Str
                 // reading (#6127); every other candidate kind keeps the coarse walker,
                 // so this widens exactly one class at a time.
                 var borrow_ok: boolean = !body_unsafe_for(body, v.name, borrowable, []);
-                if (!borrow_ok && (is_rcopt || is_opt)) { borrow_ok = !body_unsafe_for_match_borrow(body, v.name, borrowable, [], []); }
-                if ((is_lit || is_opt || is_rcopt || is_enum || is_rcenum || is_map) && !shadowed && reassign_ok && borrow_ok) {
+                if (!borrow_ok && (is_rcopt || is_opt || is_optbox)) { borrow_ok = !body_unsafe_for_match_borrow(body, v.name, borrowable, [], []); }
+                if ((is_lit || is_opt || is_rcopt || is_optbox || is_enum || is_rcenum || is_map) && !shadowed && reassign_ok && borrow_ok) {
                     var last: i32 = 0 - 1;
                     var k: i32 = i + 1;
                     var none: string[] = [];
@@ -30562,7 +30580,7 @@ function precise_drop_names(body: ast.Stmt[], reassigned: string[], structs: Str
                         if (is_rcopt && rcopt_pfree != "__fern_rc_dec") { kind = "opt-payloadfree:" + rcopt_pfree; }
                         else if (is_rcopt && rcopt_sty.len() > 0) { kind = "opt-structpayload:" + rcopt_sty; }
                         else if (is_rcopt) { kind = "opt-rcpayload"; }
-                        else if (is_opt || is_enum) { kind = "box-shallow"; }
+                        else if (is_opt || is_optbox || is_enum) { kind = "box-shallow"; }
                         else if (is_rcenum) { kind = "enum-rcpayload:" + rcenum_owner; }
                         else if (is_map) { kind = "map-buffers"; }
                         idxs = idxs.append(last);
@@ -31726,6 +31744,9 @@ pub function lower_block(stmts: ast.Stmt[], s: LowerState): LowerState {
     //     flat, so a nested-block box can never have been donated to a reuse site
     //     (which is what the fn-level emission's edon check guards against).
     var scenfrees: EnumFrees = consumed_scalar_enum_frees(stmts, reasg, s.frame.structs, s.frame.sigs.opt_fresh_ret_fns, true);
+    // The BOX-ONLY option/result half (#8806), block-level mirror of lower_func's
+    // optboxfrees.
+    var obfrees: EnumFrees = consumed_optbox_frees(stmts, reasg, s.frame.structs, s.frame.sigs.opt_fresh_ret_fns, s.frame.sigs.fn_names, true);
     // Consumed RC-PAYLOAD enum free, per block (#6127) — the last member of this
     // family to get a block-level sibling. lower_func runs
     // consumed_rcpayload_enum_frees over fn.body only, so `while { var t =
@@ -31768,6 +31789,17 @@ pub function lower_block(stmts: ast.Stmt[], s: LowerState): LowerState {
                 }
             }
             opj = opj + 1;
+        }
+        // Same, for the block-local BOX-ONLY option/result box (#8806).
+        var obj2: i32 = 0;
+        while (obj2 < obfrees.idxs.len()) {
+            if (obfrees.vidxs[obj2] < i && i <= obfrees.idxs[obj2]) {
+                var obslot2: i32 = st.slot_of(obfrees.names[obj2]);
+                if (obslot2 >= st.frame.n_params) {
+                    st = st.with_optret_pending(st.optret_pending.append(util.i32_to_string(obslot2) + "#b"));
+                }
+            }
+            obj2 = obj2 + 1;
         }
         // Same, for the block-local scalar-enum / scalar-Option box (#6219).
         var sej: i32 = 0;
@@ -31948,6 +31980,15 @@ pub function lower_block(stmts: ast.Stmt[], s: LowerState): LowerState {
                 if (sslot >= st.frame.n_params) { st = emit_scalar_enum_box_free(st, sslot); }
             }
             sef = sef + 1;
+        }
+        // The BOX-ONLY option/result half, same placement and the same reason.
+        var obf: i32 = 0;
+        while (obf < obfrees.idxs.len()) {
+            if (obfrees.idxs[obf] == i) {
+                var obslot: i32 = st.slot_of(obfrees.names[obf]);
+                if (obslot >= st.frame.n_params) { st = emit_scalar_enum_box_free(st, obslot); }
+            }
+            obf = obf + 1;
         }
         // Consumed rc-payload enum free: same placement and the same reason as the
         // scalar loop above, but the release is emit_enum_variant_drops_gated —
@@ -42518,6 +42559,130 @@ function fresh_scalar_option_call_init(v: ast.StmtVar, opt_fresh_reg: SigReg): b
     return false;
 }
 
+// opt_ctor_init_variant: the Option / Result variant a `var` initialiser
+// CONSTRUCTS — "Some" / "Ok" / "Err" / "None" — or "" for anything else. The
+// shape test fresh_scalar_option_init applies before its scalar-payload gate,
+// split out so the box-only admission below can reuse it without that gate.
+function opt_ctor_init_variant(e: ast.Expr): string {
+    match (e) {
+        ast.ExprCall(c) => {
+            match (c.callee) {
+                ast.ExprIdent(id) => {
+                    if ((id.name == "Some" || id.name == "Ok" || id.name == "Err") && c.args.len() == 1) { return id.name; }
+                },
+                ast.ExprFieldAccess(fa) => {
+                    if ((fa.field == "Some" || fa.field == "Ok" || fa.field == "Err") && c.args.len() == 1) { return fa.field; }
+                },
+                _ => {}
+            }
+        },
+        ast.ExprIdent(id) => { if (id.name == "None") { return "None"; } },
+        ast.ExprFieldAccess(fa) => { if (fa.field == "None") { return "None"; } },
+        _ => {}
+    }
+    return "";
+}
+
+// fresh_optbox_only_init: an Option / Result local whose BOX is fresh and sole-
+// owned but whose payload neither of the two payload-releasing admissions above
+// will touch — a struct payload, a Reader / Writer, a FileStat, an IoError, a
+// map, a tuple. Those were released by NOBODY: consumed_scalar_enum_frees wants
+// a scalar payload, consumed_rcpayload_option_frees wants a leak-safe array /
+// fresh string / nested scalar Option, and a payload in neither kept the whole
+// 40-byte box as well as itself (#8806).
+//
+// The release this admits is BOX-ONLY (emit_scalar_enum_box_free / the
+// "box-shallow" precise drop), which is sound for every payload kind: the box is
+// one block and a payload that is itself a box has its own owner. The payload
+// keeps today's leak, so this is a strict improvement on every path and can
+// never turn a leak into a dangle.
+//
+// Freshness is fresh_opt_box_init's question. What is this function's own is the
+// REFUSAL: whatever fresh_scalar_option_init / fresh_scalar_option_call_init or
+// the rc-payload pair already claim stays theirs, which is what keeps this set
+// DISJOINT from both and no box released twice.
+function fresh_optbox_only_init(v: ast.StmtVar, opt_fresh_reg: SigReg, fn_names: SigReg, structs: StructTab): boolean {
+    if (fresh_scalar_option_init(v) || fresh_scalar_option_call_init(v, opt_fresh_reg)) { return false; }
+    if (rcpayload_option_cand(v, structs).variant != "") { return false; }
+    if (rcpayload_option_call_ptype(v, opt_fresh_reg) != "") { return false; }
+    return fresh_opt_box_init(v, opt_fresh_reg, fn_names, structs);
+}
+
+// fresh_opt_box_init: the initialiser CONSTRUCTS an Option / Result box — a
+// direct `Some(..)` / `Ok(..)` / `Err(..)` / `None`, or a call to an
+// OPTFRESH-proven producer (every return a direct constructor) read under an
+// Option / Result annotation. The box is then rc=1 and this local its only
+// owner, whatever the payload is made of.
+//
+// A bare-ident BUILT-IN producer counts too, and needs no annotation: its box
+// comes out of a generated helper's own `Ok(..)` / `Some(..)` / `None`, and
+// builtin_opt_ret_type names the type the annotation would have. That is the
+// binding form of what match_scrut_owns_fresh_result_box admits as a scrutinee —
+// `var r: Result[Reader, IoError] = open_reader(p); match (r)` is the same box as
+// `match (open_reader(p))`. A user function of the same name is NOT the builtin
+// (fn_names, the gate lower_call itself applies).
+//
+// Both payload spellings must pass optbox_shallow_payload_ok, and an unnamed
+// type is refused: a binding, unlike an anonymous match scrutinee, can carry
+// reclaim credits of its own, and the box-only free would zero the slot in front
+// of them.
+function fresh_opt_box_init(v: ast.StmtVar, opt_fresh_reg: SigReg, fn_names: SigReg, structs: StructTab): boolean {
+    var t: string = opt_box_init_type(v, opt_fresh_reg, fn_names);
+    if (t == "") { return false; }
+    return optbox_shallow_payload_ok(opt_payload_type(t, "Ok"), structs)
+        && optbox_shallow_payload_ok(opt_payload_type(t, "Err"), structs);
+}
+
+// opt_box_init_type: the Option / Result type of an initialiser that CONSTRUCTS
+// a fresh box — a bare-ident BUILT-IN producer (the type comes off
+// builtin_opt_ret_type, so no annotation is needed), or, under an Option /
+// Result annotation, a direct `Some(..)` / `Ok(..)` / `Err(..)` / `None` or a
+// call to an OPTFRESH-proven producer. "" for anything else, including an
+// unannotated construction: the spelling is what the payload gate reads.
+function opt_box_init_type(v: ast.StmtVar, opt_fresh_reg: SigReg, fn_names: SigReg): string {
+    var callee: string = direct_call_callee_name(v.init);
+    if (callee != "" && !sig_reg_has_name(fn_names, callee)) {
+        var bt: string = builtin_opt_ret_type(callee);
+        if (bt != "") { return bt; }
+    }
+    var ann: string = v.type_name;
+    if (ann.len() < 8) { return ""; }
+    if (slice_unchecked(ann, 0, 7) != "Option[" && slice_unchecked(ann, 0, 7) != "Result[") { return ""; }
+    if (opt_ctor_init_variant(v.init) != "") { return ann; }
+    if (callee == "") { return ""; }
+    if (sig_reg_has_name(opt_fresh_reg, callee)) { return ann; }
+    return "";
+}
+
+// optbox_shallow_payload_ok: is a BOX-ONLY release safe for this payload
+// spelling — will nothing else come looking for the payload once the free has
+// zeroed the slot?
+//
+// The release does not merely leave the payload where it is. It zeroes the
+// slot, so a deep drop that owns the payload afterwards finds null and releases
+// NOTHING — the payload's whole structure, not just a box (the #5453 shape, and
+// the reason lower_block's per-block pass is blockable-only). So every payload
+// kind the reclaim machinery has a class for is REFUSED here: a string or
+// string[] (OPTSTR), any array (OPTARR / OPTARRARR / OPTAARR / OPTARRERR), a
+// tuple (OPTTUP), a nested Option / Result (OPTOPT*), a Map, and a declared
+// struct (OPTSTRUCT). What is left — a scalar, an enum, an opaque nominal like
+// IoError / Reader / FileStat — has no class at all, which is exactly why its
+// box was kept in the first place.
+//
+// Read on the SUCCESS and the ERROR payload both: an Err string has its own
+// release (the errstrs credit) and starving that is the same defect.
+function optbox_shallow_payload_ok(pt: string, structs: StructTab): boolean {
+    if (pt == "") { return true; }
+    if (is_scalar_type_name(pt)) { return true; }
+    if (pt == "string" || pt == "string[]") { return false; }
+    if (pt.len() > 2 && slice_unchecked(pt, pt.len() - 2, pt.len()) == "[]") { return false; }
+    if (pt[0] == b'(') { return false; }
+    if (pt.len() >= 7 && (slice_unchecked(pt, 0, 7) == "Option[" || slice_unchecked(pt, 0, 7) == "Result[")) { return false; }
+    if (pt.len() >= 4 && slice_unchecked(pt, 0, 4) == "Map[") { return false; }
+    if (decl_is_struct(structs, pt)) { return false; }
+    return true;
+}
+
 // optfresh_entry_payload_is_fresh: does a raw registry row ("name|ptype|flag")
 // carry the "f" flag — every success payload a static literal or a fresh string
 // producer? Tagged rows ("RCE:" / "AAC:") have no flag field and are refused.
@@ -42966,6 +43131,82 @@ function consumed_scalar_enum_frees(body: ast.Stmt[], reassigned: string[], stru
                         // escape; we separately reject any arm-body use of x. Every
                         // other statement (incl. the construction's own init — a ctor
                         // call does not push x) is walked for escapes.
+                        var arms_use: boolean = match_arms_use_name(msv[0], v.name);
+                        var dead_after: boolean = !name_used_after(body, v.name, match_idx);
+                        var escapes: boolean = name_escapes_outside_stmt(body, v.name, match_idx);
+                        if (!arms_use && dead_after && !escapes) {
+                            idxs = idxs.append(match_idx);
+                            vidxs = vidxs.append(vi);
+                            names = names.append(v.name);
+                            sites = sites.append(reclaim_site_key_of(v.name, v.line, v.col));
+                        }
+                    }
+                }
+            },
+            _ => {}
+        }
+        vi = vi + 1;
+    }
+    return EnumFrees { idxs: idxs, vidxs: vidxs, names: names, sites: sites };
+}
+
+// consumed_optbox_frees: the BOX-ONLY half of the consumed-Option/Result family,
+// in two halves of its own (#8806).
+//
+// The CONSUMED half is every function-local `var o: Option[..]/Result[..] =
+// <fresh box>` whose payload kind neither consumed_scalar_enum_frees nor
+// consumed_rcpayload_option_frees will release (fresh_optbox_only_init), consumed
+// by exactly one `match (o)` where o is single-owner, dead after the match and
+// non-escaping. The box is shallow-freed right after its match — the payload is
+// left exactly as it was, so this can only turn a two-block leak into a one-block
+// one. The DEAD half, at the candidate loop itself, is a box no statement
+// mentions again at all, and it takes EVERY payload kind: see there.
+//
+// Same gates and the same emission shape as consumed_scalar_enum_frees, and
+// DISJOINT from it by fresh_optbox_only_init's refusals. It is deliberately NOT
+// fed to enum_donor_reuse_sites: the donor path writes a recipient's fields over
+// the donor box WITHOUT releasing the old slots, which is sound only for a donor
+// whose payload really is a scalar — the same boundary consumed_rcpayload_enum_frees
+// keeps.
+//
+// No arm binding can make this unsound. An arm binds the PAYLOAD, which lives in
+// its own block and is never touched here; an `@` binding aliases the box itself,
+// and that is a use in an arm body (match_arms_use_name), which the gate refuses.
+function consumed_optbox_frees(body: ast.Stmt[], reassigned: string[], structs: StructTab, opt_fresh_reg: SigReg, fn_names: SigReg, nested_ok: boolean): EnumFrees {
+    var idxs: i32[] = [];
+    var vidxs: i32[] = [];
+    var names: string[] = [];
+    var sites: string[] = [];
+    var vi: i32 = 0;
+    while (vi < body.len()) {
+        match (body[vi]) {
+            ast.StmtVar(v) => {
+                // The DEAD half: a fresh box this scope binds and never mentions
+                // again. Nothing claims such a local — every other release rides
+                // a consuming match or a last USE, and a value discarded without
+                // being looked at has neither, so it was the one shape that kept
+                // its block whatever its payload (#8806). The free lands right
+                // after the declaration, where the slot is bound and already
+                // dead, and the payload kind is irrelevant because the release is
+                // box-only.
+                if (fresh_opt_box_init(v, opt_fresh_reg, fn_names, structs) && util.index_of_str(reassigned, v.name) < 0
+                        && !name_used_after(body, v.name, vi) && !name_escapes_outside_stmt(body, v.name, vi)) {
+                    idxs = idxs.append(vi);
+                    vidxs = vidxs.append(vi);
+                    names = names.append(v.name);
+                    sites = sites.append(reclaim_site_key_of(v.name, v.line, v.col));
+                }
+                else if (fresh_optbox_only_init(v, opt_fresh_reg, fn_names, structs) && util.index_of_str(reassigned, v.name) < 0) {
+                    var match_idx: i32 = 0 - 1;
+                    var msv: ast.Stmt[] = [];
+                    if (nested_ok) {
+                        match_idx = sole_consuming_match_idx(body, v.name);
+                        if (match_idx > vi) { msv = consuming_match_of(body[match_idx], v.name); }
+                    } else {
+                        match_idx = sole_top_level_match_idx(body, v.name);
+                        if (match_idx > vi) { msv = [body[match_idx]]; }
+                    }
+                    if (match_idx > vi && msv.len() == 1) {
                         var arms_use: boolean = match_arms_use_name(msv[0], v.name);
                         var dead_after: boolean = !name_used_after(body, v.name, match_idx);
                         var escapes: boolean = name_escapes_outside_stmt(body, v.name, match_idx);
@@ -57644,7 +57885,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
     // after its last top-level use (drop-on-last-use), instead of at the exit
     // sweep — bounding the live set so its block recycles for later allocations.
     // Emitted as dec + zero the slot, so the exit sweep harmlessly decs null.
-    var pdrops: PreciseDrops = pd_filter_names(precise_drop_names(fn.body, asg_targets, structs, sg.arr_ret_fns, sg.strarr_ret_fns, sg.borrowable_params, sg.opt_fresh_ret_fns, sg.str_fresh_ret_fns, move_sites_toplevel_of(fn, structs)), dalias.srcs);
+    var pdrops: PreciseDrops = pd_filter_names(precise_drop_names(fn.body, asg_targets, structs, sg.arr_ret_fns, sg.strarr_ret_fns, sg.borrowable_params, sg.opt_fresh_ret_fns, sg.fn_names, sg.str_fresh_ret_fns, move_sites_toplevel_of(fn, structs)), dalias.srcs);
     // Reuse-layer switch (#4350 §6.5): with FERN_SELFHOST_NO_REUSE=1 every
     // donor-based pairing below stays EMPTY, so every construction allocates
     // fresh and every donor keeps its normal free (the suppressions keyed on
@@ -57684,6 +57925,11 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
     // deep-dropped then the box freed right after its match (emit_opt_payload_drop).
     // DISJOINT from enumfrees (that's scalar-payload options) — freed once here.
     var rcoptfrees: OptRcFrees = consumed_rcpayload_option_frees(fn.body, asg_targets, structs, sg.opt_fresh_ret_fns, false);
+    // Consumed BOX-ONLY option/result frees: the same shape again for a payload
+    // kind neither of the two above releases (a struct, an IoError, a Reader) —
+    // the box is given back and the payload keeps today's leak (#8806). Disjoint
+    // from both by construction and never a reuse donor.
+    var optboxfrees: EnumFrees = consumed_optbox_frees(fn.body, asg_targets, structs, sg.opt_fresh_ret_fns, sg.fn_names, false);
     // Enum-donor cross-reuse (FBIP): a consumed-and-dead scalar-enum box donated to
     // a later same-size full struct construction instead of being freed (see
     // enum_donor_reuse_sites). The recipient is lowered by emit_enum_donor_reuse, and
@@ -57777,6 +58023,18 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
                 }
             }
             sej = sej + 1;
+        }
+        // Same, for the BOX-ONLY option/result box (#8806). It is never a reuse
+        // donor, so there is no donor suppression to mirror.
+        var obj: i32 = 0;
+        while (obj < optboxfrees.idxs.len()) {
+            if (optboxfrees.vidxs[obj] < j && j <= optboxfrees.idxs[obj]) {
+                var obslot2: i32 = s.slot_of(optboxfrees.names[obj]);
+                if (obslot2 >= s.frame.n_params) {
+                    s = s.with_optret_pending(s.optret_pending.append(util.i32_to_string(obslot2) + "#b"));
+                }
+            }
+            obj = obj + 1;
         }
         // Same, for the rc-PAYLOAD enum box. Its release is the runtime
         // variant_is dispatch, so the entry carries the enum name and the moved
@@ -58083,6 +58341,18 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
                 if (xslot >= s.frame.n_params) { s = emit_scalar_enum_box_free(s, xslot); }
             }
             ei = ei + 1;
+        }
+        // Consumed BOX-ONLY option/result free: if statement j is the consuming
+        // match of one of those locals, give its box back now (shallow dec + zero
+        // the slot). The payload is untouched — it has its own owner or its own
+        // pre-existing leak — so this is disjoint from every deep drop above.
+        var obi: i32 = 0;
+        while (obi < optboxfrees.idxs.len()) {
+            if (optboxfrees.idxs[obi] == j) {
+                var obslot: i32 = s.slot_of(optboxfrees.names[obi]);
+                if (obslot >= s.frame.n_params) { s = emit_scalar_enum_box_free(s, obslot); }
+            }
+            obi = obi + 1;
         }
         // Consumed rc-payload enum deep-drop free: if statement j is the consuming
         // match of an rc-payload enum local, deep-drop its variant's rc payload
@@ -68654,7 +68924,7 @@ pub function rc_plan_dump(fn: parser.FuncDecl, structs: StructTab, funcs: parser
         }
     }
     var arr_ret: string[] = array_ret_fn_names(funcs);
-    var pd: PreciseDrops = pd_filter_names(precise_drop_names(fn.body, reasg, structs, sig_reg_of(arr_ret), sig_reg_of(strarr_ret_fns_of(funcs)), borrowable_params_of(funcs), sig_reg_of(opt_fresh_ret_fns_of(funcs, structs, str_fresh_ret_fns_of(funcs))), str_fresh_ret_fns_of(funcs), move_sites_toplevel_of(fn, structs)), dead_alias_of(fn.body, reasg, rc_ml_compute(fn, structs).names).srcs);
+    var pd: PreciseDrops = pd_filter_names(precise_drop_names(fn.body, reasg, structs, sig_reg_of(arr_ret), sig_reg_of(strarr_ret_fns_of(funcs)), borrowable_params_of(funcs), sig_reg_of(opt_fresh_ret_fns_of(funcs, structs, str_fresh_ret_fns_of(funcs))), sig_reg_of(fn_names_of(funcs)), str_fresh_ret_fns_of(funcs), move_sites_toplevel_of(fn, structs)), dead_alias_of(fn.body, reasg, rc_ml_compute(fn, structs).names).srcs);
     // Dump fidelity: lower_func SUPPRESSES the precise drop of a local consumed
     // as a reuse donor (its box survives into the recipient); the dump must
     // mirror that or it over-reports drops the lowering never emits (native's
@@ -69175,11 +69445,19 @@ pub function (s: LowerState) callee_param_is_dyn_arr(name: string, idx: i32): bo
 pub function (s: LowerState) opt_ret_type(name: string): string {
     var v: string = sig_reg_value_of(s.frame.sigs.opt_ret_fns, name);
     if (v.len() > 0) { return v; }
-    // Built-in I/O functions return a fixed Option/Result the lowering must
-    // recognise so a `match (read_file(p)) { Ok => .., Err => .. }` scrutinee or a
-    // `var r = read_file(p)` binding resolves the result type (read_file lowers to
-    // op_read_file). Checked AFTER the registry so a user decl of the same name
-    // still wins. read_file → Result[string, IoError].
+    // Checked AFTER the registry so a user decl of the same name still wins.
+    return builtin_opt_ret_type(name);
+}
+
+// builtin_opt_ret_type: the fixed Option / Result a BUILT-IN returns, or "" when
+// the name is not one. The lowering has to recognise these so a `match
+// (read_file(p)) { Ok => .., Err => .. }` scrutinee or a `var r = read_file(p)`
+// binding resolves the result type (read_file lowers to op_read_file), and the
+// rc side reads the same table to know the answer is a box a generated helper
+// built fresh for this caller (match_scrut_owns_fresh_result_box,
+// fresh_opt_box_init). One table, so the two cannot disagree about what a
+// builtin call even is.
+function builtin_opt_ret_type(name: string): string {
     if (name == "read_file") { return "Result[string, IoError]"; }
     if (name == "read_file_bytes") { return "Result[u8[], IoError]"; }
     if (name == "write_file") { return "Result[void, IoError]"; }

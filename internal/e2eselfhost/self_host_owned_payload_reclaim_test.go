@@ -11,12 +11,13 @@ import (
 // Self-host RC: a match over read_chunk / read_line owns the payload it binds
 // (#8402, the self-host half of native's #8396 / #8399).
 //
-// The runtime hands back an IMMORTAL Option / Result box whose success payload
-// is a fresh rc=1 string built for this caller. The box needs no release; the
-// payload's unit is the caller's, and nothing released it: the arm binding was a
-// borrow of a box nothing sweeps, so every chunk of a streaming-reader loop
-// leaked. FERN_LEAKCHECK on 20 MB of stdin through the pass-through loop read
-// allocs=461 frees=0 live_bytes=20,201,064.
+// The runtime hands back an Option / Result box whose success payload is a fresh
+// rc=1 string built for this caller. The payload's unit is the caller's, and
+// nothing released it: the arm binding was a borrow, so every chunk of a
+// streaming-reader loop leaked. FERN_LEAKCHECK on 20 MB of stdin through the
+// pass-through loop read allocs=461 frees=0 live_bytes=20,201,064. The BOX is a
+// separate owner with a separate release (#8811); a shallow box free never
+// reaches the payload, so these legs measure the same thing either way.
 //
 // The two shapes each leg pins:
 //
