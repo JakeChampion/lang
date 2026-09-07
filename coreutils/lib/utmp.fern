@@ -37,17 +37,45 @@ import "std/array";
 // a logged-in user; the rest describe the run level, the boot time, an
 // init or login process that has not yet been claimed, and the tail of
 // one that has.
-pub function empty_type(): i32 { return 0; }
-pub function run_lvl(): i32 { return 1; }
-pub function boot_time(): i32 { return 2; }
-pub function new_time(): i32 { return 3; }
-pub function old_time(): i32 { return 4; }
-pub function init_process(): i32 { return 5; }
-pub function login_process(): i32 { return 6; }
-pub function user_process(): i32 { return 7; }
-pub function dead_process(): i32 { return 8; }
+pub function empty_type(): i32 {
+  return 0;
+}
 
-pub function record_bytes(): i32 { return 384; }
+pub function run_lvl(): i32 {
+  return 1;
+}
+
+pub function boot_time(): i32 {
+  return 2;
+}
+
+pub function new_time(): i32 {
+  return 3;
+}
+
+pub function old_time(): i32 {
+  return 4;
+}
+
+pub function init_process(): i32 {
+  return 5;
+}
+
+pub function login_process(): i32 {
+  return 6;
+}
+
+pub function user_process(): i32 {
+  return 7;
+}
+
+pub function dead_process(): i32 {
+  return 8;
+}
+
+pub function record_bytes(): i32 {
+  return 384;
+}
 
 // One record, reduced to the fields a utility prints or matches on.
 pub struct Entry { kind: i32, pid: i32, line: string, id: string, user: string, host: string, sec: i64 }
@@ -61,15 +89,14 @@ pub function default_path(): string {
 
 // A little-endian unsigned 16-bit field.
 function u16_at(bs: u8[], off: i32): i32 {
-  return (bs[off] as i32) + (bs[off + 1] as i32) * 256;
+  return bs[off] as i32 + bs[off + 1] as i32 * 256;
 }
 
 // A little-endian signed 32-bit field.
 function i32_at(bs: u8[], off: i32): i32 {
-  var v: i64 = (bs[off] as i64) + (bs[off + 1] as i64) * (256 as i64)
-    + (bs[off + 2] as i64) * (65536 as i64) + (bs[off + 3] as i64) * (16777216 as i64);
-  if (v > (2147483647 as i64)) {
-    v = v - (4294967296 as i64);
+  var v: i64 = bs[off] as i64 + bs[off + 1] as i64 * (256 as i64) + bs[off + 2] as i64 * (65536 as i64) + bs[off + 3] as i64 * (16777216 as i64);
+  if (v > 2147483647 as i64) {
+    v = v - 4294967296 as i64;
   }
   return v as i32;
 }
@@ -78,7 +105,7 @@ function i32_at(bs: u8[], off: i32): i32 {
 // field's end, whichever comes first.
 function field_at(bs: u8[], off: i32, width: i32): string {
   var n: i32 = 0;
-  while (n < width && (bs[off + n] as i32) != 0) {
+  while (n < width && bs[off + n] as i32 != 0) {
     n = n + 1;
   }
   var out: u8[] = [];
@@ -91,15 +118,7 @@ function field_at(bs: u8[], off: i32, width: i32): string {
 }
 
 function entry_at(bs: u8[], off: i32): Entry {
-  return Entry {
-    kind: u16_at(bs, off + 0),
-    pid: i32_at(bs, off + 4),
-    line: field_at(bs, off + 8, 32),
-    id: field_at(bs, off + 40, 4),
-    user: field_at(bs, off + 44, 32),
-    host: field_at(bs, off + 76, 256),
-    sec: i32_at(bs, off + 340) as i64,
-  };
+  return Entry { kind: u16_at(bs, off + 0), pid: i32_at(bs, off + 4), line: field_at(bs, off + 8, 32), id: field_at(bs, off + 40, 4), user: field_at(bs, off + 44, 32), host: field_at(bs, off + 76, 256), sec: i32_at(bs, off + 340) as i64 };
 }
 
 // Every whole record in `path`, in file order. A missing or unreadable

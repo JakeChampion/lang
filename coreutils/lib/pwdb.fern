@@ -76,8 +76,8 @@ pub function parse_id(s: string): Option[i64] {
     if (c < 48 || c > 57) {
       return None;
     }
-    v = v * (10 as i64) + ((c - 48) as i64);
-    if (v > (4294967295 as i64)) {
+    v = v * (10 as i64) + (c - 48) as i64;
+    if (v > 4294967295 as i64) {
       return None;
     }
     i = i + 1;

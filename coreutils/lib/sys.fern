@@ -8,7 +8,6 @@
 // What the record does NOT carry is `uname -p` / `-i`, the processor and
 // hardware-platform strings — see uname.fern, where the choice of what
 // to print for them belongs.
-
 // `sysname()` — the operating system's name; `uname -s`, "Linux".
 pub function sysname(): string {
   return uname_field(0);
