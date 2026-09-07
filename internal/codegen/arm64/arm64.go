@@ -3769,11 +3769,24 @@ func (g *generator) emitStrAppendEligible(dataX, lenX, bail string) {
 // Past the i32 length ceiling there is no representable result and the
 // capacity test can still match, so the ceiling is checked here and the grow
 // declined; __fern_strcat then traps on the same total.
+//
+// A total that still fits the INLINE form is declined too, and that is not a
+// missed optimisation: __fern_strcat packs such a result into the (data, len)
+// pair with no allocation at all and the append's fallback then releases the
+// accumulator's buffer, so the copy path is strictly the cheaper of the two —
+// no allocation either way, one heap block fewer live afterwards. Declining
+// also keeps the append REPRESENTATION-PRESERVING, which is the property that
+// makes it an optimisation of `a + b` rather than a second meaning for it: a
+// short result is the inline form whether or not the accumulator happened to
+// be a growable heap buffer, so it drops, classes and compares the same way.
+// arm64's 15-byte inline cap makes that a wide class of strings.
 func (g *generator) emitStrAppendFits(laX, lbX, bail string) {
 	assertStrAppendOperands(laX, lbX)
 	g.emit("add x9, %s, %s", laX, lbX) // total, in 64 bits so it cannot wrap
 	g.emit("lsr x10, x9, #31")
 	g.emit("cbnz x10, %s", bail) // total past the i32 length ceiling
+	g.emit("cmp x9, #%d", fernstring.InlineCap(8))
+	g.emit("b.ls %s", bail) // __fern_strcat packs this without allocating
 	g.emit("add x10, x9, #23")
 	g.emit("and x10, x10, #-16") // req_new = round16(total + 8)
 	g.emit("add x9, %s, #23", laX)
