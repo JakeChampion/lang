@@ -101,18 +101,20 @@ function main(): i32 {
     while (i < 3) { acc = put(acc, "12345678"); i = i + 1; }
     return acc.len();
 }`
-	wantPutDecs := map[string]int{"wasm": 1, "x86-64": 1, "arm64": 2}
+	// Every ABI appends in place, so the overwrite-dec is suppressed and the
+	// one dec left is the promoted param's exit release — the `own` shape,
+	// arm64 included since it gained the helper.
 	twoWord := map[string]bool{"wasm": true, "x86-64": false, "arm64": true}
 	for abi, prog := range ownStrParamLowerings(t, src) {
-		if got := countStringDecs(prog, "put"); got != wantPutDecs[abi] {
-			t.Errorf("%s: string decs in put = %d, want %d (the promoted param's exit release)", abi, got, wantPutDecs[abi])
+		if got := countStringDecs(prog, "put"); got != 1 {
+			t.Errorf("%s: string decs in put = %d, want 1 (the promoted param's exit release)", abi, got)
 		}
 		if got := paramEntryRetains(prog, "put", 0, twoWord[abi]); got != 1 {
 			t.Errorf("%s: balanced entry retains on put's param 0 = %d, want 1 — without it the append grows the CALLER's buffer", abi, got)
 		}
 	}
 	progs := ownStrParamLowerings(t, src)
-	for _, abi := range []string{"wasm", "x86-64"} {
+	for _, abi := range []string{"wasm", "x86-64", "arm64"} {
 		if got := countFnCallDirect(progs[abi], "put", "__fern_str_append"); got != 1 {
 			t.Errorf("%s: __fern_str_append calls in put = %d, want 1", abi, got)
 		}

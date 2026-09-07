@@ -257,7 +257,7 @@ function parse_ignore(v: string): u64 {
     return r.0;
   }
   var msg: string = "invalid number: " + gnu.quote(v);
-  if (r.1 >= 2) {
+  if (gnu.count_overflow(r.1)) {
     msg = msg + ": Value too large for defined data type";
   }
   gnu.error(msg);
