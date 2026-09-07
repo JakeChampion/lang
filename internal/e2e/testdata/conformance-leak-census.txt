@@ -278,6 +278,7 @@ hash_struct_enum                                     0
 headers_map                                          0
 hello_world                                          0
 hex_literal                                          0
+hex_literal_width                                    0
 hex_roundtrip                                        0
 higher_order                                         0
 http_content_type                                    5
