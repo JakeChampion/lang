@@ -40,3 +40,30 @@ func TestFuncTypeStringNilParamDoesNotPanic(t *testing.T) {
 		})
 	}
 }
+
+// TestFuncElemStringKeepsParens guards the rendering of an array / slice of
+// function values. Without the grouping parens, `((i32) => i32)[]` prints as
+// `(i32) => i32[]` — the spelling of a function returning an array of i32 —
+// so the two distinct types render identically and neither re-parses to
+// itself. The func element is the one spelling whose own grammar swallows the
+// `[]` suffix; every other element round-trips unparenthesised.
+func TestFuncElemStringKeepsParens(t *testing.T) {
+	fn := &FuncType{Params: []Type{NumberType{Width: 32, Signed: true}}, Result: NumberType{Width: 32, Signed: true}}
+	cases := []struct {
+		name string
+		ty   Type
+		want string
+	}{
+		{name: "array of functions", ty: ArrayType{Elem: fn}, want: "((i32) => i32)[]"},
+		{name: "slice of functions", ty: SliceType{Elem: fn}, want: "[(i32) => i32]"},
+		{name: "array of strings stays bare", ty: ArrayType{Elem: StringType{}}, want: "string[]"},
+		{name: "array of tuples stays bare", ty: ArrayType{Elem: TupleType{Elems: []Type{NumberType{Width: 32, Signed: true}, StringType{}}}}, want: "(i32, string)[]"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.ty.String(); got != tc.want {
+				t.Errorf("String() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
