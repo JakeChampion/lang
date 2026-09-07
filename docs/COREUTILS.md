@@ -931,12 +931,12 @@ groups are the order of work. Each sub-issue names its group.
   `sum` `md5sum` `sha1sum` `sha224sum` `sha256sum` `sha384sum` `sha512sum`
   `b2sum` `tee`. Done: `cat`, `tac`, `head`, `tail`, `wc`, `nl`, `cut`,
   `paste`, `join`, `comm`, `uniq`, `sort`, `tr`, `fold`, `expand`, `unexpand`,
-  `split`, `base32`, `base64`, `basenc` and the seven checksum utilities.
-  Needs a buffered stdout writer in `std/io_buffered` (its own header
-  already promises one) and a streaming stdin reader whose reads can FAIL:
-  every one of these reaches a read error through a directory operand, and
-  `Reader.read_chunk` answered None to EOF and to EISDIR alike until #8700
-  gave it `Result[string, IoError]`. The hash
+  `split`, `csplit`, `base32`, `base64`, `basenc` and the seven checksum
+  utilities. Needs a buffered stdout writer in `std/io_buffered` (its own
+  header already promises one) and a streaming stdin reader whose reads can
+  FAIL: every one of these reaches a read error through a directory operand,
+  and `Reader.read_chunk` answered None to EOF and to EISDIR alike until
+  #8700 gave it `Result[string, IoError]`. The hash
   utilities have their digests: `std/crypto` streams MD5, SHA-1,
   SHA-224/256/384/512 and BLAKE2b (`h = h.update(chunk)` per `read_chunk`
   piece), and `std/hash` has cksum's CRC-32 and both sum(1) checksums with

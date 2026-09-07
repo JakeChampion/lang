@@ -1585,6 +1585,76 @@ function exec_at(re: Bre, text: string, lo: i32, hi: i32): BreMatch {
   return exec_threads(re, text, lo, hi);
 }
 
+// `(re).search(text)` — whether the pattern matches ANYWHERE in
+// `text`, which is what glibc's `re_search` answers and what csplit
+// asks of each line. `exec` above is anchored at 0; running it once per
+// start offset would cost a pass per offset, so this seeds a thread at
+// every position of the one pass instead.
+//
+// Only the yes/no is reported: csplit uses the answer to decide where a
+// piece ends, and never looks at where the match fell.
+pub function (re: Bre) search(text: string): boolean {
+  if (re.backref) {
+    return search_backtrack(re, text);
+  }
+  return search_threads(re, text);
+}
+
+// A backreference is not a regular language, so the search is the
+// anchored backtracker run from each start in turn.
+function search_backtrack(re: Bre, text: string): boolean {
+  var start: i32 = 0;
+  while (start <= text.len()) {
+    var end: i32 = text.len();
+    while (end >= start) {
+      var m: M = M { text: text, re: re, target: end, caps: fresh_caps(re.ngroups * 2), marks: fresh_caps(re.nmarks) };
+      var r: (boolean, M) = step(m, 0, start);
+      if (r.0) {
+        return true;
+      }
+      end = end - 1;
+    }
+    start = start + 1;
+  }
+  return false;
+}
+
+// The Thompson simulation with a fresh thread seeded at each position.
+// The generation stamp is the position, so a seed and a transition that
+// reach one program counter at the same position still enter it once.
+function search_threads(re: Bre, text: string): boolean {
+  var ncap: i32 = re.ngroups * 2;
+  var no_pcs: i32[] = [];
+  var no_caps: i32[][] = [];
+  var t: Threads = Threads { pcs: no_pcs, caps: no_caps, seen: fill(re.insts.len(), 0 - 1) };
+  t = add_thread(re, t, 0, 0, fresh_caps(ncap), 0, text);
+  var pos: i32 = 0;
+  while (true) {
+    var pcs: i32[] = t.pcs;
+    var caps: i32[][] = t.caps;
+    var empty_pcs: i32[] = [];
+    var empty_caps: i32[][] = [];
+    t = Threads { ...t, pcs: empty_pcs, caps: empty_caps };
+    var k: i32 = 0;
+    while (k < pcs.len()) {
+      var in: Inst = re.insts[pcs[k]];
+      if (in.op == op_match()) {
+        return true;
+      }
+      if (pos < text.len() && byte_matches(re, in, text[pos] as i32)) {
+        t = add_thread(re, t, pos + 1, pcs[k] + 1, caps[k], pos + 1, text);
+      }
+      k = k + 1;
+    }
+    if (pos >= text.len()) {
+      return false;
+    }
+    pos = pos + 1;
+    t = add_thread(re, t, pos, 0, fresh_caps(ncap), pos, text);
+  }
+  return false;
+}
+
 // The backtracking engine: ask for one end position at a time, longest
 // first, and take the first that answers yes.
 function exec_backtrack(re: Bre, text: string, lo: i32, hi: i32): BreMatch {

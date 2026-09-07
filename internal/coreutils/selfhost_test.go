@@ -44,6 +44,7 @@ func corpusByUtil() map[string]func(*testing.T) []invocation {
 		"basenc":    basencCases,
 		"cat":       catCases,
 		"comm":      commCases,
+		"csplit":    csplitCases,
 		"cut":       cutCases,
 		"dirname":   dirnameCases,
 		"echo":      echoCases,
@@ -233,6 +234,9 @@ func TestSelfHostCoreutilsParity(t *testing.T) {
 					if want.how() != got.how() {
 						t.Errorf("status differs for %s %s: native %s, selfhost %s", util, quoteArgs(inv.args), want.how(), got.how())
 					}
+					// A utility whose output IS the files it writes
+					// (csplit) would otherwise have the two compilers
+					// compared on two silences.
 					if diff := treeDiff(want.tree, got.tree); diff != "" {
 						t.Errorf("the files left behind differ for %s %s\n%s", util, quoteArgs(inv.args), diff)
 					}
