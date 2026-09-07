@@ -413,7 +413,12 @@ uutils 0.0.24 (the Debian multi-call binary the script now finds) and a
 588 KiB file — 100 000 lines of `seq` — for the regular-expression row.
 Another agent was building on the same four cores for part of the run, so
 read the ratios rather than the absolute numbers; GNU's own figure for the
-plain copy moved 85 → 100 ms between two runs an hour apart:
+plain copy moved 85 → 100 ms between two runs an hour apart.
+
+These rows were taken BEFORE #8784's range-append fusion reached this
+branch, so they understate the shipped build by roughly 8 ns of a 22 ns
+record on the x86-64 and wasm throughput rows — see the emit bullet below.
+The startup and `-r` rows are unaffected, and so is arm64:
 
 | utility | workload | fern (ms) | gnu (ms) | uutils (ms) | gnu / fern | uutils / fern |
 |---|---|---|---|---|---|---|
@@ -430,10 +435,15 @@ than algorithmic: both sides read the same 8 KiB blocks backwards and copy
 each record once, and Fern's copy costs more. Measured on 8 000 000
 records, one at a time:
 
-- **the emit, ~22 ns a record.** `buf = buf + slice_unchecked(w, lo, hi)`
-  into a buffer that resets at 8 KiB: 12 ns for the append and 10 more for
-  materialising the slice as its own string first. That is #8770's floor,
-  not something tac can arrange around.
+- **the emit, ~14 ns a record.** `buf = buf + slice_unchecked(w, lo, hi)`
+  into a buffer that resets at 8 KiB. It used to be ~22 ns — 12 for the
+  append and 10 more for materialising the slice as its own string first —
+  until #8784 fused that shape into `__fern_str_append_range`, which copies
+  the range straight out of the source. Re-measured over 8 000 000 records
+  against the same loop appending a literal, the slice now costs 1.6 ns on
+  top of the 12.3 ns append. What is left is #8770's per-append floor,
+  which is not something tac can arrange around. arm64 has no in-place
+  append helper, so it keeps the old cost.
 - **the scan, ~21 ns a record.** `__rmemchr` itself is 4.5 ns; the rest is
   the call returning `(i32, i32)`, which costs 8 ns against 1.3 for a
   scalar return.
@@ -508,11 +518,13 @@ compares equal — but the option is not implemented until the primitive is.
 **A string append costs 8-16 ns whatever its size (#8770).** Every
 line-oriented utility assembles its output by appending to a local, and the
 floor is per append rather than per byte, so `cat -n` is 0.22× GNU and
-`cat -A` 0.18× while plain `cat` is at parity. The shape that wants fusing
-is `acc = acc + slice_unchecked(s, a, b)`, which today materialises the
-slice as its own string before copying it again. Two rewrites of `cat -n`
-measured as a wash and were reverted rather than kept, which is what
-located the cost. Neighbours: #8530 (`array.with`, struct updates) and
+`cat -A` 0.18× while plain `cat` is at parity. The one shape that HAS been
+fused is `acc = acc + slice_unchecked(s, a, b)`: #8784 lowers it to
+`__fern_str_append_range`, so the slice is no longer materialised as its own
+string first — worth 8 ns of a 22 ns record in tac's emit loop, on x86-64
+and wasm only. The per-append floor underneath it is what remains open.
+Two rewrites of `cat -n` measured as a wash and were reverted rather than
+kept, which is what located the cost. Neighbours: #8530 (`array.with`, struct updates) and
 #8532 (small value structs boxed).
 
 Gaps that are closed, each now exercised by the corpus rather than carved
@@ -539,11 +551,12 @@ groups are the order of work. Each sub-issue names its group.
   `join` `comm` `uniq` `sort` `tr` `fold` `fmt` `pr` `ptx` `expand`
   `unexpand` `split` `csplit` `shuf` `od` `base32` `base64` `basenc` `cksum`
   `sum` `md5sum` `sha1sum` `sha224sum` `sha256sum` `sha384sum` `sha512sum`
-  `b2sum` `tee`. `head`, `wc` and `tac` are done. Needs a buffered stdout writer in
-  `std/io_buffered` (its own header already promises one) and a streaming
-  stdin reader whose reads can FAIL: every one of these reaches a read error
-  through a directory operand, and `Reader.read_chunk` answered None to EOF
-  and to EISDIR alike until #8700 gave it `Result[string, IoError]`. The hash
+  `b2sum` `tee`. `cat`, `head`, `tail`, `wc` and `tac` are done. Needs a
+  buffered stdout writer in `std/io_buffered` (its own header already
+  promises one) and a streaming stdin reader whose reads can FAIL: every one
+  of these reaches a read error through a directory operand, and
+  `Reader.read_chunk` answered None to EOF and to EISDIR alike until #8700
+  gave it `Result[string, IoError]`. The hash
   utilities have their digests: `std/crypto` streams MD5, SHA-1,
   SHA-224/256/384/512 and BLAKE2b (`h = h.update(chunk)` per `read_chunk`
   piece), and `std/hash` has cksum's CRC-32 and both sum(1) checksums with
