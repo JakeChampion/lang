@@ -92,32 +92,27 @@ function main(): i32 { return build(3, "abcdef").len(); }`
 	}
 }
 
-// TestLowerStrAppendRangeSkipsArm64: arm64 (ptrW==8 + TwoWordOverride) has no
-// __fern_str_append and so has none of its range form either — widening the
-// predicate without the helper is what turns the suppressed dec-on-overwrite
-// into a use-after-free (see strAppendAvailable).
-func TestLowerStrAppendRangeSkipsArm64(t *testing.T) {
+// TestLowerStrAppendRangeArm64: the ptrW==8 + TwoWordOverride ABI fuses the
+// range too, so no __str_slice buffer is materialised there either.
+func TestLowerStrAppendRangeArm64(t *testing.T) {
 	prevFree, prevOverride := ast.RcFreeEnabled, ast.TwoWordOverride
 	ast.RcFreeEnabled = true
 	ast.TwoWordOverride = true
 	defer func() { ast.RcFreeEnabled, ast.TwoWordOverride = prevFree, prevOverride }()
 
 	prog := lowerSourceWith(t, strAppendRangeSrc, 8)
-	if got := countFnCallDirect(prog, "build", "__fern_str_append_range"); got != 0 {
-		t.Errorf("arm64 (two-word, ptrW=8): __fern_str_append_range calls = %d, want 0", got)
+	if got := countFnCallDirect(prog, "build", "__fern_str_append_range"); got != 1 {
+		t.Errorf("arm64 (two-word, ptrW=8): __fern_str_append_range calls = %d, want 1", got)
 	}
-	if got := countFnCallDirect(prog, "build", "__str_slice"); got != 1 {
-		t.Errorf("arm64: __str_slice calls = %d, want 1 (the slice is still materialised)", got)
-	}
-	if got := countOpKind(prog, "build", OpStrConcat); got != 1 {
-		t.Errorf("arm64: OpStrConcat = %d, want 1", got)
+	if got := countFnCallDirect(prog, "build", "__str_slice"); got != 0 {
+		t.Errorf("arm64: __str_slice calls = %d, want 0 (the fused helper reads the range in place)", got)
 	}
 }
 
 // TestLowerStrAppendRangeSkipsCellRead: a `Cell[string]` read is owned only in
 // the sense of carrying a retain on top of the reference the SLOT still holds,
 // so it must not be grown in place — #8067, silent loss on x86-64 and a freed
-// live buffer on arm64 and wasm. The exclusion has to hold for the range form
+// live buffer on the two-word ABIs. The exclusion has to hold for the range form
 // as firmly as for the plain append.
 func TestLowerStrAppendRangeSkipsCellRead(t *testing.T) {
 	prev := ast.RcFreeEnabled

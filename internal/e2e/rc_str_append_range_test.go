@@ -13,8 +13,7 @@ import (
 // these pin what the emitted runtime does.
 
 // strAppendRangeCorrectnessSrc covers every shape the fused path must get
-// right, all against values the interpreter and the unfused arm64 lowering
-// agree on:
+// right, all against values the interpreter agrees on:
 //
 //   - an EMPTY range (the shared-sentinel case __str_slice short-circuits),
 //   - a range of 7 bytes or fewer (the inline/SSO case __str_slice packs
@@ -150,9 +149,10 @@ func TestWASMStrAppendRangeBalanced(t *testing.T) {
 	}
 }
 
-// TestArm64StrAppendRangeCorrect: arm64 has no in-place append and so no
-// fused range form — it keeps __str_slice + OpStrConcat. Same answers, which
-// is the property the exclusion has to preserve.
+// TestArm64StrAppendRangeCorrect is the two-word NATIVE sibling. Under the
+// leak detector, so it doubles as an over-release probe: the fused helper's
+// fallback releases BOTH the consumed accumulator and the range it
+// materialised.
 func TestArm64StrAppendRangeCorrect(t *testing.T) {
 	prev := ast.RcFreeEnabled
 	ast.RcFreeEnabled = true
@@ -164,6 +164,28 @@ func TestArm64StrAppendRangeCorrect(t *testing.T) {
 	}
 	if stdout != strAppendRangeWant+"\n" {
 		t.Errorf("arm64 range append output =\n%q\nwant\n%q", stdout, strAppendRangeWant+"\n")
+	}
+	allocs, frees, live := parseLeakCheckLine(t, stderr)
+	if allocs != frees || live != 0 {
+		t.Errorf("heap unbalanced: allocs=%d frees=%d live_bytes=%d, want allocs==frees and live_bytes==0", allocs, frees, live)
+	}
+}
+
+func TestArm64StrAppendRangeAllocsCollapse(t *testing.T) {
+	prev := ast.RcFreeEnabled
+	ast.RcFreeEnabled = true
+	defer func() { ast.RcFreeEnabled = prev }()
+
+	stdout, stderr, code := runLeakCheckArm64(t, strAppendRangeAllocSrc)
+	if code != 0 {
+		t.Fatalf("range-append loop exited %d (want 0 — the accumulated length was wrong); stdout=%q stderr=%q", code, stdout, stderr)
+	}
+	allocs, frees, live := parseLeakCheckLine(t, stderr)
+	if allocs > 400 {
+		t.Errorf("allocs = %d for 500 range appends, want <= 400; the slice is still being materialised", allocs)
+	}
+	if allocs != frees || live != 0 {
+		t.Errorf("heap unbalanced: allocs=%d frees=%d live_bytes=%d, want allocs==frees and live_bytes==0", allocs, frees, live)
 	}
 }
 
