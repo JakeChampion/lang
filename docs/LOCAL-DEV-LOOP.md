@@ -37,7 +37,15 @@ Mac) supply them.
 ## Git hooks: `.githooks/pre-push`
 
 `make hooks` (the session hook runs it) points `core.hooksPath` at
-`.githooks/`. `pre-push` runs the part of `make lint-all` that finishes in
+`.githooks/` and turns **rerere** on for the clone, so a conflict you have
+already resolved is replayed rather than re-asked when the same branch is
+rebased onto a main that moved again. It is set per-clone because git defaults
+it off and it was previously on for one machine only, out of a global
+`~/.gitconfig` — no help to CI, a fresh clone, or an agent session in a
+container. `rerere.autoUpdate` is left alone: replaying a resolution is safe,
+staging it unread is a preference. This is the local loop only —
+`auto-rebase-prs.yml` replays open PRs on a fresh runner clone, which has no
+cache to hit. `pre-push` runs the part of `make lint-all` that finishes in
 seconds and fails CI most often — `go build`, `go vet`, `gofmt-check`,
 `fmt-check`, `actionlint`, `testnames` — about 15 s warm, 40 s with a cold
 `bin/fern` (measured 2026-09-05, 4-core x86-64). `check-sources`, `deadcode` and
