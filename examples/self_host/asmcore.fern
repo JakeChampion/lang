@@ -1537,21 +1537,18 @@ pub function rt_src_remove_dir(t: string): string {
     return "function __fern_remove_dir(path: string): Result[void, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var rc: i32 = __syscall3(" + sysno(t, "unlinkat") + ", " + at_fdcwd(t) + ", pathz, " + at_removedir(t) + "); if (rc < 0) { return Err(__fern_io_error(0 - rc, __raw_string(pathz, plen))); } return Ok(()); }";
 }
 
-// rt_two_pathz is the shared preamble of the two link builders:
-// NUL-terminated copies of both operands, with `plen` left naming the LINK's
-// length because that is the path the error arm reports — `ln` and `link`
-// both name the link they failed to create, not the file it was to point at.
-function rt_two_pathz(): string {
-    return "var tlen: i32 = target.len(); var targetz: i32 = __raw_alloc(tlen + 1); var j: i32 = 0; while (j < tlen) { __raw_store8(targetz, j, target[j]); j = j + 1; } __raw_store8(targetz, tlen, 0); var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0);";
-}
-
 // rt_src_create_link backs `create_link(target, path)` (#8883, syscall-leaf) →
 // Result[void, IoError]. linkat(AT_FDCWD, target, AT_FDCWD, path, 0) — five
 // arguments, so this is a __syscall5 user. The flags word is 0 rather than
 // AT_SYMLINK_FOLLOW, so a symlink named as the target is linked to itself,
 // which is what link(1) and ln(1) without -L do.
+//
+// Both operands are NUL-terminated here rather than through a shared
+// preamble: TestRawStringPointerComesFromRawAlloc reads each builder's own
+// text to prove the pointer __raw_string boxes came from __raw_alloc, and a
+// binding it cannot see is a binding it cannot check (#7351).
 pub function rt_src_create_link(t: string): string {
-    return "function __fern_create_link(target: string, path: string): Result[void, IoError] { " + rt_two_pathz() + " var rc: i32 = __syscall5(" + sysno(t, "linkat") + ", " + at_fdcwd(t) + ", targetz, " + at_fdcwd(t) + ", pathz, 0); if (rc < 0) { return Err(__fern_io_error(0 - rc, __raw_string(pathz, plen))); } return Ok(()); }";
+    return "function __fern_create_link(target: string, path: string): Result[void, IoError] { var tlen: i32 = target.len(); var targetz: i32 = __raw_alloc(tlen + 1); var j: i32 = 0; while (j < tlen) { __raw_store8(targetz, j, target[j]); j = j + 1; } __raw_store8(targetz, tlen, 0); var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var rc: i32 = __syscall5(" + sysno(t, "linkat") + ", " + at_fdcwd(t) + ", targetz, " + at_fdcwd(t) + ", pathz, 0); if (rc < 0) { return Err(__fern_io_error(0 - rc, __raw_string(pathz, plen))); } return Ok(()); }";
 }
 
 // rt_src_create_symlink backs `create_symlink(target, path)` (#8883,
@@ -1559,7 +1556,7 @@ pub function rt_src_create_link(t: string): string {
 // the target is stored verbatim and never resolved, so it takes no dirfd of
 // its own and a link to something absent is created without complaint.
 pub function rt_src_create_symlink(t: string): string {
-    return "function __fern_create_symlink(target: string, path: string): Result[void, IoError] { " + rt_two_pathz() + " var rc: i32 = __syscall3(" + sysno(t, "symlinkat") + ", targetz, " + at_fdcwd(t) + ", pathz); if (rc < 0) { return Err(__fern_io_error(0 - rc, __raw_string(pathz, plen))); } return Ok(()); }";
+    return "function __fern_create_symlink(target: string, path: string): Result[void, IoError] { var tlen: i32 = target.len(); var targetz: i32 = __raw_alloc(tlen + 1); var j: i32 = 0; while (j < tlen) { __raw_store8(targetz, j, target[j]); j = j + 1; } __raw_store8(targetz, tlen, 0); var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var rc: i32 = __syscall3(" + sysno(t, "symlinkat") + ", targetz, " + at_fdcwd(t) + ", pathz); if (rc < 0) { return Err(__fern_io_error(0 - rc, __raw_string(pathz, plen))); } return Ok(()); }";
 }
 
 // rt_src_read_link backs `read_link(path)` (#8883, syscall-leaf) →
