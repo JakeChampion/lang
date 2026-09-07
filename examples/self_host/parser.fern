@@ -9378,25 +9378,62 @@ function assoc_ret_of(funcs: FuncDecl[], tyname: string, method: string): string
 // mono_infer computes a coarse type-name for an expression, enough to
 // pick the right clone. Unknown shapes return "" (the call stays
 // generic — fine for non-primitive receivers).
-// literal_is_i64 reports whether a non-negative decimal integer literal text is
-// too big for i32 (so it is an i64 value): >10 digits always, exactly 10 digits
-// if it exceeds i32-max "2147483647". Mirrors irlower.literal_is_i64 — parser
-// can't import irlower (the dependency runs the other way), so the width
-// classification is duplicated here to keep instantiation inference and lowering
-// in agreement. (Negative literals are unary minus over a positive literal;
-// hex literals keep the "0x" prefix so len<10 reads i32, matching irlower.)
-pub function literal_is_i64(text: string): boolean {
-    var n: i32 = text.len();
-    if (n > 10) { return true; }
-    if (n < 10) { return false; }
-    var m: string = "2147483647";
-    var i: i32 = 0;
-    while (i < 10) {
-        if (text[i] > m[i]) { return true; }
-        if (text[i] < m[i]) { return false; }
+// is_hex_lit reports whether an integer literal's spelling is a `0x` numeral.
+function is_hex_lit(text: string): boolean {
+    return text.len() > 2 && (text[0] as i32) == 48
+        && ((text[1] as i32) == 120 || (text[1] as i32) == 88);
+}
+
+// lower_hex_byte folds an ASCII hex digit to lower case; any other byte is
+// returned unchanged. Equal-length hex numerals compare lexicographically the
+// same as numerically, but only when both are written in the same case.
+function lower_hex_byte(b: i32): i32 {
+    if (b >= 65 && b <= 70) {
+        return b + 32;
+    }
+    return b;
+}
+
+// magnitude_fits compares the literal's digits — from `start`, leading zeros
+// skipped, hex letters lower-cased — against `max`, written in the same base.
+// Equal-length numerals compare lexicographically the same as numerically, so
+// the bound is a character compare. The same predicate rules the checker's
+// int_lit_fits; the two can't share it (the dependency runs checker -> parser).
+function magnitude_fits(text: string, start: i32, max: string): boolean {
+    var i: i32 = start;
+    while (i < text.len() && (text[i] as i32) == 48) {
         i = i + 1;
     }
-    return false;
+    var n: i32 = text.len() - i;
+    if (n != max.len()) {
+        return n < max.len();
+    }
+    var k: i32 = 0;
+    while (k < n) {
+        var tc: i32 = lower_hex_byte(text[i + k] as i32);
+        var mc: i32 = max[k] as i32;
+        if (tc != mc) {
+            return tc < mc;
+        }
+        k = k + 1;
+    }
+    return true;
+}
+
+// literal_is_i64 reports whether a non-negative integer literal text is too big
+// for i32 (so it is an i64 value). Magnitude is measured against i32-max in the
+// literal's OWN base — "7fffffff" for a `0x` numeral with the prefix stripped,
+// "2147483647" for decimal — rather than by digit count, which read a wide hex
+// literal like `0xFFFFFFFF` (10 characters) as fitting i32. Negative literals
+// are unary minus over a positive literal. irlower reads the same rule through
+// the module boundary (it imports parser), so the two sides stay in agreement.
+pub function literal_is_i64(text: string): boolean {
+    var hex: boolean = is_hex_lit(text);
+    var start: i32 = 0;
+    if (hex) { start = 2; }
+    var m: string = "2147483647";
+    if (hex) { m = "7fffffff"; }
+    return !magnitude_fits(text, start, m);
 }
 function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
     match (e) {
