@@ -230,6 +230,36 @@ function main(): i32 {
     if (k1.code[0] != 228 || k1.code[1] != 105 || k1.code[2] != 174 || k1.code[3] != 114) { return 52; }
     var k2: Arm64Asm = arm64_gas_assemble("movk x4, #29519, lsl #16");
     if (k2.code[0] != 228 || k2.code[1] != 105 || k2.code[2] != 174 || k2.code[3] != 242) { return 53; }
+    // The three shapes __mismatch adds on top of memchr's five (#8791): the
+    // vector eor and cmtst that replace the broadcast compare, and the
+    // register-offset load its overlapping trailing window addresses with.
+    // Same rule as above — a kernel about to be emitted on this target gets
+    // its assembler checked, and each is pinned twice so a dropped register
+    // field cannot pass.
+    // eor v0.16b, v0.16b, v1.16b -> 0x6E211C00 -> 00 1C 21 6E
+    var m1: Arm64Asm = arm64_gas_assemble("eor v0.16b, v0.16b, v1.16b");
+    if (m1.code[0] != 0 || m1.code[1] != 28 || m1.code[2] != 33 || m1.code[3] != 110) { return 54; }
+    // eor v5.16b, v6.16b, v7.16b -> 0x6E271CC5 -> C5 1C 27 6E
+    var m2: Arm64Asm = arm64_gas_assemble("eor v5.16b, v6.16b, v7.16b");
+    if (m2.code[0] != 197 || m2.code[1] != 28 || m2.code[2] != 39 || m2.code[3] != 110) { return 55; }
+    // cmtst v0.16b, v0.16b, v0.16b -> 0x4E208C00 -> 00 8C 20 4E
+    var m3: Arm64Asm = arm64_gas_assemble("cmtst v0.16b, v0.16b, v0.16b");
+    if (m3.code[0] != 0 || m3.code[1] != 140 || m3.code[2] != 32 || m3.code[3] != 78) { return 56; }
+    // cmtst v9.16b, v10.16b, v11.16b -> 0x4E2B8D49 -> 49 8D 2B 4E
+    var m4: Arm64Asm = arm64_gas_assemble("cmtst v9.16b, v10.16b, v11.16b");
+    if (m4.code[0] != 73 || m4.code[1] != 141 || m4.code[2] != 43 || m4.code[3] != 78) { return 57; }
+    // ldr x11, [x8, x14] -> 0xF86E690B -> 0B 69 6E F8. The unscaled register
+    // offset, not the lsl #3 form the array loads use: the window offset is a
+    // byte count.
+    var m5: Arm64Asm = arm64_gas_assemble("ldr x11, [x8, x14]");
+    if (m5.code[0] != 11 || m5.code[1] != 105 || m5.code[2] != 110 || m5.code[3] != 248) { return 58; }
+    // ldr w15, [x9, x14] -> 0xB86E692F -> 2F 69 6E B8
+    var m6: Arm64Asm = arm64_gas_assemble("ldr w15, [x9, x14]");
+    if (m6.code[0] != 47 || m6.code[1] != 105 || m6.code[2] != 110 || m6.code[3] != 184) { return 59; }
+    // The whole __mismatch body assembles clean — the vector gather, both
+    // overlapping windows and the scalar remainder.
+    var mk: Arm64GasProg = arm64_gas_program("ld1 {v0.16b}, [x8]\nld1 {v1.16b}, [x9]\neor v0.16b, v0.16b, v1.16b\ncmtst v0.16b, v0.16b, v0.16b\nshrn v0.8b, v0.8h, #4\nfmov x11, d0\nrbit x11, x11\nclz x11, x11\nlsr x11, x11, #2\ncsel x1, x5, x1, gt\nldr x11, [x8, x14]\nldr w15, [x9, x14]\neor x11, x11, x14\neor w11, w11, w15\nldrb w11, [x8]\n");
+    if (mk.unknown.len() != 0) { return 60; }
     return 0;
 }
 `
