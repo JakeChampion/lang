@@ -17167,6 +17167,17 @@ func (b *builder) dropStructField(t ast.Type) {
 		b.emit(Op{Kind: OpCallDirect, Str: dynDropFnName(dt.Traits), I32: 1})
 		return
 	}
+	// wasm's inline two-word `dyn`: discard both words without releasing.
+	// dropFnNameFor DOES name a helper here (its guard is `ptrW != 4 &&
+	// !dynRcSupported`), but the branch below appends the trailing OpDrop its
+	// own drop fns need, and __drop_dyn_ returns void — so falling through
+	// emitted a module that fails wasm validation. Leaking matches every other
+	// wasm `dyn` drop site (docs/DYN-TRAITS.md §7.8); releasing it needs the
+	// §7.8 double-drop fixed first, so the element leaks for now (#8797).
+	if _, isDyn := t.(ast.DynTraitType); isDyn && b.ptrW == 4 {
+		b.emit(Op{Kind: OpDrop, Width: WidthString})
+		return
+	}
 	// Slice child: the owner is unique here, so its header frees at rc==1
 	// (a shared header only decs); the viewed bytes are the source's.
 	if isSliceType(t) {
