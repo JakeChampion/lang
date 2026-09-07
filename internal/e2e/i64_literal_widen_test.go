@@ -80,6 +80,36 @@ function main(): i32 {
 }
 `
 
+// compositeBigLiteralProgram pins #8722: the widening reaches the ELEMENTS of
+// an unannotated tuple / array init, which nothing settled — so a wide element
+// typed i32 and lowered at that default, reading back as 0 for 2^62 on every
+// native backend while `-interp` computed it wide (`var t = (1, 2^62); var a:
+// i64 = t.1;` printed 0 against interp's 4611686018427387904, with no
+// diagnostic anywhere). Each element shape adds a distinct bit: a tuple
+// element, an array element, a tuple nested in a tuple, an array nested in a
+// tuple, an element written as arithmetic, and the neighbouring small elements
+// that must keep their own values. A correct run exits 63; before the fix the
+// program did not even compile, since comparing an i32-typed element against
+// the i64 `w` is E041.
+const compositeBigLiteralProgram = `
+function main(): i32 {
+  var w: i64 = 4611686018427387904;
+  var c = 0;
+  var t = (1, 4611686018427387904);
+  if (t.1 == w) { c = c + 1; }
+  var xs = [4611686018427387904, 1];
+  if (xs[0] == w) { c = c + 2; }
+  var n = (1, (2, 4611686018427387904));
+  if (n.1.1 == w) { c = c + 4; }
+  var m = (1, [4611686018427387904]);
+  if (m.1[0] == w) { c = c + 8; }
+  var d = (1, 4611686018427387904 / 2);
+  if (d.1 == w / 2) { c = c + 16; }
+  if (t.0 == 1 && xs[1] == 1) { c = c + 32; }
+  return c;
+}
+`
+
 func TestInterpUnannotatedBigLiteralWidens(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	run := func(src string, want int, what string) {
@@ -96,6 +126,7 @@ func TestInterpUnannotatedBigLiteralWidens(t *testing.T) {
 	run(unannotatedBigLiteralProgram, 0, "big-literal widen (stays positive)")
 	run(compoundBigLiteralProgram, 44, "big-literal compound")
 	run(wideLiteralSiblingsProgram, 63, "big-literal generic call and comparisons")
+	run(compositeBigLiteralProgram, 63, "big-literal tuple and array elements")
 }
 
 func TestX86_64UnannotatedBigLiteralWidens(t *testing.T) {
@@ -110,6 +141,9 @@ func TestX86_64UnannotatedBigLiteralWidens(t *testing.T) {
 	}
 	if _, code := compileAndRunX86_64(t, wideLiteralSiblingsProgram); code != 63 {
 		t.Errorf("x86-64 big-literal generic call and comparisons: exit = %d, want 63", code)
+	}
+	if _, code := compileAndRunX86_64(t, compositeBigLiteralProgram); code != 63 {
+		t.Errorf("x86-64 big-literal tuple and array elements: exit = %d, want 63", code)
 	}
 }
 
@@ -126,6 +160,9 @@ func TestArm64UnannotatedBigLiteralWidens(t *testing.T) {
 	if _, code := compileAndRunArm64(t, wideLiteralSiblingsProgram); code != 63 {
 		t.Errorf("arm64 big-literal generic call and comparisons: exit = %d, want 63", code)
 	}
+	if _, code := compileAndRunArm64(t, compositeBigLiteralProgram); code != 63 {
+		t.Errorf("arm64 big-literal tuple and array elements: exit = %d, want 63", code)
+	}
 }
 
 func TestWASMUnannotatedBigLiteralWidens(t *testing.T) {
@@ -140,5 +177,8 @@ func TestWASMUnannotatedBigLiteralWidens(t *testing.T) {
 	}
 	if code := runWasm(t, wideLiteralSiblingsProgram); code != 63 {
 		t.Errorf("wasm big-literal generic call and comparisons: exit = %d, want 63", code)
+	}
+	if code := runWasm(t, compositeBigLiteralProgram); code != 63 {
+		t.Errorf("wasm big-literal tuple and array elements: exit = %d, want 63", code)
 	}
 }

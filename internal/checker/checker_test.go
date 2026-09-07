@@ -586,6 +586,65 @@ func TestUnannotatedCompoundWithBigLiteralDefaultsToI64(t *testing.T) {
 	}
 }
 
+// TestUnannotatedCompositeInitWidensElementToI64 covers #8722: the #3676 /
+// #8668 widening reaches the ELEMENTS of an unannotated tuple / array init.
+// Before it, `var t = (1, 4611686018427387904)` typed the wide element i32 and
+// lowered it truncated to 0 with no diagnostic, while `-interp` computed the
+// full value — a silent wrong answer, and a native-vs-self-host divergence.
+// Widths are asserted through assignability: the widened element goes into an
+// i64 slot and refuses an i32 one, and a small element still keeps i32.
+func TestUnannotatedCompositeInitWidensElementToI64(t *testing.T) {
+	const big = "4611686018427387904"
+	widened := []struct{ decl, read string }{
+		{`var t = (1, ` + big + `);`, "t.1"},
+		{`var t = (` + big + `, 1);`, "t.0"},
+		{`var t = (1, -` + big + `);`, "t.1"},
+		{`var t = (1, ` + big + ` / 2);`, "t.1"},
+		{`var t = [` + big + `];`, "t[0]"},
+		{`var t = [1, ` + big + `];`, "t[0]"},
+		{`var t = (1, (2, ` + big + `));`, "t.1.1"},
+		{`var t = (1, [` + big + `]);`, "t.1[0]"},
+		{`var t = if (true) { (1, ` + big + `) } else { (2, 3) };`, "t.1"},
+	}
+	for _, c := range widened {
+		if err := checkSource(t, "function main(): i32 { "+c.decl+" var u: i64 = "+c.read+"; return 0; }"); err != nil {
+			t.Errorf("%s: %s should be i64, got: %v", c.decl, c.read, err)
+		}
+		err := checkSource(t, "function main(): i32 { "+c.decl+" var u: i32 = "+c.read+"; return 0; }")
+		if err == nil || !strings.Contains(err.Error(), "cannot assign i64") {
+			t.Errorf("%s: %s into an i32 slot should be E003 naming i64, got: %v", c.decl, c.read, err)
+		}
+	}
+	// Only the element the literal is in widens; its neighbours keep the i32
+	// default, and a composite of small literals is untouched.
+	kept := []struct{ decl, read string }{
+		{`var t = (1, ` + big + `);`, "t.0"},
+		{`var t = (1, 2);`, "t.1"},
+		{`var t = [1, 2];`, "t[0]"},
+	}
+	for _, c := range kept {
+		if err := checkSource(t, "function main(): i32 { "+c.decl+" var u: i32 = "+c.read+"; return u; }"); err != nil {
+			t.Errorf("%s: %s should stay i32, got: %v", c.decl, c.read, err)
+		}
+	}
+	// An element that is not a literal tree settles nothing: an i32 binding
+	// read into a tuple stays i32 even beside a widened neighbour.
+	if err := checkSource(t, "function main(): i32 { var a: i32 = 3; var t = (a, "+big+"); var u: i32 = t.0; var v: i64 = t.1; return u; }"); err != nil {
+		t.Errorf("committed element beside a widened one should stay i32, got: %v", err)
+	}
+	// A literal too wide even for i64 is refused against the i64 the element
+	// settles at, rather than silently wrapping at the i32 default.
+	for _, src := range []string{
+		"var t = (18446744073709551616, 1);",
+		"var xs = [18446744073709551616];",
+	} {
+		err := checkSource(t, "function main(): i32 { "+src+" return 0; }")
+		if err == nil || !strings.Contains(err.Error(), "does not fit in i64") {
+			t.Errorf("%s: past-u64 element should be E047 naming i64, got: %v", src, err)
+		}
+	}
+}
+
 // A generic call's result can carry T anywhere — `pair[A, B](a: A, b: B):
 // (A, B)` — so the widening restamps the TypeArgs entry a wide literal pins
 // and re-derives the result from it (#8668): the binding is `(i64, string)`,

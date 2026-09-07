@@ -11520,6 +11520,9 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 					c.settleInt(n.Init, def)
 					got = def
 				}
+			} else if widened := c.widenCompositeByLiterals(got, n.Init); widened != nil {
+				c.settleNumeric(n.Init, widened)
+				got = widened
 			}
 			n.Type = got
 		} else if got != nil {
@@ -17308,6 +17311,95 @@ func (c *checker) polymorphicIntDefault(es ...ast.Expr) ast.NumberType {
 		}
 	}
 	return ast.NumberType{Width: 32, Signed: true}
+}
+
+// widenCompositeByLiterals rewrites the still-polymorphic integer slots of a
+// composite type to i64 where the matching part of the init holds a literal
+// with no i32 reading. A tuple or array init is not itself a numeric
+// expression, so polymorphicIntDefault above never reaches its elements and
+// `var t = (1, 4611686018427387904)` lowered the wide element at the i32
+// default — a silent truncation (#8722). Slots whose elements all read at i32
+// are left polymorphic, so `var t = (1, 2)` settles exactly as before.
+// Returns nil when no slot changed.
+func (c *checker) widenCompositeByLiterals(t ast.Type, es ...ast.Expr) ast.Type {
+	switch tt := t.(type) {
+	case ast.NumberType:
+		if !tt.Polymorphic {
+			return nil
+		}
+		if def := c.polymorphicIntDefault(es...); def.Width == 64 {
+			return def
+		}
+	case ast.TupleType:
+		elems := append([]ast.Type(nil), tt.Elems...)
+		changed := false
+		for i := range elems {
+			if w := c.widenCompositeByLiterals(elems[i], tupleElemExprs(es, i)...); w != nil {
+				elems[i], changed = w, true
+			}
+		}
+		if changed {
+			return ast.TupleType{Elems: elems}
+		}
+	case ast.ArrayType:
+		if w := c.widenCompositeByLiterals(tt.Elem, arrayElemExprs(es)...); w != nil {
+			return ast.ArrayType{Elem: w}
+		}
+	case ast.SliceType:
+		if w := c.widenCompositeByLiterals(tt.Elem, arrayElemExprs(es)...); w != nil {
+			return ast.SliceType{Elem: w}
+		}
+	}
+	return nil
+}
+
+// valueExprs expands each expression to the value-producing trees behind it —
+// an if / match arm, a block's tail — so a composite literal written inside one
+// is reached. polymorphicIntDefault does the same descent for a scalar.
+func valueExprs(es []ast.Expr) []ast.Expr {
+	var out []ast.Expr
+	for _, e := range es {
+		switch x := e.(type) {
+		case *ast.IfExpr:
+			out = append(out, valueExprs([]ast.Expr{x.Then, x.Else})...)
+		case *ast.MatchExpr:
+			for _, arm := range x.Arms {
+				if arm != nil {
+					out = append(out, valueExprs([]ast.Expr{arm.Body})...)
+				}
+			}
+		case *ast.BlockExpr:
+			out = append(out, valueExprs([]ast.Expr{x.Tail})...)
+		case nil:
+		default:
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// tupleElemExprs is the set of expressions occupying element i of the tuple
+// type es produce.
+func tupleElemExprs(es []ast.Expr, i int) []ast.Expr {
+	var out []ast.Expr
+	for _, e := range valueExprs(es) {
+		if tl, ok := e.(*ast.TupleLit); ok && i < len(tl.Elems) {
+			out = append(out, tl.Elems[i])
+		}
+	}
+	return out
+}
+
+// arrayElemExprs is the set of expressions occupying the (single) element type
+// of the array / slice type es produce.
+func arrayElemExprs(es []ast.Expr) []ast.Expr {
+	var out []ast.Expr
+	for _, e := range valueExprs(es) {
+		if al, ok := e.(*ast.ArrayLit); ok {
+			out = append(out, al.Elems...)
+		}
+	}
+	return out
 }
 
 // widenGenericCallByLiterals gives each type parameter of a generic call that
