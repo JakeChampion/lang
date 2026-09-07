@@ -2168,6 +2168,40 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 		{"width-i32-min-literal", "function main(): i32 { var x: i32 = -2147483648; return x; }\n"},
 		{"width-i32-min-return", "function smallest(): i32 { return -2147483648; }\nfunction main(): i32 { return 0; }\n"},
 		{"width-mixed-literal-array", "function main(): i32 { var a: i64[] = [5000000000, 1]; return a.len(); }\n"},
+		// A wide literal beside an operand already COMMITTED to a width is read
+		// at that width, and E047 is what reports one it cannot hold (#8722).
+		// The self-host typed every wide literal i64 by magnitude and had no
+		// rule for this, so it either widened the binary silently (rows 1, 4)
+		// or reported the mismatch downstream as E003 (row 2). Native is the
+		// oracle for all of them; each destination the rule reaches gets a row,
+		// with the accepting neighbour beside it so the rule cannot become a
+		// blanket refusal of every wide literal.
+		{"wide-lit-beside-i32-operand", "function main(): i32 { var a: i32 = 3; var t = a - 4611686018427387904; return 0; }\n"},
+		{"wide-lit-i32-annotated-arith", "function main(): i32 { var t: i32 = 3 - 4611686018427387904; return 0; }\n"},
+		{"wide-lit-past-i64-unannotated", "function main(): i32 { var t = 3 - 18446744073709551616; return 0; }\n"},
+		{"wide-lit-compare-i32-operand", "function main(): i32 { var a: i32 = 3; if (a != 4611686018427387904) { return 1; } return 0; }\n"},
+		{"wide-lit-shift-i32-operand", "function main(): i32 { var a: i32 = 1; var t = a << 4611686018427387904; return 0; }\n"},
+		{"wide-lit-beside-u32-operand", "function main(): i32 { var a: u32 = 3; var t = a + 4611686018427387904; return 0; }\n"},
+		{"over-lit-beside-u8-operand", "function main(): i32 { var a: u8 = 3; var t = a + 300; return 0; }\n"},
+		{"wide-lit-i32-call-arg", "function f(n: i32): i32 { return n; }\nfunction main(): i32 { return f(4611686018427387904); }\n"},
+		{"wide-lit-i32-return", "function main(): i32 { return 4611686018427387904; }\n"},
+		{"wide-lit-i32-struct-field", "struct P { x: i32 }\nfunction main(): i32 { var p = P { x: 4611686018427387904 }; return p.x; }\n"},
+		{"wide-lit-i32-array-append", "function main(): i32 { var xs: i32[] = []; xs = xs.append(4611686018427387904); return 0; }\n"},
+		{"wide-lit-i32-array-annot", "function main(): i32 { var xs: i32[] = [4611686018427387904]; return 0; }\n"},
+		{"wide-lit-i32-tuple-annot", "function main(): i32 { var t: (i32, i32) = (1, 4611686018427387904); return 0; }\n"},
+		{"wide-lit-i32-assignment", "function main(): i32 { var a: i32 = 3; a = a + 4611686018427387904; return a; }\n"},
+		{"double-negated-i32-min-lit", "function main(): i32 { var x: i32 = - -2147483648; return x; }\n"},
+		// The accepting side of the same rule: a wide literal beside an operand
+		// committed to a width that HOLDS it settles there and stays clean —
+		// including at u64, where reading the literal as the i64 its magnitude
+		// names made it a signedness clash (E009) instead.
+		{"wide-lit-beside-i64-operand-ok", "function main(): i32 { var a: i64 = 3; var t = a - 4611686018427387904; return 0; }\n"},
+		{"wide-lit-beside-u64-operand-ok", "function main(): i32 { var a: u64 = 1; var t = a - 4611686018427387904; return 0; }\n"},
+		{"u64-max-lit-beside-u64-operand-ok", "function main(): i32 { var x: u64 = 3; var t = x - 18446744073709551615; return 0; }\n"},
+		{"wide-lit-i64-tuple-annot-ok", "function main(): i32 { var t: (i32, i64) = (1, 4611686018427387904); var u: i64 = t.1; return 0; }\n"},
+		{"wide-lit-unannotated-tuple-ok", "function main(): i32 { var t = (1, 4611686018427387904); var u: i64 = t.1; return 0; }\n"},
+		{"wide-lit-unannotated-array-ok", "function main(): i32 { var xs = [4611686018427387904]; var u: i64 = xs[0]; return 0; }\n"},
+		{"wrapping-i32-sum-of-fitting-lits-ok", "function main(): i32 { var a: i32 = 1; var t = a - (2147483647 + 1); return 0; }\n"},
 	}
 
 	for _, tc := range progs {
