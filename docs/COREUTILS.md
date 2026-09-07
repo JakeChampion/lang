@@ -200,6 +200,14 @@ coreutils/
                     source: the option surface, the file-name escaping
                     and the check-line grammar, parameterised by the
                     digest each of the seven names
+  lib/canon.fern    the canonicalisation walk: what absolute path does
+                    this operand name, with `.` and `..` folded away and
+                    every symlink followed? Shared by readlink's -f / -e /
+                    -m, and by realpath and `ln -r` next. The three modes
+                    are the three answers to "what if a component is not
+                    there"; loop detection is by REVISIT of a (dev, ino)
+                    pair, not by a count, so a sixty-link chain resolves
+                    where MAXSYMLINKS would refuse it
   lib/resolv.fern   glibc's IPv4 name lookup — /etc/hosts, the
                     `hosts:` line of nsswitch.conf, resolv.conf and an
                     RFC 1035 A query — for the utilities that resolve
@@ -586,6 +594,26 @@ what the previous one did, so the `rm` that clears the link (and the shell
 redirection that recreates the file) is inside the timed command. It comes from
 the GNU directory for all three implementations, exactly as `yes`'s `head`
 does, so it compresses every ratio equally rather than biasing one.
+
+Group C's next two, 2026-09-07, same machine:
+
+| utility | workload | fern (ms) | gnu (ms) | uutils (ms) | gnu / fern | uutils / fern |
+|---|---|---|---|---|---|---|
+| `rmdir` | rmdir one directory | 9.56 ± 12.80 | 10.72 ± 18.63 | 16.25 ± 19.01 | 1.12× | 1.70× |
+| `rmdir` | rmdir 200 directories | 1250.40 ± 355.95 | 1720.10 ± 956.13 | 1527.01 ± 583.11 | 1.38× | 1.22× |
+| `rmdir` | rmdir -p a five-deep chain | 1.93 ± 1.44 | 3.66 ± 2.65 | 4.62 ± 3.06 | 1.90× | 2.39× |
+| `readlink` | readlink one link | 0.31 ± 0.57 | 1.13 ± 0.63 | 2.24 ± 1.11 | 3.64× | 7.19× |
+| `readlink` | readlink -f a ten-component path | 0.33 ± 0.87 | 2.15 ± 2.75 | 2.71 ± 2.17 | 6.45× | 8.12× |
+| `readlink` | readlink -m a missing path | 0.32 ± 0.73 | 1.33 ± 1.57 | 3.03 ± 3.12 | 4.21× | 9.56× |
+| `readlink` | readlink 200 links | 148.60 ± 153.63 | 399.13 ± 188.63 | 447.28 ± 112.83 | 2.69× | 3.01× |
+
+Read the σ on the two `rmdir` rows before the mean: a directory has to be
+REMADE before each run, so those commands carry 200 GNU `mkdir` spawns —
+the same constant for all three implementations, but one that dwarfs what is
+being measured. `rmdir -p a five-deep chain` is the row with signal, and it
+is the walk rather than the startup. `readlink -f` beating its own plain
+form is not noise either: the canonicalising path never calls `getcwd`
+twice, where GNU's reaches for the dynamic loader before it reads anything.
 
 ## The primitives group C is built on
 

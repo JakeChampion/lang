@@ -266,6 +266,34 @@ PY
       printf 'unlink one file\ty\t: > %s/v; {} %s/v\n' "$d" "$d"
       printf 'unlink 200 files\ty\tfor n in %s; do : > %s/v.$n; done; for n in %s; do {} %s/v.$n; done\n' "$(seq 200 | tr '\n' ' ')" "$d" "$(seq 200 | tr '\n' ' ')" "$d"
       ;;
+    rmdir)
+      # One rmdir(2) per operand, so the whole cost is process startup and
+      # the 200-operand row is that cost 200 times. The seed loop uses the
+      # GNU mkdir for all three implementations, so it is the same constant
+      # term rather than a variable.
+      d="$out/rmdirbench"
+      mkdir -p "$d"
+      printf 'rmdir one directory\ty\t{gnu}/mkdir -p %s/one; {} %s/one\n' "$d" "$d"
+      printf 'rmdir 200 directories\ty\t{gnu}/mkdir -p %s; for n in %s; do {gnu}/mkdir -p %s/r.$n; done; for n in %s; do {} %s/r.$n; done\n' "$d" "$(seq 200 | tr '\n' ' ')" "$d" "$(seq 200 | tr '\n' ' ')" "$d"
+      printf 'rmdir -p a five-deep chain\ty\t{gnu}/mkdir -p %s/p1/p2/p3/p4/p5; {} -p %s/p1/p2/p3/p4/p5\n' "$d" "$d"
+      ;;
+    readlink)
+      # Two different programs share the name: one readlink(2), and the
+      # canonicalisation walk, which is one lstat per component and one
+      # readlink per link. The deep row is what separates them — a
+      # ten-component path costs ten round trips whatever the answer.
+      d="$out/readlinkbench"
+      if [ ! -L "$d/l" ]; then
+        mkdir -p "$d/a/b/c/d/e/f/g/h"
+        : > "$d/a/b/c/d/e/f/g/h/target"
+        ln -sf a/b/c/d/e/f/g/h/target "$d/l"
+        ln -sf l "$d/l2"
+      fi
+      printf 'readlink one link\tn\t{} %s/l\n' "$d"
+      printf 'readlink -f a ten-component path\tn\t{} -f %s/l\n' "$d"
+      printf 'readlink -m a missing path\tn\t{} -m %s/a/b/c/nope/x\n' "$d"
+      printf 'readlink 200 links\ty\tfor n in %s; do {} %s/l; done > /dev/null\n' "$(seq 200 | tr '\n' ' ')" "$d"
+      ;;
     hostid)
       # Startup plus the NSS walk: /etc/hostid, /etc/nsswitch.conf and
       # /etc/hosts, read on every call.

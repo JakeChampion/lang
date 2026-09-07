@@ -1,0 +1,182 @@
+// readlink.fern — GNU-compatible `readlink`.
+//
+//   FILE...                       print the target each FILE holds
+//   -f, --canonicalize            resolve every component; all but the last
+//                                 must exist
+//   -e, --canonicalize-existing   the same, with every component required
+//   -m, --canonicalize-missing    the same, with none required
+//   -n, --no-newline              no delimiter after the last line
+//   -q, --quiet / -s, --silent    suppress error messages (the default)
+//   -v, --verbose                 report error messages
+//   -z, --zero                    end each line with NUL rather than newline
+//
+// Two different programs share the name. Without -f / -e / -m it is one
+// readlink(2) and a path that is not a symlink is EINVAL; with any of them
+// it is the canonicalisation walk in `lib/canon.fern`, which is where the
+// three differ only in what they demand of a component that is not there.
+//
+// It is SILENT by default — a failed operand is exit 1 and nothing on
+// stderr — which is why `-q` and `-s` are no-ops and `-v` is the option
+// that does something. The diagnostic they gate is `prog: NAME: strerror`,
+// with NAME quoted the way a shell would need it typed rather than always.
+//
+// `-n` with more than one operand is REFUSED rather than applied to the
+// last: GNU warns and turns it off, so every line keeps its delimiter.
+import "std/string";
+import "std/array";
+import "std/io_buffered";
+import "./lib/gnu";
+import "./lib/canon";
+
+function help_text(): string {
+  var out: string = "";
+  out = out + "Usage: " + gnu.prog() + " [OPTION]... FILE...\n";
+  out = out + "Print value of a symbolic link or canonical file name\n";
+  out = out + "\n";
+  out = out + "  -f, --canonicalize            canonicalize by following every symlink in\n";
+  out = out + "                                every component of the given name recursively;\n";
+  out = out + "                                all but the last component must exist\n";
+  out = out + "  -e, --canonicalize-existing   canonicalize by following every symlink in\n";
+  out = out + "                                every component of the given name recursively,\n";
+  out = out + "                                all components must exist\n";
+  out = out + "  -m, --canonicalize-missing    canonicalize by following every symlink in\n";
+  out = out + "                                every component of the given name recursively,\n";
+  out = out + "                                without requirements on components existence\n";
+  out = out + "  -n, --no-newline              do not output the trailing delimiter\n";
+  out = out + "  -q, --quiet\n";
+  out = out + "  -s, --silent                  suppress most error messages (on by default)\n";
+  out = out + "  -v, --verbose                 report error messages\n";
+  out = out + "  -z, --zero                    end each output line with NUL, not newline\n";
+  out = out + "      --help        display this help and exit\n";
+  out = out + "      --version     output version information and exit\n";
+  return out;
+}
+
+// `can_mode` is -1 until one of -f / -e / -m is seen; the three are
+// last-wins, since each simply reassigns it.
+struct Opts { can_mode: i32, no_newline: boolean, verbose: boolean, delim: string }
+
+function main(): i32 {
+  var opts: gnu.Opt[] = [
+    gnu.flag("f", "canonicalize", 1),
+    gnu.flag("e", "canonicalize-existing", 2),
+    gnu.flag("m", "canonicalize-missing", 3),
+    gnu.flag("n", "no-newline", 4),
+    gnu.flag("q", "quiet", 5),
+    gnu.flag("s", "silent", 6),
+    gnu.flag("v", "verbose", 7),
+    gnu.flag("z", "zero", 8)
+  ];
+  var g: gnu.Getopt = gnu.getopt_new(args(), opts, "readlink", help_text(), 1);
+  var o: Opts = Opts { can_mode: 0 - 1, no_newline: false, verbose: false, delim: "\n" };
+  while (true) {
+    var r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    g = r.1;
+    match (r.0) {
+      Some(m) => {
+        if (m.id == 1) {
+          o = Opts { ...o, can_mode: canon.mode_all_but_last() };
+        } else if (m.id == 2) {
+          o = Opts { ...o, can_mode: canon.mode_existing() };
+        } else if (m.id == 3) {
+          o = Opts { ...o, can_mode: canon.mode_missing() };
+        } else if (m.id == 4) {
+          o = Opts { ...o, no_newline: true };
+        } else if (m.id == 5 || m.id == 6) {
+          o = Opts { ...o, verbose: false };
+        } else if (m.id == 7) {
+          o = Opts { ...o, verbose: true };
+        } else {
+          o = Opts { ...o, delim: string_from_bytes_unchecked([0 as u8]) };
+        }
+      },
+      None => {
+        break;
+      }
+    }
+  }
+  var operands: string[] = g.operands();
+  if (operands.len() == 0) {
+    gnu.die_usage("missing operand", 1);
+  }
+  var w: io_buffered.BufWriter = gnu.out_new();
+  if (o.no_newline && operands.len() > 1) {
+    // GNU turns the option OFF rather than applying it to the last
+    // operand, so every line below keeps its delimiter.
+    w = gnu.error_out(w, "ignoring --no-newline with multiple arguments");
+    o = Opts { ...o, no_newline: false };
+  }
+  var status: i32 = 0;
+  var i: i32 = 0;
+  while (i < operands.len()) {
+    var name: string = operands[i];
+    var value: string = "";
+    var ok: boolean = false;
+    var msg: string = "";
+    if (o.can_mode < 0) {
+      match (read_link(name)) {
+        Ok(t) => {
+          value = t;
+          ok = true;
+        },
+        Err(e) => {
+          msg = gnu.io_error_text(e);
+        }
+      }
+    } else {
+      var c: canon.Canon = canon.canonicalise(name, o.can_mode);
+      if (c.ok) {
+        value = c.path;
+        ok = true;
+      } else {
+        msg = strerror_of(c.errno);
+      }
+    }
+    if (ok) {
+      var line: string = value;
+      if (!o.no_newline) {
+        line = line + o.delim;
+      }
+      w = gnu.put(w, line);
+    } else {
+      status = 1;
+      if (o.verbose) {
+        w = gnu.error_out(w, gnu.quotef(name) + ": " + msg);
+      }
+    }
+    i = i + 1;
+  }
+  gnu.finish(w);
+  return status;
+}
+
+// The strerror text for an errno the walk reports. Only the handful it can
+// produce are named; anything else is glibc's own text, which the runtime
+// already carries on the IoError the walk turned into a number.
+function strerror_of(errno: i32): string {
+  if (errno == 2) {
+    return "No such file or directory";
+  }
+  if (errno == 13) {
+    return "Permission denied";
+  }
+  if (errno == 20) {
+    return "Not a directory";
+  }
+  if (errno == 40) {
+    return "Too many levels of symbolic links";
+  }
+  if (errno == 22) {
+    return "Invalid argument";
+  }
+  if (errno == 36) {
+    return "Name too long";
+  }
+  if (errno == 17) {
+    return "File exists";
+  }
+  if (errno == 4) {
+    return "Interrupted system call";
+  }
+  return "Unknown error";
+}

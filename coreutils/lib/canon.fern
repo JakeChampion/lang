@@ -1,0 +1,284 @@
+// coreutils/lib/canon.fern — the canonicalisation walk.
+//
+// `readlink -f` / `-e` / `-m` and (next) `realpath` and `ln -r` all ask the
+// same question: what absolute path does this operand name, with every `.`
+// and `..` folded away and every symbolic link followed? gnulib answers it
+// once, in `canonicalize_filename_mode`, and so does this.
+//
+// The three modes are the three answers to "what if a component is not
+// there", and they are the only difference between the utilities' `-f`,
+// `-e` and `-m`:
+//
+//   EXISTING      every component must exist          (readlink -e)
+//   ALL_BUT_LAST  all but the final one must exist    (readlink -f)
+//   MISSING       nothing has to exist                (readlink -m)
+//
+// The walk is over the OPERAND's text, not the filesystem: components are
+// taken one at a time, `.` is dropped, `..` pops the last component off the
+// answer so far (which is why the answer never contains one), and a symlink
+// splices its target in front of whatever is left to walk. An absolute
+// target restarts the answer at `/`.
+//
+// Loop detection is by REVISIT, not by a count: every symlink traversed is
+// remembered by its (dev, ino) pair and meeting one twice is ELOOP. A chain
+// of sixty distinct links is not a loop and resolves, which a counter
+// bounded at MAXSYMLINKS would refuse.
+import "std/string";
+import "std/array";
+
+// The three modes. `EXISTING` and `ALL_BUT_LAST` fail on a missing
+// component; `MISSING` never fails on one, and also stops caring whether a
+// component is a directory — `readlink -m a/b/x` answers even when `b` is a
+// regular file.
+pub function mode_existing(): i32 { return 0; }
+pub function mode_all_but_last(): i32 { return 1; }
+pub function mode_missing(): i32 { return 2; }
+
+// The errno the walk reports. `Result[string, IoError]` would be the
+// obvious shape, but there is no IoError to build here without a path to
+// name and the callers want the errno itself — `readlink -v` prints its
+// strerror text against the ORIGINAL operand, not against the component the
+// walk was on when it gave up.
+pub struct Canon { path: string, errno: i32, ok: boolean }
+
+function fail(errno: i32): Canon {
+  return Canon { path: "", errno: errno, ok: false };
+}
+
+// S_IFMT and the two kinds the walk decides on.
+function is_link(st: FileStat): boolean {
+  return (st.mode as i32 & 61440) == 40960;
+}
+
+function is_dir_mode(st: FileStat): boolean {
+  return (st.mode as i32 & 61440) == 16384;
+}
+
+// `canonicalise(name, mode)` — the absolute path `name` denotes.
+//
+// An empty name is ENOENT on every mode, which is what makes
+// `readlink -f ""` exit 1 rather than answering the working directory.
+pub function canonicalise(name: string, mode: i32): Canon {
+  if (name.len() == 0) {
+    return fail(2);
+  }
+  var out: string = "/";
+  if (name[0] as i32 != 47) {
+    match (getcwd()) {
+      Ok(d) => {
+        out = d;
+      },
+      Err(_) => {
+        return fail(2);
+      }
+    }
+  }
+  // `rest` is what is left to walk. A symlink's target is spliced onto the
+  // front of it, so the walk is over a string that grows and shrinks rather
+  // than over the operand alone.
+  var rest: string = name;
+  var seen_dev: i64[] = [];
+  var seen_ino: i64[] = [];
+  var i: i32 = 0;
+  while (i < rest.len()) {
+    if (rest[i] as i32 == 47) {
+      i = i + 1;
+      continue;
+    }
+    var start: i32 = i;
+    while (i < rest.len() && rest[i] as i32 != 47) {
+      i = i + 1;
+    }
+    var comp: string = slice_unchecked(rest, start, i) + "";
+    if (comp == ".") {
+      continue;
+    }
+    if (comp == "..") {
+      out = pop_component(out);
+      continue;
+    }
+    var next: string = join_path(out, comp);
+    var st: FileStat = FileStat { is_file: false, is_dir: false, size: 0 as i64,
+      mode: 0 as u32, nlink: 0 as u32, uid: 0 as u32, gid: 0 as u32,
+      dev: 0 as i64, rdev: 0 as i64, ino: 0 as i64, blksize: 0 as i64, blocks: 0 as i64,
+      atime: 0 as i64, atime_nsec: 0 as i64, mtime: 0 as i64, mtime_nsec: 0 as i64,
+      ctime: 0 as i64, ctime_nsec: 0 as i64 };
+    var have: boolean = false;
+    var errno: i32 = 0;
+    match (lstat(next)) {
+      Ok(s) => {
+        st = s;
+        have = true;
+      },
+      Err(e) => {
+        errno = io_errno(e);
+      }
+    }
+    if (!have) {
+      if (mode == mode_existing()) {
+        return fail(errno);
+      }
+      if (mode == mode_all_but_last()) {
+        // Tolerated only for the LAST component, and only for ENOENT: a
+        // missing INTERMEDIATE is what `-f` refuses, and any other errno
+        // (EACCES on a parent, ENOTDIR partway down) is a real failure
+        // whatever the position.
+        if (!only_slashes_left(rest, i) || errno != 2) {
+          return fail(errno);
+        }
+      }
+      out = next;
+      continue;
+    }
+    if (is_link(st)) {
+      if (revisited(seen_dev, seen_ino, st.dev, st.ino)) {
+        // A link already traversed: the walk is going round. `-m` keeps
+        // the component as written and carries on, which is how
+        // `readlink -m selfloop/x` answers instead of failing.
+        if (mode == mode_missing()) {
+          out = next;
+          continue;
+        }
+        return fail(40);
+      }
+      seen_dev = seen_dev.append(st.dev);
+      seen_ino = seen_ino.append(st.ino);
+      var target: string = "";
+      var read_ok: boolean = false;
+      var lerr: i32 = 0;
+      match (read_link(next)) {
+        Ok(t) => {
+          target = t;
+          read_ok = true;
+        },
+        Err(e) => {
+          lerr = io_errno(e);
+        }
+      }
+      if (!read_ok) {
+        if (mode == mode_missing()) {
+          out = next;
+          continue;
+        }
+        return fail(lerr);
+      }
+      // The target replaces the component: absolute targets restart the
+      // answer at the root, relative ones continue from where the link
+      // sits. Whatever is left of `rest` follows either way.
+      rest = target + slice_unchecked(rest, i, rest.len());
+      i = 0;
+      if (target.len() > 0 && target[0] as i32 == 47) {
+        out = "/";
+      }
+      continue;
+    }
+    // A non-directory with ANYTHING after it — a further component, or
+    // just a trailing slash — is ENOTDIR: `readlink -f link-to-a-file/`
+    // fails where `readlink -f link-to-a-file` answers. That is a
+    // different test from the one above, which asks whether a further
+    // COMPONENT follows, and conflating them is how the trailing-slash
+    // case goes quietly wrong.
+    if (!is_dir_mode(st) && i < rest.len() && mode != mode_missing()) {
+      return fail(20);
+    }
+    out = next;
+  }
+  return Canon { path: out, errno: 0, ok: true };
+}
+
+// Whether everything from `i` on is slashes — i.e. the component just taken
+// was the last one. `a/b/` and `a/b` both end here; `a/b/c` does not.
+function only_slashes_left(rest: string, i: i32): boolean {
+  var k: i32 = i;
+  while (k < rest.len()) {
+    if (rest[k] as i32 != 47) {
+      return false;
+    }
+    k = k + 1;
+  }
+  return true;
+}
+
+// `out` with one component removed. The root has no parent, so `..` there
+// is `/` — the same fixed point the kernel gives it.
+function pop_component(out: string): string {
+  if (out == "/") {
+    return out;
+  }
+  var end: i32 = out.len();
+  while (end > 0 && out[end - 1] as i32 != 47) {
+    end = end - 1;
+  }
+  if (end <= 1) {
+    return "/";
+  }
+  return slice_unchecked(out, 0, end - 1) + "";
+}
+
+// `out` with `comp` appended, without doubling the separator at the root.
+function join_path(out: string, comp: string): string {
+  if (out == "/") {
+    return "/" + comp;
+  }
+  return out + "/" + comp;
+}
+
+function revisited(devs: i64[], inos: i64[], dev: i64, ino: i64): boolean {
+  var k: i32 = 0;
+  while (k < devs.len()) {
+    if (devs[k] == dev && inos[k] == ino) {
+      return true;
+    }
+    k = k + 1;
+  }
+  return false;
+}
+
+// The errno behind an IoError. The runtime names four kinds and carries
+// glibc's strerror text for the rest, so the number is recovered from
+// whichever of the two the value is.
+pub function io_errno(e: IoError): i32 {
+  match (e) {
+    NotFound(_) => {
+      return 2;
+    },
+    PermissionDenied(_) => {
+      return 13;
+    },
+    AlreadyExists(_) => {
+      return 17;
+    },
+    InvalidUtf8(_) => {
+      return 84;
+    },
+    Interrupted => {
+      return 4;
+    },
+    Unsupported => {
+      return 0 - 1;
+    },
+    Other(_, text) => {
+      return errno_of_text(text);
+    }
+  }
+  return 0;
+}
+
+// The errnos the walk itself can meet, by their strerror text. Only these
+// change what it does; anything else is reported as it came, and the caller
+// prints the IoError's own text rather than a number.
+function errno_of_text(text: string): i32 {
+  if (text == "Not a directory") {
+    return 20;
+  }
+  if (text == "Too many levels of symbolic links") {
+    return 40;
+  }
+  if (text == "Invalid argument") {
+    return 22;
+  }
+  if (text == "Name too long") {
+    return 36;
+  }
+  return 0 - 1;
+}
