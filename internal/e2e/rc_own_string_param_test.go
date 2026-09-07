@@ -26,8 +26,16 @@ import (
 //   - fresh heap bytes do not scale with the round count. The eligibility
 //     entry the fix restores is also isSelfStrAppendLocal's gate, so the
 //     accumulator grows in place instead of allocating a fresh buffer per
-//     append: pre-fix x86-64 spent 17x the bytes for 4x the work (quadratic)
-//     where every backend now spends about 1.1x.
+//     append.
+//
+// The 2x bound is a wide fence around a settled measurement, not a guess.
+// The two SEGMENT deltas the check compares — b1-b0 over 200 rounds, then
+// b2-b1 over 800, four times the appends — came out at 73 968 / 83 040 on
+// x86-64, 145 792 / 164 464 on arm64 and 73 440 / 81 424 on wasm: a ratio
+// of 1.11x to 1.13x everywhere, because an in-place append costs bytes only
+// when it crosses a size class. Pre-fix x86-64 was 164 800 / 2 801 632 —
+// 17.0x — so the fence sits an order of magnitude clear of the failure it
+// is there to catch, with room for allocator noise it must not trip on.
 //
 // Self-checking: 0 == both hold, 97 == a wrong length, 98 == the bytes scale,
 // 99 == over-release.
@@ -47,7 +55,7 @@ function main(): i32 {
     if (rounds(800) != 6400) { return 97; }        // 4x the appends
     var b2: i64 = __heap_bump_bytes();
     if (__rc_underflow_count() != 0) { return 99; }
-    if (b2 - b1 > (b1 - b0) * 2) { return 98; }    // 4x work, so quadratic is ~16x
+    if (b2 - b1 > (b1 - b0) * 2) { return 98; }    // see the margin above
     return 0;
 }`
 
