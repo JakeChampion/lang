@@ -1,0 +1,2435 @@
+// sort.fern — GNU-compatible `sort`.
+//
+//   sort [OPTION]... [FILE]...
+//   sort [OPTION]... --files0-from=F
+//
+// Lines from every operand, concatenated and ordered by a list of
+// keys, with the whole line as a last-resort tie-break. Usage errors
+// exit 2, a failed `-c` check exits 1.
+//
+// Four things about it are not obvious from the synopsis:
+//
+//   - `-k1` is the WHOLE LINE, not the first field: a key whose start
+//     is field 1 character 1 has nothing to skip, and GNU turns that
+//     into the line itself, so its end is the line's end rather than
+//     the end of field one.
+//   - A field STARTS at the blanks in front of it when -t is absent,
+//     so `-k2` on `b a` selects ` a` and not `a`. `b` is what the
+//     `leading blanks are significant` warning is about.
+//   - Global ordering options are inherited by a key only when that
+//     key names no ordering of its own AND is not reversed, so
+//     `sort -n -k2r` compares field 2 as TEXT, reversed.
+//   - The last-resort comparison is dropped by -u and by -s, and it
+//     is the only comparison the global `-r` applies to once any key
+//     exists: `sort -k1n -r` reverses the tie-break and not the key.
+//
+// The whole input is read before anything is written — `sort -o f f`
+// works because of it — and is held in one buffer with the lines as
+// offsets into it, so ordering permutes 4-byte indices rather than
+// strings.
+import "std/string";
+import "std/array";
+import "std/io_buffered";
+import "std/crypto";
+import "./lib/gnu";
+import "./lib/ld";
+
+// The exit status of a usage error and of any other failure; gnulib's
+// exit_failure, which sort sets to 2. A `-c` mismatch is 1, and so is
+// an argmatch failure, which exits through usage(EXIT_FAILURE).
+function sort_failure(): i32 {
+  return 2;
+}
+
+// ---- option ids -------------------------------------------------------------
+//
+// Declared in GNU's order: the ambiguity list prints candidates in the
+// order the long options are declared, so `--r` names '--random-sort'
+// before '--random-source' before '--reverse'.
+function o_blanks(): i32 {
+  return 1;
+}
+
+function o_check(): i32 {
+  return 2;
+}
+
+function o_compress(): i32 {
+  return 3;
+}
+
+function o_debug(): i32 {
+  return 4;
+}
+
+function o_dict(): i32 {
+  return 5;
+}
+
+function o_files0(): i32 {
+  return 6;
+}
+
+function o_general(): i32 {
+  return 7;
+}
+
+function o_fold(): i32 {
+  return 8;
+}
+
+function o_human(): i32 {
+  return 9;
+}
+
+function o_nonprint(): i32 {
+  return 10;
+}
+
+function o_key(): i32 {
+  return 11;
+}
+
+function o_merge(): i32 {
+  return 12;
+}
+
+function o_month(): i32 {
+  return 13;
+}
+
+function o_numeric(): i32 {
+  return 14;
+}
+
+function o_output(): i32 {
+  return 15;
+}
+
+function o_parallel(): i32 {
+  return 16;
+}
+
+function o_randsort(): i32 {
+  return 17;
+}
+
+function o_randsource(): i32 {
+  return 18;
+}
+
+function o_reverse(): i32 {
+  return 19;
+}
+
+function o_sort(): i32 {
+  return 20;
+}
+
+function o_stable(): i32 {
+  return 21;
+}
+
+function o_batch(): i32 {
+  return 22;
+}
+
+function o_buffer(): i32 {
+  return 23;
+}
+
+function o_tab(): i32 {
+  return 24;
+}
+
+function o_tmpdir(): i32 {
+  return 25;
+}
+
+function o_unique(): i32 {
+  return 26;
+}
+
+function o_zero(): i32 {
+  return 27;
+}
+
+function o_version(): i32 {
+  return 28;
+}
+
+function o_quietcheck(): i32 {
+  return 29;
+}
+
+function o_ignored(): i32 {
+  return 30;
+}
+
+function help_text(): string {
+  var out: string = "";
+  out = out + "Usage: " + gnu.prog() + " [OPTION]... [FILE]...\n";
+  out = out + "  or:  " + gnu.prog() + " [OPTION]... --files0-from=F\n";
+  out = out + "Write sorted concatenation of all FILE(s) to standard output.\n";
+  out = out + "\n";
+  out = out + "With no FILE, or when FILE is -, read standard input.\n";
+  out = out + "\n";
+  out = out + "Ordering options:\n";
+  out = out + "\n";
+  out = out + "  -b, --ignore-leading-blanks  ignore leading blanks\n";
+  out = out + "  -d, --dictionary-order      consider only blanks and alphanumeric characters\n";
+  out = out + "  -f, --ignore-case           fold lower case to upper case characters\n";
+  out = out + "  -g, --general-numeric-sort  compare according to general numerical value\n";
+  out = out + "  -i, --ignore-nonprinting    consider only printable characters\n";
+  out = out + "  -M, --month-sort            compare (unknown) < 'JAN' < ... < 'DEC'\n";
+  out = out + "  -h, --human-numeric-sort    compare human readable numbers (e.g., 2K 1G)\n";
+  out = out + "  -n, --numeric-sort          compare according to string numerical value\n";
+  out = out + "  -R, --random-sort           shuffle, but group identical keys\n";
+  out = out + "      --random-source=FILE    get random bytes from FILE\n";
+  out = out + "  -r, --reverse               reverse the result of comparisons\n";
+  out = out + "      --sort=WORD             sort according to WORD:\n";
+  out = out + "                                general-numeric -g, human-numeric -h, month -M,\n";
+  out = out + "                                numeric -n, random -R, version -V\n";
+  out = out + "  -V, --version-sort          natural sort of (version) numbers within text\n";
+  out = out + "\n";
+  out = out + "Other options:\n";
+  out = out + "\n";
+  out = out + "      --batch-size=NMERGE   merge at most NMERGE inputs at once;\n";
+  out = out + "                            for more use temp files\n";
+  out = out + "  -c, --check, --check=diagnose-first  check for sorted input; do not sort\n";
+  out = out + "  -C, --check=quiet, --check=silent  like -c, but do not report first bad line\n";
+  out = out + "      --compress-program=PROG  compress temporaries with PROG;\n";
+  out = out + "                              decompress them with PROG -d\n";
+  out = out + "      --debug               annotate the part of the line used to sort,\n";
+  out = out + "                              and warn about questionable usage to stderr\n";
+  out = out + "      --files0-from=F       read input from the files specified by\n";
+  out = out + "                            NUL-terminated names in file F;\n";
+  out = out + "                            If F is - then read names from standard input\n";
+  out = out + "  -k, --key=KEYDEF          sort via a key; KEYDEF gives location and type\n";
+  out = out + "  -m, --merge               merge already sorted files; do not sort\n";
+  out = out + "  -o, --output=FILE         write result to FILE instead of standard output\n";
+  out = out + "  -s, --stable              stabilize sort by disabling last-resort comparison\n";
+  out = out + "  -S, --buffer-size=SIZE    use SIZE for main memory buffer\n";
+  out = out + "  -t, --field-separator=SEP  use SEP instead of non-blank to blank transition\n";
+  out = out + "  -T, --temporary-directory=DIR  use DIR for temporaries, not $TMPDIR or /tmp;\n";
+  out = out + "                              multiple options specify multiple directories\n";
+  out = out + "      --parallel=N          change the number of sorts run concurrently to N\n";
+  out = out + "  -u, --unique              with -c, check for strict ordering;\n";
+  out = out + "                              without -c, output only the first of an equal run\n";
+  out = out + "  -z, --zero-terminated     line delimiter is NUL, not newline\n";
+  out = out + "      --help        display this help and exit\n";
+  out = out + "      --version     output version information and exit\n";
+  out = out + "\n";
+  out = out + "KEYDEF is F[.C][OPTS][,F[.C][OPTS]] for start and stop position, where F is a\n";
+  out = out + "field number and C a character position in the field; both are origin 1, and\n";
+  out = out + "the stop position defaults to the line's end.  If neither -t nor -b is in\n";
+  out = out + "effect, characters in a field are counted from the beginning of the preceding\n";
+  out = out + "whitespace.  OPTS is one or more single-letter ordering options [bdfgiMhnRrV],\n";
+  out = out + "which override global ordering options for that key.  If no key is given, use\n";
+  out = out + "the entire line as the key.  Use --debug to diagnose incorrect key usage.\n";
+  return out;
+}
+
+// ---- character tables -------------------------------------------------------
+//
+// GNU builds four tables at start-up from the locale; in C they are
+// these. `blanks` is isblank PLUS newline: a line cannot hold the
+// newline that ends it, so treating one as a field separator only ever
+// matters under -z, where it does.
+function is_blank_b(c: i32): boolean {
+  return c == 32 || c == 9 || c == 10;
+}
+
+function is_print_b(c: i32): boolean {
+  return c >= 32 && c < 127;
+}
+
+function is_alnum_b(c: i32): boolean {
+  return c >= 48 && c <= 57 || c >= 65 && c <= 90 || c >= 97 && c <= 122;
+}
+
+function fold_up(c: i32): i32 {
+  if (c >= 97 && c <= 122) {
+    return c - 32;
+  }
+  return c;
+}
+
+// The two `ignore` tables a key can carry: 1 is -i's (drop what is not
+// printable), 2 is -d's (drop what is neither alphanumeric nor a
+// blank). -d wins over -i whatever order they were given in.
+function ignore_none(): i32 {
+  return 0;
+}
+
+function ignore_nonprinting(): i32 {
+  return 1;
+}
+
+function ignore_nondictionary(): i32 {
+  return 2;
+}
+
+function ignored(kind: i32, c: i32): boolean {
+  if (kind == ignore_nonprinting()) {
+    return !is_print_b(c);
+  }
+  return !is_alnum_b(c) && !is_blank_b(c);
+}
+
+// ---- keys -------------------------------------------------------------------
+//
+// One `-k` (or one obsolete `+POS -POS`). `sword` / `eword` are
+// zero-origin field numbers with -1 for "not given", which for the
+// start means the whole line; `schar` / `echar` are the extra
+// characters into the field, zero-origin at the start and a count at
+// the end.
+struct Key { sword: i32, schar: i32, eword: i32, echar: i32, skipsblanks: boolean, skipeblanks: boolean, ignore: i32, translate: boolean, numeric: boolean, general: boolean, human: boolean, month: boolean, version: boolean, random: boolean, reverse: boolean, obsolete: boolean }
+
+function key_new(): Key {
+  return Key { sword: 0, schar: 0, eword: 0 - 1, echar: 0, skipsblanks: false, skipeblanks: false, ignore: ignore_none(), translate: false, numeric: false, general: false, human: false, month: false, version: false, random: false, reverse: false, obsolete: false };
+}
+
+function global_key_new(): Key {
+  return Key { ...key_new(), sword: 0 - 1 };
+}
+
+function key_numeric(k: Key): boolean {
+  return k.numeric || k.general || k.human;
+}
+
+// Whether `k` names no ordering at all — the test that decides both
+// whether a key inherits the global options and whether the global
+// options become a key of their own. `reverse` is deliberately not
+// part of it: `sort -r` alone still has no key.
+function default_key_compare(k: Key): boolean {
+  return !(k.ignore != ignore_none() || k.translate || k.skipsblanks || k.skipeblanks || key_numeric(k) || k.month || k.version || k.random);
+}
+
+// The tab a run has, and the value that stands for "none given": GNU's
+// TAB_DEFAULT is CHAR_MAX + 1, a value no byte can equal.
+function tab_default(): i32 {
+  return 0 - 1;
+}
+
+// ---- the run's settings -----------------------------------------------------
+struct Conf { keys: Key[], tab: i32, reverse: boolean, unique: boolean, stable: boolean, term: i32, seed: crypto.Md5, debug: boolean, gkey_only: boolean }
+
+// ---- diagnostics ------------------------------------------------------------
+function die(msg: string): void {
+  gnu.error(msg);
+  exit(sort_failure());
+}
+
+// gnulib's sort_die: one message, the file it is about, and the errno
+// text — `sort: cannot read: nosuch: No such file or directory`.
+function die_file(msg: string, file: string, e: IoError): void {
+  die(msg + ": " + gnu.quotef(file) + ": " + gnu.io_error_text(e));
+}
+
+function bad_field(spec: string, msgid: string): void {
+  die(msgid + ": invalid field specification " + gnu.quote(spec));
+}
+
+// ---- counts -----------------------------------------------------------------
+//
+// xstrtoumax with no suffixes, as every count in a key spec is parsed:
+// leading blanks and a `+` are accepted, a `-` is not, and a value past
+// what a line can hold saturates rather than failing — GNU saturates at
+// SIZE_MAX for the same reason. Returns (value, end, ok).
+function parse_count(s: string, from: i32): (i32, i32, boolean) {
+  var i: i32 = from;
+  while (i < s.len() && gnu.is_blank(s[i] as i32)) {
+    i = i + 1;
+  }
+  if (i < s.len() && s[i] as i32 == 45) {
+    return (0, from, false);
+  }
+  if (i < s.len() && s[i] as i32 == 43) {
+    i = i + 1;
+  }
+  if (i >= s.len() || !gnu.is_digit(s[i] as i32)) {
+    return (0, from, false);
+  }
+  var v: i32 = 0;
+  while (i < s.len() && gnu.is_digit(s[i] as i32)) {
+    if (v < 100000000) {
+      v = v * 10 + (s[i] as i32 - 48);
+    } else {
+      v = 2147483647;
+    }
+    i = i + 1;
+  }
+  return (v, i, true);
+}
+
+// `parse_field_count(spec, from, msgid)` — one count inside a field
+// spec. A malformed one dies naming the REMAINDER of the spec, which
+// is what GNU quotes: `-k1,x` complains about 'x'.
+function parse_field_count(spec: string, from: i32, msgid: string): (i32, i32) {
+  var r: (i32, i32, boolean) = parse_count(spec, from);
+  if (!r.2) {
+    die(msgid + ": invalid count at start of " + gnu.quote(slice_unchecked(spec, from, spec.len()) + ""));
+  }
+  return (r.0, r.1);
+}
+
+// ---- ordering letters -------------------------------------------------------
+function bl_start(): i32 {
+  return 1;
+}
+
+function bl_end(): i32 {
+  return 2;
+}
+
+function bl_both(): i32 {
+  return 3;
+}
+
+// The `[bdfgiMhnRrV]` run of a key spec, and the single letters the
+// global options set. Returns the key and the index of the first byte
+// that is not one of them.
+function set_ordering(s: string, from: i32, k: Key, blanktype: i32): (Key, i32) {
+  var key: Key = k;
+  var i: i32 = from;
+  while (i < s.len()) {
+    var c: i32 = s[i] as i32;
+    if (c == 98) {
+      if (blanktype == bl_start() || blanktype == bl_both()) {
+        key = Key { ...key, skipsblanks: true };
+      }
+      if (blanktype == bl_end() || blanktype == bl_both()) {
+        key = Key { ...key, skipeblanks: true };
+      }
+    } else if (c == 100) {
+      key = Key { ...key, ignore: ignore_nondictionary() };
+    } else if (c == 102) {
+      key = Key { ...key, translate: true };
+    } else if (c == 103) {
+      key = Key { ...key, general: true };
+    } else if (c == 104) {
+      key = Key { ...key, human: true };
+    } else if (c == 105) {
+      // -d implies -i, so -i never overrides a -d already given.
+      if (key.ignore == ignore_none()) {
+        key = Key { ...key, ignore: ignore_nonprinting() };
+      }
+    } else if (c == 77) {
+      key = Key { ...key, month: true };
+    } else if (c == 110) {
+      key = Key { ...key, numeric: true };
+    } else if (c == 82) {
+      key = Key { ...key, random: true };
+    } else if (c == 114) {
+      key = Key { ...key, reverse: true };
+    } else if (c == 86) {
+      key = Key { ...key, version: true };
+    } else {
+      return (key, i);
+    }
+    i = i + 1;
+  }
+  return (key, i);
+}
+
+// `parse_key(spec)` — one `-k F[.C][OPTS][,F[.C][OPTS]]`.
+function parse_key(spec: string): Key {
+  var k: Key = key_new();
+  var r: (i32, i32) = parse_field_count(spec, 0, "invalid number at field start");
+  if (r.0 == 0) {
+    bad_field(spec, "field number is zero");
+  }
+  k = Key { ...k, sword: r.0 - 1 };
+  var i: i32 = r.1;
+  if (i < spec.len() && spec[i] as i32 == 46) {
+    var c: (i32, i32) = parse_field_count(spec, i + 1, "invalid number after '.'");
+    if (c.0 == 0) {
+      bad_field(spec, "character offset is zero");
+    }
+    k = Key { ...k, schar: c.0 - 1 };
+    i = c.1;
+  }
+  if (k.sword == 0 && k.schar == 0) {
+    k = Key { ...k, sword: 0 - 1 };
+  }
+  var so: (Key, i32) = set_ordering(spec, i, k, bl_start());
+  k = so.0;
+  i = so.1;
+  if (i < spec.len() && spec[i] as i32 == 44) {
+    var e: (i32, i32) = parse_field_count(spec, i + 1, "invalid number after ','");
+    if (e.0 == 0) {
+      bad_field(spec, "field number is zero");
+    }
+    k = Key { ...k, eword: e.0 - 1 };
+    i = e.1;
+    if (i < spec.len() && spec[i] as i32 == 46) {
+      var ec: (i32, i32) = parse_field_count(spec, i + 1, "invalid number after '.'");
+      k = Key { ...k, echar: ec.0 };
+      i = ec.1;
+    } else {
+      k = Key { ...k, echar: 0 };
+    }
+    var eo: (Key, i32) = set_ordering(spec, i, k, bl_end());
+    k = eo.0;
+    i = eo.1;
+  }
+  if (i != spec.len()) {
+    bad_field(spec, "stray character in field spec");
+  }
+  return k;
+}
+
+// ---- fields -----------------------------------------------------------------
+//
+// `begfield` / `limfield`, which is where a key's bytes come from. A
+// field starts at the blanks in front of it when no -t was given, so
+// `-k2` on `b a` selects ` a`; with -t the separator belongs to the
+// field it precedes.
+function begfield(text: string, lo: i32, hi: i32, k: Key, tab: i32): i32 {
+  var ptr: i32 = lo;
+  var sword: i32 = k.sword;
+  if (tab != tab_default()) {
+    while (ptr < hi && sword > 0) {
+      while (ptr < hi && text[ptr] as i32 != tab) {
+        ptr = ptr + 1;
+      }
+      if (ptr < hi) {
+        ptr = ptr + 1;
+      }
+      sword = sword - 1;
+    }
+  } else {
+    while (ptr < hi && sword > 0) {
+      while (ptr < hi && is_blank_b(text[ptr] as i32)) {
+        ptr = ptr + 1;
+      }
+      while (ptr < hi && !is_blank_b(text[ptr] as i32)) {
+        ptr = ptr + 1;
+      }
+      sword = sword - 1;
+    }
+  }
+  if (k.skipsblanks) {
+    while (ptr < hi && is_blank_b(text[ptr] as i32)) {
+      ptr = ptr + 1;
+    }
+  }
+  if (k.schar >= hi - ptr) {
+    return hi;
+  }
+  return ptr + k.schar;
+}
+
+function limfield(text: string, lo: i32, hi: i32, k: Key, tab: i32): i32 {
+  var ptr: i32 = lo;
+  var eword: i32 = k.eword;
+  var echar: i32 = k.echar;
+  if (echar == 0) {
+    eword = eword + 1;
+  }
+  if (tab != tab_default()) {
+    while (ptr < hi && eword > 0) {
+      while (ptr < hi && text[ptr] as i32 != tab) {
+        ptr = ptr + 1;
+      }
+      eword = eword - 1;
+      if (ptr < hi && (eword > 0 || echar != 0)) {
+        ptr = ptr + 1;
+      }
+    }
+  } else {
+    while (ptr < hi && eword > 0) {
+      while (ptr < hi && is_blank_b(text[ptr] as i32)) {
+        ptr = ptr + 1;
+      }
+      while (ptr < hi && !is_blank_b(text[ptr] as i32)) {
+        ptr = ptr + 1;
+      }
+      eword = eword - 1;
+    }
+  }
+  if (k.skipeblanks) {
+    while (ptr < hi && is_blank_b(text[ptr] as i32)) {
+      ptr = ptr + 1;
+    }
+  }
+  if (echar >= hi - ptr) {
+    return hi;
+  }
+  return ptr + echar;
+}
+
+// The half-open span key `k` selects out of the line at [lo, hi).
+function key_span(text: string, lo: i32, hi: i32, k: Key, tab: i32): (i32, i32) {
+  var lim: i32 = hi;
+  if (k.eword != 0 - 1) {
+    lim = limfield(text, lo, hi, k, tab);
+  }
+  var beg: i32 = lo;
+  if (k.sword != 0 - 1) {
+    beg = begfield(text, lo, hi, k, tab);
+  } else if (k.skipsblanks) {
+    while (beg < lim && is_blank_b(text[beg] as i32)) {
+      beg = beg + 1;
+    }
+  }
+  if (lim < beg) {
+    lim = beg;
+  }
+  return (beg, lim);
+}
+
+// The comparisons that GNU makes over a NUL-terminated copy of the key
+// stop at an embedded NUL as well as at the key's end.
+function nul_end(text: string, lo: i32, hi: i32): i32 {
+  var i: i32 = lo;
+  while (i < hi && text[i] as i32 != 0) {
+    i = i + 1;
+  }
+  return i;
+}
+
+// ---- numeric comparison -----------------------------------------------------
+//
+// gnulib's strnumcmp: the two numbers are compared digit by digit
+// without ever being converted, so `-n` orders values no long double
+// could hold apart. The C locale has no thousands separator and `.` for
+// a decimal point.
+//
+// `byte_at` is the NUL a C string would have past its end.
+function byte_at(text: string, i: i32, end: i32): i32 {
+  if (i >= end) {
+    return 0;
+  }
+  return text[i] as i32;
+}
+
+// The fraction after a decimal point, once the integer parts have been
+// found equal.
+function fraccompare(text: string, ai: i32, aend: i32, bi: i32, bend: i32): i32 {
+  var a: i32 = ai;
+  var b: i32 = bi;
+  if (byte_at(text, a, aend) == 46 && byte_at(text, b, bend) == 46) {
+    a = a + 1;
+    b = b + 1;
+    while (byte_at(text, a, aend) == byte_at(text, b, bend)) {
+      if (!gnu.is_digit(byte_at(text, a, aend))) {
+        return 0;
+      }
+      a = a + 1;
+      b = b + 1;
+    }
+    if (gnu.is_digit(byte_at(text, a, aend)) && gnu.is_digit(byte_at(text, b, bend))) {
+      return byte_at(text, a, aend) - byte_at(text, b, bend);
+    }
+    if (gnu.is_digit(byte_at(text, a, aend))) {
+      return trailing_nonzero(text, a, aend);
+    }
+    if (gnu.is_digit(byte_at(text, b, bend))) {
+      return 0 - trailing_nonzero(text, b, bend);
+    }
+    return 0;
+  }
+  if (byte_at(text, a, aend) == 46) {
+    return trailing_nonzero(text, a + 1, aend);
+  }
+  if (byte_at(text, b, bend) == 46) {
+    return 0 - trailing_nonzero(text, b + 1, bend);
+  }
+  return 0;
+}
+
+// 1 when what follows the zeros is still a digit — a fraction that is
+// not all zeros, so the number with it is the larger.
+function trailing_nonzero(text: string, from: i32, end: i32): i32 {
+  var i: i32 = from;
+  while (byte_at(text, i, end) == 48) {
+    i = i + 1;
+  }
+  if (gnu.is_digit(byte_at(text, i, end))) {
+    return 1;
+  }
+  return 0;
+}
+
+// The sign-free half of strnumcmp: two magnitudes, leading zeros
+// already skipped.
+function magcompare(text: string, ai: i32, aend: i32, bi: i32, bend: i32): i32 {
+  var a: i32 = ai;
+  var b: i32 = bi;
+  var ca: i32 = byte_at(text, a, aend);
+  var cb: i32 = byte_at(text, b, bend);
+  while (ca == cb && gnu.is_digit(ca)) {
+    a = a + 1;
+    b = b + 1;
+    ca = byte_at(text, a, aend);
+    cb = byte_at(text, b, bend);
+  }
+  if (ca == 46 && !gnu.is_digit(cb) || cb == 46 && !gnu.is_digit(ca)) {
+    return fraccompare(text, a, aend, b, bend);
+  }
+  var tmp: i32 = ca - cb;
+  var log_a: i32 = 0;
+  while (gnu.is_digit(byte_at(text, a, aend))) {
+    log_a = log_a + 1;
+    a = a + 1;
+  }
+  var log_b: i32 = 0;
+  while (gnu.is_digit(byte_at(text, b, bend))) {
+    log_b = log_b + 1;
+    b = b + 1;
+  }
+  if (log_a != log_b) {
+    if (log_a < log_b) {
+      return 0 - 1;
+    }
+    return 1;
+  }
+  if (log_a == 0) {
+    return 0;
+  }
+  return tmp;
+}
+
+// Past a run of `-`, then a run of zeros; the two skips strnumcmp makes
+// before it can compare anything.
+function skip_zeros(text: string, from: i32, end: i32): i32 {
+  var i: i32 = from;
+  while (byte_at(text, i, end) == 48) {
+    i = i + 1;
+  }
+  return i;
+}
+
+// Whether what remains, after any leading zeros and one decimal point
+// with its zeros, is a digit: strnumcmp's test for "this side is a
+// nonzero number and the other is not".
+function nonzero_after(text: string, from: i32, end: i32): boolean {
+  var i: i32 = skip_zeros(text, from, end);
+  if (byte_at(text, i, end) == 46) {
+    i = skip_zeros(text, i + 1, end);
+  }
+  return gnu.is_digit(byte_at(text, i, end));
+}
+
+function numcompare(text: string, ai: i32, aend: i32, bi: i32, bend: i32): i32 {
+  var a: i32 = ai;
+  var b: i32 = bi;
+  while (is_blank_b(byte_at(text, a, aend))) {
+    a = a + 1;
+  }
+  while (is_blank_b(byte_at(text, b, bend))) {
+    b = b + 1;
+  }
+  var nega: boolean = byte_at(text, a, aend) == 45;
+  var negb: boolean = byte_at(text, b, bend) == 45;
+  if (nega && !negb) {
+    if (nonzero_after(text, a + 1, aend)) {
+      return 0 - 1;
+    }
+    if (nonzero_after(text, b, bend)) {
+      return 0 - 1;
+    }
+    return 0;
+  }
+  if (negb && !nega) {
+    if (nonzero_after(text, b + 1, bend)) {
+      return 1;
+    }
+    if (nonzero_after(text, a, aend)) {
+      return 1;
+    }
+    return 0;
+  }
+  if (nega) {
+    return 0 - magcompare(text, skip_zeros(text, a + 1, aend), aend, skip_zeros(text, b + 1, bend), bend);
+  }
+  return magcompare(text, skip_zeros(text, a, aend), aend, skip_zeros(text, b, bend), bend);
+}
+
+// ---- human-readable comparison ----------------------------------------------
+//
+// `-h` orders by the SI suffix first and by the number only within one
+// order of magnitude, so 1K < 1M whatever the digits say. A negative
+// number takes a negative order, which is what puts -1K below 1.
+function unit_order(c: i32): i32 {
+  if (c == 75 || c == 107) {
+    return 1;
+  }
+  if (c == 77) {
+    return 2;
+  }
+  if (c == 71) {
+    return 3;
+  }
+  if (c == 84) {
+    return 4;
+  }
+  if (c == 80) {
+    return 5;
+  }
+  if (c == 69) {
+    return 6;
+  }
+  if (c == 90) {
+    return 7;
+  }
+  if (c == 89) {
+    return 8;
+  }
+  if (c == 82) {
+    return 9;
+  }
+  if (c == 81) {
+    return 10;
+  }
+  return 0;
+}
+
+function find_unit_order(text: string, from: i32, end: i32): i32 {
+  var p: i32 = from;
+  while (is_blank_b(byte_at(text, p, end))) {
+    p = p + 1;
+  }
+  var sign: i32 = 1;
+  if (byte_at(text, p, end) == 45) {
+    sign = 0 - 1;
+    p = p + 1;
+  }
+  var nonzero: boolean = false;
+  while (true) {
+    var c: i32 = byte_at(text, p, end);
+    if (gnu.is_digit(c)) {
+      if (c != 48) {
+        nonzero = true;
+      }
+    } else if (c != 46) {
+      break;
+    }
+    p = p + 1;
+  }
+  // A number worth zero has no order, so `0K` sits with the bare
+  // numbers rather than with the kilos.
+  if (!nonzero) {
+    return 0;
+  }
+  return sign * unit_order(byte_at(text, p, end));
+}
+
+function human_numcompare(text: string, ai: i32, aend: i32, bi: i32, bend: i32): i32 {
+  var a: i32 = ai;
+  var b: i32 = bi;
+  while (is_blank_b(byte_at(text, a, aend))) {
+    a = a + 1;
+  }
+  while (is_blank_b(byte_at(text, b, bend))) {
+    b = b + 1;
+  }
+  var diff: i32 = find_unit_order(text, a, aend) - find_unit_order(text, b, bend);
+  if (diff != 0) {
+    return diff;
+  }
+  return numcompare(text, a, aend, b, bend);
+}
+
+// ---- month comparison -------------------------------------------------------
+//
+// The C locale's abbreviated month names, case-folded: an unknown month
+// is 0, which is why `sort -M` puts everything it does not recognise
+// first.
+function month_name(i: i32): string {
+  if (i == 0) {
+    return "JAN";
+  }
+  if (i == 1) {
+    return "FEB";
+  }
+  if (i == 2) {
+    return "MAR";
+  }
+  if (i == 3) {
+    return "APR";
+  }
+  if (i == 4) {
+    return "MAY";
+  }
+  if (i == 5) {
+    return "JUN";
+  }
+  if (i == 6) {
+    return "JUL";
+  }
+  if (i == 7) {
+    return "AUG";
+  }
+  if (i == 8) {
+    return "SEP";
+  }
+  if (i == 9) {
+    return "OCT";
+  }
+  if (i == 10) {
+    return "NOV";
+  }
+  return "DEC";
+}
+
+// The month at the start of [from, end), and where its name ended.
+function getmonth(text: string, from: i32, end: i32): (i32, i32) {
+  var p: i32 = from;
+  while (p < end && is_blank_b(text[p] as i32)) {
+    p = p + 1;
+  }
+  var m: i32 = 0;
+  while (m < 12) {
+    var name: string = month_name(m);
+    var k: i32 = 0;
+    while (k < name.len() && p + k < end && fold_up(text[p + k] as i32) == name[k] as i32) {
+      k = k + 1;
+    }
+    if (k == name.len()) {
+      return (m + 1, p + k);
+    }
+    m = m + 1;
+  }
+  return (0, p);
+}
+
+// ---- version comparison -----------------------------------------------------
+//
+// gnulib's filevercmp. Three layers: the leading-dot special cases, a
+// file suffix matching `(\.[A-Za-z~][A-Za-z0-9~]*)*$` cut off the end,
+// and dpkg's version comparison over what is left — digits compared as
+// numbers, `~` sorting before everything including the end of a string.
+function ver_order(c: i32): i32 {
+  if (gnu.is_digit(c)) {
+    return 0;
+  }
+  if (c >= 65 && c <= 90 || c >= 97 && c <= 122) {
+    return c;
+  }
+  if (c == 126) {
+    return 0 - 1;
+  }
+  return c + 256;
+}
+
+function verrevcmp(text: string, a0: i32, a1: i32, b0: i32, b1: i32): i32 {
+  var a: i32 = a0;
+  var b: i32 = b0;
+  while (a < a1 || b < b1) {
+    var first_diff: i32 = 0;
+    while (a < a1 && !gnu.is_digit(text[a] as i32) || b < b1 && !gnu.is_digit(text[b] as i32)) {
+      var ca: i32 = 0;
+      if (a < a1) {
+        ca = ver_order(text[a] as i32);
+      }
+      var cb: i32 = 0;
+      if (b < b1) {
+        cb = ver_order(text[b] as i32);
+      }
+      if (ca != cb) {
+        return ca - cb;
+      }
+      a = a + 1;
+      b = b + 1;
+    }
+    while (a < a1 && text[a] as i32 == 48) {
+      a = a + 1;
+    }
+    while (b < b1 && text[b] as i32 == 48) {
+      b = b + 1;
+    }
+    while (a < a1 && b < b1 && gnu.is_digit(text[a] as i32) && gnu.is_digit(text[b] as i32)) {
+      if (first_diff == 0) {
+        first_diff = text[a] as i32 - text[b] as i32;
+      }
+      a = a + 1;
+      b = b + 1;
+    }
+    if (a < a1 && gnu.is_digit(text[a] as i32)) {
+      return 1;
+    }
+    if (b < b1 && gnu.is_digit(text[b] as i32)) {
+      return 0 - 1;
+    }
+    if (first_diff != 0) {
+      return first_diff;
+    }
+  }
+  return 0;
+}
+
+function is_alpha_b(c: i32): boolean {
+  return c >= 65 && c <= 90 || c >= 97 && c <= 122;
+}
+
+// Where the file suffix starts, or `end` when there is none: the
+// longest tail matching `(\.[A-Za-z~][A-Za-z0-9~]*)*` that is not the
+// whole of a non-empty string.
+function file_prefixlen(text: string, from: i32, end: i32): i32 {
+  var i: i32 = from;
+  while (i < end) {
+    if (text[i] as i32 == 46 && i > from) {
+      if (suffix_runs_to_end(text, i, end)) {
+        return i;
+      }
+    }
+    i = i + 1;
+  }
+  return end;
+}
+
+// Whether [at, end) is one or more `\.[A-Za-z~][A-Za-z0-9~]*` segments
+// and nothing else.
+function suffix_runs_to_end(text: string, at: i32, end: i32): boolean {
+  var i: i32 = at;
+  while (i < end) {
+    if (text[i] as i32 != 46) {
+      return false;
+    }
+    i = i + 1;
+    if (i >= end) {
+      return false;
+    }
+    var c: i32 = text[i] as i32;
+    if (!is_alpha_b(c) && c != 126) {
+      return false;
+    }
+    i = i + 1;
+    while (i < end) {
+      var d: i32 = text[i] as i32;
+      if (!is_alnum_b(d) && d != 126) {
+        break;
+      }
+      i = i + 1;
+    }
+  }
+  return true;
+}
+
+function filevercmp(text: string, a0: i32, a1: i32, b0: i32, b1: i32): i32 {
+  if (a0 == a1) {
+    if (b0 == b1) {
+      return 0;
+    }
+    return 0 - 1;
+  }
+  if (b0 == b1) {
+    return 1;
+  }
+  if (text[a0] as i32 == 46) {
+    if (text[b0] as i32 != 46) {
+      return 0 - 1;
+    }
+    var adot: boolean = a1 - a0 == 1;
+    var bdot: boolean = b1 - b0 == 1;
+    if (adot) {
+      if (bdot) {
+        return 0;
+      }
+      return 0 - 1;
+    }
+    if (bdot) {
+      return 1;
+    }
+    var add: boolean = a1 - a0 == 2 && text[a0 + 1] as i32 == 46;
+    var bdd: boolean = b1 - b0 == 2 && text[b0 + 1] as i32 == 46;
+    if (add) {
+      if (bdd) {
+        return 0;
+      }
+      return 0 - 1;
+    }
+    if (bdd) {
+      return 1;
+    }
+  } else if (text[b0] as i32 == 46) {
+    return 1;
+  }
+  var ap: i32 = file_prefixlen(text, a0, a1);
+  var bp: i32 = file_prefixlen(text, b0, b1);
+  var one_pass: boolean = ap == a1 && bp == b1;
+  var r: i32 = verrevcmp(text, a0, ap, b0, bp);
+  if (r != 0 || one_pass) {
+    return r;
+  }
+  return verrevcmp(text, a0, a1, b0, b1);
+}
+
+// ---- random comparison ------------------------------------------------------
+//
+// `-R` groups equal keys and shuffles the groups: the key's MD5 digest
+// under a state seeded from --random-source decides the order, and the
+// raw bytes break a digest tie so that equal keys stay together.
+function compare_random(seed: crypto.Md5, text: string, a0: i32, a1: i32, b0: i32, b1: i32): i32 {
+  var da: u8[] = seed.update(slice_unchecked(text, a0, a1) + "").final_bytes();
+  var db: u8[] = seed.update(slice_unchecked(text, b0, b1) + "").final_bytes();
+  var i: i32 = 0;
+  while (i < da.len()) {
+    var x: i32 = da[i] as i32;
+    var y: i32 = db[i] as i32;
+    if (x != y) {
+      return x - y;
+    }
+    i = i + 1;
+  }
+  return cmp_bytes(text, a0, a1, b0, b1);
+}
+
+// ---- the comparison ---------------------------------------------------------
+//
+// A plain byte comparison of two spans, with the shorter one first when
+// one is a prefix of the other. An empty span sorts before every
+// non-empty one.
+function cmp_bytes(text: string, a0: i32, a1: i32, b0: i32, b1: i32): i32 {
+  var la: i32 = a1 - a0;
+  var lb: i32 = b1 - b0;
+  if (la == 0) {
+    if (lb == 0) {
+      return 0;
+    }
+    return 0 - 1;
+  }
+  if (lb == 0) {
+    return 1;
+  }
+  var n: i32 = la;
+  if (lb < n) {
+    n = lb;
+  }
+  var i: i32 = 0;
+  while (i < n) {
+    var x: i32 = text[a0 + i] as i32;
+    var y: i32 = text[b0 + i] as i32;
+    if (x != y) {
+      return x - y;
+    }
+    i = i + 1;
+  }
+  if (la < lb) {
+    return 0 - 1;
+  }
+  if (la > lb) {
+    return 1;
+  }
+  return 0;
+}
+
+// The same with each byte folded to upper case first: -f.
+function cmp_folded(text: string, a0: i32, a1: i32, b0: i32, b1: i32): i32 {
+  var la: i32 = a1 - a0;
+  var lb: i32 = b1 - b0;
+  var n: i32 = la;
+  if (lb < n) {
+    n = lb;
+  }
+  var i: i32 = 0;
+  while (i < n) {
+    var x: i32 = fold_up(text[a0 + i] as i32);
+    var y: i32 = fold_up(text[b0 + i] as i32);
+    if (x != y) {
+      return x - y;
+    }
+    i = i + 1;
+  }
+  if (la < lb) {
+    return 0 - 1;
+  }
+  if (la > lb) {
+    return 1;
+  }
+  return 0;
+}
+
+// The same skipping every byte the key's `ignore` table drops, with or
+// without the case fold. Two keys are equal when both run out at the
+// same time.
+function cmp_ignoring(k: Key, text: string, a0: i32, a1: i32, b0: i32, b1: i32): i32 {
+  var a: i32 = a0;
+  var b: i32 = b0;
+  while (true) {
+    while (a < a1 && ignored(k.ignore, text[a] as i32)) {
+      a = a + 1;
+    }
+    while (b < b1 && ignored(k.ignore, text[b] as i32)) {
+      b = b + 1;
+    }
+    if (!(a < a1 && b < b1)) {
+      break;
+    }
+    var x: i32 = text[a] as i32;
+    var y: i32 = text[b] as i32;
+    if (k.translate) {
+      x = fold_up(x);
+      y = fold_up(y);
+    }
+    if (x != y) {
+      return x - y;
+    }
+    a = a + 1;
+    b = b + 1;
+  }
+  var ra: i32 = 0;
+  if (a < a1) {
+    ra = 1;
+  }
+  var rb: i32 = 0;
+  if (b < b1) {
+    rb = 1;
+  }
+  return ra - rb;
+}
+
+// One key's verdict on two spans, before its own `r` is applied.
+function key_diff(c: Conf, k: Key, text: string, a0: i32, a1: i32, b0: i32, b1: i32): i32 {
+  if (k.random) {
+    return compare_random(c.seed, text, a0, a1, b0, b1);
+  }
+  if (key_numeric(k)) {
+    var ae: i32 = nul_end(text, a0, a1);
+    var be: i32 = nul_end(text, b0, b1);
+    if (k.human) {
+      return human_numcompare(text, a0, ae, b0, be);
+    }
+    if (k.general) {
+      return general_numcompare(text, a0, ae, b0, be);
+    }
+    return numcompare(text, a0, ae, b0, be);
+  }
+  if (k.version) {
+    return filevercmp(text, a0, nul_end(text, a0, a1), b0, nul_end(text, b0, b1));
+  }
+  if (k.month) {
+    var ma: (i32, i32) = getmonth(text, a0, nul_end(text, a0, a1));
+    var mb: (i32, i32) = getmonth(text, b0, nul_end(text, b0, b1));
+    return ma.0 - mb.0;
+  }
+  if (k.ignore != ignore_none()) {
+    return cmp_ignoring(k, text, a0, a1, b0, b1);
+  }
+  if (a1 - a0 == 0) {
+    if (b1 - b0 == 0) {
+      return 0;
+    }
+    return 0 - 1;
+  }
+  if (b1 - b0 == 0) {
+    return 1;
+  }
+  if (k.translate) {
+    return cmp_folded(text, a0, a1, b0, b1);
+  }
+  return cmp_bytes(text, a0, a1, b0, b1);
+}
+
+// `-g` converts with strtold and compares the two long doubles, which
+// is the one ordering mode whose answer depends on the machine's
+// format. A string no conversion consumed sorts before every number,
+// and a NaN between the two.
+function general_numcompare(text: string, a0: i32, a1: i32, b0: i32, b1: i32): i32 {
+  var f: ld.Format = ld.format();
+  var pa: ld.Parse = f.strtold(slice_unchecked(text, a0, a1) + "");
+  var pb: ld.Parse = f.strtold(slice_unchecked(text, b0, b1) + "");
+  if (pa.end == 0) {
+    if (pb.end == 0) {
+      return 0;
+    }
+    return 0 - 1;
+  }
+  if (pb.end == 0) {
+    return 1;
+  }
+  var d: i32 = pa.v.cmp(pb.v);
+  if (d != 2) {
+    return d;
+  }
+  if (pa.v.is_nan() && !pb.v.is_nan()) {
+    return 0 - 1;
+  }
+  if (pb.v.is_nan() && !pa.v.is_nan()) {
+    return 1;
+  }
+  return 0;
+}
+
+// Every key in turn; the first that separates the two lines decides,
+// reversed when that key was.
+function keycompare(c: Conf, text: string, alo: i32, ahi: i32, blo: i32, bhi: i32): i32 {
+  var i: i32 = 0;
+  while (i < c.keys.len()) {
+    var k: Key = c.keys[i];
+    var sa: (i32, i32) = key_span(text, alo, ahi, k, c.tab);
+    var sb: (i32, i32) = key_span(text, blo, bhi, k, c.tab);
+    var d: i32 = key_diff(c, k, text, sa.0, sa.1, sb.0, sb.1);
+    if (d != 0) {
+      if (k.reverse) {
+        return 0 - d;
+      }
+      return d;
+    }
+    i = i + 1;
+  }
+  return 0;
+}
+
+// The whole comparison: the keys, then the line itself unless -u or -s
+// dropped that last resort. The global -r applies only here once a key
+// exists.
+function compare(c: Conf, text: string, alo: i32, ahi: i32, blo: i32, bhi: i32): i32 {
+  if (c.keys.len() > 0) {
+    var d: i32 = keycompare(c, text, alo, ahi, blo, bhi);
+    if (d != 0 || c.unique || c.stable) {
+      return d;
+    }
+  }
+  var r: i32 = cmp_bytes(text, alo, ahi, blo, bhi);
+  if (c.reverse) {
+    return 0 - r;
+  }
+  return r;
+}
+
+// `merge_files(c, text, lo, hi, bounds)` — `-m`: the inputs are taken
+// as already sorted, and the smallest head across them is emitted each
+// time, a tie going to the earlier operand. Nothing is compared within
+// one input, so `sort -m` over an unsorted file reproduces it.
+function merge_files(c: Conf, text: string, lo: i32[], hi: i32[], bounds: i32[]): i32[] {
+  var n: i32 = bounds.len();
+  var head: i32[] = [];
+  var f: i32 = 0;
+  var start: i32 = 0;
+  while (f < n) {
+    head = head.append(start);
+    start = bounds[f];
+    f = f + 1;
+  }
+  var out: i32[] = [];
+  var total: i32 = lo.len();
+  var emitted: i32 = 0;
+  while (emitted < total) {
+    var best: i32 = 0 - 1;
+    f = 0;
+    while (f < n) {
+      if (head[f] < bounds[f]) {
+        if (best < 0) {
+          best = f;
+        } else {
+          var x: i32 = head[f];
+          var y: i32 = head[best];
+          if (compare(c, text, lo[x], hi[x], lo[y], hi[y]) < 0) {
+            best = f;
+          }
+        }
+      }
+      f = f + 1;
+    }
+    out = out.append(head[best]);
+    head = head.with(best, head[best] + 1);
+    emitted = emitted + 1;
+  }
+  return out;
+}
+
+// ---- the sort ---------------------------------------------------------------
+//
+// A bottom-up stable merge over line indices: only 4-byte indices move,
+// and equal lines keep their input order, which is what -u and -s both
+// rely on. Each pass writes a fresh destination rather than merging
+// through an alias.
+function sort_lines(c: Conf, text: string, lo: i32[], hi: i32[], idx: i32[]): i32[] {
+  var n: i32 = idx.len();
+  var src: i32[] = idx;
+  var width: i32 = 1;
+  while (width < n) {
+    var dst: i32[] = [];
+    var start: i32 = 0;
+    while (start < n) {
+      var mid: i32 = start + width;
+      if (mid > n) {
+        mid = n;
+      }
+      var end: i32 = mid + width;
+      if (end > n) {
+        end = n;
+      }
+      var a: i32 = start;
+      var b: i32 = mid;
+      while (a < mid && b < end) {
+        var ia: i32 = src[a];
+        var ib: i32 = src[b];
+        if (compare(c, text, lo[ib], hi[ib], lo[ia], hi[ia]) < 0) {
+          dst = dst.append(ib);
+          b = b + 1;
+        } else {
+          dst = dst.append(ia);
+          a = a + 1;
+        }
+      }
+      while (a < mid) {
+        dst = dst.append(src[a]);
+        a = a + 1;
+      }
+      while (b < end) {
+        dst = dst.append(src[b]);
+        b = b + 1;
+      }
+      start = end;
+    }
+    src = dst;
+    width = width * 2;
+  }
+  return src;
+}
+
+// ---- input ------------------------------------------------------------------
+function read_size(): i32 {
+  return 262144;
+}
+
+// Every byte of `path` ("-" is standard input), or death with the
+// wording GNU uses for that stage.
+function slurp(path: string, open_msg: string): string {
+  var r: Reader = stdin();
+  if (path != "-") {
+    match (open_reader(path)) {
+      Ok(f) => {
+        r = f;
+      },
+      Err(e) => {
+        die_file(open_msg, path, e);
+      }
+    }
+  }
+  var chunks: string[] = [];
+  while (true) {
+    match (r.read_chunk(read_size())) {
+      Ok(chunk) => {
+        if (chunk.len() == 0) {
+          break;
+        }
+        chunks = chunks.append(chunk);
+      },
+      Err(e) => {
+        die_file("read failed", path, e);
+      }
+    }
+  }
+  if (path != "-") {
+    r.close();
+  }
+  if (chunks.len() == 1) {
+    return chunks[0];
+  }
+  return chunks.join("");
+}
+
+// GNU asks access(R_OK) about every named input before it reads any of
+// them, so `sort missing existing` reports the missing one and stops.
+function check_inputs(files: string[]): void {
+  var i: i32 = 0;
+  while (i < files.len()) {
+    if (files[i] != "-") {
+      match (open_reader(files[i])) {
+        Ok(f) => {
+          f.close();
+        },
+        Err(e) => {
+          die_file("cannot read", files[i], e);
+        }
+      }
+    }
+    i = i + 1;
+  }
+}
+
+// ---- output -----------------------------------------------------------------
+struct Out { w: io_buffered.BufWriter, file: string, to_stdout: boolean }
+
+function out_open(file: string, to_stdout: boolean): Out {
+  if (to_stdout) {
+    return Out { w: gnu.out_new(), file: file, to_stdout: true };
+  }
+  match (open_writer(file)) {
+    Ok(w) => {
+      return Out { w: io_buffered.buf_writer_new(w, gnu.block_bytes()), file: file, to_stdout: false };
+    },
+    Err(e) => {
+      die_file("open failed", file, e);
+    }
+  }
+  return Out { w: gnu.out_new(), file: file, to_stdout: true };
+}
+
+// The name the output is reported under: the -o file, or gnulib's
+// wording for fd 1.
+function out_name(o: Out): string {
+  if (o.to_stdout) {
+    return gnu.quotef("standard output");
+  }
+  return gnu.quotef(o.file);
+}
+
+// A failure here is followed by close_stdout's own line, which carries
+// no strerror text because the stream already holds the error.
+function out_die(o: Out, stage: string, e: IoError): void {
+  gnu.error(stage + ": " + out_name(o) + ": " + gnu.io_error_text(e));
+  gnu.error("write error");
+  exit(sort_failure());
+}
+
+function out_put(o: Out, s: string): Out {
+  var w: io_buffered.BufWriter = o.w.write_string(s);
+  match (w.error()) {
+    Some(e) => {
+      out_die(o, "write failed", e);
+    },
+    None => {}
+  }
+  return Out { ...o, w: w };
+}
+
+function out_finish(o: Out): void {
+  var w: io_buffered.BufWriter = o.w.flush();
+  match (w.error()) {
+    Some(e) => {
+      out_die(o, "fflush failed", e);
+    },
+    None => {}
+  }
+  gnu.close_stdout_with(w, false, sort_failure());
+}
+
+// ---- lines ------------------------------------------------------------------
+//
+// The line boundaries of `text`: [lo, hi) excludes the terminator, and
+// a final line without one still counts. An empty input has no lines.
+function split_lines(text: string, term: i32): (i32[], i32[]) {
+  var lo: i32[] = [];
+  var hi: i32[] = [];
+  var start: i32 = 0;
+  while (start < text.len()) {
+    var end: i32 = __memchr(text, term, start);
+    if (end < 0) {
+      lo = lo.append(start);
+      hi = hi.append(text.len());
+      break;
+    }
+    lo = lo.append(start);
+    hi = hi.append(end);
+    start = end + 1;
+  }
+  return (lo, hi);
+}
+
+// ---- argmatch ---------------------------------------------------------------
+//
+// gnulib's argmatch: an exact match wins, a unique abbreviation is
+// accepted, and anything else prints the valid values — one line per
+// distinct meaning, so `--check`'s quiet and silent share a line — and
+// exits through usage(), which is 1 rather than sort's own 2.
+function argmatch(value: string, names: string[], vals: i32[], option: string, groups: string[]): i32 {
+  var found: i32 = 0 - 1;
+  var ambiguous: boolean = false;
+  var i: i32 = 0;
+  while (i < names.len()) {
+    if (names[i] == value) {
+      return vals[i];
+    }
+    if (names[i].starts_with(value)) {
+      if (found < 0) {
+        found = i;
+      } else if (vals[i] != vals[found]) {
+        ambiguous = true;
+      }
+    }
+    i = i + 1;
+  }
+  if (found >= 0 && !ambiguous) {
+    return vals[found];
+  }
+  var what: string = "invalid";
+  if (ambiguous) {
+    what = "ambiguous";
+  }
+  var msg: string = what + " argument " + gnu.quote(value) + " for " + gnu.quote(option) + "\n";
+  msg = msg + "Valid arguments are:\n";
+  i = 0;
+  while (i < groups.len()) {
+    msg = msg + "  - " + groups[i] + "\n";
+    i = i + 1;
+  }
+  eprint(gnu.prog() + ": " + slice_unchecked(msg, 0, msg.len() - 1));
+  gnu.try_help(1);
+  return 0;
+}
+
+function check_words(): string[] {
+  return ["quiet", "silent", "diagnose-first"];
+}
+
+function check_vals(): i32[] {
+  return [67, 67, 99];
+}
+
+function check_groups(): string[] {
+  return ["'quiet', 'silent'", "'diagnose-first'"];
+}
+
+function sort_words(): string[] {
+  return ["general-numeric", "human-numeric", "month", "numeric", "random", "version"];
+}
+
+function sort_vals(): i32[] {
+  return [103, 104, 77, 110, 82, 86];
+}
+
+function sort_groups(): string[] {
+  return ["'general-numeric'", "'human-numeric'", "'month'", "'numeric'", "'random'", "'version'"];
+}
+
+// ---- -S, --parallel, --batch-size -------------------------------------------
+//
+// None of the three changes a byte of output — this sort holds the
+// whole input in memory — but each is validated exactly as GNU
+// validates it, because the diagnostics are output.
+function xstrtol_fatal(status: i32, option: string, arg: string): void {
+  if (status == 1) {
+    die("invalid " + option + " argument " + gnu.quote(arg));
+  }
+  if (status == 2) {
+    die("invalid suffix in " + option + " argument " + gnu.quote(arg));
+  }
+  die(option + " argument " + gnu.quote(arg) + " too large");
+}
+
+// xstrtoumax over `s` with the -S suffix set, then the two suffixes
+// specify_sort_size adds itself: a bare `b` is bytes and a `%` is a
+// share of memory. Returns 0 accepted, 1 malformed, 2 a bad suffix,
+// 3 out of range.
+function parse_sort_size(s: string): i32 {
+  var i: i32 = 0;
+  while (i < s.len() && gnu.is_blank(s[i] as i32)) {
+    i = i + 1;
+  }
+  if (i < s.len() && s[i] as i32 == 45) {
+    return 1;
+  }
+  if (i < s.len() && s[i] as i32 == 43) {
+    i = i + 1;
+  }
+  if (i >= s.len() || !gnu.is_digit(s[i] as i32)) {
+    return 1;
+  }
+  var v: u64 = 0 as u64;
+  var over: boolean = false;
+  while (i < s.len() && gnu.is_digit(s[i] as i32)) {
+    match (v.checked_mul(10 as u64)) {
+      Some(m) => {
+        match (m.checked_add((s[i] as i32 - 48) as u64)) {
+          Some(a) => {
+            v = a;
+          },
+          None => {
+            over = true;
+          }
+        }
+      },
+      None => {
+        over = true;
+      }
+    }
+    i = i + 1;
+  }
+  if (i == s.len()) {
+    // No suffix: the unit is KiB.
+    if (over) {
+      return 3;
+    }
+    match (v.checked_mul(1024 as u64)) {
+      Some(_) => {
+        return 0;
+      },
+      None => {
+        return 3;
+      }
+    }
+  }
+  var c: i32 = s[i] as i32;
+  var power: i32 = sort_size_power(c);
+  if (power > 0 && i + 1 == s.len()) {
+    if (over) {
+      return 3;
+    }
+    var k: i32 = 0;
+    while (k < power) {
+      match (v.checked_mul(1024 as u64)) {
+        Some(m) => {
+          v = m;
+        },
+        None => {
+          return 3;
+        }
+      }
+      k = k + 1;
+    }
+    return 0;
+  }
+  if (i + 1 == s.len() && (c == 98 || c == 37)) {
+    if (over) {
+      return 3;
+    }
+    return 0;
+  }
+  if (over) {
+    return 2;
+  }
+  return 2;
+}
+
+// The -S suffixes, `EgGkKmMPQRtTYZ`: note the lower-case letters GNU
+// accepts and the ones it does not.
+function sort_size_power(c: i32): i32 {
+  if (c == 75 || c == 107) {
+    return 1;
+  }
+  if (c == 77 || c == 109) {
+    return 2;
+  }
+  if (c == 71 || c == 103) {
+    return 3;
+  }
+  if (c == 84 || c == 116) {
+    return 4;
+  }
+  if (c == 80) {
+    return 5;
+  }
+  if (c == 69) {
+    return 6;
+  }
+  if (c == 90) {
+    return 7;
+  }
+  if (c == 89) {
+    return 8;
+  }
+  if (c == 82) {
+    return 9;
+  }
+  if (c == 81) {
+    return 10;
+  }
+  return 0;
+}
+
+// ---- key inheritance --------------------------------------------------------
+//
+// A key that names no ordering of its own, and is not reversed, takes
+// the global options; when no key was given at all, the global options
+// BECOME the one key.
+function inherit(k: Key, g: Key): Key {
+  if (!default_key_compare(k) || k.reverse) {
+    return k;
+  }
+  return Key { ...k, ignore: g.ignore, translate: g.translate, skipsblanks: g.skipsblanks, skipeblanks: g.skipeblanks, month: g.month, numeric: g.numeric, general: g.general, human: g.human, version: g.version, random: g.random, reverse: g.reverse };
+}
+
+// ---- ordering compatibility --------------------------------------------------
+//
+// One key may name at most one way of ordering. The four value
+// orderings — -n, -g, -h, -M — exclude each other and also exclude -R,
+// -V and the -d / -i filters; those three are compatible among
+// themselves, so `sort -RVd` is fine and `sort -nV` is not.
+function key_to_opts(k: Key): string {
+  var out: string = "";
+  if (k.ignore == ignore_nondictionary()) {
+    out = out + "d";
+  }
+  if (k.translate) {
+    out = out + "f";
+  }
+  if (k.general) {
+    out = out + "g";
+  }
+  if (k.human) {
+    out = out + "h";
+  }
+  if (k.ignore == ignore_nonprinting()) {
+    out = out + "i";
+  }
+  if (k.month) {
+    out = out + "M";
+  }
+  if (k.numeric) {
+    out = out + "n";
+  }
+  if (k.random) {
+    out = out + "R";
+  }
+  if (k.version) {
+    out = out + "V";
+  }
+  return out;
+}
+
+function check_ordering_compatibility(keys: Key[]): void {
+  var i: i32 = 0;
+  while (i < keys.len()) {
+    var k: Key = keys[i];
+    var value_orders: i32 = 0;
+    if (k.numeric) {
+      value_orders = value_orders + 1;
+    }
+    if (k.general) {
+      value_orders = value_orders + 1;
+    }
+    if (k.human) {
+      value_orders = value_orders + 1;
+    }
+    if (k.month) {
+      value_orders = value_orders + 1;
+    }
+    var others: i32 = value_orders;
+    if (k.random) {
+      others = others + 1;
+    }
+    if (k.version) {
+      others = others + 1;
+    }
+    if (k.ignore != ignore_none()) {
+      others = others + 1;
+    }
+    if (value_orders > 0 && others > 1) {
+      die("options '-" + key_to_opts(k) + "' are incompatible");
+    }
+    i = i + 1;
+  }
+}
+
+// ---- the check --------------------------------------------------------------
+//
+// `-c` reports the first line that is out of order and exits 1; `-C`
+// exits 1 in silence. With -u, equal adjacent lines are disorder too.
+function check_order(c: Conf, name: string, text: string, lo: i32[], hi: i32[], quiet: boolean): i32 {
+  var i: i32 = 1;
+  while (i < lo.len()) {
+    var d: i32 = compare(c, text, lo[i - 1], hi[i - 1], lo[i], hi[i]);
+    var bad: boolean = d > 0;
+    if (c.unique && d == 0) {
+      bad = true;
+    }
+    if (bad) {
+      if (!quiet) {
+        var w: Writer = stderr();
+        w.write(gnu.prog() + ": " + name + ":" + (i + 1).to_string() + ": disorder: " + slice_unchecked(text, lo[i], hi[i]) + term_string(c.term));
+      }
+      return 1;
+    }
+    i = i + 1;
+  }
+  return 0;
+}
+
+// ---- --files0-from ----------------------------------------------------------
+function read_names(file: string): string[] {
+  var text: string = "";
+  if (file == "-") {
+    text = slurp("-", "open failed");
+  } else {
+    match (stat(file)) {
+      Ok(st) => {
+        if (!st.is_file) {
+          die("cannot read file names from " + gnu.quote(file));
+        }
+      },
+      Err(_) => {}
+    }
+    text = slurp(file, "open failed");
+  }
+  if (text.len() == 0) {
+    die("no input from " + gnu.quote(file));
+  }
+  var names: string[] = [];
+  var start: i32 = 0;
+  var n: i32 = 0;
+  while (start < text.len()) {
+    var end: i32 = __memchr(text, 0, start);
+    if (end < 0) {
+      end = text.len();
+    }
+    n = n + 1;
+    var name: string = slice_unchecked(text, start, end) + "";
+    if (name.len() == 0) {
+      die(gnu.quotef(file) + ":" + n.to_string() + ": invalid zero-length file name");
+    }
+    if (name == "-") {
+      die("when reading file names from stdin, no file name of '-' allowed");
+    }
+    names = names.append(name);
+    start = end + 1;
+  }
+  return names;
+}
+
+// ---- main -------------------------------------------------------------------
+function declare_options(): gnu.Opt[] {
+  var opts: gnu.Opt[] = [];
+  opts = opts.append(gnu.flag("b", "ignore-leading-blanks", o_blanks()));
+  opts = opts.append(gnu.optional_long("c", "check", o_check()));
+  opts = opts.append(gnu.valued("", "compress-program", o_compress()));
+  opts = opts.append(gnu.flag("", "debug", o_debug()));
+  opts = opts.append(gnu.flag("d", "dictionary-order", o_dict()));
+  opts = opts.append(gnu.flag("f", "ignore-case", o_fold()));
+  opts = opts.append(gnu.valued("", "files0-from", o_files0()));
+  opts = opts.append(gnu.flag("g", "general-numeric-sort", o_general()));
+  opts = opts.append(gnu.flag("i", "ignore-nonprinting", o_nonprint()));
+  opts = opts.append(gnu.valued("k", "key", o_key()));
+  opts = opts.append(gnu.flag("m", "merge", o_merge()));
+  opts = opts.append(gnu.flag("M", "month-sort", o_month()));
+  opts = opts.append(gnu.flag("n", "numeric-sort", o_numeric()));
+  opts = opts.append(gnu.flag("h", "human-numeric-sort", o_human()));
+  opts = opts.append(gnu.flag("V", "version-sort", o_version()));
+  opts = opts.append(gnu.flag("R", "random-sort", o_randsort()));
+  opts = opts.append(gnu.valued("", "random-source", o_randsource()));
+  opts = opts.append(gnu.valued("", "sort", o_sort()));
+  opts = opts.append(gnu.valued("o", "output", o_output()));
+  opts = opts.append(gnu.flag("r", "reverse", o_reverse()));
+  opts = opts.append(gnu.flag("s", "stable", o_stable()));
+  opts = opts.append(gnu.valued("", "batch-size", o_batch()));
+  opts = opts.append(gnu.valued("S", "buffer-size", o_buffer()));
+  opts = opts.append(gnu.valued("t", "field-separator", o_tab()));
+  opts = opts.append(gnu.valued("T", "temporary-directory", o_tmpdir()));
+  opts = opts.append(gnu.flag("u", "unique", o_unique()));
+  opts = opts.append(gnu.flag("z", "zero-terminated", o_zero()));
+  opts = opts.append(gnu.valued("", "parallel", o_parallel()));
+  opts = opts.append(gnu.flag("C", "", o_quietcheck()));
+  opts = opts.append(gnu.valued("y", "", o_ignored()));
+  return opts;
+}
+
+// The settings the option scan builds up.
+struct Args { gkey: Key, keys: Key[], tab: i32, have_tab: boolean, checkonly: i32, merge: boolean, unique: boolean, stable: boolean, zero: boolean, debug: boolean, outfile: string, have_out: boolean, randsource: string, have_rand: boolean, files: string[], files0: string, have_files0: boolean }
+
+function args_new(): Args {
+  var keys: Key[] = [];
+  var files: string[] = [];
+  return Args { gkey: global_key_new(), keys: keys, tab: tab_default(), have_tab: false, checkonly: 0, merge: false, unique: false, stable: false, zero: false, debug: false, outfile: "", have_out: false, randsource: "", have_rand: false, files: files, files0: "", have_files0: false };
+}
+
+// One `-t SEP`: a single byte, or the two-character `\0` for NUL. A
+// second one that disagrees with the first is an error.
+function set_tab(a: Args, v: string): Args {
+  if (v.len() == 0) {
+    die("empty tab");
+  }
+  var newtab: i32 = v[0] as i32;
+  if (v.len() > 1) {
+    if (v == "\\0") {
+      newtab = 0;
+    } else {
+      die("multi-character tab " + gnu.quote(v));
+    }
+  }
+  if (a.have_tab && a.tab != newtab) {
+    die("incompatible tabs");
+  }
+  return Args { ...a, tab: newtab, have_tab: true };
+}
+
+// The single ordering letter a global option stands for, applied to
+// the global key.
+function global_letter(a: Args, letter: string, blanktype: i32): Args {
+  var r: (Key, i32) = set_ordering(letter, 0, a.gkey, blanktype);
+  return Args { ...a, gkey: r.0 };
+}
+
+function main(): i32 {
+  var argv: string[] = args();
+  var a: Args = args_new();
+  var g: gnu.Getopt = gnu.getopt_new(argv, declare_options(), "sort", help_text(), sort_failure()).return_in_order();
+  var posixly: boolean = false;
+  match (env("POSIXLY_CORRECT")) {
+    Some(_) => {
+      posixly = true;
+    },
+    None => {}
+  }
+  var posix: i64 = gnu.posix2_version();
+  var obsolete_usage: boolean = posix < 200112 as i64 || posix >= 200809 as i64;
+  while (true) {
+    if (posixly && a.files.len() > 0) {
+      match (g.peek()) {
+        Some(t) => {
+          a = Args { ...a, files: a.files.append(t) };
+          g = g.advance();
+          continue;
+        },
+        None => {
+          break;
+        }
+      }
+    }
+    var r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    g = r.1;
+    match (r.0) {
+      Some(m) => {
+        if (m.id == gnu.operand_id()) {
+          var taken: (Args, gnu.Getopt) = operand(a, g, m.value, obsolete_usage, posixly);
+          a = taken.0;
+          g = taken.1;
+        } else {
+          a = option(a, m);
+        }
+      },
+      None => {
+        break;
+      }
+    }
+  }
+  // Everything past `--`: glibc ends the scan there, so those tokens
+  // are file names rather than obsolete key specs.
+  var rest: string[] = g.operands();
+  var k: i32 = 0;
+  while (k < rest.len()) {
+    a = Args { ...a, files: a.files.append(rest[k]) };
+    k = k + 1;
+  }
+  return run(a);
+}
+
+// One operand: sort's obsolete `+POS [-POS]` key when the environment
+// still asks for it, else a file name.
+function operand(a0: Args, g0: gnu.Getopt, tok: string, obsolete_usage: boolean, posixly: boolean): (Args, gnu.Getopt) {
+  var a: Args = a0;
+  var g: gnu.Getopt = g0;
+  if (tok.len() == 0 || tok[0] as i32 != 43) {
+    return (Args { ...a, files: a.files.append(tok) }, g);
+  }
+  var next: string = "";
+  var minus_pos: boolean = false;
+  match (g.peek()) {
+    Some(t) => {
+      if (t.len() >= 2 && t[0] as i32 == 45 && gnu.is_digit(t[1] as i32)) {
+        minus_pos = true;
+        next = t;
+      }
+    },
+    None => {}
+  }
+  if (!obsolete_usage && !(minus_pos && !posixly)) {
+    return (Args { ...a, files: a.files.append(tok) }, g);
+  }
+  var k: Key = key_new();
+  var r: (i32, i32, boolean) = parse_count(tok, 1);
+  if (!r.2) {
+    return (Args { ...a, files: a.files.append(tok) }, g);
+  }
+  k = Key { ...k, sword: r.0 };
+  var i: i32 = r.1;
+  if (i < tok.len() && tok[i] as i32 == 46) {
+    var c: (i32, i32, boolean) = parse_count(tok, i + 1);
+    if (!c.2) {
+      return (Args { ...a, files: a.files.append(tok) }, g);
+    }
+    k = Key { ...k, schar: c.0 };
+    i = c.1;
+  }
+  if (k.sword == 0 && k.schar == 0) {
+    k = Key { ...k, sword: 0 - 1 };
+  }
+  var so: (Key, i32) = set_ordering(tok, i, k, bl_start());
+  if (so.1 != tok.len()) {
+    return (Args { ...a, files: a.files.append(tok) }, g);
+  }
+  k = so.0;
+  if (minus_pos) {
+    g = g.advance();
+    var e: (i32, i32) = parse_field_count(next, 1, "invalid number after '-'");
+    k = Key { ...k, eword: e.0 };
+    var j: i32 = e.1;
+    if (j < next.len() && next[j] as i32 == 46) {
+      var ec: (i32, i32) = parse_field_count(next, j + 1, "invalid number after '.'");
+      k = Key { ...k, echar: ec.0 };
+      j = ec.1;
+    }
+    if (k.echar == 0 && k.eword != 0) {
+      k = Key { ...k, eword: k.eword - 1 };
+    }
+    var eo: (Key, i32) = set_ordering(next, j, k, bl_end());
+    if (eo.1 != next.len()) {
+      bad_field(next, "stray character in field spec");
+    }
+    k = eo.0;
+  }
+  k = Key { ...k, obsolete: true };
+  return (Args { ...a, keys: a.keys.append(k) }, g);
+}
+
+function option(a0: Args, m: gnu.OptMatch): Args {
+  var a: Args = a0;
+  if (m.id == o_blanks()) {
+    return global_letter(a, "b", bl_both());
+  }
+  if (m.id == o_dict()) {
+    return global_letter(a, "d", bl_both());
+  }
+  if (m.id == o_fold()) {
+    return global_letter(a, "f", bl_both());
+  }
+  if (m.id == o_general()) {
+    return global_letter(a, "g", bl_both());
+  }
+  if (m.id == o_human()) {
+    return global_letter(a, "h", bl_both());
+  }
+  if (m.id == o_nonprint()) {
+    return global_letter(a, "i", bl_both());
+  }
+  if (m.id == o_month()) {
+    return global_letter(a, "M", bl_both());
+  }
+  if (m.id == o_numeric()) {
+    return global_letter(a, "n", bl_both());
+  }
+  if (m.id == o_randsort()) {
+    return global_letter(a, "R", bl_both());
+  }
+  if (m.id == o_reverse()) {
+    return global_letter(a, "r", bl_both());
+  }
+  if (m.id == o_version()) {
+    return global_letter(a, "V", bl_both());
+  }
+  if (m.id == o_sort()) {
+    var w: i32 = argmatch(m.value, sort_words(), sort_vals(), "--sort", sort_groups());
+    return global_letter(a, sort_letter(w), bl_both());
+  }
+  if (m.id == o_key()) {
+    return Args { ...a, keys: a.keys.append(parse_key(m.value)) };
+  }
+  if (m.id == o_check()) {
+    var mode: i32 = 99;
+    if (m.has_value) {
+      mode = argmatch(m.value, check_words(), check_vals(), "--check", check_groups());
+    }
+    return Args { ...a, checkonly: mode };
+  }
+  if (m.id == o_quietcheck()) {
+    return Args { ...a, checkonly: 67 };
+  }
+  if (m.id == o_merge()) {
+    return Args { ...a, merge: true };
+  }
+  if (m.id == o_unique()) {
+    return Args { ...a, unique: true };
+  }
+  if (m.id == o_stable()) {
+    return Args { ...a, stable: true };
+  }
+  if (m.id == o_zero()) {
+    return Args { ...a, zero: true };
+  }
+  if (m.id == o_debug()) {
+    return Args { ...a, debug: true };
+  }
+  if (m.id == o_tab()) {
+    return set_tab(a, m.value);
+  }
+  if (m.id == o_output()) {
+    if (a.have_out && a.outfile != m.value) {
+      die("multiple output files specified");
+    }
+    return Args { ...a, outfile: m.value, have_out: true };
+  }
+  if (m.id == o_files0()) {
+    return Args { ...a, files0: m.value, have_files0: true };
+  }
+  if (m.id == o_randsource()) {
+    return Args { ...a, randsource: m.value, have_rand: true };
+  }
+  if (m.id == o_buffer()) {
+    var st: i32 = parse_sort_size(m.value);
+    if (st != 0) {
+      var spelling: string = "-S";
+      if (m.long_form) {
+        spelling = "--buffer-size";
+      }
+      xstrtol_fatal(st, spelling, m.value);
+    }
+    return a;
+  }
+  if (m.id == o_parallel()) {
+    return parallel(a, m.value);
+  }
+  if (m.id == o_batch()) {
+    return batch_size(a, m.value);
+  }
+  return a;
+}
+
+// `--sort=WORD` is spelled as the letter its short option is.
+function sort_letter(w: i32): string {
+  if (w == 103) {
+    return "g";
+  }
+  if (w == 104) {
+    return "h";
+  }
+  if (w == 77) {
+    return "M";
+  }
+  if (w == 110) {
+    return "n";
+  }
+  if (w == 82) {
+    return "R";
+  }
+  return "V";
+}
+
+// `--parallel=N`: a count out of range is silently clamped, only zero
+// and a non-number are refused.
+function parallel(a: Args, v: string): Args {
+  var r: (i32, i32, boolean) = parse_count(v, 0);
+  if (!r.2) {
+    xstrtol_fatal(1, "--parallel", v);
+  }
+  if (r.1 != v.len()) {
+    xstrtol_fatal(2, "--parallel", v);
+  }
+  if (r.0 == 0) {
+    die("number in parallel must be nonzero");
+  }
+  return a;
+}
+
+// `--batch-size=NMERGE`: below 2 is refused with the minimum named.
+// The upper bound is the process's open-file limit, which Fern cannot
+// ask for yet (#8823), so a value above it is accepted here.
+function batch_size(a: Args, v: string): Args {
+  var r: (i32, i32, boolean) = parse_count(v, 0);
+  if (!r.2) {
+    xstrtol_fatal(1, "--batch-size", v);
+  }
+  if (r.1 != v.len()) {
+    xstrtol_fatal(2, "--batch-size", v);
+  }
+  if (r.0 < 2) {
+    gnu.error("invalid --batch-size argument " + gnu.quote(v));
+    die("minimum --batch-size argument is " + gnu.quote("2"));
+  }
+  return a;
+}
+
+// The MD5 state `-R` hashes each key under: sixteen bytes read from
+// --random-source, or from the default source when none was named.
+function random_seed(a: Args): crypto.Md5 {
+  var src: string = default_random_source();
+  if (a.have_rand) {
+    src = a.randsource;
+  }
+  match (open_reader(src)) {
+    Ok(r) => {
+      var got: string = "";
+      while (got.len() < 16) {
+        match (r.read_chunk(16 - got.len())) {
+          Ok(chunk) => {
+            if (chunk.len() == 0) {
+              r.close();
+              die(gnu.quote(src) + ": end of file");
+            }
+            got = got + chunk;
+          },
+          Err(e) => {
+            r.close();
+            die(gnu.quote(src) + ": read error: " + gnu.io_error_text(e));
+          }
+        }
+      }
+      r.close();
+      return crypto.md5_new().update(got);
+    },
+    Err(e) => {
+      die_file("open failed", src, e);
+    }
+  }
+  return crypto.md5_new();
+}
+
+// Where `-R` gets its sixteen bytes when --random-source names no
+// file. GNU asks the kernel through getrandom(2) and seeds ISAAC with
+// the answer; this reads the same kernel pool by its name, so the
+// shuffle is unpredictable in the same way. A machine with no
+// /dev/urandom reports that file rather than aborting as GNU does.
+function default_random_source(): string {
+  return "/dev/urandom";
+}
+
+function run(a0: Args): i32 {
+  var a: Args = a0;
+  if (a.debug && (a.checkonly != 0 || a.have_out)) {
+    var what: string = "-o";
+    if (a.checkonly == 99) {
+      what = "-c";
+    } else if (a.checkonly == 67) {
+      what = "-C";
+    }
+    die("options '" + what + " --debug' are incompatible");
+  }
+  if (a.checkonly != 0 && a.have_out) {
+    var letter: string = "c";
+    if (a.checkonly == 67) {
+      letter = "C";
+    }
+    die("options '-" + letter + "o' are incompatible");
+  }
+  var files: string[] = a.files;
+  if (a.have_files0) {
+    if (files.len() > 0) {
+      gnu.error("extra operand " + gnu.quote(files[0]) + "\nfile operands cannot be combined with --files0-from");
+      gnu.try_help(sort_failure());
+    }
+    files = read_names(a.files0);
+  }
+  if (a.checkonly != 0 && files.len() > 1) {
+    var letter2: string = "c";
+    if (a.checkonly == 67) {
+      letter2 = "C";
+    }
+    die("extra operand " + gnu.quote(files[1]) + " not allowed with -" + letter2);
+  }
+  if (files.len() == 0) {
+    files = files.append("-");
+  }
+
+  // Global options become the one key when no -k was given, and are
+  // inherited by every key that names no ordering of its own.
+  var keys: Key[] = [];
+  var i: i32 = 0;
+  while (i < a.keys.len()) {
+    keys = keys.append(inherit(a.keys[i], a.gkey));
+    i = i + 1;
+  }
+  var gkey_only: boolean = false;
+  if (keys.len() == 0 && !default_key_compare(a.gkey)) {
+    gkey_only = true;
+    keys = keys.append(a.gkey);
+  }
+  check_ordering_compatibility(keys);
+  var need_random: boolean = false;
+  i = 0;
+  while (i < keys.len()) {
+    if (keys[i].random) {
+      need_random = true;
+    }
+    i = i + 1;
+  }
+  var seed: crypto.Md5 = crypto.md5_new();
+  if (need_random) {
+    seed = random_seed(a);
+  }
+  var term: i32 = 10;
+  if (a.zero) {
+    term = 0;
+  }
+  var c: Conf = Conf { keys: keys, tab: a.tab, reverse: a.gkey.reverse, unique: a.unique, stable: a.stable, term: term, seed: seed, debug: a.debug, gkey_only: gkey_only };
+
+  if (a.checkonly != 0) {
+    var text: string = slurp(files[0], "open failed");
+    var parts: (i32[], i32[]) = split_lines(text, term);
+    return check_order(c, files[0], text, parts.0, parts.1, a.checkonly == 67);
+  }
+
+  check_inputs(files);
+  var chunks: string[] = [];
+  var ends: i32[] = [];
+  i = 0;
+  while (i < files.len()) {
+    var part: string = slurp(files[i], "open failed");
+    if (part.len() > 0) {
+      chunks = chunks.append(part);
+      if (part[part.len() - 1] as i32 != term) {
+        chunks = chunks.append(term_string(term));
+      }
+    }
+    ends = ends.append(chunk_bytes(chunks));
+    i = i + 1;
+  }
+  var all: string = "";
+  if (chunks.len() == 1) {
+    all = chunks[0];
+  } else if (chunks.len() > 1) {
+    all = chunks.join("");
+  }
+  var lines: (i32[], i32[]) = split_lines(all, term);
+  var lo: i32[] = lines.0;
+  var hi: i32[] = lines.1;
+  var idx: i32[] = [];
+  if (a.merge) {
+    idx = merge_files(c, all, lo, hi, line_bounds(lo, ends));
+  } else {
+    i = 0;
+    while (i < lo.len()) {
+      idx = idx.append(i);
+      i = i + 1;
+    }
+    idx = sort_lines(c, all, lo, hi, idx);
+  }
+
+  var out: Out = out_open(a.outfile, !a.have_out);
+  var tstr: string = term_string(term);
+  var prev: i32 = 0 - 1;
+  i = 0;
+  while (i < idx.len()) {
+    var j: i32 = idx[i];
+    var keep: boolean = true;
+    if (a.unique && prev >= 0) {
+      keep = compare(c, all, lo[prev], hi[prev], lo[j], hi[j]) != 0;
+    }
+    if (keep) {
+      out = out_put(out, slice_unchecked(all, lo[j], hi[j]) + tstr);
+      prev = j;
+    }
+    i = i + 1;
+  }
+  out_finish(out);
+  return 0;
+}
+
+// Bytes held in the chunks read so far — where one operand's text
+// ends and the next begins.
+function chunk_bytes(chunks: string[]): i32 {
+  var n: i32 = 0;
+  var i: i32 = 0;
+  while (i < chunks.len()) {
+    n = n + chunks[i].len();
+    i = i + 1;
+  }
+  return n;
+}
+
+// The line index each operand's text ends at, from the byte offset it
+// ends at. Lines never straddle an operand: every operand's text is
+// terminated before the next is appended.
+function line_bounds(lo: i32[], ends: i32[]): i32[] {
+  var bounds: i32[] = [];
+  var line: i32 = 0;
+  var f: i32 = 0;
+  while (f < ends.len()) {
+    while (line < lo.len() && lo[line] < ends[f]) {
+      line = line + 1;
+    }
+    bounds = bounds.append(line);
+    f = f + 1;
+  }
+  return bounds;
+}
+
+function term_string(term: i32): string {
+  if (term == 0) {
+    return string_from_bytes_unchecked([0 as u8]);
+  }
+  return "\n";
+}

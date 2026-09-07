@@ -431,51 +431,6 @@ function parse_hex_float(s: string): Option[f64] {
 }
 
 // ---- the obsolete form -----------------------------------------------------
-// `posix2_version()` — gnulib's: `_POSIX2_VERSION` in the environment
-// when it is a whole strtol number, else 200809.
-function posix2_version(): i64 {
-  match (env("_POSIX2_VERSION")) {
-    Some(v) => {
-      match (strtol_all(v)) {
-        Some(n) => {
-          return n;
-        },
-        None => {}
-      }
-    },
-    None => {}
-  }
-  return 200809 as i64;
-}
-
-// strtol over the whole string: leading blanks, a sign, digits and
-// nothing after them; more than eighteen digits is out of range.
-function strtol_all(s: string): Option[i64] {
-  var i: i32 = 0;
-  while (i < s.len() && gnu.is_blank(s[i] as i32)) {
-    i = i + 1;
-  }
-  var neg: boolean = false;
-  if (i < s.len() && (s[i] as i32 == 43 || s[i] as i32 == 45)) {
-    neg = s[i] as i32 == 45;
-    i = i + 1;
-  }
-  var v: i64 = 0 as i64;
-  var digits: i32 = 0;
-  while (i < s.len() && gnu.is_digit(s[i] as i32)) {
-    v = v * (10 as i64) + (s[i] as i32 - 48) as i64;
-    i = i + 1;
-    digits = digits + 1;
-  }
-  if (digits == 0 || digits > 18 || i != s.len()) {
-    return None;
-  }
-  if (neg) {
-    return Some(0 as i64 - v);
-  }
-  return Some(v);
-}
-
 // `obsolete(argv, s)` — GNU's parse_obsolete_option: whether argv[1]
 // is the `[+-]NUM[bcl][f]` form in this argv shape and environment,
 // and the settings it selects when it is.
@@ -492,7 +447,7 @@ function obsolete(argv: string[], s: Settings): (boolean, Settings) {
   if (!shape) {
     return (false, s);
   }
-  var posix: i64 = posix2_version();
+  var posix: i64 = gnu.posix2_version();
   var obsolete_usage: boolean = posix < 200112 as i64;
   var traditional: boolean = obsolete_usage || posix >= 200809 as i64;
   var p: string = argv[1];
