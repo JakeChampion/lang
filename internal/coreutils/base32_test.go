@@ -80,6 +80,8 @@ func base32Cases(t *testing.T) []invocation {
 		// Operands and option faults, the two that differ from base64's
 		// only by the utility's name in the message.
 		{name: "dash is stdin", args: []string{"-"}, stdin: "hi"},
+		{name: "terminator", args: []string{"--", f.hello}},
+		{name: "terminator makes a dash an operand", args: []string{"--", "-"}, stdin: "hi"},
 		{name: "file operand", args: []string{f.hello}},
 		{name: "two operands", args: []string{f.hello, "extra"}},
 		{name: "missing file", args: []string{f.nosuch}},
