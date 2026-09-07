@@ -305,10 +305,14 @@ pub function rt_src_map_find(): string {
 // deliberately overwriting the length word (see op_tuple_make). __raw_arr_box
 // gives it the refcount header the old bare __fern_alloc(16) left off.
 //
-// The search is __fern_map_find's; what is left here is the compaction that
-// closes the hole in both columns.
+// The search is __fern_map_find's; what is left here is the removal, which
+// moves the LAST entry into the hole in both columns. That is core/map's
+// delete, which native lowers `.without` to, and the orders have to agree:
+// a map iterates in insertion order, so a shift-down here and a swap-with-last
+// there made the same program print its keys differently on the two compilers
+// (#8839).
 pub function rt_src_map_delete(): string {
-    return "function __fern_map_delete(mapbox: i32, key: i32, keykind: i32, eqfn: i32): i32 { var keys: i32 = __raw_load_ptr(mapbox, 0); var found: i32 = __fern_map_find(keys, key, keykind, eqfn); var existed: i32 = 0; if (found >= 0) { var ks: i32 = __raw_load_ptr(mapbox, 0); var m: i32 = __raw_load_ptr(ks, 0); var j: i32 = found; while (j < m - 1) { __raw_store_ptr(ks, j + 1, __raw_load_ptr(ks, j + 2)); j = j + 1; } __raw_store_ptr(ks, 0, m - 1); var vs: i32 = __raw_load_ptr(mapbox, 1); var j2: i32 = found; while (j2 < m - 1) { __raw_store_ptr(vs, j2 + 1, __raw_load_ptr(vs, j2 + 2)); j2 = j2 + 1; } __raw_store_ptr(vs, 0, m - 1); existed = 1; } var r: i32 = __raw_arr_box(2); __raw_store_ptr(r, 0, mapbox); __raw_store_ptr(r, 1, existed); return r; }";
+    return "function __fern_map_delete(mapbox: i32, key: i32, keykind: i32, eqfn: i32): i32 { var keys: i32 = __raw_load_ptr(mapbox, 0); var found: i32 = __fern_map_find(keys, key, keykind, eqfn); var existed: i32 = 0; if (found >= 0) { var ks: i32 = __raw_load_ptr(mapbox, 0); var m: i32 = __raw_load_ptr(ks, 0); __raw_store_ptr(ks, found + 1, __raw_load_ptr(ks, m)); __raw_store_ptr(ks, 0, m - 1); var vs: i32 = __raw_load_ptr(mapbox, 1); __raw_store_ptr(vs, found + 1, __raw_load_ptr(vs, m)); __raw_store_ptr(vs, 0, m - 1); existed = 1; } var r: i32 = __raw_arr_box(2); __raw_store_ptr(r, 0, mapbox); __raw_store_ptr(r, 1, existed); return r; }";
 }
 
 pub function (s: EmitState) mark_str_eq(): EmitState {
