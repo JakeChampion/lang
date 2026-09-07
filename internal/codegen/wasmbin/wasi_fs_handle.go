@@ -45,14 +45,14 @@ func putLocalsI32I64(n32, n64 uint32) []byte {
 // path, wrap it in Err, return the box" — the error path every handle
 // method shares, since a read, a write, an fstat or an lseek carries no
 // path to name.
-func emitHandleResultErr(body []byte, buildIoErr, allocBox, errnoLocal, errPtrLocal, boxLocal uint32) []byte {
+func emitHandleResultErr(body []byte, buildIoErr, allocRc1, errnoLocal, errPtrLocal, boxLocal uint32) []byte {
 	body = inst.InstLocalGet(body, errnoLocal)
 	body = inst.InstI32Const(body, 0)
 	body = inst.InstI32Const(body, 0)
 	body = inst.InstCall(body, buildIoErr)
 	body = inst.InstLocalSet(body, errPtrLocal)
 	body = inst.InstI32Const(body, 8)
-	body = inst.InstCall(body, allocBox)
+	body = inst.InstCall(body, allocRc1)
 	body = inst.InstLocalTee(body, boxLocal)
 	body = inst.InstI32Const(body, 1) // tag = Err
 	body = memory.InstI32Store(body, 2, 0)
@@ -68,9 +68,9 @@ func emitHandleResultErr(body []byte, buildIoErr, allocBox, errnoLocal, errPtrLo
 // emitHandleResultOkI64 appends "wrap the i64 in `valLocal` in Ok and
 // leave the box on the stack": a 16-byte box, tag at 0, the payload at 8
 // — where `payloadLayout` puts an 8-byte payload behind a 4-byte tag.
-func emitHandleResultOkI64(body []byte, allocBox, valLocal, boxLocal uint32) []byte {
+func emitHandleResultOkI64(body []byte, allocRc1, valLocal, boxLocal uint32) []byte {
 	body = inst.InstI32Const(body, 16)
-	body = inst.InstCall(body, allocBox)
+	body = inst.InstCall(body, allocRc1)
 	body = inst.InstLocalTee(body, boxLocal)
 	body = inst.InstI32Const(body, 0) // tag = Ok
 	body = memory.InstI32Store(body, 2, 0)
@@ -91,7 +91,7 @@ func emitHandleResultOkI64(body []byte, allocBox, valLocal, boxLocal uint32) []b
 //	5: $errno  6: $stat_buf  7: $filetype  8: $fs  9: $box
 func buildFdStatBody(idxs map[string]uint32) []byte {
 	alloc := idxs["__fern_alloc"]
-	allocBox := idxs["__fern_alloc_box"]
+	allocRc1 := idxs["__fern_alloc_rc1"]
 	buildIoErr := idxs["__build_io_error"]
 	filestatGet := idxs["wasi_fd_filestat_get"]
 
@@ -110,7 +110,7 @@ func buildFdStatBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 5)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	{
-		body = emitHandleResultErr(body, buildIoErr, allocBox, 5, 7, 9)
+		body = emitHandleResultErr(body, buildIoErr, allocRc1, 5, 7, 9)
 	}
 	body = inst.InstEnd(body)
 
@@ -118,7 +118,7 @@ func buildFdStatBody(idxs map[string]uint32) []byte {
 	body = memory.InstI32Load8U(body, 0, filestatFiletypeOff)
 	body = inst.InstLocalSet(body, 7)
 	body = projectFilestatP1(body, alloc, 6, 7, 8)
-	body = emitResultOkPtr(body, allocBox, 8, 9)
+	body = emitResultOkPtr(body, allocRc1, 8, 9)
 
 	locals := inst.PutLocalsOneGroup(nil, 9, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
@@ -134,7 +134,7 @@ func buildFdStatBody(idxs map[string]uint32) []byte {
 //	2: $rb  6: $errno  7: $type  8: $fs  9: $box  10: $desc
 func buildFdStatBodyP2(idxs map[string]uint32) []byte {
 	alloc := idxs["__fern_alloc"]
-	allocBox := idxs["__fern_alloc_box"]
+	allocRc1 := idxs["__fern_alloc_rc1"]
 	buildIoErr := idxs["__build_io_error"]
 	descStat := idxs["wasi_descriptor_stat_p2"]
 
@@ -148,7 +148,7 @@ func buildFdStatBodyP2(idxs map[string]uint32) []byte {
 	{
 		body = inst.InstI32Const(body, errnoNoTsup)
 		body = inst.InstLocalSet(body, 6)
-		body = emitHandleResultErr(body, buildIoErr, allocBox, 6, 7, 9)
+		body = emitHandleResultErr(body, buildIoErr, allocRc1, 6, 7, 9)
 	}
 	body = inst.InstEnd(body)
 
@@ -164,7 +164,7 @@ func buildFdStatBodyP2(idxs map[string]uint32) []byte {
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	{
 		body = appendErrnoFromErrorCodeAt(body, idxs, 2, 6, statAtTypeOff)
-		body = emitHandleResultErr(body, buildIoErr, allocBox, 6, 7, 9)
+		body = emitHandleResultErr(body, buildIoErr, allocRc1, 6, 7, 9)
 	}
 	body = inst.InstEnd(body)
 
@@ -172,7 +172,7 @@ func buildFdStatBodyP2(idxs map[string]uint32) []byte {
 	body = memory.InstI32Load8U(body, 0, statAtTypeOff)
 	body = inst.InstLocalSet(body, 7)
 	body = projectDescriptorStatP2(body, alloc, 2, 7, 8)
-	body = emitResultOkPtr(body, allocBox, 8, 9)
+	body = emitResultOkPtr(body, allocRc1, 8, 9)
 
 	locals := inst.PutLocalsOneGroup(nil, 10, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
@@ -189,7 +189,7 @@ func buildFdStatBodyP2(idxs map[string]uint32) []byte {
 //	3: $errno  4: $rb  5: $errptr  6: $box
 func buildReaderSeekBody(idxs map[string]uint32) []byte {
 	alloc := idxs["__fern_alloc"]
-	allocBox := idxs["__fern_alloc_box"]
+	allocRc1 := idxs["__fern_alloc_rc1"]
 	buildIoErr := idxs["__build_io_error"]
 	fdSeek := idxs["wasi_fd_seek"]
 
@@ -210,7 +210,7 @@ func buildReaderSeekBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 3)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	{
-		body = emitHandleResultErr(body, buildIoErr, allocBox, 3, 5, 6)
+		body = emitHandleResultErr(body, buildIoErr, allocRc1, 3, 5, 6)
 	}
 	body = inst.InstEnd(body)
 
@@ -218,7 +218,7 @@ func buildReaderSeekBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 4)
 	body = memory.InstI64Load(body, 3, 0)
 	body = inst.InstLocalSet(body, 1)
-	body = emitHandleResultOkI64(body, allocBox, 1, 6)
+	body = emitHandleResultOkI64(body, allocRc1, 1, 6)
 
 	locals := inst.PutLocalsOneGroup(nil, 4, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
@@ -237,7 +237,7 @@ func buildReaderSeekBody(idxs map[string]uint32) []byte {
 //	i64 — 9: $target
 func buildReaderSeekBodyP2(idxs map[string]uint32) []byte {
 	alloc := idxs["__fern_alloc"]
-	allocBox := idxs["__fern_alloc_box"]
+	allocRc1 := idxs["__fern_alloc_rc1"]
 	buildIoErr := idxs["__build_io_error"]
 	descStat := idxs["wasi_descriptor_stat_p2"]
 	readVia := idxs["wasi_descriptor_read_via_stream_p2"]
@@ -253,7 +253,7 @@ func buildReaderSeekBodyP2(idxs map[string]uint32) []byte {
 	{
 		body = inst.InstI32Const(body, errnoSpipe)
 		body = inst.InstLocalSet(body, 3)
-		body = emitHandleResultErr(body, buildIoErr, allocBox, 3, 5, 6)
+		body = emitHandleResultErr(body, buildIoErr, allocRc1, 3, 5, 6)
 	}
 	body = inst.InstEnd(body)
 
@@ -290,7 +290,7 @@ func buildReaderSeekBodyP2(idxs map[string]uint32) []byte {
 		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 		{
 			body = appendErrnoFromErrorCodeAt(body, idxs, 4, 3, statAtTypeOff)
-			body = emitHandleResultErr(body, buildIoErr, allocBox, 3, 5, 6)
+			body = emitHandleResultErr(body, buildIoErr, allocRc1, 3, 5, 6)
 		}
 		body = inst.InstEnd(body)
 		body = inst.InstLocalGet(body, 9)
@@ -308,7 +308,7 @@ func buildReaderSeekBodyP2(idxs map[string]uint32) []byte {
 	{
 		body = inst.InstI32Const(body, errnoInval)
 		body = inst.InstLocalSet(body, 3)
-		body = emitHandleResultErr(body, buildIoErr, allocBox, 3, 5, 6)
+		body = emitHandleResultErr(body, buildIoErr, allocRc1, 3, 5, 6)
 	}
 	body = inst.InstEnd(body)
 
@@ -326,7 +326,7 @@ func buildReaderSeekBodyP2(idxs map[string]uint32) []byte {
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	{
 		body = appendErrnoFromErrorCode(body, idxs, 4, 3)
-		body = emitHandleResultErr(body, buildIoErr, allocBox, 3, 5, 6)
+		body = emitHandleResultErr(body, buildIoErr, allocRc1, 3, 5, 6)
 	}
 	body = inst.InstEnd(body)
 	body = inst.InstLocalGet(body, 4)
@@ -342,7 +342,7 @@ func buildReaderSeekBodyP2(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 9)
 	body = memory.InstI64Store(body, 3, readerPosOff)
 
-	body = emitHandleResultOkI64(body, allocBox, 9, 6)
+	body = emitHandleResultOkI64(body, allocRc1, 9, 6)
 
 	return inst.PutFunctionBody(nil, putLocalsI32I64(6, 1), body)
 }

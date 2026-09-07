@@ -493,8 +493,9 @@ function arm_expr_value(body: ast.Stmt[], v: string, depth: i32): string {
 function print_expr_prec(e: ast.Expr, parent_prec: i32, depth: i32): string {
     match (e) {
         ast.ExprNumber(n) => {
-            // A quoted literal prints its spelling, escapes and all — the
-            // decoded value in `text` is not what the author wrote.
+            // A quoted literal or the unit `()` prints its spelling, escapes
+            // and all — the decoded value in `text` is not what the author
+            // wrote, and writing it back changes what the program means.
             if (n.raw.len() > 0) { return n.raw; }
             if (n.suffix.len() > 0) { return n.text + n.suffix; }
             return n.text;

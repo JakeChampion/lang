@@ -4510,13 +4510,15 @@ pub function is_scalar_array_type(t: string): boolean {
 // reclamation. u32[] / the sub-word array ride the i32[] 4-byte element read
 // unchanged (each element lives in a full 32-bit slot, pre-wrapped by the `as
 // u8` cast at the producing site); their narrowness only affects arithmetic ON
-// a read element, not the field round-trip. NOT here: u64[] (its 8-byte element
-// read needs the i64-width dispatch routed through the "u64[]" field tag — like
-// the u64 tuple element slice — a separate increment). NOT used for enum
-// payloads (those need the element-width mark, not a plain mark_arr).
+// a read element, not the field round-trip. char[] rides that same 4-byte read —
+// a char IS an i32 value in an i32 slot (its element-kind dispatch is #7763,
+// separate from the field round-trip). u64[] rides the i64-width element
+// dispatch through the "u64[]" field tag, like the u64 tuple element slice. NOT
+// used for enum payloads (those need the element-width mark, not a plain
+// mark_arr).
 pub function is_leaksafe_array_field(t: string): boolean {
     return is_scalar_array_type(t) || is_float_array_type_name(t) || t == "i64[]" || t == "u64[]" || t == "u32[]"
-        || is_subword_array_type(t);
+        || t == "char[]" || is_subword_array_type(t);
 }
 
 // is_float_array_type_name reports whether the declared type name `t` is a
@@ -5353,10 +5355,9 @@ function decl_is_leaksafe_at_d(structs: StructTab, decl_index: i32, depth: i32, 
         // A nominal-enum field (Color, Expr, …) is leak-only on the IR
         // path — the exit sweep never frees an enum box — so it leaks
         // with the struct like a string / Option / tuple field: no RC, no
-        // aliasing bail. is_enum_like_name can over-match a bare nominal
-        // that is not really an enum, but the only consequence is an AST
-        // fallback at the construction / match site (never a miscompile),
-        // and the stage-2 fixpoint guards byte-stability.
+        // aliasing bail. is_enum_like_name can still over-match a bare type
+        // VARIABLE, but the only consequence is the construction / match site
+        // bailing on an absent symbol (never a miscompile).
         if (is_enum_like_name(t, structs)) {
             fi = fi + 1;
             continue;
@@ -5395,19 +5396,35 @@ function decl_is_leaksafe_at_d(structs: StructTab, decl_index: i32, depth: i32, 
     return true;
 }
 
+// is_prim_type_name reports whether `t` is a PRIMITIVE type spelling — one that
+// can never name a struct or an enum. The same set checker.e060_is_primitive_name
+// gates `as?` on, plus `str` (the borrowed-string view: the parser erases a BARE
+// `str` to "string", but the spelling survives verbatim inside a generic
+// argument) and `void`. asmcore.is_enum_recv asks the same question of the Ty
+// decoding (is_int_tag); this is the spelling-level form irlower works in.
+function is_prim_type_name(t: string): boolean {
+    return t == "i32" || t == "i64" || t == "u8" || t == "u32" || t == "u64" || t == "usize"
+        || t == "f32" || t == "f64" || t == "float"
+        || t == "boolean" || t == "bool"
+        || t == "string" || t == "str" || t == "char" || t == "void";
+}
+
 // is_enum_like_name reports whether type name `t` denotes a (nominal) enum:
 // not a primitive, struct, array, or bracketed/tuple generic. Mirrors the AST
 // emitter's is_enum_recv heuristic (asmcore.is_enum_recv) — a bare nominal that
 // isn't anything else is an enum. Used to carry an enum-typed local / param /
 // receiver's type name in local_struct_type, so `x.method()` on an enum value
-// dispatches to `<Enum>.<method>` (the enum-receiver-method path). A name that
-// is really a scalar type alias would be mis-marked, but the only consequence
-// is a method-dispatch label that calls_only_known finds absent → the module
-// bails; never a miscompile.
+// dispatches to `<Enum>.<method>` (the enum-receiver-method path).
+//
+// It stays SYNTACTIC rather than asking decl_is_enum: at the leak-safety and
+// param/receiver gates the enum's variant decls are frequently not in the
+// `structs` handed down, so decl_is_enum answers false for a genuine enum
+// (ast.Expr, checker.Type, lexer.Token …) and the gate would bail every module
+// that names one. A bare type VARIABLE (`T`) still over-matches; the sites that
+// care exclude it themselves (enum_ret_recordable).
 pub function is_enum_like_name(t: string, structs: StructTab): boolean {
     if (t.len() == 0) { return false; }
-    if (t == "i32" || t == "boolean" || t == "bool" || t == "string"
-        || t == "i64" || t == "f64" || t == "f32" || t == "float" || t == "void") { return false; }
+    if (is_prim_type_name(t)) { return false; }
     // "clo" is the compiler's closure-BOX tag spelling (a boxed fn-valued
     // tuple element / Option payload) — never a user enum name. Without this
     // exclusion an Option[clo] payload's match bind was claimed by the enum
@@ -5439,7 +5456,6 @@ pub function decl_is_prim_recv(structs: StructTab, name: string): boolean {
     if (name.len() == 0) { return false; }
     if (is_array_type_name(name)) { return false; }
     if (decl_is_struct(structs, name)) { return false; }
-    if (is_enum_like_name(name, structs)) { return false; }
     if (name == "i32" || name == "i64" || name == "u32" || name == "u64" || name == "usize"
         || name == "f64" || name == "f32" || name == "float"
         || name == "boolean" || name == "bool" || name == "string") { return true; }
@@ -5559,6 +5575,15 @@ pub function call_fn_field_ret(c: ast.ExprCall, s: LowerState): string {
 // coarsened to the flat "fn" tag wherever it is stored, so the result lives in a
 // sidecar (LocalInfo.fn_ret for a slot, StructFieldDecl.fn_ret for a field) and
 // no walk over the callee expression can recover it.
+//
+// Every scalar predicate consults it. Without one, `key(x)` at a `(T) => string`
+// / `=> f64` / `=> boolean` parameter answers false to all of them and takes
+// expr_scalar_type's "i32" last resort, so `key(x).m()` dispatches `i32.m`.
+// Whenever i32 also owns that verb the call SILENTLY lands on the integer
+// routine with the closure's real value as its receiver — the module is not
+// refused, because a symbol of that name resolved (#7187). The same failure
+// expr_scalar_type's u32 / u64 branches exist to prevent, one expression kind
+// further out.
 pub function call_fn_value_ret(c: ast.ExprCall, s: LowerState): string {
     match (c.callee) {
         ast.ExprIdent(cid) => {
@@ -5995,10 +6020,7 @@ function iife_lambda_composite_tuple_tags(lam: ast.ExprLambda, s: LowerState): s
 // "" — a struct literal's type, or a struct-tracked local/param slot.
 // struct_tag_from_ty admits a checker-stamped tag when it names a known struct
 // or nominal enum — the same guard every structural case of expr_struct_type
-// applies. The scalar tag vocabulary is rejected FIRST: is_enum_like_name's
-// exclusion list holds only the spellings declarations use, so a checker tag
-// like "u64" (which no declaration walk ever produced here) would read as
-// enum-like and type a cast/overload result as a struct (#5986).
+// applies.
 // is_dyn_value_name reports whether `t` is the coarse `dyn Trait` spelling of a
 // single boxed trait object — not an ARRAY of them, whose element is what a
 // consumer wants and which reads as a value here otherwise.
@@ -6418,6 +6440,11 @@ function expr_is_bool(e: ast.Expr, s: LowerState): boolean {
         // one expression kind over. A method is keyed by its receiver's base
         // type, so a name shared across receivers cannot answer for another.
         ast.ExprCall(bc) => {
+            // A call through a fn VALUE declared `=> boolean` (#7187): the
+            // registry keys by NAME and a closure parameter has none, so without
+            // this the result takes the "i32" default and `.to_string()` renders
+            // 1/0 through i32's impl.
+            if (call_fn_value_ret(bc, s) == "boolean") { return true; }
             // typed-IR (#5986): the checker's stamped result type answers where
             // the registry cannot key the callee (a closure-typed local, an IIFE).
             match (bc.callee) {
@@ -7359,6 +7386,16 @@ pub function expr_is_str(e: ast.Expr, s: LowerState): boolean {
                     _ => {}
                 }
             }
+            // A call THROUGH a fn VALUE — a local or PARAMETER holding a
+            // closure (`key(x)` where `key: (T) => string`), or a fn-typed
+            // struct field (`h.f(1)` where H.f: (i32) => string). Either way
+            // the value's type is coarsened to the flat "fn" tag with the
+            // result in a sidecar, so no walk over the callee can answer.
+            // Without it the result falls through expr_scalar_type's "i32" last
+            // resort and `key(x).m()` dispatches `i32.m` — which SILENTLY lands
+            // on the integer routine with a string box as its receiver whenever
+            // that verb also exists on i32 (#7187).
+            if (call_fn_value_ret(c, s) == "string") { return true; }
             // A call to a string-returning user function (str_ret_fns), or a
             // string-returning builtin.
             match (c.callee) {
@@ -7447,15 +7484,6 @@ pub function expr_is_str(e: ast.Expr, s: LowerState): boolean {
                     // dispatch cannot disagree about what a receiver is (#3317).
                     if (cfa.field == "get_or" && c.args.len() == 2
                             && map_value_of(get_or_recv_map_type(cfa.obj, s)) == "string") { return true; }
-                    // A call THROUGH a string-returning fn-typed struct FIELD
-                    // (`h.f(1)` where H.f: (i32) => string): the field's declared
-                    // type coarsens to "fn" but its fn_ret keeps the string
-                    // return, so the call result feeds `.len()` / concat as a
-                    // string. Without this the chained `h.f(1).len()` mis-
-                    // dispatched and read 0 even though the closure returned the
-                    // string correctly (#5306 gap 2 — an annotated rebind
-                    // `var r: string = h.f(1)` already worked).
-                    if (call_fn_field_ret(c, s) == "string") { return true; }
                     // `it.key()` / `it.value()` on a `MapIter[K, V]` receiver returns
                     // the key / value box; when that side is `string` the result
                     // feeds `.len()` / concat as a string. Without this `.len()`
@@ -9140,7 +9168,8 @@ pub function arr_index_is_i64(arr: ast.Expr, s: LowerState): boolean {
         // `p.vals[i]` where p's field `vals` is an i64[] struct field.
         ast.ExprFieldAccess(fa) => {
             if (util.is_all_digits(fa.field)) {
-                return tuple_elem_arr_tag(fa.obj, util.digits_to_i32(fa.field), s) == "i64[]";
+                var tet: string = tuple_elem_arr_tag(fa.obj, util.digits_to_i32(fa.field), s);
+                return tet == "i64[]" || tet == "u64[]";
             }
             var oty: string = expr_struct_type(fa.obj, s);
             if (oty == "") { return false; }
@@ -9230,7 +9259,8 @@ pub function expr_is_i64arr(e: ast.Expr, s: LowerState): boolean {
         // above). #3353.
         ast.ExprFieldAccess(fa) => {
             if (util.is_all_digits(fa.field)) {
-                return tuple_elem_arr_tag(fa.obj, util.digits_to_i32(fa.field), s) == "i64[]";
+                var tea: string = tuple_elem_arr_tag(fa.obj, util.digits_to_i32(fa.field), s);
+                return tea == "i64[]" || tea == "u64[]";
             }
             // A NAMED struct field declared i64[] / u64[]. Only the tuple case
             // above was handled, so `p.vals.append(v)` on an `i64[]` field
@@ -9437,6 +9467,11 @@ pub function expr_is_f64(e: ast.Expr, s: LowerState): boolean {
             // annotate, or the checker left this call's type unresolved) — falls
             // through to the structural walk, so behaviour is unchanged there.
             if (c.ty != "") { return c.ty == "f64"; }
+            // A call through a fn VALUE declared to return a float (#7187) — the
+            // f64 sibling of expr_is_str's arm. f32 is stored as an 8-byte f64,
+            // so it answers true here too (expr_is_f32 is the strict view).
+            var fvf: string = call_fn_value_ret(c, s);
+            if (fvf == "f64" || fvf == "f32" || fvf == "float") { return true; }
             // An f64-valued if/match-EXPRESSION (the 0-arg IIFE the desugar emits)
             // — classify by its first branch's returned value, so `var f = if (…)
             // { 1.5 } else { 2.5 }` tracks f as an f64.
@@ -9536,6 +9571,10 @@ pub function expr_is_f32(e: ast.Expr, s: LowerState): boolean {
         // is f32 exactly when that argument is — the f32 sibling of expr_is_f64's
         // argref arm, so `id(x as f32) + y` keeps the f32-twin dispatch.
         ast.ExprCall(c) => {
+            // A call through a fn VALUE declared `=> f32` (#7187): the strict
+            // f32 view of the arm expr_is_f64 carries, so the receiver keys
+            // "f32.<m>" rather than f64's precision.
+            if (call_fn_value_ret(c, s) == "f32") { return true; }
             match (c.callee) {
                 ast.ExprIdent(cid) => {
                     var gfi: i32 = str_ret_argref(s, cid.name);
@@ -9641,6 +9680,10 @@ pub function expr_is_u32(e: ast.Expr, s: LowerState): boolean {
             // retiring the is_u32_ret_fn re-derivation for annotated calls. ""
             // (unannotated) falls through to the structural walk.
             if (c.ty != "") { return c.ty == "u32"; }
+            // A call through a fn VALUE declared `=> u32` (#7187) — the u32
+            // sibling of expr_is_str's arm; without it the result is signed and
+            // a chained `>>` / `/` selects the arithmetic form.
+            if (call_fn_value_ret(c, s) == "u32") { return true; }
             // A u32-valued if/match-EXPRESSION (the 0-arg IIFE the desugar emits):
             // `(if (c) { big_u32 } else { 0 }) >> 1` selects the UNSIGNED shift.
             // Classify by its first branch's returned value — the u32 sibling of
@@ -9759,6 +9802,10 @@ pub function expr_is_u64(e: ast.Expr, s: LowerState): boolean {
             // retiring the is_u64_ret_fn re-derivation for annotated calls. ""
             // (unannotated) falls through to the structural walk.
             if (c.ty != "") { return c.ty == "u64"; }
+            // A call through a fn VALUE declared `=> u64` (#7187) — the u64
+            // sibling of the u32 arm. infer_expr_width already reads the same
+            // sidecar for the WIDTH; this recovers the unsigned-ness.
+            if (call_fn_value_ret(c, s) == "u64") { return true; }
             // A u64-valued if/match-EXPRESSION (the 0-arg IIFE the desugar emits)
             // is a u64 value, so `(if (c) { big_u64 } else { 0 }) >> 1` selects the
             // UNSIGNED shift — the u64 sibling of expr_is_f64's IIFE arm and of
@@ -11719,9 +11766,12 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
         return pe1.emit(ir.op_proc_exec());
     }
     // Built-in `write(s)` / `print(s)` — write a string's bytes to
-    // stdout. `print` appends a newline (Fern's print == println):
-    // it desugars to `print_str(s + "\n")` via the existing str_concat
-    // op, so a single print_str op + helper serves both.
+    // stdout. `print` appends a newline (Fern's print == println), and
+    // it does so with a SECOND print_str of a "\n" literal rather than a
+    // joined buffer: both payloads go straight out of a box the caller
+    // already holds, so the pair allocates nothing. Native's __fern_puts
+    // and the self-host's own eprint are the same two writes (#8410 — the
+    // joined temp was a fresh box per call that nothing released).
     //
     // `write` and `print` take any Display type and stringify through
     // display_arg; `print_str` is the internal string-only spelling and
@@ -11739,8 +11789,9 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
     if (cid.name == "print" && c.args.len() == 1) {
         var prs: LowerState = lower_expr(display_arg(c.args[0], c.line, c.col, s), s);
         if (!prs.ok) { return prs; }
+        prs = prs.emit(ir.op_print_str());
+        prs = prs.emit(ir.op_drop());
         prs = prs.emit(ir.op_const_str("\n"));
-        prs = prs.emit(ir.op_str_concat());
         return prs.emit(ir.op_print_str());
     }
     // Built-in `read_int()` — read a line from stdin, parse a leading
@@ -16892,6 +16943,57 @@ function resource_method_opt_ret_type(field: string, obj: ast.Expr, s: LowerStat
     }
     if (field == "write") { return s.opt_ret_type("Writer.write"); }
     return "";
+}
+
+// owned_payload_builtin_ptype: the SUCCESS payload type of a scrutinee that is
+// a direct call to a builtin whose success payload is a fresh, sole-owned value
+// built for this caller — native's rcOwnedPayloadBuiltins (rcresults.go), read
+// off the same runtime bodies here (asmcore.rt_src_reader_read_chunk /
+// rt_src_read_line / rt_src_read_file / rt_src_read_file_bytes / rt_src_env,
+// each of which boxes a block it just allocated). "" for anything else.
+//
+// This is the PAYLOAD's ownership and is independent of the box's: a match arm
+// bound the payload like any other enum payload — a borrow — so every chunk of a
+// `while` reader loop leaked (#8402). The binding is the payload's owner; see
+// lower_stmt_match for what that costs it. The BOX is
+// match_scrut_owns_fresh_result_box's, and its release is shallow, so the two
+// never touch the same block.
+//
+// A user-declared function of the same name is NOT the builtin: fn_names is the
+// gate lower_call applies before intercepting a bare-ident builtin, so the two
+// cannot disagree.
+function owned_payload_builtin_ptype(e: ast.Expr, s: LowerState): string {
+    match (e) {
+        ast.ExprCall(c) => {
+            match (c.callee) {
+                ast.ExprIdent(cid) => {
+                    if (sig_reg_has_name(s.frame.sigs.fn_names, cid.name)) { return ""; }
+                    if (cid.name == "read_line" && c.args.len() == 0) { return "string"; }
+                    if (cid.name == "env" && c.args.len() == 1) { return "string"; }
+                    if (cid.name == "read_file" && c.args.len() == 1) { return "string"; }
+                    if (cid.name == "read_file_bytes" && c.args.len() == 1) { return "u8[]"; }
+                    return "";
+                },
+                ast.ExprFieldAccess(fa) => {
+                    if (fa.field != "read_chunk" && fa.field != "read_line") { return ""; }
+                    if (resource_method_opt_ret_type(fa.field, fa.obj, s) == "") { return ""; }
+                    return "string";
+                },
+                _ => { return ""; }
+            }
+        },
+        _ => {}
+    }
+    return "";
+}
+
+// owned_payload_free_helper: the release symbol for an owned builtin payload —
+// the memory-layout choice the release choke points insist stays with the site.
+// A string box's block starts at value-8 (__fern_str_free); an array buffer's at
+// data-16 (__fern_rc_dec).
+function owned_payload_free_helper(ptype: string): string {
+    if (ptype == "string") { return "__fern_str_free"; }
+    return "__fern_rc_dec";
 }
 
 // builtin_arr_opt_ret_type returns the Option type of a built-in array method
@@ -22326,6 +22428,12 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
     // enum name in local_struct_type too, so `a.method()` dispatches to
     // `<Enum>.<method>` (enum-receiver methods).
     else if (struct_ty == "" && is_enum_like_name(v.type_name, se.frame.structs)) { struct_ty = v.type_name; }
+    // `var c: char = 97 as char` — not a struct or an enum, but std/unicode's
+    // methods are keyed by the spelling, so the slot carries "char" for dispatch
+    // the same way an enum local carries its enum name. Dispatch-only: a char is
+    // an i32 value in an i32 slot (expr_is_char says the same for the inline
+    // cast form, which never reaches a slot).
+    else if (struct_ty == "" && v.type_name == "char") { struct_ty = "char"; }
     // A struct- or enum-ARRAY annotation (`var ps: P[]` / `var cs: C[]`)
     // carries the ELEMENT type (the slot is is_arr, so it reads as the
     // element type for `ps[i]` / `for x in ps`, not the slot's own type).
@@ -22925,7 +23033,14 @@ function lower_stmt_var_destructure(v: ast.StmtVar, s: LowerState): LowerState {
         // (f64/i64) or the string read (string[]) — the read-side twin
         // of the f64[]/i64[]/string[] admission in tuple_elems_lowerable.
         else if (is_float_array_type_name(dtag)) { dt = dt.mark_arr(dkslot, true); dt = dt.mark_f64arr(dkslot, true); }
-        else if (dtag == "i64[]") { dt = dt.mark_arr(dkslot, true); dt = dt.mark_i64arr(dkslot, true); }
+        else if (dtag == "i64[]" || dtag == "u64[]") {
+            dt = dt.mark_arr(dkslot, true);
+            dt = dt.mark_i64arr(dkslot, true);
+            // u64[] rides the i64[] 8-byte storage/read path; the extra u64 mark
+            // drives UNSIGNED arithmetic on a read element (the same pair the
+            // annotated `var xs: u64[]` binding stamps).
+            if (dtag == "u64[]") { dt = dt.mark_u64(dkslot, true); }
+        }
         else if (dtag == "string[]") { dt = dt.mark_arr(dkslot, true); dt = dt.mark_strarr(dkslot, true); }
         // A struct-array (X[]) or enum-array (E[]) element binds the slot
         // as an array AND carries the element struct/enum name (strip the
@@ -24408,6 +24523,14 @@ function lower_stmt_match(m: ast.StmtMatch, s: LowerState): LowerState {
     // patterns, and non-scalar payloads bail.
     var ms: LowerState = lower_expr(m.scrutinee, s);
     if (!ms.ok) { return ms; }
+    // #8402: the scrutinee's owned payload, if this is a match over a builtin
+    // whose success payload is a fresh, sole-owned value nobody else releases
+    // (owned_payload_builtin_ptype). "" for every other scrutinee, which is every
+    // match that was here before.
+    var owned_pay: string = owned_payload_builtin_ptype(m.scrutinee, ms);
+    // #8410: the scrutinee's own BOX, when the call built it fresh for this
+    // caller and no other holder survives (match_scrut_owns_fresh_result_box).
+    var owns_box: boolean = match_scrut_owns_fresh_result_box(m, ms);
     var scrut: string = "$mscrut" + util.i32_to_string(ms.locals.len());
     ms = ms.add_local(scrut);
     var scrut_slot: i32 = ms.slot_of(scrut);
@@ -24463,6 +24586,26 @@ function lower_stmt_match(m: ast.StmtMatch, s: LowerState): LowerState {
                         continue;
                     }
                     var hb: boolean = pv.binding.len() > 0 && pv.binding != "_";
+                    // #8402: the SUCCESS arm of a match over an owned-payload
+                    // builtin. The payload's unit is this frame's and nothing
+                    // else will ever release it — the box's own release below is
+                    // shallow and never reaches it. A
+                    // guard, an alternation continuation or a sub-pattern keeps
+                    // today's leak rather than guessing which arm reads the
+                    // payload (native's ownedPayloadMatches makes the same three
+                    // exclusions).
+                    var vbare: string = variant_pattern_bare_name(pv.type_name);
+                    var owned_arm: boolean = owned_pay.len() > 0 && !arm.has_guard && !arm.alt_cont
+                        && pv.nested.len() == 0 && !pv.has_lit_cond && pv.extra_bindings.len() == 0
+                        && (vbare == "Ok" || vbare == "Some");
+                    // …and the binding owns it only while the arm keeps it: an
+                    // escaping binding (returned, stored, aliased, or passed at a
+                    // position the callee retains) leaves ownership with the
+                    // destination, so releasing here would dangle. The frame's
+                    // real borrowability registry is what admits `w.write(chunk)`
+                    // — a copying builtin — as the borrow it is.
+                    var owned_bound: boolean = owned_arm && hb
+                        && !binding_escapes_arm(arm, pv.binding, ms.frame.sigs.borrowable_params);
                     // A payload binding needs the payload's type. Only a
                     // direct-call scrutinee `f()` whose ret_type is recorded
                     // (opt_ret_fns) lets us recover it: T for Some/Ok, E for
@@ -24686,7 +24829,7 @@ function lower_stmt_match(m: ast.StmtMatch, s: LowerState): LowerState {
                         // (clone) / `xs.len()` resolve. The 8-byte-element and
                         // string/struct/enum-element arrays all ride one slot.
                         var ptag_is_array: boolean = ptag == "i32[]" || ptag == "boolean[]" || ptag == "u32[]" || is_subword_array_type(ptag)
-                            || is_float_array_type_name(ptag) || ptag == "i64[]" || ptag == "string[]"
+                            || is_float_array_type_name(ptag) || ptag == "i64[]" || ptag == "u64[]" || ptag == "string[]"
                             || is_struct_array_field_type(ms.frame.structs, ptag) || is_enum_array_field_type(ms.frame.structs, ptag);
                         // A NESTED-array payload (`Ok(seeds)` where the payload
                         // is a `T[][]` — the fuzz-corpus shape). The outer
@@ -24733,8 +24876,23 @@ function lower_stmt_match(m: ast.StmtMatch, s: LowerState): LowerState {
                         // so it also matches `Map[K, V][]` — the array branch owns
                         // that spelling.
                         var ptag_is_map: boolean = is_map_type_name(ptag) && !is_array_type_name(ptag);
-                        if (ptag != "i32" && ptag != "boolean" && ptag != "string" && ptag != "i64" && !elem_ty_is_f64slot(ptag) && !ptag_is_struct && !ptag_is_enum && !ptag_is_opt && !ptag_is_tuple && !ptag_is_array && !ptag_is_arrarr && !ptag_is_dyn && !ptag_is_fn && !ptag_is_void && !ptag_is_map) { return s.fail(); }
+                        // The by-value payload spellings whose bind is written
+                        // below: the i32 slot (i32 / boolean / u32 / char), the
+                        // 8-byte slot (i64 / u64 / the f64 widths) and the string
+                        // views (string / str). u32, u64, `char` and `str` are
+                        // named here rather than reaching the arm through
+                        // ptag_is_enum, which used to accept every unsigned
+                        // spelling as a bare nominal enum (#8428).
+                        var ptag_is_scalar: boolean = ptag == "i32" || ptag == "boolean" || ptag == "u32" || ptag == "char"
+                            || ptag == "i64" || ptag == "u64" || elem_ty_is_f64slot(ptag)
+                            || ptag == "string" || ptag == "str";
+                        if (!ptag_is_scalar && !ptag_is_struct && !ptag_is_enum && !ptag_is_opt && !ptag_is_tuple && !ptag_is_array && !ptag_is_arrarr && !ptag_is_dyn && !ptag_is_fn && !ptag_is_void && !ptag_is_map) { return s.fail(); }
                     }
+                    // The binding really is at the builtin's owned payload
+                    // position: its recovered type is the one the runtime built
+                    // fresh. A `Result[string, IoError]`'s Err(e) binds the
+                    // IMMORTAL error box and never reaches here.
+                    var owned_here: boolean = owned_bound && ptag == owned_pay;
                     var want: i32 = 0;
                     if (pv.type_name == "None" || pv.type_name == "Err") { want = 1; }
                     ms = ms.emit(ir.op_block(0));   // arm block: br 0 = skip arm
@@ -24763,8 +24921,17 @@ function lower_stmt_match(m: ast.StmtMatch, s: LowerState): LowerState {
                         if (ptag == "i64" || ptag == "u64") { ms = ms.emit(ir.op_opt_payload_w(64, true)); }
                         else if (elem_ty_is_f64slot(ptag)) { ms = ms.emit(ir.op_opt_payload_w(64, false)); }
                         else { ms = ms.emit(ir.op_opt_payload()); }
-                        ms = ms.emit(ir.op_store_local(pbslot));
-                        if (ptag == "string") { ms = ms.mark_str(pbslot, true); }
+                        // #8402: an owned payload is stored through the reclaim
+                        // store, which releases what the slot held from the
+                        // PREVIOUS iteration before overwriting it — a reader
+                        // loop otherwise strands every chunk but the last. The
+                        // first pass sees the prologue's zero, which both helpers
+                        // null-guard. Every other payload takes the bare store it
+                        // always did.
+                        if (owned_here && ptag == "string") { ms = emit_str_reclaim_store(ms, pbslot, false); }
+                        else if (owned_here) { ms = emit_arr_store(ms, pbslot, false, true); }
+                        else { ms = ms.emit(ir.op_store_local(pbslot)); }
+                        if (ptag == "string" || ptag == "str") { ms = ms.mark_str(pbslot, true); }
                         else if (ptag == "i64") { ms = ms.mark_i64(pbslot, true); }
                         // A u64 payload rode the 8-byte op_opt_payload_w(64)
                         // load above; mark the slot u64 (its own 8-byte domain,
@@ -24787,6 +24954,12 @@ function lower_stmt_match(m: ast.StmtMatch, s: LowerState): LowerState {
                         // the binding site). Sub-word payloads are not
                         // leak-safe payloads (see is_leaksafe_payload).
                         else if (ptag == "u32") { ms = ms.mark_u32(pbslot, true); }
+                        // A `char` payload (std/utf8's Option[char]) is an i32
+                        // value in an i32 slot, so the default load above already
+                        // bound it; the slot carries the spelling only so
+                        // `c.to_upper()` keys "char.<m>" — dispatch-only, exactly
+                        // like expr_is_char at an inline cast.
+                        else if (ptag == "char") { ms = ms.mark_struct_type(pbslot, ptag); }
                         // A fn-typed payload (`Some(f)` / `Ok(g)` where T is
                         // `() => i32` / `(i32) => i32`, slice #3445 match-fn):
                         // the payload read above is the env box the constructor
@@ -24826,7 +24999,11 @@ function lower_stmt_match(m: ast.StmtMatch, s: LowerState): LowerState {
                             if (ptag == "u32[]") { ms = ms.mark_u32(pbslot, true); }
                         }
                         else if (is_float_array_type_name(ptag)) { ms = ms.mark_arr(pbslot, true); ms = ms.mark_f64arr(pbslot, true); if (ptag == "f32[]") { ms = ms.mark_f32arr(pbslot, true); } }
-                        else if (ptag == "i64[]") { ms = ms.mark_arr(pbslot, true); ms = ms.mark_i64arr(pbslot, true); }
+                        else if (ptag == "i64[]" || ptag == "u64[]") {
+                            ms = ms.mark_arr(pbslot, true);
+                            ms = ms.mark_i64arr(pbslot, true);
+                            if (ptag == "u64[]") { ms = ms.mark_u64(pbslot, true); }
+                        }
                         else if (ptag == "string[]") { ms = ms.mark_arr(pbslot, true); ms = ms.mark_strarr(pbslot, true); }
                         else if (is_struct_array_field_type(ms.frame.structs, ptag) || is_enum_array_field_type(ms.frame.structs, ptag)) {
                             ms = ms.mark_arr(pbslot, true);
@@ -24857,7 +25034,39 @@ function lower_stmt_match(m: ast.StmtMatch, s: LowerState): LowerState {
                         // own buffer once per entry — the box is never swept, so
                         // nothing ever balanced that. Same defect as the user-enum
                         // arm binding, same opt-out (#6049; LocalInfo.borrowed_arr).
-                        if (ms.is_arr_slot(pbslot)) { ms = ms.mark_borrowed_arr(pbslot, true); }
+                        // An OWNED array payload is the exception the opt-out
+                        // exists to exclude: nothing else holds it, so it takes
+                        // the ordinary is_arr sweep (#8402).
+                        if (ms.is_arr_slot(pbslot) && !owned_here) { ms = ms.mark_borrowed_arr(pbslot, true); }
+                        // An owned STRING payload joins the "STR:" reclaim class
+                        // the fresh-producer bindings hold: the exit sweep frees
+                        // the LAST payload the loop bound, the reclaim store above
+                        // freed every earlier one, and str_own records the class on
+                        // the slot. Keyed on the ARM's site, so two arms binding one
+                        // spelling resolve their own credit.
+                        if (owned_here && ptag == "string") {
+                            var opkey: string = reclaim_site_key_of(pv.binding, arm.line, arm.col);
+                            ms = ms.mark_reclaim_site(pbslot, opkey);
+                            ms = LowerState { ...ms, frame: LowerFrame { ...ms.frame, reclaimable_names: ms.frame.reclaimable_names.append("STR:" + opkey) } };
+                            ms = ms.mark_str_own(pbslot, 0);
+                        }
+                    } else if (owned_arm) {
+                        // `Ok(_)` / `Some(_)` at an owned payload position: there
+                        // is no binding to own the payload, so release it here.
+                        ms = ms.emit(ir.op_load_local(scrut_slot));
+                        ms = ms.emit(ir.op_opt_payload());
+                        ms = ms.emit(ir.op_call_direct(owned_payload_free_helper(owned_pay), 1));
+                        ms = ms.emit(ir.op_drop());
+                    }
+                    // #8410: this arm has its bindings, so the box they were
+                    // read out of is dead. Release it HERE rather than only at
+                    // the join, so an arm that `return`s gives it back too. A
+                    // guarded arm can still fall through to the next one and an
+                    // alternation continuation shares its predecessor's block,
+                    // so both wait for the join. The slot is zeroed, which makes
+                    // the join's release a null-safe no-op.
+                    if (owns_box && !arm.has_guard && !arm.alt_cont) {
+                        ms = emit_scalar_enum_box_free(ms, scrut_slot);
                     }
                     if (arm.has_guard) {
                         ms = lower_expr(arm.guard, ms);
@@ -25139,18 +25348,68 @@ function lower_stmt_match(m: ast.StmtMatch, s: LowerState): LowerState {
         }
     }
     ms = ms.emit(ir.op_end());   // end outer block
-    if (match_scrut_is_map_get(m, ms)) { ms = emit_scalar_enum_box_free(ms, scrut_slot); }
+    if (match_scrut_is_map_get(m, ms) || owns_box) { ms = emit_scalar_enum_box_free(ms, scrut_slot); }
     return ms;
     return s.fail();
 }
 
-function match_scrut_is_map_get(m: ast.StmtMatch, s: LowerState): boolean {
-    for arm in m.arms {
-        match (arm.pattern) {
-            ast.PatVariant(pv) => { if (pv.at_binding.len() > 0) { return false; } },
-            _ => {}
+// match_scrut_owns_fresh_result_box: the scrutinee is a call to a built-in I/O
+// producer, whose Option / Result box the generated helper built fresh for this
+// caller (`Ok(..)` / `Err(..)` / `Some(..)` / `None` in the helper's own Fern
+// body, so an ordinary rc=1 box) and handed over whole — nobody else holds it,
+// so the frame that consumed the match gives it back. Nothing did, and every
+// call leaked its 40-byte answer: the self-host half of #8405 (#8410, #8811).
+//
+// The two admitted spellings are the two lower_call / lower_call_method
+// intercept: a RESOURCE METHOD (`r.read_chunk(n)`, `r.read_line()`, `r.close()`,
+// `w.write(s)`, `.stat()` / `.seek()`) behind resource_method_opt_ret_type's own
+// receiver gate, and a bare-ident BUILTIN (`open_reader(p)`, `env(k)`,
+// `read_file(p)`, `read_dir(p)`, `access(p)`, …) whose Option / Result return
+// comes from opt_ret_type's builtin table. Both gates are the ones the CALL
+// itself is lowered behind, so this cannot claim a user `.write()` on a struct,
+// an enum, a string or an array, nor a user function shadowing a builtin name
+// (fn_names) — a user producer's box is the binding analyses' business
+// (hoist_call_scrutinees puts a direct call to one into a `var` first).
+//
+// The release is SHALLOW (emit_scalar_enum_box_free), which is the whole block
+// for a payload that is a scalar or absent — `None`, `Ok(fd)`, a successful
+// write or close. A payload that is itself a box keeps its own owner: an owned
+// success payload is the arm binding's (owned_payload_builtin_ptype, #8402), and
+// a fresh `IoError` on an error path keeps today's leak, since deep-dropping it
+// needs the variant walk plus a proof the arm binding does not outlive it — the
+// payload-kind gap #8806 covers. One block per FAILING call, against one per
+// call before.
+//
+// An `@` binding aliases the whole box into a name that outlives the arm, so it
+// declines, exactly as the map-get release does.
+function match_scrut_owns_fresh_result_box(m: ast.StmtMatch, s: LowerState): boolean {
+    if (match_binds_whole_scrutinee(m)) { return false; }
+    if let ast.ExprCall(c) = m.scrutinee {
+        if let ast.ExprFieldAccess(fa) = c.callee {
+            return resource_method_opt_ret_type(fa.field, fa.obj, s) != "";
+        }
+        if let ast.ExprIdent(id) = c.callee {
+            if (sig_reg_has_name(s.frame.sigs.fn_names, id.name)) { return false; }
+            return builtin_opt_ret_type(id.name) != "";
         }
     }
+    return false;
+}
+
+// match_binds_whole_scrutinee: some arm's `n @ Variant(...)` aliases the whole
+// matched value into a name that outlives the arm, so the box is not this
+// statement's to release. The precondition both post-match box releases share.
+function match_binds_whole_scrutinee(m: ast.StmtMatch): boolean {
+    for arm in m.arms {
+        if let ast.PatVariant(pv) = arm.pattern {
+            if (pv.at_binding.len() > 0) { return true; }
+        }
+    }
+    return false;
+}
+
+function match_scrut_is_map_get(m: ast.StmtMatch, s: LowerState): boolean {
+    if (match_binds_whole_scrutinee(m)) { return false; }
     match (m.scrutinee) {
         ast.ExprCall(c) => {
             if (c.args.len() == 1) {
@@ -30183,7 +30442,7 @@ struct PreciseDrops { idxs: i32[], names: string[], kinds: string[] }
 // is its LAST top-level statement reference; releasing after that whole
 // statement completes is sound even when the last reference sits inside a
 // nested block.
-function precise_drop_names(body: ast.Stmt[], reassigned: string[], structs: StructTab, arr_ret: SigReg, strarr_ret: SigReg, borrowable: string[], opt_fresh_reg: SigReg, str_fresh: string[], msites: string[]): PreciseDrops {
+function precise_drop_names(body: ast.Stmt[], reassigned: string[], structs: StructTab, arr_ret: SigReg, strarr_ret: SigReg, borrowable: string[], opt_fresh_reg: SigReg, fn_names: SigReg, str_fresh: string[], msites: string[]): PreciseDrops {
     var idxs: i32[] = [];
     var names: string[] = [];
     var kinds: string[] = [];
@@ -30288,6 +30547,16 @@ function precise_drop_names(body: ast.Stmt[], reassigned: string[], structs: Str
                         }
                     }
                 }
+                // A fresh Option/Result whose payload NEITHER of the two above will
+                // release (a struct, a Reader/Writer, an IoError, a FileStat — see
+                // fresh_optbox_only_init). The box is freed shallow; the payload
+                // keeps today's leak, so this can only ever improve on the nothing
+                // that was released before (#8806). Same no-top-level-match
+                // disjointness rule as its siblings.
+                var is_optbox: boolean = false;
+                if (!is_lit && !is_opt && !is_rcopt && fresh_optbox_only_init(v, opt_fresh_reg, fn_names, structs)) {
+                    is_optbox = !body_has_top_level_match(body, v.name);
+                }
                 // A fresh SCALAR user-enum (`var x = Circle(7)` of an all-scalar-variant
                 // enum). Because the top-level-match case belongs to
                 // consumed_scalar_enum_frees, which also feeds the donor/reuse paths, a
@@ -30296,7 +30565,7 @@ function precise_drop_names(body: ast.Stmt[], reassigned: string[], structs: Str
                 // kind IS the witness, so the slot needs no struct_type: an unannotated
                 // `var x = Circle(7)` is reclaimed too.
                 var is_enum: boolean = false;
-                if (!is_lit && !is_opt && !is_rcopt && fresh_scalar_enum_init(v.init, structs) != "") {
+                if (!is_lit && !is_opt && !is_rcopt && !is_optbox && fresh_scalar_enum_init(v.init, structs) != "") {
                     is_enum = !body_has_top_level_match(body, v.name);
                 }
                 // A fresh rc-PAYLOAD user-enum (`var x = Poly([..])` — a variant carrying
@@ -30305,7 +30574,7 @@ function precise_drop_names(body: ast.Stmt[], reassigned: string[], structs: Str
                 // enum NAME rides in the kind ("enum-rcpayload:<Enum>") so
                 // emit_enum_variant_drops can dispatch the right variant deep-drop.
                 var rcenum_owner: string = "";
-                if (!is_lit && !is_opt && !is_rcopt && !is_enum) {
+                if (!is_lit && !is_opt && !is_rcopt && !is_optbox && !is_enum) {
                     var eo: string = fresh_rcpayload_enum_init(v.init, structs, str_fresh, msites, false);
                     if (eo != "") {
                         if (!body_has_top_level_match(body, v.name) && !enum_body_binds_rc_payload(body, v.name, structs)) { rcenum_owner = eo; }
@@ -30321,7 +30590,7 @@ function precise_drop_names(body: ast.Stmt[], reassigned: string[], structs: Str
                 // as the "MAP:" exit set: fresh init, not aliased, not iterated (the
                 // outer `if` adds not-reassigned + non-escaping).
                 var is_map: boolean = false;
-                if (!is_lit && !is_opt && !is_rcopt && !is_enum && !is_rcenum && is_fresh_map_init(v.init)) {
+                if (!is_lit && !is_opt && !is_rcopt && !is_optbox && !is_enum && !is_rcenum && is_fresh_map_init(v.init)) {
                     if (util.index_of_str(aliased_array_names_of(body), v.name) < 0 && !map_has_explicit_iter(body, v.name)
                         && !map_identity_escape(body, v.name)) { is_map = true; }
                 }
@@ -30339,8 +30608,8 @@ function precise_drop_names(body: ast.Stmt[], reassigned: string[], structs: Str
                 // reading (#6127); every other candidate kind keeps the coarse walker,
                 // so this widens exactly one class at a time.
                 var borrow_ok: boolean = !body_unsafe_for(body, v.name, borrowable, []);
-                if (!borrow_ok && (is_rcopt || is_opt)) { borrow_ok = !body_unsafe_for_match_borrow(body, v.name, borrowable, [], []); }
-                if ((is_lit || is_opt || is_rcopt || is_enum || is_rcenum || is_map) && !shadowed && reassign_ok && borrow_ok) {
+                if (!borrow_ok && (is_rcopt || is_opt || is_optbox)) { borrow_ok = !body_unsafe_for_match_borrow(body, v.name, borrowable, [], []); }
+                if ((is_lit || is_opt || is_rcopt || is_optbox || is_enum || is_rcenum || is_map) && !shadowed && reassign_ok && borrow_ok) {
                     var last: i32 = 0 - 1;
                     var k: i32 = i + 1;
                     var none: string[] = [];
@@ -30353,7 +30622,7 @@ function precise_drop_names(body: ast.Stmt[], reassigned: string[], structs: Str
                         if (is_rcopt && rcopt_pfree != "__fern_rc_dec") { kind = "opt-payloadfree:" + rcopt_pfree; }
                         else if (is_rcopt && rcopt_sty.len() > 0) { kind = "opt-structpayload:" + rcopt_sty; }
                         else if (is_rcopt) { kind = "opt-rcpayload"; }
-                        else if (is_opt || is_enum) { kind = "box-shallow"; }
+                        else if (is_opt || is_optbox || is_enum) { kind = "box-shallow"; }
                         else if (is_rcenum) { kind = "enum-rcpayload:" + rcenum_owner; }
                         else if (is_map) { kind = "map-buffers"; }
                         idxs = idxs.append(last);
@@ -31517,6 +31786,9 @@ pub function lower_block(stmts: ast.Stmt[], s: LowerState): LowerState {
     //     flat, so a nested-block box can never have been donated to a reuse site
     //     (which is what the fn-level emission's edon check guards against).
     var scenfrees: EnumFrees = consumed_scalar_enum_frees(stmts, reasg, s.frame.structs, s.frame.sigs.opt_fresh_ret_fns, true);
+    // The BOX-ONLY option/result half (#8806), block-level mirror of lower_func's
+    // optboxfrees.
+    var obfrees: EnumFrees = consumed_optbox_frees(stmts, reasg, s.frame.structs, s.frame.sigs.opt_fresh_ret_fns, s.frame.sigs.fn_names, true);
     // Consumed RC-PAYLOAD enum free, per block (#6127) — the last member of this
     // family to get a block-level sibling. lower_func runs
     // consumed_rcpayload_enum_frees over fn.body only, so `while { var t =
@@ -31559,6 +31831,17 @@ pub function lower_block(stmts: ast.Stmt[], s: LowerState): LowerState {
                 }
             }
             opj = opj + 1;
+        }
+        // Same, for the block-local BOX-ONLY option/result box (#8806).
+        var obj2: i32 = 0;
+        while (obj2 < obfrees.idxs.len()) {
+            if (obfrees.vidxs[obj2] < i && i <= obfrees.idxs[obj2]) {
+                var obslot2: i32 = st.slot_of(obfrees.names[obj2]);
+                if (obslot2 >= st.frame.n_params) {
+                    st = st.with_optret_pending(st.optret_pending.append(util.i32_to_string(obslot2) + "#b"));
+                }
+            }
+            obj2 = obj2 + 1;
         }
         // Same, for the block-local scalar-enum / scalar-Option box (#6219).
         var sej: i32 = 0;
@@ -31739,6 +32022,15 @@ pub function lower_block(stmts: ast.Stmt[], s: LowerState): LowerState {
                 if (sslot >= st.frame.n_params) { st = emit_scalar_enum_box_free(st, sslot); }
             }
             sef = sef + 1;
+        }
+        // The BOX-ONLY option/result half, same placement and the same reason.
+        var obf: i32 = 0;
+        while (obf < obfrees.idxs.len()) {
+            if (obfrees.idxs[obf] == i) {
+                var obslot: i32 = st.slot_of(obfrees.names[obf]);
+                if (obslot >= st.frame.n_params) { st = emit_scalar_enum_box_free(st, obslot); }
+            }
+            obf = obf + 1;
         }
         // Consumed rc-payload enum free: same placement and the same reason as the
         // scalar loop above, but the release is emit_enum_variant_drops_gated —
@@ -42309,6 +42601,130 @@ function fresh_scalar_option_call_init(v: ast.StmtVar, opt_fresh_reg: SigReg): b
     return false;
 }
 
+// opt_ctor_init_variant: the Option / Result variant a `var` initialiser
+// CONSTRUCTS — "Some" / "Ok" / "Err" / "None" — or "" for anything else. The
+// shape test fresh_scalar_option_init applies before its scalar-payload gate,
+// split out so the box-only admission below can reuse it without that gate.
+function opt_ctor_init_variant(e: ast.Expr): string {
+    match (e) {
+        ast.ExprCall(c) => {
+            match (c.callee) {
+                ast.ExprIdent(id) => {
+                    if ((id.name == "Some" || id.name == "Ok" || id.name == "Err") && c.args.len() == 1) { return id.name; }
+                },
+                ast.ExprFieldAccess(fa) => {
+                    if ((fa.field == "Some" || fa.field == "Ok" || fa.field == "Err") && c.args.len() == 1) { return fa.field; }
+                },
+                _ => {}
+            }
+        },
+        ast.ExprIdent(id) => { if (id.name == "None") { return "None"; } },
+        ast.ExprFieldAccess(fa) => { if (fa.field == "None") { return "None"; } },
+        _ => {}
+    }
+    return "";
+}
+
+// fresh_optbox_only_init: an Option / Result local whose BOX is fresh and sole-
+// owned but whose payload neither of the two payload-releasing admissions above
+// will touch — a struct payload, a Reader / Writer, a FileStat, an IoError, a
+// map, a tuple. Those were released by NOBODY: consumed_scalar_enum_frees wants
+// a scalar payload, consumed_rcpayload_option_frees wants a leak-safe array /
+// fresh string / nested scalar Option, and a payload in neither kept the whole
+// 40-byte box as well as itself (#8806).
+//
+// The release this admits is BOX-ONLY (emit_scalar_enum_box_free / the
+// "box-shallow" precise drop), which is sound for every payload kind: the box is
+// one block and a payload that is itself a box has its own owner. The payload
+// keeps today's leak, so this is a strict improvement on every path and can
+// never turn a leak into a dangle.
+//
+// Freshness is fresh_opt_box_init's question. What is this function's own is the
+// REFUSAL: whatever fresh_scalar_option_init / fresh_scalar_option_call_init or
+// the rc-payload pair already claim stays theirs, which is what keeps this set
+// DISJOINT from both and no box released twice.
+function fresh_optbox_only_init(v: ast.StmtVar, opt_fresh_reg: SigReg, fn_names: SigReg, structs: StructTab): boolean {
+    if (fresh_scalar_option_init(v) || fresh_scalar_option_call_init(v, opt_fresh_reg)) { return false; }
+    if (rcpayload_option_cand(v, structs).variant != "") { return false; }
+    if (rcpayload_option_call_ptype(v, opt_fresh_reg) != "") { return false; }
+    return fresh_opt_box_init(v, opt_fresh_reg, fn_names, structs);
+}
+
+// fresh_opt_box_init: the initialiser CONSTRUCTS an Option / Result box — a
+// direct `Some(..)` / `Ok(..)` / `Err(..)` / `None`, or a call to an
+// OPTFRESH-proven producer (every return a direct constructor) read under an
+// Option / Result annotation. The box is then rc=1 and this local its only
+// owner, whatever the payload is made of.
+//
+// A bare-ident BUILT-IN producer counts too, and needs no annotation: its box
+// comes out of a generated helper's own `Ok(..)` / `Some(..)` / `None`, and
+// builtin_opt_ret_type names the type the annotation would have. That is the
+// binding form of what match_scrut_owns_fresh_result_box admits as a scrutinee —
+// `var r: Result[Reader, IoError] = open_reader(p); match (r)` is the same box as
+// `match (open_reader(p))`. A user function of the same name is NOT the builtin
+// (fn_names, the gate lower_call itself applies).
+//
+// Both payload spellings must pass optbox_shallow_payload_ok, and an unnamed
+// type is refused: a binding, unlike an anonymous match scrutinee, can carry
+// reclaim credits of its own, and the box-only free would zero the slot in front
+// of them.
+function fresh_opt_box_init(v: ast.StmtVar, opt_fresh_reg: SigReg, fn_names: SigReg, structs: StructTab): boolean {
+    var t: string = opt_box_init_type(v, opt_fresh_reg, fn_names);
+    if (t == "") { return false; }
+    return optbox_shallow_payload_ok(opt_payload_type(t, "Ok"), structs)
+        && optbox_shallow_payload_ok(opt_payload_type(t, "Err"), structs);
+}
+
+// opt_box_init_type: the Option / Result type of an initialiser that CONSTRUCTS
+// a fresh box — a bare-ident BUILT-IN producer (the type comes off
+// builtin_opt_ret_type, so no annotation is needed), or, under an Option /
+// Result annotation, a direct `Some(..)` / `Ok(..)` / `Err(..)` / `None` or a
+// call to an OPTFRESH-proven producer. "" for anything else, including an
+// unannotated construction: the spelling is what the payload gate reads.
+function opt_box_init_type(v: ast.StmtVar, opt_fresh_reg: SigReg, fn_names: SigReg): string {
+    var callee: string = direct_call_callee_name(v.init);
+    if (callee != "" && !sig_reg_has_name(fn_names, callee)) {
+        var bt: string = builtin_opt_ret_type(callee);
+        if (bt != "") { return bt; }
+    }
+    var ann: string = v.type_name;
+    if (ann.len() < 8) { return ""; }
+    if (slice_unchecked(ann, 0, 7) != "Option[" && slice_unchecked(ann, 0, 7) != "Result[") { return ""; }
+    if (opt_ctor_init_variant(v.init) != "") { return ann; }
+    if (callee == "") { return ""; }
+    if (sig_reg_has_name(opt_fresh_reg, callee)) { return ann; }
+    return "";
+}
+
+// optbox_shallow_payload_ok: is a BOX-ONLY release safe for this payload
+// spelling — will nothing else come looking for the payload once the free has
+// zeroed the slot?
+//
+// The release does not merely leave the payload where it is. It zeroes the
+// slot, so a deep drop that owns the payload afterwards finds null and releases
+// NOTHING — the payload's whole structure, not just a box (the #5453 shape, and
+// the reason lower_block's per-block pass is blockable-only). So every payload
+// kind the reclaim machinery has a class for is REFUSED here: a string or
+// string[] (OPTSTR), any array (OPTARR / OPTARRARR / OPTAARR / OPTARRERR), a
+// tuple (OPTTUP), a nested Option / Result (OPTOPT*), a Map, and a declared
+// struct (OPTSTRUCT). What is left — a scalar, an enum, an opaque nominal like
+// IoError / Reader / FileStat — has no class at all, which is exactly why its
+// box was kept in the first place.
+//
+// Read on the SUCCESS and the ERROR payload both: an Err string has its own
+// release (the errstrs credit) and starving that is the same defect.
+function optbox_shallow_payload_ok(pt: string, structs: StructTab): boolean {
+    if (pt == "") { return true; }
+    if (is_scalar_type_name(pt)) { return true; }
+    if (pt == "string" || pt == "string[]") { return false; }
+    if (pt.len() > 2 && slice_unchecked(pt, pt.len() - 2, pt.len()) == "[]") { return false; }
+    if (pt[0] == b'(') { return false; }
+    if (pt.len() >= 7 && (slice_unchecked(pt, 0, 7) == "Option[" || slice_unchecked(pt, 0, 7) == "Result[")) { return false; }
+    if (pt.len() >= 4 && slice_unchecked(pt, 0, 4) == "Map[") { return false; }
+    if (decl_is_struct(structs, pt)) { return false; }
+    return true;
+}
+
 // optfresh_entry_payload_is_fresh: does a raw registry row ("name|ptype|flag")
 // carry the "f" flag — every success payload a static literal or a fresh string
 // producer? Tagged rows ("RCE:" / "AAC:") have no flag field and are refused.
@@ -42757,6 +43173,82 @@ function consumed_scalar_enum_frees(body: ast.Stmt[], reassigned: string[], stru
                         // escape; we separately reject any arm-body use of x. Every
                         // other statement (incl. the construction's own init — a ctor
                         // call does not push x) is walked for escapes.
+                        var arms_use: boolean = match_arms_use_name(msv[0], v.name);
+                        var dead_after: boolean = !name_used_after(body, v.name, match_idx);
+                        var escapes: boolean = name_escapes_outside_stmt(body, v.name, match_idx);
+                        if (!arms_use && dead_after && !escapes) {
+                            idxs = idxs.append(match_idx);
+                            vidxs = vidxs.append(vi);
+                            names = names.append(v.name);
+                            sites = sites.append(reclaim_site_key_of(v.name, v.line, v.col));
+                        }
+                    }
+                }
+            },
+            _ => {}
+        }
+        vi = vi + 1;
+    }
+    return EnumFrees { idxs: idxs, vidxs: vidxs, names: names, sites: sites };
+}
+
+// consumed_optbox_frees: the BOX-ONLY half of the consumed-Option/Result family,
+// in two halves of its own (#8806).
+//
+// The CONSUMED half is every function-local `var o: Option[..]/Result[..] =
+// <fresh box>` whose payload kind neither consumed_scalar_enum_frees nor
+// consumed_rcpayload_option_frees will release (fresh_optbox_only_init), consumed
+// by exactly one `match (o)` where o is single-owner, dead after the match and
+// non-escaping. The box is shallow-freed right after its match — the payload is
+// left exactly as it was, so this can only turn a two-block leak into a one-block
+// one. The DEAD half, at the candidate loop itself, is a box no statement
+// mentions again at all, and it takes EVERY payload kind: see there.
+//
+// Same gates and the same emission shape as consumed_scalar_enum_frees, and
+// DISJOINT from it by fresh_optbox_only_init's refusals. It is deliberately NOT
+// fed to enum_donor_reuse_sites: the donor path writes a recipient's fields over
+// the donor box WITHOUT releasing the old slots, which is sound only for a donor
+// whose payload really is a scalar — the same boundary consumed_rcpayload_enum_frees
+// keeps.
+//
+// No arm binding can make this unsound. An arm binds the PAYLOAD, which lives in
+// its own block and is never touched here; an `@` binding aliases the box itself,
+// and that is a use in an arm body (match_arms_use_name), which the gate refuses.
+function consumed_optbox_frees(body: ast.Stmt[], reassigned: string[], structs: StructTab, opt_fresh_reg: SigReg, fn_names: SigReg, nested_ok: boolean): EnumFrees {
+    var idxs: i32[] = [];
+    var vidxs: i32[] = [];
+    var names: string[] = [];
+    var sites: string[] = [];
+    var vi: i32 = 0;
+    while (vi < body.len()) {
+        match (body[vi]) {
+            ast.StmtVar(v) => {
+                // The DEAD half: a fresh box this scope binds and never mentions
+                // again. Nothing claims such a local — every other release rides
+                // a consuming match or a last USE, and a value discarded without
+                // being looked at has neither, so it was the one shape that kept
+                // its block whatever its payload (#8806). The free lands right
+                // after the declaration, where the slot is bound and already
+                // dead, and the payload kind is irrelevant because the release is
+                // box-only.
+                if (fresh_opt_box_init(v, opt_fresh_reg, fn_names, structs) && util.index_of_str(reassigned, v.name) < 0
+                        && !name_used_after(body, v.name, vi) && !name_escapes_outside_stmt(body, v.name, vi)) {
+                    idxs = idxs.append(vi);
+                    vidxs = vidxs.append(vi);
+                    names = names.append(v.name);
+                    sites = sites.append(reclaim_site_key_of(v.name, v.line, v.col));
+                }
+                else if (fresh_optbox_only_init(v, opt_fresh_reg, fn_names, structs) && util.index_of_str(reassigned, v.name) < 0) {
+                    var match_idx: i32 = 0 - 1;
+                    var msv: ast.Stmt[] = [];
+                    if (nested_ok) {
+                        match_idx = sole_consuming_match_idx(body, v.name);
+                        if (match_idx > vi) { msv = consuming_match_of(body[match_idx], v.name); }
+                    } else {
+                        match_idx = sole_top_level_match_idx(body, v.name);
+                        if (match_idx > vi) { msv = [body[match_idx]]; }
+                    }
+                    if (match_idx > vi && msv.len() == 1) {
                         var arms_use: boolean = match_arms_use_name(msv[0], v.name);
                         var dead_after: boolean = !name_used_after(body, v.name, match_idx);
                         var escapes: boolean = name_escapes_outside_stmt(body, v.name, match_idx);
@@ -56902,6 +57394,10 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
         var pty: string = "";
         if (decl_is_struct(structs, fn.params[i].type_name)) { pty = fn.params[i].type_name; }
         else if (is_enum_like_name(fn.params[i].type_name, structs)) { pty = fn.params[i].type_name; }
+        // A `char` param carries its spelling for the same reason a `var c: char`
+        // local does: std/unicode's methods are keyed "char.<m>". Dispatch-only —
+        // a char is an i32 value in an i32 slot.
+        else if (fn.params[i].type_name == "char") { pty = "char"; }
         // A struct-array param `a: P[]` carries the ELEMENT struct type, so
         // `a[i].field` / `for x in a` over the borrowed array resolve.
         else if (is_array_type_name(fn.params[i].type_name)
@@ -57431,7 +57927,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
     // after its last top-level use (drop-on-last-use), instead of at the exit
     // sweep — bounding the live set so its block recycles for later allocations.
     // Emitted as dec + zero the slot, so the exit sweep harmlessly decs null.
-    var pdrops: PreciseDrops = pd_filter_names(precise_drop_names(fn.body, asg_targets, structs, sg.arr_ret_fns, sg.strarr_ret_fns, sg.borrowable_params, sg.opt_fresh_ret_fns, sg.str_fresh_ret_fns, move_sites_toplevel_of(fn, structs)), dalias.srcs);
+    var pdrops: PreciseDrops = pd_filter_names(precise_drop_names(fn.body, asg_targets, structs, sg.arr_ret_fns, sg.strarr_ret_fns, sg.borrowable_params, sg.opt_fresh_ret_fns, sg.fn_names, sg.str_fresh_ret_fns, move_sites_toplevel_of(fn, structs)), dalias.srcs);
     // Reuse-layer switch (#4350 §6.5): with FERN_SELFHOST_NO_REUSE=1 every
     // donor-based pairing below stays EMPTY, so every construction allocates
     // fresh and every donor keeps its normal free (the suppressions keyed on
@@ -57471,6 +57967,11 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
     // deep-dropped then the box freed right after its match (emit_opt_payload_drop).
     // DISJOINT from enumfrees (that's scalar-payload options) — freed once here.
     var rcoptfrees: OptRcFrees = consumed_rcpayload_option_frees(fn.body, asg_targets, structs, sg.opt_fresh_ret_fns, false);
+    // Consumed BOX-ONLY option/result frees: the same shape again for a payload
+    // kind neither of the two above releases (a struct, an IoError, a Reader) —
+    // the box is given back and the payload keeps today's leak (#8806). Disjoint
+    // from both by construction and never a reuse donor.
+    var optboxfrees: EnumFrees = consumed_optbox_frees(fn.body, asg_targets, structs, sg.opt_fresh_ret_fns, sg.fn_names, false);
     // Enum-donor cross-reuse (FBIP): a consumed-and-dead scalar-enum box donated to
     // a later same-size full struct construction instead of being freed (see
     // enum_donor_reuse_sites). The recipient is lowered by emit_enum_donor_reuse, and
@@ -57564,6 +58065,18 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
                 }
             }
             sej = sej + 1;
+        }
+        // Same, for the BOX-ONLY option/result box (#8806). It is never a reuse
+        // donor, so there is no donor suppression to mirror.
+        var obj: i32 = 0;
+        while (obj < optboxfrees.idxs.len()) {
+            if (optboxfrees.vidxs[obj] < j && j <= optboxfrees.idxs[obj]) {
+                var obslot2: i32 = s.slot_of(optboxfrees.names[obj]);
+                if (obslot2 >= s.frame.n_params) {
+                    s = s.with_optret_pending(s.optret_pending.append(util.i32_to_string(obslot2) + "#b"));
+                }
+            }
+            obj = obj + 1;
         }
         // Same, for the rc-PAYLOAD enum box. Its release is the runtime
         // variant_is dispatch, so the entry carries the enum name and the moved
@@ -57870,6 +58383,18 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
                 if (xslot >= s.frame.n_params) { s = emit_scalar_enum_box_free(s, xslot); }
             }
             ei = ei + 1;
+        }
+        // Consumed BOX-ONLY option/result free: if statement j is the consuming
+        // match of one of those locals, give its box back now (shallow dec + zero
+        // the slot). The payload is untouched — it has its own owner or its own
+        // pre-existing leak — so this is disjoint from every deep drop above.
+        var obi: i32 = 0;
+        while (obi < optboxfrees.idxs.len()) {
+            if (optboxfrees.idxs[obi] == j) {
+                var obslot: i32 = s.slot_of(optboxfrees.names[obi]);
+                if (obslot >= s.frame.n_params) { s = emit_scalar_enum_box_free(s, obslot); }
+            }
+            obi = obi + 1;
         }
         // Consumed rc-payload enum deep-drop free: if statement j is the consuming
         // match of an rc-payload enum local, deep-drop its variant's rc payload
@@ -61483,14 +62008,13 @@ pub function tuple_elems_lowerable(rt: string, structs: StructTab): boolean {
             // op_tuple_get and the bind marks the slot an array (mark_arr), after
             // which `t.N[i]` rides the 4-byte arr_get.
             if (!ok_elem && (t == "i32[]" || t == "boolean[]" || t == "u32[]" || is_subword_array_type(t))) { ok_elem = true; }
-            // The 8-byte-element arrays (f64[]/i64[]) and string[] are ALSO just a
-            // heap pointer in the tuple slot — the element WIDTH/kind only matters
-            // when reading an element (`t.N[i]`), not the tuple slot itself. The
-            // destructure / `.N` bind marks the slot f64arr / i64arr / strarr so
-            // `t.N[i]` rides the width-marked arr_get(64) / arr_get_i64 / str read.
-            // (u64[] stays deferred: it needs the "u64[]" field-tag plumbing, like
-            // the u64 tuple scalar, a separate increment.)
-            if (!ok_elem && (is_float_array_type_name(t) || t == "i64[]" || t == "string[]")) { ok_elem = true; }
+            // The 8-byte-element arrays (f64[]/i64[]/u64[]) and string[] are ALSO
+            // just a heap pointer in the tuple slot — the element WIDTH/kind only
+            // matters when reading an element (`t.N[i]`), not the tuple slot itself.
+            // The destructure / `.N` bind marks the slot f64arr / i64arr (+ u64 for
+            // the unsigned spelling) / strarr so `t.N[i]` rides the width-marked
+            // arr_get(64) / arr_get_i64 / str read.
+            if (!ok_elem && (is_float_array_type_name(t) || t == "i64[]" || t == "u64[]" || t == "string[]")) { ok_elem = true; }
             // A struct-array (X[]) or enum-array (E[]) element is a heap pointer in
             // one tuple slot, like any other array element — leak mode: the buffer
             // AND its struct/enum-box elements leak with the (leak-only) tuple, so
@@ -68442,7 +68966,7 @@ pub function rc_plan_dump(fn: parser.FuncDecl, structs: StructTab, funcs: parser
         }
     }
     var arr_ret: string[] = array_ret_fn_names(funcs);
-    var pd: PreciseDrops = pd_filter_names(precise_drop_names(fn.body, reasg, structs, sig_reg_of(arr_ret), sig_reg_of(strarr_ret_fns_of(funcs)), borrowable_params_of(funcs), sig_reg_of(opt_fresh_ret_fns_of(funcs, structs, str_fresh_ret_fns_of(funcs))), str_fresh_ret_fns_of(funcs), move_sites_toplevel_of(fn, structs)), dead_alias_of(fn.body, reasg, rc_ml_compute(fn, structs).names).srcs);
+    var pd: PreciseDrops = pd_filter_names(precise_drop_names(fn.body, reasg, structs, sig_reg_of(arr_ret), sig_reg_of(strarr_ret_fns_of(funcs)), borrowable_params_of(funcs), sig_reg_of(opt_fresh_ret_fns_of(funcs, structs, str_fresh_ret_fns_of(funcs))), sig_reg_of(fn_names_of(funcs)), str_fresh_ret_fns_of(funcs), move_sites_toplevel_of(fn, structs)), dead_alias_of(fn.body, reasg, rc_ml_compute(fn, structs).names).srcs);
     // Dump fidelity: lower_func SUPPRESSES the precise drop of a local consumed
     // as a reuse donor (its box survives into the recipient); the dump must
     // mirror that or it over-reports drops the lowering never emits (native's
@@ -68963,11 +69487,19 @@ pub function (s: LowerState) callee_param_is_dyn_arr(name: string, idx: i32): bo
 pub function (s: LowerState) opt_ret_type(name: string): string {
     var v: string = sig_reg_value_of(s.frame.sigs.opt_ret_fns, name);
     if (v.len() > 0) { return v; }
-    // Built-in I/O functions return a fixed Option/Result the lowering must
-    // recognise so a `match (read_file(p)) { Ok => .., Err => .. }` scrutinee or a
-    // `var r = read_file(p)` binding resolves the result type (read_file lowers to
-    // op_read_file). Checked AFTER the registry so a user decl of the same name
-    // still wins. read_file → Result[string, IoError].
+    // Checked AFTER the registry so a user decl of the same name still wins.
+    return builtin_opt_ret_type(name);
+}
+
+// builtin_opt_ret_type: the fixed Option / Result a BUILT-IN returns, or "" when
+// the name is not one. The lowering has to recognise these so a `match
+// (read_file(p)) { Ok => .., Err => .. }` scrutinee or a `var r = read_file(p)`
+// binding resolves the result type (read_file lowers to op_read_file), and the
+// rc side reads the same table to know the answer is a box a generated helper
+// built fresh for this caller (match_scrut_owns_fresh_result_box,
+// fresh_opt_box_init). One table, so the two cannot disagree about what a
+// builtin call even is.
+function builtin_opt_ret_type(name: string): string {
     if (name == "read_file") { return "Result[string, IoError]"; }
     if (name == "read_file_bytes") { return "Result[u8[], IoError]"; }
     if (name == "write_file") { return "Result[void, IoError]"; }
@@ -71533,6 +72065,17 @@ function lift_iife_arm_values(stmts: ast.Stmt[], fd: parser.FuncDecl, funcs: par
     function vs(s: ast.Stmt, a: InlineCloAcc): (ast.Stmt, InlineCloAcc, boolean) {
         match (s) {
             ast.StmtReturn(r) => {
+                // An arm returning an array of fn VALUES is box_iife_arm_array_elems'
+                // to claim, and it claims every arm's elements or none of them.
+                // Walking one here boxed a capturing lambda in THIS arm while a
+                // sibling arm kept raw fn pointers, so the binding carried two
+                // dispatch ABIs and `xs[i](…)` called a box pointer as code
+                // (#8163). Left unwalked, the capturing lambda stays raw and the
+                // module bails at it — what the uniformity gate promises when it
+                // declines.
+                if let ast.ExprArray(ra) = r.value {
+                    if (array_holds_fn_value(ra, mfuncs)) { return (s, a, true); }
+                }
                 var vr: InlineCloRes = lift_inline_closures_expr(r.value, fd, a.funcs, a.counter, gfns, structs, mfuncs);
                 return (ast.StmtReturn { value: vr.expr, line: r.line, col: r.col }, InlineCloAcc { funcs: vr.funcs, counter: vr.counter }, true);
             },
@@ -71773,6 +72316,57 @@ function idx_bound_name_at(st: ast.Stmt, acc: string[]): string[] {
         _ => {}
     }
     return acc;
+}
+
+// fd_arr_lit_bound_names collects the names `body` binds to an ARRAY LITERAL, at
+// any statement depth. Those declarations are the ones the fd-wide env-box rule
+// can reach and rewrite, so an IIFE arm that merely NAMES one still has its
+// elements brought onto the same dispatch ABI as its sibling arms (#8163). A
+// name bound to anything else — a parameter, a call's result — is out of reach.
+function fd_arr_lit_bound_names(body: ast.Stmt[]): string[] {
+    var out: string[] = [];
+    for st in body {
+        out = astwalk.fold_stmt_spine(st, out, arr_lit_bound_name_at);
+    }
+    return out;
+}
+
+function arr_lit_bound_name_at(st: ast.Stmt, acc: string[]): string[] {
+    if let ast.StmtVar(v) = st {
+        if let ast.ExprArray(_) = v.init { return acc.append(v.name); }
+    }
+    return acc;
+}
+
+// fd_binds_iife_boxed_fn_array reports whether `fd` holds a value-position
+// if/match whose arms the uniform-box rule claims — one arm an array literal
+// with an env-boxed element, the rest array literals or names of local ones.
+// The arms share ONE binding and so one dispatch ABI (#5071 one container out),
+// and a NAMED arm's literal sits elsewhere in the function, out of reach of the
+// in-place arm boxing. Answering yes puts every fn-value array literal in `fd`
+// on the env-box ABI, so the named arm and the boxed one agree by construction.
+// The fd_returns_boxed_fn_array sibling for a value-position if/match.
+//
+// The scan descends into nested lambda bodies, so an IIFE inside one flips the
+// whole enclosing fd too.
+function fd_binds_iife_boxed_fn_array(fd: parser.FuncDecl, structs: StructTab, mfuncs: MFuncs): boolean {
+    var calls: ast.Expr[] = [];
+    var si: i32 = 0;
+    while (si < fd.body.len()) {
+        calls = astwalk.fold_stmt(fd.body[si], calls, call_exprs_of);
+        si = si + 1;
+    }
+    var ci: i32 = 0;
+    while (ci < calls.len()) {
+        if let ast.ExprCall(c) = calls[ci] {
+            if let ast.ExprLambda(il) = c.callee {
+                if (c.args.len() == 0 && il.params.len() == 0
+                        && iife_arms_are_arrays_with_boxed_elem(il.body, fd, structs, mfuncs)) { return true; }
+            }
+        }
+        ci = ci + 1;
+    }
+    return false;
 }
 
 // call_exprs_of collects every call node an expression holds.
@@ -72471,14 +73065,23 @@ function iife_stmts_all_closurearr(stmts: ast.Stmt[], s: LowerState, seen: i32):
 }
 
 // expr_is_closure_array reports whether an arm value yields an array of closure
-// boxes: an array LITERAL with a boxed element, a call to a closurearr-returning
-// fn, or a nested value-position if/match whose own arms all are.
+// boxes: an array LITERAL with a boxed element, a NAME already bound to a
+// closure array, a call to a closurearr-returning fn, or a nested value-position
+// if/match whose own arms all are.
 function expr_is_closure_array(e: ast.Expr, s: LowerState): boolean {
     match (e) {
         ast.ExprArray(arr) => {
             if (arr.elements.len() == 0) { return false; }
             return arr_elem_is_closure_box(arr.elements[0], s);
         },
+        // `(if (c) { [<lambda>] } else { ys })` — an arm that NAMES a local
+        // array. Its slot already records the element ABI, which is the same
+        // answer the literal arm computes from its element; without this arm the
+        // name read as "not a closure array", the destination stayed on plain
+        // fn-pointer dispatch, and `xs[0](…)` called the box pointer as code
+        // (#8163). The lift's arm-uniformity gate is what makes the two arms
+        // agree, so this only ever reports what that gate already arranged.
+        ast.ExprIdent(aid) => { return s.is_closurearr_slot(s.slot_of(aid.name)); },
         ast.ExprCall(c) => {
             match (c.callee) {
                 ast.ExprIdent(cid) => {
@@ -72689,14 +73292,15 @@ function iife_arms_hold_fn_value(stmts: ast.Stmt[], fd: parser.FuncDecl, structs
 // lambda reading `Ok(a) => [(x) => x + a]` looks capture-free, the gate answers
 // 0, and the lambda stays raw for a `<fd>$clo` nobody built.
 function iife_arms_are_arrays_with_boxed_elem(stmts: ast.Stmt[], fd: parser.FuncDecl, structs: StructTab, mfuncs: MFuncs): boolean {
-    var seen: i32 = iife_arm_arrays_boxed_elems(stmts, iife_scope_fd(fd, stmts), 0, structs, mfuncs);
+    var seen: i32 = iife_arm_arrays_boxed_elems(stmts, iife_scope_fd(fd, stmts), 0, fd_arr_lit_bound_names(fd.body), structs, mfuncs);
     return seen > 0;
 }
 
 // Returns the number of env-boxed elements found, or -1 as soon as an arm
-// returns something that is neither an array literal nor a nested value-position
-// if/match whose own arms satisfy the same test.
-function iife_arm_arrays_boxed_elems(stmts: ast.Stmt[], fd: parser.FuncDecl, seen: i32, structs: StructTab, mfuncs: MFuncs): i32 {
+// returns something that is neither an array literal, nor a name from `names`
+// (a local bound to one), nor a nested value-position if/match whose own arms
+// satisfy the same test.
+function iife_arm_arrays_boxed_elems(stmts: ast.Stmt[], fd: parser.FuncDecl, seen: i32, names: string[], structs: StructTab, mfuncs: MFuncs): i32 {
     var n: i32 = seen;
     for stmt in stmts {
         match (stmt) {
@@ -72717,7 +73321,7 @@ function iife_arm_arrays_boxed_elems(stmts: ast.Stmt[], fd: parser.FuncDecl, see
                         match (rc.callee) {
                             ast.ExprLambda(ril) => {
                                 if (rc.args.len() != 0 || ril.params.len() != 0) { return 0 - 1; }
-                                n = iife_arm_arrays_boxed_elems(ril.body, iife_scope_fd(fd, ril.body), n, structs, mfuncs);
+                                n = iife_arm_arrays_boxed_elems(ril.body, iife_scope_fd(fd, ril.body), n, names, structs, mfuncs);
                                 if (n < 0) { return 0 - 1; }
                             },
                             // `id([<lambda>, …])` — a generic passthrough hands the
@@ -72740,19 +73344,28 @@ function iife_arm_arrays_boxed_elems(stmts: ast.Stmt[], fd: parser.FuncDecl, see
                             _ => { return 0 - 1; }
                         }
                     },
+                    // An arm that NAMES a local bound to an array literal in the
+                    // enclosing function. Nothing can box it where it sits, so
+                    // fd_binds_iife_boxed_fn_array puts that declaration's
+                    // literal on the env-box ABI too and the arms still agree.
+                    // A name bound to anything else — a parameter, a call's
+                    // result — is out of this pass's reach and declines the
+                    // whole IIFE, which leaves a capturing arm lambda raw for
+                    // the module to bail at (#8163).
+                    ast.ExprIdent(aid) => { if (util.index_of_str(names, aid.name) < 0) { return 0 - 1; } },
                     _ => { return 0 - 1; }
                 }
             },
             ast.StmtIf(iff) => {
-                n = iife_arm_arrays_boxed_elems(iff.then_body, fd, n, structs, mfuncs);
+                n = iife_arm_arrays_boxed_elems(iff.then_body, fd, n, names, structs, mfuncs);
                 if (n < 0) { return 0 - 1; }
-                n = iife_arm_arrays_boxed_elems(iff.else_body, fd, n, structs, mfuncs);
+                n = iife_arm_arrays_boxed_elems(iff.else_body, fd, n, names, structs, mfuncs);
                 if (n < 0) { return 0 - 1; }
             },
             ast.StmtMatch(mm) => {
                 var a: i32 = 0;
                 while (a < mm.arms.len()) {
-                    n = iife_arm_arrays_boxed_elems(mm.arms[a].body, fd, n, structs, mfuncs);
+                    n = iife_arm_arrays_boxed_elems(mm.arms[a].body, fd, n, names, structs, mfuncs);
                     if (n < 0) { return 0 - 1; }
                     a = a + 1;
                 }
@@ -73052,14 +73665,17 @@ function ilc_expr_at(e: ast.Expr, acc: InlineCloAcc, fd: parser.FuncDecl, gfns: 
                     //
                     // Boxing that one element is not enough, and the two extra
                     // requirements are why this is gated on EVERY arm being an
-                    // array literal rather than done element by element. The
-                    // binding gets ONE dispatch ABI, so a sibling arm whose array
-                    // holds a raw fn pointer (a no-capture lambda the later lift
-                    // hoists to `__lam_N`) would be env-first-dispatched as a box —
-                    // #5071's problem, one container out. And the DESTINATION has
-                    // to read as a closure array (expr_is_closure_array below),
-                    // which it only can when every arm answers the same way.
-                    // Anything else is left to bail exactly as before.
+                    // array this pass can put on the env-box ABI — a literal, or
+                    // a name bound to one in this function — rather than done
+                    // element by element. The binding gets ONE dispatch ABI, so a
+                    // sibling arm whose array holds a raw fn pointer (a
+                    // no-capture lambda the later lift hoists to `__lam_N`) would
+                    // be env-first-dispatched as a box — #5071's problem, one
+                    // container out. And the DESTINATION has to read as a closure
+                    // array (expr_is_closure_array below), which it only can when
+                    // every arm answers the same way. Anything else — an arm
+                    // naming a PARAMETER, or yielding a call's result — is left to
+                    // bail exactly as before (#8795).
                     if (call.args.len() == 0 && ielam.params.len() == 0
                         && iife_arms_are_arrays_with_boxed_elem(ielam.body, fd, structs, mfuncs)) {
                         var (ibrs, ibra) = box_iife_arm_array_elems(ielam.body, iife_scope_fd(fd, ielam.body), fs, ct, gfns, structs, mfuncs);
@@ -73146,10 +73762,14 @@ function ilc_expr_at(e: ast.Expr, acc: InlineCloAcc, fd: parser.FuncDecl, gfns: 
             // binding and a binding gets one dispatch ABI. A `.with`/`.append`
             // storing a fn value into an array forces the same promotion, one
             // container further out again: the store boxes its value, and the
-            // array it clones is this literal.
+            // array it clones is this literal. A value-position if/match
+            // binding whose arms the uniform-box rule claims is the third such
+            // site: an arm that merely NAMES a local array still shares the
+            // binding's one dispatch ABI, and this literal is where that
+            // declaration lives (#8163).
             if (!has_cap_lam && afnval
                     && (fd_returns_boxed_fn_array(fd, structs, mfuncs) || fd_stores_fn_value_array(fd, mfuncs, abound)
-                        || fd_passes_fn_array_elem(fd, mfuncs))) {
+                        || fd_passes_fn_array_elem(fd, mfuncs) || fd_binds_iife_boxed_fn_array(fd, structs, mfuncs))) {
                 has_cap_lam = true;
             }
             var i: i32 = 0;

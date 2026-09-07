@@ -14,7 +14,7 @@
 # it being visible; a row going DOWN is progress and also fails, so the
 # improvement gets recorded rather than absorbed.
 #
-# Measured 2026-09-06: 495 fixtures, 424 clean, 71 leaking, 7513
+# Measured 2026-09-07: 495 fixtures, 426 clean, 69 leaking, 7495
 # unpaired allocations. The distribution is heavily skewed — the median
 # leaking fixture is 2, and regex_captures_assert alone is 5987 of the
 # total.
@@ -54,9 +54,10 @@
 # it binds, read_chunk gives back its buffer on EOF, and the bytes() /
 # string_from_bytes_unchecked copies release. prop_string_involution (580)
 # and prop_url_roundtrip (293) fell to 0 on the second; read_all_stdin_chunks
-# lost its chunks on the first. What alloc_flat_read_chunk still carries is
-# the per-call immortal Option box (#8405); its as_bytes slice header, and
-# all of alloc_flat_bytes_roundtrip's, went with #8406 below.
+# lost its chunks on the first. What alloc_flat_read_chunk still carried was
+# the per-call immortal Option box (#8405), now gone too — see the I/O
+# paragraph below; its as_bytes slice header, and all of
+# alloc_flat_bytes_roundtrip's, went with #8406 below.
 #
 # Eleven rows went DOWN when `[T]` slice headers became rc1 blocks the IR
 # releases (#8406): the view fixtures (slice_views, slice_at_length,
@@ -77,6 +78,19 @@
 # its argument temps, so a fresh key and a counted-read fallback stop
 # stranding one each per miss.
 #
+# Eleven rows went DOWN with #8398 / #8405, two of them to 0: the I/O
+# helpers' per-call Option / Result box is a counted rc=1 block now, so the
+# match arm, the `var` local, the argument temp and the discarded statement
+# all release it. stdin_double and multiline_stdin are the two that reach 0.
+# What every other row keeps is exactly its HANDLE — one stdin() for
+# alloc_flat_read_chunk (5 -> 1), read_all_stdin_chunks (3 -> 1), read_line
+# and stdin_line (2 -> 1) and audit_env_time_random (2 -> 1), two stdout()
+# for alloc_flat_writer_accumulator (4 -> 2), and the three io_error_other_*
+# rows the IoError their name is about. The handle is per-stream rather than
+# per-call and keeps its static sentinel — the residual half of #8398, which
+# needs the receiver-ownership question answered first
+# (docs/rc-log/2026-09-07-io-result-boxes-are-counted.md).
+#
 # The counts are pinned; the alloc SITES are not. A site is a runtime
 # return address, so it moves with any codegen change and would churn
 # this file for reasons unrelated to reference counting. Sites are
@@ -96,15 +110,15 @@ alloc_flat_map_get                                   0
 alloc_flat_method_identity_return                    0
 alloc_flat_method_result_field_read                  0
 alloc_flat_nested_string_array                       0
-alloc_flat_read_chunk                                5
+alloc_flat_read_chunk                                1
 alloc_flat_struct_self_update                        0
 alloc_flat_struct_string_field                       0
 alloc_flat_under_reclaim                             0
-# The four are two stdout() handles and two Writer.write result boxes: the
-# I/O helpers hand back static-sentinel / header-less boxes that no release
-# can reclaim (rcresults.go, #8398). The accumulator the case measures is
-# clean — it is what the "flat" line asserts.
-alloc_flat_writer_accumulator                        4
+# The two are the stdout() handles of the case's two `rounds` calls, which
+# keep the static sentinel no release can reclaim (rcresults.go, #8398). The
+# Writer.write result boxes that made this 4 are reclaimed since #8405. The
+# accumulator the case measures is clean — it is what the "flat" line asserts.
+alloc_flat_writer_accumulator                        2
 alloc_grows_when_retained                            0
 args                                                 2
 arith_precedence                                     0
@@ -123,7 +137,7 @@ arrow_lambda_block_body                              0
 arrpush                                              0
 associated_functions                                 0
 audit_core_builtins                                  0
-audit_env_time_random                                2
+audit_env_time_random                                1
 audit_generics_traits_closures                       0
 audit_io_builtins                                    0
 audit_monotonic_sleep                                0
@@ -300,9 +314,9 @@ int_min_arithmetic                                   0
 int_saturating_ops                                   0
 int_shift_count_masked                               0
 int_wrap                                             0
-io_error_other_closed_stdout                         5
-io_error_other_is_a_directory                        3
-io_error_other_not_a_directory                       2
+io_error_other_closed_stdout                         4
+io_error_other_is_a_directory                        2
+io_error_other_not_a_directory                       1
 iter_build_consume                                   0
 json_array_field                                     0
 json_error_location                                  51
@@ -353,7 +367,7 @@ mock_platform_log                                    2
 module_scoped_variant                                0
 multi_file                                           0
 multi_hop_alias                                      0
-multiline_stdin                                      1
+multiline_stdin                                      0
 must_consume_own_sink                                0
 mutual_recursion                                     0
 named_args                                           0
@@ -416,8 +430,8 @@ range_for                                            0
 range_value                                          0
 rc_borrowed_box_field                                0
 rc_borrowed_payload_array                            0
-read_all_stdin_chunks                                3
-read_line                                            2
+read_all_stdin_chunks                                1
+read_line                                            1
 recursive_tree                                       0
 regex_basic                                          0
 regex_captures                                       129
@@ -479,8 +493,8 @@ sso_slice_len_1_inline                               0
 sso_slice_len_7_inline                               0
 sso_slice_len_8_heap                                 0
 sso_triple_concat_via_inline                         0
-stdin_double                                         1
-stdin_line                                           2
+stdin_double                                         0
+stdin_line                                           1
 str_to_owned_into_own_param                          0
 strarrarr_struct_field                               0
 strconcat                                            0

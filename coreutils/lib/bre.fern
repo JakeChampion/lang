@@ -227,9 +227,33 @@ function nd_assert(): i32 {
 }
 
 // `P` — the parser: the pattern, the cursor, the nodes built so far, the
-// group counter, and the first error met (parsing stops reporting after
-// one, the way glibc reports only the first).
-struct P { pat: string, i: i32, nodes: Node[], classes: u8[], ngroups: i32, err: string }
+// group counter, the groups a backreference may name here, and the first
+// error met (parsing stops reporting after one, the way glibc reports
+// only the first).
+struct P { pat: string, i: i32, nodes: Node[], classes: u8[], ngroups: i32, done: i32, err: string }
+
+// `done` is a bitmask of the groups COMPLETED at the cursor, over the
+// nine a `\N` can spell. glibc scopes a backreference to the alternation
+// branch its group closed in: a group closed in a sibling branch is not
+// visible, and neither is the group the reference sits inside, which is
+// still open. A group closed before an alternation is visible in every
+// branch of it, and one closed inside a branch is visible again once the
+// whole alternation is behind the cursor.
+function group_bit(n: i32): i32 {
+  return 1 << n - 1;
+}
+
+function group_done(p: P, n: i32): boolean {
+  return (p.done & group_bit(n)) != 0;
+}
+
+// A number past nine is unnameable, so it takes no bit.
+function mark_group_done(p: P, n: i32): P {
+  if (n > 9) {
+    return p;
+  }
+  return P { ...p, done: p.done | group_bit(n) };
+}
 
 function add_node(p: P, n: Node): (P, i32) {
   var out: P = P { ...p, nodes: p.nodes.append(n) };
@@ -572,15 +596,19 @@ function any_table(p0: P): (P, i32) {
 
 // ---- the grammar -----------------------------------------------------------
 // A whole alternation, ending at the pattern's end or at the `\)` the
-// caller opened.
+// caller opened. Each branch starts from the groups completed BEFORE the
+// alternation, and the alternation leaves behind everything any of its
+// branches completed.
 function parse_alt(p0: P): (P, i32) {
+  var outer: i32 = p0.done;
   var r: (P, i32) = parse_branch(p0);
   var p: P = r.0;
   var left: i32 = r.1;
   while (p.err.len() == 0 && esc_at(p, p.i, 124)) {
-    p = P { ...p, i: p.i + 2 };
+    var sofar: i32 = p.done;
+    p = P { ...p, i: p.i + 2, done: outer };
     var r2: (P, i32) = parse_branch(p);
-    p = r2.0;
+    p = P { ...r2.0, done: r2.0.done | sofar };
     var n: (P, i32) = add_node(p, Node { kind: nd_alt(), a: left, b: r2.1, c: 0 });
     p = n.0;
     left = n.1;
@@ -814,7 +842,7 @@ function parse_escape(p0: P): (P, i32) {
   }
   if (c >= 49 && c <= 57) {
     p = P { ...p, i: p.i + 2 };
-    if (c - 48 > p.ngroups) {
+    if (!group_done(p, c - 48)) {
       return (fail(p, err_esubreg()), 0);
     }
     return add_node(p, Node { kind: nd_backref(), a: c - 48, b: 0, c: 0 });
@@ -873,7 +901,8 @@ function assert_index(c: i32): i32 {
 }
 
 // `\( … \)`. The group number is taken before the body is parsed, so
-// groups are numbered by their opening parenthesis as glibc numbers them.
+// groups are numbered by their opening parenthesis as glibc numbers them,
+// but the group only becomes referenceable at its `\)`.
 function parse_group(p0: P): (P, i32) {
   var n: i32 = p0.ngroups + 1;
   var r: (P, i32) = parse_alt(P { ...p0, ngroups: n });
@@ -884,7 +913,7 @@ function parse_group(p0: P): (P, i32) {
   if (!esc_at(p, p.i, 41)) {
     return (fail(p, err_eparen_open()), 0);
   }
-  p = P { ...p, i: p.i + 2 };
+  p = mark_group_done(P { ...p, i: p.i + 2 }, n);
   return add_node(p, Node { kind: nd_group(), a: r.1, b: n, c: 0 });
 }
 
@@ -1100,7 +1129,7 @@ function has_backref(nodes: Node[]): boolean {
 pub function bre_compile(pat: string): Bre {
   var nodes: Node[] = [Node { kind: nd_empty(), a: 0, b: 0, c: 0 }];
   var cls: u8[] = [];
-  var p: P = P { pat: pat, i: 0, nodes: nodes, classes: cls, ngroups: 0, err: "" };
+  var p: P = P { pat: pat, i: 0, nodes: nodes, classes: cls, ngroups: 0, done: 0, err: "" };
   var r: (P, i32) = parse_alt(p);
   p = r.0;
   if (p.err.len() == 0 && !at_end(p)) {

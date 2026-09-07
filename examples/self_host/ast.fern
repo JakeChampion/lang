@@ -18,10 +18,11 @@
 // Ident / Binary / Call); this port collapses similar shapes into
 // fewer variants to keep the union member count tractable.
 
-// `raw` is the source spelling of a quoted literal — `'x'` (a `char`,
-// suffix "char") or `b'x'` (a `u8`, suffix "u8"). The lexer decodes the
-// scalar into `text` as a decimal numeral, so every consumer of a
-// suffixed integer literal reads them unchanged and only the printer
+// `raw` is the source spelling of a literal whose written form is not its
+// decoded payload — a quoted `'x'` (a `char`, suffix "char") or `b'x'` (a
+// `u8`, suffix "u8"), and the unit value `()`, which the parser records as
+// the constant 0 native's UnitLit lowers to. `text` holds the decimal
+// numeral, so every consumer reads those unchanged and only the printer
 // needs the spelling back. Empty for an ordinary number.
 pub struct ExprNumber { text: string, suffix: string, raw: string, is_float: boolean, line: i32, col: i32 }
 
