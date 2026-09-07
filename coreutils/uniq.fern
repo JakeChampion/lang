@@ -396,9 +396,8 @@ function eq_fold(a: string, ao: i32, b: string, bo: i32, n: i32): boolean {
 }
 
 // The compared field of a held line, cut out once when the line is
-// held rather than at every comparison against it: the field is a
-// SUB-range of the line, so comparing it in place would copy it out
-// again for each following line (#8791).
+// held. Incoming lines are compared in their read buffer, without
+// materialising another key for each line.
 function key_of(line: string, field: i32, cfg: Cfg): string {
   var n: i32 = cap(cfg.check_chars, line.len() - 1 - field);
   return slice_unchecked(line, field, field + n).to_string();
@@ -417,7 +416,7 @@ function same_key(a: string, at: i32, len: i32, af: i32, key: string, cfg: Cfg):
   if (cfg.ignore_case) {
     return eq_fold(a, at + af, key, 0, an);
   }
-  return slice_unchecked(a, at + af, at + af + an) == key;
+  return __mismatch(a, at + af, key, 0, an) == an;
 }
 
 // ---- input ------------------------------------------------------------------
@@ -622,17 +621,16 @@ function run(r: Reader, cfg: Cfg, w: Writer, name: string): i32 {
         // Nothing skipped, no width, no folding: the whole line INCLUDING
         // its delimiter is the key, since both carry the same delimiter.
         //
-        // The length and the last content byte come first because the
-        // comparison itself COPIES the line — `slice_unchecked` has no
-        // view to hand out (#8791) — where an indexed byte does not, and
-        // sorted input differs at the end far more often than at the
-        // start: consecutive numbers in their last digit, sorted paths
+        // The length and the last content byte cheaply reject unequal
+        // lines before the block comparison. Sorted input often differs
+        // at the end rather than at the start: consecutive numbers in
+        // their last digit, sorted paths
         // in their last component.
         if (len == prev.len() && (len < 2 || last_byte(chunk, carry, spanned, at, len) == prev[len - 2] as i32)) {
           if (spanned) {
             matched = carry == prev;
           } else {
-            matched = slice_unchecked(chunk, at, at + len) == prev;
+            matched = __mismatch(chunk, at, prev, 0, len) == len;
           }
         }
       } else if (spanned) {
