@@ -71855,6 +71855,9 @@ function arr_lit_bound_name_at(st: ast.Stmt, acc: string[]): string[] {
 // in-place arm boxing. Answering yes puts every fn-value array literal in `fd`
 // on the env-box ABI, so the named arm and the boxed one agree by construction.
 // The fd_returns_boxed_fn_array sibling for a value-position if/match.
+//
+// The scan descends into nested lambda bodies, so an IIFE inside one flips the
+// whole enclosing fd too.
 function fd_binds_iife_boxed_fn_array(fd: parser.FuncDecl, structs: StructTab, mfuncs: MFuncs): boolean {
     var calls: ast.Expr[] = [];
     var si: i32 = 0;
