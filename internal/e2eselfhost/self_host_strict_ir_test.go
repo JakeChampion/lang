@@ -767,9 +767,10 @@ function main(): i32 {
 	//
 	// So the capture has to be a destructure binding (`var (a, b) = t`) AND
 	// pointer-shaped: the same program with an i32 element resolves, lifts, and
-	// lowers. #8153 replaced the previous if-arm-array fixture, whose shape
-	// stopped reaching the bail once value-position IIFE arms started boxing
-	// their array elements.
+	// lowers. The if-arm-array program this fixture replaced (#8153) is no
+	// longer a bail at all — it lowers, and
+	// TestSelfHostIIFEArmArrayUnreachableNameRefuses holds the arm shapes that
+	// still refuse (#8163).
 	{"unhoisted-closure-value", `function main(): i32 {
     var t: (i32[], i32) = ([3i32], 4i32);
     var (a, b) = t;

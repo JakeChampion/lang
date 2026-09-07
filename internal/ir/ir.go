@@ -9348,7 +9348,12 @@ func (b *builder) stmt(s ast.Stmt) error {
 				bts = append(bts, arm.BindingTypes)
 				regions = append(regions, armConfinementRegion(arm.AtBinding, arm.Guard, arm.Body))
 			}
-			scrutEnum, reclaimScrut = b.reclaimableMatchScrutinee(n.Tag, bns, bts, regions, nil)
+			// An owned-payload match releases the box inside each arm
+			// (emitOwnedPayloadArmBoxFree); a join reclaim on top of that
+			// would free it twice.
+			if !b.rc.ownedPayloadMatches[n] {
+				scrutEnum, reclaimScrut = b.reclaimableMatchScrutinee(n.Tag, bns, bts, regions, nil)
+			}
 		}
 		// The join release below is only reached by falling out of the
 		// match, so an arm that returns / breaks / continues has to emit it
@@ -9536,6 +9541,18 @@ func (b *builder) stmt(s ast.Stmt) error {
 				armRestores = append(armRestores, atRestore)
 				b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
 				b.emit(Op{Kind: OpStoreLocal, I32: atSlot})
+			}
+			// Owned-payload match (#8405): the helper's Option / Result box
+			// is one fresh rc=1 block per call, and its payload has just been
+			// extracted — into a binding that owns it (consumingBindings) or
+			// into a drop above. Free the box SHALLOW here, at THIS arm's
+			// variant size (the layout need not be uniform: Option[string]'s
+			// Some and None differ on a two-word-string target), so the block
+			// goes back to the class it was taken from. is_unique-gated, so an
+			// aliased box is only dec'd. An `@` binding keeps the box pointer
+			// alive into the body, so it opts out.
+			if ownedPayloadArm && !pairFormScrutinee && arm.AtBinding == "" {
+				b.emitOwnedPayloadArmBoxFree(ptrSlot, n.Tag, arm.VariantName)
 			}
 			// Consuming match: the bindings are now copied into their own slots,
 			// so the scrutinee box is dead (its pointer payloads were MOVED into
@@ -16125,17 +16142,32 @@ func structReuseEligible(sd *ast.StructDecl) bool {
 }
 
 // structUpdateReusePlaceable is the per-SITE gate for the struct-update reuse
-// paths, which is weaker than structReuseEligible in exactly one way: a
-// CARRIED field keeps the reference the box already holds, so the reuse branch
-// never touches it and the fresh branch copies it straight out of the base box
-// — any type will do there, the two-word string included. Only a REPLACED
-// field rides a temp, and so must be placeable.
+// paths, which is weaker than structReuseEligible in two ways.
+//
+// A CARRIED field keeps the reference the box already holds, so the reuse
+// branch never touches it and the fresh branch copies it straight out of the
+// base box — any type will do there, the two-word string included.
+//
+// A string field APPENDED TO ITSELF (`buf: p.buf + s`) has the same ownership
+// shape from the other side: __fern_str_append consumes the box's own
+// reference and hands the grown buffer back, so that field needs no temp-side
+// retain and no release of a displaced value either — see emitStructUpdateReuse
+// step 4a. A general replaced string (`buf: some_other_string`) is a different
+// question — it needs both, and its release is per-ABI — so it still refuses
+// through reusePlaceableField, and it is not what makes an accumulator
+// quadratic.
+//
+// Every other REPLACED field rides a temp, and so must be placeable.
 func (b *builder) structUpdateReusePlaceable(sl *ast.StructLit, sd *ast.StructDecl, base *ast.Ident) bool {
 	for _, f := range structUpdateFieldInits(sl, sd, base) {
 		if b.fieldCarriedFrom(f.Value, base.Name, f.Name) {
 			continue
 		}
-		if !reusePlaceableField(fieldType(sd.Fields, f.Name)) {
+		ft := fieldType(sd.Fields, f.Name)
+		if b.isSelfStrAppendField(f.Value, ft, base.Name, f.Name) {
+			continue
+		}
+		if !reusePlaceableField(ft) {
 			return false
 		}
 	}
@@ -16436,7 +16468,10 @@ func (b *builder) tryStructReuseOverwrite(n *ast.Assign, t *ast.Ident, idx int32
 //   - All field expressions are evaluated into temps BEFORE the box is
 //     reused, so a field that reads p (`x: p.x + 1`) sees the old value
 //     even though the box it lives in is about to be overwritten — no
-//     read-after-overwrite hazard, including field swaps.
+//     read-after-overwrite hazard, including field swaps. The string
+//     self-append `buf: p.buf + s` splits: its RHS is evaluated there, its
+//     concat under the is_unique branch (step 4a), which is still ahead of
+//     every store to the box.
 //   - Pointer fields: each new value is retained on eval (emitAliasInc
 //     for an alias-shaped RHS, same as normal StructLit construction).
 //     On the REUSE branch only, the box's OLD pointer-field values are
@@ -16481,7 +16516,23 @@ func (b *builder) emitStructUpdateReuse(sl *ast.StructLit, sd *ast.StructDecl, t
 		name string
 		slot int32
 		ptr  bool
+		// appended: the temp is filled by step 4a's in-place string
+		// append, which took over the box's own reference to this field.
+		// Step 4 must not release it as well — that is the double free.
+		appended bool
 	}
+	// appendField carries a `buf: p.buf + rhs` field between step 1, which
+	// evaluates only its RHS (keeping the site's evaluation order), and
+	// step 4a, which needs the uniqueness answer before it can pick between
+	// growing the buffer and copying it.
+	type appendField struct {
+		name     string
+		typ      ast.Type
+		slot     int32
+		rhsSlot  int32
+		rhsOwned bool
+	}
+	var appends []appendField
 	temps := make([]fieldTemp, 0, len(sl.Fields))
 	var carriedFields []ast.Param
 	hasPtr := false
@@ -16489,6 +16540,20 @@ func (b *builder) emitStructUpdateReuse(sl *ast.StructLit, sd *ast.StructDecl, t
 		ft := fieldType(sd.Fields, f.Name)
 		if b.fieldCarriedFrom(f.Value, t.Name, f.Name) {
 			carriedFields = append(carriedFields, ast.Param{Name: f.Name, Type: ft})
+			continue
+		}
+		if b.isSelfStrAppendField(f.Value, ft, t.Name, f.Name) {
+			rhsSlot, rhsOwned, err := b.spillStringOperand(f.Value.(*ast.Binary).Right)
+			if err != nil {
+				return err
+			}
+			ts := b.allocSlot()
+			b.locals[fmt.Sprintf("__reuse_fld_%d", ts)] = ts
+			b.scratchType[ts] = ft
+			temps = append(temps, fieldTemp{name: f.Name, slot: ts, appended: true})
+			appends = append(appends, appendField{
+				name: f.Name, typ: ft, slot: ts, rhsSlot: rhsSlot, rhsOwned: rhsOwned,
+			})
 			continue
 		}
 		isPtr := arrElemIsRcTracked(ft)
@@ -16507,7 +16572,7 @@ func (b *builder) emitStructUpdateReuse(sl *ast.StructLit, sd *ast.StructDecl, t
 		// validation (wasm).
 		b.scratchType[ts] = ft
 		b.emit(Op{Kind: OpStoreLocal, I32: ts})
-		temps = append(temps, fieldTemp{f.Name, ts, isPtr})
+		temps = append(temps, fieldTemp{name: f.Name, slot: ts, ptr: isPtr})
 		hasPtr = hasPtr || isPtr
 	}
 
@@ -16525,6 +16590,63 @@ func (b *builder) emitStructUpdateReuse(sl *ast.StructLit, sd *ast.StructDecl, t
 	b.locals[fmt.Sprintf("__reuse_box_%d", boxSlot)] = boxSlot
 	b.emitReuseBox(reusedSlot, idx, boxSlot, size+rcHeaderBytes, nil)
 
+	// 4a. The string self-append `buf: p.buf + s`. It is the one field
+	//     evaluated AFTER the uniqueness gate, because the two answers want
+	//     different code:
+	//
+	//     REUSE — the box IS p's and nothing else names it, so the field's
+	//     own reference is this frame's to spend. __fern_str_append takes
+	//     it and grows the buffer in place when that reference is also the
+	//     buffer's only one and the grown length still classes to the same
+	//     block; otherwise it copies and releases the old buffer itself.
+	//     Either way it OWNS what the field held, which is why step 4 skips
+	//     an appended field — dropping it there is a double free, exactly
+	//     as the dec-on-overwrite in assign() is for the bare-local form
+	//     (isSelfStrAppendLocal, the `strAppended` arm).
+	//
+	//     DECLINE — p's box is shared and an alias reads this field through
+	//     it, so the buffer must not move: a plain concat into a fresh
+	//     buffer for the fresh box, leaving p's field exactly as it was.
+	//     The BOX's rc is the right question and the string's is not — an
+	//     aliased struct still holds its buffer at rc 1, since only the box
+	//     holds that reference.
+	//
+	//     Deferring the append does not weaken step 1's read-after-overwrite
+	//     invariant. That invariant is about ordering against STORES to the
+	//     box (`x: p.x + 1`, a field swap), and no store has happened yet:
+	//     steps 5-6 are still ahead. The RHS was evaluated back in step 1 in
+	//     its own position, so user-visible evaluation order is unchanged;
+	//     only the concat itself, which reads nothing the user can observe,
+	//     moved.
+	for _, af := range appends {
+		b.emit(Op{Kind: OpLoadLocal, I32: reusedSlot})
+		b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
+		b.emit(Op{Kind: OpLoadLocal, I32: boxSlot})
+		b.emit(Op{Kind: OpConstI32, I32: rcHeaderBytes + offs[af.name]})
+		b.emit(Op{Kind: OpAdd})
+		b.emit(payloadLoadOpFor(af.typ, b.ptrW))
+		b.emit(Op{Kind: OpLoadLocal, I32: af.rhsSlot})
+		b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_append", Width: ResAddr, I32: 2})
+		b.emit(Op{Kind: OpStoreLocal, I32: af.slot})
+		b.emit(Op{Kind: OpElse})
+		b.emit(Op{Kind: OpLoadLocal, I32: idx})
+		if offs[af.name] != 0 {
+			b.emit(Op{Kind: OpConstI32, I32: offs[af.name]})
+			b.emit(Op{Kind: OpAdd})
+		}
+		b.emit(payloadLoadOpFor(af.typ, b.ptrW))
+		b.emit(Op{Kind: OpLoadLocal, I32: af.rhsSlot})
+		b.emit(Op{Kind: OpStrConcat})
+		b.emit(Op{Kind: OpStoreLocal, I32: af.slot})
+		b.emit(Op{Kind: OpEnd})
+		// The RHS is borrowed by both arms (__fern_str_append moves its
+		// accumulator, not its piece; OpStrConcat copies out of both), so
+		// an owned temp there is released once, after both have read it.
+		if af.rhsOwned {
+			b.decStashedStringTemps(af.rhsSlot)
+		}
+	}
+
 	// 4. REUSE branch only: release the box's OLD pointer-field values
 	//    before the new ones overwrite them. On a fresh box (reused==0)
 	//    the slots are uninitialised, so this is gated on the is_unique
@@ -16538,7 +16660,7 @@ func (b *builder) emitStructUpdateReuse(sl *ast.StructLit, sd *ast.StructDecl, t
 		b.emit(Op{Kind: OpLoadLocal, I32: reusedSlot})
 		b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
 		for _, tp := range temps {
-			if !tp.ptr {
+			if !tp.ptr || tp.appended {
 				continue
 			}
 			b.emit(Op{Kind: OpLoadLocal, I32: boxSlot})
@@ -17199,6 +17321,17 @@ func (b *builder) dropStructField(t ast.Type) {
 	// see appendChildDrop's dyn arm + docs/DYN-TRAITS.md §7.8.
 	if dt, isDyn := t.(ast.DynTraitType); isDyn && b.dynRcSupported {
 		b.emit(Op{Kind: OpCallDirect, Str: dynDropFnName(dt.Traits), I32: 1})
+		return
+	}
+	// wasm's inline two-word `dyn`: discard both words without releasing.
+	// dropFnNameFor DOES name a helper here (its guard is `ptrW != 4 &&
+	// !dynRcSupported`), but the branch below appends the trailing OpDrop its
+	// own drop fns need, and __drop_dyn_ returns void — so falling through
+	// emitted a module that fails wasm validation. Leaking matches every other
+	// wasm `dyn` drop site (docs/DYN-TRAITS.md §7.8); releasing it needs the
+	// §7.8 double-drop fixed first, so the element leaks for now (#8797).
+	if _, isDyn := t.(ast.DynTraitType); isDyn && b.ptrW == 4 {
+		b.emit(Op{Kind: OpDrop, Width: WidthString})
 		return
 	}
 	// Slice child: the owner is unique here, so its header frees at rc==1
@@ -18618,7 +18751,13 @@ func (b *builder) assign(n *ast.Assign) error {
 			// held — nothing to release) or copied into a fresh one and ran
 			// the same __fern_str_dec this branch would have. Dec'ing again
 			// here would over-release. See isSelfStrAppendLocal.
-		} else if isStringTypeOfLocal(t.Name, b) && ast.RcFreeEnabled && b.rc.freeEligible[t.Name] {
+		} else if isStringTypeOfLocal(t.Name, b) && ast.RcFreeEnabled && b.rc.freeEligible[t.Name] &&
+			!b.callConsumesIdent(n.Value, t.Name) {
+			// `s = f(.., s, ..)` into an `own` parameter hands the callee
+			// this reference to reclaim, so releasing it here too is an
+			// over-release — the array branch above declines for the same
+			// reason.
+			//
 			// dec the OLD string buffer before the
 			// overwrite, mirroring the exit-sweep string branch (emitDec)
 			// and gated identically (RcFreeEnabled && freeEligible). A
@@ -18785,9 +18924,9 @@ func (b *builder) assign(n *ast.Assign) error {
 				// the outer scope alias it deliberately), so its `cell[0] = v`
 				// write must store IN PLACE — never CoW, which would fork the
 				// cell whenever a closure also holds it (rc > 1) and silently
-				// drop the sharing. Fall through to the direct in-place store.
+				// drop the sharing.
 				if b.info != nil && b.info.BoxedCells[arrIdent.Name] {
-					// (skip the CoW dispatch below)
+					return b.emitBoxedCellStore(t, n, storeOp, storeWidth, helper)
 				} else if slot, isLocal := b.locals[arrIdent.Name]; isLocal && isArrayTypeOfLocal(arrIdent.Name, b) && !isParamName(arrIdent.Name, b) {
 					return b.emitArrayIndexAssignCoW(arrIdent, slot, t, n, stride, storeOp, storeWidth, helper)
 				}
@@ -19242,6 +19381,40 @@ func (b *builder) isSelfStrAppendLocal(value ast.Expr, name string) bool {
 		return false
 	}
 	return isStringTypeOfLocal(name, b) && b.rc.freeEligible[name]
+}
+
+// isSelfStrAppendField is the field twin of isSelfStrAppendLocal: it reports
+// whether the struct-update field init `value` is exactly
+// `<base>.<field> + rhs` with `field` string-typed (`ft`) — the accumulator
+// written through the record-update idiom, `b = B { ...b, buf: b.buf + s }`.
+// E048 forbids field assignment, so that literal IS how a struct-held string
+// builder is appended to; `BufWriter.write_string` is one.
+//
+// The caller establishes the ownership half. Both struct-update reuse hooks
+// reach this only through structUpdateReuseDecl, which has already proven
+// `base` names an OWNED (freeEligible) value of the struct type whose box
+// this frame may repurpose, and the emitter puts the append on the reuse arm
+// of that site's runtime is_unique gate — the BOX's, which is the question
+// that matters here and is not the buffer's: a struct aliased twice keeps its
+// buffer at rc 1, since only the box holds that reference, so a gate on the
+// string would grow a buffer the second alias still reads through.
+func (b *builder) isSelfStrAppendField(value ast.Expr, ft ast.Type, baseName, fieldName string) bool {
+	if !ast.RcFreeEnabled || !b.strAppendAvailable() {
+		return false
+	}
+	if _, isStr := ft.(ast.StringType); !isStr {
+		return false
+	}
+	bin, ok := value.(*ast.Binary)
+	if !ok || !bin.IsStringConcat {
+		return false
+	}
+	fa, ok := bin.Left.(*ast.FieldAccess)
+	if !ok || fa.Field != fieldName {
+		return false
+	}
+	id, ok := fa.Target.(*ast.Ident)
+	return ok && id.Name == baseName
 }
 
 // tupleTypeOfLocal returns the TupleType of a param / local named
@@ -21208,6 +21381,86 @@ func (b *builder) emitCellSet(n *ast.Call) error {
 	b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
 	b.emit(Op{Kind: OpLoadLocal, I32: valSlot})
 	b.emit(arrayElemStoreOpFor(elemType, b.ptrW))
+	return nil
+}
+
+// emitBoxedCellStore lowers `cell[0] = v` for a boxcapture cell — the shared
+// one-element box BoxMutatedCaptures rewrites a captured-and-assigned local
+// into (#5301). It is the Cell.set shape with an array spelling, and it
+// carries the same rc bookkeeping: retain an alias-shaped new value, then
+// release the element it supersedes.
+//
+// The release is sound because the cell OWNS its element. Nothing else may
+// write the slot: `x` reads and writes only ever lower here or through the
+// closure's env, the cell is never a CoW receiver, and computeFreeEligible
+// already reads the cell as an owned array-literal local — so the exit sweep
+// emits the DEEP `__fern_drop_arr_str` / `__drop_arr_*` for it, which walks
+// the element on the cell's last reference. That walk is only correct if the
+// slot holds a reference the cell took, which is exactly what the retain here
+// establishes and what the raw store did not: every outer rebind dropped the
+// superseded pointer on the floor (32 bytes an iteration, unbounded, #8441)
+// and left an aliased value in the slot under a count nobody had taken.
+//
+// The new value is evaluated and stashed BEFORE the old one is released, for
+// emitCellSet's reason: `s = s + "x"` reads the slot inside the value
+// expression, so releasing first would free the buffer the read is standing
+// on.
+//
+// A cycle still leaks. A closure element takes decValueOnStack's flat
+// `__fern_rc_dec` (dropFnNameFor declines a FuncType), which decrements
+// without re-entering a closure release, so `g = f` supersedes an element on
+// a cyclic graph without the recursion #8637 traced.
+func (b *builder) emitBoxedCellStore(t *ast.Index, n *ast.Assign, storeOp OpKind, storeWidth int, idxHelper string) error {
+	elem := t.ElemType
+	counted := elem != nil && ast.RcFreeEnabled && ast.IsPointerType(elem)
+	if !counted {
+		// A scalar cell carries no rc traffic: address, value, store.
+		if err := b.expr(t.Array); err != nil {
+			return err
+		}
+		if err := b.expr(t.Idx); err != nil {
+			return err
+		}
+		b.emit(Op{Kind: OpCallDirect, Str: idxHelper, Width: ResAddr, I32: 2})
+		if err := b.expr(n.Value); err != nil {
+			return err
+		}
+		b.emit(Op{Kind: storeOp, Width: storeWidth})
+		return nil
+	}
+	// addr = &cell[0], evaluated once so the load of the old element and the
+	// store of the new one hit the same slot.
+	addrSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__cell_box_addr_%d", addrSlot)] = addrSlot
+	if err := b.expr(t.Array); err != nil {
+		return err
+	}
+	if err := b.expr(t.Idx); err != nil {
+		return err
+	}
+	b.emit(Op{Kind: OpCallDirect, Str: idxHelper, Width: ResAddr, I32: 2})
+	b.emit(Op{Kind: OpStoreLocal, I32: addrSlot})
+	// The new value, retained when it is an alias the writer still holds.
+	valSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__cell_box_val_%d", valSlot)] = valSlot
+	// Typed so a two-word string ABI declares a slot wide enough for both
+	// words; an untyped slot keeps only the data word.
+	b.scratchType[valSlot] = elem
+	if err := b.expr(n.Value); err != nil {
+		return err
+	}
+	if needsRcIncOnAlias(n.Value, b) && !b.rc.moveSites[n.Value] {
+		b.emitAliasInc(n.Value)
+	}
+	b.emit(Op{Kind: OpStoreLocal, I32: valSlot})
+	// Release the superseded element through the same ladder a container
+	// slot's replacement takes.
+	b.emit(Op{Kind: OpLoadLocal, I32: addrSlot})
+	b.emit(payloadLoadOpFor(elem, b.ptrW))
+	b.dropStructField(elem)
+	b.emit(Op{Kind: OpLoadLocal, I32: addrSlot})
+	b.emit(Op{Kind: OpLoadLocal, I32: valSlot})
+	b.emit(Op{Kind: storeOp, Width: storeWidth})
 	return nil
 }
 

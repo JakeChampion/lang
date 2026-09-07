@@ -531,6 +531,30 @@ func exprCases(t *testing.T) []invocation {
 		{name: "ninth backreference", args: []string{"abcdefghii", ":", `\(a\)\(b\)\(c\)\(d\)\(e\)\(f\)\(g\)\(h\)\(i\)\9`}},
 		{name: "ten is one then a zero", args: []string{"abcdefghija0", ":", `\(a\)\(b\)\(c\)\(d\)\(e\)\(f\)\(g\)\(h\)\(i\)\(j\)\10`}},
 		{name: "ten is one then a zero that fails", args: []string{"abcdefghij", ":", `\(a\)\(b\)\(c\)\(d\)\(e\)\(f\)\(g\)\(h\)\(i\)\(j\)\10`}},
+
+		// A backreference is scoped to the alternation BRANCH its group was
+		// completed in: a group closed in a sibling branch is out of scope,
+		// and so is the group the reference itself sits inside, which is
+		// still open. A group closed before an alternation is in scope in
+		// every branch of it, and one closed inside a branch is in scope
+		// again past the whole alternation.
+		{name: "backreference to a sibling branch", args: []string{"aab", ":", `\(a\)b\|\1`}},
+		{name: "backreference is the whole sibling branch", args: []string{"aab", ":", `\(a\)\|\1`}},
+		{name: "backreference after text in a sibling branch", args: []string{"aab", ":", `\(a\)\|x\1`}},
+		{name: "backreference past a group in a sibling branch", args: []string{"aab", ":", `\(a\)\|\(b\)\1`}},
+		{name: "backreference to a repeated sibling branch", args: []string{"aab", ":", `\(a\)\{2\}\|\1`}},
+		{name: "backreference to its own group", args: []string{"aab", ":", `\(a\|\1\)`}},
+		{name: "backreference to a nested sibling branch", args: []string{"aab", ":", `\(\(a\)\|\2\)`}},
+		{name: "backreference to the group it sits in", args: []string{"aab", ":", `\(\(a\)\1\)`}},
+		{name: "backreference to a group closed before the alternation", args: []string{"aab", ":", `\(a\)\(b\|\1\)`}},
+		{name: "backreference in a later branch of its own alternation", args: []string{"aab", ":", `x\|\(a\)\1`}},
+		{name: "backreference past an alternation that closed it", args: []string{"aab", ":", `\(\(a\)\|b\)\2`}},
+		{name: "backreference to a nested group past its close", args: []string{"aab", ":", `\(\(a\)\)\2`}},
+		{name: "backreference to a starred group", args: []string{"aab", ":", `\(a\)*\1`}},
+		{name: "backreference to an optional group", args: []string{"aab", ":", `\(a\)\{0,1\}\1`}},
+		{name: "backreference past an empty branch", args: []string{"aab", ":", `\(a\)\|\|\1`}},
+		{name: "backreference to a group closed in an earlier branch", args: []string{"aab", ":", `\(a\)\1\|\1`}},
+		{name: "backreference to a group opened in an earlier branch", args: []string{"aab", ":", `\(a\|\(b\)\)\2`}},
 		{name: "unmatched group open", args: []string{"abc", ":", `\(`}},
 		{name: "unmatched group close", args: []string{"abc", ":", `\)`}},
 		{name: "nested unmatched group open", args: []string{"a", ":", `\(\(a\)`}},

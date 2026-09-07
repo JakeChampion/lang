@@ -47,7 +47,7 @@ column says what `TestSelfHostFeatureCensus` holds the row to.
 |---|---|---|---|
 | Generic functions | ✅ monomorphised, with trait bounds | **13**, all `astwalk`'s — 10 fold spine, 3 accumulator map spine | pinned |
 | Generic structs | ✅ | **0** — load-bearing: a generic struct in a signature promotes its type param to the monomorphiser, which the per-module emit path does not run (the accumulator spine returns bare tuples for exactly that reason) | pinned |
-| Closures / lambdas | ✅ `(x: T) => e`, escaping + capturing | **115** — 103 nested named fns (4 astwalk visitors, 19 `wasm_ir` helper-gate predicates behind `any_op`, 23 in `checker`'s collectors, 12 in `parser` — the mentions, fn-value-call, moves-handle, deep-defer-scan, elb-guard and hl families, the last two having lost their no-op expression visitors to `fold_stmt_spine` (#8180) — and 31 in `irlower` — the cap-family visitors, body_binds_lambda's, the closure-array family's four (the credit's two and the empty-`fn[]`-declaration scan's two, #4354), the five visit/descend pairs of the Perceus escape-scanner trio, the env-box lift's nine accumulator-spine wrappers, #6993, the superseded-field own move's three, #8186, and the own-lift scan's `pick`, #8267, plus #8639's `at_unary` and `at_number` in `checker` — the sign-chain collector and the E047 report for a suffixed integer literal); the visitors mostly capture, the gate predicates mostly do not — plus **12** arrow lambdas (3 no-op statement visitors, 3 in `constfold`'s assert probe, the 4 that were anonymous `function(…)` exprs until #2673 — `astwalk`'s splice, `checker`'s diag fold, two `parser` rewriters — and `checker`'s 2 break scans, #8562) | pinned |
+| Closures / lambdas | ✅ `(x: T) => e`, escaping + capturing | **116** — 104 nested named fns (4 astwalk visitors, 19 `wasm_ir` helper-gate predicates behind `any_op`, 23 in `checker`'s collectors, 12 in `parser` — the mentions, fn-value-call, moves-handle, deep-defer-scan, elb-guard and hl families, the last two having lost their no-op expression visitors to `fold_stmt_spine` (#8180) — and 31 in `irlower` — the cap-family visitors, body_binds_lambda's, the closure-array family's four (the credit's two and the empty-`fn[]`-declaration scan's two, #4354), the five visit/descend pairs of the Perceus escape-scanner trio, the env-box lift's nine accumulator-spine wrappers, #6993, the superseded-field own move's three, #8186, and the own-lift scan's `pick`, #8267, plus #8639's `at_unary` and `at_number` in `checker` — the sign-chain collector and the E047 report for a suffixed integer literal — and #8657's `at` in `checker`'s value-block local retype, the `map_expr` visitor closing over the scope the rewritten block sits in); the visitors mostly capture, the gate predicates mostly do not — plus **12** arrow lambdas (3 no-op statement visitors, 3 in `constfold`'s assert probe, the 4 that were anonymous `function(…)` exprs until #2673 — `astwalk`'s splice, `checker`'s diag fold, two `parser` rewriters — and `checker`'s 2 break scans, #8562) | pinned |
 | `for x in xs` | ✅ arrays, strings, `Iterator[T]` | **1,150** in 8 modules — `irlower.fern` and `checker.fern` carry most of them | floor |
 | `?` error propagation | ✅ incl. `From`-converting widening | **0** | pinned |
 | Hash map (`Map[K, V]`) | ✅ i32/string/`@derive(Eq, Hash)` keys | **12** spellings in 4 modules (`irverify`'s `NameIndex`, `wasm_ir`'s call set, `builtins`' mirror of `JObject`, and `printer`'s line-id table for the linear-space diff, #8611) | pinned |
@@ -61,9 +61,17 @@ column says what `TestSelfHostFeatureCensus` holds the row to.
 | Magic ASCII byte constants (`== 91`, `== 44`) | — | **342** | — |
 | Explicit `as` casts | — | **715** | logged |
 | Hand-written AST walkers | — | **~130** over `Expr`, **~247** over `Stmt` | — |
-| Wildcard `_ =>` match arms | — | **2,863** of **10,089** arrow tokens (28%) | ceiling |
+| Wildcard `_ =>` match arms | — | **3,038** of **11,180** arrow tokens (27%) | ceiling |
 | Locals with a written type annotation | inference exists | **17,168** of 17,175 (99.9%) | logged |
 | Methods (`function (r: T) name(…)`) | ✅ | **289** in 9 modules | logged |
+
+The wildcard row last moved at #8410, and DOWN: the `@`-binding precondition
+the two post-match box releases in `irlower.fern` share became one `if let`
+helper (`match_binds_whole_scrutinee`), which is one arm fewer than the two
+`match (arm.pattern)` loops it replaced and none added for the new release's own
+probes. The ceiling moved with it, from 3039/3036 to 3041/3038 — the banked
+measurement had understated main by three, which is the failure mode
+`TestSelfHostFeatureCensus`'s own note keeps recording.
 
 **Method.** Every counted row is taken after `//` comments and string, f-string
 and char literals are stripped out. The self-host embeds whole test programs as

@@ -332,71 +332,26 @@ pub function is_sorted_by[T](arr: T[], cmp: (T, T) => i32): boolean {
 // `sort_by_i32_key[T](arr, key)` — return a fresh copy of `arr` sorted
 // ascending by the i32 `key(x)` projection. The common "sort records by a
 // numeric field" case (`sort_by_i32_key(rows, \r -> r.timestamp)`), without
-// spelling a full comparator. Keys are computed ONCE up front into a parallel
-// array (a Schwartzian transform — each element's `key` is evaluated a single
-// time, not O(n log n) times), then the elements and their keys are merge-
-// sorted together in lockstep by the precomputed i32 key. Stable bottom-up
-// merge sort, O(n log n) (#4387 item 3); the input is not mutated. Each merge
-// pass materializes fresh `dstv` / `dstk` copies, so no merge reads a slot it
-// has already overwritten (see the file-header aliasing rule).
+// spelling a full comparator.
 //
-// This body IS `sort_key` with `K` fixed to `i32` — `impl Ord for i32` is `<` /
-// `>`, so the two order identically, stability included — and it stays spelled
-// out rather than delegating because the self-host cannot yet monomorphise a
-// generic that FORWARDS its closure parameter to another generic (#7187).
+// `sort_key` with `K` fixed to `i32`: `impl Ord for i32` is `<` / `>`, so the
+// two order identically, stability included.
 pub function sort_by_i32_key[T](arr: T[], key: (T) => i32): T[] {
-    var srcv: T[] = arr;
-    var srck: i32[] = [];
-    for x in srcv { srck = srck.append(key(x)); }
-    var n: i32 = srcv.len();
-    if (n < 2) { return srcv; }
-    var width: i32 = 1;
-    while (width < n) {
-        var dstv: T[] = [];
-        var dstk: i32[] = [];
-        var c: i32 = 0;
-        while (c < n) { dstv = dstv.append(srcv[c]); dstk = dstk.append(srck[c]); c = c + 1; }
-        var lo: i32 = 0;
-        while (lo < n) {
-            var mid: i32 = lo + width;
-            if (mid > n) { mid = n; }
-            var hi: i32 = lo + width + width;
-            if (hi > n) { hi = n; }
-            var i: i32 = lo;
-            var j: i32 = mid;
-            var k: i32 = lo;
-            while (i < mid && j < hi) {
-                if (srck[j] < srck[i]) {
-                    dstv = dstv.with(k, srcv[j]); dstk = dstk.with(k, srck[j]); j = j + 1;
-                } else {
-                    dstv = dstv.with(k, srcv[i]); dstk = dstk.with(k, srck[i]); i = i + 1;
-                }
-                k = k + 1;
-            }
-            while (i < mid) { dstv = dstv.with(k, srcv[i]); dstk = dstk.with(k, srck[i]); i = i + 1; k = k + 1; }
-            while (j < hi) { dstv = dstv.with(k, srcv[j]); dstk = dstk.with(k, srck[j]); j = j + 1; k = k + 1; }
-            lo = lo + width + width;
-        }
-        srcv = dstv;
-        srck = dstk;
-        width = width + width;
-    }
-    return srcv;
+    return sort_key(arr, key);
 }
 
 // `sort_key[T, K: cmp.Ord](arr, key)` — return a fresh copy of `arr`
 // sorted ascending by the `key(x)` projection, where the key type `K`
 // is any `core/cmp.Ord` (scalar, `string`, or a `@derive(Ord)` struct
-// / enum). The generic-key generalisation of `sort_by_i32_key`: where
-// that one is pinned to an i32 key and a scalar `<`, this dispatches
-// the ordering through `k.cmp(k2)`, so you can sort records by a
-// `string` name, a `u64` id, or any composite `Ord` key without
-// spelling a full comparator. The `K: cmp.Ord` bound monomorphises the
-// compare per key type on the self-host IR path — a `string` key
-// lowers `.cmp` to the lexicographic byte compare, an `i32` key to the
-// scalar three-way — where an unbounded `[K]` would erase and mis-
-// order strings. Like `sort_by_i32_key` it is a Schwartzian transform:
-// each element's `key` is evaluated ONCE up front into a parallel
+// / enum). The generic-key generalisation of `sort_by_i32_key`, which
+// is this function at `K = i32`: the ordering goes through `k.cmp(k2)`,
+// so you can sort records by a `string` name, a `u64` id, or any
+// composite `Ord` key without spelling a full comparator. The
+// `K: cmp.Ord` bound monomorphises the compare per key type on the
+// self-host IR path — a `string` key lowers `.cmp` to the lexicographic
+// byte compare, an `i32` key to the scalar three-way — where an
+// unbounded `[K]` would erase and mis-order strings. A Schwartzian
+// transform: each element's `key` is evaluated ONCE up front into a parallel
 // `K[]`, then the elements and their keys merge-sort in lockstep, so a
 // costly projection is not recomputed O(n log n) times. Stable bottom-
 // up merge sort, O(n log n); the input is not mutated (equal keys keep

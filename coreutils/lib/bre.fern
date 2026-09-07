@@ -227,9 +227,33 @@ function nd_assert(): i32 {
 }
 
 // `P` — the parser: the pattern, the cursor, the nodes built so far, the
-// group counter, and the first error met (parsing stops reporting after
-// one, the way glibc reports only the first).
-struct P { pat: string, i: i32, nodes: Node[], classes: u8[], ngroups: i32, err: string }
+// group counter, the groups a backreference may name here, and the first
+// error met (parsing stops reporting after one, the way glibc reports
+// only the first).
+struct P { pat: string, i: i32, nodes: Node[], classes: u8[], ngroups: i32, done: i32, err: string }
+
+// `done` is a bitmask of the groups COMPLETED at the cursor, over the
+// nine a `\N` can spell. glibc scopes a backreference to the alternation
+// branch its group closed in: a group closed in a sibling branch is not
+// visible, and neither is the group the reference sits inside, which is
+// still open. A group closed before an alternation is visible in every
+// branch of it, and one closed inside a branch is visible again once the
+// whole alternation is behind the cursor.
+function group_bit(n: i32): i32 {
+  return 1 << n - 1;
+}
+
+function group_done(p: P, n: i32): boolean {
+  return (p.done & group_bit(n)) != 0;
+}
+
+// A number past nine is unnameable, so it takes no bit.
+function mark_group_done(p: P, n: i32): P {
+  if (n > 9) {
+    return p;
+  }
+  return P { ...p, done: p.done | group_bit(n) };
+}
 
 function add_node(p: P, n: Node): (P, i32) {
   var out: P = P { ...p, nodes: p.nodes.append(n) };
@@ -572,15 +596,19 @@ function any_table(p0: P): (P, i32) {
 
 // ---- the grammar -----------------------------------------------------------
 // A whole alternation, ending at the pattern's end or at the `\)` the
-// caller opened.
+// caller opened. Each branch starts from the groups completed BEFORE the
+// alternation, and the alternation leaves behind everything any of its
+// branches completed.
 function parse_alt(p0: P): (P, i32) {
+  var outer: i32 = p0.done;
   var r: (P, i32) = parse_branch(p0);
   var p: P = r.0;
   var left: i32 = r.1;
   while (p.err.len() == 0 && esc_at(p, p.i, 124)) {
-    p = P { ...p, i: p.i + 2 };
+    var sofar: i32 = p.done;
+    p = P { ...p, i: p.i + 2, done: outer };
     var r2: (P, i32) = parse_branch(p);
-    p = r2.0;
+    p = P { ...r2.0, done: r2.0.done | sofar };
     var n: (P, i32) = add_node(p, Node { kind: nd_alt(), a: left, b: r2.1, c: 0 });
     p = n.0;
     left = n.1;
@@ -814,7 +842,7 @@ function parse_escape(p0: P): (P, i32) {
   }
   if (c >= 49 && c <= 57) {
     p = P { ...p, i: p.i + 2 };
-    if (c - 48 > p.ngroups) {
+    if (!group_done(p, c - 48)) {
       return (fail(p, err_esubreg()), 0);
     }
     return add_node(p, Node { kind: nd_backref(), a: c - 48, b: 0, c: 0 });
@@ -873,7 +901,8 @@ function assert_index(c: i32): i32 {
 }
 
 // `\( … \)`. The group number is taken before the body is parsed, so
-// groups are numbered by their opening parenthesis as glibc numbers them.
+// groups are numbered by their opening parenthesis as glibc numbers them,
+// but the group only becomes referenceable at its `\)`.
 function parse_group(p0: P): (P, i32) {
   var n: i32 = p0.ngroups + 1;
   var r: (P, i32) = parse_alt(P { ...p0, ngroups: n });
@@ -884,7 +913,7 @@ function parse_group(p0: P): (P, i32) {
   if (!esc_at(p, p.i, 41)) {
     return (fail(p, err_eparen_open()), 0);
   }
-  p = P { ...p, i: p.i + 2 };
+  p = mark_group_done(P { ...p, i: p.i + 2 }, n);
   return add_node(p, Node { kind: nd_group(), a: r.1, b: n, c: 0 });
 }
 
@@ -1100,7 +1129,7 @@ function has_backref(nodes: Node[]): boolean {
 pub function bre_compile(pat: string): Bre {
   var nodes: Node[] = [Node { kind: nd_empty(), a: 0, b: 0, c: 0 }];
   var cls: u8[] = [];
-  var p: P = P { pat: pat, i: 0, nodes: nodes, classes: cls, ngroups: 0, err: "" };
+  var p: P = P { pat: pat, i: 0, nodes: nodes, classes: cls, ngroups: 0, done: 0, err: "" };
   var r: (P, i32) = parse_alt(p);
   p = r.0;
   if (p.err.len() == 0 && !at_end(p)) {
@@ -1304,19 +1333,44 @@ function fresh_caps(n: i32): i32[] {
 // `text`, with every group's span.
 pub function (re: Bre) exec(text: string): BreMatch {
   if (re.backref) {
-    return exec_backtrack(re, text);
+    return exec_backtrack(re, text, 0);
   }
-  return exec_threads(re, text);
+  return exec_threads(re, text, 0);
+}
+
+// `(re).search(text)` — glibc's `re_search` reduced to the question a
+// line-selecting utility asks of it: does the pattern match ANYWHERE in
+// `text`? nl(1) is the caller.
+//
+// The scan hands the engines the WHOLE string with a starting offset
+// rather than a suffix of it, so `^` still means the start of the line
+// and `$` its end however far in the scan has reached — `nl -bp'^a'`
+// numbers a line beginning with `a`, not every line containing one.
+pub function (re: Bre) search(text: string): boolean {
+  if (!re.backref) {
+    // One pass: a fresh thread is seeded at every position rather than
+    // the whole simulation being re-run from each of them, which is the
+    // difference between O(n·m) and O(n²·m) over a line.
+    return exec_threads_from(re, text, 0, true).matched;
+  }
+  var i: i32 = 0;
+  while (i <= text.len()) {
+    if (exec_backtrack(re, text, i).matched) {
+      return true;
+    }
+    i = i + 1;
+  }
+  return false;
 }
 
 // The backtracking engine: ask for one end position at a time, longest
 // first, and take the first that answers yes.
-function exec_backtrack(re: Bre, text: string): BreMatch {
+function exec_backtrack(re: Bre, text: string, start: i32): BreMatch {
   var no: i32[] = [];
   var end: i32 = text.len();
-  while (end >= 0) {
+  while (end >= start) {
     var m: M = M { text: text, re: re, target: end, caps: fresh_caps(re.ngroups * 2), marks: fresh_caps(re.nmarks) };
-    var r: (boolean, M) = step(m, 0, 0);
+    var r: (boolean, M) = step(m, 0, start);
     if (r.0) {
       return caps_to_match(r.1.caps, re, end);
     }
@@ -1385,15 +1439,23 @@ function zero_width_holds(text: string, in: Inst, pos: i32): boolean {
 }
 
 // The Thompson simulation: one pass, every thread in step.
-function exec_threads(re: Bre, text: string): BreMatch {
+function exec_threads(re: Bre, text: string, start: i32): BreMatch {
+  return exec_threads_from(re, text, start, false);
+}
+
+// `unanchored` seeds the start state at every position, which is
+// glibc's re_search; without it the match must begin at `start`, which
+// is re_match. `^` and `$` are unaffected either way: they are asked
+// about the position in the WHOLE text, not about where the scan began.
+function exec_threads_from(re: Bre, text: string, start: i32, unanchored: boolean): BreMatch {
   var ncap: i32 = re.ngroups * 2;
   var no_pcs: i32[] = [];
   var no_caps: i32[][] = [];
-  var t: Threads = Threads { pcs: no_pcs, caps: no_caps, seen: fill(re.insts.len(), 0 - 1) };
-  t = add_thread(re, t, 0, 0, fresh_caps(ncap), 0, text);
+  var t: Threads = Threads { pcs: no_pcs, caps: no_caps, seen: fill(re.insts.len(), 0 - 2) };
+  t = add_thread(re, t, start, 0, fresh_caps(ncap), start, text);
   var best: i32 = 0 - 1;
   var best_caps: i32[] = fresh_caps(ncap);
-  var pos: i32 = 0;
+  var pos: i32 = start;
   while (true) {
     // The list being stepped is held apart from `t`, so `t` keeps sole
     // ownership of the stamp array and updates it in place.
@@ -1417,10 +1479,22 @@ function exec_threads(re: Bre, text: string): BreMatch {
       }
       k = k + 1;
     }
-    if (pos >= text.len() || t.pcs.len() == 0) {
+    if (pos >= text.len() || unanchored && best >= 0) {
       break;
     }
     pos = pos + 1;
+    if (unanchored) {
+      // This seed shares generation `pos` with the byte-children added
+      // above, so a pc the byte-chain already stamped is skipped here. That
+      // costs the seed's captures at that pc, never a thread: the chain
+      // expanded the same split itself, so the set of pcs waiting on the
+      // next byte is identical. `search` reads only `.matched`, which is
+      // why it is sound to share the stamps rather than pay a second array.
+      t = add_thread(re, t, pos, 0, fresh_caps(ncap), pos, text);
+    }
+    if (t.pcs.len() == 0) {
+      break;
+    }
   }
   if (best < 0) {
     return BreMatch { matched: false, end: 0, starts: no_pcs, ends: no_pcs };

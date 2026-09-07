@@ -12,9 +12,10 @@ import (
 // the IR path. They lower to a `print_str` IR op (not a call_direct, so they
 // sidestep the call eligibility gate). The register backends emit a call to
 // __fn___fern_print_str, the Fern-compiled helper (asmcore.rt_src_print_str);
-// wasm calls its own WASI $__fern_print_str. `print(s)` desugars to
-// `print_str(s + "\n")` via the existing str_concat op, so one op + helper serves
-// both. stdout pins the exact bytes: write is verbatim, print appends a newline.
+// wasm calls its own WASI $__fern_print_str. `print(s)` is two print_str — the
+// payload, then a "\n" literal — so one op + helper serves both and neither
+// builds a joined temp (#8410). stdout pins the exact bytes: write is verbatim,
+// print appends a newline.
 var printStrIRCases = []struct {
 	name, src, want string
 }{

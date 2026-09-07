@@ -289,6 +289,27 @@ function e_number_at(text: string, suffix: string, is_float: boolean, line: i32,
 function e_quoted_at(text: string, suffix: string, raw: string, line: i32, col: i32): ast.Expr {
     return ast.ExprNumber { text: text, suffix: suffix, raw: raw, is_float: false, line: line, col: col };
 }
+// e_unit_at builds the unit value `()`. Its payload is the constant 0 the
+// native compiler lowers its UnitLit to, and `()` rides along as the source
+// spelling so the printer writes the unit back rather than the decoded payload.
+function e_unit_at(line: i32, col: i32): ast.Expr {
+    return ast.ExprNumber { text: "0", suffix: "", raw: "()", is_float: false, line: line, col: col };
+}
+// is_unit_literal reads back what e_unit_at wrote: this node is the unit, not
+// a written `0`. It is the one thing that tells them apart, since the payload
+// is the same constant — the checker types it `void` and the number rules
+// (float settling, destination-width reading) skip it.
+pub function is_unit_literal(n: ast.ExprNumber): boolean {
+    return n.raw == "()";
+}
+// is_unit_expr asks the same of any expression.
+pub function is_unit_expr(e: ast.Expr): boolean {
+    match (e) {
+        ast.ExprNumber(n) => { return is_unit_literal(n); },
+        _ => { return false; }
+    }
+    return false;
+}
 function e_ident(name: string): ast.Expr { return ast.ExprIdent { name: name, line: 0, col: 0, ty: "" }; }
 function e_ident_at(name: string, line: i32, col: i32): ast.Expr { return ast.ExprIdent { name: name, line: line, col: col, ty: "" }; }
 function e_string(value: string): ast.Expr { return ast.ExprString { value: value, line: 0, col: 0 }; }
@@ -2292,7 +2313,7 @@ function parse_primary_nested(p: Par): (ast.Expr, Par) {
                 // arrow_lambda_at() already claimed `() => e` above.
                 if (p.peek_punct() == ")") {
                     p = p.advance();
-                    return parse_postfix(p, e_number_at("0", "", false, tpl, tpc));
+                    return parse_postfix(p, e_unit_at(tpl, tpc));
                 }
                 var (inner_expr, inner_p) = parse_expr(p);
                 p = inner_p;
@@ -6318,6 +6339,15 @@ function fn_ret_admitted(rr_name: string, r_is_arr: boolean): string {
     return "";
 }
 
+// at_unit_type reports whether the cursor sits on the unit type `()`. Native's
+// type parser resolves the empty parens to the void type and its printer writes
+// `void`, so the self-host records the same name rather than the written parens
+// (#8759). `() => R` is a function type with an empty parameter list, not the
+// unit, and is left for the collectors that build a fn-type spelling.
+function at_unit_type(p: Par): boolean {
+    return p.peek_punct() == "(" && p.peek_punct_at(1) == ")" && p.peek_punct_at(2) != "=>";
+}
+
 function consume_array_suffix(p: Par, name: string): (string, boolean, string, Par) {
     while (p.peek_punct() == "[") {
         p = p.advance();
@@ -6403,6 +6433,13 @@ function parse_type_name_reserving_arrow(p: Par): (string, boolean, string, Par)
 }
 
 function parse_type_paren_arrow(p: Par, top_arrow: boolean): (string, boolean, string, Par) {
+    // The unit type `()`, folded to `void` before the collect loop can record
+    // its parens as a spelling.
+    if (at_unit_type(p)) {
+        var up: Par = p.advance();
+        up = up.advance();
+        return consume_array_suffix(up, "void");
+    }
     // A parenthesized SINGLE trait-object type — `(dyn T)`,
     // `(dyn A + B)`, optionally arrayed `(dyn T)[]`. The parens are
     // redundant grouping (source needs them so a trailing `[]` binds to
@@ -6439,6 +6476,9 @@ function parse_type_paren_arrow(p: Par, top_arrow: boolean): (string, boolean, s
     var tprev_word: boolean = false;
     while (!p.at_end()) {
         var tpk: string = p.peek_punct();
+        // A unit ELEMENT of a tuple type — `((), i32)`. The head `()` never
+        // reaches here (folded above), so this is always a nested one.
+        if (at_unit_type(p)) { tbuf = tbuf + "void"; p = p.advance(); p = p.advance(); tprev_word = false; continue; }
         if (tpk == "(") { td = td + 1; tbuf = tbuf + "("; p = p.advance(); tprev_word = false; continue; }
         if (tpk == ")") { td = td - 1; tbuf = tbuf + ")"; p = p.advance(); tprev_word = false; if (td == 0) { break; } continue; }
         if (tpk == ",") { if (td == 1) { top_comma = true; } tbuf = tbuf + ", "; p = p.advance(); tprev_word = false; continue; }
@@ -6561,8 +6601,8 @@ function parse_type_paren_arrow(p: Par, top_arrow: boolean): (string, boolean, s
 }
 
 // unwrap_grouping_parens strips redundant grouping parens from a type spelling.
-// The caller has established the parens hold one non-fn element, so `()` — the
-// unit type, whose parens are its name — is the only shape left to protect.
+// The caller has established the parens hold one non-fn element; the unit `()`
+// is folded to `void` before it can reach here.
 function unwrap_grouping_parens(s: string): string {
     var t: string = s;
     while (t.len() > 2 && t[0] == b'(' && t[t.len() - 1] == b')') {
@@ -6657,6 +6697,10 @@ function parse_type_ident_led(p: Par, base: string): (string, boolean, string, P
         // top-level `parse_type` spelling (` + ` joined) so the dyn payload
         // type round-trips identically.
         if (pk == "+") { inner = inner + " + "; p = p.advance(); prev_ident = false; continue; }
+        // The unit type as a generic ARGUMENT — `Result[(), E]`, `Option[()]`.
+        // Folded to `void` here too: this collector reads the brackets a token
+        // at a time and never calls back into the type parser.
+        if (at_unit_type(p)) { inner = inner + "void"; p = p.advance(); p = p.advance(); prev_ident = false; continue; }
         // Tuple types nested inside a generic arg, e.g.
         // `Option[(string, string)]` — pass parens through verbatim.
         if (pk == "(") { inner = inner + "("; p = p.advance(); prev_ident = false; continue; }
@@ -18122,7 +18166,7 @@ function is_float_type_name(t: string): boolean {
 // already and is likewise not a candidate.
 function is_unsettled_int_literal(e: ast.Expr): boolean {
     match (e) {
-        ast.ExprNumber(n) => { return !n.is_float && n.suffix.len() == 0; },
+        ast.ExprNumber(n) => { return !n.is_float && n.suffix.len() == 0 && !is_unit_literal(n); },
         ast.ExprUnary(u) => {
             if (u.op != "-" && u.op != "+") { return false; }
             return is_unsettled_int_literal(u.operand);

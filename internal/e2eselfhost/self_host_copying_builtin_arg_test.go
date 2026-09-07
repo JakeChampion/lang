@@ -21,12 +21,12 @@ import (
 // reaching it, `out` would be released under the field (exit 139, or 250 when
 // the bytes had already been recycled).
 //
-// `print` and `Writer.write` each leave one block per call on the self-host
-// whatever their argument — print's newline-joined temp and write's
-// Option[IoError] result box, measured identically with a string literal
-// (#8410). Those rows pin exactly that one block, so the accumulator's own
-// three concats per round are proven freed and the row moves when the gap
-// closes.
+// `print` and `Writer.write` used to leave one block per call whatever their
+// argument — print's newline-joined temp and write's Option[IoError] result box
+// (#8410). print now writes the payload and a "\n" literal without joining
+// them, and a match over `w.write(...)` releases the box it consumed, so every
+// row here is balanced: each case allocates only the accumulator's three
+// concats per round and frees all of them.
 
 const copyingBuiltinProlog = `function round(n: i32): i32 {
     var out: string = "";
@@ -49,23 +49,22 @@ type copyingBuiltinCase struct {
 	name  string
 	decls string
 	use   string
-	// leakPerRound is the number of blocks the builtin itself leaves behind
-	// per call (#8410); the accumulator's blocks must be freed regardless.
-	// The retaining user method is checked by its exit code only, since its
-	// Sink's own drop may legitimately free the string once.
-	pinCounts    bool
-	leakPerRound int64
+	// pinCounts asks for the leak counts as well as the exit code: every
+	// block the round allocates must be freed, the builtin's own included
+	// (#8410). The retaining user method is checked by its exit code only,
+	// since its Sink's own drop may legitimately free the string once.
+	pinCounts bool
 }
 
 func copyingBuiltinCases() []copyingBuiltinCase {
 	return []copyingBuiltinCase{
 		{name: "control_len", use: `var q: i32 = out.len();`, pinCounts: true},
-		{name: "print", use: `print(out);`, pinCounts: true, leakPerRound: 1},
+		{name: "print", use: `print(out);`, pinCounts: true},
 		{name: "eprint", use: `eprint(out);`, pinCounts: true},
 		{name: "memchr", use: `var q: i32 = __memchr(out, 10, 0);`, pinCounts: true},
 		{name: "count_byte", use: `var q: i32 = __count_byte(out, 97);`, pinCounts: true},
 		{name: "writer_write", use: `var w: Writer = stdout();
-    match (w.write(out)) { Some(_) => { return -1; }, None => {} }`, pinCounts: true, leakPerRound: 1},
+    match (w.write(out)) { Some(_) => { return -1; }, None => {} }`, pinCounts: true},
 		{
 			name: "user_write_method_retains",
 			decls: `struct Sink { last: string }
@@ -112,8 +111,8 @@ func TestSelfHostCopyingBuiltinArgX86_64(t *testing.T) {
 			if frees < 150 {
 				t.Errorf("%s: %s — the accumulator's blocks were not freed; the credit did not reach `out`", tc.name, summary)
 			}
-			if allocs-frees != tc.leakPerRound*50 || (tc.leakPerRound == 0 && live != 0) {
-				t.Errorf("%s: %s — want exactly %d unpaired block(s) per round", tc.name, summary, tc.leakPerRound)
+			if allocs != frees || live != 0 {
+				t.Errorf("%s: %s — want every block freed, none unpaired", tc.name, summary)
 			}
 		})
 	}

@@ -11165,7 +11165,7 @@ func (g *generator) emitEnvRuntime() {
 	//   16 bytes [tag=0, pad, ptr]
 	g.emit("mov r14, rax") // stash str ptr
 	g.emit("mov edi, 16")
-	g.emit("call __fern_alloc_box")
+	g.emit("call __fern_alloc_rc1")
 	g.emit("mov dword ptr [rax], 0") // tag = 0 (Some)
 	g.emit("mov [rax + 8], r14")     // payload at +8 (8-byte slot)
 	g.emit("jmp .Lenv_done")
@@ -11173,8 +11173,8 @@ func (g *generator) emitEnvRuntime() {
 	g.emit("add rbx, 8")
 	g.emit("jmp .Lenv_loop")
 	g.label(".Lenv_none")
-	g.emit("mov edi, 8")
-	g.emit("call __fern_alloc_box")
+	g.emit("mov edi, 16")
+	g.emit("call __fern_alloc_rc1")
 	g.emit("mov dword ptr [rax], 1") // tag = 1 (None)
 	g.label(".Lenv_done")
 	g.emit("add rsp, 24")
@@ -11628,8 +11628,8 @@ func (g *generator) emitReadLineRuntime() {
 	// EOF before any byte → return None.
 	g.emit("test r12, r12")
 	g.emit("jnz .Lrl_some")
-	g.emit("mov edi, 4")
-	g.emit("call __fern_alloc_box")
+	g.emit("mov edi, 16")
+	g.emit("call __fern_alloc_rc1")
 	g.emit("mov dword ptr [rax], 1") // tag = 1 (None)
 	g.emit("jmp .Lrl_ret")
 	g.label(".Lrl_some")
@@ -11647,7 +11647,7 @@ func (g *generator) emitReadLineRuntime() {
 	g.emit("mov byte ptr [r13 + r12], 0")
 	// Build Option[string]: 16 bytes [tag=0, pad, ptr@+8].
 	g.emit("mov edi, 16")
-	g.emit("call __fern_alloc_box")
+	g.emit("call __fern_alloc_rc1")
 	g.emit("mov dword ptr [rax], 0") // tag = 0 (Some)
 	g.emit("mov [rax + 8], r13")     // payload at +8 (8-byte slot)
 	g.label(".Lrl_ret")
@@ -12209,7 +12209,7 @@ func (g *generator) emitReadFileRuntime() {
 	g.label(".Lrf_ok")
 	// Result.Ok(string): 16-byte box, tag=0 @0, str_ptr @8.
 	g.emit("mov edi, 16")
-	g.emit("call __fern_alloc_box")
+	g.emit("call __fern_alloc_rc1")
 	g.emit("mov dword ptr [rax], 0")
 	g.emit("mov [rax + 8], r13") // r13 is already the data ptr
 	g.emit("jmp .Lrf_return")
@@ -12233,7 +12233,7 @@ func (g *generator) emitReadFileRuntime() {
 	g.emit("call __fern_io_error")
 	g.emit("mov r13, rax") // stash IoError box across the next alloc
 	g.emit("mov edi, 16")
-	g.emit("call __fern_alloc_box")
+	g.emit("call __fern_alloc_rc1")
 	g.emit("mov dword ptr [rax], 1") // tag=1 (Err)
 	g.emit("mov [rax + 8], r13")
 
@@ -12320,7 +12320,7 @@ func (g *generator) emitReadFileBytesRuntime() {
 	g.emitSyscall(3)
 	// Result.Ok(u8[]): 16-byte box, tag=0 @0, arr_ptr @8.
 	g.emit("mov edi, 16")
-	g.emit("call __fern_alloc_box")
+	g.emit("call __fern_alloc_rc1")
 	g.emit("mov dword ptr [rax], 0")
 	g.emit("mov [rax + 8], r13")
 	g.emit("jmp .Lrfb_return")
@@ -12344,7 +12344,7 @@ func (g *generator) emitReadFileBytesRuntime() {
 	g.emit("call __fern_io_error")
 	g.emit("mov r13, rax") // stash IoError box across the next alloc
 	g.emit("mov edi, 16")
-	g.emit("call __fern_alloc_box")
+	g.emit("call __fern_alloc_rc1")
 	g.emit("mov dword ptr [rax], 1") // tag=1 (Err)
 	g.emit("mov [rax + 8], r13")
 
@@ -12368,7 +12368,9 @@ func (g *generator) emitReadFileBytesRuntime() {
 // Option[IoError] layout:
 //
 //	tag=0 (Some) → payload@+8 = IoError box ptr
-//	tag=1 (None) → 8-byte box, no payload
+//	tag=1 (None) → the same 16-byte box with no payload — every arm
+//	               takes the enum's uniform size so a caller that
+//	               reclaims the box frees it in its own size class
 func (g *generator) emitWriteFileRuntime() {
 	g.emitWriteFileRuntimeMode("__fern_write_file", "0644", "", "")
 }
@@ -12443,7 +12445,7 @@ func (g *generator) emitWriteFileRuntimeMode(sym, mode, sfx, fixupMode string) {
 	// loads it by the declared layout — so the success arm cannot be
 	// the 8-byte tag-only box the Option shape used.
 	g.emit("mov edi, 16")
-	g.emit("call __fern_alloc_box")
+	g.emit("call __fern_alloc_rc1")
 	g.emit("mov dword ptr [rax], 0")     // tag = 0 (Ok)
 	g.emit("mov qword ptr [rax + 8], 0") // unit payload
 	g.emit("jmp .Lwf_return" + sfx)
@@ -12465,7 +12467,7 @@ func (g *generator) emitWriteFileRuntimeMode(sym, mode, sfx, fixupMode string) {
 	g.emit("call __fern_io_error")
 	g.emit("mov r14, rax") // stash IoError box
 	g.emit("mov edi, 16")
-	g.emit("call __fern_alloc_box")
+	g.emit("call __fern_alloc_rc1")
 	g.emit("mov dword ptr [rax], 1") // tag = 1 (Err)
 	g.emit("mov [rax + 8], r14")
 
@@ -12495,8 +12497,8 @@ func (g *generator) emitWriteFileRuntimeMode(sym, mode, sfx, fixupMode string) {
 //	  -ENOTDIR (-20) → it's a file: unlinkat(file) → None
 //	  else           → Some(IoError) via __fern_io_error
 //
-// Option[IoError] layout matches write_file: None = 8-byte box
-// tag=1; Some = 16-byte box tag=0 with the IoError box @+8.
+// Option[IoError] layout matches write_file: None and Some are both
+// 16-byte boxes, tag=1 and tag=0 with the IoError box @+8.
 //
 // The path is copied into a NUL-terminated heap buffer (pathz,
 // rbx) once at entry — handling both inline-SSO and heap string
@@ -12677,7 +12679,7 @@ func (g *generator) emitRemoveDirAllRuntime() {
 	// loads it by the declared layout — so the success arm cannot be
 	// the 8-byte tag-only box the Option shape used.
 	g.emit("mov edi, 16")
-	g.emit("call __fern_alloc_box")
+	g.emit("call __fern_alloc_rc1")
 	g.emit("mov dword ptr [rax], 0")     // tag = 0 (Ok)
 	g.emit("mov qword ptr [rax + 8], 0") // unit payload
 	g.emit("jmp .Lrda_return")
@@ -12690,7 +12692,7 @@ func (g *generator) emitRemoveDirAllRuntime() {
 	g.emit("call __fern_io_error")
 	g.emit("mov r12, rax") // stash IoError box across the alloc
 	g.emit("mov edi, 16")
-	g.emit("call __fern_alloc_box")
+	g.emit("call __fern_alloc_rc1")
 	g.emit("mov dword ptr [rax], 1") // tag = 1 (Err)
 	g.emit("mov [rax + 8], r12")
 
@@ -12711,7 +12713,7 @@ func (g *generator) emitRemoveDirAllRuntime() {
 // success; Some(IoError) on failure (removing a missing file IS
 // an error, matching the checker's contract — unlike
 // remove_dir_all's silent-ENOENT). Box shapes match write_file:
-// None = 8-byte box tag=1; Some = 16-byte box tag=0 with the
+// None and Some are both 16-byte boxes, tag=1 and tag=0 with the
 // IoError box @+8. System V: rdi = path string value.
 func (g *generator) emitRemoveFileRuntime() {
 	g.line("")
@@ -12756,7 +12758,7 @@ func (g *generator) emitRemoveFileRuntime() {
 	// loads it by the declared layout — so the success arm cannot be
 	// the 8-byte tag-only box the Option shape used.
 	g.emit("mov edi, 16")
-	g.emit("call __fern_alloc_box")
+	g.emit("call __fern_alloc_rc1")
 	g.emit("mov dword ptr [rax], 0")     // tag = 0 (Ok)
 	g.emit("mov qword ptr [rax + 8], 0") // unit payload
 	g.emit("jmp .Lrmf_return")
@@ -12769,7 +12771,7 @@ func (g *generator) emitRemoveFileRuntime() {
 	g.emit("call __fern_io_error")
 	g.emit("mov r12, rax") // stash IoError box across the alloc
 	g.emit("mov edi, 16")
-	g.emit("call __fern_alloc_box")
+	g.emit("call __fern_alloc_rc1")
 	g.emit("mov dword ptr [rax], 1") // tag = 1 (Err)
 	g.emit("mov [rax + 8], r12")
 
@@ -12865,7 +12867,7 @@ func (g *generator) emitCreateDirAllRuntime() {
 
 	g.label(".Lcda_ok")
 	g.emit("mov edi, 16")
-	g.emit("call __fern_alloc_box")
+	g.emit("call __fern_alloc_rc1")
 	g.emit("mov dword ptr [rax], 0")     // tag = 0 (Ok)
 	g.emit("mov qword ptr [rax + 8], 0") // unit payload
 	g.emit("jmp .Lcda_return")
@@ -12878,7 +12880,7 @@ func (g *generator) emitCreateDirAllRuntime() {
 	g.emit("call __fern_io_error")
 	g.emit("mov r12, rax") // stash IoError box across the alloc
 	g.emit("mov edi, 16")
-	g.emit("call __fern_alloc_box")
+	g.emit("call __fern_alloc_rc1")
 	g.emit("mov dword ptr [rax], 1") // tag = 1 (Err)
 	g.emit("mov [rax + 8], r12")
 
@@ -13010,7 +13012,7 @@ func (g *generator) emitTempDirRuntime() {
 	g.label(".Ltd_ccpd")
 	g.emit("mov byte ptr [rbx + r14], 0")
 	g.emit("mov edi, 16")
-	g.emit("call __fern_alloc_box")
+	g.emit("call __fern_alloc_rc1")
 	g.emit("mov dword ptr [rax], 0") // Ok
 	g.emit("mov [rax + 8], rbx")
 	g.emit("jmp .Ltd_return")
@@ -13028,7 +13030,7 @@ func (g *generator) emitTempDirRuntime() {
 	g.emit("call __fern_io_error")
 	g.emit("mov r12, rax")
 	g.emit("mov edi, 16")
-	g.emit("call __fern_alloc_box")
+	g.emit("call __fern_alloc_rc1")
 	g.emit("mov dword ptr [rax], 1") // Err
 	g.emit("mov [rax + 8], r12")
 
@@ -13201,7 +13203,7 @@ func (g *generator) emitReadDirRuntime() {
 	g.emit("jmp .Lrdd_p2")
 	g.label(".Lrdd_p2d")
 	g.emit("mov edi, 16")
-	g.emit("call __fern_alloc_box")
+	g.emit("call __fern_alloc_rc1")
 	g.emit("mov dword ptr [rax], 0") // Ok
 	g.emit("mov [rax + 8], rbx")
 	g.emit("jmp .Lrdd_return")
@@ -13214,7 +13216,7 @@ func (g *generator) emitReadDirRuntime() {
 	g.emit("call __fern_io_error")
 	g.emit("mov r12, rax")
 	g.emit("mov edi, 16")
-	g.emit("call __fern_alloc_box")
+	g.emit("call __fern_alloc_rc1")
 	g.emit("mov dword ptr [rax], 1") // Err
 	g.emit("mov [rax + 8], r12")
 
@@ -13373,7 +13375,7 @@ func (g *generator) emitStatLikeRuntime(sym string, atFlags int, lp string, byFd
 	}
 	g.emit("mov r13, rax")
 	g.emit("mov edi, 16")
-	g.emit("call __fern_alloc_box")
+	g.emit("call __fern_alloc_rc1")
 	g.emit("mov dword ptr [rax], 0") // Ok
 	g.emit("mov [rax + 8], r13")
 	g.emit("jmp .L" + lp + "_return")
@@ -13390,7 +13392,7 @@ func (g *generator) emitStatLikeRuntime(sym string, atFlags int, lp string, byFd
 	g.emit("call __fern_io_error")
 	g.emit("mov r13, rax")
 	g.emit("mov edi, 16")
-	g.emit("call __fern_alloc_box")
+	g.emit("call __fern_alloc_rc1")
 	g.emit("mov dword ptr [rax], 1") // Err
 	g.emit("mov [rax + 8], r13")
 
@@ -13425,7 +13427,7 @@ func (g *generator) emitReaderSeekRuntime() {
 	g.emit("js .Lrsk_err")
 	g.emit("mov rbx, rax")
 	g.emit("mov edi, 16")
-	g.emit("call __fern_alloc_box")
+	g.emit("call __fern_alloc_rc1")
 	g.emit("mov dword ptr [rax], 0") // Ok
 	g.emit("mov [rax + 8], rbx")
 	g.emit("jmp .Lrsk_ret")
@@ -13436,7 +13438,7 @@ func (g *generator) emitReaderSeekRuntime() {
 	g.emit("call __fern_io_error")
 	g.emit("mov rbx, rax")
 	g.emit("mov edi, 16")
-	g.emit("call __fern_alloc_box")
+	g.emit("call __fern_alloc_rc1")
 	g.emit("mov dword ptr [rax], 1") // Err
 	g.emit("mov [rax + 8], rbx")
 	g.label(".Lrsk_ret")
@@ -13499,7 +13501,7 @@ func (g *generator) emitAccessRuntime() {
 	g.emit("test rax, rax")
 	g.emit("js .Lacc_err")
 	g.emit("mov edi, 16")
-	g.emit("call __fern_alloc_box")
+	g.emit("call __fern_alloc_rc1")
 	g.emit("mov dword ptr [rax], 0")     // tag = 0 (Ok)
 	g.emit("mov qword ptr [rax + 8], 0") // unit payload
 	g.emit("jmp .Lacc_return")
@@ -13512,7 +13514,7 @@ func (g *generator) emitAccessRuntime() {
 	g.emit("call __fern_io_error")
 	g.emit("mov r13, rax")
 	g.emit("mov edi, 16")
-	g.emit("call __fern_alloc_box")
+	g.emit("call __fern_alloc_rc1")
 	g.emit("mov dword ptr [rax], 1") // tag = 1 (Err)
 	g.emit("mov [rax + 8], r13")
 
@@ -13705,7 +13707,7 @@ func (g *generator) emitReaderWriterRuntime() {
 		g.emit("call __fern_make_handle")
 		g.emit("mov r12, rax") // handle ptr in callee-save
 		g.emit("mov edi, 16")
-		g.emit("call __fern_alloc_box")
+		g.emit("call __fern_alloc_rc1")
 		g.emit("mov dword ptr [rax], 0") // tag=0 (Ok)
 		g.emit("mov [rax + 8], r12")
 		g.emit("jmp .Lorw_ret_" + e.sym)
@@ -13716,7 +13718,7 @@ func (g *generator) emitReaderWriterRuntime() {
 		g.emit("call __fern_io_error")
 		g.emit("mov r12, rax") // IoError ptr
 		g.emit("mov edi, 16")
-		g.emit("call __fern_alloc_box")
+		g.emit("call __fern_alloc_rc1")
 		g.emit("mov dword ptr [rax], 1") // Err
 		g.emit("mov [rax + 8], r12")
 		g.label(".Lorw_ret_" + e.sym)
@@ -13763,8 +13765,8 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("test r13, r13")
 	g.emit("jne .Lrrl_some")
 	// None
-	g.emit("mov edi, 4")
-	g.emit("call __fern_alloc_box")
+	g.emit("mov edi, 16")
+	g.emit("call __fern_alloc_rc1")
 	g.emit("mov dword ptr [rax], 1")
 	g.emit("jmp .Lrrl_ret")
 	g.label(".Lrrl_some")
@@ -13781,7 +13783,7 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("mov byte ptr [r14 + r13], 0")
 	g.emit("mov rbx, r14") // stash str ptr (rbx no longer needed for fd)
 	g.emit("mov edi, 16")
-	g.emit("call __fern_alloc_box")
+	g.emit("call __fern_alloc_rc1")
 	g.emit("mov dword ptr [rax], 0")
 	g.emit("mov [rax + 8], rbx")
 	g.label(".Lrrl_ret")
@@ -13846,7 +13848,7 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("mov [r13 - 4], r12d")         // length prefix at data-4
 	g.emit("mov byte ptr [r13 + r12], 0") // trailing NUL within alloc
 	g.emit("mov edi, 16")
-	g.emit("call __fern_alloc_box")
+	g.emit("call __fern_alloc_rc1")
 	g.emit("mov dword ptr [rax], 0")
 	g.emit("mov [rax + 8], r13")
 	g.emit("jmp .Lrrc_ret")
@@ -13857,7 +13859,7 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("lea esi, [r12 + 1]")
 	g.emit("call __fern_box_free")
 	g.emit("mov edi, 16")
-	g.emit("call __fern_alloc_box")
+	g.emit("call __fern_alloc_rc1")
 	g.emit("mov dword ptr [rax], 0")
 	g.emit("lea rcx, [rip + .LStr_ioerr_empty]")
 	g.emit("mov [rax + 8], rcx")
@@ -13875,7 +13877,7 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("call __fern_io_error")
 	g.emit("mov r12, rax")
 	g.emit("mov edi, 16")
-	g.emit("call __fern_alloc_box")
+	g.emit("call __fern_alloc_rc1")
 	g.emit("mov dword ptr [rax], 1")
 	g.emit("mov [rax + 8], r12")
 	g.label(".Lrrc_ret")
@@ -13923,8 +13925,8 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("add r14, rax")
 	g.emit("jmp .Lww_loop")
 	g.label(".Lww_done")
-	g.emit("mov edi, 4")
-	g.emit("call __fern_alloc_box")
+	g.emit("mov edi, 16")
+	g.emit("call __fern_alloc_rc1")
 	g.emit("mov dword ptr [rax], 1") // None
 	g.emit("jmp .Lww_ret")
 	g.label(".Lww_err")
@@ -13934,7 +13936,7 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("call __fern_io_error")
 	g.emit("mov r12, rax")
 	g.emit("mov edi, 16")
-	g.emit("call __fern_alloc_box")
+	g.emit("call __fern_alloc_rc1")
 	g.emit("mov dword ptr [rax], 0") // Some
 	g.emit("mov [rax + 8], r12")
 	g.label(".Lww_ret")
@@ -13961,8 +13963,8 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emitSyscall(3)
 	g.emit("test rax, rax")
 	g.emit("js .Lcfb_err")
-	g.emit("mov edi, 4")
-	g.emit("call __fern_alloc_box")
+	g.emit("mov edi, 16")
+	g.emit("call __fern_alloc_rc1")
 	g.emit("mov dword ptr [rax], 1") // None
 	g.emit("jmp .Lcfb_ret")
 	g.label(".Lcfb_err")
@@ -13972,7 +13974,7 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("call __fern_io_error")
 	g.emit("mov rbx, rax")
 	g.emit("mov edi, 16")
-	g.emit("call __fern_alloc_box")
+	g.emit("call __fern_alloc_rc1")
 	g.emit("mov dword ptr [rax], 0") // Some
 	g.emit("mov [rax + 8], rbx")
 	g.label(".Lcfb_ret")

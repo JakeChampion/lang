@@ -289,6 +289,57 @@ PY
       printf 'tail -n 10 from a pipe\ty\t{gnu}/cat %s | {} -n 10 > /dev/null\n' "$big"
       printf 'tail -n +4000000 of a 62 MiB file\ty\t{} -n +4000000 %s > /dev/null\n' "$big"
       ;;
+    join)
+      # Two sorted 1M-line files: the whole cost is splitting each line
+      # into fields and reassembling one output line, so the shapes are
+      # a plain pairing, one where half the lines are unpairable, an
+      # explicit -o format, and a single-character separator.
+      ja="$out/join-a.txt"
+      jb="$out/join-b.txt"
+      jc="$out/join-c.txt"
+      if [ ! -f "$ja" ]; then
+        "$gnu/seq" -f 'k%09.0f v1 v2' 1 1000000 > "$ja"
+        "$gnu/seq" -f 'k%09.0f w1 w2' 1 1000000 > "$jb"
+        "$gnu/seq" -f 'k%09.0f w1 w2' 500001 1500000 > "$jc"
+      fi
+      printf 'join two 1M-line files\ty\t{} %s %s > /dev/null\n' "$ja" "$jb"
+      printf 'join with half unpairable\ty\t{} %s %s > /dev/null\n' "$ja" "$jc"
+      printf 'join -a1 -a2 two 1M-line files\ty\t{} -a1 -a2 %s %s > /dev/null\n' "$ja" "$jc"
+      printf 'join -o 0,1.2,2.3 two 1M-line files\ty\t{} -o 0,1.2,2.3 %s %s > /dev/null\n' "$ja" "$jb"
+      printf 'join -v1 two 1M-line files\ty\t{} -v1 %s %s > /dev/null\n' "$ja" "$jc"
+      ;;
+    nl)
+      # nl's cost is one line number formatted and one line copied, so
+      # the shapes are the default (only non-empty lines numbered), -ba
+      # (every line), -bn (none, a straight copy with a fixed pad), and
+      # the regex style, which runs lib/bre.fern over every line.
+      big="$out/text-64m.txt"
+      [ -f "$big" ] || "$gnu/seq" 1 8000000 > "$big"
+      printf 'nl a 62 MiB file\ty\t{} %s > /dev/null\n' "$big"
+      printf 'nl -ba a 62 MiB file\ty\t{} -ba %s > /dev/null\n' "$big"
+      printf 'nl -bn a 62 MiB file\ty\t{} -bn %s > /dev/null\n' "$big"
+      printf 'nl -n rz -w12 a 62 MiB file\ty\t{} -n rz -w12 %s > /dev/null\n' "$big"
+      # The regex style runs a compiled BRE over every line, so it gets a
+      # smaller input than the copying styles: at 62 MiB it is a minute a
+      # run and the ratio is the same.
+      med="$out/text-3m.txt"
+      [ -f "$med" ] || "$gnu/seq" 1 500000 > "$med"
+      printf 'nl -bp7 a 3 MiB file\ty\t{} -bp7 %s > /dev/null\n' "$med"
+      printf 'nl from a pipe\ty\t{gnu}/cat %s | {} > /dev/null\n' "$big"
+      ;;
+    tr)
+      # tr's whole cost is one table lookup per byte, so the shapes are:
+      # a pure translation, a deletion (which also compacts), a squeeze
+      # (which carries a run across the block boundary), and the
+      # complemented delete, whose table is built by inversion.
+      big="$out/text-64m.txt"
+      [ -f "$big" ] || "$gnu/seq" 1 8000000 > "$big"
+      printf 'tr 0-9 a-j over a 62 MiB file\ty\t{} 0-9 a-j < %s > /dev/null\n' "$big"
+      printf 'tr -d 0-4 over a 62 MiB file\ty\t{} -d 0-4 < %s > /dev/null\n' "$big"
+      printf 'tr -s 0-9 over a 62 MiB file\ty\t{} -s 0-9 < %s > /dev/null\n' "$big"
+      printf 'tr -cd digits over a 62 MiB file\ty\t{} -cd "[:digit:]" < %s > /dev/null\n' "$big"
+      printf 'tr from a pipe\ty\t{gnu}/cat %s | {} 0-9 a-j > /dev/null\n' "$big"
+      ;;
     wc)
       # wc -l is the SIMD count, wc -c is fstat and no read at all, and
       # -w / -L are the byte-at-a-time scan the C locale asks for.
@@ -300,6 +351,44 @@ PY
       printf 'wc -w of a 62 MiB file\tn\t{} -w %s\n' "$big"
       printf 'wc -L of a 62 MiB file\tn\t{} -L %s\n' "$big"
       printf 'wc -l from a pipe\ty\t{gnu}/cat %s | {} -l\n' "$big"
+      ;;
+    base64|base32|basenc)
+      # Two regimes, and where they cross is the interesting number. A
+      # static binary with no loader starts in a fraction of the time,
+      # so a small file is over before GNU has finished linking; a
+      # byte-at-a-time transform in Fern runs behind a gcc -O2 loop, so
+      # a large one is not. Both sizes are here rather than only the one
+      # that flatters.
+      small="$out/base-16k.bin"
+      [ -f "$small" ] || "$gnu/head" -c 16384 /dev/urandom > "$small"
+      big="$out/base-64m.bin"
+      [ -f "$big" ] || "$gnu/head" -c 67108864 /dev/urandom > "$big"
+      case "$1" in
+        base64|base32)
+          smallenc="$out/base-16k.$1"
+          [ -f "$smallenc" ] || "$gnu/$1" "$small" > "$smallenc"
+          bigenc="$out/base-64m.$1"
+          [ -f "$bigenc" ] || "$gnu/$1" "$big" > "$bigenc"
+          printf '%s a 16 KiB file\tn\t{} %s\n' "$1" "$small"
+          printf '%s -d a 16 KiB file\tn\t{} -d %s\n' "$1" "$smallenc"
+          printf '%s a 64 MiB file\ty\t{} %s > /dev/null\n' "$1" "$big"
+          printf '%s -w0 a 64 MiB file\ty\t{} -w0 %s > /dev/null\n' "$1" "$big"
+          printf '%s -d a 64 MiB file\ty\t{} -d %s > /dev/null\n' "$1" "$bigenc"
+          ;;
+        basenc)
+          # One row per encoding: they share a codec, so what differs is
+          # the block shape and how much output a byte turns into.
+          b16="$out/base-64m.b16"
+          [ -f "$b16" ] || "$gnu/basenc" --base16 -w0 "$big" > "$b16"
+          printf 'basenc --base64 a 16 KiB file\tn\t{} --base64 %s\n' "$small"
+          printf 'basenc --base64 -w0 a 64 MiB file\ty\t{} --base64 -w0 %s > /dev/null\n' "$big"
+          printf 'basenc --base32hex -w0 a 64 MiB file\ty\t{} --base32hex -w0 %s > /dev/null\n' "$big"
+          printf 'basenc --base16 -w0 a 64 MiB file\ty\t{} --base16 -w0 %s > /dev/null\n' "$big"
+          printf 'basenc --base2msbf -w0 an 8 MiB slice\ty\t{gnu}/head -c 8388608 %s | {} --base2msbf -w0 > /dev/null\n' "$big"
+          printf 'basenc --z85 a 64 MiB file\ty\t{} --z85 %s > /dev/null\n' "$big"
+          printf 'basenc --base16 -d a 128 MiB stream\ty\t{} --base16 -d %s > /dev/null\n' "$b16"
+          ;;
+      esac
       ;;
     uniq)
       # uniq's cost is per LINE, so the three shapes are: a run of

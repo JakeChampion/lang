@@ -1,0 +1,176 @@
+// basenc.fern — GNU-compatible `basenc`.
+//
+//   basenc --ENCODING [-d] [-i] [-w COLS] [FILE]
+//
+// The superset `base64` and `base32` are single-alphabet cuts of: the
+// two base64 alphabets, the two base32 ones, base16, the two bit
+// orders of base2, and z85. All nine drive the one codec in
+// `lib/base.fern`; this file chooses which.
+//
+// The encoding is mandatory and its absence is reported before
+// anything else about the operands — `basenc a b` is `missing encoding
+// type`, not `extra operand`. The declaration order in `declare()` is
+// GNU's, because the ambiguity list prints candidates in it: `--=x`
+// names all thirteen in that order, `--base` the seven `base*` ones and
+// `--base3` the two base32 ones.
+import "std/string";
+import "std/array";
+import "./lib/gnu";
+import "./lib/base";
+
+function opt_base64(): i32 {
+  return 1;
+}
+
+function opt_base64url(): i32 {
+  return 2;
+}
+
+function opt_base32(): i32 {
+  return 3;
+}
+
+function opt_base32hex(): i32 {
+  return 4;
+}
+
+function opt_base16(): i32 {
+  return 5;
+}
+
+function opt_base2msbf(): i32 {
+  return 6;
+}
+
+function opt_base2lsbf(): i32 {
+  return 7;
+}
+
+function opt_decode(): i32 {
+  return 8;
+}
+
+function opt_ignore(): i32 {
+  return 9;
+}
+
+function opt_wrap(): i32 {
+  return 10;
+}
+
+function opt_z85(): i32 {
+  return 11;
+}
+
+function help_text(): string {
+  var out: string = "";
+  out = out + "Usage: " + gnu.prog() + " [OPTION]... [FILE]\n";
+  out = out + "Write FILE, or standard input, to standard output in the named encoding.\n";
+  out = out + "\n";
+  out = out + "With no FILE, or when FILE is -, read standard input.\n";
+  out = out + "\n";
+  out = out + "      --base64          RFC 4648 section 4, as the base64 program\n";
+  out = out + "      --base64url       RFC 4648 section 5, safe in URLs and file names\n";
+  out = out + "      --base32          RFC 4648 section 6, as the base32 program\n";
+  out = out + "      --base32hex       RFC 4648 section 7, the extended hex alphabet\n";
+  out = out + "      --base16          RFC 4648 section 8, uppercase hexadecimal\n";
+  out = out + "      --base2msbf       bits of each byte, most significant first\n";
+  out = out + "      --base2lsbf       bits of each byte, least significant first\n";
+  out = out + "  -d, --decode          decode data\n";
+  out = out + "  -i, --ignore-garbage  when decoding, ignore non-alphabet characters\n";
+  out = out + "  -w, --wrap=COLS       wrap encoded lines after COLS characters (default 76);\n";
+  out = out + "                          0 disables wrapping\n";
+  out = out + "      --z85             ZeroMQ RFC 32 Z85; the length must be a multiple of\n";
+  out = out + "                          4 bytes to encode and of 5 characters to decode\n";
+  out = out + "      --help        display this help and exit\n";
+  out = out + "      --version     output version information and exit\n";
+  out = out + "\n";
+  out = out + "Decoding accepts newlines in the encoded stream; -i accepts any other\n";
+  out = out + "stray byte too.\n";
+  return out;
+}
+
+// The encoding an option id selects. Called once the scan has run, so
+// the LAST `--base*` on the command line is the one that decides.
+function codec_for(id: i32): base.Codec {
+  if (id == opt_base64()) {
+    return base.base64();
+  }
+  if (id == opt_base64url()) {
+    return base.base64url();
+  }
+  if (id == opt_base32()) {
+    return base.base32();
+  }
+  if (id == opt_base32hex()) {
+    return base.base32hex();
+  }
+  if (id == opt_base16()) {
+    return base.base16();
+  }
+  if (id == opt_base2msbf()) {
+    return base.base2msbf();
+  }
+  if (id == opt_base2lsbf()) {
+    return base.base2lsbf();
+  }
+  return base.z85();
+}
+
+function declare(): gnu.Opt[] {
+  var opts: gnu.Opt[] = [];
+  opts = opts.append(gnu.flag("d", "decode", opt_decode()));
+  opts = opts.append(gnu.valued("w", "wrap", opt_wrap()));
+  opts = opts.append(gnu.flag("i", "ignore-garbage", opt_ignore()));
+  opts = opts.append(gnu.flag("", "base64", opt_base64()));
+  opts = opts.append(gnu.flag("", "base64url", opt_base64url()));
+  opts = opts.append(gnu.flag("", "base32", opt_base32()));
+  opts = opts.append(gnu.flag("", "base32hex", opt_base32hex()));
+  opts = opts.append(gnu.flag("", "base16", opt_base16()));
+  opts = opts.append(gnu.flag("", "base2msbf", opt_base2msbf()));
+  opts = opts.append(gnu.flag("", "base2lsbf", opt_base2lsbf()));
+  opts = opts.append(gnu.flag("", "z85", opt_z85()));
+  return opts;
+}
+
+function main(): i32 {
+  var argv: string[] = args();
+  var g: gnu.Getopt = gnu.getopt_new(argv, declare(), "basenc", help_text(), 1);
+  var chosen: i32 = 0;
+  var decode: boolean = false;
+  var ignore: boolean = false;
+  var wrap: i64 = 76 as i64;
+  while (true) {
+    var res: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    g = res.1;
+    match (res.0) {
+      Some(m) => {
+        if (m.id == opt_decode()) {
+          decode = true;
+        } else if (m.id == opt_ignore()) {
+          ignore = true;
+        } else if (m.id == opt_wrap()) {
+          wrap = base.parse_wrap(m.value);
+        } else {
+          chosen = m.id;
+        }
+      },
+      None => {
+        break;
+      }
+    }
+  }
+  if (chosen == 0) {
+    gnu.die_usage("missing encoding type", 1);
+  }
+  var ops: string[] = g.operands();
+  if (ops.len() > 1) {
+    gnu.die_usage("extra operand " + gnu.quote(ops[1]), 1);
+  }
+  var file: string = "";
+  if (ops.len() == 1) {
+    file = ops[0];
+  }
+  base.run(codec_for(chosen), decode, ignore, wrap, ops.len() == 1, file);
+  return 0;
+}

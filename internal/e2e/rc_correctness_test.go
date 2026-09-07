@@ -7194,6 +7194,72 @@ function main(): i32 {
 }`,
 	},
 	{
+		// #8441: every outer rebind of a captured reference stranded the
+		// value it superseded. BoxMutatedCaptures rewrites `s` into a
+		// shared one-element cell and the store went through it raw — no
+		// retain of the new value, no release of the old — so a rebinding
+		// loop leaked one buffer a round (32 bytes here, unbounded in
+		// general) while the same loop without the capture was clean.
+		//
+		// The concat spelling rather than the f-string keeps the case about
+		// the capture cell: an f-string RHS had its own superseded-store
+		// leak, pinned by fstring_reassign_releases_superseded above.
+		name: "closure_capture_rebind_churn_free",
+		src: `
+import "core/int";
+import "std/i32";
+import "std/string";
+function main(): i32 {
+    var s: string = "";
+    var f: () => i32 = (): i32 => { return s.len(); };
+    var i: i32 = 0;
+    while (i < 500) { s = i.to_string() + "-iteration"; i = i + 1; }
+    return (f() - 13) + __rc_underflow_count();
+}`,
+	},
+	{
+		// The other half of that store, and the direction the raw store was
+		// protecting: an ALIAS written into the cell, superseded on the
+		// next round while the writer still holds it. Releasing the
+		// superseded element is sound only because the store retains an
+		// alias-shaped value first, so `a` survives 500 supersedes and its
+		// own release frees the buffer exactly once. Drop that retain and
+		// the release frees `a`'s buffer on the first round: the sanitizer
+		// reports `use-after-free (touched a quarantined block)` and exits
+		// 124 on the very next one.
+		//
+		// The trailing `s = a` leaves an alias in the cell at exit, which
+		// is what makes this case discriminate all four states of the pair
+		// of changes behind it: 16000 bytes with neither, 32 with the
+		// counted store alone (the closure thunk freed the cell's buffer
+		// without walking it), a use-after-free with the thunk's walk alone
+		// (it releases a reference the store never took), 0 with both.
+		//
+		// `mk` interpolates its argument so the result is a heap buffer.
+		// Folded to a literal it would be the immortal static sentinel,
+		// where every rc helper no-ops and the case proves nothing.
+		name: "closure_capture_rebind_alias_not_over_released",
+		src: `
+import "core/int";
+import "std/i32";
+import "std/string";
+@noinline
+function mk(n: i32): string { return "captured-payload-" + n.to_string(); }
+function main(): i32 {
+    var a: string = mk(7);
+    var s: string = "";
+    var f: () => i32 = (): i32 => { return s.len(); };
+    var i: i32 = 0;
+    while (i < 500) {
+        s = a;
+        s = mk(i);
+        i = i + 1;
+    }
+    s = a;
+    return (a.len() + f() - 36) + __rc_underflow_count();
+}`,
+	},
+	{
 		// A closure LOCAL handed to a callee keeps its pair: the slot has a
 		// reader ElideClosurePair cannot elide, so the exit sweep's
 		// per-closure thunk — which reads a bare env — cannot run on the
@@ -8420,6 +8486,40 @@ function main(): i32 {
     if (s.xs[0] != 7 || s.xs[40] != 46) { bad = bad + 2; }
     if (s.ys.len() != 40 || s.ys[39] != "n40") { bad = bad + 4; }
     return bad + __rc_underflow_count();
+}`,
+	},
+	{
+		// #8398 / #8405: the I/O helpers' per-call Option / Result box is a
+		// counted rc=1 block, so every site that consumes one releases it.
+		// The four shapes, all of which leaked one box a round before:
+		// the match scrutinee (the arm frees the box shallow once its
+		// payload is out), a `var` local, an argument temp, and a bare
+		// discarded statement. `env` of a name nothing sets answers None
+		// every round, which is the arm whose box the runtime had been
+		// allocating BELOW the enum's uniform size — freeing that one at
+		// the uniform size is what would push a short block onto a class
+		// its extent does not cover, so this is the case that pins the
+		// sizing as much as the classification.
+		name: "io_option_box_reclaimed_per_call",
+		src: `
+function sink(o: Option[string]): i32 {
+    match (o) { Some(_) => { return 1; }, None => { return 0; } }
+}
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 200) {
+        match (env("FERN_RC_CORPUS_NEVER_SET_A")) {
+            Some(v) => { acc = acc + v.len(); },
+            None => { acc = acc + 1; }
+        }
+        var o: Option[string] = env("FERN_RC_CORPUS_NEVER_SET_B");
+        match (o) { Some(_) => { acc = acc + 1000; }, None => {} }
+        acc = acc + sink(env("FERN_RC_CORPUS_NEVER_SET_C"));
+        env("FERN_RC_CORPUS_NEVER_SET_D");
+        i = i + 1;
+    }
+    return (acc - 200) + __rc_underflow_count();
 }`,
 	},
 }
