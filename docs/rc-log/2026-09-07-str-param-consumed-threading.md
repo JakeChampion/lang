@@ -147,7 +147,7 @@ lengthened or double-released, and the entry retain's count is what prevents
 both, at run time, while the ops become exactly the `own` ones.
 
 So it is split. `TestReassignedStringParamMatchesTheOwnShape` pins the new
-shape — the same dec counts as the `own` case (1 / 1 / 2) plus the one balanced
+shape — the same dec counts as the `own` case (1 / 1 / 1) plus the one balanced
 entry retain `own` does not take — and `TestBorrowedStringParamStillCopies`
 keeps its name and its assertions for a parameter the body only READS, which is
 where the borrow boundary still is.
