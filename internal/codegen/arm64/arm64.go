@@ -12059,22 +12059,42 @@ func (g *generator) sym(target string) string {
 	return target
 }
 
-// callSym is sym for an OpCallDirect, which is the one site where the two
-// namespaces genuinely overlap: the lowering calls its own helpers by plain
-// name (`__fern_str_append`, `__memcpy`, …) and a program may define a
+// callsRuntimeSymbol reports whether an OpCallDirect lands on the bare runtime
+// symbol rather than a Fern function's mangled one. This is the one site where
+// the two namespaces genuinely overlap: the lowering calls its own helpers by
+// plain name (`__fern_str_append`, `__memcpy`, …) and a program may define a
 // function called the same thing. `op.Runtime` records which the lowering
-// meant, so neither has to be guessed from the name.
+// meant, so neither has to be guessed from the name; a name the program does
+// not define is the helper either way.
+//
+// Everything keyed by that bare name has to ask this, not the name alone —
+// the two-word ABI's arity table and the return-shape lookups included.
+// `function __fern_str_append(x: i32): i32` beside the lowering's own append
+// otherwise reads the user's i32 signature onto the helper's call: one
+// operand-stack slot popped where four belong and one pushed where the (data,
+// len) pair belongs, which is an operand stack out of step for the rest of the
+// function.
 //
 // `target` is the callee after this backend's own rewrites (the
 // `__method_Map_*` → `__map_*_impl` family). A rewrite REPLACES the callee, so
 // the flag no longer describes it: `__map_set_impl` and friends are Fern
 // functions in internal/stdlib/core/map.fern and must be mangled like any
 // other. Only an unrewritten target is the one the lowering marked.
-func (g *generator) callSym(op ir.Op, target string) string {
+func (g *generator) callsRuntimeSymbol(op ir.Op, target string) bool {
 	if op.Runtime && target == op.Str {
-		return op.Str
+		return true
 	}
-	return g.sym(target)
+	_, defined := g.funcs[target]
+	return !defined
+}
+
+// callSym is sym for an OpCallDirect — the mangled symbol for a Fern function,
+// the bare name for a runtime helper.
+func (g *generator) callSym(op ir.Op, target string) string {
+	if g.callsRuntimeSymbol(op, target) {
+		return target
+	}
+	return AsmFnName(target)
 }
 
 // prescanOps sets the use-flags the prologue reads from one function's ops,
@@ -12602,8 +12622,12 @@ func callArgTypes(g *generator, op ir.Op, argc int) []ast.Type {
 // returns a string-typed value under the two-word ABI —
 // matters for OpCallDirect's post-call push (data, len)
 // instead of single-i32.
-func returnIsString(g *generator, name string) bool {
-	if callee, ok := g.funcs[name]; ok && callee != nil {
+func returnIsString(g *generator, op ir.Op, name string) bool {
+	if !g.callsRuntimeSymbol(op, name) {
+		callee := g.funcs[name]
+		if callee == nil {
+			return false
+		}
 		_, isStr := callee.ReturnType.(ast.StringType)
 		return isStr
 	}
@@ -12646,8 +12670,12 @@ func returnIsString(g *generator, name string) bool {
 // literal field initialiser: the inner `__memcpy` left a
 // phantom slot that the outer struct-lit's OpStore consumed
 // instead of the field address.
-func returnIsVoid(g *generator, name string) bool {
-	if callee, ok := g.funcs[name]; ok && callee != nil {
+func returnIsVoid(g *generator, op ir.Op, name string) bool {
+	if !g.callsRuntimeSymbol(op, name) {
+		callee := g.funcs[name]
+		if callee == nil {
+			return false
+		}
 		_, isVoid := callee.ReturnType.(ast.VoidType)
 		return isVoid
 	}
@@ -14884,10 +14912,10 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		g.emitCallArgsLoad(slotCount)
 		g.emit("bl %s", g.callSym(op, op.Str))
 		g.emitCallArgsCleanup(slotCount)
-		if returnIsVoid(g, op.Str) {
+		if returnIsVoid(g, op, op.Str) {
 			break
 		}
-		if ast.UseTwoWordStrings(8) && returnIsString(g, op.Str) {
+		if ast.UseTwoWordStrings(8) && returnIsString(g, op, op.Str) {
 			g.push() // push data (x0)
 			g.emit("mov x0, x1")
 			g.push() // push len
@@ -15631,7 +15659,7 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		argc := int(op.I32)
 		slotCount := argc
 		if ast.UseTwoWordStrings(8) {
-			if sw, ok := twoWordStrHelperArgSlots[target]; ok {
+			if sw, ok := twoWordStrHelperArgSlots[target]; ok && g.callsRuntimeSymbol(op, target) {
 				// Built-in two-word string runtime helpers — emitted
 				// from many IR sites with a bare I32:1 arg count and no
 				// ArgTypes, so callArgTypes can't see that their single
@@ -15660,10 +15688,10 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		// both. Non-string returns push x0 only. Void-returning
 		// callees push NOTHING — see returnIsVoid for the
 		// rationale.
-		if returnIsVoid(g, op.Str) {
+		if returnIsVoid(g, op, op.Str) {
 			break
 		}
-		if ast.UseTwoWordStrings(8) && returnIsString(g, op.Str) {
+		if ast.UseTwoWordStrings(8) && returnIsString(g, op, op.Str) {
 			g.push() // push data (x0)
 			g.emit("mov x0, x1")
 			g.push() // push len
