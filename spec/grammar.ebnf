@@ -351,7 +351,27 @@ MatchExprArm
 # lambda. So `(): (i32) => i32 => e` is a lambda returning a function, and
 # `(): (string, i32) => e` one returning a tuple; explicit parens around a
 # function-typed return say so unambiguously.
-ArrowLambda = '(' [ LambdaParams ] ')' [ ':' Type ] '=>' Expr ;
+#
+# PEG commits to an alternative that succeeds, so the greedy reading
+# cannot be one branch of a choice INSIDE the annotation: `Type` would
+# take the arrow, `Expr` would find none left, and the whole lambda
+# would fail rather than the annotation being re-read. The two readings
+# are therefore whole alternatives of ArrowLambda itself, greedy first,
+# so a failure to find the lambda's arrow backtracks into the second.
+ArrowLambda = '(' [ LambdaParams ] ')' ':' Type '=>' Expr
+            | '(' [ LambdaParams ] ')' ':' RetType '=>' Expr
+            | '(' [ LambdaParams ] ')' '=>' Expr
+            ;
+
+# A return annotation read with the lambda's own arrow RESERVED: the
+# top-level function-type arrow of FnOrTupleType is not available, so
+# `(): (string, i32) => e` reads the tuple. Nested arrows are untouched,
+# because only the outermost one competes with the lambda's.
+RetType     = ( 'own' | 'borrow' ) RetType
+            | 'dyn' Bound { '+' Bound }
+            | '(' [ Type { ',' Type } [ ',' ] ] ')' { TypeSuffix }
+            | SliceType
+            ;
 LambdaParams
             = LambdaParam { ',' LambdaParam } [ ',' ] ;
 # The type annotation is REQUIRED, not optional. It is what tells the
