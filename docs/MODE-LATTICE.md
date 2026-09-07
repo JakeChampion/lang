@@ -94,10 +94,9 @@ marked type at its binding site (`mcCheckBinding`,
 Fern's global laws collapse the rest. E048/E056 immutability
 freezes the heap after construction — no contention axis
 because there is no mutation to contend over, and no cycle
-collector — although the cycle-freedom that one rests on does
-not hold: E049 (`checker.go:14908`) guards a reference capture
-only inside the closure, so an outer rebind of it closes a cycle
-undiagnosed (#8440). Views are the only uncounted
+collector, whose cycle-freedom E049 carries by guarding a
+reference capture from inside the closure AND from the enclosing
+scope (#8440). Views are the only uncounted
 references, so the only locality-like rule needed is "a view
 must not outlive its backing frame" (E063/E065) — one rule, not
 an axis; everything else is RC-counted and lifetime-free.

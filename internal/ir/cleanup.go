@@ -27,7 +27,7 @@ package ir
 const optimizeCleanupMaxIterations = 8
 
 // OptimizeCleanup runs PropagateCopies + ConstPropagate + Fold +
-// ReduceStrength + PruneZeroSlotGuards + EliminateDeadCode to a fixed
+// ReduceStrength + FuseRotates + PruneZeroSlotGuards + EliminateDeadCode to a fixed
 // point on every function in prog. Each pass is idempotent on its own;
 // the loop exists because they interact — the output of one can expose
 // new work for the others (a strength-reduced `<expr> ; drop ; const 0`
@@ -51,7 +51,7 @@ func OptimizeCleanup(prog *Program) {
 	}
 }
 
-// optimizeCleanupFunc runs the six passes on one function until a round
+// optimizeCleanupFunc runs the seven passes on one function until a round
 // rewrites nothing. The passes are intra-function, so converging each
 // function on its own is the same fixed point as converging the program;
 // the difference is that a converged function is never revisited, where a
@@ -77,6 +77,10 @@ func optimizeCleanupFunc(fn *Func, ptrW int) {
 			changed = true
 		}
 		if next := reduceStrengthOps(fn.Ops); !opsEqual(next, fn.Ops) {
+			fn.Ops = next
+			changed = true
+		}
+		if next := fuseRotatesIn(fn); !opsEqual(next, fn.Ops) {
 			fn.Ops = next
 			changed = true
 		}

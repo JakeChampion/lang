@@ -20,10 +20,11 @@ value-returning with their discard rejected (E055). The single invariant
 all of that protects is **"no reference cycles,"** which is what lets
 Perceus reference counting stay garbage-free with *no cycle collector*.
 
-That invariant is not yet held. `E049` guards a reference-typed capture
-only from inside the closure, so rebinding the captured variable from the
-ENCLOSING scope closes a cycle with no `Cell` and no diagnostic (#8440) —
-which is also the `a.set(b); b.set(a)` argument E057 rests on (§1 below).
+`E049` guarded a reference-typed capture only from inside the closure
+until #8440, so rebinding the captured variable from the ENCLOSING scope
+closed a cycle with no `Cell` and no diagnostic — the same
+`a.set(b); b.set(a)` shape E057 rests on (§1 below). It now guards the
+enclosing scope's store as well, and the invariant holds.
 
 The last mutation *statement* still standing is `arr[i] = v`
 (`docs/PURE-COLLECTION-API-PLAN.md` §3a). Removing it to make subscripts

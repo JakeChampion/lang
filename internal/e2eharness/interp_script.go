@@ -5,7 +5,6 @@
 package e2eharness
 
 import (
-	"os"
 	"os/exec"
 	"path/filepath"
 	"sync"
@@ -23,12 +22,11 @@ import (
 // tests (parallel runs no longer race on temp-dir
 // cleanup of a binary another test is mid-exec).
 //
-// The shared binary lives in `os.MkdirTemp` rather than
-// `t.TempDir()`: per-test temp dirs get auto-cleaned at
-// the END of THEIR test, which would yank the binary out
-// from under a parallel sibling that's still using it.
-// The package-level temp dir survives until the test
-// process exits; OS-level temp cleanup handles the rest.
+// The shared binary lives in a `ProcessScratchDir`
+// rather than `t.TempDir()`: per-test temp dirs get
+// auto-cleaned at the END of THEIR test, which would yank
+// the binary out from under a parallel sibling that's
+// still using it.
 var (
 	langBinOnce sync.Once
 	langBinPath string
@@ -38,7 +36,7 @@ var (
 func BuildLangBinForInterp(t testing.TB) string {
 	t.Helper()
 	langBinOnce.Do(func() {
-		dir, err := os.MkdirTemp("", "fern-e2e-bin-")
+		dir, err := ProcessScratchDir("fern-e2e-bin")
 		if err != nil {
 			langBinErr = err
 			return

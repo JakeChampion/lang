@@ -82,16 +82,32 @@ type invocation struct {
 	// are pipes here, so this is the one descriptor on which `test -t`
 	// can answer true.
 	tty bool
-	// dir gives the case a working directory of its own — a fresh one
-	// per SIDE, seeded by this function — and makes the tree it leaves
-	// behind part of the comparison alongside the streams. It is how a
-	// utility whose whole output is the files it writes (`split`) is
-	// held to docs/COREUTILS.md's "the same resulting tree"; the streams
-	// alone would compare two silences.
-	dir func(t *testing.T, dir string)
+	// dir is the working directory the child runs in; the default is the
+	// harness's own. A case needs one when an operand has to be
+	// RELATIVE, which is the only way to spell uniq's output operand as
+	// `-c` or `+2` and see what POSIXLY_CORRECT does with it.
+	dir string
+	// prepare runs immediately before each side starts, so a case for a
+	// utility that WRITES hands both implementations the same tree: the
+	// GNU run would otherwise leave its output behind for the Fern run
+	// to append to.
+	prepare func(t *testing.T)
+	// artifacts are the paths the case writes. Each is read back after
+	// each side has run and the two are required to match, which is
+	// docs/COREUTILS.md's "the same resulting tree". A path that does
+	// not exist compares equal to a path that does not exist.
+	artifacts []string
+	// seedTree is the same requirement for a utility whose output names
+	// cannot be listed in advance: `split` chooses `xaa`, `xab`, … from
+	// the input's length. It gets a fresh working directory per SIDE,
+	// seeded by this function, and EVERYTHING left under it joins the
+	// comparison — so a file neither side was expected to write fails
+	// too, which an `artifacts` list cannot express. Takes precedence
+	// over dir.
+	seedTree func(t *testing.T, dir string)
 }
 
-// treeEntry is one path under a case's working directory, as the
+// treeEntry is one path under a seedTree case's working directory, as the
 // comparison sees it: the name relative to that directory, whether it is
 // a directory, and a regular file's bytes.
 type treeEntry struct {
@@ -171,6 +187,61 @@ func (o outcome) how() string {
 		return "killed by " + o.signal
 	}
 	return fmt.Sprintf("exit %d", o.exit)
+}
+
+// artifact is one path's state after a run: its bytes, or the fact that
+// it is absent. `uniq f -` leaves no output file, and a Fern build that
+// created an empty one would be diverging.
+type artifact struct {
+	name    string
+	present bool
+	data    []byte
+}
+
+func (inv invocation) prep(t *testing.T) {
+	t.Helper()
+	if inv.prepare != nil {
+		inv.prepare(t)
+	}
+}
+
+func (inv invocation) readArtifacts(t *testing.T) []artifact {
+	t.Helper()
+	out := make([]artifact, 0, len(inv.artifacts))
+	for _, name := range inv.artifacts {
+		b, err := os.ReadFile(name)
+		switch {
+		case err == nil:
+			out = append(out, artifact{name: name, present: true, data: b})
+		case errors.Is(err, os.ErrNotExist):
+			out = append(out, artifact{name: name, present: false})
+		default:
+			t.Fatalf("read artifact %s: %v", name, err)
+		}
+	}
+	return out
+}
+
+// diffArtifacts reports every path the two runs left in different states.
+func diffArtifacts(t *testing.T, util string, inv invocation, want, got []artifact, wantWho, gotWho string) {
+	t.Helper()
+	for i := range want {
+		w, g := want[i], got[i]
+		if w.present != g.present {
+			t.Errorf("%s %s: %s %s %s, %s %s it", util, quoteArgs(inv.args), wantWho, presence(w.present), w.name, gotWho, presence(g.present))
+			continue
+		}
+		if w.present && !bytes.Equal(w.data, g.data) {
+			t.Errorf("%s %s: %s differs\n%8s: %s\n%8s: %s", util, quoteArgs(inv.args), w.name, wantWho, quote(w.data), gotWho, quote(g.data))
+		}
+	}
+}
+
+func presence(ok bool) string {
+	if ok {
+		return "wrote"
+	}
+	return "left no"
 }
 
 // The environment both sides run under. Parity is asserted in the C
@@ -385,10 +456,12 @@ func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 	}
 	cmd.Env = append(baseEnv(), inv.env...)
 	var workDir string
-	if inv.dir != nil {
+	if inv.seedTree != nil {
 		workDir = t.TempDir()
-		inv.dir(t, workDir)
+		inv.seedTree(t, workDir)
 		cmd.Dir = workDir
+	} else {
+		cmd.Dir = inv.dir
 	}
 	cmd.Stdin = strings.NewReader(inv.stdin)
 	if inv.tty {
@@ -718,8 +791,12 @@ func requireParity(t *testing.T, util string, cases []invocation) {
 
 	for _, inv := range cases {
 		t.Run(inv.name, func(t *testing.T) {
+			inv.prep(t)
 			want := inv.run(t, ref, util)
+			wantFiles := inv.readArtifacts(t)
+			inv.prep(t)
 			got := inv.run(t, ours, util)
+			diffArtifacts(t, util, inv, wantFiles, inv.readArtifacts(t), "gnu", "fern")
 			if !bytes.Equal(want.stdout, got.stdout) {
 				t.Errorf("stdout differs for %s %s\n gnu: %s\nfern: %s", util, quoteArgs(inv.args), quote(want.stdout), quote(got.stdout))
 			}

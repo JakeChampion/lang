@@ -487,7 +487,7 @@ func (s *stackChecker) step(i int, op Op) {
 		}
 
 	// Integer arithmetic, comparison and bit counting.
-	case OpAdd, OpSub, OpMul, OpDivS, OpRemS, OpAnd, OpOr, OpXor, OpShl, OpShrS,
+	case OpAdd, OpSub, OpMul, OpDivS, OpRemS, OpAnd, OpOr, OpXor, OpShl, OpShrS, OpRotr,
 		OpEq, OpNe, OpLtS, OpLeS, OpGtS, OpGeS:
 		s.popN(i, op.Kind, 2, kInt)
 		s.push(kInt)

@@ -124,16 +124,13 @@ function main(): i32 { var o: O2 = O2.None; var r: Option[i32] = Option.Some(3);
 // These cannot be oracle-checked: native REJECTS a bare colliding name outright
 // (`E036: variant "None" is declared in multiple enums … qualify the reference`),
 // so there is no native answer to compare against. The self-host computes the
-// same E036 but drops it, so it compiles the program instead. The build gate
-// now enforces every coded diagnostic EXCEPT the partial-port rules measured to
-// false-positive (#6961), and E036 is one of those exclusions: it still misreads
-// a derive-synthesised `Status.default()` in `conformance/cases/derive_default`
-// as a bad qualified variant. Making E036 gate means fixing that misreading and
-// deleting its line from `is_partial_checker_gap_code` (checker.fern).
-//
-// Until then the value it produces should at least be the USER's variant, which
-// is what these pin. When E036 starts gating, these become compile errors and
-// this test moves to asserting the diagnostic.
+// same E036, and since #8461 the COMPILER (fern.fern) refuses the program on
+// it, matching native. This driver is asm_run.fern, which is a raw
+// stdin-to-asm path that runs no checker gate at all, so the lowering is still
+// reachable here — and the value it produces should be the USER's variant.
+// That is what these pin: the lowering must be right underneath the
+// diagnostic, not merely unreachable behind it.
+// TestSelfHostFormerlyExemptCodesGateX86_64 is where the refusal is asserted.
 var selfHostBareShadowedConstructionCases = []struct {
 	name string
 	src  string

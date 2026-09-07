@@ -46,13 +46,13 @@ func splitSeed(t *testing.T, dir string) {
 
 // splitCase is one invocation in split's own working directory.
 func splitCase(name string, args ...string) invocation {
-	return invocation{name: name, args: args, dir: splitSeed}
+	return invocation{name: name, args: args, seedTree: splitSeed}
 }
 
 // splitStdin is splitCase with something on stdin — a PIPE, so the
 // input is not seekable and `-n` has to learn its size another way.
 func splitStdin(name, stdin string, args ...string) invocation {
-	return invocation{name: name, args: args, stdin: stdin, dir: splitSeed}
+	return invocation{name: name, args: args, stdin: stdin, seedTree: splitSeed}
 }
 
 // splitCases is split(1)'s corpus.
@@ -290,7 +290,7 @@ func splitCases(*testing.T) []invocation {
 		splitCase("unrecognized long option", "--foo=bar", "in"),
 		splitCase("cluster", "-el", "3", "in"),
 		splitCase("options after the operand are permuted", "in", "-l", "3"),
-		{name: "posixly correct stops at the operand", args: []string{"-l", "2", "-", "-e"}, stdin: "1\n2\n", env: []string{"POSIXLY_CORRECT=1"}, dir: splitSeed},
+		{name: "posixly correct stops at the operand", args: []string{"-l", "2", "-", "-e"}, stdin: "1\n2\n", env: []string{"POSIXLY_CORRECT=1"}, seedTree: splitSeed},
 	}
 }
 

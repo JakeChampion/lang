@@ -1,3 +1,5 @@
+*.fern linguist-language=Rust
+
 # Merge behaviour for the append-only REGISTRIES.
 #
 # A registry here is one line per subject, sorted, with no prose between the

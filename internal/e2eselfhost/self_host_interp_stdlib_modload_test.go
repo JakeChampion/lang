@@ -43,6 +43,11 @@ var interpStdlibModloadCases = []struct {
 	// The intrinsics called directly, without a stdlib body in between.
 	{"alloc-fill-pack", "function main(): i32 {\n  var buf: u8[] = __alloc_u8(3);\n  buf = buf.with(0, 102 as u8);\n  buf = buf.with(1, 111 as u8);\n  buf = buf.with(2, 111 as u8);\n  if (string_from_bytes_unchecked(buf) == \"foo\") { return 7; }\n  return 1;\n}\n"},
 	{"memchr-ascii-run", "function main(): i32 {\n  if (__memchr(\"abcb\", 98, 2) != 3) { return 1; }\n  if (__memchr(\"abc\", 122, 0) != 0 - 1) { return 2; }\n  if (__ascii_run(\"abé\", 0) != 2) { return 3; }\n  return 7;\n}\n"},
+	// The comparison kernel, whose CLAMPS are the contract rather than
+	// defensive tidying: an offset past the end leaves nothing to compare, a
+	// negative one reads from 0, and an `n` past either range answers the
+	// shorter length so a caller's `== n` equality test correctly fails.
+	{"mismatch", "function main(): i32 {\n  if (__mismatch(\"hello\", 0, \"hello\", 0, 5) != 5) { return 1; }\n  if (__mismatch(\"abc\", 0, \"abd\", 0, 3) != 2) { return 2; }\n  if (__mismatch(\"zzabc\", 2, \"qqqabd\", 3, 3) != 2) { return 3; }\n  if (__mismatch(\"ab\", 0, \"abcdef\", 0, 6) != 2) { return 4; }\n  if (__mismatch(\"abc\", 0 - 4, \"abc\", 0, 3) != 3) { return 5; }\n  if (__mismatch(\"abc\", 99, \"abc\", 0, 3) != 0) { return 6; }\n  return 7;\n}\n"},
 	{"float-bits-roundtrip", "function main(): i32 {\n  if (f64_from_bits(f64_bits(1.5)) != 1.5) { return 1; }\n  if (f32_from_bits(f32_bits(0.5 as f32)) != (0.5 as f32)) { return 2; }\n  return 7;\n}\n"},
 	// `var (a, b) = tuple` is one StmtVar carrying a comma-joined name; the
 	// interpreter used to bind that name whole, so std/json's parser (which

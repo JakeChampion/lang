@@ -356,6 +356,23 @@ function main(): i32 {
     return 0;
 }`},
 
+	// #8833: a captured Map rebound in the enclosing scope from its own
+	// element. `insert` on a map only the cell names updates IN PLACE and
+	// returns the same handle, so the store's release of the superseded
+	// element took the map it was about to store: both natives printed 0
+	// where the interpreter printed 11, and `-sanitize` reported a
+	// use-after-free. 11 = the new map read through the binding (1) times
+	// ten, plus the same map read through the closure.
+	{"closure_capture_map_rebind_in_place", `import "std/i32";
+import "core/map";
+function main(): i32 {
+    var m: Map[string, i32] = map_new(2);
+    var f: () => i32 = (): i32 => { return m.len(); };
+    m = m.insert("k", 1);
+    print((m.len() * 10 + f()).to_string());
+    return 0;
+}`},
+
 	// ---- map keys()/values() iteration ----
 	{"map_iteration", `import "std/i32";
 import "core/map";

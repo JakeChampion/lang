@@ -481,7 +481,7 @@ func b2i(b bool) int64 {
 func binInt(k ssa.OpKind, a, b int64, w int8) (int64, error) {
 	if w != 64 {
 		switch k {
-		case ssa.OpDivU, ssa.OpRemU, ssa.OpShrU:
+		case ssa.OpDivU, ssa.OpRemU, ssa.OpShrU, ssa.OpRotr:
 			a = int64(uint32(a))
 			b = int64(uint32(b))
 		}
@@ -511,6 +511,11 @@ func binInt(k ssa.OpKind, a, b int64, w int8) (int64, error) {
 		return a >> shiftBy(), nil
 	case ssa.OpShrU:
 		return int64(uint64(a) >> shiftBy()), nil
+	case ssa.OpRotr:
+		if w == 64 {
+			return int64(bits.RotateLeft64(uint64(a), -int(shiftBy()))), nil
+		}
+		return int64(int32(bits.RotateLeft32(uint32(a), -int(shiftBy())))), nil
 	case ssa.OpDiv:
 		if b == 0 {
 			return 0, fmt.Errorf("Run: division by zero")

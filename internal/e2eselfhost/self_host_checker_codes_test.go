@@ -1821,6 +1821,31 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"e072-void-call-payload", "function nothing(): void { return; }\nfunction main(): i32 { var r: Result[(), i32] = Ok(nothing()); return 0; }\n", []string{"E072"}},
 		// The unit is not a numeral: it settles at no destination width.
 		{"unit-not-a-number", "function main(): i32 { var f: f64 = (); return 0; }\n", []string{"E003"}},
+		// #8461: five rules that fired on programs native accepts, which is
+		// what held E001 / E036 / E044 off the compile path. Each is silent
+		// now, so each is a row that must stay silent.
+		//
+		// A nested position in a `for` pattern rides the binder encoding as a
+		// parenthesised group, and the split ran over every comma — binding
+		// "(a" and "b)" and leaving `a` and `b` undefined.
+		{"for-nested-tuple-pattern", "function main(): i32 { var deep: ((i32, i32), string)[] = [((2, 3), \"xy\")]; var s: i32 = 0; for ((a, b), c) in deep { s = s + a * b + c.len(); } return s; }\n", nil},
+		// The `@` whole-value binder names the scrutinee; nothing bound it, so
+		// every read of the name was an undefined E001.
+		{"at-binder-names-the-scrutinee", "enum One { Only(string) }\nfunction whole(o: One): i32 { return 1; }\nfunction main(): i32 { var o: One = Only(\"e\"); match (o) { w @ Only(v) => { return whole(w) + v.len(); } } }\n", nil},
+		// An if-EXPRESSION is an IIFE here and has no counterpart in the
+		// native AST, so its erased-`T` operands read as closure captures with
+		// no runtime representation (E044). Only a lambda the PROGRAMMER wrote
+		// is a capture site.
+		{"if-expr-iife-is-not-a-capture", "function pick[T](cond: boolean, a: T, b: T): T { return if (cond) { a } else { b }; }\nfunction main(): i32 { return pick(true, 1, 2); }\n", nil},
+		// An associated function reached through its ENUM: the qualified
+		// -variant arm claimed the call before the associated resolution ran,
+		// and reported a variant nobody wrote (E036).
+		{"enum-qualified-associated-fn", "trait Empty { function empty(): Self; }\nenum Opt { Nothing, Just(i32) }\nimpl Empty for Opt { function empty(): Self { return Nothing; } }\nfunction main(): i32 { var o: Opt = Opt.empty(); match (o) { Nothing => { return 0; }, Just(n) => { return n; } } }\n", nil},
+		// A tuple / struct / literal match is REPLACED at parse time by a
+		// done-flag if/else chain that falls through by construction, so
+		// reading the chain said every such function could fall off its end
+		// (E052). The `if` carries the arms as written.
+		{"tuple-match-exhausts-the-function", "function f(t: (i32, i32)): i32 { match (t) { (0, b) => { return b; }, (a, _) => { return a; } } }\nfunction main(): i32 { return f((0, 7)); }\n", nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

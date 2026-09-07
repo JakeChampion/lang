@@ -1917,15 +1917,25 @@ function parse_postfix(p: Par, base: ast.Expr): (ast.Expr, Par) {
                 var ta_depth: i32 = 0;
                 var ta_saw: boolean = false;
                 var ta_commas: i32 = 0;
+                // A TRAILING comma closes no further argument — `pick[i32,]`
+                // is one type argument, and counting it as two reported E040
+                // against a call the grammar allows.
+                var ta_trailing: boolean = false;
                 while (!p.at_end()) {
                     var tp2: string = p.peek_punct();
                     if (tp2 == "]" && ta_depth == 0) { break; }
                     if (tp2 == "[") { ta_depth = ta_depth + 1; }
                     if (tp2 == "]") { ta_depth = ta_depth - 1; }
-                    if (tp2 == "," && ta_depth == 0) { ta_commas = ta_commas + 1; }
+                    if (tp2 == "," && ta_depth == 0) {
+                        ta_commas = ta_commas + 1;
+                        ta_trailing = true;
+                    } else {
+                        ta_trailing = false;
+                    }
                     ta_saw = true;
                     p = p.advance();
                 }
+                if (ta_trailing) { ta_commas = ta_commas - 1; }
                 if (ta_saw) { pending_type_argc = ta_commas + 1; }
                 if (p.peek_punct() == "]") { p = p.advance(); }
                 // `Name[T] { … }` — a generic struct construction: the
