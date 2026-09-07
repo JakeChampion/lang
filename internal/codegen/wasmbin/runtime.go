@@ -855,6 +855,8 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_wasm_poll")
 				case "isatty":
 					needs.add("isatty")
+				case "signal_ignore", "signal_default":
+					needs.add(op.Str)
 				case "hostname":
 					needs.add("hostname")
 				case "strbuf_reset", "strbuf_append", "strbuf_take":
@@ -1866,6 +1868,21 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildIsattyBody,
+	},
+	"signal_ignore": {
+		// (sig: i32) → () — set one signal to SIG_IGN. Nothing can
+		// deliver a signal to a component, so there is nothing to
+		// ignore and doing nothing is the whole truth about it
+		// (compare hostname's ""). See buildSignalDispositionBody.
+		params:  []byte{encode.ValtypeI32},
+		results: nil,
+		body:    buildSignalDispositionBody,
+	},
+	"signal_default": {
+		// (sig: i32) → () — the same no-op in the other direction.
+		params:  []byte{encode.ValtypeI32},
+		results: nil,
+		body:    buildSignalDispositionBody,
 	},
 	"hostname": {
 		// () → (data, len): the kernel's node name. Neither WASI

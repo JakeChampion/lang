@@ -20,6 +20,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"os/signal"
 	"runtime"
 	"sort"
 	"strconv"
@@ -1068,6 +1069,8 @@ func New() *Interp {
 	i.Builtins["getgid"] = &Builtin{Fn: builtinGetgid}
 	i.Builtins["getgroups"] = &Builtin{Fn: builtinGetgroups}
 	i.Builtins["hostname"] = &Builtin{Fn: builtinHostname}
+	i.Builtins["signal_ignore"] = &Builtin{Fn: builtinSignalIgnore}
+	i.Builtins["signal_default"] = &Builtin{Fn: builtinSignalDefault}
 	i.Builtins["remove_file"] = &Builtin{Fn: builtinRemoveFile}
 	i.Builtins["create_dir_all"] = &Builtin{Fn: builtinCreateDirAll}
 	i.Builtins["remove_dir_all"] = &Builtin{Fn: builtinRemoveDirAll}
@@ -2651,6 +2654,50 @@ func builtinHostname(_ *Interp, args []Value) (Value, error) {
 		return String(""), nil
 	}
 	return String(h), nil
+}
+
+// signalArg reads the one signal-number argument the two disposition
+// builtins take. The number is the caller's — the compiled backends pass
+// it straight to rt_sigaction, so a value the kernel rejects is the
+// caller's error there and is rejected here for the same reason.
+func signalArg(name string, args []Value) (syscall.Signal, error) {
+	if len(args) != 1 {
+		return 0, fmt.Errorf("%s: expected 1 arg, got %d", name, len(args))
+	}
+	n, ok := args[0].(Number)
+	if !ok {
+		return 0, fmt.Errorf("%s: expected number arg, got %T", name, args[0])
+	}
+	return syscall.Signal(int32(int64(n))), nil
+}
+
+// builtinSignalIgnore sets one signal's disposition to SIG_IGN.
+//
+// The interpreter shares its process with the Go runtime, so this moves
+// the disposition of `fern` itself for as long as the program runs —
+// which is the same scope a compiled program has, one process. The
+// difference to know about is SIGPIPE: the Go runtime already forces
+// EPIPE rather than death for writes to a descriptor above 2, so an
+// interpreted program survives a broken pipe whether or not it asked
+// to. Ignoring it here still narrows the gap rather than widening it.
+func builtinSignalIgnore(_ *Interp, args []Value) (Value, error) {
+	sig, err := signalArg("signal_ignore", args)
+	if err != nil {
+		return nil, err
+	}
+	signal.Ignore(sig)
+	return Void{}, nil
+}
+
+// builtinSignalDefault restores one signal's default disposition, so a
+// utility that ignored a signal for one stretch of work can put it back.
+func builtinSignalDefault(_ *Interp, args []Value) (Value, error) {
+	sig, err := signalArg("signal_default", args)
+	if err != nil {
+		return nil, err
+	}
+	signal.Reset(sig)
+	return Void{}, nil
 }
 
 // builtinRemoveFile unlinks `path`. `Option[IoError]` mirrors

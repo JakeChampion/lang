@@ -288,6 +288,19 @@ const (
 	// ioctl(2): x86-64 syscall 16. Backs `__fern_isatty` via TCGETS,
 	// which succeeds only on a terminal.
 	sysIoctl = 16
+	// rt_sigaction(2): x86-64 syscall 13. Backs `__fern_signal_ignore`
+	// and `__fern_signal_default`.
+	sysRtSigaction = 13
+)
+
+// SIG_DFL / SIG_IGN, the two `sa_handler` values that are dispositions
+// rather than addresses, and the `sigsetsize` rt_sigaction wants in its
+// fourth argument — the width of the kernel's sigset_t, 8 bytes on both
+// 64-bit targets.
+const (
+	sigDfl        = 0
+	sigIgn        = 1
+	kernelSigsetN = 8
 )
 
 // Options tunes the emit.
@@ -780,6 +793,9 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	if g.usesIsatty {
 		g.emitIsattyRuntime()
 	}
+	if g.usesSignalDisposition {
+		g.emitSignalDispositionRuntime()
+	}
 	if g.usesEnv {
 		g.emitEnvRuntime()
 	}
@@ -1075,9 +1091,13 @@ type generator struct {
 	usesTimerFd           bool
 	// usesIsatty pulls in `__fern_isatty(fd)` — one TCGETS ioctl,
 	// 1 when it succeeds.
-	usesIsatty   bool
-	usesAsBytes  bool
-	usesReadLine bool
+	usesIsatty bool
+	// usesSignalDisposition pulls in both `__fern_signal_ignore` and
+	// `__fern_signal_default`; they differ by one immediate, so they
+	// share a body and one flag rather than splitting into two.
+	usesSignalDisposition bool
+	usesAsBytes           bool
+	usesReadLine          bool
 	// usesStrIdx tracks whether any code emits the SSO-aware
 	// inlined __str_idx helper, which spills inline-tagged
 	// strings to the .bss `__fern_str_idx_scratch` slot before
@@ -1648,6 +1668,8 @@ func (g *generator) recordUse(target string) {
 		g.usesTimerFd = true
 	case "isatty":
 		g.usesIsatty = true
+	case "signal_ignore", "signal_default":
+		g.usesSignalDisposition = true
 	case "env":
 		g.usesEnv = true
 		g.usesAlloc = true
@@ -3240,6 +3262,10 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_timer_fd"
 		case "isatty":
 			target = "__fern_isatty"
+		case "signal_ignore":
+			target = "__fern_signal_ignore"
+		case "signal_default":
+			target = "__fern_signal_default"
 		case "tcp_send":
 			target = "__fern_tcp_send"
 		case "tcp_connect":
@@ -11928,6 +11954,60 @@ func (g *generator) emitIsattyRuntime() {
 	g.emit("movzx eax, al")
 	g.emit("ret")
 	g.line(".size __fern_isatty, .-__fern_isatty")
+}
+
+// emitSignalDispositionRuntime emits `__fern_signal_ignore(sig)` and
+// `__fern_signal_default(sig)` — one rt_sigaction each, setting
+// `sa_handler` to SIG_IGN or SIG_DFL and leaving every other field zero.
+//
+// The two bodies differ only in that handler word, so `__fern_signal_ignore`
+// falls through into the shared tail rather than being copied.
+//
+// `struct kernel_sigaction` is 32 bytes on x86-64 — sa_handler, sa_flags,
+// sa_restorer, sa_mask — and all of it but sa_handler is zero here. SA_RESTORER
+// is required at DELIVERY (setup_rt_frame refuses a frame without it), and
+// neither disposition ever builds a frame, so leaving sa_flags zero is correct
+// rather than a shortcut.
+//
+// Off the process entry shape there is no kernel to ask and nothing that can
+// deliver a signal, so the helper returns without doing anything
+// (docs/FREESTANDING-CORE.md).
+func (g *generator) emitSignalDispositionRuntime() {
+	for _, h := range []struct {
+		name    string
+		handler int
+	}{
+		{"__fern_signal_ignore", sigIgn},
+		{"__fern_signal_default", sigDfl},
+	} {
+		g.line("")
+		g.line(".globl " + h.name)
+		g.line(".type " + h.name + ", @function")
+		g.label(h.name)
+		if g.entry != platforms.EntryProcess {
+			g.emit("ret")
+			g.line(".size " + h.name + ", .-" + h.name)
+			continue
+		}
+		// The 128-byte red zone below rsp holds the 32-byte act without a
+		// frame. Zero it, then write the one field that is not zero.
+		g.emit("xor eax, eax")
+		g.emit("mov qword ptr [rsp - 32], rax")
+		g.emit("mov qword ptr [rsp - 24], rax")
+		g.emit("mov qword ptr [rsp - 16], rax")
+		g.emit("mov qword ptr [rsp - 8], rax")
+		g.emit(fmt.Sprintf("mov qword ptr [rsp - 32], %d", h.handler))
+		// rt_sigaction(sig, act, NULL, sizeof(sigset_t)). `sig` arrives in
+		// edi and stays there.
+		g.emit("lea rsi, [rsp - 32]")
+		g.emit("xor edx, edx")
+		g.emit(fmt.Sprintf("mov r10d, %d", kernelSigsetN))
+		g.emitSyscall(sysRtSigaction)
+		// A rejected signal number is the caller's error, the same as it is
+		// through libc's signal(3); there is no return value to report it in.
+		g.emit("ret")
+		g.line(".size " + h.name + ", .-" + h.name)
+	}
 }
 
 // emitRandomI32Runtime emits `__fern_random_i32()` — returns a

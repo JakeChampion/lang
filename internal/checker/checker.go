@@ -1994,6 +1994,24 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		Params: nil,
 		Result: ast.StringType{},
 	}
+	// signal_ignore(sig) / signal_default(sig): void — set one
+	// signal's disposition to SIG_IGN or back to SIG_DFL. No
+	// handler-installing form: a handler runs as a second context
+	// against non-atomic refcounts (docs/BARE-METAL-PLAN.md), and
+	// the two dispositions are what a utility actually needs —
+	// `tee -i` is `signal(SIGINT, SIG_IGN)` and its
+	// `--output-error` family is the same move on SIGPIPE, which
+	// turns a death into an EPIPE the write can report (#8792).
+	// The signal number is the caller's: `std/signal` names the
+	// two that are portable rather than putting a number here.
+	c.info.FuncSigs["signal_ignore"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{Width: 32, Signed: true}},
+		Result: ast.VoidType{},
+	}
+	c.info.FuncSigs["signal_default"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{Width: 32, Signed: true}},
+		Result: ast.VoidType{},
+	}
 	// remove_file(path): Result[void, IoError] — unlink the file.
 	// `Ok(())` on success, `Err(e)` on failure (mirrors
 	// `write_file`). Removing a non-existent file is an

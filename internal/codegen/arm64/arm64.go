@@ -183,7 +183,15 @@ var linuxDarwinSysno = map[string][2]int{
 	"getuid": {174, 24},
 	"getgid": {176, 47},
 	// getgroups(2) — Linux asm-generic 158, Darwin BSD 79.
-	"getgroups":  {158, 79},
+	"getgroups": {158, 79},
+	// rt_sigaction(2) — Linux asm-generic 134, Darwin's sigaction BSD 46.
+	// Linux takes a fourth `sigsetsize` argument that Darwin ignores, and
+	// the two `struct sigaction` layouts disagree past the first field —
+	// Linux is {handler, flags, restorer, mask}, XNU {handler, tramp,
+	// mask, flags}. Only `sa_handler`, at offset 0 on both, is non-zero
+	// for a plain SIG_IGN / SIG_DFL, so one zeroed 32-byte buffer serves
+	// either and the numbers can share a row.
+	"sigaction":  {134, 46},
 	"exit":       {sysExit, darExit},
 	"exit_group": {sysExitGroup, darExit},
 	"mmap":       {sysMmap, darMmap},
@@ -681,6 +689,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	}
 	if g.usesIsatty {
 		g.emitIsattyRuntime()
+	}
+	if g.usesSignalDisposition {
+		g.emitSignalDispositionRuntime()
 	}
 	if g.usesStrSlice {
 		g.emitStrSliceRuntime()
@@ -8272,6 +8283,60 @@ func (g *generator) emitIsattyRuntime() {
 	g.line(".ltorg")
 }
 
+// emitSignalDispositionRuntime emits `__fern_signal_ignore(sig)` and
+// `__fern_signal_default(sig)` — one sigaction each, setting `sa_handler`
+// to SIG_IGN or SIG_DFL and leaving every other field zero.
+//
+// The two bodies differ only in that handler word, so they are emitted
+// from one loop rather than copied.
+//
+// The 32-byte zeroed act covers both layouts: Linux's kernel sigaction is
+// {handler, flags, restorer, mask} and XNU's is {handler, tramp, mask,
+// flags}, and only `sa_handler` at offset 0 is non-zero for a plain
+// disposition. Linux's fourth `sigsetsize` argument goes in x3 on both —
+// Darwin's three-argument sigaction ignores it. Linux requires SA_RESTORER
+// at DELIVERY, and neither disposition ever builds a signal frame, so a
+// zero sa_flags is correct rather than a shortcut.
+//
+// Off the process entry shape nothing can deliver a signal, so the helper
+// returns without doing anything (docs/FREESTANDING-CORE.md).
+func (g *generator) emitSignalDispositionRuntime() {
+	const sigDfl = 0
+	const sigIgn = 1
+	const kernelSigsetN = 8
+	for _, h := range []struct {
+		name    string
+		handler int
+	}{
+		{"__fern_signal_ignore", sigIgn},
+		{"__fern_signal_default", sigDfl},
+	} {
+		g.line("")
+		g.line(".global " + h.name)
+		g.typeDirective(h.name)
+		g.label(h.name)
+		if g.entry != platforms.EntryProcess {
+			g.emit("ret")
+			g.sizeDirective(h.name)
+			continue
+		}
+		g.emit("sub sp, sp, #32")
+		g.emit("stp xzr, xzr, [sp]")
+		g.emit("stp xzr, xzr, [sp, #16]")
+		g.emit("mov x9, #%d", h.handler)
+		g.emit("str x9, [sp]")
+		g.emit("mov x1, sp")
+		g.emit("mov x2, #0")
+		g.emit("mov x3, #%d", kernelSigsetN)
+		g.syscall("sigaction")
+		// A rejected signal number is the caller's error, the same as it is
+		// through libc's signal(3); there is no return value to report it in.
+		g.emit("add sp, sp, #32")
+		g.emit("ret")
+		g.sizeDirective(h.name)
+	}
+}
+
 // emitRandomI32Runtime emits `__fern_random_i32()` — returns a
 // single cryptographic-quality i32 by reading 4 CSPRNG bytes
 // into a stack slot and reloading them as a (little-endian) i32.
@@ -11429,6 +11494,10 @@ type generator struct {
 	// usesIsatty pulls in `__fern_isatty(fd)` — one terminal-attribute
 	// ioctl, 1 when it succeeds.
 	usesIsatty bool
+	// usesSignalDisposition pulls in both `__fern_signal_ignore` and
+	// `__fern_signal_default`; they differ by one immediate, so they
+	// share a body and one flag rather than splitting into two.
+	usesSignalDisposition bool
 	// usesStrSlice pulls in `__str_slice(base, low, high)` —
 	// a length-prefix-aware substring extractor that
 	// allocates a fresh string. The IR's `s[a:b]` slice
@@ -15652,6 +15721,12 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		case "isatty":
 			target = "__fern_isatty"
 			g.usesIsatty = true
+		case "signal_ignore":
+			target = "__fern_signal_ignore"
+			g.usesSignalDisposition = true
+		case "signal_default":
+			target = "__fern_signal_default"
+			g.usesSignalDisposition = true
 		// Map / MapIter — the lang Map runtime lives entirely
 		// in the stdlib under `_impl`-suffixed names;
 		// user-facing call sites use the unsuffixed mangled

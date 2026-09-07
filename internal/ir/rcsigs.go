@@ -302,6 +302,9 @@ var rcInertBuiltins = map[string]bool{
 	// no such helper exists there to alias through. Same door
 	// `write_file_exec` and `access` come in by.
 	"getgroups": true,
+	// One i32 in, nothing out — the disposition lives in the kernel,
+	// not in anything counted.
+	"signal_ignore": true, "signal_default": true,
 }
 
 // rcUnmodelled are helpers that do move counts, and whose movement one
@@ -374,6 +377,7 @@ var rcInert = map[string]bool{
 	"__fern_putchar": true, "__fern_random_bytes": true,
 	"__fern_random_i32": true, "__fern_rc_underflow_count": true,
 	"__fern_read_byte": true, "__fern_read_dir": true,
+	"__fern_signal_default": true, "__fern_signal_ignore": true,
 	"__fern_read_dir_raw": true, "__fern_read_file": true,
 	"__fern_read_file_bytes": true, "__fern_read_line": true,
 	"__fern_reader_close": true, "__fern_reader_close_fd": true,
