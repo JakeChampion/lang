@@ -44,6 +44,18 @@ const (
 	pageRoundCeil = -65536
 )
 
+// strRoundedSize writes the 16-rounded allocator request for a string of
+// byte length local[lenLocal] into local[sizeLocal]: (len + 8 + 15) & -16,
+// the header word included. It is what emitFreelistBin bins.
+func strRoundedSize(b []byte, lenLocal, sizeLocal uint32) []byte {
+	b = inst.InstLocalGet(b, lenLocal)
+	b = inst.InstI32Const(b, 23)
+	b = numeric.InstI32Add(b)
+	b = inst.InstI32Const(b, -16)
+	b = numeric.InstI32And(b)
+	return inst.InstLocalSet(b, sizeLocal)
+}
+
 // emitFreelistBin appends the size→(capacity, class) binning both
 // __fern_alloc and __fern_free must agree on. Emitting it from ONE
 // place is the point: alloc has to BUMP at the same capacity free
@@ -253,6 +265,22 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					// transitive deps (box_free → __free, rc_dec), which the
 					// flat scan does not close over.
 					needs.add("__fern_str_append")
+					needs.add("__str_concat")
+					needs.add("__fern_str_len")
+					needs.add("__fern_str_byte")
+					needs.add("__fern_alloc")
+					needs.add("__fern_alloc_rc1")
+					needs.add("__fern_str_dec")
+					needs.add("__fern_box_free")
+					needs.add("__fern_rc_dec")
+					needs.add("__free")
+				case "__fern_str_append_range":
+					// The same append over a byte range of a second string.
+					// Its fallback materialises the range through
+					// __str_slice before joining it, so that helper joins
+					// __fern_str_append's own closure.
+					needs.add("__fern_str_append_range")
+					needs.add("__str_slice")
 					needs.add("__str_concat")
 					needs.add("__fern_str_len")
 					needs.add("__fern_str_byte")
@@ -2434,6 +2462,18 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		results: []byte{encode.ValtypeI32, encode.ValtypeI32},
 		body:    buildStrAppendBody,
 	},
+	"__fern_str_append_range": {
+		// (a_data, a_len, s_data, s_len, lo, hi) → (data, len). The same
+		// append with a byte range of `s` as its piece, copied straight
+		// out of the source. CONSUMES a, borrows s. See
+		// buildStrAppendRangeBody.
+		params: []byte{
+			encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32,
+			encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32,
+		},
+		results: []byte{encode.ValtypeI32, encode.ValtypeI32},
+		body:    buildStrAppendRangeBody,
+	},
 	"__http_entry": {
 		// (req, out) → () — wasi:http/incoming-handler wrapper.
 		// Marshals the canonical-ABI incoming-request into the
@@ -3606,8 +3646,9 @@ func buildStrConcatBody(idxs map[string]uint32) []byte {
 	// the per-byte __fern_str_byte loop (≤7 bytes, negligible). #4379 — replaces
 	// the unconditional per-byte copy with memory.copy on the common
 	// large-string path.
-	body = strConcatCopyOne(body, strByte, 0, 1, 4, 6, 0, false) // a → dst
-	body = strConcatCopyOne(body, strByte, 2, 3, 5, 6, 4, true)  // b → dst + la
+	// a → dst, then b → dst + la.
+	body = strCopyBytes(body, strCopySpec{strByte: strByte, data: 0, rawLen: 1, length: 4, dst: 6, scratch: 7})
+	body = strCopyBytes(body, strCopySpec{strByte: strByte, data: 2, rawLen: 3, length: 5, dst: 6, dstOff: 4, hasDstOff: true, scratch: 7})
 	// Return (dst, la + lb) as the multi-value result.
 	body = inst.InstLocalGet(body, 6) // dst (data)
 	body = inst.InstLocalGet(body, 4)
@@ -3623,9 +3664,9 @@ func buildStrConcatBody(idxs map[string]uint32) []byte {
 //
 // Signature: (param $a_data $a_len $b_data $b_len i32) (result i32 i32)
 // Locals (after params): $la (4), $lb (5), $total (6), $i (7 —
-// strConcatCopyOne's scratch), $out_data (8), $out_len (9), then the class
+// strCopyBytes' loop index), $out_data (8), $out_len (9), then the class
 // arithmetic's $size_a (10), $cap_a (11), $class (12), $tmp (13), $size_t
-// (14), $cap_t (15).
+// (14).
 //
 // It CONSUMES `a`: the IR only emits it where the assignment was about to
 // overwrite and reclaim that slot, so its dec-on-overwrite is suppressed.
@@ -3705,23 +3746,16 @@ func buildStrAppendBody(idxs map[string]uint32) []byte {
 		body = inst.InstI32Const(body, maxStrLen)
 		body = numeric.InstI32GtU(body)
 		body = inst.InstBrIf(body, 0)
-		// Same allocator capacity? request(len) = (len + 8 + 15) & -16,
-		// then the tier's round-up.
-		roundedSize := func(b []byte, lenLocal, sizeLocal uint32) []byte {
-			b = inst.InstLocalGet(b, lenLocal)
-			b = inst.InstI32Const(b, 23)
-			b = numeric.InstI32Add(b)
-			b = inst.InstI32Const(b, -16)
-			b = numeric.InstI32And(b)
-			return inst.InstLocalSet(b, sizeLocal)
-		}
-		body = roundedSize(body, 4, 10)
-		body = roundedSize(body, 6, 14)
+		// Still the same block? request(len) = (len + 8 + 15) & -16, and
+		// the capacity function is monotone and idempotent, so the grown
+		// request classing the same as the old one is exactly
+		// `size_t > cap_a` being false — one binning, not two.
+		body = strRoundedSize(body, 4, 10)
+		body = strRoundedSize(body, 6, 14)
 		body = emitFreelistBin(body, 10, 11, 12, 13)
-		body = emitFreelistBin(body, 14, 15, 12, 13)
+		body = inst.InstLocalGet(body, 14)
 		body = inst.InstLocalGet(body, 11)
-		body = inst.InstLocalGet(body, 15)
-		body = numeric.InstI32Ne(body)
+		body = numeric.InstI32GtU(body)
 		body = inst.InstBrIf(body, 0)
 		if ast.LeakCheckEnabled {
 			// The block was charged at its 16-rounded request and __free
@@ -3740,7 +3774,7 @@ func buildStrAppendBody(idxs map[string]uint32) []byte {
 		// In place: copy b's bytes to mem[$a_data + $la ..] and return
 		// (a_data, total). rc stays 1 — the accumulator's sole owner is
 		// still the slot the caller is about to store into.
-		body = strConcatCopyOne(body, strByte, 2, 3, 5, 0, 4, true)
+		body = strCopyBytes(body, strCopySpec{strByte: strByte, data: 2, rawLen: 3, length: 5, dst: 0, dstOff: 4, hasDstOff: true, scratch: 7})
 		body = inst.InstLocalGet(body, 0)
 		body = inst.InstLocalGet(body, 6)
 		body = inst.InstReturn(body)
@@ -3760,62 +3794,255 @@ func buildStrAppendBody(idxs map[string]uint32) []byte {
 	body = inst.InstDrop(body)
 	body = inst.InstLocalGet(body, 8)
 	body = inst.InstLocalGet(body, 9)
-	locals := inst.PutLocalsOneGroup(nil, 12, encode.ValtypeI32)
+	locals := inst.PutLocalsOneGroup(nil, 11, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
 }
 
-// strConcatCopyOne appends one input string's byte-copy block to a
-// __str_concat body (see buildStrConcatBody). The write base is $dst (local
-// dstLocal), plus local[offLocal] when hasOff (the +la offset for the second
-// string). dataLocal/lenLocal are the string's (data, raw-len) params, and
-// lenComputed is its resolved byte length (from __fern_str_len). For a
-// heap-form string (raw-len top bit clear → contiguous in memory) it emits a
-// single memory.copy; for an inline/SSO string (top bit set → bytes live in
-// the words) it falls back to the per-byte __fern_str_byte loop using scratch
-// local 7 ($i). #4379.
-func strConcatCopyOne(body []byte, strByte uint32, dataLocal, lenLocal, lenComputed, dstLocal, offLocal uint32, hasOff bool) []byte {
+// buildStrAppendRangeBody assembles wasm bytes for
+// __fern_str_append_range — __fern_str_append whose piece is a byte range of
+// a second string rather than a whole one.
+//
+// Signature: (param $a_data $a_len $s_data $s_len $lo $hi i32)
+// (result i32 i32). Locals (after params): $slen (6), $i (7 — strCopyBytes'
+// loop index), $lb (8), $la (9), $total (10), $out_data (11), $out_len (12),
+// then the class arithmetic's $size_a (13), $cap_a (14), $class (15),
+// $tmp (16), $size_t (17), and the fallback's $slice_data (18),
+// $slice_len (19).
+//
+// It is the fusion of `a + slice_unchecked(s, lo, hi)`: the unfused pair
+// allocates a slice buffer, copies the range into it, copies it again into
+// `a`'s slack and frees it. Here the range is copied straight out of `s`.
+// Same guards and the same consumption of `a` as __fern_str_append; the
+// fallback materialises the range through __str_slice exactly as the unfused
+// lowering did and then releases both the accumulator and the slice.
+//
+// The bounds are checked UP FRONT and trap the way __str_slice does, so a
+// range the unfused form would have rejected is still rejected here.
+func buildStrAppendRangeBody(idxs map[string]uint32) []byte {
+	strLen := idxs["__fern_str_len"]
+	strByte := idxs["__fern_str_byte"]
+	concat := idxs["__str_concat"]
+	strDec := idxs["__fern_str_dec"]
+	strSlice := idxs["__str_slice"]
+	var body []byte
+	// $slen = __fern_str_len(s)
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstLocalGet(body, 3)
+	body = inst.InstCall(body, strLen)
+	body = inst.InstLocalSet(body, 6)
+	// Bounds, in __str_slice's own order and with its trap: lo < 0,
+	// hi > slen (unsigned, so a negative hi trips it too), lo > hi.
+	trapIf := func(b []byte, cond func([]byte) []byte) []byte {
+		b = cond(b)
+		b = inst.InstIfStart(b, inst.BlocktypeEmpty)
+		b = inst.InstUnreachable(b)
+		return inst.InstEnd(b)
+	}
+	body = trapIf(body, func(b []byte) []byte {
+		b = inst.InstLocalGet(b, 4)
+		b = inst.InstI32Const(b, 0)
+		return numeric.InstI32LtS(b)
+	})
+	body = trapIf(body, func(b []byte) []byte {
+		b = inst.InstLocalGet(b, 5)
+		b = inst.InstLocalGet(b, 6)
+		return numeric.InstI32GtU(b)
+	})
+	body = trapIf(body, func(b []byte) []byte {
+		b = inst.InstLocalGet(b, 4)
+		b = inst.InstLocalGet(b, 5)
+		return numeric.InstI32GtS(b)
+	})
+	// $lb = hi - lo
+	body = inst.InstLocalGet(body, 5)
+	body = inst.InstLocalGet(body, 4)
+	body = numeric.InstI32Sub(body)
+	body = inst.InstLocalSet(body, 8)
+	body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
+	{
+		// The same three eligibility tests __fern_str_append makes on `a`:
+		// inline/SSO, below the rc guard (a data-segment literal), shared.
+		body = inst.InstLocalGet(body, 1)
+		body = inst.InstI32Const(body, int32(-0x80000000))
+		body = numeric.InstI32And(body)
+		body = inst.InstBrIf(body, 0)
+		body = inst.InstLocalGet(body, 0)
+		body = inst.InstI32Const(body, rcLowAddrGuard)
+		body = numeric.InstI32LtU(body)
+		body = inst.InstBrIf(body, 0)
+		body = inst.InstLocalGet(body, 0)
+		body = inst.InstI32Const(body, 8)
+		body = numeric.InstI32Sub(body)
+		body = memory.InstI32Load(body, 2, 0)
+		body = inst.InstI32Const(body, 1)
+		body = numeric.InstI32Ne(body)
+		body = inst.InstBrIf(body, 0)
+		// $la = $a_len (heap form), $total = $la + $lb.
+		body = inst.InstLocalGet(body, 1)
+		body = inst.InstLocalTee(body, 9) // $la
+		body = inst.InstLocalGet(body, 8)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalSet(body, 10) // $total
+		// Past the i32 length ceiling there is no representable result and
+		// the capacity test can still match (#8457).
+		body = inst.InstLocalGet(body, 10)
+		body = inst.InstI32Const(body, maxStrLen)
+		body = numeric.InstI32GtU(body)
+		body = inst.InstBrIf(body, 0)
+		// Still the same block? The same monotone-and-idempotent capacity
+		// test __fern_str_append makes.
+		body = strRoundedSize(body, 9, 13)
+		body = strRoundedSize(body, 10, 17)
+		body = emitFreelistBin(body, 13, 14, 15, 16)
+		body = inst.InstLocalGet(body, 17)
+		body = inst.InstLocalGet(body, 14)
+		body = numeric.InstI32GtU(body)
+		body = inst.InstBrIf(body, 0)
+		if ast.LeakCheckEnabled {
+			// mem[lcAllocBytesAddr] += $size_t - $size_a, the same exact
+			// pairing __fern_str_append keeps.
+			body = inst.InstI32Const(body, lcAllocBytesAddr)
+			body = inst.InstI32Const(body, lcAllocBytesAddr)
+			body = memory.InstI64Load(body, 3, 0)
+			body = inst.InstLocalGet(body, 17)
+			body = inst.InstLocalGet(body, 13)
+			body = numeric.InstI32Sub(body)
+			body = convert.InstI64ExtendI32U(body)
+			body = numeric.InstI64Add(body)
+			body = memory.InstI64Store(body, 3, 0)
+		}
+		// In place: copy $lb bytes from $s + $lo to mem[$a_data + $la ..].
+		// The source can only be `a` itself when the range lies inside a's
+		// current length, which ends where the destination begins, so the
+		// two never overlap.
+		body = strCopyBytes(body, strCopySpec{
+			strByte: strByte, data: 2, rawLen: 3, length: 8,
+			srcOff: 4, hasSrcOff: true,
+			dst: 0, dstOff: 9, hasDstOff: true,
+			scratch: 7,
+		})
+		body = inst.InstLocalGet(body, 0)
+		body = inst.InstLocalGet(body, 10)
+		body = inst.InstReturn(body)
+	}
+	body = inst.InstEnd(body)
+	// Fallback: materialise the range, join it, release both.
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstLocalGet(body, 3)
+	body = inst.InstLocalGet(body, 4)
+	body = inst.InstLocalGet(body, 5)
+	body = inst.InstCall(body, strSlice)
+	body = inst.InstLocalSet(body, 19) // $slice_len (top of the pair)
+	body = inst.InstLocalSet(body, 18) // $slice_data
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstLocalGet(body, 18)
+	body = inst.InstLocalGet(body, 19)
+	body = inst.InstCall(body, concat)
+	body = inst.InstLocalSet(body, 12) // $out_len
+	body = inst.InstLocalSet(body, 11) // $out_data
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstCall(body, strDec)
+	body = inst.InstDrop(body)
+	body = inst.InstLocalGet(body, 18)
+	body = inst.InstLocalGet(body, 19)
+	body = inst.InstCall(body, strDec)
+	body = inst.InstDrop(body)
+	body = inst.InstLocalGet(body, 11)
+	body = inst.InstLocalGet(body, 12)
+	locals := inst.PutLocalsOneGroup(nil, 14, encode.ValtypeI32)
+	return inst.PutFunctionBody(nil, locals, body)
+}
+
+// strCopySpec describes one string's byte copy for strCopyBytes.
+type strCopySpec struct {
+	// strByte is the __fern_str_byte function index the inline path calls.
+	strByte uint32
+	// data and rawLen are the source string's (data, raw-len) locals, and
+	// length its resolved byte length (from __fern_str_len).
+	data, rawLen, length uint32
+	// srcOff, when hasSrcOff, starts the read that many bytes into the
+	// source — how the range append copies `s[lo..lo+length]` without
+	// materialising the slice first.
+	srcOff    uint32
+	hasSrcOff bool
+	// dst is the write base, plus dstOff when hasDstOff (the +la offset for
+	// a second string).
+	dst       uint32
+	dstOff    uint32
+	hasDstOff bool
+	// scratch is the inline path's loop index. It must not be any local the
+	// spec above names.
+	scratch uint32
+}
+
+// strCopyBytes appends one input string's byte-copy block to a runtime body
+// (see buildStrConcatBody). For a heap-form string (raw-len top bit clear →
+// contiguous in memory) it emits a single memory.copy; for an inline/SSO
+// string (top bit set → bytes live in the words) it falls back to a per-byte
+// __fern_str_byte loop. #4379.
+func strCopyBytes(body []byte, sp strCopySpec) []byte {
 	// dstBase pushes the write base ($dst [+ off]).
 	dstBase := func(b []byte) []byte {
-		b = inst.InstLocalGet(b, dstLocal)
-		if hasOff {
-			b = inst.InstLocalGet(b, offLocal)
+		b = inst.InstLocalGet(b, sp.dst)
+		if sp.hasDstOff {
+			b = inst.InstLocalGet(b, sp.dstOff)
+			b = numeric.InstI32Add(b)
+		}
+		return b
+	}
+	// srcBase pushes the read base, and srcIndex the inline loop's byte
+	// index — both shifted by the read offset when there is one.
+	srcBase := func(b []byte) []byte {
+		b = inst.InstLocalGet(b, sp.data)
+		if sp.hasSrcOff {
+			b = inst.InstLocalGet(b, sp.srcOff)
+			b = numeric.InstI32Add(b)
+		}
+		return b
+	}
+	srcIndex := func(b []byte) []byte {
+		b = inst.InstLocalGet(b, sp.scratch)
+		if sp.hasSrcOff {
+			b = inst.InstLocalGet(b, sp.srcOff)
 			b = numeric.InstI32Add(b)
 		}
 		return b
 	}
 	// heap check: (raw_len & 0x80000000) == 0.
-	body = inst.InstLocalGet(body, lenLocal)
+	body = inst.InstLocalGet(body, sp.rawLen)
 	body = inst.InstI32Const(body, int32(-0x80000000))
 	body = numeric.InstI32And(body)
 	body = numeric.InstI32Eqz(body)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-	// heap: memory.copy(dstBase, data, lenComputed).
+	// heap: memory.copy(dstBase, srcBase, length).
 	body = dstBase(body)
-	body = inst.InstLocalGet(body, dataLocal)
-	body = inst.InstLocalGet(body, lenComputed)
+	body = srcBase(body)
+	body = inst.InstLocalGet(body, sp.length)
 	body = memory.InstMemoryCopy(body)
 	body = inst.InstElse(body)
-	// inline: per-byte loop, $i in 0..lenComputed → mem[dstBase + i].
+	// inline: per-byte loop, $i in 0..length → mem[dstBase + i].
 	body = inst.InstI32Const(body, 0)
-	body = inst.InstLocalSet(body, 7) // $i = 0
+	body = inst.InstLocalSet(body, sp.scratch) // $i = 0
 	body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
 	body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
-	body = inst.InstLocalGet(body, 7)
-	body = inst.InstLocalGet(body, lenComputed)
+	body = inst.InstLocalGet(body, sp.scratch)
+	body = inst.InstLocalGet(body, sp.length)
 	body = numeric.InstI32GeS(body)
 	body = inst.InstBrIf(body, 1)
 	body = dstBase(body)
-	body = inst.InstLocalGet(body, 7)
+	body = inst.InstLocalGet(body, sp.scratch)
 	body = numeric.InstI32Add(body)
-	body = inst.InstLocalGet(body, dataLocal)
-	body = inst.InstLocalGet(body, lenLocal)
-	body = inst.InstLocalGet(body, 7)
-	body = inst.InstCall(body, strByte)
+	body = inst.InstLocalGet(body, sp.data)
+	body = inst.InstLocalGet(body, sp.rawLen)
+	body = srcIndex(body)
+	body = inst.InstCall(body, sp.strByte)
 	body = memory.InstI32Store8(body, 0, 0)
-	body = inst.InstLocalGet(body, 7)
+	body = inst.InstLocalGet(body, sp.scratch)
 	body = inst.InstI32Const(body, 1)
 	body = numeric.InstI32Add(body)
-	body = inst.InstLocalSet(body, 7)
+	body = inst.InstLocalSet(body, sp.scratch)
 	body = inst.InstBr(body, 0)
 	body = inst.InstEnd(body) // end loop
 	body = inst.InstEnd(body) // end block

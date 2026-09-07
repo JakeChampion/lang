@@ -152,6 +152,10 @@ var rcRuntimeSigs = map[string]RcSig{
 	"__fern_arr_cow_inplace_str": one(0, RcMove, false),
 	// "CONSUMES a", per its own definition; b is borrowed.
 	"__fern_str_append": one(0, RcMove, false),
+	// The same move on the accumulator. Its SOURCE (argument 1) is
+	// borrowed: the helper copies the range out and leaves that buffer
+	// alone, exactly as __str_slice would have.
+	"__fern_str_append_range": one(0, RcMove, false),
 }
 
 // The BUILTINS the lowering emits by name, and the rule that covers

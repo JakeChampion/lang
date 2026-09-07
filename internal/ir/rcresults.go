@@ -129,7 +129,8 @@ var rcResultOwned = map[string]bool{
 	// CONSUMES its receiver and hands back one owned string, in place
 	// when unique and freshly concatenated otherwise. Either path
 	// leaves the caller holding exactly one unit.
-	"__fern_str_append": true,
+	"__fern_str_append":       true,
+	"__fern_str_append_range": true,
 	// Copies through __fern_str_copy — unlike __fern_arg_at beside it.
 	"__fern_env_at": true,
 	// Snapshots the string builder into a fresh rc=1 string and rewinds

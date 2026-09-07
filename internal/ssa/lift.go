@@ -22,6 +22,37 @@ func ssaHelperName(name string) string {
 	return name
 }
 
+// liftStrAppendRange expands `__fern_str_append_range(a, s, lo, hi)` back
+// into the pair it fuses — `__str_concat(a, __str_slice(s, lo, hi))` — and
+// pushes the result.
+//
+// Same reasoning as ssaHelperName above: these backends bump-allocate and
+// never reclaim, so the unfused pair satisfies the same contract with the
+// consumed operand and the intermediate slice simply left behind. The fusion
+// only pays where a buffer can be grown in place, which is the reclaiming
+// runtime's property, not this one's.
+func (l *lifter) liftStrAppendRange(args []Value) {
+	w := l.strWords()
+	slice := l.callStringHelper("__str_slice", args[w:])
+	l.stack = append(l.stack, l.callStringHelper("__str_concat", append(append([]Value(nil), args[:w]...), slice...))...)
+}
+
+// callStringHelper emits a call to a runtime helper returning one string,
+// under whichever ABI this function was lowered for: a value pair on the
+// two-word ABIs, a single address on the one-word one.
+func (l *lifter) callStringHelper(name string, args []Value) []Value {
+	if l.strWords() == 2 {
+		a, b := l.out.AddCallPair(l.cur, args...)
+		l.cur.Ops[len(l.cur.Ops)-1].Str = name
+		return []Value{a, b}
+	}
+	v := l.out.AddOp(l.cur, OpCall, args...)
+	o := l.cur.Ops[len(l.cur.Ops)-1]
+	o.Str = name
+	applyCallResultWidth(o, ir.ResAddr)
+	return []Value{v}
+}
+
 // applyCallResultWidth transfers an ir call's result classification onto the
 // lifted OpCall. Only a backend-provided callee carries one — a callee the
 // module defines is left to ResolveWidths, which reads the answer off its
@@ -945,6 +976,10 @@ func (l *lifter) handle(i int, op ir.Op) error {
 		}
 		args := append([]Value(nil), l.stack[len(l.stack)-argc:]...)
 		l.stack = l.stack[:len(l.stack)-argc]
+		if op.Str == "__fern_str_append_range" {
+			l.liftStrAppendRange(args)
+			break
+		}
 		if shaped && results == 2 {
 			// A callee returning a two-word value leaves a pair.
 			a, b := l.out.AddCallPair(l.cur, args...)
