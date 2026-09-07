@@ -140,10 +140,11 @@ function unset(): u64 {
 // consumed. Returns the 0-based field, or dies.
 function field_number(s: string): u64 {
   var r: (u64, i32) = gnu.parse_number(s);
-  if (r.1 >= 2) {
+  if (gnu.count_overflow(r.1)) {
     // Out of range saturates to SIZE_MAX, one past the "not given"
     // marker, so a field number that overflowed is not read back as
-    // an unset one.
+    // an unset one. Trailing junk is a different refusal, and one
+    // GNU reports rather than saturates.
     return unset() - 1 as u64;
   }
   if (r.1 != 0 || r.0 == 0 as u64) {

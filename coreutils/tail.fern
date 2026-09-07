@@ -198,11 +198,11 @@ function count_of(value: string, lines: boolean, s: Settings): Settings {
     noun = "lines";
   }
   var r: (u64, i32) = gnu.parse_units(body);
-  if (r.1 == 1) {
+  if (gnu.count_malformed(r.1)) {
     gnu.error("invalid number of " + noun + ": " + gnu.quote(body));
     exit(1);
   }
-  if (r.1 >= 2) {
+  if (r.1 != 0) {
     gnu.error("invalid number of " + noun + ": " + gnu.quote(body) + ": Value too large for defined data type");
     exit(1);
   }
@@ -213,11 +213,11 @@ function count_of(value: string, lines: boolean, s: Settings): Settings {
 // that does not parse is `<what>: 'value'`, one out of range says so.
 function plain_of(value: string, what: string, max: u64): u64 {
   var r: (u64, i32) = gnu.parse_number(value);
-  if (r.1 == 1) {
+  if (gnu.count_malformed(r.1)) {
     gnu.error(what + ": " + gnu.quote(value));
     exit(1);
   }
-  if (r.1 >= 2 || r.0 > max) {
+  if (r.1 != 0 || r.0 > max) {
     gnu.error(what + ": " + gnu.quote(value) + ": Value too large for defined data type");
     exit(1);
   }
