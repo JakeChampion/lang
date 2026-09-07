@@ -7194,6 +7194,72 @@ function main(): i32 {
 }`,
 	},
 	{
+		// #8441: every outer rebind of a captured reference stranded the
+		// value it superseded. BoxMutatedCaptures rewrites `s` into a
+		// shared one-element cell and the store went through it raw — no
+		// retain of the new value, no release of the old — so a rebinding
+		// loop leaked one buffer a round (32 bytes here, unbounded in
+		// general) while the same loop without the capture was clean.
+		//
+		// The concat spelling rather than the f-string keeps the case about
+		// the capture cell: an f-string RHS had its own superseded-store
+		// leak, pinned by fstring_reassign_releases_superseded above.
+		name: "closure_capture_rebind_churn_free",
+		src: `
+import "core/int";
+import "std/i32";
+import "std/string";
+function main(): i32 {
+    var s: string = "";
+    var f: () => i32 = (): i32 => { return s.len(); };
+    var i: i32 = 0;
+    while (i < 500) { s = i.to_string() + "-iteration"; i = i + 1; }
+    return (f() - 13) + __rc_underflow_count();
+}`,
+	},
+	{
+		// The other half of that store, and the direction the raw store was
+		// protecting: an ALIAS written into the cell, superseded on the
+		// next round while the writer still holds it. Releasing the
+		// superseded element is sound only because the store retains an
+		// alias-shaped value first, so `a` survives 500 supersedes and its
+		// own release frees the buffer exactly once. Drop that retain and
+		// the release frees `a`'s buffer on the first round: the sanitizer
+		// reports `use-after-free (touched a quarantined block)` and exits
+		// 124 on the very next one.
+		//
+		// The trailing `s = a` leaves an alias in the cell at exit, which
+		// is what makes this case discriminate all four states of the pair
+		// of changes behind it: 16000 bytes with neither, 32 with the
+		// counted store alone (the closure thunk freed the cell's buffer
+		// without walking it), a use-after-free with the thunk's walk alone
+		// (it releases a reference the store never took), 0 with both.
+		//
+		// `mk` interpolates its argument so the result is a heap buffer.
+		// Folded to a literal it would be the immortal static sentinel,
+		// where every rc helper no-ops and the case proves nothing.
+		name: "closure_capture_rebind_alias_not_over_released",
+		src: `
+import "core/int";
+import "std/i32";
+import "std/string";
+@noinline
+function mk(n: i32): string { return "captured-payload-" + n.to_string(); }
+function main(): i32 {
+    var a: string = mk(7);
+    var s: string = "";
+    var f: () => i32 = (): i32 => { return s.len(); };
+    var i: i32 = 0;
+    while (i < 500) {
+        s = a;
+        s = mk(i);
+        i = i + 1;
+    }
+    s = a;
+    return (a.len() + f() - 36) + __rc_underflow_count();
+}`,
+	},
+	{
 		// A closure LOCAL handed to a callee keeps its pair: the slot has a
 		// reader ElideClosurePair cannot elide, so the exit sweep's
 		// per-closure thunk — which reads a bare env — cannot run on the

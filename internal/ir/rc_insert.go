@@ -2070,6 +2070,16 @@ func genClosureDropThunk(name string, caps []ast.Param, ptrW int, info *checker.
 					helper := "__fern_arr_dec"
 					if arrElemIsRcTracked(at.Elem) {
 						helper = "__fern_drop_arr_ptr"
+					} else if _, isStr := at.Elem.(ast.StringType); isStr {
+						// string[]: walk + __fern_str_dec each element
+						// before freeing the buffer, exactly as
+						// dropStructField does for a string-array field.
+						// __fern_arr_dec frees the buffer alone, so the
+						// captured array's last generation of element
+						// buffers was stranded — including the one live
+						// element of a boxcapture cell, whose store now
+						// leaves the cell owning it (#8441).
+						helper = "__fern_drop_arr_str"
 					}
 					ops = append(ops,
 						Op{Kind: OpConstI32, I32: int32(ast.ElemSizeBytesFor(at.Elem, ptrW))},

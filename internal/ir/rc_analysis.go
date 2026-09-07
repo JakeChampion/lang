@@ -2629,14 +2629,18 @@ func (b *builder) computeFreeEligible() map[string]bool {
 				//
 				// Index / FieldAccess targets are NOT sinks anymore:
 				// the immutability migration banned both at the
-				// checker (`a[i] = v` is E056, `p.f = v` is E048 —
-				// unconditionally, and every internal desugar builds
-				// Ident-target assigns only), so no program that
-				// reaches lowering contains them. Their taint arms
-				// were dead case-law and are deleted (#4399 sink 3);
-				// the mutation idioms that replaced them are the
+				// checker (`a[i] = v` is E056, `p.f = v` is E048),
+				// and the mutation idioms that replaced them are the
 				// counted `.with` / functional-update stores handled
-				// above and at StructLit.
+				// above and at StructLit. Their taint arms were dead
+				// case-law and are deleted (#4399 sink 3).
+				//
+				// One Index target does reach lowering: BoxMutatedCaptures
+				// runs after the checker and rewrites a captured-and-
+				// assigned local's `x = v` into `x[0] = v` through the
+				// shared cell. That store is COUNTED — emitBoxedCellStore
+				// retains an alias-shaped value and releases the element it
+				// supersedes (#8441) — so it is not a sink either.
 				if _, isCap := s.Target.(*ast.CaptureRef); isCap {
 					escape(s.Value)
 				}
