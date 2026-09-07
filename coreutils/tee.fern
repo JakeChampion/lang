@@ -125,10 +125,19 @@ struct Out { w: Writer, name: string, live: boolean, is_file: boolean }
 // whether anything has gone wrong yet (the exit status).
 struct Copy { outs: Out[], mode: i32, live: i32, ok: boolean }
 
-// Bytes per read(2), and so per write(2) to each output. GNU reads
-// 8 KiB. The sweep behind this number is in the PR that added the
-// utility; the block changes nothing an output receives, only how many
-// syscalls carry it.
+// Bytes per read(2), and so per write(2) to each output. The block
+// changes nothing an output receives, only how many syscalls carry it.
+// GNU reads 8 KiB; this is the knee of the sweep, 62 MiB through one
+// file output and then down a pipe (Linux x86-64, ms):
+//
+//   block    4K     8K    16K    32K    64K   128K   256K
+//   file  106.1   82.3   65.5   58.8   58.6   56.1   57.7
+//   pipe  142.5  101.5   80.1   78.7   71.3   73.3   69.4
+//
+// Past 64 KiB the file case keeps creeping down and the pipe case
+// stops improving — a write bigger than the 64 KiB pipe buffer puts
+// writer and reader in lockstep, which is the same effect yes.fern
+// measured.
 function read_size(): i32 {
   return 65536;
 }

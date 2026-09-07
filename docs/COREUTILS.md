@@ -1041,8 +1041,10 @@ groups are the order of work. Each sub-issue names its group.
   `sum` `md5sum` `sha1sum` `sha224sum` `sha256sum` `sha384sum` `sha512sum`
   `b2sum` `tee`. Done: `cat`, `tac`, `head`, `tail`, `wc`, `nl`, `cut`,
   `paste`, `join`, `comm`, `uniq`, `sort`, `tr`, `fold`, `expand`, `unexpand`,
-  `split`, `csplit`, `od`, `base32`, `base64`, `basenc` and the seven
-  checksum utilities. Needs a buffered stdout writer in `std/io_buffered`
+  `split`, `csplit`, `od`, `base32`, `base64`, `basenc`, `tee` and the seven
+  checksum utilities. `tee` wanted signal dispositions (#8792) for `-i`
+  and its `--output-error` family: SIG_IGN on SIGINT and SIGPIPE.
+  Needs a buffered stdout writer in `std/io_buffered`
   (its own header already promises one) and a streaming stdin reader whose
   reads can FAIL: every one of these reaches a read error through a directory
   operand, and `Reader.read_chunk` answered None to EOF and to EISDIR alike
