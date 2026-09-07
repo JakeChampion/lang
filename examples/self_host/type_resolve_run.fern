@@ -1,6 +1,6 @@
 // examples/self_host/type_resolve_run.fern — golden driver for the checker's
 // structured type-name resolver (checker.fern's type_from_name_with_structs_unions
-// / type_from_ref_su + type_debug, SH-021 slice 4 — docs/SELF-HOST-AUDIT.md T2).
+// / type_from_ref_names + type_debug, SH-021 slice 4 — docs/SELF-HOST-AUDIT.md T2).
 //
 // The resolver maps a type STRING to the checker's Type against a struct/union
 // context. It now decodes via the structured TypeRef (parser.parse_type_ref +
