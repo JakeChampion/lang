@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"syscall"
 	"testing"
 )
 
@@ -20,31 +19,12 @@ import (
 // second path, never against "non-empty": sysname is "Linux" on every
 // box in this fleet, so a helper that read the neighbouring field would
 // sail through a non-empty check. `uname -m` and Go's syscall.Uname are
-// that second path.
-
-// hostUtsname is the five utsname fields as the host reports them, in
-// the order the record holds them.
-func hostUtsname(t *testing.T) [5]string {
-	t.Helper()
-	if runtime.GOOS != "linux" {
-		t.Skipf("the utsname probe reads uname(2); %s is not it", runtime.GOOS)
-	}
-	var u syscall.Utsname
-	if err := syscall.Uname(&u); err != nil {
-		t.Fatalf("uname: %v", err)
-	}
-	str := func(f []int8) string {
-		b := make([]byte, 0, len(f))
-		for _, c := range f {
-			if c == 0 {
-				break
-			}
-			b = append(b, byte(c))
-		}
-		return string(b)
-	}
-	return [5]string{str(u.Sysname[:]), str(u.Nodename[:]), str(u.Release[:]), str(u.Version[:]), str(u.Machine[:])}
-}
+// that second path. The utsname probe (hostUtsname) reads uname(2) and
+// is linux-only: syscall.Utsname does not exist on the darwin target
+// (no uname syscall) and these legs cross-check kernels that answer it,
+// so the probe lives in sysinfo_linux_test.go and the other OSes skip
+// in sysinfo_other_test.go — the OS-gated split the interp's
+// unameFields uses.
 
 // unameFieldProbeSource prints the five fields one per line, then the
 // two out-of-range indices, which must be empty rather than the
