@@ -806,7 +806,7 @@ func evalOp(funcs map[string]*Func, table []string, h *heap, strLen map[int32]in
 func evalBinaryInt(k OpKind, a, b int64, width int8) (int64, error) {
 	if width != 64 {
 		switch k {
-		case OpDivU, OpRemU, OpShrU:
+		case OpDivU, OpRemU, OpShrU, OpRotr:
 			a = int64(uint32(a))
 			b = int64(uint32(b))
 		}
@@ -851,10 +851,10 @@ func evalBinaryInt(k OpKind, a, b int64, width int8) (int64, error) {
 	case OpShrU:
 		return int64(uint64(a) >> shiftCount(b, width)), nil
 	case OpRotr:
-		if width == 32 {
-			return int64(int32(bits.RotateLeft32(uint32(a), -int(shiftCount(b, width))))), nil
+		if width == 64 {
+			return int64(bits.RotateLeft64(uint64(a), -int(shiftCount(b, width)))), nil
 		}
-		return int64(bits.RotateLeft64(uint64(a), -int(shiftCount(b, width)))), nil
+		return int64(int32(bits.RotateLeft32(uint32(a), -int(shiftCount(b, width))))), nil
 	default:
 		return 0, fmt.Errorf("Eval: not a binary int op: %v", k)
 	}
