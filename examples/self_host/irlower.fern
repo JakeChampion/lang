@@ -5575,6 +5575,15 @@ pub function call_fn_field_ret(c: ast.ExprCall, s: LowerState): string {
 // coarsened to the flat "fn" tag wherever it is stored, so the result lives in a
 // sidecar (LocalInfo.fn_ret for a slot, StructFieldDecl.fn_ret for a field) and
 // no walk over the callee expression can recover it.
+//
+// Every scalar predicate consults it. Without one, `key(x)` at a `(T) => string`
+// / `=> f64` / `=> boolean` parameter answers false to all of them and takes
+// expr_scalar_type's "i32" last resort, so `key(x).m()` dispatches `i32.m`.
+// Whenever i32 also owns that verb the call SILENTLY lands on the integer
+// routine with the closure's real value as its receiver — the module is not
+// refused, because a symbol of that name resolved (#7187). The same failure
+// expr_scalar_type's u32 / u64 branches exist to prevent, one expression kind
+// further out.
 pub function call_fn_value_ret(c: ast.ExprCall, s: LowerState): string {
     match (c.callee) {
         ast.ExprIdent(cid) => {
@@ -6431,6 +6440,11 @@ function expr_is_bool(e: ast.Expr, s: LowerState): boolean {
         // one expression kind over. A method is keyed by its receiver's base
         // type, so a name shared across receivers cannot answer for another.
         ast.ExprCall(bc) => {
+            // A call through a fn VALUE declared `=> boolean` (#7187): the
+            // registry keys by NAME and a closure parameter has none, so without
+            // this the result takes the "i32" default and `.to_string()` renders
+            // 1/0 through i32's impl.
+            if (call_fn_value_ret(bc, s) == "boolean") { return true; }
             // typed-IR (#5986): the checker's stamped result type answers where
             // the registry cannot key the callee (a closure-typed local, an IIFE).
             match (bc.callee) {
@@ -7372,6 +7386,16 @@ pub function expr_is_str(e: ast.Expr, s: LowerState): boolean {
                     _ => {}
                 }
             }
+            // A call THROUGH a fn VALUE — a local or PARAMETER holding a
+            // closure (`key(x)` where `key: (T) => string`), or a fn-typed
+            // struct field (`h.f(1)` where H.f: (i32) => string). Either way
+            // the value's type is coarsened to the flat "fn" tag with the
+            // result in a sidecar, so no walk over the callee can answer.
+            // Without it the result falls through expr_scalar_type's "i32" last
+            // resort and `key(x).m()` dispatches `i32.m` — which SILENTLY lands
+            // on the integer routine with a string box as its receiver whenever
+            // that verb also exists on i32 (#7187).
+            if (call_fn_value_ret(c, s) == "string") { return true; }
             // A call to a string-returning user function (str_ret_fns), or a
             // string-returning builtin.
             match (c.callee) {
@@ -7460,15 +7484,6 @@ pub function expr_is_str(e: ast.Expr, s: LowerState): boolean {
                     // dispatch cannot disagree about what a receiver is (#3317).
                     if (cfa.field == "get_or" && c.args.len() == 2
                             && map_value_of(get_or_recv_map_type(cfa.obj, s)) == "string") { return true; }
-                    // A call THROUGH a string-returning fn-typed struct FIELD
-                    // (`h.f(1)` where H.f: (i32) => string): the field's declared
-                    // type coarsens to "fn" but its fn_ret keeps the string
-                    // return, so the call result feeds `.len()` / concat as a
-                    // string. Without this the chained `h.f(1).len()` mis-
-                    // dispatched and read 0 even though the closure returned the
-                    // string correctly (#5306 gap 2 — an annotated rebind
-                    // `var r: string = h.f(1)` already worked).
-                    if (call_fn_field_ret(c, s) == "string") { return true; }
                     // `it.key()` / `it.value()` on a `MapIter[K, V]` receiver returns
                     // the key / value box; when that side is `string` the result
                     // feeds `.len()` / concat as a string. Without this `.len()`
@@ -9452,6 +9467,11 @@ pub function expr_is_f64(e: ast.Expr, s: LowerState): boolean {
             // annotate, or the checker left this call's type unresolved) — falls
             // through to the structural walk, so behaviour is unchanged there.
             if (c.ty != "") { return c.ty == "f64"; }
+            // A call through a fn VALUE declared to return a float (#7187) — the
+            // f64 sibling of expr_is_str's arm. f32 is stored as an 8-byte f64,
+            // so it answers true here too (expr_is_f32 is the strict view).
+            var fvf: string = call_fn_value_ret(c, s);
+            if (fvf == "f64" || fvf == "f32" || fvf == "float") { return true; }
             // An f64-valued if/match-EXPRESSION (the 0-arg IIFE the desugar emits)
             // — classify by its first branch's returned value, so `var f = if (…)
             // { 1.5 } else { 2.5 }` tracks f as an f64.
@@ -9551,6 +9571,10 @@ pub function expr_is_f32(e: ast.Expr, s: LowerState): boolean {
         // is f32 exactly when that argument is — the f32 sibling of expr_is_f64's
         // argref arm, so `id(x as f32) + y` keeps the f32-twin dispatch.
         ast.ExprCall(c) => {
+            // A call through a fn VALUE declared `=> f32` (#7187): the strict
+            // f32 view of the arm expr_is_f64 carries, so the receiver keys
+            // "f32.<m>" rather than f64's precision.
+            if (call_fn_value_ret(c, s) == "f32") { return true; }
             match (c.callee) {
                 ast.ExprIdent(cid) => {
                     var gfi: i32 = str_ret_argref(s, cid.name);
@@ -9656,6 +9680,10 @@ pub function expr_is_u32(e: ast.Expr, s: LowerState): boolean {
             // retiring the is_u32_ret_fn re-derivation for annotated calls. ""
             // (unannotated) falls through to the structural walk.
             if (c.ty != "") { return c.ty == "u32"; }
+            // A call through a fn VALUE declared `=> u32` (#7187) — the u32
+            // sibling of expr_is_str's arm; without it the result is signed and
+            // a chained `>>` / `/` selects the arithmetic form.
+            if (call_fn_value_ret(c, s) == "u32") { return true; }
             // A u32-valued if/match-EXPRESSION (the 0-arg IIFE the desugar emits):
             // `(if (c) { big_u32 } else { 0 }) >> 1` selects the UNSIGNED shift.
             // Classify by its first branch's returned value — the u32 sibling of
@@ -9774,6 +9802,10 @@ pub function expr_is_u64(e: ast.Expr, s: LowerState): boolean {
             // retiring the is_u64_ret_fn re-derivation for annotated calls. ""
             // (unannotated) falls through to the structural walk.
             if (c.ty != "") { return c.ty == "u64"; }
+            // A call through a fn VALUE declared `=> u64` (#7187) — the u64
+            // sibling of the u32 arm. infer_expr_width already reads the same
+            // sidecar for the WIDTH; this recovers the unsigned-ness.
+            if (call_fn_value_ret(c, s) == "u64") { return true; }
             // A u64-valued if/match-EXPRESSION (the 0-arg IIFE the desugar emits)
             // is a u64 value, so `(if (c) { big_u64 } else { 0 }) >> 1` selects the
             // UNSIGNED shift — the u64 sibling of expr_is_f64's IIFE arm and of
