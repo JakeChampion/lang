@@ -1428,6 +1428,22 @@ var t: ((), i32) = ((), 1);
 return sink(u) + sink(v) + sink(t.0) + thunk()() + t.1;
 }
 `},
+	// The grouping parens native's type parser strips (#8800). The self-host
+	// generic-argument collector passed them through verbatim, so
+	// `Result[(i32), i32]` reprinted with the ones around the single element
+	// still in place — byte-parity broke against native, which resolves
+	// `(i32)` to `i32` wherever it occurs. Kept are the parens that are
+	// SYNTAX rather than grouping: a tuple (a top-level comma), a function
+	// parameter list (a `=>` follows the group), and the array-of-closure
+	// shape whose suffix the group stops splitting into an array of the
+	// function's RESULT.
+	{"generic-arg-grouping-parens", `function sink(p: Result[(i32), i32]): i32 { return 0; }
+function nested(p: Result[Option[(i32)], i32]): i32 { return 0; }
+function fnarg(p: Result[((i32) => i32), i32]): i32 { return 0; }
+function fnsuf(p: Result[((i32) => i32)[], i32]): i32 { return 0; }
+function tup(p: Result[(i32, i32), i32]): i32 { return 0; }
+function main(): i32 { return 0; }
+`},
 }
 
 // typeChecks reports whether src is a program the checker accepts, running the
