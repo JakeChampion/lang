@@ -1820,3 +1820,46 @@ func TestLiftMarksAStaticClosureCell(t *testing.T) {
 		t.Error("a real OpMakeClosure allocates and must not be marked static")
 	}
 }
+
+// TestLiftStrAppendRangeUnfuses: `__fern_str_append_range(a, s, lo, hi)` has
+// no emitter in these backends and, growing a buffer in place, nothing they
+// would do with one — they bump-allocate and never reclaim. The lift expands
+// it back into the pair it fuses, the same way ssaHelperName renames
+// __fern_str_append to __str_concat.
+func TestLiftStrAppendRangeUnfuses(t *testing.T) {
+	in := &ir.Func{
+		Name: "f",
+		Ops: []ir.Op{
+			{Kind: ir.OpConstStr, Str: "acc"},
+			{Kind: ir.OpConstStr, Str: "source"},
+			{Kind: ir.OpConstI32, I32: 1},
+			{Kind: ir.OpConstI32, I32: 4},
+			{Kind: ir.OpCallDirect, Runtime: true, Str: "__fern_str_append_range", Width: ir.ResAddr, I32: 4},
+			{Kind: ir.OpReturn},
+		},
+	}
+	out, err := LiftFromIR(in)
+	if err != nil {
+		t.Fatalf("LiftFromIR: %v", err)
+	}
+	if err := Verify(out); err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	var names []string
+	for _, op := range out.Blocks[0].Ops {
+		if op.Kind == OpCall {
+			names = append(names, op.Str)
+		}
+	}
+	want := []string{"__str_slice", "__str_concat"}
+	if len(names) != len(want) || names[0] != want[0] || names[1] != want[1] {
+		t.Fatalf("calls = %v, want %v (the fused helper has no emitter here)", names, want)
+	}
+	slice, concat := out.Blocks[0].Ops[4], out.Blocks[0].Ops[5]
+	if len(slice.Args) != 3 {
+		t.Errorf("__str_slice takes %d args, want 3 (source, lo, hi)", len(slice.Args))
+	}
+	if len(concat.Args) != 2 || concat.Args[1] != slice.Result {
+		t.Errorf("__str_concat args = %v, want the accumulator and __str_slice's result %v", concat.Args, slice.Result)
+	}
+}
