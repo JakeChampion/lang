@@ -362,6 +362,22 @@ func odCases(t *testing.T) []invocation {
 		{name: "strings bounded", args: []string{"-S", "3", "-N", "12", strs}},
 		{name: "strings and a type", args: []string{"-S", "3", "-t", "x1", strs}},
 		{name: "strings and duplicates", args: []string{"-S", "3", "-v", strs}},
+		// A minimum length no run can reach is not an error: GNU sizes its
+		// buffer from it, scans, and prints nothing. The widths either side
+		// of INT_MAX and UINT_MAX are where a 32-bit length would wrap into
+		// a threshold that matches.
+		{name: "strings longer than int", args: []string{"-S", "2147483648", strs}},
+		{name: "strings at int max", args: []string{"-S", "2147483647", strs}},
+		{name: "strings longer than unsigned int", args: []string{"-S", "4294967296", strs}},
+		{name: "strings wrapping to a short length", args: []string{"-S", "4294967299", strs}},
+		{name: "strings of eight gibibytes", args: []string{"-S", "8589934592", strs}},
+		{name: "strings long option longer than int", args: []string{"--strings=2147483648", strs}},
+		// At PTRDIFF_MAX and above the buffer cannot exist on any host, so
+		// GNU's allocation fails rather than its scan.
+		{name: "strings at ptrdiff max", args: []string{"-S", "9223372036854775807", strs}},
+		{name: "strings past ptrdiff max", args: []string{"-S", "9223372036854775808", strs}},
+		{name: "strings at uintmax", args: []string{"-S", "18446744073709551615", strs}},
+		{name: "strings past uintmax", args: []string{"-S", "18446744073709551616", strs}},
 
 		// The traditional operand forms.
 		{name: "offset operand", args: []string{short, "4"}},

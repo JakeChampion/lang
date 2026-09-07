@@ -790,6 +790,17 @@ and Fern has no `abort()` to match it with; od refuses a width past
 INT_MAX with GNU's own `memory exhausted`, which is what GNU says for a
 width of a terabyte.
 
+**`od -S` between the host's memory and PTRDIFF_MAX.** GNU sizes a buffer
+from the minimum string length and allocates it before it scans, so a
+length larger than the machine can allocate is `memory exhausted` rather
+than a run nothing reaches — on the dev container the break is somewhere
+between 8 GiB, which it accepts, and 64 GiB, which it does not. That
+boundary is the host's, so od.fern refuses only at PTRDIFF_MAX and above,
+where no host can serve the allocation and glibc's malloc always fails.
+Between the two it prints nothing and exits 0, as GNU does on a machine
+with the memory. The corpus covers both deterministic sides and nothing in
+the band.
+
 **`tac` holds a non-seekable input in memory.** tac reads its input
 backwards, so a pipe has to be stored before the first record can be
 written. GNU spools it to an unlinked `$TMPDIR/cutmpXXXXXX` and keeps one

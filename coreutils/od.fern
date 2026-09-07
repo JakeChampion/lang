@@ -1008,7 +1008,7 @@ function put(o: Out, s: string): Out {
 }
 
 // `Settings` — everything the option scan decides.
-struct Settings { specs: Spec[], base: i32, block: i32, wpb: i32, skip: u64, limit: u64, limited: boolean, dups: boolean, big: boolean, strings: boolean, min_string: i32, label: u64, labelled: boolean }
+struct Settings { specs: Spec[], base: i32, block: i32, wpb: i32, skip: u64, limit: u64, limited: boolean, dups: boolean, big: boolean, strings: boolean, min_string: u64, label: u64, labelled: boolean }
 
 // `write_block(o, s, block, n, off)` — one input block through every
 // spec, the first line carrying the address and the rest the same width
@@ -1445,7 +1445,7 @@ function dump_strings(o0: Out, s: Settings, src0: Src): (Out, Src) {
     while (i < block.len()) {
       var c: i32 = block[i] as i32;
       if (c == 0) {
-        if (run.len() >= s.min_string) {
+        if (run.len() as u64 >= s.min_string) {
           o = put(o, string_prefix(s, start) + string_from_bytes_unchecked(run) + "\n");
         }
         var empty: u8[] = [];
@@ -1664,7 +1664,7 @@ function main(): i32 {
   var dups: boolean = false;
   var big: boolean = false;
   var strings: boolean = false;
-  var min_string: i32 = 3;
+  var min_string: u64 = 3 as u64;
   var width: i32 = 16;
   var width_given: boolean = false;
   var modern: boolean = false;
@@ -1698,7 +1698,17 @@ function main(): i32 {
           modern = true;
           strings = true;
           if (m.has_value) {
-            min_string = count_arg(m.value, strings_name(argv)) as i32;
+            var n: u64 = count_arg(m.value, strings_name(argv));
+            // GNU allocates max(100, n) bytes before it scans, so a length
+            // it cannot allocate is `memory exhausted` rather than a run
+            // nothing reaches. At PTRDIFF_MAX and above no host can serve
+            // that; below it the answer is the host's, and od.fern accepts
+            // what GNU would only refuse for want of memory.
+            if (n >= 9223372036854775807 as u64) {
+              gnu.error("memory exhausted");
+              exit(1);
+            }
+            min_string = n;
           }
         } else if (m.id == opt_width()) {
           modern = true;
