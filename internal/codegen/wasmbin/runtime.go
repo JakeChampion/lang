@@ -1134,6 +1134,32 @@ var helperResultBoxCallers = []string{
 	"__fern_create_dir_all",
 }
 
+// emitPayloadlessResultBox appends the arm of a helper in
+// helperResultBoxCallers that carries NO payload — an Option's None, a
+// Result's unit Ok. It allocates the enum's uniform `size`, stores `tag`,
+// zeroes the payload words, and leaves the box pointer on the stack.
+// `boxLocal` is scratch.
+//
+// The zeroing is what makes the box safe to reclaim. The IR's branchless
+// enum drop (rc_insert.go's uniform tier) releases a box's payload words
+// WITHOUT testing the tag, so an unwritten word is released as if it were
+// a live pointer: out-of-bounds trap here, arbitrary rc write on the
+// natives (#8843).
+func emitPayloadlessResultBox(body []byte, allocRc1, boxLocal uint32, size, tag int32) []byte {
+	body = inst.InstI32Const(body, size)
+	body = inst.InstCall(body, allocRc1)
+	body = inst.InstLocalTee(body, boxLocal)
+	body = inst.InstI32Const(body, tag)
+	body = memory.InstI32Store(body, 2, 0)
+	for off := int32(4); off < size; off += 4 {
+		body = inst.InstLocalGet(body, boxLocal)
+		body = inst.InstI32Const(body, 0)
+		body = memory.InstI32Store(body, 2, uint32(off))
+	}
+	body = inst.InstLocalGet(body, boxLocal)
+	return body
+}
+
 // injectFernHelpers moves the helpers in needs that runtime.fern defines
 // (internal/fernrt) out of the helper set and into the program, as
 // functions to be emitted like any other. Each one's own needs — the raw
@@ -7094,8 +7120,9 @@ func buildStrSliceBody(helperIdxs map[string]uint32) []byte {
 //	  +8..11:  data pointer
 //	  +12..15: len (byte count, top bit clear → heap form)
 //
-//	None box (4 bytes):
+//	None box (16 bytes — the enum's uniform size):
 //	  +0..3:   tag = 1
+//	  +4..15:  zeroed (the drop reads the payload without the tag)
 //
 // EOF before any byte → None. EOF mid-line → Some(partial).
 //
@@ -7181,18 +7208,13 @@ func buildReadLineBody(helperIdxs map[string]uint32) []byte {
 	}
 	body = inst.InstEnd(body) // end loop
 	body = inst.InstEnd(body) // end block
-	// EOF-with-empty-buf → None: alloc(4), tag=1.
+	// EOF-with-empty-buf → None.
 	body = inst.InstLocalGet(body, 2)
 	body = numeric.InstI32Eqz(body)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	// None takes Option[string]'s uniform box size, not the tag alone:
 	// a caller that reclaims the box frees it in that size class.
-	body = inst.InstI32Const(body, 16)
-	body = inst.InstCall(body, alloc)
-	body = inst.InstLocalTee(body, 5)
-	body = inst.InstI32Const(body, 1)
-	body = memory.InstI32Store(body, 2, 0)
-	body = inst.InstLocalGet(body, 5)
+	body = emitPayloadlessResultBox(body, alloc, 5, 16, 1)
 	body = inst.InstReturn(body)
 	body = inst.InstEnd(body)
 	// Build Some(line) box: 16 bytes, tag=0, data, len.

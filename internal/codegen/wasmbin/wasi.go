@@ -3696,7 +3696,7 @@ func buildRandomBytesBody(idxs map[string]uint32) []byte {
 // Layout matches __fern_read_line's Option[string] box:
 //
 //	Some(line): 16-byte alloc, tag=0 at +0, data at +8, len at +12.
-//	None:       4-byte alloc, tag=1 at +0.
+//	None:       16-byte alloc, tag=1 at +0, data / len zeroed.
 //
 // Algorithm:
 //   - Lazily init the env cache (shared with __fern_env_at).
@@ -3919,12 +3919,7 @@ func buildEnvBody(idxs map[string]uint32) []byte {
 	body = inst.InstEnd(body) // end outer loop
 	body = inst.InstEnd(body) // end outer block
 	// No match: return None, at Option[string]'s uniform box size.
-	body = inst.InstI32Const(body, 16)
-	body = inst.InstCall(body, allocRc1)
-	body = inst.InstLocalTee(body, 9)
-	body = inst.InstI32Const(body, 1)
-	body = memory.InstI32Store(body, 2, 0)
-	body = inst.InstLocalGet(body, 9)
+	body = emitPayloadlessResultBox(body, allocRc1, 9, 16, 1)
 	locals := inst.PutLocalsOneGroup(nil, 9, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
 }
@@ -3941,8 +3936,8 @@ func buildEnvBody(idxs map[string]uint32) []byte {
 // the env slots on first call (envCountAddr, envPtrsAddr).
 //
 // Returns the same Option[string] box as buildEnvBody:
-// Some(value) → alloc_box(16) {tag=0, data@+8, len@+12};
-// None → alloc_box(4) {tag=1}.
+// Some(value) → alloc_rc1(16) {tag=0, data@+8, len@+12};
+// None → alloc_rc1(16) {tag=1, data / len zeroed}.
 //
 // Locals (after 2 params): 2=$i, 3=$tuple, 4=$key_ptr, 5=$key_len,
 // 6=$j, 7=$matched, 8=$name_len, 9=$rb/$box.
@@ -4102,12 +4097,7 @@ func buildEnvBodyP2(idxs map[string]uint32) []byte {
 	body = inst.InstEnd(body) // outer loop
 	body = inst.InstEnd(body) // outer block
 	// No match: None box at Option[string]'s uniform size, tag=1.
-	body = inst.InstI32Const(body, 16)
-	body = inst.InstCall(body, allocRc1)
-	body = inst.InstLocalTee(body, 9)
-	body = inst.InstI32Const(body, 1)
-	body = memory.InstI32Store(body, 2, 0)
-	body = inst.InstLocalGet(body, 9)
+	body = emitPayloadlessResultBox(body, allocRc1, 9, 16, 1)
 	locals := inst.PutLocalsOneGroup(nil, 10, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
 }
