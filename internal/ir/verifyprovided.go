@@ -305,6 +305,7 @@ var providedSigs = map[string]providedSig{
 	"remove_dir_all":                {-1, rWord},
 	"remove_file":                   {-1, rWord},
 	"create_dir":                    {3, rWord},
+	"getcwd":                        {0, rWord},
 	"remove_dir":                    {2, rWord},
 	"create_link":                   {4, rWord},
 	"create_symlink":                {4, rWord},

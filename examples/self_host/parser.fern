@@ -8036,6 +8036,7 @@ pub function builtin_function_names(): string[] {
         // the single-step directory and link primitives, each one syscall
         // with nothing folded away
         "create_dir", "remove_dir", "create_link", "create_symlink", "read_link", "umask",
+        "getcwd",
         // the process's own effective ids, which `test -O` / `-G` compare a
         // file's owner against, and the machine's node name
         "geteuid", "getegid", "hostname",

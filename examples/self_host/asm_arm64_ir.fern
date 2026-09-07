@@ -1460,6 +1460,11 @@ pub function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDec
             // holding the link's target.
             s = s.need("heap"); s = s.need("read_link");
             s = s.write("    bl __fn___fern_read_link\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind_tag == 266) {  // getcwd
+            // no args -> __fn___fern_getcwd: a fresh
+            // Result[string, IoError] in x0.
+            s = s.need("heap"); s = s.need("getcwd");
+            s = s.write("    bl __fn___fern_getcwd\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 265) {  // umask
             // [mask] IS param[0] — one syscall, the previous mask in x0.
             // Nothing is boxed, so no heap need.
@@ -6354,7 +6359,7 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     // writer_write joined for the same reason once its own result became an
     // Option[IoError] (#7926), and reader_close once it started reporting a
     // failing close instead of discarding it.
-    if (s.has_need("read_file") || s.has_need("read_file_bytes") || s.has_need("write_file") || s.has_need("write_file_exec") || s.has_need("remove_file") || s.has_need("create_dir_all") || s.has_need("create_dir") || s.has_need("remove_dir") || s.has_need("create_link") || s.has_need("create_symlink") || s.has_need("read_link") || s.has_need("umask") || s.has_need("temp_dir") || s.has_need("stat") || s.has_need("lstat") || s.has_need("access") || s.has_need("read_dir") || s.has_need("remove_dir_all") || s.has_need("open_file") || s.has_need("writer_write") || s.has_need("reader")) {
+    if (s.has_need("read_file") || s.has_need("read_file_bytes") || s.has_need("write_file") || s.has_need("write_file_exec") || s.has_need("remove_file") || s.has_need("create_dir_all") || s.has_need("create_dir") || s.has_need("remove_dir") || s.has_need("create_link") || s.has_need("create_symlink") || s.has_need("read_link") || s.has_need("umask") || s.has_need("getcwd") || s.has_need("temp_dir") || s.has_need("stat") || s.has_need("lstat") || s.has_need("access") || s.has_need("read_dir") || s.has_need("remove_dir_all") || s.has_need("open_file") || s.has_need("writer_write") || s.has_need("reader")) {
         var fs_src: string = asmcore.rt_src_io_error(tgt);
         if (s.has_need("stat")) { fs_src = fs_src + " " + asmcore.rt_src_stat(tgt); }
         if (s.has_need("access")) { fs_src = fs_src + " " + asmcore.rt_src_access(tgt); }
@@ -6371,6 +6376,7 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
         if (s.has_need("create_symlink")) { fs_src = fs_src + " " + asmcore.rt_src_create_symlink(tgt); }
         if (s.has_need("read_link")) { fs_src = fs_src + " " + asmcore.rt_src_read_link(tgt); }
         if (s.has_need("umask")) { fs_src = fs_src + " " + asmcore.rt_src_umask(tgt); }
+        if (s.has_need("getcwd")) { fs_src = fs_src + " " + asmcore.rt_src_getcwd(tgt); }
         if (s.has_need("temp_dir")) { fs_src = fs_src + " " + asmcore.rt_src_temp_dir(tgt); }
         if (s.has_need("read_dir")) { fs_src = fs_src + " " + asmcore.rt_src_read_dir(tgt); }
         if (s.has_need("remove_dir_all")) { fs_src = fs_src + " " + asmcore.rt_src_remove_dir_all(tgt); }

@@ -1063,6 +1063,7 @@ func New() *Interp {
 	i.Builtins["getegid"] = &Builtin{Fn: builtinGetegid}
 	i.Builtins["hostname"] = &Builtin{Fn: builtinHostname}
 	i.Builtins["remove_file"] = &Builtin{Fn: builtinRemoveFile}
+	i.Builtins["getcwd"] = &Builtin{Fn: builtinGetcwd}
 	i.Builtins["create_dir"] = &Builtin{Fn: builtinCreateDir}
 	i.Builtins["remove_dir"] = &Builtin{Fn: builtinRemoveDir}
 	i.Builtins["create_link"] = &Builtin{Fn: builtinCreateLink}
@@ -2633,6 +2634,21 @@ func ioResult(path string, err error) Value {
 		return resultErr(classifyIoError(path, err))
 	}
 	return resultOk(unitValue())
+}
+
+// builtinGetcwd answers the process's own working directory. os.Getwd
+// prefers $PWD when it names the same directory, which getcwd(2) does not;
+// syscall.Getwd is the syscall itself, so the answer is the kernel's rather
+// than the environment's.
+func builtinGetcwd(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 0 {
+		return nil, fmt.Errorf("getcwd: expected 0 args, got %d", len(args))
+	}
+	dir, err := syscall.Getwd()
+	if err != nil {
+		return resultErr(classifyIoError("", err)), nil
+	}
+	return resultOk(String(dir)), nil
 }
 
 // builtinCreateDir creates ONE directory. Unlike create_dir_all,

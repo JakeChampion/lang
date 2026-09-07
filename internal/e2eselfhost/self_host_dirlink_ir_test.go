@@ -130,6 +130,61 @@ func TestSelfHostDirLinkIR(t *testing.T) {
 	selfHostDirLinkTree(t, work)
 }
 
+// TestSelfHostGetcwdIR pins `getcwd()` on the self-host x86-64 IR path.
+//
+// The program is not told which directory it is in: the answer has to be
+// absolute and reading a marker back THROUGH it has to find the file the
+// test seeded. A generated body that mishandled the syscall's return — Linux
+// counts the terminating NUL and XNU does not, and `rt_src_getcwd` branches
+// on exactly that — leaves a stray NUL on the path and fails the read.
+func TestSelfHostGetcwdIR(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	if len(runner) != 0 {
+		t.Skip("getcwd test runs only natively (reads the host's working directory)")
+	}
+	dir := t.TempDir()
+	copySelfHostDriver(t, dir, "asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+
+	work := t.TempDir()
+	if err := os.WriteFile(filepath.Join(work, "cwd-marker.txt"), []byte("here\n"), 0o644); err != nil {
+		t.Fatalf("seed marker: %v", err)
+	}
+	src := `function main(): i32 {
+    match (getcwd()) {
+        Ok(d) => {
+            if (d.len() == 0) { return 1; }
+            if (d[0] as i32 != 47) { return 2; }
+            if (d.len() > 1 && d[d.len() - 1] as i32 == 47) { return 3; }
+            match (read_file(d + "/cwd-marker.txt")) {
+                Ok(text) => { if (text != "here\n") { return 4; } },
+                Err(_) => { return 5; }
+            }
+            return 0;
+        },
+        Err(_) => { return 6; }
+    }
+    return 7;
+}
+`
+	cmd := exec.Command(driverBin, "-ir")
+	cmd.Stdin = bytes.NewReader([]byte(src))
+	asm, err := cmd.Output()
+	if err != nil || len(asm) == 0 {
+		t.Fatalf("driver failed: %v", err)
+	}
+	if !bytes.Contains(asm, []byte("__fern_getcwd")) {
+		t.Fatal("getcwd did not reach the IR runtime path (no __fern_getcwd in asm)")
+	}
+	progBin := buildBin(t, gcc, dir, "getcwd_prog", string(asm))
+	run := exec.Command(progBin)
+	run.Dir = work
+	_ = run.Run()
+	if code := run.ProcessState.ExitCode(); code != 0 {
+		t.Fatalf("getcwd program exited %d, want 0 — 1 empty, 2 not absolute, 3 a trailing slash, 5 the marker, 6 the Err arm", code)
+	}
+}
+
 // The wasm leg: five of the six are real WASI calls
 // (path_create_directory / path_remove_directory / path_link /
 // path_symlink / path_readlink), so they are exercised rather than

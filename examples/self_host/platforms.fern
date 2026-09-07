@@ -65,7 +65,7 @@ pub struct Descriptor {
 // native's own note claims for it.
 function capability_profile(profile: string): string[] {
     if (profile == "hosted-native") {
-        return ["log", "now", "env", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "subprocess"];
+        return ["log", "now", "env", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "cwd", "subprocess"];
     }
     if (profile == "wasi-cli") {
         // fs is preview1's fd helpers and tcp is wasi:sockets; there is no
@@ -283,6 +283,11 @@ pub function gated_builtins(): Gate[] {
         // The umask is the same property from the other side: the mode
         // bits a creation is allowed to keep. WASI has no creation mask.
         Gate { builtin: "umask", capability: "fsmode" },
+
+        // The working directory the process's relative paths resolve
+        // against. A component has none — every path resolves against a
+        // preopen descriptor — so there is no single place to name.
+        Gate { builtin: "getcwd", capability: "cwd" },
 
         // The process's own effective identity. Neither WASI preview has a
         // notion of a user, and there is no honest constant to answer with:

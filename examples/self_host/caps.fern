@@ -78,6 +78,7 @@ pub function builtin_caps(): BuiltinCap[] {
         BuiltinCap { builtin: "remove_dir_all", capability: "fs" },
         BuiltinCap { builtin: "create_dir_all", capability: "fs" },
         BuiltinCap { builtin: "create_dir", capability: "fs" },
+        BuiltinCap { builtin: "getcwd", capability: "fs" },
         BuiltinCap { builtin: "remove_dir", capability: "fs" },
         BuiltinCap { builtin: "create_link", capability: "fs" },
         BuiltinCap { builtin: "create_symlink", capability: "fs" },

@@ -53,6 +53,7 @@ costs a silent failure on the first target that lacks it.
 | `fs` | `read_file`, `write_file`, `open_reader`, … | a filesystem |
 | `fsmode` | `write_file_exec`, `access`, `umask` | permission bits on a filesystem entry, and the mask a creation keeps them through |
 | `userid` | `geteuid`, `getegid` | a user the process can be |
+| `cwd` | `getcwd` | a working directory relative paths resolve against |
 | `host` | `hostname` | a node name: uname(2) on Linux, kern.hostname on Darwin; `""` on WASI, which has none |
 | `cabi` | `__c_call0..4` (+ `_f32` / `_f64`) | a C calling convention to call a function pointer through |
 | `tcp` | `tcp_*`, `udp_send` | a network stack |
@@ -141,6 +142,15 @@ than discovering:
     a kernel would resolve it. That bound is the whole `fs` family's, not
     these five's, but a `ln` or `mkdir` operand is far likelier to be absolute
     than a `read_file` one.
+
+**`cwd` is its own capability for the same reason `userid` is.** A WASI
+component has no working directory at all: every path is resolved against a
+preopen descriptor, so there is no single place to name and no string that
+would be a truthful answer. `/` would be a lie about a component with several
+preopens and about one with none, and the empty string would make every
+`getcwd() + "/x"` a relative path silently. `readlink -f`, `ln -r`, `realpath`
+and `pwd` all begin by turning a relative operand into an absolute one, which
+is what makes this a capability rather than a convenience.
 
 **`userid` is a capability, where `isatty` is core** — and the pair is the
 clearest illustration of where that line runs. Both are host-shaped questions

@@ -67,6 +67,10 @@ var providedRefusedByPlatform = map[string]bool{
 	// bits a creation is allowed to keep. WASI has no creation mask, and
 	// answering 0 would claim every bit survives.
 	"umask": true,
+	// `cwd` — a working directory relative paths resolve against. A
+	// component has none: every path resolves against a preopen
+	// descriptor, so there is no single place to name.
+	"getcwd": true,
 	// `userid` — an effective user / group id. Neither WASI preview has
 	// a notion of a user at all, and FileStat's uid / gid are zero
 	// there for the same reason.

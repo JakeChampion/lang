@@ -612,6 +612,11 @@ pub function op_read_link(): Op { return op0("read_link"); }
 // umask(2), which sets and reads in one uninterruptible step. It cannot
 // fail. Native only: neither WASI preview has a file-mode creation mask.
 pub function op_umask(): Op { return op0("umask"); }
+
+// `getcwd` takes no operands and pushes Result[string, IoError]: the
+// process's own working directory. Native only — a WASI component has no
+// working directory to name.
+pub function op_getcwd(): Op { return op0("getcwd"); }
 // `hostname` takes no operands and pushes ONE fresh string box holding the
 // kernel's node name (uname(2) on Linux, kern.hostname on Darwin); the empty
 // string on wasm, which has no host identity.
@@ -1505,12 +1510,12 @@ pub function kind_count(): i32 { return 196; }
 // 1..kind_count() sweep requires the id space to stay dense, and moving the
 // last entry into the hole beats renumbering every id above it.
 //
-// Extension tags beyond kind_count() (struct_copy=198 … umask=265): not
+// Extension tags beyond kind_count() (struct_copy=198 … getcwd=266): not
 // in the 1..kind_count() bijection sweep (ir_kind_run sweeps them separately
 // by name), but nameable so module_emits_op_cached / the backends see them.
 // The id space is NOT dense up here: 246..259 are held by slices in flight,
 // which is why this family starts at 260.
-// NEXT FREE EXTENSION ID: 266 (re-grep rather than trusting this line — it has
+// NEXT FREE EXTENSION ID: 267 (re-grep rather than trusting this line — it has
 // been stale before, which is the drift the paragraph below is about).
 // ADDING AN EXTENSION TAG: take the next id here AND register it in
 // kind_name + ir_kind_run's two sweep lists, then re-grep the whole tree
@@ -1660,6 +1665,7 @@ function kind_id_len6(name: string): i32 {
     if (c == b'a' && name == "arr_rc") { return 91; }
     if (c == b'a' && name == "arg_at") { return 210; }
     if (c == b'a' && name == "access") { return 237; }
+    if (c == b'g' && name == "getcwd") { return 266; }
     if (c == b'f') { return kind_id_len6_f(name); }
     if (c == b'i' && name == "isatty") { return 232; }
     if (c == b'm') { return kind_id_len6_m(name); }
@@ -2281,13 +2287,14 @@ function kind_name_4(id: i32): string {
     if (id == 263) { return "create_symlink"; }
     if (id == 264) { return "read_link"; }
     if (id == 265) { return "umask"; }
+    if (id == 266) { return "getcwd"; }
     return "invalid";
 }
 
 // kind_name maps an integer id back to its op-kind tag ("invalid" for an
 // out-of-range / KIND_INVALID id). The inverse of kind_id. A cheap range
 // check routes to the owning chunk; everything past 160 — including the
-// extension tags beyond kind_count() (struct_copy=198 … umask=265)
+// extension tags beyond kind_count() (struct_copy=198 … getcwd=266)
 // — lives in kind_name_4, whose fallthrough is the "invalid" sentinel.
 pub function kind_name(id: i32): string {
     if (id <= 40) { return kind_name_0(id); }
@@ -2340,7 +2347,8 @@ function pops0(t: i32): boolean {
         || t == 207 || t == 209 || t == 211                              // raw_environ, read_all_stdin, proc_fork
         || t == 216 || t == 217 || t == 218                              // arr_push_shared_*, const_struct
         || t == 222                                                      // map_hash_seed
-        || t == 238 || t == 239 || t == 240;                             // geteuid, getegid, hostname
+        || t == 238 || t == 239 || t == 240                              // geteuid, getegid, hostname
+        || t == 266;                                                     // getcwd
 }
 
 function pops1_conv(t: i32): boolean {
@@ -4035,6 +4043,8 @@ pub function op_allocates(tag: i32): boolean {
     // heap-build the NUL-terminated paths they pass to the kernel;
     // read_link boxes the target string as well.
     if (tag == 260 || tag == 261 || tag == 262 || tag == 263 || tag == 264) { return true; }
+    // getcwd boxes the path string and a Result wrapper.
+    if (tag == 266) { return true; }
     // read_dir boxes a fresh string[] (the arr box + a string block per entry),
     // so it needs the heap runtime.
     if (tag == 171) { return true; }

@@ -148,6 +148,11 @@ var gatedBuiltins = map[string]string{
 	"geteuid": "userid",
 	"getegid": "userid",
 
+	// The working directory the process's relative paths resolve
+	// against. A component has none — every path resolves against a
+	// preopen descriptor — so there is no single place to name.
+	"getcwd": "cwd",
+
 	// The host's own name — the kernel node name gethostname(2) reports.
 	// A hosted target asks its kernel; WASI has no host identity and
 	// answers the empty string, which is a fact about a component rather

@@ -257,6 +257,9 @@ const (
 	sysSymlinkat  = 266
 	sysReadlinkat = 267
 	sysUmask      = 95
+	// getcwd(2): x86-64 syscall 79. Returns the byte LENGTH including
+	// the NUL on success, -errno otherwise.
+	sysGetcwd = 79
 	// geteuid(2) / getegid(2): x86-64 syscalls 107 / 108.
 	sysGeteuid = 107
 	sysGetegid = 108
@@ -860,6 +863,9 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	if g.usesUmask {
 		g.emitUmaskRuntime()
 	}
+	if g.usesGetcwd {
+		g.emitGetcwdRuntime()
+	}
 	if g.usesTempDir {
 		g.emitTempDirRuntime()
 	}
@@ -1338,6 +1344,9 @@ type generator struct {
 	usesCreateSymlink bool
 	usesReadLink      bool
 	usesUmask         bool
+	// usesGetcwd pulls in `__fern_getcwd`, the process's own working
+	// directory (#8886).
+	usesGetcwd bool
 
 	// usesReaderWriter pulls in the full Reader / Writer
 	// runtime bundle (stdin/stdout/stderr + open_reader /
@@ -1771,6 +1780,11 @@ func (g *generator) recordUse(target string) {
 		g.usesIoError = true
 	case "umask":
 		g.usesUmask = true
+	case "getcwd":
+		g.usesGetcwd = true
+		g.usesAlloc = true
+		g.usesMemcpy = true
+		g.usesIoError = true
 	case "temp_dir":
 		g.usesTempDir = true
 		g.usesMonotonicNs = true
@@ -3312,6 +3326,8 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_read_link"
 		case "umask":
 			target = "__fern_umask"
+		case "getcwd":
+			target = "__fern_getcwd"
 		case "temp_dir":
 			target = "__fern_temp_dir"
 		case "read_dir":
@@ -13327,6 +13343,71 @@ func (g *generator) emitReadLinkRuntime() {
 	g.emit("pop rbp")
 	g.emit("ret")
 	g.line(".size __fern_read_link, .-__fern_read_link")
+}
+
+// emitGetcwdRuntime emits `__fern_getcwd() → Result[string, IoError]` —
+// getcwd(2) into a PATH_MAX buffer.
+//
+// Linux returns the byte length INCLUDING the terminating NUL, so the
+// string's length is one less; a working directory longer than the buffer
+// is ERANGE from the kernel and reaches the caller as it came. The IoError
+// carries the empty string as its path: there is no operand to name.
+func (g *generator) emitGetcwdRuntime() {
+	g.line("")
+	g.line(".globl __fern_getcwd")
+	g.line(".type __fern_getcwd, @function")
+	g.label("__fern_getcwd")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx") // the buffer
+	g.emit("push r12") // length / errno
+	g.emit("push r13") // the string box
+	// 4 pushes ⇒ rsp≡8 mod 16; the 4096 buffer plus 8 realigns.
+	g.emit("sub rsp, 4104")
+	g.emit("mov rbx, rsp")
+	g.emit("mov rdi, rbx")
+	g.emit("mov esi, 4096")
+	g.emitSyscall(sysGetcwd)
+	g.emit("test rax, rax")
+	g.emit("js .Lcwd_err")
+	g.emit("mov r12, rax")
+	g.emit("sub r12, 1") // drop the terminating NUL
+	// L2 rc-header layout: payload = N data bytes + 1 NUL.
+	g.emit("lea edi, [r12 + 1]")
+	g.emit("call __fern_alloc_rc1")
+	g.emit("mov rdi, rax")
+	g.emitStrLenStore("r12d", "rdi")
+	g.emit("mov byte ptr [rdi + r12], 0")
+	g.emit("mov rsi, rbx")
+	g.emit("mov rdx, r12")
+	g.emit("call __fern_memcpy") // rax = dst
+	g.emit("mov r13, rax")
+	g.emit("mov edi, 16")
+	g.emit("call __fern_alloc_rc1")
+	g.emit("mov dword ptr [rax], 0") // tag = 0 (Ok)
+	g.emit("mov [rax + 8], r13")
+	g.emit("jmp .Lcwd_ret")
+
+	g.label(".Lcwd_err")
+	g.emit("neg rax")
+	g.emit("mov r12, rax")
+	g.emit("mov edi, r12d")
+	g.emitStrEmpty("rsi") // no operand to name
+	g.emit("call __fern_io_error")
+	g.emit("mov r13, rax")
+	g.emit("mov edi, 16")
+	g.emit("call __fern_alloc_rc1")
+	g.emit("mov dword ptr [rax], 1") // tag = 1 (Err)
+	g.emit("mov [rax + 8], r13")
+
+	g.label(".Lcwd_ret")
+	g.emit("add rsp, 4104")
+	g.emit("pop r13")
+	g.emit("pop r12")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_getcwd, .-__fern_getcwd")
 }
 
 // emitUmaskRuntime emits `__fern_umask(mask) → previous mask`. umask(2)

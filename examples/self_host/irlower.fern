@@ -11902,6 +11902,11 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
     // lower_call_dirlink, split out so this dispatch does not grow six
     // more arms of the same shape.
     if (is_dirlink_call(cid.name, c.args.len())) { return lower_call_dirlink(c, cid, s); }
+    // Built-in `getcwd()` — no operands, pushes a fresh
+    // Result[string, IoError] holding the process's working directory.
+    if (cid.name == "getcwd" && c.args.len() == 0) {
+        return s.emit(ir.op_getcwd());
+    }
     // Built-in `temp_dir(prefix)` — make a uniquely-named /tmp
     // directory, push a fresh Result[string, IoError] box
     // (Ok(path) / Err(_)). The Result type is resolved by
@@ -69569,6 +69574,7 @@ function builtin_opt_ret_type(name: string): string {
     if (name == "create_link") { return "Result[void, IoError]"; }
     if (name == "create_symlink") { return "Result[void, IoError]"; }
     if (name == "read_link") { return "Result[string, IoError]"; }
+    if (name == "getcwd") { return "Result[string, IoError]"; }
     if (name == "temp_dir") { return "Result[string, IoError]"; }
     if (name == "read_dir") { return "Result[string[], IoError]"; }
     if (name == "env") { return "Option[string]"; }

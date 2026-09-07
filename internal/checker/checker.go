@@ -1987,6 +1987,26 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 			ast.EnumType{Name: "IoError"},
 		}},
 	}
+	// getcwd(): Result[string, IoError] — the process's own working
+	// directory, absolute and with every symlink already resolved (the
+	// kernel builds it from the dentry chain, so it is the path the
+	// process is AT rather than the one it was told).
+	//
+	// A Result rather than a bare string like `hostname`, because this
+	// one has a failure a program must be able to report: a working
+	// directory can be REMOVED under a running process, and `pwd` says
+	// so in words rather than falling silent.
+	//
+	// Native only. A WASI component has no working directory at all —
+	// every path resolves against a preopen descriptor — so E066 refuses
+	// it there (docs/FREESTANDING-CORE.md).
+	c.info.FuncSigs["getcwd"] = &ast.FuncType{
+		Params: nil,
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.StringType{},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
 	// remove_dir(path): Result[void, IoError] — remove ONE empty
 	// directory, `rmdir(2)`. A non-empty directory is ENOTEMPTY, a
 	// regular file ENOTDIR, and a missing one ENOENT: the errno

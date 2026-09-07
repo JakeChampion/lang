@@ -4942,6 +4942,11 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             // Result[string, IoError] holding the link's target.
             s = s.write("    call __fn___fern_read_link\n    addq $8, %rsp\n    pushq %rax\n");
             s = s.need("heap"); s = s.need("read_link");
+        } else if (o.kind_tag == 266) {  // getcwd
+            // no args -> the Fern-compiled __fn___fern_getcwd: a fresh
+            // Result[string, IoError] in %rax.
+            s = s.write("    call __fn___fern_getcwd\n    pushq %rax\n");
+            s = s.need("heap"); s = s.need("getcwd");
         } else if (o.kind_tag == 265) {  // umask
             // [mask] IS param[0] (+16) — one syscall, the previous mask
             // in %rax. Nothing is boxed, so no heap need.
@@ -7694,7 +7699,7 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
             || s.has_need("temp_dir") || s.has_need("create_dir_all")
             || s.has_need("create_dir") || s.has_need("remove_dir")
             || s.has_need("create_link") || s.has_need("create_symlink")
-            || s.has_need("read_link")) {
+            || s.has_need("read_link") || s.has_need("getcwd")) {
         var ioePre1: asmcore.ShapeRefOut = asmcore.shape_ref(s, "NotFound");
         s = ioePre1.state;
         var ioePre2: asmcore.ShapeRefOut = asmcore.shape_ref(s, "PermissionDenied");
@@ -7778,7 +7783,7 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
     // The freestanding allocator + RC runtime, only when the program allocates.
     // i32.to_string() allocates its box even in an otherwise heap-free program,
     // so its emit-time need pulls the runtime in too (its body calls __fern_alloc).
-    if (s.has_need("heap") || s.has_need("i32_to_string") || s.has_need("u32_to_string") || s.has_need("str_to_i32") || s.has_need("chr") || s.has_need("read_int") || s.has_need("read_all_stdin") || s.has_need("str_read_line") || s.has_need("strbuf") || s.has_need("reader") || s.has_need("write_file") || s.has_need("write_file_exec") || s.has_need("remove_dir_all") || s.has_need("temp_dir") || s.has_need("read_dir") || s.has_need("remove_file") || s.has_need("create_dir_all") || s.has_need("create_dir") || s.has_need("remove_dir") || s.has_need("create_link") || s.has_need("create_symlink") || s.has_need("read_link") || s.has_need("umask") || s.has_need("env") || s.has_need("stat") || s.has_need("lstat") || s.has_need("access") || s.has_need("subprocess")) { s = emit_ir_runtime(s); }
+    if (s.has_need("heap") || s.has_need("i32_to_string") || s.has_need("u32_to_string") || s.has_need("str_to_i32") || s.has_need("chr") || s.has_need("read_int") || s.has_need("read_all_stdin") || s.has_need("str_read_line") || s.has_need("strbuf") || s.has_need("reader") || s.has_need("write_file") || s.has_need("write_file_exec") || s.has_need("remove_dir_all") || s.has_need("temp_dir") || s.has_need("read_dir") || s.has_need("remove_file") || s.has_need("create_dir_all") || s.has_need("create_dir") || s.has_need("remove_dir") || s.has_need("create_link") || s.has_need("create_symlink") || s.has_need("read_link") || s.has_need("umask") || s.has_need("getcwd") || s.has_need("env") || s.has_need("stat") || s.has_need("lstat") || s.has_need("access") || s.has_need("subprocess")) { s = emit_ir_runtime(s); }
     // The f64 transcendental bundle (sin/cos/exp/log/pow). Deliberately NOT
     // inside the heap gate above: a program that only does float maths
     // allocates nothing, and would otherwise `call __fern_sin_f64` with no
@@ -8127,7 +8132,7 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
     // additionally calls the monotonic_ns builtin (op-mediated, so recognized in
     // the bundle like any builtin; its __fn___fern_monotonic_ns is emitted above,
     // need-marked by op_temp_dir). Heap-dependent (present above); x86-64-only.
-    if (s.has_need("stat") || s.has_need("lstat") || s.has_need("access") || s.has_need("read_file") || s.has_need("read_file_bytes") || s.has_need("remove_file") || s.has_need("create_dir_all") || s.has_need("create_dir") || s.has_need("remove_dir") || s.has_need("create_link") || s.has_need("create_symlink") || s.has_need("read_link") || s.has_need("umask") || s.has_need("write_file") || s.has_need("write_file_exec") || s.has_need("temp_dir") || s.has_need("read_dir") || s.has_need("remove_dir_all") || s.has_need("open_file") || s.has_need("writer_write") || s.has_need("reader")) {
+    if (s.has_need("stat") || s.has_need("lstat") || s.has_need("access") || s.has_need("read_file") || s.has_need("read_file_bytes") || s.has_need("remove_file") || s.has_need("create_dir_all") || s.has_need("create_dir") || s.has_need("remove_dir") || s.has_need("create_link") || s.has_need("create_symlink") || s.has_need("read_link") || s.has_need("umask") || s.has_need("getcwd") || s.has_need("write_file") || s.has_need("write_file_exec") || s.has_need("temp_dir") || s.has_need("read_dir") || s.has_need("remove_dir_all") || s.has_need("open_file") || s.has_need("writer_write") || s.has_need("reader")) {
         s = s.write("    .text\n");
         var fs_src: string = asmcore.rt_src_io_error("x86_64");
         if (s.has_need("stat")) { fs_src = fs_src + " " + asmcore.rt_src_stat("x86_64"); }
@@ -8143,6 +8148,7 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
         if (s.has_need("create_symlink")) { fs_src = fs_src + " " + asmcore.rt_src_create_symlink("x86_64"); }
         if (s.has_need("read_link")) { fs_src = fs_src + " " + asmcore.rt_src_read_link("x86_64"); }
         if (s.has_need("umask")) { fs_src = fs_src + " " + asmcore.rt_src_umask("x86_64"); }
+        if (s.has_need("getcwd")) { fs_src = fs_src + " " + asmcore.rt_src_getcwd("x86_64"); }
         if (s.has_need("write_file")) { fs_src = fs_src + " " + asmcore.rt_src_write_file("x86_64"); }
         if (s.has_need("write_file_exec")) { fs_src = fs_src + " " + asmcore.rt_src_write_file_exec("x86_64"); }
         if (s.has_need("temp_dir")) { fs_src = fs_src + " " + asmcore.rt_src_temp_dir("x86_64"); }

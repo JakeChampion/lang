@@ -473,6 +473,7 @@ pub function sysno(t: string, name: string): string {
         if (name == "symlinkat") { return "266"; }
         if (name == "readlinkat") { return "267"; }
         if (name == "umask") { return "95"; }
+        if (name == "getcwd") { return "79"; }
         return "-1";
     }
     if (t == "arm64-darwin") {
@@ -521,6 +522,10 @@ pub function sysno(t: string, name: string): string {
         if (name == "symlinkat") { return "474"; }
         if (name == "readlinkat") { return "473"; }
         if (name == "umask") { return "60"; }
+        // XNU's is __getcwd, and its RETURN differs from Linux's: 0 on
+        // success with the buffer NUL-terminated, where Linux answers the
+        // byte count including that NUL. rt_src_getcwd branches on it.
+        if (name == "getcwd") { return "326"; }
         // No pipe2 / dup3 rows: XNU has neither, and its pipe() reports the
         // second fd in x1, which no __syscall* intrinsic can see. That is why
         // subprocess keeps a hand-written body on this one target — the same
@@ -564,6 +569,7 @@ pub function sysno(t: string, name: string): string {
     if (name == "symlinkat") { return "36"; }
     if (name == "readlinkat") { return "78"; }
     if (name == "umask") { return "166"; }
+    if (name == "getcwd") { return "17"; }
     // No Darwin row: XNU has no uname syscall (libc builds it from sysctl),
     // so asm_arm64_ir keeps a hand-written kern.hostname body for that target.
     if (name == "uname") { return "160"; }
@@ -1544,6 +1550,28 @@ pub function rt_src_create_symlink(t: string): string {
 // means ENAMETOOLONG (36) rather than a target missing its tail.
 pub function rt_src_read_link(t: string): string {
     return "function __fern_read_link(path: string): Result[string, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var buf: i32 = __raw_alloc(4096); var n: i32 = __syscall4(" + sysno(t, "readlinkat") + ", " + at_fdcwd(t) + ", pathz, buf, 4096); if (n < 0) { return Err(__fern_io_error(0 - n, __raw_string(pathz, plen))); } if (n >= 4096) { return Err(__fern_io_error(36, __raw_string(pathz, plen))); } return Ok(__raw_string(buf, n)); }";
+}
+
+// rt_src_getcwd backs `getcwd()` (#8886, syscall-leaf) → Result[string,
+// IoError]. getcwd into a PATH_MAX buffer, then the bytes copied into a
+// fresh string.
+//
+// The two platforms disagree about the RETURN and not about the arguments:
+// Linux answers the byte length INCLUDING the terminating NUL, XNU answers
+// 0 and leaves the caller to measure the NUL-terminated buffer. A working
+// directory longer than the buffer is ERANGE from the kernel and reaches
+// the caller as it came; the IoError's path is empty, since there is no
+// operand to name.
+pub function rt_src_getcwd(t: string): string {
+    var len_expr: string = "n - 1";
+    if (t == "arm64-darwin") {
+        len_expr = "__fern_cstr_len(buf)";
+    }
+    var src: string = "";
+    if (t == "arm64-darwin") {
+        src = src + "function __fern_cstr_len(buf: i32): i32 { var i: i32 = 0; while (__raw_load8(buf, i) != 0) { i = i + 1; } return i; } ";
+    }
+    return src + "function __fern_getcwd(): Result[string, IoError] { var buf: i32 = __raw_alloc(4096); var n: i32 = __syscall3(" + sysno(t, "getcwd") + ", buf, 4096, 0); if (n < 0) { var nopath: i32 = __raw_alloc(1); return Err(__fern_io_error(0 - n, __raw_string(nopath, 0))); } return Ok(__raw_string(buf, " + len_expr + ")); }";
 }
 
 // rt_src_umask backs `umask(mask)` (#8883, syscall-leaf) → the previous mask.
@@ -3646,6 +3674,7 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
     if (id.name == "create_link") { return ty_option(ty_unknown()); }
     if (id.name == "create_symlink") { return ty_option(ty_unknown()); }
     if (id.name == "read_link") { return ty_result(ty_string()); }
+    if (id.name == "getcwd") { return ty_result(ty_string()); }
     // subprocess(cmd, args, stdin) → ProcessResult struct.
     // See asm.fern: returns "unknown" because the struct's
     // fields resolve through the shape-pointer dispatch path
@@ -5571,7 +5600,7 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
         "__fn___fern_create_dir_all",
         "__fn___fern_create_dir", "__fn___fern_remove_dir",
         "__fn___fern_create_link", "__fn___fern_create_symlink",
-        "__fn___fern_read_link", "__fn___fern_umask",
+        "__fn___fern_read_link", "__fn___fern_umask", "__fn___fern_getcwd",
         "__fn___fern_env", "__fern_stat", "__fn___fern_stat", "__fn___fern_subprocess",
         "__fern_args", "__fern_arg_at", "__fern_strbuf_append",
         // #5623: the IR path's whole-stdin reader, emitted in the entry module's

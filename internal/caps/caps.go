@@ -67,10 +67,13 @@ var BuiltinCaps = map[string]string{
 	"remove_dir_all":  "fs",
 	"create_dir_all":  "fs",
 	"create_dir":      "fs",
-	"remove_dir":      "fs",
-	"create_link":     "fs",
-	"create_symlink":  "fs",
-	"read_link":       "fs",
+	// Where the process is rooted. A dependency that learns it learns
+	// which tree every relative path it builds will land in.
+	"getcwd":         "fs",
+	"remove_dir":     "fs",
+	"create_link":    "fs",
+	"create_symlink": "fs",
+	"read_link":      "fs",
 	// The process file-mode creation mask. Reading it is ambient
 	// information about the process, but SETTING it changes the mode of
 	// every file and directory anything creates afterwards — a

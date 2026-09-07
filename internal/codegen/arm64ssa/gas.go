@@ -1275,6 +1275,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"create_symlink":                emitCreateSymlinkHelper,
 	"read_link":                     emitReadLinkHelper,
 	"umask":                         emitUmaskHelper,
+	"getcwd":                        emitGetcwdHelper,
 	"remove_dir_all":                emitRemoveDirAllHelper,
 	"temp_dir":                      emitTempDirHelper,
 	"read_dir":                      emitReadDirHelper,
@@ -2939,6 +2940,7 @@ var runtimeHelperDeps = map[string][]string{
 	"create_link":                   {"__fern_io_error"},
 	"create_symlink":                {"__fern_io_error"},
 	"read_link":                     {"__fern_io_error"},
+	"getcwd":                        {"__fern_io_error"},
 	"remove_dir_all":                {"__fern_io_error"},
 	"temp_dir":                      {"__fern_io_error"},
 	"read_dir":                      {"__fern_io_error"},
@@ -2997,6 +2999,7 @@ var heapUsingHelpers = map[string]bool{
 	"create_link":                   true,
 	"create_symlink":                true,
 	"read_link":                     true,
+	"getcwd":                        true,
 	"remove_dir_all":                true,
 	"temp_dir":                      true,
 	"read_dir":                      true,
@@ -5212,6 +5215,89 @@ func emitReadLinkHelper(w func(string, ...any)) {
 	w("\tldp x21, x22, [sp, #32]")
 	w("\tldp x19, x20, [sp, #16]")
 	w("\tldp x29, x30, [sp], #64")
+	w("\tret")
+}
+
+// emitGetcwdHelper writes getcwd() -> Result[string, IoError]: getcwd(2)
+// into a PATH_MAX buffer.
+//
+// Linux answers the byte length INCLUDING the terminating NUL, so the
+// string's own length is one less. A working directory longer than the
+// buffer is ERANGE from the kernel and reaches the caller as it came; the
+// IoError carries the empty string, since there is no operand to name.
+func emitGetcwdHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("getcwd"))
+	w("\tstp x29, x30, [sp, #-48]!")
+	w("\tmov x29, sp")
+	w("\tstp x19, x20, [sp, #16]")
+	w("\tstr x21, [sp, #32]")
+	w("\tsub sp, sp, #4096")
+	w("\tmov x0, sp")
+	w("\tmov x1, #4096")
+	w("\tmov x8, #17") // getcwd
+	w("\tsvc #0")
+	w("\ttbnz x0, #63, .Lssa_cwd_err")
+	w("\tsub x19, x0, #1") // the length without the NUL
+	// The string in its own rc block: {rc@0, len@4, data@8}, data
+	// NUL-terminated so a C consumer can read it back.
+	w("\tadrp x3, %s", heapPtrSym)
+	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
+	w("\tldr x4, [x3]")
+	w("\tadd x4, x4, #15")
+	w("\tand x4, x4, #-16")
+	w("\tadd x5, x19, #9")
+	w("\tadd x6, x4, x5")
+	w("\tstr x6, [x3]")
+	emitHeapGuardCall(w)
+	w("\tmov w6, #1")
+	w("\tstr w6, [x4]")      // rc = 1
+	w("\tstr w19, [x4, #4]") // len
+	w("\tadd x20, x4, #8")   // data
+	w("\tmov w7, #0")
+	w(".Lssa_cwd_cp:")
+	w("\tcmp w7, w19")
+	w("\tb.hs .Lssa_cwd_cpd")
+	w("\tldrb w8, [sp, x7]")
+	w("\tstrb w8, [x20, x7]")
+	w("\tadd w7, w7, #1")
+	w("\tb .Lssa_cwd_cp")
+	w(".Lssa_cwd_cpd:")
+	w("\tstrb wzr, [x20, x19]")
+	emitSsaResultBox(w)
+	w("\tstr wzr, [x0]")     // tag = 0 (Ok)
+	w("\tstr x20, [x0, #8]") // the path string
+	w("\tb .Lssa_cwd_ret")
+	w(".Lssa_cwd_err:")
+	w("\tneg x19, x0") // errno, across the alloc below
+	// The IoError's path: a zero-length string block, since there is no
+	// operand to name. It still needs a real rc-headered block — a
+	// string value here is a data pointer with its length at [ptr-4].
+	w("\tadrp x3, %s", heapPtrSym)
+	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
+	w("\tldr x4, [x3]")
+	w("\tadd x4, x4, #15")
+	w("\tand x4, x4, #-16")
+	w("\tadd x5, x4, #16")
+	w("\tstr x5, [x3]")
+	emitHeapGuardCall(w)
+	w("\tmov w6, #1")
+	w("\tstr w6, [x4]")      // rc = 1
+	w("\tstr wzr, [x4, #4]") // len = 0
+	w("\tadd x1, x4, #8")
+	w("\tstrb wzr, [x1]")
+	w("\tmov x0, x19")
+	w("\tbl %s", fnLabel("__fern_io_error"))
+	w("\tmov x21, x0")
+	emitSsaResultBox(w)
+	w("\tmov w6, #1")
+	w("\tstr w6, [x0]") // tag = 1 (Err)
+	w("\tstr x21, [x0, #8]")
+	w(".Lssa_cwd_ret:")
+	w("\tadd sp, sp, #4096")
+	w("\tldr x21, [sp, #32]")
+	w("\tldp x19, x20, [sp, #16]")
+	w("\tldp x29, x30, [sp], #48")
 	w("\tret")
 }
 

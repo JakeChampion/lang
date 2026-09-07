@@ -168,6 +168,11 @@ var linuxDarwinSysno = map[string][2]int{
 	// umask(2) — Linux asm-generic 166, Darwin BSD 60. One argument,
 	// the previous mask returned, and no error return on either.
 	"umask": {166, 60},
+	// getcwd — Linux asm-generic 17, Darwin `__getcwd` BSD 326. Same
+	// (buf, size) arguments; the RETURN differs, and emitGetcwdRuntime
+	// branches on it: Linux answers the byte length including the NUL,
+	// XNU answers 0 and leaves the caller to measure the buffer.
+	"getcwd": {17, 326},
 	// fchmod(2) — Linux 52, Darwin BSD 124. Backs write_file_exec's
 	// mode fixup: openat's mode argument applies only on CREATE, so
 	// writing over a stale output would leave the old mode (#6133).
@@ -807,6 +812,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	}
 	if g.usesUmask {
 		g.emitUmaskRuntime()
+	}
+	if g.usesGetcwd {
+		g.emitGetcwdRuntime()
 	}
 	if g.usesTempDir {
 		g.emitTempDirRuntime()
@@ -9600,6 +9608,84 @@ func (g *generator) emitReadLinkRuntime() {
 	g.line(".ltorg")
 }
 
+// emitGetcwdRuntime emits `__fern_getcwd() → Result[string, IoError]` —
+// getcwd into a PATH_MAX buffer.
+//
+// The two platforms disagree about the RETURN and not about the arguments:
+// Linux answers the byte length including the terminating NUL, XNU answers
+// 0 and leaves the buffer NUL-terminated for the caller to measure. A
+// working directory longer than the buffer is ERANGE from the kernel and
+// reaches the caller as it came. The IoError carries the empty string as
+// its path — there is no operand to name.
+func (g *generator) emitGetcwdRuntime() {
+	g.line("")
+	g.line(".global __fern_getcwd")
+	g.typeDirective("__fern_getcwd")
+	g.label("__fern_getcwd")
+	// Frame: fp/lr (16) + x19..x22 (32) + 16 pad + a 4096-byte buffer
+	// at [x29 + 64].
+	g.emit("sub sp, sp, #4096")
+	g.emit("sub sp, sp, #64")
+	g.emit("stp x29, x30, [sp]")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	g.emit("stp x21, x22, [sp, #32]")
+	g.emit("add x19, x29, #64") // buffer
+	g.emit("mov x0, x19")
+	g.emit("mov x1, #4096")
+	g.syscall("getcwd")
+	g.emit("tbnz x0, #63, .Lcwd_err")
+	if g.darwin {
+		// XNU answers 0; the length is the NUL-terminated buffer's.
+		g.emit("mov x20, #0")
+		g.label(".Lcwd_slen")
+		g.emit("ldrb w1, [x19, x20]")
+		g.emit("cbz w1, .Lcwd_have")
+		g.emit("add x20, x20, #1")
+		g.emit("b .Lcwd_slen")
+	} else {
+		// Linux answers the byte count INCLUDING the NUL.
+		g.emit("sub x20, x0, #1")
+	}
+	g.label(".Lcwd_have")
+	g.emit("mov x0, x20")
+	g.emit("bl __fern_alloc_rc1")
+	g.emit("mov x21, x0") // data ptr
+	g.emit("mov x1, x19")
+	g.emit("mov x2, x20")
+	g.emit("bl __fern_memcpy")
+	// Result.Ok(string): 24-byte box — {tag@0, pad@4, data@8, len@16}.
+	g.emit("mov x0, #24")
+	g.emit("bl __fern_alloc_rc1")
+	g.emit("str wzr, [x0]")      // tag = 0 (Ok)
+	g.emit("str x21, [x0, #8]")  // payload data
+	g.emit("str x20, [x0, #16]") // payload len
+	g.emit("b .Lcwd_return")
+
+	g.label(".Lcwd_err")
+	g.emit("neg x22, x0") // errno
+	g.emit("mov x0, x22")
+	g.emit("mov x1, xzr")
+	g.emit("movz x2, #0x8000, lsl #48") // the empty string: no operand to name
+	g.emit("bl __fern_io_error")
+	g.emit("mov x19, x0") // stash the IoError box across the alloc
+	g.emit("mov x0, #16")
+	g.emit("bl __fern_alloc_rc1")
+	g.emit("mov w1, #1")
+	g.emit("str w1, [x0]") // tag = 1 (Err)
+	g.emit("str x19, [x0, #8]")
+
+	g.label(".Lcwd_return")
+	g.emit("ldp x21, x22, [sp, #32]")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x29, x30, [sp]")
+	g.emit("add sp, sp, #4096")
+	g.emit("add sp, sp, #64")
+	g.emit("ret")
+	g.sizeDirective("__fern_getcwd")
+	g.line(".ltorg")
+}
+
 // emitUmaskRuntime emits `__fern_umask(mask) → previous mask`. umask(2)
 // cannot fail and returns the mask it replaced, so the syscall's own
 // return value is the whole answer.
@@ -11895,6 +11981,9 @@ type generator struct {
 	usesCreateSymlink bool
 	usesReadLink      bool
 	usesUmask         bool
+	// usesGetcwd pulls in `__fern_getcwd`, the process's own working
+	// directory (#8886).
+	usesGetcwd bool
 	// usesIoError pulls in `__fern_io_error(errno, path)` —
 	// constructs an `IoError` enum box from a Linux errno.
 	// Shared by read_file + write_file + the Reader / Writer
@@ -16091,6 +16180,14 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			// umask(mask): the previous mask. Cannot fail.
 			target = "__fern_umask"
 			g.usesUmask = true
+		case "getcwd":
+			// getcwd(): Result[string, IoError] — the process's
+			// own working directory.
+			target = "__fern_getcwd"
+			g.usesGetcwd = true
+			g.usesAlloc = true
+			g.usesMemcpy = true
+			g.usesIoError = true
 		case "temp_dir":
 			// temp_dir(prefix): Result[string, IoError] —
 			// mkdirat("/tmp/<prefix>-<monotonic_ns>").
