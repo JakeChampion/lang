@@ -201,26 +201,47 @@ pub function is_blank(c: i32): boolean {
 // `parse_units(s)` — glibc's strtoumax over `s` followed by a gnulib
 // multiplier suffix (xstrtoumax with "bkKmMGTPEZYRQ0"): leading blanks
 // and a `+` are accepted, `1b` is 512, `1kB` is 1000 and `1KiB` is
-// 1024. Returns (value, status): 0 accepted, 1 malformed, 2 the digits
-// themselves past uintmax_t, 3 the suffix multiply past it.
+// 1024. A suffix with NO digits in front of it is the number 1, which
+// is gnulib's rule and not an oversight — `head -c b` is 512 bytes.
+// Returns (value, status): 0 accepted, 1 nothing numeric at all, 2 the
+// digits themselves past uintmax_t, 3 the suffix multiply past it, 4 a
+// suffix that is not one (`1x`), which glibc reports separately from 1.
 //
 // The two overflows are separate because glibc's are: strtoumax sets
 // ERANGE for 2 and leaves errno alone for 3, and tail's obsolete form
 // prints the raw errno, so `-36028797018963968b` gets no strerror text
 // while `-18446744073709551616b` gets `Numerical result out of range`.
-// A caller that reaches xstrtol_fatal instead — head's and tail's `-n`
-// and `-c` — words both as `: Value too large for defined data type`,
-// so it tests `status >= 2` rather than flattening the two here.
+// The two malformed codes are separate because od's are: `od -j x` is
+// `invalid -j argument` and `od -j 1x` is `invalid suffix in -j
+// argument`. A caller with one wording for each pair asks
+// `count_malformed` and `count_overflow` rather than the numbers.
 //
 // `parse_number` is the same without the suffixes (xstrtoumax with ""),
 // for tail's `--max-unchanged-stats` and `--pid`; with no suffix to
-// multiply by it never returns 3.
+// multiply by it never returns 3, and a bare suffix is malformed there
+// because there are no valid ones.
 pub function parse_units(s: string): (u64, i32) {
   return parse_count(s, true);
 }
 
 pub function parse_number(s: string): (u64, i32) {
   return parse_count(s, false);
+}
+
+// Whether `c` starts a multiplier suffix, which is what lets a suffix
+// with no digits in front of it stand for 1.
+function is_suffix(c: i32): boolean {
+  return c == 98 || suffix_power(c) > 0;
+}
+
+// `count_malformed(status)` — the two ways parse_units refuses a string
+// as a number; `count_overflow` the two ways it refuses the value.
+pub function count_malformed(status: i32): boolean {
+  return status == 1 || status == 4;
+}
+
+pub function count_overflow(status: i32): boolean {
+  return status == 2 || status == 3;
 }
 
 function parse_count(s: string, suffixes: boolean): (u64, i32) {
@@ -231,10 +252,14 @@ function parse_count(s: string, suffixes: boolean): (u64, i32) {
   if (i < s.len() && s[i] as i32 == 43) {
     i = i + 1;
   }
-  if (i >= s.len() || !is_digit(s[i] as i32)) {
+  var starts: boolean = i < s.len() && is_digit(s[i] as i32);
+  if (!starts && !(suffixes && i < s.len() && is_suffix(s[i] as i32))) {
     return (0 as u64, 1);
   }
-  var v: u64 = 0 as u64;
+  var v: u64 = 1 as u64;
+  if (starts) {
+    v = 0 as u64;
+  }
   var over: boolean = false;
   var digits_over: boolean = false;
   while (i < s.len() && is_digit(s[i] as i32)) {
@@ -265,7 +290,7 @@ function parse_count(s: string, suffixes: boolean): (u64, i32) {
     } else {
       var p: i32 = suffix_power(c);
       if (p == 0) {
-        return (0 as u64, 1);
+        return (0 as u64, 4);
       }
       i = i + 1;
       var base: u64 = 1024 as u64;
@@ -290,7 +315,7 @@ function parse_count(s: string, suffixes: boolean): (u64, i32) {
     }
   }
   if (i != s.len()) {
-    return (0 as u64, 1);
+    return (0 as u64, 4);
   }
   if (!over && !digits_over) {
     match (v.checked_mul(mul)) {
@@ -1005,6 +1030,14 @@ pub function optional(short: string, long: string, id: i32): Opt {
 
 pub function optional_long(short: string, long: string, id: i32): Opt {
   return Opt { short: short_byte(short), long: long, short_arg: 0, arg: 2, id: id };
+}
+
+// `valued_optional_long(short, long, id)` — the other split shape, od's
+// `-S`: the short spelling REQUIRES a value and the long one takes it
+// only when glued, so `od -S 3 f` reads the 3 and `od --strings f`
+// takes the default.
+pub function valued_optional_long(short: string, long: string, id: i32): Opt {
+  return Opt { short: short_byte(short), long: long, short_arg: 1, arg: 2, id: id };
 }
 
 function short_byte(short: string): i32 {

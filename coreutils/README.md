@@ -83,6 +83,7 @@ they are not on PATH. Wall time, so compare within one run only.
 | `tac` | done — `-b` `-r` `-s`, the input read BACKWARDS in 8 KiB blocks that double when a record outgrows one, and `-r` in glibc's syntax 0 (Emacs), which is what a program that never calls `re_set_syntax` gets. Startup beats GNU by 4×; throughput loses by 3-4×, and `docs/COREUTILS.md` measures where it goes |
 | `wc` | done — `-c` `-l` `-m` `-w` `-L`, `--total=WHEN`, `--files0-from`, the column width taken from the operands' sizes, and the C-locale ISPRINT rule for words and display width. A REGULAR-FILE stdin still widens to seven columns, which needs fstat on a descriptor (#8713) |
 | `csplit` | done — line-number, `/REGEXP/[OFFSET]`, `%REGEXP%[OFFSET]` and `{N}` / `{*}` patterns with the two cursors GNU leaves behind, `-b` `-f` `-k` `-n` `-s` `-z` `--suppress-matched`, the printf suffix format and its flag rules, and the four failure paths that each leave a different piece behind |
+| `od` | done — `-A -j -N -S -t -v -w --endian --traditional` and the ten hidden format letters, the column arithmetic that lines several `-t` specs up with each other, the `z` printable trailer, duplicate-block folding, the traditional offset and label operands, and gnulib's shortest-round-trip float rendering at the target's `float`, `double` and `long double` |
 | `nl` | done — `-b` `-h` `-f` with the `a` / `t` / `n` / `pBRE` styles, `-d` in all three delimiter forms, `-i` `-l` `-n` `-p` `-s` `-v` `-w`, and the line-number overflow reported one line after it happens |
 | `join` | done — `-1` `-2` `-j` `-a` `-v` `-e` `-o` `-t` `-i` `--check-order` `--nocheck-order` `--header` `-z`, the obsolete `-j1` / `-j2` and multi-argument `-o` forms with the counting that tells an option argument from a file, and GNU's order check with its default weakness |
 | `tr` | done — the whole SET grammar (ranges, `[:class:]`, `[=c=]`, `[c*n]`, `[c*]`), `-c` `-C` `-d` `-s` `-t`, the case-fold pairing of `[:upper:]` and `[:lower:]`, and the lazy SET2 extension that decides which of two faults a mismatched pair is reported as |
@@ -119,6 +120,6 @@ they are not on PATH. Wall time, so compare within one run only.
 | `lib/cond.fern` | the conditional expression `test` and `[` evaluate |
 | `lib/tabs.fern` | the `-t` tab-stop list `expand` and `unexpand` share: the grammar, its faults, and the next stop past a column |
 | `lib/bre.fern` | regular expressions as glibc compiles them: POSIX basic for `expr`, syntax 0 (Emacs) for `tac -r`, anchored or searched over a range of a buffer for `nl` and `csplit`, with a literal and a literal-prefix fast path ahead of glibc's fastmap and the simulation |
-| `lib/ld.fern` | C's `long double` at the TARGET's format — strtold, arithmetic, rounding and the `%f` `%e` `%g` `%a` conversions — shared by `printf`, `numfmt`, `seq` and `sleep` |
+| `lib/ld.fern` | C's `float`, `double` and `long double` at the TARGET's formats — strtold, arithmetic, rounding and the `%f` `%e` `%g` `%a` conversions — shared by `printf`, `numfmt`, `seq`, `sleep` and `od` |
 
 The tracking epic (#8278) lists every other utility and its status.

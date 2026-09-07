@@ -1,0 +1,1955 @@
+// od.fern — GNU-compatible `od`.
+//
+//   od [OPTION]... [FILE]...
+//   od [-abcdfilosx]... [FILE] [[+]OFFSET[.][b]]
+//   od --traditional [OPTION]... [FILE] [[+]OFFSET[.][b] [+][LABEL][.][b]]
+//
+// The concatenated FILEs as octal bytes by default, or in whatever the
+// `-t` specifications ask for, one block of `-w` bytes per line, with the
+// offset of each block in front of it and a run of identical blocks
+// folded to a single `*`.
+//
+// Four things decide the bytes and are not guessable from the synopsis:
+//
+//   - **The specs line up with each other, not with themselves.** Each
+//     spec's block occupies `(field_width + 1) * fields` columns, the
+//     widest wins, and every narrower spec has the difference spread
+//     across ITS fields — so `-t x1c` prints hexadecimal in four columns
+//     rather than three, because `c` needs four. The share a field gets
+//     is what is left divided by the fields still to come, which is what
+//     makes the distribution even.
+//   - **A float prints as the SHORTEST decimal that reads back as the
+//     same value**, which is gnulib's ftoastr rather than a fixed
+//     precision: `%.*g` from LDBL_DIG (or from 1 when the value is
+//     subnormal) upwards until strtold agrees. That is why a
+//     denormalised float prints `1e-45` and not `1.4012985e-45`.
+//   - **The traditional offset operand is only read when no MODERN
+//     option was given** (-A -j -N -S -t -v -w), unless `--traditional`
+//     asks for it: `od f 4` dumps from byte 4, `od -t x1 f 4` reports
+//     that there is no file named `4`.
+//   - **A block is folded only when it is FULL and equal to the one
+//     before it**, so the `*` never stands for the last, short block, and
+//     the offset line that ends the dump is the total length whether or
+//     not anything was folded.
+//
+// The floating-point formats come from `lib/ld.fern`, which carries the
+// target's `float`, `double` and `long double` rather than the host's.
+import "std/string";
+import "std/array";
+import "std/io_buffered";
+import "core/bigint";
+import "./lib/gnu";
+import "./lib/ld";
+
+// ---- options ---------------------------------------------------------------
+// Ids in GNU's DECLARATION order, which the ambiguity list prints in:
+// `--s` names '--skip-bytes' before '--strings'.
+function opt_skip(): i32 {
+  return 1;
+}
+
+function opt_radix(): i32 {
+  return 2;
+}
+
+function opt_read(): i32 {
+  return 3;
+}
+
+function opt_format(): i32 {
+  return 4;
+}
+
+function opt_dups(): i32 {
+  return 5;
+}
+
+function opt_strings(): i32 {
+  return 6;
+}
+
+function opt_traditional(): i32 {
+  return 7;
+}
+
+function opt_width(): i32 {
+  return 8;
+}
+
+function opt_endian(): i32 {
+  return 9;
+}
+
+// The traditional format letters, and the hidden aliases GNU still
+// carries for the same shapes. Each gets an id of its own — its byte
+// plus this base — because the letter cannot be recovered from argv: a
+// `d` inside `-Ad` is another option's value, not a format.
+function trad_base(): i32 {
+  return 1000;
+}
+
+function help_text(): string {
+  var out: string = "";
+  out = out + "Usage: " + gnu.prog() + " [OPTION]... [FILE]...\n";
+  out = out + "  or:  " + gnu.prog() + " [-abcdfilosx]... [FILE] [[+]OFFSET[.][b]]\n";
+  out = out + "  or:  " + gnu.prog() + " --traditional [OPTION]... [FILE] [[+]OFFSET[.][b] [+][LABEL][.][b]]\n";
+  out = out + "\n";
+  out = out + "Dump the concatenated FILEs, octal bytes by default, one block per line\n";
+  out = out + "with the offset of the block in front of it.\n";
+  out = out + "\n";
+  out = out + "With no FILE, or when FILE is -, read standard input.\n";
+  out = out + "\n";
+  out = out + "  -A, --address-radix=RADIX   offset radix: one of [doxn] for decimal,\n";
+  out = out + "                                octal, hexadecimal or none\n";
+  out = out + "      --endian={big|little}   read each unit in that byte order\n";
+  out = out + "  -j, --skip-bytes=BYTES      skip BYTES of input first\n";
+  out = out + "  -N, --read-bytes=BYTES      dump at most BYTES of input\n";
+  out = out + "  -S BYTES, --strings[=BYTES]  dump only NUL-terminated runs of at least\n";
+  out = out + "                                BYTES (3) printable characters\n";
+  out = out + "  -t, --format=TYPE           dump in TYPE, once per TYPE given\n";
+  out = out + "  -v, --output-duplicates     write every block, never '*'\n";
+  out = out + "  -w[BYTES], --width[=BYTES]  BYTES per line (32 when BYTES is omitted)\n";
+  out = out + "      --traditional           read the offset and label operands above\n";
+  out = out + "      --help        display this help and exit\n";
+  out = out + "      --version     output version information and exit\n";
+  out = out + "\n";
+  out = out + "The traditional format letters accumulate:\n";
+  out = out + "  -a   -t a,  named character, high bit ignored\n";
+  out = out + "  -b   -t o1, octal bytes\n";
+  out = out + "  -c   -t c,  printable character or backslash escape\n";
+  out = out + "  -d   -t u2, unsigned decimal 2-byte units\n";
+  out = out + "  -f   -t fF, floats\n";
+  out = out + "  -i   -t dI, decimal ints\n";
+  out = out + "  -l   -t dL, decimal longs\n";
+  out = out + "  -o   -t o2, octal 2-byte units\n";
+  out = out + "  -s   -t d2, decimal 2-byte units\n";
+  out = out + "  -x   -t x2, hexadecimal 2-byte units\n";
+  out = out + "\n";
+  out = out + "A TYPE is one or more of:\n";
+  out = out + "  a          named character, high bit ignored\n";
+  out = out + "  c          printable character or backslash escape\n";
+  out = out + "  d[SIZE]    signed decimal, SIZE bytes per integer\n";
+  out = out + "  f[SIZE]    floating point, SIZE bytes per float\n";
+  out = out + "  o[SIZE]    octal, SIZE bytes per integer\n";
+  out = out + "  u[SIZE]    unsigned decimal, SIZE bytes per integer\n";
+  out = out + "  x[SIZE]    hexadecimal, SIZE bytes per integer\n";
+  out = out + "\n";
+  out = out + "SIZE is a number; for d, o, u and x it may also be C, S, I or L for the\n";
+  out = out + "sizes of char, short, int and long, and for f it may be F, D or L for\n";
+  out = out + "float, double and long double. A z suffix adds the printable characters\n";
+  out = out + "of each line at its end.\n";
+  out = out + "\n";
+  out = out + "BYTES is hex with a 0x prefix, and takes a multiplier suffix:\n";
+  out = out + "b 512, KB 1000, K 1024, MB 1000*1000, M 1024*1024, and so on for\n";
+  out = out + "G, T, P, E, Z, Y, R, Q. Binary prefixes work too: KiB=K, MiB=M.\n";
+  return out;
+}
+
+// ---- field widths ----------------------------------------------------------
+//
+// The digits an N-byte unit needs in each base. These are the counts GNU
+// tabulates; every one of them is `ceil(N * 8 * log(2) / log(base))`,
+// with the signed decimal one carrying its sign.
+function oct_digits(n: i32): i32 {
+  return (n * 8 + 2) / 3;
+}
+
+function hex_digits(n: i32): i32 {
+  return n * 2;
+}
+
+function bit_digits(bits: i32): i32 {
+  return bits * 30103 / 100000 + 1;
+}
+
+function unsigned_dec_digits(n: i32): i32 {
+  return bit_digits(n * 8);
+}
+
+// The sign costs a column only when the negative range is not already
+// shorter than the unsigned one, which for eight bytes it is.
+function signed_dec_digits(n: i32): i32 {
+  var neg: i32 = bit_digits(n * 8 - 1) + 1;
+  var pos: i32 = unsigned_dec_digits(n);
+  if (neg > pos) {
+    return neg;
+  }
+  return pos;
+}
+
+// The columns a float of `f`'s format needs: a sign, a leading digit, a
+// point, the digits past the first that a round trip can require, `e`, an
+// exponent sign, and the exponent's own digits.
+function float_digits(f: ld.Format): i32 {
+  return 5 + prec_bound(f) - 1 + exp_digits(f);
+}
+
+// C's FLOAT_PREC_BOUND: the most significant digits `%g` can be asked
+// for before a round trip is guaranteed — one past ceil(mant log10 2).
+function prec_bound(f: ld.Format): i32 {
+  return (f.mant * 30103 + 99999) / 100000 + 1;
+}
+
+function exp_digits(f: ld.Format): i32 {
+  var e: i32 = f.emax * 30103 / 100000;
+  var d: i32 = 1;
+  while (e >= 10) {
+    e = e / 10;
+    d = d + 1;
+  }
+  return d;
+}
+
+// ---- specifications --------------------------------------------------------
+function k_named(): i32 {
+  return 0;
+}
+
+function k_char(): i32 {
+  return 1;
+}
+
+function k_signed(): i32 {
+  return 2;
+}
+
+function k_octal(): i32 {
+  return 3;
+}
+
+function k_unsigned(): i32 {
+  return 4;
+}
+
+function k_hex(): i32 {
+  return 5;
+}
+
+function k_float(): i32 {
+  return 6;
+}
+
+// `Spec` — one output format: its kind, the bytes per unit, the columns
+// one unit occupies before the block padding is spread over it, whether
+// the `z` suffix asked for the printable-character trailer, and the pad
+// this spec's block gets so every spec's block ends in the same column.
+struct Spec { kind: i32, size: i32, fw: i32, z: boolean, pad: i32 }
+
+function spec_width(kind: i32, size: i32): i32 {
+  if (kind == k_named() || kind == k_char()) {
+    return 3;
+  }
+  if (kind == k_octal()) {
+    return oct_digits(size);
+  }
+  if (kind == k_hex()) {
+    return hex_digits(size);
+  }
+  if (kind == k_unsigned()) {
+    return unsigned_dec_digits(size);
+  }
+  if (kind == k_signed()) {
+    return signed_dec_digits(size);
+  }
+  return float_digits(float_format(size));
+}
+
+// The format a float of `size` bytes has on the target: `lib/ld.fern`
+// carries the target's, not the host's.
+function float_format(size: i32): ld.Format {
+  if (size == 4) {
+    return ld.binary32();
+  }
+  if (size == 8) {
+    return ld.binary64();
+  }
+  return ld.format();
+}
+
+// The bytes `long double` occupies on the target. x87 is ten bytes of
+// value in sixteen of storage; the IEEE formats are their own width.
+function long_double_size(): i32 {
+  var f: ld.Format = ld.format();
+  if (f.mant == 53) {
+    return 8;
+  }
+  return 16;
+}
+
+function new_spec(kind: i32, size: i32, z: boolean): Spec {
+  return Spec { kind: kind, size: size, fw: spec_width(kind, size), z: z, pad: 0 };
+}
+
+// ---- the type string -------------------------------------------------------
+//
+// One `-t` argument holds one or more specifications end to end, so
+// `-t x1c` is two of them. Each is a letter, an optional size, and an
+// optional `z`.
+function type_error_size(arg: string, size: i32, floating: boolean): void {
+  var what: string = "integral";
+  if (floating) {
+    what = "floating point";
+  }
+  gnu.error("invalid type string " + gnu.quote(arg) + ";\nthis system doesn't provide a " + size.to_string() + "-byte " + what + " type");
+  exit(1);
+}
+
+// The size letters `d`, `o`, `u` and `x` accept, which are C's integer
+// widths, and the ones `f` accepts, which are its floating widths.
+function int_size_letter(c: i32): i32 {
+  if (c == 67) {
+    return 1;
+  }
+  if (c == 83) {
+    return 2;
+  }
+  if (c == 73) {
+    return 4;
+  }
+  if (c == 76) {
+    return 8;
+  }
+  return 0;
+}
+
+function float_size_letter(c: i32): i32 {
+  if (c == 70) {
+    return 4;
+  }
+  if (c == 68) {
+    return 8;
+  }
+  if (c == 76) {
+    return long_double_size();
+  }
+  return 0;
+}
+
+function valid_int_size(n: i32): boolean {
+  return n == 1 || n == 2 || n == 4 || n == 8;
+}
+
+function valid_float_size(n: i32): boolean {
+  return n == 4 || n == 8 || n == long_double_size();
+}
+
+// `parse_type(arg, specs)` — every specification in one `-t` argument,
+// appended to `specs`.
+function parse_type(arg: string, specs: Spec[]): Spec[] {
+  var out: Spec[] = specs;
+  var i: i32 = 0;
+  while (i < arg.len()) {
+    var c: i32 = arg[i] as i32;
+    i = i + 1;
+    var kind: i32 = 0 - 1;
+    var floating: boolean = false;
+    if (c == 97) {
+      kind = k_named();
+    } else if (c == 99) {
+      kind = k_char();
+    } else if (c == 100) {
+      kind = k_signed();
+    } else if (c == 111) {
+      kind = k_octal();
+    } else if (c == 117) {
+      kind = k_unsigned();
+    } else if (c == 120) {
+      kind = k_hex();
+    } else if (c == 102) {
+      kind = k_float();
+      floating = true;
+    } else {
+      invalid_type_char(c, arg);
+    }
+    var size: i32 = 4;
+    if (floating) {
+      size = 8;
+    }
+    if (kind == k_named() || kind == k_char()) {
+      size = 1;
+    } else if (i < arg.len() && gnu.is_digit(arg[i] as i32)) {
+      var n: i64 = 0 as i64;
+      while (i < arg.len() && gnu.is_digit(arg[i] as i32)) {
+        if (n < 1000000 as i64) {
+          n = n * (10 as i64) + (arg[i] as i32 - 48) as i64;
+        }
+        i = i + 1;
+      }
+      size = n as i32;
+      if (floating) {
+        if (!valid_float_size(size)) {
+          type_error_size(arg, size, true);
+        }
+      } else if (!valid_int_size(size)) {
+        type_error_size(arg, size, false);
+      }
+    } else if (i < arg.len()) {
+      var letter: i32 = 0;
+      if (floating) {
+        letter = float_size_letter(arg[i] as i32);
+      } else {
+        letter = int_size_letter(arg[i] as i32);
+      }
+      if (letter > 0) {
+        size = letter;
+        i = i + 1;
+      }
+    }
+    var z: boolean = false;
+    if (i < arg.len() && arg[i] as i32 == 122) {
+      z = true;
+      i = i + 1;
+    }
+    out = out.append(new_spec(kind, size, z));
+  }
+  return out;
+}
+
+// A size digit or letter that is neither is a character fault, and the
+// non-printable ones are named in octal — `a1` and `c1` reach this too,
+// because those two carry no size at all.
+function invalid_type_char(c: i32, arg: string): void {
+  gnu.error("invalid character '" + byte_str(c) + "' in type string " + gnu.quote(arg));
+  exit(1);
+}
+
+function byte_str(c: i32): string {
+  var b: u8[] = [];
+  b = b.append(c as u8);
+  return string_from_bytes_unchecked(b);
+}
+
+// ---- counts ----------------------------------------------------------------
+//
+// `-j`, `-N`, `-S` and `-w` take gnulib's byte counts, with a `0x`
+// prefix for hexadecimal and the usual multiplier suffixes. The two
+// faults are worded differently: nothing that could be a number at all
+// is `invalid`, digits followed by a suffix that is not one is
+// `invalid suffix in`.
+function count_arg(value: string, opt: string): u64 {
+  var body: string = value;
+  var mul: u64 = 1 as u64;
+  if (body.starts_with("0x") || body.starts_with("0X")) {
+    var h: (u64, boolean, i32) = parse_hex(body);
+    if (!h.1) {
+      gnu.error("invalid " + opt + " argument " + gnu.quote(value));
+      exit(1);
+    }
+    if (h.2 < body.len()) {
+      var s: (u64, boolean) = suffix_multiplier(slice_unchecked(body, h.2, body.len()) + "");
+      if (!s.1) {
+        gnu.error("invalid suffix in " + opt + " argument " + gnu.quote(value));
+        exit(1);
+      }
+      mul = s.0;
+    }
+    return checked_scale(h.0, mul, value, opt);
+  }
+  var r: (u64, i32) = gnu.parse_units(body);
+  if (r.1 == 0) {
+    return r.0;
+  }
+  if (r.1 == 1) {
+    gnu.error("invalid " + opt + " argument " + gnu.quote(value));
+    exit(1);
+  }
+  if (r.1 == 4) {
+    gnu.error("invalid suffix in " + opt + " argument " + gnu.quote(value));
+    exit(1);
+  }
+  gnu.error(opt + " argument " + gnu.quote(value) + " too large");
+  exit(1);
+  return 0 as u64;
+}
+
+function checked_scale(v: u64, mul: u64, value: string, opt: string): u64 {
+  match (v.checked_mul(mul)) {
+    Some(m) => {
+      return m;
+    },
+    None => {
+      gnu.error(opt + " argument " + gnu.quote(value) + " too large");
+      exit(1);
+    }
+  }
+  return 0 as u64;
+}
+
+// The hexadecimal body of a `0x` count, and where its digits end.
+function parse_hex(s: string): (u64, boolean, i32) {
+  var i: i32 = 2;
+  var v: u64 = 0 as u64;
+  var any: boolean = false;
+  while (i < s.len()) {
+    var d: i32 = hex_value(s[i] as i32);
+    if (d < 0) {
+      break;
+    }
+    match (v.checked_mul(16 as u64)) {
+      Some(m) => {
+        v = m + d as u64;
+      },
+      None => {
+        return (0 as u64, false, i);
+      }
+    }
+    any = true;
+    i = i + 1;
+  }
+  return (v, any, i);
+}
+
+function hex_value(c: i32): i32 {
+  if (c >= 48 && c <= 57) {
+    return c - 48;
+  }
+  if (c >= 97 && c <= 102) {
+    return c - 87;
+  }
+  if (c >= 65 && c <= 70) {
+    return c - 55;
+  }
+  return 0 - 1;
+}
+
+// gnulib's multiplier suffixes, for the `0x` path that parses its own
+// digits.
+function suffix_multiplier(s: string): (u64, boolean) {
+  var r: (u64, i32) = gnu.parse_units("1" + s);
+  if (r.1 != 0) {
+    return (0 as u64, false);
+  }
+  return (r.0, true);
+}
+
+// ---- the address -----------------------------------------------------------
+function radix_none(): i32 {
+  return 0;
+}
+
+function address_width(base: i32): i32 {
+  if (base == 16) {
+    return 6;
+  }
+  if (base == radix_none()) {
+    return 0;
+  }
+  return 7;
+}
+
+function digits_in(v: u64, base: i32, upper: boolean): string {
+  if (v == 0 as u64) {
+    return "0";
+  }
+  var out: u8[] = [];
+  var n: u64 = v;
+  var b: u64 = base as u64;
+  while (n > 0 as u64) {
+    var d: i32 = (n % b) as i32;
+    var c: i32 = 48 + d;
+    if (d >= 10) {
+      c = 87 + d;
+      if (upper) {
+        c = 55 + d;
+      }
+    }
+    out = out.append(c as u8);
+    n = n / b;
+  }
+  var rev: u8[] = [];
+  var i: i32 = out.len() - 1;
+  while (i >= 0) {
+    rev = rev.append(out[i]);
+    i = i - 1;
+  }
+  return string_from_bytes_unchecked(rev);
+}
+
+function zero_pad(s: string, n: i32): string {
+  if (s.len() >= n) {
+    return s;
+  }
+  return "0".repeat(n - s.len()) + s;
+}
+
+function space_pad(s: string, n: i32): string {
+  if (s.len() >= n) {
+    return s;
+  }
+  return " ".repeat(n - s.len()) + s;
+}
+
+function format_address(base: i32, off: u64): string {
+  if (base == radix_none()) {
+    return "";
+  }
+  return zero_pad(digits_in(off, base, false), address_width(base));
+}
+
+// The whole leading text of a line: the address, and the pseudo-address
+// in parentheses after it when a LABEL operand asked for one. `-A n`
+// prints no address, but a label still prints — in octal, which is the
+// radix GNU restores for exactly that case.
+function address_text(s: Settings, off: u64): string {
+  if (!s.labelled) {
+    return format_address(s.base, off);
+  }
+  if (s.base == radix_none()) {
+    return "(" + format_address(8, off) + ")";
+  }
+  return format_address(s.base, off) + " (" + format_address(s.base, off - s.skip + s.label) + ")";
+}
+
+// `emit_address(out, s, off)` — the same text as `address_text`, put
+// into the line's buffer a digit at a time. The address is written once
+// per block, so building it as a string first was three allocations for
+// every sixteen bytes of input.
+function emit_address(out: u8[], s: Settings, off: u64): u8[] {
+  if (s.base != radix_none()) {
+    out = emit_num(out, false, off, s.base, address_width(s.base), 0, false);
+  }
+  if (!s.labelled) {
+    return out;
+  }
+  if (s.base == radix_none()) {
+    out = out.append(40 as u8);
+    out = emit_num(out, false, off, 8, address_width(8), 0, false);
+    return out.append(41 as u8);
+  }
+  out = out.append(32 as u8);
+  out = out.append(40 as u8);
+  out = emit_num(out, false, off - s.skip + s.label, s.base, address_width(s.base), 0, false);
+  return out.append(41 as u8);
+}
+
+// ---- one unit --------------------------------------------------------------
+//
+// The bytes of one unit as an unsigned integer, in the byte order the
+// input is being read in.
+function unit_value(block: string, at: i32, size: i32, big: boolean): u64 {
+  var v: u64 = 0 as u64;
+  var i: i32 = 0;
+  while (i < size) {
+    var k: i32 = at + i;
+    if (big) {
+      v = (v << 8 as u64) + (block[k] as i32) as u64;
+    } else {
+      v = v + ((block[k] as i32) as u64 << (i * 8) as u64);
+    }
+    i = i + 1;
+  }
+  return v;
+}
+
+// The same, sign-extended from `size` bytes.
+function signed_value(v: u64, size: i32): i64 {
+  if (size >= 8) {
+    return v as i64;
+  }
+  var bits: i32 = size * 8;
+  var sign: u64 = 1 as u64 << (bits - 1) as u64;
+  if ((v & sign) != 0 as u64) {
+    return v as i64 - (1 as i64 << bits as i64);
+  }
+  return v as i64;
+}
+
+// The named-character table `-t a` prints, which is ASCII's own names
+// for the first thirty-three codes plus `del`. The high bit is dropped
+// before the lookup, so 0xff is `del`.
+function char_name(c: i32): string {
+  var b: i32 = c % 128;
+  if (b == 127) {
+    return "del";
+  }
+  if (b > 32) {
+    return byte_str(b);
+  }
+  var names: string[] = ["nul", "soh", "stx", "etx", "eot", "enq", "ack", "bel", "bs", "ht", "nl", "vt", "ff", "cr", "so", "si", "dle", "dc1", "dc2", "dc3", "dc4", "nak", "syn", "etb", "can", "em", "sub", "esc", "fs", "gs", "rs", "us", "sp"];
+  return names[b];
+}
+
+// `-t c`: the seven named C escapes and NUL keep their backslash, a
+// printable byte is itself, and anything else is three octal digits with
+// NO backslash — which is GNU's rendering, not C's.
+function char_escape(c: i32): string {
+  if (c == 0) {
+    return "\\0";
+  }
+  if (c == 7) {
+    return "\\a";
+  }
+  if (c == 8) {
+    return "\\b";
+  }
+  if (c == 9) {
+    return "\\t";
+  }
+  if (c == 10) {
+    return "\\n";
+  }
+  if (c == 11) {
+    return "\\v";
+  }
+  if (c == 12) {
+    return "\\f";
+  }
+  if (c == 13) {
+    return "\\r";
+  }
+  if (c >= 32 && c < 127) {
+    return byte_str(c);
+  }
+  return zero_pad(digits_in(c as u64, 8, false), 3);
+}
+
+function is_printable(c: i32): boolean {
+  return c >= 32 && c < 127;
+}
+
+// ---- floating point --------------------------------------------------------
+//
+// The unit's bytes as the exact value the format holds. A significand is
+// assembled as a bigint because binary128 carries 113 bits of it.
+function decode_float(block: string, at: i32, size: i32, big: boolean): ld.LD {
+  var f: ld.Format = float_format(size);
+  var lo: u64 = 0 as u64;
+  var hi: u64 = 0 as u64;
+  if (size <= 8) {
+    lo = unit_value(block, at, size, big);
+  } else if (big) {
+    hi = unit_value(block, at, 8, true);
+    lo = unit_value(block, at + 8, 8, true);
+  } else {
+    lo = unit_value(block, at, 8, false);
+    hi = unit_value(block, at + 8, 8, false);
+  }
+  if (f.explicit_bit) {
+    return decode_x87(f, lo, hi);
+  }
+  return decode_ieee(f, lo, hi, size);
+}
+
+// An IEEE interchange format: a sign, a biased exponent, and a
+// significand whose leading bit is implied for a normal value.
+function decode_ieee(f: ld.Format, lo: u64, hi: u64, size: i32): ld.LD {
+  var frac_bits: i32 = f.mant - 1;
+  var m: bigint.BigInt = significand(lo, hi, frac_bits);
+  var shifted: u64 = 0 as u64;
+  if (frac_bits >= 64) {
+    shifted = hi >> (frac_bits - 64) as u64;
+  } else {
+    shifted = lo >> frac_bits as u64;
+  }
+  var exp_bits: i32 = size * 8 - f.mant;
+  var exp: i32 = (shifted & (1 as u64 << exp_bits as u64) - 1 as u64) as i32;
+  var neg: boolean = (shifted >> exp_bits as u64 & 1 as u64) != 0 as u64;
+  var max_exp: i32 = (1 << exp_bits) - 1;
+  if (exp == max_exp) {
+    if (m.is_zero()) {
+      return ld.inf(neg);
+    }
+    return ld.nan(neg);
+  }
+  if (exp == 0) {
+    return ld.LD { neg: neg, kind: 0, m: m, e: f.min_exp() };
+  }
+  return ld.LD { neg: neg, kind: 0, m: m.add(bigint.from_i64(1 as i64).shl(frac_bits)), e: exp - f.emax - frac_bits };
+}
+
+// x87's 80-bit extended: the integer bit is STORED, so the significand
+// is the whole low word and a normal value differs from a subnormal only
+// in its exponent field.
+function decode_x87(f: ld.Format, lo: u64, hi: u64): ld.LD {
+  var neg: boolean = (hi >> 15 as u64 & 1 as u64) != 0 as u64;
+  var exp: i32 = (hi & 32767 as u64) as i32;
+  var integer_bit: boolean = lo >> 63 as u64 != 0 as u64;
+  var m: bigint.BigInt = bigint.from_u64(lo);
+  if (exp == 32767) {
+    if (!integer_bit) {
+      return ld.nan(neg);
+    }
+    if ((lo & 9223372036854775807 as u64) == 0 as u64) {
+      return ld.inf(neg);
+    }
+    return ld.nan(neg);
+  }
+  // An UNNORMAL — a stored integer bit of 0 under a non-zero exponent —
+  // is not a value x87 produces, and the FPU answers a load of one with
+  // an invalid operation. So does GNU, which prints `nan` for it; a
+  // pseudo-denormal (the bit set under a zero exponent) is a plain
+  // denormal and needs no case of its own, the exponent being the same.
+  if (exp != 0 && !integer_bit) {
+    return ld.nan(neg);
+  }
+  if (exp == 0) {
+    // glibc reads a zero exponent as a subnormal, which means it takes
+    // the 63-bit FRACTION and normalises that: the stored integer bit
+    // does not contribute, and an encoding whose only set bit is that
+    // one has nothing to normalise and keeps the value it had.
+    var frac: u64 = lo & 9223372036854775807 as u64;
+    if (frac != 0 as u64) {
+      return ld.LD { neg: neg, kind: 0, m: bigint.from_u64(frac), e: f.min_exp() };
+    }
+    return ld.LD { neg: neg, kind: 0, m: m, e: f.min_exp() };
+  }
+  return ld.LD { neg: neg, kind: 0, m: m, e: exp - f.emax - (f.mant - 1) };
+}
+
+// The low `bits` bits of the two words as one bigint.
+function significand(lo: u64, hi: u64, bits: i32): bigint.BigInt {
+  if (bits <= 64) {
+    var mask: u64 = 18446744073709551615 as u64;
+    if (bits < 64) {
+      mask = (1 as u64 << bits as u64) - 1 as u64;
+    }
+    return bigint.from_u64(lo & mask);
+  }
+  var top: u64 = hi & (1 as u64 << (bits - 64) as u64) - 1 as u64;
+  return bigint.from_u64(top).shl(64).add(bigint.from_u64(lo));
+}
+
+// `ftoa(f, v)` — gnulib's ftoastr: `%.*g` at rising precision until the
+// text reads back as the same value, so the printed decimal is the
+// shortest one that identifies this float. A subnormal starts at one
+// digit, because that is where a round trip can already succeed.
+function ftoa(f: ld.Format, v: ld.LD): string {
+  if (v.is_nan()) {
+    if (v.neg) {
+      return "-nan";
+    }
+    return "nan";
+  }
+  if (v.is_inf()) {
+    if (v.neg) {
+      return "-inf";
+    }
+    return "inf";
+  }
+  var sign: string = "";
+  if (v.neg) {
+    sign = "-";
+  }
+  var d: ld.Dec = v.dec();
+  var prec: i32 = f.dig();
+  if (subnormal(f, v)) {
+    prec = 1;
+  }
+  var bound: i32 = prec_bound(f);
+  var s: string = "";
+  while (prec <= bound) {
+    s = sign + ld.general(d, prec as i64, false, false, 0 as i64).s;
+    if (f.strtold(s).v.eq(v)) {
+      return s;
+    }
+    prec = prec + 1;
+  }
+  return s;
+}
+
+function subnormal(f: ld.Format, v: ld.LD): boolean {
+  if (v.m.is_zero()) {
+    return true;
+  }
+  return v.e + v.m.bit_length() - 1 < f.emin();
+}
+
+// ---- one field -------------------------------------------------------------
+//
+// A field goes into the line's byte buffer directly. Nothing here builds
+// a string: a dump of a 62 MiB file writes sixty-two million fields, and
+// one allocation apiece is the whole difference between this and GNU.
+function digit_byte(d: i32, upper: boolean): u8 {
+  if (d < 10) {
+    return (48 + d) as u8;
+  }
+  if (upper) {
+    return (55 + d) as u8;
+  }
+  return (87 + d) as u8;
+}
+
+function spaces(out: u8[], n: i32): u8[] {
+  var k: i32 = n;
+  while (k > 0) {
+    out = out.append(32 as u8);
+    k = k - 1;
+  }
+  return out;
+}
+
+// `emit_num(out, neg, v, base, least, width, upper)` — the magnitude `v`
+// with its sign, right-aligned in `width` columns and zero-padded to at
+// least `least` digits. The digits go in backwards and are reversed in
+// place, which keeps the whole field to one pass and no allocation.
+function emit_num(out: u8[], neg: boolean, v: u64, base: i32, least: i32, width: i32, upper: boolean): u8[] {
+  var b: u64 = base as u64;
+  var count: i32 = 1;
+  var t: u64 = v;
+  while (t >= b) {
+    t = t / b;
+    count = count + 1;
+  }
+  var digits: i32 = count;
+  if (least > digits) {
+    digits = least;
+  }
+  var taken: i32 = digits;
+  if (neg) {
+    taken = taken + 1;
+  }
+  // `spaces` and the reversal are written out here rather than called:
+  // an array handed to a function is a second reference to its buffer,
+  // so every call would copy the line so far (#8498).
+  var k: i32 = width - taken;
+  while (k > 0) {
+    out = out.append(32 as u8);
+    k = k - 1;
+  }
+  if (neg) {
+    out = out.append(45 as u8);
+  }
+  k = digits - count;
+  while (k > 0) {
+    out = out.append(48 as u8);
+    k = k - 1;
+  }
+  var from: i32 = out.len();
+  var n: u64 = v;
+  var i: i32 = 0;
+  while (i < count) {
+    out = out.append(digit_byte((n % b) as i32, upper));
+    n = n / b;
+    i = i + 1;
+  }
+  var a: i32 = from;
+  var z: i32 = out.len() - 1;
+  while (a < z) {
+    var swap: u8 = out[a];
+    out = out.with(a, out[z]);
+    out = out.with(z, swap);
+    a = a + 1;
+    z = z - 1;
+  }
+  return out;
+}
+
+function emit_uint(out0: u8[], v: u64, base: i32, least: i32, width: i32, upper: boolean): u8[] {
+  return emit_num(out0, false, v, base, least, width, upper);
+}
+
+function reverse_from(out: u8[], from: i32): u8[] {
+  var a: i32 = from;
+  var z: i32 = out.len() - 1;
+  while (a < z) {
+    var t: u8 = out[a];
+    out = out.with(a, out[z]);
+    out = out.with(z, t);
+    a = a + 1;
+    z = z - 1;
+  }
+  return out;
+}
+
+function emit_text(out: u8[], text: string, width: i32): u8[] {
+  var k: i32 = width - text.len();
+  while (k > 0) {
+    out = out.append(32 as u8);
+    k = k - 1;
+  }
+  var i: i32 = 0;
+  while (i < text.len()) {
+    out = out.append(text[i]);
+    i = i + 1;
+  }
+  return out;
+}
+
+// One unit of `sp` at `at`, right-aligned in `width` columns.
+function emit_field(out: u8[], sp: Spec, block: string, at: i32, width: i32, big: boolean): u8[] {
+  if (sp.kind == k_named()) {
+    return emit_text(out, char_name(block[at] as i32), width);
+  }
+  if (sp.kind == k_char()) {
+    return emit_text(out, char_escape(block[at] as i32), width);
+  }
+  if (sp.kind == k_float()) {
+    var f: ld.Format = float_format(sp.size);
+    return emit_text(out, ftoa(f, decode_float(block, at, sp.size, big)), width);
+  }
+  var v: u64 = unit_value(block, at, sp.size, big);
+  if (sp.kind == k_octal()) {
+    return emit_uint(out, v, 8, sp.fw, width, false);
+  }
+  if (sp.kind == k_hex()) {
+    return emit_uint(out, v, 16, sp.fw, width, false);
+  }
+  if (sp.kind == k_unsigned()) {
+    return emit_uint(out, v, 10, 1, width, false);
+  }
+  var n: i64 = signed_value(v, sp.size);
+  if (n < 0 as i64) {
+    return emit_num(out, true, negated(n), 10, 1, width, false);
+  }
+  return emit_num(out, false, n as u64, 10, 1, width, false);
+}
+
+// The magnitude of a negative i64, taken in u64 so the least one has a
+// magnitude to take.
+function negated(n: i64): u64 {
+  return 0 as u64 - n as u64;
+}
+
+// ---- output ----------------------------------------------------------------
+struct Out { w: io_buffered.BufWriter }
+
+function put(o: Out, s: string): Out {
+  return Out { w: gnu.put(o.w, s) };
+}
+
+// `Settings` — everything the option scan decides.
+struct Settings { specs: Spec[], base: i32, block: i32, wpb: i32, skip: u64, limit: u64, limited: boolean, dups: boolean, big: boolean, strings: boolean, min_string: i32, label: u64, labelled: boolean }
+
+// `write_block(o, s, block, n, off)` — one input block through every
+// spec, the first line carrying the address and the rest the same width
+// in spaces. The whole block is assembled in one byte buffer and handed
+// to the writer once.
+function write_block(out: u8[], s: Settings, block: string, base: i32, n: i32, off: u64): u8[] {
+  var i: i32 = 0;
+  while (i < s.specs.len()) {
+    if (i == 0) {
+      out = emit_address(out, s, off);
+    } else {
+      out = spaces(out, address_width(s.base));
+    }
+    out = spec_line(out, s.specs[i], s, block, base, n);
+    out = out.append(10 as u8);
+    i = i + 1;
+  }
+  return out;
+}
+
+// The fields of one spec over one block. The block's pad is handed out
+// as the fields are printed — what is left divided by the fields still
+// to come — which spreads it evenly and is what lines the specs up.
+function spec_line(out: u8[], sp: Spec, s: Settings, block: string, base: i32, n: i32): u8[] {
+  var fields: i32 = s.block / sp.size;
+  var blank: i32 = (s.block - n) / sp.size;
+  var pad: i32 = sp.pad;
+  var used: i32 = 0;
+  var i: i32 = fields;
+  var at: i32 = base;
+  while (i > blank) {
+    var next_pad: i32 = pad * (i - 1) / i;
+    var w: i32 = pad - next_pad + sp.fw + 1;
+    pad = next_pad;
+    if (sp.kind == k_hex()) {
+      out = emit_num(out, false, unit_value(block, at, sp.size, s.big), 16, sp.fw, w, false);
+    } else if (sp.kind == k_octal()) {
+      out = emit_num(out, false, unit_value(block, at, sp.size, s.big), 8, sp.fw, w, false);
+    } else if (sp.kind == k_unsigned()) {
+      out = emit_num(out, false, unit_value(block, at, sp.size, s.big), 10, 1, w, false);
+    } else {
+      out = emit_field(out, sp, block, at, w, s.big);
+    }
+    used = used + w;
+    at = at + sp.size;
+    i = i - 1;
+  }
+  if (!sp.z) {
+    return out;
+  }
+  out = spaces(out, s.wpb - used);
+  out = out.append(32 as u8);
+  out = out.append(32 as u8);
+  out = out.append(62 as u8);
+  i = 0;
+  while (i < n) {
+    var c: i32 = block[base + i] as i32;
+    if (!is_printable(c)) {
+      c = 46;
+    }
+    out = out.append(c as u8);
+    i = i + 1;
+  }
+  return out.append(60 as u8);
+}
+
+// ---- the input -------------------------------------------------------------
+//
+// `Src` — the operands as one stream. A file that cannot be opened is
+// reported and skipped, and the exit status remembers it.
+// `buf` / `pos` hold what has been read and not yet handed out. A block
+// is 16 bytes by default, so without them a 62 MiB dump would be four
+// million read(2) calls.
+struct Src { files: string[], at: i32, r: Reader, open: boolean, is_stdin: boolean, buf: string, pos: i32, eof: boolean, ok: boolean, opened: boolean }
+
+function src_new(files: string[]): Src {
+  return Src { files: files, at: 0, r: stdin(), open: false, is_stdin: false, buf: "", pos: 0, eof: false, ok: true, opened: false };
+}
+
+function read_size(): i32 {
+  return 65536;
+}
+
+// `src_ensure(s)` — open operands until one opens or the list is spent,
+// which is GNU's open_next_file. Each failure is reported and remembered
+// in the exit status; a run where none of them opens writes nothing at
+// all, not even the offset line.
+function src_ensure(s0: Src): Src {
+  var s: Src = s0;
+  while (!s.open && s.at < s.files.len()) {
+    var name: string = s.files[s.at];
+    s = Src { ...s, at: s.at + 1 };
+    if (name == "-") {
+      s = Src { ...s, r: stdin(), open: true, is_stdin: true, opened: true, buf: "", pos: 0 };
+    } else {
+      match (open_reader(name)) {
+        Ok(f) => {
+          s = Src { ...s, r: f, open: true, is_stdin: false, opened: true, buf: "", pos: 0 };
+        },
+        Err(e) => {
+          gnu.error(gnu.quotef(name) + ": " + gnu.io_error_text(e));
+          s = Src { ...s, ok: false };
+        }
+      }
+    }
+  }
+  return s;
+}
+
+// Done with the operand in hand. Stdin is left open: it can be named
+// twice (`od - -`), and the second mention reads from where the first
+// stopped rather than from a closed descriptor.
+function src_close(s: Src): Src {
+  if (s.open && !s.is_stdin) {
+    s.r.close();
+  }
+  return Src { ...s, open: false };
+}
+
+// What is held in the buffer counts as part of the operand still to
+// come, so a skip spends it before it reaches for the descriptor.
+function skip_buffered(s0: Src, left0: u64): (u64, Src) {
+  var s: Src = s0;
+  var left: u64 = left0;
+  var have: u64 = (s.buf.len() - s.pos) as u64;
+  if (have == 0 as u64) {
+    return (left, s);
+  }
+  if (have <= left) {
+    return (left - have, Src { ...s, buf: "", pos: 0 });
+  }
+  return (0 as u64, Src { ...s, pos: s.pos + left as i32 });
+}
+
+// The next block of at most `want` bytes, spanning operands.
+function src_read(s0: Src, want: i32): (string, Src) {
+  var s: Src = s0;
+  var got: string = "";
+  while (true) {
+    if (s.pos < s.buf.len()) {
+      var take: i32 = s.buf.len() - s.pos;
+      if (take > want - got.len()) {
+        take = want - got.len();
+      }
+      if (take > 0) {
+        if (got.len() == 0 && take == want) {
+          // The whole answer is already in the buffer, so it is one
+          // slice rather than a copy into an accumulator.
+          return (slice_unchecked(s.buf, s.pos, s.pos + take) + "", Src { ...s, pos: s.pos + take });
+        }
+        got = got + slice_unchecked(s.buf, s.pos, s.pos + take);
+        s = Src { ...s, pos: s.pos + take };
+      }
+    }
+    if (got.len() >= want) {
+      return (got, s);
+    }
+    s = src_ensure(s);
+    if (!s.open) {
+      return (got, Src { ...s, eof: true });
+    }
+    match (s.r.read_chunk(read_size())) {
+      Ok(chunk) => {
+        if (chunk.len() == 0) {
+          s = src_close(s);
+        } else {
+          s = Src { ...s, buf: chunk, pos: 0 };
+        }
+      },
+      Err(e) => {
+        gnu.error(gnu.quotef(s.files[s.at - 1]) + ": " + gnu.io_error_text(e));
+        s = Src { ...src_close(s), ok: false };
+      }
+    }
+  }
+  return (got, s);
+}
+
+// `skip_input(s, n)` — drop `n` bytes, reporting GNU's refusal when the
+// whole input is shorter than that.
+//
+// How far an operand can be skipped depends on what it is, and GNU asks
+// in this order: a REGULAR file answers from its size, so skipping past
+// the end of one is refused however seekable it is; anything else is
+// seeked when it can be, which is why `od -j 4 /dev/null` succeeds where
+// the same skip on a pipe cannot; and a pipe is read and discarded.
+function skip_input(s0: Src, n: u64): Src {
+  var s: Src = s0;
+  var left: u64 = n;
+  while (left > 0 as u64) {
+    s = src_ensure(s);
+    if (!s.open) {
+      gnu.error("cannot skip past end of combined input");
+      exit(1);
+    }
+    var r: (u64, Src) = skip_in_file(s, left);
+    left = r.0;
+    s = r.1;
+    if (left > 0 as u64) {
+      s = src_close(s);
+    }
+  }
+  return s;
+}
+
+function skip_in_file(s0: Src, left0: u64): (u64, Src) {
+  var b: (u64, Src) = skip_buffered(s0, left0);
+  var s: Src = b.1;
+  var left: u64 = b.0;
+  if (left == 0 as u64) {
+    return (0 as u64, s);
+  }
+  match (s.r.stat()) {
+    Ok(st) => {
+      if (st.is_file) {
+        var avail: u64 = 0 as u64;
+        var at: i64 = 0 as i64;
+        match (s.r.seek(0 as i64, 1)) {
+          Ok(p) => {
+            at = p;
+          },
+          Err(_) => {}
+        }
+        if (st.size > at) {
+          avail = (st.size - at) as u64;
+        }
+        if (avail < left) {
+          return (left - avail, s);
+        }
+        match (s.r.seek(left as i64, 1)) {
+          Ok(_) => {
+            return (0 as u64, s);
+          },
+          Err(_) => {}
+        }
+      }
+    },
+    Err(_) => {}
+  }
+  match (s.r.seek(left as i64, 1)) {
+    Ok(_) => {
+      return (0 as u64, s);
+    },
+    Err(_) => {}
+  }
+  while (left > 0 as u64) {
+    var want: i32 = read_size();
+    if (left < want as u64) {
+      want = left as i32;
+    }
+    match (s.r.read_chunk(want)) {
+      Ok(chunk) => {
+        if (chunk.len() == 0) {
+          return (left, s);
+        }
+        left = left - chunk.len() as u64;
+      },
+      Err(e) => {
+        gnu.error(gnu.quotef(s.files[s.at - 1]) + ": " + gnu.io_error_text(e));
+        return (left, Src { ...s, ok: false });
+      }
+    }
+  }
+  return (0 as u64, s);
+}
+
+// ---- the dump --------------------------------------------------------------
+//
+// Input arrives a page at a time and output leaves a page at a time. The
+// per-BLOCK buffer stays small on purpose: a byte array that is passed to
+// a function and appended to inside it is a second reference to the same
+// buffer, so the append copies (#8498), and a buffer that grew across the
+// whole page would pay that copy on every field. The page-sized
+// accumulation is a string built in this frame, where nothing else holds
+// it.
+function dump(o0: Out, s: Settings, src0: Src): (Out, Src) {
+  var o: Out = o0;
+  var src: Src = src0;
+  var off: u64 = s.skip;
+  var left: u64 = s.limit;
+  // The block before this one is almost always the one just behind it in
+  // the same page, so the elision compares two ranges of the page and
+  // only carries a copy across the seam between pages.
+  var carry: u8[] = zero_bytes(s.block);
+  var have_prev: boolean = false;
+  var folded: boolean = false;
+  var pending: string = "";
+  var per_read: i32 = read_size() / s.block * s.block;
+  if (per_read < s.block) {
+    per_read = s.block;
+  }
+  while (true) {
+    var want: i32 = per_read;
+    if (s.limited && left < want as u64) {
+      want = left as i32;
+    }
+    if (want == 0) {
+      break;
+    }
+    var r: (string, Src) = src_read(src, want);
+    src = r.1;
+    var chunk: string = r.0;
+    if (chunk.len() == 0) {
+      break;
+    }
+    left = left - chunk.len() as u64;
+    var at: i32 = 0;
+    while (at + s.block <= chunk.len()) {
+      var repeat: boolean = false;
+      if (!s.dups && have_prev) {
+        if (at >= s.block) {
+          repeat = same_range(chunk, at - s.block, at, s.block);
+        } else {
+          repeat = same_carry(chunk, at, carry, s.block);
+        }
+      }
+      if (repeat) {
+        if (!folded) {
+          pending = pending + "*\n";
+          folded = true;
+        }
+      } else {
+        var line: u8[] = [];
+        line = write_block(line, s, chunk, at, s.block, off);
+        pending = pending + string_from_bytes_unchecked(line);
+        folded = false;
+      }
+      have_prev = true;
+      off = off + s.block as u64;
+      at = at + s.block;
+      if (pending.len() >= read_size()) {
+        o = put(o, pending);
+        pending = "";
+      }
+    }
+    if (at < chunk.len()) {
+      var tail: i32 = chunk.len() - at;
+      var last: u8[] = [];
+      last = write_block(last, s, pad_block(slice_unchecked(chunk, at, chunk.len()) + "", s.block), 0, tail, off);
+      pending = pending + string_from_bytes_unchecked(last);
+      off = off + tail as u64;
+      break;
+    }
+    if (at >= s.block) {
+      var k: i32 = 0;
+      while (k < s.block) {
+        carry = carry.with(k, chunk[at - s.block + k]);
+        k = k + 1;
+      }
+    }
+    if (chunk.len() < want) {
+      break;
+    }
+  }
+  if ((s.base != radix_none() || s.labelled) && src.opened) {
+    pending = pending + address_text(s, off) + "\n";
+  }
+  if (pending.len() > 0) {
+    o = put(o, pending);
+  }
+  return (o, src);
+}
+
+function zero_bytes(n: i32): u8[] {
+  return __alloc_u8(n);
+}
+
+function same_range(chunk: string, a: i32, b: i32, n: i32): boolean {
+  var i: i32 = 0;
+  while (i < n) {
+    if (chunk[a + i] != chunk[b + i]) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+function same_carry(chunk: string, at: i32, carry: u8[], n: i32): boolean {
+  var i: i32 = 0;
+  while (i < n) {
+    if (chunk[at + i] != carry[i]) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+// A short last block is completed with zeros so a multi-byte unit at its
+// end still has a whole unit to print.
+function pad_block(block: string, n: i32): string {
+  var out: u8[] = [];
+  var i: i32 = 0;
+  while (i < block.len()) {
+    out = out.append(block[i]);
+    i = i + 1;
+  }
+  while (i < n) {
+    out = out.append(0 as u8);
+    i = i + 1;
+  }
+  return string_from_bytes_unchecked(out);
+}
+
+// ---- strings mode ----------------------------------------------------------
+//
+// `-S N` reports the NUL-terminated runs of at least N printable
+// characters, each with the offset it starts at. A run broken by a byte
+// that is neither printable nor NUL is not a string at all.
+function dump_strings(o0: Out, s: Settings, src0: Src): (Out, Src) {
+  var o: Out = o0;
+  var src: Src = src0;
+  var off: u64 = s.skip;
+  var left: u64 = s.limit;
+  var start: u64 = off;
+  var run: u8[] = [];
+  while (true) {
+    var want: i32 = read_size();
+    if (s.limited && left < want as u64) {
+      want = left as i32;
+    }
+    if (want == 0) {
+      break;
+    }
+    var r: (string, Src) = src_read(src, want);
+    src = r.1;
+    var block: string = r.0;
+    if (block.len() == 0) {
+      break;
+    }
+    left = left - block.len() as u64;
+    var i: i32 = 0;
+    while (i < block.len()) {
+      var c: i32 = block[i] as i32;
+      if (c == 0) {
+        if (run.len() >= s.min_string) {
+          o = put(o, string_prefix(s, start) + string_from_bytes_unchecked(run) + "\n");
+        }
+        var empty: u8[] = [];
+        run = empty;
+        start = off + (i + 1) as u64;
+      } else if (is_printable(c)) {
+        if (run.len() == 0) {
+          start = off + i as u64;
+        }
+        run = run.append(c as u8);
+      } else {
+        var none: u8[] = [];
+        run = none;
+        start = off + (i + 1) as u64;
+      }
+      i = i + 1;
+    }
+    off = off + block.len() as u64;
+  }
+  return (o, src);
+}
+
+function string_prefix(s: Settings, off: u64): string {
+  var a: string = address_text(s, off);
+  if (a.len() == 0) {
+    return "";
+  }
+  return a + " ";
+}
+
+// ---- traditional operands --------------------------------------------------
+//
+// `[+]OFFSET[.][b]`: hexadecimal with a `0x` prefix, decimal with a
+// trailing `.`, octal otherwise, and `b` multiplies by 512. Anything
+// else is not an offset, and the operand stays a file name.
+function parse_old_offset(s: string): (u64, boolean) {
+  var i: i32 = 0;
+  if (i < s.len() && s[i] as i32 == 43) {
+    i = i + 1;
+  }
+  if (i >= s.len() || !gnu.is_digit(s[i] as i32)) {
+    return (0 as u64, false);
+  }
+  // A `.` anywhere picks decimal — and then fails, because gnulib's
+  // suffix set for this operand is `Bb` and the point is not in it. GNU
+  // documents the point as an octal marker and accepts it nowhere.
+  var base: i32 = 8;
+  if (s.index_of(".") >= 0) {
+    base = 10;
+  } else if (s.len() > i + 1 && s[i] as i32 == 48 && (s[i + 1] as i32 == 120 || s[i + 1] as i32 == 88)) {
+    base = 16;
+    i = i + 2;
+  }
+  var v: u64 = 0 as u64;
+  var any: boolean = false;
+  while (i < s.len()) {
+    var d: i32 = hex_value(s[i] as i32);
+    if (d < 0 || d >= base) {
+      break;
+    }
+    match (v.checked_mul(base as u64)) {
+      Some(m) => {
+        v = m + d as u64;
+      },
+      None => {
+        return (0 as u64, false);
+      }
+    }
+    any = true;
+    i = i + 1;
+  }
+  if (!any) {
+    return (0 as u64, false);
+  }
+  if (i < s.len()) {
+    var mul: u64 = 0 as u64;
+    if (s[i] as i32 == 98) {
+      mul = 512 as u64;
+    } else if (s[i] as i32 == 66) {
+      mul = 1024 as u64;
+    } else {
+      return (0 as u64, false);
+    }
+    match (v.checked_mul(mul)) {
+      Some(m) => {
+        v = m;
+      },
+      None => {
+        return (0 as u64, false);
+      }
+    }
+    i = i + 1;
+  }
+  if (i != s.len()) {
+    return (0 as u64, false);
+  }
+  return (v, true);
+}
+
+// ---- main ------------------------------------------------------------------
+//
+// The block is a multiple of every spec's unit size, so no unit ever
+// straddles two lines: the least common multiple of the sizes, taken up
+// to sixteen when it is smaller.
+function lcm_of(specs: Spec[]): i32 {
+  var l: i32 = 1;
+  var i: i32 = 0;
+  while (i < specs.len()) {
+    l = lcm2(l, specs[i].size);
+    i = i + 1;
+  }
+  return l;
+}
+
+function lcm2(a: i32, b: i32): i32 {
+  return a / gcd(a, b) * b;
+}
+
+function gcd(a: i32, b: i32): i32 {
+  var x: i32 = a;
+  var y: i32 = b;
+  while (y != 0) {
+    var t: i32 = x % y;
+    x = y;
+    y = t;
+  }
+  return x;
+}
+
+// The traditional letters, in the order GNU declares them, each with the
+// spec it stands for. The hidden ones (B D e F H I L O X h) are here
+// too, because a user who types one still gets its dump.
+function trad_spec(c: i32): Spec {
+  if (c == 97) {
+    return new_spec(k_named(), 1, false);
+  }
+  if (c == 98) {
+    return new_spec(k_octal(), 1, false);
+  }
+  if (c == 99) {
+    return new_spec(k_char(), 1, false);
+  }
+  if (c == 100) {
+    return new_spec(k_unsigned(), 2, false);
+  }
+  if (c == 102) {
+    return new_spec(k_float(), 4, false);
+  }
+  if (c == 105) {
+    return new_spec(k_signed(), 4, false);
+  }
+  if (c == 108) {
+    return new_spec(k_signed(), 8, false);
+  }
+  if (c == 111) {
+    return new_spec(k_octal(), 2, false);
+  }
+  if (c == 115) {
+    return new_spec(k_signed(), 2, false);
+  }
+  if (c == 120) {
+    return new_spec(k_hex(), 2, false);
+  }
+  if (c == 66) {
+    return new_spec(k_octal(), 2, false);
+  }
+  if (c == 68) {
+    return new_spec(k_unsigned(), 4, false);
+  }
+  if (c == 101 || c == 70) {
+    return new_spec(k_float(), 8, false);
+  }
+  if (c == 72 || c == 88) {
+    return new_spec(k_hex(), 4, false);
+  }
+  if (c == 73 || c == 76) {
+    return new_spec(k_signed(), 8, false);
+  }
+  if (c == 79) {
+    return new_spec(k_octal(), 4, false);
+  }
+  return new_spec(k_hex(), 2, false);
+}
+
+function trad_letters(): string {
+  return "abcdfilosxBDeFHILOXh";
+}
+
+function declare_options(): gnu.Opt[] {
+  var opts: gnu.Opt[] = [];
+  opts = opts.append(gnu.valued("j", "skip-bytes", opt_skip()));
+  opts = opts.append(gnu.valued("A", "address-radix", opt_radix()));
+  opts = opts.append(gnu.valued("N", "read-bytes", opt_read()));
+  opts = opts.append(gnu.valued("t", "format", opt_format()));
+  opts = opts.append(gnu.flag("v", "output-duplicates", opt_dups()));
+  opts = opts.append(gnu.valued_optional_long("S", "strings", opt_strings()));
+  opts = opts.append(gnu.flag("", "traditional", opt_traditional()));
+  opts = opts.append(gnu.optional("w", "width", opt_width()));
+  opts = opts.append(gnu.valued("", "endian", opt_endian()));
+  var letters: string = trad_letters();
+  var i: i32 = 0;
+  while (i < letters.len()) {
+    opts = opts.append(gnu.flag(slice_unchecked(letters, i, i + 1) + "", "", trad_base() + letters[i] as i32));
+    i = i + 1;
+  }
+  return opts;
+}
+
+function main(): i32 {
+  var argv: string[] = args();
+  var specs: Spec[] = [];
+  var base: i32 = 8;
+  var skip: u64 = 0 as u64;
+  var limit: u64 = 0 as u64;
+  var limited: boolean = false;
+  var dups: boolean = false;
+  var big: boolean = false;
+  var strings: boolean = false;
+  var min_string: i32 = 3;
+  var width: i32 = 16;
+  var width_given: boolean = false;
+  var modern: boolean = false;
+  var traditional: boolean = false;
+  var type_given: boolean = false;
+
+  var g: gnu.Getopt = gnu.getopt_new(argv, declare_options(), "od", help_text(), 1);
+  while (true) {
+    var r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    g = r.1;
+    match (r.0) {
+      Some(m) => {
+        if (m.id == opt_skip()) {
+          modern = true;
+          skip = count_arg(m.value, skip_name(argv));
+        } else if (m.id == opt_read()) {
+          modern = true;
+          limit = count_arg(m.value, read_name(argv));
+          limited = true;
+        } else if (m.id == opt_radix()) {
+          modern = true;
+          base = radix_of(m.value);
+        } else if (m.id == opt_format()) {
+          modern = true;
+          type_given = true;
+          specs = parse_type(m.value, specs);
+        } else if (m.id == opt_dups()) {
+          modern = true;
+          dups = true;
+        } else if (m.id == opt_strings()) {
+          modern = true;
+          strings = true;
+          if (m.has_value) {
+            min_string = count_arg(m.value, strings_name(argv)) as i32;
+          }
+        } else if (m.id == opt_width()) {
+          modern = true;
+          width_given = true;
+          width = 32;
+          if (m.has_value) {
+            var w: u64 = count_arg(m.value, width_name(argv));
+            if (w > 2147483647 as u64) {
+              gnu.error("memory exhausted");
+              exit(1);
+            }
+            width = w as i32;
+          }
+        } else if (m.id == opt_endian()) {
+          big = endian_of(m.value);
+        } else if (m.id == opt_traditional()) {
+          traditional = true;
+        } else if (m.id >= trad_base()) {
+          specs = specs.append(trad_spec(m.id - trad_base()));
+        }
+      },
+      None => {
+        break;
+      }
+    }
+  }
+
+  var operands: string[] = g.operands();
+  var files: string[] = [];
+  var label: u64 = 0 as u64;
+  var labelled: boolean = false;
+  if (!modern || traditional) {
+    var t: (string[], u64, boolean, u64) = old_operands(operands, traditional);
+    files = t.0;
+    skip = t.1;
+    labelled = t.2;
+    label = t.3;
+  } else {
+    files = operands;
+  }
+  if (files.len() == 0) {
+    files = files.append("-");
+  }
+
+  if (specs.len() == 0) {
+    specs = specs.append(new_spec(k_octal(), 2, false));
+  }
+  if (strings && type_given) {
+    gnu.error("no type may be specified when dumping strings");
+    exit(1);
+  }
+  var block: i32 = block_bytes(specs, width, width_given);
+  var wpb: i32 = 0;
+  var i: i32 = 0;
+  while (i < specs.len()) {
+    var w: i32 = (specs[i].fw + 1) * (block / specs[i].size);
+    if (w > wpb) {
+      wpb = w;
+    }
+    i = i + 1;
+  }
+  i = 0;
+  while (i < specs.len()) {
+    specs = specs.with(i, Spec { ...specs[i], pad: wpb - (specs[i].fw + 1) * (block / specs[i].size) });
+    i = i + 1;
+  }
+
+  var s: Settings = Settings { specs: specs, base: base, block: block, wpb: wpb, skip: skip, limit: limit, limited: limited, dups: dups, big: big, strings: strings, min_string: min_string, label: label, labelled: labelled };
+
+  var src: Src = src_ensure(src_new(files));
+  if (skip > 0 as u64) {
+    src = skip_input(src, skip);
+  }
+  var o: Out = Out { w: gnu.out_with(65536) };
+  if (strings) {
+    var ds: (Out, Src) = dump_strings(o, s, src);
+    o = ds.0;
+    src = ds.1;
+  } else {
+    var dd: (Out, Src) = dump(o, s, src);
+    o = dd.0;
+    src = dd.1;
+  }
+  gnu.finish(o.w);
+  if (!src.ok) {
+    return 1;
+  }
+  return 0;
+}
+
+// `-w`'s block, which is a multiple of every spec's unit: the least
+// common multiple, or the width asked for when that is a multiple of it.
+function block_bytes(specs: Spec[], width: i32, given: boolean): i32 {
+  var l: i32 = lcm_of(specs);
+  if (!given) {
+    if (l < 16) {
+      return l * (16 / l);
+    }
+    return l;
+  }
+  if (width % l == 0) {
+    return width;
+  }
+  gnu.error("warning: invalid width " + width.to_string() + "; using " + l.to_string() + " instead");
+  return l;
+}
+
+function radix_of(v: string): i32 {
+  var c: i32 = 0;
+  if (v.len() > 0) {
+    c = v[0] as i32;
+  }
+  if (c == 100) {
+    return 10;
+  }
+  if (c == 111) {
+    return 8;
+  }
+  if (c == 120) {
+    return 16;
+  }
+  if (c == 110) {
+    return radix_none();
+  }
+  // The byte goes in RAW, as GNU's %c does: `od -A ""` puts a NUL in
+  // the middle of its own diagnostic.
+  gnu.error("invalid output address radix '" + byte_str(c) + "'; it must be one character from [doxn]");
+  exit(1);
+  return 8;
+}
+
+function endian_of(v: string): boolean {
+  if (v == "big") {
+    return true;
+  }
+  if (v == "little") {
+    return false;
+  }
+  gnu.error("invalid argument " + gnu.quote(v) + " for '--endian'\nValid arguments are:\n  - 'little'\n  - 'big'");
+  gnu.try_help(1);
+  return false;
+}
+
+// The name a count diagnostic gives the option: the short letter when
+// that is how it was typed, the canonical long name when it was not.
+function option_name(argv: string[], short: string, long: string): string {
+  var i: i32 = 1;
+  while (i < argv.len()) {
+    var a: string = argv[i];
+    if (a.starts_with("--")) {
+      if (a.starts_with("--" + long) || long.starts_with(slice_unchecked(a, 2, arg_name_end(a)) + "")) {
+        return "--" + long;
+      }
+    } else if (gnu.is_option(a)) {
+      var k: i32 = 1;
+      while (k < a.len()) {
+        if (slice_unchecked(a, k, k + 1) + "" == short) {
+          return "-" + short;
+        }
+        k = k + 1;
+      }
+    }
+    i = i + 1;
+  }
+  return "-" + short;
+}
+
+function arg_name_end(a: string): i32 {
+  var eq: i32 = a.index_of("=");
+  if (eq >= 0) {
+    return eq;
+  }
+  return a.len();
+}
+
+function skip_name(argv: string[]): string {
+  return option_name(argv, "j", "skip-bytes");
+}
+
+function read_name(argv: string[]): string {
+  return option_name(argv, "N", "read-bytes");
+}
+
+function strings_name(argv: string[]): string {
+  return option_name(argv, "S", "strings");
+}
+
+function width_name(argv: string[]): string {
+  return option_name(argv, "w", "width");
+}
+
+// The second and third call formats: a file, then an offset, then (with
+// --traditional) a label. An operand that is not an offset stays a file
+// name, which is why `od f 4` and `od -t x1 f 4` differ.
+function old_operands(operands: string[], traditional: boolean): (string[], u64, boolean, u64) {
+  var files: string[] = [];
+  var skip: u64 = 0 as u64;
+  var label: u64 = 0 as u64;
+  var labelled: boolean = false;
+  var n: i32 = operands.len();
+  if (traditional) {
+    if (n == 1) {
+      var one: (u64, boolean) = parse_old_offset(operands[0]);
+      if (one.1) {
+        return (files, one.0, false, 0 as u64);
+      }
+      files = files.append(operands[0]);
+      return (files, 0 as u64, false, 0 as u64);
+    }
+    if (n == 2) {
+      var first: (u64, boolean) = parse_old_offset(operands[0]);
+      var second: (u64, boolean) = parse_old_offset(operands[1]);
+      if (first.1 && second.1) {
+        return (files, first.0, true, second.0);
+      }
+      if (second.1) {
+        files = files.append(operands[0]);
+        return (files, second.0, false, 0 as u64);
+      }
+    } else if (n == 3) {
+      var off: (u64, boolean) = parse_old_offset(operands[1]);
+      var lab: (u64, boolean) = parse_old_offset(operands[2]);
+      if (off.1 && lab.1) {
+        files = files.append(operands[0]);
+        return (files, off.0, true, lab.0);
+      }
+    }
+    if (n >= 2) {
+      gnu.error("extra operand " + gnu.quote(operands[1]));
+      gnu.die_usage("compatibility mode supports at most one file", 1);
+    }
+    return (files, 0 as u64, false, 0 as u64);
+  }
+  // Without --traditional the offset is taken only where the help says
+  // it is: a lone `+N`, or a second operand that starts with `+` or a
+  // digit.
+  if (n == 1 && operands[0].len() > 0 && operands[0][0] as i32 == 43) {
+    var one: (u64, boolean) = parse_old_offset(operands[0]);
+    if (one.1) {
+      return (files, one.0, false, 0 as u64);
+    }
+  }
+  if (n == 2 && operands[1].len() > 0) {
+    var c: i32 = operands[1][0] as i32;
+    if (c == 43 || gnu.is_digit(c)) {
+      var two: (u64, boolean) = parse_old_offset(operands[1]);
+      if (two.1) {
+        files = files.append(operands[0]);
+        return (files, two.0, false, 0 as u64);
+      }
+    }
+  }
+  return (operands, 0 as u64, false, 0 as u64);
+}

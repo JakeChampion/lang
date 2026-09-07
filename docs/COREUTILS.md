@@ -466,6 +466,32 @@ one, is answered by a byte scan, and everything else runs the Thompson
 simulation over every byte at several heap operations per position. An
 alternation has no literal prefix, so nothing filters it.
 
+`od`, 2026-09-07, Linux x86-64, the same 62 MiB file (and a 1 MiB one for
+the float row), GNU 9.4:
+
+| utility | workload | fern (ms) | gnu (ms) | gnu / fern |
+|---|---|---|---|---|
+| `od` | default (`-t o2`) | 6023 | 3252 | 0.54× |
+| `od` | `-t x1` | 5677 | 5588 | 0.98× |
+| `od` | `-t x1 -w64` | 4626 | 5394 | 1.17× |
+| `od` | `-t x8` | 4888 | 944 | 0.19× |
+| `od` | `-c` | 6405 | 5700 | 0.89× |
+| `od` | `-A n -t x1` | 4676 | 5635 | 1.21× |
+| `od` | `-S 4` | 568 | 515 | 0.91× |
+| `od` | `-t f8` of 1 MiB | 6685 | 160 | 0.02× |
+
+Reading it: od's cost splits into a per-FIELD part, which is close to
+GNU's, and a per-BLOCK part, which is not. The three `-t x1` rows are the
+same fields over 3.9 M, 977 K and 242 K blocks, and the ratio walks from
+0.98 to 1.17 as the block count falls; `-t x8` has two fields a block and
+is nearly all of the per-block cost. That cost is `u8[]`'s append, which
+allocates rather than growing, and a byte buffer handed to a function,
+which the callee's first write copies (#8498) — folding five call
+boundaries into one already took `-t x1` from 11.0 s to 5.7. The float row
+is a different gap: the shortest-round-trip search runs `lib/ld.fern`'s
+EXACT decimal expansion once per attempt, where glibc has a purpose-built
+dtoa. Both are #8828.
+
 Group B's fifth, 2026-09-07, Linux x86-64, the same 62 MiB / 8 000 000-line
 file, GNU 9.4 and uutils 0.0.24. The same 4-core container with other agents'
 builds on it — the σ is mostly theirs, and the rows within 20% of parity are
@@ -737,6 +763,30 @@ what GNU's `struct line` carries and what would close most of the `-k` rows;
 
 ## Known divergences
 
+**`od -t fL` prints a canonical value for an encoding x87 never
+produces.** The 80-bit extended format has bit patterns that are not
+values: an unnormal (a non-zero exponent with the stored integer bit
+clear) and a pseudo-denormal (a zero exponent with it set). od.fern reads
+the first as NaN, which is what the FPU answers and what GNU prints, and
+the second as glibc's `__mpn_extract_long_double` does — the 63-bit
+fraction, normalised, with the integer bit contributing nothing. That
+agrees with GNU on every pseudo-denormal measured except one whose only
+set bit IS the integer bit, where GNU prints the value the bit would have
+carried, and it can differ in the last place for the others because
+GNU's shortest-round-trip search cannot round-trip a value `strtold` will
+not produce. Real data does not contain these: a pseudo-denormal needs a
+zero exponent field under a set integer bit, which no computation writes.
+
+**`csplit -w0` and `od -w0` are not in the corpus.** GNU 9.4 aborts on
+`csplit -b` with a zero-width block — `bytes_per_block` comes out 0 and a
+later assertion fires, with no diagnostic and a SIGABRT — and od's own
+width handling past INT_MAX prints integer-overflow artefacts rather than
+answers (`od -w2147483648` runs the fields together, `od -w4294967296`
+dumps nothing). Reproducing a crash is not a behaviour worth matching,
+and Fern has no `abort()` to match it with; od refuses a width past
+INT_MAX with GNU's own `memory exhausted`, which is what GNU says for a
+width of a terabyte.
+
 **`tac` holds a non-seekable input in memory.** tac reads its input
 backwards, so a pipe has to be stored before the first record can be
 written. GNU spools it to an unlinked `$TMPDIR/cutmpXXXXXX` and keeps one
@@ -963,12 +1013,12 @@ groups are the order of work. Each sub-issue names its group.
   `sum` `md5sum` `sha1sum` `sha224sum` `sha256sum` `sha384sum` `sha512sum`
   `b2sum` `tee`. Done: `cat`, `tac`, `head`, `tail`, `wc`, `nl`, `cut`,
   `paste`, `join`, `comm`, `uniq`, `sort`, `tr`, `fold`, `expand`, `unexpand`,
-  `split`, `csplit`, `base32`, `base64`, `basenc` and the seven checksum
-  utilities. Needs a buffered stdout writer in `std/io_buffered` (its own
-  header already promises one) and a streaming stdin reader whose reads can
-  FAIL: every one of these reaches a read error through a directory operand,
-  and `Reader.read_chunk` answered None to EOF and to EISDIR alike until
-  #8700 gave it `Result[string, IoError]`. The hash
+  `split`, `csplit`, `od`, `base32`, `base64`, `basenc` and the seven
+  checksum utilities. Needs a buffered stdout writer in `std/io_buffered`
+  (its own header already promises one) and a streaming stdin reader whose
+  reads can FAIL: every one of these reaches a read error through a directory
+  operand, and `Reader.read_chunk` answered None to EOF and to EISDIR alike
+  until #8700 gave it `Result[string, IoError]`. The hash
   utilities have their digests: `std/crypto` streams MD5, SHA-1,
   SHA-224/256/384/512 and BLAKE2b (`h = h.update(chunk)` per `read_chunk`
   piece), and `std/hash` has cksum's CRC-32 and both sum(1) checksums with

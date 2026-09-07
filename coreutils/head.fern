@@ -126,11 +126,11 @@ function count_of(value: string, lines: boolean): Count {
   if (status == 0 && elide && !lines && r.0 > off_t_max()) {
     status = 2;
   }
-  if (status == 1) {
+  if (gnu.count_malformed(status)) {
     gnu.error("invalid number of " + noun + ": " + gnu.quote(body));
     exit(1);
   }
-  if (status >= 2) {
+  if (status != 0) {
     gnu.error("invalid number of " + noun + ": " + gnu.quote(body) + ": Value too large for defined data type");
     exit(1);
   }
