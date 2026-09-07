@@ -37,6 +37,7 @@ func corpusByUtil() map[string]func(*testing.T) []invocation {
 	return map[string]func(*testing.T) []invocation{
 		"[":        bracketCases,
 		"basename": basenameCases,
+		"comm":     commCases,
 		"dirname":  dirnameCases,
 		"echo":     echoCases,
 		"expr":     exprCases,
@@ -51,6 +52,7 @@ func corpusByUtil() map[string]func(*testing.T) []invocation {
 		"test":     testCases,
 		"true":     trueFalseCases,
 		"tsort":    tsortCases,
+		"uniq":     uniqCases,
 		"wc":       wcCases,
 		"yes":      yesCases,
 	}
@@ -176,8 +178,12 @@ func TestSelfHostCoreutilsParity(t *testing.T) {
 					// processes with no shared state; the two binary
 					// caches they read are mutex-guarded.
 					t.Parallel()
+					inv.prep(t)
 					want := inv.run(t, native, util)
+					wantFiles := inv.readArtifacts(t)
+					inv.prep(t)
 					got := inv.run(t, ours, util)
+					diffArtifacts(t, util, inv, wantFiles, inv.readArtifacts(t), "native", "selfhost")
 					if !bytes.Equal(want.stdout, got.stdout) {
 						t.Errorf("stdout differs for %s %s\n  native: %s\nselfhost: %s", util, quoteArgs(inv.args), quote(want.stdout), quote(got.stdout))
 					}

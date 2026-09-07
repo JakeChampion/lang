@@ -63,6 +63,18 @@ pub function error_out(o: io_buffered.BufWriter, msg: string): io_buffered.BufWr
   return w;
 }
 
+// `die(o, msg, status)` — a fatal diagnostic from a utility that
+// buffers stdout: the message with the buffer flushed ahead of it, then
+// gnulib's close_stdout, which is an atexit handler and so reports a
+// failed output stream on the way out of an error path too — `comm
+// --check-order` on a full disk says the order fault AND `write error`.
+// Never returns.
+pub function die(o: io_buffered.BufWriter, msg: string, status: i32): void {
+  var w: io_buffered.BufWriter = error_out(o, msg);
+  close_stdout_with(w, false, status);
+  exit(status);
+}
+
 // `try_help(status)` — the trailing line of every usage error, then
 // exit. Split out because a few utilities emit it with no preceding
 // message of their own.
@@ -465,8 +477,9 @@ function print_version(name: string, status: i32, fail_status: i32): void {
 // exactly as the C loop does, and `head -n5x --foo` complains about
 // the count before it ever sees `--foo`. Operands are permuted out
 // unless POSIXLY_CORRECT is set (or `in_order()` was asked for), in
-// which case the first operand ends the options. Every fault exits
-// through `die_usage` with the utility's usage status.
+// which case the first operand ends the options; `return_in_order()`
+// hands them back interleaved instead. Every fault exits through
+// `die_usage` with the utility's usage status.
 //
 // Short options: a cluster `-abc` is consumed byte by byte; an
 // unknown byte is `invalid option -- 'x'`. A required value is the
@@ -512,7 +525,7 @@ pub struct OptMatch { id: i32, value: string, has_value: boolean }
 // `Getopt` — the scan state. `cluster` is what is left of a short
 // cluster still being consumed (without its dash); `operands` are
 // the tokens permuted out so far.
-pub struct Getopt { argv: string[], opts: Opt[], name: string, help: string, status: i32, in_order: boolean, i: i32, cluster: string, operands: string[] }
+pub struct Getopt { argv: string[], opts: Opt[], name: string, help: string, status: i32, in_order: boolean, report_operands: boolean, i: i32, cluster: string, operands: string[] }
 
 // The ids `next()` reserves for the two standard options; they never
 // reach the caller because `next()` answers them itself.
@@ -538,7 +551,7 @@ pub function getopt_new(argv: string[], opts: Opt[], name: string, help_text: st
     None => {}
   }
   var empty: string[] = [];
-  return Getopt { argv: argv, opts: all, name: name, help: help_text, status: status, in_order: in_order, i: 1, cluster: "", operands: empty };
+  return Getopt { argv: argv, opts: all, name: name, help: help_text, status: status, in_order: in_order, report_operands: false, i: 1, cluster: "", operands: empty };
 }
 
 // `(g).in_order()` — stop at the first operand regardless of
@@ -546,6 +559,23 @@ pub function getopt_new(argv: string[], opts: Opt[], name: string, help_text: st
 // timeout(1) and the other command runners.
 pub function (g: Getopt) in_order(): Getopt {
   return Getopt { ...g, in_order: true };
+}
+
+// `operand_id()` — the id `next()` reports an operand under after
+// `return_in_order()`; the token is the match's value.
+pub function operand_id(): i32 {
+  return 0 - 3;
+}
+
+// `(g).return_in_order()` — the `-` optstring prefix of uniq(1): every
+// operand is handed back by `next()` as `operand_id()` in argv order
+// instead of being permuted out, and POSIXLY_CORRECT no longer ends the
+// scan, because glibc lets the prefix outrank it. A utility asks for
+// this when an operand's MEANING depends on what came before it — uniq's
+// `+N` is a skip-chars count until a file operand has been seen and a
+// file name after that — and stops the scan itself with `stop()`.
+pub function (g: Getopt) return_in_order(): Getopt {
+  return Getopt { ...g, report_operands: true, in_order: false };
 }
 
 // `(g).next()` — the next option, or None once the options are
@@ -562,6 +592,9 @@ pub function (g: Getopt) next(): (Option[OptMatch], Getopt) {
       return (None, take_rest(s));
     }
     if (!is_option(a)) {
+      if (s.report_operands) {
+        return (Some(OptMatch { id: operand_id(), value: a, has_value: true }), Getopt { ...s, i: s.i + 1 });
+      }
       if (s.in_order) {
         return (None, take_rest(s));
       }
