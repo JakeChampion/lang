@@ -51,7 +51,7 @@ costs a silent failure on the first target that lacks it.
 | `args` | `args` | argv, which exists only because something exec'd you |
 | `random` | `random_bytes`, `random_i32` | entropy: a syscall or a host import, never computed |
 | `fs` | `read_file`, `write_file`, `open_reader`, … | a filesystem |
-| `fsmode` | `write_file_exec`, `access` | permission bits on a filesystem entry |
+| `fsmode` | `write_file_exec`, `access`, `umask` | permission bits on a filesystem entry, and the mask a creation keeps them through |
 | `userid` | `geteuid`, `getegid` | a user the process can be |
 | `host` | `hostname` | a node name: uname(2) on Linux, kern.hostname on Darwin; `""` on WASI, which has none |
 | `cabi` | `__c_call0..4` (+ `_f32` / `_f64`) | a C calling convention to call a function pointer through |
@@ -114,6 +114,33 @@ is the same property from the other side, and a host with files and no
 permission model can answer neither. Putting it on `fs` would make the question
 askable on a target that has no bits to answer it from, which is the failure
 `fsmode` exists to convert into an E066.
+
+**`umask` is on `fsmode` too, and it is the one that is not a question.**
+`access` and `write_file_exec` ask and set the bits on one entry; `umask` sets
+the mask EVERY later creation is filtered through, which is the same property
+one level up. A host with files and no permission model has no such mask, and
+the constant that would stand in for it — 0, "every bit survives" — is the
+`geteuid` failure again: an answer that is wrong rather than absent. WASI has
+no `umask` in either preview, so E066 refuses it there.
+
+**The five directory and link primitives are plain `fs`, and WASI implements
+them.** `create_dir`, `remove_dir`, `create_link`, `create_symlink` and
+`read_link` are `path_create_directory`, `path_remove_directory`, `path_link`,
+`path_symlink` and `path_readlink` on preview 1, and the matching
+`descriptor.*-at` methods on preview 2 — so they are provided there rather than
+refused. Two things about that target are true and are worth stating rather
+than discovering:
+
+  - **`path_create_directory` carries no mode.** `create_dir`'s `mode`
+    argument is accepted and DROPPED on wasm, so the directory gets whatever
+    the host chooses. That is why `umask` is refused rather than made a no-op:
+    a program that clears the mask to apply a mode verbatim would otherwise
+    believe it had.
+  - **Every path resolves under the first preopen.** A path that escapes it —
+    an absolute one, or one that climbs out with `..` — is `ENOTCAPABLE` where
+    a kernel would resolve it. That bound is the whole `fs` family's, not
+    these five's, but a `ln` or `mkdir` operand is far likelier to be absolute
+    than a `read_file` one.
 
 **`userid` is a capability, where `isatty` is core** — and the pair is the
 clearest illustration of where that line runs. Both are host-shaped questions
