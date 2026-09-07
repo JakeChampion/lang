@@ -600,33 +600,36 @@ widened: GNU pays the dynamic loader AND `dlopen`s libcrypto before it hashes
 a hundred bytes.
 
 Group C's first four, 2026-09-07, Linux x86-64 (GNU coreutils 9.4; uutils
-0.0.24 as the Debian multi-call binary; other agents' builds were running on
-the same four cores, which is the whole of the σ):
+0.0.24 as the Debian multi-call binary):
 
 | utility | workload | fern (ms) | gnu (ms) | uutils (ms) | gnu / fern | uutils / fern |
 |---|---|---|---|---|---|---|
-| `uname` | uname | 0.61 ± 1.28 | 2.56 ± 5.88 | 4.01 ± 4.89 | 4.21× | 6.60× |
-| `uname` | uname -a | 0.91 ± 2.51 | 1.42 ± 1.02 | 2.43 ± 2.28 | 1.56× | 2.68× |
-| `arch` | arch | 0.32 ± 0.98 | 1.89 ± 2.20 | 3.17 ± 2.52 | 5.83× | 9.77× |
-| `nproc` | nproc | 0.36 ± 0.89 | 1.48 ± 1.40 | 2.77 ± 2.93 | 4.12× | 7.74× |
-| `nproc` | nproc --all | 0.35 ± 1.33 | 1.88 ± 3.70 | 2.10 ± 0.85 | 5.38× | 6.00× |
-| `nproc` | nproc --ignore=1 | 0.25 ± 0.60 | 1.46 ± 1.58 | 2.02 ± 0.65 | 5.86× | 8.11× |
-| `pwd` | pwd | 0.23 ± 0.53 | 1.07 ± 0.79 | 2.47 ± 2.56 | 4.75× | 10.93× |
-| `pwd` | pwd -L | 0.52 ± 1.39 | 2.61 ± 2.83 | 2.88 ± 1.83 | 5.05× | 5.57× |
+| `uname` | uname | 0.18 ± 0.36 | 0.99 ± 0.51 | 1.93 ± 0.48 | 5.60× | 10.89× |
+| `uname` | uname -a | 0.18 ± 0.36 | 1.03 ± 0.46 | 1.92 ± 0.77 | 5.58× | 10.44× |
+| `arch` | arch | 0.17 ± 0.36 | 1.09 ± 0.86 | 1.95 ± 0.65 | 6.46× | 11.52× |
+| `nproc` | nproc | 0.23 ± 0.38 | 1.22 ± 0.58 | 2.37 ± 0.78 | 5.27× | 10.23× |
+| `nproc` | nproc --all | 0.39 ± 0.61 | 1.27 ± 0.68 | 2.27 ± 0.71 | 3.26× | 5.81× |
+| `nproc` | nproc --ignore=1 | 0.35 ± 0.58 | 1.25 ± 0.73 | 2.48 ± 1.61 | 3.53× | 6.99× |
+| `pwd` | pwd | 0.21 ± 0.51 | 1.44 ± 1.36 | 2.05 ± 0.93 | 7.02× | 9.97× |
+| `pwd` | pwd -L | 0.29 ± 0.47 | 1.19 ± 0.56 | 2.18 ± 0.65 | 4.10× | 7.48× |
 
 All four are startup-bound, so the margin is the same static-binary one
 `true` and `echo` measure, and `strace -c` says where it comes from: each of
 these runs **four syscalls** — execve, the one the utility is about, write,
-exit_group — against GNU's 38, which is the dynamic loader before main. The
-one row that only reaches 1.56× is `uname -a`, where the extra work is
-Fern's: eight string concatenations to build the line against GNU's eight
-`fputs` into one stdio buffer. That is #8770 (a string append costs 8-16 ns
-whatever its size) showing up in a program short enough for eight of them to
-be a fifth of the run.
+exit_group — against GNU's 38, which is the dynamic loader before main.
 
-`nproc --all` is the only one whose syscall is not a single question: it
-reads the per-CPU directories out of /sys with one openat + getdents, which
-is what glibc's `_SC_NPROCESSORS_CONF` does, and still lands at 5.38×.
+Nothing else in the table is signal. Every Fern row is 0.17–0.39 ms and every
+difference between two of them is inside its own σ, `uname` against `uname -a`
+included: one uname(2) fills the whole record whichever fields are asked for,
+and one write puts them out.
+
+**At this scale the σ is the machine, not the program.** A table taken while
+another agent's bench has the same four cores comes back with σ larger than
+the mean and these eight ratios spread over a factor of five — enough to
+invent an explanation for a row that is not there. That is what the "only
+comparable within one run on one machine" above costs when it is ignored, and
+a sub-millisecond utility is where it costs the most.
+
 Group C's identity slice, 2026-09-07, Linux x86-64 (GNU coreutils 9.4;
 uutils 0.0.24 as the Debian multi-call binary). All five are
 startup-bound, so the whole table is one comparison made five ways:
