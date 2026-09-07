@@ -1,0 +1,42 @@
+// unlink.fern — GNU-compatible `unlink`.
+//
+//   unlink FILE   remove FILE with one `unlink(2)`
+//
+// The whole program: exactly one operand, no options of its own, and no
+// recursion, no prompt and no `-f`. A directory is EISDIR here rather than
+// being removed, which is the distinction that makes `unlink` different from
+// `rm` and the reason it exists.
+import "std/string";
+import "std/array";
+import "./lib/gnu";
+
+function help_text(): string {
+  var out: string = "";
+  out = out + "Usage: " + gnu.prog() + " FILE\n";
+  out = out + "  or:  " + gnu.prog() + " OPTION\n";
+  out = out + "Call the unlink function to remove the specified FILE.\n";
+  out = out + "\n";
+  out = out + "      --help        display this help and exit\n";
+  out = out + "      --version     output version information and exit\n";
+  return out;
+}
+
+function main(): i32 {
+  var operands: string[] = gnu.parse_standard_options_only(args(), "unlink", help_text(), 1);
+  if (operands.len() == 0) {
+    gnu.die_usage("missing operand", 1);
+  }
+  if (operands.len() > 1) {
+    gnu.die_usage("extra operand " + gnu.quote(operands[1]), 1);
+  }
+  match (remove_file(operands[0])) {
+    Ok(_) => {
+      return 0;
+    },
+    Err(e) => {
+      gnu.error("cannot unlink " + gnu.quotea(operands[0]) + ": " + gnu.io_error_text(e));
+      return 1;
+    }
+  }
+  return 0;
+}

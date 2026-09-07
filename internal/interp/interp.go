@@ -1072,6 +1072,12 @@ func New() *Interp {
 	i.Builtins["getcwd"] = &Builtin{Fn: builtinGetcwd}
 	i.Builtins["cpu_count"] = &Builtin{Fn: builtinCPUCount}
 	i.Builtins["remove_file"] = &Builtin{Fn: builtinRemoveFile}
+	i.Builtins["create_dir"] = &Builtin{Fn: builtinCreateDir}
+	i.Builtins["remove_dir"] = &Builtin{Fn: builtinRemoveDir}
+	i.Builtins["create_link"] = &Builtin{Fn: builtinCreateLink}
+	i.Builtins["create_symlink"] = &Builtin{Fn: builtinCreateSymlink}
+	i.Builtins["read_link"] = &Builtin{Fn: builtinReadLink}
+	i.Builtins["umask"] = &Builtin{Fn: builtinUmask}
 	i.Builtins["create_dir_all"] = &Builtin{Fn: builtinCreateDirAll}
 	i.Builtins["remove_dir_all"] = &Builtin{Fn: builtinRemoveDirAll}
 	i.Builtins["subprocess"] = &Builtin{Fn: builtinSubprocess}
@@ -2716,6 +2722,117 @@ func builtinRemoveFile(_ *Interp, args []Value) (Value, error) {
 		return resultErr(classifyIoError(string(path), err)), nil
 	}
 	return resultOk(unitValue()), nil
+}
+
+// pathArgs pulls `n` string arguments out of a builtin call, naming
+// the builtin in the error the way every other filesystem builtin here
+// does.
+func pathArgs(name string, args []Value, n int) ([]string, error) {
+	if len(args) != n {
+		return nil, fmt.Errorf("%s: expected %d arg(s), got %d", name, n, len(args))
+	}
+	out := make([]string, n)
+	for i, a := range args {
+		s, ok := a.(String)
+		if !ok {
+			return nil, fmt.Errorf("%s: expected string path, got %T", name, a)
+		}
+		out[i] = string(s)
+	}
+	return out, nil
+}
+
+// ioResult wraps a syscall outcome in Result[void, IoError] — the shape
+// every mutating filesystem builtin returns.
+func ioResult(path string, err error) Value {
+	if err != nil {
+		return resultErr(classifyIoError(path, err))
+	}
+	return resultOk(unitValue())
+}
+
+// builtinCreateDir creates ONE directory. Unlike create_dir_all,
+// EEXIST is an error and no parent is created: this is mkdir(2), and
+// `mkdir(1)` is entirely about the errno it returns.
+func builtinCreateDir(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("create_dir: expected 2 args, got %d", len(args))
+	}
+	path, ok := args[0].(String)
+	if !ok {
+		return nil, fmt.Errorf("create_dir: expected string path, got %T", args[0])
+	}
+	mode, ok := args[1].(Number)
+	if !ok {
+		return nil, fmt.Errorf("create_dir: expected number mode, got %T", args[1])
+	}
+	return ioResult(string(path), syscall.Mkdir(string(path), uint32(int(mode))&0o7777)), nil
+}
+
+// builtinRemoveDir removes one EMPTY directory. `os.Remove` would fall
+// back to unlink for a non-directory and report the wrong errno for
+// `rmdir(1)`, so this is rmdir(2) itself.
+func builtinRemoveDir(_ *Interp, args []Value) (Value, error) {
+	p, err := pathArgs("remove_dir", args, 1)
+	if err != nil {
+		return nil, err
+	}
+	return ioResult(p[0], syscall.Rmdir(p[0])), nil
+}
+
+// builtinCreateLink hard-links `path` to the existing `target`.
+func builtinCreateLink(_ *Interp, args []Value) (Value, error) {
+	p, err := pathArgs("create_link", args, 2)
+	if err != nil {
+		return nil, err
+	}
+	// The IoError names the link being created, which is the operand
+	// every diagnostic over this builtin reports.
+	return ioResult(p[1], syscall.Link(p[0], p[1])), nil
+}
+
+// builtinCreateSymlink writes a symbolic link at `path` holding the
+// bytes `target`, which is never resolved.
+func builtinCreateSymlink(_ *Interp, args []Value) (Value, error) {
+	p, err := pathArgs("create_symlink", args, 2)
+	if err != nil {
+		return nil, err
+	}
+	return ioResult(p[1], syscall.Symlink(p[0], p[1])), nil
+}
+
+// builtinReadLink reads the target a symbolic link holds. The kernel
+// truncates silently into a fixed buffer, so the buffer grows until the
+// answer fits inside it — a target can be as long as PATH_MAX.
+func builtinReadLink(_ *Interp, args []Value) (Value, error) {
+	p, err := pathArgs("read_link", args, 1)
+	if err != nil {
+		return nil, err
+	}
+	for size := 256; size <= 65536; size *= 2 {
+		buf := make([]byte, size)
+		n, err := syscall.Readlink(p[0], buf)
+		if err != nil {
+			return resultErr(classifyIoError(p[0], err)), nil
+		}
+		if n < size {
+			return resultOk(String(buf[:n])), nil
+		}
+	}
+	return resultErr(ioErrorOther(p[0], syscall.ENAMETOOLONG)), nil
+}
+
+// builtinUmask sets the process file-mode creation mask and answers the
+// previous one — umask(2), which has no read-only form.
+func builtinUmask(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("umask: expected 1 arg, got %d", len(args))
+	}
+	mask, ok := args[0].(Number)
+	if !ok {
+		return nil, fmt.Errorf("umask: expected number mask, got %T", args[0])
+	}
+	return Number(setUmask(int(mask) & 0o7777)), nil
 }
 
 // builtinCreateDirAll creates `path` and every missing parent.
