@@ -31,7 +31,7 @@ func paramCountedFor(t *testing.T, src, fn string) []bool {
 	if err != nil {
 		t.Fatalf("check: %v", err)
 	}
-	return inferParamCountedRetain(prog, info)[fn]
+	return inferParamCountedRetain(prog, info, nil)[fn]
 }
 
 func TestStringParamByteReadIsCounted(t *testing.T) {

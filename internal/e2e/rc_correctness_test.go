@@ -8618,6 +8618,120 @@ function main(): i32 {
 }`,
 	},
 	{
+		// #8785: a reassigned string PARAMETER is consumed-threaded, and the
+		// entry retain that pays for it is also what keeps the append honest.
+		// The incoming buffer is the CALLER's, so `a = a + s` inside the
+		// callee must copy — rc 2 sends __fern_str_append down its copy path
+		// — and the caller's own name must still read the string it passed.
+		//
+		// Every check here is a LENGTH, which is the observable the in-place
+		// grow moves: __fern_str_append restamps the length prefix of the
+		// buffer it grows, so a wrongly-admitted in-place append shows up as
+		// the caller's string having got longer. Drop the entry retain (or
+		// admit the param at rc 1 some other way) and `base` reads 23.
+		name: "str_param_append_leaves_the_callers_string_alone",
+		src: `
+function mk(n: i32): string {
+    var s: string = "";
+    var i: i32 = 0;
+    while (i < n) { s = s + "abcde"; i = i + 1; }
+    return s;
+}
+function bump(a: string, s: string): i32 {
+    a = a + s;
+    return a.len();
+}
+function main(): i32 {
+    var base: string = mk(4);
+    var pre: i32 = base.len();
+    var got: i32 = bump(base, "XYZ");
+    var post: i32 = base.len();
+    var again: i32 = bump(base, "XYZ");
+    if (pre != 20) { return 1; }
+    if (post != 20) { return 2; }
+    if (base.len() != 20) { return 3; }
+    if (got != 23 || again != 23) { return 4; }
+    return __rc_underflow_count();
+}`,
+	},
+	{
+		// The same admission reached through a STRUCT FIELD and a second live
+		// name for one buffer. The argument is `b.buf`, so the reference the
+		// callee sees is held by the box, not by a local the analysis can see
+		// dying; and `alias` names the same buffer across the call. A field
+		// read before and after the call must agree, and so must the alias.
+		//
+		// The loop is what makes it a regression net rather than a one-shot:
+		// each iteration re-enters the callee with the field at whatever
+		// count the previous one left, so a retain that leaks or a release
+		// that over-fires drifts into a wrong length or an underflow.
+		name: "str_param_append_through_a_field_and_an_alias",
+		src: `
+struct Buf { buf: string, n: i32 }
+function mk(n: i32): string {
+    var s: string = "";
+    var i: i32 = 0;
+    while (i < n) { s = s + "abcde"; i = i + 1; }
+    return s;
+}
+function bump(a: string, s: string): i32 {
+    a = a + s;
+    a = a + s;
+    return a.len();
+}
+function main(): i32 {
+    var b: Buf = Buf { buf: mk(4), n: 0 };
+    var alias: string = b.buf;
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 8) {
+        var pre: i32 = b.buf.len();
+        acc = acc + bump(b.buf, "XYZ");
+        if (b.buf.len() != pre) { return 1; }
+        if (alias.len() != 20) { return 2; }
+        acc = acc + bump(alias, "XY");
+        if (b.buf.len() != 20) { return 3; }
+        i = i + 1;
+    }
+    if (acc != 8 * (26 + 24)) { return 4; }
+    return __rc_underflow_count();
+}`,
+	},
+	{
+		// The reassignment with no append in it at all: the RHS is a fresh
+		// concat of the OTHER parameter, so nothing can grow in place and the
+		// only question is who owns the value the slot was overwritten with.
+		// The callee does, and must release it — that is the promotion's leak
+		// half. Returning the param on one path and not the other keeps the
+		// exit sweep's move-on-return exclusion honest at the same time.
+		name: "str_param_reassigned_to_a_fresh_value",
+		src: `
+function mk(n: i32): string {
+    var s: string = "";
+    var i: i32 = 0;
+    while (i < n) { s = s + "abcd"; i = i + 1; }
+    return s;
+}
+function pick(a: string, s: string, keep: boolean): string {
+    a = s + s;
+    if (keep) { return a; }
+    return "fixed";
+}
+function main(): i32 {
+    var base: string = mk(4);
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 64) {
+        acc = acc + pick(base, "12345678", true).len();
+        acc = acc + pick(base, "12345678", false).len();
+        if (base.len() != 16) { return 1; }
+        i = i + 1;
+    }
+    if (acc != 64 * (16 + 5)) { return 2; }
+    return __rc_underflow_count();
+}`,
+	},
+	{
 		// A fresh temp handed to a PAIR-FORM callee whose payloads are all
 		// scalars: the (tag, payload) result cannot be the argument, so the
 		// caller releases it after the call like any borrowed arg temp. Both

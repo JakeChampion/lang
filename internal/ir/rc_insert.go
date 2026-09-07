@@ -91,10 +91,22 @@ func (b *builder) insertConsumedParamEntryIncs(at int, pos ast.Position) {
 		if !ok {
 			continue
 		}
-		incs = append(incs,
-			Op{Kind: OpLoadLocal, I32: slot, Pos: pos},
-			Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1, Pos: pos},
-			Op{Kind: OpDrop, Pos: pos})
+		incs = append(incs, Op{Kind: OpLoadLocal, I32: slot, Pos: pos})
+		if _, isStr := p.Type.(ast.StringType); isStr && b.twoWordStrings() {
+			// Two-word ABI (wasm + arm64 TwoWordOverride): OpLoadLocal fans
+			// the slot out to (data, len), so the single-word __fern_rc_inc
+			// would pop the LENGTH and dereference it. __fern_str_inc takes
+			// both words and gives both back — it is the retain that
+			// tag-checks the inline bit — so the discard is TWO drops, not
+			// one. A single drop leaves a stray word on the operand stack and
+			// every later slot in the frame reads one position off.
+			incs = append(incs,
+				Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_inc", Width: ResAddr, I32: 1, Pos: pos},
+				Op{Kind: OpDrop, Pos: pos})
+		} else {
+			incs = append(incs, Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1, Pos: pos})
+		}
+		incs = append(incs, Op{Kind: OpDrop, Pos: pos})
 	}
 	if len(incs) == 0 {
 		return

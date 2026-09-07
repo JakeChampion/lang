@@ -84,12 +84,48 @@ func TestOwnStringParamSelfAppendsInPlace(t *testing.T) {
 	}
 }
 
-// TestBorrowedStringParamStillCopies: a PLAIN parameter's buffer belongs to
-// the caller, which reads it back after the call, so it may neither be grown
-// in place nor released here. This is the boundary the fix must not cross —
-// and the row of #8785 that stays open.
-func TestBorrowedStringParamStillCopies(t *testing.T) {
+// TestReassignedStringParamMatchesTheOwnShape: a plain parameter the body
+// REASSIGNS is consumed-threaded (#8785), so its ops are the `own` ones above
+// — the append in place and the exit release — and what keeps that sound is
+// the balanced ENTRY RETAIN, which `own` does not take. The retain puts the
+// incoming buffer at rc >= 2, so the first append of every call takes
+// __fern_str_append's copy path and the caller's string is not lengthened
+// under it; the reference the exit release spends is the retain's, not the
+// caller's. rcCorpus's str_param_append_leaves_the_callers_string_alone is
+// the runtime half — it reads the caller's length either side of the call.
+func TestReassignedStringParamMatchesTheOwnShape(t *testing.T) {
 	const src = `function put(a: string, s: string): string { a = a + s; return a; }
+function main(): i32 {
+    var acc: string = "";
+    var i: i32 = 0;
+    while (i < 3) { acc = put(acc, "12345678"); i = i + 1; }
+    return acc.len();
+}`
+	wantPutDecs := map[string]int{"wasm": 1, "x86-64": 1, "arm64": 2}
+	twoWord := map[string]bool{"wasm": true, "x86-64": false, "arm64": true}
+	for abi, prog := range ownStrParamLowerings(t, src) {
+		if got := countStringDecs(prog, "put"); got != wantPutDecs[abi] {
+			t.Errorf("%s: string decs in put = %d, want %d (the promoted param's exit release)", abi, got, wantPutDecs[abi])
+		}
+		if got := paramEntryRetains(prog, "put", 0, twoWord[abi]); got != 1 {
+			t.Errorf("%s: balanced entry retains on put's param 0 = %d, want 1 — without it the append grows the CALLER's buffer", abi, got)
+		}
+	}
+	progs := ownStrParamLowerings(t, src)
+	for _, abi := range []string{"wasm", "x86-64"} {
+		if got := countFnCallDirect(progs[abi], "put", "__fern_str_append"); got != 1 {
+			t.Errorf("%s: __fern_str_append calls in put = %d, want 1", abi, got)
+		}
+	}
+}
+
+// TestBorrowedStringParamStillCopies: a parameter the body only READS is
+// borrowed — its buffer belongs to the caller, which reads it back after the
+// call — so it may neither be grown in place nor released here. That is the
+// boundary the promotion above does not cross: no reassignment, no entry
+// retain, no ownership.
+func TestBorrowedStringParamStillCopies(t *testing.T) {
+	const src = `function put(a: string, s: string): string { return a + s; }
 function main(): i32 {
     var acc: string = "";
     var i: i32 = 0;

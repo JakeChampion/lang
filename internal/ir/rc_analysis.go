@@ -1051,11 +1051,11 @@ func computeReadOnlyComparators(info *checker.Info) map[string]bool {
 // Conservative by construction: a parameter qualifies only when EVERY
 // occurrence is positively classified by its tier — a counted store, a
 // non-retaining read (a pure-read builtin, a scalar projection, a concat
-// operand, an append receiver), a counted-seed binding, or an argument to a
-// position the summary has already credited (the fixpoint below). One
-// occurrence outside those — a bare `return name`, a reassignment, an
-// uncounted sink — and the summary is false and the caller keeps the
-// conservative taint.
+// operand, an append receiver), a WRITE of the parameter's own slot, a
+// counted-seed binding, or an argument to a position the summary has already
+// credited (the fixpoint below). One occurrence outside those — a bare
+// `return name` from a borrowed parameter, an uncounted sink — and the
+// summary is false and the caller keeps the conservative taint.
 //
 // A variant-constructor payload is a counted store too — emitEnumNew inc's an
 // aliased payload under the same predicate a StructLit field takes — so
@@ -1187,12 +1187,15 @@ func shadowingNames(fn *ast.FuncDecl, info *checker.Info) map[string]bool {
 	return out
 }
 
-func inferParamCountedRetain(prog *ast.Program, info *checker.Info) map[string][]bool {
+func inferParamCountedRetain(prog *ast.Program, info *checker.Info, trmcFuncs map[string]bool) map[string][]bool {
 	// Precompute the shadowed-name set per function once (match / match-expr
-	// bindings that reuse a parameter name).
+	// bindings that reuse a parameter name), and the consumed-threaded string
+	// params whose entry retain makes a bare `return p` the frame's own
+	// reference rather than the caller's.
 	type fnCtx struct {
 		shadowed    map[string]bool
 		ctorCounted func(*ast.Call) bool
+		consumedStr map[string]bool
 	}
 	ctxs := make(map[*ast.FuncDecl]fnCtx, len(prog.Funcs))
 	out := newSummaryTable[[]bool](len(prog.Funcs))
@@ -1201,7 +1204,7 @@ func inferParamCountedRetain(prog *ast.Program, info *checker.Info) map[string][
 			continue
 		}
 		sh := shadowingNames(fn, info)
-		ctxs[fn] = fnCtx{sh, variantCtorCountedIn(fn, info, sh)}
+		ctxs[fn] = fnCtx{sh, variantCtorCountedIn(fn, info, sh), consumedStringParams(fn, info, trmcFuncs)}
 		out.vals[fn.Name] = make([]bool, len(fn.Params))
 	}
 	// Least-fixpoint: struct-param crediting consults the summary for the
@@ -1217,7 +1220,7 @@ func inferParamCountedRetain(prog *ast.Program, info *checker.Info) map[string][
 		if !ok {
 			return false
 		}
-		sh, ctorCounted := c.shadowed, c.ctorCounted
+		sh, ctorCounted, consumedStr := c.shadowed, c.ctorCounted, c.consumedStr
 		flags := make([]bool, len(fn.Params))
 		for i, p := range fn.Params {
 			// A parameter carrying no heap (i32 / bool / f64 / …) can never
@@ -1236,7 +1239,7 @@ func inferParamCountedRetain(prog *ast.Program, info *checker.Info) map[string][
 			}
 			switch pt := p.Type.(type) {
 			case ast.StringType:
-				flags[i] = stringParamCounted(fn, p.Name, out, ctorCounted)
+				flags[i] = stringParamCounted(fn, p.Name, out, ctorCounted, consumedStr[p.Name])
 			case ast.ArrayType:
 				flags[i] = arrayParamCounted(fn, p.Name, pt, info, out, ctorCounted)
 			case ast.StructType:
@@ -1596,7 +1599,44 @@ func syncByteCopyRoots(call *ast.Call) []*ast.Ident {
 	return out
 }
 
-func stringParamCounted(fn *ast.FuncDecl, pn string, summary *summaryTable[[]bool], ctorCounted func(*ast.Call) bool) bool {
+// consumedStringParams names the STRING parameters computeConsumedParams
+// promotes to consumed-threaded in `fn`. It is a whole-program PROJECTION of
+// that per-function analysis rather than a duplicate, for the same reason
+// consumedArrayParamPositions is one: ownedByDefaultShape has no StringType
+// arm, so paramOwnedByDefault is always false, paramVerdict is always
+// NotOwnedType (never Borrowed), and the owned-shape skip and the verdict
+// gate it guards cannot fire — leaving exactly the conditions below.
+// TestConsumedStringParamsMatchTheLoweringVerdict pins the agreement.
+func consumedStringParams(fn *ast.FuncDecl, info *checker.Info, trmcFuncs map[string]bool) map[string]bool {
+	out := map[string]bool{}
+	if !ast.RcFreeEnabled || fn.Body == nil || trmcFuncs[fn.Name] {
+		return out
+	}
+	reassigned := map[string]bool{}
+	ast.Walk(fn.Body, func(n ast.Node) bool {
+		if a, ok := n.(*ast.Assign); ok {
+			if id, ok := a.Target.(*ast.Ident); ok {
+				reassigned[id.Name] = true
+			}
+		}
+		return true
+	})
+	for _, p := range fn.Params {
+		if _, isStr := p.Type.(ast.StringType); !isStr {
+			continue
+		}
+		if p.Own || !reassigned[p.Name] || !deepDropWired(info, p.Type) {
+			continue
+		}
+		out[p.Name] = true
+	}
+	return out
+}
+
+// stringParamCounted classifies string parameter `pn`. `consumed` says the
+// parameter is consumed-threaded (consumedStringParams), which is what lets a
+// bare `return pn` count as safe.
+func stringParamCounted(fn *ast.FuncDecl, pn string, summary *summaryTable[[]bool], ctorCounted func(*ast.Call) bool, consumed bool) bool {
 	safe := map[*ast.Ident]bool{}
 	seedOK := countedSeedOccurrences(fn)
 	mark := func(e ast.Expr) {
@@ -1613,6 +1653,30 @@ func stringParamCounted(fn *ast.FuncDecl, pn string, summary *summaryTable[[]boo
 				if seedOK[x] {
 					safe[x] = true
 				}
+			}
+		case *ast.Assign:
+			// The parameter slot as an assignment DESTINATION. A write
+			// retains nothing: it names the slot, not the buffer, and the
+			// reference it discards is the frame's own — a reassigned string
+			// param is consumed-threaded, so the entry retain gave the frame
+			// a count and the overwrite dec spends exactly that one. The
+			// caller's reference is untouched either way, which is the whole
+			// question this summary answers.
+			//
+			// Without the arm every reassigning callee refused, and through
+			// computeFreeEligible's native string-arg taint the refusal
+			// reached the CALLER: `bump(base, "XYZ")` on `bump(a, s) { a = a
+			// + s; … }` stranded base's whole buffer, one per local, with no
+			// dependence on how often it was called.
+			mark(x.Target)
+		case *ast.Return:
+			// `return p` on a CONSUMED-THREADED param hands out the frame's
+			// OWN reference: the entry retain is the count move-on-return
+			// transfers to the result, and the sweep then skips the slot. A
+			// borrowed param returned bare has no such count and keeps its
+			// refusal — that is the shape the tier's conservatism is for.
+			if consumed {
+				mark(x.Value)
 			}
 		case *ast.StructLit:
 			for _, f := range x.Fields {
@@ -2306,8 +2370,21 @@ func (b *builder) computeConsumedParams() map[string]bool {
 		// so every append in the function — and in everything it threads the
 		// buffer through — would copy the whole buffer. See
 		// emitConsumedArrayOverwriteDec.
+		//
+		// STRINGS take the entry retain, not the flag, and the rc 2 it leaves
+		// is required rather than a cost. The incoming buffer is the caller's,
+		// so __fern_str_append must NOT grow it in place — `f(a) { a = a + s; }`
+		// would lengthen a string the caller still reads. rc 2 sends the first
+		// append down the copy path; every later one in the body sees the
+		// replacement at rc 1 and grows in place, which is the
+		// accumulate-in-the-callee shape (#8785).
+		//
+		// Without the promotion a reassigned string param left the frame owning
+		// a buffer nothing released: the sweep skips borrowed params, so one
+		// heap string leaked per call, unbounded and with no append involved
+		// (`a = s + s` leaks the same way).
 		switch p.Type.(type) {
-		case ast.StructType, ast.TupleType, ast.EnumType, ast.ArrayType:
+		case ast.StructType, ast.TupleType, ast.EnumType, ast.ArrayType, ast.StringType:
 		default:
 			continue
 		}

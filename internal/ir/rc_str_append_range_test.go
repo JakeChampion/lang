@@ -137,11 +137,14 @@ function main(): i32 { return build("abcdef"); }`
 	}
 }
 
-// TestLowerStrAppendRangeSkipsBorrowedParam: a borrowed string parameter's
-// buffer is the caller's still-live value, so the accumulator is not the
-// callee's to grow — and with no in-place append there is nothing to fuse
-// into.
-func TestLowerStrAppendRangeSkipsBorrowedParam(t *testing.T) {
+// TestLowerStrAppendRangeFusesConsumedParam: the fusion follows the append it
+// fuses into. A string parameter the body reassigns is consumed-threaded
+// (#8785), so its accumulator grows in place and the slice is read straight
+// out of the source — no materialised slice buffer at all. The entry retain is
+// what makes that sound (see TestLowerStrSelfAppendThreadsConsumedParam): the
+// incoming buffer is at rc >= 2, so the first append copies and every buffer
+// grown in place afterwards is this frame's own.
+func TestLowerStrAppendRangeFusesConsumedParam(t *testing.T) {
 	prev := ast.RcFreeEnabled
 	ast.RcFreeEnabled = true
 	defer func() { ast.RcFreeEnabled = prev }()
@@ -158,11 +161,14 @@ function main(): i32 { return grow("a", "bcd", 3).len(); }`
 
 	for _, ptrW := range []int{4, 8} {
 		prog := lowerSourceWith(t, src, ptrW)
-		if got := countFnCallDirect(prog, "grow", "__fern_str_append_range"); got != 0 {
-			t.Errorf("ptrW=%d: __fern_str_append_range calls in grow = %d, want 0", ptrW, got)
+		if got := countFnCallDirect(prog, "grow", "__fern_str_append_range"); got != 1 {
+			t.Errorf("ptrW=%d: __fern_str_append_range calls in grow = %d, want 1", ptrW, got)
 		}
-		if got := countFnCallDirect(prog, "grow", "__str_slice"); got != 1 {
-			t.Errorf("ptrW=%d: __str_slice calls in grow = %d, want 1", ptrW, got)
+		if got := countFnCallDirect(prog, "grow", "__str_slice"); got != 0 {
+			t.Errorf("ptrW=%d: __str_slice calls in grow = %d, want 0 (the append reads the range out of `s`)", ptrW, got)
+		}
+		if got := paramEntryRetains(prog, "grow", 0, ptrW == 4); got != 1 {
+			t.Errorf("ptrW=%d: balanced entry retains on acc = %d, want 1", ptrW, got)
 		}
 	}
 }

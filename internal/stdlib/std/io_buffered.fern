@@ -115,10 +115,14 @@ pub function (w: BytesWriter) reset(): BytesWriter {
 // found at the next write or at close.
 //
 // The buffer is grown inside the struct literal (`{ ...b, buf: b.buf
-// + s }`) because E048 leaves no other way to write it, and that shape
-// grows in place when the frame owns the box (#8785). Reading the field
-// into a local first shares the buffer between the local and the field,
-// and every append then copies the whole of it.
+// + s }`) because E048 leaves no other way to write it. That shape
+// grows the buffer in PLACE, since borrow inference gives the receiver
+// an owned verdict and the frame therefore owns the box being updated
+// — the admission #8790 opened. So a write costs its own bytes, not
+// the buffered prefix: 2M 8-byte writes through a 4 KiB writer take
+// 0.14 s, and the time does not move with `cap`.
+// Reading the field into a local first shares the buffer between the local
+// and the field, and every append then copies the whole of it.
 pub struct BufWriter { w: Writer, buf: string, cap: i32, err: Option[IoError] }
 
 // `buf_writer_new(w, cap)` — buffer `w` with a `cap`-byte threshold.
