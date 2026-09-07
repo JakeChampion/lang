@@ -8146,6 +8146,9 @@ pub function builtin_function_names(): string[] {
         // filesystem
         "read_file", "read_file_bytes", "write_file", "write_file_exec", "read_dir", "remove_dir_all", "remove_file",
         "create_dir_all", "stat", "lstat", "access", "temp_dir",
+        // the single-step directory and link primitives, each one syscall
+        // with nothing folded away
+        "create_dir", "remove_dir", "create_link", "create_symlink", "read_link", "umask",
         // the process's own effective ids, which `test -O` / `-G` compare a
         // file's owner against, and the machine's node name
         "geteuid", "getegid", "hostname",

@@ -159,6 +159,15 @@ var linuxDarwinSysno = map[string][2]int{
 	// __fern_remove_dir_all / __fern_temp_dir.
 	"unlinkat": {35, 472},
 	"mkdirat":  {34, 475},
+	// linkat(2) / symlinkat(2) / readlinkat(2) — Linux 37 / 36 / 78,
+	// Darwin BSD 471 / 474 / 473. Identical argument shapes on both;
+	// only AT_FDCWD differs and `atFdcwd` already carries that.
+	"linkat":     {37, 471},
+	"symlinkat":  {36, 474},
+	"readlinkat": {78, 473},
+	// umask(2) — Linux asm-generic 166, Darwin BSD 60. One argument,
+	// the previous mask returned, and no error return on either.
+	"umask": {166, 60},
 	// fchmod(2) — Linux 52, Darwin BSD 124. Backs write_file_exec's
 	// mode fixup: openat's mode argument applies only on CREATE, so
 	// writing over a stale output would leave the old mode (#6133).
@@ -505,7 +514,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesReadFile || g.usesReadFileBytes || g.usesWriteFile || g.usesWriteFileExec ||
 		g.usesRemoveFile || g.usesTempDir || g.usesReadDir || g.usesStat || g.usesLstat ||
 		g.usesFdStat || g.usesReaderSeek ||
-		g.usesAccess || g.usesRemoveDirAll || g.usesCreateDirAll {
+		g.usesAccess || g.usesRemoveDirAll || g.usesCreateDirAll ||
+		g.usesCreateDir || g.usesRemoveDir || g.usesCreateLink ||
+		g.usesCreateSymlink || g.usesReadLink {
 		g.usesAlloc = true
 		g.usesMemcpy = true
 		g.usesIoError = true
@@ -800,6 +811,24 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	}
 	if g.usesCreateDirAll {
 		g.emitCreateDirAllRuntime()
+	}
+	if g.usesCreateDir {
+		g.emitCreateDirRuntime()
+	}
+	if g.usesRemoveDir {
+		g.emitRemoveDirRuntime()
+	}
+	if g.usesCreateLink {
+		g.emitCreateLinkRuntime()
+	}
+	if g.usesCreateSymlink {
+		g.emitCreateSymlinkRuntime()
+	}
+	if g.usesReadLink {
+		g.emitReadLinkRuntime()
+	}
+	if g.usesUmask {
+		g.emitUmaskRuntime()
 	}
 	if g.usesTempDir {
 		g.emitTempDirRuntime()
@@ -9496,6 +9525,242 @@ func (g *generator) emitRemoveFileRuntime() {
 	g.line(".ltorg")
 }
 
+// emitPathOpRuntime writes one of the single-syscall path helpers:
+// NUL-terminate the one or two path operands, issue `name`'s syscall,
+// and answer Result[void, IoError] — Ok = 16-byte box tag=0 with the
+// unit payload @+8, Err = tag=1 with the IoError box @+8, the shapes
+// remove_file already uses.
+//
+// `args` places the syscall arguments with the NUL-terminated copies in
+// x21 (the first path) and x23 (the second) and the mode in x24. The
+// IoError names the operand in (x25, x26), which for the two-operand
+// helpers is the SECOND one: `ln` and `link` both report the link they
+// failed to create, not the file it was to point at.
+//
+// (x0, x1) = the first path; (x2, x3) = the second, or x2 = the mode.
+func (g *generator) emitPathOpRuntime(name, tag, sysname string, paths int, mode bool, args func()) {
+	g.line("")
+	g.line(".global " + name)
+	g.typeDirective(name)
+	g.label(name)
+	// Frame: fp/lr (16) + x19..x26 (64) + 16-byte inline-spill
+	// scratch at [x29+80] = 96.
+	g.emit("stp x29, x30, [sp, #-96]!")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	g.emit("stp x21, x22, [sp, #32]")
+	g.emit("stp x23, x24, [sp, #48]")
+	g.emit("stp x25, x26, [sp, #64]")
+	g.emit("mov x19, x0") // first path_data
+	g.emit("mov x20, x1") // first path_len
+	if paths == 2 {
+		g.emit("mov x25, x2") // second path_data
+		g.emit("mov x26, x3") // second path_len
+	} else {
+		g.emit("mov x25, x0")
+		g.emit("mov x26, x1")
+		if mode {
+			g.emit("mov x24, x2")
+		}
+	}
+	g.emitStrDataPtr2W("x21", "x19", "x20", 80)
+	g.emitNulTermPath2W("x21", "x21", "x20")
+	if paths == 2 {
+		g.emitStrDataPtr2W("x23", "x25", "x26", 80)
+		g.emitNulTermPath2W("x23", "x23", "x26")
+	}
+	args()
+	g.syscall(sysname)
+	g.emit("tbnz x0, #63, .L%s_err", tag)
+	// Result.Ok(()): 16-byte box, tag=0, unit payload @+8.
+	g.emit("mov x0, #16")
+	g.emit("bl __fern_alloc_rc1")
+	g.emit("str wzr, [x0]")     // tag = 0 (Ok)
+	g.emit("str xzr, [x0, #8]") // unit payload
+	g.emit("b .L%s_return", tag)
+
+	g.label(fmt.Sprintf(".L%s_err", tag))
+	g.emit("neg x22, x0") // errno
+	g.emit("mov x0, x22")
+	g.emit("mov x1, x25")
+	g.emit("mov x2, x26")
+	g.emit("bl __fern_io_error")
+	g.emit("mov x19, x0") // stash the IoError box across the alloc
+	g.emit("mov x0, #16")
+	g.emit("bl __fern_alloc_rc1")
+	g.emit("mov w1, #1")
+	g.emit("str w1, [x0]") // tag = 1 (Err)
+	g.emit("str x19, [x0, #8]")
+
+	g.label(fmt.Sprintf(".L%s_return", tag))
+	g.emit("ldp x25, x26, [sp, #64]")
+	g.emit("ldp x23, x24, [sp, #48]")
+	g.emit("ldp x21, x22, [sp, #32]")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #96")
+	g.emit("ret")
+	g.sizeDirective(name)
+	g.line(".ltorg")
+}
+
+// emitCreateDirRuntime emits `__fern_create_dir(path, mode)` —
+// mkdirat(AT_FDCWD, path, mode). One directory, no parents, and EEXIST
+// reaches the caller: that is the whole difference from
+// __fern_create_dir_all.
+func (g *generator) emitCreateDirRuntime() {
+	g.emitPathOpRuntime("__fern_create_dir", "cdir", "mkdirat", 1, true, func() {
+		g.atFdcwd("x0")
+		g.emit("mov x1, x21")
+		g.emit("and x2, x24, #4095")
+	})
+}
+
+// emitRemoveDirRuntime emits `__fern_remove_dir(path)` —
+// unlinkat(AT_FDCWD, path, AT_REMOVEDIR), which is rmdir(2). A
+// non-empty directory is ENOTEMPTY and reaches the caller.
+func (g *generator) emitRemoveDirRuntime() {
+	g.emitPathOpRuntime("__fern_remove_dir", "rdir", "unlinkat", 1, false, func() {
+		g.atFdcwd("x0")
+		g.emit("mov x1, x21")
+		g.emit("mov x2, #%d", g.atRemoveDir())
+	})
+}
+
+// emitCreateLinkRuntime emits `__fern_create_link(target, path)` —
+// linkat(AT_FDCWD, target, AT_FDCWD, path, 0). No AT_SYMLINK_FOLLOW, so
+// a symlink named as the target is linked to itself, which is what
+// link(1) and ln(1) without -L do.
+func (g *generator) emitCreateLinkRuntime() {
+	g.emitPathOpRuntime("__fern_create_link", "clink", "linkat", 2, false, func() {
+		g.atFdcwd("x0")
+		g.emit("mov x1, x21")
+		g.atFdcwd("x2")
+		g.emit("mov x3, x23")
+		g.emit("mov x4, #0")
+	})
+}
+
+// emitCreateSymlinkRuntime emits `__fern_create_symlink(target, path)` —
+// symlinkat(target, AT_FDCWD, path). `target` is stored verbatim and
+// never resolved.
+func (g *generator) emitCreateSymlinkRuntime() {
+	g.emitPathOpRuntime("__fern_create_symlink", "csym", "symlinkat", 2, false, func() {
+		g.emit("mov x0, x21")
+		g.atFdcwd("x1")
+		g.emit("mov x2, x23")
+	})
+}
+
+// atRemoveDir is AT_REMOVEDIR: 0x200 on Linux, 0x80 on Darwin. It is
+// the flag that turns unlinkat into rmdir.
+func (g *generator) atRemoveDir() int {
+	if g.darwin {
+		return 0x80
+	}
+	return 0x200
+}
+
+// emitReadLinkRuntime emits `__fern_read_link(path) → Result[string,
+// IoError]` — readlinkat(AT_FDCWD, path, buf, 4096).
+//
+// readlinkat truncates silently into a buffer that is too small and
+// reports no error, so the answer is only trustworthy when it is SHORTER
+// than the buffer. PATH_MAX is the kernel's own bound on a stored link
+// target, so a full buffer means the target is longer than any path can
+// be and the honest answer is ENAMETOOLONG rather than a truncated one.
+func (g *generator) emitReadLinkRuntime() {
+	g.line("")
+	g.line(".global __fern_read_link")
+	g.typeDirective("__fern_read_link")
+	g.label("__fern_read_link")
+	// Frame: fp/lr (16) + x19..x24 (48) + 16-byte inline-spill
+	// scratch at [x29+80] + 4096-byte target buffer at [x29+96].
+	// Two subs: an aarch64 immediate is 12 bits, optionally shifted by
+	// 12, so 4192 is not one instruction's operand.
+	g.emit("sub sp, sp, #4096")
+	g.emit("sub sp, sp, #96")
+	g.emit("stp x29, x30, [sp]")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	g.emit("stp x21, x22, [sp, #32]")
+	g.emit("stp x23, x24, [sp, #48]")
+	g.emit("mov x19, x0") // path_data
+	g.emit("mov x20, x1") // path_len
+	g.emitStrDataPtr2W("x21", "x19", "x20", 80)
+	g.emitNulTermPath2W("x21", "x21", "x20")
+	g.atFdcwd("x0")
+	g.emit("mov x1, x21")
+	g.emit("add x2, x29, #96")
+	g.emit("mov x3, #4096")
+	g.syscall("readlinkat")
+	g.emit("tbnz x0, #63, .Lrlnk_err")
+	g.emit("mov x23, x0") // target length
+	g.emit("cmp x23, #4096")
+	g.emit("b.lo .Lrlnk_fits")
+	g.emit("mov x22, #36") // ENAMETOOLONG
+	g.emit("b .Lrlnk_dispatch")
+	g.label(".Lrlnk_fits")
+	// The target string's own rc-headered buffer, exactly its length:
+	// the two-word ABI carries the length beside the pointer, so there
+	// is no prefix to reserve.
+	g.emit("mov x0, x23")
+	g.emit("bl __fern_alloc_rc1")
+	g.emit("mov x24, x0") // data ptr
+	g.emit("add x1, x29, #96")
+	g.emit("mov x2, x23")
+	g.emit("bl __fern_memcpy")
+	// Result.Ok(string): 24-byte box — {tag@0, pad@4, data@8, len@16}.
+	g.emit("mov x0, #24")
+	g.emit("bl __fern_alloc_rc1")
+	g.emit("str wzr, [x0]")      // tag = 0 (Ok)
+	g.emit("str x24, [x0, #8]")  // payload data
+	g.emit("str x23, [x0, #16]") // payload len
+	g.emit("b .Lrlnk_return")
+
+	g.label(".Lrlnk_err")
+	g.emit("neg x22, x0") // errno
+	g.label(".Lrlnk_dispatch")
+	g.emit("mov x0, x22")
+	g.emit("mov x1, x19")
+	g.emit("mov x2, x20")
+	g.emit("bl __fern_io_error")
+	g.emit("mov x19, x0") // stash the IoError box across the alloc
+	g.emit("mov x0, #16")
+	g.emit("bl __fern_alloc_rc1")
+	g.emit("mov w1, #1")
+	g.emit("str w1, [x0]") // tag = 1 (Err)
+	g.emit("str x19, [x0, #8]")
+
+	g.label(".Lrlnk_return")
+	g.emit("ldp x23, x24, [sp, #48]")
+	g.emit("ldp x21, x22, [sp, #32]")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x29, x30, [sp]")
+	g.emit("add sp, sp, #4096")
+	g.emit("add sp, sp, #96")
+	g.emit("ret")
+	g.sizeDirective("__fern_read_link")
+	g.line(".ltorg")
+}
+
+// emitUmaskRuntime emits `__fern_umask(mask) → previous mask`. umask(2)
+// cannot fail and returns the mask it replaced, so the syscall's own
+// return value is the whole answer.
+func (g *generator) emitUmaskRuntime() {
+	g.line("")
+	g.line(".global __fern_umask")
+	g.typeDirective("__fern_umask")
+	g.label("__fern_umask")
+	g.emit("stp x29, x30, [sp, #-16]!")
+	g.emit("mov x29, sp")
+	g.emit("and x0, x0, #4095")
+	g.syscall("umask")
+	g.emit("ldp x29, x30, [sp], #16")
+	g.emit("ret")
+	g.sizeDirective("__fern_umask")
+	g.line(".ltorg")
+}
+
 // emitCreateDirAllRuntime emits `__fern_create_dir_all(path_data,
 // path_len)` in (x0, x1) → Result[void, IoError] — mkdirat(AT_FDCWD,
 // path, 0777) for every missing component of `path`, POSIX `mkdir -p`.
@@ -12112,6 +12377,16 @@ type generator struct {
 	// usesCreateDirAll pulls in the `mkdir -p` runtime — the only
 	// builtin that can BUILD a directory tree (#6749).
 	usesCreateDirAll bool
+	// The single-step directory and link primitives (#8883), each one
+	// syscall with nothing folded away: mkdirat where EEXIST is an
+	// error, unlinkat with AT_REMOVEDIR, and linkat / symlinkat /
+	// readlinkat. usesUmask is the process file-mode creation mask.
+	usesCreateDir     bool
+	usesRemoveDir     bool
+	usesCreateLink    bool
+	usesCreateSymlink bool
+	usesReadLink      bool
+	usesUmask         bool
 	// usesIoError pulls in `__fern_io_error(errno, path)` —
 	// constructs an `IoError` enum box from a Linux errno.
 	// Shared by read_file + write_file + the Reader / Writer
@@ -16292,6 +16567,37 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			// mkdirat per missing component.
 			target = "__fern_create_dir_all"
 			g.usesCreateDirAll = true
+		case "create_dir":
+			// create_dir(path, mode): Result[void, IoError] —
+			// one mkdirat, EEXIST included.
+			target = "__fern_create_dir"
+			g.usesCreateDir = true
+		case "remove_dir":
+			// remove_dir(path): Result[void, IoError] —
+			// unlinkat with AT_REMOVEDIR, which is rmdir(2).
+			target = "__fern_remove_dir"
+			g.usesRemoveDir = true
+		case "create_link":
+			// create_link(target, path): Result[void, IoError] —
+			// linkat with no AT_SYMLINK_FOLLOW.
+			target = "__fern_create_link"
+			g.usesCreateLink = true
+		case "create_symlink":
+			// create_symlink(target, path): Result[void, IoError] —
+			// symlinkat; the target is stored verbatim.
+			target = "__fern_create_symlink"
+			g.usesCreateSymlink = true
+		case "read_link":
+			// read_link(path): Result[string, IoError] —
+			// readlinkat into a PATH_MAX buffer.
+			target = "__fern_read_link"
+			g.usesReadLink = true
+			g.usesAlloc = true
+			g.usesMemcpy = true
+		case "umask":
+			// umask(mask): the previous mask. Cannot fail.
+			target = "__fern_umask"
+			g.usesUmask = true
 		case "temp_dir":
 			// temp_dir(prefix): Result[string, IoError] —
 			// mkdirat("/tmp/<prefix>-<monotonic_ns>").

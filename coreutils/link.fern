@@ -1,0 +1,49 @@
+// link.fern — GNU-compatible `link`.
+//
+//   link FILE1 FILE2   create a hard link named FILE2 to the existing FILE1
+//
+// One `link(2)` and nothing else: exactly two operands, no options of its
+// own, and no attempt to be helpful about what went wrong. A symlink named
+// as FILE1 is linked to ITSELF rather than to what it points at, which is
+// what link(2) does on Linux and what `ln` without `-L` does.
+//
+// The diagnostic names both operands, the NEW one first —
+// `cannot create link 'b' to 'a': File exists` — because that is the order
+// gnulib's message reads in.
+import "std/string";
+import "std/array";
+import "./lib/gnu";
+
+function help_text(): string {
+  var out: string = "";
+  out = out + "Usage: " + gnu.prog() + " FILE1 FILE2\n";
+  out = out + "  or:  " + gnu.prog() + " OPTION\n";
+  out = out + "Call the link function to create a link named FILE2 to an existing FILE1.\n";
+  out = out + "\n";
+  out = out + "      --help        display this help and exit\n";
+  out = out + "      --version     output version information and exit\n";
+  return out;
+}
+
+function main(): i32 {
+  var operands: string[] = gnu.parse_standard_options_only(args(), "link", help_text(), 1);
+  if (operands.len() == 0) {
+    gnu.die_usage("missing operand", 1);
+  }
+  if (operands.len() == 1) {
+    gnu.die_usage("missing operand after " + gnu.quote(operands[0]), 1);
+  }
+  if (operands.len() > 2) {
+    gnu.die_usage("extra operand " + gnu.quote(operands[2]), 1);
+  }
+  match (create_link(operands[0], operands[1])) {
+    Ok(_) => {
+      return 0;
+    },
+    Err(e) => {
+      gnu.error("cannot create link " + gnu.quotea(operands[1]) + " to " + gnu.quotea(operands[0]) + ": " + gnu.io_error_text(e));
+      return 1;
+    }
+  }
+  return 0;
+}

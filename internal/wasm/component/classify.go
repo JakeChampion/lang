@@ -95,6 +95,12 @@ func ClassifyCore(bin []byte) (ComposeRequest, []string) {
 			req.File.Unlink = true
 		case m == "wasi:filesystem/types@0.2.0" && n == "[method]descriptor.create-directory-at":
 			req.File.Mkdir = true
+		case m == "wasi:filesystem/types@0.2.0" && n == "[method]descriptor.link-at":
+			req.File.Link = true
+		case m == "wasi:filesystem/types@0.2.0" && n == "[method]descriptor.symlink-at":
+			req.File.Symlink = true
+		case m == "wasi:filesystem/types@0.2.0" && n == "[method]descriptor.readlink-at":
+			req.File.Readlink = true
 		case m == "wasi:filesystem/types@0.2.0" && n == "[method]descriptor.stat-at":
 			req.File.Stat = true
 		case m == "wasi:filesystem/types@0.2.0" && n == "[method]descriptor.stat":
