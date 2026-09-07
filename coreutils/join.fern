@@ -1,0 +1,1002 @@
+// join.fern — GNU-compatible `join`.
+//
+//   join [OPTION]... FILE1 FILE2
+//
+// The two files are read in step and every pair of lines whose join
+// field matches is written as one line. Both files must already be
+// sorted on that field; what happens when they are not is the subtlest
+// part of the program and is described at `check_order` below.
+//
+// Two shapes of this are older than the option syntax and decide how
+// the command line is read:
+//
+//   - `-o` takes its field specs as SEPARATE arguments as well as one
+//     comma-separated one, and `-j1` / `-j2` take their field number
+//     from the next argument. So a bare word after either of them is
+//     ambiguous: an option argument, or one of the two files.
+//   - The ambiguity is settled by counting backwards. A candidate is
+//     taken as the option's argument, and at the end of the scan any
+//     shortfall in the two file operands is made up by giving the LAST
+//     candidates back — which is why `join -o 1.1 f1 f2` joins two
+//     files while `join -o 1.1 f1 f2 f3` reads `f1` as a field spec.
+//     Nothing about the token decides it; only how many follow.
+//
+// Unpairable lines are printed by -a and are the only output under -v.
+// -o names the output fields; -e fills a field a line does not have,
+// which only -o and `-o auto` can ask for.
+import "std/string";
+import "std/array";
+import "std/io_buffered";
+import "./lib/gnu";
+
+// Option ids. The declaration order below is GNU's, because the
+// ambiguity list prints candidates in it (`join --=x`).
+function opt_a(): i32 {
+  return 1;
+}
+
+function opt_e(): i32 {
+  return 2;
+}
+
+function opt_ignore(): i32 {
+  return 3;
+}
+
+function opt_j(): i32 {
+  return 4;
+}
+
+function opt_o(): i32 {
+  return 5;
+}
+
+function opt_t(): i32 {
+  return 6;
+}
+
+function opt_v(): i32 {
+  return 7;
+}
+
+function opt_1(): i32 {
+  return 8;
+}
+
+function opt_2(): i32 {
+  return 9;
+}
+
+function opt_check(): i32 {
+  return 10;
+}
+
+function opt_nocheck(): i32 {
+  return 11;
+}
+
+function opt_zero(): i32 {
+  return 12;
+}
+
+function opt_header(): i32 {
+  return 13;
+}
+
+function help_text(): string {
+  var out: string = "";
+  out = out + "Usage: " + gnu.prog() + " [OPTION]... FILE1 FILE2\n";
+  out = out + "For each pair of input lines with identical join fields, write a line to\n";
+  out = out + "standard output.  The default join field is the first, delimited by blanks.\n";
+  out = out + "\n";
+  out = out + "When FILE1 or FILE2 (not both) is -, read standard input.\n";
+  out = out + "\n";
+  out = out + "  -a FILENUM             also print unpairable lines from file FILENUM, where\n";
+  out = out + "                           FILENUM is 1 or 2, corresponding to FILE1 or FILE2\n";
+  out = out + "  -e STRING              replace missing (empty) input fields with STRING;\n";
+  out = out + "                           I.e., missing fields specified with '-12jo' options\n";
+  out = out + "  -i, --ignore-case      ignore differences in case when comparing fields\n";
+  out = out + "  -j FIELD               equivalent to '-1 FIELD -2 FIELD'\n";
+  out = out + "  -o FORMAT              obey FORMAT while constructing output line\n";
+  out = out + "  -t CHAR                use CHAR as input and output field separator\n";
+  out = out + "  -v FILENUM             like -a FILENUM, but suppress joined output lines\n";
+  out = out + "  -1 FIELD               join on this FIELD of file 1\n";
+  out = out + "  -2 FIELD               join on this FIELD of file 2\n";
+  out = out + "      --check-order      check that the input is correctly sorted, even\n";
+  out = out + "                           if all input lines are pairable\n";
+  out = out + "      --nocheck-order    do not check that the input is correctly sorted\n";
+  out = out + "      --header           treat the first line in each file as field headers,\n";
+  out = out + "                           print them without trying to pair them\n";
+  out = out + "  -z, --zero-terminated  line delimiter is NUL, not newline\n";
+  out = out + "      --help        display this help and exit\n";
+  out = out + "      --version     output version information and exit\n";
+  out = out + "\n";
+  out = out + "Unless -t CHAR is given, leading blanks separate fields and are ignored,\n";
+  out = out + "else fields are separated by CHAR.  Any FIELD is a field number counted\n";
+  out = out + "from 1.  FORMAT is one or more comma or blank separated specifications,\n";
+  out = out + "each being 'FILENUM.FIELD' or '0'.  Default FORMAT outputs the join field,\n";
+  out = out + "the remaining fields from FILE1, the remaining fields from FILE2, all\n";
+  out = out + "separated by CHAR.  If FORMAT is the keyword 'auto', then the first\n";
+  out = out + "line of each file determines the number of fields output for each line.\n";
+  out = out + "\n";
+  out = out + "Important: FILE1 and FILE2 must be sorted on the join fields.\n";
+  out = out + "If the input is not sorted and some lines cannot be joined, a\n";
+  out = out + "warning message will be given.\n";
+  return out;
+}
+
+function chr(b: i32): string {
+  return string_from_bytes_unchecked([b as u8]);
+}
+
+// SIZE_MAX: the value an out-of-range field number saturates to, and
+// the "not given yet" marker for the two join fields.
+function unset(): u64 {
+  return 18446744073709551615 as u64;
+}
+
+// `field_number(s)` — gnulib's string_to_join_field: xstrtoumax, zero
+// refused, out of range saturating to SIZE_MAX, and the whole operand
+// consumed. Returns the 0-based field, or dies.
+function field_number(s: string): u64 {
+  var r: (u64, i32) = gnu.parse_number(s);
+  if (r.1 >= 2) {
+    // Out of range saturates to SIZE_MAX, one past the "not given"
+    // marker, so a field number that overflowed is not read back as
+    // an unset one.
+    return unset() - 1 as u64;
+  }
+  if (r.1 != 0 || r.0 == 0 as u64) {
+    gnu.error("invalid field number: " + gnu.quote(s));
+    exit(1);
+  }
+  return r.0 - 1 as u64;
+}
+
+// `file_number(s)` — the 1-or-2 a -a or -v takes.
+function file_number(s: string): i32 {
+  var r: (u64, i32) = gnu.parse_number(s);
+  if (r.1 != 0 || r.0 == 0 as u64 || r.0 > 2 as u64) {
+    gnu.error("invalid field number: " + gnu.quote(s));
+    exit(1);
+  }
+  return r.0 as i32;
+}
+
+// ---- output fields ----------------------------------------------------------
+// `Spec` — one -o item: `file` 0 for the join field, 1 or 2 for that
+// file's `field`.
+struct Spec { file: i32, field: u64 }
+
+// ---- settings ---------------------------------------------------------------
+struct Opts {
+  jf1: u64,
+  jf2: u64,
+  tab: i32,
+  eol: i32,
+  filler: string,
+  ignore_case: boolean,
+  pairs: boolean,
+  unpair1: boolean,
+  unpair2: boolean,
+  specs: Spec[],
+  autofmt: boolean,
+  check: i32,
+  header: boolean
+}
+
+// check: 0 the default (report a disorder only once a line has proved
+// unpairable), 1 --check-order (report and die), 2 --nocheck-order.
+function check_default(): i32 {
+  return 0;
+}
+
+function check_on(): i32 {
+  return 1;
+}
+
+function check_off(): i32 {
+  return 2;
+}
+
+// ---- lines ------------------------------------------------------------------
+// `Line` — one input line without its terminator, its field bounds as
+// start/end pairs, and the join field's text.
+struct Line { text: string, fs: i32[], key: string }
+
+function blank_line(): Line {
+  var none: i32[] = [];
+  return Line { text: "", fs: none, key: "" };
+}
+
+function nfields(l: Line): u64 {
+  return (l.fs.len() / 2) as u64;
+}
+
+// A field separator in the default mode. A newline joins the blanks
+// because -z lets one appear inside a line, where it separates fields
+// exactly as it separates lines everywhere else.
+function is_sep(c: i32): boolean {
+  return c == 32 || c == 9 || c == 10;
+}
+
+// gnulib's xfields. An empty line has no fields at all; a `-t` line
+// always has one more field than it has separators, so a leading
+// separator makes the first field empty. `-t ''` sets the separator to
+// a newline, which no line can contain, so the whole line is one field.
+function split_fields(text: string, tab: i32): i32[] {
+  var fs: i32[] = [];
+  var n: i32 = text.len();
+  if (n == 0) {
+    return fs;
+  }
+  if (tab == 10) {
+    fs = fs.append(0);
+    fs = fs.append(n);
+    return fs;
+  }
+  if (tab >= 0) {
+    var start: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) {
+      if (text[i] as i32 == tab) {
+        fs = fs.append(start);
+        fs = fs.append(i);
+        start = i + 1;
+      }
+      i = i + 1;
+    }
+    fs = fs.append(start);
+    fs = fs.append(n);
+    return fs;
+  }
+  var i: i32 = 0;
+  while (i < n && is_sep(text[i] as i32)) {
+    i = i + 1;
+  }
+  if (i >= n) {
+    return fs;
+  }
+  while (true) {
+    var s: i32 = i;
+    i = i + 1;
+    while (i < n && !is_sep(text[i] as i32)) {
+      i = i + 1;
+    }
+    fs = fs.append(s);
+    fs = fs.append(i);
+    if (i >= n) {
+      return fs;
+    }
+    i = i + 1;
+    while (i < n && is_sep(text[i] as i32)) {
+      i = i + 1;
+    }
+    if (i >= n) {
+      // The line ends with a separator, so one empty field follows it.
+      fs = fs.append(n);
+      fs = fs.append(n);
+      return fs;
+    }
+  }
+  return fs;
+}
+
+function field_text(l: Line, n: u64): string {
+  if (n >= nfields(l)) {
+    return "";
+  }
+  var i: i32 = (n as i32) * 2;
+  return slice_unchecked(l.text, l.fs[i], l.fs[i + 1]) + "";
+}
+
+function make_line(text: string, tab: i32, jf: u64): Line {
+  var fs: i32[] = split_fields(text, tab);
+  var l: Line = Line { text: text, fs: fs, key: "" };
+  return Line { ...l, key: field_text(l, jf) };
+}
+
+function fold(c: i32): i32 {
+  if (c >= 65 && c <= 90) {
+    return c + 32;
+  }
+  return c;
+}
+
+// gnulib's keycmp: memcmp in the C locale, memcasecmp under -i, with a
+// shorter key that is a prefix sorting first. Only the sign is used.
+function keycmp(a: string, b: string, ic: boolean): i32 {
+  var n: i32 = a.len();
+  if (b.len() < n) {
+    n = b.len();
+  }
+  var i: i32 = 0;
+  while (i < n) {
+    var x: i32 = a[i] as i32;
+    var y: i32 = b[i] as i32;
+    if (ic) {
+      x = fold(x);
+      y = fold(y);
+    }
+    if (x != y) {
+      if (x < y) {
+        return 0 - 1;
+      }
+      return 1;
+    }
+    i = i + 1;
+  }
+  if (a.len() == b.len()) {
+    return 0;
+  }
+  if (a.len() < b.len()) {
+    return 0 - 1;
+  }
+  return 1;
+}
+
+// ---- input ------------------------------------------------------------------
+// `In` — one file: its reader, the unread tail of the last block, and
+// the order-check state (the previous line's key, whether this file has
+// already been warned about).
+struct In {
+  r: Reader,
+  is_stdin: boolean,
+  buf: string,
+  pos: i32,
+  eof: boolean,
+  name: string,
+  no: u64,
+  prevkey: string,
+  hasprev: boolean,
+  warned: boolean,
+  which: i32
+}
+
+function read_size(): i32 {
+  return 65536;
+}
+
+// `read_raw(s, eol)` — the next line without its terminator. Returns
+// (status, line, error text, cursor): status 0 a line, 1 end of input,
+// 2 a read failure.
+function read_raw(s: In, eol: i32): (i32, string, string, In) {
+  var cur: In = s;
+  while (true) {
+    var j: i32 = __memchr(cur.buf, eol, cur.pos);
+    if (j >= 0) {
+      var line: string = slice_unchecked(cur.buf, cur.pos, j) + "";
+      return (0, line, "", In { ...cur, pos: j + 1 });
+    }
+    if (cur.eof) {
+      if (cur.pos >= cur.buf.len()) {
+        return (1, "", "", cur);
+      }
+      var tail: string = slice_unchecked(cur.buf, cur.pos, cur.buf.len()) + "";
+      return (0, tail, "", In { ...cur, pos: cur.buf.len() });
+    }
+    var rest: string = slice_unchecked(cur.buf, cur.pos, cur.buf.len()) + "";
+    match (cur.r.read_chunk(read_size())) {
+      Ok(chunk) => {
+        if (chunk.len() == 0) {
+          cur = In { ...cur, buf: rest, pos: 0, eof: true };
+        } else {
+          cur = In { ...cur, buf: rest + chunk, pos: 0 };
+        }
+      },
+      Err(e) => {
+        return (2, "", gnu.io_error_text(e), cur);
+      }
+    }
+  }
+  return (1, "", "", cur);
+}
+
+// `Run` — the two facts the order check reads and writes across both
+// files: whether any line has proved unpairable yet, and whether a
+// disorder has been reported.
+struct Run { unpairable: boolean, disorder: boolean }
+
+// `check_order(...)` — gnulib's check_order.
+//
+// The default is deliberately weak: a file may be out of order as long
+// as every line still pairs, which is a GNU extension over POSIX, so
+// the disorder is reported only once a line HAS proved unpairable —
+// and `seen_unpairable` is set AFTER the next line has been read, so
+// the very line that follows the first unpairable one is still exempt.
+// --check-order drops all of that and dies on the first disorder.
+// Either way a file is warned about once.
+function check_order(inp: In, l: Line, o: Opts, run: Run, w: io_buffered.BufWriter): (In, Run, io_buffered.BufWriter) {
+  if (o.check == check_off() || !inp.hasprev) {
+    return (inp, run, w);
+  }
+  if (o.check != check_on() && !run.unpairable) {
+    return (inp, run, w);
+  }
+  if (inp.warned) {
+    return (inp, run, w);
+  }
+  if (keycmp(inp.prevkey, l.key, o.ignore_case) <= 0) {
+    return (inp, run, w);
+  }
+  var msg: string = inp.name + ":" + inp.no.to_string() + ": is not sorted: " + l.text;
+  var out: io_buffered.BufWriter = gnu.error_out(w, msg);
+  if (o.check == check_on()) {
+    exit(1);
+  }
+  return (In { ...inp, warned: true }, Run { ...run, disorder: true }, out);
+}
+
+// `next_line(...)` — gnulib's get_line: one line, split into fields,
+// checked against the one before it. Returns whether a line was read.
+function next_line(inp: In, o: Opts, run: Run, w: io_buffered.BufWriter): (boolean, Line, In, Run, io_buffered.BufWriter) {
+  var jf: u64 = o.jf1;
+  if (inp.which == 2) {
+    jf = o.jf2;
+  }
+  var r: (i32, string, string, In) = read_raw(inp, o.eol);
+  var cur: In = r.3;
+  if (r.0 == 2) {
+    var w2: io_buffered.BufWriter = gnu.error_out(w, "read error: " + r.2);
+    exit(1);
+  }
+  if (r.0 == 1) {
+    return (false, blank_line(), cur, run, w);
+  }
+  var l: Line = make_line(r.1, o.tab, jf);
+  cur = In { ...cur, no: cur.no + 1 as u64 };
+  var c: (In, Run, io_buffered.BufWriter) = check_order(cur, l, o, run, w);
+  cur = In { ...c.0, prevkey: l.key, hasprev: true };
+  return (true, l, cur, c.1, c.2);
+}
+
+// ---- output -----------------------------------------------------------------
+function out_sep(o: Opts): string {
+  if (o.tab >= 0) {
+    return chr(o.tab);
+  }
+  return " ";
+}
+
+// gnulib's prfield: the field's bytes, or -e's filler when there are
+// none — a field the line is too short to have and one that is present
+// but empty are both filled. Only -o and `-o auto` can reach past a
+// line's own fields, which is why -e usually needs one of them.
+function pr_field(l: Line, n: u64, o: Opts): string {
+  var t: string = field_text(l, n);
+  if (t.len() > 0) {
+    return t;
+  }
+  return o.filler;
+}
+
+// gnulib's prfields: every field but the join field, each preceded by
+// the separator. `count` is the line's own field count, or the
+// autoformat width when `-o auto` fixed one.
+function pr_fields(acc: string, l: Line, jf: u64, count: u64, o: Opts): string {
+  var sep: string = out_sep(o);
+  var s: string = acc;
+  var i: u64 = 0 as u64;
+  while (i < jf && i < count) {
+    s = s + sep + pr_field(l, i, o);
+    i = i + 1 as u64;
+  }
+  i = jf + 1 as u64;
+  while (i < count) {
+    s = s + sep + pr_field(l, i, o);
+    i = i + 1 as u64;
+  }
+  return s;
+}
+
+// `prjoin(l1, l2, b1, ...)` — one output line. `b1` says the first
+// line is the placeholder, which is what makes `-o 0` print the OTHER
+// file's join field on a line only file 2 has.
+function prjoin(l1: Line, l2: Line, b1: boolean, o: Opts, ac1: u64, ac2: u64): string {
+  var sep: string = out_sep(o);
+  var out: string = "";
+  if (o.specs.len() > 0) {
+    var k: i32 = 0;
+    while (k < o.specs.len()) {
+      if (k > 0) {
+        out = out + sep;
+      }
+      var sp: Spec = o.specs[k];
+      if (sp.file == 0) {
+        if (b1) {
+          out = out + pr_field(l2, o.jf2, o);
+        } else {
+          out = out + pr_field(l1, o.jf1, o);
+        }
+      } else if (sp.file == 1) {
+        out = out + pr_field(l1, sp.field, o);
+      } else {
+        out = out + pr_field(l2, sp.field, o);
+      }
+      k = k + 1;
+    }
+    return out + chr(o.eol);
+  }
+  var c1: u64 = nfields(l1);
+  var c2: u64 = nfields(l2);
+  if (o.autofmt) {
+    c1 = ac1;
+    c2 = ac2;
+  }
+  if (b1) {
+    out = out + pr_field(l2, o.jf2, o);
+  } else {
+    out = out + pr_field(l1, o.jf1, o);
+  }
+  out = pr_fields(out, l1, o.jf1, c1, o);
+  out = pr_fields(out, l2, o.jf2, c2, o);
+  return out + chr(o.eol);
+}
+
+// ---- the -o field list ------------------------------------------------------
+// gnulib's add_field_list: comma- or blank-separated `FILENUM.FIELD`
+// items, plus the bare `0` that names the join field.
+function add_field_list(specs: Spec[], str: string): Spec[] {
+  var out: Spec[] = specs;
+  var i: i32 = 0;
+  var n: i32 = str.len();
+  while (true) {
+    var j: i32 = i;
+    while (j < n && str[j] as i32 != 44 && str[j] as i32 != 32 && str[j] as i32 != 9) {
+      j = j + 1;
+    }
+    var item: string = slice_unchecked(str, i, j) + "";
+    if (item == "0") {
+      out = out.append(Spec { file: 0, field: 0 as u64 });
+    } else {
+      var c: i32 = 0;
+      if (item.len() > 0) {
+        c = item[0] as i32;
+      }
+      if (item.len() < 2 || c < 49 || c > 50 || item[1] as i32 != 46) {
+        gnu.error("invalid file number in field spec: " + gnu.quote(item));
+        exit(1);
+      }
+      out = out.append(Spec { file: c - 48, field: field_number(slice_unchecked(item, 2, item.len()) + "") });
+    }
+    if (j >= n) {
+      return out;
+    }
+    i = j + 1;
+  }
+  return out;
+}
+
+// ---- the command line -------------------------------------------------------
+// `Tok` — one thing the command line said, in the order it said it.
+// Kind 0 is a file operand and 1-3 are the bare words that stood where
+// an option argument was expected — an -o field spec, a -j1 field, a
+// -j2 field — which are only CANDIDATES until the scan ends: a
+// shortfall in the two file operands is made up from the END of the
+// list. Kinds 4-8 are the values that came glued to their option and
+// are never in doubt; they are recorded rather than acted on so that
+// the whole line is applied in ONE ordered pass, which is what decides
+// which of two conflicting join fields a diagnostic names first.
+struct Tok { text: string, kind: i32 }
+
+function tok_file(): i32 {
+  return 0;
+}
+
+function tok_ospec(): i32 {
+  return 4;
+}
+
+function tok_field1(): i32 {
+  return 5;
+}
+
+function tok_field2(): i32 {
+  return 6;
+}
+
+function tok_field_both(): i32 {
+  return 7;
+}
+
+function tok_auto(): i32 {
+  return 8;
+}
+
+// `Scan` — the option scan's running state.
+struct Scan { o: Opts, toks: Tok[], nfiles: i32, pending: i32 }
+function set_field_1(o: Opts, v: u64): Opts {
+  if (o.jf1 != unset() && o.jf1 != v) {
+    gnu.error("incompatible join fields " + o.jf1.to_string() + ", " + v.to_string());
+    exit(1);
+  }
+  return Opts { ...o, jf1: v };
+}
+
+function set_field_2(o: Opts, v: u64): Opts {
+  if (o.jf2 != unset() && o.jf2 != v) {
+    gnu.error("incompatible join fields " + o.jf2.to_string() + ", " + v.to_string());
+    exit(1);
+  }
+  return Opts { ...o, jf2: v };
+}
+
+function take_operand(s: Scan, name: string): Scan {
+  if (s.nfiles == 2) {
+    gnu.die_usage("extra operand " + gnu.quote(name), 1);
+  }
+  return Scan { ...s, toks: s.toks.append(Tok { text: name, kind: 0 }), nfiles: s.nfiles + 1 };
+}
+
+function main(): i32 {
+  var argv: string[] = args();
+  var opts: gnu.Opt[] = [];
+  opts = opts.append(gnu.valued("a", "", opt_a()));
+  opts = opts.append(gnu.valued("e", "", opt_e()));
+  opts = opts.append(gnu.flag("i", "ignore-case", opt_ignore()));
+  opts = opts.append(gnu.valued("j", "", opt_j()));
+  opts = opts.append(gnu.valued("o", "", opt_o()));
+  opts = opts.append(gnu.valued("t", "", opt_t()));
+  opts = opts.append(gnu.valued("v", "", opt_v()));
+  opts = opts.append(gnu.valued("1", "", opt_1()));
+  opts = opts.append(gnu.valued("2", "", opt_2()));
+  opts = opts.append(gnu.flag("", "check-order", opt_check()));
+  opts = opts.append(gnu.flag("", "nocheck-order", opt_nocheck()));
+  opts = opts.append(gnu.flag("z", "zero-terminated", opt_zero()));
+  opts = opts.append(gnu.flag("", "header", opt_header()));
+
+  var none_specs: Spec[] = [];
+  var none_toks: Tok[] = [];
+  var o: Opts = Opts { jf1: unset(), jf2: unset(), tab: 0 - 1, eol: 10, filler: "", ignore_case: false, pairs: true, unpair1: false, unpair2: false, specs: none_specs, autofmt: false, check: check_default(), header: false };
+  var s: Scan = Scan { o: o, toks: none_toks, nfiles: 0, pending: 0 };
+
+  var g: gnu.Getopt = gnu.getopt_new(argv, opts, "join", help_text(), 1);
+  while (true) {
+    var r: (i32, gnu.OptMatch, gnu.Getopt) = g.next_argv_order();
+    g = r.2;
+    if (r.0 == 0) {
+      break;
+    }
+    if (r.0 == 2) {
+      // A bare word: the argument of the option just seen, or a file.
+      if (s.pending != 0 && !g.after_dashdash()) {
+        s = Scan { ...s, toks: s.toks.append(Tok { text: r.1.value, kind: s.pending }) };
+        if (s.pending != 1) {
+          s = Scan { ...s, pending: 0 };
+        }
+      } else {
+        s = take_operand(s, r.1.value);
+      }
+      continue;
+    }
+    var m: gnu.OptMatch = r.1;
+    var next_pending: i32 = 0;
+    if (m.id == opt_a()) {
+      if (file_number(m.value) == 1) {
+        s = Scan { ...s, o: Opts { ...s.o, unpair1: true } };
+      } else {
+        s = Scan { ...s, o: Opts { ...s.o, unpair2: true } };
+      }
+    } else if (m.id == opt_v()) {
+      if (file_number(m.value) == 1) {
+        s = Scan { ...s, o: Opts { ...s.o, unpair1: true, pairs: false } };
+      } else {
+        s = Scan { ...s, o: Opts { ...s.o, unpair2: true, pairs: false } };
+      }
+    } else if (m.id == opt_e()) {
+      s = Scan { ...s, o: Opts { ...s.o, filler: m.value } };
+    } else if (m.id == opt_ignore()) {
+      s = Scan { ...s, o: Opts { ...s.o, ignore_case: true } };
+    } else if (m.id == opt_j()) {
+      // `-j1` / `-j2` GLUED are the obsolete forms, which take their
+      // field from the next argument; `-j 1` is the field itself.
+      if (m.value == "1" && glued(argv, g, m.value)) {
+        next_pending = 2;
+      } else if (m.value == "2" && glued(argv, g, m.value)) {
+        next_pending = 3;
+      } else {
+        s = Scan { ...s, toks: s.toks.append(Tok { text: m.value, kind: tok_field_both() }) };
+      }
+    } else if (m.id == opt_o()) {
+      if (m.value == "auto") {
+        s = Scan { ...s, toks: s.toks.append(Tok { text: "", kind: tok_auto() }) };
+      } else {
+        s = Scan { ...s, toks: s.toks.append(Tok { text: m.value, kind: tok_ospec() }) };
+      }
+      next_pending = 1;
+    } else if (m.id == opt_t()) {
+      s = Scan { ...s, o: set_tab(s.o, m.value) };
+    } else if (m.id == opt_1()) {
+      s = Scan { ...s, toks: s.toks.append(Tok { text: m.value, kind: tok_field1() }) };
+    } else if (m.id == opt_2()) {
+      s = Scan { ...s, toks: s.toks.append(Tok { text: m.value, kind: tok_field2() }) };
+    } else if (m.id == opt_check()) {
+      s = Scan { ...s, o: Opts { ...s.o, check: check_on() } };
+    } else if (m.id == opt_nocheck()) {
+      s = Scan { ...s, o: Opts { ...s.o, check: check_off() } };
+    } else if (m.id == opt_zero()) {
+      s = Scan { ...s, o: Opts { ...s.o, eol: 0 } };
+    } else if (m.id == opt_header()) {
+      s = Scan { ...s, o: Opts { ...s.o, header: true } };
+    }
+    s = Scan { ...s, pending: next_pending };
+  }
+
+  // The shortfall in the file operands is made up from the END of the
+  // candidate list, so the earliest candidates stay option arguments
+  // and the files keep their command-line order.
+  var toks: Tok[] = s.toks;
+  var want: i32 = 2 - s.nfiles;
+  var k: i32 = toks.len() - 1;
+  while (want > 0 && k >= 0) {
+    if (toks[k].kind >= 1 && toks[k].kind <= 3) {
+      toks = toks.with(k, Tok { text: toks[k].text, kind: tok_file() });
+      want = want - 1;
+    }
+    k = k - 1;
+  }
+  var files: string[] = [];
+  k = 0;
+  while (k < toks.len()) {
+    var t: Tok = toks[k];
+    if (t.kind == tok_file()) {
+      files = files.append(t.text);
+    } else if (t.kind == 1 || t.kind == tok_ospec()) {
+      s = Scan { ...s, o: Opts { ...s.o, specs: add_field_list(s.o.specs, t.text), autofmt: false } };
+    } else if (t.kind == 2 || t.kind == tok_field1()) {
+      s = Scan { ...s, o: set_field_1(s.o, field_number(t.text)) };
+    } else if (t.kind == 3 || t.kind == tok_field2()) {
+      s = Scan { ...s, o: set_field_2(s.o, field_number(t.text)) };
+    } else if (t.kind == tok_field_both()) {
+      var v: u64 = field_number(t.text);
+      s = Scan { ...s, o: set_field_2(set_field_1(s.o, v), v) };
+    } else {
+      s = Scan { ...s, o: Opts { ...s.o, autofmt: true } };
+    }
+    k = k + 1;
+  }
+
+  if (files.len() == 0) {
+    gnu.die_usage("missing operand", 1);
+  }
+  if (files.len() == 1) {
+    gnu.die_usage("missing operand after " + gnu.quote(files[0]), 1);
+  }
+
+  o = s.o;
+  if (o.jf1 == unset()) {
+    o = Opts { ...o, jf1: 0 as u64 };
+  }
+  if (o.jf2 == unset()) {
+    o = Opts { ...o, jf2: 0 as u64 };
+  }
+
+  if (files[0] == "-" && files[1] == "-") {
+    gnu.error("both files cannot be standard input");
+    exit(1);
+  }
+
+  var in1: In = open_input(files[0], 1);
+  var in2: In = open_input(files[1], 2);
+
+  var w: io_buffered.BufWriter = gnu.out_new();
+  var run: Run = Run { unpairable: false, disorder: false };
+
+  var r1: (boolean, Line, In, Run, io_buffered.BufWriter) = next_line(in1, o, run, w);
+  var have1: boolean = r1.0;
+  var l1: Line = r1.1;
+  in1 = r1.2;
+  run = r1.3;
+  w = r1.4;
+  var r2: (boolean, Line, In, Run, io_buffered.BufWriter) = next_line(in2, o, run, w);
+  var have2: boolean = r2.0;
+  var l2: Line = r2.1;
+  in2 = r2.2;
+  run = r2.3;
+  w = r2.4;
+
+  var ac1: u64 = 0 as u64;
+  var ac2: u64 = 0 as u64;
+  if (have1) {
+    ac1 = nfields(l1);
+  }
+  if (have2) {
+    ac2 = nfields(l2);
+  }
+
+  if (o.header && (have1 || have2)) {
+    var h1: Line = blank_line();
+    var h2: Line = blank_line();
+    if (have1) {
+      h1 = l1;
+    }
+    if (have2) {
+      h2 = l2;
+    }
+    w = gnu.put(w, prjoin(h1, h2, !have1, o, ac1, ac2));
+    // A header is not compared with the line after it.
+    in1 = In { ...in1, hasprev: false };
+    in2 = In { ...in2, hasprev: false };
+    if (have1) {
+      var h: (boolean, Line, In, Run, io_buffered.BufWriter) = next_line(in1, o, run, w);
+      have1 = h.0;
+      l1 = h.1;
+      in1 = h.2;
+      run = h.3;
+      w = h.4;
+    }
+    if (have2) {
+      var h: (boolean, Line, In, Run, io_buffered.BufWriter) = next_line(in2, o, run, w);
+      have2 = h.0;
+      l2 = h.1;
+      in2 = h.2;
+      run = h.3;
+      w = h.4;
+    }
+  }
+
+  var blank: Line = blank_line();
+  while (have1 && have2) {
+    var d: i32 = keycmp(l1.key, l2.key, o.ignore_case);
+    if (d < 0) {
+      if (o.unpair1) {
+        w = gnu.put(w, prjoin(l1, blank, false, o, ac1, ac2));
+      }
+      var a: (boolean, Line, In, Run, io_buffered.BufWriter) = next_line(in1, o, run, w);
+      have1 = a.0;
+      l1 = a.1;
+      in1 = a.2;
+      run = a.3;
+      w = a.4;
+      // Set only AFTER the next line has been read: the line that
+      // follows the first unpairable one is still exempt.
+      run = Run { ...run, unpairable: true };
+      continue;
+    }
+    if (d > 0) {
+      if (o.unpair2) {
+        w = gnu.put(w, prjoin(blank, l2, true, o, ac1, ac2));
+      }
+      var b: (boolean, Line, In, Run, io_buffered.BufWriter) = next_line(in2, o, run, w);
+      have2 = b.0;
+      l2 = b.1;
+      in2 = b.2;
+      run = b.3;
+      w = b.4;
+      run = Run { ...run, unpairable: true };
+      continue;
+    }
+    // Equal keys: every line with this key on each side, then the
+    // cross product of the two groups.
+    var g1: Line[] = [];
+    g1 = g1.append(l1);
+    while (true) {
+      var c: (boolean, Line, In, Run, io_buffered.BufWriter) = next_line(in1, o, run, w);
+      have1 = c.0;
+      l1 = c.1;
+      in1 = c.2;
+      run = c.3;
+      w = c.4;
+      if (!have1 || keycmp(l1.key, g1[0].key, o.ignore_case) != 0) {
+        break;
+      }
+      g1 = g1.append(l1);
+    }
+    var g2: Line[] = [];
+    g2 = g2.append(l2);
+    while (true) {
+      var c: (boolean, Line, In, Run, io_buffered.BufWriter) = next_line(in2, o, run, w);
+      have2 = c.0;
+      l2 = c.1;
+      in2 = c.2;
+      run = c.3;
+      w = c.4;
+      if (!have2 || keycmp(l2.key, g2[0].key, o.ignore_case) != 0) {
+        break;
+      }
+      g2 = g2.append(l2);
+    }
+    if (o.pairs) {
+      var i: i32 = 0;
+      while (i < g1.len()) {
+        var j: i32 = 0;
+        while (j < g2.len()) {
+          w = gnu.put(w, prjoin(g1[i], g2[j], false, o, ac1, ac2));
+          j = j + 1;
+        }
+        i = i + 1;
+      }
+    }
+  }
+
+  // Both files are read to the end whether or not anything is printed
+  // from them: the order check only sees the lines it reads.
+  while (have1) {
+    if (o.unpair1) {
+      w = gnu.put(w, prjoin(l1, blank, false, o, ac1, ac2));
+    }
+    var a: (boolean, Line, In, Run, io_buffered.BufWriter) = next_line(in1, o, run, w);
+    have1 = a.0;
+    l1 = a.1;
+    in1 = a.2;
+    run = a.3;
+    w = a.4;
+  }
+  while (have2) {
+    if (o.unpair2) {
+      w = gnu.put(w, prjoin(blank, l2, true, o, ac1, ac2));
+    }
+    var b: (boolean, Line, In, Run, io_buffered.BufWriter) = next_line(in2, o, run, w);
+    have2 = b.0;
+    l2 = b.1;
+    in2 = b.2;
+    run = b.3;
+    w = b.4;
+  }
+
+  if (!in1.is_stdin) {
+    in1.r.close();
+  }
+  if (!in2.is_stdin) {
+    in2.r.close();
+  }
+  if (run.disorder) {
+    w = gnu.error_out(w, "input is not in sorted order");
+    gnu.finish(w);
+    return 1;
+  }
+  gnu.finish(w);
+  return 0;
+}
+
+// `set_tab(o, arg)` — -t. An empty argument means the whole line is
+// one field, which GNU spells as a newline separator; `\0` names NUL;
+// two different -t characters are refused.
+function set_tab(o: Opts, arg: string): Opts {
+  var t: i32 = 10;
+  if (arg.len() > 0) {
+    t = arg[0] as i32;
+    if (arg.len() > 1) {
+      if (arg == "\\0") {
+        t = 0;
+      } else {
+        gnu.error("multi-character tab " + gnu.quote(arg));
+        exit(1);
+      }
+    }
+  }
+  if (o.tab >= 0 && o.tab != t) {
+    gnu.error("incompatible tabs");
+    exit(1);
+  }
+  return Opts { ...o, tab: t };
+}
+
+// `glued(argv, g, digit)` — whether the `-j` just matched was written
+// `-jN` rather than `-j N`. Only the glued spelling is the obsolete
+// form, so `join -j 1 f1 f2` joins on field 1 while `join -j1 2 f1 f2`
+// joins file 1 on field 2.
+function glued(argv: string[], g: gnu.Getopt, value: string): boolean {
+  var i: i32 = g.index() - 1;
+  if (i < 0 || i >= argv.len()) {
+    return false;
+  }
+  return argv[i] != value;
+}
+
+function open_input(path: string, which: i32): In {
+  var name: string = path;
+  if (path == "-") {
+    return In { r: stdin(), is_stdin: true, buf: "", pos: 0, eof: false, name: name, no: 0 as u64, prevkey: "", hasprev: false, warned: false, which: which };
+  }
+  match (open_reader(path)) {
+    Ok(f) => {
+      return In { r: f, is_stdin: false, buf: "", pos: 0, eof: false, name: name, no: 0 as u64, prevkey: "", hasprev: false, warned: false, which: which };
+    },
+    Err(e) => {
+      gnu.error(gnu.quotef(path) + ": " + gnu.io_error_text(e));
+      exit(1);
+    }
+  }
+  return In { r: stdin(), is_stdin: true, buf: "", pos: 0, eof: false, name: name, no: 0 as u64, prevkey: "", hasprev: false, warned: false, which: which };
+}
