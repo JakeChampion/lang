@@ -244,7 +244,7 @@ function parse_imax(s: string): (i64, i32) {
     if (mag == 9223372036854775808 as u64) {
       return (0 as i64 - 9223372036854775807 as i64 - 1 as i64, 0);
     }
-    return (0 as i64 - (mag as i64), 0);
+    return (0 as i64 - mag as i64, 0);
   }
   return (mag as i64, 0);
 }
@@ -290,7 +290,7 @@ struct Opts {
   // unnumbered line carries in place of the number and the separator.
   pad: string,
   zeros: string,
-  blank: string
+  blank: string,
 }
 
 // ---- output -----------------------------------------------------------------

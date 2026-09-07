@@ -131,7 +131,7 @@ function printable_char(c: i32): string {
 }
 
 function octal3(c: i32): string {
-  return chr(48 + (c / 64) % 8) + chr(48 + (c / 8) % 8) + chr(48 + c % 8);
+  return chr(48 + c / 64 % 8) + chr(48 + c / 8 % 8) + chr(48 + c % 8);
 }
 
 // `printable_str(s)` — gnulib's make_printable_str: the same, except

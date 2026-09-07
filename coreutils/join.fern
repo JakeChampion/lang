@@ -169,21 +169,7 @@ function file_number(s: string): i32 {
 struct Spec { file: i32, field: u64 }
 
 // ---- settings ---------------------------------------------------------------
-struct Opts {
-  jf1: u64,
-  jf2: u64,
-  tab: i32,
-  eol: i32,
-  filler: string,
-  ignore_case: boolean,
-  pairs: boolean,
-  unpair1: boolean,
-  unpair2: boolean,
-  specs: Spec[],
-  autofmt: boolean,
-  check: i32,
-  header: boolean
-}
+struct Opts { jf1: u64, jf2: u64, tab: i32, eol: i32, filler: string, ignore_case: boolean, pairs: boolean, unpair1: boolean, unpair2: boolean, specs: Spec[], autofmt: boolean, check: i32, header: boolean }
 
 // check: 0 the default (report a disorder only once a line has proved
 // unpairable), 1 --check-order (report and die), 2 --nocheck-order.
@@ -289,7 +275,7 @@ function field_text(l: Line, n: u64): string {
   if (n >= nfields(l)) {
     return "";
   }
-  var i: i32 = (n as i32) * 2;
+  var i: i32 = n as i32 * 2;
   return slice_unchecked(l.text, l.fs[i], l.fs[i + 1]) + "";
 }
 
@@ -298,7 +284,7 @@ function make_line(text: string, tab: i32, jf: u64): Line {
   var a: i32 = 0;
   var b: i32 = 0;
   if (jf < (fs.len() / 2) as u64) {
-    var i: i32 = (jf as i32) * 2;
+    var i: i32 = jf as i32 * 2;
     a = fs[i];
     b = fs[i + 1];
   }
@@ -354,19 +340,7 @@ function range_cmp(at: string, a0: i32, a1: i32, bt: string, b0: i32, b1: i32, i
 // `In` — one file: its reader, the unread tail of the last block, and
 // the order-check state (the previous line's key, whether this file has
 // already been warned about).
-struct In {
-  r: Reader,
-  is_stdin: boolean,
-  buf: string,
-  pos: i32,
-  eof: boolean,
-  name: string,
-  no: u64,
-  prev: Line,
-  hasprev: boolean,
-  warned: boolean,
-  which: i32
-}
+struct In { r: Reader, is_stdin: boolean, buf: string, pos: i32, eof: boolean, name: string, no: u64, prev: Line, hasprev: boolean, warned: boolean, which: i32 }
 
 function read_size(): i32 {
   return 65536;
@@ -642,6 +616,7 @@ function tok_auto(): i32 {
 
 // `Scan` — the option scan's running state.
 struct Scan { o: Opts, toks: Tok[], nfiles: i32, pending: i32 }
+
 function set_field_1(o: Opts, v: u64): Opts {
   if (o.jf1 != unset() && o.jf1 != v) {
     gnu.error("incompatible join fields " + o.jf1.to_string() + ", " + v.to_string());
