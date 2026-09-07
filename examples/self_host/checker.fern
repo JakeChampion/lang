@@ -3301,6 +3301,12 @@ function check_call_expr(c: ast.ExprCall, s: Scope): Type {
 function check_expr(e: ast.Expr, s: Scope): Type {
   match (e) {
     ast.ExprNumber(n) => {
+      // `()` — the unit value. Its payload is the constant 0 the parser
+      // records, so the spelling is what tells it from a written `0`; native
+      // types its UnitLit `void` the same way.
+      if (parser.is_unit_literal(n)) {
+        return t_void();
+      }
       if (n.is_float) {
         return t_float();
       }
@@ -7740,8 +7746,10 @@ function unsettled_int_literal(e: ast.Expr): boolean {
   match (e) {
     ast.ExprNumber(n) => {
       // A wide literal is already settled at i64 by its magnitude, so it is
-      // not free to be read at the destination's width.
-      return !n.is_float && n.suffix.len() == 0 && !parser.literal_is_i64(n.text);
+      // not free to be read at the destination's width. The unit is not a
+      // numeral at all — it is typed `void` and settles nowhere.
+      return !n.is_float && n.suffix.len() == 0 && !parser.is_unit_literal(n)
+        && !parser.literal_is_i64(n.text);
     },
     ast.ExprUnary(u) => {
       if (u.op == "-") {
@@ -8311,7 +8319,10 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
       // code native does not.
       if (union_of_variant(id.name, s.unions).len() > 0 || mx_builtin_enum_of(id.name).len() > 0) {
         for arg in c.args {
-          if (is_void(check_expr(arg, s))) {
+          // `Ok(())` is the payload written as the unit itself — void's one
+          // value, and the spelling the message asks for. Native's
+          // requireValue exempts its UnitLit here for the same reason.
+          if (is_void(check_expr(arg, s)) && !parser.is_unit_expr(arg)) {
             out = out.append(dg_at("E072", "a void expression is not a value here; call it as a statement, and write `()` if you meant the unit value", expr_line(arg), expr_col(arg)));
           }
         }
