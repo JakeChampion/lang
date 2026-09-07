@@ -11106,6 +11106,23 @@ func (g *generator) emitTcpCloseRuntime() {
 	g.line(".size __fern_tcp_close, .-__fern_tcp_close")
 }
 
+// emitPayloadlessResultBox emits the arm of an I/O helper that carries NO
+// payload — an Option's `None`, a Result's unit `Ok`: a 16-byte rc=1 box
+// (the enum's uniform size) holding `tag` and a ZEROED payload slot,
+// returned in rax.
+//
+// The zeroing is what makes the box safe to reclaim. The IR's branchless
+// enum drop (internal/ir's uniform tier) releases a box's payload word
+// WITHOUT testing the tag, so an unwritten word reaches __fern_str_dec as
+// if it were a live pointer — an arbitrary rc write here, an
+// out-of-bounds trap on wasm (#8843).
+func (g *generator) emitPayloadlessResultBox(tag int) {
+	g.emit("mov edi, 16")
+	g.emit("call __fern_alloc_rc1")
+	g.emit(fmt.Sprintf("mov dword ptr [rax], %d", tag))
+	g.emit("mov qword ptr [rax + 8], 0")
+}
+
 // emitEnvRuntime emits `__fern_env(name)` — walks the envp
 // vector for NAME=VALUE entries. Returns Option[string]: a
 // 16-byte heap object [tag:i32, _pad:i32, str_ptr:i64].
@@ -11173,9 +11190,7 @@ func (g *generator) emitEnvRuntime() {
 	g.emit("add rbx, 8")
 	g.emit("jmp .Lenv_loop")
 	g.label(".Lenv_none")
-	g.emit("mov edi, 16")
-	g.emit("call __fern_alloc_rc1")
-	g.emit("mov dword ptr [rax], 1") // tag = 1 (None)
+	g.emitPayloadlessResultBox(1)
 	g.label(".Lenv_done")
 	g.emit("add rsp, 24")
 	g.emit("pop r15")
@@ -11588,7 +11603,7 @@ func (g *generator) emitStringAsBytesRuntime() {
 // Option payload layout matches the IR's PR #267 shape:
 //
 //	Some: [tag=0:4][pad:4][str_ptr:8]   (16 bytes; payload at +8)
-//	None: [tag=1:4]                      (heap-allocated; tag-only)
+//	None: [tag=1:4][pad:4][0:8]         (the same 16 bytes, payload zeroed)
 //
 // Callee-save rbx / r12 / r13 hold buf base, bytes-read,
 // and stash slots across the inner read syscall + alloc /
@@ -11628,9 +11643,7 @@ func (g *generator) emitReadLineRuntime() {
 	// EOF before any byte → return None.
 	g.emit("test r12, r12")
 	g.emit("jnz .Lrl_some")
-	g.emit("mov edi, 16")
-	g.emit("call __fern_alloc_rc1")
-	g.emit("mov dword ptr [rax], 1") // tag = 1 (None)
+	g.emitPayloadlessResultBox(1)
 	g.emit("jmp .Lrl_ret")
 	g.label(".Lrl_some")
 	// L2 rc-header layout (see __fern_strcat): payload = N data + 1 NUL.
@@ -13764,10 +13777,7 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.label(".Lrrl_done")
 	g.emit("test r13, r13")
 	g.emit("jne .Lrrl_some")
-	// None
-	g.emit("mov edi, 16")
-	g.emit("call __fern_alloc_rc1")
-	g.emit("mov dword ptr [rax], 1")
+	g.emitPayloadlessResultBox(1) // None
 	g.emit("jmp .Lrrl_ret")
 	g.label(".Lrrl_some")
 	// L2 rc-header layout (see __fern_strcat): payload = N data + 1 NUL.
@@ -13925,9 +13935,7 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("add r14, rax")
 	g.emit("jmp .Lww_loop")
 	g.label(".Lww_done")
-	g.emit("mov edi, 16")
-	g.emit("call __fern_alloc_rc1")
-	g.emit("mov dword ptr [rax], 1") // None
+	g.emitPayloadlessResultBox(1) // None
 	g.emit("jmp .Lww_ret")
 	g.label(".Lww_err")
 	g.emit("neg rax")
@@ -13963,9 +13971,7 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emitSyscall(3)
 	g.emit("test rax, rax")
 	g.emit("js .Lcfb_err")
-	g.emit("mov edi, 16")
-	g.emit("call __fern_alloc_rc1")
-	g.emit("mov dword ptr [rax], 1") // None
+	g.emitPayloadlessResultBox(1) // None
 	g.emit("jmp .Lcfb_ret")
 	g.label(".Lcfb_err")
 	g.emit("neg rax")
