@@ -285,6 +285,7 @@ PY
       printf 'printenv -0\tn\t{} -0\n'
       printf 'printenv PATH\tn\t{} PATH\n'
       printf 'printenv four names\tn\t{} PATH HOME LANG TERM\n'
+      ;;
     uname)
       # Startup plus one uname(2). -a is the whole record through the
       # same one syscall, so the two rows differ only in the formatting.

@@ -7,7 +7,6 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
-	"syscall"
 	"testing"
 )
 
@@ -16,31 +15,10 @@ import (
 // `getcwd()` and `cpu_count()`. Each asserts the VALUE, against the same
 // kernel fact read a second way — sysname is "Linux" on every box here,
 // so a body that read the neighbouring utsname field would pass a
-// non-empty check.
-
-// selfHostUtsname is the five utsname fields as the host reports them,
-// in the order the record holds them.
-func selfHostUtsname(t *testing.T) [5]string {
-	t.Helper()
-	if runtime.GOOS != "linux" {
-		t.Skipf("the utsname probe reads uname(2); %s is not it", runtime.GOOS)
-	}
-	var u syscall.Utsname
-	if err := syscall.Uname(&u); err != nil {
-		t.Fatalf("uname: %v", err)
-	}
-	str := func(f []int8) string {
-		b := make([]byte, 0, len(f))
-		for _, c := range f {
-			if c == 0 {
-				break
-			}
-			b = append(b, byte(c))
-		}
-		return string(b)
-	}
-	return [5]string{str(u.Sysname[:]), str(u.Nodename[:]), str(u.Release[:]), str(u.Version[:]), str(u.Machine[:])}
-}
+// non-empty check. The utsname probe reads uname(2) and is linux-only
+// (syscall.Utsname does not exist on darwin), so it lives in
+// self_host_sysinfo_linux_test.go and the other OSes skip in
+// self_host_sysinfo_other_test.go.
 
 // selfHostSysinfoSource exits 0 only when every field matches; each
 // other exit code names the one that did not. `machine` is passed in
