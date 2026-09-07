@@ -3,10 +3,12 @@ package e2e
 import "testing"
 
 // A fresh string passed straight to Writer.write is released after the call
-// (#8413). The write's own Option[IoError] result box is sentinel-headered
-// and never reclaimed (#8398), so the shape cannot balance; what it pins is
-// the count: exactly that one box per round is unpaired, and every build()
-// result is freed. Before the release, allocs - frees was two per round.
+// (#8413), and so is the write's own Option[IoError] result box, which is one
+// counted rc=1 block per call since #8405. What is left unpaired is the
+// per-STREAM handle `stdout()` builds: it is sentinel-headered and deliberately
+// still immortal (#8398's remaining half), and it is allocated once, not per
+// round. So the count this pins is exactly one, whatever the round count —
+// before #8413 the build() results alone made it two per round.
 const writerArgTempSrc = `function build(n: i32): string {
     var out: string = "";
     var i: i32 = 0;
@@ -32,9 +34,9 @@ func TestX86_64WriterArgTempReclaimed(t *testing.T) {
 	if allocs < 120 {
 		t.Fatalf("allocs=%d: the probe is not building its strings", allocs)
 	}
-	// One stdout() handle plus one write result box per round stay unpaired
-	// by design; the 40 build() results must not.
-	if got := allocs - frees; got != 41 {
-		t.Errorf("allocs=%d frees=%d: %d unpaired, want 41 (the handle and one write box per round) — the build() temps are not released", allocs, frees, got)
+	// The stdout() handle is the one unpaired block; the 40 build() results
+	// and the 40 write result boxes must not join it.
+	if got := allocs - frees; got != 1 {
+		t.Errorf("allocs=%d frees=%d: %d unpaired, want 1 (the stdout handle alone) — a per-round temp is not released", allocs, frees, got)
 	}
 }
