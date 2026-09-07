@@ -213,6 +213,25 @@ fall-through.
 
 Worth knowing so you do not assume coverage you do not have:
 
+- **Any arm of a runtime helper family that no corpus program reaches.** A
+  gate that runs a program and checks what it does only covers the arms that
+  program takes, so it is not a gate on the family — it is a gate on the
+  sample. #8843 is the worked example: nine payloadless result-box arms on
+  wasm each left their box's payload words holding recycled bytes, and the
+  branchless enum drop released them without testing the tag. The behavioural
+  gate reaches `env`, so `env`'s arm was caught. Nothing in the corpus reaches
+  `Writer.write`'s success arm, so that one merged (#8850) and needed a second
+  PR (#8859). The natives got a STRUCTURAL gate in the first PR precisely
+  because their version of the corruption is silent — the reasoning was right
+  and was applied to two backends out of three, on the grounds that wasm traps.
+  A trap is only a gate for the arms something actually executes.
+
+  What closes a family is a test that walks the emitters and asserts the
+  property per arm, plus an explicit absent-list so a new helper cannot join
+  the exemption by saying nothing: `internal/codegen/wasmbin/payloadless_result_box_test.go`
+  and its native siblings. Prefer that shape whenever "every member of this
+  family must do X" is the actual claim.
+
 - **Which source lines any suite actually reaches.** Nothing asserts this, and
   nothing ever will — but as of #5548 it is now MEASURABLE rather than
   guessed: `fern -cover` instruments every executable line and every

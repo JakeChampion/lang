@@ -8578,6 +8578,45 @@ function main(): i32 {
     return (acc - 200) + __rc_underflow_count();
 }`,
 	},
+	{
+		// #8846: a fresh owned temp handed to a PAIR-FORM callee had no
+		// owner. The four argument-temp admissions all read
+		// `resultCannotAliasArg` off the call's static type, which for a
+		// pair-form callee is the enum (`Option[i32]`) rather than the
+		// (tag, payload) it really returns, so the whole family was excluded
+		// and `s.trim().parse_int()` stranded one `__str_slice` buffer per
+		// call — 32 B a round on x86-64, and at ANY length on the two-word
+		// ABIs, which have no inline packing.
+		//
+		// The padding matters: `trim()` of a string whose result fits the
+		// 7-byte native inline form allocates nothing, which is why the two
+		// stdin conformance fixtures carrying this shape read clean and the
+		// certify walk was right about them and the census silent.
+		// Both consumer shapes, because they differ on the operand stack
+		// where the post-call dec is spliced in: the match scrutinee sets
+		// suppressPairRebox and leaves the bare (tag, payload) there, while
+		// the `var` binding reboxes it into one heap pointer first.
+		name: "pair_form_call_arg_temp_reclaimed",
+		src: `
+import "std/string";
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 200) {
+        match ("  12345678  ".trim().parse_int()) {
+            Some(n) => { acc = acc + (n / 12345678); },
+            None => { }
+        }
+        var o: Option[i32] = "  87654321  ".trim().parse_int();
+        match (o) {
+            Some(n) => { acc = acc + (n / 87654321); },
+            None => { }
+        }
+        i = i + 1;
+    }
+    return (acc - 400) + __rc_underflow_count();
+}`,
+	},
 }
 
 func TestX86_64RcCorrectnessCorpus(t *testing.T) {

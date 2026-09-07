@@ -3830,7 +3830,12 @@ func uniformEnumDropLoads(ed *ast.EnumDecl, ptrW int) ([]enumDropLoad, bool) {
 	have := false
 	for _, v := range ed.Variants {
 		if len(v.Payloads) == 0 {
-			continue // payloadless ⇒ static sentinel, no box
+			// Contributes no loads, but the resulting drop is BRANCHLESS: a
+			// payloadless value that is a real box (a pair-form rebox, a
+			// runtime helper's None) passes the is_unique gate and has its
+			// payload words released without a tag test, so every producer of
+			// one must zero them (#8843).
+			continue
 		}
 		offsets, _ := payloadLayout(v.Payloads, len(v.Payloads), ptrW)
 		var loads []enumDropLoad

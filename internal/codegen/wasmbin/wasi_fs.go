@@ -1918,12 +1918,7 @@ func buildCloseBody(idxs map[string]uint32) []byte {
 	body = inst.InstEnd(body)
 
 	// Return None, at Option[IoError]'s uniform box size.
-	body = inst.InstI32Const(body, 8)
-	body = inst.InstCall(body, allocRc1)
-	body = inst.InstLocalTee(body, 3)
-	body = inst.InstI32Const(body, 1)
-	body = memory.InstI32Store(body, 2, 0)
-	body = inst.InstLocalGet(body, 3)
+	body = emitPayloadlessResultBox(body, allocRc1, 3, 8, 1)
 
 	// 3 i32 locals after the 1 param.
 	locals := inst.PutLocalsOneGroup(nil, 3, encode.ValtypeI32)
@@ -1979,12 +1974,7 @@ func buildStreamCloseBodyP2(idxs map[string]uint32, drop uint32) []byte {
 	}
 
 	// Return None, at Option[IoError]'s uniform box size.
-	body = inst.InstI32Const(body, 8)
-	body = inst.InstCall(body, allocRc1)
-	body = inst.InstLocalTee(body, 1)
-	body = inst.InstI32Const(body, 1)
-	body = memory.InstI32Store(body, 2, 0)
-	body = inst.InstLocalGet(body, 1)
+	body = emitPayloadlessResultBox(body, allocRc1, 1, 8, 1)
 
 	locals := inst.PutLocalsOneGroup(nil, 3, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
@@ -2115,13 +2105,8 @@ func buildWriterWriteBody(idxs map[string]uint32) []byte {
 	body = inst.InstEnd(body) // end loop
 	body = inst.InstEnd(body) // end block
 
-	// Return None.
-	body = inst.InstI32Const(body, 8)
-	body = inst.InstCall(body, allocRc1)
-	body = inst.InstLocalTee(body, 7)
-	body = inst.InstI32Const(body, 1)
-	body = memory.InstI32Store(body, 2, 0)
-	body = inst.InstLocalGet(body, 7)
+	// Return None, at Option[IoError]'s uniform box size.
+	body = emitPayloadlessResultBox(body, allocRc1, 7, 8, 1)
 
 	// 10 i32 locals after the 3 params (slots 3..12).
 	locals := inst.PutLocalsOneGroup(nil, 10, encode.ValtypeI32)
@@ -2227,12 +2212,7 @@ func buildWriterWriteBodyP2(idxs map[string]uint32) []byte {
 	body = inst.InstEnd(body)
 
 	// Success → None, at Option[IoError]'s uniform box size.
-	body = inst.InstI32Const(body, 8)
-	body = inst.InstCall(body, allocRc1)
-	body = inst.InstLocalTee(body, 10)
-	body = inst.InstI32Const(body, 1)
-	body = memory.InstI32Store(body, 2, 0)
-	body = inst.InstLocalGet(body, 10)
+	body = emitPayloadlessResultBox(body, allocRc1, 10, 8, 1)
 
 	// 12 i32 locals after the 3 params (slots 3..14).
 	locals := inst.PutLocalsOneGroup(nil, 12, encode.ValtypeI32)
@@ -2383,12 +2363,7 @@ func buildReaderReadLineFdBody(idxs map[string]uint32) []byte {
 	body = numeric.InstI32Eqz(body)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	{
-		body = inst.InstI32Const(body, 16)
-		body = inst.InstCall(body, alloc)
-		body = inst.InstLocalTee(body, 10)
-		body = inst.InstI32Const(body, 1)
-		body = memory.InstI32Store(body, 2, 0)
-		body = inst.InstLocalGet(body, 10)
+		body = emitPayloadlessResultBox(body, alloc, 10, 16, 1)
 		body = inst.InstReturn(body)
 	}
 	body = inst.InstEnd(body)
@@ -2533,12 +2508,7 @@ func buildReaderReadLineFdBodyP2(idxs map[string]uint32) []byte {
 	body = numeric.InstI32Eqz(body)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	{
-		body = inst.InstI32Const(body, 16)
-		body = inst.InstCall(body, alloc)
-		body = inst.InstLocalTee(body, 10)
-		body = inst.InstI32Const(body, 1)
-		body = memory.InstI32Store(body, 2, 0)
-		body = inst.InstLocalGet(body, 10)
+		body = emitPayloadlessResultBox(body, alloc, 10, 16, 1)
 		body = inst.InstReturn(body)
 	}
 	body = inst.InstEnd(body)

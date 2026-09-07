@@ -1,0 +1,38 @@
+*.fern linguist-language=Rust
+
+# Merge behaviour for the append-only REGISTRIES.
+#
+# A registry here is one line per subject, sorted, with no prose between the
+# rows: the conformance leak census (598 rows) and the self-host rejection
+# gaps. Over the last 40 commits the census took 297 insertions to 144
+# deletions — it is overwhelmingly APPENDED to, by every PR that adds a
+# conformance fixture, and it is touched by roughly a quarter of all commits.
+#
+# Two such appends are not a disagreement. Both rows belong in the file, and
+# the sorted position they collide at carries no meaning, so `merge=union`
+# keeps both instead of stopping ~200 merges a week on a conflict whose
+# resolution is never in doubt.
+#
+# THE HAZARD union introduces, and what covers it: when the same row's VALUE
+# differs on both sides, union keeps both rows rather than picking one. Every
+# reader of these files builds a map keyed on the row name
+# (censusRowNames, readRejectionGaps), so a duplicated key collapses SILENTLY
+# to whichever row was read last. TestUnionMergedRegistriesHaveNoDuplicateKeys
+# is what makes that loud, and it derives its file list from THIS file, so a
+# path added below is covered without anyone remembering to.
+#
+# NOT applied to .github/selfhost-driver-sizes.txt, which looks like a registry
+# and is not. Its 15 rows change by RE-MEASUREMENT, not by appending, so
+# both-sides-differ is the COMMON case there rather than the rare one — and the
+# right resolution is neither side but a fresh measurement of the merged tree.
+# Its 300 comment lines are the narrative attributing each figure to the commit
+# that moved it, which union would interleave into two PRs' notes at once.
+#
+# No test enforces that exclusion, and a shape check cannot: this file and the
+# rejection gaps are both a comment header followed by data rows, so nothing
+# syntactic separates them. What distinguishes a union-safe registry is how it
+# CHANGES, which is a property of its history. Adding a path above is therefore
+# a judgement — "is a colliding row here two appends, or one disagreement?" —
+# and the duplicate-key test is what catches getting it wrong.
+internal/e2e/testdata/conformance-leak-census.txt merge=union
+internal/e2eselfhost/testdata/selfhost-rejection-gaps.txt merge=union
