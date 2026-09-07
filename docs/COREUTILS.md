@@ -773,20 +773,15 @@ groups are the order of work. Each sub-issue names its group.
   `sleep`. No new runtime surface; the full getopt emulation lands here.
 - **B. streaming text** — `cat` `tac` `head` `tail` `wc` `nl` `cut` `paste`
   `join` `comm` `uniq` `sort` `tr` `fold` `fmt` `pr` `ptx` `expand`
-  `unexpand` `csplit` `shuf` `od` `base32` `base64` `basenc` `cksum`
+  `unexpand` `split` `csplit` `shuf` `od` `base32` `base64` `basenc` `cksum`
   `sum` `md5sum` `sha1sum` `sha224sum` `sha256sum` `sha384sum` `sha512sum`
-  `b2sum` `tee`. `cat`, `head`, `split`, `tail` and `wc` are done. Needs a
-  `b2sum` `tee`. `cat`, `head`, `tail`, `wc` and `tac` are done. Needs a
-  buffered stdout writer in `std/io_buffered` (its own header already
-  promises one) and a streaming stdin reader whose reads can FAIL: every one
-  of these reaches a read error through a directory operand, and
-  `Reader.read_chunk` answered None to EOF and to EISDIR alike until #8700
-  gave it `Result[string, IoError]`. The hash
-  `b2sum` `tee`. `head`, `wc` and the seven checksum utilities are done. Needs a buffered stdout writer in
-  `std/io_buffered` (its own header already promises one) and a streaming
-  stdin reader whose reads can FAIL: every one of these reaches a read error
-  through a directory operand, and `Reader.read_chunk` answered None to EOF
-  and to EISDIR alike until #8700 gave it `Result[string, IoError]`. The hash
+  `b2sum` `tee`. Done: `cat`, `tac`, `head`, `tail`, `wc`, `nl`, `join`,
+  `comm`, `uniq`, `tr`, `split`, `base32`, `base64`, `basenc` and the seven
+  checksum utilities. Needs a buffered stdout writer in `std/io_buffered`
+  (its own header already promises one) and a streaming stdin reader whose
+  reads can FAIL: every one of these reaches a read error through a
+  directory operand, and `Reader.read_chunk` answered None to EOF and to
+  EISDIR alike until #8700 gave it `Result[string, IoError]`. The hash
   utilities have their digests: `std/crypto` streams MD5, SHA-1,
   SHA-224/256/384/512 and BLAKE2b (`h = h.update(chunk)` per `read_chunk`
   piece), and `std/hash` has cksum's CRC-32 and both sum(1) checksums with
