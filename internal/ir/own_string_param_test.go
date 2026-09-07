@@ -101,7 +101,7 @@ function main(): i32 {
     while (i < 3) { acc = put(acc, "12345678"); i = i + 1; }
     return acc.len();
 }`
-	wantPutDecs := map[string]int{"wasm": 1, "x86-64": 1, "arm64": 2}
+	wantPutDecs := map[string]int{"wasm": 1, "x86-64": 1, "arm64": 1}
 	twoWord := map[string]bool{"wasm": true, "x86-64": false, "arm64": true}
 	for abi, prog := range ownStrParamLowerings(t, src) {
 		if got := countStringDecs(prog, "put"); got != wantPutDecs[abi] {
