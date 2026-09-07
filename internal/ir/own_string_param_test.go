@@ -54,14 +54,12 @@ func ownStrParamLowerings(t *testing.T, src string) map[string]*Program {
 // caller moved in, and the caller does not release it a second time. Both
 // halves on every ABI — taking either one alone is one of the two bugs.
 func TestOwnStringParamReleasedOnce(t *testing.T) {
-	// arm64 has no __fern_str_append, so its `a = a + s` keeps the
-	// overwrite-dec that frees the superseded buffer; the ABIs that append
-	// in place suppress it (the `strAppended` arm). The exit release is the
-	// one both must have, and it is what was missing.
-	wantPutDecs := map[string]int{"wasm": 1, "x86-64": 1, "arm64": 2}
+	// Every ABI appends in place, so the overwrite-dec is suppressed (the
+	// `strAppended` arm) and the one dec left is the moved-in param's exit
+	// release — which is what was missing.
 	for abi, prog := range ownStrParamLowerings(t, ownStrParamSrc) {
-		if got := countStringDecs(prog, "put"); got != wantPutDecs[abi] {
-			t.Errorf("%s: string decs in put = %d, want %d (the moved-in param's exit release)", abi, got, wantPutDecs[abi])
+		if got := countStringDecs(prog, "put"); got != 1 {
+			t.Errorf("%s: string decs in put = %d, want 1 (the moved-in param's exit release)", abi, got)
 		}
 		// main's `acc = put(acc, …)` is a move, so its overwrite-dec must
 		// not fire; what decs remain are acc's own scope-exit release.
@@ -72,12 +70,11 @@ func TestOwnStringParamReleasedOnce(t *testing.T) {
 }
 
 // TestOwnStringParamSelfAppendsInPlace: with the parameter eligible, its
-// self-append is the in-place `__fern_str_append` a bare local already got.
-// arm64 has no such helper (strAppendAvailable) and keeps OpStrConcat, so
-// this pins only the two ABIs that emit it.
+// self-append is the in-place `__fern_str_append` a bare local already got,
+// on every ABI.
 func TestOwnStringParamSelfAppendsInPlace(t *testing.T) {
 	progs := ownStrParamLowerings(t, ownStrParamSrc)
-	for _, abi := range []string{"wasm", "x86-64"} {
+	for _, abi := range []string{"wasm", "x86-64", "arm64"} {
 		if got := countFnCallDirect(progs[abi], "put", "__fern_str_append"); got != 1 {
 			t.Errorf("%s: __fern_str_append calls in put = %d, want 1", abi, got)
 		}

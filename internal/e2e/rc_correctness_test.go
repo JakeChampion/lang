@@ -8731,6 +8731,33 @@ function main(): i32 {
     return __rc_underflow_count();
 }`,
 	},
+	{
+		// A fresh temp handed to a PAIR-FORM callee whose payloads are all
+		// scalars: the (tag, payload) result cannot be the argument, so the
+		// caller releases it after the call like any borrowed arg temp. Both
+		// strings are longer than the inline threshold so a missed release
+		// is a heap block, not an inline word the census cannot see; the
+		// second shape is the `line.trim().parse_int()` idiom the certify
+		// walk flagged in stdin_double / multiline_stdin.
+		name: "pair_form_callee_arg_temp_released",
+		src: `import "std/string";
+function mk(i: i32): string { var s: string = "abcdefghij"; return s + "k"; }
+function classify(s: string): Option[i32] { if (s.len() > 3) { return Some(s.len()); } return None; }
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) {
+        match (classify(mk(i))) { Some(n) => { acc = acc + n; }, None => {} }
+        var line: string = "   " + "12345678" + "   ";
+        match (line.trim().parse_int()) {
+            Some(n) => { acc = acc + (n / 12345678); },
+            None => { return 254; }
+        }
+        i = i + 1;
+    }
+    return (acc - 1200) + __rc_underflow_count();
+}`,
+	},
 }
 
 func TestX86_64RcCorrectnessCorpus(t *testing.T) {

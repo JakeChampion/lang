@@ -1,0 +1,523 @@
+// paste.fern — GNU-compatible `paste`.
+//
+//   paste [-s] [-d LIST] [-z] [FILE]...
+//
+// In parallel (the default) the n-th line of every FILE is written as
+// one line, the files separated by the delimiters of LIST cycling round
+// (a tab by default). `-s` pastes each FILE on a line of its own
+// instead. `-z` makes NUL the line delimiter on both sides.
+//
+// Four behaviours are the reference binary's:
+//
+//   - A NUL delimiter writes NOTHING. `-d ''` means exactly that, since
+//     an empty LIST is read as `\0`, so `paste -d '' a b` concatenates.
+//   - A FILE that runs out early keeps its column: the delimiter that
+//     would have followed it is HELD BACK and written only when a later
+//     file on the same line produces something, or at the end of a line
+//     that produced anything at all. That is why the row after a short
+//     file starts with delimiters rather than ending with them.
+//   - Every `-` operand is ONE stream, not one per column, so
+//     `paste - -` puts consecutive lines of stdin side by side.
+//   - A FILE that cannot be OPENED ends the run before any output at
+//     all, where one that cannot be READ (a directory) is reported and
+//     treated as empty.
+import "std/array";
+import "std/io_buffered";
+import "./lib/gnu";
+
+function opt_serial(): i32 {
+  return 1;
+}
+
+function opt_delims(): i32 {
+  return 2;
+}
+
+function opt_zero(): i32 {
+  return 3;
+}
+
+function help_text(): string {
+  var out: string = "";
+  out = out + "Usage: " + gnu.prog() + " [OPTION]... [FILE]...\n";
+  out = out + "Write lines consisting of the sequentially corresponding lines from\n";
+  out = out + "each FILE, separated by TABs, to standard output.\n";
+  out = out + "\n";
+  out = out + "With no FILE, or when FILE is -, read standard input.\n";
+  out = out + "\n";
+  out = out + "  -d, --delimiters=LIST   reuse characters from LIST instead of TABs\n";
+  out = out + "  -s, --serial            paste one file at a time instead of in parallel\n";
+  out = out + "  -z, --zero-terminated    line delimiter is NUL, not newline\n";
+  out = out + "      --help        display this help and exit\n";
+  out = out + "      --version     output version information and exit\n";
+  return out;
+}
+
+// Bytes per read(2), and the size of the block the accumulated output
+// is handed to the buffered writer in. The writer's threshold is the
+// same number, so a full block goes straight to the fd instead of being
+// copied into its buffer first.
+function read_size(): i32 {
+  return 65536;
+}
+
+function block_size(): i32 {
+  return 16384;
+}
+
+function byte_str(b: i32): string {
+  var bs: u8[] = [];
+  bs = bs.append(b as u8);
+  return string_from_bytes_unchecked(bs);
+}
+
+// `collapse(list)` — the `-d` operand with its escapes resolved. The
+// named ones are the seven C escapes plus `\0`; any other backslashed
+// byte is itself, and a list ending in a bare backslash is an error.
+function collapse(list: string): u8[] {
+  var out: u8[] = [];
+  var i: i32 = 0;
+  while (i < list.len()) {
+    var c: i32 = list[i] as i32;
+    if (c != 92) {
+      out = out.append(c as u8);
+      i = i + 1;
+      continue;
+    }
+    i = i + 1;
+    if (i >= list.len()) {
+      gnu.error("delimiter list ends with an unescaped backslash: " + list);
+      exit(1);
+    }
+    var e: i32 = list[i] as i32;
+    if (e == 48) {
+      out = out.append(0 as u8);
+    } else if (e == 98) {
+      out = out.append(8 as u8);
+    } else if (e == 102) {
+      out = out.append(12 as u8);
+    } else if (e == 110) {
+      out = out.append(10 as u8);
+    } else if (e == 114) {
+      out = out.append(13 as u8);
+    } else if (e == 116) {
+      out = out.append(9 as u8);
+    } else if (e == 118) {
+      out = out.append(11 as u8);
+    } else {
+      out = out.append(e as u8);
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+function main(): i32 {
+  var argv: string[] = args();
+  var opts: gnu.Opt[] = [];
+  opts = opts.append(gnu.flag("s", "serial", opt_serial()));
+  opts = opts.append(gnu.valued("d", "delimiters", opt_delims()));
+  opts = opts.append(gnu.flag("z", "zero-terminated", opt_zero()));
+
+  var serial: boolean = false;
+  var list: string = "\t";
+  var term: i32 = 10;
+  var g: gnu.Getopt = gnu.getopt_new(argv, opts, "paste", help_text(), 1);
+  while (true) {
+    var res: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    g = res.1;
+    match (res.0) {
+      Some(m) => {
+        if (m.id == opt_serial()) {
+          serial = true;
+        } else if (m.id == opt_delims()) {
+          // An empty LIST is read as `\0`: one delimiter that writes
+          // nothing.
+          if (m.value.len() == 0) {
+            list = "\\0";
+          } else {
+            list = m.value;
+          }
+        } else if (m.id == opt_zero()) {
+          term = 0;
+        }
+      },
+      None => {
+        break;
+      }
+    }
+  }
+  // The delimiters as the strings they are written as: a NUL entry is
+  // the empty string, since GNU writes nothing for one. Built once so
+  // the output loop never makes a string per delimiter.
+  var bytes: u8[] = collapse(list);
+  var delims: string[] = [];
+  var di: i32 = 0;
+  while (di < bytes.len()) {
+    if (bytes[di] as i32 == 0) {
+      delims = delims.append("");
+    } else {
+      delims = delims.append(byte_str(bytes[di] as i32));
+    }
+    di = di + 1;
+  }
+
+  var files: string[] = g.operands();
+  if (files.len() == 0) {
+    files = files.append("-");
+  }
+  if (serial) {
+    return run_serial(files, delims, term);
+  }
+  return run_parallel(files, delims, term);
+}
+
+// `run_serial(files, delims, term)` — one line per FILE, its own lines
+// joined by the delimiters. Even a FILE with nothing in it produces its
+// line delimiter; one that cannot be opened produces nothing at all.
+function run_serial(files: string[], delims: string[], term: i32): i32 {
+  var o: io_buffered.BufWriter = gnu.out_with(block_size());
+  var out: string = "";
+  var ok: boolean = true;
+  var termstr: string = byte_str(term);
+
+  var fi: i32 = 0;
+  while (fi < files.len()) {
+    var name: string = files[fi];
+    fi = fi + 1;
+    var is_stdin: boolean = name == "-";
+    var r: Reader = stdin();
+    var opened: boolean = true;
+    if (!is_stdin) {
+      opened = false;
+      match (open_reader(name)) {
+        Ok(f) => {
+          r = f;
+          opened = true;
+        },
+        Err(e) => {
+          o = o.write_string(out);
+          out = "";
+          o = gnu.error_out(o, gnu.quotef(name) + ": " + gnu.io_error_text(e));
+          ok = false;
+        }
+      }
+    }
+    if (!opened) {
+      continue;
+    }
+    var chunk: string = "";
+    var pos: i32 = 0;
+    var eof: boolean = false;
+    var di: i32 = 0;
+    var first_line: boolean = true;
+    var in_line: boolean = false;
+    while (true) {
+      if (pos >= chunk.len()) {
+        if (eof) {
+          break;
+        }
+        var piece: string = "";
+        var read_ok: boolean = true;
+        match (r.read_chunk(read_size())) {
+          Ok(c) => {
+            piece = c;
+          },
+          Err(e) => {
+            o = o.write_string(out);
+            out = "";
+            o = gnu.error_out(o, gnu.quotef(name) + ": " + gnu.io_error_text(e));
+            ok = false;
+            read_ok = false;
+          }
+        }
+        if (!read_ok || piece.len() == 0) {
+          eof = true;
+        } else {
+          chunk = piece;
+          pos = 0;
+        }
+        continue;
+      }
+      var j: i32 = __memchr(chunk, term, pos);
+      var end: i32 = chunk.len();
+      var terminated: boolean = false;
+      if (j >= 0) {
+        end = j;
+        terminated = true;
+      }
+      if (terminated || end > pos) {
+        if (!in_line) {
+          if (!first_line) {
+            out = out + delims[di];
+            di = di + 1;
+            if (di >= delims.len()) {
+              di = 0;
+            }
+          }
+          first_line = false;
+          in_line = true;
+        }
+        out = out + slice_unchecked(chunk, pos, end);
+      }
+      pos = end;
+      if (terminated) {
+        pos = pos + 1;
+        in_line = false;
+      }
+      if (out.len() >= block_size()) {
+        o = o.write_string(out);
+        out = "";
+      }
+    }
+    out = out + termstr;
+    if (!is_stdin) {
+      r.close();
+    }
+    if (out.len() >= block_size()) {
+      o = o.write_string(out);
+      out = "";
+    }
+  }
+
+  o = o.write_string(out);
+  gnu.finish(o);
+  if (!ok) {
+    return 1;
+  }
+  return 0;
+}
+
+// `run_parallel(files, delims, term)` — the n-th line of each FILE on
+// one line. `held` is the delimiters of files that have already run
+// out: they are only written once a later file on the same line
+// produces something.
+function run_parallel(files: string[], delims: string[], term: i32): i32 {
+  var o: io_buffered.BufWriter = gnu.out_with(block_size());
+  var out: string = "";
+  var ok: boolean = true;
+  var termstr: string = byte_str(term);
+
+  var rs: Reader[] = [];
+  var chunks: string[] = [];
+  var poss: i32[] = [];
+  var eofs: boolean[] = [];
+  var live: boolean[] = [];
+  var stdins: boolean[] = [];
+  // Every `-` operand is the SAME stream, so they share one read
+  // position: `paste - -` puts consecutive lines of stdin side by side
+  // rather than giving each column a buffer of its own.
+  var slot: i32[] = [];
+  var stdin_slot: i32 = 0 - 1;
+  var i: i32 = 0;
+  while (i < files.len()) {
+    var name: string = files[i];
+    var is_stdin: boolean = name == "-";
+    live = live.append(true);
+    stdins = stdins.append(is_stdin);
+    if (is_stdin && stdin_slot >= 0) {
+      slot = slot.append(stdin_slot);
+      i = i + 1;
+      continue;
+    }
+    var r: Reader = stdin();
+    if (!is_stdin) {
+      match (open_reader(name)) {
+        Ok(f) => {
+          r = f;
+        },
+        Err(e) => {
+          gnu.error(gnu.quotef(name) + ": " + gnu.io_error_text(e));
+          gnu.finish(o);
+          return 1;
+        }
+      }
+    }
+    slot = slot.append(rs.len());
+    if (is_stdin) {
+      stdin_slot = rs.len();
+    }
+    rs = rs.append(r);
+    chunks = chunks.append("");
+    poss = poss.append(0);
+    eofs = eofs.append(false);
+    i = i + 1;
+  }
+
+  var open_count: i32 = files.len();
+  while (open_count > 0) {
+    var somedone: boolean = false;
+    var di: i32 = 0;
+    var held: string = "";
+    i = 0;
+    while (i < files.len()) {
+      var k: i32 = slot[i];
+      var produced: boolean = false;
+      // Whether the line's own terminator went out with its content.
+      // For the LAST column of a line that is exactly what follows it,
+      // so taking the two together halves the appends per row.
+      var took_term: boolean = false;
+      var whole: boolean = false;
+      if (live[i]) {
+        // The usual line: already whole in the chunk this file is on,
+        // so it needs neither the refill loop nor the piece loop.
+        var ck: string = chunks[k];
+        var cp: i32 = poss[k];
+        if (cp < ck.len()) {
+          var w: i32 = __memchr(ck, term, cp);
+          if (w >= 0) {
+            whole = true;
+            produced = true;
+            somedone = true;
+            if (held.len() > 0) {
+              out = out + held;
+              held = "";
+            }
+            var upto: i32 = w;
+            if (i + 1 == files.len()) {
+              upto = w + 1;
+              took_term = true;
+            }
+            out = out + slice_unchecked(ck, cp, upto);
+            poss = poss.with(k, w + 1);
+          }
+        }
+      }
+      if (live[i] && !whole) {
+        // Is there anything left at all? The answer decides whether
+        // this file still holds a column on this line.
+        while (poss[k] >= chunks[k].len() && !eofs[k]) {
+          var piece: string = "";
+          var read_ok: boolean = true;
+          match (rs[k].read_chunk(read_size())) {
+            Ok(c) => {
+              piece = c;
+            },
+            Err(e) => {
+              o = o.write_string(out);
+              out = "";
+              o = gnu.error_out(o, gnu.quotef(files[i]) + ": " + gnu.io_error_text(e));
+              ok = false;
+              read_ok = false;
+            }
+          }
+          if (!read_ok || piece.len() == 0) {
+            eofs = eofs.with(k, true);
+          } else {
+            chunks = chunks.with(k, piece);
+            poss = poss.with(k, 0);
+          }
+        }
+        if (poss[k] < chunks[k].len()) {
+          produced = true;
+          somedone = true;
+          if (held.len() > 0) {
+            out = out + held;
+            held = "";
+          }
+          // The line itself, terminator dropped.
+          var reading: boolean = true;
+          while (reading) {
+            if (poss[k] >= chunks[k].len()) {
+              if (eofs[k]) {
+                reading = false;
+              } else {
+                var more: string = "";
+                var read2: boolean = true;
+                match (rs[k].read_chunk(read_size())) {
+                  Ok(c) => {
+                    more = c;
+                  },
+                  Err(e) => {
+                    o = o.write_string(out);
+                    out = "";
+                    o = gnu.error_out(o, gnu.quotef(files[i]) + ": " + gnu.io_error_text(e));
+                    ok = false;
+                    read2 = false;
+                  }
+                }
+                if (!read2 || more.len() == 0) {
+                  eofs = eofs.with(k, true);
+                } else {
+                  chunks = chunks.with(k, more);
+                  poss = poss.with(k, 0);
+                }
+              }
+            } else {
+              var j: i32 = __memchr(chunks[k], term, poss[k]);
+              if (j >= 0) {
+                var upto: i32 = j;
+                if (i + 1 == files.len()) {
+                  upto = j + 1;
+                  took_term = true;
+                }
+                out = out + slice_unchecked(chunks[k], poss[k], upto);
+                poss = poss.with(k, j + 1);
+                reading = false;
+              } else {
+                out = out + slice_unchecked(chunks[k], poss[k], chunks[k].len());
+                poss = poss.with(k, chunks[k].len());
+              }
+            }
+          }
+          // A line that ran into end of file leaves the file behind:
+          // its column is held from the next one on.
+          if (poss[k] >= chunks[k].len() && eofs[k]) {
+            produced = false;
+          }
+        }
+      }
+      if (!produced) {
+        if (live[i]) {
+          live = live.with(i, false);
+          open_count = open_count - 1;
+          if (!stdins[i]) {
+            rs[k].close();
+          }
+        }
+        if (i + 1 == files.len()) {
+          if (somedone) {
+            out = out + held;
+            held = "";
+            out = out + termstr;
+          }
+        } else {
+          held = held + delims[di];
+          di = di + 1;
+          if (di >= delims.len()) {
+            di = 0;
+          }
+        }
+      } else {
+        if (i + 1 == files.len()) {
+          if (!took_term) {
+            out = out + termstr;
+          }
+        } else if (delims[di].len() > 0) {
+          out = out + delims[di];
+          di = di + 1;
+          if (di >= delims.len()) {
+            di = 0;
+          }
+        } else {
+          di = di + 1;
+          if (di >= delims.len()) {
+            di = 0;
+          }
+        }
+      }
+      i = i + 1;
+    }
+    if (out.len() >= block_size()) {
+      o = o.write_string(out);
+      out = "";
+    }
+  }
+
+  o = o.write_string(out);
+  gnu.finish(o);
+  if (!ok) {
+    return 1;
+  }
+  return 0;
+}

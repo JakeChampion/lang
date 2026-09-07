@@ -80,7 +80,7 @@ func diskCacheWriteDir() string {
 // down per-test); the cache must outlive any single test.
 func linkCacheBaseDir() (string, error) {
 	linkCacheDirOnce.Do(func() {
-		linkCacheDir, linkCacheDirErr = os.MkdirTemp("", "selfhost-bincache-")
+		linkCacheDir, linkCacheDirErr = ProcessScratchDir("selfhost-bincache")
 	})
 	return linkCacheDir, linkCacheDirErr
 }

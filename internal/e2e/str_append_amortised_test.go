@@ -55,3 +55,8 @@ func TestWASMStrAppendAmortised(t *testing.T) {
 	_, stderr, exit := runLeakCheckWasm(t, strAppendAmortisedSrc, false)
 	checkStrAppendAmortised(t, stderr, exit)
 }
+
+func TestArm64StrAppendAmortised(t *testing.T) {
+	_, stderr, exit := runLeakCheckArm64(t, strAppendAmortisedSrc)
+	checkStrAppendAmortised(t, stderr, exit)
+}

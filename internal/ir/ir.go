@@ -12745,7 +12745,7 @@ func (b *builder) binary(n *ast.Binary) error {
 		// arm64 and wasm once the order was corrected. Copy instead; the
 		// stash below releases the read's retain exactly as for any other
 		// borrowed operand.
-		consumeLeftTemp := ast.RcFreeEnabled && b.strAppendAvailable() &&
+		consumeLeftTemp := ast.RcFreeEnabled &&
 			b.isOwnedStringTemp(n.Left) && !isCellStringGetExpr(n.Left) &&
 			ast.Expr(n) != b.selfStrAppendBin
 		stash := func(e ast.Expr, consumed bool) (int32, error) {
@@ -19405,28 +19405,6 @@ func isStringTypeOfLocal(name string, b *builder) bool {
 	return false
 }
 
-// strAppendAvailable reports whether this target's backend emits the
-// __fern_str_append helper: wasm's two-word ABI (ptrW==4) and native
-// single-word x86_64 (ptrW==8 with TwoWordOverride off). arm64 (ptrW==8 +
-// TwoWordOverride) has no such helper yet, so it keeps plain OpStrConcat
-// and its codegen is byte-identical.
-//
-// These USED to be exactly the widths whose assign() string branch releases
-// the old buffer on overwrite, so the two sets coincided by construction.
-// They no longer do: since #6554 / #7446 that branch releases on every
-// width, arm64 included. The sets must now be kept apart deliberately.
-//
-// What balances the release is the marked self-append short-circuit
-// (isSelfStrAppendLocal, the `strAppended` arm ahead of it), not the width:
-// __fern_str_append writes back into the same box, so releasing after it
-// would over-release. Widening this predicate to arm64 without a helper
-// that arm64 does not have would therefore be the one change that turns
-// that release into a use-after-free — which is why arm64 keeps plain
-// OpStrConcat here even though it now reclaims on overwrite.
-func (b *builder) strAppendAvailable() bool {
-	return b.ptrW == 4 || (b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW))
-}
-
 // isSelfStrAppendLocal reports whether `value` is exactly `<name> + rhs` —
 // the string self-append that `__fern_str_append` lowers in place (#5637
 // option 3). `out = out + piece` is the stdlib's universal string builder
@@ -19443,12 +19421,18 @@ func (b *builder) strAppendAvailable() bool {
 // __fern_str_dec the overwrite would have emitted, so the reclaim is
 // unchanged — see the backends' __fern_str_append.
 //
-// The guards mirror that ownership transfer: RcFreeEnabled, an OWNED
+// The guards mirror that ownership transfer: RcFreeEnabled and an OWNED
 // (freeEligible) string local — a borrowed param's buffer is still the
-// caller's, so mutating it in place would corrupt a live value — and an ABI
-// that releases on overwrite at all.
+// caller's, so mutating it in place would corrupt a live value.
+//
+// This mark is also what BALANCES assign()'s release of the old buffer on
+// overwrite: __fern_str_append writes back into the same box, so releasing
+// after it would over-release, and the `strAppended` arm ahead of that
+// release is what stops it. A target whose backend did not emit the helper
+// would therefore turn that release into a use-after-free — which is why
+// every backend emits it and there is no width test left here.
 func (b *builder) isSelfStrAppendLocal(value ast.Expr, name string) bool {
-	if !ast.RcFreeEnabled || !b.strAppendAvailable() {
+	if !ast.RcFreeEnabled {
 		return false
 	}
 	bin, ok := value.(*ast.Binary)
@@ -19477,7 +19461,7 @@ func (b *builder) isSelfStrAppendLocal(value ast.Expr, name string) bool {
 // buffer at rc 1, since only the box holds that reference, so a gate on the
 // string would grow a buffer the second alias still reads through.
 func (b *builder) isSelfStrAppendField(value ast.Expr, ft ast.Type, baseName, fieldName string) bool {
-	if !ast.RcFreeEnabled || !b.strAppendAvailable() {
+	if !ast.RcFreeEnabled {
 		return false
 	}
 	if _, isStr := ft.(ast.StringType); !isStr {
