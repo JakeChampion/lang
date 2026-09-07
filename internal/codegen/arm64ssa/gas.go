@@ -2551,7 +2551,7 @@ func emitOpenAppenderHelper(w func(string, ...any)) {
 // there, which reaches the caller as IoError::AlreadyExists. No O_TRUNC: with
 // O_EXCL the file cannot already exist.
 func emitOpenExclusiveHelper(w func(string, ...any)) {
-	emitOpenHandleHelper(w, "open_exclusive", "ox", 193, 420)
+	emitOpenHandleHelper(w, "open_exclusive", "ox", 193, 384)
 }
 
 // emitWriterWriteHelper writes __method_Writer_write(writer, data) ->

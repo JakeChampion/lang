@@ -10026,7 +10026,7 @@ func (g *generator) emitReaderWriterRuntime() {
 		{"__fern_open_reader", "open_reader", 0, 0},
 		{"__fern_open_writer", "open_writer", g.oflagWrite(oflagCreatTrunc), 0644},
 		{"__fern_open_appender", "open_appender", g.oflagWrite(oflagCreatAppend), 0644},
-		{"__fern_open_exclusive", "open_exclusive", g.oflagWrite(oflagCreatExcl), 0644},
+		{"__fern_open_exclusive", "open_exclusive", g.oflagWrite(oflagCreatExcl), 0600},
 	} {
 		_ = e.name
 		g.line("")

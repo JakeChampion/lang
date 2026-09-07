@@ -733,6 +733,7 @@ function spool(s: Src, first: string): (Src, i64) {
     buf = buf.write_string(block);
     match (buf.error()) {
       Some(e) => {
+        drop_spool(path);
         gnu.error(path + ": " + gnu.io_error_text(e));
         exit(1);
       },
@@ -744,6 +745,7 @@ function spool(s: Src, first: string): (Src, i64) {
   }
   match (buf.close()) {
     Some(e) => {
+      drop_spool(path);
       gnu.error(path + ": " + gnu.io_error_text(e));
       exit(1);
     },
@@ -758,11 +760,26 @@ function spool(s: Src, first: string): (Src, i64) {
       return (src_new(r, s.name), total);
     },
     Err(e) => {
+      drop_spool(path);
       gnu.error(path + ": " + gnu.io_error_text(e));
       exit(1);
     }
   }
   return (s, total);
+}
+
+// `drop_spool(path)` — best-effort unlink of the spool file, for the exits
+// that leave `spool` without one. GNU never needs this: create_temp_file
+// unlinks at creation and keeps only the fd, so the input has no name to
+// leave behind. This one has a name until the reopen, so every failing
+// path removes it rather than leaving a copy of the input in $TMPDIR.
+// A signal still leaks it — closing that needs the unlink-at-creation
+// shape (#8814).
+function drop_spool(path: string): void {
+  match (remove_file(path)) {
+    Ok(_) => {},
+    Err(_) => {}
+  }
 }
 
 // `sized(s, r)` — the input's byte count, with the input still readable

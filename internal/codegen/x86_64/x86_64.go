@@ -13668,7 +13668,7 @@ func (g *generator) emitReaderWriterRuntime() {
 		{"__fern_open_reader", 0, 0},
 		{"__fern_open_writer", oflagCreatTrunc, 0644},
 		{"__fern_open_appender", oflagCreatAppend, 0644},
-		{"__fern_open_exclusive", oflagCreatExcl, 0644},
+		{"__fern_open_exclusive", oflagCreatExcl, 0600},
 	} {
 		g.line("")
 		g.line(".globl " + e.sym)
