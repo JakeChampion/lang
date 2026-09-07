@@ -46,7 +46,17 @@ actionlint:
 # lint gates). Per clone, since core.hooksPath is local config.
 hooks:
 	git config core.hooksPath .githooks
-	@echo "git hooks: .githooks/ (git push --no-verify skips them)"
+	# rerere replays a conflict resolution you have already made, so rebasing the
+	# same branch onto a main that moved again does not re-ask. Set per-clone
+	# because it is OFF by default: it was on for exactly one machine here, out
+	# of a global ~/.gitconfig, which is no help to CI, a fresh clone, or an
+	# agent session in a container. `rerere.autoUpdate` is deliberately left
+	# alone — replaying a resolution is safe, staging it unread is a preference.
+	#
+	# This is the LOCAL loop only. auto-rebase-prs.yml replays every open PR on
+	# a fresh runner clone, which has no cache to hit, so it gains nothing here.
+	git config rerere.enabled true
+	@echo "git hooks: .githooks/ (git push --no-verify skips them); rerere on"
 
 # Fail when a workflow selects a Go test by a name nothing answers to.
 # `go test -run` reports exit 0 for a name that matches nothing, so a lane
