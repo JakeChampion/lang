@@ -3,10 +3,18 @@
 # selfhost-emit-hashes — byte-identity gate for pure refactors of the self-host
 # compiler.
 #
-# Emits every fixture in conformance/cases through a self-host
-# compiler binary, on all three backends, and writes one sha256 per (fixture,
-# target). Run it before and after a refactor and diff the two files: if the
-# refactor was pure, they are identical.
+# Builds every fixture in conformance/cases with a self-host compiler binary,
+# on all three backends, and writes one sha256 per (fixture, target). Run it
+# before and after a refactor and diff the two files: if the refactor was pure,
+# they are identical.
+#
+# It hashes the ASSEMBLED ARTIFACT — the x86-64 and arm64 ELF, the wasm module —
+# not emitted `.s` text: the default path runs a plain `-o` build, so the
+# in-process assembler is inside what is being compared. That matters for a
+# change to the assembler itself, where an asm-text hash would be invariant by
+# construction and prove nothing. (`--ssa` is the exception: it compares
+# `-emit asm` output, because what it needs to detect is an SSA-to-IR
+# fall-through, which is visible in the text and not in the artifact.)
 #
 # This exists because the compiler's own type system cannot catch the mistakes
 # a mechanical refactor makes. Whole families of values here share one type —
