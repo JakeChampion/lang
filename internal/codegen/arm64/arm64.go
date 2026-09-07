@@ -3712,13 +3712,33 @@ func (g *generator) emitSizeClassCap(reg, t1, t2, t3 string) {
 	g.label(done)
 }
 
+// strAppendScratch are the registers the two __fern_str_append eligibility
+// helpers below clobber. A value the caller still needs must not live in one:
+// the first scratch write destroys it and the read back sees a size-class
+// intermediate, which reaches the fast path as a capacity test that passes for
+// a piece of any width and grows the accumulator off the end of its block.
+var strAppendScratch = []string{"x9", "x10", "x11", "x12", "x13"}
+
+// assertStrAppendOperands panics when a caller hands one of those helpers an
+// operand in a register it is about to use as scratch.
+func assertStrAppendOperands(regs ...string) {
+	for _, r := range regs {
+		for _, s := range strAppendScratch {
+			if r == s {
+				panic("arm64: __fern_str_append operand in a scratch register: " + r)
+			}
+		}
+	}
+}
+
 // emitStrAppendEligible emits the in-place-eligibility test __fern_str_append
 // and __fern_str_append_range share: branch to `bail` unless the accumulator
 // in (dataX, lenX) is a uniquely-owned heap buffer this frame may grow.
 // Inline/SSO pairs have no buffer to grow; anything below the heap floor is a
 // .rodata literal, refused whatever the rc word at [data-8] reads; rc != 1
-// means a second reference would observe the mutation. x9/x10 are scratch.
+// means a second reference would observe the mutation.
 func (g *generator) emitStrAppendEligible(dataX, lenX, bail string) {
+	assertStrAppendOperands(dataX, lenX)
 	g.emit("tbnz %s, #63, %s", lenX, bail) // inline/SSO: no heap buffer
 	g.emit("lsr x9, %s, #28", dataX)
 	g.emit("cbz x9, %s", bail)           // below the heap floor (and null)
@@ -3730,8 +3750,7 @@ func (g *generator) emitStrAppendEligible(dataX, lenX, bail string) {
 // emitStrAppendFits emits the capacity half of that test: branch to `bail`
 // unless a `laX`-byte string grown by `lbX` bytes still fits the block it was
 // allocated from. It takes the two lengths rather than the total so that no
-// caller has to keep the total live across it: x9..x13 are scratch here, and a
-// total parked in one of them would be read back as a size-class intermediate.
+// caller has to keep the total live across strAppendScratch.
 //
 // Same-class is the exact test rather than a heuristic. An owned two-word heap
 // string comes from __fern_alloc_rc1(payload) — `payload + 8` rounded to 16,
@@ -3751,12 +3770,7 @@ func (g *generator) emitStrAppendEligible(dataX, lenX, bail string) {
 // capacity test can still match, so the ceiling is checked here and the grow
 // declined; __fern_strcat then traps on the same total.
 func (g *generator) emitStrAppendFits(laX, lbX, bail string) {
-	for _, r := range []string{laX, lbX} {
-		switch r {
-		case "x9", "x10", "x11", "x12", "x13":
-			panic("arm64: __fern_str_append length in a scratch register: " + r)
-		}
-	}
+	assertStrAppendOperands(laX, lbX)
 	g.emit("add x9, %s, %s", laX, lbX) // total, in 64 bits so it cannot wrap
 	g.emit("lsr x10, x9, #31")
 	g.emit("cbnz x10, %s", bail) // total past the i32 length ceiling
