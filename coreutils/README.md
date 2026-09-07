@@ -81,8 +81,14 @@ they are not on PATH. Wall time, so compare within one run only.
 | `wc` | done — `-c` `-l` `-m` `-w` `-L`, `--total=WHEN`, `--files0-from`, the column width taken from the operands' sizes, and the C-locale ISPRINT rule for words and display width. A REGULAR-FILE stdin still widens to seven columns, which needs fstat on a descriptor (#8713) |
 | `hostid` | done — glibc's gethostid: `/etc/hostid`, else the hostname's IPv4 address through NSS (`lib/resolv.fern`: nsswitch's `hosts:` line, `/etc/hosts`, `/etc/resolv.conf`, an RFC 1035 A query over TCP) with its halves swapped, else 0; `extra operand` for anything. Needs `hostname()`, so it is a native-target utility: WASI has no host identity |
 | `test` `[` | done — POSIX's one-to-four-argument table and GNU's parser beyond it, every string, integer (any length, compared as digit strings), file and file-pair primary, `-l STRING`, `-t` via isatty, `-r -w -x` against the effective ids; `[` adds the closing `]` and honours `--help` / `--version` as the sole argument where `test` does not. Needs `stat`, `access`, `geteuid` and `isatty`, so it is a native-target utility: WASI reports no mode, owner or effective ids |
+| `cut` | done — `-b` `-c` `-f` with GNU's list grammar (overlapping ranges merged, adjacent ones not), `-d` `-n` `-s` `-z`, `--complement` and `--output-delimiter`, the whole-file record a field delimiter equal to the line delimiter makes, and the trailing line delimiter gnulib's first-field buffering decides |
+| `paste` | done — parallel and `-s`, the `-d` list with its escapes and its NUL entry that writes nothing, `-z`, the held-back delimiter of a file that ran out, and one shared read position for every `-` operand |
+| `fold` | done — `-b` `-s` `-w` and the obsolete `-NUM`, columns counted with tabs, backspaces and carriage returns, and the overflowing character re-measured against the line it lands on |
+| `expand` | done — `-i` and the `-t` grammar including `/N` and `+N`, the obsolete `-NUM`, `\b` rewinding both the column and the stop cursor, and one space for a tab past the last stop |
+| `unexpand` | done — `-a` `--first-only` `-t` and the obsolete `-NUM` (which does NOT imply `-a`, and whose digits and commas spell one list read after the scan), and the rule that a single blank on a stop is held rather than converted |
 | `lib/gnu.fern` | the GNU conventions every utility shares |
 | `lib/cond.fern` | the conditional expression `test` and `[` evaluate |
+| `lib/tabs.fern` | the `-t` tab-stop list `expand` and `unexpand` share: the grammar, its faults, and the next stop past a column |
 | `lib/bre.fern` | POSIX basic regular expressions as glibc compiles them |
 | `lib/ld.fern` | C's `long double` at the TARGET's format — strtold, arithmetic, rounding and the `%f` `%e` `%g` `%a` conversions — shared by `printf`, `numfmt`, `seq` and `sleep` |
 

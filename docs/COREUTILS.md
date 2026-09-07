@@ -170,6 +170,8 @@ coreutils/
   lib/ld.fern       C's `long double` as the TARGET has it, for the
                     utilities that convert and compute in one
                     (printf, numfmt, seq, sleep)
+  lib/tabs.fern     the `-t` tab-stop grammar and lookup expand and
+                    unexpand share
   lib/resolv.fern   glibc's IPv4 name lookup — /etc/hosts, the
                     `hosts:` line of nsswitch.conf, resolv.conf and an
                     RFC 1035 A query — for the utilities that resolve
