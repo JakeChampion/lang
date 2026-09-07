@@ -223,13 +223,16 @@ same code(s) the Go checker does — restricted to
   repro (`import "core/int"` + `enum Opt { Some, None }`) draws 5 E036 from
   the self-host and none from native.
 
-  Observable behaviour agrees — E036 is in `is_partial_checker_gap_code`, so
-  the self-host compiled these programs before the change and native does
-  now — and `conformance/cases/module_scoped_variant` +
-  `shadowed_builtin_variant` pass all three self-host fixture legs. It is
-  the unfiltered `-check` code set that differs, which no differential
-  currently covers (both corpora are cross-module only for stdlib imports,
-  and neither declares a colliding enum).
+  `conformance/cases/module_scoped_variant` + `shadowed_builtin_variant`
+  pass all three self-host fixture legs, and neither draws a code. The #6951
+  repro itself does not: the self-host refuses it, and has since before E036
+  gated — the same misresolution that makes the bare reference ambiguous
+  types the imported module's `Some` / `None` against the user's enum, and
+  the five **E002** that follows never was exempt. So gating E036 (#8461)
+  does not change the verdict on any program; what is still open is the
+  module scoping, which no differential covers (both corpora are
+  cross-module only for stdlib imports, and neither declares a colliding
+  enum).
 
   Closing it needs module attribution the self-host AST does not carry:
   `parser.EnumDecl` and `parser.FuncDecl` gaining a source module (107
