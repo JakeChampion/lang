@@ -3,6 +3,7 @@ package fernrt
 import (
 	"testing"
 
+	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/ir"
 )
 
@@ -62,6 +63,33 @@ func TestHelpersCallOnlyTheFloorOrEachOther(t *testing.T) {
 			case ir.OpCallIndirect, ir.OpCallClosureDirect, ir.OpMakeClosure, ir.OpMakeEnv, ir.OpStrConcat, ir.OpStrEq, ir.OpStrCmp, ir.OpAlloc:
 				t.Errorf("%s uses %v, which needs a runtime helper of its own", name, op.Kind)
 			}
+		}
+	}
+}
+
+// The helpers lower under -cover too. They are not the program under
+// measurement, and ir.LowerWith refuses an uninstrumented lowering while
+// ast.CoverEnabled is set unless told the lowering is exempt — every
+// `fern -cover` build of a program that needs a helper failed that way.
+func TestHelpersLowerUnderCover(t *testing.T) {
+	mu.Lock()
+	cache = map[cacheKey]*lowered{}
+	mu.Unlock()
+	prev := ast.CoverEnabled
+	ast.CoverEnabled = true
+	t.Cleanup(func() {
+		ast.CoverEnabled = prev
+		mu.Lock()
+		cache = map[cacheKey]*lowered{}
+		mu.Unlock()
+	})
+	_, fn, err := Func("__fern_utf8_valid", 8)
+	if err != nil {
+		t.Fatalf("Func under -cover: %v", err)
+	}
+	for _, op := range fn.Ops {
+		if op.Kind == ir.OpCoverPoint {
+			t.Fatal("a helper lowered under -cover carries cover points; the program's counters are not its")
 		}
 	}
 }
