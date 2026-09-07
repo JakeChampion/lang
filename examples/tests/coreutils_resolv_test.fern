@@ -505,14 +505,22 @@ function test_search_leading_as_is_failure_still_tries_suffixes(): test.TestOutc
   return test.pass();
 }
 
-function test_search_refused_stops_everything(): test.TestOutcome {
-  // ECONNREFUSED returns from res_search at once — no later name, no
-  // retry, and the saved as-is status is not consulted.
+function test_search_refused_suffix_stops_everything(): test.TestOutcome {
+  // The ECONNREFUSED hard-stop is the SUFFIX loop's rule, not res_search's:
+  // it returns at once, with no later name, no retry, and the saved as-is
+  // status not consulted.
   if (trail("ok1", ["refused", "ok2"]).0 != resolv.unavail()) {
     return test.fail("a refused connection must not fall through to a later name");
   }
-  if (lead("refused", ["ok1"]).0 != resolv.unavail()) {
-    return test.fail("a refused as-is query must not fall through to the suffixes");
+  // The LEADING as-is query has no such rule — glibc classifies nothing
+  // there, it only saves h_errno — so a refused as-is still asks the
+  // suffixes, and one that answers wins.
+  if (lead("refused", ["ok1"]).1 != 1) {
+    return test.fail("a refused as-is query must still try the suffixes");
+  }
+  // With nothing to find there either, the saved refusal is what reports.
+  if (lead("refused", ["nx"]).0 != resolv.unavail()) {
+    return test.fail("a refused as-is query reports unavail once the suffixes miss");
   }
   return test.pass();
 }
@@ -571,7 +579,7 @@ function main(): i32 {
   r = r.it("search: a timeout ends the suffixes", test_search_timeout_ends_the_suffixes);
   r = r.it("search: a leading as-is name has no retry", test_search_leading_as_is_has_no_retry);
   r = r.it("search: a failed leading as-is still tries the suffixes", test_search_leading_as_is_failure_still_tries_suffixes);
-  r = r.it("search: a refused connection stops everything", test_search_refused_stops_everything);
+  r = r.it("search: a refused suffix stops everything", test_search_refused_suffix_stops_everything);
   r = r.it("search: every name NXDOMAIN", test_search_all_nxdomain);
   r = r.it("live: this machine's /etc/hosts", test_live_hosts_file);
   r = r.it("live: resolve localhost", test_live_resolve_localhost);
