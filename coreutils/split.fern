@@ -867,7 +867,11 @@ function split_bytes(s: Settings, o: Out, src: Src): Out {
       }
       var have: u64 = (block.len() - at) as u64;
       if (have < left) {
-        out = out_put(out, slice_unchecked(block, at, block.len()) + "");
+        if (at == 0) {
+          out = out_put(out, block);
+        } else {
+          out = out_put(out, slice_unchecked(block, at, block.len()) + "");
+        }
         left = left - have;
         at = block.len();
       } else {
@@ -896,27 +900,15 @@ function split_line_bytes(s: Settings, o: Out, src: Src): Out {
   var eof: boolean = false;
   while (true) {
     var avail: u64 = s.units - used;
-    if (!eof && buf.len() as u64 < avail) {
-      var want: i32 = read_size();
-      if (avail - buf.len() as u64 < want as u64) {
-        want = (avail - buf.len() as u64) as i32;
-      }
-      var r: (string, Src) = src_read(input, want);
-      input = r.1;
-      if (r.0.len() == 0) {
-        eof = true;
-      } else {
-        buf = buf + r.0;
-        continue;
-      }
-    }
-    if (buf.len() == 0) {
-      return out;
-    }
     var hi: i32 = buf.len();
     if (avail < hi as u64) {
       hi = avail as i32;
     }
+    // The last record that ends inside what is left of this file's
+    // budget: everything up to it goes out in one write. Scanning BEFORE
+    // reading more is what keeps the buffer one record long instead of
+    // `-C SIZE` long — with `-C 8M` the other order copies a growing
+    // 8 MiB buffer once per read.
     var j: i32 = __rmemchr(buf, s.sep, hi - 1);
     if (j >= 0) {
       if (!started) {
@@ -932,7 +924,27 @@ function split_line_bytes(s: Settings, o: Out, src: Src): Out {
       }
       continue;
     }
+    if (!eof && buf.len() as u64 < avail) {
+      var want: i32 = read_size();
+      if (avail - buf.len() as u64 < want as u64) {
+        want = (avail - buf.len() as u64) as i32;
+      }
+      var r: (string, Src) = src_read(input, want);
+      input = r.1;
+      if (r.0.len() == 0) {
+        eof = true;
+      } else if (buf.len() == 0) {
+        buf = r.0;
+      } else {
+        buf = buf + r.0;
+      }
+      continue;
+    }
+    if (buf.len() == 0) {
+      return out;
+    }
     if (eof && buf.len() as u64 <= avail) {
+      // The tail is a final unterminated record that fits.
       if (!started) {
         out = out_begin(out);
         started = true;
@@ -940,7 +952,8 @@ function split_line_bytes(s: Settings, o: Out, src: Src): Out {
       out = out_put(out, buf);
       return out;
     }
-    // No record ends inside what is left of this file's budget.
+    // No record ends inside the budget: start a new file if this one has
+    // anything in it, else cut the over-long record at exactly SIZE.
     if (used > 0 as u64) {
       used = 0 as u64;
       started = false;
@@ -1121,6 +1134,14 @@ function src_pushback(s: Src, rest: string): Src {
 // `-n r/N` and `-n r/K/N`: records dealt round robin. No size is needed
 // — record i goes to file i mod N — so this is the one `-n` form that
 // streams a pipe without spooling it.
+//
+// A block at a time, not a record at a time. The record ends in the block
+// are found once, and then each output file takes its share in ONE write
+// built through the shared string buffer. Dealing record by record into
+// per-file buffers is the obvious shape and is 200x slower: a BufWriter
+// read out of an array is aliased by the array, so appending to it copies
+// the whole buffer instead of growing it in place (#8770 is the same cost
+// one level down).
 function split_round(s: Settings, o: Out, src: Src): Out {
   var out: Out = o;
   var input: Src = src;
@@ -1129,7 +1150,7 @@ function split_round(s: Settings, o: Out, src: Src): Out {
   }
   // Every file exists up front unless -e says an unused one should not,
   // which is also the order GNU opens them in.
-  var ws: io_buffered.BufWriter[] = [];
+  var ws: Writer[] = [];
   var names: string[] = [];
   var live: boolean[] = [];
   var i: u64 = 0 as u64;
@@ -1139,64 +1160,87 @@ function split_round(s: Settings, o: Out, src: Src): Out {
     out = r.1;
     names = names.append(name);
     if (s.elide) {
-      ws = ws.append(io_buffered.buf_writer_new(stdout(), 1));
+      ws = ws.append(stdout());
       live = live.append(false);
     } else {
       out = out_verbose(out, name);
-      ws = ws.append(io_buffered.buf_writer_new(open_out(name), 65536));
+      ws = ws.append(open_out(name));
       live = live.append(true);
     }
     i = i + 1 as u64;
   }
+  var n: i32 = names.len();
   var slot: i32 = 0;
   var buf: string = "";
   var eof: boolean = false;
   while (true) {
     if (!eof) {
-      var rd: (string, Src) = src_read(input, read_size());
+      var rd: (string, Src) = src_read(input, round_block());
       input = rd.1;
       if (rd.0.len() == 0) {
         eof = true;
+      } else if (buf.len() == 0) {
+        buf = rd.0;
       } else {
         buf = buf + rd.0;
       }
+      if (!eof) {
+        continue;
+      }
     }
+    if (buf.len() == 0) {
+      break;
+    }
+    // Record ends inside the buffer. At EOF an unterminated tail is a
+    // record of its own, so it joins the list.
+    var ends: i32[] = [];
     var at: i32 = 0;
     while (at < buf.len()) {
       var j: i32 = __memchr(buf, s.sep, at);
       if (j < 0) {
         break;
       }
-      var rec: string = slice_unchecked(buf, at, j + 1) + "";
+      ends = ends.append(j + 1);
       at = j + 1;
-      if (!live[slot]) {
-        out = out_verbose(out, names[slot]);
-        ws = ws.with(slot, io_buffered.buf_writer_new(open_out(names[slot]), 65536));
-        live = live.with(slot, true);
-      }
-      ws = ws.with(slot, write_slot(ws[slot], names[slot], rec));
-      slot = slot + 1;
-      if (slot as u64 >= s.units) {
-        slot = 0;
-      }
     }
-    if (at > 0) {
+    if (eof && at < buf.len()) {
+      ends = ends.append(buf.len());
+      at = buf.len();
+    }
+    var k: i32 = 0;
+    while (k < n && k < ends.len()) {
+      strbuf_reset();
+      var e: i32 = k;
+      while (e < ends.len()) {
+        var from: i32 = 0;
+        if (e > 0) {
+          from = ends[e - 1];
+        }
+        strbuf_append(slice_unchecked(buf, from, ends[e]) + "");
+        e = e + n;
+      }
+      var share: string = strbuf_take();
+      var target: i32 = (slot + k) % n;
+      if (!live[target]) {
+        out = out_verbose(out, names[target]);
+        ws = ws.with(target, open_out(names[target]));
+        live = live.with(target, true);
+      }
+      write_fd(ws[target], names[target], share);
+      k = k + 1;
+    }
+    slot = (slot + ends.len()) % n;
+    if (at < buf.len()) {
       buf = slice_unchecked(buf, at, buf.len()) + "";
+    } else {
+      buf = "";
     }
     if (eof) {
       break;
     }
   }
-  if (buf.len() > 0) {
-    if (!live[slot]) {
-      out = out_verbose(out, names[slot]);
-      ws = ws.with(slot, io_buffered.buf_writer_new(open_out(names[slot]), 65536));
-      live = live.with(slot, true);
-    }
-    ws = ws.with(slot, write_slot(ws[slot], names[slot], buf));
-  }
   var c: i32 = 0;
-  while (c < ws.len()) {
+  while (c < n) {
     if (live[c]) {
       match (ws[c].close()) {
         Some(e) => {
@@ -1209,6 +1253,12 @@ function split_round(s: Settings, o: Out, src: Src): Out {
     c = c + 1;
   }
   return out;
+}
+
+// The read block for round robin: bigger than the streaming one, so each
+// output file's share of a block is still a write worth making.
+function round_block(): i32 {
+  return 262144;
 }
 
 // `-n r/K/N`: only the Kth share, on stdout.
@@ -1277,16 +1327,17 @@ function open_out(name: string): Writer {
   return stdout();
 }
 
-function write_slot(w: io_buffered.BufWriter, name: string, data: string): io_buffered.BufWriter {
-  var next: io_buffered.BufWriter = w.write_string(data);
-  match (next.error()) {
+function write_fd(w: Writer, name: string, data: string): void {
+  if (data.len() == 0) {
+    return;
+  }
+  match (w.write(data)) {
     Some(e) => {
       gnu.error(name + ": " + gnu.io_error_text(e));
       exit(1);
     },
     None => {}
   }
-  return next;
 }
 
 // ---- main ------------------------------------------------------------------

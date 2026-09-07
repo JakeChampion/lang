@@ -412,6 +412,39 @@ The one row where BOTH lose to uutils is the plain copy, 3.6 ms against 7.1:
 uutils reaches for `copy_file_range(2)` and moves the bytes without a
 round trip through user space, where Fern and GNU both read and write.
 
+Group B's fifth, 2026-09-07, Linux x86-64, the same 62 MiB / 8 000 000-line
+file, GNU 9.4 and uutils 0.0.24. The same 4-core container with other agents'
+builds on it — the σ is mostly theirs, and the rows within 20% of parity are
+not separable from the noise:
+
+| utility | workload | fern (ms) | gnu (ms) | uutils (ms) | gnu / fern | uutils / fern |
+|---|---|---|---|---|---|---|
+| `split` | `-l 100000` of a 62 MiB file | 46.40 ± 20.48 | 90.30 ± 27.16 | 109.02 ± 23.28 | 1.95× | 2.35× |
+| `split` | `-b 8M` of a 62 MiB file | 32.06 ± 19.54 | 18.85 ± 5.88 | 63.40 ± 31.07 | 0.59× | 1.98× |
+| `split` | `-C 8M` of a 62 MiB file | 50.03 ± 37.38 | 43.71 ± 33.89 | 91.33 ± 25.84 | 0.87× | 1.83× |
+| `split` | `-n 8` of a 62 MiB file | 41.79 ± 26.29 | 40.42 ± 29.02 | 88.17 ± 62.82 | 0.97× | 2.11× |
+| `split` | `-n l/8` of a 62 MiB file | 34.64 ± 21.56 | 41.02 ± 27.84 | 319.98 ± 41.05 | 1.18× | 9.24× |
+| `split` | `-n r/8` of a 62 MiB file | 1058.74 ± 178.33 | 317.38 ± 72.02 | 418.23 ± 83.65 | 0.30× | 0.40× |
+| `split` | `-l 100000` from a pipe | 66.00 ± 29.74 | 112.12 ± 32.75 | 149.03 ± 39.35 | 1.70× | 2.26× |
+| `split` | `-n 8` from a pipe | 86.40 ± 44.42 | 95.24 ± 38.26 | 102.48 ± 39.30 | 1.10× | 1.19× |
+
+Reading it: every row that decides a whole BLOCK at a time is at or ahead of
+GNU — `-l` with one `__count_byte` per block, `-C` with one `__rmemchr` per
+piece, and the two `-n` divisions that need no record boundaries before the
+chunk end. `-n 8 from a pipe` carries the spool to `$TMPDIR` and still wins,
+because the spool is a copy at memory bandwidth and GNU pays it too.
+
+`-n r/8` is the one row that loses, and it loses to #8770: round robin is the
+only mode with per-RECORD work, and a record has to be copied into its file's
+share one append at a time. Two shapes were measured before this one. Dealing
+records into an array of `BufWriter` is 0.04× — a writer read out of an array
+is aliased by the array, so appending to it copies the whole buffer instead of
+growing it in place, which is quadratic per block. Batching a block's share
+per file through the shared string buffer (`strbuf_append`) is what is here,
+and it is 10x better and still 3x off GNU: what remains is 8 million
+`slice_unchecked(...) + ""` materialisations, one per record, which is exactly
+the append #8770 wants to fuse.
+
 ## Known divergences
 
 **`hostid` asks DNS over TCP.** The id is glibc's `gethostid`: `/etc/hostid`
