@@ -3948,8 +3948,11 @@ func buildEnvBodyP2(idxs map[string]uint32) []byte {
 	strByte := idxs["__fern_str_byte"]
 	strCopy := idxs["__fern_str_copy"]
 	getEnv := idxs["wasi_get_environment_p2"]
+	free := idxs["__free"]
 	var body []byte
-	// Lazy init: get-environment into an 8-byte retbuf ($rb=local 9).
+	// Lazy init: get-environment into an 8-byte retbuf ($rb=local 9),
+	// copied into the env slots and returned through __free — the list
+	// it points at is the process-lifetime snapshot, the retbuf is not.
 	body = inst.InstI32Const(body, envInitAddr)
 	body = memory.InstI32Load(body, 2, 0)
 	body = numeric.InstI32Eqz(body)
@@ -3970,6 +3973,10 @@ func buildEnvBodyP2(idxs map[string]uint32) []byte {
 		body = inst.InstLocalGet(body, 9)
 		body = memory.InstI32Load(body, 2, 0)
 		body = memory.InstI32Store(body, 2, 0)
+		// __free($rb, 8)
+		body = inst.InstLocalGet(body, 9)
+		body = inst.InstI32Const(body, 8)
+		body = inst.InstCall(body, free)
 		body = inst.InstI32Const(body, envInitAddr)
 		body = inst.InstI32Const(body, 1)
 		body = memory.InstI32Store(body, 2, 0)
