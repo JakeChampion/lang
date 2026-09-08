@@ -1,0 +1,18 @@
+import "core/int";
+
+// Each labelled exit replays the inner action exactly once and observes its
+// late replacement. Completed iterations must not remain armed at return.
+function main(): i32 {
+    var seen: i32 = 0;
+    var i: i32 = 0;
+    outer: while (i < 3) {
+        i = i + 1;
+        loop {
+            var items: i32[] = [0];
+            defer seen = seen * 3 + items[0];
+            items = [i];
+            continue outer;
+        }
+    }
+    return seen;
+}

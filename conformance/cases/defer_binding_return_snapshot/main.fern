@@ -1,0 +1,14 @@
+import "core/int";
+
+// Evaluate the return value before cleanup. Rebinding its source does not
+// replace the returned immutable array or release it before the caller reads.
+function snapshot(): i32[] {
+    var items: i32[] = [7];
+    defer items = [9];
+    return items;
+}
+
+function main(): i32 {
+    var result: i32[] = snapshot();
+    return result[0];
+}
