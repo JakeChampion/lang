@@ -2389,6 +2389,14 @@ func TestSelfHostCheckerBundleDifferentialX86_64(t *testing.T) {
 		// The gate is the BOUND, not "any name that looks like a type": a
 		// method no bound provides is still the E001 the Go checker reports.
 		{"assoc-tp-unbound-e001", "import \"std/num\";\npub function total[T: num.Add + num.Zero](xs: T[]): T { var acc: T = T.nope(); for x in xs { acc = acc.add(x); } return acc; }\nfunction main(): i32 { var xs: i32[] = [1, 2, 3]; return total(xs); }\n"},
+		{"assoc-tp-single-bound-missing", "trait Zero { function zero(): Self; }\nfunction f[T: Zero](x: T): i32 { T.nope(); return 0; }\nfunction main(): i32 { return 0; }\n"},
+		{"assoc-tp-other-parameter-bound", "trait Zero { function zero(): Self; }\ntrait One { function one(): Self; }\nfunction f[T: Zero, U: One](x: T, y: U): i32 { T.one(); return 0; }\nfunction main(): i32 { return 0; }\n"},
+		{"assoc-tp-receiver-is-not-associated", "trait Value { function value(self: Self): i32; }\nfunction f[T: Value](x: T): i32 { return T.value(); }\nfunction main(): i32 { return 0; }\n"},
+		{"assoc-tp-supertrait-ok", "trait Zero { function zero(): Self; }\ntrait Num: Zero { function one(): Self; }\nfunction f[T: Num](x: T): i32 { T.zero(); return 0; }\nfunction main(): i32 { return 0; }\n"},
+		{"assoc-tp-deep-supertrait-ok", "trait A { function value(): i32; }\ntrait B: A {}\ntrait C: B {}\ntrait D: C {}\ntrait E: D {}\ntrait F: E {}\ntrait G: F {}\ntrait H: G {}\ntrait I: H {}\ntrait J: I {}\ntrait K: J {}\nfunction f[T: K](x: T): i32 { return T.value(); }\nfunction main(): i32 { return 0; }\n"},
+		{"assoc-tp-default-ok", "trait Answer { function answer(): i32 { return 42; } }\nfunction f[T: Answer](x: T): i32 { return T.answer(); }\nfunction main(): i32 { return 0; }\n"},
+		{"assoc-tp-supertrait-default-ok", "trait Answer { function answer(): i32 { return 42; } }\ntrait More: Answer { function extra(): i32; }\nfunction f[T: More](x: T): i32 { return T.answer(); }\nfunction main(): i32 { return 0; }\n"},
+		{"assoc-tp-generated-generic-default-ok", "trait Default { function default(): Self; }\n@derive(Default) struct Inner { n: i32 }\n@derive(Default) struct Pair[T] { a: T, b: i32 }\nfunction main(): i32 { var p: Pair[Inner] = Pair.default(); return p.a.n + p.b; }\n"},
 		// The CONCRETE spelling of the same call — what a monomorphised
 		// `T.zero()` becomes — on a primitive and on a user type. Both must
 		// resolve AND type: an unknown result would trip the self-host's

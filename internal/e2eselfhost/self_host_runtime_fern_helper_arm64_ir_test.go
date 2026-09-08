@@ -2,7 +2,6 @@ package e2eselfhost
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -24,11 +23,11 @@ import (
 // every x86 lane: the emitted aarch64 asm must define each Fern-compiled symbol,
 // must NOT define the hand-asm one, and must contain the __syscall3 op's number
 // load — the same instruction darwinize keys its Mach-O rewrite off.
+// This is an internal-runtime probe: print_int/read_int/read_all_stdin are
+// self-host lowering primitives, not public builtins of the Go front end.
+// The emitting compiler can run under QEMU; emitted target code is not run.
 func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 	x86gcc, x86runner := x86_64Tooling(t)
-	if len(x86runner) != 0 {
-		t.Skip("needs a native x86 host to run the aarch64-emitting driver")
-	}
 	dir := writeSelfHostAsmProject(t)
 	copySelfHostDriver(t, dir, "asm_load_run.fern")
 	mmc := buildSelfHostBin(t, x86gcc, dir, "asm_load_run.fern", "mmc_arm64_rb")
@@ -81,7 +80,7 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 		// The four stdout/stderr leaves. Called for effect, not tested — the
 		// probe is emitted rather than run, and all this has to do is make the
 		// ops lower so the helpers are emitted.
-		"    print_str(\"x\");\n" +
+		"    write(\"x\");\n" +
 		"    print_int(1);\n" +
 		"    putchar(65);\n" +
 		"    eprint(\"x\");\n" +
@@ -103,9 +102,9 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 		t.Fatalf("write probe: %v", err)
 	}
 
-	out, err := exec.Command(mmc, srcFile, stdlibRoot, "-target", "arm64-linux").Output()
-	if err != nil {
-		t.Fatalf("self-host arm64 emit failed: %v", err)
+	out, stderr, code := runDriverAllowFail(t, x86runner, mmc, "", srcFile, stdlibRoot, "-target", "arm64-linux")
+	if code != 0 {
+		t.Fatalf("self-host arm64 emit failed: exit %d\n%s", code, stderr)
 	}
 	asm := string(out)
 
@@ -262,12 +261,12 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 	// the three — which is the half of the gating change the probe above, holding
 	// every leaf at once, cannot see.
 	noReader := filepath.Join(t.TempDir(), "no_reader.fern")
-	if err := os.WriteFile(noReader, []byte("function main(): i32 { var s: string = \"a\" + \"b\"; print_str(s); return s.len(); }\n"), 0o644); err != nil {
+	if err := os.WriteFile(noReader, []byte("function main(): i32 { var s: string = \"a\" + \"b\"; print(s); return s.len(); }\n"), 0o644); err != nil {
 		t.Fatalf("write no-reader probe: %v", err)
 	}
-	nrOut, err := exec.Command(mmc, noReader, "-target", "arm64-linux").Output()
-	if err != nil {
-		t.Fatalf("self-host arm64 emit (no-reader probe) failed: %v", err)
+	nrOut, nrErr, nrCode := runDriverAllowFail(t, x86runner, mmc, "", noReader, "-target", "arm64-linux")
+	if nrCode != 0 {
+		t.Fatalf("self-host arm64 emit (no-reader probe) failed: exit %d\n%s", nrCode, nrErr)
 	}
 	nrAsm := string(nrOut)
 	if !strings.Contains(nrAsm, "__fn___fern_str_concat:") {
@@ -293,9 +292,6 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 // which left exit(125) / exit(134) trapping through the Linux vector on XNU.
 func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 	x86gcc, x86runner := x86_64Tooling(t)
-	if len(x86runner) != 0 {
-		t.Skip("needs a native x86 host to run the aarch64-emitting driver")
-	}
 	dir := writeSelfHostAsmProject(t)
 	copySelfHostDriver(t, dir, "asm_load_run.fern")
 	mmc := buildSelfHostBin(t, x86gcc, dir, "asm_load_run.fern", "mmc_darwin_rb")
@@ -330,7 +326,7 @@ func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 		"    if (proc_fork() == 123456) { return 17; }\n" +
 		// The four stdout/stderr leaves, called for effect so the helpers are
 		// emitted and their write(2) number can be inspected below.
-		"    print_str(\"x\");\n" +
+		"    write(\"x\");\n" +
 		"    print_int(1);\n" +
 		"    putchar(65);\n" +
 		"    eprint(\"x\");\n" +
@@ -342,7 +338,7 @@ func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 		// numbers can be inspected below.
 		"    match (read_line()) { Some(_) => {}, None => {} }\n" +
 		"    var rd: Reader = stdin();\n" +
-		"    match (rd.read_chunk(64)) { Some(_) => {}, None => {} }\n" +
+		"    match (rd.read_chunk(64)) { Ok(_) => {}, Err(_) => {} }\n" +
 		"    rd.close();\n" +
 		"    return b.len();\n" +
 		"}\n"
@@ -351,9 +347,9 @@ func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 		t.Fatalf("write probe: %v", err)
 	}
 
-	out, err := exec.Command(mmc, srcFile, "-target", "arm64-darwin").Output()
-	if err != nil {
-		t.Fatalf("self-host arm64-darwin emit failed: %v", err)
+	out, stderr, code := runDriverAllowFail(t, x86runner, mmc, "", srcFile, "-target", "arm64-darwin")
+	if code != 0 {
+		t.Fatalf("self-host arm64-darwin emit failed: exit %d\n%s", code, stderr)
 	}
 	asm := string(out)
 

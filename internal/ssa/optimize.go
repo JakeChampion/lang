@@ -21,8 +21,9 @@ package ssa
 //     specialised rewrites.
 //  5. FoldBranches collapses BrIf-on-const that SCCP missed
 //     (e.g. introduced post-SCCP by Fold/Simplify).
-//  6. PruneUnreachable drops blocks that became unreachable
-//     after FoldBranches severed their inbound edges.
+//  6. ThreadPhiBranches bypasses boolean-only joins without speculating
+//     their incoming computations. PruneUnreachable then drops blocks made
+//     unreachable by branch folding or threading.
 //  7. MergeTrivialBlocks / FuseLinearBlocks compact the CFG.
 //  8. TrivialPhis aliases now-redundant phis (single arg or
 //     all args identical) to their surviving Value.
@@ -55,6 +56,7 @@ func Optimize(f *Func) int {
 		StrengthReduce(f)
 		Canonicalize(f)
 		FoldBranches(f)
+		ThreadPhiBranches(f)
 		PruneUnreachable(f)
 		MergeTrivialBlocks(f)
 		FuseLinearBlocks(f)

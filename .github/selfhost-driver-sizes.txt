@@ -309,18 +309,21 @@
 # above is attributed to a commit; the two before it are recorded as observed,
 # not credited to a change this pass did not isolate.
 
-fern.fern 12408028
-asm_load_run.fern 9454628
-asm_modload_run.fern 8803004
-asm_ir_run.fern 8675116
-asm_run.fern 8293660
-wasm_ir_run.fern 8356972
-wasm_run.fern 8340236
-wasm_runio_run.fern 8306540
-asm_pathprobe_run.fern 7622716
-ssa_lift_scan_run.fern 7428572
-asm_ir_elig_run.fern 7126748
-irlower_run.fern 7431580
-checker_modload_run.fern 2151348
+# Refreshed downward after preserving nested field roots in grow containment.
+# Same-source A/B measurements and the cause are recorded in
+# docs/SELFHOST-GROW-BRACKET-SIZE-2026-09-08.md. No ceiling was increased.
+fern.fern 11453884
+asm_load_run.fern 8218356
+asm_modload_run.fern 7583236
+asm_ir_run.fern 7352268
+asm_run.fern 6909180
+wasm_ir_run.fern 6958940
+wasm_run.fern 6938124
+wasm_runio_run.fern 6904428
+asm_pathprobe_run.fern 6173932
+ssa_lift_scan_run.fern 5987876
+asm_ir_elig_run.fern 5661036
+irlower_run.fern 5982668
+checker_modload_run.fern 2141188
 ssa_emit_run.fern 1715900
 ssa_run.fern 1537804

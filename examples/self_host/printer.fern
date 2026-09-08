@@ -2051,12 +2051,16 @@ function join_plus(bounds: string): string {
     return out;
 }
 
-function print_func_decl(fd: parser.FuncDecl, f: Fmt): (string, Fmt) {
+function print_func_decl(fd: parser.FuncDecl, has_inline_hint: boolean, inline_never: boolean, f: Fmt): (string, Fmt) {
     // An `@import` extern (P4 — docs/WIT-BRING-YOUR-OWN.md) renders as the
     // attribute on its own line followed by a body-less function (`;`).
     var out: string = "";
     if (fd.import_iface.len() > 0) {
         out = out + "@import(" + quote_string(fd.import_iface) + ", " + quote_string(fd.import_wit) + ")\n";
+    }
+    if (has_inline_hint) {
+        if (inline_never) { out = out + "@noinline\n"; }
+        else { out = out + "@inline\n"; }
     }
     // Modifier ORDER is native's: `pub`, then `fip`/`fbip`, then `async`.
     //
@@ -2520,6 +2524,16 @@ pub function print_module(mod: parser.Module): string {
 // against whichever declaration happened to be printed first and RELOCATE it
 // onto an unrelated one — the same reason native's Format orders by position.
 pub function format_module(mod: parser.Module, traits: parser.TraitDecl[], impls: parser.ImplDecl[], flines: parser.FieldLines[], comments: lexer.Comment[], blanks: boolean[]): string {
+    return format_module_with_inline(mod, traits, impls, flines, [], comments, blanks);
+}
+
+// The verbatim parse includes attributes that compilation does not consume.
+// Keep them beside the module, like field positions and authored impl blocks.
+pub function format_parsed(pf: parser.ParsedFmt, comments: lexer.Comment[], blanks: boolean[]): string {
+    return format_module_with_inline(pf.pmod, pf.ptraits, pf.pimpls, pf.pflines, pf.pinline, comments, blanks);
+}
+
+function format_module_with_inline(mod: parser.Module, traits: parser.TraitDecl[], impls: parser.ImplDecl[], flines: parser.FieldLines[], hints: parser.FunctionInlineHint[], comments: lexer.Comment[], blanks: boolean[]): string {
     var f: Fmt = Fmt { comments: comments, ci: 0, blanks: blanks };
     // Chunk-join rather than a left fold: format_module is the whole-FILE
     // accumulator, so `out = out + decl` copies the document once per
@@ -2617,6 +2631,9 @@ pub function format_module(mod: parser.Module, traits: parser.TraitDecl[], impls
         }
         si = si + 1;
     }
+    // Hints and authored functions are both in source order. Consume each
+    // hint once rather than searching the entire list for every function.
+    var hint_cursor: i32 = 0;
     var di: i32 = 0;
     while (di < kinds.len()) {
         var dline: i32 = lines[di];
@@ -2652,7 +2669,12 @@ pub function format_module(mod: parser.Module, traits: parser.TraitDecl[], impls
         else {
             if (mod.funcs[idxs[di]].is_const) { chunks = chunks.append(print_const_decl(mod.funcs[idxs[di]])); wrote = true; }
             else {
-                var (ftext, ff) = print_func_decl(mod.funcs[idxs[di]], f);
+                var fd: parser.FuncDecl = mod.funcs[idxs[di]];
+                var has_hint: boolean = hint_cursor < hints.len()
+                    && hints[hint_cursor].line == fd.line && hints[hint_cursor].col == fd.col;
+                var never: boolean = false;
+                if (has_hint) { never = hints[hint_cursor].never; hint_cursor = hint_cursor + 1; }
+                var (ftext, ff) = print_func_decl(fd, has_hint, never, f);
                 chunks = chunks.append(ftext); wrote = true;
                 f = ff;
             }

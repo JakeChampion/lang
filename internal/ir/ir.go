@@ -14451,10 +14451,10 @@ func (b *builder) arrayFieldPaths(structName string, depth int, seen map[string]
 	for _, fld := range sd.Fields {
 		switch ft := fld.Type.(type) {
 		case ast.ArrayType:
-			out = append(out, arrayFieldPath{offs: []int32{offs[fld.Name]}, name: fld.Name})
+			out = append(out, arrayFieldPath{offs: []int32{offs[fld.Name]}, root: fld.Name, name: fld.Name})
 		case ast.StructType:
 			for _, sub := range b.arrayFieldPaths(ft.Name, depth-1, seen) {
-				out = append(out, arrayFieldPath{offs: append([]int32{offs[fld.Name]}, sub.offs...)})
+				out = append(out, arrayFieldPath{offs: append([]int32{offs[fld.Name]}, sub.offs...), root: fld.Name})
 			}
 		}
 	}
@@ -14462,11 +14462,15 @@ func (b *builder) arrayFieldPaths(structName string, depth int, seen map[string]
 }
 
 // arrayFieldPath is one buffer arrayFieldPaths found: the offset hops to it,
-// and — for a DIRECT field of the struct only — the field's name, which is the
+// the root field naming the subtree the growth summary describes, and — for a
+// DIRECT field of the struct only — the field's name, which is the
 // key the field-granular death verdict (markUnobservedParamFields) is filed
-// under. A nested path has no single name and is never skipped.
+// under. A nested path has no direct-field death verdict, but its root still
+// lets a named growth exclude unrelated subtrees. Unresolved growth (*) keeps
+// every path protected.
 type arrayFieldPath struct {
 	offs []int32
+	root string
 	name string
 }
 
@@ -14524,7 +14528,7 @@ func (b *builder) growBracketArgs(n *ast.Call, calleeName string) []growBracketE
 		if len(gp[ai].fields) > 0 && sig != nil && ai < len(sig.Params) {
 			if st, isStruct := sig.Params[ai].(ast.StructType); isStruct {
 				for _, path := range b.arrayFieldPaths(st.Name, 4, map[string]bool{}) {
-					if path.name != "" && !gp[ai].growsField(path.name) {
+					if !gp[ai].growsField(path.root) {
 						continue
 					}
 					if path.name != "" && b.callArgDies[n][root.Name+"."+path.name] {
@@ -15799,8 +15803,12 @@ func (b *builder) callBody(n *ast.Call) error {
 		// which on a branchy function is a DIFFERENT one (`if (…) { return
 		// consume(a); } return a;` — the consume is not last, the bare `return
 		// a` is), so retain here and let the callee's drop spend the extra.
-		if ai < len(ownArgFlags) && ownArgFlags[ai] && b.ownArgNeedsRetain(a) {
-			b.emitAliasInc(a)
+		if ai < len(ownArgFlags) && ownArgFlags[ai] {
+			if b.ownArgNeedsRetain(a) {
+				b.emitAliasInc(a)
+			} else {
+				b.emitBorrowedArrayOwnArgRetain(a)
+			}
 		}
 		// Phase 2d-borrow: function parameters are borrowed, not
 		// owned, so passing a tracked argument is NOT an
@@ -18742,6 +18750,13 @@ func (b *builder) assign(n *ast.Assign) error {
 				// Self-append / self-map / construction-move shapes are
 				// unaffected: their RHS is a method call or constructor, never an
 				// `own`-flagged user function, so callConsumesIdent is false.
+				if flag, ok := b.locals[ownFlagName(t.Name)]; ok && b.isConsumedArrayParam(t.Name) {
+					// The callee spent the transferred reference, so no overwrite
+					// drop is owed. Its result is now this frame's counted owner,
+					// even if it happens to equal the original borrowed pointer.
+					b.emit(Op{Kind: OpConstI32, I32: 1})
+					b.emit(Op{Kind: OpStoreLocal, I32: flag})
+				}
 			} else if sety, isSE := structOrEnumTypeOfLocal(t.Name, b); isSE && ast.RcFreeEnabled && (b.rc.freeEligible[t.Name] || b.selfReassignOwnedLocal(n.Value, t.Name, sety)) {
 				// Struct / enum reassignment-overwrite — `s = Other{...}` /
 				// `e = Variant(...)` ends the old binding's ownership exactly
