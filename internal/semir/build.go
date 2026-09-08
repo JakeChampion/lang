@@ -242,9 +242,11 @@ func (b *builder) exprValue(expr ast.Expr) (ssa.Value, error) {
 		}
 		return b.scalarBinary(n)
 	case *ast.Unary:
-		return b.booleanNot(n)
+		return b.scalarUnary(n)
 	case *ast.IfExpr:
 		return b.ifValue(n)
+	case *ast.MatchExpr:
+		return b.matchValue(n)
 	case *ast.BlockExpr:
 		return b.blockValue(n)
 	case *ast.Assign:

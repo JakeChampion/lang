@@ -84,18 +84,23 @@ func (b *builder) shortCircuit(n *ast.Binary) (ssa.Value, error) {
 	return b.branchValue(left.value, n.P, yes, no)
 }
 
-func (b *builder) booleanNot(n *ast.Unary) (ssa.Value, error) {
-	if n.Op != "!" {
+func (b *builder) scalarUnary(n *ast.Unary) (ssa.Value, error) {
+	if n.Op != "!" && n.Op != "-" {
 		return ssa.Value{}, b.errorAt(n.P, "unsupported unary contract: "+n.Op)
 	}
 	result, err := b.expr(n.Operand)
 	if err != nil || result.ended {
 		return ssa.Value{}, err
 	}
-	if !ast.Equal(b.fn.values[result.value.ID].typ, ast.BoolType{}) {
-		return ssa.Value{}, b.errorAt(n.P, "logical negation requires boolean")
+	kind := ssa.OpNot
+	var typ ast.Type = ast.BoolType{}
+	if n.Op == "-" {
+		kind, typ = ssa.OpNeg, ast.NumberType{}
 	}
-	return b.fn.addOp(b.current, ssa.OpNot, ast.BoolType{}, n.P, result.value), nil
+	if !ast.Equal(b.fn.values[result.value.ID].typ, typ) {
+		return ssa.Value{}, b.errorAt(n.P, "unary operation requires boolean ! or wrapping i32 -")
+	}
+	return b.fn.addOp(b.current, kind, typ, n.P, result.value), nil
 }
 
 func (b *builder) branchValue(cond ssa.Value, pos ast.Position, yes, no func() (exprResult, error)) (ssa.Value, error) {
@@ -106,7 +111,6 @@ func (b *builder) branchValue(cond ssa.Value, pos ast.Position, yes, no func() (
 	b.fn.graph.SetBrIf(b.current, cond, blocks[0], blocks[1])
 	var ends []*ssa.Block
 	var values []ssa.Value
-	var typ ast.Type
 	for i, arm := range []func() (exprResult, error){yes, no} {
 		b.current = blocks[i]
 		if err := b.seal(b.current); err != nil {
@@ -121,12 +125,21 @@ func (b *builder) branchValue(cond ssa.Value, pos ast.Position, yes, no func() (
 		if result.ended {
 			continue
 		}
-		armType := b.fn.values[result.value.ID].typ
+		ends, values = append(ends, b.current), append(values, result.value)
+	}
+	return b.joinValues(ends, values, pos)
+}
+
+// joinValues is shared by source constructs that select a value. Only live
+// edges participate; the unit planner secures reference-bearing phi inputs.
+func (b *builder) joinValues(ends []*ssa.Block, values []ssa.Value, pos ast.Position) (ssa.Value, error) {
+	var typ ast.Type
+	for _, value := range values {
+		armType := b.fn.values[value.ID].typ
 		if typ != nil && !ast.Equal(typ, armType) {
 			return ssa.Value{}, b.errorAt(pos, "value join needs an explicit checked coercion contract")
 		}
 		typ = armType
-		ends, values = append(ends, b.current), append(values, result.value)
 	}
 	b.current = nil
 	if len(ends) == 0 {

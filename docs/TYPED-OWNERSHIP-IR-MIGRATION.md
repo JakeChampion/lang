@@ -6,6 +6,23 @@ SSA cutover and typed-IR work. Initial integration base: `02ea66e91`.
 
 ## Current implementation checkpoint
 
+Scalar match expressions now produce ordered typed control flow directly from
+the native checked MatchExpr, without parser-result temporaries. This bounded
+surface covers i32/boolean literals, @ bindings, guards and a final unguarded
+wildcard. The scrutinee is evaluated once. Failed guards preserve outer-binding
+updates, while arm-local bindings leave scope before the next arm. Arm yields
+share the existing typed live-edge join and ownership-unit verification with
+if-expressions; return/break/continue do not invent a result value. Source,
+interpreter, raw/optimized executable and CLI tests cover these contracts.
+Range/aggregate patterns and other scalar widths remain explicit unsupported
+contracts, not silent equality/fallback paths. This consumes the native checked
+match representation and follows the scope/control rules of the preserved
+self-host typed-match prototype; its self-host IR integration remains pending.
+Signed literals use a verified wrapping i32 negation operation, including the
+minimum value. That regression exposed an interpreter width gap: checked unary
+result types now survive contextual settlement, and integer negation uses that
+type instead of treating every runtime Number as an unbounded-width result.
+
 Expression control flow now preserves live values versus terminated paths
 explicitly. Value blocks and if-expressions join only live edges and identical
 complete semantic types; coercing joins require a future checked coercion
@@ -44,7 +61,7 @@ layout optimization, not a reason to omit that unit's release today.
 Some inferred nested numeric literals still carry polymorphic type metadata
 after the common checker. This pilot rejects that unresolved metadata; explicit
 literal types work. Resolve the frontend's final type facts rather than dropping
-the unresolved marker or reconstructing types from backend layouts. Match,
+the unresolved marker or reconstructing types from backend layouts. Aggregate matches,
 closures, cleanup, aggregate mutation and broader types remain unsupported.
 
 The source producer now handles local replacement, while/unconditional loops,

@@ -161,6 +161,10 @@ func verifyOp(f *Func, op *ssa.Op) error {
 		return nil
 	}
 	switch op.Kind {
+	case ssa.OpNeg:
+		if len(op.Args) != 1 || !ast.Equal(arg(0), ast.NumberType{}) || !ast.Equal(result, ast.NumberType{}) {
+			return bad()
+		}
 	case ssa.OpNot:
 		if len(op.Args) != 1 || !ast.Equal(arg(0), ast.BoolType{}) || !ast.Equal(result, ast.BoolType{}) {
 			return bad()
