@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -160,7 +161,7 @@ func requireBalancedCensus(t *testing.T, stderr string) {
 }
 
 func TestARM64TypedLoweringAssembles(t *testing.T) {
-	for _, tc := range append(append(append(armLowerCases, sourceLoopCases...), expressionFlowCases...), append(matchFlowCases, tupleMatchCases...)...) {
+	for _, tc := range slices.Concat(armLowerCases, sourceLoopCases, expressionFlowCases, matchFlowCases, tupleMatchCases, voidCallCases) {
 		t.Run(tc.name, func(t *testing.T) {
 			prog, _ := checkedProgram(t, tc.source)
 			oracle := interp.New()
@@ -186,7 +187,7 @@ func TestARM64TypedLoweringAssembles(t *testing.T) {
 
 func TestARM64TypedLoweringRuns(t *testing.T) {
 	armLauncher(t)
-	for _, tc := range append(append(append(armLowerCases, sourceLoopCases...), expressionFlowCases...), append(matchFlowCases, tupleMatchCases...)...) {
+	for _, tc := range slices.Concat(armLowerCases, sourceLoopCases, expressionFlowCases, matchFlowCases, tupleMatchCases, voidCallCases) {
 		for _, optimize := range []bool{false, true} {
 			t.Run(tc.name+map[bool]string{false: "/raw", true: "/optimized"}[optimize], func(t *testing.T) {
 				out := lowerCheckedARM64(t, tc.source)

@@ -112,8 +112,7 @@ func (b *builder) stmt(stmt ast.Stmt) error {
 	case *ast.Destructure:
 		return b.destructure(n)
 	case *ast.ExprStmt:
-		_, err := b.expr(n.Expr)
-		return err
+		return b.effectExpr(n.Expr)
 	case *ast.While:
 		return b.sourceLoop(n.Cond, n.Body, n.Label)
 	case *ast.Loop:
@@ -125,11 +124,20 @@ func (b *builder) stmt(stmt ast.Stmt) error {
 	case *ast.Return:
 		var value ssa.Value
 		if n.Value != nil {
-			result, err := b.expr(n.Value)
-			if err != nil || result.ended {
-				return err
+			if _, void := b.fn.result.(ast.VoidType); void {
+				if err := b.effectExpr(n.Value); err != nil {
+					return err
+				}
+			} else {
+				result, err := b.expr(n.Value)
+				if err != nil || result.ended {
+					return err
+				}
+				value = result.value
 			}
-			value = result.value
+		}
+		if b.current == nil {
+			return nil
 		}
 		b.fn.graph.SetRet(b.current, value)
 		b.current = nil
@@ -290,47 +298,7 @@ func (b *builder) exprValue(expr ast.Expr) (ssa.Value, error) {
 		}
 		return emit(ssa.OpArrayGet, n.ElemType, args...), nil
 	case *ast.Call:
-		if intrinsic, ok := b.info.IntrinsicCalls[n]; ok {
-			if intrinsic.Kind != checker.IntrinsicArrayAppend || intrinsic.Signature == nil {
-				return ssa.Value{}, b.errorAt(n.P, "unsupported or unresolved intrinsic contract")
-			}
-			args, types, ended, err := b.exprs(n.Args)
-			if err != nil || ended {
-				return ssa.Value{}, err
-			}
-			sig := intrinsic.Signature
-			if len(args) != len(sig.Params) {
-				return ssa.Value{}, b.errorAt(n.P, "intrinsic argument count differs from checked contract")
-			}
-			for i, typ := range types {
-				if !ast.Equal(typ, sig.Params[i]) {
-					return ssa.Value{}, b.errorAt(n.P, "intrinsic argument type differs from checked contract")
-				}
-			}
-			return emit(ssa.OpArrayAppend, sig.Result, args...), nil
-		}
-		ident, direct := n.Callee.(*ast.Ident)
-		if !direct || n.IsVariantCall || n.DynTrait != "" || len(n.TypeArgs) != 0 || len(n.ArgNames) != 0 {
-			return ssa.Value{}, b.errorAt(n.P, "unsupported semantic call form")
-		}
-		if _, local := b.lookup(ident.Name); local {
-			return ssa.Value{}, b.errorAt(n.P, "indirect calls are not implemented in the typed pilot")
-		}
-		id, ok := b.fn.program.byName[ident.Name]
-		if !ok {
-			return ssa.Value{}, b.errorAt(n.P, "callee is outside the typed program: "+ident.Name)
-		}
-		callee := b.fn.program.funcs[id-1]
-		if _, void := callee.result.(ast.VoidType); void {
-			return ssa.Value{}, b.errorAt(n.P, "void call effects are not implemented in the typed pilot")
-		}
-		args, _, ended, err := b.exprs(n.Args)
-		if err != nil || ended {
-			return ssa.Value{}, err
-		}
-		value := emit(ssa.OpSemanticCall, callee.result, args...)
-		b.current.Ops[len(b.current.Ops)-1].Imm = id
-		return value, nil
+		return b.call(n, false)
 	default:
 		return ssa.Value{}, b.errorAt(expr.Pos(), fmt.Sprintf("unsupported expression %T", expr))
 	}

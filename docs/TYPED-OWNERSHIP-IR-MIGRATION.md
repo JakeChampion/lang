@@ -6,6 +6,17 @@ SSA cutover and typed-IR work. Initial integration base: `02ea66e91`.
 
 ## Current implementation checkpoint
 
+Direct void calls now have explicit effect-only semantic operations: the same
+closed-module function identity and typed own/borrow operands as value calls,
+but no result value. Source metadata is retained separately and verified for
+these operations. Return provenance does not invent a value-flow equation for
+void; liveness, counted-argument supplies, borrow anchors and independent callee
+balance checks still apply. Physical lowering emits resultless ARM64 calls and
+keeps source origins. Statement and void-return call contexts are supported;
+void calls cannot supply semantic values. This enables the call-effect boundary
+needed by cleanup, but defer registration/replay, general void control-value
+expressions and external/indirect calls remain explicit unsupported contracts.
+
 Recursive tuple patterns now lower to explicit typed field projections and
 ordered decisions. Checked BindingTypes/NestedTypes must match the scrutinee's
 complete resolved field types. Binders, wildcards, nested tuples and i32/bool
@@ -115,7 +126,7 @@ checked types and own/borrow contracts before building bodies, including
 forward calls and recursion. Calls use module function identities, not runtime
 helper names. Verification checks arguments, results and actual callee modes
 against shared contracts. Missing, stale and unsupported callees are rejected.
-Indirect/external/void calls remain outside this slice. `BuildFunc` is an
+Indirect/external calls remain outside this slice. `BuildFunc` is an
 explicit single-function wrapper; calls to other functions need BuildProgram.
 
 Call effects expose consuming-argument obligations but leave reference-bearing
