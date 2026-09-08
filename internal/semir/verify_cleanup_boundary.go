@@ -20,7 +20,11 @@ type cleanupFlowPoint struct {
 }
 
 func verifyCleanupBoundaries(f *Func, dom *ssa.DomTree) (*cleanupBoundaryFlow, error) {
+	var origin *cleanupBoundary
 	fail := func(message string) (*cleanupBoundaryFlow, error) {
+		if origin != nil && origin.owner == f {
+			return nil, fmt.Errorf("semir %s cleanup at %d:%d: %s", f.graph.Name, origin.pos.Line, origin.pos.Col, message)
+		}
 		return nil, fmt.Errorf("semir %s cleanup: %s", f.graph.Name, message)
 	}
 	flow := &cleanupBoundaryFlow{known: make(map[*cleanupBoundary]bool), points: make(map[*ssa.Block]*cleanupFlowPoint, len(f.graph.Blocks))}
@@ -34,6 +38,7 @@ func verifyCleanupBoundaries(f *Func, dom *ssa.DomTree) (*cleanupBoundaryFlow, e
 		return fail("missing function boundary")
 	}
 	for i, scope := range f.boundaries {
+		origin = scope
 		if scope == nil || flow.known[scope] || scope.owner != f || flow.points[scope.entry] == nil || flow.points[scope.entry].entry != nil {
 			return fail("invalid boundary identity, owner or entry")
 		}
@@ -51,6 +56,10 @@ func verifyCleanupBoundaries(f *Func, dom *ssa.DomTree) (*cleanupBoundaryFlow, e
 		flow.points[scope.entry].entry = scope
 	}
 	for _, e := range f.cleanupExits {
+		origin = nil
+		if e != nil {
+			origin = e.from
+		}
 		if e == nil || !flow.known[e.from] || !flow.known[e.through] || flow.points[e.start] == nil || flow.points[e.finish] == nil || flow.points[e.start].start != nil || flow.points[e.finish].finish != nil {
 			return fail("invalid cleanup exit identity")
 		}
@@ -99,6 +108,7 @@ func verifyCleanupBoundaries(f *Func, dom *ssa.DomTree) (*cleanupBoundaryFlow, e
 		flow.points[e.start].start, flow.points[e.finish].finish = e, e
 	}
 	for _, block := range f.graph.Blocks {
+		origin = f.boundaries[0]
 		if block.Term.Kind == ssa.TermRet && flow.points[block].finish == nil {
 			return fail("return lacks a function cleanup exit")
 		}

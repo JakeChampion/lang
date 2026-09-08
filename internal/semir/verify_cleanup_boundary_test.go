@@ -1,6 +1,7 @@
 package semir
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -112,5 +113,27 @@ function sink(): void {}`)
 	}
 	if err := VerifyProgram(p); err == nil || !strings.Contains(err.Error(), "registration state disagrees across a join or cycle") {
 		t.Fatalf("unclosed iteration cycle accepted: %v", err)
+	}
+}
+
+func TestVerifyCleanupBoundaryDiagnosticSource(t *testing.T) {
+	for _, iteration := range []bool{false, true} {
+		p := iterationBoundaryProgram(t)
+		f := p.funcs[0]
+		scope := f.boundaries[0]
+		if iteration {
+			exit := f.cleanupExits[0]
+			scope = exit.from
+			exit.kind = cleanupContinue
+		} else {
+			scope.header = scope.entry
+		}
+		if scope.pos.Line <= 0 || scope.pos.Col <= 0 {
+			t.Fatal("source boundary lost its origin")
+		}
+		want := fmt.Sprintf("cleanup at %d:%d:", scope.pos.Line, scope.pos.Col)
+		if err := VerifyProgram(p); err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("want source-anchored diagnostic %q, got %v", want, err)
+		}
 	}
 }
