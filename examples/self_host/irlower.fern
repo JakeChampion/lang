@@ -701,6 +701,10 @@ pub struct LowerFrame {
     // lowering. Params need no hand-off — their slots are the frame layout
     // lower_func just built, so they are stamped into locals0 directly.
     fnval_seed: string[],
+    // Source facts shared with counted-container return inference. These name
+    // only immutable, unshadowed bindings; mutable/ambiguous bindings remain
+    // outside the proof. This does not assert uniqueness of their elements.
+    strarr_sources: StringArraySources,
     // structs: the module's struct decls, for field-index / field-order lookup
     // (constant across the lowering; threaded read-only).
     structs: StructTab,
@@ -1259,13 +1263,14 @@ pub function struct_alias_ident_escapes(e: ast.Expr, s: LowerState): boolean {
     return decl_is_struct(s.frame.structs, s.struct_type_of_slot(sl));
 }
 
-// strarr_param_slot_of returns the slot when `e` is a bare ident naming a
-// string[] PARAMETER, else -1.
+// strarr_param_slot_of recognises a string[] parameter or a proven immutable
+// local alias of one. The source facts refuse shadowed or reassigned aliases.
 function strarr_param_slot_of(e: ast.Expr, s: LowerState): i32 {
     var nm: string = ident_name_or_empty(e);
     if (nm.len() == 0) { return 0 - 1; }
     var sl: i32 = s.slot_of(nm);
-    if (sl < 0 || sl >= s.frame.n_params || !s.is_strarr_slot(sl)) { return 0 - 1; }
+    if (sl < 0 || !s.is_strarr_slot(sl)) { return 0 - 1; }
+    if (sl >= s.frame.n_params && !util.has_str(s.frame.strarr_sources.arrays, nm)) { return 0 - 1; }
     return sl;
 }
 
@@ -1274,8 +1279,8 @@ function strarr_param_slot_of(e: ast.Expr, s: LowerState): i32 {
 // such a read bound (LocalInfo.str_caller_elem — `var e = p[i]`, `for e in p`,
 // an alias of either). The caller frees that array deep at its own exit, so a
 // container storing the element takes a second owner and the store must be
-// COUNTED — the string sibling of struct_alias_ident_escapes. A LOCAL array's
-// element is deliberately not here: sharing one withdraws the local's deep
+// COUNTED: the string sibling of struct_alias_ident_escapes. A frame-built
+// LOCAL array's element is deliberately not here: sharing one withdraws its deep
 // free (strarr_unsafe_for), so the container holds the only release.
 pub function str_param_elem_escapes(e: ast.Expr, s: LowerState): boolean {
     match (e) {
@@ -24507,7 +24512,7 @@ function lower_stmt_for(fr: ast.StmtFor, s: LowerState): LowerState {
     var xslot: i32 = ff.slot_of(fr.var_name);
     if (elem_is_str) {
         ff = ff.mark_str(xslot, true);
-        if (aslot < ff.frame.n_params) { ff = ff.mark_str_caller_elem(xslot, true); }
+        if (strarr_param_slot_of(fr.iter, s) >= 0) { ff = ff.mark_str_caller_elem(xslot, true); }
     }
     if (elem_is_bool) { ff = ff.mark_bool(xslot, true); }
     if (elem_is_f64) { ff = ff.mark_f64(xslot, true); }
@@ -38058,7 +38063,8 @@ function collect_fresh_strarr_in_stmt(st: ast.Stmt, body: ast.Stmt[], fresh_ret:
                 ast.ExprCall(c) => {
                     match (c.callee) {
                         ast.ExprIdent(cid) => {
-                            if (util.index_of_str(fresh_ret, "STRARR:" + cid.name) >= 0
+                            if ((util.index_of_str(fresh_ret, "STRARR:" + cid.name) >= 0
+                                    || util.index_of_str(fresh_ret, "SARRC:" + cid.name) >= 0)
                                     && !body_declares_name(body, cid.name)) {
                                 return push_str_unique(acc, reclaim_site_key_of(v.name, v.line, v.col));
                             }
@@ -38285,6 +38291,10 @@ function strarr_producer_names_of(fresh_ret: string[], body: ast.Stmt[]): string
     while (i < fresh_ret.len()) {
         if (fresh_ret[i].len() > 7 && slice_unchecked(fresh_ret[i], 0, 7) == "STRARR:") {
             var nm: string = slice_unchecked(fresh_ret[i], 7, fresh_ret[i].len()) + "";
+            if (!body_declares_name(body, nm)) { out = push_str_unique(out, nm); }
+        }
+        if (fresh_ret[i].len() > 6 && slice_unchecked(fresh_ret[i], 0, 6) == "SARRC:") {
+            var nm: string = slice_unchecked(fresh_ret[i], 6, fresh_ret[i].len()) + "";
             if (!body_declares_name(body, nm)) { out = push_str_unique(out, nm); }
         }
         i = i + 1;
@@ -41659,6 +41669,296 @@ function strarr_local_stores_nonfresh(stmts: ast.Stmt[], name: string, str_fresh
     return false;
 }
 
+// Caller provenance and owned returns are different facts. The former tells
+// a store when it must count a second element reference; the latter tells the
+// result's owner that it owes an element walk. Neither implies uniqueness.
+pub struct StringArraySources { arrays: string[], elements: string[] }
+
+function single_immutable_binding(name: string, bound: string[], assigned: string[]): boolean {
+    if (util.has_str(assigned, name)) {
+        return false;
+    }
+    var count: i32 = 0;
+    for nm in bound {
+        if (nm == name) {
+            count = count + 1;
+        }
+    }
+    return count == 1;
+}
+
+function caller_string_element(e: ast.Expr, sources: StringArraySources): boolean {
+    if let ast.ExprIdent(id) = e {
+        return util.has_str(sources.elements, id.name);
+    }
+    if let ast.ExprIndex(ix) = e {
+        return util.has_str(sources.arrays, ident_name_or_empty(ix.array));
+    }
+    return false;
+}
+
+function string_array_sources_in(stmts: ast.Stmt[], bound: string[], assigned: string[], sources: StringArraySources): StringArraySources {
+    var out: StringArraySources = sources;
+    for st in stmts {
+        match (st) {
+            ast.StmtVar(v) => {
+                if (single_immutable_binding(v.name, bound, assigned)) {
+                    if (util.has_str(out.arrays, ident_name_or_empty(v.init))) {
+                        out = StringArraySources { ...out, arrays: out.arrays.append(v.name) };
+                    } else if (caller_string_element(v.init, out)) {
+                        out = StringArraySources { ...out, elements: out.elements.append(v.name) };
+                    }
+                }
+            },
+            ast.StmtIf(f) => {
+                out = string_array_sources_in(f.then_body, bound, assigned, out);
+                out = string_array_sources_in(f.else_body, bound, assigned, out);
+            },
+            ast.StmtWhile(w) => {
+                out = string_array_sources_in(w.body, bound, assigned, out);
+            },
+            ast.StmtFor(f) => {
+                if (util.has_str(out.arrays, ident_name_or_empty(f.iter)) && single_immutable_binding(f.var_name, bound, assigned)) {
+                    out = StringArraySources { ...out, elements: out.elements.append(f.var_name) };
+                }
+                out = string_array_sources_in(f.body, bound, assigned, out);
+            },
+            ast.StmtMatch(m) => {
+                for arm in m.arms {
+                    out = string_array_sources_in(arm.body, bound, assigned, out);
+                }
+            },
+            ast.StmtDefer(d) => {
+                out = string_array_sources_in([d.action], bound, assigned, out);
+            },
+            ast.StmtAssign(_) => {},
+            ast.StmtReturn(_) => {},
+            ast.StmtExpr(_) => {},
+            ast.StmtBreak(_) => {},
+            ast.StmtContinue(_) => {},
+            ast.StmtUnknown(_) => {}
+        }
+    }
+    return out;
+}
+
+function string_array_sources_of(fn: parser.FuncDecl): StringArraySources {
+    var candidate: boolean = false;
+    for p in fn.params {
+        if (p.type_name == "string[]" && !p.own) {
+            candidate = true;
+        }
+    }
+    if (!candidate) {
+        return StringArraySources { arrays: [], elements: [] };
+    }
+    var arrays: string[] = [];
+    var bound: string[] = astwalk.collect_bound_stmts(fn.body, []);
+    var assigned: string[] = body_assign_targets(fn.body);
+    for p in fn.params {
+        if (p.type_name == "string[]" && !p.own && !util.has_str(bound, p.name) && !util.has_str(assigned, p.name)) {
+            arrays = arrays.append(p.name);
+        }
+    }
+    var sources: StringArraySources = StringArraySources { arrays: arrays, elements: [] };
+    if (arrays.len() == 0) {
+        return sources;
+    }
+    // A single local declaration can still shadow a parameter. Its fact must
+    // not describe that parameter after the local's scope ends.
+    var alias_forbidden: string[] = assigned;
+    for p in fn.params { alias_forbidden = alias_forbidden.append(p.name); }
+    return string_array_sources_in(fn.body, bound, alias_forbidden, sources);
+}
+
+function counted_strarr_store(e: ast.Expr, sources: StringArraySources, str_fresh: string[]): boolean {
+    // These are exactly the fresh moves and caller-element shares counted by
+    // the array literal / append lowering. An arbitrary borrowed string or
+    // local-array element is not evidence of a counted store.
+    return strarr_value_is_fresh(e, str_fresh) || caller_string_element(e, sources);
+}
+
+function counted_strarr_value(e: ast.Expr, fn: parser.FuncDecl, sources: StringArraySources, owned: string[], str_fresh: string[]): boolean {
+    if let ast.ExprArray(a) = e {
+        for el in a.elements {
+            if (!counted_strarr_store(el, sources, str_fresh)) {
+                return false;
+            }
+        }
+        return true;
+    }
+    if let ast.ExprCall(c) = e {
+        var nm: string = ident_name_or_empty(c.callee);
+        return util.has_str(owned, nm) && !fn_has_param_named(fn, nm) && !body_declares_name(fn.body, nm);
+    }
+    return false;
+}
+
+// Validate every use of a returned builder, not only its final append. Element
+// handouts and buffer aliases would need their own counted claim, so remain
+// refused. Returning the builder transfers its claim rather than escaping an
+// uncounted element. Inspecting an unrelated return still checks its operands.
+function counted_strarr_builder_ok(stmts: ast.Stmt[], name: string, fn: parser.FuncDecl, sources: StringArraySources, owned: string[], str_fresh: string[]): boolean {
+    for st in stmts {
+        match (st) {
+            ast.StmtVar(v) => {
+                if (v.name == name) {
+                    if (!counted_strarr_value(v.init, fn, sources, owned, str_fresh)) {
+                        return false;
+                    }
+                } else if (strarr_expr_unsafe(v.init, name, [])) {
+                    return false;
+                }
+            },
+            ast.StmtAssign(a) => {
+                if (a.target == name) {
+                    var ok: boolean = false;
+                    if let ast.ExprCall(c) = a.value {
+                        if let ast.ExprFieldAccess(fa) = c.callee {
+                            if (fa.field == "append" && ident_name_or_empty(fa.obj) == name && c.args.len() == 1) {
+                                ok = counted_strarr_store(c.args[0], sources, str_fresh) && !strarr_expr_unsafe(c.args[0], name, []);
+                            }
+                        }
+                    }
+                    if (!ok) {
+                        return false;
+                    }
+                } else if (strarr_expr_unsafe(a.value, name, [])) {
+                    return false;
+                }
+            },
+            ast.StmtReturn(r) => {
+                if (ident_name_or_empty(r.value) != name && strarr_expr_unsafe(r.value, name, [])) {
+                    return false;
+                }
+            },
+            ast.StmtIf(f) => {
+                if (strarr_expr_unsafe(f.cond, name, []) || !counted_strarr_builder_ok(f.then_body, name, fn, sources, owned, str_fresh) || !counted_strarr_builder_ok(f.else_body, name, fn, sources, owned, str_fresh)) {
+                    return false;
+                }
+            },
+            ast.StmtWhile(w) => {
+                if (strarr_expr_unsafe(w.cond, name, []) || !counted_strarr_builder_ok(w.body, name, fn, sources, owned, str_fresh)) {
+                    return false;
+                }
+            },
+            ast.StmtFor(f) => {
+                if (strarr_expr_unsafe(f.iter, name, []) || !counted_strarr_builder_ok(f.body, name, fn, sources, owned, str_fresh)) {
+                    return false;
+                }
+            },
+            ast.StmtMatch(m) => {
+                if (strarr_expr_unsafe(m.scrutinee, name, [])) {
+                    return false;
+                }
+                for arm in m.arms {
+                    if (arm.has_guard && strarr_expr_unsafe(arm.guard, name, []) || !counted_strarr_builder_ok(arm.body, name, fn, sources, owned, str_fresh)) {
+                        return false;
+                    }
+                }
+            },
+            ast.StmtDefer(d) => {
+                if (!counted_strarr_builder_ok([d.action], name, fn, sources, owned, str_fresh)) {
+                    return false;
+                }
+            },
+            ast.StmtExpr(e) => {
+                if (strarr_expr_unsafe(e.value, name, [])) {
+                    return false;
+                }
+            },
+            ast.StmtBreak(_) => {},
+            ast.StmtContinue(_) => {},
+            ast.StmtUnknown(_) => {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+function counted_strarr_returns_ok(stmts: ast.Stmt[], fn: parser.FuncDecl, sources: StringArraySources, owned: string[], str_fresh: string[]): boolean {
+    for st in stmts {
+        match (st) {
+            ast.StmtReturn(r) => {
+                if (!counted_strarr_value(r.value, fn, sources, owned, str_fresh)) {
+                    var nm: string = ident_name_or_empty(r.value);
+                    if (nm.len() == 0 || fn_has_param_named(fn, nm) || local_decl_count(fn.body, nm) != 1 || !counted_strarr_builder_ok(fn.body, nm, fn, sources, owned, str_fresh)) {
+                        return false;
+                    }
+                }
+            },
+            ast.StmtIf(f) => {
+                if (!counted_strarr_returns_ok(f.then_body, fn, sources, owned, str_fresh) || !counted_strarr_returns_ok(f.else_body, fn, sources, owned, str_fresh)) {
+                    return false;
+                }
+            },
+            ast.StmtWhile(w) => {
+                if (!counted_strarr_returns_ok(w.body, fn, sources, owned, str_fresh)) {
+                    return false;
+                }
+            },
+            ast.StmtFor(f) => {
+                if (!counted_strarr_returns_ok(f.body, fn, sources, owned, str_fresh)) {
+                    return false;
+                }
+            },
+            ast.StmtMatch(m) => {
+                for arm in m.arms {
+                    if (!counted_strarr_returns_ok(arm.body, fn, sources, owned, str_fresh)) {
+                        return false;
+                    }
+                }
+            },
+            ast.StmtDefer(d) => {
+                if (!counted_strarr_returns_ok([d.action], fn, sources, owned, str_fresh)) {
+                    return false;
+                }
+            },
+            ast.StmtVar(_) => {},
+            ast.StmtAssign(_) => {},
+            ast.StmtExpr(_) => {},
+            ast.StmtBreak(_) => {},
+            ast.StmtContinue(_) => {},
+            ast.StmtUnknown(_) => {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+// Least fixed point: a forwarding result qualifies only after its callee.
+// Remove proved functions from the worklist; an ungrounded recursion cycle
+// adds nothing and terminates without claiming ownership. No depth cut-off.
+function counted_strarr_returns_of(funcs: parser.FuncDecl[], str_fresh: string[]): string[] {
+    var pending: i32[] = [];
+    var i: i32 = 0;
+    while (i < funcs.len()) {
+        if (funcs[i].receiver_type.len() == 0 && funcs[i].ret_type == "string[]" && body_has_return(funcs[i].body)) {
+            pending = pending.append(i);
+        }
+        i = i + 1;
+    }
+    var owned: string[] = [];
+    while (pending.len() > 0) {
+        var next: i32[] = [];
+        for fi in pending {
+            var fn: parser.FuncDecl = funcs[fi];
+            if (counted_strarr_returns_ok(fn.body, fn, string_array_sources_of(fn), owned, str_fresh)) {
+                owned = owned.append(fn.name);
+            } else {
+                next = next.append(fi);
+            }
+        }
+        if (next.len() == pending.len()) {
+            return owned;
+        }
+        pending = next;
+    }
+    return owned;
+}
+
 // fn_returns_fresh_strarr: `fn` is a FREE function every return of which hands
 // back a `string[]` whose buffer AND every element box this frame allocated —
 // a direct element-fresh literal, or a local built from one and only ever
@@ -42046,6 +42346,9 @@ pub function return_fresh_struct_ret_fns_of(funcs: parser.FuncDecl[], structs: S
         else if (decl_is_struct(structs, fn.ret_type) && decl_has_string_field(structs, fn.ret_type)) { want_str_fresh = true; }
     }
     if (want_str_fresh) { str_fresh = str_fresh_ret_fns_of(funcs); }
+    // Counted elements need not be fresh or unique. Keep this result separate
+    // from STRARR: so projection and field-freshness consumers do not widen.
+    for nm in counted_strarr_returns_of(funcs, str_fresh) { out = out.append("SARRC:" + nm); }
     var arr_fresh: string[] = arr_fresh_ret_fns_of(funcs);
     // The string[] producers ride the same list under "SA:" so the strict-fresh
     // walk can ask about either element kind without a second parameter; every
@@ -57972,7 +58275,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
     // uniform-i64 path in StmtReturn (#5464). Kept off the non-wasm path.
     if (for_wasm && erased_passthrough_safe(fn, structs)) { ret_arrdyn0 = ret_arrdyn0 + 8; }
     var dalias: DeadAliases = dead_alias_of(fn.body, asg_targets, rc_ml_compute(fn, structs).names);
-    var s: LowerState = LowerState { ops: empty, locals: locals0, ctrl: 0, loop_blk: noloop, frame: LowerFrame { ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, sigs: FnSigs { ...sg, arr_ret_fns: arr_ret_fns_aug, struct_ret_fns: struct_ret_fns_aug }, clo_base: clo_owner_name(fn), cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: noclos, tup_elem_kinds: [], alias_incs: [], dead_alias_ok: dalias.sites, spread_sites: spread_sites_of(fn.body, structs, []), fnval_seed: fnval_seed0, structs: structs, reclaimable_names: reclaim, aliased_names: aliased, map_clone_sites: map_clone_insert_sites_of(fn.body), borrowed_names: borrowed, try_cleanup: tclean, defer_slots: [], defer_guard: "", append_inplace: append_inplace_names_of(fn), field_append_inplace: field_append_inplace_sites_of(fn), grow_sole: grow_sole_exempt_names_of(fn), grow_alias: grow_alias_names_of(fn), own_params: own_names, n_params: names.len(), fail_why: "", moved_names: moved_locals_toplevel_of(fn, structs), moved_elided: [], move_sites: move_sites_toplevel_of(fn, structs), fld_bases: field_move_bases_of(fn, sg), own_lift_sites: own_lift_retain_sites_of(fn, sg, structs) }, xblock_pending: [], optret_pending: [], grow_exempt: [], ok: true, selfrebind: "", fld_moves: [] };
+    var s: LowerState = LowerState { ops: empty, locals: locals0, ctrl: 0, loop_blk: noloop, frame: LowerFrame { ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, sigs: FnSigs { ...sg, arr_ret_fns: arr_ret_fns_aug, struct_ret_fns: struct_ret_fns_aug }, clo_base: clo_owner_name(fn), cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: noclos, tup_elem_kinds: [], alias_incs: [], dead_alias_ok: dalias.sites, spread_sites: spread_sites_of(fn.body, structs, []), fnval_seed: fnval_seed0, strarr_sources: string_array_sources_of(fn), structs: structs, reclaimable_names: reclaim, aliased_names: aliased, map_clone_sites: map_clone_insert_sites_of(fn.body), borrowed_names: borrowed, try_cleanup: tclean, defer_slots: [], defer_guard: "", append_inplace: append_inplace_names_of(fn), field_append_inplace: field_append_inplace_sites_of(fn), grow_sole: grow_sole_exempt_names_of(fn), grow_alias: grow_alias_names_of(fn), own_params: own_names, n_params: names.len(), fail_why: "", moved_names: moved_locals_toplevel_of(fn, structs), moved_elided: [], move_sites: move_sites_toplevel_of(fn, structs), fld_bases: field_move_bases_of(fn, sg), own_lift_sites: own_lift_retain_sites_of(fn, sg, structs) }, xblock_pending: [], optret_pending: [], grow_exempt: [], ok: true, selfrebind: "", fld_moves: [] };
     // Consumed-threaded array params (ownflag_name): allocate and zero each flag
     // before any body op, in parameter order, so slot numbering is deterministic.
     // A declared `own` param is excluded — the caller moved its reference in.
@@ -69228,7 +69531,7 @@ pub function str_own_dump(fn: parser.FuncDecl, structs: StructTab, funcs: parser
         locals0 = locals0.append(li);
         pi = pi + 1;
     }
-    var st: LowerState = LowerState { ops: no_ops, locals: locals0, ctrl: 0, loop_blk: no_blk, frame: LowerFrame { ret_is_i64: false, ret_arrdyn: 0, sigs: FnSigs { ...fn_sigs_empty(), str_ret_fns: sig_reg_of(str_ret_fns_of(funcs)) }, clo_base: clo_owner_name(fn), cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: no_strs, tup_elem_kinds: no_strs, alias_incs: no_strs, dead_alias_ok: no_strs, spread_sites: spread_sites_of(fn.body, structs, []), fnval_seed: no_strs, structs: structs, reclaimable_names: no_strs, aliased_names: no_strs, map_clone_sites: no_strs, borrowed_names: no_strs, try_cleanup: no_stmts, defer_slots: no_strs, defer_guard: "", append_inplace: [], field_append_inplace: [], grow_sole: [], grow_alias: [], own_params: own_param_names_of(fn), n_params: fn.params.len(), fail_why: "", moved_names: [], moved_elided: [], move_sites: [], fld_bases: [], own_lift_sites: [] }, xblock_pending: no_strs, optret_pending: [], grow_exempt: [], ok: true, selfrebind: "", fld_moves: [] };
+    var st: LowerState = LowerState { ops: no_ops, locals: locals0, ctrl: 0, loop_blk: no_blk, frame: LowerFrame { ret_is_i64: false, ret_arrdyn: 0, sigs: FnSigs { ...fn_sigs_empty(), str_ret_fns: sig_reg_of(str_ret_fns_of(funcs)) }, clo_base: clo_owner_name(fn), cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: no_strs, tup_elem_kinds: no_strs, alias_incs: no_strs, dead_alias_ok: no_strs, spread_sites: spread_sites_of(fn.body, structs, []), fnval_seed: no_strs, strarr_sources: StringArraySources { arrays: [], elements: [] }, structs: structs, reclaimable_names: no_strs, aliased_names: no_strs, map_clone_sites: no_strs, borrowed_names: no_strs, try_cleanup: no_stmts, defer_slots: no_strs, defer_guard: "", append_inplace: [], field_append_inplace: [], grow_sole: [], grow_alias: [], own_params: own_param_names_of(fn), n_params: fn.params.len(), fail_why: "", moved_names: [], moved_elided: [], move_sites: [], fld_bases: [], own_lift_sites: [] }, xblock_pending: no_strs, optret_pending: [], grow_exempt: [], ok: true, selfrebind: "", fld_moves: [] };
     var out: string = "";
     var qi: i32 = 0;
     while (qi < fn.params.len()) {

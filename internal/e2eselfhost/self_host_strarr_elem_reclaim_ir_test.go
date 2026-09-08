@@ -86,6 +86,15 @@ func TestSelfHostStrArrElemReclaimIRX86_64(t *testing.T) {
 		if wantCall == "no" && hasCall {
 			t.Fatalf("%s: emitted asm calls __fn___fern_str_arr_free — the element-hazard walk failed to exclude an aliased/escaping element", name)
 		}
+		if wantCall == "forwarded" {
+			const call = "call __fn___fern_str_arr_free"
+			if strings.Contains(asmFuncBody(t, string(asm), "__fn_fwd"), call) {
+				t.Fatal("forwarder must transfer its result without freeing the elements")
+			}
+			if !strings.Contains(asmFuncBody(t, string(asm), "__fn_churn"), call) {
+				t.Fatal("consumer must release the counted elements received through the forwarder")
+			}
+		}
 		bin := buildBin(t, gcc, dir, name, string(asm))
 		var cmd *exec.Cmd
 		if len(runner) == 0 {
@@ -241,15 +250,16 @@ function main(): i32 {
 }`,
 		"strarr-local-callee-holder-escapes", 8, "yes")
 
-	// FORWARDED RETURN excludes: `fwd` binds the producer's result and hands it
-	// straight back out, so the array escapes its frame and the credit must not
-	// fire. The caller reads it after fwd returns. 3 + 43 = 46, underflow 0.
+	// Forwarding transfers the claim: fwd must not free its returned array,
+	// while churn must deep-free that result. A whole-module "no free" assertion
+	// previously hid the consumer leak. Pin both functions and flat high-water
+	// over two identical churns, as well as the returned value and underflows.
 	run(t, `function w(pre: string): string { return pre + "-a-wide-element-past-the-inline-threshold"; }
 function mk(pre: string): string[] { var out: string[] = []; var i: i32 = 0; while (i < 3) { out = out.append(w(pre)); i = i + 1; } return out; }
 function fwd(pre: string): string[] { var xs: string[] = mk(pre); return xs; }
 function churn(n: i32): i32 { var pre: string = "ab"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { var r: string[] = fwd(pre); if (r.len() + r[1].len() != 46) { bad = 1; } i = i + 1; } return bad; }
-function main(): i32 { var v: i32 = churn(2000); if (__rc_underflow() != 0) { return 99; } return v; }`,
-		"strarr-local-forwarded-return-excluded", 0, "no")
+function main(): i32 { var v: i32 = churn(2000); var before = __heap_bump_bytes(); var v2: i32 = churn(2000); var after = __heap_bump_bytes(); if (after != before) { return 98; } if (__rc_underflow() != 0) { return 99; } return v + v2; }`,
+		"strarr-local-forwarded-return-owned", 0, "forwarded")
 
 	// SELF-`.with` REBIND, BOUNDED HIGH-WATER (#6407): `a = a.with(i, v)` on an
 	// owned string[] lowers to an in-place arr_set, which used to drop the
