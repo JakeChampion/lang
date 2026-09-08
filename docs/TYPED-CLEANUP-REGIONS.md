@@ -57,6 +57,15 @@ changes and metadata also contribute. The new code implements the typed cleanup
 contract. No compiler-size baseline is changed. Region interfaces introduce no
 runtime environment allocation, independently checked in the executable graph.
 
+Review follow-up coverage pins cross-action binding reads through cloned joins:
+the checking action captures a scalar or array projection that the preceding
+branching action does not capture. A third case crosses successive branching
+actions. Both branch choices execute, and structural assertions ensure these
+cases cannot silently turn into direct capture-output forwarding tests. The
+shared matrix checks interpreter results, typed unit planning, physical lowering,
+raw/optimized ARM64 execution and balanced allocation counts. This adds coverage,
+not a compiler behaviour change or a performance claim.
+
 ## Observable contract
 
 The existing language contract is in the `defer` section of
