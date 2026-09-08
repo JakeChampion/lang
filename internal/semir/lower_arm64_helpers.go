@@ -50,6 +50,25 @@ func (l *armLowerer) helper(key string, params []ast.Type, result ast.Type) (*ar
 	if name := l.helpers[key]; name != "" {
 		return nil, name, false
 	}
+	shapes := make([]armABIValue, len(params))
+	for i, typ := range params {
+		shapes[i].width, shapes[i].addr = armValueShape(typ)
+	}
+	w, addr := armValueShape(result)
+	return l.physicalHelper(key, shapes, armABIValue{w, addr})
+}
+
+// Runtime-only pointer arithmetic has physical shapes, not invented source
+// types. In particular an indexing helper returns an address, not a string.
+type armABIValue struct {
+	width int8
+	addr  bool
+}
+
+func (l *armLowerer) physicalHelper(key string, params []armABIValue, result armABIValue) (*armBuilder, string, bool) {
+	if name := l.helpers[key]; name != "" {
+		return nil, name, false
+	}
 	index := len(l.out.Functions)
 	name := fmt.Sprintf("__semir_helper_%d", index)
 	for l.out.Functions[name] != nil {
@@ -57,9 +76,11 @@ func (l *armLowerer) helper(key string, params []ast.Type, result ast.Type) (*ar
 		name = fmt.Sprintf("__semir_helper_%d", index)
 	}
 	f := ssa.NewFunc(name)
-	f.ReturnWidth, f.ReturnAddr = armValueShape(result)
-	for _, typ := range params {
-		armParam(f, typ)
+	f.ReturnWidth, f.ReturnAddr = result.width, result.addr
+	for _, shape := range params {
+		f.ParamWidths = append(f.ParamWidths, shape.width)
+		f.ParamAddrs = append(f.ParamAddrs, shape.addr)
+		f.AddParam()
 	}
 	l.helpers[key], l.out.Functions[name] = name, f
 	return &armBuilder{f: f, b: f.NewBlock(), l: l}, name, true
@@ -159,7 +180,7 @@ func (b *armBuilder) require(condition ssa.Value, message string) {
 }
 
 func (l *armLowerer) indexHelper(stride int64) string {
-	b, name, fresh := l.helper(fmt.Sprintf("index:%d", stride), []ast.Type{ast.ArrayType{Elem: ast.StringType{}}, armU64}, ast.StringType{})
+	b, name, fresh := l.physicalHelper(fmt.Sprintf("index:%d", stride), []armABIValue{{64, true}, {64, false}}, armABIValue{64, true})
 	if !fresh {
 		return name
 	}
@@ -200,6 +221,11 @@ func (l *armLowerer) appendHelper(elem ast.Type) string {
 		b.call("__memcpy", 64, true, result, array, bytes)
 	}
 	tail := b.op(ssa.OpAdd, 64, true, result, b.op(ssa.OpMul, 64, false, length, b.constant(stride)))
+	// The caller's verified storeValue supply has already acquired or moved
+	// exactly one unit for item, independently of each copied child above.
+	// In particular, append(array, array[index]) retains the projected child
+	// before this call; the borrowed original array stays live through copying.
+	// This store consumes that supplied unit. Retaining it again here leaks.
 	b.store(tail, 0, item, elem)
 	b.f.SetRet(b.b, result)
 	return name
