@@ -20,6 +20,15 @@ cannot recover definitions across an end. Saved SSA values remain live according
 to their own uses. This prevents stale iteration state without admitting
 conditional registration or changing the production AST cleanup route.
 
+Cleanup action expansion now runs as a separate verified IR pass after the
+source CFG is complete. The frontend records typed invocation sites, not copied
+action bodies. Expansion consumes only action/binding identities and CFG edges,
+preserving late reads, sequential outputs, continuation phis and boundary ends.
+Pending invocations cannot reach binding promotion or ownership analysis. The
+pre-expansion verifier still restricts registration by dominance on the complete
+typed CFG, replacing per-exit source-builder dominance queries. Correlated conditional
+availability and production native/self-host retirement remain outstanding.
+
 Plain function and iteration cleanup actions with dominating registrations now compile
 once to typed action regions. Capture interfaces preserve enclosing BindingIDs;
 expansion reads current values at replay, threads writes between LIFO actions

@@ -59,6 +59,8 @@ type Func struct {
 	cleanupExits    []*cleanupExit
 	// Only source construction and verified binding promotion admit place ops.
 	unpromotedBindings bool
+	// Replay sites contain semantic action invocations until IR expansion.
+	unexpandedCleanups bool
 }
 
 func newFunc(name string, result ast.Type) *Func {

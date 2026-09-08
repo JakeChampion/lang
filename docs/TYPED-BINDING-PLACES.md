@@ -68,6 +68,10 @@ Each action promotes before expansion into its caller. Its protocol yield
 therefore still carries ordinary SSA values, not mutable storage references.
 
 At each replay the enclosing function explicitly reads the captured BindingIDs.
+These reads and output replacements are inserted by the standalone typed action
+expansion pass after source CFG construction, not by source-time action copying.
+Pending sites independently require initialized captures, even before ordinary
+read operations exist. Binding promotion rejects the pending-expansion phase.
 The expanded action writes its outputs back through binding replacements before
 the next LIFO action reads them. No registration-time environment copy is added.
 Return reads stay distinct SSA values across these replacements; subsequent

@@ -17,6 +17,33 @@ The tuple yield is only a region interface: expansion removes it before
 ordinary ownership planning, so it creates no runtime environment or tuple.
 Saved return values remain ordinary live SSA values across cleanup.
 
+Expansion is now a standalone typed-IR pass, not a source-builder operation.
+The source producer resolves names and constructs each private action once,
+then records invocations as empty CFG sites carrying their continuation. It
+does not copy action operations while visiting exits. Once the complete source
+CFG exists, verification checks registration/boundary state, private-region
+phase, site shape and definite initialization of every captured binding.
+Invalid input is rejected before expansion mutates the graph.
+
+The expansion pass has no source syntax or checker input. It reads the current
+BindingIDs at each site, installs the already-typed action CFG and publishes
+simultaneous binding outputs before continuing. It reuses the site as the action
+entry, so phase separation adds no continuation-only blocks. Multi-block actions
+move the original continuation to the action exit, preserving successor phi
+operand order. Boundary-end and exit-finish identities relocate in one pass,
+rather than scanning every exit for every replay. Source positions, resolved
+types and call identities remain attached to their copied operations.
+
+An explicit pending-expansion phase cannot enter binding promotion or ownership
+analysis. Expanded place graphs still pass verification before promotion;
+promoted graphs still pass whole-program verification before ownership. This
+separates the pass boundaries needed by conditional availability, but does not
+activate it: the pre-expansion verifier rejects nondominating registrations with
+the existing source-anchored unsupported diagnostic, and the exact cleanup-flow
+proof still rejects inconsistent path states. Registration admission now uses
+the complete typed CFG. The source builder no longer computes dominance at each
+exit while control flow is still under construction.
+
 The verifier checks action types, capture identities/contracts, final yields,
 registration dominance and exact registration state across every CFG edge. Region
 branches and local loops reuse the existing source producer; source locations,
@@ -163,6 +190,53 @@ the action verifier shrinks by 48 bytes. Caller changes and data/debug/segment
 layout account for the rest. This implements and independently verifies new
 iteration semantics; it does not add a runtime cleanup environment or change
 a compiler-size baseline. Production native/self-host cutover remains pending.
+
+## Standalone expansion validation and costs, 2026-09-09
+
+Five malformed pending-action cases reject before graph mutation. Additional
+tests reject promotion/ownership phase escape and repeated expansion, preserve
+continuation phi ordering with reversed predecessor order, pin the exact added
+action-block count and leave action-free graphs unchanged. Two conditional cases
+prove source construction completes before the typed admission diagnostic.
+Existing cleanup-cycle
+tests pass unchanged. Full semantic IR, source-lint and CLI packages, targeted
+race tests and lint pass. Strict Linux ARM64 raw/optimized typed runtime and
+actual CLI tests pass with the existing balanced allocator census expectations.
+Full integration and self-host CI remain separate publication gates.
+
+Five 100 ms samples on native Darwin ARM64, Apple M3 Pro, compare the same
+checked-source-to-physical-lowering workloads against parent `0b92aba21`. The
+one-loop smoke run preceded scaling. Only loop/action count changes. These are
+observed ranges, not confidence intervals or a speedup claim.
+
+| Workload | Parent ns/op | Separate expansion ns/op | Parent allocs/op | Separate expansion allocs/op |
+| --- | --- | --- | --- | --- |
+| 1 iteration action | 66,083-68,159 | 68,876-92,404 | 1,114 | 1,152 |
+| 8 iteration actions | 395,663-506,972 | 402,733-435,927 | 4,714 | 4,774 |
+| 64 iteration actions | 3,740,241-4,059,020 | 3,091,099-3,301,443 | 27,705-27,707 | 26,191-26,193 |
+| 1 function action | 68,130-73,216 | 71,880-96,611 | 1,208 | 1,242 |
+| 8 function actions | 293,676-354,932 | 300,105-311,351 | 3,659 | 3,799 |
+| 64 function actions | 2,342,470-2,460,950 | 2,440,658-2,591,185 | 19,361-19,362 | 20,042-20,043 |
+
+The independent pre-expansion verification and site/capture indexing add
+compiler allocations at small scales and in the function-action family. Moving
+registration admission to the completed CFG removes repeated per-exit dominance
+construction: the 64-loop workload now takes less time and allocation space than
+the parent in these samples, despite the added verification. The function-action
+family does not show the same improvement; this is not a general speedup claim.
+Expansion reuses invocation blocks, adds no runtime protocol
+allocation, and relocates all boundary endpoints with a single linear scan.
+An intermediate continuation-block scaffold was removed before measurement;
+the retained regression prohibits reintroducing those unnecessary blocks.
+
+Identical `go build -trimpath -buildvcs=false` builds measure 28,883,218 parent
+bytes and 28,883,426 candidate bytes: 208 bytes net growth. Mach-O `__text`
+grows by 2,976 bytes; segment padding makes total file growth much smaller than
+code growth. The old builder expansion method (3,648 symbol bytes) is removed;
+the standalone site expansion is 3,792 bytes and its phase driver is 816 bytes.
+The remaining code changes enforce site shape, capture availability and consumer
+phase gates. No baseline is changed. Production native/self-host AST ownership
+retirement and conditional cleanup activation remain outstanding.
 
 ## Observable contract
 

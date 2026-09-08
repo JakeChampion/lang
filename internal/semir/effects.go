@@ -80,6 +80,9 @@ func ownershipEffects(f *Func) (*functionEffects, error) {
 	if err := Verify(f); err != nil {
 		return nil, err
 	}
+	if f.unexpandedCleanups {
+		return nil, fmt.Errorf("semir %s: ownership requires expanded cleanup actions", f.graph.Name)
+	}
 	if f.unpromotedBindings {
 		return nil, fmt.Errorf("semir %s: binding promotion must precede ownership analysis", f.graph.Name)
 	}

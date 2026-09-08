@@ -13,6 +13,9 @@ import (
 // The enclosing VerifyProgram checks the promoted result before any ownership
 // consumer; it also checks promoted private action regions through their owner.
 func promoteBindings(f *Func) error {
+	if f.unexpandedCleanups {
+		return fmt.Errorf("semir %s: binding promotion requires expanded cleanup actions", f.graph.Name)
+	}
 	if !f.unpromotedBindings {
 		return fmt.Errorf("semir %s: binding promotion outside construction phase", f.graph.Name)
 	}

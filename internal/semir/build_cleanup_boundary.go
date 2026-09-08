@@ -47,19 +47,15 @@ func (b *builder) newCleanupBoundary(parent *cleanupBoundary, entry, header, exi
 
 func (b *builder) emitCleanupExit(through *cleanupBoundary, kind cleanupExitKind, target *ssa.Block) error {
 	e := &cleanupExit{from: b.cleanupScope, through: through, start: b.current, target: target, kind: kind}
-	var dom *ssa.DomTree
 	for scope := b.cleanupScope; ; scope = scope.parent {
 		for i := len(scope.actions) - 1; i >= 0; i-- {
 			r := scope.actions[i]
-			if dom == nil {
-				dom = ssa.BuildDomTree(b.fn.graph)
-			}
-			if !dom.Dominates(r.register, e.start) {
-				return b.errorAt(r.pos, "conditional cleanup registration is not implemented in the typed pilot")
-			}
-			if err := b.expandCleanup(r); err != nil {
-				return err
-			}
+			// Record an invocation in the source CFG. The standalone typed pass
+			// expands it only after all ordinary control flow is complete.
+			site := b.fn.graph.NewBlock()
+			b.fn.graph.SetBr(b.current, site)
+			r.replays = append(r.replays, site)
+			b.current = site
 		}
 		e.ends = append(e.ends, cleanupEnd{scope, b.current})
 		if scope == through {
