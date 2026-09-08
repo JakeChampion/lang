@@ -1905,6 +1905,12 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__arr_idx_16":                  emitArrIdxHelperN("__arr_idx_16", 4),
 	"__arr_idx_16_nc":               emitArrIdxHelperNChecked("__arr_idx_16_nc", 4, false),
 	"__str_idx":                     emitArrIdxHelperN("__str_idx", 0),
+	"__slice_idx":                   emitSliceIdxHelper("__slice_idx", 2),
+	"__slice_idx_1":                 emitSliceIdxHelper("__slice_idx_1", 0),
+	"__slice_idx_8":                 emitSliceIdxHelper("__slice_idx_8", 3),
+	"__slice_range":                 emitSliceRangeHelper,
+	"__slice_make":                  emitSliceMakeHelper,
+	"__method_string_as_bytes":      emitStringAsBytesHelper,
 	"__fern_memchr":                 emitMemchrHelper,
 	"__fern_mismatch":               emitMismatchHelper,
 	"__fern_rmemchr":                emitRmemchrHelper,
@@ -1937,6 +1943,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 // the .bss heap section + cursor must be emitted whenever one is referenced even
 // if the program body has no direct heap op.
 var heapUsingHelpers = map[string]bool{
+	"__slice_make":                true,
 	"__str_concat":                true,
 	"__alloc_u8":                  true,
 	"string_from_bytes_unchecked": true, "__str_slice": true,
@@ -1951,6 +1958,7 @@ var heapUsingHelpers = map[string]bool{
 // calls another must have that callee emitted too — the module never references
 // it directly). Transitively closed by referencedRuntimeHelpers.
 var runtimeHelperDeps = map[string][]string{
+	"__method_string_as_bytes":      {"__slice_make"},
 	"__fern_closure_drop":           {"__fern_box_free", "__fern_rc_dec"},
 	"__fern_arr_push_grow_ptr":      {"__fern_arr_push_grow"},
 	"__fern_arr_push_grow_str":      {"__fern_arr_push_grow"},
