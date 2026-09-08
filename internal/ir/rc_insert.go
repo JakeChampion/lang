@@ -4063,6 +4063,34 @@ func (b *builder) ownArgNeedsRetain(a ast.Expr) bool {
 	return false
 }
 
+// emitBorrowedArrayOwnArgRetain buys the reference an explicit own callee
+// consumes while this threaded array parameter still holds its caller's borrow.
+// Once a replacement is owned, transfer it without another retain. The matching
+// callConsumesIdent assignment sets the flag even for an identity result.
+// The argument value stays on the operand stack throughout this guard.
+func (b *builder) emitBorrowedArrayOwnArgRetain(a ast.Expr) {
+	if !ast.RcFreeEnabled {
+		return
+	}
+	id, ok := a.(*ast.Ident)
+	if !ok || !b.isConsumedArrayParam(id.Name) {
+		return
+	}
+	flag, hasFlag := b.locals[ownFlagName(id.Name)]
+	slot, hasSlot := b.locals[id.Name]
+	if !hasFlag || !hasSlot {
+		return
+	}
+	b.emit(Op{Kind: OpLoadLocal, I32: flag})
+	b.emit(Op{Kind: OpConstI32, I32: 0})
+	b.emit(Op{Kind: OpEq})
+	b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
+	b.emit(Op{Kind: OpLoadLocal, I32: slot})
+	b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
+	b.emit(Op{Kind: OpDrop})
+	b.emit(Op{Kind: OpEnd})
+}
+
 // genStructFlatDropFn builds `__drop_struct_flat_<Name>`: the outlined form of
 // the exit sweep's OWNED-but-NOT-free-eligible struct drop. It mirrors that
 // arm exactly — at rc==1 each rc-tracked field gets a FLAT one-level dec (the
