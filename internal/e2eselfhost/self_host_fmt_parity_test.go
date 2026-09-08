@@ -61,6 +61,21 @@ var fmtParityCases = []struct {
 	name string
 	src  string
 }{
+	{"inline-hints", `@inline
+function inc(n: i32): i32 { return n + 1; }
+@noinline
+pub function slow(n: i32): i32 { return inc(n); }
+function plain(): i32 { return 0; }
+`},
+	{"inline-hints-methods", `struct A { value: i32 }
+struct B { value: i32 }
+@inline function (a: A) get(): i32 { return a.value; } @noinline function (b: B) get(): i32 { return b.value; }
+`},
+	{"inline-hints-modifiers", `@noinline
+pub fip function keep(own xs: i32[]): i32[] { return xs; }
+@inline
+function id[T](x: T): T { return x; }
+`},
 	// Precedence is the substantive half — one wrong level silently
 	// reassociates. `(n & (n - 1)) == 0` is the trap native's own table
 	// documents: bitwise sits BELOW the comparison family in Fern's grammar,
@@ -1500,9 +1515,6 @@ func fmtOutputTypeChecks(t *testing.T, label, src, formatted string) {
 // pass.
 func TestSelfHostFmtNativeParityX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
-	if len(runner) != 0 {
-		t.Skip("CLI driver test runs only natively (argv paths)")
-	}
 	dir := writeSelfHostAsmProject(t)
 	copySelfHostDriver(t, dir, "fern.fern")
 	fernBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
@@ -1512,7 +1524,7 @@ func TestSelfHostFmtNativeParityX86_64(t *testing.T) {
 		if !slices.Contains(args, "-target") {
 			args = append([]string{"-target", "x86-64-linux", "-emit", "asm"}, args...)
 		}
-		cmd := exec.Command(fernBin, args...)
+		cmd := runX86_64Bin(runner, fernBin, args...)
 		out, _ := cmd.Output()
 		return out, cmd.ProcessState.ExitCode()
 	}
@@ -1640,9 +1652,6 @@ var selfHostFmtKnownDivergences = map[string]string{}
 // already pays for and caches.
 func TestSelfHostFmtCorpusParityX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
-	if len(runner) != 0 {
-		t.Skip("CLI driver test runs only natively (argv paths)")
-	}
 	root := repoRootFromTest(t)
 	dir := writeSelfHostAsmProject(t)
 	copySelfHostDriver(t, dir, "fern.fern")
@@ -1661,7 +1670,7 @@ func TestSelfHostFmtCorpusParityX86_64(t *testing.T) {
 			continue
 		}
 		want := goprinter.Format(prog)
-		cmd := exec.Command(fernBin, "-fmt", filepath.Join(root, rel))
+		cmd := runX86_64Bin(runner, fernBin, "-fmt", filepath.Join(root, rel))
 		got, err := cmd.Output()
 		if err != nil {
 			t.Errorf("%s: self-host -fmt failed: %v", rel, err)
@@ -1702,9 +1711,6 @@ func TestSelfHostFmtCorpusParityX86_64(t *testing.T) {
 // than a mismatch is that table coming back.
 func TestSelfHostFmtDiffCorpusParityX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
-	if len(runner) != 0 {
-		t.Skip("CLI driver test runs only natively (argv paths)")
-	}
 	root := repoRootFromTest(t)
 	dir := writeSelfHostAsmProject(t)
 	copySelfHostDriver(t, dir, "fern.fern")
@@ -1727,7 +1733,7 @@ func TestSelfHostFmtDiffCorpusParityX86_64(t *testing.T) {
 		}
 		want := goprinter.UnifiedDiff(string(src), goprinter.Format(prog), path, path)
 		// `-d` exits 1 when it prints a diff, which is the usual case here.
-		out, err := exec.Command(fernBin, "-fmt", "-d", path).Output()
+		out, err := runX86_64Bin(runner, fernBin, "-fmt", "-d", path).Output()
 		if err != nil {
 			var ee *exec.ExitError
 			if !errors.As(err, &ee) || ee.ExitCode() != 1 {
