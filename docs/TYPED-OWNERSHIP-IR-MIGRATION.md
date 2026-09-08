@@ -6,6 +6,21 @@ SSA cutover and typed-IR work. Initial integration base: `02ea66e91`.
 
 ## Current implementation checkpoint
 
+Recursive tuple patterns now lower to explicit typed field projections and
+ordered decisions. Checked BindingTypes/NestedTypes must match the scrutinee's
+complete resolved field types. Binders, wildcards, nested tuples and i32/bool
+literal tests are supported, along with top-level whole-tuple @ bindings.
+Partial pattern bindings enter scope only after all tests succeed. Failed
+guards preserve outer updates while later arms still inspect the original
+scrutinee value. An unguarded all-binder/wildcard tuple arm is irrefutable and
+does not fabricate a failure edge. A guard that terminates without producing
+a boolean likewise cannot resurrect later arms. Child escape and repeated
+own/borrow uses pass through the existing projection-aware ownership planner;
+no tuple-pattern ownership rule is inferred from syntax. Nested @, enum/struct
+patterns, ranges and other literal comparison types remain explicit gaps.
+The interpreter's wildcard-only tuple dispatch now accepts the checker's valid
+arm forms, rather than requiring at least one explicitly tuple-shaped arm.
+
 Scalar match expressions now produce ordered typed control flow directly from
 the native checked MatchExpr, without parser-result temporaries. This bounded
 surface covers i32/boolean literals, @ bindings, guards and a final unguarded
@@ -14,7 +29,7 @@ updates, while arm-local bindings leave scope before the next arm. Arm yields
 share the existing typed live-edge join and ownership-unit verification with
 if-expressions; return/break/continue do not invent a result value. Source,
 interpreter, raw/optimized executable and CLI tests cover these contracts.
-Range/aggregate patterns and other scalar widths remain explicit unsupported
+Range/enum/struct patterns and other scalar widths remain explicit unsupported
 contracts, not silent equality/fallback paths. This consumes the native checked
 match representation and follows the scope/control rules of the preserved
 self-host typed-match prototype; its self-host IR integration remains pending.
@@ -61,8 +76,8 @@ layout optimization, not a reason to omit that unit's release today.
 Some inferred nested numeric literals still carry polymorphic type metadata
 after the common checker. This pilot rejects that unresolved metadata; explicit
 literal types work. Resolve the frontend's final type facts rather than dropping
-the unresolved marker or reconstructing types from backend layouts. Aggregate matches,
-closures, cleanup, aggregate mutation and broader types remain unsupported.
+the unresolved marker or reconstructing types from backend layouts. Enum/struct
+matches, closures, cleanup, aggregate mutation and broader types remain unsupported.
 
 The source producer now handles local replacement, while/unconditional loops,
 break/continue (including labels), joins and early returns. A sealed-block

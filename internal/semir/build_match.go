@@ -1,6 +1,8 @@
 package semir
 
 import (
+	"slices"
+
 	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/ssa"
 )
@@ -13,34 +15,27 @@ func (b *builder) matchValue(n *ast.MatchExpr) (ssa.Value, error) {
 		return ssa.Value{}, err
 	}
 	typ := b.fn.values[tag.value.ID].typ
-	if !ast.Equal(typ, ast.NumberType{}) && !ast.Equal(typ, ast.BoolType{}) {
-		return ssa.Value{}, b.errorAt(n.P, "match scrutinee requires an implemented semantic pattern contract")
-	}
-	if err := b.scalarMatchArms(n); err != nil {
+	refutable, err := b.matchArms(n, typ)
+	if err != nil {
 		return ssa.Value{}, err
 	}
 	var ends []*ssa.Block
 	var values []ssa.Value
-	for _, arm := range n.Arms {
+	for i, arm := range n.Arms {
 		var next *ssa.Block
-		if !arm.IsWildcard {
-			pattern, err := b.expr(arm.Literal)
-			if err != nil {
-				return ssa.Value{}, err
-			}
-			if pattern.ended || !ast.Equal(b.fn.values[pattern.value.ID].typ, typ) {
-				return ssa.Value{}, b.errorAt(arm.P, "literal pattern differs from the checked scrutinee type")
-			}
-			cond := b.fn.addOp(b.current, ssa.OpEq, ast.BoolType{}, arm.P, tag.value, pattern.value)
-			body := b.fn.graph.NewBlock()
+		if refutable[i] {
 			next = b.fn.graph.NewBlock()
-			b.fn.graph.SetBrIf(b.current, cond, body, next)
-			b.current = body
-			if err := b.seal(body); err != nil {
-				return ssa.Value{}, err
-			}
 		}
-		result, err := b.matchArmValue(arm, tag.value, next)
+		var bindings []matchBinding
+		if arm.TupleElems != nil {
+			bindings, err = b.tuplePattern(arm.TupleElems, tag.value, next, arm.P)
+		} else if !arm.IsWildcard {
+			err = b.matchLiteral(arm.Literal, tag.value, next, arm.P)
+		}
+		if err != nil {
+			return ssa.Value{}, err
+		}
+		result, err := b.matchArmValue(arm, tag.value, next, bindings)
 		if err != nil {
 			return ssa.Value{}, err
 		}
@@ -52,6 +47,13 @@ func (b *builder) matchValue(n *ast.MatchExpr) (ssa.Value, error) {
 		// through the existing sealed-block SSA construction.
 		b.current = next
 		if next != nil {
+			if len(next.Preds) == 0 {
+				// An irrefutable pattern's guard can terminate before it
+				// produces a boolean. No failure path reaches later arms.
+				b.fn.graph.Blocks = slices.DeleteFunc(b.fn.graph.Blocks, func(block *ssa.Block) bool { return block == next })
+				b.current = nil
+				break
+			}
 			if err := b.seal(next); err != nil {
 				return ssa.Value{}, err
 			}
@@ -60,11 +62,16 @@ func (b *builder) matchValue(n *ast.MatchExpr) (ssa.Value, error) {
 	return b.joinValues(ends, values, n.P)
 }
 
-func (b *builder) matchArmValue(arm *ast.MatchExprArm, tag ssa.Value, next *ssa.Block) (exprResult, error) {
+func (b *builder) matchArmValue(arm *ast.MatchExprArm, tag ssa.Value, next *ssa.Block, bindings []matchBinding) (exprResult, error) {
 	b.pushScope()
 	defer b.popScope()
 	if arm.AtBinding != "" {
 		if err := b.bind(arm.AtBinding, b.fn.values[tag.ID].typ, arm.P, tag); err != nil {
+			return exprResult{}, err
+		}
+	}
+	for _, binding := range bindings {
+		if err := b.bind(binding.name, b.fn.values[binding.value.ID].typ, arm.P, binding.value); err != nil {
 			return exprResult{}, err
 		}
 	}
@@ -84,6 +91,38 @@ func (b *builder) matchArmValue(arm *ast.MatchExprArm, tag ssa.Value, next *ssa.
 		}
 	}
 	return b.expr(arm.Body)
+}
+
+func (b *builder) matchLiteral(literal ast.Expr, tag ssa.Value, next *ssa.Block, pos ast.Position) error {
+	pattern, err := b.expr(literal)
+	if err != nil {
+		return err
+	}
+	if pattern.ended || !ast.Equal(b.fn.values[pattern.value.ID].typ, b.fn.values[tag.ID].typ) {
+		return b.errorAt(pos, "literal pattern differs from the checked scrutinee type")
+	}
+	cond := b.fn.addOp(b.current, ssa.OpEq, ast.BoolType{}, pos, tag, pattern.value)
+	body := b.fn.graph.NewBlock()
+	b.fn.graph.SetBrIf(b.current, cond, body, next)
+	b.current = body
+	return b.seal(body)
+}
+
+func (b *builder) matchArms(n *ast.MatchExpr, typ ast.Type) ([]bool, error) {
+	if tuple, ok := typ.(ast.TupleType); ok {
+		return b.tupleMatchArms(n, tuple)
+	}
+	if !ast.Equal(typ, ast.NumberType{}) && !ast.Equal(typ, ast.BoolType{}) {
+		return nil, b.errorAt(n.P, "match scrutinee requires an implemented semantic pattern contract")
+	}
+	if err := b.scalarMatchArms(n); err != nil {
+		return nil, err
+	}
+	refutable := make([]bool, len(n.Arms))
+	for i, arm := range n.Arms {
+		refutable[i] = !arm.IsWildcard
+	}
+	return refutable, nil
 }
 
 // This bounded scalar surface has the same explicit final wildcard required

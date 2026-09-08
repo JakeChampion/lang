@@ -65,6 +65,22 @@ function choose(tag: i32): i32 {
 `)
 }
 
+func TestTypedSSATupleMatchFlow(t *testing.T) {
+	bin := buildFernForStdoutTest(t)
+	checkTypedSSAExecutable(t, bin, `
+function main(): i32 {
+  var pair = (([41i32], true), 1i32);
+  var child = match (pair) {
+    ((_, false), _) => [17i32],
+    ((items, _), _) when { pair = (([29i32], false), 0i32); false } => items,
+    ((items, _), _) => items
+  };
+  var i = 0i32; while (i < 64i32) { var churn = (([7i32], true), 2i32); i = i + 1i32; }
+  return child[0];
+}
+`)
+}
+
 func checkTypedSSAExecutable(t *testing.T, bin, source string) {
 	t.Helper()
 	entry := writeFern(t, source)
