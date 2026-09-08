@@ -8156,22 +8156,20 @@ function trait_req_idx(tr: string, reqs: parser.TraitReq[]): i32 {
   return e021_trait_idx(simple, reqs);
 }
 
-// trait_assoc_req resolves trait `tr`'s ASSOCIATED (receiver-less)
-// requirement named `field` — `trait Zero { function zero(): Self; }`. A
-// required method whose first parameter is `self` is a receiver method and
-// does not answer a `Type.f()` call. Supertraits are followed, so `T: Num`
-// reaches `Zero.zero` when `trait Num: Zero`; `depth` bounds a cyclic
-// supertrait chain.
-function trait_assoc_req(reqs: parser.TraitReq[], tr: string, field: string, depth: i32): AssocHit {
-  if (depth > 8) {
-    return assoc_miss();
-  }
+// trait_assoc_req resolves trait `tr`'s ASSOCIATED (receiver-less) function,
+// abstract or defaulted. A method whose first parameter is `self` is a
+// receiver method and does not answer a `Type.f()` call. Supertraits are
+// followed, so `T: Num` reaches `Zero.zero` when `trait Num: Zero`. Track
+// the current path to terminate cycles without rejecting deep valid chains.
+function trait_assoc_req(reqs: parser.TraitReq[], tr: string, field: string, seen: string[]): AssocHit {
   var idx: i32 = trait_req_idx(tr, reqs);
   if (idx < 0) {
     return assoc_miss();
   }
   var req: parser.TraitReq = reqs[idx];
-  for rs in req.req_sigs {
+  if (util.has_str(seen, req.trait_name)) { return assoc_miss(); }
+  var path: string[] = seen.append(req.trait_name);
+  for rs in req.assoc_sigs {
     if (rs.name == field) {
       if (rs.params.len() == 0) {
         return AssocHit { found: true, ret: rs.ret_type, owner: req.trait_name };
@@ -8182,7 +8180,7 @@ function trait_assoc_req(reqs: parser.TraitReq[], tr: string, field: string, dep
     }
   }
   for supertrait in req.supertraits {
-    var sh: AssocHit = trait_assoc_req(reqs, supertrait, field, depth + 1);
+    var sh: AssocHit = trait_assoc_req(reqs, supertrait, field, path);
     if (sh.found) {
       return sh;
     }
@@ -8210,7 +8208,7 @@ function tp_assoc_req(s: Scope, tname: string, field: string): AssocHit {
     if (i == bound.len() || bound[i] == b'+') {
       if (i > start) {
         var tr: str = slice_unchecked(bound, start, i);
-        var h: AssocHit = trait_assoc_req(s.trait_reqs, tr, field, 0);
+        var h: AssocHit = trait_assoc_req(s.trait_reqs, tr, field, []);
         if (h.found) {
           return h;
         }
@@ -8246,7 +8244,7 @@ function type_assoc_req(s: Scope, tyname: string, field: string): AssocHit {
   for imp in s.impls {
     if (imp.impl_type == tyname && util.has_str(imp.method_names, field)) {
       if (s.lookup_method(field, tyname).name.len() == 0) {
-        var h: AssocHit = trait_assoc_req(s.trait_reqs, imp.trait_name, field, 0);
+        var h: AssocHit = trait_assoc_req(s.trait_reqs, imp.trait_name, field, []);
         if (h.found) {
           return h;
         }
@@ -8298,14 +8296,15 @@ function assoc_call_req(obj: ast.Expr, field: string, s: Scope): AssocHit {
       if (ht.found) {
         return ht;
       }
-      // A name that IS one of the enclosing function's type parameters is a
-      // type qualifier however the function is supplied — an UNBOUNDED `T`
-      // still gets one from its instantiation, which is the shape
+      // An UNBOUNDED parameter may get its associated function from its
+      // instantiation, which is the shape
       // `@derive(cmp.Default) struct Pair[T]` reaches through `T.default()`.
       // Only the qualifier position takes this: tp_assoc_req stays the
       // bound-driven answer the E021 associated-vs-method rule reads. The
       // return type is unrecoverable, as every erased parameter's is (#8461).
-      if (util.index_of_str(s.tparams, oid.name) >= 0) {
+      // A bounded parameter must resolve through its declared traits above:
+      // treating the qualifier alone as a hit also accepts T.nope().
+      if (util.index_of_str(s.tparams, oid.name) >= 0 && tp_bound_for(oid.name, s.tparams, s.tbounds).len() == 0) {
         return AssocHit { found: true, ret: "", owner: "" };
       }
       return assoc_miss();
@@ -10340,8 +10339,44 @@ function const_grammar_diags(mod: parser.Module): util.Diag[] {
 }
 
 
+// E075 belongs to the automatic init/handle wiring. A user-written main owns
+// that wiring instead. Match native's declaration lookup: methods named init
+// or handle are not lifecycle entries, and imported names remain qualified.
+function handler_state_diags(mod: parser.Module): util.Diag[] {
+  var init_idx: i32 = -1;
+  var handle_idx: i32 = -1;
+  var i: i32 = 0;
+  for fd in mod.funcs {
+    if (fd.name == "main") {
+      return [];
+    }
+    if (fd.receiver_type.len() == 0) {
+      if (fd.name == "init" && init_idx < 0) { init_idx = i; }
+      if (fd.name == "handle" && handle_idx < 0) { handle_idx = i; }
+    }
+    i = i + 1;
+  }
+  if (handle_idx < 0) { return []; }
+  var returns_state: boolean = false;
+  if (init_idx >= 0) {
+    var rt: string = mod.funcs[init_idx].ret_type;
+    returns_state = rt.len() > 0 && rt != "void";
+  }
+  var handle: parser.FuncDecl = mod.funcs[handle_idx];
+  var takes_state: boolean = handle.params.len() == 3;
+  if (takes_state && !returns_state) {
+    return [dg_at("E075", "handler takes a state parameter, but no `init` produces the state to thread through it", handle.line, handle.col)];
+  }
+  if (returns_state && !takes_state) {
+    var init: parser.FuncDecl = mod.funcs[init_idx];
+    return [dg_at("E075", "`init` returns a value, but the handler takes no state parameter to thread it through", init.line, init.col)];
+  }
+  return [];
+}
+
 function collect_decl_diags(mod: parser.Module): util.Diag[] {
   var out: util.Diag[] = util.append_diags([], const_grammar_diags(mod));
+  out = util.append_diags(out, handler_state_diags(mod));
   // E007: duplicate field within a struct (enum-variant structs carry at
   // most one `__ev` field, so they never trip this).
   for sd in mod.structs {
@@ -13658,7 +13693,7 @@ function e060_e062_stmts(stmts: ast.Stmt[], dyns: string[], mod: parser.Module, 
                   var assoc_owner: string = "";
                   for atr in rtrs {
                     if (assoc_owner.len() == 0) {
-                      var ah: AssocHit = trait_assoc_req(mod.trait_reqs, atr, fa.field, 0);
+                      var ah: AssocHit = trait_assoc_req(mod.trait_reqs, atr, fa.field, []);
                       if (ah.found) {
                         assoc_owner = ah.owner;
                       }
