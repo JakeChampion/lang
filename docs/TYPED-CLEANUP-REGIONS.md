@@ -34,7 +34,7 @@ or establish self-host parity or production cutover.
 
 ## Action-slice validation, 2026-09-08
 
-Fourteen source cases pass typed ownership planning and raw/optimized ARM64
+Seventeen source cases pass typed ownership planning and raw/optimized ARM64
 execution with balanced allocation/free counts. Fifteen malformed-region cases
 exercise independent verification. The actual CLI regression keeps a returned
 array alive across cleanup replacement and subsequent allocator churn. Full
