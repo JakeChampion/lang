@@ -8171,12 +8171,8 @@ function trait_assoc_req(reqs: parser.TraitReq[], tr: string, field: string, see
   var path: string[] = seen.append(req.trait_name);
   for rs in req.assoc_sigs {
     if (rs.name == field) {
-      if (rs.params.len() == 0) {
-        return AssocHit { found: true, ret: rs.ret_type, owner: req.trait_name };
-      }
-      if (rs.params[0].name != "self") {
-        return AssocHit { found: true, ret: rs.ret_type, owner: req.trait_name };
-      }
+      // The parser already limits assoc_sigs to receiverless functions.
+      return AssocHit { found: true, ret: rs.ret_type, owner: req.trait_name };
     }
   }
   for supertrait in req.supertraits {
