@@ -52,8 +52,8 @@ func (b *builder) scalarBinary(n *ast.Binary) (ssa.Value, error) {
 		n.EqCall != nil || n.CmpCall != nil || n.ArithCall != nil {
 		return ssa.Value{}, b.errorAt(n.P, "unsupported scalar binary contract: "+n.Op)
 	}
-	args, types, err := b.exprs([]ast.Expr{n.Left, n.Right})
-	if err != nil {
+	args, types, ended, err := b.exprs([]ast.Expr{n.Left, n.Right})
+	if err != nil || ended {
 		return ssa.Value{}, err
 	}
 	i32 := ast.Equal(types[0], ast.NumberType{})

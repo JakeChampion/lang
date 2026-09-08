@@ -100,8 +100,11 @@ func (b *builder) sourceLoop(cond ast.Expr, body ast.Stmt, label string) error {
 		if err != nil {
 			return err
 		}
+		if value.ended {
+			return b.closeLoop(header, exit)
+		}
 		work := b.fn.graph.NewBlock()
-		b.fn.graph.SetBrIf(b.current, value, work, exit)
+		b.fn.graph.SetBrIf(b.current, value.value, work, exit)
 		b.current = work
 		if err := b.seal(work); err != nil {
 			return err
@@ -116,6 +119,10 @@ func (b *builder) sourceLoop(cond ast.Expr, body ast.Stmt, label string) error {
 	if b.current != nil {
 		b.fn.graph.SetBr(b.current, header)
 	}
+	return b.closeLoop(header, exit)
+}
+
+func (b *builder) closeLoop(header, exit *ssa.Block) error {
 	if err := b.seal(header); err != nil {
 		return err
 	}
