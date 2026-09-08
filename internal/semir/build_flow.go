@@ -90,6 +90,8 @@ func (b *builder) seal(block *ssa.Block) error {
 }
 
 func (b *builder) sourceLoop(cond ast.Expr, body ast.Stmt, label string) error {
+	b.cleanupLoopDepth++
+	defer func() { b.cleanupLoopDepth-- }()
 	header, exit := b.fn.graph.NewBlock(), b.fn.graph.NewBlock()
 	b.fn.graph.SetBr(b.current, header)
 	b.current = header

@@ -11,8 +11,9 @@ import (
 // BuildFunc builds the experimental typed phase from a checked declaration,
 // before ir.LowerWith erases surface types and inserts concrete RC operations.
 // The current slice handles immutable array/tuple values and projections,
-// local replacement, branches and source loops. Aggregate mutation and
-// cleanup effects remain explicit unsupported errors, not silent fallbacks.
+// local replacement, branches, source loops and statically present function
+// cleanup actions. Aggregate mutation and conditional/iteration registration
+// remain explicit unsupported errors, not silent fallbacks.
 // Production compilation continues to use its existing route until ownership
 // analysis and verified lowering make this phase an end-to-end replacement.
 func BuildFunc(decl *ast.FuncDecl, info *checker.Info) (*Func, error) {
@@ -40,6 +41,9 @@ func buildBody(f *Func, decl *ast.FuncDecl, info *checker.Info) error {
 		if _, void := f.result.(ast.VoidType); !void {
 			return b.errorAt(decl.P, "value-returning body falls through")
 		}
+		if err := b.emitCleanups(); err != nil {
+			return err
+		}
 		f.graph.SetRet(b.current, ssa.Value{})
 	}
 	return nil
@@ -52,6 +56,9 @@ type builder struct {
 	scopes  []map[string]BindingID
 	flow    map[*ssa.Block]*bindingFlow
 	loops   []sourceLoop
+	// Includes loop conditions, which do not introduce break/continue targets.
+	cleanupLoopDepth int
+	action           *cleanupBuilder
 }
 
 func (b *builder) errorAt(pos ast.Position, message string) error {
@@ -81,6 +88,9 @@ func (b *builder) lookup(name string) (BindingID, bool) {
 		if id, ok := b.scopes[i][name]; ok {
 			return id, true
 		}
+	}
+	if b.action != nil {
+		return b.captureBinding(name)
 	}
 	return 0, false
 }
@@ -121,7 +131,12 @@ func (b *builder) stmt(stmt ast.Stmt) error {
 		return b.loopBranch(n.Label, false, n.P)
 	case *ast.Continue:
 		return b.loopBranch(n.Label, true, n.P)
+	case *ast.Defer:
+		return b.registerCleanup(n)
 	case *ast.Return:
+		if b.action != nil {
+			return b.errorAt(n.P, "return inside a cleanup action is not implemented in the typed pilot")
+		}
 		var value ssa.Value
 		if n.Value != nil {
 			if _, void := b.fn.result.(ast.VoidType); void {
@@ -138,6 +153,9 @@ func (b *builder) stmt(stmt ast.Stmt) error {
 		}
 		if b.current == nil {
 			return nil
+		}
+		if err := b.emitCleanups(); err != nil {
+			return err
 		}
 		b.fn.graph.SetRet(b.current, value)
 		b.current = nil
