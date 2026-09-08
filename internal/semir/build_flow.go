@@ -93,20 +93,25 @@ func (b *builder) sourceLoop(cond ast.Expr, body ast.Stmt, label string) error {
 	header, exit := b.fn.graph.NewBlock(), b.fn.graph.NewBlock()
 	b.fn.graph.SetBr(b.current, header)
 	b.current = header
-	b.loops = append(b.loops, sourceLoop{label, header, exit})
-	defer func() { b.loops = b.loops[:len(b.loops)-1] }()
 	if cond != nil {
 		value, err := b.expr(cond)
 		if err != nil {
 			return err
 		}
+		if value.ended {
+			return b.closeLoop(header, exit)
+		}
 		work := b.fn.graph.NewBlock()
-		b.fn.graph.SetBrIf(b.current, value, work, exit)
+		b.fn.graph.SetBrIf(b.current, value.value, work, exit)
 		b.current = work
 		if err := b.seal(work); err != nil {
 			return err
 		}
 	}
+	// The condition is evaluated in the enclosing loop scope, matching the
+	// checker. Only the body introduces this loop's break/continue targets.
+	b.loops = append(b.loops, sourceLoop{label, header, exit})
+	defer func() { b.loops = b.loops[:len(b.loops)-1] }()
 	b.pushScope()
 	err := b.stmt(body)
 	b.popScope()
@@ -116,6 +121,10 @@ func (b *builder) sourceLoop(cond ast.Expr, body ast.Stmt, label string) error {
 	if b.current != nil {
 		b.fn.graph.SetBr(b.current, header)
 	}
+	return b.closeLoop(header, exit)
+}
+
+func (b *builder) closeLoop(header, exit *ssa.Block) error {
 	if err := b.seal(header); err != nil {
 		return err
 	}

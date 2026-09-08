@@ -105,10 +105,10 @@ func (b *builder) stmt(stmt ast.Stmt) error {
 			return b.errorAt(n.P, "missing or inconsistent checked local type")
 		}
 		value, err := b.expr(n.Init)
-		if err != nil {
+		if err != nil || value.ended {
 			return err
 		}
-		return b.bind(n.Name, typ, n.P, value)
+		return b.bind(n.Name, typ, n.P, value.value)
 	case *ast.Destructure:
 		return b.destructure(n)
 	case *ast.ExprStmt:
@@ -125,22 +125,22 @@ func (b *builder) stmt(stmt ast.Stmt) error {
 	case *ast.Return:
 		var value ssa.Value
 		if n.Value != nil {
-			var err error
-			value, err = b.expr(n.Value)
-			if err != nil {
+			result, err := b.expr(n.Value)
+			if err != nil || result.ended {
 				return err
 			}
+			value = result.value
 		}
 		b.fn.graph.SetRet(b.current, value)
 		b.current = nil
 		return nil
 	case *ast.If:
 		cond, err := b.expr(n.Cond)
-		if err != nil {
+		if err != nil || cond.ended {
 			return err
 		}
 		yes, no := b.fn.graph.NewBlock(), b.fn.graph.NewBlock()
-		b.fn.graph.SetBrIf(b.current, cond, yes, no)
+		b.fn.graph.SetBrIf(b.current, cond.value, yes, no)
 		ends := make([]*ssa.Block, 0, 2)
 		for i, arm := range []ast.Stmt{n.Then, n.Else} {
 			b.current = []*ssa.Block{yes, no}[i]
@@ -177,10 +177,11 @@ func (b *builder) destructure(n *ast.Destructure) error {
 	if n.StructName != "" || len(n.Fields) != 0 {
 		return b.errorAt(n.P, "struct projection is not implemented in the typed pilot")
 	}
-	value, err := b.expr(n.Init)
-	if err != nil {
+	result, err := b.expr(n.Init)
+	if err != nil || result.ended {
 		return err
 	}
+	value := result.value
 	typ, ok := b.fn.values[value.ID].typ.(ast.TupleType)
 	if !ok || len(typ.Elems) != len(n.Names) || (len(n.Nested) != 0 && len(n.Nested) != len(n.Names)) {
 		return b.errorAt(n.P, "inconsistent checked tuple destructure")
@@ -205,7 +206,7 @@ func (b *builder) destructure(n *ast.Destructure) error {
 	return nil
 }
 
-func (b *builder) expr(expr ast.Expr) (ssa.Value, error) {
+func (b *builder) exprValue(expr ast.Expr) (ssa.Value, error) {
 	if expr == nil {
 		return ssa.Value{}, fmt.Errorf("semir: missing checked expression")
 	}
@@ -236,7 +237,16 @@ func (b *builder) expr(expr ast.Expr) (ssa.Value, error) {
 		}
 		return value, nil
 	case *ast.Binary:
+		if n.Op == "&&" || n.Op == "||" {
+			return b.shortCircuit(n)
+		}
 		return b.scalarBinary(n)
+	case *ast.Unary:
+		return b.booleanNot(n)
+	case *ast.IfExpr:
+		return b.ifValue(n)
+	case *ast.BlockExpr:
+		return b.blockValue(n)
 	case *ast.Assign:
 		ident, ok := n.Target.(*ast.Ident)
 		if !ok {
@@ -246,24 +256,25 @@ func (b *builder) expr(expr ast.Expr) (ssa.Value, error) {
 		if !ok {
 			return ssa.Value{}, b.errorAt(n.P, "unresolved assignment binding: "+ident.Name)
 		}
-		value, err := b.expr(n.Value)
-		if err != nil {
+		result, err := b.expr(n.Value)
+		if err != nil || result.ended {
 			return ssa.Value{}, err
 		}
+		value := result.value
 		if !ast.Equal(b.fn.bindings[id-1].typ, b.fn.values[value.ID].typ) {
 			return ssa.Value{}, b.errorAt(n.P, "assignment type differs from binding type")
 		}
 		b.state(b.current).values[id] = value
 		return value, nil
 	case *ast.ArrayLit:
-		args, _, err := b.exprs(n.Elems)
-		if err != nil {
+		args, _, ended, err := b.exprs(n.Elems)
+		if err != nil || ended {
 			return ssa.Value{}, err
 		}
 		return emit(ssa.OpArrayMake, ast.ArrayType{Elem: n.ElemType}, args...), nil
 	case *ast.TupleLit:
-		args, types, err := b.exprs(n.Elems)
-		if err != nil {
+		args, types, ended, err := b.exprs(n.Elems)
+		if err != nil || ended {
 			return ssa.Value{}, err
 		}
 		return emit(ssa.OpTupleMake, ast.TupleType{Elems: types}, args...), nil
@@ -271,8 +282,8 @@ func (b *builder) expr(expr ast.Expr) (ssa.Value, error) {
 		if n.IsString || n.IsSlice || n.Unchecked {
 			return ssa.Value{}, b.errorAt(n.P, "unsupported projection contract")
 		}
-		args, _, err := b.exprs([]ast.Expr{n.Array, n.Idx})
-		if err != nil {
+		args, _, ended, err := b.exprs([]ast.Expr{n.Array, n.Idx})
+		if err != nil || ended {
 			return ssa.Value{}, err
 		}
 		return emit(ssa.OpArrayGet, n.ElemType, args...), nil
@@ -281,8 +292,8 @@ func (b *builder) expr(expr ast.Expr) (ssa.Value, error) {
 			if intrinsic.Kind != checker.IntrinsicArrayAppend || intrinsic.Signature == nil {
 				return ssa.Value{}, b.errorAt(n.P, "unsupported or unresolved intrinsic contract")
 			}
-			args, types, err := b.exprs(n.Args)
-			if err != nil {
+			args, types, ended, err := b.exprs(n.Args)
+			if err != nil || ended {
 				return ssa.Value{}, err
 			}
 			sig := intrinsic.Signature
@@ -311,8 +322,8 @@ func (b *builder) expr(expr ast.Expr) (ssa.Value, error) {
 		if _, void := callee.result.(ast.VoidType); void {
 			return ssa.Value{}, b.errorAt(n.P, "void call effects are not implemented in the typed pilot")
 		}
-		args, _, err := b.exprs(n.Args)
-		if err != nil {
+		args, _, ended, err := b.exprs(n.Args)
+		if err != nil || ended {
 			return ssa.Value{}, err
 		}
 		value := emit(ssa.OpSemanticCall, callee.result, args...)
@@ -323,16 +334,17 @@ func (b *builder) expr(expr ast.Expr) (ssa.Value, error) {
 	}
 }
 
-func (b *builder) exprs(exprs []ast.Expr) ([]ssa.Value, []ast.Type, error) {
+func (b *builder) exprs(exprs []ast.Expr) ([]ssa.Value, []ast.Type, bool, error) {
 	values := make([]ssa.Value, 0, len(exprs))
 	types := make([]ast.Type, 0, len(exprs))
 	for _, expr := range exprs {
-		value, err := b.expr(expr)
-		if err != nil {
-			return nil, nil, err
+		result, err := b.expr(expr)
+		if err != nil || result.ended {
+			return nil, nil, result.ended, err
 		}
+		value := result.value
 		values = append(values, value)
 		types = append(types, b.fn.values[value.ID].typ)
 	}
-	return values, types, nil
+	return values, types, false, nil
 }

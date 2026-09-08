@@ -6,6 +6,16 @@ SSA cutover and typed-IR work. Initial integration base: `02ea66e91`.
 
 ## Current implementation checkpoint
 
+Expression control flow now preserves live values versus terminated paths
+explicitly. Value blocks and if-expressions join only live edges and identical
+complete semantic types; coercing joins require a future checked coercion
+contract rather than guessing from IsFloat or machine widths. Boolean &&/||
+uses conditional edges, not eager operand evaluation, and ! is a verified
+boolean operation. Every supported constructor, call, projection and scalar
+operand list stops after an expression returns, breaks or continues. Never
+does not acquire an invented SSA value. This is groundwork for typed match
+arms/guards; it does not replace the preserved self-host typed-match work.
+
 The compiler now exposes `-target arm64-linux -backend typed-ssa`. This route
 uses the common frontend checking, monomorphization and capability enforcement,
 then typed semantic ownership planning and concrete RC lowering directly to
@@ -47,7 +57,7 @@ No low-level width-dependent optimization runs on this semantic graph.
 
 The initial scalar induction surface is wrapping i32 addition, subtraction
 and multiplication, i32 comparisons and boolean equality. Unsupported numeric
-widths, overloaded operators, division and short-circuit expressions are
+widths, overloaded operators and division are
 explicit errors until their own contracts are implemented. Source/interpreter
 and raw/optimized ARM64 tests exercise repeated append, retained snapshots,
 projected borrows across allocator churn, simultaneous swaps, counted-parameter
@@ -146,7 +156,7 @@ tooling passes the expanded raw/optimized lifetime matrix and actual source
 loop CLI executable. Source loop support is a follow-up to the initial pilot;
 it does not establish self-host or other-target parity.
 
-`BenchmarkTypedSourceLoops` measures checked-source production plus verified
+At source-loop commit `bfa1572d7`, `BenchmarkTypedSourceLoops` measures checked-source production plus verified
 physical lowering, excluding frontend checking, backend optimization and
 assembly. Five 100 ms samples on native Darwin ARM64, Apple M3 Pro, measured
 72,649 to 81,294 ns/op for one loop, 403,784 to 542,983 ns/op for eight, and
@@ -345,6 +355,55 @@ until the replacement's acceptance gates hold, without changing its answers
 to make differential tests agree with a new bug.
 
 ## Acceptance gates
+
+### Retirement endpoint
+
+User direction: retire the old AST-based ownership approach. The opt-in pilot
+is an intermediate delivery, not the endpoint. Parsing, name resolution and
+initial type checking remain frontend responsibilities. Ownership, lifetime,
+escape/containment and reuse decisions must become typed-IR consumers in both
+the native and self-host compilers.
+
+For each legacy analysis, record its production callers, replacement semantic
+operations/contracts, outstanding feature/target gaps, differential tests and
+the commit that removes it. An analysis is not retired merely because the
+experimental backend bypasses it. Cut over its production consumers only after
+the replacement covers their supported semantics, then delete the obsolete
+implementation, its redundant metadata and fallback path. Keep behavioral
+regressions and independent interpreter/runtime oracles after deleting the old
+implementation; do not retain two permanent ownership decision systems.
+
+Initial retirement inventory (not an exhaustive list):
+
+| Legacy production analysis | Replacement responsibility | Current retirement blocker |
+| --- | --- | --- |
+| Native `ir.LowerWith` inputs: `inferParamEscapes`, `inferParamCountedRetain`, `findReturnsParamProjection` and related return facts | Typed interprocedural identity/containment, call effects and verified counted-unit plans | Pilot does not yet cover all calls, types, cleanup or production targets |
+| Native `ast.ExprResultOwnershipWith` and self-host `str_producer_ownership` / `str_binding_ownership` / `str_expr_ownership` | Explicit typed producer effects and value/binding identities | Full string/runtime contracts and self-host producer parity remain incomplete |
+| Self-host syntax-based container/alias escape checks in `irlower.fern` | Projection-aware lifetime, control-flow joins and explicit cleanup | Match payloads, aggregate updates, closures and self-host IR ownership integration remain incomplete |
+
+None of these families is retired yet. Extend this inventory as their callers
+are migrated, retaining exact deletion and regression-test references.
+
+The concrete sequence is:
+
+1. Complete typed source and effect contracts, including match projections,
+   closures, cleanup, external/indirect calls and existing aggregate semantics.
+   Preserve the existing self-host typed-match work and resolved source types.
+2. Establish target ABI/runtime coverage and native/self-host parity, including
+   diagnostics, allocator-pressure lifetime tests and compiler fixpoints.
+3. Switch production ownership consumers to verified typed IR. Unsupported
+   pilot features must be implemented before this cutover, not silently routed
+   back to AST ownership heuristics.
+4. Delete the replaced AST analyses and fallback routing, and add architecture
+   checks preventing ownership consumers from depending on those old helpers.
+5. Measure representative compiler/coreutils performance, memory, RC work and
+   size on the production route. Attribute and fix avoidable regressions.
+
+The migration is complete only when all production ownership consumers have
+crossed this boundary and the old approach can be removed. The next checklist
+item below is a minimum intermediate milestone, not full retirement.
+
+### Validation
 
 - Correct values, diagnostics, evaluation order and cleanup across targets.
 - No use-after-free, over-release or falsely admitted ownership, including
