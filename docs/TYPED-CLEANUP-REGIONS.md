@@ -18,12 +18,31 @@ ordinary ownership planning, so it creates no runtime environment or tuple.
 Saved return values remain ordinary live SSA values across cleanup.
 
 The verifier checks action types, capture identities/contracts, final yields,
-registration dominance, exactly-once replay on returns and LIFO ordering. Region
+registration dominance and exact registration state across every CFG edge. Region
 branches and local loops reuse the existing source producer; source locations,
 call identities and ownership operands survive expansion. No AST action is
 retained for replay or ownership analysis. Raw and optimized ARM64 execution
 tests include late replacement, action-to-action writes, simultaneous binding
 outputs, returned projections, own/borrow aliases and allocator balance.
+
+Registration pushes a pending action; replay must consume the most recent one,
+and returns require an empty pending stack. Joins and backedges must have equal
+incoming registration states. An independent registration history prevents a
+cycle from repeatedly registering and consuming a function action while leaving
+the pending stack deceptively empty. A nonreturning path may still carry a
+pending action without executing it. Canonical persistent stack nodes make
+push/pop and state equality efficient without copying each action list at
+every CFG edge. Each reachable block is processed once; incompatible paths are
+rejected, not unioned into a state that loses registration correlation.
+
+Malformed CFG tests demonstrate why return dominance was insufficient:
+direct and indirect replay cycles, replay in a cycle without a return, and a
+balanced registration/replay cycle previously passed verification. An additional
+case rejects a join of pending and consumed states even without a return. The graphs
+retain valid SSA, so the independent cleanup proof must reject them. This is a
+prerequisite for iteration support, not its activation: iteration registration
+still needs explicit boundary identities and reset/exit events, while optional
+registration requires the correlated availability model below.
 
 Conditional availability that cannot be proven by dominance, registration in
 loop bodies or conditions, error-only actions, and nonlocal control/nested
@@ -65,6 +84,32 @@ cases cannot silently turn into direct capture-output forwarding tests. The
 shared matrix checks interpreter results, typed unit planning, physical lowering,
 raw/optimized ARM64 execution and balanced allocation counts. This adds coverage,
 not a compiler behaviour change or a performance claim.
+
+## Registration-state proof measurements, 2026-09-08
+
+On the same Darwin ARM64 host and benchmark configuration used above, five
+100 ms samples compare the parent dominance verifier with the exact-state
+verifier. Only the action count changes between workloads. Times are observed
+ranges, not a general speedup claim or statistical confidence interval.
+
+| Actions | Parent ns/op | Exact-state ns/op | Parent allocs/op | Exact-state allocs/op |
+| --- | --- | --- | --- | --- |
+| 1 | 54,781-59,303 | 57,156-66,107 | 950 | 971 |
+| 8 | 248,649-267,967 | 234,005-243,689 | 3,048 | 3,132 |
+| 64 | 2,443,075-2,555,932 | 1,920,700-2,491,410 | 16,804-16,805 | 17,057-17,058 |
+
+The indexed arena avoids the initial proof implementation's per-node heap
+allocation: at 64 actions it measured 17,057-17,058 allocations instead of
+17,539-17,540. The remaining additional state storage buys the stronger edge
+proof. These benchmarks include all repeated verification in the typed pipeline,
+not just one isolated verifier call; non-cleanup functions retain the fast path.
+
+With identical `go build -trimpath -buildvcs=false` commands, the compiler grows
+from 28,798,530 to 28,815,730 bytes, a 17,200-byte increase. Mach-O `__text`
+grows by 2,752 bytes: the new flow verifier is 4,032 symbol bytes and the old
+verifier shrinks by 1,280. Type/constant data, line/debug information and segment
+alignment also change. No baseline is raised. Program cleanup generation and
+runtime code are unchanged; this change strengthens compilation-time validation.
 
 ## Observable contract
 
