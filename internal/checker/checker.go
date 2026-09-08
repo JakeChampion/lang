@@ -15610,7 +15610,10 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				c.requireFloat(n.P, lt, n.Op)
 				c.requireFloat(n.P, rt, n.Op)
 				n.IsFloat = true
-				if common, ok := commonFloatWidth(lt, rt); ok && !common.Polymorphic {
+				common, ok := commonFloatWidth(lt, rt)
+				if !ok && isFloat(lt) && isFloat(rt) {
+					c.errfCode(n.P, "E009", "operator %q requires both operands to share a float type; got %s and %s - use `as` for explicit conversion", n.Op, lt, rt)
+				} else if ok && !common.Polymorphic {
 					c.settleNumeric(n.Left, common)
 					c.settleNumeric(n.Right, common)
 					n.FloatWidth = common.NormalWidth()
