@@ -7942,9 +7942,6 @@ func unifyIfArms(a, b ast.Type) ast.Type {
 	if _, ok := b.(ast.NeverType); ok {
 		return a
 	}
-	if ast.Equal(a, b) {
-		return a
-	}
 	// Polymorphic numeric (an unsettled NumberLit) is
 	// compatible with any concrete numeric / float type —
 	// return the concrete side and let the surrounding
@@ -8008,6 +8005,13 @@ func unifyIfArms(a, b ast.Type) ast.Type {
 			}
 			return ast.TupleType{Elems: out}
 		}
+	}
+	// Equal compares default widths, not whether a width is committed. Select
+	// concrete numeric arms (recursively for tuples) before this shortcut, or
+	// an initial literal can erase a concrete i32/f64 constraint and allow a
+	// later, incompatible concrete arm.
+	if ast.Equal(a, b) {
+		return a
 	}
 	// Empty-array / empty-slice literal vs typed array of the
 	// same shape: `[]` (Elem=nil) unifies with any concrete
@@ -13075,6 +13079,10 @@ func (c *checker) checkLiteralMatchExpr(n *ast.MatchExpr, tagT ast.Type, s *scop
 		if _, ok := armT.(ast.NeverType); ok {
 			return
 		}
+		if unified := unifyIfArms(result, armT); unified != nil {
+			result = unified
+			return
+		}
 		if c.assignable(armT, result) {
 			return
 		}
@@ -13179,6 +13187,10 @@ func (c *checker) checkTupleMatchExpr(n *ast.MatchExpr, tup ast.TupleType, s *sc
 			return
 		}
 		if _, ok := armT.(ast.NeverType); ok {
+			return
+		}
+		if unified := unifyIfArms(result, armT); unified != nil {
+			result = unified
 			return
 		}
 		if c.assignable(armT, result) {
@@ -15610,7 +15622,10 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				c.requireFloat(n.P, lt, n.Op)
 				c.requireFloat(n.P, rt, n.Op)
 				n.IsFloat = true
-				if common, ok := commonFloatWidth(lt, rt); ok && !common.Polymorphic {
+				common, ok := commonFloatWidth(lt, rt)
+				if !ok && isFloat(lt) && isFloat(rt) {
+					c.errfCode(n.P, "E009", "operator %q requires both operands to share a float type; got %s and %s - use `as` for explicit conversion", n.Op, lt, rt)
+				} else if ok && !common.Polymorphic {
 					c.settleNumeric(n.Left, common)
 					c.settleNumeric(n.Right, common)
 					n.FloatWidth = common.NormalWidth()
@@ -15997,9 +16012,15 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		if isFloat(result) {
 			n.IsFloat = true
 		}
+		// A concrete arm constrains the other arms even without an
+		// annotated destination. Carry that resolved type into their
+		// literals so runtime widths agree with the inferred join type.
+		c.settleNumeric(n, result)
 		return result
 	case *ast.MatchExpr:
-		return c.checkMatchExpr(n, s)
+		result := c.checkMatchExpr(n, s)
+		c.settleNumeric(n, result)
+		return result
 	case *ast.TryOp:
 		// Postfix `?` covers two source enums:
 		//   - Option[T]?    yields T; on None,   returns None
@@ -16780,6 +16801,15 @@ func betterRefinement(existing, candidate ast.Type) bool {
 }
 
 func (c *checker) settleNumeric(e ast.Expr, hint ast.Type) {
+	// A value block contributes its tail, not its leading statements.
+	// Forward the complete hint here so composite joins receive the
+	// same contextual settlement as scalar numeric results.
+	if block, ok := e.(*ast.BlockExpr); ok {
+		if block.Tail != nil {
+			c.settleNumeric(block.Tail, hint)
+		}
+		return
+	}
 	// TryOp: `Some(EXPR)?` / `Ok(EXPR)?` — the destination's
 	// hint applies to the inner expression's payload, not
 	// to the TryOp itself. Wrap the hint in the appropriate
