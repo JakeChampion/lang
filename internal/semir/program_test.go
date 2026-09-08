@@ -10,7 +10,7 @@ import (
 	"github.com/jakechampion/lang/internal/ssa"
 )
 
-func checkedProgram(t *testing.T, source string) (*ast.Program, *checker.Info) {
+func checkedProgram(t testing.TB, source string) (*ast.Program, *checker.Info) {
 	t.Helper()
 	prog, err := parser.Parse(source + "\nfunction main(): i32 { return 0; }")
 	if err != nil {
@@ -134,7 +134,8 @@ function replace(own items: string[]): string[] { return items; }
 func TestCalledUnsupportedBodyIsNotSilentlyAccepted(t *testing.T) {
 	prog, info := checkedProgram(t, `
 function pilot(items: string[]): string[] { return replace(items); }
-function replace(items: string[]): string[] { while (false) {} return items; }
+function replace(items: string[]): string[] { defer cleanup(); return items; }
+function cleanup(): void {}
 `)
 	if p, err := BuildProgram(prog, info); p != nil || err == nil || !strings.Contains(err.Error(), "unsupported statement") {
 		t.Fatalf("callee without typed body accepted: %v", err)

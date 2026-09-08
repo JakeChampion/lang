@@ -77,6 +77,11 @@ func BuildProgram(prog *ast.Program, info *checker.Info) (*Program, error) {
 	if err := VerifyProgram(p); err != nil {
 		return nil, err
 	}
+	for _, f := range p.funcs {
+		if err := finishFlow(f); err != nil {
+			return nil, err
+		}
+	}
 	return p, nil
 }
 

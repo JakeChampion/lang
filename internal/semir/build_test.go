@@ -127,8 +127,8 @@ func TestBuildKeepsCompleteTypes(t *testing.T) {
 func TestBuildUnsupportedIsExplicit(t *testing.T) {
 	for _, tc := range []struct{ name, source, want string }{
 		{"call-outside-program", `function pilot(items: string[]): string[] { return pass(items); } function pass(items: string[]): string[] { return items; }`, "callee is outside the typed program"},
-		{"mutation", `function pilot(items: string[]): string[] { var result = items; result = []; return result; }`, "unsupported statement"},
-		{"loop", `function pilot(items: string[]): string[] { while (false) {} return items; }`, "unsupported statement"},
+		{"division", `function pilot(n: i32): i32 { return n / 2i32; }`, "unsupported scalar binary contract"},
+		{"wide-arithmetic", `function pilot(n: i64): i64 { return n + 1i64; }`, "scalar binary requires"},
 		{"defer", `function pilot(): string { defer cleanup(); return "a"; } function cleanup(): void {}`, "unsupported statement"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
