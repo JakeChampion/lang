@@ -291,7 +291,7 @@ func (b *armBuilder) acquire(step unitStep, values map[int32]ssa.Value) {
 func (b *armBuilder) semanticOp(src *Func, op *ssa.Op, args []ssa.Value) (ssa.Value, error) {
 	typ := src.values[op.Result.ID].typ
 	w, addr := armValueShape(typ)
-	if scalarOp(op.Kind) {
+	if scalarOp(op.Kind) || op.Kind == ssa.OpNot {
 		return b.op(op.Kind, w, addr, args...), nil
 	}
 	switch op.Kind {

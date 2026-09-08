@@ -32,6 +32,23 @@ function get(items: i32[]): i32 { return items[0]; }
 `)
 }
 
+func TestTypedSSAExpressionFlow(t *testing.T) {
+	bin := buildFernForStdoutTest(t)
+	for _, tc := range []struct{ name, source string }{
+		{"short-circuit-join", `function main(): i32 { return choose(false); }
+function choose(flag: boolean): i32 {
+  var items = if (flag && fault()) { [7i32] } else { [41i32] }; return items[0];
+}
+function fault(): boolean { var missing: boolean[] = []; return missing[0]; }`},
+		{"element-return", `function main(): i32 { return choose(true); }
+function choose(flag: boolean): i32 {
+  var items = [[17i32], if (flag) { return 41i32; } else { [2i32] }]; return items[1][0];
+}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) { checkTypedSSAExecutable(t, bin, tc.source) })
+	}
+}
+
 func checkTypedSSAExecutable(t *testing.T, bin, source string) {
 	t.Helper()
 	entry := writeFern(t, source)
