@@ -30,9 +30,10 @@ const (
 type BindingID uint32
 
 type binding struct {
-	name string
-	typ  ast.Type
-	pos  ast.Position
+	name     string
+	typ      ast.Type
+	pos      ast.Position
+	boundary *cleanupBoundary
 }
 
 type valueInfo struct {

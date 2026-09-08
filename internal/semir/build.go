@@ -78,6 +78,7 @@ func (b *builder) bind(name string, typ ast.Type, pos ast.Position, value ssa.Va
 		return b.errorAt(pos, "duplicate declaration in the same scope")
 	}
 	id := b.fn.addBinding(name, typ, pos)
+	b.fn.bindings[id-1].boundary = b.cleanupScope
 	scope[name] = id
 	b.fn.writeBinding(b.current, ssa.OpBindingInit, id, value, pos)
 	return nil

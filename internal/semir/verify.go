@@ -142,12 +142,23 @@ func Verify(f *Func) error {
 	if effectCount != len(f.effectPositions) {
 		return fail("stale effect-only source metadata")
 	}
+	knownBoundaries := make(map[*cleanupBoundary]bool, len(f.boundaries))
+	for _, boundary := range f.boundaries {
+		knownBoundaries[boundary] = true
+	}
 	for _, b := range f.bindings {
 		if err := resolvedType(b.typ, false); err != nil {
 			return fail("binding %q: %v", b.name, err)
 		}
+		if (len(f.boundaries) != 0 && !knownBoundaries[b.boundary]) ||
+			(b.boundary != nil && (!knownBoundaries[b.boundary] || b.boundary.owner != f)) {
+			return fail("binding %q at %d:%d has a missing or foreign lifetime boundary", b.name, b.pos.Line, b.pos.Col)
+		}
 	}
 	if err := ssa.Verify(g); err != nil {
+		return err
+	}
+	if err := verifyCleanups(f); err != nil {
 		return err
 	}
 	if f.unpromotedBindings {
@@ -155,7 +166,7 @@ func Verify(f *Func) error {
 			return err
 		}
 	}
-	return verifyCleanups(f)
+	return nil
 }
 
 func verifyOp(f *Func, op *ssa.Op) error {

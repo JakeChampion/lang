@@ -19,6 +19,7 @@ func promoteBindings(f *Func) error {
 	if err := Verify(f); err != nil {
 		return err
 	}
+	ends := bindingLifetimeEnds(f)
 	type key struct {
 		block *ssa.Block
 		id    BindingID
@@ -42,6 +43,9 @@ func promoteBindings(f *Func) error {
 	}
 	var readEntry func(*ssa.Block, BindingID) (ssa.Value, error)
 	readEnd := func(block *ssa.Block, id BindingID) (ssa.Value, error) {
+		if mask := ends[block]; mask != nil && mask[(id-1)/64]&(uint64(1)<<((id-1)%64)) != 0 {
+			return ssa.Value{}, fmt.Errorf("semir %s: binding %d is absent after its lifetime end", f.graph.Name, id)
+		}
 		if value, ok := last[key{block, id}]; ok {
 			return value, nil
 		}

@@ -14,6 +14,12 @@ per-block maps and sealing. Match/effect CFG and cleanup BindingIDs feed the
 same pass; conditional availability remains a later correlated-state contract.
 See [typed binding places](TYPED-BINDING-PLACES.md).
 
+Binding availability now ends at the owning typed cleanup boundary. The verifier
+checks initializer scope and clears only that boundary's place state; promotion
+cannot recover definitions across an end. Saved SSA values remain live according
+to their own uses. This prevents stale iteration state without admitting
+conditional registration or changing the production AST cleanup route.
+
 Plain function and iteration cleanup actions with dominating registrations now compile
 once to typed action regions. Capture interfaces preserve enclosing BindingIDs;
 expansion reads current values at replay, threads writes between LIFO actions
