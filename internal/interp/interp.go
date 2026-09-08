@@ -4147,7 +4147,7 @@ func (i *Interp) execStmtInner(s ast.Stmt, e *env) (result, error) {
 		// a binder element always matches and binds, `_` is ignored.
 		// The checker (E035/E030) guarantees the arm shapes and that
 		// an irrefutable arm exists.
-		if arr, isArr := tag.(Array); isArr && matchArmsHaveTuple(x.Arms) {
+		if arr, isArr := tag.(Array); isArr && matchArmsAllowTuple(x.Arms) {
 			for _, arm := range x.Arms {
 				armEnv := newEnv(e)
 				if !arm.IsWildcard {
@@ -4262,26 +4262,26 @@ func (i *Interp) execStmtInner(s ast.Stmt, e *env) (result, error) {
 	return result{}, fmt.Errorf("interp: unsupported statement %T", s)
 }
 
-// matchArmsHaveTuple reports whether any arm carries a tuple pattern —
-// the dispatch cue for a tuple-typed match scrutinee (whose runtime
-// value is an Array, which a plain literal match never produces).
-func matchArmsHaveTuple(arms []*ast.MatchArm) bool {
+// matchArmsAllowTuple checks the arm forms admitted for a tuple runtime value
+// (represented as Array). An exhaustive match may contain only wildcards;
+// requiring a tuple-shaped arm incorrectly rejects that valid source form.
+func matchArmsAllowTuple(arms []*ast.MatchArm) bool {
 	for _, arm := range arms {
-		if arm.TupleElems != nil {
-			return true
+		if !arm.IsWildcard && arm.TupleElems == nil {
+			return false
 		}
 	}
-	return false
+	return len(arms) != 0
 }
 
-// matchExprArmsHaveTuple is the MatchExpr-side counterpart.
-func matchExprArmsHaveTuple(arms []*ast.MatchExprArm) bool {
+// matchExprArmsAllowTuple is the MatchExpr-side counterpart.
+func matchExprArmsAllowTuple(arms []*ast.MatchExprArm) bool {
 	for _, arm := range arms {
-		if arm.TupleElems != nil {
-			return true
+		if !arm.IsWildcard && arm.TupleElems == nil {
+			return false
 		}
 	}
-	return false
+	return len(arms) != 0
 }
 
 // tupleElemVariantMatches reports whether a tuple element's runtime value is
@@ -5120,7 +5120,7 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 		// Tuple scrutinee: tuple-pattern arms — same element rules as
 		// the statement form (literal by equality, binder binds, `_`
 		// ignored), but each arm body is an Expr.
-		if arr, isArr := tag.(Array); isArr && matchExprArmsHaveTuple(x.Arms) {
+		if arr, isArr := tag.(Array); isArr && matchExprArmsAllowTuple(x.Arms) {
 			for _, arm := range x.Arms {
 				armEnv := newEnv(env)
 				if !arm.IsWildcard {
