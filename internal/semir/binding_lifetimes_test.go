@@ -42,6 +42,11 @@ func TestBindingLifetimeRejectsStalePlaces(t *testing.T) {
 		{"foreign-boundary", func(f *Func, _, _ *ssa.Block, id BindingID, _ ssa.Value) {
 			f.bindings[id-1].boundary = &cleanupBoundary{owner: f}
 		}, "foreign lifetime boundary"},
+		{"known-boundary-foreign-owner", func(f *Func, _, _ *ssa.Block, id BindingID, _ ssa.Value) {
+			// Membership is not ownership. Keep the binding's known boundary,
+			// but require the independent boundary verifier to reject its owner.
+			f.bindings[id-1].boundary.owner = &Func{}
+		}, "invalid boundary identity, owner or entry"},
 		{"missing-boundary", func(f *Func, _, _ *ssa.Block, id BindingID, _ ssa.Value) {
 			f.bindings[id-1].boundary = nil
 		}, "missing or foreign lifetime boundary"},
