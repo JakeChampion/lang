@@ -65,6 +65,7 @@ func Verify(f *Func) error {
 			return fail("parameter %v has invalid ownership mode %d", p, mode)
 		}
 	}
+	effectCount := 0
 	for _, b := range g.Blocks {
 		preds := make(map[*ssa.Block]bool, len(b.Preds))
 		for _, p := range b.Preds {
@@ -89,7 +90,15 @@ func Verify(f *Func) error {
 			if op == nil || op.Result2 != (ssa.Value{}) {
 				return fail("nil operation or ABI-split semantic value")
 			}
-			if err := checkValue(op.Result, true); err != nil {
+			if op.Result == (ssa.Value{}) {
+				if op.Kind != ssa.OpSemanticCall {
+					return fail("only void semantic calls may omit their result")
+				}
+				if _, ok := f.effectPositions[op]; !ok {
+					return fail("effect-only operation has no source metadata")
+				}
+				effectCount++
+			} else if err := checkValue(op.Result, true); err != nil {
 				return err
 			}
 			for _, a := range op.Args {
@@ -129,6 +138,9 @@ func Verify(f *Func) error {
 	}
 	if len(defs) != len(f.values) {
 		return fail("stale semantic value metadata")
+	}
+	if effectCount != len(f.effectPositions) {
+		return fail("stale effect-only source metadata")
 	}
 	for _, b := range f.bindings {
 		if err := resolvedType(b.typ, false); err != nil {
@@ -241,7 +253,9 @@ func verifyOp(f *Func, op *ssa.Op) error {
 			return err
 		}
 		c := callee.contract
-		if len(op.Args) != len(c.params) || !ast.Equal(result, c.result) {
+		_, void := c.result.(ast.VoidType)
+		if len(op.Args) != len(c.params) || (void && op.Result != (ssa.Value{})) ||
+			(!void && (!op.Result.IsValid() || !ast.Equal(result, c.result))) {
 			return bad()
 		}
 		for i, typ := range c.params {

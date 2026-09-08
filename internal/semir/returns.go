@@ -142,7 +142,9 @@ func solveReturnFlow(p *Program) (*returnFlow, error) {
 		}
 		for _, block := range f.graph.RPO() {
 			for _, op := range block.Ops {
-				state.values[op.Result.ID] = emptyFlow(f.values[op.Result.ID].typ)
+				if op.Result.IsValid() {
+					state.values[op.Result.ID] = emptyFlow(f.values[op.Result.ID].typ)
+				}
 			}
 			if block.Term.Kind == ssa.TermRet && block.Term.Value.IsValid() {
 				state.returns = append(state.returns, block.Term.Value)
@@ -163,6 +165,11 @@ func solveReturnFlow(p *Program) (*returnFlow, error) {
 	for _, f := range p.funcs {
 		for _, block := range f.graph.RPO() {
 			for _, op := range block.Ops {
+				// A void call still has checked argument effects and a
+				// verified callee, but no value-provenance equation.
+				if !op.Result.IsValid() {
+					continue
+				}
 				id := len(equations)
 				opTask[op] = id
 				equations = append(equations, equation{fn: f, block: block, op: op})

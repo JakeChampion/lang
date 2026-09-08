@@ -81,6 +81,20 @@ function main(): i32 {
 `)
 }
 
+func TestTypedSSAVoidCallEffects(t *testing.T) {
+	bin := buildFernForStdoutTest(t)
+	checkTypedSSAExecutable(t, bin, `
+function main(): i32 {
+  var items = [[41i32]]; inspect(items[0]);
+  var i = 0i32; while (i < 64i32) { release([[7i32]]); i = i + 1i32; }
+  return items[0][0];
+}
+function inspect(items: i32[]): void { var value = items[0]; }
+function release(own items: i32[][]): void { return consume(items); }
+function consume(own items: i32[][]): void {}
+`)
+}
+
 func checkTypedSSAExecutable(t *testing.T, bin, source string) {
 	t.Helper()
 	entry := writeFern(t, source)

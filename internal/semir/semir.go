@@ -49,8 +49,10 @@ type Func struct {
 	graph    *ssa.Func
 	result   ast.Type
 	values   map[int32]valueInfo
-	modes    []ParamMode
-	bindings []binding
+	// Effect-only operations have source origins but no semantic value.
+	effectPositions map[*ssa.Op]ast.Position
+	modes           []ParamMode
+	bindings        []binding
 }
 
 func newFunc(name string, result ast.Type) *Func {
@@ -79,6 +81,15 @@ func (f *Func) addPhi(b *ssa.Block, typ ast.Type, pos ast.Position, args ...ssa.
 	v := f.graph.AddPhi(b, args...)
 	f.values[v.ID] = valueInfo{typ: typ, pos: pos}
 	return v
+}
+
+func (f *Func) addEffect(b *ssa.Block, kind ssa.OpKind, pos ast.Position, args ...ssa.Value) *ssa.Op {
+	op := f.graph.AddOpNoResult(b, kind, args...)
+	if f.effectPositions == nil {
+		f.effectPositions = make(map[*ssa.Op]ast.Position)
+	}
+	f.effectPositions[op] = pos
+	return op
 }
 
 // A projection is containment, not identity aliasing or an acquired reference.

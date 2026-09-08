@@ -184,7 +184,9 @@ func finishFlow(f *Func) error {
 		}
 		for _, block := range f.graph.Blocks {
 			for _, op := range block.Ops {
-				live[op.Result.ID] = f.values[op.Result.ID]
+				if op.Result.IsValid() {
+					live[op.Result.ID] = f.values[op.Result.ID]
+				}
 			}
 		}
 		f.values = live

@@ -13,6 +13,7 @@ type resultKind uint8
 
 const (
 	resultInvalid resultKind = iota
+	resultNone               // effect-only operation; no value or counted return obligation
 	resultValue
 	resultImmortal
 	resultCounted
@@ -127,6 +128,9 @@ func ownershipEffects(f *Func) (*functionEffects, error) {
 				e.result, e.callee = resultCall, callee
 				if !ref {
 					e.result = resultValue
+				}
+				if !op.Result.IsValid() {
+					e.result = resultNone
 				}
 				for i, mode := range callee.contract.modes {
 					e.inputs[i].consume = mode == ParamCounted

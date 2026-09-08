@@ -167,7 +167,9 @@ func (l *armLowerer) function(plan *functionUnits) error {
 		}
 		blocks[block] = f.NewBlock()
 		for _, op := range block.Ops {
-			values[op.Result.ID] = f.NewValue()
+			if op.Result.IsValid() {
+				values[op.Result.ID] = f.NewValue()
+			}
 		}
 	}
 	f.Entry = blocks[src.graph.Entry]
@@ -193,6 +195,9 @@ func (l *armLowerer) function(plan *functionUnits) error {
 		}
 		for _, op := range block.Ops {
 			b.pos = src.values[op.Result.ID].pos
+			if !op.Result.IsValid() {
+				b.pos = src.effectPositions[op]
+			}
 			args := make([]ssa.Value, len(op.Args))
 			for i, a := range op.Args {
 				args[i] = values[a.ID]
@@ -204,8 +209,10 @@ func (l *armLowerer) function(plan *functionUnits) error {
 			if err != nil {
 				return err
 			}
-			fixups[values[op.Result.ID].ID] = v
-			values[op.Result.ID] = v
+			if op.Result.IsValid() {
+				fixups[values[op.Result.ID].ID] = v
+				values[op.Result.ID] = v
+			}
 			for _, drop := range plan.ops[op].drops {
 				b.drop(values[drop.ID], src.values[drop.ID].typ)
 			}
@@ -313,6 +320,12 @@ func (b *armBuilder) semanticOp(src *Func, op *ssa.Op, args []ssa.Value) (ssa.Va
 		callee, err := src.callee(op)
 		if err != nil {
 			return ssa.Value{}, err
+		}
+		if !op.Result.IsValid() {
+			call := b.f.AddOpNoResult(b.b, ssa.OpCall, args...)
+			call.Str = b.l.names[callee]
+			b.l.out.Positions[call] = b.pos
+			return ssa.Value{}, nil
 		}
 		return b.call(b.l.names[callee], w, addr, args...), nil
 	case ssa.OpArrayMake:
