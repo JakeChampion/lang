@@ -16009,9 +16009,15 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		if isFloat(result) {
 			n.IsFloat = true
 		}
+		// A concrete arm constrains the other arms even without an
+		// annotated destination. Carry that resolved type into their
+		// literals so runtime widths agree with the inferred join type.
+		c.settleNumeric(n, result)
 		return result
 	case *ast.MatchExpr:
-		return c.checkMatchExpr(n, s)
+		result := c.checkMatchExpr(n, s)
+		c.settleNumeric(n, result)
+		return result
 	case *ast.TryOp:
 		// Postfix `?` covers two source enums:
 		//   - Option[T]?    yields T; on None,   returns None
@@ -16792,6 +16798,15 @@ func betterRefinement(existing, candidate ast.Type) bool {
 }
 
 func (c *checker) settleNumeric(e ast.Expr, hint ast.Type) {
+	// A value block contributes its tail, not its leading statements.
+	// Forward the complete hint here so composite joins receive the
+	// same contextual settlement as scalar numeric results.
+	if block, ok := e.(*ast.BlockExpr); ok {
+		if block.Tail != nil {
+			c.settleNumeric(block.Tail, hint)
+		}
+		return
+	}
 	// TryOp: `Some(EXPR)?` / `Ok(EXPR)?` — the destination's
 	// hint applies to the inner expression's payload, not
 	// to the TryOp itself. Wrap the hint in the appropriate
