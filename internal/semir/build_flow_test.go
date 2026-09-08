@@ -9,6 +9,79 @@ import (
 )
 
 var sourceLoopCases = []struct{ name, source, want string }{
+	{"source-loop-mixed-break-taken", `function pilot(): string { return choose(true); }
+function choose(jump: boolean): string {
+  var items = ["initial"]; var i = 0i32;
+  outer: while (i < 2i32) {
+    i = i + 1i32; var j = 0i32;
+    while (j < 2i32) {
+      j = j + 1i32;
+      if (jump) { items = ["outer break"]; break outer; }
+      items = ["inner body"];
+    }
+    items = ["normal exit"];
+  }
+  return items[0];
+}`, "outer break\n"},
+	{"source-loop-mixed-break-normal", `function pilot(): string { return choose(false); }
+function choose(jump: boolean): string {
+  var items = ["initial"]; var i = 0i32;
+  outer: while (i < 2i32) {
+    i = i + 1i32; var j = 0i32;
+    while (j < 2i32) {
+      j = j + 1i32;
+      if (jump) { items = ["outer break"]; break outer; }
+      items = ["inner body"];
+    }
+    items = ["normal exit"];
+  }
+  return items[0];
+}`, "normal exit\n"},
+	{"source-loop-mixed-continue-taken", `function pilot(): string { return choose(true); }
+function choose(jump: boolean): string {
+  var items = ["initial"]; var i = 0i32;
+  outer: while (i < 2i32) {
+    i = i + 1i32; var j = 0i32;
+    while (j < 2i32) {
+      j = j + 1i32;
+      if (jump) { items = ["outer continue"]; continue outer; }
+      items = ["inner body"];
+    }
+    items = ["normal exit"];
+  }
+  return items[0];
+}`, "outer continue\n"},
+	{"source-loop-mixed-continue-normal", `function pilot(): string { return choose(false); }
+function choose(jump: boolean): string {
+  var items = ["initial"]; var i = 0i32;
+  outer: while (i < 2i32) {
+    i = i + 1i32; var j = 0i32;
+    while (j < 2i32) {
+      j = j + 1i32;
+      if (jump) { items = ["outer continue"]; continue outer; }
+      items = ["inner body"];
+    }
+    items = ["normal exit"];
+  }
+  return items[0];
+}`, "normal exit\n"},
+	{"source-loop-unconditional-outer-break", `function pilot(): string {
+  var items = ["initial"];
+  outer: loop {
+    loop { items = ["outer exit"]; break outer; }
+    items = ["dead after inner"];
+  }
+  return items[0];
+}`, "outer exit\n"},
+	{"source-loop-unconditional-outer-continue", `function pilot(): string {
+  var items = ["initial"]; var i = 0i32;
+  outer: while (i < 2i32) {
+    i = i + 1i32;
+    loop { items = ["outer continue"]; continue outer; }
+    items = ["dead after inner"];
+  }
+  return items[0];
+}`, "outer continue\n"},
 	{"source-loop-append-snapshot", `function pilot(): string {
   var items = [["original"]]; var saved = items;
   var i = 0i32;
@@ -143,6 +216,33 @@ func TestSourceLoopKeepsUnchangedBorrowIdentity(t *testing.T) {
 				t.Fatal("unchanged borrowed array acquired a spurious loop phi")
 			}
 		}
+	}
+}
+
+func TestSourceLoopDoesNotResurrectUnconditionalExit(t *testing.T) {
+	for _, tc := range sourceLoopCases {
+		if !strings.HasPrefix(tc.name, "source-loop-unconditional-outer-") {
+			continue
+		}
+		t.Run(tc.name, func(t *testing.T) {
+			prog, info := checkedProgram(t, tc.source)
+			p, err := BuildProgram(prog, info)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, fn := range p.funcs {
+				for _, block := range fn.graph.Blocks {
+					if block != fn.graph.Entry && len(block.Preds) == 0 {
+						t.Fatal("retained a disconnected loop exit")
+					}
+					for _, op := range block.Ops {
+						if op.Kind == ssa.OpConstString && op.Str == "dead after inner" {
+							t.Fatal("emitted statements after an unconditional outer jump")
+						}
+					}
+				}
+			}
+		})
 	}
 }
 
