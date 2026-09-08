@@ -92,7 +92,7 @@ function fmt_output_is_readable(formatted: string): boolean {
     if (util.contains(formatted, "/*unknown")) { return false; }
     var flex: lexer.LexResult = lexer.tokenize_full(formatted);
     var pf: parser.ParsedFmt = parser.parse_module_verbatim(flex.tokens);
-    var again: string = printer.format_module(pf.pmod, pf.ptraits, pf.pimpls, pf.pflines, flex.comments, blank_line_map(formatted));
+    var again: string = printer.format_parsed(pf, flex.comments, blank_line_map(formatted));
     return again == formatted;
 }
 
@@ -116,7 +116,7 @@ function fmt_file(path: string, fmt_write: boolean, fmt_diff: boolean, out_path:
     // and the blank-line map is read straight off the source (#6769).
     var flex: lexer.LexResult = lexer.tokenize_full(esrc);
     var pf: parser.ParsedFmt = parser.parse_module_verbatim(flex.tokens);
-    var formatted: string = printer.format_module(pf.pmod, pf.ptraits, pf.pimpls, pf.pflines, flex.comments, blank_line_map(esrc));
+    var formatted: string = printer.format_parsed(pf, flex.comments, blank_line_map(esrc));
     if (fmt_diff) {
         var d: string = printer.unified_diff(esrc, formatted, path, path);
         if (d.len() == 0) { return 0; }

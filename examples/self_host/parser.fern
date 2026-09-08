@@ -234,9 +234,15 @@ pub struct ImplDecl { trait_ref: string, type_ref: string, type_params: string[]
 // reads.
 pub struct FieldLines { name: string, decl_line: i32, lines: i32[] }
 
+// An inlining hint has no self-host codegen consumer yet, but formatting must
+// preserve it for subsequent native builds. Bind it to the declaration's full
+// source position, not its name: receiver methods can share names and a line
+// can contain more than one declaration. Absence means no explicit hint.
+pub struct FunctionInlineHint { line: i32, col: i32, never: boolean }
+
 // ParsedFmt is parse_module_verbatim's result: the module plus the decls kept
 // only for printing.
-pub struct ParsedFmt { pmod: Module, ptraits: TraitDecl[], pimpls: ImplDecl[], pflines: FieldLines[] }
+pub struct ParsedFmt { pmod: Module, ptraits: TraitDecl[], pimpls: ImplDecl[], pflines: FieldLines[], pinline: FunctionInlineHint[] }
 
 // ResourceDecl records a `resource Name;` declaration (P5 — WIT resource-handle
 // types, docs/WIT-BRING-YOUR-OWN.md). `iface` / `wit` carry the WIT identity
@@ -18953,7 +18959,7 @@ pub function settle_module(mod: Module): Module {
 }
 
 pub function parse_module(toks: lexer.Token[]): Module {
-    var (m, t, im, fl) = parse_module_flagged(toks, false);
+    var (m, t, im, fl, ih) = parse_module_flagged(toks, false);
     return m;
 }
 
@@ -18964,8 +18970,8 @@ pub function parse_module(toks: lexer.Token[]): Module {
 // reach it spelled as written, which every compile-path `type_name == "string"`
 // / `== "fn"` dispatch would misread.
 pub function parse_module_verbatim(toks: lexer.Token[]): ParsedFmt {
-    var (m, t, im, fl) = parse_module_flagged(toks, true);
-    return ParsedFmt { pmod: m, ptraits: t, pimpls: im, pflines: fl };
+    var (m, t, im, fl, ih) = parse_module_flagged(toks, true);
+    return ParsedFmt { pmod: m, ptraits: t, pimpls: im, pflines: fl, pinline: ih };
 }
 
 // record_field_lines appends one FieldLines entry, and is a no-op outside a
@@ -18976,7 +18982,7 @@ function record_field_lines(acc: FieldLines[], verbatim: boolean, name: string, 
     return acc.append(FieldLines { name: name, decl_line: decl_line, lines: lines });
 }
 
-function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, TraitDecl[], ImplDecl[], FieldLines[]) {
+function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, TraitDecl[], ImplDecl[], FieldLines[], FunctionInlineHint[]) {
     var p: Par = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1, structnames: scan_struct_names(toks), verbatim: verbatim , depth: 0 };
     var funcs: FuncDecl[] = [];
     var trait_defaults: TraitDefault[] = [];
@@ -18992,6 +18998,9 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
     var traits: TraitDecl[] = [];
     var impl_decls: ImplDecl[] = [];
     var flines: FieldLines[] = [];
+    var inline_hints: FunctionInlineHint[] = [];
+    var has_inline_hint: boolean = false;
+    var inline_never: boolean = false;
     // Claimed `<Type>.<name>` method symbol keys, and the trait that claimed
     // each — see claim_method_name, which keeps the emitted symbol namespace
     // injective when two traits provide one method for one type.
@@ -19031,6 +19040,8 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
                 if (ik == "function") {
                     var (ifr_func, ifr_p) = parse_func_decl(p);
                     p = ifr_p;
+                    if (verbatim && has_inline_hint) { inline_hints = inline_hints.append(FunctionInlineHint { line: ifr_func.line, col: ifr_func.col, never: inline_never }); }
+                    has_inline_hint = false;
                     var ifn: FuncDecl = FuncDecl { ...ifr_func, import_iface: iar_iface, import_wit: iar_wit, async: i_async, is_pub: decl_pub };
                     funcs = funcs.append(ifn);
                 } else if (p.peek_ident() == "resource") {
@@ -19056,18 +19067,19 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
                 if (xk == "function") {
                     var (xfr_func, xfr_p) = parse_func_decl(p);
                     p = xfr_p;
+                    if (verbatim && has_inline_hint) { inline_hints = inline_hints.append(FunctionInlineHint { line: xfr_func.line, col: xfr_func.col, never: inline_never }); }
+                    has_inline_hint = false;
                     funcs = funcs.append(FuncDecl { ...xfr_func, is_pub: decl_pub });
                     exports = exports.append(ExportBinding { func_name: xfr_func.name, iface: ear_iface, wit: ear_wit });
                 }
                 continue;
             }
             if (probe.peek_ident() == "inline" || probe.peek_ident() == "noinline") {
-                // `@inline` / `@noinline` markers (#4412 Rec §14) are
-                // consulted by the NATIVE inliner only — the self-host
-                // IR path runs no inline pass, so the marker is
-                // parse-tolerated and dropped (the must_consume
-                // precedent below). The following function decl parses
-                // normally on the next loop iteration.
+                // The self-host has no inlining pass. Preserve the marker in
+                // the formatter-only metadata when its function is parsed;
+                // dropping it from -fmt changes later native compilation.
+                has_inline_hint = true;
+                inline_never = probe.peek_ident() == "noinline";
                 p = probe.advance();
                 continue;
             }
@@ -19199,6 +19211,8 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
         if (kw == "function") {
             var (fr_func, fr_p) = parse_func_decl(p);
             p = fr_p;
+            if (verbatim && has_inline_hint) { inline_hints = inline_hints.append(FunctionInlineHint { line: fr_func.line, col: fr_func.col, never: inline_never }); }
+            has_inline_hint = false;
             var fr_pub: FuncDecl = FuncDecl { ...fr_func, is_pub: decl_pub };
             var fr_out: FuncDecl = fr_pub;
             if (decl_fip || decl_fbip) {
@@ -19356,7 +19370,7 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
     // settle_module rides the same reasoning: an integer literal in a float
     // destination is restamped here, at the one shared entry, so the checker and
     // every backend read a literal that already carries its settled type (#6654).
-    return (settle_module(resolve_variant_fields_module(resolve_labels_module(Module { funcs: funcs, structs: structs, aliases: aliases, imports: imports, top_stmts: top_stmts, enums: enums, resources: resources, exports: exports, impls: impl_infos, trait_reqs: trait_reqs, trait_decls: traits }))), traits, impl_decls, flines);
+    return (settle_module(resolve_variant_fields_module(resolve_labels_module(Module { funcs: funcs, structs: structs, aliases: aliases, imports: imports, top_stmts: top_stmts, enums: enums, resources: resources, exports: exports, impls: impl_infos, trait_reqs: trait_reqs, trait_decls: traits }))), traits, impl_decls, flines, inline_hints);
 }
 
 // merge_module flat-concatenates `into`'s decls with `from`'s:

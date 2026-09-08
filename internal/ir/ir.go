@@ -15803,8 +15803,12 @@ func (b *builder) callBody(n *ast.Call) error {
 		// which on a branchy function is a DIFFERENT one (`if (…) { return
 		// consume(a); } return a;` — the consume is not last, the bare `return
 		// a` is), so retain here and let the callee's drop spend the extra.
-		if ai < len(ownArgFlags) && ownArgFlags[ai] && b.ownArgNeedsRetain(a) {
-			b.emitAliasInc(a)
+		if ai < len(ownArgFlags) && ownArgFlags[ai] {
+			if b.ownArgNeedsRetain(a) {
+				b.emitAliasInc(a)
+			} else {
+				b.emitBorrowedArrayOwnArgRetain(a)
+			}
 		}
 		// Phase 2d-borrow: function parameters are borrowed, not
 		// owned, so passing a tracked argument is NOT an
@@ -18746,6 +18750,13 @@ func (b *builder) assign(n *ast.Assign) error {
 				// Self-append / self-map / construction-move shapes are
 				// unaffected: their RHS is a method call or constructor, never an
 				// `own`-flagged user function, so callConsumesIdent is false.
+				if flag, ok := b.locals[ownFlagName(t.Name)]; ok && b.isConsumedArrayParam(t.Name) {
+					// The callee spent the transferred reference, so no overwrite
+					// drop is owed. Its result is now this frame's counted owner,
+					// even if it happens to equal the original borrowed pointer.
+					b.emit(Op{Kind: OpConstI32, I32: 1})
+					b.emit(Op{Kind: OpStoreLocal, I32: flag})
+				}
 			} else if sety, isSE := structOrEnumTypeOfLocal(t.Name, b); isSE && ast.RcFreeEnabled && (b.rc.freeEligible[t.Name] || b.selfReassignOwnedLocal(n.Value, t.Name, sety)) {
 				// Struct / enum reassignment-overwrite — `s = Other{...}` /
 				// `e = Variant(...)` ends the old binding's ownership exactly
