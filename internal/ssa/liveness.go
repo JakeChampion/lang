@@ -36,9 +36,19 @@ type blockLocal struct {
 // the per-block live sets. Deterministic: iteration order is the function's
 // block slice order, and the result depends only on the CFG + def/use graph.
 func ComputeLiveness(f *Func) *Liveness {
+	return ComputeLivenessWithDependencies(f, nil)
+}
+
+// ComputeLivenessWithDependencies adds lifetime dependencies to every use of a
+// value, including terminator uses and phi uses on predecessor edges. The
+// original use is always preserved. Each supplied slice must already include
+// transitive dependencies, and its values must be available wherever the key
+// value is used. The caller owns verification of these semantic obligations.
+// This does not mutate the graph or by itself certify ownership or uniqueness.
+func ComputeLivenessWithDependencies(f *Func, dependencies map[int32][]Value) *Liveness {
 	local := make(map[*Block]*blockLocal, len(f.Blocks))
 	for _, b := range f.Blocks {
-		local[b] = computeBlockLocal(b)
+		local[b] = computeBlockLocalWithDependencies(b, dependencies)
 	}
 
 	liveIn := make(map[*Block]map[int32]bool, len(f.Blocks))
@@ -101,8 +111,8 @@ func ComputeLiveness(f *Func) *Liveness {
 	return &Liveness{f: f, LiveIn: liveIn, LiveOut: liveOut}
 }
 
-// computeBlockLocal builds the fixpoint-invariant sets for one block.
-func computeBlockLocal(b *Block) *blockLocal {
+// computeBlockLocalWithDependencies builds the fixpoint-invariant sets for one block.
+func computeBlockLocalWithDependencies(b *Block, dependencies map[int32][]Value) *blockLocal {
 	lb := &blockLocal{
 		uses:    map[int32]bool{},
 		defs:    map[int32]bool{},
@@ -112,6 +122,16 @@ func computeBlockLocal(b *Block) *blockLocal {
 	for i := range lb.phiUse {
 		lb.phiUse[i] = map[int32]bool{}
 	}
+	use := func(set map[int32]bool, v Value, local bool) {
+		if v.IsValid() && (!local || !lb.defs[v.ID]) {
+			set[v.ID] = true
+		}
+		for _, d := range dependencies[v.ID] {
+			if d.IsValid() && (!local || !lb.defs[d.ID]) {
+				set[d.ID] = true
+			}
+		}
+	}
 
 	for _, op := range b.Ops {
 		if op.Kind == OpPhi {
@@ -119,7 +139,7 @@ func computeBlockLocal(b *Block) *blockLocal {
 			// matching predecessor, never local uses of this block.
 			for pi, a := range op.Args {
 				if a.IsValid() && pi < len(lb.phiUse) {
-					lb.phiUse[pi][a.ID] = true
+					use(lb.phiUse[pi], a, false)
 				}
 			}
 			if op.Result.IsValid() {
@@ -131,9 +151,7 @@ func computeBlockLocal(b *Block) *blockLocal {
 		// Non-phi op: an arg used before it has been defined locally is
 		// upward-exposed.
 		for _, a := range op.Args {
-			if a.IsValid() && !lb.defs[a.ID] {
-				lb.uses[a.ID] = true
-			}
+			use(lb.uses, a, true)
 		}
 		if op.Result.IsValid() {
 			lb.defs[op.Result.ID] = true
@@ -145,9 +163,7 @@ func computeBlockLocal(b *Block) *blockLocal {
 
 	// Terminator operands are used at the end of the block.
 	for _, v := range termUses(b.Term) {
-		if v.IsValid() && !lb.defs[v.ID] {
-			lb.uses[v.ID] = true
-		}
+		use(lb.uses, v, true)
 	}
 	return lb
 }

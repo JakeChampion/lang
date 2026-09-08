@@ -36,7 +36,8 @@ func IsPure(k OpKind) bool {
 		OpLoadF, OpStoreF,
 		OpAlloc,
 		OpMakeClosure, OpMakeEnv,
-		OpBoxDyn, OpCallDyn:
+		OpBoxDyn, OpCallDyn,
+		OpArrayMake, OpArrayGet, OpArrayAppend, OpTupleMake, OpTupleGet, OpSemanticCall:
 		return false
 	default:
 		return true

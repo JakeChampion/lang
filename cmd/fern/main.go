@@ -644,6 +644,7 @@ func main() {
 	repl := flag.Bool("repl", false, "start an interactive REPL via the AST interpreter")
 	doInterp := flag.Bool("interp", false, "run FILE.fern (or `-` for stdin) through the AST interpreter — no codegen, no link, no binary. main()'s return value becomes the process exit code (clamped to 0..255). State is fresh per invocation; the REPL flag keeps an interactive session across lines.")
 	backend := flag.String("backend", "", "alternate code-generation backend for the selected -target, instead of its default emitter. `ssa` selects the SSA-direct backend (register allocation instead of the stack-machine emitter, so the emitted .text is markedly smaller), available for -target wasm32-wasi, -target arm64-linux and -target x86-64-linux. Coverage is a subset of the language — the integer core, control flow, calls, memory, strings, arrays, and the RC runtime — and an unsupported op errors rather than miscompiles. Unlike the old `-target wasm-ssa` / `-target arm64-ssa` spellings this replaces, the target keeps its descriptor, so capability enforcement (E066) applies here exactly as it does to the default emitter.")
+	flag.Lookup("backend").Usage += " `typed-ssa` is the experimental typed pre-RC ownership pipeline for arm64-linux only: immutable array/tuple values, projections, direct calls and conditional returns; unsupported constructs are errors. See docs/TYPED-OWNERSHIP-IR-MIGRATION.md."
 	emit := flag.String("emit", "", "output form for the selected -target, instead of its default. `core-module` emits a raw wasm core module (runnable via `wasmtime run --invoke <fn>`) instead of composing a component; `command-module` emits a WASI preview-1 COMMAND module — the same core bytes plus a `_start` that runs main and exits with its value, which is what a preview-1 host (`wasmtime run`, or a browser shim like web/wasi-shim.js) runs directly. Both are the wasm targets only. Replaces the old `-target wasm-bin` spelling: an output format is a property of the artifact, not of the machine it runs on, so it does not belong in the target name.")
 	componentWrap := flag.Bool("component-wrap", false, "with -emit core-module: wrap the core module as a self-contained preview-2 component via internal/wasm/component (no wasm-tools shell-out, no preview-1 adapter). Lifts main() as a component-level u32-returning export. Supports any mix of the migrated preview-2 imports; unrecognised imports surface a clear error.")
 	componentWrapCli := flag.Bool("component-wrap-cli", false, "like -component-wrap but emits the wasi:cli/run@0.2.0 export shape so the produced component runs under plain `wasmtime run prog.wasm` (no --invoke). main()'s return value lowers to result<_, _>: 0 = ok, non-zero = err. void main is supported (auto-wrapped to return 0). Same WASI coverage as -component-wrap.")
@@ -1447,12 +1448,22 @@ func run(srcPath, outPath, target, backend, emit, cc string, runIt, native bool,
 	// working binary that is not the one asked for.
 	switch backend {
 	case "":
+	case "typed-ssa":
+		if target != "arm64-linux" {
+			return 1, fmt.Errorf("-backend typed-ssa is not available for -target %s (available for: arm64-linux)", target)
+		}
+		if runIt || shared || export != "" || cc != "" || componentWrap || componentWrapCli || asyncExport || len(asyncProviders) != 0 {
+			return 1, fmt.Errorf("-backend typed-ssa currently supports assembly output or -o executable only; run, shared/export, external linker and component options are unsupported")
+		}
+		if ast.CoverEnabled || ast.SanitizeEnabled {
+			return 1, fmt.Errorf("-backend typed-ssa does not implement coverage or sanitizer instrumentation")
+		}
 	case "ssa":
 		if target != "wasm32-wasi" && target != "arm64-linux" && target != "x86-64-linux" {
 			return 1, fmt.Errorf("-backend ssa is not available for -target %s (available for: arm64-linux, x86-64-linux, wasm32-wasi)", target)
 		}
 	default:
-		return 1, fmt.Errorf("unknown -backend %q (want ssa, or omit it for the target's default emitter)", backend)
+		return 1, fmt.Errorf("unknown -backend %q (want ssa or typed-ssa, or omit it for the target's default emitter)", backend)
 	}
 
 	switch emit {
@@ -1513,7 +1524,7 @@ func run(srcPath, outPath, target, backend, emit, cc string, runIt, native bool,
 		return 0, nil
 	}
 
-	if backend == "ssa" && target == "arm64-linux" {
+	if (backend == "ssa" || backend == "typed-ssa") && target == "arm64-linux" {
 		// Experimental SSA-direct arm64 backend (internal/codegen/arm64ssa)
 		// — lowers via parse → check → ir.LowerWith → ssa.LiftFromIR →
 		// ssa.Optimize → arm64ssa.EmitAsmModule, then links the same in-process
@@ -1524,9 +1535,13 @@ func run(srcPath, outPath, target, backend, emit, cc string, runIt, native bool,
 		// an unsupported op surfaces as a clean error rather than a miscompile —
 		// this is the path the binary-size epic widens until the self-host
 		// compiler itself can be built through it.
-		asm, err := buildArm64SSA(prog, info)
+		build := buildArm64SSA
+		if backend == "typed-ssa" {
+			build = buildTypedArm64SSA
+		}
+		asm, err := build(prog, info)
 		if err != nil {
-			return 1, fmt.Errorf("arm64/ssa: %v", err)
+			return 1, fmt.Errorf("arm64/%s: %v", backend, err)
 		}
 		// No -o writes the assembly to stdout, as the default emitter does:
 		// -o names the output BINARY, and the text is what this emitter has

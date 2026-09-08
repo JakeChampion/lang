@@ -50,6 +50,9 @@ var _ diag.FileSetter = (*Error)(nil)
 // list of locals (so codegen can lay out a frame).
 type Info struct {
 	VarTypes map[*ast.Var]ast.Type
+	// IntrinsicCalls records resolved semantic identities for the pre-RC IR.
+	// Nil when no supported intrinsic was checked; legacy lowering is unchanged.
+	IntrinsicCalls map[*ast.Call]IntrinsicCall
 	// BoxedCells names the locals that closureconv.BoxMutatedCaptures
 	// rewrote into 1-element array cells for by-reference scalar capture. Such a
 	// cell is a SHARED MUTABLE reference (the whole point — a closure and the
@@ -2360,6 +2363,9 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 			arrayElemParam,
 		},
 		Result: ast.ArrayType{Elem: arrayElemParam},
+	}
+	c.intrinsicSigs = map[*ast.FuncType]IntrinsicKind{
+		c.info.FuncSigs["__method_Array_push"]: IntrinsicArrayAppend,
 	}
 	// `arr.set(i, v)` — Phase 2b's value-returning sister to
 	// `arr[i] = v`. The IR intercepts the rewritten
@@ -5963,6 +5969,9 @@ func (c *checker) typeImplementsDisplay(t ast.Type) bool {
 type checker struct {
 	info   *Info
 	errors []error
+	// Intrinsics are registered by signature identity at their declaration
+	// site, not recognized from a call's spelling by semantic lowering.
+	intrinsicSigs map[*ast.FuncType]IntrinsicKind
 	// seenDiags drops a diagnostic identical to one already recorded at
 	// the same position — see errfCode.
 	seenDiags map[diagKey]bool
@@ -14558,6 +14567,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		// it can't leak into the argument sub-expressions we check
 		// below — only *this* call's generic completion may consult it
 		// for return-position inference (#2668).
+		delete(c.info.IntrinsicCalls, n)
 		callExpected := c.expectedType
 		c.expectedType = nil
 		// Display spine (#2696): `print` / `write` / `eprint` accept any
@@ -15061,6 +15071,12 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			}
 			return nil
 		}
+		intrinsic := IntrinsicNone
+		if id, direct := n.Callee.(*ast.Ident); direct {
+			if _, local := c.identValueBinding(id.Name, s); !local {
+				intrinsic = c.intrinsicSigs[ft]
+			}
+		}
 		// Method calls on a generic struct's instantiation: the
 		// dispatch path stamped n.TypeArgs from the receiver's
 		// concrete Args. Substitute those into the registered
@@ -15357,6 +15373,12 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				return c.resolveProj(substituteType(ft.Result, sub))
 			}
 			return nil
+		}
+		if intrinsic != IntrinsicNone {
+			if c.info.IntrinsicCalls == nil {
+				c.info.IntrinsicCalls = make(map[*ast.Call]IntrinsicCall)
+			}
+			c.info.IntrinsicCalls[n] = IntrinsicCall{Kind: intrinsic, Signature: ft}
 		}
 		return ft.Result
 	case *ast.Binary:
