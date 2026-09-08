@@ -120,3 +120,29 @@ read/fill/seal functions, totaling 1,904 bytes, are removed. Caller and metadata
 layout changes contribute to the net totals. No size baseline is raised. This
 replaces source-time machinery with verified IR passes; native/self-host
 production ownership retirement remains future work.
+
+## Independent initialization oracle and scaling check
+
+An exact test oracle explores `(block, initialized)` states without using the
+production bitset analysis or bounding loop iterations. All 168 initializer/read
+placements across diamonds, loops, nested loops and irreducible cycles agree
+with the verifier. Every accepted graph also promotes and passes ordinary SSA
+verification. Both same-block instruction orders are tested.
+
+Single-initializer dominance was tested as an alternative proof: it is equivalent
+for this slice, which has no absence/reset operation. The prototype agrees with
+the same oracle, but the existing dominance query walks an ancestor chain on
+each read. Three 100 ms native samples of `BenchmarkVerifyBindingInitialization`
+gave the following results; this benchmark includes full semantic verification.
+
+| Bindings and blocks | Existing bitset ns/op | Dominance prototype ns/op |
+| --- | --- | --- |
+| 1 | 779.3-925.2 | 723.6-735.8 |
+| 64 | 35,886-38,151 | 65,412-68,517 |
+| 1,024 | 740,469-752,859 | 9,247,705-11,969,135 |
+
+The larger case allocates 900,205-900,317 bytes per verification with bitsets and
+844,948-845,844 bytes with the prototype. The small memory reduction does not
+justify the deep-CFG time regression. The prototype is not retained; the exact
+oracle and benchmark are. Future alternatives must preserve the proof and be
+measured, including the tradeoff between CFG depth and initialization-set size.
