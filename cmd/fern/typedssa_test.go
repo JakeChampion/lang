@@ -49,6 +49,22 @@ function choose(flag: boolean): i32 {
 	}
 }
 
+func TestTypedSSAMatchFlow(t *testing.T) {
+	bin := buildFernForStdoutTest(t)
+	checkTypedSSAExecutable(t, bin, `
+function main(): i32 { return choose(1i32); }
+function choose(tag: i32): i32 {
+  var items = [17i32];
+  var selected = match (tag) {
+    n @ 1i32 when { items = [41i32]; false } => [n],
+    1i32 => items,
+    _ => [29i32]
+  };
+  return selected[0];
+}
+`)
+}
+
 func checkTypedSSAExecutable(t *testing.T, bin, source string) {
 	t.Helper()
 	entry := writeFern(t, source)
