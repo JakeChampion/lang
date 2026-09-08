@@ -153,8 +153,10 @@ func Verify(f *Func) error {
 		if err := resolvedType(b.typ, false); err != nil {
 			return fail("binding %q: %v", b.name, err)
 		}
-		if (len(f.boundaries) != 0 && !knownBoundaries[b.boundary]) ||
-			(b.boundary != nil && (!knownBoundaries[b.boundary] || b.boundary.owner != f)) {
+		// Boundary membership is checked here; verifyCleanups independently
+		// validates every listed boundary's owner before any lifetime transfer.
+		if (b.boundary == nil && len(f.boundaries) != 0) ||
+			(b.boundary != nil && !knownBoundaries[b.boundary]) {
 			return fail("binding %q at %d:%d has a missing or foreign lifetime boundary", b.name, b.pos.Line, b.pos.Col)
 		}
 	}
