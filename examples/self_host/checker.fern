@@ -10340,8 +10340,44 @@ function const_grammar_diags(mod: parser.Module): util.Diag[] {
 }
 
 
+// E075 belongs to the automatic init/handle wiring. A user-written main owns
+// that wiring instead. Match native's declaration lookup: methods named init
+// or handle are not lifecycle entries, and imported names remain qualified.
+function handler_state_diags(mod: parser.Module): util.Diag[] {
+  var init_idx: i32 = -1;
+  var handle_idx: i32 = -1;
+  var i: i32 = 0;
+  for fd in mod.funcs {
+    if (fd.name == "main") {
+      return [];
+    }
+    if (fd.receiver_type.len() == 0) {
+      if (fd.name == "init" && init_idx < 0) { init_idx = i; }
+      if (fd.name == "handle" && handle_idx < 0) { handle_idx = i; }
+    }
+    i = i + 1;
+  }
+  if (handle_idx < 0) { return []; }
+  var returns_state: boolean = false;
+  if (init_idx >= 0) {
+    var rt: string = mod.funcs[init_idx].ret_type;
+    returns_state = rt.len() > 0 && rt != "void";
+  }
+  var handle: parser.FuncDecl = mod.funcs[handle_idx];
+  var takes_state: boolean = handle.params.len() == 3;
+  if (takes_state && !returns_state) {
+    return [dg_at("E075", "handler takes a state parameter, but no `init` produces the state to thread through it", handle.line, handle.col)];
+  }
+  if (returns_state && !takes_state) {
+    var init: parser.FuncDecl = mod.funcs[init_idx];
+    return [dg_at("E075", "`init` returns a value, but the handler takes no state parameter to thread it through", init.line, init.col)];
+  }
+  return [];
+}
+
 function collect_decl_diags(mod: parser.Module): util.Diag[] {
   var out: util.Diag[] = util.append_diags([], const_grammar_diags(mod));
+  out = util.append_diags(out, handler_state_diags(mod));
   // E007: duplicate field within a struct (enum-variant structs carry at
   // most one `__ev` field, so they never trip this).
   for sd in mod.structs {
