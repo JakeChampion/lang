@@ -7942,9 +7942,6 @@ func unifyIfArms(a, b ast.Type) ast.Type {
 	if _, ok := b.(ast.NeverType); ok {
 		return a
 	}
-	if ast.Equal(a, b) {
-		return a
-	}
 	// Polymorphic numeric (an unsettled NumberLit) is
 	// compatible with any concrete numeric / float type —
 	// return the concrete side and let the surrounding
@@ -8008,6 +8005,13 @@ func unifyIfArms(a, b ast.Type) ast.Type {
 			}
 			return ast.TupleType{Elems: out}
 		}
+	}
+	// Equal compares default widths, not whether a width is committed. Select
+	// concrete numeric arms (recursively for tuples) before this shortcut, or
+	// an initial literal can erase a concrete i32/f64 constraint and allow a
+	// later, incompatible concrete arm.
+	if ast.Equal(a, b) {
+		return a
 	}
 	// Empty-array / empty-slice literal vs typed array of the
 	// same shape: `[]` (Elem=nil) unifies with any concrete
@@ -13075,6 +13079,10 @@ func (c *checker) checkLiteralMatchExpr(n *ast.MatchExpr, tagT ast.Type, s *scop
 		if _, ok := armT.(ast.NeverType); ok {
 			return
 		}
+		if unified := unifyIfArms(result, armT); unified != nil {
+			result = unified
+			return
+		}
 		if c.assignable(armT, result) {
 			return
 		}
@@ -13179,6 +13187,10 @@ func (c *checker) checkTupleMatchExpr(n *ast.MatchExpr, tup ast.TupleType, s *sc
 			return
 		}
 		if _, ok := armT.(ast.NeverType); ok {
+			return
+		}
+		if unified := unifyIfArms(result, armT); unified != nil {
+			result = unified
 			return
 		}
 		if c.assignable(armT, result) {
