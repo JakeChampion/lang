@@ -52,6 +52,20 @@ var armLowerCases = []struct{ name, source, want string }{
 	{"other-return", `function pilot(): string { return choose(["early"], false); } function choose(own items: string[], yes: boolean): string { if (yes) { return items[0]; } return "other"; }`, "other\n"},
 	{"embedded-zero", `function pilot(): string { var items = ["a\0b"]; return items[0]; }`, "a\x00b\n"},
 	{"generated-name-shadow", `function pilot(): string { return __semir_helper_2(["safe"]); } function __semir_helper_2(items: string[]): string { return items[0]; }`, "safe\n"},
+	{"recursive-borrowed-return", `function pilot(): string { return descend([["recursive"]], false)[0]; }
+function descend(items: string[][], stop: boolean): string[] {
+  if (stop) { return items[0]; }
+  var returned = descend(items, true); var wrapped = [returned]; return wrapped[0];
+}`, "recursive\n"},
+	{"mutual-counted-return", `function pilot(): string { return first([["mutual"]], false)[0]; }
+function first(own items: string[][], stop: boolean): string[] {
+  if (stop) { return items[0]; } return second(items, true);
+}
+function second(own items: string[][], stop: boolean): string[] { return first(items, stop); }
+`, "mutual\n"},
+	{"own-container-self-element-append", `function pilot(): string { return grow([["self"]])[1][0]; }
+function grow(own items: string[][]): string[][] { return items.append(items[0]); }
+`, "self\n"},
 }
 
 func printHarness(out *ARM64Program) string {

@@ -81,25 +81,25 @@ func (f *Func) addPhi(b *ssa.Block, typ ast.Type, pos ast.Position, args ...ssa.
 	return v
 }
 
-// Projection is containment, not identity aliasing or an acquired reference.
+// A projection is containment, not identity aliasing or an acquired reference.
 // Its container and dynamic index are real Op.Args, so SSA def-use and
 // dominance see every lifetime dependency. Field is used only for tuples.
-type Projection struct {
+type projectionInfo struct {
 	Container ssa.Value
 	Index     ssa.Value
 	Field     int64
 }
 
-func projection(op *ssa.Op) (Projection, bool) {
+func projection(op *ssa.Op) (projectionInfo, bool) {
 	switch op.Kind {
 	case ssa.OpArrayGet:
 		if len(op.Args) == 2 {
-			return Projection{Container: op.Args[0], Index: op.Args[1]}, true
+			return projectionInfo{Container: op.Args[0], Index: op.Args[1]}, true
 		}
 	case ssa.OpTupleGet:
 		if len(op.Args) == 1 {
-			return Projection{Container: op.Args[0], Field: op.Imm}, true
+			return projectionInfo{Container: op.Args[0], Field: op.Imm}, true
 		}
 	}
-	return Projection{}, false
+	return projectionInfo{}, false
 }
