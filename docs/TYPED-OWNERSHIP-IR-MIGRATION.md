@@ -26,11 +26,20 @@ coverage/sanitizer instrumentation are explicitly unsupported, not ignored.
 
 Executable regressions compare complete output with interpreter expectations,
 before and after SSA optimization. They cover nested arrays and tuples, append,
-own/borrow call interactions, early returns, an executed loop back edge,
+own/borrow call interactions, direct and mutual recursion, early returns,
+an executed hand-built semantic loop back edge (not source-loop coverage),
 escaped child arrays under allocator reuse, shared snapshots and borrowed
 dynamic-string units. The runtime census checks matching allocations/frees and
 zero live bytes for these fixtures. This does not fix the existing runtime's
 final-string-release limitation or establish native/self-host parity.
+
+The immutable constructor/copy-only pilot cannot construct reference cycles:
+new containers contain existing values, with no admitted mutable heap stores
+or closure captures that can link them back. Broader forms must preserve this
+invariant or introduce an explicit cycle-management contract; ordinary RC is
+not a general cycle collector. Tuples, including scalar-only tuples, use the
+current boxed ABI and therefore carry a buffer unit. Unboxing them is a future
+layout optimization, not a reason to omit that unit's release today.
 
 Some inferred nested numeric literals still carry polymorphic type metadata
 after the common checker. This pilot rejects that unresolved metadata; explicit

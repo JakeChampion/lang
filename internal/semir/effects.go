@@ -108,10 +108,14 @@ func ownershipEffects(f *Func) (*functionEffects, error) {
 				e.inputs[0].counted = referenceBearing(f.values[op.Args[1].ID].typ)
 				e.inputs[1].counted = e.inputs[0].counted
 			case ssa.OpArrayGet, ssa.OpTupleGet:
+				projected, ok := projection(op)
+				if !ok {
+					return nil, fmt.Errorf("semir: missing projection contract for %s", op.Kind)
+				}
 				e.result = resultValue
 				if ref {
 					e.result = resultProjection
-					e.parent = op.Args[0]
+					e.parent = projected.Container
 				}
 			case ssa.OpPhi:
 				e.result = resultJoin
