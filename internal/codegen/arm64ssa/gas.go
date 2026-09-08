@@ -7916,12 +7916,14 @@ func usesCallIndirect(progs map[string]*x86.Program) bool {
 // stack-machine backend has always inlined them (emitInlineIdxHelper in
 // internal/codegen/arm64); this is the SSA side of the same decision.
 //
-// __str_idx is absent on purpose: two-word strings make it a different shape,
-// not an address compute.
+// Strings on this SSA backend are single-word data pointers, with the same
+// length header and checked byte-address calculation as __arr_idx_1. The
+// default backend's two-word string ABI does not apply here.
 var arrIdxInline = map[string]struct {
 	shift   int
 	checked bool
 }{
+	"__str_idx":       {0, true}, // single-word string, byte stride
 	"__arr_idx":       {2, true}, // stride 4 (i32)
 	"__arr_idx_1":     {0, true}, // stride 1 (byte array)
 	"__arr_idx_8":     {3, true}, // stride 8 (i64 / pointer)
