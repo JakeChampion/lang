@@ -119,6 +119,10 @@ func (b *builder) sourceLoop(cond ast.Expr, body ast.Stmt, label string) error {
 	if err := b.seal(header); err != nil {
 		return err
 	}
+	// A jump ended only the body path. A while's false condition can still
+	// reach its exit, so subsequent source statements belong there. With no
+	// incoming edge (an unconditional loop without a local break), discard
+	// the exit below and preserve the lack of a continuation.
 	b.current = exit
 	if len(exit.Preds) == 0 {
 		// An unconditional loop without a break has no continuation. Do not
