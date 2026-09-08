@@ -24535,10 +24535,12 @@ function lower_stmt_for(fr: ast.StmtFor, s: LowerState): LowerState {
     // inner array's data pointer), same as a struct/string element.
     if (s.is_arrarr_slot(aslot)) {
         ff = ff.mark_arr(xslot, true);
-        // Carry the inner element kind so `for x in row` reads 8-byte
-        // i64/f64 elements instead of truncating to 32 bits. #2691.
+        // Preserve both width and kind: unsigned rows need the 8-byte load
+        // AND unsigned operations; string rows need string dispatch.
         if (s.arrarr_elem_of_slot(aslot) == "i64") { ff = ff.mark_i64arr(xslot, true); }
+        if (s.arrarr_elem_of_slot(aslot) == "u64") { ff = ff.mark_i64arr(xslot, true).mark_u64(xslot, true); }
         if (s.arrarr_elem_of_slot(aslot) == "f64") { ff = ff.mark_f64arr(xslot, true); }
+        if (s.arrarr_elem_of_slot(aslot) == "string") { ff = ff.mark_strarr(xslot, true); }
         // A 3-deep source (`for plane in <T[][][]>`): the element is ITSELF an
         // array-of-arrays, so carry that too or the next `for` level sees a
         // scalar. See the "arr" kind in the arrarr_e derivation.
@@ -57630,7 +57632,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
     var nrecv: i32 = 0;
     if (fn.receiver_name.len() > 0) { nrecv = 1; }
     var isarrarr: boolean[] = [];
-    // arrarr_elem[i]: inner element kind of a T[][] param slot — "i64"/"f64"/"".
+    // Use the same inner element kinds as local annotations and field reads.
     var arrarr_elem: string[] = [];
     var cii: i32 = 0;
     while (cii < names.len()) {
@@ -57641,10 +57643,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
             var ptn2: string = fn.params[pidx].type_name;
             if (is_array_type_name(ptn2) && ptn2.len() >= 4 && is_array_type_name(slice_unchecked(ptn2, 0, ptn2.len() - 2))) {
                 aa = true;
-                // Strip both `[]` suffixes to the inner scalar; map the 8-byte kinds.
-                var inner: str = slice_unchecked(ptn2, 0, ptn2.len() - 4);
-                if (inner == "i64" || inner == "u64") { aelem = "i64"; }
-                if (inner == "f64") { aelem = "f64"; }
+                aelem = arrarr_elem_kind_of_type(ptn2);
             } else if (is_array_type_name(ptn2)) {
                 // A `(tuple)[]` PARAM records its ELEMENT TUPLE spelling in the
                 // same column — the form arrtup_ret_fns documents and a local
