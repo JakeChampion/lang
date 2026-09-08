@@ -6,6 +6,14 @@ SSA cutover and typed-IR work. Initial integration base: `02ea66e91`.
 
 ## Current implementation checkpoint
 
+Source binding resolution now emits explicit typed initialization, read and
+replacement operations. A separate, independently verified CFG pass proves
+definite initialization and promotes these places to ordinary SSA before
+ownership analysis. The source builder no longer constructs binding phis through
+per-block maps and sealing. Match/effect CFG and cleanup BindingIDs feed the
+same pass; conditional availability remains a later correlated-state contract.
+See [typed binding places](TYPED-BINDING-PLACES.md).
+
 Plain function and iteration cleanup actions with dominating registrations now compile
 once to typed action regions. Capture interfaces preserve enclosing BindingIDs;
 expansion reads current values at replay, threads writes between LIFO actions

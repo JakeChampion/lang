@@ -25,12 +25,12 @@ func BuildFunc(decl *ast.FuncDecl, info *checker.Info) (*Func, error) {
 }
 
 func buildBody(f *Func, decl *ast.FuncDecl, info *checker.Info) error {
-	b := builder{fn: f, info: info, current: f.graph.NewBlock(), flow: make(map[*ssa.Block]*bindingFlow)}
+	f.unpromotedBindings = true
+	b := builder{fn: f, info: info, current: f.graph.Entry}
 	b.cleanupScope = b.newCleanupBoundary(nil, b.current, nil, nil, decl.P)
-	b.state(b.current).sealed = true
 	b.pushScope()
 	for i, p := range decl.Params {
-		v := f.addParam(p.Type, f.contract.modes[i], p.NamePos)
+		v := f.graph.Params[i]
 		if err := b.bind(p.Name, p.Type, p.NamePos, v); err != nil {
 			return err
 		}
@@ -55,7 +55,6 @@ type builder struct {
 	info                  *checker.Info
 	current               *ssa.Block
 	scopes                []map[string]BindingID
-	flow                  map[*ssa.Block]*bindingFlow
 	loops                 []sourceLoop
 	cleanupConditionDepth int
 	cleanupScope          *cleanupBoundary
@@ -80,7 +79,7 @@ func (b *builder) bind(name string, typ ast.Type, pos ast.Position, value ssa.Va
 	}
 	id := b.fn.addBinding(name, typ, pos)
 	scope[name] = id
-	b.state(b.current).values[id] = value
+	b.fn.writeBinding(b.current, ssa.OpBindingInit, id, value, pos)
 	return nil
 }
 
@@ -171,9 +170,6 @@ func (b *builder) stmt(stmt ast.Stmt) error {
 		ends := make([]*ssa.Block, 0, 2)
 		for i, arm := range []ast.Stmt{n.Then, n.Else} {
 			b.current = []*ssa.Block{yes, no}[i]
-			if err := b.seal(b.current); err != nil {
-				return err
-			}
 			b.pushScope()
 			if arm != nil {
 				err = b.stmt(arm)
@@ -192,7 +188,6 @@ func (b *builder) stmt(stmt ast.Stmt) error {
 			for _, end := range ends {
 				b.fn.graph.SetBr(end, b.current)
 			}
-			return b.seal(b.current)
 		}
 		return nil
 	default:
@@ -243,7 +238,7 @@ func (b *builder) exprValue(expr ast.Expr) (ssa.Value, error) {
 	switch n := expr.(type) {
 	case *ast.Ident:
 		if id, ok := b.lookup(n.Name); ok && n.EnumName == "" {
-			return b.readBinding(b.current, id)
+			return b.fn.readBinding(b.current, id, n.P), nil
 		}
 		return ssa.Value{}, b.errorAt(n.P, "unresolved local binding: "+n.Name)
 	case *ast.StringLit:
@@ -293,7 +288,7 @@ func (b *builder) exprValue(expr ast.Expr) (ssa.Value, error) {
 		if !ast.Equal(b.fn.bindings[id-1].typ, b.fn.values[value.ID].typ) {
 			return ssa.Value{}, b.errorAt(n.P, "assignment type differs from binding type")
 		}
-		b.state(b.current).values[id] = value
+		b.fn.writeBinding(b.current, ssa.OpBindingReplace, id, value, n.P)
 		return value, nil
 	case *ast.ArrayLit:
 		args, _, ended, err := b.exprs(n.Elems)

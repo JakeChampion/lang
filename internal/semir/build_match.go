@@ -55,7 +55,7 @@ func (b *builder) matchFlow(n *ast.MatchExpr, wantValue bool) (ssa.Value, error)
 		}
 		// Both the pattern-false and guard-false edges are now known. Arm
 		// bindings have left scope, but their outer-binding updates survive
-		// through the existing sealed-block SSA construction.
+		// through explicit typed binding operations and later SSA promotion.
 		b.current = next
 		if next != nil {
 			if len(next.Preds) == 0 {
@@ -64,9 +64,6 @@ func (b *builder) matchFlow(n *ast.MatchExpr, wantValue bool) (ssa.Value, error)
 				b.fn.graph.Blocks = slices.DeleteFunc(b.fn.graph.Blocks, func(block *ssa.Block) bool { return block == next })
 				b.current = nil
 				break
-			}
-			if err := b.seal(next); err != nil {
-				return ssa.Value{}, err
 			}
 		}
 	}
@@ -100,9 +97,6 @@ func (b *builder) matchArm(arm *ast.MatchExprArm, tag ssa.Value, next *ssa.Block
 		body := b.fn.graph.NewBlock()
 		b.fn.graph.SetBrIf(b.current, guard.value, body, next)
 		b.current = body
-		if err := b.seal(body); err != nil {
-			return exprResult{}, err
-		}
 	}
 	return emit(arm.Body)
 }
@@ -119,7 +113,7 @@ func (b *builder) matchLiteral(literal ast.Expr, tag ssa.Value, next *ssa.Block,
 	body := b.fn.graph.NewBlock()
 	b.fn.graph.SetBrIf(b.current, cond, body, next)
 	b.current = body
-	return b.seal(body)
+	return nil
 }
 
 func (b *builder) matchArms(n *ast.MatchExpr, typ ast.Type) ([]bool, error) {

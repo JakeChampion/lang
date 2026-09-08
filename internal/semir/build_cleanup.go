@@ -45,7 +45,11 @@ func (b *builder) captureBinding(name string) (BindingID, bool) {
 	// Captures live in the outermost action scope. An action-local declaration
 	// can shadow one without changing the captured enclosing binding's identity.
 	b.scopes[0][name] = id
-	b.state(b.fn.graph.Entry).values[id] = param
+	// Captures are discovered on demand, including from nested blocks. Their
+	// parameter initialization belongs at region entry before any region read.
+	op := b.fn.writeBinding(b.fn.graph.Entry, ssa.OpBindingInit, id, param, decl.pos)
+	entry := b.fn.graph.Entry
+	entry.Ops = append([]*ssa.Op{op}, entry.Ops[:len(entry.Ops)-1]...)
 	a.region.captures = append(a.region.captures, parentID)
 	a.locals = append(a.locals, id)
 	return id, true
@@ -64,9 +68,9 @@ func (b *builder) registerCleanup(n *ast.Defer) error {
 	r := &cleanupRegion{owner: b.fn, pos: n.P, register: b.current, boundary: b.cleanupScope}
 	r.body = newFunc(fmt.Sprintf("%s.cleanup%d", b.fn.graph.Name, len(b.fn.cleanups)), ast.VoidType{})
 	r.body.program = b.fn.program
-	a := builder{fn: r.body, info: b.info, current: r.body.graph.NewBlock(), flow: make(map[*ssa.Block]*bindingFlow)}
+	r.body.unpromotedBindings = true
+	a := builder{fn: r.body, info: b.info, current: r.body.graph.NewBlock()}
 	a.action = &cleanupBuilder{parent: b, region: r}
-	a.state(a.current).sealed = true
 	a.pushScope()
 	if err := a.effectExpr(n.Expr); err != nil {
 		return err
@@ -77,10 +81,7 @@ func (b *builder) registerCleanup(n *ast.Defer) error {
 	var types []ast.Type
 	var values []ssa.Value
 	for i, id := range a.action.locals {
-		value, err := a.readBinding(a.current, id)
-		if err != nil {
-			return err
-		}
+		value := a.fn.readBinding(a.current, id, n.P)
 		values = append(values, value)
 		types = append(types, b.fn.bindings[r.captures[i]-1].typ)
 	}
@@ -89,6 +90,9 @@ func (b *builder) registerCleanup(n *ast.Defer) error {
 	r.yield = a.current.Ops[len(a.current.Ops)-1]
 	r.exit = a.current
 	r.body.graph.SetRet(a.current, result)
+	if err := promoteBindings(r.body); err != nil {
+		return err
+	}
 	b.fn.cleanups = append(b.fn.cleanups, r)
 	b.cleanupScope.actions = append(b.cleanupScope.actions, r)
 	return nil
@@ -101,10 +105,7 @@ func (b *builder) emitCleanups() error {
 func (b *builder) expandCleanup(r *cleanupRegion) error {
 	values := make(map[int32]ssa.Value, len(r.body.values))
 	for i, id := range r.captures {
-		value, err := b.readBinding(b.current, id)
-		if err != nil {
-			return err
-		}
+		value := b.fn.readBinding(b.current, id, r.pos)
 		values[r.body.graph.Params[i].ID] = value
 	}
 	blocks := make(map[*ssa.Block]*ssa.Block, len(r.body.graph.Blocks))
@@ -149,7 +150,6 @@ func (b *builder) expandCleanup(r *cleanupRegion) error {
 		term.Target, term.True, term.False = blocks[term.Target], blocks[term.True], blocks[term.False]
 		term.Value = ssa.Value{}
 		block.Term = term
-		b.state(block).sealed = true
 	}
 	entry := blocks[r.body.graph.Entry]
 	b.fn.graph.SetBr(b.current, entry)
@@ -160,7 +160,7 @@ func (b *builder) expandCleanup(r *cleanupRegion) error {
 	// not accidentally read another output's newly installed binding value.
 	b.current.Term = ssa.Terminator{}
 	for i, id := range r.captures {
-		b.state(b.current).values[id] = values[r.yield.Args[i].ID]
+		b.fn.writeBinding(b.current, ssa.OpBindingReplace, id, values[r.yield.Args[i].ID], r.pos)
 	}
 	return nil
 }

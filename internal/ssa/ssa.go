@@ -307,12 +307,15 @@ const (
 	// Semantic operations belong to the typed, pre-RC phase in internal/semir.
 	// Their operands are semantic values, not runtime addresses or ABI words.
 	// They must be lowered before invoking low-level optimizers or emitters.
-	OpArrayMake    // Args = elements, in evaluation order
-	OpArrayGet     // Args = container, index; checked element projection
-	OpArrayAppend  // Args = original container, element; immutable replacement
-	OpTupleMake    // Args = fields, in declaration order
-	OpTupleGet     // Args = container; Imm = field ordinal
-	OpSemanticCall // Args = semantic arguments; Imm = module function identity
+	OpArrayMake      // Args = elements, in evaluation order
+	OpArrayGet       // Args = container, index; checked element projection
+	OpArrayAppend    // Args = original container, element; immutable replacement
+	OpTupleMake      // Args = fields, in declaration order
+	OpTupleGet       // Args = container; Imm = field ordinal
+	OpSemanticCall   // Args = semantic arguments; Imm = module function identity
+	OpBindingInit    // Args = initial value; Imm = function-local binding identity
+	OpBindingRead    // Imm = binding identity; result has the binding's resolved type
+	OpBindingReplace // Args = replacement value; requires an initialized binding
 )
 
 // String renders the OpKind for dumps + error messages.
@@ -500,6 +503,12 @@ func (k OpKind) String() string {
 		return "tuple_get"
 	case OpSemanticCall:
 		return "semantic_call"
+	case OpBindingInit:
+		return "binding_init"
+	case OpBindingRead:
+		return "binding_read"
+	case OpBindingReplace:
+		return "binding_replace"
 	default:
 		return fmt.Sprintf("op(%d)", int(k))
 	}

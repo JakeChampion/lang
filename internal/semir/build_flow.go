@@ -1,93 +1,14 @@
 package semir
 
 import (
-	"fmt"
-
 	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/ssa"
 )
-
-// A block is sealed once all its incoming edges are known. Reads in an open
-// loop header create typed incomplete phis, filled when its back edges exist.
-// Binding identity is lexical; each block maps it to its own SSA value.
-type bindingFlow struct {
-	sealed  bool
-	values  map[BindingID]ssa.Value
-	pending []bindingPhi
-}
-
-type bindingPhi struct {
-	id BindingID
-	op *ssa.Op
-}
 
 type sourceLoop struct {
 	label        string
 	header, exit *ssa.Block
 	boundary     *cleanupBoundary
-}
-
-func (b *builder) state(block *ssa.Block) *bindingFlow {
-	if b.flow[block] == nil {
-		b.flow[block] = &bindingFlow{values: make(map[BindingID]ssa.Value)}
-	}
-	return b.flow[block]
-}
-
-func (b *builder) readBinding(block *ssa.Block, id BindingID) (ssa.Value, error) {
-	state := b.state(block)
-	if value, ok := state.values[id]; ok {
-		return value, nil
-	}
-	if state.sealed && len(block.Preds) == 1 {
-		value, err := b.readBinding(block.Preds[0], id)
-		if err == nil {
-			state.values[id] = value
-		}
-		return value, err
-	}
-	if state.sealed && len(block.Preds) == 0 {
-		return ssa.Value{}, fmt.Errorf("semir: binding %d has no definition on entry to block %d", id, block.ID)
-	}
-	decl := b.fn.bindings[id-1]
-	value := b.fn.addPhi(block, decl.typ, decl.pos)
-	var op *ssa.Op
-	for _, candidate := range block.Ops {
-		if candidate.Result == value {
-			op = candidate
-			break
-		}
-	}
-	state.values[id] = value // Publish before recursively reading back edges.
-	phi := bindingPhi{id, op}
-	if !state.sealed {
-		state.pending = append(state.pending, phi)
-		return value, nil
-	}
-	return value, b.fillPhi(block, phi)
-}
-
-func (b *builder) fillPhi(block *ssa.Block, phi bindingPhi) error {
-	for _, pred := range block.Preds {
-		value, err := b.readBinding(pred, phi.id)
-		if err != nil {
-			return err
-		}
-		phi.op.Args = append(phi.op.Args, value)
-	}
-	return nil
-}
-
-func (b *builder) seal(block *ssa.Block) error {
-	state := b.state(block)
-	state.sealed = true
-	for _, phi := range state.pending {
-		if err := b.fillPhi(block, phi); err != nil {
-			return err
-		}
-	}
-	state.pending = nil
-	return nil
 }
 
 func (b *builder) sourceLoop(cond ast.Expr, body ast.Stmt, label string, pos ast.Position) error {
@@ -107,9 +28,6 @@ func (b *builder) sourceLoop(cond ast.Expr, body ast.Stmt, label string, pos ast
 		work := b.fn.graph.NewBlock()
 		b.fn.graph.SetBrIf(b.current, value.value, work, exit)
 		b.current = work
-		if err := b.seal(work); err != nil {
-			return err
-		}
 	}
 	// The condition is evaluated in the enclosing loop scope, matching the
 	// checker. Only the body introduces this loop's break/continue targets.
@@ -140,9 +58,6 @@ func (b *builder) sourceLoop(cond ast.Expr, body ast.Stmt, label string, pos ast
 }
 
 func (b *builder) closeLoop(header, exit *ssa.Block, boundary *cleanupBoundary) error {
-	if err := b.seal(header); err != nil {
-		return err
-	}
 	// A jump ended only the body path. A while's false condition can still
 	// reach its exit, so subsequent source statements belong there. With no
 	// incoming edge (an unconditional loop without a local break), discard
@@ -163,7 +78,7 @@ func (b *builder) closeLoop(header, exit *ssa.Block, boundary *cleanupBoundary) 
 		b.current = nil
 		return nil
 	}
-	return b.seal(exit)
+	return nil
 }
 
 func (b *builder) loopBranch(label string, continuing bool, pos ast.Position) error {

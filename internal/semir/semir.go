@@ -56,6 +56,8 @@ type Func struct {
 	cleanups        []*cleanupRegion
 	boundaries      []*cleanupBoundary
 	cleanupExits    []*cleanupExit
+	// Only source construction and verified binding promotion admit place ops.
+	unpromotedBindings bool
 }
 
 func newFunc(name string, result ast.Type) *Func {

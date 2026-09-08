@@ -117,9 +117,6 @@ func (b *builder) branchFlow(cond ssa.Value, pos ast.Position, wantValue bool, y
 	var values []ssa.Value
 	for i, arm := range []func() (exprResult, error){yes, no} {
 		b.current = blocks[i]
-		if err := b.seal(b.current); err != nil {
-			return ssa.Value{}, err
-		}
 		b.pushScope()
 		result, err := arm()
 		b.popScope()
@@ -180,5 +177,5 @@ func (b *builder) joinControl(ends []*ssa.Block) error {
 	for _, end := range ends {
 		b.fn.graph.SetBr(end, b.current)
 	}
-	return b.seal(b.current)
+	return nil
 }
