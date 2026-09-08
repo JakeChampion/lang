@@ -30,6 +30,15 @@ func bindingInitializationOracle(f *Func) bool {
 				}
 			}
 		}
+		// Interpret lifetime events directly, independently of the production
+		// mask builder. The single place may become absent again at an end.
+		for _, exit := range f.cleanupExits {
+			for _, end := range exit.ends {
+				if end.block == at.block && end.boundary == f.bindings[0].boundary {
+					at.initialized = false
+				}
+			}
+		}
 		for _, successor := range at.block.Succs() {
 			incoming := state{successor, at.initialized}
 			if !seen[incoming] {

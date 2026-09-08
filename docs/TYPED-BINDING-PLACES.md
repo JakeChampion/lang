@@ -24,11 +24,27 @@ has at most one initializer instruction, which may execute on repeated loop
 iterations. Repeated declaration execution creates the next value of that
 non-addressable binding; no old value is read as part of initialization.
 
+Source bindings also identify their owning typed cleanup boundary. The cleanup
+flow verifier requires initialization to occur in that active boundary, not a
+foreign boundary or a falsely claimed outer scope. Function and iteration ends
+reset initialized state for exactly their own bindings after the block's
+operations. Existing verified cleanup-end records supply these events: no AST
+rescan, synthetic end instruction or runtime environment is needed. Value blocks
+and match arms retain the enclosing cleanup lifetime.
+
+Ending a place does not read or destroy a missing payload. It also does not
+invalidate an SSA value read earlier from that place. Saved returns and outer
+binding replacements retain their value-flow and ownership obligations. Private
+action bindings promote within the action region before expansion; captures
+read and update the enclosing function's boundary-owned BindingIDs.
+
 Verified promotion consumes only semantic operations, BindingIDs, types and CFG
 edges. It records reads at their exact instruction positions and computes
 reaching values with demand-driven phis in predecessor order. Loop recursion
 publishes a phi before reading backedges. Read aliases are canonicalized once
 so a chain of replacements does not require repeated full-chain walks.
+Reaching-definition lookup stops at lifetime ends, rather than recovering a
+stale value from an earlier iteration or an exited scope.
 
 The pass removes all binding operations and their value/effect metadata, then
 verifies the resulting ordinary semantic SSA. Ownership, return provenance,
@@ -129,8 +145,9 @@ placements across diamonds, loops, nested loops and irreducible cycles agree
 with the verifier. Every accepted graph also promotes and passes ordinary SSA
 verification. Both same-block instruction orders are tested.
 
-Single-initializer dominance was tested as an alternative proof: it is equivalent
-for this slice, which has no absence/reset operation. The prototype agrees with
+Single-initializer dominance was tested against `2897b8a78` as an alternative
+proof, before binding lifetime ends were introduced. It was equivalent for that
+earlier slice, which had no absence/reset operation. The prototype agrees with
 the same oracle, but the existing dominance query walks an ancestor chain on
 each read. Three 100 ms native samples of `BenchmarkVerifyBindingInitialization`
 gave the following results; this benchmark includes full semantic verification.
@@ -146,3 +163,38 @@ The larger case allocates 900,205-900,317 bytes per verification with bitsets an
 justify the deep-CFG time regression. The prototype is not retained; the exact
 oracle and benchmark are. Future alternatives must preserve the proof and be
 measured, including the tradeoff between CFG depth and initialization-set size.
+
+Lifetime ends now provide an additional reason dominance alone is insufficient:
+an initializer can dominate a read but its place can have ended in between.
+The exact oracle now interprets these reset events directly. Regressions prove
+that stale reads and replacements would pass initialization-only verification,
+but fail once lifetime ends are respected; saved SSA values and outer binding
+updates remain valid.
+
+## Lifetime-end cost measurements, 2026-09-08
+
+Five 100 ms samples on the same native Darwin ARM64 host measure the same full
+typed compilation pipeline. Only action/loop count changes within each family.
+These are observed ranges, not a general speedup claim.
+
+| Workload | ns/op | allocs/op |
+| --- | --- | --- |
+| 1 iteration action | 65,570-70,039 | 1,114 |
+| 8 iteration actions | 391,221-445,304 | 4,714 |
+| 64 iteration actions | 3,755,977-3,977,891 | 27,705-27,707 |
+| 1 function action | 67,963-75,685 | 1,208 |
+| 8 function actions | 279,842-304,969 | 3,659 |
+| 64 function actions | 2,282,737-2,380,404 | 19,361-19,362 |
+
+Against the prior place implementation, the function-action family adds eight
+allocations per compilation for lifetime masks and indexing. The iteration
+family adds eight at one loop and more at larger CFGs. Masks remain compiler
+metadata; there is no generated runtime allocation. Initializer-scope checks
+run only before promotion, when initializer operations still exist.
+
+Identical `go build -trimpath -buildvcs=false` builds grow from 28,866,498 to
+28,883,218 bytes against parent `2897b8a78`: 16,720 bytes overall and 2,512 bytes
+in Mach-O `__text`. The lifetime-mask constructor contributes 944 symbol bytes;
+identity validation, initialization transfer, active-scope checking and promotion
+barriers account for the remaining code changes. Data/debug/segment layout also
+changes. No size baseline is raised and no native/self-host cutover is claimed.

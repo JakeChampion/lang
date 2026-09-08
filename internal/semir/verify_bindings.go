@@ -22,6 +22,7 @@ func verifyBindingInitialization(f *Func) error {
 		return nil
 	}
 	words := (len(f.bindings) + 63) / 64
+	ends := bindingLifetimeEnds(f)
 	initialized := func(state []uint64, id int64) bool { return state[(id-1)/64]&(uint64(1)<<((id-1)%64)) != 0 }
 	set := func(state []uint64, id int64) { state[(id-1)/64] |= uint64(1) << ((id - 1) % 64) }
 	order := f.graph.RPO()
@@ -76,6 +77,9 @@ func verifyBindingInitialization(f *Func) error {
 				if op.Kind == ssa.OpBindingInit {
 					set(state, op.Imm)
 				}
+			}
+			for i, bits := range ends[block] {
+				state[i] &^= bits
 			}
 			if !slices.Equal(state, outputs[block]) {
 				copy(outputs[block], state)
