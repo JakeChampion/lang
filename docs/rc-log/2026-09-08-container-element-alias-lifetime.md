@@ -5,6 +5,34 @@ Investigated for #7989, #8920 and coreutils #8278 on main
 The sections below preserve the red-before evidence alongside the paired fix.
 This is ownership validation, not a runtime-speed benchmark.
 
+## CI follow-up: require an initializer witness
+
+PR #8928's self-host shard 0 exposed an unsound admission at `16fca58d8`.
+The existing tuple-destructure return test expected its documented residual
+leak, but instead reported `allocs=400 frees=400 live_bytes=0`. That particular
+fresh-element fixture became clean, but this was not proof of safe admission.
+
+`local_decl_count` counts tuple, foreach and match binders as well as ordinary
+locals. The builder validator only checks an initializer when it encounters a
+matching ordinary `StmtVar`. A destructured or loop/match-bound return could
+therefore satisfy the proof without any validated initializer at all.
+
+Four source-valid regressions reproduced the false `SARRC:build` admission:
+fresh tuple destructure, borrowed tuple destructure, foreach-bound return and
+match-payload return. Their native source checks passed; all four ownership
+proof checks failed before the correction (3.759 s combined suite). The fix
+uses the existing local-initializer lookup and requires its value to satisfy
+the counted-store/producer contract. Missing initializers remain unknown.
+This narrows admission and adds no new projection ownership heuristic.
+
+Afterward the complete original tuple-destructure test, all 26 proof cases,
+the ARM64/x86/Wasm lifetime matrix and existing x86 element-reclaim test passed
+together in 75.541 s. Lint passed. The tuple test's expectations are unchanged;
+its residual projection leak remains work for the typed-IR migration rather
+than an unproved widening of this patch. Full CI must validate the new head.
+Local logs: `/private/tmp/lang-counted-init-red.log`,
+`/private/tmp/lang-counted-init-green.log`, `/private/tmp/lang-counted-init-lint.log`.
+
 ## Paired implementation
 
 The follow-up patch is based on main `b4aeb9d2821f64ab2d312b53616b8bb7e3511659`,

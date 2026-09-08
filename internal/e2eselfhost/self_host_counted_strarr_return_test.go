@@ -2,6 +2,7 @@ package e2eselfhost
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -26,6 +27,7 @@ function main(): i32 {
 		t.Fatal(err)
 	}
 	bin := buildSelfHostBin(t, gcc, dir, "proof.fern", "proof")
+	native := buildLangBinForInterp(t)
 	cases := []struct {
 		name, source string
 		owned        bool
@@ -40,6 +42,10 @@ function main(): i32 {
 		{"unowned-string", `function build(p: string): string[] { var out: string[] = []; out = out.append(p); return out; }`, false},
 		{"parameter-return", `function build(p: string[]): string[] { return p; }`, false},
 		{"owned-parameter-return", `function build(own p: string[]): string[] { return p; }`, false},
+		{"tuple-fresh-destructure", `function w(a: string): string { return a + "!"; } function build(): string[] { var p: (i32, string[]) = (0, [w("x"), w("y")]); var (a, out) = p; return out; }`, false},
+		{"tuple-borrowed-destructure", `function build(p: (i32, string[])): string[] { var (a, out) = p; return out; }`, false},
+		{"foreach-bound-return", `function build(p: string[][]): string[] { for out in p { return out; } return []; }`, false},
+		{"match-bound-return", `function build(p: Option[string[]]): string[] { match (p) { Some(out) => { return out; }, None => { return []; } } }`, false},
 		{"local-array-element", `function build(): string[] { var p: string[] = ["aa" + "!"]; var out: string[] = []; out = out.append(p[0]); return out; }`, false},
 		{"mutable-array-alias", `function build(p: string[], q: string[]): string[] { var a = p; a = q; return [a[0]]; }`, false},
 		{"mutable-element-alias", `function build(p: string[], x: string): string[] { var a = p[0]; a = x; return [a]; }`, false},
@@ -55,6 +61,15 @@ function main(): i32 {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			// Pin source validity independently of the proof's parser-only
+			// entry point, so malformed binding fixtures cannot pass by refusal.
+			path := filepath.Join(t.TempDir(), "proof-input.fern")
+			if err := os.WriteFile(path, []byte(tc.source), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if out, err := exec.Command(native, "-check", path).CombinedOutput(); err != nil {
+				t.Fatalf("native source validity: %v\n%s", err, out)
+			}
 			out := runCapture(t, gcc, runner, bin, []byte(tc.source))
 			got := false
 			for _, row := range strings.Fields(string(out)) {

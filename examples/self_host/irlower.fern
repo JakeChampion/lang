@@ -41883,7 +41883,12 @@ function counted_strarr_returns_ok(stmts: ast.Stmt[], fn: parser.FuncDecl, sourc
             ast.StmtReturn(r) => {
                 if (!counted_strarr_value(r.value, fn, sources, owned, str_fresh)) {
                     var nm: string = ident_name_or_empty(r.value);
-                    if (nm.len() == 0 || fn_has_param_named(fn, nm) || local_decl_count(fn.body, nm) != 1 || !counted_strarr_builder_ok(fn.body, nm, fn, sources, owned, str_fresh)) {
+                    // A unique binder is not an initializer witness: tuple,
+                    // foreach and match binders are counted too. Their child
+                    // ownership is not proved by the ordinary builder walk.
+                    // cap_local_init returns Unknown unless a matching var
+                    // actually supplies an initializer we can validate.
+                    if (nm.len() == 0 || fn_has_param_named(fn, nm) || local_decl_count(fn.body, nm) != 1 || !counted_strarr_value(cap_local_init(fn.body, nm), fn, sources, owned, str_fresh) || !counted_strarr_builder_ok(fn.body, nm, fn, sources, owned, str_fresh)) {
                         return false;
                     }
                 }
