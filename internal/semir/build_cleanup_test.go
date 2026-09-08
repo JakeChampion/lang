@@ -2,6 +2,7 @@ package semir
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -75,6 +76,98 @@ function inspect(reader: string[], own taken: string[]): void { var value = read
   return "last";
 }
 function check(n: i32): void { if (n != 2i32) { var empty: i32[] = []; var bad = empty[0]; } }`, "last\n"},
+	{"cleanup-cross-action-scalar", `function pilot(): string {
+  work(true); work(false); return "scalar joins";
+}
+function work(enabled: boolean): void {
+  var items: i32[] = [2]; var carrier = 7i32;
+  defer check(items[0], carrier, enabled);
+  defer { if (enabled) { items = [9] } else { items = [4] } }
+  carrier = 11i32;
+}
+function check(n: i32, carrier: i32, enabled: boolean): void {
+  if (carrier != 11i32 || (enabled && n != 9i32) || (!enabled && n != 4i32)) {
+    var empty: i32[] = []; var bad = empty[0];
+  }
+}`, "scalar joins\n"},
+	{"cleanup-cross-action-reference", `function pilot(): string {
+  work([[11]], true); work([[11]], false); return "reference joins";
+}
+function work(own seed: i32[][], enabled: boolean): void {
+  var reader = seed[0]; var items: i32[] = [2];
+  defer check(items[0], reader, seed, enabled);
+  defer { if (enabled) { items = [9] } else { items = [4] } }
+}
+function check(n: i32, reader: i32[], own taken: i32[][], enabled: boolean): void {
+  if (reader[0] != 11i32 || taken[0][0] != 11i32 || (enabled && n != 9i32) || (!enabled && n != 4i32)) {
+    var empty: i32[] = []; var bad = empty[0];
+  }
+}`, "reference joins\n"},
+	{"cleanup-cross-action-multiple-joins", `function pilot(): string {
+  work(true); work(false); return "successive joins";
+}
+function work(enabled: boolean): void {
+  var items: i32[] = [2]; var other: i32[] = [3]; var reader: i32[] = [11];
+  defer check(items[0], other[0], reader[0], enabled);
+  defer { if (enabled) { items = [9] } else { items = [4] } }
+  defer { if (enabled) { other = [6] } else { other = [8] } }
+}
+function check(n: i32, m: i32, reader: i32, enabled: boolean): void {
+  if (reader != 11i32 || (enabled && (n != 9i32 || m != 6i32)) || (!enabled && (n != 4i32 || m != 8i32))) {
+    var empty: i32[] = []; var bad = empty[0];
+  }
+}`, "successive joins\n"},
+}
+
+// Pin the precondition for the cross-action readBinding path: the first
+// registered action reads a binding none of the later branch actions capture.
+// Replaying it cannot use those actions' published capture outputs directly.
+func TestCleanupCrossActionReadsThroughClonedJoins(t *testing.T) {
+	for _, tc := range cleanupActionCases {
+		if !strings.HasPrefix(tc.name, "cleanup-cross-action-") {
+			continue
+		}
+		t.Run(tc.name, func(t *testing.T) {
+			prog, info := checkedProgram(t, tc.source)
+			p, err := BuildProgram(prog, info)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var work *Func
+			for _, f := range p.funcs {
+				if f.graph.Name == "work" {
+					work = f
+				}
+			}
+			if work == nil || len(work.cleanups) < 2 {
+				t.Fatal("missing cross-action function")
+			}
+			var untouched BindingID
+			for i, binding := range work.bindings {
+				if binding.name == "carrier" || binding.name == "reader" {
+					untouched = BindingID(i + 1)
+				}
+			}
+			if untouched == 0 || !slices.Contains(work.cleanups[0].captures, untouched) {
+				t.Fatal("checking action must capture the untouched binding")
+			}
+			for _, r := range work.cleanups[1:] {
+				if slices.Contains(r.captures, untouched) {
+					t.Fatal("branch action must not forward the untouched binding")
+				}
+				joined := false
+				for _, block := range r.body.graph.Blocks {
+					joined = joined || len(block.Preds) > 1
+				}
+				if !joined {
+					t.Fatal("branch action must retain a control-flow join")
+				}
+			}
+			if _, err := LowerARM64SSA(p); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
 }
 
 func TestBuildCleanupActions(t *testing.T) {
