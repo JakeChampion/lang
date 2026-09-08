@@ -1,9 +1,61 @@
 # Typed cleanup regions
 
 Design prerequisite for the [typed ownership migration](TYPED-OWNERSHIP-IR-MIGRATION.md).
-This document specifies obligations for its next implementation slice, not an
-implemented cleanup pass. The typed-SSA pilot still rejects `defer` explicitly.
-Native and self-host production still use their existing cleanup paths.
+This document specifies the full cleanup migration contract. The typed-SSA
+pilot now implements a bounded function-exit action slice described below, not
+the complete registration/availability model. Native and self-host production
+still use their existing cleanup paths.
+
+## Executable action slice
+
+Plain function-exit actions with a registration that dominates each replay
+now build once into a private typed SSA region. Capture parameters and yield
+fields address enclosing BindingIDs rather than storing registration-time
+values. Expansion reads the current bindings immediately before each action,
+copies its typed CFG, and publishes its binding outputs for the next action.
+The tuple yield is only a region interface: expansion removes it before
+ordinary ownership planning, so it creates no runtime environment or tuple.
+Saved return values remain ordinary live SSA values across cleanup.
+
+The verifier checks action types, capture identities/contracts, final yields,
+registration dominance, exactly-once replay on returns and LIFO ordering. Region
+branches and local loops reuse the existing source producer; source locations,
+call identities and ownership operands survive expansion. No AST action is
+retained for replay or ownership analysis. Raw and optimized ARM64 execution
+tests include late replacement, action-to-action writes, simultaneous binding
+outputs, returned projections, own/borrow aliases and allocator balance.
+
+Conditional availability that cannot be proven by dominance, registration in
+loop bodies or conditions, error-only actions, and nonlocal control/nested
+registration inside actions remain explicit unsupported contracts. The place
+model below is still required for the broader migration. This slice does not
+activate the seven conditional/iteration conformance cases as typed-pilot tests
+or establish self-host parity or production cutover.
+
+## Action-slice validation, 2026-09-08
+
+Fourteen source cases pass typed ownership planning and raw/optimized ARM64
+execution with balanced allocation/free counts. Fifteen malformed-region cases
+exercise independent verification. The actual CLI regression keeps a returned
+array alive across cleanup replacement and subsequent allocator churn. Full
+semantic IR, source-lint and CLI packages, targeted race tests and `make lint-all`
+pass. This is not a full integration or self-host parity result.
+
+On native Darwin ARM64, Apple M3 Pro, five 100 ms samples of
+`BenchmarkTypedCleanupActions` measured 54,799 to 58,737 ns/op for one action,
+232,653 to 247,718 ns/op for eight, and 2,461,662 to 3,222,720 ns/op for 64.
+Allocation counts were 950, 3,048 and 16,804 to 16,805 per compilation. The
+benchmark covers checked-source production through verified physical lowering,
+excluding frontend checking and machine optimization/emission. Only action count
+changes. These are initial scaling measurements, not a speedup claim.
+
+With `go build -trimpath -buildvcs=false` on the same host, the Go compiler
+grows from 28,780,642 to 28,798,530 bytes compared with the contract-only parent.
+The five newly linked action construction, expansion and verification functions
+account for 13,024 symbol bytes of the 17,888-byte total growth; existing caller
+changes and metadata also contribute. The new code implements the typed cleanup
+contract. No compiler-size baseline is changed. Region interfaces introduce no
+runtime environment allocation, independently checked in the executable graph.
 
 ## Observable contract
 

@@ -53,6 +53,7 @@ type Func struct {
 	effectPositions map[*ssa.Op]ast.Position
 	modes           []ParamMode
 	bindings        []binding
+	cleanups        []*cleanupRegion
 }
 
 func newFunc(name string, result ast.Type) *Func {

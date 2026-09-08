@@ -6,11 +6,16 @@ SSA cutover and typed-IR work. Initial integration base: `02ea66e91`.
 
 ## Current implementation checkpoint
 
-The next cleanup slice has a separate [typed region contract](TYPED-CLEANUP-REGIONS.md)
-and shared `defer_binding_*` conformance cases. They pin conditional binding
-availability, late reads, cleanup-to-cleanup writes and return snapshots before
-registration is activated in the typed pilot. They do not implement cleanup or
-retire either production AST path.
+Plain function-exit cleanup actions with dominating registrations now compile
+once to typed action regions. Capture interfaces preserve enclosing BindingIDs;
+expansion reads current values at replay, threads writes between LIFO actions
+and preserves saved return values. Protocol tuple yields are removed before
+ordinary ownership planning, without a runtime environment allocation. The
+verifier checks types, capture contracts, registration dominance and exactly-once
+ordered replay. Conditional/iteration registration and error-only cleanup remain
+unsupported pending the [full region contract](TYPED-CLEANUP-REGIONS.md). Its
+shared `defer_binding_*` conformance cases pin the broader contract, not completed
+pilot coverage. Neither native nor self-host production AST cleanup is retired.
 
 Structured effect contexts now reuse typed block, conditional and ordered
 match control flow. They join live control edges and binding state without a
@@ -19,7 +24,8 @@ conditions, scrutinees and call operands remain value contexts. Discarded
 aggregate producers still pass through verified ownership and reclamation;
 no AST last-use rule or fake void/never value is introduced. Value joins remain
 strict about one complete typed value per live edge. This covers structured
-actions and void-return expressions but does not yet schedule deferred actions.
+actions and void-return expressions, and supplies the action bodies for the
+bounded function-exit cleanup slice above.
 
 Direct void calls now have explicit effect-only semantic operations: the same
 closed-module function identity and typed own/borrow operands as value calls,
@@ -29,8 +35,8 @@ void; liveness, counted-argument supplies, borrow anchors and independent callee
 balance checks still apply. Physical lowering emits resultless ARM64 calls and
 keeps source origins. Statement and void-return call contexts are supported;
 void calls cannot supply semantic values. This enables the call-effect boundary
-needed by cleanup, but defer registration/replay and external/indirect calls
-remain explicit unsupported contracts.
+needed by cleanup. Conditional/iteration registration, error-only cleanup and
+external/indirect calls remain explicit unsupported contracts.
 
 Recursive tuple patterns now lower to explicit typed field projections and
 ordered decisions. Checked BindingTypes/NestedTypes must match the scrutinee's
@@ -103,7 +109,7 @@ Some inferred nested numeric literals still carry polymorphic type metadata
 after the common checker. This pilot rejects that unresolved metadata; explicit
 literal types work. Resolve the frontend's final type facts rather than dropping
 the unresolved marker or reconstructing types from backend layouts. Enum/struct
-matches, closures, cleanup, aggregate mutation and broader types remain unsupported.
+matches, closures, broader cleanup, aggregate mutation and broader types remain unsupported.
 
 The source producer now handles local replacement, while/unconditional loops,
 break/continue (including labels), joins and early returns. A sealed-block
@@ -131,7 +137,7 @@ and unsupported operations before ownership analysis.
 
 The checked-source producer handles local aliases, independent shadowed
 bindings, array and tuple construction, nested tuple destructures and
-conditional early returns. Unsupported aggregate mutation and cleanup
+conditional early returns. Unsupported aggregate mutation and broader cleanup
 effects fail explicitly. Source loops now produce the same verified phis and
 ownership edges as the hand-built loop tests. Struct/enum/callable/view types
 remain outside this initial verified surface, not erased to scalar stand-ins.

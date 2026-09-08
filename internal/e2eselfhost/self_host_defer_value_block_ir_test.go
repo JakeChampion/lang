@@ -4,6 +4,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 )
 
@@ -113,13 +115,87 @@ function main(): i32 {
 }`},
 }
 
+// These cases keep their observable status below 126 for the Wasm runner.
+func deferValueBlockBindingCases(t *testing.T) []struct{ name, src string } {
+	t.Helper()
+	source, err := os.ReadFile(filepath.Join("..", "..", "conformance", "cases", "defer_binding_value_block", "main.fern"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return []struct{ name, src string }{
+		{"captured_array_value_block", string(source)},
+		{"sibling_value_block_bindings", `function main(): i32 {
+    var seen: i32 = 0;
+    loop {
+        var first: i32 = { var items: i32[] = [3]; defer seen = seen * 10 + items[0]; 1 };
+        var second: i32 = { var items: i32[] = [5]; defer seen = seen * 10 + items[0]; 1 };
+        break;
+    }
+    return seen;
+}`},
+		{"shadowed_value_block_binding", `function main(): i32 {
+    var items: i32[] = [1];
+    var seen: i32 = 0;
+    var before: i32 = 0;
+    loop {
+        var value: i32 = { var items: i32[] = [9]; defer seen = items[0]; 1 };
+        before = items[0];
+        break;
+    }
+    return before * 10 + seen;
+}`},
+		{"nested_value_block_bindings", `function main(): i32 {
+    var seen: i32 = 0;
+    loop {
+        var first: i32 = {
+            var items: i32[] = [3];
+            defer seen = seen * 10 + items[0];
+            var second: i32 = { var items: i32[] = [5]; defer seen = seen * 10 + items[0]; 1 };
+            items[0]
+        };
+        break;
+    }
+    return seen;
+}`},
+		{"function_value_block_binding", `function f(a: Cell[i32]): i32 {
+    var value: i32 = { var items: i32[] = [3]; defer a.set(items[0]); 1 };
+    var items: i32[] = [9];
+    return items[0];
+}
+function main(): i32 {
+    var a: Cell[i32] = cell_new(0);
+    var value: i32 = f(a);
+    return value * 10 + a.get();
+}`},
+		{"lambda_registration_namespace", `function f(a: Cell[i32]): i32 {
+    if (true) {
+        var items: i32[] = [3];
+        defer a.set(a.get() * 10 + items[0]);
+        var run = (b: Cell[i32]): i32 => {
+            var items: i32[] = [5];
+            defer b.set(b.get() * 10 + items[0]);
+            return 1;
+        };
+        var value: i32 = { run(a) };
+    }
+    return 1;
+}
+function main(): i32 {
+    var a: Cell[i32] = cell_new(0);
+    var value: i32 = f(a);
+    return a.get();
+}`},
+	}
+}
+
 // TestSelfHostDeferValueBlockIR_X86_64 drives deferValueBlockCases through the
 // self-host x86-64 IR path under FERN_STRICT_IR, so a per-function bail is a
 // hard failure rather than a route that quietly reaches the same answer.
 func TestSelfHostDeferValueBlockIR_X86_64(t *testing.T) {
 	dir, mmc, stdlibRoot, gcc, runner, interpBin := annotateF64ProjDir(t)
 
-	for _, tc := range deferValueBlockCases {
+	cases := slices.Concat(deferValueBlockCases, deferValueBlockBindingCases(t))
+	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			want := interpExit(t, interpBin, tc.src)
 			proj := t.TempDir()
@@ -142,6 +218,70 @@ func TestSelfHostDeferValueBlockIR_X86_64(t *testing.T) {
 			_ = run.Run()
 			if code := run.ProcessState.ExitCode(); code != want {
 				t.Errorf("%s exited %d, want %d (interp oracle)", tc.name, code, want)
+			}
+		})
+	}
+}
+
+func TestSelfHostDeferValueBlockBindingsIRArm64(t *testing.T) {
+	armgcc, runner := arm64Tooling(t)
+	dir, mmc, stdlibRoot, _, compilerRunner, interpBin := annotateF64ProjDir(t)
+	for _, tc := range deferValueBlockBindingCases(t) {
+		t.Run(tc.name, func(t *testing.T) {
+			want := interpExit(t, interpBin, tc.src)
+			mainPath := filepath.Join(t.TempDir(), "main.fern")
+			if err := os.WriteFile(mainPath, []byte(tc.src), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			cmd := runX86_64Bin(compilerRunner, mmc, mainPath, stdlibRoot, "-target", "arm64-linux")
+			cmd.Env = append(os.Environ(), "FERN_STRICT_IR=1")
+			asm, err := cmd.Output()
+			if err != nil {
+				t.Fatalf("strict-IR compile: %v: %s", err, exitStderr(err))
+			}
+			bin := buildBinArm64(t, armgcc, dir, tc.name, string(asm))
+			run := runArm64Bin(runner, bin)
+			_ = run.Run()
+			if run.ProcessState == nil {
+				t.Fatal("program did not start")
+			}
+			if got := run.ProcessState.ExitCode(); got != want {
+				t.Errorf("exit %d, want %d (interp oracle)", got, want)
+			}
+		})
+	}
+}
+
+func TestSelfHostDeferValueBlockBindingsIRWasm(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	gcc, runner := x86_64Tooling(t)
+	dir := t.TempDir()
+	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
+	driver := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
+	interpBin := buildLangBinForInterp(t)
+	for _, tc := range deferValueBlockBindingCases(t) {
+		t.Run(tc.name, func(t *testing.T) {
+			want := interpExit(t, interpBin, tc.src)
+			cmd := runX86_64Bin(runner, driver, "-ir")
+			cmd.Env = append(os.Environ(), "FERN_STRICT_IR=1")
+			cmd.Stdin = strings.NewReader(tc.src)
+			wat, err := cmd.Output()
+			if err != nil {
+				t.Fatalf("strict-IR compile: %v: %s", err, exitStderr(err))
+			}
+			path := filepath.Join(t.TempDir(), "main.wat")
+			if err := os.WriteFile(path, wat, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			run := exec.Command("wasmtime", "run", path)
+			output, _ := run.CombinedOutput()
+			if run.ProcessState == nil {
+				t.Fatalf("program did not start: %s", output)
+			}
+			if got := run.ProcessState.ExitCode(); got != want {
+				t.Errorf("exit %d, want %d (interp oracle): %s", got, want, output)
 			}
 		})
 	}

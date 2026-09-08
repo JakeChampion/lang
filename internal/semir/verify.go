@@ -147,7 +147,10 @@ func Verify(f *Func) error {
 			return fail("binding %q: %v", b.name, err)
 		}
 	}
-	return ssa.Verify(g)
+	if err := ssa.Verify(g); err != nil {
+		return err
+	}
+	return verifyCleanups(f)
 }
 
 func verifyOp(f *Func, op *ssa.Op) error {

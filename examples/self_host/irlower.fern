@@ -1491,23 +1491,24 @@ function disarms_defer_flag(v: ast.Expr): boolean {
 function armed_defer_flags(stmts: ast.Stmt[], acc: string[]): string[] {
     var out: string[] = acc;
     for stmt in stmts {
-        match (stmt) {
-            ast.StmtAssign(a) => {
-                if (is_defer_flag_name(a.target) && !disarms_defer_flag(a.value) && util.index_of_str(out, a.target) < 0) { out = out.append(a.target); }
-            },
-            ast.StmtIf(f) => {
-                out = armed_defer_flags(f.then_body, out);
-                out = armed_defer_flags(f.else_body, out);
-            },
-            ast.StmtWhile(w) => { out = armed_defer_flags(w.body, out); },
-            ast.StmtFor(fr) => { out = armed_defer_flags(fr.body, out); },
-            ast.StmtMatch(m) => {
-                for arm in m.arms { out = armed_defer_flags(arm.body, out); }
-            },
-            _ => {},
-        }
+        out = astwalk.fold_stmt_nodes(stmt, out, armed_defer_flag_at, no_expr_strs, defer_scope_descend);
     }
     return out;
+}
+
+function armed_defer_flag_at(stmt: ast.Stmt, acc: string[]): string[] {
+    if let ast.StmtAssign(a) = stmt {
+        if (is_defer_flag_name(a.target) && !disarms_defer_flag(a.value) && util.index_of_str(acc, a.target) < 0) { return acc.append(a.target); }
+    }
+    return acc;
+}
+
+// Value blocks are inlined into this function, so their registrations belong
+// to its enclosing function/iteration scope. A real lambda owns a separate
+// registration namespace and must not donate flags or binding aliases here.
+function defer_scope_descend(e: ast.Expr): boolean {
+    if let ast.ExprLambda(lm) = e { return parser.is_value_block_origin(lm.origin); }
+    return true;
 }
 
 // retire_locals_for_scope records what the defers in `scope` will need, then
@@ -17437,8 +17438,16 @@ function lower_iife(c: ast.ExprCall, lam: ast.ExprLambda, s: LowerState, force_i
     // return/break/continue escapes to the function/loop, exactly like the
     // native *ast.BlockExpr arm) and only the FINAL statement becomes the
     // block's value. See lower_value_block.
-    if (lam.body.len() != 1) { return lower_value_block(lam.body, s, force_i64); }
-    return lower_value_stmt(lam.body[0], s, force_i64);
+    var lowered: LowerState = s;
+    if (lam.body.len() != 1) { lowered = lower_value_block(lam.body, s, force_i64); }
+    else { lowered = lower_value_stmt(lam.body[0], s, force_i64); }
+    // The result is already loaded, but the inlined block's declarations must
+    // leave name resolution here, before a sibling can shadow them. Record
+    // deferred binding aliases first; retirement preserves slots and types.
+    if (parser.is_value_block_origin(lam.origin)) {
+        return lowered.retire_locals_for_scope(s.locals.len(), lam.body);
+    }
+    return lowered;
 }
 
 // lower_value_stmt lowers the ONE statement that produces a value-position
@@ -22529,6 +22538,13 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
     // (`var s: string = id("hi")`), where the init expr isn't structurally
     // a string but the checker has proven the slot's type.
     var is_str: boolean = expr_is_str(v.init, se) || v.type_name == "string";
+    // A value block has already retired its lexical names, but its result
+    // load still identifies a typed slot. Preserve that type at the binding
+    // boundary instead of resolving an out-of-scope match payload name again.
+    if (se.ops.len() > s.ops.len()) {
+        var result_op: ir.Op = se.ops[se.ops.len() - 1];
+        if (result_op.kind_tag == 18 && se.is_str_slot(result_op.i32_imm)) { is_str = true; }
+    }
     // Struct tracking: `var p = P { .. }` (or `= other_struct_local`, or a
     // `var p: P = …` annotation) records the slot's struct type so `p.x`
     // resolves the field index. Leak-only scalar structs — no RC.
