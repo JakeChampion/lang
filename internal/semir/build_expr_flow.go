@@ -104,6 +104,10 @@ func (b *builder) scalarUnary(n *ast.Unary) (ssa.Value, error) {
 }
 
 func (b *builder) branchValue(cond ssa.Value, pos ast.Position, yes, no func() (exprResult, error)) (ssa.Value, error) {
+	return b.branchFlow(cond, pos, true, yes, no)
+}
+
+func (b *builder) branchFlow(cond ssa.Value, pos ast.Position, wantValue bool, yes, no func() (exprResult, error)) (ssa.Value, error) {
 	if !ast.Equal(b.fn.values[cond.ID].typ, ast.BoolType{}) {
 		return ssa.Value{}, b.errorAt(pos, "value branch condition is not boolean")
 	}
@@ -125,7 +129,13 @@ func (b *builder) branchValue(cond ssa.Value, pos ast.Position, yes, no func() (
 		if result.ended {
 			continue
 		}
-		ends, values = append(ends, b.current), append(values, result.value)
+		ends = append(ends, b.current)
+		if wantValue {
+			values = append(values, result.value)
+		}
+	}
+	if !wantValue {
+		return ssa.Value{}, b.joinControl(ends)
 	}
 	return b.joinValues(ends, values, pos)
 }
@@ -133,27 +143,42 @@ func (b *builder) branchValue(cond ssa.Value, pos ast.Position, yes, no func() (
 // joinValues is shared by source constructs that select a value. Only live
 // edges participate; the unit planner secures reference-bearing phi inputs.
 func (b *builder) joinValues(ends []*ssa.Block, values []ssa.Value, pos ast.Position) (ssa.Value, error) {
+	if len(ends) != len(values) {
+		return ssa.Value{}, b.errorAt(pos, "value join requires one value per live edge")
+	}
 	var typ ast.Type
 	for _, value := range values {
+		if !value.IsValid() {
+			return ssa.Value{}, b.errorAt(pos, "value join cannot use an effect-only result")
+		}
 		armType := b.fn.values[value.ID].typ
 		if typ != nil && !ast.Equal(typ, armType) {
 			return ssa.Value{}, b.errorAt(pos, "value join needs an explicit checked coercion contract")
 		}
 		typ = armType
 	}
-	b.current = nil
-	if len(ends) == 0 {
-		return ssa.Value{}, nil
-	}
-	b.current = b.fn.graph.NewBlock()
-	for _, end := range ends {
-		b.fn.graph.SetBr(end, b.current)
-	}
-	if err := b.seal(b.current); err != nil {
+	if err := b.joinControl(ends); err != nil {
 		return ssa.Value{}, err
+	}
+	if b.current == nil {
+		return ssa.Value{}, nil
 	}
 	if len(values) == 1 {
 		return values[0], nil
 	}
 	return b.fn.addPhi(b.current, typ, pos, values...), nil
+}
+
+// joinControl merges live paths and their binding identities without creating
+// a result value. Value-producing constructs add their typed result afterwards.
+func (b *builder) joinControl(ends []*ssa.Block) error {
+	b.current = nil
+	if len(ends) == 0 {
+		return nil
+	}
+	b.current = b.fn.graph.NewBlock()
+	for _, end := range ends {
+		b.fn.graph.SetBr(end, b.current)
+	}
+	return b.seal(b.current)
 }

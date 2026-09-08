@@ -6,6 +6,15 @@ SSA cutover and typed-IR work. Initial integration base: `02ea66e91`.
 
 ## Current implementation checkpoint
 
+Structured effect contexts now reuse typed block, conditional and ordered
+match control flow. They join live control edges and binding state without a
+result phi, whether the arms yield void or discard an ordinary value. Guards,
+conditions, scrutinees and call operands remain value contexts. Discarded
+aggregate producers still pass through verified ownership and reclamation;
+no AST last-use rule or fake void/never value is introduced. Value joins remain
+strict about one complete typed value per live edge. This covers structured
+actions and void-return expressions but does not yet schedule deferred actions.
+
 Direct void calls now have explicit effect-only semantic operations: the same
 closed-module function identity and typed own/borrow operands as value calls,
 but no result value. Source metadata is retained separately and verified for
@@ -14,8 +23,8 @@ void; liveness, counted-argument supplies, borrow anchors and independent callee
 balance checks still apply. Physical lowering emits resultless ARM64 calls and
 keeps source origins. Statement and void-return call contexts are supported;
 void calls cannot supply semantic values. This enables the call-effect boundary
-needed by cleanup, but defer registration/replay, general void control-value
-expressions and external/indirect calls remain explicit unsupported contracts.
+needed by cleanup, but defer registration/replay and external/indirect calls
+remain explicit unsupported contracts.
 
 Recursive tuple patterns now lower to explicit typed field projections and
 ordered decisions. Checked BindingTypes/NestedTypes must match the scrutinee's

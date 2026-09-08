@@ -6,15 +6,45 @@ import (
 	"github.com/jakechampion/lang/internal/ssa"
 )
 
-// Effect contexts may discard a value or execute a resultless direct call.
-// Value contexts still go through expr and must produce a value or terminate.
+// Effect contexts join control and binding state, not a discarded result.
+// Conditions, guards and arguments remain value contexts through expr.
 func (b *builder) effectExpr(expr ast.Expr) error {
-	if call, ok := expr.(*ast.Call); ok {
-		_, err := b.call(call, true)
+	switch n := expr.(type) {
+	case *ast.Call:
+		_, err := b.call(n, true)
+		return err
+	case *ast.BlockExpr:
+		b.pushScope()
+		defer b.popScope()
+		for _, stmt := range n.Stmts {
+			if err := b.stmt(stmt); err != nil {
+				return err
+			}
+		}
+		if b.current == nil || n.Tail == nil {
+			return nil
+		}
+		return b.effectExpr(n.Tail)
+	case *ast.IfExpr:
+		cond, err := b.expr(n.Cond)
+		if err != nil || cond.ended {
+			return err
+		}
+		_, err = b.branchFlow(cond.value, n.P, false,
+			func() (exprResult, error) { return b.effectResult(n.Then) },
+			func() (exprResult, error) { return b.effectResult(n.Else) })
+		return err
+	case *ast.MatchExpr:
+		_, err := b.matchFlow(n, false)
 		return err
 	}
 	_, err := b.expr(expr)
 	return err
+}
+
+func (b *builder) effectResult(expr ast.Expr) (exprResult, error) {
+	err := b.effectExpr(expr)
+	return exprResult{ended: b.current == nil}, err
 }
 
 func (b *builder) call(n *ast.Call, allowVoid bool) (ssa.Value, error) {

@@ -10,6 +10,10 @@ import (
 // matchValue produces ordered decisions directly from the checked match. It
 // never desugars arms into parser temporaries or chooses ownership from syntax.
 func (b *builder) matchValue(n *ast.MatchExpr) (ssa.Value, error) {
+	return b.matchFlow(n, true)
+}
+
+func (b *builder) matchFlow(n *ast.MatchExpr, wantValue bool) (ssa.Value, error) {
 	tag, err := b.expr(n.Tag)
 	if err != nil || tag.ended {
 		return ssa.Value{}, err
@@ -21,6 +25,10 @@ func (b *builder) matchValue(n *ast.MatchExpr) (ssa.Value, error) {
 	}
 	var ends []*ssa.Block
 	var values []ssa.Value
+	emit := b.expr
+	if !wantValue {
+		emit = b.effectResult
+	}
 	for i, arm := range n.Arms {
 		var next *ssa.Block
 		if refutable[i] {
@@ -35,12 +43,15 @@ func (b *builder) matchValue(n *ast.MatchExpr) (ssa.Value, error) {
 		if err != nil {
 			return ssa.Value{}, err
 		}
-		result, err := b.matchArmValue(arm, tag.value, next, bindings)
+		result, err := b.matchArm(arm, tag.value, next, bindings, emit)
 		if err != nil {
 			return ssa.Value{}, err
 		}
 		if !result.ended {
-			ends, values = append(ends, b.current), append(values, result.value)
+			ends = append(ends, b.current)
+			if wantValue {
+				values = append(values, result.value)
+			}
 		}
 		// Both the pattern-false and guard-false edges are now known. Arm
 		// bindings have left scope, but their outer-binding updates survive
@@ -59,10 +70,13 @@ func (b *builder) matchValue(n *ast.MatchExpr) (ssa.Value, error) {
 			}
 		}
 	}
+	if !wantValue {
+		return ssa.Value{}, b.joinControl(ends)
+	}
 	return b.joinValues(ends, values, n.P)
 }
 
-func (b *builder) matchArmValue(arm *ast.MatchExprArm, tag ssa.Value, next *ssa.Block, bindings []matchBinding) (exprResult, error) {
+func (b *builder) matchArm(arm *ast.MatchExprArm, tag ssa.Value, next *ssa.Block, bindings []matchBinding, emit func(ast.Expr) (exprResult, error)) (exprResult, error) {
 	b.pushScope()
 	defer b.popScope()
 	if arm.AtBinding != "" {
@@ -90,7 +104,7 @@ func (b *builder) matchArmValue(arm *ast.MatchExprArm, tag ssa.Value, next *ssa.
 			return exprResult{}, err
 		}
 	}
-	return b.expr(arm.Body)
+	return emit(arm.Body)
 }
 
 func (b *builder) matchLiteral(literal ast.Expr, tag ssa.Value, next *ssa.Block, pos ast.Position) error {
