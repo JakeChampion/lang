@@ -95,6 +95,25 @@ function consume(own items: i32[][]): void {}
 `)
 }
 
+func TestTypedSSAStructuredEffects(t *testing.T) {
+	bin := buildFernForStdoutTest(t)
+	checkTypedSSAExecutable(t, bin, `
+function main(): i32 {
+  var items = [17i32];
+  (match ((true, [41i32])) {
+    (true, child) => { items = child; inspect(child) },
+    _ => noop()
+  });
+  var i = 0i32;
+  while (i < 64i32) { (if (i == 0i32) { [[7i32]] } else { [[9i32]] }); i = i + 1i32; }
+  action(false); return items[0];
+}
+function action(flag: boolean): void { return if (flag) { noop() } else { var items = [1i32]; inspect(items) }; }
+function inspect(items: i32[]): void { var value = items[0]; }
+function noop(): void {}
+`)
+}
+
 func checkTypedSSAExecutable(t *testing.T, bin, source string) {
 	t.Helper()
 	entry := writeFern(t, source)
