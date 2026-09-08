@@ -27297,10 +27297,12 @@ function emit_strarr_reclaim_store(se: LowerState, slot: i32, alias_inc: boolean
 // lower_strarr_with_store lowers the self-rebind `a = a.with(i, v)` on a
 // reclaimable string[] slot as a REFERENCE-CORRECT in-place element store:
 // retain `v` (unless it is a fresh temp the frame already owns), release the
-// element `i` currently holds unless it IS `v`, then arr_set. Without the
-// release the overwritten box leaks; without the retain a `v` that aliases
-// another element leaves two slots sharing one reference and the exit sweep's
-// element walk frees it twice.
+// reference element `i` currently holds, then arr_set. Even when old == new,
+// the replacement owns its own reference after the retain (or fresh move),
+// so skipping the old release would strand one reference per self-store.
+// Without the release the overwritten box leaks; without the retain a `v`
+// that aliases another element leaves two slots sharing one reference and
+// the exit sweep's element walk frees it twice.
 function lower_strarr_with_store(idx: ast.Expr, val: ast.Expr, slot: i32, s: LowerState): LowerState {
     var iname: string = "$swi" + util.i32_to_string(s.locals.len());
     var st: LowerState = s.add_local(iname);
@@ -27319,19 +27321,12 @@ function lower_strarr_with_store(idx: ast.Expr, val: ast.Expr, slot: i32, s: Low
     if (!val_fresh) { st = st.retain_tos("strarr-with-elem"); }
     st = st.emit(ir.op_store_local(vslot));
 
-    // release the superseded element unless the store is a self-store
-    st = st.emit(ir.op_load_local(slot));
-    st = st.emit(ir.op_load_local(islot));
-    st = st.emit(ir.op_arr_get(32));
-    st = st.emit(ir.op_load_local(vslot));
-    st = st.emit(ir.op_bin("ne", 0, false));
-    st = st.emit(ir.op_if(0));
+    // The replacement reference is secured before the old one is released.
     st = st.emit(ir.op_load_local(slot));
     st = st.emit(ir.op_load_local(islot));
     st = st.emit(ir.op_arr_get(32));
     st = st.emit(ir.op_call_direct(strarr_elem_free_helper(st, slot), 1));
     st = st.emit(ir.op_drop());
-    st = st.emit(ir.op_end());
 
     st = st.emit(ir.op_load_local(slot));
     st = st.emit(ir.op_load_local(islot));
