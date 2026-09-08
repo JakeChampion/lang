@@ -77,6 +77,9 @@ func BuildProgram(prog *ast.Program, info *checker.Info) (*Program, error) {
 		}
 	}
 	for _, f := range p.funcs {
+		if err := expandCleanups(f); err != nil {
+			return nil, err
+		}
 		if err := promoteBindings(f); err != nil {
 			return nil, err
 		}
