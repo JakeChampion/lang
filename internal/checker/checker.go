@@ -15789,6 +15789,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 	case *ast.Unary:
 		c.markLiteralSign(n, false)
 		t := c.checkExpr(n.Operand, s)
+		n.CheckedType = t
 		switch n.Op {
 		case "-":
 			if ft, ok := t.(ast.FloatType); ok {
@@ -15807,6 +15808,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					call := &ast.Call{Callee: &ast.FieldAccess{Target: n.Operand, Field: "neg"}, Args: nil}
 					rtt := c.checkExpr(call, s)
 					n.NegCall = call
+					n.CheckedType = rtt
 					return rtt
 				}
 			}
@@ -15821,6 +15823,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					call := &ast.Call{Callee: &ast.FieldAccess{Target: n.Operand, Field: "neg"}, Args: nil}
 					rtt := c.checkExpr(call, s)
 					n.NegCall = call
+					n.CheckedType = rtt
 					return rtt
 				}
 				c.errfCode(n.P, "E009", "unary `-` is not defined for %s — implement `function (self: %s) neg(): %s` to overload it", t, tn, tn)
@@ -17144,8 +17147,10 @@ func (c *checker) settleIntSigned(e ast.Expr, hn ast.NumberType, negated bool) {
 	case *ast.Unary:
 		if x.Op == "-" {
 			c.settleIntSigned(x.Operand, hn, !negated)
+			x.CheckedType = c.postSettleType(x.Operand, x.CheckedType)
 		} else if x.Op == "+" {
 			c.settleIntSigned(x.Operand, hn, negated)
+			x.CheckedType = c.postSettleType(x.Operand, x.CheckedType)
 		}
 	case *ast.Binary:
 		switch x.Op {
@@ -17323,6 +17328,7 @@ func (c *checker) settleFloat(e ast.Expr, hf ast.FloatType) {
 	case *ast.Unary:
 		if x.Op == "-" || x.Op == "+" {
 			c.settleFloat(x.Operand, hf)
+			x.CheckedType = c.postSettleType(x.Operand, x.CheckedType)
 		}
 	case *ast.Binary:
 		switch x.Op {

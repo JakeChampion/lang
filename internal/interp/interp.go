@@ -4975,6 +4975,9 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 		switch x.Op {
 		case "-":
 			if n, ok := v.(Number); ok {
+				if typ, checked := x.CheckedType.(ast.NumberType); checked {
+					return Number(narrowInt(-int64(n), typ.NormalWidth(), !typ.IsSigned())), nil
+				}
 				return -n, nil
 			}
 			if f, ok := v.(Float); ok {

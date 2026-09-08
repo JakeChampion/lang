@@ -2313,6 +2313,10 @@ type Unary struct {
 	P       Position
 	Op      string
 	Operand Expr
+	// CheckedType is the result's semantic type, retained by the checker and
+	// updated during contextual numeric settlement. Nil on unchecked trees.
+	// Consumers must not reconstruct integer width from a runtime value.
+	CheckedType Type
 	// IsFloat is set by the checker when the operand is a float,
 	// so codegen can pick the f32 form of the operation.
 	IsFloat bool
