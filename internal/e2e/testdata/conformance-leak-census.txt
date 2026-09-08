@@ -201,6 +201,13 @@ csv_fields                                           0
 date_iso                                             0
 default_args                                         0
 default_args_const                                   0
+defer_binding_action_write                           0
+defer_binding_conditional                            0
+defer_binding_early_exit                             0
+defer_binding_labelled_continue                      0
+defer_binding_return_snapshot                        0
+defer_binding_siblings                               0
+defer_binding_value_block                            0
 defer_block_form                                     0
 defer_control_flow                                   0
 defer_in_loop                                        0

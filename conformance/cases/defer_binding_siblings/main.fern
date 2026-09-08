@@ -1,0 +1,25 @@
+import "core/int";
+
+// The two spellings name distinct lexical bindings. LIFO replay reads their
+// final arrays: first 5, then 3, giving 5 * 10 + 3.
+function observe(enabled: boolean): i32 {
+    var seen: i32 = 0;
+    loop {
+        if (enabled) {
+            var items: i32[] = [1];
+            defer seen = seen * 10 + items[0];
+            items = [3];
+        }
+        if (enabled) {
+            var items: i32[] = [2];
+            defer seen = seen * 10 + items[0];
+            items = [5];
+        }
+        break;
+    }
+    return seen;
+}
+
+function main(): i32 {
+    return observe(true) + observe(false);
+}

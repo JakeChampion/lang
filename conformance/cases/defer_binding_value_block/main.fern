@@ -1,0 +1,19 @@
+import "core/int";
+
+// Leaving a value block does not run cleanup. The block-local binding stays
+// available until iteration exit, and replay observes its replacement.
+function main(): i32 {
+    var seen: i32 = 0;
+    var before: i32 = 0;
+    loop {
+        var yielded: i32 = {
+            var items: i32[] = [2];
+            defer seen = items[0];
+            items = [9];
+            1
+        };
+        before = seen + yielded;
+        break;
+    }
+    return before * 10 + seen;
+}

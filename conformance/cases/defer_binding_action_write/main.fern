@@ -1,0 +1,14 @@
+import "core/int";
+
+// The later registration runs first and replaces the array. The earlier
+// action must read that replacement, not a capture made before cleanup.
+function main(): i32 {
+    var seen: i32 = 0;
+    loop {
+        var items: i32[] = [2];
+        defer seen = items[0];
+        defer items = [9];
+        break;
+    }
+    return seen;
+}

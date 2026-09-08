@@ -6,6 +6,12 @@ SSA cutover and typed-IR work. Initial integration base: `02ea66e91`.
 
 ## Current implementation checkpoint
 
+The next cleanup slice has a separate [typed region contract](TYPED-CLEANUP-REGIONS.md)
+and shared `defer_binding_*` conformance cases. They pin conditional binding
+availability, late reads, cleanup-to-cleanup writes and return snapshots before
+registration is activated in the typed pilot. They do not implement cleanup or
+retire either production AST path.
+
 Structured effect contexts now reuse typed block, conditional and ordered
 match control flow. They join live control edges and binding state without a
 result phi, whether the arms yield void or discard an ordinary value. Guards,

@@ -1,0 +1,18 @@
+import "core/int";
+
+// A continue before registration cannot read a nonexistent local or reuse the
+// previous iteration's registration. Only iterations one and three contribute.
+function main(): i32 {
+    var seen: i32 = 0;
+    var i: i32 = 0;
+    while (i < 3) {
+        i = i + 1;
+        if (i == 2) {
+            continue;
+        }
+        var items: i32[] = [0];
+        defer seen = seen * 10 + items[0];
+        items = [i];
+    }
+    return seen;
+}
