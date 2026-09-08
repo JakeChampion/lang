@@ -856,8 +856,12 @@ func (inv invocation) runFollow(t *testing.T, cmd *exec.Cmd) []byte {
 // reports each difference.
 func requireParity(t *testing.T, util string, cases []invocation) {
 	t.Helper()
+	requireParityBinary(t, util, fernBin(t, util), cases)
+}
+
+func requireParityBinary(t *testing.T, util, ours string, cases []invocation) {
+	t.Helper()
 	ref := referenceBin(t, util)
-	ours := fernBin(t, util)
 	_, ver := gnuDir(t)
 	t.Logf("reference: %s (%s)", ref, ver)
 

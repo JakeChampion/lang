@@ -4409,7 +4409,9 @@ func emitAsciiRunHelper(w func(string, ...any)) {
 // single-word rc-headered string (rc=1@base, len@base+4, data@base+8) holding the
 // argv[i] bytes plus a trailing NUL (for C-shaped consumers). The container is a
 // standard rc-headered array (cap/rc/len at data -12/-8/-4) of pointer-stride
-// entries. Everything is bump-allocated inline, so this is a leaf. Registers held
+// entries. Its rc is the static sentinel: the cache owns it for the process
+// lifetime, so a caller's drop must not reclaim it or its strings. Everything
+// is bump-allocated inline. Registers held
 // across the outer loop: x1=&cache, x2=argc, x3=argv, x9=container, x10=i.
 func emitArgsHelper(w func(string, ...any)) {
 	w("")
@@ -4439,8 +4441,8 @@ func emitArgsHelper(w func(string, ...any)) {
 	emitHeapGuardCall(w)
 	w("\tadd x9, x5, #16")     // x9 = container data (entries past the header)
 	w("\tstur w2, [x9, #-12]") // cap = argc
-	w("\tmov w6, #1")
-	w("\tstur w6, [x9, #-8]") // rc = 1
+	w("\tmov w6, #0x80000000")
+	w("\tstur w6, [x9, #-8]") // rc = static sentinel, matching the flat backend
 	w("\tstur w2, [x9, #-4]") // len = argc
 	w("\tmov x10, #0")        // i
 	w(".Lssa_args_loop:")
