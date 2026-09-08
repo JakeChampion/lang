@@ -134,10 +134,10 @@ function replace(own items: string[]): string[] { return items; }
 func TestCalledUnsupportedBodyIsNotSilentlyAccepted(t *testing.T) {
 	prog, info := checkedProgram(t, `
 function pilot(items: string[]): string[] { return replace(items); }
-function replace(items: string[]): string[] { loop { defer cleanup(); break; } return items; }
+function replace(items: string[]): string[] { while ({ defer cleanup(); false }) {} return items; }
 function cleanup(): void {}
 `)
-	if p, err := BuildProgram(prog, info); p != nil || err == nil || !strings.Contains(err.Error(), "iteration cleanup") {
+	if p, err := BuildProgram(prog, info); p != nil || err == nil || !strings.Contains(err.Error(), "loop-condition cleanup") {
 		t.Fatalf("callee without typed body accepted: %v", err)
 	}
 }

@@ -54,6 +54,8 @@ type Func struct {
 	modes           []ParamMode
 	bindings        []binding
 	cleanups        []*cleanupRegion
+	boundaries      []*cleanupBoundary
+	cleanupExits    []*cleanupExit
 }
 
 func newFunc(name string, result ast.Type) *Func {

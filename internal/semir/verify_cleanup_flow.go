@@ -18,21 +18,27 @@ type cleanupFlowState struct {
 	// Function-scope registrations cannot reset after replay. Keeping their
 	// history rejects a cycle that both registers and consumes an action: its
 	// pending stack alone would misleadingly agree on the backedge. Iteration
-	// registration needs explicit boundary/reset events before it is admitted.
+	// history resets only when its verified iteration boundary closes.
 	registered int
+	scope      int
 }
 
-func verifyCleanupFlow(f *Func) error {
+type cleanupScopeState struct {
+	previous            int
+	boundary            *cleanupBoundary
+	pending, registered int
+}
+
+func verifyCleanupFlow(f *Func, boundaries *cleanupBoundaryFlow) error {
 	fail := func(message string) error { return fmt.Errorf("semir %s cleanup: %s", f.graph.Name, message) }
-	registers := make(map[*ssa.Block][]*cleanupRegion)
-	replays := make(map[*ssa.Block]*cleanupRegion)
 	for _, r := range f.cleanups {
-		registers[r.register] = append(registers[r.register], r)
+		point := boundaries.points[r.register]
+		point.registers = append(point.registers, r)
 		for _, block := range r.replays {
-			if replays[block] != nil {
+			if boundaries.points[block].replay != nil {
 				return fail("multiple actions share a replay entry")
 			}
-			replays[block] = r
+			boundaries.points[block].replay = r
 		}
 	}
 	// An indexed arena avoids a heap allocation for each persistent node. Zero
@@ -50,24 +56,56 @@ func verifyCleanupFlow(f *Func) error {
 		return node
 	}
 	states := map[*ssa.Block]cleanupFlowState{f.graph.Entry: {}}
+	frames := make([]cleanupScopeState, 1, len(f.boundaries)+1)
+	scopes := make(map[cleanupScopeState]int, len(f.boundaries))
 	queue := []*ssa.Block{f.graph.Entry}
 	for next := 0; next < len(queue); next++ {
 		block := queue[next]
 		state := states[block]
-		if len(registers[block]) != 0 && replays[block] != nil {
+		point := boundaries.points[block]
+		if scope := point.entry; scope != nil {
+			if frames[state.scope].boundary != scope.parent {
+				return fail("boundary entry has the wrong active parent")
+			}
+			key := cleanupScopeState{state.scope, scope, state.pending, state.registered}
+			id := scopes[key]
+			if id == 0 {
+				id = len(frames)
+				frames = append(frames, key)
+				scopes[key] = id
+			}
+			state.scope = id
+		}
+		if len(point.registers) != 0 && point.replay != nil {
 			return fail("registration and replay require distinct program points")
 		}
-		for _, r := range registers[block] {
+		for _, r := range point.registers {
+			if frames[state.scope].boundary != r.boundary {
+				return fail("registration belongs to a different active boundary")
+			}
 			state.pending = push(state.pending, r)
 			state.registered = push(state.registered, r)
 		}
-		if r := replays[block]; r != nil {
-			if state.pending == 0 || nodes[state.pending].action != r {
+		if r := point.replay; r != nil {
+			if state.pending == 0 || nodes[state.pending].action != r || frames[state.scope].boundary != r.boundary {
 				return fail("replay does not consume the most recent pending registration")
 			}
 			state.pending = nodes[state.pending].previous
 		}
-		if block.Term.Kind == ssa.TermRet && state.pending != 0 {
+		if e := point.start; e != nil && frames[state.scope].boundary != e.from {
+			return fail("cleanup exit starts in a different active boundary")
+		}
+		for _, scope := range point.ends {
+			frame := frames[state.scope]
+			if frame.boundary != scope || state.pending != frame.pending {
+				return fail("boundary closes with pending actions or in the wrong order")
+			}
+			state.registered, state.scope = frame.registered, frame.previous
+		}
+		if e := point.finish; e != nil && frames[state.scope].boundary != e.through.parent {
+			return fail("cleanup exit finishes in a different parent boundary")
+		}
+		if block.Term.Kind == ssa.TermRet && (state.pending != 0 || state.scope != 0 || state.registered != 0) {
 			return fail("return leaves a registered action pending")
 		}
 		for _, succ := range block.Succs() {
@@ -81,14 +119,18 @@ func verifyCleanupFlow(f *Func) error {
 			}
 		}
 	}
-	for block := range registers {
+	for block, point := range boundaries.points {
 		if _, reachable := states[block]; !reachable {
-			return fail("unreachable registration")
-		}
-	}
-	for block := range replays {
-		if _, reachable := states[block]; !reachable {
-			return fail("unreachable replay")
+			switch {
+			case len(point.registers) != 0:
+				return fail("unreachable registration")
+			case point.replay != nil:
+				return fail("unreachable replay")
+			case point.entry != nil:
+				return fail("unreachable boundary entry")
+			case point.start != nil:
+				return fail("unreachable cleanup exit")
+			}
 		}
 	}
 	return nil

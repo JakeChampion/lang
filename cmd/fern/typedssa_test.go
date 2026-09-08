@@ -135,6 +135,24 @@ function sink(own items: i32[][][]): void {}
 `)
 }
 
+func TestTypedSSAIterationCleanup(t *testing.T) {
+	bin := buildFernForStdoutTest(t)
+	checkTypedSSAExecutable(t, bin, `function main(): i32 {
+  var snapshot = produce();
+  var i = 0i32; while (i < 64i32) { churn(); i = i + 1i32; }
+  return snapshot[0];
+}
+function produce(): i32[] {
+  var items = [41i32];
+  outer: loop { defer inspect(items[0]);
+    loop { defer items = [7i32]; return items; }
+  }
+}
+function inspect(n: i32): void { if (n != 7i32) { var bad: i32[] = []; var v = bad[0]; } }
+function churn(): void { loop { defer sink([[9i32]]); break; } }
+function sink(own items: i32[][]): void {}`)
+}
+
 func checkTypedSSAExecutable(t *testing.T, bin, source string) {
 	t.Helper()
 	entry := writeFern(t, source)

@@ -129,7 +129,7 @@ func TestBuildUnsupportedIsExplicit(t *testing.T) {
 		{"call-outside-program", `function pilot(items: string[]): string[] { return pass(items); } function pass(items: string[]): string[] { return items; }`, "callee is outside the typed program"},
 		{"division", `function pilot(n: i32): i32 { return n / 2i32; }`, "unsupported scalar binary contract"},
 		{"wide-arithmetic", `function pilot(n: i64): i64 { return n + 1i64; }`, "scalar binary requires"},
-		{"iteration-defer", `function pilot(): string { loop { defer cleanup(); break; } return "a"; } function cleanup(): void {}`, "iteration cleanup"},
+		{"loop-condition-defer", `function pilot(): string { while ({ defer cleanup(); false }) {} return "a"; } function cleanup(): void {}`, "loop-condition cleanup"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			decl, info := checkedFunc(t, tc.source)
