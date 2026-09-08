@@ -8,6 +8,38 @@ import (
 )
 
 var expressionFlowCases = []struct{ name, source, want string }{
+	{"expression-condition-break-enclosing-loop", `function pilot(): string {
+  var items = ["before"];
+  loop {
+    while (if (true) { items = ["outer break"]; break; } else { false }) {}
+    return "wrong loop";
+  }
+  return items[0];
+}`, "outer break\n"},
+	{"expression-condition-continue-enclosing-loop", `function pilot(): string {
+  var items = ["before"]; var i = 0i32;
+  while (i < 2i32) {
+    while (if (i < 2i32) { i = i + 1i32; items = ["outer continue"]; continue; } else { false }) {}
+    return "wrong loop";
+  }
+  return items[0];
+}`, "outer continue\n"},
+	{"expression-condition-labeled-break", `function pilot(): string {
+  var items = ["before"];
+  outer: loop {
+    inner: while (if (true) { items = ["labeled break"]; break outer; } else { false }) {}
+    return "wrong loop";
+  }
+  return items[0];
+}`, "labeled break\n"},
+	{"expression-condition-labeled-continue", `function pilot(): string {
+  var items = ["before"]; var i = 0i32;
+  outer: while (i < 2i32) {
+    inner: while (if (i < 2i32) { i = i + 1i32; items = ["labeled continue"]; continue outer; } else { false }) {}
+    return "wrong loop";
+  }
+  return items[0];
+}`, "labeled continue\n"},
 	{"expression-and-skips-fault", `function pilot(): string { return choose(false); }
 function choose(flag: boolean): string { if (flag && fault()) { return "wrong"; } return "skipped"; }
 function fault(): boolean { var missing: boolean[] = []; return missing[0]; }`, "skipped\n"},

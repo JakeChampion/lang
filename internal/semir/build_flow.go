@@ -93,8 +93,6 @@ func (b *builder) sourceLoop(cond ast.Expr, body ast.Stmt, label string) error {
 	header, exit := b.fn.graph.NewBlock(), b.fn.graph.NewBlock()
 	b.fn.graph.SetBr(b.current, header)
 	b.current = header
-	b.loops = append(b.loops, sourceLoop{label, header, exit})
-	defer func() { b.loops = b.loops[:len(b.loops)-1] }()
 	if cond != nil {
 		value, err := b.expr(cond)
 		if err != nil {
@@ -110,6 +108,10 @@ func (b *builder) sourceLoop(cond ast.Expr, body ast.Stmt, label string) error {
 			return err
 		}
 	}
+	// The condition is evaluated in the enclosing loop scope, matching the
+	// checker. Only the body introduces this loop's break/continue targets.
+	b.loops = append(b.loops, sourceLoop{label, header, exit})
+	defer func() { b.loops = b.loops[:len(b.loops)-1] }()
 	b.pushScope()
 	err := b.stmt(body)
 	b.popScope()
