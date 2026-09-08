@@ -22538,6 +22538,13 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
     // (`var s: string = id("hi")`), where the init expr isn't structurally
     // a string but the checker has proven the slot's type.
     var is_str: boolean = expr_is_str(v.init, se) || v.type_name == "string";
+    // A value block has already retired its lexical names, but its result
+    // load still identifies a typed slot. Preserve that type at the binding
+    // boundary instead of resolving an out-of-scope match payload name again.
+    if (se.ops.len() > s.ops.len()) {
+        var result_op: ir.Op = se.ops[se.ops.len() - 1];
+        if (result_op.kind_tag == 18 && se.is_str_slot(result_op.i32_imm)) { is_str = true; }
+    }
     // Struct tracking: `var p = P { .. }` (or `= other_struct_local`, or a
     // `var p: P = …` annotation) records the slot's struct type so `p.x`
     // resolves the field index. Leak-only scalar structs — no RC.
