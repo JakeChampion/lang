@@ -88,7 +88,8 @@ func ownershipEffects(f *Func) (*functionEffects, error) {
 			}
 			ref := referenceBearing(f.values[op.Result.ID].typ)
 			switch op.Kind {
-			case ssa.OpConstInt, ssa.OpConstBool:
+			case ssa.OpConstInt, ssa.OpConstBool, ssa.OpAdd, ssa.OpSub, ssa.OpMul,
+				ssa.OpEq, ssa.OpNe, ssa.OpLt, ssa.OpLe, ssa.OpGt, ssa.OpGe:
 				e.result = resultValue
 			case ssa.OpConstString:
 				e.result = resultImmortal

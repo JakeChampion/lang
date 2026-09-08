@@ -212,7 +212,8 @@ func solveReturnFlow(p *Program) (*returnFlow, error) {
 		arg := func(i int) *valueFlow { return state.values[op.Args[i].ID] }
 		changed := false
 		switch op.Kind {
-		case ssa.OpConstInt, ssa.OpConstBool:
+		case ssa.OpConstInt, ssa.OpConstBool, ssa.OpAdd, ssa.OpSub, ssa.OpMul,
+			ssa.OpEq, ssa.OpNe, ssa.OpLt, ssa.OpLe, ssa.OpGt, ssa.OpGe:
 			changed = addSource(dst, source{kind: sourceScalar})
 		case ssa.OpConstString:
 			changed = addSource(dst, source{kind: sourceImmortal})

@@ -10,8 +10,8 @@ import (
 
 // BuildFunc builds the experimental typed phase from a checked declaration,
 // before ir.LowerWith erases surface types and inserts concrete RC operations.
-// The current slice handles immutable local bindings, array/tuple construction
-// and projections, and conditional control flow. Mutation, loops and
+// The current slice handles immutable array/tuple values and projections,
+// local replacement, branches and source loops. Aggregate mutation and
 // cleanup effects remain explicit unsupported errors, not silent fallbacks.
 // Production compilation continues to use its existing route until ownership
 // analysis and verified lowering make this phase an end-to-end replacement.
@@ -24,7 +24,8 @@ func BuildFunc(decl *ast.FuncDecl, info *checker.Info) (*Func, error) {
 }
 
 func buildBody(f *Func, decl *ast.FuncDecl, info *checker.Info) error {
-	b := builder{fn: f, info: info, current: f.graph.NewBlock(), values: make(map[BindingID]ssa.Value)}
+	b := builder{fn: f, info: info, current: f.graph.NewBlock(), flow: make(map[*ssa.Block]*bindingFlow)}
+	b.state(b.current).sealed = true
 	b.pushScope()
 	for i, p := range decl.Params {
 		v := f.addParam(p.Type, f.contract.modes[i], p.NamePos)
@@ -49,7 +50,8 @@ type builder struct {
 	info    *checker.Info
 	current *ssa.Block
 	scopes  []map[string]BindingID
-	values  map[BindingID]ssa.Value
+	flow    map[*ssa.Block]*bindingFlow
+	loops   []sourceLoop
 }
 
 func (b *builder) errorAt(pos ast.Position, message string) error {
@@ -70,17 +72,17 @@ func (b *builder) bind(name string, typ ast.Type, pos ast.Position, value ssa.Va
 	}
 	id := b.fn.addBinding(name, typ, pos)
 	scope[name] = id
-	b.values[id] = value
+	b.state(b.current).values[id] = value
 	return nil
 }
 
-func (b *builder) lookup(name string) (ssa.Value, bool) {
+func (b *builder) lookup(name string) (BindingID, bool) {
 	for i := len(b.scopes) - 1; i >= 0; i-- {
 		if id, ok := b.scopes[i][name]; ok {
-			return b.values[id], true
+			return id, true
 		}
 	}
-	return ssa.Value{}, false
+	return 0, false
 }
 
 func (b *builder) stmt(stmt ast.Stmt) error {
@@ -109,6 +111,17 @@ func (b *builder) stmt(stmt ast.Stmt) error {
 		return b.bind(n.Name, typ, n.P, value)
 	case *ast.Destructure:
 		return b.destructure(n)
+	case *ast.ExprStmt:
+		_, err := b.expr(n.Expr)
+		return err
+	case *ast.While:
+		return b.sourceLoop(n.Cond, n.Body, n.Label)
+	case *ast.Loop:
+		return b.sourceLoop(nil, n.Body, n.Label)
+	case *ast.Break:
+		return b.loopBranch(n.Label, false, n.P)
+	case *ast.Continue:
+		return b.loopBranch(n.Label, true, n.P)
 	case *ast.Return:
 		var value ssa.Value
 		if n.Value != nil {
@@ -131,6 +144,9 @@ func (b *builder) stmt(stmt ast.Stmt) error {
 		ends := make([]*ssa.Block, 0, 2)
 		for i, arm := range []ast.Stmt{n.Then, n.Else} {
 			b.current = []*ssa.Block{yes, no}[i]
+			if err := b.seal(b.current); err != nil {
+				return err
+			}
 			b.pushScope()
 			if arm != nil {
 				err = b.stmt(arm)
@@ -149,6 +165,7 @@ func (b *builder) stmt(stmt ast.Stmt) error {
 			for _, end := range ends {
 				b.fn.graph.SetBr(end, b.current)
 			}
+			return b.seal(b.current)
 		}
 		return nil
 	default:
@@ -197,8 +214,8 @@ func (b *builder) expr(expr ast.Expr) (ssa.Value, error) {
 	}
 	switch n := expr.(type) {
 	case *ast.Ident:
-		if value, ok := b.lookup(n.Name); ok && n.EnumName == "" {
-			return value, nil
+		if id, ok := b.lookup(n.Name); ok && n.EnumName == "" {
+			return b.readBinding(b.current, id)
 		}
 		return ssa.Value{}, b.errorAt(n.P, "unresolved local binding: "+n.Name)
 	case *ast.StringLit:
@@ -217,6 +234,26 @@ func (b *builder) expr(expr ast.Expr) (ssa.Value, error) {
 		if n.Value {
 			b.current.Ops[len(b.current.Ops)-1].Imm = 1
 		}
+		return value, nil
+	case *ast.Binary:
+		return b.scalarBinary(n)
+	case *ast.Assign:
+		ident, ok := n.Target.(*ast.Ident)
+		if !ok {
+			return ssa.Value{}, b.errorAt(n.P, "aggregate mutation is not implemented in the typed pilot")
+		}
+		id, ok := b.lookup(ident.Name)
+		if !ok {
+			return ssa.Value{}, b.errorAt(n.P, "unresolved assignment binding: "+ident.Name)
+		}
+		value, err := b.expr(n.Value)
+		if err != nil {
+			return ssa.Value{}, err
+		}
+		if !ast.Equal(b.fn.bindings[id-1].typ, b.fn.values[value.ID].typ) {
+			return ssa.Value{}, b.errorAt(n.P, "assignment type differs from binding type")
+		}
+		b.state(b.current).values[id] = value
 		return value, nil
 	case *ast.ArrayLit:
 		args, _, err := b.exprs(n.Elems)

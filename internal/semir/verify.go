@@ -142,6 +142,24 @@ func verifyOp(f *Func, op *ssa.Op) error {
 	result := f.values[op.Result.ID].typ
 	arg := func(i int) ast.Type { return f.values[op.Args[i].ID].typ }
 	bad := func() error { return fmt.Errorf("invalid operand/result types or arity") }
+	if scalarOp(op.Kind) {
+		if len(op.Args) != 2 || !ast.Equal(arg(0), arg(1)) {
+			return bad()
+		}
+		i32 := ast.Equal(arg(0), ast.NumberType{})
+		boolean := ast.Equal(arg(0), ast.BoolType{}) && (op.Kind == ssa.OpEq || op.Kind == ssa.OpNe)
+		if !i32 && !boolean {
+			return bad()
+		}
+		var want ast.Type = ast.BoolType{}
+		if scalarArithmetic(op.Kind) {
+			want = arg(0)
+		}
+		if !ast.Equal(result, want) {
+			return bad()
+		}
+		return nil
+	}
 	switch op.Kind {
 	case ssa.OpConstInt:
 		if _, ok := result.(ast.NumberType); !ok || len(op.Args) != 0 {

@@ -14,10 +14,27 @@ import (
 
 func TestTypedSSACLICompilesThroughSemanticOwnership(t *testing.T) {
 	bin := buildFernForStdoutTest(t)
-	entry := writeFern(t, `
+	checkTypedSSAExecutable(t, bin, `
 function main(): i32 { var items = [[17i32, 29i32]]; return get(items[0].append(41i32)); }
 function get(items: i32[]): i32 { return items[2]; }
 `)
+}
+
+func TestTypedSSASourceLoops(t *testing.T) {
+	bin := buildFernForStdoutTest(t)
+	checkTypedSSAExecutable(t, bin, `
+function main(): i32 {
+  var items = [[17i32, 29i32]]; var i = 0i32;
+  while (i < 2i32) { items = items.append([41i32]); i = i + 1i32; }
+  return get(items[2]);
+}
+function get(items: i32[]): i32 { return items[0]; }
+`)
+}
+
+func checkTypedSSAExecutable(t *testing.T, bin, source string) {
+	t.Helper()
+	entry := writeFern(t, source)
 	asm, err := exec.Command(bin, "-backend", "typed-ssa", "-target", "arm64-linux", entry).CombinedOutput()
 	if err != nil {
 		t.Fatalf("typed-ssa compile: %v\n%s", err, asm)
@@ -68,8 +85,8 @@ function get(items: i32[]): i32 { return items[2]; }
 func TestTypedSSACLIRejectsUnsupportedConstructs(t *testing.T) {
 	bin := buildFernForStdoutTest(t)
 	for _, tc := range []struct{ name, source, want string }{
-		{"loop", `function main(): i32 { var x = 0; while (x < 2) { x = x + 1; } return x; }`, "unsupported statement"},
-		{"mutation", `function main(): i32 { var x = 1; x = 2; return x; }`, "unsupported statement"},
+		{"division", `function main(): i32 { var x = 4i32; return x / 2i32; }`, "unsupported scalar binary contract"},
+		{"wide-arithmetic", `function main(): i32 { var x = 1i64; var y = x + 1i64; return 0; }`, "scalar binary requires"},
 		{"unresolved-literal-metadata", `function main(): i32 { var items = [[17, 29]]; return items[0][1]; }`, "unresolved or unsupported semantic type"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

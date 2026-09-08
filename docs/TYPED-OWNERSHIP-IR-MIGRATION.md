@@ -25,8 +25,25 @@ final-string-release limitation or establish native/self-host parity.
 Some inferred nested numeric literals still carry polymorphic type metadata
 after the common checker. This pilot rejects that unresolved metadata; explicit
 literal types work. Resolve the frontend's final type facts rather than dropping
-the unresolved marker or reconstructing types from backend layouts. Source
-loops, mutation, match, closures, cleanup and broader types remain unsupported.
+the unresolved marker or reconstructing types from backend layouts. Match,
+closures, cleanup, aggregate mutation and broader types remain unsupported.
+
+The source producer now handles local replacement, while/unconditional loops,
+break/continue (including labels), joins and early returns. A sealed-block
+binding map creates typed phis on demand; it never keys ownership by source
+names or scans AST syntax for an ownership decision. All bodies are built and
+verified before existing identity-only trivial-phi simplification and dead
+pure-value removal run. Types and source metadata are retained and reverified.
+No low-level width-dependent optimization runs on this semantic graph.
+
+The initial scalar induction surface is wrapping i32 addition, subtraction
+and multiplication, i32 comparisons and boolean equality. Unsupported numeric
+widths, overloaded operators, division and short-circuit expressions are
+explicit errors until their own contracts are implemented. Source/interpreter
+and raw/optimized ARM64 tests exercise repeated append, retained snapshots,
+projected borrows across allocator churn, simultaneous swaps, counted-parameter
+loops, nested labeled exits, early returns and shadowed variables. Allocation
+census and reference-count underflow checks remain part of executable tests.
 
 The `internal/semir` pilot now uses a private existing-SSA graph, with full
 checker types and source positions in phase-local value metadata. New explicit
@@ -37,9 +54,9 @@ and unsupported operations before ownership analysis.
 
 The checked-source producer handles local aliases, independent shadowed
 bindings, array and tuple construction, nested tuple destructures and
-conditional early returns. Unsupported mutation, loops and cleanup
-effects fail explicitly. Hand-built loop phis are verified, but this does not
-mean the source loop producer is implemented. Struct/enum/callable/view types
+conditional early returns. Unsupported aggregate mutation and cleanup
+effects fail explicitly. Source loops now produce the same verified phis and
+ownership edges as the hand-built loop tests. Struct/enum/callable/view types
 remain outside this initial verified surface, not erased to scalar stand-ins.
 
 Direct value-returning calls now use `BuildProgram`: a closed module declares
@@ -98,19 +115,36 @@ closed module, including recursive components, rather than certifying a caller
 from a signature alone. It recomputes semantic lifetime facts, not trusting the
 planner's cached last-use decisions. Corruption tests cover missing supplies,
 duplicate transfers, early/missing drops, false immortality, lost copied-child
-obligations and a callee that fails its counted-return ABI. Hand-built loop swaps
-verify simultaneous phi transfer, but source loop lowering remains unsupported.
+obligations and a callee that fails its counted-return ABI. Both hand-built and
+source loop swaps verify simultaneous phi transfer.
 
 This is opt-in, not the default pipeline. No legacy AST proof has been deleted;
 the new route bypasses those decisions for its verified supported surface.
 Physical RC lowering and executable lifetime checks now cover the pilot's
-supported operations. Remaining work includes source loop/match/cleanup
+supported operations. Remaining work includes match/cleanup and broader source
 coverage, broader runtime contracts, reuse proofs and native/self-host parity.
 Abstract unit verification alone does not prove that a concrete runtime helper
 implements its contract. The executable tests add runtime evidence for their
 specific fixtures, not general runtime or performance acceptance. This useful
 end-to-end connection meets the initial publication gate below; the complete
 migration acceptance gates remain outstanding.
+
+## Source loop validation, 2026-09-08
+
+Complete semantic IR, CLI and source-lint packages, targeted race tests and
+`make lint-all` pass. Native Linux ARM64 execution with required runtime
+tooling passes the expanded raw/optimized lifetime matrix and actual source
+loop CLI executable. Source loop support is a follow-up to the initial pilot;
+it does not establish self-host or other-target parity.
+
+`BenchmarkTypedSourceLoops` measures checked-source production plus verified
+physical lowering, excluding frontend checking, backend optimization and
+assembly. Five 100 ms samples on native Darwin ARM64, Apple M3 Pro, measured
+72,649 to 81,294 ns/op for one loop, 403,784 to 542,983 ns/op for eight, and
+3,174,700 to 3,390,880 ns/op for 64. The corresponding allocation counts are
+1,193, 4,752, and 29,958 to 29,959 per compilation. This is an initial scaling
+baseline for the new phase, not a speedup against the existing compiler or a
+generated-program runtime benchmark. Only the source loop count changes.
 
 ## Initial publication validation, 2026-09-08
 
