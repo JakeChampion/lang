@@ -85,7 +85,7 @@ function choose(flag: boolean): string {
 }
 
 func TestBuildMatchFlow(t *testing.T) {
-	for _, tc := range matchFlowCases {
+	for _, tc := range append(matchFlowCases, tupleMatchCases...) {
 		t.Run(tc.name, func(t *testing.T) {
 			prog, info := checkedProgram(t, tc.source)
 			p, err := BuildProgram(prog, info)
@@ -103,7 +103,7 @@ func TestBuildMatchRejectsUnsupportedPatterns(t *testing.T) {
 	for _, tc := range []struct{ name, source, want string }{
 		{"string", `function pilot(): string { return match ("x") { "x" => "yes", _ => "no" }; }`, "match scrutinee requires"},
 		{"wide", `function pilot(): string { return match (1i64) { 1i64 => "yes", _ => "no" }; }`, "match scrutinee requires"},
-		{"tuple", `function pilot(): string { return match ((1i32, true)) { (a, b) => "yes" }; }`, "match scrutinee requires"},
+		{"tuple-string-literal", `function pilot(): string { return match ((1i32, "x")) { (_, "x") => "yes", _ => "no" }; }`, "tuple literal requires"},
 		{"range", `function pilot(): string { return match (1i32) { 0i32..=2i32 => "yes", _ => "no" }; }`, "unsupported semantic match pattern"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
