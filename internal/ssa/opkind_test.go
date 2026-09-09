@@ -26,7 +26,7 @@ func TestIsCommutative(t *testing.T) {
 // (including Phi, which is structurally complex but
 // side-effect-free) is pure.
 func TestIsPure(t *testing.T) {
-	impure := []OpKind{OpCall, OpLoad, OpStore}
+	impure := []OpKind{OpCall, OpLoad, OpStore, OpBindingInit, OpBindingRead, OpBindingReplace}
 	for _, k := range impure {
 		if IsPure(k) {
 			t.Errorf("IsPure(%v) = true, want false", k)

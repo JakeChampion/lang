@@ -91,8 +91,8 @@ func Verify(f *Func) error {
 				return fail("nil operation or ABI-split semantic value")
 			}
 			if op.Result == (ssa.Value{}) {
-				if op.Kind != ssa.OpSemanticCall {
-					return fail("only void semantic calls may omit their result")
+				if op.Kind != ssa.OpSemanticCall && op.Kind != ssa.OpBindingInit && op.Kind != ssa.OpBindingReplace {
+					return fail("only void semantic calls and binding writes may omit their result")
 				}
 				if _, ok := f.effectPositions[op]; !ok {
 					return fail("effect-only operation has no source metadata")
@@ -150,6 +150,11 @@ func Verify(f *Func) error {
 	if err := ssa.Verify(g); err != nil {
 		return err
 	}
+	if f.unpromotedBindings {
+		if err := verifyBindingInitialization(f); err != nil {
+			return err
+		}
+	}
 	return verifyCleanups(f)
 }
 
@@ -157,6 +162,20 @@ func verifyOp(f *Func, op *ssa.Op) error {
 	result := f.values[op.Result.ID].typ
 	arg := func(i int) ast.Type { return f.values[op.Args[i].ID].typ }
 	bad := func() error { return fmt.Errorf("invalid operand/result types or arity") }
+	if bindingOp(op.Kind) {
+		if !f.unpromotedBindings || op.Imm <= 0 || op.Imm > int64(len(f.bindings)) {
+			return fmt.Errorf("binding operation outside its phase or invalid identity")
+		}
+		typ := f.bindings[op.Imm-1].typ
+		if op.Kind == ssa.OpBindingRead {
+			if len(op.Args) != 0 || !ast.Equal(result, typ) {
+				return bad()
+			}
+		} else if op.Result.IsValid() || len(op.Args) != 1 || !ast.Equal(arg(0), typ) {
+			return bad()
+		}
+		return nil
+	}
 	if scalarOp(op.Kind) {
 		if len(op.Args) != 2 || !ast.Equal(arg(0), arg(1)) {
 			return bad()

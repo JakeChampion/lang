@@ -80,6 +80,9 @@ func ownershipEffects(f *Func) (*functionEffects, error) {
 	if err := Verify(f); err != nil {
 		return nil, err
 	}
+	if f.unpromotedBindings {
+		return nil, fmt.Errorf("semir %s: binding promotion must precede ownership analysis", f.graph.Name)
+	}
 	out := &functionEffects{ops: make(map[*ssa.Op]opEffect)}
 	for _, block := range f.graph.Blocks {
 		for _, op := range block.Ops {

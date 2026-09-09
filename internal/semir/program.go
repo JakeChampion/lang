@@ -44,6 +44,7 @@ func BuildProgram(prog *ast.Program, info *checker.Info) (*Program, error) {
 			return nil, fmt.Errorf("semir %s: missing or inconsistent checked signature", decl.Name)
 		}
 		f := newFunc(decl.Name, sig.Result)
+		f.graph.NewBlock()
 		f.program = p
 		f.contract = funcContract{params: append([]ast.Type(nil), sig.Params...), result: sig.Result}
 		own := info.OwnFuncs[decl.Name]
@@ -65,12 +66,18 @@ func BuildProgram(prog *ast.Program, info *checker.Info) (*Program, error) {
 				}
 			}
 			f.contract.modes = append(f.contract.modes, mode)
+			f.addParam(param.Type, mode, param.NamePos)
 		}
 		p.funcs = append(p.funcs, f)
 		p.byName[decl.Name] = int64(len(p.funcs))
 	}
 	for i, decl := range prog.Funcs {
 		if err := buildBody(p.funcs[i], decl, info); err != nil {
+			return nil, err
+		}
+	}
+	for _, f := range p.funcs {
+		if err := promoteBindings(f); err != nil {
 			return nil, err
 		}
 	}
