@@ -60,13 +60,19 @@ parameter contract after planning. The same corpus runs with bootstrap and
 the actual self-host CLI for ARM64, x86-64 and Wasm. This validates the abstract
 protocol, not physical runtime RC or performance.
 
-Validation on parent `571cbcf22`: `scripts/devbox go test
-./internal/e2eselfhost -run '^TestSelfHostSSA(Units|Semantic)' -count=1 -v`
-passed in 85.004 seconds without skips. This includes the 22 unit-plan cases,
-parameter-mode and unsupported-layout rejection checks, and the existing 23
-semantic cases, under bootstrap and as complete corpora compiled by the
-self-host CLI for each target. `scripts/devbox make lint-all` passed. Full
-current-head CI and review remain required before merging.
+Replay separates supply validation against the original state, moves, result
+creation and drops. Operation, return and edge checks then enforce their own
+obligations without using the planner's last-use decisions. This preserves
+diagnostics and keeps the combined stack within the repository's unchanged
+complexity limit. Type admission accepts only the representations with defined
+counted contracts, without a wildcard source arm.
+
+Validation uses `scripts/devbox go test ./internal/e2eselfhost
+-run '^TestSelfHostSSAUnits' -count=1 -v` for the unit-plan corpus and its
+parameter-mode and unsupported-layout rejection checks. The same corpus is
+compiled by the self-host CLI for each target. Repository checks are
+`scripts/devbox make lint-all` and `scripts/devbox go test ./internal/lint`.
+Full current-head CI and review remain required before merging.
 
 ## Remaining production work
 
@@ -76,4 +82,5 @@ lowering and production typed-value import remain required before deleting
 the replaced AST ownership analyses. A caller's signature alone cannot certify
 the counted-return ABI of its callees; future call support needs closed-module
 verification. No optional compiler route or size baseline change is introduced.
-The two existing enum-return leak failures remain unchanged merge blockers.
+Main's two enum-return leaks were repaired by #8990 with exact heap-balance
+assertions. Those regressions are also checked after integrating the parent.
