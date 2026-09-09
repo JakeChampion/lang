@@ -31712,7 +31712,11 @@ function returned_moved_arr_slots(e: ast.Expr, s: LowerState, acc: i32[]): i32[]
                         match (fa.obj) {
                             ast.ExprIdent(rid) => {
                                 var rs: i32 = s.slot_of(rid.name);
-                                if (s.is_arr_slot(rs) && !slot_list_has(out, rs)) { out = out.append(rs); }
+                                // A bracketed append borrows its receiver and
+                                // returns a separate counted buffer.
+                                var owns_input: boolean = owned_scalar_array_slot(s, rs);
+                                if (s.is_arr_slot(rs) && !slot_list_has(out, rs)
+                                    && (!owns_input || append_copy_recv_slot(fa.obj, s) < 0)) { out = out.append(rs); }
                             },
                             _ => {}
                         }
