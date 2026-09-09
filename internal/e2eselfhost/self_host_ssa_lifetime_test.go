@@ -125,11 +125,12 @@ func selfHostLifetimeFixtures() map[string]lifetimeFixture {
 	}
 	{
 		f := ssa.NewFunc("rebound-value")
-		entry, exit := f.NewBlock(), f.NewBlock()
-		f.AddOp(entry, ssa.OpConstInt) // old value of a subsequently rebound binding
+		entry, oldExit, exit := f.NewBlock(), f.NewBlock(), f.NewBlock()
+		oldValue := f.AddOp(entry, ssa.OpConstInt)
 		actualRoot := f.AddOp(entry, ssa.OpConstInt)
 		child := f.AddOp(entry, ssa.OpAdd, actualRoot, actualRoot)
-		f.SetBr(entry, exit)
+		f.SetBrIf(entry, f.AddOp(entry, ssa.OpConstInt), oldExit, exit)
+		f.SetRet(oldExit, oldValue)
 		f.SetRet(exit, child)
 		out["rebound-value"] = lifetimeFixture{f, map[int32][]ssa.Value{child.ID: {actualRoot}}}
 	}
@@ -259,6 +260,16 @@ func TestSelfHostSSALifetimeInvalidMetadata(t *testing.T) {
 		{"dependency-id", "deps = deps.with(1, [f.nvals]);", "dependency value out of range"},
 		{"entry", "f = ssa.SFunc { ...f, entry: 0 - 1 };", "missing entry block"},
 		{"predecessor", "f = ssa.SFunc { ...f, blocks: f.blocks.with(1, ssa.SBlock { ...f.blocks[1], preds: [] }) };", "missing predecessor edge"},
+		{"terminator", "var b = f.blocks[0]; b = ssa.SBlock { ...b, term: ssa.STerm { ...b.term, kind_tag: 0 } }; f = ssa.SFunc { ...f, blocks: f.blocks.with(0, b) };", "invalid terminator"},
+		{"negative-successor", "var b = f.blocks[0]; b = ssa.SBlock { ...b, term: ssa.STerm { ...b.term, target: 0 - 1 } }; f = ssa.SFunc { ...f, blocks: f.blocks.with(0, b) };", "negative successor"},
+		{"missing-successor", "var b = f.blocks[0]; b = ssa.SBlock { ...b, term: ssa.STerm { ...b.term, target: 999 } }; f = ssa.SFunc { ...f, blocks: f.blocks.with(0, b) };", "missing successor"},
+		{"phi-arity", "var b = f.blocks[0]; var ins = ssa.SInst { ...b.insts[2], kind_tag: 8 }; b = ssa.SBlock { ...b, insts: b.insts.with(2, ins) }; f = ssa.SFunc { ...f, blocks: f.blocks.with(0, b) };", "phi predecessor arity"},
+		{"operand-id", "var b = f.blocks[0]; var ins = ssa.SInst { ...b.insts[2], args: [f.nvals] }; b = ssa.SBlock { ...b, insts: b.insts.with(2, ins) }; f = ssa.SFunc { ...f, blocks: f.blocks.with(0, b) };", "operand value out of range"},
+		{"result-id", "var b = f.blocks[0]; var ins = ssa.SInst { ...b.insts[2], result: f.nvals }; b = ssa.SBlock { ...b, insts: b.insts.with(2, ins) }; f = ssa.SFunc { ...f, blocks: f.blocks.with(0, b) };", "result value out of range"},
+		{"return-id", "var b = f.blocks[2]; b = ssa.SBlock { ...b, term: ssa.STerm { ...b.term, value: f.nvals } }; f = ssa.SFunc { ...f, blocks: f.blocks.with(2, b) };", "return value out of range"},
+		{"condition-id", "var b = f.blocks[0]; b = ssa.SBlock { ...b, term: ssa.STerm { ...b.term, kind_tag: 3, cond: f.nvals } }; f = ssa.SFunc { ...f, blocks: f.blocks.with(0, b) };", "condition value out of range"},
+		{"duplicate-block", "f = ssa.SFunc { ...f, blocks: [f.blocks[0], f.blocks[1], f.blocks[2], f.blocks[0]] };", "duplicate or negative block id"},
+		{"negative-block", "f = ssa.SFunc { ...f, blocks: [ssa.SBlock { ...f.blocks[2], id: 0 - 1 }, f.blocks[0], f.blocks[1], f.blocks[2]] };", "duplicate or negative block id"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			src := strings.Replace(source, "var before =", tc.change+"\nvar before =", 1)
