@@ -44,6 +44,12 @@ func testForinCaptureIR(t *testing.T, target string) {
 		// The x86 output carries the corresponding IR function label.
 		irWitness string
 	}{
+		{"forin-string-byte-capture",
+			`function main(): i32 { var total: i32 = 0; for ch in "é" { var read = (): u8 => ch; total = total + (read() as i32); } if (total == 364) { return 42; } return 1; }`,
+			42, ".Lir_main"},
+		{"forin-generic-callback-capture",
+			`function items(x: i32): i64[] { return [4294967296 + (x as i64)]; } function run[T](xs: T[], callback: (T) => i64[]): i32 { var total: i64 = 0; for x in xs { for y in callback(x) { var read = (): i64 => y; total = total + read(); } } if (total == 8589934634) { return 42; } return 1; } function main(): i32 { return run([20, 22], items); }`,
+			42, ".Lir_main"},
 		{"forin-binder-fn-field",
 			`struct H { f: (i32) => i32, id: i32 } function main(): i32 { var acc: i32 = 0; var xs: i32[] = [1, 2, 3]; for x in xs { var h: H = H { f: (q: i32): i32 => { return q + x; }, id: x }; acc = acc + h.f(1) + h.id; } return acc; }`,
 			15, ".Lir_main"},

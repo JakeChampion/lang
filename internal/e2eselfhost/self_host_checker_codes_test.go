@@ -1988,6 +1988,12 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 	checkerBin, runner, dir := buildCheckerCodesBin(t)
 
 	progs := []struct{ name, src string }{
+		{"loop-string-byte-binding", `function f(text: string): i32 { var out: u8[] = []; for ch in text { out = out.append(ch); } return out.len(); }`},
+		{"loop-string-byte-mismatch", `function f(text: string): i32 { for ch in text { var wrong: string = ch; } return 0; }`},
+		{"loop-str-byte-binding", `function f(text: str): i32 { var out: u8[] = []; for ch in text { out = out.append(ch); } return out.len(); }`},
+		{"loop-generic-callback-result", `function f[T, U](xs: T[], callback: (T) => U[]): U[] { var out: U[] = []; for x in xs { for y in callback(x) { out = out.append(y); } } return out; }`},
+		{"loop-generic-callback-local", `function f[T, U](xs: T[], callback: (T) => U[]): U[] { var out: U[] = []; for x in xs { var ys = callback(x); for y in ys { out = out.append(y); } } return out; }`},
+		{"loop-callback-argument-mismatch", `function f(callback: (string) => i32[]): i32 { for y in callback(1) { var n = y; } return 0; }`},
 		{"loop-map-pair-types", `function f(m: Map[string, i64]): i64 { for (k, v) in m { return k.len() + v; } return 0; }`},
 		{"loop-map-return-mismatch", `function f(m: Map[string, i64]): i64 { for (k, v) in m { return k; } return 0; }`},
 		{"loop-map-argument-mismatch", `function take(s: string): i32 { return s.len(); } function f(m: Map[string, i64]): i32 { for (k, v) in m { return take(v); } return 0; }`},

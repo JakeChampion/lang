@@ -13,6 +13,9 @@ func TestSelfHostLexicalCaptureTypesX86_64(t *testing.T) {
 	cases := []struct{ name, src, want string }{
 		{"wide shadow", `function f(n: i64): i32 { var cb = (): i64 => { var answer = n; var n = 99; return answer; }; return 0; }`, "n:i64;"},
 		{"tuple binder", `function f(): i32 { var (n, other) = (7, 8); var cb = (): i32 => n; return 0; }`, "n:i32;"},
+		{"string loop byte", `function f(text: string): i32 { for ch in text { var cb = (): u8 => ch; } return 0; }`, "ch:u8;"},
+		{"generic callback loop", `function f[T](xs: T[], callback: (T) => i64[]): i32 { for x in xs { for y in callback(x) { var cb = (): i64 => y; } } return 0; }`, "y:i64;"},
+		{"generic callable value loop", `function f[T](xs: T[], callbacks: ((T) => i64[])[]): i32 { for x in xs { for y in callbacks[0](x) { var cb = (): i64 => y; } } return 0; }`, "y:i64;"},
 		{"map pair", `function f(m: Map[string, i64]): i32 { for (k, v) in m { var cb = (): i64 => { k.len(); return v; }; } return 0; }`, "k:string;v:i64;"},
 		{"tuple array loop", `function f(xs: (i64, string)[]): i32 { for (n, text) in xs { var cb = (): i64 => { text.len(); return n; }; } return 0; }`, "text:string;n:i64;"},
 		{"nested tuple loop", `function f(xs: ((i64, string), boolean)[]): i32 { for ((n, text), flag) in xs { var cb = (): i64 => { text.len(); flag; return n; }; } return 0; }`, "text:string;flag:boolean;n:i64;"},

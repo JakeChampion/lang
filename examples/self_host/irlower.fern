@@ -8861,7 +8861,7 @@ pub function lower_range_for(var_name: string, iter: ast.Expr, body: ast.Stmt[],
 // functions miscompile on the native backend — cf. #2720).
 pub function lower_foreach_snapshot(var_name: string, iter: ast.Expr, body: ast.Stmt[], s: LowerState): LowerState {
     var itn: string = "$forit" + util.i32_to_string(s.locals.len());
-    var sv: ast.Stmt = ast.StmtVar { name: itn, type_name: "", init: iter, line: 0, col: 0, is_str: false, fn_ret: "", fn_param_types: "" };
+    var sv: ast.Stmt = ast.StmtVar { name: itn, type_name: stamped_expr_ty(iter), init: iter, line: 0, col: 0, is_str: false, fn_ret: "", fn_param_types: "" };
     var s2: LowerState = lower_stmt(sv, s);
     if (!s2.ok) { return s2; }
     var nf: ast.Stmt = ast.StmtFor { var_name: var_name, iter: ast.ExprIdent { name: itn, line: 0, col: 0, ty: "" }, body: body, label: "", line: 0 };

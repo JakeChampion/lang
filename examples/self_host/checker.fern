@@ -2785,7 +2785,7 @@ function call_through_fn_value(c: ast.ExprCall, s: Scope): typeinfo.Type {
       var i: i32 = 0;
       while (i < c.args.len()) {
         var at: typeinfo.Type = check_expr(c.args[i], s);
-        if (!settles_to(c.args[i], tf.param_types[i], s) && !str_arg_borrow(at, tf.param_types[i]) && !type_assignable(at, tf.param_types[i], s.unions.unions)) {
+        if (!is_unknown(tf.param_types[i]) && !settles_to(c.args[i], tf.param_types[i], s) && !str_arg_borrow(at, tf.param_types[i]) && !type_assignable(at, tf.param_types[i], s.unions.unions)) {
           return t_unknown("arg-type mismatch calling function value");
         }
         i = i + 1;
@@ -3168,7 +3168,7 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
       var ci: i32 = 0;
       while (ci < c.args.len()) {
         var cat: typeinfo.Type = check_expr(c.args[ci], s);
-        if (!settles_to(c.args[ci], tf.param_types[ci], s) && !str_arg_borrow(cat, tf.param_types[ci]) && !type_assignable(cat, tf.param_types[ci], s.unions.unions)) {
+        if (!is_unknown(tf.param_types[ci]) && !settles_to(c.args[ci], tf.param_types[ci], s) && !str_arg_borrow(cat, tf.param_types[ci]) && !type_assignable(cat, tf.param_types[ci], s.unions.unions)) {
           return t_unknown("arg-type mismatch calling closure `" + name + "`");
         }
         ci = ci + 1;
@@ -14873,6 +14873,11 @@ function main(): i32 {
 // must carry Type directly rather than depend on this incomplete projection.
 function type_to_irtag(t: typeinfo.Type): string {
   match (t) {
+    typeinfo.TypeArray(a) => {
+      var elem = type_to_irtag(a.elem);
+      if (elem.len() == 0) { return ""; }
+      return elem + "[]";
+    },
     typeinfo.TypeFunc(_) => { return "fn"; },
     typeinfo.TypeFloat(f) => {
       return float_label(f);
@@ -15171,6 +15176,9 @@ function for_binding(fr: ast.StmtFor, s: Scope): ForBinding {
   }
   var it: typeinfo.Type = check_expr(fr.iter, s);
   match (it) {
+    typeinfo.TypeString(_) => {
+      return ForBinding { scope: bind_for_element(body, fr.var_name, t_u8()), valid: !name_has_comma(fr.var_name) };
+    },
     typeinfo.TypeArray(ta) => {
       return ForBinding { scope: bind_for_element(body, fr.var_name, ta.elem), valid: true };
     },
@@ -15179,10 +15187,11 @@ function for_binding(fr: ast.StmtFor, s: Scope): ForBinding {
       return ForBinding { scope: bind_tuple_destr_names(body, names, t_tuple([tm.key, tm.value])), valid: names.len() == 2 };
     },
     _ => {
-      return ForBinding { scope: body, valid: false };
+      // An invalid iterator still introduces names for diagnostic recovery.
+      return ForBinding { scope: bind_for_element(body, fr.var_name, t_unknown("invalid iterator")), valid: false };
     }
   }
-  return ForBinding { scope: body, valid: false };
+  return ForBinding { scope: bind_for_element(body, fr.var_name, t_unknown("invalid iterator")), valid: false };
 }
 
 function bind_for_element(s: Scope, name: string, ty: typeinfo.Type): Scope {
