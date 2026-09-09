@@ -41,6 +41,7 @@ import "./lexer";
 import "./parser";
 import "./astwalk";
 import "./typeinfo";
+import "./decltypes";
 
 // =================== TYPE SYSTEM ====================
 // Semantic type definitions live in typeinfo, shared with typed consumers.
@@ -15173,8 +15174,9 @@ function annotate_block(body: ast.Stmt[], s: Scope): ast.Stmt[] {
   var out: ast.Stmt[] = [];
   var cur: Scope = s;
   for stmt in body {
-    out = out.append(annotate_stmt(stmt, cur));
-    cur = annotate_advance(stmt, cur);
+    var next: Scope = annotate_advance(stmt, cur);
+    out = out.append(annotate_stmt(stmt, cur, next));
+    cur = next;
   }
   return out;
 }
@@ -15245,9 +15247,15 @@ function annotate_arm_scope(arm: ast.MatchArm, s: Scope, whole: typeinfo.Type): 
   return s;
 }
 
-function annotate_stmt(st: ast.Stmt, s: Scope): ast.Stmt {
+function annotate_stmt(st: ast.Stmt, s: Scope, after: Scope): ast.Stmt {
   match (st) {
     ast.StmtVar(v) => {
+      // Reuse the type resolved for the binding; the initializer sees s.
+      var callable: ast.ParamDecl = decltypes.fn_param_from_type(v.name, after.lookup(v.name));
+      if (callable.type_name == "fn") {
+        return ast.StmtVar { ...v, type_name: "fn", init: annotate_expr(v.init, s),
+          fn_ret: callable.fn_ret, fn_param_types: callable.fn_param_types };
+      }
       return ast.StmtVar { name: v.name, type_name: v.type_name, init: annotate_expr(v.init, s), line: v.line, col: v.col, is_str: v.is_str, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types };
     },
     ast.StmtReturn(r) => {
@@ -15281,7 +15289,7 @@ function annotate_stmt(st: ast.Stmt, s: Scope): ast.Stmt {
       return ast.StmtFor { var_name: fr.var_name, iter: annotate_expr(fr.iter, s), body: annotate_block(fr.body, annotate_for_scope(fr, s)), label: fr.label, line: fr.line };
     },
     ast.StmtDefer(d) => {
-      return ast.StmtDefer { action: annotate_stmt(d.action, s), on_error: d.on_error, line: d.line };
+      return ast.StmtDefer { action: annotate_stmt(d.action, s, after), on_error: d.on_error, line: d.line };
     },
     _ => {
       return st;

@@ -123,7 +123,12 @@ func TestSelfHostClosureCallsClosureX86IR(t *testing.T) {
 
 	for _, tc := range closureCallsClosureIRCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src))
+			compile := runX86_64Bin(runner, driverBin)
+			compile.Stdin = strings.NewReader(tc.src)
+			asm, err := compile.CombinedOutput()
+			if err != nil {
+				t.Fatalf("compile: %v\n%s", err, asm)
+			}
 			if len(asm) == 0 || len(asm) > 18000 {
 				t.Fatalf("asm is %d bytes — expected small IR output; the closure-calls-closure module likely bailed to the AST runtime", len(asm))
 			}
@@ -165,9 +170,9 @@ func TestSelfHostClosureCallsClosureWasmIR(t *testing.T) {
 				cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
 			}
 			cmd.Stdin = bytes.NewReader([]byte(tc.src))
-			wat, err := cmd.Output()
+			wat, err := cmd.CombinedOutput()
 			if err != nil || len(wat) == 0 {
-				t.Fatalf("driver failed for %q: %v", tc.name, err)
+				t.Fatalf("driver failed for %q: %v\n%s", tc.name, err, wat)
 			}
 			watFile := filepath.Join(dir, "ccc_prog.wat")
 			if err := os.WriteFile(watFile, wat, 0o644); err != nil {

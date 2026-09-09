@@ -34,16 +34,9 @@ func stripLinesWithPrefix(s, prefix string) string {
 // byte-for-byte. The interpreter is the oracle, so the gate tracks the
 // examples as they evolve rather than pinning hand-copied output.
 //
-// Native only: the driver reads stdlib module files by host path from
-// argv, so a qemu runner couldn't resolve them (mirrors the local
-// file-loading + stdlib-import tests). The self-host print=println
-// codegen exercised here is covered on arm64 by the CI-gated f64 and
-// asm-emit suites.
+// The configured user-mode runner shares the driver's filesystem paths.
 func TestSelfHostStdTestE2E(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
-	if len(runner) != 0 {
-		t.Skip("file-loading driver test runs only natively (argv paths)")
-	}
 	interpBin := buildLangBinForInterp(t)
 
 	dir := writeSelfHostAsmProject(t) // lexer, parser, asm
@@ -80,7 +73,7 @@ func TestSelfHostStdTestE2E(t *testing.T) {
 			wantExit := ic.ProcessState.ExitCode()
 
 			// Self-host: compile → assemble → link → run.
-			asm, err := exec.Command(mmc, tc.src, stdlibRoot).Output()
+			asm, err := runX86_64Bin(runner, mmc, tc.src, stdlibRoot).Output()
 			if err != nil {
 				// The driver reports the reason (a checker diagnostic, an
 				// unsupported construct) on stderr; without it the failure is
@@ -96,7 +89,7 @@ func TestSelfHostStdTestE2E(t *testing.T) {
 				t.Fatal("self-host emitted 0 bytes")
 			}
 			bin := buildBin(t, gcc, dir, tc.name, string(asm))
-			rc := exec.Command(bin)
+			rc := runX86_64Bin(runner, bin)
 			gotOut, _ := rc.Output()
 			gotExit := rc.ProcessState.ExitCode()
 
@@ -117,8 +110,8 @@ func TestSelfHostStdTestE2E(t *testing.T) {
 }
 
 // TestSelfHostStdTestE2EArm64 is the arm64 mirror of the gate above.
-// Gates the arm64 self-host emitter (`asm_arm64.fern`): mmc is built
-// from `asm_load_run.fern -target arm64-linux` as a native x86 host binary (the
+// Gates the arm64 self-host IR emitter: mmc is built
+// from `asm_load_run.fern -target arm64-linux` as an x86 driver binary (the
 // same cross-compiler-on-host pattern the existing arm64 reader /
 // alloc-trap tests use), then for each case the host mmc emits
 // aarch64 assembly, the aarch64 cross-gcc assembles + links, and
@@ -133,18 +126,11 @@ func TestSelfHostStdTestE2E(t *testing.T) {
 func TestSelfHostStdTestE2EArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
-	if len(x86runner) != 0 {
-		t.Skip("arm64 differential gate needs a native x86 host to run the driver")
-	}
 	interpBin := buildLangBinForInterp(t)
 
 	dir := writeSelfHostAsmProject(t) // lexer, parser, asm
 	copySelfHostDriver(t, dir, "asm_load_run.fern")
-	// Build the arm64 driver as a native x86 host binary — its
-	// OUTPUT is aarch64 asm. Cheaper than running mmc itself under
-	// qemu and avoids any arm64-self-compiling-arm64-self bugs in
-	// the Go arm64 backend that aren't part of what this gate is
-	// trying to validate.
+	// The x86 driver emits ARM64 assembly, independently of the host target.
 	mmc := buildSelfHostBin(t, x86gcc, dir, "asm_load_run.fern", "mmc_arm64")
 
 	stdlibRoot, err := filepath.Abs("../../internal/stdlib")
@@ -167,15 +153,15 @@ func TestSelfHostStdTestE2EArm64(t *testing.T) {
 	cases := selfHostStdTestCases(t, failing)
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			// Oracle: the reference interpreter (native x86 binary).
+			// Oracle: the reference interpreter built for this host.
 			ic := exec.Command(interpBin, "-interp", tc.src)
 			wantOut, _ := ic.Output()
 			wantExit := ic.ProcessState.ExitCode()
 
-			// Self-host: native x86 mmc emits aarch64 asm; gcc-
+			// Self-host: x86 mmc emits aarch64 asm; gcc-
 			// aarch64 assembles + links; qemu-aarch64 runs (or
 			// native, when qemu == "").
-			asm, err := exec.Command(mmc, tc.src, stdlibRoot, "-target", "arm64-linux").Output()
+			asm, err := runX86_64Bin(x86runner, mmc, tc.src, stdlibRoot, "-target", "arm64-linux").Output()
 			if err != nil {
 				// Same reason the x86-64 sibling above prints stderr: without
 				// it the failure is a bare "exit status 1" and the next reader
@@ -190,9 +176,8 @@ func TestSelfHostStdTestE2EArm64(t *testing.T) {
 				t.Fatal("self-host emitted 0 bytes")
 			}
 			bin := buildBinArm64(t, arm64gcc, dir, tc.name, string(asm))
-			gotOut, _ := runArm64Bin(qemu, bin).Output()
 			rc := runArm64Bin(qemu, bin)
-			_ = rc.Run()
+			gotOut, _ := rc.Output()
 			gotExit := rc.ProcessState.ExitCode()
 
 			if gotExit != wantExit {

@@ -32,6 +32,7 @@ import "./irverify";
 import "./parser";
 import "./util";
 import "./astwalk";
+import "./decltypes";
 
 // LocalInfo is the per-local-slot type record — one entry per slot, indexed by
 // slot number. Everything here answers "what does this slot hold?", which is
@@ -698,15 +699,7 @@ pub struct LowerFrame {
     // Seeded once per function because the share is decided mid-expression, with no
     // body in reach.
     spread_sites: string[],
-    // fnval_seed: the fn-VALUE sidecars lower_func's pre-pass computed for
-    // fn-typed top-level LOCALS, as "<binding site>|<dyn>|<sig>|<ret>" rows,
-    // consumed by bind_var_slot and stamped onto the slot it creates. The facts
-    // themselves live on LocalInfo (see its fn_dyn / fn_sig / fn_ret /
-    // fn_opt_ret); this is only the hand-off across the one boundary where a
-    // slot does not exist yet, because the pre-pass runs before any body
-    // lowering. Params need no hand-off — their slots are the frame layout
-    // lower_func just built, so they are stamped into locals0 directly.
-    fnval_seed: string[],
+    type_params: string[],
     // Source facts shared with counted-container return inference. These name
     // only immutable, unshadowed bindings; mutable/ambiguous bindings remain
     // outside the proof. This does not assert uniqueness of their elements.
@@ -1926,36 +1919,9 @@ function callee_fn_sig(c: ast.ExprCall, with_env: boolean): string {
     return "_" + rc;
 }
 
-// fn_params_sidecars joins a fn value's parameter type list into the
-// comma-separated `fn_param_types` spelling plus the `fn_param_dyn` position
-// list, or an EMPTY array when a position is unannotated.
-function fn_params_sidecars(tys: string[]): string[] {
-    var ptys: string = "";
-    var dyns: string = "";
-    var i: i32 = 0;
-    while (i < tys.len()) {
-        if (tys[i].len() == 0) { return []; }
-        if (i > 0) { ptys = ptys + ","; }
-        ptys = ptys + tys[i];
-        if (tys[i].len() > 4 && slice_unchecked(tys[i], 0, 4) == "dyn ") {
-            if (dyns.len() > 0) { dyns = dyns + ","; }
-            dyns = dyns + util.i32_to_string(i);
-        }
-        i = i + 1;
-    }
-    return [ptys, dyns];
-}
-
-// fn_param_decl builds the fn-typed ParamDecl `name` from an already-split
-// signature, or declines (type_name "") when a position or the return is
-// unannotated. The one place the sidecars parse_param records for a fn-typed
-// PARAM are reconstructed, so the three recovery routes below cannot drift.
+// Shared declaration metadata for source signatures and checked binding types.
 function fn_param_decl(name: string, tys: string[], ret: string): ast.ParamDecl {
-    var declined: ast.ParamDecl = ast.ParamDecl { name: name, type_name: "", own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" };
-    if (ret.len() == 0) { return declined; }
-    var sc: string[] = fn_params_sidecars(tys);
-    if (sc.len() == 0) { return declined; }
-    return ast.ParamDecl { name: name, type_name: "fn", own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: ret, fn_param_dyn: sc[1], fn_param_types: sc[0] };
+    return decltypes.fn_param_decl(name, tys, ret);
 }
 
 // fn_param_from_lambda recovers a fn value's signature from the lambda LITERAL
@@ -2063,45 +2029,8 @@ function stamp_fn_local_types_stmts(body: ast.Stmt[], funcs: parser.FuncDecl[]):
     return out;
 }
 
-// fn_param_from_spelling rebuilds the fn-signature sidecars parse_param records
-// for a fn-typed PARAM (fn_param_types / fn_ret / fn_param_dyn) out of a
-// `(P0,P1) => R` type spelling, so a fn-typed LOCAL seeds the same funcref facts
-// a param does. Returns a ParamDecl whose type_name is "" when `sp` is not a fn
-// spelling — a multi-element tuple `(A, B)` has no top-level `=>` and so
-// declines here.
 pub function fn_param_from_spelling(name: string, sp: string): ast.ParamDecl {
-    var declined: ast.ParamDecl = ast.ParamDecl { name: name, type_name: "", own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" };
-    var n: i32 = sp.len();
-    if (n < 5) { return declined; }
-    if (sp[0] != b'(') { return declined; }
-    var depth: i32 = 0;
-    var close: i32 = 0 - 1;
-    var i: i32 = 0;
-    while (i < n && close < 0) {
-        var ch: u8 = sp[i];
-        if (ch == b'(' || ch == b'[') { depth = depth + 1; }
-        else if (ch == b')' || ch == b']') {
-            depth = depth - 1;
-            if (depth == 0 && ch == b')') { close = i; }
-        }
-        i = i + 1;
-    }
-    if (close < 0) { return declined; }
-    var j: i32 = close + 1;
-    while (j < n && sp[j] == b' ') { j = j + 1; }
-    if (j + 1 >= n) { return declined; }
-    if (sp[j] != b'=' || sp[j + 1] != b'>') { return declined; }
-    // Re-split the parameter list without the source's spaces: fn_sig_of splits
-    // it on bare commas and matches each part against a type spelling, so a
-    // leading space would read `(i64, i32)`'s second position as a pointer.
-    var tys: string[] = [];
-    var inner: string = trim_spaces(slice_unchecked(sp, 1, close));
-    if (inner.len() > 0) {
-        var parts: string[] = split_type_list(inner);
-        var k: i32 = 0;
-        while (k < parts.len()) { tys = tys.append(trim_spaces(parts[k])); k = k + 1; }
-    }
-    return fn_param_decl(name, tys, trim_spaces(slice_unchecked(sp, j + 2, n)));
+    return decltypes.fn_param_from_spelling(name, sp);
 }
 
 // bytes_at: `e` carries the bytes of `s` starting at index `at`.
@@ -2487,8 +2416,7 @@ pub function (s: LowerState) mark_closure_opt_ret(i: i32, ty: string): LowerStat
 // lesson (#7358), where converting half of one value tagged twice produced two
 // keys off one string.
 // stamp_fn_value_facts applies BOTH fn-VALUE facts to the slot a `var` bind has
-// just created: the signature sidecars lower_func's pre-pass filed under this
-// binding's site, and the Option/Result return read off the init.
+// just created: the declaration's signature and the Option/Result return.
 //
 // THREE paths in lower_stmt_var bind a fn-typed `var`, and each has to call this:
 // bind_var_slot, lower_stmt_var_closure (a lambda / closure init, which does not
@@ -2499,7 +2427,7 @@ pub function (s: LowerState) mark_closure_opt_ret(i: i32, ty: string): LowerStat
 // had no recorded Option return, so lower_stmt_match could not name the
 // scrutinee's payload type and bailed the whole function.
 pub function (s: LowerState) stamp_fn_value_facts(v: ast.StmtVar, slot: i32, pre: LowerState): LowerState {
-    var out: LowerState = s.stamp_fnval_seed(slot, reclaim_site_key_of(v.name, v.line, v.col));
+    var out: LowerState = s.stamp_fnval_decl(slot, v);
     // An ANNOTATED fn-typed local bound to a named opt-returning fn
     // (`var f: () => Option[i32] = g`), so a later `match (f())` names its
     // scrutinee type instead of bailing (#3457 slice 3). Gated on the fn-type
@@ -2514,23 +2442,11 @@ pub function (s: LowerState) stamp_fn_value_facts(v: ast.StmtVar, slot: i32, pre
     return out;
 }
 
-// stamp_fnval_seed applies the "<site>|<dyn>|<sig>|<ret>" row lower_func's
-// pre-pass filed for `site`, if any, to slot `i`. The one place the seed is
-// read; the facts live on the slot from here on.
-pub function (s: LowerState) stamp_fnval_seed(i: i32, site: string): LowerState {
-    if (site.len() == 0) { return s; }
-    var row: string = tagged_value_of(s.frame.fnval_seed, "", site);
-    if (row.len() == 0) { return s; }
-    var b1: i32 = 0;
-    while (b1 < row.len() && row[b1] != b'|') { b1 = b1 + 1; }
-    if (b1 >= row.len()) { return s; }
-    var b2: i32 = b1 + 1;
-    while (b2 < row.len() && row[b2] != b'|') { b2 = b2 + 1; }
-    if (b2 >= row.len()) { return s; }
-    return s.mark_fn_value_sidecars(i,
-        slice_unchecked(row, 0, b1) + "",
-        slice_unchecked(row, b1 + 1, b2) + "",
-        slice_unchecked(row, b2 + 1, row.len()) + "");
+// Attach the checked declaration to its actual slot, in any lexical block.
+pub function (s: LowerState) stamp_fnval_decl(i: i32, v: ast.StmtVar): LowerState {
+    var p: ast.ParamDecl = decltypes.fn_param_from_var(v);
+    if (p.type_name != "fn") { return s; }
+    return s.mark_fn_value_sidecars(i, p.fn_param_dyn, fn_sig_of(p, s.frame.type_params), p.fn_ret);
 }
 
 pub function (s: LowerState) mark_fn_value_sidecars(i: i32, dyn_positions: string, sig: string, ret: string): LowerState {
@@ -23320,11 +23236,7 @@ function lower_stmt_var_closure(v: ast.StmtVar, init_retclo: boolean, s: LowerSt
     var cslot: i32 = cvb.slot_of(v.name);
     cvb = cvb.mark_arr(cslot, true);
     cvb = cvb.mark_closure_local(v.name);
-    // The fn-VALUE signature sidecars. This bind does not route through
-    // bind_var_slot, so it applies the seed itself — an annotated
-    // `var f: (i64) => boolean = |x| …` is a top-level fn-typed local like any
-    // other and lower_func's pre-pass filed a row for it.
-    cvb = cvb.stamp_fnval_seed(cslot, reclaim_site_key_of(v.name, v.line, v.col));
+    cvb = cvb.stamp_fnval_decl(cslot, v);
     // Record an Option/Result return so a later `match (f())` can name its
     // scrutinee type — the closure-LOCAL sibling of the fn-param stamping.
     // (The annotated named-fn-bound form is stamped in bind_var_slot; this
@@ -58377,48 +58289,6 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
         }
         fpdi = fpdi + 1;
     }
-    // #6862: the same facts for a fn-typed LOCAL, whose declared type spelling
-    // carries the signature the flat "fn" param tag needs sidecars for. The env
-    // box a captured fn value rides is untyped, so make_clo_func's capture read
-    // (`var lf: (i64) => boolean = __env[1]`) is the only place the signature
-    // survives into the hoisted body — without this the call inside it dispatches
-    // through the arity-keyed `$fn<N>` funcref type and traps on wasm.
-    //
-    // A local has no slot yet — add_local runs during lowering — so this pass
-    // emits "<site>|<dyn>|<sig>|<ret>" rows and bind_var_slot stamps the slot it
-    // creates. The site rather than the name (#7253): the seed and the read are
-    // the two halves that must agree about WHICH binding, and only one of them
-    // can see a slot.
-    var fnval_seed0: string[] = [];
-    var fnli: i32 = 0;
-    while (fnli < fn.body.len()) {
-        match (fn.body[fnli]) {
-            ast.StmtVar(fnlv) => {
-                var fnlp: ast.ParamDecl = fn_param_from_spelling(fnlv.name, fnlv.type_name);
-                // parse_type_name coarsens a fn annotation to the flat "fn" tag
-                // and records the signature in the StmtVar's own two sidecars, so
-                // a coarsened binding has to be rebuilt from those the way a fn
-                // ARRAY binding already is (fnarr_elem_of_var).
-                if (fnlp.type_name != "fn" && fnlv.fn_ret.len() > 0) {
-                    fnlp = fn_param_from_spelling(fnlv.name, "(" + fnlv.fn_param_types + ") => " + fnlv.fn_ret);
-                }
-                if (fnlp.type_name == "fn") {
-                    var fnlsg: string = fn_sig_of(fnlp, fn.type_params);
-                    // The declared RETURN spelling rides the seed whatever the
-                    // width signature is — the fn-param twin of the same fact, and
-                    // the reason a `() => (i32, f64)` local's tuple result could not
-                    // be typed: its signature is all-i32 and gating the return on it
-                    // threw the return away.
-                    if (fnlp.fn_param_dyn.len() > 0 || fnlsg.len() > 0 || fnlp.fn_ret.len() > 0) {
-                        fnval_seed0 = fnval_seed0.append(reclaim_site_key_of(fnlv.name, fnlv.line, fnlv.col)
-                            + "|" + fnlp.fn_param_dyn + "|" + fnlsg + "|" + fnlp.fn_ret);
-                    }
-                }
-            },
-            _ => {}
-        }
-        fnli = fnli + 1;
-    }
     // #4355 slice 6: seed the borrowable-params entries ("name|flags") the
     // call lowering's literal-arg box reclaim (call_arg_borrowable) consults
     // from LowerState — but ONLY for callees this function actually calls
@@ -58476,7 +58346,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
     // uniform-i64 path in StmtReturn (#5464). Kept off the non-wasm path.
     if (for_wasm && erased_passthrough_safe(fn, structs)) { ret_arrdyn0 = ret_arrdyn0 + 8; }
     var dalias: DeadAliases = dead_alias_of(fn.body, asg_targets, rc_ml_compute(fn, structs).names);
-    var s: LowerState = LowerState { ops: empty, locals: locals0, ctrl: 0, loop_blk: noloop, frame: LowerFrame { ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, sigs: FnSigs { ...sg, arr_ret_fns: arr_ret_fns_aug, struct_ret_fns: struct_ret_fns_aug }, clo_base: clo_owner_name(fn), cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: noclos, tup_elem_kinds: [], alias_incs: [], dead_alias_ok: dalias.sites, spread_sites: spread_sites_of(fn.body, structs, []), fnval_seed: fnval_seed0, strarr_sources: string_array_sources_of(fn), structs: structs, reclaimable_names: reclaim, aliased_names: aliased, map_clone_sites: map_clone_insert_sites_of(fn.body), borrowed_names: borrowed, try_cleanup: tclean, defer_slots: [], defer_guard: "", append_inplace: append_inplace_names_of(fn), field_append_inplace: field_append_inplace_sites_of(fn), grow_sole: grow_sole_exempt_names_of(fn), grow_alias: grow_alias_names_of(fn), own_params: own_names, n_params: names.len(), fail_why: "", moved_names: moved_locals_toplevel_of(fn, structs), moved_elided: [], move_sites: move_sites_toplevel_of(fn, structs), fld_bases: field_move_bases_of(fn, sg), own_lift_sites: own_lift_retain_sites_of(fn, sg, structs) }, xblock_pending: [], optret_pending: [], grow_exempt: [], ok: true, selfrebind: "", fld_moves: [] };
+    var s: LowerState = LowerState { ops: empty, locals: locals0, ctrl: 0, loop_blk: noloop, frame: LowerFrame { ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, sigs: FnSigs { ...sg, arr_ret_fns: arr_ret_fns_aug, struct_ret_fns: struct_ret_fns_aug }, clo_base: clo_owner_name(fn), cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: noclos, tup_elem_kinds: [], alias_incs: [], dead_alias_ok: dalias.sites, spread_sites: spread_sites_of(fn.body, structs, []), type_params: fn.type_params, strarr_sources: string_array_sources_of(fn), structs: structs, reclaimable_names: reclaim, aliased_names: aliased, map_clone_sites: map_clone_insert_sites_of(fn.body), borrowed_names: borrowed, try_cleanup: tclean, defer_slots: [], defer_guard: "", append_inplace: append_inplace_names_of(fn), field_append_inplace: field_append_inplace_sites_of(fn), grow_sole: grow_sole_exempt_names_of(fn), grow_alias: grow_alias_names_of(fn), own_params: own_names, n_params: names.len(), fail_why: "", moved_names: moved_locals_toplevel_of(fn, structs), moved_elided: [], move_sites: move_sites_toplevel_of(fn, structs), fld_bases: field_move_bases_of(fn, sg), own_lift_sites: own_lift_retain_sites_of(fn, sg, structs) }, xblock_pending: [], optret_pending: [], grow_exempt: [], ok: true, selfrebind: "", fld_moves: [] };
     // Consumed-threaded array params (ownflag_name): allocate and zero each flag
     // before any body op, in parameter order, so slot numbering is deterministic.
     // A declared `own` param is excluded — the caller moved its reference in.
@@ -69733,7 +69603,7 @@ pub function str_own_dump(fn: parser.FuncDecl, structs: StructTab, funcs: parser
         locals0 = locals0.append(li);
         pi = pi + 1;
     }
-    var st: LowerState = LowerState { ops: no_ops, locals: locals0, ctrl: 0, loop_blk: no_blk, frame: LowerFrame { ret_is_i64: false, ret_arrdyn: 0, sigs: FnSigs { ...fn_sigs_empty(), str_ret_fns: sig_reg_of(str_ret_fns_of(funcs)) }, clo_base: clo_owner_name(fn), cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: no_strs, tup_elem_kinds: no_strs, alias_incs: no_strs, dead_alias_ok: no_strs, spread_sites: spread_sites_of(fn.body, structs, []), fnval_seed: no_strs, strarr_sources: StringArraySources { arrays: [], elements: [] }, structs: structs, reclaimable_names: no_strs, aliased_names: no_strs, map_clone_sites: no_strs, borrowed_names: no_strs, try_cleanup: no_stmts, defer_slots: no_strs, defer_guard: "", append_inplace: [], field_append_inplace: [], grow_sole: [], grow_alias: [], own_params: own_param_names_of(fn), n_params: fn.params.len(), fail_why: "", moved_names: [], moved_elided: [], move_sites: [], fld_bases: [], own_lift_sites: [] }, xblock_pending: no_strs, optret_pending: [], grow_exempt: [], ok: true, selfrebind: "", fld_moves: [] };
+    var st: LowerState = LowerState { ops: no_ops, locals: locals0, ctrl: 0, loop_blk: no_blk, frame: LowerFrame { ret_is_i64: false, ret_arrdyn: 0, sigs: FnSigs { ...fn_sigs_empty(), str_ret_fns: sig_reg_of(str_ret_fns_of(funcs)) }, clo_base: clo_owner_name(fn), cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: no_strs, tup_elem_kinds: no_strs, alias_incs: no_strs, dead_alias_ok: no_strs, spread_sites: spread_sites_of(fn.body, structs, []), type_params: fn.type_params, strarr_sources: StringArraySources { arrays: [], elements: [] }, structs: structs, reclaimable_names: no_strs, aliased_names: no_strs, map_clone_sites: no_strs, borrowed_names: no_strs, try_cleanup: no_stmts, defer_slots: no_strs, defer_guard: "", append_inplace: [], field_append_inplace: [], grow_sole: [], grow_alias: [], own_params: own_param_names_of(fn), n_params: fn.params.len(), fail_why: "", moved_names: [], moved_elided: [], move_sites: [], fld_bases: [], own_lift_sites: [] }, xblock_pending: no_strs, optret_pending: [], grow_exempt: [], ok: true, selfrebind: "", fld_moves: [] };
     var out: string = "";
     var qi: i32 = 0;
     while (qi < fn.params.len()) {
@@ -71233,25 +71103,28 @@ function cap_local_init(body: ast.Stmt[], name: string): ast.Expr {
     return found;
 }
 
-// cap_local_fn_ret is the declared RETURN spelling of fn-typed local `name`'s
-// binding (`var f: (i32) => i32` -> "i32"), or "". Same walk as cap_local_init,
-// reading the annotation the parser kept on the StmtVar rather than the
-// initialiser.
-function cap_local_fn_ret(body: ast.Stmt[], name: string): string {
-    function fn_ret_of(st: ast.Stmt, acc: string): string {
-        if (acc.len() > 0) { return acc; }
+// Retain the whole declaration contract when adapting a captured callable.
+function cap_local_fn_decl(body: ast.Stmt[], name: string): ast.ParamDecl {
+    function fn_decl_of(st: ast.Stmt, acc: ast.ParamDecl): ast.ParamDecl {
+        if (acc.type_name.len() > 0 || acc.fn_ret.len() > 0) { return acc; }
         match (st) {
-            ast.StmtVar(v) => { if (v.name == name) { return v.fn_ret; } },
+            ast.StmtVar(v) => {
+                if (v.name == name) {
+                    var p: ast.ParamDecl = decltypes.fn_param_from_var(v);
+                    if (p.type_name.len() > 0) { return p; }
+                    return ast.ParamDecl { ...p, fn_ret: v.fn_ret };
+                }
+            },
             _ => {}
         }
         return acc;
     }
-    var found: string = "";
+    var found: ast.ParamDecl = fn_param_from_spelling(name, "");
     for st in body {
-        found = astwalk.fold_stmt_spine(st, found, fn_ret_of);
-        if (found.len() > 0) { return found; }
+        found = astwalk.fold_stmt_spine(st, found, fn_decl_of);
+        if (found.type_name.len() > 0 || found.fn_ret.len() > 0) { return found; }
     }
-    return "";
+    return found;
 }
 
 // passthrough_forwards_lambda / passthrough_lambda_param_types read the LAMBDA a
@@ -71339,10 +71212,8 @@ function passthrough_lambda_param_types(e: ast.Expr, mfuncs: MFuncs): string[] {
 //   * a LOCAL whose declared type_name is the full `(P) => R` spelling, which
 //     fn_param_from_spelling reads back into the sidecars directly.
 //
-// A local bound from anything else (a call, another local) declines: StmtVar
-// keeps only the coarse type_name, so the signature is genuinely gone and there
-// is nothing to recover it from. Declining leaves the module bailing as it does
-// today.
+// Checked callable declarations carry the complete contract even when their
+// initializer is another call or value. Unrecorded contracts remain declined.
 //
 // Being exact matters more here than usual: wasm funcref types are STRUCTURAL
 // (#6282), so a wrong fn_param_types does not degrade into a slow path — it
@@ -71363,6 +71234,8 @@ function cap_param_for(name: string, fd: parser.FuncDecl, structs: StructTab, mf
         if (spp.type_name == "fn") { return spp; }
         return ast.ParamDecl { name: name, type_name: cty, own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" };
     }
+    var recorded: ast.ParamDecl = cap_local_fn_decl(fd.body, name);
+    if (recorded.type_name == "fn") { return recorded; }
     match (cap_local_init(fd.body, name)) {
         ast.ExprLambda(lam) => { return fn_param_from_lambda(name, lam); },
         // `__mkclo$<target>(caps…)` — the env-box constructor the lift leaves in
@@ -71385,7 +71258,7 @@ function cap_param_for(name: string, fd: parser.FuncDecl, structs: StructTab, mf
                     // arguments straight back, so the lambda at that parameter
                     // IS this binding's value. Its own annotated params plus the
                     // return the binding declares make the signature exact.
-                    var dret: string = cap_local_fn_ret(fd.body, name);
+                    var dret: string = recorded.fn_ret;
                     if (dret.len() > 0 && passthrough_forwards_lambda(mk, mfuncs)) {
                         return fn_param_decl(name, passthrough_lambda_param_types(mk, mfuncs), dret);
                     }
@@ -72040,37 +71913,15 @@ function try_lift_binding(body: ast.Stmt[], idx: i32, fname: string, lam: ast.Ex
     // and when it does not, both bindings lower as ordinary closures with their
     // own slots — which is correct, just not lifted.
     if (local_decl_count(body, fname) != 1) { return ClosureLift { body: body, acc: acc, changed: false }; }
-    var ctypes: string[] = [];
-    var ci: i32 = 0;
-    while (ci < caps.len()) {
-        var t: string = cap_type(caps[ci], fd, structs, mfuncs);
-        // A capture REASSIGNED in the enclosing body does NOT decline the lift:
-        // the param-lift passes each capture at the CALL SITE, so every call
-        // reads the binding's current value — exactly the interpreter's
-        // by-reference capture semantics (#5301 pointer captures, #5300
-        // outer-mutated scalars; the old decline sent these shapes to the AST
-        // emitter, which snapshots at make time and diverges from the oracle).
-        // Closure-side writes never reach here un-shared: a written scalar
-        // capture is already a boxed cell (box_mutated_scalar_captures runs
-        // first), and a written pointer capture is checker-rejected (E049).
-        if (t.len() == 0) { return ClosureLift { body: body, acc: acc, changed: false }; }
-        ctypes = ctypes.append(t);
-        ci = ci + 1;
-    }
     var lparams: ast.ParamDecl[] = [];
     var pj: i32 = 0;
     while (pj < lam.params.len()) { lparams = lparams.append(lam.params[pj]); pj = pj + 1; }
     var cj: i32 = 0;
     while (cj < caps.len()) {
-        // A capture whose type is spelled out as a fn (`var f: (i32) => i32`, or
-        // a capture read make_clo_func typed) becomes the flat "fn" tag plus the
-        // sidecars a fn-typed PARAM carries: lower_func marks a "fn" param a
-        // closure local, and the spelling on its own does not, so the call
-        // inside the lifted body would dispatch the env box as a raw table
-        // index.
-        var lcp: ast.ParamDecl = fn_param_from_spelling(caps[cj], ctypes[cj]);
-        if (lcp.type_name != "fn") { lcp = ast.ParamDecl { name: caps[cj], type_name: ctypes[cj], own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }; }
-        lparams = lparams.append(lcp);
+        // Preserve the callable contract, not just its coarse storage type.
+        var lcp: ast.ParamDecl = cap_param_for(caps[cj], fd, structs, mfuncs);
+        if (lcp.type_name.len() == 0) { return ClosureLift { body: body, acc: acc, changed: false }; }
+        lparams = lparams.append(ast.ParamDecl { ...lcp, own: false, has_default: false, default_value: parser.e_unknown("") });
         cj = cj + 1;
     }
     var lname: string = "__lam_" + util.i32_to_string(acc.counter);
@@ -74986,11 +74837,8 @@ function ilc_stmt_at(st: ast.Stmt, acc: InlineCloAcc, fd: parser.FuncDecl, gfns:
             return (ast.StmtVar { name: v.name, type_name: v.type_name, init: er.expr, line: v.line, col: v.col, is_str: v.is_str, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types }, InlineCloAcc { funcs: er.funcs, counter: er.counter }, true);
         },
         ast.StmtReturn(r) => {
-            // `function get(): () => i32 { return a1; }` — the declared RETURN
-            // type is the annotation, and it rules out the const reading the
-            // same way a tuple element's or an Option payload's does. The
-            // caller binds the result as a fn value and dispatches it
-            // env-first, so a bare zero-arg name has to be boxed here.
+            // A callable result uses the same env-box ABI as callable
+            // parameters and fields, regardless of the function's arity.
             var rpre: ast.Expr = r.value;
             if (fd.ret_type == "fn" || util.contains(fd.ret_type, "=>")) {
                 match (rpre) {
@@ -75000,7 +74848,7 @@ function ilc_stmt_at(st: ast.Stmt, acc: InlineCloAcc, fd: parser.FuncDecl, gfns:
                         while (rbp < fd.params.len()) { rbound = rbound.append(fd.params[rbp].name); rbp = rbp + 1; }
                         var rbs: i32 = 0;
                         while (rbs < fd.body.len()) { rbound = astwalk.collect_bound_stmt(fd.body[rbs], rbound); rbs = rbs + 1; }
-                        if (util.index_of_str(rbound, rid.name) < 0 && lift_module_fn_arity(mfuncs, rid.name) == 0) {
+                        if (util.index_of_str(rbound, rid.name) < 0 && lift_module_fn_arity(mfuncs, rid.name) >= 0) {
                             var rwr: InlineCloRes = try_fn_field_value(rpre, fd, fs, ct, gfns, mfuncs, structs);
                             match (rwr.expr) {
                                 ast.ExprCall(_) => { fs = rwr.funcs; ct = rwr.counter; rpre = rwr.expr; },
@@ -76404,7 +76252,9 @@ pub function lift_lambdas_view(raw_mod: parser.Module, view: parser.FuncDecl[]):
             var lgfns: string[] = gfns;
             var gj: i32 = 0;
             while (gj < acc.funcs.len()) { lgfns = lgfns.append(acc.funcs[gj].name); gj = gj + 1; }
-            var cl: ClosureLift = closure_lift_one(cbody, fd, acc, lgfns, mstab, mf);
+            var lsigs: MFuncs = mf;
+            if (acc.funcs.len() > 0) { lsigs = mfuncs_extend(mf, acc.funcs); }
+            var cl: ClosureLift = closure_lift_one(cbody, fd, acc, lgfns, mstab, lsigs);
             cbody = cl.body;
             acc = cl.acc;
             more = cl.changed;
