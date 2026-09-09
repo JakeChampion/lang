@@ -190,6 +190,19 @@ function project(box: Box[i32[]]): i32[] { return box.value; }
 function churn(): void { var box = Box[i32[][]] { value: [[7i32]] }; }`)
 }
 
+func TestTypedSSARecursiveRecordValues(t *testing.T) {
+	bin := buildFernForStdoutTest(t)
+	checkTypedSSAExecutable(t, bin, `struct Node[T] { data: T, children: Node[T][] }
+function main(): i32 {
+  var root = Node[i32[]] { data: [0i32], children: [Node[i32[]] { data: [41i32], children: [] }] };
+  var saved = root.children[0].data;
+  root = Node[i32[]] { data: [9i32], children: [] };
+  var i = 0i32; while (i < 32i32) { churn(); i = i + 1i32; }
+  return saved[0];
+}
+function churn(): void { var node = Node[i32[][]] { data: [[7i32]], children: [] }; }`)
+}
+
 func checkTypedSSAExecutable(t *testing.T, bin, source string) {
 	t.Helper()
 	entry := writeFern(t, source)

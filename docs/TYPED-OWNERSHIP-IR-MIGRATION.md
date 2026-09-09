@@ -6,11 +6,19 @@ SSA cutover and typed-IR work. Initial integration base: `02ea66e91`.
 
 ## Current implementation checkpoint
 
-Acyclic nominal records now have private typed field interfaces, explicit
+Recursive nominal record types now import as complete finite declaration graphs
+and execute under the existing independently verified counted-result ownership
+contract. Generic recursive CLI inputs, recursive calls, shared updates and
+escaped children have native runtime coverage. The optional eager-tree return-
+provenance analysis separately rejects recursive input with no summary; it is
+not a prerequisite of executable ownership lowering. See
+[recursive typed records](TYPED-RECURSIVE-RECORDS-2026-09-09.md).
+
+Nominal records now have private typed field interfaces, explicit
 construction/projection and immutable spread updates. Ownership, exact return
 provenance and ARM64 field/deep-drop lowering use those interfaces without AST
 declaration lookup. Concrete generic records work through the common CLI's
-monomorphization. Recursive record provenance, record patterns and field mutation
+monomorphization. Recursive return-provenance analysis, record patterns and field mutation
 remain explicit gaps. See [typed record values](TYPED-RECORD-VALUES-2026-09-09.md).
 
 Conditional function/iteration cleanup now executes in the opt-in typed pipeline.

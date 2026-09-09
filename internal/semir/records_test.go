@@ -31,7 +31,7 @@ func TestRecordInterfaceCorruption(t *testing.T) {
 		{"duplicate-field", "duplicate field", func(p *Program, r *recordContract) { r.fields[1].name = r.fields[0].name }},
 		{"empty-field", "empty or duplicate", func(p *Program, r *recordContract) { r.fields[0].name = "" }},
 		{"void-field", "unsupported semantic type", func(p *Program, r *recordContract) { r.fields[0].typ = ast.VoidType{} }},
-		{"recursive-field", "recursive record provenance", func(p *Program, r *recordContract) {
+		{"recursive-field-mismatch", "record_", func(p *Program, r *recordContract) {
 			r.fields[0].typ = ast.ArrayType{Elem: ast.StructType{Name: "Pair"}}
 		}},
 	} {
@@ -131,14 +131,21 @@ function pilot(box: Box): i32[] { return box.pair.0; }`)
 	}
 }
 
-func TestRecordRecursiveTypeIsExplicitlyRejected(t *testing.T) {
+func TestRecordRecursiveTypesSeparateAnalysisCapability(t *testing.T) {
 	for _, source := range []string{
 		`struct Node { children: Node[] } function pilot(node: Node): void {}`,
 		`struct A { children: B[] } struct B { parent: A[] } function pilot(node: A): void {}`,
 	} {
 		prog, info := checkedProgram(t, source)
-		if _, err := BuildProgram(prog, info); err == nil || !strings.Contains(err.Error(), "recursive record provenance") {
-			t.Fatalf("got %v, want explicit recursive record gate", err)
+		p, err := BuildProgram(prog, info)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := LowerARM64SSA(p); err != nil {
+			t.Fatal(err)
+		}
+		if flow, err := solveReturnFlow(p); err == nil || flow != nil || !strings.Contains(err.Error(), "recursive record return-flow analysis") {
+			t.Fatalf("got %v, want explicit unsupported analysis without a summary", err)
 		}
 	}
 }

@@ -1,5 +1,10 @@
 # Nominal record values in typed ownership IR
 
+Historical slice: the subsequent [recursive-record change](TYPED-RECURSIVE-RECORDS-2026-09-09.md)
+admits recursive type graphs and execution independently of optional return-flow
+analysis. The original source/verification gate described below is now confined
+to that analysis; the original measurements and acyclic coverage remain valid.
+
 The opt-in typed ARM64 pipeline now supports acyclic concrete record values:
 construction, field projection, immutable spread updates, function calls and
 existing control-flow/cleanup composition. Nominal type identity survives until
