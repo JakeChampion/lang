@@ -31,7 +31,9 @@ live-out bit with native SSA `ComputeLivenessWithDependencies`. Serialization
 maps native value ids to the self-host's zero-based ids and uses non-contiguous
 block ids. Cases cover nested projections, branch-local phi inputs, loop back
 edges with reversed block storage order, and a rebound binding's distinct
-values. The solver must also preserve the graph's printed representation.
+values. The rebound case returns the old value on one exit and the projected
+replacement on the other, so both identities have real, distinct uses. The
+solver must also preserve the graph's printed representation.
 
 Tests execute the Fern module compiled by the bootstrap compiler and by the
 production self-host CLI for x86-64, ARM64 and Wasm. Invalid-metadata cases
@@ -43,6 +45,12 @@ native-oracle graph cases, four invalid-input cases, and the four graph cases
 self-compiled for each of x86-64, ARM64 and Wasm. Lint-all passed. The two
 pre-existing enum-return failures were reproduced separately on the same main
 in 15.844 s and remain merge blockers. Full CI and review are still required.
+
+Review follow-up expands the invalid-input table from four to fourteen cases,
+covering malformed terminators, missing/negative successors, phi arity, operand,
+result, return and condition indices, and duplicate/negative block identities.
+The overflow guard remains an unexercised large-input boundary.
+All 30 updated cases passed without skips in 111.229 s; lint-all passed.
 
 ## Remaining production integration
 
