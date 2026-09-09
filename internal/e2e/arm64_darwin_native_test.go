@@ -57,6 +57,7 @@ func TestArm64DarwinNativeMachO(t *testing.T) {
 	}{
 		// Integer only — exercises just the code path (no __DATA).
 		{"exit", `function main(): i32 { return 42; }`, 42},
+		{"callback_snapshot", callbackSnapshotProg, 42},
 		// String constant — exercises __DATA, adrp @PAGE / @PAGEOFF to a
 		// read-only string, and the write(2) syscall.
 		{"print", `
