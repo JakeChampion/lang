@@ -614,24 +614,6 @@ function is_func_type(t: typeinfo.Type): boolean {
   return false;
 }
 
-// fn_arity_of returns a callable's recorded parameter count, or -1 when `t` is
-// not callable or its parameter list was never recorded (params_known). A
-// caller checking arity must treat -1 as "no claim", not as zero.
-function fn_arity_of(t: typeinfo.Type): i32 {
-  match (t) {
-    typeinfo.TypeFunc(f) => {
-      if (!f.params_known) {
-        return 0 - 1;
-      }
-      return f.param_types.len();
-    },
-    _ => {
-      return 0 - 1;
-    }
-  }
-  return 0 - 1;
-}
-
 // type_contains_unknown reports whether `t` is unknown or has any unknown
 // component anywhere in its shape — an array whose element, a tuple whose
 // member, a map whose key/value, a struct whose instantiation arg, or a
@@ -2699,10 +2681,9 @@ function type_assignable(from: typeinfo.Type, to: typeinfo.Type, unions: UnionSi
       return true;
     },
     typeinfo.TypeFunc(_) => {
-      // A function value flows into any fn-typed slot. Coarse on purpose
-      // (#5986): a "fn"-coarsened FIELD's TypeFunc carries an empty param
-      // list, so comparing signatures would reject constructions the
-      // unknown-typed field accepted before fn fields were typed at all.
+      // Callable assignment compatibility remains coarse in this partial
+      // checker. Calls themselves check the retained parameter contract;
+      // signature variance and callable assignment are a separate rule.
       return is_func_type(from);
     },
     _ => {
@@ -4150,16 +4131,8 @@ function func_ret_type(fd: parser.FuncDecl, struct_names: string[], union_names:
   if (fd.ret_str) {
     return t_str();
   }
-  // A fn-VALUE return coarsens to the flat "fn" / "fn[]" tag, so the declared
-  // result comes from the ret_fn_ret sidecar — which is what types `mk()(4.5)`,
-  // whose callee is this call. The function-level sibling of var_declared_type's
-  // and collect_struct_sigs' arms, opaque for the same reason: the parameter
-  // spellings exist to name a funcref in irlower, and checking arguments against
-  // them here would reject calls that type-check today (#5986).
-  if (fd.ret_fn_ret.len() > 0) {
-    var rt: typeinfo.Type = type_from_name_erasing_tparams(fd.ret_fn_ret, fd.type_params, struct_names, union_names);
-    if (fd.ret_type == "fn") { return t_func_opaque(rt); }
-    if (fd.ret_type == "fn[]") { return t_array(t_func_opaque(rt)); }
+  if (fd.ret_fn_ret.len() > 0 && (fd.ret_type == "fn" || fd.ret_type == "fn[]")) {
+    return declared_callable_type(fd.ret_type, fd.ret_fn_ret, fd.ret_fn_param_types, fd.type_params, struct_names, union_names);
   }
   return type_from_name_erasing_tparams(fd.ret_type, fd.type_params, struct_names, union_names);
 }
@@ -4170,20 +4143,8 @@ function var_declared_type(v: ast.StmtVar, s: Scope): typeinfo.Type {
   if (v.is_str) {
     return t_str();
   }
-  // A "fn"-coarsened annotation records its RESULT in the fn_ret sidecar, and
-  // the declared return is what types a call through the binding (#5986). The
-  // local sibling of fn_param_decl_type. Also for an ARRAY of them
-  // (`(() => f64)[]`, spelled "fn[]"), whose element is that same fn type.
-  // Opaque on purpose: the parameter spellings the binding records are there to
-  // name a funcref signature in irlower, and checking arguments against them
-  // here would reject calls that type-check today.
-  if (v.fn_ret.len() > 0) {
-    if (v.type_name == "fn") {
-      return t_func_opaque(s.resolve_type(v.fn_ret));
-    }
-    if (v.type_name == "fn[]") {
-      return t_array(t_func_opaque(s.resolve_type(v.fn_ret)));
-    }
+  if (v.fn_ret.len() > 0 && (v.type_name == "fn" || v.type_name == "fn[]")) {
+    return declared_callable_type(v.type_name, v.fn_ret, v.fn_param_types, s.tparams, s.structs.names, s.unions.names);
   }
   return s.resolve_type(v.type_name);
 }
@@ -4268,22 +4229,8 @@ function collect_struct_sigs(structs: parser.StructDecl[], union_names: string[]
     var ftnames: string[] = [];
     for elem in sd.fields {
       fnames = fnames.append(elem.name);
-      // A fn-typed field ("fn"-coarsened spelling) resolves to a TypeFunc
-      // from its fn_ret sidecar (#5986), so a closure-field call `h.f()`
-      // types to the declared return instead of unknown (which also E038'd
-      // as "calling non-function value"). An ARRAY of them ("fn[]") resolves
-      // to an array of that same fn type, so `r.hs[0](x)` types too — the
-      // field sibling of var_declared_type's array arm.
-      //
-      // t_func_opaque, not t_func: the parameter spellings the field records
-      // exist to name a funcref signature in irlower, and reading them here
-      // would start argument-checking calls that type-check today. The empty
-      // param list stays unrecorded, not arity 0; type_assignable's fn arm is
-      // coarse for the same reason.
-      if (elem.type_name == "fn" && elem.fn_ret.len() > 0) {
-        ftypes = ftypes.append(t_func_opaque(type_from_name_with_names_and_unions(elem.fn_ret, names, union_names)));
-      } else if (elem.type_name == "fn[]" && elem.fn_ret.len() > 0) {
-        ftypes = ftypes.append(t_array(t_func_opaque(type_from_name_with_names_and_unions(elem.fn_ret, names, union_names))));
+      if (elem.fn_ret.len() > 0 && (elem.type_name == "fn" || elem.type_name == "fn[]")) {
+        ftypes = ftypes.append(declared_callable_type(elem.type_name, elem.fn_ret, elem.fn_param_types, sd.type_params, names, union_names));
       } else {
         ftypes = ftypes.append(type_from_name_with_names_and_unions(elem.type_name, names, union_names));
       }
@@ -4339,29 +4286,8 @@ function union_sig_names(unions: UnionSig[]): string[] {
   return out;
 }
 
-// type_from_spelling is the entry every resolver funnels through: the `dyn `
-// prefix (which is not a TypeRef spelling), then the structured decode.
+// Parse once, then resolve every constituent through the same structured ladder.
 function type_from_spelling(name: string, struct_names: string[], union_names: string[]): typeinfo.Type {
-  // A `dyn Trait` annotation ("dyn Greet", "dyn A + B", or an array
-  // `dyn Greet[]`) resolves to a TypeDyn carrying the trait-set text after
-  // the `dyn ` prefix — parse_type_ref doesn't model the `dyn ` keyword, and
-  // without this the annotation collapsed to unknown and over-rejected every
-  // `var d: dyn Greet = …` (#4346 piece 2). Trailing `[]` peels to an array
-  // of dyn so `dyn Greet[]` is TypeArray<TypeDyn>.
-  if (name.len() >= 5 && slice_unchecked(name, 0, 4) == "dyn ") {
-    var tail: str = slice_unchecked(name, 4, name.len());
-    var depth: i32 = 0;
-    while (tail.len() >= 2 && tail[tail.len() - 2] == b'[' && tail[tail.len() - 1] == b']') {
-      tail = slice_unchecked(tail, 0, tail.len() - 2);
-      depth = depth + 1;
-    }
-    var dt: typeinfo.Type = t_dyn(tail + "");
-    while (depth > 0) {
-      dt = t_array(dt);
-      depth = depth - 1;
-    }
-    return dt;
-  }
   return type_from_ref_names(parser.parse_type_ref(name), struct_names, union_names);
 }
 
@@ -4383,6 +4309,11 @@ function type_from_ref_names(r: parser.TypeRef, struct_names: string[], union_na
   // array_depth == 0 below. `name` is this node's canonical spelling — the
   // primitive / struct / union key and the unknown-reason text.
   var name: string = parser.render_type_ref(r);
+  // TypeRef retains a dyn trait set as a named leaf. Resolve it here so nested
+  // parameters, tuples and containers obey the same rule as a top-level type.
+  if (name.len() >= 5 && slice_unchecked(name, 0, 4) == "dyn ") {
+    return t_dyn(slice_unchecked(name, 4, name.len()) + "");
+  }
   if (name == "i32") {
     return t_i32();
   }
@@ -4417,20 +4348,9 @@ function type_from_ref_names(r: parser.TypeRef, struct_names: string[], union_na
   if (name == "void") {
     return t_void();
   }
-  // A FUNCTION type resolves to the opaque callable, from either spelling that
-  // reaches here: the arrow form (`(i32) => i32`, and the parenthesised grouping
-  // of one that a tuple element carries), or the bare tag `fn` a coarsened
-  // parameter / field / substituted type parameter spells.
-  //
-  // Opaque rather than signature-carrying, for the reason the "fn"-coarsened
-  // struct field and parameter already are (#5986): a coarsened spelling records
-  // no parameter list, so an empty one means UNRECORDED, not arity 0, and
-  // type_assignable's fn arm is coarse to match. The RESULT is recorded whenever
-  // the arrow survived — which is the whole point of keeping it (#7961): without
-  // it `var t: ((() => i32), i32) = (a1, 4)` read as `(unknown, i32)`, drew E003
-  // against an init typed correctly, and `t.0()` had no type to check.
+  // Retained arrows have known arity, including zero. Only bare fn is opaque.
   if (parser.ref_is_fn_value(r)) {
-    return t_func_opaque(type_from_ref_names(parser.ref_fn_result(r), struct_names, union_names));
+    return callable_from_ref_names(r, struct_names, union_names);
   }
   if (name == "fn") {
     return t_func_opaque(t_unknown("fn result (the coarse tag records none)"));
@@ -4550,6 +4470,19 @@ function type_from_ref_names(r: parser.TypeRef, struct_names: string[], union_na
   return t_unknown("unrecognised type name: " + name);
 }
 
+// Keep callable construction separate from the scalar/nominal resolution ladder:
+// its recursive parameter traversal needs no other ladder state.
+function callable_from_ref_names(r: parser.TypeRef, struct_names: string[], union_names: string[]): typeinfo.Type {
+  var f: parser.TypeRef = parser.ref_ungroup(r);
+  var params: typeinfo.Type[] = [];
+  var i: i32 = 0;
+  while (i + 1 < f.args.len()) {
+    params = params.append(type_from_ref_names(f.args[i], struct_names, union_names));
+    i = i + 1;
+  }
+  return t_func(params, type_from_ref_names(parser.ref_fn_result(r), struct_names, union_names));
+}
+
 // type_from_ref_subst resolves a field's declared type spelling against a
 // struct's concrete instantiation args — substituting each type-parameter leaf
 // with the matching arg Type throughout the spelling (#4346 piece 2, nested
@@ -4573,6 +4506,16 @@ function type_from_ref_subst(r: parser.TypeRef, tparams: string[], targs: typein
     if (tpi >= 0 && tpi < targs.len()) {
       return targs[tpi];
     }
+  }
+  if (parser.ref_is_fn_value(r)) {
+    var f: parser.TypeRef = parser.ref_ungroup(r);
+    var pts: typeinfo.Type[] = [];
+    var i: i32 = 0;
+    while (i + 1 < f.args.len()) {
+      pts = pts.append(type_from_ref_subst(f.args[i], tparams, targs, struct_names, union_names));
+      i = i + 1;
+    }
+    return t_func(pts, type_from_ref_subst(parser.ref_fn_result(r), tparams, targs, struct_names, union_names));
   }
   if (r.is_tuple && r.args.len() >= 2) {
     var elems: typeinfo.Type[] = [];
@@ -4601,8 +4544,7 @@ function type_from_ref_subst(r: parser.TypeRef, tparams: string[], targs: typein
 // parameter substitutes to unknown; a spelling naming none of them resolves
 // unchanged.
 function type_from_name_erasing_tparams(name: string, tparams: string[], struct_names: string[], union_names: string[]): typeinfo.Type {
-  // `dyn Trait` is not a TypeRef spelling, and a trait name is never a type
-  // parameter — leave it to the resolver that models the `dyn ` prefix.
+  // A top-level dyn trait set cannot name an enclosing type variable.
   if (tparams.len() == 0 || name.len() == 0 || (name.len() >= 5 && slice_unchecked(name, 0, 4) == "dyn ")) {
     return type_from_spelling(name, struct_names, union_names);
   }
@@ -4835,23 +4777,28 @@ function split_fn_param_spellings(csv: string): string[] {
   return out;
 }
 
-// fn_param_decl_type resolves a "fn"-coarsened PARAMETER to a real TypeFunc
-// from its sidecars — param types from fn_param_types, the return from fn_ret
-// (#5986) — so a call through the param types to the declared return instead
-// of "undefined function", and the typed-IR annotation stamps it. Unknown when
-// the declaration carries no return spelling, keeping the opaque tag for an
-// unannotated or void fn type.
+// Parameters use the same retained scalar/array callable contract as locals,
+// fields and results. No recorded result means an opaque tag, not zero arity.
 function fn_param_decl_type(p: ast.ParamDecl, tparams: string[], struct_names: string[], union_names: string[]): typeinfo.Type {
-  if (p.type_name != "fn" || p.fn_ret.len() == 0) {
+  if ((p.type_name != "fn" && p.type_name != "fn[]") || p.fn_ret.len() == 0) {
     return t_unknown("opaque fn param");
   }
+  return declared_callable_type(p.type_name, p.fn_ret, p.fn_param_types, tparams, struct_names, union_names);
+}
+
+// The parser retains callable signatures beside coarse fn/fn[] tags. All
+// declaration sites consume that same contract. A recorded result distinguishes
+// a genuine empty parameter list from an opaque tag with no signature at all.
+function declared_callable_type(name: string, ret: string, params: string, tparams: string[], struct_names: string[], union_names: string[]): typeinfo.Type {
   var pts: typeinfo.Type[] = [];
-  if (p.fn_param_types.len() > 0) {
-    for seg in split_fn_param_spellings(p.fn_param_types) {
+  if (params.len() > 0) {
+    for seg in split_fn_param_spellings(params) {
       pts = pts.append(type_from_name_erasing_tparams(seg, tparams, struct_names, union_names));
     }
   }
-  return t_func(pts, type_from_name_erasing_tparams(p.fn_ret, tparams, struct_names, union_names));
+  var ft: typeinfo.Type = t_func(pts, type_from_name_erasing_tparams(ret, tparams, struct_names, union_names));
+  if (name == "fn[]") { return t_array(ft); }
+  return ft;
 }
 
 // `s` is the function's body scope, built by build_func_scope and carrying the
@@ -8258,6 +8205,34 @@ function call_diags(e: ast.Expr, s: Scope): util.Diag[] {
   return out;
 }
 
+// Value calls share one semantic contract regardless of the expression that
+// produced the callee. Unknown constituents suppress only their own type check,
+// not a known arity or checks on the other parameters.
+function callable_arg_diags(c: ast.ExprCall, ft: typeinfo.Type, s: Scope): util.Diag[] {
+  var out: util.Diag[] = [];
+  match (ft) {
+    typeinfo.TypeFunc(f) => {
+      if (!f.params_known) { return out; }
+      if (c.args.len() != f.param_types.len()) {
+        return [dg_at("E004", "function expects " + util.i32_to_string(f.param_types.len()) + " arguments, got " + util.i32_to_string(c.args.len()), c.line, c.col)];
+      }
+      var i: i32 = 0;
+      while (i < c.args.len()) {
+        var pt: typeinfo.Type = f.param_types[i];
+        var at: typeinfo.Type = check_expr(c.args[i], s);
+        out = util.append_diags(out, int_dest_range_diags(c.args[i], pt));
+        if (!is_unknown(at) && !is_unknown(pt) && !settles_to(c.args[i], pt, s) && !str_arg_borrow(at, pt) && !type_assignable(at, pt, s.unions.unions)) {
+          out = out.append(dg_at("E038", "argument " + util.i32_to_string(i + 1) + ": expected " + type_label(pt) + ", got " + type_label(at), expr_line(c.args[i]), expr_col(c.args[i])));
+        }
+        out = util.append_diags(out, array_elem_check(array_elem_type_of(pt), c.args[i], s));
+        i = i + 1;
+      }
+    },
+    _ => {}
+  }
+  return out;
+}
+
 function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag[] {
   // A method-call callee (`obj.m(...)`) is an ExprFieldAccess
   // whose field names a METHOD, not a field — recurse only into
@@ -8486,16 +8461,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
           out = util.append_diags(out, variant_ctor_diags(id.name, c, s));
         }
       } else {
-        // E004 (#7311): closure / fn-value call arity. The free-function rule
-        // above is skipped for a name bound in scope, so `var g = dbl; g(1)`
-        // and a lambda bound to a local reached IR lowering unchecked: the
-        // module built and the callee read an argument the caller never
-        // pushed. A -1 arity is a callable that never recorded a parameter
-        // list, which is no claim about the call.
-        var cfa: i32 = fn_arity_of(s.lookup(id.name));
-        if (cfa >= 0 && c.args.len() != cfa) {
-          out = out.append(dg_at("E004", "function expects " + util.i32_to_string(cfa) + " arguments, got " + util.i32_to_string(c.args.len()), c.line, c.col));
-        }
+        out = util.append_diags(out, callable_arg_diags(c, s.lookup(id.name), s));
       }
     },
     ast.ExprFieldAccess(mfa) => {
@@ -8509,6 +8475,9 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
       // lookup returns empty and they're left alone.
       var recv: typeinfo.Type = check_expr(mfa.obj, s);
       match (recv) {
+        typeinfo.TypeTuple(_) => {
+          out = util.append_diags(out, callable_arg_diags(c, check_expr(c.callee, s), s));
+        },
         typeinfo.TypeI32(it) => {
           // E043: a method call on a numeric scalar receiver
           // (`x.m(...)` where x is i32 or f64) for which no method
@@ -8670,6 +8639,8 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
                 }
                 if (!fld_is_fn) {
                   out = out.append(dg_at("E038", "calling non-function value of type " + type_label(fldt), mfa.line, mfa.col));
+                } else {
+                  out = util.append_diags(out, callable_arg_diags(c, check_expr(c.callee, s), s));
                 }
               }
             }
@@ -8696,7 +8667,9 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
         }
       }
     },
-    _ => {}
+    _ => {
+      out = util.append_diags(out, callable_arg_diags(c, check_expr(c.callee, s), s));
+    }
   }
 
   return out;

@@ -2,7 +2,6 @@ package e2eselfhost
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -25,9 +24,6 @@ import (
 // TestSelfHostClosurePtrCaptureIRX86_64.
 func TestSelfHostFetchFutureModloadIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
-	if len(runner) != 0 {
-		t.Skip("file-loading driver test runs only natively (argv paths)")
-	}
 	dir := writeSelfHostAsmProject(t)
 	copySelfHostDriver(t, dir, "asm_load_run.fern")
 	mmc := buildSelfHostBin(t, gcc, dir, "asm_load_run.fern", "mmc")
@@ -52,16 +48,16 @@ function main(): i32 {
 	if err := os.WriteFile(mainPath, []byte(prog), 0o644); err != nil {
 		t.Fatalf("write main.fern: %v", err)
 	}
-	decide, err := exec.Command(mmc, mainPath, stdlibRoot, "-decide").Output()
+	decide, err := runX86_64Bin(runner, mmc, mainPath, stdlibRoot, "-decide").CombinedOutput()
 	if err != nil {
-		t.Fatalf("decide: %v", err)
+		t.Fatalf("decide: %v\n%s", err, decide)
 	}
 	if got := strings.TrimSpace(string(decide)); got != "ir" {
 		t.Fatalf("fetch_future routed %q, want \"ir\" (pointer-capture closure bailed)", got)
 	}
-	asm, err := exec.Command(mmc, mainPath, stdlibRoot).Output()
+	asm, err := runX86_64Bin(runner, mmc, mainPath, stdlibRoot).CombinedOutput()
 	if err != nil {
-		t.Fatalf("loader compile: %v", err)
+		t.Fatalf("loader compile: %v\n%s", err, asm)
 	}
 	if len(asm) == 0 {
 		t.Fatal("loader emitted 0 bytes")

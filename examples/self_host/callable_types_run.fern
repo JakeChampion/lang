@@ -1,0 +1,50 @@
+import "./checker";
+import "./typeinfo";
+
+function joined(ts: typeinfo.Type[]): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < ts.len()) {
+        if (i > 0) { out = out + ","; }
+        out = out + shape(ts[i]);
+        i = i + 1;
+    }
+    return out;
+}
+
+function nominal(name: string, args: typeinfo.Type[]): string {
+    if (args.len() == 0) { return name; }
+    return name + "[" + joined(args) + "]";
+}
+
+function shape(t: typeinfo.Type): string {
+    match (t) {
+        typeinfo.TypeFunc(f) => {
+            if (!f.params_known) { return "opaque->" + shape(f.ret_type); }
+            return "fn(" + joined(f.param_types) + ")->" + shape(f.ret_type);
+        },
+        typeinfo.TypeArray(a) => { return "array<" + shape(a.elem) + ">"; },
+        typeinfo.TypeTuple(p) => { return "tuple(" + joined(p.elements) + ")"; },
+        typeinfo.TypeStruct(s) => { return "struct:" + nominal(s.name, s.args); },
+        typeinfo.TypeUnion(u) => { return "union:" + nominal(u.name, u.args); },
+        typeinfo.TypeMap(m) => { return "map<" + shape(m.key) + "," + shape(m.value) + ">"; },
+        _ => { return checker.type_debug(t); }
+    }
+    return "";
+}
+
+function main(): i32 {
+    var corpus: string[] = [
+        "() => void", "fn", "(i64, string) => boolean", "((((i32) => string[])))",
+        "((i64) => string, (boolean, i32[])) => (string) => i64[]",
+        "((i32) => string)[]", "(Foo[string], Option[i32[]]) => Foo[boolean]",
+        "(Map[string, (i32) => Foo[i64]]) => Result[string, i32]",
+        "(Missing, fn) => Missing", "(dyn Shape, char, u64) => boolean",
+        "dyn Shape[]", "(dyn Shape[], Map[string, dyn Shape]) => dyn Shape"
+    ];
+    for spelling in corpus {
+        var t: typeinfo.Type = checker.type_from_name_with_names_and_unions(spelling, ["Foo"], ["Shape"]);
+        print(shape(t));
+    }
+    return 0;
+}

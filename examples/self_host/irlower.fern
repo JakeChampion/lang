@@ -5493,7 +5493,7 @@ function is_prim_type_name(t: string): boolean {
 // It stays SYNTACTIC rather than asking decl_is_enum: at the leak-safety and
 // param/receiver gates the enum's variant decls are frequently not in the
 // `structs` handed down, so decl_is_enum answers false for a genuine enum
-// (ast.Expr, checker.Type, lexer.Token …) and the gate would bail every module
+// (ast.Expr, typeinfo.Type, lexer.Token) and the gate would bail every module
 // that names one. A bare type VARIABLE (`T`) still over-matches; the sites that
 // care exclude it themselves (enum_ret_recordable).
 pub function is_enum_like_name(t: string, structs: StructTab): boolean {
