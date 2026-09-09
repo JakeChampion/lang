@@ -29,12 +29,16 @@ func TestConditionalCleanupAdmission(t *testing.T) {
 			if err := Verify(f); err != nil {
 				t.Fatal(err)
 			}
-			before := f.graph.String()
-			if err := expandCleanups(f); err == nil || !strings.Contains(err.Error(), "conditional cleanup registration") {
-				t.Fatalf("execution must remain gated after admission: %v", err)
+			for _, phase := range []struct {
+				name string
+				run  func(*Func) error
+			}{{"expand", expandCleanups}, {"verify expanded", Verify}, {"promote", promoteBindings}, {"finish", finishFlow}} {
+				if err := phase.run(f); err != nil {
+					t.Fatalf("%s: %v", phase.name, err)
+				}
 			}
-			if f.graph.String() != before || !f.unexpandedCleanups {
-				t.Fatal("execution gate mutated the graph")
+			if _, err := ownershipEffects(f); err != nil {
+				t.Fatal(err)
 			}
 		})
 	}

@@ -21,6 +21,7 @@ type cleanupRegion struct {
 	exit     *ssa.Block
 	yield    *ssa.Op
 	replays  []*ssa.Block
+	guarded  *guardedCleanup
 }
 
 type cleanupBuilder struct {

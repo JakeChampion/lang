@@ -20,15 +20,19 @@ func expandCleanups(f *Func) error {
 		if err := verifyWithFacts(f, &facts); err != nil {
 			return err
 		}
-		// Semantic conditional admission is not executable activation. Reject
-		// before mutating any site until guarded snapshots/writeback are lowered.
-		if conditional := facts.conditional; conditional != nil {
-			return fmt.Errorf("semir %s at %d:%d: conditional cleanup registration is not implemented in the typed pilot", f.graph.Name, conditional.pos.Line, conditional.pos.Col)
+		if facts.conditional != nil {
+			prepareCleanupActivation(f)
 		}
 		exits := make(map[*ssa.Block]*ssa.Block)
 		for _, r := range f.cleanups {
 			for _, site := range r.replays {
-				if end := expandCleanupSite(f, r, site); end != site {
+				end := site
+				if r.guarded == nil {
+					end = expandCleanupSite(f, r, site)
+				} else {
+					end = expandGuardedCleanupSite(f, r, site)
+				}
+				if end != site {
 					exits[site] = end
 				}
 			}
@@ -53,12 +57,24 @@ func expandCleanups(f *Func) error {
 func expandCleanupSite(f *Func, r *cleanupRegion, site *ssa.Block) *ssa.Block {
 	continuation := site.Term
 	successors := site.Succs()
-	current := site
 	values := make(map[int32]ssa.Value, len(r.body.values))
 	for i, id := range r.captures {
-		value := f.readBinding(current, id, r.pos)
+		value := f.readBinding(site, id, r.pos)
 		values[r.body.graph.Params[i].ID] = value
 	}
+	current := cloneCleanupBody(f, r, site, values)
+	// All output values are computed before publishing any binding update.
+	for i, id := range r.captures {
+		f.writeBinding(current, ssa.OpBindingReplace, id, values[r.yield.Args[i].ID], r.pos)
+	}
+	relocateCleanupContinuation(site, current, successors)
+	current.Term = continuation
+	return current
+}
+
+// Both ordinary and guarded replay clone the same typed body. The caller maps
+// private parameters to late capture values and publishes the yielded outputs.
+func cloneCleanupBody(f *Func, r *cleanupRegion, site *ssa.Block, values map[int32]ssa.Value) *ssa.Block {
 	blocks := make(map[*ssa.Block]*ssa.Block, len(r.body.graph.Blocks))
 	for _, old := range r.body.graph.Blocks {
 		if old == r.body.graph.Entry {
@@ -106,14 +122,12 @@ func expandCleanupSite(f *Func, r *cleanupRegion, site *ssa.Block) *ssa.Block {
 		term.Value = ssa.Value{}
 		block.Term = term
 	}
-	current = blocks[r.exit]
-	// The protocol return is now an ordinary continuation. All capture outputs
-	// are read before publishing any updates, so simultaneous replacements do
-	// not accidentally read another output's newly installed binding value.
+	current := blocks[r.exit]
 	current.Term = ssa.Terminator{}
-	for i, id := range r.captures {
-		f.writeBinding(current, ssa.OpBindingReplace, id, values[r.yield.Args[i].ID], r.pos)
-	}
+	return current
+}
+
+func relocateCleanupContinuation(site, current *ssa.Block, successors []*ssa.Block) {
 	// Move the original continuation to the expanded action's exit. Replace
 	// predecessor identities in place, preserving successor phi operand order.
 	for _, successor := range successors {
@@ -123,6 +137,4 @@ func expandCleanupSite(f *Func, r *cleanupRegion, site *ssa.Block) *ssa.Block {
 			}
 		}
 	}
-	current.Term = continuation
-	return current
 }

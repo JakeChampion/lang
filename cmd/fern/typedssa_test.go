@@ -153,6 +153,29 @@ function churn(): void { loop { defer sink([[9i32]]); break; } }
 function sink(own items: i32[][]): void {}`)
 }
 
+func TestTypedSSAConditionalCleanup(t *testing.T) {
+	bin := buildFernForStdoutTest(t)
+	checkTypedSSAExecutable(t, bin, `function main(): i32 {
+  var saved = produce(true); var other = produce(false);
+  var i = 0i32; while (i < 64i32) { churn(i < 32i32); i = i + 1i32; }
+  return saved[0] + other[0] - 41i32;
+}
+function produce(flag: boolean): i32[] {
+  var items = [41i32]; defer check(items[0], flag);
+  if (flag) { defer items = [7i32]; } return items;
+}
+function check(n: i32, flag: boolean): void {
+  if ((flag && n != 7i32) || (!flag && n != 41i32)) { var bad: i32[] = []; var v = bad[0]; }
+}
+function churn(flag: boolean): void {
+  var i = 0i32; while (i < 4i32) {
+    if (flag && i < 2i32) { var items = [[9i32]]; defer sink([items]); }
+    i = i + 1i32;
+  }
+}
+function sink(own items: i32[][][]): void {}`)
+}
+
 func checkTypedSSAExecutable(t *testing.T, bin, source string) {
 	t.Helper()
 	entry := writeFern(t, source)

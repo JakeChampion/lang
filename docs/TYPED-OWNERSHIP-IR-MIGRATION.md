@@ -6,28 +6,35 @@ SSA cutover and typed-IR work. Initial integration base: `02ea66e91`.
 
 ## Current implementation checkpoint
 
+Conditional function/iteration cleanup now executes in the opt-in typed pipeline.
+Typed activation bindings, late capture snapshots and guarded writeback connect
+the registration/capture proof to actual CFG branches. The verifier rechecks
+activation and capture semantics before and after promotion, using retained
+initializer/observation events and independently reconstructed snapshot equations.
+There is no AST replay or runtime environment object. Ordinary dominating-only
+functions retain their existing expansion path. See
+[conditional cleanup execution](TYPED-CONDITIONAL-CLEANUP-2026-09-09.md).
+
 Internal guarded binding replacement now requires an exact same-binding snapshot,
 a dominating true presence guard and an unended binding lifetime. Promotion threads
 its new payload into later values without relaxing ordinary must-initialization.
 An independent lifetime oracle and native allocator-pressure/replacement-loop
-tests cover this cleanup writeback prerequisite. Source conditional execution
-still needs guarded activation and replay integration. See
+tests cover this cleanup writeback prerequisite, now used by conditional replay. See
 [typed binding places](TYPED-BINDING-PLACES.md#guarded-replacement).
 
 Typed pending cleanup graphs now admit conditional registration through finite
 action/order/capture projections. The proof preserves correlated initialization,
 LIFO order, exactly-once replay and lifetime resets across joins and cycles, with
 11,520 comparisons against an independent full-stack oracle. Ordinary binding
-must-initialization rules remain unchanged. Expansion still explicitly rejects
-conditional actions until guarded activation, snapshot extraction and sequential
-writeback have executable proof. See [typed cleanup regions](TYPED-CLEANUP-REGIONS.md).
+must-initialization rules remain unchanged. Guarded expansion now connects this
+proof to executable activation, capture extraction and sequential writeback.
+See [typed cleanup regions](TYPED-CLEANUP-REGIONS.md).
 
 Internal binding snapshots now promote partial initialization and lifetime resets
 to typed Absent/Present states. Guarded payload access preserves snapshot identity
 across replacement and scope exit without relaxing ordinary must-initialization
 checks. Demand-driven materialization and a 168-case independent CFG oracle are
-documented in [typed binding places](TYPED-BINDING-PLACES.md). Source conditional
-cleanup still needs guarded executable registration/replay integration.
+documented in [typed binding places](TYPED-BINDING-PLACES.md).
 
 Internal availability values now distinguish Absent from Present(T),
 with complete semantic type/phi checks, exact-state guard proofs and unboxed
@@ -35,8 +42,8 @@ machine lanes. Direct payload aliases and presence-only states omit unused
 components. This end-to-end IR slice is documented in
 [typed availability values](TYPED-AVAILABILITY-VALUES.md). Reference-bearing states
 carry independently verified conditional payload obligations, and their borrows
-preserve state/container anchors through guarded RC lowering. Correlated source
-conditional cleanup and production AST retirement remain unimplemented; the
+preserve state/container anchors through guarded RC lowering. Production AST
+retirement remains unimplemented; the
 ordinary source ABI and ownership gates are unchanged.
 
 Source binding resolution now emits explicit typed initialization, read and
@@ -44,14 +51,14 @@ replacement operations. A separate, independently verified CFG pass proves
 definite initialization and promotes these places to ordinary SSA before
 ownership analysis. The source builder no longer constructs binding phis through
 per-block maps and sealing. Match/effect CFG and cleanup BindingIDs feed the
-same pass; conditional availability remains a later correlated-state contract.
+same pass, including the correlated optional states used by conditional cleanup.
 See [typed binding places](TYPED-BINDING-PLACES.md).
 
 Binding availability now ends at the owning typed cleanup boundary. The verifier
 checks initializer scope and clears only that boundary's place state; promotion
 cannot recover definitions across an end. Saved SSA values remain live according
-to their own uses. This prevents stale iteration state without admitting
-conditional registration or changing the production AST cleanup route.
+to their own uses. This prevents stale iteration state in both ordinary and
+conditional cleanup without changing the production AST cleanup route.
 
 Cleanup action expansion now runs as a separate verified IR pass after the
 source CFG is complete. The frontend records typed invocation sites, not copied
@@ -59,9 +66,8 @@ action bodies. Expansion consumes only action/binding identities and CFG edges,
 preserving late reads, sequential outputs, continuation phis and boundary ends.
 Pending invocations cannot reach binding promotion or ownership analysis. The
 pre-expansion verifier uses the complete typed CFG, replacing per-exit source-builder
-dominance queries. Conditional graphs use correlated admission; executable expansion
-still requires dominating registrations. Guarded conditional expansion and production
-native/self-host retirement remain outstanding.
+dominance queries. Conditional graphs use correlated admission and verified
+guarded expansion. Production native/self-host retirement remains outstanding.
 
 Plain function and iteration cleanup actions with dominating registrations now compile
 once to typed action regions. Capture interfaces preserve enclosing BindingIDs;
@@ -71,7 +77,7 @@ ordinary ownership planning, without a runtime environment allocation. The
 verifier checks types, capture contracts, registration dominance and exactly-once
 ordered replay. Explicit iteration boundaries handle tail, break, continue,
 labelled exits and function returns, resetting registration history only after
-verified LIFO cleanup. Conditional registration, loop-condition registration and error-only cleanup remain
+verified LIFO cleanup. Loop-condition registration and error-only cleanup remain
 unsupported pending the [full region contract](TYPED-CLEANUP-REGIONS.md). Its
 shared `defer_binding_*` conformance cases pin the broader contract, not completed
 pilot coverage. Neither native nor self-host production AST cleanup is retired.
@@ -94,7 +100,7 @@ void; liveness, counted-argument supplies, borrow anchors and independent callee
 balance checks still apply. Physical lowering emits resultless ARM64 calls and
 keeps source origins. Statement and void-return call contexts are supported;
 void calls cannot supply semantic values. This enables the call-effect boundary
-needed by cleanup. Conditional registration, loop-condition registration, error-only cleanup and
+needed by cleanup. Loop-condition registration, error-only cleanup and
 external/indirect calls remain explicit unsupported contracts.
 
 Recursive tuple patterns now lower to explicit typed field projections and

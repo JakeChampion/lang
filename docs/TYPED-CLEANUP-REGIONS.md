@@ -4,7 +4,11 @@ Design prerequisite for the [typed ownership migration](TYPED-OWNERSHIP-IR-MIGRA
 This document specifies the full cleanup migration contract. The typed-SSA
 pilot now implements bounded function and iteration actions described below, not
 the complete registration/availability model. Native and self-host production
-still use their existing cleanup paths.
+still use their existing cleanup paths. Conditional function/iteration actions
+now execute through verified typed activation and late optional captures; see
+[conditional execution](TYPED-CONDITIONAL-CLEANUP-2026-09-09.md) for the current
+pass contract, validation and measured costs. Dated sections below retain the
+measurements and restrictions of their original implementation slices.
 
 ## Executable action slice
 
@@ -39,8 +43,8 @@ analysis. Expanded place graphs still pass verification before promotion;
 promoted graphs still pass whole-program verification before ownership. This
 separates the pass boundaries needed by conditional availability. The pre-expansion
 verifier now admits safe conditional registration using the correlated proof below;
-expansion still rejects it with the existing source-anchored unsupported diagnostic
-before changing any action. Guarded executable activation is not yet implemented.
+expansion implements it using typed activation, late capture guards and guarded
+writeback, all independently reverified after promotion.
 Registration admission uses
 the complete typed CFG. The source builder no longer computes dominance at each
 exit while control flow is still under construction.
@@ -68,7 +72,7 @@ direct and indirect replay cycles, replay in a cycle without a return, and a
 balanced registration/replay cycle previously passed verification. An additional
 case rejects a join of pending and consumed states even without a return. The graphs
 retain valid SSA, so the independent cleanup proof must reject them. The executable
-path retains these exact-state restrictions. The conditional pre-expansion proof
+ordinary path retains these exact-state restrictions. The conditional proof
 below instead preserves small correlated state sets.
 
 Function and iteration boundaries now carry explicit identities, lexical parent
@@ -86,8 +90,7 @@ missing exits, wrong targets and incomplete or reversed boundary sequences also
 reject while preserving valid SSA. State equality at joins and backedges remains
 exact; only a verified boundary close resets registration history.
 
-Conditional availability that cannot be proven by dominance, registration in
-loop conditions, error-only actions, and nonlocal control/nested
+Registration in loop conditions, error-only actions, and nonlocal control/nested
 registration inside actions remain explicit unsupported contracts. The place
 model below is still required for the broader migration. This slice does not
 activate the seven conditional/iteration conformance cases as typed-pilot tests
@@ -271,24 +274,23 @@ branch predicates: this is not symbolic reasoning about source boolean values.
 For A actions, C total capture occurrences, and graph size G including operations
 and edges, the bound is O((A squared + C) G) time with O(G) reusable projection
 storage, in addition to existing IR/event metadata. The existing canonical-stack
-path is retained for dominating registrations and for expanded executable graphs;
-it does not incur these pairwise walks. This separation is temporary until
-guarded expansion has its own verified executable event contract.
+path is retained for functions with only dominating registrations; it does not
+incur these pairwise walks. Guarded executable graphs use the correlated proof
+too, with initializer events retained after binding promotion.
 
 Ordinary BindingRead and BindingReplace still require initialization on every
-incoming path. Only pending action sites use the conditional capture proof.
+incoming path. Conditional action sites use the correlated capture proof.
 The admission result is ephemeral and cannot survive graph mutation as a cached
 certificate. Expansion receives it from the same verification call, avoiding a
-second dominance traversal. It rejects conditional graphs before mutating any
-site, including earlier unconditional sites in a mixed graph. Pending actions
-still cannot enter binding promotion or ownership lowering.
+second dominance traversal. Pending actions cannot enter binding promotion or
+ownership lowering; they must first become verified executable dispatches.
 
-The next pass must materialize exact action activation, take late immutable
-binding snapshots at each replay, guard extraction and publish sequential outputs
-without inventing an absent payload or relaxing ordinary write preconditions.
-Those operations must pass availability, ownership-unit and runtime verification
-before the source execution gate can be removed. This admission slice does not
-enable source conditional cleanup or retire production AST analyses.
+Guarded expansion now materializes exact action activation, takes late immutable
+binding snapshots at each replay, guards extraction and publishes sequential
+outputs without inventing absent payloads or relaxing ordinary write preconditions.
+The original admission slice below did not enable source execution; the subsequent
+[executable integration](TYPED-CONDITIONAL-CLEANUP-2026-09-09.md) does. Neither
+slice retires production AST analyses.
 
 Validation includes branch-local and mutually exclusive actions, late replacements,
 nested iteration resets, labelled exits, returns and nonreturning paths. Negative

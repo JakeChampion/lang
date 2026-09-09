@@ -13,14 +13,27 @@ import (
 // Keeping reachable product states (not independent may facts) preserves these
 // correlations through joins and arbitrarily many loop iterations.
 func verifyConditionalCleanupFlow(f *Func, flow *cleanupBoundaryFlow) error {
-	if err := verifyConditionalCleanupScopes(f, flow); err != nil {
+	events, err := cleanupInitializerEvents(f)
+	if err != nil {
 		return err
 	}
-	return verifyCleanupProjections(f, flow)
+	if err := verifyConditionalCleanupScopes(f, flow, events); err != nil {
+		return err
+	}
+	return verifyCleanupProjectionsWithEvents(f, flow, events)
 }
 
 func verifyCleanupProjections(f *Func, flow *cleanupBoundaryFlow) error {
+	events, err := cleanupInitializerEvents(f)
+	if err != nil {
+		return err
+	}
+	return verifyCleanupProjectionsWithEvents(f, flow, events)
+}
+
+func verifyCleanupProjectionsWithEvents(f *Func, flow *cleanupBoundaryFlow, events map[*ssa.Block][]bindingStateWrite) error {
 	walk := newCleanupProjection(f, flow)
+	walk.initializers = events
 	for i, action := range f.cleanups {
 		partners := f.cleanups[i+1:]
 		if len(f.cleanups) == 1 {
@@ -44,7 +57,7 @@ func verifyCleanupProjections(f *Func, flow *cleanupBoundaryFlow) error {
 
 // Scope identity is not conditional: every CFG join must have the same active
 // boundary. Pending actions differ by path, but may reset only at verified ends.
-func verifyConditionalCleanupScopes(f *Func, flow *cleanupBoundaryFlow) error {
+func verifyConditionalCleanupScopes(f *Func, flow *cleanupBoundaryFlow, events map[*ssa.Block][]bindingStateWrite) error {
 	fail := func(message string) error { return fmt.Errorf("semir %s cleanup: %s", f.graph.Name, message) }
 	states := map[*ssa.Block]*cleanupBoundary{f.graph.Entry: nil}
 	queue := []*ssa.Block{f.graph.Entry}
@@ -58,10 +71,9 @@ func verifyConditionalCleanupScopes(f *Func, flow *cleanupBoundaryFlow) error {
 			}
 			scope = entry
 		}
-		for _, op := range block.Ops {
-			if op.Kind == ssa.OpBindingInit && f.bindings[op.Imm-1].boundary != scope {
-				pos := f.effectPositions[op]
-				return fmt.Errorf("semir %s binding %d at %d:%d: initializer belongs to a different active boundary", f.graph.Name, op.Imm, pos.Line, pos.Col)
+		for _, write := range events[block] {
+			if f.bindings[write.id-1].boundary != scope {
+				return fmt.Errorf("semir %s binding %d at %d:%d: initializer belongs to a different active boundary", f.graph.Name, write.id, write.pos.Line, write.pos.Col)
 			}
 		}
 		if len(point.registers) != 0 && point.replay != nil {
@@ -110,12 +122,13 @@ func verifyConditionalCleanupScopes(f *Func, flow *cleanupBoundaryFlow) error {
 }
 
 type cleanupProjection struct {
-	f      *Func
-	points []*cleanupFlowPoint
-	succs  [][]int
-	entry  int
-	seen   []uint32
-	queue  []int
+	initializers map[*ssa.Block][]bindingStateWrite
+	f            *Func
+	points       []*cleanupFlowPoint
+	succs        [][]int
+	entry        int
+	seen         []uint32
+	queue        []int
 }
 
 func newCleanupProjection(f *Func, flow *cleanupBoundaryFlow) *cleanupProjection {
@@ -227,8 +240,8 @@ func (w *cleanupProjection) capture(action *cleanupRegion, id BindingID) error {
 	return w.run(func(block int, state uint8) (uint8, error) {
 		status, initialized := state%3, state/3 != 0
 		point := w.points[block]
-		for _, op := range w.f.graph.Blocks[block].Ops {
-			if op.Kind == ssa.OpBindingInit && op.Imm == int64(id) {
+		for _, write := range w.initializers[w.f.graph.Blocks[block]] {
+			if write.id == id {
 				initialized = true
 			}
 		}
