@@ -76,6 +76,14 @@ func verifyCleanupFlow(f *Func, boundaries *cleanupBoundaryFlow) error {
 			}
 			state.scope = id
 		}
+		if f.unpromotedBindings {
+			for _, op := range block.Ops {
+				if op.Kind == ssa.OpBindingInit && f.bindings[op.Imm-1].boundary != frames[state.scope].boundary {
+					pos := f.effectPositions[op]
+					return fmt.Errorf("semir %s binding %d at %d:%d: initializer belongs to a different active boundary", f.graph.Name, op.Imm, pos.Line, pos.Col)
+				}
+			}
+		}
 		if len(point.registers) != 0 && point.replay != nil {
 			return fail("registration and replay require distinct program points")
 		}
