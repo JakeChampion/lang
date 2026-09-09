@@ -105,7 +105,7 @@ func TestInvalidCallContracts(t *testing.T) {
 		{"outside-module", func(p *Program, op *ssa.Op) { op.Imm = int64(len(p.funcs) + 1) }, "function identity"},
 		{"missing-argument", func(_ *Program, op *ssa.Op) { op.Args = nil }, "arity"},
 		{"wrong-result", func(p *Program, op *ssa.Op) {
-			p.funcs[0].values[op.Result.ID] = valueInfo{typ: ast.StringType{}}
+			p.funcs[0].values[op.Result.ID] = valueInfo{typ: sourceValueType(ast.StringType{})}
 		}, "arity"},
 		{"wrong-param", func(p *Program, _ *ssa.Op) {
 			p.funcs[1].contract.params[0] = ast.ArrayType{Elem: ast.NumberType{}}

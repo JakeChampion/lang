@@ -38,7 +38,7 @@ func analyzeLifetimes(f *Func, effects *functionEffects) *lifetimeFlow {
 	}
 	for op, effect := range effects.ops {
 		id := op.Result.ID
-		if !referenceBearing(f.values[id].typ) {
+		if !referenceBearing(f.values[id].typ.source) {
 			continue
 		}
 		switch effect.result {

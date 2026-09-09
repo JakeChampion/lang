@@ -137,11 +137,11 @@ func TestVoidCallRejectsInvalidContracts(t *testing.T) {
 	}{
 		{"fake-scalar-result", func(p *Program, op *ssa.Op) {
 			op.Result = p.funcs[0].graph.NewValue()
-			p.funcs[0].values[op.Result.ID] = valueInfo{typ: ast.NumberType{}}
+			p.funcs[0].values[op.Result.ID] = valueInfo{typ: sourceValueType(ast.NumberType{})}
 		}, "arity"},
 		{"fake-void-result", func(p *Program, op *ssa.Op) {
 			op.Result = p.funcs[0].graph.NewValue()
-			p.funcs[0].values[op.Result.ID] = valueInfo{typ: ast.VoidType{}}
+			p.funcs[0].values[op.Result.ID] = valueInfo{typ: sourceValueType(ast.VoidType{})}
 		}, "unsupported semantic type"},
 		{"missing-origin", func(p *Program, op *ssa.Op) { delete(p.funcs[0].effectPositions, op) }, "no source metadata"},
 		{"foreign-origin", func(p *Program, _ *ssa.Op) { p.funcs[0].effectPositions[&ssa.Op{}] = ast.Position{} }, "stale effect-only"},

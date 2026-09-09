@@ -316,11 +316,23 @@ const (
 	OpBindingInit    // Args = initial value; Imm = function-local binding identity
 	OpBindingRead    // Imm = binding identity; result has the binding's resolved type
 	OpBindingReplace // Args = replacement value; requires an initialized binding
+	OpStateAbsent    // No payload; result is an internal availability type
+	OpStatePresent   // Args = initialized payload
+	OpStateHas       // Args = availability state; result is boolean
+	OpStateGet       // Args = availability state; requires a verified presence proof
 )
 
 // String renders the OpKind for dumps + error messages.
 func (k OpKind) String() string {
 	switch k {
+	case OpStateAbsent:
+		return "state_absent"
+	case OpStatePresent:
+		return "state_present"
+	case OpStateHas:
+		return "state_has"
+	case OpStateGet:
+		return "state_get"
 	case OpInvalid:
 		return "invalid"
 	case OpAdd:

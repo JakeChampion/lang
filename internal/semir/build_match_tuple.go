@@ -14,7 +14,7 @@ type matchBinding struct {
 // bindings are installed only after every test succeeds, never on failure
 // edges or in the outer scope used to evaluate literal patterns.
 func (b *builder) tuplePattern(elems []ast.TuplePatElem, tag ssa.Value, next *ssa.Block, pos ast.Position) ([]matchBinding, error) {
-	typ := b.fn.values[tag.ID].typ.(ast.TupleType) // Validated by tuplePatternContract.
+	typ := b.fn.values[tag.ID].typ.source.(ast.TupleType) // Validated by tuplePatternContract.
 	var bindings []matchBinding
 	for i, elem := range elems {
 		if elem.IsWildcard {

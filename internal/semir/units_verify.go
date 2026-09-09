@@ -93,7 +93,7 @@ func verifyFunctionUnits(p *functionUnits, closed map[*Func]*functionUnits) erro
 		if !v.IsValid() {
 			return nil
 		}
-		if v.Func != f.graph || f.values[v.ID].typ == nil {
+		if v.Func != f.graph || f.values[v.ID].typ.source == nil {
 			return fail("invalid value identity %s", v)
 		}
 		if l.owned[v.ID] && !state[v.ID] {

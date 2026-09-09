@@ -208,7 +208,7 @@ func lowerSemanticARM64(t *testing.T, f *Func) *ARM64Program {
 	p := &Program{funcs: []*Func{f}, byName: map[string]int64{f.graph.Name: 1}}
 	f.program, f.contract = p, funcContract{result: f.result, modes: append([]ParamMode(nil), f.modes...)}
 	for _, param := range f.graph.Params {
-		f.contract.params = append(f.contract.params, f.values[param.ID].typ)
+		f.contract.params = append(f.contract.params, f.values[param.ID].typ.source)
 	}
 	out, err := LowerARM64SSA(p)
 	if err != nil {

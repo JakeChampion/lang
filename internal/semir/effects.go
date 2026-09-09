@@ -93,10 +93,11 @@ func ownershipEffects(f *Func) (*functionEffects, error) {
 			for i, arg := range op.Args {
 				e.inputs[i].value = arg
 			}
-			ref := referenceBearing(f.values[op.Result.ID].typ)
+			ref := referenceBearing(f.values[op.Result.ID].typ.source)
 			switch op.Kind {
 			case ssa.OpConstInt, ssa.OpConstBool, ssa.OpNot, ssa.OpNeg, ssa.OpAdd, ssa.OpSub, ssa.OpMul,
-				ssa.OpEq, ssa.OpNe, ssa.OpLt, ssa.OpLe, ssa.OpGt, ssa.OpGe:
+				ssa.OpEq, ssa.OpNe, ssa.OpLt, ssa.OpLe, ssa.OpGt, ssa.OpGe,
+				ssa.OpStateAbsent, ssa.OpStatePresent, ssa.OpStateHas, ssa.OpStateGet:
 				e.result = resultValue
 			case ssa.OpConstString:
 				e.result = resultImmortal
@@ -104,7 +105,7 @@ func ownershipEffects(f *Func) (*functionEffects, error) {
 				e.result = resultCounted
 				for i, arg := range op.Args {
 					e.inputs[i].store = storeValue
-					e.inputs[i].counted = referenceBearing(f.values[arg.ID].typ)
+					e.inputs[i].counted = referenceBearing(f.values[arg.ID].typ.source)
 				}
 			case ssa.OpArrayAppend:
 				e.result = resultCounted
@@ -112,7 +113,7 @@ func ownershipEffects(f *Func) (*functionEffects, error) {
 				e.inputs[1].store = storeValue
 				// The second operand has exactly the array's element type,
 				// already established by semantic verification.
-				e.inputs[0].counted = referenceBearing(f.values[op.Args[1].ID].typ)
+				e.inputs[0].counted = referenceBearing(f.values[op.Args[1].ID].typ.source)
 				e.inputs[1].counted = e.inputs[0].counted
 			case ssa.OpArrayGet, ssa.OpTupleGet:
 				projected, ok := projection(op)
@@ -149,7 +150,7 @@ func ownershipEffects(f *Func) (*functionEffects, error) {
 		if block.Term.Kind == ssa.TermRet && block.Term.Value.IsValid() {
 			value := block.Term.Value
 			out.returns = append(out.returns, returnEffect{
-				block: block, value: value, counted: referenceBearing(f.values[value.ID].typ),
+				block: block, value: value, counted: referenceBearing(f.values[value.ID].typ.source),
 			})
 		}
 	}

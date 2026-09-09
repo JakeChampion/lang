@@ -53,7 +53,7 @@ func verifyCleanups(f *Func) error {
 			captures[id] = true
 			typ := f.bindings[id-1].typ
 			param := r.body.graph.Params[i]
-			if !ast.Equal(typ, r.body.values[param.ID].typ) || !ast.Equal(typ, r.body.values[r.yield.Args[i].ID].typ) ||
+			if !ast.Equal(typ, r.body.values[param.ID].typ.source) || !ast.Equal(typ, r.body.values[r.yield.Args[i].ID].typ.source) ||
 				(referenceBearing(typ) && r.body.modes[i] != ParamBorrow) {
 				return fail("capture input/output differs from its binding contract")
 			}
