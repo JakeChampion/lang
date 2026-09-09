@@ -6,7 +6,22 @@ import (
 )
 
 func bindingOp(kind ssa.OpKind) bool {
-	return kind == ssa.OpBindingInit || kind == ssa.OpBindingRead || kind == ssa.OpBindingReplace || kind == ssa.OpBindingSnapshot
+	return kind == ssa.OpBindingInit || kind == ssa.OpBindingRead || kind == ssa.OpBindingReplace || kind == ssa.OpBindingSnapshot || kind == ssa.OpBindingReplaceGuarded
+}
+
+// A guarded replacement still writes an ordinary value. Its separate immutable
+// witness proves availability without becoming the payload reaching later reads.
+func bindingWriteValue(op *ssa.Op) ssa.Value {
+	if op.Kind == ssa.OpBindingReplaceGuarded {
+		return op.Args[1]
+	}
+	return op.Args[0]
+}
+
+func (f *Func) replaceBindingGuarded(block *ssa.Block, id BindingID, witness, value ssa.Value, pos ast.Position) *ssa.Op {
+	op := f.addEffect(block, ssa.OpBindingReplaceGuarded, pos, witness, value)
+	op.Imm = int64(id)
+	return op
 }
 
 // A snapshot observes availability, not an initialized payload. It remains an

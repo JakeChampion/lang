@@ -6,6 +6,14 @@ SSA cutover and typed-IR work. Initial integration base: `02ea66e91`.
 
 ## Current implementation checkpoint
 
+Internal guarded binding replacement now requires an exact same-binding snapshot,
+a dominating true presence guard and an unended binding lifetime. Promotion threads
+its new payload into later values without relaxing ordinary must-initialization.
+An independent lifetime oracle and native allocator-pressure/replacement-loop
+tests cover this cleanup writeback prerequisite. Source conditional execution
+still needs guarded activation and replay integration. See
+[typed binding places](TYPED-BINDING-PLACES.md#guarded-replacement).
+
 Typed pending cleanup graphs now admit conditional registration through finite
 action/order/capture projections. The proof preserves correlated initialization,
 LIFO order, exactly-once replay and lifetime resets across joins and cycles, with
