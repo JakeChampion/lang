@@ -35,14 +35,23 @@ func promoteBindings(f *Func) error {
 		local ssa.Value
 	}
 	var reads []bindingRead
+	var snapshots map[BindingID]bool
 	for _, block := range f.graph.Blocks {
 		for _, op := range block.Ops {
 			if op.Kind == ssa.OpBindingInit || op.Kind == ssa.OpBindingReplace {
 				last[key{block, BindingID(op.Imm)}] = op.Args[0]
 			} else if op.Kind == ssa.OpBindingRead {
 				reads = append(reads, bindingRead{op, block, last[key{block, BindingID(op.Imm)}]})
+			} else if op.Kind == ssa.OpBindingSnapshot {
+				if snapshots == nil {
+					snapshots = make(map[BindingID]bool)
+				}
+				snapshots[BindingID(op.Imm)] = true
 			}
 		}
+	}
+	if len(snapshots) != 0 {
+		promoteBindingSnapshots(f, snapshots, ends)
 	}
 	var readEntry func(*ssa.Block, BindingID) (ssa.Value, error)
 	readEnd := func(block *ssa.Block, id BindingID) (ssa.Value, error) {

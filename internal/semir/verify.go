@@ -191,6 +191,16 @@ func verifyOp(f *Func, op *ssa.Op) error {
 	if stateOp(op.Kind) {
 		return verifyStateOp(f, op)
 	}
+	if op.Kind == ssa.OpBindingSnapshot {
+		if !f.unpromotedBindings || op.Imm <= 0 || op.Imm > int64(len(f.bindings)) {
+			return fmt.Errorf("binding snapshot outside its phase or invalid identity")
+		}
+		want := valueType{source: f.bindings[op.Imm-1].typ, form: availabilityForm}
+		if !op.Result.IsValid() || len(op.Args) != 0 || op.Str != "" || op.F64 != 0 || !sameValueType(f.values[op.Result.ID].typ, want) {
+			return fmt.Errorf("invalid binding snapshot type or operands")
+		}
+		return nil
+	}
 	typ := f.values[op.Result.ID].typ
 	if op.Kind == ssa.OpPhi {
 		if len(op.Args) == 0 {
