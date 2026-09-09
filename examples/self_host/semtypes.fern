@@ -1,0 +1,78 @@
+// Exact semantic identity, distinct from frontend assignability or spelling.
+import "./typeinfo";
+
+pub function equal(a: typeinfo.Type, b: typeinfo.Type): boolean {
+    match (a) {
+        typeinfo.TypeI32(x) => {
+            if let typeinfo.TypeI32(y) = b { return x.width == y.width && x.unsigned == y.unsigned && x.is_char == y.is_char; }
+        },
+        typeinfo.TypeBool(_) => { if let typeinfo.TypeBool(_) = b { return true; } },
+        typeinfo.TypeString(x) => { if let typeinfo.TypeString(y) = b { return x.tag == y.tag; } },
+        typeinfo.TypeFloat(x) => { if let typeinfo.TypeFloat(y) = b { return x.width == y.width && x.polymorphic == y.polymorphic; } },
+        typeinfo.TypeArray(x) => { if let typeinfo.TypeArray(y) = b { return equal(x.elem, y.elem); } },
+        typeinfo.TypeStruct(x) => { if let typeinfo.TypeStruct(y) = b { return x.name == y.name && equal_list(x.args, y.args); } },
+        typeinfo.TypeUnion(x) => { if let typeinfo.TypeUnion(y) = b { return x.name == y.name && equal_list(x.args, y.args); } },
+        typeinfo.TypeTuple(x) => { if let typeinfo.TypeTuple(y) = b { return equal_list(x.elements, y.elements); } },
+        typeinfo.TypeFunc(x) => {
+            if let typeinfo.TypeFunc(y) = b { return x.params_known == y.params_known && equal_list(x.param_types, y.param_types) && equal(x.ret_type, y.ret_type); }
+        },
+        typeinfo.TypeMap(x) => { if let typeinfo.TypeMap(y) = b { return equal(x.key, y.key) && equal(x.value, y.value); } },
+        typeinfo.TypeDyn(x) => { if let typeinfo.TypeDyn(y) = b { return x.traits == y.traits; } },
+        typeinfo.TypeVoid(_) => { if let typeinfo.TypeVoid(_) = b { return true; } },
+        typeinfo.TypeUnknown(_) => { return false; }
+    }
+    return false;
+}
+
+function equal_list(a: typeinfo.Type[], b: typeinfo.Type[]): boolean {
+    if (a.len() != b.len()) { return false; }
+    var i: i32 = 0;
+    while (i < a.len()) {
+        if (!equal(a[i], b[i])) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+// Fully committed value types only. Nominal identities remain opaque until
+// a resolved declaration schema is supplied for constructing/projecting them.
+pub function concrete(t: typeinfo.Type, allow_void: boolean): boolean {
+    match (t) {
+        typeinfo.TypeI32(i) => {
+            if (i.is_char) { return i.width == 32 && !i.unsigned; }
+            return i.width == 32 || i.width == 64 || (i.width == 8 && i.unsigned);
+        },
+        typeinfo.TypeBool(_) => { return true; },
+        typeinfo.TypeString(s) => { return s.tag == 0 || s.tag == 1; },
+        typeinfo.TypeFloat(f) => { return !f.polymorphic && (f.width == 32 || f.width == 64); },
+        typeinfo.TypeArray(a) => { return concrete(a.elem, false); },
+        typeinfo.TypeStruct(s) => { return s.name.len() > 0 && concrete_list(s.args); },
+        typeinfo.TypeUnion(u) => { return u.name.len() > 0 && concrete_list(u.args); },
+        typeinfo.TypeTuple(tup) => { return tup.elements.len() >= 2 && concrete_list(tup.elements); },
+        typeinfo.TypeFunc(f) => { return f.params_known && concrete_list(f.param_types) && concrete(f.ret_type, true); },
+        typeinfo.TypeMap(m) => { return concrete(m.key, false) && concrete(m.value, false); },
+        typeinfo.TypeDyn(d) => { return d.traits.len() > 0; },
+        typeinfo.TypeVoid(_) => { return allow_void; },
+        typeinfo.TypeUnknown(_) => { return false; }
+    }
+    return false;
+}
+
+function concrete_list(ts: typeinfo.Type[]): boolean {
+    for t in ts { if (!concrete(t, false)) { return false; } }
+    return true;
+}
+
+// This is a conservative lifetime classification, not an RC layout or a claim
+// that a value carries a counted unit. Views and opaque nominal values retain
+// their anchors too. Their eventual unit/layout contracts must be verified.
+pub function needs_anchor(t: typeinfo.Type): boolean {
+    match (t) {
+        typeinfo.TypeI32(_) => { return false; },
+        typeinfo.TypeBool(_) => { return false; },
+        typeinfo.TypeFloat(_) => { return false; },
+        typeinfo.TypeVoid(_) => { return false; },
+        _ => { return true; }
+    }
+    return true;
+}
