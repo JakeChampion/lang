@@ -12,8 +12,8 @@ const (
 
 // A state component only needs a machine definition if a semantic use observes
 // it. Propagate lane demand through phis, including cycles, once per lane/edge.
-// This is scalar-state lowering, not a reference lifetime or ownership proof.
-func availabilityLaneDemand(f *Func) map[int32]uint8 {
+// Verified conditional RC adds physical uses; this is not an ownership proof.
+func availabilityLaneDemand(f *Func, plan *functionUnits) map[int32]uint8 {
 	needed := make(map[int32]uint8)
 	phis := make(map[int32]*ssa.Op)
 	type demand struct {
@@ -41,6 +41,37 @@ func availabilityLaneDemand(f *Func) map[int32]uint8 {
 			}
 		}
 	}
+	if plan != nil {
+		drops := func(values []ssa.Value) {
+			for _, value := range values {
+				if f.values[value.ID].typ.conditionalUnit() {
+					mark(value.ID, statePresenceLane)
+					mark(value.ID, statePayloadLane)
+				}
+			}
+		}
+		step := func(step unitStep) {
+			for _, supply := range step.supplies {
+				if supply.mode == unitRetain && supply.conditional {
+					mark(supply.value.ID, statePresenceLane)
+					mark(supply.value.ID, statePayloadLane)
+				}
+			}
+			drops(step.drops)
+		}
+		for _, values := range plan.entry {
+			drops(values)
+		}
+		for _, s := range plan.ops {
+			step(s)
+		}
+		for _, s := range plan.edges {
+			step(s)
+		}
+		for _, s := range plan.returns {
+			step(s)
+		}
+	}
 	for next := 0; next < len(queue); next++ {
 		at := queue[next]
 		if phi := phis[at.id]; phi != nil {
@@ -50,6 +81,26 @@ func availabilityLaneDemand(f *Func) map[int32]uint8 {
 		}
 	}
 	return needed
+}
+
+// Guard payload operations by the semantic discriminant, never by pointer
+// bits. The payload lane has no meaning on the absent path.
+func (b *armBuilder) whenPresent(flag ssa.Value, action func()) {
+	yes, next := b.f.NewBlock(), b.f.NewBlock()
+	b.f.SetBrIf(b.b, flag, yes, next)
+	b.b = yes
+	action()
+	b.f.SetBr(b.b, next)
+	b.b = next
+}
+
+func (b *armBuilder) dropSemantic(src *Func, value ssa.Value, values, payloads map[int32]ssa.Value) {
+	typ := src.values[value.ID].typ
+	if typ.conditionalUnit() {
+		b.whenPresent(values[value.ID], func() { b.drop(payloads[value.ID], typ.source) })
+	} else {
+		b.drop(values[value.ID], typ.source)
+	}
 }
 
 func (b *armBuilder) phi(typ ast.Type) ssa.Value {

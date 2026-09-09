@@ -59,9 +59,6 @@ func Verify(f *Func) error {
 			if info.typ.form != sourceForm && info.typ.form != availabilityForm {
 				return fail("%v: invalid semantic type form", v)
 			}
-			if info.typ.form == availabilityForm && referenceBearing(info.typ.source) {
-				return fail("%v: reference-bearing availability requires conditional unit support", v)
-			}
 			hasAvailability = hasAvailability || info.typ.form == availabilityForm
 		}
 		return nil
