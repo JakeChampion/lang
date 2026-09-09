@@ -298,8 +298,22 @@ An independent full-stack interpreter agrees on 11,520 finite-state comparisons
 (181 accepted and 11,339 rejected), using all permutations of three registration
 and three replay events across eight graph families, with and without a captured
 place. These include bypasses, joins, cycles and lifetime resets. The oracle uses
-complete stacks/history and no production transfer or fixed-point helper. Scope
-structure is separately tested through full semantic verification.
+complete stacks/history and no production transfer or fixed-point helper. That
+permutation corpus has one scope, so it does not establish nested-scope coverage.
+
+A separate source-derived nested corpus adds 960 comparisons (265 accepted and
+695 rejected), deleting every combination of action registration, replay and
+captured-place initialization events. It covers outer actions pending across an
+inner close, nested iteration with outer and inner captures, three-level labelled
+breaks, continues and returns. The interpreter maintains initialization separately
+for every binding and resets only actions and places owned by an ending boundary.
+Thus an inner close preserves an outer pending action and its captured value,
+while an inner binding cannot remain initialized across an iteration reset.
+An event index built directly from the typed contract avoids sharing the
+production indexing, lifetime-mask or transfer helpers. Intact source fixtures
+also pass full semantic verification; generated mutations compare event traces,
+not structural SSA or scope admission. Restoring the original whole-stack-empty
+end check makes the outer-pending/inner-close regression fail as expected.
 
 ## Correlated-admission costs, 2026-09-09
 
