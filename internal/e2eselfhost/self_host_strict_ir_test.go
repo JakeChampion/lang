@@ -50,6 +50,15 @@ var strictIRCorpus = []struct {
 	src  string
 	want int
 }{
+	// Typed captures now resolve pointer elements of tuple destructures. This
+	// used to be a refusal fixture; require successful lowering and execution.
+	{"destructured-array-closure", `function main(): i32 {
+    var t: (i32[], i32) = ([3i32], 4i32);
+    var (a, b) = t;
+    var fs: ((i32) => i32)[] = [((x: i32) => (x + a[0i32]))];
+    return (fs[0i32](1i32) + b) & 63i32;
+}
+`, 8},
 	// The #5642 shape itself: checked operators in a match scrutinee, the
 	// construct whose missing recovery case motivated the issue. Both arms are
 	// exercised — f(100, 3) fits u8, f(250, 10) overflows.
@@ -713,8 +722,9 @@ func TestSelfHostStrictIRRefusesBail(t *testing.T) {
 // be filed against programs the checker rejects.
 //
 // A row breaking because its gap CLOSED is the intended failure: the fixture no
-// longer demonstrates a reason, so replace it with a program that still bails.
-// Do not weaken the assertion to keep it green.
+// longer demonstrates a reason. Move it into strictIRCorpus, which requires
+// successful compilation and execution, and retain valid refusal examples for
+// the remaining gaps. Do not weaken an assertion to accept both outcomes.
 var strictIRBailReasons = []struct {
 	name   string
 	src    string
@@ -751,33 +761,6 @@ function main(): i32 {
     return (u as i32) & 255i32;
 }
 `, "main", "did not lower: `var u` bound from immediately-invoked value block"},
-	// A capturing lambda that reaches lowering with no hoisted body behind it.
-	// The bail is minted where the name is: the escaping-closure lowering asks
-	// for `<fn>$clo`, and refusing there names the construct at its own site
-	// rather than leaving a dangling symbol for the resolution pass — or, on a
-	// route with no such pass, for the linker (#7215).
-	//
-	// What keeps the lambda unhoisted is its CAPTURE TYPE. The array-literal
-	// element position is lifted (`<fn>$cloN` + a `__mkclo$` marker), but the
-	// lift builds the hoisted body from the capture's resolved type, and a
-	// POINTER element of a tuple destructure resolves to nothing on purpose:
-	// materialising such a capture is a known-wrong IR path, so cap_type_in_stmts
-	// declines it rather than lifting a closure that would read garbage. The
-	// lambda therefore stays inline and asks for a `main$clo` nothing built.
-	//
-	// So the capture has to be a destructure binding (`var (a, b) = t`) AND
-	// pointer-shaped: the same program with an i32 element resolves, lifts, and
-	// lowers. The if-arm-array program this fixture replaced (#8153) is no
-	// longer a bail at all — it lowers, and
-	// TestSelfHostIIFEArmArrayUnreachableNameRefuses holds the arm shapes that
-	// still refuse (#8163).
-	{"unhoisted-closure-value", `function main(): i32 {
-    var t: (i32[], i32) = ([3i32], 4i32);
-    var (a, b) = t;
-    var fs: ((i32) => i32)[] = [((x: i32) => (x + a[0i32]))];
-    return (fs[0i32](1i32) + b) & 63i32;
-}
-`, "main", "did not lower: lambda: no lifted `main$clo` for the escaping closure"},
 }
 
 // TestSelfHostStrictIRNamesBailReason asserts each fixture's bail names its own
