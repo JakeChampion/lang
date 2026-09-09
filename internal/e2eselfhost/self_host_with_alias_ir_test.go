@@ -173,6 +173,18 @@ function main(): i32 { if (churn() != 0) { return 1; } var before: i64 = __heap_
 function grow(own xs: i32[]): i32[] { var i = 0; while (i < 32) { xs = xs.append(i); i = i + 1; } return xs; }
 function churn(): i32 { var i = 0; while (i < 32) { var xs = [1, 2, 3]; xs = grow(xs); if (xs.len() != 35 || xs[0] != 1 || xs[34] != 31) { return 1; } i = i + 1; } return 0; }
 function main(): i32 { if (churn() != 0) { return 1; } var before: i64 = __heap_bump_bytes(); if (churn() != 0) { return 2; } if (__heap_bump_bytes() != before) { return 3; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`},
+	{"own-caller-lifetime-tail-append", `@noinline
+function grow(own xs: i32[], n: i32): i32[] { return xs.append(n); }
+function churn(): i32 { var xs = [1, 2]; var old = xs; var i = 0; while (i < 32) { xs = grow(xs, i); i = i + 1; } if (old.len() != 2 || old[0] != 1 || old[1] != 2 || xs.len() != 34 || xs[33] != 31) { return 1; } return 0; }
+function main(): i32 { if (churn() != 0) { return 1; } var before = __heap_bump_bytes(); if (churn() != 0) { return 2; } if (__heap_bump_bytes() != before) { return 3; } return 0; }`},
+	{"own-caller-lifetime-tail-append-i64", `@noinline
+function grow(own xs: i64[]): i64[] { return xs.append(9000000000i64); }
+function churn(): i32 { var xs = [1000000000i64, 2000000000i64]; var old = xs; var i = 0; while (i < 32) { xs = grow(xs); i = i + 1; } if (old.len() != 2 || old[0] != 1000000000i64 || old[1] != 2000000000i64 || xs.len() != 34 || xs[33] != 9000000000i64) { return 1; } return 0; }
+function main(): i32 { if (churn() != 0) { return 1; } var before = __heap_bump_bytes(); if (churn() != 0) { return 2; } if (__heap_bump_bytes() != before) { return 3; } return 0; }`},
+	{"own-caller-lifetime-tail-append-f64", `@noinline
+function grow(own xs: f64[]): f64[] { return xs.append(9.5); }
+function churn(): i32 { var xs = [1.5, 2.5]; var old = xs; var i = 0; while (i < 32) { xs = grow(xs); i = i + 1; } if (old.len() != 2 || old[0] != 1.5 || old[1] != 2.5 || xs.len() != 34 || xs[33] != 9.5) { return 1; } return 0; }
+function main(): i32 { if (churn() != 0) { return 1; } var before = __heap_bump_bytes(); if (churn() != 0) { return 2; } if (__heap_bump_bytes() != before) { return 3; } return 0; }`},
 	{"own-caller-earlier-argument-read", `@noinline
 function update(n: i32, own xs: i32[]): i32[] { xs = xs.with(0, n); return xs; }
 @noinline
