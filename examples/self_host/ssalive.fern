@@ -54,7 +54,7 @@ function successor(t: ssa.STerm, which: i32): i32 {
 
 // Structural input validation only. Semantic typing, dominance and the
 // availability of each dependency remain obligations of the caller.
-function input_error(f: ssa.SFunc, dependencies: i32[][]): string {
+pub function input_error(f: ssa.SFunc, dependencies: i32[][]): string {
     if (f.nvals < 0 || dependencies.len() != f.nvals) { return "dependency dimensions"; }
     if (block_index(f, f.entry) < 0) { return "missing entry block"; }
     if (f.nvals > 0 && f.blocks.len() > 2147483647 / f.nvals) { return "live matrix overflow"; }
