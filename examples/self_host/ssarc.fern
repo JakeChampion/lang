@@ -3,6 +3,7 @@
 import "./ir";
 import "./irlower";
 import "./ssa";
+import "./ssadeps";
 import "./ssasem";
 import "./ssaunits";
 import "./typeinfo";
@@ -132,29 +133,117 @@ function drops(r: irlower.LowerResult, step: ssaunits.Step, f: ssasem.Func): irl
     return r;
 }
 
-function at(p: ssaunits.Plan, point: i32): ssaunits.Step {
-    for step in p.steps { if (step.point == point) { return step; } }
-    // Unreachable after verify for this single-block, return-only contract.
+function at(p: ssaunits.Plan, block: i32, point: i32, target: i32): ssaunits.Step {
+    for step in p.steps {
+        if (step.block == block && step.point == point && step.target == target) { return step; }
+    }
+    // Unreachable after verification of the complete plan.
     return ssaunits.Step { block: 0 - 1, point: point, target: 0 - 1, supplies: [], drops: [] };
+}
+
+function block_index(f: ssa.SFunc, id: i32): i32 {
+    var i: i32 = 0;
+    while (i < f.blocks.len()) { if (f.blocks[i].id == id) { return i; } i = i + 1; }
+    return 0 - 1;
+}
+
+function successors(t: ssa.STerm): i32[] {
+    if (t.kind_tag == 2) { return [t.target]; }
+    if (t.kind_tag == 3) {
+        if (t.t == t.f) { return [t.t]; }
+        return [t.t, t.f];
+    }
+    return [];
+}
+
+// Block positions, not block IDs. An empty result means a reachable cycle;
+// every verified graph has at least its reachable entry block.
+function forward_order(f: ssa.SFunc): i32[] {
+    var reachable: boolean[] = ssadeps.reachable_blocks(f);
+    var pending: i32[] = [];
+    var emitted: boolean[] = [];
+    var remaining: i32 = 0;
+    var bi: i32 = 0;
+    for b in f.blocks {
+        var count: i32 = 0;
+        for pred in b.preds { if (reachable[block_index(f, pred)]) { count = count + 1; } }
+        pending = pending.append(count);
+        emitted = emitted.append(false);
+        if (reachable[bi]) { remaining = remaining + 1; }
+        bi = bi + 1;
+    }
+    var order: i32[] = [];
+    while (remaining > 0) {
+        var chosen: i32 = 0 - 1;
+        bi = 0;
+        while (bi < f.blocks.len() && chosen < 0) {
+            if (reachable[bi] && !emitted[bi] && pending[bi] == 0) { chosen = bi; }
+            bi = bi + 1;
+        }
+        if (chosen < 0) { return []; }
+        order = order.append(chosen);
+        emitted = emitted.with(chosen, true);
+        for id in successors(f.blocks[chosen].term) {
+            var next: i32 = block_index(f, id);
+            pending = pending.with(next, pending[next] - 1);
+        }
+        remaining = remaining - 1;
+    }
+    return order;
+}
+
+function rank(f: ssa.SFunc, order: i32[], id: i32): i32 {
+    var i: i32 = 0;
+    while (i < order.len()) { if (f.blocks[order[i]].id == id) { return i; } i = i + 1; }
+    return 0 - 1;
+}
+
+function edge(r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan, from: i32, target: i32): irlower.LowerResult {
+    var step: ssaunits.Step = at(p, from, ssaunits.edge_point(), target);
+    r = supplies(r, step);
+    var dest: ssa.SBlock = f.graph.blocks[block_index(f.graph, target)];
+    var pi: i32 = 0;
+    while (dest.preds[pi] != from) { pi = pi + 1; }
+    // All phi sources remain on the operand stack while old edge units are
+    // released. Assign in reverse stack order, after every source was read.
+    // Drop helpers and their nested scopes preserve the existing stack prefix.
+    for ins in dest.insts {
+        if (ins.kind_tag == 8) { r = emit(r, ir.op_load_local(ins.args[pi])); }
+    }
+    r = drops(r, step, f);
+    var i: i32 = dest.insts.len() - 1;
+    while (i >= 0) {
+        var ins: ssa.SInst = dest.insts[i];
+        if (ins.kind_tag == 8) { r = emit(r, ir.op_store_local(ins.result)); }
+        i = i - 1;
+    }
+    return r;
+}
+
+function jump(r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan, order: i32[], position: i32, target: i32, scopes: i32): irlower.LowerResult {
+    r = edge(r, f, p, f.graph.blocks[order[position]].id, target);
+    var dest: i32 = rank(f.graph, order, target);
+    if (dest != position + 1) { r = emit(r, ir.op_br(dest - position - 1 + scopes)); }
+    return r;
 }
 
 function validate(f: ssasem.Func, modes: i32[], p: ssaunits.Plan): string {
     var why: string = ssaunits.verify(f, modes, p);
     if (why != "") { return why; }
-    if (f.graph.blocks.len() != 1 || f.graph.blocks[0].term.kind_tag != 1) { return "physical RC needs straight-line return graph"; }
     for t in f.values { if (!supported(t)) { return "unsupported physical RC value type"; } }
     if (!supported(f.result)) { return "unsupported physical RC result type"; }
     // Keep this physical vocabulary closed when semantic analysis grows new
     // operations. Verification of a new operation does not implement its ABI.
-    for ins in f.graph.blocks[0].insts {
-        var k: i32 = ins.kind_tag;
-        if (!supported_op(k)) { return "unsupported physical RC operation"; }
+    for b in f.graph.blocks {
+        for ins in b.insts {
+            if (!supported_op(ins.kind_tag)) { return "unsupported physical RC operation"; }
+        }
     }
     return "";
 }
 
 function supported_op(k: i32): boolean {
-    return k == 1 || k == 2 || k == 6 || k == 7
+    return k == 1 || k == 2 || k == 6 || k == 7 || k == 8
         || k == ssasem.array_new() || k == ssasem.tuple_new()
         || k == ssasem.array_get() || k == ssasem.tuple_get();
 }
@@ -181,28 +270,58 @@ function instruction(r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerResul
     return emit(r, ir.op_store_local(ins.result));
 }
 
-pub function lower(f: ssasem.Func, modes: i32[], p: ssaunits.Plan): irlower.LowerResult {
-    var why: string = validate(f, modes, p);
-    if (why != "") { return empty(why); }
-    var r: irlower.LowerResult = frame(f);
-    r = drops(r, at(p, ssaunits.entry_point()), f);
-    var b = f.graph.blocks[0];
+function block_body(r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan, b: ssa.SBlock): irlower.LowerResult {
+    r = drops(r, at(p, b.id, ssaunits.entry_point(), 0 - 1), f);
     var pos: i32 = 0;
     for ins in b.insts {
-        if (ins.kind_tag != 6) {
-            var step: ssaunits.Step = at(p, pos);
+        if (ins.kind_tag != 6 && ins.kind_tag != 8) {
+            var step: ssaunits.Step = at(p, b.id, pos, 0 - 1);
             r = supplies(r, step);
             r = instruction(r, ins);
             r = drops(r, step, f);
         }
         pos = pos + 1;
     }
-    var ret: ssaunits.Step = at(p, ssaunits.return_point());
-    r = supplies(r, ret);
-    r = drops(r, ret, f);
-    if (b.term.value >= 0) { r = emit(r, ir.op_load_local(b.term.value)); }
-    else { r = emit(r, ir.op_const_i32(0)); }
-    r = emit(r, ir.op_return());
+    return r;
+}
+
+function terminator(r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan, order: i32[], position: i32): irlower.LowerResult {
+    var b: ssa.SBlock = f.graph.blocks[order[position]];
+    if (b.term.kind_tag == 1) {
+        var ret: ssaunits.Step = at(p, b.id, ssaunits.return_point(), 0 - 1);
+        r = supplies(r, ret);
+        r = drops(r, ret, f);
+        if (b.term.value >= 0) { r = emit(r, ir.op_load_local(b.term.value)); }
+        else { r = emit(r, ir.op_const_i32(0)); }
+        return emit(r, ir.op_return());
+    }
+    if (b.term.kind_tag == 2) { return jump(r, f, p, order, position, b.term.target, 0); }
+    if (b.term.t == b.term.f) { return jump(r, f, p, order, position, b.term.t, 0); }
+    r = emit(r, ir.op_load_local(b.term.cond));
+    r = emit(r, ir.op_if(0));
+    r = jump(r, f, p, order, position, b.term.t, 1);
+    r = emit(r, ir.op_else());
+    r = jump(r, f, p, order, position, b.term.f, 1);
+    return emit(r, ir.op_end());
+}
+
+pub function lower(f: ssasem.Func, modes: i32[], p: ssaunits.Plan): irlower.LowerResult {
+    var why: string = validate(f, modes, p);
+    if (why != "") { return empty(why); }
+    var order: i32[] = forward_order(f.graph);
+    if (order.len() == 0) { return empty("physical RC needs acyclic graph"); }
+    var r: irlower.LowerResult = frame(f);
+    // Nest forward labels in reverse layout order. Closing one introduces
+    // the corresponding block, so branches need no runtime dispatcher.
+    var labels: i32 = order.len() - 1;
+    while (labels > 0) { r = emit(r, ir.op_block(0)); labels = labels - 1; }
+    var position: i32 = 0;
+    for bi in order {
+        if (position > 0) { r = emit(r, ir.op_end()); }
+        r = block_body(r, f, p, f.graph.blocks[bi]);
+        r = terminator(r, f, p, order, position);
+        position = position + 1;
+    }
     var optimized: ir.OptimizedOps = ir.optimize_ops(r.ops, r.n_params, r.n_locals);
     return irlower.LowerResult { ...r, ops: optimized.ops, n_locals: optimized.n_locals };
 }
