@@ -2,7 +2,6 @@ package e2eselfhost
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -22,12 +21,9 @@ import (
 //
 // Each combinator program compiles via the asm_load_run modload driver, must
 // route the IR path (-decide == "ir"), and must match the interpreter oracle.
-// x86-64 only (loader driver takes argv paths — mirrors TestSelfHostStdlibModloadIR).
+// The configured runner executes the file-loading driver and output binary.
 func TestSelfHostAsyncCombinatorsModloadIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
-	if len(runner) != 0 {
-		t.Skip("file-loading driver test runs only natively (argv paths)")
-	}
 	interpBin := buildLangBinForInterp(t)
 	dir := writeSelfHostAsmProject(t)
 	copySelfHostDriver(t, dir, "asm_load_run.fern")
@@ -68,22 +64,22 @@ function main(): i32 {
 			if err := os.WriteFile(mainPath, []byte(tc.prog), 0o644); err != nil {
 				t.Fatalf("write main.fern: %v", err)
 			}
-			decide, err := exec.Command(mmc, mainPath, stdlibRoot, "-decide").Output()
+			decide, err := runX86_64Bin(runner, mmc, mainPath, stdlibRoot, "-decide").CombinedOutput()
 			if err != nil {
-				t.Fatalf("decide: %v", err)
+				t.Fatalf("decide: %v\n%s", err, decide)
 			}
 			if got := strings.TrimSpace(string(decide)); got != "ir" {
 				t.Fatalf("%s routed %q, want \"ir\" (generic-enum type-param inference bailed)", tc.name, got)
 			}
-			asm, err := exec.Command(mmc, mainPath, stdlibRoot).Output()
+			asm, err := runX86_64Bin(runner, mmc, mainPath, stdlibRoot).CombinedOutput()
 			if err != nil {
-				t.Fatalf("loader compile: %v", err)
+				t.Fatalf("loader compile: %v\n%s", err, asm)
 			}
 			if len(asm) == 0 {
 				t.Fatal("loader emitted 0 bytes")
 			}
 			progBin := buildBin(t, gcc, dir, "async_"+tc.name, string(asm))
-			cmd := exec.Command(progBin)
+			cmd := runX86_64Bin(runner, progBin)
 			_ = cmd.Run()
 			if code := cmd.ProcessState.ExitCode(); code != want {
 				t.Errorf("%s exited %d, want %d (interp oracle)", tc.name, code, want)
