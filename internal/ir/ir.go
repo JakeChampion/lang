@@ -6595,8 +6595,8 @@ func (b *builder) emitEnumNew(callNode *ast.Call, enumName string, varIdx int, p
 	// arg can't be float anyway since the constraint failed).
 	var payloadTypes []ast.Type
 	if callNode != nil {
-		if pts, ok := b.info.VariantCallPayloads[callNode]; ok {
-			payloadTypes = pts
+		if construction, ok := b.info.EnumConstructions[callNode]; ok {
+			payloadTypes = construction.Payloads
 		}
 	}
 	if payloadTypes == nil {
@@ -16941,8 +16941,8 @@ func (b *builder) tryEnumReuseOverwrite(n *ast.Assign, t *ast.Ident, idx int32) 
 	// as emitEnumNew: checker-substituted concrete types first, else the
 	// declared payload list).
 	var payloadTypes []ast.Type
-	if pts, ok := b.info.VariantCallPayloads[call]; ok {
-		payloadTypes = pts
+	if construction, ok := b.info.EnumConstructions[call]; ok {
+		payloadTypes = construction.Payloads
 	}
 	if payloadTypes == nil && varIdx < len(ed.Variants) {
 		payloadTypes = ed.Variants[varIdx].Payloads

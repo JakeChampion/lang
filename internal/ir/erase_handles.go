@@ -53,7 +53,7 @@ func eraseHandleTypes(prog *ast.Program, info *checker.Info) {
 	}
 	// FuncSigs holds copies of the (resolved) signature types, read directly
 	// by lowering, so it must be erased alongside the AST. VarTypes and
-	// VariantCallPayloads are erased defensively — cheap, and keeps any future
+	// EnumConstructions are erased defensively - keeps any future
 	// Info-driven lowering path handle-free.
 	for _, sig := range info.FuncSigs {
 		if sig == nil {
@@ -67,10 +67,12 @@ func eraseHandleTypes(prog *ast.Program, info *checker.Info) {
 	for v, t := range info.VarTypes {
 		info.VarTypes[v] = eraseHandle(t)
 	}
-	for _, ts := range info.VariantCallPayloads {
-		for i := range ts {
-			ts[i] = eraseHandle(ts[i])
+	for expr, construction := range info.EnumConstructions {
+		construction.Type = eraseHandle(construction.Type).(ast.EnumType)
+		for i := range construction.Payloads {
+			construction.Payloads[i] = eraseHandle(construction.Payloads[i])
 		}
+		info.EnumConstructions[expr] = construction
 	}
 }
 
