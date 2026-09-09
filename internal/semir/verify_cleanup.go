@@ -7,15 +7,18 @@ import (
 	"github.com/jakechampion/lang/internal/ssa"
 )
 
-func verifyCleanups(f *Func) error {
+func verifyCleanups(f *Func) (*cleanupRegion, error) {
 	if len(f.cleanups) == 0 && len(f.boundaries) == 0 && len(f.cleanupExits) == 0 {
-		return nil
+		return nil, nil
 	}
-	fail := func(message string) error { return fmt.Errorf("semir %s cleanup: %s", f.graph.Name, message) }
+	fail := func(message string) (*cleanupRegion, error) {
+		return nil, fmt.Errorf("semir %s cleanup: %s", f.graph.Name, message)
+	}
+	var conditional *cleanupRegion
 	dom := ssa.BuildDomTree(f.graph)
 	boundaryFlow, err := verifyCleanupBoundaries(f, dom)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	seen := make(map[*cleanupRegion]bool)
 	for _, r := range f.cleanups {
@@ -25,7 +28,7 @@ func verifyCleanups(f *Func) error {
 		}
 		seen[r] = true
 		if err := Verify(r.body); err != nil {
-			return err
+			return nil, err
 		}
 		if len(r.captures) != len(r.body.graph.Params) || r.exit == nil || r.yield == nil ||
 			r.yield.Kind != ssa.OpTupleMake || len(r.yield.Args) != len(r.captures) {
@@ -65,9 +68,12 @@ func verifyCleanups(f *Func) error {
 			}
 			if !dom.Dominates(r.register, replay) {
 				if f.unexpandedCleanups {
-					return fmt.Errorf("semir %s at %d:%d: conditional cleanup registration is not implemented in the typed pilot", f.graph.Name, r.pos.Line, r.pos.Col)
+					if conditional == nil {
+						conditional = r
+					}
+				} else {
+					return fail("replay lacks a dominating registration")
 				}
-				return fail("replay lacks a dominating registration")
 			}
 			replays[replay] = true
 			if f.unexpandedCleanups && (len(replay.Ops) != 0 || (replay.Term.Kind != ssa.TermBr && replay.Term.Kind != ssa.TermRet)) {
@@ -75,5 +81,11 @@ func verifyCleanups(f *Func) error {
 			}
 		}
 	}
-	return verifyCleanupFlow(f, boundaryFlow)
+	if err := indexCleanupActions(f, boundaryFlow); err != nil {
+		return nil, err
+	}
+	if conditional != nil {
+		return conditional, verifyConditionalCleanupFlow(f, boundaryFlow)
+	}
+	return nil, verifyCleanupFlow(f, boundaryFlow)
 }

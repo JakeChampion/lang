@@ -11,6 +11,12 @@ import (
 // structural invariants. It does not certify RC balance or uniqueness: those
 // require the ownership/effect analysis that follows this representation.
 func Verify(f *Func) error {
+	return verifyWithCleanupAdmission(f, nil)
+}
+
+// Expansion can request the verified conditional admission result without a
+// second dominance traversal. This is an ephemeral proof, never cached on IR.
+func verifyWithCleanupAdmission(f *Func, conditionalAction **cleanupRegion) error {
 	if f == nil || f.graph == nil {
 		return fmt.Errorf("semir: nil function")
 	}
@@ -176,11 +182,15 @@ func Verify(f *Func) error {
 			return err
 		}
 	}
-	if err := verifyCleanups(f); err != nil {
+	conditional, err := verifyCleanups(f)
+	if err != nil {
 		return err
 	}
+	if conditionalAction != nil {
+		*conditionalAction = conditional
+	}
 	if f.unpromotedBindings {
-		if err := verifyBindingInitialization(f); err != nil {
+		if err := verifyBindingInitialization(f, conditional == nil); err != nil {
 			return err
 		}
 	}
