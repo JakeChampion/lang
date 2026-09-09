@@ -254,6 +254,9 @@ pub struct LocalInfo {
     // A CONSUMING match still reclaims the payload — it reads it back out of the
     // box's own slot (emit_enum_variant_drops_gated), never through this binding.
     borrowed_arr: boolean,
+    // Runtime ownership of a scalar-array projection after rebind. Indexed by
+    // slot identity, so retirement and shadowing cannot lose the flag.
+    arr_own_flag: i32,
     // moved_claim: a borrowed_arr binding that IS the box's counted reference
     // rather than a borrow of it, because the box is one this frame built and
     // no owner of the buffer outlives the call (scrutinee_owns_no_surviving_claim).
@@ -268,7 +271,7 @@ pub struct LocalInfo {
 
 // li_new(name) — a fresh local slot (defaults: every flag false, every type "").
 pub function li_new(name: string): LocalInfo {
-    return LocalInfo { slot_name: name, is_arr: false, is_str: false, is_strarr: false, strarr_builtin: false, str_view_local: false, str_identity_src: 0 - 1, reclaim_site: "", struct_type: "", opt_type: "", tuple_elems: "", tuple_type: "", fnarr_elem: "", map_type: "", is_i64: false, is_f64: false, is_f32: false, is_f64arr: false, is_f32arr: false, is_i64arr: false, is_bool: false, is_boolarr: false, is_closurearr: false, is_fnarr: false, is_arrarr: false, arrarr_elem: "", is_u32: false, is_u64: false, subword: "", is_cell: false, cell_elem: "", fn_dyn: "", fn_sig: "", fn_ret: "", fn_opt_ret: "", str_own: 1, str_caller_elem: false, borrowed_arr: false, moved_claim: false };
+    return LocalInfo { slot_name: name, is_arr: false, is_str: false, is_strarr: false, strarr_builtin: false, str_view_local: false, str_identity_src: 0 - 1, reclaim_site: "", struct_type: "", opt_type: "", tuple_elems: "", tuple_type: "", fnarr_elem: "", map_type: "", is_i64: false, is_f64: false, is_f32: false, is_f64arr: false, is_f32arr: false, is_i64arr: false, is_bool: false, is_boolarr: false, is_closurearr: false, is_fnarr: false, is_arrarr: false, arrarr_elem: "", is_u32: false, is_u64: false, subword: "", is_cell: false, cell_elem: "", fn_dyn: "", fn_sig: "", fn_ret: "", fn_opt_ret: "", str_own: 1, str_caller_elem: false, borrowed_arr: false, arr_own_flag: 0 - 1, moved_claim: false };
 }
 
 pub function li_set_str_caller_elem(li: LocalInfo, v: boolean): LocalInfo {
@@ -578,6 +581,9 @@ pub struct FnSigs {
     // function — the argument there was MOVED in, so a callee handing it straight
     // back returns it uncounted (rebind_call_same_dec).
     own_positions: string[],
+    // Declared own scalar-array positions sharing the counted-buffer ABI.
+    // Pointer-element arrays require a separate element-unit protocol.
+    own_scalar_arr_positions: string[],
     // consumed_arr_positions: "fn|idx" for every consumed-threaded array
     // parameter of a free function (reassigned, not `own` — the ownflag_name
     // protocol): the callee never releases the incoming buffer, so a temp the
@@ -1314,6 +1320,12 @@ pub function (s: LowerState) is_own_param(name: string): boolean {
     return util.index_of_str(s.frame.own_params, name) >= 0;
 }
 
+function owned_scalar_array_slot(s: LowerState, slot: i32): boolean {
+    return slot >= 0 && slot < s.frame.n_params
+        && util.index_of_str(s.frame.sigs.own_scalar_arr_positions,
+            s.frame.cur_fn + "|" + util.i32_to_string(slot)) >= 0;
+}
+
 // A consumed-threaded array parameter is a borrowed array param the body
 // reassigns (`acc = f(acc)`, `acc = acc.append(v)`). Its slot holds the caller's
 // buffer until the first rebind replaces it, and a value this frame owns after;
@@ -1370,11 +1382,72 @@ function call_owns_arg(value: ast.Expr, target: string, s: LowerState): boolean 
     return false;
 }
 
-// ownflag_slot_of returns the ownership-flag slot of parameter slot `slot`, or
-// -1 when it is not a consumed-threaded array parameter.
+// ownflag_slot_of returns the ownership flag for a borrowed array parameter or
+// scalar-array projection. Projection flags use stable slot identities rather
+// than names, which can be retired or shadowed. -1 means no dynamic flag.
 pub function (s: LowerState) ownflag_slot_of(slot: i32): i32 {
-    if (slot < 0 || slot >= s.frame.n_params) { return 0 - 1; }
+    if (slot < 0 || slot >= s.locals.len()) { return 0 - 1; }
+    if (slot >= s.frame.n_params) { return s.locals[slot].arr_own_flag; }
     return s.slot_of(ownflag_name(s.locals[slot].slot_name));
+}
+
+// Bind a scalar-array projection as a borrow, releasing an owned replacement
+// from the previous loop iteration first. The projected value is on the stack.
+// Stores and consuming calls reuse the same dynamic ownership protocol as a
+// borrowed parameter. No alias or last-use inference is needed at this bind.
+function emit_borrowed_scalar_array_bind(s: LowerState, slot: i32, ty: string): LowerState {
+    var st: LowerState = s.mark_arr(slot, true).mark_borrowed_arr(slot, true);
+    // Keep the projection's declared element representation with its binding.
+    if (ty == "i64[]" || ty == "u64[]") { st = st.mark_i64arr(slot, true); }
+    if (ty == "u64[]") { st = st.mark_u64(slot, true); }
+    if (ty == "f64[]" || ty == "f32[]") { st = st.mark_f64arr(slot, true); }
+    if (ty == "f32[]") { st = st.mark_f32arr(slot, true); }
+    if (ty == "u32[]") { st = st.mark_u32(slot, true); }
+    if (ty == "boolean[]") { st = st.mark_boolarr(slot, true); }
+    if (ty == "u8[]") { st = st.mark_subword(slot, "u8"); }
+    if (ty == "char[]") { st = st.mark_struct_type(slot, "char"); }
+    var flag: i32 = st.ownflag_slot_of(slot);
+    if (flag < 0) {
+        flag = st.locals.len();
+        st = st.add_local("$borrowflag" + util.i32_to_string(slot));
+        st = LowerState { ...st, locals: st.locals.with(slot, LocalInfo { ...st.locals[slot], arr_own_flag: flag }) };
+    }
+    st = st.emit(ir.op_load_local(flag));
+    st = st.emit(ir.op_if(0));
+    st = st.release(slot, "__fern_rc_dec", "borrowed-binding-old");
+    st = st.emit(ir.op_end());
+    st = st.emit(ir.op_store_local(slot));
+    st = st.emit(ir.op_const_i32(0));
+    return st.emit(ir.op_store_local(flag));
+}
+
+// A pending consuming-match drop already records the exact payload references
+// it transfers instead of releasing. Pair that existing transfer with the
+// binding's ownership flag. A shared root keeps its field reference, so the
+// binding acquires a separate count; uniqueness alone never proves ownership.
+function claim_pending_scalar_payload(s: LowerState, root: i32, slot: i32, payload: string): LowerState {
+    if (root < s.frame.n_params || s.ownflag_slot_of(slot) < 0) { return s; }
+    var prefix: string = util.i32_to_string(root) + "#e";
+    var claimed: boolean = false;
+    for pending in s.optret_pending {
+        if (pending.len() >= prefix.len() && slice_unchecked(pending, 0, prefix.len()) == prefix) {
+            var parts: string[] = split_semi(slice_unchecked(pending, prefix.len(), pending.len()) + "");
+            var i: i32 = 1;
+            while (i < parts.len()) {
+                if (parts[i] == payload) { claimed = true; }
+                i = i + 1;
+            }
+        }
+    }
+    if (!claimed) { return s; }
+    var st: LowerState = s.emit(ir.op_load_local(root));
+    st = st.emit(ir.op_call_direct("__fern_rc_is_unique", 1));
+    st = st.emit(ir.op_if(0));
+    st = st.emit(ir.op_else());
+    st = st.retain(slot, "shared-moved-array-payload");
+    st = st.emit(ir.op_end());
+    st = st.emit(ir.op_const_i32(1));
+    return st.emit(ir.op_store_local(st.ownflag_slot_of(slot)));
 }
 
 // add_local binds `name` to a fresh slot (its index = the old slot count),
@@ -12449,6 +12522,7 @@ function lower_call_named_generic(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIde
     var lat_guard: i32[] = [];
     var laa_slots: i32[] = [];
     var lca_slots: i32[] = [];
+    var own_arr_moves: i32[] = [];
     var lsl_slots: i32[] = [];
     while (ai < c.args.len()) {
         // A bare function-name argument at a "fn"-typed param
@@ -12633,7 +12707,8 @@ function lower_call_named_generic(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIde
             // this release is guarded on the result differing from the temp.
             var arg_consumed: boolean = !arg_releasable
                 && util.index_of_str(sc.frame.sigs.consumed_arr_positions, cid.name + "|" + util.i32_to_string(ai)) >= 0;
-            if (arrlit_arg && sc.ok && (arg_releasable || arg_consumed)) {
+            if (arrlit_arg && sc.ok && (arg_releasable || arg_consumed)
+                && util.index_of_str(sc.frame.sigs.own_scalar_arr_positions, cid.name + "|" + util.i32_to_string(ai)) < 0) {
                 var laan: string = "$laa" + util.i32_to_string(sc.locals.len());
                 sc = sc.add_local(laan);
                 var laas: i32 = sc.slot_of(laan);
@@ -12661,7 +12736,13 @@ function lower_call_named_generic(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIde
             && !sc.callee_param_is_typevar(cid.name, ai)) {
             match (c.args[ai]) {
                 ast.ExprFieldAccess(ofa) => { sc = emit_own_field_arg(ofa, sc); },
-                ast.ExprIdent(oid) => { sc = emit_own_borrowed_param_arg(oid, sc); },
+                ast.ExprIdent(oid) => {
+                    var scalar_move: boolean = util.index_of_str(sc.frame.sigs.own_scalar_arr_positions,
+                        cid.name + "|" + util.i32_to_string(ai)) >= 0;
+                    sc = emit_own_borrowed_param_arg(oid, scalar_move, sc);
+                    var oas: i32 = sc.slot_of(oid.name);
+                    if (scalar_move && oas >= 0 && sc.is_arr_slot(oas)) { own_arr_moves = own_arr_moves.append(oas); }
+                },
                 _ => {}
             }
         }
@@ -12732,6 +12813,16 @@ function lower_call_named_generic(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIde
         gbj = gbj + 1;
     }
     scr = emit_grow_field_bracket_dec(scr, gbf.slots);
+    // Arguments have all been evaluated and share brackets have been restored.
+    // The callee consumed these references; neither a rebind nor an exit sweep
+    // may release the old slot again. A later argument was allowed to read it
+    // during evaluation, so do not clear slots while lowering the arguments.
+    var oam: i32 = 0;
+    while (oam < own_arr_moves.len()) {
+        scr = scr.emit(ir.op_const_i32(0));
+        scr = scr.emit(ir.op_store_local(own_arr_moves[oam]));
+        oam = oam + 1;
+    }
     // Free the stashed literal-arg boxes. Net-zero on the operand
     // stack (load → free → drop), so the call's result — live
     // beneath — is untouched; __fern_str_free is rc-aware and
@@ -19675,7 +19766,7 @@ function lower_stmt_inner(st: ast.Stmt, s: LowerState): LowerState {
                         }
                     }
                     rpl = emit_consumed_param_exit(rpl, r.value, true);
-                    rpl = emit_dec_sweep_except(rpl, 0 - 1);
+                    rpl = emit_dec_sweep_except(rpl, rps);
                     return rpl.emit(ir.op_return());
                 }
                 // A match-arm binding of an ARRAY payload borrows the enum
@@ -19692,11 +19783,24 @@ function lower_stmt_inner(st: ast.Stmt, s: LowerState): LowerState {
                 // on top strands the buffer, since the caller's dec then lands on
                 // the extra claim instead of on zero. Such a return falls through
                 // to the move-on-return path below.
-                if (rps >= s.frame.n_params && s.is_borrowed_arr_slot(rps) && !s.is_moved_claim_slot(rps)) {
+                if (rps >= s.frame.n_params && s.is_borrowed_arr_slot(rps)
+                    && (!s.is_moved_claim_slot(rps) || s.ownflag_slot_of(rps) >= 0)) {
                     var rbl: LowerState = lower_expr(r.value, s);
                     if (!rbl.ok) { return rbl; }
-                    rbl = rbl.retain_tos("ret-borrowed-binding");
-                    rbl = emit_dec_sweep_except(rbl, 0 - 1);
+                    if (!s.is_moved_claim_slot(rps) || s.ownflag_slot_of(rps) >= 0) {
+                        var rbf: i32 = rbl.ownflag_slot_of(rps);
+                        if (rbf >= 0) {
+                            rbl = rbl.emit(ir.op_load_local(rbf));
+                            rbl = rbl.emit(ir.op_const_i32(0));
+                            rbl = rbl.emit(ir.op_bin("eq", 0, false));
+                            rbl = rbl.emit(ir.op_if(0));
+                            rbl = rbl.retain(rps, "ret-borrowed-binding");
+                            rbl = rbl.emit(ir.op_end());
+                        } else {
+                            rbl = rbl.retain_tos("ret-borrowed-binding");
+                        }
+                    }
+                    rbl = emit_dec_sweep_except(rbl, rps);
                     return rbl.emit(ir.op_return());
                 }
             }
@@ -23368,6 +23472,9 @@ function lower_stmt_assign(a: ast.StmtAssign, s: LowerState): LowerState {
                             _ => {}
                         }
                         if (self_recv && wfa.field == "with" && wc.args.len() == 2) {
+                            if (owned_scalar_array_slot(s, slot)) {
+                                return lower_owned_arr_with(wfa.obj, wc.args[0], wc.args[1], slot, s);
+                            }
                             // ALIASED target (#3599): `a` has a lasting local
                             // alias (`var b = a`, `H { xs: a }`, …), so an
                             // in-place arr_set would mutate the buffer the
@@ -23790,7 +23897,7 @@ function lower_stmt_assign(a: ast.StmtAssign, s: LowerState): LowerState {
             _ => {}
         }
     }
-    var target_is_arr: boolean = s.is_arr_slot(slot) && slot >= s.frame.n_params;
+    var target_is_arr: boolean = s.is_arr_slot(slot) && (slot >= s.frame.n_params || owned_scalar_array_slot(s, slot));
     var aas: LowerState = s;
     // Mark a struct-literal self-rebind (`o = S { … }`) for the duration of the
     // RHS, so its override path can drop the retain on a field aliased off `o`
@@ -24625,7 +24732,11 @@ function lower_stmt_for(fr: ast.StmtFor, s: LowerState): LowerState {
     // per-iteration bounds check (x86 honours the flag; arm64/wasm keep theirs).
     if (elem_is_i64 || elem_is_u64) { ff = ff.emit(ir.op_arr_get_i64_nc()); }
     else { ff = ff.emit(ir.op_arr_get_nc(elem_w)); }
-    ff = ff.emit(ir.op_store_local(xslot));
+    var row_kind: string = s.arrarr_elem_of_slot(aslot);
+    if (row_kind == "") { row_kind = "i32"; }
+    if (s.is_arrarr_slot(aslot) && is_leaksafe_array_field(row_kind + "[]")) {
+        ff = emit_borrowed_scalar_array_bind(ff, xslot, row_kind + "[]");
+    } else { ff = ff.emit(ir.op_store_local(xslot)); }
     ff = lower_block(fr.body, ff);
     if (!ff.ok) { return ff; }
     ff = ff.emit(ir.op_br(0));   // back-edge to header (re-advances)
@@ -25059,6 +25170,7 @@ function lower_stmt_match(m: ast.StmtMatch, s: LowerState): LowerState {
                         // always did.
                         if (owned_here && ptag == "string") { ms = emit_str_reclaim_store(ms, pbslot, false); }
                         else if (owned_here) { ms = emit_arr_store(ms, pbslot, false, true); }
+                        else if (is_leaksafe_array_field(ptag)) { ms = emit_borrowed_scalar_array_bind(ms, pbslot, ptag); }
                         else { ms = ms.emit(ir.op_store_local(pbslot)); }
                         if (ptag == "string" || ptag == "str") { ms = ms.mark_str(pbslot, true); }
                         else if (ptag == "i64") { ms = ms.mark_i64(pbslot, true); }
@@ -25326,7 +25438,8 @@ function lower_stmt_match(m: ast.StmtMatch, s: LowerState): LowerState {
                         ms = ms.emit(ir.op_load_local(scrut_slot));
                         if (ev_ty == "i64" || ev_ty == "u64") { ms = ms.emit(ir.op_struct_get_i64(bidx)); }
                         else { ms = ms.emit(ir.op_struct_get(bidx, struct_field_at_width(ms.frame.structs, vdecl, bidx))); }
-                        ms = ms.emit(ir.op_store_local(bslot));
+                        if (is_leaksafe_array_field(ev_ty)) { ms = emit_borrowed_scalar_array_bind(ms, bslot, ev_ty); }
+                        else { ms = ms.emit(ir.op_store_local(bslot)); }
                         // Type the bound payload for downstream dispatch: a
                         // string payload (`Word(string)`) as a string; a
                         // struct payload (`Binary(BinExpr)`) with its struct
@@ -25433,6 +25546,10 @@ function lower_stmt_match(m: ast.StmtMatch, s: LowerState): LowerState {
                         // second one. See LocalInfo.moved_claim.
                         if (ms.is_arr_slot(bslot) && scrutinee_owns_no_surviving_claim(m.scrutinee, ms)) {
                             ms = ms.mark_moved_claim(bslot, true);
+                        }
+                        if (is_leaksafe_array_field(ev_ty)) {
+                            ms = claim_pending_scalar_payload(ms, ms.slot_of(ident_name_or_empty(m.scrutinee)),
+                                bslot, vname + "#" + util.i32_to_string(bidx));
                         }
                     }
                     bidx = bidx + 1;
@@ -25567,6 +25684,68 @@ function arr_elem_kind(obj: ast.Expr, s: LowerState): string {
     if (expr_is_f64arr(obj, s)) { return "f64"; }
     if (expr_is_i64arr(obj, s) || (expr_is_arr_src(obj, s) && expr_is_u64(obj, s))) { return "i64"; }
     return "i32";
+}
+
+// Own scalar-array updates retain the evaluated receiver while index/value
+// effects run. Releasing the destination afterwards leaves the receiver's
+// counted unit available for a runtime uniqueness test. Scratch ownership is
+// visible to ordinary exit cleanup, including returns inside an operand.
+function lower_owned_arr_with(obj: ast.Expr, idx: ast.Expr, val: ast.Expr, slot: i32, s: LowerState): LowerState {
+    var bname: string = "$owb" + util.i32_to_string(s.locals.len());
+    var st: LowerState = s.add_local(bname);
+    var base: i32 = st.slot_of(bname);
+    st = st.mark_arr(base, true);
+    st = st.emit(ir.op_load_local(slot));
+    st = st.retain_tos("own-with-receiver");
+    st = st.emit(ir.op_store_local(base));
+
+    var iname: string = "$owi" + util.i32_to_string(st.locals.len());
+    st = st.add_local(iname);
+    var index: i32 = st.slot_of(iname);
+    st = lower_expr(idx, st);
+    if (!st.ok) { return st; }
+    st = st.emit(ir.op_store_local(index));
+
+    var vname: string = "$owv" + util.i32_to_string(st.locals.len());
+    st = st.add_local(vname);
+    var value: i32 = st.slot_of(vname);
+    var kind: string = arr_elem_kind(obj, st);
+    if (kind == "i64") {
+        st = st.mark_i64(value, true);
+        st = lower_i64(val, st);
+    } else {
+        if (kind == "f64") { st = st.mark_f64(value, true); }
+        st = lower_expr(val, st);
+    }
+    if (!st.ok) { return st; }
+    st = st.emit(ir.op_store_local(value));
+
+    st = st.release(slot, "__fern_rc_dec", "own-with-destination");
+    st = st.emit(ir.op_const_i32(0));
+    st = st.emit(ir.op_store_local(slot));
+    st = st.emit(ir.op_load_local(base));
+    st = st.emit(ir.op_call_direct("__fern_rc_is_unique", 1));
+    st = st.emit(ir.op_if(0));
+    st = st.emit(ir.op_else());
+    st = st.emit(ir.op_load_local(base));
+    st = st.emit(ir.op_const_i32(0));
+    st = st.emit(ir.op_load_local(base));
+    st = st.emit(ir.op_arr_len());
+    var width: i32 = 32;
+    if (kind != "i32") { width = 64; }
+    st = st.emit(ir.op_arr_slice(width));
+    st = emit_arr_store(st, base, false, true);
+    st = st.emit(ir.op_end());
+
+    st = st.emit(ir.op_load_local(base));
+    st = st.emit(ir.op_load_local(index));
+    st = st.emit(ir.op_load_local(value));
+    if (kind == "i64") { st = st.emit(ir.op_arr_set_i64()); }
+    else { st = st.emit(ir.op_arr_set(width)); }
+    st = st.emit(ir.op_load_local(base));
+    st = st.emit(ir.op_store_local(slot));
+    st = st.emit(ir.op_const_i32(0));
+    return st.emit(ir.op_store_local(base));
 }
 
 // lower_arr_with_value lowers `obj.with(idx, val)` as a VALUE-PRODUCING
@@ -27076,7 +27255,8 @@ pub function emit_arr_store(se: LowerState, slot: i32, alias_inc: boolean, do_de
 pub function emit_arr_store_from(se: LowerState, slot: i32, alias_inc: boolean, do_dec: boolean, same_dec: boolean): LowerState {
     var ofl: i32 = se.ownflag_slot_of(slot);
     if (ofl >= 0) { return emit_consumed_param_store(se, slot, alias_inc, ofl, same_dec); }
-    if (same_dec && do_dec && !alias_inc) {
+    var release_old: boolean = do_dec || owned_scalar_array_slot(se, slot);
+    if (same_dec && release_old && !alias_inc) {
         var sscratch: string = "$rea" + util.i32_to_string(se.locals.len());
         var sst: LowerState = se.add_local(sscratch);
         var stmp: i32 = sst.slot_of(sscratch);
@@ -27085,7 +27265,7 @@ pub function emit_arr_store_from(se: LowerState, slot: i32, alias_inc: boolean, 
         sst = sst.emit(ir.op_load_local(stmp));
         return sst.emit(ir.op_store_local(slot));
     }
-    if (!alias_inc && !do_dec) {
+    if (!alias_inc && !release_old) {
         // No RC bookkeeping: a bare store (the common non-array case).
         return se.emit(ir.op_store_local(slot));
     }
@@ -27096,11 +27276,11 @@ pub function emit_arr_store_from(se: LowerState, slot: i32, alias_inc: boolean, 
     if (alias_inc) {
         st = st.retain(tmp, "arr-store-alias");
     }
-    if (do_dec && alias_inc) {
+    if (release_old && alias_inc) {
         st = st.emit(ir.op_load_local(slot));      // OLD value the slot holds
         st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
         st = st.emit(ir.op_drop());
-    } else if (do_dec) {
+    } else if (release_old) {
         st = st.emit(ir.op_load_local(slot));      // OLD value the slot holds
         st = st.emit(ir.op_load_local(tmp));       // new value
         st = st.emit(ir.op_bin("ne", 0, false));   // old != new (cow guard)
@@ -30941,12 +31121,21 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
                 st = st.release(opi2, "__fern_rc_dec", "own-param-exit");
             } else if (reclaim_has(st.frame.reclaimable_names, "OWNRELB:", opnm)) {
                 st = st.release(opi2, "__fern_rc_dec", "own-param-exit-box");
+            } else if (owned_scalar_array_slot(st, opi2) && !slot_list_has(st.frame.moved_elided, opi2)) {
+                st = st.release(opi2, "__fern_rc_dec", "own-array-param-exit");
             }
         }
         opi2 = opi2 + 1;
     }
     var i: i32 = st.frame.n_params;
     while (i < st.locals.len()) {
+        var local_flag: i32 = st.ownflag_slot_of(i);
+        if (local_flag >= 0 && !slot_list_has(keeps, i) && !slot_list_has(st.frame.moved_elided, i)) {
+            st = st.emit(ir.op_load_local(local_flag));
+            st = st.emit(ir.op_if(0));
+            st = st.release(i, "__fern_rc_dec", "borrowed-binding-exit");
+            st = st.emit(ir.op_end());
+        }
         if (!slot_list_has(keeps, i) && !slot_list_has(st.frame.moved_elided, i) && st.is_arr_slot(i) && !st.is_borrowed_arr_slot(i) && !slot_is_reclaimable_arrtup(st, i) && !slot_is_reclaimable_arrstruct(st, i) && !slot_is_reclaimable_arrenum(st, i) && !reclaim_has(st.frame.reclaimable_names, "ENVCAP:", st.reclaim_site_key(i))) {
             // dyn Trait[] ELEMENT reclaim (#4351 slice 3): a credited literal
             // dyn array releases each element box (per-index, kinds recorded
@@ -58123,7 +58312,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
     var locals0: LocalInfo[] = [];
     var lzi: i32 = 0;
     while (lzi < names.len()) {
-        locals0 = locals0.append(LocalInfo { slot_name: names[lzi], is_arr: isarr[lzi], is_str: isstr[lzi], is_strarr: isstrarr[lzi], strarr_builtin: false, str_view_local: false, str_identity_src: 0 - 1, reclaim_site: "", struct_type: structty[lzi], opt_type: optty[lzi], tuple_elems: tupty[lzi], tuple_type: "", fnarr_elem: "", map_type: mapty[lzi], is_i64: isi64[lzi], is_f64: isf64[lzi], is_f32: isf32[lzi], is_f64arr: isf64arr[lzi], is_f32arr: isf32arr[lzi], is_i64arr: isi64arr[lzi], is_bool: isbool[lzi], is_boolarr: isboolarr[lzi], is_closurearr: isclosurearr[lzi], is_fnarr: isfnarr[lzi], is_arrarr: isarrarr[lzi], arrarr_elem: arrarr_elem[lzi], is_u32: isu32[lzi], is_u64: isu64[lzi], subword: subword[lzi], is_cell: cellty[lzi].len() > 0, cell_elem: cellty[lzi], fn_dyn: "", fn_sig: "", fn_ret: "", fn_opt_ret: "", str_own: 1, str_caller_elem: false, borrowed_arr: false, moved_claim: false });
+        locals0 = locals0.append(LocalInfo { slot_name: names[lzi], is_arr: isarr[lzi], is_str: isstr[lzi], is_strarr: isstrarr[lzi], strarr_builtin: false, str_view_local: false, str_identity_src: 0 - 1, reclaim_site: "", struct_type: structty[lzi], opt_type: optty[lzi], tuple_elems: tupty[lzi], tuple_type: "", fnarr_elem: "", map_type: mapty[lzi], is_i64: isi64[lzi], is_f64: isf64[lzi], is_f32: isf32[lzi], is_f64arr: isf64arr[lzi], is_f32arr: isf32arr[lzi], is_i64arr: isi64arr[lzi], is_bool: isbool[lzi], is_boolarr: isboolarr[lzi], is_closurearr: isclosurearr[lzi], is_fnarr: isfnarr[lzi], is_arrarr: isarrarr[lzi], arrarr_elem: arrarr_elem[lzi], is_u32: isu32[lzi], is_u64: isu64[lzi], subword: subword[lzi], is_cell: cellty[lzi].len() > 0, cell_elem: cellty[lzi], fn_dyn: "", fn_sig: "", fn_ret: "", fn_opt_ret: "", str_own: 1, str_caller_elem: false, borrowed_arr: false, arr_own_flag: 0 - 1, moved_claim: false });
         lzi = lzi + 1;
     }
     // Consumed scalar-payload enum frees: a function-local `var x = V(scalar...)`
@@ -65890,7 +66079,7 @@ pub function fn_sigs_without_ownership(sg: FnSigs): FnSigs {
     var e: string[] = [];
     return FnSigs { ...sg, fresh_struct_ret_fns: e, consume_safe_params: e,
         return_fresh_struct_ret_fns: e, recv_borrow_fns: e, str_fresh_ret_fns: e,
-        opt_fresh_ret_fns: sig_reg_empty(), strfld_ok_types: e, tuple_fresh_ret_fns: e, own_positions: e,
+        opt_fresh_ret_fns: sig_reg_empty(), strfld_ok_types: e, tuple_fresh_ret_fns: e, own_positions: e, own_scalar_arr_positions: e,
         consumed_arr_positions: e, param_counted: e };
 }
 
@@ -65905,7 +66094,7 @@ pub function fn_sigs_empty(): FnSigs {
         closurearr_ret_fns: e, const_fns: e, borrowable_params: e, borrow_bare: e, fn_names: r,
         fresh_struct_ret_fns: e, consume_safe_params: e, return_fresh_struct_ret_fns: e,
         recv_borrow_fns: e, str_fresh_ret_fns: e, opt_fresh_ret_fns: r, strfld_ok_types: e,
-        tuple_fresh_ret_fns: e, own_positions: e, consumed_arr_positions: e, param_counted: e, trmc_consume_fns: e, handback_params: e,
+        tuple_fresh_ret_fns: e, own_positions: e, own_scalar_arr_positions: e, consumed_arr_positions: e, param_counted: e, trmc_consume_fns: e, handback_params: e,
         str_handback_ret: e, grow_recv_fns: e, grow_field_positions: e };
 }
 
@@ -66354,6 +66543,7 @@ pub function fn_sigs_for_borrow(funcs: parser.FuncDecl[], structs: StructTab, ar
         strfld_ok_types: sfok,
         tuple_fresh_ret_fns: tuple_fresh_ret_fns_of(funcs),
         own_positions: own_positions_of(funcs),
+        own_scalar_arr_positions: own_scalar_arr_positions_of(funcs),
         consumed_arr_positions: consumed_arr_positions_of(funcs),
         param_counted: pcnt,
         trmc_consume_fns: trmc_consume_fns_of(funcs, structs),
@@ -72207,7 +72397,12 @@ function make_wrap_named_func(fnname: string, wrapname: string, mfuncs: MFuncs):
             var args: ast.Expr[] = [];
             var pj: i32 = 0;
             while (pj < tgt.params.len()) {
-                ps = ps.append(tgt.params[pj]);
+                // Function-value calls borrow their arguments. The trampoline
+                // acquires the counted scalar-array argument at its direct call
+                // to the consuming target, using the ordinary call protocol.
+                var p: ast.ParamDecl = tgt.params[pj];
+                if (p.own && is_leaksafe_array_field(p.type_name)) { p = ast.ParamDecl { ...p, own: false }; }
+                ps = ps.append(p);
                 args = args.append(ast.ExprIdent { name: tgt.params[pj].name, line: 0, col: 0, ty: "" });
                 pj = pj + 1;
             }
@@ -76603,6 +76798,23 @@ pub function own_positions_of(funcs: parser.FuncDecl[]): string[] {
     return out;
 }
 
+// A declaration contract, not an alias or last-use inference. The same
+// positions select caller transfer, callee update and callee buffer cleanup.
+function own_scalar_arr_positions_of(funcs: parser.FuncDecl[]): string[] {
+    var out: string[] = [];
+    for fn in funcs {
+        if (fn.receiver_name.len() > 0) { continue; }
+        var i: i32 = 0;
+        while (i < fn.params.len()) {
+            if (fn.params[i].own && is_leaksafe_array_field(fn.params[i].type_name)) {
+                out = out.append(fn.name + "|" + util.i32_to_string(i));
+            }
+            i = i + 1;
+        }
+    }
+    return out;
+}
+
 // consumed_arr_positions_of lists "fname|idx" for every consumed-threaded
 // array parameter of a free function: reassigned in the body and not `own`,
 // the predicate lower_func allocates an ownership flag for.
@@ -79586,17 +79798,30 @@ function emit_own_field_arg(fa: ast.ExprFieldAccess, s: LowerState): LowerState 
 // the callee's __fern_rc_is_unique gate reads the caller's sole count as its
 // own and rewrites the caller's box in place (#8429).
 //
-// Struct and tuple boxes only. An array parameter carries its borrow in the
-// "$ownflag_" sidecar and is bracketed at may-grow positions instead, and a
-// string parameter is exempt from the free-eligible taint seed; a retain here
-// would be a second claim over machinery that already holds one.
-function emit_own_borrowed_param_arg(id: ast.ExprIdent, s: LowerState): LowerState {
+// A threaded array parameter or projection binding may already own a
+// replacement: its flag then records the reference to transfer. Only a
+// still-borrowed input needs a retain.
+// String parameters use their separate ownership convention.
+function emit_own_borrowed_param_arg(id: ast.ExprIdent, scalar_array_move: boolean, s: LowerState): LowerState {
     var sl: i32 = s.slot_of(id.name);
-    if (sl < 0 || sl >= s.frame.n_params) { return s; }
-    if (s.is_own_param(id.name)) { return s; }
+    if (sl < 0) { return s; }
+    if (sl < s.frame.n_params && s.is_own_param(id.name)) { return s; }
+    if (s.is_arr_slot(sl)) {
+        if (sl >= s.frame.n_params && !s.is_borrowed_arr_slot(sl)) { return s; }
+        if (!scalar_array_move) { return s; }
+        var flag: i32 = s.ownflag_slot_of(sl);
+        if (flag < 0) { return s.retain_tos("own-borrowed-array-arg"); }
+        var st: LowerState = s.emit(ir.op_load_local(flag));
+        st = st.emit(ir.op_const_i32(0));
+        st = st.emit(ir.op_bin("eq", 0, false));
+        st = st.emit(ir.op_if(0));
+        st = st.retain(sl, "own-borrowed-array-arg");
+        return st.emit(ir.op_end());
+    }
     // struct_type is stamped on a struct-ELEMENT array slot too, so the
     // container kinds are refused by name before it is consulted.
-    if (s.is_arr_slot(sl) || s.is_str_slot(sl) || s.is_cell_slot(sl)) { return s; }
+    if (sl >= s.frame.n_params) { return s; }
+    if (s.is_str_slot(sl) || s.is_cell_slot(sl)) { return s; }
     if (s.struct_type_of_slot(sl).len() == 0 && !s.slot_is_tuple_box(sl)) { return s; }
     return s.emit(ir.op_call_direct("__fern_rc_inc", 1));
 }
