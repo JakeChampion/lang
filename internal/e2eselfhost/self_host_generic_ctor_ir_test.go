@@ -242,10 +242,33 @@ function main(): i32 {
     var n: M[i32, i32] = m.map_values((v: i32) => v + 22);
     match (n.root) { Node(k, v) => { return v; }, Leaf => { return 0; } }
 }`},
-	// Two generic structs each declare a `filter` that hoists a capturing
-	// lambda: the hoisted closures are named under the receiver-qualified
-	// method (`A__i32.filter$clo0` / `B__i32.filter$clo0`), not the bare
-	// `filter`, so the two symbols do not collide at link time.
+	// Specialization must update callback signatures and recheck captures in
+	// the concrete scope. Values above 32 bits expose argument/return truncation.
+	{"receiver_callback_preserves_wide_signature", `struct Box[T] { value: T }
+pub function (b: Box[T]) apply(f: (T) => T): T {
+    var callback: (T) => T = f;
+    var run = (x: T): T => callback(x);
+    var invoke = (g: (T) => T): T => g(b.value);
+    return invoke(run);
+}
+function inc(x: i64): i64 { return x + 1i64; }
+function main(): i32 {
+    var b: Box[i64] = Box { value: 4294967337i64 };
+    if (b.apply(inc) == 4294967338i64) { return 42; }
+    return 1;
+}`},
+	{"receiver_returns_wide_callback", `struct Box[T] { value: T }
+pub function (b: Box[T]) callback(f: (T) => T): (T) => T {
+    return (x: T): T => f(x);
+}
+function inc(x: i64): i64 { return x + 1i64; }
+function main(): i32 {
+    var b: Box[i64] = Box { value: 4294967337i64 };
+    var callback: (i64) => i64 = b.callback(inc);
+    if (callback(b.value) == 4294967338i64) { return 42; }
+    return 1;
+}`},
+	// Receiver-qualified closure names keep the two filter methods distinct.
 	// 3 * 10 + 3 + 9 = 42.
 	{"closure_named_per_receiver", `struct A[T] { xs: T[] }
 struct B[T] { xs: T[] }

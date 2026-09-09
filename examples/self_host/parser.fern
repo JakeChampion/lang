@@ -10328,8 +10328,10 @@ function subst_expr(e: ast.Expr, tparams: string[], cts: string[]): ast.Expr {
         // never added.
         ast.ExprLambda(lm) => {
             var lps: ast.ParamDecl[] = [];
-            for lpd in lm.params { lps = lps.append(ast.ParamDecl { ...lpd, type_name: subst_ty(lpd.type_name, tparams, cts) }); }
-            return ast.ExprLambda { ...lm, params: lps, ret_type: subst_ty(lm.ret_type, tparams, cts), body: subst_stmts(lm.body, tparams, cts) };
+            for lpd in lm.params { lps = lps.append(ast.ParamDecl { ...lpd, type_name: subst_ty(lpd.type_name, tparams, cts), fn_ret: subst_ty(lpd.fn_ret, tparams, cts), fn_param_types: subst_ty_list(lpd.fn_param_types, tparams, cts) }); }
+            // Capture types were checked in the generic declaration's scope.
+            // The clone must resolve them again against its substituted bindings.
+            return ast.ExprLambda { ...lm, params: lps, ret_type: subst_ty(lm.ret_type, tparams, cts), body: subst_stmts(lm.body, tparams, cts), captures: [], captures_known: false };
         },
         _ => { return e; }
     }
@@ -10345,7 +10347,7 @@ function subst_stmts(stmts: ast.Stmt[], tparams: string[], cts: string[]): ast.S
     while (i < stmts.len()) {
         var st: ast.Stmt = stmts[i];
         match (st) {
-            ast.StmtVar(v) => { out = out.append(ast.StmtVar { name: v.name, type_name: subst_ty(v.type_name, tparams, cts), init: subst_expr(v.init, tparams, cts), line: v.line, col: v.col, is_str: v.is_str, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types }); },
+            ast.StmtVar(v) => { out = out.append(ast.StmtVar { name: v.name, type_name: subst_ty(v.type_name, tparams, cts), init: subst_expr(v.init, tparams, cts), line: v.line, col: v.col, is_str: v.is_str, fn_ret: subst_ty(v.fn_ret, tparams, cts), fn_param_types: subst_ty_list(v.fn_param_types, tparams, cts) }); },
             ast.StmtReturn(r) => { out = out.append(ast.StmtReturn { value: subst_expr(r.value, tparams, cts), line: r.line, col: r.col }); },
             ast.StmtExpr(x) => { out = out.append(ast.StmtExpr { value: subst_expr(x.value, tparams, cts), line: x.line }); },
             ast.StmtAssign(a) => { out = out.append(ast.StmtAssign { target: a.target, value: subst_expr(a.value, tparams, cts), line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col }); },
@@ -11616,13 +11618,13 @@ function clone_struct_method(m: FuncDecl, base: string, key: string, gstructs: S
     while (i < m.params.len()) {
         var psrc: string = replace_struct_ident(m.params[i].type_name, bare_base, base);
         var pt: string = to_concrete_struct_ty(subst_ty(psrc, tparams, cts), base, mang, gstructs);
-        nparams = nparams.append(ast.ParamDecl { name: m.params[i].name, type_name: pt, is_str: m.params[i].is_str, own: m.params[i].own, has_default: m.params[i].has_default, default_value: m.params[i].default_value, ret_arr: m.params[i].ret_arr, fn_ret: m.params[i].fn_ret, fn_param_dyn: m.params[i].fn_param_dyn, fn_param_types: m.params[i].fn_param_types });
+        nparams = nparams.append(ast.ParamDecl { name: m.params[i].name, type_name: pt, is_str: m.params[i].is_str, own: m.params[i].own, has_default: m.params[i].has_default, default_value: m.params[i].default_value, ret_arr: m.params[i].ret_arr, fn_ret: subst_ty(m.params[i].fn_ret, tparams, cts), fn_param_dyn: m.params[i].fn_param_dyn, fn_param_types: subst_ty_list(m.params[i].fn_param_types, tparams, cts) });
         i = i + 1;
     }
     var rsrc: string = replace_struct_ident(m.ret_type, bare_base, base);
     var rt: string = to_concrete_struct_ty(subst_ty(rsrc, tparams, cts), base, mang, gstructs);
     var notp: string[] = [];
-    return FuncDecl { ...m, receiver_type: mang, type_params: notp, params: nparams, ret_type: rt, body: retarget_self_lit_stmts(subst_stmts(m.body, tparams, cts), base, mang), bound_traits: [] };
+    return FuncDecl { ...m, receiver_type: mang, type_params: notp, params: nparams, ret_type: rt, ret_fn_ret: subst_ty(m.ret_fn_ret, tparams, cts), ret_fn_param_types: subst_ty_list(m.ret_fn_param_types, tparams, cts), body: retarget_self_lit_stmts(subst_stmts(m.body, tparams, cts), base, mang), bound_traits: [] };
 }
 
 // monomorphize_structs clones every generic struct (and its methods) per
