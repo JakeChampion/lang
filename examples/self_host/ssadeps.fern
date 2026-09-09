@@ -1,0 +1,220 @@
+// Validate SSA value availability for semantic lifetime dependencies before
+// feeding them to ssalive. This proves neither reference counts nor uniqueness.
+import "./ssa";
+import "./ssalive";
+
+function block_index(f: ssa.SFunc, id: i32): i32 {
+    var i: i32 = 0;
+    while (i < f.blocks.len()) {
+        if (f.blocks[i].id == id) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+function flags(n: i32, bit: boolean): boolean[] {
+    var out: boolean[] = [];
+    var i: i32 = 0;
+    while (i < n) { out = out.append(bit); i = i + 1; }
+    return out;
+}
+
+function indices(n: i32): i32[] {
+    var out: i32[] = [];
+    var i: i32 = 0;
+    while (i < n) { out = out.append(0 - 1); i = i + 1; }
+    return out;
+}
+
+function contains(values: i32[], value: i32): boolean {
+    for v in values { if (v == value) { return true; } }
+    return false;
+}
+
+function reachable_blocks(f: ssa.SFunc): boolean[] {
+    var reachable: boolean[] = flags(f.blocks.len(), false);
+    reachable = reachable.with(block_index(f, f.entry), true);
+    var changed: boolean = true;
+    while (changed) {
+        changed = false;
+        var bi: i32 = 0;
+        while (bi < f.blocks.len()) {
+            if (reachable[bi]) {
+                var term: ssa.STerm = f.blocks[bi].term;
+                var si: i32 = 0;
+                while (si < 2) {
+                    var target: i32 = 0 - 1;
+                    if (term.kind_tag == 2 && si == 0) { target = term.target; }
+                    if (term.kind_tag == 3) {
+                        target = term.t;
+                        if (si == 1) { target = term.f; }
+                    }
+                    if (target >= 0) {
+                        var sb: i32 = block_index(f, target);
+                        if (!reachable[sb]) { reachable = reachable.with(sb, true); changed = true; }
+                    }
+                    si = si + 1;
+                }
+            }
+            bi = bi + 1;
+        }
+    }
+    return reachable;
+}
+
+function dominators(f: ssa.SFunc, reachable: boolean[]): boolean[] {
+    var n: i32 = f.blocks.len();
+    var dom: boolean[] = flags(n * n, false);
+    var entry: i32 = block_index(f, f.entry);
+    var bi: i32 = 0;
+    while (bi < n) {
+        var di: i32 = 0;
+        while (di < n) {
+            if (reachable[bi] && ((bi == entry && di == entry) || (bi != entry && reachable[di]))) {
+                dom = dom.with(bi * n + di, true);
+            }
+            di = di + 1;
+        }
+        bi = bi + 1;
+    }
+    var changed: boolean = true;
+    while (changed) {
+        changed = false;
+        bi = 0;
+        while (bi < n) {
+            if (reachable[bi] && bi != entry) {
+                var di: i32 = 0;
+                while (di < n) {
+                    var present: boolean = reachable[di];
+                    for pred in f.blocks[bi].preds {
+                        var pi: i32 = block_index(f, pred);
+                        if (reachable[pi] && !dom[pi * n + di]) { present = false; }
+                    }
+                    if (di == bi) { present = true; }
+                    if (dom[bi * n + di] != present) {
+                        dom = dom.with(bi * n + di, present);
+                        changed = true;
+                    }
+                    di = di + 1;
+                }
+            }
+            bi = bi + 1;
+        }
+    }
+    return dom;
+}
+
+function available(value: i32, block: i32, pos: i32, nblocks: i32, defs: i32[], positions: i32[], dom: boolean[]): boolean {
+    var definition: i32 = defs[value];
+    if (definition < 0) { return false; }
+    if (definition == block) { return positions[value] < pos; }
+    return dom[block * nblocks + definition];
+}
+
+function use_error(value: i32, block: i32, pos: i32, f: ssa.SFunc, dependencies: i32[][], defs: i32[], positions: i32[], dom: boolean[]): string {
+    if (value < 0) { return ""; }
+    if (!available(value, block, pos, f.blocks.len(), defs, positions, dom)) { return "value unavailable at use"; }
+    for dep in dependencies[value] {
+        if (!available(dep, block, pos, f.blocks.len(), defs, positions, dom)) { return "dependency unavailable at use"; }
+    }
+    return "";
+}
+
+// The ownership planner's lifetime entry must validate these prerequisites
+// before receiving any live sets. Exact semantic types and counted-unit
+// verification remain separate obligations of that planner's typed input.
+pub function analyze(f: ssa.SFunc, dependencies: i32[][]): ssalive.Flow {
+    var why: string = verify(f, dependencies);
+    if (why != "") { return ssalive.Flow { ok: false, why: why, live_in: [], live_out: [] }; }
+    return ssalive.compute(f, dependencies);
+}
+
+// Dependencies contain their full transitive closure and are keyed by values,
+// not mutable source bindings. Phi results receive independent units in the
+// later planner; their incoming borrows are checked on the incoming edges.
+pub function verify(f: ssa.SFunc, dependencies: i32[][]): string {
+    var err: string = ssalive.input_error(f, dependencies);
+    if (err != "") { return err; }
+    if (f.blocks.len() > 2147483647 / f.blocks.len()) { return "dominator matrix overflow"; }
+    if (f.nparams < 0 || f.nparams > f.nvals) { return "parameter dimensions"; }
+    if (f.blocks[block_index(f, f.entry)].preds.len() > 0) { return "entry has predecessors"; }
+    var defs: i32[] = indices(f.nvals);
+    var positions: i32[] = indices(f.nvals);
+    var bi: i32 = 0;
+    while (bi < f.blocks.len()) {
+        var pos: i32 = 0;
+        var seen_regular: boolean = false;
+        for ins in f.blocks[bi].insts {
+            if (ins.kind_tag == 6 && (f.blocks[bi].id != f.entry || ins.imm < 0 || ins.imm >= f.nparams)) { return "invalid parameter definition"; }
+            if (ins.kind_tag == 8) {
+                if (seen_regular || ins.result < 0) { return "invalid phi definition"; }
+            } else { seen_regular = true; }
+            if (ins.result >= 0) {
+                if (defs[ins.result] >= 0) { return "duplicate value definition"; }
+                defs = defs.with(ins.result, bi);
+                positions = positions.with(ins.result, pos);
+            }
+            pos = pos + 1;
+        }
+        bi = bi + 1;
+    }
+    // Definitions must exist even in unreachable blocks. Dominance below is
+    // meaningful only for reachable uses and executable predecessor edges.
+    for b in f.blocks {
+        for ins in b.insts {
+            for arg in ins.args { if (defs[arg] < 0) { return "undefined value"; } }
+        }
+        var used: i32 = 0 - 1;
+        if (b.term.kind_tag == 1) { used = b.term.value; }
+        if (b.term.kind_tag == 3) { used = b.term.cond; }
+        if (used >= 0 && defs[used] < 0) { return "undefined value"; }
+    }
+    var value: i32 = 0;
+    while (value < f.nvals) {
+        if (dependencies[value].len() > 0 && defs[value] < 0) { return "undefined dependency source"; }
+        for dep in dependencies[value] {
+            if (defs[dep] < 0) { return "undefined dependency"; }
+            if (dep == value) { return "cyclic dependency"; }
+            for transitive in dependencies[dep] {
+                if (transitive == value) { return "cyclic dependency"; }
+                if (!contains(dependencies[value], transitive)) { return "incomplete dependency closure"; }
+            }
+        }
+        value = value + 1;
+    }
+    var reachable: boolean[] = reachable_blocks(f);
+    var dom: boolean[] = dominators(f, reachable);
+    bi = 0;
+    while (bi < f.blocks.len()) {
+        var b: ssa.SBlock = f.blocks[bi];
+        if (reachable[bi]) {
+            var pos: i32 = 0;
+            for ins in b.insts {
+                if (ins.kind_tag == 8) {
+                    var pi: i32 = 0;
+                    while (pi < b.preds.len()) {
+                        var pb: i32 = block_index(f, b.preds[pi]);
+                        if (reachable[pb]) {
+                            err = use_error(ins.args[pi], pb, f.blocks[pb].insts.len(), f, dependencies, defs, positions, dom);
+                            if (err != "") { return err; }
+                        }
+                        pi = pi + 1;
+                    }
+                } else {
+                    for arg in ins.args {
+                        err = use_error(arg, bi, pos, f, dependencies, defs, positions, dom);
+                        if (err != "") { return err; }
+                    }
+                }
+                pos = pos + 1;
+            }
+            var used: i32 = 0 - 1;
+            if (b.term.kind_tag == 1) { used = b.term.value; }
+            if (b.term.kind_tag == 3) { used = b.term.cond; }
+            err = use_error(used, bi, b.insts.len(), f, dependencies, defs, positions, dom);
+            if (err != "") { return err; }
+        }
+        bi = bi + 1;
+    }
+    return "";
+}
