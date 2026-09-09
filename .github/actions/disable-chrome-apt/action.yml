@@ -10,4 +10,4 @@ runs:
       shell: bash
       # A Chrome Packages/InRelease hash mismatch must not prevent unrelated
       # Ubuntu packages from being installed. Apt's verification stays enabled.
-      run: sudo rm -f /etc/apt/sources.list.d/google-chrome.list
+      run: sudo bash "$GITHUB_ACTION_PATH/disable.sh"
