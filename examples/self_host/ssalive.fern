@@ -1,0 +1,196 @@
+// Dependency-aware dataflow over the existing SSA graph. The semantic phase
+// supplies verified, transitive lifetime dependencies by VALUE identity.
+// This module neither infers ownership nor certifies a counted-unit plan.
+// Keep phi inputs on predecessor edges; do not add synthetic graph operands.
+import "./ssa";
+
+// Matrices are indexed by block POSITION * nvals + value id. Block ids need
+// not be contiguous after CFG simplification. Flat scalar buffers avoid a
+// separately allocated row for every block or dataflow iteration.
+pub struct Flow {
+    ok: boolean,
+    why: string,
+    live_in: boolean[],
+    live_out: boolean[]
+}
+
+function failed(why: string): Flow {
+    return Flow { ok: false, why: why, live_in: [], live_out: [] };
+}
+
+function zeroes(n: i32): boolean[] {
+    var out: boolean[] = [];
+    var i: i32 = 0;
+    while (i < n) { out = out.append(false); i = i + 1; }
+    return out;
+}
+
+function block_index(f: ssa.SFunc, id: i32): i32 {
+    var i: i32 = 0;
+    while (i < f.blocks.len()) {
+        if (f.blocks[i].id == id) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+function pred_index(b: ssa.SBlock, id: i32): i32 {
+    var i: i32 = 0;
+    while (i < b.preds.len()) {
+        if (b.preds[i] == id) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+function successor(t: ssa.STerm, which: i32): i32 {
+    if (t.kind_tag == 2 && which == 0) { return t.target; }
+    if (t.kind_tag == 3) {
+        if (which == 0) { return t.t; }
+        return t.f;
+    }
+    return 0 - 1;
+}
+
+// Structural input validation only. Semantic typing, dominance and the
+// availability of each dependency remain obligations of the caller.
+function input_error(f: ssa.SFunc, dependencies: i32[][]): string {
+    if (f.nvals < 0 || dependencies.len() != f.nvals) { return "dependency dimensions"; }
+    if (block_index(f, f.entry) < 0) { return "missing entry block"; }
+    if (f.nvals > 0 && f.blocks.len() > 2147483647 / f.nvals) { return "live matrix overflow"; }
+    for deps in dependencies {
+        for value in deps {
+            if (value < 0 || value >= f.nvals) { return "dependency value out of range"; }
+        }
+    }
+    var bi: i32 = 0;
+    while (bi < f.blocks.len()) {
+        var b: ssa.SBlock = f.blocks[bi];
+        if (b.id < 0 || block_index(f, b.id) != bi) { return "duplicate or negative block id"; }
+        if (b.term.kind_tag < 1 || b.term.kind_tag > 3) { return "invalid terminator"; }
+        if (b.term.kind_tag == 1 && (b.term.value < 0 - 1 || b.term.value >= f.nvals)) { return "return value out of range"; }
+        if (b.term.kind_tag == 3 && (b.term.cond < 0 || b.term.cond >= f.nvals)) { return "condition value out of range"; }
+        var pi: i32 = 0;
+        while (pi < b.preds.len()) {
+            var pb: i32 = block_index(f, b.preds[pi]);
+            if (pb < 0 || pred_index(b, b.preds[pi]) != pi) { return "invalid predecessor"; }
+            var pt: ssa.STerm = f.blocks[pb].term;
+            if (successor(pt, 0) != b.id && successor(pt, 1) != b.id) { return "predecessor is not an edge"; }
+            pi = pi + 1;
+        }
+        for ins in b.insts {
+            if (ins.result < 0 - 1 || ins.result >= f.nvals) { return "result value out of range"; }
+            if (ins.kind_tag == 8 && ins.args.len() != b.preds.len()) { return "phi predecessor arity"; }
+            for arg in ins.args {
+                if (arg < 0 || arg >= f.nvals) { return "operand value out of range"; }
+            }
+        }
+        var si: i32 = 0;
+        while (si < 2) {
+            var target: i32 = successor(b.term, si);
+            if (target >= 0) {
+                var sb: i32 = block_index(f, target);
+                if (sb < 0) { return "missing successor"; }
+                if (pred_index(f.blocks[sb], b.id) < 0) { return "missing predecessor edge"; }
+            } else if (b.term.kind_tag == 3 || (b.term.kind_tag == 2 && si == 0)) {
+                return "negative successor";
+            }
+            si = si + 1;
+        }
+        bi = bi + 1;
+    }
+    return "";
+}
+
+function add_use(own bits: boolean[], base: i32, value: i32, dependencies: i32[][]): boolean[] {
+    if (value < 0) { return bits; }
+    bits = bits.with(base + value, true);
+    for dep in dependencies[value] { bits = bits.with(base + dep, true); }
+    return bits;
+}
+
+function add_local_use(own bits: boolean[], defs: boolean[], base: i32, value: i32, dependencies: i32[][]): boolean[] {
+    if (value < 0) { return bits; }
+    if (!defs[base + value]) { bits = bits.with(base + value, true); }
+    for dep in dependencies[value] {
+        if (!defs[base + dep]) { bits = bits.with(base + dep, true); }
+    }
+    return bits;
+}
+
+// This is the self-host counterpart of native SSA's
+// ComputeLivenessWithDependencies. Dependencies must already be transitive
+// and available at every use of their key, including uses on phi edges.
+pub function compute(f: ssa.SFunc, dependencies: i32[][]): Flow {
+    var why: string = input_error(f, dependencies);
+    if (why != "") { return failed(why); }
+    var size: i32 = f.blocks.len() * f.nvals;
+    var uses: boolean[] = zeroes(size);
+    var defs: boolean[] = zeroes(size);
+    var bi: i32 = 0;
+    while (bi < f.blocks.len()) {
+        var b: ssa.SBlock = f.blocks[bi];
+        var base: i32 = bi * f.nvals;
+        for ins in b.insts {
+            if (ins.kind_tag != 8) {
+                for arg in ins.args { uses = add_local_use(uses, defs, base, arg, dependencies); }
+            }
+            if (ins.result >= 0) { defs = defs.with(base + ins.result, true); }
+        }
+        if (b.term.kind_tag == 1) { uses = add_local_use(uses, defs, base, b.term.value, dependencies); }
+        if (b.term.kind_tag == 3) { uses = add_local_use(uses, defs, base, b.term.cond, dependencies); }
+        bi = bi + 1;
+    }
+    var live_in: boolean[] = zeroes(size);
+    var live_out: boolean[] = zeroes(size);
+    var changed: boolean = true;
+    while (changed) {
+        changed = false;
+        bi = f.blocks.len() - 1;
+        while (bi >= 0) {
+            var b: ssa.SBlock = f.blocks[bi];
+            var base: i32 = bi * f.nvals;
+            var si: i32 = 0;
+            while (si < 2) {
+                var target: i32 = successor(b.term, si);
+                if (target >= 0) {
+                    var sb: i32 = block_index(f, target);
+                    var sbase: i32 = sb * f.nvals;
+                    var value: i32 = 0;
+                    while (value < f.nvals) {
+                        if (live_in[sbase + value] && !live_out[base + value]) {
+                            live_out = live_out.with(base + value, true);
+                            changed = true;
+                        }
+                        value = value + 1;
+                    }
+                    // Phi arguments belong to this exact predecessor edge.
+                    // The phi result is a definition in the successor, so its
+                    // normal live-in set already excludes that result.
+                    var pi: i32 = pred_index(f.blocks[sb], b.id);
+                    for ins in f.blocks[sb].insts {
+                        if (ins.kind_tag == 8) {
+                            var arg: i32 = ins.args[pi];
+                            if (!live_out[base + arg]) { changed = true; }
+                            for dep in dependencies[arg] {
+                                if (!live_out[base + dep]) { changed = true; }
+                            }
+                            live_out = add_use(live_out, base, arg, dependencies);
+                        }
+                    }
+                }
+                si = si + 1;
+            }
+            var value: i32 = 0;
+            while (value < f.nvals) {
+                if ((uses[base + value] || (live_out[base + value] && !defs[base + value])) && !live_in[base + value]) {
+                    live_in = live_in.with(base + value, true);
+                    changed = true;
+                }
+                value = value + 1;
+            }
+            bi = bi - 1;
+        }
+    }
+    return Flow { ok: true, why: "", live_in: live_in, live_out: live_out };
+}
