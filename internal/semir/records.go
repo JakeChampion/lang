@@ -36,7 +36,7 @@ func (p *Program) importRecordTypes(typ ast.Type, info *checker.Info) error {
 		return nil
 	}
 	var copyType func(ast.Type) (ast.Type, error)
-	var pending map[string]bool
+	var pending map[string]*recordContract
 	copyType = func(typ ast.Type) (ast.Type, error) {
 		switch t := typ.(type) {
 		case ast.ArrayType:
@@ -56,10 +56,7 @@ func (p *Program) importRecordTypes(typ ast.Type, info *checker.Info) error {
 			if len(t.Args) != 0 {
 				return nil, fmt.Errorf("semir record %s: monomorphization must precede typed construction", t.Name)
 			}
-			if pending[t.Name] {
-				return nil, fmt.Errorf("semir record %s: recursive record provenance is not implemented in the typed pilot", t.Name)
-			}
-			if p.records[t.Name] != nil {
+			if p.records[t.Name] != nil || pending[t.Name] != nil {
 				return t, nil
 			}
 			decl := info.Structs[t.Name]
@@ -67,10 +64,10 @@ func (p *Program) importRecordTypes(typ ast.Type, info *checker.Info) error {
 				return nil, fmt.Errorf("semir record %s: missing concrete checked field interface", t.Name)
 			}
 			if pending == nil {
-				pending = make(map[string]bool)
+				pending = make(map[string]*recordContract)
 			}
-			pending[t.Name] = true
 			r := &recordContract{owner: p, name: t.Name, fields: make([]recordField, len(decl.Fields))}
+			pending[t.Name] = r
 			for i, field := range decl.Fields {
 				ft, err := copyType(field.Type)
 				if err != nil {
@@ -78,18 +75,24 @@ func (p *Program) importRecordTypes(typ ast.Type, info *checker.Info) error {
 				}
 				r.fields[i] = recordField{field.Name, ft, field.NamePos}
 			}
-			delete(pending, t.Name)
-			if p.records == nil {
-				p.records = make(map[string]*recordContract)
-			}
-			p.records[t.Name] = r
 			return t, nil
 		default:
 			return typ, nil
 		}
 	}
 	_, err := copyType(typ)
-	return err
+	if err != nil {
+		return err
+	}
+	// Publish only complete interfaces. Back edges name the pending nominal
+	// contract, while any failed import leaves the existing catalogue intact.
+	if len(pending) != 0 && p.records == nil {
+		p.records = make(map[string]*recordContract, len(pending))
+	}
+	for name, r := range pending {
+		p.records[name] = r
+	}
+	return nil
 }
 
 // A verifier-local traversal memo is safe only while the input is unchanged.
@@ -106,7 +109,9 @@ func (v *typeVerifier) checkRecord(t ast.StructType) error {
 	}
 	switch v.records[t.Name] {
 	case 1:
-		return fmt.Errorf("recursive record provenance is not implemented in the typed pilot: %s", t)
+		// A nominal back edge is valid. The active caller still verifies all
+		// remaining fields before marking this interface complete.
+		return nil
 	case 2:
 		return nil
 	}

@@ -104,6 +104,9 @@ func solveReturnFlow(p *Program) (*returnFlow, error) {
 	if err := VerifyProgram(p); err != nil {
 		return nil, err
 	}
+	if err := verifyFiniteReturnTypes(p); err != nil {
+		return nil, err
+	}
 	out := &returnFlow{funcs: make(map[*Func]*functionFlow)}
 	paths := make(map[sourcePath]*sourcePath)
 	var seedParameter func(*valueFlow, ast.Type, int, *sourcePath)
@@ -281,6 +284,62 @@ func solveReturnFlow(p *Program) (*returnFlow, error) {
 		}
 	}
 	return out, nil
+}
+
+// This optional analysis still uses eager trees, unlike the semantic record
+// catalogue and independently verified counted-result executable ABI. Reject
+// recursive input explicitly before expanding it; never invent a summary or
+// restrict the representation merely because this analysis is not applicable.
+func verifyFiniteReturnTypes(p *Program) error {
+	states := make(map[string]uint8)
+	var visit func(ast.Type) error
+	visit = func(typ ast.Type) error {
+		switch t := typ.(type) {
+		case ast.ArrayType:
+			return visit(t.Elem)
+		case ast.TupleType:
+			for _, elem := range t.Elems {
+				if err := visit(elem); err != nil {
+					return err
+				}
+			}
+		case ast.StructType:
+			switch states[t.Name] {
+			case 1:
+				return fmt.Errorf("recursive record return-flow analysis is not implemented: %s", t)
+			case 2:
+				return nil
+			}
+			states[t.Name] = 1
+			for _, field := range p.record(t).fields {
+				if err := visit(field.typ); err != nil {
+					return err
+				}
+			}
+			states[t.Name] = 2
+		}
+		return nil
+	}
+	for _, f := range p.funcs {
+		if err := visit(f.result); err != nil {
+			return err
+		}
+		for _, param := range f.graph.Params {
+			if err := visit(f.values[param.ID].typ.source); err != nil {
+				return err
+			}
+		}
+		for _, block := range f.graph.Blocks {
+			for _, op := range block.Ops {
+				if op.Result.IsValid() {
+					if err := visit(f.values[op.Result.ID].typ.source); err != nil {
+						return err
+					}
+				}
+			}
+		}
+	}
+	return nil
 }
 
 func selectPath(flow *valueFlow, path *sourcePath) *valueFlow {
