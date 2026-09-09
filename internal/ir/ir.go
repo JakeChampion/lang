@@ -20127,6 +20127,14 @@ func payloadSlotSize(t ast.Type, ptrW int) int32 {
 	if ast.IsPointerType(t) {
 		return int32(ptrW)
 	}
+	// The unit occupies a payload slot like any other value, and on the
+	// natives that slot is pointer-width: `Result[void, E]`'s Ok box is
+	// then the 16 bytes both native runtimes build (unit at +8), the same
+	// size as its Err box, so the enum is uniform and a box is freed at
+	// the size it was allocated (#8809). On wasm32 both are 8 either way.
+	if _, isVoid := t.(ast.VoidType); isVoid {
+		return int32(ptrW)
+	}
 	return 4
 }
 
