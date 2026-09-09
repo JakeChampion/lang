@@ -147,6 +147,17 @@ matrix executes 0, 1, 2, 3 and 64 replacement iterations, returning either the
 latest array or the original immutable snapshot. Allocation/free balance and
 result reference counts are checked by the existing runtime harness.
 
+The lifetime-query oracle alone does not establish initialization or payload
+semantics. A separate epoch regression places the snapshot before or after the
+current iteration's initializer and records actual guarded-write counts across
+0, 1, 2, 3 and 64 iterations. A loop-latch lifetime end makes every pre-initializer
+snapshot absent, even though the previous iteration initialized the same place;
+post-initializer snapshots are present. Both modes pass promoted-state checks and
+20 native ARM64 raw/optimized cases. Disabling lifetime ends in snapshot promotion
+makes the absent-state regression fail, independently of the witness verifier's
+backward walk. Re-executing a snapshot observes the new lifetime; it does not
+restore an old lifetime or imply that the new observation is present.
+
 ### Guarded replacement costs, 2026-09-09
 
 Five 100 ms samples on native Darwin ARM64, Apple M3 Pro, measure complete
