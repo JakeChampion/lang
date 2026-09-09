@@ -235,9 +235,6 @@ func TestSelfHostFnValueCaptureWasmIR(t *testing.T) {
 func TestSelfHostFnValueCaptureIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
-	if len(x86runner) != 0 {
-		t.Skip("arm64 fn-value-capture gate needs a native x86 host to run the driver")
-	}
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")

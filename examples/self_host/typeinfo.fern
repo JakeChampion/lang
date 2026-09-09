@@ -95,3 +95,100 @@ pub struct TypeVoid { tag: i32 }
 pub struct TypeUnknown { reason: string }
 
 pub type Type = TypeI32 | TypeBool | TypeString | TypeFloat | TypeArray | TypeStruct | TypeTuple | TypeFunc | TypeMap | TypeUnion | TypeDyn | TypeVoid | TypeUnknown;
+
+pub function unchecked(): Type {
+  return TypeUnknown { reason: "not yet checked" };
+}
+
+// Exact source-type spelling for interfaces that still consume declarations.
+// This is not the checker's lossy scalar IR tag. Function signatures, generic
+// arguments, view ownership and all supported widths survive the conversion.
+// Unknown and opaque signatures have no usable declaration spelling.
+// A polymorphic float uses Fern's f64 default when no context committed f32;
+// the semantic Type remains on the AST and retains that polymorphism metadata.
+pub function spelling(t: Type): string {
+  match (t) {
+    TypeI32(i) => {
+      if (i.is_char) {
+        if (i.width == 32 && !i.unsigned) { return "char"; }
+        return "";
+      }
+      if (i.unsigned) {
+        if (i.width == 8) { return "u8"; }
+        if (i.width == 32) { return "u32"; }
+        if (i.width == 64) { return "u64"; }
+      } else {
+        if (i.width == 32) { return "i32"; }
+        if (i.width == 64) { return "i64"; }
+      }
+      return "";
+    },
+    TypeBool(_) => { return "boolean"; },
+    TypeString(s) => {
+      if (s.tag == 0) { return "string"; }
+      if (s.tag == 1) { return "str"; }
+      return "";
+    },
+    TypeFloat(f) => {
+      if (f.width == 32) { return "f32"; }
+      if (f.width == 64 || (f.width == 0 && f.polymorphic)) { return "f64"; }
+      return "";
+    },
+    TypeArray(a) => {
+      var elem: string = spelling(a.elem);
+      if (elem.len() == 0) { return ""; }
+      return elem + "[]";
+    },
+    TypeStruct(s) => { return nominal_spelling(s.name, s.args); },
+    TypeUnion(u) => { return nominal_spelling(u.name, u.args); },
+    TypeTuple(tup) => {
+      if (tup.elements.len() < 2) { return ""; }
+      var fields: string = type_list_spelling(tup.elements);
+      if (fields.len() == 0) { return ""; }
+      return "(" + fields + ")";
+    },
+    TypeFunc(f) => {
+      if (!f.params_known) { return ""; }
+      var params: string = type_list_spelling(f.param_types);
+      if (params.len() == 0 && f.param_types.len() > 0) { return ""; }
+      var ret: string = spelling(f.ret_type);
+      if (ret.len() == 0) { return ""; }
+      // Group the entire arrow type, so array suffixes and enclosing tuples
+      // cannot attach to its return type instead of to the function value.
+      return "((" + params + ") => " + ret + ")";
+    },
+    TypeMap(m) => {
+      var key: string = spelling(m.key);
+      var value: string = spelling(m.value);
+      if (key.len() == 0 || value.len() == 0) { return ""; }
+      return "Map[" + key + ", " + value + "]";
+    },
+    TypeDyn(d) => {
+      if (d.traits.len() == 0) { return ""; }
+      return "dyn " + d.traits;
+    },
+    TypeVoid(_) => { return "void"; },
+    TypeUnknown(_) => { return ""; }
+  }
+  return "";
+}
+
+function type_list_spelling(ts: Type[]): string {
+  var out: string = "";
+  var i: i32 = 0;
+  while (i < ts.len()) {
+    var next: string = spelling(ts[i]);
+    if (next.len() == 0) { return ""; }
+    if (i > 0) { out = out + ", "; }
+    out = out + next;
+    i = i + 1;
+  }
+  return out;
+}
+
+function nominal_spelling(name: string, args: Type[]): string {
+  if (name.len() == 0 || args.len() == 0) { return name; }
+  var params: string = type_list_spelling(args);
+  if (params.len() == 0) { return ""; }
+  return name + "[" + params + "]";
+}
