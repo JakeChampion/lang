@@ -66,32 +66,5 @@ func verifyCleanups(f *Func) error {
 			replays[replay] = true
 		}
 	}
-	for _, block := range f.graph.Blocks {
-		if block.Term.Kind != ssa.TermRet {
-			continue
-		}
-		var previous *ssa.Block
-		for i := len(f.cleanups) - 1; i >= 0; i-- {
-			r := f.cleanups[i]
-			var found *ssa.Block
-			for _, replay := range r.replays {
-				if dom.Dominates(replay, block) {
-					if found != nil {
-						return fail("action replays twice before one return")
-					}
-					found = replay
-				}
-			}
-			if dom.Dominates(r.register, block) != (found != nil) {
-				return fail("return does not replay its registered action exactly once")
-			}
-			if found != nil {
-				if previous != nil && !dom.Dominates(previous, found) {
-					return fail("actions do not replay in LIFO order")
-				}
-				previous = found
-			}
-		}
-	}
-	return nil
+	return verifyCleanupFlow(f)
 }
