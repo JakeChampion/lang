@@ -1988,6 +1988,16 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 	checkerBin, runner, dir := buildCheckerCodesBin(t)
 
 	progs := []struct{ name, src string }{
+		{"loop-map-pair-types", `function f(m: Map[string, i64]): i64 { for (k, v) in m { return k.len() + v; } return 0; }`},
+		{"loop-map-return-mismatch", `function f(m: Map[string, i64]): i64 { for (k, v) in m { return k; } return 0; }`},
+		{"loop-map-argument-mismatch", `function take(s: string): i32 { return s.len(); } function f(m: Map[string, i64]): i32 { for (k, v) in m { return take(v); } return 0; }`},
+		{"loop-map-assignment-mismatch", `function f(m: Map[string, i64]): i32 { for (k, v) in m { v = k; } return 0; }`},
+		{"loop-tuple-element-types", `function f(xs: (i64, string)[]): i64 { for (n, text) in xs { return n + text.len(); } return 0; }`},
+		{"loop-nested-tuple-types", `function f(xs: ((i64, string), boolean)[]): i64 { for ((n, text), flag) in xs { if (flag) { return n + text.len(); } } return 0; }`},
+		{"loop-discard-is-not-binding", `function f(xs: (i32, i32)[]): i32 { for (_, n) in xs { return _; } return 0; }`},
+		{"loop-range-shadow", `function f(i: string): i32 { for i in 0..4 { var n: i32 = i; } return i.len(); }`},
+		{"loop-map-shadow", `function f(m: Map[string, i64], k: i32): i32 { for (k, v) in m { var text: string = k; } return k; }`},
+		{"loop-array-shadow", `function f(xs: string[], x: i64): i64 { for x in xs { var text: string = x; } return x; }`},
 		// Annotated tuple shapes — var binding, parameter, return, nested, and
 		// a tuple whose element is a (builtin) enum/union. All well-typed: the
 		// self-host must not invent a diagnostic the Go checker doesn't report.

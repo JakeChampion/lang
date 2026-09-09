@@ -13,6 +13,10 @@ func TestSelfHostLexicalCaptureTypesX86_64(t *testing.T) {
 	cases := []struct{ name, src, want string }{
 		{"wide shadow", `function f(n: i64): i32 { var cb = (): i64 => { var answer = n; var n = 99; return answer; }; return 0; }`, "n:i64;"},
 		{"tuple binder", `function f(): i32 { var (n, other) = (7, 8); var cb = (): i32 => n; return 0; }`, "n:i32;"},
+		{"map pair", `function f(m: Map[string, i64]): i32 { for (k, v) in m { var cb = (): i64 => { k.len(); return v; }; } return 0; }`, "k:string;v:i64;"},
+		{"tuple array loop", `function f(xs: (i64, string)[]): i32 { for (n, text) in xs { var cb = (): i64 => { text.len(); return n; }; } return 0; }`, "text:string;n:i64;"},
+		{"nested tuple loop", `function f(xs: ((i64, string), boolean)[]): i32 { for ((n, text), flag) in xs { var cb = (): i64 => { text.len(); flag; return n; }; } return 0; }`, "text:string;flag:boolean;n:i64;"},
+		{"map loop shadows parameter", `function f(m: Map[string, i64], k: i32): i32 { for (k, v) in m { var cb = (): string => k; } return k; }`, "k:string;"},
 		{"pattern binder", `enum E { Full(i32), Empty } function f(e: E): i32 { match(e) { Full(n) => { var cb = (): i32 => n; }, Empty => {} } return 0; }`, "n:i32;"},
 		{"guarded binder", `enum E { Full(i32), Empty } function f(): i32 { match(E.Full(7)) { Full(n) when n == 7 => { var cb = (): i32 => n; }, _ => {} } return 0; }`, "n:i32;"},
 		{"callable and view", `function f(callback: (f32, str) => i64, text: str): i32 { var cb = (): i32 => { callback(1.0f32, text); return 0; }; return 0; }`, "callback:((f32, str) => i64);text:str;"},

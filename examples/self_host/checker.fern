@@ -4028,35 +4028,10 @@ pub function check_stmt(st: ast.Stmt, s: Scope): CheckResult {
       return CheckResult { scope: s, ty: t_bool() };
     },
     ast.StmtFor(f) => {
-      // Iter expr must be a TypeArray. Walk the body in
-      // a scope where var_name is bound to the array's
-      // elem type, and loop_depth+1 so inner break /
-      // continue type-check.
-      //
-      // Range form `for i in LOW..HIGH` arrives as a synthetic
-      // `__range(LOW, HIGH)` call (parser desugar). The loop var
-      // is an i32 over the half-open interval; bind it directly
-      // instead of typing the (function-less) `__range` callee.
-      // LOW / HIGH are still walked for E001 etc. by call_diags.
-      var elem_ty: typeinfo.Type = t_unknown("for-in iter not an array");
-      var ok: boolean = true;
-      if (for_iter_is_range(f.iter)) {
-        elem_ty = t_i32();
-      } else {
-        var it: typeinfo.Type = check_expr(f.iter, s);
-        match (it) {
-          typeinfo.TypeArray(ta) => {
-            elem_ty = ta.elem;
-          },
-          _ => {
-            ok = false;
-          }
-        }
-      }
-      var body_scope: Scope = s.enter_loop().bind(f.var_name, elem_ty);
-      var fOk: boolean = check_block(f.body, body_scope);
-      if (!ok) {
-        return CheckResult { scope: s, ty: t_unknown("for-in: iter not array") };
+      var binding = for_binding(f, s);
+      var fOk: boolean = check_block(f.body, binding.scope);
+      if (!binding.valid) {
+        return CheckResult { scope: s, ty: t_unknown("for-in: invalid iterator binding") };
       }
       if (!fOk) {
         return CheckResult { scope: s, ty: t_unknown("for-in: ill-typed body") };
@@ -5037,7 +5012,7 @@ function ret_diags(stmts: ast.Stmt[], s: Scope, ret_ty: typeinfo.Type, unions: U
         out = util.append_diags(out, ret_diags(w.body, cur, ret_ty, unions));
       },
       ast.StmtFor(fr) => {
-        out = util.append_diags(out, ret_diags(fr.body, cur, ret_ty, unions));
+        out = util.append_diags(out, ret_diags(fr.body, for_body_scope(fr, cur), ret_ty, unions));
       },
       ast.StmtMatch(m) => {
         for arm in m.arms {
@@ -5091,7 +5066,7 @@ function void_ret_diags(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]): util.D
         out = util.append_diags(out, void_ret_diags(w.body, cur, unions));
       },
       ast.StmtFor(fr) => {
-        out = util.append_diags(out, void_ret_diags(fr.body, cur, unions));
+        out = util.append_diags(out, void_ret_diags(fr.body, for_body_scope(fr, cur), unions));
       },
       ast.StmtMatch(m) => {
         for arm in m.arms {
@@ -5475,7 +5450,7 @@ function slc_walk(stmts: ast.Stmt[], s: Scope, params: string[], localarr: strin
         owns = owns || ww.owns;
       },
       ast.StmtFor(fr) => {
-        var wf: SlcWalk = slc_walk(fr.body, cur, params, localarr, tainted, sums, vix, ret_is_view);
+        var wf: SlcWalk = slc_walk(fr.body, for_body_scope(fr, cur), params, localarr, tainted, sums, vix, ret_is_view);
         out = util.append_diags(out, wf.diags);
         viewed = merge_view_names(viewed, wf.viewed);
         owns = owns || wf.owns;
@@ -6025,7 +6000,7 @@ function mc_walk_body(stmts: ast.Stmt[], s: Scope, structs: parser.StructDecl[],
         out = util.append_diags(out, mc_walk_body(w.body, cur, structs, enums));
       },
       ast.StmtFor(fr) => {
-        out = util.append_diags(out, mc_walk_body(fr.body, cur, structs, enums));
+        out = util.append_diags(out, mc_walk_body(fr.body, for_body_scope(fr, cur), structs, enums));
       },
       ast.StmtMatch(m) => {
         for arm in m.arms {
@@ -6194,7 +6169,7 @@ function lret_stmts(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]): util.Diag[
       },
       ast.StmtFor(fr) => {
         out = util.append_diags(out, lret_expr(fr.iter, cur, unions, ""));
-        out = util.append_diags(out, lret_stmts(fr.body, cur, unions));
+        out = util.append_diags(out, lret_stmts(fr.body, for_body_scope(fr, cur), unions));
       },
       ast.StmtMatch(m) => {
         out = util.append_diags(out, lret_expr(m.scrutinee, cur, unions, ""));
@@ -6574,7 +6549,7 @@ function mx_stmts(stmts: ast.Stmt[], s: Scope, unions: UnionSig[], enums: parser
       },
       ast.StmtFor(fr) => {
         out = util.append_diags(out, mx_expr(fr.iter, cur, unions, enums));
-        out = util.append_diags(out, mx_stmts(fr.body, cur, unions, enums));
+        out = util.append_diags(out, mx_stmts(fr.body, for_body_scope(fr, cur), unions, enums));
       },
       ast.StmtMatch(m) => {
         out = util.append_diags(out, mx_expr(m.scrutinee, cur, unions, enums));
@@ -9502,9 +9477,7 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
       },
       ast.StmtFor(fr) => {
         out = util.append_diags(out, call_diags(fr.iter, cur));
-        // Bind the loop variable(s) so a read of one inside the body
-        // isn't mis-flagged as E001.
-        out = util.append_diags(out, stmts_call_diags(fr.body, bind_names(cur, fr.var_name)));
+        out = util.append_diags(out, stmts_call_diags(fr.body, for_body_scope(fr, cur)));
       },
       ast.StmtMatch(m) => {
         out = util.append_diags(out, call_diags(m.scrutinee, cur));
@@ -9831,7 +9804,7 @@ function vref_stmts(stmts: ast.Stmt[], s: Scope, ambig: string[]): util.Diag[] {
       },
       ast.StmtFor(fr) => {
         out = util.append_diags(out, vref_expr(fr.iter, cur, ambig));
-        out = util.append_diags(out, vref_stmts(fr.body, cur, ambig));
+        out = util.append_diags(out, vref_stmts(fr.body, for_body_scope(fr, cur), ambig));
       },
       ast.StmtMatch(m) => {
         out = util.append_diags(out, vref_expr(m.scrutinee, cur, ambig));
@@ -9983,9 +9956,7 @@ function stmts_assign_diags(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]): ut
         out = util.append_diags(out, stmts_assign_diags(w.body, cur, unions));
       },
       ast.StmtFor(fr) => {
-        // Bind the loop variable(s) so an assignment to one inside
-        // the body isn't mis-flagged as E001 (same as the read walk).
-        out = util.append_diags(out, stmts_assign_diags(fr.body, bind_names(cur, fr.var_name), unions));
+        out = util.append_diags(out, stmts_assign_diags(fr.body, for_body_scope(fr, cur), unions));
       },
       ast.StmtMatch(m) => {
         for elem in m.arms {
@@ -12338,7 +12309,7 @@ function e053_stmts(stmts: ast.Stmt[], fx: E053Ctx, s: Scope): util.Diag[] {
         out = util.append_diags(out, e053_stmts(w.body, fx, cur));
       },
       ast.StmtFor(fr) => {
-        out = util.append_diags(out, e053_stmts(fr.body, fx, cur));
+        out = util.append_diags(out, e053_stmts(fr.body, fx, for_body_scope(fr, cur)));
       },
       ast.StmtMatch(m) => {
         for arm in m.arms {
@@ -12692,7 +12663,7 @@ function e065_stmts(stmts: ast.Stmt[], fname: string, params: string[], str_ret_
         owns = owns || ww.owns;
       },
       ast.StmtFor(fr) => {
-        var wf: E065Walk = e065_stmts(fr.body, fname, params, str_ret_names, sbacked, sums, vix, cur, ret_is_view);
+        var wf: E065Walk = e065_stmts(fr.body, fname, params, str_ret_names, sbacked, sums, vix, for_body_scope(fr, cur), ret_is_view);
         out = util.append_diags(out, wf.diags);
         viewed = merge_view_names(viewed, wf.viewed);
         owns = owns || wf.owns;
@@ -12870,7 +12841,7 @@ function e032_stmts(stmts: ast.Stmt[], lastfn: string[], s: Scope): util.Diag[] 
         out = util.append_diags(out, e032_stmts(w.body, lastfn, cur));
       },
       ast.StmtFor(fr) => {
-        out = util.append_diags(out, e032_stmts(fr.body, lastfn, cur));
+        out = util.append_diags(out, e032_stmts(fr.body, lastfn, for_body_scope(fr, cur)));
       },
       ast.StmtMatch(m) => {
         for arm in m.arms {
@@ -15176,7 +15147,7 @@ function annotate_lambda_expr(lm: ast.ExprLambda, s: Scope, self_name: string): 
 // annotate_block rebuilds a statement list, threading scope statement-to-statement
 // via bind_stmt. A nested control-flow body is rebuilt in the scope that
 // body actually sees: a for-loop's body binds the loop variable and a match arm's
-// body binds its variant payloads (annotate_for_scope / annotate_arm_scope), so a
+// body binds its variant payloads (for_body_scope / annotate_arm_scope), so a
 // call whose type depends on one is annotated rather than falling back to the
 // structural walk.
 function annotate_block(body: ast.Stmt[], s: Scope): ast.Stmt[] {
@@ -15190,25 +15161,38 @@ function annotate_block(body: ast.Stmt[], s: Scope): ast.Stmt[] {
   return out;
 }
 
-// annotate_for_scope returns the scope a for-loop BODY sees — `s` plus the loop
-// variable — reproducing check_stmt's StmtFor binding: a range form (`for i in
-// a..b`, the synthetic `__range` call) binds i32; an array iter binds the element
-// type. A non-array iter leaves the variable unbound, so a call over it annotates
-// "" and takes the structural fallback exactly as before.
-function annotate_for_scope(fr: ast.StmtFor, s: Scope): Scope {
+struct ForBinding { scope: Scope, valid: boolean }
+
+// Checking, diagnostics and annotation share the iterator's binding types.
+function for_binding(fr: ast.StmtFor, s: Scope): ForBinding {
+  var body = s.enter_loop();
   if (for_iter_is_range(fr.iter)) {
-    return s.bind(fr.var_name, t_i32());
+    return ForBinding { scope: bind_for_element(body, fr.var_name, t_i32()), valid: !name_has_comma(fr.var_name) };
   }
   var it: typeinfo.Type = check_expr(fr.iter, s);
   match (it) {
     typeinfo.TypeArray(ta) => {
-      return s.bind(fr.var_name, ta.elem);
+      return ForBinding { scope: bind_for_element(body, fr.var_name, ta.elem), valid: true };
+    },
+    typeinfo.TypeMap(tm) => {
+      var names = split_pattern_names(fr.var_name);
+      return ForBinding { scope: bind_tuple_destr_names(body, names, t_tuple([tm.key, tm.value])), valid: names.len() == 2 };
     },
     _ => {
-      return s;
+      return ForBinding { scope: body, valid: false };
     }
   }
-  return s;
+  return ForBinding { scope: body, valid: false };
+}
+
+function bind_for_element(s: Scope, name: string, ty: typeinfo.Type): Scope {
+  if (name_has_comma(name)) { return bind_tuple_destr_names(s, split_pattern_names(name), ty); }
+  if (name == "_") { return s; }
+  return s.bind(name, ty);
+}
+
+function for_body_scope(fr: ast.StmtFor, s: Scope): Scope {
+  return for_binding(fr, s).scope;
 }
 
 // annotate_variant_struct resolves a match pattern's variant name to the name its
@@ -15298,7 +15282,7 @@ function annotate_stmt(st: ast.Stmt, s: Scope, after: Scope): ast.Stmt {
       return ast.StmtMatch { ...m, scrutinee: annotate_expr(m.scrutinee, s), arms: narms };
     },
     ast.StmtFor(fr) => {
-      return ast.StmtFor { var_name: fr.var_name, iter: annotate_expr(fr.iter, s), body: annotate_block(fr.body, annotate_for_scope(fr, s)), label: fr.label, line: fr.line };
+      return ast.StmtFor { var_name: fr.var_name, iter: annotate_expr(fr.iter, s), body: annotate_block(fr.body, for_body_scope(fr, s)), label: fr.label, line: fr.line };
     },
     ast.StmtDefer(d) => {
       return ast.StmtDefer { action: annotate_stmt(d.action, s, after), on_error: d.on_error, line: d.line };
@@ -15456,7 +15440,7 @@ function vb_assigned_types(stmts: ast.Stmt[], name: string, s: Scope, acc: typei
         out = vb_assigned_types(w.body, name, cur, out);
       },
       ast.StmtFor(fr) => {
-        out = vb_assigned_types(fr.body, name, annotate_for_scope(fr, cur), out);
+        out = vb_assigned_types(fr.body, name, for_body_scope(fr, cur), out);
       },
       ast.StmtMatch(m) => {
         for arm in m.arms {
@@ -15637,7 +15621,7 @@ function vb_stmt(st: ast.Stmt, s: Scope): ast.Stmt {
       return ast.StmtWhile { ...w, cond: vb_expr(w.cond, s), body: vb_stmts(w.body, s) };
     },
     ast.StmtFor(fr) => {
-      return ast.StmtFor { ...fr, iter: vb_expr(fr.iter, s), body: vb_stmts(fr.body, annotate_for_scope(fr, s)) };
+      return ast.StmtFor { ...fr, iter: vb_expr(fr.iter, s), body: vb_stmts(fr.body, for_body_scope(fr, s)) };
     },
     ast.StmtMatch(m) => {
       var narms: ast.MatchArm[] = [];
