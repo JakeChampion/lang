@@ -72,7 +72,8 @@ var closedStdio = (*os.File)(nil)
 
 func TestOpenedHandleNeverLandsOnAStandardDescriptor(t *testing.T) {
 	bin := buildFernCLI(t)
-	qemu, haveArm64 := arm64Runner()
+	x86Qemu, haveX86 := x86Runner()
+	arm64Qemu, haveArm64 := arm64Runner()
 	for _, tc := range []struct {
 		name   string
 		target []string
@@ -83,12 +84,12 @@ func TestOpenedHandleNeverLandsOnAStandardDescriptor(t *testing.T) {
 		{"arm64-ssa", []string{"-target", "arm64-linux", "-backend", "ssa"}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if tc.arm64 && !haveArm64 {
-				t.Skip("no way to run an arm64 binary here")
-			}
-			runner := ""
+			runner, have := x86Qemu, haveX86
 			if tc.arm64 {
-				runner = qemu
+				runner, have = arm64Qemu, haveArm64
+			}
+			if !have {
+				t.Skipf("no way to run a %s binary here", tc.name)
 			}
 			dir := t.TempDir()
 			build := func(name, src string) string {
