@@ -58,5 +58,6 @@ variant schemas, guard proofs, call and cleanup effects, counted-unit planning
 and its independent verifier remain required. Then the frontend must import
 typed values before RC lowering, production consumers must switch, and the
 replaced AST analyses must be deleted. This prerequisite is not a permanent
-optional compiler route. The two existing enum-return leak failures remain
-unchanged merge blockers; no size baseline is changed.
+optional compiler route. Main's enum-return leaks were repaired separately by
+#8990, whose exact heap-balance regressions pass after parent integration.
+No size baseline is changed.
