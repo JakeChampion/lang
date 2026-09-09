@@ -301,6 +301,44 @@ place. These include bypasses, joins, cycles and lifetime resets. The oracle use
 complete stacks/history and no production transfer or fixed-point helper. Scope
 structure is separately tested through full semantic verification.
 
+## Correlated-admission costs, 2026-09-09
+
+Five 100 ms samples on native Darwin ARM64, Apple M3 Pro, measure complete
+`Verify` calls on prebuilt conditional graphs. A one-action smoke run preceded
+scaling; only action count changes. These are observed ranges, not confidence
+intervals or a runtime speedup claim.
+
+| Conditional actions | ns/op | bytes/op | allocs/op |
+| --- | --- | --- | --- |
+| 1 | 4,458-4,817 | 3,193-3,194 | 63 |
+| 8 | 67,057-81,021 | 43,465-43,467 | 344 |
+| 64 | 13,498,521-14,028,984 | 359,593-359,609 | 1,882 |
+
+The pairwise proof's scaling cost is explicit: it is not yet a claim of cheap
+admission for large action sets. Whole-stack enumeration is avoided, and every
+worklist has a finite bound independent of execution length. One flat successor
+arena replaces per-block slices, reducing initial allocation counts from
+67 / 383 / 2,201 to 63 / 344 / 1,882. Pair walks already check both individual
+histories, so separate single-action walks are omitted unless there is only one
+action. Sharing that call site also removes a duplicated compiled transfer body.
+
+The existing source-to-physical-lowering cleanup benchmark retains
+1,242 / 3,799 / 20,042-20,043 allocations for 1 / 8 / 64 ordinary actions, matching
+parent `8ce8a3eae`. Integrated samples before the conditional-only walk refinement
+measured 70,890-75,409 / 306,386-384,964 / 2,454,962-2,547,326 ns/op. The parent
+measured 70,571-75,969 / 301,810-321,194 / 2,467,101-3,156,869. These noisy ranges
+do not establish a speedup; the existing executable route remains unchanged.
+
+Identical `go build -trimpath -buildvcs=false` builds measure 28,935,970 parent
+bytes and 28,937,042 candidate bytes, a 1,072-byte net increase. Mach-O instruction
+size increases by 8,208 bytes. The new correlated scope/projection functions and
+transfer bodies account for 7,712 symbol bytes; caller/indexing changes account
+for the remaining instruction difference. Consolidating the pair call site
+removed 832 instruction bytes and avoided crossing a segment-alignment boundary
+in this build. Data, debug information and alignment explain why net file growth
+differs from instruction growth. No compiler-size baseline changes, runtime
+environment allocation or source conditional activation are included.
+
 ## Observable contract
 
 The existing language contract is in the `defer` section of

@@ -22,11 +22,14 @@ func verifyConditionalCleanupFlow(f *Func, flow *cleanupBoundaryFlow) error {
 func verifyCleanupProjections(f *Func, flow *cleanupBoundaryFlow) error {
 	walk := newCleanupProjection(f, flow)
 	for i, action := range f.cleanups {
-		if err := walk.actions(action, nil); err != nil {
-			return err
+		partners := f.cleanups[i+1:]
+		if len(f.cleanups) == 1 {
+			partners = []*cleanupRegion{nil}
 		}
-		for _, earlier := range f.cleanups[:i] {
-			if err := walk.actions(earlier, action); err != nil {
+		// A pair checks both individual histories too. Do not repeat separate
+		// single-action walks when every action already participates in a pair.
+		for _, partner := range partners {
+			if err := walk.actions(action, partner); err != nil {
 				return err
 			}
 		}
