@@ -324,11 +324,20 @@ const (
 	OpBindingReplaceGuarded // Args = same-binding snapshot witness, replacement
 	OpRecordMake            // Args = fields in nominal declaration order
 	OpRecordGet             // Args = nominal container; Imm = field ordinal
+	OpSumMake               // Args = active payloads; Imm = nominal variant ordinal
+	OpSumIs                 // Args = enum container; Imm = nominal variant ordinal
+	OpSumGet                // Args = enum container; Imm = nominal sum field identity
 )
 
 // String renders the OpKind for dumps + error messages.
 func (k OpKind) String() string {
 	switch k {
+	case OpSumMake:
+		return "sum_make"
+	case OpSumIs:
+		return "sum_is"
+	case OpSumGet:
+		return "sum_get"
 	case OpRecordMake:
 		return "record_make"
 	case OpRecordGet:

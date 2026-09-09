@@ -71,7 +71,7 @@ func (b *builder) pushScope() { b.scopes = append(b.scopes, make(map[string]Bind
 func (b *builder) popScope() { b.scopes = b.scopes[:len(b.scopes)-1] }
 
 func (b *builder) bind(name string, typ ast.Type, pos ast.Position, value ssa.Value) error {
-	if err := b.fn.program.importRecordTypes(typ, b.info); err != nil {
+	if err := b.fn.program.importNominalTypes(typ, b.info); err != nil {
 		return b.errorAt(pos, err.Error())
 	}
 	if !ast.Equal(typ, b.fn.values[value.ID].typ.source) {
@@ -237,6 +237,9 @@ func (b *builder) exprValue(expr ast.Expr) (ssa.Value, error) {
 	if expr == nil {
 		return ssa.Value{}, fmt.Errorf("semir: missing checked expression")
 	}
+	if construction, ok := b.info.EnumConstructions[expr]; ok {
+		return b.enumValue(expr, construction)
+	}
 	emit := func(kind ssa.OpKind, typ ast.Type, args ...ssa.Value) ssa.Value {
 		return b.fn.addOp(b.current, kind, typ, expr.Pos(), args...)
 	}
@@ -296,14 +299,14 @@ func (b *builder) exprValue(expr ast.Expr) (ssa.Value, error) {
 		b.fn.writeBinding(b.current, ssa.OpBindingReplace, id, value, n.P)
 		return value, nil
 	case *ast.ArrayLit:
-		if err := b.fn.program.importRecordTypes(n.ElemType, b.info); err != nil {
+		if err := b.fn.program.importNominalTypes(n.ElemType, b.info); err != nil {
 			return ssa.Value{}, b.errorAt(n.P, err.Error())
 		}
 		args, _, ended, err := b.exprs(n.Elems)
 		if err != nil || ended {
 			return ssa.Value{}, err
 		}
-		return emit(ssa.OpArrayMake, ast.ArrayType{Elem: n.ElemType}, args...), nil
+		return emit(ssa.OpArrayMake, ast.ArrayType{Elem: b.fn.program.canonicalType(n.ElemType)}, args...), nil
 	case *ast.TupleLit:
 		args, types, ended, err := b.exprs(n.Elems)
 		if err != nil || ended {
@@ -322,7 +325,7 @@ func (b *builder) exprValue(expr ast.Expr) (ssa.Value, error) {
 		if err != nil || ended {
 			return ssa.Value{}, err
 		}
-		return emit(ssa.OpArrayGet, n.ElemType, args...), nil
+		return emit(ssa.OpArrayGet, b.fn.program.canonicalType(n.ElemType), args...), nil
 	case *ast.Call:
 		return b.call(n, false)
 	default:

@@ -46,7 +46,7 @@ func (p *Program) emptyFlow(typ ast.Type) *valueFlow {
 	switch t := typ.(type) {
 	case ast.ArrayType:
 		f.children = []*valueFlow{p.emptyFlow(t.Elem)}
-	case ast.TupleType, ast.StructType:
+	case ast.TupleType, ast.StructType, ast.EnumType:
 		fields := p.aggregateFields(typ)
 		for i := range fields.len() {
 			f.children = append(f.children, p.emptyFlow(fields.at(i)))
@@ -127,7 +127,7 @@ func solveReturnFlow(p *Program) (*returnFlow, error) {
 		switch t := typ.(type) {
 		case ast.ArrayType:
 			seedParameter(flow.children[0], t.Elem, param, child(-1))
-		case ast.TupleType, ast.StructType:
+		case ast.TupleType, ast.StructType, ast.EnumType:
 			fields := p.aggregateFields(typ)
 			for i := range fields.len() {
 				seedParameter(flow.children[i], fields.at(i), param, child(i))
@@ -226,7 +226,7 @@ func solveReturnFlow(p *Program) (*returnFlow, error) {
 		switch op.Kind {
 		case ssa.OpConstInt, ssa.OpConstBool, ssa.OpNot, ssa.OpNeg, ssa.OpAdd, ssa.OpSub, ssa.OpMul,
 			ssa.OpEq, ssa.OpNe, ssa.OpLt, ssa.OpLe, ssa.OpGt, ssa.OpGe,
-			ssa.OpStateHas:
+			ssa.OpStateHas, ssa.OpSumIs:
 			changed = addSource(dst, source{kind: sourceScalar})
 		case ssa.OpStateAbsent:
 			// No payload exists on this alternative, including no provenance.
@@ -244,6 +244,17 @@ func solveReturnFlow(p *Program) (*returnFlow, error) {
 			for i := range op.Args {
 				changed = mergeFlow(dst.children[i], arg(i)) || changed
 			}
+		case ssa.OpSumMake:
+			kind := sourceGenerated
+			if len(op.Args) == 0 {
+				kind = sourceImmortal
+			}
+			changed = addSource(dst, source{kind: kind})
+			e := p.enum(eq.fn.values[op.Result.ID].typ.source)
+			variant := e.variants[op.Imm]
+			for i := range op.Args {
+				changed = mergeFlow(dst.children[variant.first+i], arg(i)) || changed
+			}
 		case ssa.OpArrayAppend:
 			changed = addSource(dst, source{kind: sourceGenerated})
 			// A future reuse choice may retain the input buffer's identity.
@@ -254,7 +265,7 @@ func solveReturnFlow(p *Program) (*returnFlow, error) {
 			changed = mergeFlow(dst.children[0], arg(1)) || changed
 		case ssa.OpArrayGet:
 			changed = mergeFlow(dst, arg(0).children[0])
-		case ssa.OpTupleGet, ssa.OpRecordGet:
+		case ssa.OpTupleGet, ssa.OpRecordGet, ssa.OpSumGet:
 			changed = mergeFlow(dst, arg(0).children[op.Imm])
 		case ssa.OpPhi:
 			for i := range op.Args {
@@ -304,19 +315,35 @@ func verifyFiniteReturnTypes(p *Program) error {
 				}
 			}
 		case ast.StructType:
-			switch states[t.Name] {
+			key := "record:" + t.Name
+			switch states[key] {
 			case 1:
 				return fmt.Errorf("recursive record return-flow analysis is not implemented: %s", t)
 			case 2:
 				return nil
 			}
-			states[t.Name] = 1
+			states[key] = 1
 			for _, field := range p.record(t).fields {
 				if err := visit(field.typ); err != nil {
 					return err
 				}
 			}
-			states[t.Name] = 2
+			states[key] = 2
+		case ast.EnumType:
+			key := "enum:" + t.String()
+			switch states[key] {
+			case 1:
+				return fmt.Errorf("recursive enum return-flow analysis is not implemented: %s", t)
+			case 2:
+				return nil
+			}
+			states[key] = 1
+			for _, field := range p.enum(t).fields {
+				if err := visit(field.typ); err != nil {
+					return err
+				}
+			}
+			states[key] = 2
 		}
 		return nil
 	}

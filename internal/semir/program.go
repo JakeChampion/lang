@@ -16,6 +16,7 @@ type Program struct {
 	funcs   []*Func
 	byName  map[string]int64
 	records map[string]*recordContract
+	enums   map[string]*enumContract
 }
 
 type funcContract struct {
@@ -45,18 +46,19 @@ func BuildProgram(prog *ast.Program, info *checker.Info) (*Program, error) {
 			return nil, fmt.Errorf("semir %s: missing or inconsistent checked signature", decl.Name)
 		}
 		f := newFunc(decl.Name, sig.Result)
-		if err := p.importRecordTypes(sig.Result, info); err != nil {
+		if err := p.importNominalTypes(sig.Result, info); err != nil {
 			return nil, err
 		}
 		f.graph.NewBlock()
 		f.program = p
-		f.contract = funcContract{params: append([]ast.Type(nil), sig.Params...), result: sig.Result}
+		f.result = p.canonicalType(sig.Result)
+		f.contract = funcContract{params: make([]ast.Type, len(sig.Params)), result: f.result}
 		own := info.OwnFuncs[decl.Name]
 		if len(own) != 0 && len(own) != len(decl.Params) {
 			return nil, fmt.Errorf("semir %s: inconsistent checked ownership contract", decl.Name)
 		}
 		for i, param := range decl.Params {
-			if err := p.importRecordTypes(param.Type, info); err != nil {
+			if err := p.importNominalTypes(param.Type, info); err != nil {
 				return nil, err
 			}
 			if !ast.Equal(sig.Params[i], param.Type) {
@@ -73,7 +75,8 @@ func BuildProgram(prog *ast.Program, info *checker.Info) (*Program, error) {
 				}
 			}
 			f.contract.modes = append(f.contract.modes, mode)
-			f.addParam(param.Type, mode, param.NamePos)
+			value := f.addParam(param.Type, mode, param.NamePos)
+			f.contract.params[i] = f.values[value.ID].typ.source
 		}
 		p.funcs = append(p.funcs, f)
 		p.byName[decl.Name] = int64(len(p.funcs))

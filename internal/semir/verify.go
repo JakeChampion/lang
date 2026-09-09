@@ -56,6 +56,7 @@ func verifyWithFacts(f *Func, facts *verificationFacts) error {
 	defs := make(map[int32]bool, len(f.values))
 	hasAvailability := false
 	hasGuardedWrites := false
+	hasEnumProjections := false
 	checkValue := func(v ssa.Value, define bool) error {
 		if v.ID <= 0 || v.Func != g {
 			return fail("invalid or foreign value %v", v)
@@ -137,6 +138,7 @@ func verifyWithFacts(f *Func, facts *verificationFacts) error {
 				return fail("%v = %s: %v", op.Result, op.Kind, err)
 			}
 			hasGuardedWrites = hasGuardedWrites || op.Kind == ssa.OpBindingReplaceGuarded
+			hasEnumProjections = hasEnumProjections || op.Kind == ssa.OpSumGet
 		}
 		var used ssa.Value
 		switch b.Term.Kind {
@@ -191,6 +193,11 @@ func verifyWithFacts(f *Func, facts *verificationFacts) error {
 	}
 	if hasAvailability {
 		if err := verifyStateGuards(f, dom); err != nil {
+			return err
+		}
+	}
+	if hasEnumProjections {
+		if err := verifyEnumGuards(f, dom); err != nil {
 			return err
 		}
 	}
@@ -379,6 +386,35 @@ func verifyOp(f *Func, op *ssa.Op) error {
 				return bad()
 			}
 		}
+	case ssa.OpSumMake:
+		e := f.program.enum(result)
+		if e == nil || op.Imm < 0 || op.Imm >= int64(len(e.variants)) || op.Str != "" || op.F64 != 0 {
+			return bad()
+		}
+		variant := e.variants[op.Imm]
+		if len(op.Args) != variant.count {
+			return bad()
+		}
+		for i := range op.Args {
+			if !ast.Equal(e.fields[variant.first+i].typ, arg(i)) {
+				return bad()
+			}
+		}
+	case ssa.OpSumIs, ssa.OpSumGet:
+		if len(op.Args) != 1 || op.Str != "" || op.F64 != 0 {
+			return bad()
+		}
+		e := f.program.enum(arg(0))
+		if e == nil || op.Imm < 0 {
+			return bad()
+		}
+		if op.Kind == ssa.OpSumIs {
+			if op.Imm >= int64(len(e.variants)) || !ast.Equal(result, ast.BoolType{}) {
+				return bad()
+			}
+		} else if op.Imm >= int64(len(e.fields)) || !ast.Equal(result, e.fields[op.Imm].typ) {
+			return bad()
+		}
 	case ssa.OpRecordGet:
 		if len(op.Args) != 1 {
 			return bad()
@@ -435,13 +471,15 @@ func (v *typeVerifier) check(typ ast.Type, allowVoid bool) error {
 		return nil
 	case ast.StructType:
 		return v.checkRecord(t)
+	case ast.EnumType:
+		return v.checkEnum(t)
 	}
 	return fmt.Errorf("unresolved or unsupported semantic type %T", typ)
 }
 
 func referenceBearing(typ ast.Type) bool {
 	switch typ.(type) {
-	case ast.StringType, ast.ArrayType, ast.TupleType, ast.StructType:
+	case ast.StringType, ast.ArrayType, ast.TupleType, ast.StructType, ast.EnumType:
 		return true
 	default:
 		return false

@@ -98,7 +98,7 @@ func ownershipEffects(f *Func) (*functionEffects, error) {
 			switch op.Kind {
 			case ssa.OpConstInt, ssa.OpConstBool, ssa.OpNot, ssa.OpNeg, ssa.OpAdd, ssa.OpSub, ssa.OpMul,
 				ssa.OpEq, ssa.OpNe, ssa.OpLt, ssa.OpLe, ssa.OpGt, ssa.OpGe,
-				ssa.OpStateHas:
+				ssa.OpStateHas, ssa.OpSumIs:
 				e.result = resultValue
 			case ssa.OpStateAbsent, ssa.OpStatePresent:
 				e.result = resultValue
@@ -115,8 +115,11 @@ func ownershipEffects(f *Func) (*functionEffects, error) {
 				}
 			case ssa.OpConstString:
 				e.result = resultImmortal
-			case ssa.OpArrayMake, ssa.OpTupleMake, ssa.OpRecordMake:
+			case ssa.OpArrayMake, ssa.OpTupleMake, ssa.OpRecordMake, ssa.OpSumMake:
 				e.result = resultCounted
+				if op.Kind == ssa.OpSumMake && len(op.Args) == 0 {
+					e.result = resultImmortal
+				}
 				for i, arg := range op.Args {
 					e.inputs[i].store = storeValue
 					e.inputs[i].counted = referenceBearing(f.values[arg.ID].typ.source)
@@ -129,7 +132,7 @@ func ownershipEffects(f *Func) (*functionEffects, error) {
 				// already established by semantic verification.
 				e.inputs[0].counted = referenceBearing(f.values[op.Args[1].ID].typ.source)
 				e.inputs[1].counted = e.inputs[0].counted
-			case ssa.OpArrayGet, ssa.OpTupleGet, ssa.OpRecordGet:
+			case ssa.OpArrayGet, ssa.OpTupleGet, ssa.OpRecordGet, ssa.OpSumGet:
 				projected, ok := projection(op)
 				if !ok {
 					return nil, fmt.Errorf("semir: missing projection contract for %s", op.Kind)
