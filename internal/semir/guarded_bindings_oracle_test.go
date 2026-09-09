@@ -9,6 +9,9 @@ import (
 
 // Forward execution tracks an expired witness until its definition executes
 // again. This does not use the production backward walk or lifetime mask helper.
+// This oracle isolates the intervening-end relation, not snapshot payload or
+// initialization semantics. Fresh observations can be absent: the separate epoch
+// promotion/native tests check this across real loop-latch lifetime resets.
 func guardedWitnessOracle(start, write, end *ssa.Block) bool {
 	type state struct {
 		block   *ssa.Block
