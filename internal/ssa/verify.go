@@ -23,6 +23,21 @@ import "fmt"
 //   - Entry block has no Preds (function entry can't be
 //     re-entered).
 func Verify(f *Func) error {
+	return verify(f, nil)
+}
+
+// VerifyWithDomTree returns the dominance snapshot built during successful SSA
+// verification. Subsequent read-only semantic checks can reuse it. No tree is
+// returned on failure, and callers must discard it after any CFG mutation.
+func VerifyWithDomTree(f *Func) (*DomTree, error) {
+	var dom *DomTree
+	if err := verify(f, &dom); err != nil {
+		return nil, err
+	}
+	return dom, nil
+}
+
+func verify(f *Func, verifiedDom **DomTree) error {
 	if f == nil {
 		return fmt.Errorf("ssa.Verify: nil func")
 	}
@@ -149,6 +164,9 @@ func Verify(f *Func) error {
 	}
 
 	dom := BuildDomTree(f)
+	if verifiedDom != nil {
+		*verifiedDom = dom
+	}
 
 	dominatesUse := func(def defSite, useBlock *Block, useIndex int) bool {
 		if def.block == nil {

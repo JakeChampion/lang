@@ -60,7 +60,7 @@ func verifyStateOp(f *Func, op *ssa.Op) error {
 // Presence proofs refer to an immutable state SSA identity, not merely a
 // binding name or a boolean with the same spelling. Guard edges must dominate
 // extraction: an alternate predecessor cannot enter the payload block.
-func verifyStateGuards(f *Func) error {
+func verifyStateGuards(f *Func, dom *ssa.DomTree) error {
 	var gets []*ssa.Op
 	var getBlocks []*ssa.Block
 	for _, block := range f.graph.Blocks {
@@ -93,7 +93,6 @@ func verifyStateGuards(f *Func) error {
 			guards[test.Args[0].ID] = append(guards[test.Args[0].ID], yes)
 		}
 	}
-	dom := ssa.BuildDomTree(f.graph)
 	for i, get := range gets {
 		state := get.Args[0]
 		if def := defs[state.ID]; def != nil && def.Kind == ssa.OpStatePresent {

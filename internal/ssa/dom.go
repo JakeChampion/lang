@@ -9,6 +9,8 @@ package ssa
 // Unreachable blocks (no path from entry) are absent from Idom.
 // Callers that walk Func.Blocks should skip blocks for which
 // `_, ok := Idom[b]` is false.
+// The tree is an immutable analysis snapshot. Rebuild after changing CFG edges;
+// callers must not mutate Idom or RPO. Concurrent read-only queries are safe.
 type DomTree struct {
 	// Idom maps each reachable block to its immediate dominator.
 	Idom map[*Block]*Block
@@ -16,31 +18,36 @@ type DomTree struct {
 	// entry first. Cached so callers running tree-shaped
 	// analyses don't recompute it.
 	rpo []*Block
+	// Reuse construction's block index for dense dominator-tree DFS intervals.
+	// Block.ID is not an identity: other functions can reuse the same numbers.
+	index map[*Block]int
+	spans []domSpan
 }
+
+type domSpan struct{ start, end int }
 
 // RPO returns the cached reverse-postorder walk of reachable
 // blocks (entry first). Callers must not mutate the slice.
 func (d *DomTree) RPO() []*Block { return d.rpo }
 
 // Dominates reports whether `a` dominates `b` (a appears on
-// every entry-to-b path). Reflexive: a dominates itself. Walks
-// up the idom chain from b — O(depth) per call.
+// every entry-to-b path). It is O(1), using subtree interval containment.
+// Preserve reflexivity for every non-nil block, including unreachable blocks;
+// distinct unreachable or foreign blocks do not dominate one another.
 func (d *DomTree) Dominates(a, b *Block) bool {
 	if a == nil || b == nil {
 		return false
 	}
-	for cur := b; cur != nil; {
-		if cur == a {
-			return true
-		}
-		next, ok := d.Idom[cur]
-		if !ok || next == cur {
-			// hit the entry's self-loop or an unreachable node
-			return cur == a
-		}
-		cur = next
+	if a == b {
+		return true
 	}
-	return false
+	ai, aok := d.index[a]
+	bi, bok := d.index[b]
+	if !aok || !bok {
+		return false
+	}
+	as, bs := d.spans[ai], d.spans[bi]
+	return as.start <= bs.start && bs.start < as.end
 }
 
 // BuildDomTree constructs the dominator tree for `f` using
@@ -70,12 +77,16 @@ func BuildDomTree(f *Func) *DomTree {
 	}
 
 	d.rpo = reversePostorder(f.Entry)
+	d.Idom[f.Entry] = f.Entry
+	// A singleton tree has no non-reflexive dominance relations to index.
+	if len(d.rpo) == 1 {
+		return d
+	}
 	rpoIndex := map[*Block]int{}
 	for i, b := range d.rpo {
 		rpoIndex[b] = i
 	}
-
-	d.Idom[f.Entry] = f.Entry
+	d.index = rpoIndex
 
 	changed := true
 	for changed {
@@ -103,7 +114,45 @@ func BuildDomTree(f *Func) *DomTree {
 		}
 	}
 
+	d.indexSubtrees()
 	return d
+}
+
+// Index the completed tree, not the CFG's traversal order: a dominator subtree
+// need not be contiguous in CFG RPO. Child/sibling links share one scratch arena.
+// Iterative traversal avoids a second depth-proportional call stack. Every edge
+// is followed a constant number of times, so this adds O(N) construction work.
+func (d *DomTree) indexSubtrees() {
+	n := len(d.rpo)
+	d.spans = make([]domSpan, n)
+	links := make([]int, 2*n)
+	children, siblings := links[:n], links[n:]
+	for i, block := range d.rpo[1:] {
+		child := i + 1
+		parent := d.index[d.Idom[block]]
+		siblings[child] = children[parent]
+		children[parent] = child // Zero is the root, never a child.
+	}
+	node, clock := 0, 0
+	for {
+		d.spans[node].start = clock
+		clock++
+		if child := children[node]; child != 0 {
+			node = child
+			continue
+		}
+		for {
+			d.spans[node].end = clock
+			if sibling := siblings[node]; sibling != 0 {
+				node = sibling
+				break
+			}
+			if node == 0 {
+				return
+			}
+			node = d.index[d.Idom[d.rpo[node]]]
+		}
+	}
 }
 
 // intersect finds the lowest common ancestor of b1 and b2 in

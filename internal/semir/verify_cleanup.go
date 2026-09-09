@@ -7,7 +7,7 @@ import (
 	"github.com/jakechampion/lang/internal/ssa"
 )
 
-func verifyCleanups(f *Func) (*cleanupRegion, error) {
+func verifyCleanups(f *Func, dom *ssa.DomTree) (*cleanupRegion, error) {
 	if len(f.cleanups) == 0 && len(f.boundaries) == 0 && len(f.cleanupExits) == 0 {
 		return nil, nil
 	}
@@ -15,7 +15,6 @@ func verifyCleanups(f *Func) (*cleanupRegion, error) {
 		return nil, fmt.Errorf("semir %s cleanup: %s", f.graph.Name, message)
 	}
 	var conditional *cleanupRegion
-	dom := ssa.BuildDomTree(f.graph)
 	boundaryFlow, err := verifyCleanupBoundaries(f, dom)
 	if err != nil {
 		return nil, err

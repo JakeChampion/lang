@@ -181,15 +181,16 @@ func verifyWithFacts(f *Func, facts *verificationFacts) error {
 			return fail("binding %q at %d:%d has a missing or foreign lifetime boundary", b.name, b.pos.Line, b.pos.Col)
 		}
 	}
-	if err := ssa.Verify(g); err != nil {
+	dom, err := ssa.VerifyWithDomTree(g)
+	if err != nil {
 		return err
 	}
 	if hasAvailability {
-		if err := verifyStateGuards(f); err != nil {
+		if err := verifyStateGuards(f, dom); err != nil {
 			return err
 		}
 	}
-	conditional, err := verifyCleanups(f)
+	conditional, err := verifyCleanups(f, dom)
 	if err != nil {
 		return err
 	}
