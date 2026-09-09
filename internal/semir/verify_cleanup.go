@@ -20,7 +20,7 @@ func verifyCleanups(f *Func) error {
 	seen := make(map[*cleanupRegion]bool)
 	for _, r := range f.cleanups {
 		if r == nil || seen[r] || r.owner != f || r.body == nil || r.body == f ||
-			r.body.program != f.program || len(r.body.cleanups) != 0 || boundaryFlow.points[r.register] == nil || !boundaryFlow.known[r.boundary] {
+			r.body.program != f.program || r.body.unexpandedCleanups || r.body.unpromotedBindings || len(r.body.cleanups) != 0 || boundaryFlow.points[r.register] == nil || !boundaryFlow.known[r.boundary] {
 			return fail("invalid action, owner or registration identity")
 		}
 		seen[r] = true
@@ -60,10 +60,19 @@ func verifyCleanups(f *Func) error {
 		}
 		replays := make(map[*ssa.Block]bool)
 		for _, replay := range r.replays {
-			if boundaryFlow.points[replay] == nil || replays[replay] || !dom.Dominates(r.register, replay) {
+			if boundaryFlow.points[replay] == nil || replays[replay] {
 				return fail("replay lacks a dominating registration or has invalid identity")
 			}
+			if !dom.Dominates(r.register, replay) {
+				if f.unexpandedCleanups {
+					return fmt.Errorf("semir %s at %d:%d: conditional cleanup registration is not implemented in the typed pilot", f.graph.Name, r.pos.Line, r.pos.Col)
+				}
+				return fail("replay lacks a dominating registration")
+			}
 			replays[replay] = true
+			if f.unexpandedCleanups && (len(replay.Ops) != 0 || (replay.Term.Kind != ssa.TermBr && replay.Term.Kind != ssa.TermRet)) {
+				return fail("unexpanded replay must contain only its continuation")
+			}
 		}
 	}
 	return verifyCleanupFlow(f, boundaryFlow)

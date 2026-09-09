@@ -26,6 +26,7 @@ func BuildFunc(decl *ast.FuncDecl, info *checker.Info) (*Func, error) {
 
 func buildBody(f *Func, decl *ast.FuncDecl, info *checker.Info) error {
 	f.unpromotedBindings = true
+	f.unexpandedCleanups = true
 	b := builder{fn: f, info: info, current: f.graph.Entry}
 	b.cleanupScope = b.newCleanupBoundary(nil, b.current, nil, nil, decl.P)
 	b.pushScope()

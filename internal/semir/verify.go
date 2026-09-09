@@ -15,6 +15,9 @@ func Verify(f *Func) error {
 		return fmt.Errorf("semir: nil function")
 	}
 	g := f.graph
+	if f.unexpandedCleanups && !f.unpromotedBindings {
+		return fmt.Errorf("semir %s: pending cleanup actions require binding places", g.Name)
+	}
 	fail := func(format string, args ...any) error {
 		return fmt.Errorf("semir %s: %s", g.Name, fmt.Sprintf(format, args...))
 	}

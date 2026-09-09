@@ -23,6 +23,18 @@ func verifyBindingInitialization(f *Func) error {
 	}
 	words := (len(f.bindings) + 63) / 64
 	ends := bindingLifetimeEnds(f)
+	// Before expansion the site itself reads every capture and publishes its
+	// replacement only after the action. Check availability without fabricating
+	// an SSA payload or relying on the later expansion to discover an invalid read.
+	var replays map[*ssa.Block]*cleanupRegion
+	if f.unexpandedCleanups {
+		replays = make(map[*ssa.Block]*cleanupRegion)
+		for _, r := range f.cleanups {
+			for _, site := range r.replays {
+				replays[site] = r
+			}
+		}
+	}
 	initialized := func(state []uint64, id int64) bool { return state[(id-1)/64]&(uint64(1)<<((id-1)%64)) != 0 }
 	set := func(state []uint64, id int64) { state[(id-1)/64] |= uint64(1) << ((id - 1) % 64) }
 	order := f.graph.RPO()
@@ -89,6 +101,13 @@ func verifyBindingInitialization(f *Func) error {
 	}
 	for _, block := range order {
 		entryState(block)
+		if r := replays[block]; r != nil {
+			for _, id := range r.captures {
+				if !initialized(state, int64(id)) {
+					return fmt.Errorf("semir %s cleanup at %d:%d: captured binding %d requires initialization on every incoming path", f.graph.Name, r.pos.Line, r.pos.Col, id)
+				}
+			}
+		}
 		for _, op := range block.Ops {
 			switch op.Kind {
 			case ssa.OpBindingInit:
