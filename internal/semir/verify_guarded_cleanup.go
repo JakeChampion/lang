@@ -72,7 +72,7 @@ func verifyGuardedCleanups(f *Func, flow *cleanupBoundaryFlow, dom *ssa.DomTree)
 				term := current.Term
 				test := defs[term.Cond.ID].op
 				if term.Kind != ssa.TermBrIf || term.True != guard.next || term.False != d.continuation ||
-					test == nil || test.Kind != ssa.OpStateHas || test.Args[0] != guard.state {
+					test == nil || test.Kind != ssa.OpStateHas || len(test.Args) != 1 || test.Args[0] != guard.state {
 					return fail(r, "does not branch on its exact snapshot presence")
 				}
 				if f.unpromotedBindings {

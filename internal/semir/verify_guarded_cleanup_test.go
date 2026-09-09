@@ -77,6 +77,42 @@ func TestGuardedCleanupRejectsMalformedDispatch(t *testing.T) {
 	}
 }
 
+func TestGuardedCleanupRejectsMalformedPresenceArity(t *testing.T) {
+	for _, promoted := range []bool{false, true} {
+		for _, arity := range []int{0, 2} {
+			name := map[bool]string{false: "places", true: "promoted"}[promoted] + map[int]string{0: "/missing", 2: "/extra"}[arity]
+			t.Run(name, func(t *testing.T) {
+				f := expandedGuardedFixture(t, promoted)
+				guard := f.cleanups[0].guarded.dispatches[0].guards[0]
+				for _, op := range guard.block.Ops {
+					if op.Result == guard.block.Term.Cond {
+						op.Args = make([]ssa.Value, arity)
+						for i := range op.Args {
+							op.Args[i] = guard.state
+						}
+					}
+				}
+				dom, err := ssa.VerifyWithDomTree(f.graph)
+				if err != nil {
+					t.Fatalf("mutation invalidated ordinary SSA: %v", err)
+				}
+				// The public verifier must reject malformed state operands before
+				// cleanup checking, which must also be safe when checked directly.
+				if err := Verify(f); err == nil {
+					t.Fatal("public verifier accepted malformed presence arity")
+				}
+				flow, err := verifyCleanupBoundaries(f, dom)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := verifyGuardedCleanups(f, flow, dom); err == nil || !strings.Contains(err.Error(), "exact snapshot presence") {
+					t.Fatalf("got %v, want exact snapshot presence diagnostic", err)
+				}
+			})
+		}
+	}
+}
+
 func TestGuardedCleanupRequiresInitializationHistory(t *testing.T) {
 	for _, promoted := range []bool{false, true} {
 		for _, activation := range []bool{false, true} {
