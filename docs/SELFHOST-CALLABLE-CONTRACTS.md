@@ -43,7 +43,10 @@ now pass, together with the prior 23 cases, callable structural contracts and
 the four previously failing async module-loading scenarios (20.295 s, no skips).
 `make lint-all` and full source lint pass. The broader production checker,
 callable, native/Wasm function-return/payload and type resolver selection passes
-in 135.179 s with no skips. Full current-head CI remains mandatory before merge.
+in 135.179 s, with one legacy native-only skip in the x86 payload test. That
+test now uses the configured runner too; its separate x86/Wasm rerun passes all
+ten payload cases in 12.921 s with no skips. Lint passes again after that harness
+change. Full current-head CI remains mandatory before merge.
 
 Using the identical compiler and linker described below, compared with the
 published pre-correction #8964 checker, this repair reduces `.text` by 2,188
