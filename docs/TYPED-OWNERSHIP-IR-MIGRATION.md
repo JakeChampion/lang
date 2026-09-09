@@ -6,12 +6,15 @@ SSA cutover and typed-IR work. Initial integration base: `02ea66e91`.
 
 ## Current implementation checkpoint
 
-Checked enum constructors now retain their complete resolved result arguments,
-variant identities and substituted payloads in one frontend contract, including
-payloadless/phantom cases. Existing legacy lowering consumes that contract in
-place of the payload-only map. This prepares typed sum operations; it does not
-yet add executable semantic-IR enum support or retire production AST ownership.
-See [checked enum contracts](TYPED-ENUM-CONSTRUCTION-CONTRACTS-2026-09-09.md).
+Enum construction and flat guarded payload matches now execute in the typed
+ARM64 pilot. Transactional nominal interfaces, finite generic-instantiation
+proofs, variant-distinct projections and independently verified active-variant
+guards feed counted ownership and recursive active-payload drops. Nullary values
+use immortal sentinels. Native raw/optimized and actual CLI coverage includes
+generic enum/record cycles, escaped children, loops and deferred cleanup. This
+uses the [checked enum contracts](TYPED-ENUM-CONSTRUCTION-CONTRACTS-2026-09-09.md)
+without adding AST ownership heuristics. It does not retire production native or
+self-host AST ownership. See [typed enum values](TYPED-ENUM-VALUES-2026-09-09.md).
 
 Recursive nominal record types now import as complete finite declaration graphs
 and execute under the existing independently verified counted-result ownership

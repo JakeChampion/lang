@@ -9,7 +9,7 @@ import (
 
 func (b *builder) recordValue(n *ast.StructLit) (ssa.Value, error) {
 	typ := ast.StructType{Name: n.TypeName, Args: n.TypeArgs}
-	if err := b.fn.program.importRecordTypes(typ, b.info); err != nil {
+	if err := b.fn.program.importNominalTypes(typ, b.info); err != nil {
 		return ssa.Value{}, b.errorAt(n.P, err.Error())
 	}
 	if err := b.fn.resolvedType(typ, false); err != nil {

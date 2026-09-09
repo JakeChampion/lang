@@ -48,6 +48,9 @@ func (b *builder) effectResult(expr ast.Expr) (exprResult, error) {
 }
 
 func (b *builder) call(n *ast.Call, allowVoid bool) (ssa.Value, error) {
+	if construction, ok := b.info.EnumConstructions[n]; ok {
+		return b.enumValue(n, construction)
+	}
 	if intrinsic, ok := b.info.IntrinsicCalls[n]; ok {
 		if intrinsic.Kind != checker.IntrinsicArrayAppend || intrinsic.Signature == nil {
 			return ssa.Value{}, b.errorAt(n.P, "unsupported or unresolved intrinsic contract")
@@ -65,7 +68,7 @@ func (b *builder) call(n *ast.Call, allowVoid bool) (ssa.Value, error) {
 				return ssa.Value{}, b.errorAt(n.P, "intrinsic argument type differs from checked contract")
 			}
 		}
-		return b.fn.addOp(b.current, ssa.OpArrayAppend, sig.Result, n.P, args...), nil
+		return b.fn.addOp(b.current, ssa.OpArrayAppend, b.fn.program.canonicalType(sig.Result), n.P, args...), nil
 	}
 	ident, direct := n.Callee.(*ast.Ident)
 	if !direct || n.IsVariantCall || n.DynTrait != "" || len(n.TypeArgs) != 0 || len(n.ArgNames) != 0 {

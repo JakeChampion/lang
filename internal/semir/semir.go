@@ -73,6 +73,7 @@ func newFunc(name string, result ast.Type) *Func {
 }
 
 func (f *Func) addParam(typ ast.Type, mode ParamMode, pos ast.Position) ssa.Value {
+	typ = f.program.canonicalType(typ)
 	v := f.graph.AddParam()
 	f.values[v.ID] = valueInfo{typ: sourceValueType(typ), pos: pos}
 	f.modes = append(f.modes, mode)
@@ -80,10 +81,14 @@ func (f *Func) addParam(typ ast.Type, mode ParamMode, pos ast.Position) ssa.Valu
 }
 
 func (f *Func) addBinding(name string, typ ast.Type, pos ast.Position) BindingID {
+	typ = f.program.canonicalType(typ)
 	f.bindings = append(f.bindings, binding{name: name, typ: typ, pos: pos})
 	return BindingID(len(f.bindings))
 }
 
+// Internal operations propagate private semantic types. Mutable frontend type
+// arguments must be detached at their signature/expression import boundary,
+// not recopied at every internal operation and transformation.
 func (f *Func) addOp(b *ssa.Block, kind ssa.OpKind, typ ast.Type, pos ast.Position, args ...ssa.Value) ssa.Value {
 	v := f.graph.AddOp(b, kind, args...)
 	f.values[v.ID] = valueInfo{typ: sourceValueType(typ), pos: pos}
@@ -120,7 +125,7 @@ func projection(op *ssa.Op) (projectionInfo, bool) {
 		if len(op.Args) == 2 {
 			return projectionInfo{Container: op.Args[0], Index: op.Args[1]}, true
 		}
-	case ssa.OpTupleGet, ssa.OpRecordGet:
+	case ssa.OpTupleGet, ssa.OpRecordGet, ssa.OpSumGet:
 		if len(op.Args) == 1 {
 			return projectionInfo{Container: op.Args[0], Field: op.Imm}, true
 		}

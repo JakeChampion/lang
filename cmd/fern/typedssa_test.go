@@ -203,6 +203,23 @@ function main(): i32 {
 function churn(): void { var node = Node[i32[][]] { data: [[7i32]], children: [] }; }`)
 }
 
+func TestTypedSSAEnumValues(t *testing.T) {
+	bin := buildFernForStdoutTest(t)
+	checkTypedSSAExecutable(t, bin, `struct Box[T] { value: T }
+enum Chain[T] { End, Next(T, Chain[T]) }
+function main(): i32 {
+  var tail: Chain[Box[i32[]]] = End;
+  var chain: Chain[Box[i32[]]] = Next(Box[i32[]] { value: [41i32] }, tail);
+  var saved = read(chain); chain = End;
+  var i = 0i32; while (i < 32i32) { churn(); i = i + 1i32; }
+  return saved[0];
+}
+function read(chain: Chain[Box[i32[]]]): i32[] {
+  return match (chain) { End => [0i32], Next(box, rest) => box.value };
+}
+function churn(): void { var value: Option[i32[][]] = Some([[7i32]]); }`)
+}
+
 func checkTypedSSAExecutable(t *testing.T, bin, source string) {
 	t.Helper()
 	entry := writeFern(t, source)

@@ -1,0 +1,154 @@
+Typed enum values: sequential benchmark samples, 2026-09-09
+Host: Darwin ARM64, Apple M3 Pro, Go 1.26.0
+Five 100 ms samples per case; heavy validation stopped before these runs.
+Parent source: 3888228ed7e484232d0976c3d0f4bbb7231cf307, identical to merge 9c21098f1788aa786c510fda935f1840a4e750b7.
+Initial enum implementation is unpublished, not the merged parent.
+All benches measure checked-source BuildProgram and LowerARM64SSA only.
+
+Initial unpublished enum implementation
+goos: darwin
+goarch: arm64
+pkg: github.com/jakechampion/lang/internal/semir
+cpu: Apple M3 Pro
+BenchmarkEnumValuesBuild/fields-1-12         	    1362	     74341 ns/op	   94243 B/op	    1205 allocs/op
+BenchmarkEnumValuesBuild/fields-1-12         	    1632	     72150 ns/op	   94243 B/op	    1205 allocs/op
+BenchmarkEnumValuesBuild/fields-1-12         	    1687	     72820 ns/op	   94242 B/op	    1205 allocs/op
+BenchmarkEnumValuesBuild/fields-1-12         	    1578	     77236 ns/op	   94243 B/op	    1205 allocs/op
+BenchmarkEnumValuesBuild/fields-1-12         	    1647	     72939 ns/op	   94242 B/op	    1205 allocs/op
+BenchmarkEnumValuesBuild/fields-8-12         	     651	    183629 ns/op	  268938 B/op	    2190 allocs/op
+BenchmarkEnumValuesBuild/fields-8-12         	     630	    194408 ns/op	  268944 B/op	    2190 allocs/op
+BenchmarkEnumValuesBuild/fields-8-12         	     646	    185914 ns/op	  268943 B/op	    2190 allocs/op
+BenchmarkEnumValuesBuild/fields-8-12         	     658	    183166 ns/op	  268935 B/op	    2190 allocs/op
+BenchmarkEnumValuesBuild/fields-8-12         	     590	    184641 ns/op	  268937 B/op	    2190 allocs/op
+BenchmarkEnumValuesBuild/fields-64-12        	     100	   1019067 ns/op	 1345944 B/op	    8041 allocs/op
+BenchmarkEnumValuesBuild/fields-64-12        	     100	   1009665 ns/op	 1345960 B/op	    8042 allocs/op
+BenchmarkEnumValuesBuild/fields-64-12        	     122	    961411 ns/op	 1345977 B/op	    8042 allocs/op
+BenchmarkEnumValuesBuild/fields-64-12        	     100	   1350971 ns/op	 1346026 B/op	    8042 allocs/op
+BenchmarkEnumValuesBuild/fields-64-12        	     100	   1136835 ns/op	 1345970 B/op	    8042 allocs/op
+PASS
+
+Final enum implementation
+goos: darwin
+goarch: arm64
+pkg: github.com/jakechampion/lang/internal/semir
+cpu: Apple M3 Pro
+BenchmarkEnumValuesBuild/fields-1-12         	    1540	     75960 ns/op	   94223 B/op	    1200 allocs/op
+BenchmarkEnumValuesBuild/fields-1-12         	    1782	     69330 ns/op	   94219 B/op	    1200 allocs/op
+BenchmarkEnumValuesBuild/fields-1-12         	    1754	     69337 ns/op	   94217 B/op	    1200 allocs/op
+BenchmarkEnumValuesBuild/fields-1-12         	    1780	     69190 ns/op	   94219 B/op	    1200 allocs/op
+BenchmarkEnumValuesBuild/fields-1-12         	    1808	     70576 ns/op	   94219 B/op	    1200 allocs/op
+BenchmarkEnumValuesBuild/fields-8-12         	     610	    279601 ns/op	  251724 B/op	    2125 allocs/op
+BenchmarkEnumValuesBuild/fields-8-12         	     609	    191324 ns/op	  251722 B/op	    2125 allocs/op
+BenchmarkEnumValuesBuild/fields-8-12         	     670	    174689 ns/op	  251712 B/op	    2125 allocs/op
+BenchmarkEnumValuesBuild/fields-8-12         	     705	    169881 ns/op	  251713 B/op	    2125 allocs/op
+BenchmarkEnumValuesBuild/fields-8-12         	     703	    169384 ns/op	  251708 B/op	    2125 allocs/op
+BenchmarkEnumValuesBuild/fields-64-12        	     127	    967407 ns/op	 1238129 B/op	    7889 allocs/op
+BenchmarkEnumValuesBuild/fields-64-12        	     129	    890025 ns/op	 1238107 B/op	    7888 allocs/op
+BenchmarkEnumValuesBuild/fields-64-12        	     134	    883533 ns/op	 1238110 B/op	    7889 allocs/op
+BenchmarkEnumValuesBuild/fields-64-12        	     134	    887010 ns/op	 1238094 B/op	    7888 allocs/op
+BenchmarkEnumValuesBuild/fields-64-12        	     135	    898612 ns/op	 1238101 B/op	    7888 allocs/op
+PASS
+
+Merged-parent ordinary workloads
+goos: darwin
+goarch: arm64
+pkg: github.com/jakechampion/lang/internal/semir
+cpu: Apple M3 Pro
+BenchmarkTypedSourceLoops/loops-1-12         	    1264	     97776 ns/op	  123892 B/op	    1479 allocs/op
+BenchmarkTypedSourceLoops/loops-1-12         	    1263	     92501 ns/op	  123892 B/op	    1479 allocs/op
+BenchmarkTypedSourceLoops/loops-1-12         	    1342	     90655 ns/op	  123896 B/op	    1479 allocs/op
+BenchmarkTypedSourceLoops/loops-1-12         	    1306	     90629 ns/op	  123893 B/op	    1479 allocs/op
+BenchmarkTypedSourceLoops/loops-1-12         	    1333	    126967 ns/op	  123896 B/op	    1479 allocs/op
+BenchmarkTypedSourceLoops/loops-8-12         	     205	    543033 ns/op	  675811 B/op	    5603 allocs/op
+BenchmarkTypedSourceLoops/loops-8-12         	     219	    594052 ns/op	  675852 B/op	    5604 allocs/op
+BenchmarkTypedSourceLoops/loops-8-12         	     190	    546276 ns/op	  675810 B/op	    5603 allocs/op
+BenchmarkTypedSourceLoops/loops-8-12         	     226	    521931 ns/op	  675815 B/op	    5603 allocs/op
+BenchmarkTypedSourceLoops/loops-8-12         	     231	    513082 ns/op	  675811 B/op	    5604 allocs/op
+BenchmarkTypedSourceLoops/loops-64-12        	      28	   4069112 ns/op	 5039201 B/op	   33746 allocs/op
+BenchmarkTypedSourceLoops/loops-64-12        	      30	   4041138 ns/op	 5039068 B/op	   33745 allocs/op
+BenchmarkTypedSourceLoops/loops-64-12        	      28	   4217970 ns/op	 5039545 B/op	   33747 allocs/op
+BenchmarkTypedSourceLoops/loops-64-12        	      27	   4377992 ns/op	 5039399 B/op	   33747 allocs/op
+BenchmarkTypedSourceLoops/loops-64-12        	      26	   4244457 ns/op	 5039142 B/op	   33746 allocs/op
+BenchmarkRecordValuesBuild/fields-1-12       	    1993	     57581 ns/op	   83308 B/op	     950 allocs/op
+BenchmarkRecordValuesBuild/fields-1-12       	    2160	     57053 ns/op	   83308 B/op	     950 allocs/op
+BenchmarkRecordValuesBuild/fields-1-12       	    2052	     57792 ns/op	   83307 B/op	     950 allocs/op
+BenchmarkRecordValuesBuild/fields-1-12       	    1944	     74031 ns/op	   83309 B/op	     950 allocs/op
+BenchmarkRecordValuesBuild/fields-1-12       	    1927	     62416 ns/op	   83310 B/op	     950 allocs/op
+BenchmarkRecordValuesBuild/fields-8-12       	     658	    173610 ns/op	  266000 B/op	    1924 allocs/op
+BenchmarkRecordValuesBuild/fields-8-12       	     636	    186312 ns/op	  266017 B/op	    1924 allocs/op
+BenchmarkRecordValuesBuild/fields-8-12       	     669	    176008 ns/op	  266004 B/op	    1924 allocs/op
+BenchmarkRecordValuesBuild/fields-8-12       	     699	    170504 ns/op	  265998 B/op	    1924 allocs/op
+BenchmarkRecordValuesBuild/fields-8-12       	     712	    168620 ns/op	  265999 B/op	    1924 allocs/op
+BenchmarkRecordValuesBuild/fields-64-12      	     128	    994898 ns/op	 1292626 B/op	    7871 allocs/op
+BenchmarkRecordValuesBuild/fields-64-12      	     124	    977824 ns/op	 1292597 B/op	    7871 allocs/op
+BenchmarkRecordValuesBuild/fields-64-12      	     100	   1022836 ns/op	 1292648 B/op	    7872 allocs/op
+BenchmarkRecordValuesBuild/fields-64-12      	     121	    956017 ns/op	 1292603 B/op	    7871 allocs/op
+BenchmarkRecordValuesBuild/fields-64-12      	     100	   1004442 ns/op	 1292670 B/op	    7872 allocs/op
+BenchmarkRecursiveRecordBuild/types-1-12     	    3636	     31098 ns/op	   52554 B/op	     673 allocs/op
+BenchmarkRecursiveRecordBuild/types-1-12     	    3988	     31157 ns/op	   52553 B/op	     673 allocs/op
+BenchmarkRecursiveRecordBuild/types-1-12     	    3722	     46347 ns/op	   52554 B/op	     673 allocs/op
+BenchmarkRecursiveRecordBuild/types-1-12     	    3471	     47644 ns/op	   52553 B/op	     673 allocs/op
+BenchmarkRecursiveRecordBuild/types-1-12     	    2979	     36408 ns/op	   52553 B/op	     673 allocs/op
+BenchmarkRecursiveRecordBuild/types-8-12     	    1059	    105775 ns/op	  155826 B/op	    1931 allocs/op
+BenchmarkRecursiveRecordBuild/types-8-12     	    1183	    111058 ns/op	  155827 B/op	    1931 allocs/op
+BenchmarkRecursiveRecordBuild/types-8-12     	    1076	    109900 ns/op	  155827 B/op	    1931 allocs/op
+BenchmarkRecursiveRecordBuild/types-8-12     	    1083	    104878 ns/op	  155826 B/op	    1931 allocs/op
+BenchmarkRecursiveRecordBuild/types-8-12     	    1182	    101772 ns/op	  155825 B/op	    1931 allocs/op
+BenchmarkRecursiveRecordBuild/types-64-12    	     171	    696346 ns/op	 1017204 B/op	   11756 allocs/op
+BenchmarkRecursiveRecordBuild/types-64-12    	     152	    756825 ns/op	 1017282 B/op	   11757 allocs/op
+BenchmarkRecursiveRecordBuild/types-64-12    	     169	    699391 ns/op	 1017225 B/op	   11756 allocs/op
+BenchmarkRecursiveRecordBuild/types-64-12    	     175	    679935 ns/op	 1017196 B/op	   11756 allocs/op
+BenchmarkRecursiveRecordBuild/types-64-12    	     174	    908576 ns/op	 1017250 B/op	   11757 allocs/op
+PASS
+
+Final ordinary workloads
+goos: darwin
+goarch: arm64
+pkg: github.com/jakechampion/lang/internal/semir
+cpu: Apple M3 Pro
+BenchmarkTypedSourceLoops/loops-1-12         	    1155	    121190 ns/op	  123915 B/op	    1479 allocs/op
+BenchmarkTypedSourceLoops/loops-1-12         	    1153	    106979 ns/op	  123908 B/op	    1479 allocs/op
+BenchmarkTypedSourceLoops/loops-1-12         	    1203	     98616 ns/op	  123908 B/op	    1479 allocs/op
+BenchmarkTypedSourceLoops/loops-1-12         	    1272	     96840 ns/op	  123907 B/op	    1479 allocs/op
+BenchmarkTypedSourceLoops/loops-1-12         	    1197	     92038 ns/op	  123908 B/op	    1479 allocs/op
+BenchmarkTypedSourceLoops/loops-8-12         	     234	    505473 ns/op	  675829 B/op	    5604 allocs/op
+BenchmarkTypedSourceLoops/loops-8-12         	     237	    530475 ns/op	  675831 B/op	    5604 allocs/op
+BenchmarkTypedSourceLoops/loops-8-12         	     211	    538316 ns/op	  675853 B/op	    5604 allocs/op
+BenchmarkTypedSourceLoops/loops-8-12         	     230	    506271 ns/op	  675834 B/op	    5603 allocs/op
+BenchmarkTypedSourceLoops/loops-8-12         	     236	    505872 ns/op	  675826 B/op	    5604 allocs/op
+BenchmarkTypedSourceLoops/loops-64-12        	      30	   4167939 ns/op	 5039438 B/op	   33747 allocs/op
+BenchmarkTypedSourceLoops/loops-64-12        	      27	   4132407 ns/op	 5039383 B/op	   33747 allocs/op
+BenchmarkTypedSourceLoops/loops-64-12        	      30	   4007307 ns/op	 5039243 B/op	   33746 allocs/op
+BenchmarkTypedSourceLoops/loops-64-12        	      30	   4176007 ns/op	 5039057 B/op	   33746 allocs/op
+BenchmarkTypedSourceLoops/loops-64-12        	      25	   4261065 ns/op	 5039255 B/op	   33746 allocs/op
+BenchmarkRecordValuesBuild/fields-1-12       	    1742	     82682 ns/op	   83324 B/op	     950 allocs/op
+BenchmarkRecordValuesBuild/fields-1-12       	    1887	     68297 ns/op	   83324 B/op	     950 allocs/op
+BenchmarkRecordValuesBuild/fields-1-12       	    1938	     58477 ns/op	   83323 B/op	     950 allocs/op
+BenchmarkRecordValuesBuild/fields-1-12       	    2125	     56678 ns/op	   83323 B/op	     950 allocs/op
+BenchmarkRecordValuesBuild/fields-1-12       	    2187	     55490 ns/op	   83323 B/op	     950 allocs/op
+BenchmarkRecordValuesBuild/fields-8-12       	     706	    167128 ns/op	  266009 B/op	    1924 allocs/op
+BenchmarkRecordValuesBuild/fields-8-12       	     722	    182418 ns/op	  266017 B/op	    1924 allocs/op
+BenchmarkRecordValuesBuild/fields-8-12       	     681	    175190 ns/op	  266017 B/op	    1924 allocs/op
+BenchmarkRecordValuesBuild/fields-8-12       	     655	    183134 ns/op	  266017 B/op	    1924 allocs/op
+BenchmarkRecordValuesBuild/fields-8-12       	     652	    182295 ns/op	  266019 B/op	    1924 allocs/op
+BenchmarkRecordValuesBuild/fields-64-12      	     127	    919844 ns/op	 1292624 B/op	    7871 allocs/op
+BenchmarkRecordValuesBuild/fields-64-12      	     130	    926376 ns/op	 1292638 B/op	    7871 allocs/op
+BenchmarkRecordValuesBuild/fields-64-12      	     122	    968745 ns/op	 1292649 B/op	    7872 allocs/op
+BenchmarkRecordValuesBuild/fields-64-12      	     100	   1343119 ns/op	 1292690 B/op	    7872 allocs/op
+BenchmarkRecordValuesBuild/fields-64-12      	     100	   1043284 ns/op	 1292647 B/op	    7871 allocs/op
+BenchmarkRecursiveRecordBuild/types-1-12     	    3679	     31592 ns/op	   52569 B/op	     673 allocs/op
+BenchmarkRecursiveRecordBuild/types-1-12     	    4072	     29993 ns/op	   52569 B/op	     673 allocs/op
+BenchmarkRecursiveRecordBuild/types-1-12     	    4118	     29259 ns/op	   52569 B/op	     673 allocs/op
+BenchmarkRecursiveRecordBuild/types-1-12     	    4202	     28833 ns/op	   52569 B/op	     673 allocs/op
+BenchmarkRecursiveRecordBuild/types-1-12     	    4363	     30693 ns/op	   52570 B/op	     673 allocs/op
+BenchmarkRecursiveRecordBuild/types-8-12     	    1084	    104225 ns/op	  155847 B/op	    1931 allocs/op
+BenchmarkRecursiveRecordBuild/types-8-12     	    1208	     98776 ns/op	  155843 B/op	    1931 allocs/op
+BenchmarkRecursiveRecordBuild/types-8-12     	    1262	     96590 ns/op	  155844 B/op	    1931 allocs/op
+BenchmarkRecursiveRecordBuild/types-8-12     	    1279	     96281 ns/op	  155845 B/op	    1931 allocs/op
+BenchmarkRecursiveRecordBuild/types-8-12     	    1269	     96029 ns/op	  155841 B/op	    1931 allocs/op
+BenchmarkRecursiveRecordBuild/types-64-12    	     180	    662146 ns/op	 1017227 B/op	   11756 allocs/op
+BenchmarkRecursiveRecordBuild/types-64-12    	     178	    710088 ns/op	 1017228 B/op	   11756 allocs/op
+BenchmarkRecursiveRecordBuild/types-64-12    	     172	    920648 ns/op	 1017235 B/op	   11756 allocs/op
+BenchmarkRecursiveRecordBuild/types-64-12    	     150	    772706 ns/op	 1017227 B/op	   11756 allocs/op
+BenchmarkRecursiveRecordBuild/types-64-12    	     165	    686720 ns/op	 1017210 B/op	   11756 allocs/op
+PASS

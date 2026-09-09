@@ -162,7 +162,7 @@ func TestRecordImportRejectsUnresolvedInterfaces(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			p := &Program{}
-			if err := p.importRecordTypes(tc.typ, info); err == nil || !strings.Contains(err.Error(), tc.want) {
+			if err := p.importNominalTypes(tc.typ, info); err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("got %v, want %s", err, tc.want)
 			}
 		})

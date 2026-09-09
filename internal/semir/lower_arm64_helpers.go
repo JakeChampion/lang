@@ -29,7 +29,10 @@ func armElementBytes(typ ast.Type) int64 {
 }
 
 func armAggregateLayout(fields aggregateShape) ([]int64, int64) {
-	var size int64
+	return armAggregateLayoutAt(fields, 0)
+}
+
+func armAggregateLayoutAt(fields aggregateShape, size int64) ([]int64, int64) {
 	offsets := make([]int64, fields.len())
 	for i := range fields.len() {
 		elem := fields.at(i)
@@ -142,6 +145,9 @@ func (l *armLowerer) dropHelper(typ ast.Type) string {
 			}
 		}
 		b.call("__fern_box_free", 64, true, value, b.constant(size))
+	case ast.EnumType:
+		b.dropEnum(value, l.program.enum(t))
+		return name
 	}
 	b.f.SetRet(b.b, value)
 	return name

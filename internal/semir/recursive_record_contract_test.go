@@ -14,20 +14,20 @@ struct A { children: B[], payload: (i32[], i32[]) }
 struct B { children: A[] }
 function pilot(): i32 { return 0i32; }`)
 	p := &Program{}
-	if err := p.importRecordTypes(ast.StructType{Name: "Good"}, info); err != nil {
+	if err := p.importNominalTypes(ast.StructType{Name: "Good"}, info); err != nil {
 		t.Fatal(err)
 	}
 	good := p.records["Good"]
 	original := info.Structs["A"].Fields[1].Type
 	info.Structs["A"].Fields[1].Type = ast.StructType{Name: "Missing"}
-	if err := p.importRecordTypes(ast.StructType{Name: "A"}, info); err == nil || !strings.Contains(err.Error(), "missing concrete") {
+	if err := p.importNominalTypes(ast.StructType{Name: "A"}, info); err == nil || !strings.Contains(err.Error(), "missing concrete") {
 		t.Fatalf("got %v, want missing nested interface", err)
 	}
 	if len(p.records) != 1 || p.records["Good"] != good {
 		t.Fatal("failed recursive import changed the existing catalogue")
 	}
 	info.Structs["A"].Fields[1].Type = original
-	if err := p.importRecordTypes(ast.StructType{Name: "A"}, info); err != nil {
+	if err := p.importNominalTypes(ast.StructType{Name: "A"}, info); err != nil {
 		t.Fatal(err)
 	}
 	if len(p.records) != 3 || p.records["Good"] != good {
@@ -101,7 +101,7 @@ function pilot(items: i32[]): i32[] { return items; }`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := p.importRecordTypes(ast.StructType{Name: "Node"}, info); err != nil {
+	if err := p.importNominalTypes(ast.StructType{Name: "Node"}, info); err != nil {
 		t.Fatal(err)
 	}
 	flow, err := solveReturnFlow(p)

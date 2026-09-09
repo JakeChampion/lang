@@ -37,6 +37,8 @@ func (b *builder) matchFlow(n *ast.MatchExpr, wantValue bool) (ssa.Value, error)
 		var bindings []matchBinding
 		if arm.TupleElems != nil {
 			bindings, err = b.tuplePattern(arm.TupleElems, tag.value, next, arm.P)
+		} else if !arm.IsWildcard && b.fn.program.enum(typ) != nil {
+			bindings = b.enumPattern(arm, tag.value, next)
 		} else if !arm.IsWildcard {
 			err = b.matchLiteral(arm.Literal, tag.value, next, arm.P)
 		}
@@ -117,6 +119,9 @@ func (b *builder) matchLiteral(literal ast.Expr, tag ssa.Value, next *ssa.Block,
 }
 
 func (b *builder) matchArms(n *ast.MatchExpr, typ ast.Type) ([]bool, error) {
+	if e := b.fn.program.enum(typ); e != nil {
+		return b.enumMatchArms(n, e)
+	}
 	if tuple, ok := typ.(ast.TupleType); ok {
 		return b.tupleMatchArms(n, tuple)
 	}

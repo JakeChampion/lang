@@ -56,6 +56,7 @@ type armLowerer struct {
 	out     *ARM64Program
 	helpers map[string]string
 	names   map[*Func]string
+	enums   map[*enumVariant]armEnumLayout
 }
 
 type armBuilder struct {
@@ -486,6 +487,35 @@ func (b *armBuilder) semanticOp(src *Func, op *ssa.Op, args []ssa.Value) (ssa.Va
 		fields := b.l.program.aggregateFields(src.values[op.Args[0].ID].typ.source)
 		offsets, _ := armAggregateLayout(fields)
 		return b.load(args[0], offsets[op.Imm], typ), nil
+	case ssa.OpSumMake:
+		e := b.l.program.enum(typ)
+		variant := e.variants[op.Imm]
+		if variant.count == 0 {
+			value := b.op(ssa.OpEnumSentinel, 64, true)
+			b.b.Ops[len(b.b.Ops)-1].Imm = op.Imm
+			return value, nil
+		}
+		offsets, size := b.l.enumLayout(e, int(op.Imm))
+		if size > maxArmAllocation-8 {
+			return ssa.Value{}, fmt.Errorf("semir: enum allocation too large")
+		}
+		base := b.op(ssa.OpAlloc, 64, true, b.constant(size+8))
+		b.store(base, 0, b.constant(1), armI32)
+		b.store(base, 4, b.constant(size), armI32)
+		data := b.offset(base, 8)
+		b.store(data, 0, b.constant(op.Imm), armI32)
+		for i, value := range args {
+			b.store(data, offsets[i], value, e.fields[variant.first+i].typ)
+		}
+		return data, nil
+	case ssa.OpSumIs:
+		tag := b.load(args[0], 0, armI32)
+		return b.op(ssa.OpEq, 32, false, tag, b.constant(op.Imm)), nil
+	case ssa.OpSumGet:
+		e := b.l.program.enum(src.values[op.Args[0].ID].typ.source)
+		field := e.fields[op.Imm]
+		offsets, _ := b.l.enumLayout(e, field.variant)
+		return b.load(args[0], offsets[field.index], typ), nil
 	default:
 		return ssa.Value{}, fmt.Errorf("semir ARM64: unsupported operation %s", op.Kind)
 	}
