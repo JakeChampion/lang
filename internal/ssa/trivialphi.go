@@ -114,7 +114,59 @@ func TrivialPhisWithAliases(f *Func, aliases ValueAliases) {
 	if len(sub) == 0 {
 		return
 	}
+	canonicalizePhiAliases(f, sub)
 	applySubstitutions(f, sub)
+}
+
+// Resolve each phi-alias chain once instead of building a visited map for every
+// operand that uses it. A cycle member resolves to itself, exactly as the old
+// resolver did when starting at that member; a prefix resolves to its first
+// cycle entry. Thus even degenerate phi cycles preserve existing semantics.
+func canonicalizePhiAliases(f *Func, sub ValueAliases) {
+	hasChain := false
+	for _, value := range sub {
+		if _, ok := sub[value.ID]; ok {
+			hasChain = true
+			break
+		}
+	}
+	if !hasChain {
+		return
+	}
+	// Zero: unseen. Positive: one-based position in this walk. Negative: final.
+	state := make(map[int32]int, len(sub))
+	var path []Value
+	for id := range sub {
+		if state[id] < 0 {
+			continue
+		}
+		path = path[:0]
+		value := Value{ID: id, Func: f}
+		for value.IsValid() {
+			next, exists := sub[value.ID]
+			if !exists {
+				break
+			}
+			mark := state[value.ID]
+			if mark < 0 {
+				value = next
+				break
+			}
+			if mark > 0 {
+				for _, member := range path[mark-1:] {
+					sub[member.ID], state[member.ID] = member, -1
+				}
+				path = path[:mark-1]
+				break
+			}
+			path = append(path, value)
+			state[value.ID] = len(path)
+			value = next
+		}
+		for _, member := range path {
+			sub[member.ID], state[member.ID] = value, -1
+		}
+	}
 }
 
 // reorderPhisFirst moves `consts` — Ops in b that were phis a moment ago
