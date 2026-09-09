@@ -59,6 +59,12 @@ children are generated: a returned right field retains the right argument's
 provenance, not the left argument's or the container identity. Call substitution
 preserves those distinctions through record construction and projection.
 
+This return-flow analysis is currently exercised by analysis tests, not consumed
+by executable ownership planning. The executable call convention conservatively
+requires counted reference-bearing results, with independently checked callee
+obligations and local projection anchors. This change does not claim inferred
+borrow-return call conventions or runtime savings from the provenance summaries.
+
 Recursive nominal types require a further representation change. The current
 return-flow structures are finite trees. Adding recursive records by naively
 recursing, truncating at a chosen depth or replacing children with a positive
@@ -154,7 +160,9 @@ profile is useful for locating these sites, not assigning precise percentages.
 Comparable compiler builds used `-trimpath -buildvcs=false`. File size changed
 from 29,057,698 to 29,075,154 bytes (+17,456); Mach-O `__text` changed from
 10,165,236 to 10,177,348 bytes (+12,112). This adds the concrete record importer,
-builder, nominal verifier and their provenance/layout integrations. For example,
+builder, nominal verifier and executable ownership/layout integrations. The
+currently test-consumed return-flow analysis is not linked into this binary.
+For example,
 the importer and recursive copying closure occupy 192 and 1,792 instruction bytes,
 the record constructor builder 2,704 and the nominal record verifier 1,424.
 Some shared helpers replace existing tuple/type helpers rather than being wholly
