@@ -550,8 +550,8 @@ func (b *builder) trmcArmsTotal(sh *trmcShape, scrutEnum ast.EnumType) bool {
 // preferring the checker's substituted types for this exact call.
 func (b *builder) variantPayloadTypes(call *ast.Call, enumName string, varIdx int) []ast.Type {
 	if call != nil {
-		if pts, ok := b.info.VariantCallPayloads[call]; ok {
-			return pts
+		if construction, ok := b.info.EnumConstructions[call]; ok {
+			return construction.Payloads
 		}
 	}
 	if ed, ok := b.info.Enums[enumName]; ok && varIdx < len(ed.Variants) {

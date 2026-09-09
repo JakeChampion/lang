@@ -6,6 +6,13 @@ SSA cutover and typed-IR work. Initial integration base: `02ea66e91`.
 
 ## Current implementation checkpoint
 
+Checked enum constructors now retain their complete resolved result arguments,
+variant identities and substituted payloads in one frontend contract, including
+payloadless/phantom cases. Existing legacy lowering consumes that contract in
+place of the payload-only map. This prepares typed sum operations; it does not
+yet add executable semantic-IR enum support or retire production AST ownership.
+See [checked enum contracts](TYPED-ENUM-CONSTRUCTION-CONTRACTS-2026-09-09.md).
+
 Recursive nominal record types now import as complete finite declaration graphs
 and execute under the existing independently verified counted-result ownership
 contract. Generic recursive CLI inputs, recursive calls, shared updates and

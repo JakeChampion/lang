@@ -155,10 +155,12 @@ func eraseSurfaceTypes(prog *ast.Program, info *checker.Info) {
 	for v, t := range info.VarTypes {
 		info.VarTypes[v] = eraseStr(t)
 	}
-	for _, ts := range info.VariantCallPayloads {
-		for i := range ts {
-			ts[i] = eraseStr(ts[i])
+	for expr, construction := range info.EnumConstructions {
+		construction.Type = eraseStr(construction.Type).(ast.EnumType)
+		for i := range construction.Payloads {
+			construction.Payloads[i] = eraseStr(construction.Payloads[i])
 		}
+		info.EnumConstructions[expr] = construction
 	}
 }
 

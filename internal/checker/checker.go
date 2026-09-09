@@ -144,14 +144,11 @@ type Info struct {
 	// ranked by whether the calling module imported (or declared) it
 	// itself. Copied onto Info alongside ModuleImports.
 	DirectImports map[string]map[string]bool
-	// VariantCallPayloads is keyed by every variant-construction
-	// Call (`Some(42)`, `Ok(v)`, …) with the variant's payload
-	// types AFTER the checker has substituted any type-parameter
-	// references with the concrete instantiation. Codegen uses
-	// this so a payload declared as `T` inside `Option[T]`
-	// resolves to `float` at the construction of `Some(3.14)`,
-	// letting the IR pick `OpFStore` instead of `OpStore`.
-	VariantCallPayloads map[*ast.Call][]ast.Type
+	// EnumConstructions preserves the checked result type, variant identity
+	// and substituted payload types of actual constructor expressions. Bare
+	// and qualified payloadless variants are included; ordinary enum-valued
+	// references and function calls are not. Nil when no constructors occur.
+	EnumConstructions map[ast.Expr]EnumConstruction
 	// GenericFuncs maps a generic function name to its declaration.
 	// Populated at the start of Check; used by the call-site
 	// inference path to detect "this is a generic call" and to
@@ -865,28 +862,27 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	}
 	c := &checker{
 		info: &Info{
-			VarTypes:            map[*ast.Var]ast.Type{},
-			Locals:              map[*ast.FuncDecl][]*ast.Var{},
-			FuncSigs:            map[string]*ast.FuncType{},
-			Structs:             map[string]*ast.StructDecl{},
-			Enums:               map[string]*ast.EnumDecl{},
-			Resources:           map[string]*ast.ResourceDecl{},
-			Methods:             map[string]string{},
-			TraitMethods:        map[string]string{},
-			MethodOwners:        map[string][]string{},
-			MethodDeclSites:     map[string]ast.Position{},
-			MethodSources:       map[string]string{},
-			ModuleImports:       prog.ModuleImports,
-			DirectImports:       prog.DirectImports,
-			VariantCallPayloads: map[*ast.Call][]ast.Type{},
-			GenericFuncs:        map[string]*ast.FuncDecl{},
-			GenericStructs:      map[string]*ast.StructDecl{},
-			Generics:            map[string]ast.GenericDecl{},
-			Traits:              map[string]*ast.TraitDecl{},
-			Impls:               map[string]map[string]bool{},
-			ImplTraitArgs:       map[string]map[string][]ast.Type{},
-			ImplForPattern:      map[string]map[string]ast.Type{},
-			AssocBindings:       map[string]map[string]ast.Type{},
+			VarTypes:        map[*ast.Var]ast.Type{},
+			Locals:          map[*ast.FuncDecl][]*ast.Var{},
+			FuncSigs:        map[string]*ast.FuncType{},
+			Structs:         map[string]*ast.StructDecl{},
+			Enums:           map[string]*ast.EnumDecl{},
+			Resources:       map[string]*ast.ResourceDecl{},
+			Methods:         map[string]string{},
+			TraitMethods:    map[string]string{},
+			MethodOwners:    map[string][]string{},
+			MethodDeclSites: map[string]ast.Position{},
+			MethodSources:   map[string]string{},
+			ModuleImports:   prog.ModuleImports,
+			DirectImports:   prog.DirectImports,
+			GenericFuncs:    map[string]*ast.FuncDecl{},
+			GenericStructs:  map[string]*ast.StructDecl{},
+			Generics:        map[string]ast.GenericDecl{},
+			Traits:          map[string]*ast.TraitDecl{},
+			Impls:           map[string]map[string]bool{},
+			ImplTraitArgs:   map[string]map[string][]ast.Type{},
+			ImplForPattern:  map[string]map[string]ast.Type{},
+			AssocBindings:   map[string]map[string]ast.Type{},
 		},
 		variantOf:            map[string][]variantRef{},
 		shadowedGenericCalls: map[*ast.Call]bool{},
@@ -14375,6 +14371,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				return nil
 			}
 			n.EnumName = vr.enumName
+			c.recordEnumConstruction(n, vr, ast.EnumType{Name: vr.enumName}, nil, c.expectedType)
 			return ast.EnumType{Name: vr.enumName}
 		} else if multi {
 			c.errfCode(n.P, "E036", "variant %q is declared in multiple enums (%s) — qualify the reference, e.g. `%s.%s`",
@@ -14483,6 +14480,11 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			return nil
 		}
 		n.ElemType = elemT
+		// The inferred element join constrains constructors too, including
+		// payloadless variants whose type arguments are supplied by a sibling.
+		for _, el := range n.Elems {
+			c.settleNumeric(el, elemT)
+		}
 		return ast.ArrayType{Elem: elemT}
 	case *ast.Index:
 		at := c.checkExpr(n.Array, s)
@@ -14831,7 +14833,14 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				for i := range vr.payloads {
 					resolvedPayloads[i] = substituteType(vr.payloads[i], sub)
 				}
-				c.info.VariantCallPayloads[n] = resolvedPayloads
+				// Payload declarations constrain nested constructors even when
+				// the outer value has no annotated destination. Refine after
+				// resolution so a pre-check hint cannot invent a constructor.
+				for i, a := range n.Args {
+					if i < len(resolvedPayloads) {
+						c.settleNumeric(a, resolvedPayloads[i])
+					}
+				}
 				// Tag this Call as a variant constructor so later
 				// passes that need to gate on the variant-vs-fn
 				// distinction (postSettleType) can do so without
@@ -14854,10 +14863,13 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 						// so `assignable` flows the type into
 						// whatever the surrounding context
 						// expects.
+						c.recordEnumConstruction(n, vr, ast.EnumType{Name: vr.enumName}, resolvedPayloads, callExpected)
 						return ast.EnumType{Name: vr.enumName}
 					}
+					c.recordEnumConstruction(n, vr, ast.EnumType{Name: vr.enumName, Args: args}, resolvedPayloads, callExpected)
 					return ast.EnumType{Name: vr.enumName, Args: args}
 				}
+				c.recordEnumConstruction(n, vr, ast.EnumType{Name: vr.enumName}, resolvedPayloads, callExpected)
 				return ast.EnumType{Name: vr.enumName}
 			}
 		}
@@ -16419,6 +16431,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 							en, n.Field, len(vr.payloads), en, n.Field)
 						return nil
 					}
+					c.recordEnumConstruction(n, vr, ast.EnumType{Name: vr.enumName}, nil, c.expectedType)
 					return ast.EnumType{Name: vr.enumName}
 				}
 				c.errfCode(n.P, "E036", "enum %s has no variant %q", c.enumHintName(tid.Name), n.Field)
@@ -17062,7 +17075,7 @@ func (c *checker) settleNumeric(e ast.Expr, hint ast.Type) {
 		// substituted payload type. This is the second-pass
 		// counterpart to the variant-call's pre-settle (which
 		// only fires when payloads are non-generic). Also
-		// re-stamps `VariantCallPayloads` so the IR's
+		// refines `EnumConstructions` so the IR's
 		// emitEnumNew picks the resolved (no-longer-polymorphic)
 		// payload type for slot sizing + store-op selection.
 		// IfExpr / MatchExpr forms: recurse into each arm
@@ -17087,39 +17100,19 @@ func (c *checker) settleNumeric(e ast.Expr, hint ast.Type) {
 			}
 			return
 		}
+		construction, resolved := c.refineEnumConstruction(e, hn)
 		call, ok := e.(*ast.Call)
-		if !ok {
+		if !ok || !resolved {
 			return
 		}
-		id, ok := call.Callee.(*ast.Ident)
-		if !ok {
-			return
-		}
-		vr, isVariant, _ := c.resolveVariant(id.Name, id.EnumName)
-		if !isVariant {
-			return
-		}
-		ed := c.info.Enums[vr.enumName]
-		if ed == nil || len(ed.TypeParams) != len(hn.Args) {
-			return
-		}
-		sub := map[string]ast.Type{}
-		for i, tp := range ed.TypeParams {
-			sub[tp] = hn.Args[i]
-		}
-		resolvedPayloads := make([]ast.Type, len(vr.payloads))
-		for i := range vr.payloads {
-			resolvedPayloads[i] = substituteType(vr.payloads[i], sub)
-		}
+		// Only a resolved constructor carries its result context into its
+		// payloads. An enum-returning function with the same spelling does
+		// not. Pre-check hints are applied after actual payload resolution.
 		for i, a := range call.Args {
-			if i >= len(resolvedPayloads) {
-				break
-			}
-			if resolvedPayloads[i] != nil {
-				c.settleNumeric(a, resolvedPayloads[i])
+			if i < len(construction.Payloads) {
+				c.settleNumeric(a, construction.Payloads[i])
 			}
 		}
-		c.info.VariantCallPayloads[call] = resolvedPayloads
 	}
 }
 

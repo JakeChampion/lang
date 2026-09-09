@@ -2379,7 +2379,7 @@ func appendMapDropChain(ops []Op, st ast.StructType, info *checker.Info, reg map
 // and classified from the still-generic shape, so `W(T[])` got a
 // buffer-only __fern_arr_dec and leaked its elements' heap. Reproduces
 // exactly the payload types emitEnumNew sized the box from
-// (b.info.VariantCallPayloads) — the box layout for a composite payload
+// (b.info.EnumConstructions) - the box layout for a composite payload
 // is a single pointer regardless of T, so sharpening the type changes
 // no sizing, only how deep the (is_unique-gated) drop recursion sees.
 // Returns ed unchanged when not a type-arg-bearing instantiation; a
