@@ -28,6 +28,20 @@ moves back to `xs`. Tracked receiver scratch ownership is available to exit
 cleanup. The change uses existing IR/runtime operations, declared parameter
 modes and existing move facts; it adds no alias or last-use inference.
 
+Scalar arrays projected by foreach and match bindings use the same dynamic
+ownership flag as borrowed parameters. The flag is stored by local-slot
+identity, so scope retirement and shadowing cannot lose it. Each projection
+bind releases an owned replacement from the previous iteration, then records
+a borrow. Calls, stores, returns and exit sweeps distinguish that borrow from
+a subsequently owned replacement. The binding also keeps its declared element
+representation, including wide and floating-point array elements.
+
+A payload becomes an owned transfer only when the existing pending
+consuming-match drop records that exact root slot and variant field as moved.
+If the root is shared, the binding acquires another child reference. This
+preserves the fresh-box handback's balanced lifetime without treating an
+escaping payload of a borrowed parameter as an uncounted return.
+
 Admitted elements are `i32`, `u32`, `i64`, `u64`, `u8`, `char`, `boolean`, `f32`
 and `f64`. Pointer elements need a separate child-reference protocol and are
 not admitted by this registry.
@@ -45,9 +59,11 @@ The unique-input update loop requires no allocation during its first batch
 either. A wrapper checks underflows after each fixture's owning frame exits,
 so a double drop in that exit sweep cannot escape the assertion.
 
-The Go x86-64 oracle also runs the applicable new cases. Two additional
-semantic fixtures already return 1 with the unchanged Go compiler:
-`own-caller-operand-order` and `own-caller-higher-order`. Those remain
+The Go x86-64 oracle also runs the applicable new cases. Three additional
+semantic fixtures fail with the unchanged Go compiler:
+`own-caller-operand-order` and `own-caller-higher-order` return 1, and
+`own-caller-lifetime-option-projection` returns 4 (corrupted caller snapshot).
+Those remain
 interpreter-checked self-host regressions, rather than treating the Go result
 as authoritative. No Go compiler code changes are included here.
 
@@ -60,10 +76,15 @@ scripts/devbox go test ./internal/e2eselfhost \
 
 Neighboring coverage includes OwnBorrowedParamArg, FieldOwnMove,
 ConsumedAppendReclaim, ArrOwnedRetRelease, AppendParamElem,
-StrArrayWithReclaim and BorrowedWithInPlace. That combined suite passed in
-227.358 seconds. The final scalar gate, including `char` snapshots, passed
-in 64.224 seconds. `scripts/devbox make lint-all` passes. Full CI remains a
-merge gate.
+StrArrayWithReclaim, BorrowedWithInPlace, ArrReturnTransfer, NestedArrPayload,
+MatchPayloadWidth, OwnedPayload, MatchPayloadRC and SharedVariantPayload.
+That combined suite passed in 262.432 seconds. Its existing ARM64
+MatchPayloadWidth test requires a native x86 host and skips on this ARM64
+host; the new strict projection tests execute ARM64 directly.
+The final scalar and return-transfer gate, including wide projections and
+fresh payload handback, passes in 107.276 seconds on all three self-hosted
+targets. The final fifteen-driver build and smoke run passes in 78.421 seconds.
+`scripts/devbox make lint-all` passes. Full CI remains a merge gate.
 
 ## Same-source linked-size comparison
 
@@ -75,23 +96,23 @@ counts, not native x86-64 timing claims.
 
 | Driver | Control bytes | Candidate bytes |
 |---|---:|---:|
-| fern.fern | 11499292 | 11511756 |
-| asm_load_run.fern | 8263716 | 8276180 |
-| asm_modload_run.fern | 7620164 | 7636724 |
-| asm_ir_run.fern | 7393292 | 7405756 |
-| asm_run.fern | 6946108 | 6962668 |
-| wasm_ir_run.fern | 6999964 | 7012428 |
-| wasm_run.fern | 6979148 | 6991612 |
-| wasm_runio_run.fern | 6941356 | 6957916 |
-| asm_pathprobe_run.fern | 6214956 | 6227420 |
-| ssa_lift_scan_run.fern | 6028900 | 6041364 |
-| asm_ir_elig_run.fern | 5702060 | 5714524 |
-| irlower_run.fern | 6023692 | 6036156 |
+| fern.fern | 11499292 | 11532364 |
+| asm_load_run.fern | 8263716 | 8296788 |
+| asm_modload_run.fern | 7620164 | 7657332 |
+| asm_ir_run.fern | 7393292 | 7426364 |
+| asm_run.fern | 6946108 | 6983276 |
+| wasm_ir_run.fern | 6999964 | 7033036 |
+| wasm_run.fern | 6979148 | 7012220 |
+| wasm_runio_run.fern | 6941356 | 6974428 |
+| asm_pathprobe_run.fern | 6214956 | 6248028 |
+| ssa_lift_scan_run.fern | 6028900 | 6061972 |
+| asm_ir_elig_run.fern | 5702060 | 5735132 |
+| irlower_run.fern | 6023692 | 6056764 |
 | checker_modload_run.fern | 2145540 | 2145540 |
 | ssa_emit_run.fern | 1731692 | 1731692 |
 | ssa_run.fern | 1553596 | 1553596 |
 
-The full compiler grows by 12464 bytes. Only consumers of `irlower` grow;
+The full compiler grows by 33072 bytes. Only consumers of `irlower` grow;
 the three independent frontend/SSA slices are unchanged. The added behavior
 is the counted-buffer call/update/exit protocol above. Every driver remains
 within the existing size gate, with no baseline or tolerance changes.

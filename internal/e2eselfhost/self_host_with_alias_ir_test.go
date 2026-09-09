@@ -88,6 +88,41 @@ function main(): i32 { var xs: u32[] = [1u32, 2147483648u32]; var old = xs; xs =
 	{"own-caller-snapshot-char", `@noinline
 function update(own xs: char[]): char[] { xs = xs.with(0, 937 as char); return xs; }
 function main(): i32 { var xs: char[] = [97 as char, 128512 as char]; var old = xs; xs = update(xs); if ((old[0] as i32) != 97 || (old[1] as i32) != 128512 || (xs[0] as i32) != 937 || (xs[1] as i32) != 128512) { return 1; } return 0; }`},
+	{"own-caller-foreach-snapshot", `@noinline
+function update(own xs: i32[]): i32[] { xs = xs.with(0, 9); return xs; }
+function main(): i32 { var rows = [[1, 2], [3, 4]]; var sum = 0; for xs in rows { xs = update(xs); sum = sum + xs[0] + xs[1]; } if (sum != 24 || rows[0][0] != 1 || rows[0][1] != 2 || rows[1][0] != 3 || rows[1][1] != 4) { return 1; } return 0; }`},
+	{"own-caller-match-payload-snapshot", `enum E { Data(i32[]) }
+@noinline
+function update(own xs: i32[]): i32[] { xs = xs.with(0, 9); return xs; }
+function forward(e: E): i32[] { match (e) { Data(xs) => { xs = update(xs); return xs; } } return []; }
+function main(): i32 { var e = Data([1, 2]); var xs = forward(e); if (xs[0] != 9 || xs[1] != 2) { return 1; } match (e) { Data(old) => { if (old[0] != 1 || old[1] != 2) { return 2; } } } return 0; }`},
+	{"own-caller-lifetime-foreach-projection", `@noinline
+function update(own xs: i32[]): i32[] { xs = xs.with(0, 9); return xs; }
+function churn(rows: i32[][]): i32 { var i = 0; while (i < 32) { for xs in rows { if (xs[0] == 3) { continue; } xs = update(xs); xs = update(xs); if (xs[0] != 9 || xs[1] != 2) { return 1; } if (i == 31) { break; } } i = i + 1; } return 0; }
+function main(): i32 { var rows = [[1, 2], [3, 4]]; if (churn(rows) != 0) { return 1; } var before = __heap_bump_bytes(); if (churn(rows) != 0) { return 2; } if (__heap_bump_bytes() != before) { return 3; } if (rows[0][0] != 1 || rows[1][0] != 3) { return 4; } return 0; }`},
+	{"own-caller-lifetime-match-projection", `enum E { Data(i32[]) }
+@noinline
+function update(own xs: i32[]): i32[] { xs = xs.with(0, 9); return xs; }
+function forward(e: E, change: boolean): i32[] { match (e) { Data(xs) => { if (change) { xs = update(xs); xs = update(xs); } return xs; } } return []; }
+function churn(e: E): i32 { var i = 0; while (i < 32) { var xs = forward(e, i % 2 == 0); if (i % 2 == 0) { if (xs[0] != 9) { return 1; } } else { if (xs[0] != 1) { return 2; } } if (xs[1] != 2) { return 3; } i = i + 1; } return 0; }
+function main(): i32 { var e = Data([1, 2]); if (churn(e) != 0) { return 1; } var before = __heap_bump_bytes(); if (churn(e) != 0) { return 2; } if (__heap_bump_bytes() != before) { return 3; } match (e) { Data(old) => { if (old[0] != 1 || old[1] != 2) { return 4; } } } return 0; }`},
+	{"own-caller-lifetime-option-projection", `@noinline
+function update(own xs: i32[]): i32[] { xs = xs.with(0, 9); return xs; }
+function churn(e: Option[i32[]]): i32 { var i = 0; while (i < 32) { match (e) { Some(xs) => { xs = update(xs); if (xs[0] != 9 || xs[1] != 2) { return 1; } }, None => { return 2; } } i = i + 1; } return 0; }
+function main(): i32 { var e: Option[i32[]] = Some([1, 2]); if (churn(e) != 0) { return 1; } var before = __heap_bump_bytes(); if (churn(e) != 0) { return 2; } if (__heap_bump_bytes() != before) { return 3; } match (e) { Some(xs) => { if (xs[0] != 1 || xs[1] != 2) { return 4; } }, None => { return 5; } } return 0; }`},
+	{"own-caller-lifetime-fresh-payload-transfer", `enum E { Data(i32[]) }
+function make(n: i32): E { return Data([n, n + 1]); }
+function take(n: i32): i32[] { var e = make(n); match (e) { Data(xs) => { return xs; } } return []; }
+function churn(): i32 { var i = 0; while (i < 32) { var xs = take(i); if (xs[0] != i || xs[1] != i + 1) { return 1; } i = i + 1; } return 0; }
+function main(): i32 { if (churn() != 0) { return 1; } var before = __heap_bump_bytes(); if (churn() != 0) { return 2; } if (__heap_bump_bytes() != before) { return 3; } return 0; }`},
+	{"own-caller-wide-match-projection", `enum E { Data(f64[]) }
+@noinline
+function update(own xs: f64[]): f64[] { xs = xs.with(0, 9.5); return xs; }
+function forward(e: E): f64[] { match (e) { Data(xs) => { if (xs[0] != 1.5 || xs[1] != 2.5) { return []; } xs = update(xs); return xs; } } return []; }
+function main(): i32 { var e = Data([1.5, 2.5]); var xs = forward(e); if (xs.len() != 2 || xs[0] != 9.5 || xs[1] != 2.5) { return 1; } match (e) { Data(old) => { if (old[0] != 1.5 || old[1] != 2.5) { return 2; } } } return 0; }`},
+	{"own-caller-wide-foreach-projection", `@noinline
+function update(own xs: u64[]): u64[] { xs = xs.with(0, 18446744073709551615u64); return xs; }
+function main(): i32 { var rows: u64[][] = [[1u64, 9223372036854775808u64]]; for xs in rows { xs = update(xs); if (xs[0] != 18446744073709551615u64 || xs[1] != 9223372036854775808u64) { return 1; } } if (rows[0][0] != 1u64 || rows[0][1] != 9223372036854775808u64) { return 2; } return 0; }`},
 	{"own-caller-operand-order", `@noinline
 function tap(c: Cell[i32], digit: i32, result: i32): i32 { c.set(c.get() * 10 + digit); return result; }
 @noinline
@@ -173,7 +208,7 @@ func TestSelfHostOwnArrayLifetimeNativeOracle(t *testing.T) {
 		}
 		// These semantic cases already fail in the unchanged Go backend.
 		// They remain interpreter-checked on all three self-host targets.
-		if tc.name == "own-caller-operand-order" || tc.name == "own-caller-higher-order" {
+		if tc.name == "own-caller-operand-order" || tc.name == "own-caller-higher-order" || tc.name == "own-caller-lifetime-option-projection" {
 			continue
 		}
 		tc.main = withAliasCheckedSource(tc.name, tc.main)
