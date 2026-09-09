@@ -14,8 +14,8 @@ import (
 
 // Drift gate for the import-free self-host modules.
 //
-// Ten of the 94 modules in examples/self_host carry no `import` statement at
-// all. That is deliberate and load-bearing rather than an accident: several
+// Several modules in examples/self_host carry no `import` statement at all.
+// That is deliberate and load-bearing rather than an accident: several
 // e2eselfhost drivers build a single-module program by CONCATENATING one of
 // these files with a `main()`, which only works while the file pulls in
 // nothing. x86_native.fern says so at its head —
@@ -84,7 +84,7 @@ func TestImportFreeModulesDoNotDrift(t *testing.T) {
 	sort.Strings(free)
 	wantFree := []string{
 		"arm64_native", "ast", "builtins", "elf", "lexer", "literate",
-		"util", "watbin", "wit_compose", "wit_decode", "x86_native",
+		"typeinfo", "util", "watbin", "wit_compose", "wit_decode", "x86_native",
 	}
 	if strings.Join(free, ",") != strings.Join(wantFree, ",") {
 		t.Errorf("the import-free module set changed.\n  got:  %v\n  want: %v\n"+
