@@ -34,7 +34,7 @@ or establish self-host parity or production cutover.
 
 ## Action-slice validation, 2026-09-08
 
-Fourteen source cases pass typed ownership planning and raw/optimized ARM64
+Seventeen source cases pass typed ownership planning and raw/optimized ARM64
 execution with balanced allocation/free counts. Fifteen malformed-region cases
 exercise independent verification. The actual CLI regression keeps a returned
 array alive across cleanup replacement and subsequent allocator churn. Full
@@ -56,6 +56,15 @@ account for 13,024 symbol bytes of the 17,888-byte total growth; existing caller
 changes and metadata also contribute. The new code implements the typed cleanup
 contract. No compiler-size baseline is changed. Region interfaces introduce no
 runtime environment allocation, independently checked in the executable graph.
+
+Review follow-up coverage pins cross-action binding reads through cloned joins:
+the checking action captures a scalar or array projection that the preceding
+branching action does not capture. A third case crosses successive branching
+actions. Both branch choices execute, and structural assertions ensure these
+cases cannot silently turn into direct capture-output forwarding tests. The
+shared matrix checks interpreter results, typed unit planning, physical lowering,
+raw/optimized ARM64 execution and balanced allocation counts. This adds coverage,
+not a compiler behaviour change or a performance claim.
 
 ## Observable contract
 
