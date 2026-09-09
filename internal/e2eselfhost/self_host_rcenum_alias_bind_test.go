@@ -10,25 +10,13 @@ import (
 // 200 allocs / 200 frees to 200 / 0, 8000 live, against native's 200/200.
 // The match the leak-matrix rows blamed was irrelevant; the bind alone did it.
 //
-// THE OBVIOUS FIX IS A MEASURED USE-AFTER-FREE, which is why every row here
-// gates on the EXIT CODE (each program returns 99 from `__rc_underflow()`)
-// rather than on bytes: forgiving the alias lets the SOURCE keep its deep
-// credit, and if the alias hands the payload out, that credit frees a buffer
-// the caller still holds. The census stays balanced while it happens, so the
-// counter is the only witness. Every `want` is native's own answer.
-//
-// Three things make the forgiveness safe, and each has a row:
-//
-//  1. the alias is vetted through the ENUM gate (body_unsafe_for_enumfield),
-//     not the coarse walker, so an escaping alias is refused;
-//  2. it is additionally refused when the alias hands its PAYLOAD out
-//     (`match (x) { Full(xs) => xs }`) — the escape scan reads a bare-ident
-//     scrutinee as a borrow, which is true of the BOX and false of the
-//     payload. `payload_out_via_alias_refused` is that row, and it fails with
-//     exit 99 without the check;
-//  3. every enum release is rc-gated, so where two owners do exist only the
-//     last one walks the payload (emit_enum_variant_drops no longer bypasses
-//     the `__fern_rc_is_unique` guard — five call sites did).
+// Releasing a parent under an uncounted payload return is a use-after-free,
+// even when the allocation census balances. The typed contract now proves
+// that escaping payloads acquire a separate unit before parent cleanup.
+// Payload-return coverage requires exact balance and checks underflow after
+// the producer frame returns. Root returns remain outside that contract.
+// Every enum release is still guarded by the runtime uniqueness check, so
+// only the last owner walks the payload.
 
 func rcenumAliasBindCases() []tupleAliasParamCase {
 	return []tupleAliasParamCase{
@@ -89,13 +77,10 @@ function main(): i32 {
 			want: 6, balance: true,
 		},
 		{
-			// THE NON-VACUITY INSTRUMENT. The alias's match binds the rc payload
-			// and RETURNS it, so the payload outlives the frame while the
-			// source's deep release would free it. Refused: the shape keeps its
-			// pre-existing leak. Without the payload-escape check this row
-			// exits 99 — an over-release with a perfectly balanced census, which
-			// is the trap this issue documents.
-			name: "payload_out_via_alias_refused",
+			// The typed region counts the escaping payload separately and owns
+			// the source's final cleanup. The post-frame counter must stay zero
+			// while both allocations are reclaimed on every call.
+			name: "payload_out_via_alias_counted",
 			src: `enum E { Full(i32[]), None }
 function g(i: i32): i32[] { var src: E = E.Full([i, i + 1]); var x: E = src; match (x) { Full(xs) => { return xs; }, None => { return [0]; } } }
 function round(i: i32): i32 { var v: i32[] = g(i); return v.len(); }
@@ -105,7 +90,7 @@ function main(): i32 {
     if (__rc_underflow() != 0) { return 99; }
     return s % 97;
 }`,
-			want: 6, balance: false, wantFrees: 100,
+			want: 6, balance: true,
 		},
 		{
 			// The alias itself escapes by return — refused for the plain reason,
