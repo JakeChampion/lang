@@ -72,7 +72,15 @@ pub function needs_anchor(t: typeinfo.Type): boolean {
         typeinfo.TypeBool(_) => { return false; },
         typeinfo.TypeFloat(_) => { return false; },
         typeinfo.TypeVoid(_) => { return false; },
-        _ => { return true; }
+        typeinfo.TypeString(_) => { return true; },
+        typeinfo.TypeArray(_) => { return true; },
+        typeinfo.TypeStruct(_) => { return true; },
+        typeinfo.TypeUnion(_) => { return true; },
+        typeinfo.TypeTuple(_) => { return true; },
+        typeinfo.TypeFunc(_) => { return true; },
+        typeinfo.TypeMap(_) => { return true; },
+        typeinfo.TypeDyn(_) => { return true; },
+        typeinfo.TypeUnknown(_) => { return true; }
     }
     return true;
 }
