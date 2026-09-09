@@ -2,13 +2,13 @@
 
 Design prerequisite for the [typed ownership migration](TYPED-OWNERSHIP-IR-MIGRATION.md).
 This document specifies the full cleanup migration contract. The typed-SSA
-pilot now implements a bounded function-exit action slice described below, not
+pilot now implements bounded function and iteration actions described below, not
 the complete registration/availability model. Native and self-host production
 still use their existing cleanup paths.
 
 ## Executable action slice
 
-Plain function-exit actions with a registration that dominates each replay
+Plain function and iteration actions with a registration that dominates each replay
 now build once into a private typed SSA region. Capture parameters and yield
 fields address enclosing BindingIDs rather than storing registration-time
 values. Expansion reads the current bindings immediately before each action,
@@ -39,13 +39,26 @@ Malformed CFG tests demonstrate why return dominance was insufficient:
 direct and indirect replay cycles, replay in a cycle without a return, and a
 balanced registration/replay cycle previously passed verification. An additional
 case rejects a join of pending and consumed states even without a return. The graphs
-retain valid SSA, so the independent cleanup proof must reject them. This is a
-prerequisite for iteration support, not its activation: iteration registration
-still needs explicit boundary identities and reset/exit events, while optional
-registration requires the correlated availability model below.
+retain valid SSA, so the independent cleanup proof must reject them. Optional
+registration still requires the correlated availability model below.
+
+Function and iteration boundaries now carry explicit identities, lexical parent
+links and CFG entry/header/exit points. Every action belongs to one boundary.
+Typed exit records identify the exact boundary suffix crossed by normal tails,
+local or labelled break/continue, and function return. Each boundary closes only
+after its own LIFO actions finish. Its saved registration-state prefix is then
+restored, allowing the next iteration to register again without leaking completed
+actions into a later function return. Value blocks and match arms do not introduce
+cleanup lifetimes. Loop conditions retain the enclosing loop's jump targets.
+
+The verifier independently checks boundary structure against active CFG state.
+An internally consistent but false parent chain is rejected. Missing actions,
+missing exits, wrong targets and incomplete or reversed boundary sequences also
+reject while preserving valid SSA. State equality at joins and backedges remains
+exact; only a verified boundary close resets registration history.
 
 Conditional availability that cannot be proven by dominance, registration in
-loop bodies or conditions, error-only actions, and nonlocal control/nested
+loop conditions, error-only actions, and nonlocal control/nested
 registration inside actions remain explicit unsupported contracts. The place
 model below is still required for the broader migration. This slice does not
 activate the seven conditional/iteration conformance cases as typed-pilot tests
@@ -110,6 +123,46 @@ grows by 2,752 bytes: the new flow verifier is 4,032 symbol bytes and the old
 verifier shrinks by 1,280. Type/constant data, line/debug information and segment
 alignment also change. No baseline is raised. Program cleanup generation and
 runtime code are unchanged; this change strengthens compilation-time validation.
+
+## Iteration-slice validation and costs, 2026-09-08
+
+Eleven additional source cases execute in the raw and optimized ARM64 matrix
+with balanced allocation/free counts. They cover normal tails, local/labelled
+exits, early exits before registration, late binding replacement, value blocks,
+return projections and an outer jump from an inner loop condition. The CLI
+regression preserves a returned array across nested cleanup and allocator churn.
+Twenty-two malformed-boundary tests retain valid SSA. Separate tests prove that
+false active parents and balanced but unclosed iteration cycles reach and fail
+the independent flow proof rather than only a structural metadata check.
+
+Five 100 ms samples on native Darwin ARM64, Apple M3 Pro, use the same checked
+source-to-verified-physical-lowering pipeline as the action benchmark. The new
+benchmark changes only the number of sequential single-action loops. Observed
+ranges are not statistical confidence intervals or a general speedup claim.
+
+| Loops | ns/op | allocs/op |
+| --- | --- | --- |
+| 1 | 56,796-67,824 | 1,040 |
+| 8 | 344,980-479,303 | 4,402 |
+| 64 | 3,392,352-3,896,861 | 26,139-26,141 |
+
+Consolidating structural and flow events into one indexed arena reduced the
+initial implementation's allocations from 1,110 to 1,040 for one loop, 4,605
+to 4,402 for eight and 26,679-26,680 to 26,139-26,141 for 64. The existing
+function-action workload now measures 1,122 / 3,279 / 17,143-17,144 allocations
+at 1 / 8 / 64 actions, against the parent 971 / 3,132 / 17,056-17,057. Unlike
+the preceding slice, source functions without actions also carry and verify
+their boundary contracts. Remaining storage tracks entry, parent, exit and
+saved registration history, including through action-free nested loops.
+
+Identical `go build -trimpath -buildvcs=false` builds against parent `fe77ee32a`
+grow from 28,815,730 to 28,866,178 bytes: 50,448 bytes overall and 8,752 bytes
+in Mach-O `__text`. The new boundary verifier accounts for 5,344 symbol bytes;
+the flow verifier grows by 1,776 bytes and exit emission by 496 bytes while
+the action verifier shrinks by 48 bytes. Caller changes and data/debug/segment
+layout account for the rest. This implements and independently verifies new
+iteration semantics; it does not add a runtime cleanup environment or change
+a compiler-size baseline. Production native/self-host cutover remains pending.
 
 ## Observable contract
 

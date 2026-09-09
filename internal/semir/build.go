@@ -11,8 +11,8 @@ import (
 // BuildFunc builds the experimental typed phase from a checked declaration,
 // before ir.LowerWith erases surface types and inserts concrete RC operations.
 // The current slice handles immutable array/tuple values and projections,
-// local replacement, branches, source loops and statically present function
-// cleanup actions. Aggregate mutation and conditional/iteration registration
+// local replacement, branches, source loops and dominating function/iteration
+// cleanup actions. Aggregate mutation and conditional/loop-condition registration
 // remain explicit unsupported errors, not silent fallbacks.
 // Production compilation continues to use its existing route until ownership
 // analysis and verified lowering make this phase an end-to-end replacement.
@@ -26,6 +26,7 @@ func BuildFunc(decl *ast.FuncDecl, info *checker.Info) (*Func, error) {
 
 func buildBody(f *Func, decl *ast.FuncDecl, info *checker.Info) error {
 	b := builder{fn: f, info: info, current: f.graph.NewBlock(), flow: make(map[*ssa.Block]*bindingFlow)}
+	b.cleanupScope = b.newCleanupBoundary(nil, b.current, nil, nil, decl.P)
 	b.state(b.current).sealed = true
 	b.pushScope()
 	for i, p := range decl.Params {
@@ -50,15 +51,15 @@ func buildBody(f *Func, decl *ast.FuncDecl, info *checker.Info) error {
 }
 
 type builder struct {
-	fn      *Func
-	info    *checker.Info
-	current *ssa.Block
-	scopes  []map[string]BindingID
-	flow    map[*ssa.Block]*bindingFlow
-	loops   []sourceLoop
-	// Includes loop conditions, which do not introduce break/continue targets.
-	cleanupLoopDepth int
-	action           *cleanupBuilder
+	fn                    *Func
+	info                  *checker.Info
+	current               *ssa.Block
+	scopes                []map[string]BindingID
+	flow                  map[*ssa.Block]*bindingFlow
+	loops                 []sourceLoop
+	cleanupConditionDepth int
+	cleanupScope          *cleanupBoundary
+	action                *cleanupBuilder
 }
 
 func (b *builder) errorAt(pos ast.Position, message string) error {
@@ -124,9 +125,9 @@ func (b *builder) stmt(stmt ast.Stmt) error {
 	case *ast.ExprStmt:
 		return b.effectExpr(n.Expr)
 	case *ast.While:
-		return b.sourceLoop(n.Cond, n.Body, n.Label)
+		return b.sourceLoop(n.Cond, n.Body, n.Label, n.P)
 	case *ast.Loop:
-		return b.sourceLoop(nil, n.Body, n.Label)
+		return b.sourceLoop(nil, n.Body, n.Label, n.P)
 	case *ast.Break:
 		return b.loopBranch(n.Label, false, n.P)
 	case *ast.Continue:

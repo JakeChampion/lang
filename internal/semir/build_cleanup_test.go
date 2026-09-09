@@ -258,11 +258,11 @@ func TestVerifyRejectsMalformedCleanupRegions(t *testing.T) {
 func TestCleanupUnsupportedRegistration(t *testing.T) {
 	for _, tc := range []struct{ name, source, want string }{
 		{"conditional", `function pilot(flag: boolean): string { if (flag) { defer sink(); } return "x"; } function sink(): void {}`, "conditional cleanup"},
-		{"iteration", `function pilot(): string { loop { defer sink(); break; } return "x"; } function sink(): void {}`, "iteration cleanup"},
-		{"condition", `function pilot(): string { while ({ defer sink(); false }) {} return "x"; } function sink(): void {}`, "iteration cleanup"},
+		{"conditional-iteration", `function pilot(flag: boolean): string { loop { if (flag) { defer sink(); } break; } return "x"; } function sink(): void {}`, "conditional cleanup"},
+		{"condition", `function pilot(): string { while ({ defer sink(); false }) {} return "x"; } function sink(): void {}`, "loop-condition cleanup"},
 		{"nested", `function pilot(): string { defer { defer sink(); } return "x"; } function sink(): void {}`, "nested cleanup"},
 		{"return", `function pilot(): string { defer { return "inside"; } return "x"; }`, "return inside a cleanup"},
-		{"escaping-break", `function pilot(): string { outer: loop { defer { break outer; } } }`, "iteration cleanup"},
+		{"escaping-break", `function pilot(): string { outer: loop { defer { break outer; } } }`, "unresolved loop label"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			prog, info := checkedProgram(t, tc.source)

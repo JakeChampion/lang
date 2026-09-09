@@ -17,6 +17,7 @@ type cleanupRegion struct {
 	pos      ast.Position
 	register *ssa.Block
 	captures []BindingID
+	boundary *cleanupBoundary
 	exit     *ssa.Block
 	yield    *ssa.Op
 	replays  []*ssa.Block
@@ -57,10 +58,10 @@ func (b *builder) registerCleanup(n *ast.Defer) error {
 	if n.OnError {
 		return b.errorAt(n.P, "error-only cleanup is not implemented in the typed pilot")
 	}
-	if b.cleanupLoopDepth != 0 {
-		return b.errorAt(n.P, "iteration cleanup registration is not implemented in the typed pilot")
+	if b.cleanupConditionDepth != 0 {
+		return b.errorAt(n.P, "loop-condition cleanup registration is not implemented in the typed pilot")
 	}
-	r := &cleanupRegion{owner: b.fn, pos: n.P, register: b.current}
+	r := &cleanupRegion{owner: b.fn, pos: n.P, register: b.current, boundary: b.cleanupScope}
 	r.body = newFunc(fmt.Sprintf("%s.cleanup%d", b.fn.graph.Name, len(b.fn.cleanups)), ast.VoidType{})
 	r.body.program = b.fn.program
 	a := builder{fn: r.body, info: b.info, current: r.body.graph.NewBlock(), flow: make(map[*ssa.Block]*bindingFlow)}
@@ -89,30 +90,12 @@ func (b *builder) registerCleanup(n *ast.Defer) error {
 	r.exit = a.current
 	r.body.graph.SetRet(a.current, result)
 	b.fn.cleanups = append(b.fn.cleanups, r)
+	b.cleanupScope.actions = append(b.cleanupScope.actions, r)
 	return nil
 }
 
 func (b *builder) emitCleanups() error {
-	if len(b.fn.cleanups) == 0 {
-		return nil
-	}
-	// Expansion only adds successors after this exit point, so all actions
-	// share this one dominance query over the pre-expansion graph.
-	exit := b.current
-	dom := ssa.BuildDomTree(b.fn.graph)
-	for i := len(b.fn.cleanups) - 1; i >= 0; i-- {
-		r := b.fn.cleanups[i]
-		// This initial slice admits only statically present registrations. A
-		// conditional environment needs correlated initialization state, not a
-		// made-up default value for an unentered lexical binding.
-		if !dom.Dominates(r.register, exit) {
-			return b.errorAt(r.pos, "conditional cleanup registration is not implemented in the typed pilot")
-		}
-		if err := b.expandCleanup(r); err != nil {
-			return err
-		}
-	}
-	return nil
+	return b.emitCleanupExit(b.fn.boundaries[0], cleanupReturn, nil)
 }
 
 func (b *builder) expandCleanup(r *cleanupRegion) error {

@@ -6,13 +6,15 @@ SSA cutover and typed-IR work. Initial integration base: `02ea66e91`.
 
 ## Current implementation checkpoint
 
-Plain function-exit cleanup actions with dominating registrations now compile
+Plain function and iteration cleanup actions with dominating registrations now compile
 once to typed action regions. Capture interfaces preserve enclosing BindingIDs;
 expansion reads current values at replay, threads writes between LIFO actions
 and preserves saved return values. Protocol tuple yields are removed before
 ordinary ownership planning, without a runtime environment allocation. The
 verifier checks types, capture contracts, registration dominance and exactly-once
-ordered replay. Conditional/iteration registration and error-only cleanup remain
+ordered replay. Explicit iteration boundaries handle tail, break, continue,
+labelled exits and function returns, resetting registration history only after
+verified LIFO cleanup. Conditional registration, loop-condition registration and error-only cleanup remain
 unsupported pending the [full region contract](TYPED-CLEANUP-REGIONS.md). Its
 shared `defer_binding_*` conformance cases pin the broader contract, not completed
 pilot coverage. Neither native nor self-host production AST cleanup is retired.
@@ -35,7 +37,7 @@ void; liveness, counted-argument supplies, borrow anchors and independent callee
 balance checks still apply. Physical lowering emits resultless ARM64 calls and
 keeps source origins. Statement and void-return call contexts are supported;
 void calls cannot supply semantic values. This enables the call-effect boundary
-needed by cleanup. Conditional/iteration registration, error-only cleanup and
+needed by cleanup. Conditional registration, loop-condition registration, error-only cleanup and
 external/indirect calls remain explicit unsupported contracts.
 
 Recursive tuple patterns now lower to explicit typed field projections and

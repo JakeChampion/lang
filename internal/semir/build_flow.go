@@ -24,6 +24,7 @@ type bindingPhi struct {
 type sourceLoop struct {
 	label        string
 	header, exit *ssa.Block
+	boundary     *cleanupBoundary
 }
 
 func (b *builder) state(block *ssa.Block) *bindingFlow {
@@ -89,19 +90,19 @@ func (b *builder) seal(block *ssa.Block) error {
 	return nil
 }
 
-func (b *builder) sourceLoop(cond ast.Expr, body ast.Stmt, label string) error {
-	b.cleanupLoopDepth++
-	defer func() { b.cleanupLoopDepth-- }()
+func (b *builder) sourceLoop(cond ast.Expr, body ast.Stmt, label string, pos ast.Position) error {
 	header, exit := b.fn.graph.NewBlock(), b.fn.graph.NewBlock()
 	b.fn.graph.SetBr(b.current, header)
 	b.current = header
 	if cond != nil {
+		b.cleanupConditionDepth++
 		value, err := b.expr(cond)
+		b.cleanupConditionDepth--
 		if err != nil {
 			return err
 		}
 		if value.ended {
-			return b.closeLoop(header, exit)
+			return b.closeLoop(header, exit, nil)
 		}
 		work := b.fn.graph.NewBlock()
 		b.fn.graph.SetBrIf(b.current, value.value, work, exit)
@@ -112,7 +113,14 @@ func (b *builder) sourceLoop(cond ast.Expr, body ast.Stmt, label string) error {
 	}
 	// The condition is evaluated in the enclosing loop scope, matching the
 	// checker. Only the body introduces this loop's break/continue targets.
-	b.loops = append(b.loops, sourceLoop{label, header, exit})
+	parent := b.cleanupScope
+	var boundary *cleanupBoundary
+	if b.action == nil {
+		boundary = b.newCleanupBoundary(parent, b.current, header, exit, pos)
+		b.cleanupScope = boundary
+	}
+	defer func() { b.cleanupScope = parent }()
+	b.loops = append(b.loops, sourceLoop{label, header, exit, boundary})
 	defer func() { b.loops = b.loops[:len(b.loops)-1] }()
 	b.pushScope()
 	err := b.stmt(body)
@@ -121,12 +129,17 @@ func (b *builder) sourceLoop(cond ast.Expr, body ast.Stmt, label string) error {
 		return err
 	}
 	if b.current != nil {
+		if boundary != nil {
+			if err := b.emitCleanupExit(boundary, cleanupTail, header); err != nil {
+				return err
+			}
+		}
 		b.fn.graph.SetBr(b.current, header)
 	}
-	return b.closeLoop(header, exit)
+	return b.closeLoop(header, exit, boundary)
 }
 
-func (b *builder) closeLoop(header, exit *ssa.Block) error {
+func (b *builder) closeLoop(header, exit *ssa.Block, boundary *cleanupBoundary) error {
 	if err := b.seal(header); err != nil {
 		return err
 	}
@@ -136,6 +149,9 @@ func (b *builder) closeLoop(header, exit *ssa.Block) error {
 	// the exit below and preserve the lack of a continuation.
 	b.current = exit
 	if len(exit.Preds) == 0 {
+		if boundary != nil {
+			boundary.exit = nil
+		}
 		// An unconditional loop without a break has no continuation. Do not
 		// fabricate an undefined return or incoming value in a detached block.
 		for i, block := range b.fn.graph.Blocks {
@@ -159,6 +175,15 @@ func (b *builder) loopBranch(label string, continuing bool, pos ast.Position) er
 		target := loop.exit
 		if continuing {
 			target = loop.header
+		}
+		if loop.boundary != nil {
+			kind := cleanupBreak
+			if continuing {
+				kind = cleanupContinue
+			}
+			if err := b.emitCleanupExit(loop.boundary, kind, target); err != nil {
+				return err
+			}
 		}
 		b.fn.graph.SetBr(b.current, target)
 		b.current = nil
