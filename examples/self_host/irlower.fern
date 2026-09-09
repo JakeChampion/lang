@@ -616,6 +616,14 @@ pub struct FnSigs {
     // struct plan gate refuses a credited name passed at such a position
     // (native retains at the return instead — paramCountedRetain's channel).
     handback_params: string[],
+    // handback_carry_params: "fn|idx" for parameters the callee hands back
+    // INSIDE its result — as an element of a returned tuple literal or a field
+    // of a returned struct literal, directly or through a bare alias (`var s =
+    // g; … return (Some(m), s)`). The result is a different box from the
+    // parameter's, so the "result stands in for the new value" guard the
+    // snapshot releases rely on cannot see the handback; the caller keeps its
+    // box out of those releases instead and the result carries it on.
+    handback_carry_params: string[],
     // str_handback_ret: "<callee>|<idx>" for a STRING parameter whose OWN box a
     // return may hand back as the result THROUGH A CALL — a string identity
     // method (str_recv_handback_of, whose no-op fast path returns its receiver:
@@ -65983,7 +65991,7 @@ pub function fn_sigs_empty(): FnSigs {
         closurearr_ret_fns: e, const_fns: e, borrowable_params: e, borrow_bare: e, fn_names: r,
         fresh_struct_ret_fns: e, consume_safe_params: e, return_fresh_struct_ret_fns: e,
         recv_borrow_fns: e, str_fresh_ret_fns: e, opt_fresh_ret_fns: r, strfld_ok_types: e,
-        tuple_fresh_ret_fns: e, own_positions: e, own_scalar_arr_positions: e, consumed_arr_positions: e, param_counted: e, trmc_consume_fns: e, handback_params: e,
+        tuple_fresh_ret_fns: e, own_positions: e, own_scalar_arr_positions: e, consumed_arr_positions: e, param_counted: e, trmc_consume_fns: e, handback_params: e, handback_carry_params: e,
         str_handback_ret: e, grow_recv_fns: e, grow_field_positions: e };
 }
 
@@ -66463,6 +66471,7 @@ pub function fn_sigs_for_borrow(funcs: parser.FuncDecl[], structs: StructTab, ar
         param_counted: pcnt,
         trmc_consume_fns: trmc_consume_fns_of(funcs, structs),
         handback_params: handback_params_of(funcs),
+        handback_carry_params: handback_carry_params_of(funcs),
         str_handback_ret: str_handback_ret_of(funcs),
         grow_recv_fns: grow_recv_fns_of(growflags),
         grow_field_positions: grow_field_positions_of(funcs, growflags),
@@ -66491,6 +66500,104 @@ pub function handback_params_of(funcs: parser.FuncDecl[]): string[] {
         }
     }
     return out;
+}
+
+// handback_carry_params_of: "fn|idx" for every parameter some return hands back
+// INSIDE a tuple or struct literal — the parameter itself or a local bound from
+// it by a bare-ident chain (bare_alias_closure). The composite is a fresh box
+// holding the parameter's box uncounted, so the caller's argument lives on in
+// the result exactly as a bare handback does, and the same releases must leave
+// it alone (#8891).
+pub function handback_carry_params_of(funcs: parser.FuncDecl[]): string[] {
+    var out: string[] = [];
+    for fn in funcs {
+        var rets: ast.Expr[] = noesc_collect_rets(fn.body, []);
+        var pi: i32 = 0;
+        while (pi < fn.params.len()) {
+            var names: string[] = bare_alias_closure(fn.body, [fn.params[pi].name]);
+            var hit: boolean = false;
+            for r in rets { if (composite_carries_name(r, names)) { hit = true; } }
+            if (hit) { out = out.append(fn.name + "|" + util.i32_to_string(pi)); }
+            pi = pi + 1;
+        }
+    }
+    return out;
+}
+
+// composite_carries_name: `e` is a tuple or struct literal one of whose
+// elements is a name in `names`, at any nesting depth of such literals.
+function composite_carries_name(e: ast.Expr, names: string[]): boolean {
+    match (e) {
+        ast.ExprTuple(t) => {
+            for el in t.elements {
+                if (ident_name_or_empty(el).len() > 0 && util.index_of_str(names, ident_name_or_empty(el)) >= 0) { return true; }
+                if (composite_carries_name(el, names)) { return true; }
+            }
+            return false;
+        },
+        ast.ExprStructLit(sl) => {
+            for fv in sl.field_values {
+                if (ident_name_or_empty(fv).len() > 0 && util.index_of_str(names, ident_name_or_empty(fv)) >= 0) { return true; }
+                if (composite_carries_name(fv, names)) { return true; }
+            }
+            return false;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// bare_alias_closure: `names` plus every local bound or reassigned from one of
+// them by a bare ident (`var s = g;` / `s = g;`), to a fixpoint, through every
+// nested block. A rebind that later replaces the alias with something else is
+// still counted: the question is whether the name MAY carry the parameter's
+// box, and the safe answer to "may" is yes.
+function bare_alias_closure(stmts: ast.Stmt[], names: string[]): string[] {
+    var out: string[] = names;
+    var changed: boolean = true;
+    while (changed) {
+        var grown: string[] = bare_alias_step(stmts, out);
+        changed = grown.len() != out.len();
+        out = grown;
+    }
+    return out;
+}
+function bare_alias_step(stmts: ast.Stmt[], names: string[]): string[] {
+    var a: string[] = names;
+    for stmt in stmts {
+        match (stmt) {
+            ast.StmtVar(v) => {
+                var src: string = ident_name_or_empty(v.init);
+                if (src.len() > 0 && util.index_of_str(a, src) >= 0) { a = push_str_unique(a, v.name); }
+            },
+            ast.StmtAssign(asg) => {
+                var src2: string = ident_name_or_empty(asg.value);
+                if (src2.len() > 0 && util.index_of_str(a, src2) >= 0) { a = push_str_unique(a, asg.target); }
+            },
+            ast.StmtIf(f) => { a = bare_alias_step(f.then_body, a); a = bare_alias_step(f.else_body, a); },
+            ast.StmtWhile(w) => { a = bare_alias_step(w.body, a); },
+            ast.StmtFor(fo) => { a = bare_alias_step(fo.body, a); },
+            ast.StmtMatch(m) => { for arm in m.arms { a = bare_alias_step(arm.body, a); } },
+            _ => {}
+        }
+    }
+    return a;
+}
+
+// callee_carries_arg: `e` is a direct call that hands `name`'s box back inside
+// its result (handback_carry_params) at some argument position `name` sits at.
+function callee_carries_arg(e: ast.Expr, name: string, s: LowerState): boolean {
+    var cname: string = direct_call_callee_name(e);
+    if (cname.len() == 0 || name.len() == 0) { return false; }
+    if let ast.ExprCall(c) = e {
+        var i: i32 = 0;
+        while (i < c.args.len()) {
+            if (ident_name_or_empty(c.args[i]) == name
+                && util.index_of_str(s.frame.sigs.handback_carry_params, cname + "|" + util.i32_to_string(i)) >= 0) { return true; }
+            i = i + 1;
+        }
+    }
+    return false;
 }
 
 // str_recv_may_be: `e`, in a string method whose receiver is `rname`, may yield
@@ -77039,7 +77146,11 @@ function release_last_use_source(v: ast.StmtVar, sv: LowerState): LowerState {
     var slot: i32 = last_use_release_slot(v, sv);
     if (slot < 0) { return sv; }
     var st: LowerState = sv;
-    if (!arg_moved_into_callee(v.init, site_row_value(sv.frame.reclaimable_names, "LASTUSE:", reclaim_site_key_of(v.name, v.line, v.col)), sv)) {
+    var lu_name: string = site_row_value(sv.frame.reclaimable_names, "LASTUSE:", reclaim_site_key_of(v.name, v.line, v.col));
+    // A composite handback (callee_carries_arg) is the tuple-borne twin of the
+    // bare one below: the box lives on inside q2's result, so nothing is
+    // released and the slot is zeroed like the moved case.
+    if (!arg_moved_into_callee(v.init, lu_name, sv) && !callee_carries_arg(v.init, lu_name, sv)) {
         var q2: i32 = st.slot_of(v.name);
         var sty: string = st.struct_type_of_slot(slot);
         var snls: i32 = st.slot_of(snapshot_slot_name(slot));
@@ -77110,7 +77221,14 @@ function stmts_mention_from(stmts: ast.Stmt[], from: i32, name: string): boolean
 // credited local is left to its exit sweep.
 function tail_release_snapshot_locals(v: ast.Expr, s: LowerState): LowerState {
     var st: LowerState = s;
-    for an in call_operand_idents(v) { st = tail_release_one(an, st); }
+    for an in call_operand_idents(v) {
+        // A callee that hands the operand back INSIDE its result (a returned
+        // tuple / struct literal) leaves the result a different box from the
+        // operand's, so the release's stand-in guard would not see the
+        // handback and would free what the caller is about to receive
+        // (#8891). The box goes back with the result instead.
+        if (!callee_carries_arg(v, an, st)) { st = tail_release_one(an, st); }
+    }
     return st;
 }
 
