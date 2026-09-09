@@ -342,6 +342,12 @@ jobs:
     if: fromJSON(needs.changes.outputs.lanes)['bootstrap']
     uses: ./.github/workflows/bootstrap.yml
     secrets: inherit
+    # Its `release` job requests `contents: write` for the publish path, and
+    # GitHub validates a nested job's permissions against the caller's grant
+    # even for a job the event skips; the lane's own `contents: read` still
+    # narrows its verify jobs.
+    permissions:
+      contents: write
 
   macos:
     name: macOS arm64
