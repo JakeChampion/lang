@@ -1,0 +1,212 @@
+import "./ast";
+import "./astwalk";
+import "./parser";
+import "./util";
+
+// Binding identity belongs to the declaration, not to a mutable value or a
+// later use's spelling. Symbols bridge the existing string-named syntax.
+pub struct Binding { id: i32, name: string, symbol: string, line: i32, col: i32 }
+pub struct ResolvedFunction { func: parser.FuncDecl, bindings: Binding[] }
+struct Scope { bindings: Binding[], visible: i32[], reserved: string[] }
+
+function lookup(s: Scope, name: string): string {
+    var i = s.visible.len();
+    while (i > 0) {
+        i = i - 1;
+        var b = s.bindings[s.visible[i]];
+        if (b.name == name) { return b.symbol; }
+    }
+    return name;
+}
+
+function bind(s: Scope, name: string, line: i32, col: i32): Scope {
+    if (name == "" || name == "_") { return s; }
+    var id = s.bindings.len();
+    var symbol = "$binding$" + util.i32_to_string(id) + "$" + name;
+    while (util.has_str(s.reserved, symbol)) { symbol = symbol + "$"; }
+    var b = Binding { id: id, name: name, symbol: symbol, line: line, col: col };
+    return Scope { ...s, bindings: s.bindings.append(b), visible: s.visible.append(id) };
+}
+
+function bind_names(s: Scope, packed: string, line: i32, col: i32): Scope {
+    var out = s;
+    for name in astwalk.append_bound_name([], packed) { out = bind(out, name, line, col); }
+    return out;
+}
+
+function names(s: Scope, packed: string): string {
+    var out = "";
+    var start = 0;
+    var i = 0;
+    while (i <= packed.len()) {
+        if (i == packed.len() || packed[i] == b',' || packed[i] == b'(' || packed[i] == b')') {
+            out = out + lookup(s, slice_unchecked(packed, start, i) + "");
+            if (i < packed.len()) { out = out + slice_unchecked(packed, i, i + 1) + ""; }
+            start = i + 1;
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// Preserve newly allocated identities, but restore lexical visibility.
+function leave(inner: Scope, outer: Scope): Scope {
+    return Scope { ...inner, visible: outer.visible };
+}
+
+function expr(e: ast.Expr, s: Scope): (ast.Expr, Scope) {
+    var (out, tail, handled) = astwalk.map_expr_acc(e, s, stmt_at, expr_at);
+    return (out, tail);
+}
+
+function body(stmts: ast.Stmt[], s: Scope): (ast.Stmt[], Scope) {
+    var out: ast.Stmt[] = [];
+    var cur = s;
+    for st in stmts {
+        var (next, tail, handled) = astwalk.map_stmt_acc(st, cur, stmt_at, expr_at);
+        out = out.append(next);
+        cur = tail;
+    }
+    return (out, cur);
+}
+
+function params(ps: ast.ParamDecl[], s: Scope, line: i32, col: i32): (ast.ParamDecl[], Scope) {
+    var out: ast.ParamDecl[] = [];
+    var cur = s;
+    for p in ps {
+        var d = p.default_value;
+        if (p.has_default) {
+            var (nd, tail) = expr(d, cur);
+            d = nd;
+            cur = tail;
+        }
+        cur = bind_names(cur, p.name, line, col);
+        out = out.append(ast.ParamDecl { ...p, name: names(cur, p.name), default_value: d });
+    }
+    return (out, cur);
+}
+
+function expr_at(e: ast.Expr, s: Scope): (ast.Expr, Scope, boolean) {
+    match (e) {
+        ast.ExprIdent(i) => { return (ast.ExprIdent { ...i, name: lookup(s, i.name) }, s, true); },
+        ast.ExprLambda(lm) => {
+            var captures: ast.TypedBinding[] = [];
+            for capture in lm.captures {
+                captures = captures.append(ast.TypedBinding { ...capture, name: lookup(s, capture.name) });
+            }
+            var (ps, inner) = params(lm.params, s, lm.line, lm.col);
+            var (bs, tail) = body(lm.body, inner);
+            return (ast.ExprLambda { ...lm, params: ps, body: bs, captures: captures }, leave(tail, s), true);
+        },
+        _ => { return (e, s, false); }
+    }
+    return (e, s, false);
+}
+
+function pattern(p: ast.Pattern, s: Scope): ast.Pattern {
+    match (p) {
+        ast.PatVariant(v) => {
+            var extra: string[] = [];
+            for n in v.extra_bindings { extra = extra.append(names(s, n)); }
+            var tuple: string[] = [];
+            for n in v.tup_binds { tuple = tuple.append(names(s, n)); }
+            var nested: ast.Pattern[] = [];
+            for p in v.nested { nested = nested.append(pattern(p, s)); }
+            var tuple_pats: ast.Pattern[] = [];
+            for p in v.tup_pats { tuple_pats = tuple_pats.append(pattern(p, s)); }
+            return ast.PatVariant { ...v, binding: names(s, v.binding),
+                at_binding: names(s, v.at_binding), extra_bindings: extra,
+                tup_binds: tuple, nested: nested, tup_pats: tuple_pats };
+        },
+        ast.PatWildcard(_) => { return p; }
+    }
+    return p;
+}
+
+function stmt_at(st: ast.Stmt, s: Scope): (ast.Stmt, Scope, boolean) {
+    match (st) {
+        ast.StmtVar(v) => {
+            var before = s;
+            var recursive = false;
+            if let ast.ExprLambda(lm) = v.init { recursive = true; }
+            if (recursive) { before = bind_names(before, v.name, v.line, v.col); }
+            var (init, tail) = expr(v.init, before);
+            if (!recursive) { tail = bind_names(tail, v.name, v.line, v.col); }
+            return (ast.StmtVar { ...v, name: names(tail, v.name), init: init }, tail, true);
+        },
+        ast.StmtAssign(a) => {
+            var (value, tail) = expr(a.value, s);
+            return (ast.StmtAssign { ...a, target: names(s, a.target), value: value }, tail, true);
+        },
+        ast.StmtIf(f) => {
+            var (cond, cs) = expr(f.cond, s);
+            var (tb, ts) = body(f.then_body, cs);
+            var (eb, es) = body(f.else_body, leave(ts, cs));
+            return (ast.StmtIf { ...f, cond: cond, then_body: tb, else_body: eb }, leave(es, s), true);
+        },
+        ast.StmtWhile(w) => {
+            var (cond, cs) = expr(w.cond, s);
+            var (bs, tail) = body(w.body, cs);
+            return (ast.StmtWhile { ...w, cond: cond, body: bs }, leave(tail, s), true);
+        },
+        ast.StmtFor(f) => {
+            var (iter, cs) = expr(f.iter, s);
+            var inner = bind_names(cs, f.var_name, f.line, 0);
+            var (bs, tail) = body(f.body, inner);
+            return (ast.StmtFor { ...f, var_name: names(inner, f.var_name), iter: iter, body: bs }, leave(tail, s), true);
+        },
+        ast.StmtMatch(m) => {
+            var (scrutinee, cur) = expr(m.scrutinee, s);
+            var arms: ast.MatchArm[] = [];
+            for arm in m.arms {
+                var inner = cur;
+                for n in astwalk.pattern_binders(arm.pattern, []) { inner = bind_names(inner, n, arm.line, arm.col); }
+                var p = pattern(arm.pattern, inner);
+                var guard = arm.guard;
+                if (arm.has_guard) {
+                    var (g, gs) = expr(guard, inner);
+                    guard = g;
+                    inner = gs;
+                }
+                var (bs, tail) = body(arm.body, inner);
+                arms = arms.append(ast.MatchArm { ...arm, pattern: p, guard: guard, body: bs });
+                cur = leave(tail, cur);
+            }
+            return (ast.StmtMatch { ...m, scrutinee: scrutinee, arms: arms }, cur, true);
+        },
+        ast.StmtDefer(d) => {
+            var (action, tail, handled) = astwalk.map_stmt_acc(d.action, s, stmt_at, expr_at);
+            return (ast.StmtDefer { ...d, action: action }, leave(tail, s), true);
+        },
+        _ => { return (st, s, false); }
+    }
+    return (st, s, false);
+}
+
+function reserve(name: string, acc: string[]): string[] {
+    if (name.len() >= 9 && slice_unchecked(name, 0, 9) == "$binding$") { return acc.append(name); }
+    return acc;
+}
+
+function reserve_expr(e: ast.Expr, acc: string[]): string[] {
+    if let ast.ExprIdent(i) = e { return reserve(i.name, acc); }
+    if let ast.ExprLambda(lm) = e {
+        for p in lm.params { for n in astwalk.append_bound_name([], p.name) { acc = reserve(n, acc); } }
+    }
+    return acc;
+}
+
+pub function resolve_func(fd: parser.FuncDecl): ResolvedFunction {
+    var reserved: string[] = [];
+    for n in astwalk.collect_bound_stmts(fd.body, []) { reserved = reserve(n, reserved); }
+    for st in fd.body { reserved = astwalk.fold_stmt(st, reserved, reserve_expr); }
+    for p in fd.params { reserved = reserve(p.name, reserved); }
+    reserved = reserve(fd.receiver_name, reserved);
+    var s = Scope { bindings: [], visible: [], reserved: reserved };
+    s = bind(s, fd.receiver_name, fd.line, fd.col);
+    var receiver = lookup(s, fd.receiver_name);
+    var (ps, inner) = params(fd.params, s, fd.line, fd.col);
+    var (bs, tail) = body(fd.body, inner);
+    var func = parser.FuncDecl { ...fd, receiver_name: receiver, params: ps, body: bs };
+    return ResolvedFunction { func: func, bindings: tail.bindings };
+}

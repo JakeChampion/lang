@@ -1273,19 +1273,12 @@ function build_while(w: ast.StmtWhile, s: BState): BState {
 // captures, in first-read order (deterministic, so the lift site and the call
 // site agree).
 function lambda_free_caps(lm: ast.ExprLambda, locals: string[]): string[] {
-    var refs: string[] = [];
-    var bi: i32 = 0;
-    while (bi < lm.body.len()) { refs = astwalk.collect_idents_stmt(lm.body[bi], refs); bi = bi + 1; }
-    var bound: string[] = [];
-    var pi: i32 = 0;
-    while (pi < lm.params.len()) { bound = bound.append(lm.params[pi].name); pi = pi + 1; }
-    var si: i32 = 0;
-    while (si < lm.body.len()) { bound = astwalk.collect_bound_stmt(lm.body[si], bound); si = si + 1; }
+    var refs: string[] = astwalk.collect_lambda_idents(lm, []);
     var caps: string[] = [];
     var ri: i32 = 0;
     while (ri < refs.len()) {
         var nm: string = refs[ri];
-        if (util.index_of_str(bound, nm) < 0 && util.index_of_str(caps, nm) < 0 && util.index_of_str(locals, nm) >= 0) {
+        if (util.index_of_str(caps, nm) < 0 && util.index_of_str(locals, nm) >= 0) {
             caps = caps.append(nm);
         }
         ri = ri + 1;
@@ -1416,7 +1409,7 @@ pub function collect_lambdas(funcs: parser.FuncDecl[]): parser.FuncDecl[] {
                                 var eparams: ast.ParamDecl[] = [];
                                 var ep: i32 = 0;
                                 while (ep < lam.params.len()) { eparams = eparams.append(lam.params[ep]); ep = ep + 1; }
-                                eparams = eparams.append(ast.ParamDecl { name: "__env", type_name: "fn", own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" });
+                                eparams = eparams.append(ast.ParamDecl { name: "__env", type_name: "fn", is_str: false, own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" });
                                 var ebody: ast.Stmt[] = [];
                                 var cj: i32 = 0;
                                 while (cj < caps.len()) {

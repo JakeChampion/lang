@@ -341,10 +341,26 @@ pub function elide_asserts(mod: parser.Module): parser.Module {
     var funcs: parser.FuncDecl[] = [];
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
-        funcs = funcs.append(parser.FuncDecl { ...mod.funcs[i], body: astwalk.splice_stmts(mod.funcs[i].body, drop_assert) });
+        funcs = funcs.append(parser.FuncDecl { ...mod.funcs[i], body: astwalk.splice_stmts_with_lambda(mod.funcs[i].body, drop_assert, elided_lambda_captures) });
         i = i + 1;
     }
-    return parser.Module { ...mod, funcs: funcs, top_stmts: astwalk.splice_stmts(mod.top_stmts, drop_assert) };
+    return parser.Module { ...mod, funcs: funcs, top_stmts: astwalk.splice_stmts_with_lambda(mod.top_stmts, drop_assert, elided_lambda_captures) };
+}
+
+// Elision removes reads but cannot introduce a new captured binding or type.
+function elided_lambda_captures(lm: ast.ExprLambda): ast.ExprLambda {
+    if (!lm.captures_known || lm.captures.len() == 0) { return lm; }
+    var captures: ast.TypedBinding[] = [];
+    var seen: string[] = [];
+    for name in astwalk.collect_lambda_idents(lm, []) {
+        if (!util.has_str(seen, name)) {
+            seen = seen.append(name);
+            for cap in lm.captures {
+                if (cap.name == name) { captures = captures.append(cap); }
+            }
+        }
+    }
+    return ast.ExprLambda { ...lm, captures: captures };
 }
 
 // has_asserts reports whether elide_asserts would remove anything — the same

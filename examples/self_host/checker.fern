@@ -2785,7 +2785,7 @@ function call_through_fn_value(c: ast.ExprCall, s: Scope): typeinfo.Type {
       var i: i32 = 0;
       while (i < c.args.len()) {
         var at: typeinfo.Type = check_expr(c.args[i], s);
-        if (!settles_to(c.args[i], tf.param_types[i], s) && !str_arg_borrow(at, tf.param_types[i]) && !type_assignable(at, tf.param_types[i], s.unions.unions)) {
+        if (!is_unknown(tf.param_types[i]) && !settles_to(c.args[i], tf.param_types[i], s) && !str_arg_borrow(at, tf.param_types[i]) && !type_assignable(at, tf.param_types[i], s.unions.unions)) {
           return t_unknown("arg-type mismatch calling function value");
         }
         i = i + 1;
@@ -3168,7 +3168,7 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
       var ci: i32 = 0;
       while (ci < c.args.len()) {
         var cat: typeinfo.Type = check_expr(c.args[ci], s);
-        if (!settles_to(c.args[ci], tf.param_types[ci], s) && !str_arg_borrow(cat, tf.param_types[ci]) && !type_assignable(cat, tf.param_types[ci], s.unions.unions)) {
+        if (!is_unknown(tf.param_types[ci]) && !settles_to(c.args[ci], tf.param_types[ci], s) && !str_arg_borrow(cat, tf.param_types[ci]) && !type_assignable(cat, tf.param_types[ci], s.unions.unions)) {
           return t_unknown("arg-type mismatch calling closure `" + name + "`");
         }
         ci = ci + 1;
@@ -3749,7 +3749,7 @@ function check_expr(e: ast.Expr, s: Scope): typeinfo.Type {
       // surrounding scope (lexical capture).
       var pts: typeinfo.Type[] = [];
       for param in lm.params {
-        pts = pts.append(s.resolve_type(param.type_name));
+        pts = pts.append(s.resolve_param(param));
       }
       var rt: typeinfo.Type = s.resolve_type(lm.ret_type);
       // Walk the body for side-effect checks. The body's
@@ -3810,7 +3810,7 @@ pub function check_stmt(st: ast.Stmt, s: Scope): CheckResult {
         ast.ExprLambda(lm) => {
           var lpts: typeinfo.Type[] = [];
           for param in lm.params {
-            lpts = lpts.append(s.resolve_type(param.type_name));
+            lpts = lpts.append(s.resolve_param(param));
           }
           var lrt: typeinfo.Type = s.resolve_type(lm.ret_type);
           init_scope = s.bind(v.name, t_func(lpts, lrt));
@@ -4028,35 +4028,10 @@ pub function check_stmt(st: ast.Stmt, s: Scope): CheckResult {
       return CheckResult { scope: s, ty: t_bool() };
     },
     ast.StmtFor(f) => {
-      // Iter expr must be a TypeArray. Walk the body in
-      // a scope where var_name is bound to the array's
-      // elem type, and loop_depth+1 so inner break /
-      // continue type-check.
-      //
-      // Range form `for i in LOW..HIGH` arrives as a synthetic
-      // `__range(LOW, HIGH)` call (parser desugar). The loop var
-      // is an i32 over the half-open interval; bind it directly
-      // instead of typing the (function-less) `__range` callee.
-      // LOW / HIGH are still walked for E001 etc. by call_diags.
-      var elem_ty: typeinfo.Type = t_unknown("for-in iter not an array");
-      var ok: boolean = true;
-      if (for_iter_is_range(f.iter)) {
-        elem_ty = t_i32();
-      } else {
-        var it: typeinfo.Type = check_expr(f.iter, s);
-        match (it) {
-          typeinfo.TypeArray(ta) => {
-            elem_ty = ta.elem;
-          },
-          _ => {
-            ok = false;
-          }
-        }
-      }
-      var body_scope: Scope = s.enter_loop().bind(f.var_name, elem_ty);
-      var fOk: boolean = check_block(f.body, body_scope);
-      if (!ok) {
-        return CheckResult { scope: s, ty: t_unknown("for-in: iter not array") };
+      var binding = for_binding(f, s);
+      var fOk: boolean = check_block(f.body, binding.scope);
+      if (!binding.valid) {
+        return CheckResult { scope: s, ty: t_unknown("for-in: invalid iterator binding") };
       }
       if (!fOk) {
         return CheckResult { scope: s, ty: t_unknown("for-in: ill-typed body") };
@@ -4112,7 +4087,7 @@ pub function bind_stmt(st: ast.Stmt, s: Scope): Scope {
         ast.ExprLambda(lm) => {
           var lpts: typeinfo.Type[] = [];
           for param in lm.params {
-            lpts = lpts.append(s.resolve_type(param.type_name));
+            lpts = lpts.append(s.resolve_param(param));
           }
           var lrt: typeinfo.Type = s.resolve_type(lm.ret_type);
           init_scope = s.bind(v.name, t_func(lpts, lrt));
@@ -4384,6 +4359,7 @@ function type_from_ref_names(r: parser.TypeRef, struct_names: string[], union_na
   if (name == "string") {
     return t_string();
   }
+  if (name == "str") { return t_str(); }
   if (name == "f32") { return t_f32(); }
   if (name == "f64" || name == "float") {
     return t_float();
@@ -4823,10 +4799,19 @@ function split_fn_param_spellings(csv: string): string[] {
 // Parameters use the same retained scalar/array callable contract as locals,
 // fields and results. No recorded result means an opaque tag, not zero arity.
 function fn_param_decl_type(p: ast.ParamDecl, tparams: string[], struct_names: string[], union_names: string[]): typeinfo.Type {
+  if (p.is_str) { return t_str(); }
   if ((p.type_name != "fn" && p.type_name != "fn[]") || p.fn_ret.len() == 0) {
     return t_unknown("opaque fn param");
   }
   return declared_callable_type(p.type_name, p.fn_ret, p.fn_param_types, tparams, struct_names, union_names);
+}
+
+// Every lambda scope and diagnostic walk consumes the same declaration
+// contract as top-level functions, including callable signatures and views.
+function (s: Scope) resolve_param(p: ast.ParamDecl): typeinfo.Type {
+  var ty = fn_param_decl_type(p, s.tparams, s.structs.names, s.unions.names);
+  if (!is_unknown(ty)) { return ty; }
+  return s.resolve_type(p.type_name);
 }
 
 // The parser retains callable signatures beside coarse fn/fn[] tags. All
@@ -5027,7 +5012,7 @@ function ret_diags(stmts: ast.Stmt[], s: Scope, ret_ty: typeinfo.Type, unions: U
         out = util.append_diags(out, ret_diags(w.body, cur, ret_ty, unions));
       },
       ast.StmtFor(fr) => {
-        out = util.append_diags(out, ret_diags(fr.body, cur, ret_ty, unions));
+        out = util.append_diags(out, ret_diags(fr.body, for_body_scope(fr, cur), ret_ty, unions));
       },
       ast.StmtMatch(m) => {
         for arm in m.arms {
@@ -5081,7 +5066,7 @@ function void_ret_diags(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]): util.D
         out = util.append_diags(out, void_ret_diags(w.body, cur, unions));
       },
       ast.StmtFor(fr) => {
-        out = util.append_diags(out, void_ret_diags(fr.body, cur, unions));
+        out = util.append_diags(out, void_ret_diags(fr.body, for_body_scope(fr, cur), unions));
       },
       ast.StmtMatch(m) => {
         for arm in m.arms {
@@ -5465,7 +5450,7 @@ function slc_walk(stmts: ast.Stmt[], s: Scope, params: string[], localarr: strin
         owns = owns || ww.owns;
       },
       ast.StmtFor(fr) => {
-        var wf: SlcWalk = slc_walk(fr.body, cur, params, localarr, tainted, sums, vix, ret_is_view);
+        var wf: SlcWalk = slc_walk(fr.body, for_body_scope(fr, cur), params, localarr, tainted, sums, vix, ret_is_view);
         out = util.append_diags(out, wf.diags);
         viewed = merge_view_names(viewed, wf.viewed);
         owns = owns || wf.owns;
@@ -6015,7 +6000,7 @@ function mc_walk_body(stmts: ast.Stmt[], s: Scope, structs: parser.StructDecl[],
         out = util.append_diags(out, mc_walk_body(w.body, cur, structs, enums));
       },
       ast.StmtFor(fr) => {
-        out = util.append_diags(out, mc_walk_body(fr.body, cur, structs, enums));
+        out = util.append_diags(out, mc_walk_body(fr.body, for_body_scope(fr, cur), structs, enums));
       },
       ast.StmtMatch(m) => {
         for arm in m.arms {
@@ -6070,7 +6055,7 @@ function lret_expr(e: ast.Expr, cur: Scope, unions: UnionSig[], self_name: strin
     ast.ExprLambda(lm) => {
       var pts: typeinfo.Type[] = [];
       for param in lm.params {
-        pts = pts.append(cur.resolve_type(param.type_name));
+        pts = pts.append(cur.resolve_param(param));
       }
       var rt: typeinfo.Type = cur.resolve_type(lm.ret_type);
       var lsc: Scope = cur;
@@ -6107,7 +6092,7 @@ function lret_expr(e: ast.Expr, cur: Scope, unions: UnionSig[], self_name: strin
         ast.ExprLambda(lm) => {
           var lsc: Scope = cur;
           for param in lm.params {
-            lsc = lsc.bind(param.name, cur.resolve_type(param.type_name));
+            lsc = lsc.bind(param.name, cur.resolve_param(param));
           }
           out = util.append_diags(out, lret_stmts(lm.body, lsc, unions));
         },
@@ -6184,7 +6169,7 @@ function lret_stmts(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]): util.Diag[
       },
       ast.StmtFor(fr) => {
         out = util.append_diags(out, lret_expr(fr.iter, cur, unions, ""));
-        out = util.append_diags(out, lret_stmts(fr.body, cur, unions));
+        out = util.append_diags(out, lret_stmts(fr.body, for_body_scope(fr, cur), unions));
       },
       ast.StmtMatch(m) => {
         out = util.append_diags(out, lret_expr(m.scrutinee, cur, unions, ""));
@@ -6479,7 +6464,7 @@ function mx_expr(e: ast.Expr, s: Scope, unions: UnionSig[], enums: parser.EnumDe
     ast.ExprLambda(lm) => {
       var lsc: Scope = s;
       for param in lm.params {
-        lsc = lsc.bind(param.name, s.resolve_type(param.type_name));
+        lsc = lsc.bind(param.name, s.resolve_param(param));
       }
       out = util.append_diags(out, mx_stmts(lm.body, lsc, unions, enums));
     },
@@ -6564,7 +6549,7 @@ function mx_stmts(stmts: ast.Stmt[], s: Scope, unions: UnionSig[], enums: parser
       },
       ast.StmtFor(fr) => {
         out = util.append_diags(out, mx_expr(fr.iter, cur, unions, enums));
-        out = util.append_diags(out, mx_stmts(fr.body, cur, unions, enums));
+        out = util.append_diags(out, mx_stmts(fr.body, for_body_scope(fr, cur), unions, enums));
       },
       ast.StmtMatch(m) => {
         out = util.append_diags(out, mx_expr(m.scrutinee, cur, unions, enums));
@@ -9253,7 +9238,7 @@ function call_diags_lambda(lm: ast.ExprLambda, s: Scope, out: util.Diag[]): util
   // isn't mis-flagged as E001.
   var lsc: Scope = s;
   for param in lm.params {
-    lsc = lsc.bind(param.name, s.resolve_type(param.type_name));
+    lsc = lsc.bind(param.name, s.resolve_param(param));
   }
   // A return inside the lambda returns from the LAMBDA — thread
   // its declared return type (or unknown when undeclared) so the
@@ -9443,7 +9428,7 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
           ast.ExprLambda(lm) => {
             var fpts: typeinfo.Type[] = [];
             for param in lm.params {
-              fpts = fpts.append(cur.resolve_type(param.type_name));
+              fpts = fpts.append(cur.resolve_param(param));
             }
             vsc = cur.bind(v.name, t_func(fpts, cur.resolve_type(lm.ret_type)));
             cur = vsc;
@@ -9492,9 +9477,7 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
       },
       ast.StmtFor(fr) => {
         out = util.append_diags(out, call_diags(fr.iter, cur));
-        // Bind the loop variable(s) so a read of one inside the body
-        // isn't mis-flagged as E001.
-        out = util.append_diags(out, stmts_call_diags(fr.body, bind_names(cur, fr.var_name)));
+        out = util.append_diags(out, stmts_call_diags(fr.body, for_body_scope(fr, cur)));
       },
       ast.StmtMatch(m) => {
         out = util.append_diags(out, call_diags(m.scrutinee, cur));
@@ -9821,7 +9804,7 @@ function vref_stmts(stmts: ast.Stmt[], s: Scope, ambig: string[]): util.Diag[] {
       },
       ast.StmtFor(fr) => {
         out = util.append_diags(out, vref_expr(fr.iter, cur, ambig));
-        out = util.append_diags(out, vref_stmts(fr.body, cur, ambig));
+        out = util.append_diags(out, vref_stmts(fr.body, for_body_scope(fr, cur), ambig));
       },
       ast.StmtMatch(m) => {
         out = util.append_diags(out, vref_expr(m.scrutinee, cur, ambig));
@@ -9869,7 +9852,7 @@ function assign_stmt_own_lambdas(st: ast.Stmt, cur: Scope, unions: UnionSig[]): 
       ast.ExprLambda(lm) => {
         var lsc: Scope = cur;
         for param in lm.params {
-          lsc = lsc.bind(param.name, cur.resolve_type(param.type_name));
+          lsc = lsc.bind(param.name, cur.resolve_param(param));
         }
         if (lm.ret_type.len() > 0) {
           lsc = lsc.with_ret_type(cur.resolve_type(lm.ret_type));
@@ -9973,9 +9956,7 @@ function stmts_assign_diags(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]): ut
         out = util.append_diags(out, stmts_assign_diags(w.body, cur, unions));
       },
       ast.StmtFor(fr) => {
-        // Bind the loop variable(s) so an assignment to one inside
-        // the body isn't mis-flagged as E001 (same as the read walk).
-        out = util.append_diags(out, stmts_assign_diags(fr.body, bind_names(cur, fr.var_name), unions));
+        out = util.append_diags(out, stmts_assign_diags(fr.body, for_body_scope(fr, cur), unions));
       },
       ast.StmtMatch(m) => {
         for elem in m.arms {
@@ -12328,7 +12309,7 @@ function e053_stmts(stmts: ast.Stmt[], fx: E053Ctx, s: Scope): util.Diag[] {
         out = util.append_diags(out, e053_stmts(w.body, fx, cur));
       },
       ast.StmtFor(fr) => {
-        out = util.append_diags(out, e053_stmts(fr.body, fx, cur));
+        out = util.append_diags(out, e053_stmts(fr.body, fx, for_body_scope(fr, cur)));
       },
       ast.StmtMatch(m) => {
         for arm in m.arms {
@@ -12682,7 +12663,7 @@ function e065_stmts(stmts: ast.Stmt[], fname: string, params: string[], str_ret_
         owns = owns || ww.owns;
       },
       ast.StmtFor(fr) => {
-        var wf: E065Walk = e065_stmts(fr.body, fname, params, str_ret_names, sbacked, sums, vix, cur, ret_is_view);
+        var wf: E065Walk = e065_stmts(fr.body, fname, params, str_ret_names, sbacked, sums, vix, for_body_scope(fr, cur), ret_is_view);
         out = util.append_diags(out, wf.diags);
         viewed = merge_view_names(viewed, wf.viewed);
         owns = owns || wf.owns;
@@ -12860,7 +12841,7 @@ function e032_stmts(stmts: ast.Stmt[], lastfn: string[], s: Scope): util.Diag[] 
         out = util.append_diags(out, e032_stmts(w.body, lastfn, cur));
       },
       ast.StmtFor(fr) => {
-        out = util.append_diags(out, e032_stmts(fr.body, lastfn, cur));
+        out = util.append_diags(out, e032_stmts(fr.body, lastfn, for_body_scope(fr, cur)));
       },
       ast.StmtMatch(m) => {
         for arm in m.arms {
@@ -14892,6 +14873,12 @@ function main(): i32 {
 // must carry Type directly rather than depend on this incomplete projection.
 function type_to_irtag(t: typeinfo.Type): string {
   match (t) {
+    typeinfo.TypeArray(a) => {
+      var elem = type_to_irtag(a.elem);
+      if (elem.len() == 0) { return ""; }
+      return elem + "[]";
+    },
+    typeinfo.TypeFunc(_) => { return "fn"; },
     typeinfo.TypeFloat(f) => {
       return float_label(f);
     },
@@ -15047,30 +15034,6 @@ function build_module_tables(mod: parser.Module): ModuleTables {
   return ModuleTables { structs: struct_table(structs), unions: union_table(unions), sigs: sig_table(sigs), methods: methods, imports: import_paths_of(mod) };
 }
 
-// annotate_advance threads the block scope from one statement to the next,
-// reproducing exactly the scope check_stmt returns: only a StmtVar changes it
-// (binding its name to the declared type, or the inferred init type when
-// unannotated); every other statement's bindings are block-local and do not
-// escape, so the scope passes through unchanged. This is the cheap half of
-// check_stmt (no diagnostics), so annotation does not re-run the full checker.
-function annotate_advance(st: ast.Stmt, s: Scope): Scope {
-  match (st) {
-    ast.StmtVar(v) => {
-      if (v.type_name.len() > 0) {
-        return s.bind(v.name, var_declared_type(v, s));
-      }
-      return s.bind(v.name, check_expr(v.init, s));
-    },
-    ast.StmtDefer(d) => {
-      return annotate_advance(d.action, s);
-    },
-    _ => {
-      return s;
-    }
-  }
-  return s;
-}
-
 // settle_int_tree records a contextual integer type on the compile-only AST.
 // Number nodes have no type tag, so their suffix carries the settled width.
 // Formatting uses the original parser tree, never this annotated copy.
@@ -15151,11 +15114,7 @@ function annotate_expr(e: ast.Expr, s: Scope): ast.Expr {
       return ast.ExprStructLit { type_name: sli.type_name, field_names: sli.field_names, field_values: nfv, has_base: sli.has_base, base: nbase, line: sli.line, col: sli.col };
     },
     ast.ExprLambda(lm) => {
-      var ls: Scope = s;
-      for param in lm.params {
-        ls = ls.bind(param.name, s.resolve_type(param.type_name));
-      }
-      return ast.ExprLambda { ...lm, body: annotate_block(lm.body, ls) };
+      return annotate_lambda_expr(lm, s, "");
     },
     _ => {
       return e;
@@ -15164,42 +15123,85 @@ function annotate_expr(e: ast.Expr, s: Scope): ast.Expr {
   return e;
 }
 
+// Capture contracts are resolved where the lambda is defined, including
+// unknown-typed locals that still shadow globals. A recursive local binds itself.
+function annotate_lambda_expr(lm: ast.ExprLambda, s: Scope, self_name: string): ast.Expr {
+  var captures: ast.TypedBinding[] = [];
+  var seen: string[] = [];
+  for name in astwalk.collect_lambda_idents(lm, []) {
+    if (name != self_name && s.is_bound(name) && !util.has_str(seen, name)) {
+      captures = captures.append(ast.TypedBinding { name: name, ty: s.lookup(name) });
+      seen = seen.append(name);
+    }
+  }
+  var pts: typeinfo.Type[] = [];
+  for param in lm.params {
+    pts = pts.append(s.resolve_param(param));
+  }
+  var rt: typeinfo.Type = s.resolve_type(lm.ret_type);
+  var ls: Scope = Scope { ...s, loop_depth: 0, ret_type: rt };
+  if (self_name.len() > 0) { ls = ls.bind(self_name, t_func(pts, rt)); }
+  var i: i32 = 0;
+  while (i < lm.params.len()) {
+    ls = ls.bind(lm.params[i].name, pts[i]);
+    i = i + 1;
+  }
+  return ast.ExprLambda { ...lm, body: annotate_block(lm.body, ls), captures: captures, captures_known: true };
+}
+
 // annotate_block rebuilds a statement list, threading scope statement-to-statement
-// via annotate_advance. A nested control-flow body is rebuilt in the scope that
+// via bind_stmt. A nested control-flow body is rebuilt in the scope that
 // body actually sees: a for-loop's body binds the loop variable and a match arm's
-// body binds its variant payloads (annotate_for_scope / annotate_arm_scope), so a
+// body binds its variant payloads (for_body_scope / annotate_arm_scope), so a
 // call whose type depends on one is annotated rather than falling back to the
 // structural walk.
 function annotate_block(body: ast.Stmt[], s: Scope): ast.Stmt[] {
   var out: ast.Stmt[] = [];
   var cur: Scope = s;
   for stmt in body {
-    var next: Scope = annotate_advance(stmt, cur);
+    var next: Scope = bind_stmt(stmt, cur);
     out = out.append(annotate_stmt(stmt, cur, next));
     cur = next;
   }
   return out;
 }
 
-// annotate_for_scope returns the scope a for-loop BODY sees — `s` plus the loop
-// variable — reproducing check_stmt's StmtFor binding: a range form (`for i in
-// a..b`, the synthetic `__range` call) binds i32; an array iter binds the element
-// type. A non-array iter leaves the variable unbound, so a call over it annotates
-// "" and takes the structural fallback exactly as before.
-function annotate_for_scope(fr: ast.StmtFor, s: Scope): Scope {
+struct ForBinding { scope: Scope, valid: boolean }
+
+// Checking, diagnostics and annotation share the iterator's binding types.
+function for_binding(fr: ast.StmtFor, s: Scope): ForBinding {
+  var body = s.enter_loop();
   if (for_iter_is_range(fr.iter)) {
-    return s.bind(fr.var_name, t_i32());
+    return ForBinding { scope: bind_for_element(body, fr.var_name, t_i32()), valid: !name_has_comma(fr.var_name) };
   }
   var it: typeinfo.Type = check_expr(fr.iter, s);
   match (it) {
+    typeinfo.TypeString(_) => {
+      return ForBinding { scope: bind_for_element(body, fr.var_name, t_u8()), valid: !name_has_comma(fr.var_name) };
+    },
     typeinfo.TypeArray(ta) => {
-      return s.bind(fr.var_name, ta.elem);
+      return ForBinding { scope: bind_for_element(body, fr.var_name, ta.elem), valid: true };
+    },
+    typeinfo.TypeMap(tm) => {
+      var names = split_pattern_names(fr.var_name);
+      return ForBinding { scope: bind_tuple_destr_names(body, names, t_tuple([tm.key, tm.value])), valid: names.len() == 2 };
     },
     _ => {
-      return s;
+      // An invalid iterator still introduces names for diagnostic recovery.
+      return ForBinding { scope: bind_for_element(body, fr.var_name, t_unknown("invalid iterator")), valid: false };
     }
   }
-  return s;
+  return ForBinding { scope: bind_for_element(body, fr.var_name, t_unknown("invalid iterator")), valid: false };
+}
+
+function bind_for_element(s: Scope, name: string, ty: typeinfo.Type): Scope {
+  if (name_has_comma(name)) { return bind_tuple_destr_names(s, split_pattern_names(name), ty); }
+  if (name == "_") { return s; }
+  return s.bind(name, ty);
+}
+
+function for_body_scope(fr: ast.StmtFor, s: Scope): Scope {
+  return for_binding(fr, s).scope;
 }
 
 // annotate_variant_struct resolves a match pattern's variant name to the name its
@@ -15251,12 +15253,15 @@ function annotate_stmt(st: ast.Stmt, s: Scope, after: Scope): ast.Stmt {
   match (st) {
     ast.StmtVar(v) => {
       // Reuse the type resolved for the binding; the initializer sees s.
+      var init = v.init;
+      if let ast.ExprLambda(lm) = v.init { init = annotate_lambda_expr(lm, s, v.name); }
+      else { init = annotate_expr(v.init, s); }
       var callable: ast.ParamDecl = decltypes.fn_param_from_type(v.name, after.lookup(v.name));
       if (callable.type_name == "fn") {
-        return ast.StmtVar { ...v, type_name: "fn", init: annotate_expr(v.init, s),
+        return ast.StmtVar { ...v, type_name: "fn", init: init,
           fn_ret: callable.fn_ret, fn_param_types: callable.fn_param_types };
       }
-      return ast.StmtVar { name: v.name, type_name: v.type_name, init: annotate_expr(v.init, s), line: v.line, col: v.col, is_str: v.is_str, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types };
+      return ast.StmtVar { ...v, init: init };
     },
     ast.StmtReturn(r) => {
       return ast.StmtReturn { value: annotate_expr(r.value, s), line: r.line, col: r.col };
@@ -15286,7 +15291,7 @@ function annotate_stmt(st: ast.Stmt, s: Scope, after: Scope): ast.Stmt {
       return ast.StmtMatch { ...m, scrutinee: annotate_expr(m.scrutinee, s), arms: narms };
     },
     ast.StmtFor(fr) => {
-      return ast.StmtFor { var_name: fr.var_name, iter: annotate_expr(fr.iter, s), body: annotate_block(fr.body, annotate_for_scope(fr, s)), label: fr.label, line: fr.line };
+      return ast.StmtFor { var_name: fr.var_name, iter: annotate_expr(fr.iter, s), body: annotate_block(fr.body, for_body_scope(fr, s)), label: fr.label, line: fr.line };
     },
     ast.StmtDefer(d) => {
       return ast.StmtDefer { action: annotate_stmt(d.action, s, after), on_error: d.on_error, line: d.line };
@@ -15314,14 +15319,66 @@ pub function annotate_module(mod: parser.Module): parser.Module {
   // The same value-local re-declaration check_module types against, so the
   // module handed to lowering carries the arms' type rather than the parser's
   // syntactic guess (#8657).
-  var rmod: parser.Module = retype_value_blocks(mod);
-  var mt: ModuleTables = build_module_tables(rmod);
+  return annotate_module_in(mod, build_module_tables(mod));
+}
+
+function annotate_module_in(mod: parser.Module, mt: ModuleTables): parser.Module {
+  var rmod: parser.Module = retype_value_blocks_in(mod, mt);
   var nfuncs: parser.FuncDecl[] = [];
   for func in rmod.funcs {
     nfuncs = nfuncs.append(annotate_func(func, mt));
   }
   var ntop: ast.Stmt[] = annotate_block(rmod.top_stmts, new_scope_full(mt.sigs, mt.structs, mt.unions, mt.methods, mt.imports));
   return parser.Module { funcs: nfuncs, structs: rmod.structs, aliases: rmod.aliases, imports: rmod.imports, top_stmts: ntop, enums: rmod.enums, resources: rmod.resources, exports: rmod.exports, impls: rmod.impls, trait_reqs: rmod.trait_reqs, trait_decls: rmod.trait_decls };
+}
+
+function unchecked_capture(e: ast.Expr, found: boolean): boolean {
+  if let ast.ExprLambda(lm) = e { return found || !lm.captures_known; }
+  return found;
+}
+
+// Raw IR drivers enter the same checked-capture boundary as the CLI. Already
+// checked syntax keeps its contracts without repeating frontend annotation.
+pub function ensure_capture_types(mod: parser.Module): parser.Module {
+  if (has_unchecked_captures(mod)) { return annotate_module(mod); }
+  return mod;
+}
+
+function has_unchecked_captures(mod: parser.Module): boolean {
+  var unchecked: boolean = false;
+  for fd in mod.funcs {
+    for st in fd.body { unchecked = astwalk.fold_stmt(st, unchecked, unchecked_capture); }
+  }
+  for st in mod.top_stmts { unchecked = astwalk.fold_stmt(st, unchecked, unchecked_capture); }
+  return unchecked;
+}
+
+// Separate emission does not make imported nominal types or call signatures
+// opaque. Build the shared declaration context once, retaining each part's
+// own functions, top-level statements and emission ownership.
+pub function ensure_capture_types_parts(mods: parser.Module[]): parser.Module[] {
+  var needed: boolean = false;
+  for mod in mods { if (has_unchecked_captures(mod)) { needed = true; } }
+  if (!needed) { return mods; }
+  var funcs: parser.FuncDecl[] = [];
+  var structs: parser.StructDecl[] = [];
+  var aliases: parser.TypeAlias[] = [];
+  var enums: parser.EnumDecl[] = [];
+  for mod in mods {
+    for fd in mod.funcs { funcs = funcs.append(fd); }
+    for sd in mod.structs { structs = structs.append(sd); }
+    for ad in mod.aliases { aliases = aliases.append(ad); }
+    for ed in mod.enums { enums = enums.append(ed); }
+  }
+  var view = parser.Module { ...mods[0], funcs: funcs, structs: structs, aliases: aliases, enums: enums };
+  var mt = build_module_tables(view);
+  var out: parser.Module[] = [];
+  for mod in mods {
+    if (has_unchecked_captures(mod)) {
+      out = out.append(annotate_module_in(mod, ModuleTables { ...mt, imports: import_paths_of(mod) }));
+    } else { out = out.append(mod); }
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -15392,7 +15449,7 @@ function vb_assigned_types(stmts: ast.Stmt[], name: string, s: Scope, acc: typei
         out = vb_assigned_types(w.body, name, cur, out);
       },
       ast.StmtFor(fr) => {
-        out = vb_assigned_types(fr.body, name, annotate_for_scope(fr, cur), out);
+        out = vb_assigned_types(fr.body, name, for_body_scope(fr, cur), out);
       },
       ast.StmtMatch(m) => {
         for arm in m.arms {
@@ -15573,7 +15630,7 @@ function vb_stmt(st: ast.Stmt, s: Scope): ast.Stmt {
       return ast.StmtWhile { ...w, cond: vb_expr(w.cond, s), body: vb_stmts(w.body, s) };
     },
     ast.StmtFor(fr) => {
-      return ast.StmtFor { ...fr, iter: vb_expr(fr.iter, s), body: vb_stmts(fr.body, annotate_for_scope(fr, s)) };
+      return ast.StmtFor { ...fr, iter: vb_expr(fr.iter, s), body: vb_stmts(fr.body, for_body_scope(fr, s)) };
     },
     ast.StmtMatch(m) => {
       var narms: ast.MatchArm[] = [];
@@ -15642,9 +15699,15 @@ function vb_holds_local(stmts: ast.Stmt[]): boolean {
 // syntax alone with the type its arms assign. Runs ahead of the checker's own
 // diagnostics and of lowering, so both see one declaration.
 pub function retype_value_blocks(mod: parser.Module): parser.Module {
-  // One pre-scan pass, kept as a per-function flag: the scan runs on every
-  // compile, and the module tables below are worth building only for a module
-  // that has a value local somewhere.
+  if (vb_holds_local(mod.top_stmts)) { return retype_value_blocks_in(mod, build_module_tables(mod)); }
+  for fd in mod.funcs {
+    if (vb_holds_local(fd.body)) { return retype_value_blocks_in(mod, build_module_tables(mod)); }
+  }
+  return mod;
+}
+
+function retype_value_blocks_in(mod: parser.Module, mt: ModuleTables): parser.Module {
+  // Keep untouched functions and avoid rebuilding bodies without value locals.
   var top_hit: boolean = vb_holds_local(mod.top_stmts);
   var hits: boolean[] = [];
   var any: boolean = top_hit;
@@ -15658,7 +15721,6 @@ pub function retype_value_blocks(mod: parser.Module): parser.Module {
   if (!any) {
     return mod;
   }
-  var mt: ModuleTables = build_module_tables(mod);
   var nfuncs: parser.FuncDecl[] = [];
   var i: i32 = 0;
   while (i < mod.funcs.len()) {

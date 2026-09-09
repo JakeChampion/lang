@@ -1,3 +1,5 @@
+import "./typeinfo";
+
 // ast — the syntax tree the whole compiler shares.
 //
 // These types used to live in parser.fern. They are here so that a pass
@@ -93,7 +95,8 @@ pub struct ExprArray { elements: Expr[], elem_ty: string, line: i32, col: i32 }
 // its annotations. Zero on a lambda the parser synthesised — the value-block
 // and match-/if-expression IIFEs — which is what keeps a reporter off their
 // guessed `ret_type`: those carry no annotation the programmer wrote.
-pub struct ExprLambda { params: ParamDecl[], ret_type: string, body: Stmt[], use_infer: boolean, origin: string, line: i32, col: i32 }
+pub struct TypedBinding { name: string, ty: typeinfo.Type }
+pub struct ExprLambda { params: ParamDecl[], ret_type: string, body: Stmt[], use_infer: boolean, origin: string, line: i32, col: i32, captures: TypedBinding[], captures_known: boolean }
 
 // ExprTuple holds a parenthesised comma-separated list:
 // `(a, b, c)`. Distinct from arrays because tuple shape is
@@ -387,7 +390,7 @@ pub struct PatWildcard { tag: i32 }
 
 pub type Pattern = PatVariant | PatWildcard;
 
-// guard is an optional `if <expr>` between the pattern and `=>`; has_guard
+// guard is an optional `when <expr>` between the pattern and `=>`; has_guard
 // distinguishes a real guard from the placeholder. When present the arm matches
 // only if the guard evaluates true (E027 checks it is boolean).
 // alt_cont marks an arm that continues the previous one's `|` alternative
@@ -469,7 +472,7 @@ pub type Stmt = StmtVar | StmtReturn | StmtExpr | StmtIf | StmtWhile
 // spellings are kept RAW rather than mapped to widths here, because deciding
 // whether `T` is a type variable or a struct named T needs the enclosing
 // function's type_params, which parse_param does not have.
-pub struct ParamDecl { name: string, type_name: string, own: boolean, has_default: boolean, default_value: Expr, ret_arr: boolean, fn_ret: string, fn_param_dyn: string, fn_param_types: string }
+pub struct ParamDecl { name: string, type_name: string, is_str: boolean, own: boolean, has_default: boolean, default_value: Expr, ret_arr: boolean, fn_ret: string, fn_param_dyn: string, fn_param_types: string }
 
 // LitArm is one arm of a match on a non-enum (i32 / string) scrutinee:
 // a literal to compare against (`lit`, dispatched via `==`) or the `_`

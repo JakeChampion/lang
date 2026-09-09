@@ -828,6 +828,10 @@ func (o *Op) CaptureSlots() []int32 {
 // right type (i32 / f32).
 type Func struct {
 	Name string
+	// NullIdentity certifies that this one-argument function returns zero
+	// without observable effects when passed zero. Set by helper generation,
+	// never inferred from a function's name or from its ownership effects.
+	NullIdentity bool
 	// PtrW is the pointer width, in bytes, of the lowering that
 	// produced this function, and TwoWordStr whether that lowering
 	// used the two-word string ABI.
