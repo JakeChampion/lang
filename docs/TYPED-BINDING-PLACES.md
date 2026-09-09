@@ -93,6 +93,96 @@ writes. Absent definitions dominate their uses from entry; no fake payload or
 runtime place/environment is introduced. The resulting state values go through
 the existing independent conditional-unit proof before guarded RC lowering.
 
+## Guarded replacement
+
+Internal `binding_replace_guarded` publishes an ordinary replacement payload
+using a separate immutable snapshot witness. It addresses an explicit BindingID
+and disappears during promotion. It introduces neither source syntax nor an
+AST ownership heuristic. This is the writeback prerequisite for guarded cleanup
+expansion; conditional source cleanup execution remains gated.
+
+The verifier independently requires:
+
+- A direct `binding_snapshot` of the same BindingID, with the same complete
+  availability/payload types. An arbitrary Present value, state phi, or snapshot
+  of a sibling binding cannot authorize the write.
+- The existing exact-state presence proof: the true successor of a StateHas
+  test dominates the write, and no alternate predecessor can bypass that guard.
+- No end of the binding lifetime between the snapshot definition and the write.
+  Snapshot presence alone is insufficient: an old value can remain alive after
+  its place has ceased to exist.
+
+SSA dominance supplies the definition/use ordering. A backward CFG walk checks
+lifetime edges and stops at the exact snapshot definition. When a loop executes
+that definition again, the new observation is valid for the new iteration.
+The same witness can authorize a later replacement after another replacement:
+it proves continued initialization, not equality with the old value. Ended
+lifetimes cannot be resurrected this way.
+
+Writes are grouped by snapshot with flat linked indices. A completed query's
+closed predecessor set can serve later writes using that same immutable witness.
+Every newly inspected edge checks its lifetime end before reusing a predecessor
+entry. Groups and writes retain first-seen order for deterministic diagnostics;
+the cache is cleared between witnesses and never survives this verification call.
+For S witnesses, W writes and graph size G, this lifetime phase is O(S G + W)
+with O(G + S + W) storage, rather than a separate full walk per write.
+
+Ordinary BindingRead/BindingReplace must-initialization checks are unchanged.
+Guarded replacement is not an initializer and does not establish a must fact on
+absent incoming paths. Both ordinary and optional reaching-definition promotion
+use its replacement operand, not its snapshot operand. Later snapshots see the
+new value; saved old snapshots keep their own identities and ownership lifetimes.
+Ordinary-read payload aliases are rewritten through the existing promotion path.
+
+An independent forward interpreter agrees on 1,514 lifetime queries (922 accepted,
+592 rejected), including multiple writes sharing a witness, diamonds, loops,
+nested loops and irreducible flow. It uses no backward-walk or lifetime-mask
+helper and has no execution-length cap. Full verifier tests separately exercise
+scope identity, exact/false/mismatched guards, source diagnostics, phase/type
+errors, expired places and fresh loop observations.
+
+Native Linux ARM64 raw/optimized tests cover borrowed/counted inputs, absent
+paths, sequential replacement, saved old arrays and allocator pressure. A second
+matrix executes 0, 1, 2, 3 and 64 replacement iterations, returning either the
+latest array or the original immutable snapshot. Allocation/free balance and
+result reference counts are checked by the existing runtime harness.
+
+### Guarded replacement costs, 2026-09-09
+
+Five 100 ms samples on native Darwin ARM64, Apple M3 Pro, measure complete
+verification of prebuilt graphs; only the number of guarded writes changes.
+A one-write smoke run preceded scaling. Observed ranges are not confidence
+intervals or a general speedup claim.
+
+| Writes sharing a snapshot | ns/op | bytes/op | allocs/op |
+| --- | --- | --- | --- |
+| 1 | 3,002-3,376 | 1,200 | 42 |
+| 64 | 97,359-103,050 | 57,320-57,321 | 149 |
+| 1,024 | 17,459,521-19,110,056 | 950,974-951,338 | 269-270 |
+
+Grouping removes repeated lifetime walks. A CPU profile of the deep 1,024-write
+case attributes most sampled time to the existing depth-based dominance queries
+in SSA verification and availability guard verification, not the grouped lifetime
+walk. That remaining scaling cost is explicit; this slice does not change the
+general dominance implementation or claim large-function verification is optimal.
+
+Ordinary source-to-physical-lowering cleanup samples retain the parent's
+1,242 / 3,799 / 20,042-20,043 allocations at 1 / 8 / 64 actions. Candidate times
+are 72,261-103,192 / 304,401-332,068 / 2,504,805-2,669,488 ns/op, versus parent
+77,562-102,036 / 302,444-322,140 / 2,451,022-2,589,683. These noisy ranges do not
+establish a speedup. The guarded-write analysis only runs when the new operation
+is present.
+
+Identical `go build -trimpath -buildvcs=false` builds compare parent `a59990d31`
+(28,937,042 bytes) with the candidate (28,970,658 bytes): +33,616 file bytes and
++4,624 Mach-O instruction bytes. The rest of the file-size difference includes
+data/debug information and segment alignment. The added code verifies the new
+guard/lifetime contract and promotes its payload: the lifetime verifier accounts
+for 2,848 symbol bytes, the operation/type verifier adds 416 bytes and the two
+promotion paths add 208 bytes. Guard dispatch, callers and opcode handling also
+contribute. No baseline is changed and
+the internal operation introduces no runtime environment or runtime instruction.
+
 ## Cleanup integration
 
 Private actions contain their own typed binding operations. Demand-discovered

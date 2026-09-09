@@ -40,8 +40,8 @@ func promoteBindings(f *Func) error {
 	var snapshots map[BindingID]bool
 	for _, block := range f.graph.Blocks {
 		for _, op := range block.Ops {
-			if op.Kind == ssa.OpBindingInit || op.Kind == ssa.OpBindingReplace {
-				last[key{block, BindingID(op.Imm)}] = op.Args[0]
+			if op.Kind == ssa.OpBindingInit || op.Kind == ssa.OpBindingReplace || op.Kind == ssa.OpBindingReplaceGuarded {
+				last[key{block, BindingID(op.Imm)}] = bindingWriteValue(op)
 			} else if op.Kind == ssa.OpBindingRead {
 				reads = append(reads, bindingRead{op, block, last[key{block, BindingID(op.Imm)}]})
 			} else if op.Kind == ssa.OpBindingSnapshot {

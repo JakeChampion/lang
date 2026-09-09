@@ -30,7 +30,7 @@ func promoteBindingSnapshots(f *Func, needed map[BindingID]bool, ends map[*ssa.B
 				continue
 			}
 			switch op.Kind {
-			case ssa.OpBindingInit, ssa.OpBindingReplace:
+			case ssa.OpBindingInit, ssa.OpBindingReplace, ssa.OpBindingReplaceGuarded:
 				last[key{block, id}] = definition{block, op}
 			case ssa.OpBindingSnapshot:
 				snapshots = append(snapshots, snapshot{block, op, last[key{block, id}]})
@@ -59,7 +59,7 @@ func promoteBindingSnapshots(f *Func, needed map[BindingID]bool, ends map[*ssa.B
 		if op := wrapped[def.op]; op != nil {
 			return op.Result
 		}
-		value := f.addState(def.block, ssa.OpStatePresent, f.bindings[def.op.Imm-1].typ, f.effectPositions[def.op], def.op.Args[0])
+		value := f.addState(def.block, ssa.OpStatePresent, f.bindings[def.op.Imm-1].typ, f.effectPositions[def.op], bindingWriteValue(def.op))
 		wrapped[def.op] = def.block.Ops[len(def.block.Ops)-1]
 		return value
 	}

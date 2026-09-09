@@ -65,7 +65,7 @@ func verifyStateGuards(f *Func) error {
 	var getBlocks []*ssa.Block
 	for _, block := range f.graph.Blocks {
 		for _, op := range block.Ops {
-			if op.Kind == ssa.OpStateGet {
+			if op.Kind == ssa.OpStateGet || op.Kind == ssa.OpBindingReplaceGuarded {
 				gets = append(gets, op)
 				getBlocks = append(getBlocks, block)
 			}
@@ -104,7 +104,10 @@ func verifyStateGuards(f *Func) error {
 			proven = proven || dom.Dominates(guard, getBlocks[i])
 		}
 		if !proven {
-			pos := f.values[get.Result.ID].pos
+			pos := f.effectPositions[get]
+			if get.Result.IsValid() {
+				pos = f.values[get.Result.ID].pos
+			}
 			return fmt.Errorf("semir %s at %d:%d: availability payload lacks a presence proof for %s", f.graph.Name, pos.Line, pos.Col, state)
 		}
 	}
