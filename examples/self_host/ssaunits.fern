@@ -1,0 +1,417 @@
+// Abstract counted-unit planning and independent replay before physical RC.
+import "./ssa";
+import "./ssasem";
+import "./ssadeps";
+import "./typeinfo";
+
+pub function value_mode(): i32 { return 1; }
+pub function borrow_mode(): i32 { return 2; }
+pub function counted_mode(): i32 { return 3; }
+pub function retain_unit(): i32 { return 1; }
+pub function move_unit(): i32 { return 2; }
+pub function entry_point(): i32 { return 0 - 1; }
+pub function return_point(): i32 { return 0 - 2; }
+pub function edge_point(): i32 { return 0 - 3; }
+
+pub struct Supply { value: i32, slot: i32, mode: i32 }
+// point is an instruction position, or entry/return/edge. target is a block
+// id only for edges and -1 otherwise. All acquisitions execute before moves,
+// the semantic operation then creates its result, and drops execute last.
+pub struct Step { block: i32, point: i32, target: i32, supplies: Supply[], drops: i32[] }
+pub struct Plan { ok: boolean, why: string, steps: Step[] }
+struct Ledger { ok: boolean, why: string, bits: boolean[] }
+
+function bad(why: string): Plan { return Plan { ok: false, why: why, steps: [] }; }
+function rejected(why: string): Ledger { return Ledger { ok: false, why: why, bits: [] }; }
+function step(block: i32, point: i32, target: i32): Step { return Step { block: block, point: point, target: target, supplies: [], drops: [] }; }
+function bits(n: i32): boolean[] {
+    var out: boolean[] = [];
+    var i: i32 = 0;
+    while (i < n) { out = out.append(false); i = i + 1; }
+    return out;
+}
+function block_index(f: ssa.SFunc, id: i32): i32 {
+    var i: i32 = 0;
+    while (i < f.blocks.len()) { if (f.blocks[i].id == id) { return i; } i = i + 1; }
+    return 0 - 1;
+}
+function successors(b: ssa.SBlock): i32[] {
+    if (b.term.kind_tag == 2) { return [b.term.target]; }
+    if (b.term.kind_tag == 3) {
+        if (b.term.t == b.term.f) { return [b.term.t]; }
+        return [b.term.t, b.term.f];
+    }
+    return [];
+}
+// Admit only representations whose counted layout is defined by this pass.
+function reference(t: typeinfo.Type): boolean {
+    if let typeinfo.TypeString(_) = t { return true; }
+    if let typeinfo.TypeArray(_) = t { return true; }
+    if let typeinfo.TypeTuple(_) = t { return true; }
+    return false;
+}
+function supported_tuple(tup: typeinfo.TypeTuple): boolean {
+    for t in tup.elements { if (!supported(t)) { return false; } }
+    return true;
+}
+function supported(t: typeinfo.Type): boolean {
+    if let typeinfo.TypeI32(_) = t { return true; }
+    if let typeinfo.TypeBool(_) = t { return true; }
+    if let typeinfo.TypeFloat(_) = t { return true; }
+    if let typeinfo.TypeVoid(_) = t { return true; }
+    if let typeinfo.TypeString(s) = t { return s.tag == 0; }
+    if let typeinfo.TypeArray(a) = t { return supported(a.elem); }
+    if let typeinfo.TypeTuple(tup) = t { return supported_tuple(tup); }
+    return false;
+}
+function contract_error(f: ssasem.Func, modes: i32[]): string {
+    if (modes.len() != f.params.len()) { return "parameter mode dimensions"; }
+    for t in f.values { if (!supported(t)) { return "unsupported counted-unit type"; } }
+    if (!supported(f.result)) { return "unsupported counted-unit result"; }
+    var i: i32 = 0;
+    while (i < modes.len()) {
+        if (reference(f.params[i])) {
+            if (modes[i] != borrow_mode() && modes[i] != counted_mode()) { return "reference parameter mode"; }
+        } else if (modes[i] != value_mode()) { return "scalar parameter mode"; }
+        i = i + 1;
+    }
+    return "";
+}
+function owned_values(f: ssasem.Func, modes: i32[]): boolean[] {
+    var out: boolean[] = bits(f.graph.nvals);
+    for b in f.graph.blocks {
+        for ins in b.insts {
+            var owns: boolean = false;
+            if (ins.kind_tag == 6) { owns = modes[ins.imm] == counted_mode(); }
+            if (ins.kind_tag == 8 || ins.kind_tag == ssasem.array_new() || ins.kind_tag == ssasem.tuple_new()) { owns = reference(f.values[ins.result]); }
+            out = out.with(ins.result, owns);
+        }
+    }
+    return out;
+}
+function row(all: boolean[], bi: i32, n: i32): boolean[] {
+    var out: boolean[] = [];
+    var i: i32 = 0;
+    while (i < n) { out = out.append(all[bi * n + i]); i = i + 1; }
+    return out;
+}
+function add_use(own live: boolean[], value: i32, deps: i32[][]): boolean[] {
+    if (value < 0) { return live; }
+    live = live.with(value, true);
+    for dep in deps[value] { live = live.with(dep, true); }
+    return live;
+}
+function operation_supplies(f: ssasem.Func, ins: ssa.SInst): Supply[] {
+    var out: Supply[] = [];
+    if (ins.kind_tag == ssasem.array_new() || ins.kind_tag == ssasem.tuple_new()) {
+        var i: i32 = 0;
+        while (i < ins.args.len()) {
+            if (reference(f.values[ins.args[i]])) { out = out.append(Supply { value: ins.args[i], slot: i, mode: 0 }); }
+            i = i + 1;
+        }
+    }
+    return out;
+}
+function return_supplies(f: ssasem.Func, b: ssa.SBlock): Supply[] {
+    if (b.term.value >= 0 && reference(f.values[b.term.value])) { return [Supply { value: b.term.value, slot: 0, mode: 0 }]; }
+    return [];
+}
+function edge_supplies(f: ssasem.Func, b: ssa.SBlock, target: i32, owned: boolean[]): Supply[] {
+    var succ: ssa.SBlock = f.graph.blocks[block_index(f.graph, target)];
+    var pi: i32 = 0;
+    while (succ.preds[pi] != b.id) { pi = pi + 1; }
+    var out: Supply[] = [];
+    var i: i32 = 0;
+    for ins in succ.insts {
+        if (ins.kind_tag == 8 && owned[ins.result]) { out = out.append(Supply { value: ins.args[pi], slot: i, mode: 0 }); }
+        i = i + 1;
+    }
+    return out;
+}
+
+// Last occurrence may move one dead unit; every other occurrence retains.
+function choose(s: Step, supplies: Supply[], dead: boolean[], owned: boolean[]): Step {
+    var moved: boolean[] = bits(owned.len());
+    var selected: Supply[] = supplies;
+    var i: i32 = selected.len() - 1;
+    while (i >= 0) {
+        var item: Supply = selected[i];
+        var mode: i32 = retain_unit();
+        if (owned[item.value] && dead[item.value] && !moved[item.value]) {
+            mode = move_unit();
+            moved = moved.with(item.value, true);
+        }
+        selected = selected.with(i, Supply { ...item, mode: mode });
+        i = i - 1;
+    }
+    var drops: i32[] = [];
+    i = 0;
+    while (i < dead.len()) {
+        if (dead[i] && owned[i] && !moved[i]) { drops = drops.append(i); }
+        i = i + 1;
+    }
+    return Step { ...s, supplies: selected, drops: drops };
+}
+
+pub function plan(f: ssasem.Func, modes: i32[]): Plan {
+    var analysis: ssasem.Analysis = ssasem.analyze(f);
+    if (!analysis.ok) { return bad(analysis.why); }
+    var why: string = contract_error(f, modes);
+    if (why != "") { return bad(why); }
+    var owned: boolean[] = owned_values(f, modes);
+    var reachable: boolean[] = ssadeps.reachable_blocks(f.graph);
+    var steps: Step[] = [];
+    var bi: i32 = 0;
+    while (bi < f.graph.blocks.len()) {
+        var b: ssa.SBlock = f.graph.blocks[bi];
+        if (reachable[bi]) {
+            var live: boolean[] = row(analysis.flow.live_out, bi, f.graph.nvals);
+            if (b.term.kind_tag == 1) { live = add_use(live, b.term.value, analysis.dependencies); }
+            if (b.term.kind_tag == 3) { live = add_use(live, b.term.cond, analysis.dependencies); }
+            var pos: i32 = b.insts.len() - 1;
+            while (pos >= 0) {
+                var ins: ssa.SInst = b.insts[pos];
+                if (ins.kind_tag != 6 && ins.kind_tag != 8) {
+                    var dead: boolean[] = bits(f.graph.nvals);
+                    if (owned[ins.result] && !live[ins.result]) { dead = dead.with(ins.result, true); }
+                    live = live.with(ins.result, false);
+                    for arg in ins.args {
+                        var uses: boolean[] = add_use(bits(f.graph.nvals), arg, analysis.dependencies);
+                        var vi: i32 = 0;
+                        while (vi < f.graph.nvals) {
+                            if (uses[vi] && !live[vi]) { dead = dead.with(vi, true); }
+                            if (uses[vi]) { live = live.with(vi, true); }
+                            vi = vi + 1;
+                        }
+                    }
+                    steps = steps.append(choose(step(b.id, pos, 0 - 1), operation_supplies(f, ins), dead, owned));
+                }
+                pos = pos - 1;
+            }
+            var entry_dead: boolean[] = bits(f.graph.nvals);
+            for ins in b.insts {
+                if ((ins.kind_tag == 6 || ins.kind_tag == 8) && owned[ins.result] && !live[ins.result]) { entry_dead = entry_dead.with(ins.result, true); }
+            }
+            steps = steps.append(choose(step(b.id, entry_point(), 0 - 1), [], entry_dead, owned));
+            if (b.term.kind_tag == 1) {
+                var dead: boolean[] = add_use(bits(f.graph.nvals), b.term.value, analysis.dependencies);
+                steps = steps.append(choose(step(b.id, return_point(), 0 - 1), return_supplies(f, b), dead, owned));
+            }
+            for target in successors(b) {
+                var si: i32 = block_index(f.graph, target);
+                var dead: boolean[] = bits(f.graph.nvals);
+                var vi: i32 = 0;
+                while (vi < f.graph.nvals) {
+                    if (analysis.flow.live_out[bi * f.graph.nvals + vi] && !analysis.flow.live_in[si * f.graph.nvals + vi]) { dead = dead.with(vi, true); }
+                    vi = vi + 1;
+                }
+                steps = steps.append(choose(step(b.id, edge_point(), target), edge_supplies(f, b, target, owned), dead, owned));
+            }
+        }
+        bi = bi + 1;
+    }
+    var out: Plan = Plan { ok: true, why: "", steps: steps };
+    why = verify(f, modes, out);
+    if (why != "") { return bad(why); }
+    return out;
+}
+
+function read_error(state: boolean[], value: i32, owned: boolean[], deps: i32[][]): string {
+    if (value < 0) { return ""; }
+    if (owned[value] && !state[value]) { return "read without counted unit"; }
+    for dep in deps[value] {
+        if (owned[dep] && !state[dep]) { return "borrow outlives container unit"; }
+    }
+    return "";
+}
+function invariant(f: ssasem.Func, bi: i32, owned: boolean[], live_in: boolean[]): boolean[] {
+    var state: boolean[] = bits(f.graph.nvals);
+    var i: i32 = 0;
+    while (i < f.graph.nvals) {
+        if (owned[i] && live_in[bi * f.graph.nvals + i]) { state = state.with(i, true); }
+        i = i + 1;
+    }
+    for ins in f.graph.blocks[bi].insts {
+        if ((ins.kind_tag == 8 || ins.kind_tag == 6) && owned[ins.result]) { state = state.with(ins.result, true); }
+    }
+    return state;
+}
+function same_bits(a: boolean[], b: boolean[]): boolean {
+    var i: i32 = 0;
+    while (i < a.len()) { if (a[i] != b[i]) { return false; } i = i + 1; }
+    return true;
+}
+function find_step(p: Plan, block: i32, point: i32, target: i32): i32 {
+    var found: i32 = 0 - 1;
+    var i: i32 = 0;
+    while (i < p.steps.len()) {
+        var s: Step = p.steps[i];
+        if (s.block == block && s.point == point && s.target == target) {
+            if (found >= 0) { return 0 - 1; }
+            found = i;
+        }
+        i = i + 1;
+    }
+    return found;
+}
+
+// Acquisitions observe the original state: a later move in the same step
+// must not invalidate an earlier retain of the same value.
+function supply_error(state: boolean[], supplies: Supply[], wanted: Supply[], owned: boolean[], deps: i32[][]): string {
+    if (supplies.len() != wanted.len()) { return "unit supply arity"; }
+    var i: i32 = 0;
+    while (i < wanted.len()) {
+        var got: Supply = supplies[i];
+        if (got.value != wanted[i].value || got.slot != wanted[i].slot) { return "unit supply identity or slot"; }
+        var why: string = read_error(state, got.value, owned, deps);
+        if (why != "") { return why; }
+        if (got.mode != retain_unit() && got.mode != move_unit()) { return "invalid unit supply mode"; }
+        i = i + 1;
+    }
+    return "";
+}
+
+function move_supplies(state: boolean[], supplies: Supply[], owned: boolean[]): Ledger {
+    var next: boolean[] = state;
+    for got in supplies {
+        if (got.mode == move_unit()) {
+            if (!owned[got.value] || !next[got.value]) { return rejected("move without counted unit"); }
+            next = next.with(got.value, false);
+        }
+    }
+    return Ledger { ok: true, why: "", bits: next };
+}
+
+function drop_units(state: boolean[], drops: i32[], owned: boolean[]): Ledger {
+    var next: boolean[] = state;
+    for value in drops {
+        if (value < 0 || value >= owned.len()) { return rejected("drop value out of range"); }
+        if (!owned[value] || !next[value]) { return rejected("drop without counted unit"); }
+        next = next.with(value, false);
+    }
+    return Ledger { ok: true, why: "", bits: next };
+}
+
+// Replay checks supplies against freshly derived effect obligations. It does
+// not reuse the planner's last-use sets or chosen move/drop decisions.
+function replay(state: boolean[], s: Step, wanted: Supply[], result: i32, owned: boolean[], deps: i32[][]): Ledger {
+    var why: string = supply_error(state, s.supplies, wanted, owned, deps);
+    if (why != "") { return rejected(why); }
+    var moved: Ledger = move_supplies(state, s.supplies, owned);
+    if (!moved.ok) { return moved; }
+    var next: boolean[] = moved.bits;
+    if (result >= 0 && owned[result]) {
+        if (next[result]) { return rejected("result unit already present"); }
+        next = next.with(result, true);
+    }
+    return drop_units(next, s.drops, owned);
+}
+
+struct ReplayProgress { why: string, state: boolean[], count: i32 }
+function progress_error(why: string): ReplayProgress { return ReplayProgress { why: why, state: [], count: 0 }; }
+
+function verify_operations(f: ssasem.Func, b: ssa.SBlock, p: Plan, state: boolean[], owned: boolean[], deps: i32[][]): ReplayProgress {
+    var next: boolean[] = state;
+    var count: i32 = 0;
+    var pos: i32 = 0;
+    for ins in b.insts {
+        if (ins.kind_tag != 6 && ins.kind_tag != 8) {
+            for arg in ins.args {
+                var why: string = read_error(next, arg, owned, deps);
+                if (why != "") { return progress_error(why); }
+            }
+            var at: i32 = find_step(p, b.id, pos, 0 - 1);
+            if (at < 0) { return progress_error("missing or duplicate operation step"); }
+            var done: Ledger = replay(next, p.steps[at], operation_supplies(f, ins), ins.result, owned, deps);
+            if (!done.ok) { return progress_error(done.why); }
+            next = done.bits;
+            count = count + 1;
+        }
+        pos = pos + 1;
+    }
+    return ReplayProgress { why: "", state: next, count: count };
+}
+
+function verify_return(f: ssasem.Func, b: ssa.SBlock, p: Plan, state: boolean[], owned: boolean[], deps: i32[][]): string {
+    var why: string = read_error(state, b.term.value, owned, deps);
+    if (why != "") { return why; }
+    var at: i32 = find_step(p, b.id, return_point(), 0 - 1);
+    if (at < 0) { return "missing or duplicate return step"; }
+    var done: Ledger = replay(state, p.steps[at], return_supplies(f, b), 0 - 1, owned, deps);
+    if (!done.ok) { return done.why; }
+    for bit in done.bits { if (bit) { return "counted unit leaks at return"; } }
+    return "";
+}
+
+function enter_phis(b: ssa.SBlock, state: boolean[], owned: boolean[]): Ledger {
+    var next: boolean[] = state;
+    for ins in b.insts {
+        if (ins.kind_tag == 8 && owned[ins.result]) {
+            if (next[ins.result]) { return rejected("phi unit already present"); }
+            next = next.with(ins.result, true);
+        }
+    }
+    return Ledger { ok: true, why: "", bits: next };
+}
+
+function verify_edge(f: ssasem.Func, b: ssa.SBlock, target: i32, p: Plan, state: boolean[], owned: boolean[], analysis: ssasem.Analysis): string {
+    var at: i32 = find_step(p, b.id, edge_point(), target);
+    if (at < 0) { return "missing or duplicate edge step"; }
+    var done: Ledger = replay(state, p.steps[at], edge_supplies(f, b, target, owned), 0 - 1, owned, analysis.dependencies);
+    if (!done.ok) { return done.why; }
+    var si: i32 = block_index(f.graph, target);
+    var entered: Ledger = enter_phis(f.graph.blocks[si], done.bits, owned);
+    if (!entered.ok) { return entered.why; }
+    if (!same_bits(entered.bits, invariant(f, si, owned, analysis.flow.live_in))) { return "edge unit invariant mismatch"; }
+    return "";
+}
+
+function verify_block(f: ssasem.Func, bi: i32, p: Plan, owned: boolean[], analysis: ssasem.Analysis): ReplayProgress {
+    var b: ssa.SBlock = f.graph.blocks[bi];
+    var state: boolean[] = invariant(f, bi, owned, analysis.flow.live_in);
+    var at: i32 = find_step(p, b.id, entry_point(), 0 - 1);
+    if (at < 0) { return progress_error("missing or duplicate entry step"); }
+    var done: Ledger = replay(state, p.steps[at], [], 0 - 1, owned, analysis.dependencies);
+    if (!done.ok) { return progress_error(done.why); }
+    var operations: ReplayProgress = verify_operations(f, b, p, done.bits, owned, analysis.dependencies);
+    if (operations.why != "") { return operations; }
+    state = operations.state;
+    var count: i32 = 1 + operations.count;
+    if (b.term.kind_tag == 1) {
+        var why: string = verify_return(f, b, p, state, owned, analysis.dependencies);
+        if (why != "") { return progress_error(why); }
+        count = count + 1;
+    }
+    if (b.term.kind_tag == 3) {
+        var why: string = read_error(state, b.term.cond, owned, analysis.dependencies);
+        if (why != "") { return progress_error(why); }
+    }
+    for target in successors(b) {
+        var why: string = verify_edge(f, b, target, p, state, owned, analysis);
+        if (why != "") { return progress_error(why); }
+        count = count + 1;
+    }
+    return ReplayProgress { why: "", state: state, count: count };
+}
+
+pub function verify(f: ssasem.Func, modes: i32[], p: Plan): string {
+    if (!p.ok || p.why != "") { return "missing successful unit plan"; }
+    var analysis: ssasem.Analysis = ssasem.analyze(f);
+    if (!analysis.ok) { return analysis.why; }
+    var why: string = contract_error(f, modes);
+    if (why != "") { return why; }
+    var owned: boolean[] = owned_values(f, modes);
+    var reachable: boolean[] = ssadeps.reachable_blocks(f.graph);
+    var count: i32 = 0;
+    var bi: i32 = 0;
+    while (bi < f.graph.blocks.len()) {
+        if (reachable[bi]) {
+            var done: ReplayProgress = verify_block(f, bi, p, owned, analysis);
+            if (done.why != "") { return done.why; }
+            count = count + done.count;
+        }
+        bi = bi + 1;
+    }
+    if (count != p.steps.len()) { return "extra unit plan steps"; }
+    return "";
+}

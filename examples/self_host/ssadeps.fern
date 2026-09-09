@@ -31,7 +31,8 @@ function contains(values: i32[], value: i32): boolean {
     return false;
 }
 
-function reachable_blocks(f: ssa.SFunc): boolean[] {
+// Requires a structurally verified graph with an existing entry block.
+pub function reachable_blocks(f: ssa.SFunc): boolean[] {
     var reachable: boolean[] = flags(f.blocks.len(), false);
     reachable = reachable.with(block_index(f, f.entry), true);
     var changed: boolean = true;
