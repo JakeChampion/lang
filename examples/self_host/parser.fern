@@ -7767,14 +7767,6 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
     return (FuncDecl { name: name, receiver_name: receiver_name, receiver_type: receiver_type, type_params: bounded_tps, params: params, ret_type: ret_type, body: fbody, line: fline, col: fcol, import_iface: "", import_wit: "", type_param_count: all_tp_count, bound_traits: bound_names, fip: false, fbip: false, fip_allowance: 0, ret_str: fn_ret_str, ret_slice: fn_ret_slice, async: false, is_const: false, is_pub: false, ret_fn_ret: fn_ret_fn_ret, ret_fn_param_types: fn_ret_fn_ptys }, p);
 }
 
-// parse_module is the entry point that handles both function
-// decls and "loose" top-level stmts. Loose stmts are appended to
-// `top_stmts` in source order so a runner can use them as a
-// fallback entry point when there's no `main` function.
-// parse_struct_field consumes `name: type_name` and returns the
-// declared field. Same type-name model as parse_param: a bare
-// ident, no array / generic syntax for this cut.
-
 function parse_struct_field(p: Par): (StructFieldDecl, Par) {
     var name: string = p.peek_ident();
     if (name.len() == 0) {
@@ -7785,13 +7777,11 @@ function parse_struct_field(p: Par): (StructFieldDecl, Par) {
         return (StructFieldDecl { name: name, type_name: "", fn_ret: "", fn_param_types: "" }, p);
     }
     p = p.advance();
-    // The PARAMETER spellings of a fn-typed field — or, for `hs: ((i32) => i32)[]`,
-    // of its ELEMENT — peeked before parse_type_name coarsens the whole type to
-    // "fn" / "fn[]". The same non-consuming lookahead parse_param uses, kept on
-    // the same rule: both peeks answer "" for a non-fn type as well as for a
-    // zero-parameter one, so the resulting tag is what makes one meaningful.
-    // Without them a funcref tag cannot name a field call's signature and
-    // irlower has to fall back to the arity-keyed form (#5986).
+    return parse_field_type(p, name);
+}
+
+// Struct and enum payload fields preserve the same callable declaration data.
+function parse_field_type(p: Par, name: string): (StructFieldDecl, Par) {
     var sftr_fn_ptys: string = peek_fn_param_types(p);
     var sftr_arr_ptys: string = peek_fn_array_param_types(p);
     var (sftr_name, sftr_ret_arr, sftr_fn_ret, sftr_p) = parse_type_name(p);
@@ -7968,11 +7958,11 @@ function parse_enum_decl(p: Par): (string, StructDecl[], string[], i32[], Par) {
                 if (rfname.len() == 0) { break; }
                 p = p.advance();
                 if (p.peek_punct() == ":") { p = p.advance(); }
-                var (rf_name, rf_ret_arr, rf_fn_ret, rf_p) = parse_type_name(p);
-                p = rf_p;
                 var mark: string = "__ev";
                 if (rnum > 0) { mark = "__ev" + dl_itoa(rnum); }
-                fields = fields.append(StructFieldDecl { name: mark, type_name: rf_name, fn_ret: rf_fn_ret, fn_param_types: "" });
+                var (rf, rf_p) = parse_field_type(p, mark);
+                p = rf_p;
+                fields = fields.append(rf);
                 vfnames = vfnames.append(rfname);
                 rnum = rnum + 1;
                 if (p.peek_punct() == ",") { p = p.advance(); continue; }
@@ -7981,19 +7971,19 @@ function parse_enum_decl(p: Par): (string, StructDecl[], string[], i32[], Par) {
             if (p.peek_punct() == "}") { p = p.advance(); }
         } else if (p.peek_punct() == "(") {
             p = p.advance();
-            var (tr_name, tr_ret_arr, tr_fn_ret, tr_p) = parse_type_name(p);
+            var (tr, tr_p) = parse_field_type(p, "__ev");
             p = tr_p;
             // A multi-payload variant `V(A, B, …)` keeps every payload as a field
             // `__ev`, `__ev1`, `__ev2`, … (the first stays `__ev` so the existing
             // "is this a payloaded variant?" checks that look for `__ev` still
             // fire). Codegen indexes them by position (struct_field_off).
-            fields = fields.append(StructFieldDecl { name: "__ev", type_name: tr_name, fn_ret: tr_fn_ret, fn_param_types: "" });
+            fields = fields.append(tr);
             var pnum: i32 = 1;
             while (p.peek_punct() == ",") {
                 p = p.advance();
-                var (tr2_name, tr2_ret_arr, tr2_fn_ret, tr2_p) = parse_type_name(p);
+                var (tr2, tr2_p) = parse_field_type(p, "__ev" + dl_itoa(pnum));
                 p = tr2_p;
-                fields = fields.append(StructFieldDecl { name: "__ev" + dl_itoa(pnum), type_name: tr2_name, fn_ret: tr2_fn_ret, fn_param_types: "" });
+                fields = fields.append(tr2);
                 pnum = pnum + 1;
             }
             if (p.peek_punct() == ")") { p = p.advance(); }

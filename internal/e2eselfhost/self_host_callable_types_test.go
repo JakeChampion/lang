@@ -67,6 +67,16 @@ func TestSelfHostCallableTypeDiagnostics(t *testing.T) {
 		{"returned-wrong", `function inc(n: i32): i32 { return n + 1; } function make(): (i32) => i32 { return inc; } function main(): i32 { return make()("bad"); }`, true},
 		{"returned-arity", `function inc(n: i32): i32 { return n + 1; } function make(): (i32) => i32 { return inc; } function main(): i32 { return make()(); }`, true},
 		{"returned-array-wrong", `function inc(n: i32): i32 { return n + 1; } function make(): ((i32) => i32)[] { return [inc]; } function main(): i32 { return make()[0](); }`, true},
+		{"enum-first-valid", `enum Task { Run((i32) => i32) } function apply(t: Task): i32 { match (t) { Run(f) => { return f(7); } } } function main(): i32 { return 0; }`, false},
+		{"enum-first-wrong", `enum Task { Run((i32) => i32) } function apply(t: Task): i32 { match (t) { Run(f) => { return f("bad"); } } } function main(): i32 { return 0; }`, true},
+		{"enum-second-valid", `enum Task { Run(i32, (i32) => i32) } function apply(t: Task): i32 { match (t) { Run(n, f) => { return f(n); } } } function main(): i32 { return 0; }`, false},
+		{"enum-second-arity", `enum Task { Run(i32, (i32) => i32) } function apply(t: Task): i32 { match (t) { Run(n, f) => { return f(); } } } function main(): i32 { return 0; }`, true},
+		{"enum-named-valid", `enum Task { Run { n: i32, f: (i32) => i32 } } function apply(t: Task): i32 { match (t) { Run { f, n } => { return f(n); } } } function main(): i32 { return 0; }`, false},
+		{"enum-named-wrong", `enum Task { Run { f: (i32) => i32 } } function apply(t: Task): i32 { match (t) { Run { f } => { return f("bad"); } } } function main(): i32 { return 0; }`, true},
+		{"enum-array-valid", `enum Task { Run(((i32) => i32)[]) } function apply(t: Task): i32 { match (t) { Run(fs) => { return fs[0](7); } } } function main(): i32 { return 0; }`, false},
+		{"enum-array-arity", `enum Task { Run(((i32) => i32)[]) } function apply(t: Task): i32 { match (t) { Run(fs) => { return fs[0](); } } } function main(): i32 { return 0; }`, true},
+		{"enum-zero-valid", `enum Task { Run(() => i32) } function apply(t: Task): i32 { match (t) { Run(f) => { return f(); } } } function main(): i32 { return 0; }`, false},
+		{"enum-zero-extra", `enum Task { Run(() => i32) } function apply(t: Task): i32 { match (t) { Run(f) => { return f(7); } } } function main(): i32 { return 0; }`, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			want := goCheckerCodes(t, dir, tc.src)
