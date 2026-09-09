@@ -6,11 +6,19 @@ Explicit parameter modes distinguish scalar values, borrowed references and
 counted references. A counted reference may share its allocation; no decision
 in this pass establishes uniqueness or authorizes destructive reuse.
 
-The supported unit types are owned strings, arrays and tuples, recursively,
-plus scalar values. Views and opaque nominal, callable, map and dynamic-object
+The supported unit types are owned strings, arrays, tuples and schema-resolved
+records, recursively, plus scalar values. Views and opaque nominal, callable,
+map and dynamic-object
 contracts are rejected. The semantic verifier still checks exact types,
 definitions, dominance and projections first. Calls and cleanup effects are
 outside the current semantic vocabulary and cannot silently receive a plan.
+
+Every reference-bearing record field is a stored occurrence, just like an
+array or tuple element. A fresh record owns its own unit even when it was
+constructed from a borrowed record's projections. The parameter's unit mode
+does not determine the constructed value's ownership. Record field types are
+checked across the finite schema table, so recursive nominal definitions do
+not cause recursive compiler expansion. Physical lowering still refuses them.
 
 ## Proposed plan
 
@@ -77,7 +85,7 @@ Full current-head CI and review remain required before merging.
 ## Remaining production work
 
 No production lowering consumer is switched by this prerequisite. Verified
-nominal/variant schemas and guard proofs, call/cleanup contracts, physical RC
+variant schemas and guard proofs, call/cleanup contracts, expanded physical RC
 lowering and production typed-value import remain required before deleting
 the replaced AST ownership analyses. A caller's signature alone cannot certify
 the counted-return ABI of its callees; future call support needs closed-module

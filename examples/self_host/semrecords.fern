@@ -1,0 +1,84 @@
+// Resolved nominal instances, separate from syntax and physical layouts.
+import "./typeinfo";
+import "./semtypes";
+
+pub struct Field { name: string, ty: typeinfo.Type }
+pub struct Record { ty: typeinfo.Type, fields: Field[] }
+
+pub function find(records: Record[], ty: typeinfo.Type): i32 {
+    var i: i32 = 0;
+    while (i < records.len()) {
+        if (semtypes.equal(records[i].ty, ty)) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+function resolved_all(types: typeinfo.Type[], records: Record[]): boolean {
+    for ty in types { if (!resolved(ty, records)) { return false; } }
+    return true;
+}
+
+// Follow structural types, not nominal field edges. The table verifies every
+// field separately, so recursive declarations never recurse during validation.
+function resolved(ty: typeinfo.Type, records: Record[]): boolean {
+    if let typeinfo.TypeStruct(s) = ty { return find(records, ty) >= 0 && resolved_all(s.args, records); }
+    if let typeinfo.TypeArray(a) = ty { return resolved(a.elem, records); }
+    if let typeinfo.TypeTuple(t) = ty { return resolved_all(t.elements, records); }
+    if let typeinfo.TypeMap(m) = ty { return resolved(m.key, records) && resolved(m.value, records); }
+    if let typeinfo.TypeFunc(f) = ty { return resolved_all(f.param_types, records) && resolved(f.ret_type, records); }
+    if let typeinfo.TypeUnion(u) = ty { return resolved_all(u.args, records); }
+    return true;
+}
+
+function fields_error(fields: Field[], records: Record[]): string {
+    var i: i32 = 0;
+    while (i < fields.len()) {
+        var field: Field = fields[i];
+        if (field.name == "") { return "empty record field name"; }
+        if (!semtypes.concrete(field.ty, false)) { return "unresolved record field type"; }
+        if (!resolved(field.ty, records)) { return "missing nested record schema"; }
+        var j: i32 = 0;
+        while (j < i) {
+            if (fields[j].name == field.name) { return "duplicate record field name"; }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+function instance_error(a: Record, b: Record): string {
+    if (semtypes.equal(a.ty, b.ty)) { return "duplicate record schema"; }
+    if let typeinfo.TypeStruct(x) = a.ty {
+        if let typeinfo.TypeStruct(y) = b.ty {
+            if (x.name != y.name) { return ""; }
+            if (x.args.len() != y.args.len() || a.fields.len() != b.fields.len()) { return "inconsistent record instance schema"; }
+            var i: i32 = 0;
+            while (i < a.fields.len()) {
+                if (a.fields[i].name != b.fields[i].name) { return "inconsistent record instance schema"; }
+                i = i + 1;
+            }
+        }
+    }
+    return "";
+}
+
+pub function verify(records: Record[]): string {
+    var i: i32 = 0;
+    while (i < records.len()) {
+        var record: Record = records[i];
+        if (!semtypes.concrete(record.ty, false)) { return "unresolved record identity"; }
+        if let typeinfo.TypeStruct(_) = record.ty {} else { return "non-nominal record identity"; }
+        var j: i32 = 0;
+        while (j < i) {
+            var why: string = instance_error(record, records[j]);
+            if (why != "") { return why; }
+            j = j + 1;
+        }
+        var why: string = fields_error(record.fields, records);
+        if (why != "") { return why; }
+        i = i + 1;
+    }
+    return "";
+}

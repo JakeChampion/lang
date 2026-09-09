@@ -58,7 +58,7 @@ graph = ssa.SFunc { name: "loop", nparams: 2, nvals: 3, entry: 7, takes_env: fal
 type unitCase struct{ name, setup, check, mutate, want string }
 
 func unitCases() []unitCase {
-	return []unitCase{
+	base := []unitCase{
 		{"nested-projections", "", `
 var r = find(p, 7, ssaunits.return_point(), 0 - 1);
 if (!supply(r, 0, 5, 0, ssaunits.retain_unit()) || !drops(r, [0])) { return 11; }
@@ -105,18 +105,19 @@ if (!supply(find(p, 27, ssaunits.edge_point(), 17), 0, 2, 0, ssaunits.move_unit(
 		{"missing-entry", unitDuplicate, "", `var steps: ssaunits.Step[] = []; for s in p.steps { if (s.point != ssaunits.entry_point()) { steps = steps.append(s); } } p = ssaunits.Plan { ...p, steps: steps };`, "missing or duplicate entry step"},
 		{"invalid-drop-id", unitDuplicate, "", `var s = find(p, 7, 1, 0 - 1); p = replace(p, ssaunits.Step { ...s, drops: [99] });`, "drop value out of range"},
 	}
+	return append(base, unitRecordCases()...)
 }
 
 func unitSource(indices []int) (string, string) {
 	var source, main, want strings.Builder
-	source.WriteString("import \"./ssa\";\nimport \"./ssasem\";\nimport \"./semtypes\";\nimport \"./typeinfo\";\nimport \"./ssaunits\";\n")
+	source.WriteString("import \"./ssa\";\nimport \"./ssasem\";\nimport \"./semtypes\";\nimport \"./semrecords\";\nimport \"./typeinfo\";\nimport \"./ssaunits\";\n")
 	source.WriteString(semanticHelpers + unitHelpers)
 	main.WriteString("function main(): i32 {\n")
 	for _, i := range indices {
 		tc := unitCases()[i]
 		fmt.Fprintf(&source, "function unit_case_%d(): i32 {\n%s\nvar modes: i32[] = [3, 1];\n%s\n", i, semanticFixture, tc.setup)
 		source.WriteString(`
-var f = ssasem.Func { graph: graph, values: types, params: params, result: result };
+var f = ssasem.Func { graph: graph, values: types, params: params, result: result, records: records };
 var p = ssaunits.plan(f, modes);
 if (!p.ok) { print(p.why); return 1; }
 `)
@@ -133,7 +134,7 @@ for opaque in opaque_types {
     var g = ssa.SFunc { name: "opaque", nparams: 1, nvals: 1, entry: 7, takes_env: false, blocks: [
         ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0)], term: ret(0) }
     ] };
-    bad = ssaunits.plan(ssasem.Func { graph: g, values: [opaque], params: [opaque], result: opaque }, [3]);
+    bad = ssaunits.plan(ssasem.Func { graph: g, values: [opaque], params: [opaque], result: opaque, records: [] }, [3]);
     if (bad.ok || bad.steps.len() != 0 || bad.why != "unsupported counted-unit type") { return 34; }
 }
 `)

@@ -2,6 +2,7 @@
 import "./ssa";
 import "./ssasem";
 import "./ssadeps";
+import "./semrecords";
 import "./typeinfo";
 
 pub function value_mode(): i32 { return 1; }
@@ -48,26 +49,34 @@ function reference(t: typeinfo.Type): boolean {
     if let typeinfo.TypeString(_) = t { return true; }
     if let typeinfo.TypeArray(_) = t { return true; }
     if let typeinfo.TypeTuple(_) = t { return true; }
+    if let typeinfo.TypeStruct(_) = t { return true; }
     return false;
 }
-function supported_tuple(tup: typeinfo.TypeTuple): boolean {
-    for t in tup.elements { if (!supported(t)) { return false; } }
+function supported_tuple(tup: typeinfo.TypeTuple, records: semrecords.Record[]): boolean {
+    for t in tup.elements { if (!supported(t, records)) { return false; } }
     return true;
 }
-function supported(t: typeinfo.Type): boolean {
+function supported(t: typeinfo.Type, records: semrecords.Record[]): boolean {
     if let typeinfo.TypeI32(_) = t { return true; }
     if let typeinfo.TypeBool(_) = t { return true; }
     if let typeinfo.TypeFloat(_) = t { return true; }
     if let typeinfo.TypeVoid(_) = t { return true; }
     if let typeinfo.TypeString(s) = t { return s.tag == 0; }
-    if let typeinfo.TypeArray(a) = t { return supported(a.elem); }
-    if let typeinfo.TypeTuple(tup) = t { return supported_tuple(tup); }
+    if let typeinfo.TypeArray(a) = t { return supported(a.elem, records); }
+    if let typeinfo.TypeTuple(tup) = t { return supported_tuple(tup, records); }
+    if let typeinfo.TypeStruct(_) = t { return semrecords.find(records, t) >= 0; }
     return false;
 }
 function contract_error(f: ssasem.Func, modes: i32[]): string {
     if (modes.len() != f.params.len()) { return "parameter mode dimensions"; }
-    for t in f.values { if (!supported(t)) { return "unsupported counted-unit type"; } }
-    if (!supported(f.result)) { return "unsupported counted-unit result"; }
+    for t in f.values { if (!supported(t, f.records)) { return "unsupported counted-unit type"; } }
+    if (!supported(f.result, f.records)) { return "unsupported counted-unit result"; }
+    // Check the finite schema table, not recursive nominal field expansion.
+    for record in f.records {
+        for field in record.fields {
+            if (!supported(field.ty, f.records)) { return "unsupported counted record field"; }
+        }
+    }
     var i: i32 = 0;
     while (i < modes.len()) {
         if (reference(f.params[i])) {
@@ -83,7 +92,7 @@ function owned_values(f: ssasem.Func, modes: i32[]): boolean[] {
         for ins in b.insts {
             var owns: boolean = false;
             if (ins.kind_tag == 6) { owns = modes[ins.imm] == counted_mode(); }
-            if (ins.kind_tag == 8 || ins.kind_tag == ssasem.array_new() || ins.kind_tag == ssasem.tuple_new()) { owns = reference(f.values[ins.result]); }
+            if (ins.kind_tag == 8 || ins.kind_tag == ssasem.array_new() || ins.kind_tag == ssasem.tuple_new() || ins.kind_tag == ssasem.record_new()) { owns = reference(f.values[ins.result]); }
             out = out.with(ins.result, owns);
         }
     }
@@ -103,7 +112,7 @@ function add_use(own live: boolean[], value: i32, deps: i32[][]): boolean[] {
 }
 function operation_supplies(f: ssasem.Func, ins: ssa.SInst): Supply[] {
     var out: Supply[] = [];
-    if (ins.kind_tag == ssasem.array_new() || ins.kind_tag == ssasem.tuple_new()) {
+    if (ins.kind_tag == ssasem.array_new() || ins.kind_tag == ssasem.tuple_new() || ins.kind_tag == ssasem.record_new()) {
         var i: i32 = 0;
         while (i < ins.args.len()) {
             if (reference(f.values[ins.args[i]])) { out = out.append(Supply { value: ins.args[i], slot: i, mode: 0 }); }
