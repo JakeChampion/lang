@@ -11,6 +11,12 @@ import (
 // structural invariants. It does not certify RC balance or uniqueness: those
 // require the ownership/effect analysis that follows this representation.
 func Verify(f *Func) error {
+	return verifyWithDeadBindings(f, nil)
+}
+
+// Promotion requests unreachable blocks from the existing initialization walk.
+// This result is local to one verification, never cached across IR mutation.
+func verifyWithDeadBindings(f *Func, deadBlocks *map[*ssa.Block]bool) error {
 	if f == nil || f.graph == nil {
 		return fmt.Errorf("semir: nil function")
 	}
@@ -180,7 +186,7 @@ func Verify(f *Func) error {
 		return err
 	}
 	if f.unpromotedBindings {
-		if err := verifyBindingInitialization(f); err != nil {
+		if err := verifyBindingInitialization(f, deadBlocks); err != nil {
 			return err
 		}
 	}
@@ -190,6 +196,16 @@ func Verify(f *Func) error {
 func verifyOp(f *Func, op *ssa.Op) error {
 	if stateOp(op.Kind) {
 		return verifyStateOp(f, op)
+	}
+	if op.Kind == ssa.OpBindingSnapshot {
+		if !f.unpromotedBindings || op.Imm <= 0 || op.Imm > int64(len(f.bindings)) {
+			return fmt.Errorf("binding snapshot outside its phase or invalid identity")
+		}
+		want := valueType{source: f.bindings[op.Imm-1].typ, form: availabilityForm}
+		if !op.Result.IsValid() || len(op.Args) != 0 || op.Str != "" || op.F64 != 0 || !sameValueType(f.values[op.Result.ID].typ, want) {
+			return fmt.Errorf("invalid binding snapshot type or operands")
+		}
+		return nil
 	}
 	typ := f.values[op.Result.ID].typ
 	if op.Kind == ssa.OpPhi {

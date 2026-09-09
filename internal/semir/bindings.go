@@ -6,7 +6,15 @@ import (
 )
 
 func bindingOp(kind ssa.OpKind) bool {
-	return kind == ssa.OpBindingInit || kind == ssa.OpBindingRead || kind == ssa.OpBindingReplace
+	return kind == ssa.OpBindingInit || kind == ssa.OpBindingRead || kind == ssa.OpBindingReplace || kind == ssa.OpBindingSnapshot
+}
+
+// A snapshot observes availability, not an initialized payload. It remains an
+// immutable SSA identity even when the place is replaced or its lifetime ends.
+func (f *Func) snapshotBinding(block *ssa.Block, id BindingID, pos ast.Position) ssa.Value {
+	value := f.addState(block, ssa.OpBindingSnapshot, f.bindings[id-1].typ, pos)
+	block.Ops[len(block.Ops)-1].Imm = int64(id)
+	return value
 }
 
 func (f *Func) readBinding(block *ssa.Block, id BindingID, pos ast.Position) ssa.Value {

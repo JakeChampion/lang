@@ -47,7 +47,8 @@ Reaching-definition lookup stops at lifetime ends, rather than recovering a
 stale value from an earlier iteration or an exited scope.
 
 The pass removes all binding operations and their value/effect metadata, then
-verifies the resulting ordinary semantic SSA. Ownership, return provenance,
+verifies the resulting semantic SSA, including explicit availability values when
+requested by the internal snapshot operation. Ownership, return provenance,
 containment-aware liveness and RC-unit planning operate only after this phase
 transition. Ownership analysis explicitly rejects an unpromoted graph, even
 when its individual operations would otherwise be valid.
@@ -59,6 +60,38 @@ Module parameter identities are established with signatures before constructing
 any body, so a private action region can verify a forward call without waiting
 for the callee's source traversal. Whole-program verification still requires
 every body to be built and to agree with that contract.
+
+## Immutable availability snapshots
+
+Internal `binding_snapshot` observes one BindingID at its instruction position
+and produces `Absent | Present(T)`. Unlike an ordinary read, it can safely observe
+an uninitialized place. It does not expose a T payload on that path. Parameters,
+ordinary operations and returns still cannot accept an internal availability
+value accidentally, and the operation is confined to the unpromoted phase.
+
+Snapshot extraction requires the existing presence proof for that exact immutable
+SSA identity. A test of a different snapshot is not sufficient. Ordinary binding
+reads and replacements still require must-initialization, even in a branch that
+tests a snapshot; no initialization diagnostic is weakened. This is a semantic
+operation for later cleanup integration, not a new source feature.
+
+Promotion collects observed BindingIDs during its existing instruction scan.
+Only graphs containing snapshots run optional reaching-definition construction.
+Before initialization, or after a verified lifetime end, the reaching state is
+Absent. A demanded write becomes Present immediately after that write. A join
+uses state phis in actual predecessor order, with the result identity cached
+before traversing backedges. Ordinary source phis and instruction order remain
+intact. A saved snapshot keeps its old value after replacement or scope exit;
+a subsequent snapshot observes the new value or absence.
+
+The pass does not wrap every initializer and replacement. It materializes only
+definitions demanded by snapshots and shares a wrapper for repeated observations
+of the same definition. Construction detaches the original instruction slices
+before generating values, appends temporary phis without repeated prefix scans,
+then rebuilds each block once with phis first and wrappers at their defining
+writes. Absent definitions dominate their uses from entry; no fake payload or
+runtime place/environment is introduced. The resulting state values go through
+the existing independent conditional-unit proof before guarded RC lowering.
 
 ## Cleanup integration
 
@@ -84,9 +117,9 @@ into a zero pointer, an undefined array value or a fictitious reference-count
 unit. Conditional cleanup registration remains explicitly unsupported.
 
 The next phase must preserve correlation between active actions and initialized
-places through joins, iteration resets and replay. Promotion must either prove
-initialization dominates the read, preserve a typed optional state without an
-absent payload, or split control so payload uses occur only on initialized paths.
+places through joins, iteration resets and replay. The internal snapshot path
+now preserves optional state without an absent payload; cleanup expansion must
+connect that state to verified registration and replay before source activation.
 A standalone boolean flag or independent union of available bindings is not
 sufficient. Stack storage would require a separate verified lifetime contract;
 the current pipeline removes all places before physical RC lowering.
@@ -104,6 +137,73 @@ contract, including raw/optimized ARM64 execution, allocator balance and actual
 CLI return-snapshot pressure tests. No existing expectation or size baseline is
 changed. Compile-time and binary-size measurements accompany publication; this
 representation change is not by itself a runtime speedup claim.
+
+Snapshot validation additionally compares promoted presence alternatives with an
+independent exact `(block, initialized)` oracle over 168 diamond, loop,
+nested-loop and irreducible-cycle cases. The oracle has no iteration bound and
+does not use production reaching-definition or dominance helpers. Tests preserve
+the initialized payload identity, check 128 independent state phis, and verify
+that 64 writes with one final observation need only one Present wrapper.
+Malformed snapshot tests reject foreign identity, wrong phase/type/operands,
+unguarded or different-snapshot extraction, and ordinary reads/replacements that
+remain uninitialized. Native raw/optimized tests cover borrowed/consumed arrays,
+absence, loop-carried initialization and saved payloads across replacement and
+verified lifetime ends, with allocator pressure at 1 and 64 rounds.
+
+## Snapshot-promotion costs
+
+Review follow-up: rejecting snapshots *inside* unreachable blocks alone does not
+make predecessor recursion safe. A reachable read can have an incoming edge from
+an unreachable single-predecessor cycle. Both snapshot and ordinary promotion now
+prune dead CFG predecessors before following reaching definitions. The existing
+initialization verifier reports dead blocks from its RPO outputs when promotion
+requests them, without another reachability walk or allocation on all-reachable
+graphs. SSA's existing pruning preserves live phi slots; semantic metadata for
+removed operations is deleted, and unused optional iteration exits become nil.
+Tests cover 1-, 2- and 8-block dead cycles feeding live snapshots/reads, verified
+physical lowering, live phi-slot preservation and unused iteration exits. A
+snapshot located inside dead code still rejects before mutation. This fixes a
+verified-input recursion hazard; it does not relax initialization requirements.
+
+On the same Darwin ARM64 build configuration, this correction adds 144 compiler
+file bytes and 640 Mach-O instruction bytes relative to `517aa70fe`; the pruning
+adapter accounts for 432 symbol bytes. Five 100 ms ordinary cleanup samples retain
+1,242 / 3,799 / 20,042-20,043 allocations for 1 / 8 / 64 actions. Their time ranges
+are 70,571-75,969 / 301,810-321,194 / 2,467,101-3,156,869 ns/op, versus the control's
+70,764-72,843 / 303,995-422,966 / 2,442,929-2,618,486. These observations do not
+establish a speedup. No baseline is changed; dead-edge normalization adds no
+runtime code or allocation on all-reachable input graphs.
+
+Measured against `9a360bd34` using Go 1.26.0 on native Darwin ARM64 / Apple M3 Pro.
+Three 100 ms samples follow a one-write smoke run. The snapshot benchmark includes
+synthetic typed graph construction, promotion, verification, ownership planning
+and ARM64 SSA lowering; it excludes machine optimization and execution.
+
+| Writes, one final snapshot | ns/op range | Bytes/op range | Allocations/op |
+| --- | ---: | ---: | ---: |
+| 1 | 8,310-9,207 | 13,832 | 171 |
+| 64 | 18,674-18,910 | 34,845-34,846 | 316 |
+| 1,024 | 174,484-239,070 | 346,006-346,010 | 2,255 |
+
+Existing ordinary loop and cleanup-action pipelines retain their allocation
+counts and bytes within sampling variation. At 64 loops, parent and snapshot
+versions both use 26,191-26,192 allocations; bytes are 3,681,896-3,682,006 versus
+3,681,903-3,682,013. At 64 actions they use 20,042-20,043 versus 20,042 allocations,
+with 2,530,518-2,530,585 versus 2,530,538-2,530,553 bytes. The ordinary path does
+not allocate snapshot maps or perform a second graph scan.
+
+Parent versus snapshot median times for 1/8/64 loops are 70,417 / 458,370 /
+3,299,242 versus 69,927 / 432,997 / 3,122,824 ns/op. Action medians are
+70,719 / 303,577 / 2,579,715 versus 70,098 / 327,434 / 2,482,760 ns/op. These short
+samples vary in both directions and do not establish a general throughput win.
+
+Identical `go build -trimpath -buildvcs=false ./cmd/fern` builds grow from
+28,917,970 to 28,935,826 bytes (+17,856), including +7,152 instruction bytes.
+The new optional-promotion function and its closures account for 5,776 instruction
+bytes; the existing promotion entry grows by 160 and operation verification by
+368. Remaining growth includes opcode handling, type metadata and alignment.
+This cost implements optional reaching definitions and validation rather than a
+boxed runtime environment. No binary-size or performance baseline is changed.
 
 ## Initial cost measurements, 2026-09-08
 
