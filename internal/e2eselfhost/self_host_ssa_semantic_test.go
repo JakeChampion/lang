@@ -164,6 +164,12 @@ if (checked.dependencies[3].len() != 0 || checked.dependencies[4].len() != 1 || 
 if (checked.dependencies[6].len() != 0) { return 11; }
 `)
 		}
+		if tc.name == "record-scalar-field" {
+			source.WriteString(`
+if (!checked.ok) { print(checked.why); return 12; }
+if (checked.dependencies[4].len() != 0) { return 13; }
+`)
+		}
 		source.WriteString("print(checked.why); return 0; }\n")
 		fmt.Fprintf(&main, "if (semantic_case_%d() != 0) { return %d; }\n", i, i+1)
 		want.WriteString(tc.want + "\n")
