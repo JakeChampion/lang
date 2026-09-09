@@ -86,7 +86,7 @@ func narrowARM64Program(t *testing.T, typ ast.NumberType, max int64) *ARM64Progr
 		f.program = p
 		f.contract = funcContract{result: f.result, modes: append([]ParamMode(nil), f.modes...)}
 		for _, param := range f.graph.Params {
-			f.contract.params = append(f.contract.params, f.values[param.ID].typ)
+			f.contract.params = append(f.contract.params, f.values[param.ID].typ.source)
 		}
 	}
 	out, err := LowerARM64SSA(p)

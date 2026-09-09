@@ -84,7 +84,7 @@ func planFunctionUnits(f *Func) (*functionUnits, error) {
 		if b.Term.Kind == ssa.TermRet {
 			step := unitStep{}
 			value := b.Term.Value
-			if referenceBearing(f.values[value.ID].typ) {
+			if referenceBearing(f.values[value.ID].typ.source) {
 				step.supplies = []unitSupply{{value: value}}
 			}
 			last := make(map[int32]bool)

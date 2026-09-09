@@ -71,7 +71,7 @@ func (b *builder) pushScope() { b.scopes = append(b.scopes, make(map[string]Bind
 func (b *builder) popScope() { b.scopes = b.scopes[:len(b.scopes)-1] }
 
 func (b *builder) bind(name string, typ ast.Type, pos ast.Position, value ssa.Value) error {
-	if !ast.Equal(typ, b.fn.values[value.ID].typ) {
+	if !ast.Equal(typ, b.fn.values[value.ID].typ.source) {
 		return b.errorAt(pos, "binding type does not match its semantic value")
 	}
 	scope := b.scopes[len(b.scopes)-1]
@@ -206,7 +206,7 @@ func (b *builder) destructure(n *ast.Destructure) error {
 		return err
 	}
 	value := result.value
-	typ, ok := b.fn.values[value.ID].typ.(ast.TupleType)
+	typ, ok := b.fn.values[value.ID].typ.source.(ast.TupleType)
 	if !ok || len(typ.Elems) != len(n.Names) || (len(n.Nested) != 0 && len(n.Nested) != len(n.Names)) {
 		return b.errorAt(n.P, "inconsistent checked tuple destructure")
 	}
@@ -287,7 +287,7 @@ func (b *builder) exprValue(expr ast.Expr) (ssa.Value, error) {
 			return ssa.Value{}, err
 		}
 		value := result.value
-		if !ast.Equal(b.fn.bindings[id-1].typ, b.fn.values[value.ID].typ) {
+		if !ast.Equal(b.fn.bindings[id-1].typ, b.fn.values[value.ID].typ.source) {
 			return ssa.Value{}, b.errorAt(n.P, "assignment type differs from binding type")
 		}
 		b.fn.writeBinding(b.current, ssa.OpBindingReplace, id, value, n.P)
@@ -330,7 +330,7 @@ func (b *builder) exprs(exprs []ast.Expr) ([]ssa.Value, []ast.Type, bool, error)
 		}
 		value := result.value
 		values = append(values, value)
-		types = append(types, b.fn.values[value.ID].typ)
+		types = append(types, b.fn.values[value.ID].typ.source)
 	}
 	return values, types, false, nil
 }

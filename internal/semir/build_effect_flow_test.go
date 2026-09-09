@@ -116,7 +116,7 @@ func TestBuildEffectControlFlow(t *testing.T) {
 					t.Fatal("effect control flow invented value zero")
 				}
 				for _, info := range f.values {
-					if _, void := info.typ.(ast.VoidType); void {
+					if _, void := info.typ.source.(ast.VoidType); void {
 						t.Fatal("effect control flow invented a void value")
 					}
 				}

@@ -65,7 +65,7 @@ func (b *builder) shortCircuit(n *ast.Binary) (ssa.Value, error) {
 	}
 	right := func() (exprResult, error) {
 		result, err := b.expr(n.Right)
-		if err == nil && !result.ended && !ast.Equal(b.fn.values[result.value.ID].typ, ast.BoolType{}) {
+		if err == nil && !result.ended && !ast.Equal(b.fn.values[result.value.ID].typ.source, ast.BoolType{}) {
 			err = b.errorAt(n.Right.Pos(), "short-circuit operand is not boolean")
 		}
 		return result, err
@@ -97,7 +97,7 @@ func (b *builder) scalarUnary(n *ast.Unary) (ssa.Value, error) {
 	if n.Op == "-" {
 		kind, typ = ssa.OpNeg, ast.NumberType{}
 	}
-	if !ast.Equal(b.fn.values[result.value.ID].typ, typ) {
+	if !ast.Equal(b.fn.values[result.value.ID].typ.source, typ) {
 		return ssa.Value{}, b.errorAt(n.P, "unary operation requires boolean ! or wrapping i32 -")
 	}
 	return b.fn.addOp(b.current, kind, typ, n.P, result.value), nil
@@ -108,7 +108,7 @@ func (b *builder) branchValue(cond ssa.Value, pos ast.Position, yes, no func() (
 }
 
 func (b *builder) branchFlow(cond ssa.Value, pos ast.Position, wantValue bool, yes, no func() (exprResult, error)) (ssa.Value, error) {
-	if !ast.Equal(b.fn.values[cond.ID].typ, ast.BoolType{}) {
+	if !ast.Equal(b.fn.values[cond.ID].typ.source, ast.BoolType{}) {
 		return ssa.Value{}, b.errorAt(pos, "value branch condition is not boolean")
 	}
 	blocks := []*ssa.Block{b.fn.graph.NewBlock(), b.fn.graph.NewBlock()}
@@ -148,7 +148,7 @@ func (b *builder) joinValues(ends []*ssa.Block, values []ssa.Value, pos ast.Posi
 		if !value.IsValid() {
 			return ssa.Value{}, b.errorAt(pos, "value join cannot use an effect-only result")
 		}
-		armType := b.fn.values[value.ID].typ
+		armType := b.fn.values[value.ID].typ.source
 		if typ != nil && !ast.Equal(typ, armType) {
 			return ssa.Value{}, b.errorAt(pos, "value join needs an explicit checked coercion contract")
 		}

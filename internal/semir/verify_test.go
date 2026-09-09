@@ -49,13 +49,13 @@ func TestRejectInvalidSemanticGraphs(t *testing.T) {
 		{"missing-type", func(f *Func, _ *ssa.Block, _, _, v ssa.Value) { delete(f.values, v.ID) }, "no semantic type"},
 		{"nil-type", func(f *Func, _ *ssa.Block, _, _, v ssa.Value) { f.values[v.ID] = valueInfo{} }, "unresolved or unsupported"},
 		{"unknown-element", func(f *Func, _ *ssa.Block, a, _, _ ssa.Value) {
-			f.values[a.ID] = valueInfo{typ: ast.ArrayType{Elem: ast.ParamType{Name: "T"}}}
+			f.values[a.ID] = valueInfo{typ: sourceValueType(ast.ArrayType{Elem: ast.ParamType{Name: "T"}})}
 		}, "unresolved or unsupported"},
 		{"unsettled-integer", func(f *Func, _ *ssa.Block, _, i, _ ssa.Value) {
-			f.values[i.ID] = valueInfo{typ: ast.NumberType{Polymorphic: true}}
+			f.values[i.ID] = valueInfo{typ: sourceValueType(ast.NumberType{Polymorphic: true})}
 		}, "unresolved or unsupported"},
 		{"invalid-width", func(f *Func, _ *ssa.Block, _, i, _ ssa.Value) {
-			f.values[i.ID] = valueInfo{typ: ast.NumberType{Width: 17}}
+			f.values[i.ID] = valueInfo{typ: sourceValueType(ast.NumberType{Width: 17})}
 		}, "unresolved or unsupported"},
 		{"hidden-container", func(_ *Func, b *ssa.Block, _, i, _ ssa.Value) { b.Ops[0].Args = []ssa.Value{i} }, "arity"},
 		{"zero-container", func(_ *Func, b *ssa.Block, _, _, _ ssa.Value) { b.Ops[0].Args[0] = ssa.Value{} }, "invalid or foreign"},
@@ -64,17 +64,19 @@ func TestRejectInvalidSemanticGraphs(t *testing.T) {
 		}, "invalid or foreign"},
 		{"untyped-load", func(_ *Func, b *ssa.Block, _, _, _ ssa.Value) { b.Ops[0].Kind = ssa.OpLoad }, "not supported"},
 		{"wrong-element", func(f *Func, _ *ssa.Block, _, _, v ssa.Value) {
-			f.values[v.ID] = valueInfo{typ: ast.NumberType{}}
+			f.values[v.ID] = valueInfo{typ: sourceValueType(ast.NumberType{})}
 		}, "types or arity"},
 		{"non-integer-index", func(f *Func, _ *ssa.Block, _, i, _ ssa.Value) {
-			f.values[i.ID] = valueInfo{typ: ast.BoolType{}}
+			f.values[i.ID] = valueInfo{typ: sourceValueType(ast.BoolType{})}
 		}, "types or arity"},
 		{"wrong-return", func(f *Func, _ *ssa.Block, _, _, _ ssa.Value) { f.result = ast.NumberType{} }, "return type"},
 		{"missing-return", func(_ *Func, b *ssa.Block, _, _, _ ssa.Value) { b.Term.Value = ssa.Value{} }, "return type"},
 		{"value-mode-on-reference", func(f *Func, _ *ssa.Block, _, _, _ ssa.Value) { f.modes[0] = ParamValue }, "ownership mode"},
 		{"counted-mode-on-number", func(f *Func, _ *ssa.Block, _, _, _ ssa.Value) { f.modes[1] = ParamCounted }, "ownership mode"},
 		{"missing-mode", func(f *Func, _ *ssa.Block, _, _, _ ssa.Value) { f.modes = nil }, "modes"},
-		{"stale-metadata", func(f *Func, _ *ssa.Block, _, _, _ ssa.Value) { f.values[99] = valueInfo{typ: ast.StringType{}} }, "stale"},
+		{"stale-metadata", func(f *Func, _ *ssa.Block, _, _, _ ssa.Value) {
+			f.values[99] = valueInfo{typ: sourceValueType(ast.StringType{})}
+		}, "stale"},
 		{"split-result", func(_ *Func, b *ssa.Block, _, i, _ ssa.Value) { b.Ops[0].Result2 = i }, "ABI-split"},
 		{"duplicate-definition", func(_ *Func, b *ssa.Block, a, _, _ ssa.Value) { b.Ops[0].Result = a }, "defined twice"},
 		{"nil-block", func(f *Func, _ *ssa.Block, _, _, _ ssa.Value) { f.graph.Blocks = append(f.graph.Blocks, nil) }, "block identity"},
@@ -111,7 +113,7 @@ func TestTypedBranchJoin(t *testing.T) {
 	if err := Verify(f); err != nil {
 		t.Fatal(err)
 	}
-	f.values[right.ID] = valueInfo{typ: ast.ArrayType{Elem: ast.NumberType{}}}
+	f.values[right.ID] = valueInfo{typ: sourceValueType(ast.ArrayType{Elem: ast.NumberType{}})}
 	if err := Verify(f); err == nil {
 		t.Fatal("phi admitted incompatible semantic types with the same machine representation")
 	}

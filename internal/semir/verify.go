@@ -39,6 +39,7 @@ func Verify(f *Func) error {
 		blocks[b], blockIDs[b.ID] = true, true
 	}
 	defs := make(map[int32]bool, len(f.values))
+	hasAvailability := false
 	checkValue := func(v ssa.Value, define bool) error {
 		if v.ID <= 0 || v.Func != g {
 			return fail("invalid or foreign value %v", v)
@@ -52,9 +53,16 @@ func Verify(f *Func) error {
 				return fail("%v defined twice", v)
 			}
 			defs[v.ID] = true
-			if err := resolvedType(info.typ, false); err != nil {
+			if err := resolvedType(info.typ.source, false); err != nil {
 				return fail("%v: %v", v, err)
 			}
+			if info.typ.form != sourceForm && info.typ.form != availabilityForm {
+				return fail("%v: invalid semantic type form", v)
+			}
+			if info.typ.form == availabilityForm && referenceBearing(info.typ.source) {
+				return fail("%v: reference-bearing availability requires conditional unit support", v)
+			}
+			hasAvailability = hasAvailability || info.typ.form == availabilityForm
 		}
 		return nil
 	}
@@ -62,7 +70,10 @@ func Verify(f *Func) error {
 		if err := checkValue(p, true); err != nil {
 			return err
 		}
-		ref := referenceBearing(f.values[p.ID].typ)
+		if f.values[p.ID].typ.form != sourceForm {
+			return fail("internal availability state cannot be a source parameter")
+		}
+		ref := referenceBearing(f.values[p.ID].typ.source)
 		mode := f.modes[i]
 		if (ref && mode != ParamBorrow && mode != ParamCounted) || (!ref && mode != ParamValue) {
 			return fail("parameter %v has invalid ownership mode %d", p, mode)
@@ -118,7 +129,7 @@ func Verify(f *Func) error {
 		case ssa.TermBr:
 		case ssa.TermBrIf:
 			used = b.Term.Cond
-			if !ast.Equal(f.values[used.ID].typ, ast.BoolType{}) {
+			if f.values[used.ID].typ.form != sourceForm || !ast.Equal(f.values[used.ID].typ.source, ast.BoolType{}) {
 				return fail("branch condition is not boolean")
 			}
 		case ssa.TermRet:
@@ -127,7 +138,7 @@ func Verify(f *Func) error {
 				if used != (ssa.Value{}) {
 					return fail("void function returns a value")
 				}
-			} else if !ast.Equal(f.values[used.ID].typ, f.result) {
+			} else if f.values[used.ID].typ.form != sourceForm || !ast.Equal(f.values[used.ID].typ.source, f.result) {
 				return fail("return type does not match signature")
 			}
 		default:
@@ -163,6 +174,11 @@ func Verify(f *Func) error {
 	if err := ssa.Verify(g); err != nil {
 		return err
 	}
+	if hasAvailability {
+		if err := verifyStateGuards(f); err != nil {
+			return err
+		}
+	}
 	if err := verifyCleanups(f); err != nil {
 		return err
 	}
@@ -175,8 +191,31 @@ func Verify(f *Func) error {
 }
 
 func verifyOp(f *Func, op *ssa.Op) error {
-	result := f.values[op.Result.ID].typ
-	arg := func(i int) ast.Type { return f.values[op.Args[i].ID].typ }
+	if stateOp(op.Kind) {
+		return verifyStateOp(f, op)
+	}
+	typ := f.values[op.Result.ID].typ
+	if op.Kind == ssa.OpPhi {
+		if len(op.Args) == 0 {
+			return fmt.Errorf("invalid operand/result types or arity: empty phi")
+		}
+		for _, arg := range op.Args {
+			if !sameValueType(typ, f.values[arg.ID].typ) {
+				return fmt.Errorf("phi operands differ in semantic type or availability form")
+			}
+		}
+		return nil
+	}
+	if typ.form != sourceForm {
+		return fmt.Errorf("ordinary operation cannot produce an availability state")
+	}
+	for _, arg := range op.Args {
+		if f.values[arg.ID].typ.form != sourceForm {
+			return fmt.Errorf("ordinary operation cannot consume an availability state")
+		}
+	}
+	result := f.values[op.Result.ID].typ.source
+	arg := func(i int) ast.Type { return f.values[op.Args[i].ID].typ.source }
 	bad := func() error { return fmt.Errorf("invalid operand/result types or arity") }
 	if bindingOp(op.Kind) {
 		if !f.unpromotedBindings || op.Imm <= 0 || op.Imm > int64(len(f.bindings)) {
@@ -275,15 +314,6 @@ func verifyOp(f *Func, op *ssa.Op) error {
 		a, ok := arg(0).(ast.TupleType)
 		if !ok || op.Imm < 0 || op.Imm >= int64(len(a.Elems)) || !ast.Equal(a.Elems[op.Imm], result) {
 			return bad()
-		}
-	case ssa.OpPhi:
-		if len(op.Args) == 0 {
-			return bad()
-		}
-		for i := range op.Args {
-			if !ast.Equal(result, arg(i)) {
-				return bad()
-			}
 		}
 	case ssa.OpSemanticCall:
 		callee, err := f.callee(op)

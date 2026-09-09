@@ -18,7 +18,7 @@ func (b *builder) matchFlow(n *ast.MatchExpr, wantValue bool) (ssa.Value, error)
 	if err != nil || tag.ended {
 		return ssa.Value{}, err
 	}
-	typ := b.fn.values[tag.value.ID].typ
+	typ := b.fn.values[tag.value.ID].typ.source
 	refutable, err := b.matchArms(n, typ)
 	if err != nil {
 		return ssa.Value{}, err
@@ -77,12 +77,12 @@ func (b *builder) matchArm(arm *ast.MatchExprArm, tag ssa.Value, next *ssa.Block
 	b.pushScope()
 	defer b.popScope()
 	if arm.AtBinding != "" {
-		if err := b.bind(arm.AtBinding, b.fn.values[tag.ID].typ, arm.P, tag); err != nil {
+		if err := b.bind(arm.AtBinding, b.fn.values[tag.ID].typ.source, arm.P, tag); err != nil {
 			return exprResult{}, err
 		}
 	}
 	for _, binding := range bindings {
-		if err := b.bind(binding.name, b.fn.values[binding.value.ID].typ, arm.P, binding.value); err != nil {
+		if err := b.bind(binding.name, b.fn.values[binding.value.ID].typ.source, arm.P, binding.value); err != nil {
 			return exprResult{}, err
 		}
 	}
@@ -91,7 +91,7 @@ func (b *builder) matchArm(arm *ast.MatchExprArm, tag ssa.Value, next *ssa.Block
 		if err != nil || guard.ended {
 			return guard, err
 		}
-		if !ast.Equal(b.fn.values[guard.value.ID].typ, ast.BoolType{}) {
+		if !ast.Equal(b.fn.values[guard.value.ID].typ.source, ast.BoolType{}) {
 			return exprResult{}, b.errorAt(arm.P, "match guard is not boolean")
 		}
 		body := b.fn.graph.NewBlock()
@@ -106,7 +106,7 @@ func (b *builder) matchLiteral(literal ast.Expr, tag ssa.Value, next *ssa.Block,
 	if err != nil {
 		return err
 	}
-	if pattern.ended || !ast.Equal(b.fn.values[pattern.value.ID].typ, b.fn.values[tag.ID].typ) {
+	if pattern.ended || !ast.Equal(b.fn.values[pattern.value.ID].typ.source, b.fn.values[tag.ID].typ.source) {
 		return b.errorAt(pos, "literal pattern differs from the checked scrutinee type")
 	}
 	cond := b.fn.addOp(b.current, ssa.OpEq, ast.BoolType{}, pos, tag, pattern.value)

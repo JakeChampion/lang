@@ -37,7 +37,7 @@ type binding struct {
 }
 
 type valueInfo struct {
-	typ ast.Type
+	typ valueType
 	pos ast.Position
 }
 
@@ -69,7 +69,7 @@ func newFunc(name string, result ast.Type) *Func {
 
 func (f *Func) addParam(typ ast.Type, mode ParamMode, pos ast.Position) ssa.Value {
 	v := f.graph.AddParam()
-	f.values[v.ID] = valueInfo{typ: typ, pos: pos}
+	f.values[v.ID] = valueInfo{typ: sourceValueType(typ), pos: pos}
 	f.modes = append(f.modes, mode)
 	return v
 }
@@ -81,13 +81,13 @@ func (f *Func) addBinding(name string, typ ast.Type, pos ast.Position) BindingID
 
 func (f *Func) addOp(b *ssa.Block, kind ssa.OpKind, typ ast.Type, pos ast.Position, args ...ssa.Value) ssa.Value {
 	v := f.graph.AddOp(b, kind, args...)
-	f.values[v.ID] = valueInfo{typ: typ, pos: pos}
+	f.values[v.ID] = valueInfo{typ: sourceValueType(typ), pos: pos}
 	return v
 }
 
 func (f *Func) addPhi(b *ssa.Block, typ ast.Type, pos ast.Position, args ...ssa.Value) ssa.Value {
 	v := f.graph.AddPhi(b, args...)
-	f.values[v.ID] = valueInfo{typ: typ, pos: pos}
+	f.values[v.ID] = valueInfo{typ: sourceValueType(typ), pos: pos}
 	return v
 }
 
