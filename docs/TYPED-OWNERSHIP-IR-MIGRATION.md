@@ -1,5 +1,10 @@
 # Typed ownership IR migration
 
+Destination clarification: the Fern-written self-hosted compiler is primary;
+the Go compiler is a bootstrap/validation tool to retire after verified parity.
+Prioritize the self-hosted production cutover over further optional Go-pilot
+expansion. See [the self-hosted cutover plan](SELFHOST-TYPED-OWNERSHIP-CUTOVER.md).
+
 Status: executable opt-in ARM64 pilot, not a completed migration. Highest development
 priority by user direction. Related to #8920, #8278, #7989 and the existing
 SSA cutover and typed-IR work. Initial integration base: `02ea66e91`.

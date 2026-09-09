@@ -1,0 +1,59 @@
+Self-hosted shared semantic types, 2026-09-09
+
+Source parent: 7028395a7 (same checker source as #8959 aa2a8dbf7).
+Only the production Type declaration location and qualified references change.
+Compiler: #8959 Go bootstrap compiler, Go 1.26.0, darwin/arm64.
+Compiler SHA256: 52aab6c4c723f731cdf3dc6835cfee72991ddbece554973023b4a9e9199ab6e7
+Host: Apple M3 Pro, macOS 15.7.9.
+
+ARM64 checker executable
+  Emit with the SAME compiler:
+    fern -target arm64-linux examples/self_host/checker.fern > checker.s
+  Link with gcc -static -nostdlib checker.s -o checker.elf in Linux ARM64
+  image be368d4b7a7c. Source snapshots differ; compiler and linker do not.
+
+                                 parent       shared types
+  assembly bytes               17129274           17170384
+  linked ELF bytes              3322016            3322176
+  .text bytes                   3141144            3141144
+  .rodata bytes                   41201              41201
+  .eh_frame bytes                 40460              40460
+  .bss bytes                       4160               4160
+  .symtab bytes                   60648              60648
+  .strtab bytes                   37569              37729
+
+The entire .text section is byte-identical, checked with cmp at ELF offset
+0x148 for 3141144 bytes. The linked-file increase is exactly 160 bytes, all
+in the non-loaded symbol-name string table. No executable-code or loaded-data
+size growth; the typeinfo qualifier changes symbol spelling, not instructions.
+Assembly text size alone is not executable size. No size baseline changed.
+
+Compile observations (not a speedup claim)
+  /usr/bin/time -l fern -target arm64-linux PATH/checker.fern > /dev/null
+  Three alternating parent/new process pairs, no concurrent local test suite.
+  Actual host execution, not QEMU timing.
+
+  source   trial   real seconds   user seconds   maximum RSS bytes
+  parent       1           1.21           1.87           254492672
+  shared       1           0.90           1.86           285638656
+  parent       2           0.85           1.84           273235968
+  shared       2           1.02           1.87           290144256
+  parent       3           0.85           1.86           296304640
+  shared       3           0.94           1.90           302481408
+
+These short process measurements are noisy, especially peak RSS. They do not
+establish a compile-time or memory improvement. Allocations and self-built
+compiler runtime were not measured here. The boundary extraction adds one
+source module and explicit qualified type references; it is not a performance
+optimization. Production self-host fixpoints and full driver-size gates remain
+part of PR CI, not claims derived from this one checker binary.
+
+Local validation
+  New semantic boundary contract: PASS; full sourcelint PASS (12.908 s).
+  Semantic boundary race check: PASS (1.355 s).
+  Native ARM64 checker first pilot: PASS (3.048 s).
+  Checker ARM64/x86, both resolver goldens, scope parity: PASS (10.268 s).
+  Production string/map/Option annotations, checker codes and differential,
+  nested parameter cases across x86/ARM64/Wasm: PASS (184.147 s), no skips.
+  make lint-all: PASS, including whole self-host source checking.
+  x86 runs in the local Linux ARM64 image use QEMU for correctness only.

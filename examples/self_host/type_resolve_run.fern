@@ -16,6 +16,7 @@
 // type in the checker.
 
 import "./checker";
+import "./typeinfo";
 import "./util";
 
 function main(): i32 {
@@ -42,7 +43,7 @@ function main(): i32 {
     var out: string = "";
     var i: i32 = 0;
     while (i < corpus.len()) {
-        var t: checker.Type = checker.type_from_name_with_structs_unions(corpus[i], structs, unions);
+        var t: typeinfo.Type = checker.type_from_name_with_structs_unions(corpus[i], structs, unions);
         out = out + corpus[i] + " => " + checker.type_debug(t) + "\n";
         i = i + 1;
     }
