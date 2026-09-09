@@ -1,0 +1,55 @@
+Production CLI, ARM64 Linux, parent cb6229795 -> precise float types.
+Controlled compiler and link procedure: ../SELFHOST-PRECISE-FLOATS.md.
+nm -S --radix=d, text symbols only. Blank old size means a new function.
+Columns: delta_bytes new_size old_size symbol
+
+1288 1288  __fn_checker__mx_body_result_types
+1216 1216  __fn_checker__join_result_types
+1092 1092  __fn_checker__variant_pattern_payload_type
+448 2412 1964 __fn_checker__vb_zero_of
+336 1956 1620 __fn_checker__annotate_arm_scope
+324 19964 19640 __fn_checker__type_from_ref_names
+324 1352 1028 __fn_checker__settles_to
+320 56100 55780 __fn_checker__check_expr
+244 244  __fn_checker__float_result
+224 1700 1476 __fn_checker__mx_e031
+208 6288 6080 __fn_checker__ret_diags
+204 9260 9056 __fn_checker__mx_expr
+200 4724 4524 __fn_checker__void_ret_diags
+196 196  __fn_checker__t_f32
+176 176  __fn_checker__float_operands_agree
+168 916 748 __fn_irlower__iife_payload_arith_leaf_kind
+160 38188 38028 __fn_checker__call_diags_call
+160 2884 2724 __fn_checker__bind_variant_payloads
+140 1696 1556 __fn_checker__vb_local_tag
+132 1936 1804 __fn_irlower__expr_is_f32
+108 3176 3068 __fn_irlower__iife_payload_field_bindable
+96 96  __fn_checker__float_label
+92 31076 30984 __fn_checker__check_stmt
+76 76  __fn_checker__is_poly_float
+76 76  __fn_checker__is_float
+72 1276 1204 __fn_checker__mx_arm_compatible
+64 448 384 __fn_checker__vb_unified
+36 2320 2284 __fn_checker__type_eq
+24 196 172 __fn_checker__t_float
+20 1484 1464 __fn_checker__mx_match_arm_types
+-4 4708 4712 __fn_checker__type_to_irtag
+-4 300 304 __fn_checker__method_namespace_of
+-4 2460 2464 __fn_checker__type_label
+-24 7960 7984 __fn_checker__vb_stmt
+-24 6948 6972 __fn_checker__annotate_stmt
+-24 6596 6620 __fn_checker__mx_stmts
+-24 20996 21020 __fn_checker__stmts_call_diags
+-24 12612 12636 __fn_checker__stmts_assign_diags
+-28 4100 4128 __fn_checker__vb_assigned_types
+-48 8692 8740 __fn_checker__call_diags_unary
+-56 492 548 __fn_checker__as_cast_allowed
+-100 428 528 __fn_irlower__iife_payload_kind_of_type
+-100 1444 1544 __fn_irlower__iife_payload_result_width
+-244 0 244 __fn_checker__match_scrut_enum
+-280 25768 26048 __fn_checker__call_diags_binary
+-1004 712 1716 __fn_checker__mx_if_branch_types
+-3680 46988 50668 __fn_checker__check_call_expr
+
+Sum of text symbol deltas: +2552 bytes, exactly the .text section difference.
+Unchanged runtime symbols contribute zero.

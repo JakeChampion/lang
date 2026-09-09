@@ -28,7 +28,7 @@ func TestSelfHostSemanticTypeBoundary(t *testing.T) {
 	wantNames := []string{"TypeI32", "TypeBool", "TypeString", "TypeFloat", "TypeArray", "TypeStruct", "TypeTuple", "TypeFunc", "TypeMap", "TypeUnion", "TypeDyn", "TypeVoid", "TypeUnknown"}
 	wantFields := [][]string{
 		{"is_char:boolean", "width:i32", "unsigned:boolean"},
-		{"tag:i32"}, {"tag:i32"}, {"tag:i32"}, {"elem:Type"},
+		{"tag:i32"}, {"tag:i32"}, {"width:i32", "polymorphic:boolean"}, {"elem:Type"},
 		{"name:string", "args:Type[]"}, {"elements:Type[]"},
 		{"param_types:Type[]", "ret_type:Type", "params_known:boolean"},
 		{"key:Type", "value:Type"}, {"name:string", "args:Type[]"},

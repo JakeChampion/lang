@@ -213,7 +213,58 @@ function str_arg_borrow(from: typeinfo.Type, to: typeinfo.Type): boolean {
 }
 
 function t_float(): typeinfo.Type {
-  return typeinfo.TypeFloat { tag: 0 };
+  return typeinfo.TypeFloat { width: 64, polymorphic: false };
+}
+
+function t_f32(): typeinfo.Type {
+  return typeinfo.TypeFloat { width: 32, polymorphic: false };
+}
+
+function is_float(t: typeinfo.Type): boolean {
+  if let typeinfo.TypeFloat(f) = t { return true; }
+  return false;
+}
+
+function is_poly_float(t: typeinfo.Type): boolean {
+  if let typeinfo.TypeFloat(f) = t { return f.polymorphic; }
+  return false;
+}
+
+function float_label(t: typeinfo.TypeFloat): string {
+  if (t.width == 32) { return "f32"; }
+  return "f64";
+}
+
+// A literal can adopt the other operand's width; concrete floats cannot.
+function float_operands_agree(a: typeinfo.Type, b: typeinfo.Type): boolean {
+  return is_float(a) && is_float(b) && (type_eq(a, b) || is_poly_float(a) || is_poly_float(b));
+}
+
+function float_result(a: typeinfo.Type, b: typeinfo.Type): typeinfo.Type {
+  if (!float_operands_agree(a, b)) { return t_unknown("float operands have incompatible widths"); }
+  if (is_poly_float(a)) { return b; }
+  return a;
+}
+
+// Merge literal commitments before default-width equality, including tuples.
+function join_result_types(a: typeinfo.Type, b: typeinfo.Type): typeinfo.Type {
+  if (is_float(a) && is_float(b)) { return float_result(a, b); }
+  if let typeinfo.TypeTuple(at) = a {
+    if let typeinfo.TypeTuple(bt) = b {
+      if (at.elements.len() != bt.elements.len()) { return t_unknown("result tuple arities differ"); }
+      var elems: typeinfo.Type[] = [];
+      var i: i32 = 0;
+      while (i < at.elements.len()) {
+        var elem: typeinfo.Type = join_result_types(at.elements[i], bt.elements[i]);
+        if (is_unknown(elem)) { return elem; }
+        elems = elems.append(elem);
+        i = i + 1;
+      }
+      return t_tuple(elems);
+    }
+  }
+  if (type_eq(a, b)) { return a; }
+  return t_unknown("result types disagree");
 }
 
 function t_array(elem: typeinfo.Type): typeinfo.Type {
@@ -313,8 +364,8 @@ pub function type_debug(t: typeinfo.Type): string {
     typeinfo.TypeString(_) => {
       return "string";
     },
-    typeinfo.TypeFloat(_) => {
-      return "f64";
+    typeinfo.TypeFloat(f) => {
+      return float_label(f);
     },
     typeinfo.TypeArray(a) => {
       return "array<" + type_debug(a.elem) + ">";
@@ -458,10 +509,10 @@ function type_eq(a: typeinfo.Type, b: typeinfo.Type): boolean {
         }
       }
     },
-    typeinfo.TypeFloat(_) => {
+    typeinfo.TypeFloat(af) => {
       match (b) {
-        typeinfo.TypeFloat(_) => {
-          return true;
+        typeinfo.TypeFloat(bf) => {
+          return af.width == bf.width;
         },
         _ => {
           return false;
@@ -830,8 +881,8 @@ function as_cast_allowed(src: typeinfo.Type, tgt: typeinfo.Type): boolean {
   if (type_eq(src, tgt)) {
     return true;
   }
-  var src_num: boolean = is_integer(src) || type_eq(src, t_char()) || type_eq(src, t_float());
-  var tgt_num: boolean = is_integer(tgt) || type_eq(tgt, t_char()) || type_eq(tgt, t_float());
+  var src_num: boolean = is_integer(src) || type_eq(src, t_char()) || is_float(src);
+  var tgt_num: boolean = is_integer(tgt) || type_eq(tgt, t_char()) || is_float(tgt);
   if (src_num && tgt_num) {
     return true;
   }
@@ -2113,16 +2164,8 @@ function field_index(ssig: StructSig, name: string): i32 {
 // a genuine user struct with no `__ev` marker, so its binding is the whole
 // struct — `t_struct(name)`, matching the Go checker.
 //
-// A built-in payload variant (`Some` / `Ok` / `Err` and the payload
-// `JsonValue` variants) has NO struct sig at all: its inner type isn't
-// recoverable here because a built-in generic enum resolves name-only
-// (`Option[i32]` → the bare union `Option`, dropping the i32 — see
-// type_from_ref_names). Binding such a payload as `t_struct("Some")` mis-typed
-// it as the variant WRAPPER, which spuriously tripped E003 on a downstream
-// `x = <payload>` (e.g. `match (n.checked_mul(b)) { Some(v) => { r = v; } }`
-// where `r` is i32) — #5205. With the payload type unknowable, bind it as
-// unknown so those walks skip it, matching the Go checker's practical
-// outcome (no spurious diagnostic).
+// Builtin generic payloads need the scrutinee's instantiation arguments;
+// variant_pattern_payload_type resolves those before this declaration lookup.
 function variant_binding_type(s: Scope, type_name: string): typeinfo.Type {
   var ss: StructSig = variant_payload_struct(s, type_name);
   if (ss.name.len() == 0) {
@@ -2173,11 +2216,19 @@ function variant_pattern_qualified(type_name: string): boolean {
   return false;
 }
 
-// match_scrut_enum names the enum a match scrutinee has, or "" when the
-// scrutinee is not enum-typed (or the partial checker cannot resolve it).
-function match_scrut_enum(scrutinee: ast.Expr, s: Scope): string {
-  if let typeinfo.TypeUnion(u) = check_expr(scrutinee, s) { return u.name; }
-  return "";
+// Option/Result payloads are the resolved scrutinee arguments, not wrappers.
+function variant_pattern_payload_type(s: Scope, name: string, whole: typeinfo.Type, index: i32): typeinfo.Type {
+  if let typeinfo.TypeUnion(u) = whole {
+    var bare: string = variant_pattern_name(name);
+    if ((u.name == "Option" || u.name == "Result") && mx_builtin_enum_of(bare) == u.name) {
+      var arg: i32 = 0;
+      if (bare == "Err") { arg = 1; }
+      if (index == 0 && bare != "None" && arg < u.args.len()) { return u.args[arg]; }
+      return t_unknown("unresolved generic pattern payload");
+    }
+  }
+  if (index == 0) { return variant_binding_type(s, name); }
+  return variant_payload_type_at(s, name, index);
 }
 
 // bind_variant_payloads brings EVERY payload binding of a matched variant into
@@ -2187,7 +2238,9 @@ function match_scrut_enum(scrutinee: ast.Expr, s: Scope): string {
 // scope, each position independently (so `Rect(_, h)` binds only `h`). Before
 // this only pv.binding was bound, so a multi-binding payload pattern
 // (`Rect(w, h)`) rejected the 2nd+ name as an undefined E001 (#4345).
-function bind_variant_payloads(arm: Scope, look: Scope, pvin0: ast.PatVariant, scrut_enum: string): Scope {
+function bind_variant_payloads(arm: Scope, look: Scope, pvin0: ast.PatVariant, whole: typeinfo.Type): Scope {
+  var scrut_enum: string = "";
+  if let typeinfo.TypeUnion(u) = whole { scrut_enum = u.name; }
   // An UNQUALIFIED arm pattern means the variant of ITS scrutinee, and two
   // enums may declare the same variant name at different payload types — so
   // the scrutinee's enum is what tells `B.W(f64)` from `A.W(i32)`. Without it
@@ -2220,24 +2273,18 @@ function bind_variant_payloads(arm: Scope, look: Scope, pvin0: ast.PatVariant, s
     }
   }
   var sc: Scope = arm;
-  // `w @ Only(v)` names the SCRUTINEE alongside the payload, so its type is
-  // the enum rather than any payload slot. Nothing bound it, which made every
-  // use of the whole-value name an undefined E001 (#8461). With no scrutinee
-  // enum to hand — the annotate / value-block walks call in without one — it
-  // still enters scope, erased, which is what keeps the name resolvable.
+  // An @ binding names the complete scrutinee, including its type arguments.
   if (pv.at_binding.len() > 0 && pv.at_binding != "_") {
-    var at_ty: typeinfo.Type = t_unknown("@ binding");
-    if (scrut_enum.len() > 0) { at_ty = t_union(scrut_enum); }
-    sc = sc.bind(pv.at_binding, at_ty);
+    sc = sc.bind(pv.at_binding, whole);
   }
   if (pv.binding.len() > 0 && pv.binding != "_") {
-    sc = sc.bind(pv.binding, variant_binding_type(look, pv.type_name));
+    sc = sc.bind(pv.binding, variant_pattern_payload_type(look, pv.type_name, whole, 0));
   }
   var k: i32 = 0;
   while (k < pv.extra_bindings.len()) {
     var nm: string = pv.extra_bindings[k];
     if (nm.len() > 0 && nm != "_") {
-      sc = sc.bind(nm, variant_payload_type_at(look, pv.type_name, k + 1));
+      sc = sc.bind(nm, variant_pattern_payload_type(look, pv.type_name, whole, k + 1));
     }
     k = k + 1;
   }
@@ -2517,7 +2564,7 @@ function method_namespace_of(t: typeinfo.Type): string {
     typeinfo.TypeArray(_) => { return "Array"; },
     typeinfo.TypeString(_) => { return "string"; },
     typeinfo.TypeI32(it) => { return int_label(it); },
-    typeinfo.TypeFloat(_) => { return "f64"; },
+    typeinfo.TypeFloat(f) => { return float_label(f); },
     _ => { return ""; }
   }
   return "";
@@ -2780,16 +2827,9 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
             _ => {}
           }
           if (bts.len() > 0) {
-            var all_same: boolean = true;
-            var bi: i32 = 1;
-            while (bi < bts.len()) {
-              if (!type_eq(bts[bi], bts[0])) {
-                all_same = false;
-              }
-              bi = bi + 1;
-            }
-            if (all_same && !is_unknown(bts[0])) {
-              return bts[0];
+            var result: typeinfo.Type = vb_unified(bts);
+            if (!is_unknown(result)) {
+              return result;
             }
           }
         }
@@ -2889,8 +2929,8 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
           typeinfo.TypeBool(_) => {
             recv_type_name = "boolean";
           },
-          typeinfo.TypeFloat(_) => {
-            recv_type_name = "f64";
+          typeinfo.TypeFloat(f) => {
+            recv_type_name = float_label(f);
           },
           typeinfo.TypeMap(_) => {
             recv_type_name = "Map";
@@ -3258,7 +3298,7 @@ function check_expr(e: ast.Expr, s: Scope): typeinfo.Type {
         return t_void();
       }
       if (n.is_float) {
-        return t_float();
+        return typeinfo.TypeFloat { width: 64, polymorphic: true };
       }
       // A SUFFIX names the type outright. Without this every integer
       // literal typed i32, and check_call_expr's if-expression arm — which
@@ -3374,8 +3414,8 @@ function check_expr(e: ast.Expr, s: Scope): typeinfo.Type {
         if (is_integer(lt) && is_integer(rt)) {
           return int_result(lt, rt, b.left, b.right);
         }
-        if (type_eq(lt, t_float()) && type_eq(rt, t_float())) {
-          return t_float();
+        if (float_operands_agree(lt, rt)) {
+          return float_result(lt, rt);
         }
         // Composite operator overload (#2706): `a + b` on a struct / enum is
         // `a.add(b)` and evaluates to that method's declared return type.
@@ -3410,8 +3450,8 @@ function check_expr(e: ast.Expr, s: Scope): typeinfo.Type {
         }
         // `%` on floats isn't supported — interp surfaces
         // VErr; checker is lenient and just rejects it.
-        if (b.op != "%" && type_eq(lt, t_float()) && type_eq(rt, t_float())) {
-          return t_float();
+        if (b.op != "%" && float_operands_agree(lt, rt)) {
+          return float_result(lt, rt);
         }
         // Composite operator overload (#2706), the `+` arm's sibling.
         var aovt: typeinfo.Type = s.binop_overload_ret(b.op, lt);
@@ -3436,7 +3476,7 @@ function check_expr(e: ast.Expr, s: Scope): typeinfo.Type {
         if (is_integer(lt) && is_integer(rt)) {
           return t_bool();
         }
-        if (type_eq(lt, t_float()) && type_eq(rt, t_float())) {
+        if (float_operands_agree(lt, rt)) {
           return t_bool();
         }
         // String ordering is byte-wise lexicographic with a length
@@ -3448,6 +3488,7 @@ function check_expr(e: ast.Expr, s: Scope): typeinfo.Type {
         return t_unknown("comparison op `" + b.op + "` requires matching i32, f64 or string operands");
       }
       if (b.op == "==" || b.op == "!=") {
+        if (float_operands_agree(lt, rt)) { return t_bool(); }
         if (type_eq(lt, rt) && !is_unknown(lt)) {
           return t_bool();
         }
@@ -3474,8 +3515,8 @@ function check_expr(e: ast.Expr, s: Scope): typeinfo.Type {
         if (is_integer(ot)) {
           return ot;
         }
-        if (type_eq(ot, t_float())) {
-          return t_float();
+        if (is_float(ot)) {
+          return ot;
         }
         // Composite operator overload (#2706): `-a` on a struct / enum is
         // `a.neg()`, the unary sibling of the binary arm above.
@@ -3900,7 +3941,7 @@ pub function check_stmt(st: ast.Stmt, s: Scope): CheckResult {
         return CheckResult { scope: s, ty: t_unknown("assign to undefined `" + a.target + "`") };
       }
       var vt: typeinfo.Type = check_expr(a.value, s);
-      if (!type_eq(existing, vt)) {
+      if (!settles_to(a.value, existing, s) && !type_eq(existing, vt)) {
         return CheckResult { scope: s, ty: t_unknown("type mismatch in assign to `" + a.target + "`") };
       }
       return CheckResult { scope: s, ty: vt };
@@ -3960,7 +4001,7 @@ pub function check_stmt(st: ast.Stmt, s: Scope): CheckResult {
               // Bring the payload bindings into the arm's
               // scope, each typed as the matching `__ev` field.
               // Bare names and `_` bindings stay out of scope.
-              armScope = bind_variant_payloads(armScope, s, pv, union_name);
+              armScope = bind_variant_payloads(armScope, s, pv, sct);
             }
           }
         }
@@ -4342,7 +4383,8 @@ function type_from_ref_names(r: parser.TypeRef, struct_names: string[], union_na
   if (name == "string") {
     return t_string();
   }
-  if (name == "f64" || name == "f32" || name == "float") {
+  if (name == "f32") { return t_f32(); }
+  if (name == "f64" || name == "float") {
     return t_float();
   }
   if (name == "void") {
@@ -4880,8 +4922,8 @@ function type_label(t: typeinfo.Type): string {
       }
       return "string";
     },
-    typeinfo.TypeFloat(_) => {
-      return "f64";
+    typeinfo.TypeFloat(f) => {
+      return float_label(f);
     },
     typeinfo.TypeArray(a) => {
       return type_label(a.elem) + "[]";
@@ -4988,7 +5030,7 @@ function ret_diags(stmts: ast.Stmt[], s: Scope, ret_ty: typeinfo.Type, unions: U
       },
       ast.StmtMatch(m) => {
         for arm in m.arms {
-          out = util.append_diags(out, ret_diags(arm.body, cur, ret_ty, unions));
+          out = util.append_diags(out, ret_diags(arm.body, annotate_arm_scope(arm, cur, check_expr(m.scrutinee, cur)), ret_ty, unions));
         }
       },
       ast.StmtDefer(d) => {
@@ -5042,7 +5084,7 @@ function void_ret_diags(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]): util.D
       },
       ast.StmtMatch(m) => {
         for arm in m.arms {
-          out = util.append_diags(out, void_ret_diags(arm.body, cur, unions));
+          out = util.append_diags(out, void_ret_diags(arm.body, annotate_arm_scope(arm, cur, check_expr(m.scrutinee, cur)), unions));
         }
       },
       ast.StmtDefer(d) => {
@@ -6258,6 +6300,7 @@ function mx_same_enum_family(an: string, bn: string, enums: parser.EnumDecl[]): 
 // mx_arm_compatible reports whether two arm result types may coexist,
 // mirroring the Go checker's unifyIfArms (see the section header).
 function mx_arm_compatible(a: typeinfo.Type, b: typeinfo.Type, unions: UnionSig[], enums: parser.EnumDecl[]): boolean {
+  if (is_float(a) && is_float(b)) { return float_operands_agree(a, b); }
   if (type_eq(a, b)) {
     return true;
   }
@@ -6344,31 +6387,45 @@ function mx_e031(types: typeinfo.Type[], unions: UnionSig[], enums: parser.EnumD
       out = out.append(dg_at("E031", "match/if-expression arms have incompatible types: " + type_label(t0) + " vs " + type_label(types[j]), line, col));
       return out;
     }
+    var joined: typeinfo.Type = join_result_types(t0, types[j]);
+    if (!is_unknown(joined)) { t0 = joined; }
     j = j + 1;
   }
   return out;
 }
 
-// mx_match_arm_types types each arm's result expression of a value
-// match-expression (whose arms are single `return E` statements), binding
-// each variant pattern's payload in the arm scope so the result resolves.
+// Type the terminal value in the scope established by preceding statements.
+function mx_body_result_types(body: ast.Stmt[], s: Scope): typeinfo.Type[] {
+  var out: typeinfo.Type[] = [];
+  if (body.len() == 0) { return out; }
+  var cur: Scope = s;
+  var i: i32 = 0;
+  while (i + 1 < body.len()) {
+    cur = bind_stmt(body[i], cur);
+    i = i + 1;
+  }
+  match (body[i]) {
+    ast.StmtReturn(r) => { return out.append(check_expr(r.value, cur)); },
+    ast.StmtIf(f) => { return mx_if_branch_types(f, cur); },
+    ast.StmtMatch(m) => { return mx_match_arm_types(m, cur); },
+    _ => { return out; }
+  }
+  return out;
+}
+
+// Pattern bindings belong only to their own arm's result scope.
 function mx_match_arm_types(m: ast.StmtMatch, s: Scope): typeinfo.Type[] {
   var out: typeinfo.Type[] = [];
   for arm in m.arms {
     var armScope: Scope = s;
     match (arm.pattern) {
       ast.PatVariant(pv) => {
-        armScope = bind_variant_payloads(armScope, s, pv, match_scrut_enum(m.scrutinee, s));
+        armScope = bind_variant_payloads(armScope, s, pv, check_expr(m.scrutinee, s));
       },
       _ => {}
     }
-    if (arm.body.len() == 1) {
-      match (arm.body[0]) {
-        ast.StmtReturn(r) => {
-          out = out.append(check_expr(r.value, armScope));
-        },
-        _ => {}
-      }
+    for ty in mx_body_result_types(arm.body, armScope) {
+      out = out.append(ty);
     }
   }
   return out;
@@ -6377,28 +6434,9 @@ function mx_match_arm_types(m: ast.StmtMatch, s: Scope): typeinfo.Type[] {
 // mx_if_branch_types collects an if-expression's branch result types,
 // recursing through an `else if` chain (the else arm is itself a StmtIf).
 function mx_if_branch_types(f: ast.StmtIf, s: Scope): typeinfo.Type[] {
-  var out: typeinfo.Type[] = [];
-  if (f.then_body.len() == 1) {
-    match (f.then_body[0]) {
-      ast.StmtReturn(r) => {
-        out = out.append(check_expr(r.value, s));
-      },
-      _ => {}
-    }
-  }
-  if (f.else_body.len() == 1) {
-    match (f.else_body[0]) {
-      ast.StmtReturn(r) => {
-        out = out.append(check_expr(r.value, s));
-      },
-      ast.StmtIf(nf) => {
-        var nested: typeinfo.Type[] = mx_if_branch_types(nf, s);
-        for elem in nested {
-          out = out.append(elem);
-        }
-      },
-      _ => {}
-    }
+  var out: typeinfo.Type[] = mx_body_result_types(f.then_body, s);
+  for ty in mx_body_result_types(f.else_body, s) {
+    out = out.append(ty);
   }
   return out;
 }
@@ -6533,7 +6571,7 @@ function mx_stmts(stmts: ast.Stmt[], s: Scope, unions: UnionSig[], enums: parser
           var armScope: Scope = cur;
           match (arm.pattern) {
             ast.PatVariant(pv) => {
-              armScope = bind_variant_payloads(armScope, cur, pv, match_scrut_enum(m.scrutinee, cur));
+              armScope = bind_variant_payloads(armScope, cur, pv, check_expr(m.scrutinee, cur));
             },
             _ => {}
           }
@@ -7812,7 +7850,7 @@ function int_dest_range_diags(e: ast.Expr, want: typeinfo.Type): util.Diag[] {
 function settles_to(e: ast.Expr, want: typeinfo.Type, s: Scope): boolean {
   match (want) {
     typeinfo.TypeFloat(_) => {
-      return unsettled_int_literal(e);
+      return unsettled_int_literal(e) || is_poly_float(check_expr(e, s));
     },
     typeinfo.TypeI32(wi) => {
       // An unsuffixed literal is read at the destination's width, so
@@ -8495,9 +8533,9 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
             out = out.append(dg_at("E043", s.unknown_method_advice(int_label(it), mfa.field, recv), mfa.line, mfa.col));
           }
         },
-        typeinfo.TypeFloat(_) => {
-          if (s.lookup_method(mfa.field, "f64").name.len() == 0) {
-            out = out.append(dg_at("E043", s.unknown_method_advice("f64", mfa.field, recv), mfa.line, mfa.col));
+        typeinfo.TypeFloat(f) => {
+          if (s.lookup_method(mfa.field, float_label(f)).name.len() == 0) {
+            out = out.append(dg_at("E043", s.unknown_method_advice(float_label(f), mfa.field, recv), mfa.line, mfa.col));
           }
         },
         typeinfo.TypeString(_) => {
@@ -8754,7 +8792,7 @@ function call_diags_binary(b: ast.ExprBinary, s: Scope, out: util.Diag[]): util.
       var oks: boolean = type_eq(pl, t_string()) && type_eq(pr, t_string());
       var both_int: boolean = is_integer(pl) && is_integer(pr);
       var oki2: boolean = both_int && int_operands_agree(pl, pr, b.left, b.right);
-      var okf2: boolean = type_eq(pl, t_float()) && type_eq(pr, t_float());
+      var okf2: boolean = float_operands_agree(pl, pr);
       // A composite operand carrying the overload method is well-formed —
       // the same rule check_expr applies, read from the same helper so the
       // promise above (this fires only where check_expr already rejects)
@@ -8775,7 +8813,7 @@ function call_diags_binary(b: ast.ExprBinary, s: Scope, out: util.Diag[]): util.
     if (!is_unknown(alt) && !is_unknown(art)) {
       var a_both_int: boolean = is_integer(alt) && is_integer(art);
       var oki: boolean = a_both_int && int_operands_agree(alt, art, b.left, b.right);
-      var okf: boolean = b.op != "%" && type_eq(alt, t_float()) && type_eq(art, t_float());
+      var okf: boolean = b.op != "%" && float_operands_agree(alt, art);
       var okov: boolean = !is_unknown(s.binop_overload_ret(b.op, alt));
       if (!oki && !okf && !okov) {
         if (a_both_int) {
@@ -8838,7 +8876,7 @@ function call_diags_binary(b: ast.ExprBinary, s: Scope, out: util.Diag[]): util.
     if (!is_unknown(olt) && !is_unknown(ort)) {
       var o_both_int: boolean = is_integer(olt) && is_integer(ort);
       var oki_o: boolean = o_both_int && int_operands_agree(olt, ort, b.left, b.right);
-      var okf_o: boolean = type_eq(olt, t_float()) && type_eq(ort, t_float());
+      var okf_o: boolean = float_operands_agree(olt, ort);
       var oks_o: boolean = type_eq(olt, t_string()) && type_eq(ort, t_string());
       if (!oki_o && !okf_o && !oks_o) {
         if (type_eq(olt, ort) && is_composite_type(olt)) {
@@ -8884,7 +8922,7 @@ function call_diags_unary(u: ast.ExprUnary, s: Scope, out: util.Diag[]): util.Di
   if (u.op == "-") {
     var nt: typeinfo.Type = check_expr(u.operand, s);
     var nok: boolean = !is_unknown(s.unop_overload_ret(u.op, nt));
-    if (!is_unknown(nt) && !is_integer(nt) && !type_eq(nt, t_float()) && !nok) {
+    if (!is_unknown(nt) && !is_integer(nt) && !is_float(nt) && !nok) {
       out = out.append(dg_at("E009", "operator \"-\" requires a numeric type, got " + type_label(nt), u.line, u.col));
     }
   }
@@ -9653,7 +9691,7 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
                 _ => {}
               }
               if (!foreign) {
-                armScope = bind_variant_payloads(armScope, cur, apv, match_scrut_enum(m.scrutinee, cur));
+                armScope = bind_variant_payloads(armScope, cur, apv, check_expr(m.scrutinee, cur));
               }
             },
             _ => {}
@@ -9952,7 +9990,7 @@ function stmts_assign_diags(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]): ut
               // any payload binding type-checks the same way the
               // Go checker does (and a struct-union member still
               // binds its struct).
-              asc = bind_variant_payloads(asc, cur, apv, match_scrut_enum(m.scrutinee, cur));
+              asc = bind_variant_payloads(asc, cur, apv, check_expr(m.scrutinee, cur));
             },
             _ => {}
           }
@@ -14848,32 +14886,13 @@ function main(): i32 {
 }
 
 // ---------------------------------------------------------------------------
-// Typed-IR annotation pass (#5531, docs/TYPED-IR-REWRITE.md)
-//
-// The lowering (irlower.fern) re-derives the type of nearly every expression at
-// codegen time with structural predicates, because ast.Expr nodes carry no
-// resolved type. This pass closes that gap for CALL expressions: it walks the
-// module with a threaded Scope (the same scope build_func_scope / check_stmt
-// use), asks check_expr for each ExprCall's inferred result type, and stamps the
-// result into ExprCall.ty in irlower's string tag vocabulary. Lowering then READS
-// c.ty instead of re-deriving. An unresolved / non-scalar result stamps "" so
-// lowering falls back to its structural walk — the pass never widens what lowers,
-// only removes re-derivation. Drivers that do not run it (asm_ir_run, native
-// cmd/fern) leave every ty "" and are unaffected.
-//
-// The pass is a faithful AST rebuild (ast.Expr is immutable): every node is
-// reconstructed, changing only ExprCall.ty. Any dropped/altered field would show
-// as a codegen divergence under the byte-identical self-compile fixpoint.
-// type_to_irtag serialises a resolved Type to irlower's scalar/string tag
-// vocabulary. Only the tags a lowering predicate reads are produced; every
-// composite / unresolved type maps to "" (unannotated → structural fallback).
-// Note: TypeFloat covers both f64 and f32 (the checker does not distinguish
-// them), so the tag is "f64" — the value irlower's expr_is_f64 keys on; the
-// strict f32/f64 split stays structural (expr_is_f32).
+// Serialize the supported checked types for legacy lowering annotations, keeping
+// concrete float widths. Unrepresentable types remain unannotated. Semantic IR
+// must carry Type directly rather than depend on this incomplete projection.
 function type_to_irtag(t: typeinfo.Type): string {
   match (t) {
-    typeinfo.TypeFloat(_) => {
-      return "f64";
+    typeinfo.TypeFloat(f) => {
+      return float_label(f);
     },
     typeinfo.TypeI32(x) => {
       return int_label(x);
@@ -15210,14 +15229,14 @@ function annotate_variant_struct(name: string, s: Scope): string {
 // them. A wildcard arm, an unresolvable variant, and the `_` / bare-name bindings
 // bind_variant_payloads skips all keep the enclosing scope — their calls annotate
 // "" and take the structural fallback.
-function annotate_arm_scope(arm: ast.MatchArm, s: Scope, scrut_enum: string): Scope {
+function annotate_arm_scope(arm: ast.MatchArm, s: Scope, whole: typeinfo.Type): Scope {
   match (arm.pattern) {
     ast.PatVariant(pv) => {
       var vn: string = annotate_variant_struct(pv.type_name, s);
       if (vn.len() == 0) {
-        return s;
+        return bind_variant_payloads(s, s, pv, whole);
       }
-      return bind_variant_payloads(s, s, ast.PatVariant { ...pv, type_name: vn }, scrut_enum);
+      return bind_variant_payloads(s, s, ast.PatVariant { ...pv, type_name: vn }, whole);
     },
     ast.PatWildcard(_) => {
       return s;
@@ -15249,7 +15268,7 @@ function annotate_stmt(st: ast.Stmt, s: Scope): ast.Stmt {
     ast.StmtMatch(m) => {
       var narms: ast.MatchArm[] = [];
       for arm in m.arms {
-        var asc: Scope = annotate_arm_scope(arm, s, match_scrut_enum(m.scrutinee, s));
+        var asc: Scope = annotate_arm_scope(arm, s, check_expr(m.scrutinee, s));
         var g: ast.Expr = arm.guard;
         if (arm.has_guard) {
           g = annotate_expr(arm.guard, asc);
@@ -15369,7 +15388,7 @@ function vb_assigned_types(stmts: ast.Stmt[], name: string, s: Scope, acc: typei
       },
       ast.StmtMatch(m) => {
         for arm in m.arms {
-          out = vb_assigned_types(arm.body, name, annotate_arm_scope(arm, cur, match_scrut_enum(m.scrutinee, cur)), out);
+          out = vb_assigned_types(arm.body, name, annotate_arm_scope(arm, cur, check_expr(m.scrutinee, cur)), out);
         }
       },
       ast.StmtDefer(d) => {
@@ -15395,7 +15414,8 @@ function vb_unified(ts: typeinfo.Type[]): typeinfo.Type {
   }
   var i: i32 = 1;
   while (i < ts.len()) {
-    if (!type_eq(ts[i], first)) {
+    first = join_result_types(first, ts[i]);
+    if (is_unknown(first)) {
       return t_unknown("value block arms disagree");
     }
     i = i + 1;
@@ -15428,7 +15448,7 @@ function vb_local_tag(t: typeinfo.Type): string {
     return "";
   }
   var tag: string = type_to_irtag(t);
-  if (tag == "string" || tag == "boolean" || tag == "f64" || tag == "char"
+  if (tag == "string" || tag == "boolean" || tag == "f64" || tag == "f32" || tag == "char"
       || tag == "i32" || tag == "i64" || tag == "u32" || tag == "u64" || tag == "u8") {
     return tag;
   }
@@ -15449,6 +15469,9 @@ function vb_zero_of(tag: string): ast.Expr {
   }
   if (tag == "f64") {
     return ast.ExprNumber { text: "0", suffix: "", raw: "", is_float: true, line: 0, col: 0 };
+  }
+  if (tag == "f32") {
+    return ast.ExprUnary { op: "as_f32", operand: vb_zero_of("f64"), line: 0, col: 0, ty: "f32" };
   }
   if (tag == "i32") {
     return ast.ExprNumber { text: "0", suffix: "", raw: "", is_float: false, line: 0, col: 0 };
@@ -15547,7 +15570,7 @@ function vb_stmt(st: ast.Stmt, s: Scope): ast.Stmt {
     ast.StmtMatch(m) => {
       var narms: ast.MatchArm[] = [];
       for arm in m.arms {
-        var asc: Scope = annotate_arm_scope(arm, s, match_scrut_enum(m.scrutinee, s));
+        var asc: Scope = annotate_arm_scope(arm, s, check_expr(m.scrutinee, s));
         var g: ast.Expr = arm.guard;
         if (arm.has_guard) {
           g = vb_expr(arm.guard, asc);

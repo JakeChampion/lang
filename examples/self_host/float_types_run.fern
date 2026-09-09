@@ -1,0 +1,45 @@
+import "./checker";
+import "./lexer";
+import "./parser";
+import "./typeinfo";
+
+function float_shape(t: typeinfo.Type): string {
+    match (t) {
+        typeinfo.TypeFloat(f) => {
+            var width: string = "invalid";
+            if (f.width == 32) { width = "f32"; }
+            if (f.width == 64) { width = "f64"; }
+            if (f.polymorphic) { return width + ":literal"; }
+            return width + ":concrete";
+        },
+        typeinfo.TypeArray(a) => { return "array<" + float_shape(a.elem) + ">"; },
+        typeinfo.TypeTuple(tup) => { return "tuple(" + float_list(tup.elements) + ")"; },
+        typeinfo.TypeFunc(f) => { return "fn(" + float_list(f.param_types) + ")->" + float_shape(f.ret_type); },
+        _ => { return checker.type_debug(t); }
+    }
+    return "";
+}
+
+function float_list(ts: typeinfo.Type[]): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < ts.len()) {
+        if (i > 0) { out = out + ","; }
+        out = out + float_shape(ts[i]);
+        i = i + 1;
+    }
+    return out;
+}
+
+function main(): i32 {
+    for name in ["f32", "f64", "float", "f32[][]", "(f32, (f64, f32))", "(f32) => f64[]"] {
+        print(float_shape(checker.type_from_name_with_names_and_unions(name, [], [])));
+    }
+    for body in ["var x = 0.5;", "var x: f32 = 0.5;", "var x: f64 = 0.5;", "var x = 0.5 as f32;", "var x = a + 0.5;", "var x = 0.5 + a;", "var x = 0.5 + 1.5;", "var x = (a, 0.5);", "var x = if (a > 0.0) { var y = a; y } else { var y = a; y };", "var x = match (o) { Some(y) => y, None => 0.5 };"] {
+        var mod: parser.Module = parser.parse_module(lexer.tokenize("function f(a: f32, o: Option[f32]): void { " + body + " }"));
+        var scope: checker.Scope = checker.module_scopes(mod)[0];
+        var result: checker.CheckResult = checker.check_stmt(mod.funcs[0].body[0], scope);
+        print(float_shape(result.ty));
+    }
+    return 0;
+}

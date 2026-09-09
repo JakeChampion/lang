@@ -111,10 +111,7 @@ function main(): i32 {
 // resolves it for every target.
 func f32ElemTagDriver(t *testing.T) (gcc string, dir string, fernBin string, stdlibRoot string) {
 	t.Helper()
-	gcc, runner := x86_64Tooling(t)
-	if len(runner) != 0 {
-		t.Skip("f32 element-tag tests run only natively (the driver takes argv paths)")
-	}
+	gcc, _ = x86_64Tooling(t)
 	dir = writeSelfHostAsmProject(t)
 	copySelfHostDriver(t, dir, "fern.fern")
 	fernBin = buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
@@ -131,7 +128,8 @@ func f32ElemTagEmit(t *testing.T, fernBin, dir, stdlibRoot, name, src, target st
 	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
 		t.Fatalf("write src: %v", err)
 	}
-	cmd := exec.Command(fernBin, "-target", target, "-emit", "asm", srcPath, stdlibRoot)
+	_, runner := x86_64Tooling(t)
+	cmd := runX86_64Bin(runner, fernBin, "-target", target, "-emit", "asm", srcPath, stdlibRoot)
 	out, _ := cmd.Output()
 	if code := cmd.ProcessState.ExitCode(); code != 0 {
 		t.Fatalf("%s: self-host emit for %s exited %d", name, target, code)
@@ -146,12 +144,13 @@ func f32ElemTagEmit(t *testing.T, fernBin, dir, stdlibRoot, name, src, target st
 // register backend.
 func TestSelfHostF32ElemTagX86_64(t *testing.T) {
 	gcc, dir, fernBin, stdlibRoot := f32ElemTagDriver(t)
+	_, runner := x86_64Tooling(t)
 
 	for _, tc := range f32ElemTagCases() {
 		t.Run(tc.name, func(t *testing.T) {
 			asm := f32ElemTagEmit(t, fernBin, dir, stdlibRoot, tc.name, tc.src, "x86-64-linux")
 			progBin := buildBin(t, gcc, dir, "f32elemtag_"+tc.name, asm)
-			cmd := exec.Command(progBin)
+			cmd := runX86_64Bin(runner, progBin)
 			_ = cmd.Run()
 			if exit := cmd.ProcessState.ExitCode(); exit != tc.want {
 				t.Errorf("%s rendered length = %d, want %d — a LONGER value is the f32 "+

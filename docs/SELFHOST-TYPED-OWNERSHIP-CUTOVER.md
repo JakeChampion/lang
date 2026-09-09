@@ -29,12 +29,12 @@ syntax and semantic IR to hold its values without introducing an import cycle.
 This uses the boundary designed in the existing, unfinished self-hosted typed-match
 work, rather than adding a parallel type vocabulary.
 
-This extraction preserves all 13 members, their order and fields. It deliberately
-does not change type inference or diagnostics. Existing limitations, including
-the production float type's lack of a concrete-width field and legacy lossy IR
-tags, are not solved merely by relocating the type definitions. A complete
-semantic consumer must preserve those distinctions before making ownership or
-layout decisions. No AST ownership analysis is retired by this prerequisite.
+The initial extraction preserved all 13 members, their order and fields without
+changing type inference or diagnostics. The subsequent precise-float slice adds
+concrete width and literal polymorphism, preserves checked float annotations and
+passes resolved scrutinee types into builtin generic pattern bindings. These are
+semantic prerequisites, not AST ownership retirement. The legacy string tags
+remain an incomplete projection and cannot replace complete semantic Types.
 
 ## Next production steps
 

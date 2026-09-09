@@ -9465,15 +9465,7 @@ function ix_type_tag(ix: ast.ExprIndex, s: LowerState): string {
 // test for membership, so their field arms resolve the type ONE way and can't
 // drift apart (#5520).
 //
-// The DECLARATION walk runs first and wins when it resolves, because it returns
-// the field's declared SPELLING: it distinguishes `f32` from `f64`, a
-// distinction the checker's Type erases (TypeFloat carries no width), so the
-// stamped tag would report a genuine f32 field as "f64" and take expr_is_f32's
-// dispatch off the f32 path. The typed-IR tag (#5986, the ExprCall.ty sibling
-// from #5531) fills the walk's HOLES instead: when `obj`'s struct type is not
-// structurally recoverable — a call, a map read, a generic chain — the walk
-// returns "" for a field the checker typed all along. That silent "" is the
-// missing-arm class behind #5982 / #5983 / #5985.
+// Unannotated drivers still resolve the declared spelling structurally.
 function fa_type_tag(fa: ast.ExprFieldAccess, s: LowerState): string {
     if (util.is_all_digits(fa.field)) {
         var tt: string = expr_tuple_elem_tag(fa.obj, util.digits_to_i32(fa.field), s);
@@ -9623,12 +9615,10 @@ pub function expr_is_f64(e: ast.Expr, s: LowerState): boolean {
 // (expr_recv_prim_type) which must NOT collide with f64 (their to_string /
 // to_json differ by precision). Sources: an f32-tracked local/param/receiver,
 // an `as f32` cast, f32 arithmetic, an f32 struct field / tuple element. A bare
-// float literal is f64 by default (becomes f32 only via `as f32`). A method-
-// CALL result is conservatively not classified f32 here (no f32-ret registry):
-// such a chained receiver falls back to the f64-twin dispatch, which is
-// behavior-identical for the value ops and only the (unused-in-practice)
-// chained-`to_string` would differ.
+// float literal is f64 by default. Checked carrier nodes retain their concrete
+// width, including call results and aggregate projections.
 pub function expr_is_f32(e: ast.Expr, s: LowerState): boolean {
+    if (stamped_expr_ty(e) == "f32") { return true; }
     if (cell_get_elem(e, s) == "f32") { return true; }
     match (e) {
         ast.ExprIdent(id) => { return s.is_f32_slot(s.slot_of(id.name)); },
@@ -17876,8 +17866,8 @@ function iife_payload_arith_leaf_kind(e: ast.Expr, name: string, ft: string, kin
         // A wide READ of the payload — the bare payload itself, or a field / element
         // chain rooted at it whose terminal type is the wanted kind.
         match (e) {
-            ast.ExprIdent(id) => { return id.name == name && ft == kind; },
-            ast.ExprFieldAccess(_) => { return iife_payload_chain_type(e, name, ft, s) == kind; },
+            ast.ExprIdent(id) => { return id.name == name && iife_payload_kind_of_type(ft, s) == kind; },
+            ast.ExprFieldAccess(_) => { return iife_payload_kind_of_type(iife_payload_chain_type(e, name, ft, s), s) == kind; },
             _ => { return false; }
         }
         return false;
@@ -18180,6 +18170,7 @@ function iife_payload_field_bindable(ft: string, name: string, arm: ast.MatchArm
     // toward a wrong answer instead of a bail (#6647).
     var wft: string = ft;
     if (wft == "u64") { wft = "i64"; }
+    if (is_f64_scalar_type_name(wft)) { wft = "f64"; }
     if (wft == "i64" || wft == "f64") {
         if (iife_arm_returns_ident(arm, name) || iife_arm_returns_narrowed_payload(arm, name)) { return true; }
         // `(arith-over-payload) as i32` (`Some(x) => (x + 2) as i32`, `Some(v) =>
@@ -18544,7 +18535,7 @@ function iife_payload_result_width(m: ast.StmtMatch, s: LowerState): string {
                                     // records WIDTH, and the slot carries the payload's
                                     // own signedness (#6647).
                                     if (ft == "i64" || ft == "u64") { return "i64"; }
-                                    if (ft == "f64") { return "f64"; }
+                                    if (is_f64_scalar_type_name(ft)) { return "f64"; }
                                 },
                                 _ => {}
                             }
@@ -18581,7 +18572,7 @@ function iife_match_returns_i64_payload(st: ast.Stmt, s: LowerState): boolean {
 function iife_payload_kind_of_type(ft: string, s: LowerState): string {
     if (ft == "string") { return "string"; }
     if (ft == "i64") { return "i64"; }
-    if (ft == "f64") { return "f64"; }
+    if (is_f64_scalar_type_name(ft)) { return "f64"; }
     return "";
 }
 
