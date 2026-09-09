@@ -28,6 +28,8 @@ and tuple operations, not hard-coded byte offsets.
 Scratch locals are reused across sequential drops and separated by recursive
 depth. The result runs through the existing production IR optimizer before
 being handed to the backend's normal IR verification and emission path.
+Validation, physical frame construction and instruction selection are separate
+internal boundaries; the public lowering function sequences the verified plan.
 
 ## Executable validation
 
@@ -40,6 +42,12 @@ fixture executes 32 rounds with heap churn. Native runs require nonzero,
 exactly balanced allocation/free counts and zero live bytes; all targets
 check values and the runtime over-release counter. X86 also runs sanitized.
 Wasm runs check semantics and over-release, not a native heap census.
+
+The complexity repair preserves emitted programs byte-for-byte for all ten
+fixtures on all three targets in a matched before/after comparison. The complete
+80-case runtime matrix and rejection checks pass in 131.633 seconds without
+skips; the unchanged repository complexity gate and lint also pass. These test
+durations are not performance measurements.
 
 The same fixture bundle runs with both a Go-built lowering driver and an
 ARM64 driver compiled by the actual self-host CLI. Each emits programs for

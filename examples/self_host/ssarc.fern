@@ -2,6 +2,7 @@
 // facts or alternate backend ABI enter this boundary.
 import "./ir";
 import "./irlower";
+import "./ssa";
 import "./ssasem";
 import "./ssaunits";
 import "./typeinfo";
@@ -137,22 +138,28 @@ function at(p: ssaunits.Plan, point: i32): ssaunits.Step {
     return ssaunits.Step { block: 0 - 1, point: point, target: 0 - 1, supplies: [], drops: [] };
 }
 
-pub function lower(f: ssasem.Func, modes: i32[], p: ssaunits.Plan): irlower.LowerResult {
+function validate(f: ssasem.Func, modes: i32[], p: ssaunits.Plan): string {
     var why: string = ssaunits.verify(f, modes, p);
-    if (why != "") { return empty(why); }
-    if (f.graph.blocks.len() != 1 || f.graph.blocks[0].term.kind_tag != 1) { return empty("physical RC needs straight-line return graph"); }
-    for t in f.values { if (!supported(t)) { return empty("unsupported physical RC value type"); } }
-    if (!supported(f.result)) { return empty("unsupported physical RC result type"); }
+    if (why != "") { return why; }
+    if (f.graph.blocks.len() != 1 || f.graph.blocks[0].term.kind_tag != 1) { return "physical RC needs straight-line return graph"; }
+    for t in f.values { if (!supported(t)) { return "unsupported physical RC value type"; } }
+    if (!supported(f.result)) { return "unsupported physical RC result type"; }
     // Keep this physical vocabulary closed when semantic analysis grows new
     // operations. Verification of a new operation does not implement its ABI.
     for ins in f.graph.blocks[0].insts {
         var k: i32 = ins.kind_tag;
-        if (k != 1 && k != 2 && k != 6 && k != 7
-            && k != ssasem.array_new() && k != ssasem.tuple_new()
-            && k != ssasem.array_get() && k != ssasem.tuple_get()) {
-            return empty("unsupported physical RC operation");
-        }
+        if (!supported_op(k)) { return "unsupported physical RC operation"; }
     }
+    return "";
+}
+
+function supported_op(k: i32): boolean {
+    return k == 1 || k == 2 || k == 6 || k == 7
+        || k == ssasem.array_new() || k == ssasem.tuple_new()
+        || k == ssasem.array_get() || k == ssasem.tuple_get();
+}
+
+function frame(f: ssasem.Func): irlower.LowerResult {
     var r: irlower.LowerResult = empty("");
     r = irlower.LowerResult { ...r, ok: true, n_params: f.params.len(), n_locals: f.graph.nvals };
     var vi: i32 = 0;
@@ -160,6 +167,24 @@ pub function lower(f: ssasem.Func, modes: i32[], p: ssaunits.Plan): irlower.Lowe
         if let typeinfo.TypeArray(_) = f.values[vi] { r = irlower.LowerResult { ...r, arr_slots: r.arr_slots.append(vi) }; }
         vi = vi + 1;
     }
+    return r;
+}
+
+function instruction(r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerResult {
+    for arg in ins.args { r = emit(r, ir.op_load_local(arg)); }
+    if (ins.kind_tag == 1 || ins.kind_tag == 2) { r = emit(r, ir.op_const_i32(ins.imm)); }
+    if (ins.kind_tag == ssasem.array_new()) { r = emit(r, ir.op_arr_make(ins.args.len(), 32)); }
+    if (ins.kind_tag == ssasem.tuple_new()) { r = emit(r, ir.op_tuple_make(ins.args.len())); }
+    if (ins.kind_tag == ssasem.array_get()) { r = emit(r, ir.op_arr_get(32)); }
+    if (ins.kind_tag == ssasem.tuple_get()) { r = emit(r, ir.op_tuple_get(ins.imm)); }
+    // A verified copy already has its single operand on the stack.
+    return emit(r, ir.op_store_local(ins.result));
+}
+
+pub function lower(f: ssasem.Func, modes: i32[], p: ssaunits.Plan): irlower.LowerResult {
+    var why: string = validate(f, modes, p);
+    if (why != "") { return empty(why); }
+    var r: irlower.LowerResult = frame(f);
     r = drops(r, at(p, ssaunits.entry_point()), f);
     var b = f.graph.blocks[0];
     var pos: i32 = 0;
@@ -167,14 +192,7 @@ pub function lower(f: ssasem.Func, modes: i32[], p: ssaunits.Plan): irlower.Lowe
         if (ins.kind_tag != 6) {
             var step: ssaunits.Step = at(p, pos);
             r = supplies(r, step);
-            for arg in ins.args { r = emit(r, ir.op_load_local(arg)); }
-            if (ins.kind_tag == 1 || ins.kind_tag == 2) { r = emit(r, ir.op_const_i32(ins.imm)); }
-            if (ins.kind_tag == ssasem.array_new()) { r = emit(r, ir.op_arr_make(ins.args.len(), 32)); }
-            if (ins.kind_tag == ssasem.tuple_new()) { r = emit(r, ir.op_tuple_make(ins.args.len())); }
-            if (ins.kind_tag == ssasem.array_get()) { r = emit(r, ir.op_arr_get(32)); }
-            if (ins.kind_tag == ssasem.tuple_get()) { r = emit(r, ir.op_tuple_get(ins.imm)); }
-            // A verified copy already has its single operand on the stack.
-            r = emit(r, ir.op_store_local(ins.result));
+            r = instruction(r, ins);
             r = drops(r, step, f);
         }
         pos = pos + 1;
