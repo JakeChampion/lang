@@ -44,7 +44,9 @@ On main `f1b98cea9`, all 20 cases passed without skips in 93.439 s: four
 native-oracle graph cases, four invalid-input cases, and the four graph cases
 self-compiled for each of x86-64, ARM64 and Wasm. Lint-all passed. The two
 pre-existing enum-return failures were reproduced separately on the same main
-in 15.844 s and remain merge blockers. Full CI and review are still required.
+in 15.844 s. They were subsequently repaired by #8990 with exact heap-balance
+assertions, now integrated through the parent stack. Full CI and review are
+still required.
 
 Review follow-up expands the invalid-input table from four to fourteen cases,
 covering malformed terminators, missing/negative successors, phi arity, operand,
@@ -61,6 +63,6 @@ borrowed call anchors, counted-return obligations and independent unit
 verification must be connected before RC lowering can use these live sets.
 
 The corresponding AST ownership consumers must then be replaced and removed.
-The two existing enum-root leak assertions remain unchanged; this module alone
-does not fix them or complete #8874/#8920. No optional compiler route or size
+The enum-root counting repair is supplied separately by #8990; this module
+alone does not complete #8874/#8920. No optional compiler route or size
 baseline change is introduced.
