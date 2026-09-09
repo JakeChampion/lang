@@ -322,11 +322,17 @@ const (
 	OpStateGet              // Args = availability state; requires a verified presence proof
 	OpBindingSnapshot       // Imm = binding identity; result is immutable availability
 	OpBindingReplaceGuarded // Args = same-binding snapshot witness, replacement
+	OpRecordMake            // Args = fields in nominal declaration order
+	OpRecordGet             // Args = nominal container; Imm = field ordinal
 )
 
 // String renders the OpKind for dumps + error messages.
 func (k OpKind) String() string {
 	switch k {
+	case OpRecordMake:
+		return "record_make"
+	case OpRecordGet:
+		return "record_get"
 	case OpBindingReplaceGuarded:
 		return "binding_replace_guarded"
 	case OpBindingSnapshot:

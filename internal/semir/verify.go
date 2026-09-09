@@ -35,7 +35,8 @@ func verifyWithFacts(f *Func, facts *verificationFacts) error {
 	fail := func(format string, args ...any) error {
 		return fmt.Errorf("semir %s: %s", g.Name, fmt.Sprintf(format, args...))
 	}
-	if err := resolvedType(f.result, true); err != nil {
+	types := typeVerifier{program: f.program}
+	if err := types.check(f.result, true); err != nil {
 		return fail("result: %v", err)
 	}
 	if g.Entry == nil || len(g.Blocks) == 0 {
@@ -68,7 +69,7 @@ func verifyWithFacts(f *Func, facts *verificationFacts) error {
 				return fail("%v defined twice", v)
 			}
 			defs[v.ID] = true
-			if err := resolvedType(info.typ.source, false); err != nil {
+			if err := types.check(info.typ.source, false); err != nil {
 				return fail("%v: %v", v, err)
 			}
 			if info.typ.form != sourceForm && info.typ.form != availabilityForm {
@@ -174,7 +175,7 @@ func verifyWithFacts(f *Func, facts *verificationFacts) error {
 		knownBoundaries[boundary] = true
 	}
 	for _, b := range f.bindings {
-		if err := resolvedType(b.typ, false); err != nil {
+		if err := types.check(b.typ, false); err != nil {
 			return fail("binding %q: %v", b.name, err)
 		}
 		// Boundary membership is checked here; verifyCleanups independently
@@ -368,6 +369,24 @@ func verifyOp(f *Func, op *ssa.Op) error {
 		if !ok || op.Imm < 0 || op.Imm >= int64(len(a.Elems)) || !ast.Equal(a.Elems[op.Imm], result) {
 			return bad()
 		}
+	case ssa.OpRecordMake:
+		r := f.program.record(result)
+		if r == nil || len(r.fields) != len(op.Args) || op.Imm != 0 {
+			return bad()
+		}
+		for i, field := range r.fields {
+			if !ast.Equal(field.typ, arg(i)) {
+				return bad()
+			}
+		}
+	case ssa.OpRecordGet:
+		if len(op.Args) != 1 {
+			return bad()
+		}
+		r := f.program.record(arg(0))
+		if r == nil || op.Imm < 0 || op.Imm >= int64(len(r.fields)) || !ast.Equal(r.fields[op.Imm].typ, result) {
+			return bad()
+		}
 	case ssa.OpSemanticCall:
 		callee, err := f.callee(op)
 		if err != nil {
@@ -393,7 +412,7 @@ func verifyOp(f *Func, op *ssa.Op) error {
 // Keep the pilot's supported surface explicit. These are the checker's real
 // types, not an alternate vocabulary; unresolved and not-yet-supported types
 // are rejected rather than erased to pointer-width integers.
-func resolvedType(typ ast.Type, allowVoid bool) error {
+func (v *typeVerifier) check(typ ast.Type, allowVoid bool) error {
 	switch t := typ.(type) {
 	case ast.NumberType:
 		if !t.Polymorphic && (t.Width == 0 || t.Width == 8 || t.Width == 16 || t.Width == 32 || t.Width == 64 || t.Width == ast.WidthPtr) {
@@ -406,21 +425,23 @@ func resolvedType(typ ast.Type, allowVoid bool) error {
 			return nil
 		}
 	case ast.ArrayType:
-		return resolvedType(t.Elem, false)
+		return v.check(t.Elem, false)
 	case ast.TupleType:
 		for _, elem := range t.Elems {
-			if err := resolvedType(elem, false); err != nil {
+			if err := v.check(elem, false); err != nil {
 				return err
 			}
 		}
 		return nil
+	case ast.StructType:
+		return v.checkRecord(t)
 	}
 	return fmt.Errorf("unresolved or unsupported semantic type %T", typ)
 }
 
 func referenceBearing(typ ast.Type) bool {
 	switch typ.(type) {
-	case ast.StringType, ast.ArrayType, ast.TupleType:
+	case ast.StringType, ast.ArrayType, ast.TupleType, ast.StructType:
 		return true
 	default:
 		return false

@@ -176,6 +176,20 @@ function churn(flag: boolean): void {
 function sink(own items: i32[][][]): void {}`)
 }
 
+func TestTypedSSARecordValues(t *testing.T) {
+	bin := buildFernForStdoutTest(t)
+	checkTypedSSAExecutable(t, bin, `struct Box[T] { value: T }
+function main(): i32 {
+  var original = Box[i32[]] { value: [41i32] };
+  var saved = project(original);
+  original = Box[i32[]] { ...original, value: [9i32] };
+  var i = 0i32; while (i < 64i32) { churn(); i = i + 1i32; }
+  return saved[0];
+}
+function project(box: Box[i32[]]): i32[] { return box.value; }
+function churn(): void { var box = Box[i32[][]] { value: [[7i32]] }; }`)
+}
+
 func checkTypedSSAExecutable(t *testing.T, bin, source string) {
 	t.Helper()
 	entry := writeFern(t, source)

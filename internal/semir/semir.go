@@ -107,7 +107,7 @@ func (f *Func) addEffect(b *ssa.Block, kind ssa.OpKind, pos ast.Position, args .
 
 // A projection is containment, not identity aliasing or an acquired reference.
 // Its container and dynamic index are real Op.Args, so SSA def-use and
-// dominance see every lifetime dependency. Field is used only for tuples.
+// dominance see every lifetime dependency. Field addresses tuple/record fields.
 type projectionInfo struct {
 	Container ssa.Value
 	Index     ssa.Value
@@ -120,7 +120,7 @@ func projection(op *ssa.Op) (projectionInfo, bool) {
 		if len(op.Args) == 2 {
 			return projectionInfo{Container: op.Args[0], Index: op.Args[1]}, true
 		}
-	case ssa.OpTupleGet:
+	case ssa.OpTupleGet, ssa.OpRecordGet:
 		if len(op.Args) == 1 {
 			return projectionInfo{Container: op.Args[0], Field: op.Imm}, true
 		}
