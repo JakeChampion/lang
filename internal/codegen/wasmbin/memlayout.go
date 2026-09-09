@@ -57,9 +57,19 @@ const (
 	// address here so subsequent calls reuse the same region.
 	readByteScratchAddr = allocCursorAddr + 4
 
+	// readByteRetAddr is the preview-2 byte reader's 12-byte landing area
+	// for blocking-read's result<list<u8>, stream-error>. One result per
+	// BYTE read, so a bump block here was a block leaked per byte (#8868).
+	readByteRetAddr = readByteScratchAddr + 4
+
+	// readerLineScratchAddr is Reader.read_line's call-local working area:
+	// the (iovec, nread, 1-byte buffer) 16 bytes on preview 1, the 12-byte
+	// blocking-read result on preview 2.
+	readerLineScratchAddr = readByteRetAddr + 12
+
 	// printIovecAddr is where __fern_print writes the (iov_base, iov_len)
 	// pair before calling fd_write — 8 bytes, base at +0 and len at +4.
-	printIovecAddr = readByteScratchAddr + 4
+	printIovecAddr = readerLineScratchAddr + 16
 
 	// printRetAddr is where fd_write writes its nwritten result. The
 	// preview-1 byte-write shim deliberately reuses this pair as a 1-byte
