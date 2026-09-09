@@ -1,9 +1,6 @@
 package e2eselfhost
 
-import (
-	"os/exec"
-	"testing"
-)
+import "testing"
 
 // TestSelfHostTypeRef exercises the self-hosted parser's structured type
 // reference (examples/self_host/parser.fern's TypeRef / parse_type_ref /
@@ -31,9 +28,6 @@ import (
 // report and its exit code is the round-trip failure count.
 func TestSelfHostTypeRef(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
-	if len(runner) != 0 {
-		t.Skip("typeref_run driver runs natively; skipping under an exec runner")
-	}
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "typeref_run.fern")
 	bin := buildSelfHostBin(t, gcc, dir, "typeref_run.fern", "typeref_run")
@@ -70,6 +64,14 @@ func TestSelfHostTypeRef(t *testing.T) {
 		"ok   (() => T) => U\n" +
 		"ok   (i32) => (string, i32)\n" +
 		"ok   Vec[(T) => boolean]\n" +
+		"ok   ((T) => U)[]\n" +
+		"ok   (T) => U[][]\n" +
+		"ok   (T) => () => U[]\n" +
+		"ok   ((((T) => U)))\n" +
+		"ok   ((() => U)[])\n" +
+		"ok   (((T) => U)[][])\n" +
+		"ok   (() => T, () => U)\n" +
+		"ok   () => (() => U[])[]\n" +
 		"struct Map base=Map args=2 depth=0 tuple=0\n" +
 		"struct Map.arg1 base=Option args=1\n" +
 		"struct tuparr base= args=2 depth=1 tuple=1\n" +
@@ -77,9 +79,12 @@ func TestSelfHostTypeRef(t *testing.T) {
 		"struct fn2 base= args=3 depth=0 tuple=0 fn=1 ret=i32\n" +
 		"struct fn0 args=1 fn=1 ret=P\n" +
 		"struct fnho args=2 fn=1 p0fn=1 ret=U\n" +
+		"struct fnarrret fn=1 depth=0 retdepth=2\n" +
+		"struct arrfn fn=0 depth=1 elemfn=1\n" +
+		"struct groupedfn fn=1 params=T ret=U\n" +
 		"round_trip_failures=0\n"
 
-	cmd := exec.Command(bin)
+	cmd := runX86_64Bin(runner, bin)
 	out, _ := cmd.Output()
 	if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
 		t.Fatalf("typeref_run did not exit normally")
