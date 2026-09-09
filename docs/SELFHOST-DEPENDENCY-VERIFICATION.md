@@ -50,6 +50,7 @@ semantic types and projection/effect contracts must be validated next, followed
 by counted-unit planning and its independent verification. Only then can the
 production pre-RC phase replace the corresponding AST ownership consumers.
 
-The two existing enum-root leak tests remain unchanged merge blockers. Neither
-this verifier nor liveness computation alone repairs the parent/child counting
-contract. No optional compiler route or size-baseline change is introduced.
+Neither this verifier nor liveness computation alone repairs the parent/child
+counting contract. Main's separate #8990 repair supplies that contract and its
+exact heap-balance assertions pass after integrating the parent stack. No
+optional compiler route or size-baseline change is introduced.
