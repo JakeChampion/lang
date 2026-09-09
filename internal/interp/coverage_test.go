@@ -47,9 +47,7 @@ func TestInterpHandlesEveryASTNode(t *testing.T) {
 		{node: "FString", src: `
 import "std/i32";
 function main(): string { return f"x={42}"; }`},
-		{node: "FloatLit",
-			skip: "interp doesn't model floats — owns the f32 / f64 paths via wasm + arm64 backends only",
-		},
+		{node: "FloatLit", src: `function main(): f64 { return 1.5; }`},
 		{node: "Ident", src: `function main(): i32 { var x: i32 = 7; return x; }`},
 		{node: "ArrayLit", src: `function main(): i32 { var a: i32[] = [1, 2, 3]; return a[0]; }`},
 		{node: "Index", src: `function main(): i32 { var a: i32[] = [10, 20]; return a[1]; }`},
@@ -64,9 +62,10 @@ function main(): i32 {
     var l: Light = Red;
     return match (l) { Red => 1, Green => 2 };
 }`},
-		{node: "TryOp",
-			skip: "the postfix `?` operator's early-return semantics need flow-from-expr plumbing the tree-walking interpreter doesn't have — every evalExpr would need to return Value+flow+error rather than just Value+error. Documented in the interpreter's own error message; compile to wasm or arm64 for now.",
-		},
+		{node: "TryOp", src: `function take(o: Option[i32]): Option[i32] {
+var n = o?; return Some(n); }
+function main(): i32 { match (take(Some(7))) {
+Some(n) => { return n; }, None => { return 0; } } return 0; }`},
 		{node: "StructLit", src: `struct P { x: i32, y: i32 }
 function main(): i32 { var p: P = P { x: 3, y: 4 }; return p.x; }`},
 		{node: "TupleLit", src: `function main(): i32 { var t: (i32, i32) = (3, 4); var (a, b) = t; return a + b; }`},

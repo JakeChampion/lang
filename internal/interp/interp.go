@@ -1657,8 +1657,16 @@ func (i *Interp) verifyExclusive(arr Array) error {
 		}
 	}
 	holders := 0
+	seen := make(map[*binding]bool)
 	for _, e := range i.envs {
 		for _, v := range e.vars {
+			if slot, ok := v.(*binding); ok {
+				if seen[slot] {
+					continue
+				}
+				seen[slot] = true
+				v = slot.value
+			}
 			holders += coversBuffer(v, arr.h, 0)
 		}
 	}
@@ -3584,15 +3592,70 @@ func (i *Interp) CallByName(name string, args []Value) (Value, error) {
 // ---------- evaluation core ----------
 
 type env struct {
-	parent *env
-	vars   map[string]Value
+	parent       *env
+	vars         map[string]Value
+	borrowedMaps bool
 }
 
-func newEnv(parent *env) *env { return &env{parent: parent, vars: map[string]Value{}} }
+type binding struct {
+	value Value
+}
+
+func (b *binding) String() string { return b.value.String() }
+
+func newEnv(parent *env) *env { return &env{parent: parent} }
+
+// capture freezes lexical membership, not the values of mutable bindings.
+// A nil list preserves the parser-only interpreter's unresolved environment.
+func (e *env) capture(names []ast.Param) *env {
+	out := newEnv(nil)
+	if names != nil {
+		for _, param := range names {
+			if slot, ok := e.captureCell(param.Name); ok {
+				out.captureBinding(param.Name, slot)
+			}
+		}
+		return out
+	}
+	for cur := e; cur != nil; cur = cur.parent {
+		for name := range cur.vars {
+			if _, found := out.vars[name]; !found {
+				slot, _ := cur.captureCell(name)
+				out.captureBinding(name, slot)
+			}
+		}
+	}
+	return out
+}
+
+func (e *env) captureBinding(name string, slot *binding) {
+	e.bindValue(name, slot)
+}
+
+// Promote only captured bindings. Ordinary locals need no heap cell.
+func (e *env) captureCell(name string) (*binding, bool) {
+	for cur := e; cur != nil; cur = cur.parent {
+		if v, ok := cur.vars[name]; ok {
+			if slot, ok := v.(*binding); ok {
+				return slot, true
+			}
+			slot := &binding{value: v}
+			if cur.borrowedMaps {
+				retain(v)
+			}
+			cur.captureBinding(name, slot)
+			return slot, true
+		}
+	}
+	return nil, false
+}
 
 func (e *env) get(name string) (Value, bool) {
 	for cur := e; cur != nil; cur = cur.parent {
 		if v, ok := cur.vars[name]; ok {
+			if slot, ok := v.(*binding); ok {
+				return slot.value, true
+			}
 			return v, true
 		}
 	}
@@ -3603,32 +3666,42 @@ func (e *env) get(name string) (Value, bool) {
 // innermost scope if none exists.
 func (e *env) set(name string, v Value) {
 	for cur := e; cur != nil; cur = cur.parent {
-		if _, ok := cur.vars[name]; ok {
-			cur.vars[name] = v
+		if old, ok := cur.vars[name]; ok {
+			if slot, ok := old.(*binding); ok {
+				slot.value = v
+			} else {
+				cur.vars[name] = v
+			}
 			return
 		}
+	}
+	e.bindValue(name, v)
+}
+
+func (e *env) bindValue(name string, v Value) {
+	if e.vars == nil {
+		e.vars = make(map[string]Value)
 	}
 	e.vars[name] = v
 }
 
-// declare always binds in the innermost scope (for `var` decls, params,
-// match-arm / for / let bindings). Binding is an owning store, so it
-// retains any Map reachable from v; the matching release happens when
-// the scope is torn down (releaseScope) or the binding is reassigned.
+// declare always creates a new binding in the innermost scope.
 func (e *env) declare(name string, v Value) {
-	e.vars[name] = v
+	e.bindValue(name, v)
 	retain(v)
 	arrOwn(v)
 }
 
-// releaseScope drops the COW references held by every binding in a scope
-// that is going out of scope. The escaping value (a block's return value)
-// is released here too and re-retained by the caller's binding store — a
-// transient dec that nets out, since the interpreter never frees at rc 0
-// (Go's GC owns memory; rc only drives mutate-in-place vs copy).
+// Captured cells keep their owning reference beyond scope exit, like values
+// stored in containers. Go GC owns their lifetime; COW counts are conservative.
 func (e *env) releaseScope() {
 	for _, v := range e.vars {
-		release(v)
+		if _, captured := v.(*binding); captured {
+			continue
+		}
+		if !e.borrowedMaps {
+			release(v)
+		}
 		arrDisown(v)
 	}
 }
@@ -3679,6 +3752,7 @@ func (i *Interp) callFunc(fn *ast.FuncDecl, args []Value) (Value, error) {
 		return nil, fmt.Errorf("%s: expected %d args, got %d", fn.Name, len(fn.Params), len(args))
 	}
 	e := newEnv(nil)
+	e.borrowedMaps = true
 	for k, p := range fn.Params {
 		// A map parameter is BORROWED, not owned: the backends pass a map
 		// to a function without bumping its COW refcount, so a mutation
@@ -3687,14 +3761,10 @@ func (i *Interp) callFunc(fn *ast.FuncDecl, args []Value) (Value, error) {
 		// retain, so the interp matches. See docs/INTERP-MAP-COW-PLAN.md.
 		// An ARRAY parameter is owned — the backends dup an array whose
 		// caller still needs it, and copy the `with` that follows.
-		e.vars[p.Name] = args[k]
+		e.bindValue(p.Name, args[k])
 		arrOwn(args[k])
 	}
-	defer func() {
-		for _, v := range e.vars {
-			arrDisown(v)
-		}
-	}()
+	defer e.releaseScope()
 	i.envs = append(i.envs, e)
 	defer func() { i.envs = i.envs[:len(i.envs)-1] }()
 	i.deferStack = append(i.deferStack, nil)
@@ -4043,7 +4113,11 @@ func (i *Interp) execStmtInner(s ast.Stmt, e *env) (result, error) {
 		// local scope. Subsequent calls to the name go through
 		// the Closure → callClosure path so reads of outer
 		// vars hit the captured env.
-		e.declare(x.Name, &Closure{Decl: x, Env: e})
+		closure := &Closure{Decl: x}
+		e.declare(x.Name, closure)
+		closure.Env = e.capture(x.Captures)
+		self, _ := e.captureCell(x.Name)
+		closure.Env.captureBinding(x.Name, self)
 		return result{flow: flowNormal}, nil
 	case *ast.Match:
 		tag, err := i.evalExpr(x.Tag, e)
@@ -4962,7 +5036,11 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 			ReturnType: x.ReturnType,
 			Body:       x.Body,
 		}
-		return &Closure{Decl: decl, Env: env}, nil
+		captures := x.Captures
+		if x.Synthetic != nil && captures == nil {
+			captures = []ast.Param{}
+		}
+		return &Closure{Decl: decl, Env: env.capture(captures)}, nil
 	case *ast.Call:
 		return i.evalCall(x, env)
 	case *ast.Binary:
@@ -5450,11 +5528,7 @@ func (i *Interp) callClosure(c *Closure, args []Value) (Value, error) {
 	for k, p := range c.Decl.Params {
 		e.declare(p.Name, args[k])
 	}
-	defer func() {
-		for _, v := range e.vars {
-			arrDisown(v)
-		}
-	}()
+	defer e.releaseScope()
 	i.envs = append(i.envs, e)
 	defer func() { i.envs = i.envs[:len(i.envs)-1] }()
 	i.deferStack = append(i.deferStack, nil)
