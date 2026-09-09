@@ -78,20 +78,17 @@ replace the remaining ownership queries only after their consumers are verified.
 
 ## Validation checkpoint
 
-The final targeted scope, lexical identity, capture-rewrite and callable
-diagnostic run passes in 27.852 seconds without skips; lint-all passes.
-Earlier broader closure/callable and wide/passthrough runs pass in 82.154 and
-71.970 seconds. The 27 runtime scope cases include nine sources on three targets.
+Thirty scope runtime cases and nine separate-compilation runtime cases pass
+on x86-64, ARM64 and Wasm without skips. The broader capture, callable,
+value-block and binding-scope run passes in 83.492 seconds; the final runtime
+rerun after null-cleanup optimization passes in 46.762 seconds. Lint-all passes.
+Imported callable declarations and separate-compilation capture contexts are
+covered by regression tests for #8984 and #8985.
 
-Matched Linux x86-64 driver builds against the callback-repair parent measure:
-
-| Artifact | Parent bytes | Current bytes | Change |
-| --- | ---: | ---: | ---: |
-| Whole compiler | 11,553,004 | 11,753,948 | +200,944 |
-| Assembly IR driver | 7,426,364 | 7,893,436 | +467,072 |
-
-These are correctness changes, not measured performance improvements. Raw
-drivers now require checked capture resolution, and syntax retains additional
-semantic metadata. Attribution of the binary growth and full driver coverage
-remain pending. No size baseline is changed; CI size failures remain blockers
-until avoidable overhead is addressed and any remaining growth is justified.
+All fifteen CI-equivalent linked drivers are measured and smoke-tested against
+the callback-repair parent. The whole compiler shrinks from 11,553,004 to
+11,540,956 bytes. Partial drivers now include shared checked-capture resolution.
+The complete baseline is refreshed after removing avoidable generated cleanup
+calls on null, with code-size attribution in SELFHOST-LEXICAL-CAPTURE-SIZE.md.
+These are correctness changes, not measured runtime performance improvements.
+Full current-head CI and the separate enum ownership repairs remain merge gates.

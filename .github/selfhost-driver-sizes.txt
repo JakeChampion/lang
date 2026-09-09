@@ -312,18 +312,21 @@
 # Refreshed downward after preserving nested field roots in grow containment.
 # Same-source A/B measurements and the cause are recorded in
 # docs/SELFHOST-GROW-BRACKET-SIZE-2026-09-08.md. No ceiling was increased.
-fern.fern 11453884
-asm_load_run.fern 8218356
-asm_modload_run.fern 7583236
-asm_ir_run.fern 7352268
-asm_run.fern 6909180
-wasm_ir_run.fern 6958940
-wasm_run.fern 6938124
-wasm_runio_run.fern 6904428
-asm_pathprobe_run.fern 6173932
-ssa_lift_scan_run.fern 5987876
-asm_ir_elig_run.fern 5661036
-irlower_run.fern 5982668
-checker_modload_run.fern 2141188
-ssa_emit_run.fern 1715900
-ssa_run.fern 1537804
+# Measured after lexical capture contracts and removal of inert null cleanup.
+# Attribution: docs/SELFHOST-LEXICAL-CAPTURE-SIZE.md. Partial drivers now link
+# checked capture resolution; the whole compiler shrinks against its PR parent.
+fern.fern 11540956
+asm_load_run.fern 8325836
+asm_modload_run.fern 7940084
+asm_ir_run.fern 7705020
+asm_run.fern 7298796
+wasm_ir_run.fern 7377260
+wasm_run.fern 7352348
+wasm_runio_run.fern 7318652
+asm_pathprobe_run.fern 6592252
+ssa_lift_scan_run.fern 6410596
+asm_ir_elig_run.fern 5645052
+irlower_run.fern 6405084
+checker_modload_run.fern 2125220
+ssa_emit_run.fern 1723500
+ssa_run.fern 1545404
