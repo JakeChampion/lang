@@ -75367,6 +75367,7 @@ pub function lift_lambdas_view(raw_mod: parser.Module, view: parser.FuncDecl[]):
         wi = wi + 1;
     }
     // Keep resolved bindings and expanded cleanup even when no lambda lifted.
+    // Keep explicit fields until #8989 is fixed: a spread here crashes stage1 bootstrap.
     var result: parser.Module = parser.Module { funcs: stamp_fn_local_types(newfuncs), structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs, trait_decls: mod.trait_decls };
     // Infer return types on the FINAL lifted module so a lifted lambda with an
     // inferred (empty) ret_type that returns i64/u64 is typed BEFORE eligibility
