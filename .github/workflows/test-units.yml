@@ -22,58 +22,15 @@ name: Test units
 # ran, which is the state this lane was in (#8472). The preflight below turns
 # a half-installed runtime back into a job failure.
 
+# Called from ci.yml rather than triggered: that is the one workflow a pull
+# request or a push to main launches. It holds the PR-wide lock (one pull
+# request's suite at a time), decides from the changed files whether this lane
+# runs — the lane's path filter lives in its lane table — and cancels the rest
+# of the run when a lane goes red. `workflow_dispatch` stays so the lane can
+# be run on its own, outside that lock.
 on:
-  pull_request:
-    # DOC-ONLY CHANGES DO NOT NEED THE COMPILER SUITE. This project opens a PR
-    # for every push including doc fixes and comment corrections, and each one
-    # was launching ~85 jobs into a queue that is the binding constraint on
-    # every other PR in flight.
-    #
-    # Deliberately narrow. `*.md` does not cross a `/` in a GitHub path filter,
-    # so it is root-level prose only (README, CLAUDE.md) and the literate
-    # sources under examples/literate/*.fern.md — which ARE compiled — still
-    # trigger everything. docs/ holds no .fern.md and no test fixture; the two
-    # e2e tests that name a docs/ path only cite it in a comment or a failure
-    # message.
-    #
-    # lint.yml deliberately has NO filter, so a doc-only PR still runs one real
-    # gate rather than reporting no checks at all.
-    #
-    # The identical block on every lane is pinned by
-    # TestPRWorkflowsShareOneDocOnlyFilter (internal/sourcelint).
-    paths-ignore:
-      - "docs/**"
-      - "*.md"
-  # The unit half of #7319's main smoke (check-sources.yml is the type half):
-  # rebase-merge replays commits onto a main their PR's CI never saw, so a
-  # semantic coupling between two individually-green PRs only exists in the
-  # combination — and only a run against the merge itself can report it.
-  # Filter mirrors the pull_request one; pinned by TestGateLanesRunOnMain.
-  push:
-    branches: [main]
-    paths-ignore:
-      - "docs/**"
-      - "*.md"
+  workflow_call:
   workflow_dispatch:
-
-# Supersede an in-flight run for the same ref: a new push to the
-# branch / PR (or a new dispatch) cancels the older run instead of
-# letting both sit in the queue. Keyed per-workflow + per-ref so
-# distinct PRs and the main branch never cancel each other.
-#
-# main is the one ref that never cancels: its run finishes and reports
-# even when the next merge lands mid-run. It gets ONE group, not one per
-# SHA. A SHA-keyed group supersedes nothing, so a burst of back-to-back
-# rebase-merges held an uncancellable run each — six of them stacked ~90
-# runs into the queue every open PR was waiting behind (#8124). With one
-# group GitHub keeps at most one main run executing and one pending,
-# cancelling the older pending, so a burst coalesces to its newest
-# commit. The cost is attribution: a red main names a span of merges
-# rather than one. check-sources.yml keeps the per-merge attribution —
-# one ~1-minute job can afford a slot per merge; this lane cannot.
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   test:

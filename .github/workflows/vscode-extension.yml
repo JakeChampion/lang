@@ -11,42 +11,18 @@ name: VS Code Extension
 #      the .vsix as a build artefact so a maintainer can `code
 #      --install-extension` it without rerunning the toolchain.
 #
-# Path-filtered to the extension dir + this workflow file so it
-# doesn't burn minutes on unrelated edits.
+# Path-filtered, in ci.yml's lane table, to the extension dir +
+# this workflow file so it doesn't burn minutes on unrelated edits.
 
+# Called from ci.yml rather than triggered: that is the one workflow a pull
+# request or a push to main launches. It holds the PR-wide lock (one pull
+# request's suite at a time), decides from the changed files whether this lane
+# runs — the lane's path filter lives in its lane table — and cancels the rest
+# of the run when a lane goes red. `workflow_dispatch` stays so the lane can
+# be run on its own, outside that lock.
 on:
-  pull_request:
-    paths:
-      - "editors/vscode/**"
-      - ".github/workflows/vscode-extension.yml"
-  # Also on main: a rebase-merge replays commits onto a main their PR's CI never
-  # saw, so a coupling between two individually-green PRs exists only in the
-  # merge. Filter mirrors the pull_request one; pinned by TestGateLanesRunOnMain.
-  push:
-    branches: [main]
-    paths:
-      - "editors/vscode/**"
-      - ".github/workflows/vscode-extension.yml"
+  workflow_call:
   workflow_dispatch:
-
-# Supersede an in-flight run for the same ref: a new push to the
-# branch / PR (or a new dispatch) cancels the older run instead of
-# letting both sit in the queue. Keyed per-workflow + per-ref so
-# distinct PRs and the main branch never cancel each other.
-#
-# main is the one ref that never cancels: its run finishes and reports
-# even when the next merge lands mid-run. It gets ONE group, not one per
-# SHA. A SHA-keyed group supersedes nothing, so a burst of back-to-back
-# rebase-merges held an uncancellable run each — six of them stacked ~90
-# runs into the queue every open PR was waiting behind (#8124). With one
-# group GitHub keeps at most one main run executing and one pending,
-# cancelling the older pending, so a burst coalesces to its newest
-# commit. The cost is attribution: a red main names a span of merges
-# rather than one. check-sources.yml keeps the per-merge attribution —
-# one ~1-minute job can afford a slot per merge; this lane cannot.
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
 
 jobs:
   validate:

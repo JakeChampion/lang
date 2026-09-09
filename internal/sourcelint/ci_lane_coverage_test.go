@@ -406,24 +406,11 @@ func envValue(t *testing.T, src, key string) string {
 // records its absence (#8474).
 func TestMacOSLaneFilterCoversWhatTheLaneBuilds(t *testing.T) {
 	root := mustRepoRoot(t)
-	src := readWorkflow(t, root, "macos.yml")
-	on, ok := onBlock(src)
-	if !ok {
-		t.Fatal("macos.yml has no `on:` block")
+	// One list, read by both events: the lane table in ci.yml.
+	entries := pathFilterEntries(t, "macos.yml")
+	if len(entries) == 0 {
+		t.Fatal("macos.yml has no `paths` filter in ci.yml's lane table — this gate assumes one")
 	}
-
-	// The pull_request and push filters must be the same list: a lane that
-	// gates a PR on one set and main on another reports different things
-	// about the same commit.
-	blocks := pathsBlocks(on)
-	if len(blocks) != 2 {
-		t.Fatalf("expected exactly two `paths:` filters (pull_request + push), found %d", len(blocks))
-	}
-	if strings.Join(blocks[0], "\n") != strings.Join(blocks[1], "\n") {
-		t.Errorf("macos.yml's pull_request and push path filters differ:\n  pull_request: %v\n  push:         %v",
-			blocks[0], blocks[1])
-	}
-	entries := blocks[0]
 
 	// Every entry must match something on disk. This is what catches an entry
 	// left behind by a deletion, which matches nothing and says nothing.
@@ -444,38 +431,6 @@ func TestMacOSLaneFilterCoversWhatTheLaneBuilds(t *testing.T) {
 				"binary it builds and executes is compiled from it", pkg)
 		}
 	}
-}
-
-// pathsBlocks returns each `paths:` list in the `on:` block, as its quoted
-// entries in order.
-func pathsBlocks(on string) [][]string {
-	var out [][]string
-	var cur []string
-	in := false
-	entry := regexp.MustCompile(`^\s*-\s*"([^"]*)"\s*$`)
-	for _, line := range strings.Split(on, "\n") {
-		trimmed := strings.TrimSpace(line)
-		switch {
-		case trimmed == "paths:":
-			if in {
-				out = append(out, cur)
-			}
-			in, cur = true, nil
-		case !in:
-			// nothing
-		case trimmed == "" || strings.HasPrefix(trimmed, "#"):
-			// blank lines and comments stay inside the list
-		case entry.MatchString(line):
-			cur = append(cur, entry.FindStringSubmatch(line)[1])
-		default:
-			out = append(out, cur)
-			in, cur = false, nil
-		}
-	}
-	if in {
-		out = append(out, cur)
-	}
-	return out
 }
 
 // pathFilterSelects applies GitHub's `paths:` semantics to one path: the last

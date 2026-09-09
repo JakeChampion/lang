@@ -29,45 +29,18 @@ var actionLanes = map[string]string{
 	"reap-stale-runs.yml": "cancels the queued runs nobody is waiting on",
 }
 
-// cancelOnMainLanes are the lanes short enough to finish between two merges, so
-// superseding an in-flight main run costs a result the next one reproduces
-// within minutes — and hands its slot back, which is what the pool needs.
+// No main lane cancels its own superseded runs.
 //
-// It is an ALLOWLIST, and that direction is the point: a lane not named here
-// keeps its main runs. The safe behaviour is what a new lane gets by default,
-// because the failure of the other default is invisible.
-//
-// Measured or documented, per lane: lint ~5 min of work; the fuzz targets 60
-// seconds each; fernsmith ~60 s; perf's `bench` is seconds of measurement on a
-// Go build, and its self-host job builds once for three sub-minute measures;
-// docs-build, vscode-extension and playground-e2e carry 10-15 minute timeouts
-// on jobs that do far less.
-var cancelOnMainLanes = map[string]bool{
-	"lint.yml":             true,
-	"fuzz-diff.yml":        true,
-	"test-fernsmith.yml":   true,
-	"perf.yml":             true,
-	"docs-build.yml":       true,
-	"vscode-extension.yml": true,
-	"playground-e2e.yml":   true,
-}
-
-// A main lane cancels its own superseded runs only when it can finish between
-// merges. Everything else keeps them.
-//
-// The queue is the scarce resource — 75% of a PR's CI time is spent waiting
-// rather than computing (docs/CI-SIGNOFF.md) — so a burst of merges should not
-// hold a runner for every result the newest commit supersedes. That is why the
-// short lanes cancel.
-//
-// It stops being a saving the moment a lane cannot finish inside the gap
-// between merges, because then it does not report LATER, it never reports at
-// all. test-e2e-selfhost is the measurement: it needs 29-123 minutes wall-clock
-// (14 of 40 main runs completed over 2026-09-03/04), merges here land every two
-// to four minutes, and in the hour after it was made to cancel on main, 16 main
-// runs produced zero completions — 15 cancelled, most inside three minutes. A
-// lane in that state is green by absence, which is the same failure as a lane
-// that never runs, and this repository has now paid for it twice in one day.
+// A lane that cannot finish inside the gap between merges does not report
+// LATER, it never reports at all. test-e2e-selfhost is the measurement: it
+// needs 29-123 minutes wall-clock (14 of 40 main runs completed over
+// 2026-09-03/04), merges here land every two to four minutes, and in the hour
+// after it was made to cancel on main, 16 main runs produced zero completions
+// — 15 cancelled, most inside three minutes. A lane in that state is green by
+// absence, which is the same failure as a lane that never runs, and this
+// repository has now paid for it twice in one day. Every lane is now a job of
+// ci.yml's one main run, so the run as a whole keeps that rule; the short
+// lanes that used to cancel their own main runs have none of their own left.
 //
 // check-sources.yml is not checked here: it carries no concurrency group at all,
 // deliberately, to keep per-merge attribution on a one-minute job.
@@ -120,20 +93,12 @@ func TestMainLanesCancelOnlyWhenTheyCanFinish(t *testing.T) {
 					"`cancel-in-progress: false`, not %q",
 					e.Name(), actionLanes[e.Name()], setting)
 			}
-		case cancelOnMainLanes[e.Name()]:
-			if setting != "true" {
-				t.Errorf("%s is listed as short enough to finish between merges but does "+
-					"not cancel its superseded main runs (%q). Either cancel, or drop it "+
-					"from cancelOnMainLanes", e.Name(), setting)
-			}
 		default:
 			if !strings.Contains(setting, "github.ref != 'refs/heads/main'") && setting != "false" {
-				t.Errorf("%s cancels its own main runs (`cancel-in-progress: %s`) and is "+
-					"not listed as short enough to finish between merges. A lane that "+
-					"cannot finish inside the gap between merges does not report late — "+
-					"it never reports. Use %q, or add it to cancelOnMainLanes with the "+
-					"measurement that says it finishes in minutes",
-					e.Name(), setting, mainSafeCancel)
+				t.Errorf("%s cancels its own main runs (`cancel-in-progress: %s`). A lane "+
+					"that cannot finish inside the gap between merges does not report "+
+					"late — it never reports. Use `false`, or %q where the workflow also "+
+					"runs on branches", e.Name(), setting, mainSafeCancel)
 			}
 		}
 	}
@@ -144,14 +109,9 @@ func TestMainLanesCancelOnlyWhenTheyCanFinish(t *testing.T) {
 			missing = append(missing, name)
 		}
 	}
-	for name := range cancelOnMainLanes {
-		if !seen[name] {
-			missing = append(missing, name)
-		}
-	}
 	sort.Strings(missing)
 	if len(missing) > 0 {
-		t.Errorf("these lists name %v, which no longer exist — a renamed lane leaves "+
+		t.Errorf("actionLanes names %v, which no longer exist — a renamed lane leaves "+
 			"an entry describing nothing, and the lane itself unclassified", missing)
 	}
 	if len(checked) == 0 {

@@ -1,11 +1,12 @@
 name: Cancel superseded runs
 
 # When a PR is closed (merged or abandoned) its branch will get no
-# further pushes, so the per-ref `concurrency` groups in the other
-# workflows can never fire to clean up whatever was still queued or
-# running for that PR. Those orphaned runs would otherwise sit in the
-# queue burning a slot until a runner picks them up just to test a
-# branch nobody cares about anymore.
+# further pushes, so nothing else ever supersedes whatever was still
+# queued or running for that PR: ci.yml's PR queue never cancels a run
+# by itself, and reap-stale-runs.yml acts on a push to the PR, which
+# will not come. That orphaned run would otherwise wait its turn in the
+# queue — and then take it, holding the PR-wide lock to test a branch
+# nobody cares about anymore.
 #
 # This reaps them: on PR close, cancel every run for the PR's head
 # branch that has not reached a terminal state — EXCEPT the ones a

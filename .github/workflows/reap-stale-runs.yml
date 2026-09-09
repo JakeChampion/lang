@@ -1,12 +1,17 @@
 name: Reap stale runs
 
-# A scheduled sweep for queued runs nobody is waiting on: a pull request's runs
-# after it closed, and runs at a SHA a later push superseded.
+# The sweep for queued runs nobody is waiting on: a pull request's runs after
+# it closed, and runs at a SHA a later push superseded.
 #
-# cancel-on-merge.yml already reaps the first class the moment a PR closes, and
-# every lane's own `concurrency` group reaps the second the moment a push lands.
-# This exists because BOTH mechanisms need a runner to act, and the queue they
-# drain is what they are queued behind. On 2026-09-05 five consecutive
+# cancel-on-merge.yml already reaps the first class the moment a PR closes.
+# The second class is THIS workflow's, on the `synchronize` event: ci.yml's
+# PR queue runs with `cancel-in-progress: false` (GitHub allows nothing else
+# beside `queue: max`), so a newer push to a pull request does not supersede
+# its older run by itself — the older run would finish, holding the PR-wide
+# lock for a commit nobody will merge. Every push to a PR therefore fires one
+# of these, and the superseded run is cancelled whether it was executing or
+# still waiting its turn. Every mechanism here needs a runner to act, and the
+# queue it drains is what it is queued behind. On 2026-09-05 five consecutive
 # cancel-on-merge runs sat pending or queued at once, one of them for twenty
 # minutes before it was itself cancelled — while 77 runs for already-merged pull
 # requests held slots ahead of every open PR. A hand sweep cleared 111 runs, 42%
@@ -34,9 +39,10 @@ name: Reap stale runs
 # which is the same load this sweep exists to relieve, so the one condition
 # that makes it necessary is the condition that stops it starting.
 #
-# A merge into main and a closed pull request are precisely the two moments
-# runs go stale, they fire reliably because they are repository events rather
-# than a scheduler's promise, and here they come every few minutes. The
+# A push to a pull request, a merge into main and a closed pull request are
+# precisely the moments runs go stale, they fire reliably because they are
+# repository events rather than a scheduler's promise, and here they come
+# every few minutes. The
 # concurrency group bounds the cost: one sweep runs, one waits, and a burst of
 # merges collapses into that pair rather than a job apiece.
 #
@@ -47,7 +53,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    types: [closed]
+    types: [closed, synchronize]
   schedule:
     - cron: "*/20 * * * *"
   workflow_dispatch:
@@ -79,19 +85,28 @@ jobs:
           script: |
             const { owner, repo } = context.repo;
 
-            // The open pull requests FIRST, so every run judged against them was
-            // listed afterwards. In the other order a PR opened mid-job has runs
-            // that match no open head and get reaped — the same ordering trap
-            // cancel-on-merge.yml documents.
-            const open = new Map(); // branch -> Set of live head SHAs
-            for (const pr of await github.paginate(github.rest.pulls.list, {
-              owner, repo, state: "open", per_page: 100,
-            })) {
-              const ref = pr.head?.ref;
-              if (!ref) continue;
-              if (!open.has(ref)) open.set(ref, new Set());
-              open.get(ref).add(pr.head.sha);
-            }
+            // branch -> Set of live head SHAs, taken once BEFORE the runs are
+            // listed and merged with a second snapshot taken AFTER. A run is
+            // spared if its SHA is live in either. The first snapshot alone
+            // loses a push that lands mid-job: its fresh run is already listed
+            // while the PR still reads at its old head, so the live run looks
+            // superseded and gets reaped — and with ci.yml serialising pull
+            // requests, a reaped live run is a whole CI round lost. The
+            // snapshot after the listing sees every head a listed run can
+            // have been created for. cancel-on-merge.yml documents the same
+            // trap from the other side.
+            const open = new Map();
+            const snapshot = async () => {
+              for (const pr of await github.paginate(github.rest.pulls.list, {
+                owner, repo, state: "open", per_page: 100,
+              })) {
+                const ref = pr.head?.ref;
+                if (!ref) continue;
+                if (!open.has(ref)) open.set(ref, new Set());
+                open.get(ref).add(pr.head.sha);
+              }
+            };
+            await snapshot();
             core.info(`${open.size} branch(es) with an open pull request`);
 
             const self = String(context.runId);
@@ -106,6 +121,7 @@ jobs:
               }
             }
             core.info(`${candidates.size} pull_request run(s) not yet finished`);
+            await snapshot();
 
             const doomed = [];
             for (const run of candidates.values()) {

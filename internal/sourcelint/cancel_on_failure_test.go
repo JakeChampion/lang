@@ -1,54 +1,12 @@
 package sourcelint
 
 import (
-	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
 )
 
-const cancelOnFailureFile = "cancel-on-failure.yml"
-
-// prLaneNames returns the `name:` of every workflow a pull request launches —
-// the lanes cancel-on-failure.yml has to watch. `types: [closed]` lanes are
-// lifecycle hooks that launch no suite, and the reaper itself is excluded by
-// construction: it is not triggered by `pull_request` at all.
-func prLaneNames(t *testing.T, dir string) map[string]string {
-	t.Helper()
-	ents, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatalf("read workflows: %v", err)
-	}
-	names := map[string]string{}
-	for _, e := range ents {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".yml") {
-			continue
-		}
-		b, err := os.ReadFile(filepath.Join(dir, e.Name()))
-		if err != nil {
-			t.Fatalf("read %s: %v", e.Name(), err)
-		}
-		src := string(b)
-		on, ok := onBlock(src)
-		if !ok || !strings.Contains(on, "pull_request:") {
-			continue
-		}
-		if strings.Contains(on, "types: [closed]") {
-			continue
-		}
-		name, ok := workflowName(src)
-		if !ok {
-			t.Fatalf("%s has no top-level `name:`", e.Name())
-		}
-		names[name] = e.Name()
-	}
-	if len(names) == 0 {
-		t.Fatal("no pull_request workflows found — did the `on:` format change?")
-	}
-	return names
-}
-
+// workflowName returns a workflow's top-level `name:`.
 func workflowName(src string) (string, bool) {
 	for _, l := range strings.Split(src, "\n") {
 		if rest, ok := strings.CutPrefix(l, "name: "); ok {
@@ -58,10 +16,9 @@ func workflowName(src string) (string, bool) {
 	return "", false
 }
 
-// watchedWorkflows returns the `workflows:` filter of cancel-on-failure.yml's
-// `workflow_run` trigger.
-func watchedWorkflows(t *testing.T, on string) []string {
-	t.Helper()
+// watchedWorkflows returns the `workflows:` filter of a `workflow_run`
+// trigger.
+func watchedWorkflows(on string) []string {
 	var out []string
 	inList := false
 	for _, l := range strings.Split(on, "\n") {
@@ -78,123 +35,122 @@ func watchedWorkflows(t *testing.T, on string) []string {
 	return out
 }
 
-// The reaper's `workflows:` filter names every lane a pull request launches.
+// ci.yml calls the reaper once per lane, from a job that waits on that lane
+// alone. That is what cancels the run the moment ANY lane concludes failure
+// rather than when all of them have — and every lane needs its own, because a
+// job can wait on all of a set or on one of it, never on the first of it.
 //
-// GitHub matches that filter by workflow name, so it cannot be derived at run
-// time, and a lane missing from it is silent in both directions: the lane's own
-// failure reaps nothing, and it keeps its runner slot when a sibling goes red.
-// That is the shape of drift this repo has paid for repeatedly — a list
-// maintained by hand beside the thing it describes (scripts/unit-test-packages,
-// and TestPRWorkflowsShareOneDocOnlyFilter next door).
+// A lane missing here is silent in both directions: its own failure reaps
+// nothing, and it holds the PR-wide lock while a sibling is already red. That
+// is the shape of drift this repo has paid for repeatedly — a list maintained
+// by hand beside the thing it describes (scripts/unit-test-packages, and
+// TestPRLanesShareOneDocOnlyFilter next door).
 func TestCancelOnFailureWatchesEveryPRLane(t *testing.T) {
-	dir := filepath.Join("..", "..", ".github", "workflows")
-	lanes := prLaneNames(t, dir)
-
-	b, err := os.ReadFile(filepath.Join(dir, cancelOnFailureFile))
-	if err != nil {
-		t.Fatalf("read %s: %v", cancelOnFailureFile, err)
-	}
-	src := string(b)
-	on, ok := onBlock(src)
-	if !ok {
-		t.Fatalf("%s has no `on:` block", cancelOnFailureFile)
-	}
-	if !strings.Contains(on, "workflow_run:") {
-		t.Fatalf("%s no longer triggers on workflow_run", cancelOnFailureFile)
-	}
-
-	watched := map[string]bool{}
-	for _, n := range watchedWorkflows(t, on) {
-		if watched[n] {
-			t.Errorf("%q is listed twice", n)
-		}
-		watched[n] = true
-	}
-
-	for name, file := range lanes {
-		if !watched[name] {
-			t.Errorf("%s runs on pull requests as %q but %s does not watch it: its "+
-				"failure would cancel nothing, and it would survive every sibling's",
-				file, name, cancelOnFailureFile)
+	lanes := ciLanes(t)
+	reapers := map[string]ciJob{}
+	for _, j := range ciJobs(t) {
+		if j.usesFile() == reaperFile {
+			reapers[j.id] = j
 		}
 	}
+
+	for id, lane := range lanes {
+		r, ok := reapers["reap-"+id]
+		if !ok {
+			t.Errorf("%s: lane %q has no `reap-%s` job calling %s — its failure would cancel "+
+				"nothing, and it would hold the lock while a sibling is red", ciFile, id, id, reaperFile)
+			continue
+		}
+		delete(reapers, "reap-"+id)
+		if r.keys["needs"] != "["+id+"]" {
+			t.Errorf("%s: reap-%s needs %q, not `[%s]` — it must wait on that one lane alone, "+
+				"or it fires when the wrong lane fails, or only when all of them have finished",
+				ciFile, id, r.keys["needs"], id)
+		}
+		cond := r.keys["if"]
+		for _, want := range []struct{ needle, why string }{
+			{"!cancelled()", "without a status function in the condition `success()` is implied, " +
+				"and a job that waits on a FAILED one never runs at all"},
+			{"needs." + id + ".result == 'failure'", "it must fire on this lane's failure, not " +
+				"on `failure()`, which is also true when the `changes` job upstream failed"},
+			{"github.event_name == 'pull_request'", "a red main must run to completion so " +
+				"main-red.yml's failing-job list is the whole set, and a dispatch is " +
+				"someone's deliberate run"},
+		} {
+			if !strings.Contains(cond, want.needle) {
+				t.Errorf("%s: reap-%s's `if:` lacks %q — %s", ciFile, id, want.needle, want.why)
+			}
+		}
+		if got, want := r.with["lane"], lane.keys["name"]; got != want {
+			t.Errorf("%s: reap-%s names the lane %q; the lane job is named %q", ciFile, id, got, want)
+		}
+		if r.perms["actions"] != "write" {
+			t.Errorf("%s: reap-%s does not pass `actions: write` — the called workflow can only "+
+				"narrow what it is handed, and cancelling a run needs it", ciFile, id)
+		}
+	}
+
 	var extra []string
-	for name := range watched {
-		if _, ok := lanes[name]; !ok {
-			extra = append(extra, name)
-		}
+	for id := range reapers {
+		extra = append(extra, id)
 	}
 	sort.Strings(extra)
 	if len(extra) > 0 {
-		t.Errorf("%s watches %v, which no longer run on pull requests — a renamed or "+
-			"deleted lane leaves a filter entry matching nothing",
-			cancelOnFailureFile, extra)
-	}
-
-	self, ok := workflowName(src)
-	if !ok {
-		t.Fatalf("%s has no top-level `name:`", cancelOnFailureFile)
-	}
-	if watched[self] {
-		t.Errorf("%s watches itself (%q): a reaper that concludes `failure` would "+
-			"trigger another reaper", cancelOnFailureFile, self)
+		t.Errorf("%s: %v call %s but wait on no lane — a renamed or deleted lane leaves "+
+			"a reaper describing nothing", ciFile, extra, reaperFile)
 	}
 }
 
-// The reaper cancels runs, so every guard that decides WHICH runs is a
-// correctness boundary — and all of them live in an inline `github-script`
-// body or a YAML `if:`, where nothing type-checks them. The failure mode is a
+// The reaper cancels the run it is part of, so every guard that decides
+// WHETHER is a correctness boundary — and all of them live in an inline
+// `github-script` body where nothing type-checks them. The failure mode is a
 // cancelled run somebody was relying on, visible only as CI that never
 // finished. Same reasoning as TestCancelOnMergeReapsSafely next door.
 func TestCancelOnFailureReapsSafely(t *testing.T) {
-	b, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", cancelOnFailureFile))
-	if err != nil {
-		t.Fatalf("read %s: %v", cancelOnFailureFile, err)
+	src := workflowSource(t, reaperFile)
+
+	on, ok := onBlock(src)
+	if !ok {
+		t.Fatalf("%s has no `on:` block", reaperFile)
 	}
-	src := string(b)
+	if !strings.Contains(on, "workflow_call:") {
+		t.Fatalf("%s is no longer a `workflow_call` — %s cannot call it per lane", reaperFile, ciFile)
+	}
+	for _, trigger := range []string{"pull_request", "push", "workflow_run"} {
+		if _, ok := triggerBlock(on, trigger); ok {
+			t.Errorf("%s triggers on %s of its own accord; it must run only where %s puts it, "+
+				"after one lane's failure", reaperFile, trigger, ciFile)
+		}
+	}
 
 	for _, want := range []struct{ needle, why string }{
 		{
-			`github.event.workflow_run.conclusion == 'failure'`,
-			"without it a green lane reaps its siblings",
+			`run_id: context.runId`,
+			"it must cancel the run it is IN — the sibling lanes of the one that failed — " +
+				"and no other",
 		},
 		{
-			`github.event.workflow_run.event == 'pull_request'`,
-			"a red main must run to completion to stay attributable, and a " +
-				"workflow_dispatch at that commit is someone's deliberate run",
-		},
-		{
-			`head_sha: sha`,
-			"scoping by branch instead of commit reaps the runs a force-push just " +
-				"started, and successive PRs share a branch name here",
-		},
-		{
-			`run.event !== "pull_request"`,
-			"a release, a dispatch or a reaper at the same commit was started for a " +
-				"reason that has nothing to do with this pull request being red",
-		},
-		{
-			`e.status === 409`,
-			"a run reaching a terminal state between the listing and the cancel is " +
-				"routine, not a failure",
+			`listPullRequestsAssociatedWithCommit`,
+			"the ci-full label is read from the commit so a label added after the run " +
+				"started still counts, and a fork PR is found too",
 		},
 		{
 			`l.name === "ci-full"`,
 			"the label is the only way to get a full picture of a round's failures",
 		},
+		{
+			`e.status === 409`,
+			"a run reaching a terminal state between the decision and the cancel is " +
+				"routine, not a failure",
+		},
+		{
+			`e.status === 403`,
+			"a fork pull request gets a read-only token; the lanes finishing is not " +
+				"the red lane's failure",
+		},
 	} {
 		if !strings.Contains(src, want.needle) {
-			t.Errorf("%s no longer contains %q — %s", cancelOnFailureFile, want.needle, want.why)
-		}
-	}
-
-	// Every status a run can sit in without having reached a terminal state. One
-	// missing here survives the reap and holds a slot for a pull request that is
-	// already red — the whole point of the workflow.
-	for _, status := range []string{"requested", "waiting", "pending", "queued", "in_progress"} {
-		if !strings.Contains(src, `"`+status+`"`) {
-			t.Errorf("status %q is never swept: runs in it outlive the failure that "+
-				"made them pointless", status)
+			t.Errorf("%s no longer contains %q — %s", reaperFile, want.needle, want.why)
 		}
 	}
 }

@@ -1,34 +1,20 @@
 package sourcelint
 
 import (
-	"os"
-	"path/filepath"
-	"sort"
 	"strings"
 	"testing"
 )
 
 const mainRedFile = "main-red.yml"
 
-// main-red.yml watches the same lanes cancel-on-failure.yml does, and for the
-// same reason in the other direction: the lanes that gate a pull request are
-// the lanes that gate main (TestGateLanesRunOnMain mirrors every one onto a
-// push). A lane missing from this list is one whose red main is reported by
-// nothing at all — which is the state the whole file exists to end, and is
-// exactly how nine lanes sat red across two PRs before anyone read them.
-//
-// Same drift shape as its sibling, so it gets the same guard: a hand-kept list
-// of a directory that grows elsewhere. Adding a lane and forgetting this entry
-// costs silence, and silence here is indistinguishable from green.
-func TestMainRedWatchesEveryMainLane(t *testing.T) {
-	dir := filepath.Join("..", "..", ".github", "workflows")
-	lanes := prLaneNames(t, dir)
-
-	b, err := os.ReadFile(filepath.Join(dir, mainRedFile))
-	if err != nil {
-		t.Fatalf("read %s: %v", mainRedFile, err)
-	}
-	src := string(b)
+// main-red.yml watches the one workflow a push to main launches — ci.yml, the
+// same run that gates a pull request — and reads the lanes off its job names.
+// There is no per-lane list left to drift, but the one entry that remains can:
+// a renamed orchestrator leaves a `workflows:` filter matching nothing, and a
+// red main reported by nothing at all is exactly how nine lanes sat red across
+// two PRs before anyone read them.
+func TestMainRedWatchesCI(t *testing.T) {
+	src := workflowSource(t, mainRedFile)
 	on, ok := onBlock(src)
 	if !ok {
 		t.Fatalf("%s has no `on:` block", mainRedFile)
@@ -36,41 +22,22 @@ func TestMainRedWatchesEveryMainLane(t *testing.T) {
 	if !strings.Contains(on, "workflow_run:") {
 		t.Fatalf("%s no longer triggers on workflow_run", mainRedFile)
 	}
-
-	watched := map[string]bool{}
-	for _, n := range watchedWorkflows(t, on) {
-		if watched[n] {
-			t.Errorf("%q is listed twice", n)
-		}
-		watched[n] = true
+	ci, ok := workflowName(workflowSource(t, ciFile))
+	if !ok {
+		t.Fatalf("%s has no top-level `name:`", ciFile)
 	}
-
-	for name, file := range lanes {
-		if !watched[name] {
-			t.Errorf("%s gates main as %q but %s does not watch it: its failure on "+
-				"main would open no issue and be reported by nothing",
-				file, name, mainRedFile)
-		}
+	watched := watchedWorkflows(on)
+	if len(watched) != 1 || watched[0] != ci {
+		t.Errorf("%s watches %v; it must watch exactly %q, the one workflow a push to "+
+			"main launches — every lane is a job of that run", mainRedFile, watched, ci)
 	}
-	var extra []string
-	for name := range watched {
-		if _, ok := lanes[name]; !ok {
-			extra = append(extra, name)
-		}
-	}
-	sort.Strings(extra)
-	if len(extra) > 0 {
-		t.Errorf("%s watches %v, which no longer gate main — a renamed or deleted "+
-			"lane leaves a filter entry matching nothing", mainRedFile, extra)
-	}
-
 	self, ok := workflowName(src)
 	if !ok {
 		t.Fatalf("%s has no top-level `name:`", mainRedFile)
 	}
-	if watched[self] {
-		t.Errorf("%s watches itself (%q): a reporter that concludes `failure` would "+
-			"file an issue about having failed to file an issue", mainRedFile, self)
+	if self == ci {
+		t.Errorf("%s shares %s's name: it would watch itself and file an issue about "+
+			"failing to file an issue", mainRedFile, ciFile)
 	}
 }
 
@@ -82,11 +49,7 @@ func TestMainRedWatchesEveryMainLane(t *testing.T) {
 // someone's deliberate run and may be red on purpose. Both were live mistakes
 // to make here, so the guard names the condition rather than trusting it.
 func TestMainRedFiresOnMainPushesOnly(t *testing.T) {
-	b, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", mainRedFile))
-	if err != nil {
-		t.Fatalf("read %s: %v", mainRedFile, err)
-	}
-	src := string(b)
+	src := workflowSource(t, mainRedFile)
 
 	for _, want := range []string{
 		"github.event.workflow_run.event == 'push'",
@@ -98,15 +61,20 @@ func TestMainRedFiresOnMainPushesOnly(t *testing.T) {
 		}
 	}
 
-	// Both conclusions, because the close half is what stops the tracker
-	// filling with issues for lanes that recovered days ago.
-	for _, want := range []string{
-		"conclusion == 'failure'",
-		"conclusion == 'success'",
+	// The verdict is per LANE, read off the job names of the one run, and both
+	// halves are needed: the close half is what stops the tracker filling with
+	// issues for lanes that recovered days ago, and the skipped/cancelled
+	// guards are what stop a lane the filter turned off from "recovering".
+	for _, want := range []struct{ needle, why string }{
+		{`lastIndexOf(" / ")`, "a lane is the caller job's name, the part of a job name before the last ` / `"},
+		{`j.conclusion === "failure"`, "a lane is red when one of its jobs failed"},
+		{`succeeded.length === 0`, "a lane whose jobs all skipped is no verdict, and must not close an issue"},
+		{`j.conclusion === "cancelled"`, "a cancelled main job is a person's cancel, not a green"},
+		{`lane.startsWith("reap-")`, "the reapers never run on main and must not read as lanes"},
+		{`state: "closed"`, "it opens issues it never closes"},
 	} {
-		if !strings.Contains(src, want) {
-			t.Errorf("%s does not act on `%s`: it opens issues it never closes, or "+
-				"closes issues it never opens", mainRedFile, want)
+		if !strings.Contains(src, want.needle) {
+			t.Errorf("%s no longer contains %q — %s", mainRedFile, want.needle, want.why)
 		}
 	}
 
