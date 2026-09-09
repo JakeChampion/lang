@@ -9,6 +9,16 @@ pub struct Binding { id: i32, name: string, symbol: string, line: i32, col: i32 
 pub struct ResolvedFunction { func: parser.FuncDecl, bindings: Binding[] }
 struct Scope { bindings: Binding[], visible: i32[], reserved: string[] }
 
+// Symbols retain the declaration spelling after the numeric identity. Decode
+// that spelling only for diagnostics; lookup and ownership keep the full key.
+pub function source_name(symbol: string): string {
+    if (symbol.len() < 12 || slice_unchecked(symbol, 0, 9) != "$binding$") { return symbol; }
+    var end = 9;
+    while (end < symbol.len() && symbol[end] >= b'0' && symbol[end] <= b'9') { end = end + 1; }
+    if (end == 9 || end + 1 >= symbol.len() || symbol[end] != b'$') { return symbol; }
+    return source_name(slice_unchecked(symbol, end + 1, symbol.len()) + "");
+}
+
 function lookup(s: Scope, name: string): string {
     var i = s.visible.len();
     while (i > 0) {
