@@ -197,13 +197,12 @@ function round(i: i32): i32 {
 			want: 5, allocs: 200, frees: 200,
 		},
 		{
-			// GUARD 2 — a CONDITIONAL return. Half the rounds fall through, so the
-			// post-match drop runs on a path where nothing took the payload, and
-			// the retained skip leaks there: 250/200 against native's 250/250. A
-			// sound leak and a real gap, pinned as one. Closing it needs a
-			// per-PATH verdict, not a per-binding one. Drop the skip here instead
-			// and the return path over-releases (exit 99), which is why this stays.
-			name: "conditional_return_keeps_the_skip_and_leaks",
+			// The dynamic scalar-projection flag supplies the per-path ownership
+			// that this case previously lacked. The return path moves the unit;
+			// the fallthrough path releases it in the binding's exit sweep.
+			// Require native's 250/250 balance and keep the value/underflow
+			// guards: merely removing the pending drop skip over-releases.
+			name: "conditional_return_balances_both_paths",
 			src: decls + `function take(i: i32): i32[] {
     var v: E = mkv(i);
     match (v) { E.A(xs) => { if (i % 2 == 0) { return xs; } }, E.B => { } }
@@ -214,7 +213,7 @@ function round(i: i32): i32 {
     return (r.len() + r[0]) % 101;
 }
 ` + mvsMain,
-			want: 40, allocs: 250, frees: 200,
+			want: 40, allocs: 250, frees: 250,
 		},
 		{
 			// GUARD 3 — a STRING payload stored out. `keep = s` emits NO retain, so
