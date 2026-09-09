@@ -506,6 +506,9 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 		}
 		ip.Funcs = kept
 	}
+	if err := ir.VerifyOrRefuse(ip); err != nil {
+		return "", nil, err
+	}
 	g := &generator{info: info, stringLabel: map[string]string{}, funcs: map[string]*ast.FuncDecl{}, vtables: ip.Vtables, coverSites: ip.CoverSites, pie: opts.PIE, noPeephole: opts.NoPeephole, syscalls: map[int]bool{}, entry: opts.Entry.OrDefault()}
 	// Pre-scan call sites for runtime-helper use-flags before
 	// touching any code emission, so emitDataSections + the

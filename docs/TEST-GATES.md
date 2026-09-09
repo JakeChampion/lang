@@ -786,6 +786,15 @@ answer, these are the tools, in the order they are usually reached for:
   premature free, corrupting the WAT that compiler emitted — a fault the gate
   surfaced rather than caused, and fixed by rc-heading the strings the wasm
   WASI helpers hand back.
+
+  The NATIVE backends read the same variable, opt-in: `FERN_IR_VERIFY=1` runs
+  `ir.Verify` over the program each of x86-64, arm64 and wasm is about to
+  emit — after every IR pass, so it is the op stream the emitter sees — and
+  refuses the compile naming the problems (#8798). It prints one coverage line
+  (functions verified / modelled / skipped) so a quiet run says how much it
+  looked at; a function the stack pass cannot model is skipped, not reported.
+  Off by default: the corpus sweep `TestIRVerifierAcceptsEveryLoweredCase` is what
+  proves it quiet on known-good IR, and CI compiles nothing under it.
 - **`__rc_underflow_count()`** — the counter. Exact yes/no signal for "did this
   compile over-release anything", readable from Fern. The self-host drivers
   call it themselves on every run (`util.rc_underflow_guard`).

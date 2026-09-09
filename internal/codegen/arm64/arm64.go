@@ -418,6 +418,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 		}
 		ip.Funcs = kept
 	}
+	if err := ir.VerifyOrRefuse(ip); err != nil {
+		return "", err
+	}
 	g := &generator{info: info, stringLabel: map[string]string{}, funcs: map[string]*ast.FuncDecl{}, darwin: opts.Darwin, pie: opts.PIE, vtables: ip.Vtables, coverSites: ip.CoverSites, noPeephole: opts.NoPeephole, entry: opts.Entry.OrDefault(), highHeap: opts.HighHeapProbe}
 	for _, fn := range prog.Funcs {
 		g.funcs[fn.Name] = fn

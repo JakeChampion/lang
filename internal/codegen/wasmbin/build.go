@@ -284,6 +284,9 @@ func BuildWithOptions(prog *ast.Program, info *checker.Info, opts BuildOptions) 
 		}
 		ip.Funcs = out
 	}
+	if err := ir.VerifyOrRefuse(ip); err != nil {
+		return nil, err
+	}
 	return EmitWithOptions(ip, EmitOptions{
 		ForceMemorySection: opts.ForceMemorySection,
 		SynthStart:         opts.SynthStart,
