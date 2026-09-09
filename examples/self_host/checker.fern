@@ -3749,7 +3749,7 @@ function check_expr(e: ast.Expr, s: Scope): typeinfo.Type {
       // surrounding scope (lexical capture).
       var pts: typeinfo.Type[] = [];
       for param in lm.params {
-        pts = pts.append(s.resolve_type(param.type_name));
+        pts = pts.append(s.resolve_param(param));
       }
       var rt: typeinfo.Type = s.resolve_type(lm.ret_type);
       // Walk the body for side-effect checks. The body's
@@ -3810,7 +3810,7 @@ pub function check_stmt(st: ast.Stmt, s: Scope): CheckResult {
         ast.ExprLambda(lm) => {
           var lpts: typeinfo.Type[] = [];
           for param in lm.params {
-            lpts = lpts.append(s.resolve_type(param.type_name));
+            lpts = lpts.append(s.resolve_param(param));
           }
           var lrt: typeinfo.Type = s.resolve_type(lm.ret_type);
           init_scope = s.bind(v.name, t_func(lpts, lrt));
@@ -4112,7 +4112,7 @@ pub function bind_stmt(st: ast.Stmt, s: Scope): Scope {
         ast.ExprLambda(lm) => {
           var lpts: typeinfo.Type[] = [];
           for param in lm.params {
-            lpts = lpts.append(s.resolve_type(param.type_name));
+            lpts = lpts.append(s.resolve_param(param));
           }
           var lrt: typeinfo.Type = s.resolve_type(lm.ret_type);
           init_scope = s.bind(v.name, t_func(lpts, lrt));
@@ -4384,6 +4384,7 @@ function type_from_ref_names(r: parser.TypeRef, struct_names: string[], union_na
   if (name == "string") {
     return t_string();
   }
+  if (name == "str") { return t_str(); }
   if (name == "f32") { return t_f32(); }
   if (name == "f64" || name == "float") {
     return t_float();
@@ -4823,10 +4824,19 @@ function split_fn_param_spellings(csv: string): string[] {
 // Parameters use the same retained scalar/array callable contract as locals,
 // fields and results. No recorded result means an opaque tag, not zero arity.
 function fn_param_decl_type(p: ast.ParamDecl, tparams: string[], struct_names: string[], union_names: string[]): typeinfo.Type {
+  if (p.is_str) { return t_str(); }
   if ((p.type_name != "fn" && p.type_name != "fn[]") || p.fn_ret.len() == 0) {
     return t_unknown("opaque fn param");
   }
   return declared_callable_type(p.type_name, p.fn_ret, p.fn_param_types, tparams, struct_names, union_names);
+}
+
+// Every lambda scope and diagnostic walk consumes the same declaration
+// contract as top-level functions, including callable signatures and views.
+function (s: Scope) resolve_param(p: ast.ParamDecl): typeinfo.Type {
+  var ty = fn_param_decl_type(p, s.tparams, s.structs.names, s.unions.names);
+  if (!is_unknown(ty)) { return ty; }
+  return s.resolve_type(p.type_name);
 }
 
 // The parser retains callable signatures beside coarse fn/fn[] tags. All
@@ -6070,7 +6080,7 @@ function lret_expr(e: ast.Expr, cur: Scope, unions: UnionSig[], self_name: strin
     ast.ExprLambda(lm) => {
       var pts: typeinfo.Type[] = [];
       for param in lm.params {
-        pts = pts.append(cur.resolve_type(param.type_name));
+        pts = pts.append(cur.resolve_param(param));
       }
       var rt: typeinfo.Type = cur.resolve_type(lm.ret_type);
       var lsc: Scope = cur;
@@ -6107,7 +6117,7 @@ function lret_expr(e: ast.Expr, cur: Scope, unions: UnionSig[], self_name: strin
         ast.ExprLambda(lm) => {
           var lsc: Scope = cur;
           for param in lm.params {
-            lsc = lsc.bind(param.name, cur.resolve_type(param.type_name));
+            lsc = lsc.bind(param.name, cur.resolve_param(param));
           }
           out = util.append_diags(out, lret_stmts(lm.body, lsc, unions));
         },
@@ -6479,7 +6489,7 @@ function mx_expr(e: ast.Expr, s: Scope, unions: UnionSig[], enums: parser.EnumDe
     ast.ExprLambda(lm) => {
       var lsc: Scope = s;
       for param in lm.params {
-        lsc = lsc.bind(param.name, s.resolve_type(param.type_name));
+        lsc = lsc.bind(param.name, s.resolve_param(param));
       }
       out = util.append_diags(out, mx_stmts(lm.body, lsc, unions, enums));
     },
@@ -9253,7 +9263,7 @@ function call_diags_lambda(lm: ast.ExprLambda, s: Scope, out: util.Diag[]): util
   // isn't mis-flagged as E001.
   var lsc: Scope = s;
   for param in lm.params {
-    lsc = lsc.bind(param.name, s.resolve_type(param.type_name));
+    lsc = lsc.bind(param.name, s.resolve_param(param));
   }
   // A return inside the lambda returns from the LAMBDA — thread
   // its declared return type (or unknown when undeclared) so the
@@ -9443,7 +9453,7 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
           ast.ExprLambda(lm) => {
             var fpts: typeinfo.Type[] = [];
             for param in lm.params {
-              fpts = fpts.append(cur.resolve_type(param.type_name));
+              fpts = fpts.append(cur.resolve_param(param));
             }
             vsc = cur.bind(v.name, t_func(fpts, cur.resolve_type(lm.ret_type)));
             cur = vsc;
@@ -9869,7 +9879,7 @@ function assign_stmt_own_lambdas(st: ast.Stmt, cur: Scope, unions: UnionSig[]): 
       ast.ExprLambda(lm) => {
         var lsc: Scope = cur;
         for param in lm.params {
-          lsc = lsc.bind(param.name, cur.resolve_type(param.type_name));
+          lsc = lsc.bind(param.name, cur.resolve_param(param));
         }
         if (lm.ret_type.len() > 0) {
           lsc = lsc.with_ret_type(cur.resolve_type(lm.ret_type));
@@ -14892,6 +14902,7 @@ function main(): i32 {
 // must carry Type directly rather than depend on this incomplete projection.
 function type_to_irtag(t: typeinfo.Type): string {
   match (t) {
+    typeinfo.TypeFunc(_) => { return "fn"; },
     typeinfo.TypeFloat(f) => {
       return float_label(f);
     },
@@ -15047,30 +15058,6 @@ function build_module_tables(mod: parser.Module): ModuleTables {
   return ModuleTables { structs: struct_table(structs), unions: union_table(unions), sigs: sig_table(sigs), methods: methods, imports: import_paths_of(mod) };
 }
 
-// annotate_advance threads the block scope from one statement to the next,
-// reproducing exactly the scope check_stmt returns: only a StmtVar changes it
-// (binding its name to the declared type, or the inferred init type when
-// unannotated); every other statement's bindings are block-local and do not
-// escape, so the scope passes through unchanged. This is the cheap half of
-// check_stmt (no diagnostics), so annotation does not re-run the full checker.
-function annotate_advance(st: ast.Stmt, s: Scope): Scope {
-  match (st) {
-    ast.StmtVar(v) => {
-      if (v.type_name.len() > 0) {
-        return s.bind(v.name, var_declared_type(v, s));
-      }
-      return s.bind(v.name, check_expr(v.init, s));
-    },
-    ast.StmtDefer(d) => {
-      return annotate_advance(d.action, s);
-    },
-    _ => {
-      return s;
-    }
-  }
-  return s;
-}
-
 // settle_int_tree records a contextual integer type on the compile-only AST.
 // Number nodes have no type tag, so their suffix carries the settled width.
 // Formatting uses the original parser tree, never this annotated copy.
@@ -15151,11 +15138,7 @@ function annotate_expr(e: ast.Expr, s: Scope): ast.Expr {
       return ast.ExprStructLit { type_name: sli.type_name, field_names: sli.field_names, field_values: nfv, has_base: sli.has_base, base: nbase, line: sli.line, col: sli.col };
     },
     ast.ExprLambda(lm) => {
-      var ls: Scope = s;
-      for param in lm.params {
-        ls = ls.bind(param.name, s.resolve_type(param.type_name));
-      }
-      return ast.ExprLambda { ...lm, body: annotate_block(lm.body, ls) };
+      return annotate_lambda_expr(lm, s, "");
     },
     _ => {
       return e;
@@ -15164,8 +15147,34 @@ function annotate_expr(e: ast.Expr, s: Scope): ast.Expr {
   return e;
 }
 
+// Capture contracts are resolved where the lambda is defined, including
+// unknown-typed locals that still shadow globals. A recursive local binds itself.
+function annotate_lambda_expr(lm: ast.ExprLambda, s: Scope, self_name: string): ast.Expr {
+  var captures: ast.TypedBinding[] = [];
+  var seen: string[] = [];
+  for name in astwalk.collect_lambda_idents(lm, []) {
+    if (name != self_name && s.is_bound(name) && !util.has_str(seen, name)) {
+      captures = captures.append(ast.TypedBinding { name: name, ty: s.lookup(name) });
+      seen = seen.append(name);
+    }
+  }
+  var pts: typeinfo.Type[] = [];
+  for param in lm.params {
+    pts = pts.append(s.resolve_param(param));
+  }
+  var rt: typeinfo.Type = s.resolve_type(lm.ret_type);
+  var ls: Scope = Scope { ...s, loop_depth: 0, ret_type: rt };
+  if (self_name.len() > 0) { ls = ls.bind(self_name, t_func(pts, rt)); }
+  var i: i32 = 0;
+  while (i < lm.params.len()) {
+    ls = ls.bind(lm.params[i].name, pts[i]);
+    i = i + 1;
+  }
+  return ast.ExprLambda { ...lm, body: annotate_block(lm.body, ls), captures: captures, captures_known: true };
+}
+
 // annotate_block rebuilds a statement list, threading scope statement-to-statement
-// via annotate_advance. A nested control-flow body is rebuilt in the scope that
+// via bind_stmt. A nested control-flow body is rebuilt in the scope that
 // body actually sees: a for-loop's body binds the loop variable and a match arm's
 // body binds its variant payloads (annotate_for_scope / annotate_arm_scope), so a
 // call whose type depends on one is annotated rather than falling back to the
@@ -15174,7 +15183,7 @@ function annotate_block(body: ast.Stmt[], s: Scope): ast.Stmt[] {
   var out: ast.Stmt[] = [];
   var cur: Scope = s;
   for stmt in body {
-    var next: Scope = annotate_advance(stmt, cur);
+    var next: Scope = bind_stmt(stmt, cur);
     out = out.append(annotate_stmt(stmt, cur, next));
     cur = next;
   }
@@ -15251,12 +15260,15 @@ function annotate_stmt(st: ast.Stmt, s: Scope, after: Scope): ast.Stmt {
   match (st) {
     ast.StmtVar(v) => {
       // Reuse the type resolved for the binding; the initializer sees s.
+      var init = v.init;
+      if let ast.ExprLambda(lm) = v.init { init = annotate_lambda_expr(lm, s, v.name); }
+      else { init = annotate_expr(v.init, s); }
       var callable: ast.ParamDecl = decltypes.fn_param_from_type(v.name, after.lookup(v.name));
       if (callable.type_name == "fn") {
-        return ast.StmtVar { ...v, type_name: "fn", init: annotate_expr(v.init, s),
+        return ast.StmtVar { ...v, type_name: "fn", init: init,
           fn_ret: callable.fn_ret, fn_param_types: callable.fn_param_types };
       }
-      return ast.StmtVar { name: v.name, type_name: v.type_name, init: annotate_expr(v.init, s), line: v.line, col: v.col, is_str: v.is_str, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types };
+      return ast.StmtVar { ...v, init: init };
     },
     ast.StmtReturn(r) => {
       return ast.StmtReturn { value: annotate_expr(r.value, s), line: r.line, col: r.col };
@@ -15322,6 +15334,23 @@ pub function annotate_module(mod: parser.Module): parser.Module {
   }
   var ntop: ast.Stmt[] = annotate_block(rmod.top_stmts, new_scope_full(mt.sigs, mt.structs, mt.unions, mt.methods, mt.imports));
   return parser.Module { funcs: nfuncs, structs: rmod.structs, aliases: rmod.aliases, imports: rmod.imports, top_stmts: ntop, enums: rmod.enums, resources: rmod.resources, exports: rmod.exports, impls: rmod.impls, trait_reqs: rmod.trait_reqs, trait_decls: rmod.trait_decls };
+}
+
+function unchecked_capture(e: ast.Expr, found: boolean): boolean {
+  if let ast.ExprLambda(lm) = e { return found || !lm.captures_known; }
+  return found;
+}
+
+// Raw IR drivers enter the same checked-capture boundary as the CLI. Already
+// checked syntax keeps its contracts without repeating frontend annotation.
+pub function ensure_capture_types(mod: parser.Module): parser.Module {
+  var unchecked: boolean = false;
+  for fd in mod.funcs {
+    for st in fd.body { unchecked = astwalk.fold_stmt(st, unchecked, unchecked_capture); }
+  }
+  for st in mod.top_stmts { unchecked = astwalk.fold_stmt(st, unchecked, unchecked_capture); }
+  if (unchecked) { return annotate_module(mod); }
+  return mod;
 }
 
 // ---------------------------------------------------------------------------

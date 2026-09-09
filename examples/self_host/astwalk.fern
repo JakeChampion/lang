@@ -681,9 +681,15 @@ pub function map_stmts_acc[T](stmts: ast.Stmt[], acc: T, visit_stmt: (ast.Stmt, 
 // visited exactly once: map_expr is bottom-up, so an inner lambda is spliced
 // before the outer one, and splice_own never re-enters an expression.
 pub function splice_stmts(stmts: ast.Stmt[], visit: (ast.Stmt) => ast.Stmt[]): ast.Stmt[] {
+    return splice_stmts_with_lambda(stmts, visit, (lm: ast.ExprLambda) => lm);
+}
+
+// Finish each lambda after its statements have been spliced, so a semantic
+// transformation can update its capture contract without rechecking the tree.
+pub function splice_stmts_with_lambda(stmts: ast.Stmt[], visit: (ast.Stmt) => ast.Stmt[], finish_lambda: (ast.ExprLambda) => ast.ExprLambda): ast.Stmt[] {
     var mapped: ast.Stmt[] = map_stmts(stmts, (x: ast.Expr): ast.Expr => {
         match (x) {
-            ast.ExprLambda(lm) => { return ast.ExprLambda { ...lm, body: splice_own(lm.body, visit) }; },
+            ast.ExprLambda(lm) => { return finish_lambda(ast.ExprLambda { ...lm, body: splice_own(lm.body, visit) }); },
             _ => { return x; }
         }
         return x;
@@ -731,29 +737,7 @@ function splice_own_children(st: ast.Stmt, visit: (ast.Stmt) => ast.Stmt[]): ast
 function ident_of(e: ast.Expr, acc: string[]): string[] {
     match (e) {
         ast.ExprIdent(id) => { return acc.append(id.name); },
-        ast.ExprLambda(lm) => {
-            // A nested lambda reads, from the ENCLOSING scope, only its FREE
-            // variables — its own params and locally-bound names are bound WITHIN
-            // it, not read from outside. Collect the inner body's idents, subtract
-            // the inner lambda's params + locals, and append the remainder.
-            // Without this an inner lambda's params (e.g. the `y` of
-            // `(y) => {…}`) leak as spurious references of the outer scope,
-            // which makes the enclosing lambda's capture analysis treat `y` as an
-            // unresolvable capture and decline the lift (nested closures bail).
-            //
-            // This is why the walk is `not_lambda`-pruned: the subtraction is the
-            // node's whole contribution, and descending would re-add the very
-            // names it removed.
-            var inner_used: string[] = [];
-            for body_st in lm.body { inner_used = collect_idents_stmt(body_st, inner_used); }
-            var inner_bound: string[] = [];
-            for p in lm.params { inner_bound = inner_bound.append(p.name); }
-            for body_st in lm.body { inner_bound = collect_bound_stmt(body_st, inner_bound); }
-            for nm in inner_used {
-                if (util.index_of_str(inner_bound, nm) < 0) { acc = acc.append(nm); }
-            }
-            return acc;
-        },
+        ast.ExprLambda(lm) => { return collect_lambda_idents(lm, acc); },
         _ => { return acc; }
     }
     return acc;
@@ -773,6 +757,84 @@ function not_lambda(e: ast.Expr): boolean {
 // (with duplicates; consumers dedup when building capture lists).
 pub function collect_idents_expr(e: ast.Expr, acc: string[]): string[] {
     return fold_expr_pruned(e, acc, ident_of, not_lambda);
+}
+
+function scoped_reads(e: ast.Expr, bound: string[], acc: string[], reads: (ast.Expr, string[]) => string[]): string[] {
+    for name in reads(e, []) {
+        if (!util.has_str(bound, name)) { acc = acc.append(name); }
+    }
+    return acc;
+}
+
+// Thread declarations in source order. A var's initializer sees the preceding
+// scope; a nested control-flow block cannot bind a name in its enclosing tail.
+// The callback lets the ordinary capture and fn-value-use collectors share the
+// scope rules while disagreeing on whether a direct named callee is a read.
+function scoped_stmt_reads(st: ast.Stmt, bound: string[], acc: string[], reads: (ast.Expr, string[]) => string[]): string[] {
+    match (st) {
+        ast.StmtVar(v) => {
+            var init_bound: string[] = bound;
+            if let ast.ExprLambda(lm) = v.init { init_bound = append_bound_name(init_bound, v.name); }
+            return scoped_reads(v.init, init_bound, acc, reads);
+        },
+        ast.StmtExpr(e) => { return scoped_reads(e.value, bound, acc, reads); },
+        ast.StmtReturn(r) => { return scoped_reads(r.value, bound, acc, reads); },
+        ast.StmtAssign(a) => {
+            if (!util.has_str(bound, a.target)) { acc = acc.append(a.target); }
+            return scoped_reads(a.value, bound, acc, reads);
+        },
+        ast.StmtIf(f) => {
+            acc = scoped_reads(f.cond, bound, acc, reads);
+            var (then_reads, then_bound) = scoped_stmts_reads(f.then_body, bound, acc, reads);
+            var (else_reads, else_bound) = scoped_stmts_reads(f.else_body, bound, then_reads, reads);
+            return else_reads;
+        },
+        ast.StmtWhile(w) => {
+            acc = scoped_reads(w.cond, bound, acc, reads);
+            var (used, inner_bound) = scoped_stmts_reads(w.body, bound, acc, reads);
+            return used;
+        },
+        ast.StmtFor(f) => {
+            acc = scoped_reads(f.iter, bound, acc, reads);
+            var (used, inner_bound) = scoped_stmts_reads(f.body, append_bound_name(bound, f.var_name), acc, reads);
+            return used;
+        },
+        ast.StmtMatch(m) => {
+            acc = scoped_reads(m.scrutinee, bound, acc, reads);
+            for arm in m.arms {
+                var arm_bound: string[] = pattern_binders(arm.pattern, bound);
+                if (arm.has_guard) { acc = scoped_reads(arm.guard, arm_bound, acc, reads); }
+                var (used, inner_bound) = scoped_stmts_reads(arm.body, arm_bound, acc, reads);
+                acc = used;
+            }
+            return acc;
+        },
+        ast.StmtDefer(d) => { return scoped_stmt_reads(d.action, bound, acc, reads); },
+        ast.StmtBreak(_) => { return acc; },
+        ast.StmtContinue(_) => { return acc; },
+        ast.StmtUnknown(_) => { return acc; }
+    }
+    return acc;
+}
+
+function scoped_stmts_reads(body: ast.Stmt[], bound: string[], acc: string[], reads: (ast.Expr, string[]) => string[]): (string[], string[]) {
+    for st in body {
+        acc = scoped_stmt_reads(st, bound, acc, reads);
+        if let ast.StmtVar(v) = st { bound = append_bound_name(bound, v.name); }
+    }
+    return (acc, bound);
+}
+
+// A declaration binds only from its source position onward and only within
+// its block. Subtracting every local name from every read loses captures made
+// before a later shadowing declaration, including reads in nested closures.
+// Capture consumers use this shared ordered walk before testing which free
+// names resolve to slots in the enclosing scope.
+pub function collect_lambda_idents(lm: ast.ExprLambda, acc: string[]): string[] {
+    var bound: string[] = [];
+    for param in lm.params { bound = append_bound_name(bound, param.name); }
+    var (used, final_bound) = scoped_stmts_reads(lm.body, bound, acc, collect_idents_expr);
+    return used;
 }
 
 // subst_ident_expr returns `e` with every identifier READ named `from`
@@ -832,18 +894,18 @@ pub function collect_idents_stmt(st: ast.Stmt, acc: string[]): string[] {
 // recognised as an enclosing local, so a lambda reading one reads as
 // capture-free: it takes the no-capture `$wrapN` lift and resolves the name
 // against the module instead of capturing it.
-function append_bound_name(acc: string[], name: string): string[] {
-    var has_comma: boolean = false;
-    for ch in name { if (ch == b',') { has_comma = true; } }
-    if (!has_comma) { return acc.append(name); }
+pub function append_bound_name(acc: string[], name: string): string[] {
     var start: i32 = 0;
+    var depth: i32 = 0;
     var i: i32 = 0;
     while (i <= name.len()) {
-        if (i == name.len() || name[i] == b',') {
+        if (i == name.len() || (name[i] == b',' && depth == 0)) {
             var piece: string = slice_unchecked(name, start, i) + "";
-            if (piece.len() > 0) { acc = acc.append(piece); }
+            if (util.is_tuple_type_name(piece)) { acc = append_bound_name(acc, slice_unchecked(piece, 1, piece.len() - 1) + ""); }
+            else if (piece.len() > 0 && piece != "_") { acc = acc.append(piece); }
             start = i + 1;
-        }
+        } else if (name[i] == b'(') { depth = depth + 1; }
+        else if (name[i] == b')') { depth = depth - 1; }
         i = i + 1;
     }
     return acc;

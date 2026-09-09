@@ -1,0 +1,146 @@
+import "./ast";
+import "./astwalk";
+import "./util";
+
+// Direct-call lifting changes free variables as well as call targets. The
+// injected arguments name bindings from the lifted lambda's defining scope.
+// Lexical binders can hide either the callee or those arguments; never rewrite
+// such a call to a different value. A caller can retain the ordinary closure
+// when the original callee remains after substitution.
+struct Context {
+    fname: string, lname: string, args: ast.Expr[],
+    bindings: ast.TypedBinding[], injected: string[], blocked: boolean
+}
+
+function context(fname: string, lname: string, args: ast.Expr[], bindings: ast.TypedBinding[]): Context {
+    var injected: string[] = [];
+    for arg in args { injected = astwalk.collect_idents_expr(arg, injected); }
+    return Context { fname: fname, lname: lname, args: args, bindings: bindings, injected: injected, blocked: false };
+}
+
+function shadow(ctx: Context, names: string[]): Context {
+    for name in names {
+        if (name == ctx.fname || name == ctx.lname || util.has_str(ctx.injected, name)) {
+            return Context { ...ctx, blocked: true };
+        }
+    }
+    return ctx;
+}
+
+// Each list owns its scope. An ordinary initializer still sees the old
+// binding; a recursive lambda initializer sees its own declared function.
+function body(stmts: ast.Stmt[], ctx: Context): (ast.Stmt[], Context) {
+    var out: ast.Stmt[] = [];
+    for stmt in stmts {
+        var initctx: Context = ctx;
+        if let ast.StmtVar(v) = stmt {
+            if let ast.ExprLambda(lm) = v.init {
+                initctx = shadow(ctx, astwalk.append_bound_name([], v.name));
+            }
+        }
+        var (ns, na, nh) = astwalk.map_stmt_acc(stmt, initctx, stmt_at, expr_at);
+        out = out.append(ns);
+        if let ast.StmtVar(v) = stmt { ctx = shadow(ctx, astwalk.append_bound_name([], v.name)); }
+    }
+    return (out, ctx);
+}
+
+pub function subst_fcall_stmts(stmts: ast.Stmt[], fname: string, lname: string, capargs: ast.Expr[], bindings: ast.TypedBinding[]): ast.Stmt[] {
+    var (out, ctx) = body(stmts, context(fname, lname, capargs, bindings));
+    return out;
+}
+
+pub function subst_fcall_expr(e: ast.Expr, fname: string, lname: string, capargs: ast.Expr[], bindings: ast.TypedBinding[]): ast.Expr {
+    return expr(e, context(fname, lname, capargs, bindings));
+}
+
+function expr(e: ast.Expr, ctx: Context): ast.Expr {
+    var (out, a, h) = astwalk.map_expr_acc(e, ctx, stmt_at, expr_at);
+    return out;
+}
+
+// Resolve the new free-variable order against the old exact capture types and
+// the explicitly introduced bindings. Module functions are not captures.
+// Unchecked input remains unchecked. If an older caller supplies no type for
+// an introduced capture of a checked lambda, decline that rewrite rather than
+// manufacture a type or pass stale metadata to lowering.
+function lambda(lm: ast.ExprLambda, ctx: Context): ast.Expr {
+    var names: string[] = [];
+    for param in lm.params { names = astwalk.append_bound_name(names, param.name); }
+    var (nb, tailctx) = body(lm.body, shadow(ctx, names));
+    var rewritten = ast.ExprLambda { ...lm, body: nb };
+    if (!lm.captures_known) { return rewritten; }
+    var caps: ast.TypedBinding[] = [];
+    var seen: string[] = [];
+    for name in astwalk.collect_lambda_idents(rewritten, []) {
+        if (!util.has_str(seen, name)) {
+            seen = seen.append(name);
+            var found: boolean = false;
+            for cap in lm.captures {
+                if (cap.name == name) { caps = caps.append(cap); found = true; }
+            }
+            if (!found && util.has_str(ctx.injected, name)) {
+                for binding in ctx.bindings {
+                    if (binding.name == name) { caps = caps.append(binding); found = true; }
+                }
+                if (!found) { return lm; }
+            }
+        }
+    }
+    return ast.ExprLambda { ...rewritten, captures: caps };
+}
+
+// Own only scope boundaries and direct calls. The shared
+// spine owns the other expression containers, including maps and f-strings.
+function expr_at(e: ast.Expr, ctx: Context): (ast.Expr, Context, boolean) {
+    if (ctx.blocked) { return (e, ctx, true); }
+    match (e) {
+        ast.ExprCall(c) => {
+            var args: ast.Expr[] = [];
+            for arg in c.args { args = args.append(expr(arg, ctx)); }
+            if let ast.ExprIdent(i) = c.callee {
+                if (i.name == ctx.fname) {
+                    for arg in ctx.args { args = args.append(arg); }
+                    var target: ast.Expr = ast.ExprIdent { name: ctx.lname, line: i.line, col: i.col, ty: i.ty };
+                    return (ast.ExprCall { ...c, callee: target, args: args }, ctx, true);
+                }
+            }
+            return (ast.ExprCall { ...c, callee: expr(c.callee, ctx), args: args }, ctx, true);
+        },
+        ast.ExprLambda(lm) => { return (lambda(lm, ctx), ctx, true); },
+        _ => { return (e, ctx, false); }
+    }
+    return (e, ctx, false);
+}
+
+function stmt_at(st: ast.Stmt, ctx: Context): (ast.Stmt, Context, boolean) {
+    if (ctx.blocked) { return (st, ctx, true); }
+    match (st) {
+        ast.StmtIf(f) => {
+            var (tb, tc) = body(f.then_body, ctx);
+            var (eb, ec) = body(f.else_body, ctx);
+            return (ast.StmtIf { ...f, cond: expr(f.cond, ctx), then_body: tb, else_body: eb }, ctx, true);
+        },
+        ast.StmtWhile(w) => {
+            var (wb, wc) = body(w.body, ctx);
+            return (ast.StmtWhile { ...w, cond: expr(w.cond, ctx), body: wb }, ctx, true);
+        },
+        ast.StmtFor(f) => {
+            var (fb, fc) = body(f.body, shadow(ctx, astwalk.append_bound_name([], f.var_name)));
+            return (ast.StmtFor { ...f, iter: expr(f.iter, ctx), body: fb }, ctx, true);
+        },
+        ast.StmtMatch(m) => {
+            var arms: ast.MatchArm[] = [];
+            for arm in m.arms {
+                var ac = shadow(ctx, astwalk.pattern_binders(arm.pattern, []));
+                var guard: ast.Expr = arm.guard;
+                if (arm.has_guard) { guard = expr(guard, ac); }
+                var (ab, bc) = body(arm.body, ac);
+                arms = arms.append(ast.MatchArm { ...arm, guard: guard, body: ab });
+            }
+            return (ast.StmtMatch { ...m, scrutinee: expr(m.scrutinee, ctx), arms: arms }, ctx, true);
+        },
+        _ => { return (st, ctx, false); }
+    }
+    return (st, ctx, false);
+}

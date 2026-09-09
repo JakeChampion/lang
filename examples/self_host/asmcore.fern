@@ -45,28 +45,12 @@ pub function sanitize_label(name: string): string {
 // collect_bound_stmt -> astwalk.collect_bound_stmt (SH-022).
 
 pub function lambda_captures(lm: ast.ExprLambda, outer: EmitState): string[] {
-    var refs: string[] = [];
-    var bi: i32 = 0;
-    while (bi < lm.body.len()) {
-        refs = astwalk.collect_idents_stmt(lm.body[bi], refs);
-        bi = bi + 1;
-    }
-    var bound: string[] = [];
-    var pi: i32 = 0;
-    while (pi < lm.params.len()) {
-        bound = bound.append(lm.params[pi].name);
-        pi = pi + 1;
-    }
-    var si: i32 = 0;
-    while (si < lm.body.len()) {
-        bound = astwalk.collect_bound_stmt(lm.body[si], bound);
-        si = si + 1;
-    }
+    var refs: string[] = astwalk.collect_lambda_idents(lm, []);
     var caps: string[] = [];
     var ri: i32 = 0;
     while (ri < refs.len()) {
         var nm: string = refs[ri];
-        if (!util.has_str(bound, nm) && !util.has_str(caps, nm) && outer.has_local(nm)) {
+        if (!util.has_str(caps, nm) && outer.has_local(nm)) {
             caps = caps.append(nm);
         }
         ri = ri + 1;

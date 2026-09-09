@@ -33,6 +33,11 @@ import "./parser";
 import "./util";
 import "./astwalk";
 import "./decltypes";
+import "./lexical";
+import "./checker";
+import "./typeinfo";
+import "./callsubst";
+import "./capturebox";
 
 // LocalInfo is the per-local-slot type record — one entry per slot, indexed by
 // slot number. Everything here answers "what does this slot hold?", which is
@@ -1990,12 +1995,8 @@ function fn_local_spelling_for(v: ast.StmtVar, funcs: parser.FuncDecl[]): string
 // stamp_fn_local_types writes that spelling onto every such binding across the
 // lifted module.
 //
-// It runs AFTER the whole lift, and that ordering is the point rather than a
-// detail: cap_type answers "what type is this capture" from exactly this field,
-// and several lift consumers test its answer against the flat "fn" tag
-// (try_lift_binding's injected param, iife_arms_hold_fn_value). Stamping while
-// the lift is still running turns those tests false and a captured closure stops
-// being dispatched env-first — a raw box pointer used as a table index.
+// It runs after lifting so every env-box marker can resolve its hoisted
+// target. Capture types themselves come from the checked lambda contract.
 function stamp_fn_local_types(funcs: parser.FuncDecl[]): parser.FuncDecl[] {
     var out: parser.FuncDecl[] = [];
     for fn in funcs {
@@ -70505,18 +70506,11 @@ function gfns_visible_in(fd: parser.FuncDecl, gfns: string[], gset: SigReg): str
 }
 
 function lambda_has_no_captures(lam: ast.ExprLambda, gfns: string[]): boolean {
-    var used: string[] = [];
-    var si: i32 = 0;
-    while (si < lam.body.len()) { used = astwalk.collect_idents_stmt(lam.body[si], used); si = si + 1; }
-    var bound: string[] = [];
-    var pi: i32 = 0;
-    while (pi < lam.params.len()) { bound = bound.append(lam.params[pi].name); pi = pi + 1; }
-    var bi: i32 = 0;
-    while (bi < lam.body.len()) { bound = astwalk.collect_bound_stmt(lam.body[bi], bound); bi = bi + 1; }
+    var used: string[] = astwalk.collect_lambda_idents(lam, []);
     var ui: i32 = 0;
     while (ui < used.len()) {
         var u: string = used[ui];
-        if (util.index_of_str(bound, u) < 0 && util.index_of_str(gfns, u) < 0
+        if (util.index_of_str(gfns, u) < 0
                 && u != "None" && u != "true" && u != "false") {
             return false;
         }
@@ -70932,19 +70926,12 @@ function lift_stmts(stmts: ast.Stmt[], acc: LiftAcc, gfns: string[]): LiftStmts 
 // hoist_escaping_closure's lambda_captures order so cap[i] lines up with the
 // env box's slot 1+i.
 function closure_captures(lam: ast.ExprLambda, s: LowerState): string[] {
-    var used: string[] = [];
-    var si: i32 = 0;
-    while (si < lam.body.len()) { used = astwalk.collect_idents_stmt(lam.body[si], used); si = si + 1; }
-    var bound: string[] = [];
-    var pi: i32 = 0;
-    while (pi < lam.params.len()) { bound = bound.append(lam.params[pi].name); pi = pi + 1; }
-    var bi: i32 = 0;
-    while (bi < lam.body.len()) { bound = astwalk.collect_bound_stmt(lam.body[bi], bound); bi = bi + 1; }
+    var used: string[] = astwalk.collect_lambda_idents(lam, []);
     var caps: string[] = [];
     var ui: i32 = 0;
     while (ui < used.len()) {
         var u: string = used[ui];
-        if (util.index_of_str(bound, u) < 0 && util.index_of_str(caps, u) < 0 && s.slot_of(u) >= 0) {
+        if (util.index_of_str(caps, u) < 0 && s.slot_of(u) >= 0) {
             caps = caps.append(u);
         }
         ui = ui + 1;
@@ -70953,154 +70940,32 @@ function closure_captures(lam: ast.ExprLambda, s: LowerState): string[] {
 }
 
 function lambda_captures(lam: ast.ExprLambda, fd: parser.FuncDecl): string[] {
-    var used: string[] = [];
-    var si: i32 = 0;
-    while (si < lam.body.len()) { used = astwalk.collect_idents_stmt(lam.body[si], used); si = si + 1; }
-    var bound: string[] = [];
-    var pi: i32 = 0;
-    while (pi < lam.params.len()) { bound = bound.append(lam.params[pi].name); pi = pi + 1; }
-    var bi: i32 = 0;
-    while (bi < lam.body.len()) { bound = astwalk.collect_bound_stmt(lam.body[bi], bound); bi = bi + 1; }
-    // Only an ENCLOSING LOCAL can be a capture (fd's RECEIVER + params + every name
-    // bound in fd.body). Without this, a free ident that is a USER enum constructor
-    // or an I/O builtin (not in gfns) was wrongly captured, making make_clo_func
-    // decline (not an i32 local). A global that is NOT shadowed is not an enclosing
-    // local either, so it fails this test and is referenced directly in the hoisted
-    // body — which is why membership in `gfns` is not consulted here. It used to be,
-    // as an additional exclusion, and that is what left #6191's capture case broken:
-    // a name that is BOTH an enclosing local and a module function is shadowed, so it
-    // must be captured, and the gfns exclusion said the opposite. The lambda then
-    // reported no captures at all, took the no-capture `$wrapN` lift, and resolved
-    // the name against the module function table inside the trampoline — a silent
-    // call to an unrelated top-level function of the same name.
-    // The receiver is an enclosing local like any param: a method's lambda reading
-    // `a.base` captures `a`. Omitting it made `caps` EMPTY for such a lambda, so the
-    // no-capture lift hoisted the body to a `<fd>$wrapN` trampoline where the
-    // receiver name is unbound — the module then bailed on the wrapper (#3457).
-    var encl: string[] = [];
-    if (fd.receiver_name.len() > 0) { encl = encl.append(fd.receiver_name); }
-    var ep: i32 = 0;
-    while (ep < fd.params.len()) { encl = encl.append(fd.params[ep].name); ep = ep + 1; }
-    var eb: i32 = 0;
-    while (eb < fd.body.len()) { encl = astwalk.collect_bound_stmt(fd.body[eb], encl); eb = eb + 1; }
-    var caps: string[] = [];
-    var ui: i32 = 0;
-    while (ui < used.len()) {
-        var u: string = used[ui];
-        if (util.index_of_str(bound, u) < 0
-                && util.index_of_str(encl, u) >= 0
-                && u != "None" && u != "true" && u != "false"
-                && u != "Some" && u != "Ok" && u != "Err"
-                && util.index_of_str(caps, u) < 0) {
-            caps = caps.append(u);
+    var names: string[] = [];
+    for cap in lam.captures { names = names.append(cap.name); }
+    return names;
+}
+
+function lambda_capture_param(lam: ast.ExprLambda, name: string): ast.ParamDecl {
+    for cap in lam.captures {
+        if (cap.name == name) { return decltypes.param_from_type(name, cap.ty); }
+    }
+    return decltypes.param_from_type(name, typeinfo.unchecked());
+}
+
+function lambda_capture_type(lam: ast.ExprLambda, name: string): string {
+    for cap in lam.captures {
+        if (cap.name == name) {
+            if let typeinfo.TypeFunc(f) = cap.ty { return "fn"; }
+            if let typeinfo.TypeString(s) = cap.ty { return "string"; }
+            return typeinfo.spelling(cap.ty);
         }
-        ui = ui + 1;
-    }
-    return caps;
-}
-
-// lit_init_type infers a capture's type from a literal-shaped initializer:
-// scalar literals (i32 / string / boolean — float declines, matching the old
-// scalar behaviour), array literals (element type from the first element, so
-// `[1,2,3]` is `i32[]` and `["a"]` is `string[]`), and struct literals (their
-// named type). "" when it can't infer — the caller then declines the lift, so
-// the module bails. Pure AST analysis: the inferred type
-// only labels the lifted function's capture PARAM, so an unannotated
-// array/struct capture flows exactly like the already-supported annotated /
-// param-typed array capture (passed by value as an ordinary argument — no env
-// box, no RC). Keeps cap_type small (#2720 oversized-function guard).
-function lit_init_type(e: ast.Expr): string {
-    match (e) {
-        ast.ExprNumber(num) => { if (num.is_float) { return ""; } return "i32"; },
-        ast.ExprString(_) => { return "string"; },
-        ast.ExprBool(_) => { return "boolean"; },
-        ast.ExprArray(a) => {
-            if (a.elements.len() == 0) { return ""; }
-            var et: string = lit_init_type(a.elements[0]);
-            if (et.len() == 0) { return ""; }
-            return et + "[]";
-        },
-        ast.ExprStructLit(sl) => {
-            if (sl.type_name.len() == 0) { return ""; }
-            return sl.type_name;
-        },
-        _ => { return ""; }
     }
     return "";
-}
-
-// cap_type resolves a captured variable's type from the enclosing function: a
-// param type, an annotated `var c: T`, or an initialised `var c = <expr>`
-// whose type is statically inferable — a literal (lit_init_type), an IDENT
-// chain resolving to one (`var k = i` where `var i = 0`), or i32 ARITHMETIC
-// over such (`var k = i % 7`). The binding is found ANYWHERE in the body
-// (while/for/if/match nesting included — a loop-body `var k = i` used to be
-// invisible, so a tuple-lifted lambda capturing it DECLINED and the module
-// bailed — #5051). "" when
-// it can't infer (the caller then declines the lift). Mirrors
-// ssa.resolve_capture_type.
-// pat_variant_payload_field_s is the structs-taking sibling of
-// iife_variant_payload_field (which takes a LowerState): the variant struct's
-// payload FIELD TYPE for a binding name in a PatVariant arm — `__ev` for the
-// main binding, `__ev<k+1>` for the k-th extra. Used by the lift-side
-// cap_type walk (which carries `structs`, not a LowerState) so a lambda
-// capturing a USER-ENUM match payload resolves its type and lifts instead of
-// declining and bailing the module (#5155). "" when the name binds no
-// payload of this variant.
-function pat_variant_payload_field_s(pv: ast.PatVariant, name: string, structs: StructTab): string {
-    var vname: string = pv.type_name;
-    var vld: i32 = 0;
-    while (vld < pv.type_name.len()) {
-        if (pv.type_name[vld] == b'.') { vname = slice_unchecked(pv.type_name, vld + 1, pv.type_name.len()) + ""; }
-        vld = vld + 1;
-    }
-    if (!decl_is_struct(structs, vname)) { return ""; }
-    var pvb: string = pv.binding;
-    if (pvb.len() > 0 && pvb != "_" && pvb == name) { return decl_field_type(structs, vname, "__ev"); }
-    var k: i32 = 0;
-    while (k < pv.extra_bindings.len()) {
-        var eb: string = pv.extra_bindings[k];
-        if (eb.len() > 0 && eb != "_" && eb == name) { return decl_field_type(structs, vname, "__ev" + util.i32_to_string(k + 1)); }
-        k = k + 1;
-    }
-    return "";
-}
-
-// callee_ret_type resolves a call's declared return type from the module's
-// function decls (threaded as `mfuncs`): `recv_ty` is the receiver's type
-// spelling — its base struct name (generic args stripped) is matched against
-// the decl's receiver_type — or "" for a free function. Used by the capture
-// resolver to type a for-in iter / match scrutinee that is a method or
-// function call (`for x in s.get()`, `match (pop(i)) { … }`): a call binder
-// used to resolve "" and decline the closure lift (#5193 / #5200). Returns ""
-// when no matching decl is found (a miss only declines the lift).
-function callee_ret_type(mfuncs: MFuncs, recv_ty: string, fname: string): string {
-    var base: string = recv_ty;
-    var bi: i32 = 0;
-    while (bi < recv_ty.len()) {
-        if (recv_ty[bi] == b'[') { base = slice_unchecked(recv_ty, 0, bi) + ""; bi = recv_ty.len(); }
-        bi = bi + 1;
-    }
-    var i: i32 = 0;
-    while (i < mfuncs.decls.len()) {
-        if (mfuncs.decls[i].name == fname) {
-            if (recv_ty.len() == 0 && mfuncs.decls[i].receiver_type.len() == 0) { return mfuncs.decls[i].ret_type; }
-            if (recv_ty.len() > 0 && mfuncs.decls[i].receiver_type == base) { return mfuncs.decls[i].ret_type; }
-        }
-        i = i + 1;
-    }
-    return "";
-}
-
-function cap_type(name: string, fd: parser.FuncDecl, structs: StructTab, mfuncs: MFuncs): string {
-    return cap_type_at(name, fd, 4, structs, mfuncs);
 }
 
 // cap_local_init returns the initialiser of the local `name` bound by a `var` in
-// `body`, or an unknown expression when there is none. The sibling of
-// cap_type_in_stmts' walk — that one answers "what type is it", this one answers
-// "what was it bound FROM", which is the only place a fn-typed local's signature
-// still survives (see cap_param_for).
+// `body`, or an unknown expression when there is none. This is a remaining
+// legacy ownership query, not an authority for capture types.
 function cap_local_init(body: ast.Stmt[], name: string): ast.Expr {
     function init_of(st: ast.Stmt, acc: ast.Expr): ast.Expr {
         match (acc) { ast.ExprUnknown(_) => {}, _ => { return acc; } }
@@ -71118,481 +70983,6 @@ function cap_local_init(body: ast.Stmt[], name: string): ast.Expr {
     return found;
 }
 
-// Retain the whole declaration contract when adapting a captured callable.
-function cap_local_fn_decl(body: ast.Stmt[], name: string): ast.ParamDecl {
-    function fn_decl_of(st: ast.Stmt, acc: ast.ParamDecl): ast.ParamDecl {
-        if (acc.type_name.len() > 0 || acc.fn_ret.len() > 0) { return acc; }
-        match (st) {
-            ast.StmtVar(v) => {
-                if (v.name == name) {
-                    var p: ast.ParamDecl = decltypes.fn_param_from_var(v);
-                    if (p.type_name.len() > 0) { return p; }
-                    return ast.ParamDecl { ...p, fn_ret: v.fn_ret };
-                }
-            },
-            _ => {}
-        }
-        return acc;
-    }
-    var found: ast.ParamDecl = fn_param_from_spelling(name, "");
-    for st in body {
-        found = astwalk.fold_stmt_spine(st, found, fn_decl_of);
-        if (found.type_name.len() > 0 || found.fn_ret.len() > 0) { return found; }
-    }
-    return found;
-}
-
-// passthrough_forwards_lambda / passthrough_lambda_param_types read the LAMBDA a
-// generic passthrough call hands back unchanged (`pick(c, <lambda>, <lambda>)`,
-// nested passthroughs included). The lambda carries its own annotated parameter
-// types; what it does NOT carry is a return type, because only a binding whose
-// init IS the lambda gets one stamped (stamp_lambda_ret). Paired with the
-// binding's declared fn_ret that is a complete signature, and an exact one — no
-// part of it is reconstructed from a body.
-//
-// The two are split rather than returning one value because a ZERO-parameter
-// lambda's type list is legitimately empty, which a single return could not tell
-// from "no lambda here".
-function passthrough_forwards_lambda(e: ast.Expr, mfuncs: MFuncs): boolean {
-    match (e) {
-        ast.ExprLambda(_) => { return true; },
-        ast.ExprCall(c) => {
-            match (c.callee) {
-                ast.ExprIdent(cid) => {
-                    var i: i32 = 0;
-                    while (i < c.args.len()) {
-                        if (lift_callee_is_typevar_passthrough(mfuncs, cid.name, i)
-                                && passthrough_forwards_lambda(c.args[i], mfuncs)) { return true; }
-                        i = i + 1;
-                    }
-                },
-                _ => {}
-            }
-        },
-        _ => {}
-    }
-    return false;
-}
-
-function passthrough_lambda_param_types(e: ast.Expr, mfuncs: MFuncs): string[] {
-    var out: string[] = [];
-    match (e) {
-        ast.ExprLambda(lam) => {
-            var pi: i32 = 0;
-            while (pi < lam.params.len()) { out = out.append(lam.params[pi].type_name); pi = pi + 1; }
-            return out;
-        },
-        ast.ExprCall(c) => {
-            match (c.callee) {
-                ast.ExprIdent(cid) => {
-                    var i: i32 = 0;
-                    while (i < c.args.len()) {
-                        if (lift_callee_is_typevar_passthrough(mfuncs, cid.name, i)
-                                && passthrough_forwards_lambda(c.args[i], mfuncs)) {
-                            return passthrough_lambda_param_types(c.args[i], mfuncs);
-                        }
-                        i = i + 1;
-                    }
-                },
-                _ => {}
-            }
-        },
-        _ => {}
-    }
-    return out;
-}
-
-// cap_param_for builds the ParamDecl that carries capture `name` into a hoisted
-// function, or declines by returning one with an empty type_name.
-//
-// The point of it is fn-TYPED captures (#6324). cap_type coarsens every fn type
-// to the flat "fn" tag, which is enough for the env-box path (make_clo_func only
-// needs to know the value is pointer-shaped) but NOT enough to synthesize a
-// fn-typed PARAM: that additionally needs fn_ret, fn_param_types and
-// fn_param_dyn, the sidecars parse_param records precisely because the flat tag
-// throws the signature away. A param built without them is not the one the call
-// side reads — hoist_value_iife used to decline every fn-typed capture for
-// exactly this reason, which is what kept #6256's Repro D bailing.
-//
-// Four sources are exact enough to use, and nothing else is:
-//
-//   * a PARAM or receiver — copy fd.params[i] wholesale. Nothing is
-//     reconstructed, so nothing can be reconstructed wrong.
-//   * a LOCAL bound from a lambda literal — the lambda carries its own params
-//     and ret_type (the parser stamps a binding's annotated return onto it via
-//     stamp_lambda_ret), so the signature is recoverable without guessing.
-//   * a LOCAL the lift has already replaced with a `__mkclo$<target>` env-box
-//     constructor — the hoisted target carries the real signature after its
-//     `__env` param.
-//   * a LOCAL whose declared type_name is the full `(P) => R` spelling, which
-//     fn_param_from_spelling reads back into the sidecars directly.
-//
-// Checked callable declarations carry the complete contract even when their
-// initializer is another call or value. Unrecorded contracts remain declined.
-//
-// Being exact matters more here than usual: wasm funcref types are STRUCTURAL
-// (#6282), so a wrong fn_param_types does not degrade into a slow path — it
-// produces a module the loader rejects, or an `indirect call type mismatch` at
-// runtime. Copy where possible, reconstruct only from an unambiguous source,
-// decline otherwise.
-function cap_param_for(name: string, fd: parser.FuncDecl, structs: StructTab, mfuncs: MFuncs): ast.ParamDecl {
-    var declined: ast.ParamDecl = ast.ParamDecl { name: name, type_name: "", own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" };
-    var pi: i32 = 0;
-    while (pi < fd.params.len()) {
-        if (fd.params[pi].name == name) { return fd.params[pi]; }
-        pi = pi + 1;
-    }
-    var cty: string = cap_type(name, fd, structs, mfuncs);
-    if (cty.len() == 0) { return declined; }
-    if (cty != "fn") {
-        var spp: ast.ParamDecl = fn_param_from_spelling(name, cty);
-        if (spp.type_name == "fn") { return spp; }
-        return ast.ParamDecl { name: name, type_name: cty, own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" };
-    }
-    var recorded: ast.ParamDecl = cap_local_fn_decl(fd.body, name);
-    if (recorded.type_name == "fn") { return recorded; }
-    match (cap_local_init(fd.body, name)) {
-        ast.ExprLambda(lam) => { return fn_param_from_lambda(name, lam); },
-        // `__mkclo$<target>(caps…)` — the env-box constructor the lift leaves in
-        // a fn-valued local's place. The hoisted target's params are `__env`
-        // followed by the lambda's own, so its signature after that first param
-        // is the fn value's.
-        ast.ExprCall(mk) => {
-            match (mk.callee) {
-                ast.ExprIdent(mkid) => {
-                    if (mkid.name.len() > 8 && slice_unchecked(mkid.name, 0, 8) == "__mkclo$") {
-                        var tgt: string = slice_unchecked(mkid.name, 8, mkid.name.len()) + "";
-                        var fi: i32 = 0;
-                        while (fi < mfuncs.decls.len()) {
-                            if (mfuncs.decls[fi].name == tgt) { return fn_param_from_func(name, mfuncs.decls[fi], 1); }
-                            fi = fi + 1;
-                        }
-                        return declined;
-                    }
-                    // A generic passthrough hands one of its erased-generic
-                    // arguments straight back, so the lambda at that parameter
-                    // IS this binding's value. Its own annotated params plus the
-                    // return the binding declares make the signature exact.
-                    var dret: string = recorded.fn_ret;
-                    if (dret.len() > 0 && passthrough_forwards_lambda(mk, mfuncs)) {
-                        return fn_param_decl(name, passthrough_lambda_param_types(mk, mfuncs), dret);
-                    }
-                    return declined;
-                },
-                _ => { return declined; }
-            }
-            return declined;
-        },
-        _ => { return declined; }
-    }
-    return declined;
-}
-
-function cap_type_at(name: string, fd: parser.FuncDecl, depth: i32, structs: StructTab, mfuncs: MFuncs): string {
-    // The receiver binds like a param (see lambda_captures), so resolve it first.
-    if (fd.receiver_name.len() > 0 && fd.receiver_name == name) { return fd.receiver_type; }
-    var pi: i32 = 0;
-    while (pi < fd.params.len()) {
-        if (fd.params[pi].name == name) { return fd.params[pi].type_name; }
-        pi = pi + 1;
-    }
-    return cap_type_in_stmts(fd.body, name, fd, depth, structs, mfuncs);
-}
-
-// tuple_tag_i32_only reports whether a tuple tag `(t0, t1, …)` (as produced by
-// tuple_elem_tags) is composed ENTIRELY of i32 elements, recursively. It gates
-// the nested tuple-destructure capture lift (#5201) to the shape whose element
-// reads lower correctly: an i32 destructure element captures via the 32-bit env
-// slot with the right value, so a nested `var (p, c) = t; var (a, b) = p` over
-// an all-i32 tuple lifts soundly. A POINTER (string / struct / array) element of
-// a destructure binding is a SEPARATE pre-existing capture-materialisation gap
-// (a captured string from a destructure comes through empty on the IR path,
-// with or without nesting), so enabling its lift would turn a correct AST
-// fallback into a wrong IR build — those stay declined here.
-function tuple_tag_i32_only(t: string): boolean {
-    if (t.len() < 2 || t[0] != b'(') { return false; }
-    var elems: string[] = rc_fe_split_csv(tuple_elem_tags(t));
-    if (elems.len() == 0) { return false; }
-    var i: i32 = 0;
-    while (i < elems.len()) {
-        var e: string = elems[i];
-        if (e == "i32") {}
-        else if (e.len() >= 2 && e[0] == b'(' && tuple_tag_i32_only(e)) {}
-        else { return false; }
-        i = i + 1;
-    }
-    return true;
-}
-
-// cap_type_in_stmts finds the binding of `name` anywhere in `body` — a `var`
-// (annotation or inferable init), a `for` binder, a match-arm pattern — and
-// resolves its type; astwalk's statement spine carries the recursion, which
-// keeps it out of expressions and lambda bodies. First match wins — shadowing
-// across sibling blocks is an accepted over-approximation,
-// same as the other lift-side body walkers (the fn-gates keep consequences to
-// a declined or extra lift, never a miscompile: the lifted capture param only
-// labels the hoisted function's parameter).
-// map_kv_type returns the KEY or VALUE type of a `Map[K, V]` type string, or ""
-// when the type is not a Map. The split is on the top-level comma, so a nested
-// `Map[i32, Pair[i32, i32]]` keeps its own brackets.
-function map_kv_type(mty: string, want_key: boolean): string {
-    if (mty.len() <= 5 || slice_unchecked(mty, 0, 4) != "Map[") { return ""; }
-    var inner: string = slice_unchecked(mty, 4, mty.len() - 1) + "";
-    var depth: i32 = 0;
-    var i: i32 = 0;
-    var pos: i32 = 0 - 1;
-    while (i < inner.len()) {
-        if (inner[i] == b'[') { depth = depth + 1; }
-        if (inner[i] == b']') { depth = depth - 1; }
-        if (inner[i] == b',' && depth == 0 && pos < 0) { pos = i; }
-        i = i + 1;
-    }
-    if (pos <= 0) { return ""; }
-    if (want_key) { return slice_unchecked(inner, 0, pos) + ""; }
-    var vstart: i32 = pos + 1;
-    while (vstart < inner.len() && inner[vstart] == b' ') { vstart = vstart + 1; }
-    return slice_unchecked(inner, vstart, inner.len()) + "";
-}
-
-function cap_type_in_stmts(body: ast.Stmt[], name: string, fd: parser.FuncDecl, depth: i32, structs: StructTab, mfuncs: MFuncs): string {
-    function cap_type_of(st: ast.Stmt, acc: string): string {
-        if (acc.len() > 0) { return acc; }
-        match (st) {
-            ast.StmtVar(v) => {
-                if (v.name == name) {
-                    if (v.type_name.len() > 0) { return v.type_name; }
-                    var vt: string = cap_type_expr(v.init, fd, depth, structs, mfuncs);
-                    if (vt.len() > 0) { return vt; }
-                    // The binding IS the answer even when un-inferable: stop
-                    // the scan here ("!" maps to "" at the driver). Walking on
-                    // would reach a later `match (name)` whose scrutinee
-                    // resolution re-enters cap_type_at on this same body —
-                    // unbounded mutual recursion.
-                    return "!";
-                }
-                // A tuple-destructure `var (a, b) = t` binds `name` as the
-                // element at its position: resolve the tuple type (annotation
-                // or inferred from the init) and read the element tag at that
-                // index (#5173). Without this a lambda capturing a destructure
-                // binding resolved "" and declined to the miscompiling AST
-                // path. Scalar/string element tags are returned, AND an all-i32
-                // nested-tuple element tag `(…)` (tuple_tag_i32_only) — that tag
-                // is what a SECOND-level destructure `var (a, b) = p` indexes
-                // `p`'s element into, and cap_slot_ok admits the tuple itself as
-                // a pointer riding the 32-bit env slot, so the nested-destructure
-                // capture lifts instead of declining (#5201). A pointer-element
-                // tuple stays declined: a captured string from a destructure is a
-                // separate pre-existing IR gap.
-                if (rc_fe_is_destructure(v.name)) {
-                    var dnames: string[] = rc_fe_split_csv(v.name);
-                    var didx: i32 = util.index_of_str(dnames, name);
-                    if (didx >= 0) {
-                        var tty: string = v.type_name;
-                        if (tty.len() == 0) { tty = cap_type_expr(v.init, fd, depth, structs, mfuncs); }
-                        if (tty.len() >= 2 && tty[0] == b'(') {
-                            var etags: string[] = rc_fe_split_csv(tuple_elem_tags(tty));
-                            if (didx < etags.len()) {
-                                var et: string = etags[didx];
-                                if (et == "i32" || et == "string" || et == "boolean" || et == "i64" || et == "u64" || et == "f64" || et == "u32") { return et; }
-                                if (et.len() >= 2 && et[0] == b'(' && tuple_tag_i32_only(et)) { return et; }
-                            }
-                        }
-                    }
-                }
-            },
-            ast.StmtFor(fr) => {
-                // The for-in BINDER: resolve its type from the iterated
-                // expression's element type — an ident iterating a declared
-                // `T[]` local/param binds a T (strip the "[]"), and a range
-                // (`for x in 0..n`, any non-array iter of scalar shape) binds
-                // an i32. Without this a lambda capturing a for-in binder
-                // resolved "" → cap_slot_ok declined → the whole module
-                // bailed (and the AST emitter it then fell to miscompiled a
-                // capturing lambda in a struct fn FIELD — the f5/f4 probes).
-                // A capture only labels the hoisted fn's param, so a miss
-                // stays a declined lift, never a miscompile.
-                // `for (k, v) in m` binds two names, encoded comma-joined, so
-                // the single-binder test below never matches either of them and
-                // a lambda capturing one resolved "" — the whole module bailed.
-                // The pair is a Map's key and value type.
-                if (rc_fe_is_destructure(fr.var_name)) {
-                    var kvn: string[] = rc_fe_split_csv(fr.var_name);
-                    var kvi: i32 = util.index_of_str(kvn, name);
-                    if (kvi >= 0) {
-                        match (fr.iter) {
-                            ast.ExprIdent(kvid) => {
-                                var kvt: string = map_kv_type(cap_type_at(kvid.name, fd, depth, structs, mfuncs), kvi == 0);
-                                if (kvt.len() > 0) { return kvt; }
-                            },
-                            _ => {}
-                        }
-                    }
-                }
-                if (fr.var_name == name) {
-                    var ity: string = "";
-                    match (fr.iter) {
-                        ast.ExprIdent(itid) => { ity = cap_type_at(itid.name, fd, depth, structs, mfuncs); },
-                        ast.ExprFieldAccess(itfld) => {
-                            // `for x in s.items` — the iter is a struct FIELD of
-                            // array type `T[]`; resolve the field's declared type
-                            // (the `[]`-strip below yields the binder T). #5173
-                            // follow-up: previously only a bare-ident iter
-                            // resolved, so a captured field-array binder declined.
-                            match (itfld.obj) {
-                                ast.ExprIdent(itsid) => {
-                                    var sty: string = cap_type_at(itsid.name, fd, depth, structs, mfuncs);
-                                    if (sty.len() > 0) { ity = decl_field_type(structs, sty, itfld.field); }
-                                },
-                                _ => {}
-                            }
-                        },
-                        ast.ExprSlice(itsl) => {
-                            // `for x in xs[0:2]` — the slice's element type is the
-                            // sliced array's element type (an ident array here).
-                            match (itsl.array) {
-                                ast.ExprIdent(itaid) => { ity = cap_type_at(itaid.name, fd, depth, structs, mfuncs); },
-                                _ => {}
-                            }
-                        },
-                        ast.ExprCall(itc) => {
-                            // `for k in m.keys()` / `for v in m.values()`: the
-                            // binder is the receiver Map's key resp. value type.
-                            match (itc.callee) {
-                                ast.ExprFieldAccess(itfa) => {
-                                    if ((itfa.field == "keys" || itfa.field == "values") && itc.args.len() == 0) {
-                                        match (itfa.obj) {
-                                            ast.ExprIdent(itmid) => {
-                                                ity = map_kv_type(cap_type_at(itmid.name, fd, depth, structs, mfuncs), itfa.field == "keys");
-                                            },
-                                            _ => {}
-                                        }
-                                    } else {
-                                        // `for x in s.get()`: a user-defined method
-                                        // returning an array — resolve the method's
-                                        // declared return type from `mfuncs` (matched
-                                        // on the receiver struct's name), the `[]`-
-                                        // strip below yielding the binder (#5193).
-                                        match (itfa.obj) {
-                                            ast.ExprIdent(itrid) => {
-                                                var rty: string = cap_type_at(itrid.name, fd, depth, structs, mfuncs);
-                                                if (rty.len() > 0) { ity = callee_ret_type(mfuncs, rty, itfa.field); }
-                                            },
-                                            _ => {}
-                                        }
-                                    }
-                                },
-                                ast.ExprIdent(itfid) => {
-                                    // `for x in items()`: a free function returning
-                                    // an array — resolve its declared return type
-                                    // from `mfuncs` (#5193).
-                                    ity = callee_ret_type(mfuncs, "", itfid.name);
-                                },
-                                _ => {}
-                            }
-                        },
-                        _ => {}
-                    }
-                    if (ity == "i32" || ity == "string" || ity == "boolean" || ity == "i64" || ity == "u64" || ity == "f64" || ity == "u32") {
-                        return ity;
-                    }
-                    if (ity.len() > 2 && slice_unchecked(ity, ity.len() - 2, ity.len()) == "[]") {
-                        return slice_unchecked(ity, 0, ity.len() - 2) + "";
-                    }
-                    match (fr.iter) {
-                        ast.ExprBinary(itb) => {
-                            // `for x in a..b` — the range desugar's iter is a
-                            // `..` binary; the binder is an i32.
-                            if (itb.op == "..") { return "i32"; }
-                        },
-                        _ => {}
-                    }
-                }
-            },
-            ast.StmtMatch(m) => {
-                // A match-arm PAYLOAD BINDING (`match (o) { Some(v) => … }`):
-                // `v` is not a `var`, so the body walk below never resolves its
-                // type — a lambda capturing it declined the lift and the module
-                // fell out of the IR subset, onto an AST emitter that miscompiled
-                // a fn-field-captured lambda (the m1 probe: native 20,
-                // self-host 4). Resolve
-                // the MAIN binding of an Option/Result arm from the scrutinee's
-                // type spelling (opt_payload_type — no enum decls needed here).
-                // A USER-ENUM variant's payload resolves via the enum
-                // declaration threaded as `structs` (#5155): the variant
-                // struct's `__ev` / `__ev<k>` field type
-                // (pat_variant_payload_field_s), covering the main AND extra
-                // bindings (`Tag(a, b)`). Option/Result payloads (single-
-                // binding, non-struct payload types) still resolve from the
-                // scrutinee spelling via opt_payload_type.
-                var scrut_ty: string = "";
-                match (m.scrutinee) {
-                    ast.ExprIdent(scid) => { scrut_ty = cap_type_at(scid.name, fd, depth, structs, mfuncs); },
-                    ast.ExprCall(scc) => {
-                        // `match (pop(i)) { Some(v) => … }`: the scrutinee is a
-                        // call whose Option/Result return type feeds the payload
-                        // binding — resolve the callee's declared return type from
-                        // `mfuncs` (free function or receiver method) so the arm
-                        // binding types below (#5200).
-                        match (scc.callee) {
-                            ast.ExprIdent(scfid) => { scrut_ty = callee_ret_type(mfuncs, "", scfid.name); },
-                            ast.ExprFieldAccess(scfa) => {
-                                match (scfa.obj) {
-                                    ast.ExprIdent(scrid) => {
-                                        var srty: string = cap_type_at(scrid.name, fd, depth, structs, mfuncs);
-                                        if (srty.len() > 0) { scrut_ty = callee_ret_type(mfuncs, srty, scfa.field); }
-                                    },
-                                    _ => {}
-                                }
-                            },
-                            _ => {}
-                        }
-                    },
-                    _ => {}
-                }
-                // typed-IR (#5986): a scrutinee shape the hand-rolled walk above
-                // cannot resolve — a field read (`s.o`), a builtin method call —
-                // answers from the node's own stamped tag.
-                if (scrut_ty.len() == 0) { scrut_ty = stamped_expr_ty(m.scrutinee); }
-                for arm in m.arms {
-                    match (arm.pattern) {
-                        ast.PatVariant(pv) => {
-                            // The `@` WHOLE-VALUE binding (`n @ Tag(x)`) binds
-                            // the scrutinee itself, so its type is the
-                            // scrutinee's. It reaches lowering on the pattern
-                            // rather than as a `var` — lower_stmt_match only
-                            // materialises `var n = $mscrut` later — so nothing
-                            // below this resolves it, and a lambda capturing it
-                            // declined the lift.
-                            if (pv.at_binding.len() > 0 && pv.at_binding == name && scrut_ty.len() > 0) { return scrut_ty; }
-                            // User-enum variant payload (main or extra binding).
-                            var evt: string = pat_variant_payload_field_s(pv, name, structs);
-                            if (evt.len() > 0) { return evt; }
-                            // Option/Result single-payload fall-through.
-                            if (scrut_ty.len() >= 8 && (slice_unchecked(scrut_ty, 0, 7) == "Option[" || slice_unchecked(scrut_ty, 0, 7) == "Result[")
-                                && pv.binding.len() > 0 && pv.binding != "_" && pv.binding == name) {
-                                var pt: string = opt_payload_type(scrut_ty, pv.type_name);
-                                if (pt.len() > 0) { return pt; }
-                            }
-                        },
-                        _ => {}
-                    }
-                }
-            },
-            _ => { }
-        }
-        return acc;
-    }
-    var found: string = "";
-    for st in body {
-        found = astwalk.fold_stmt_spine(st, found, cap_type_of);
-        if (found.len() > 0) {
-            if (found == "!") { return ""; }
-            return found;
-        }
-    }
-    return "";
-}
-
 // stamped_expr_ty reads the checker-stamped `ty` off any carrier node type,
 // "" for an unstamped build or a node with no carrier (#5986).
 function stamped_expr_ty(e: ast.Expr): string {
@@ -71603,102 +70993,6 @@ function stamped_expr_ty(e: ast.Expr): string {
         ast.ExprIndex(ix) => { return ix.ty; },
         ast.ExprBinary(b) => { return b.ty; },
         ast.ExprUnary(u) => { return u.ty; },
-        _ => { return ""; }
-    }
-    return "";
-}
-
-// cap_type_expr infers an initializer expression's type for capture-param
-// labelling: literals via lit_init_type; a bare ident by resolving ITS binding
-// (depth-bounded so a cycle terminates as ""); comparisons/logic → boolean;
-// arithmetic/bitwise where BOTH sides infer i32 → i32; `+` over two strings →
-// string (concat — a string capture rides the env box's pointer slot like any
-// other pointer-shaped type, so declining it only bailed the module). Every other
-// operator still requires both sides i32.
-function cap_type_expr(e: ast.Expr, fd: parser.FuncDecl, depth: i32, structs: StructTab, mfuncs: MFuncs): string {
-    var lt: string = lit_init_type(e);
-    if (lt.len() > 0) { return lt; }
-    if (depth <= 0) { return ""; }
-    match (e) {
-        ast.ExprIdent(id) => {
-            var ct: string = cap_type_at(id.name, fd, depth - 1, structs, mfuncs);
-            if (ct.len() > 0) { return ct; }
-            // typed-IR (#5986): a name no receiver/param/body decl binds — a
-            // module const — answers from the stamp, which names its DECLARED type.
-            return id.ty;
-        },
-        ast.ExprBinary(b) => {
-            if (b.op == "==" || b.op == "!=" || b.op == "<" || b.op == "<=" || b.op == ">" || b.op == ">=" || b.op == "&&" || b.op == "||") { return "boolean"; }
-            var l: string = cap_type_expr(b.left, fd, depth - 1, structs, mfuncs);
-            var r: string = cap_type_expr(b.right, fd, depth - 1, structs, mfuncs);
-            if (l == "i32" && r == "i32") { return "i32"; }
-            if (b.op == "+" && l == "string" && r == "string") { return "string"; }
-            // typed-IR (#5986): wide arithmetic (i64/u64/u32/f64) the two
-            // clauses above discard answers from the stamp — int_result types
-            // the binary from the settled operand, so the tag is width-correct.
-            return b.ty;
-        },
-        // `var b = s.field` — the object's struct type resolves through the same
-        // recursion, then the field's DECLARED type. cap_type_in_stmts already did
-        // exactly this for a for-in iter (`for x in s.items`) and a match scrutinee;
-        // the plain `var` init arm simply never did, so a lambda capturing such a
-        // local resolved "" and the lift declined (#3457).
-        ast.ExprFieldAccess(fa) => {
-            var oty: string = cap_type_expr(fa.obj, fd, depth - 1, structs, mfuncs);
-            if (oty.len() > 0) {
-                var ft: string = decl_field_type(structs, oty, fa.field);
-                if (ft.len() > 0) { return ft; }
-            }
-            // typed-IR (#5986): the checker-stamped tag when this depth-bounded
-            // walk cannot recover obj's type — either it ran out of depth or obj
-            // is a form with no arm here. That "" is what made the lift DECLINE,
-            // the exact failure #5982 patched one missing arm at a time. The walk
-            // still wins when it resolves: it returns the field's declared
-            // SPELLING, which distinguishes f32 from f64 where the checker's
-            // TypeFloat does not.
-            return fa.ty;
-        },
-        // A local bound from a lambda literal is a fn value. The flat "fn" tag is
-        // what the env-box path wants: cap_slot_ok only asks whether the capture
-        // is pointer-shaped, and make_clo_func's `var cap: fn = __env[i]` read is
-        // the spelling lower_stmt_var recognises as a closure box.
-        ast.ExprLambda(_) => { return "fn"; },
-        // `var b = f(…)` / `var b = s.m(…)` — the callee's DECLARED return type,
-        // resolved exactly as the for-in / match-scrutinee arms do (callee_ret_type).
-        ast.ExprCall(c) => {
-            match (c.callee) {
-                // `__mkclo$…(caps…)` — the lift's env-box constructor, which is
-                // what a fn-valued local's lambda init has already become by the
-                // time a sibling closure's capture is typed.
-                ast.ExprIdent(cid) => {
-                    if (cid.name.len() > 8 && slice_unchecked(cid.name, 0, 8) == "__mkclo$") { return "fn"; }
-                    var crt: string = callee_ret_type(mfuncs, "", cid.name);
-                    if (crt.len() > 0) { return crt; }
-                    // typed-IR (#5986): a BUILTIN call (`args()`, `map_new(…)`)
-                    // declares nothing in mfuncs; the stamp carries its result.
-                    return c.ty;
-                },
-                ast.ExprFieldAccess(cfa) => {
-                    var rty: string = cap_type_expr(cfa.obj, fd, depth - 1, structs, mfuncs);
-                    if (rty.len() > 0) {
-                        var mrt: string = callee_ret_type(mfuncs, rty, cfa.field);
-                        if (mrt.len() > 0) { return mrt; }
-                    }
-                    // A builtin METHOD call (`s.len()`, `m.get_or(…)`) — same (#5986).
-                    return c.ty;
-                },
-                _ => { return c.ty; }
-            }
-            return "";
-        },
-        // `var b = xs[i]` — the element type of the indexed array (`T[]` → T).
-        // A non-array (map / string index) resolves "" and still declines
-        // unless the checker's stamped element tag answers (#5986).
-        ast.ExprIndex(ix) => {
-            var aty: string = cap_type_expr(ix.array, fd, depth - 1, structs, mfuncs);
-            if (aty.len() > 2 && slice_unchecked(aty, aty.len() - 2, aty.len()) == "[]") { return slice_unchecked(aty, 0, aty.len() - 2) + ""; }
-            return ix.ty;
-        },
         _ => { return ""; }
     }
     return "";
@@ -71764,140 +71058,6 @@ function append_all(dst: string[], src: string[]): string[] {
     return dst;
 }
 
-// subst_fcall_expr rewrites every direct call `fname(args)` to
-// `lname(args, capargs…)`, recursing through the call-bearing expression forms.
-// Calls only — a bare `fname` used as a value is left in place and caught by the
-// caller's post-rewrite check.
-function subst_fcall_expr(e: ast.Expr, fname: string, lname: string, capargs: ast.Expr[]): ast.Expr {
-    match (e) {
-        ast.ExprCall(c) => {
-            var nargs: ast.Expr[] = [];
-            for arg in c.args { nargs = nargs.append(subst_fcall_expr(arg, fname, lname, capargs)); }
-            match (c.callee) {
-                ast.ExprIdent(cid) => {
-                    if (cid.name == fname) {
-                        var ca: i32 = 0;
-                        while (ca < capargs.len()) { nargs = nargs.append(capargs[ca]); ca = ca + 1; }
-                        var lc: ast.Expr = ast.ExprIdent { name: lname, line: 0, col: 0, ty: "" };
-                        return ast.ExprCall { callee: lc, args: nargs, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty };
-                    }
-                },
-                _ => { }
-            }
-            var rc: ast.Expr = subst_fcall_expr(c.callee, fname, lname, capargs);
-            return ast.ExprCall { callee: rc, args: nargs, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty };
-        },
-        ast.ExprBinary(b) => {
-            return ast.ExprBinary { op: b.op, left: subst_fcall_expr(b.left, fname, lname, capargs), right: subst_fcall_expr(b.right, fname, lname, capargs), line: b.line, col: b.col, ty: b.ty };
-        },
-        ast.ExprUnary(u) => {
-            return ast.ExprUnary { op: u.op, operand: subst_fcall_expr(u.operand, fname, lname, capargs), line: u.line, col: u.col, ty: u.ty };
-        },
-        ast.ExprIndex(ix) => {
-            return ast.ExprIndex { array: subst_fcall_expr(ix.array, fname, lname, capargs), index: subst_fcall_expr(ix.index, fname, lname, capargs), unchecked: ix.unchecked, ty: ix.ty };
-        },
-        // The aggregate literals. A call reached only through one of these was
-        // left un-substituted, so the binding's name survived the caller's
-        // post-rewrite check, the lift declined, and the lambda fell to the
-        // escaping-closure path — which names a `<fn>$clo` nothing hoisted.
-        ast.ExprArray(arr) => {
-            var ael: ast.Expr[] = [];
-            var ai: i32 = 0;
-            while (ai < arr.elements.len()) { ael = ael.append(subst_fcall_expr(arr.elements[ai], fname, lname, capargs)); ai = ai + 1; }
-            return ast.ExprArray { ...arr, elements: ael };
-        },
-        ast.ExprTuple(tu) => {
-            var tel: ast.Expr[] = [];
-            var ti: i32 = 0;
-            while (ti < tu.elements.len()) { tel = tel.append(subst_fcall_expr(tu.elements[ti], fname, lname, capargs)); ti = ti + 1; }
-            return ast.ExprTuple { elements: tel, line: tu.line, col: tu.col };
-        },
-        ast.ExprStructLit(sl) => {
-            var fvals: ast.Expr[] = [];
-            for fv in sl.field_values { fvals = fvals.append(subst_fcall_expr(fv, fname, lname, capargs)); }
-            var nbase: ast.Expr = sl.base;
-            if (sl.has_base) { nbase = subst_fcall_expr(sl.base, fname, lname, capargs); }
-            return ast.ExprStructLit { type_name: sl.type_name, field_names: sl.field_names, field_values: fvals, has_base: sl.has_base, base: nbase, line: sl.line, col: sl.col };
-        },
-        ast.ExprFieldAccess(fa) => {
-            return ast.ExprFieldAccess { obj: subst_fcall_expr(fa.obj, fname, lname, capargs), field: fa.field, line: fa.line, col: fa.col, ty: fa.ty };
-        },
-        ast.ExprLambda(lm) => {
-            // Rewrite a hoisted lambda's call sites that appear INSIDE another
-            // lambda body (`twice = fn(a){ return add(add(a)); }` → `add`
-            // resolves to its hoisted `__lam_0`, with any capture args injected).
-            // The injected capture args name the FIRST lambda's captures, which
-            // live in the shared enclosing scope — so the nested lambda naturally
-            // captures them too when it is itself lifted. This lets a closure
-            // that calls another local closure lift through the IR path instead
-            // of bailing to AST, INCLUDING a capturing inner closure (the
-            // injected caps flow through as the nested lambda's own caps).
-            // Declined when `fname` or any injected capture name is shadowed by a
-            // binding (param or local `var`) of the nested lambda: the rewrite
-            // would then bind the wrong value, so the module bails instead.
-            var bound: string[] = [];
-            var bpi: i32 = 0;
-            while (bpi < lm.params.len()) { bound = bound.append(lm.params[bpi].name); bpi = bpi + 1; }
-            var bbi: i32 = 0;
-            while (bbi < lm.body.len()) { bound = astwalk.collect_bound_stmt(lm.body[bbi], bound); bbi = bbi + 1; }
-            if (util.index_of_str(bound, fname) >= 0) { return e; }
-            var ck: i32 = 0;
-            while (ck < capargs.len()) {
-                match (capargs[ck]) {
-                    ast.ExprIdent(cid) => { if (util.index_of_str(bound, cid.name) >= 0) { return e; } },
-                    _ => { }
-                }
-                ck = ck + 1;
-            }
-            return ast.ExprLambda { ...lm, body: subst_fcall_stmts(lm.body, fname, lname, capargs) };
-        },
-        _ => { return e; }
-    }
-    return e;
-}
-
-function subst_fcall_stmts(stmts: ast.Stmt[], fname: string, lname: string, capargs: ast.Expr[]): ast.Stmt[] {
-    var out: ast.Stmt[] = [];
-    for stmt in stmts {
-        match (stmt) {
-            ast.StmtReturn(r) => { var ns: ast.Stmt = ast.StmtReturn { value: subst_fcall_expr(r.value, fname, lname, capargs), line: r.line, col: r.col }; out = out.append(ns); },
-            ast.StmtVar(v) => { var ns: ast.Stmt = ast.StmtVar { name: v.name, type_name: v.type_name, init: subst_fcall_expr(v.init, fname, lname, capargs), line: v.line, col: v.col, is_str: v.is_str, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types }; out = out.append(ns); },
-            ast.StmtExpr(s) => { var ns: ast.Stmt = ast.StmtExpr { value: subst_fcall_expr(s.value, fname, lname, capargs), line: s.line }; out = out.append(ns); },
-            ast.StmtAssign(a) => { var ns: ast.Stmt = ast.StmtAssign { target: a.target, value: subst_fcall_expr(a.value, fname, lname, capargs), line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col }; out = out.append(ns); },
-            ast.StmtIf(f) => { var ns: ast.Stmt = ast.StmtIf { ...f, cond: subst_fcall_expr(f.cond, fname, lname, capargs), then_body: subst_fcall_stmts(f.then_body, fname, lname, capargs), else_body: subst_fcall_stmts(f.else_body, fname, lname, capargs) }; out = out.append(ns); },
-            ast.StmtWhile(w) => { var ns: ast.Stmt = ast.StmtWhile { cond: subst_fcall_expr(w.cond, fname, lname, capargs), body: subst_fcall_stmts(w.body, fname, lname, capargs), label: w.label, line: w.line, is_loop: w.is_loop }; out = out.append(ns); },
-            ast.StmtFor(fr) => { var ns: ast.Stmt = ast.StmtFor { var_name: fr.var_name, iter: subst_fcall_expr(fr.iter, fname, lname, capargs), body: subst_fcall_stmts(fr.body, fname, lname, capargs), label: fr.label, line: fr.line }; out = out.append(ns); },
-            // A `match` whose scrutinee / arm bodies / guards call `f`: rewrite
-            // each to the hoisted `__lam_N(…)`. Without this arm the match passed
-            // through untouched, so an `f()` inside `match (f())` stayed a
-            // reference to the binding — the caller's leftover-fname guard then
-            // declined the lift and the capture-free lambda fell to the inline
-            // escaping-closure path (`const_func(<fn>$clo)`), bailing the module
-            // to AST (#3457 slice 3).
-            ast.StmtMatch(mm) => {
-                var narms: ast.MatchArm[] = [];
-                var q: i32 = 0;
-                while (q < mm.arms.len()) {
-                    // NB: bind `marm`, not `a` — reusing the StmtAssign arm's
-                    // local name `a` (a different struct type) makes the native
-                    // IR field resolver mis-key `a.target` to MatchArm and abort
-                    // codegen ("MatchArm has no field target"). A distinct name
-                    // sidesteps that latent collision.
-                    var marm: ast.MatchArm = mm.arms[q];
-                    var ng: ast.Expr = marm.guard;
-                    if (marm.has_guard) { ng = subst_fcall_expr(marm.guard, fname, lname, capargs); }
-                    narms = narms.append(ast.MatchArm { ...marm, body: subst_fcall_stmts(marm.body, fname, lname, capargs), guard: ng });
-                    q = q + 1;
-                }
-                var ns: ast.Stmt = ast.StmtMatch { ...mm, scrutinee: subst_fcall_expr(mm.scrutinee, fname, lname, capargs), arms: narms };
-                out = out.append(ns);
-            },
-            _ => { out = out.append(stmt); }
-        }
-    }
-    return out;
-}
-
 struct ClosureLift { body: ast.Stmt[], acc: LiftAcc, changed: boolean }
 
 // try_lift_binding attempts to lift the capturing lambda bound at body[idx] to
@@ -71934,7 +71094,7 @@ function try_lift_binding(body: ast.Stmt[], idx: i32, fname: string, lam: ast.Ex
     var cj: i32 = 0;
     while (cj < caps.len()) {
         // Preserve the callable contract, not just its coarse storage type.
-        var lcp: ast.ParamDecl = cap_param_for(caps[cj], fd, structs, mfuncs);
+        var lcp: ast.ParamDecl = lambda_capture_param(lam, caps[cj]);
         if (lcp.type_name.len() == 0) { return ClosureLift { body: body, acc: acc, changed: false }; }
         lparams = lparams.append(ast.ParamDecl { ...lcp, own: false, has_default: false, default_value: parser.e_unknown("") });
         cj = cj + 1;
@@ -71948,7 +71108,7 @@ function try_lift_binding(body: ast.Stmt[], idx: i32, fname: string, lam: ast.Ex
     var rest: ast.Stmt[] = [];
     var ri: i32 = idx + 1;
     while (ri < body.len()) { rest = rest.append(body[ri]); ri = ri + 1; }
-    var subst_rest: ast.Stmt[] = subst_fcall_stmts(rest, fname, lname, capargs);
+    var subst_rest: ast.Stmt[] = callsubst.subst_fcall_stmts(rest, fname, lname, capargs, lam.captures);
     var newbody: ast.Stmt[] = [];
     var ki: i32 = 0;
     while (ki < idx) { newbody = newbody.append(body[ki]); ki = ki + 1; }
@@ -72093,7 +71253,7 @@ function cap_slot_ok(t: string): boolean {
 // the flat "fn" tag, which carries no signature: a wasm funcref type is
 // structural, so the call inside the hoisted body needs the widths to pick its
 // type and to push its arguments (#6862). A fn capture whose signature
-// cap_param_for cannot recover declines, leaving the module on its honest bail.
+// the checked contract cannot describe declines rather than guessing an ABI.
 function make_clo_func(lam: ast.ExprLambda, cloname: string, fd: parser.FuncDecl, gfns: string[], structs: StructTab, mfuncs: MFuncs): HoistResult {
     var none: parser.FuncDecl = fd;
     var caps: string[] = lambda_captures(lam, fd);
@@ -72101,10 +71261,10 @@ function make_clo_func(lam: ast.ExprLambda, cloname: string, fd: parser.FuncDecl
     var ctys: string[] = [];
     var ci: i32 = 0;
     while (ci < caps.len()) {
-        var cty: string = cap_type(caps[ci], fd, structs, mfuncs);
+        var cty: string = lambda_capture_type(lam, caps[ci]);
         if (!cap_slot_ok(cty)) { return HoistResult { func: none, ok: false }; }
         if (cty == "fn") {
-            var cfp: ast.ParamDecl = cap_param_for(caps[ci], fd, structs, mfuncs);
+            var cfp: ast.ParamDecl = lambda_capture_param(lam, caps[ci]);
             if (cfp.type_name != "fn") { return HoistResult { func: none, ok: false }; }
             cty = fn_spelling_of(cfp);
         }
@@ -72112,11 +71272,11 @@ function make_clo_func(lam: ast.ExprLambda, cloname: string, fd: parser.FuncDecl
         ci = ci + 1;
     }
     // params = __env first, then the lambda's declared params.
-    var ps: ast.ParamDecl[] = [ast.ParamDecl { name: "__env", type_name: "i32[]", own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }];
+    var ps: ast.ParamDecl[] = [ast.ParamDecl { name: "__env", type_name: "i32[]", is_str: false, own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }];
     var pj: i32 = 0;
     while (pj < lam.params.len()) { ps = ps.append(lam.params[pj]); pj = pj + 1; }
     // body = capture reads (var cap: <T> = __env[1+i]) then the lambda body. The
-    // read is typed by the capture's real type (cap_type) so a pointer-shaped
+    // read is typed by the capture's checked type so a pointer-shaped
     // capture is a typed slot downstream; the i32[] 32-bit load still yields the
     // (32-bit-fitting) pointer value.
     var bd: ast.Stmt[] = [];
@@ -72232,7 +71392,7 @@ function try_inline_closure(lam: ast.ExprLambda, fd: parser.FuncDecl, funcs: par
 // (the lambda body inlined verbatim; __env is unused). Always succeeds — a
 // no-capture lambda needs no env reads.
 function make_wrap_lambda_func(lam: ast.ExprLambda, wrapname: string): parser.FuncDecl {
-    var ps: ast.ParamDecl[] = [ast.ParamDecl { name: "__env", type_name: "i32[]", own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }];
+    var ps: ast.ParamDecl[] = [ast.ParamDecl { name: "__env", type_name: "i32[]", is_str: false, own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }];
     var pj: i32 = 0;
     while (pj < lam.params.len()) { ps = ps.append(lam.params[pj]); pj = pj + 1; }
     var notp: string[] = [];
@@ -72250,7 +71410,7 @@ function make_wrap_named_func(fnname: string, wrapname: string, mfuncs: MFuncs):
     while (fi < mfuncs.decls.len()) {
         if (mfuncs.decls[fi].name == fnname && mfuncs.decls[fi].receiver_type.len() == 0) {
             var tgt: parser.FuncDecl = mfuncs.decls[fi];
-            var ps: ast.ParamDecl[] = [ast.ParamDecl { name: "__env", type_name: "i32[]", own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }];
+            var ps: ast.ParamDecl[] = [ast.ParamDecl { name: "__env", type_name: "i32[]", is_str: false, own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }];
             var args: ast.Expr[] = [];
             var pj: i32 = 0;
             while (pj < tgt.params.len()) {
@@ -73771,7 +72931,7 @@ function iife_arms_hold_fn_value(stmts: ast.Stmt[], fd: parser.FuncDecl, structs
                 // boxed local is not. Here the question is "does this arm yield a
                 // fn?", so the declared type answers it.
                 match (r.value) {
-                    ast.ExprIdent(aid) => { if (cap_type(aid.name, fd, structs, mfuncs) == "fn") { return true; } },
+                    ast.ExprIdent(aid) => { if (aid.ty == "fn") { return true; } },
                     // A nested value-position if/match arm yields whatever its own
                     // arms yield, so the question descends into it.
                     ast.ExprCall(rc) => {
@@ -73998,13 +73158,8 @@ function hoist_value_iife(lam: ast.ExprLambda, fd: parser.FuncDecl, funcs: parse
     var args: ast.Expr[] = [];
     var ci: i32 = 0;
     while (ci < caps.len()) {
-        // cap_param_for carries a fn-TYPED capture through with its signature
-        // intact (#6324) — copied from the ParamDecl when the capture is a
-        // param, reconstructed from the lambda when it is a local bound from
-        // one. It declines (empty type_name) when the signature is unrecoverable,
-        // which leaves the module bailing exactly as it does today rather than
-        // trading a refusal for a silent miscompile.
-        var cp: ast.ParamDecl = cap_param_for(caps[ci], fd, structs, mfuncs);
+        // The declaration adapter preserves the exact checked callable ABI.
+        var cp: ast.ParamDecl = lambda_capture_param(lam, caps[ci]);
         if (cp.type_name.len() == 0) { return InlineCloRes { expr: ast.ExprLambda { ...lam, body: lam.body }, funcs: funcs, counter: counter }; }
         ps = ps.append(cp);
         args = args.append(ast.ExprIdent { name: caps[ci], line: 0, col: 0, ty: "" });
@@ -74946,7 +74101,7 @@ function lift_inline_closures(fd: parser.FuncDecl, gfns: string[], structs: Stru
 //   var x = E         ->  var $cell$x: T[] = [E]
 //   <read x>          ->  $cell$x[0]
 //   x = v             ->  $cell$x = $cell$x.with(0, v)   (in-place arr_set)
-// The lambda then captures the cell pointer (cap_type sees `T[]`,
+// The lambda then captures the cell pointer (its contract records `T[]`,
 // try_lift_binding passes the pointer); its in-place `.with` mutates the shared
 // cell. Two rules select what boxes:
 //   1. #2850: an i32/boolean capture the CLOSURE body writes (cell `i32[]`).
@@ -74970,147 +74125,6 @@ function mcap_cell_name(c: string): string { return "$cell$" + c; }
 // is_mcap_cell_name reports whether `n` names such a cell.
 function is_mcap_cell_name(n: string): boolean {
     return n.len() > 6 && slice_unchecked(n, 0, 6) == "$cell$";
-}
-
-// box_rewrite_expr rewrites every READ of a boxed var `x` to `$cell$x[0]`,
-// recursing all expression forms (including into lambda bodies). The decl name
-// and assign target are handled by box_rewrite_stmt, not here.
-function box_rewrite_expr(e: ast.Expr, boxed: string[], btypes: string[], bsites: string[], bound: string[]): ast.Expr {
-    match (e) {
-        ast.ExprIdent(id) => {
-            if (util.index_of_str(boxed, id.name) >= 0 && util.index_of_str(bound, id.name) < 0) {
-                return ast.ExprIndex { array: ast.ExprIdent { name: mcap_cell_name(id.name), line: id.line, col: id.col, ty: "" }, index: ast.ExprNumber { text: "0", suffix: "", raw: "", is_float: false, line: id.line, col: id.col }, unchecked: false, ty: "" };
-            }
-            return e;
-        },
-        ast.ExprBinary(b) => { return ast.ExprBinary { op: b.op, left: box_rewrite_expr(b.left, boxed, btypes, bsites, bound), right: box_rewrite_expr(b.right, boxed, btypes, bsites, bound), line: b.line, col: b.col, ty: b.ty }; },
-        ast.ExprUnary(u) => { return ast.ExprUnary { op: u.op, operand: box_rewrite_expr(u.operand, boxed, btypes, bsites, bound), line: u.line, col: u.col, ty: u.ty }; },
-        ast.ExprCall(c) => {
-            var nargs: ast.Expr[] = [];
-            for arg in c.args { nargs = nargs.append(box_rewrite_expr(arg, boxed, btypes, bsites, bound)); }
-            return ast.ExprCall { callee: box_rewrite_expr(c.callee, boxed, btypes, bsites, bound), args: nargs, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty };
-        },
-        ast.ExprArray(a) => {
-            var ne: ast.Expr[] = [];
-            var i: i32 = 0;
-            while (i < a.elements.len()) { ne = ne.append(box_rewrite_expr(a.elements[i], boxed, btypes, bsites, bound)); i = i + 1; }
-            return ast.ExprArray { ...a, elements: ne };
-        },
-        ast.ExprTuple(t) => {
-            var ne: ast.Expr[] = [];
-            for el in t.elements { ne = ne.append(box_rewrite_expr(el, boxed, btypes, bsites, bound)); }
-            return ast.ExprTuple { elements: ne, line: t.line, col: t.col };
-        },
-        ast.ExprIndex(x) => { return ast.ExprIndex { array: box_rewrite_expr(x.array, boxed, btypes, bsites, bound), index: box_rewrite_expr(x.index, boxed, btypes, bsites, bound), unchecked: x.unchecked, ty: x.ty }; },
-        ast.ExprSlice(sl) => { return ast.ExprSlice { array: box_rewrite_expr(sl.array, boxed, btypes, bsites, bound), start: box_rewrite_expr(sl.start, boxed, btypes, bsites, bound), end: box_rewrite_expr(sl.end, boxed, btypes, bsites, bound), ty: sl.ty, open_end: sl.open_end }; },
-        ast.ExprStructLit(sl) => {
-            var nv: ast.Expr[] = [];
-            for fv in sl.field_values { nv = nv.append(box_rewrite_expr(fv, boxed, btypes, bsites, bound)); }
-            var nbase: ast.Expr = sl.base;
-            if (sl.has_base) { nbase = box_rewrite_expr(sl.base, boxed, btypes, bsites, bound); }
-            return ast.ExprStructLit { type_name: sl.type_name, field_names: sl.field_names, field_values: nv, has_base: sl.has_base, base: nbase, line: sl.line, col: sl.col };
-        },
-        ast.ExprFieldAccess(fa) => { return ast.ExprFieldAccess { obj: box_rewrite_expr(fa.obj, boxed, btypes, bsites, bound), field: fa.field, line: fa.line, col: fa.col, ty: fa.ty }; },
-        ast.ExprLambda(lm) => {
-            // A lambda PARAMETER of a boxed name is a different variable: inside
-            // this body the spelling means the argument, not the enclosing cell.
-            var lb: string[] = bound;
-            var lp: i32 = 0;
-            while (lp < lm.params.len()) { lb = lb.append(lm.params[lp].name); lp = lp + 1; }
-            return ast.ExprLambda { ...lm, body: box_rewrite_stmts(lm.body, boxed, btypes, bsites, lb) };
-        },
-        _ => { return e; }
-    }
-    return e;
-}
-
-// box_rewrite_stmt rewrites one statement: a boxed var's decl wraps its init in
-// a cell, a boxed assign becomes an in-place `.with`, everything else recurses.
-function box_rewrite_stmt(st: ast.Stmt, boxed: string[], btypes: string[], bsites: string[], bound: string[]): ast.Stmt {
-    match (st) {
-        ast.StmtVar(v) => {
-            var bxi: i32 = util.index_of_str(boxed, v.name);
-            // Only the declaration the cell was built from becomes the cell.
-            // A re-declaration of the spelling is a different variable, and
-            // rewriting it produced a SECOND `$cell$n` — typed from the first
-            // one's entry — that shadowed the real cell for the rest of the
-            // block. Matched on the site because the name cannot tell them apart.
-            if (bxi >= 0 && reclaim_site_key_of(v.name, v.line, v.col) != bsites[bxi]) { bxi = 0 - 1; }
-            if (bxi >= 0 && util.index_of_str(bound, v.name) >= 0) { bxi = 0 - 1; }
-            if (bxi >= 0) {
-                var cell: ast.Expr = ast.ExprArray { elements: [box_rewrite_expr(v.init, boxed, btypes, bsites, bound)], elem_ty: btypes[bxi], line: 0, col: 0 };
-                return ast.StmtVar { name: mcap_cell_name(v.name), type_name: btypes[bxi] + "[]", init: cell, line: v.line, col: v.col, is_str: false, fn_ret: "", fn_param_types: "" };
-            }
-            return ast.StmtVar { name: v.name, type_name: v.type_name, init: box_rewrite_expr(v.init, boxed, btypes, bsites, bound), line: v.line, col: v.col, is_str: v.is_str, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types };
-        },
-        ast.StmtAssign(a) => {
-            if (util.index_of_str(boxed, a.target) >= 0 && util.index_of_str(bound, a.target) < 0) {
-                // x = v  ->  $cell$x = $cell$x.with(0, v)   (receiver stays the raw cell ident)
-                var cnm: string = mcap_cell_name(a.target);
-                var recv: ast.Expr = ast.ExprIdent { name: cnm, line: a.target_line, col: a.target_col, ty: "" };
-                var wcall: ast.Expr = ast.ExprCall { callee: ast.ExprFieldAccess { obj: recv, field: "with", line: a.line, col: a.col, ty: "" }, args: [ast.ExprNumber { text: "0", suffix: "", raw: "", is_float: false, line: a.line, col: a.col }, box_rewrite_expr(a.value, boxed, btypes, bsites, bound)], line: a.line, col: a.col, type_argc: 0, ty: "" };
-                return ast.StmtAssign { target: cnm, value: wcall, line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col };
-            }
-            return ast.StmtAssign { target: a.target, value: box_rewrite_expr(a.value, boxed, btypes, bsites, bound), line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col };
-        },
-        ast.StmtReturn(r) => { return ast.StmtReturn { value: box_rewrite_expr(r.value, boxed, btypes, bsites, bound), line: r.line, col: r.col }; },
-        ast.StmtExpr(e) => { return ast.StmtExpr { value: box_rewrite_expr(e.value, boxed, btypes, bsites, bound), line: e.line }; },
-        ast.StmtIf(f) => { return ast.StmtIf { ...f, cond: box_rewrite_expr(f.cond, boxed, btypes, bsites, bound), then_body: box_rewrite_stmts(f.then_body, boxed, btypes, bsites, bound), else_body: box_rewrite_stmts(f.else_body, boxed, btypes, bsites, bound) }; },
-        ast.StmtWhile(w) => { return ast.StmtWhile { cond: box_rewrite_expr(w.cond, boxed, btypes, bsites, bound), body: box_rewrite_stmts(w.body, boxed, btypes, bsites, bound), label: w.label, line: w.line, is_loop: w.is_loop }; },
-        ast.StmtFor(fr) => {
-            // The loop BINDER shadows: `for n in xs` inside a function with a
-            // boxed `n` means the element, not the cell. The iterable is still
-            // in the enclosing scope, so only the body takes the extra binding.
-            var fb: string[] = bound;
-            fb = append_bound_binder(fb, fr.var_name);
-            return ast.StmtFor { var_name: fr.var_name, iter: box_rewrite_expr(fr.iter, boxed, btypes, bsites, bound), body: box_rewrite_stmts(fr.body, boxed, btypes, bsites, fb), label: fr.label, line: fr.line };
-        },
-        ast.StmtMatch(m) => {
-            var na: ast.MatchArm[] = [];
-            for arm in m.arms {
-                // Rewrite a boxed var read in the guard too — else the guard read
-                // the raw slot instead of the box (stale value). No-op when the
-                // guard references no boxed var (box_rewrite_expr returns it as-is).
-                // A payload binder shadows inside its own arm (body AND guard).
-                var ab: string[] = bound;
-                var bxj: i32 = 0;
-                while (bxj < boxed.len()) {
-                    if (sa_pat_binds(arm.pattern, boxed[bxj])) { ab = ab.append(boxed[bxj]); }
-                    bxj = bxj + 1;
-                }
-                var ng: ast.Expr = arm.guard;
-                if (arm.has_guard) { ng = box_rewrite_expr(arm.guard, boxed, btypes, bsites, ab); }
-                na = na.append(ast.MatchArm { ...arm, body: box_rewrite_stmts(arm.body, boxed, btypes, bsites, ab), guard: ng });
-            }
-            return ast.StmtMatch { ...m, scrutinee: box_rewrite_expr(m.scrutinee, boxed, btypes, bsites, bound), arms: na };
-        },
-        ast.StmtDefer(d) => { return ast.StmtDefer { action: box_rewrite_stmt(d.action, boxed, btypes, bsites, bound), on_error: d.on_error, line: d.line }; },
-        _ => { return st; }
-    }
-    return st;
-}
-
-// box_rewrite_stmts walks a statement LIST, so it is where a `var` shadow takes
-// effect: a re-declaration of a boxed name binds it for every LATER statement of
-// that list, and only the declaration the cell was built from is rewritten into
-// the cell (matched on its line:col, since the name alone cannot tell the two
-// apart).
-function box_rewrite_stmts(stmts: ast.Stmt[], boxed: string[], btypes: string[], bsites: string[], bound: string[]): ast.Stmt[] {
-    var out: ast.Stmt[] = [];
-    var bnd: string[] = bound;
-    for stmt in stmts {
-        out = out.append(box_rewrite_stmt(stmt, boxed, btypes, bsites, bnd));
-        match (stmt) {
-            ast.StmtVar(sv) => {
-                if (util.index_of_str(boxed, sv.name) >= 0 && util.index_of_str(bnd, sv.name) < 0
-                    && reclaim_site_key_of(sv.name, sv.line, sv.col) != bsites[util.index_of_str(boxed, sv.name)]) {
-                    bnd = bnd.append(sv.name);
-                }
-            },
-            _ => {}
-        }
-    }
-    return out;
 }
 
 // append_bound_binder appends a binder name, splitting the comma-joined form a
@@ -75340,7 +74354,7 @@ function wcap_expr(e: ast.Expr, fd: parser.FuncDecl, gfns: string[], structs: St
             var caps: string[] = lambda_captures(lm, fd);
             var ci: i32 = 0;
             while (ci < caps.len()) {
-                mine = wcaps_add(mine, caps[ci], cap_type(caps[ci], fd, structs, mfuncs), atargets);
+                mine = wcaps_add(mine, caps[ci], lambda_capture_type(lm, caps[ci]), atargets);
                 ci = ci + 1;
             }
             // Rewrite the body first (a nested lambda's own cells are emitted
@@ -75361,7 +74375,13 @@ function wcap_expr(e: ast.Expr, fd: parser.FuncDecl, gfns: string[], structs: St
             var full: ast.Stmt[] = pre;
             var fi: i32 = 0;
             while (fi < nb.len()) { full = full.append(nb[fi]); fi = fi + 1; }
-            return WCapExpr { expr: ast.ExprLambda { ...lm, body: full }, caps: wcaps_join(inner, mine) };
+            var typed_caps: ast.TypedBinding[] = [];
+            for cap in lm.captures {
+                if (util.has_str(mine.names, cap.name)) {
+                    typed_caps = typed_caps.append(ast.TypedBinding { name: wcap_cell_name(cap.name), ty: typeinfo.TypeArray { elem: cap.ty } });
+                } else { typed_caps = typed_caps.append(cap); }
+            }
+            return WCapExpr { expr: ast.ExprLambda { ...lm, body: full, captures: typed_caps }, caps: wcaps_join(inner, mine) };
         },
         ast.ExprBinary(b) => {
             var l: WCapExpr = wcap_expr(b.left, fd, gfns, structs, mfuncs, acc, atargets);
@@ -75593,7 +74613,7 @@ function has_wide_cap_expr(e: ast.Expr, fd: parser.FuncDecl, gfns: string[], str
             var ci: i32 = 0;
             while (ci < caps.len()) {
                 var cn: string = caps[ci];
-                if (util.index_of_str(atargets, cn) < 0 && is_wide_cap_type(cap_type(cn, fd, structs, mfuncs))) { return true; }
+                if (util.index_of_str(atargets, cn) < 0 && is_wide_cap_type(lambda_capture_type(lm, cn))) { return true; }
                 ci = ci + 1;
             }
             var si: i32 = 0;
@@ -75714,13 +74734,12 @@ function box_mutated_scalar_captures(fd: parser.FuncDecl, gfns: string[], struct
     if (boxed.len() == 0) { return fd; }
     // The DECLARATION SITE of each boxed name, so the rewrite can tell the `var`
     // the cell is built from apart from a re-declaration of the same spelling
-    // (#7253). First-in-source, which is what cap_type_at resolved the capture's
-    // type against, so the two agree on which binding the cell stands for.
+    // (#7253). Lexical resolution has already made each declaration distinct.
     var bsites: string[] = [];
     var si: i32 = 0;
     while (si < boxed.len()) { bsites = bsites.append(first_var_site(fd.body, boxed[si])); si = si + 1; }
     var bound: string[] = [];
-    return parser.FuncDecl { ...fd, body: box_rewrite_stmts(fd.body, boxed, btypes, bsites, bound) };
+    return parser.FuncDecl { ...fd, body: capturebox.box_rewrite_stmts(fd.body, boxed, btypes, bsites, bound) };
 }
 
 // first_var_site: the binding-site key of the FIRST `var <name>` in `stmts`,
@@ -75776,7 +74795,7 @@ function box_scan_stmts(stmts: ast.Stmt[], fd: parser.FuncDecl, structs: StructT
     while (i < stmts.len()) {
         var lam_ok: boolean = false;
         var bname: string = "";
-        var lam: ast.ExprLambda = ast.ExprLambda { params: [], ret_type: "", body: [], use_infer: false, origin: "", line: 0, col: 0 };
+        var lam: ast.ExprLambda = ast.ExprLambda { params: [], ret_type: "", body: [], use_infer: false, origin: "", line: 0, col: 0, captures: [], captures_known: false };
         var nested: ast.ExprLambda[] = [];
         match (stmts[i]) {
             ast.StmtVar(v) => {
@@ -75850,7 +74869,7 @@ function box_scan_stmts(stmts: ast.Stmt[], fd: parser.FuncDecl, structs: StructT
             var ci: i32 = 0;
             while (ci < caps.len()) {
                 var cn: string = caps[ci];
-                var ct: string = cap_type(cn, fd, structs, mfuncs);
+                var ct: string = lambda_capture_type(lam, cn);
                 if ((ct == "i32" || ct == "boolean") && util.index_of_str(wtargets, cn) >= 0 && util.index_of_str(boxed, cn) < 0) {
                     boxed = boxed.append(cn);
                     btypes = btypes.append("i32");
@@ -75879,7 +74898,7 @@ function box_apply_lambda(lam: ast.ExprLambda, esc: boolean, fd: parser.FuncDecl
     var ci: i32 = 0;
     while (ci < caps.len()) {
         var cn: string = caps[ci];
-        var ct: string = cap_type(cn, fd, structs, mfuncs);
+        var ct: string = lambda_capture_type(lam, cn);
         if ((ct == "i32" || ct == "boolean") && util.index_of_str(wtargets, cn) >= 0 && util.index_of_str(boxed, cn) < 0) {
             boxed = boxed.append(cn);
             btypes = btypes.append("i32");
@@ -76166,7 +75185,7 @@ pub function lift_lambdas_view(raw_mod: parser.Module, view: parser.FuncDecl[]):
     // wasm_ir.lift_lambdas wrap this), so the eligibility probe and the emit see
     // the same rewritten module; the slice-B.1 lower_func registration then
     // resolves the call-result struct.
-    var mod: parser.Module = parser.infer_fnvalue_locals_module(parser.fill_default_args_module(raw_mod));
+    var mod: parser.Module = checker.ensure_capture_types(parser.infer_fnvalue_locals_module(parser.fill_default_args_module(raw_mod)));
     // sigs is the signature table every "what does this callee look like?" query
     // below reads. It is the whole-program view when one was threaded in, else
     // the module's own functions (identical to the pre-view behaviour).
@@ -76214,6 +75233,8 @@ pub function lift_lambdas_view(raw_mod: parser.Module, view: parser.FuncDecl[]):
     var wlcp: i32 = 0;
     while (wlcp < mod.funcs.len()) {
         var wf: parser.FuncDecl = mod.funcs[wlcp];
+        var resolved = lexical.resolve_func(wf);
+        wf = resolved.func;
         var wdlr: DesugarRet = desugar_lambda_returns(wf.body, 0);
         if (wdlr.counter != 0) {
             wf = parser.FuncDecl { ...wf, body: wdlr.body };
@@ -76284,9 +75305,7 @@ pub function lift_lambdas_view(raw_mod: parser.Module, view: parser.FuncDecl[]):
         // 3. First-class (escaping) closure: a `return <capturing lambda>` hoists
         // its body to `<fd>$clo`. The lambda stays in the body (irlower lowers it
         // to a make_closure box); only the hoisted target is appended here.
-        // The functions lifted for THIS entry join the signature list: a capture
-        // whose lambda the lift already replaced with an env-box marker resolves
-        // its signature through the hoisted target (cap_param_for).
+        // Include the functions lifted for this worklist entry.
         var hsigs: MFuncs = mf;
         if (acc.funcs.len() > 0) { hsigs = mfuncs_extend(mf, acc.funcs); }
         var hc: HoistResult = hoist_escaping_closure(fd, gfns, mstab, hsigs);
