@@ -67,9 +67,17 @@ const (
 	// family sharing its own slots, not a second claimant.
 	printRetAddr = printIovecAddr + 8
 
+	// writerScratchAddr is Writer.write's call-local working area: the
+	// (iov_base, iov_len, nwritten) triple fd_write reads and writes on
+	// preview 1, and the 16-byte blocking-write-and-flush result on
+	// preview 2. Static rather than a per-call __fern_alloc: nothing
+	// outlives the call, and a bump block there could never be given back
+	// (#8705).
+	writerScratchAddr = printRetAddr + 4
+
 	// randomBufAddr is where wasi_random_get writes the bytes
 	// __fern_random_i32 consumes.
-	randomBufAddr = printRetAddr + 4
+	randomBufAddr = writerScratchAddr + 16
 
 	// strIdxScratchAddr is the spill region __str_idx uses for inline-form
 	// strings: base_data at +0, base_len at +4, and __str_idx returns

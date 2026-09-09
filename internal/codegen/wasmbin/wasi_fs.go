@@ -2035,16 +2035,15 @@ func buildStreamCloseBodyP2(idxs map[string]uint32, drop uint32) []byte {
 //	11: $cur
 //	12: $nwritten
 func buildWriterWriteBody(idxs map[string]uint32) []byte {
-	alloc := idxs["__fern_alloc"]
 	allocRc1 := idxs["__fern_alloc_rc1"]
 	buildIoErr := idxs["__build_io_error"]
 	fdWrite := idxs["wasi_fd_write"]
 
 	var body []byte
 
-	// scratch (12 bytes: iov.base, iov.len, nwritten retptr).
-	body = inst.InstI32Const(body, 12)
-	body = inst.InstCall(body, alloc)
+	// scratch: iov.base at +0, iov.len at +4, nwritten retptr at +8 —
+	// the static slot, since nothing outlives the call.
+	body = inst.InstI32Const(body, writerScratchAddr)
 	body = inst.InstLocalSet(body, 3)
 
 	// fd = mem[$w]
@@ -2158,15 +2157,13 @@ func buildWriterWriteBody(idxs map[string]uint32) []byte {
 // 4=handle, 5=content_buf, 6=content_byte_len, 7=cur, 8=chunk_len,
 // 9=errptr, 10=box, 14=normalize scratch.
 func buildWriterWriteBodyP2(idxs map[string]uint32) []byte {
-	alloc := idxs["__fern_alloc"]
 	allocRc1 := idxs["__fern_alloc_rc1"]
 	buildIoErr := idxs["__build_io_error"]
 	blockingWrite := idxs["wasi_blocking_write_and_flush_p2"]
 
 	var body []byte
-	// rb = alloc(16).
-	body = inst.InstI32Const(body, 16)
-	body = inst.InstCall(body, alloc)
+	// rb = the static 16-byte result slot; nothing outlives the call.
+	body = inst.InstI32Const(body, writerScratchAddr)
 	body = inst.InstLocalSet(body, 3)
 	// handle = mem[w].
 	body = inst.InstLocalGet(body, 0)
