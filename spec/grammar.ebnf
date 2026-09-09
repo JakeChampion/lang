@@ -162,8 +162,8 @@ Stmt        = Block
 
 LabeledLoop = IDENT ':' ( WhileStmt | LoopStmt | ForStmt ) ;
 
-IfStmt      = 'if' 'let' ArmPatterns '=' Expr Block [ 'else' ( IfStmt | Block ) ]
-            | 'if' '(' Expr ')' Block [ 'else' ( IfStmt | Block ) ]
+IfStmt      = 'if' 'let' ArmPatterns '=' NoStructExpr Stmt [ 'else' Stmt ]
+            | 'if' '(' Expr ')' Stmt [ 'else' Stmt ]
             ;
 WhileStmt   = 'while' '(' Expr ')' Block ;
 LoopStmt    = 'loop' Block ;
@@ -182,7 +182,7 @@ ForInit     = VarNoSemi | Expr ;
 # token after the matching ')' is `in`.
 ForBinding  = BindPattern | IDENT ;
 
-MatchStmt   = 'match' NoStructExpr '{' { MatchArm } '}' [ ';' ] ;
+MatchStmt   = 'match' '(' Expr ')' '{' { MatchArm } '}' [ ';' ] ;
 MatchArm    = ArmPatterns [ 'when' Expr ] '=>' ArmBody [ ',' ] ;
 ArmPatterns = Pattern { '|' Pattern } ;
 ArmBody     = ValueBlock | Expr ;
@@ -306,11 +306,44 @@ TypeArgList = Type { ',' Type } [ ',' ] ;
 
 # NoStructExpr is Expr with the brace-suffixed struct literal withheld,
 # for the positions where a `{` opens a block instead: `for x in E {`
-# and `match E {`. The parser draws the same distinction contextually.
+# and `if let P = E {`. Merely aliasing Assign would still
+# let StructLit consume an empty body. Keep the precedence ladder but
+# withhold brace-suffixed literals from every unparenthesized operand.
 NoStructExpr
-            = Assign ;
+            = NoStructAssign ;
+NoStructAssign
+            = NoStructPipe [ AssignOp NoStructAssign ] ;
+NoStructPipe = NoStructRange { '|>' NoStructRange } ;
+NoStructRange
+            = NoStructLogicOr [ ( '..=' | '..' ) NoStructLogicOr ] ;
+NoStructLogicOr
+            = NoStructLogicAnd { '||' NoStructLogicAnd } ;
+NoStructLogicAnd
+            = NoStructBitOr { '&&' NoStructBitOr } ;
+NoStructBitOr = NoStructBitXor { '|' NoStructBitXor } ;
+NoStructBitXor
+            = NoStructBitAnd { '^' NoStructBitAnd } ;
+NoStructBitAnd
+            = NoStructEquality { '&' NoStructEquality } ;
+NoStructEquality
+            = NoStructRelational { ( '==' | '!=' ) NoStructRelational } ;
+NoStructRelational
+            = NoStructShift { ( '<=' | '>=' | '<' | '>' ) NoStructShift } ;
+NoStructShift
+            = NoStructAdditive { ( '<<|' | '<<?' | '>>?' | '<<' | '>>' ) NoStructAdditive } ;
+NoStructAdditive
+            = NoStructMultiplicative { ( '+|' | '-|' | '+?' | '-?' | '+' | '-' ) NoStructMultiplicative } ;
+NoStructMultiplicative
+            = NoStructUnary { ( '*|' | '*?' | '/?' | '%?' | '*' | '/' | '%' ) NoStructUnary } ;
+NoStructUnary
+            = ( '-' | '!' ) NoStructUnary | NoStructCast ;
+NoStructCast = NoStructPostfix { 'as' [ '?' ] Type } ;
+NoStructPostfix
+            = NoStructPrimary { PostfixOp } ;
 
-Primary     = NUMBER
+Primary     = MapLit | StructLit | NoStructPrimary ;
+NoStructPrimary
+            = NUMBER
             | FLOAT
             | STRING
             | FSTRING
@@ -323,15 +356,13 @@ Primary     = NUMBER
             | ArrowLambda
             | ParenOrTuple
             | ArrayLit
-            | MapLit
-            | StructLit
             | ValueBlock
             | Name
             ;
 
 IfExpr      = 'if' '(' Expr ')' BranchBody 'else' ( IfExpr | BranchBody ) ;
 BranchBody  = ValueBlock | Expr ;
-MatchExpr   = 'match' NoStructExpr '{' { MatchExprArm } '}' ;
+MatchExpr   = 'match' '(' Expr ')' '{' { MatchExprArm } '}' ;
 MatchExprArm
             = ArmPatterns [ 'when' Expr ] '=>' ( ValueBlock | Expr ) [ ',' ] ;
 
