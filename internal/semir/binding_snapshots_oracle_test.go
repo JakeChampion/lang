@@ -126,6 +126,12 @@ func TestBindingSnapshotPromotionMatchesExactCFGOracle(t *testing.T) {
 						if got := promotedPresence(f, observer.Args[0]); got != want {
 							t.Fatalf("promoted alternatives %b differ from exact oracle %b", got, want)
 						}
+						if err := finishFlow(f); err != nil {
+							t.Fatal(err)
+						}
+						if got := promotedPresence(f, observer.Args[0]); got != want {
+							t.Fatalf("canonicalized alternatives %b differ from exact oracle %b", got, want)
+						}
 						for _, block := range f.graph.Blocks {
 							for _, op := range block.Ops {
 								if op.Kind == ssa.OpStatePresent && op.Args[0] != payload {

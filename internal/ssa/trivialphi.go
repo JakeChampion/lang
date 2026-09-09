@@ -48,6 +48,26 @@ package ssa
 // stay in the IR after rewriting; pair with DCE to reclaim
 // them now that their results have no consumers.
 func TrivialPhis(f *Func) {
+	TrivialPhisWithAliases(f, nil)
+}
+
+// ValueAliases records value substitutions without turning semantic metadata
+// into runtime SSA uses. Resolve follows the same chains used for graph operands.
+type ValueAliases map[int32]Value
+
+func (a ValueAliases) Resolve(v Value) Value {
+	if _, replaced := a[v.ID]; !replaced {
+		return v
+	}
+	return resolveValue(v, a)
+}
+
+// TrivialPhisWithAliases performs the same transformation as TrivialPhis and
+// records its substitutions in aliases for clients with auxiliary semantic
+// value records. The map is cleared first and applies only to this invocation's
+// input values. Passing nil keeps the ordinary pass's scratch map local.
+func TrivialPhisWithAliases(f *Func, aliases ValueAliases) {
+	clear(aliases)
 	if f == nil {
 		return
 	}
@@ -59,7 +79,10 @@ func TrivialPhis(f *Func) {
 			}
 		}
 	}
-	sub := map[int32]Value{}
+	sub := aliases
+	if sub == nil {
+		sub = make(ValueAliases)
+	}
 	// Phis to rewrite in place into a const of their own, keyed by the
 	// block holding them.
 	materialise := map[*Block][]*Op{}

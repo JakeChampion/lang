@@ -18,6 +18,9 @@ func TestARM64TypedBindingSnapshots(t *testing.T) {
 					if err := promoteBindings(a.f); err != nil {
 						t.Fatal(err)
 					}
+					if err := finishFlow(a.f); err != nil {
+						t.Fatal(err)
+					}
 					out := lowerSemanticARM64(t, a.f)
 					b := harnessBuilder(out)
 					input := b.array(b.constant(2), 8)
@@ -56,6 +59,9 @@ func TestARM64TypedBindingSnapshotSavedPayload(t *testing.T) {
 				t.Run(fmt.Sprintf("%s/rounds-%d/optimized-%t", tc.name, rounds, optimize), func(t *testing.T) {
 					f := tc.build()
 					if err := promoteBindings(f); err != nil {
+						t.Fatal(err)
+					}
+					if err := finishFlow(f); err != nil {
 						t.Fatal(err)
 					}
 					out := lowerSemanticARM64(t, f)
