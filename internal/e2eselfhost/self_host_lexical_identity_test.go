@@ -65,7 +65,10 @@ function inspect(source: string): string {
         return "changed declaration metadata";
     }
     var out = "";
-    for b in resolved.bindings { out = out + b.name + "=" + util.i32_to_string(b.id) + ";"; }
+    for b in resolved.bindings {
+        if (lexical.source_name(b.symbol) != b.name) { return "lost diagnostic spelling"; }
+        out = out + b.name + "=" + util.i32_to_string(b.id) + ";";
+    }
     return out + "|" + reads(resolved.func);
 }
 function main(): i32 {

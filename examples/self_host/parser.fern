@@ -10328,8 +10328,10 @@ function subst_expr(e: ast.Expr, tparams: string[], cts: string[]): ast.Expr {
         // never added.
         ast.ExprLambda(lm) => {
             var lps: ast.ParamDecl[] = [];
-            for lpd in lm.params { lps = lps.append(ast.ParamDecl { ...lpd, type_name: subst_ty(lpd.type_name, tparams, cts) }); }
-            return ast.ExprLambda { ...lm, params: lps, ret_type: subst_ty(lm.ret_type, tparams, cts), body: subst_stmts(lm.body, tparams, cts) };
+            for lpd in lm.params { lps = lps.append(ast.ParamDecl { ...lpd, type_name: subst_ty(lpd.type_name, tparams, cts), fn_ret: subst_ty(lpd.fn_ret, tparams, cts), fn_param_types: subst_ty_list(lpd.fn_param_types, tparams, cts) }); }
+            // Capture types were checked in the generic declaration's scope.
+            // The clone must resolve them again against its substituted bindings.
+            return ast.ExprLambda { ...lm, params: lps, ret_type: subst_ty(lm.ret_type, tparams, cts), body: subst_stmts(lm.body, tparams, cts), captures: [], captures_known: false };
         },
         _ => { return e; }
     }
@@ -10345,7 +10347,7 @@ function subst_stmts(stmts: ast.Stmt[], tparams: string[], cts: string[]): ast.S
     while (i < stmts.len()) {
         var st: ast.Stmt = stmts[i];
         match (st) {
-            ast.StmtVar(v) => { out = out.append(ast.StmtVar { name: v.name, type_name: subst_ty(v.type_name, tparams, cts), init: subst_expr(v.init, tparams, cts), line: v.line, col: v.col, is_str: v.is_str, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types }); },
+            ast.StmtVar(v) => { out = out.append(ast.StmtVar { name: v.name, type_name: subst_ty(v.type_name, tparams, cts), init: subst_expr(v.init, tparams, cts), line: v.line, col: v.col, is_str: v.is_str, fn_ret: subst_ty(v.fn_ret, tparams, cts), fn_param_types: subst_ty_list(v.fn_param_types, tparams, cts) }); },
             ast.StmtReturn(r) => { out = out.append(ast.StmtReturn { value: subst_expr(r.value, tparams, cts), line: r.line, col: r.col }); },
             ast.StmtExpr(x) => { out = out.append(ast.StmtExpr { value: subst_expr(x.value, tparams, cts), line: x.line }); },
             ast.StmtAssign(a) => { out = out.append(ast.StmtAssign { target: a.target, value: subst_expr(a.value, tparams, cts), line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col }); },
@@ -11616,13 +11618,13 @@ function clone_struct_method(m: FuncDecl, base: string, key: string, gstructs: S
     while (i < m.params.len()) {
         var psrc: string = replace_struct_ident(m.params[i].type_name, bare_base, base);
         var pt: string = to_concrete_struct_ty(subst_ty(psrc, tparams, cts), base, mang, gstructs);
-        nparams = nparams.append(ast.ParamDecl { name: m.params[i].name, type_name: pt, is_str: m.params[i].is_str, own: m.params[i].own, has_default: m.params[i].has_default, default_value: m.params[i].default_value, ret_arr: m.params[i].ret_arr, fn_ret: m.params[i].fn_ret, fn_param_dyn: m.params[i].fn_param_dyn, fn_param_types: m.params[i].fn_param_types });
+        nparams = nparams.append(ast.ParamDecl { name: m.params[i].name, type_name: pt, is_str: m.params[i].is_str, own: m.params[i].own, has_default: m.params[i].has_default, default_value: m.params[i].default_value, ret_arr: m.params[i].ret_arr, fn_ret: subst_ty(m.params[i].fn_ret, tparams, cts), fn_param_dyn: m.params[i].fn_param_dyn, fn_param_types: subst_ty_list(m.params[i].fn_param_types, tparams, cts) });
         i = i + 1;
     }
     var rsrc: string = replace_struct_ident(m.ret_type, bare_base, base);
     var rt: string = to_concrete_struct_ty(subst_ty(rsrc, tparams, cts), base, mang, gstructs);
     var notp: string[] = [];
-    return FuncDecl { ...m, receiver_type: mang, type_params: notp, params: nparams, ret_type: rt, body: retarget_self_lit_stmts(subst_stmts(m.body, tparams, cts), base, mang), bound_traits: [] };
+    return FuncDecl { ...m, receiver_type: mang, type_params: notp, params: nparams, ret_type: rt, ret_fn_ret: subst_ty(m.ret_fn_ret, tparams, cts), ret_fn_param_types: subst_ty_list(m.ret_fn_param_types, tparams, cts), body: retarget_self_lit_stmts(subst_stmts(m.body, tparams, cts), base, mang), bound_traits: [] };
 }
 
 // monomorphize_structs clones every generic struct (and its methods) per
@@ -13954,7 +13956,7 @@ pub function hoist_local_funcs_module(mod: Module): Module {
     return Module { ...mod, funcs: funcs, top_stmts: top_body };
 }
 
-function lower_defers_func(fn: FuncDecl): FuncDecl {
+pub function lower_defers_func(fn: FuncDecl): FuncDecl {
     // The walks below REBUILD every expression they pass, and on a function with
     // no `defer` they throw the copy away. This pre-scan allocates nothing, so
     // the rebuild is confined to the functions that need it. It looks INSIDE
@@ -14345,17 +14347,13 @@ function collect_dropped_resources(stmts: ast.Stmt[], body: ast.Stmt[], resource
     return res_out;
 }
 
-// lower_defers_prepass_module fuses ret-type inference + insert-resource-
-// drops + lower_defers (#4394 lever 3 / #5352, #5460) into ONE module
-// rebuild, the desugar_prepass_module argument applied to the next adjacent
-// passes. Ordering is load-bearing twice over: the ret-type fixpoint reads
-// sibling funcs' `ret_type` (a signature FIELD), so it must COMPLETE before
-// any body is rebuilt — it runs first, at the funcs-list level, and only the
-// final list feeds the body rewrites; and an owned handle's inserted `defer`
-// must exist before the defer expansion runs, so the per-function loop
-// inserts then lowers. The one list mutation — the synthesized body-less
-// `[resource-drop]` import funcs — commutes with the body rewrite, which is
-// applied to them exactly as the old pass sequence did.
+// Prepare deferred cleanup: infer return types and insert resource drops.
+// Keep each action at its registration site until the consumer resolves its
+// lexical bindings. Expanding earlier loses which shadowed local an action
+// reads when cleanup moves outside the declaration's block.
+// The return-type fixpoint must finish before the body rewrites because it
+// reads sibling signatures. IR lowering resolves bindings before expansion;
+// the interpreter expands defers at its own entry.
 pub function lower_defers_prepass_module(mod: Module): Module {
     // (1) Ret-type inference (was infer_ret_types_module, which keeps its
     // standalone form for emit_module_ir_gated's idempotent re-run): stamp
@@ -14375,18 +14373,17 @@ pub function lower_defers_prepass_module(mod: Module): Module {
         }
         pass = pass + 1;
     }
-    // (2) Per function: resource-drop insertion (skipped without `resource`
-    // decls), then defer expansion — one output-list build.
+    // (2) Per function: resource-drop insertion, skipped without resources.
     var has_res: boolean = mod.resources.len() > 0;
     var out_funcs: FuncDecl[] = [];
     var needed: string[] = [];
     var i: i32 = 0;
     while (i < funcs.len()) {
         var f: FuncDecl = funcs[i];
-        if (!has_res || f.import_iface.len() > 0) { out_funcs = out_funcs.append(lower_defers_func(f)); i = i + 1; continue; }
+        if (!has_res || f.import_iface.len() > 0) { out_funcs = out_funcs.append(f); i = i + 1; continue; }
         needed = collect_dropped_resources(f.body, f.body, mod.resources, funcs, needed);
         var nbody: ast.Stmt[] = insert_drop_defers(f.body, f.body, mod.resources, funcs);
-        out_funcs = out_funcs.append(lower_defers_func(FuncDecl { ...f, body: nbody }));
+        out_funcs = out_funcs.append(FuncDecl { ...f, body: nbody });
         i = i + 1;
     }
     var no_tp: string[] = [];
@@ -16542,13 +16539,9 @@ pub function infer_fnvalue_locals_module(mod: Module): Module {
 }
 
 pub function module_with_builtins(mod: Module): Module {
-    // #4394 lever 3: the three leading desugar passes (resolve_labels →
-    // fill_default_args → desugar_ranges) are fused into desugar_prepass_module,
-    // and ret-type inference + the defer pair — owned-WIT-resource drop
-    // insertion (P5 slice 3, docs/WIT-BRING-YOUR-OWN.md: the inserted defers
-    // must exist before the defer expansion runs) + lower_defers — into
-    // lower_defers_prepass_module (#5460). One module rebuild each instead
-    // of three + three (byte-identical — see their doc comments).
+    // Prepare defaults, ranges, return types and resource drops before generic
+    // specialization. Deferred actions retain their source scopes until the
+    // IR consumer resolves binding identities and expands cleanup.
     var mono: Module = inline_callonly_fn_values(monomorphize_enums(monomorphize_structs(monomorphize_module(register_struct_method_generics(register_map_method_generics(register_array_method_generics(lower_defers_prepass_module(hoist_local_funcs_module(desugar_prepass_module(mod))))))))));
     return Module { ...mono, structs: inject_builtin_enums(mono.structs) };
 }

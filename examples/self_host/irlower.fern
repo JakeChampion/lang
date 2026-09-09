@@ -1056,7 +1056,7 @@ pub function (s: LowerState) note_fail(why: string): LowerState {
 function expr_bail_tag(e: ast.Expr): string {
     match (e) {
         ast.ExprNumber(_) => { return "number literal"; },
-        ast.ExprIdent(id) => { return "ident `" + id.name + "`"; },
+        ast.ExprIdent(id) => { return "ident `" + lexical.source_name(id.name) + "`"; },
         ast.ExprString(_) => { return "string literal"; },
         ast.ExprBool(_) => { return "bool literal"; },
         ast.ExprBinary(b) => { return "binary `" + b.op + "`"; },
@@ -1095,7 +1095,7 @@ function expr_bail_tag(e: ast.Expr): string {
 // sends the reader looking for a lambda in a source file that has none.
 function call_bail_tag(c: ast.ExprCall): string {
     match (c.callee) {
-        ast.ExprIdent(id) => { return "call `" + id.name + "`"; },
+        ast.ExprIdent(id) => { return "call `" + lexical.source_name(id.name) + "`"; },
         ast.ExprFieldAccess(fa) => { return "call `." + fa.field + "`"; },
         ast.ExprLambda(lam) => {
             if (lam.params.len() == 0 && c.args.len() == 0) {
@@ -1123,14 +1123,14 @@ function call_bail_tag(c: ast.ExprCall): string {
 // report the bare word "return".
 function stmt_bail_tag(st: ast.Stmt): string {
     match (st) {
-        ast.StmtVar(v) => { return "`var " + v.name + "` bound from " + expr_bail_tag(v.init); },
+        ast.StmtVar(v) => { return "`var " + lexical.source_name(v.name) + "` bound from " + expr_bail_tag(v.init); },
         ast.StmtReturn(r) => { return "`return` of " + expr_bail_tag(r.value); },
         ast.StmtExpr(x) => { return "expression statement " + expr_bail_tag(x.value); },
         ast.StmtIf(_) => { return "`if`"; },
         ast.StmtWhile(_) => { return "`while`"; },
-        ast.StmtAssign(a) => { return "assignment to `" + a.target + "` from " + expr_bail_tag(a.value); },
+        ast.StmtAssign(a) => { return "assignment to `" + lexical.source_name(a.target) + "` from " + expr_bail_tag(a.value); },
         ast.StmtMatch(_) => { return "`match`"; },
-        ast.StmtFor(f) => { return "`for " + f.var_name + "`"; },
+        ast.StmtFor(f) => { return "`for " + lexical.source_name(f.var_name) + "`"; },
         ast.StmtBreak(_) => { return "`break`"; },
         ast.StmtContinue(_) => { return "`continue`"; },
         ast.StmtDefer(_) => { return "`defer`"; },
@@ -57915,7 +57915,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
     while (i < fn.params.len()) {
         // A struct param must be a scalar-field struct; otherwise bail.
         if (decl_is_struct(structs, fn.params[i].type_name) && !decl_is_leaksafe(structs, fn.params[i].type_name)) {
-            return lower_failed(fn, "param `" + fn.params[i].name + ": " + fn.params[i].type_name + "` is a struct that is not leak-safe (a field needs RC)");
+            return lower_failed(fn, "param `" + lexical.source_name(fn.params[i].name) + ": " + fn.params[i].type_name + "` is a struct that is not leak-safe (a field needs RC)");
         }
         names = names.append(fn.params[i].name);
         // An array-typed param is array-tracked (so a[i] / a.len() / aliasing
@@ -75280,7 +75280,9 @@ pub function lift_lambdas_view(raw_mod: parser.Module, view: parser.FuncDecl[]):
     while (wlcp < mod.funcs.len()) {
         var wf: parser.FuncDecl = mod.funcs[wlcp];
         var resolved = lexical.resolve_func(wf);
-        wf = resolved.func;
+        // Resolve each deferred read at its registration site before cleanup
+        // expansion moves it across lexical scopes and shadowing declarations.
+        wf = parser.lower_defers_func(resolved.func);
         var wdlr: DesugarRet = desugar_lambda_returns(wf.body, 0);
         if (wdlr.counter != 0) {
             wf = parser.FuncDecl { ...wf, body: wdlr.body };
@@ -75364,19 +75366,8 @@ pub function lift_lambdas_view(raw_mod: parser.Module, view: parser.FuncDecl[]):
         acc = LiftAcc { funcs: [], counter: acc.counter };
         wi = wi + 1;
     }
-    // Normalise the lifted module for the IR path, mirroring the transient-node
-    // pass module_with_builtins runs:
-    //   * lower `defer` / `errdefer` → the action scheduled at every scope exit
-    //     (cf. lower_defers).
-    // Without this a module whose only IR-ineligible construct was a defer
-    // bailed in full. Applied to the FINAL lifted module so defers inside
-    // lifted-lambda bodies (now top-level funcs in `newfuncs`) are covered —
-    // lower_defers doesn't descend into lambda bodies, but after lifting those
-    // bodies are ordinary functions.
-    var result: parser.Module = mod;
-    if (acc.counter != 0) {
-        result = parser.Module { funcs: stamp_fn_local_types(newfuncs), structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs, trait_decls: mod.trait_decls };
-    }
+    // Keep resolved bindings and expanded cleanup even when no lambda lifted.
+    var result: parser.Module = parser.Module { ...mod, funcs: stamp_fn_local_types(newfuncs) };
     // Infer return types on the FINAL lifted module so a lifted lambda with an
     // inferred (empty) ret_type that returns i64/u64 is typed BEFORE eligibility
     // lowers it. Without this, eligibility ran on the un-inferred module and
