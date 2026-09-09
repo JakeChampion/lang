@@ -37,10 +37,11 @@ types and call identities remain attached to their copied operations.
 An explicit pending-expansion phase cannot enter binding promotion or ownership
 analysis. Expanded place graphs still pass verification before promotion;
 promoted graphs still pass whole-program verification before ownership. This
-separates the pass boundaries needed by conditional availability, but does not
-activate it: the pre-expansion verifier rejects nondominating registrations with
-the existing source-anchored unsupported diagnostic, and the exact cleanup-flow
-proof still rejects inconsistent path states. Registration admission now uses
+separates the pass boundaries needed by conditional availability. The pre-expansion
+verifier now admits safe conditional registration using the correlated proof below;
+expansion still rejects it with the existing source-anchored unsupported diagnostic
+before changing any action. Guarded executable activation is not yet implemented.
+Registration admission uses
 the complete typed CFG. The source builder no longer computes dominance at each
 exit while control flow is still under construction.
 
@@ -66,8 +67,9 @@ Malformed CFG tests demonstrate why return dominance was insufficient:
 direct and indirect replay cycles, replay in a cycle without a return, and a
 balanced registration/replay cycle previously passed verification. An additional
 case rejects a join of pending and consumed states even without a return. The graphs
-retain valid SSA, so the independent cleanup proof must reject them. Optional
-registration still requires the correlated availability model below.
+retain valid SSA, so the independent cleanup proof must reject them. The executable
+path retains these exact-state restrictions. The conditional pre-expansion proof
+below instead preserves small correlated state sets.
 
 Function and iteration boundaries now carry explicit identities, lexical parent
 links and CFG entry/header/exit points. Every action belongs to one boundary.
@@ -237,6 +239,67 @@ the standalone site expansion is 3,792 bytes and its phase driver is 816 bytes.
 The remaining code changes enforce site shape, capture availability and consumer
 phase gates. No baseline is changed. Production native/self-host AST ownership
 retirement and conditional cleanup activation remain outstanding.
+
+## Correlated pre-expansion admission
+
+Conditional pending graphs now have an independent typed proof. Structural
+verification still checks the private action interface, binding identity, empty
+invocation sites and explicit lifetime ends. An exact active-boundary analysis
+rejects false scope parents, mismatched joins, stale initializers and unreachable
+events. Only registration state is allowed to differ across paths.
+
+The proof checks finite projections of CFG traces:
+
+- One action has never-registered, pending and replayed states. Re-registration
+  and repeated replay reject; history resets only at its own boundary end.
+- A pair of actions additionally records which registered last while both are
+  pending. Replaying the older one while the newer remains pending rejects.
+- An action and each captured BindingID track registration and initialization
+  together. An active replay with an absent capture rejects. An inactive replay
+  neither reads nor initializes its capture. Lifetime ends clear only the
+  corresponding registration or binding component.
+
+The CFG worklist unions complete product states, not independent may-flags.
+It terminates because each pair has at most 18 encoded states per block, and
+each action/capture product has six. There is no path-length or iteration cap.
+Every LIFO violation has a witness consisting of the replayed action and an
+outstanding newer action; no triple or whole-stack subset is needed for that
+property. Single-action checks cover missing/repeated replay independently.
+All CFG paths are considered, including infeasible combinations of ordinary
+branch predicates: this is not symbolic reasoning about source boolean values.
+
+For A actions, C total capture occurrences, and graph size G including operations
+and edges, the bound is O((A squared + C) G) time with O(G) reusable projection
+storage, in addition to existing IR/event metadata. The existing canonical-stack
+path is retained for dominating registrations and for expanded executable graphs;
+it does not incur these pairwise walks. This separation is temporary until
+guarded expansion has its own verified executable event contract.
+
+Ordinary BindingRead and BindingReplace still require initialization on every
+incoming path. Only pending action sites use the conditional capture proof.
+The admission result is ephemeral and cannot survive graph mutation as a cached
+certificate. Expansion receives it from the same verification call, avoiding a
+second dominance traversal. It rejects conditional graphs before mutating any
+site, including earlier unconditional sites in a mixed graph. Pending actions
+still cannot enter binding promotion or ownership lowering.
+
+The next pass must materialize exact action activation, take late immutable
+binding snapshots at each replay, guard extraction and publish sequential outputs
+without inventing an absent payload or relaxing ordinary write preconditions.
+Those operations must pass availability, ownership-unit and runtime verification
+before the source execution gate can be removed. This admission slice does not
+enable source conditional cleanup or retire production AST analyses.
+
+Validation includes branch-local and mutually exclusive actions, late replacements,
+nested iteration resets, labelled exits, returns and nonreturning paths. Negative
+tests cover wrong LIFO, missing/duplicate replay, initialization on the opposite
+branch, expired inner captures and unchanged ordinary must-initialization errors.
+An independent full-stack interpreter agrees on 11,520 finite-state comparisons
+(181 accepted and 11,339 rejected), using all permutations of three registration
+and three replay events across eight graph families, with and without a captured
+place. These include bypasses, joins, cycles and lifetime resets. The oracle uses
+complete stacks/history and no production transfer or fixed-point helper. Scope
+structure is separately tested through full semantic verification.
 
 ## Observable contract
 

@@ -6,12 +6,20 @@ SSA cutover and typed-IR work. Initial integration base: `02ea66e91`.
 
 ## Current implementation checkpoint
 
+Typed pending cleanup graphs now admit conditional registration through finite
+action/order/capture projections. The proof preserves correlated initialization,
+LIFO order, exactly-once replay and lifetime resets across joins and cycles, with
+11,520 comparisons against an independent full-stack oracle. Ordinary binding
+must-initialization rules remain unchanged. Expansion still explicitly rejects
+conditional actions until guarded activation, snapshot extraction and sequential
+writeback have executable proof. See [typed cleanup regions](TYPED-CLEANUP-REGIONS.md).
+
 Internal binding snapshots now promote partial initialization and lifetime resets
 to typed Absent/Present states. Guarded payload access preserves snapshot identity
 across replacement and scope exit without relaxing ordinary must-initialization
 checks. Demand-driven materialization and a 168-case independent CFG oracle are
 documented in [typed binding places](TYPED-BINDING-PLACES.md). Source conditional
-cleanup still needs correlated registration/replay integration.
+cleanup still needs guarded executable registration/replay integration.
 
 Internal availability values now distinguish Absent from Present(T),
 with complete semantic type/phi checks, exact-state guard proofs and unboxed
@@ -42,9 +50,10 @@ source CFG is complete. The frontend records typed invocation sites, not copied
 action bodies. Expansion consumes only action/binding identities and CFG edges,
 preserving late reads, sequential outputs, continuation phis and boundary ends.
 Pending invocations cannot reach binding promotion or ownership analysis. The
-pre-expansion verifier still restricts registration by dominance on the complete
-typed CFG, replacing per-exit source-builder dominance queries. Correlated conditional
-availability and production native/self-host retirement remain outstanding.
+pre-expansion verifier uses the complete typed CFG, replacing per-exit source-builder
+dominance queries. Conditional graphs use correlated admission; executable expansion
+still requires dominating registrations. Guarded conditional expansion and production
+native/self-host retirement remain outstanding.
 
 Plain function and iteration cleanup actions with dominating registrations now compile
 once to typed action regions. Capture interfaces preserve enclosing BindingIDs;

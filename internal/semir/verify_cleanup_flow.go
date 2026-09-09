@@ -29,7 +29,7 @@ type cleanupScopeState struct {
 	pending, registered int
 }
 
-func verifyCleanupFlow(f *Func, boundaries *cleanupBoundaryFlow) error {
+func indexCleanupActions(f *Func, boundaries *cleanupBoundaryFlow) error {
 	fail := func(message string) error { return fmt.Errorf("semir %s cleanup: %s", f.graph.Name, message) }
 	for _, r := range f.cleanups {
 		point := boundaries.points[r.register]
@@ -41,6 +41,11 @@ func verifyCleanupFlow(f *Func, boundaries *cleanupBoundaryFlow) error {
 			boundaries.points[block].replay = r
 		}
 	}
+	return nil
+}
+
+func verifyCleanupFlow(f *Func, boundaries *cleanupBoundaryFlow) error {
+	fail := func(message string) error { return fmt.Errorf("semir %s cleanup: %s", f.graph.Name, message) }
 	// An indexed arena avoids a heap allocation for each persistent node. Zero
 	// denotes the empty stack; only missing canonical nodes extend the arena.
 	nodes := make([]cleanupStack, 1, 2*len(f.cleanups)+1)
