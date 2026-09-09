@@ -19,9 +19,11 @@ func promoteBindings(f *Func) error {
 	if !f.unpromotedBindings {
 		return fmt.Errorf("semir %s: binding promotion outside construction phase", f.graph.Name)
 	}
-	if err := Verify(f); err != nil {
+	var facts verificationFacts
+	if err := verifyWithFacts(f, &facts); err != nil {
 		return err
 	}
+	pruneDeadBindingPredecessors(f, facts.deadBlocks)
 	ends := bindingLifetimeEnds(f)
 	type key struct {
 		block *ssa.Block
@@ -158,4 +160,30 @@ func promoteBindings(f *Func) error {
 	}
 	f.unpromotedBindings = false
 	return nil
+}
+
+// A live read can have a dead cyclic predecessor even when the read itself is
+// reachable. Normalize those edges before either reaching-definition walk.
+// Reuse SSA's pruning to preserve phi/predecessor order and remove semantic
+// metadata for exactly the discarded operations. Verified cleanup events cannot
+// be dead; an unused optional iteration exit may be, and ceases to name a block.
+func pruneDeadBindingPredecessors(f *Func, dead map[*ssa.Block]bool) {
+	if len(dead) == 0 {
+		return
+	}
+	for block := range dead {
+		for _, op := range block.Ops {
+			if op.Result.IsValid() {
+				delete(f.values, op.Result.ID)
+			} else {
+				delete(f.effectPositions, op)
+			}
+		}
+	}
+	for _, boundary := range f.boundaries {
+		if dead[boundary.exit] {
+			boundary.exit = nil
+		}
+	}
+	ssa.PruneUnreachable(f.graph)
 }

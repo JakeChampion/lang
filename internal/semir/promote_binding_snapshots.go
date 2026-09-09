@@ -83,6 +83,11 @@ func promoteBindingSnapshots(f *Func, needed map[BindingID]bool, ends map[*ssa.B
 			return absent(id)
 		}
 		if len(block.Preds) == 1 {
+			// Promotion prunes dead predecessors after verifying the input.
+			// Every remaining predecessor cycle has an incoming entry edge,
+			// hence a multi-predecessor block whose phi is sealed below. This
+			// termination argument is reachability, not must-initialization:
+			// snapshots may validly observe an uninitialized place.
 			value := readEnd(block.Preds[0], id)
 			entries[k] = value
 			return value

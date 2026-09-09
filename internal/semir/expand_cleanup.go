@@ -16,13 +16,13 @@ func expandCleanups(f *Func) error {
 		return fmt.Errorf("semir %s: cleanup expansion outside construction phase", f.graph.Name)
 	}
 	if len(f.cleanups) != 0 {
-		var conditional *cleanupRegion
-		if err := verifyWithCleanupAdmission(f, &conditional); err != nil {
+		var facts verificationFacts
+		if err := verifyWithFacts(f, &facts); err != nil {
 			return err
 		}
 		// Semantic conditional admission is not executable activation. Reject
 		// before mutating any site until guarded snapshots/writeback are lowered.
-		if conditional != nil {
+		if conditional := facts.conditional; conditional != nil {
 			return fmt.Errorf("semir %s at %d:%d: conditional cleanup registration is not implemented in the typed pilot", f.graph.Name, conditional.pos.Line, conditional.pos.Col)
 		}
 		exits := make(map[*ssa.Block]*ssa.Block)

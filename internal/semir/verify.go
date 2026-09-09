@@ -11,12 +11,17 @@ import (
 // structural invariants. It does not certify RC balance or uniqueness: those
 // require the ownership/effect analysis that follows this representation.
 func Verify(f *Func) error {
-	return verifyWithCleanupAdmission(f, nil)
+	return verifyWithFacts(f, nil)
 }
 
-// Expansion can request the verified conditional admission result without a
-// second dominance traversal. This is an ephemeral proof, never cached on IR.
-func verifyWithCleanupAdmission(f *Func, conditionalAction **cleanupRegion) error {
+// Transformation-local facts reuse the verifier's dominance and initialization
+// walks. They are never stored on IR or reused across graph mutation.
+type verificationFacts struct {
+	conditional *cleanupRegion
+	deadBlocks  map[*ssa.Block]bool
+}
+
+func verifyWithFacts(f *Func, facts *verificationFacts) error {
 	if f == nil || f.graph == nil {
 		return fmt.Errorf("semir: nil function")
 	}
@@ -186,13 +191,17 @@ func verifyWithCleanupAdmission(f *Func, conditionalAction **cleanupRegion) erro
 	if err != nil {
 		return err
 	}
-	if conditionalAction != nil {
-		*conditionalAction = conditional
-	}
 	if f.unpromotedBindings {
-		if err := verifyBindingInitialization(f, conditional == nil); err != nil {
+		var deadBlocks *map[*ssa.Block]bool
+		if facts != nil {
+			deadBlocks = &facts.deadBlocks
+		}
+		if err := verifyBindingInitialization(f, conditional == nil, deadBlocks); err != nil {
 			return err
 		}
+	}
+	if facts != nil {
+		facts.conditional = conditional
 	}
 	return nil
 }
