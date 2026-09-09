@@ -11,12 +11,17 @@ import (
 // structural invariants. It does not certify RC balance or uniqueness: those
 // require the ownership/effect analysis that follows this representation.
 func Verify(f *Func) error {
-	return verifyWithDeadBindings(f, nil)
+	return verifyWithFacts(f, nil)
 }
 
-// Promotion requests unreachable blocks from the existing initialization walk.
-// This result is local to one verification, never cached across IR mutation.
-func verifyWithDeadBindings(f *Func, deadBlocks *map[*ssa.Block]bool) error {
+// Transformation-local facts reuse the verifier's dominance and initialization
+// walks. They are never stored on IR or reused across graph mutation.
+type verificationFacts struct {
+	conditional *cleanupRegion
+	deadBlocks  map[*ssa.Block]bool
+}
+
+func verifyWithFacts(f *Func, facts *verificationFacts) error {
 	if f == nil || f.graph == nil {
 		return fmt.Errorf("semir: nil function")
 	}
@@ -182,13 +187,21 @@ func verifyWithDeadBindings(f *Func, deadBlocks *map[*ssa.Block]bool) error {
 			return err
 		}
 	}
-	if err := verifyCleanups(f); err != nil {
+	conditional, err := verifyCleanups(f)
+	if err != nil {
 		return err
 	}
 	if f.unpromotedBindings {
-		if err := verifyBindingInitialization(f, deadBlocks); err != nil {
+		var deadBlocks *map[*ssa.Block]bool
+		if facts != nil {
+			deadBlocks = &facts.deadBlocks
+		}
+		if err := verifyBindingInitialization(f, conditional == nil, deadBlocks); err != nil {
 			return err
 		}
+	}
+	if facts != nil {
+		facts.conditional = conditional
 	}
 	return nil
 }

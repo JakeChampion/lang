@@ -19,11 +19,11 @@ func promoteBindings(f *Func) error {
 	if !f.unpromotedBindings {
 		return fmt.Errorf("semir %s: binding promotion outside construction phase", f.graph.Name)
 	}
-	var deadBlocks map[*ssa.Block]bool
-	if err := verifyWithDeadBindings(f, &deadBlocks); err != nil {
+	var facts verificationFacts
+	if err := verifyWithFacts(f, &facts); err != nil {
 		return err
 	}
-	pruneDeadBindingPredecessors(f, deadBlocks)
+	pruneDeadBindingPredecessors(f, facts.deadBlocks)
 	ends := bindingLifetimeEnds(f)
 	type key struct {
 		block *ssa.Block

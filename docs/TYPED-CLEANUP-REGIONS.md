@@ -37,10 +37,11 @@ types and call identities remain attached to their copied operations.
 An explicit pending-expansion phase cannot enter binding promotion or ownership
 analysis. Expanded place graphs still pass verification before promotion;
 promoted graphs still pass whole-program verification before ownership. This
-separates the pass boundaries needed by conditional availability, but does not
-activate it: the pre-expansion verifier rejects nondominating registrations with
-the existing source-anchored unsupported diagnostic, and the exact cleanup-flow
-proof still rejects inconsistent path states. Registration admission now uses
+separates the pass boundaries needed by conditional availability. The pre-expansion
+verifier now admits safe conditional registration using the correlated proof below;
+expansion still rejects it with the existing source-anchored unsupported diagnostic
+before changing any action. Guarded executable activation is not yet implemented.
+Registration admission uses
 the complete typed CFG. The source builder no longer computes dominance at each
 exit while control flow is still under construction.
 
@@ -66,8 +67,9 @@ Malformed CFG tests demonstrate why return dominance was insufficient:
 direct and indirect replay cycles, replay in a cycle without a return, and a
 balanced registration/replay cycle previously passed verification. An additional
 case rejects a join of pending and consumed states even without a return. The graphs
-retain valid SSA, so the independent cleanup proof must reject them. Optional
-registration still requires the correlated availability model below.
+retain valid SSA, so the independent cleanup proof must reject them. The executable
+path retains these exact-state restrictions. The conditional pre-expansion proof
+below instead preserves small correlated state sets.
 
 Function and iteration boundaries now carry explicit identities, lexical parent
 links and CFG entry/header/exit points. Every action belongs to one boundary.
@@ -237,6 +239,119 @@ the standalone site expansion is 3,792 bytes and its phase driver is 816 bytes.
 The remaining code changes enforce site shape, capture availability and consumer
 phase gates. No baseline is changed. Production native/self-host AST ownership
 retirement and conditional cleanup activation remain outstanding.
+
+## Correlated pre-expansion admission
+
+Conditional pending graphs now have an independent typed proof. Structural
+verification still checks the private action interface, binding identity, empty
+invocation sites and explicit lifetime ends. An exact active-boundary analysis
+rejects false scope parents, mismatched joins, stale initializers and unreachable
+events. Only registration state is allowed to differ across paths.
+
+The proof checks finite projections of CFG traces:
+
+- One action has never-registered, pending and replayed states. Re-registration
+  and repeated replay reject; history resets only at its own boundary end.
+- A pair of actions additionally records which registered last while both are
+  pending. Replaying the older one while the newer remains pending rejects.
+- An action and each captured BindingID track registration and initialization
+  together. An active replay with an absent capture rejects. An inactive replay
+  neither reads nor initializes its capture. Lifetime ends clear only the
+  corresponding registration or binding component.
+
+The CFG worklist unions complete product states, not independent may-flags.
+It terminates because each pair has at most 18 encoded states per block, and
+each action/capture product has six. There is no path-length or iteration cap.
+Every LIFO violation has a witness consisting of the replayed action and an
+outstanding newer action; no triple or whole-stack subset is needed for that
+property. Single-action checks cover missing/repeated replay independently.
+All CFG paths are considered, including infeasible combinations of ordinary
+branch predicates: this is not symbolic reasoning about source boolean values.
+
+For A actions, C total capture occurrences, and graph size G including operations
+and edges, the bound is O((A squared + C) G) time with O(G) reusable projection
+storage, in addition to existing IR/event metadata. The existing canonical-stack
+path is retained for dominating registrations and for expanded executable graphs;
+it does not incur these pairwise walks. This separation is temporary until
+guarded expansion has its own verified executable event contract.
+
+Ordinary BindingRead and BindingReplace still require initialization on every
+incoming path. Only pending action sites use the conditional capture proof.
+The admission result is ephemeral and cannot survive graph mutation as a cached
+certificate. Expansion receives it from the same verification call, avoiding a
+second dominance traversal. It rejects conditional graphs before mutating any
+site, including earlier unconditional sites in a mixed graph. Pending actions
+still cannot enter binding promotion or ownership lowering.
+
+The next pass must materialize exact action activation, take late immutable
+binding snapshots at each replay, guard extraction and publish sequential outputs
+without inventing an absent payload or relaxing ordinary write preconditions.
+Those operations must pass availability, ownership-unit and runtime verification
+before the source execution gate can be removed. This admission slice does not
+enable source conditional cleanup or retire production AST analyses.
+
+Validation includes branch-local and mutually exclusive actions, late replacements,
+nested iteration resets, labelled exits, returns and nonreturning paths. Negative
+tests cover wrong LIFO, missing/duplicate replay, initialization on the opposite
+branch, expired inner captures and unchanged ordinary must-initialization errors.
+An independent full-stack interpreter agrees on 11,520 finite-state comparisons
+(181 accepted and 11,339 rejected), using all permutations of three registration
+and three replay events across eight graph families, with and without a captured
+place. These include bypasses, joins, cycles and lifetime resets. The oracle uses
+complete stacks/history and no production transfer or fixed-point helper. That
+permutation corpus has one scope, so it does not establish nested-scope coverage.
+
+A separate source-derived nested corpus adds 960 comparisons (265 accepted and
+695 rejected), deleting every combination of action registration, replay and
+captured-place initialization events. It covers outer actions pending across an
+inner close, nested iteration with outer and inner captures, three-level labelled
+breaks, continues and returns. The interpreter maintains initialization separately
+for every binding and resets only actions and places owned by an ending boundary.
+Thus an inner close preserves an outer pending action and its captured value,
+while an inner binding cannot remain initialized across an iteration reset.
+An event index built directly from the typed contract avoids sharing the
+production indexing, lifetime-mask or transfer helpers. Intact source fixtures
+also pass full semantic verification; generated mutations compare event traces,
+not structural SSA or scope admission. Restoring the original whole-stack-empty
+end check makes the outer-pending/inner-close regression fail as expected.
+
+## Correlated-admission costs, 2026-09-09
+
+Five 100 ms samples on native Darwin ARM64, Apple M3 Pro, measure complete
+`Verify` calls on prebuilt conditional graphs. A one-action smoke run preceded
+scaling; only action count changes. These are observed ranges, not confidence
+intervals or a runtime speedup claim.
+
+| Conditional actions | ns/op | bytes/op | allocs/op |
+| --- | --- | --- | --- |
+| 1 | 4,458-4,817 | 3,193-3,194 | 63 |
+| 8 | 67,057-81,021 | 43,465-43,467 | 344 |
+| 64 | 13,498,521-14,028,984 | 359,593-359,609 | 1,882 |
+
+The pairwise proof's scaling cost is explicit: it is not yet a claim of cheap
+admission for large action sets. Whole-stack enumeration is avoided, and every
+worklist has a finite bound independent of execution length. One flat successor
+arena replaces per-block slices, reducing initial allocation counts from
+67 / 383 / 2,201 to 63 / 344 / 1,882. Pair walks already check both individual
+histories, so separate single-action walks are omitted unless there is only one
+action. Sharing that call site also removes a duplicated compiled transfer body.
+
+The existing source-to-physical-lowering cleanup benchmark retains
+1,242 / 3,799 / 20,042-20,043 allocations for 1 / 8 / 64 ordinary actions, matching
+parent `8ce8a3eae`. Integrated samples before the conditional-only walk refinement
+measured 70,890-75,409 / 306,386-384,964 / 2,454,962-2,547,326 ns/op. The parent
+measured 70,571-75,969 / 301,810-321,194 / 2,467,101-3,156,869. These noisy ranges
+do not establish a speedup; the existing executable route remains unchanged.
+
+Identical `go build -trimpath -buildvcs=false` builds measure 28,935,970 parent
+bytes and 28,937,042 candidate bytes, a 1,072-byte net increase. Mach-O instruction
+size increases by 8,208 bytes. The new correlated scope/projection functions and
+transfer bodies account for 7,712 symbol bytes; caller/indexing changes account
+for the remaining instruction difference. Consolidating the pair call site
+removed 832 instruction bytes and avoided crossing a segment-alignment boundary
+in this build. Data, debug information and alignment explain why net file growth
+differs from instruction growth. No compiler-size baseline changes, runtime
+environment allocation or source conditional activation are included.
 
 ## Observable contract
 
