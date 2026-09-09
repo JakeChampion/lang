@@ -8311,17 +8311,56 @@ func computeGrowParams(prog *ast.Program, info *checker.Info, obs map[string][]f
 	isArrayMutator := func(name string) bool {
 		return name == "__method_Array_push" || name == "__method_Array_set"
 	}
-	// Seed: direct in-place-capable mutations on params.
+	indirect := map[*ast.Call]bool{}
+	// Seed: direct mutations and unknown function-value effects on params.
 	for _, fn := range prog.Funcs {
 		if fn.Body == nil {
 			continue
 		}
 		g := grow.vals[fn.Name]
+		callables := map[string]bool{}
+		for _, p := range fn.Params {
+			if _, ok := p.Type.(*ast.FuncType); ok {
+				callables[p.Name] = true
+			}
+		}
+		if info != nil {
+			for _, v := range info.Locals[fn] {
+				if _, ok := info.VarTypes[v].(*ast.FuncType); ok {
+					callables[v.Name] = true
+				}
+			}
+		}
 		ast.Walk(fn.Body, func(n ast.Node) bool {
 			switch x := n.(type) {
 			case *ast.Call:
 				id, ok := x.Callee.(*ast.Ident)
-				if !ok || !isArrayMutator(id.Name) || len(x.Args) == 0 {
+				if !ok || callables[id.Name] {
+					// Function values carry no no-growth contract. In particular,
+					// a local callable must not borrow a same-named global's summary.
+					indirect[x] = true
+					for _, a := range x.Args {
+						switch r := a.(type) {
+						case *ast.Ident:
+							if pi := paramIdx(fn, r.Name); pi >= 0 {
+								switch fn.Params[pi].Type.(type) {
+								case ast.ArrayType:
+									g[pi].buffer = true
+								case ast.StructType:
+									g[pi].addField(growAnyField)
+								}
+							}
+						case *ast.FieldAccess:
+							if rid, ok := fieldChainRoot(r); ok {
+								if pi := paramIdx(fn, rid.Name); pi >= 0 {
+									g[pi].addField(fieldNameOfDirect(r, rid))
+								}
+							}
+						}
+					}
+					return true
+				}
+				if !isArrayMutator(id.Name) || len(x.Args) == 0 {
 					return true
 				}
 				switch r := x.Args[0].(type) {
@@ -8362,7 +8401,7 @@ func computeGrowParams(prog *ast.Program, info *checker.Info, obs map[string][]f
 		changed := false
 		ast.Walk(fn.Body, func(n ast.Node) bool {
 			c, ok := n.(*ast.Call)
-			if !ok {
+			if !ok || indirect[c] {
 				return true
 			}
 			cid, ok := c.Callee.(*ast.Ident)
