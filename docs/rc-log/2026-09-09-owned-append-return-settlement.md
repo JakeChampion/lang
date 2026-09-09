@@ -62,3 +62,17 @@ uncounted return therefore risks caller snapshot corruption.
 Those leak assertions remain unchanged. Their repair must reconcile parent
 and projection ownership without adding more AST escape heuristics. This
 change does not claim that #8874, #8973 or the typed-IR migration is complete.
+
+The `own-caller-lifetime-rebound-match-root` regression also rules out trusting
+the old `FRESHBOX` marker just for local roots. Its callee constructs a local
+enum, rebinds that same local to the caller's enum, and returns its array
+payload. After the returned reference is released and the allocator reuses
+storage, the caller must still read its original `[7, 8]` payload. The marker
+describes the initializer, not the value after the rebind.
+
+The production code passes this case through the native oracle and all three
+self-host targets in 24.925 s, without skips. Temporarily honoring
+`moved_claim` instead of the dynamic projection flag makes the ARM64 case exit
+3 after churn, proving actual caller data corruption rather than relying on
+allocation counts. The diagnostic mutation was removed before final validation;
+only the regression test and this evidence are committed. Lint-all passes.
