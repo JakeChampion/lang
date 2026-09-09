@@ -1,7 +1,6 @@
 // Shared semantic types for the self-hosted compiler.
 // Keep this module independent of AST, parser, checker and physical IR so
 // checked syntax and pre-RC semantic values can carry the same type directly.
-// This extraction preserves existing fields and union member order exactly.
 
 // TypeI32 models EVERY integer width — i32 / i64 / u32 / u64 — distinguished
 // by (width, unsigned). The checker stays width-LENIENT for assignability
@@ -18,15 +17,11 @@ pub struct TypeI32 { is_char: boolean, width: i32, unsigned: boolean }
 
 pub struct TypeBool { tag: i32 }
 
-// payload — variants need a
 pub struct TypeString { tag: i32 }
 
-// shape; the field is unused.
-pub struct TypeFloat { tag: i32 }
+// An uncommitted literal defaults to f64 but may adopt a contextual width.
+pub struct TypeFloat { width: i32, polymorphic: boolean }
 
-// f64 — `f32` aliases the same
-// type in this cut (no width
-// distinction in the checker).
 // Array of homogeneous elements. elem can itself be any Type, so
 // `i32[][]` is representable. An empty literal `[]` defaults to
 // TypeArray { elem: TypeUnknown(...) } — the checker rejects it

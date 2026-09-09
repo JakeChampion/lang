@@ -34,7 +34,7 @@ func TestSelfHostTypeResolveSimple(t *testing.T) {
 		"boolean => structs=bool names=bool names+unions=bool\n" +
 		"string => structs=string names=string names+unions=string\n" +
 		"f64 => structs=f64 names=f64 names+unions=f64\n" +
-		"f32 => structs=f64 names=f64 names+unions=f64\n" +
+		"f32 => structs=f32 names=f32 names+unions=f32\n" +
 		"float => structs=f64 names=f64 names+unions=f64\n" +
 		"Foo => structs=struct:Foo names=struct:Foo names+unions=struct:Foo\n" +
 		"Bar => structs=struct:Bar names=struct:Bar names+unions=struct:Bar\n" +
