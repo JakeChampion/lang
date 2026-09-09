@@ -1,0 +1,190 @@
+// Verified semantic ownership to the production stack IR. No AST ownership
+// facts or alternate backend ABI enter this boundary.
+import "./ir";
+import "./irlower";
+import "./ssasem";
+import "./ssaunits";
+import "./typeinfo";
+
+function empty(why: string): irlower.LowerResult {
+    return irlower.LowerResult { ok: false, why: why, ops: [], n_locals: 0,
+        n_params: 0, erased_wide: false, arr_slots: [], i64_slots: [],
+        f64_slots: [], str_slots: [], alias_incs: [] };
+}
+
+// This initial physical boundary deliberately refuses types whose stack
+// representation is not implemented here, even when the unit planner knows
+// their abstract ownership. In particular a Wasm string occupies two operands.
+function supported(t: typeinfo.Type): boolean {
+    match (t) {
+        typeinfo.TypeI32(i) => { return i.width == 32; },
+        typeinfo.TypeBool(_) => { return true; },
+        typeinfo.TypeVoid(_) => { return true; },
+        typeinfo.TypeArray(a) => { return supported(a.elem); },
+        typeinfo.TypeTuple(tup) => {
+            for elem in tup.elements { if (!supported(elem)) { return false; } }
+            return true;
+        },
+        typeinfo.TypeString(_) => { return false; },
+        typeinfo.TypeFloat(_) => { return false; },
+        typeinfo.TypeStruct(_) => { return false; },
+        typeinfo.TypeUnion(_) => { return false; },
+        typeinfo.TypeFunc(_) => { return false; },
+        typeinfo.TypeMap(_) => { return false; },
+        typeinfo.TypeDyn(_) => { return false; },
+        typeinfo.TypeUnknown(_) => { return false; }
+    }
+    return false;
+}
+
+function reference(t: typeinfo.Type): boolean {
+    if let typeinfo.TypeArray(_) = t { return true; }
+    if let typeinfo.TypeTuple(_) = t { return true; }
+    return false;
+}
+
+function emit(r: irlower.LowerResult, op: ir.Op): irlower.LowerResult {
+    return irlower.LowerResult { ...r, ops: r.ops.append(op) };
+}
+
+function helper(r: irlower.LowerResult, slot: i32, name: string): irlower.LowerResult {
+    r = emit(r, ir.op_load_local(slot));
+    r = emit(r, ir.op_call_direct(name, 1));
+    return emit(r, ir.op_drop());
+}
+
+function supplies(r: irlower.LowerResult, step: ssaunits.Step): irlower.LowerResult {
+    for supply in step.supplies {
+        if (supply.mode == ssaunits.retain_unit()) { r = helper(r, supply.value, "__fern_rc_inc"); }
+    }
+    // A move transfers the existing unit. Value locals are never implicitly
+    // swept, so neither a runtime decrement nor a clear is needed for a move.
+    return r;
+}
+
+// Scratch storage is shared by successive drops and distinct within recursion.
+function reserve(r: irlower.LowerResult, end: i32): irlower.LowerResult {
+    if (end > r.n_locals) { return irlower.LowerResult { ...r, n_locals: end }; }
+    return r;
+}
+
+// A parent owns one unit per reference field. Shared parents release only
+// their own unit; the final parent release walks children before its box.
+// Array/tuple opcodes preserve the production native/Wasm layouts.
+function drop_value(r: irlower.LowerResult, slot: i32, t: typeinfo.Type, scratch: i32): irlower.LowerResult {
+    var children: boolean = false;
+    if let typeinfo.TypeArray(a) = t { children = reference(a.elem); }
+    if let typeinfo.TypeTuple(tup) = t {
+        for elem in tup.elements { if (reference(elem)) { children = true; } }
+    }
+    if (children) {
+        r = emit(r, ir.op_load_local(slot));
+        r = emit(r, ir.op_call_direct("__fern_rc_is_unique", 1));
+        r = emit(r, ir.op_if(0));
+        if let typeinfo.TypeArray(a) = t {
+            var index: i32 = scratch;
+            var child: i32 = index + 1;
+            r = reserve(r, child + 1);
+            r = emit(r, ir.op_const_i32(0));
+            r = emit(r, ir.op_store_local(index));
+            r = emit(r, ir.op_block(0));
+            r = emit(r, ir.op_loop(0));
+            r = emit(r, ir.op_load_local(index));
+            r = emit(r, ir.op_load_local(slot));
+            r = emit(r, ir.op_arr_len());
+            r = emit(r, ir.op_bin("ge_s", 0, false));
+            r = emit(r, ir.op_brif(1));
+            r = emit(r, ir.op_load_local(slot));
+            r = emit(r, ir.op_load_local(index));
+            r = emit(r, ir.op_arr_get_nc(32));
+            r = emit(r, ir.op_store_local(child));
+            r = drop_value(r, child, a.elem, child + 1);
+            r = emit(r, ir.op_load_local(index));
+            r = emit(r, ir.op_const_i32(1));
+            r = emit(r, ir.op_bin("add", 0, false));
+            r = emit(r, ir.op_store_local(index));
+            r = emit(r, ir.op_br(0));
+            r = emit(r, ir.op_end());
+            r = emit(r, ir.op_end());
+        }
+        if let typeinfo.TypeTuple(tup) = t {
+            var child: i32 = scratch;
+            r = reserve(r, child + 1);
+            var i: i32 = 0;
+            while (i < tup.elements.len()) {
+                if (reference(tup.elements[i])) {
+                    r = emit(r, ir.op_load_local(slot));
+                    r = emit(r, ir.op_tuple_get(i));
+                    r = emit(r, ir.op_store_local(child));
+                    r = drop_value(r, child, tup.elements[i], child + 1);
+                }
+                i = i + 1;
+            }
+        }
+        r = emit(r, ir.op_end());
+    }
+    return helper(r, slot, "__fern_rc_dec");
+}
+
+function drops(r: irlower.LowerResult, step: ssaunits.Step, f: ssasem.Func): irlower.LowerResult {
+    for value in step.drops { r = drop_value(r, value, f.values[value], f.graph.nvals); }
+    return r;
+}
+
+function at(p: ssaunits.Plan, point: i32): ssaunits.Step {
+    for step in p.steps { if (step.point == point) { return step; } }
+    // Unreachable after verify for this single-block, return-only contract.
+    return ssaunits.Step { block: 0 - 1, point: point, target: 0 - 1, supplies: [], drops: [] };
+}
+
+pub function lower(f: ssasem.Func, modes: i32[], p: ssaunits.Plan): irlower.LowerResult {
+    var why: string = ssaunits.verify(f, modes, p);
+    if (why != "") { return empty(why); }
+    if (f.graph.blocks.len() != 1 || f.graph.blocks[0].term.kind_tag != 1) { return empty("physical RC needs straight-line return graph"); }
+    for t in f.values { if (!supported(t)) { return empty("unsupported physical RC value type"); } }
+    if (!supported(f.result)) { return empty("unsupported physical RC result type"); }
+    // Keep this physical vocabulary closed when semantic analysis grows new
+    // operations. Verification of a new operation does not implement its ABI.
+    for ins in f.graph.blocks[0].insts {
+        var k: i32 = ins.kind_tag;
+        if (k != 1 && k != 2 && k != 6 && k != 7
+            && k != ssasem.array_new() && k != ssasem.tuple_new()
+            && k != ssasem.array_get() && k != ssasem.tuple_get()) {
+            return empty("unsupported physical RC operation");
+        }
+    }
+    var r: irlower.LowerResult = empty("");
+    r = irlower.LowerResult { ...r, ok: true, n_params: f.params.len(), n_locals: f.graph.nvals };
+    var vi: i32 = 0;
+    while (vi < f.values.len()) {
+        if let typeinfo.TypeArray(_) = f.values[vi] { r = irlower.LowerResult { ...r, arr_slots: r.arr_slots.append(vi) }; }
+        vi = vi + 1;
+    }
+    r = drops(r, at(p, ssaunits.entry_point()), f);
+    var b = f.graph.blocks[0];
+    var pos: i32 = 0;
+    for ins in b.insts {
+        if (ins.kind_tag != 6) {
+            var step: ssaunits.Step = at(p, pos);
+            r = supplies(r, step);
+            for arg in ins.args { r = emit(r, ir.op_load_local(arg)); }
+            if (ins.kind_tag == 1 || ins.kind_tag == 2) { r = emit(r, ir.op_const_i32(ins.imm)); }
+            if (ins.kind_tag == ssasem.array_new()) { r = emit(r, ir.op_arr_make(ins.args.len(), 32)); }
+            if (ins.kind_tag == ssasem.tuple_new()) { r = emit(r, ir.op_tuple_make(ins.args.len())); }
+            if (ins.kind_tag == ssasem.array_get()) { r = emit(r, ir.op_arr_get(32)); }
+            if (ins.kind_tag == ssasem.tuple_get()) { r = emit(r, ir.op_tuple_get(ins.imm)); }
+            // A verified copy already has its single operand on the stack.
+            r = emit(r, ir.op_store_local(ins.result));
+            r = drops(r, step, f);
+        }
+        pos = pos + 1;
+    }
+    var ret: ssaunits.Step = at(p, ssaunits.return_point());
+    r = supplies(r, ret);
+    r = drops(r, ret, f);
+    if (b.term.value >= 0) { r = emit(r, ir.op_load_local(b.term.value)); }
+    else { r = emit(r, ir.op_const_i32(0)); }
+    r = emit(r, ir.op_return());
+    var optimized: ir.OptimizedOps = ir.optimize_ops(r.ops, r.n_params, r.n_locals);
+    return irlower.LowerResult { ...r, ops: optimized.ops, n_locals: optimized.n_locals };
+}
