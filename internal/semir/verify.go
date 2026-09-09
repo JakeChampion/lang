@@ -51,6 +51,7 @@ func verifyWithFacts(f *Func, facts *verificationFacts) error {
 	}
 	defs := make(map[int32]bool, len(f.values))
 	hasAvailability := false
+	hasGuardedWrites := false
 	checkValue := func(v ssa.Value, define bool) error {
 		if v.ID <= 0 || v.Func != g {
 			return fail("invalid or foreign value %v", v)
@@ -113,7 +114,7 @@ func verifyWithFacts(f *Func, facts *verificationFacts) error {
 				return fail("nil operation or ABI-split semantic value")
 			}
 			if op.Result == (ssa.Value{}) {
-				if op.Kind != ssa.OpSemanticCall && op.Kind != ssa.OpBindingInit && op.Kind != ssa.OpBindingReplace {
+				if op.Kind != ssa.OpSemanticCall && op.Kind != ssa.OpBindingInit && op.Kind != ssa.OpBindingReplace && op.Kind != ssa.OpBindingReplaceGuarded {
 					return fail("only void semantic calls and binding writes may omit their result")
 				}
 				if _, ok := f.effectPositions[op]; !ok {
@@ -131,6 +132,7 @@ func verifyWithFacts(f *Func, facts *verificationFacts) error {
 			if err := verifyOp(f, op); err != nil {
 				return fail("%v = %s: %v", op.Result, op.Kind, err)
 			}
+			hasGuardedWrites = hasGuardedWrites || op.Kind == ssa.OpBindingReplaceGuarded
 		}
 		var used ssa.Value
 		switch b.Term.Kind {
@@ -192,6 +194,11 @@ func verifyWithFacts(f *Func, facts *verificationFacts) error {
 		return err
 	}
 	if f.unpromotedBindings {
+		if hasGuardedWrites {
+			if err := verifyGuardedBindingWrites(f); err != nil {
+				return err
+			}
+		}
 		var deadBlocks *map[*ssa.Block]bool
 		if facts != nil {
 			deadBlocks = &facts.deadBlocks
@@ -207,6 +214,18 @@ func verifyWithFacts(f *Func, facts *verificationFacts) error {
 }
 
 func verifyOp(f *Func, op *ssa.Op) error {
+	if op.Kind == ssa.OpBindingReplaceGuarded {
+		if !f.unpromotedBindings || op.Imm <= 0 || op.Imm > int64(len(f.bindings)) {
+			return fmt.Errorf("guarded binding replacement outside its phase or invalid identity")
+		}
+		typ := f.bindings[op.Imm-1].typ
+		if op.Result.IsValid() || len(op.Args) != 2 || op.Str != "" || op.F64 != 0 ||
+			!sameValueType(f.values[op.Args[0].ID].typ, valueType{source: typ, form: availabilityForm}) ||
+			!sameValueType(f.values[op.Args[1].ID].typ, sourceValueType(typ)) {
+			return fmt.Errorf("invalid guarded binding replacement operands or types")
+		}
+		return nil
+	}
 	if stateOp(op.Kind) {
 		return verifyStateOp(f, op)
 	}
