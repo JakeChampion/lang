@@ -13116,7 +13116,7 @@ function lower_call_append(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerSta
         if (!apf.ok) { return apf; }
         apf = apf.emit(ir.op_arr_push_f64());
         if (apcs >= 0) { apf = emit_arr_share(apf, apcs, "__fern_arr_share_dec"); }
-        return apf;
+        return settle_owned_append_result(apf, fa.obj, apcs);
     }
     if (expr_is_i64arr(fa.obj, s) || (expr_is_arr_src(fa.obj, s) && expr_is_u64(fa.obj, s))) {
         var ap8: LowerState = lower_expr(fa.obj, aps0);
@@ -13125,7 +13125,7 @@ function lower_call_append(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerSta
         if (!ap8.ok) { return ap8; }
         ap8 = ap8.emit(ir.op_arr_push_i64());
         if (apcs >= 0) { ap8 = emit_arr_share(ap8, apcs, "__fern_arr_share_dec"); }
-        return ap8;
+        return settle_owned_append_result(ap8, fa.obj, apcs);
     }
     var aps: LowerState = lower_expr(fa.obj, aps0);
     if (!aps.ok) { return aps; }
@@ -13158,7 +13158,18 @@ function lower_call_append(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerSta
         aps = aps.emit(ir.op_end());
         aps = aps.emit(ir.op_load_local(iptmp));
     }
-    return aps;
+    return settle_owned_append_result(aps, fa.obj, apcs);
+}
+
+// A consuming expression-position append transfers the result, but the push
+// helper leaves its old buffer counted when it grows or copies. Settle that
+// replacement using the same declared ownership contract as a rebind. The
+// returned-move sweep keeps this slot, so it must now hold the result's unit.
+function settle_owned_append_result(s: LowerState, recv: ast.Expr, copy_slot: i32): LowerState {
+    var slot: i32 = s.slot_of(ident_name_or_empty(recv));
+    if (copy_slot >= 0 || !owned_scalar_array_slot(s, slot)) { return s; }
+    var st: LowerState = emit_arr_store(s, slot, false, true);
+    return st.emit(ir.op_load_local(slot));
 }
 
 // lower_call_len lowers the builtin `.len()`, dispatching on the receiver's
@@ -31604,7 +31615,11 @@ function returned_moved_arr_slots(e: ast.Expr, s: LowerState, acc: i32[]): i32[]
                         match (fa.obj) {
                             ast.ExprIdent(rid) => {
                                 var rs: i32 = s.slot_of(rid.name);
-                                if (s.is_arr_slot(rs) && !slot_list_has(out, rs)) { out = out.append(rs); }
+                                // A bracketed append borrows its receiver and
+                                // returns a separate counted buffer.
+                                var owns_input: boolean = owned_scalar_array_slot(s, rs);
+                                if (s.is_arr_slot(rs) && !slot_list_has(out, rs)
+                                    && (!owns_input || append_copy_recv_slot(fa.obj, s) < 0)) { out = out.append(rs); }
                             },
                             _ => {}
                         }

@@ -115,6 +115,17 @@ function make(n: i32): E { return Data([n, n + 1]); }
 function take(n: i32): i32[] { var e = make(n); match (e) { Data(xs) => { return xs; } } return []; }
 function churn(): i32 { var i = 0; while (i < 32) { var xs = take(i); if (xs[0] != i || xs[1] != i + 1) { return 1; } i = i + 1; } return 0; }
 function main(): i32 { if (churn() != 0) { return 1; } var before = __heap_bump_bytes(); if (churn() != 0) { return 2; } if (__heap_bump_bytes() != before) { return 3; } return 0; }`},
+	// A fresh initializer is not an ownership fact about a later value of the
+	// same binding. Rebinding this local to a borrowed parent must keep that
+	// parent's payload alive after the returned projection is released.
+	{"own-caller-lifetime-rebound-match-root", `enum E { Full(i32[]), Empty }
+@noinline
+function take(e: E): i32[] { var local = E.Full([91, 92]); local = e; match (local) { Full(xs) => { return xs; }, Empty => { return [0]; } } return []; }
+@noinline
+function inspect(e: E): i32 { var xs = take(e); return xs[0]; }
+@noinline
+function churn(): i32 { var xs = [51, 52]; return xs[0]; }
+function main(): i32 { var e = E.Full([7, 8]); if (inspect(e) != 7 || churn() != 51) { return 1; } match (e) { Full(xs) => { if (xs[0] != 7 || xs[1] != 8) { return 3; } }, Empty => { return 4; } } return 0; }`},
 	{"own-caller-wide-match-projection", `enum E { Data(f64[]) }
 @noinline
 function update(own xs: f64[]): f64[] { xs = xs.with(0, 9.5); return xs; }
@@ -173,6 +184,18 @@ function main(): i32 { if (churn() != 0) { return 1; } var before: i64 = __heap_
 function grow(own xs: i32[]): i32[] { var i = 0; while (i < 32) { xs = xs.append(i); i = i + 1; } return xs; }
 function churn(): i32 { var i = 0; while (i < 32) { var xs = [1, 2, 3]; xs = grow(xs); if (xs.len() != 35 || xs[0] != 1 || xs[34] != 31) { return 1; } i = i + 1; } return 0; }
 function main(): i32 { if (churn() != 0) { return 1; } var before: i64 = __heap_bump_bytes(); if (churn() != 0) { return 2; } if (__heap_bump_bytes() != before) { return 3; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`},
+	{"own-caller-lifetime-tail-append", `@noinline
+function grow(own xs: i32[], n: i32): i32[] { return xs.append(n); }
+function churn(): i32 { var xs = [1, 2]; var old = xs; var i = 0; while (i < 32) { xs = grow(xs, i); i = i + 1; } if (old.len() != 2 || old[0] != 1 || old[1] != 2 || xs.len() != 34 || xs[33] != 31) { return 1; } return 0; }
+function main(): i32 { if (churn() != 0) { return 1; } var before = __heap_bump_bytes(); if (churn() != 0) { return 2; } if (__heap_bump_bytes() != before) { return 3; } return 0; }`},
+	{"own-caller-lifetime-tail-append-i64", `@noinline
+function grow(own xs: i64[]): i64[] { return xs.append(9000000000i64); }
+function churn(): i32 { var xs = [1000000000i64, 2000000000i64]; var old = xs; var i = 0; while (i < 32) { xs = grow(xs); i = i + 1; } if (old.len() != 2 || old[0] != 1000000000i64 || old[1] != 2000000000i64 || xs.len() != 34 || xs[33] != 9000000000i64) { return 1; } return 0; }
+function main(): i32 { if (churn() != 0) { return 1; } var before = __heap_bump_bytes(); if (churn() != 0) { return 2; } if (__heap_bump_bytes() != before) { return 3; } return 0; }`},
+	{"own-caller-lifetime-tail-append-f64", `@noinline
+function grow(own xs: f64[]): f64[] { return xs.append(9.5); }
+function churn(): i32 { var xs = [1.5, 2.5]; var old = xs; var i = 0; while (i < 32) { xs = grow(xs); i = i + 1; } if (old.len() != 2 || old[0] != 1.5 || old[1] != 2.5 || xs.len() != 34 || xs[33] != 9.5) { return 1; } return 0; }
+function main(): i32 { if (churn() != 0) { return 1; } var before = __heap_bump_bytes(); if (churn() != 0) { return 2; } if (__heap_bump_bytes() != before) { return 3; } return 0; }`},
 	{"own-caller-earlier-argument-read", `@noinline
 function update(n: i32, own xs: i32[]): i32[] { xs = xs.with(0, n); return xs; }
 @noinline
