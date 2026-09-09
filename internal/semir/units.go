@@ -18,6 +18,9 @@ type unitSupply struct {
 	value ssa.Value
 	slot  int
 	mode  unitMode
+	// Conditional supplies use value's own presence flag by construction.
+	// There is no separately stored guard identity that could diverge from it.
+	conditional bool
 }
 
 type unitStep struct {
@@ -102,8 +105,12 @@ func planFunctionUnits(f *Func) (*functionUnits, error) {
 				}
 			}
 			for i, op := range succ.Ops {
-				if op.Kind == ssa.OpPhi && l.owned[op.Result.ID] {
-					step.supplies = append(step.supplies, unitSupply{value: op.Args[pi], slot: i})
+				if op.Kind == ssa.OpPhi && l.carriesUnit(op.Result.ID) {
+					supply := unitSupply{value: op.Args[pi], slot: i}
+					if l.conditional[op.Result.ID] {
+						supply.conditional = true
+					}
+					step.supplies = append(step.supplies, supply)
 				}
 			}
 			dead := make(map[int32]bool)
@@ -129,7 +136,7 @@ func (p *functionUnits) satisfy(step *unitStep, dead, hold map[int32]bool) {
 		switch {
 		case p.lifetime.immortal[id]:
 			supply.mode = unitImmortal
-		case p.lifetime.owned[id] && dead[id] && !hold[id] && !moved[id]:
+		case p.lifetime.carriesUnit(id) && dead[id] && !hold[id] && !moved[id]:
 			supply.mode = unitMove
 			moved[id] = true
 		default:
@@ -137,7 +144,7 @@ func (p *functionUnits) satisfy(step *unitStep, dead, hold map[int32]bool) {
 		}
 	}
 	for id := range dead {
-		if p.lifetime.owned[id] && !moved[id] {
+		if p.lifetime.carriesUnit(id) && !moved[id] {
 			step.drops = append(step.drops, ssa.Value{ID: id, Func: p.function.graph})
 		}
 	}

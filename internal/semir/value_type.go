@@ -21,3 +21,7 @@ func sourceValueType(typ ast.Type) valueType { return valueType{source: typ} }
 func sameValueType(a, b valueType) bool {
 	return a.form == b.form && ast.Equal(a.source, b.source)
 }
+
+func (t valueType) conditionalUnit() bool {
+	return t.form == availabilityForm && referenceBearing(t.source)
+}

@@ -105,11 +105,11 @@ func TestAvailabilityRejectsInvalidTypesAndGuards(t *testing.T) {
 			info.typ.form = 99
 			a.f.values[a.none.ID] = info
 		}, "invalid semantic type form"},
-		{"reference-state", func(a *availabilityFixture) {
+		{"reference-state-mismatch", func(a *availabilityFixture) {
 			info := a.f.values[a.none.ID]
 			info.typ.source = ast.ArrayType{Elem: ast.NumberType{}}
 			a.f.values[a.none.ID] = info
-		}, "conditional unit support"},
+		}, "semantic type"},
 		{"source-parameter", func(a *availabilityFixture) {
 			info := a.f.values[a.payload.ID]
 			info.typ.form = availabilityForm
@@ -266,7 +266,7 @@ func TestAvailabilityPresenceOnlyOmitsPayloadLanes(t *testing.T) {
 	if err := Verify(a.f); err != nil {
 		t.Fatal(err)
 	}
-	demand := availabilityLaneDemand(a.f)
+	demand := availabilityLaneDemand(a.f, nil)
 	for _, state := range []ssa.Value{a.none, a.some, a.state} {
 		if demand[state.ID] != statePresenceLane {
 			t.Fatal("presence-only use acquired a payload demand")

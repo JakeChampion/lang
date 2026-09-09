@@ -19,7 +19,8 @@ const (
 	resultCounted
 	resultProjection
 	resultJoin
-	resultCall // return ownership awaits the callee's interprocedural summary
+	resultCall        // return ownership awaits the callee's interprocedural summary
+	resultConditional // exactly one payload unit iff this immutable state is present
 )
 
 // storageKind specifies what becomes reachable through a constructed result.
@@ -97,8 +98,21 @@ func ownershipEffects(f *Func) (*functionEffects, error) {
 			switch op.Kind {
 			case ssa.OpConstInt, ssa.OpConstBool, ssa.OpNot, ssa.OpNeg, ssa.OpAdd, ssa.OpSub, ssa.OpMul,
 				ssa.OpEq, ssa.OpNe, ssa.OpLt, ssa.OpLe, ssa.OpGt, ssa.OpGe,
-				ssa.OpStateAbsent, ssa.OpStatePresent, ssa.OpStateHas, ssa.OpStateGet:
+				ssa.OpStateHas:
 				e.result = resultValue
+			case ssa.OpStateAbsent, ssa.OpStatePresent:
+				e.result = resultValue
+				if ref {
+					e.result = resultConditional
+					if op.Kind == ssa.OpStatePresent {
+						e.inputs[0].store, e.inputs[0].counted = storeValue, true
+					}
+				}
+			case ssa.OpStateGet:
+				e.result = resultValue
+				if ref {
+					e.result, e.parent = resultProjection, op.Args[0]
+				}
 			case ssa.OpConstString:
 				e.result = resultImmortal
 			case ssa.OpArrayMake, ssa.OpTupleMake:
@@ -127,6 +141,9 @@ func ownershipEffects(f *Func) (*functionEffects, error) {
 				}
 			case ssa.OpPhi:
 				e.result = resultJoin
+				if f.values[op.Result.ID].typ.conditionalUnit() {
+					e.result = resultConditional
+				}
 			case ssa.OpSemanticCall:
 				callee, err := f.callee(op)
 				if err != nil {

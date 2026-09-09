@@ -221,8 +221,12 @@ func solveReturnFlow(p *Program) (*returnFlow, error) {
 		switch op.Kind {
 		case ssa.OpConstInt, ssa.OpConstBool, ssa.OpNot, ssa.OpNeg, ssa.OpAdd, ssa.OpSub, ssa.OpMul,
 			ssa.OpEq, ssa.OpNe, ssa.OpLt, ssa.OpLe, ssa.OpGt, ssa.OpGe,
-			ssa.OpStateAbsent, ssa.OpStatePresent, ssa.OpStateHas, ssa.OpStateGet:
+			ssa.OpStateHas:
 			changed = addSource(dst, source{kind: sourceScalar})
+		case ssa.OpStateAbsent:
+			// No payload exists on this alternative, including no provenance.
+		case ssa.OpStatePresent, ssa.OpStateGet:
+			changed = mergeFlow(dst, arg(0))
 		case ssa.OpConstString:
 			changed = addSource(dst, source{kind: sourceImmortal})
 		case ssa.OpArrayMake:

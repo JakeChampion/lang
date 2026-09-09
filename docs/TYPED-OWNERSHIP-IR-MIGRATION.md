@@ -6,13 +6,22 @@ SSA cutover and typed-IR work. Initial integration base: `02ea66e91`.
 
 ## Current implementation checkpoint
 
-Internal scalar availability values now distinguish Absent from Present(T),
+Internal binding snapshots now promote partial initialization and lifetime resets
+to typed Absent/Present states. Guarded payload access preserves snapshot identity
+across replacement and scope exit without relaxing ordinary must-initialization
+checks. Demand-driven materialization and a 168-case independent CFG oracle are
+documented in [typed binding places](TYPED-BINDING-PLACES.md). Source conditional
+cleanup still needs correlated registration/replay integration.
+
+Internal availability values now distinguish Absent from Present(T),
 with complete semantic type/phi checks, exact-state guard proofs and unboxed
 machine lanes. Direct payload aliases and presence-only states omit unused
 components. This end-to-end IR slice is documented in
-[typed availability values](TYPED-AVAILABILITY-VALUES.md). Reference-bearing
-availability, source conditional cleanup and production AST retirement remain
-unimplemented; the ordinary source ABI and ownership gates are unchanged.
+[typed availability values](TYPED-AVAILABILITY-VALUES.md). Reference-bearing states
+carry independently verified conditional payload obligations, and their borrows
+preserve state/container anchors through guarded RC lowering. Correlated source
+conditional cleanup and production AST retirement remain unimplemented; the
+ordinary source ABI and ownership gates are unchanged.
 
 Source binding resolution now emits explicit typed initialization, read and
 replacement operations. A separate, independently verified CFG pass proves
