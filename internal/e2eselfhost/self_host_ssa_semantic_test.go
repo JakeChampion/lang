@@ -11,6 +11,7 @@ import (
 )
 
 const semanticFixture = `
+var records: semrecords.Record[] = [];
 var i32t: typeinfo.Type = typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false };
 var i64t: typeinfo.Type = typeinfo.TypeI32 { width: 64, unsigned: false, is_char: false };
 var bt: typeinfo.Type = typeinfo.TypeBool { tag: 0 };
@@ -40,6 +41,9 @@ var graph = ssa.SFunc { name: "semantic", nparams: 2, nvals: 11, entry: 7, takes
 `
 
 const semanticHelpers = `
+function field(value: i32, parent: i32, index: i32, name: string): ssa.SInst {
+    return ssa.SInst { kind_tag: ssasem.record_get(), result: value, args: [parent], imm: index, str: name };
+}
 function inst(kind: i32, value: i32, args: i32[], imm: i32): ssa.SInst {
     return ssa.SInst { kind_tag: kind, result: value, args: args, imm: imm, str: "" };
 }
@@ -93,7 +97,7 @@ graph = ssa.SFunc { name: "phi", nparams: 3, nvals: 4, entry: 7, takes_env: fals
 `
 
 func semanticCases() []struct{ name, change, want string } {
-	return []struct{ name, change, want string }{
+	base := []struct{ name, change, want string }{
 		{"nested-projections", "", ""},
 		{"phi", semanticPhi, ""},
 		{"phi-view-mismatch", semanticPhi + "types = types.with(2, view); params = params.with(2, view);", "copy or phi type"},
@@ -118,11 +122,12 @@ func semanticCases() []struct{ name, change, want string } {
 		{"physical-allocation", "graph = change(graph, 6, inst(14, 6, [5], 0));", "unsupported semantic operation"},
 		{"physical-load", "graph = change(graph, 4, inst(15, 4, [3, 1], 32));", "unsupported semantic operation"},
 	}
+	return append(base, semanticRecordCases()...)
 }
 
 func semanticSource(indices []int) (string, string) {
 	var source, main, want strings.Builder
-	source.WriteString("import \"./ssa\";\nimport \"./ssasem\";\nimport \"./semtypes\";\nimport \"./typeinfo\";\n")
+	source.WriteString("import \"./ssa\";\nimport \"./ssasem\";\nimport \"./semtypes\";\nimport \"./semrecords\";\nimport \"./typeinfo\";\n")
 	source.WriteString(semanticHelpers)
 	main.WriteString("function main(): i32 { if (type_checks() != 0) { return 90; }\n")
 	for _, i := range indices {
@@ -130,7 +135,7 @@ func semanticSource(indices []int) (string, string) {
 		fmt.Fprintf(&source, "function semantic_case_%d(): i32 {\n%s\n%s\n", i, semanticFixture, tc.change)
 		source.WriteString(`
 var before = ssa.print_func(graph);
-var checked = ssasem.analyze(ssasem.Func { graph: graph, values: types, params: params, result: result });
+var checked = ssasem.analyze(ssasem.Func { graph: graph, values: types, params: params, result: result, records: records });
 if (checked.ok != (checked.why == "") || checked.flow.ok != checked.ok) { return 2; }
 if (before != ssa.print_func(graph)) { return 3; }
 if (!checked.ok && (checked.dependencies.len() != 0 || checked.flow.live_in.len() != 0 || checked.flow.live_out.len() != 0)) { return 4; }
@@ -149,6 +154,14 @@ while (at < expected.len()) {
     }
     at = at + 1;
 }
+`)
+		}
+		if tc.name == "record-replacement" {
+			source.WriteString(`
+if (!checked.ok) { print(checked.why); return 8; }
+if (checked.dependencies[1].len() != 1 || checked.dependencies[1][0] != 0) { return 9; }
+if (checked.dependencies[3].len() != 0 || checked.dependencies[4].len() != 1 || checked.dependencies[4][0] != 3) { return 10; }
+if (checked.dependencies[6].len() != 0) { return 11; }
 `)
 		}
 		source.WriteString("print(checked.why); return 0; }\n")

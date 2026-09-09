@@ -16,6 +16,11 @@ It rejects reachable cycles and other physical representations, returning no
 operations or locals on rejection. Strings, wide scalars, nominal schemas,
 closures and semantic calls are not admitted by this physical boundary.
 
+Semantic record construction/projection and counted plans are now available,
+but a valid record plan is explicitly tested to fail physical lowering without
+emitting operations or locals. Record ABI and recursive child-drop support
+must be implemented before widening this boundary.
+
 SSA value IDs map to distinct physical locals, with parameter IDs occupying
 the existing ABI's parameter positions. Retained supplies precede construction
 and return. Moves transfer existing counts without runtime operations; there

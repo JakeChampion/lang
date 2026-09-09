@@ -80,7 +80,7 @@ function fixture(): ssasem.Func {
     var graph = ssa.SFunc { name: "produce", nparams: params.len(), nvals: types.len(), entry: 7,
         takes_env: false, blocks: [ssa.SBlock { id: 7, preds: [], insts: ops, term: ret(result) }] };
     if (blocks.len() > 0) { graph = ssa.SFunc { ...graph, blocks: blocks }; }
-    return ssasem.Func { graph: graph, values: types, params: params, result: row };
+    return ssasem.Func { graph: graph, values: types, params: params, result: row, records: [] };
 }
 function main(): i32 {
     var f = fixture();
@@ -157,7 +157,7 @@ func physicalRCSource(setup, modes string) string {
 	}
 	source = strings.Replace(source, `var src: string = "function produce`, `var src: string = "@noinline function produce`, 1)
 	return `import "./ssarc"; import "./ssasem"; import "./ssaunits"; import "./ssa";
-import "./typeinfo"; import "./parser"; import "./lexer"; import "./irlower"; import "./ir";
+import "./typeinfo"; import "./semrecords"; import "./parser"; import "./lexer"; import "./irlower"; import "./ir";
 import "./ircore"; import "./asmcore"; import "./asm_ir"; import "./asm_arm64_ir"; import "./wasm_ir";
 ` + source
 }
@@ -195,11 +195,19 @@ function main(): i32 {
     for ty in types {
         var g = ssa.SFunc { name: "unsupported", nparams: 1, nvals: 1, entry: 7, takes_env: false,
             blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0)], term: ret(0) }] };
-        var typed = ssasem.Func { graph: g, values: [ty], params: [ty], result: ty };
+        var typed = ssasem.Func { graph: g, values: [ty], params: [ty], result: ty, records: [] };
         var plan = ssaunits.plan(typed, [2]);
         if (!plan.ok) { eprint(plan.why); return 5; }
         if (!refused(ssarc.lower(typed, [2], plan), "unsupported physical RC value type")) { return 6; }
     }
+    var recordType: typeinfo.Type = typeinfo.TypeStruct { name: "Box", args: [] };
+    var schema = semrecords.Record { ty: recordType, fields: [semrecords.Field { name: "xs", ty: f.result }] };
+    var recordGraph = ssa.SFunc { name: "record", nparams: 1, nvals: 2, entry: 7, takes_env: false,
+        blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(ssasem.record_new(), 1, [0], 0)], term: ret(1) }] };
+    var recordFunc = ssasem.Func { graph: recordGraph, values: [f.result, recordType], params: [f.result], result: recordType, records: [schema] };
+    var recordPlan = ssaunits.plan(recordFunc, [2]);
+    if (!recordPlan.ok) { eprint(recordPlan.why); return 7; }
+    if (!refused(ssarc.lower(recordFunc, [2], recordPlan), "unsupported physical RC value type")) { return 8; }
     return 0;
 }
 `

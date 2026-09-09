@@ -49,6 +49,22 @@ func TestGrammarDerivesConstruct(t *testing.T) {
 		{"arrow lambda returning a tuple", `function main(): i32 { var f = (x: i32): (i32, i32) => g(x); return 0; }`},
 		{"arrow lambda returning a function type", `function main(): i32 { var f = (x: i32): (i32) => i32 => g(x); return 0; }`},
 		{"slice", `function main(): i32 { return xs[0:n]; }`},
+
+		// Header expressions must leave the following brace for the body,
+		// including an empty body that could otherwise parse as a struct.
+		{"if let empty body", `function f(): i32 { if let Some(_) = value {} else { return 1; } return 0; }`},
+		{"if let qualified empty body", `function f(): i32 { if let option.Some(_) = record.value {} else { return 1; } return 0; }`},
+		{"if let empty body without else", `function f(): i32 { if let Some(_) = value {} return 0; }`},
+		{"if let binary source empty body", `function f(): i32 { if let 1 = left + right {} else { return 1; } return 0; }`},
+		{"if let unary source empty body", `function f(): i32 { if let true = !flag {} return 0; }`},
+		{"if let bare branches", `function f(): i32 { if let Some(x) = value return x; else return 0; }`},
+		{"if bare branches", `function f(): i32 { if (flag) return 1; else return 0; }`},
+		{"for empty body", `function f(): i32 { for x in items {} return 0; }`},
+		{"for qualified empty body", `function f(): i32 { for x in state.items {} return 0; }`},
+		{"match empty body", `function f(): i32 { match (value) {} return 0; }`},
+		{"match qualified empty body", `function f(): i32 { match (record.value) {} return 0; }`},
+		{"match struct literal source", `function f(): i32 { match (Box {}) { _ => { return 1; } } return 0; }`},
+		{"struct literal outside header", `function f(): i32 { var value = Box {}; return 0; }`},
 		{"explicit type args", `function main(): i32 { return pick[i32](xs, 0); }`},
 		{"type args, trailing comma", `function main(): i32 { return pick[i32,](xs, 0,); }`},
 
@@ -141,6 +157,8 @@ func TestGrammarRejects(t *testing.T) {
 		{"missing semicolon", `function main(): i32 { return 0 }`},
 		{"binary operator with no right operand", `function main(): i32 { return 1 + ; }`},
 		{"struct field with no type", `struct P { x }`},
+		{"match statement missing parentheses", `function f(): i32 { match value {} return 0; }`},
+		{"match expression missing parentheses", `function f(): i32 { return match value { _ => 0 }; }`},
 
 		// An arrow lambda's parameter annotation is what tells the parser it
 		// is looking at a lambda rather than a parenthesized expression or a

@@ -4,13 +4,15 @@ import "./ssa";
 import "./ssalive";
 import "./ssadeps";
 import "./semtypes";
+import "./semrecords";
 import "./typeinfo";
 
 pub struct Func {
     graph: ssa.SFunc,
     values: typeinfo.Type[],
     params: typeinfo.Type[],
-    result: typeinfo.Type
+    result: typeinfo.Type,
+    records: semrecords.Record[]
 }
 
 pub struct Analysis {
@@ -26,6 +28,8 @@ pub function array_new(): i32 { return 0 - 1; }
 pub function tuple_new(): i32 { return 0 - 2; }
 pub function array_get(): i32 { return 0 - 3; }
 pub function tuple_get(): i32 { return 0 - 4; }
+pub function record_new(): i32 { return 0 - 5; }
+pub function record_get(): i32 { return 0 - 6; }
 
 function failed(why: string): Analysis {
     return Analysis { ok: false, why: why, dependencies: [], flow: ssalive.Flow { ok: false, why: why, live_in: [], live_out: [] } };
@@ -112,6 +116,30 @@ function tuple_projection_error(ins: ssa.SInst, f: Func, result: typeinfo.Type):
     return "tuple container type";
 }
 
+function record_construction_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
+    var at: i32 = semrecords.find(f.records, result);
+    if (at < 0) { return "missing record construction schema"; }
+    var fields: semrecords.Field[] = f.records[at].fields;
+    if (ins.args.len() != fields.len()) { return "record construction arity"; }
+    var i: i32 = 0;
+    while (i < fields.len()) {
+        if (!semtypes.equal(fields[i].ty, f.values[ins.args[i]])) { return "record field type"; }
+        i = i + 1;
+    }
+    return "";
+}
+
+function record_projection_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
+    if (ins.args.len() != 1) { return "record projection arity"; }
+    var at: i32 = semrecords.find(f.records, f.values[ins.args[0]]);
+    if (at < 0) { return "missing record projection schema"; }
+    var fields: semrecords.Field[] = f.records[at].fields;
+    if (ins.imm < 0 || ins.imm >= fields.len()) { return "record projection index"; }
+    if (ins.str != fields[ins.imm].name) { return "record projection field identity"; }
+    if (!semtypes.equal(fields[ins.imm].ty, result)) { return "record projection type"; }
+    return "";
+}
+
 function instruction_error(ins: ssa.SInst, f: Func): string {
     if (ins.result < 0) { return "semantic operation needs a result"; }
     var result: typeinfo.Type = f.values[ins.result];
@@ -123,6 +151,8 @@ function instruction_error(ins: ssa.SInst, f: Func): string {
     if (kind == tuple_new()) { return tuple_construction_error(ins, f, result); }
     if (kind == array_get()) { return array_projection_error(ins, f, result); }
     if (kind == tuple_get()) { return tuple_projection_error(ins, f, result); }
+    if (kind == record_new()) { return record_construction_error(ins, f, result); }
+    if (kind == record_get()) { return record_projection_error(ins, f, result); }
     return "unsupported semantic operation";
 }
 
@@ -134,7 +164,7 @@ function schema_error(f: Func): string {
     if (!semtypes.concrete(f.result, true)) { return "unresolved result type"; }
     for t in f.values { if (!semtypes.concrete(t, false)) { return "unresolved value type"; } }
     for t in f.params { if (!semtypes.concrete(t, false)) { return "unresolved parameter type"; } }
-    return "";
+    return semrecords.verify(f.records);
 }
 
 function terminator_error(b: ssa.SBlock, f: Func): string {
@@ -170,7 +200,7 @@ function borrow_parents(f: Func): i32[] {
     while (i < f.graph.nvals) { parents = parents.append(0 - 1); i = i + 1; }
     for b in f.graph.blocks {
         for ins in b.insts {
-            if ((ins.kind_tag == 7 || ins.kind_tag == array_get() || ins.kind_tag == tuple_get()) && semtypes.needs_anchor(f.values[ins.result])) {
+            if ((ins.kind_tag == 7 || ins.kind_tag == array_get() || ins.kind_tag == tuple_get() || ins.kind_tag == record_get()) && semtypes.needs_anchor(f.values[ins.result])) {
                 parents = parents.with(ins.result, ins.args[0]);
             }
         }
