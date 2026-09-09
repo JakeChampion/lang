@@ -8,6 +8,14 @@ import (
 	"github.com/jakechampion/lang/internal/ssa"
 )
 
+type unitObligation uint8
+
+const (
+	noUnit unitObligation = iota
+	countedUnit
+	conditionalUnit // presence of the SSA identity that keys this ledger entry
+)
+
 // planProgramUnits checks the entire experimental closed-module counted-result
 // ABI. No caller is certified merely because its callee has a typed signature.
 func planProgramUnits(p *Program) (map[*Func]*functionUnits, error) {
@@ -68,54 +76,63 @@ func verifyFunctionUnits(p *functionUnits, closed map[*Func]*functionUnits) erro
 	fail := func(format string, args ...any) error {
 		return fmt.Errorf("semir units %s: %s", f.graph.Name, fmt.Sprintf(format, args...))
 	}
-	invariant := func(b *ssa.Block) map[int32]bool {
-		state := make(map[int32]bool)
+	obligation := func(id int32) unitObligation {
+		if l.conditional[id] {
+			return conditionalUnit
+		}
+		if l.owned[id] {
+			return countedUnit
+		}
+		return noUnit
+	}
+	invariant := func(b *ssa.Block) map[int32]unitObligation {
+		state := make(map[int32]unitObligation)
 		for id := range l.live.LiveIn[b] {
-			if l.owned[id] {
-				state[id] = true
+			if unit := obligation(id); unit != noUnit {
+				state[id] = unit
 			}
 		}
 		for _, op := range b.Ops {
-			if op.Kind == ssa.OpPhi && l.owned[op.Result.ID] {
-				state[op.Result.ID] = true
+			if op.Kind == ssa.OpPhi && l.carriesUnit(op.Result.ID) {
+				state[op.Result.ID] = obligation(op.Result.ID)
 			}
 		}
 		if b == f.graph.Entry {
 			for _, v := range f.graph.Params {
 				if l.owned[v.ID] {
-					state[v.ID] = true
+					state[v.ID] = countedUnit
 				}
 			}
 		}
 		return state
 	}
-	read := func(state map[int32]bool, v ssa.Value) error {
+	read := func(state map[int32]unitObligation, v ssa.Value) error {
 		if !v.IsValid() {
 			return nil
 		}
 		if v.Func != f.graph || f.values[v.ID].typ.source == nil {
 			return fail("invalid value identity %s", v)
 		}
-		if l.owned[v.ID] && !state[v.ID] {
+		if unit := obligation(v.ID); unit != noUnit && state[v.ID] != unit {
 			return fail("read of %s without its counted unit", v)
 		}
 		for _, anchor := range l.dependencies[v.ID] {
-			if l.owned[anchor.ID] && !state[anchor.ID] {
+			if unit := obligation(anchor.ID); unit != noUnit && state[anchor.ID] != unit {
 				return fail("borrow %s outlives container anchor %s", v, anchor)
 			}
 		}
 		return nil
 	}
-	drop := func(state map[int32]bool, values []ssa.Value) error {
+	drop := func(state map[int32]unitObligation, values []ssa.Value) error {
 		for _, v := range values {
-			if v.Func != f.graph || !state[v.ID] {
+			if v.Func != f.graph || state[v.ID] == noUnit || state[v.ID] != obligation(v.ID) {
 				return fail("drop of %s without its counted unit", v)
 			}
 			delete(state, v.ID)
 		}
 		return nil
 	}
-	supply := func(state map[int32]bool, step unitStep, want []unitSupply, copied []ssa.Value) error {
+	supply := func(state map[int32]unitObligation, step unitStep, want []unitSupply, copied []ssa.Value) error {
 		if len(step.supplies) != len(want) || !slices.Equal(step.copyElements, copied) {
 			return fail("unit supplies disagree with semantic effect contract")
 		}
@@ -123,13 +140,16 @@ func verifyFunctionUnits(p *functionUnits, closed map[*Func]*functionUnits) erro
 			if got.value != want[i].value || got.slot != want[i].slot {
 				return fail("unit supply targets the wrong value or slot")
 			}
+			if got.conditional != want[i].conditional {
+				return fail("unit supply has the wrong presence condition")
+			}
 			if err := read(state, got.value); err != nil {
 				return err
 			}
 			switch got.mode {
 			case unitRetain:
 			case unitMove:
-				if !state[got.value.ID] {
+				if state[got.value.ID] == noUnit || state[got.value.ID] != obligation(got.value.ID) {
 					return fail("move of %s without its counted unit", got.value)
 				}
 			case unitImmortal:
@@ -149,7 +169,7 @@ func verifyFunctionUnits(p *functionUnits, closed map[*Func]*functionUnits) erro
 		// even when multiple slots refer to the very same SSA value.
 		for _, got := range step.supplies {
 			if got.mode == unitMove {
-				if !state[got.value.ID] {
+				if state[got.value.ID] == noUnit {
 					return fail("counted unit for %s transferred twice", got.value)
 				}
 				delete(state, got.value.ID)
@@ -214,11 +234,11 @@ func verifyFunctionUnits(p *functionUnits, closed map[*Func]*functionUnits) erro
 					}
 				}
 			}
-			if l.owned[op.Result.ID] {
-				if state[op.Result.ID] {
+			if unit := obligation(op.Result.ID); unit != noUnit {
+				if state[op.Result.ID] != noUnit {
 					return fail("result overwrites an unreleased counted unit")
 				}
-				state[op.Result.ID] = true
+				state[op.Result.ID] = unit
 			}
 			if err := drop(state, step.drops); err != nil {
 				return err
@@ -271,8 +291,12 @@ func verifyFunctionUnits(p *functionUnits, closed map[*Func]*functionUnits) erro
 				if err := read(next, op.Args[pi]); err != nil {
 					return err
 				}
-				if l.owned[op.Result.ID] {
-					want = append(want, unitSupply{value: op.Args[pi], slot: i})
+				if l.carriesUnit(op.Result.ID) {
+					required := unitSupply{value: op.Args[pi], slot: i}
+					if f.values[op.Result.ID].typ.conditionalUnit() {
+						required.conditional = true
+					}
+					want = append(want, required)
 				}
 			}
 			if err := supply(next, step, want, nil); err != nil {
@@ -285,10 +309,10 @@ func verifyFunctionUnits(p *functionUnits, closed map[*Func]*functionUnits) erro
 			// drops. Back-edge results may reuse the previous iteration's ID.
 			for _, required := range want {
 				result := succ.Ops[required.slot].Result
-				if next[result.ID] {
+				if next[result.ID] != noUnit {
 					return fail("phi overwrites an unreleased counted unit")
 				}
-				next[result.ID] = true
+				next[result.ID] = obligation(result.ID)
 			}
 			if !maps.Equal(next, invariant(succ)) {
 				return fail("edge does not establish successor's counted-unit invariant")

@@ -6,13 +6,15 @@ SSA cutover and typed-IR work. Initial integration base: `02ea66e91`.
 
 ## Current implementation checkpoint
 
-Internal scalar availability values now distinguish Absent from Present(T),
+Internal availability values now distinguish Absent from Present(T),
 with complete semantic type/phi checks, exact-state guard proofs and unboxed
 machine lanes. Direct payload aliases and presence-only states omit unused
 components. This end-to-end IR slice is documented in
-[typed availability values](TYPED-AVAILABILITY-VALUES.md). Reference-bearing
-availability, source conditional cleanup and production AST retirement remain
-unimplemented; the ordinary source ABI and ownership gates are unchanged.
+[typed availability values](TYPED-AVAILABILITY-VALUES.md). Reference-bearing states
+carry independently verified conditional payload obligations, and their borrows
+preserve state/container anchors through guarded RC lowering. Optional source
+binding promotion, correlated conditional cleanup and production AST retirement
+remain unimplemented; the ordinary source ABI and ownership gates are unchanged.
 
 Source binding resolution now emits explicit typed initialization, read and
 replacement operations. A separate, independently verified CFG pass proves
