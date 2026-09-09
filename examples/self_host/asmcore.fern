@@ -426,6 +426,7 @@ pub function sysno(t: string, name: string): string {
         if (name == "lseek") { return "8"; }
         if (name == "fstat") { return "5"; }
         if (name == "openat") { return "257"; }
+        if (name == "fcntl") { return "72"; }
         if (name == "fchmod") { return "91"; }
         if (name == "unlinkat") { return "263"; }
         if (name == "mkdirat") { return "258"; }
@@ -472,6 +473,7 @@ pub function sysno(t: string, name: string): string {
         if (name == "lseek") { return "199"; }
         if (name == "fstat") { return "339"; }
         if (name == "openat") { return "463"; }
+        if (name == "fcntl") { return "92"; }
         if (name == "fchmod") { return "124"; }
         if (name == "unlinkat") { return "472"; }
         if (name == "mkdirat") { return "475"; }
@@ -535,6 +537,7 @@ pub function sysno(t: string, name: string): string {
     if (name == "lseek") { return "62"; }
     if (name == "fstat") { return "80"; }
     if (name == "openat") { return "56"; }
+    if (name == "fcntl") { return "25"; }
     if (name == "fchmod") { return "52"; }
     if (name == "unlinkat") { return "35"; }
     if (name == "mkdirat") { return "34"; }
@@ -857,7 +860,11 @@ pub function rt_src_random_i32(t: string): string {
 // open_writer / open_appender / open_exclusive, returning
 // `Result[Reader, IoError]`.
 // NUL-terminate the path, openat(AT_FDCWD, pathz, flags, mode), then wrap:
-// Ok(fd) on success, Err(io_error) on a negative return.
+// Ok(fd) on success, Err(io_error) on a negative return. openat hands back
+// the LOWEST free descriptor, so a program exec'd with a standard stream
+// closed would be given 0, 1 or 2 and stdout() would alias the file: such a
+// descriptor is moved up with fcntl(fd, F_DUPFD, 3) and the original closed,
+// as glibc's fopen does (#8823).
 //
 // A Reader/Writer IS its fd, so the helper's own return spelling is
 // `Result[i32, IoError]`; irlower gives the call site the Reader / Writer
@@ -881,7 +888,7 @@ pub function rt_src_open_res(t: string): string {
               + "if (f == " + oflag("x86_64", "wr_creat_append") + ") { f = " + oflag(t, "wr_creat_append") + "; } "
               + "if (f == " + oflag("x86_64", "wr_creat_excl") + ") { f = " + oflag(t, "wr_creat_excl") + "; } ";
     }
-    return "function __fern_open_res(path: string, flags: i32, mode: i32): Result[i32, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var f: i32 = flags; " + xlate + "var fd: i32 = __syscall4(" + sysno(t, "openat") + ", " + at_fdcwd(t) + ", pathz, f, mode); var pathz_own: string = __raw_string(pathz, plen + 1); if (fd < 0) { return Err(__fern_io_error(0 - fd, __fern_path_copy(pathz, plen))); } return Ok(fd); }";
+    return "function __fern_open_res(path: string, flags: i32, mode: i32): Result[i32, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var f: i32 = flags; " + xlate + "var fd: i32 = __syscall4(" + sysno(t, "openat") + ", " + at_fdcwd(t) + ", pathz, f, mode); var pathz_own: string = __raw_string(pathz, plen + 1); if (fd >= 0 && fd < 3) { var moved: i32 = __syscall3(" + sysno(t, "fcntl") + ", fd, 0, 3); __syscall3(" + sysno(t, "close") + ", fd, 0, 0); fd = moved; } if (fd < 0) { return Err(__fern_io_error(0 - fd, __fern_path_copy(pathz, plen))); } return Ok(fd); }";
 }
 
 // rt_src_writer_write backs `w.write(s)` (#4372, #2649 syscall-leaf) →

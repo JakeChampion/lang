@@ -14743,6 +14743,24 @@ func (g *generator) emitReaderWriterRuntime() {
 		g.emit("mov rax, r12")
 		g.emit("test rax, rax")
 		g.emit("js .Lorw_err_" + e.sym)
+		// openat hands back the LOWEST free descriptor, so a program
+		// exec'd with a standard stream closed would get 0, 1 or 2 and
+		// stdout() would silently alias the file. Move such a descriptor
+		// up with fcntl(fd, F_DUPFD, 3) and close the original — glibc's
+		// fopen does the same (gnulib fd_safer).
+		g.emit("cmp rax, 3")
+		g.emit("jae .Lorw_hi_" + e.sym)
+		g.emit("mov edi, r12d")
+		g.emit("xor esi, esi") // F_DUPFD
+		g.emit("mov edx, 3")
+		g.emitSyscall(72) // fcntl
+		g.emit("mov r13, rax")
+		g.emit("mov edi, r12d")
+		g.emitSyscall(3) // close the low descriptor either way
+		g.emit("mov rax, r13")
+		g.emit("test rax, rax")
+		g.emit("js .Lorw_err_" + e.sym)
+		g.label(".Lorw_hi_" + e.sym)
 		// Success: alloc handle, store fd, wrap in Ok box.
 		g.emit("mov edi, eax")
 		g.emit("call __fern_make_handle")

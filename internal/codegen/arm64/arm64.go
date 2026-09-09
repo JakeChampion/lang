@@ -154,6 +154,9 @@ var linuxDarwinSysno = map[string][2]int{
 	"accept":  {sysAccept, darAccept},
 	"connect": {sysConnect, darConnect},
 	"openat":  {sysOpenat, darOpenat},
+	// fcntl(2) — Linux asm-generic 25, Darwin BSD 92. Backs the open
+	// helpers' F_DUPFD (0 on both) move off descriptors 0/1/2.
+	"fcntl": {25, 92},
 	// unlinkat(2) / mkdirat(2): identical arg shapes on both
 	// platforms (Darwin BSD 472 / 475). Back __fern_remove_file /
 	// __fern_remove_dir_all / __fern_temp_dir.
@@ -11283,6 +11286,21 @@ func (g *generator) emitReaderWriterRuntime() {
 			g.emit("mov w3, #%d", e.mode)
 			g.syscall("openat")
 			g.emit("tbnz x0, #63, %s", ".Lorw2w_err_"+e.sym)
+			// A descriptor below 3 is a standard stream the program was
+			// exec'd without: move it up (fcntl F_DUPFD 3) and close the
+			// original, so stdout() never aliases the file (#8823).
+			g.emit("cmp x0, #3")
+			g.emit("b.hs %s", ".Lorw2w_hi_"+e.sym)
+			g.emit("mov x21, x0") // the low descriptor
+			g.emit("mov x1, #0")  // F_DUPFD
+			g.emit("mov x2, #3")
+			g.syscall("fcntl")
+			g.emit("str x0, [sp, #-16]!")
+			g.emit("mov x0, x21")
+			g.syscall("close")
+			g.emit("ldr x0, [sp], #16")
+			g.emit("tbnz x0, #63, %s", ".Lorw2w_err_"+e.sym)
+			g.label(".Lorw2w_hi_" + e.sym)
 			g.emit("mov w0, w0")
 			g.emit("bl __fern_make_handle")
 			g.emit("mov x21, x0") // handle ptr
@@ -11321,6 +11339,19 @@ func (g *generator) emitReaderWriterRuntime() {
 		g.emit("mov w3, #%d", e.mode)
 		g.syscall("openat")
 		g.emit("tbnz x0, #63, %s", ".Lorw_err_"+e.sym)
+		// Same move off 0/1/2 as the two-word form above (#8823).
+		g.emit("cmp x0, #3")
+		g.emit("b.hs %s", ".Lorw_hi_"+e.sym)
+		g.emit("mov x20, x0") // the low descriptor
+		g.emit("mov x1, #0")  // F_DUPFD
+		g.emit("mov x2, #3")
+		g.syscall("fcntl")
+		g.emit("str x0, [sp, #-16]!")
+		g.emit("mov x0, x20")
+		g.syscall("close")
+		g.emit("ldr x0, [sp], #16")
+		g.emit("tbnz x0, #63, %s", ".Lorw_err_"+e.sym)
+		g.label(".Lorw_hi_" + e.sym)
 		// Success: alloc handle struct, store fd, wrap in Ok.
 		g.emit("mov w20, w0") // fd
 		g.emit("mov w0, w20")
