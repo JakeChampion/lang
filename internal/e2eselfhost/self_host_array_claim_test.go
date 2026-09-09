@@ -118,7 +118,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, true})
-	return cases
+	return append(cases, enumContractRuntimeCases()...)
 }
 
 func TestSelfHostArrayClaimContracts(t *testing.T) {
