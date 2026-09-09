@@ -204,9 +204,9 @@ allocation. No size or performance baseline changes.
 ## Remaining connection to cleanup
 
 Conditional payload units now cover projections, snapshots, replacement and
-allocator pressure in the typed ARM64 pilot. Binding promotion must next preserve
-optional state across partial initialization,
-joins and lifetime resets. Registration must keep action identity and capture
+allocator pressure in the typed ARM64 pilot. Internal binding snapshots now
+preserve optional state across partial initialization, joins and lifetime resets;
+see [typed binding places](TYPED-BINDING-PLACES.md). Registration must next keep action identity and capture
 availability correlated, and replay must test that same action before reading
 late binding values. Source activation remains blocked until that full path is
 verified. The definite-initialization fast path remains useful throughout.
