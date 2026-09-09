@@ -103,20 +103,11 @@ function main(): i32 {
 }
 `
 
-// THE HAZARD THE BORROW VERDICT EXISTS TO REFUSE. The callee's arm binds the
-// payload and RETURNS it, so the caller still holds a live buffer where the drop
-// would land. `param_match_binding_escapes` is what sees that — the scrutinee-is-a-
-// borrow reading alone cannot, because `b` is never mentioned outside the match, so
-// no walk over `b` can observe the payload leaving.
-//
-// THE BYTE COUNT IS THE DETECTOR HERE, not the exit code, and that was measured
-// rather than assumed. Deleting `param_match_binding_escapes` takes this row from
-// 401 frees to 800 and from 16000 live bytes to 40 — the enum gets released under
-// its other holder — while the exit stays 5. Adding a same-shaped churn loop
-// between the release and the read did NOT recycle the buffer into the answer
-// either (30 both ways), so unlike #6467's string case there is no spelling of this
-// shape where the exit moves. The exact stranded count below is what kills the
-// mutation: 400 at 100 rounds against the mutation's 1.
+// A returned projection now acquires a separate count. The typed callee
+// contract keeps its enum parameter borrowed, allowing the caller to release
+// the parent and its field unit while the returned child remains live.
+// Both round counts require exact heap balance. Separate lifetime regressions
+// remove the return retain and require a post-frame underflow failure.
 const rcenumPayloadEscapesSrc = `import "core/int";
 enum Box { Val(i32[]), Empty }
 function take(b: Box): i32[] {
@@ -218,19 +209,13 @@ func TestSelfHostRcEnumBorrowHelperX86_64(t *testing.T) {
 		})
 	}
 
-	// Refused, so the correct outcome is one stranded enum chain per iteration —
-	// 4 inner rounds x N outer. An EXACT count, not a bound: deleting the
-	// binding-escape gate leaves exactly 1, which any "some leak" assertion would
-	// have accepted.
+	// The typed contract proves that take borrows the enum root and returns a
+	// separately counted array. Both parent and child must now be reclaimed.
 	t.Run("callee_returns_the_payload", func(t *testing.T) {
-		a1, f1, _ := counts(t, "callee_returns_the_payload", rcenumPayloadEscapesSrc, "100")
-		a2, f2, _ := counts(t, "callee_returns_the_payload", rcenumPayloadEscapesSrc, "200")
-		if a1-f1 != 400 || a2-f2 != 800 {
-			t.Errorf("callee_returns_the_payload: unfreed %d at 100 rounds and %d at 200, "+
-				"want 400 and 800. The callee's arm returns the payload, so the param is not "+
-				"borrowable and the enum must be stranded rather than released; without the "+
-				"binding-escape gate this reads 1 and 1 — the buffer freed under its other "+
-				"holder (allocs=%d, frees=%d)", a1-f1, a2-f2, a1, f1)
+		a1, f1, l1 := counts(t, "callee_returns_the_payload", rcenumPayloadEscapesSrc, "100")
+		a2, f2, l2 := counts(t, "callee_returns_the_payload", rcenumPayloadEscapesSrc, "200")
+		if a1 != f1 || a2 != f2 || l1 != 0 || l2 != 0 {
+			t.Errorf("counted payload return must balance: 100 rounds %d/%d live=%d; 200 rounds %d/%d live=%d", a1, f1, l1, a2, f2, l2)
 		}
 	})
 }
