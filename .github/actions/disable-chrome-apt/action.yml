@@ -1,0 +1,13 @@
+name: Disable unused Chrome apt source
+description: >
+  Remove the runner image's Google Chrome apt feed before installing Ubuntu
+  packages. Playwright downloads its own Chromium; this feed supplies none of
+  the compiler, Valgrind or browser system dependencies used by these jobs.
+runs:
+  using: composite
+  steps:
+    - name: Remove the unused runner Chrome repository
+      shell: bash
+      # A Chrome Packages/InRelease hash mismatch must not prevent unrelated
+      # Ubuntu packages from being installed. Apt's verification stays enabled.
+      run: sudo rm -f /etc/apt/sources.list.d/google-chrome.list
