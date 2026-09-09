@@ -896,8 +896,8 @@ function main(): i32 {
 	//
 	// The two legs have to AGREE; which exit code they agree on is the second
 	// assertion. Both rejections are now the checker's own diagnostic — E001
-	// for the undefined name (since #8461 emptied all but two entries out of
-	// is_partial_checker_gap_code, so its verdict reaches the build) and E043
+	// for the undefined name (since #8461 made every coded diagnostic gate the
+	// build, so its verdict reaches it) and E043
 	// for the unknown field (since #7380) — rather than the ineligibility
 	// refusal that named neither the call nor the mistake.
 	t.Run("opt-does-not-widen-what-compiles", func(t *testing.T) {

@@ -1425,18 +1425,7 @@ function bind_tuple_destr_names(out: Scope, names: string[], whole: typeinfo.Typ
     if (i < elems.len()) { et = elems[i]; }
     if (util.is_tuple_type_name(nm)) {
       out = bind_tuple_destr_names(out, split_pattern_names(slice_unchecked(nm, 1, nm.len() - 1) + ""), et);
-    } else if (nm.len() > 0 && nm != "_") {
-      // `_` is the discard: it introduces NO name, so reading it back is an
-      // undefined identifier rather than a way to recover the element the
-      // binding said to throw away. Binding it made `return _` compile and
-      // hand back the discarded value.
-      //
-      // Guarded HERE and not in `bind` itself, which would cover every binder
-      // at once: a uniform refusal also unmasks a live bug in the nested
-      // for-loop pattern `for ((a, b), s) in xs`, which the self-host already
-      // mis-binds — it reports E001 for both `a` and `b` where native accepts
-      // the program. The remaining binders stay as they are until that is
-      // fixed.
+    } else if (nm.len() > 0) {
       out = out.bind(nm, et);
     }
     i = i + 1;
@@ -9998,30 +9987,14 @@ function stmts_assign_diags(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]): ut
 // loose `var x = add(1, 2);` both resolve `add`.
 pub struct ModuleTypes { sigs: FuncSig[], top_tys: typeinfo.Type[], all_well_typed: boolean, diags: util.Diag[] }
 
-// is_partial_checker_gap_code reports whether `code` is one this checker still
-// raises on programs the native compiler accepts. The port is partial (#4346):
-// where it cannot model a type it guesses, and these are the rules measured to
-// guess wrong. Each is a bug, not a permanent carve-out, and every entry needs
-// an issue that owns closing it — a code exempted with nothing tracking it is
-// how `xs == ys` came to compile to a pointer compare (#8461). The corpora and
-// per-code counts behind the list are in docs/SELFHOST-CHECKER-PORT.md;
-// re-measure before adding or removing one.
-//
-// E013 / E018 (#8852): the self-host parser never renames `_`, so a repeated
-// discard — `function f(_: i32, _: string)`, `var _ = 1; var _ = 2;` — reads
-// as a redeclared name. Native renames each occurrence (`discardName`); the
-// mirror its comment claims in examples/self_host/parser.fern does not exist.
-function is_partial_checker_gap_code(code: string): boolean {
-  return code == "E013" || code == "E018";
-}
-
 // is_build_gate_code reports whether `code` must reject a program before
-// codegen. A coded diagnostic rejects unless it is a known gap above, so a rule
-// ported for parity gates the compile path the day it lands instead of being
-// reachable only through `-check` (#6961).
+// codegen: every coded diagnostic does, so a rule ported for parity gates the
+// compile path the day it lands instead of being reachable only through
+// `-check` (#6961). A code this checker raises on a program native accepts is
+// a bug to fix, never a code to exempt here — an exemption list is how
+// `xs == ys` came to compile to a pointer compare (#8461).
 pub function is_build_gate_code(code: string): boolean {
-  if (!util.is_diagnostic_code(code)) { return false; }
-  return !is_partial_checker_gap_code(code);
+  return util.is_diagnostic_code(code);
 }
 
 // filter_build_gate keeps the diagnostics the compile path enforces.
