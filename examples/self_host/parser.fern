@@ -8727,13 +8727,6 @@ pub function top_arrow_at(s: string): i32 {
 pub function parse_type_ref(sin: string): TypeRef {
     var s: string = sin;
     var depth: i32 = 0;
-    // Peel trailing array suffixes. A literal empty "[]" at the end is
-    // unambiguously an array marker: a generic's brackets always enclose
-    // content ("Map[…]") and a tuple ends with ")", so neither ends in "[]".
-    while (s.len() >= 2 && s[s.len() - 2] == b'[' && s[s.len() - 1] == b']') {
-        depth = depth + 1;
-        s = slice_unchecked(s, 0, s.len() - 2) + "";
-    }
     // Function "(P, Q) => R": base "", args are the parameters with the RESULT
     // last. Checked before the tuple branch because the parameter list opens
     // with "(" too — `(i32) => i32` would otherwise be read as a malformed
@@ -8756,6 +8749,13 @@ pub function parse_type_ref(sin: string): TypeRef {
             fargs = fargs.append(parse_type_ref(rhs));
             return TypeRef { base: "", args: fargs, array_depth: depth, is_tuple: false, is_fn: true };
         }
+    }
+    // Only peel array suffixes after ruling out an outer arrow. In
+    // `(T) => U[]` the suffix belongs to the result; in `((T) => U)[]`
+    // it belongs to the grouped function value.
+    while (s.len() >= 2 && s[s.len() - 2] == b'[' && s[s.len() - 1] == b']') {
+        depth = depth + 1;
+        s = slice_unchecked(s, 0, s.len() - 2) + "";
     }
     // Tuple "(…)": base "", args are the (recursively parsed) elements.
     if (s.len() >= 2 && s[0] == b'(' && s[s.len() - 1] == b')') {
@@ -8784,6 +8784,15 @@ pub function parse_type_ref(sin: string): TypeRef {
     return TypeRef { base: s, args: [], array_depth: depth, is_tuple: false, is_fn: false };
 }
 
+// Strip only grouping parentheses, never an array or a real tuple.
+pub function ref_ungroup(r: TypeRef): TypeRef {
+    var t: TypeRef = r;
+    while (t.array_depth == 0 && t.is_tuple && t.args.len() == 1) {
+        t = t.args[0];
+    }
+    return t;
+}
+
 // ref_is_fn_value reports whether `r` names a FUNCTION value: the arrow form
 // itself, or the parenthesised grouping of one, which parse_type_ref models as
 // a one-element tuple (Fern has no singleton tuples, so there is nothing else
@@ -8795,17 +8804,15 @@ pub function parse_type_ref(sin: string): TypeRef {
 //
 // An array of functions is an ARRAY, not a function, so a suffix disqualifies.
 pub function ref_is_fn_value(r: TypeRef): boolean {
-    if (r.array_depth != 0) { return false; }
-    if (r.is_fn) { return true; }
-    return r.is_tuple && r.args.len() == 1 && r.args[0].is_fn;
+    var f: TypeRef = ref_ungroup(r);
+    return f.array_depth == 0 && f.is_fn;
 }
 
 // ref_fn_result returns the RESULT type of a fn `r` — parse_type_ref puts the
 // parameters and the result in `args` with the result last. Only meaningful
 // when ref_is_fn_value(r); the caller checks that first.
 pub function ref_fn_result(r: TypeRef): TypeRef {
-    var f: TypeRef = r;
-    if (!f.is_fn) { f = f.args[0]; }
+    var f: TypeRef = ref_ungroup(r);
     return f.args[f.args.len() - 1];
 }
 
@@ -8816,8 +8823,7 @@ pub function ref_fn_result(r: TypeRef): TypeRef {
 // zero-parameter fn type, which every consumer reads as "no parameters
 // recorded". Only meaningful when ref_is_fn_value(r); the caller checks first.
 pub function ref_fn_param_spellings(r: TypeRef): string {
-    var f: TypeRef = r;
-    if (!f.is_fn) { f = f.args[0]; }
+    var f: TypeRef = ref_ungroup(r);
     var out: string = "";
     var i: i32 = 0;
     while (i + 1 < f.args.len()) {

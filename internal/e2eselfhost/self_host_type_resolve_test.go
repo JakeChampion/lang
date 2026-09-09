@@ -82,7 +82,14 @@ func TestSelfHostTypeResolve(t *testing.T) {
 		"Foo[T] => struct:Foo\n" +
 		"Bogus[] => array<unknown(unrecognised type name: Bogus)>\n" +
 		"mod.Thing => unknown(unrecognised type name: mod.Thing)\n" +
-		" => unknown(unrecognised type name: )\n"
+		" => unknown(unrecognised type name: )\n" +
+		"callable () => i32[] => fn<array<i32>>\n" +
+		"callable ((i32) => string[][]) => fn<array<array<string>>>\n" +
+		"callable ((i32) => string)[] => array<fn<string>>\n" +
+		"callable ((((i32) => string[][]))) => fn<array<array<string>>>\n" +
+		"callable () => () => i32[] => fn<fn<array<i32>>>\n" +
+		"callable () => (() => i32[])[] => fn<array<fn<array<i32>>>>\n" +
+		"callable fn => fn<unknown(fn result (the coarse tag records none))>\n"
 
 	cmd := runX86_64Bin(runner, bin)
 	out, _ := cmd.Output()

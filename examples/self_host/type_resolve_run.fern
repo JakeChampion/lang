@@ -19,6 +19,17 @@ import "./checker";
 import "./typeinfo";
 import "./util";
 
+// type_debug intentionally coarsens a callable to "fn". The declaration
+// boundary test must also inspect its actual result and nested array types.
+function callable_shape(t: typeinfo.Type): string {
+    match (t) {
+        typeinfo.TypeFunc(f) => { return "fn<" + callable_shape(f.ret_type) + ">"; },
+        typeinfo.TypeArray(a) => { return "array<" + callable_shape(a.elem) + ">"; },
+        _ => { return checker.type_debug(t); }
+    }
+    return "";
+}
+
 function main(): i32 {
     // Fixtures: two struct names, one union alias.
     var structs: checker.StructSig[] = [
@@ -46,6 +57,15 @@ function main(): i32 {
         var t: typeinfo.Type = checker.type_from_name_with_structs_unions(corpus[i], structs, unions);
         out = out + corpus[i] + " => " + checker.type_debug(t) + "\n";
         i = i + 1;
+    }
+    var callables: string[] = [
+        "() => i32[]", "((i32) => string[][])", "((i32) => string)[]",
+        "((((i32) => string[][])))", "() => () => i32[]",
+        "() => (() => i32[])[]", "fn"
+    ];
+    for spelling in callables {
+        var resolved: typeinfo.Type = checker.type_from_name_with_structs_unions(spelling, structs, unions);
+        out = out + "callable " + spelling + " => " + callable_shape(resolved) + "\n";
     }
     write(out);
     return 0;
