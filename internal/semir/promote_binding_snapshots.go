@@ -5,7 +5,7 @@ import "github.com/jakechampion/lang/internal/ssa"
 // promoteBindingSnapshots runs only for explicitly observed places, after
 // semantic and initialization verification. Ordinary reads keep their separate
 // must-initialized promotion path. No AST or inferred source-name fact is used.
-func promoteBindingSnapshots(f *Func, needed map[BindingID]bool, ends map[*ssa.Block][]uint64) {
+func promoteBindingSnapshots(f *Func, needed map[BindingID]bool, ends map[*ssa.Block][]uint64) map[int32]ssa.Value {
 	type key struct {
 		block *ssa.Block
 		id    BindingID
@@ -156,4 +156,5 @@ func promoteBindingSnapshots(f *Func, needed map[BindingID]bool, ends map[*ssa.B
 		block.Term.Value = rewrite(block.Term.Value)
 		block.Term.Cond = rewrite(block.Term.Cond)
 	}
+	return replacements
 }

@@ -29,6 +29,9 @@ func verifyWithFacts(f *Func, facts *verificationFacts) error {
 	if f.unexpandedCleanups && !f.unpromotedBindings {
 		return fmt.Errorf("semir %s: pending cleanup actions require binding places", g.Name)
 	}
+	if f.unpromotedBindings && f.bindingStates != nil {
+		return fmt.Errorf("semir %s: promoted binding records before promotion", g.Name)
+	}
 	fail := func(format string, args ...any) error {
 		return fmt.Errorf("semir %s: %s", g.Name, fmt.Sprintf(format, args...))
 	}
@@ -205,6 +208,10 @@ func verifyWithFacts(f *Func, facts *verificationFacts) error {
 			deadBlocks = &facts.deadBlocks
 		}
 		if err := verifyBindingInitialization(f, conditional == nil, deadBlocks); err != nil {
+			return err
+		}
+	} else if f.bindingStates != nil {
+		if err := verifyBindingStates(f, dom); err != nil {
 			return err
 		}
 	}

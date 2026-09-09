@@ -54,9 +54,12 @@ type Func struct {
 	effectPositions map[*ssa.Op]ast.Position
 	modes           []ParamMode
 	bindings        []binding
-	cleanups        []*cleanupRegion
-	boundaries      []*cleanupBoundary
-	cleanupExits    []*cleanupExit
+	// Typed writes and observations survive optional-place promotion. These
+	// are semantic events, not cached verification results or runtime uses.
+	bindingStates *bindingStateContract
+	cleanups      []*cleanupRegion
+	boundaries    []*cleanupBoundary
+	cleanupExits  []*cleanupExit
 	// Only source construction and verified binding promotion admit place ops.
 	unpromotedBindings bool
 	// Replay sites contain semantic action invocations until IR expansion.

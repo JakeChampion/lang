@@ -102,6 +102,9 @@ func TestARM64TypedGuardedBindingEpochs(t *testing.T) {
 					if err := promoteBindings(f); err != nil {
 						t.Fatal(err)
 					}
+					if err := finishFlow(f); err != nil {
+						t.Fatal(err)
+					}
 					out := lowerSemanticARM64(t, f)
 					b := harnessBuilder(out)
 					result := b.call(out.Symbols["pilot"], 64, true, b.constant(rounds))

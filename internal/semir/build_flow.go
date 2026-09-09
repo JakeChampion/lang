@@ -118,7 +118,13 @@ func finishFlow(f *Func) error {
 	// No width-dependent folding or low-level ownership analysis runs here.
 	for {
 		before := len(f.values)
-		ssa.TrivialPhis(f.graph)
+		if f.bindingStates == nil {
+			ssa.TrivialPhis(f.graph)
+		} else {
+			aliases := make(ssa.ValueAliases)
+			ssa.TrivialPhisWithAliases(f.graph, aliases)
+			f.bindingStates.rewrite(aliases)
+		}
 		ssa.DCE(f.graph)
 		live := make(map[int32]valueInfo)
 		for _, param := range f.graph.Params {
@@ -132,6 +138,12 @@ func finishFlow(f *Func) error {
 			}
 		}
 		f.values = live
+		if f.bindingStates != nil {
+			f.bindingStates.prune(live)
+			if len(f.bindingStates.observations) == 0 {
+				f.bindingStates = nil
+			}
+		}
 		if before == len(live) {
 			return Verify(f)
 		}
