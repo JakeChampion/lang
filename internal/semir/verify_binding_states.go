@@ -53,7 +53,7 @@ func verifyBindingStates(f *Func, dom *ssa.DomTree) error {
 	ends := bindingLifetimeEnds(f)
 	seen := make(map[obligation]bool)
 	var queue []obligation
-	for _, observation := range c.observations {
+	check := func(observation bindingObservation) error {
 		fail := func(message string) error {
 			return fmt.Errorf("semir %s binding %d at %d:%d: promoted snapshot %s", f.graph.Name, observation.id, observation.pos.Line, observation.pos.Col, message)
 		}
@@ -76,7 +76,7 @@ func verifyBindingStates(f *Func, dom *ssa.DomTree) error {
 			if write.block != observation.block || write.id != observation.id || !present(observation.state, write) {
 				return fail("does not preserve its local write payload")
 			}
-			continue
+			return nil
 		}
 		if observation.local != -1 {
 			return fail("has an invalid incoming-state position")
@@ -114,6 +114,32 @@ func verifyBindingStates(f *Func, dom *ssa.DomTree) error {
 				} else {
 					queue = append(queue, obligation{point{pred, at.id}, value})
 				}
+			}
+		}
+		return nil
+	}
+	if len(c.observations) == 1 {
+		return check(c.observations[0])
+	}
+	// Share obligations across observations of one binding, but release that
+	// scratch state before the next binding. A global map unnecessarily retains
+	// the Cartesian product of all places and their traversed value/CFG states.
+	// Linked indices preserve first-occurrence order without copying records or
+	// requiring the semantic event stream itself to be sorted.
+	first := make(map[BindingID]int)
+	next := make([]int, len(c.observations))
+	for i := len(c.observations) - 1; i >= 0; i-- {
+		id := c.observations[i].id
+		next[i], first[id] = first[id], i+1
+	}
+	for i, observation := range c.observations {
+		if first[observation.id] != i+1 {
+			continue
+		}
+		clear(seen)
+		for at := i + 1; at != 0; at = next[at-1] {
+			if err := check(c.observations[at-1]); err != nil {
+				return err
 			}
 		}
 	}

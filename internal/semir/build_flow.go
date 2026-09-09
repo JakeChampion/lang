@@ -123,7 +123,7 @@ func finishFlow(f *Func) error {
 		} else {
 			aliases := make(ssa.ValueAliases)
 			ssa.TrivialPhisWithAliases(f.graph, aliases)
-			f.bindingStates.rewrite(aliases)
+			f.rewriteBindingAliases(aliases)
 		}
 		ssa.DCE(f.graph)
 		live := make(map[int32]valueInfo)

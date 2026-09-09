@@ -66,13 +66,15 @@ func TestCleanupAdmissionUsesCompleteTypedCFG(t *testing.T) {
 			t.Fatal("source producer must finish the graph before registration admission")
 		}
 		pos := f.cleanups[0].pos
-		want := fmt.Sprintf("at %d:%d: conditional cleanup registration", pos.Line, pos.Col)
-		before := f.graph.String()
-		if err := expandCleanups(f); err == nil || !strings.Contains(err.Error(), want) {
-			t.Fatalf("complete-CFG admission lost its source diagnostic: %v", err)
+		for _, phase := range []func(*Func) error{expandCleanups, Verify, promoteBindings, finishFlow} {
+			if err := phase(f); err != nil {
+				t.Fatal(err)
+			}
 		}
-		if f.graph.String() != before || !f.unexpandedCleanups {
-			t.Fatal("unsupported conditional action was expanded")
+		f.cleanups[0].guarded.activation = 0
+		want := fmt.Sprintf("at %d:%d: guarded replay", pos.Line, pos.Col)
+		if err := Verify(f); err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("complete-CFG admission lost its source diagnostic: %v", err)
 		}
 	}
 }

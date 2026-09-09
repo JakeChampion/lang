@@ -64,6 +64,8 @@ type Func struct {
 	unpromotedBindings bool
 	// Replay sites contain semantic action invocations until IR expansion.
 	unexpandedCleanups bool
+	// Expanded conditional cleanup uses guarded dispatch records for all actions.
+	guardedCleanups bool
 }
 
 func newFunc(name string, result ast.Type) *Func {

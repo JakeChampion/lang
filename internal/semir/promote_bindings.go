@@ -55,7 +55,7 @@ func promoteBindings(f *Func) error {
 	if len(snapshots) != 0 {
 		f.bindingStates = recordBindingStates(f, snapshots)
 		aliases := promoteBindingSnapshots(f, snapshots, ends)
-		f.bindingStates.rewrite(aliases)
+		f.rewriteBindingAliases(aliases)
 	}
 	var readEntry func(*ssa.Block, BindingID) (ssa.Value, error)
 	readEnd := func(block *ssa.Block, id BindingID) (ssa.Value, error) {
@@ -160,7 +160,7 @@ func promoteBindings(f *Func) error {
 		block.Term.Value = rewrite(block.Term.Value)
 		block.Term.Cond = rewrite(block.Term.Cond)
 	}
-	f.bindingStates.rewrite(replacements)
+	f.rewriteBindingAliases(replacements)
 	f.unpromotedBindings = false
 	return nil
 }

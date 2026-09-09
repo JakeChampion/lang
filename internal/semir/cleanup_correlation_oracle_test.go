@@ -120,6 +120,10 @@ func TestCleanupCorrelationMatchesFullStackOracle(t *testing.T) {
 			}
 			for shape := 0; shape < 8; shape++ {
 				f := newFunc("oracle", ast.VoidType{})
+				// This corpus supplies initializer instructions, not promoted
+				// semantic records. Keep that phase and the payload explicit.
+				f.unpromotedBindings = true
+				payload := f.addParam(ast.BoolType{}, ParamValue, ast.Position{})
 				for range 8 {
 					f.graph.NewBlock()
 				}
@@ -140,7 +144,7 @@ func TestCleanupCorrelationMatchesFullStackOracle(t *testing.T) {
 					if event < 3 {
 						flow.points[block].registers = []*cleanupRegion{f.cleanups[event]}
 						if captures && event == shape%3 {
-							block.Ops = append(block.Ops, &ssa.Op{Kind: ssa.OpBindingInit, Imm: 1})
+							block.Ops = append(block.Ops, &ssa.Op{Kind: ssa.OpBindingInit, Imm: 1, Args: []ssa.Value{payload}})
 						}
 					} else {
 						flow.points[block].replay = f.cleanups[event-3]

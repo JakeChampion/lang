@@ -8,6 +8,9 @@ import (
 )
 
 func verifyCleanups(f *Func, dom *ssa.DomTree) (*cleanupRegion, error) {
+	if f.guardedCleanups && (f.unexpandedCleanups || len(f.cleanups) == 0) {
+		return nil, fmt.Errorf("semir %s cleanup: invalid guarded expansion phase", f.graph.Name)
+	}
 	if len(f.cleanups) == 0 && len(f.boundaries) == 0 && len(f.cleanupExits) == 0 {
 		return nil, nil
 	}
@@ -15,6 +18,7 @@ func verifyCleanups(f *Func, dom *ssa.DomTree) (*cleanupRegion, error) {
 		return nil, fmt.Errorf("semir %s cleanup: %s", f.graph.Name, message)
 	}
 	var conditional *cleanupRegion
+	hasGuarded := false
 	boundaryFlow, err := verifyCleanupBoundaries(f, dom)
 	if err != nil {
 		return nil, err
@@ -26,6 +30,13 @@ func verifyCleanups(f *Func, dom *ssa.DomTree) (*cleanupRegion, error) {
 			return fail("invalid action, owner or registration identity")
 		}
 		seen[r] = true
+		if (r.guarded != nil) != f.guardedCleanups {
+			return fail("action does not match its guarded expansion phase")
+		}
+		if r.guarded != nil {
+			hasGuarded = true
+			conditional = r
+		}
 		if err := Verify(r.body); err != nil {
 			return nil, err
 		}
@@ -66,7 +77,7 @@ func verifyCleanups(f *Func, dom *ssa.DomTree) (*cleanupRegion, error) {
 				return fail("replay lacks a dominating registration or has invalid identity")
 			}
 			if !dom.Dominates(r.register, replay) {
-				if f.unexpandedCleanups {
+				if f.unexpandedCleanups || r.guarded != nil {
 					if conditional == nil {
 						conditional = r
 					}
@@ -82,6 +93,11 @@ func verifyCleanups(f *Func, dom *ssa.DomTree) (*cleanupRegion, error) {
 	}
 	if err := indexCleanupActions(f, boundaryFlow); err != nil {
 		return nil, err
+	}
+	if hasGuarded {
+		if err := verifyGuardedCleanups(f, boundaryFlow, dom); err != nil {
+			return nil, err
+		}
 	}
 	if conditional != nil {
 		return conditional, verifyConditionalCleanupFlow(f, boundaryFlow)
