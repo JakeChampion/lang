@@ -663,9 +663,9 @@ function rewrite_params(params: ast.ParamDecl[], ctx: RewriteCtx): ast.ParamDecl
             has_default: params[i].has_default,
             default_value: params[i].default_value,
             ret_arr: params[i].ret_arr,
-            fn_ret: params[i].fn_ret,
+            fn_ret: rewrite_type_name(params[i].fn_ret, ctx),
             fn_param_dyn: params[i].fn_param_dyn,
-            fn_param_types: params[i].fn_param_types
+            fn_param_types: rewrite_type_name_list(params[i].fn_param_types, ctx)
         });
         i = i + 1;
     }

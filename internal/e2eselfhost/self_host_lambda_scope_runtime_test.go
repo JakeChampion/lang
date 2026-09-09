@@ -12,10 +12,25 @@ func TestSelfHostLambdaScopeRuntime(t *testing.T) {
 	dir := writeSelfHostAsmProject(t)
 	copySelfHostDriver(t, dir, "fern.fern")
 	compiler := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
-	interp := buildLangBinForInterp(t)
 	stdlib, err := filepath.Abs("../../internal/stdlib")
 	if err != nil {
 		t.Fatal(err)
+	}
+	const captureModule = `pub struct Node { value: i32 }
+function apply(node: Node, callback: (Node) => Node): Node { return callback(node); }
+pub function run(callback: (Node) => Node): i32 {
+    var node = apply(Node { value: 7 }, (n: Node): Node => callback(n));
+    return node.value;
+}`
+	writeProject := func(src string) string {
+		t.Helper()
+		proj := t.TempDir()
+		for name, text := range map[string]string{"main.fern": src, "capture_api.fern": captureModule} {
+			if err := os.WriteFile(filepath.Join(proj, name), []byte(text), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return filepath.Join(proj, "main.fern")
 	}
 	cases := []struct{ name, src string }{
 		{"initializer-reads-outer", `function main(): i32 {
@@ -42,9 +57,11 @@ function main(): i32 {
 var answer: i32 = 0;
 match (E.Full(7)) { Full(n) when n == 7 => { var call = (): i32 => n; var n = 99; answer = call(); }, _ => { return 98; } }
 return answer; }`},
+		{"imported-callback-capture", `import "./capture_api";
+function main(): i32 { return capture_api.run((n: capture_api.Node): capture_api.Node => n); }`},
 	}
 	for _, tc := range cases {
-		if got := interpExit(t, interp, tc.src); got != 7 {
+		if _, got := runFixtureInterp(t, writeProject(tc.src), ""); got != 7 {
 			t.Fatalf("%s: interpreter = %d, want independently pinned 7", tc.name, got)
 		}
 	}
@@ -52,11 +69,8 @@ return answer; }`},
 		t.Run(target, func(t *testing.T) {
 			for _, tc := range cases {
 				t.Run(tc.name, func(t *testing.T) {
-					proj := t.TempDir()
-					main := filepath.Join(proj, "main.fern")
-					if err := os.WriteFile(main, []byte(tc.src), 0o644); err != nil {
-						t.Fatal(err)
-					}
+					main := writeProject(tc.src)
+					proj := filepath.Dir(main)
 					out := filepath.Join(proj, "out.asm")
 					cmd := runX86_64Bin(runner, compiler, "-target", target, "-emit", "asm", main, stdlib, "-o", out)
 					cmd.Env = append(os.Environ(), "FERN_STRICT_IR=1")
