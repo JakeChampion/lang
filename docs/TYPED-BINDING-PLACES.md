@@ -152,6 +152,28 @@ verified lifetime ends, with allocator pressure at 1 and 64 rounds.
 
 ## Snapshot-promotion costs
 
+Review follow-up: rejecting snapshots *inside* unreachable blocks alone does not
+make predecessor recursion safe. A reachable read can have an incoming edge from
+an unreachable single-predecessor cycle. Both snapshot and ordinary promotion now
+prune dead CFG predecessors before following reaching definitions. The existing
+initialization verifier reports dead blocks from its RPO outputs when promotion
+requests them, without another reachability walk or allocation on all-reachable
+graphs. SSA's existing pruning preserves live phi slots; semantic metadata for
+removed operations is deleted, and unused optional iteration exits become nil.
+Tests cover 1-, 2- and 8-block dead cycles feeding live snapshots/reads, verified
+physical lowering, live phi-slot preservation and unused iteration exits. A
+snapshot located inside dead code still rejects before mutation. This fixes a
+verified-input recursion hazard; it does not relax initialization requirements.
+
+On the same Darwin ARM64 build configuration, this correction adds 144 compiler
+file bytes and 640 Mach-O instruction bytes relative to `517aa70fe`; the pruning
+adapter accounts for 432 symbol bytes. Five 100 ms ordinary cleanup samples retain
+1,242 / 3,799 / 20,042-20,043 allocations for 1 / 8 / 64 actions. Their time ranges
+are 70,571-75,969 / 301,810-321,194 / 2,467,101-3,156,869 ns/op, versus the control's
+70,764-72,843 / 303,995-422,966 / 2,442,929-2,618,486. These observations do not
+establish a speedup. No baseline is changed; dead-edge normalization adds no
+runtime code or allocation on all-reachable input graphs.
+
 Measured against `9a360bd34` using Go 1.26.0 on native Darwin ARM64 / Apple M3 Pro.
 Three 100 ms samples follow a one-write smoke run. The snapshot benchmark includes
 synthetic typed graph construction, promotion, verification, ownership planning

@@ -10,7 +10,7 @@ import (
 // Initialization is a must fact: intersect incoming states, never union them.
 // The finite descending bitset lattice includes backedges without enumerating
 // paths or assuming a bounded number of loop iterations. Absence is not a value.
-func verifyBindingInitialization(f *Func, checkCaptures bool) error {
+func verifyBindingInitialization(f *Func, checkCaptures bool, deadBlocks *map[*ssa.Block]bool) error {
 	fail := func(op *ssa.Op, message string) error {
 		pos := f.effectPositions[op]
 		if op.Result.IsValid() {
@@ -50,6 +50,12 @@ func verifyBindingInitialization(f *Func, checkCaptures bool) error {
 		}
 	}
 	for _, block := range f.graph.Blocks {
+		if outputs[block] == nil && deadBlocks != nil {
+			if *deadBlocks == nil {
+				*deadBlocks = make(map[*ssa.Block]bool)
+			}
+			(*deadBlocks)[block] = true
+		}
 		for _, op := range block.Ops {
 			if bindingOp(op.Kind) && outputs[block] == nil {
 				return fail(op, "unreachable binding operation")

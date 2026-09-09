@@ -155,6 +155,109 @@ func TestBindingSnapshotIsSemanticOnly(t *testing.T) {
 	}
 }
 
+func TestBindingSnapshotRejectsUnreachablePredecessorCyclesBeforePromotion(t *testing.T) {
+	for _, count := range []int{1, 2, 8} {
+		t.Run(fmt.Sprintf("blocks-%d", count), func(t *testing.T) {
+			f, entry, id, value := bindingTestFunc()
+			f.graph.SetRet(entry, value)
+			cycle := make([]*ssa.Block, count)
+			for i := range cycle {
+				cycle[i] = f.graph.NewBlock()
+			}
+			for i, block := range cycle {
+				f.graph.SetBr(block, cycle[(i+1)%count])
+			}
+			f.snapshotBinding(cycle[0], id, ast.Position{Line: 8, Col: 4})
+			if err := ssa.Verify(f.graph); err != nil {
+				t.Fatalf("fixture must preserve structural SSA: %v", err)
+			}
+			before := f.graph.String()
+			if err := promoteBindings(f); err == nil || !strings.Contains(err.Error(), "8:4: unreachable binding operation") {
+				t.Fatalf("unreachable snapshot reached recursive promotion: %v", err)
+			}
+			if f.graph.String() != before || !f.unpromotedBindings {
+				t.Fatal("unreachable snapshot rejection mutated the graph")
+			}
+		})
+	}
+}
+
+func TestBindingSnapshotUnreachableIncomingCycle(t *testing.T) {
+	for _, count := range []int{1, 2, 8} {
+		for _, kind := range []ssa.OpKind{ssa.OpBindingSnapshot, ssa.OpBindingRead} {
+			t.Run(fmt.Sprintf("blocks-%d/%s", count, kind), func(t *testing.T) {
+				f, entry, id, value := bindingTestFunc()
+				flag := f.addParam(ast.BoolType{}, ParamValue, ast.Position{})
+				if kind == ssa.OpBindingRead {
+					f.writeBinding(entry, ssa.OpBindingInit, id, value, ast.Position{})
+				}
+				cycle := make([]*ssa.Block, count)
+				for i := range cycle {
+					cycle[i] = f.graph.NewBlock()
+				}
+				join := f.graph.NewBlock()
+				f.graph.SetBr(entry, join)
+				for i := range len(cycle) - 1 {
+					f.graph.SetBr(cycle[i], cycle[i+1])
+				}
+				last := cycle[len(cycle)-1]
+				f.graph.SetBrIf(last, flag, cycle[0], join)
+				deadValue := f.addOp(last, ssa.OpConstInt, ast.NumberType{}, ast.Position{})
+				phi := f.addPhi(join, ast.NumberType{}, ast.Position{}, value, deadValue)
+				if kind == ssa.OpBindingSnapshot {
+					f.snapshotBinding(join, id, ast.Position{})
+				} else {
+					f.readBinding(join, id, ast.Position{})
+				}
+				f.graph.SetRet(join, phi)
+				if err := Verify(f); err != nil {
+					t.Fatal(err)
+				}
+				if err := promoteBindings(f); err != nil {
+					t.Fatal(err)
+				}
+				if err := Verify(f); err != nil {
+					t.Fatal(err)
+				}
+				if len(f.graph.Blocks) != 2 || len(join.Preds) != 1 || join.Preds[0] != entry ||
+					len(join.Ops[0].Args) != 1 || join.Ops[0].Args[0] != value {
+					t.Fatal("dead predecessor pruning lost the live phi slot")
+				}
+				if _, ok := f.values[deadValue.ID]; ok {
+					t.Fatal("dead operation retained semantic metadata")
+				}
+				if _, err := LowerARM64SSA(singleProgram(f)); err != nil {
+					t.Fatal(err)
+				}
+			})
+		}
+	}
+}
+
+func TestBindingPromotionPrunesUnusedIterationExit(t *testing.T) {
+	f := unverifiedCleanupSource(t, `function pilot(): void { loop {} }`)
+	if err := expandCleanups(f); err != nil {
+		t.Fatal(err)
+	}
+	id := f.addBinding("unused", ast.BoolType{}, ast.Position{})
+	f.bindings[id-1].boundary = f.boundaries[0]
+	dead := f.graph.NewBlock()
+	f.graph.SetBr(dead, dead)
+	f.boundaries[1].exit = dead
+	if err := Verify(f); err != nil {
+		t.Fatal(err)
+	}
+	if err := promoteBindings(f); err != nil {
+		t.Fatal(err)
+	}
+	if f.boundaries[1].exit != nil {
+		t.Fatal("optional iteration exit still names a pruned block")
+	}
+	if err := Verify(f); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestBindingSnapshotManyPhiIdentities(t *testing.T) {
 	f, entry, _, payload := bindingTestFunc()
 	flag := f.addParam(ast.BoolType{}, ParamValue, ast.Position{})
