@@ -30,6 +30,9 @@ depth. The result runs through the existing production IR optimizer before
 being handed to the backend's normal IR verification and emission path.
 Validation, physical frame construction and instruction selection are separate
 internal boundaries; the public lowering function sequences the verified plan.
+Type admission lists only the implemented representation families and checks
+tuple fields recursively. Unsupported types still fail before emission; this
+also keeps the combined parent stack within the unchanged complexity limit.
 
 ## Executable validation
 
@@ -45,14 +48,22 @@ Wasm runs check semantics and over-release, not a native heap census.
 
 The complexity repair preserves emitted programs byte-for-byte for all ten
 fixtures on all three targets in a matched before/after comparison. The complete
-80-case runtime matrix and rejection checks pass in 131.633 seconds without
-skips; the unchanged repository complexity gate and lint also pass. These test
-durations are not performance measurements.
+80-case runtime matrix and rejection checks pass without skips; the unchanged
+repository complexity gate and lint also pass.
 
 The same fixture bundle runs with both a Go-built lowering driver and an
 ARM64 driver compiled by the actual self-host CLI. Each emits programs for
 ARM64, x86-64 and Wasm. Rejection cases exercise failed/corrupt plans, a valid
 multi-block graph, and abstractly valid string/wide-array parameter contracts.
+
+The result-type and opcode checks are defensive guards for future semantic
+extensions. In the current single-block return contract, semantic verification
+makes the result type equal to a value type already checked by the physical
+boundary. The only additional semantic opcode is phi: it needs a nonempty
+incoming edge set, which a valid single-block return graph cannot have.
+Consequently these two guards cannot independently reject a currently valid
+plan after the earlier guards pass. New semantic operations must add a direct
+physical refusal test before relying on these guards.
 
 ```sh
 scripts/devbox go test ./internal/e2eselfhost \
@@ -83,5 +94,5 @@ replacement drops, alias preservation and parent cleanup together. Neither
 these physical construction/projection operations nor an AST escape exception
 constitutes that fix. General control-flow lowering, typed frontend import,
 coverage expansion, production cutover and deletion of obsolete ownership
-analyses remain required. The two existing enum-return leak assertions also
-remain merge blockers; no baseline or assertion is relaxed here.
+analyses remain required. Main's enum-return leaks were separately repaired
+by #8990, with exact heap-balance assertions and no baseline relaxation.

@@ -16,25 +16,16 @@ function empty(why: string): irlower.LowerResult {
 // This initial physical boundary deliberately refuses types whose stack
 // representation is not implemented here, even when the unit planner knows
 // their abstract ownership. In particular a Wasm string occupies two operands.
+function supported_tuple(tup: typeinfo.TypeTuple): boolean {
+    for elem in tup.elements { if (!supported(elem)) { return false; } }
+    return true;
+}
 function supported(t: typeinfo.Type): boolean {
-    match (t) {
-        typeinfo.TypeI32(i) => { return i.width == 32; },
-        typeinfo.TypeBool(_) => { return true; },
-        typeinfo.TypeVoid(_) => { return true; },
-        typeinfo.TypeArray(a) => { return supported(a.elem); },
-        typeinfo.TypeTuple(tup) => {
-            for elem in tup.elements { if (!supported(elem)) { return false; } }
-            return true;
-        },
-        typeinfo.TypeString(_) => { return false; },
-        typeinfo.TypeFloat(_) => { return false; },
-        typeinfo.TypeStruct(_) => { return false; },
-        typeinfo.TypeUnion(_) => { return false; },
-        typeinfo.TypeFunc(_) => { return false; },
-        typeinfo.TypeMap(_) => { return false; },
-        typeinfo.TypeDyn(_) => { return false; },
-        typeinfo.TypeUnknown(_) => { return false; }
-    }
+    if let typeinfo.TypeI32(i) = t { return i.width == 32; }
+    if let typeinfo.TypeBool(_) = t { return true; }
+    if let typeinfo.TypeVoid(_) = t { return true; }
+    if let typeinfo.TypeArray(a) = t { return supported(a.elem); }
+    if let typeinfo.TypeTuple(tup) = t { return supported_tuple(tup); }
     return false;
 }
 
