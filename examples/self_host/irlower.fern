@@ -38,6 +38,7 @@ import "./checker";
 import "./typeinfo";
 import "./callsubst";
 import "./capturebox";
+import "./enumcontract";
 
 // LocalInfo is the per-local-slot type record — one entry per slot, indexed by
 // slot number. Everything here answers "what does this slot hold?", which is
@@ -457,6 +458,7 @@ pub struct SigReg {
 // wasm_ir. It also unpins LowerState's field count, which had grown tight
 // enough to force booleans into the ret_arrdyn bit word.
 pub struct FnSigs {
+    enum_regions: enumcontract.Region[],
     // arr_ret_fns: functions whose return type is an array, so a `var x = f()`
     // is a move (owned, no inc) and x is array-tracked.
     arr_ret_fns: SigReg,
@@ -32080,7 +32082,7 @@ pub function lower_block(stmts: ast.Stmt[], s: LowerState): LowerState {
         while (sej < scenfrees.idxs.len()) {
             if (scenfrees.vidxs[sej] < i && i <= scenfrees.idxs[sej]) {
                 var seslot2: i32 = st.slot_of(scenfrees.names[sej]);
-                if (seslot2 >= st.frame.n_params) {
+                if (seslot2 >= st.frame.n_params && !slot_credit_at(st, seslot2, "TYPEDENUM:")) {
                     st = st.with_optret_pending(st.optret_pending.append(util.i32_to_string(seslot2) + "#b"));
                 }
             }
@@ -32097,7 +32099,7 @@ pub function lower_block(stmts: ast.Stmt[], s: LowerState): LowerState {
             // return would withhold drops for fields that path never moved.
             if (rcenfrees.vidxs[rej] < i && i <= rcenfrees.idxs[rej]) {
                 var reslot2: i32 = st.slot_of(rcenfrees.names[rej]);
-                if (reslot2 >= st.frame.n_params) {
+                if (reslot2 >= st.frame.n_params && !slot_credit_at(st, reslot2, "TYPEDENUM:")) {
                     st = st.with_optret_pending(st.optret_pending.append(rcenum_pending_entry(reslot2, rcenfrees.enums[rej], match_moved_rc_payloads(stmts[i], st.frame.structs))));
                 }
             }
@@ -32251,7 +32253,7 @@ pub function lower_block(stmts: ast.Stmt[], s: LowerState): LowerState {
         while (sef < scenfrees.idxs.len()) {
             if (scenfrees.idxs[sef] == i) {
                 var sslot: i32 = st.slot_of(scenfrees.names[sef]);
-                if (sslot >= st.frame.n_params) { st = emit_scalar_enum_box_free(st, sslot); }
+                if (sslot >= st.frame.n_params && !slot_credit_at(st, sslot, "TYPEDENUM:")) { st = emit_scalar_enum_box_free(st, sslot); }
             }
             sef = sef + 1;
         }
@@ -32279,7 +32281,8 @@ pub function lower_block(stmts: ast.Stmt[], s: LowerState): LowerState {
                 // moved_elided: a construction took over this local's reference and
                 // dropped the retain, so its release belongs to the destination —
                 // see the RCENUMS sweep's note.
-                if (rslot2 >= st.frame.n_params && !slot_list_has(st.frame.moved_elided, rslot2)) {
+                if (rslot2 >= st.frame.n_params && !slot_list_has(st.frame.moved_elided, rslot2)
+                    && !slot_credit_at(st, rslot2, "TYPEDENUM:")) {
                     st = emit_enum_variant_drops_gated(st, rslot2, rcenfrees.enums[ref2], match_moved_rc_payloads(stmts[i], st.frame.structs), true);
                 }
             }
@@ -58155,6 +58158,15 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
     var plan_fe: string[] = [];
     if (plan_on) { plan_fe = free_eligible_sites_of(fn, asg_targets, structs, sg.ret_type_fns, sg.noesc_ret_fns); }
     var reclaim: string[] = reclaimable_names_of(fn.body, asg_targets, structs, sg.borrowable_params, sg.return_fresh_struct_ret_fns, sg.str_fresh_ret_fns, sg.opt_fresh_ret_fns, sg.tuple_fresh_ret_fns, move_sites_of(fn, structs), sg.recv_borrow_fns, sg.struct_ret_fns, fn.params, plan_on, plan_fe, sg.handback_params, sg.strfld_ok_types, sg.str_handback_ret);
+    // A verified typed region owns its parent units until the exit sweep. Its
+    // counted payload returns replace the old consuming-match transfer/drop.
+    var enum_plan: enumcontract.Plan = enumcontract.analyze_calls(fn, structs.decls, sg.enum_regions);
+    if (enum_plan.ok) {
+        for site in enum_plan.roots {
+            reclaim = push_str_unique(reclaim, "TYPEDENUM:" + site);
+            reclaim = push_str_unique(reclaim, "RCENUMS:" + site);
+        }
+    }
     // Hoisted-closure capture extracts are BORROWS (#4354): make_clo_func
     // synthesizes `var <cap> = __env[1+i]` reads at the top of a `$clo`/`$wrap`
     // body, but the env box owns those references — the exit sweep's shallow
@@ -65957,7 +65969,7 @@ pub function fn_sigs_without_ownership(sg: FnSigs): FnSigs {
     return FnSigs { ...sg, fresh_struct_ret_fns: e, consume_safe_params: e,
         return_fresh_struct_ret_fns: e, recv_borrow_fns: e, str_fresh_ret_fns: e,
         opt_fresh_ret_fns: sig_reg_empty(), strfld_ok_types: e, tuple_fresh_ret_fns: e, own_positions: e, own_scalar_arr_positions: e,
-        consumed_arr_positions: e, param_counted: e };
+        consumed_arr_positions: e, param_counted: e, enum_regions: [] };
 }
 
 // fn_sigs_empty is the all-empty registry, for the analysis-only lowerings that
@@ -65965,7 +65977,7 @@ pub function fn_sigs_without_ownership(sg: FnSigs): FnSigs {
 pub function fn_sigs_empty(): FnSigs {
     var e: string[] = [];
     var r: SigReg = sig_reg_empty();
-    return FnSigs { arr_ret_fns: r, str_ret_fns: r, bool_ret_fns: r, strarr_ret_fns: r, arr_method_fns: e, ret_type_fns: r, ret_fn_sigs: r, noesc_ret_fns: r,
+    return FnSigs { enum_regions: [], arr_ret_fns: r, str_ret_fns: r, bool_ret_fns: r, strarr_ret_fns: r, arr_method_fns: e, ret_type_fns: r, ret_fn_sigs: r, noesc_ret_fns: r,
         opt_ret_fns: r, i64_ret_fns: r, tuple_ret_fns: r, arrtup_ret_fns: r, struct_ret_fns: r, map_ret_fns: r,
         f64_ret_fns: r, f64arr_ret_fns: r, i64arr_ret_fns: r, erased_elem_ret_fns: r, fn_param_sigs: r, closure_fns: e,
         closurearr_ret_fns: e, const_fns: e, borrowable_params: e, borrow_bare: e, fn_names: r,
@@ -66370,7 +66382,32 @@ pub function fn_sigs_of(funcs: parser.FuncDecl[], structs: StructTab, arr_ret_fn
 // FnSigs read that verdict, so both are built here from the one argument
 // (#6703): a strfld admission derived from a WEAKER registry than the one the
 // backend seeds "strfldok:" from would free fields nothing retained.
+function typed_enum_borrows(regions: enumcontract.Region[], original: string[]): string[] {
+    var out: string[] = [];
+    for bucket in original { out = out.append(bucket); }
+    if (out.len() == 0) { out = borrow_reg_new(); }
+    for region in regions {
+        var plan: enumcontract.Plan = enumcontract.verify(region);
+        if (plan.ok) {
+            var flags: string = ""; var i: i32 = 0; var changed: boolean = false;
+            for borrowed in plan.borrowed {
+                if (borrowed || param_is_borrowable(original, region.name, i)) { flags = flags + "1"; }
+                else { flags = flags + "0"; }
+                if (borrowed && !param_is_borrowable(original, region.name, i)) { changed = true; }
+                i = i + 1;
+            }
+            if (changed) {
+                var bucket: i32 = util.hash_bucket(region.name, out.len());
+                out = out.with(bucket, borrow_reg_record(region.name, flags) + out[bucket]);
+            }
+        }
+    }
+    return out;
+}
+
 pub function fn_sigs_for_borrow(funcs: parser.FuncDecl[], structs: StructTab, arr_ret_fns: string[], bparams: string[]): FnSigs {
+    var enum_regions: enumcontract.Region[] = enumcontract.leaves(funcs, structs.decls);
+    bparams = typed_enum_borrows(enum_regions, bparams);
     // Hoisted: the counted-retain registry needs the same verdict the
     // construction-side string retain is gated on, and this walk is
     // whole-program — computing it twice would be a second pass over every body.
@@ -66386,6 +66423,7 @@ pub function fn_sigs_for_borrow(funcs: parser.FuncDecl[], structs: StructTab, ar
     // runs once here rather than per consumer.
     var growflags: string[] = grow_param_flags_of(funcs);
     return FnSigs {
+        enum_regions: enum_regions,
         arr_ret_fns: sig_reg_of(arr_ret_fns),
         ret_type_fns: sig_reg_of(ret_type_fns_of(funcs)),
         ret_fn_sigs: sig_reg_of(ret_fn_sigs_of(funcs)),
