@@ -85,28 +85,24 @@ var fnPayloadVariantCases = []struct {
 // TestSelfHostFnPayloadVariantIR pins the round-trip on the x86-64 IR path.
 func TestSelfHostFnPayloadVariantIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
-	if len(runner) != 0 {
-		t.Skip("single-program IR driver test runs only natively")
-	}
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
 
 	for _, tc := range fnPayloadVariantCases {
 		t.Run(tc.name, func(t *testing.T) {
-			cmd := exec.Command(driverBin, "-ir")
+			cmd := runX86_64Bin(runner, driverBin, "-ir")
 			cmd.Stdin = bytes.NewReader([]byte(tc.src))
 			asm, err := cmd.Output()
 			if err != nil || len(asm) == 0 {
 				t.Fatalf("driver failed: %v", err)
 			}
-			// The whole module must reach the IR path — a bail here would drop to
-			// the AST emitter that mis-emits `call __fn_<Variant>` (the #4364 bug).
+			// Constructors must lower as values, not calls to variant names.
 			if bytes.Contains(asm, []byte("call __fn_Fn")) || bytes.Contains(asm, []byte("call __fn_Wait")) {
 				t.Fatalf("%s: variant constructor mis-emitted as a direct call (#4364 regression)\n%s", tc.name, asm)
 			}
 			progBin := buildBin(t, gcc, dir, tc.name, string(asm))
-			run := exec.Command(progBin)
+			run := runX86_64Bin(runner, progBin)
 			_ = run.Run()
 			if code := run.ProcessState.ExitCode(); code != 42 {
 				t.Errorf("%s (x86-64 IR) exited %d, want 42", tc.name, code)

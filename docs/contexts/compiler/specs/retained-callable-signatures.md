@@ -47,6 +47,8 @@ legacy function tag remains explicitly unknown rather than becoming zero-arity.
   and composite-array argument rules without duplicating free-function diagnostics.
 - Resolve nested dynamic trait types at the recursive type boundary, using the
   same semantics as a top-level dynamic trait annotation.
+- Struct and enum payload fields share one declaration-type parser. All payload
+  positions, named forms and callable arrays retain complete parameter sidecars.
 
 ## Testing Strategy
 

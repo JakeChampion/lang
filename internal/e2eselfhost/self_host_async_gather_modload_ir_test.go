@@ -2,7 +2,6 @@ package e2eselfhost
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -24,14 +23,10 @@ import (
 //
 // The driver's `-decide` must report `ir` (the merged program routes the IR
 // path), and the compiled binary must match the interpreter oracle
-// (sum of three Ready values = 42). x86-64 only (the loader driver takes argv
-// file paths, so it can't run under the qemu runner — mirrors
-// TestSelfHostStdlibModloadIRX86_64).
+// (sum of three Ready values = 42). The configured runner executes the driver
+// and output binary with the same filesystem paths.
 func TestSelfHostAsyncGatherModloadIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
-	if len(runner) != 0 {
-		t.Skip("file-loading driver test runs only natively (argv paths)")
-	}
 	interpBin := buildLangBinForInterp(t)
 	dir := writeSelfHostAsmProject(t)
 	copySelfHostDriver(t, dir, "asm_load_run.fern")
@@ -59,24 +54,24 @@ function main(): i32 {
 	}
 
 	// (1) The merged multi-module program must route the IR path, not AST.
-	decide, err := exec.Command(mmc, mainPath, stdlibRoot, "-decide").Output()
+	decide, err := runX86_64Bin(runner, mmc, mainPath, stdlibRoot, "-decide").CombinedOutput()
 	if err != nil {
-		t.Fatalf("decide: %v", err)
+		t.Fatalf("decide: %v\n%s", err, decide)
 	}
 	if got := strings.TrimSpace(string(decide)); got != "ir" {
 		t.Fatalf("gather/std/async routed %q, want \"ir\" (imported generic enum bailed)", got)
 	}
 
 	// (2) It compiles + runs to the interpreter oracle (42).
-	asm, err := exec.Command(mmc, mainPath, stdlibRoot).Output()
+	asm, err := runX86_64Bin(runner, mmc, mainPath, stdlibRoot).CombinedOutput()
 	if err != nil {
-		t.Fatalf("loader compile: %v", err)
+		t.Fatalf("loader compile: %v\n%s", err, asm)
 	}
 	if len(asm) == 0 {
 		t.Fatal("loader emitted 0 bytes")
 	}
 	progBin := buildBin(t, gcc, dir, "async_gather", string(asm))
-	cmd := exec.Command(progBin)
+	cmd := runX86_64Bin(runner, progBin)
 	_ = cmd.Run()
 	if code := cmd.ProcessState.ExitCode(); code != want {
 		t.Errorf("gather exited %d, want %d (interp oracle)", code, want)

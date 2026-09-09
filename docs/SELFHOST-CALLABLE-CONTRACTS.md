@@ -28,6 +28,34 @@ existing bound and dispatch checks. No ownership heuristics or ABI rules change.
 Callable assignment variance and the checker's other partial type rules remain
 separate work; this does not claim full semantic type-system parity.
 
+## CI correction: enum payload declarations
+
+Full CI exposed a missed producer: enum payload fields retained a callable result
+but discarded its parameter list. That represented `resume(fd)` in imported
+async code as a known zero-argument call. Struct and enum payload fields now use
+one declaration-type parser, including positional, named and array payloads.
+No argument checks are suppressed. The existing async module-loading tests now
+run through the configured x86 runner and include compiler diagnostics on failure.
+
+Ten added enum diagnostic cases compare against the Go checker. Eight failed
+before the fix, while the two genuine zero-argument controls passed. All ten
+now pass, together with the prior 23 cases, callable structural contracts and
+the four previously failing async module-loading scenarios (20.295 s, no skips).
+`make lint-all` and full source lint pass. The broader production checker,
+callable, native/Wasm function-return/payload and type resolver selection passes
+in 135.179 s, with one legacy native-only skip in the x86 payload test. That
+test now uses the configured runner too; its separate x86/Wasm rerun passes all
+ten payload cases in 12.921 s with no skips. Lint passes again after that harness
+change. Full current-head CI remains mandatory before merge.
+
+Using the identical compiler and linker described below, compared with the
+published pre-correction #8964 checker, this repair reduces `.text` by 2,188
+bytes and the linked ELF by 2,072 bytes (3,328,472 to 3,326,400). Symbol deltas
+fully account for instructions: shared field parser +1,232, struct field parser
+-1,476, enum parser -1,944. `.rodata` and `.bss` are unchanged; unwind data grows
+36 bytes. The remaining ELF difference is symbol entries (+48), symbol names
+(+30) and alignment (+2). No baseline changes or runtime speed claims.
+
 ## Verification
 
 The new public-resolver driver inspects recursive callable, array, tuple, map,

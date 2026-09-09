@@ -1382,9 +1382,7 @@ function main(): i32 {
     // ways round.
     if (rewrite_type_name("() => (i32) => Token", ctx) != "() => (i32) => lx__Token") { return 211; }
     if (rewrite_type_name("(() => Token) => i32", ctx) != "(() => lx__Token) => i32") { return 212; }
-    // A trailing `[]` peels before the arrow is found, so parse_type_ref carries
-    // it as the fn's own array_depth; whatever that models, the spelling has to
-    // come back unchanged, and render_type_ref appends the suffix after the arrow.
+    // The array suffix belongs to the function result and survives rewriting.
     if (rewrite_type_name("() => Token[]", ctx) != "() => lx__Token[]") { return 213; }
 
     // --- `pub use` re-export redirection (type position) ---
