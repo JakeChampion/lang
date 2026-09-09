@@ -27,7 +27,7 @@ package ir
 const optimizeCleanupMaxIterations = 8
 
 // OptimizeCleanup runs PropagateCopies + ConstPropagate + Fold +
-// ReduceStrength + FuseRotates + PruneZeroSlotGuards + EliminateDeadCode to a fixed
+// null-call folding + ReduceStrength + FuseRotates + PruneZeroSlotGuards + EliminateDeadCode to a fixed
 // point on every function in prog. Each pass is idempotent on its own;
 // the loop exists because they interact — the output of one can expose
 // new work for the others (a strength-reduced `<expr> ; drop ; const 0`
@@ -46,18 +46,24 @@ func OptimizeCleanup(prog *Program) {
 	if ptrW == 0 {
 		ptrW = 4
 	}
+	nullIdentity := make(map[string]bool)
 	for _, fn := range prog.Funcs {
-		optimizeCleanupFunc(fn, ptrW)
+		if fn.NullIdentity && len(fn.Params) == 1 {
+			nullIdentity[fn.Name] = true
+		}
+	}
+	for _, fn := range prog.Funcs {
+		optimizeCleanupFunc(fn, ptrW, nullIdentity)
 	}
 }
 
-// optimizeCleanupFunc runs the seven passes on one function until a round
+// optimizeCleanupFunc runs the cleanup passes on one function until a round
 // rewrites nothing. The passes are intra-function, so converging each
 // function on its own is the same fixed point as converging the program;
 // the difference is that a converged function is never revisited, where a
 // whole-program round re-runs every pass over every function (copying its
 // op list five times) for as long as any function is still changing.
-func optimizeCleanupFunc(fn *Func, ptrW int) {
+func optimizeCleanupFunc(fn *Func, ptrW int, nullIdentity map[string]bool) {
 	for i := 0; i < optimizeCleanupMaxIterations; i++ {
 		changed := false
 		if next := propagateCopiesOps(fn, fn.Ops, ptrW); !opsEqual(next, fn.Ops) {
@@ -65,6 +71,10 @@ func optimizeCleanupFunc(fn *Func, ptrW int) {
 			changed = true
 		}
 		if next := constPropOps(fn.Ops, fn); !opsEqual(next, fn.Ops) {
+			fn.Ops = next
+			changed = true
+		}
+		if next := foldNullIdentityCalls(fn.Ops, nullIdentity); !opsEqual(next, fn.Ops) {
 			fn.Ops = next
 			changed = true
 		}

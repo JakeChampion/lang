@@ -3617,10 +3617,11 @@ func genTupleDropFn(mangled string, tt ast.TupleType, info *checker.Info, ptrW i
 		Op{Kind: OpLoadLocal, I32: 0},
 		Op{Kind: OpReturn})
 	return &Func{
-		Name:       "__drop_tuple_" + mangled,
-		Params:     []ast.Param{{Name: "__dt", Type: dropThunkParamType}},
-		ReturnType: ast.NumberType{},
-		Ops:        ops,
+		Name:         "__drop_tuple_" + mangled,
+		NullIdentity: true,
+		Params:       []ast.Param{{Name: "__dt", Type: dropThunkParamType}},
+		ReturnType:   ast.NumberType{},
+		Ops:          ops,
 	}
 }
 
@@ -3699,10 +3700,11 @@ func genStructDropFn(name string, sd *ast.StructDecl, info *checker.Info, ptrW i
 		Op{Kind: OpLoadLocal, I32: 0},
 		Op{Kind: OpReturn})
 	return &Func{
-		Name:       "__drop_struct_" + name,
-		Params:     []ast.Param{{Name: "__ds", Type: dropThunkParamType}},
-		ReturnType: ast.NumberType{},
-		Ops:        ops,
+		Name:         "__drop_struct_" + name,
+		NullIdentity: true,
+		Params:       []ast.Param{{Name: "__ds", Type: dropThunkParamType}},
+		ReturnType:   ast.NumberType{},
+		Ops:          ops,
 	}
 }
 
