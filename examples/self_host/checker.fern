@@ -15326,8 +15326,11 @@ pub function annotate_module(mod: parser.Module): parser.Module {
   // The same value-local re-declaration check_module types against, so the
   // module handed to lowering carries the arms' type rather than the parser's
   // syntactic guess (#8657).
-  var rmod: parser.Module = retype_value_blocks(mod);
-  var mt: ModuleTables = build_module_tables(rmod);
+  return annotate_module_in(mod, build_module_tables(mod));
+}
+
+function annotate_module_in(mod: parser.Module, mt: ModuleTables): parser.Module {
+  var rmod: parser.Module = retype_value_blocks_in(mod, mt);
   var nfuncs: parser.FuncDecl[] = [];
   for func in rmod.funcs {
     nfuncs = nfuncs.append(annotate_func(func, mt));
@@ -15344,13 +15347,45 @@ function unchecked_capture(e: ast.Expr, found: boolean): boolean {
 // Raw IR drivers enter the same checked-capture boundary as the CLI. Already
 // checked syntax keeps its contracts without repeating frontend annotation.
 pub function ensure_capture_types(mod: parser.Module): parser.Module {
+  if (has_unchecked_captures(mod)) { return annotate_module(mod); }
+  return mod;
+}
+
+function has_unchecked_captures(mod: parser.Module): boolean {
   var unchecked: boolean = false;
   for fd in mod.funcs {
     for st in fd.body { unchecked = astwalk.fold_stmt(st, unchecked, unchecked_capture); }
   }
   for st in mod.top_stmts { unchecked = astwalk.fold_stmt(st, unchecked, unchecked_capture); }
-  if (unchecked) { return annotate_module(mod); }
-  return mod;
+  return unchecked;
+}
+
+// Separate emission does not make imported nominal types or call signatures
+// opaque. Build the shared declaration context once, retaining each part's
+// own functions, top-level statements and emission ownership.
+pub function ensure_capture_types_parts(mods: parser.Module[]): parser.Module[] {
+  var needed: boolean = false;
+  for mod in mods { if (has_unchecked_captures(mod)) { needed = true; } }
+  if (!needed) { return mods; }
+  var funcs: parser.FuncDecl[] = [];
+  var structs: parser.StructDecl[] = [];
+  var aliases: parser.TypeAlias[] = [];
+  var enums: parser.EnumDecl[] = [];
+  for mod in mods {
+    for fd in mod.funcs { funcs = funcs.append(fd); }
+    for sd in mod.structs { structs = structs.append(sd); }
+    for ad in mod.aliases { aliases = aliases.append(ad); }
+    for ed in mod.enums { enums = enums.append(ed); }
+  }
+  var view = parser.Module { ...mods[0], funcs: funcs, structs: structs, aliases: aliases, enums: enums };
+  var mt = build_module_tables(view);
+  var out: parser.Module[] = [];
+  for mod in mods {
+    if (has_unchecked_captures(mod)) {
+      out = out.append(annotate_module_in(mod, ModuleTables { ...mt, imports: import_paths_of(mod) }));
+    } else { out = out.append(mod); }
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -15671,9 +15706,15 @@ function vb_holds_local(stmts: ast.Stmt[]): boolean {
 // syntax alone with the type its arms assign. Runs ahead of the checker's own
 // diagnostics and of lowering, so both see one declaration.
 pub function retype_value_blocks(mod: parser.Module): parser.Module {
-  // One pre-scan pass, kept as a per-function flag: the scan runs on every
-  // compile, and the module tables below are worth building only for a module
-  // that has a value local somewhere.
+  if (vb_holds_local(mod.top_stmts)) { return retype_value_blocks_in(mod, build_module_tables(mod)); }
+  for fd in mod.funcs {
+    if (vb_holds_local(fd.body)) { return retype_value_blocks_in(mod, build_module_tables(mod)); }
+  }
+  return mod;
+}
+
+function retype_value_blocks_in(mod: parser.Module, mt: ModuleTables): parser.Module {
+  // Keep untouched functions and avoid rebuilding bodies without value locals.
   var top_hit: boolean = vb_holds_local(mod.top_stmts);
   var hits: boolean[] = [];
   var any: boolean = top_hit;
@@ -15687,7 +15728,6 @@ pub function retype_value_blocks(mod: parser.Module): parser.Module {
   if (!any) {
     return mod;
   }
-  var mt: ModuleTables = build_module_tables(mod);
   var nfuncs: parser.FuncDecl[] = [];
   var i: i32 = 0;
   while (i < mod.funcs.len()) {

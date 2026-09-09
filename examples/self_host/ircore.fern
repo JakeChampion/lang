@@ -865,6 +865,7 @@ pub function lift_lambdas_view(mod: parser.Module, view: parser.FuncDecl[]): par
 // unboxed and lowering then names a `<fd>$clo` the lift never hoisted — an
 // undefined symbol at link (#5698, #7215).
 pub function lift_lambdas_parts(mods: parser.Module[]): parser.Module[] {
+    mods = irlower.prepare_lambda_parts(mods);
     var view: parser.FuncDecl[] = irlower.module_sig_view(mods);
     var out: parser.Module[] = [];
     var i: i32 = 0;

@@ -3131,6 +3131,7 @@ pub function lift_lambdas(mod: parser.Module): parser.Module {
 // env-boxed instead of reaching lowering as a bare lambda that names a `<fd>$clo`
 // the lift never hoisted — a missing elem-table entry at link (#7215).
 pub function lift_lambdas_parts(mods: parser.Module[]): parser.Module[] {
+    mods = irlower.prepare_lambda_parts(mods);
     var view: parser.FuncDecl[] = irlower.module_sig_view(mods);
     var out: parser.Module[] = [];
     var i: i32 = 0;

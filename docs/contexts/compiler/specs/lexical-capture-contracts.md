@@ -44,6 +44,11 @@ conversion consumes the checked contract instead of reconstructing a type.
 - Assertion elision may remove or reorder captures but cannot invent bindings.
 - Raw IR drivers enter the same checked-capture boundary as the CLI. Already
   checked syntax is not reannotated solely for closure conversion.
+- Separate compilation shares the complete declaration context before capture
+  annotation, including imported nominal types and call results. Each part
+  retains its own functions and statements for emission. Callable argument and
+  result declarations follow their enclosing parameter through namespace
+  rewriting.
 - Remove replaced recursive capture type reconstruction. The remaining physical
   closure representation is unchanged; this is not the pre-RC ownership planner.
 

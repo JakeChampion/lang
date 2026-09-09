@@ -75159,6 +75159,14 @@ pub function module_sig_view(mods: parser.Module[]): parser.FuncDecl[] {
     return view;
 }
 
+pub function prepare_lambda_parts(mods: parser.Module[]): parser.Module[] {
+    var prepared: parser.Module[] = [];
+    for mod in mods {
+        prepared = prepared.append(parser.infer_fnvalue_locals_module(parser.fill_default_args_module(mod)));
+    }
+    return checker.ensure_capture_types_parts(prepared);
+}
+
 // lift_lambdas_view is lift_lambdas with an explicit whole-program SIGNATURE
 // view: `view` supplies the function declarations the pass consults to answer
 // "is this callee's parameter fn-typed?" (lift_callee_param_is_fn), "how many
