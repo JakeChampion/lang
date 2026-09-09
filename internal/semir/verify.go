@@ -11,6 +11,12 @@ import (
 // structural invariants. It does not certify RC balance or uniqueness: those
 // require the ownership/effect analysis that follows this representation.
 func Verify(f *Func) error {
+	return verifyWithDeadBindings(f, nil)
+}
+
+// Promotion requests unreachable blocks from the existing initialization walk.
+// This result is local to one verification, never cached across IR mutation.
+func verifyWithDeadBindings(f *Func, deadBlocks *map[*ssa.Block]bool) error {
 	if f == nil || f.graph == nil {
 		return fmt.Errorf("semir: nil function")
 	}
@@ -180,7 +186,7 @@ func Verify(f *Func) error {
 		return err
 	}
 	if f.unpromotedBindings {
-		if err := verifyBindingInitialization(f); err != nil {
+		if err := verifyBindingInitialization(f, deadBlocks); err != nil {
 			return err
 		}
 	}
