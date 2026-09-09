@@ -82,7 +82,7 @@ func (b *builder) tuplePatternContract(elems []ast.TuplePatElem, types []ast.Typ
 	}
 	refutable := false
 	for i, elem := range elems {
-		if resolvedType(types[i], false) != nil || !ast.Equal(types[i], typ.Elems[i]) {
+		if b.fn.resolvedType(types[i], false) != nil || !ast.Equal(types[i], typ.Elems[i]) {
 			return false, b.errorAt(pos, "tuple pattern metadata differs from its semantic field type")
 		}
 		if elem.VariantName != "" || elem.VariantModule != "" || elem.IsStruct ||

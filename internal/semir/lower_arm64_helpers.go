@@ -28,10 +28,11 @@ func armElementBytes(typ ast.Type) int64 {
 	return 8
 }
 
-func armTupleLayout(typ ast.TupleType) ([]int64, int64) {
+func armAggregateLayout(fields aggregateShape) ([]int64, int64) {
 	var size int64
-	offsets := make([]int64, len(typ.Elems))
-	for i, elem := range typ.Elems {
+	offsets := make([]int64, fields.len())
+	for i := range fields.len() {
+		elem := fields.at(i)
 		width := int64(4)
 		if referenceBearing(elem) {
 			width = 8
@@ -131,9 +132,11 @@ func (l *armLowerer) dropHelper(typ ast.Type) string {
 			})
 		}
 		b.call("__fern_arr_dec", 64, true, value, b.constant(stride))
-	case ast.TupleType:
-		offsets, size := armTupleLayout(t)
-		for i, elem := range t.Elems {
+	case ast.TupleType, ast.StructType:
+		fields := l.program.aggregateFields(typ)
+		offsets, size := armAggregateLayout(fields)
+		for i := range fields.len() {
+			elem := fields.at(i)
 			if referenceBearing(elem) {
 				b.drop(b.load(value, offsets[i], elem), elem)
 			}

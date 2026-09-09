@@ -12,7 +12,7 @@ import (
 // before ir.LowerWith erases surface types and inserts concrete RC operations.
 // The current slice handles immutable array/tuple values and projections,
 // local replacement, branches, source loops and dominating function/iteration
-// cleanup actions. Aggregate mutation and conditional/loop-condition registration
+// cleanup actions. Aggregate mutation and loop-condition registration
 // remain explicit unsupported errors, not silent fallbacks.
 // Production compilation continues to use its existing route until ownership
 // analysis and verified lowering make this phase an end-to-end replacement.
@@ -71,6 +71,9 @@ func (b *builder) pushScope() { b.scopes = append(b.scopes, make(map[string]Bind
 func (b *builder) popScope() { b.scopes = b.scopes[:len(b.scopes)-1] }
 
 func (b *builder) bind(name string, typ ast.Type, pos ast.Position, value ssa.Value) error {
+	if err := b.fn.program.importRecordTypes(typ, b.info); err != nil {
+		return b.errorAt(pos, err.Error())
+	}
 	if !ast.Equal(typ, b.fn.values[value.ID].typ.source) {
 		return b.errorAt(pos, "binding type does not match its semantic value")
 	}
@@ -293,6 +296,9 @@ func (b *builder) exprValue(expr ast.Expr) (ssa.Value, error) {
 		b.fn.writeBinding(b.current, ssa.OpBindingReplace, id, value, n.P)
 		return value, nil
 	case *ast.ArrayLit:
+		if err := b.fn.program.importRecordTypes(n.ElemType, b.info); err != nil {
+			return ssa.Value{}, b.errorAt(n.P, err.Error())
+		}
 		args, _, ended, err := b.exprs(n.Elems)
 		if err != nil || ended {
 			return ssa.Value{}, err
@@ -304,6 +310,10 @@ func (b *builder) exprValue(expr ast.Expr) (ssa.Value, error) {
 			return ssa.Value{}, err
 		}
 		return emit(ssa.OpTupleMake, ast.TupleType{Elems: types}, args...), nil
+	case *ast.StructLit:
+		return b.recordValue(n)
+	case *ast.FieldAccess:
+		return b.fieldValue(n)
 	case *ast.Index:
 		if n.IsString || n.IsSlice || n.Unchecked {
 			return ssa.Value{}, b.errorAt(n.P, "unsupported projection contract")

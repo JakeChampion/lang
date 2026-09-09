@@ -28,6 +28,7 @@ func LowerARM64SSA(p *Program) (*ARM64Program, error) {
 		return nil, err
 	}
 	l := &armLowerer{
+		program: p,
 		out:     &ARM64Program{Functions: make(map[string]*ssa.Func), Positions: make(map[*ssa.Op]ast.Position), Symbols: make(map[string]string)},
 		helpers: make(map[string]string),
 		names:   make(map[*Func]string),
@@ -51,6 +52,7 @@ func LowerARM64SSA(p *Program) (*ARM64Program, error) {
 }
 
 type armLowerer struct {
+	program *Program
 	out     *ARM64Program
 	helpers map[string]string
 	names   map[*Func]string
@@ -466,9 +468,9 @@ func (b *armBuilder) semanticOp(src *Func, op *ssa.Op, args []ssa.Value) (ssa.Va
 		return b.load(ptr, 0, typ), nil
 	case ssa.OpArrayAppend:
 		return b.call(b.l.appendHelper(typ.(ast.ArrayType).Elem), 64, true, args...), nil
-	case ssa.OpTupleMake:
-		tuple := typ.(ast.TupleType)
-		offsets, size := armTupleLayout(tuple)
+	case ssa.OpTupleMake, ssa.OpRecordMake:
+		fields := b.l.program.aggregateFields(typ)
+		offsets, size := armAggregateLayout(fields)
 		if size > maxArmAllocation-8 {
 			return ssa.Value{}, fmt.Errorf("semir: tuple allocation too large")
 		}
@@ -477,11 +479,12 @@ func (b *armBuilder) semanticOp(src *Func, op *ssa.Op, args []ssa.Value) (ssa.Va
 		b.store(base, 4, b.constant(size), armI32)
 		data := b.offset(base, 8)
 		for i, v := range args {
-			b.store(data, offsets[i], v, tuple.Elems[i])
+			b.store(data, offsets[i], v, fields.at(i))
 		}
 		return data, nil
-	case ssa.OpTupleGet:
-		offsets, _ := armTupleLayout(src.values[op.Args[0].ID].typ.source.(ast.TupleType))
+	case ssa.OpTupleGet, ssa.OpRecordGet:
+		fields := b.l.program.aggregateFields(src.values[op.Args[0].ID].typ.source)
+		offsets, _ := armAggregateLayout(fields)
 		return b.load(args[0], offsets[op.Imm], typ), nil
 	default:
 		return ssa.Value{}, fmt.Errorf("semir ARM64: unsupported operation %s", op.Kind)

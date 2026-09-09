@@ -41,14 +41,15 @@ type valueFlow struct {
 	children []*valueFlow
 }
 
-func emptyFlow(typ ast.Type) *valueFlow {
+func (p *Program) emptyFlow(typ ast.Type) *valueFlow {
 	f := &valueFlow{roots: make(map[source]bool)}
 	switch t := typ.(type) {
 	case ast.ArrayType:
-		f.children = []*valueFlow{emptyFlow(t.Elem)}
-	case ast.TupleType:
-		for _, elem := range t.Elems {
-			f.children = append(f.children, emptyFlow(elem))
+		f.children = []*valueFlow{p.emptyFlow(t.Elem)}
+	case ast.TupleType, ast.StructType:
+		fields := p.aggregateFields(typ)
+		for i := range fields.len() {
+			f.children = append(f.children, p.emptyFlow(fields.at(i)))
 		}
 	}
 	return f
@@ -123,19 +124,20 @@ func solveReturnFlow(p *Program) (*returnFlow, error) {
 		switch t := typ.(type) {
 		case ast.ArrayType:
 			seedParameter(flow.children[0], t.Elem, param, child(-1))
-		case ast.TupleType:
-			for i, elem := range t.Elems {
-				seedParameter(flow.children[i], elem, param, child(i))
+		case ast.TupleType, ast.StructType:
+			fields := p.aggregateFields(typ)
+			for i := range fields.len() {
+				seedParameter(flow.children[i], fields.at(i), param, child(i))
 			}
 		}
 	}
 	for _, f := range p.funcs {
 		state := &functionFlow{
-			values: make(map[int32]*valueFlow), result: emptyFlow(f.result),
+			values: make(map[int32]*valueFlow), result: p.emptyFlow(f.result),
 			uses: ssa.BuildUses(f.graph), reach: ssa.Reachable(f.graph),
 		}
 		for _, param := range f.graph.Params {
-			state.values[param.ID] = emptyFlow(f.values[param.ID].typ.source)
+			state.values[param.ID] = p.emptyFlow(f.values[param.ID].typ.source)
 		}
 		for i, param := range f.graph.Params {
 			seedParameter(state.values[param.ID], f.values[param.ID].typ.source, i, nil)
@@ -143,7 +145,7 @@ func solveReturnFlow(p *Program) (*returnFlow, error) {
 		for _, block := range f.graph.RPO() {
 			for _, op := range block.Ops {
 				if op.Result.IsValid() {
-					state.values[op.Result.ID] = emptyFlow(f.values[op.Result.ID].typ.source)
+					state.values[op.Result.ID] = p.emptyFlow(f.values[op.Result.ID].typ.source)
 				}
 			}
 			if block.Term.Kind == ssa.TermRet && block.Term.Value.IsValid() {
@@ -234,7 +236,7 @@ func solveReturnFlow(p *Program) (*returnFlow, error) {
 			for i := range op.Args {
 				changed = mergeFlow(dst.children[0], arg(i)) || changed
 			}
-		case ssa.OpTupleMake:
+		case ssa.OpTupleMake, ssa.OpRecordMake:
 			changed = addSource(dst, source{kind: sourceGenerated})
 			for i := range op.Args {
 				changed = mergeFlow(dst.children[i], arg(i)) || changed
@@ -249,7 +251,7 @@ func solveReturnFlow(p *Program) (*returnFlow, error) {
 			changed = mergeFlow(dst.children[0], arg(1)) || changed
 		case ssa.OpArrayGet:
 			changed = mergeFlow(dst, arg(0).children[0])
-		case ssa.OpTupleGet:
+		case ssa.OpTupleGet, ssa.OpRecordGet:
 			changed = mergeFlow(dst, arg(0).children[op.Imm])
 		case ssa.OpPhi:
 			for i := range op.Args {

@@ -13,8 +13,9 @@ import (
 // and are not used as ownership-analysis keys. The program and its SSA graphs
 // remain private to this phase until explicit RC and layout lowering.
 type Program struct {
-	funcs  []*Func
-	byName map[string]int64
+	funcs   []*Func
+	byName  map[string]int64
+	records map[string]*recordContract
 }
 
 type funcContract struct {
@@ -44,6 +45,9 @@ func BuildProgram(prog *ast.Program, info *checker.Info) (*Program, error) {
 			return nil, fmt.Errorf("semir %s: missing or inconsistent checked signature", decl.Name)
 		}
 		f := newFunc(decl.Name, sig.Result)
+		if err := p.importRecordTypes(sig.Result, info); err != nil {
+			return nil, err
+		}
 		f.graph.NewBlock()
 		f.program = p
 		f.contract = funcContract{params: append([]ast.Type(nil), sig.Params...), result: sig.Result}
@@ -52,6 +56,9 @@ func BuildProgram(prog *ast.Program, info *checker.Info) (*Program, error) {
 			return nil, fmt.Errorf("semir %s: inconsistent checked ownership contract", decl.Name)
 		}
 		for i, param := range decl.Params {
+			if err := p.importRecordTypes(param.Type, info); err != nil {
+				return nil, err
+			}
 			if !ast.Equal(sig.Params[i], param.Type) {
 				return nil, fmt.Errorf("semir %s: inconsistent checked parameter type", decl.Name)
 			}

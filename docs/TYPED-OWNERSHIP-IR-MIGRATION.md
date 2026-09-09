@@ -6,6 +6,13 @@ SSA cutover and typed-IR work. Initial integration base: `02ea66e91`.
 
 ## Current implementation checkpoint
 
+Acyclic nominal records now have private typed field interfaces, explicit
+construction/projection and immutable spread updates. Ownership, exact return
+provenance and ARM64 field/deep-drop lowering use those interfaces without AST
+declaration lookup. Concrete generic records work through the common CLI's
+monomorphization. Recursive record provenance, record patterns and field mutation
+remain explicit gaps. See [typed record values](TYPED-RECORD-VALUES-2026-09-09.md).
+
 Conditional function/iteration cleanup now executes in the opt-in typed pipeline.
 Typed activation bindings, late capture snapshots and guarded writeback connect
 the registration/capture proof to actual CFG branches. The verifier rechecks
@@ -177,9 +184,10 @@ the unresolved marker or reconstructing types from backend layouts. Enum/struct
 matches, closures, broader cleanup, aggregate mutation and broader types remain unsupported.
 
 The source producer now handles local replacement, while/unconditional loops,
-break/continue (including labels), joins and early returns. A sealed-block
-binding map creates typed phis on demand; it never keys ownership by source
-names or scans AST syntax for an ownership decision. All bodies are built and
+break/continue (including labels), joins and early returns. The initial sealed-
+block binding map has been replaced by typed binding places and a separate
+verified promotion pass; ownership is never keyed by source names or decided
+by scanning AST syntax. All bodies are built and
 verified before existing identity-only trivial-phi simplification and dead
 pure-value removal run. Types and source metadata are retained and reverified.
 No low-level width-dependent optimization runs on this semantic graph.

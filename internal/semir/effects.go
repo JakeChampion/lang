@@ -115,7 +115,7 @@ func ownershipEffects(f *Func) (*functionEffects, error) {
 				}
 			case ssa.OpConstString:
 				e.result = resultImmortal
-			case ssa.OpArrayMake, ssa.OpTupleMake:
+			case ssa.OpArrayMake, ssa.OpTupleMake, ssa.OpRecordMake:
 				e.result = resultCounted
 				for i, arg := range op.Args {
 					e.inputs[i].store = storeValue
@@ -129,7 +129,7 @@ func ownershipEffects(f *Func) (*functionEffects, error) {
 				// already established by semantic verification.
 				e.inputs[0].counted = referenceBearing(f.values[op.Args[1].ID].typ.source)
 				e.inputs[1].counted = e.inputs[0].counted
-			case ssa.OpArrayGet, ssa.OpTupleGet:
+			case ssa.OpArrayGet, ssa.OpTupleGet, ssa.OpRecordGet:
 				projected, ok := projection(op)
 				if !ok {
 					return nil, fmt.Errorf("semir: missing projection contract for %s", op.Kind)
