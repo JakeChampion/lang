@@ -10,7 +10,7 @@ import (
 // Initialization is a must fact: intersect incoming states, never union them.
 // The finite descending bitset lattice includes backedges without enumerating
 // paths or assuming a bounded number of loop iterations. Absence is not a value.
-func verifyBindingInitialization(f *Func) error {
+func verifyBindingInitialization(f *Func, checkCaptures bool, deadBlocks *map[*ssa.Block]bool) error {
 	fail := func(op *ssa.Op, message string) error {
 		pos := f.effectPositions[op]
 		if op.Result.IsValid() {
@@ -26,8 +26,10 @@ func verifyBindingInitialization(f *Func) error {
 	// Before expansion the site itself reads every capture and publishes its
 	// replacement only after the action. Check availability without fabricating
 	// an SSA payload or relying on the later expansion to discover an invalid read.
+	// Conditional graphs instead prove every capture with its registration in
+	// verifyCleanups. This flag never disables ordinary read/replacement checks.
 	var replays map[*ssa.Block]*cleanupRegion
-	if f.unexpandedCleanups {
+	if f.unexpandedCleanups && checkCaptures {
 		replays = make(map[*ssa.Block]*cleanupRegion)
 		for _, r := range f.cleanups {
 			for _, site := range r.replays {
@@ -48,6 +50,12 @@ func verifyBindingInitialization(f *Func) error {
 		}
 	}
 	for _, block := range f.graph.Blocks {
+		if outputs[block] == nil && deadBlocks != nil {
+			if *deadBlocks == nil {
+				*deadBlocks = make(map[*ssa.Block]bool)
+			}
+			(*deadBlocks)[block] = true
+		}
 		for _, op := range block.Ops {
 			if bindingOp(op.Kind) && outputs[block] == nil {
 				return fail(op, "unreachable binding operation")

@@ -16,7 +16,10 @@ type lifetimeFlow struct {
 	live         *ssa.Liveness
 	reachable    map[*ssa.Block]bool
 	owned        map[int32]bool
-	immortal     map[int32]bool
+	// Conditional owners carry one unit iff their own state is present. They
+	// must never be interpreted as unconditional payload owners.
+	conditional map[int32]bool
+	immortal    map[int32]bool
 	// last includes units whose last lifetime use is this operation, plus
 	// unused newly produced units. It avoids a live-set copy per instruction.
 	last      map[*ssa.Op]map[int32]bool
@@ -38,10 +41,15 @@ func analyzeLifetimes(f *Func, effects *functionEffects) *lifetimeFlow {
 	}
 	for op, effect := range effects.ops {
 		id := op.Result.ID
-		if !referenceBearing(f.values[id].typ) {
+		if !referenceBearing(f.values[id].typ.source) {
 			continue
 		}
 		switch effect.result {
+		case resultConditional:
+			if l.conditional == nil {
+				l.conditional = make(map[int32]bool)
+			}
+			l.conditional[id] = true
 		case resultCounted, resultCall, resultJoin:
 			// Calls and joins are obligations of the closed-module unit ABI,
 			// not ownership conclusions drawn from semantic provenance.
@@ -82,7 +90,7 @@ func analyzeLifetimes(f *Func, effects *functionEffects) *lifetimeFlow {
 				continue
 			}
 			last := make(map[int32]bool)
-			if l.owned[op.Result.ID] && !live[op.Result.ID] {
+			if l.carriesUnit(op.Result.ID) && !live[op.Result.ID] {
 				last[op.Result.ID] = true
 			}
 			delete(live, op.Result.ID)
@@ -102,7 +110,7 @@ func analyzeLifetimes(f *Func, effects *functionEffects) *lifetimeFlow {
 		}
 		for _, op := range b.Ops {
 			if op.Kind == ssa.OpPhi {
-				initial[op.Result.ID] = l.owned[op.Result.ID]
+				initial[op.Result.ID] = l.carriesUnit(op.Result.ID)
 			}
 		}
 		for id, owns := range initial {
@@ -116,10 +124,14 @@ func analyzeLifetimes(f *Func, effects *functionEffects) *lifetimeFlow {
 }
 
 func (l *lifetimeFlow) addLastUse(live, last map[int32]bool, v ssa.Value) {
-	if l.owned[v.ID] && !live[v.ID] {
+	if l.carriesUnit(v.ID) && !live[v.ID] {
 		last[v.ID] = true
 	}
 	live[v.ID] = true
+}
+
+func (l *lifetimeFlow) carriesUnit(id int32) bool {
+	return l.owned[id] || l.conditional[id]
 }
 
 func (l *lifetimeFlow) addUse(set map[int32]bool, v ssa.Value) {

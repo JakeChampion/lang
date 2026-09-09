@@ -135,15 +135,15 @@ func solveReturnFlow(p *Program) (*returnFlow, error) {
 			uses: ssa.BuildUses(f.graph), reach: ssa.Reachable(f.graph),
 		}
 		for _, param := range f.graph.Params {
-			state.values[param.ID] = emptyFlow(f.values[param.ID].typ)
+			state.values[param.ID] = emptyFlow(f.values[param.ID].typ.source)
 		}
 		for i, param := range f.graph.Params {
-			seedParameter(state.values[param.ID], f.values[param.ID].typ, i, nil)
+			seedParameter(state.values[param.ID], f.values[param.ID].typ.source, i, nil)
 		}
 		for _, block := range f.graph.RPO() {
 			for _, op := range block.Ops {
 				if op.Result.IsValid() {
-					state.values[op.Result.ID] = emptyFlow(f.values[op.Result.ID].typ)
+					state.values[op.Result.ID] = emptyFlow(f.values[op.Result.ID].typ.source)
 				}
 			}
 			if block.Term.Kind == ssa.TermRet && block.Term.Value.IsValid() {
@@ -220,8 +220,13 @@ func solveReturnFlow(p *Program) (*returnFlow, error) {
 		changed := false
 		switch op.Kind {
 		case ssa.OpConstInt, ssa.OpConstBool, ssa.OpNot, ssa.OpNeg, ssa.OpAdd, ssa.OpSub, ssa.OpMul,
-			ssa.OpEq, ssa.OpNe, ssa.OpLt, ssa.OpLe, ssa.OpGt, ssa.OpGe:
+			ssa.OpEq, ssa.OpNe, ssa.OpLt, ssa.OpLe, ssa.OpGt, ssa.OpGe,
+			ssa.OpStateHas:
 			changed = addSource(dst, source{kind: sourceScalar})
+		case ssa.OpStateAbsent:
+			// No payload exists on this alternative, including no provenance.
+		case ssa.OpStatePresent, ssa.OpStateGet:
+			changed = mergeFlow(dst, arg(0))
 		case ssa.OpConstString:
 			changed = addSource(dst, source{kind: sourceImmortal})
 		case ssa.OpArrayMake:

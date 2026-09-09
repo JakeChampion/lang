@@ -212,7 +212,7 @@ func TestSourceLoopKeepsUnchangedBorrowIdentity(t *testing.T) {
 	f := p.funcs[0]
 	for _, block := range f.graph.Blocks {
 		for _, op := range block.Ops {
-			if op.Kind == ssa.OpPhi && referenceBearing(f.values[op.Result.ID].typ) {
+			if op.Kind == ssa.OpPhi && referenceBearing(f.values[op.Result.ID].typ.source) {
 				t.Fatal("unchanged borrowed array acquired a spurious loop phi")
 			}
 		}

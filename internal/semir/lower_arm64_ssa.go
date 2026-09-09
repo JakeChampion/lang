@@ -156,10 +156,13 @@ func (l *armLowerer) function(plan *functionUnits) error {
 	f := l.out.Functions[l.names[src]]
 	f.ReturnWidth, f.ReturnAddr = armValueShape(src.result)
 	values := make(map[int32]ssa.Value)
+	// Availability is an unboxed sum in machine IR. The primary lane is its
+	// presence flag; the payload lane is meaningful only when that flag is true.
+	payloads := make(map[int32]ssa.Value)
 	blocks := make(map[*ssa.Block]*ssa.Block)
 	edges := make(map[flowEdge]*ssa.Block)
 	for _, v := range src.graph.Params {
-		values[v.ID] = armParam(f, src.values[v.ID].typ)
+		values[v.ID] = armParam(f, src.values[v.ID].typ.source)
 	}
 	for _, block := range src.graph.Blocks {
 		if !plan.lifetime.reachable[block] {
@@ -169,10 +172,17 @@ func (l *armLowerer) function(plan *functionUnits) error {
 		for _, op := range block.Ops {
 			if op.Result.IsValid() {
 				values[op.Result.ID] = f.NewValue()
+				if src.values[op.Result.ID].typ.form == availabilityForm {
+					payloads[op.Result.ID] = f.NewValue()
+				}
 			}
 		}
 	}
 	f.Entry = blocks[src.graph.Entry]
+	var laneDemand map[int32]uint8
+	if len(payloads) != 0 {
+		laneDemand = availabilityLaneDemand(src, plan)
+	}
 	for _, block := range src.graph.Blocks {
 		if blocks[block] == nil {
 			continue
@@ -191,7 +201,7 @@ func (l *armLowerer) function(plan *functionUnits) error {
 		}
 		b := &armBuilder{f: f, b: blocks[block], l: l}
 		for _, v := range plan.entry[block] {
-			b.drop(values[v.ID], src.values[v.ID].typ)
+			b.dropSemantic(src, v, values, payloads)
 		}
 		for _, op := range block.Ops {
 			b.pos = src.values[op.Result.ID].pos
@@ -203,26 +213,77 @@ func (l *armLowerer) function(plan *functionUnits) error {
 				args[i] = values[a.ID]
 			}
 			if op.Kind != ssa.OpPhi {
-				b.acquire(plan.ops[op], values)
+				b.acquire(plan.ops[op], values, payloads)
 			}
-			v, err := b.semanticOp(src, op, args)
+			var v ssa.Value
+			var err error
+			payload := payloads[op.Result.ID]
+			typ := src.values[op.Result.ID].typ
+			lanes := laneDemand[op.Result.ID]
+			switch op.Kind {
+			case ssa.OpStateAbsent, ssa.OpStatePresent:
+				// Scalar Present/Get pairs need only the payload lane. Has,
+				// state phis and conditional RC can also require the flag.
+				if lanes&statePresenceLane != 0 {
+					v = b.op(ssa.OpConstBool, 32, false)
+				}
+				if op.Kind == ssa.OpStatePresent {
+					if v.IsValid() {
+						b.b.Ops[len(b.b.Ops)-1].Imm = 1
+					}
+				}
+				payloads[op.Result.ID] = ssa.Value{}
+				if lanes&statePayloadLane != 0 && op.Kind == ssa.OpStatePresent {
+					payloads[op.Result.ID] = args[0]
+				} else if lanes&statePayloadLane != 0 {
+					// This is an inactive machine lane, not a semantic T payload.
+					width, addr := armValueShape(typ.source)
+					payloads[op.Result.ID] = b.op(ssa.OpConstInt, width, addr)
+				}
+			case ssa.OpStateHas:
+				v = args[0]
+			case ssa.OpStateGet:
+				v = payloads[op.Args[0].ID]
+			case ssa.OpPhi:
+				// Entry cleanup may split b.b. Parallel phis still belong to
+				// the source block entry, before all conditional RC branches.
+				phiBuilder := &armBuilder{f: f, b: blocks[block], l: l, pos: b.pos}
+				if typ.form == availabilityForm {
+					if lanes&statePresenceLane != 0 {
+						v = phiBuilder.phi(ast.BoolType{})
+					}
+					payloads[op.Result.ID] = ssa.Value{}
+					if lanes&statePayloadLane != 0 {
+						payloads[op.Result.ID] = phiBuilder.phi(typ.source)
+					}
+				} else {
+					v = phiBuilder.phi(typ.source)
+				}
+			default:
+				v, err = b.semanticOp(src, op, args)
+			}
 			if err != nil {
 				return err
 			}
+			if payload.IsValid() && payloads[op.Result.ID].IsValid() {
+				fixups[payload.ID] = payloads[op.Result.ID]
+			}
 			if op.Result.IsValid() {
-				fixups[values[op.Result.ID].ID] = v
+				if v.IsValid() {
+					fixups[values[op.Result.ID].ID] = v
+				}
 				values[op.Result.ID] = v
 			}
 			for _, drop := range plan.ops[op].drops {
-				b.drop(values[drop.ID], src.values[drop.ID].typ)
+				b.dropSemantic(src, drop, values, payloads)
 			}
 		}
 		switch block.Term.Kind {
 		case ssa.TermRet:
 			step := plan.returns[block]
-			b.acquire(step, values)
+			b.acquire(step, values, payloads)
 			for _, v := range step.drops {
-				b.drop(values[v.ID], src.values[v.ID].typ)
+				b.dropSemantic(src, v, values, payloads)
 			}
 			f.SetRet(b.b, values[block.Term.Value.ID])
 		case ssa.TermBr:
@@ -231,40 +292,94 @@ func (l *armLowerer) function(plan *functionUnits) error {
 			f.SetBrIf(b.b, values[block.Term.Cond.ID], edges[flowEdge{block, block.Term.True}], edges[flowEdge{block, block.Term.False}])
 		}
 	}
+	// Terminators now hold the edge-entry pointers. Reuse their lookup for
+	// post-cleanup exits instead of allocating a second full edge map.
+	edgeExits := edges
 	for _, block := range src.graph.Blocks {
 		if blocks[block] == nil {
 			continue
 		}
 		for _, succ := range block.Succs() {
 			edge := flowEdge{block, succ}
-			b := &armBuilder{f: f, b: edges[edge], l: l}
+			edgeEntry := edges[edge]
+			b := &armBuilder{f: f, b: edgeEntry, l: l}
 			if b.b.Term.Kind != ssa.TermInvalid {
 				continue
 			}
-			b.acquire(plan.edges[edge], values)
+			b.acquire(plan.edges[edge], values, payloads)
 			for _, v := range plan.edges[edge].drops {
-				b.drop(values[v.ID], src.values[v.ID].typ)
+				b.dropSemantic(src, v, values, payloads)
+			}
+			if b.b != edgeEntry {
+				edgeExits[edge] = b.b
 			}
 			f.SetBr(b.b, blocks[succ])
 		}
 	}
 	// Phi operands correspond to the actual split predecessor edges, not
 	// the source block order or a map's iteration order.
+	var physicalPhis map[int32]*ssa.Op
+	if len(payloads) != 0 {
+		physicalPhis = make(map[int32]*ssa.Op)
+		for _, block := range blocks {
+			for _, op := range block.Ops {
+				if op.Kind != ssa.OpPhi {
+					break
+				}
+				physicalPhis[op.Result.ID] = op
+			}
+		}
+	}
 	for old, block := range blocks {
 		for i, op := range old.Ops {
 			if op.Kind != ssa.OpPhi {
 				continue
 			}
-			var args []ssa.Value
+			var args, payloadArgs []ssa.Value
 			for _, pred := range block.Preds {
 				for j, oldPred := range old.Preds {
-					if edges[flowEdge{oldPred, old}] == pred {
+					if edgeExits[flowEdge{oldPred, old}] == pred {
 						args = append(args, values[op.Args[j].ID])
+						if payloads[op.Result.ID].IsValid() {
+							payloadArgs = append(payloadArgs, payloads[op.Args[j].ID])
+						}
 						break
 					}
 				}
 			}
-			block.Ops[i].Args = args
+			if physicalPhis == nil {
+				block.Ops[i].Args = args
+			} else {
+				if phi := physicalPhis[values[op.Result.ID].ID]; phi != nil {
+					phi.Args = args
+				}
+				if phi := physicalPhis[payloads[op.Result.ID].ID]; phi != nil {
+					phi.Args = payloadArgs
+				}
+			}
+		}
+	}
+	// State construction/extraction aliases can cross forward block references.
+	// Canonicalize the finite alias graph once before rewriting operands.
+	for id := range fixups {
+		if len(payloads) == 0 {
+			break // Ordinary one-lane lowering already has direct fixups.
+		}
+		at := fixups[id]
+		path := []int32{id}
+		for {
+			next, exists := fixups[at.ID]
+			if !exists {
+				break
+			}
+			if len(path) > len(fixups) {
+				return fmt.Errorf("semir %s: cyclic physical value aliases", src.graph.Name)
+			}
+			path = append(path, at.ID)
+			at = next
+		}
+		for _, old := range path {
+			fixups[old] = at
 		}
 	}
 	rewrite := func(v ssa.Value) ssa.Value {
@@ -285,10 +400,16 @@ func (l *armLowerer) function(plan *functionUnits) error {
 	return nil
 }
 
-func (b *armBuilder) acquire(step unitStep, values map[int32]ssa.Value) {
+func (b *armBuilder) acquire(step unitStep, values, payloads map[int32]ssa.Value) {
 	for _, supply := range step.supplies {
 		if supply.mode == unitRetain {
-			b.call("__fern_rc_inc", 64, true, values[supply.value.ID])
+			if supply.conditional {
+				b.whenPresent(values[supply.value.ID], func() {
+					b.call("__fern_rc_inc", 64, true, payloads[supply.value.ID])
+				})
+			} else {
+				b.call("__fern_rc_inc", 64, true, values[supply.value.ID])
+			}
 		}
 	}
 	// Moves are SSA value flow, not physical RC operations. copyElements is
@@ -296,7 +417,7 @@ func (b *armBuilder) acquire(step unitStep, values map[int32]ssa.Value) {
 }
 
 func (b *armBuilder) semanticOp(src *Func, op *ssa.Op, args []ssa.Value) (ssa.Value, error) {
-	typ := src.values[op.Result.ID].typ
+	typ := src.values[op.Result.ID].typ.source
 	w, addr := armValueShape(typ)
 	if scalarOp(op.Kind) || op.Kind == ssa.OpNot || op.Kind == ssa.OpNeg {
 		return b.op(op.Kind, w, addr, args...), nil
@@ -306,15 +427,6 @@ func (b *armBuilder) semanticOp(src *Func, op *ssa.Op, args []ssa.Value) (ssa.Va
 		v := b.op(op.Kind, w, addr)
 		last := b.b.Ops[len(b.b.Ops)-1]
 		last.Imm, last.Str = op.Imm, op.Str
-		return v, nil
-	case ssa.OpPhi:
-		v := b.f.AddPhi(b.b)
-		for _, phi := range b.b.Ops {
-			if phi.Result == v {
-				phi.Width, phi.Addr = w, addr
-				b.l.out.Positions[phi] = b.pos
-			}
-		}
 		return v, nil
 	case ssa.OpSemanticCall:
 		callee, err := src.callee(op)
@@ -342,7 +454,7 @@ func (b *armBuilder) semanticOp(src *Func, op *ssa.Op, args []ssa.Value) (ssa.Va
 	case ssa.OpArrayGet:
 		stride := armElementBytes(typ)
 		index := args[1]
-		n := src.values[op.Args[1].ID].typ.(ast.NumberType)
+		n := src.values[op.Args[1].ID].typ.source.(ast.NumberType)
 		if n.NormalWidth() <= 32 && n.Width != ast.WidthPtr {
 			kind := ssa.OpExtendU
 			if n.IsSigned() {
@@ -369,7 +481,7 @@ func (b *armBuilder) semanticOp(src *Func, op *ssa.Op, args []ssa.Value) (ssa.Va
 		}
 		return data, nil
 	case ssa.OpTupleGet:
-		offsets, _ := armTupleLayout(src.values[op.Args[0].ID].typ.(ast.TupleType))
+		offsets, _ := armTupleLayout(src.values[op.Args[0].ID].typ.source.(ast.TupleType))
 		return b.load(args[0], offsets[op.Imm], typ), nil
 	default:
 		return ssa.Value{}, fmt.Errorf("semir ARM64: unsupported operation %s", op.Kind)

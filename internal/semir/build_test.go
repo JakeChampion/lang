@@ -119,7 +119,7 @@ func TestBuildKeepsCompleteTypes(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := ast.ArrayType{Elem: ast.TupleType{Elems: []ast.Type{ast.ArrayType{Elem: ast.StringType{}}, ast.NumberType{Width: 64}}}}
-	if !ast.Equal(f.result, want) || !ast.Equal(f.values[f.graph.Params[0].ID].typ, want) || f.modes[0] != ParamCounted {
+	if !ast.Equal(f.result, want) || !ast.Equal(f.values[f.graph.Params[0].ID].typ.source, want) || f.modes[0] != ParamCounted {
 		t.Fatal("lost nested semantic type or counted entry contract")
 	}
 }

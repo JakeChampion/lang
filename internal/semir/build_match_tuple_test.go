@@ -127,8 +127,8 @@ func TestTupleMatchPreservesProjectionContracts(t *testing.T) {
 				continue
 			}
 			effect := effects.ops[op]
-			fieldType := f.values[parent.ID].typ.(ast.TupleType).Elems[0]
-			if op.Args[0] != parent || op.Imm != 0 || !ast.Equal(f.values[op.Result.ID].typ, fieldType) ||
+			fieldType := f.values[parent.ID].typ.source.(ast.TupleType).Elems[0]
+			if op.Args[0] != parent || op.Imm != 0 || !ast.Equal(f.values[op.Result.ID].typ.source, fieldType) ||
 				effect.result != resultProjection || effect.parent != parent || effect.parent == op.Result {
 				t.Fatal("tuple pattern lost the typed child/container relationship")
 			}

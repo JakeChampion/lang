@@ -6,6 +6,39 @@ SSA cutover and typed-IR work. Initial integration base: `02ea66e91`.
 
 ## Current implementation checkpoint
 
+Internal guarded binding replacement now requires an exact same-binding snapshot,
+a dominating true presence guard and an unended binding lifetime. Promotion threads
+its new payload into later values without relaxing ordinary must-initialization.
+An independent lifetime oracle and native allocator-pressure/replacement-loop
+tests cover this cleanup writeback prerequisite. Source conditional execution
+still needs guarded activation and replay integration. See
+[typed binding places](TYPED-BINDING-PLACES.md#guarded-replacement).
+
+Typed pending cleanup graphs now admit conditional registration through finite
+action/order/capture projections. The proof preserves correlated initialization,
+LIFO order, exactly-once replay and lifetime resets across joins and cycles, with
+11,520 comparisons against an independent full-stack oracle. Ordinary binding
+must-initialization rules remain unchanged. Expansion still explicitly rejects
+conditional actions until guarded activation, snapshot extraction and sequential
+writeback have executable proof. See [typed cleanup regions](TYPED-CLEANUP-REGIONS.md).
+
+Internal binding snapshots now promote partial initialization and lifetime resets
+to typed Absent/Present states. Guarded payload access preserves snapshot identity
+across replacement and scope exit without relaxing ordinary must-initialization
+checks. Demand-driven materialization and a 168-case independent CFG oracle are
+documented in [typed binding places](TYPED-BINDING-PLACES.md). Source conditional
+cleanup still needs guarded executable registration/replay integration.
+
+Internal availability values now distinguish Absent from Present(T),
+with complete semantic type/phi checks, exact-state guard proofs and unboxed
+machine lanes. Direct payload aliases and presence-only states omit unused
+components. This end-to-end IR slice is documented in
+[typed availability values](TYPED-AVAILABILITY-VALUES.md). Reference-bearing states
+carry independently verified conditional payload obligations, and their borrows
+preserve state/container anchors through guarded RC lowering. Correlated source
+conditional cleanup and production AST retirement remain unimplemented; the
+ordinary source ABI and ownership gates are unchanged.
+
 Source binding resolution now emits explicit typed initialization, read and
 replacement operations. A separate, independently verified CFG pass proves
 definite initialization and promotes these places to ordinary SSA before
@@ -25,9 +58,10 @@ source CFG is complete. The frontend records typed invocation sites, not copied
 action bodies. Expansion consumes only action/binding identities and CFG edges,
 preserving late reads, sequential outputs, continuation phis and boundary ends.
 Pending invocations cannot reach binding promotion or ownership analysis. The
-pre-expansion verifier still restricts registration by dominance on the complete
-typed CFG, replacing per-exit source-builder dominance queries. Correlated conditional
-availability and production native/self-host retirement remain outstanding.
+pre-expansion verifier uses the complete typed CFG, replacing per-exit source-builder
+dominance queries. Conditional graphs use correlated admission; executable expansion
+still requires dominating registrations. Guarded conditional expansion and production
+native/self-host retirement remain outstanding.
 
 Plain function and iteration cleanup actions with dominating registrations now compile
 once to typed action regions. Capture interfaces preserve enclosing BindingIDs;

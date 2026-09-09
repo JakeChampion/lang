@@ -113,7 +113,7 @@ func VerifyProgram(p *Program) error {
 			return fmt.Errorf("semir %s: body disagrees with call contract", f.graph.Name)
 		}
 		for i, param := range f.graph.Params {
-			if !ast.Equal(c.params[i], f.values[param.ID].typ) || c.modes[i] != f.modes[i] {
+			if !ast.Equal(c.params[i], f.values[param.ID].typ.source) || c.modes[i] != f.modes[i] {
 				return fmt.Errorf("semir %s: parameter disagrees with call contract", f.graph.Name)
 			}
 		}
@@ -134,7 +134,7 @@ func (f *Func) callee(op *ssa.Op) (*Func, error) {
 		return nil, fmt.Errorf("body disagrees with semantic call contract")
 	}
 	for i, param := range callee.graph.Params {
-		typ := callee.values[param.ID].typ
+		typ := callee.values[param.ID].typ.source
 		if !ast.Equal(c.params[i], typ) || c.modes[i] != callee.modes[i] {
 			return nil, fmt.Errorf("parameter disagrees with semantic call contract")
 		}
