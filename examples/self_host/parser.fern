@@ -7062,9 +7062,11 @@ function parse_pattern_param(p: Par): (ast.ParamDecl, ParamDestr, Par) {
     // while the spelling has some would state the wrong arity.
     var dtr_fn_pdyn: string = peek_fn_param_dyn(p);
     var dtr_fn_ptys: string = peek_fn_param_types(p);
+    var dtr_arr_ptys: string = peek_fn_array_param_types(p);
     var (tr_name, tr_ret_arr, tr_fn_ret, tr_p) = parse_type_name(p);
     p = tr_p;
-    if (tr_name != "fn") { dtr_fn_pdyn = ""; dtr_fn_ptys = ""; }
+    if (tr_name != "fn") { dtr_fn_pdyn = ""; }
+    dtr_fn_ptys = fn_param_types_for(tr_name, dtr_fn_ptys, dtr_arr_ptys);
     // A destructured parameter can't carry a default value.
     if (p.peek_punct() == "=") {
         return (bad_param, bad, p);
@@ -7260,9 +7262,11 @@ function parse_param(p: Par): (ast.ParamDecl, Par) {
     // coarsens the spelling to the flat "fn" tag (#5276).
     var tr_fn_pdyn: string = peek_fn_param_dyn(p);
     var tr_fn_ptys: string = peek_fn_param_types(p);
+    var tr_arr_ptys: string = peek_fn_array_param_types(p);
     var (tr_name, tr_ret_arr, tr_fn_ret, tr_p) = parse_type_name(p);
     p = tr_p;
-    if (tr_name != "fn") { tr_fn_pdyn = ""; tr_fn_ptys = ""; }
+    if (tr_name != "fn") { tr_fn_pdyn = ""; }
+    tr_fn_ptys = fn_param_types_for(tr_name, tr_fn_ptys, tr_arr_ptys);
     // Optional default value: `function f(a: i32, b: i32 = 128)`.
     // fill_default_args_module fills it at call sites that omit the argument.
     var has_def: boolean = false;

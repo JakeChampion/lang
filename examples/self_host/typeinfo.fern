@@ -50,9 +50,9 @@ pub struct TypeTuple { elements: Type[] }
 // the body's declared return type.
 //
 // params_known separates a param list that is genuinely empty (a `() => R`
-// callable) from one that was never recorded: a "fn"-coarsened struct FIELD
-// carries no param spellings, so its TypeFunc has an empty list it cannot
-// vouch for. Only a known list may be read as the callable's arity.
+// callable) from one that was never recorded: a bare legacy "fn" tag carries
+// no signature, so its TypeFunc has an empty list it cannot vouch for. Retained
+// declaration sidecars do record a signature. Only a known list is an arity.
 pub struct TypeFunc { param_types: Type[], ret_type: Type, params_known: boolean }
 
 // TypeMap models `Map[K, V]` — a runtime hash-map keyed by K
