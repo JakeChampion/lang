@@ -95,6 +95,7 @@ jobs:
       # valgrind carries the dynamic half. If it cannot be installed the run
       # still reports the static half and says which half is missing, rather
       # than reporting a green it did not earn.
+      - uses: ./.github/actions/disable-chrome-apt
       - name: Install valgrind
         run: sudo apt-get update && sudo apt-get install -y valgrind
 
