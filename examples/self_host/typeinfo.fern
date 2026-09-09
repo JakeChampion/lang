@@ -1,0 +1,102 @@
+// Shared semantic types for the self-hosted compiler.
+// Keep this module independent of AST, parser, checker and physical IR so
+// checked syntax and pre-RC semantic values can carry the same type directly.
+// This extraction preserves existing fields and union member order exactly.
+
+// TypeI32 models EVERY integer width — i32 / i64 / u32 / u64 — distinguished
+// by (width, unsigned). The checker stays width-LENIENT for assignability
+// (type_eq treats all integer types as interchangeable, matching the port's
+// long-standing loose-int behaviour), but width is carried so method DISPATCH
+// keys (which compare the declared receiver-type spelling) can recover "i64" /
+// "u32" / "u64" at a call site. Actual codegen width lives in asmcore's `Ty`.
+// The integer-shaped scalars, plus `char`. `is_char` marks a Unicode scalar
+// value (#5629): it rides an i32 slot, so it shares this variant and stays
+// interchangeable with i32 under type_eq — but it dispatches its own method
+// surface (std/unicode declares seven `char`-receiver methods), which is what
+// the flag is read for. Replaces a dead `tag` filler field that nothing read.
+pub struct TypeI32 { is_char: boolean, width: i32, unsigned: boolean }
+
+pub struct TypeBool { tag: i32 }
+
+// payload — variants need a
+pub struct TypeString { tag: i32 }
+
+// shape; the field is unused.
+pub struct TypeFloat { tag: i32 }
+
+// f64 — `f32` aliases the same
+// type in this cut (no width
+// distinction in the checker).
+// Array of homogeneous elements. elem can itself be any Type, so
+// `i32[][]` is representable. An empty literal `[]` defaults to
+// TypeArray { elem: TypeUnknown(...) } — the checker rejects it
+// in inference contexts because it can't infer a concrete elem
+// type.
+pub struct TypeArray { elem: Type }
+
+// TypeStruct references a user-declared struct by name. The
+// full field list lives in the StructTable (built once per
+// module); this variant is just the nominal handle.
+pub struct TypeStruct { name: string, args: Type[] }
+
+// TypeTuple carries a fixed-arity heterogeneous element-type
+// list. Field access via `.0` / `.1` / … reads the elem type
+// at that position; out-of-range indices surface unknown.
+pub struct TypeTuple { elements: Type[] }
+
+// TypeFunc is the static type of a callable value — `function
+// (a: T, b: T): RT { … }` or a binding to one. param_types
+// captures the declared parameter types in order; ret_type is
+// the body's declared return type.
+//
+// params_known separates a param list that is genuinely empty (a `() => R`
+// callable) from one that was never recorded: a "fn"-coarsened struct FIELD
+// carries no param spellings, so its TypeFunc has an empty list it cannot
+// vouch for. Only a known list may be read as the callable's arity.
+pub struct TypeFunc { param_types: Type[], ret_type: Type, params_known: boolean }
+
+// TypeMap models `Map[K, V]` — a runtime hash-map keyed by K
+// values yielding V values. The actual runtime + method
+// dispatch is a follow-up; the checker only knows enough to
+// give a Map-typed binding a structural identity and route
+// `==` comparisons / type assignability.
+pub struct TypeMap { key: Type, value: Type }
+
+// TypeUnion references a user-declared type alias by name —
+// `pub type Shape = Circle | Square`. Variant resolution lives
+// in the UnionTable (parallel to StructTable). The checker uses
+// the union name for assignability: a variant value (TypeStruct
+// "Circle") is assignable to a TypeUnion "Shape" if Circle
+// appears in Shape's variant list.
+// `args` carries a builtin generic union's instantiation arguments
+// (`Option[i32]` → TypeUnion{"Option", [i32]}), mirroring TypeStruct.args.
+// type_eq / assignability compare unions by NAME and ignore args, so a
+// name-only union (args=[]) and an instantiated one stay interchangeable
+// everywhere the checker compares them — the field is read only by the
+// typed-IR annotation (type_to_irtag), to reconstruct the "Option[T]" /
+// "Result[T, E]" tag irlower's try_opt_type keys on (#5531).
+pub struct TypeUnion { name: string, args: Type[] }
+
+// A `dyn Trait` object type. `traits` is the trait-set text after the
+// `dyn ` prefix — "Greet" for `dyn Greet`, "A + B" for `dyn A + B`. In this
+// partial type system a dyn value's concrete Self isn't tracked (native
+// resolves it at monomorphisation / vtable-dispatch time), so assignability
+// into a dyn slot is lenient — a value of ANY value type may flow in, exactly
+// as a generic parameter accepts any argument. The coded conformance passes
+// (E021 object-safety, E059/E060 downcast, E062 ambiguous-method) run
+// independently off the annotation TEXT, so real dyn errors still surface;
+// this Type only stops the uncoded silent over-reject of a `dyn` binding
+// (#4346 piece 2). Method dispatch THROUGH a dyn value is not yet typed —
+// `d.hi()` still infers unknown — a deliberately-deferred follow-up.
+pub struct TypeDyn { traits: string }
+
+// The type of an expression that yields no value: a call of a `: void`
+// function, and a bare `return;`. It is distinct from TypeUnknown, which
+// means "this checker could not work the type out" — conflating the two made
+// void read as an unresolved name, so a void call was an uncoded over-reject
+// in statement position and an invisible wildcard in value position (#6649).
+pub struct TypeVoid { tag: i32 }
+
+pub struct TypeUnknown { reason: string }
+
+pub type Type = TypeI32 | TypeBool | TypeString | TypeFloat | TypeArray | TypeStruct | TypeTuple | TypeFunc | TypeMap | TypeUnion | TypeDyn | TypeVoid | TypeUnknown;

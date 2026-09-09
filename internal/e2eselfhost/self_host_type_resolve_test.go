@@ -1,7 +1,6 @@
 package e2eselfhost
 
 import (
-	"os/exec"
 	"testing"
 )
 
@@ -25,9 +24,6 @@ import (
 // The driver is built natively via the Go x86-64 backend; its stdout is the map.
 func TestSelfHostTypeResolve(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
-	if len(runner) != 0 {
-		t.Skip("type_resolve_run driver runs natively; skipping under an exec runner")
-	}
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "type_resolve_run.fern")
 	bin := buildSelfHostBin(t, gcc, dir, "type_resolve_run.fern", "type_resolve_run")
@@ -88,7 +84,7 @@ func TestSelfHostTypeResolve(t *testing.T) {
 		"mod.Thing => unknown(unrecognised type name: mod.Thing)\n" +
 		" => unknown(unrecognised type name: )\n"
 
-	cmd := exec.Command(bin)
+	cmd := runX86_64Bin(runner, bin)
 	out, _ := cmd.Output()
 	if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
 		t.Fatalf("type_resolve_run did not exit normally")
