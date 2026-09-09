@@ -51,7 +51,9 @@ function main(): i32 {
         "(i32, string)[]", "dyn Shape", "dyn Shape[]",
         "() => P", "(i32) => i32", "(T, T) => i32", "(T) => U[]",
         "(ast.Expr, T) => T", "(() => T) => U", "(i32) => (string, i32)",
-        "Vec[(T) => boolean]"
+        "Vec[(T) => boolean]", "((T) => U)[]", "(T) => U[][]",
+        "(T) => () => U[]", "((((T) => U)))", "((() => U)[])",
+        "(((T) => U)[][])", "(() => T, () => U)", "() => (() => U[])[]"
     ];
     var out: string = "";
     var bad: i32 = 0;
@@ -109,6 +111,35 @@ function main(): i32 {
         + " fn=" + b2s(fh.is_fn)
         + " p0fn=" + b2s(fh.args[0].is_fn)
         + " ret=" + parser.render_type_ref(fh.args[1]) + "\n";
+
+    var fr: parser.TypeRef = parser.parse_type_ref("(T) => U[][]");
+    out = out + "struct fnarrret fn=" + b2s(parser.ref_is_fn_value(fr))
+        + " depth=" + util.i32_to_string(fr.array_depth)
+        + " retdepth=" + util.i32_to_string(parser.ref_fn_result(fr).array_depth) + "\n";
+    var fa: parser.TypeRef = parser.parse_type_ref("((T) => U)[]");
+    out = out + "struct arrfn fn=" + b2s(parser.ref_is_fn_value(fa))
+        + " depth=" + util.i32_to_string(fa.array_depth)
+        + " elemfn=" + b2s(parser.ref_is_fn_value(parser.elem_type_ref(fa))) + "\n";
+    var fg: parser.TypeRef = parser.parse_type_ref("((((T) => U)))");
+    out = out + "struct groupedfn fn=" + b2s(parser.ref_is_fn_value(fg))
+        + " params=" + parser.ref_fn_param_spellings(fg)
+        + " ret=" + parser.render_type_ref(parser.ref_fn_result(fg)) + "\n";
+
+    // A grouping must not unwrap through an array or turn a real tuple into
+    // a function. Right-associated arrows retain the innermost result array.
+    if (parser.ref_is_fn_value(parser.parse_type_ref("((() => U)[])"))) { bad = bad + 1; }
+    if (parser.ref_is_fn_value(parser.parse_type_ref("(((T) => U)[][])"))) { bad = bad + 1; }
+    if (parser.ref_is_fn_value(parser.parse_type_ref("(() => T, () => U)"))) { bad = bad + 1; }
+    if (parser.ref_is_fn_value(parser.parse_type_ref("fn"))) { bad = bad + 1; }
+    var chain: parser.TypeRef = parser.parse_type_ref("(T) => () => U[]");
+    var inner_fn: parser.TypeRef = parser.ref_fn_result(chain);
+    if (!parser.ref_is_fn_value(inner_fn)) { bad = bad + 1; }
+    if (parser.ref_fn_result(inner_fn).array_depth != 1) { bad = bad + 1; }
+    var array_result: parser.TypeRef = parser.ref_fn_result(parser.parse_type_ref("() => (() => U[])[]"));
+    if (array_result.array_depth != 1 || parser.ref_is_fn_value(array_result)) { bad = bad + 1; }
+    var element_fn: parser.TypeRef = parser.elem_type_ref(array_result);
+    if (!parser.ref_is_fn_value(element_fn)) { bad = bad + 1; }
+    if (parser.ref_fn_result(element_fn).array_depth != 1) { bad = bad + 1; }
 
     out = out + "round_trip_failures=" + util.i32_to_string(bad) + "\n";
     write(out);
