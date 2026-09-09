@@ -1,0 +1,212 @@
+// Typed semantic values before RC. Reuse SSA's graph, never lift ownership
+// facts from physical load/store/alloc or runtime helper names.
+import "./ssa";
+import "./ssalive";
+import "./ssadeps";
+import "./semtypes";
+import "./typeinfo";
+
+pub struct Func {
+    graph: ssa.SFunc,
+    values: typeinfo.Type[],
+    params: typeinfo.Type[],
+    result: typeinfo.Type
+}
+
+pub struct Analysis {
+    ok: boolean,
+    why: string,
+    dependencies: i32[][],
+    flow: ssalive.Flow
+}
+
+// Negative tags belong to this semantic phase. Physical SSA consumers do not
+// implement them. Existing parameter, copy, phi and scalar tags are reused.
+pub function array_new(): i32 { return 0 - 1; }
+pub function tuple_new(): i32 { return 0 - 2; }
+pub function array_get(): i32 { return 0 - 3; }
+pub function tuple_get(): i32 { return 0 - 4; }
+
+function failed(why: string): Analysis {
+    return Analysis { ok: false, why: why, dependencies: [], flow: ssalive.Flow { ok: false, why: why, live_in: [], live_out: [] } };
+}
+
+function empty_dependencies(n: i32): i32[][] {
+    var out: i32[][] = [];
+    var i: i32 = 0;
+    while (i < n) { out = out.append([]); i = i + 1; }
+    return out;
+}
+
+function is_i32(t: typeinfo.Type): boolean {
+    if let typeinfo.TypeI32(i) = t { return i.width == 32 && !i.unsigned && !i.is_char; }
+    return false;
+}
+
+function is_bool(t: typeinfo.Type): boolean {
+    if let typeinfo.TypeBool(_) = t { return true; }
+    return false;
+}
+
+function is_void(t: typeinfo.Type): boolean {
+    if let typeinfo.TypeVoid(_) = t { return true; }
+    return false;
+}
+
+function parameter_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
+    if (ins.args.len() != 0 || ins.result != ins.imm || !semtypes.equal(result, f.params[ins.imm])) { return "parameter type or identity"; }
+    return "";
+}
+
+function copy_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
+    if ((ins.kind_tag == 7 && ins.args.len() != 1) || (ins.kind_tag == 8 && ins.args.len() == 0)) { return "copy or phi arity"; }
+    for arg in ins.args { if (!semtypes.equal(result, f.values[arg])) { return "copy or phi type"; } }
+    return "";
+}
+
+function constant_error(ins: ssa.SInst, result: typeinfo.Type): string {
+    if (ins.args.len() != 0) { return "constant arity"; }
+    if (ins.kind_tag == 1 && !is_i32(result)) { return "integer constant type"; }
+    if (ins.kind_tag == 2 && (!is_bool(result) || (ins.imm != 0 && ins.imm != 1))) { return "boolean constant type or value"; }
+    return "";
+}
+
+function array_construction_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
+    if let typeinfo.TypeArray(a) = result {
+        for arg in ins.args { if (!semtypes.equal(a.elem, f.values[arg])) { return "array element type"; } }
+        return "";
+    }
+    return "array construction type";
+}
+
+function tuple_construction_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
+    if let typeinfo.TypeTuple(tup) = result {
+        if (ins.args.len() != tup.elements.len()) { return "tuple construction arity"; }
+        var i: i32 = 0;
+        while (i < ins.args.len()) {
+            if (!semtypes.equal(tup.elements[i], f.values[ins.args[i]])) { return "tuple element type"; }
+            i = i + 1;
+        }
+        return "";
+    }
+    return "tuple construction type";
+}
+
+function array_projection_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
+    if (ins.args.len() != 2) { return "array projection arity"; }
+    if (!is_i32(f.values[ins.args[1]])) { return "array index type"; }
+    if let typeinfo.TypeArray(a) = f.values[ins.args[0]] {
+        if (!semtypes.equal(a.elem, result)) { return "array projection type"; }
+        return "";
+    }
+    return "array container type";
+}
+
+function tuple_projection_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
+    if (ins.args.len() != 1) { return "tuple projection arity"; }
+    if let typeinfo.TypeTuple(tup) = f.values[ins.args[0]] {
+        if (ins.imm < 0 || ins.imm >= tup.elements.len()) { return "tuple projection index"; }
+        if (!semtypes.equal(tup.elements[ins.imm], result)) { return "tuple projection type"; }
+        return "";
+    }
+    return "tuple container type";
+}
+
+function instruction_error(ins: ssa.SInst, f: Func): string {
+    if (ins.result < 0) { return "semantic operation needs a result"; }
+    var result: typeinfo.Type = f.values[ins.result];
+    var kind: i32 = ins.kind_tag;
+    if (kind == 6) { return parameter_error(ins, f, result); }
+    if (kind == 7 || kind == 8) { return copy_error(ins, f, result); }
+    if (kind == 1 || kind == 2) { return constant_error(ins, result); }
+    if (kind == array_new()) { return array_construction_error(ins, f, result); }
+    if (kind == tuple_new()) { return tuple_construction_error(ins, f, result); }
+    if (kind == array_get()) { return array_projection_error(ins, f, result); }
+    if (kind == tuple_get()) { return tuple_projection_error(ins, f, result); }
+    return "unsupported semantic operation";
+}
+
+function schema_error(f: Func): string {
+    if (f.graph.nvals < 0 || f.values.len() != f.graph.nvals || f.params.len() != f.graph.nparams) { return "semantic type dimensions"; }
+    if (f.graph.takes_env) { return "closure contract not available"; }
+    var why: string = ssadeps.verify(f.graph, empty_dependencies(f.graph.nvals));
+    if (why != "") { return why; }
+    if (!semtypes.concrete(f.result, true)) { return "unresolved result type"; }
+    for t in f.values { if (!semtypes.concrete(t, false)) { return "unresolved value type"; } }
+    for t in f.params { if (!semtypes.concrete(t, false)) { return "unresolved parameter type"; } }
+    return "";
+}
+
+function terminator_error(b: ssa.SBlock, f: Func): string {
+    if (b.term.kind_tag == 1) {
+        if (b.term.value < 0) {
+            if (!is_void(f.result)) { return "missing return value"; }
+        } else if (!semtypes.equal(f.result, f.values[b.term.value])) { return "return type"; }
+    }
+    if (b.term.kind_tag == 3 && !is_bool(f.values[b.term.cond])) { return "condition type"; }
+    return "";
+}
+
+function operations_error(f: Func): string {
+    var seen_params: i32 = 0;
+    for b in f.graph.blocks {
+        for ins in b.insts {
+            var why: string = instruction_error(ins, f);
+            if (why != "") { return why; }
+            if (ins.kind_tag == 6) { seen_params = seen_params + 1; }
+        }
+        var why: string = terminator_error(b, f);
+        if (why != "") { return why; }
+    }
+    // Result == parameter index plus unique SSA definitions rules out repeated
+    // parameter indices; exact cardinality therefore proves full coverage.
+    if (seen_params != f.params.len()) { return "missing parameter definition"; }
+    return "";
+}
+
+function borrow_parents(f: Func): i32[] {
+    var parents: i32[] = [];
+    var i: i32 = 0;
+    while (i < f.graph.nvals) { parents = parents.append(0 - 1); i = i + 1; }
+    for b in f.graph.blocks {
+        for ins in b.insts {
+            if ((ins.kind_tag == 7 || ins.kind_tag == array_get() || ins.kind_tag == tuple_get()) && semtypes.needs_anchor(f.values[ins.result])) {
+                parents = parents.with(ins.result, ins.args[0]);
+            }
+        }
+    }
+    return parents;
+}
+
+function analyze_parents(f: Func, parents: i32[]): Analysis {
+    var derived: i32[][] = [];
+    var i: i32 = 0;
+    while (i < f.graph.nvals) {
+        var chain: i32[] = [];
+        var at: i32 = parents[i];
+        while (at >= 0) {
+            // Unreachable blocks have no dominance obligation, so reject their
+            // possible parent cycles explicitly rather than looping forever.
+            if (at == i || chain.len() >= f.graph.nvals) { return failed("cyclic semantic projection"); }
+            chain = chain.append(at);
+            at = parents[at];
+        }
+        derived = derived.append(chain);
+        i = i + 1;
+    }
+    var flow: ssalive.Flow = ssadeps.analyze(f.graph, derived);
+    if (!flow.ok) { return failed(flow.why); }
+    return Analysis { ok: true, why: "", dependencies: derived, flow: flow };
+}
+
+// Dependencies are derived from typed operations, not accepted as a sidecar
+// assertion. Copies preserve a borrow's source identity; managed projections
+// borrow their actual container. Construction and phis have no parent anchor:
+// their independent counted supplies are obligations of the later unit pass.
+pub function analyze(f: Func): Analysis {
+    var why: string = schema_error(f);
+    if (why != "") { return failed(why); }
+    why = operations_error(f);
+    if (why != "") { return failed(why); }
+    return analyze_parents(f, borrow_parents(f));
+}

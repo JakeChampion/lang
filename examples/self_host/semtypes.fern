@@ -1,0 +1,107 @@
+// Exact semantic identity, distinct from frontend assignability or spelling.
+import "./typeinfo";
+
+pub function equal(a: typeinfo.Type, b: typeinfo.Type): boolean {
+    if let typeinfo.TypeArray(x) = a { if let typeinfo.TypeArray(y) = b { return equal(x.elem, y.elem); } }
+    if let typeinfo.TypeTuple(x) = a { if let typeinfo.TypeTuple(y) = b { return equal_list(x.elements, y.elements); } }
+    if let typeinfo.TypeMap(x) = a { if let typeinfo.TypeMap(y) = b { return equal(x.key, y.key) && equal(x.value, y.value); } }
+    return named_equal(a, b) || numeric_equal(a, b) || atomic_equal(a, b);
+}
+
+function numeric_equal(a: typeinfo.Type, b: typeinfo.Type): boolean {
+    if let typeinfo.TypeI32(x) = a {
+        if let typeinfo.TypeI32(y) = b { return x.width == y.width && x.unsigned == y.unsigned && x.is_char == y.is_char; }
+    }
+    if let typeinfo.TypeFloat(x) = a {
+        if let typeinfo.TypeFloat(y) = b { return x.width == y.width && x.polymorphic == y.polymorphic; }
+    }
+    return false;
+}
+
+function atomic_equal(a: typeinfo.Type, b: typeinfo.Type): boolean {
+    if let typeinfo.TypeBool(_) = a { if let typeinfo.TypeBool(_) = b { return true; } }
+    if let typeinfo.TypeString(x) = a { if let typeinfo.TypeString(y) = b { return x.tag == y.tag; } }
+    if let typeinfo.TypeVoid(_) = a { if let typeinfo.TypeVoid(_) = b { return true; } }
+    return false;
+}
+
+function named_args_equal(a: string, aa: typeinfo.Type[], b: string, ba: typeinfo.Type[]): boolean {
+    return a == b && equal_list(aa, ba);
+}
+
+function callable_equal(a: typeinfo.TypeFunc, b: typeinfo.TypeFunc): boolean {
+    return a.params_known == b.params_known && equal_list(a.param_types, b.param_types) && equal(a.ret_type, b.ret_type);
+}
+
+function named_equal(a: typeinfo.Type, b: typeinfo.Type): boolean {
+    if let typeinfo.TypeStruct(x) = a { if let typeinfo.TypeStruct(y) = b { return named_args_equal(x.name, x.args, y.name, y.args); } }
+    if let typeinfo.TypeUnion(x) = a { if let typeinfo.TypeUnion(y) = b { return named_args_equal(x.name, x.args, y.name, y.args); } }
+    if let typeinfo.TypeFunc(x) = a { if let typeinfo.TypeFunc(y) = b { return callable_equal(x, y); } }
+    if let typeinfo.TypeDyn(x) = a { if let typeinfo.TypeDyn(y) = b { return x.traits == y.traits; } }
+    return false;
+}
+
+function equal_list(a: typeinfo.Type[], b: typeinfo.Type[]): boolean {
+    if (a.len() != b.len()) { return false; }
+    var i: i32 = 0;
+    while (i < a.len()) {
+        if (!equal(a[i], b[i])) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+// Each helper admits a closed representation family. Unknown types match none.
+// Nominal identities remain opaque until a declaration schema is supplied.
+pub function concrete(t: typeinfo.Type, allow_void: boolean): boolean {
+    return concrete_numeric(t) || concrete_leaf(t, allow_void) || concrete_container(t) || concrete_named(t);
+}
+
+function concrete_integer(i: typeinfo.TypeI32): boolean {
+    if (i.is_char) { return i.width == 32 && !i.unsigned; }
+    return i.width == 32 || i.width == 64 || (i.width == 8 && i.unsigned);
+}
+
+function concrete_numeric(t: typeinfo.Type): boolean {
+    if let typeinfo.TypeI32(i) = t { return concrete_integer(i); }
+    if let typeinfo.TypeFloat(f) = t { return !f.polymorphic && (f.width == 32 || f.width == 64); }
+    return false;
+}
+
+function concrete_leaf(t: typeinfo.Type, allow_void: boolean): boolean {
+    if let typeinfo.TypeBool(_) = t { return true; }
+    if let typeinfo.TypeString(s) = t { return s.tag == 0 || s.tag == 1; }
+    if let typeinfo.TypeDyn(d) = t { return d.traits.len() > 0; }
+    if let typeinfo.TypeVoid(_) = t { return allow_void; }
+    return false;
+}
+
+function concrete_container(t: typeinfo.Type): boolean {
+    if let typeinfo.TypeArray(a) = t { return concrete(a.elem, false); }
+    if let typeinfo.TypeTuple(tup) = t { return tup.elements.len() >= 2 && concrete_list(tup.elements); }
+    if let typeinfo.TypeMap(m) = t { return concrete(m.key, false) && concrete(m.value, false); }
+    return false;
+}
+
+function concrete_named(t: typeinfo.Type): boolean {
+    if let typeinfo.TypeStruct(s) = t { return s.name.len() > 0 && concrete_list(s.args); }
+    if let typeinfo.TypeUnion(u) = t { return u.name.len() > 0 && concrete_list(u.args); }
+    if let typeinfo.TypeFunc(f) = t { return f.params_known && concrete_list(f.param_types) && concrete(f.ret_type, true); }
+    return false;
+}
+
+function concrete_list(ts: typeinfo.Type[]): boolean {
+    for t in ts { if (!concrete(t, false)) { return false; } }
+    return true;
+}
+
+// This is a conservative lifetime classification, not an RC layout or a claim
+// that a value carries a counted unit. Views and opaque nominal values retain
+// their anchors too. Their eventual unit/layout contracts must be verified.
+pub function needs_anchor(t: typeinfo.Type): boolean {
+    if let typeinfo.TypeI32(_) = t { return false; }
+    if let typeinfo.TypeBool(_) = t { return false; }
+    if let typeinfo.TypeFloat(_) = t { return false; }
+    if let typeinfo.TypeVoid(_) = t { return false; }
+    return true;
+}
