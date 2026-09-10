@@ -8623,9 +8623,16 @@ func (c *checker) assignableWith(dst, src ast.Type, dynBox bool) bool {
 	}
 	// Polymorphic empty-array literal (`[]`) — its concrete
 	// element type is filled in from `dst` by settleEmptyArray.
+	// A non-empty array assigns element-wise like a tuple, so a
+	// still-polymorphic numeric element (a generic call's `T[]`
+	// result over a literal argument) reaches a concrete element
+	// destination the way a scalar or a tuple element does (#9003).
 	if da, dok := dst.(ast.ArrayType); dok {
-		if sa, sok := src.(ast.ArrayType); sok && sa.Elem == nil && da.Elem != nil {
-			return true
+		if sa, sok := src.(ast.ArrayType); sok && da.Elem != nil {
+			if sa.Elem == nil {
+				return true
+			}
+			return c.assignableWith(da.Elem, sa.Elem, false)
 		}
 	}
 	d, dok := dst.(ast.EnumType)
