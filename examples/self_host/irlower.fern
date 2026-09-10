@@ -22594,9 +22594,14 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
                     // returns an array (e.g. a struct-array `P[]`) — a MOVE,
                     // track a as an array so `a[i].field` / `for x in a`
                     // recover the element type (struct_ret_type carries the
-                    // element struct type, keyed "<Type>.m"). The struct
-                    // receiver gate keeps this to a genuine method call (#3040).
-                    else if (se.is_arr_ret_fn(cfa.field) && expr_struct_type(cfa.obj, se) != "") { is_arr = true; }
+                    // element struct type, keyed "<Type>.m"). Keyed qualified
+                    // on the receiver's struct type, exactly as expr_is_arr_src
+                    // keys the same method call: the bare entry belongs to every
+                    // free function too, so a same-spelled array-returning free
+                    // function would otherwise classify a struct-typed binding
+                    // as an array and refuse the next method call on it (#8997).
+                    else if (expr_struct_type(cfa.obj, se) != ""
+                        && se.is_arr_ret_fn(expr_struct_type(cfa.obj, se) + "." + cfa.field)) { is_arr = true; }
                     // The same for a PRIMITIVE receiver — `s.chars()`, `s.codes()`,
                     // `(n as i64).digits()`. array_ret_fn_names registers EVERY
                     // method under the qualified "<BaseType>.<method>" key (the

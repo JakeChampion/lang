@@ -2966,6 +2966,12 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
           typeinfo.TypeMap(_) => {
             recv_type_name = "Map";
           },
+          // An enum or struct-union receiver dispatches under the union's
+          // own name, the way irlower keys `<Union>.<method>`. A generic
+          // union carries its args separately, so the bare name is the key.
+          typeinfo.TypeUnion(un) => {
+            recv_type_name = un.name;
+          },
           _ => {
             // `t.0()` — a numeric field access whose element is a fn value is
             // a call THROUGH that value, not a method on the tuple.
@@ -3708,16 +3714,32 @@ function check_expr(e: ast.Expr, s: Scope): typeinfo.Type {
       if (sl.field_names.len() != ssig.field_names.len()) {
         return t_unknown("struct " + sl.type_name + " field count mismatch");
       }
+      // Field ORDER is free — a literal may write the declared fields in
+      // any order. Resolve each written name against the declaration and
+      // check its value against THAT field's type. The count matched
+      // above, so "every declared field written exactly once" follows
+      // from no name repeating and none being undeclared.
+      var swritten: boolean[] = [];
+      var sdi: i32 = 0;
+      while (sdi < ssig.field_names.len()) {
+        swritten = swritten.append(false);
+        sdi = sdi + 1;
+      }
       var sli: i32 = 0;
       while (sli < sl.field_names.len()) {
-        if (sl.field_names[sli] != ssig.field_names[sli]) {
-          return t_unknown("struct " + sl.type_name + " field name mismatch at index " + sl.field_names[sli]);
+        var sfi: i32 = field_index(ssig, sl.field_names[sli]);
+        if (sfi < 0) {
+          return t_unknown("struct " + sl.type_name + " has no field `" + sl.field_names[sli] + "`");
         }
+        if (swritten[sfi]) {
+          return t_unknown("struct " + sl.type_name + " field `" + sl.field_names[sli] + "` written twice");
+        }
+        swritten = swritten.with(sfi, true);
         var ft: typeinfo.Type = check_expr(sl.field_values[sli], s);
         // An opaque generic field — bare (`Box[T] { v: T }`, T →
         // unknown) or nested (`items: T[]` → array<unknown>) — accepts
         // any value; skip the check (#4346 piece 2).
-        if (!type_contains_unknown(ssig.field_types[sli]) && !type_eq(ft, ssig.field_types[sli])) {
+        if (!type_contains_unknown(ssig.field_types[sfi]) && !type_eq(ft, ssig.field_types[sfi])) {
           return t_unknown("struct " + sl.type_name + " field `" + sl.field_names[sli] + "` type mismatch");
         }
         sli = sli + 1;
@@ -7796,6 +7818,32 @@ function int_literal_tree(e: ast.Expr): boolean {
   return parser.int_literal_tree(e);
 }
 
+// int_operand_op: does a binary `op` hand its own integer type down to both
+// operands? Arithmetic, bitwise, shift and SATURATING operators do — including
+// the shift COUNT, which native judges against the same type as the value — so
+// a literal under one is read at the destination's type and range-checked
+// there. The set is native's settleInt Binary case, entry for entry.
+//
+// Comparison and logical operators are absent because their operands carry a
+// type of their own, and the CHECKED forms because they yield an Option, which
+// never reaches an integer destination — native answers those with E003 on the
+// Option, not a range error.
+function int_operand_op(op: string): boolean {
+  if (op == "+" || op == "-" || op == "*" || op == "/" || op == "%") { return true; }
+  if (op == "&" || op == "|" || op == "^" || op == "<<" || op == ">>") { return true; }
+  return op == "+|" || op == "-|" || op == "*|" || op == "<<|";
+}
+
+// const_refused_op: the operators native's constfold leaves out of its integer
+// switch, so folding one is an error there rather than a value. Its message is
+// uncoded, like the rest of the const grammar.
+function const_refused_op(op: string): boolean {
+  if (op == "+|" || op == "-|" || op == "*|" || op == "<<|") { return true; }
+  if (op == "+?" || op == "-?" || op == "*?") { return true; }
+  if (op == "/?" || op == "%?") { return true; }
+  return op == "<<?" || op == ">>?";
+}
+
 // int_range_diags: E047 for every literal in `e` that the type it is READ at
 // cannot hold. Native settles a polymorphic literal to the type its context
 // names and then range-checks it (settleInt -> checkLiteralFits); the self-host
@@ -7822,7 +7870,7 @@ function int_range_diags(e: ast.Expr, ty: string, negated: boolean): util.Diag[]
       return out;
     },
     ast.ExprBinary(b) => {
-      if (b.op == "+" || b.op == "-" || b.op == "*" || b.op == "/") {
+      if (int_operand_op(b.op)) {
         out = util.append_diags(int_range_diags(b.left, ty, false), int_range_diags(b.right, ty, false));
       }
       return out;
@@ -10278,6 +10326,9 @@ function const_expr_err(e: ast.Expr, earlier: string[]): string {
       return const_expr_err(u.operand, earlier);
     },
     ast.ExprBinary(b) => {
+      if (const_refused_op(b.op)) {
+        return "operator `" + b.op + "` not allowed in integer constant expressions";
+      }
       var le: string = const_expr_err(b.left, earlier);
       if (le.len() > 0) {
         return le;
@@ -11344,9 +11395,10 @@ function ow_fresh_owners(mod: parser.Module, ofuncs: OwnFunc[]): string[] {
   // TestSelfHostFreshOwnedBuiltinsMatchChecker recomputes the list from
   // native's table and fails when the two drift.
   var out: string[] = [
-    "__alloc_u8", "args", "cell_new", "hostname", "map_new", "random_bytes",
-    "read_line", "stderr", "stdin", "stdout", "strbuf_take", "target_arch",
-    "target_os", "tcp_recv"
+    "__alloc_u8", "args", "cell_new", "environ", "getcwd", "getgroups",
+    "hostname", "map_new", "random_bytes", "read_line", "stderr", "stdin",
+    "stdout", "strbuf_take", "target_arch", "target_os", "tcp_recv",
+    "uname_field"
   ];
   for fn in mod.funcs {
     if (fn.receiver_name.len() > 0 || fn.type_params.len() > 0) { continue; }
@@ -14166,6 +14218,16 @@ pub function check_module(raw_mod: parser.Module): ModuleTypes {
         body_diags = util.append_diags(body_diags, e057_annot_diags(field.type_name, esd.line, esd.col));
       }
     }
+  }
+  // Native folds top-level consts BEFORE the checker runs, and a const the
+  // fold refuses aborts it — so the checker never sees the module and nothing
+  // else is reported. Mirror that ordering: without it a refused const also
+  // collects whatever its body walk finds (a range error on the operand it
+  // could not fold, a type error on the Option a checked operator yields),
+  // which native never reaches.
+  var cgd: util.Diag[] = const_grammar_diags(mod);
+  if (cgd.len() > 0) {
+    return ModuleTypes { sigs: sigs, top_tys: top_tys, all_well_typed: false, diags: cgd };
   }
   // own_diags (E050/E051) and e049_diags (E049) walk whole-function bodies
   // for move / capture analysis.

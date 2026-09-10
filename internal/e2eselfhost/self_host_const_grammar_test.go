@@ -47,11 +47,24 @@ func TestSelfHostConstGrammarX86_64(t *testing.T) {
 		// generic one.
 		{"forward-reference", "const B: i32 = A + 1;\nconst A: i32 = 2;\nfunction main(): i32 { return B; }\n"},
 		{"unknown-ident", "const B: i32 = ZZZ;\nfunction main(): i32 { return B; }\n"},
+		// The SATURATING and CHECKED operator families sit outside
+		// constfold's integer switch, so folding one is an error there
+		// rather than a value. The self-host walked into a binary's
+		// operands without ever judging the operator, so it admitted
+		// both — the larger-const-language direction again.
+		{"saturating-add", "const B: u8 = 300 +| 1;\nfunction main(): i32 { return B as i32; }\n"},
+		{"saturating-mul", "const B: i32 = 3 *| 2;\nfunction main(): i32 { return B; }\n"},
+		{"saturating-shl", "const B: i32 = 3 <<| 2;\nfunction main(): i32 { return B; }\n"},
+		{"checked-add", "const B: i32 = 3 +? 2;\nfunction main(): i32 { return B; }\n"},
+		{"checked-div", "const B: i32 = 6 /? 2;\nfunction main(): i32 { return B; }\n"},
+
 		// Accepted — what stops the rule being a blanket rejection of consts.
 		{"plain-literal-ok", "const N: i32 = 41;\nfunction main(): i32 { return N; }\n"},
 		{"arith-over-earlier-const-ok", "const A: i32 = 2;\nconst B: i32 = A * 3 + 1;\nfunction main(): i32 { return B; }\n"},
 		{"unary-ok", "const A: i32 = 0 - 5;\nfunction main(): i32 { return A; }\n"},
 		{"string-ok", "const S: string = \"ab\";\nfunction main(): i32 { return S.len(); }\n"},
+		{"bitwise-ok", "const A: i32 = (6 >> 1) & 3;\nfunction main(): i32 { return A; }\n"},
+		{"logical-ok", "const A: boolean = true && false;\nfunction main(): i32 { if (A) { return 1; } return 0; }\n"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			src := filepath.Join(dir, c.name+".fern")
@@ -80,7 +93,12 @@ func constDiagLines(out string) []string {
 	var keep []string
 	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
 		line = strings.TrimSpace(line)
-		if !strings.Contains(line, "is not a constant") {
+		// Every const-grammar diagnostic is prefixed `const <name>: ` on both
+		// sides, which is what makes one recognisable without a code. Keying
+		// on the message instead misses a family: a filter for "is not a
+		// constant" alone drops the refused-OPERATOR wording entirely, and
+		// rows comparing it then pass empty-vs-empty whatever the rule does.
+		if !strings.Contains(line, ": const ") {
 			continue
 		}
 		// native: "<path>:2:1: const C: …"  self-host: "2:1: const C: …"

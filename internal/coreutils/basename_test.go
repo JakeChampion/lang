@@ -138,6 +138,23 @@ func basenameCases(t *testing.T) []invocation {
 		{name: "extra operand with a backslash", args: []string{"a", "b", "\\c"}},
 		{name: "extra operand with question marks", args: []string{"a", "b", "c??(d"}},
 		{name: "extra operand that is empty", args: []string{"a", "b", ""}},
+
+		// A failing write: `>&-` and `> /dev/full` are the paths close_stdout
+		// and the exit status wire together, and they were left out until
+		// #8265 landed.
+		{name: "stdout closed", args: []string{"/a/b"}, stdout: stdoutClosed},
+		{name: "stdout full", args: []string{"/a/b"}, stdout: stdoutFull},
+		{name: "stdout closed with a suffix", args: []string{"/a/b.c", ".c"}, stdout: stdoutClosed},
+		{name: "stdout full with a suffix", args: []string{"/a/b.c", ".c"}, stdout: stdoutFull},
+		{name: "stdout closed on -a", args: []string{"-a", "/a/b", "/c/d"}, stdout: stdoutClosed},
+		{name: "stdout full on -a", args: []string{"-a", "/a/b", "/c/d"}, stdout: stdoutFull},
+		{name: "stdout closed on -z", args: []string{"-z", "/a/b"}, stdout: stdoutClosed},
+		{name: "stdout closed on a usage error", args: []string{"a", "b", "c"}, stdout: stdoutClosed},
+		{name: "stdout closed on a missing operand", args: []string{}, stdout: stdoutClosed},
+		{name: "stdout closed on help", args: []string{"--help"}, stdout: stdoutClosed},
+		{name: "stdout full on help", args: []string{"--help"}, stdout: stdoutFull},
+		{name: "stdout closed on version", args: []string{"--version"}, stdout: stdoutClosed},
+		{name: "stdout full on version", args: []string{"--version"}, stdout: stdoutFull},
 	}
 }
 

@@ -14,6 +14,13 @@ func init() {
 // runs both sides here and now rather than pinning a string: the two
 // processes are siblings with the same credentials, so a divergence is
 // the implementation and never the machine.
+//
+// That sibling-credentials property is also what puts one quirk out of
+// reach: `cannot find name for user ID N` needs a uid with no passwd
+// entry, and the harness runs as its own uid, which has one. Redirecting
+// the lookup is not available either — pwdb.passwd_path is the literal
+// `/etc/passwd` with no override — so the message is covered by the
+// implementation and by nothing here.
 func whoamiCases(t *testing.T) []invocation {
 	return []invocation{
 		{name: "no arguments"},

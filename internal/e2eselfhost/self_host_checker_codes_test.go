@@ -739,6 +739,19 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"struct-field-type-string-ok", "struct P { x: i32, name: string }\nfunction main(): i32 { var p: P = P { x: 1, name: \"hi\" }; return p.x; }\n", nil},
 		{"struct-field-array-mismatch", "struct P { xs: i32[] }\nfunction main(): i32 { var p: P = P { xs: 5 }; return 0; }\n", []string{"E043"}},
 		{"struct-field-array-ok", "struct P { xs: i32[] }\nfunction main(): i32 { var p: P = P { xs: [1, 2, 3] }; return 0; }\n", nil},
+		// A struct literal may write the declared fields in ANY order (#9036).
+		// The literal has to type as the struct either way, so a later misuse
+		// of the binding is still caught: an out-of-order literal that typed as
+		// unknown made every downstream check vanish.
+		{"struct-lit-order-swapped-ok", "struct P { a: i32, b: string }\nfunction main(): i32 { var p = P { b: \"x\", a: 1 }; return p.a; }\n", nil},
+		{"struct-lit-order-swapped-downstream", "struct P { a: i32, b: string }\nfunction main(): i32 { var p = P { b: \"x\", a: 1 }; var w: i32 = p.b; return 0; }\n", []string{"E003"}},
+		{"struct-lit-order-swapped-value-mismatch", "struct P { a: i32, b: string }\nfunction main(): i32 { var p = P { b: 7, a: 1 }; return p.a; }\n", []string{"E043"}},
+		// A method on an enum or struct-union receiver dispatches under the
+		// union's name (#9031); without that the call typed as unknown and its
+		// result went unchecked.
+		{"enum-receiver-method-ok", "enum Shape { Dot, Line(i32) }\nfunction (s: Shape) mag(): i32 { match (s) { Dot => { return 0; }, Line(n) => { return n; } } return 0; }\nfunction main(): i32 { var s: Shape = Line(3); return s.mag(); }\n", nil},
+		{"enum-receiver-method-ret-mismatch", "enum Shape { Dot, Line(i32) }\nfunction (s: Shape) mag(): i32 { match (s) { Dot => { return 0; }, Line(n) => { return n; } } return 0; }\nfunction main(): i32 { var s: Shape = Line(3); var w: string = s.mag(); return 0; }\n", []string{"E003"}},
+		{"struct-union-receiver-method-ret-mismatch", "struct Circle { r: i32 }\nstruct Square { w: i32 }\ntype Shape = Circle | Square;\nfunction (s: Shape) area(): i32 { match (s) { Circle(c) => { return c.r; }, Square(q) => { return q.w; } } return 0; }\nfunction main(): i32 { var s: Shape = Circle { r: 2 }; var w: string = s.area(); return 0; }\n", []string{"E003"}},
 		// E034 (typed composite-array element): an element of a `var x: Elem[]`
 		// literal must be assignable to Elem. A union element type widens
 		// (members ok); a non-member, a wrong struct, or a primitive is E034.
@@ -990,6 +1003,106 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"literal-wide-generic-arg-ok", "function id[T](v: T): T { return v; }\nfunction main(): i32 { var t = id(4611686018427387904); var u: i64 = t; return 0; }\n", nil},
 		{"literal-wide-compare-ok", "function main(): i32 { var b = 4611686018427387904 > 1; if (b) { return 1; } return 0; }\n", nil},
 		{"literal-wide-generic-tuple-ok", "function pair[A, B](a: A, b: B): (A, B) { return (a, b); }\nfunction main(): i32 { var p = pair(4611686018427387904, \"hello\"); if (p.0 == 4611686018427387904) { return 1; } return 0; }\n", nil},
+		// #8640: the range rule reaches every integer WIDTH, not just i32, and
+		// every destination a literal settles at. A const rides the same rule:
+		// the self-host represents one as a `FuncDecl` whose body returns the
+		// initialiser, so the return-position destination judges it. Each
+		// refused row is paired with the value one step inside the bound, so
+		// the rule cannot degenerate into refusing every wide literal.
+		{"literal-u8-over", "function main(): i32 { var x: u8 = 256; return 0; }\n", []string{"E047"}},
+		{"literal-u8-max-ok", "function main(): i32 { var x: u8 = 255; return 0; }\n", nil},
+		{"literal-u32-over", "function main(): i32 { var x: u32 = 4294967296; return 0; }\n", []string{"E047"}},
+		{"literal-u32-max-ok", "function main(): i32 { var x: u32 = 4294967295; return 0; }\n", nil},
+		{"literal-u32-negative", "function main(): i32 { var x: u32 = -1; return 0; }\n", []string{"E047"}},
+		{"literal-i64-over", "function main(): i32 { var x: i64 = 9223372036854775808; return 0; }\n", []string{"E047"}},
+		{"literal-i64-max-ok", "function main(): i32 { var x: i64 = 9223372036854775807; return 0; }\n", nil},
+		{"literal-u64-max-ok", "function main(): i32 { var x: u64 = 18446744073709551615; return 0; }\n", nil},
+		// Past u64 no integer type holds at all, so every destination refuses
+		// it — including the i64 an unannotated binding defaults to.
+		{"literal-past-u64-u64", "function main(): i32 { var x: u64 = 18446744073709551616; return 0; }\n", []string{"E047"}},
+		{"literal-past-u64-i32", "function main(): i32 { var x: i32 = 18446744073709551616; return 0; }\n", []string{"E047"}},
+		{"literal-past-u64-unannotated", "function main(): i32 { var x = 18446744073709551616; return 0; }\n", []string{"E047"}},
+		{"literal-past-u64-arg", "function take(v: u8): i32 { return 0; }\nfunction main(): i32 { return take(18446744073709551616); }\n", []string{"E047"}},
+		{"literal-past-u64-return", "function f(): i64 { return 18446744073709551616; }\nfunction main(): i32 { return f() as i32; }\n", []string{"E047"}},
+		{"literal-past-u64-array", "function main(): i32 { var xs: i64[] = [18446744073709551616]; return xs.len(); }\n", []string{"E047"}},
+		{"literal-past-u64-hex", "function main(): i32 { var x: u64 = 0x10000000000000000; return 0; }\n", []string{"E047"}},
+		// A const initialiser is judged before it folds: folding wraps at the
+		// declared width, so a literal too wide for the type has already
+		// wrapped by the time the folded value could be inspected.
+		{"const-i32-over", "const B: i32 = 2147483648;\nfunction main(): i32 { return B; }\n", []string{"E047"}},
+		{"const-i32-max-ok", "const B: i32 = 2147483647;\nfunction main(): i32 { return B; }\n", nil},
+		{"const-i32-min-ok", "const B: i32 = -2147483648;\nfunction main(): i32 { return B; }\n", nil},
+		{"const-i32-under", "const B: i32 = -2147483649;\nfunction main(): i32 { return B; }\n", []string{"E047"}},
+		{"const-u8-over", "const B: u8 = 256;\nfunction main(): i32 { return B as i32; }\n", []string{"E047"}},
+		{"const-u8-max-ok", "const B: u8 = 255;\nfunction main(): i32 { return B as i32; }\n", nil},
+		{"const-u8-negative", "const B: u8 = -1;\nfunction main(): i32 { return B as i32; }\n", []string{"E047"}},
+		{"const-u32-over", "const B: u32 = 4294967296;\nfunction main(): i32 { return B as i32; }\n", []string{"E047"}},
+		{"const-u32-max-ok", "const B: u32 = 4294967295;\nfunction main(): i32 { return B as i32; }\n", nil},
+		{"const-i64-over", "const B: i64 = 9223372036854775808;\nfunction main(): i32 { return B as i32; }\n", []string{"E047"}},
+		{"const-i64-min-ok", "const B: i64 = -9223372036854775808;\nfunction main(): i32 { return B as i32; }\n", nil},
+		{"const-u64-max-ok", "const B: u64 = 18446744073709551615;\nfunction main(): i32 { return B as i32; }\n", nil},
+		{"const-past-u64", "const B: u64 = 18446744073709551616;\nfunction main(): i32 { return B as i32; }\n", []string{"E047"}},
+		{"const-hex-u8-over", "const B: u8 = 0x100;\nfunction main(): i32 { return B as i32; }\n", []string{"E047"}},
+		{"const-hex-u8-max-ok", "const B: u8 = 0xFF;\nfunction main(): i32 { return B as i32; }\n", nil},
+		{"const-suffix-u8-over", "const B: u8 = 300u8;\nfunction main(): i32 { return B as i32; }\n", []string{"E047"}},
+		{"const-earlier-ref-ok", "const A: i32 = 5;\nconst B: i32 = A + 1;\nfunction main(): i32 { return B; }\n", nil},
+		// Every destination a settled literal can reach, at a non-i32 width.
+		{"literal-u8-arg", "function take(v: u8): i32 { return 0; }\nfunction main(): i32 { return take(256); }\n", []string{"E047"}},
+		{"literal-u8-arg-ok", "function take(v: u8): i32 { return 0; }\nfunction main(): i32 { return take(255); }\n", nil},
+		{"literal-u8-struct-field", "struct S { v: u8 }\nfunction main(): i32 { var s = S { v: 256 }; return 0; }\n", []string{"E047"}},
+		{"literal-u8-struct-field-ok", "struct S { v: u8 }\nfunction main(): i32 { var s = S { v: 255 }; return 0; }\n", nil},
+		{"literal-u8-array-elem", "function main(): i32 { var xs: u8[] = [1, 256]; return xs.len(); }\n", []string{"E047"}},
+		{"literal-u8-array-elem-ok", "function main(): i32 { var xs: u8[] = [1, 255]; return xs.len(); }\n", nil},
+		{"literal-u8-return", "function f(): u8 { return 256; }\nfunction main(): i32 { return f() as i32; }\n", []string{"E047"}},
+		{"literal-u8-return-ok", "function f(): u8 { return 255; }\nfunction main(): i32 { return f() as i32; }\n", nil},
+		{"literal-u8-assign", "function main(): i32 { var a: u8 = 1; a = 256; return 0; }\n", []string{"E047"}},
+		{"literal-u8-assign-ok", "function main(): i32 { var a: u8 = 1; a = 255; return 0; }\n", nil},
+		// #8640: a destination hands its type to BOTH operands of every
+		// arithmetic, bitwise and shift operator — the shift COUNT included —
+		// so a literal under one is judged there. The self-host recursed into
+		// `+ - * /` only, so `300 & 1` at u8 went unjudged. Comparison and
+		// logical operators do not pass a type down, and their operands stay
+		// unjudged in both checkers.
+		{"literal-u8-mod-operand", "function main(): i32 { var a: u8 = 300 % 7; return 0; }\n", []string{"E047"}},
+		{"literal-u8-mod-ok", "function main(): i32 { var a: u8 = 255 % 7; return 0; }\n", nil},
+		{"literal-u8-and-operand", "function main(): i32 { var a: u8 = 300 & 1; return 0; }\n", []string{"E047"}},
+		{"literal-u8-and-ok", "function main(): i32 { var a: u8 = 255 & 1; return 0; }\n", nil},
+		{"literal-u8-or-operand", "function main(): i32 { var a: u8 = 300 | 1; return 0; }\n", []string{"E047"}},
+		{"literal-u8-or-ok", "function main(): i32 { var a: u8 = 200 | 55; return 0; }\n", nil},
+		{"literal-u8-xor-rhs", "function main(): i32 { var a: u8 = 1 ^ 256; return 0; }\n", []string{"E047"}},
+		{"literal-u8-shl-operand", "function main(): i32 { var a: u8 = 300 << 1; return 0; }\n", []string{"E047"}},
+		{"literal-u8-shl-count", "function main(): i32 { var a: u8 = 1 << 300; return 0; }\n", []string{"E047"}},
+		{"literal-u8-shl-ok", "function main(): i32 { var a: u8 = 1 << 3; return 0; }\n", nil},
+		{"literal-u8-shr-count", "function main(): i32 { var a: u8 = 255 >> 300; return 0; }\n", []string{"E047"}},
+		{"literal-i32-and-operand", "function main(): i32 { var a: i32 = 3000000000 & 1; return 0; }\n", []string{"E047"}},
+		{"literal-i64-and-operand", "function main(): i32 { var a: i64 = 9223372036854775808 & 1; return 0; }\n", []string{"E047"}},
+		{"literal-u8-nested-and", "function main(): i32 { var a: u8 = (300 & 1) + 1; return 0; }\n", []string{"E047"}},
+		{"literal-u8-neg-in-bitwise", "function main(): i32 { var a: u8 = -1 & 1; return 0; }\n", []string{"E047"}},
+		{"const-u8-mod-operand", "const B: u8 = 300 % 7;\nfunction main(): i32 { return B as i32; }\n", []string{"E047"}},
+		{"const-u8-and-operand", "const B: u8 = 300 & 1;\nfunction main(): i32 { return B as i32; }\n", []string{"E047"}},
+		{"const-u8-shl-count", "const B: u8 = 1 << 300;\nfunction main(): i32 { return B as i32; }\n", []string{"E047"}},
+		{"const-u8-arith-operand", "const B: u8 = 300 - 100;\nfunction main(): i32 { return B as i32; }\n", []string{"E047"}},
+		// The SATURATING operators type their operands too — they are in
+		// native's settleInt Binary case — so a wide literal under one is
+		// judged at the destination's width like any other.
+		{"literal-u8-sat-add-operand", "function main(): i32 { var a: u8 = 300 +| 1; return 0; }\n", []string{"E047"}},
+		{"literal-u8-sat-sub-operand", "function main(): i32 { var a: u8 = 300 -| 1; return 0; }\n", []string{"E047"}},
+		{"literal-u8-sat-mul-operand", "function main(): i32 { var a: u8 = 300 *| 1; return 0; }\n", []string{"E047"}},
+		{"literal-u8-sat-shl-count", "function main(): i32 { var a: u8 = 1 <<| 300; return 0; }\n", []string{"E047"}},
+		{"literal-u8-sat-add-in-range-ok", "function main(): i32 { var a: u8 = 200 +| 1; return 0; }\n", nil},
+		// A CHECKED operator yields an Option, so it never reaches an integer
+		// destination and no range rule applies — native answers E003 on the
+		// Option instead, which is why settleInt omits these.
+		{"literal-u8-checked-add-is-option", "function main(): i32 { var a: u8 = 300 +? 1; return 0; }\n", []string{"E003"}},
+		// A const naming either family is refused by the const GRAMMAR, whose
+		// diagnostic is uncoded on both sides — so it cannot be gated here and
+		// lives in TestSelfHostConstGrammarX86_64, which compares message text.
+		{"const-shr-still-ok", "const B: i32 = 6 >> 1;\nfunction main(): i32 { return B; }\n", nil},
+		{"const-u8-arith-ok", "const B: u8 = 200 + 50;\nfunction main(): i32 { return B as i32; }\n", nil},
+		// A comparison hands neither operand a type, so a wide literal under
+		// one is not judged against the destination in either checker.
+		{"literal-compare-operand-ok", "function main(): i32 { var b: boolean = 3000000000 > 1; if (b) { return 1; } return 0; }\n", nil},
+		{"const-compare-operand-ok", "const B: boolean = 300 > 1;\nfunction main(): i32 { if (B) { return 1; } return 0; }\n", nil},
 		{"enum-redeclared", "enum Opt { A, B }\nenum Opt { C, D }\nfunction main(): i32 { return 0; }\n", []string{"E006"}},
 		{"enum-dup-variant", "enum Opt { A, A, B }\nfunction main(): i32 { return 0; }\n", []string{"E017"}},
 		{"enum-clean-ok", "enum Opt { A, B }\nfunction main(): i32 { return 0; }\n", nil},
