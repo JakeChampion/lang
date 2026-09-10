@@ -30,6 +30,19 @@ Unsupported constructs refuse the whole function with a reason.
 - Array and tuple literals as `array_new` / `tuple_new`. An empty literal takes
   its type from the binding or enclosing container it initializes.
 - Index and tuple-field projections as `array_get` / `tuple_get`.
+- Record literals as `record_new` and named-field projections as
+  `record_get`. A record is a declared struct with no type parameters and no
+  enum owner; its schema (`semrecords.Record`) is the declaration's field
+  names and checked field types in declaration order, which is the order a
+  literal names them in. Every record a function's values, contracts or a
+  schema's own fields name is entered into the function's schema table, so
+  a nested record is walked through its schema, never through syntax. A
+  functional update (`T { ...base, f: v }`) is refused.
+- String literals as the SSA `const_str` constant, string `+` as a fresh
+  concatenation and string `==` / `!=`, typed by `ssasem.binary_result`
+  beside the scalar rules. A string constant and a concatenation are units
+  of the function's own, released when dead; a literal's static box is
+  immortal to the runtime, so its release is a no-op.
 - Wrapping i32 `+ - *`, i32 comparisons, boolean `==` / `!=`, unary `-` and
   `!`. These are new semantic kinds (the SSA `binary` / `unary` tags) whose
   typing lives in `ssasem.binary_result` / `unary_result`; `ssarc` lowers them
@@ -43,9 +56,10 @@ Unsupported constructs refuse the whole function with a reason.
 - Calls of module functions, in expression or statement position, as the
   semantic `call` kind (below).
 
-Refused, each with its own reason: calls of builtins, methods, local function
-values and void functions, strings and floats in expressions, integer widths
-other than i32, division, destructuring, labelled loops, `for`, `match`,
+Refused, each with its own reason: calls of builtins, methods (including a
+string's), local function values and void functions, floats in expressions,
+integer widths other than i32, division, string ordering, generic records,
+enum variants, record updates, destructuring, labelled loops, `for`, `match`,
 `defer`, closures, receiver methods, generics, external and async functions,
 and a value-returning body that falls through.
 
@@ -122,8 +136,11 @@ caller's guess about the callee's syntax.
 
 ## Remaining
 
-The producer does not yet admit void calls, builtins, strings, records,
-enums, closures, match or destructuring, so no production consumer is
-switched and no AST ownership analysis is deleted. Next: record and string
-values through the same boundary, then the caller contract at the AST
-boundary (#9004) so `main` can receive every produced shape.
+The producer does not yet admit void calls, builtins, string methods,
+generic records, record updates, enums, closures, match or destructuring, so
+no production consumer is switched and no AST ownership analysis is deleted.
+Records and strings cross the boundary (`make`, `wrap`, `unwrap`, `tally`,
+`greet` in the executable fixture: a record with a string field and a nested
+record, an `own` record parameter, string concatenation in a loop, string
+equality; balanced on every target). Next: the caller contract at the AST
+boundary (#9004) so `main` can receive every produced shape, then enums.

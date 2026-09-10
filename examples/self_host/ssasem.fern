@@ -74,6 +74,13 @@ function is_void(t: typeinfo.Type): boolean {
     return false;
 }
 
+// An owned string: the view tag is a borrow of another string's bytes and has
+// no contract here.
+pub function is_string(t: typeinfo.Type): boolean {
+    if let typeinfo.TypeString(s) = t { return s.tag == 0; }
+    return false;
+}
+
 function parameter_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     if (ins.args.len() != 0 || ins.result != ins.imm || !semtypes.equal(result, f.params[ins.imm])) { return "parameter type or identity"; }
     return "";
@@ -89,6 +96,7 @@ function constant_error(ins: ssa.SInst, result: typeinfo.Type): string {
     if (ins.args.len() != 0) { return "constant arity"; }
     if (ins.kind_tag == 1 && !is_i32(result)) { return "integer constant type"; }
     if (ins.kind_tag == 2 && (!is_bool(result) || (ins.imm != 0 && ins.imm != 1))) { return "boolean constant type or value"; }
+    if (ins.kind_tag == 5 && !is_string(result)) { return "string constant type"; }
     return "";
 }
 
@@ -176,14 +184,22 @@ function comparison(op: string): boolean {
     return op == "<" || op == "<=" || op == ">" || op == ">=" || op == "==" || op == "!=";
 }
 
-// Wrapping i32 arithmetic, i32 ordering and equality on i32 or booleans.
-// Division, other widths and operator overloads have no contract yet.
+// Wrapping i32 arithmetic, i32 ordering and equality on i32 or booleans;
+// string concatenation, a fresh string, and string equality. Division, other
+// widths, string ordering and operator overloads have no contract yet.
 pub function binary_result(op: string, left: typeinfo.Type, right: typeinfo.Type): typeinfo.Type {
     if (is_i32(left) && is_i32(right)) {
         if (arithmetic(op)) { return typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false }; }
         if (comparison(op)) { return typeinfo.TypeBool { tag: 0 }; }
     }
     if (is_bool(left) && is_bool(right) && (op == "==" || op == "!=")) { return typeinfo.TypeBool { tag: 0 }; }
+    if (is_string(left) && is_string(right)) { return string_result(op); }
+    return typeinfo.unchecked();
+}
+
+function string_result(op: string): typeinfo.Type {
+    if (op == "+") { return typeinfo.TypeString { tag: 0 }; }
+    if (op == "==" || op == "!=") { return typeinfo.TypeBool { tag: 0 }; }
     return typeinfo.unchecked();
 }
 
@@ -213,7 +229,7 @@ function instruction_error(ins: ssa.SInst, f: Func): string {
     var kind: i32 = ins.kind_tag;
     if (kind == 6) { return parameter_error(ins, f, result); }
     if (kind == 7 || kind == 8) { return copy_error(ins, f, result); }
-    if (kind == 1 || kind == 2) { return constant_error(ins, result); }
+    if (kind == 1 || kind == 2 || kind == 5) { return constant_error(ins, result); }
     if (kind == 9) { return binary_error(ins, f, result); }
     if (kind == 10) { return unary_error(ins, f, result); }
     if (kind == array_new()) { return array_construction_error(ins, f, result); }
