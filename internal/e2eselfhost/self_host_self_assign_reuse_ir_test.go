@@ -102,11 +102,12 @@ var selfAssignReuseCases = []struct {
 	{"self-assign-shadowed-by-for",
 		`struct P { xs: i32[], n: i32 } function main(): i32 { var p: P = P { xs: [1], n: 0 }; var ps: P[] = [P { xs: [7, 8], n: 5 }]; for p in ps { p = P { ...p, xs: [2], n: p.n + 1 }; } return ps[0].xs[0] * 10 + ps[0].n + p.n; }`,
 		75, 0, 1},
-	// SHADOWING control: a nested `var p` of the same type. Only the top-level
-	// binding carries the donor gates, so the name is refused outright.
+	// SHADOWING: a nested `var p` of the same type is its own binding
+	// (lexical.fern). Only the top-level binding carries the donor gates, so its
+	// update reuses and the nested one's copies.
 	{"self-assign-shadowed-by-var",
 		`struct P { x: i32, y: i32 } function main(): i32 { var p: P = P { x: 1, y: 2 }; var i: i32 = 0; while (i < 2) { var p: P = P { x: 5, y: 6 }; p = P { ...p, x: p.x + 1 }; i = i + 1; } p = P { ...p, x: p.x + 10 }; return p.x * 10 + p.y; }`,
-		112, 0, 2},
+		112, 1, 1},
 	// Memory safety at scale: 5M updates through one box. A per-iteration leak
 	// would exhaust the arena (exit 125) and a double-free would crash.
 	{"self-assign-churn-safe",

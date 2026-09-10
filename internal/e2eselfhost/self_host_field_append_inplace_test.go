@@ -1087,10 +1087,11 @@ function main(): i32 { return h(2); }`,
 			label:     "__fn_h",
 			wantClone: true,
 		},
-		// SHADOWED in a nested block: the fai_* walks match a root by name over
-		// the whole body, so a second binding conflates two variables.
+		// SHADOWED in a nested block: the fai_* walks match a root by symbol,
+		// and the nested `var a = p` is a different binding (lexical.fern), so
+		// the outer root is still the sole owner of its buffer and grows in place.
 		{
-			name: "local-root-shadowed-name-clones",
+			name: "local-root-shadowed-name-grows",
 			src: `
 struct St { ops: i32[], n: i32 }
 function w(k: i32, p: St): i32 {
@@ -1103,7 +1104,7 @@ function w(k: i32, p: St): i32 {
 }
 function main(): i32 { var s: St = St { ops: [1, 2], n: 0 }; return w(1, s) % 250; }`,
 			label:     "__fn_w",
-			wantClone: true,
+			wantClone: false,
 		},
 		// A SECOND NAME for the local's box keeps the pre-move container
 		// reachable under a name the site does not resolve through.

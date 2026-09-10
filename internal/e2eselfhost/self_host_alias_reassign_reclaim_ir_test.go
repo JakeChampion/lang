@@ -29,6 +29,39 @@ var aliasReassignReclaimCases = []struct {
 	src  string
 	want int
 }{
+	// The mirror image (#8983): a local bound from a SPREAD over a borrowed base
+	// (`var ls = Sc { ...s, depth: 0 }`) holds a fresh rc-1 box, and a unique box is
+	// taken to own its fields — `ls.bind(…)` moves the array out of it and pushes
+	// in place, and the rebind's reclaim frees what the successor replaced. The
+	// base copy used to carry the arrays uncounted, so both landed on the
+	// caller's buffers: `s.names` grew under the caller and `s.types` was freed
+	// while `s` still read it (the checker's annotate_lambda_expr, which took
+	// the self-built compiler down in the emit-all fixpoint). The copy now
+	// retains every array it carries. 91 = the caller's scope changed length;
+	// 92 = its buffer was reused; 99 = over-release.
+	{"spread-carry-owned", `struct Sc { names: string[], types: i32[], depth: i32 }
+function (s: Sc) bind(n: string, t: i32): Sc { return Sc { names: s.names.append(n), types: s.types.append(t), depth: s.depth }; }
+function lam(s: Sc, ps: string[]): i32 {
+    var ls: Sc = Sc { ...s, depth: 0 };
+    var i: i32 = 0;
+    while (i < ps.len()) { ls = ls.bind(ps[i], i + 10); i = i + 1; }
+    return ls.names.len() + ls.types.len();
+}
+function main(): i32 {
+    var s: Sc = Sc { names: [], types: [], depth: 1 };
+    s = s.bind("a", 1);
+    s = s.bind("b", 2);
+    s = s.bind("c", 3);
+    var r: i32 = lam(s, ["p", "q"]);
+    var j1: i32[] = [7, 7, 7, 7];
+    var j2: i32[] = [8, 8, 8, 8];
+    var j3: i32[] = [9, 9, 9, 9];
+    if (r != 10) { return 90; }
+    if (s.names.len() != 3 || s.types.len() != 3) { return 91; }
+    if (s.types[0] + s.types[1] + s.types[2] != 6) { return 92; }
+    if (__rc_underflow() != 0) { return 99; }
+    return 0;
+}`, 0},
 	// Array-element alias (`t = b.items[i]`): the ExprIndex reassign branch.
 	{"alias-element", `struct S { arr: i32[] }
 struct Box { items: S[] }
