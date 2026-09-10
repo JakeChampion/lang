@@ -616,6 +616,14 @@ pub struct FnSigs {
     // struct plan gate refuses a credited name passed at such a position
     // (native retains at the return instead — paramCountedRetain's channel).
     handback_params: string[],
+    // handback_carry_params: "fn|idx" for parameters the callee hands back
+    // INSIDE its result — as an element of a returned tuple literal or a field
+    // of a returned struct literal, directly or through a bare alias (`var s =
+    // g; … return (Some(m), s)`). The result is a different box from the
+    // parameter's, so the "result stands in for the new value" guard the
+    // snapshot releases rely on cannot see the handback; the caller keeps its
+    // box out of those releases instead and the result carries it on.
+    handback_carry_params: string[],
     // str_handback_ret: "<callee>|<idx>" for a STRING parameter whose OWN box a
     // return may hand back as the result THROUGH A CALL — a string identity
     // method (str_recv_handback_of, whose no-op fast path returns its receiver:
@@ -16414,10 +16422,22 @@ function lower_expr_struct_lit(slit: ast.ExprStructLit, s: LowerState): LowerSta
                     // RC-frontier slice 3). field_access_arr_field_type only
                     // admits a scalar-element OR array-of-struct field read
                     // (NOT enum-array), matching the outer struct-lit gate.
-                    ast.ExprFieldAccess(_) => {
+                    ast.ExprFieldAccess(fafa) => {
                         if (field_access_arr_field_type(fav, s) != "") {
                             fav_ok = true;
                             fav_alias_inc = !selfrebind_field_alias(fav, slit_selfrebind);
+                        }
+                        // A tuple ELEMENT (`Holder { bytes: m.0 }` over a tuple
+                        // local, or a nested element) of exactly the field's
+                        // array type: the tuple box still owns the buffer, so
+                        // the new box co-owns it through the alias-inc the
+                        // ident and field-read arms take — the tuple's reclaim
+                        // decs the element and the field drop decs it again,
+                        // both balanced by the one inc (#8774).
+                        else if (util.is_all_digits(fafa.field) && is_array_type_name(cfft)
+                            && expr_tuple_elem_tag(fafa.obj, util.digits_to_i32(fafa.field), s) == cfft) {
+                            fav_ok = true;
+                            fav_alias_inc = true;
                         }
                     },
                     // A ROW of a nested array (`G { lines: placed[0] }` over
@@ -18077,6 +18097,38 @@ function iife_borrow_subexpr_i32(e: ast.Expr, name: string, ft: string, s: Lower
     return false;
 }
 
+// iife_payload_block_consumed admits a payload binding whose arm tail is a nested
+// VALUE BLOCK — `V(x) => match (x) { … }`, `V(x) => if (c) { … } else { … }` —
+// whatever the result temp's kind. The StmtMatch path binds the payload at its
+// type and only the block reads it, lowering with a temp of its own; the arm
+// stores the block's value, which classified the outer temp like any other tail
+// (#8778). A return of the block that hands the payload back bare would need a
+// payload-typed temp, so it is refused, as is a struct payload that is not
+// leak-safe: the payload is borrowed from the enum box and never reclaimed.
+function iife_payload_block_consumed(ft: string, name: string, arm: ast.MatchArm, s: LowerState): boolean {
+    if (decl_is_struct(s.frame.structs, ft) && !is_enum_like_name(ft, s.frame.structs) && !decl_is_leaksafe(s.frame.structs, ft)) { return false; }
+    match (iife_arm_tail_expr(arm)) {
+        ast.ExprCall(c) => {
+            if (c.args.len() != 0) { return false; }
+            match (c.callee) {
+                ast.ExprLambda(lam) => {
+                    if (lam.params.len() != 0 || lam.origin == parser.ORIGIN_IIFE_SCOPED) { return false; }
+                    for r in collect_returns(lam.body, []) {
+                        match (r) {
+                            ast.ExprIdent(rid) => { if (rid.name == name) { return false; } },
+                            _ => {}
+                        }
+                    }
+                    return true;
+                },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
 // iife_payload_borrow_i32 admits a STRUCT / STRING / TUPLE / ENUM payload binding
 // for the inlined match-EXPRESSION when the arm's tail reads it as a BORROW that
 // produces a provably-i32 result (`p.x` of an i32 field, `s.len()`, `t.0` of an i32
@@ -18159,9 +18211,16 @@ function iife_payload_field_bindable(ft: string, name: string, arm: ast.MatchArm
         // width-typed slot. This is the wide-payload analog of the unconditional i32
         // admit above and of the wildcard `Some(_)` path, which already lower.
         if (!parser.stmts_mention(arm.body, name)) { return true; }
+        if (iife_payload_block_consumed(ft, name, arm, s)) { return true; }
         return false;
     }
+    // A DEAD binding of any other type (`Ok1(q) => "ok"`, the arm never reads
+    // `q`) is admitted for the same reason as the wide one above: the result temp
+    // is classified from what the arm returns, and the StmtMatch binder binds
+    // the payload exactly as the statement form does.
+    if (!parser.stmts_mention(arm.body, name)) { return true; }
     if (is_scalar_array_type(ft)) { return !iife_arm_returns_ident(arm, name); }
+    if (iife_payload_block_consumed(ft, name, arm, s)) { return true; }
     // STRING result temp (res_kind == "string"): admit a string read of the bound
     // payload — a BARE string payload (`V(x) => x`, ft string) or a string FIELD /
     // ELEMENT read of a struct / tuple payload (`V(p) => p.name`, `V(t) => t.0`).
@@ -63860,21 +63919,64 @@ pub function closurearr_ret_fns_of(funcs: parser.FuncDecl[], structs: StructTab)
     // The single-closure registry, reused so a `[mk(), …]` element (mk a
     // closure factory) counts as a closure-array element.
     var closureset: string[] = closure_ret_fns_of(funcs, structs);
+    var reg: (string[], string[]) = closurearr_registry_of(funcs, structs, closureset);
+    var out: string[] = reg.0;
+    // "CAC:<name>" rows (#4354), in the same list so no registry is threaded: a
+    // closurearr-returning fn whose EVERY return is a fresh closure array, so
+    // the caller's binding is the sole owner of each element box and may take
+    // the "CLOARR:" element walk. Exact-match consumers never see a fn named
+    // "CAC:…"; collect_fresh_cloarr_names is the one reader of the prefix.
+    for fn in funcs {
+        if (util.index_of_str(out, fn.name) >= 0 && !body_has_nonfresh_cloarr_return(fn.body, closureset)) { out = out.append("CAC:" + fn.name); }
+    }
+    return out;
+}
+
+// closurearr_registry_of: the closurearr-returning functions and the proven
+// closure-array params, as (names, "fname|pname" keys), computed to ONE
+// fixpoint because each feeds the other: a function returning its fn[] param
+// bare (`return x`) returns a closure array iff that param is proven one, and
+// the param proof (fnarr_param_all_closurearr) accepts a call to a
+// closurearr-returning function as a closure-array argument (#8870). Both
+// sets only grow from sound base cases, so the loop terminates; a program
+// with no fn[] params proves no params and the returns half reads as before.
+//
+// Returns: only functions declared to return a fn-ARRAY (`((T) => R)[]`,
+// coarsed to "fn[]") — never the compiler's own sources, keeping the
+// self-compile fixpoint byte-identical. EVERY return in the body counts
+// (branch / loop / match-arm returns via collect_returns), in these forms:
+//   (a) `return [<closure>, …]` — a closure-array literal;
+//   (b) `return <ident>` bound (anywhere in the body) to such a literal, to
+//       a closurearr-returning call, or naming a PROVEN closure-array param;
+//   (c) `return <closurearr-returning call>` — a factory that FORWARDS
+//       another factory's array, e.g. `return mk();` (fixpoint-ordered,
+//       like closure_ret_fns_of's transitive form).
+// Params: "fname|pname" for every free-function fn[] param whose every call
+// site provably passes a closure array; a round that proves a param lets the
+// next round accept that param FORWARDED as a call argument
+// (arg_is_closurearr's caller_cparams case), so `main → chain(fs) →
+// apply(fs, …)` proves chain's param first and apply's from it (#5119).
+function closurearr_registry_of(funcs: parser.FuncDecl[], structs: StructTab, closureset: string[]): (string[], string[]) {
     var out: string[] = [];
-    // Only functions declared to return a fn-ARRAY (`((T) => R)[]`, coarsed
-    // to "fn[]") — never the compiler's own sources, keeping the self-compile
-    // fixpoint byte-identical. EVERY return in the body counts (branch /
-    // loop / match-arm returns via collect_returns), in three forms:
-    //   (a) `return [<closure>, …]` — a closure-array literal;
-    //   (b) `return <ident>` bound (anywhere in the body) to such a literal
-    //       or to a closurearr-returning call;
-    //   (c) `return <closurearr-returning call>` — a factory that FORWARDS
-    //       another factory's array, e.g. `return mk();` (fixpoint-ordered,
-    //       like closure_ret_fns_of's transitive form).
+    var caparams: string[] = [];
     var changed: boolean = true;
     while (changed) {
         changed = false;
         for fn in funcs {
+            if (fn.receiver_type.len() == 0) {
+                var fpj: i32 = 0;
+                while (fpj < fn.params.len()) {
+                    if (fn.params[fpj].type_name == "fn[]") {
+                        var fkey: string = fn.name + "|" + fn.params[fpj].name;
+                        if (util.index_of_str(caparams, fkey) < 0
+                            && fnarr_param_all_closurearr(funcs, fn.name, fpj, closureset, out, caparams)) {
+                            caparams = caparams.append(fkey);
+                            changed = true;
+                        }
+                    }
+                    fpj = fpj + 1;
+                }
+            }
             if (fn.ret_type == "fn[]" && util.index_of_str(out, fn.name) < 0) {
                 var rets: ast.Expr[] = collect_returns(fn.body, []);
                 var hit: boolean = false;
@@ -63886,6 +63988,7 @@ pub function closurearr_ret_fns_of(funcs: parser.FuncDecl[], structs: StructTab)
                         },
                         ast.ExprIdent(rid) => {
                             if (body_binds_closurearr_local(fn.body, rid.name, fn.body, closureset, out)) { hit = true; }
+                            if (fn.receiver_type.len() == 0 && util.index_of_str(caparams, fn.name + "|" + rid.name) >= 0) { hit = true; }
                         },
                         ast.ExprCall(rcc) => {
                             match (rcc.callee) {
@@ -63920,15 +64023,7 @@ pub function closurearr_ret_fns_of(funcs: parser.FuncDecl[], structs: StructTab)
             }
         }
     }
-    // "CAC:<name>" rows (#4354), in the same list so no registry is threaded: a
-    // closurearr-returning fn whose EVERY return is a fresh closure array, so
-    // the caller's binding is the sole owner of each element box and may take
-    // the "CLOARR:" element walk. Exact-match consumers never see a fn named
-    // "CAC:…"; collect_fresh_cloarr_names is the one reader of the prefix.
-    for fn in funcs {
-        if (util.index_of_str(out, fn.name) >= 0 && !body_has_nonfresh_cloarr_return(fn.body, closureset)) { out = out.append("CAC:" + fn.name); }
-    }
-    return out;
+    return (out, caparams);
 }
 
 pub function (s: LowerState) is_closurearr_ret_fn(name: string): boolean {
@@ -64208,40 +64303,12 @@ pub function fn_param_sigs_of(funcs: parser.FuncDecl[], structs: StructTab, grow
             }
         }
     }
-    var closureset: string[] = [];
-    var caset: string[] = [];
-    // caparams: "fname|pname" for every free-function fn[] param proven to be
-    // a closure array, computed to a FIXPOINT: a round that proves a param
-    // lets the next round accept that param FORWARDED as a call argument
-    // (arg_is_closurearr's caller_cparams case), so `main → chain(fs) →
-    // apply(fs, …)` proves chain's param first and apply's from it (#5119).
-    // Monotone (the set only grows from sound base cases) and bounded by the
-    // number of fn[] params, so it terminates; a program with no fn[] params
-    // never enters the loop (the bootstrap self-compile pays nothing).
+    // caparams: the proven closure-array params, from the same fixpoint that
+    // decides the closurearr-returning functions (closurearr_registry_of).
     var caparams: string[] = [];
     if (have_fnarr) {
-        closureset = closure_ret_fns_of(funcs, structs);
-        caset = closurearr_ret_fns_of(funcs, structs);
-        var ca_changed: boolean = true;
-        while (ca_changed) {
-            ca_changed = false;
-            for fn in funcs {
-                if (fn.receiver_type.len() == 0) {
-                    var fpj: i32 = 0;
-                    while (fpj < fn.params.len()) {
-                        if (fn.params[fpj].type_name == "fn[]") {
-                            var fkey: string = fn.name + "|" + fn.params[fpj].name;
-                            if (util.index_of_str(caparams, fkey) < 0
-                                && fnarr_param_all_closurearr(funcs, fn.name, fpj, closureset, caset, caparams)) {
-                                caparams = caparams.append(fkey);
-                                ca_changed = true;
-                            }
-                        }
-                        fpj = fpj + 1;
-                    }
-                }
-            }
-        }
+        var reg: (string[], string[]) = closurearr_registry_of(funcs, structs, closure_ret_fns_of(funcs, structs));
+        caparams = reg.1;
     }
     var out: string[] = [];
     for fd in funcs {
@@ -66043,7 +66110,7 @@ pub function fn_sigs_empty(): FnSigs {
         closurearr_ret_fns: e, const_fns: e, borrowable_params: e, borrow_bare: e, fn_names: r,
         fresh_struct_ret_fns: e, consume_safe_params: e, return_fresh_struct_ret_fns: e,
         recv_borrow_fns: e, str_fresh_ret_fns: e, opt_fresh_ret_fns: r, strfld_ok_types: e,
-        tuple_fresh_ret_fns: e, own_positions: e, own_scalar_arr_positions: e, consumed_arr_positions: e, param_counted: e, trmc_consume_fns: e, handback_params: e,
+        tuple_fresh_ret_fns: e, own_positions: e, own_scalar_arr_positions: e, consumed_arr_positions: e, param_counted: e, trmc_consume_fns: e, handback_params: e, handback_carry_params: e,
         str_handback_ret: e, grow_recv_fns: e, grow_field_positions: e };
 }
 
@@ -66523,6 +66590,7 @@ pub function fn_sigs_for_borrow(funcs: parser.FuncDecl[], structs: StructTab, ar
         param_counted: pcnt,
         trmc_consume_fns: trmc_consume_fns_of(funcs, structs),
         handback_params: handback_params_of(funcs),
+        handback_carry_params: handback_carry_params_of(funcs),
         str_handback_ret: str_handback_ret_of(funcs),
         grow_recv_fns: grow_recv_fns_of(growflags),
         grow_field_positions: grow_field_positions_of(funcs, growflags),
@@ -66551,6 +66619,104 @@ pub function handback_params_of(funcs: parser.FuncDecl[]): string[] {
         }
     }
     return out;
+}
+
+// handback_carry_params_of: "fn|idx" for every parameter some return hands back
+// INSIDE a tuple or struct literal — the parameter itself or a local bound from
+// it by a bare-ident chain (bare_alias_closure). The composite is a fresh box
+// holding the parameter's box uncounted, so the caller's argument lives on in
+// the result exactly as a bare handback does, and the same releases must leave
+// it alone (#8891).
+pub function handback_carry_params_of(funcs: parser.FuncDecl[]): string[] {
+    var out: string[] = [];
+    for fn in funcs {
+        var rets: ast.Expr[] = noesc_collect_rets(fn.body, []);
+        var pi: i32 = 0;
+        while (pi < fn.params.len()) {
+            var names: string[] = bare_alias_closure(fn.body, [fn.params[pi].name]);
+            var hit: boolean = false;
+            for r in rets { if (composite_carries_name(r, names)) { hit = true; } }
+            if (hit) { out = out.append(fn.name + "|" + util.i32_to_string(pi)); }
+            pi = pi + 1;
+        }
+    }
+    return out;
+}
+
+// composite_carries_name: `e` is a tuple or struct literal one of whose
+// elements is a name in `names`, at any nesting depth of such literals.
+function composite_carries_name(e: ast.Expr, names: string[]): boolean {
+    match (e) {
+        ast.ExprTuple(t) => {
+            for el in t.elements {
+                if (ident_name_or_empty(el).len() > 0 && util.index_of_str(names, ident_name_or_empty(el)) >= 0) { return true; }
+                if (composite_carries_name(el, names)) { return true; }
+            }
+            return false;
+        },
+        ast.ExprStructLit(sl) => {
+            for fv in sl.field_values {
+                if (ident_name_or_empty(fv).len() > 0 && util.index_of_str(names, ident_name_or_empty(fv)) >= 0) { return true; }
+                if (composite_carries_name(fv, names)) { return true; }
+            }
+            return false;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// bare_alias_closure: `names` plus every local bound or reassigned from one of
+// them by a bare ident (`var s = g;` / `s = g;`), to a fixpoint, through every
+// nested block. A rebind that later replaces the alias with something else is
+// still counted: the question is whether the name MAY carry the parameter's
+// box, and the safe answer to "may" is yes.
+function bare_alias_closure(stmts: ast.Stmt[], names: string[]): string[] {
+    var out: string[] = names;
+    var changed: boolean = true;
+    while (changed) {
+        var grown: string[] = bare_alias_step(stmts, out);
+        changed = grown.len() != out.len();
+        out = grown;
+    }
+    return out;
+}
+function bare_alias_step(stmts: ast.Stmt[], names: string[]): string[] {
+    var a: string[] = names;
+    for stmt in stmts {
+        match (stmt) {
+            ast.StmtVar(v) => {
+                var src: string = ident_name_or_empty(v.init);
+                if (src.len() > 0 && util.index_of_str(a, src) >= 0) { a = push_str_unique(a, v.name); }
+            },
+            ast.StmtAssign(asg) => {
+                var src2: string = ident_name_or_empty(asg.value);
+                if (src2.len() > 0 && util.index_of_str(a, src2) >= 0) { a = push_str_unique(a, asg.target); }
+            },
+            ast.StmtIf(f) => { a = bare_alias_step(f.then_body, a); a = bare_alias_step(f.else_body, a); },
+            ast.StmtWhile(w) => { a = bare_alias_step(w.body, a); },
+            ast.StmtFor(fo) => { a = bare_alias_step(fo.body, a); },
+            ast.StmtMatch(m) => { for arm in m.arms { a = bare_alias_step(arm.body, a); } },
+            _ => {}
+        }
+    }
+    return a;
+}
+
+// callee_carries_arg: `e` is a direct call that hands `name`'s box back inside
+// its result (handback_carry_params) at some argument position `name` sits at.
+function callee_carries_arg(e: ast.Expr, name: string, s: LowerState): boolean {
+    var cname: string = direct_call_callee_name(e);
+    if (cname.len() == 0 || name.len() == 0) { return false; }
+    if let ast.ExprCall(c) = e {
+        var i: i32 = 0;
+        while (i < c.args.len()) {
+            if (ident_name_or_empty(c.args[i]) == name
+                && util.index_of_str(s.frame.sigs.handback_carry_params, cname + "|" + util.i32_to_string(i)) >= 0) { return true; }
+            i = i + 1;
+        }
+    }
+    return false;
 }
 
 // str_recv_may_be: `e`, in a string method whose receiver is `rname`, may yield
@@ -72318,8 +72484,10 @@ function var_param_is_fn(v: ast.StmtVar, fd: parser.FuncDecl, idx: i32, mfuncs: 
     match (v.init) {
         ast.ExprLambda(lm) => { return idx < lm.params.len() && lm.params[idx].type_name == "fn"; },
         ast.ExprIdent(src) => {
-            if (lift_callee_param_is_fn(mfuncs, src.name, idx)) { return true; }
-            return depth < 8 && binding_param_is_fn(fd, src.name, idx, mfuncs, depth + 1);
+            if (util.index_of_str(fd_bound_names(fd), src.name) >= 0) {
+                return depth < 8 && binding_param_is_fn(fd, src.name, idx, mfuncs, depth + 1);
+            }
+            return lift_callee_param_is_fn(mfuncs, src.name, idx);
         },
         _ => { return false; }
     }
@@ -77131,7 +77299,11 @@ function release_last_use_source(v: ast.StmtVar, sv: LowerState): LowerState {
     var slot: i32 = last_use_release_slot(v, sv);
     if (slot < 0) { return sv; }
     var st: LowerState = sv;
-    if (!arg_moved_into_callee(v.init, site_row_value(sv.frame.reclaimable_names, "LASTUSE:", reclaim_site_key_of(v.name, v.line, v.col)), sv)) {
+    var lu_name: string = site_row_value(sv.frame.reclaimable_names, "LASTUSE:", reclaim_site_key_of(v.name, v.line, v.col));
+    // A composite handback (callee_carries_arg) is the tuple-borne twin of the
+    // bare one below: the box lives on inside q2's result, so nothing is
+    // released and the slot is zeroed like the moved case.
+    if (!arg_moved_into_callee(v.init, lu_name, sv) && !callee_carries_arg(v.init, lu_name, sv)) {
         var q2: i32 = st.slot_of(v.name);
         var sty: string = st.struct_type_of_slot(slot);
         var snls: i32 = st.slot_of(snapshot_slot_name(slot));
@@ -77202,7 +77374,14 @@ function stmts_mention_from(stmts: ast.Stmt[], from: i32, name: string): boolean
 // credited local is left to its exit sweep.
 function tail_release_snapshot_locals(v: ast.Expr, s: LowerState): LowerState {
     var st: LowerState = s;
-    for an in call_operand_idents(v) { st = tail_release_one(an, st); }
+    for an in call_operand_idents(v) {
+        // A callee that hands the operand back INSIDE its result (a returned
+        // tuple / struct literal) leaves the result a different box from the
+        // operand's, so the release's stand-in guard would not see the
+        // handback and would free what the caller is about to receive
+        // (#8891). The box goes back with the result instead.
+        if (!callee_carries_arg(v, an, st)) { st = tail_release_one(an, st); }
+    }
     return st;
 }
 

@@ -75,3 +75,27 @@ func TestBoxedDynCaptureReachesTheCountedStore(t *testing.T) {
 	}
 	t.Errorf("no two-word OpDrop in main: the dyn cell rebind no longer takes the counted store's release ladder\nops:\n%s", sb.String())
 }
+
+// The rebind's store must write BOTH words of the inline wasm `dyn`. The
+// index-assign path used to pick its store width by hand, with no `dyn`
+// case, so the cell store was a one-word store that left the other word on
+// the operand stack: the closure read the superseded Sq (9, not 15) and the
+// CLI's module failed validation (#8797's program).
+func TestBoxedDynCaptureStoreIsTwoWordOnWasm(t *testing.T) {
+	p := lowerSource(t, dynBoxedCaptureSrc)
+	var main *Func
+	for _, f := range p.Funcs {
+		if f.Name == "main" {
+			main = f
+		}
+	}
+	if main == nil {
+		t.Fatal("no main in lowered program")
+	}
+	for _, op := range main.Ops {
+		if op.Kind == OpStore && op.Width == WidthString {
+			return
+		}
+	}
+	t.Errorf("no two-word OpStore in main: the dyn cell rebind stores one word of a two-word value")
+}

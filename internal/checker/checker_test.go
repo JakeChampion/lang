@@ -2674,6 +2674,70 @@ func TestNestedFunctionRecordsCaptures(t *testing.T) {
 	}
 }
 
+// A nested function's name is bound in the scope that declares it and
+// nowhere else. It used to be written into the program-wide signature table
+// under its bare name, so a top-level function sharing the name — declared
+// before or after — resolved to the nested signature at every other call
+// site (#9005: `ssarc.at(p, block, point, target)` drew E004 against a
+// nested `at(x)` in checker.fern).
+// An annotated array destination accepts a generic call whose `T[]` result
+// is still polymorphic, like a tuple or scalar destination does; a concrete
+// element type that differs stays refused (#9003).
+func TestArrayDestinationBindsGenericElement(t *testing.T) {
+	accepted := map[string]string{
+		"literal argument": `function wrap[T](x: T): T[] { return [x]; }
+		function main(): i32 { var xs: i64[] = wrap(5); return xs[0] as i32; }`,
+		"wide literal argument": `function wrap[T](x: T): T[] { return [x]; }
+		function main(): i32 { var xs: i64[] = wrap(1234567890123); return (xs[0] / 1000000000000) as i32; }`,
+		"two literal arguments": `function two[T](a: T, b: T): T[] { return [a, b]; }
+		function main(): i32 { var xs: i64[] = two(1, 4611686018427387904); return xs[0] as i32; }`,
+	}
+	for name, src := range accepted {
+		if err := checkSource(t, src); err != nil {
+			t.Errorf("%s: unexpected error: %v", name, err)
+		}
+	}
+	rejected := `function wrap[T](x: T): T[] { return [x]; }
+	function main(): i32 { var xs: i64[] = wrap(5i32); return xs[0] as i32; }`
+	err := checkSource(t, rejected)
+	es, ok := err.(diag.Errors)
+	if !ok || len(es) == 0 {
+		t.Fatalf("concrete i32 element into i64[]: want E003, got %v", err)
+	}
+	if ce, ok := es[0].(*Error); !ok || ce.ErrCode != "E003" {
+		t.Errorf("concrete i32 element into i64[]: want E003, got %v", es[0])
+	}
+}
+
+func TestNestedFunctionNameDoesNotShadowTopLevel(t *testing.T) {
+	cases := map[string]string{
+		"top-level declared after": `function outer(n: i32): i32 {
+			function at(x: i32): i32 { return x + 1; }
+			return at(n);
+		}
+		function at(p: i32, q: i32): i32 { return p * q; }
+		function main(): i32 { return at(3, 4) + outer(1); }`,
+		"top-level declared before": `function at(p: i32, q: i32): i32 { return p * q; }
+		function outer(n: i32): i32 {
+			function at(x: i32): i32 { return x + 1; }
+			return at(n);
+		}
+		function main(): i32 { return at(3, 4) + outer(1); }`,
+		"nested passed as a value": `function apply(f: (i32) => i32, v: i32): i32 { return f(v); }
+		function outer(n: i32): i32 {
+			function at(x: i32): i32 { return x + n; }
+			return apply(at, 1);
+		}
+		function at(p: i32, q: i32): i32 { return p * q; }
+		function main(): i32 { return at(3, 4) + outer(1); }`,
+	}
+	for name, src := range cases {
+		if err := checkSource(t, src); err != nil {
+			t.Errorf("%s: unexpected error: %v", name, err)
+		}
+	}
+}
+
 // Pointer-shaped captures (string, T[], [T], structs, enums,
 // tuples, function values) all type-check now — their 4-byte
 // heap reference fits in the same env-slot scalars use.

@@ -3636,9 +3636,9 @@ func buildReadByteBody(idxs map[string]uint32) []byte {
 //	0: $handle
 //	1: $retbuf
 func buildReadByteBodyP2(idxs map[string]uint32) []byte {
-	alloc := idxs["__fern_alloc"]
 	getStdin := idxs["wasi_get_stdin_p2"]
 	blockingRead := idxs["wasi_io_blocking_read"]
+	free := idxs["__free"]
 	var body []byte
 	// $handle: load cached (handle+1); if 0, fetch + cache, else
 	// decode by subtracting 1. Both branches leave $0 = handle.
@@ -3665,9 +3665,9 @@ func buildReadByteBodyP2(idxs map[string]uint32) []byte {
 		body = inst.InstLocalSet(body, 0)
 	}
 	body = inst.InstEnd(body)
-	// $retbuf = __fern_alloc(12)
-	body = inst.InstI32Const(body, 12)
-	body = inst.InstCall(body, alloc)
+	// $retbuf = the static result slot: a result per byte, never outliving
+	// the call.
+	body = inst.InstI32Const(body, readByteRetAddr)
 	body = inst.InstLocalSet(body, 1)
 	// blocking-read(handle, 1 /* len u64 */, retbuf)
 	body = inst.InstLocalGet(body, 0)
@@ -3691,13 +3691,22 @@ func buildReadByteBodyP2(idxs map[string]uint32) []byte {
 	body = inst.InstI32Const(body, -1)
 	body = inst.InstReturn(body)
 	body = inst.InstEnd(body)
-	// Return the byte at the list data pointer (retbuf+4).
+	// $byte = mem8[mem[retbuf+4]], the first byte of the list.
 	body = inst.InstLocalGet(body, 1)
 	body = inst.InstI32Const(body, 4)
 	body = numeric.InstI32Add(body)
 	body = memory.InstI32Load(body, 2, 0)
 	body = memory.InstI32Load8U(body, 0, 0)
-	locals := inst.PutLocalsOneGroup(nil, 2, encode.ValtypeI32)
+	body = inst.InstLocalSet(body, 2)
+	// __free(list_ptr, list_len): cabi_realloc bumped exactly that for
+	// the host's list, and nothing else holds it.
+	body = inst.InstLocalGet(body, 1)
+	body = memory.InstI32Load(body, 2, 4)
+	body = inst.InstLocalGet(body, 1)
+	body = memory.InstI32Load(body, 2, 8)
+	body = inst.InstCall(body, free)
+	body = inst.InstLocalGet(body, 2)
+	locals := inst.PutLocalsOneGroup(nil, 3, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
 }
 

@@ -1250,11 +1250,9 @@ pub function bre_compile_syntax(pat: string, syntax: Syntax): Bre {
     return Bre { insts: none, classes: p.classes, ngroups: 0, nmarks: 0, backref: false, err: c.err, newline_anchor: syntax.newline_anchor, first: none_first, empty_ok: true, pre: "", pre_bol: false, pre_eol: false, literal: false };
   }
   var fm: (u8[], boolean) = fastmap(c.insts, p.classes);
-  var first: u8[] = fm.0;
-  var empty_ok: boolean = fm.1;
   var pre: (string, boolean, i32) = prefix_scan(c.insts);
   var tail: (boolean, boolean) = literal_tail(c.insts, pre.2);
-  return Bre { insts: c.insts, classes: p.classes, ngroups: p.ngroups, nmarks: c.nmarks, backref: has_backref(p.nodes), err: "", newline_anchor: syntax.newline_anchor, first: first, empty_ok: empty_ok, pre: pre.0, pre_bol: pre.1, pre_eol: tail.0, literal: tail.1 };
+  return Bre { insts: c.insts, classes: p.classes, ngroups: p.ngroups, nmarks: c.nmarks, backref: has_backref(p.nodes), err: "", newline_anchor: syntax.newline_anchor, first: fm.0, empty_ok: fm.1, pre: pre.0, pre_bol: pre.1, pre_eol: tail.0, literal: tail.1 };
 }
 
 // ---- the fastmap -----------------------------------------------------------
@@ -1431,7 +1429,10 @@ function find_literal(text: string, lit: string, lo: i32, hi: i32): i32 {
 // rather than cutting it out, and `^` and `` \` `` have to mean the
 // line's start rather than the buffer's. Both are the whole string for
 // the callers that hand over a whole string.
-struct M { text: string, lo: i32, hi: i32, re: Bre, target: i32, caps: i32[], marks: i32[] }
+// `zw_caps` holds the captures of the first path that reached the end
+// through a trailing zero-width assertion, kept only until a path that
+// did not is found (see step).
+struct M { text: string, lo: i32, hi: i32, re: Bre, target: i32, caps: i32[], marks: i32[], have_zw: boolean, zw_caps: i32[] }
 
 function class_has_byte(re: Bre, idx: i32, b: i32): boolean {
   return re.classes[idx * 256 + b] as i32 != 0;
@@ -1492,10 +1493,17 @@ function byte_matches(re: Bre, in: Inst, b: i32): boolean {
 }
 
 // Whether some path from (pc, pos) reaches the end at exactly `target`.
-function step(m0: M, pc0: i32, pos0: i32): (boolean, M) {
+// Between equally long matches glibc prefers the one whose last step to
+// the end crossed no zero-width assertion: an assertion's successors are
+// duplicated nodes carrying its constraint, and the plain end node sorts
+// before every duplicate when the halt node is chosen. `zw` is whether
+// this path has crossed one since it last consumed a byte; a match
+// reached with it set is held as a fallback while the search goes on.
+function step(m0: M, pc0: i32, pos0: i32, zw0: boolean): (boolean, M) {
   var m: M = m0;
   var pc: i32 = pc0;
   var pos: i32 = pos0;
+  var zw: boolean = zw0;
   while (true) {
     var in: Inst = m.re.insts[pc];
     if (in.op == op_char()) {
@@ -1504,6 +1512,7 @@ function step(m0: M, pc0: i32, pos0: i32): (boolean, M) {
       }
       pc = pc + 1;
       pos = pos + 1;
+      zw = false;
       continue;
     }
     if (in.op == op_class()) {
@@ -1512,6 +1521,7 @@ function step(m0: M, pc0: i32, pos0: i32): (boolean, M) {
       }
       pc = pc + 1;
       pos = pos + 1;
+      zw = false;
       continue;
     }
     if (in.op == op_jmp()) {
@@ -1519,13 +1529,23 @@ function step(m0: M, pc0: i32, pos0: i32): (boolean, M) {
       continue;
     }
     if (in.op == op_match()) {
-      return (pos == m.target, m);
+      if (pos != m.target) {
+        return (false, m);
+      }
+      if (!zw) {
+        return (true, m);
+      }
+      if (m.have_zw) {
+        return (false, m);
+      }
+      return (false, M { ...m, have_zw: true, zw_caps: m.caps });
     }
     if (in.op == op_bol()) {
       if (!bol_holds(m.re, m.text, pos, m.lo)) {
         return (false, m);
       }
       pc = pc + 1;
+      zw = true;
       continue;
     }
     if (in.op == op_eol()) {
@@ -1533,6 +1553,7 @@ function step(m0: M, pc0: i32, pos0: i32): (boolean, M) {
         return (false, m);
       }
       pc = pc + 1;
+      zw = true;
       continue;
     }
     if (in.op == op_assert()) {
@@ -1540,6 +1561,7 @@ function step(m0: M, pc0: i32, pos0: i32): (boolean, M) {
         return (false, m);
       }
       pc = pc + 1;
+      zw = true;
       continue;
     }
     if (in.op == op_progress()) {
@@ -1561,26 +1583,29 @@ function step(m0: M, pc0: i32, pos0: i32): (boolean, M) {
       }
       pc = pc + 1;
       pos = pos + n;
+      if (n > 0) {
+        zw = false;
+      }
       continue;
     }
-    return branch(m, pc, pos, in);
+    return branch(m, pc, pos, in, zw);
   }
   return (false, m);
 }
 
 // The instructions that have to try more than one continuation, and so
 // have to be able to put back what they changed.
-function branch(m0: M, pc: i32, pos: i32, in: Inst): (boolean, M) {
+function branch(m0: M, pc: i32, pos: i32, in: Inst, zw: boolean): (boolean, M) {
   if (in.op == op_split()) {
-    var r: (boolean, M) = step(m0, in.a, pos);
+    var r: (boolean, M) = step(m0, in.a, pos, zw);
     if (r.0) {
       return r;
     }
-    return step(r.1, in.b, pos);
+    return step(r.1, in.b, pos, zw);
   }
   if (in.op == op_save()) {
     var old: i32 = m0.caps[in.a];
-    var r2: (boolean, M) = step(M { ...m0, caps: m0.caps.with(in.a, pos) }, pc + 1, pos);
+    var r2: (boolean, M) = step(M { ...m0, caps: m0.caps.with(in.a, pos) }, pc + 1, pos, zw);
     if (r2.0) {
       return r2;
     }
@@ -1588,7 +1613,7 @@ function branch(m0: M, pc: i32, pos: i32, in: Inst): (boolean, M) {
   }
   if (in.op == op_mark()) {
     var oldm: i32 = m0.marks[in.a];
-    var r3: (boolean, M) = step(M { ...m0, marks: m0.marks.with(in.a, pos) }, pc + 1, pos);
+    var r3: (boolean, M) = step(M { ...m0, marks: m0.marks.with(in.a, pos) }, pc + 1, pos, zw);
     if (r3.0) {
       return r3;
     }
@@ -1758,10 +1783,13 @@ function exec_backtrack(re: Bre, text: string, start: i32, lo: i32, hi: i32): Br
   var no: i32[] = [];
   var end: i32 = hi;
   while (end >= start) {
-    var m: M = M { text: text, lo: lo, hi: hi, re: re, target: end, caps: fresh_caps(re.ngroups * 2), marks: fresh_caps(re.nmarks) };
-    var r: (boolean, M) = step(m, 0, start);
+    var m: M = M { text: text, lo: lo, hi: hi, re: re, target: end, caps: fresh_caps(re.ngroups * 2), marks: fresh_caps(re.nmarks), have_zw: false, zw_caps: no };
+    var r: (boolean, M) = step(m, 0, start, false);
     if (r.0) {
       return caps_to_match(r.1.caps, re, start, end);
+    }
+    if (r.1.have_zw) {
+      return caps_to_match(r.1.zw_caps, re, start, end);
     }
     end = end - 1;
   }
@@ -1771,7 +1799,10 @@ function exec_backtrack(re: Bre, text: string, start: i32, lo: i32, hi: i32): Br
 // `Threads` — one position's thread list: the program counters waiting
 // on a byte, each with its captures, plus the generation stamp that
 // keeps a program counter from being entered twice at one position.
-struct Threads { pcs: i32[], caps: i32[][], seen: i32[] }
+// `match_at` is the index of this position's match thread, or -1, and
+// `match_zw` whether it reached the end through a trailing zero-width
+// assertion (see step): such a thread yields to a later one that did not.
+struct Threads { pcs: i32[], caps: i32[][], seen: i32[], match_at: i32, match_zw: boolean }
 
 // The epsilon closure from `pc`: every program counter reachable
 // without consuming a byte, in priority order, stopping at each one
@@ -1781,30 +1812,36 @@ struct Threads { pcs: i32[], caps: i32[][], seen: i32[] }
 // array, and each stamp would then copy it (#8498) — one copy per
 // instruction of the closure, which a pattern like `\(a*\)\{3200\}`
 // walks in full at every position.
-function add_thread(re: Bre, t0: Threads, gen: i32, pc: i32, caps: i32[], pos: i32, text: string, lo: i32, hi: i32): Threads {
+function add_thread(re: Bre, t0: Threads, gen: i32, pc: i32, caps: i32[], pos: i32, text: string, lo: i32, hi: i32, zw: boolean): Threads {
   if (t0.seen[pc] == gen) {
+    if (!zw && t0.match_zw && re.insts[pc].op == op_match()) {
+      return Threads { ...t0, caps: t0.caps.with(t0.match_at, caps), match_zw: false };
+    }
     return t0;
   }
   var in: Inst = re.insts[pc];
   if (in.op == op_jmp()) {
-    return add_thread(re, stamp(t0, pc, gen), gen, in.a, caps, pos, text, lo, hi);
+    return add_thread(re, stamp(t0, pc, gen), gen, in.a, caps, pos, text, lo, hi, zw);
   }
   if (in.op == op_split()) {
-    return add_thread(re, add_thread(re, stamp(t0, pc, gen), gen, in.a, caps, pos, text, lo, hi), gen, in.b, caps, pos, text, lo, hi);
+    return add_thread(re, add_thread(re, stamp(t0, pc, gen), gen, in.a, caps, pos, text, lo, hi, zw), gen, in.b, caps, pos, text, lo, hi, zw);
   }
   if (in.op == op_save()) {
-    return add_thread(re, stamp(t0, pc, gen), gen, pc + 1, caps.with(in.a, pos), pos, text, lo, hi);
+    return add_thread(re, stamp(t0, pc, gen), gen, pc + 1, caps.with(in.a, pos), pos, text, lo, hi, zw);
   }
   // `Mark` and `Progress` guard the backtracker's empty star loops; the
   // generation stamp already does that job here.
   if (in.op == op_mark() || in.op == op_progress()) {
-    return add_thread(re, stamp(t0, pc, gen), gen, pc + 1, caps, pos, text, lo, hi);
+    return add_thread(re, stamp(t0, pc, gen), gen, pc + 1, caps, pos, text, lo, hi, zw);
   }
   if (in.op == op_bol() || in.op == op_eol() || in.op == op_assert()) {
     if (!zero_width_holds(re, text, in, pos, lo, hi)) {
       return stamp(t0, pc, gen);
     }
-    return add_thread(re, stamp(t0, pc, gen), gen, pc + 1, caps, pos, text, lo, hi);
+    return add_thread(re, stamp(t0, pc, gen), gen, pc + 1, caps, pos, text, lo, hi, true);
+  }
+  if (in.op == op_match()) {
+    return append_match_thread(stamp(t0, pc, gen), pc, caps, zw);
   }
   return append_thread(stamp(t0, pc, gen), pc, caps);
 }
@@ -1815,6 +1852,11 @@ function stamp(t: Threads, pc: i32, gen: i32): Threads {
 
 function append_thread(t: Threads, pc: i32, caps: i32[]): Threads {
   return Threads { ...t, pcs: t.pcs.append(pc), caps: t.caps.append(caps) };
+}
+
+function append_match_thread(t: Threads, pc: i32, caps: i32[], zw: boolean): Threads {
+  var at: i32 = t.pcs.len();
+  return Threads { ...t, pcs: t.pcs.append(pc), caps: t.caps.append(caps), match_at: at, match_zw: zw };
 }
 
 function zero_width_holds(re: Bre, text: string, in: Inst, pos: i32, lo: i32, hi: i32): boolean {
@@ -1840,8 +1882,8 @@ function exec_threads_from(re: Bre, text: string, start: i32, lo: i32, hi: i32, 
   var ncap: i32 = re.ngroups * 2;
   var no_pcs: i32[] = [];
   var no_caps: i32[][] = [];
-  var t: Threads = Threads { pcs: no_pcs, caps: no_caps, seen: fill(re.insts.len(), start - 1) };
-  t = add_thread(re, t, start, 0, fresh_caps(ncap), start, text, lo, hi);
+  var t: Threads = Threads { pcs: no_pcs, caps: no_caps, seen: fill(re.insts.len(), start - 1), match_at: 0 - 1, match_zw: false };
+  t = add_thread(re, t, start, 0, fresh_caps(ncap), start, text, lo, hi, false);
   var best: i32 = 0 - 1;
   var best_caps: i32[] = fresh_caps(ncap);
   var pos: i32 = start;
@@ -1852,7 +1894,7 @@ function exec_threads_from(re: Bre, text: string, start: i32, lo: i32, hi: i32, 
     var caps: i32[][] = t.caps;
     var empty_pcs: i32[] = [];
     var empty_caps: i32[][] = [];
-    t = Threads { ...t, pcs: empty_pcs, caps: empty_caps };
+    t = Threads { ...t, pcs: empty_pcs, caps: empty_caps, match_at: 0 - 1, match_zw: false };
     var found: boolean = false;
     var k: i32 = 0;
     while (k < pcs.len()) {
@@ -1864,7 +1906,7 @@ function exec_threads_from(re: Bre, text: string, start: i32, lo: i32, hi: i32, 
           found = true;
         }
       } else if (pos < hi && byte_matches(re, in, text[pos] as i32)) {
-        t = add_thread(re, t, pos + 1, pcs[k] + 1, caps[k], pos + 1, text, lo, hi);
+        t = add_thread(re, t, pos + 1, pcs[k] + 1, caps[k], pos + 1, text, lo, hi, false);
       }
       k = k + 1;
     }
@@ -1884,7 +1926,7 @@ function exec_threads_from(re: Bre, text: string, start: i32, lo: i32, hi: i32, 
       // The fastmap gate is the third of `search_range`'s filters: a
       // position no match can begin at is never seeded.
       if (can_start_at(re, text, pos, hi)) {
-        t = add_thread(re, t, pos, 0, fresh_caps(ncap), pos, text, lo, hi);
+        t = add_thread(re, t, pos, 0, fresh_caps(ncap), pos, text, lo, hi, false);
       }
     }
     if (t.pcs.len() == 0) {

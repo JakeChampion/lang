@@ -1695,21 +1695,18 @@ Same four-corpus sweep as #6961, re-run whole:
 
 | corpus | programs native accepts | files drawing a code the self-host should not |
 |---|---|---|
-| `conformance/cases` | 496 of 570 | 1 (`underscore_discard`, E013 + E018) |
+| `conformance/cases` | 496 of 570 | 0 |
 | `examples/` + `coreutils/` + `spec/` + `internal/stdlib` | 445 of 448 | 0 |
 | `examples/self_host` via `fern.fern` | accepted | 0 — only the uncoded #4346 hint |
 
-The list is now two codes:
-
-```
-E013 E018
-```
-
-Both are the same bug and **#8852 owns it**: the self-host parser never renames
-`_`, so a repeated discard (`function f(_: i32, _: string)`, `var _ = 1; var _
-= 2;`) reads as a redeclared name. Native renames each occurrence
-(`discardName`), and its comment claims a `discard_name` mirror in
-`examples/self_host/parser.fern` that was never written.
+The list is empty and `is_partial_checker_gap_code` is gone: every coded
+diagnostic gates the build. Its last two entries were E013 / E018 (#8852), one
+bug: the self-host parser bound `_` as a real name, so a repeated discard
+(`function f(_: i32, _: string)`, `var _ = 1; var _ = 2;`) read as a
+redeclared one and `return _` read the discarded value. `parser.discard_name`
+now renames each occurrence to `__discard_<line>_<col>_<n>` at every binding
+site — parameter, `var`, tuple- and struct-destructure element, `for` header —
+as native's `discardName` does, and `printer.written_name` writes `_` back.
 
 ### Gate
 

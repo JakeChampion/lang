@@ -54,9 +54,6 @@ var teePipeStdin = strings.Repeat("0123456789abcdef", 16384) // 256 KiB
 // where the file ends up with all of stdin whatever the block size. In
 // a mode that stops, how much reached the file is a race, so those
 // cases write to stdout alone.
-//
-// `tee FILE >&-` is not here: an output file opened while fd 1 is
-// closed takes descriptor 1 and aliases stdout (#8823).
 func teeCases(t *testing.T) []invocation {
 	big := strings.Repeat("line\n", 40000)
 	// A directory to hand a case as its stdin. The per-case working
@@ -131,6 +128,11 @@ func teeCases(t *testing.T) []invocation {
 		{name: "stdout full no operands", stdin: "hello\n", stdout: stdoutFull},
 		{name: "stdout full with nothing to write", stdin: "", stdout: stdoutFull},
 		{name: "stdout closed", stdin: "hello\n", stdout: stdoutClosed},
+		// The FILE is opened while fd 1 is closed, so it must not be handed
+		// descriptor 1: GNU writes the input once, to the file, and reports
+		// standard output (#8823).
+		{name: "stdout closed with a file operand", args: []string{"a"}, stdin: "hello\n", stdout: stdoutClosed, seedTree: teeSeed},
+		{name: "stdout closed with two file operands", args: []string{"a", "b"}, stdin: "hello\n", stdout: stdoutClosed, seedTree: teeSeed},
 		{name: "stdout closed with nothing to write", stdin: "", stdout: stdoutClosed},
 		{name: "stdout closed with exit", args: []string{"--output-error=exit"}, stdin: "hello\n", stdout: stdoutClosed},
 		{name: "full file operand", args: []string{"/dev/full"}, stdin: "hello\n"},

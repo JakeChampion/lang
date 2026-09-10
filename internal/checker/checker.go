@@ -8623,9 +8623,16 @@ func (c *checker) assignableWith(dst, src ast.Type, dynBox bool) bool {
 	}
 	// Polymorphic empty-array literal (`[]`) — its concrete
 	// element type is filled in from `dst` by settleEmptyArray.
+	// A non-empty array assigns element-wise like a tuple, so a
+	// still-polymorphic numeric element (a generic call's `T[]`
+	// result over a literal argument) reaches a concrete element
+	// destination the way a scalar or a tuple element does (#9003).
 	if da, dok := dst.(ast.ArrayType); dok {
-		if sa, sok := src.(ast.ArrayType); sok && sa.Elem == nil && da.Elem != nil {
-			return true
+		if sa, sok := src.(ast.ArrayType); sok && da.Elem != nil {
+			if sa.Elem == nil {
+				return true
+			}
+			return c.assignableWith(da.Elem, sa.Elem, false)
 		}
 	}
 	d, dok := dst.(ast.EnumType)
@@ -12782,6 +12789,49 @@ func (c *checker) checkMatch(n *ast.Match, s *scope) {
 	stampRemainderStmtArms(n.Arms, ed)
 }
 
+// settlePolymorphicScrutinee commits a still-polymorphic integer scrutinee to
+// the width its own literals and the arms' literal patterns select before the
+// patterns are settled against it: `match (3 - 4611686018427387904) { 3 => …
+// }` compared at the i32 default, where the truncated literal made the
+// scrutinee 3, and took the arm every wide reading of it rejects (#8722).
+func (c *checker) settlePolymorphicScrutinee(tag ast.Expr, tagT ast.Type, pats []ast.Expr) ast.Type {
+	if nt, ok := tagT.(ast.NumberType); !ok || !nt.Polymorphic {
+		return tagT
+	}
+	def := c.polymorphicIntDefault(append([]ast.Expr{tag}, pats...)...)
+	c.settleInt(tag, def)
+	return def
+}
+
+func literalPatterns(arms []*ast.MatchArm) []ast.Expr {
+	var out []ast.Expr
+	for _, arm := range arms {
+		if arm.Literal != nil {
+			out = append(out, arm.Literal)
+		}
+		if arm.RangeHi != nil {
+			out = append(out, arm.RangeHi)
+		}
+	}
+	return out
+}
+
+func literalPatternExprs(arms []*ast.MatchExprArm) []ast.Expr {
+	var out []ast.Expr
+	for _, arm := range arms {
+		if arm == nil {
+			continue
+		}
+		if arm.Literal != nil {
+			out = append(out, arm.Literal)
+		}
+		if arm.RangeHi != nil {
+			out = append(out, arm.RangeHi)
+		}
+	}
+	return out
+}
+
 // checkLiteralMatch handles `match (n) { 0 => …, _ => … }` where
 // the scrutinee is a number / string / bool. Every arm must
 // carry a literal pattern or be a wildcard; literals must
@@ -12791,6 +12841,7 @@ func (c *checker) checkMatch(n *ast.Match, s *scope) {
 // two-literal form is intentionally NOT special-cased — the
 // `_` arm covers it more uniformly).
 func (c *checker) checkLiteralMatch(n *ast.Match, tagT ast.Type, s *scope) {
+	tagT = c.settlePolymorphicScrutinee(n.Tag, tagT, literalPatterns(n.Arms))
 	sawWildcard := false
 	for i, arm := range n.Arms {
 		if arm.IsWildcard {
@@ -13063,6 +13114,7 @@ func (c *checker) checkStructMatch(n *ast.Match, st ast.StructType, s *scope) {
 // checkLiteralMatch. Each arm body is an Expr and the unified
 // arm type is returned as the match-expression's result.
 func (c *checker) checkLiteralMatchExpr(n *ast.MatchExpr, tagT ast.Type, s *scope) ast.Type {
+	tagT = c.settlePolymorphicScrutinee(n.Tag, tagT, literalPatternExprs(n.Arms))
 	sawWildcard := false
 	var result ast.Type
 	unify := func(armT ast.Type, p ast.Position) {
@@ -13944,9 +13996,6 @@ func (c *checker) checkLocalFunc(fn *ast.FuncDecl, outer *scope) {
 	for _, name := range captureOrder {
 		fn.Captures = append(fn.Captures, ast.Param{Name: name, Type: captured[name]})
 	}
-	// Track the local function's signature so call sites can look it
-	// up by name. Codegen's hoisting pass will rename it later.
-	c.info.FuncSigs[fn.Name] = sig
 }
 
 func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
@@ -16902,6 +16951,8 @@ func (c *checker) settleNumeric(e ast.Expr, hint ast.Type) {
 			for _, el := range al.Elems {
 				c.settleNumeric(el, hn.Elem)
 			}
+		} else if call, ok := e.(*ast.Call); ok {
+			c.settleGenericCallByHint(call, hint)
 		} else if ie, ok := e.(*ast.IfExpr); ok {
 			if ie.Then != nil {
 				c.settleNumeric(ie.Then, hint)
@@ -16923,6 +16974,8 @@ func (c *checker) settleNumeric(e ast.Expr, hint ast.Type) {
 			for _, el := range al.Elems {
 				c.settleNumeric(el, hn.Elem)
 			}
+		} else if call, ok := e.(*ast.Call); ok {
+			c.settleGenericCallByHint(call, hint)
 		} else if ie, ok := e.(*ast.IfExpr); ok {
 			if ie.Then != nil {
 				c.settleNumeric(ie.Then, hint)
@@ -16952,6 +17005,11 @@ func (c *checker) settleNumeric(e ast.Expr, hint ast.Type) {
 					c.settleNumeric(el, hn.Elems[i])
 				}
 			}
+		case *ast.Call:
+			// `var p: (i64, string) = pair(1234567890123, "hello")`:
+			// the destination reaches the call's type parameters
+			// through the return type.
+			c.settleGenericCallByHint(tl, hint)
 		case *ast.IfExpr:
 			// `return if cond { tup1 } else { tup2 }` — feed
 			// the destination tuple type into both arms so
@@ -17102,7 +17160,13 @@ func (c *checker) settleNumeric(e ast.Expr, hint ast.Type) {
 		}
 		construction, resolved := c.refineEnumConstruction(e, hn)
 		call, ok := e.(*ast.Call)
-		if !ok || !resolved {
+		if !ok {
+			return
+		}
+		if !resolved {
+			// An enum-returning GENERIC function: `var o: Option[i64] =
+			// wrap(1234567890123)` reaches T through the return type.
+			c.settleGenericCallByHint(call, hint)
 			return
 		}
 		// Only a resolved constructor carries its result context into its
@@ -17219,41 +17283,11 @@ func (c *checker) settleIntSigned(e ast.Expr, hn ast.NumberType, negated bool) {
 		// `(id(7i64) as i32)` flipped id's T to i32, monomorph
 		// produced id__i32 with i32-typed params, and the
 		// re-check rejected the i64 literal arg.
-		if id, ok := x.Callee.(*ast.Ident); ok && !c.shadowedGenericCalls[x] {
-			if fn, isGen := c.info.GenericFuncs[id.Name]; isGen {
-				// An argument whose parameter mentions T and which is not
-				// a still-unsettled literal PINS T: `get_or(b, 0, 7i32)`
-				// with `b: Box[i32]` has T = i32 whatever the destination
-				// says. The TypeArgs entry alone cannot tell — a T bound to
-				// plain `i32` is recorded at the default width, which reads
-				// as unsettled — so only restamp when every T-bearing
-				// argument is literal-shaped.
-				pinned := false
-				for i, p := range fn.Params {
-					if i >= len(x.Args) {
-						break
-					}
-					if pt, ok := p.Type.(ast.ParamType); ok {
-						_ = pt
-						if !unsettledNumericShape(x.Args[i]) {
-							pinned = true
-						}
-						c.settleInt(x.Args[i], hn)
-					} else if containsParamType(p.Type) {
-						pinned = true
-					}
-				}
-				// Re-stamp TypeArgs only when the existing entry
-				// is polymorphic — meaning args-driven inference
-				// didn't fix T at a concrete width. A concrete
-				// entry (e.g. from a typed-literal arg) wins
-				// over the surrounding-context hint.
-				if !pinned && len(fn.TypeParams) == 1 && len(x.TypeArgs) == 1 &&
-					isPolymorphicNumeric(x.TypeArgs[0]) {
-					x.TypeArgs[0] = hn
-				}
-			}
-		}
+		// Which type parameter the hint reaches is what the return
+		// type says, and only the arguments bound to THAT parameter
+		// settle: `first(1234567890123, "x"): A` binds A alone, and
+		// B's string leaves A's proof untouched (#8722).
+		c.settleGenericCallByHint(x, hn)
 	}
 }
 
@@ -17769,6 +17803,73 @@ func (c *checker) widenGenericCallByLiterals(call *ast.Call) ast.Type {
 		sub[tp] = call.TypeArgs[i]
 	}
 	return c.resolveProj(substituteType(fn.ReturnType, sub))
+}
+
+// settleGenericCallByHint settles a generic call against the type its
+// destination gives its RESULT — `(i64, string)` for `pair(1234567890123,
+// "hello")`, `i64[]` for `wrap(1234567890123)` — by unifying the callee's
+// return type with the hint and treating each type parameter that binds to a
+// concrete number as the hint for the arguments bound to it: the
+// literal-shaped ones settle at that width and the TypeArgs entry is
+// restamped, exactly as a scalar destination does through settleInt's Call
+// case. A parameter pinned by a typed argument, or by an argument whose
+// parameter type merely mentions it (`T[]`, `Option[T]`), is left to that
+// argument (#8722).
+func (c *checker) settleGenericCallByHint(call *ast.Call, hint ast.Type) {
+	id, ok := call.Callee.(*ast.Ident)
+	if !ok || c.shadowedGenericCalls[call] {
+		return
+	}
+	fn, isGen := c.info.GenericFuncs[id.Name]
+	if !isGen || len(call.TypeArgs) != len(fn.TypeParams) {
+		return
+	}
+	for i, tp := range fn.TypeParams {
+		want, ok := c.genericReturnBinding(fn, hint, tp)
+		if !ok || !isPolymorphicNumeric(call.TypeArgs[i]) {
+			continue
+		}
+		var bound []ast.Expr
+		pinned := false
+		for j, p := range fn.Params {
+			if j >= len(call.Args) {
+				break
+			}
+			if pt, ok := p.Type.(ast.ParamType); ok && pt.Name == tp {
+				if !unsettledNumericShape(call.Args[j]) {
+					pinned = true
+				}
+				bound = append(bound, call.Args[j])
+			} else if !ast.Equal(substituteType(p.Type, map[string]ast.Type{tp: want}), p.Type) {
+				pinned = true
+			}
+		}
+		if pinned {
+			continue
+		}
+		for _, a := range bound {
+			c.settleNumeric(a, want)
+		}
+		call.TypeArgs[i] = want
+	}
+}
+
+// genericReturnBinding is the concrete number type the destination `hint`
+// binds type parameter `tp` to through `fn`'s return type, if any.
+func (c *checker) genericReturnBinding(fn *ast.FuncDecl, hint ast.Type, tp string) (ast.Type, bool) {
+	sub := map[string]ast.Type{}
+	if !c.unifyType(fn.ReturnType, hint, sub) {
+		return nil, false
+	}
+	want, ok := sub[tp]
+	if !ok || isPolymorphicNumeric(want) {
+		return nil, false
+	}
+	switch want.(type) {
+	case ast.NumberType, ast.FloatType:
+		return want, true
+	}
+	return nil, false
 }
 
 func (c *checker) unsettledIntLitExceedsI32(e ast.Expr, negated bool) bool {

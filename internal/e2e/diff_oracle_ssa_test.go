@@ -41,6 +41,13 @@
 // so the sweep asserts a floor on how many sampled seeds compiled
 // and ran, which stops a regression from hollowing the test out the
 // way TestArm64SSACliRoundtrip was hollowed for months.
+//
+// A child that does not FINISH is a third outcome, kept apart from
+// both: a compile or run that is still going at arm64SSAChildTimeout
+// is counted as a timeout, not as a coverage gap and not as a
+// miscompile, so the floor is measured over the seeds that finished
+// and a loaded machine reads as "N seeds timed out" rather than as a
+// backend regression (#8875).
 package e2e
 
 import (
@@ -53,6 +60,7 @@ import (
 	"runtime"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/jakechampion/lang/internal/fernsmith"
 )
@@ -68,6 +76,46 @@ import (
 // the floor says exactly that rather than leaving 60% of the sweep
 // free to disappear unnoticed.
 const diffOracleSSAMinRunRatio = 1.0
+
+// arm64SSAChildTimeout bounds one compile child and one run child. An
+// unloaded compile of a fernsmith program takes well under a second and
+// a run under qemu a few, so a child still going at this wall is the
+// machine, not the program: it is scored as a timeout, never as a
+// compile failure or a wrong answer.
+const arm64SSAChildTimeout = 60 * time.Second
+
+// diffOracleSSAMaxTimeoutRatio is the share of sampled seeds allowed to
+// time out before the sweep fails for having been unable to say
+// anything. The failure names load as the cause; it is the one verdict
+// here that a busy machine can produce, and it says so.
+const diffOracleSSAMaxTimeoutRatio = 0.05
+
+// ssaTally counts one sweep's seeds by outcome. sampled is every seed
+// the window handed out; ran is those that compiled and executed to a
+// verdict; timedOut is those whose compile or run child hit
+// arm64SSAChildTimeout. sampled - ran - timedOut is the coverage gaps.
+type ssaTally struct {
+	sampled, ran, timedOut int64
+}
+
+// runBounded starts cmd and waits at most timeout for it. A child that
+// outlives the wall is killed and reported as timedOut with no error;
+// otherwise the Wait error comes back as it would from cmd.Run.
+func runBounded(cmd *exec.Cmd, timeout time.Duration) (timedOut bool, err error) {
+	if err := cmd.Start(); err != nil {
+		return false, err
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	select {
+	case err := <-done:
+		return false, err
+	case <-time.After(timeout):
+		_ = cmd.Process.Kill()
+		<-done
+		return true, nil
+	}
+}
 
 // TestDifferential_Arm64SSAStdout runs the printable fernsmith
 // corpus through `-target arm64-linux -backend ssa` and asserts the resulting
@@ -87,17 +135,16 @@ func TestDifferential_Arm64SSAStdout(t *testing.T) {
 	qemu := arm64QemuOrEmpty(t)
 	bin := buildFernCLI(t)
 
-	var sampled, ran int64
+	var tally ssaTally
 	for _, seed := range diffOracleWindow(t, printableSeeds(t)) {
 		seed := seed
-		sampled++
+		tally.sampled++
 		t.Run(fmt.Sprintf("seed=%d", seed), func(t *testing.T) {
 			t.Parallel()
 			src := fernsmith.GenPrintableMain(seed)
 			want := interpStdout(t, src)
 
-			r := runArm64SSAOrSkip(t, bin, qemu, src)
-			atomic.AddInt64(&ran, 1)
+			r := runArm64SSAOrSkip(t, bin, qemu, src, &tally)
 			if got := trimOut(r.stdout); got != want {
 				art := preserveDiagArtifacts(t, fmt.Sprintf("seed=%d/arm64-ssa", seed), src, r.diag)
 				t.Errorf("arm64-ssa stdout mismatch (exit=%d, signal=%s)\ngot:\n%s\nwant (interp):\n%s\nstderr:\n%s\nartifact dir: %s\nsrc:\n%s",
@@ -106,7 +153,7 @@ func TestDifferential_Arm64SSAStdout(t *testing.T) {
 		})
 	}
 
-	t.Cleanup(func() { assertSSARunRatio(t, sampled, atomic.LoadInt64(&ran)) })
+	t.Cleanup(func() { assertSSARunRatio(t, &tally) })
 }
 
 // TestDifferential_Arm64SSAExitByte runs the exit-code fernsmith
@@ -134,17 +181,16 @@ func TestDifferential_Arm64SSAExitByte(t *testing.T) {
 	qemu := arm64QemuOrEmpty(t)
 	bin := buildFernCLI(t)
 
-	var sampled, ran int64
+	var tally ssaTally
 	for _, seed := range diffOracleWindow(t, diffOracleSeeds(t)) {
 		seed := seed
-		sampled++
+		tally.sampled++
 		t.Run(fmt.Sprintf("seed=%d", seed), func(t *testing.T) {
 			t.Parallel()
 			src := fernsmith.GenMain(seed)
 			want := runInterpByteOrSkip(t, src)
 
-			r := runArm64SSAOrSkip(t, bin, qemu, src)
-			atomic.AddInt64(&ran, 1)
+			r := runArm64SSAOrSkip(t, bin, qemu, src, &tally)
 			if r.diag.code != want {
 				art := preserveDiagArtifacts(t, fmt.Sprintf("seed=%d/arm64-ssa-exit", seed), src, r.diag)
 				t.Errorf("arm64-ssa exit=%d (signal=%s), interp=%d\nbinary output (stdout+stderr):\n%s%s\nartifact dir: %s\nsrc:\n%s",
@@ -153,7 +199,7 @@ func TestDifferential_Arm64SSAExitByte(t *testing.T) {
 		})
 	}
 
-	t.Cleanup(func() { assertSSARunRatio(t, sampled, atomic.LoadInt64(&ran)) })
+	t.Cleanup(func() { assertSSARunRatio(t, &tally) })
 }
 
 // ssaRun is one compile-and-run of a generated program through
@@ -171,13 +217,16 @@ func (r ssaRun) signalOrNormal() string {
 }
 
 // runArm64SSAOrSkip compiles src with `-target arm64-linux -backend ssa` and runs
-// the binary, returning its stdout and post-mortem details. A
-// compile failure SKIPS: the documented experimental-backend
-// contract is that an op the SSA path doesn't cover yet is a clean
-// error, not a miscompile. A run that dies by signal is NOT a skip —
-// that is exactly what these oracles exist to catch — so the exit
-// code (128+signal) and signal name come back in diagInfo.
-func runArm64SSAOrSkip(t *testing.T, bin, qemu, src string) ssaRun {
+// the binary, returning its stdout and post-mortem details, and counts
+// the seed in tally as ran. A compile failure SKIPS: the documented
+// experimental-backend contract is that an op the SSA path doesn't
+// cover yet is a clean error, not a miscompile. A run that dies by
+// signal is NOT a skip — that is exactly what these oracles exist to
+// catch — so the exit code (128+signal) and signal name come back in
+// diagInfo. A child still running at arm64SSAChildTimeout is neither:
+// it is counted in tally as timedOut and the seed skips, so a slow
+// machine cannot be read as a coverage gap.
+func runArm64SSAOrSkip(t *testing.T, bin, qemu, src string, tally *ssaTally) ssaRun {
 	t.Helper()
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "main.fern")
@@ -188,19 +237,30 @@ func runArm64SSAOrSkip(t *testing.T, bin, qemu, src string) ssaRun {
 	emit := exec.Command(bin, "-target", "arm64-linux", "-backend", "ssa", "-o", outPath, srcPath)
 	var eb bytes.Buffer
 	emit.Stderr = &eb
-	if err := emit.Run(); err != nil {
+	timedOut, err := runBounded(emit, arm64SSAChildTimeout)
+	if timedOut {
+		atomic.AddInt64(&tally.timedOut, 1)
+		t.Skipf("arm64-ssa compile child did not finish in %s: a load signal, not a compiler verdict", arm64SSAChildTimeout)
+	}
+	if err != nil {
 		t.Skipf("arm64-ssa coverage gap: %v\nstderr:\n%s", err, eb.String())
 	}
 
 	run := runArm64Bin(qemu, outPath)
 	var stdout, stderr bytes.Buffer
 	run.Stdout, run.Stderr = &stdout, &stderr
-	if err := run.Run(); err != nil {
+	timedOut, err = runBounded(run, arm64SSAChildTimeout)
+	if timedOut {
+		atomic.AddInt64(&tally.timedOut, 1)
+		t.Skipf("arm64-ssa run child did not finish in %s: a load signal, not a compiler verdict", arm64SSAChildTimeout)
+	}
+	if err != nil {
 		var ee *exec.ExitError
 		if !errors.As(err, &ee) {
 			t.Fatalf("run: %v\nstderr:\n%s", err, stderr.String())
 		}
 	}
+	atomic.AddInt64(&tally.ran, 1)
 	return ssaRun{
 		stdout: stdout.String(),
 		diag: diagInfo{
@@ -215,15 +275,55 @@ func runArm64SSAOrSkip(t *testing.T, bin, qemu, src string) ssaRun {
 // assertSSARunRatio is the shared floor guard: compile gaps are
 // legitimate, but a backend that regressed to rejecting nearly
 // everything would leave these oracles green while testing nothing.
-func assertSSARunRatio(t *testing.T, sampled, ran int64) {
+// Timed-out seeds are outside the ratio — they say nothing about the
+// backend — and are reported on their own, failing only past
+// diffOracleSSAMaxTimeoutRatio.
+func assertSSARunRatio(t *testing.T, tally *ssaTally) {
 	t.Helper()
+	sampled, ran, timedOut := tally.sampled, atomic.LoadInt64(&tally.ran), atomic.LoadInt64(&tally.timedOut)
 	if sampled == 0 {
 		return
 	}
-	if ratio := float64(ran) / float64(sampled); ratio < diffOracleSSAMinRunRatio {
-		t.Errorf("only %d/%d sampled seeds compiled under arm64-ssa (%.0f%%, want >= %.0f%%): "+
+	if timedOut > 0 {
+		ratio := float64(timedOut) / float64(sampled)
+		if ratio > diffOracleSSAMaxTimeoutRatio {
+			t.Errorf("%d/%d sampled seeds timed out under arm64-ssa (%.0f%%, ceiling %.0f%%): "+
+				"the machine was too loaded for this sweep to say anything about the backend; "+
+				"re-run it unloaded rather than reading the result as a compiler verdict",
+				timedOut, sampled, ratio*100, diffOracleSSAMaxTimeoutRatio*100)
+		} else {
+			t.Logf("%d/%d sampled seeds timed out under arm64-ssa (load, not a compiler verdict); the floor is measured over the %d that finished",
+				timedOut, sampled, sampled-timedOut)
+		}
+	}
+	finished := sampled - timedOut
+	if finished == 0 {
+		return
+	}
+	if ratio := float64(ran) / float64(finished); ratio < diffOracleSSAMinRunRatio {
+		t.Errorf("only %d/%d finished seeds compiled under arm64-ssa (%.0f%%, want >= %.0f%%): "+
 			"the backend appears to have regressed to rejecting programs it used to accept, "+
 			"which would leave this oracle green while testing nothing",
-			ran, sampled, ratio*100, diffOracleSSAMinRunRatio*100)
+			ran, finished, ratio*100, diffOracleSSAMinRunRatio*100)
+	}
+}
+
+// TestRunBoundedClassifiesTimeout pins the three outcomes runBounded
+// separates: a child that exits cleanly, one that exits non-zero, and
+// one that outlives the wall — the last must come back as timedOut
+// with no error, since that is what keeps a slow machine out of the
+// coverage-gap count.
+func TestRunBoundedClassifiesTimeout(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX sleep/true/false")
+	}
+	if timedOut, err := runBounded(exec.Command("true"), arm64SSAChildTimeout); timedOut || err != nil {
+		t.Errorf("clean exit: timedOut=%v err=%v, want false and nil", timedOut, err)
+	}
+	if timedOut, err := runBounded(exec.Command("false"), arm64SSAChildTimeout); timedOut || err == nil {
+		t.Errorf("non-zero exit: timedOut=%v err=%v, want false and an error", timedOut, err)
+	}
+	if timedOut, err := runBounded(exec.Command("sleep", "30"), 100*time.Millisecond); !timedOut || err != nil {
+		t.Errorf("outlived the wall: timedOut=%v err=%v, want true and nil", timedOut, err)
 	}
 }

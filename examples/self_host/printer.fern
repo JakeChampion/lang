@@ -171,7 +171,7 @@ function print_params_with(params: ast.ParamDecl[], pats: string[]): string {
         if (pi < pats.len() && pats[pi].len() > 0) {
             out = out + pats[pi];
         } else {
-            out = out + params[pi].name;
+            out = out + written_name(params[pi].name);
         }
         if (params[pi].type_name.len() > 0) {
             out = out + ": " + params[pi].type_name;
@@ -1353,7 +1353,7 @@ function as_use(e: ast.Expr): UseSugar {
 // print_let_else recovers for the other rest-of-block desugar. The type prints
 // only when the source wrote one; otherwise the checker infers it.
 function print_use(us: UseSugar, line: i32, depth: i32, f: Fmt): (string, Fmt) {
-    var out: string = "use " + us.name;
+    var out: string = "use " + written_name(us.name);
     if (us.type_name.len() > 0) { out = out + ": " + us.type_name; }
     out = out + " <- " + print_expr(us.call, depth) + ";";
     var g: Fmt = f;
@@ -1734,14 +1734,34 @@ function split_commas(csv: string): string[] {
     return out;
 }
 
-// join_csv respells a comma-joined list with native's `, ` separator.
+// written_name is the name the author wrote for a binding: `_` for the
+// `__discard_<line>_<col>_<n>` the parser substituted (parser.discard_name),
+// and the name itself otherwise.
+function written_name(name: string): string {
+    if (util.str_has_prefix(name, "__discard_")) { return "_"; }
+    return name;
+}
+
+// written_part is written_name for one element of a comma-joined binder list,
+// where a nested position leaves grouping parens on the element — `(a` and
+// `b)` for `((a, b), c)` — around the name.
+function written_part(part: string): string {
+    var lead: i32 = 0;
+    while (lead < part.len() && part[lead] == b'(') { lead = lead + 1; }
+    var trail: i32 = part.len();
+    while (trail > lead && part[trail - 1] == b')') { trail = trail - 1; }
+    return slice_unchecked(part, 0, lead) + written_name(slice_unchecked(part, lead, trail) + "") + slice_unchecked(part, trail, part.len());
+}
+
+// join_csv respells a comma-joined binder list with native's `, ` separator,
+// each element as the author wrote it.
 function join_csv(csv: string): string {
     var parts: string[] = split_commas(csv);
     var out: string = "";
     var i: i32 = 0;
     while (i < parts.len()) {
         if (i > 0) { out = out + ", "; }
-        out = out + parts[i];
+        out = out + written_part(parts[i]);
         i = i + 1;
     }
     return out;
@@ -1786,7 +1806,7 @@ function struct_destr_pattern(v: ast.StmtVar): string {
     while (i < fields.len()) {
         if (i > 0) { out = out + ", "; }
         out = out + fields[i];
-        if (i < binds.len() && binds[i] != fields[i]) { out = out + ": " + binds[i]; }
+        if (i < binds.len() && binds[i] != fields[i]) { out = out + ": " + written_name(binds[i]); }
         i = i + 1;
     }
     out = out + rest_suffix(parser.destr_marker_split(v.type_name).rest_written, fields.len());
@@ -1924,7 +1944,7 @@ function print_stmt_body(st: ast.Stmt, depth: i32, f: Fmt): (string, Fmt) {
             }
             var ann: string = "";
             if (v.type_name.len() > 0) { ann = ": " + v.type_name; }
-            return ("var " + v.name + ann + " = " + print_expr(v.init, depth) + ";", f);
+            return ("var " + written_name(v.name) + ann + " = " + print_expr(v.init, depth) + ";", f);
         },
         ast.StmtReturn(r) => {
             // A void `return;` parses with no value expression, which reaches
@@ -2106,7 +2126,7 @@ function print_func_decl(fd: parser.FuncDecl, has_inline_hint: boolean, inline_n
         if (i < dpats.len() && dpats[i].len() > 0) {
             out = out + dpats[i];
         } else {
-            out = out + fd.params[i].name;
+            out = out + written_name(fd.params[i].name);
         }
         if (fd.params[i].type_name.len() > 0) {
             out = out + ": " + fd.params[i].type_name;
@@ -2397,7 +2417,7 @@ function print_impl_method(m: parser.FuncDecl, impl_tps: string[], f: Fmt): (str
     while (i < m.params.len()) {
         if (!first) { out = out + ", "; }
         if (m.params[i].own) { out = out + "own "; }
-        out = out + m.params[i].name;
+        out = out + written_name(m.params[i].name);
         if (m.params[i].type_name.len() > 0) { out = out + ": " + m.params[i].type_name; }
         first = false;
         i = i + 1;
@@ -2456,7 +2476,7 @@ function print_trait_method(m: parser.FuncDecl, f: Fmt): (string, Fmt) {
     while (i < m.params.len()) {
         if (i > 0) { out = out + ", "; }
         if (m.params[i].own) { out = out + "own "; }
-        out = out + m.params[i].name;
+        out = out + written_name(m.params[i].name);
         if (m.params[i].type_name.len() > 0) { out = out + ": " + m.params[i].type_name; }
         i = i + 1;
     }

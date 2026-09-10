@@ -1405,6 +1405,29 @@ return 0;
 }
 function main(): i32 { return chain(1); }
 `},
+	// A `_` binding is renamed to `__discard_<line>_<col>_<n>` by both
+	// parsers (#8852), and both printers have to write `_` back — through a
+	// parameter, a lambda parameter, a plain var, a tuple destructure with
+	// a nested position, a struct destructure's renamed field, and a `for`
+	// header. Every site is here because the self-host reprints them from
+	// four different encodings.
+	{"discard-bindings", `struct P { x: i32, y: i32 }
+function pair(): (i32, i32) { return (1, 2); }
+function constant(_: i32, _: string): i32 { return 7; }
+function main(): i32 {
+var _ = 99;
+var _ = 98;
+var (a, _) = pair();
+var (_, b) = pair();
+let ((c, _), _) = ((3, 4), 5);
+let P { x: _, y } = P { x: 1, y: 6 };
+var g = (_: i32, n: i32): i32 => n;
+var xs: (i32, i32)[] = [(1, 2)];
+var s: i32 = 0;
+for (k, _) in xs { s = s + k; }
+return a + b + c + y + s + g(0, 1) + constant(1, "x");
+}
+`},
 	// An arrow lambda's return annotation is followed by the lambda's own
 	// `=>`, so the type parser reserves the top-level function-type arrow
 	// there (#8706, #8717). Both printers must put the grouping parens back
