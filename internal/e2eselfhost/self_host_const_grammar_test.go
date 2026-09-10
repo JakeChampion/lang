@@ -93,7 +93,12 @@ func constDiagLines(out string) []string {
 	var keep []string
 	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
 		line = strings.TrimSpace(line)
-		if !strings.Contains(line, "is not a constant") {
+		// Every const-grammar diagnostic is prefixed `const <name>: ` on both
+		// sides, which is what makes one recognisable without a code. Keying
+		// on the message instead misses a family: a filter for "is not a
+		// constant" alone drops the refused-OPERATOR wording entirely, and
+		// rows comparing it then pass empty-vs-empty whatever the rule does.
+		if !strings.Contains(line, ": const ") {
 			continue
 		}
 		// native: "<path>:2:1: const C: …"  self-host: "2:1: const C: …"
