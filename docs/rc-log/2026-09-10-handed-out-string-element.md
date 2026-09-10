@@ -29,6 +29,13 @@ than 59e40b4: a sixty-line reproducer of the shape leaks at afc6d0a and runs on
 freed-but-intact memory, and the element retain on the un-share copy is what
 made it fault.
 
+Main's 8e9bf1a stops the walk instead: a `string[]` is no longer a
+counted-element array, so an un-share copy shares its elements uncounted as
+it did before #9014, and the string[] field's release stays refused per type
+(#5338's class). That leaves the element dangling in the scope once the
+caller frees it, as it was at afc6d0a; the count below is what keeps it
+alive, and the two compose.
+
 `retain_caller_elem_handoff` closes it at the handoff: a `str_param_elem_escapes`
 argument (a `p[i]` of a borrowed `string[]` parameter, or a local such a read
 bound) is retained at every call-argument site whose position is neither
