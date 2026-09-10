@@ -1344,6 +1344,20 @@ pub function str_param_elem_escapes(e: ast.Expr, s: LowerState): boolean {
     return false;
 }
 
+// retain_caller_elem_handoff retains a caller-owned string ELEMENT
+// (str_param_elem_escapes) sitting on the operand stack as argument `ai` of
+// `callee` when that position may keep it: a string parameter that is neither
+// borrowable nor counted takes over the argument's reference, and the element
+// has none of its own to give — the caller's deep free is its only release.
+// The callee's store then holds the second count, as `xs.append(p[i])` does
+// inside one function.
+function retain_caller_elem_handoff(s: LowerState, arg: ast.Expr, callee: string, ai: i32): LowerState {
+    if (!s.ok || !str_param_elem_escapes(arg, s)) { return s; }
+    var reg: string[] = s.frame.sigs.borrowable_params;
+    if (param_is_borrowable(reg, callee, ai) || param_is_borrowable(reg, "CNT:" + callee, ai)) { return s; }
+    return s.retain_tos("handoff-param-str-elem");
+}
+
 // indexed_box_elem_escapes reports whether `e` is an index read of a STRUCT or
 // ARRAY element — a box the source array's own release drops, whoever owns that
 // array — so a container storing it takes a second owner and the store must be
@@ -12569,6 +12583,7 @@ function lower_call_named_generic(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIde
             // (store+reload keeps the arg in place) and free it
             // right after the call — the call-arg sibling of the
             // #2649 concat-operand anonymous-temp reclaim.
+            sc = retain_caller_elem_handoff(sc, c.args[ai], cid.name, ai);
             var lst: ArgStash = stash_fresh_str_arg(sc, c.args[ai], cid.name, ai);
             sc = lst.state;
             if (lst.slot >= 0) {
@@ -12907,6 +12922,7 @@ function lower_call_prim_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, pty: s
         else if (pm.param_is_i64(pty + "." + fa.field, pai)) { pm = lower_i64(c.args[pai], pm); }
         else {
             pm = lower_expr(c.args[pai], pm);
+            pm = retain_caller_elem_handoff(pm, c.args[pai], pty + "." + fa.field, pai);
             var pmst: ArgStash = stash_fresh_str_arg(pm, c.args[pai], pty + "." + fa.field, pai);
             pm = pmst.state;
             if (pmst.slot >= 0) {
@@ -12997,6 +13013,7 @@ function lower_call_struct_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, rty:
             sm = lower_i64(c.args[ai], sm);
         } else {
             sm = lower_expr(c.args[ai], sm);
+            sm = retain_caller_elem_handoff(sm, c.args[ai], disp_ty + "." + fa.field, ai);
             sm_gbf = grow_field_bracket_rows(sm, disp_ty + "." + fa.field, ai, c.args[ai], sm_gbf);
             var smst: ArgStash = stash_fresh_str_arg(sm, c.args[ai], disp_ty + "." + fa.field, ai);
             sm = smst.state;
@@ -14747,6 +14764,7 @@ function lower_call_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerSta
             else if (em.param_is_i64(ety + "." + fa.field, eai)) { em = lower_i64(c.args[eai], em); }
             else {
                 em = lower_expr(c.args[eai], em);
+                em = retain_caller_elem_handoff(em, c.args[eai], ety + "." + fa.field, eai);
                 var emst: ArgStash = stash_fresh_str_arg(em, c.args[eai], ety + "." + fa.field, eai);
                 em = emst.state;
                 if (emst.slot >= 0) {
@@ -26050,6 +26068,10 @@ function fai_bracket_shared_root(s: LowerState, uniqslot: i32, srcslot: i32, fn:
 // an array touches freed boxes: the checker driver segfaulted on
 // `for (k, v) in m` (TestSelfHostCheckerDifferentialX86_64/loop-map-shadow).
 function is_counted_elem_array_type(structs: StructTab, t: string): boolean {
+    // "fn[]" is a closure array's flat spelling, and is_enum_array_field_type
+    // would admit it: a closure element is a code address or a closure pair,
+    // never an rc-headed box (#9017).
+    if (t == "fn[]") { return false; }
     return is_struct_array_field_type(structs, t)
         || is_enum_array_field_type(structs, t) || is_nested_array_field_type(structs, t);
 }
