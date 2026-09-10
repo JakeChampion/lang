@@ -2942,6 +2942,15 @@ func (b *builder) computeFreeEligible() map[string]bool {
 										if pi < len(counted) && counted[pi] {
 											continue
 										}
+										// An `own` position takes the reference
+										// outright: the callee releases what it
+										// was handed, and the binding holds only
+										// what it is rebound to afterwards — an
+										// owned value the exit sweep must still
+										// release.
+										if own := b.info.OwnFuncs[id.Name]; pi < len(own) && own[pi] {
+											continue
+										}
 										tainted[aid.Name] = true
 									}
 								}

@@ -14,14 +14,22 @@ import (
 // them. Rounds-based: the accumulator is built and dies each round, so a
 // correct runtime is flat in the round count.
 //
-// The two callees are the two answers a callee can give: `put` appends to
-// its parameter and hands the SAME buffer back (grown in place when it is
+// The first two callees are the two answers a callee can give: `put` appends
+// to its parameter and hands the SAME buffer back (grown in place when it is
 // unique), `fresh` builds a new string and hands THAT back, so the caller's
 // old buffer is superseded on every iteration.
+// The third callee takes the accumulator as an `own` parameter. That moves
+// the caller's reference in, and the caller's binding then holds only what
+// the callee handed back; on x86-64 the single-word string argument taint
+// still read the move as a possible retention and kept the binding out of
+// the exit sweep, so the final accumulator of every frame was stranded —
+// balanced only when the frame returned it.
 const threadedStringAccumulatorCallees = `@noinline
 function put(a: string, s: string): string { a = a + s; return a; }
 @noinline
 function fresh(a: string, s: string): string { var b: string = a + s; return b; }
+@noinline
+function take(own a: string, s: string): string { return a + s; }
 @noinline
 function round_put(): i32 {
     var acc: string = "";
@@ -36,12 +44,19 @@ function round_fresh(): i32 {
     while (i < 16) { acc = fresh(acc, "12345678"); i = i + 1; }
     return acc.len() - 128;
 }
+@noinline
+function round_take(): i32 {
+    var acc: string = "";
+    var i: i32 = 0;
+    while (i < 16) { acc = take(acc, "12345678"); i = i + 1; }
+    return acc.len() - 128;
+}
 `
 
 const threadedStringAccumulatorSrc = threadedStringAccumulatorCallees + `function main(): i32 {
     var r: i32 = 0;
     var acc: i32 = 0;
-    while (r < 200) { acc = acc + round_put() + round_fresh(); r = r + 1; }
+    while (r < 200) { acc = acc + round_put() + round_fresh() + round_take(); r = r + 1; }
     return acc;
 }`
 
@@ -50,7 +65,7 @@ func threadedStringAccumulatorBumpSrc(n string) string {
     var before: i32 = (__heap_bump_bytes() as i32);
     var r: i32 = 0;
     var acc: i32 = 0;
-    while (r < ` + n + `) { acc = acc + round_put() + round_fresh(); r = r + 1; }
+    while (r < ` + n + `) { acc = acc + round_put() + round_fresh() + round_take(); r = r + 1; }
     if (acc != 0) { return 99; }
     return (__heap_bump_bytes() as i32) - before;
 }`
