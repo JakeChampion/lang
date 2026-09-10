@@ -112,27 +112,39 @@ one by hand.
   and calls between produced functions: borrowed and counted array
   arguments, a counted argument retained across a call and moved at its
   last use, a temporary result moved into a counted parameter, a discarded
-  result, a returned parameter, recursion, and a call result carried into a
-  loop header.
+  result, a returned parameter, recursion, a call result carried into a
+  loop header, and the AST-lowered `main` binding, discarding and projecting
+  tuple and array results under `ssarc.caller_sigs`.
 
 ```sh
 go test ./internal/e2eselfhost -run 'TestSelfHostSemanticSource' -count=1
 go test ./internal/e2eselfhost -run 'TestSelfHostSSAPhysicalRC|TestSelfHostSSAUnits|TestSelfHostSSASemantic|TestSelfHostSSADependencyVerification|TestSelfHostSSALifetime' -count=1
 ```
 
-## The caller contract, observed
+## The caller contract at the AST boundary
 
 Substituting a verified callee under an AST-lowered caller exposed the
 mismatch the [physical RC notes](SELFHOST-PHYSICAL-RC.md) predicted. A caller
-binding a returned `(i32, i32[])` deep-releases the tuple's array only when
-the callee's body returns a tuple literal; when the callee returns a local
-tuple, the caller's syntactic analysis of the callee decides the child is not
-its own and leaks it. The verified callee is balanced either way, and the
-pure AST route leaks the same shape without any substitution (#9004). The
-executable fixture therefore hands the AST caller arrays and scalars, and
-keeps tuple construction, replacement and projection inside produced
-functions. Production integration needs closed-module call contracts, not the
-caller's guess about the callee's syntax.
+binding a returned `(i32, i32[])` deep-released the tuple's array only when
+the callee's body returned a tuple literal of literals; for a returned local
+tuple, or a literal carrying a local array, the caller's syntactic reading of
+the callee decided the child was not its own and leaked it, and a projected
+call temporary (`carry(k)[0]`) leaked its array the same way. The verified
+callee is balanced either way, and the pure AST route leaks the same shapes
+without any substitution (#9004).
+
+`ssarc.caller_sigs` closes the gap for produced callees: it rewrites the AST
+registries an AST caller reads from the callee's verified result type rather
+than its syntax. The contract every produced function honours is one counted
+reference whose container owns its children, so a tuple result earns the
+fresh-tuple row with a deep-drop flag at every scalar-element array
+position, and a scalar-element array result earns the owned-array row. Rows
+the caller's syntactic reading recorded for the same result are replaced;
+positions those registries cannot release (a string or record element) keep
+the AST caller's leak-mode floor, and the rows are only derived for callees
+actually lowered here, since the contract needs both sides. The executable
+fixture's `main` now receives the three #9004 shapes and balances; removing
+the contract feed leaks five blocks on the same program.
 
 ## Remaining
 
@@ -142,5 +154,9 @@ no production consumer is switched and no AST ownership analysis is deleted.
 Records and strings cross the boundary (`make`, `wrap`, `unwrap`, `tally`,
 `greet` in the executable fixture: a record with a string field and a nested
 record, an `own` record parameter, string concatenation in a loop, string
-equality; balanced on every target). Next: the caller contract at the AST
-boundary (#9004) so `main` can receive every produced shape, then enums.
+equality; balanced on every target), and the AST-lowered `main` receives
+tuple and array results by contract. String and record positions of a
+received tuple, and record results, still rely on the AST caller's own
+syntactic rows. Next: enums, then a production consumer that lowers produced
+functions through this pipeline and feeds `caller_sigs` to the remaining AST
+callers.

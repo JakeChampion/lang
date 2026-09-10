@@ -442,6 +442,55 @@ function region(e: Emit, f: ssasem.Func, p: ssaunits.Plan, l: ssalayout.Layout, 
     return e;
 }
 
+// An AST caller releases a produced callee's result by the contract this
+// lowering honours, in the AST registries' own vocabulary: one counted
+// reference whose container owns its children. Rows the caller's reading of
+// the callee's syntax recorded for the same result are replaced. Only the
+// shapes those registries can release get a row: a tuple's scalar-element
+// array positions ("ARRF:") and a scalar-element array result ("ARROWN:");
+// every other position keeps the AST caller's leak-mode floor.
+pub function caller_sigs(sg: irlower.FnSigs, name: string, f: ssasem.Func): irlower.FnSigs {
+    var tuples: string[] = without_rows(sg.tuple_fresh_ret_fns, name, ["", "ARRF:"]);
+    var arrays: string[] = without_rows(sg.return_fresh_struct_ret_fns, name, ["ARR:", "ARROWN:"]);
+    if let typeinfo.TypeTuple(tup) = f.result {
+        tuples = tuples.append(name);
+        var flags: string = tuple_flags(tup);
+        if (flags != "") { tuples = tuples.append("ARRF:" + name + "|" + flags); }
+    }
+    if (scalar_array(f.result)) { arrays = arrays.append("ARROWN:" + name); }
+    return irlower.FnSigs { ...sg, tuple_fresh_ret_fns: tuples, return_fresh_struct_ret_fns: arrays };
+}
+
+function scalar_array(t: typeinfo.Type): boolean {
+    if let typeinfo.TypeArray(a) = t { return !reference(a.elem); }
+    return false;
+}
+
+function tuple_flags(tup: typeinfo.TypeTuple): string {
+    var flags: string = "";
+    for elem in tup.elements {
+        if (scalar_array(elem)) { flags = flags + "1"; } else { flags = flags + "0"; }
+    }
+    return flags;
+}
+
+// A row keyed "<prefix><name>" or "<prefix><name>|<flags>".
+function keyed_row(row: string, prefix: string, name: string): boolean {
+    var key: string = prefix + name;
+    if (row == key) { return true; }
+    return row.len() > key.len() && slice_unchecked(row, 0, key.len()) == key && row[key.len()] == b'|';
+}
+
+function without_rows(rows: string[], name: string, prefixes: string[]): string[] {
+    var out: string[] = [];
+    for row in rows {
+        var drop: boolean = false;
+        for prefix in prefixes { if (keyed_row(row, prefix, name)) { drop = true; } }
+        if (!drop) { out = out.append(row); }
+    }
+    return out;
+}
+
 pub function lower(f: ssasem.Func, modes: i32[], p: ssaunits.Plan): irlower.LowerResult {
     var why: string = validate(f, modes, p);
     if (why != "") { return empty(why); }
