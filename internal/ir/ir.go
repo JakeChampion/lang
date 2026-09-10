@@ -18988,29 +18988,8 @@ func (b *builder) assign(n *ast.Assign) error {
 		storeWidth := 0
 		if t.ElemType != nil {
 			stride = int32(ast.ElemSizeBytesFor(t.ElemType, b.ptrW))
-			if nt, ok := t.ElemType.(ast.NumberType); ok {
-				switch nt.NormalWidth() {
-				case 8:
-					storeOp = OpStoreI8
-				case 64:
-					storeWidth = 64
-				}
-			}
-			if ast.IsPointerType(t.ElemType) {
-				storeWidth = WidthPtr
-			}
-			if ft, ok := t.ElemType.(ast.FloatType); ok {
-				storeOp = OpFStore
-				if ft.NormalWidth() == 64 {
-					storeWidth = 64
-				}
-			}
-			// String elements: fan store out to two i32.store
-			// calls on wasm via WidthString. Natives stay on
-			// WidthPtr (single ptr-slot store).
-			if _, isString := t.ElemType.(ast.StringType); isString && b.twoWordStrings() {
-				storeWidth = WidthString
-			}
+			so := arrayElemStoreOpFor(t.ElemType, b.ptrW)
+			storeOp, storeWidth = so.Kind, so.Width
 		}
 		var helper string
 		if t.IsSlice {
