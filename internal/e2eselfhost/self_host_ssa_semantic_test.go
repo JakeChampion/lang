@@ -12,6 +12,7 @@ import (
 
 const semanticFixture = `
 var records: semrecords.Record[] = [];
+var calls: ssasem.Contract[] = [];
 var i32t: typeinfo.Type = typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false };
 var i64t: typeinfo.Type = typeinfo.TypeI32 { width: 64, unsigned: false, is_char: false };
 var bt: typeinfo.Type = typeinfo.TypeBool { tag: 0 };
@@ -46,6 +47,12 @@ function field(value: i32, parent: i32, index: i32, name: string): ssa.SInst {
 }
 function inst(kind: i32, value: i32, args: i32[], imm: i32): ssa.SInst {
     return ssa.SInst { kind_tag: kind, result: value, args: args, imm: imm, str: "" };
+}
+function call_inst(value: i32, callee: string, args: i32[]): ssa.SInst {
+    return ssa.SInst { kind_tag: ssasem.call(), result: value, args: args, imm: 0, str: callee };
+}
+function contract(name: string, params: typeinfo.Type[], modes: i32[], result: typeinfo.Type): ssasem.Contract {
+    return ssasem.Contract { name: name, params: params, modes: modes, result: result };
 }
 function ret(value: i32): ssa.STerm { return ssa.STerm { kind_tag: 1, value: value, cond: 0, target: 0, t: 0, f: 0 }; }
 function br(target: i32): ssa.STerm { return ssa.STerm { kind_tag: 2, value: 0, cond: 0, target: target, t: 0, f: 0 }; }
@@ -121,6 +128,14 @@ func semanticCases() []struct{ name, change, want string } {
 		{"opaque-signature", "types = types.with(5, typeinfo.TypeFunc { param_types: [], ret_type: st, params_known: false });", "unresolved value type"},
 		{"physical-allocation", "graph = change(graph, 6, inst(14, 6, [5], 0));", "unsupported semantic operation"},
 		{"physical-load", "graph = change(graph, 4, inst(15, 4, [3, 1], 32));", "unsupported semantic operation"},
+		{"call", `calls = [contract("g", [sa], [2], st)]; graph = change(graph, 5, call_inst(5, "g", [3]));`, ""},
+		{"call-argument-type", `calls = [contract("g", [ia], [3], st)]; graph = change(graph, 5, call_inst(5, "g", [3]));`, "call argument type"},
+		{"call-arity", `calls = [contract("g", [sa, i32t], [2, 1], st)]; graph = change(graph, 5, call_inst(5, "g", [3]));`, "call arity"},
+		{"call-result-type", `calls = [contract("g", [sa], [2], ia)]; graph = change(graph, 5, call_inst(5, "g", [3]));`, "call result type"},
+		{"missing-call-contract", `graph = change(graph, 5, call_inst(5, "g", [3]));`, "missing call contract"},
+		{"duplicate-call-contract", `calls = [contract("g", [sa], [2], st), contract("g", [], [], st)];`, "duplicate call contract"},
+		{"call-contract-modes", `calls = [contract("g", [sa], [], st)];`, "call contract mode dimensions"},
+		{"call-contract-unresolved", `calls = [contract("g", [typeinfo.unchecked()], [2], st)];`, "unresolved call parameter type"},
 	}
 	return append(base, semanticRecordCases()...)
 }
@@ -135,7 +150,7 @@ func semanticSource(indices []int) (string, string) {
 		fmt.Fprintf(&source, "function semantic_case_%d(): i32 {\n%s\n%s\n", i, semanticFixture, tc.change)
 		source.WriteString(`
 var before = ssa.print_func(graph);
-var checked = ssasem.analyze(ssasem.Func { graph: graph, values: types, params: params, result: result, records: records });
+var checked = ssasem.analyze(ssasem.Func { graph: graph, values: types, params: params, result: result, records: records, calls: calls });
 if (checked.ok != (checked.why == "") || checked.flow.ok != checked.ok) { return 2; }
 if (before != ssa.print_func(graph)) { return 3; }
 if (!checked.ok && (checked.dependencies.len() != 0 || checked.flow.live_in.len() != 0 || checked.flow.live_out.len() != 0)) { return 4; }

@@ -67,6 +67,23 @@ function supported(t: typeinfo.Type, records: semrecords.Record[]): boolean {
     if let typeinfo.TypeStruct(_) = t { return semrecords.find(records, t) >= 0; }
     return false;
 }
+function mode_error(params: typeinfo.Type[], modes: i32[]): string {
+    var i: i32 = 0;
+    while (i < modes.len()) {
+        if (reference(params[i])) {
+            if (modes[i] != borrow_mode() && modes[i] != counted_mode()) { return "reference parameter mode"; }
+        } else if (modes[i] != value_mode()) { return "scalar parameter mode"; }
+        i = i + 1;
+    }
+    return "";
+}
+// A callee's contract is held to the same representation and mode rules as
+// this function's own parameters: its counted result is a fresh unit here.
+function call_contract_error(c: ssasem.Contract, records: semrecords.Record[]): string {
+    for t in c.params { if (!supported(t, records)) { return "unsupported counted-unit call parameter"; } }
+    if (!supported(c.result, records)) { return "unsupported counted-unit call result"; }
+    return mode_error(c.params, c.modes);
+}
 function contract_error(f: ssasem.Func, modes: i32[]): string {
     if (modes.len() != f.params.len()) { return "parameter mode dimensions"; }
     for t in f.values { if (!supported(t, f.records)) { return "unsupported counted-unit type"; } }
@@ -77,14 +94,11 @@ function contract_error(f: ssasem.Func, modes: i32[]): string {
             if (!supported(field.ty, f.records)) { return "unsupported counted record field"; }
         }
     }
-    var i: i32 = 0;
-    while (i < modes.len()) {
-        if (reference(f.params[i])) {
-            if (modes[i] != borrow_mode() && modes[i] != counted_mode()) { return "reference parameter mode"; }
-        } else if (modes[i] != value_mode()) { return "scalar parameter mode"; }
-        i = i + 1;
+    for c in f.calls {
+        var why: string = call_contract_error(c, f.records);
+        if (why != "") { return why; }
     }
-    return "";
+    return mode_error(f.params, modes);
 }
 function owned_values(f: ssasem.Func, modes: i32[]): boolean[] {
     var out: boolean[] = bits(f.graph.nvals);
@@ -92,7 +106,7 @@ function owned_values(f: ssasem.Func, modes: i32[]): boolean[] {
         for ins in b.insts {
             var owns: boolean = false;
             if (ins.kind_tag == 6) { owns = modes[ins.imm] == counted_mode(); }
-            if (ins.kind_tag == 8 || ins.kind_tag == ssasem.array_new() || ins.kind_tag == ssasem.tuple_new() || ins.kind_tag == ssasem.record_new()) { owns = reference(f.values[ins.result]); }
+            if (ins.kind_tag == 8 || ins.kind_tag == ssasem.array_new() || ins.kind_tag == ssasem.tuple_new() || ins.kind_tag == ssasem.record_new() || ins.kind_tag == ssasem.call()) { owns = reference(f.values[ins.result]); }
             out = out.with(ins.result, owns);
         }
     }
@@ -110,14 +124,30 @@ function add_use(own live: boolean[], value: i32, deps: i32[][]): boolean[] {
     for dep in deps[value] { live = live.with(dep, true); }
     return live;
 }
+// A construction takes one unit per reference operand. A call takes one per
+// counted parameter; a borrowed parameter only reads the caller's unit.
 function operation_supplies(f: ssasem.Func, ins: ssa.SInst): Supply[] {
     var out: Supply[] = [];
-    if (ins.kind_tag == ssasem.array_new() || ins.kind_tag == ssasem.tuple_new() || ins.kind_tag == ssasem.record_new()) {
-        var i: i32 = 0;
-        while (i < ins.args.len()) {
-            if (reference(f.values[ins.args[i]])) { out = out.append(Supply { value: ins.args[i], slot: i, mode: 0 }); }
-            i = i + 1;
-        }
+    var counted: boolean[] = [];
+    if (ins.kind_tag == ssasem.call()) {
+        counted = call_supplied(f, ins);
+    } else if (ins.kind_tag == ssasem.array_new() || ins.kind_tag == ssasem.tuple_new() || ins.kind_tag == ssasem.record_new()) {
+        for arg in ins.args { counted = counted.append(reference(f.values[arg])); }
+    }
+    var i: i32 = 0;
+    while (i < counted.len()) {
+        if (counted[i]) { out = out.append(Supply { value: ins.args[i], slot: i, mode: 0 }); }
+        i = i + 1;
+    }
+    return out;
+}
+function call_supplied(f: ssasem.Func, ins: ssa.SInst): boolean[] {
+    var c: ssasem.Contract = f.calls[ssasem.find_contract(f.calls, ins.str)];
+    var out: boolean[] = [];
+    var i: i32 = 0;
+    while (i < ins.args.len()) {
+        out = out.append(c.modes[i] == counted_mode() && reference(f.values[ins.args[i]]));
+        i = i + 1;
     }
     return out;
 }

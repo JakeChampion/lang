@@ -49,7 +49,8 @@ remain an incomplete projection and cannot replace complete semantic Types.
    `semsource.fern` is the first slice of this import
    ([semantic source](SELFHOST-SEMANTIC-SOURCE.md)): scalars, arrays,
    tuples, branches and loops from checked declarations, verified and
-   physically executed; calls, strings, records and enums are still refused.
+   physically executed, and calls between produced functions verified against
+   declared contracts; strings, records and enums are still refused there.
 3. Move a complete ownership slice through this boundary, including borrowed
    inputs, counted transfers, shared containers and escaping match payloads.
    Verify edge-sensitive lifetime and counted-unit plans before physical lowering.

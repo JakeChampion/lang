@@ -12,7 +12,23 @@ pub struct Func {
     values: typeinfo.Type[],
     params: typeinfo.Type[],
     result: typeinfo.Type,
-    records: semrecords.Record[]
+    records: semrecords.Record[],
+    calls: Contract[]
+}
+
+// A callee's declared signature as this function sees it: exact parameter
+// and result types, and one mode per parameter (the unit planner's value,
+// borrow or counted). A call is verified against its contract alone; the
+// callee's body is never consulted.
+pub struct Contract { name: string, params: typeinfo.Type[], modes: i32[], result: typeinfo.Type }
+
+pub function find_contract(calls: Contract[], name: string): i32 {
+    var i: i32 = 0;
+    while (i < calls.len()) {
+        if (calls[i].name == name) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
 }
 
 pub struct Analysis {
@@ -30,6 +46,7 @@ pub function array_get(): i32 { return 0 - 3; }
 pub function tuple_get(): i32 { return 0 - 4; }
 pub function record_new(): i32 { return 0 - 5; }
 pub function record_get(): i32 { return 0 - 6; }
+pub function call(): i32 { return 0 - 7; }
 
 function failed(why: string): Analysis {
     return Analysis { ok: false, why: why, dependencies: [], flow: ssalive.Flow { ok: false, why: why, live_in: [], live_out: [] } };
@@ -140,6 +157,20 @@ function record_projection_error(ins: ssa.SInst, f: Func, result: typeinfo.Type)
     return "";
 }
 
+function call_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
+    var at: i32 = find_contract(f.calls, ins.str);
+    if (at < 0) { return "missing call contract"; }
+    var c: Contract = f.calls[at];
+    if (ins.args.len() != c.params.len()) { return "call arity"; }
+    var i: i32 = 0;
+    while (i < ins.args.len()) {
+        if (!semtypes.equal(c.params[i], f.values[ins.args[i]])) { return "call argument type"; }
+        i = i + 1;
+    }
+    if (!semtypes.equal(c.result, result)) { return "call result type"; }
+    return "";
+}
+
 function arithmetic(op: string): boolean { return op == "+" || op == "-" || op == "*"; }
 function comparison(op: string): boolean {
     return op == "<" || op == "<=" || op == ">" || op == ">=" || op == "==" || op == "!=";
@@ -191,6 +222,7 @@ function instruction_error(ins: ssa.SInst, f: Func): string {
     if (kind == tuple_get()) { return tuple_projection_error(ins, f, result); }
     if (kind == record_new()) { return record_construction_error(ins, f, result); }
     if (kind == record_get()) { return record_projection_error(ins, f, result); }
+    if (kind == call()) { return call_error(ins, f, result); }
     return "unsupported semantic operation";
 }
 
@@ -202,7 +234,25 @@ function schema_error(f: Func): string {
     if (!semtypes.concrete(f.result, true)) { return "unresolved result type"; }
     for t in f.values { if (!semtypes.concrete(t, false)) { return "unresolved value type"; } }
     for t in f.params { if (!semtypes.concrete(t, false)) { return "unresolved parameter type"; } }
+    why = contracts_error(f.calls);
+    if (why != "") { return why; }
     return semrecords.verify(f.records);
+}
+
+// Contracts are a finite table keyed by callee name. A void result is the
+// only void a contract may carry; parameters are values.
+function contracts_error(calls: Contract[]): string {
+    var i: i32 = 0;
+    while (i < calls.len()) {
+        var c: Contract = calls[i];
+        if (c.name == "") { return "empty call contract name"; }
+        if (find_contract(calls, c.name) != i) { return "duplicate call contract"; }
+        if (c.modes.len() != c.params.len()) { return "call contract mode dimensions"; }
+        for t in c.params { if (!semtypes.concrete(t, false)) { return "unresolved call parameter type"; } }
+        if (!semtypes.concrete(c.result, true)) { return "unresolved call result type"; }
+        i = i + 1;
+    }
+    return "";
 }
 
 function terminator_error(b: ssa.SBlock, f: Func): string {

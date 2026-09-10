@@ -55,6 +55,18 @@ graph = ssa.SFunc { name: "loop", nparams: 2, nvals: 3, entry: 7, takes_env: fal
 ] };
 `
 
+// A call to `g(borrowed, counted)` returning a fresh array: the counted
+// argument is supplied like a construction operand, the borrowed one is only
+// read, and the result is a unit of this function's own.
+const unitCall = `
+var callee: ssasem.Contract = contract("g", [sa, sa], [2, 3], sa);
+calls = [callee];
+params = [sa, sa]; types = [sa, sa, sa, sa]; result = sa; modes = [3, 3];
+graph = ssa.SFunc { name: "call", nparams: 2, nvals: 4, entry: 7, takes_env: false, blocks: [
+    ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(6, 1, [], 1), call_inst(2, "g", [0, 1]), call_inst(3, "g", [0, 0])], term: ret(3) }
+] };
+`
+
 type unitCase struct{ name, setup, check, mutate, want string }
 
 func unitCases() []unitCase {
@@ -104,6 +116,20 @@ if (!supply(find(p, 27, ssaunits.edge_point(), 17), 0, 2, 0, ssaunits.move_unit(
 		{"changed-parameter-contract", unitDuplicate, "", `modes = [2];`, "move without counted unit"},
 		{"missing-entry", unitDuplicate, "", `var steps: ssaunits.Step[] = []; for s in p.steps { if (s.point != ssaunits.entry_point()) { steps = steps.append(s); } } p = ssaunits.Plan { ...p, steps: steps };`, "missing or duplicate entry step"},
 		{"invalid-drop-id", unitDuplicate, "", `var s = find(p, 7, 1, 0 - 1); p = replace(p, ssaunits.Step { ...s, drops: [99] });`, "drop value out of range"},
+		{"call-supplies", unitCall, `
+var first = find(p, 7, 2, 0 - 1);
+if (first.supplies.len() != 1 || !supply(first, 0, 1, 1, ssaunits.move_unit()) || !drops(first, [2])) { return 24; }
+var second = find(p, 7, 3, 0 - 1);
+if (second.supplies.len() != 1 || !supply(second, 0, 0, 1, ssaunits.move_unit()) || !drops(second, [])) { return 25; }
+if (!supply(find(p, 7, ssaunits.return_point(), 0 - 1), 0, 3, 0, ssaunits.move_unit())) { return 26; }
+`, "", ""},
+		{"call-borrowed-argument", unitCall + "modes = [2, 3];", `
+var second = find(p, 7, 3, 0 - 1);
+if (!supply(second, 0, 0, 1, ssaunits.retain_unit()) || !drops(second, [])) { return 27; }
+`, "", ""},
+		{"changed-call-contract", unitCall, "", `f = ssasem.Func { ...f, calls: [contract("g", [sa, sa], [2, 2], sa)] };`, "unit supply arity"},
+		{"call-contract-mode", unitCall, "", `f = ssasem.Func { ...f, calls: [contract("g", [sa, sa], [1, 3], sa)] };`, "reference parameter mode"},
+		{"dropped-call-contract", unitCall, "", `f = ssasem.Func { ...f, calls: [] };`, "missing call contract"},
 	}
 	return append(base, unitRecordCases()...)
 }
@@ -117,7 +143,7 @@ func unitSource(indices []int) (string, string) {
 		tc := unitCases()[i]
 		fmt.Fprintf(&source, "function unit_case_%d(): i32 {\n%s\nvar modes: i32[] = [3, 1];\n%s\n", i, semanticFixture, tc.setup)
 		source.WriteString(`
-var f = ssasem.Func { graph: graph, values: types, params: params, result: result, records: records };
+var f = ssasem.Func { graph: graph, values: types, params: params, result: result, records: records, calls: calls };
 var p = ssaunits.plan(f, modes);
 if (!p.ok) { print(p.why); return 1; }
 `)
@@ -134,7 +160,7 @@ for opaque in opaque_types {
     var g = ssa.SFunc { name: "opaque", nparams: 1, nvals: 1, entry: 7, takes_env: false, blocks: [
         ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0)], term: ret(0) }
     ] };
-    bad = ssaunits.plan(ssasem.Func { graph: g, values: [opaque], params: [opaque], result: opaque, records: [] }, [3]);
+    bad = ssaunits.plan(ssasem.Func { graph: g, values: [opaque], params: [opaque], result: opaque, records: [], calls: [] }, [3]);
     if (bad.ok || bad.steps.len() != 0 || bad.why != "unsupported counted-unit type") { return 34; }
 }
 `)
