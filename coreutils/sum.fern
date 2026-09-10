@@ -35,7 +35,7 @@ function opt_sysv(): i32 {
 function help_text(): string {
   var out: string = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]... [FILE]...\n";
-  out = out + "Print or check BSD (16-bit) checksums.\n";
+  out = out + "Print a 16-bit checksum and a block count for each FILE.\n";
   out = out + "\n";
   out = out + "With no FILE, or when FILE is -, read standard input.\n";
   out = out + "\n";
