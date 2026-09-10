@@ -254,6 +254,13 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"enum-value-mismatch", "enum Color { Red, Green }\nfunction main(): i32 { var x: i32 = Red; return x; }\n", []string{"E003"}},
 		{"enum-value-assign-clean", "enum Color { Red, Green }\nfunction main(): i32 { var c: Color = Red; return 0; }\n", nil},
 		{"enum-value-return-clean", "enum Color { Red, Green }\nfunction pick(): Color { return Green; }\nfunction main(): i32 { var c: Color = pick(); return 0; }\n", nil},
+		// A struct FIELD typed by an enum. The struct table is built before the
+		// full union table exists, from the declared union NAMES alone, and an
+		// enum names a union exactly as a type alias does.
+		{"enum-struct-field-clean", "enum Color { Red, Green }\nstruct H { c: Color, n: i32 }\nfunction main(): i32 { var h: H = H { c: Red, n: 1 }; return h.n; }\n", nil},
+		{"enum-struct-field-mismatch", "enum Color { Red, Green }\nstruct H { c: Color, n: i32 }\nfunction main(): i32 { var h: H = H { c: 5, n: 1 }; return h.n; }\n", []string{"E043"}},
+		{"enum-struct-field-match-clean", "enum Color { Red, Green(i32) }\nstruct H { c: Color, n: i32 }\nfunction main(): i32 { var h: H = H { c: Green(3), n: 1 };\n    match (h.c) { Green(v) => { return v; }, _ => { return 0; } }\n}\n", nil},
+		{"enum-struct-field-payload-mismatch", "enum Color { Red, Green(i32) }\nstruct H { c: Color, n: i32 }\nfunction main(): i32 { var h: H = H { c: Green(3), n: 1 };\n    match (h.c) { Green(v) => { var s: string = v; return 0; }, _ => { return 0; } }\n}\n", []string{"E003"}},
 		// Builtin Option/Result as values (#4346 piece 2, second slice). The
 		// generic annotation `Option[i32]` resolves to a name-only union, the
 		// constructor call `Some(3)` / `Ok(3)` types to that union, and bare

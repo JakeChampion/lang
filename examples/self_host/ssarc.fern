@@ -20,18 +20,19 @@ function empty(why: string): irlower.LowerResult {
 // implemented here, even when the unit planner knows their abstract
 // ownership: wide scalars, string views, and a record with no schema or with
 // type arguments (its box is named by the bare declaration).
-function supported_tuple(tup: typeinfo.TypeTuple, records: semrecords.Record[]): boolean {
-    for elem in tup.elements { if (!supported(elem, records)) { return false; } }
+function supported_tuple(tup: typeinfo.TypeTuple, f: ssasem.Func): boolean {
+    for elem in tup.elements { if (!supported(elem, f)) { return false; } }
     return true;
 }
-function supported(t: typeinfo.Type, records: semrecords.Record[]): boolean {
+function supported(t: typeinfo.Type, f: ssasem.Func): boolean {
     if let typeinfo.TypeI32(i) = t { return i.width == 32; }
     if let typeinfo.TypeBool(_) = t { return true; }
     if let typeinfo.TypeVoid(_) = t { return true; }
     if let typeinfo.TypeString(_) = t { return ssasem.is_string(t); }
-    if let typeinfo.TypeArray(a) = t { return supported(a.elem, records); }
-    if let typeinfo.TypeTuple(tup) = t { return supported_tuple(tup, records); }
-    if let typeinfo.TypeStruct(r) = t { return r.args.len() == 0 && semrecords.find(records, t) >= 0; }
+    if let typeinfo.TypeArray(a) = t { return supported(a.elem, f); }
+    if let typeinfo.TypeTuple(tup) = t { return supported_tuple(tup, f); }
+    if let typeinfo.TypeStruct(r) = t { return r.args.len() == 0 && semrecords.find(f.records, t) >= 0; }
+    if let typeinfo.TypeUnion(u) = t { return u.args.len() == 0 && semrecords.find_enum(f.enums, t) >= 0; }
     return false;
 }
 
@@ -40,6 +41,7 @@ function reference(t: typeinfo.Type): boolean {
     if let typeinfo.TypeArray(_) = t { return true; }
     if let typeinfo.TypeTuple(_) = t { return true; }
     if let typeinfo.TypeStruct(_) = t { return true; }
+    if let typeinfo.TypeUnion(_) = t { return true; }
     return false;
 }
 
@@ -48,8 +50,17 @@ function record_name(t: typeinfo.Type): string {
     return "";
 }
 
-function record_fields(t: typeinfo.Type, records: semrecords.Record[]): semrecords.Field[] {
-    return records[semrecords.find(records, t)].fields;
+function record_fields(t: typeinfo.Type, f: ssasem.Func): semrecords.Field[] {
+    return f.records[semrecords.find(f.records, t)].fields;
+}
+
+function variants_of(t: typeinfo.Type, f: ssasem.Func): semrecords.Variant[] {
+    return f.enums[semrecords.find_enum(f.enums, t)].variants;
+}
+
+function fields_have_children(fields: semrecords.Field[]): boolean {
+    for field in fields { if (reference(field.ty)) { return true; } }
+    return false;
 }
 
 // A string box is released by its own helper: its block starts before the
@@ -87,31 +98,48 @@ function reserve(r: irlower.LowerResult, end: i32): irlower.LowerResult {
 // A parent owns one unit per reference field. Shared parents release only
 // their own unit; the final parent release walks children before its box.
 // Array/tuple/struct opcodes preserve the production native/Wasm layouts.
-function has_children(t: typeinfo.Type, records: semrecords.Record[]): boolean {
+function has_children(t: typeinfo.Type, f: ssasem.Func): boolean {
     if let typeinfo.TypeArray(a) = t { return reference(a.elem); }
     if let typeinfo.TypeTuple(tup) = t {
         for elem in tup.elements { if (reference(elem)) { return true; } }
     }
-    if let typeinfo.TypeStruct(_) = t {
-        for field in record_fields(t, records) { if (reference(field.ty)) { return true; } }
+    if let typeinfo.TypeStruct(_) = t { return fields_have_children(record_fields(t, f)); }
+    if let typeinfo.TypeUnion(_) = t {
+        for v in variants_of(t, f) { if (fields_have_children(v.fields)) { return true; } }
     }
     return false;
 }
 
-function drop_value(r: irlower.LowerResult, slot: i32, t: typeinfo.Type, scratch: i32, records: semrecords.Record[]): irlower.LowerResult {
-    if (has_children(t, records)) {
+function drop_value(r: irlower.LowerResult, slot: i32, t: typeinfo.Type, scratch: i32, f: ssasem.Func): irlower.LowerResult {
+    if (has_children(t, f)) {
         r = emit(r, ir.op_load_local(slot));
         r = emit(r, ir.op_call_direct("__fern_rc_is_unique", 1));
         r = emit(r, ir.op_if(0));
-        if let typeinfo.TypeArray(a) = t { r = drop_elements(r, slot, a.elem, scratch, records); }
-        if let typeinfo.TypeTuple(tup) = t { r = drop_tuple_fields(r, slot, tup, scratch, records); }
-        if let typeinfo.TypeStruct(_) = t { r = drop_record_fields(r, slot, record_fields(t, records), scratch, records); }
+        if let typeinfo.TypeArray(a) = t { r = drop_elements(r, slot, a.elem, scratch, f); }
+        if let typeinfo.TypeTuple(tup) = t { r = drop_tuple_fields(r, slot, tup, scratch, f); }
+        if let typeinfo.TypeStruct(_) = t { r = drop_record_fields(r, slot, record_fields(t, f), scratch, f); }
+        if let typeinfo.TypeUnion(_) = t { r = drop_variant_fields(r, slot, variants_of(t, f), scratch, f); }
         r = emit(r, ir.op_end());
     }
     return helper(r, slot, release_name(t));
 }
 
-function drop_elements(r: irlower.LowerResult, slot: i32, elem: typeinfo.Type, scratch: i32, records: semrecords.Record[]): irlower.LowerResult {
+// A variant box carries only its own variant's fields, so the walk selects
+// them by the box's runtime variant.
+function drop_variant_fields(r: irlower.LowerResult, slot: i32, variants: semrecords.Variant[], scratch: i32, f: ssasem.Func): irlower.LowerResult {
+    for v in variants {
+        if (fields_have_children(v.fields)) {
+            r = emit(r, ir.op_load_local(slot));
+            r = emit(r, ir.op_variant_is(v.name));
+            r = emit(r, ir.op_if(0));
+            r = drop_record_fields(r, slot, v.fields, scratch, f);
+            r = emit(r, ir.op_end());
+        }
+    }
+    return r;
+}
+
+function drop_elements(r: irlower.LowerResult, slot: i32, elem: typeinfo.Type, scratch: i32, f: ssasem.Func): irlower.LowerResult {
     var index: i32 = scratch;
     var child: i32 = index + 1;
     r = reserve(r, child + 1);
@@ -128,7 +156,7 @@ function drop_elements(r: irlower.LowerResult, slot: i32, elem: typeinfo.Type, s
     r = emit(r, ir.op_load_local(index));
     r = emit(r, ir.op_arr_get_nc(32));
     r = emit(r, ir.op_store_local(child));
-    r = drop_value(r, child, elem, child + 1, records);
+    r = drop_value(r, child, elem, child + 1, f);
     r = emit(r, ir.op_load_local(index));
     r = emit(r, ir.op_const_i32(1));
     r = emit(r, ir.op_bin("add", 0, false));
@@ -138,7 +166,7 @@ function drop_elements(r: irlower.LowerResult, slot: i32, elem: typeinfo.Type, s
     return emit(r, ir.op_end());
 }
 
-function drop_tuple_fields(r: irlower.LowerResult, slot: i32, tup: typeinfo.TypeTuple, scratch: i32, records: semrecords.Record[]): irlower.LowerResult {
+function drop_tuple_fields(r: irlower.LowerResult, slot: i32, tup: typeinfo.TypeTuple, scratch: i32, f: ssasem.Func): irlower.LowerResult {
     var child: i32 = scratch;
     r = reserve(r, child + 1);
     var i: i32 = 0;
@@ -147,14 +175,14 @@ function drop_tuple_fields(r: irlower.LowerResult, slot: i32, tup: typeinfo.Type
             r = emit(r, ir.op_load_local(slot));
             r = emit(r, ir.op_tuple_get(i));
             r = emit(r, ir.op_store_local(child));
-            r = drop_value(r, child, tup.elements[i], child + 1, records);
+            r = drop_value(r, child, tup.elements[i], child + 1, f);
         }
         i = i + 1;
     }
     return r;
 }
 
-function drop_record_fields(r: irlower.LowerResult, slot: i32, fields: semrecords.Field[], scratch: i32, records: semrecords.Record[]): irlower.LowerResult {
+function drop_record_fields(r: irlower.LowerResult, slot: i32, fields: semrecords.Field[], scratch: i32, f: ssasem.Func): irlower.LowerResult {
     var child: i32 = scratch;
     r = reserve(r, child + 1);
     var i: i32 = 0;
@@ -163,7 +191,7 @@ function drop_record_fields(r: irlower.LowerResult, slot: i32, fields: semrecord
             r = emit(r, ir.op_load_local(slot));
             r = emit(r, ir.op_struct_get(i, 0));
             r = emit(r, ir.op_store_local(child));
-            r = drop_value(r, child, fields[i].ty, child + 1, records);
+            r = drop_value(r, child, fields[i].ty, child + 1, f);
         }
         i = i + 1;
     }
@@ -171,7 +199,7 @@ function drop_record_fields(r: irlower.LowerResult, slot: i32, fields: semrecord
 }
 
 function drops(r: irlower.LowerResult, step: ssaunits.Step, f: ssasem.Func): irlower.LowerResult {
-    for value in step.drops { r = drop_value(r, value, f.values[value], f.graph.nvals, f.records); }
+    for value in step.drops { r = drop_value(r, value, f.values[value], f.graph.nvals, f); }
     return r;
 }
 
@@ -221,15 +249,26 @@ function edge(r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan, from: i3
 }
 
 // A schema's fields are values a walk reads through this vocabulary too.
-function types_error(f: ssasem.Func): string {
+function schema_types_error(f: ssasem.Func): string {
     for record in f.records {
-        for field in record.fields { if (!supported(field.ty, f.records)) { return "unsupported physical RC record field type"; } }
+        for field in record.fields { if (!supported(field.ty, f)) { return "unsupported physical RC record field type"; } }
     }
-    for t in f.values { if (!supported(t, f.records)) { return "unsupported physical RC value type"; } }
-    if (!supported(f.result, f.records)) { return "unsupported physical RC result type"; }
+    for e in f.enums {
+        for v in e.variants {
+            for field in v.fields { if (!supported(field.ty, f)) { return "unsupported physical RC variant field type"; } }
+        }
+    }
+    return "";
+}
+
+function types_error(f: ssasem.Func): string {
+    var why: string = schema_types_error(f);
+    if (why != "") { return why; }
+    for t in f.values { if (!supported(t, f)) { return "unsupported physical RC value type"; } }
+    if (!supported(f.result, f)) { return "unsupported physical RC result type"; }
     for c in f.calls {
-        for t in c.params { if (!supported(t, f.records)) { return "unsupported physical RC call parameter type"; } }
-        if (!supported(c.result, f.records)) { return "unsupported physical RC call result type"; }
+        for t in c.params { if (!supported(t, f)) { return "unsupported physical RC call parameter type"; } }
+        if (!supported(c.result, f)) { return "unsupported physical RC call result type"; }
     }
     return "";
 }
@@ -255,7 +294,11 @@ function scalar_op(k: i32): boolean {
 
 function container_op(k: i32): boolean {
     return k == ssasem.array_new() || k == ssasem.tuple_new() || k == ssasem.record_new()
-        || k == ssasem.array_get() || k == ssasem.tuple_get() || k == ssasem.record_get();
+        || k == ssasem.array_get() || k == ssasem.tuple_get() || k == ssasem.record_get() || variant_op(k);
+}
+
+function variant_op(k: i32): boolean {
+    return k == ssasem.variant_new() || k == ssasem.variant_is() || k == ssasem.variant_get();
 }
 
 function supported_op(k: i32): boolean { return scalar_op(k) || container_op(k); }
@@ -301,15 +344,22 @@ function scalar(r: irlower.LowerResult, ins: ssa.SInst, strings: boolean): irlow
     return emit(r, ir.op_bin("sub", 0, false));
 }
 
-// A record box is named by its declaration; every field this vocabulary
-// admits is one i32-shaped word, so the backends need no declaration index
-// to pick a store width.
+// A record box is named by its declaration, a variant box by its variant;
+// every field this vocabulary admits is one i32-shaped word, so the backends
+// need no declaration index to pick a store width.
 function container(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
+    if (variant_op(ins.kind_tag)) { return variant(r, ins); }
     if (ins.kind_tag == ssasem.array_new()) { return emit(r, ir.op_arr_make(ins.args.len(), 32)); }
     if (ins.kind_tag == ssasem.tuple_new()) { return emit(r, ir.op_tuple_make(ins.args.len())); }
     if (ins.kind_tag == ssasem.record_new()) { return emit(r, ir.op_struct_make(record_name(f.values[ins.result]), ins.args.len(), 0 - 1)); }
     if (ins.kind_tag == ssasem.array_get()) { return emit(r, ir.op_arr_get(32)); }
     if (ins.kind_tag == ssasem.tuple_get()) { return emit(r, ir.op_tuple_get(ins.imm)); }
+    return emit(r, ir.op_struct_get(ins.imm, 0));
+}
+
+function variant(r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerResult {
+    if (ins.kind_tag == ssasem.variant_new()) { return emit(r, ir.op_struct_make(ins.str, ins.args.len(), 0 - 1)); }
+    if (ins.kind_tag == ssasem.variant_is()) { return emit(r, ir.op_variant_is(ins.str)); }
     return emit(r, ir.op_struct_get(ins.imm, 0));
 }
 

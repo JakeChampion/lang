@@ -171,6 +171,9 @@ function semantic_kind_name(id: i32): string {
     if (id == 0 - 5) { return "record_new"; }
     if (id == 0 - 6) { return "record_get"; }
     if (id == 0 - 7) { return "call"; }
+    if (id == 0 - 8) { return "variant_new"; }
+    if (id == 0 - 9) { return "variant_is"; }
+    if (id == 0 - 10) { return "variant_get"; }
     return "invalid";
 }
 
@@ -2946,10 +2949,10 @@ pub function print_func(f: SFunc): string {
         while (k < blk.insts.len()) {
             var ins: SInst = blk.insts[k];
             out = out + "    v" + util.i32_to_string(ins.result) + " = " + kind_name(ins.kind_tag);
-            if (ins.kind_tag == 1 || ins.kind_tag == 2 || ins.kind_tag == 6 || ins.kind_tag == 0 - 4 || ins.kind_tag == 0 - 6) {
+            if (ins.kind_tag == 1 || ins.kind_tag == 2 || ins.kind_tag == 6 || ins.kind_tag == 0 - 4 || ins.kind_tag == 0 - 6 || ins.kind_tag == 0 - 10) {
                 out = out + " " + util.i32_to_string(ins.imm);
             }
-            if (ins.kind_tag == 9 || ins.kind_tag == 10 || ins.kind_tag == 11 || ins.kind_tag == 0 - 7) {
+            if (ins.kind_tag == 9 || ins.kind_tag == 10 || ins.kind_tag == 11 || ins.kind_tag <= 0 - 7) {
                 out = out + " " + ins.str;
             }
             var ai: i32 = 0;

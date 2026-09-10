@@ -4,6 +4,9 @@ import "./semtypes";
 
 pub struct Field { name: string, ty: typeinfo.Type }
 pub struct Record { ty: typeinfo.Type, fields: Field[] }
+// An enum's identity is its union type; each variant is a named field shape.
+pub struct Variant { name: string, fields: Field[] }
+pub struct Enum { ty: typeinfo.Type, variants: Variant[] }
 
 pub function find(records: Record[], ty: typeinfo.Type): i32 {
     var i: i32 = 0;
@@ -14,30 +17,52 @@ pub function find(records: Record[], ty: typeinfo.Type): i32 {
     return 0 - 1;
 }
 
-function resolved_all(types: typeinfo.Type[], records: Record[]): boolean {
-    for ty in types { if (!resolved(ty, records)) { return false; } }
+pub function find_enum(enums: Enum[], ty: typeinfo.Type): i32 {
+    var i: i32 = 0;
+    while (i < enums.len()) {
+        if (semtypes.equal(enums[i].ty, ty)) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+pub function find_variant(e: Enum, name: string): i32 {
+    var i: i32 = 0;
+    while (i < e.variants.len()) {
+        if (e.variants[i].name == name) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+function resolved_all(types: typeinfo.Type[], records: Record[], enums: Enum[]): boolean {
+    for ty in types { if (!resolved(ty, records, enums)) { return false; } }
     return true;
 }
 
 // Follow structural types, not nominal field edges. The table verifies every
 // field separately, so recursive declarations never recurse during validation.
-function resolved(ty: typeinfo.Type, records: Record[]): boolean {
-    if let typeinfo.TypeStruct(s) = ty { return find(records, ty) >= 0 && resolved_all(s.args, records); }
-    if let typeinfo.TypeArray(a) = ty { return resolved(a.elem, records); }
-    if let typeinfo.TypeTuple(t) = ty { return resolved_all(t.elements, records); }
-    if let typeinfo.TypeMap(m) = ty { return resolved(m.key, records) && resolved(m.value, records); }
-    if let typeinfo.TypeFunc(f) = ty { return resolved_all(f.param_types, records) && resolved(f.ret_type, records); }
-    if let typeinfo.TypeUnion(u) = ty { return resolved_all(u.args, records); }
+function resolved(ty: typeinfo.Type, records: Record[], enums: Enum[]): boolean {
+    if let typeinfo.TypeStruct(s) = ty { return find(records, ty) >= 0 && resolved_all(s.args, records, enums); }
+    if let typeinfo.TypeUnion(u) = ty { return find_enum(enums, ty) >= 0 && resolved_all(u.args, records, enums); }
+    return resolved_structural(ty, records, enums);
+}
+
+function resolved_structural(ty: typeinfo.Type, records: Record[], enums: Enum[]): boolean {
+    if let typeinfo.TypeArray(a) = ty { return resolved(a.elem, records, enums); }
+    if let typeinfo.TypeTuple(t) = ty { return resolved_all(t.elements, records, enums); }
+    if let typeinfo.TypeMap(m) = ty { return resolved(m.key, records, enums) && resolved(m.value, records, enums); }
+    if let typeinfo.TypeFunc(f) = ty { return resolved_all(f.param_types, records, enums) && resolved(f.ret_type, records, enums); }
     return true;
 }
 
-function fields_error(fields: Field[], records: Record[]): string {
+function fields_error(fields: Field[], records: Record[], enums: Enum[]): string {
     var i: i32 = 0;
     while (i < fields.len()) {
         var field: Field = fields[i];
         if (field.name == "") { return "empty record field name"; }
         if (!semtypes.concrete(field.ty, false)) { return "unresolved record field type"; }
-        if (!resolved(field.ty, records)) { return "missing nested record schema"; }
+        if (!resolved(field.ty, records, enums)) { return "missing nested record schema"; }
         var j: i32 = 0;
         while (j < i) {
             if (fields[j].name == field.name) { return "duplicate record field name"; }
@@ -64,7 +89,7 @@ function instance_error(a: Record, b: Record): string {
     return "";
 }
 
-pub function verify(records: Record[]): string {
+function records_error(records: Record[], enums: Enum[]): string {
     var i: i32 = 0;
     while (i < records.len()) {
         var record: Record = records[i];
@@ -76,9 +101,49 @@ pub function verify(records: Record[]): string {
             if (why != "") { return why; }
             j = j + 1;
         }
-        var why: string = fields_error(record.fields, records);
+        var why: string = fields_error(record.fields, records, enums);
         if (why != "") { return why; }
         i = i + 1;
     }
     return "";
+}
+
+function variants_error(variants: Variant[], records: Record[], enums: Enum[]): string {
+    var i: i32 = 0;
+    while (i < variants.len()) {
+        if (variants[i].name == "") { return "empty variant name"; }
+        var j: i32 = 0;
+        while (j < i) {
+            if (variants[j].name == variants[i].name) { return "duplicate variant name"; }
+            j = j + 1;
+        }
+        var why: string = fields_error(variants[i].fields, records, enums);
+        if (why != "") { return why; }
+        i = i + 1;
+    }
+    return "";
+}
+
+function enums_error(records: Record[], enums: Enum[]): string {
+    var i: i32 = 0;
+    while (i < enums.len()) {
+        var e: Enum = enums[i];
+        if (!semtypes.concrete(e.ty, false)) { return "unresolved enum identity"; }
+        if let typeinfo.TypeUnion(_) = e.ty {} else { return "non-union enum identity"; }
+        var j: i32 = 0;
+        while (j < i) {
+            if (semtypes.equal(e.ty, enums[j].ty)) { return "duplicate enum schema"; }
+            j = j + 1;
+        }
+        var why: string = variants_error(e.variants, records, enums);
+        if (why != "") { return why; }
+        i = i + 1;
+    }
+    return "";
+}
+
+pub function verify(records: Record[], enums: Enum[]): string {
+    var why: string = records_error(records, enums);
+    if (why != "") { return why; }
+    return enums_error(records, enums);
 }
