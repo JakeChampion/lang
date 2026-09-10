@@ -155,6 +155,52 @@ func TestElideKeepsEscapingClosure(t *testing.T) {
 // thunk otherwise (#8545). Both must be rerouted to the pair-aware
 // __drop_closure_value — and only in the user function: the helper's own
 // __fern_closure_drop releases the pair it was handed and must stay.
+// A closure handed through an ERASED generic and bound to a FuncType local
+// holds a pair no OpMakeClosure or closure-returning callee wrote (#8701):
+// the slot's declared type is what names it, and its drop goes through the
+// pair-aware helper. The helper's own release stays untouched.
+func TestElideRoutesErasedGenericResultDropThroughPair(t *testing.T) {
+	p := loweredAndDefuncdAndElided(t, `@noinline
+	function id[T](x: T): T { return x; }
+	@noinline
+	function capturing(p: i32): i32 {
+		var v: (i32) => i32 = id(((a: i32) => (a + p)));
+		return v(1);
+	}
+	function main(): i32 { return capturing(6) - 7; }`)
+	fn := findFunc(p, "capturing")
+	if fn == nil {
+		t.Fatal("capturing not found")
+	}
+	var pairDrops, bareDrops int
+	for _, op := range fn.Ops {
+		if op.Kind != OpCallDirect {
+			continue
+		}
+		switch {
+		case op.Str == "__drop_closure_value":
+			pairDrops++
+		case op.Str == "__fern_closure_drop" || strings.HasPrefix(op.Str, "__closure_drop_"):
+			bareDrops++
+		}
+	}
+	// Two pair drops: the lambda's argument temp after the call (a slot an
+	// OpMakeClosure wrote) and `v` itself at exit (the slot the erased call
+	// wrote, named a pair by its type alone).
+	if pairDrops != 2 || bareDrops != 0 {
+		t.Errorf("capturing: want two __drop_closure_value and no bare closure drop, got %d / %d:\n%s", pairDrops, bareDrops, p)
+	}
+	helper := findFunc(p, "__drop_closure_value")
+	if helper == nil {
+		t.Fatalf("__drop_closure_value not generated:\n%s", p)
+	}
+	for _, op := range helper.Ops {
+		if op.Kind == OpCallDirect && op.Str == "__drop_closure_value" {
+			t.Fatalf("__drop_closure_value's own pair release was rewritten into a call to itself:\n%s", p)
+		}
+	}
+}
+
 func TestElideRoutesNonElidedScalarCaptureDropThroughPair(t *testing.T) {
 	p := loweredAndDefuncdAndElided(t, `@noinline
 	function apply(f: (i32) => i32, v: i32): i32 { return f(v); }

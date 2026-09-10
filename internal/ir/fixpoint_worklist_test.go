@@ -20,6 +20,7 @@ var lowerWithFixpoints = []string{
 	"inferParamEscapes",
 	"inferParamCountedRetain",
 	"findReturnsFreshBox",
+	"findReturnsConstructedBox",
 	"computeGrowParams",
 }
 

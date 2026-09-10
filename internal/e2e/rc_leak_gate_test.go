@@ -68,7 +68,6 @@ var rcCorpusLeakBaselineX86_64 = map[string]int64{
 	"closure_captures_arr_of_struct_churn_free":             14256,
 	"closure_captures_struct_churn_free":                    6336,
 	"closure_churn_free":                                    1584,
-	"closure_capture_passed_to_owned_param":                 64,
 	// The `m.without(k)` shapes, split out of one case so a fix to one
 	// can bank its own zero (#8276). They are NOT four times the old single
 	// entry gone wrong: each now runs its own 500-round loop over its own map,
@@ -112,7 +111,6 @@ var rcCorpusLeakBaselineArm64 = map[string]int64{
 	"closure_captures_arr_of_struct_churn_free":             14256,
 	"closure_captures_struct_churn_free":                    6336,
 	"closure_churn_free":                                    1584,
-	"closure_capture_passed_to_owned_param":                 80,
 	// The `m.without(k)` shapes, split out of one case so a fix to one
 	// can bank its own zero (#8276). They are NOT four times the old single
 	// entry gone wrong: each now runs its own 500-round loop over its own map,
@@ -167,7 +165,6 @@ var rcCorpusLeakBaselineWasm = map[string]int64{
 	"closure_capture_rebind_identity_call_not_stranded":     112,
 	"closure_array_capture_churn":                           4752,
 	"closure_call_arg_handed_back_is_not_reclaimed":         1920,
-	"closure_capture_passed_to_owned_param":                 64,
 	"closure_captures_arr_of_struct_churn_free":             14256,
 	"closure_captures_struct_churn_free":                    6336,
 	"closure_churn_free":                                    1584,

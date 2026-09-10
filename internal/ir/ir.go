@@ -3182,6 +3182,7 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 		readOnlyComparators: readOnlyComparators,
 	}
 	returnsFreshBox := findReturnsFreshBox(prog, info, pairForm, trmcFuncs, verdictFacts.ownedParam)
+	returnsConstructedBox := findReturnsConstructedBox(prog, info, pairForm, trmcFuncs)
 	// #4873: per-function param positions whose buffers the callee may grow
 	// in place — drives the caller-side containment bracket in callBody.
 	paramFieldObs := computeParamFieldObs(prog, vtableDispatched)
@@ -3204,7 +3205,7 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 		if fn.ImportIface != "" {
 			return nil
 		}
-		f, err := lowerFunc(fn, info, ptrW, lo.dynRcSupported, lo.emitLineMarkers, target, cover, pairForm, closureCaps, genEnumDrops, genTupleDrops, returnsNoParamEscape, returnsFreshPairPayload, returnsFreshBox, trmcFuncs, trmcConsumeSafe, paramEscapes, returnsParamProjection, paramCountedRetain, consumedArrayArgPos, readOnlyComparators, vtableDispatched, addressTaken, growParams, paramFieldObs)
+		f, err := lowerFunc(fn, info, ptrW, lo.dynRcSupported, lo.emitLineMarkers, target, cover, pairForm, closureCaps, genEnumDrops, genTupleDrops, returnsNoParamEscape, returnsFreshPairPayload, returnsFreshBox, returnsConstructedBox, trmcFuncs, trmcConsumeSafe, paramEscapes, returnsParamProjection, paramCountedRetain, consumedArrayArgPos, readOnlyComparators, vtableDispatched, addressTaken, growParams, paramFieldObs)
 		if err != nil {
 			return err
 		}
@@ -5297,6 +5298,11 @@ type builder struct {
 	// constructs its result. rhsTainted's Call case uses it to stop an
 	// argument's borrow taint flowing into a box the callee built.
 	returnsFreshBox map[string]bool
+	// returnsConstructedBox[name] is true when every value return of the
+	// callee is a box it BUILT — never a parameter, owned or not, nor a
+	// projection of one (findReturnsConstructedBox). Identity, where
+	// returnsFreshBox is ownership; the field-place append root rule reads it.
+	returnsConstructedBox map[string]bool
 	// selfPushMoveCall is the exact `a.append(v)` RHS call node of a
 	// self-append assignment (`a = a.append(v)`, isSelfArrayPushLocal),
 	// set by the Assign lowering just before it lowers the RHS and
@@ -5343,6 +5349,10 @@ type builder struct {
 	// consumer is an rc analysis that runs before any push is lowered.
 	fieldMutCopy   map[*ast.Call]bool
 	fieldMutCopyFn *ast.FuncDecl
+	// freshRoots is freshLocalRoots for the function being lowered, under
+	// its own key like fieldMutCopy (fieldAppendRootOK).
+	freshRoots   map[string]bool
+	freshRootsFn *ast.FuncDecl
 	// identOrder is the same order under its own key, for the analyses that
 	// want only it. Separate from appendOrderFn so asking for the order does
 	// not also build inPlacePushes and fieldPlaceMutationCopies, which are far
@@ -5893,7 +5903,7 @@ type variantDrop struct {
 	size  int32
 }
 
-func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bool, emitLineMarkers bool, target targetName, cover *coverTable, pairForm map[string]bool, closureCaps map[string][]ast.Param, genEnumDrops map[string]*ast.EnumDecl, genTupleDrops map[string]ast.TupleType, returnsNoParamEscape, returnsFreshPairPayload, returnsFreshBox map[string]bool, trmcFuncs, trmcConsumeSafe map[string]bool, paramEscapes map[string][]bool, returnsParamProjection map[string]bool, paramCountedRetain map[string][]bool, consumedArrayArgPos map[string][]bool, readOnlyComparators map[string]bool, vtableDispatched map[string]bool, addressTaken map[string]bool, growParams map[string][]growParam, paramFieldObs map[string][]fieldObs) (*Func, error) {
+func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bool, emitLineMarkers bool, target targetName, cover *coverTable, pairForm map[string]bool, closureCaps map[string][]ast.Param, genEnumDrops map[string]*ast.EnumDecl, genTupleDrops map[string]ast.TupleType, returnsNoParamEscape, returnsFreshPairPayload, returnsFreshBox, returnsConstructedBox map[string]bool, trmcFuncs, trmcConsumeSafe map[string]bool, paramEscapes map[string][]bool, returnsParamProjection map[string]bool, paramCountedRetain map[string][]bool, consumedArrayArgPos map[string][]bool, readOnlyComparators map[string]bool, vtableDispatched map[string]bool, addressTaken map[string]bool, growParams map[string][]growParam, paramFieldObs map[string][]fieldObs) (*Func, error) {
 	out := &Func{
 		Name:       fn.Name,
 		Params:     fn.Params,
@@ -5922,6 +5932,7 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bo
 		returnsNoParamEscape:    returnsNoParamEscape,
 		returnsFreshPairPayload: returnsFreshPairPayload,
 		returnsFreshBox:         returnsFreshBox,
+		returnsConstructedBox:   returnsConstructedBox,
 		trmcFuncs:               trmcFuncs,
 		trmcConsumeSafe:         trmcConsumeSafe,
 		paramEscapes:            paramEscapes,
@@ -21854,9 +21865,12 @@ func (b *builder) appendDecision(n *ast.Call) (bool, string) {
 	if ast.Expr(n) == b.selfPushMoveCall {
 		return false, "self-reassign move: the only reference is overwritten by the assignment"
 	}
-	if _, ok := n.Args[0].(*ast.FieldAccess); ok {
+	if fa, ok := n.Args[0].(*ast.FieldAccess); ok {
 		if b.fieldMutationCopies()[n] {
 			return true, "field receiver: the container can still be read through (#6665)"
+		}
+		if !b.fieldAppendRootOK(fa) {
+			return true, "field receiver: the root names a box another value may own (#8768)"
 		}
 		return false, "field receiver: the container is not read again"
 	}
@@ -21881,6 +21895,28 @@ func (b *builder) appendDecision(n *ast.Call) (bool, string) {
 		return false, "self-reassign of a borrowed param or a return-position append (#4849)"
 	}
 	return true, "receiver \"" + id.Name + "\" is read again after this append"
+}
+
+// fieldAppendRootOK reports whether the root of a field-place append names a
+// box this frame may grow: the receiver or a parameter, whose box is the
+// caller's and whose fields the #4873 grow bracket covers, or a local the
+// frame built (freshLocalRoots). The mutation analysis proves no later read
+// through the ROOT observes the grow; this is the other half — that no other
+// name holds the same box — without which `var t = o.inner; t.xs.append(v)`
+// lengthened `o.inner.xs` too (#8768).
+func (b *builder) fieldAppendRootOK(fa *ast.FieldAccess) bool {
+	root, _, ok := fieldPlace(fa)
+	if !ok {
+		return false
+	}
+	if b.isParamName(root) {
+		return true
+	}
+	if b.freshRootsFn != b.fn {
+		b.freshRootsFn = b.fn
+		b.freshRoots = b.freshLocalRoots()
+	}
+	return b.freshRoots[root]
 }
 
 // ownedAppendReceiver reports whether an append's receiver expression yields a

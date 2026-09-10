@@ -8787,6 +8787,66 @@ function main(): i32 {
     return (t - 20500) + __rc_underflow_count();
 }`,
 	},
+	{
+		// A closure handed through an ERASED generic (`id[T]`, whose
+		// declared return is `T`) and bound to a FuncType local. Neither an
+		// OpMakeClosure nor a closure-returning callee wrote the slot, so its
+		// drop went through the generic release and freed the pair, never the
+		// env behind it (#8701); the slot's declared type now says it holds a
+		// pair. The non-capturing spelling is the guard: a zero-capture value
+		// arrives as a static cell the pair-aware drop must skip. 100 rounds
+		// of (i + 1) + 2 = 5250, minus 5250.
+		name: "closure_through_erased_generic_released",
+		src: `
+function id[T](x: T): T { return x; }
+function capturing(p: i32): i32 {
+    var v: (i32) => i32 = id(((a: i32) => (a + p)));
+    return v(1);
+}
+function non_capturing(): i32 {
+    var v: (i32) => i32 = id(((a: i32) => (a + 1)));
+    return v(1);
+}
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) { t = t + capturing(i) + non_capturing(); i = i + 1; }
+    return (t - 5250) + __rc_underflow_count();
+}`,
+	},
+	{
+		// A field-place append whose root is a local bound from a FIELD READ:
+		// `t` names the box `o` still holds, so an rc==1 in-place grow of
+		// `t.xs` lengthened `o.inner.xs` as well — 44 where value semantics
+		// say 43 (#8768). The buffer must have spare capacity for the
+		// divergence to show, hence the appends that build it. A control
+		// through a fresh call result, which may grow in place, sits beside
+		// it. 43 + 4.
+		name: "field_append_root_bound_from_field_read_copies",
+		src: `
+struct Inner { xs: i32[] }
+struct Outer { inner: Inner, n: i32 }
+function mk(): Outer {
+    var b: i32[] = [];
+    var i: i32 = 0;
+    while (i < 3) { b = b.append(i); i = i + 1; }
+    return Outer { inner: Inner { xs: b }, n: 0 };
+}
+function through_field_read(): i32 {
+    var o: Outer = mk();
+    var t: Inner = o.inner;
+    var ys: i32[] = t.xs.append(9);
+    return ys.len() * 10 + o.inner.xs.len();
+}
+function through_fresh_call(): i32 {
+    var o: Outer = mk();
+    var ys: i32[] = o.inner.xs.append(9);
+    return ys.len();
+}
+function main(): i32 {
+    return (through_field_read() + through_fresh_call() - 47) + __rc_underflow_count();
+}`,
+	},
 }
 
 func TestX86_64RcCorrectnessCorpus(t *testing.T) {
