@@ -972,6 +972,42 @@ function main(): i32 {
 		}
 	})
 
+	// #9042. A struct literal's field value was checked on its own and then
+	// compared to the declared field type by tag-blind equality, rather than
+	// checked AGAINST it. So a value needing the field's type to check —  an
+	// unsuffixed literal at a wide field, a member at a union-typed field —
+	// was refused, and the refusal collapsed the whole literal to unknown,
+	// bailing the module.
+	//
+	// Gated by EXIT STATUS rather than by diagnostic code: the bail is an
+	// uncoded `error[type]`, so the checker-codes differential compares
+	// nothing on these and passes whether or not the rule is right. Native
+	// accepts every program here.
+	t.Run("check-accepts-typed-field", func(t *testing.T) {
+		for _, tc := range []struct {
+			name string
+			src  string
+		}{
+			{"untyped-literal-at-i64-field", "struct W { a: i32, b: i64 }\nfunction mk(n: i32): W { return W { a: n, b: 0 }; }\nfunction main(): i32 { return mk(1).a; }\n"},
+			{"member-widens-to-union-field", "struct Lf { v: i32 }\nstruct Tw { xs: i32[] }\ntype Node = Lf | Tw;\nstruct Holds { t: Node, n: i32 }\nfunction mk(n: i32): Holds { return Holds { t: Lf { v: n }, n: n }; }\nfunction main(): i32 { return mk(1).n; }\n"},
+			{"member-widens-in-struct-update", "struct Lf { v: i32 }\nstruct Tw { xs: i32[] }\ntype Node = Lf | Tw;\nstruct Holds { t: Node, n: i32 }\nfunction upd(h: Holds, n: i32): Holds { return Holds { ...h, t: Lf { v: n } }; }\nfunction main(): i32 { return upd(Holds { t: Lf { v: 1 }, n: 2 }, 3).n; }\n"},
+			// The control that isolates it to the literal-field position:
+			// the same value through a local already checked before the fix.
+			{"same-value-via-local", "struct Lf { v: i32 }\nstruct Tw { xs: i32[] }\ntype Node = Lf | Tw;\nstruct Holds { t: Node, n: i32 }\nfunction mk(n: i32): Holds { var t: Node = Lf { v: n }; return Holds { t: t, n: n }; }\nfunction main(): i32 { return mk(1).n; }\n"},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				srcPath := filepath.Join(dir, "typed_field.fern")
+				if err := os.WriteFile(srcPath, []byte(tc.src), 0o644); err != nil {
+					t.Fatalf("write src: %v", err)
+				}
+				out, code := runDriver(t, "-check", srcPath)
+				if code != 0 {
+					t.Errorf("-check exited %d on a program native accepts, want 0:\n%s", code, out)
+				}
+			})
+		}
+	})
+
 	// #8739. The parser is permissive: where it cannot read the source it
 	// plants an ExprUnknown and carries on, so every later pass reasons about
 	// the MARKER. `-check` never ran the gate that turns those markers back
