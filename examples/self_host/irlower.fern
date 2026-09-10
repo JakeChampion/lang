@@ -72334,14 +72334,19 @@ function spelled_param_is_fn(csv: string, idx: i32): boolean {
 }
 
 // body_var_decls collects every `var` in body, at any nesting depth, that binds name.
-function body_var_decls(body: ast.Stmt[], name: string): ast.StmtVar[] {
-    function var_named_at(st: ast.Stmt, acc: ast.StmtVar[]): ast.StmtVar[] {
-        if let ast.StmtVar(v) = st { if (v.name == name) { return acc.append(v); } }
-        return acc;
+struct VarSearch { name: string, found: ast.StmtVar[] }
+
+function var_named_at(st: ast.Stmt, acc: VarSearch): VarSearch {
+    if let ast.StmtVar(v) = st {
+        if (v.name == acc.name) { return VarSearch { ...acc, found: acc.found.append(v) }; }
     }
-    var out: ast.StmtVar[] = [];
-    for st in body { out = astwalk.fold_stmt_spine(st, out, var_named_at); }
-    return out;
+    return acc;
+}
+
+function body_var_decls(body: ast.Stmt[], name: string): ast.StmtVar[] {
+    var acc: VarSearch = VarSearch { name: name, found: [] };
+    for st in body { acc = astwalk.fold_stmt_spine(st, acc, var_named_at); }
+    return acc.found;
 }
 
 // MFuncs is the module function table plus a name index over it. The
