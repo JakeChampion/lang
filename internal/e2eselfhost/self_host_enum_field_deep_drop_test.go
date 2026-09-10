@@ -78,6 +78,29 @@ var selfHostEnumFieldDeepDropCases = []struct {
 	// would be an over-release. Clean before and after.
 	{"scalar-payload-control", "enum Payload { None, Some(i32) }\nstruct Asm { p: Payload, n: i32 }\n@noinline\nfunction step(a: Asm, v: i32): Asm {\n    return Asm { ...a, p: Payload.Some(v) };\n}\nfunction main(): i32 {\n    var a: Asm = Asm { p: Payload.Some(0), n: 0 };\n    a = step(a, 1);\n    var r: i32 = 0;\n    match (a.p) { Payload.None => { r = 0; }, Payload.Some(g) => { r = g; } }\n    return r + __rc_underflow_count();\n}", false},
 
+	// A SECOND STRUCT holds the enum box across the supersede. Every struct
+	// literal reading a nested-struct or enum field incs it, so `b` holds a
+	// COUNTED reference and `a`'s supersede must still release its own — but the
+	// unsafe scan marked the field by NAME, which stripped the enum arm out of
+	// __field_reclaim_Asm for the whole type and left the supersede's claim
+	// standing (#8658: 88 B a round, unbounded in a loop).
+	//
+	// It is the guard the local-alias row cannot be: only the STRUCT alias took
+	// the marking path, which is why `local-alias-declines-walk` above stayed
+	// clean throughout. `__rc_underflow_count()` rides the answer here for the
+	// same reason it does everywhere else in this table — the carve-out restores
+	// a dec, and a dec past a live claim would land as an underflow rather than
+	// as a leak.
+	{"second-struct-alias", "enum Payload { None, Some(i32[]) }\nstruct Asm { p: Payload, n: i32 }\n@noinline\nfunction step(a: Asm, v: i32): Asm {\n    return Asm { ...a, p: Payload.Some([v]) };\n}\nfunction main(): i32 {\n    var a: Asm = Asm { p: Payload.Some([9, 9, 9]), n: 0 };\n    var b: Asm = Asm { p: a.p, n: 1 };\n    a = step(a, 1);\n    var r: i32 = 0;\n    match (b.p) { Payload.None => { r = 0; }, Payload.Some(g) => { r = g.len(); } }\n    return r + __rc_underflow_count();\n}", false},
+
+	// The same share built by ASSIGNMENT rather than by an initialiser. The
+	// retain arms are position-independent, so refusing the type here while
+	// admitting it above left the identical leak reachable through the commoner
+	// spelling — 120 B, caught in review of the fix for the row above. The
+	// var-init row cannot stand in for it: the two positions are scanned by
+	// different functions.
+	{"second-struct-alias-assigned", "enum Payload { None, Some(i32[]) }\nstruct Asm { p: Payload, n: i32 }\n@noinline\nfunction step(a: Asm, v: i32): Asm {\n    return Asm { ...a, p: Payload.Some([v]) };\n}\nfunction main(): i32 {\n    var a: Asm = Asm { p: Payload.Some([9, 9, 9]), n: 0 };\n    var b: Asm = Asm { p: Payload.None, n: 0 };\n    b = Asm { p: a.p, n: 1 };\n    a = step(a, 1);\n    var r: i32 = 0;\n    match (b.p) { Payload.None => { r = 0; }, Payload.Some(g) => { r = g.len(); } }\n    return r + __rc_underflow_count();\n}", false},
+
 	// Control: the same enum as an ARRAY field, which #8604 fixed and whose walk
 	// now delegates to the new helper. Clean before and after — the refactor must
 	// not have moved it.
@@ -87,18 +110,18 @@ var selfHostEnumFieldDeepDropCases = []struct {
 // TestSelfHostEnumFieldDeepDropLeakCheck is the gate: clean under FERN_LEAKCHECK
 // on BOTH compilers, native as the oracle.
 //
-// FIVE rows leak without the fix: the three defect rows and both guard rows. The
-// guards earn their name from the other direction — they are the rows an UNGATED
-// or unbalanced walk would fail, and it would fail them as a changed answer or an
-// underflow rather than as a leak, which is why the exit code is asserted
-// alongside the verdict. The two controls are clean either way, and the refused
-// row leaks either way.
+// FIVE rows leak without #8567's fix: the three defect rows and both guard rows.
+// The guards earn their name from the other direction — they are the rows an
+// UNGATED or unbalanced walk would fail, and it would fail them as a changed
+// answer or an underflow rather than as a leak, which is why the exit code is
+// asserted alongside the verdict. The two controls are clean either way, and the
+// refused row leaks either way.
 //
-// The obvious guard shape — a SECOND STRUCT holding the enum box across the
-// supersede — is deliberately not here: it leaks 88 B/round for an unrelated
-// reason (#8658, measured with and without this fix, and it moves for neither),
-// which would confound the row. The two guards below reach the same gate without
-// it.
+// The second-struct-alias PAIR answers a LATER fix and is counted separately:
+// both leak without #8658's counted-share carve-out, one row per scanned
+// position. The initialiser and the assignment are walked by different
+// functions, so neither row stands in for the other — which is how the
+// assignment half survived that fix's first cut.
 func TestSelfHostEnumFieldDeepDropLeakCheck(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	cli := buildLangBinForInterp(t)
