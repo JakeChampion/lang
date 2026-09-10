@@ -481,6 +481,42 @@ func globMatches(pattern, path string) bool {
 	return regexp.MustCompile(b.String()).MatchString(path)
 }
 
+// The grammar has two copies — globMatches here and `compile` in ci.yml's
+// `changes` job — and the lane filters in use exercise only `*`, `**` and
+// literals, so the other arms would drift from GitHub's documented meaning,
+// and from each other, with nothing failing. Same cases as the script's own
+// harness.
+func TestGlobMatchesFollowsGitHubGrammar(t *testing.T) {
+	for _, c := range []struct {
+		pattern, path string
+		want          bool
+	}{
+		// `?`: zero or one of the character before it.
+		{"src/x?.txt", "src/.txt", true},
+		{"src/x?.txt", "src/x.txt", true},
+		{"src/x?.txt", "src/xx.txt", false},
+		// `+`: one or more of the character before it.
+		{"a+b.txt", "aab.txt", true},
+		{"a+b.txt", "b.txt", false},
+		// A class quantifies too.
+		{"[ab]+.go", "abba.go", true},
+		{"[ab]x.go", "cx.go", false},
+		// A quantifier with nothing before it is literal, as is an unclosed class.
+		{"?x", "?x", true},
+		{"+x", "+x", true},
+		{"[a", "[a", true},
+		// `*` stops at `/`, `**` does not, `.` is literal.
+		{"*.md", "README.md", true},
+		{"*.md", "docs/a.md", false},
+		{"docs/**", "docs/a/b.md", true},
+		{"a.b", "axb", false},
+	} {
+		if got := globMatches(c.pattern, c.path); got != c.want {
+			t.Errorf("globMatches(%q, %q) = %v, want %v", c.pattern, c.path, got, c.want)
+		}
+	}
+}
+
 func pathPatternMatchesSomething(t *testing.T, root, pattern string) bool {
 	t.Helper()
 	found := false

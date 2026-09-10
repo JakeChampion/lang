@@ -153,7 +153,17 @@ jobs:
             }
         with:
           script: |
-            const lanes = JSON.parse(process.env.LANES);
+            // Without a parsable table the lane names are unknown, so this one
+            // failure cannot run everything: it fails loudly, and every filtered
+            // lane skips until the table is fixed. laneTable in
+            // internal/sourcelint rejects the same edit locally.
+            let lanes;
+            try {
+              lanes = JSON.parse(process.env.LANES);
+            } catch (e) {
+              core.setFailed(`the lane table is not valid JSON: ${e.message}`);
+              return;
+            }
             const everything = Object.fromEntries(Object.keys(lanes).map((l) => [l, true]));
             const { owner, repo } = context.repo;
             try {
@@ -263,6 +273,7 @@ jobs:
               // A gate that cannot decide runs everything: a bad table entry or
               // an API shape change must skip no lane, and a failed job here
               // would skip all of them (a `needs` on a failed job never runs).
+              // Only a table that does not parse, above, is loud instead.
               core.setOutput("lanes", JSON.stringify(everything));
               core.warning(`every lane runs: the filter failed (${e.message})`);
             }
