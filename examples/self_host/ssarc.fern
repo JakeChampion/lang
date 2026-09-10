@@ -597,6 +597,12 @@ pub function caller_sigs(sg: irlower.FnSigs, name: string, f: ssasem.Func): irlo
     // describes a body the AST no longer lowered. Erasing one it should have
     // kept leaks; keeping one this boundary cannot honour double-frees, so the
     // list errs wide.
+    //
+    // The list mirrors irlower's readers by hand, and nothing ties the two
+    // together: a reader prefix added there without a row here would let an
+    // AST caller release a result this boundary lowered. The readers are the
+    // `index_of_str(...return_fresh_struct_ret_fns, "<prefix>" + name)` sites
+    // in irlower; grep that shape when adding one.
     var arrays: string[] = without_rows(sg.return_fresh_struct_ret_fns, name,
         ["", "ARR:", "ARROWN:", "SARRC:", "STRARR:", "ENUM:", "STRFLDF:",
          "FRESHSELF:", "ARRTUPF:", "ARRSTRUCTF:", "STRUCTARRF:", "ARENUMF:"]);

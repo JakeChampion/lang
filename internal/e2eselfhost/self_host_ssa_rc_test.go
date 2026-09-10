@@ -274,6 +274,13 @@ function main(): i32 {
     var merged = ssarc.merge_helpers([], ssarc.drop_helpers(selfFunc).append(ssarc.drop_helpers(selfFunc)[0]));
     if (merged.len() != 1) { return 25; }
     if (!merged[0].ok) { eprint(merged[0].why); return 26; }
+    // Two bodies under one symbol refuse instead. The weak linkage that lets
+    // duplicates co-link would otherwise pick one of them silently.
+    var perturbed = irlower.LowerResult { ...selfHelpers[0], ops: selfHelpers[0].ops.append(ir.op_const_i32(1)) };
+    var clashed = ssarc.merge_helpers([], [selfHelpers[0], perturbed]);
+    if (clashed.len() != 1) { return 27; }
+    if (clashed[0].ok) { return 28; }
+    if (clashed[0].why != "conflicting drop helper for __sem_drop_Node") { eprint(clashed[0].why); return 29; }
     return 0;
 }
 `
