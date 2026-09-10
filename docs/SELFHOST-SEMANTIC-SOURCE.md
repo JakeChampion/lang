@@ -159,18 +159,32 @@ the contract feed leaks five blocks on the same program.
 
 ## Remaining
 
-The producer does not yet admit void calls, builtins, string methods,
-generic records, record updates, enums, closures, match or destructuring, so
-no production consumer is switched and no AST ownership analysis is deleted.
-Records, strings and enums cross the boundary (`make`, `wrap`, `unwrap`,
-`tally`, `greet`, `shape`, `measure`, `sum_shapes`, `consume`, `boxed_shape`
-and `hold` in the executable fixture: a record with a string field and a
-nested record, an `own` record parameter, string concatenation in a loop,
-string equality, a four-variant enum matched in a loop and carried across
-iterations, an `own` enum parameter consumed through `if let`, produced-call
-temporaries handed to a counted parameter, and a record with an enum field;
-balanced on every target), and the AST-lowered `main` receives tuple and
-array results by contract. String and record positions of a received tuple,
-and record and enum results, still rely on the AST caller's own syntactic
-rows. Next: a production consumer that lowers produced functions through this
-pipeline and feeds `caller_sigs` to the remaining AST callers.
+The producer does not yet admit method calls, builtins, `for`, casts, record
+updates, integer widths other than i32, floats, division, destructuring,
+closures or generics, so no production consumer is switched and no AST
+ownership analysis is deleted.
+
+Records, strings, enums and struct-unions cross the boundary (`make`, `wrap`,
+`unwrap`, `tally`, `greet`, `shape`, `measure`, `sum_shapes`, `consume`,
+`boxed_shape`, `hold`, `mk_node`, `node_size` and `node_sum` in the executable
+fixture: a record with a string field and a nested record, an `own` record
+parameter, string concatenation in a loop, string equality, a four-variant
+enum matched in a loop and carried across iterations, an `own` enum parameter
+consumed through `if let`, produced-call temporaries handed to a counted
+parameter, a record with an enum field, and a struct-union widened from both
+members, matched, and carried across a loop as a phi; balanced on every
+target). The AST-lowered `main` receives tuple and array results by contract.
+String and record positions of a received tuple, and record, enum and union
+results, still rely on the AST caller's own syntactic rows.
+
+Measured against the whole loaded self-hosted compiler, 1,000 of its 7,356
+functions produce, plan and physically lower. The refusals are led by method
+calls, which are the first refusal for 3,057 of them and appear somewhere in
+more than half of all functions; then the statement surface, receiver method
+declarations, and recursive types.
+
+Next: a per-type drop helper so a recursive type has a physical lowering,
+since every union this compiler declares is recursive; then method calls,
+which nothing else compounds past; then a production consumer that lowers
+produced functions through this pipeline and feeds `caller_sigs` to the
+remaining AST callers.

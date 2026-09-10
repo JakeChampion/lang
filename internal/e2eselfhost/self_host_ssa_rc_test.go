@@ -231,16 +231,27 @@ function main(): i32 {
     var shapeType: typeinfo.Type = typeinfo.TypeUnion { name: "Shape", args: [] };
     var enumGraph = ssa.SFunc { name: "enum", nparams: 1, nvals: 2, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), ssa.SInst { kind_tag: ssasem.variant_new(), result: 1, args: [0], imm: 0, str: "W" }], term: ret(1) }] };
-    var wideEnum = semrecords.Enum { ty: shapeType, variants: [semrecords.Variant { name: "W", fields: [semrecords.Field { name: "__ev", ty: wide }] }] };
+    var wideEnum = semrecords.Enum { ty: shapeType, variants: [semrecords.Variant { name: "W", fields: [semrecords.Field { name: "__ev", ty: wide }] }], layout: semrecords.layout_variant() };
     var wideEnumFunc = ssasem.Func { graph: enumGraph, values: [wide, shapeType], params: [wide], result: shapeType, records: [], enums: [wideEnum], calls: [] };
     var wideEnumPlan = ssaunits.plan(wideEnumFunc, [2]);
     if (!wideEnumPlan.ok) { eprint(wideEnumPlan.why); return 13; }
     if (!refused(ssarc.lower(wideEnumFunc, [2], wideEnumPlan), "unsupported physical RC variant field type")) { return 14; }
-    var arrayEnum = semrecords.Enum { ty: shapeType, variants: [semrecords.Variant { name: "W", fields: [semrecords.Field { name: "__ev", ty: f.result }] }] };
+    var arrayEnum = semrecords.Enum { ty: shapeType, variants: [semrecords.Variant { name: "W", fields: [semrecords.Field { name: "__ev", ty: f.result }] }], layout: semrecords.layout_variant() };
     var enumFunc = ssasem.Func { graph: enumGraph, values: [f.result, shapeType], params: [f.result], result: shapeType, records: [], enums: [arrayEnum], calls: [] };
     var enumPlan = ssaunits.plan(enumFunc, [2]);
     if (!enumPlan.ok) { eprint(enumPlan.why); return 15; }
     if (!ssarc.lower(enumFunc, [2], enumPlan).ok) { return 16; }
+    // The drop walk is expanded inline, so a type that reaches itself through
+    // a reference field has no finite expansion and is refused rather than
+    // emitted.
+    var selfType: typeinfo.Type = typeinfo.TypeStruct { name: "Node", args: [] };
+    var selfSchema = semrecords.Record { ty: selfType, fields: [semrecords.Field { name: "kid", ty: selfType }] };
+    var selfGraph = ssa.SFunc { name: "cycle", nparams: 1, nvals: 1, entry: 7, takes_env: false,
+        blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0)], term: ret(0) }] };
+    var selfFunc = ssasem.Func { graph: selfGraph, values: [selfType], params: [selfType], result: selfType, records: [selfSchema], enums: [], calls: [] };
+    var selfPlan = ssaunits.plan(selfFunc, [2]);
+    if (!selfPlan.ok) { eprint(selfPlan.why); return 17; }
+    if (!refused(ssarc.lower(selfFunc, [2], selfPlan), "recursive type has no physical drop")) { return 18; }
     return 0;
 }
 `

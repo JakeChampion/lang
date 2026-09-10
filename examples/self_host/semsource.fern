@@ -194,6 +194,29 @@ function union_name(t: typeinfo.Type): string {
     return "";
 }
 
+// A union's layout, read from the declarations rather than from any use: an
+// enum owns its variant declarations, a struct-union names structs declared on
+// their own. A union that mixes the two has no layout here.
+function union_layout(s: State, name: string): i32 {
+    var sig: checker.UnionSig = checker.union_sig(s.scope, name);
+    if (sig.name.len() == 0 || sig.variants.len() == 0) { return 0; }
+    var owned: i32 = 0;
+    var plain: i32 = 0;
+    for v in sig.variants {
+        var vs: checker.StructSig = checker.variant_shape_sig(s.scope, v, name);
+        if (vs.name.len() == 0) { return 0; }
+        if (vs.enum_owner == name) { owned = owned + 1; } else { plain = plain + 1; }
+    }
+    if (plain == 0) { return semrecords.layout_variant(); }
+    if (owned == 0) { return semrecords.layout_member(); }
+    return 0;
+}
+
+function struct_name(t: typeinfo.Type): string {
+    if let typeinfo.TypeStruct(r) = t { if (r.args.len() == 0) { return r.name; } }
+    return "";
+}
+
 function element_type(t: typeinfo.Type): typeinfo.Type {
     if let typeinfo.TypeArray(a) = t { return a.elem; }
     return typeinfo.unchecked();
@@ -318,6 +341,7 @@ function record(e: ast.Expr, sl: ast.ExprStructLit, s: State): Value {
 // A variant literal supplies its payload fields in declaration order; the
 // value is its enum.
 function variant(e: ast.Expr, name: string, owner: string, args: ast.Expr[], s: State): Value {
+    if (union_layout(s, owner) != semrecords.layout_variant()) { return refused(s, "unsupported variant literal"); }
     var ty: typeinfo.Type = checked(e, s);
     var sig: checker.StructSig = checker.variant_sig(s.scope, name, owner);
     if (sig.name.len() == 0 || !semtypes.concrete(ty, false) || args.len() != sig.field_types.len()) { return refused(s, "unsupported variant literal"); }
@@ -410,8 +434,28 @@ function call(e: ast.Expr, c: ast.ExprCall, s: State): Value {
     return define(s, ssasem.call(), ids, 0, name, contract.result);
 }
 
+// A union-typed destination accepts any of its members. The widening is a
+// verified operation, not an implicit reinterpretation: the value carries
+// exactly the type the destination declared, and every obligation site keeps
+// its exact-type rule.
+function widen(v: Value, expected: typeinfo.Type): Value {
+    var s: State = v.s;
+    if (semtypes.equal(s.values[v.id], expected)) { return v; }
+    var owner: string = union_name(expected);
+    if (owner == "" || union_layout(s, owner) != semrecords.layout_member()) { return v; }
+    var member: string = struct_name(s.values[v.id]);
+    if (member == "" || checker.variant_shape_sig(s.scope, member, owner).name.len() == 0) { return v; }
+    return define(s, ssasem.variant_up(), [v.id], 0, member, expected);
+}
+
 function expr(e: ast.Expr, s: State, expected: typeinfo.Type): Value {
     if (!s.ok) { return Value { s: s, id: 0 - 1 }; }
+    var v: Value = produce(e, s, expected);
+    if (!v.s.ok) { return v; }
+    return widen(v, expected);
+}
+
+function produce(e: ast.Expr, s: State, expected: typeinfo.Type): Value {
     match (e) {
         ast.ExprNumber(n) => { return number(n, s); },
         ast.ExprBool(b) => { return define(s, 2, [], boolean_value(b.value), "", t_bool()); },
@@ -545,18 +589,35 @@ function pattern_shape_error(pv: ast.PatVariant): string {
     return "";
 }
 
-function pattern_error(a: ast.MatchArm, pv: ast.PatVariant, sig: checker.StructSig): string {
+function pattern_error(a: ast.MatchArm, pv: ast.PatVariant, sig: checker.StructSig, layout: i32): string {
     if (a.has_guard || a.alt_cont) { return "unsupported match guard"; }
     var why: string = pattern_shape_error(pv);
     if (why != "") { return why; }
     if (sig.name.len() == 0) { return "unknown variant"; }
+    // A struct-union member's box IS the value, so its arm binds one name
+    // whatever the member's field count; an enum variant binds one name per
+    // payload position.
+    if (layout == semrecords.layout_member()) {
+        if (pv.extra_bindings.len() > 0) { return "pattern arity"; }
+        return "";
+    }
     if (pv.binding != "" && 1 + pv.extra_bindings.len() != sig.field_types.len()) { return "pattern arity"; }
     return "";
 }
 
+// A struct-union member's box is the value itself, so the arm's binding names
+// the scrutinee narrowed to that member rather than a field of it.
+function narrowed(pv: ast.PatVariant, scrut: i32, s: State): State {
+    if (pv.binding == "" || pv.binding == "_") { return s; }
+    var ty: typeinfo.Type = typeinfo.TypeStruct { name: pv.type_name, args: [] };
+    var v: Value = define(s, ssasem.variant_as(), [scrut], 0, pv.type_name, ty);
+    return bind(v.s, pv.binding, v.id);
+}
+
 // Each named payload position is a projection of the scrutinee, bound for
 // the arm's body; `_` and an absent payload list bind nothing.
-function payloads(pv: ast.PatVariant, scrut: i32, fields: typeinfo.Type[], s: State): State {
+function payloads(pv: ast.PatVariant, scrut: i32, fields: typeinfo.Type[], s: State, layout: i32): State {
+    if (layout == semrecords.layout_member()) { return narrowed(pv, scrut, s); }
     if (pv.binding == "") { return s; }
     var names: string[] = [pv.binding];
     for n in pv.extra_bindings { names = names.append(n); }
@@ -573,8 +634,9 @@ function payloads(pv: ast.PatVariant, scrut: i32, fields: typeinfo.Type[], s: St
 
 function variant_arm(a: ast.MatchArm, pv: ast.PatVariant, scrut: i32, owner: string, arms: Arms, entry: i32[], join: i32, count: i32, scope: checker.Scope): Arms {
     var s: State = arms.s;
-    var sig: checker.StructSig = checker.variant_sig(s.scope, pv.type_name, owner);
-    var why: string = pattern_error(a, pv, sig);
+    var layout: i32 = union_layout(s, owner);
+    var sig: checker.StructSig = checker.variant_shape_sig(s.scope, pv.type_name, owner);
+    var why: string = pattern_error(a, pv, sig, layout);
     if (why != "") { return Arms { ...arms, s: fail(s, why) }; }
     var pred: i32 = s.cur.id;
     var id: i32 = s.next_block;
@@ -582,7 +644,7 @@ function variant_arm(a: ast.MatchArm, pv: ast.PatVariant, scrut: i32, owner: str
     s = State { ...s, next_block: next + 1 };
     var test: Value = define(s, ssasem.variant_is(), [scrut], 0, pv.type_name, t_bool());
     s = terminate(test.s, t_brif(test.id, id, next));
-    var opened: State = payloads(pv, scrut, sig.field_types, open(State { ...s, vals: entry }, id, [pred]));
+    var opened: State = payloads(pv, scrut, sig.field_types, open(State { ...s, vals: entry }, id, [pred]), layout);
     opened = State { ...opened, scope: checker.arm_scope(a, scope, opened.values[scrut]) };
     var done: Arm = finish_arm(a.body, opened, join, count, scope);
     done = Arm { ...done, s: open(State { ...done.s, vals: entry }, next, [pred]) };
@@ -613,7 +675,7 @@ function match_stmt(m: ast.StmtMatch, s: State): State {
     s = scrut.s;
     if (!s.ok) { return s; }
     var owner: string = union_name(s.values[scrut.id]);
-    if (owner == "" || checker.union_sig(s.scope, owner).name.len() == 0) { return fail(s, "unsupported match scrutinee"); }
+    if (owner == "" || union_layout(s, owner) == 0) { return fail(s, "unsupported match scrutinee"); }
     var join: i32 = s.next_block;
     s = State { ...s, next_block: join + 1 };
     var count: i32 = s.names.len();
@@ -964,19 +1026,28 @@ function record_entry(t: typeinfo.Type, r: typeinfo.TypeStruct, s: State, out: S
     return Schemas { ...out, records: out.records.append(semrecords.Record { ty: t, fields: fields_of(sig) }) };
 }
 
-// An enum is a declared union whose every variant is one of its own
-// variant declarations; a union of separately declared structs is not.
+// A union is a declared enum, whose variants it owns, or a struct-union, whose
+// members are declared on their own. The layout says which, and a mixture has
+// no layout this boundary can give.
 function enum_entry(t: typeinfo.Type, u: typeinfo.TypeUnion, s: State, out: Schemas): Schemas {
     var sig: checker.UnionSig = checker.union_sig(s.scope, u.name);
-    if (sig.name.len() == 0 || u.args.len() > 0) { return Schemas { ...out, ok: false, why: "unsupported enum type" }; }
+    var layout: i32 = union_layout(s, u.name);
+    if (sig.name.len() == 0 || u.args.len() > 0 || layout == 0) { return Schemas { ...out, ok: false, why: "unsupported enum type" }; }
     var variants: semrecords.Variant[] = [];
     for name in sig.variants {
-        var vs: checker.StructSig = checker.variant_sig(s.scope, name, u.name);
-        if (vs.name.len() == 0) { return Schemas { ...out, ok: false, why: "unsupported enum type" }; }
+        var vs: checker.StructSig = checker.variant_shape_sig(s.scope, name, u.name);
         if (!fields_resolved(vs)) { return Schemas { ...out, ok: false, why: "unresolved variant field type" }; }
         variants = variants.append(semrecords.Variant { name: name, fields: fields_of(vs) });
     }
-    return Schemas { ...out, enums: out.enums.append(semrecords.Enum { ty: t, variants: variants }) };
+    var table: Schemas = Schemas { ...out, enums: out.enums.append(semrecords.Enum { ty: t, variants: variants, layout: layout }) };
+    if (layout != semrecords.layout_member()) { return table; }
+    // A member's box is read through its own record, so the table must carry
+    // one whether or not any value in this function has the member's type.
+    for name in sig.variants {
+        table = schema_of(typeinfo.TypeStruct { name: name, args: [] }, s, table);
+        if (!table.ok) { return table; }
+    }
+    return table;
 }
 
 function contract_types(calls: ssasem.Contract[]): typeinfo.Type[] {
