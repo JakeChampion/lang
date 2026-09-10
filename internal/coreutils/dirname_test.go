@@ -67,6 +67,23 @@ func dirnameCases(t *testing.T) []invocation {
 		{name: "--zero with a value", args: []string{"--zero=x", "a"}},
 		{name: "help with a value", args: []string{"--help=x"}},
 		{name: "bad option before help", args: []string{"--foo", "--help"}},
+
+		// A failing write: `>&-` and `> /dev/full` are the paths close_stdout
+		// and the exit status wire together, and they were left out until
+		// #8265 landed.
+		{name: "stdout closed", args: []string{"/a/b"}, stdout: stdoutClosed},
+		{name: "stdout full", args: []string{"/a/b"}, stdout: stdoutFull},
+		{name: "stdout closed on many operands", args: []string{"/a/b", "/c/d"}, stdout: stdoutClosed},
+		{name: "stdout full on many operands", args: []string{"/a/b", "/c/d"}, stdout: stdoutFull},
+		{name: "stdout closed on -z", args: []string{"-z", "/a/b"}, stdout: stdoutClosed},
+		{name: "stdout full on -z", args: []string{"-z", "/a/b"}, stdout: stdoutFull},
+		{name: "stdout closed on root", args: []string{"/"}, stdout: stdoutClosed},
+		{name: "stdout closed on a missing operand", args: []string{}, stdout: stdoutClosed},
+		{name: "stdout closed on a bad option", args: []string{"-x"}, stdout: stdoutClosed},
+		{name: "stdout closed on help", args: []string{"--help"}, stdout: stdoutClosed},
+		{name: "stdout full on help", args: []string{"--help"}, stdout: stdoutFull},
+		{name: "stdout closed on version", args: []string{"--version"}, stdout: stdoutClosed},
+		{name: "stdout full on version", args: []string{"--version"}, stdout: stdoutFull},
 	}
 }
 
