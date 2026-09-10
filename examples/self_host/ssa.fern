@@ -174,6 +174,8 @@ function semantic_kind_name(id: i32): string {
     if (id == 0 - 8) { return "variant_new"; }
     if (id == 0 - 9) { return "variant_is"; }
     if (id == 0 - 10) { return "variant_get"; }
+    if (id == 0 - 11) { return "variant_up"; }
+    if (id == 0 - 12) { return "variant_as"; }
     return "invalid";
 }
 

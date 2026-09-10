@@ -261,9 +261,45 @@ function schema_types_error(f: ssasem.Func): string {
     return "";
 }
 
+function named(t: typeinfo.Type): string {
+    if let typeinfo.TypeStruct(r) = t { return r.name; }
+    if let typeinfo.TypeUnion(u) = t { return u.name; }
+    return "";
+}
+
+function seen_name(seen: string[], name: string): boolean {
+    for s in seen { if (s == name) { return true; } }
+    return false;
+}
+
+function fields_terminate(fields: semrecords.Field[], f: ssasem.Func, seen: string[]): boolean {
+    for field in fields { if (!drop_terminates(field.ty, f, seen)) { return false; } }
+    return true;
+}
+
+// The drop walk is expanded inline, so a nominal type that reaches itself
+// through a reference field has no finite expansion. Such a type needs a
+// per-type drop helper the walk can call; until it has one, this boundary
+// refuses it rather than emitting an expansion that does not terminate.
+function drop_terminates(t: typeinfo.Type, f: ssasem.Func, seen: string[]): boolean {
+    if let typeinfo.TypeArray(a) = t { return drop_terminates(a.elem, f, seen); }
+    if let typeinfo.TypeTuple(tup) = t {
+        for elem in tup.elements { if (!drop_terminates(elem, f, seen)) { return false; } }
+        return true;
+    }
+    var name: string = named(t);
+    if (name == "") { return true; }
+    if (seen_name(seen, name)) { return false; }
+    var deeper: string[] = seen.append(name);
+    if let typeinfo.TypeStruct(_) = t { return fields_terminate(record_fields(t, f), f, deeper); }
+    for v in variants_of(t, f) { if (!fields_terminate(v.fields, f, deeper)) { return false; } }
+    return true;
+}
+
 function types_error(f: ssasem.Func): string {
     var why: string = schema_types_error(f);
     if (why != "") { return why; }
+    for t in f.values { if (!drop_terminates(t, f, [])) { return "recursive type has no physical drop"; } }
     for t in f.values { if (!supported(t, f)) { return "unsupported physical RC value type"; } }
     if (!supported(f.result, f)) { return "unsupported physical RC result type"; }
     for c in f.calls {
@@ -298,7 +334,14 @@ function container_op(k: i32): boolean {
 }
 
 function variant_op(k: i32): boolean {
-    return k == ssasem.variant_new() || k == ssasem.variant_is() || k == ssasem.variant_get();
+    return k == ssasem.variant_new() || k == ssasem.variant_is() || k == ssasem.variant_get()
+        || identity_op(k);
+}
+
+// A struct-union's member is its own box, so widening and narrowing move no
+// bytes: the operand is already on the stack and the store below takes it.
+function identity_op(k: i32): boolean {
+    return k == ssasem.variant_up() || k == ssasem.variant_as();
 }
 
 function supported_op(k: i32): boolean { return scalar_op(k) || container_op(k); }
@@ -358,6 +401,7 @@ function container(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlo
 }
 
 function variant(r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerResult {
+    if (identity_op(ins.kind_tag)) { return r; }
     if (ins.kind_tag == ssasem.variant_new()) { return emit(r, ir.op_struct_make(ins.str, ins.args.len(), 0 - 1)); }
     if (ins.kind_tag == ssasem.variant_is()) { return emit(r, ir.op_variant_is(ins.str)); }
     return emit(r, ir.op_struct_get(ins.imm, 0));

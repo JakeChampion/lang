@@ -110,6 +110,30 @@ function refused_qualified(s: Shape): i32 {
         _ => { return 0; }
     }
 }
+struct Leaf { n: i32 }
+struct Twig { xs: i32[] }
+type Node = Leaf | Twig;
+struct Nest { kid: Tree, n: i32 }
+struct Tip { n: i32 }
+type Tree = Nest | Tip;
+function mk_node(n: i32): Node {
+    if (n == 0) { return Leaf { n: 7 }; }
+    return Twig { xs: [n, n + 1] };
+}
+function node_size(nd: Node): i32 {
+    match (nd) {
+        Leaf(l) => { return l.n; },
+        Twig(t) => { return t.xs[1]; }
+    }
+    return 0 - 1;
+}
+function recursive_union(t: Tree): i32 {
+    match (t) {
+        Tip(p) => { return p.n; },
+        Nest(nst) => { return nst.n; }
+    }
+    return 0;
+}
 function scalar_match(n: i32): i32 {
     match (n) {
         1 => { return 1; },
@@ -286,6 +310,32 @@ struct Q { name: string, p: P }
 }
 enum Shape { Dot, Line(i32), Full(i32[]), Pair(i32, i32[]) }
 struct Holder { s: Shape, n: i32 }
+struct Leaf { n: i32 }
+struct Twig { xs: i32[] }
+type Node = Leaf | Twig;
+@noinline function mk_node(n: i32): Node {
+    if (n == 0) { return Leaf { n: 7 }; }
+    return Twig { xs: [n, n + 1] };
+}
+@noinline function node_size(nd: Node): i32 {
+    match (nd) {
+        Leaf(l) => { return l.n; },
+        Twig(t) => { return t.xs[1]; }
+    }
+    return 0 - 1;
+}
+@noinline function node_sum(limit: i32): i32 {
+    var total: i32 = 0;
+    var i: i32 = 0;
+    var kept: Node = Leaf { n: 0 };
+    while (i < limit) {
+        var nd: Node = mk_node(i);
+        total = total + node_size(nd);
+        if (i == 1) { kept = nd; }
+        i = i + 1;
+    }
+    return total + node_size(kept);
+}
 @noinline function shape(n: i32): Shape {
     if (n == 0) { return Dot; }
     if (n == 1) { return Line(n); }
@@ -365,6 +415,7 @@ function main(): i32 {
     print_int(greet(2)); print(""); print_int(greet(0)); print(""); print_int(greet(1)); print("");
     print_int(sum_shapes(4)); print(""); print_int(boxed_shape(3)); print(""); print_int(boxed_shape(0)); print("");
     print_int(hold(1)); print(""); print_int(hold(2)); print("");
+    print_int(node_sum(3)); print(""); print_int(node_sum(1)); print("");
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }
@@ -374,7 +425,9 @@ function main(): i32 {
 // tally(5): 5 + unwrap(r) (6 + 7 = 13) + 13 → 31.
 // sum_shapes(4): Dot 0, Line(1) 10, Full([2, 3]) 3, Pair(3, [3]) 6, plus the kept Full: 22.
 // boxed_shape(3): Pair takes the wildcard 7, Full([3]) 3: 10; boxed_shape(0): 7 + 0.
-const semsourceRCWant = "1\n4\n5\n-3\n-2\n2\n0\n1\n5\n5\n12\n1\n8\n12\n0\n3\n3\n6\n4\n2\n0\n7\n31\n1\n0\n2\n22\n10\n7\n2\n5\n"
+// node_sum(3): Leaf 7, Twig([1,2]) 2, Twig([2,3]) 3, plus the kept Twig 2 = 14.
+// node_sum(1): the Leaf 7 only, plus the kept Leaf { n: 0 } = 7.
+const semsourceRCWant = "1\n4\n5\n-3\n-2\n2\n0\n1\n5\n5\n12\n1\n8\n12\n0\n3\n3\n6\n4\n2\n0\n7\n31\n1\n0\n2\n22\n10\n7\n2\n5\n14\n7\n"
 
 const semsourceRCDriver = `import "./semsource"; import "./ssarc"; import "./ssaunits"; import "./ssa";
 import "./parser"; import "./lexer"; import "./irlower"; import "./ir";
@@ -449,7 +502,7 @@ func TestSelfHostSemanticSourceRC(t *testing.T) {
 			if err != nil {
 				t.Fatalf("semantic lowering: %v\n%s", err, diagnostics.String())
 			}
-			for _, name := range []string{"pick", "pair", "boxed", "carry", "count_even", "fill", "first_of", "keep", "chain", "twice", "count_down", "grow", "make", "wrap", "unwrap", "tally", "greet", "boxed_local", "boxed_carry", "shape", "measure", "sum_shapes", "consume", "boxed_shape", "hold"} {
+			for _, name := range []string{"pick", "pair", "boxed", "carry", "count_even", "fill", "first_of", "keep", "chain", "twice", "count_down", "grow", "make", "wrap", "unwrap", "tally", "greet", "boxed_local", "boxed_carry", "shape", "measure", "sum_shapes", "consume", "boxed_shape", "hold", "mk_node", "node_size", "node_sum"} {
 				if !strings.Contains(diagnostics.String(), "produced "+name+"\n") {
 					t.Fatalf("%s was not produced:\n%s", name, diagnostics.String())
 				}
