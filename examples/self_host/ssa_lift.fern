@@ -209,6 +209,8 @@ function is_rc_noop(name: string): boolean {
     // no-ops) — same take-the-box-return-it shape, always drop'd.
     if (name == "__fern_arr_share_inc") { return true; }
     if (name == "__fern_arr_share_dec") { return true; }
+    // The per-element retain takes and returns its buffer like the pair above.
+    if (name == "__fern_arr_inc_elems") { return true; }
     if (name == "__fern_str_free") { return true; }
     if (name == "__fern_str_view_free") { return true; }
     if (name == "__fern_str_arr_free") { return true; }

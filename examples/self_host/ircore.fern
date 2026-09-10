@@ -157,6 +157,12 @@ pub function is_fern_helper(name: string): boolean {
         || name == "__fern_map_free_vsa"
         || name == "__fern_map_free_ksvsa"
         || name == "__fern_rc_is_unique"
+        // element retain ahead of an un-share copy: one rc_inc per element of
+        // a pointer-element array, so the copy and the original both hold a
+        // count of each. Default ir_helper_symbol maps it to
+        // __fn___fern_arr_inc_elems; wasm_helper_symbol to $__fern_arr_inc_elems.
+        // Never user-callable — only the in-place field append / with emit it.
+        || name == "__fern_arr_inc_elems"
         // FBIP reuse-degrade primitive (#4350): hands a dead donor's block back
         // when its cap matches, else freelists it and allocs fresh — so a reuse
         // site guarded by __fern_rc_is_unique degrades instead of corrupting.

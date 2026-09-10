@@ -5733,7 +5733,7 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
         // module's kind 131/132 flag-0/flag-2 read calls these; the entry
         // owns the definitions.
         "__fern_map_snapshot_col", "__fern_map_snapshot_col_str",
-        "__fn___fern_rc_inc", "__fn___fern_arr_dec", "__fn___fern_rc_is_unique",
+        "__fn___fern_rc_inc", "__fn___fern_arr_dec", "__fn___fern_rc_is_unique", "__fn___fern_arr_inc_elems",
         "__fn___fern_alloc_reuse",
         "__fn___fern_rc_underflow_count", "__fn___fern_i32_to_string", "__fn___fern_u32_to_string",
         "__fn___fern_i64_to_string", "__fn___fern_u64_to_string",

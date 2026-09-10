@@ -23,14 +23,13 @@ import (
 // below at exit 99 with allocs == frees and live_bytes 0: the census reads clean
 // while __rc_underflow_count fires.
 //
-// TWO PRECONDITIONS, both found by measurement rather than by reading:
+// TWO FINDINGS, both by measurement rather than by reading:
 //
-//   - `respread`: a `T { ...base }` anywhere in the function copies every field
-//     pointer into a fresh box with NO inc, minting a third owner. Two rc-gated
-//     walks against a count of two is one release too many — exit 99 at a flat
-//     700/700. Gated by FIELD TYPE (LowerState.spread_sites), not by holder name,
-//     because the dangerous base can name a local with no slot yet at the moment
-//     the share is decided.
+//   - `respread`: a `T { ...base }` used to copy every field pointer into a
+//     fresh box with NO inc, minting a third owner, and two rc-gated walks
+//     against a count of two were one release too many — exit 99 at a flat
+//     700/700. The base copy now retains the array it carries and the copy is
+//     credited, so the three walks hand off to the last one.
 //   - `blockscoped`: "NODEEP:" and "FLDCHECKED:" are the two arms of one either/or
 //     verdict, and a block-scoped slot deep-drops ONLY on the second. Dropping
 //     NODEEP alone left `p` with neither marker and the whole payload leaked
@@ -120,9 +119,8 @@ function round(i: i32): i32 {
 			want: 66, balance: true,
 		},
 		{
-			// PRECONDITION 1: the spread mints an uncounted third owner, so the
-			// share is refused outright. Without the gate this is exit 99 at
-			// 700 allocs, 700 frees, live_bytes 0.
+			// The spread copy is the third counted holder; when its carry was
+			// uncounted this was exit 99 at 700 allocs, 700 frees, live_bytes 0.
 			name: "respread",
 			src: arrenumFieldReadDecl + `function round(i: i32): i32 {
     var q: P = P { f: mkv(i), n: i };
