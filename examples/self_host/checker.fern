@@ -2966,6 +2966,12 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
           typeinfo.TypeMap(_) => {
             recv_type_name = "Map";
           },
+          // An enum or struct-union receiver dispatches under the union's
+          // own name, the way irlower keys `<Union>.<method>`. A generic
+          // union carries its args separately, so the bare name is the key.
+          typeinfo.TypeUnion(un) => {
+            recv_type_name = un.name;
+          },
           _ => {
             // `t.0()` — a numeric field access whose element is a fn value is
             // a call THROUGH that value, not a method on the tuple.
@@ -3708,16 +3714,32 @@ function check_expr(e: ast.Expr, s: Scope): typeinfo.Type {
       if (sl.field_names.len() != ssig.field_names.len()) {
         return t_unknown("struct " + sl.type_name + " field count mismatch");
       }
+      // Field ORDER is free — a literal may write the declared fields in
+      // any order. Resolve each written name against the declaration and
+      // check its value against THAT field's type. The count matched
+      // above, so "every declared field written exactly once" follows
+      // from no name repeating and none being undeclared.
+      var swritten: boolean[] = [];
+      var sdi: i32 = 0;
+      while (sdi < ssig.field_names.len()) {
+        swritten = swritten.append(false);
+        sdi = sdi + 1;
+      }
       var sli: i32 = 0;
       while (sli < sl.field_names.len()) {
-        if (sl.field_names[sli] != ssig.field_names[sli]) {
-          return t_unknown("struct " + sl.type_name + " field name mismatch at index " + sl.field_names[sli]);
+        var sfi: i32 = field_index(ssig, sl.field_names[sli]);
+        if (sfi < 0) {
+          return t_unknown("struct " + sl.type_name + " has no field `" + sl.field_names[sli] + "`");
         }
+        if (swritten[sfi]) {
+          return t_unknown("struct " + sl.type_name + " field `" + sl.field_names[sli] + "` written twice");
+        }
+        swritten = swritten.with(sfi, true);
         var ft: typeinfo.Type = check_expr(sl.field_values[sli], s);
         // An opaque generic field — bare (`Box[T] { v: T }`, T →
         // unknown) or nested (`items: T[]` → array<unknown>) — accepts
         // any value; skip the check (#4346 piece 2).
-        if (!type_contains_unknown(ssig.field_types[sli]) && !type_eq(ft, ssig.field_types[sli])) {
+        if (!type_contains_unknown(ssig.field_types[sfi]) && !type_eq(ft, ssig.field_types[sfi])) {
           return t_unknown("struct " + sl.type_name + " field `" + sl.field_names[sli] + "` type mismatch");
         }
         sli = sli + 1;
@@ -11344,9 +11366,10 @@ function ow_fresh_owners(mod: parser.Module, ofuncs: OwnFunc[]): string[] {
   // TestSelfHostFreshOwnedBuiltinsMatchChecker recomputes the list from
   // native's table and fails when the two drift.
   var out: string[] = [
-    "__alloc_u8", "args", "cell_new", "hostname", "map_new", "random_bytes",
-    "read_line", "stderr", "stdin", "stdout", "strbuf_take", "target_arch",
-    "target_os", "tcp_recv"
+    "__alloc_u8", "args", "cell_new", "environ", "getcwd", "getgroups",
+    "hostname", "map_new", "random_bytes", "read_line", "stderr", "stdin",
+    "stdout", "strbuf_take", "target_arch", "target_os", "tcp_recv",
+    "uname_field"
   ];
   for fn in mod.funcs {
     if (fn.receiver_name.len() > 0 || fn.type_params.len() > 0) { continue; }

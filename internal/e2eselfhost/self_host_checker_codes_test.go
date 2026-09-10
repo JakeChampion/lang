@@ -739,6 +739,19 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"struct-field-type-string-ok", "struct P { x: i32, name: string }\nfunction main(): i32 { var p: P = P { x: 1, name: \"hi\" }; return p.x; }\n", nil},
 		{"struct-field-array-mismatch", "struct P { xs: i32[] }\nfunction main(): i32 { var p: P = P { xs: 5 }; return 0; }\n", []string{"E043"}},
 		{"struct-field-array-ok", "struct P { xs: i32[] }\nfunction main(): i32 { var p: P = P { xs: [1, 2, 3] }; return 0; }\n", nil},
+		// A struct literal may write the declared fields in ANY order (#9036).
+		// The literal has to type as the struct either way, so a later misuse
+		// of the binding is still caught: an out-of-order literal that typed as
+		// unknown made every downstream check vanish.
+		{"struct-lit-order-swapped-ok", "struct P { a: i32, b: string }\nfunction main(): i32 { var p = P { b: \"x\", a: 1 }; return p.a; }\n", nil},
+		{"struct-lit-order-swapped-downstream", "struct P { a: i32, b: string }\nfunction main(): i32 { var p = P { b: \"x\", a: 1 }; var w: i32 = p.b; return 0; }\n", []string{"E003"}},
+		{"struct-lit-order-swapped-value-mismatch", "struct P { a: i32, b: string }\nfunction main(): i32 { var p = P { b: 7, a: 1 }; return p.a; }\n", []string{"E043"}},
+		// A method on an enum or struct-union receiver dispatches under the
+		// union's name (#9031); without that the call typed as unknown and its
+		// result went unchecked.
+		{"enum-receiver-method-ok", "enum Shape { Dot, Line(i32) }\nfunction (s: Shape) mag(): i32 { match (s) { Dot => { return 0; }, Line(n) => { return n; } } return 0; }\nfunction main(): i32 { var s: Shape = Line(3); return s.mag(); }\n", nil},
+		{"enum-receiver-method-ret-mismatch", "enum Shape { Dot, Line(i32) }\nfunction (s: Shape) mag(): i32 { match (s) { Dot => { return 0; }, Line(n) => { return n; } } return 0; }\nfunction main(): i32 { var s: Shape = Line(3); var w: string = s.mag(); return 0; }\n", []string{"E003"}},
+		{"struct-union-receiver-method-ret-mismatch", "struct Circle { r: i32 }\nstruct Square { w: i32 }\ntype Shape = Circle | Square;\nfunction (s: Shape) area(): i32 { match (s) { Circle(c) => { return c.r; }, Square(q) => { return q.w; } } return 0; }\nfunction main(): i32 { var s: Shape = Circle { r: 2 }; var w: string = s.area(); return 0; }\n", []string{"E003"}},
 		// E034 (typed composite-array element): an element of a `var x: Elem[]`
 		// literal must be assignable to Elem. A union element type widens
 		// (members ok); a non-member, a wrong struct, or a primitive is E034.
