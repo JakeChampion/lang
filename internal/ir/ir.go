@@ -8923,6 +8923,25 @@ func (b *builder) stmt(s ast.Stmt) error {
 			b.emit(Op{Kind: OpReturn})
 			return nil
 		}
+		// `return m.insert(..)` on a Map this frame holds a slot for: the
+		// cow-in-place branch hands back m's own handle, which the caller
+		// takes as counted, so retain it when the handle is unchanged (a
+		// copy arrives counted). m's slot is released as before — by the
+		// exit sweep when the frame owns it, by its owner otherwise (#8276).
+		if recvSlot, ok := b.selfMapMutationReceiverSlot(n.Value); ok {
+			newSlot := b.allocSlot()
+			b.locals[fmt.Sprintf("__ret_cow_new_%d", newSlot)] = newSlot
+			b.emit(Op{Kind: OpStoreLocal, I32: newSlot})
+			b.emit(Op{Kind: OpLoadLocal, I32: newSlot})
+			b.emit(Op{Kind: OpLoadLocal, I32: recvSlot})
+			b.emit(Op{Kind: OpEq, Width: WidthPtr})
+			b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
+			b.emit(Op{Kind: OpLoadLocal, I32: newSlot})
+			b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
+			b.emit(Op{Kind: OpDrop})
+			b.emit(Op{Kind: OpEnd})
+			b.emit(Op{Kind: OpLoadLocal, I32: newSlot})
+		}
 		if needsRcIncOnAlias(n.Value, b) {
 			// Transfer inc so the caller owns the returned alias and
 			// the callee's exit-sweep dec is balanced. A returned
@@ -8985,8 +9004,38 @@ func (b *builder) stmt(s ast.Stmt) error {
 				b.closureTarget[n.Name] = mc.FuncName
 			}
 		}
+		// A cow-in-place map mutator on a boxcapture cell's own element hands
+		// that element back borrowed when it mutates in place, and a fresh
+		// copy otherwise. Only the first owes this binding a count of its own
+		// — the cell keeps its own, and a later `m = t` releases what it
+		// supersedes as usual — so the element is stashed before the call
+		// and the retain taken when the result is the same pointer (#8853).
+		cellCow := b.isBoxedCellMapCow(n.Init)
+		var cellOldSlot int32
+		if cellCow {
+			cellOldSlot = b.allocSlot()
+			b.locals[fmt.Sprintf("__cell_cow_old_%d", cellOldSlot)] = cellOldSlot
+			if err := b.expr(n.Init.(*ast.Call).Args[0]); err != nil {
+				return err
+			}
+			b.emit(Op{Kind: OpStoreLocal, I32: cellOldSlot})
+		}
 		if err := b.expr(n.Init); err != nil {
 			return err
+		}
+		if cellCow {
+			newSlot := b.allocSlot()
+			b.locals[fmt.Sprintf("__cell_cow_new_%d", newSlot)] = newSlot
+			b.emit(Op{Kind: OpStoreLocal, I32: newSlot})
+			b.emit(Op{Kind: OpLoadLocal, I32: newSlot})
+			b.emit(Op{Kind: OpLoadLocal, I32: cellOldSlot})
+			b.emit(Op{Kind: OpEq, Width: WidthPtr})
+			b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
+			b.emit(Op{Kind: OpLoadLocal, I32: newSlot})
+			b.emitAliasInc(n.Init)
+			b.emit(Op{Kind: OpDrop})
+			b.emit(Op{Kind: OpEnd})
+			b.emit(Op{Kind: OpLoadLocal, I32: newSlot})
 		}
 		idx, ok := b.locals[n.Name]
 		if !ok {
@@ -15548,16 +15597,21 @@ func (b *builder) callBody(n *ast.Call) error {
 	// outright stranded every fresh temp handed to one: `line.trim()` is a
 	// fresh `__str_slice` buffer and `parse_int` is pair-form, so
 	// `line.trim().parse_int()` leaked one string per call above the inline
-	// threshold (#8846). The other three admissions below stay closed to it:
-	// each ends in a guarded drop that stashes the call's result in a slot,
-	// and a pair leaves two values on the operand stack.
+	// threshold (#8846). The no-parameter-escape proof is about the callee's
+	// body, not its return ABI, so it admits a pair-form callee too: a fresh
+	// struct temp handed to `bump: C -> Result[C, string]` whose payload is
+	// built inside cannot be reached from the result (#8869). Only
+	// resultCannotAliasArg keeps the exclusion, since an enum result reads as
+	// aliasing-capable to it; the per-argument guarded admissions below stay
+	// closed to the family, each ending in a guarded drop that stashes the
+	// call's result in a slot where a pair leaves two values.
 	pairArgTempsSafe := b.pairForm[id.Name] && b.pairResultCannotAliasArg(b.exprType(n))
 	reclaimArgTemps := ast.RcFreeEnabled && calleeIsFunc && !calleeIsLocal &&
 		id.Name != "map_new" && !calleeRetainsAnyArg(id.Name) &&
 		(pairArgTempsSafe ||
-			(!b.pairForm[id.Name] &&
-				(resultCannotAliasArg(b.exprType(n)) || b.returnsNoParamEscape[id.Name] ||
-					b.resultIsCountedStringAlias(id.Name, b.exprType(n)))))
+			(!b.pairForm[id.Name] && resultCannotAliasArg(b.exprType(n))) ||
+			b.returnsNoParamEscape[id.Name] ||
+			b.resultIsCountedStringAlias(id.Name, b.exprType(n)))
 	// Per-ARGUMENT admission, where the call-level gate above says no. That
 	// gate is whole-call: one pointer-shaped result disqualifies every
 	// argument at once, so `node(name, no_deps(), k)` — a constructor whose
@@ -18958,29 +19012,8 @@ func (b *builder) assign(n *ast.Assign) error {
 		storeWidth := 0
 		if t.ElemType != nil {
 			stride = int32(ast.ElemSizeBytesFor(t.ElemType, b.ptrW))
-			if nt, ok := t.ElemType.(ast.NumberType); ok {
-				switch nt.NormalWidth() {
-				case 8:
-					storeOp = OpStoreI8
-				case 64:
-					storeWidth = 64
-				}
-			}
-			if ast.IsPointerType(t.ElemType) {
-				storeWidth = WidthPtr
-			}
-			if ft, ok := t.ElemType.(ast.FloatType); ok {
-				storeOp = OpFStore
-				if ft.NormalWidth() == 64 {
-					storeWidth = 64
-				}
-			}
-			// String elements: fan store out to two i32.store
-			// calls on wasm via WidthString. Natives stay on
-			// WidthPtr (single ptr-slot store).
-			if _, isString := t.ElemType.(ast.StringType); isString && b.twoWordStrings() {
-				storeWidth = WidthString
-			}
+			so := arrayElemStoreOpFor(t.ElemType, b.ptrW)
+			storeOp, storeWidth = so.Kind, so.Width
 		}
 		var helper string
 		if t.IsSlice {
@@ -19219,6 +19252,24 @@ func isSelfCowRebind(value ast.Expr, targetName string) bool {
 	}
 	recv, ok := call.Args[0].(*ast.Ident)
 	return ok && recv.Name == targetName
+}
+
+// selfMapMutationReceiverSlot is the slot of the Map ident a returned
+// `m.insert(..)` / `m.clear()` mutates, when the frame holds one.
+func (b *builder) selfMapMutationReceiverSlot(value ast.Expr) (int32, bool) {
+	call, ok := value.(*ast.Call)
+	if !ok || !ast.RcFreeEnabled || len(call.Args) == 0 {
+		return 0, false
+	}
+	recv, ok := call.Args[0].(*ast.Ident)
+	if !ok || !isSelfMapMutation(value, recv.Name) {
+		return 0, false
+	}
+	if _, isMap := structOrEnumTypeOfLocal(recv.Name, b); !isMap {
+		return 0, false
+	}
+	slot, ok := b.locals[recv.Name]
+	return slot, ok
 }
 
 // isSelfMapMutation reports whether `value` is a value-returning
@@ -20125,6 +20176,14 @@ func payloadSlotSize(t ast.Type, ptrW int) int32 {
 		return int32(2 * ptrW)
 	}
 	if ast.IsPointerType(t) {
+		return int32(ptrW)
+	}
+	// The unit occupies a payload slot like any other value, and on the
+	// natives that slot is pointer-width: `Result[void, E]`'s Ok box is
+	// then the 16 bytes both native runtimes build (unit at +8), the same
+	// size as its Err box, so the enum is uniform and a box is freed at
+	// the size it was allocated (#8809). On wasm32 both are 8 either way.
+	if _, isVoid := t.(ast.VoidType); isVoid {
 		return int32(ptrW)
 	}
 	return 4
@@ -21627,6 +21686,20 @@ func isCellSelfMapCow(value ast.Expr, cellName string) bool {
 	if cellName == "" {
 		return false
 	}
+	return isMapCowOnCellRead(value, func(recv string) bool { return recv == cellName })
+}
+
+// isBoxedCellMapCow reports whether `value` is a cow-in-place map mutator whose
+// receiver is a read of ANY boxcapture cell — isCellSelfMapCow for a `var`
+// initialiser, which has no cell of its own to compare against.
+func (b *builder) isBoxedCellMapCow(value ast.Expr) bool {
+	if b.info == nil || len(b.info.BoxedCells) == 0 {
+		return false
+	}
+	return isMapCowOnCellRead(value, func(recv string) bool { return b.info.BoxedCells[recv] })
+}
+
+func isMapCowOnCellRead(value ast.Expr, isCell func(string) bool) bool {
 	call, isCall := value.(*ast.Call)
 	if !isCall || len(call.Args) == 0 {
 		return false
@@ -21640,7 +21713,7 @@ func isCellSelfMapCow(value ast.Expr, cellName string) bool {
 		return false
 	}
 	recv, isRecvIdent := idx.Array.(*ast.Ident)
-	return isRecvIdent && recv.Name == cellName
+	return isRecvIdent && isCell(recv.Name)
 }
 
 // sliceUncheckedArgs returns the (source, low, high) of a

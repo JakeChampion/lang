@@ -181,9 +181,9 @@ function id(own p: P): P { if (p.n < 0) { return P { ...p, n: 0 }; } return p; }
 		},
 		{
 			// REFUSED reuse (a borrowed string as the override) over a type
-			// with an ARRAY field: the spread copies `xs` uncounted into the
-			// result, so the param's exit release must stay BOX-ONLY
-			// ("OWNRELB:"). The string it carried leaks; nothing dangles.
+			// with an ARRAY field: the spread copies `xs` into the result
+			// COUNTED, so the param's exit release stays deep ("OWNREL:") and
+			// the result's own drop releases its share — every box balances.
 			name: "own_array_spread_refused_reuse",
 			src: `import "std/i32";
 struct A { xs: i32[], s: string, n: i32 }
@@ -192,7 +192,7 @@ function w(i: i32): string { return "s-a-wide-payload-past-any-inline-threshold-
 @noinline
 function relabel(own p: A, t: string): A { return A { ...p, s: t }; }` +
 				ownParamReleaseMain(`var t: string = w(i + 1); var q: A = relabel(A { xs: [i, i + 1], s: w(i), n: i }, t); x = x + q.n + q.s.len() + q.xs[1] + t.len();`),
-			want: 60, wantFrees: 300,
+			want: 60, balance: true,
 		},
 		{
 			// The own-update string override over a COUNTED share: the
@@ -208,13 +208,16 @@ function bump(own p: P): P { return P { ...p, s: "override-payload-wide-enough-t
 		{
 			// The same with the call result SPREAD again in the caller —
 			// the shape that first exposed the bogus post-call free of an
-			// `own` argument (exit 99 with the type gate alone widened).
+			// `own` argument (exit 99 with the type gate alone widened). The
+			// spread copy `z` holds its own count of `s` (P routes), so `q`
+			// keeps its deep release rather than being demoted for it; one
+			// box per round, the argument temp, is what stays open.
 			name: "call_result_spread_again",
 			src: ownParamReleaseHead + `struct H { s: string, k: i32 }
 @noinline
 function bump(own p: P): P { return P { ...p, s: "override-payload-wide-enough-to-heap-" + w(p.n), n: p.n + 1 }; }` +
 				ownParamReleaseMain(`var h: H = H { s: w(i), k: i }; var q: P = bump(P { s: h.s, n: i }); var z: P = P { ...q, n: 0 }; x = x + q.n + q.s.len() + h.s.len() + z.n;`),
-			want: 51, wantFrees: 600,
+			want: 51, wantFrees: 700,
 		},
 		{
 			// THE USE-AFTER-FREE. `get` returns a field named `s`, which the

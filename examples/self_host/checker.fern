@@ -1425,18 +1425,7 @@ function bind_tuple_destr_names(out: Scope, names: string[], whole: typeinfo.Typ
     if (i < elems.len()) { et = elems[i]; }
     if (util.is_tuple_type_name(nm)) {
       out = bind_tuple_destr_names(out, split_pattern_names(slice_unchecked(nm, 1, nm.len() - 1) + ""), et);
-    } else if (nm.len() > 0 && nm != "_") {
-      // `_` is the discard: it introduces NO name, so reading it back is an
-      // undefined identifier rather than a way to recover the element the
-      // binding said to throw away. Binding it made `return _` compile and
-      // hand back the discarded value.
-      //
-      // Guarded HERE and not in `bind` itself, which would cover every binder
-      // at once: a uniform refusal also unmasks a live bug in the nested
-      // for-loop pattern `for ((a, b), s) in xs`, which the self-host already
-      // mis-binds — it reports E001 for both `a` and `b` where native accepts
-      // the program. The remaining binders stay as they are until that is
-      // fixed.
+    } else if (nm.len() > 0) {
       out = out.bind(nm, et);
     }
     i = i + 1;
@@ -8066,38 +8055,96 @@ function trait_assoc_req(reqs: parser.TraitReq[], tr: string, field: string, see
 // associated-dispatch arm (resolveTraitMethodForParam + `tm.Assoc`), so
 // `T.nope()` — no bound providing it — stays the E001 native reports.
 function tp_assoc_req(s: Scope, tname: string, field: string): AssocHit {
+  for tr in tp_bound_traits(s, tname) {
+    var h: AssocHit = trait_assoc_req(s.trait_reqs, tr, field, []);
+    if (h.found) {
+      return h;
+    }
+  }
+  return assoc_miss();
+}
+
+// tp_bound_traits lists the traits bounding type parameter `tname` in scope:
+// the `+`-joined spelling split into names, empty for an unbounded or unknown
+// parameter.
+function tp_bound_traits(s: Scope, tname: string): string[] {
+  var out: string[] = [];
   var k: i32 = util.index_of_str(s.tparams, tname);
-  if (k < 0) {
-    return assoc_miss();
+  if (k < 0 || k >= s.tbounds.len()) {
+    return out;
   }
-  var bound: string = "";
-  if (k < s.tbounds.len()) {
-    bound = s.tbounds[k];
-  }
+  var bound: string = s.tbounds[k];
   var start: i32 = 0;
   var i: i32 = 0;
   while (i <= bound.len()) {
     if (i == bound.len() || bound[i] == b'+') {
       if (i > start) {
-        var tr: str = slice_unchecked(bound, start, i);
-        var h: AssocHit = trait_assoc_req(s.trait_reqs, tr, field, []);
-        if (h.found) {
-          return h;
-        }
+        out = out.append(slice_unchecked(bound, start, i) + "");
       }
       start = i + 1;
     }
     i = i + 1;
   }
-  return assoc_miss();
+  return out;
 }
 
-// tpvar_receiver returns the type parameter a method call's RECEIVER was
-// declared with — "" for anything but a bare identifier bound to one.
-function tpvar_receiver(obj: ast.Expr, s: Scope): string {
+// tp_bound_provides reports whether some bound on type parameter `tname` — or
+// a supertrait of one — declares `field`, abstract, defaulted or associated.
+// A bound naming a trait this module cannot see counts as providing it: the
+// rule refuses only what the declarations in hand rule out.
+function tp_bound_provides(s: Scope, tname: string, field: string): boolean {
+  for tr in tp_bound_traits(s, tname) {
+    if (trait_provides(s.trait_reqs, tr, field, [])) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function trait_provides(reqs: parser.TraitReq[], tr: string, field: string, seen: string[]): boolean {
+  var idx: i32 = trait_req_idx(tr, reqs);
+  if (idx < 0) {
+    return true;
+  }
+  var req: parser.TraitReq = reqs[idx];
+  if (util.has_str(seen, req.trait_name)) { return false; }
+  if (util.has_str(req.provided, field)) {
+    return true;
+  }
+  var path: string[] = seen.append(req.trait_name);
+  for supertrait in req.supertraits {
+    if (trait_provides(reqs, supertrait, field, path)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// tp_receiver returns the type parameter a method call's RECEIVER is a value
+// of, or "" when it is not one. A parameter declared `a: T` is recorded as
+// such at its binding; any other receiver — a call through a fn-typed
+// parameter returning `T`, a local annotated `T` or initialised from one —
+// carries the parameter's name in the erased unknown it typed to, and counts
+// only while `T` is a type variable of the enclosing function.
+function tp_receiver(obj: ast.Expr, recv: typeinfo.Type, s: Scope): string {
   match (obj) {
     ast.ExprIdent(id) => {
-      return s.tpvar_of(id.name);
+      var tp: string = s.tpvar_of(id.name);
+      if (tp.len() > 0) {
+        return tp;
+      }
+    },
+    _ => {}
+  }
+  match (recv) {
+    typeinfo.TypeUnknown(u) => {
+      var prefix: string = "type parameter ";
+      if (u.reason.len() > prefix.len() && slice_unchecked(u.reason, 0, prefix.len()) == prefix) {
+        var tp: string = slice_unchecked(u.reason, prefix.len(), u.reason.len()) + "";
+        if (util.index_of_str(s.tparams, tp) >= 0) {
+          return tp;
+        }
+      }
     },
     _ => {}
   }
@@ -8681,11 +8728,13 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
           // at codegen, in the language of an internal invariant
           // (#7221). A receiver method, and a `T.f(...)` written the
           // way it is meant to be, are resolved elsewhere and untouched.
-          var tpn: string = tpvar_receiver(mfa.obj, s);
+          var tpn: string = tp_receiver(mfa.obj, recv, s);
           if (tpn.len() > 0) {
             var tph: AssocHit = tp_assoc_req(s, tpn, mfa.field);
             if (tph.found) {
               out = out.append(dg_at("E021", "\"" + mfa.field + "\" is an associated function of trait " + tph.owner + ", not a method; call it as " + tpn + "." + mfa.field + "(...)", c.line, c.col));
+            } else if (!tp_bound_provides(s, tpn, mfa.field)) {
+              out = out.append(dg_at("E021", "no method \"" + mfa.field + "\" on type parameter " + tpn + "; add a trait bound such as [" + tpn + ": SomeTrait] that provides it", c.line, c.col));
             }
           }
         }
@@ -9880,7 +9929,7 @@ function stmts_assign_diags(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]): ut
   for st in stmts {
     match (st) {
       ast.StmtVar(v) => {
-        if (v.type_name.len() > 0 && !parser.is_destr_marker(v.type_name)) {
+        if (v.type_name.len() > 0 && !parser.is_destr_marker(v.type_name) && !vb_placeholder_decl(v)) {
           var declared: typeinfo.Type = var_declared_type(v, cur);
           var initt: typeinfo.Type = check_expr(v.init, cur);
           if (!mlit_is_desugared(v.init)) {
@@ -9998,30 +10047,14 @@ function stmts_assign_diags(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]): ut
 // loose `var x = add(1, 2);` both resolve `add`.
 pub struct ModuleTypes { sigs: FuncSig[], top_tys: typeinfo.Type[], all_well_typed: boolean, diags: util.Diag[] }
 
-// is_partial_checker_gap_code reports whether `code` is one this checker still
-// raises on programs the native compiler accepts. The port is partial (#4346):
-// where it cannot model a type it guesses, and these are the rules measured to
-// guess wrong. Each is a bug, not a permanent carve-out, and every entry needs
-// an issue that owns closing it — a code exempted with nothing tracking it is
-// how `xs == ys` came to compile to a pointer compare (#8461). The corpora and
-// per-code counts behind the list are in docs/SELFHOST-CHECKER-PORT.md;
-// re-measure before adding or removing one.
-//
-// E013 / E018 (#8852): the self-host parser never renames `_`, so a repeated
-// discard — `function f(_: i32, _: string)`, `var _ = 1; var _ = 2;` — reads
-// as a redeclared name. Native renames each occurrence (`discardName`); the
-// mirror its comment claims in examples/self_host/parser.fern does not exist.
-function is_partial_checker_gap_code(code: string): boolean {
-  return code == "E013" || code == "E018";
-}
-
 // is_build_gate_code reports whether `code` must reject a program before
-// codegen. A coded diagnostic rejects unless it is a known gap above, so a rule
-// ported for parity gates the compile path the day it lands instead of being
-// reachable only through `-check` (#6961).
+// codegen: every coded diagnostic does, so a rule ported for parity gates the
+// compile path the day it lands instead of being reachable only through
+// `-check` (#6961). A code this checker raises on a program native accepts is
+// a bug to fix, never a code to exempt here — an exemption list is how
+// `xs == ys` came to compile to a pointer compare (#8461).
 pub function is_build_gate_code(code: string): boolean {
-  if (!util.is_diagnostic_code(code)) { return false; }
-  return !is_partial_checker_gap_code(code);
+  return util.is_diagnostic_code(code);
 }
 
 // filter_build_gate keeps the diagnostics the compile path enforces.
@@ -15520,6 +15553,51 @@ function vb_local_tag(t: typeinfo.Type): string {
   return "";
 }
 
+// vb_annotation_of spells a value local's type the way a declaration would,
+// for the types vb_local_tag declines: a struct or enum, an array of one, a
+// tuple. A `str` view stays unspelled — nothing writable declares one.
+function vb_annotation_of(t: typeinfo.Type): string {
+  match (t) {
+    typeinfo.TypeStruct(_) => { return type_label(t); },
+    typeinfo.TypeTuple(_) => { return type_label(t); },
+    typeinfo.TypeArray(a) => {
+      if (type_label(a.elem) == "str") { return ""; }
+      return type_label(t);
+    },
+    typeinfo.TypeUnion(u) => {
+      if (u.args.len() == 0) { return ""; }
+      return type_label(t);
+    },
+    _ => { return ""; }
+  }
+  return "";
+}
+
+// vb_wants_annotation reports whether `t` is a composite the destination's
+// spelling may declare the value local with when the stores leave it partial.
+function vb_wants_annotation(t: typeinfo.Type): boolean {
+  match (t) {
+    typeinfo.TypeUnion(_) => { return true; },
+    typeinfo.TypeStruct(_) => { return true; },
+    typeinfo.TypeArray(_) => { return true; },
+    typeinfo.TypeTuple(_) => { return true; },
+    _ => { return false; }
+  }
+  return false;
+}
+
+// vb_placeholder_decl reports whether `v` is a value local the compiler declared
+// with an annotation and the parser's `0` placeholder: the annotation types the
+// slot and the placeholder only zeroes it, so it is not an assignment to check.
+function vb_placeholder_decl(v: ast.StmtVar): boolean {
+  if (!parser.is_value_local_name(v.name) || v.type_name.len() == 0) { return false; }
+  match (v.init) {
+    ast.ExprNumber(n) => { return n.text == "0" && n.suffix.len() == 0 && !n.is_float; },
+    _ => { return false; }
+  }
+  return false;
+}
+
 // vb_zero_of builds the declaration placeholder for a value local of type
 // `tag`. The integer widths carry their suffix: the local is declared
 // unannotated, so a bare `0` is what makes it an i32 — the width and the
@@ -15548,6 +15626,14 @@ function vb_zero_of(tag: string): ast.Expr {
 // Everything else — including a value block whose local the parser already
 // typed correctly — is returned untouched.
 function vb_retype(e: ast.Expr, s: Scope): ast.Expr {
+  return vb_retype_dest(e, s, "");
+}
+
+// vb_retype_dest is vb_retype with the annotation of the binding the block
+// initialises, for a type the stores name only partially — an enum whose
+// arguments the construction leaves open spells `Option`, and only the
+// destination says `Option[i32]`.
+function vb_retype_dest(e: ast.Expr, s: Scope, dest: string): ast.Expr {
   match (e) {
     ast.ExprCall(c) => {
       if (!parser.is_value_block(c)) {
@@ -15563,16 +15649,28 @@ function vb_retype(e: ast.Expr, s: Scope): ast.Expr {
         return e;
       }
       var tag: string = vb_local_tag(want);
-      if (tag.len() == 0) {
-        return e;
-      }
       var nbody: ast.Stmt[] = [];
       match (body[0]) {
         ast.StmtVar(v) => {
           if (type_eq(check_expr(v.init, s), want)) {
             return e;
           }
-          nbody = nbody.append(ast.StmtVar { ...v, init: vb_zero_of(tag) });
+          if (tag.len() > 0) {
+            nbody = nbody.append(ast.StmtVar { ...v, init: vb_zero_of(tag) });
+          } else {
+            // No literal zero exists for the type (a struct, an enum, an
+            // array, a tuple): the local keeps the parser's placeholder and
+            // gains the annotation, so the declaration alone types it — the
+            // arms write the slot before anything reads it (#8777).
+            tag = vb_annotation_of(want);
+            if (tag.len() == 0 && dest.len() > 0 && !parser.is_destr_marker(dest) && vb_wants_annotation(want)) {
+              tag = dest;
+            }
+            if (tag.len() == 0) {
+              return e;
+            }
+            nbody = nbody.append(ast.StmtVar { ...v, type_name: tag });
+          }
         },
         _ => {
           return e;
@@ -15612,7 +15710,11 @@ function vb_expr(e: ast.Expr, s: Scope): ast.Expr {
 function vb_stmt(st: ast.Stmt, s: Scope): ast.Stmt {
   match (st) {
     ast.StmtVar(v) => {
-      return ast.StmtVar { ...v, init: vb_expr(v.init, s) };
+      var init: ast.Expr = vb_expr(v.init, s);
+      if (v.type_name.len() > 0 && !parser.is_destr_marker(v.type_name)) {
+        init = vb_retype_dest(init, s, v.type_name);
+      }
+      return ast.StmtVar { ...v, init: init };
     },
     ast.StmtReturn(r) => {
       return ast.StmtReturn { ...r, value: vb_expr(r.value, s) };

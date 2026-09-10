@@ -193,7 +193,9 @@ pub struct Module { funcs: FuncDecl[], structs: StructDecl[], aliases: TypeAlias
 // assoc_sigs is the callable associated-function set, including DEFAULTS.
 // Keep it separate from required signatures: an impl may omit a default, but
 // a bounded type parameter may still call it through the trait.
-pub struct TraitReq { trait_name: string, methods: string[], req_sigs: FuncDecl[], supertraits: string[], assoc_sigs: FuncDecl[] }
+// provided is every method name the trait declares — abstract, defaulted, or
+// associated — the set a bound on a type parameter makes callable.
+pub struct TraitReq { trait_name: string, methods: string[], req_sigs: FuncDecl[], supertraits: string[], assoc_sigs: FuncDecl[], provided: string[] }
 
 // TraitDecl is the `trait` block as WRITTEN, retained for the formatter
 // (#6773) and, since it is the only record of a trait's TYPE PARAMETERS, for
@@ -304,6 +306,18 @@ function e_quoted_at(text: string, suffix: string, raw: string, line: i32, col: 
 function e_unit_at(line: i32, col: i32): ast.Expr {
     return ast.ExprNumber { text: "0", suffix: "", raw: "()", is_float: false, line: line, col: col };
 }
+// discard_name maps a binding name to the name that enters scope. `_` is a
+// DISCARD wherever a binding is introduced — a var, a tuple- or
+// struct-destructure element, a parameter — so each occurrence gets its own
+// internal name: two discards in one scope do not collide, and `_` itself is
+// never in scope, so reading it back is an undefined identifier rather than a
+// way to recover the value. Renaming rather than binding nothing keeps every
+// downstream consumer keyed off a real local, as native's discardName does;
+// the printer's written_name reverses it.
+pub function discard_name(name: string, line: i32, col: i32, nth: i32): string {
+    if (name != "_") { return name; }
+    return "__discard_" + util.i32_to_string(line) + "_" + util.i32_to_string(col) + "_" + util.i32_to_string(nth);
+}
 // is_unit_literal reads back what e_unit_at wrote: this node is the unit, not
 // a written `0`. It is the one thing that tells them apart, since the payload
 // is the same constant — the checker types it `void` and the number rules
@@ -407,6 +421,8 @@ function parse_destructure_names(p: Par): (string, i32, boolean, Par) {
 }
 
 function parse_destructure_names_nested(p: Par): (string, i32, boolean, Par) {
+    var open_line: i32 = p.peek_line();
+    var open_col: i32 = p.peek_col();
     p = p.advance(); // consume `(`
     var names: string = "";
     var count: i32 = 0;
@@ -421,6 +437,7 @@ function parse_destructure_names_nested(p: Par): (string, i32, boolean, Par) {
         } else {
             part = p.peek_ident();
             if (part.len() == 0) { return ("", 0, false, p); }
+            part = discard_name(part, open_line, open_col, count);
             p = p.advance();
         }
         if (!first) { names = names + ","; }
@@ -461,7 +478,10 @@ function parse_struct_pattern_fields(p: Par): (string, string, boolean, boolean,
         if (p.peek_punct() == ":") {
             p = p.advance();
             var bn: string = p.peek_ident();
-            if (bn.len() > 0) { p = p.advance(); bind = bn; }
+            if (bn.len() > 0) {
+                bind = discard_name(bn, p.peek_line(), p.peek_col(), 0);
+                p = p.advance();
+            }
         }
         if (!first) { bindings = bindings + ","; fields = fields + ","; }
         bindings = bindings + bind;
@@ -1511,7 +1531,7 @@ function parse_arrow_lambda(p: Par): (ast.Expr, Par) {
                 }
                 break;
             }
-            var (pr_param, pr_p) = parse_param(p);
+            var (pr_param, pr_p) = parse_param(p, params.len());
             p = pr_p;
             params = params.append(pr_param);
             // A trailing comma before `)` must not start another parameter —
@@ -6065,7 +6085,7 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
         // builtin surface. The annotation outranks the inference.
         init_expr = stamp_lambda_ret(init_expr, v_fn_ret);
         init_expr = stamp_value_block_ret(init_expr, type_name);
-        return (ast.StmtVar { name: name, type_name: type_name, init: init_expr, line: vline, col: vcol, is_str: v_is_str, fn_ret: v_fn_ret, fn_param_types: v_fn_ptys }, p);
+        return (ast.StmtVar { name: discard_name(name, vline, vcol, 0), type_name: type_name, init: init_expr, line: vline, col: vcol, is_str: v_is_str, fn_ret: v_fn_ret, fn_param_types: v_fn_ptys }, p);
     }
     if (kw == "return") {
         var rline: i32 = p.peek_line();
@@ -7118,7 +7138,9 @@ function prepend_param_destrs(body: ast.Stmt[], destrs: ParamDestr[]): ast.Stmt[
 }
 
 
-function parse_param(p: Par): (ast.ParamDecl, Par) {
+// parse_param reads one `[own] NAME: TYPE [= DEFAULT]` parameter; `nth` is its
+// position in the list, which is what tells two discarded parameters apart.
+function parse_param(p: Par, nth: i32): (ast.ParamDecl, Par) {
     var name: string = p.peek_ident();
     if (name.len() == 0) {
         return (ast.ParamDecl { name: "", type_name: "", is_str: false, own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }, p);
@@ -7137,6 +7159,7 @@ function parse_param(p: Par): (ast.ParamDecl, Par) {
             name = p.peek_ident();
         }
     }
+    name = discard_name(name, p.peek_line(), p.peek_col(), nth);
     p = p.advance();
     if (p.peek_punct() != ":") {
         return (ast.ParamDecl { name: name, type_name: "", is_str: false, own: is_own, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }, p);
@@ -7381,7 +7404,7 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
                 }
                 break;
             }
-            var (pr_param, pr_p) = parse_param(p);
+            var (pr_param, pr_p) = parse_param(p, params.len());
             p = pr_p;
             params = params.append(pr_param);
             // Trailing comma before `)` — see the note in the arrow-lambda
@@ -12924,6 +12947,16 @@ function dl_itoa(n: i32): string {
 
 struct DeferAcc { stmts: ast.Stmt[], actions: ast.Stmt[], flags: i32[] }
 
+// is_value_local_name reports whether `name` is the local a value-position
+// desugar stores its result into (`__tm<line>_<col>_r` and its siblings, see
+// IfChain.value_local) — a declaration the compiler writes, never the source.
+pub function is_value_local_name(name: string): boolean {
+    var n: i32 = name.len();
+    if (n < 6 || slice_unchecked(name, n - 2, n) != "_r") { return false; }
+    var head: str = slice_unchecked(name, 0, 4);
+    return head == "__tm" || head == "__sm" || head == "__nt" || head == "__na";
+}
+
 // is_value_block reports whether `e` is a value-position `{ … }` block.
 // parse_primary builds one as an immediately-invoked zero-parameter lambda (the
 // general value-block form and the if- / match-expression desugars), and irlower
@@ -18128,6 +18161,7 @@ function parse_trait_decl(p: Par): (TraitDefault[], TraitReq, TraitDecl, Par) {
     var required: string[] = [];
     var required_sigs: FuncDecl[] = [];
     var assoc_sigs: FuncDecl[] = [];
+    var provided: string[] = [];
     var supertraits: string[] = [];
     // The written form, for the formatter: every method in source order (an
     // empty body marks an abstract one), the supertraits with any `mod.`
@@ -18183,6 +18217,7 @@ function parse_trait_decl(p: Par): (TraitDefault[], TraitReq, TraitDecl, Par) {
                 var (fr_func, fr_p) = parse_func_decl(p);
                 p = fr_p;
                 decl_methods = decl_methods.append(fr_func);
+                provided = provided.append(fr_func.name);
                 if (fr_func.params.len() == 0 || fr_func.params[0].name != "self") {
                     assoc_sigs = assoc_sigs.append(fr_func);
                 }
@@ -18208,7 +18243,7 @@ function parse_trait_decl(p: Par): (TraitDefault[], TraitReq, TraitDecl, Par) {
         if (p.peek_punct() == "}") { p = p.advance(); }
     }
     return (defaults,
-            TraitReq { trait_name: simple, methods: required, req_sigs: required_sigs, supertraits: supertraits, assoc_sigs: assoc_sigs },
+            TraitReq { trait_name: simple, methods: required, req_sigs: required_sigs, supertraits: supertraits, assoc_sigs: assoc_sigs, provided: provided },
             TraitDecl { name: tname, type_params: trait_tps.tnames, supertraits: decl_supers, methods: decl_methods, line: tline, col: tcol, is_pub: false },
             p);
 }

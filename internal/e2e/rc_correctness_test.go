@@ -8758,6 +8758,35 @@ function main(): i32 {
     return (acc - 1200) + __rc_underflow_count();
 }`,
 	},
+	{
+		// A fresh struct temp handed to a PAIR-FORM callee whose result
+		// carries a POINTER payload built inside (`bump(C { value: i })`,
+		// `bump: C -> Result[C, string]` — closure_field_match's shape). The
+		// scalar-payload admission above cannot see it; the no-parameter-
+		// escape proof can, and it does not depend on the return ABI (#8869).
+		// Before: 250 stranded temps on every backend. 200 + 50 + 7.
+		name: "pair_form_pointer_payload_arg_temp_released",
+		src: `
+struct C { value: i32 }
+function bump(c: C): Result[C, string] {
+    if (c.value < 0) { return Err("negative"); }
+    return Ok(C { value: c.value + 1 });
+}
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 200) {
+        match (bump(C { value: i })) { Ok(n) => { t = t + n.value; }, Err(e) => { return 251; } }
+        i = i + 1;
+    }
+    i = 0;
+    while (i < 50) {
+        match (bump(C { value: 0 - 1 })) { Ok(n) => { return 252; }, Err(e) => { t = t + e.len(); } }
+        i = i + 1;
+    }
+    return (t - 20500) + __rc_underflow_count();
+}`,
+	},
 }
 
 func TestX86_64RcCorrectnessCorpus(t *testing.T) {

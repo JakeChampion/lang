@@ -1035,20 +1035,6 @@ supported on this system`, and it follows without it. That is a real
 degraded path in GNU rather than a divergence invented here, so the corpus
 compares equal — but the option is not implemented until the primitive is.
 
-**An opened handle can land on fd 0/1/2 (#8823).** `open_writer` calls
-`openat(2)`, which returns the lowest free descriptor, so a utility exec'd
-with a standard descriptor closed — `prog >&-`, which this harness has a
-mode for — takes that number for the next file it opens, and `stdout()`
-silently aliases it. glibc refuses to hand back a stream on 0/1/2 for
-exactly this reason (`fcntl (fd, F_DUPFD, 3)`, visible under strace), which
-is what makes `tee FILE >&-` say `tee: 'standard output': Bad file
-descriptor` and exit 1 where a Fern `tee` writes the input to the file twice
-and exits 0. It is not specific to `tee`: any utility that opens a file
-while a standard descriptor is closed has the same hole. The fix is in the
-open helpers on each backend, so it is its own change; until it lands `tee`
-has no `>&-`-with-an-operand case, which is the one invocation its corpus
-cannot hold.
-
 **A string append costs 8-16 ns whatever its size (#8770).** Every
 line-oriented utility assembles its output by appending to a local, and the
 floor is per append rather than per byte, so `cat -n` is 0.22× GNU and

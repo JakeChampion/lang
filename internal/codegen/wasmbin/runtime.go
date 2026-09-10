@@ -509,17 +509,22 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_env")
 				case "__fern_read_byte":
 					// wasi_fd_read on stdin (fd=0) + alloc for
-					// the per-process scratch region.
+					// the per-process scratch region. Preview 2
+					// gives the host's per-byte list back through
+					// __free.
 					needs.add("__fern_alloc")
+					needs.add("__free")
 					needs.add("__fern_read_byte")
 				case "__fern_read_line":
 					// Reads bytes via __fern_read_byte until '\n'
 					// or EOF, accumulates into a growable buffer,
-					// then builds an Option[string] heap box. The
-					// accumulation buffer is the returned string's
-					// data → rc1-headered for reclamation.
+					// then copies the line into an exact-size rc1
+					// block for the Option[string] box; the
+					// accumulator and its outgrown generations go
+					// back through __free.
 					needs.add("__fern_alloc") // rc1 calls it
 					needs.add("__fern_alloc_rc1")
+					needs.add("__free")
 					needs.add("__fern_read_byte")
 					needs.add("__fern_read_line")
 				case "__fern_stdin":
@@ -531,10 +536,14 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_stdin")
 				case "__fern_reader_read_line_fd":
 					// (r) → i32 — heap-form Option[string]. Reads
-					// from r.fd byte-by-byte until '\n' / EOF. The
-					// line buffer is the returned string → rc1.
+					// from r.fd byte-by-byte until '\n' / EOF into
+					// an accumulator the line is copied out of; the
+					// accumulator, its outgrown generations and
+					// (preview 2) the host's per-byte list go back
+					// through __free.
 					needs.add("__fern_alloc") // rc1 calls it
 					needs.add("__fern_alloc_rc1")
+					needs.add("__free")
 					needs.add("__fern_reader_read_line_fd")
 				case "__fern_reader_read_chunk":
 					// (r, n) → i32 — single fd_read of up to n
@@ -7387,14 +7396,14 @@ func buildStrSliceBody(helperIdxs map[string]uint32) []byte {
 //	1: $cap    — current capacity in bytes
 //	2: $n      — bytes written so far
 //	3: $byte   — last byte read (or -1 for EOF)
-//	4: $newbuf — replacement buffer when growing
+//	4: $newbuf — replacement buffer when growing, then the exact-size
+//	   block the line is copied into
 //	5: $box    — Option box pointer for return
 //	6: $copy_i — byte-copy loop counter
 func buildReadLineBody(helperIdxs map[string]uint32) []byte {
-	// The accumulation buffer becomes the returned string's data (stored
-	// directly into the Some box below), so header it with rc1 for
-	// reclamation. Grown copies are also rc1 (abandoned intermediates
-	// leak as before — harmless).
+	free := helperIdxs["__free"]
+	// The line is copied into an exact-size rc1 block for the Some box; the
+	// accumulator and every generation it outgrew go back through __free.
 	alloc := helperIdxs["__fern_alloc_rc1"]
 	readByte := helperIdxs["__fern_read_byte"]
 	var body []byte
@@ -7434,6 +7443,15 @@ func buildReadLineBody(helperIdxs map[string]uint32) []byte {
 			body = inst.InstLocalGet(body, 0)
 			body = inst.InstLocalGet(body, 2)
 			body = memory.InstMemoryCopy(body)
+			// __free($buf - 8, $cap + 8): the outgrown generation, rc1 header
+			// in front of it.
+			body = inst.InstLocalGet(body, 0)
+			body = inst.InstI32Const(body, 8)
+			body = numeric.InstI32Sub(body)
+			body = inst.InstLocalGet(body, 1)
+			body = inst.InstI32Const(body, 8)
+			body = numeric.InstI32Add(body)
+			body = inst.InstCall(body, free)
 			// $buf = $newbuf; $cap *= 2
 			body = inst.InstLocalGet(body, 4)
 			body = inst.InstLocalSet(body, 0)
@@ -7469,9 +7487,34 @@ func buildReadLineBody(helperIdxs map[string]uint32) []byte {
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	// None takes Option[string]'s uniform box size, not the tag alone:
 	// a caller that reclaims the box frees it in that size class.
+	// Nothing was read into $buf, so it goes back too.
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 8)
+	body = numeric.InstI32Sub(body)
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstI32Const(body, 8)
+	body = numeric.InstI32Add(body)
+	body = inst.InstCall(body, free)
 	body = emitPayloadlessResultBox(body, alloc, 5, 16, 1)
 	body = inst.InstReturn(body)
 	body = inst.InstEnd(body)
+	// The line is copied into an exact-size block and $buf given back:
+	// a block is freed at the size its owner knows, and the string's
+	// owner knows $n, not $cap — handing $buf out as the data would put a
+	// $cap-byte block on the $n-byte freelist class.
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstLocalTee(body, 4)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstLocalGet(body, 2)
+	body = memory.InstMemoryCopy(body)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 8)
+	body = numeric.InstI32Sub(body)
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstI32Const(body, 8)
+	body = numeric.InstI32Add(body)
+	body = inst.InstCall(body, free)
 	// Build Some(line) box: 16 bytes, tag=0, data, len.
 	body = inst.InstI32Const(body, 16)
 	body = inst.InstCall(body, alloc)
@@ -7484,7 +7527,7 @@ func buildReadLineBody(helperIdxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 5)
 	body = inst.InstI32Const(body, 8)
 	body = numeric.InstI32Add(body)
-	body = inst.InstLocalGet(body, 0)
+	body = inst.InstLocalGet(body, 4)
 	body = memory.InstI32Store(body, 2, 0)
 	// len at +12
 	body = inst.InstLocalGet(body, 5)

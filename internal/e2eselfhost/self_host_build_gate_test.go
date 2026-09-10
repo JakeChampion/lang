@@ -14,13 +14,10 @@ import (
 // `-target` then compiled to a working binary, and every checker rule ported
 // for parity stayed reachable only through `-check`.
 //
-// Both directions are the test. The gate is an exclusion list
-// (`is_partial_checker_gap_code` in checker.fern), so a case either names a
-// code that must now reject the build, or one of the partial-port rules that
-// must NOT — a valid program drawing one of those still has to compile, which
-// is the failure mode that kept the gate at six codes in the first place. A
-// change that widens the exclusion list silently is what the second group
-// catches; one that narrows it too far is what the first group catches.
+// Both directions are the test: a case either names a code that must reject
+// the build, or is a valid program that still has to compile — a checker rule
+// that false-positives on legal code is what the second group catches, and a
+// rule that stopped gating is what the first group catches.
 func TestSelfHostBuildGateX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -337,15 +334,30 @@ func TestSelfHostBuildGateX86_64(t *testing.T) {
 			wantDiag: "",
 		},
 		{
-			// E013 / E018 are the two codes still exempt, and #8852 owns them:
-			// the self-host parser never renames `_`, so a repeated discard
-			// reads as a redeclared name. Native accepts this program; the
-			// self-host CHECKER rejects it, so the gate has to keep letting it
-			// build until the rename lands. When #8852 closes, this row's
-			// wantDiag stays "" — the checker will simply stop reporting.
-			name:     "repeated-discard-still-compiles-8852",
+			// Every `_` binding is its own discard (parser.discard_name), so
+			// two in one signature or one scope are neither E018 nor E013 —
+			// the last two codes the compile path had to exempt (#8852).
+			name:     "repeated-discard-compiles",
 			src:      "function constant(_: i32, _: string): i32 { return 7; }\nfunction main(): i32 { var _ = 99; var _ = 98; return constant(1, \"a\"); }\n",
 			wantDiag: "",
+		},
+		{
+			// The same rename is what keeps a discard unreadable through every
+			// binding site: a plain `var`, a parameter, and a `for` header
+			// each introduce no name for `_` (#8852).
+			name:     "discard-var-read-back-E001",
+			src:      "function main(): i32 { var _ = 99; return _; }\n",
+			wantDiag: "error[E001]",
+		},
+		{
+			name:     "discard-param-read-back-E001",
+			src:      "function f(_: i32): i32 { return _; }\nfunction main(): i32 { return f(1); }\n",
+			wantDiag: "error[E001]",
+		},
+		{
+			name:     "discard-for-header-read-back-E001",
+			src:      "function main(): i32 { var xs: (i32, i32)[] = [(1, 2)]; for (a, _) in xs { return _; } return 0; }\n",
+			wantDiag: "error[E001]",
 		},
 		{
 			// Negative controls for the five false positives #8461 had to fix
@@ -489,15 +501,10 @@ func TestSelfHostBuildGateMatchesCheckX86_64(t *testing.T) {
 }
 
 // formerlyExemptCode is one row of the #8461 matrix: a program NATIVE rejects
-// with `code`, which `is_partial_checker_gap_code` used to hold off the
-// self-host compile path.
+// with `code`, which the self-host compile path used to exempt.
 type formerlyExemptCode struct {
 	code string
 	src  string
-	// stillExempt names the issue that owns the remaining divergence, empty
-	// when the code gates. A row with an issue number is a divergence someone
-	// is closing; a row without one is a promise the gate keeps.
-	stillExempt string
 }
 
 // TestSelfHostFormerlyExemptCodesGateX86_64 is the three-way parity matrix
@@ -505,19 +512,17 @@ type formerlyExemptCode struct {
 // `-check`, and self-host `-target`, asserting all three agree on
 // accept/reject.
 //
-// The eighteen codes below were exempted from the compile path by
-// `is_partial_checker_gap_code`, so the two front ends of ONE compiler
+// The eighteen codes below were exempted from the compile path by an
+// `is_partial_checker_gap_code` list, so the two front ends of ONE compiler
 // disagreed about whether a program was legal and the permissive one produced
 // the binary. That is invisible from any single path — both `-check` legs
 // reported E041 on `xs == ys` for as long as the exemption existed, while the
 // build lowered it to a pointer compare and answered "not equal" for two equal
 // arrays. Reading all three at once is what makes the disagreement visible.
 //
-// A code drops out of `is_partial_checker_gap_code` when the checker stops
-// false-positiving on it, so a row here that goes red means either a rule
-// regressed or an exemption came back. Every row that is still exempt carries
-// the issue that owns it: an exemption with nothing tracking it is exactly how
-// this list stood at eighteen.
+// The list is gone (#8852 retired its last two entries, E013 / E018), so every
+// coded diagnostic gates: a row here that goes red means either a rule
+// regressed or an exemption came back.
 func TestSelfHostFormerlyExemptCodesGateX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -535,16 +540,8 @@ func TestSelfHostFormerlyExemptCodesGateX86_64(t *testing.T) {
 	rows := []formerlyExemptCode{
 		{code: "E001", src: "function main(): i32 { var a: i32 = zz; return a; }\n"},
 		{code: "E009", src: "function main(): i32 { var s: string = \"x\"; if (s && true) { return 1; } return 0; }\n"},
-		{
-			code:        "E013",
-			src:         "function main(): i32 { var a: i32 = 1; var a: i32 = 2; return a; }\n",
-			stillExempt: "#8852",
-		},
-		{
-			code:        "E018",
-			src:         "function f(a: i32, a: i32): i32 { return a; }\nfunction main(): i32 { return f(1, 2); }\n",
-			stillExempt: "#8852",
-		},
+		{code: "E013", src: "function main(): i32 { var a: i32 = 1; var a: i32 = 2; return a; }\n"},
+		{code: "E018", src: "function f(a: i32, a: i32): i32 { return a; }\nfunction main(): i32 { return f(1, 2); }\n"},
 		{code: "E019", src: "struct Box[T] { v: T }\nfunction f(b: Box[i32, string]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n"},
 		{code: "E021", src: "trait Greet { function hello(): i32; }\nstruct Dog {}\nimpl Greet for Dog {}\nfunction main(): i32 { return 0; }\n"},
 		{code: "E024", src: "function pair(): (i32, i32) { return (1, 2); }\nfunction main(): i32 { var (a, b, c) = pair(); return a; }\n"},
@@ -598,15 +595,6 @@ func TestSelfHostFormerlyExemptCodesGateX86_64(t *testing.T) {
 				"-o", filepath.Join(progDir, "prog.bin"), prog, stdlibRoot)
 			buildOut, _ := buildCmd.CombinedOutput()
 			built := buildCmd.ProcessState.ExitCode() == 0
-
-			if row.stillExempt != "" {
-				if !built {
-					t.Errorf("%s is listed as still exempt (%s) but the build now REFUSES it.\n"+
-						"    Delete it from is_partial_checker_gap_code and drop stillExempt here —\n"+
-						"    an exemption that no longer applies hides the next one.", row.code, row.stillExempt)
-				}
-				return
-			}
 			if built {
 				t.Errorf("%s: -check rejects and -target builds it anyway — the exemption is back (#8461).\n"+
 					"src: %s-check said: %s", row.code, row.src, checkOut)

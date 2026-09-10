@@ -2665,6 +2665,23 @@ func emitOpenHandleHelper(w func(string, ...any), name, lbl string, flags, mode 
 	w("\tmov x8, #56") // openat
 	w("\tsvc #0")
 	w("\ttbnz x0, #63, .Lssa_%s_err", lbl)
+	// A descriptor below 3 is a standard stream the program was exec'd
+	// without: move it up (fcntl F_DUPFD 3) and close the original, so
+	// stdout() never aliases the file (#8823).
+	w("\tcmp x0, #3")
+	w("\tb.hs .Lssa_%s_hi", lbl)
+	w("\tmov x20, x0") // the low descriptor
+	w("\tmov x1, #0")  // F_DUPFD
+	w("\tmov x2, #3")
+	w("\tmov x8, #25") // fcntl
+	w("\tsvc #0")
+	w("\tstr x0, [sp, #-16]!")
+	w("\tmov x0, x20")
+	w("\tmov x8, #57") // close
+	w("\tsvc #0")
+	w("\tldr x0, [sp], #16")
+	w("\ttbnz x0, #63, .Lssa_%s_err", lbl)
+	w(".Lssa_%s_hi:", lbl)
 	// Success: wrap the fd in a handle (x19), then Ok(handle).
 	w("\tmov w9, w0") // fd (survives the inline alloc — no call/svc)
 	emitWriterHandleAlloc(w, "x19", "w9")

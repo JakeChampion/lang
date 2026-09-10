@@ -57,9 +57,19 @@ const (
 	// address here so subsequent calls reuse the same region.
 	readByteScratchAddr = allocCursorAddr + 4
 
+	// readByteRetAddr is the preview-2 byte reader's 12-byte landing area
+	// for blocking-read's result<list<u8>, stream-error>. One result per
+	// BYTE read, so a bump block here was a block leaked per byte (#8868).
+	readByteRetAddr = readByteScratchAddr + 4
+
+	// readerLineScratchAddr is Reader.read_line's call-local working area:
+	// the (iovec, nread, 1-byte buffer) 16 bytes on preview 1, the 12-byte
+	// blocking-read result on preview 2.
+	readerLineScratchAddr = readByteRetAddr + 12
+
 	// printIovecAddr is where __fern_print writes the (iov_base, iov_len)
 	// pair before calling fd_write — 8 bytes, base at +0 and len at +4.
-	printIovecAddr = readByteScratchAddr + 4
+	printIovecAddr = readerLineScratchAddr + 16
 
 	// printRetAddr is where fd_write writes its nwritten result. The
 	// preview-1 byte-write shim deliberately reuses this pair as a 1-byte
@@ -67,9 +77,17 @@ const (
 	// family sharing its own slots, not a second claimant.
 	printRetAddr = printIovecAddr + 8
 
+	// writerScratchAddr is Writer.write's call-local working area: the
+	// (iov_base, iov_len, nwritten) triple fd_write reads and writes on
+	// preview 1, and the 16-byte blocking-write-and-flush result on
+	// preview 2. Static rather than a per-call __fern_alloc: nothing
+	// outlives the call, and a bump block there could never be given back
+	// (#8705).
+	writerScratchAddr = printRetAddr + 4
+
 	// randomBufAddr is where wasi_random_get writes the bytes
 	// __fern_random_i32 consumes.
-	randomBufAddr = printRetAddr + 4
+	randomBufAddr = writerScratchAddr + 16
 
 	// strIdxScratchAddr is the spill region __str_idx uses for inline-form
 	// strings: base_data at +0, base_len at +4, and __str_idx returns

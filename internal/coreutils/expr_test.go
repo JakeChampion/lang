@@ -568,6 +568,38 @@ func exprCases(t *testing.T) []invocation {
 		{name: "backreference past an empty branch", args: []string{"aab", ":", `\(a\)\|\|\1`}},
 		{name: "backreference to a group closed in an earlier branch", args: []string{"aab", ":", `\(a\)\1\|\1`}},
 		{name: "backreference to a group opened in an earlier branch", args: []string{"aab", ":", `\(a\|\(b\)\)\2`}},
+
+		// Between alternation branches that match the SAME extent, glibc
+		// awards the match to the earlier one — unless that branch reached
+		// the end through a trailing zero-width assertion and a later one
+		// did not (#8796). An assertion's successors are duplicated nodes
+		// carrying its constraint, and the plain end node sorts before every
+		// duplicate when glibc picks the halt node. A leading assertion, an
+		// assertion followed by more text, or an assertion in every
+		// contending branch leaves the earlier branch in front.
+		{name: "trailing anchor yields to a plain branch", args: []string{"a", ":", `\(a\)$\|.`}},
+		{name: "trailing anchor inside the group yields", args: []string{"a", ":", `\(a$\)\|.`}},
+		{name: "trailing word boundary yields", args: []string{"a", ":", `\(a\)\b\|.`}},
+		{name: "trailing word end yields", args: []string{"a", ":", `\(a\)\>\|.`}},
+		{name: "trailing buffer end yields", args: []string{"a", ":", `\(a\)\'\|.`}},
+		{name: "trailing anchor yields to an interval", args: []string{"ab", ":", `\(ab\)$\|.\{2\}`}},
+		{name: "trailing anchor yields to a later group", args: []string{"a", ":", `\(a\)$\|\(a\)`}},
+		{name: "trailing anchor yields through an empty group", args: []string{"a", ":", `\(a\)\(\)$\|.`}},
+		{name: "plain first branch keeps the match", args: []string{"a", ":", `\(a\)\|.`}},
+		{name: "plain first branch keeps it over a trailing anchor", args: []string{"a", ":", `\(a\)\|\(a\)$`}},
+		{name: "plain second branch takes it from a trailing anchor", args: []string{"a", ":", `a$\|\(a\)`}},
+		{name: "leading word boundary keeps the match", args: []string{"a", ":", `\b\(a\)\|.`}},
+		{name: "leading anchor keeps the match", args: []string{"a", ":", `^\(a\)\|.`}},
+		{name: "trailing anchors in both branches keep the first", args: []string{"a", ":", `\(a\)$\|\(a\)$`}},
+		{name: "different trailing assertions keep the first", args: []string{"a", ":", `\(a\)\b\|\(a\)$`}},
+		{name: "different trailing assertions keep the first anchor", args: []string{"a", ":", `\(a\)$\|\(a\)\b`}},
+		{name: "only matching branch keeps its trailing anchor", args: []string{"a", ":", `\(a\)$\|x`}},
+		{name: "assertion before more text is not trailing", args: []string{"ab", ":", `\(a\)\bb\|.b`}},
+		{name: "assertion before a later group is not trailing", args: []string{"ab", ":", `\(a\)\b\(b\)\|.b`}},
+		{name: "assertion inside a nested alternation is not trailing", args: []string{"ab", ":", `\(a\)\(\b\(\)\|\)b`}},
+		{name: "trailing anchor after a backreference yields", args: []string{"aa", ":", `\(a\)\1$\|..`}},
+		{name: "anchor before a backreference yields", args: []string{"aa", ":", `\(a\)$\1\|..`}},
+		{name: "backreference branch keeps it over a trailing anchor", args: []string{"aa", ":", `\(a\)\1\|\(a\)$a`}},
 		{name: "unmatched group open", args: []string{"abc", ":", `\(`}},
 		{name: "unmatched group close", args: []string{"abc", ":", `\)`}},
 		{name: "nested unmatched group open", args: []string{"a", ":", `\(\(a\)`}},

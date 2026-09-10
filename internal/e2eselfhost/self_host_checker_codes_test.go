@@ -527,6 +527,35 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// the way it is meant to be, through the type parameter.
 		{"tp-trait-method-on-value-ok", "trait Show { function show(self: Self): i32; }\nstruct P { v: i32 }\nimpl Show for P { function show(self: Self): i32 { return self.v; } }\nfunction pick[T: Show](a: T): i32 { return a.show(); }\nfunction main(): i32 { return pick(P { v: 42 }); }\n", nil},
 		{"tp-assoc-fn-on-type-param-ok", "trait Zero { function zero(): Self; }\nstruct P { v: i32 }\nimpl Zero for P { function zero(): Self { return P { v: 7 }; } }\nfunction mk[T: Zero](): i32 { var z: T = T.zero(); return 1; }\nfunction main(): i32 { return 42; }\n", nil},
+		// E021 (#7187): a method NO bound on the type parameter provides. The
+		// self-host said nothing, so `-check` passed a program whose call then
+		// resolved against the first same-named function in the module —
+		// `impl Key for i32` ran with a string box as its receiver. The
+		// receiver kinds native types as the parameter: the parameter itself,
+		// the result of a call through a fn-typed parameter returning it, a
+		// local annotated with it, and a local initialised from it; plus an
+		// unbounded parameter, where nothing can provide the method.
+		{"tp-method-unbound", "trait Key { function k_id(self: Self): i32; }\nimpl Key for i32 { function k_id(self: Self): i32 { return self; } }\nfunction direct[K: Key](k: K): i32 { return k.no_such_method(); }\nfunction main(): i32 { return direct(3); }\n", []string{"E021"}},
+		{"tp-method-unbound-fn-param-result", "trait Key { function k_id(self: Self): i32; }\nimpl Key for i32 { function k_id(self: Self): i32 { return self; } }\nimpl Key for string { function k_id(self: Self): i32 { return self.len(); } }\nfunction keyed_sum[T, K: Key](xs: T[], key: (T) => K): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < xs.len()) { acc = acc + key(xs[i]).no_such_method(); i = i + 1; } return acc; }\nstruct Row { n: i32, name: string }\nfunction main(): i32 { var rows: Row[] = [Row { n: 7, name: \"abcd\" }]; return keyed_sum(rows, (r: Row): string => r.name); }\n", []string{"E021"}},
+		{"tp-method-unbound-annotated-local", "trait Key { function k_id(self: Self): i32; }\nimpl Key for i32 { function k_id(self: Self): i32 { return self; } }\nfunction direct[K: Key](k: K): i32 { var kv: K = k; return kv.no_such_method(); }\nfunction main(): i32 { return direct(3); }\n", []string{"E021"}},
+		{"tp-method-unbound-inferred-local", "trait Key { function k_id(self: Self): i32; }\nimpl Key for i32 { function k_id(self: Self): i32 { return self; } }\nfunction direct[K: Key](k: K): i32 { var kv = k; return kv.no_such_method(); }\nfunction main(): i32 { return direct(3); }\n", []string{"E021"}},
+		{"tp-method-unbounded-param", "function unbounded[K](k: K): i32 { return k.no_such_method(); }\nfunction main(): i32 { return unbounded(3); }\n", []string{"E021"}},
+		// The accepting side: a method a bound provides through a supertrait,
+		// through a default body, through the second of two `+` bounds, and on
+		// the result of a call through a fn-typed parameter.
+		{"tp-method-via-supertrait-and-default-ok", "trait A { function fa(self: Self): i32; }\ntrait B: A { function fb(self: Self): i32; function fd(self: Self): i32 { return 4; } }\nstruct S { v: i32 }\nimpl A for S { function fa(self: Self): i32 { return self.v; } }\nimpl B for S { function fb(self: Self): i32 { return self.v + 1; } }\nfunction viasuper[T: B](x: T): i32 { return x.fa() + x.fb() + x.fd(); }\nfunction main(): i32 { return viasuper(S { v: 1 }); }\n", nil},
+		{"tp-method-via-second-bound-ok", "trait A { function fa(self: Self): i32; }\ntrait C { function fc(self: Self): i32; }\nstruct S { v: i32 }\nimpl A for S { function fa(self: Self): i32 { return self.v; } }\nimpl C for S { function fc(self: Self): i32 { return self.v + 2; } }\nfunction viaplus[T: A + C](x: T): i32 { var y: T = x; var z = x; return y.fc() + z.fa(); }\nfunction main(): i32 { return viaplus(S { v: 1 }); }\n", nil},
+		{"tp-method-on-fn-param-result-ok", "trait C { function fc(self: Self): i32; }\nstruct S { v: i32 }\nimpl C for S { function fc(self: Self): i32 { return self.v + 2; } }\nfunction viafn[T, K: C](xs: T[], key: (T) => K): i32 { return key(xs[0]).fc(); }\nfunction main(): i32 { var ss: S[] = [S { v: 1 }]; return viafn(ss, (q: S): S => q); }\n", nil},
+		// A match EXPRESSION over a tuple scrutinee that evaluates to a struct
+		// (#8777): the desugar routes the arms through a value local, and a
+		// struct has no literal zero to declare it with, so the local kept the
+		// parser's i32 and the arm store was E003. The local is now declared by
+		// annotation with the placeholder, so the shape is clean — for a
+		// struct, an annotated enum destination, an array and a tuple.
+		{"value-local-struct-ok", "struct P { x: i32 }\nfunction main(): i32 { var t: (i32, i32) = (7, 2); var p: P = match (t) { (a, b) => P { x: a } }; return p.x - 7; }\n", nil},
+		{"value-local-enum-dest-ok", "function main(): i32 { var t: (i32, i32) = (7, 2); var o: Option[i32] = match (t) { (a, b) => Some(a + b) }; match (o) { Some(v) => { return v - 9; }, None => { return 5; } } }\n", nil},
+		{"value-local-array-ok", "function main(): i32 { var t: (i32, i32) = (7, 2); var xs: i32[] = match (t) { (a, b) => [a, b, 1] }; return xs.len() - 3; }\n", nil},
+		{"value-local-tuple-ok", "function main(): i32 { var t: (i32, i32) = (7, 2); var u: (i32, i32) = match (t) { (a, b) => (b, a) }; return u.0 - 2; }\n", nil},
 		// E021 object-safety (#4347 slice 4): a `dyn T` param whose trait T is not
 		// object-safe draws E021 — T has an associated function (no self) or a
 		// Self-returning method, neither of which can dispatch through a dyn
@@ -2218,6 +2247,23 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 		{"wide-lit-unannotated-tuple-ok", "function main(): i32 { var t = (1, 4611686018427387904); var u: i64 = t.1; return 0; }\n"},
 		{"wide-lit-unannotated-array-ok", "function main(): i32 { var xs = [4611686018427387904]; var u: i64 = xs[0]; return 0; }\n"},
 		{"wrapping-i32-sum-of-fitting-lits-ok", "function main(): i32 { var a: i32 = 1; var t = a - (2147483647 + 1); return 0; }\n"},
+		// A method on a type-parameter receiver (#7187): refused when no bound
+		// provides it, in every receiver spelling native types as the
+		// parameter; accepted through a supertrait, a default, a second bound
+		// or a fn-typed parameter's result.
+		{"tp-method-unbound", "trait Key { function k_id(self: Self): i32; }\nimpl Key for i32 { function k_id(self: Self): i32 { return self; } }\nfunction direct[K: Key](k: K): i32 { return k.no_such_method(); }\nfunction main(): i32 { return direct(3); }\n"},
+		{"tp-method-unbound-fn-param-result", "trait Key { function k_id(self: Self): i32; }\nimpl Key for i32 { function k_id(self: Self): i32 { return self; } }\nimpl Key for string { function k_id(self: Self): i32 { return self.len(); } }\nfunction keyed_sum[T, K: Key](xs: T[], key: (T) => K): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < xs.len()) { acc = acc + key(xs[i]).no_such_method(); i = i + 1; } return acc; }\nstruct Row { n: i32, name: string }\nfunction main(): i32 { var rows: Row[] = [Row { n: 7, name: \"abcd\" }]; return keyed_sum(rows, (r: Row): string => r.name); }\n"},
+		{"tp-method-unbound-annotated-local", "trait Key { function k_id(self: Self): i32; }\nimpl Key for i32 { function k_id(self: Self): i32 { return self; } }\nfunction direct[K: Key](k: K): i32 { var kv: K = k; return kv.no_such_method(); }\nfunction main(): i32 { return direct(3); }\n"},
+		{"tp-method-unbound-inferred-local", "trait Key { function k_id(self: Self): i32; }\nimpl Key for i32 { function k_id(self: Self): i32 { return self; } }\nfunction direct[K: Key](k: K): i32 { var kv = k; return kv.no_such_method(); }\nfunction main(): i32 { return direct(3); }\n"},
+		{"tp-method-unbounded-param", "function unbounded[K](k: K): i32 { return k.no_such_method(); }\nfunction main(): i32 { return unbounded(3); }\n"},
+		{"tp-method-via-supertrait-and-default-ok", "trait A { function fa(self: Self): i32; }\ntrait B: A { function fb(self: Self): i32; function fd(self: Self): i32 { return 4; } }\nstruct S { v: i32 }\nimpl A for S { function fa(self: Self): i32 { return self.v; } }\nimpl B for S { function fb(self: Self): i32 { return self.v + 1; } }\nfunction viasuper[T: B](x: T): i32 { return x.fa() + x.fb() + x.fd(); }\nfunction main(): i32 { return viasuper(S { v: 1 }); }\n"},
+		{"tp-method-via-second-bound-ok", "trait A { function fa(self: Self): i32; }\ntrait C { function fc(self: Self): i32; }\nstruct S { v: i32 }\nimpl A for S { function fa(self: Self): i32 { return self.v; } }\nimpl C for S { function fc(self: Self): i32 { return self.v + 2; } }\nfunction viaplus[T: A + C](x: T): i32 { var y: T = x; var z = x; return y.fc() + z.fa(); }\nfunction main(): i32 { return viaplus(S { v: 1 }); }\n"},
+		{"tp-method-on-fn-param-result-ok", "trait C { function fc(self: Self): i32; }\nstruct S { v: i32 }\nimpl C for S { function fc(self: Self): i32 { return self.v + 2; } }\nfunction viafn[T, K: C](xs: T[], key: (T) => K): i32 { return key(xs[0]).fc(); }\nfunction main(): i32 { var ss: S[] = [S { v: 1 }]; return viafn(ss, (q: S): S => q); }\n"},
+		{"value-local-struct-ok", "struct P { x: i32 }\nfunction main(): i32 { var t: (i32, i32) = (7, 2); var p: P = match (t) { (a, b) => P { x: a } }; return p.x - 7; }\n"},
+		{"value-local-enum-dest-ok", "function main(): i32 { var t: (i32, i32) = (7, 2); var o: Option[i32] = match (t) { (a, b) => Some(a + b) }; match (o) { Some(v) => { return v - 9; }, None => { return 5; } } }\n"},
+		{"value-local-array-ok", "function main(): i32 { var t: (i32, i32) = (7, 2); var xs: i32[] = match (t) { (a, b) => [a, b, 1] }; return xs.len() - 3; }\n"},
+		{"value-local-tuple-ok", "function main(): i32 { var t: (i32, i32) = (7, 2); var u: (i32, i32) = match (t) { (a, b) => (b, a) }; return u.0 - 2; }\n"},
+		{"tp-method-shadowed-by-local-ok", "trait Key { function k_id(self: Self): i32; }\nimpl Key for i32 { function k_id(self: Self): i32 { return self; } }\nfunction direct[K: Key](k: K): i32 { var k: string = \"ab\"; return k.len(); }\nfunction main(): i32 { return direct(3); }\n"},
 	}
 
 	for _, tc := range progs {

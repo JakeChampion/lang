@@ -2035,16 +2035,15 @@ func buildStreamCloseBodyP2(idxs map[string]uint32, drop uint32) []byte {
 //	11: $cur
 //	12: $nwritten
 func buildWriterWriteBody(idxs map[string]uint32) []byte {
-	alloc := idxs["__fern_alloc"]
 	allocRc1 := idxs["__fern_alloc_rc1"]
 	buildIoErr := idxs["__build_io_error"]
 	fdWrite := idxs["wasi_fd_write"]
 
 	var body []byte
 
-	// scratch (12 bytes: iov.base, iov.len, nwritten retptr).
-	body = inst.InstI32Const(body, 12)
-	body = inst.InstCall(body, alloc)
+	// scratch: iov.base at +0, iov.len at +4, nwritten retptr at +8 —
+	// the static slot, since nothing outlives the call.
+	body = inst.InstI32Const(body, writerScratchAddr)
 	body = inst.InstLocalSet(body, 3)
 
 	// fd = mem[$w]
@@ -2158,15 +2157,13 @@ func buildWriterWriteBody(idxs map[string]uint32) []byte {
 // 4=handle, 5=content_buf, 6=content_byte_len, 7=cur, 8=chunk_len,
 // 9=errptr, 10=box, 14=normalize scratch.
 func buildWriterWriteBodyP2(idxs map[string]uint32) []byte {
-	alloc := idxs["__fern_alloc"]
 	allocRc1 := idxs["__fern_alloc_rc1"]
 	buildIoErr := idxs["__build_io_error"]
 	blockingWrite := idxs["wasi_blocking_write_and_flush_p2"]
 
 	var body []byte
-	// rb = alloc(16).
-	body = inst.InstI32Const(body, 16)
-	body = inst.InstCall(body, alloc)
+	// rb = the static 16-byte result slot; nothing outlives the call.
+	body = inst.InstI32Const(body, writerScratchAddr)
 	body = inst.InstLocalSet(body, 3)
 	// handle = mem[w].
 	body = inst.InstLocalGet(body, 0)
@@ -2273,17 +2270,17 @@ func buildWriterWriteBodyP2(idxs map[string]uint32) []byte {
 //	9: $strbuf
 //	10: $result
 func buildReaderReadLineFdBody(idxs map[string]uint32) []byte {
-	// Reused for the iov scratch, the line accumulation buffer that
-	// becomes the returned Some(line) string data AND the Option box —
-	// all rc1 so both reclaim (scratch over-headering is harmless).
+	// The accumulator, the string the line is copied into and the Option
+	// box are all rc1: the last two are the caller's to reclaim, the
+	// accumulator goes back here through __free.
 	alloc := idxs["__fern_alloc_rc1"]
 	fdRead := idxs["wasi_fd_read"]
+	free := idxs["__free"]
 
 	var body []byte
 
-	// scratch (16 bytes for iov + nread + 1-byte buffer slot)
-	body = inst.InstI32Const(body, 16)
-	body = inst.InstCall(body, alloc)
+	// scratch: the static slot (iov + nread + 1-byte buffer at +12).
+	body = inst.InstI32Const(body, readerLineScratchAddr)
 	body = inst.InstLocalSet(body, 1)
 
 	// fd = mem[$r]
@@ -2361,6 +2358,14 @@ func buildReaderReadLineFdBody(idxs map[string]uint32) []byte {
 			body = inst.InstLocalGet(body, 3)
 			body = inst.InstLocalGet(body, 5)
 			body = memory.InstMemoryCopy(body)
+			// __free(buf - 8, buf_size + 8): the outgrown generation.
+			body = inst.InstLocalGet(body, 3)
+			body = inst.InstI32Const(body, 8)
+			body = numeric.InstI32Sub(body)
+			body = inst.InstLocalGet(body, 4)
+			body = inst.InstI32Const(body, 8)
+			body = numeric.InstI32Add(body)
+			body = inst.InstCall(body, free)
 			body = inst.InstLocalGet(body, 7)
 			body = inst.InstLocalSet(body, 3)
 			body = inst.InstLocalGet(body, 8)
@@ -2395,6 +2400,14 @@ func buildReaderReadLineFdBody(idxs map[string]uint32) []byte {
 	body = numeric.InstI32Eqz(body)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	{
+		// __free(buf - 8, buf_size + 8): nothing was read into it.
+		body = inst.InstLocalGet(body, 3)
+		body = inst.InstI32Const(body, 8)
+		body = numeric.InstI32Sub(body)
+		body = inst.InstLocalGet(body, 4)
+		body = inst.InstI32Const(body, 8)
+		body = numeric.InstI32Add(body)
+		body = inst.InstCall(body, free)
 		body = emitPayloadlessResultBox(body, alloc, 10, 16, 1)
 		body = inst.InstReturn(body)
 	}
@@ -2407,6 +2420,15 @@ func buildReaderReadLineFdBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 3)
 	body = inst.InstLocalGet(body, 5)
 	body = memory.InstMemoryCopy(body)
+	// __free(buf - 8, buf_size + 8): the line is copied out of the
+	// accumulator, so it goes back.
+	body = inst.InstLocalGet(body, 3)
+	body = inst.InstI32Const(body, 8)
+	body = numeric.InstI32Sub(body)
+	body = inst.InstLocalGet(body, 4)
+	body = inst.InstI32Const(body, 8)
+	body = numeric.InstI32Add(body)
+	body = inst.InstCall(body, free)
 
 	// Build Some(string): 16 bytes, tag=0, padding, data@8, len@12.
 	body = inst.InstI32Const(body, 16)
@@ -2443,16 +2465,16 @@ func buildReaderReadLineFdBody(idxs map[string]uint32) []byte {
 // Locals (after 1 param r): 1=retbuf(12), 2=handle, 3=buf,
 // 4=buf_size, 5=cur, 6=byte, 7=newbuf, 8=newsize, 9=strbuf, 10=box.
 func buildReaderReadLineFdBodyP2(idxs map[string]uint32) []byte {
-	// Reused for retbuf/buf scratch, the strbuf that becomes the returned
-	// string data AND the Option box — all rc1 for reclamation
-	// (over-headering the scratch is harmless carrier-side).
+	// The accumulator, the string the line is copied into and the Option
+	// box are all rc1: the last two are the caller's to reclaim, the
+	// accumulator goes back here through __free.
 	alloc := idxs["__fern_alloc_rc1"]
 	blockingRead := idxs["wasi_io_blocking_read"]
+	free := idxs["__free"]
 
 	var body []byte
-	// retbuf = alloc(12) — result<list<u8>, stream-error>.
-	body = inst.InstI32Const(body, 12)
-	body = inst.InstCall(body, alloc)
+	// retbuf = the static slot — result<list<u8>, stream-error>.
+	body = inst.InstI32Const(body, readerLineScratchAddr)
 	body = inst.InstLocalSet(body, 1)
 	// handle = mem[r]
 	body = inst.InstLocalGet(body, 0)
@@ -2491,6 +2513,12 @@ func buildReaderReadLineFdBodyP2(idxs map[string]uint32) []byte {
 		body = memory.InstI32Load(body, 2, 4)
 		body = memory.InstI32Load8U(body, 0, 0)
 		body = inst.InstLocalSet(body, 6)
+		// __free(list_ptr, list_len): cabi_realloc bumped exactly that.
+		body = inst.InstLocalGet(body, 1)
+		body = memory.InstI32Load(body, 2, 4)
+		body = inst.InstLocalGet(body, 1)
+		body = memory.InstI32Load(body, 2, 8)
+		body = inst.InstCall(body, free)
 		// Grow if cur+1 > buf_size.
 		body = inst.InstLocalGet(body, 5)
 		body = inst.InstI32Const(body, 1)
@@ -2508,6 +2536,14 @@ func buildReaderReadLineFdBodyP2(idxs map[string]uint32) []byte {
 			body = inst.InstLocalGet(body, 3)
 			body = inst.InstLocalGet(body, 5)
 			body = memory.InstMemoryCopy(body)
+			// __free(buf - 8, buf_size + 8): the outgrown generation.
+			body = inst.InstLocalGet(body, 3)
+			body = inst.InstI32Const(body, 8)
+			body = numeric.InstI32Sub(body)
+			body = inst.InstLocalGet(body, 4)
+			body = inst.InstI32Const(body, 8)
+			body = numeric.InstI32Add(body)
+			body = inst.InstCall(body, free)
 			body = inst.InstLocalGet(body, 7)
 			body = inst.InstLocalSet(body, 3)
 			body = inst.InstLocalGet(body, 8)
@@ -2540,6 +2576,14 @@ func buildReaderReadLineFdBodyP2(idxs map[string]uint32) []byte {
 	body = numeric.InstI32Eqz(body)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	{
+		// __free(buf - 8, buf_size + 8): nothing was read into it.
+		body = inst.InstLocalGet(body, 3)
+		body = inst.InstI32Const(body, 8)
+		body = numeric.InstI32Sub(body)
+		body = inst.InstLocalGet(body, 4)
+		body = inst.InstI32Const(body, 8)
+		body = numeric.InstI32Add(body)
+		body = inst.InstCall(body, free)
 		body = emitPayloadlessResultBox(body, alloc, 10, 16, 1)
 		body = inst.InstReturn(body)
 	}
@@ -2553,6 +2597,15 @@ func buildReaderReadLineFdBodyP2(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 3)
 	body = inst.InstLocalGet(body, 5)
 	body = memory.InstMemoryCopy(body)
+	// __free(buf - 8, buf_size + 8): the line is copied out of the
+	// accumulator, so it goes back.
+	body = inst.InstLocalGet(body, 3)
+	body = inst.InstI32Const(body, 8)
+	body = numeric.InstI32Sub(body)
+	body = inst.InstLocalGet(body, 4)
+	body = inst.InstI32Const(body, 8)
+	body = numeric.InstI32Add(body)
+	body = inst.InstCall(body, free)
 	body = inst.InstI32Const(body, 16)
 	body = inst.InstCall(body, alloc)
 	body = inst.InstLocalTee(body, 10)
