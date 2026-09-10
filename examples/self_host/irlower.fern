@@ -27726,15 +27726,16 @@ function struct_lit_all_string_fields_fresh(structs: StructTab, slit: ast.ExprSt
 // (one `call __fn___fern_struct_copy` per site) instead of the inline per-field
 // struct_get/store fan-out (#4650 — the self-host compiler's working set on the
 // x86_encode/x86_gas encoders otherwise OOMs the wasm driver). struct_copy is a
-// SHALLOW word-for-word box copy: it shares every field pointer with no rc-inc,
-// exactly like the inline base-copy path leaves array fields "as-is". So it is
-// admissible ONLY when the inline path would ALSO emit no per-field retain on the
-// copied fields — i.e. the struct carries no field that the base-copy arm inc's:
+// SHALLOW word-for-word box copy: it shares every field pointer with no rc-inc.
+// The caller retains the carried ARRAY fields off the result box afterwards, the
+// same retain the inline path takes per field, so an array field is admissible;
+// the kinds the inline path retains at the struct_get itself are not — the
+// struct carries no field the base-copy arm inc's in place:
 //   - a DIRECT nested-struct field (retained, k_struct drop) — excluded,
 //   - a DIRECT enum field (retained, k_enum drop) — excluded,
 //   - a bare `string` field (retained on a reclaimable struct) — excluded.
-// Array / string[] / map / option / tuple / scalar fields are copied with no inc
-// on both paths, so they are fine. 8-byte SCALAR fields (i64 / u64 / f64) are two
+// Map / option / tuple / scalar fields are copied with no inc on both paths, so
+// they are fine. 8-byte SCALAR fields (i64 / u64 / f64) are two
 // 4-byte slots on wasm, whereas the copy helper is slot-count driven off the field
 // COUNT; keep the first cut to fields that occupy exactly one slot per backend so
 // the word/slot copy is unambiguous (the encoders are all i32 + array fields). An
