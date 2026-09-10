@@ -7402,10 +7402,8 @@ func buildStrSliceBody(helperIdxs map[string]uint32) []byte {
 //	6: $copy_i — byte-copy loop counter
 func buildReadLineBody(helperIdxs map[string]uint32) []byte {
 	free := helperIdxs["__free"]
-	// The accumulation buffer becomes the returned string's data (stored
-	// directly into the Some box below), so header it with rc1 for
-	// reclamation. Grown copies are also rc1 (abandoned intermediates
-	// leak as before — harmless).
+	// The line is copied into an exact-size rc1 block for the Some box; the
+	// accumulator and every generation it outgrew go back through __free.
 	alloc := helperIdxs["__fern_alloc_rc1"]
 	readByte := helperIdxs["__fern_read_byte"]
 	var body []byte
