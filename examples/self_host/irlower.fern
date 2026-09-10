@@ -26055,25 +26055,33 @@ function fai_bracket_shared_root(s: LowerState, uniqslot: i32, srcslot: i32, fn:
 }
 
 // is_counted_elem_array_type: an array whose elements are rc-headered boxes the
-// release walks account for — a string[], a struct[] or enum[], or a nested
-// T[][] whose elements are inner buffers. A copy of such a buffer duplicates
-// every element pointer, so a copy both holders may release has to retain the
-// elements first. A scalar-element array carries no reference.
+// release walks account for — a struct[] or enum[], or a nested T[][] whose
+// elements are inner buffers. A copy of such a buffer duplicates every element
+// pointer, so a copy both holders may release has to retain the elements
+// first. A scalar-element array carries no reference.
+//
+// A string[] is deliberately NOT one, although its elements are boxes: a string
+// stored into a string[] field is an uncounted borrow whose owner may already
+// have released it — checker.for_binding frees the pattern-name string it
+// stored into the scope's `names` — which is why the string[] FIELD release is
+// refused per type (strarrfld_scan) rather than walked. A retain walk over such
+// an array touches freed boxes: the checker driver segfaulted on
+// `for (k, v) in m` (TestSelfHostCheckerDifferentialX86_64/loop-map-shadow).
 function is_counted_elem_array_type(structs: StructTab, t: string): boolean {
     // "fn[]" is a closure array's flat spelling, and is_enum_array_field_type
     // would admit it: a closure element is a code address or a closure pair,
     // never an rc-headed box (#9017).
     if (t == "fn[]") { return false; }
-    return t == "string[]" || is_struct_array_field_type(structs, t)
+    return is_struct_array_field_type(structs, t)
         || is_enum_array_field_type(structs, t) || is_nested_array_field_type(structs, t);
 }
 
-// arr_expr_counted_elems: the array RECEIVER `obj` holds rc-boxed elements — a
-// string[], or an array whose element type is a struct or enum: a local slot
-// records that element type as the slot's struct type, a field read names it
-// in the declaration. A clone of such a buffer has to retain its elements.
+// arr_expr_counted_elems: the array RECEIVER `obj` holds rc-boxed elements the
+// release walks account for — its element type is a struct or enum: a local
+// slot records that element type as the slot's struct type, a field read names
+// it in the declaration. A clone of such a buffer has to retain its elements. A
+// string[] is not one, for the reason is_counted_elem_array_type gives.
 function arr_expr_counted_elems(obj: ast.Expr, s: LowerState): boolean {
-    if (expr_is_strarr(obj, s)) { return true; }
     match (obj) {
         ast.ExprIdent(id) => {
             var sl: i32 = s.slot_of(id.name);
