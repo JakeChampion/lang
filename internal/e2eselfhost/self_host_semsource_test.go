@@ -296,6 +296,8 @@ struct P { n: i32, xs: i32[] }
 struct Q { name: string, p: P }
 @noinline function make(n: i32): P { return P { n: n, xs: [n, n + 1] }; }
 @noinline function wrap(own p: P, tag: string): Q { return Q { name: tag + "!", p: p }; }
+struct S2 { a: i32, b: i32 }
+@noinline function mk_s2(n: i32): S2 { return S2 { a: n, b: n + 1 }; }
 @noinline function unwrap(q: Q): i32 {
     var p: P = q.p;
     if (q.name == "x!") { return p.xs[0]; }
@@ -449,6 +451,8 @@ function main(): i32 {
     print_int(node_sum(3)); print(""); print_int(node_sum(1)); print("");
     print_int(build_sum(1)); print(""); print_int(build_sum(0)); print("");
     print_int(chain_build(2)); print(""); print_int(chain_build(0)); print("");
+    var s2: S2 = mk_s2(4);
+    print_int(s2.a); print("");
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }
@@ -546,7 +550,7 @@ func TestSelfHostSemanticSourceRC(t *testing.T) {
 			if err != nil {
 				t.Fatalf("semantic lowering: %v\n%s", err, diagnostics.String())
 			}
-			for _, name := range []string{"pick", "pair", "boxed", "carry", "count_even", "fill", "first_of", "keep", "chain", "twice", "count_down", "grow", "make", "wrap", "unwrap", "tally", "greet", "boxed_local", "boxed_carry", "shape", "measure", "sum_shapes", "consume", "boxed_shape", "hold", "mk_node", "node_size", "node_sum", "leaf", "fork", "tree_sum", "build_sum", "chain_len", "chain_build"} {
+			for _, name := range []string{"pick", "pair", "boxed", "carry", "count_even", "fill", "first_of", "keep", "chain", "twice", "count_down", "grow", "make", "wrap", "unwrap", "tally", "greet", "boxed_local", "boxed_carry", "shape", "measure", "sum_shapes", "consume", "boxed_shape", "hold", "mk_node", "node_size", "node_sum", "leaf", "fork", "tree_sum", "build_sum", "chain_len", "chain_build", "mk_s2"} {
 				if !strings.Contains(diagnostics.String(), "produced "+name+"\n") {
 					t.Fatalf("%s was not produced:\n%s", name, diagnostics.String())
 				}
