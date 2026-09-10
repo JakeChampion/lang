@@ -13,7 +13,7 @@ import "./typeinfo";
 function empty(why: string): irlower.LowerResult {
     return irlower.LowerResult { ok: false, why: why, ops: [], n_locals: 0,
         n_params: 0, erased_wide: false, arr_slots: [], i64_slots: [],
-        f64_slots: [], str_slots: [], alias_incs: [] };
+        f64_slots: [], str_slots: [], alias_incs: [], name: "" };
 }
 
 // This physical boundary refuses types whose stack representation is not

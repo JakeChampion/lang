@@ -443,7 +443,7 @@ function main(): i32 {
     var bodies: irlower.LowerResult[] = [];
     var at: i32 = 0;
     for fd in mod.funcs {
-        if (fd.name == "main") { bodies = bodies.append(irlower.LowerResult { ok: false, why: "", ops: [], n_locals: 0, n_params: 0, erased_wide: false, arr_slots: [], i64_slots: [], f64_slots: [], str_slots: [], alias_incs: [] }); at = at + 1; continue; }
+        if (fd.name == "main") { bodies = bodies.append(irlower.LowerResult { ok: false, why: "", ops: [], n_locals: 0, n_params: 0, erased_wide: false, arr_slots: [], i64_slots: [], f64_slots: [], str_slots: [], alias_incs: [], name: "" }); at = at + 1; continue; }
         var p = produced[at];
         if (!p.ok) { eprint(fd.name + ": " + p.why); return 4; }
         var plan = ssaunits.plan(p.func, p.modes);

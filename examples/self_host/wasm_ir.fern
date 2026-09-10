@@ -4486,6 +4486,43 @@ function emit_str_op_wat(o: ir.Op): string {
 // by construction. `fd` supplies the func wrapper (name / receiver / ret); the
 // ~13 ret-fn / borrow side-tables that only fed lower_func are gone.
 function emit_function_ir(ns: string, r: irlower.LowerResult, fd: parser.FuncDecl, str_vals: string[], cagg_vals: string[], structs: irlower.StructTab, fn_table: string[], funcs: parser.FuncDecl[], vsigs: irverify.NameIndex): string {
+    // Methods get the receiver-type-qualified name `$<Type>.<name>` (matching
+    // irlower's call_direct dispatch); free functions stay `$<name>`. WAT idents
+    // allow `.`. r.n_params already counts the receiver as the first param.
+    var fn_name: string = fd.name;
+    if (fd.receiver_type.len() > 0) { fn_name = util.base_type_name(fd.receiver_type) + "." + fd.name; }
+    return emit_function_ir_named(ns, r, fn_name, decl_result_wat(fd, structs), str_vals, cagg_vals, structs, fn_table, funcs, vsigs);
+}
+
+// decl_result_wat is the WAT result clause a DECLARATION's return type asks for.
+// u64 returns ride the i64 result type (8-byte; only signedness of the value's
+// own ops differs, handled at the producing expression) (#2904). A bare-typevar
+// (erased-generic) return is typed i64 — the uniform 8-byte slot the register
+// backends give every value — so a wide value survives pass-through and the
+// caller coerces at the call boundary (#5464). Free functions only.
+function decl_result_wat(fd: parser.FuncDecl, structs: irlower.StructTab): string {
+    if (fd.ret_type == "i64" || fd.ret_type == "u64") { return " (result i64)\n"; }
+    if (irlower.is_f64_scalar_type_name(fd.ret_type)) { return " (result f64)\n"; }
+    if (irlower.erased_passthrough_safe(fd, structs)) { return " (result i64)\n"; }
+    return " (result i32)\n";
+}
+
+// fallthrough_filler is the zero the implicit end pops, typed to match the
+// result clause. Derived from the clause rather than re-deciding it, so the two
+// cannot disagree — a mismatch is a wasm validator error at module load.
+function fallthrough_filler(result_wat: string): string {
+    if (util.contains(result_wat, "i64")) { return "    i64.const 0)\n"; }
+    if (util.contains(result_wat, "f64")) { return "    f64.const 0)\n"; }
+    return "    i32.const 0)\n";
+}
+
+// emit_function_ir_named is the body above with the name and result clause
+// supplied rather than read from a declaration, so a body the semantic pipeline
+// produced — which carries its own name — emits through the same path. The
+// register twins are asm_ir / asm_arm64_ir's emit_function_via_ir_named.
+// fern-lint: allow cyclomatic-complexity
+// The wasm half of the same op table as asm_ir.fern: one guard per op.
+function emit_function_ir_named(ns: string, r: irlower.LowerResult, fn_name: string, result_wat: string, str_vals: string[], cagg_vals: string[], structs: irlower.StructTab, fn_table: string[], funcs: parser.FuncDecl[], vsigs: irverify.NameIndex): string {
     var arrtmp: i32 = r.n_locals;
     var eltmp: i32 = r.n_locals + 1;
     // f64tmp: an f64-typed scratch local for reordering 64-bit struct field
@@ -4500,11 +4537,6 @@ function emit_function_ir(ns: string, r: irlower.LowerResult, fd: parser.FuncDec
     // check (arrtmp holds the base). Needed as a fifth scratch because arr_set's
     // i32 path already parks the value in eltmp, so the index needs its own home.
     var bctmp: i32 = r.n_locals + 4;
-    // Methods get the receiver-type-qualified name `$<Type>.<name>` (matching
-    // irlower's call_direct dispatch); free functions stay `$<name>`. WAT idents
-    // allow `.`. r.n_params already counts the receiver as the first param.
-    var fn_name: string = fd.name;
-    if (fd.receiver_type.len() > 0) { fn_name = util.base_type_name(fd.receiver_type) + "." + fd.name; }
     ircore.lower_failed_refuse(fn_name, r);
     irverifygate.verify_or_refuse(fn_name, r.ops, r.n_params, r.n_locals, vsigs);
     var parts: string[] = [];
@@ -4518,16 +4550,7 @@ function emit_function_ir(ns: string, r: irlower.LowerResult, fd: parser.FuncDec
         else { parts = parts.append(" (param i32)"); }
         p = p + 1;
     }
-    // u64 returns ride the i64 result type (8-byte; only signedness of the
-    // value's own ops differs, handled at the producing expression) (#2904).
-    if (fd.ret_type == "i64" || fd.ret_type == "u64") { parts = parts.append(" (result i64)\n"); }
-    else if (irlower.is_f64_scalar_type_name(fd.ret_type)) { parts = parts.append(" (result f64)\n"); }
-    // A bare-typevar (erased-generic) return is typed i64 on wasm — the uniform
-    // 8-byte slot the register backends give every value — so a wide value
-    // survives pass-through; the caller coerces the i64 result to the concrete
-    // type at the call boundary (#5464). Free functions only.
-    else if (irlower.erased_passthrough_safe(fd, structs)) { parts = parts.append(" (result i64)\n"); }
-    else { parts = parts.append(" (result i32)\n"); }
+    parts = parts.append(result_wat);
     // body locals + 5 scratch locals. A body local in r.i64_slots is declared
     // (local i64), one in r.f64_slots (local f64); the trailing scratch locals
     // are two i32 (arrtmp/eltmp), one f64 (f64tmp), one i64 (i64tmp), one i32
@@ -4562,12 +4585,7 @@ function emit_function_ir(ns: string, r: irlower.LowerResult, fd: parser.FuncDec
     // type-match the declared result when the implicit end pops it (wasm's
     // stack-polymorphic typing accepts an underflow, not a wrong-typed top), so
     // the default's type tracks the result: i64 / f64 / i32.
-    if (fd.ret_type == "i64" || fd.ret_type == "u64") { parts = parts.append("    i64.const 0)\n"); }
-    else if (irlower.is_f64_scalar_type_name(fd.ret_type)) { parts = parts.append("    f64.const 0)\n"); }
-    // A bare-typevar (erased-generic) return is typed i64 on wasm (#5464), so its
-    // fallthrough filler must be i64.const 0 to match the (result i64) signature.
-    else if (irlower.erased_passthrough_safe(fd, structs)) { parts = parts.append("    i64.const 0)\n"); }
-    else { parts = parts.append("    i32.const 0)\n"); }
+    parts = parts.append(fallthrough_filler(result_wat));
     return util.str_join_chunks(parts);
 }
 
@@ -4631,6 +4649,13 @@ pub function emit_functions_view(ns: string, mod: parser.Module, cache: irlower.
             parts = parts.append(emit_function_ir(ns, cache[fi], mod.funcs[fi], str_vals, cagg_vals, all_structs, ft, all_funcs, vsigs));
         }
         fi = fi + 1;
+    }
+    // Cache entries past the declarations are bodies with no FuncDecl, each
+    // naming the symbol it defines. A produced body's result is one i32 word.
+    var xi: i32 = mod.funcs.len();
+    while (xi < cache.len()) {
+        parts = parts.append(emit_function_ir_named(ns, cache[xi], cache[xi].name, " (result i32)\n", str_vals, cagg_vals, all_structs, ft, all_funcs, vsigs));
+        xi = xi + 1;
     }
     return util.str_join_chunks(parts);
 }

@@ -4322,14 +4322,25 @@ function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg: irl
 // runtime-need detection onward reads only r / fd / s (none of the eighteen
 // side-tables lower_func consumes), so this split is byte-identical to the
 // inlined body.
-// fern-lint: allow cyclomatic-complexity
-// One guard per IR op and no multi-line body left to move — 190 guards over
-// 950 lines is the op table itself.
 function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s: asmcore.EmitState, vsigs: irverify.NameIndex): asmcore.EmitState {
     // Methods get the receiver-type-qualified label `__fn_<Type>.<name>` (matching
     // asm.fern + irlower's dispatch); free functions stay `__fn_<name>`.
     var label_name: string = fd.name;
     if (fd.receiver_type.len() > 0) { label_name = util.base_type_name(fd.receiver_type) + "." + fd.name; }
+    return emit_function_via_ir_named(r, label_name, false, s, vsigs);
+}
+
+// emit_function_via_ir_named is the body of emit_function_via_ir_pre with the
+// label supplied rather than read from a declaration, so a lowering that has no
+// FuncDecl — a body the semantic pipeline produced, which carries its own name —
+// emits through exactly the same path. `weak` marks the definition co-linkable,
+// the way the per-type __struct_drop_<T> bodies are: several per-module units may
+// each emit an identical copy and the linker keeps one.
+// fern-lint: allow cyclomatic-complexity
+// One guard per IR op and no multi-line body left to move — 190 guards over
+// 950 lines is the op table itself.
+function emit_function_via_ir_named(r: irlower.LowerResult, label_name: string, weak: boolean, s: asmcore.EmitState, vsigs: irverify.NameIndex): asmcore.EmitState {
+    if (weak) { s = s.write(".weak __fn_" + asmcore.sanitize_label(label_name) + "\n"); }
     ircore.lower_failed_refuse(label_name, r);
     // Runtime-need detection is marked off the ops of this one lowering; the
     // runtime tail reads the accumulated needs (has_need) rather than lowering
@@ -6752,6 +6763,18 @@ function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], all
             s = emit_function_via_ir_pre(cache[fi], mod.funcs[fi], s, vsigs);
         }
         fi = fi + 1;
+    }
+    // Cache entries past the declarations are bodies with no FuncDecl, each
+    // naming the symbol it defines. `.weak`, so a shard window or a sibling
+    // unit that emits the same body co-links to one definition.
+    return emit_named_bodies(cache, mod.funcs.len(), s, vsigs);
+}
+
+function emit_named_bodies(cache: irlower.LowerResult[], from: i32, s: asmcore.EmitState, vsigs: irverify.NameIndex): asmcore.EmitState {
+    var xi: i32 = from;
+    while (xi < cache.len()) {
+        s = emit_function_via_ir_named(cache[xi], cache[xi].name, true, s, vsigs);
+        xi = xi + 1;
     }
     return s;
 }
