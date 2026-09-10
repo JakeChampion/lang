@@ -39703,7 +39703,7 @@ function moves_fields_stmt(st: ast.Stmt, name: string, nomove: string[], spread_
 // the key carries the callee half.
 //
 // Struct receivers only: the marker it feeds is the struct deep drop.
-pub function recv_borrow_fns_of(funcs: parser.FuncDecl[], structs: StructTab, borrowable: string[]): string[] {
+pub function recv_borrow_fns_of(funcs: parser.FuncDecl[], structs: StructTab, borrowable: string[], sfok: string[]): string[] {
     var out: string[] = [];
     var none: string[] = [];
     for fn in funcs {
@@ -39733,7 +39733,7 @@ pub function recv_borrow_fns_of(funcs: parser.FuncDecl[], structs: StructTab, bo
                 if (body_returns_bare_ident(fn.body, fn.receiver_name)) {
                     out = out.append("RECVRET:" + rty + "." + fn.name);
                 }
-                if (!moves_fields_stmts(fn.body, fn.receiver_name, none, false)
+                if (!moves_fields_stmts(fn.body, fn.receiver_name, none, spread_copy_counted(structs, sfok, rty))
                     && !optstruct_body_moves_field(fn.body, fn.receiver_name, rty, structs, borrowable)) {
                     if (!body_unsafe_for(fn.body, fn.receiver_name, borrowable, [])) {
                         out = out.append(rty + "." + fn.name);
@@ -40410,7 +40410,7 @@ function reclaimable_names_of(body: ast.Stmt[], reassigned: string[], structs: S
         var mvnm: string[] = recv_borrow_methods_of(recv_borrow, mvsty);
         mvnm = append_all(mvnm, recv_ident_methods_of(recv_borrow, mvsty, body, mvnmk, borrowable));
         if (mvty != "") { mvnm = append_all(mvnm, clo_field_names_of(structs, mvty)); }
-        var mv_moves: boolean = moves_fields_stmts(body, mvnmk, mvnm, false);
+        var mv_moves: boolean = moves_fields_stmts(body, mvnmk, mvnm, mvsty != "" && spread_copy_counted(structs, sfok, mvsty));
         // A BARE NON-SCALAR FIELD READ moves the field out just as surely as a
         // receiver use does, and moves_fields_expr cannot see it: its
         // ExprFieldAccess arm only recurses into the object, and a bare ExprIdent
@@ -41448,8 +41448,8 @@ function struct_ret_local_is_frame_fresh(name: string, structs: StructTab, fnbod
     // admitting it would rest on "no reader outlives the frame", which is a
     // liveness claim this predicate does not make and moves_fields_stmts does.
     var no_nomove: string[] = [];
-    if (moves_fields_stmts(fnbody, name, no_nomove, false)) { return false; }
     var mvsty: string = declared_struct_type_of(fnbody, name, structs);
+    if (moves_fields_stmts(fnbody, name, no_nomove, mvsty != "" && spread_copy_counted(structs, sfok, mvsty))) { return false; }
     var no_mv_borrow: string[] = [];
     if (mvsty != "" && optstruct_body_moves_field(fnbody, name, mvsty, structs, no_mv_borrow)) { return false; }
     var no_borrow: string[] = [];
@@ -66511,7 +66511,7 @@ pub function fn_sigs_for_borrow(funcs: parser.FuncDecl[], structs: StructTab, ar
         fresh_struct_ret_fns: fresh_struct_ret_fns_of(funcs, structs),
         consume_safe_params: [],
         return_fresh_struct_ret_fns: return_fresh_struct_ret_fns_of(funcs, structs, sfok),
-        recv_borrow_fns: recv_borrow_fns_of(funcs, structs, bparams),
+        recv_borrow_fns: recv_borrow_fns_of(funcs, structs, bparams, sfok),
         str_fresh_ret_fns: str_fresh_ret_fns_of(funcs),
         opt_fresh_ret_fns: sig_reg_of(opt_fresh_ret_fns_of(funcs, structs, str_fresh_ret_fns_of(funcs))),
         strfld_ok_types: sfok,
@@ -76909,10 +76909,12 @@ while (sli < snap_locals.len()) {
         // unmarked — self-rebinds are exempt and a bare `return st` is a
         // read — so its rebind field-reclaim and deep sweep both survive.
         // A bare ARGUMENT derives too: the callee may hand back a box sharing
-        // the local's fields (a spread copy retains none of its arrays), and
-        // moves_fields_expr flags only a receiver. `return emit_arr_store(apf, …)`
-        // left `apf` deep-swept under the very box it had just been copied into.
-        if (moves_fields_stmts(fn.body, reclaim_site_name(key), [], false) || derived_anywhere(fn, reclaim_site_name(key), structs)) { reclaim = reclaim.append("NODEEP:" + key); }
+        // the local's fields (a spread copy carries a tuple, map, option or
+        // closure field uncounted), and moves_fields_expr flags only a receiver.
+        // `return emit_arr_store(apf, …)` left `apf` deep-swept under the very
+        // box it had just been copied into.
+        var snty: string = decl_type_in_fn(fn, reclaim_site_name(key));
+        if (moves_fields_stmts(fn.body, reclaim_site_name(key), [], decl_is_struct(structs, snty) && spread_copy_counted(structs, sg.strfld_ok_types, snty)) || derived_anywhere(fn, reclaim_site_name(key), structs, sg.strfld_ok_types)) { reclaim = reclaim.append("NODEEP:" + key); }
     }
     // "NOFLD:" keeps the REBIND release box-only where a value derived from the
     // local may outlive a later rebind and still share the fields that rebind
@@ -77313,22 +77315,51 @@ function dor_scan(stmts: ast.Stmt[], name: string, fn: parser.FuncDecl, structs:
 // derived from `name` is bound under another name, or returned other than as
 // the bare local, so at exit it may still share the fields a deep drop of
 // name's box would free. Order is irrelevant at exit: every such value is live
-// then.
-function derived_anywhere(fn: parser.FuncDecl, name: string, structs: StructTab): boolean {
-    return derived_scan(fn.body, name, fn, structs);
+// then. A spread `T { ...name, … }` whose carries all copy counted
+// (spread_over_counted) is not a derivation: the box it builds holds its own
+// count of every field it shares.
+function derived_anywhere(fn: parser.FuncDecl, name: string, structs: StructTab, sfok: string[]): boolean {
+    return derived_scan(fn.body, name, fn, structs, sfok);
 }
-function derived_scan(stmts: ast.Stmt[], name: string, fn: parser.FuncDecl, structs: StructTab): boolean {
+function derived_scan(stmts: ast.Stmt[], name: string, fn: parser.FuncDecl, structs: StructTab, sfok: string[]): boolean {
     for stmt in stmts {
         match (stmt) {
-            ast.StmtVar(v) => { if (expr_mentions_name(v.init, name) && dor_type_can_hold(v.type_name, structs)) { return true; } },
-            ast.StmtAssign(a) => { if (a.target != name && expr_mentions_name(a.value, name) && dor_type_can_hold(decl_type_in_fn(fn, a.target), structs)) { return true; } },
-            ast.StmtReturn(r) => { if (ident_name_or_empty(r.value) != name && expr_mentions_name(r.value, name)) { return true; } },
-            ast.StmtIf(f) => { if (derived_scan(f.then_body, name, fn, structs) || derived_scan(f.else_body, name, fn, structs)) { return true; } },
-            ast.StmtWhile(w) => { if (derived_scan(w.body, name, fn, structs)) { return true; } },
-            ast.StmtFor(fo) => { if (derived_scan(fo.body, name, fn, structs)) { return true; } },
-            ast.StmtMatch(m) => { for arm in m.arms { if (derived_scan(arm.body, name, fn, structs)) { return true; } } },
+            ast.StmtVar(v) => { if (expr_mentions_name(v.init, name) && dor_type_can_hold(v.type_name, structs) && !spread_over_counted(v.init, name, structs, sfok)) { return true; } },
+            ast.StmtAssign(a) => { if (a.target != name && expr_mentions_name(a.value, name) && dor_type_can_hold(decl_type_in_fn(fn, a.target), structs) && !spread_over_counted(a.value, name, structs, sfok)) { return true; } },
+            ast.StmtReturn(r) => { if (ident_name_or_empty(r.value) != name && expr_mentions_name(r.value, name) && !spread_over_counted(r.value, name, structs, sfok)) { return true; } },
+            ast.StmtIf(f) => { if (derived_scan(f.then_body, name, fn, structs, sfok) || derived_scan(f.else_body, name, fn, structs, sfok)) { return true; } },
+            ast.StmtWhile(w) => { if (derived_scan(w.body, name, fn, structs, sfok)) { return true; } },
+            ast.StmtFor(fo) => { if (derived_scan(fo.body, name, fn, structs, sfok)) { return true; } },
+            ast.StmtMatch(m) => { for arm in m.arms { if (derived_scan(arm.body, name, fn, structs, sfok)) { return true; } } },
             _ => {}
         }
+    }
+    return false;
+}
+
+// spread_over_counted: `e` is `T { ...name, … }` with every carried field
+// copying counted (spread_carried_fields_counted) and every override that reads
+// `name` of a scalar type, so the box it builds shares nothing with `name`'s
+// that it does not hold a count of.
+function spread_over_counted(e: ast.Expr, name: string, structs: StructTab, sfok: string[]): boolean {
+    match (e) {
+        ast.ExprStructLit(slit) => {
+            if (!slit.has_base) { return false; }
+            var base_is_name: boolean = false;
+            match (slit.base) {
+                ast.ExprIdent(bid) => { base_is_name = bid.name == name; },
+                _ => {}
+            }
+            if (!base_is_name || !spread_carried_fields_counted(structs, sfok, slit)) { return false; }
+            var i: i32 = 0;
+            while (i < slit.field_names.len()) {
+                if (expr_mentions_name(slit.field_values[i], name)
+                        && !reuse_field_is_scalar(decl_field_type(structs, slit.type_name, slit.field_names[i]))) { return false; }
+                i = i + 1;
+            }
+            return true;
+        },
+        _ => { return false; }
     }
     return false;
 }
