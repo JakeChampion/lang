@@ -70,6 +70,55 @@ function round(i: i32): i32 {
 }
 function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 50) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }
 `},
+	// The holder handed on through an alias: `var alias = result` is the same
+	// box, so `infer(alias)` keeps it exactly as `infer(result)` would.
+	{"kept_call_alias", "lift", "__struct_drop_M", `enum E { A(i32), B }
+struct F { body: E[], n: i32 }
+struct M { funcs: F[], items: E[], k: i32 }
+function touch(f: F): F { if (f.n < 0) { return F { body: [], n: 0 }; } return f; }
+function rebuild(m: M): M {
+    var fs: F[] = [];
+    var i: i32 = 0;
+    while (i < m.funcs.len()) { fs = fs.append(touch(m.funcs[i])); i = i + 1; }
+    return M { ...m, funcs: fs };
+}
+function infer(m: M): M { return m; }
+function lift(mod: M): M {
+    var fresh: F[] = [];
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) { fresh = fresh.append(touch(mod.funcs[i])); i = i + 1; }
+    var result: M = M { funcs: fresh, items: mod.items, k: mod.k + 1 };
+    var alias: M = result;
+    return infer(rebuild(alias));
+}
+function round(i: i32): i32 {
+    var m: M = M { funcs: [F { body: [E.A(i), E.B], n: 1 }, F { body: [E.B], n: 2 }], items: [E.A(i + 1)], k: 0 };
+    var r: M = lift(m);
+    var v: i32 = 0;
+    match (r.funcs[0].body[0]) { E.A(x) => { v = x; }, E.B => { v = 0 - 1; } }
+    return (v + r.funcs[1].n + r.funcs[0].body.len() + r.items.len() + r.k + m.k) % 101;
+}
+function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 50) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }
+`},
+	// The same closure array reached through a struct field, whose declared
+	// type is the flat "fn[]" spelling that is_enum_array_field_type admits.
+	// The elements are read into locals before the call: a call through an
+	// indexed element is not IR-eligible.
+	{"closure_field_with", "round", "__fern_arr_inc_elems", `struct H { hs: ((i32) => i32)[], n: i32 }
+function inc(x: i32): i32 { return x + 7; }
+function dec(x: i32): i32 { return x - 1; }
+function round(i: i32): i32 {
+    var h: H = H { hs: [inc, inc, dec], n: i };
+    var keep: H = h;
+    var w: ((i32) => i32)[] = h.hs.with(1, dec);
+    var a: ((i32) => i32)[] = h.hs.append(inc);
+    var f: (i32) => i32 = w[1];
+    var g: (i32) => i32 = a[3];
+    var k: (i32) => i32 = keep.hs[2];
+    return (f(i) + g(i) + k(i) + a.len() + h.n) % 101;
+}
+function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 50) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }
+`},
 	{"closure_array_with", "round", "__fern_arr_inc_elems", `function round(i: i32): i32 {
     var v1: (i32) => i32 = ((x: i32) => x + 7);
     var s0: ((i32) => i32)[] = [v1, v1, ((y: i32) => y - 1), v1];

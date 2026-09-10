@@ -36,9 +36,10 @@ The refusal that gate provided was an accident: `lift_lambdas_view` spreads a
 
 The fix names the hazard instead. `reclaimable_names_of` mints a `NOFLIP:`
 witness next to `NODEEP:` when the reason is a move (`moves_fields_stmts`,
-`optstruct_body_moves_field`) or the new `handed_to_kept_call`: the local
-appears whole as a bare-ident argument of a call whose result is kept, bound
-to a value that can hold a struct, assigned to one, or returned. The
+`optstruct_body_moves_field`) or the new `handed_to_kept_call`: the local, or
+a local bound whole from it (`var alias = result`, chased to a fixpoint),
+appears as a bare-ident argument of a call whose result is kept, bound to a
+value that can hold a struct, assigned to one, or returned. The
 `derived_anywhere` form used for snapshot locals is too wide here: its return
 arm counts `return (p.f.len() + …)`, and the `chain` / `always` / `respread`
 rows leaked under it. The bare-argument form keeps `keepit(p)` bound to an
@@ -52,14 +53,19 @@ read the slot's `"fn"` spelling as enum-like, so the clone was followed by
 `__fern_arr_inc_elems`, and `__fern_rc_inc` wrote an rc word eight bytes
 before a lambda's entry. Whether that faults depends on the bytes that happen
 to sit there, which is why a small program with the same shape ran clean while
-the seed died. The predicate now excludes `"fn"`.
+the seed died. A struct field of that type is spelled `"fn[]"` and
+`is_enum_array_field_type` admits it the same way, so the value forms on
+`h.hs` and the in-place field forms had the same hole. The exclusion sits in
+`is_counted_elem_array_type`, the one predicate all four sites ask.
 
 ## Gates
 
-- `TestSelfHostKeptCallHolderX86_64`: both shapes, pinned on the emit (`lift`
-  carries no `__struct_drop_M`, `round` no `__fern_arr_inc_elems`) and run
-  under the sanitizer against the interpreter's exit. Fails on 54ce1bf on
-  exactly those two counts.
+- `TestSelfHostKeptCallHolderX86_64`: the holder handed directly and through
+  an alias, and the closure array as a local and as a struct field, pinned on
+  the emit (`lift` carries no `__struct_drop_M`, `round` no
+  `__fern_arr_inc_elems`) and run under the sanitizer against the
+  interpreter's exit. Fails on 54ce1bf on every count, and the alias shape
+  is a use-after-free there (sanitizer exit 124).
 - `TestSelfHostConstFuncGen2`: green again; the four #9012 rows and
   `TestSelfHostSpreadCarryElemsX86_64` stay balanced; seed 301 passes;
   `TestSelfHostPerModuleEmitAllFixpointX86_64`, `make lint-all`, the

@@ -309,12 +309,6 @@
 # above is attributed to a commit; the two before it are recorded as observed,
 # not credited to a change this pass did not isolate.
 
-# Refreshed downward after preserving nested field roots in grow containment.
-# Same-source A/B measurements and the cause are recorded in
-# docs/SELFHOST-GROW-BRACKET-SIZE-2026-09-08.md. No ceiling was increased.
-# Measured after lexical capture contracts and removal of inert null cleanup.
-# Attribution: docs/SELFHOST-LEXICAL-CAPTURE-SIZE.md. Partial drivers now link
-# checked capture resolution; the whole compiler shrinks against its PR parent.
 fern.fern 11792332
 asm_load_run.fern 8572572
 asm_modload_run.fern 8186708

@@ -26001,6 +26001,10 @@ function fai_bracket_shared_root(s: LowerState, uniqslot: i32, srcslot: i32, fn:
 // every element pointer, so a copy both holders may release has to retain the
 // elements first. A scalar-element array carries no reference.
 function is_counted_elem_array_type(structs: StructTab, t: string): boolean {
+    // "fn[]" is a closure array's flat spelling, and is_enum_array_field_type
+    // would admit it: a closure element is a code address or a closure pair,
+    // never an rc-headed box (#9017).
+    if (t == "fn[]") { return false; }
     return t == "string[]" || is_struct_array_field_type(structs, t)
         || is_enum_array_field_type(structs, t) || is_nested_array_field_type(structs, t);
 }
@@ -26016,10 +26020,8 @@ function arr_expr_counted_elems(obj: ast.Expr, s: LowerState): boolean {
             var sl: i32 = s.slot_of(id.name);
             if (!s.is_arr_slot(sl)) { return false; }
             var et: string = s.struct_type_of_slot(sl);
-            // "fn" is a closure slot's spelling, and a closure element is a code
-            // address or a closure pair, never an rc-headed box (#9017).
-            if (et == "fn") { return false; }
-            return et.len() > 0 && (decl_is_struct(s.frame.structs, et) || is_enum_like_name(et, s.frame.structs));
+            if (et.len() == 0 || !(decl_is_struct(s.frame.structs, et) || is_enum_like_name(et, s.frame.structs))) { return false; }
+            return is_counted_elem_array_type(s.frame.structs, et + "[]");
         },
         ast.ExprFieldAccess(fa) => {
             var oty: string = expr_struct_type(fa.obj, s);
@@ -77550,56 +77552,89 @@ function derived_anywhere(fn: parser.FuncDecl, name: string, structs: StructTab,
 // them under that result (#9016). A call whose result is dropped, or bound to
 // a scalar, cannot carry the alias out.
 function handed_to_kept_call(body: ast.Stmt[], params: ast.ParamDecl[], name: string, structs: StructTab): boolean {
-    return kept_call_scan(body, name, decl_view_of(params, body), structs);
+    return kept_call_scan(body, holder_aliases(body, [name]), decl_view_of(params, body), structs);
+}
+// holder_aliases: `names` plus every local bound whole from one of them
+// (`var alias = name`), to a fixpoint, so a handoff through an alias is the
+// holder's handoff.
+function holder_aliases(body: ast.Stmt[], names: string[]): string[] {
+    var out: string[] = names;
+    var round: i32 = 0;
+    while (round < 8) {
+        var grown: string[] = alias_binds_in(body, out);
+        if (grown.len() == out.len()) { return out; }
+        out = grown;
+        round = round + 1;
+    }
+    return out;
+}
+function alias_binds_in(stmts: ast.Stmt[], names: string[]): string[] {
+    var out: string[] = names;
+    for stmt in stmts {
+        match (stmt) {
+            ast.StmtVar(v) => {
+                match (v.init) {
+                    ast.ExprIdent(src) => { if (util.index_of_str(out, src.name) >= 0) { out = push_str_unique(out, v.name); } },
+                    _ => {}
+                }
+            },
+            ast.StmtIf(f) => { out = alias_binds_in(f.then_body, out); out = alias_binds_in(f.else_body, out); },
+            ast.StmtWhile(w) => { out = alias_binds_in(w.body, out); },
+            ast.StmtFor(fo) => { out = alias_binds_in(fo.body, out); },
+            ast.StmtMatch(m) => { for arm in m.arms { out = alias_binds_in(arm.body, out); } },
+            _ => {}
+        }
+    }
+    return out;
 }
 // decl_view_of: a declaration-only FuncDecl over `params` and `body`, enough
 // for decl_type_in_fn; every other field is empty.
 function decl_view_of(params: ast.ParamDecl[], body: ast.Stmt[]): parser.FuncDecl {
     return parser.FuncDecl { name: "", receiver_name: "", receiver_type: "", type_params: [], params: params, ret_type: "", body: body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: false, ret_slice: false, async: false, is_const: false, is_pub: false, ret_fn_ret: "", ret_fn_param_types: "" };
 }
-function kept_call_scan(stmts: ast.Stmt[], name: string, fn: parser.FuncDecl, structs: StructTab): boolean {
+function kept_call_scan(stmts: ast.Stmt[], names: string[], fn: parser.FuncDecl, structs: StructTab): boolean {
     for stmt in stmts {
         match (stmt) {
-            ast.StmtVar(v) => { if (dor_type_can_hold(v.type_name, structs) && expr_hands_to_call(v.init, name)) { return true; } },
-            ast.StmtAssign(a) => { if (a.target != name && dor_type_can_hold(decl_type_in_fn(fn, a.target), structs) && expr_hands_to_call(a.value, name)) { return true; } },
-            ast.StmtReturn(r) => { if (expr_hands_to_call(r.value, name)) { return true; } },
-            ast.StmtIf(f) => { if (kept_call_scan(f.then_body, name, fn, structs) || kept_call_scan(f.else_body, name, fn, structs)) { return true; } },
-            ast.StmtWhile(w) => { if (kept_call_scan(w.body, name, fn, structs)) { return true; } },
-            ast.StmtFor(fo) => { if (kept_call_scan(fo.body, name, fn, structs)) { return true; } },
-            ast.StmtMatch(m) => { for arm in m.arms { if (kept_call_scan(arm.body, name, fn, structs)) { return true; } } },
+            ast.StmtVar(v) => { if (dor_type_can_hold(v.type_name, structs) && expr_hands_to_call(v.init, names)) { return true; } },
+            ast.StmtAssign(a) => { if (util.index_of_str(names, a.target) < 0 && dor_type_can_hold(decl_type_in_fn(fn, a.target), structs) && expr_hands_to_call(a.value, names)) { return true; } },
+            ast.StmtReturn(r) => { if (expr_hands_to_call(r.value, names)) { return true; } },
+            ast.StmtIf(f) => { if (kept_call_scan(f.then_body, names, fn, structs) || kept_call_scan(f.else_body, names, fn, structs)) { return true; } },
+            ast.StmtWhile(w) => { if (kept_call_scan(w.body, names, fn, structs)) { return true; } },
+            ast.StmtFor(fo) => { if (kept_call_scan(fo.body, names, fn, structs)) { return true; } },
+            ast.StmtMatch(m) => { for arm in m.arms { if (kept_call_scan(arm.body, names, fn, structs)) { return true; } } },
             _ => {}
         }
     }
     return false;
 }
-function expr_hands_to_call(e: ast.Expr, name: string): boolean {
+function expr_hands_to_call(e: ast.Expr, names: string[]): boolean {
     match (e) {
         ast.ExprCall(c) => {
             for arg in c.args {
                 match (arg) {
-                    ast.ExprIdent(id) => { if (id.name == name) { return true; } },
+                    ast.ExprIdent(id) => { if (util.index_of_str(names, id.name) >= 0) { return true; } },
                     _ => {}
                 }
-                if (expr_hands_to_call(arg, name)) { return true; }
+                if (expr_hands_to_call(arg, names)) { return true; }
             }
-            return expr_hands_to_call(c.callee, name);
+            return expr_hands_to_call(c.callee, names);
         },
-        ast.ExprBinary(b) => { return expr_hands_to_call(b.left, name) || expr_hands_to_call(b.right, name); },
-        ast.ExprUnary(u) => { return expr_hands_to_call(u.operand, name); },
-        ast.ExprIndex(ix) => { return expr_hands_to_call(ix.array, name) || expr_hands_to_call(ix.index, name); },
-        ast.ExprFieldAccess(fa) => { return expr_hands_to_call(fa.obj, name); },
+        ast.ExprBinary(b) => { return expr_hands_to_call(b.left, names) || expr_hands_to_call(b.right, names); },
+        ast.ExprUnary(u) => { return expr_hands_to_call(u.operand, names); },
+        ast.ExprIndex(ix) => { return expr_hands_to_call(ix.array, names) || expr_hands_to_call(ix.index, names); },
+        ast.ExprFieldAccess(fa) => { return expr_hands_to_call(fa.obj, names); },
         ast.ExprStructLit(sl) => {
-            if (sl.has_base && expr_hands_to_call(sl.base, name)) { return true; }
-            for fv in sl.field_values { if (expr_hands_to_call(fv, name)) { return true; } }
+            if (sl.has_base && expr_hands_to_call(sl.base, names)) { return true; }
+            for fv in sl.field_values { if (expr_hands_to_call(fv, names)) { return true; } }
             return false;
         },
         ast.ExprArray(a) => {
             var i: i32 = 0;
-            while (i < a.elements.len()) { if (expr_hands_to_call(a.elements[i], name)) { return true; } i = i + 1; }
+            while (i < a.elements.len()) { if (expr_hands_to_call(a.elements[i], names)) { return true; } i = i + 1; }
             return false;
         },
         ast.ExprTuple(t) => {
-            for el in t.elements { if (expr_hands_to_call(el, name)) { return true; } }
+            for el in t.elements { if (expr_hands_to_call(el, names)) { return true; } }
             return false;
         },
         _ => { return false; }
