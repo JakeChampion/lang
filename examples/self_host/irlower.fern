@@ -16393,10 +16393,22 @@ function lower_expr_struct_lit(slit: ast.ExprStructLit, s: LowerState): LowerSta
                     // RC-frontier slice 3). field_access_arr_field_type only
                     // admits a scalar-element OR array-of-struct field read
                     // (NOT enum-array), matching the outer struct-lit gate.
-                    ast.ExprFieldAccess(_) => {
+                    ast.ExprFieldAccess(fafa) => {
                         if (field_access_arr_field_type(fav, s) != "") {
                             fav_ok = true;
                             fav_alias_inc = !selfrebind_field_alias(fav, slit_selfrebind);
+                        }
+                        // A tuple ELEMENT (`Holder { bytes: m.0 }` over a tuple
+                        // local, or a nested element) of exactly the field's
+                        // array type: the tuple box still owns the buffer, so
+                        // the new box co-owns it through the alias-inc the
+                        // ident and field-read arms take — the tuple's reclaim
+                        // decs the element and the field drop decs it again,
+                        // both balanced by the one inc (#8774).
+                        else if (util.is_all_digits(fafa.field) && is_array_type_name(cfft)
+                            && expr_tuple_elem_tag(fafa.obj, util.digits_to_i32(fafa.field), s) == cfft) {
+                            fav_ok = true;
+                            fav_alias_inc = true;
                         }
                     },
                     // A ROW of a nested array (`G { lines: placed[0] }` over

@@ -1250,11 +1250,9 @@ pub function bre_compile_syntax(pat: string, syntax: Syntax): Bre {
     return Bre { insts: none, classes: p.classes, ngroups: 0, nmarks: 0, backref: false, err: c.err, newline_anchor: syntax.newline_anchor, first: none_first, empty_ok: true, pre: "", pre_bol: false, pre_eol: false, literal: false };
   }
   var fm: (u8[], boolean) = fastmap(c.insts, p.classes);
-  var first: u8[] = fm.0;
-  var empty_ok: boolean = fm.1;
   var pre: (string, boolean, i32) = prefix_scan(c.insts);
   var tail: (boolean, boolean) = literal_tail(c.insts, pre.2);
-  return Bre { insts: c.insts, classes: p.classes, ngroups: p.ngroups, nmarks: c.nmarks, backref: has_backref(p.nodes), err: "", newline_anchor: syntax.newline_anchor, first: first, empty_ok: empty_ok, pre: pre.0, pre_bol: pre.1, pre_eol: tail.0, literal: tail.1 };
+  return Bre { insts: c.insts, classes: p.classes, ngroups: p.ngroups, nmarks: c.nmarks, backref: has_backref(p.nodes), err: "", newline_anchor: syntax.newline_anchor, first: fm.0, empty_ok: fm.1, pre: pre.0, pre_bol: pre.1, pre_eol: tail.0, literal: tail.1 };
 }
 
 // ---- the fastmap -----------------------------------------------------------
