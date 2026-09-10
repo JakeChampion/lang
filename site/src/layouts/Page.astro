@@ -1,0 +1,172 @@
+---
+/**
+ * Page — the shell for the bespoke pages that sit outside Starlight's
+ * `[...slug]` route (today: the landing page).
+ *
+ * Starlight owns everything under the docs collection and brings its own
+ * header, sidebar and search. The landing page deliberately has none of
+ * those, so it needs its own `<html>`. The one thing it must NOT have of
+ * its own is a second theme mechanism: the toggle here writes exactly the
+ * key and attribute Starlight's ThemeProvider reads
+ * (`localStorage["starlight-theme"]`, `documentElement.dataset.theme`), so
+ * a reader who picks light on the landing page stays in light when they
+ * click through to the docs, and vice versa.
+ */
+import "../styles/tokens.css";
+import "../styles/fonts.css";
+import "../styles/landing.css";
+
+interface Props {
+  title: string;
+  description: string;
+  /** Absolute URL of the social card. */
+  ogImage: string;
+}
+
+const { title, description, ogImage } = Astro.props;
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+const href = (path: string) => `${base}/${path.replace(/^\//, "")}`;
+
+const nav = [
+  { label: "Docs", href: href("tutorial/install/") },
+  { label: "Reference", href: href("reference/syntax/") },
+  { label: "Stdlib", href: href("stdlib/") },
+  { label: "Status", href: href("status/") },
+  { label: "Playground", href: href("playground/") },
+];
+---
+
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <link rel="canonical" href={new URL(Astro.url.pathname, Astro.site)} />
+    <link rel="icon" href={href("favicon.svg")} type="image/svg+xml" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Fern" />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:image" content={ogImage} />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:image" content={ogImage} />
+    <meta name="theme-color" content="#0c1512" />
+
+    {/* Inlined and render-blocking on purpose: the ground colour has to be
+        settled before first paint or a light-mode reader gets a black
+        flash. Mirrors Starlight's own ThemeProvider logic. */}
+    <script is:inline>
+      (() => {
+        let stored;
+        try {
+          stored = localStorage.getItem("starlight-theme");
+        } catch {}
+        const theme =
+          stored === "light" || stored === "dark"
+            ? stored
+            : matchMedia("(prefers-color-scheme: light)").matches
+              ? "light"
+              : "dark";
+        document.documentElement.dataset.theme = theme;
+      })();
+    </script>
+  </head>
+
+  <body>
+    <a class="skip" href="#main">Skip to content</a>
+
+    <header class="masthead">
+      <a class="masthead__mark" href={href("/")}>
+        <svg viewBox="0 0 32 32" aria-hidden="true" width="26" height="26">
+          <g
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.5"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <path d="M6 29 C 9 22, 13 14, 18 9 C 21 6, 24 6, 25 8"></path>
+            <path d="M7.6 25 C 4.5 24, 3 21.5, 3.2 18.8"></path>
+            <path d="M9.6 21 C 7 20, 5.7 17.8, 6 15.4"></path>
+            <path d="M11.8 17 C 9.6 16.2, 8.6 14.3, 9 12.2"></path>
+            <path d="M9.4 23 C 12.5 22, 14 19.5, 13.8 16.8"></path>
+            <path d="M11.4 19 C 14 18, 15.3 15.8, 15 13.4"></path>
+          </g>
+        </svg>
+        <span>Fern</span>
+      </a>
+
+      <nav class="masthead__nav" aria-label="Main">
+        {nav.map((item) => <a href={item.href}>{item.label}</a>)}
+        <a
+          href="https://github.com/JakeChampion/lang"
+          rel="noopener"
+          class="masthead__gh">GitHub</a
+        >
+      </nav>
+
+      <button
+        class="masthead__theme"
+        type="button"
+        data-theme-toggle
+        aria-label="Toggle colour theme"
+      >
+        <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+          <g
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.8"
+            stroke-linecap="round"
+          >
+            <circle class="theme-sun" cx="12" cy="12" r="4.2"></circle>
+            <path
+              class="theme-sun"
+              d="M12 2.6v2.2M12 19.2v2.2M2.6 12h2.2M19.2 12h2.2M5.3 5.3l1.6 1.6M17.1 17.1l1.6 1.6M18.7 5.3l-1.6 1.6M6.9 17.1l-1.6 1.6"
+            ></path>
+            <path
+              class="theme-moon"
+              d="M20 13.4A8.2 8.2 0 1 1 10.6 4a6.6 6.6 0 0 0 9.4 9.4Z"
+            ></path>
+          </g>
+        </svg>
+      </button>
+    </header>
+
+    <main id="main">
+      <slot />
+    </main>
+
+    <footer class="colophon">
+      <div class="colophon__inner">
+        <p class="fern-tag">Fern · pre-1.0 · nightly channel</p>
+        <nav aria-label="Footer">
+          <a href={href("tutorial/install/")}>Install</a>
+          <a href={href("why/")}>Why Fern</a>
+          <a href={href("status/")}>Status</a>
+          <a href={href("contributing/")}>Contributing</a>
+          <a href="https://github.com/JakeChampion/lang" rel="noopener">Source</a
+          >
+        </nav>
+      </div>
+    </footer>
+
+    <script is:inline>
+      document
+        .querySelector("[data-theme-toggle]")
+        ?.addEventListener("click", () => {
+          const root = document.documentElement;
+          const next = root.dataset.theme === "light" ? "dark" : "light";
+          root.dataset.theme = next;
+          try {
+            localStorage.setItem("starlight-theme", next);
+          } catch {}
+        });
+    </script>
+  </body>
+</html>

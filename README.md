@@ -4,14 +4,25 @@
 ([tutorial](https://jakechampion.github.io/lang/tutorial/install/) ·
 [reference](https://jakechampion.github.io/lang/reference/syntax/) ·
 [standard library](https://jakechampion.github.io/lang/stdlib/) ·
+[compiler internals](https://jakechampion.github.io/lang/compiler/) ·
+[project status](https://jakechampion.github.io/lang/status/) ·
 [playground](https://jakechampion.github.io/lang/playground/))
 
-Fern is a small statically-typed, general-purpose language with several
-backends, written in Go. It grew up around two workloads it's especially
-good at — fast-startup CLI tools and short-lived edge-function HTTP
-servers — and is broadening out from there into a language you can reach
-for generally, including long-running programs (its own self-hosted
-compiler among them). Targets so far:
+Fern is a statically-typed, general-purpose language with no garbage
+collector and no borrow checker: memory is Perceus-style reference counted,
+most of the counting is elided at compile time, and reference cycles are not
+expressible, so nothing is left for a collector to do.
+
+The compiler assembles **and links** in-process — no gcc, no ld, no libc, no
+`wasm-tools` — and exists twice over: `internal/` is the Go implementation
+you get from `go install`, and `examples/self_host/` is 222,000 lines of
+Fern that compiles itself and bootstraps with no Go present
+(`docs/BOOTSTRAP.md`, `docs/NATIVE-CONVERGENCE.md`).
+
+It grew up around two workloads it's especially good at — fast-startup CLI
+tools and short-lived edge-function HTTP servers — and has broadened out
+into a language to reach for generally, including long-running programs
+(its own compiler among them). Targets so far:
 
 - **ARM64 / aarch64** Linux ELF — the **default** target (Raspberry Pi 4+,
   AWS Graviton, Android, qemu-aarch64). Assembled and linked **in-process**
@@ -42,7 +53,7 @@ independently in idiomatic Go — no source from the book was copied.
 
 ## Install
 
-Three ways to get `fern`, easiest first (see the
+Four ways to get `fern`, easiest first (see the
 [install guide](https://jakechampion.github.io/lang/tutorial/install/)
 for details):
 
@@ -119,8 +130,8 @@ wasmtime run factorial.wasm
 To opt out to an external assembler/linker, pass `-cc` (e.g. `-cc
 aarch64-linux-gnu-gcc` on Linux, `-cc clang` on Darwin).
 
-The formatter re-emits from the parsed tree, so `//` comments and blank lines
-are dropped; format → parse → format is byte-stable.
+The formatter re-emits from the parsed tree, keeping `//` comments in place;
+format → parse → format is byte-stable.
 
 A `.fern.md` file is a Markdown document whose `fern` code chunks (`<<name>>=`)
 are reassembled — *tangled* — from the root chunk `<<*>>` into a compilable
@@ -195,9 +206,9 @@ Supported:
 - Statements: `if` / `else`, `while`, `for(init; cond; step)`,
   `for x in arr / "string"`, `match` (pattern dispatch, incl. literal
   arms), `return`, `break`, `continue`, blocks, expression statements.
-- Types: sized integers `i8` / `i16` / `i32` / `i64` / `u8` / `u16` /
-  `u32` / `u64` plus `usize` (target-aware native pointer width; `i32`
-  is the default literal type), `boolean`, `void`, `f32` / `f64`
+- Types: sized integers `i32` / `i64` / `u8` / `u32` / `u64` plus
+  `usize` (target-aware native pointer width; `i32` is the default
+  literal type), `boolean`, `void`, `f32` / `f64`
   (IEEE), `string`, owned arrays (`i32[]`), non-owning slice views
   (`[i32]`), tuples (`(i32, string)`), `Map[K, V]`, nominal structs,
   generic structs/enums, and function types (`(T, U) => V`).
@@ -262,15 +273,19 @@ collapses to a single `const.i32 27 ; return` after the pipeline.
 **ARM64**: standard AAPCS64, libc-free — linked in-process by the native
 backend on Linux (or `gcc -static -nostdlib` via `-cc`; `clang -nostdlib`
 on Darwin), with our own `_start` that sets up
-argc/argv/envp and the bump heap before calling `main`. I/O bottoms out in
-direct syscalls. Heap-backed values come from `__fern_alloc`, a bump arena
-over a 64 MiB mmap region with no per-allocation header and no `free`; strings
-carry a 4-byte little-endian length prefix at `ptr - 4` (plus a trailing NUL).
+argc/argv/envp and the heap before calling `main`. I/O bottoms out in
+direct syscalls. Heap-backed values come from `__fern_alloc`, which bumps
+through a 16 GiB `MAP_NORESERVE` reservation backed by a segregated freelist
+that `__fern_free` returns blocks to — memory IS reclaimed (see
+`docs/ARENA-DECISION.md`; the older arena-and-forget allocator was replaced
+by reference counting in June 2026). Each block carries a reference count at
+`ptr - 8`; strings carry a 4-byte little-endian length prefix at `ptr - 4`
+(plus a trailing NUL), and arrays a capacity at `ptr - 12`.
 
 **WASM**: standard WASM calling convention. A `funcref` table holds every
 function referenced as a value; closures are `{fn_idx, env_ptr}` 8-byte heap
-pairs, and arrays / strings / structs share the same length-prefixed
-bump-allocated layout as ARM64.
+pairs, and arrays / strings / structs share the same length-prefixed,
+reference-counted layout as ARM64.
 
 ## Repository layout
 

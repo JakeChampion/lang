@@ -1,28 +1,29 @@
 // Astro + Starlight config for the Fern documentation site.
 //
 // Site lives at the repo root URL (https://<user>.github.io/lang/)
-// with the playground bundle nested at /playground/ — keeps the
-// canonical landing URL on docs (standard for a language project)
-// without breaking any existing playground deep links.
+// with the playground bundle nested at /playground/.
 //
-// Three top-level sections in the sidebar:
-//   - Tutorial: narrative learn-the-language pages, ordered.
-//   - Reference: syntax + types + tooling.
-//   - Stdlib: auto-generated from internal/stdlib/*.fern by
-//     `cmd/ferndoc`; pages exist under src/content/docs/stdlib/
-//     after that build step, and `stdlibSidebar()` groups whatever
-//     it finds there by purpose. A clean checkout where ferndoc
-//     hasn't run keeps the section, with just its overview link.
+// This file configures the DOCS half of the site. `/` is a bespoke
+// page outside the docs collection (src/pages/index.astro), which
+// takes that route because a static route outranks `[...slug]`.
+//
+// The sidebar's `sidebar:` key below is the map of the docs. One
+// section is not written by hand: Stdlib is auto-generated from
+// internal/stdlib/**/*.fern by `cmd/ferndoc`, and `stdlibSidebar()`
+// groups whatever pages it finds by purpose. A clean checkout where
+// ferndoc hasn't run keeps the section, with just its overview link.
 //
 // `base` is set so the site works under GitHub Pages' project
 // subpath (https://<user>.github.io/lang/) without absolute-URL
 // breakage; override via `SITE_BASE` env if deploying elsewhere.
 
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 import { defineConfig } from "astro/config";
 import starlight from "@astrojs/starlight";
+
+import { fernGrammar, CODE_THEMES } from "./src/lib/grammar.mjs";
 
 const base = process.env.SITE_BASE ?? "/lang";
 const siteUrl = process.env.SITE_URL ?? "https://jakechampion.github.io";
@@ -31,7 +32,7 @@ const siteUrl = process.env.SITE_URL ?? "https://jakechampion.github.io";
 // card, and Starlight's own `description` — so search results, chat
 // unfurls, and the site itself all say the same thing.
 const tagline =
-  "Fern is a small statically typed language that compiles to a fast standalone binary — or to WebAssembly, from the same source. No runtime, no garbage collector, nothing else to install.";
+  "Fern is a statically typed language with no garbage collector and no borrow checker. Its compiler assembles and links binaries in one process — no gcc, no ld — targets arm64, x86-64 and WebAssembly, and is written in Fern.";
 
 // Social-card image. Crawlers won't resolve a relative URL, so this has to
 // be absolute — built from the same two vars the rest of the site's URLs
@@ -40,11 +41,6 @@ const tagline =
 // `npm run og` from src/assets/og-card.svg.
 const ogImage = `${siteUrl.replace(/\/$/, "")}${base.replace(/\/$/, "")}/og.png`;
 
-// Load the real Fern TextMate grammar (the same one the VS Code
-// extension ships) so ```fern code fences highlight as actual Fern
-// rather than borrowing TypeScript's grammar. Read from the repo
-// source so the grammar has a single source of truth — editing the
-// extension's grammar updates the docs colours too.
 // Standard-library sidebar, grouped by what a module is for.
 // `autogenerate` gives one flat alphabetical run of ~70 pages, which is
 // a list to scroll rather than a thing to browse. Membership is keyed by
@@ -107,18 +103,6 @@ function stdlibSidebar() {
   return items;
 }
 
-const fernGrammar = JSON.parse(
-  readFileSync(
-    fileURLToPath(
-      new URL(
-        "../editors/vscode/syntaxes/fern.tmLanguage.json",
-        import.meta.url,
-      ),
-    ),
-    "utf8",
-  ),
-);
-
 export default defineConfig({
   site: siteUrl,
   base,
@@ -173,11 +157,14 @@ export default defineConfig({
         },
         {
           tag: "meta",
-          attrs: { name: "theme-color", content: "#143026" },
+          attrs: { name: "theme-color", content: "#0c1512" },
         },
       ],
-      // Register Fern's own TextMate grammar (loaded above) so ```fern
-      // fences get language-accurate highlighting — method receivers,
+      // Register Fern's own TextMate grammar — the one the VS Code
+      // extension ships, imported from src/lib/grammar.mjs so the docs,
+      // the landing page and the editor all colour from one file — so
+      // ```fern fences highlight as actual Fern rather than borrowing
+      // TypeScript's grammar: method receivers,
       // `match`, sized integer types, generics, f-strings, and the
       // pipe operator all colour correctly instead of being approximated
       // by TypeScript's grammar.
@@ -185,6 +172,9 @@ export default defineConfig({
         shiki: {
           langs: [fernGrammar],
         },
+        // The same theme pair the landing page's plain-Shiki blocks use,
+        // so a snippet looks identical on either side of the site.
+        themes: [CODE_THEMES.dark, CODE_THEMES.light],
         // Match the site's own chrome: the same hairline radius the
         // specimen panels use, and code set in IBM Plex Mono via the
         // shared `--sl-font-mono` token rather than a second stack.
@@ -204,9 +194,31 @@ export default defineConfig({
           href: "https://github.com/JakeChampion/lang",
         },
       ],
+      // Eight groups, in the order someone meets them: decide whether you
+      // want it, learn it, look things up, then read how it is built. The
+      // landing page at `/` is not in the docs collection (see
+      // src/pages/index.astro) so it has no entry here; Starlight's site
+      // title links to it.
+      //
+      // A label may appear only ONCE across the whole tree — the docs test
+      // suite matches sidebar entries by exact text, so a second "Install"
+      // would make those matches ambiguous.
       sidebar: [
-        { label: "Overview", link: "/" },
-        { label: "Why Fern", link: "/why/" },
+        {
+          label: "Start here",
+          items: [
+            { label: "Why Fern", link: "/why/" },
+            { label: "Project status", link: "/status/" },
+            {
+              // Bare `/playground/` — Starlight prepends `base` to
+              // absolute sidebar links automatically, so don't double-
+              // prefix it here; `${base}` produced `/lang/lang/playground/`.
+              label: "Playground",
+              link: "/playground/",
+              attrs: { target: "_blank" },
+            },
+          ],
+        },
         // Starlight 0.39 removed the `{label, autogenerate}`
         // shorthand — groups now wrap autogenerate inside their
         // items list. Same end result; one extra layer.
@@ -216,24 +228,23 @@ export default defineConfig({
         },
         { label: "Cookbook", link: "/cookbook/" },
         {
-          label: "Reference",
+          label: "Language reference",
           items: [{ autogenerate: { directory: "reference" } }],
         },
         {
           label: "Standard library",
           items: stdlibSidebar(),
         },
-        { label: "Releases", link: "/releases/" },
-        { label: "Contributing", link: "/contributing/" },
         {
-          label: "Playground",
-          // Bare `/playground/` — Starlight prepends `base` to
-          // absolute sidebar links automatically, so don't double-
-          // prefix it here. (CI's lychee link-check caught the
-          // `/lang/lang/playground/` shape the previous `${base}`
-          // produced.)
-          link: "/playground/",
-          attrs: { target: "_blank" },
+          label: "The compiler",
+          items: [{ autogenerate: { directory: "compiler" } }],
+        },
+        {
+          label: "Project",
+          items: [
+            { label: "Releases", link: "/releases/" },
+            { label: "Contributing", link: "/contributing/" },
+          ],
         },
       ],
       // fonts.css first: the @font-face rules it generates are what
@@ -241,7 +252,12 @@ export default defineConfig({
       // resolve to. Both are bundled into the same stylesheet, so this is
       // one request rather than the three (two preconnects + a
       // cross-origin stylesheet) the Google Fonts link used to cost.
-      customCss: ["./src/styles/fonts.css", "./src/styles/fern.css"],
+      customCss: [
+        "./src/styles/tokens.css",
+        "./src/styles/fonts.css",
+        "./src/styles/fern.css",
+        "./src/styles/embed.css",
+      ],
       lastUpdated: true,
       editLink: {
         baseUrl:

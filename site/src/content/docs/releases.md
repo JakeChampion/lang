@@ -5,10 +5,15 @@ description: How Fern ships — the nightly channel, what stability to expect be
 
 ## The nightly *is* the release channel
 
-Every push to `main` publishes a rolling [**nightly
-release**][nightly] with prebuilt binaries for Linux x86-64, Linux arm64
-and macOS arm64. There is no tagged stable version yet, and no `latest`
-that lags behind it — the nightly is what there is.
+A rolling [**nightly release**][nightly] is built once a day, at 06:00
+UTC, from whatever `main` is at that moment. It carries prebuilt binaries
+for Linux x86-64, Linux arm64 and macOS arm64, each with a `.sha256`
+sidecar. There is no tagged stable version yet, and no `latest` that lags
+behind it — the nightly is what there is.
+
+Because it is a daily build rather than a per-merge one, a fix that landed
+this morning may not be in the nightly until tomorrow. Building from a
+checkout is the way to get ahead of it.
 
 Installing or updating is the same command either way; see the
 [install guide](../tutorial/install/).
@@ -19,16 +24,21 @@ Installing or updating is the same command either way; see the
   between nightlies, sometimes without a deprecation period.
 - **No semantic versioning yet.** The nightly tag is reused, so "which
   nightly" is a date, not a number.
+- **No deprecation window.** When a construct is replaced, the old one is
+  deleted rather than left working alongside it. That is deliberate: the
+  project treats keeping both paths alive as the more expensive mistake.
 - **The language is in use, though.** Fern's own compiler is written in
-  Fern and rebuilt from `main` continuously, so a change that breaks
-  real programs tends to be caught by the largest Fern program there is.
+  Fern and rebuilt from `main` continuously, so a change that breaks real
+  programs tends to be caught by the largest Fern program there is — and
+  57 GNU coreutils reimplemented in Fern are held to byte-for-byte parity
+  with the originals on every run.
 
 ## Which build do I have?
 
 ```bash
 $ fern -version
-fern be167834e1b8 (2026-08-04T13:06:07Z)
-built with go1.24.7 for linux/amd64
+fern be167834e1b8 (2026-09-10T13:06:07Z)
+built with go1.26.8 for linux/amd64
 ```
 
 Because the tag rolls, the commit is the answer — quote that line in a

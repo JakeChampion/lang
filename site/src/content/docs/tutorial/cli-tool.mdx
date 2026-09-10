@@ -61,10 +61,16 @@ stack.
 
 ## Parsing flags
 
-There's no argument-parsing framework — and for small tools you don't
-need one. Walk `argv` yourself. The pattern below recognises bundled
-single-character flags (`-in` is `-i` plus `-n`), the standard shape for
-classic tools.
+For anything with more than a couple of options, reach for
+[`std/cli`](../../stdlib/cli/): you describe the options once and it
+parses `--opt V`, `--opt=V`, `-o V`, bare flags, positionals and the `--`
+terminator, with `--help` generated from the same description. The
+[cookbook](../../cookbook/) has a worked example.
+
+Below we do it by hand instead, because it is worth seeing once and
+because `grep` is small enough not to need the library. The pattern
+recognises bundled single-character flags (`-in` is `-i` plus `-n`), the
+standard shape for classic tools.
 
 We'll collect the recognised flags into a small `struct` and use the
 `{ ...o, field: value }` spread-update form to flip one field
@@ -196,13 +202,18 @@ in a shell loop.
 
 ## Where to go from here
 
-- The repository's [`examples/cli/`][cli] directory has full, idiomatic
-  reimplementations of `cat`, `wc`, `head`, `tail`, `sort`, `cut`, `tr`,
+- The repository's [`examples/cli/`][cli] directory has compact,
+  idiomatic versions of `cat`, `wc`, `head`, `tail`, `sort`, `cut`, `tr`
   and more — each a single self-contained `.fern` file.
+- [`coreutils/`][coreutils] goes considerably further: 57 GNU utilities
+  reimplemented in Fern and held to byte-for-byte parity with the
+  originals — every flag, every error message, every exit code. It is the
+  best available answer to "does this language actually work".
 - The [Standard library reference](../../stdlib/) documents `std/string`,
   `std/io`, `std/sort`, and the rest of the toolbox.
 - Ready for the other use case? [Build an HTTP handler →](../http-server/)
 
 [cli]: https://github.com/JakeChampion/lang/tree/main/examples/cli
+[coreutils]: https://github.com/JakeChampion/lang/tree/main/coreutils
 
 [Next: Build an HTTP handler →](../http-server/)

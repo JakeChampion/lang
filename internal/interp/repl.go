@@ -25,7 +25,7 @@ func REPL(in io.Reader, out io.Writer) error {
 	i := New()
 	i.Stdout = out
 	s := bufio.NewScanner(in)
-	fmt.Fprintln(out, "lang REPL — Ctrl+D to exit")
+	fmt.Fprintln(out, "Fern REPL — Ctrl+D to exit")
 	for {
 		fmt.Fprint(out, "> ")
 		if !s.Scan() {

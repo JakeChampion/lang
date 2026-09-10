@@ -1,0 +1,963 @@
+/* Landing page — the herbarium sheet.
+ *
+ * The page is a stack of numbered plates on one ground. Each plate has a
+ * mono index in the margin, a hairline above it, and a specimen: code,
+ * a diagram, a table of measurements. Nothing is a card with a shadow;
+ * the structure is rules and space.
+ *
+ * Sections, in order: shell + masthead, hero, plates, specimens (code,
+ * pipeline, measurements), colophon, motion.
+ */
+
+@import "./embed.css";
+
+/* ---------------------------------------------------------------- *
+ * Ground
+ * ---------------------------------------------------------------- */
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--fern-bg);
+  color: var(--fern-ink);
+  font-family: var(--fern-font-body);
+  font-size: 1rem;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: var(--fern-frond);
+}
+
+p {
+  margin: 0 0 1rem;
+}
+
+.skip {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  padding: 0.6rem 1rem;
+  background: var(--fern-bg-panel);
+  color: var(--fern-ink);
+  z-index: 10;
+}
+
+.skip:focus {
+  left: 0;
+}
+
+:focus-visible {
+  outline: 2px solid var(--fern-spore);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+.shell {
+  width: 100%;
+  max-width: 72rem;
+  margin-inline: auto;
+  padding-inline: clamp(1rem, 4vw, 2.5rem);
+}
+
+.prose {
+  max-width: 44rem;
+}
+
+/* ---------------------------------------------------------------- *
+ * Masthead
+ * ---------------------------------------------------------------- */
+
+.masthead {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: clamp(0.75rem, 3vw, 2rem);
+  padding: 0.7rem clamp(1rem, 4vw, 2.5rem);
+  border-bottom: 1px solid var(--fern-line);
+  background: color-mix(in oklab, var(--fern-bg) 88%, transparent);
+  backdrop-filter: blur(10px);
+}
+
+.masthead__mark {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--fern-frond);
+  text-decoration: none;
+  font-family: var(--fern-font-display);
+  font-variation-settings: var(--fern-axes-title);
+  font-size: 1.2rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.masthead__mark span {
+  color: var(--fern-ink);
+}
+
+.masthead__nav {
+  display: flex;
+  align-items: center;
+  gap: clamp(0.6rem, 2.2vw, 1.5rem);
+  margin-inline-start: auto;
+  font-family: var(--fern-font-mono);
+  font-size: 0.78rem;
+  letter-spacing: 0.02em;
+}
+
+.masthead__nav a {
+  color: var(--fern-ink-muted);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.masthead__nav a:hover {
+  color: var(--fern-ink);
+}
+
+.masthead__gh {
+  padding: 0.25rem 0.6rem;
+  border: 1px solid var(--fern-line-strong);
+  border-radius: 0.35rem;
+}
+
+.masthead__theme {
+  display: inline-grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  border: 1px solid var(--fern-line-strong);
+  border-radius: 0.35rem;
+  background: none;
+  color: var(--fern-ink-muted);
+  cursor: pointer;
+}
+
+.masthead__theme:hover {
+  color: var(--fern-ink);
+  border-color: var(--fern-frond);
+}
+
+/* One icon, two halves: the sun shows on the dark ground (click for
+ * light) and the moon on the light one. */
+:root .theme-moon,
+:root[data-theme="light"] .theme-sun {
+  display: none;
+}
+
+:root[data-theme="light"] .theme-moon {
+  display: initial;
+}
+
+@media (max-width: 46rem) {
+  .masthead__nav a:nth-child(n + 3):not(.masthead__gh) {
+    display: none;
+  }
+}
+
+/* ---------------------------------------------------------------- *
+ * Hero
+ * ---------------------------------------------------------------- */
+
+.hero {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  border-bottom: 1px solid var(--fern-line);
+}
+
+/* Atmosphere: two washes and a fine grain, masked on every side so no
+ * edge of the decorative layer is ever visible as a rectangle. */
+.hero::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -2;
+  pointer-events: none;
+  background-image:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)' opacity='0.35'/%3E%3C/svg%3E"),
+    radial-gradient(
+      68% 85% at 12% 18%,
+      color-mix(in oklab, var(--fern-frond) 18%, transparent),
+      transparent 70%
+    ),
+    radial-gradient(
+      52% 70% at 88% 88%,
+      color-mix(in oklab, var(--fern-spore) 12%, transparent),
+      transparent 70%
+    );
+  background-blend-mode: soft-light, normal, normal;
+  mask-image:
+    linear-gradient(to bottom, black 60%, transparent),
+    linear-gradient(to right, transparent, black 15%, black 85%, transparent);
+  mask-composite: intersect;
+}
+
+/* The pressed specimen, bled off the right edge. Decorative only; it is
+ * hidden below the two-column breakpoint rather than shrunk, because a
+ * small frond reads as a smudge. */
+.hero__frond {
+  position: absolute;
+  z-index: -1;
+  right: clamp(0.5rem, 3vw, 3.5rem);
+  top: 50%;
+  translate: 0 -50%;
+  rotate: 6deg;
+  width: min(30rem, 42%);
+  color: var(--fern-frond);
+  opacity: 0.3;
+  pointer-events: none;
+}
+
+@media (max-width: 60rem) {
+  .hero__frond {
+    display: none;
+  }
+}
+
+.hero__inner {
+  padding-block: clamp(3.5rem, 11vmin, 7rem);
+}
+
+.hero__eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 1.4rem;
+}
+
+.hero__eyebrow::after {
+  content: "";
+  flex: 0 1 6rem;
+  height: 1px;
+  background: var(--fern-spore);
+}
+
+.hero h1 {
+  margin: 0;
+  font-family: var(--fern-font-display);
+  font-variation-settings: var(--fern-axes-display);
+  font-weight: 600;
+  font-size: clamp(3.5rem, 12vw, 7rem);
+  line-height: 0.92;
+  letter-spacing: -0.035em;
+}
+
+.hero__claim {
+  margin: 1.2rem 0 0;
+  font-family: var(--fern-font-display);
+  font-variation-settings: var(--fern-axes-title);
+  font-size: clamp(1.5rem, 4.2vw, 2.35rem);
+  font-weight: 600;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  text-wrap: balance;
+}
+
+/* Three deliberate lines rather than a wrapped paragraph: the claim is a
+ * list of three absences and reads as one. */
+.hero__claim span {
+  display: block;
+}
+
+.hero__claim em {
+  font-style: normal;
+  color: var(--fern-frond);
+}
+
+.hero__lede {
+  max-width: 48ch;
+  margin-top: 1.1rem;
+  font-size: clamp(1rem, 1.6vw, 1.12rem);
+  color: var(--fern-ink-muted);
+}
+
+.hero__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 2rem;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.62rem 1.1rem;
+  border: 1px solid var(--fern-line-strong);
+  border-radius: 0.4rem;
+  font-family: var(--fern-font-mono);
+  font-size: 0.85rem;
+  text-decoration: none;
+  color: var(--fern-ink);
+  transition:
+    transform 0.18s var(--fern-ease),
+    border-color 0.18s var(--fern-ease),
+    background 0.18s var(--fern-ease);
+}
+
+.btn:hover {
+  transform: translateY(-2px);
+  border-color: var(--fern-frond);
+}
+
+.btn--primary {
+  background: var(--fern-frond);
+  border-color: var(--fern-frond);
+  color: var(--fern-bg);
+  font-weight: 600;
+}
+
+.btn--primary:hover {
+  background: var(--fern-frond-bright);
+  border-color: var(--fern-frond-bright);
+}
+
+/* ---------------------------------------------------------------- *
+ * Command line
+ * ---------------------------------------------------------------- */
+
+.cmd {
+  margin-top: 2.2rem;
+  max-width: 40rem;
+  border: 1px solid var(--fern-line);
+  border-radius: var(--fern-radius);
+  background: var(--fern-bg-sunken);
+  overflow: hidden;
+}
+
+.cmd__head {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.45rem 0.8rem;
+  border-bottom: 1px solid var(--fern-line);
+  background: var(--fern-bg-raised);
+}
+
+.cmd__line {
+  display: flex;
+  gap: 0.6rem;
+  padding: 0.6rem 0.85rem;
+  font-family: var(--fern-font-mono);
+  font-size: 0.82rem;
+  line-height: 1.55;
+  overflow-x: auto;
+}
+
+.cmd__line + .cmd__line {
+  border-top: 1px solid color-mix(in oklab, var(--fern-line) 60%, transparent);
+}
+
+.cmd__prompt {
+  color: var(--fern-spore);
+  user-select: none;
+}
+
+.cmd__note {
+  padding: 0.5rem 0.85rem 0.7rem;
+  font-size: 0.82rem;
+  color: var(--fern-ink-faint);
+}
+
+.cmd__note p {
+  margin: 0;
+}
+
+/* ---------------------------------------------------------------- *
+ * Stat strip — the hard numbers, directly under the hero
+ * ---------------------------------------------------------------- */
+
+.stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: 1px;
+  margin: 0;
+  background: var(--fern-line);
+  border-bottom: 1px solid var(--fern-line);
+}
+
+.stats > div {
+  padding: 1.4rem clamp(1rem, 3vw, 1.8rem);
+  background: var(--fern-bg);
+}
+
+.stats dt {
+  font-family: var(--fern-font-mono);
+  font-size: 0.66rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.13em;
+  color: var(--fern-ink-faint);
+}
+
+.stats dd {
+  margin: 0.35rem 0 0;
+  font-family: var(--fern-font-display);
+  font-variation-settings: var(--fern-axes-title);
+  font-size: clamp(1.6rem, 3.2vw, 2.1rem);
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: -0.02em;
+}
+
+.stats dd small {
+  display: block;
+  margin-top: 0.4rem;
+  font-family: var(--fern-font-body);
+  font-size: 0.8rem;
+  font-weight: 400;
+  line-height: 1.45;
+  letter-spacing: 0;
+  color: var(--fern-ink-muted);
+}
+
+/* ---------------------------------------------------------------- *
+ * Plates — the numbered sections
+ * ---------------------------------------------------------------- */
+
+.plate {
+  border-bottom: 1px solid var(--fern-line);
+}
+
+.plate__inner {
+  padding-block: var(--fern-section);
+}
+
+.plate__head {
+  display: grid;
+  gap: 0.4rem 2rem;
+  margin-bottom: 2.5rem;
+}
+
+@media (min-width: 60rem) {
+  .plate__head {
+    grid-template-columns: 5rem 1fr;
+  }
+
+  .plate__num {
+    grid-row: span 3;
+    padding-top: 0.6rem;
+  }
+}
+
+.plate__num {
+  font-family: var(--fern-font-mono);
+  font-size: 0.72rem;
+  font-weight: 500;
+  letter-spacing: 0.16em;
+  color: var(--fern-spore);
+}
+
+.plate h2 {
+  margin: 0;
+  font-family: var(--fern-font-display);
+  font-variation-settings: var(--fern-axes-title);
+  font-size: clamp(1.85rem, 4.4vw, 2.75rem);
+  font-weight: 600;
+  line-height: 1.08;
+  letter-spacing: -0.025em;
+  text-wrap: balance;
+}
+
+.plate__sub {
+  max-width: 58ch;
+  margin: 0.9rem 0 0;
+  font-size: 1.05rem;
+  color: var(--fern-ink-muted);
+}
+
+.plate h3 {
+  margin: 0 0 0.5rem;
+  font-family: var(--fern-font-display);
+  font-variation-settings: var(--fern-axes-title);
+  font-size: 1.2rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.plate--sunken {
+  background: var(--fern-bg-raised);
+}
+
+/* ---------------------------------------------------------------- *
+ * Two-column: prose beside a specimen
+ * ---------------------------------------------------------------- */
+
+.split {
+  display: grid;
+  gap: clamp(1.75rem, 4vw, 3rem);
+  align-items: start;
+}
+
+@media (min-width: 62rem) {
+  .split {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
+  }
+
+  .split--wide-first {
+    grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+  }
+}
+
+.split p:last-child {
+  margin-bottom: 0;
+}
+
+/* ---------------------------------------------------------------- *
+ * Code specimen
+ * ---------------------------------------------------------------- */
+
+.specimen {
+  border: 1px solid var(--fern-line);
+  border-radius: var(--fern-radius);
+  background: var(--fern-bg-sunken);
+  overflow: hidden;
+}
+
+.specimen__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.5rem 0.85rem;
+  border-bottom: 1px solid var(--fern-line);
+  background: var(--fern-bg-raised);
+}
+
+.specimen pre {
+  margin: 0;
+  padding: 1rem 1.1rem;
+  overflow-x: auto;
+  font-size: 0.82rem;
+  line-height: 1.65;
+  background: transparent !important;
+}
+
+.specimen code {
+  font-family: var(--fern-font-mono);
+}
+
+/* Shiki is asked for both themes at once; the light one is the default
+ * inline colour and the dark one rides along in `--shiki-dark`. Swap on
+ * the attribute rather than a media query so the toggle wins. */
+:root:not([data-theme="light"]) .astro-code,
+:root:not([data-theme="light"]) .astro-code span {
+  color: var(--shiki-dark) !important;
+  font-style: var(--shiki-dark-font-style) !important;
+  font-weight: var(--shiki-dark-font-weight) !important;
+  text-decoration: var(--shiki-dark-text-decoration) !important;
+}
+
+/* ---------------------------------------------------------------- *
+ * Tabs (the language tour)
+ * ---------------------------------------------------------------- */
+
+.tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-bottom: 1.25rem;
+  padding-bottom: 0.85rem;
+  border-bottom: 1px solid var(--fern-line);
+}
+
+.tabs button {
+  padding: 0.38rem 0.8rem;
+  border: 1px solid transparent;
+  border-radius: 0.35rem;
+  background: none;
+  color: var(--fern-ink-faint);
+  font-family: var(--fern-font-mono);
+  font-size: 0.76rem;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+}
+
+.tabs button:hover {
+  color: var(--fern-ink);
+}
+
+.tabs button[aria-selected="true"] {
+  border-color: var(--fern-line-strong);
+  background: var(--fern-bg-panel);
+  color: var(--fern-ink);
+}
+
+.tabpanel[hidden] {
+  display: none;
+}
+
+.tabpanel__note {
+  max-width: 52ch;
+  margin: 1.1rem 0 0;
+  font-size: 0.95rem;
+  color: var(--fern-ink-muted);
+}
+
+/* ---------------------------------------------------------------- *
+ * Feature grid
+ * ---------------------------------------------------------------- */
+
+.features {
+  display: grid;
+  gap: 1px;
+  background: var(--fern-line);
+  border: 1px solid var(--fern-line);
+  border-radius: var(--fern-radius);
+  overflow: hidden;
+}
+
+@media (min-width: 46rem) {
+  .features {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (min-width: 72rem) {
+  .features--three {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+.features > div {
+  padding: 1.5rem clamp(1.1rem, 2.5vw, 1.75rem);
+  background: var(--fern-bg);
+}
+
+.features p {
+  margin: 0;
+  font-size: 0.94rem;
+  color: var(--fern-ink-muted);
+}
+
+/* Inline code in prose. Scoped to the running text rather than set globally,
+ * so it never reaches the code specimens or the command lines, which have
+ * their own treatment. */
+.plate p code,
+.plate h3 code,
+.stats small code,
+.hero__lede code,
+.status__note code {
+  padding: 0.08em 0.3em;
+  border: 1px solid color-mix(in oklab, var(--fern-frond) 24%, transparent);
+  border-radius: 0.25rem;
+  background: color-mix(in oklab, var(--fern-frond-dim) 55%, transparent);
+  font-family: var(--fern-font-mono);
+  font-size: 0.84em;
+  color: var(--fern-ink);
+}
+
+/* ---------------------------------------------------------------- *
+ * Pipeline diagram
+ * ---------------------------------------------------------------- */
+
+/* The diagram is the one thing on the page allowed to be wider than the
+ * viewport: scaled to 390px its labels would be about four pixels tall.
+ * It scrolls inside its own frame instead, and the page body does not. */
+.pipeline-frame {
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+}
+
+.pipeline {
+  display: block;
+  width: 100%;
+  min-width: 46rem;
+  height: auto;
+}
+
+.pipeline text {
+  font-family: var(--fern-font-mono);
+  fill: var(--fern-ink-muted);
+}
+
+.pipeline .p-stage {
+  fill: var(--fern-bg-panel);
+  stroke: var(--fern-line-strong);
+}
+
+.pipeline .p-label {
+  fill: var(--fern-ink);
+  font-size: 11px;
+}
+
+.pipeline .p-small {
+  font-size: 9.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  fill: var(--fern-ink-faint);
+}
+
+.pipeline .p-edge {
+  stroke: var(--fern-line-strong);
+  fill: none;
+}
+
+.pipeline .p-out {
+  fill: none;
+  stroke: var(--fern-frond);
+}
+
+.pipeline .p-out-label {
+  fill: var(--fern-frond);
+  font-size: 10.5px;
+}
+
+.pipeline .p-tick {
+  stroke: var(--fern-spore);
+}
+
+/* ---------------------------------------------------------------- *
+ * Tables of measurement
+ * ---------------------------------------------------------------- */
+
+.table-wrap {
+  overflow-x: auto;
+}
+
+table.data {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+}
+
+table.data th {
+  padding: 0.5rem 0.9rem 0.5rem 0;
+  border-bottom: 1px solid var(--fern-line-strong);
+  font-family: var(--fern-font-mono);
+  font-size: 0.66rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--fern-ink-faint);
+  text-align: left;
+  white-space: nowrap;
+}
+
+table.data td {
+  padding: 0.55rem 0.9rem 0.55rem 0;
+  border-bottom: 1px solid var(--fern-line);
+  vertical-align: baseline;
+}
+
+table.data td.num {
+  font-family: var(--fern-font-mono);
+  font-size: 0.84rem;
+  white-space: nowrap;
+}
+
+table.data tr.win td.num:nth-child(2) {
+  color: var(--fern-frond);
+}
+
+.footnote {
+  margin-top: 1rem;
+  font-size: 0.82rem;
+  color: var(--fern-ink-faint);
+}
+
+/* ---------------------------------------------------------------- *
+ * Status list
+ * ---------------------------------------------------------------- */
+
+.status {
+  display: grid;
+  gap: 0;
+  margin: 0;
+}
+
+.status__row {
+  display: grid;
+  gap: 0.25rem 1.5rem;
+  padding: 0.95rem 0;
+  border-bottom: 1px solid var(--fern-line);
+}
+
+@media (min-width: 52rem) {
+  .status__row {
+    grid-template-columns: 8rem 12rem 1fr;
+    align-items: baseline;
+  }
+}
+
+.status__state {
+  font-family: var(--fern-font-mono);
+  font-size: 0.66rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+
+.status__state[data-state="solid"] {
+  color: var(--fern-frond);
+}
+
+.status__state[data-state="moving"] {
+  color: var(--fern-spore);
+}
+
+.status__state[data-state="absent"] {
+  color: var(--fern-ink-faint);
+}
+
+.status__what {
+  font-weight: 600;
+}
+
+.status__note {
+  font-size: 0.94rem;
+  color: var(--fern-ink-muted);
+}
+
+/* ---------------------------------------------------------------- *
+ * Signposts
+ * ---------------------------------------------------------------- */
+
+.signposts {
+  display: grid;
+  gap: 1px;
+  background: var(--fern-line);
+  border-block: 1px solid var(--fern-line);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+@media (min-width: 46rem) {
+  .signposts {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (min-width: 72rem) {
+  .signposts {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+.signposts li {
+  padding: 1.5rem clamp(1.1rem, 2.5vw, 1.75rem);
+  background: var(--fern-bg);
+}
+
+.signposts a {
+  font-family: var(--fern-font-display);
+  font-variation-settings: var(--fern-axes-title);
+  font-size: 1.15rem;
+  font-weight: 600;
+  text-decoration: none;
+  color: var(--fern-ink);
+}
+
+.signposts a:hover {
+  color: var(--fern-frond);
+}
+
+.signposts .arrow {
+  color: var(--fern-spore);
+}
+
+.signposts p {
+  margin: 0.4rem 0 0;
+  font-size: 0.92rem;
+  color: var(--fern-ink-muted);
+}
+
+/* ---------------------------------------------------------------- *
+ * Colophon
+ * ---------------------------------------------------------------- */
+
+.colophon {
+  padding-block: 2.5rem 3.5rem;
+}
+
+.colophon__inner {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem 2rem;
+  align-items: baseline;
+  justify-content: space-between;
+  width: 100%;
+  max-width: 72rem;
+  margin-inline: auto;
+  padding-inline: clamp(1rem, 4vw, 2.5rem);
+}
+
+.colophon p {
+  margin: 0;
+}
+
+.colophon nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.25rem;
+  font-family: var(--fern-font-mono);
+  font-size: 0.78rem;
+}
+
+.colophon a {
+  color: var(--fern-ink-muted);
+  text-decoration: none;
+}
+
+.colophon a:hover {
+  color: var(--fern-ink);
+}
+
+/* ---------------------------------------------------------------- *
+ * Motion — every reveal is optional
+ * ---------------------------------------------------------------- */
+
+@media (prefers-reduced-motion: no-preference) {
+  .hero__eyebrow,
+  .hero h1,
+  .hero__claim,
+  .hero__lede,
+  .hero__actions,
+  .cmd {
+    animation: rise 0.55s var(--fern-ease) backwards;
+  }
+
+  .hero h1 {
+    animation-delay: 0.04s;
+  }
+  .hero__claim {
+    animation-delay: 0.09s;
+  }
+  .hero__lede {
+    animation-delay: 0.14s;
+  }
+  .hero__actions {
+    animation-delay: 0.19s;
+  }
+  .cmd {
+    animation-delay: 0.24s;
+  }
+
+  .hero__frond {
+    animation: settle 1.1s var(--fern-ease) 0.15s backwards;
+  }
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+}
+
+@keyframes settle {
+  from {
+    opacity: 0;
+    transform: scale(0.96) rotate(-3deg);
+  }
+}

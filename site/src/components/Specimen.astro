@@ -1,0 +1,37 @@
+---
+/**
+ * Specimen — a labelled code block for the landing page.
+ *
+ * The landing page sits outside Starlight, so it has no Expressive Code.
+ * This is the plain-Shiki equivalent: same grammar, same theme pair, and a
+ * mono caption bar carrying the filename and, optionally, what the snippet
+ * does when you run it.
+ */
+import { Code } from "astro:components";
+import { fernGrammar, CODE_THEMES } from "../lib/grammar.mjs";
+
+interface Props {
+  /** Filename shown at the left of the caption bar. */
+  file: string;
+  /** Optional right-hand caption — usually the command or the output. */
+  meta?: string;
+  code: string;
+  /** Anything Shiki knows by name; defaults to the Fern grammar. */
+  lang?: string;
+}
+
+const { file, meta, code, lang } = Astro.props;
+---
+
+<figure class="specimen">
+  <figcaption class="specimen__head">
+    <span class="fern-tag">{file}</span>
+    {meta && <span class="fern-tag">{meta}</span>}
+  </figcaption>
+  <Code
+    code={code.trim()}
+    lang={lang ?? fernGrammar}
+    themes={CODE_THEMES}
+    defaultColor="light"
+  />
+</figure>

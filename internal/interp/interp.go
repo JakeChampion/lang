@@ -1,4 +1,4 @@
-// Package interp is a small tree-walking interpreter for the lang AST.
+// Package interp is a small tree-walking interpreter for the Fern AST.
 //
 // It's used by the REPL (cmd/fern -repl) and by tests; production
 // builds still go through the ARM64 / WASM code generators.

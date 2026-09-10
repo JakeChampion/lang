@@ -91,7 +91,7 @@ the predicate, so a grep across CI logs finds the regression.
 | Array length | `assert_len_i32`, `assert_len_string`                                                                                 |
 | Array eq     | `assert_eq_i32_array`, `assert_eq_string_array`                                                                       |
 | Process      | `assert_exit`, `assert_stdout_eq`, `assert_stderr_eq`, `assert_stdout_contains`, `assert_stderr_contains`, `assert_process` |
-| Free-form    | `pass()`, `fail(msg)`                                                                                                 |
+| Free-form    | `test.pass()`, `test.fail(msg)`                                                                                       |
 
 ## Skipping cases
 
@@ -102,7 +102,7 @@ skipped cases don't affect the exit code.
 
 ```fern
 function main(): i32 {
-    var r: TestRunner = test_new("backends");
+    var r: test.TestRunner = test.test_new("backends");
     r = r.skip_if(env("WASMTIME_PATH").is_none(),
                   "wasm e2e", "wasmtime not on $PATH",
                   run_wasm_test);
@@ -118,7 +118,7 @@ print as `parent / child / case`, so the hierarchy is visible in
 the log.
 
 ```fern
-var arm: TestRunner = r.subsuite("arm64");
+var arm: test.TestRunner = r.subsuite("arm64");
 arm = arm.it("exit code", run_arm64_exit);
 arm = arm.it("stdout",    run_arm64_stdout);
 r = r.merge(arm);   // fold counts back into parent
@@ -135,7 +135,7 @@ assertion family above (`assert_exit` / `assert_stdout_eq` /
 function test_fern_hello(): test.TestOutcome {
     var r: ProcessResult = subprocess("./fern",
         ["-interp", "/tmp/hello.fern"], "");
-    return assert_process(r, 0, "hello");
+    return test.assert_process(r, 0, "hello");
 }
 ```
 
@@ -181,10 +181,10 @@ function check_to_upper_idempotent(input: string): test.TestOutcome {
 }
 
 function main(): i32 {
-    var r: TestRunner = test_new("fuzz");
+    var r: test.TestRunner = test.test_new("fuzz");
     r = r.fuzz("to_upper idempotent",
                ["", "abc", "Hello"],
-               fuzz_default_iterations(),
+               fuzz.fuzz_default_iterations(),
                check_to_upper_idempotent);
     return r.finish();
 }
@@ -207,8 +207,8 @@ The example file lifts the pattern off `args()`:
 
 ```fern
 function main(): i32 {
-    var f: string = parse_filter_from_args(args());
-    var r: TestRunner = test_new_filtered("my suite", f);
+    var f: string = test.parse_filter_from_args(args());
+    var r: test.TestRunner = test.test_new_filtered("my suite", f);
     r = r.it("addition basic",    test_a);
     r = r.it("subtraction basic", test_b);
     return r.finish();
@@ -260,20 +260,20 @@ fuzz targets where any single malformed byte breaks the property.
 
 A test function can run any logic that returns `TestOutcome` —
 the assertions above are conveniences. For a hand-rolled check,
-return `fail(...)` directly:
+return `test.fail(...)` directly:
 
 ```fern
 function test_modulo_table(): test.TestOutcome {
     var inputs: i32[] = [0, 1, 5, 10, 11];
     var expected: i32[] = [0, 1, 5, 0, 1];
     var i: i32 = 0;
-    while (i < len(inputs)) {
+    while (i < inputs.len()) {
         if (inputs[i] % 10 != expected[i]) {
-            return fail("table mismatch at " + i.to_string());
+            return test.fail("table mismatch at " + i.to_string());
         }
         i = i + 1;
     }
-    return pass();
+    return test.pass();
 }
 ```
 

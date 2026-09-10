@@ -692,6 +692,24 @@
 // CDN; the editor module below consumes this shared boot via
 // window.__fernRuntimeReady instead of instantiating its own.
 (function () {
+  // Which chrome to show is decided HERE, not in the editor module below,
+  // because it does not depend on the editor: the module's static esm.sh
+  // imports are resolved before any of its body runs, so an unreachable CDN
+  // used to leave a docs embed rendering the FULL playground — title,
+  // toolbar, example picker — inside a 180px iframe. Setting the classes
+  // synchronously, before the runtime boot, also means no flash of the
+  // wrong layout on a slow connection.
+  var q0 = new URLSearchParams(location.search);
+  var flag0 = function (n) {
+    return ["1", "true", "yes"].indexOf((q0.get(n) || "").toLowerCase()) >= 0;
+  };
+  if (flag0("minimal")) {
+    document.body.classList.add("minimal");
+  }
+  if (flag0("embed") || flag0("minimal")) {
+    document.body.classList.add("embed");
+  }
+
   var go = new Go();
   window.__fernRuntimeReady = WebAssembly
     .instantiateStreaming(fetch("fern.wasm"), go.importObject)
@@ -699,11 +717,10 @@
   window.__fernRuntimeReady.then(function () {
     var el = document.getElementById("status");
     if (!el) return;
-    // Mirror the editor module's embed detection (urlFlag "embed"/"minimal")
-    // so the ready text matches; the module refines it with the key hint once
-    // CodeMirror loads. Either way #status now contains "ready".
-    var q = new URLSearchParams(location.search);
-    var embed = q.has("embed") || q.has("minimal");
+    // The class set above is the same detection the editor module uses, so
+    // the ready text matches the layout. Either way #status now contains
+    // "ready".
+    var embed = document.body.classList.contains("embed");
     el.textContent = embed ? "ready" : "ready · Ctrl/Cmd+Enter to run · hover for types";
   }).catch(function (err) {
     var el = document.getElementById("status");
@@ -1049,12 +1066,8 @@ const minimalMode = urlFlag("minimal");
 const embedMode = urlFlag("embed") || minimalMode;
 // Minimal snippets must autorun — there's no Run button to click.
 const autoRun = urlFlag("autorun") || minimalMode;
-if (embedMode) {
-  document.body.classList.add("embed");
-}
-if (minimalMode) {
-  document.body.classList.add("minimal");
-}
+// The `embed` / `minimal` body classes are set by the boot script above,
+// before this module's CDN imports can fail — see the comment there.
 
 // ---- Theme (dark / light) ----
 //

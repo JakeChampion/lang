@@ -1,0 +1,58 @@
+/* The <FernPlayground> figure.
+ *
+ * Shared by the docs (Starlight, via `customCss`) and the landing page
+ * (which has no Starlight chrome at all), so it is written against the
+ * `--fern-*` tokens rather than Starlight's `--sl-*` variables — those
+ * only exist on one of the two.
+ */
+
+.fern-playground {
+  display: block;
+  width: 100%;
+  margin: 1.75rem 0;
+  border: 1px solid var(--fern-line);
+  border-radius: var(--fern-radius);
+  background: var(--fern-bg-panel);
+  overflow: hidden;
+}
+
+.fern-playground iframe {
+  display: block;
+  width: 100%;
+  border: 0;
+  background: var(--fern-bg);
+  /* Height is set inline per-snippet by the component, and updated live
+   * for `minimal` embeds via the `fern:height` message. */
+}
+
+.fern-playground header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.5rem 0.85rem;
+  border-bottom: 1px solid var(--fern-line);
+  background: var(--fern-bg-raised);
+  font-family: var(--fern-font-mono);
+  font-size: 0.68rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--fern-ink-faint);
+}
+
+.fern-playground header span[aria-hidden] {
+  color: var(--fern-spore);
+}
+
+.fern-playground header a {
+  color: var(--fern-frond);
+  text-decoration: none;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+}
+
+.fern-playground header a:hover {
+  text-decoration: underline;
+  text-underline-offset: 0.25em;
+}

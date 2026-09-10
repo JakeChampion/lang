@@ -2,7 +2,7 @@
 title: Packages
 description: fern.toml, dependencies, workspaces, vendoring, and version resolution.
 sidebar:
-  order: 7
+  order: 9
 ---
 
 Packaging is opt-in. A program with no `fern.toml` anywhere above it

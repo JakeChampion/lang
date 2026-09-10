@@ -16,9 +16,12 @@ cd site
 npm install
 
 # Build the in-browser playground bundle and stage it under public/.
+# Copy the whole set: index.html statically imports both shims, so a
+# missing one breaks the ES module and the playground hangs on
+# "loading runtime…".
 ( cd .. && ./web/build.sh )
 mkdir -p public/playground
-cp -L ../web/index.html ../web/wasm_exec.js ../web/fern.wasm public/playground/
+cp -L ../web/*.html ../web/*.js ../web/fern.wasm public/playground/
 
 # Generate the standard-library reference pages (see below).
 go run ../cmd/ferndoc -out src/content/docs/stdlib/
@@ -32,11 +35,21 @@ configured `base`. `npm run build` produces the production output in
 
 ## Add or edit a page
 
-Tutorial and reference pages are Markdown (`.md`) or MDX (`.mdx`) files
-under `src/content/docs/`:
+The site has two halves, and which one you are editing decides how.
+
+**The landing page** at `/` is a bespoke Astro page,
+`src/pages/index.astro`, deliberately outside Starlight's content
+collection — a static route outranks Starlight's `[...slug]`, so that file
+takes `/`. It has its own layout (`src/layouts/Page.astro`) and its own
+stylesheet (`src/styles/landing.css`), and shares the palette with the
+docs through `src/styles/tokens.css`.
+
+**Everything else** is Markdown (`.md`) or MDX (`.mdx`) under
+`src/content/docs/`:
 
 - **Tutorials** — `src/content/docs/tutorial/`
-- **Reference** — `src/content/docs/reference/`
+- **Language reference** — `src/content/docs/reference/`
+- **Compiler internals** — `src/content/docs/compiler/`
 
 Each page needs `title` and `description` frontmatter; `sidebar.order`
 controls its position within the section:

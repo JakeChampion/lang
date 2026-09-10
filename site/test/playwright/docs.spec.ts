@@ -8,15 +8,16 @@
 
 import { test, expect } from "@playwright/test";
 
-test("home page renders the hero + landing card grid", async ({ page }) => {
+test("home page renders the bespoke landing hero", async ({ page }) => {
   await page.goto("./");
   await expect(page.locator("h1")).toContainText("Fern");
-  // The card grid uses Starlight's Card component — asserting on
-  // the "Get started" CTA is more robust than poking at the card
-  // wrapper class which changes between Starlight versions.
   await expect(
     page.getByRole("link", { name: /Get started/i }),
   ).toBeVisible();
+  // `/` is src/pages/index.astro, NOT a Starlight page — a static route
+  // outranks Starlight's `[...slug]`. If that ever stops being true the
+  // Starlight chrome reappears here, so assert its absence.
+  await expect(page.locator(".sidebar-pane")).toHaveCount(0);
 });
 
 test("tutorial sidebar group lists the install page", async ({ page }) => {
@@ -88,6 +89,19 @@ test("minimal playground embed is wired read-only + autorun on the home page", a
     "src",
     /\/lang\/playground\/\?[^#]*autorun=1[^#]*#src=/,
   );
+
+  // …and the embed must actually put the playground into minimal chrome.
+  // This is deliberately checked inside the frame rather than on the URL:
+  // the classes used to be set by the editor module, whose static esm.sh
+  // imports resolve before any of its body runs, so an unreachable CDN
+  // rendered the FULL playground — title, toolbar, example picker — inside
+  // a 180px docs iframe. They are set by the boot script now, ahead of the
+  // imports, and this assertion holds with or without a network.
+  const body = page
+    .frameLocator("figure.fern-playground[data-fern-minimal='1'] iframe")
+    .locator("body");
+  await expect(body).toHaveClass(/\bminimal\b/);
+  await expect(body).toHaveClass(/\bembed\b/);
 });
 
 test("embedded playground actually boots — the staged bundle is complete", async ({
@@ -121,10 +135,11 @@ test("embedded playground actually boots — the staged bundle is complete", asy
   });
 });
 
-test("search modal opens via Ctrl/Cmd-K", async ({ page }) => {
-  await page.goto("./");
-  // Starlight ships pagefind-backed search; the trigger is
-  // labelled "Search" and opens a dialog.
+// Search lives on the docs half only: `/` is a bespoke page outside
+// Starlight, so it has no pagefind bundle and no search trigger. Exercise
+// it from a docs page instead.
+test("search modal opens via Ctrl/Cmd-K on a docs page", async ({ page }) => {
+  await page.goto("why/");
   await page.keyboard.press("ControlOrMeta+k");
   await expect(page.getByRole("dialog")).toBeVisible({ timeout: 5_000 });
 });
@@ -222,4 +237,111 @@ test("tutorial install → first-steps next-link navigates", async ({ page }) =>
     .first()
     .click();
   await expect(page).toHaveURL(/\/lang\/tutorial\/first-steps\/?$/);
+});
+
+// --- The bespoke landing page ------------------------------------------
+//
+// `/` is src/pages/index.astro rather than a Starlight content page, so it
+// has none of Starlight's guarantees behind it. These four cover the parts
+// that would break silently.
+
+test("landing page language tour switches specimens", async ({ page }) => {
+  await page.goto("./");
+  const tablist = page.getByRole("tablist", { name: "Language tour" });
+  await expect(tablist).toBeVisible();
+
+  // First panel is shown, later ones hidden — that much holds with JS off.
+  await expect(page.getByRole("tabpanel").first()).toBeVisible();
+
+  await tablist.getByRole("tab", { name: /Ownership modes/ }).click();
+  const panel = page.locator("#panel-own");
+  await expect(panel).toBeVisible();
+  await expect(panel).toContainText("fip");
+  await expect(page.locator("#panel-match")).toBeHidden();
+});
+
+test("landing page code specimens are highlighted, not plain text", async ({
+  page,
+}) => {
+  await page.goto("./");
+  // Plain Shiki (not Expressive Code) renders `.astro-code`; a span inside
+  // it proves the Fern grammar loaded rather than the block falling back
+  // to unstyled text.
+  const block = page.locator("figure.specimen .astro-code").first();
+  await expect(block).toBeVisible();
+  await expect(block.locator("span").first()).toBeVisible();
+});
+
+test("theme choice on the landing page carries into the docs", async ({
+  page,
+}) => {
+  await page.goto("./");
+  // The landing page writes the same localStorage key Starlight's
+  // ThemeProvider reads, so a reader who picks light here stays in light
+  // when they click through. Two separate mechanisms would desynchronise.
+  const before = await page.evaluate(
+    () => document.documentElement.dataset.theme,
+  );
+  await page.locator("[data-theme-toggle]").click();
+  const after = await page.evaluate(
+    () => document.documentElement.dataset.theme,
+  );
+  // Assert the flip rather than a fixed value: with no stored preference
+  // the landing page starts from prefers-color-scheme, which differs
+  // between a developer's machine and CI.
+  expect(after).not.toBe(before);
+
+  await page.goto("why/");
+  await expect(page.locator("html")).toHaveAttribute("data-theme", after);
+});
+
+test("landing masthead reaches the docs, stdlib and status", async ({
+  page,
+}) => {
+  await page.goto("./");
+  const nav = page.getByRole("navigation", { name: "Main" });
+  await expect(nav.getByRole("link", { name: "Docs" })).toHaveAttribute(
+    "href",
+    /\/lang\/tutorial\/install\/?$/,
+  );
+  await expect(nav.getByRole("link", { name: "Stdlib" })).toHaveAttribute(
+    "href",
+    /\/lang\/stdlib\/?$/,
+  );
+  await nav.getByRole("link", { name: "Status" }).click();
+  await expect(page).toHaveURL(/\/lang\/status\/?$/);
+  await expect(page.locator("h1")).toContainText("Project status");
+});
+
+// --- The compiler section ----------------------------------------------
+
+test("compiler section pages are reachable and in the sidebar", async ({
+  page,
+}) => {
+  await page.goto("compiler/");
+  await expect(page.locator("h1")).toContainText("How the compiler works");
+  const sidebar = page.locator("nav, aside").first();
+  await expect(
+    sidebar.getByText("Targets and backends", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    sidebar.getByText("Self-hosting and bootstrap", { exact: true }),
+  ).toBeVisible();
+});
+
+test("targets page names every shipped target", async ({ page }) => {
+  await page.goto("compiler/targets/");
+  const main = page.locator("main");
+  for (const t of [
+    "arm64-linux",
+    "arm64-darwin",
+    "arm64-android",
+    "x86-64-linux",
+    "wasm32-wasi",
+    "wasm32-wasi-http",
+  ]) {
+    await expect(main).toContainText(t);
+  }
+  // ARM32 was retired; it must never come back as a documented target.
+  await expect(main).not.toContainText("arm32-");
 });

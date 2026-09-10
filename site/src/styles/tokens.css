@@ -1,0 +1,101 @@
+/* Fern design tokens — shared by the bespoke landing page and the
+ * Starlight docs theme.
+ *
+ * The identity is a herbarium sheet: a pressed specimen on paper, with
+ * the plate number, the collector's hand and the hairline registration
+ * marks all part of the object. Translated to screen that means —
+ *
+ *   - Two grounds, not one theme with a filter. Dark is ink under
+ *     glass; light is warm rag paper. Both are green-tinted, never
+ *     neutral gray.
+ *   - One sharp accent, and it is not the green. Spore ochre carries
+ *     plate numbers, rules and the focus ring, so the greens can stay
+ *     quiet and structural.
+ *   - Hairlines instead of boxes. A 1px rule and a corner tick say
+ *     "panel" without a fill.
+ *   - Metadata is set in mono small caps, prose in a display serif,
+ *     body in the reader's own UI face.
+ *
+ * `--fern-*` is this file's vocabulary. fern.css maps it onto
+ * Starlight's `--sl-*` variables so the docs chrome inherits it rather
+ * than being overridden control by control.
+ */
+
+:root {
+  /* -- Type ------------------------------------------------------- */
+  --fern-font-display: "Fraunces", "Iowan Old Style", "Palatino Linotype",
+    Palatino, "Book Antiqua", Georgia, serif;
+  --fern-font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo,
+    Consolas, monospace;
+  --fern-font-body: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+
+  /* Fraunces axes. `opsz` is the whole difference between a heading
+   * that looks like a display face and one that looks like body copy
+   * scaled up, so it is a token rather than a per-rule constant. */
+  --fern-axes-display: "opsz" 120, "SOFT" 40, "WONK" 1;
+  --fern-axes-title: "opsz" 48, "SOFT" 30, "WONK" 1;
+
+  /* -- Rhythm ----------------------------------------------------- */
+  --fern-gap: 1.5rem;
+  --fern-section: clamp(4rem, 9vmin, 7rem);
+  --fern-radius: 0.5rem;
+  --fern-ease: cubic-bezier(0.2, 0.7, 0.3, 1);
+
+  /* -- Dark ground (default) -------------------------------------- */
+  --fern-bg: #0c1512;
+  --fern-bg-raised: #111c17;
+  --fern-bg-panel: #16231d;
+  --fern-bg-sunken: #08100d;
+
+  --fern-line: #24352c;
+  --fern-line-strong: #35493d;
+
+  --fern-ink: #e9f1eb;
+  --fern-ink-muted: #a4b7ab;
+  --fern-ink-faint: #71877a;
+
+  --fern-frond: #5fbf8f;
+  --fern-frond-bright: #93dcb6;
+  --fern-frond-dim: #1b3a2b;
+
+  --fern-spore: #d9a94f;
+  --fern-spore-dim: #40331a;
+
+  color-scheme: dark;
+}
+
+:root[data-theme="light"] {
+  --fern-bg: #faf7ee;
+  --fern-bg-raised: #f5f1e5;
+  --fern-bg-panel: #f7f4ea;
+  --fern-bg-sunken: #efe9da;
+
+  --fern-line: #ddd6c4;
+  --fern-line-strong: #c8bfa8;
+
+  --fern-ink: #14231c;
+  --fern-ink-muted: #4c5b52;
+  --fern-ink-faint: #78857c;
+
+  --fern-frond: #1f6b47;
+  --fern-frond-bright: #145034;
+  --fern-frond-dim: #dcefe2;
+
+  --fern-spore: #8a6520;
+  --fern-spore-dim: #eee3c8;
+
+  color-scheme: light;
+}
+
+/* A mono, letter-spaced small-caps label. Used for plate numbers,
+ * section eyebrows, table heads and panel captions — every piece of
+ * metadata on the site is set this way, which is most of what holds
+ * the two halves of the site (bespoke page, docs) together visually. */
+.fern-tag {
+  font-family: var(--fern-font-mono);
+  font-size: 0.68rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--fern-ink-faint);
+}

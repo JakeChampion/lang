@@ -31,7 +31,7 @@ function and no `main`, it **synthesises one for you**:
 
 - For a **native** target it generates `main` that calls
   `tcp_serve(port, handle)`, listening on `$PORT` (default `8080`).
-- For the **`wasi-http`** target it drops the synthesised `main` and
+- For the **`wasm32-wasi-http`** target it drops the synthesised `main` and
   exports `wasi:http/incoming-handler` instead — the standard component
   interface that `wasmtime serve` and edge hosts speak.
 

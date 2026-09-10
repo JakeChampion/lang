@@ -32,13 +32,16 @@
   <text x="212" y="182" font-family="Fraunces 144pt Wonky" font-size="104" font-weight="600" fill="#143026">Fern</text>
 
   <!-- tagline -->
-  <text font-family="Fraunces 144pt Wonky" font-size="46" font-weight="600" fill="#22392e">
-    <tspan x="104" y="316">A small statically typed language</tspan>
-    <tspan x="104" y="380">that compiles to a fast standalone</tspan>
-    <tspan x="104" y="444">binary — or to WebAssembly.</tspan>
+  <text font-family="Fraunces 144pt Wonky" font-size="52" font-weight="600" fill="#22392e">
+    <tspan x="104" y="312">No collector. No borrow checker.</tspan>
+    <tspan x="104" y="382">Nothing underneath.</tspan>
+  </text>
+  <text font-family="IBM Plex Mono" font-size="25" fill="#5f5442">
+    <tspan x="104" y="446">A statically typed language whose compiler assembles</tspan>
+    <tspan x="104" y="480">and links its own binaries — and is written in itself.</tspan>
   </text>
 
   <!-- specimen label -->
-  <line x1="104" y1="506" x2="1096" y2="506" stroke="#ddd3bf" stroke-width="2"/>
-  <text x="104" y="546" font-family="IBM Plex Mono Medium" font-size="23" font-weight="500" fill="#b08331" letter-spacing="2.6">NO RUNTIME · NO GARBAGE COLLECTOR</text>
+  <line x1="104" y1="524" x2="1096" y2="524" stroke="#ddd3bf" stroke-width="2"/>
+  <text x="104" y="562" font-family="IBM Plex Mono Medium" font-size="23" font-weight="500" fill="#b08331" letter-spacing="2.6">ARM64 · X86-64 · WEBASSEMBLY</text>
 </svg>

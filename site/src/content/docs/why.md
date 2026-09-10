@@ -3,66 +3,87 @@ title: Why Fern
 description: What Fern is good at, what it gives up, and how it compares to the languages you'd otherwise reach for.
 ---
 
-Fern is a small statically typed language that compiles to a standalone
-binary — or to WebAssembly, from the same source. It is a good fit when
-you want a program to start fast, stay small, and depend on nothing;
-it is a bad fit when you need threads, Windows, or a large ecosystem.
+Fern is a statically typed, general-purpose language that compiles to a
+standalone binary — or to WebAssembly, from the same source. It is a good
+fit when you want a program that starts instantly, stays small and depends
+on nothing at all. It is a bad fit when you need threads, Windows, or a
+library somebody else has already written.
 
-The rest of this page is the long version, including the parts that
-don't flatter it.
+The rest of this page is the long version, including the parts that don't
+flatter it.
 
 ## Nothing between your code and the machine
 
 There is no runtime to boot, no interpreter, no JIT, and no garbage
-collector. A Fern binary is your program, statically linked, plus the
-parts of the standard library it actually calls — so there is no fixed
-floor to pay off before your own code earns its size:
+collector. A Fern binary is your program, statically linked, plus the parts
+of the standard library it actually calls — so there is no fixed floor to
+pay off before your own code earns its size:
 
-| Language | `hello, world` | Statically linked |
-| -------- | -------------- | ----------------- |
-| Fern     | 4.3 kB         | yes               |
-| Go       | 1.4 MB         | yes               |
-| Rust     | 350 kB         | no — needs libc   |
+| Language | `hello, world` | Needs libc at runtime |
+| -------- | -------------- | --------------------- |
+| Fern     | 4.3 kB         | no                    |
+| C, dynamic | 16 kB        | yes                   |
+| Rust     | 350 kB         | yes                   |
+| C, static | 785 kB         | no                    |
+| Go       | 1.6 MB         | no                    |
 
-A `grep`-style line filter — argv handling, stdin, string search, exit
-codes — comes to 16 kB. Startup is the kernel's `exec` and then your
-`main`; nothing initialises first, and nothing pauses you later.
+The measure that matters more is what runs before your code does. Counting
+retired instructions between `_start` and `exit` for an empty `main`, Fern
+executes **7**. Statically linked C executes 228,519; Go, 291,170; Rust,
+375,878. There is no dynamic loader, no libc initialiser, no runtime and no
+collector to bring up — so cold start is `exec` and then you.
 
-Memory is reference counted, freed at the point the last use goes out of
-scope rather than at a collector's convenience. There is no tuning, no
-heap sizing, and no pause to plan around.
+A `grep`-style line filter — argument handling, stdin, string search, exit
+codes — comes to 23 kB.
 
-<small>Measured on x86-64 Linux, August 2026: `fern -target x86-64-linux -o
-hello hello.fern`, `go build -ldflags="-s -w"`, `rustc -O -C
-strip=symbols`. Re-run them yourself — the order of magnitude is the
-point, not the digits.</small>
+<small>Binary sizes measured on x86-64 Linux, 10 September 2026:
+`fern -O -target x86-64-linux`, `gcc -O2` (and `-static`), `rustc -O -C
+strip=symbols`, `go build -ldflags="-s -w"`. Instruction counts are from
+`docs/CODEGEN-QUALITY-AUDIT-2026-09.md`, measured under callgrind. Re-run
+them yourself — the order of magnitude is the point, not the digits.</small>
+
+## Memory that is freed, not collected
+
+Memory is reference counted. The compiler inserts the counting, then
+removes most of it again at compile time; what is left frees a value at the
+point its last use goes out of scope. There is no heap to size, no pause to
+plan around and no lifetime annotation to satisfy.
+
+The usual objection to reference counting is cycles, and Fern answers it by
+making them unconstructible rather than by shipping a collector to clean up
+after them. That has a cost — back-pointers and doubly linked lists need a
+different shape — and [Memory](../reference/memory/) is the full account.
 
 ## One toolchain, no build system
 
-`fern` is a single binary. It assembles and links natively in-process,
-so producing an executable needs no `gcc`, no `clang`, no `ld`. There is
-no build file to write and no plugin to configure: `fern -o app
-app.fern` is the whole build.
+`fern` is a single binary that assembles **and links** in-process, so
+producing an executable needs no `gcc`, no `clang`, no `ld` and no
+`wasm-tools`. There is no build file to write and no plugin to configure:
+`fern -o app app.fern` is the whole build.
 
-The same binary type-checks (`-check`), formats (`-fmt`), runs a program
-without compiling it (`-interp`), resolves dependencies, and reports what
-capabilities a package uses. Editor support is `fern-lsp` plus a VS Code
-extension; the test runner is `std/test`, a library rather than a
-separate tool.
+The same binary type-checks (`-check`), formats (`-fmt`), lints
+(`-lint`), interprets (`-interp`), gives you a REPL (`-repl`), measures
+coverage (`-cover`), hunts memory bugs (`-sanitize`), embeds assets
+(`-embed`), resolves and vendors dependencies, explains any diagnostic by
+code (`-explain`), and tangles literate Markdown into source (`-tangle`).
+Editor support is `fern-lsp` plus a VS Code extension; the test runner is
+`std/test`, a library rather than a separate tool.
 
 ## The same program, native or WebAssembly
 
-`-target wasm32-wasi` emits a self-contained WASI component and `-target
-wasi-http` an HTTP handler for `wasmtime serve` — from the source that
-also builds a native binary. No JavaScript shim, no adapter step, no
-second implementation to keep in sync.
+`-target wasm32-wasi` emits a self-contained WASI Preview 2 component
+and `-target wasm32-wasi-http` an HTTP handler for `wasmtime serve` —
+from the source that also builds a native binary. The component is
+composed inside the compiler, so there is no `wasm-tools` step, no
+JavaScript shim, and no second implementation to keep in sync.
 
 ## Types that don't lie, errors that are values
 
 Integers carry their width and never convert silently. Enums are tagged
 unions and `match` must cover every variant — miss one and the build
 stops. Generics are monomorphised, so the abstraction costs nothing at
-runtime.
+runtime; traits give you shared behaviour, and `dyn Trait` gives you
+runtime dispatch when you ask for it by name.
 
 Failure is an ordinary value: `Option` and `Result` are part of the
 language, `?` passes a failure up the call stack, and `let … else`
@@ -73,28 +94,47 @@ invisible second control flow to reason about.
 
 A package's manifest grants it capabilities — `net`, `fs`, `env`,
 `subprocess`, `time`, `random` — and the compiler rejects a build where a
-package reaches past its grant. `fern -capabilities` prints what each
-package in a program can reach, with an example call chain. A logging
-library that suddenly wants the network fails the build rather than the
-audit.
+package reaches past its grant, with the offending call chain in the error.
+`fern -capabilities` prints what each package in a program can reach. A
+logging library that suddenly wants the network fails the build rather than
+the audit.
+
+One caveat while this is still being finished: a dependency that declares
+*no* capabilities is currently allowed with a warning rather than denied.
+Treat it as a strong signal, not yet as a sandbox.
+
+## The compiler is written in Fern
+
+222,000 lines of it — parser, checker, optimiser, all three backends, the
+assemblers and the linkers. It compiles itself, and `make bootstrap` builds
+it from a pinned earlier binary on a machine with no Go toolchain present.
+
+That matters beyond the novelty: it is the proof that Fern is not only for
+short-lived programs. A compiler is a long-running, allocation-heavy
+workload, and making it work is what drove the language's memory model.
+[Self-hosting and bootstrap](../compiler/bootstrap/) has the detail,
+including the one reproducibility gate that is still red.
 
 ## What it costs
 
 - **Pre-1.0.** Nightly builds are the release channel. Syntax still
   changes under you, and there is no compatibility promise yet.
-- **The ecosystem is small.** The standard library covers strings,
-  collections, iterators, JSON, I/O, HTTP, time and math. Beyond that you
-  will be writing it yourself.
+- **The ecosystem is small.** The standard library is not: 77 modules
+  covering strings and Unicode, regex and PEG parsing, JSON and CSV,
+  crypto hashes, HTTP and TCP, time, arbitrary-precision integers, and
+  persistent maps, sets and vectors. But beyond it there is very little,
+  and no registry.
 - **Single-threaded.** Concurrency is I/O-driven futures (`std/async`) —
   `gather`, `race`, and friends over one poll loop. There are no threads
   and no parallelism; refcounts are non-atomic by design.
-- **No cycles, by construction.** Reference counting cannot collect a
-  cycle, so Fern makes cycles unconstructible: the checker rejects the
-  struct-field assignment that would close one. Back-pointers, doubly
-  linked lists and observer graphs need a different shape — usually an
-  index into an array.
+- **Inner loops are not optimised hard.** Instruction selection is naive:
+  Fern's advantage is startup and size, not throughput. A comparison sort
+  against GNU `sort` is roughly six times slower.
+- **No cycles, by construction.** See [Memory](../reference/memory/) —
+  cheap for most code, a rewrite for anything shaped like a graph.
 - **A narrow platform set.** Linux on arm64 and x86-64, macOS on Apple
-  Silicon, and WebAssembly. No Windows, no Intel Mac, no 32-bit.
+  Silicon, Android on arm64, and WebAssembly. No Windows, no Intel Mac, no
+  32-bit.
 - **C interop is native-only.** The wasm target rejects it at build
   time rather than failing at runtime, but it is still a gap.
 
@@ -117,25 +157,32 @@ manual allocation and `comptime`; Fern hands you automatic memory and a
 stricter, more opinionated type system. Zig's cross-compilation story is
 a superset of Fern's.
 
-**TypeScript** is where a lot of Fern's syntax came from, so it reads
-familiar — but there is no VM to start, no `node_modules`, and the types
-are compiled rather than erased. If you are writing a CLI or an edge
-handler in TypeScript today and cold start is what hurts, that is the
-swap Fern is built for.
+**Koka and Roc** are where Fern's memory model comes from — Perceus
+reference counting, in-place reuse, and functions that promise not to
+allocate. Fern is the less academic member of that family: imperative
+syntax, four production targets, and its own assembler.
+
+**TypeScript** is where a lot of Fern's syntax originally came from, so it
+reads familiar — but there is no VM to start, no `node_modules`, and the
+types are compiled rather than erased. If you are writing a CLI or an edge
+handler in TypeScript today and cold start is what hurts, that is the swap
+Fern is built for.
 
 ## When not to use Fern
 
-You need Windows. You need threads or parallelism. You need a library
-that already exists somewhere else. You need a version you can pin and
-trust for a year. Any of those, and one of the languages above is the
-honest recommendation.
+You need Windows. You need threads or parallelism. You need a library that
+already exists somewhere else. You need throughput in a tight numeric loop.
+You need a version you can pin and trust for a year. Any of those, and one
+of the languages above is the honest recommendation.
 
 ## When it fits
 
 Command-line tools, edge and serverless handlers, small HTTP services,
 build-time utilities — anything where you want one small artifact that
-starts instantly and depends on nothing. The compiler is written in
-Fern, so long-running, allocation-heavy programs work too.
+starts instantly and depends on nothing. But the boundary has moved: the
+compiler is written in Fern, so long-running, allocation-heavy programs are
+in scope too, and 57 GNU coreutils are reimplemented in it at byte-for-byte
+parity.
 
-Start with the [tutorial](../tutorial/install/), or read a program on the
-[overview](../) first.
+Start with the [tutorial](../tutorial/install/), or read the current
+[project status](../status/) first.

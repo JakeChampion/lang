@@ -1,0 +1,982 @@
+---
+/**
+ * The landing page.
+ *
+ * Deliberately outside Starlight's `[...slug]` route (a static route wins
+ * over a dynamic one, so this file takes `/` and Starlight keeps the rest).
+ * That buys full control of the layout at the cost of the docs chrome, which
+ * this page does not want: no sidebar, no search, one column of plates.
+ *
+ * Every Fern snippet below is real, type-checks, and was run before it was
+ * pasted here — `internal/wasm/playground/docs_embeds_test.go` re-checks the
+ * `<FernPlayground>` ones on every CI run. Every number is measured and cites
+ * where it came from; see `docs/CODEGEN-QUALITY-AUDIT-2026-09.md` and
+ * `docs/COREUTILS.md` for the two benchmark sets quoted.
+ */
+import Page from "../layouts/Page.astro";
+import Specimen from "../components/Specimen.astro";
+import FernPlayground from "../components/FernPlayground.astro";
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+const href = (p: string) => `${base}/${p.replace(/^\//, "")}`;
+
+const siteUrl = (
+  import.meta.env.SITE ?? "https://jakechampion.github.io"
+).replace(/\/$/, "");
+const ogImage = `${siteUrl}${base}/og.png`;
+
+const description =
+  "Fern is a statically typed language with no garbage collector and no borrow checker. Its compiler assembles and links binaries in one process — no gcc, no ld — targets arm64, x86-64 and WebAssembly, and is written in Fern.";
+
+/* Backticks in the prose below become `<code>`. The strings are authored in
+ * this file, so `set:html` is rendering our own markup, not anyone's input. */
+const ticks = (s: string) => s.replace(/`([^`]+)`/g, "<code>$1</code>");
+
+/* --- The language tour ------------------------------------------------- */
+
+const tour = [
+  {
+    id: "match",
+    tab: "Exhaustive match",
+    file: "shape.fern",
+    meta: "fern -interp shape.fern",
+    note: "Enums carry payloads and `match` must cover every variant. Add a case to `Shape` and this stops compiling until `area` handles it — the compiler points at the arm you did not write, rather than the program failing in front of a user.",
+    code: `import "std/i32";
+
+enum Shape {
+  Circle(i32),
+  Rect(i32, i32),
+}
+
+function area(s: Shape): i32 {
+  match (s) {
+    Circle(r) => { return 3 * r * r; },
+    Rect(w, h) => { return w * h; }
+  }
+}
+
+function main(): i32 {
+  print(area(Circle(5)).to_string());
+  print(area(Rect(3, 4)).to_string());
+  return 0;
+}`,
+  },
+  {
+    id: "errors",
+    tab: "Errors as values",
+    file: "addr.fern",
+    meta: "127.0.0.1:8080",
+    note: "There are no exceptions, so there is no second control flow to reason about. `Option` and `Result` are built in, and postfix `?` unwraps the success case or returns the failure to your caller. On the happy path a `Result` is a register pair, not an allocation.",
+    code: `import "std/i32";
+import "std/string";
+
+struct ParseError {
+  message: string,
+  pos: i32,
+}
+
+function parse_port(s: string): Result[i32, ParseError] {
+  if (s.len() == 0) {
+    return Err(ParseError { message: "empty", pos: 0 });
+  }
+  match (s.parse_int()) {
+    Some(n) => { return Ok(n); },
+    None => { return Err(ParseError { message: "not a number", pos: 0 }); }
+  }
+}
+
+function listen_addr(s: string): Result[string, ParseError] {
+  var port: i32 = parse_port(s)?;
+  return Ok("127.0.0.1:" + port.to_string());
+}`,
+  },
+  {
+    id: "traits",
+    tab: "Traits & generics",
+    file: "shapes.fern",
+    meta: "square",
+    note: "Traits describe behaviour; `impl` supplies it. A bounded generic like `[T: Shape]` is monomorphised, so the abstraction costs nothing at runtime. When you want dispatch at runtime instead, ask for it by name: `dyn Shape`.",
+    code: `trait Shape {
+  function area(self: Self): i32;
+  function name(self: Self): string;
+}
+
+struct Square { side: i32 }
+struct Circle { r: i32 }
+
+impl Shape for Square {
+  function area(self: Self): i32 { return self.side * self.side; }
+  function name(self: Self): string { return "square"; }
+}
+
+impl Shape for Circle {
+  function area(self: Self): i32 { return 3 * self.r * self.r; }
+  function name(self: Self): string { return "circle"; }
+}
+
+function bigger[T: Shape, U: Shape](a: T, b: U): string {
+  if (a.area() >= b.area()) { return a.name(); }
+  return b.name();
+}`,
+  },
+  {
+    id: "own",
+    tab: "Ownership modes",
+    file: "sort.fern",
+    meta: "allocates nothing",
+    note: "`own` consumes the caller's array, so the sorted result is the same buffer rather than a copy. `fip` is a promise the compiler checks — this function is rejected if it allocates. These two are how you get in-place updates without a borrow checker; you can ignore both and the program still runs correctly, just with more copying.",
+    code: `import "std/array";
+
+pub fip function sort_inplace(own xs: i32[]): i32[] {
+  var n: i32 = xs.len();
+  var k: i32 = 1;
+  while (k < n) {
+    var key: i32 = xs[k];
+    var j: i32 = k - 1;
+    while (j >= 0 && xs[j] > key) {
+      xs = xs.with(j + 1, xs[j]);
+      j = j - 1;
+    }
+    xs = xs.with(j + 1, key);
+    k = k + 1;
+  }
+  return xs;
+}`,
+  },
+  {
+    id: "test",
+    tab: "Tests",
+    file: "arithmetic_test.fern",
+    meta: "TAP version 13",
+    note: "The test runner is a Fern library, not a second tool with its own opinions — `std/test` is ordinary code that emits TAP-13 and exits non-zero on failure. There is no reflection, so a suite lists its cases; that is the whole registration story. Around it sit `std/fuzz` for byte-level fuzzing and `std/sim` for deterministic simulation, where a concurrency bug is a seed you replay.",
+    code: `import "std/test";
+
+function test_addition(): test.TestOutcome {
+  return test.assert_eq(2 + 2, 4);
+}
+
+function test_greeting(): test.TestOutcome {
+  return test.assert_contains("hello, world", "world");
+}
+
+function main(): i32 {
+  var r: test.TestRunner = test.test_new("arithmetic");
+  r = r.it("addition", test_addition);
+  r = r.it("greeting", test_greeting);
+  return r.finish();
+}`,
+  },
+];
+
+/* --- Signposts --------------------------------------------------------- */
+
+const signposts = [
+  {
+    label: "Tutorial",
+    href: "tutorial/install/",
+    blurb:
+      "Install it, then learn the language one idea at a time, up to a working HTTP handler.",
+  },
+  {
+    label: "Why Fern",
+    href: "why/",
+    blurb:
+      "The long version, including what it gives up and how it compares to Go, Rust and Zig.",
+  },
+  {
+    label: "Cookbook",
+    href: "cookbook/",
+    blurb:
+      "Whole answers to the day-one questions: files, stdin, flags, JSON, HTTP, tests.",
+  },
+  {
+    label: "Reference",
+    href: "reference/syntax/",
+    blurb:
+      "Syntax, types, traits, the memory model, concurrency, packages and capabilities.",
+  },
+  {
+    label: "Standard library",
+    href: "stdlib/",
+    blurb:
+      "All 77 modules with their signatures, generated from the Fern source they document.",
+  },
+  {
+    label: "Compiler internals",
+    href: "compiler/",
+    blurb:
+      "How a .fern file becomes an executable, what each backend emits, and how it bootstraps.",
+  },
+];
+---
+
+<Page
+  title="Fern — a language that compiles itself"
+  description={description}
+  ogImage={ogImage}
+>
+  {/* ---------------------------------------------------------------- */}
+  <section class="hero">
+    <svg
+      class="hero__frond"
+      viewBox="0 0 32 32"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="0.55"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M6 29 C 9 22, 13 14, 18 9 C 21 6, 24 6, 25 8"></path>
+      <path d="M7.6 25 C 4.5 24, 3 21.5, 3.2 18.8"></path>
+      <path d="M9.6 21 C 7 20, 5.7 17.8, 6 15.4"></path>
+      <path d="M11.8 17 C 9.6 16.2, 8.6 14.3, 9 12.2"></path>
+      <path d="M14 13.5 C 12.2 12.9, 11.5 11.3, 12 9.6"></path>
+      <path d="M9.4 23 C 12.5 22, 14 19.5, 13.8 16.8"></path>
+      <path d="M11.4 19 C 14 18, 15.3 15.8, 15 13.4"></path>
+      <path d="M13.6 15 C 15.8 14.2, 16.8 12.3, 16.4 10.2"></path>
+      <path d="M25 8 C 26.8 9.5, 26.4 12.2, 24.2 12.2 C 22.6 12.2, 22.6 10.2, 24 10"
+      ></path>
+    </svg>
+
+    <div class="shell hero__inner">
+      <p class="hero__eyebrow fern-tag">
+        Pre-1.0 · self-hosting · arm64 · x86-64 · wasm
+      </p>
+
+      <h1>Fern</h1>
+
+      <p class="hero__claim">
+        <span>No collector.</span>
+        <span>No borrow checker.</span>
+        <span><em>Nothing underneath.</em></span>
+      </p>
+
+      <p class="hero__lede">
+        A statically typed language whose compiler assembles and links its own
+        binaries in one process — no gcc, no ld, no libc. Memory is reference
+        counted, most of the counting is removed at compile time, and reference
+        cycles are not expressible, so nothing is left for a collector to do.
+        The compiler is 222,000 lines of Fern, and it compiles itself.
+      </p>
+
+      <div class="hero__actions">
+        <a class="btn btn--primary" href={href("tutorial/install/")}
+          >Get started</a
+        >
+        <a class="btn" href={href("playground/")}>Try in browser</a>
+        <a class="btn" href="https://github.com/JakeChampion/lang" rel="noopener"
+          >Read the source</a
+        >
+      </div>
+
+      <div class="cmd">
+        <div class="cmd__head">
+          <span class="fern-tag">Install</span>
+          <span class="fern-tag">macOS · Linux</span>
+        </div>
+        <div class="cmd__line">
+          <span class="cmd__prompt" aria-hidden="true">$</span><code
+            >go install github.com/jakechampion/lang/cmd/fern@latest</code
+          >
+        </div>
+        <div class="cmd__line">
+          <span class="cmd__prompt" aria-hidden="true">$</span><code
+            >fern -o hello hello.fern &amp;&amp; ./hello</code
+          >
+        </div>
+        <div class="cmd__note">
+          <p>
+            Needs Go 1.26+ to build the compiler, and nothing at all to use it.
+            Prefer a prebuilt binary, or a bootstrap with no Go on the machine?
+            The <a href={href("tutorial/install/")}>install guide</a> has both.
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  {/* ---------------------------------------------------------------- */}
+  <dl class="stats">
+    <div>
+      <dt>Instructions retired</dt>
+      <dd>
+        7
+        <small
+          >From <code>_start</code> to <code>exit</code> for an empty
+          <code>main</code>. Statically linked C is 228,519; Go is 291,170.</small
+        >
+      </dd>
+    </div>
+    <div>
+      <dt>Hello, world</dt>
+      <dd>
+        4.3 kB
+        <small
+          >A complete static x86-64 executable. No libc, no loader, no runtime
+          to initialise.</small
+        >
+      </dd>
+    </div>
+    <div>
+      <dt>External toolchain</dt>
+      <dd>
+        none
+        <small
+          >The assembler, the linker, the ELF and Mach-O writers and the wasm
+          encoder are all inside <code>fern</code>.</small
+        >
+      </dd>
+    </div>
+    <div>
+      <dt>Compiler, written in Fern</dt>
+      <dd>
+        222k
+        <small
+          >Lines across 118 modules, bootstrapping from a pinned binary with no
+          Go present.</small
+        >
+      </dd>
+    </div>
+  </dl>
+
+  {/* ---------------------------------------------------------------- */}
+  <section class="plate" id="try">
+    <div class="shell plate__inner">
+      <div class="plate__head">
+        <p class="plate__num">§ 01</p>
+        <h2>Run one now</h2>
+        <p class="plate__sub">
+          Every program is a <code>main</code> that returns an exit code. This one
+          is compiling and running in your browser — the real compiler, built to
+          WebAssembly, with no server involved.
+        </p>
+      </div>
+
+      <FernPlayground
+        minimal
+        code={`function main(): i32 {
+  print("hello, world");
+  return 0;
+}`}
+      />
+    </div>
+  </section>
+
+  {/* ---------------------------------------------------------------- */}
+  <section class="plate">
+    <div class="shell plate__inner">
+      <div class="plate__head">
+        <p class="plate__num">§ 02</p>
+        <h2>The language, in five specimens</h2>
+        <p class="plate__sub">
+          Fern started out TypeScript-flavoured and has been growing away from
+          it ever since. What it takes from Roc, Koka, Rust and Zig is the part
+          that matters: types that describe what a value can be, failure that
+          travels as a value, and ownership you can state when it pays.
+        </p>
+      </div>
+
+      <div class="tabs" role="tablist" aria-label="Language tour">
+        {
+          tour.map((t, i) => (
+            <button
+              type="button"
+              role="tab"
+              id={`tab-${t.id}`}
+              aria-controls={`panel-${t.id}`}
+              aria-selected={i === 0 ? "true" : "false"}
+              tabindex={i === 0 ? 0 : -1}
+            >
+              {t.tab}
+            </button>
+          ))
+        }
+      </div>
+
+      {
+        tour.map((t, i) => (
+          <div
+            class="tabpanel split"
+            role="tabpanel"
+            id={`panel-${t.id}`}
+            aria-labelledby={`tab-${t.id}`}
+            hidden={i !== 0}
+          >
+            <div>
+              <h3>{t.tab}</h3>
+              <p class="tabpanel__note" set:html={ticks(t.note)} />
+            </div>
+            <Specimen file={t.file} meta={t.meta} code={t.code} />
+          </div>
+        ))
+      }
+    </div>
+  </section>
+
+  {/* ---------------------------------------------------------------- */}
+  <section class="plate plate--sunken">
+    <div class="shell plate__inner">
+      <div class="plate__head">
+        <p class="plate__num">§ 03</p>
+        <h2>Memory, without a collector or a borrow checker</h2>
+        <p class="plate__sub">
+          Fern uses Perceus-style reference counting: the compiler inserts the
+          increments and decrements, then removes the ones it can prove
+          unnecessary. What is left runs at the point the last use goes out of
+          scope. There is no heap to size, no pause to plan around, and no
+          lifetime annotation to satisfy.
+        </p>
+      </div>
+
+      <div class="features features--three">
+        <div>
+          <h3>Cycles do not compile</h3>
+          <p>
+            Reference counting cannot free a cycle, so Fern makes one
+            impossible to build: struct fields are immutable after
+            construction, and the mutable <code>Cell[T]</code> is restricted to
+            scalars and strings. The escape hatch other counted languages need
+            — weak references — is not here, because the leak it patches is not
+            reachable.
+          </p>
+        </div>
+        <div>
+          <h3>Reuse in place</h3>
+          <p>
+            When the compiler can prove a value is uniquely owned, rebuilding
+            it writes over the old box instead of allocating a new one. A
+            consuming <code>match</code>, a record update, an append to a
+            unique buffer: all of them reuse. If the proof fails at runtime the
+            value is shared, and you get a fresh allocation rather than a bug.
+          </p>
+        </div>
+        <div>
+          <h3>A sanitizer, not a hope</h3>
+          <p>
+            <code>fern -sanitize</code> turns on double-free and use-after-free
+            detection plus a leak census at exit, so “did that free?” is a
+            question with an answer. It covers the native targets;
+            <code>fern -append-report</code> is the companion for finding an
+            append that quietly copies.
+          </p>
+        </div>
+      </div>
+
+      <div class="split" style="margin-top: 2.5rem">
+        <div>
+          <h3>Say it when it pays</h3>
+          <p class="tabpanel__note">
+            Most code never mentions ownership. When a hot path does,
+            <code>own</code> consumes an argument so the result can be written back
+            into the same allocation, and <code>fip</code> asks the compiler to
+            reject the function if it allocates at all. Both are checked, not advisory.
+          </p>
+          <p class="tabpanel__note">
+            <a href={href("reference/memory/")}>The memory model in full →</a>
+          </p>
+        </div>
+        <Specimen
+          file="std/sort.fern"
+          meta="from the standard library"
+          code={`// Insertion sort, deliberately: a merge sort needs a
+// scratch buffer, and a \`fip\` function may not allocate.
+pub fip function sort_i32_inplace_asc(own arr: i32[]): i32[] {
+  var n: i32 = arr.len();
+  var k: i32 = 1;
+  while (k < n) {
+    var key: i32 = arr[k];
+    var j: i32 = k - 1;
+    while (j >= 0 && arr[j] > key) {
+      arr = arr.with(j + 1, arr[j]);
+      j = j - 1;
+    }
+    arr = arr.with(j + 1, key);
+    k = k + 1;
+  }
+  return arr;
+}`}
+        />
+      </div>
+    </div>
+  </section>
+
+  {/* ---------------------------------------------------------------- */}
+  <section class="plate">
+    <div class="shell plate__inner">
+      <div class="plate__head">
+        <p class="plate__num">§ 04</p>
+        <h2>One binary, all the way down to the ELF</h2>
+        <p class="plate__sub">
+          Most compilers stop at assembly and hand the rest to a toolchain you
+          also have to install. Fern does not stop. The assembler, the linker,
+          the ELF and Mach-O writers, the DWARF emitter, the ad-hoc code signer
+          and the WebAssembly component encoder are all inside the same
+          process, and <code>fern -o app app.fern</code> is the entire build.
+        </p>
+      </div>
+
+      <div class="pipeline-frame">
+      <svg
+        class="pipeline"
+        viewBox="0 0 960 286"
+        role="img"
+        aria-label="Fern's compilation pipeline: source is lexed, parsed, type-checked, monomorphised and lowered to a shared IR, which feeds the arm64, x86-64 and wasm backends; each emits its final artefact in the same process."
+      >
+        <g class="p-stage" stroke-width="1">
+          <rect x="20" y="24" width="160" height="42" rx="6"></rect>
+          <rect x="210" y="24" width="160" height="42" rx="6"></rect>
+          <rect x="400" y="24" width="160" height="42" rx="6"></rect>
+          <rect x="590" y="24" width="160" height="42" rx="6"></rect>
+          <rect x="780" y="24" width="160" height="42" rx="6"></rect>
+        </g>
+        <g class="p-label" text-anchor="middle">
+          <text x="100" y="50">source.fern</text>
+          <text x="290" y="50">parse</text>
+          <text x="480" y="50">check</text>
+          <text x="670" y="50">monomorphise</text>
+          <text x="860" y="50">IR + optimise</text>
+        </g>
+        <g class="p-edge" stroke-width="1.2">
+          <path d="M180 45 H206" marker-end="url(#arw)"></path>
+          <path d="M370 45 H396" marker-end="url(#arw)"></path>
+          <path d="M560 45 H586" marker-end="url(#arw)"></path>
+          <path d="M750 45 H776" marker-end="url(#arw)"></path>
+          <path d="M860 66 V92 H145 M480 92 V112 M145 92 V112 M815 92 V112"
+          ></path>
+          <path d="M145 92 V108" marker-end="url(#arw)"></path>
+          <path d="M480 92 V108" marker-end="url(#arw)"></path>
+          <path d="M815 92 V108" marker-end="url(#arw)"></path>
+        </g>
+
+        <g class="p-stage" stroke-width="1">
+          <rect x="30" y="112" width="230" height="48" rx="6"></rect>
+          <rect x="365" y="112" width="230" height="48" rx="6"></rect>
+          <rect x="700" y="112" width="230" height="48" rx="6"></rect>
+        </g>
+        <g text-anchor="middle">
+          <text class="p-label" x="145" y="134">arm64</text>
+          <text class="p-small" x="145" y="150">Linux · macOS · Android</text>
+          <text class="p-label" x="480" y="134">x86-64</text>
+          <text class="p-small" x="480" y="150">Linux</text>
+          <text class="p-label" x="815" y="134">wasm32</text>
+          <text class="p-small" x="815" y="150">WASI preview 2</text>
+        </g>
+
+        <g class="p-edge" stroke-width="1.2">
+          <path d="M145 160 V194" marker-end="url(#arw)"></path>
+          <path d="M480 160 V194" marker-end="url(#arw)"></path>
+          <path d="M815 160 V194" marker-end="url(#arw)"></path>
+        </g>
+
+        <g class="p-out" stroke-width="1.2">
+          <rect x="40" y="198" width="210" height="36" rx="18"></rect>
+          <rect x="375" y="198" width="210" height="36" rx="18"></rect>
+          <rect x="710" y="198" width="210" height="36" rx="18"></rect>
+        </g>
+        <g class="p-out-label" text-anchor="middle">
+          <text x="145" y="221">static ELF · signed Mach-O</text>
+          <text x="480" y="221">static ELF</text>
+          <text x="815" y="221">component · core module</text>
+        </g>
+
+        <g class="p-tick" stroke-width="2">
+          <path d="M20 262 H60"></path>
+        </g>
+        <text class="p-small" x="72" y="266">
+          everything above happens in one process — no gcc, no ld, no wasm-tools
+        </text>
+
+        <defs>
+          <marker
+            id="arw"
+            viewBox="0 0 10 10"
+            refX="9"
+            refY="5"
+            markerWidth="5"
+            markerHeight="5"
+            orient="auto-start-reverse"
+          >
+            <path d="M0 0 L10 5 L0 10 z" fill="currentColor"></path>
+          </marker>
+        </defs>
+      </svg>
+      </div>
+
+      <div class="features features--three" style="margin-top: 2.5rem">
+        <div>
+          <h3>The same source, natively or on the web</h3>
+          <p>
+            <code>-target wasm32-wasi</code> emits a WASI Preview 2 component
+            for <code>wasmtime run</code>, and
+            <code>-target wasm32-wasi-http</code> an HTTP handler for
+            <code>wasmtime serve</code> — composed natively, with no
+            <code>wasm-tools</code> step and no JavaScript glue. What a target cannot
+            provide is not expressible in a program built for it, so you get a build
+            error rather than a runtime surprise.
+          </p>
+        </div>
+        <div>
+          <h3>Deterministic, and checked that way</h3>
+          <p>
+            The same inputs produce byte-identical output, and the gate on that
+            is unusually strong: the compiler compiles itself, then the result
+            compiles itself again, and the two must match byte for byte. A
+            cross-architecture variant proves the emitted code does not depend
+            on the machine that emitted it.
+          </p>
+        </div>
+        <div>
+          <h3>Written in Fern</h3>
+          <p>
+            222,000 lines across 118 modules — parser, checker, optimiser, all
+            three backends, the assemblers and the linkers.
+            <code>make bootstrap</code> builds it from a pinned earlier binary on
+            a machine with no Go toolchain at all.
+          </p>
+        </div>
+      </div>
+
+      <p class="footnote">
+        <a href={href("compiler/")}>How the compiler works</a> ·
+        <a href={href("compiler/targets/")}>Targets and backends</a> ·
+        <a href={href("compiler/bootstrap/")}>Self-hosting and bootstrap</a>
+      </p>
+    </div>
+  </section>
+
+  {/* ---------------------------------------------------------------- */}
+  <section class="plate plate--sunken">
+    <div class="shell plate__inner">
+      <div class="plate__head">
+        <p class="plate__num">§ 05</p>
+        <h2>The tools are the compiler</h2>
+        <p class="plate__sub">
+          There is no plugin to install and no second tool to keep in step.
+          <code>fern</code> is one binary and every mode is a flag on it.
+        </p>
+      </div>
+
+      <div class="features">
+        <div>
+          <h3>Write</h3>
+          <p>
+            <code>-fmt</code> formats and <code>-check</code> type-checks a file,
+            a package or a whole workspace. <code>-explain E048</code> prints the
+            long-form account of any of the 81 diagnostics.
+            <code>fern-lsp</code> gives any LSP editor hover, completion, go-to-definition,
+            references, rename, inlay hints and semantic tokens, and a VS Code extension
+            wraps it.
+          </p>
+        </div>
+        <div>
+          <h3>Run</h3>
+          <p>
+            <code>-interp</code> runs a program without compiling it and
+            <code>-repl</code> gives you a prompt. Compiling is
+            <code>-o</code>; <code>-O</code> drops every <code>assert</code>;
+            <code>-g</code> emits a symbol table, and
+            <code>-shared</code> a loadable <code>.so</code>.
+          </p>
+        </div>
+        <div>
+          <h3>Prove</h3>
+          <p>
+            <code>std/test</code> is the runner, <code>-cover</code> gives line
+            and branch coverage with an lcov export,
+            <code>-sanitize</code> hunts memory bugs, and
+            <code>-lint</code> reads the parse tree so a file with a type error still
+            lints.
+          </p>
+        </div>
+        <div>
+          <h3>Ship</h3>
+          <p>
+            <code>-embed</code> bakes a directory of assets into the binary.
+            <code>fern.toml</code> pins dependencies by content hash and resolves
+            them with minimum version selection — no registry, and
+            <code>-vendor</code> makes the build fully offline. A package declares
+            which capabilities it may reach.
+          </p>
+        </div>
+        <div>
+          <h3>Explain</h3>
+          <p>
+            A program can be a Markdown document.
+            <code>-tangle</code> extracts the code from a
+            <code>.fern.md</code>, <code>-weave</code> renders a
+            cross-referenced page, <code>-doctest</code> runs the examples in
+            it, and diagnostics point back at the line you actually wrote.
+          </p>
+        </div>
+        <div>
+          <h3>Inspect</h3>
+          <p>
+            <code>-targets</code> prints exactly what each target provides.
+            <code>-capabilities</code> reports what a package can reach and the
+            call chain that gets it there. <code>-effects</code> does the same
+            per function.
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  {/* ---------------------------------------------------------------- */}
+  <section class="plate">
+    <div class="shell plate__inner">
+      <div class="plate__head">
+        <p class="plate__num">§ 06</p>
+        <h2>Evidence, not adjectives</h2>
+        <p class="plate__sub">
+          Fern carries a reimplementation of 57 GNU coreutils, held to
+          byte-for-byte parity with the real thing — every flag, every error
+          message, every exit code — and benchmarked against both GNU and
+          uutils. It is the best answer available to “does this actually work”.
+        </p>
+      </div>
+
+      <div class="split split--wide-first">
+        <div class="table-wrap">
+          <table class="data">
+            <caption class="fern-tag" style="text-align: left; padding-bottom: 0.6rem"
+              >Wall time, hyperfine, ≥20 runs · arm64 Linux</caption
+            >
+            <thead>
+              <tr>
+                <th>Program</th>
+                <th>Fern</th>
+                <th>GNU</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr class="win">
+                <td><code>true</code></td>
+                <td class="num">0.15 ms</td>
+                <td class="num">0.19 ms</td>
+                <td class="num">1.28×</td>
+              </tr>
+              <tr class="win">
+                <td><code>echo hello world</code></td>
+                <td class="num">0.15 ms</td>
+                <td class="num">0.20 ms</td>
+                <td class="num">1.32×</td>
+              </tr>
+              <tr class="win">
+                <td><code>yes | head -c 1G</code></td>
+                <td class="num">158.5 ms</td>
+                <td class="num">168.0 ms</td>
+                <td class="num">1.06×</td>
+              </tr>
+              <tr>
+                <td><code>sort</code>, 200k lines</td>
+                <td class="num">130 ms</td>
+                <td class="num">22 ms</td>
+                <td class="num">0.17×</td>
+              </tr>
+            </tbody>
+          </table>
+          <p class="footnote">
+            The margin on the first three is startup: a Fern binary is static,
+            with no dynamic loader and no libc to initialise, and the gap widens
+            on macOS where the loader costs more. The last row is the other
+            half of the truth — instruction selection is still naive, and
+            comparison sorting is where that shows. Both sets are in
+            <code>docs/COREUTILS.md</code>, re-runnable with
+            <code>scripts/coreutils-bench</code>.
+          </p>
+        </div>
+
+        <div>
+          <h3>What else is held to a line</h3>
+          <p class="tabpanel__note">
+            <strong>578 conformance cases</strong> define observable Fern
+            behaviour by example. Changing what one of them expects is a change
+            to the language, and is reviewed as one. Every implementation is
+            measured against the same corpus: the interpreter, all three
+            backends, and the self-hosted compiler's own emitters.
+          </p>
+          <p class="tabpanel__note">
+            <strong>77 standard-library modules</strong>, about 42,000 lines of
+            Fern — including a Thompson-NFA regex with no catastrophic
+            backtracking, a PEG matcher, JSON, a pure-Fern crypto suite with the
+            SHA-2 family and BLAKE2b, persistent HAMT maps and sets, arbitrary
+            precision integers, and a WebAssembly encoder the self-hosted
+            compiler emits through.
+          </p>
+          <p class="tabpanel__note">
+            <strong>A byte-identical fixpoint.</strong> The compiler compiles
+            itself; that output compiles itself; the two must agree exactly.
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  {/* ---------------------------------------------------------------- */}
+  <section class="plate plate--sunken">
+    <div class="shell plate__inner">
+      <div class="plate__head">
+        <p class="plate__num">§ 07</p>
+        <h2>Where it actually is</h2>
+        <p class="plate__sub">
+          Fern is pre-1.0 and the nightly build is the release channel. Syntax
+          still moves. Here is the honest state of each part, and the
+          <a href={href("status/")}>status page</a> keeps the longer version.
+        </p>
+      </div>
+
+      <div class="status">
+        <div class="status__row">
+          <span class="status__state" data-state="solid">Solid</span>
+          <span class="status__what">Language &amp; type system</span>
+          <span class="status__note"
+            >Generics, traits, <code>dyn</code>, sum types, exhaustive matching,
+            errors as values, ownership modes. Associated types are native-only
+            so far.</span
+          >
+        </div>
+        <div class="status__row">
+          <span class="status__state" data-state="solid">Solid</span>
+          <span class="status__what">Native targets</span>
+          <span class="status__note"
+            >arm64 Linux, macOS and Android, and x86-64 Linux, all assembled and
+            linked in-process. x86-64 is the newer of the two and has a few
+            gaps.</span
+          >
+        </div>
+        <div class="status__row">
+          <span class="status__state" data-state="solid">Solid</span>
+          <span class="status__what">WebAssembly</span>
+          <span class="status__note"
+            >Preview 2 components composed natively. Coverage and the sanitizer
+            are native-only; heap exhaustion traps rather than exiting
+            cleanly.</span
+          >
+        </div>
+        <div class="status__row">
+          <span class="status__state" data-state="moving">Moving</span>
+          <span class="status__what">Reference counting</span>
+          <span class="status__note"
+            >Complete and shipping on the Go implementation; the port to the
+            self-hosted compiler is the project's live front. Some shapes still
+            retain memory — the leak census is pinned per fixture rather than
+            waved at.</span
+          >
+        </div>
+        <div class="status__row">
+          <span class="status__state" data-state="moving">Moving</span>
+          <span class="status__what">Self-hosting</span>
+          <span class="status__note"
+            >The compiler builds itself and bootstraps with no Go present. The
+            remaining gate is memory: the self-host compiler frees less than the
+            Go one, and the second bootstrap stage does not yet fit in a
+            reasonable heap.</span
+          >
+        </div>
+        <div class="status__row">
+          <span class="status__state" data-state="moving">Moving</span>
+          <span class="status__what">Package capabilities</span>
+          <span class="status__note"
+            >Grants are enforced with the full call chain in the error, but a
+            dependency that declares nothing is still allowed with a warning.
+            Default-deny is the next step, so do not treat it as a sandbox
+            yet.</span
+          >
+        </div>
+        <div class="status__row">
+          <span class="status__state" data-state="absent">Not yet</span>
+          <span class="status__what">Threads &amp; parallelism</span>
+          <span class="status__note"
+            >Concurrency is I/O-driven futures on one poll loop. Reference
+            counts are non-atomic by design, so there are no threads and no
+            multicore.</span
+          >
+        </div>
+        <div class="status__row">
+          <span class="status__state" data-state="absent">Not yet</span>
+          <span class="status__what">Bare metal</span>
+          <span class="status__note"
+            >The freestanding targets type-check against an empty capability set
+            and no backend emits for them yet. The blocker is not codegen: an
+            interrupt handler is a second context racing non-atomic
+            refcounts.</span
+          >
+        </div>
+        <div class="status__row">
+          <span class="status__state" data-state="absent">Not yet</span>
+          <span class="status__what">Windows, Intel Macs, 32-bit</span>
+          <span class="status__note"
+            >None are planned. If you need one of them, one of the languages on
+            the <a href={href("why/")}>Why Fern</a> page is the honest answer.</span
+          >
+        </div>
+      </div>
+    </div>
+  </section>
+
+  {/* ---------------------------------------------------------------- */}
+  <section class="plate" id="next">
+    <div class="shell plate__inner" style="padding-bottom: 2rem">
+      <div class="plate__head">
+        <p class="plate__num">§ 08</p>
+        <h2>Where next</h2>
+      </div>
+    </div>
+    <ul class="signposts">
+      {
+        signposts.map((s) => (
+          <li>
+            <a href={href(s.href)}>
+              {s.label}
+              <span class="arrow" aria-hidden="true">
+                {" →"}
+              </span>
+            </a>
+            <p>{s.blurb}</p>
+          </li>
+        ))
+      }
+    </ul>
+  </section>
+
+  <script is:inline>
+    // The language tour. Progressive enhancement: with JS off every panel
+    // is already in the DOM, and only the first is hidden — so the page
+    // still shows a complete specimen rather than an empty box.
+    (() => {
+      const list = document.querySelector('[role="tablist"]');
+      if (!list) return;
+      const tabs = [...list.querySelectorAll('[role="tab"]')];
+
+      function select(tab) {
+        for (const t of tabs) {
+          const on = t === tab;
+          t.setAttribute("aria-selected", String(on));
+          t.tabIndex = on ? 0 : -1;
+          document.getElementById(
+            t.getAttribute("aria-controls"),
+          ).hidden = !on;
+        }
+      }
+
+      list.addEventListener("click", (e) => {
+        const tab = e.target.closest('[role="tab"]');
+        if (tab) select(tab);
+      });
+
+      list.addEventListener("keydown", (e) => {
+        const i = tabs.indexOf(document.activeElement);
+        if (i < 0) return;
+        const step =
+          e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
+        if (!step) return;
+        e.preventDefault();
+        const next = tabs[(i + step + tabs.length) % tabs.length];
+        next.focus();
+        select(next);
+      });
+    })();
+  </script>
+</Page>

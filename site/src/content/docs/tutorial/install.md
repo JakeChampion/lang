@@ -5,14 +5,14 @@ sidebar:
   order: 1
 ---
 
-There are two ways to get `fern`: download a prebuilt binary, or build
-from source with Go. Both take about a minute.
+There are three ways to get `fern`: download a prebuilt binary, build from
+source with Go, or bootstrap the self-hosted compiler with no Go at all.
+The first two take about a minute.
 
 ## Option A — prebuilt binary (fastest)
 
-Every push to `main` publishes a rolling [**nightly
-release**][nightly] with statically-linked binaries. Grab the one for
-your platform:
+A rolling [**nightly release**][nightly] is built once a day from `main`,
+with statically-linked binaries. Grab the one for your platform:
 
 | Platform              | Asset                          |
 | --------------------- | ------------------------------ |
@@ -52,6 +52,23 @@ Building needs **Go 1.26+** ([download](https://go.dev/dl/)) and nothing
 else. Compiling a Fern program needs nothing else either — no `gcc`, no
 `clang`, no `ld`. Pass `-cc` (for example `-cc clang`) if you would
 rather use your own assembler and linker.
+
+## Option C — bootstrap, with no Go on the machine
+
+Fern's compiler is written in Fern, so it can build itself. A pinned
+earlier compiler (**stage 0**) is downloaded, verified against the sha256
+in `bootstrap/stage0.lock`, and used to compile the current sources:
+
+```bash
+git clone https://github.com/JakeChampion/lang
+cd lang
+make bootstrap        # → bin/fern-selfhost
+```
+
+No Go toolchain and no native backend are needed on the machine running
+it. [Self-hosting and bootstrap](../../compiler/bootstrap/) explains what
+the pin is, how to verify it by hand, and which reproducibility gates are
+green.
 
 ## Verify the install
 

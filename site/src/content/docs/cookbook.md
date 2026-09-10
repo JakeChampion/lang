@@ -278,7 +278,7 @@ requests on one thread.
 
 A program with a `handle` function and no `main` is a server: Fern
 synthesises the `main` that listens, or exports the WASI HTTP interface
-when you build for `wasi-http`.
+when you build for `wasm32-wasi-http`.
 
 ```fern
 import "std/http";
