@@ -110,12 +110,18 @@ var selfHostEnumFieldDeepDropCases = []struct {
 // TestSelfHostEnumFieldDeepDropLeakCheck is the gate: clean under FERN_LEAKCHECK
 // on BOTH compilers, native as the oracle.
 //
-// FIVE rows leak without the fix: the three defect rows and both guard rows. The
-// guards earn their name from the other direction — they are the rows an UNGATED
-// or unbalanced walk would fail, and it would fail them as a changed answer or an
-// underflow rather than as a leak, which is why the exit code is asserted
-// alongside the verdict. The two controls are clean either way, and the refused
-// row leaks either way.
+// FIVE rows leak without #8567's fix: the three defect rows and both guard rows.
+// The guards earn their name from the other direction — they are the rows an
+// UNGATED or unbalanced walk would fail, and it would fail them as a changed
+// answer or an underflow rather than as a leak, which is why the exit code is
+// asserted alongside the verdict. The two controls are clean either way, and the
+// refused row leaks either way.
+//
+// The second-struct-alias PAIR answers a LATER fix and is counted separately:
+// both leak without #8658's counted-share carve-out, one row per scanned
+// position. The initialiser and the assignment are walked by different
+// functions, so neither row stands in for the other — which is how the
+// assignment half survived that fix's first cut.
 func TestSelfHostEnumFieldDeepDropLeakCheck(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	cli := buildLangBinForInterp(t)
