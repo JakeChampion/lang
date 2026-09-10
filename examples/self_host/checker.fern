@@ -7819,20 +7819,29 @@ function int_literal_tree(e: ast.Expr): boolean {
 }
 
 // int_operand_op: does a binary `op` hand its own integer type down to both
-// operands? Arithmetic, bitwise and shift operators do — including the shift
-// COUNT, which native judges against the same type as the value — so a literal
-// under one is read at the destination's type and range-checked there.
-// Comparison and logical operators do not: their operands carry a type of
-// their own, so no destination reaches through them.
+// operands? Arithmetic, bitwise, shift and SATURATING operators do — including
+// the shift COUNT, which native judges against the same type as the value — so
+// a literal under one is read at the destination's type and range-checked
+// there. The set is native's settleInt Binary case, entry for entry.
 //
-// This is deliberately narrower than parser.int_literal_tree's set, which also
-// admits the saturating `+|` / `-|` / `*|` / `<<|` forms: native's two range
-// paths disagree about those (its checker refuses a wide operand, its constfold
-// walk does not list them and folds one instead), so admitting them here would
-// refuse a const that native accepts.
+// Comparison and logical operators are absent because their operands carry a
+// type of their own, and the CHECKED forms because they yield an Option, which
+// never reaches an integer destination — native answers those with E003 on the
+// Option, not a range error.
 function int_operand_op(op: string): boolean {
   if (op == "+" || op == "-" || op == "*" || op == "/" || op == "%") { return true; }
-  return op == "&" || op == "|" || op == "^" || op == "<<" || op == ">>";
+  if (op == "&" || op == "|" || op == "^" || op == "<<" || op == ">>") { return true; }
+  return op == "+|" || op == "-|" || op == "*|" || op == "<<|";
+}
+
+// const_refused_op: the operators native's constfold leaves out of its integer
+// switch, so folding one is an error there rather than a value. Its message is
+// uncoded, like the rest of the const grammar.
+function const_refused_op(op: string): boolean {
+  if (op == "+|" || op == "-|" || op == "*|" || op == "<<|") { return true; }
+  if (op == "+?" || op == "-?" || op == "*?") { return true; }
+  if (op == "/?" || op == "%?") { return true; }
+  return op == "<<?" || op == ">>?";
 }
 
 // int_range_diags: E047 for every literal in `e` that the type it is READ at
@@ -10317,6 +10326,9 @@ function const_expr_err(e: ast.Expr, earlier: string[]): string {
       return const_expr_err(u.operand, earlier);
     },
     ast.ExprBinary(b) => {
+      if (const_refused_op(b.op)) {
+        return "operator `" + b.op + "` not allowed in integer constant expressions";
+      }
       var le: string = const_expr_err(b.left, earlier);
       if (le.len() > 0) {
         return le;
@@ -14206,6 +14218,16 @@ pub function check_module(raw_mod: parser.Module): ModuleTypes {
         body_diags = util.append_diags(body_diags, e057_annot_diags(field.type_name, esd.line, esd.col));
       }
     }
+  }
+  // Native folds top-level consts BEFORE the checker runs, and a const the
+  // fold refuses aborts it — so the checker never sees the module and nothing
+  // else is reported. Mirror that ordering: without it a refused const also
+  // collects whatever its body walk finds (a range error on the operand it
+  // could not fold, a type error on the Option a checked operator yields),
+  // which native never reaches.
+  var cgd: util.Diag[] = const_grammar_diags(mod);
+  if (cgd.len() > 0) {
+    return ModuleTypes { sigs: sigs, top_tys: top_tys, all_well_typed: false, diags: cgd };
   }
   // own_diags (E050/E051) and e049_diags (E049) walk whole-function bodies
   // for move / capture analysis.
