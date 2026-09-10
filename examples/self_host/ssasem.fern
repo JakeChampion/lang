@@ -140,6 +140,42 @@ function record_projection_error(ins: ssa.SInst, f: Func, result: typeinfo.Type)
     return "";
 }
 
+function arithmetic(op: string): boolean { return op == "+" || op == "-" || op == "*"; }
+function comparison(op: string): boolean {
+    return op == "<" || op == "<=" || op == ">" || op == ">=" || op == "==" || op == "!=";
+}
+
+// Wrapping i32 arithmetic, i32 ordering and equality on i32 or booleans.
+// Division, other widths and operator overloads have no contract yet.
+pub function binary_result(op: string, left: typeinfo.Type, right: typeinfo.Type): typeinfo.Type {
+    if (is_i32(left) && is_i32(right)) {
+        if (arithmetic(op)) { return typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false }; }
+        if (comparison(op)) { return typeinfo.TypeBool { tag: 0 }; }
+    }
+    if (is_bool(left) && is_bool(right) && (op == "==" || op == "!=")) { return typeinfo.TypeBool { tag: 0 }; }
+    return typeinfo.unchecked();
+}
+
+pub function unary_result(op: string, operand: typeinfo.Type): typeinfo.Type {
+    if (op == "-" && is_i32(operand)) { return typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false }; }
+    if (op == "!" && is_bool(operand)) { return typeinfo.TypeBool { tag: 0 }; }
+    return typeinfo.unchecked();
+}
+
+function binary_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
+    if (ins.args.len() != 2) { return "binary operator arity"; }
+    var want: typeinfo.Type = binary_result(ins.str, f.values[ins.args[0]], f.values[ins.args[1]]);
+    if (!semtypes.concrete(want, false) || !semtypes.equal(want, result)) { return "binary operator contract"; }
+    return "";
+}
+
+function unary_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
+    if (ins.args.len() != 1) { return "unary operator arity"; }
+    var want: typeinfo.Type = unary_result(ins.str, f.values[ins.args[0]]);
+    if (!semtypes.concrete(want, false) || !semtypes.equal(want, result)) { return "unary operator contract"; }
+    return "";
+}
+
 function instruction_error(ins: ssa.SInst, f: Func): string {
     if (ins.result < 0) { return "semantic operation needs a result"; }
     var result: typeinfo.Type = f.values[ins.result];
@@ -147,6 +183,8 @@ function instruction_error(ins: ssa.SInst, f: Func): string {
     if (kind == 6) { return parameter_error(ins, f, result); }
     if (kind == 7 || kind == 8) { return copy_error(ins, f, result); }
     if (kind == 1 || kind == 2) { return constant_error(ins, result); }
+    if (kind == 9) { return binary_error(ins, f, result); }
+    if (kind == 10) { return unary_error(ins, f, result); }
     if (kind == array_new()) { return array_construction_error(ins, f, result); }
     if (kind == tuple_new()) { return tuple_construction_error(ins, f, result); }
     if (kind == array_get()) { return array_projection_error(ins, f, result); }
