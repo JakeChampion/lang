@@ -45,6 +45,10 @@ name: Lint
 #                that matches nothing, so the arm64 cross-host lane ran 15 of
 #                the 17 tests it listed — including the one its 55-minute budget
 #                was sized for — and reported green the whole time (#6310).
+#   ci-selftest — `make ci-selftest`: runs ci.yml's `changes` script against
+#                stubbed API responses (tools/ci-changes-selftest.mjs), so the
+#                path-filter grammar it implements is pinned before it gates a
+#                pull request.
 #   freeze     — `make freeze`: reports the live state of the native-convergence
 #                freeze preconditions, derived from the tree. Fails only when
 #                ground is LOST (an AST emitter returns, a backend loses
@@ -103,6 +107,10 @@ jobs:
       - name: testnames
         if: ${{ !cancelled() }}
         run: make testnames
+
+      - name: ci changes self-test
+        if: ${{ !cancelled() }}
+        run: make ci-selftest
 
       - name: freeze preconditions
         if: ${{ !cancelled() }}

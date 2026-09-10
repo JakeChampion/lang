@@ -484,8 +484,8 @@ func globMatches(pattern, path string) bool {
 // The grammar has two copies — globMatches here and `compile` in ci.yml's
 // `changes` job — and the lane filters in use exercise only `*`, `**` and
 // literals, so the other arms would drift from GitHub's documented meaning,
-// and from each other, with nothing failing. Same cases as the script's own
-// harness.
+// and from each other, with nothing failing. tools/ci-changes-selftest.mjs
+// runs the same cases against the JS copy, from the lint lane.
 func TestGlobMatchesFollowsGitHubGrammar(t *testing.T) {
 	for _, c := range []struct {
 		pattern, path string

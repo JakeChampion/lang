@@ -65,6 +65,14 @@ hooks:
 testnames:
 	./tools/testname_gate.sh
 
+# Run ci.yml's `changes` script against stubbed API responses: the JS copy of
+# GitHub's filter grammar and the job's fail-open rules, pinned the way
+# internal/sourcelint pins the Go copy. See tools/ci-changes-selftest.mjs.
+ci-selftest:
+	@command -v node >/dev/null 2>&1 || { \
+		echo "node is not on PATH: the lint lane runs this on the runner image" >&2; exit 1; }
+	node tools/ci-changes-selftest.mjs
+
 # Report the live state of the native-convergence freeze preconditions,
 # derived from the tree rather than read off #4451. Fails only on a
 # REGRESSION (ground lost). See tools/freeze_gate.sh.
@@ -197,13 +205,13 @@ gofmt-check:
 # One target so a local run and CI cannot drift into checking different things,
 # and so `scripts/signoff lint` and the workflow share one definition.
 #
-# Keeps going after a failure and reports the set at the end: nine gates run
+# Keeps going after a failure and reports the set at the end: ten gates run
 # as one job must not hide the seventh failure behind the second.
 lint-all:
 	@status=0; \
 	for gate in "go build ./..." "go vet ./..." "$(MAKE) gofmt-check" "$(MAKE) fmt-check" \
 	            "$(MAKE) check-sources" "$(MAKE) deadcode" "$(MAKE) actionlint" \
-	            "$(MAKE) testnames" "$(MAKE) freeze"; do \
+	            "$(MAKE) testnames" "$(MAKE) ci-selftest" "$(MAKE) freeze"; do \
 		echo "==> $$gate"; \
 		if ! sh -c "$$gate"; then echo "FAILED: $$gate"; status=1; fi; \
 	done; \

@@ -396,3 +396,23 @@ func TestCILanesAreGrantedWhatTheyRequest(t *testing.T) {
 		t.Errorf("%s declares permissions of its own; it takes them from each reap-* caller job", reaperFile)
 	}
 }
+
+// The `changes` script has no test of its own inside ci.yml, so
+// tools/ci-changes-selftest.mjs executes it against stubbed responses, and
+// the lint lane is where that runs. Drop the step and the JS copy of the
+// grammar is unpinned again while the Go copy stays green.
+func TestChangesScriptIsSelfTested(t *testing.T) {
+	if _, err := os.Stat(filepath.Join("..", "..", "tools", "ci-changes-selftest.mjs")); err != nil {
+		t.Fatalf("tools/ci-changes-selftest.mjs is missing: %v", err)
+	}
+	if !strings.Contains(workflowSource(t, "lint.yml"), "make ci-selftest") {
+		t.Errorf("lint.yml no longer runs `make ci-selftest`, so nothing executes the `changes` script before it reaches a pull request")
+	}
+	mk, err := os.ReadFile(filepath.Join("..", "..", "Makefile"))
+	if err != nil {
+		t.Fatalf("read Makefile: %v", err)
+	}
+	if !strings.Contains(string(mk), "node tools/ci-changes-selftest.mjs") {
+		t.Errorf("Makefile's ci-selftest target no longer runs tools/ci-changes-selftest.mjs")
+	}
+}
