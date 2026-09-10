@@ -18073,6 +18073,18 @@ func (b *builder) emitEnumSlotDrop(slot int32, et ast.EnumType, eligible bool) {
 				b.emit(Op{Kind: OpEq})
 				b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
 				for _, ld := range vd.loads {
+					if isMapType(ld.typ) {
+						// Map-in-enum DOCUMENTED SAFE LEAK (#4425) — the inline
+						// local-drop sibling of genEnumDropFn's skip. A Map-payload
+						// variant reclaims via __map_drop_values (dropStructField),
+						// which lives in core/map.fern — a program can use the enum
+						// WITHOUT importing it (no map operations, e.g. a local
+						// `JsonValue` bound to `JString(...)`), so that call was to an
+						// unloaded symbol (wasm "unknown callee" / native "undefined
+						// label"). Skip the map reclaim: the map leaks (safe), matching
+						// the enum's EnumRcPayloads exclusion; the box is freed below.
+						continue
+					}
 					b.emit(Op{Kind: OpLoadLocal, I32: slot})
 					if ld.off != 0 {
 						b.emit(Op{Kind: OpConstI32, I32: ld.off})

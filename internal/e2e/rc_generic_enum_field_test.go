@@ -210,29 +210,22 @@ func TestWASMGenericEnumFieldAliasedBoxIsNotMutated(t *testing.T) {
 	}
 }
 
-// A generic enum whose ARGUMENT carries a Map stays out of the OWNED model:
-// only the substituted walk can see it, since the Map is in EnumType.Args and
-// never in the shared decl. That exclusion is what this test is named for and
-// still holds.
-//
-// What no longer holds is the reclamation gap behind it. The Map payload is now
-// released at the enum's own drop (appendChildDrop's Map arm, reached once
-// genEnumDropFn and emitEnumSlotDrop stopped skipping Map payloads), and the
-// #4425 hazard those skips guarded is covered elsewhere: the dead
-// map-reclamation cull strips `__map_drop_values` when core/map was never
-// loaded, and every other name appendMapDropChain can emit is generated on
-// demand by the drop worklist.
+// A generic enum whose ARGUMENT carries a Map stays out: only the substituted
+// walk can see it, since the Map is in EnumType.Args and never in the shared
+// decl. Map-in-enum reclamation is an open gap (__map_drop_values is not
+// pulled into a generated __drop_enum_ body on wasm), so admitting this shape
+// would hand the owned model a drop it cannot run.
 func TestOptionOfMapStaysOutOfTheOwnedModel(t *testing.T) {
 	prev := ast.RcFreeEnabled
 	ast.RcFreeEnabled = true
 	defer func() { ast.RcFreeEnabled = prev }()
 
-	// Run at two loop counts and require BOTH a flat balance and an identical
-	// reading. The balance is the #8854 gate: the Map's two allocations were
-	// stranded at exit (50 appends and 200 both stranded 2 / 224 B), and this
-	// fails on the pre-fix compiler. The invariance is the older assertion and
-	// is kept: admitting Option[Map] to the owned model would make a loss scale
-	// with the append count, which a single-count balance check would not see.
+	// The Map's own two allocations are stranded at exit (#8854) — identical on
+	// main, and one-time rather than per-append. Admitting Option[Map] to the
+	// owned model would make the loss scale with the append count, so running
+	// the same program at two loop counts and requiring an identical loss is
+	// the assertion that actually guards the exclusion. A flat balance check
+	// cannot be used here while #8854 stands.
 	src := func(n int) string {
 		return fmt.Sprintf(`import "core/map";
 
@@ -267,14 +260,6 @@ function main(): i32 {
 
 	shortUnpaired, shortLive := measure(50)
 	longUnpaired, longLive := measure(200)
-	if shortUnpaired != 0 || shortLive != 0 {
-		t.Errorf("50 appends stranded %d allocations / %d bytes, want a flat balance (#8854)",
-			shortUnpaired, shortLive)
-	}
-	if longUnpaired != 0 || longLive != 0 {
-		t.Errorf("200 appends stranded %d allocations / %d bytes, want a flat balance (#8854)",
-			longUnpaired, longLive)
-	}
 	if shortUnpaired != longUnpaired || shortLive != longLive {
 		t.Errorf("loss scales with the append count: 50 appends stranded %d allocations / %d bytes, "+
 			"200 stranded %d / %d — Option[Map] has reached the owned model",

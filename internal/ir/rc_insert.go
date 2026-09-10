@@ -3758,6 +3758,21 @@ func genEnumDropFn(name string, ed *ast.EnumDecl, info *checker.Info, ptrW int, 
 			if _, isFn := ld.typ.(*ast.FuncType); isFn {
 				continue
 			}
+			if isMapType(ld.typ) {
+				// Map-in-enum is a DOCUMENTED SAFE LEAK (see enumRcPayloadsEligible,
+				// ~ir.go:9085): a Map-payload variant's box carries an un-inc'd map
+				// (the enum is excluded from EnumRcPayloads), and __map_drop_values —
+				// the value-column reclaimer this drop would call via appendChildDrop
+				// — lives in core/map.fern, which a program can use the enum WITHOUT
+				// importing (e.g. a `JsonValue[]` built from `JString` values: the
+				// whole-enum drop glue still emits the JObject arm, but core/map was
+				// never loaded, so the call was to an absent symbol — the wasm
+				// "unknown callee __map_drop_values" build error, #4425). Skip the
+				// map reclaim entirely: the map's buffer + values leak (safe — nothing
+				// dangles), consistent with the enum's leak-mode exclusion. The box
+				// itself is still freed by __fern_box_free below.
+				continue
+			}
 			ops = append(ops, Op{Kind: OpLoadLocal, I32: 0})
 			if ld.off != 0 {
 				ops = append(ops, Op{Kind: OpConstI32, I32: ld.off}, Op{Kind: OpAdd})
