@@ -1277,6 +1277,45 @@ pub function struct_alias_ident_escapes(e: ast.Expr, s: LowerState): boolean {
     return decl_is_struct(s.frame.structs, s.struct_type_of_slot(sl));
 }
 
+// stored_elem_is_borrow reports whether an element value about to be stored in a
+// container is a reference some other owner releases — an indexed struct or
+// array element, a borrowed struct parameter, an enum alias or field read, a
+// caller-owned string element — so the store has to be counted. It is the
+// question lower_append_elem_value asks of a value, gathered so a call result
+// standing in for one of its arguments can ask it of the argument.
+function stored_elem_is_borrow(e: ast.Expr, s: LowerState): boolean {
+    return indexed_box_elem_escapes(e, s) || struct_alias_ident_escapes(e, s)
+        || enum_alias_ident_escapes(e, s) || enum_field_read_type(e, s) != ""
+        || str_param_elem_escapes(e, s) || handback_result_of_borrow(e, s);
+}
+
+// handback_result_of_borrow: `e` is a call whose callee hands one of its
+// parameters back BARE (handback_params) and the argument at that position is
+// a borrow — so the result may be that very box, uncounted, and a container
+// storing it takes a second owner exactly as it would storing the argument.
+// `lower_defers_func(mod.funcs[i])` returns its parameter when the function has
+// no defer; appended uncounted, the module the caller builds shared every
+// function box with the one it was built from, and the first deep release
+// freed them under the other. A callee that returns something else leaves the
+// retained box to leak, the safe direction.
+function handback_result_of_borrow(e: ast.Expr, s: LowerState): boolean {
+    match (e) {
+        ast.ExprCall(c) => {
+            var cname: string = ident_name_or_empty(c.callee);
+            if (cname.len() == 0) { return false; }
+            var i: i32 = 0;
+            while (i < c.args.len()) {
+                if (util.index_of_str(s.frame.sigs.handback_params, cname + "|" + util.i32_to_string(i)) >= 0
+                    && stored_elem_is_borrow(c.args[i], s)) { return true; }
+                i = i + 1;
+            }
+            return false;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
 // strarr_param_slot_of recognises a string[] parameter or a proven immutable
 // local alias of one. The source facts refuse shadowed or reassigned aliases.
 function strarr_param_slot_of(e: ast.Expr, s: LowerState): i32 {
@@ -13140,6 +13179,7 @@ function lower_call_append(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerSta
     // so is a struct or array element read by index (indexed_box_elem_escapes).
     if (str_param_elem_escapes(c.args[0], aps)) { aps = aps.retain_tos("append-param-str-elem"); }
     if (indexed_box_elem_escapes(c.args[0], aps)) { aps = aps.retain_tos("append-indexed-elem"); }
+    if (handback_result_of_borrow(c.args[0], aps)) { aps = aps.retain_tos("append-handback"); }
     aps = aps.emit(ir.op_arr_push());
     if (apcs >= 0) { aps = emit_arr_share(aps, apcs, "__fern_arr_share_dec"); }
     // An in-place push on a BORROWED param's buffer hands that same buffer out
@@ -23656,6 +23696,12 @@ function lower_stmt_assign(a: ast.StmtAssign, s: LowerState): LowerState {
                                     else if (indexed_box_elem_escapes(wc.args[0], aps)) {
                                         aps = aps.retain_tos("append-indexed-elem");
                                     }
+                                    // A call handing one of those back bare
+                                    // (handback_result_of_borrow): the result may be
+                                    // the argument's own box.
+                                    else if (handback_result_of_borrow(wc.args[0], aps)) {
+                                        aps = aps.retain_tos("append-handback");
+                                    }
                                 }
                             }
                             // Sole-owner (unaliased) `a = a.append(v)`: the old
@@ -26208,6 +26254,9 @@ function lower_append_elem_value(val: ast.Expr, s: LowerState): LowerState {
     }
     if (indexed_box_elem_escapes(val, st)) {
         st = st.retain_tos("clone-append-indexed-elem");
+    }
+    if (handback_result_of_borrow(val, st)) {
+        st = st.retain_tos("clone-append-handback");
     }
     return st;
 }
@@ -39661,6 +39710,129 @@ function struct_counted_share_stmts(stmts: ast.Stmt[], name: string, structs: St
     return false;
 }
 
+// struct_lit_holds_borrowed_elems: the credited candidate's own struct literal
+// (found by its binding-site key) takes, as a struct- or enum-array field, a
+// bare LOCAL array into which the body appended an element borrowed out of a
+// parameter's container — `for mod in mods { for fd in mod.funcs { funcs =
+// funcs.append(fd); } }` then `Module { ...mods[0], funcs: funcs, … }`
+// (checker.ensure_capture_types_parts). The append stored the box uncounted
+// (an element binding is a local, not the parameter struct_alias_ident_escapes
+// counts), so the array holds boxes the caller releases, and the deep walk
+// would free them under the caller — the emit-all fixpoint's gen1 read its
+// modules' function boxes back freed. Box-only is the sound release role for
+// such a box, exactly as it is for a read-shaped borrow field above. An array
+// built from fresh boxes or from call results keeps the deep drop.
+function struct_lit_holds_borrowed_elems(stmts: ast.Stmt[], key: string, structs: StructTab, params: ast.ParamDecl[], body: ast.Stmt[]): boolean {
+    for stmt in stmts {
+        match (stmt) {
+            ast.StmtVar(v) => {
+                if (reclaim_site_key_of(v.name, v.line, v.col) == key) {
+                    match (v.init) {
+                        ast.ExprStructLit(sl) => {
+                            var i: i32 = 0;
+                            while (i < sl.field_values.len() && i < sl.field_names.len()) {
+                                var fnm: string = ident_name_or_empty(sl.field_values[i]);
+                                if (fnm.len() > 0) {
+                                    var ft: string = decl_field_type(structs, sl.type_name, sl.field_names[i]);
+                                    if ((is_struct_array_field_type(structs, ft) || is_enum_array_field_type(structs, ft))
+                                        && body_appends_borrowed_elem(body, fnm, params, [])) { return true; }
+                                }
+                                i = i + 1;
+                            }
+                        },
+                        _ => {}
+                    }
+                }
+            },
+            ast.StmtIf(f) => {
+                if (struct_lit_holds_borrowed_elems(f.then_body, key, structs, params, body)) { return true; }
+                if (struct_lit_holds_borrowed_elems(f.else_body, key, structs, params, body)) { return true; }
+            },
+            ast.StmtWhile(w) => { if (struct_lit_holds_borrowed_elems(w.body, key, structs, params, body)) { return true; } },
+            ast.StmtFor(fo) => { if (struct_lit_holds_borrowed_elems(fo.body, key, structs, params, body)) { return true; } },
+            ast.StmtMatch(m) => {
+                for arm in m.arms { if (struct_lit_holds_borrowed_elems(arm.body, key, structs, params, body)) { return true; } }
+            },
+            _ => {}
+        }
+    }
+    return false;
+}
+
+// body_appends_borrowed_elem: some `arr = arr.append(x)` or `arr.append(x)` in
+// `stmts` stores an element read out of a caller-owned container — an element
+// or field of a non-`own` parameter, or a name bound to such a read: a `for`
+// element over such an array, or a `var` bound to one, through any depth of
+// such bindings (`borrows` carries the names in scope).
+function body_appends_borrowed_elem(stmts: ast.Stmt[], arr: string, params: ast.ParamDecl[], borrows: string[]): boolean {
+    var b: string[] = borrows;
+    for stmt in stmts {
+        match (stmt) {
+            ast.StmtVar(v) => {
+                if (caller_rooted_read(v.init, params, b)) { b = push_str_unique(b, v.name); }
+            },
+            ast.StmtAssign(asg) => {
+                if (asg.target == arr && append_arg_is_borrow(asg.value, arr, params, b)) { return true; }
+                if (caller_rooted_read(asg.value, params, b)) { b = push_str_unique(b, asg.target); }
+            },
+            ast.StmtExpr(x) => { if (append_arg_is_borrow(x.value, arr, params, b)) { return true; } },
+            ast.StmtIf(f) => {
+                if (body_appends_borrowed_elem(f.then_body, arr, params, b)) { return true; }
+                if (body_appends_borrowed_elem(f.else_body, arr, params, b)) { return true; }
+            },
+            ast.StmtWhile(w) => { if (body_appends_borrowed_elem(w.body, arr, params, b)) { return true; } },
+            ast.StmtFor(fo) => {
+                var fb: string[] = b;
+                if (caller_rooted_read(fo.iter, params, b)) { fb = push_str_unique(fb, fo.var_name); }
+                if (body_appends_borrowed_elem(fo.body, arr, params, fb)) { return true; }
+            },
+            ast.StmtMatch(m) => {
+                for arm in m.arms { if (body_appends_borrowed_elem(arm.body, arr, params, b)) { return true; } }
+            },
+            _ => {}
+        }
+    }
+    return false;
+}
+
+// append_arg_is_borrow: `e` is `arr.append(x)` where x is a borrowed name or a
+// read out of a caller-owned container. A bare parameter is not one: the
+// construction retains it (struct_alias_ident_escapes).
+function append_arg_is_borrow(e: ast.Expr, arr: string, params: ast.ParamDecl[], borrows: string[]): boolean {
+    match (e) {
+        ast.ExprCall(c) => {
+            if (c.args.len() != 1) { return false; }
+            match (c.callee) {
+                ast.ExprFieldAccess(fa) => {
+                    if (fa.field != "append" || ident_name_or_empty(fa.obj) != arr) { return false; }
+                    var xn: string = ident_name_or_empty(c.args[0]);
+                    if (xn.len() > 0) { return util.has_str(borrows, xn); }
+                    return caller_rooted_read(c.args[0], params, borrows);
+                },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// caller_rooted_read: `e` is a non-`own` parameter, a name bound from one, or a
+// field or element read chain rooted in either.
+function caller_rooted_read(e: ast.Expr, params: ast.ParamDecl[], borrows: string[]): boolean {
+    match (e) {
+        ast.ExprIdent(id) => {
+            if (util.has_str(borrows, id.name)) { return true; }
+            for p in params { if (p.name == id.name && !p.own) { return true; } }
+            return false;
+        },
+        ast.ExprFieldAccess(fa) => { return caller_rooted_read(fa.obj, params, borrows); },
+        ast.ExprIndex(ix) => { return caller_rooted_read(ix.array, params, borrows); },
+        _ => { return false; }
+    }
+    return false;
+}
+
 // struct_lit_unretained_borrow_field: the credited candidate's own struct
 // literal (found by its binding-site key) carries a BORROW-shaped value —
 // a bare ident, field access, index or slice — in an rc field kind the
@@ -40571,6 +40743,9 @@ function reclaimable_names_of(body: ast.Stmt[], reassigned: string[], structs: S
         // string[] / enum-array reads of another value): the deep walk would
         // free the source's buffers — see struct_lit_unretained_borrow_field.
         if (!mv_moves && struct_lit_unretained_borrow_field(body, out[mvi], structs)) { mv_moves = true; }
+        // A literal that takes a local array holding elements the body borrowed
+        // out of a parameter's container — see struct_lit_holds_borrowed_elems.
+        if (!mv_moves && struct_lit_holds_borrowed_elems(body, out[mvi], structs, params, body)) { mv_moves = true; }
         if (mv_moves) { out = out.append("NODEEP:" + out[mvi]); }
         // "FLDCHECKED:" — the field-move scan actually RAN for this name, i.e. its
         // struct type was resolvable. A BLOCK-SCOPED slot only earns the deep drop
