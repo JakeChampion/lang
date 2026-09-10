@@ -1,6 +1,6 @@
 # A counted-share holder handed to a call keeps its box-only release, and a closure array has no rc elements
 
-Refs #9016, #9017; both regressions of `2026-09-10-spread-carry-elems-secured.md`
+Refs #9016, #9017, #9023; the first two regressions of `2026-09-10-spread-carry-elems-secured.md`
 (59e40b4, in #9014).
 
 ## What was red
@@ -75,6 +75,40 @@ small-output ceiling at 18385. Both backends now mark `arr_inc_elems` at the
 call and emit the body under `has_need`; the root joins
 `all_runtime_need_roots` so a per-module entry unit still links it.
 
+## The handed-out element (#9023)
+
+`TestSelfHostCheckerDifferentialX86_64/loop-map-shadow`: the self-host-built
+checker dies on a signal binding `for (k, v) in m`. Under the sanitizer,
+`__fern_arr_inc_elems` inside `Scope.bind` walks a `names` buffer whose element
+`"k"` `__fern_str_arr_free` freed at the exit of `for_binding`. A hardware
+watchpoint on the block's header found the free; the frame walk found the
+walker.
+
+`for_binding` splits the pattern into a fresh `string[]` and hands it to
+`bind_tuple_destr_names`, whose parameter is box-borrowable, so the caller keeps
+its deep free. Inside, `var nm: string = names[i]` reads an element that deep
+free releases, and `out.bind(nm, et)` hands it to `bind`'s `name`, a parameter
+that is stored (`s.names.append(name)`) and so neither borrowable nor counted.
+A string parameter at such a position takes over the argument's reference; the
+element had none to give, so the scope stored it uncounted. The deficit is
+older than 59e40b4 — the shape ran on freed-but-intact memory before, and
+leaks at afc6d0a in a sixty-line reproducer — and the element retain on the
+un-share copy is what made it fault.
+
+`retain_caller_elem_handoff` closes it at the handoff: a `str_param_elem_escapes`
+argument (a `p[i]` of a borrowed `string[]` parameter, or a local such a read
+bound) is retained at every call-argument site whose position is neither
+borrowable nor `CNT:`-counted in the frame's registry, the same second owner
+`xs.append(p[i])` takes inside one function. A position that keeps the value
+for another reason leaks one count rather than freeing under a holder.
+
+With the binding's name intact, `loop-map-pair-types` (`return k.len() + v`,
+`v: i64`) then showed the checker typing a settled `i32 + i64` as `i32`:
+`int_result` returned the left side where native's `commonIntegerWidth` widens
+to the wider operand in either order. It now does too; a literal tree on either
+side still reads at the other operand's width, so `a + 4611686018427387904`
+against an `i32` stays E047 rather than becoming an `i64` (#8722).
+
 ## Gates
 
 - `TestSelfHostKeptCallHolderX86_64`: the holder handed directly and through
@@ -83,6 +117,10 @@ call and emit the body under `has_need`; the root joins
   `__fern_arr_inc_elems`) and run under the sanitizer against the
   interpreter's exit. Fails on 54ce1bf on every count, and the alias shape
   is a use-after-free there (sanitizer exit 124).
+- `TestSelfHostStrElemHandoffX86_64`: the reproducer, pinned on the one
+  retain in the handing function and run under the sanitizer against the
+  interpreter's exit (a use-after-free on 54ce1bf). The checker differential
+  gains five mixed-width cases, both operand orders at both return widths.
 - `TestSelfHostConstFuncGen2`: green again; the four #9012 rows and
   `TestSelfHostSpreadCarryElemsX86_64` stay balanced; seed 301 passes;
   `TestSelfHostPerModuleEmitAllFixpointX86_64`, `make lint-all`, the

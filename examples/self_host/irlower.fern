@@ -77795,53 +77795,72 @@ function decl_view_of(params: ast.ParamDecl[], body: ast.Stmt[]): parser.FuncDec
 // with no row (a method, a closure, a generic) never had this witness either.
 function kept_call_scan(stmts: ast.Stmt[], names: string[], fn: parser.FuncDecl, structs: StructTab, retreg: SigReg): boolean {
     for stmt in stmts {
-        match (stmt) {
-            ast.StmtVar(v) => { if (dor_type_can_hold(v.type_name, structs) && expr_hands_to_call(v.init, names, structs, retreg)) { return true; } },
-            ast.StmtAssign(a) => { if (util.index_of_str(names, a.target) < 0 && dor_type_can_hold(decl_type_in_fn(fn, a.target), structs) && expr_hands_to_call(a.value, names, structs, retreg)) { return true; } },
-            ast.StmtReturn(r) => { if (expr_hands_to_call(r.value, names, structs, retreg)) { return true; } },
-            ast.StmtIf(f) => { if (kept_call_scan(f.then_body, names, fn, structs, retreg) || kept_call_scan(f.else_body, names, fn, structs, retreg)) { return true; } },
-            ast.StmtWhile(w) => { if (kept_call_scan(w.body, names, fn, structs, retreg)) { return true; } },
-            ast.StmtFor(fo) => { if (kept_call_scan(fo.body, names, fn, structs, retreg)) { return true; } },
-            ast.StmtMatch(m) => { for arm in m.arms { if (kept_call_scan(arm.body, names, fn, structs, retreg)) { return true; } } },
-            _ => {}
-        }
+        if (stmt_keeps_call(stmt, names, fn, structs, retreg)) { return true; }
+        if (nested_keeps_call(stmt, names, fn, structs, retreg)) { return true; }
+    }
+    return false;
+}
+function stmt_keeps_call(stmt: ast.Stmt, names: string[], fn: parser.FuncDecl, structs: StructTab, retreg: SigReg): boolean {
+    match (stmt) {
+        ast.StmtVar(v) => { return dor_type_can_hold(v.type_name, structs) && expr_hands_to_call(v.init, names, structs, retreg); },
+        ast.StmtAssign(a) => { return assign_keeps_call(a, names, fn, structs, retreg); },
+        ast.StmtReturn(r) => { return expr_hands_to_call(r.value, names, structs, retreg); },
+        _ => { return false; }
+    }
+    return false;
+}
+function assign_keeps_call(a: ast.StmtAssign, names: string[], fn: parser.FuncDecl, structs: StructTab, retreg: SigReg): boolean {
+    if (util.index_of_str(names, a.target) >= 0) { return false; }
+    return dor_type_can_hold(decl_type_in_fn(fn, a.target), structs) && expr_hands_to_call(a.value, names, structs, retreg);
+}
+function nested_keeps_call(stmt: ast.Stmt, names: string[], fn: parser.FuncDecl, structs: StructTab, retreg: SigReg): boolean {
+    match (stmt) {
+        ast.StmtIf(f) => { return kept_call_scan(f.then_body, names, fn, structs, retreg) || kept_call_scan(f.else_body, names, fn, structs, retreg); },
+        ast.StmtWhile(w) => { return kept_call_scan(w.body, names, fn, structs, retreg); },
+        ast.StmtFor(fo) => { return kept_call_scan(fo.body, names, fn, structs, retreg); },
+        ast.StmtMatch(m) => {
+            for arm in m.arms { if (kept_call_scan(arm.body, names, fn, structs, retreg)) { return true; } }
+            return false;
+        },
+        _ => { return false; }
     }
     return false;
 }
 function expr_hands_to_call(e: ast.Expr, names: string[], structs: StructTab, retreg: SigReg): boolean {
     match (e) {
-        ast.ExprCall(c) => {
-            if (call_result_can_hold(c, structs, retreg)) {
-                for arg in c.args {
-                    match (arg) {
-                        ast.ExprIdent(id) => { if (util.index_of_str(names, id.name) >= 0) { return true; } },
-                        _ => {}
-                    }
-                }
-            }
-            for arg in c.args { if (expr_hands_to_call(arg, names, structs, retreg)) { return true; } }
-            return expr_hands_to_call(c.callee, names, structs, retreg);
-        },
+        ast.ExprCall(c) => { return call_hands_to_call(c, names, structs, retreg); },
         ast.ExprBinary(b) => { return expr_hands_to_call(b.left, names, structs, retreg) || expr_hands_to_call(b.right, names, structs, retreg); },
         ast.ExprUnary(u) => { return expr_hands_to_call(u.operand, names, structs, retreg); },
         ast.ExprIndex(ix) => { return expr_hands_to_call(ix.array, names, structs, retreg) || expr_hands_to_call(ix.index, names, structs, retreg); },
         ast.ExprFieldAccess(fa) => { return expr_hands_to_call(fa.obj, names, structs, retreg); },
+        _ => { return lit_hands_to_call(e, names, structs, retreg); }
+    }
+    return false;
+}
+function lit_hands_to_call(e: ast.Expr, names: string[], structs: StructTab, retreg: SigReg): boolean {
+    match (e) {
         ast.ExprStructLit(sl) => {
             if (sl.has_base && expr_hands_to_call(sl.base, names, structs, retreg)) { return true; }
-            for fv in sl.field_values { if (expr_hands_to_call(fv, names, structs, retreg)) { return true; } }
-            return false;
+            return exprs_hand_to_call(sl.field_values, names, structs, retreg);
         },
-        ast.ExprArray(a) => {
-            var i: i32 = 0;
-            while (i < a.elements.len()) { if (expr_hands_to_call(a.elements[i], names, structs, retreg)) { return true; } i = i + 1; }
-            return false;
-        },
-        ast.ExprTuple(t) => {
-            for el in t.elements { if (expr_hands_to_call(el, names, structs, retreg)) { return true; } }
-            return false;
-        },
+        ast.ExprArray(a) => { return exprs_hand_to_call(a.elements, names, structs, retreg); },
+        ast.ExprTuple(t) => { return exprs_hand_to_call(t.elements, names, structs, retreg); },
         _ => { return false; }
     }
+    return false;
+}
+function exprs_hand_to_call(es: ast.Expr[], names: string[], structs: StructTab, retreg: SigReg): boolean {
+    for e in es { if (expr_hands_to_call(e, names, structs, retreg)) { return true; } }
+    return false;
+}
+// call_hands_to_call: a bare-ident argument in `names` at a call whose result
+// can hold it, or a handoff anywhere inside the arguments or the callee.
+function call_hands_to_call(c: ast.ExprCall, names: string[], structs: StructTab, retreg: SigReg): boolean {
+    if (call_result_can_hold(c, structs, retreg) && any_ident_named(c.args, names)) { return true; }
+    return exprs_hand_to_call(c.args, names, structs, retreg) || expr_hands_to_call(c.callee, names, structs, retreg);
+}
+function any_ident_named(es: ast.Expr[], names: string[]): boolean {
+    for e in es { if (util.index_of_str(names, ident_name_or_empty(e)) >= 0) { return true; } }
     return false;
 }
 // call_result_can_hold: the callee is a named function whose declared return
