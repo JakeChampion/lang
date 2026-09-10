@@ -13104,7 +13104,7 @@ function report_expr_append(s: LowerState, fa: ast.ExprFieldAccess, c: ast.ExprC
 // unnamed shape degrades to its kind rather than refusing the line.
 function expr_append_recv_label(o: ast.Expr): string {
     match (o) {
-        ast.ExprIdent(id) => { return id.name; },
+        ast.ExprIdent(id) => { return lexical.source_name(id.name); },
         ast.ExprFieldAccess(f) => { return expr_append_recv_label(f.obj) + "." + f.field; },
         _ => { return "<expr>"; },
     }
@@ -23202,7 +23202,7 @@ function lower_stmt_var_destructure(v: ast.StmtVar, s: LowerState): LowerState {
         // pattern and an i64 element truncated, on every backend and with no
         // diagnostic (#8458). A bail names the site under FERN_STRICT_IR=1
         // instead.
-        if (dtag == "") { return dt.note_fail("destructured tuple element " + util.i32_to_string(dk) + " (`" + dbind + "`) has no type: its width is unknown").fail(); }
+        if (dtag == "") { return dt.note_fail("destructured tuple element " + util.i32_to_string(dk) + " (`" + lexical.source_name(dbind) + "`) has no type: its width is unknown").fail(); }
         // Emit the element read at its width (8-byte i64/f64 use the
         // matching load), then store + type the binding. An i64
         // element marks the slot i64 (so later uses route through
@@ -23678,7 +23678,7 @@ function lower_stmt_assign(a: ast.StmtAssign, s: LowerState): LowerState {
                                 if (tgt_aliased || tgt_param) { verdict = "LEAKS"; }
                                 eprint("append-report: " + s.frame.cur_fn + ":"
                                     + util.i32_to_string(a.line) + ":" + util.i32_to_string(a.col)
-                                    + "  " + verdict + "  " + a.target + "  " + why + "\n");
+                                    + "  " + verdict + "  " + lexical.source_name(a.target) + "  " + why + "\n");
                             }
                             if (tgt_aliased || tgt_param) {
                                 aps = aps.emit(ir.op_arr_push());
