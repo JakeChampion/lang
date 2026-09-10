@@ -67,6 +67,15 @@ graph = ssa.SFunc { name: "call", nparams: 2, nvals: 4, entry: 7, takes_env: fal
 ] };
 `
 
+// A string constant and a concatenation are units of this function's own,
+// released when dead; a borrowed string parameter returned is retained.
+const unitString = `
+params = [st]; types = [st, st, st]; result = st; modes = [2];
+graph = ssa.SFunc { name: "concat", nparams: 1, nvals: 3, entry: 7, takes_env: false, blocks: [
+    ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), ssa.SInst { kind_tag: 5, result: 1, args: [], imm: 0, str: "a" }, ssa.SInst { kind_tag: 9, result: 2, args: [0, 1], imm: 0, str: "+" }], term: ret(0) }
+] };
+`
+
 type unitCase struct{ name, setup, check, mutate, want string }
 
 func unitCases() []unitCase {
@@ -130,6 +139,11 @@ if (!supply(second, 0, 0, 1, ssaunits.retain_unit()) || !drops(second, [])) { re
 		{"changed-call-contract", unitCall, "", `f = ssasem.Func { ...f, calls: [contract("g", [sa, sa], [2, 2], sa)] };`, "unit supply arity"},
 		{"call-contract-mode", unitCall, "", `f = ssasem.Func { ...f, calls: [contract("g", [sa, sa], [1, 3], sa)] };`, "reference parameter mode"},
 		{"dropped-call-contract", unitCall, "", `f = ssasem.Func { ...f, calls: [] };`, "missing call contract"},
+		{"string-units", unitString, `
+var s = find(p, 7, 2, 0 - 1);
+if (s.supplies.len() != 0 || !drops(s, [1, 2])) { return 28; }
+if (!supply(find(p, 7, ssaunits.return_point(), 0 - 1), 0, 0, 0, ssaunits.retain_unit())) { return 29; }
+`, "", ""},
 	}
 	return append(base, unitRecordCases()...)
 }

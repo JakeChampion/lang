@@ -66,6 +66,20 @@ function noop() { return; }
 function refused_void_call(): i32 { noop(); return 1; }
 function refused_method_call(xs: i32[]): i32 { return xs.len(); }
 function refused_transitive(n: i32): i32 { return refused_call(n); }
+struct P { n: i32, xs: i32[] }
+struct Q { name: string, p: P }
+struct G[T] { v: T }
+function make(n: i32): P { return P { n: n, xs: [n, n + 1] }; }
+function wrap(own p: P, tag: string): Q { return Q { name: tag + "!", p: p }; }
+function unwrap(q: Q): i32 {
+    var p: P = q.p;
+    if (q.name == "x!") { return p.xs[0]; }
+    return p.n;
+}
+function greet(s: string): string { return "hello, " + s; }
+function refused_update(p: P): P { return P { ...p, n: 0 }; }
+function refused_generic_record(n: i32): i32 { var g: G[i32] = G { v: n }; return g.v; }
+function refused_string_method(s: string): i32 { return s.len(); }
 `
 
 const semsourcePrintDriver = `import "./semsource"; import "./ssa"; import "./ssaunits"; import "./typeinfo";
@@ -207,6 +221,30 @@ const semsourceRCProgram = `
     if (n <= 0) { return 0; }
     return 1 + count_down(n - 1);
 }
+struct P { n: i32, xs: i32[] }
+struct Q { name: string, p: P }
+@noinline function make(n: i32): P { return P { n: n, xs: [n, n + 1] }; }
+@noinline function wrap(own p: P, tag: string): Q { return Q { name: tag + "!", p: p }; }
+@noinline function unwrap(q: Q): i32 {
+    var p: P = q.p;
+    if (q.name == "x!") { return p.xs[0]; }
+    return p.n + p.xs[1];
+}
+@noinline function tally(n: i32): i32 {
+    var q: Q = wrap(make(n), "x");
+    var r: Q = wrap(make(n + 1), "y");
+    var keep: Q = q;
+    if (n > 3) { keep = r; }
+    return unwrap(q) + unwrap(keep) + unwrap(r);
+}
+@noinline function greet(n: i32): i32 {
+    var s: string = "ab";
+    var i: i32 = 0;
+    while (i < n) { s = s + "c"; i = i + 1; }
+    if (s == "abcc") { return 1; }
+    if (s != "ab") { return 2; }
+    return 0;
+}
 function main(): i32 {
     var a: i32[] = pick(0);
     var b: i32[] = pick(1);
@@ -229,12 +267,16 @@ function main(): i32 {
     var g: i32[] = grow(3);
     var h: i32[] = grow(0);
     print_int(g[0]); print(""); print_int(h[0]); print("");
+    print_int(tally(1)); print(""); print_int(tally(5)); print("");
+    print_int(greet(2)); print(""); print_int(greet(0)); print(""); print_int(greet(1)); print("");
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }
 `
 
-const semsourceRCWant = "1\n4\n5\n-3\n-2\n2\n0\n1\n5\n8\n12\n0\n3\n3\n6\n4\n2\n0\n"
+// tally(1): unwrap(q) = xs[0] = 1; keep = q → 1; unwrap(r) = n + xs[1] = 2 + 3 = 5 → 7.
+// tally(5): 5 + unwrap(r) (6 + 7 = 13) + 13 → 31.
+const semsourceRCWant = "1\n4\n5\n-3\n-2\n2\n0\n1\n5\n8\n12\n0\n3\n3\n6\n4\n2\n0\n7\n31\n1\n0\n2\n"
 
 const semsourceRCDriver = `import "./semsource"; import "./ssarc"; import "./ssaunits"; import "./ssa";
 import "./parser"; import "./lexer"; import "./irlower"; import "./ir";
@@ -302,7 +344,7 @@ func TestSelfHostSemanticSourceRC(t *testing.T) {
 			if err != nil {
 				t.Fatalf("semantic lowering: %v\n%s", err, diagnostics.String())
 			}
-			for _, name := range []string{"pick", "pair", "boxed", "carry", "count_even", "fill", "first_of", "keep", "chain", "twice", "count_down", "grow"} {
+			for _, name := range []string{"pick", "pair", "boxed", "carry", "count_even", "fill", "first_of", "keep", "chain", "twice", "count_down", "grow", "make", "wrap", "unwrap", "tally", "greet"} {
 				if !strings.Contains(diagnostics.String(), "produced "+name+"\n") {
 					t.Fatalf("%s was not produced:\n%s", name, diagnostics.String())
 				}

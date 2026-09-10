@@ -11,19 +11,25 @@ ABI, including its target-specific array and tuple layouts.
 The input is a `ssasem.Func`, explicit parameter modes and an `ssaunits.Plan`.
 Lowering re-verifies the entire plan against freshly derived semantic facts.
 The physical vocabulary accepts reachable reducible control-flow graphs with
-32-bit integer/boolean values, scalar operators, and recursively nested
-arrays and tuples. Natural loops become structured `loop` labels through
-`ssalayout.fern` ([semantic source](SELFHOST-SEMANTIC-SOURCE.md)); an
-irreducible cycle and other physical representations are rejected, returning
-no operations or locals. A verified semantic call lowers to the stack IR's
-direct call: its counted arguments are supplied like construction operands
-and its result is a unit of the caller's own. Strings, wide scalars, nominal
-schemas and closures are not admitted by this physical boundary.
+32-bit integer/boolean values, scalar operators, owned strings, and
+recursively nested arrays, tuples and records. Natural loops become
+structured `loop` labels through `ssalayout.fern` ([semantic
+source](SELFHOST-SEMANTIC-SOURCE.md)); an irreducible cycle and other
+physical representations are rejected, returning no operations or locals. A
+verified semantic call lowers to the stack IR's direct call: its counted
+arguments are supplied like construction operands and its result is a unit
+of the caller's own. Wide scalars, string views, a record instance with type
+arguments, a schema with a field outside this vocabulary, and closures are
+not admitted by this physical boundary.
 
-Semantic record construction/projection and counted plans are now available,
-but a valid record plan is explicitly tested to fail physical lowering without
-emitting operations or locals. Record ABI and recursive child-drop support
-must be implemented before widening this boundary.
+A record lowers to the stack IR's `struct_make` / `struct_get`, named by its
+declaration: every field this vocabulary admits is one i32-shaped word, so
+no declaration index is needed for a store width. Its drop walks the
+reference fields of its schema under `__fern_rc_is_unique`, exactly as a
+tuple's walks its elements, before releasing the box. A string constant is
+`const_str` and string `+` / `==` the runtime's concatenation and equality;
+a string is released through `__fern_str_free`, whose block starts before
+the value where an array's starts before the data words.
 
 SSA value IDs map to distinct physical locals, with parameter IDs occupying
 the existing ABI's parameter positions. Retained supplies precede construction
@@ -82,7 +88,9 @@ detects it. The mutation applies only to generated test output.
 The same fixture bundle runs with both a Go-built lowering driver and an
 ARM64 driver compiled by the actual self-host CLI. Each emits programs for
 ARM64, x86-64 and Wasm. Rejection cases exercise failed/corrupt plans, a valid
-cyclic graph, and abstractly valid string/wide-array parameter contracts.
+cyclic graph, an abstractly valid wide-array parameter contract, a record
+instance with type arguments and a schema with a wide field; a plain record
+with an array field lowers.
 
 The result-type and opcode checks are defensive guards for future semantic
 extensions. Semantic verification makes each return type equal to a value type

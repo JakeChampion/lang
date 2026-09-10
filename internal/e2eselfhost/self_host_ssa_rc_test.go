@@ -196,23 +196,36 @@ function main(): i32 {
     var cp = ssaunits.plan(cfg, []);
     if (!cp.ok) { eprint(cp.why); return 3; }
     if (!refused(ssarc.lower(cfg, [], cp), "physical RC needs reducible graph")) { return 4; }
-    var types: typeinfo.Type[] = [typeinfo.TypeString { tag: 0 }, typeinfo.TypeArray { elem: typeinfo.TypeI32 { width: 64, unsigned: false, is_char: false } }];
-    for ty in types {
-        var g = ssa.SFunc { name: "unsupported", nparams: 1, nvals: 1, entry: 7, takes_env: false,
-            blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0)], term: ret(0) }] };
-        var typed = ssasem.Func { graph: g, values: [ty], params: [ty], result: ty, records: [], calls: [] };
-        var plan = ssaunits.plan(typed, [2]);
-        if (!plan.ok) { eprint(plan.why); return 5; }
-        if (!refused(ssarc.lower(typed, [2], plan), "unsupported physical RC value type")) { return 6; }
-    }
+    // A wide array has no stack representation here; a string does now.
+    var wide: typeinfo.Type = typeinfo.TypeArray { elem: typeinfo.TypeI32 { width: 64, unsigned: false, is_char: false } };
+    var g = ssa.SFunc { name: "unsupported", nparams: 1, nvals: 1, entry: 7, takes_env: false,
+        blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0)], term: ret(0) }] };
+    var typed = ssasem.Func { graph: g, values: [wide], params: [wide], result: wide, records: [], calls: [] };
+    var plan = ssaunits.plan(typed, [2]);
+    if (!plan.ok) { eprint(plan.why); return 5; }
+    if (!refused(ssarc.lower(typed, [2], plan), "unsupported physical RC value type")) { return 6; }
+    // A record instance with type arguments is named by more than its
+    // declaration, and a schema field this vocabulary cannot walk refuses the
+    // whole schema; a plain record with an array field lowers.
+    var wideType: typeinfo.Type = typeinfo.TypeStruct { name: "Box", args: [wide] };
+    var wideSchema = semrecords.Record { ty: wideType, fields: [semrecords.Field { name: "xs", ty: f.result }] };
     var recordType: typeinfo.Type = typeinfo.TypeStruct { name: "Box", args: [] };
     var schema = semrecords.Record { ty: recordType, fields: [semrecords.Field { name: "xs", ty: f.result }] };
     var recordGraph = ssa.SFunc { name: "record", nparams: 1, nvals: 2, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(ssasem.record_new(), 1, [0], 0)], term: ret(1) }] };
+    var genericFunc = ssasem.Func { graph: recordGraph, values: [f.result, wideType], params: [f.result], result: wideType, records: [wideSchema], calls: [] };
+    var genericPlan = ssaunits.plan(genericFunc, [2]);
+    if (!genericPlan.ok) { eprint(genericPlan.why); return 7; }
+    if (!refused(ssarc.lower(genericFunc, [2], genericPlan), "unsupported physical RC value type")) { return 8; }
+    var wideField = semrecords.Record { ty: recordType, fields: [semrecords.Field { name: "xs", ty: wide }] };
+    var wideFieldFunc = ssasem.Func { graph: recordGraph, values: [wide, recordType], params: [wide], result: recordType, records: [wideField], calls: [] };
+    var wideFieldPlan = ssaunits.plan(wideFieldFunc, [2]);
+    if (!wideFieldPlan.ok) { eprint(wideFieldPlan.why); return 9; }
+    if (!refused(ssarc.lower(wideFieldFunc, [2], wideFieldPlan), "unsupported physical RC record field type")) { return 10; }
     var recordFunc = ssasem.Func { graph: recordGraph, values: [f.result, recordType], params: [f.result], result: recordType, records: [schema], calls: [] };
     var recordPlan = ssaunits.plan(recordFunc, [2]);
-    if (!recordPlan.ok) { eprint(recordPlan.why); return 7; }
-    if (!refused(ssarc.lower(recordFunc, [2], recordPlan), "unsupported physical RC value type")) { return 8; }
+    if (!recordPlan.ok) { eprint(recordPlan.why); return 11; }
+    if (!ssarc.lower(recordFunc, [2], recordPlan).ok) { return 12; }
     return 0;
 }
 `

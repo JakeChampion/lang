@@ -14183,6 +14183,12 @@ pub function scope_type(s: Scope, name: string): typeinfo.Type {
   return s.lookup(name);
 }
 
+// struct_sig is the declared signature of struct `name` in this scope's
+// module, or the empty-named sentinel when there is none.
+pub function struct_sig(s: Scope, name: string): StructSig {
+  return s.lookup_struct(name);
+}
+
 pub function module_scopes(mod: parser.Module): Scope[] {
   var env: ModuleEnv = module_env(mod);
   var out: Scope[] = [];

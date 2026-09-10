@@ -100,13 +100,20 @@ function contract_error(f: ssasem.Func, modes: i32[]): string {
     }
     return mode_error(f.params, modes);
 }
+// A construction, a call result, a phi, a string constant and a string
+// operator's result are units of this function's own; a projection or a copy
+// borrows its source.
+function fresh_unit(kind: i32): boolean {
+    return kind == 8 || kind == 5 || kind == 9 || kind == ssasem.array_new() || kind == ssasem.tuple_new()
+        || kind == ssasem.record_new() || kind == ssasem.call();
+}
 function owned_values(f: ssasem.Func, modes: i32[]): boolean[] {
     var out: boolean[] = bits(f.graph.nvals);
     for b in f.graph.blocks {
         for ins in b.insts {
             var owns: boolean = false;
             if (ins.kind_tag == 6) { owns = modes[ins.imm] == counted_mode(); }
-            if (ins.kind_tag == 8 || ins.kind_tag == ssasem.array_new() || ins.kind_tag == ssasem.tuple_new() || ins.kind_tag == ssasem.record_new() || ins.kind_tag == ssasem.call()) { owns = reference(f.values[ins.result]); }
+            if (fresh_unit(ins.kind_tag)) { owns = reference(f.values[ins.result]); }
             out = out.with(ins.result, owns);
         }
     }

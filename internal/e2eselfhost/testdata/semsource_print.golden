@@ -182,3 +182,62 @@ refused unsupported expression
 refused unsupported void call
 refused unsupported call target
 refused call target was refused: call target has no semantic contract
+modes 1 result P
+v0:i32 v1:i32 v2:i32 v3:i32[] v4:P
+func make {
+  b0:
+    v0 = param 0
+    v1 = const_int 1
+    v2 = binary + v0 v1
+    v3 = array_new v0 v2
+    v4 = record_new v0 v3
+    ret v4
+}
+
+modes 3 2 result Q
+v0:P v1:string v2:string v3:string v4:Q
+func wrap {
+  b0:
+    v0 = param 0
+    v1 = param 1
+    v2 = const_str
+    v3 = binary + v1 v2
+    v4 = record_new v3 v0
+    ret v4
+}
+
+modes 2 result i32
+v0:Q v1:P v2:string v3:string v4:boolean v5:i32[] v6:i32 v7:i32 v8:i32
+func unwrap {
+  b0:
+    v0 = param 0
+    v1 = record_get 1 v0
+    v2 = record_get 0 v0
+    v3 = const_str
+    v4 = binary == v2 v3
+    brif v4 b1 b2
+  b1:
+    v5 = record_get 1 v1
+    v6 = const_int 0
+    v7 = array_get v5 v6
+    ret v7
+  b2:
+    br b3
+  b3:
+    v8 = record_get 0 v1
+    ret v8
+}
+
+modes 2 result string
+v0:string v1:string v2:string
+func greet {
+  b0:
+    v0 = param 0
+    v1 = const_str
+    v2 = binary + v1 v0
+    ret v2
+}
+
+refused unsupported record update
+refused unsupported record literal
+refused unsupported call target

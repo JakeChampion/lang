@@ -6,6 +6,7 @@ import "./parser";
 import "./checker";
 import "./typeinfo";
 import "./semtypes";
+import "./semrecords";
 import "./ssa";
 import "./ssasem";
 import "./ssaunits";
@@ -42,6 +43,7 @@ struct Value { s: State, id: i32 }
 
 function t_i32(): typeinfo.Type { return typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false }; }
 function t_bool(): typeinfo.Type { return typeinfo.TypeBool { tag: 0 }; }
+function t_string(): typeinfo.Type { return typeinfo.TypeString { tag: 0 }; }
 function t_void(): typeinfo.Type { return typeinfo.TypeVoid { tag: 0 }; }
 function is_i32(t: typeinfo.Type): boolean { return semtypes.equal(t, t_i32()); }
 function is_bool(t: typeinfo.Type): boolean { return semtypes.equal(t, t_bool()); }
@@ -243,7 +245,7 @@ function index(ix: ast.ExprIndex, s: State): Value {
 }
 
 function field(fa: ast.ExprFieldAccess, s: State): Value {
-    if (!decimal(fa.field)) { return refused(s, "unsupported projection"); }
+    if (!decimal(fa.field)) { return record_field(fa, s); }
     var container: Value = expr(fa.obj, s, typeinfo.unchecked());
     s = container.s;
     if (!s.ok) { return container; }
@@ -251,6 +253,59 @@ function field(fa: ast.ExprFieldAccess, s: State): Value {
     var elem: typeinfo.Type = tuple_element_type(s.values[container.id], at);
     if (!semtypes.concrete(elem, false)) { return refused(s, "tuple projection contract"); }
     return define(s, ssasem.tuple_get(), [container.id], at, "", elem);
+}
+
+// A record is a declared struct with no type parameters and no enum owner:
+// its schema is the declaration's field names and checked field types, in
+// declaration order, which is also the order a literal supplies them in.
+function record_schema(name: string, s: State): checker.StructSig {
+    var sig: checker.StructSig = checker.struct_sig(s.scope, name);
+    if (sig.type_params.len() > 0 || sig.enum_owner.len() > 0) { return checker.struct_sig(s.scope, ""); }
+    return sig;
+}
+
+function record_field_index(sig: checker.StructSig, name: string): i32 {
+    var i: i32 = 0;
+    while (i < sig.field_names.len()) {
+        if (sig.field_names[i] == name) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+function record_field(fa: ast.ExprFieldAccess, s: State): Value {
+    var container: Value = expr(fa.obj, s, typeinfo.unchecked());
+    s = container.s;
+    if (!s.ok) { return container; }
+    var name: string = "";
+    if let typeinfo.TypeStruct(r) = s.values[container.id] { name = r.name; }
+    var sig: checker.StructSig = record_schema(name, s);
+    if (sig.name.len() == 0) { return refused(s, "unsupported projection"); }
+    var at: i32 = record_field_index(sig, fa.field);
+    if (at < 0 || !semtypes.concrete(sig.field_types[at], false)) { return refused(s, "record projection contract"); }
+    return define(s, ssasem.record_get(), [container.id], at, fa.field, sig.field_types[at]);
+}
+
+// A literal names every field once, in declaration order; the checker has
+// already held it to that. A functional update reads a base value's fields
+// through no semantic operation yet, so it is refused.
+function record(e: ast.Expr, sl: ast.ExprStructLit, s: State): Value {
+    if (sl.has_base) { return refused(s, "unsupported record update"); }
+    var ty: typeinfo.Type = checked(e, s);
+    var sig: checker.StructSig = record_schema(sl.type_name, s);
+    if (sig.name.len() == 0 || !semtypes.concrete(ty, false) || sl.field_values.len() != sig.field_types.len()) { return refused(s, "unsupported record literal"); }
+    var ids: i32[] = [];
+    var i: i32 = 0;
+    while (i < sl.field_values.len()) {
+        if (sl.field_names[i] != sig.field_names[i]) { return refused(s, "unsupported record literal"); }
+        var v: Value = expr(sl.field_values[i], s, sig.field_types[i]);
+        s = v.s;
+        if (!s.ok) { return v; }
+        if (!semtypes.equal(s.values[v.id], sig.field_types[i])) { return refused(s, "record field type"); }
+        ids = ids.append(v.id);
+        i = i + 1;
+    }
+    return define(s, ssasem.record_new(), ids, 0, "", ty);
 }
 
 function binary(b: ast.ExprBinary, s: State): Value {
@@ -330,7 +385,9 @@ function expr(e: ast.Expr, s: State, expected: typeinfo.Type): Value {
     match (e) {
         ast.ExprNumber(n) => { return number(n, s); },
         ast.ExprBool(b) => { return define(s, 2, [], boolean_value(b.value), "", t_bool()); },
+        ast.ExprString(st) => { return define(s, 5, [], 0, st.value, t_string()); },
         ast.ExprIdent(id) => { return ident(id, s); },
+        ast.ExprStructLit(sl) => { return record(e, sl, s); },
         ast.ExprArray(a) => { return array(e, a, s, expected); },
         ast.ExprTuple(t) => { return tuple(e, t, s, expected); },
         ast.ExprIndex(ix) => { return index(ix, s); },
@@ -675,6 +732,68 @@ function initial(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Co
         names: [], vals: [], scope: scope, result: result_type(fd, scope), loops: [], contracts: contracts, calls: [] };
 }
 
+// ---- record schemas ---------------------------------------------------------
+
+struct Schemas { ok: boolean, why: string, records: semrecords.Record[] }
+
+// Every record type a function's values, contracts and result name gets its
+// declaration's schema, and so does every record a schema's field names, to a
+// fixpoint over the finite declaration table. A type this boundary cannot
+// give a schema refuses the function.
+function schemas(types: typeinfo.Type[], s: State): Schemas {
+    var out: Schemas = Schemas { ok: true, why: "", records: [] };
+    var pending: typeinfo.Type[] = types;
+    var i: i32 = 0;
+    while (i < pending.len()) {
+        out = schema_of(pending[i], s, out);
+        if (!out.ok) { return out; }
+        if (out.records.len() > 0 && semtypes.equal(out.records[out.records.len() - 1].ty, pending[i])) {
+            for field in out.records[out.records.len() - 1].fields { pending = pending.append(field.ty); }
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// Structural types name records inside them; a nominal type is its own.
+function schema_of(t: typeinfo.Type, s: State, out: Schemas): Schemas {
+    if let typeinfo.TypeArray(a) = t { return schema_of(a.elem, s, out); }
+    if let typeinfo.TypeTuple(tup) = t {
+        for elem in tup.elements {
+            out = schema_of(elem, s, out);
+            if (!out.ok) { return out; }
+        }
+        return out;
+    }
+    if let typeinfo.TypeStruct(r) = t {
+        if (semrecords.find(out.records, t) >= 0) { return out; }
+        return record_entry(t, r, s, out);
+    }
+    return out;
+}
+
+function record_entry(t: typeinfo.Type, r: typeinfo.TypeStruct, s: State, out: Schemas): Schemas {
+    var sig: checker.StructSig = record_schema(r.name, s);
+    if (sig.name.len() == 0 || r.args.len() > 0) { return Schemas { ...out, ok: false, why: "unsupported record type" }; }
+    var fields: semrecords.Field[] = [];
+    var i: i32 = 0;
+    while (i < sig.field_names.len()) {
+        if (!semtypes.concrete(sig.field_types[i], false)) { return Schemas { ...out, ok: false, why: "unresolved record field type" }; }
+        fields = fields.append(semrecords.Field { name: sig.field_names[i], ty: sig.field_types[i] });
+        i = i + 1;
+    }
+    return Schemas { ...out, records: out.records.append(semrecords.Record { ty: t, fields: fields }) };
+}
+
+function contract_types(calls: ssasem.Contract[]): typeinfo.Type[] {
+    var out: typeinfo.Type[] = [];
+    for c in calls {
+        for t in c.params { out = out.append(t); }
+        out = out.append(c.result);
+    }
+    return out;
+}
+
 function complete(fd: parser.FuncDecl, s: State): Produced {
     if (!s.ok) { return refuse(s.why); }
     if (s.live && !is_void(s.result)) { return refuse("value-returning body falls through"); }
@@ -689,8 +808,12 @@ function complete(fd: parser.FuncDecl, s: State): Produced {
         modes = modes.append(mode(fd.params[at], f.values[at]));
         at = at + 1;
     }
+    var named: typeinfo.Type[] = f.values.append(s.result);
+    for t in contract_types(s.calls) { named = named.append(t); }
+    var table: Schemas = schemas(named, s);
+    if (!table.ok) { return refuse(table.why); }
     var graph: ssa.SFunc = ssa.SFunc { ...f.graph, name: fd.name, nparams: params.len() };
-    f = ssasem.Func { ...f, graph: graph, params: params, result: s.result, calls: s.calls };
+    f = ssasem.Func { ...f, graph: graph, params: params, result: s.result, records: table.records, calls: s.calls };
     var analysis: ssasem.Analysis = ssasem.analyze(f);
     if (!analysis.ok) { return refuse("produced graph fails semantic verification: " + analysis.why); }
     return Produced { ok: true, why: "", func: f, modes: modes };
