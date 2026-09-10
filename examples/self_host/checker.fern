@@ -7818,6 +7818,23 @@ function int_literal_tree(e: ast.Expr): boolean {
   return parser.int_literal_tree(e);
 }
 
+// int_operand_op: does a binary `op` hand its own integer type down to both
+// operands? Arithmetic, bitwise and shift operators do — including the shift
+// COUNT, which native judges against the same type as the value — so a literal
+// under one is read at the destination's type and range-checked there.
+// Comparison and logical operators do not: their operands carry a type of
+// their own, so no destination reaches through them.
+//
+// This is deliberately narrower than parser.int_literal_tree's set, which also
+// admits the saturating `+|` / `-|` / `*|` / `<<|` forms: native's two range
+// paths disagree about those (its checker refuses a wide operand, its constfold
+// walk does not list them and folds one instead), so admitting them here would
+// refuse a const that native accepts.
+function int_operand_op(op: string): boolean {
+  if (op == "+" || op == "-" || op == "*" || op == "/" || op == "%") { return true; }
+  return op == "&" || op == "|" || op == "^" || op == "<<" || op == ">>";
+}
+
 // int_range_diags: E047 for every literal in `e` that the type it is READ at
 // cannot hold. Native settles a polymorphic literal to the type its context
 // names and then range-checks it (settleInt -> checkLiteralFits); the self-host
@@ -7844,7 +7861,7 @@ function int_range_diags(e: ast.Expr, ty: string, negated: boolean): util.Diag[]
       return out;
     },
     ast.ExprBinary(b) => {
-      if (b.op == "+" || b.op == "-" || b.op == "*" || b.op == "/") {
+      if (int_operand_op(b.op)) {
         out = util.append_diags(int_range_diags(b.left, ty, false), int_range_diags(b.right, ty, false));
       }
       return out;
