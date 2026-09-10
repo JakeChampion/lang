@@ -411,6 +411,24 @@ func elideClosurePairFunc(fn *Func, pairEnvOffset int32, returnsClosure map[stri
 			}
 		}
 	}
+	// The slot's declared type is the provenance that reaches a pair behind a
+	// call whose declared return is an erased `T` — `id[T]` handing back the
+	// lambda it was given (#8701), which returnsClosure cannot name. A
+	// FuncType slot holds a pair, a static function cell or zero whatever
+	// wrote it, and __drop_closure_value handles all three; an elided slot
+	// holds a bare env and is skipped below. Generated drop glue releases an
+	// env it has already dispatched through this same helper name, so its
+	// own slots are left alone.
+	if !isGeneratedDrop(fn.Name) {
+		for _, op := range fn.Ops {
+			if op.Kind != OpLoadLocal || pairSlot[op.I32] {
+				continue
+			}
+			if _, ok := slotTypeAt(fn, op.I32).(*ast.FuncType); ok {
+				pairSlot[op.I32] = true
+			}
+		}
+	}
 	for i := 0; i+1 < len(fn.Ops); i++ {
 		if fn.Ops[i].Kind != OpLoadLocal || elidedSlot[fn.Ops[i].I32] {
 			continue

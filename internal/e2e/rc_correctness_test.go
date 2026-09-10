@@ -8787,6 +8787,33 @@ function main(): i32 {
     return (t - 20500) + __rc_underflow_count();
 }`,
 	},
+	{
+		// A closure handed through an ERASED generic (`id[T]`, whose
+		// declared return is `T`) and bound to a FuncType local. Neither an
+		// OpMakeClosure nor a closure-returning callee wrote the slot, so its
+		// drop went through the generic release and freed the pair, never the
+		// env behind it (#8701); the slot's declared type now says it holds a
+		// pair. The non-capturing spelling is the guard: a zero-capture value
+		// arrives as a static cell the pair-aware drop must skip. 100 rounds
+		// of (i + 1) + 2 = 5250, minus 5250.
+		name: "closure_through_erased_generic_released",
+		src: `
+function id[T](x: T): T { return x; }
+function capturing(p: i32): i32 {
+    var v: (i32) => i32 = id(((a: i32) => (a + p)));
+    return v(1);
+}
+function non_capturing(): i32 {
+    var v: (i32) => i32 = id(((a: i32) => (a + 1)));
+    return v(1);
+}
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) { t = t + capturing(i) + non_capturing(); i = i + 1; }
+    return (t - 5250) + __rc_underflow_count();
+}`,
+	},
 }
 
 func TestX86_64RcCorrectnessCorpus(t *testing.T) {
