@@ -51,6 +51,8 @@ pub function call(): i32 { return 0 - 7; }
 pub function variant_new(): i32 { return 0 - 8; }
 pub function variant_is(): i32 { return 0 - 9; }
 pub function variant_get(): i32 { return 0 - 10; }
+pub function variant_up(): i32 { return 0 - 11; }
+pub function variant_as(): i32 { return 0 - 12; }
 
 function failed(why: string): Analysis {
     return Analysis { ok: false, why: why, dependencies: [], flow: ssalive.Flow { ok: false, why: why, live_in: [], live_out: [] } };
@@ -213,15 +215,54 @@ function variant_projection_error(ins: ssa.SInst, f: Func, result: typeinfo.Type
     return "";
 }
 
+// A struct-union's member is its own box, so widening and narrowing are
+// identities between the member's type and the union's. An enum boxes its
+// payload behind the variant's own shape and has neither operation.
+function member_layout(f: Func, t: typeinfo.Type): boolean {
+    var at: i32 = semrecords.find_enum(f.enums, t);
+    return at >= 0 && f.enums[at].layout == semrecords.layout_member();
+}
+
+function member_named(t: typeinfo.Type, name: string): boolean {
+    if let typeinfo.TypeStruct(r) = t { return r.args.len() == 0 && r.name == name; }
+    return false;
+}
+
+function widening_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
+    if (ins.args.len() != 1) { return "variant widening arity"; }
+    if (!member_layout(f, result)) { return "variant widening layout"; }
+    var why: string = variant_known(f, result, ins.str);
+    if (why != "") { return why; }
+    if (!member_named(f.values[ins.args[0]], ins.str)) { return "variant widening type"; }
+    return "";
+}
+
+function narrowing_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
+    if (ins.args.len() != 1) { return "variant narrowing arity"; }
+    var whole: typeinfo.Type = f.values[ins.args[0]];
+    if (!member_layout(f, whole)) { return "variant narrowing layout"; }
+    var why: string = variant_known(f, whole, ins.str);
+    if (why != "") { return why; }
+    if (!member_named(result, ins.str)) { return "variant narrowing type"; }
+    return "";
+}
+
 function variant_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     if (ins.kind_tag == variant_new()) { return variant_construction_error(ins, f, result); }
     if (ins.kind_tag == variant_is()) { return variant_test_error(ins, f, result); }
+    if (ins.kind_tag == variant_up()) { return widening_error(ins, f, result); }
+    if (ins.kind_tag == variant_as()) { return narrowing_error(ins, f, result); }
     return variant_projection_error(ins, f, result);
 }
 
 function is_variant_op(kind: i32): boolean {
-    return kind == variant_new() || kind == variant_is() || kind == variant_get();
+    return kind == variant_new() || kind == variant_is() || kind == variant_get()
+        || kind == variant_up() || kind == variant_as();
 }
+
+// A variant's field, and a narrowing to a variant, exist only while the value
+// is that variant.
+function needs_guard(kind: i32): boolean { return kind == variant_get() || kind == variant_as(); }
 
 function call_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     var at: i32 = find_contract(f.calls, ins.str);
@@ -409,7 +450,7 @@ function guard_error(f: Func): string {
     while (bi < f.graph.blocks.len()) {
         if (reachable[bi]) {
             for ins in f.graph.blocks[bi].insts {
-                if (ins.kind_tag == variant_get() && !guarded(f, ins, bi, dom)) { return "unguarded variant projection"; }
+                if (needs_guard(ins.kind_tag) && !guarded(f, ins, bi, dom)) { return "unguarded variant projection"; }
             }
         }
         bi = bi + 1;
@@ -417,8 +458,11 @@ function guard_error(f: Func): string {
     return "";
 }
 
+// A widening and a narrowing hand back the same box, so each borrows its
+// source exactly as a projection does.
 function projects(kind: i32): boolean {
-    return kind == 7 || kind == array_get() || kind == tuple_get() || kind == record_get() || kind == variant_get();
+    return kind == 7 || kind == array_get() || kind == tuple_get() || kind == record_get()
+        || kind == variant_get() || kind == variant_up() || kind == variant_as();
 }
 
 function borrow_parents(f: Func): i32[] {

@@ -8,7 +8,7 @@ var shape: typeinfo.Type = typeinfo.TypeUnion { name: "Shape", args: [] };
 var dot = semrecords.Variant { name: "Dot", fields: [] };
 var full = semrecords.Variant { name: "Full", fields: [semrecords.Field { name: "__ev", ty: ia }] };
 var line = semrecords.Variant { name: "Line", fields: [semrecords.Field { name: "__ev", ty: i32t }] };
-var shapeEnum = semrecords.Enum { ty: shape, variants: [dot, full, line] };
+var shapeEnum = semrecords.Enum { ty: shape, variants: [dot, full, line], layout: semrecords.layout_variant() };
 enums = [shapeEnum];
 params = [shape]; types = [shape, bt, ia, i32t, i32t, i32t, shape]; result = i32t;
 graph = ssa.SFunc { name: "measure", nparams: 1, nvals: 7, entry: 7, takes_env: false, blocks: [

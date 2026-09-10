@@ -14228,6 +14228,21 @@ pub function union_sig(s: Scope, name: string): UnionSig {
   return s.lookup_union(name);
 }
 
+// variant_shape_sig is the declared field shape of `name` as a member of union
+// `owner`: an enum's own variant declaration, or — for a struct-union
+// (`type Shape = Circle | Square`) — the separately declared struct the union
+// names. The two are distinguished by `enum_owner`, which a struct-union
+// member never carries.
+pub function variant_shape_sig(s: Scope, name: string, owner: string): StructSig {
+  var owned: StructSig = s.lookup_owned_struct(name, owner);
+  if (owned.enum_owner == owner) { return owned; }
+  var plain: StructSig = s.lookup_struct(name);
+  if (plain.name.len() > 0 && plain.enum_owner.len() == 0 && is_variant_of(name, owner, s.unions.unions)) {
+    return plain;
+  }
+  return s.lookup_struct("");
+}
+
 // arm_scope is the scope a match arm's body sees: `s` plus the arm's payload
 // bindings, typed as check_stmt types them.
 pub function arm_scope(arm: ast.MatchArm, s: Scope, whole: typeinfo.Type): Scope {

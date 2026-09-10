@@ -5,8 +5,14 @@ import "./semtypes";
 pub struct Field { name: string, ty: typeinfo.Type }
 pub struct Record { ty: typeinfo.Type, fields: Field[] }
 // An enum's identity is its union type; each variant is a named field shape.
+// `layout` says how a variant's box is built and read, which is a property of
+// the declaration rather than of any use: a declared enum boxes its payload
+// behind the variant's own shape, while a struct-union's member IS the box.
 pub struct Variant { name: string, fields: Field[] }
-pub struct Enum { ty: typeinfo.Type, variants: Variant[] }
+pub struct Enum { ty: typeinfo.Type, variants: Variant[], layout: i32 }
+
+pub function layout_variant(): i32 { return 1; }
+pub function layout_member(): i32 { return 2; }
 
 pub function find(records: Record[], ty: typeinfo.Type): i32 {
     var i: i32 = 0;
@@ -124,6 +130,39 @@ function variants_error(variants: Variant[], records: Record[], enums: Enum[]): 
     return "";
 }
 
+// A struct-union's member is its own box, so the member's field shape must
+// also be a record this table carries: the walks that read a member read it
+// through that record.
+function layout_error(e: Enum, records: Record[]): string {
+    if (e.layout != layout_variant() && e.layout != layout_member()) { return "unknown enum layout"; }
+    if (e.layout != layout_member()) { return ""; }
+    for v in e.variants {
+        var at: i32 = find_named(records, v.name);
+        if (at < 0) { return "missing union member record"; }
+        if (!same_fields(records[at].fields, v.fields)) { return "inconsistent union member record"; }
+    }
+    return "";
+}
+
+function find_named(records: Record[], name: string): i32 {
+    var i: i32 = 0;
+    while (i < records.len()) {
+        if let typeinfo.TypeStruct(r) = records[i].ty { if (r.name == name) { return i; } }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+function same_fields(a: Field[], b: Field[]): boolean {
+    if (a.len() != b.len()) { return false; }
+    var i: i32 = 0;
+    while (i < a.len()) {
+        if (a[i].name != b[i].name || !semtypes.equal(a[i].ty, b[i].ty)) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
 function enums_error(records: Record[], enums: Enum[]): string {
     var i: i32 = 0;
     while (i < enums.len()) {
@@ -136,6 +175,8 @@ function enums_error(records: Record[], enums: Enum[]): string {
             j = j + 1;
         }
         var why: string = variants_error(e.variants, records, enums);
+        if (why != "") { return why; }
+        why = layout_error(e, records);
         if (why != "") { return why; }
         i = i + 1;
     }
