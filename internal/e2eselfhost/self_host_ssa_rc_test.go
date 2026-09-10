@@ -158,7 +158,7 @@ func physicalRCSource(setup, modes string) string {
 	}
 	source = strings.Replace(source, `var src: string = "function produce`, `var src: string = "@noinline function produce`, 1)
 	return `import "./ssarc"; import "./ssasem"; import "./ssaunits"; import "./ssa";
-import "./typeinfo"; import "./semrecords"; import "./parser"; import "./lexer"; import "./irlower"; import "./ir";
+import "./typeinfo"; import "./semrecords"; import "./parser"; import "./lexer"; import "./irlower"; import "./ir"; import "./util";
 import "./ircore"; import "./asmcore"; import "./asm_ir"; import "./asm_arm64_ir"; import "./wasm_ir";
 ` + source
 }
@@ -281,6 +281,22 @@ function main(): i32 {
     if (clashed.len() != 1) { return 27; }
     if (clashed[0].ok) { return 28; }
     if (clashed[0].why != "conflicting drop helper for __sem_drop_Node") { eprint(clashed[0].why); return 29; }
+    // The AST-caller row for a nominal result. The bare name asserts SOLE
+    // ownership, which this boundary does not promise, and its exit sweep runs
+    // the field walk unguarded — so it is granted only to a schema with no
+    // reference field, where there is no field walk to run and the release is
+    // the rc-guarded box dec alone.
+    var i32ty: typeinfo.Type = typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false };
+    var boxOnly: typeinfo.Type = typeinfo.TypeStruct { name: "BoxOnly", args: [] };
+    var boxOnlySchema = semrecords.Record { ty: boxOnly, fields: [semrecords.Field { name: "n", ty: i32ty }] };
+    var boxOnlyFunc = ssasem.Func { graph: selfGraph, values: [boxOnly], params: [boxOnly], result: boxOnly, records: [boxOnlySchema], enums: [], calls: [] };
+    if (util.index_of_str(ssarc.caller_sigs(irlower.fn_sigs_empty(), "mk", boxOnlyFunc).return_fresh_struct_ret_fns, "mk") < 0) { return 30; }
+    // A reference field is exactly what makes that sweep dangerous, so the same
+    // shape one field over gets nothing and keeps the leak floor.
+    var withKids: typeinfo.Type = typeinfo.TypeStruct { name: "WithKids", args: [] };
+    var withKidsSchema = semrecords.Record { ty: withKids, fields: [semrecords.Field { name: "xs", ty: f.result }] };
+    var withKidsFunc = ssasem.Func { graph: selfGraph, values: [withKids], params: [withKids], result: withKids, records: [withKidsSchema], enums: [], calls: [] };
+    if (util.index_of_str(ssarc.caller_sigs(irlower.fn_sigs_empty(), "mk", withKidsFunc).return_fresh_struct_ret_fns, "mk") >= 0) { return 31; }
     return 0;
 }
 `
