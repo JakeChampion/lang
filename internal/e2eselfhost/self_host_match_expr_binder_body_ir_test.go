@@ -151,6 +151,44 @@ function main(): i32 {
     var got: i32 = match (t) { (q, n) => n };
     return got;
 }`}, // 4
+	// #8778: the arm body is a nested VALUE BLOCK that consumes the bound
+	// payload — a match expression over it, or an if expression reading it —
+	// with a string result. The payload is bound by the statement-match path
+	// and read only inside the block, which lowers with a temp of its own;
+	// before, the arm was refused for any result kind but i32.
+	{"nested_match_string_payload", `enum Res { Ok1(string), Err1(string) }
+enum Wrap { Box(Res) }
+function main(): i32 {
+    var w: Wrap = Box(Err1("bad"));
+    var inner: string = match (w) { Box(x) => match (x) { Ok1(q) => q, Err1(r) => r } };
+    if (inner != "bad") { return 14; }
+    return inner.len() as i32;
+}`}, // 3
+	{"if_expr_over_wide_payload", `enum W { V(i64), U(f64) }
+function pick(w: W): string {
+    return match (w) { V(n) => if (n > 5000000000i64) { "big" } else { "small" }, U(f) => if (f > 1.5) { "hi" } else { "lo" } };
+}
+function main(): i32 {
+    if (pick(V(6000000000i64)) != "big") { return 21; }
+    if (pick(U(0.5)) != "lo") { return 22; }
+    return (pick(V(1i64)).len() + pick(U(2.5)).len()) as i32;
+}`}, // 7
+	{"option_nested_match_i64_result", `enum Res { Ok1(string), Err1(string) }
+function main(): i32 {
+    var o: Option[Res] = Some(Err1("bad"));
+    var u: i64 = match (o) { Some(x) => match (x) { Ok1(q) => 1i64, Err1(r) => 7000000000i64 }, None => 0i64 };
+    if (u != 7000000000i64) { return 23; }
+    return (u % 1000i64) as i32;
+}`}, // 0
+	// A DEAD payload binding (`Ok1(q) => "ok"`, q never read) beside a string
+	// result was refused on its own, whatever the arm did with the value.
+	{"dead_string_payload_literal_arm", `enum Res { Ok1(string), Err1(string) }
+function main(): i32 {
+    var r: Res = Err1("bad");
+    var s: string = match (r) { Ok1(q) => "ok", Err1(e) => "err" };
+    if (s != "err") { return 24; }
+    return s.len() as i32;
+}`}, // 3
 }
 
 // TestSelfHostMatchExprBinderBodyX86_64 — the x86-64 leg. fern.fern is the

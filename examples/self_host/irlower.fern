@@ -18048,6 +18048,38 @@ function iife_borrow_subexpr_i32(e: ast.Expr, name: string, ft: string, s: Lower
     return false;
 }
 
+// iife_payload_block_consumed admits a payload binding whose arm tail is a nested
+// VALUE BLOCK — `V(x) => match (x) { … }`, `V(x) => if (c) { … } else { … }` —
+// whatever the result temp's kind. The StmtMatch path binds the payload at its
+// type and only the block reads it, lowering with a temp of its own; the arm
+// stores the block's value, which classified the outer temp like any other tail
+// (#8778). A return of the block that hands the payload back bare would need a
+// payload-typed temp, so it is refused, as is a struct payload that is not
+// leak-safe: the payload is borrowed from the enum box and never reclaimed.
+function iife_payload_block_consumed(ft: string, name: string, arm: ast.MatchArm, s: LowerState): boolean {
+    if (decl_is_struct(s.frame.structs, ft) && !is_enum_like_name(ft, s.frame.structs) && !decl_is_leaksafe(s.frame.structs, ft)) { return false; }
+    match (iife_arm_tail_expr(arm)) {
+        ast.ExprCall(c) => {
+            if (c.args.len() != 0) { return false; }
+            match (c.callee) {
+                ast.ExprLambda(lam) => {
+                    if (lam.params.len() != 0 || lam.origin == parser.ORIGIN_IIFE_SCOPED) { return false; }
+                    for r in collect_returns(lam.body, []) {
+                        match (r) {
+                            ast.ExprIdent(rid) => { if (rid.name == name) { return false; } },
+                            _ => {}
+                        }
+                    }
+                    return true;
+                },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
 // iife_payload_borrow_i32 admits a STRUCT / STRING / TUPLE / ENUM payload binding
 // for the inlined match-EXPRESSION when the arm's tail reads it as a BORROW that
 // produces a provably-i32 result (`p.x` of an i32 field, `s.len()`, `t.0` of an i32
@@ -18130,9 +18162,16 @@ function iife_payload_field_bindable(ft: string, name: string, arm: ast.MatchArm
         // width-typed slot. This is the wide-payload analog of the unconditional i32
         // admit above and of the wildcard `Some(_)` path, which already lower.
         if (!parser.stmts_mention(arm.body, name)) { return true; }
+        if (iife_payload_block_consumed(ft, name, arm, s)) { return true; }
         return false;
     }
+    // A DEAD binding of any other type (`Ok1(q) => "ok"`, the arm never reads
+    // `q`) is admitted for the same reason as the wide one above: the result temp
+    // is classified from what the arm returns, and the StmtMatch binder binds
+    // the payload exactly as the statement form does.
+    if (!parser.stmts_mention(arm.body, name)) { return true; }
     if (is_scalar_array_type(ft)) { return !iife_arm_returns_ident(arm, name); }
+    if (iife_payload_block_consumed(ft, name, arm, s)) { return true; }
     // STRING result temp (res_kind == "string"): admit a string read of the bound
     // payload — a BARE string payload (`V(x) => x`, ft string) or a string FIELD /
     // ELEMENT read of a struct / tuple payload (`V(p) => p.name`, `V(t) => t.0`).
