@@ -4768,10 +4768,11 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    ret\n");
     // __fern_arr_inc_elems(arr) -> arr: one guarded __fn___fern_rc_inc per
     // element of a pointer-element array, the arm64 sibling of the x86-64
-    // body in asm_ir.emit_ir_runtime. irlower emits it ahead of an un-share
-    // copy of a SHARED buffer so both buffers hold a count of each element.
+    // body in asm_ir.emit_ir_runtime. irlower emits it ahead of a copy of a
+    // pointer-element buffer so both buffers hold a count of each element.
     // Same guard chain as the deep-free walks; x19/x20/x21 hold arr/len/i
-    // across the bl (callee-saved, x30 saved too).
+    // across the bl (callee-saved, x30 saved too). Gated on its need like
+    // the x86-64 body.
     if (s.has_need("arr_inc_elems")) {
     s = s.write("__fn___fern_arr_inc_elems:\n");
     s = s.write("    ldr x0, [sp]\n");              // arr (also the result)

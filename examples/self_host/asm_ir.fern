@@ -2338,14 +2338,16 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(".Lshuniq_ret:\n");
     s = s.write("    ret\n");
     // __fern_arr_inc_elems(arr) -> arr: one guarded __fn___fern_rc_inc per
-    // element of a pointer-element array. irlower emits it ahead of an
-    // un-share copy of a SHARED buffer (lower_field_append_inplace /
-    // lower_field_with_inplace): the copy duplicates every element pointer,
+    // element of a pointer-element array. irlower emits it ahead of a copy of
+    // a pointer-element buffer (the un-share push of a shared receiver, the
+    // clone the value forms take): the copy duplicates every element pointer,
     // so both buffers must hold a count of each element for the last owner's
     // element walk to free them once. Null / low-address / immortal buffers
     // are skipped like the deep-free walks skip them; an immortal or tagged
     // element is skipped by rc_inc's own guards. %rbx/%r12/%r13 hold
     // arr/len/i across the per-element call (callee-saved; rc_inc is a leaf).
+    // Gated on its need: a program with no such copy must not carry a body
+    // whose `call __fn___fern_rc_inc` the negative asm-grep contracts read.
     if (s.has_need("arr_inc_elems")) {
     s = s.write("__fn___fern_arr_inc_elems:\n");
     s = s.write("    movq 8(%rsp), %rax\n");        // arr (also the result)
@@ -5798,8 +5800,6 @@ function emit_ir_op_call_direct_helper(o: ir.Op, s: asmcore.EmitState): asmcore.
     // asm-grep contracts (e.g. strarr-elem-alias-excluded). Both free
     // through the freelist, so they need the heap runtime.
     if (o.str == "__fern_arrarr_free") { s = s.need("heap"); s = s.need("arrarr_free"); }
-    // The element retain ahead of an un-share copy: its body calls
-    // __fn___fern_rc_inc, so a binary with no such copy must not carry it.
     if (o.str == "__fern_arr_inc_elems") { s = s.need("arr_inc_elems"); }
     // The VIEW-aware string[] element walk (#6544) is gated the same way
     // and for the same reason: its body's inner
