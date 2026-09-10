@@ -2029,6 +2029,14 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 		{"loop-generic-callback-local", `function f[T, U](xs: T[], callback: (T) => U[]): U[] { var out: U[] = []; for x in xs { var ys = callback(x); for y in ys { out = out.append(y); } } return out; }`},
 		{"loop-callback-argument-mismatch", `function f(callback: (string) => i32[]): i32 { for y in callback(1) { var n = y; } return 0; }`},
 		{"loop-map-pair-types", `function f(m: Map[string, i64]): i64 { for (k, v) in m { return k.len() + v; } return 0; }`},
+		// A settled i32 beside a settled i64 widens to i64 in either operand
+		// order (native's commonIntegerWidth), so the sum returns as i64 and
+		// is refused as i32.
+		{"mixed-width-narrow-left-ok", `function f(a: i32, v: i64): i64 { return a + v; }`},
+		{"mixed-width-narrow-right-ok", `function f(a: i32, v: i64): i64 { return v + a; }`},
+		{"mixed-width-narrow-left-mismatch", `function f(a: i32, v: i64): i32 { return a + v; }`},
+		{"mixed-width-narrow-right-mismatch", `function f(a: i32, v: i64): i32 { return v + a; }`},
+		{"mixed-width-call-left-ok", `function g(): i32 { return 1; } function f(v: i64): i64 { return g() + v; }`},
 		{"loop-map-return-mismatch", `function f(m: Map[string, i64]): i64 { for (k, v) in m { return k; } return 0; }`},
 		{"loop-map-argument-mismatch", `function take(s: string): i32 { return s.len(); } function f(m: Map[string, i64]): i32 { for (k, v) in m { return take(v); } return 0; }`},
 		{"loop-map-assignment-mismatch", `function f(m: Map[string, i64]): i32 { for (k, v) in m { v = k; } return 0; }`},

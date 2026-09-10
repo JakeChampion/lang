@@ -457,12 +457,31 @@ function mixed_int_diag(op: string, lt: typeinfo.Type, rt: typeinfo.Type, line: 
 
 // int_result: the type an integer binop yields. An unsuffixed literal is read
 // at the other operand's width, so `n + 1` stays i64 when `n` is; when both
-// sides are settled the operator rules have already required them to agree, so
-// either side names the result.
+// sides are settled the operator rules have already required them to share a
+// signedness, and the narrower side widens to the wider one, as native's
+// commonIntegerWidth does for `i32 + i64` in either order.
 function int_result(lt: typeinfo.Type, rt: typeinfo.Type, le: ast.Expr, re: ast.Expr): typeinfo.Type {
   if (int_literal_tree(le) && !int_literal_tree(re)) { return rt; }
+  // A literal tree on the right reads at the left's width too, wide or not:
+  // the RANGE rule objects to what does not fit (#8722).
+  if (int_literal_tree(re) && !int_literal_tree(le)) { return lt; }
   if (unsettled_int_literal(le)) {
     return rt;
+  }
+  return wider_int(lt, rt);
+}
+
+// wider_int: of two settled integer types, the one with the wider width; the
+// left one when they agree or either is not an integer.
+function wider_int(lt: typeinfo.Type, rt: typeinfo.Type): typeinfo.Type {
+  match (lt) {
+    typeinfo.TypeI32(li) => {
+      match (rt) {
+        typeinfo.TypeI32(ri) => { if (ri.width > li.width) { return rt; } },
+        _ => {}
+      }
+    },
+    _ => {}
   }
   return lt;
 }
