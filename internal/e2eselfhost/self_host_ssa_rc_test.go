@@ -15,8 +15,9 @@ function inst(kind: i32, value: i32, args: i32[], imm: i32): ssa.SInst {
     return ssa.SInst { kind_tag: kind, result: value, args: args, imm: imm, str: "" };
 }
 function ret(value: i32): ssa.STerm { return ssa.STerm { kind_tag: 1, value: value, cond: 0, target: 0, t: 0, f: 0 }; }
-// Explicit caller contract for ABI tests. Semantic calls are not yet admitted
-// by ssasem; using AST escape inference here would test a different contract.
+// Explicit caller contract for ABI tests. The caller here is AST-lowered, so
+// its supplies are written out rather than taken from the AST's escape
+// inference, which would test a different contract than the callee's.
 function caller(template: irlower.LowerResult, mode: i32): irlower.LowerResult {
     var ops: ir.Op[] = [ir.op_const_i32(7), ir.op_arr_make(1, 32), ir.op_store_local(0),
         ir.op_const_i32(0), ir.op_store_local(2), ir.op_block(0), ir.op_loop(0),
@@ -80,7 +81,7 @@ function fixture(): ssasem.Func {
     var graph = ssa.SFunc { name: "produce", nparams: params.len(), nvals: types.len(), entry: 7,
         takes_env: false, blocks: [ssa.SBlock { id: 7, preds: [], insts: ops, term: ret(result) }] };
     if (blocks.len() > 0) { graph = ssa.SFunc { ...graph, blocks: blocks }; }
-    return ssasem.Func { graph: graph, values: types, params: params, result: row, records: [] };
+    return ssasem.Func { graph: graph, values: types, params: params, result: row, records: [], calls: [] };
 }
 function main(): i32 {
     var f = fixture();
@@ -199,7 +200,7 @@ function main(): i32 {
     for ty in types {
         var g = ssa.SFunc { name: "unsupported", nparams: 1, nvals: 1, entry: 7, takes_env: false,
             blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0)], term: ret(0) }] };
-        var typed = ssasem.Func { graph: g, values: [ty], params: [ty], result: ty, records: [] };
+        var typed = ssasem.Func { graph: g, values: [ty], params: [ty], result: ty, records: [], calls: [] };
         var plan = ssaunits.plan(typed, [2]);
         if (!plan.ok) { eprint(plan.why); return 5; }
         if (!refused(ssarc.lower(typed, [2], plan), "unsupported physical RC value type")) { return 6; }
@@ -208,7 +209,7 @@ function main(): i32 {
     var schema = semrecords.Record { ty: recordType, fields: [semrecords.Field { name: "xs", ty: f.result }] };
     var recordGraph = ssa.SFunc { name: "record", nparams: 1, nvals: 2, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(ssasem.record_new(), 1, [0], 0)], term: ret(1) }] };
-    var recordFunc = ssasem.Func { graph: recordGraph, values: [f.result, recordType], params: [f.result], result: recordType, records: [schema] };
+    var recordFunc = ssasem.Func { graph: recordGraph, values: [f.result, recordType], params: [f.result], result: recordType, records: [schema], calls: [] };
     var recordPlan = ssaunits.plan(recordFunc, [2]);
     if (!recordPlan.ok) { eprint(recordPlan.why); return 7; }
     if (!refused(ssarc.lower(recordFunc, [2], recordPlan), "unsupported physical RC value type")) { return 8; }

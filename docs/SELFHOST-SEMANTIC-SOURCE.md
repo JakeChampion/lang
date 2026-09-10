@@ -40,11 +40,32 @@ Unsupported constructs refuse the whole function with a reason.
   and `continue`, `return`. Loop headers get one phi per visible binding
   before the body is known; trivial phis are removed and values renumbered
   densely afterwards, parameters keeping their declared positions.
+- Calls of module functions, in expression or statement position, as the
+  semantic `call` kind (below).
 
-Refused, each with its own reason: calls of any kind, strings and floats in
-expressions, integer widths other than i32, division, destructuring, labelled
-loops, `for`, `match`, `defer`, closures, receiver methods, generics, external
-and async functions, and a value-returning body that falls through.
+Refused, each with its own reason: calls of builtins, methods, local function
+values and void functions, strings and floats in expressions, integer widths
+other than i32, division, destructuring, labelled loops, `for`, `match`,
+`defer`, closures, receiver methods, generics, external and async functions,
+and a value-returning body that falls through.
+
+## Calls
+
+A call is verified against its callee's declared contract, never its body.
+`ssasem.Contract` holds the exact parameter types, one unit mode per
+parameter (value, borrow or counted, as the callee's own production reads
+them from the declaration) and the result type. `build_module` derives one
+contract per declaration this boundary can produce and hands the table to
+every function; `ssasem.analyze` checks each call's argument and result types
+against it, and the unit planner treats a counted parameter like a
+construction operand (retained, or moved at the argument's last use), a
+borrowed parameter as a read, and a reference result as a fresh unit of the
+caller's own. A discarded call result is released at the call.
+
+The module is closed: a produced function whose callee was refused is refused
+in turn, transitively, because a contract is only honoured by a body verified
+against it. The AST-lowered `main` still calls produced functions with scalar
+arguments only, so the caller-side finding below is unchanged.
 
 ## Physical loops
 
@@ -73,7 +94,10 @@ one by hand.
   program on arm64, x86-64, x86-64 under the sanitizer and wasm. Output is
   compared exactly and the native runs must balance under `FERN_LEAKCHECK`.
   The fixtures cover loops with `break` / `continue`, nested loops, tuple
-  replacement across a branch, projected returns and short-circuit conditions.
+  replacement across a branch, projected returns, short-circuit conditions,
+  and calls between produced functions: borrowed and counted array
+  arguments, a temporary result moved into a counted parameter, a discarded
+  result, a returned parameter and recursion.
 
 ```sh
 go test ./internal/e2eselfhost -run 'TestSelfHostSemanticSource' -count=1
@@ -96,8 +120,8 @@ caller's guess about the callee's syntax.
 
 ## Remaining
 
-The producer does not yet admit calls, strings, records, enums, closures,
-match or destructuring, so no production consumer is switched and no AST
-ownership analysis is deleted. Next: semantic call operations with the
-closed-module contracts `ssaunits` already requires for counted returns, then
-record and string values through the same boundary.
+The producer does not yet admit void calls, builtins, strings, records,
+enums, closures, match or destructuring, so no production consumer is
+switched and no AST ownership analysis is deleted. Next: record and string
+values through the same boundary, then the caller contract at the AST
+boundary (#9004) so `main` can receive every produced shape.

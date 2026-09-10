@@ -32,7 +32,10 @@ struct State {
     vals: i32[],
     scope: checker.Scope,
     result: typeinfo.Type,
-    loops: Loop[]
+    loops: Loop[],
+    // Every module function's declared contract, and the ones this body calls.
+    contracts: ssasem.Contract[],
+    calls: ssasem.Contract[]
 }
 
 struct Value { s: State, id: i32 }
@@ -295,6 +298,33 @@ function logical(b: ast.ExprBinary, s: State): Value {
     return define(open(s, join, [rhs_end, skip]), 8, [right.id, short.id], 0, "", t_bool());
 }
 
+// A call is verified against the callee's declared contract: exact argument
+// types, and a result the callee hands over. Only a module function with a
+// contract is a call target; builtins, methods and local function values are
+// outside this boundary.
+function call(c: ast.ExprCall, s: State): Value {
+    var name: string = "";
+    if let ast.ExprIdent(id) = c.callee { name = id.name; }
+    if (name == "" || lookup(s, name) >= 0) { return refused(s, "unsupported call target"); }
+    var at: i32 = ssasem.find_contract(s.contracts, name);
+    if (at < 0) { return refused(s, "call target has no semantic contract"); }
+    var contract: ssasem.Contract = s.contracts[at];
+    if (c.type_argc > 0 || c.args.len() != contract.params.len()) { return refused(s, "call arity"); }
+    if (is_void(contract.result)) { return refused(s, "unsupported void call"); }
+    var ids: i32[] = [];
+    var i: i32 = 0;
+    while (i < c.args.len()) {
+        var v: Value = expr(c.args[i], s, contract.params[i]);
+        s = v.s;
+        if (!s.ok) { return v; }
+        if (!semtypes.equal(s.values[v.id], contract.params[i])) { return refused(s, "call argument type"); }
+        ids = ids.append(v.id);
+        i = i + 1;
+    }
+    if (ssasem.find_contract(s.calls, name) < 0) { s = State { ...s, calls: s.calls.append(contract) }; }
+    return define(s, ssasem.call(), ids, 0, name, contract.result);
+}
+
 function expr(e: ast.Expr, s: State, expected: typeinfo.Type): Value {
     if (!s.ok) { return Value { s: s, id: 0 - 1 }; }
     match (e) {
@@ -307,6 +337,7 @@ function expr(e: ast.Expr, s: State, expected: typeinfo.Type): Value {
         ast.ExprFieldAccess(fa) => { return field(fa, s); },
         ast.ExprBinary(b) => { return binary(b, s); },
         ast.ExprUnary(u) => { return unary(u, s); },
+        ast.ExprCall(c) => { return call(c, s); },
         _ => { return refused(s, "unsupported expression"); }
     }
 }
@@ -484,10 +515,21 @@ function prefix_loops(xs: Loop[], n: i32): Loop[] {
     return out;
 }
 
+// A discarded call result is a value nothing reads; the unit planner
+// releases it at the call.
+function discard(e: ast.Expr, s: State): State {
+    match (e) {
+        ast.ExprCall(c) => { return call(c, s).s; },
+        _ => { return fail(s, "unsupported statement"); }
+    }
+    return s;
+}
+
 function stmt(st: ast.Stmt, s: State): State {
     if (!s.ok || !s.live) { return s; }
     match (st) {
         ast.StmtVar(v) => { return declare(st, v, s); },
+        ast.StmtExpr(e) => { return discard(e.value, s); },
         ast.StmtAssign(a) => { return assign(a, s); },
         ast.StmtReturn(r) => { return ret(r, s); },
         ast.StmtIf(f) => { return branch(f, s); },
@@ -584,7 +626,7 @@ function renumber(blocks: ssa.SBlock[], map: i32[], values: typeinfo.Type[]): ss
         out = out.append(ssa.SBlock { ...b, insts: insts, term: term });
     }
     var graph: ssa.SFunc = ssa.SFunc { name: "", nparams: 0, nvals: kept.len(), blocks: out, entry: 0, takes_env: false };
-    return ssasem.Func { graph: graph, values: kept, params: [], result: t_void(), records: [] };
+    return ssasem.Func { graph: graph, values: kept, params: [], result: t_void(), records: [], calls: [] };
 }
 
 // ---- functions --------------------------------------------------------------
@@ -624,13 +666,13 @@ function parameters(fd: parser.FuncDecl, s: State): State {
 
 function refuse(why: string): Produced {
     var graph: ssa.SFunc = ssa.SFunc { name: "", nparams: 0, nvals: 0, blocks: [], entry: 0, takes_env: false };
-    return Produced { ok: false, why: why, func: ssasem.Func { graph: graph, values: [], params: [], result: t_void(), records: [] }, modes: [] };
+    return Produced { ok: false, why: why, func: ssasem.Func { graph: graph, values: [], params: [], result: t_void(), records: [], calls: [] }, modes: [] };
 }
 
-function initial(fd: parser.FuncDecl, scope: checker.Scope): State {
+function initial(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Contract[]): State {
     var entry: ssa.SBlock = ssa.SBlock { id: 0, insts: [], term: t_none(), preds: [] };
     return State { ok: true, why: "", blocks: [], cur: entry, live: true, next_block: 1, values: [],
-        names: [], vals: [], scope: scope, result: result_type(fd, scope), loops: [] };
+        names: [], vals: [], scope: scope, result: result_type(fd, scope), loops: [], contracts: contracts, calls: [] };
 }
 
 function complete(fd: parser.FuncDecl, s: State): Produced {
@@ -648,34 +690,90 @@ function complete(fd: parser.FuncDecl, s: State): Produced {
         at = at + 1;
     }
     var graph: ssa.SFunc = ssa.SFunc { ...f.graph, name: fd.name, nparams: params.len() };
-    f = ssasem.Func { ...f, graph: graph, params: params, result: s.result };
+    f = ssasem.Func { ...f, graph: graph, params: params, result: s.result, calls: s.calls };
     var analysis: ssasem.Analysis = ssasem.analyze(f);
     if (!analysis.ok) { return refuse("produced graph fails semantic verification: " + analysis.why); }
     return Produced { ok: true, why: "", func: f, modes: modes };
 }
 
 // build produces one function's typed semantic graph from its checked
-// declaration and the checker's function scope. Unsupported constructs are
-// explicit refusals, never a partial graph.
-pub function build(fd: parser.FuncDecl, scope: checker.Scope): Produced {
+// declaration, the checker's function scope and the module's call contracts.
+// Unsupported constructs are explicit refusals, never a partial graph.
+pub function build(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Contract[]): Produced {
     var why: string = unsupported_declaration(fd);
     if (why != "") { return refuse(why); }
-    var s: State = initial(fd, scope);
+    var s: State = initial(fd, scope, contracts);
     if (!semtypes.concrete(s.result, true)) { return refuse("unresolved result type"); }
     s = parameters(fd, s);
     s = stmts(fd.body, s);
     return complete(fd, s);
 }
 
-// build_module pairs every function with its checked scope, in declaration
-// order. Refusals are per function.
-pub function build_module(mod: parser.Module): Produced[] {
-    var scopes: checker.Scope[] = checker.module_scopes(mod);
-    var out: Produced[] = [];
+// A declaration's contract is read from its checked scope and its parameter
+// declarations, the same way its own production reads them. A declaration
+// this boundary cannot produce has no contract, so no call may target it.
+function contract(fd: parser.FuncDecl, scope: checker.Scope): ssasem.Contract {
+    var none: ssasem.Contract = ssasem.Contract { name: "", params: [], modes: [], result: t_void() };
+    if (unsupported_declaration(fd) != "") { return none; }
+    var result: typeinfo.Type = result_type(fd, scope);
+    if (!semtypes.concrete(result, true)) { return none; }
+    var params: typeinfo.Type[] = [];
+    var modes: i32[] = [];
+    for p in fd.params {
+        var ty: typeinfo.Type = checker.scope_type(scope, p.name);
+        if (!semtypes.concrete(ty, false)) { return none; }
+        params = params.append(ty);
+        modes = modes.append(mode(p, ty));
+    }
+    return ssasem.Contract { name: fd.name, params: params, modes: modes, result: result };
+}
+
+function contracts(mod: parser.Module, scopes: checker.Scope[]): ssasem.Contract[] {
+    var out: ssasem.Contract[] = [];
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
-        out = out.append(build(mod.funcs[i], scopes[i]));
+        var c: ssasem.Contract = contract(mod.funcs[i], scopes[i]);
+        if (c.name != "" && ssasem.find_contract(out, c.name) < 0) { out = out.append(c); }
         i = i + 1;
     }
     return out;
+}
+
+// A produced function's callees must be produced too: a contract is only
+// honoured by a body verified against it, so a refused callee refuses every
+// caller, transitively.
+function close_module(mod: parser.Module, out: Produced[]): Produced[] {
+    var changed: boolean = true;
+    while (changed) {
+        changed = false;
+        var i: i32 = 0;
+        while (i < out.len()) {
+            if (out[i].ok) {
+                for c in out[i].func.calls {
+                    var at: i32 = 0;
+                    while (at < mod.funcs.len() && mod.funcs[at].name != c.name) { at = at + 1; }
+                    if (at < mod.funcs.len() && !out[at].ok && out[i].ok) {
+                        out = out.with(i, refuse("call target was refused: " + out[at].why));
+                        changed = true;
+                    }
+                }
+            }
+            i = i + 1;
+        }
+    }
+    return out;
+}
+
+// build_module pairs every function with its checked scope, in declaration
+// order. Refusals are per function and propagate to callers.
+pub function build_module(mod: parser.Module): Produced[] {
+    var scopes: checker.Scope[] = checker.module_scopes(mod);
+    var table: ssasem.Contract[] = contracts(mod, scopes);
+    var out: Produced[] = [];
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) {
+        out = out.append(build(mod.funcs[i], scopes[i], table));
+        i = i + 1;
+    }
+    return close_module(mod, out);
 }

@@ -55,6 +55,17 @@ function refused_fallthrough(n: i32): i32 { if (n > 0) { return 1; } }
 function refused_destructure(): i32 { var (a, b) = (1, 2); return a + b; }
 function refused_division(n: i32): i32 { return n / 2; }
 function refused_global(): i32 { return loop_phi(2); }
+function callee(xs: i32[], own ys: i32[]): i32[] { return ys; }
+function caller(n: i32): i32[] {
+    var a: i32[] = [n];
+    var b: i32[] = callee(a, [n, n]);
+    callee(b, a);
+    return callee(b, b);
+}
+function noop() { return; }
+function refused_void_call(): i32 { noop(); return 1; }
+function refused_method_call(xs: i32[]): i32 { return xs.len(); }
+function refused_transitive(n: i32): i32 { return refused_call(n); }
 `
 
 const semsourcePrintDriver = `import "./semsource"; import "./ssa"; import "./ssaunits"; import "./typeinfo";
@@ -162,6 +173,31 @@ const semsourceRCProgram = `
     }
     return total;
 }
+@noinline function fill(n: i32): i32[] {
+    var out: i32[] = [n, n + 1, n + 2];
+    return out;
+}
+@noinline function first_of(xs: i32[]): i32 { return xs[0]; }
+@noinline function keep(own xs: i32[], k: i32): i32[] {
+    if (k > 0) { return xs; }
+    return [k];
+}
+@noinline function chain(n: i32): i32[] {
+    var a: i32[] = fill(n);
+    var b: i32[] = keep(a, n);
+    var c: i32[] = keep(fill(n + 1), 0);
+    return [first_of(b) + first_of(c), b[0]];
+}
+@noinline function twice(n: i32): i32 {
+    var a: i32[] = fill(n);
+    var x: i32 = first_of(a) + first_of(keep(a, 1));
+    fill(x);
+    return x;
+}
+@noinline function count_down(n: i32): i32 {
+    if (n <= 0) { return 0; }
+    return 1 + count_down(n - 1);
+}
 function main(): i32 {
     var a: i32[] = pick(0);
     var b: i32[] = pick(1);
@@ -178,12 +214,15 @@ function main(): i32 {
     var e: i32[] = carry(0);
     print_int(d[0] + e[0]); print("");
     print_int(count_even(5)); print(""); print_int(count_even(0)); print("");
+    var r: i32[] = chain(3);
+    print_int(r[0]); print(""); print_int(r[1]); print("");
+    print_int(twice(2)); print(""); print_int(count_down(4)); print("");
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }
 `
 
-const semsourceRCWant = "1\n4\n5\n-3\n-2\n2\n0\n1\n5\n8\n12\n0\n"
+const semsourceRCWant = "1\n4\n5\n-3\n-2\n2\n0\n1\n5\n8\n12\n0\n3\n3\n4\n4\n"
 
 const semsourceRCDriver = `import "./semsource"; import "./ssarc"; import "./ssaunits"; import "./ssa";
 import "./parser"; import "./lexer"; import "./irlower"; import "./ir";
@@ -251,7 +290,7 @@ func TestSelfHostSemanticSourceRC(t *testing.T) {
 			if err != nil {
 				t.Fatalf("semantic lowering: %v\n%s", err, diagnostics.String())
 			}
-			for _, name := range []string{"pick", "pair", "boxed", "carry", "count_even"} {
+			for _, name := range []string{"pick", "pair", "boxed", "carry", "count_even", "fill", "first_of", "keep", "chain", "twice", "count_down"} {
 				if !strings.Contains(diagnostics.String(), "produced "+name+"\n") {
 					t.Fatalf("%s was not produced:\n%s", name, diagnostics.String())
 				}
