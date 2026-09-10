@@ -1082,6 +1082,22 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"const-u8-and-operand", "const B: u8 = 300 & 1;\nfunction main(): i32 { return B as i32; }\n", []string{"E047"}},
 		{"const-u8-shl-count", "const B: u8 = 1 << 300;\nfunction main(): i32 { return B as i32; }\n", []string{"E047"}},
 		{"const-u8-arith-operand", "const B: u8 = 300 - 100;\nfunction main(): i32 { return B as i32; }\n", []string{"E047"}},
+		// The SATURATING operators type their operands too — they are in
+		// native's settleInt Binary case — so a wide literal under one is
+		// judged at the destination's width like any other.
+		{"literal-u8-sat-add-operand", "function main(): i32 { var a: u8 = 300 +| 1; return 0; }\n", []string{"E047"}},
+		{"literal-u8-sat-sub-operand", "function main(): i32 { var a: u8 = 300 -| 1; return 0; }\n", []string{"E047"}},
+		{"literal-u8-sat-mul-operand", "function main(): i32 { var a: u8 = 300 *| 1; return 0; }\n", []string{"E047"}},
+		{"literal-u8-sat-shl-count", "function main(): i32 { var a: u8 = 1 <<| 300; return 0; }\n", []string{"E047"}},
+		{"literal-u8-sat-add-in-range-ok", "function main(): i32 { var a: u8 = 200 +| 1; return 0; }\n", nil},
+		// A CHECKED operator yields an Option, so it never reaches an integer
+		// destination and no range rule applies — native answers E003 on the
+		// Option instead, which is why settleInt omits these.
+		{"literal-u8-checked-add-is-option", "function main(): i32 { var a: u8 = 300 +? 1; return 0; }\n", []string{"E003"}},
+		// A const naming either family is refused by the const GRAMMAR, whose
+		// diagnostic is uncoded on both sides — so it cannot be gated here and
+		// lives in TestSelfHostConstGrammarX86_64, which compares message text.
+		{"const-shr-still-ok", "const B: i32 = 6 >> 1;\nfunction main(): i32 { return B; }\n", nil},
 		{"const-u8-arith-ok", "const B: u8 = 200 + 50;\nfunction main(): i32 { return B as i32; }\n", nil},
 		// A comparison hands neither operand a type, so a wide literal under
 		// one is not judged against the destination in either checker.
