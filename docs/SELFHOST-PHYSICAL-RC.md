@@ -124,8 +124,11 @@ assume the old caller analysis agrees with a new callee contract. Between
 produced functions that verification now exists: `semsource.fern` derives one
 contract per declaration and refuses a caller whose callee was refused, so
 every substituted call has a callee verified against the same contract
-([semantic source](SELFHOST-SEMANTIC-SOURCE.md)). The AST-lowered `main` of
-the executable fixture still only hands produced functions scalars.
+([semantic source](SELFHOST-SEMANTIC-SOURCE.md)). Across the boundary,
+`caller_sigs` rewrites the AST registries an AST caller reads from a produced
+callee's verified result type, so the executable fixture's AST-lowered `main`
+receives tuple and array results by contract rather than by the callee's
+syntax.
 
 The nested-array `.with` source failure found while building semantic
 dependency rows also remains unresolved: the existing store does not retain

@@ -160,6 +160,17 @@ const semsourceRCProgram = `
     return [swapped.0, swapped.1[1], swapped.1[0]];
 }
 @noinline function boxed(n: i32): (i32, i32[]) { return (n, [n, n + 1]); }
+@noinline function boxed_local(n: i32): (i32, i32[]) {
+    var xs: i32[] = [n];
+    var t: (i32, i32[]) = (n, xs);
+    var c: i32 = t.1[0];
+    if (c < 0) { var e: i32[] = []; return (0, e); }
+    return t;
+}
+@noinline function boxed_carry(n: i32): (i32[], boolean) {
+    var xs: i32[] = [n, n * 2];
+    return (xs, n > 0);
+}
 @noinline function carry(limit: i32): i32[] {
     var last: i32[] = [7];
     var i: i32 = 0;
@@ -257,6 +268,12 @@ function main(): i32 {
     print_int(q[1]); print(""); print_int(r[1]); print("");
     var m: (i32, i32[]) = boxed(4);
     print_int(m.1[1]); print("");
+    var ml: (i32, i32[]) = boxed_local(5);
+    var mc: (i32[], boolean) = boxed_carry(6);
+    print_int(ml.1[0]); print(""); print_int(mc.0[1]); print("");
+    boxed_local(1);
+    boxed_carry(2);
+    print_int(carry(2)[0]); print("");
     var d: i32[] = carry(5);
     var e: i32[] = carry(0);
     print_int(d[0] + e[0]); print("");
@@ -276,7 +293,7 @@ function main(): i32 {
 
 // tally(1): unwrap(q) = xs[0] = 1; keep = q → 1; unwrap(r) = n + xs[1] = 2 + 3 = 5 → 7.
 // tally(5): 5 + unwrap(r) (6 + 7 = 13) + 13 → 31.
-const semsourceRCWant = "1\n4\n5\n-3\n-2\n2\n0\n1\n5\n8\n12\n0\n3\n3\n6\n4\n2\n0\n7\n31\n1\n0\n2\n"
+const semsourceRCWant = "1\n4\n5\n-3\n-2\n2\n0\n1\n5\n5\n12\n1\n8\n12\n0\n3\n3\n6\n4\n2\n0\n7\n31\n1\n0\n2\n"
 
 const semsourceRCDriver = `import "./semsource"; import "./ssarc"; import "./ssaunits"; import "./ssa";
 import "./parser"; import "./lexer"; import "./irlower"; import "./ir";
@@ -288,13 +305,11 @@ function main(): i32 {
     var mod = checker.annotate_module(parser.parse_module(lexer.tokenize(src)));
     var tab = irlower.struct_tab(mod.structs);
     var base = ircore.wp_fn_sigs(mod.funcs, tab);
-    var g = ircore.lower_gated(mod, tab, base, [], av[1] == "wasm32-wasi");
-    if (!g.ok) { eprint("ast lowering failed"); return 3; }
     var produced = semsource.build_module(mod);
-    var cache: irlower.LowerResult[] = [];
+    var bodies: irlower.LowerResult[] = [];
     var at: i32 = 0;
     for fd in mod.funcs {
-        if (fd.name == "main") { cache = cache.append(g.cache[at]); at = at + 1; continue; }
+        if (fd.name == "main") { bodies = bodies.append(irlower.LowerResult { ok: false, why: "", ops: [], n_locals: 0, n_params: 0, erased_wide: false, arr_slots: [], i64_slots: [], f64_slots: [], str_slots: [], alias_incs: [] }); at = at + 1; continue; }
         var p = produced[at];
         if (!p.ok) { eprint(fd.name + ": " + p.why); return 4; }
         var plan = ssaunits.plan(p.func, p.modes);
@@ -302,7 +317,16 @@ function main(): i32 {
         var lowered = ssarc.lower(p.func, p.modes, plan);
         if (!lowered.ok) { eprint(fd.name + ": " + lowered.why); return 6; }
         eprint("produced " + fd.name + "\n");
-        cache = cache.append(lowered);
+        base = ssarc.caller_sigs(base, fd.name, p.func);
+        bodies = bodies.append(lowered);
+        at = at + 1;
+    }
+    var g = ircore.lower_gated(mod, tab, base, [], av[1] == "wasm32-wasi");
+    if (!g.ok) { eprint("ast lowering failed"); return 3; }
+    var cache: irlower.LowerResult[] = [];
+    at = 0;
+    for fd in mod.funcs {
+        if (fd.name == "main") { cache = cache.append(g.cache[at]); } else { cache = cache.append(bodies[at]); }
         at = at + 1;
     }
     if (av[1] == "x86-64-linux") {
@@ -344,7 +368,7 @@ func TestSelfHostSemanticSourceRC(t *testing.T) {
 			if err != nil {
 				t.Fatalf("semantic lowering: %v\n%s", err, diagnostics.String())
 			}
-			for _, name := range []string{"pick", "pair", "boxed", "carry", "count_even", "fill", "first_of", "keep", "chain", "twice", "count_down", "grow", "make", "wrap", "unwrap", "tally", "greet"} {
+			for _, name := range []string{"pick", "pair", "boxed", "carry", "count_even", "fill", "first_of", "keep", "chain", "twice", "count_down", "grow", "make", "wrap", "unwrap", "tally", "greet", "boxed_local", "boxed_carry"} {
 				if !strings.Contains(diagnostics.String(), "produced "+name+"\n") {
 					t.Fatalf("%s was not produced:\n%s", name, diagnostics.String())
 				}
