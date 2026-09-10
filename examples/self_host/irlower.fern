@@ -72228,7 +72228,7 @@ function fd_passes_fn_array_elem(fd: parser.FuncDecl, mfuncs: MFuncs): boolean {
                             match (c.args[ai]) {
                                 ast.ExprIdent(aid) => {
                                     if (util.index_of_str(names, aid.name) >= 0
-                                            && (lift_callee_param_is_fn(mfuncs, cid.name, ai) || lift_local_fn_param_is_fn(fd, cid.name, ai))) { return true; }
+                                            && (lift_callee_param_is_fn(mfuncs, cid.name, ai) || lift_local_fn_param_is_fn(fd, cid.name, ai, mfuncs))) { return true; }
                                 },
                                 _ => {}
                             }
@@ -72464,7 +72464,14 @@ function no_expr_bool(e: ast.Expr, acc: boolean): boolean { return acc; }
 // [funcval, caps…] box — so it dereferenced a bare code address and the program
 // segfaulted with no diagnostic at all (#6341). Binding the same value to a
 // local first happened to work, because that path boxes it.
-function lift_local_fn_param_is_fn(fd: parser.FuncDecl, callee: string, idx: i32): boolean {
+//
+// A local bound to a bare module-function NAME (`var w = withRes; w(inc)`)
+// calls that function, so its parameter decides. The lift used to find the
+// callee only when the local happened to share the function's name — the
+// shadowing `use` source of the shadowed-generic gate — and once bindings
+// carried their lexical symbols nothing matched, so the argument went raw
+// into a callee that dispatches it env-first.
+function lift_local_fn_param_is_fn(fd: parser.FuncDecl, callee: string, idx: i32, mfuncs: MFuncs): boolean {
     var i: i32 = 0;
     while (i < fd.body.len()) {
         match (fd.body[i]) {
@@ -72473,6 +72480,11 @@ function lift_local_fn_param_is_fn(fd: parser.FuncDecl, callee: string, idx: i32
                     match (v.init) {
                         ast.ExprLambda(lm) => {
                             if (idx < lm.params.len() && lm.params[idx].type_name == "fn") { return true; }
+                        },
+                        ast.ExprIdent(iid) => {
+                            if (util.index_of_str(fd_bound_names(fd), iid.name) < 0
+                                && lift_module_fn_arity(mfuncs, iid.name) >= 1
+                                && lift_callee_param_is_fn(mfuncs, iid.name, idx)) { return true; }
                         },
                         _ => {}
                     }
@@ -73539,7 +73551,7 @@ function ilc_expr_at(e: ast.Expr, acc: InlineCloAcc, fd: parser.FuncDecl, gfns: 
                     // module to AST (slice 5b; bare/non-capturing already worked).
                     var vfr: InlineCloRes = try_fn_field_value(call.args[ai], fd, fs, ct, gfns, mfuncs, structs);
                     fs = vfr.funcs; ct = vfr.counter; nargs = nargs.append(vfr.expr);
-                } else if (!is_mkclo && cnm.len() > 0 && (lift_callee_param_is_fn(mfuncs, cnm, ai) || lift_local_fn_param_is_fn(fd, cnm, ai))) {
+                } else if (!is_mkclo && cnm.len() > 0 && (lift_callee_param_is_fn(mfuncs, cnm, ai) || lift_local_fn_param_is_fn(fd, cnm, ai, mfuncs))) {
                     var fr: InlineCloRes = try_fn_field_value(call.args[ai], fd, fs, ct, gfns, mfuncs, structs);
                     fs = fr.funcs; ct = fr.counter; nargs = nargs.append(fr.expr);
                 } else if (!is_mkclo && cnm.len() > 0 && expr_is_array_lit(call.args[ai])
