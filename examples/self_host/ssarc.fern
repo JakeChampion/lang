@@ -286,7 +286,9 @@ function binary_kind(op: string): string {
 
 // Scalar operators are verified i32/boolean contracts; negation is the
 // stack IR's zero-minus form. A string `+` is the runtime's concatenation,
-// a fresh box; string equality reads both operands.
+// a fresh box; string equality reads both operands. The verifier admits no
+// other string operator (ssasem.string_result), so a string binary that is
+// not `+` is `==` or `!=`.
 function scalar(r: irlower.LowerResult, ins: ssa.SInst, strings: boolean): irlower.LowerResult {
     if (ins.kind_tag == 9 && strings) {
         if (ins.str == "+") { return emit(r, ir.op_str_concat()); }
