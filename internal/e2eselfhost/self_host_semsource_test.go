@@ -135,6 +135,16 @@ const semsourceRCProgram = `
     return [swapped.0, swapped.1[1], swapped.1[0]];
 }
 @noinline function boxed(n: i32): (i32, i32[]) { return (n, [n, n + 1]); }
+@noinline function carry(limit: i32): i32[] {
+    var last: i32[] = [7];
+    var i: i32 = 0;
+    while (i < limit) {
+        last = [i];
+        if (i == 1) { break; }
+        i = i + 1;
+    }
+    return last;
+}
 @noinline function count_even(limit: i32): i32 {
     var total: i32 = 0;
     var i: i32 = 0;
@@ -164,13 +174,16 @@ function main(): i32 {
     print_int(q[1]); print(""); print_int(r[1]); print("");
     var m: (i32, i32[]) = boxed(4);
     print_int(m.1[1]); print("");
+    var d: i32[] = carry(5);
+    var e: i32[] = carry(0);
+    print_int(d[0] + e[0]); print("");
     print_int(count_even(5)); print(""); print_int(count_even(0)); print("");
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }
 `
 
-const semsourceRCWant = "1\n4\n5\n-3\n-2\n2\n0\n1\n5\n12\n0\n"
+const semsourceRCWant = "1\n4\n5\n-3\n-2\n2\n0\n1\n5\n8\n12\n0\n"
 
 const semsourceRCDriver = `import "./semsource"; import "./ssarc"; import "./ssaunits"; import "./ssa";
 import "./parser"; import "./lexer"; import "./irlower"; import "./ir";
@@ -238,7 +251,7 @@ func TestSelfHostSemanticSourceRC(t *testing.T) {
 			if err != nil {
 				t.Fatalf("semantic lowering: %v\n%s", err, diagnostics.String())
 			}
-			for _, name := range []string{"pick", "pair", "boxed", "count_even"} {
+			for _, name := range []string{"pick", "pair", "boxed", "carry", "count_even"} {
 				if !strings.Contains(diagnostics.String(), "produced "+name+"\n") {
 					t.Fatalf("%s was not produced:\n%s", name, diagnostics.String())
 				}

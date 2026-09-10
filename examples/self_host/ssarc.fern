@@ -253,24 +253,27 @@ function block_body(r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan, b:
 // Open stack-IR labels, innermost last. A label is the layout index control
 // reaches by branching to it: a `block` ends before that index, a `loop`
 // starts at it. An `if` arm is a label of its own that no branch targets.
-struct Emit { r: irlower.LowerResult, labels: i32[] }
+struct Emit { r: irlower.LowerResult, labels: i32[], why: string }
 
 function label_if(): i32 { return 0 - 1; }
 
 function push(e: Emit, op: ir.Op, label: i32): Emit {
-    return Emit { r: emit(e.r, op), labels: e.labels.append(label) };
+    return Emit { ...e, r: emit(e.r, op), labels: e.labels.append(label) };
 }
 
 function pop(e: Emit): Emit {
     var labels: i32[] = [];
     var i: i32 = 0;
     while (i < e.labels.len() - 1) { labels = labels.append(e.labels[i]); i = i + 1; }
-    return Emit { r: emit(e.r, ir.op_end()), labels: labels };
+    return Emit { ...e, r: emit(e.r, ir.op_end()), labels: labels };
 }
 
+// A branch target without an open label is a layout defect; refuse the
+// function rather than emit a depth the backends would fault on.
 function depth(e: Emit, target: i32): i32 {
     var i: i32 = e.labels.len() - 1;
     while (i >= 0 && e.labels[i] != target) { i = i - 1; }
+    if (i < 0) { return 0 - 1; }
     return e.labels.len() - 1 - i;
 }
 
@@ -283,8 +286,10 @@ function rank(f: ssa.SFunc, order: i32[], id: i32): i32 {
 function jump(e: Emit, f: ssasem.Func, p: ssaunits.Plan, order: i32[], position: i32, target: i32): Emit {
     var r: irlower.LowerResult = edge(e.r, f, p, f.graph.blocks[order[position]].id, target);
     var dest: i32 = rank(f.graph, order, target);
-    if (dest != position + 1) { r = emit(r, ir.op_br(depth(e, dest))); }
-    return Emit { ...e, r: r };
+    if (dest == position + 1) { return Emit { ...e, r: r }; }
+    var d: i32 = depth(e, dest);
+    if (d < 0) { return Emit { ...e, why: "branch target has no open label" }; }
+    return Emit { ...e, r: emit(r, ir.op_br(d)) };
 }
 
 function terminator(e: Emit, f: ssasem.Func, p: ssaunits.Plan, order: i32[], position: i32): Emit {
@@ -350,7 +355,8 @@ pub function lower(f: ssasem.Func, modes: i32[], p: ssaunits.Plan): irlower.Lowe
     if (why != "") { return empty(why); }
     var layout: ssalayout.Layout = ssalayout.compute(f.graph);
     if (!layout.ok) { return empty("physical RC needs reducible graph"); }
-    var e: Emit = region(Emit { r: frame(f), labels: [] }, f, p, layout, 0, layout.order.len() - 1, false);
+    var e: Emit = region(Emit { r: frame(f), labels: [], why: "" }, f, p, layout, 0, layout.order.len() - 1, false);
+    if (e.why != "") { return empty(e.why); }
     var optimized: ir.OptimizedOps = ir.optimize_ops(e.r.ops, e.r.n_params, e.r.n_locals);
     return irlower.LowerResult { ...e.r, ops: optimized.ops, n_locals: optimized.n_locals };
 }
