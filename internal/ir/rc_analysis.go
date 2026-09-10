@@ -571,6 +571,21 @@ func (s *summaryTable[V]) fixpoint(funcs []*ast.FuncDecl, analyse func(*ast.Func
 //
 // A function with no value returns gets false: it returns nothing to be fresh.
 func findReturnsFreshBox(prog *ast.Program, info *checker.Info, pairForm, trmcFuncs map[string]bool, ownedParam func(*ast.FuncDecl, int) bool) map[string]bool {
+	return findReturnsOwnBox(prog, info, pairForm, trmcFuncs, ownedParam, false)
+}
+
+// findReturnsConstructedBox is findReturnsFreshBox on IDENTITY rather than
+// ownership: every value return is a box the callee built — a literal, a
+// fresh local, another constructed call — and never a parameter, owned or
+// not, nor a projection of one. A caller binding such a result names a box
+// no other live value holds, which is what a field-place append's root needs
+// before it may grow in place (#8768); the ownership answer credits a
+// returned owned parameter, whose box the caller's other bindings still name.
+func findReturnsConstructedBox(prog *ast.Program, info *checker.Info, pairForm, trmcFuncs map[string]bool) map[string]bool {
+	return findReturnsOwnBox(prog, info, pairForm, trmcFuncs, func(*ast.FuncDecl, int) bool { return false }, true)
+}
+
+func findReturnsOwnBox(prog *ast.Program, info *checker.Info, pairForm, trmcFuncs map[string]bool, ownedParam func(*ast.FuncDecl, int) bool, identity bool) map[string]bool {
 	// Greatest fixpoint: assume every function with a body qualifies, then
 	// eliminate the ones a return disproves. A call may be fresh because its
 	// callee is, so the answer for one function depends on the answers for
@@ -587,10 +602,13 @@ func findReturnsFreshBox(prog *ast.Program, info *checker.Info, pairForm, trmcFu
 		}
 		ctorFresh := variantCtorFreshIn(info, shadowingNames(fn, info))
 		fresh := freshLocalsIn(fn, q, ctorFresh)
-		retained := returnedAliasIsRetained(fn, pairForm, trmcFuncs)
+		retained := !identity && returnedAliasIsRetained(fn, pairForm, trmcFuncs)
 		refused := map[string]bool{}
 		for i, p := range fn.Params {
-			refused[p.Name] = !ownedParam(fn, i)
+			refused[p.Name] = identity || !ownedParam(fn, i)
+			if identity {
+				delete(fresh, p.Name) // an `own` parameter is the caller's box
+			}
 		}
 		ok, saw := true, false
 		ast.Walk(fn.Body, func(n ast.Node) bool {
@@ -4286,16 +4304,52 @@ func (b *builder) isParamName(name string) bool {
 // parameters — and a name bound twice cannot be told apart from a second
 // variable by an analysis that matches roots by NAME over the whole body.
 func (b *builder) structLiteralLocalRoots() map[string]bool {
+	return b.localsBuiltFrom(func(e ast.Expr) bool {
+		_, isLit := e.(*ast.StructLit)
+		return isLit
+	})
+}
+
+// freshLocalRoots is structLiteralLocalRoots widened to a call whose every
+// value return is a box the callee CONSTRUCTED (returnsConstructedBox): a
+// local bound only from struct literals and such calls names a box no other
+// live value holds, so a field append may grow its buffer in place (#8768).
+// A local bound from a field read, an index, another name, a match arm, a
+// `for` element or a call that may hand a parameter back names a box someone
+// else owns, and the rc==1 in-place grow would lengthen the array that value
+// still reads. Neither ownership fact serves: returnsFreshBox credits a
+// returned owned parameter and returnsNoParamEscape excuses a bare one.
+func (b *builder) freshLocalRoots() map[string]bool {
+	return b.localsBuiltFrom(func(e ast.Expr) bool {
+		switch x := e.(type) {
+		case *ast.StructLit:
+			return true
+		case *ast.Call:
+			id, ok := x.Callee.(*ast.Ident)
+			if !ok {
+				return false
+			}
+			if _, isLocal := b.locals[id.Name]; isLocal {
+				return false
+			}
+			return b.returnsConstructedBox[id.Name]
+		}
+		return false
+	})
+}
+
+// localsBuiltFrom names the locals declared as a direct statement of the body
+// from an expression `accept` admits, bound exactly once anywhere in it, and
+// assigned nothing but admitted expressions afterwards.
+func (b *builder) localsBuiltFrom(accept func(ast.Expr) bool) map[string]bool {
 	fn := b.fn
 	if fn.Body == nil {
 		return nil
 	}
 	cand := map[string]bool{}
 	for _, st := range fn.Body.Stmts {
-		if v, isVar := st.(*ast.Var); isVar {
-			if _, isLit := v.Init.(*ast.StructLit); isLit {
-				cand[v.Name] = true
-			}
+		if v, isVar := st.(*ast.Var); isVar && v.Init != nil && accept(v.Init) {
+			cand[v.Name] = true
 		}
 	}
 	if len(cand) == 0 {
@@ -4331,7 +4385,7 @@ func (b *builder) structLiteralLocalRoots() map[string]bool {
 			if !isID || !cand[t.Name] {
 				return true
 			}
-			if _, isLit := x.Value.(*ast.StructLit); !isLit {
+			if x.Value == nil || !accept(x.Value) {
 				delete(cand, t.Name)
 			}
 		}

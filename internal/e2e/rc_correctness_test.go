@@ -8814,6 +8814,39 @@ function main(): i32 {
     return (t - 5250) + __rc_underflow_count();
 }`,
 	},
+	{
+		// A field-place append whose root is a local bound from a FIELD READ:
+		// `t` names the box `o` still holds, so an rc==1 in-place grow of
+		// `t.xs` lengthened `o.inner.xs` as well — 44 where value semantics
+		// say 43 (#8768). The buffer must have spare capacity for the
+		// divergence to show, hence the appends that build it. A control
+		// through a fresh call result, which may grow in place, sits beside
+		// it. 43 + 4.
+		name: "field_append_root_bound_from_field_read_copies",
+		src: `
+struct Inner { xs: i32[] }
+struct Outer { inner: Inner, n: i32 }
+function mk(): Outer {
+    var b: i32[] = [];
+    var i: i32 = 0;
+    while (i < 3) { b = b.append(i); i = i + 1; }
+    return Outer { inner: Inner { xs: b }, n: 0 };
+}
+function through_field_read(): i32 {
+    var o: Outer = mk();
+    var t: Inner = o.inner;
+    var ys: i32[] = t.xs.append(9);
+    return ys.len() * 10 + o.inner.xs.len();
+}
+function through_fresh_call(): i32 {
+    var o: Outer = mk();
+    var ys: i32[] = o.inner.xs.append(9);
+    return ys.len();
+}
+function main(): i32 {
+    return (through_field_read() + through_fresh_call() - 47) + __rc_underflow_count();
+}`,
+	},
 }
 
 func TestX86_64RcCorrectnessCorpus(t *testing.T) {
