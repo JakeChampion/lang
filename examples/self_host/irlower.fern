@@ -63808,21 +63808,64 @@ pub function closurearr_ret_fns_of(funcs: parser.FuncDecl[], structs: StructTab)
     // The single-closure registry, reused so a `[mk(), …]` element (mk a
     // closure factory) counts as a closure-array element.
     var closureset: string[] = closure_ret_fns_of(funcs, structs);
+    var reg: (string[], string[]) = closurearr_registry_of(funcs, structs, closureset);
+    var out: string[] = reg.0;
+    // "CAC:<name>" rows (#4354), in the same list so no registry is threaded: a
+    // closurearr-returning fn whose EVERY return is a fresh closure array, so
+    // the caller's binding is the sole owner of each element box and may take
+    // the "CLOARR:" element walk. Exact-match consumers never see a fn named
+    // "CAC:…"; collect_fresh_cloarr_names is the one reader of the prefix.
+    for fn in funcs {
+        if (util.index_of_str(out, fn.name) >= 0 && !body_has_nonfresh_cloarr_return(fn.body, closureset)) { out = out.append("CAC:" + fn.name); }
+    }
+    return out;
+}
+
+// closurearr_registry_of: the closurearr-returning functions and the proven
+// closure-array params, as (names, "fname|pname" keys), computed to ONE
+// fixpoint because each feeds the other: a function returning its fn[] param
+// bare (`return x`) returns a closure array iff that param is proven one, and
+// the param proof (fnarr_param_all_closurearr) accepts a call to a
+// closurearr-returning function as a closure-array argument (#8870). Both
+// sets only grow from sound base cases, so the loop terminates; a program
+// with no fn[] params proves no params and the returns half reads as before.
+//
+// Returns: only functions declared to return a fn-ARRAY (`((T) => R)[]`,
+// coarsed to "fn[]") — never the compiler's own sources, keeping the
+// self-compile fixpoint byte-identical. EVERY return in the body counts
+// (branch / loop / match-arm returns via collect_returns), in these forms:
+//   (a) `return [<closure>, …]` — a closure-array literal;
+//   (b) `return <ident>` bound (anywhere in the body) to such a literal, to
+//       a closurearr-returning call, or naming a PROVEN closure-array param;
+//   (c) `return <closurearr-returning call>` — a factory that FORWARDS
+//       another factory's array, e.g. `return mk();` (fixpoint-ordered,
+//       like closure_ret_fns_of's transitive form).
+// Params: "fname|pname" for every free-function fn[] param whose every call
+// site provably passes a closure array; a round that proves a param lets the
+// next round accept that param FORWARDED as a call argument
+// (arg_is_closurearr's caller_cparams case), so `main → chain(fs) →
+// apply(fs, …)` proves chain's param first and apply's from it (#5119).
+function closurearr_registry_of(funcs: parser.FuncDecl[], structs: StructTab, closureset: string[]): (string[], string[]) {
     var out: string[] = [];
-    // Only functions declared to return a fn-ARRAY (`((T) => R)[]`, coarsed
-    // to "fn[]") — never the compiler's own sources, keeping the self-compile
-    // fixpoint byte-identical. EVERY return in the body counts (branch /
-    // loop / match-arm returns via collect_returns), in three forms:
-    //   (a) `return [<closure>, …]` — a closure-array literal;
-    //   (b) `return <ident>` bound (anywhere in the body) to such a literal
-    //       or to a closurearr-returning call;
-    //   (c) `return <closurearr-returning call>` — a factory that FORWARDS
-    //       another factory's array, e.g. `return mk();` (fixpoint-ordered,
-    //       like closure_ret_fns_of's transitive form).
+    var caparams: string[] = [];
     var changed: boolean = true;
     while (changed) {
         changed = false;
         for fn in funcs {
+            if (fn.receiver_type.len() == 0) {
+                var fpj: i32 = 0;
+                while (fpj < fn.params.len()) {
+                    if (fn.params[fpj].type_name == "fn[]") {
+                        var fkey: string = fn.name + "|" + fn.params[fpj].name;
+                        if (util.index_of_str(caparams, fkey) < 0
+                            && fnarr_param_all_closurearr(funcs, fn.name, fpj, closureset, out, caparams)) {
+                            caparams = caparams.append(fkey);
+                            changed = true;
+                        }
+                    }
+                    fpj = fpj + 1;
+                }
+            }
             if (fn.ret_type == "fn[]" && util.index_of_str(out, fn.name) < 0) {
                 var rets: ast.Expr[] = collect_returns(fn.body, []);
                 var hit: boolean = false;
@@ -63834,6 +63877,7 @@ pub function closurearr_ret_fns_of(funcs: parser.FuncDecl[], structs: StructTab)
                         },
                         ast.ExprIdent(rid) => {
                             if (body_binds_closurearr_local(fn.body, rid.name, fn.body, closureset, out)) { hit = true; }
+                            if (fn.receiver_type.len() == 0 && util.index_of_str(caparams, fn.name + "|" + rid.name) >= 0) { hit = true; }
                         },
                         ast.ExprCall(rcc) => {
                             match (rcc.callee) {
@@ -63868,15 +63912,7 @@ pub function closurearr_ret_fns_of(funcs: parser.FuncDecl[], structs: StructTab)
             }
         }
     }
-    // "CAC:<name>" rows (#4354), in the same list so no registry is threaded: a
-    // closurearr-returning fn whose EVERY return is a fresh closure array, so
-    // the caller's binding is the sole owner of each element box and may take
-    // the "CLOARR:" element walk. Exact-match consumers never see a fn named
-    // "CAC:…"; collect_fresh_cloarr_names is the one reader of the prefix.
-    for fn in funcs {
-        if (util.index_of_str(out, fn.name) >= 0 && !body_has_nonfresh_cloarr_return(fn.body, closureset)) { out = out.append("CAC:" + fn.name); }
-    }
-    return out;
+    return (out, caparams);
 }
 
 pub function (s: LowerState) is_closurearr_ret_fn(name: string): boolean {
@@ -64156,40 +64192,12 @@ pub function fn_param_sigs_of(funcs: parser.FuncDecl[], structs: StructTab, grow
             }
         }
     }
-    var closureset: string[] = [];
-    var caset: string[] = [];
-    // caparams: "fname|pname" for every free-function fn[] param proven to be
-    // a closure array, computed to a FIXPOINT: a round that proves a param
-    // lets the next round accept that param FORWARDED as a call argument
-    // (arg_is_closurearr's caller_cparams case), so `main → chain(fs) →
-    // apply(fs, …)` proves chain's param first and apply's from it (#5119).
-    // Monotone (the set only grows from sound base cases) and bounded by the
-    // number of fn[] params, so it terminates; a program with no fn[] params
-    // never enters the loop (the bootstrap self-compile pays nothing).
+    // caparams: the proven closure-array params, from the same fixpoint that
+    // decides the closurearr-returning functions (closurearr_registry_of).
     var caparams: string[] = [];
     if (have_fnarr) {
-        closureset = closure_ret_fns_of(funcs, structs);
-        caset = closurearr_ret_fns_of(funcs, structs);
-        var ca_changed: boolean = true;
-        while (ca_changed) {
-            ca_changed = false;
-            for fn in funcs {
-                if (fn.receiver_type.len() == 0) {
-                    var fpj: i32 = 0;
-                    while (fpj < fn.params.len()) {
-                        if (fn.params[fpj].type_name == "fn[]") {
-                            var fkey: string = fn.name + "|" + fn.params[fpj].name;
-                            if (util.index_of_str(caparams, fkey) < 0
-                                && fnarr_param_all_closurearr(funcs, fn.name, fpj, closureset, caset, caparams)) {
-                                caparams = caparams.append(fkey);
-                                ca_changed = true;
-                            }
-                        }
-                        fpj = fpj + 1;
-                    }
-                }
-            }
-        }
+        var reg: (string[], string[]) = closurearr_registry_of(funcs, structs, closure_ret_fns_of(funcs, structs));
+        caparams = reg.1;
     }
     var out: string[] = [];
     for fd in funcs {
