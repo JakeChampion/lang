@@ -604,6 +604,16 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 		// FuncType locals.
 		g.emitAllocRc1Runtime()
 	}
+	// The path-taking fs helpers free their NUL-terminated path copies and
+	// working buffers (#9001); remove_dir_all also releases its child paths.
+	if g.usesRemoveDirAll || g.usesRemoveFile || g.usesCreateDirAll || g.usesCreateDir ||
+		g.usesRemoveDir || g.usesCreateLink || g.usesCreateSymlink || g.usesTempDir ||
+		g.usesReadDir || g.usesStat || g.usesLstat || g.usesAccess || g.usesReadLink {
+		g.usesFree = true
+	}
+	if g.usesRemoveDirAll {
+		g.usesBoxFree = true
+	}
 	if g.usesFree {
 		g.emitFreeRuntime()
 	}
@@ -13172,7 +13182,8 @@ func (g *generator) emitRemoveDirAllRuntime() {
 	//   [rbp-56] child name ptr    (across __fern_alloc_rc1)
 	//   [rbp-64] plen = strlen(pathz)
 	//   [rbp-72] nlen = strlen(name)
-	g.emit("sub rsp, 40")
+	//   [rbp-80] path len (pathz is freed at every exit)
+	g.emit("sub rsp, 56")
 
 	// Materialise the incoming path into pathz (NUL-terminated).
 	// r12/r13 are callee-saved so they survive the __fern_alloc.
@@ -13191,6 +13202,7 @@ func (g *generator) emitRemoveDirAllRuntime() {
 	g.emit("jmp .Lrda_cp")
 	g.label(".Lrda_cpd")
 	g.emit("mov byte ptr [rbx + r13], 0") // NUL-terminate
+	g.emit("mov [rbp - 80], r13")
 
 	// openat(AT_FDCWD, pathz, O_RDONLY|O_DIRECTORY=0x10000, 0)
 	g.emit("mov edi, -100")
@@ -13301,24 +13313,41 @@ func (g *generator) emitRemoveDirAllRuntime() {
 	g.label(".Lrda_c2d")
 	g.emit("lea r10, [rcx + rdx + 1]") // childlen
 	g.emit("mov byte ptr [r8 + r10], 0")
-	// recurse: remove_dir_all(child).
+	// recurse: remove_dir_all(child), then release the child path (an
+	// rc=1 block of childlen + 1 bytes).
+	g.emit("mov [rbp - 56], r8")
+	g.emit("add r10, 1")
+	g.emit("mov [rbp - 72], r10")
 	g.emit("mov rdi, r8")
 	g.emit("call __fern_remove_dir_all")
+	g.emit("mov rdi, rax") // the recursion's own Result box (16 bytes, rc=1)
+	g.emit("mov esi, 16")
+	g.emit("call __fern_box_free")
+	g.emit("mov rdi, [rbp - 56]")
+	g.emit("mov rsi, [rbp - 72]")
+	g.emit("call __fern_box_free")
 	g.label(".Lrda_adv")
 	g.emit("movzx eax, word ptr [r13 + r15 + 16]") // d_reclen
 	g.emit("add r15, rax")
 	g.emit("jmp .Lrda_it")
 
 	g.label(".Lrda_itd")
-	// close(fd), then rmdir the now-empty directory.
+	// close(fd), free the dirent buffer, then rmdir the now-empty directory.
 	g.emit("mov edi, r12d")
 	g.emitSyscall(3)
+	g.emit("mov rdi, r13")
+	g.emit("mov esi, 1024")
+	g.emit("call __fern_free")
 	g.emit("mov edi, -100")
 	g.emit("mov rsi, rbx")
 	g.emit("mov edx, 512") // AT_REMOVEDIR
 	g.emitSyscall(263)
 
 	g.label(".Lrda_none")
+	g.emit("mov rdi, rbx")
+	g.emit("mov rsi, [rbp - 80]")
+	g.emit("add rsi, 1")
+	g.emit("call __fern_free")
 	// Result.Ok(()): 16-byte box, tag=0, unit payload @+8. The unit
 	// value occupies a payload slot like any other value — the reader
 	// loads it by the declared layout — so the success arm cannot be
@@ -13330,8 +13359,14 @@ func (g *generator) emitRemoveDirAllRuntime() {
 	g.emit("jmp .Lrda_return")
 
 	g.label(".Lrda_some")
-	g.emit("neg rax")
 	g.emit("mov r12, rax") // errno (r12 free — never opened a fd on this path)
+	g.emit("mov rdi, rbx")
+	g.emit("mov rsi, [rbp - 80]")
+	g.emit("add rsi, 1")
+	g.emit("call __fern_free")
+	g.emit("mov rax, r12")
+	g.emit("neg rax")
+	g.emit("mov r12, rax")
 	g.emit("mov edi, r12d")
 	g.emitStrEmpty("rsi") // io_error path arg (empty, as arm64 does)
 	g.emit("call __fern_io_error")
@@ -13342,7 +13377,7 @@ func (g *generator) emitRemoveDirAllRuntime() {
 	g.emit("mov [rax + 8], r12")
 
 	g.label(".Lrda_return")
-	g.emit("add rsp, 40")
+	g.emit("add rsp, 56")
 	g.emit("pop r15")
 	g.emit("pop r14")
 	g.emit("pop r13")
@@ -13396,6 +13431,11 @@ func (g *generator) emitRemoveFileRuntime() {
 	g.emit("mov rsi, r13")
 	g.emit("xor edx, edx")
 	g.emitSyscall(263)
+	g.emit("mov rbx, rax") // result across the free (path byte ptr dead)
+	g.emit("mov rdi, r13")
+	g.emit("lea rsi, [r12 + 1]")
+	g.emit("call __fern_free")
+	g.emit("mov rax, rbx")
 	g.emit("test rax, rax")
 	g.emit("js .Lrmf_some")
 	// Result.Ok(()): 16-byte box, tag=0, unit payload @+8. The unit
@@ -13482,13 +13522,15 @@ func (g *generator) emitPathOpRuntime(name, tag string, sysno, paths int, mode b
 	g.emit("push r12") // path byte ptr (copy scratch)
 	g.emit("push r13") // path len / errno / IoError box
 	g.emit("push r14") // pathz of the second operand
-	g.emit("push r15") // unused; keeps the frame one shape
-	// 6 pushes ⇒ rsp≡8 mod 16; sub 40 realigns. Slots:
+	g.emit("push r15") // syscall result across the frees
+	// 6 pushes ⇒ rsp≡8 mod 16; sub 56 realigns. Slots:
 	//   [rbp-48] emitStrDataPtr inline-spill scratch
 	//   [rbp-56] first operand string value
 	//   [rbp-64] the operand the IoError names
 	//   [rbp-72] mode
-	g.emit("sub rsp, 40")
+	//   [rbp-80] first path len
+	//   [rbp-88] second path len
+	g.emit("sub rsp, 56")
 	g.emit("mov [rbp - 56], rdi")
 	g.emit("mov [rbp - 64], rdi")
 	if paths == 2 {
@@ -13498,11 +13540,25 @@ func (g *generator) emitPathOpRuntime(name, tag string, sysno, paths int, mode b
 		g.emit("mov [rbp - 72], rsi")
 	}
 	g.emitPathzCopy("rbx", "[rbp - 56]", "[rbp - 48]", tag+"1")
+	g.emit("mov [rbp - 80], r13")
 	if paths == 2 {
 		g.emitPathzCopy("r14", "[rbp - 72]", "[rbp - 48]", tag+"2")
+		g.emit("mov [rbp - 88], r13")
 	}
 	args()
 	g.emitSyscall(sysno)
+	g.emit("mov r15, rax")
+	g.emit("mov rdi, rbx")
+	g.emit("mov rsi, [rbp - 80]")
+	g.emit("add rsi, 1")
+	g.emit("call __fern_free")
+	if paths == 2 {
+		g.emit("mov rdi, r14")
+		g.emit("mov rsi, [rbp - 88]")
+		g.emit("add rsi, 1")
+		g.emit("call __fern_free")
+	}
+	g.emit("mov rax, r15")
 	g.emit("test rax, rax")
 	g.emit("js .L" + tag + "_err")
 	g.emit("mov edi, 16")
@@ -13524,7 +13580,7 @@ func (g *generator) emitPathOpRuntime(name, tag string, sysno, paths int, mode b
 	g.emit("mov [rax + 8], r13")
 
 	g.label(".L" + tag + "_ret")
-	g.emit("add rsp, 40")
+	g.emit("add rsp, 56")
 	g.emit("pop r15")
 	g.emit("pop r14")
 	g.emit("pop r13")
@@ -13618,6 +13674,11 @@ func (g *generator) emitReadLinkRuntime() {
 	g.emit("mov rdx, r15")
 	g.emit("mov r10d, 4096")
 	g.emitSyscall(sysReadlinkat)
+	g.emit("mov r14, rax") // result across the free
+	g.emit("mov rdi, rbx")
+	g.emit("lea rsi, [r13 + 1]")
+	g.emit("call __fern_free")
+	g.emit("mov rax, r14")
 	g.emit("test rax, rax")
 	g.emit("js .Lrlnk_err")
 	g.emit("mov r14, rax")
@@ -13756,6 +13817,11 @@ func (g *generator) emitCreateDirAllRuntime() {
 	g.emit("mov rsi, r13")
 	g.emit("mov edx, 511")
 	g.emitSyscall(258)
+	g.emit("mov rbx, rax") // result across the free (path byte ptr dead)
+	g.emit("mov rdi, r13")
+	g.emit("lea rsi, [r12 + 1]")
+	g.emit("call __fern_free")
+	g.emit("mov rax, rbx")
 	g.emit("test rax, rax")
 	g.emit("jz .Lcda_ok")
 	g.emit("cmp rax, -17") // -EEXIST
@@ -13907,6 +13973,9 @@ func (g *generator) emitTempDirRuntime() {
 	g.emit("jmp .Ltd_ccp")
 	g.label(".Ltd_ccpd")
 	g.emit("mov byte ptr [rbx + r14], 0")
+	g.emit("mov rdi, r13") // the scratch path buffer
+	g.emit("lea rsi, [r12 + 27]")
+	g.emit("call __fern_free")
 	g.emit("mov edi, 16")
 	g.emit("call __fern_alloc_rc1")
 	g.emit("mov dword ptr [rax], 0") // Ok
@@ -13918,6 +13987,11 @@ func (g *generator) emitTempDirRuntime() {
 	g.emit("jmp .Ltd_mkerr")
 
 	g.label(".Ltd_err")
+	g.emit("mov rbx, rax") // errno across the free (prefix byte ptr dead)
+	g.emit("mov rdi, r13")
+	g.emit("lea rsi, [r12 + 27]")
+	g.emit("call __fern_free")
+	g.emit("mov rax, rbx")
 	g.emit("neg rax")
 	g.emit("mov r12, rax")
 	g.label(".Ltd_mkerr")
@@ -13992,6 +14066,11 @@ func (g *generator) emitReadDirRuntime() {
 	g.emit("mov edx, 0x10000")
 	g.emit("xor r10d, r10d")
 	g.emitSyscall(257)
+	g.emit("mov r14, rax") // result across the free
+	g.emit("mov rdi, rbx")
+	g.emit("lea rsi, [r13 + 1]")
+	g.emit("call __fern_free")
+	g.emit("mov rax, r14")
 	g.emit("test rax, rax")
 	g.emit("js .Lrdd_err")
 	g.emit("mov r12, rax") // fd
@@ -14098,6 +14177,9 @@ func (g *generator) emitReadDirRuntime() {
 	g.emit("add r15, rax")
 	g.emit("jmp .Lrdd_p2")
 	g.label(".Lrdd_p2d")
+	g.emit("mov rdi, r13") // the dirent buffer
+	g.emit("mov esi, 1048576")
+	g.emit("call __fern_free")
 	g.emit("mov edi, 16")
 	g.emit("call __fern_alloc_rc1")
 	g.emit("mov dword ptr [rax], 0") // Ok
@@ -14241,6 +14323,11 @@ func (g *generator) emitStatLikeRuntime(sym string, atFlags int, lp string, byFd
 			g.emit(fmt.Sprintf("mov r10d, %d", atFlags))
 		}
 		g.emitSyscall(262)
+		g.emit("mov r14, rax") // result across the free
+		g.emit("mov rdi, rbx")
+		g.emit("lea rsi, [r13 + 1]")
+		g.emit("call __fern_free")
+		g.emit("mov rax, r14")
 	}
 	g.emit("test rax, rax")
 	g.emit("js .L" + lp + "_err")
@@ -14394,6 +14481,11 @@ func (g *generator) emitAccessRuntime() {
 	g.emit("mov edx, r14d")
 	g.emit("mov r10d, 512")
 	g.emitSyscall(sysFaccessat2)
+	g.emit("mov r14, rax") // result across the free (mode dead)
+	g.emit("mov rdi, rbx")
+	g.emit("lea rsi, [r13 + 1]")
+	g.emit("call __fern_free")
+	g.emit("mov rax, r14")
 	g.emit("test rax, rax")
 	g.emit("js .Lacc_err")
 	g.emit("mov edi, 16")

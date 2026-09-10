@@ -545,6 +545,18 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 		// Live-rc variant for closure env blocks / pairs.
 		g.emitAllocRc1Runtime()
 	}
+	// The path-taking fs helpers free their NUL-terminated path copies and
+	// working buffers (#9001); remove_dir_all also releases its child paths.
+	if g.usesReadFile || g.usesReadFileBytes || g.usesWriteFile || g.usesWriteFileExec ||
+		g.usesRemoveFile || g.usesCreateDirAll || g.usesCreateDir || g.usesRemoveDir ||
+		g.usesCreateLink || g.usesCreateSymlink || g.usesReadLink || g.usesTempDir ||
+		g.usesReadDir || g.usesStat || g.usesLstat || g.usesAccess || g.usesRemoveDirAll ||
+		g.usesReaderWriter {
+		g.usesFree = true
+	}
+	if g.usesRemoveDirAll {
+		g.usesBoxFree = true
+	}
 	if g.usesFree {
 		g.emitFreeRuntime()
 	}
@@ -8930,6 +8942,7 @@ func (g *generator) emitReadFileRuntime2W() {
 	g.emit("mov x2, #0")
 	g.emit("mov x3, #0")
 	g.syscall("openat")
+	g.emitFreeNulTermPath2W("x25", "x20")
 	g.emit("tbnz x0, #63, .Lrf2w_err_open")
 	g.emit("mov x21, x0") // fd
 	// fstat(fd, statbuf).
@@ -9066,6 +9079,7 @@ func (g *generator) emitReadFileBytesRuntime() {
 	g.emit("mov x2, #0")
 	g.emit("mov x3, #0")
 	g.syscall("openat")
+	g.emitFreeNulTermPath2W("x25", "x20")
 	g.emit("tbnz x0, #63, .Lrfb_err_open")
 	g.emit("mov x21, x0") // fd
 	// fstat(fd, statbuf).
@@ -9287,6 +9301,7 @@ func (g *generator) emitWriteFileRuntime2W(sym, mode, sfx, fixupMode string) {
 	g.emit("mov x2, #%d", g.oflagWrite(oflagCreatTrunc))
 	g.emit("mov x3, #%s", mode)
 	g.syscall("openat")
+	g.emitFreeNulTermPath2W("x25", "x20")
 	g.emit("tbnz x0, #63, .Lwf2w_err_open%s", sfx)
 	g.emit("mov x21, x0") // fd (reuse x21 — content_data no longer needed past this point)
 	// Write loop. x22 = cumulative bytes written (callee-
@@ -9498,6 +9513,7 @@ func (g *generator) emitRemoveFileRuntime() {
 	g.emit("mov x1, x21")
 	g.emit("mov x2, #0")
 	g.syscall("unlinkat")
+	g.emitFreeNulTermPath2W("x21", "x22")
 	g.emit("tbnz x0, #63, .Lrmf2w_some")
 	// Return Ok(()): 16-byte box, tag=0, unit payload @+8. The unit
 	// value occupies a payload slot like any other value — the reader
@@ -9577,6 +9593,10 @@ func (g *generator) emitPathOpRuntime(name, tag, sysname string, paths int, mode
 	}
 	args()
 	g.syscall(sysname)
+	g.emitFreeNulTermPath2W("x21", "x20")
+	if paths == 2 {
+		g.emitFreeNulTermPath2W("x23", "x26")
+	}
 	g.emit("tbnz x0, #63, .L%s_err", tag)
 	// Result.Ok(()): 16-byte box, tag=0, unit payload @+8.
 	g.emit("mov x0, #16")
@@ -9699,6 +9719,7 @@ func (g *generator) emitReadLinkRuntime() {
 	g.emit("add x2, x29, #96")
 	g.emit("mov x3, #4096")
 	g.syscall("readlinkat")
+	g.emitFreeNulTermPath2W("x21", "x20")
 	g.emit("tbnz x0, #63, .Lrlnk_err")
 	g.emit("mov x23, x0") // target length
 	g.emit("cmp x23, #4096")
@@ -9830,6 +9851,7 @@ func (g *generator) emitCreateDirAllRuntime() {
 	g.emit("mov x1, x21")
 	g.emit("mov x2, #511")
 	g.syscall("mkdirat")
+	g.emitFreeNulTermPath2W("x21", "x22")
 	g.emit("cmp x0, #0")
 	g.emit("b.eq .Lcda2w_ok")
 	g.emit("cmn x0, #17") // errno == -EEXIST
@@ -9912,8 +9934,9 @@ func (g *generator) emitTempDirRuntime() {
 	// Scratch: 5 ("/tmp/") + plen + 1 ('-') + 20 (max digits) + 1 NUL.
 	g.emit("add x0, x24, #27")
 	g.emit("bl __fern_alloc")
-	g.emit("mov x21, x0") // scratch path buffer
-	g.emit("mov w9, #47") // '/'
+	g.emit("mov x21, x0")         // scratch path buffer
+	g.emit("str x24, [x29, #88]") // prefix byte length, for the scratch free
+	g.emit("mov w9, #47")         // '/'
 	g.emit("strb w9, [x21]")
 	g.emit("mov w9, #116") // 't'
 	g.emit("strb w9, [x21, #1]")
@@ -9977,6 +10000,10 @@ func (g *generator) emitTempDirRuntime() {
 	g.emit("mov x2, x22")
 	g.emit("bl __fern_memcpy")
 	g.emit("strb wzr, [x24, x22]")
+	g.emit("mov x0, x21") // the scratch path buffer
+	g.emit("ldr x1, [x29, #88]")
+	g.emit("add x1, x1, #27")
+	g.emit("bl __fern_free")
 	g.emit("mov x0, #24")
 	g.emit("bl __fern_alloc_rc1")
 	g.emit("str wzr, [x0]")      // tag = 0 (Ok)
@@ -9989,6 +10016,12 @@ func (g *generator) emitTempDirRuntime() {
 	g.emit("b .Ltd2w_mkerr")
 
 	g.label(".Ltd2w_err")
+	g.emit("str x0, [sp, #-16]!")
+	g.emit("mov x0, x21") // the scratch path buffer
+	g.emit("ldr x1, [x29, #88]")
+	g.emit("add x1, x1, #27")
+	g.emit("bl __fern_free")
+	g.emit("ldr x0, [sp], #16")
 	g.emit("neg x22, x0") // errno (cursor dead on this path)
 	g.emit("mov x0, x22")
 	g.label(".Ltd2w_mkerr")
@@ -10047,6 +10080,7 @@ func (g *generator) emitReadDirRuntime() {
 	g.emitODirectory("x2")
 	g.emit("mov x3, #0")
 	g.syscall("openat")
+	g.emitFreeNulTermPath2W("x21", "x22")
 	g.emit("tbnz x0, #63, .Lrdd2w_err")
 	g.emit("mov x23, x0") // fd
 	// 1 MiB dirent buffer (mirrors the self-host helper's cap).
@@ -10079,6 +10113,9 @@ func (g *generator) emitReadDirRuntime() {
 	g.label(".Lrdd2w_gd")
 	g.emit("mov x0, x23")
 	g.syscall("close")
+	if g.darwin {
+		g.emitFreeScratch2W("x24", 8)
+	}
 	// Pass 1: count entries that aren't "." / "..".
 	g.emit("mov x23, #0") // count (fd is closed)
 	g.emit("mov x26, #0") // offset
@@ -10167,6 +10204,7 @@ func (g *generator) emitReadDirRuntime() {
 	g.emit("add x26, x26, x11")
 	g.emit("b .Lrdd2w_p2")
 	g.label(".Lrdd2w_p2d")
+	g.emitFreeScratch2W("x21", 1<<20) // the dirent buffer
 	g.emit("mov x0, #16")
 	g.emit("bl __fern_alloc_rc1")
 	g.emit("str wzr, [x0]") // tag = 0 (Ok)
@@ -10265,6 +10303,7 @@ func (g *generator) emitStatLikeRuntime(sym string, atFlags int, lp string, byFd
 		g.emit("add x2, x29, #96")
 		g.emit("mov x3, #%d", atFlags)
 		g.syscallFstatat()
+		g.emitFreeNulTermPath2W("x21", "x22")
 	}
 	g.emit("tbnz x0, #63, .L%s_err", lp)
 	if g.darwin {
@@ -10497,6 +10536,7 @@ func (g *generator) emitAccessRuntime() {
 	g.emit("mov w2, w23")
 	g.atEaccess("x3")
 	g.syscall("faccessat")
+	g.emitFreeNulTermPath2W("x21", "x22")
 	g.emit("tbnz x0, #63, .Lacc2w_err")
 	g.emit("mov x0, #16")
 	g.emit("bl __fern_alloc_rc1")
@@ -11001,6 +11041,7 @@ func (g *generator) emitRemoveDirAllRuntime() {
 	g.emitStrDataPtr2W("x19", "x20", "x21", 80)
 	g.emitStrLen2W("w22", "x21")
 	g.emitNulTermPath2W("x19", "x19", "x22") // x19 = pathz
+	g.emit("str x22, [x29, #80]")            // path byte len, for the free at exit
 	// openat(AT_FDCWD, pathz, O_RDONLY|O_DIRECTORY, 0)
 	g.atFdcwd("x0")
 	g.emit("mov x1, x19")
@@ -11120,10 +11161,17 @@ func (g *generator) emitRemoveDirAllRuntime() {
 	g.emit("b .Lrda2w_c2")
 	g.label(".Lrda2w_c2d")
 	g.emit("strb wzr, [x10, x13]") // NUL
-	// recurse: remove_dir_all(child_data, child_len).
+	// recurse: remove_dir_all(child_data, child_len), then release the
+	// child path (an rc=1 block of childlen + 1 bytes).
+	g.emit("stp x10, x13, [sp, #-16]!")
 	g.emit("mov x0, x10")
 	g.emit("mov x1, x13")
 	g.emit("bl __fern_remove_dir_all")
+	g.emit("mov x1, #16") // the recursion's own Result box (16 bytes, rc=1)
+	g.emit("bl __fern_box_free")
+	g.emit("ldp x0, x1, [sp], #16")
+	g.emit("add x1, x1, #1")
+	g.emit("bl __fern_box_free")
 	g.label(".Lrda2w_adv")
 	g.emit("add x12, x23, x25")
 	g.emit("ldrh w11, [x12, #16]") // d_reclen
@@ -11131,9 +11179,10 @@ func (g *generator) emitRemoveDirAllRuntime() {
 	g.emit("b .Lrda2w_it")
 
 	g.label(".Lrda2w_itd")
-	// close(fd), then rmdir the now-empty directory.
+	// close(fd), free the dirent buffer, then rmdir the now-empty directory.
 	g.emit("mov x0, x22")
 	g.syscall("close")
+	g.emitFreeScratch2W("x23", 1024)
 	g.atFdcwd("x0")
 	g.emit("mov x1, x19")
 	if g.darwin {
@@ -11144,6 +11193,8 @@ func (g *generator) emitRemoveDirAllRuntime() {
 	g.syscall("unlinkat")
 
 	g.label(".Lrda2w_none")
+	g.emit("ldr x22, [x29, #80]")
+	g.emitFreeNulTermPath2W("x19", "x22")
 	// Return Ok(()): 16-byte box, tag=0, unit payload @+8. The unit
 	// value occupies a payload slot like any other value — the reader
 	// loads it by the declared layout — so the success arm cannot be
@@ -11155,6 +11206,8 @@ func (g *generator) emitRemoveDirAllRuntime() {
 	g.emit("b .Lrda2w_return")
 
 	g.label(".Lrda2w_some")
+	g.emit("ldr x22, [x29, #80]")
+	g.emitFreeNulTermPath2W("x19", "x22")
 	g.emit("neg x22, x0") // errno (never opened a fd on this path)
 	g.emit("mov x0, x22")
 	g.emit("mov x1, x20")
@@ -11285,6 +11338,7 @@ func (g *generator) emitReaderWriterRuntime() {
 			g.emit("mov w2, #%d", e.flags)
 			g.emit("mov w3, #%d", e.mode)
 			g.syscall("openat")
+			g.emitFreeNulTermPath2W("x21", "x20")
 			g.emit("tbnz x0, #63, %s", ".Lorw2w_err_"+e.sym)
 			// A descriptor below 3 is a standard stream the program was
 			// exec'd without: move it up (fcntl F_DUPFD 3) and close the
@@ -13897,6 +13951,27 @@ func (g *generator) emitNulTermPath2W(dstX, dataX, lenX string) {
 	g.emit("bl __fern_memcpy")
 	g.emitStrLen2W("w9", lenX)
 	g.emit("strb wzr, [%s, x9]", dstX)
+}
+
+// emitFreeNulTermPath2W returns the copy emitNulTermPath2W made once the
+// syscall has read it. x0 (the syscall result) survives; x1..x9 do not.
+func (g *generator) emitFreeNulTermPath2W(cstrX, lenX string) {
+	g.emit("str x0, [sp, #-16]!")
+	g.emit("mov x0, %s", cstrX)
+	g.emitStrLen2W("w1", lenX)
+	g.emit("add x1, x1, #1")
+	g.emit("bl __fern_free")
+	g.emit("ldr x0, [sp], #16")
+}
+
+// emitFreeScratch2W returns a plain __fern_alloc block of `size` bytes; x0
+// survives.
+func (g *generator) emitFreeScratch2W(baseX string, size int) {
+	g.emit("str x0, [sp, #-16]!")
+	g.emit("mov x0, %s", baseX)
+	g.emit("mov x1, #%d", size)
+	g.emit("bl __fern_free")
+	g.emit("ldr x0, [sp], #16")
 }
 
 // emitStrDataPtr2W is the two-word-ABI counterpart of
