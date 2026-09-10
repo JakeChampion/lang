@@ -764,13 +764,22 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
 // emit_function_via_ir_pre is the emit half of emit_function_via_ir, split at
 // the lower_func boundary (the x86 twin is asm_ir.emit_function_via_ir_pre) so
 // the fused gate+emit path emits from the LowerResult it already judged.
-// fern-lint: allow cyclomatic-complexity
-// The arm64 half of the same op table as asm_ir.fern: 181 guards, one per
-// op, with the bodies that could move already moved.
 pub function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s: asmcore.EmitState, vsigs: irverify.NameIndex): asmcore.EmitState {
     // Methods get the receiver-type-qualified label `__fn_<Type>.<name>`.
     var label_name: string = fd.name;
     if (fd.receiver_type.len() > 0) { label_name = util.base_type_name(fd.receiver_type) + "." + fd.name; }
+    return emit_function_via_ir_named(r, label_name, false, s, vsigs);
+}
+
+// emit_function_via_ir_named is the body above with the label supplied rather
+// than read from a declaration, so a body the semantic pipeline produced — which
+// carries its own name — emits through the same path. The x86 twin is
+// asm_ir.emit_function_via_ir_named.
+// fern-lint: allow cyclomatic-complexity
+// The arm64 half of the same op table as asm_ir.fern: 181 guards, one per
+// op, with the bodies that could move already moved.
+pub function emit_function_via_ir_named(r: irlower.LowerResult, label_name: string, weak: boolean, s: asmcore.EmitState, vsigs: irverify.NameIndex): asmcore.EmitState {
+    if (weak) { s = s.write(".weak __fn_" + asmcore.sanitize_label(label_name) + "\n"); }
     ircore.lower_failed_refuse(label_name, r);
     irverifygate.verify_or_refuse(label_name, r.ops, r.n_params, r.n_locals, vsigs);
     s = s.write("__fn_" + asmcore.sanitize_label(label_name) + ":\n");
@@ -2744,6 +2753,13 @@ pub function emit_body(mod: parser.Module, s: asmcore.EmitState, darwin: boolean
             s = emit_function_via_ir_pre(cache[fi], mod.funcs[fi], s, vsigs);
         }
         fi = fi + 1;
+    }
+    // Cache entries past the declarations are bodies with no FuncDecl, each
+    // naming the symbol it defines.
+    var xi: i32 = mod.funcs.len();
+    while (xi < cache.len()) {
+        s = emit_function_via_ir_named(cache[xi], cache[xi].name, true, s, vsigs);
+        xi = xi + 1;
     }
     // Ahead of _start, which gates its envp save on the heap need. close_needs
     // is what turns a root like str_concat into that heap need, so reading it
