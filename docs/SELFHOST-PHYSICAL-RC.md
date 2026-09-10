@@ -15,8 +15,10 @@ The physical vocabulary accepts reachable reducible control-flow graphs with
 arrays and tuples. Natural loops become structured `loop` labels through
 `ssalayout.fern` ([semantic source](SELFHOST-SEMANTIC-SOURCE.md)); an
 irreducible cycle and other physical representations are rejected, returning
-no operations or locals. Strings, wide scalars, nominal schemas,
-closures and semantic calls are not admitted by this physical boundary.
+no operations or locals. A verified semantic call lowers to the stack IR's
+direct call: its counted arguments are supplied like construction operands
+and its result is a unit of the caller's own. Strings, wide scalars, nominal
+schemas and closures are not admitted by this physical boundary.
 
 Semantic record construction/projection and counted plans are now available,
 but a valid record plan is explicitly tested to fail physical lowering without
@@ -110,7 +112,12 @@ An earlier experiment substituting these bodies under AST-derived callers
 leaked one allocation for a borrowed parameter and failed at runtime for a
 counted parameter. The explicit caller contracts pass. This is evidence that
 default integration needs closed-module call verification, not permission to
-assume the old caller analysis agrees with a new callee contract.
+assume the old caller analysis agrees with a new callee contract. Between
+produced functions that verification now exists: `semsource.fern` derives one
+contract per declaration and refuses a caller whose callee was refused, so
+every substituted call has a callee verified against the same contract
+([semantic source](SELFHOST-SEMANTIC-SOURCE.md)). The AST-lowered `main` of
+the executable fixture still only hands produced functions scalars.
 
 The nested-array `.with` source failure found while building semantic
 dependency rows also remains unresolved: the existing store does not retain

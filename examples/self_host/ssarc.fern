@@ -175,6 +175,10 @@ function validate(f: ssasem.Func, modes: i32[], p: ssaunits.Plan): string {
     if (why != "") { return why; }
     for t in f.values { if (!supported(t)) { return "unsupported physical RC value type"; } }
     if (!supported(f.result)) { return "unsupported physical RC result type"; }
+    for c in f.calls {
+        for t in c.params { if (!supported(t)) { return "unsupported physical RC call parameter type"; } }
+        if (!supported(c.result)) { return "unsupported physical RC call result type"; }
+    }
     // Keep this physical vocabulary closed when semantic analysis grows new
     // operations. Verification of a new operation does not implement its ABI.
     for b in f.graph.blocks {
@@ -188,7 +192,7 @@ function validate(f: ssasem.Func, modes: i32[], p: ssaunits.Plan): string {
 function supported_op(k: i32): boolean {
     return k == 1 || k == 2 || k == 6 || k == 7 || k == 8 || k == 9 || k == 10
         || k == ssasem.array_new() || k == ssasem.tuple_new()
-        || k == ssasem.array_get() || k == ssasem.tuple_get();
+        || k == ssasem.array_get() || k == ssasem.tuple_get() || k == ssasem.call();
 }
 
 function frame(f: ssasem.Func): irlower.LowerResult {
@@ -231,6 +235,9 @@ function instruction(r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerResul
     if (ins.kind_tag == ssasem.tuple_new()) { r = emit(r, ir.op_tuple_make(ins.args.len())); }
     if (ins.kind_tag == ssasem.array_get()) { r = emit(r, ir.op_arr_get(32)); }
     if (ins.kind_tag == ssasem.tuple_get()) { r = emit(r, ir.op_tuple_get(ins.imm)); }
+    // A call's counted parameters were supplied before its operands were
+    // loaded; its result is the unit the callee returns.
+    if (ins.kind_tag == ssasem.call()) { r = emit(r, ir.op_call_direct(ins.str, ins.args.len())); }
     // A verified copy already has its single operand on the stack.
     return emit(r, ir.op_store_local(ins.result));
 }
