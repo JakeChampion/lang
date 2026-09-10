@@ -3961,6 +3961,26 @@ pub function is_commutative_kind(id: i32): boolean {
         || id == kind_id("eq") || id == kind_id("ne");
 }
 
+// ---- identity ----------------------------------------------------------
+//
+// Field-by-field, not by rendering: render_op shows only the fields an opcode
+// uses, so two ops differing in an unrendered field would print alike.
+pub function op_equal(a: Op, b: Op): boolean {
+    return a.kind_tag == b.kind_tag && a.i32_imm == b.i32_imm && a.i64_imm == b.i64_imm
+        && a.f64_imm == b.f64_imm && a.width == b.width && a.unsigned == b.unsigned
+        && a.str == b.str && a.decl == b.decl;
+}
+
+pub function ops_equal(a: Op[], b: Op[]): boolean {
+    if (a.len() != b.len()) { return false; }
+    var i: i32 = 0;
+    while (i < a.len()) {
+        if (!op_equal(a[i], b[i])) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
 // ---- printing ----------------------------------------------------------
 //
 // render_op gives a stable one-line textual form (the basis for a future

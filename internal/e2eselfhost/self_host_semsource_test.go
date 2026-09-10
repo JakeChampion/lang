@@ -324,6 +324,37 @@ type Node = Leaf | Twig;
     }
     return 0 - 1;
 }
+struct Tip { v: i32 }
+struct Fork { l: Tree, r: Tree }
+type Tree = Tip | Fork;
+enum Chain { End, Link(i32, Chain) }
+@noinline function leaf(n: i32): Tree { return Tip { v: n }; }
+@noinline function fork(a: Tree, b: Tree): Tree { return Fork { l: a, r: b }; }
+@noinline function tree_sum(t: Tree): i32 {
+    match (t) {
+        Tip(x) => { return x.v; },
+        Fork(y) => { return tree_sum(y.l) + tree_sum(y.r); }
+    }
+    return 0;
+}
+@noinline function build_sum(n: i32): i32 {
+    var a: Tree = leaf(n);
+    var b: Tree = leaf(n + 1);
+    var t: Tree = fork(a, b);
+    var c: Tree = leaf(n + 2);
+    var u: Tree = fork(t, c);
+    return tree_sum(u) + tree_sum(t);
+}
+@noinline function chain_len(c: Chain): i32 {
+    match (c) { End => { return 0; }, Link(v, rest) => { return v + chain_len(rest); } }
+    return 0;
+}
+@noinline function chain_build(n: i32): i32 {
+    var c: Chain = End;
+    var d: Chain = Link(n, c);
+    var e: Chain = Link(n + 1, d);
+    return chain_len(e) + chain_len(d);
+}
 @noinline function node_sum(limit: i32): i32 {
     var total: i32 = 0;
     var i: i32 = 0;
@@ -416,6 +447,8 @@ function main(): i32 {
     print_int(sum_shapes(4)); print(""); print_int(boxed_shape(3)); print(""); print_int(boxed_shape(0)); print("");
     print_int(hold(1)); print(""); print_int(hold(2)); print("");
     print_int(node_sum(3)); print(""); print_int(node_sum(1)); print("");
+    print_int(build_sum(1)); print(""); print_int(build_sum(0)); print("");
+    print_int(chain_build(2)); print(""); print_int(chain_build(0)); print("");
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }
@@ -427,7 +460,13 @@ function main(): i32 {
 // boxed_shape(3): Pair takes the wildcard 7, Full([3]) 3: 10; boxed_shape(0): 7 + 0.
 // node_sum(3): Leaf 7, Twig([1,2]) 2, Twig([2,3]) 3, plus the kept Twig 2 = 14.
 // node_sum(1): the Leaf 7 only, plus the kept Leaf { n: 0 } = 7.
-const semsourceRCWant = "1\n4\n5\n-3\n-2\n2\n0\n1\n5\n5\n12\n1\n8\n12\n0\n3\n3\n6\n4\n2\n0\n7\n31\n1\n0\n2\n22\n10\n7\n2\n5\n14\n7\n"
+// build_sum(1): u is Fork(Fork(Tip 1, Tip 2), Tip 3) = 6, plus its shared
+// subtree t = 3 → 9; build_sum(0): 3 + 1 = 4. A Fork field is typed by the
+// union that owns Fork, so Tree reaches itself and only a helper can drop it.
+// chain_build(2): Link(3, Link(2, End)) = 5, plus the shared tail d = 2 → 7;
+// chain_build(0): 1 + 0 = 1. Chain is the recursive DECLARED enum, the layout
+// the compiler's own sources never exercise.
+const semsourceRCWant = "1\n4\n5\n-3\n-2\n2\n0\n1\n5\n5\n12\n1\n8\n12\n0\n3\n3\n6\n4\n2\n0\n7\n31\n1\n0\n2\n22\n10\n7\n2\n5\n14\n7\n9\n4\n7\n1\n"
 
 const semsourceRCDriver = `import "./semsource"; import "./ssarc"; import "./ssaunits"; import "./ssa";
 import "./parser"; import "./lexer"; import "./irlower"; import "./ir";
@@ -441,9 +480,10 @@ function main(): i32 {
     var base = ircore.wp_fn_sigs(mod.funcs, tab);
     var produced = semsource.build_module(mod);
     var bodies: irlower.LowerResult[] = [];
+    var helpers: irlower.LowerResult[] = [];
     var at: i32 = 0;
     for fd in mod.funcs {
-        if (fd.name == "main") { bodies = bodies.append(irlower.LowerResult { ok: false, why: "", ops: [], n_locals: 0, n_params: 0, erased_wide: false, arr_slots: [], i64_slots: [], f64_slots: [], str_slots: [], alias_incs: [], name: "" }); at = at + 1; continue; }
+        if (fd.name == "main") { bodies = bodies.append(irlower.LowerResult { ok: false, why: "", ops: [], n_locals: 0, n_params: 0, erased_wide: false, arr_slots: [], i64_slots: [], f64_slots: [], str_slots: [], alias_incs: [], name: "", result_kind: irlower.result_from_decl() }); at = at + 1; continue; }
         var p = produced[at];
         if (!p.ok) { eprint(fd.name + ": " + p.why); return 4; }
         var plan = ssaunits.plan(p.func, p.modes);
@@ -452,6 +492,7 @@ function main(): i32 {
         if (!lowered.ok) { eprint(fd.name + ": " + lowered.why); return 6; }
         eprint("produced " + fd.name + "\n");
         base = ssarc.caller_sigs(base, fd.name, p.func);
+        for h in ssarc.drop_helpers(p.func) { helpers = helpers.append(h); }
         bodies = bodies.append(lowered);
         at = at + 1;
     }
@@ -463,6 +504,9 @@ function main(): i32 {
         if (fd.name == "main") { cache = cache.append(g.cache[at]); } else { cache = cache.append(bodies[at]); }
         at = at + 1;
     }
+    // The per-type drop helpers are bodies with no declaration, so they go on
+    // the cache tail past mod.funcs, deduped by symbol.
+    cache = ssarc.merge_helpers(cache, helpers);
     if (av[1] == "x86-64-linux") {
         print(asm_ir.emit_module_ir_unit_flat(mod, true, false, "", [], mod.funcs, tab, 0, 0 - 1, cache, base));
     } else if (av[1] == "arm64-linux") {
@@ -502,7 +546,7 @@ func TestSelfHostSemanticSourceRC(t *testing.T) {
 			if err != nil {
 				t.Fatalf("semantic lowering: %v\n%s", err, diagnostics.String())
 			}
-			for _, name := range []string{"pick", "pair", "boxed", "carry", "count_even", "fill", "first_of", "keep", "chain", "twice", "count_down", "grow", "make", "wrap", "unwrap", "tally", "greet", "boxed_local", "boxed_carry", "shape", "measure", "sum_shapes", "consume", "boxed_shape", "hold", "mk_node", "node_size", "node_sum"} {
+			for _, name := range []string{"pick", "pair", "boxed", "carry", "count_even", "fill", "first_of", "keep", "chain", "twice", "count_down", "grow", "make", "wrap", "unwrap", "tally", "greet", "boxed_local", "boxed_carry", "shape", "measure", "sum_shapes", "consume", "boxed_shape", "hold", "mk_node", "node_size", "node_sum", "leaf", "fork", "tree_sum", "build_sum", "chain_len", "chain_build"} {
 				if !strings.Contains(diagnostics.String(), "produced "+name+"\n") {
 					t.Fatalf("%s was not produced:\n%s", name, diagnostics.String())
 				}

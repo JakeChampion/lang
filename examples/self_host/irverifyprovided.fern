@@ -111,6 +111,7 @@ pub function provided_names(): string[] {
 // name the program supplies, so the rule is a prefix and not an inventory.
 pub function is_generated_helper(name: string): boolean {
     if (name.len() > 14 && slice_unchecked(name, 0, 14) == "__struct_drop_") { return true; }
+    if (name.len() > 11 && slice_unchecked(name, 0, 11) == "__sem_drop_") { return true; }
     return name.len() > 16 && slice_unchecked(name, 0, 16) == "__field_reclaim_";
 }
 
