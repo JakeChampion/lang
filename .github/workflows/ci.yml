@@ -1,8 +1,10 @@
 name: CI
 
-# The one workflow a pull request, a push to main, or a manual dispatch
-# launches. Every lane under .github/workflows is a `workflow_call` this file
-# calls, and that is what lets ONE concurrency group serialise pull requests as
+# The one workflow a pull request launches, and the one that runs the gate
+# lanes on a push to main or a manual dispatch (check-sources.yml, pages.yml
+# and auto-rebase-prs.yml keep push triggers of their own, outside the lock).
+# Every lane under .github/workflows is a `workflow_call` this file calls, and
+# that is what lets ONE concurrency group serialise pull requests as
 # whole suites: at most one pull request has its CI running at a time, and the
 # lanes of that pull request run in parallel inside its run. Seventeen lanes
 # each holding their own per-ref group could only serialise lane-by-lane, with
@@ -69,8 +71,10 @@ jobs:
           # The lane table: the filter each lane ran under when it triggered
           # itself. `paths` runs the lane when a changed file matches;
           # `paths-ignore` runs it when a changed file matches nothing in the
-          # list. `*` does not cross `/`, `**` does, and a `!` entry negates
-          # the entries before it — GitHub's rules, evaluated in `filter`.
+          # list. GitHub's filter grammar, evaluated in `filter`: `*` does not
+          # cross `/`, `**` does, `?` and `+` quantify the character before
+          # them, `[…]` is a character class, and a `!` entry negates the
+          # entries before it.
           #
           # The doc-only exclusion is deliberately narrow: `*.md` is root-level
           # prose (README, CLAUDE.md), and the literate sources under
@@ -150,101 +154,118 @@ jobs:
         with:
           script: |
             const lanes = JSON.parse(process.env.LANES);
+            const everything = Object.fromEntries(Object.keys(lanes).map((l) => [l, true]));
             const { owner, repo } = context.repo;
-
-            // A pull request is filtered on its whole diff against the base
-            // (what GitHub's own `paths:` reads); a push on `before..after`.
-            // Whenever the list cannot be trusted — no base commit, a diverged
-            // compare, the listing cap, an API error — every lane runs: the
-            // safe direction for a gate is to run.
-            let files = null;
-            let why = "";
             try {
-              if (context.eventName === "pull_request") {
-                const list = await github.paginate(github.rest.pulls.listFiles, {
-                  owner, repo, pull_number: context.payload.pull_request.number, per_page: 100,
-                });
-                if (list.length >= 3000) why = "the diff is past the 3000-file listing cap";
-                else files = list;
-              } else if (context.eventName === "push") {
-                const { before, after } = context.payload;
-                if (!before || /^0+$/.test(before)) {
-                  why = "the push has no base commit";
-                } else {
-                  let status = "";
-                  const list = await github.paginate(
-                    github.rest.repos.compareCommitsWithBasehead,
-                    { owner, repo, basehead: `${before}...${after}`, per_page: 100 },
-                    (res) => { status = res.data.status; return res.data.files ?? []; },
-                  );
-                  if (status === "diverged") why = "the push is not a fast-forward";
-                  else if (list.length >= 3000) why = "the diff is past the 3000-file listing cap";
+
+              // A pull request is filtered on its whole diff against the base
+              // (what GitHub's own `paths:` reads); a push on `before..after`.
+              // Whenever the list cannot be trusted — no base commit, a diverged
+              // compare, the listing cap, an API error — every lane runs: the
+              // safe direction for a gate is to run.
+              let files = null;
+              let why = "";
+              try {
+                if (context.eventName === "pull_request") {
+                  const list = await github.paginate(github.rest.pulls.listFiles, {
+                    owner, repo, pull_number: context.payload.pull_request.number, per_page: 100,
+                  });
+                  if (list.length >= 3000) why = "the diff is past the 3000-file listing cap";
                   else files = list;
-                }
-              } else {
-                why = `a ${context.eventName} runs every lane`;
-              }
-            } catch (e) {
-              why = `listing the changed files failed: ${e.message}`;
-            }
-
-            // GitHub's filter globs: `*` and `?` stop at `/`, `**` does not.
-            const compile = (glob) => {
-              let re = "^";
-              for (let i = 0; i < glob.length; i++) {
-                const c = glob[i];
-                if (c === "*") {
-                  if (glob[i + 1] === "*") { re += ".*"; i++; } else re += "[^/]*";
-                } else if (c === "?") {
-                  re += "[^/]";
-                } else if (c === "[" && glob.indexOf("]", i) > i) {
-                  const j = glob.indexOf("]", i);
-                  re += glob.slice(i, j + 1);
-                  i = j;
+                } else if (context.eventName === "push") {
+                  const { before, after } = context.payload;
+                  if (!before || /^0+$/.test(before)) {
+                    why = "the push has no base commit";
+                  } else {
+                    let status = "";
+                    const list = await github.paginate(
+                      github.rest.repos.compareCommitsWithBasehead,
+                      { owner, repo, basehead: `${before}...${after}`, per_page: 100 },
+                      (res) => { status = res.data.status; return res.data.files ?? []; },
+                    );
+                    if (status === "diverged") why = "the push is not a fast-forward";
+                    else if (list.length >= 3000) why = "the diff is past the 3000-file listing cap";
+                    else files = list;
+                  }
                 } else {
-                  re += c.replace(/[.+^${}()|\\]/g, "\\$&");
+                  why = `a ${context.eventName} runs every lane`;
                 }
+              } catch (e) {
+                why = `listing the changed files failed: ${e.message}`;
               }
-              return new RegExp(re + "$");
-            };
-            // Later entries win, so `!` re-excludes what an earlier entry let in.
-            const selects = (patterns, path) => {
-              let hit = false;
-              for (const p of patterns) {
-                const neg = p.startsWith("!");
-                if (compile(neg ? p.slice(1) : p).test(path)) hit = !neg;
-              }
-              return hit;
-            };
-            const paths = files === null ? [] : files.flatMap((f) =>
-              f.previous_filename ? [f.filename, f.previous_filename] : [f.filename]);
-            const runs = (filter) => {
-              if (files === null) return true;
-              let ok = true;
-              if (filter.paths) ok = paths.some((p) => selects(filter.paths, p));
-              if (ok && filter["paths-ignore"]) ok = paths.some((p) => !selects(filter["paths-ignore"], p));
-              return ok;
-            };
 
-            const out = {};
-            for (const [lane, filter] of Object.entries(lanes)) out[lane] = runs(filter);
-            core.setOutput("lanes", JSON.stringify(out));
+              // GitHub's filter globs: `*` stops at `/` and `**` does not; `?`
+              // and `+` are quantifiers on the character or class before them,
+              // not wildcards of their own. One with nothing to quantify is
+              // taken literally, which is what GitHub does with it too.
+              const compile = (glob) => {
+                let re = "^";
+                let atom = false;
+                for (let i = 0; i < glob.length; i++) {
+                  const c = glob[i];
+                  if (c === "*") {
+                    if (glob[i + 1] === "*") { re += ".*"; i++; } else re += "[^/]*";
+                    atom = false;
+                  } else if ((c === "?" || c === "+") && atom) {
+                    re += c;
+                    atom = false;
+                  } else if (c === "[" && glob.indexOf("]", i) > i) {
+                    const j = glob.indexOf("]", i);
+                    re += glob.slice(i, j + 1);
+                    i = j;
+                    atom = true;
+                  } else {
+                    re += c.replace(/[.+?^${}()|\\]/g, "\\$&");
+                    atom = true;
+                  }
+                }
+                return new RegExp(re + "$");
+              };
+              // Later entries win, so `!` re-excludes what an earlier entry let in.
+              const selects = (patterns, path) => {
+                let hit = false;
+                for (const p of patterns) {
+                  const neg = p.startsWith("!");
+                  if (compile(neg ? p.slice(1) : p).test(path)) hit = !neg;
+                }
+                return hit;
+              };
+              const paths = files === null ? [] : files.flatMap((f) =>
+                f.previous_filename ? [f.filename, f.previous_filename] : [f.filename]);
+              const runs = (filter) => {
+                if (files === null) return true;
+                let ok = true;
+                if (filter.paths) ok = paths.some((p) => selects(filter.paths, p));
+                if (ok && filter["paths-ignore"]) ok = paths.some((p) => !selects(filter["paths-ignore"], p));
+                return ok;
+              };
 
-            const on = Object.keys(out).filter((l) => out[l]);
-            const off = Object.keys(out).filter((l) => !out[l]);
-            core.info(files === null
-              ? `every lane runs: ${why}`
-              : `${paths.length} changed path(s): ${on.length} lane(s) run, ${off.length} skipped`);
-            await core.summary
-              .addHeading("Lanes", 3)
-              .addRaw(files === null
-                ? `Every lane runs: ${why}.\n`
-                : `${files.length} changed file(s).\n`)
-              .addTable([
-                [{ data: "Lane", header: true }, { data: "Runs", header: true }],
-                ...Object.keys(out).map((l) => [l, out[l] ? "yes" : "skipped"]),
-              ])
-              .write();
+              const out = {};
+              for (const [lane, filter] of Object.entries(lanes)) out[lane] = runs(filter);
+              core.setOutput("lanes", JSON.stringify(out));
+
+              const on = Object.keys(out).filter((l) => out[l]);
+              const off = Object.keys(out).filter((l) => !out[l]);
+              core.info(files === null
+                ? `every lane runs: ${why}`
+                : `${paths.length} changed path(s): ${on.length} lane(s) run, ${off.length} skipped`);
+              await core.summary
+                .addHeading("Lanes", 3)
+                .addRaw(files === null
+                  ? `Every lane runs: ${why}.\n`
+                  : `${files.length} changed file(s).\n`)
+                .addTable([
+                  [{ data: "Lane", header: true }, { data: "Runs", header: true }],
+                  ...Object.keys(out).map((l) => [l, out[l] ? "yes" : "skipped"]),
+                ])
+                .write();
+            } catch (e) {
+              // A gate that cannot decide runs everything: a bad table entry or
+              // an API shape change must skip no lane, and a failed job here
+              // would skip all of them (a `needs` on a failed job never runs).
+              core.setOutput("lanes", JSON.stringify(everything));
+              core.warning(`every lane runs: the filter failed (${e.message})`);
+            }
 
   # The lanes. Each caller job carries the lane's workflow `name:` so a check
   # reads `Test units / test-units-x86_64` and main-red.yml can name the lane

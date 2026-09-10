@@ -342,3 +342,57 @@ func TestCILaneFiltersMatchTheirJobs(t *testing.T) {
 		t.Errorf("%s: the lane table has rows for %v, which no job reads", ciFile, stale)
 	}
 }
+
+// permissionRequests returns the strongest level a workflow asks for per
+// scope, across its workflow-level and job-level `permissions:` blocks.
+func permissionRequests(src string) map[string]string {
+	rank := map[string]int{"none": 0, "read": 1, "write": 2}
+	out := map[string]string{}
+	lines := strings.Split(src, "\n")
+	entry := regexp.MustCompile(`^(\s*)([a-z-]+):\s*(none|read|write)\s*$`)
+	for i, l := range lines {
+		if strings.TrimSpace(l) != "permissions:" {
+			continue
+		}
+		indent := len(l) - len(strings.TrimLeft(l, " "))
+		for _, m := range lines[i+1:] {
+			if strings.TrimSpace(m) == "" || strings.HasPrefix(strings.TrimSpace(m), "#") {
+				continue
+			}
+			sm := entry.FindStringSubmatch(m)
+			if sm == nil || len(sm[1]) <= indent {
+				break
+			}
+			if rank[sm[3]] > rank[out[sm[2]]] {
+				out[sm[2]] = sm[3]
+			}
+		}
+	}
+	return out
+}
+
+// A called workflow can only narrow what its caller hands it, and GitHub
+// checks that STATICALLY: a nested job asking for `write` on a scope the
+// caller did not grant fails the whole run at startup, whether or not that
+// job's `if:` would have run it. The repository's default token is read-only,
+// so every `write` a lane asks for anywhere must be granted at its caller job.
+// This PR's own first run failed exactly that way, on bootstrap's
+// dispatch-only `release` job.
+func TestCILanesAreGrantedWhatTheyRequest(t *testing.T) {
+	for id, j := range ciLanes(t) {
+		for scope, level := range permissionRequests(workflowSource(t, j.usesFile())) {
+			if level != "write" {
+				continue
+			}
+			if j.perms[scope] != "write" {
+				t.Errorf("%s: lane %q asks for `%s: write` in %s but its caller job grants %q — "+
+					"GitHub rejects the run at startup, even if the asking job is skipped",
+					ciFile, id, scope, j.usesFile(), j.perms[scope])
+			}
+		}
+	}
+	reaper := permissionRequests(workflowSource(t, reaperFile))
+	if reaper["actions"] == "write" {
+		t.Errorf("%s declares permissions of its own; it takes them from each reap-* caller job", reaperFile)
+	}
+}

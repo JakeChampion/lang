@@ -447,22 +447,34 @@ func pathFilterSelects(entries []string, path string) bool {
 	return selected
 }
 
-// globMatches implements the subset of GitHub's filter-pattern syntax the
-// macOS lane uses: `**` crosses `/`, `*` does not.
+// globMatches implements GitHub's filter-pattern grammar, the same way the
+// `changes` job in ci.yml does: `**` crosses `/`, `*` does not, `?` and `+`
+// quantify the character or class before them, `[…]` is a class.
 func globMatches(pattern, path string) bool {
 	var b strings.Builder
 	b.WriteString("^")
+	atom := false
 	for i := 0; i < len(pattern); i++ {
+		c := pattern[i]
 		switch {
 		case strings.HasPrefix(pattern[i:], "**"):
 			b.WriteString(".*")
 			i++
-		case pattern[i] == '*':
+			atom = false
+		case c == '*':
 			b.WriteString("[^/]*")
-		case pattern[i] == '?':
-			b.WriteString("[^/]")
+			atom = false
+		case (c == '?' || c == '+') && atom:
+			b.WriteByte(c)
+			atom = false
+		case c == '[' && strings.IndexByte(pattern[i:], ']') > 0:
+			j := i + strings.IndexByte(pattern[i:], ']')
+			b.WriteString(pattern[i : j+1])
+			i = j
+			atom = true
 		default:
 			b.WriteString(regexp.QuoteMeta(pattern[i : i+1]))
+			atom = true
 		}
 	}
 	b.WriteString("$")
