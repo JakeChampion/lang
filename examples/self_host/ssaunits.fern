@@ -100,9 +100,10 @@ function contract_error(f: ssasem.Func, modes: i32[]): string {
     }
     return mode_error(f.params, modes);
 }
-// A construction, a call result, a phi, a string constant and a string
-// operator's result are units of this function's own; a projection or a copy
-// borrows its source.
+// A construction, a call result, a phi, a string constant and a binary
+// operator's result are fresh; only a reference-typed one is a unit of this
+// function's own (a string concatenation), so a scalar operator's result is
+// never owned. A projection or a copy borrows its source.
 function fresh_unit(kind: i32): boolean {
     return kind == 8 || kind == 5 || kind == 9 || kind == ssasem.array_new() || kind == ssasem.tuple_new()
         || kind == ssasem.record_new() || kind == ssasem.call();
