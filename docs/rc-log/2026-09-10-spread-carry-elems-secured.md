@@ -70,6 +70,63 @@ row in `enum_arr_field_share_read`. `spread_sites` keeps its "FT:" rows for the
 STRING limb: a string field is retained only when the type routes field
 reclaim, so an unrouted spread still mints an uncounted co-owner there.
 
+## The second and third findings: two stores that made a second owner uncounted
+
+With the clone secured, gen1 still segfaulted on `-per-module-func-counts`,
+and so does any two-module program through that query — which made the rest
+cheap. The self-host x86-64 sanitizer prints no backtrace, so a frame dump was
+spliced into its report and a hook onto the release helper for the quarantined
+pointer (the allocator is deterministic run to run), and the two pointed at
+two places.
+
+**A handed-back argument.** `irlower.lift_lambdas_view` returns
+`infer_ret_types_module(lower_defers_module(result))`; `lower_defers_module`
+rebuilds `funcs` by appending `lower_defers_func(mod.funcs[i])`, and that
+callee returns its parameter bare when the function has no defer. The append
+stored the call result uncounted — a call result is taken to be fresh — so the
+returned module shared every function box with `result`, and once `result`
+earned the deep release (its `top_stmts: mod.top_stmts` share, granted now
+that the field-type refusal is gone) its exit freed them under the module
+`run_per_module` was about to read. `handback_params` already records the
+callees that return a parameter bare, for the release side (#8891); the three
+append forms now ask it too: a call result whose callee hands back an argument
+that is itself a borrow is retained when stored, exactly as the argument would
+be. The same shape with no lifting anywhere was an over-release on main
+(`handback_elem_append`: exit 99, a flat census, the interpreter's 68 here).
+
+**An array of borrowed elements taken by a literal.**
+`checker.ensure_capture_types_parts` builds a whole-program view — `for mod in
+mods { for fd in mod.funcs { funcs = funcs.append(fd); } … }` then
+`Module { ...mods[0], funcs: funcs, structs: structs, … }` — out of boxes
+borrowed from the caller's modules through `for` bindings, which no append
+counts (a binding is a local, not the parameter struct_alias_ident_escapes
+counts). Every carry of `Module` counts now, so the copy earned the deep
+release its explicit-literal twin never had, and its exit freed the caller's
+function and struct boxes. Retaining those stores instead was measured and
+rejected: the same borrowed-element array returned to a caller that releases
+it shallow (`param_elems_appended`) is balanced today and leaked 4 blocks a
+round with the retain. So the verdict moves the way the plain literal's does:
+a struct literal taking, as a struct- or enum-array field, a bare local array
+into which the body appended an element read out of a parameter's container is
+box-only (`struct_lit_holds_borrowed_elems`, next to
+`struct_lit_unretained_borrow_field`). The view leaks its own box and buffers,
+as it did before the carry counted.
+
+## A closure array is not a counted-element array
+
+The differential's seed 301 hung on main after #9014: `fns.with(1, lam)` in
+value form on a `((i32) => i32)[]`. A closure array's slot records its element
+env type where a struct array records its element struct, so the clone's new
+element retain took it for a counted-element array, retained every closure box
+and released the replaced one — and a closure box is leak-only here, released
+by nothing. `arr_expr_counted_elems` now refuses closure and fn arrays
+(`with_on_closure_array`: the interpreter's exit, sanitizer silent; main's
+compiler exits 122 on the seed, #9014's segfaulted).
+
+`checker_modload_run.fern` grew 7.3% under #9014 — the value-block pass's new
+instantiation of `astwalk.map_expr_acc` with `Scope` as the accumulator — so
+its row in `.github/selfhost-driver-sizes.txt` is re-banked here.
+
 ## Measured (self-host x86-64 unless said, 100 rounds)
 
 - The three rows above: all 600 / 600 resp. 700 / 700 at live 0, exits the
@@ -86,6 +143,14 @@ reclaim, so an unrouted spread still mints an uncounted co-owner there.
 - `clone_override` / `clone_override_spread` in the same suite: 1000 / 1000 at
   live 0 and the interpreter's exit, against exit 99 (no spread) and 1000 / 900
   with a wrong-free-free (spread) on main.
+- `handback_elem_append`: exit 99 on main at a flat 1100 / 1100 (the
+  double free counts as a free), the interpreter's 68 here at 1100 / 1100.
+- `view_of_borrowed_elems`: the compiler's shape at small scale; exits the
+  interpreter's on main and here with the sanitizer silent on both, box-only
+  here by verdict (2700 / 400 against main's 2700 / 1100 — main's fewer
+  leaks are a verdict elsewhere, not a release of the view).
+- `param_elems_appended`: a parameter's elements handed back to a caller that
+  releases the array shallow, 1000 / 1000 on main and here.
 
 ## The string[] residue is a different gap
 
