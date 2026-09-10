@@ -602,7 +602,7 @@ function match_arm(a: ast.MatchArm, scrut: i32, owner: string, arms: Arms, entry
         ast.PatWildcard(_) => { return wildcard_arm(a, arms, entry, join, count, scope); },
         ast.PatVariant(pv) => { return variant_arm(a, pv, scrut, owner, arms, entry, join, count, scope); }
     }
-    return arms;
+    return Arms { ...arms, s: fail(arms.s, "unsupported pattern") };
 }
 
 // Arms are tested in order; each test's false edge enters the next test.
