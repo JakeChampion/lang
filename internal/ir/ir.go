@@ -15597,16 +15597,21 @@ func (b *builder) callBody(n *ast.Call) error {
 	// outright stranded every fresh temp handed to one: `line.trim()` is a
 	// fresh `__str_slice` buffer and `parse_int` is pair-form, so
 	// `line.trim().parse_int()` leaked one string per call above the inline
-	// threshold (#8846). The other three admissions below stay closed to it:
-	// each ends in a guarded drop that stashes the call's result in a slot,
-	// and a pair leaves two values on the operand stack.
+	// threshold (#8846). The no-parameter-escape proof is about the callee's
+	// body, not its return ABI, so it admits a pair-form callee too: a fresh
+	// struct temp handed to `bump: C -> Result[C, string]` whose payload is
+	// built inside cannot be reached from the result (#8869). Only
+	// resultCannotAliasArg keeps the exclusion, since an enum result reads as
+	// aliasing-capable to it; the per-argument guarded admissions below stay
+	// closed to the family, each ending in a guarded drop that stashes the
+	// call's result in a slot where a pair leaves two values.
 	pairArgTempsSafe := b.pairForm[id.Name] && b.pairResultCannotAliasArg(b.exprType(n))
 	reclaimArgTemps := ast.RcFreeEnabled && calleeIsFunc && !calleeIsLocal &&
 		id.Name != "map_new" && !calleeRetainsAnyArg(id.Name) &&
 		(pairArgTempsSafe ||
-			(!b.pairForm[id.Name] &&
-				(resultCannotAliasArg(b.exprType(n)) || b.returnsNoParamEscape[id.Name] ||
-					b.resultIsCountedStringAlias(id.Name, b.exprType(n)))))
+			(!b.pairForm[id.Name] && resultCannotAliasArg(b.exprType(n))) ||
+			b.returnsNoParamEscape[id.Name] ||
+			b.resultIsCountedStringAlias(id.Name, b.exprType(n)))
 	// Per-ARGUMENT admission, where the call-level gate above says no. That
 	// gate is whole-call: one pointer-shaped result disqualifies every
 	// argument at once, so `node(name, no_deps(), k)` — a constructor whose
