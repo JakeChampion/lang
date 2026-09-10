@@ -3698,7 +3698,9 @@ function check_expr(e: ast.Expr, s: Scope): typeinfo.Type {
               // opaque generic field; any value is acceptable, so
               // skip rather than mis-flag a mismatch (#4346 piece
               // 2, mirrors the opaque-param skips elsewhere).
-              if (!type_contains_unknown(ssig.field_types[ufi]) && !type_eq(uft, ssig.field_types[ufi])) {
+              if (!type_contains_unknown(ssig.field_types[ufi])
+                  && !settles_to(sl.field_values[ui], ssig.field_types[ufi], s)
+                  && !type_assignable(uft, ssig.field_types[ufi], s.unions.unions)) {
                 return t_unknown("struct " + sl.type_name + " field `" + uname + "` type mismatch");
               }
             }
@@ -3739,7 +3741,15 @@ function check_expr(e: ast.Expr, s: Scope): typeinfo.Type {
         // An opaque generic field — bare (`Box[T] { v: T }`, T →
         // unknown) or nested (`items: T[]` → array<unknown>) — accepts
         // any value; skip the check (#4346 piece 2).
-        if (!type_contains_unknown(ssig.field_types[sfi]) && !type_eq(ft, ssig.field_types[sfi])) {
+        //
+        // The value is judged AGAINST the declared field type, by the
+        // same pair every other destination uses: an unsuffixed literal
+        // settles to the field's width, and a member widens to a
+        // union-typed field. Tag-blind equality alone refused both, and
+        // refusing collapsed the whole literal to unknown (#9042).
+        if (!type_contains_unknown(ssig.field_types[sfi])
+            && !settles_to(sl.field_values[sli], ssig.field_types[sfi], s)
+            && !type_assignable(ft, ssig.field_types[sfi], s.unions.unions)) {
           return t_unknown("struct " + sl.type_name + " field `" + sl.field_names[sli] + "` type mismatch");
         }
         sli = sli + 1;
