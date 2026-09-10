@@ -80,6 +80,42 @@ function greet(s: string): string { return "hello, " + s; }
 function refused_update(p: P): P { return P { ...p, n: 0 }; }
 function refused_generic_record(n: i32): i32 { var g: G[i32] = G { v: n }; return g.v; }
 function refused_string_method(s: string): i32 { return s.len(); }
+enum Shape { Dot, Line(i32), Full(i32[]), Pair(i32, i32[]) }
+function shape(n: i32): Shape {
+    if (n == 0) { return Dot; }
+    if (n == 1) { return Line(n); }
+    if (n == 2) { return Full([n, n + 1]); }
+    return Pair(n, [n]);
+}
+function measure(s: Shape): i32 {
+    match (s) {
+        Dot => { return 0; },
+        Line(n) => { return n; },
+        Pair(_, ys) => { return ys[0]; },
+        _ => {}
+    }
+    var total: i32 = 1;
+    if let Full(xs) = s { total = total + xs[0]; }
+    return total;
+}
+function refused_guard(s: Shape): i32 {
+    match (s) {
+        Line(n) when n > 0 => { return n; },
+        _ => { return 0; }
+    }
+}
+function refused_qualified(s: Shape): i32 {
+    match (s) {
+        Shape.Dot => { return 1; },
+        _ => { return 0; }
+    }
+}
+function scalar_match(n: i32): i32 {
+    match (n) {
+        1 => { return 1; },
+        _ => { return 0; }
+    }
+}
 `
 
 const semsourcePrintDriver = `import "./semsource"; import "./ssa"; import "./ssaunits"; import "./typeinfo";
@@ -248,6 +284,47 @@ struct Q { name: string, p: P }
     if (n > 3) { keep = r; }
     return unwrap(q) + unwrap(keep) + unwrap(r);
 }
+enum Shape { Dot, Line(i32), Full(i32[]), Pair(i32, i32[]) }
+struct Holder { s: Shape, n: i32 }
+@noinline function shape(n: i32): Shape {
+    if (n == 0) { return Dot; }
+    if (n == 1) { return Line(n); }
+    if (n == 2) { return Full([n, n + 1]); }
+    return Pair(n, [n]);
+}
+@noinline function measure(s: Shape): i32 {
+    match (s) {
+        Dot => { return 0; },
+        Line(n) => { return n; },
+        Full(xs) => { return xs[1]; },
+        Pair(a, ys) => { return a + ys[0]; }
+    }
+    return 0 - 1;
+}
+@noinline function sum_shapes(limit: i32): i32 {
+    var total: i32 = 0;
+    var i: i32 = 0;
+    var last: Shape = Dot;
+    while (i < limit) {
+        var s: Shape = shape(i);
+        match (s) {
+            Line(n) => { total = total + n * 10; },
+            _ => { total = total + measure(s); }
+        }
+        if (i == 2) { last = s; }
+        i = i + 1;
+    }
+    return total + measure(last);
+}
+@noinline function consume(own s: Shape): i32 {
+    if let Full(xs) = s { return xs[0]; }
+    return 7;
+}
+@noinline function boxed_shape(n: i32): i32 { return consume(shape(n)) + consume(Full([n])); }
+@noinline function hold(n: i32): i32 {
+    var h: Holder = Holder { s: shape(n), n: n };
+    return measure(h.s) + h.n;
+}
 @noinline function greet(n: i32): i32 {
     var s: string = "ab";
     var i: i32 = 0;
@@ -286,6 +363,8 @@ function main(): i32 {
     print_int(g[0]); print(""); print_int(h[0]); print("");
     print_int(tally(1)); print(""); print_int(tally(5)); print("");
     print_int(greet(2)); print(""); print_int(greet(0)); print(""); print_int(greet(1)); print("");
+    print_int(sum_shapes(4)); print(""); print_int(boxed_shape(3)); print(""); print_int(boxed_shape(0)); print("");
+    print_int(hold(1)); print(""); print_int(hold(2)); print("");
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }
@@ -293,7 +372,9 @@ function main(): i32 {
 
 // tally(1): unwrap(q) = xs[0] = 1; keep = q → 1; unwrap(r) = n + xs[1] = 2 + 3 = 5 → 7.
 // tally(5): 5 + unwrap(r) (6 + 7 = 13) + 13 → 31.
-const semsourceRCWant = "1\n4\n5\n-3\n-2\n2\n0\n1\n5\n5\n12\n1\n8\n12\n0\n3\n3\n6\n4\n2\n0\n7\n31\n1\n0\n2\n"
+// sum_shapes(4): Dot 0, Line(1) 10, Full([2, 3]) 3, Pair(3, [3]) 6, plus the kept Full: 22.
+// boxed_shape(3): Pair takes the wildcard 7, Full([3]) 3: 10; boxed_shape(0): 7 + 0.
+const semsourceRCWant = "1\n4\n5\n-3\n-2\n2\n0\n1\n5\n5\n12\n1\n8\n12\n0\n3\n3\n6\n4\n2\n0\n7\n31\n1\n0\n2\n22\n10\n7\n2\n5\n"
 
 const semsourceRCDriver = `import "./semsource"; import "./ssarc"; import "./ssaunits"; import "./ssa";
 import "./parser"; import "./lexer"; import "./irlower"; import "./ir";
@@ -368,7 +449,7 @@ func TestSelfHostSemanticSourceRC(t *testing.T) {
 			if err != nil {
 				t.Fatalf("semantic lowering: %v\n%s", err, diagnostics.String())
 			}
-			for _, name := range []string{"pick", "pair", "boxed", "carry", "count_even", "fill", "first_of", "keep", "chain", "twice", "count_down", "grow", "make", "wrap", "unwrap", "tally", "greet", "boxed_local", "boxed_carry"} {
+			for _, name := range []string{"pick", "pair", "boxed", "carry", "count_even", "fill", "first_of", "keep", "chain", "twice", "count_down", "grow", "make", "wrap", "unwrap", "tally", "greet", "boxed_local", "boxed_carry", "shape", "measure", "sum_shapes", "consume", "boxed_shape", "hold"} {
 				if !strings.Contains(diagnostics.String(), "produced "+name+"\n") {
 					t.Fatalf("%s was not produced:\n%s", name, diagnostics.String())
 				}

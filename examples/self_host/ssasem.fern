@@ -13,6 +13,7 @@ pub struct Func {
     params: typeinfo.Type[],
     result: typeinfo.Type,
     records: semrecords.Record[],
+    enums: semrecords.Enum[],
     calls: Contract[]
 }
 
@@ -47,6 +48,9 @@ pub function tuple_get(): i32 { return 0 - 4; }
 pub function record_new(): i32 { return 0 - 5; }
 pub function record_get(): i32 { return 0 - 6; }
 pub function call(): i32 { return 0 - 7; }
+pub function variant_new(): i32 { return 0 - 8; }
+pub function variant_is(): i32 { return 0 - 9; }
+pub function variant_get(): i32 { return 0 - 10; }
 
 function failed(why: string): Analysis {
     return Analysis { ok: false, why: why, dependencies: [], flow: ssalive.Flow { ok: false, why: why, live_in: [], live_out: [] } };
@@ -165,6 +169,60 @@ function record_projection_error(ins: ssa.SInst, f: Func, result: typeinfo.Type)
     return "";
 }
 
+function variant_fields(f: Func, t: typeinfo.Type, name: string): semrecords.Field[] {
+    var at: i32 = semrecords.find_enum(f.enums, t);
+    if (at < 0) { return []; }
+    var v: i32 = semrecords.find_variant(f.enums[at], name);
+    if (v < 0) { return []; }
+    return f.enums[at].variants[v].fields;
+}
+
+function variant_known(f: Func, t: typeinfo.Type, name: string): string {
+    var at: i32 = semrecords.find_enum(f.enums, t);
+    if (at < 0) { return "missing variant schema"; }
+    if (semrecords.find_variant(f.enums[at], name) < 0) { return "unknown variant"; }
+    return "";
+}
+
+function variant_construction_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
+    var why: string = variant_known(f, result, ins.str);
+    if (why != "") { return why; }
+    var fields: semrecords.Field[] = variant_fields(f, result, ins.str);
+    if (ins.args.len() != fields.len()) { return "variant construction arity"; }
+    var i: i32 = 0;
+    while (i < fields.len()) {
+        if (!semtypes.equal(fields[i].ty, f.values[ins.args[i]])) { return "variant field type"; }
+        i = i + 1;
+    }
+    return "";
+}
+
+function variant_test_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
+    if (ins.args.len() != 1) { return "variant test arity"; }
+    if (!is_bool(result)) { return "variant test type"; }
+    return variant_known(f, f.values[ins.args[0]], ins.str);
+}
+
+function variant_projection_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
+    if (ins.args.len() != 1) { return "variant projection arity"; }
+    var why: string = variant_known(f, f.values[ins.args[0]], ins.str);
+    if (why != "") { return why; }
+    var fields: semrecords.Field[] = variant_fields(f, f.values[ins.args[0]], ins.str);
+    if (ins.imm < 0 || ins.imm >= fields.len()) { return "variant projection index"; }
+    if (!semtypes.equal(fields[ins.imm].ty, result)) { return "variant projection type"; }
+    return "";
+}
+
+function variant_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
+    if (ins.kind_tag == variant_new()) { return variant_construction_error(ins, f, result); }
+    if (ins.kind_tag == variant_is()) { return variant_test_error(ins, f, result); }
+    return variant_projection_error(ins, f, result);
+}
+
+function is_variant_op(kind: i32): boolean {
+    return kind == variant_new() || kind == variant_is() || kind == variant_get();
+}
+
 function call_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     var at: i32 = find_contract(f.calls, ins.str);
     if (at < 0) { return "missing call contract"; }
@@ -223,6 +281,21 @@ function unary_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     return "";
 }
 
+// Constructions, projections and calls: the operations whose contract is a
+// container's shape rather than a scalar's type.
+function composite_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
+    var kind: i32 = ins.kind_tag;
+    if (kind == array_new()) { return array_construction_error(ins, f, result); }
+    if (kind == tuple_new()) { return tuple_construction_error(ins, f, result); }
+    if (kind == array_get()) { return array_projection_error(ins, f, result); }
+    if (kind == tuple_get()) { return tuple_projection_error(ins, f, result); }
+    if (kind == record_new()) { return record_construction_error(ins, f, result); }
+    if (kind == record_get()) { return record_projection_error(ins, f, result); }
+    if (kind == call()) { return call_error(ins, f, result); }
+    if (is_variant_op(kind)) { return variant_error(ins, f, result); }
+    return "unsupported semantic operation";
+}
+
 function instruction_error(ins: ssa.SInst, f: Func): string {
     if (ins.result < 0) { return "semantic operation needs a result"; }
     var result: typeinfo.Type = f.values[ins.result];
@@ -232,14 +305,7 @@ function instruction_error(ins: ssa.SInst, f: Func): string {
     if (kind == 1 || kind == 2 || kind == 5) { return constant_error(ins, result); }
     if (kind == 9) { return binary_error(ins, f, result); }
     if (kind == 10) { return unary_error(ins, f, result); }
-    if (kind == array_new()) { return array_construction_error(ins, f, result); }
-    if (kind == tuple_new()) { return tuple_construction_error(ins, f, result); }
-    if (kind == array_get()) { return array_projection_error(ins, f, result); }
-    if (kind == tuple_get()) { return tuple_projection_error(ins, f, result); }
-    if (kind == record_new()) { return record_construction_error(ins, f, result); }
-    if (kind == record_get()) { return record_projection_error(ins, f, result); }
-    if (kind == call()) { return call_error(ins, f, result); }
-    return "unsupported semantic operation";
+    return composite_error(ins, f, result);
 }
 
 function schema_error(f: Func): string {
@@ -252,7 +318,7 @@ function schema_error(f: Func): string {
     for t in f.params { if (!semtypes.concrete(t, false)) { return "unresolved parameter type"; } }
     why = contracts_error(f.calls);
     if (why != "") { return why; }
-    return semrecords.verify(f.records);
+    return semrecords.verify(f.records, f.enums);
 }
 
 // Contracts are a finite table keyed by callee name. A void result is the
@@ -295,7 +361,64 @@ function operations_error(f: Func): string {
     // Result == parameter index plus unique SSA definitions rules out repeated
     // parameter indices; exact cardinality therefore proves full coverage.
     if (seen_params != f.params.len()) { return "missing parameter definition"; }
+    return guard_error(f);
+}
+
+function defining(f: Func, value: i32): ssa.SInst {
+    for b in f.graph.blocks {
+        for ins in b.insts { if (ins.result == value) { return ins; } }
+    }
+    return ssa.SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" };
+}
+
+// The block a test's true edge enters, when that edge is its only way in.
+function sole_true_successor(f: Func, b: ssa.SBlock): i32 {
+    if (b.term.kind_tag != 3 || b.term.t == b.term.f) { return 0 - 1; }
+    var ti: i32 = 0;
+    while (ti < f.graph.blocks.len() && f.graph.blocks[ti].id != b.term.t) { ti = ti + 1; }
+    if (ti == f.graph.blocks.len()) { return 0 - 1; }
+    var succ: ssa.SBlock = f.graph.blocks[ti];
+    if (succ.preds.len() != 1 || succ.preds[0] != b.id) { return 0 - 1; }
+    return ti;
+}
+
+function guarded(f: Func, ins: ssa.SInst, bi: i32, dom: boolean[]): boolean {
+    var n: i32 = f.graph.blocks.len();
+    var pi: i32 = 0;
+    while (pi < n) {
+        var b: ssa.SBlock = f.graph.blocks[pi];
+        var ti: i32 = sole_true_successor(f, b);
+        if (ti >= 0 && dom[bi * n + ti]) {
+            var test: ssa.SInst = defining(f, b.term.cond);
+            if (test.kind_tag == variant_is() && test.args[0] == ins.args[0] && test.str == ins.str) { return true; }
+        }
+        pi = pi + 1;
+    }
+    return false;
+}
+
+// A variant's field exists only while the value is that variant, so a
+// projection must sit where a test of the same value for the same variant has
+// held: in a block dominated by the test's true successor, which the true
+// edge alone enters. A value never changes variant, so the test holds for
+// every later use of the value.
+function guard_error(f: Func): string {
+    var reachable: boolean[] = ssadeps.reachable_blocks(f.graph);
+    var dom: boolean[] = ssadeps.dominates(f.graph);
+    var bi: i32 = 0;
+    while (bi < f.graph.blocks.len()) {
+        if (reachable[bi]) {
+            for ins in f.graph.blocks[bi].insts {
+                if (ins.kind_tag == variant_get() && !guarded(f, ins, bi, dom)) { return "unguarded variant projection"; }
+            }
+        }
+        bi = bi + 1;
+    }
     return "";
+}
+
+function projects(kind: i32): boolean {
+    return kind == 7 || kind == array_get() || kind == tuple_get() || kind == record_get() || kind == variant_get();
 }
 
 function borrow_parents(f: Func): i32[] {
@@ -304,7 +427,7 @@ function borrow_parents(f: Func): i32[] {
     while (i < f.graph.nvals) { parents = parents.append(0 - 1); i = i + 1; }
     for b in f.graph.blocks {
         for ins in b.insts {
-            if ((ins.kind_tag == 7 || ins.kind_tag == array_get() || ins.kind_tag == tuple_get() || ins.kind_tag == record_get()) && semtypes.needs_anchor(f.values[ins.result])) {
+            if (projects(ins.kind_tag) && semtypes.needs_anchor(f.values[ins.result])) {
                 parents = parents.with(ins.result, ins.args[0]);
             }
         }

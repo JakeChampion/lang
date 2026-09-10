@@ -12,6 +12,7 @@ import (
 
 const semanticFixture = `
 var records: semrecords.Record[] = [];
+var enums: semrecords.Enum[] = [];
 var calls: ssasem.Contract[] = [];
 var i32t: typeinfo.Type = typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false };
 var i64t: typeinfo.Type = typeinfo.TypeI32 { width: 64, unsigned: false, is_char: false };
@@ -48,6 +49,16 @@ function field(value: i32, parent: i32, index: i32, name: string): ssa.SInst {
 function inst(kind: i32, value: i32, args: i32[], imm: i32): ssa.SInst {
     return ssa.SInst { kind_tag: kind, result: value, args: args, imm: imm, str: "" };
 }
+function variant_make(value: i32, name: string, args: i32[]): ssa.SInst {
+    return ssa.SInst { kind_tag: ssasem.variant_new(), result: value, args: args, imm: 0, str: name };
+}
+function variant_test(value: i32, subject: i32, name: string): ssa.SInst {
+    return ssa.SInst { kind_tag: ssasem.variant_is(), result: value, args: [subject], imm: 0, str: name };
+}
+function variant_field(value: i32, subject: i32, index: i32, name: string): ssa.SInst {
+    return ssa.SInst { kind_tag: ssasem.variant_get(), result: value, args: [subject], imm: index, str: name };
+}
+function branch_on(cond: i32): ssa.STerm { return ssa.STerm { kind_tag: 3, value: 0, cond: cond, target: 0, t: 17, f: 27 }; }
 function call_inst(value: i32, callee: string, args: i32[]): ssa.SInst {
     return ssa.SInst { kind_tag: ssasem.call(), result: value, args: args, imm: 0, str: callee };
 }
@@ -143,7 +154,8 @@ func semanticCases() []struct{ name, change, want string } {
 		{"call-contract-modes", `calls = [contract("g", [sa], [], st)];`, "call contract mode dimensions"},
 		{"call-contract-unresolved", `calls = [contract("g", [typeinfo.unchecked()], [2], st)];`, "unresolved call parameter type"},
 	}
-	return append(base, semanticRecordCases()...)
+	base = append(base, semanticRecordCases()...)
+	return append(base, semanticEnumCases()...)
 }
 
 func semanticSource(indices []int) (string, string) {
@@ -156,7 +168,7 @@ func semanticSource(indices []int) (string, string) {
 		fmt.Fprintf(&source, "function semantic_case_%d(): i32 {\n%s\n%s\n", i, semanticFixture, tc.change)
 		source.WriteString(`
 var before = ssa.print_func(graph);
-var checked = ssasem.analyze(ssasem.Func { graph: graph, values: types, params: params, result: result, records: records, calls: calls });
+var checked = ssasem.analyze(ssasem.Func { graph: graph, values: types, params: params, result: result, records: records, enums: enums, calls: calls });
 if (checked.ok != (checked.why == "") || checked.flow.ok != checked.ok) { return 2; }
 if (before != ssa.print_func(graph)) { return 3; }
 if (!checked.ok && (checked.dependencies.len() != 0 || checked.flow.live_in.len() != 0 || checked.flow.live_out.len() != 0)) { return 4; }
