@@ -72062,7 +72062,7 @@ function fd_passes_fn_array_elem(fd: parser.FuncDecl, mfuncs: MFuncs): boolean {
                             match (c.args[ai]) {
                                 ast.ExprIdent(aid) => {
                                     if (util.index_of_str(names, aid.name) >= 0
-                                            && (lift_callee_param_is_fn(mfuncs, cid.name, ai) || lift_local_fn_param_is_fn(fd, cid.name, ai))) { return true; }
+                                            && (lift_callee_param_is_fn(mfuncs, cid.name, ai) || lift_binding_param_is_fn(fd, cid.name, ai, mfuncs))) { return true; }
                                 },
                                 _ => {}
                             }
@@ -72285,38 +72285,63 @@ function no_expr_bool(e: ast.Expr, acc: boolean): boolean { return acc; }
 // param `idx` is fn-typed (coarse type_name "fn"). The lift-pass mirror of
 // LowerState.callee_param_is_fn / asmcore.callee_param_is_fn, reading the module
 // funcs directly (no fn_param_sigs registry available at lift time).
-// lift_local_fn_param_is_fn is lift_callee_param_is_fn for a NESTED local
-// function — `function helper(f: (i32) => i32): i32 { … }` declared inside
-// another function's body, which the parser represents as a `var helper =
-// <lambda>` binding.
-//
-// The module-function lookup cannot see one: hoist_local_funcs_module only
-// rewrites bodies containing a SELF-RECURSIVE local, so a plain nested function
-// stays a statement and never reaches `mfuncs`. The lift therefore judged a
-// fn-value argument to it as "callee param is not fn-typed" and passed the value
-// RAW. The callee dispatches env-first — it reads slot 0 of what it assumes is a
-// [funcval, caps…] box — so it dereferenced a bare code address and the program
-// segfaulted with no diagnostic at all (#6341). Binding the same value to a
-// local first happened to work, because that path boxes it.
-function lift_local_fn_param_is_fn(fd: parser.FuncDecl, callee: string, idx: i32): boolean {
-    var i: i32 = 0;
-    while (i < fd.body.len()) {
-        match (fd.body[i]) {
-            ast.StmtVar(v) => {
-                if (v.name == callee) {
-                    match (v.init) {
-                        ast.ExprLambda(lm) => {
-                            if (idx < lm.params.len() && lm.params[idx].type_name == "fn") { return true; }
-                        },
-                        _ => {}
-                    }
-                }
-            },
-            _ => {}
-        }
-        i = i + 1;
+// lift_binding_param_is_fn is lift_callee_param_is_fn for a callee that is a
+// BINDING of this function rather than a module function: a nested local
+// function (`var helper = <lambda>`, #6341), a fn-typed parameter, a local
+// annotated with a fn type, or a local initialised from a module function or
+// another such binding (`var withRes = taker;`). The signature is read from
+// wherever the binding declares it — the lambda's own params, the sidecars, or
+// the function the initialiser names — never from a module function that only
+// shares the binding's name: a fn-value argument the callee dispatches env-first
+// has to arrive boxed, and a bare code address there is a segfault with no
+// diagnostic.
+function lift_binding_param_is_fn(fd: parser.FuncDecl, callee: string, idx: i32, mfuncs: MFuncs): boolean {
+    return binding_param_is_fn(fd, callee, idx, mfuncs, 0);
+}
+
+function binding_param_is_fn(fd: parser.FuncDecl, callee: string, idx: i32, mfuncs: MFuncs, depth: i32): boolean {
+    for p in fd.params {
+        if (p.name == callee) { return p.type_name == "fn" && spelled_param_is_fn(p.fn_param_types, idx); }
+    }
+    var decls: ast.StmtVar[] = body_var_decls(fd.body, callee);
+    if (decls.len() == 0) { return false; }
+    return var_param_is_fn(decls[0], fd, idx, mfuncs, depth);
+}
+
+// var_param_is_fn answers for one `var` binding: its annotation when it has
+// one, else the lambda or the function its initialiser names. A chain of
+// aliases is followed a bounded number of steps.
+function var_param_is_fn(v: ast.StmtVar, fd: parser.FuncDecl, idx: i32, mfuncs: MFuncs, depth: i32): boolean {
+    var ann: ast.ParamDecl = decltypes.fn_param_from_var(v);
+    if (ann.type_name != "fn") { ann = fn_param_from_spelling(v.name, v.type_name); }
+    if (ann.type_name == "fn") { return spelled_param_is_fn(ann.fn_param_types, idx); }
+    match (v.init) {
+        ast.ExprLambda(lm) => { return idx < lm.params.len() && lm.params[idx].type_name == "fn"; },
+        ast.ExprIdent(src) => {
+            if (lift_callee_param_is_fn(mfuncs, src.name, idx)) { return true; }
+            return depth < 8 && binding_param_is_fn(fd, src.name, idx, mfuncs, depth + 1);
+        },
+        _ => { return false; }
     }
     return false;
+}
+
+// spelled_param_is_fn: the idx-th spelling of a comma-separated parameter list
+// is itself a fn type.
+function spelled_param_is_fn(csv: string, idx: i32): boolean {
+    var parts: string[] = split_type_list(csv);
+    return idx < parts.len() && fn_param_from_spelling("", parts[idx]).type_name == "fn";
+}
+
+// body_var_decls collects every `var` in body, at any nesting depth, that binds name.
+function body_var_decls(body: ast.Stmt[], name: string): ast.StmtVar[] {
+    function var_named_at(st: ast.Stmt, acc: ast.StmtVar[]): ast.StmtVar[] {
+        if let ast.StmtVar(v) = st { if (v.name == name) { return acc.append(v); } }
+        return acc;
+    }
+    var out: ast.StmtVar[] = [];
+    for st in body { out = astwalk.fold_stmt_spine(st, out, var_named_at); }
+    return out;
 }
 
 // MFuncs is the module function table plus a name index over it. The
@@ -73373,7 +73398,7 @@ function ilc_expr_at(e: ast.Expr, acc: InlineCloAcc, fd: parser.FuncDecl, gfns: 
                     // module to AST (slice 5b; bare/non-capturing already worked).
                     var vfr: InlineCloRes = try_fn_field_value(call.args[ai], fd, fs, ct, gfns, mfuncs, structs);
                     fs = vfr.funcs; ct = vfr.counter; nargs = nargs.append(vfr.expr);
-                } else if (!is_mkclo && cnm.len() > 0 && (lift_callee_param_is_fn(mfuncs, cnm, ai) || lift_local_fn_param_is_fn(fd, cnm, ai))) {
+                } else if (!is_mkclo && cnm.len() > 0 && (lift_callee_param_is_fn(mfuncs, cnm, ai) || lift_binding_param_is_fn(fd, cnm, ai, mfuncs))) {
                     var fr: InlineCloRes = try_fn_field_value(call.args[ai], fd, fs, ct, gfns, mfuncs, structs);
                     fs = fr.funcs; ct = fr.counter; nargs = nargs.append(fr.expr);
                 } else if (!is_mkclo && cnm.len() > 0 && expr_is_array_lit(call.args[ai])
