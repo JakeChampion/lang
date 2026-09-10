@@ -5,36 +5,39 @@ import (
 	"testing"
 )
 
-// --- A counted-share holder handed whole to a call keeps its box-only release -
+// --- A holder handed whole to a call, and a closure array's clone -----------
 //
 // `var result: M = M { items: mod.items, funcs: fresh }` takes a counted share
 // of `mod.items`, and the bind-site flip (mark_enum_arr_share) then grants the
-// holder its deep drop. That drop walks `result.funcs`, a fresh buffer whose
-// element boxes came out of another array by an element read — a move, no
-// count — and the callee `rebuild(result)` hands them back inside its own
-// result. The walk freed them under that result: every generation-2 self-host
-// binary died in fn_sigs_for_borrow reading a FuncDecl body (#9016). The flip
-// now leaves the holder box-only when a call keeps it (handed_to_kept_call).
+// holder its deep drop. That drop walks `result.funcs`, whose element boxes
+// `rebuild(result)` hands back inside its own result: appended uncounted,
+// every generation-2 self-host binary died in fn_sigs_for_borrow reading a
+// FuncDecl body (#9016). The store of a handed-back borrow is counted now
+// (#9021's append-handback), so the deep drop is sound; the two holder rows
+// keep the shape running under the sanitizer, directly and through an alias.
 //
-// The second case is the value-form `.with` / `.append` on a closure-element
-// array: the clone retained its elements through __fern_arr_inc_elems, and a
-// closure element is a code address, not an rc-headed box (#9017).
+// The other two rows are the value-form `.with` / `.append` on a
+// closure-element array: the clone retained its elements through
+// __fern_arr_inc_elems, and a closure element is a code address, not an
+// rc-headed box (#9017). The local's slot is refused by arr_expr_counted_elems;
+// a struct field of that type is spelled `fn[]`, which
+// is_counted_elem_array_type refuses.
 //
-// Both are pinned by the exit code against the interpreter and by the
+// All four are pinned by the exit code against the interpreter and by the
 // sanitizer staying silent: a use-after-free or an over-release is a
 // `fern-sanitizer:` line and exit 124, and the interpreter never reaches
-// either. A leak line is not a finding here: the holder's box-only release is
-// the sound role, and what it leaves behind is the price of the alias.
+// either. A leak line is not a finding here.
 
 type keptCallHolderCase struct {
 	name string
-	// fn is the function whose emitted asm must not carry `absent`.
+	// fn is the function whose emitted asm must not carry `absent`; an empty
+	// `absent` pins nothing on the emit.
 	fn, absent string
 	src        string
 }
 
 var keptCallHolderCases = []keptCallHolderCase{
-	{"kept_call_holder", "lift", "__struct_drop_M", `enum E { A(i32), B }
+	{"kept_call_holder", "lift", "", `enum E { A(i32), B }
 struct F { body: E[], n: i32 }
 struct M { funcs: F[], items: E[], k: i32 }
 function touch(f: F): F { if (f.n < 0) { return F { body: [], n: 0 }; } return f; }
@@ -72,7 +75,7 @@ function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 50) { t = t + 
 `},
 	// The holder handed on through an alias: `var alias = result` is the same
 	// box, so `infer(alias)` keeps it exactly as `infer(result)` would.
-	{"kept_call_alias", "lift", "__struct_drop_M", `enum E { A(i32), B }
+	{"kept_call_alias", "lift", "", `enum E { A(i32), B }
 struct F { body: E[], n: i32 }
 struct M { funcs: F[], items: E[], k: i32 }
 function touch(f: F): F { if (f.n < 0) { return F { body: [], n: 0 }; } return f; }
@@ -100,8 +103,8 @@ function round(i: i32): i32 {
 }
 function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 50) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }
 `},
-	// The same closure array reached through a struct field, whose declared
-	// type is the flat "fn[]" spelling that is_enum_array_field_type admits.
+	// The closure array reached through a struct field, whose declared type is
+	// the flat "fn[]" spelling that is_enum_array_field_type admits.
 	// The elements are read into locals before the call: a call through an
 	// indexed element is not IR-eligible.
 	{"closure_field_with", "round", "__fern_arr_inc_elems", `struct H { hs: ((i32) => i32)[], n: i32 }
@@ -147,8 +150,8 @@ func emittedFn(t *testing.T, asm, fn string) string {
 	return body
 }
 
-// The x86-64 leg pins the emit and runs the result: the named function must
-// not carry the release or the retain the bug emitted, and the exit is the
+// The x86-64 leg pins the emit where a row asks and runs the result: the named
+// function must not carry the retain the bug emitted, and the exit is the
 // interpreter's under the sanitizer, which stays silent.
 func TestSelfHostKeptCallHolderX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
@@ -165,7 +168,7 @@ func TestSelfHostKeptCallHolderX86_64(t *testing.T) {
 			if len(asm) == 0 {
 				t.Fatal("self-host compiler emitted 0 bytes")
 			}
-			if n := strings.Count(emittedFn(t, string(asm), tc.fn), tc.absent); n != 0 {
+			if n := strings.Count(emittedFn(t, string(asm), tc.fn), tc.absent); tc.absent != "" && n != 0 {
 				t.Errorf("%s: %s carries %d call(s) of %s, want none", tc.name, tc.fn, n, tc.absent)
 			}
 			bin := buildBin(t, gcc, dir, "kch_"+tc.name, string(asm))
