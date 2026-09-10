@@ -17,8 +17,8 @@ name: Bootstrap
 #
 # Two jobs, two triggers:
 #
-#   verify   pull_request — `make bootstrap` against the CURRENT pin, on both
-#            Linux hosts. No Go setup, on purpose: a step that quietly needed
+#   verify   pull request / push to main, via ci.yml — `make bootstrap`
+#            against the CURRENT pin, on both Linux hosts. No Go setup, on purpose: a step that quietly needed
 #            it would defeat what the job proves. Runs when the compiler's
 #            source, the stdlib it compiles against, or the bootstrap itself
 #            changes. Red means either the current source uses something the
@@ -43,53 +43,20 @@ name: Bootstrap
 # clone forever. The lock's sha256 is of the UNCOMPRESSED binary, so what is
 # verified is the thing that runs, not the container.
 
+# Called from ci.yml rather than triggered: that is the one workflow a pull
+# request or a push to main launches. It holds the PR-wide lock (one pull
+# request's suite at a time), decides from the changed files whether this lane
+# runs — the lane's path filter lives in its lane table — and cancels the rest
+# of the run when a lane goes red. `workflow_dispatch` stays so the lane can
+# be run on its own, outside that lock.
 on:
-  pull_request:
-    paths:
-      - "bootstrap/**"
-      - "examples/self_host/**"
-      - "internal/stdlib/**"
-      - "Makefile"
-      - ".github/workflows/bootstrap.yml"
-  # Also on main: a rebase-merge replays commits onto a main their PR's CI never
-  # saw, so a coupling between two individually-green PRs exists only in the
-  # merge. Filter mirrors the pull_request one; pinned by TestGateLanesRunOnMain.
-  push:
-    branches: [main]
-    paths:
-      - "bootstrap/**"
-      - "examples/self_host/**"
-      - "internal/stdlib/**"
-      - "Makefile"
-      - ".github/workflows/bootstrap.yml"
+  workflow_call:
   workflow_dispatch:
     inputs:
       publish:
         description: "Build a fresh stage0 on all three hosts and publish it as a stage0-<date>-<sha7> release"
         type: boolean
         default: false
-
-# main never cancels its own in-flight run, and gets one concurrency group
-# rather than one per SHA: a SHA-keyed group supersedes nothing, so a burst of
-# back-to-back rebase-merges holds an uncancellable run each and buries every
-# open PR's checks behind it (#8124). One group coalesces the burst to its
-# newest commit, at the cost of a red main naming a span of merges.
-#
-# A publish gets its OWN group rather than sharing the ref's. GitHub keeps one
-# PENDING run per group, so a publish waiting for a runner is displaced by the
-# next verify run the ref takes — and `cancel-in-progress: false` does not save
-# it, since that only protects a run already executing. The publish path is
-# where that hurts most: it is 40 minutes across three hosts and ends in a
-# release, and it is dispatched exactly when the ref is busy, because a pin
-# refresh is needed when the sources moved.
-#
-# Separating the GROUP is what fixes that, so cancellation stays plain `true`
-# on both: a ref's verify runs reap their own superseded siblings, as every
-# main lane must, and a later publish supersedes an earlier one — which is
-# what a second dispatch means anyway, since both would tag the same release.
-concurrency:
-  group: ${{ github.workflow }}-${{ (github.event_name == 'workflow_dispatch' && 'publish') || github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 permissions:
   contents: read
@@ -139,6 +106,13 @@ jobs:
 
   publish:
     if: github.event_name == 'workflow_dispatch' && inputs.publish
+    # A later publish supersedes an earlier one — both would tag the same
+    # release. Job-level, per host: a workflow-level group is not this lane's
+    # to hold (ci.yml owns it when this lane is called), and one group across
+    # the matrix would make the three hosts cancel each other.
+    concurrency:
+      group: bootstrap-publish-${{ matrix.host }}
+      cancel-in-progress: true
     strategy:
       fail-fast: false
       matrix:
@@ -183,6 +157,9 @@ jobs:
 
   release:
     needs: publish
+    concurrency:
+      group: bootstrap-release
+      cancel-in-progress: true
     runs-on: ubuntu-latest
     permissions:
       contents: write

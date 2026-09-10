@@ -6,15 +6,20 @@ compiler bugs shipped past three heavyweight green gates in a row.
 This document is about *which* lanes carry signal for *which* kind of
 change, and — more usefully — which ones look authoritative and are not.
 
-Every lane runs on the pull request AND on the merge to main, with the same
-path filter on both, pinned by `TestGateLanesRunOnMain` (`internal/sourcelint`).
-The second half matters because PRs here are rebase-merged: each commit lands on
-a main its own CI never saw, so a coupling between two individually-green PRs
-exists only in the combination. Main runs key their concurrency group on the ref
-like every other run, but exempt themselves from `cancel-in-progress`, so
-back-to-back merges queue instead of superseding each other and a failure names
-the merge that caused it. Keying main on `github.sha` gives each merge its own
-group and an uncancellable run ahead of every open PR (#8124), which
+Every lane runs on the pull request AND on the merge to main, under the same
+path filter: `.github/workflows/ci.yml` is the one workflow either event
+launches, every lane is a `workflow_call` it calls, and its lane table is the
+single filter both events read (`TestGateLanesRunOnMain`,
+`internal/sourcelint`). The second half matters because PRs here are
+rebase-merged: each commit lands on a main its own CI never saw, so a coupling
+between two individually-green PRs exists only in the combination.
+
+Pull requests take one queue (`pr-ci`, `queue: max`, first in first out): at
+most one PR's suite runs at a time and its lanes run in parallel inside that
+run. Main runs take their own (`ci-main`), keyed on the ref and never
+cancelled, so every merge gets a full, attributable run and a burst queues
+rather than losing one. Keying main on `github.sha` would give each merge its
+own group and an uncancellable run ahead of every open PR (#8124), which
 `TestGateLanesRunOnMain` (`internal/sourcelint/pr_workflow_filters_test.go`)
 rejects.
 

@@ -1,0 +1,8 @@
+# actionlint's schema has no `concurrency.queue` yet (GitHub added the key in
+# May 2026; actionlint 1.7.12 still rejects it). ci.yml needs `queue: max` for
+# the PR queue, so that one message is ignored for that one file. Delete this
+# once the pinned actionlint accepts the key.
+paths:
+  .github/workflows/ci.yml:
+    ignore:
+      - '^unexpected key "queue" for "concurrency" section'

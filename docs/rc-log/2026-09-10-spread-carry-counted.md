@@ -58,12 +58,24 @@ exits 91 (the caller's `s.names.len()` is no longer 3); native is right.
 The base copy retains every un-overridden array field it carries, on both the
 per-field path and the `op_struct_copy` compact path, so an append through the
 copy finds the buffer shared and un-shares it instead of growing the base's.
-The one exception is the self-rebind spread `o = T { ...o, … }`: its successor
-replaces the base in the same slot and the reclaim's cow-skip hands the base's
-single count to the successor (#6653), so the carry stays uncounted there and
-only there (`base_is_selfrebind`).
 
-What the copy may then release DEEP is a second question, and the first
+The consume-rebind's `__field_reclaim_<T>` then has to pair that count, and
+its cow arm could not: it skipped a field pointer-equal in the old and new
+boxes on the premise that equality means the count moved. With the carry
+counted, equality can also mean two counted holders — the callee's
+`Block { ...b, n: 0 }` handed back through `out = flush_fresh(out)` stranded
+one buffer per flush (`TestSelfHostTupleHandbackReclaimX86_64`, 4 → 10
+blocks over 200 → 2000 rounds). The helper already draws the right line for
+the nested-struct and enum carries the base copy has always retained: the
+`uniq` arm releases a pointer-equal field unless it is unique, in which case
+no inc was taken (an in-place move, #6653's suppressed retain) and the
+pointers coincide for that reason. Every array kind now takes that arm, on all
+three backends (`asmcore.field_reclaim_field_ops` for x86-64 and arm64,
+`emit_wasm_field_reclaim_body` for wasm), and the self-rebind spread
+`o = T { ...o, … }` retains its carries like any other: the old box's count
+is given back by the reclaim rather than handed over by a skip.
+
+What the copy may release DEEP is a separate question, and the first
 attempt got it wrong by answering "everything retained". The runtime's
 un-share copy (`__fern_arr_push` on an rc ≥ 2 receiver) copies a pointer-element
 buffer with its children unsecured — the open pointer-element contract of
@@ -87,15 +99,6 @@ like the return-side predicate already did; that needs the string-field routing
 registry, so `sfok` is threaded through the 35 predicates between
 `reclaimable_names_of` / `return_fresh_struct_ret_fns_of` and it.
 
-The `spread_sites` refusals (`*_share_holder_respread`) and the derived-local
-box-only demotion were written against the uncounted carry. They stay: the
-self-rebind spread still carries uncounted, and a refusal is a leak, never a
-free. Their comments now say which spread they are about.
-
-`own_array_spread_refused_reuse` (own-param release) moves from an exact 300
-frees to balanced 700/700 at live 0: the result now holds its own count of
-`xs`, so the param's release stays deep and the result's drop pairs with it.
-
 The counted carry also retires two demotions that were written against the
 uncounted one, or the base's own count leaks instead. The fixture
 `alloc_flat_struct_self_update` caught it (`fork_base`: `var b = Buf { ...a, … }`
@@ -109,6 +112,16 @@ the derivation, which also requires every override reading the base to be
 scalar-typed); `recv_borrow_fns_of` takes `sfok` for that. All five shapes of
 the fixture census at allocs == frees, live 0.
 
+The `spread_sites` refusals (`*_share_holder_respread`) were written against
+the uncounted array carry and are conservative now: a refusal is a leak, never
+a free, and lifting them is its own measurement. Their comments say what they
+are about.
+
+`own_array_spread_refused_reuse` (own-param release) moves from an exact 300
+frees to balanced 700/700 at live 0: the result now holds its own count of
+`xs`, so the param's release stays deep and the result's drop pairs with it.
+`call_result_spread_again` moves from 600 to 700 frees for the same reason.
+
 ## Next lead
 
 Securing element children on the un-share copy (and releasing them on the last
@@ -121,6 +134,8 @@ contract, not this change.
 - `TestSelfHostAliasReassignReclaimIRX86_64/spread-carry-owned`: the program
   above, 91 → 0, with `__rc_underflow()` checked.
 - `TestSelfHostPerModuleEmitAllFixpointX86_64`: the failing gate, green.
+- `TestSelfHostTupleHandbackReclaimX86_64` and `alloc_flat_struct_self_update`
+  on all three self-host legs, flat again.
 - The targeted reclaim / reuse / own-param / field-append suites, plus the
   four #8982 re-pins (`two_declarations`, `binder_shadows_array`,
   `self-assign-shadowed-by-var`, `local-root-shadowed-name-grows`).

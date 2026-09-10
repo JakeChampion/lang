@@ -406,24 +406,11 @@ func envValue(t *testing.T, src, key string) string {
 // records its absence (#8474).
 func TestMacOSLaneFilterCoversWhatTheLaneBuilds(t *testing.T) {
 	root := mustRepoRoot(t)
-	src := readWorkflow(t, root, "macos.yml")
-	on, ok := onBlock(src)
-	if !ok {
-		t.Fatal("macos.yml has no `on:` block")
+	// One list, read by both events: the lane table in ci.yml.
+	entries := pathFilterEntries(t, "macos.yml")
+	if len(entries) == 0 {
+		t.Fatal("macos.yml has no `paths` filter in ci.yml's lane table — this gate assumes one")
 	}
-
-	// The pull_request and push filters must be the same list: a lane that
-	// gates a PR on one set and main on another reports different things
-	// about the same commit.
-	blocks := pathsBlocks(on)
-	if len(blocks) != 2 {
-		t.Fatalf("expected exactly two `paths:` filters (pull_request + push), found %d", len(blocks))
-	}
-	if strings.Join(blocks[0], "\n") != strings.Join(blocks[1], "\n") {
-		t.Errorf("macos.yml's pull_request and push path filters differ:\n  pull_request: %v\n  push:         %v",
-			blocks[0], blocks[1])
-	}
-	entries := blocks[0]
 
 	// Every entry must match something on disk. This is what catches an entry
 	// left behind by a deletion, which matches nothing and says nothing.
@@ -446,38 +433,6 @@ func TestMacOSLaneFilterCoversWhatTheLaneBuilds(t *testing.T) {
 	}
 }
 
-// pathsBlocks returns each `paths:` list in the `on:` block, as its quoted
-// entries in order.
-func pathsBlocks(on string) [][]string {
-	var out [][]string
-	var cur []string
-	in := false
-	entry := regexp.MustCompile(`^\s*-\s*"([^"]*)"\s*$`)
-	for _, line := range strings.Split(on, "\n") {
-		trimmed := strings.TrimSpace(line)
-		switch {
-		case trimmed == "paths:":
-			if in {
-				out = append(out, cur)
-			}
-			in, cur = true, nil
-		case !in:
-			// nothing
-		case trimmed == "" || strings.HasPrefix(trimmed, "#"):
-			// blank lines and comments stay inside the list
-		case entry.MatchString(line):
-			cur = append(cur, entry.FindStringSubmatch(line)[1])
-		default:
-			out = append(out, cur)
-			in, cur = false, nil
-		}
-	}
-	if in {
-		out = append(out, cur)
-	}
-	return out
-}
-
 // pathFilterSelects applies GitHub's `paths:` semantics to one path: the last
 // matching pattern wins, and a `!` pattern excludes.
 func pathFilterSelects(entries []string, path string) bool {
@@ -492,26 +447,74 @@ func pathFilterSelects(entries []string, path string) bool {
 	return selected
 }
 
-// globMatches implements the subset of GitHub's filter-pattern syntax the
-// macOS lane uses: `**` crosses `/`, `*` does not.
+// globMatches implements GitHub's filter-pattern grammar, the same way the
+// `changes` job in ci.yml does: `**` crosses `/`, `*` does not, `?` and `+`
+// quantify the character or class before them, `[…]` is a class.
 func globMatches(pattern, path string) bool {
 	var b strings.Builder
 	b.WriteString("^")
+	atom := false
 	for i := 0; i < len(pattern); i++ {
+		c := pattern[i]
 		switch {
 		case strings.HasPrefix(pattern[i:], "**"):
 			b.WriteString(".*")
 			i++
-		case pattern[i] == '*':
+			atom = false
+		case c == '*':
 			b.WriteString("[^/]*")
-		case pattern[i] == '?':
-			b.WriteString("[^/]")
+			atom = false
+		case (c == '?' || c == '+') && atom:
+			b.WriteByte(c)
+			atom = false
+		case c == '[' && strings.IndexByte(pattern[i:], ']') > 0:
+			j := i + strings.IndexByte(pattern[i:], ']')
+			b.WriteString(pattern[i : j+1])
+			i = j
+			atom = true
 		default:
 			b.WriteString(regexp.QuoteMeta(pattern[i : i+1]))
+			atom = true
 		}
 	}
 	b.WriteString("$")
 	return regexp.MustCompile(b.String()).MatchString(path)
+}
+
+// The grammar has two copies — globMatches here and `compile` in ci.yml's
+// `changes` job — and the lane filters in use exercise only `*`, `**` and
+// literals, so the other arms would drift from GitHub's documented meaning,
+// and from each other, with nothing failing. tools/ci-changes-selftest.mjs
+// runs the same cases against the JS copy, from the lint lane.
+func TestGlobMatchesFollowsGitHubGrammar(t *testing.T) {
+	for _, c := range []struct {
+		pattern, path string
+		want          bool
+	}{
+		// `?`: zero or one of the character before it.
+		{"src/x?.txt", "src/.txt", true},
+		{"src/x?.txt", "src/x.txt", true},
+		{"src/x?.txt", "src/xx.txt", false},
+		// `+`: one or more of the character before it.
+		{"a+b.txt", "aab.txt", true},
+		{"a+b.txt", "b.txt", false},
+		// A class quantifies too.
+		{"[ab]+.go", "abba.go", true},
+		{"[ab]x.go", "cx.go", false},
+		// A quantifier with nothing before it is literal, as is an unclosed class.
+		{"?x", "?x", true},
+		{"+x", "+x", true},
+		{"[a", "[a", true},
+		// `*` stops at `/`, `**` does not, `.` is literal.
+		{"*.md", "README.md", true},
+		{"*.md", "docs/a.md", false},
+		{"docs/**", "docs/a/b.md", true},
+		{"a.b", "axb", false},
+	} {
+		if got := globMatches(c.pattern, c.path); got != c.want {
+			t.Errorf("globMatches(%q, %q) = %v, want %v", c.pattern, c.path, got, c.want)
+		}
+	}
 }
 
 func pathPatternMatchesSomething(t *testing.T, root, pattern string) bool {

@@ -21,12 +21,17 @@ import (
 //   - every internal package a lane's binary is built from must be covered,
 //     so narrowing a filter back to an enumeration cannot silently drop one.
 
-// pathFilterEntries returns the `paths:` / `paths-ignore:` globs inside a
-// workflow's top-level `on:` mapping. Only those two keys are read: a
-// `workflows:` list names other workflows and a `branches:` list names refs,
-// neither of which is a path.
+// pathFilterEntries returns a workflow's `paths:` / `paths-ignore:` globs. For
+// a lane ci.yml calls that is its row of the lane table, keyed by the lane's
+// filename; for anything else it is the globs inside the workflow's own
+// top-level `on:` mapping. Only those two keys are read: a `workflows:` list
+// names other workflows and a `branches:` list names refs, neither of which is
+// a path.
 func pathFilterEntries(t *testing.T, workflow string) []string {
 	t.Helper()
+	if f, ok := laneTable(t)[strings.TrimSuffix(workflow, ".yml")]; ok {
+		return append(append([]string(nil), f.Paths...), f.PathsIgnore...)
+	}
 	b, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", workflow))
 	if err != nil {
 		t.Fatalf("read %s: %v", workflow, err)

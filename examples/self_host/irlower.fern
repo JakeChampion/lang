@@ -709,11 +709,10 @@ pub struct LowerFrame {
     // dead_alias_of) — arr_dead_alias_bind's pure half. Threaded read-only.
     dead_alias_ok: string[],
     // spread_sites: this function's base-spread rows (spread_sites_of). A
-    // self-rebind `base = T { ...base }` copies its array fields into the successor
-    // box with NO inc (the successor takes over the base's count), so a counted
-    // field share of a type it copies would sit behind one release too many. Seeded
-    // once per function because the share is decided mid-expression, with no body
-    // in reach.
+    // `T { ...base }` copies a tuple, map, option, closure or unrouted string
+    // field into the new box with NO inc, so a counted field share of a type it
+    // copies would sit behind one release too many. Seeded once per function
+    // because the share is decided mid-expression, with no body in reach.
     spread_sites: string[],
     type_params: string[],
     // Source facts shared with counted-container return inference. These name
@@ -5004,11 +5003,12 @@ function enum_arr_field_share_read(fv: ast.Expr, cfft: string, s: LowerState): s
     if (is_leaksafe_array_field(cfft)) { return ""; }
     if (is_struct_array_field_type(s.frame.structs, cfft)) { return ""; }
     // A `T { ...base }` anywhere in this function that copies a field of this very
-    // type mints a THIRD owner with no inc, and both this share's rc-gated walks
-    // then run against a count of two. The census reads that as a flat 700 allocs /
-    // 700 frees while __rc_underflow_count fires — the same precondition the
-    // arrstruct and arrenum credits gate on, asked by field type because the base
-    // may name a local with no slot yet.
+    // type minted a THIRD owner with no inc before the base copy retained its
+    // array carries, and both this share's rc-gated walks then ran against a
+    // count of two (a flat 700 allocs / 700 frees while __rc_underflow_count
+    // fired). The gate predates the counted carry and stays as a refusal of the
+    // credit, asked by field type because the base may name a local with no slot
+    // yet.
     if (util.index_of_str(s.frame.spread_sites, "FT:" + cfft) >= 0) { return ""; }
     match (fv) {
         ast.ExprFieldAccess(fa) => {
@@ -16265,27 +16265,16 @@ function lower_expr_struct_lit(slit: ast.ExprStructLit, s: LowerState): LowerSta
     // one, balancing the __field_reclaim / __struct_drop k_str decs.
     var slit_reclaim: boolean = s.struct_routes_field_reclaim(slit.type_name);
     // #6653: `o = S { …, ys: o.ys, … }`. The successor box is going into
-    // the slot `o` names, and __field_reclaim_'s ARRAY arm cow-SKIPS a
-    // field that is pointer-equal in old and new — so nothing ever decs
-    // a retain taken here, and one buffer per call is stranded. The
-    // `...o` spelling has always been exactly balanced for the same
-    // reason read the other way: its base-copy path emits no inc for an
-    // array field either. Consumed below, then cleared off `sm` at once
-    // so a NESTED literal in a field value keeps its own retain.
+    // the slot `o` names, and __field_reclaim_'s array arm skips a field
+    // that is pointer-equal in old and new when the buffer is unique — so
+    // a retain taken here would have no dec, and one buffer per call would
+    // be stranded; the read takes none. (The `...o` spelling retains its
+    // carry and the reclaim gives the old box's count back, since the
+    // shared buffer is then not unique.) Consumed below, then cleared off
+    // `sm` at once so a NESTED literal in a field value keeps its own
+    // retain.
     var slit_selfrebind: string = s.selfrebind;
     var sm: LowerState = s.with_selfrebind("");
-    // base_is_selfrebind: the literal is `srb = T { ...srb, … }`. Its successor
-    // replaces the base in the slot the base occupies, and the consume-rebind's
-    // __field_reclaim_<T> cow-skips a carried field that is pointer-equal in the
-    // old and new boxes, so the base's one count moves with the field: the array
-    // carry below takes no retain here, and only here.
-    var base_is_selfrebind: boolean = false;
-    if (slit.has_base && slit_selfrebind.len() > 0) {
-        match (slit.base) {
-            ast.ExprIdent(bid) => { base_is_selfrebind = bid.name == slit_selfrebind; },
-            _ => {}
-        }
-    }
     // COMPACT functional-update lowering (#4650): when the struct's fields all
     // copy with no per-field rc-inc (struct_copy_eligible), the N unchanged
     // fields are copied by ONE op_struct_copy(base) instead of N inline
@@ -16313,18 +16302,16 @@ function lower_expr_struct_lit(slit: ast.ExprStructLit, s: LowerState): LowerSta
         // The copy carries every un-overridden ARRAY field counted (see the
         // per-field path below for why); op_struct_copy is a raw word copy, so
         // the retains are taken off the result box here.
-        if (!base_is_selfrebind) {
-            var ci: i32 = 0;
-            while (ci < ndecl) {
-                if (util.index_of_str(slit.field_names, decl_field_name_at(s.frame.structs, slit.type_name, ci)) < 0
-                        && field_type_is_array(decl_field_type_at(s.frame.structs, slit.type_name, ci))) {
-                    sm = sm.emit(ir.op_load_local(result_slot));
-                    sm = sm.emit(ir.op_struct_get(ci, struct_field_width(s.frame.structs, slit.type_name, ci)));
-                    sm = sm.retain_tos("base-copy-arr-field");
-                    sm = sm.emit(ir.op_drop());
-                }
-                ci = ci + 1;
+        var ci: i32 = 0;
+        while (ci < ndecl) {
+            if (util.index_of_str(slit.field_names, decl_field_name_at(s.frame.structs, slit.type_name, ci)) < 0
+                    && field_type_is_array(decl_field_type_at(s.frame.structs, slit.type_name, ci))) {
+                sm = sm.emit(ir.op_load_local(result_slot));
+                sm = sm.emit(ir.op_struct_get(ci, struct_field_width(s.frame.structs, slit.type_name, ci)));
+                sm = sm.retain_tos("base-copy-arr-field");
+                sm = sm.emit(ir.op_drop());
             }
+            ci = ci + 1;
         }
     } else if (slit.has_base && !base_is_ident) {
         var bscratch: string = "$fub" + util.i32_to_string(sm.locals.len());
@@ -16804,10 +16791,11 @@ function lower_expr_struct_lit(slit: ast.ExprStructLit, s: LowerState): LowerSta
             // its fields — a receiver-field append moves the buffer out of it and
             // pushes in place, the consume-rebind reclaim frees the fields it
             // replaced — and an uncounted carry made the base's buffer the one they
-            // touched (#8983). Whether the box may then release the field DEEP is
-            // spread_copy_field_counted's question. The self-rebind spread keeps the
-            // base's count instead (base_is_selfrebind).
-            if (field_type_is_array(cpft) && !base_is_selfrebind) {
+            // touched (#8983). __field_reclaim_<T> pairs the count the way it does
+            // the nested-struct one: a pointer-equal field is released unless it is
+            // unique. Whether the box may release the field DEEP is
+            // spread_copy_field_counted's question.
+            if (field_type_is_array(cpft)) {
                 sm = sm.retain_tos("base-copy-arr-field");
             }
             // A DIRECT enum field COPIED from the base (`R { ...base, other: v }`,
@@ -41257,10 +41245,6 @@ function stmt_unsafe_for_ret_ok(st: ast.Stmt, name: string, borrowable: string[]
 // override. The retain still stands (it is what keeps the append off the
 // base's buffer); the count it takes is released only with the base's.
 //
-// The self-rebind spread `p = T { ...p, … }` carries its arrays uncounted (the
-// successor takes over the base's count), which this predicate need not see:
-// the base box dies in the same rebind, so no second owner of the field is
-// minted.
 //
 // The string clause is not a detail: an unrouted string-fielded type spread as
 // a base mints an uncounted co-owner, and treating that as counted hands two
@@ -51285,11 +51269,10 @@ function arrstruct_counted_share_holders(stmts: ast.Stmt[], name: string, struct
 }
 
 // arrstruct_share_holder_respread: a holder that took a counted share of `name`
-// is itself used as a struct-literal BASE (`P { ...q, … }`). A self-rebind of the
-// holder carries the buffer pointer into the successor box with NO inc — the
-// design point expr_unsafe_for's ExprStructLit arm records — so a holder whose
-// box outlives that rebind leaves the buffer with three owners at rc 2, and the
-// first two sweeps to run free it between them.
+// is itself used as a struct-literal BASE (`P { ...q, … }`). The base copy now
+// retains the buffer it carries, so the third owner is counted; this gate
+// predates that and stays as a refusal of the credit, which costs a leak and
+// never a free.
 //
 // The share count being complete is the precondition of granting `name` its
 // rc-gated walk at all, so this is a gate on the credit rather than a
@@ -52440,12 +52423,10 @@ function arrenum_counted_field_share(e: ast.Expr, name: string, structs: StructT
 }
 
 // arrenum_counted_share_holders / arrenum_share_holder_respread: the same
-// precondition the struct sibling needs. A holder that took a counted share and is
-// then self-rebound through a struct-literal BASE copies the buffer pointer into
-// the successor box with NO inc, so three owners can sit at rc 2 and the first two
-// sweeps free it between them. The share count being complete is what the credit
-// rests on, so this is a gate on the credit rather than something the walk could
-// guard against.
+// precondition the struct sibling needs. The base copy now retains the buffer a
+// spread carries, so a holder used as a base mints a counted owner; the gate
+// predates that and stays as a refusal of the credit, which costs a leak and
+// never a free.
 function arrenum_counted_share_holders(stmts: ast.Stmt[], name: string, structs: StructTab, msites: string[], acc: string[], borrowable: string[]): string[] {
     var a: string[] = acc;
     for stmt in stmts {

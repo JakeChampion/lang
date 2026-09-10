@@ -16,68 +16,26 @@ name: Playground E2E
 #                        Bombadil found a counter-example to one of
 #                        our always-true invariants.
 #
-# All three jobs share the same path filter so unrelated edits don't
-# burn CI minutes. Daily schedule runs Bombadil with fresh random
-# seeds to catch drift Playwright wouldn't.
+# All three jobs share one path filter, in ci.yml's lane table, so
+# unrelated edits don't burn CI minutes. Daily schedule runs Bombadil
+# with fresh random seeds to catch drift Playwright wouldn't.
 
+# Called from ci.yml rather than triggered: that is the one workflow a pull
+# request or a push to main launches. It holds the PR-wide lock (one pull
+# request's suite at a time), decides from the changed files whether this lane
+# runs — the lane's path filter lives in its lane table — and cancels the rest
+# of the run when a lane goes red. `workflow_dispatch` stays so the lane can
+# be run on its own, outside that lock.
 on:
-  pull_request:
-    paths:
-      - "cmd/fern-wasm/**"
-      - "web/**"
-      # EVERY internal package, not an enumeration of the ones somebody
-      # thought mattered. The enumeration listed `internal/prelude/**`,
-      # gone since the injector was removed, and covered 13 of the 50+
-      # packages the wasm build actually links, so a change to any of the
-      # rest landed with this lane never firing (#8627). A prefix cannot
-      # go stale the way a list of leaves does.
-      - "internal/**"
-      # The lane installs its toolchain from the pins, so both change
-      # what it actually executes.
-      - "mise.toml"
-      - "mise.lock"
-      - "go.mod"
-      - ".github/workflows/playground-e2e.yml"
-  # Also on main: a rebase-merge replays commits onto a main their PR's CI never
-  # saw, so a coupling between two individually-green PRs exists only in the
-  # merge. Filter mirrors the pull_request one; pinned by TestGateLanesRunOnMain.
-  push:
-    branches: [main]
-    paths:
-      - "cmd/fern-wasm/**"
-      - "web/**"
-      - "internal/**"
-      - "mise.toml"
-      - "mise.lock"
-      - "go.mod"
-      - ".github/workflows/playground-e2e.yml"
+  workflow_call:
   workflow_dispatch:
   schedule:
     # Daily at 06:17 UTC. Off-the-hour timing avoids the noisy
-    # top-of-hour CI rush.
+    # top-of-hour CI rush. Outside the PR lock: it is nobody's pull request.
     - cron: "17 6 * * *"
 
 env:
   BOMBADIL_VERSION: "v0.5.0"
-
-# Supersede an in-flight run for the same ref: a new push to the
-# branch / PR (or a new dispatch) cancels the older run instead of
-# letting both sit in the queue. Keyed per-workflow + per-ref so
-# distinct PRs and the main branch never cancel each other.
-#
-# main is the one ref that never cancels: its run finishes and reports
-# even when the next merge lands mid-run. It gets ONE group, not one per
-# SHA. A SHA-keyed group supersedes nothing, so a burst of back-to-back
-# rebase-merges held an uncancellable run each — six of them stacked ~90
-# runs into the queue every open PR was waiting behind (#8124). With one
-# group GitHub keeps at most one main run executing and one pending,
-# cancelling the older pending, so a burst coalesces to its newest
-# commit. The cost is attribution: a red main names a span of merges
-# rather than one. check-sources.yml keeps the per-merge attribution —
-# one ~1-minute job can afford a slot per merge; this lane cannot.
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
 
 jobs:
   # The shim is the page's half of running a compiled program, and the

@@ -1,0 +1,604 @@
+name: CI
+
+# The one workflow a pull request launches, and the one that runs the gate
+# lanes on a push to main or a manual dispatch (check-sources.yml, pages.yml
+# and auto-rebase-prs.yml keep push triggers of their own, outside the lock).
+# Every lane under .github/workflows is a `workflow_call` this file calls, and
+# that is what lets ONE concurrency group serialise pull requests as
+# whole suites: at most one pull request has its CI running at a time, and the
+# lanes of that pull request run in parallel inside its run. Seventeen lanes
+# each holding their own per-ref group could only serialise lane-by-lane, with
+# one PR's units interleaving another PR's shards for the same pool.
+#
+# `queue: max` is what makes the group a queue rather than a slot. With the
+# default `queue: single` GitHub keeps ONE pending run per group and cancels
+# the previous pending one when another arrives, so the second PR to wait
+# behind a running suite would silently lose its CI to the third. `max` holds
+# up to 100 pending runs and starts them first-in-first-out
+# (github.blog/changelog/2026-05-07-github-actions-concurrency-groups-now-allow-larger-queues).
+# It cannot be combined with `cancel-in-progress: true`, so a newer push to a
+# pull request does not supersede its older run here; reap-stale-runs.yml
+# does that on the `synchronize` event instead, and cancel-on-merge.yml
+# drains a closed PR's queued run. actionlint predates the key:
+# .github/actionlint.yaml ignores that one message for this file.
+#
+# Three groups, one per trigger, so nothing unrelated waits behind the PR
+# queue: `pr-ci` for every pull request, `ci-main` for pushes to main (its
+# own FIFO, keyed on the ref rather than the SHA so a burst of rebase-merges
+# does not hold an uncancellable run each ahead of every PR — #8124), and a
+# per-run group for a dispatch, which is someone's deliberate run.
+#
+# The `changes` job stands in for the `paths:` / `paths-ignore:` filters the
+# lanes used to carry, because a called workflow has none: it lists the
+# changed files once and evaluates each lane's filter from the table below
+# with GitHub's own glob rules, so a lane runs for exactly the changes it ran
+# for before. A lane the filter turns off is a SKIPPED check rather than an
+# absent one. `lint` is the deliberate exception with no filter: a doc-only
+# PR still reports one real gate.
+#
+# The `reap-*` jobs are cancel-on-failure.yml, once per lane: when a lane
+# concludes failure on a pull request, the rest of this run is cancelled so
+# the lock passes to the next PR instead of finishing a suite that is already
+# not merging. Label the PR `ci-full` to keep the other lanes running. A
+# failed lane never blocks the queue: the run completes — red — and the next
+# pending run starts.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: >-
+    ${{ (github.event_name == 'pull_request' && 'pr-ci')
+     || (github.event_name == 'push' && format('ci-{0}', github.ref))
+     || format('ci-dispatch-{0}', github.run_id) }}
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  # Which lanes this change reaches. One API listing, no checkout; ~10 s.
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      lanes: ${{ steps.filter.outputs.lanes }}
+    steps:
+      - id: filter
+        uses: actions/github-script@v9
+        env:
+          # The lane table: the filter each lane ran under when it triggered
+          # itself. `paths` runs the lane when a changed file matches;
+          # `paths-ignore` runs it when a changed file matches nothing in the
+          # list. GitHub's filter grammar, evaluated in `filter`: `*` does not
+          # cross `/`, `**` does, `?` and `+` quantify the character before
+          # them, `[…]` is a character class, and a `!` entry negates the
+          # entries before it.
+          #
+          # The doc-only exclusion is deliberately narrow: `*.md` is root-level
+          # prose (README, CLAUDE.md), and the literate sources under
+          # examples/literate/*.fern.md — which ARE compiled — still trigger
+          # everything. docs/ holds no .fern.md and no test fixture.
+          #
+          # Every allowlist names this file, as each lane's used to name its
+          # own: an edit here changes what the lane runs under. `internal/**`
+          # rather than an enumeration of packages, because the enumerations
+          # drifted — listing a deleted package and missing 40+ live ones
+          # (#8474, #8627); TestWorkflowPathFiltersCoverEveryDependency holds
+          # each allowlist to the packages its lane is built from.
+          #
+          # internal/sourcelint reads this table (TestPRLanesShareOneDocOnlyFilter,
+          # TestWorkflowPathFiltersHaveNoDeadEntries, ...).
+          LANES: |
+            {
+              "test-units":            { "paths-ignore": ["docs/**", "*.md"] },
+              "test-e2e-x86_64":       { "paths-ignore": ["docs/**", "*.md"] },
+              "test-e2e-arm64":        { "paths-ignore": ["docs/**", "*.md"] },
+              "test-e2e-wasm":         { "paths-ignore": ["docs/**", "*.md"] },
+              "test-e2e-other":        { "paths-ignore": ["docs/**", "*.md"] },
+              "test-e2e-differential": { "paths-ignore": ["docs/**", "*.md"] },
+              "test-e2e-selfhost":     { "paths-ignore": ["docs/**", "*.md"] },
+              "test-fernsmith":        { "paths-ignore": ["docs/**", "*.md"] },
+              "fuzz-diff":             { "paths-ignore": ["docs/**", "*.md"] },
+              "examples":              { "paths-ignore": ["docs/**", "*.md"] },
+              "perf":                  { "paths-ignore": ["docs/**", "*.md"] },
+              "bootstrap": { "paths": [
+                "bootstrap/**",
+                "examples/self_host/**",
+                "internal/stdlib/**",
+                "Makefile",
+                ".github/workflows/bootstrap.yml",
+                ".github/workflows/ci.yml"
+              ] },
+              "macos": { "paths": [
+                "internal/**",
+                "cmd/fern/**",
+                "examples/**",
+                ".github/workflows/macos.yml",
+                ".github/workflows/ci.yml",
+                ".github/actions/**",
+                "mise.toml",
+                "mise.lock",
+                "go.mod"
+              ] },
+              "docs-build": { "paths": [
+                "cmd/fern-wasm/**",
+                "cmd/ferndoc/**",
+                "web/**",
+                "site/**",
+                "editors/vscode/syntaxes/**",
+                "internal/**",
+                "mise.toml",
+                "mise.lock",
+                "go.mod",
+                ".github/workflows/docs-build.yml",
+                ".github/workflows/ci.yml"
+              ] },
+              "playground-e2e": { "paths": [
+                "cmd/fern-wasm/**",
+                "web/**",
+                "internal/**",
+                "mise.toml",
+                "mise.lock",
+                "go.mod",
+                ".github/workflows/playground-e2e.yml",
+                ".github/workflows/ci.yml"
+              ] },
+              "vscode-extension": { "paths": [
+                "editors/vscode/**",
+                ".github/workflows/vscode-extension.yml",
+                ".github/workflows/ci.yml"
+              ] }
+            }
+        with:
+          script: |
+            // Without a parsable table the lane names are unknown, so this one
+            // failure cannot run everything: it fails loudly, and every filtered
+            // lane skips until the table is fixed. laneTable in
+            // internal/sourcelint rejects the same edit locally.
+            let lanes;
+            try {
+              lanes = JSON.parse(process.env.LANES);
+            } catch (e) {
+              core.setFailed(`the lane table is not valid JSON: ${e.message}`);
+              return;
+            }
+            const everything = Object.fromEntries(Object.keys(lanes).map((l) => [l, true]));
+            const { owner, repo } = context.repo;
+            try {
+
+              // A pull request is filtered on its whole diff against the base
+              // (what GitHub's own `paths:` reads); a push on `before..after`.
+              // Whenever the list cannot be trusted — no base commit, a diverged
+              // compare, the listing cap, an API error — every lane runs: the
+              // safe direction for a gate is to run.
+              let files = null;
+              let why = "";
+              try {
+                if (context.eventName === "pull_request") {
+                  const list = await github.paginate(github.rest.pulls.listFiles, {
+                    owner, repo, pull_number: context.payload.pull_request.number, per_page: 100,
+                  });
+                  if (list.length >= 3000) why = "the diff is past the 3000-file listing cap";
+                  else files = list;
+                } else if (context.eventName === "push") {
+                  const { before, after } = context.payload;
+                  if (!before || /^0+$/.test(before)) {
+                    why = "the push has no base commit";
+                  } else {
+                    let status = "";
+                    const list = await github.paginate(
+                      github.rest.repos.compareCommitsWithBasehead,
+                      { owner, repo, basehead: `${before}...${after}`, per_page: 100 },
+                      (res) => { status = res.data.status; return res.data.files ?? []; },
+                    );
+                    if (status === "diverged") why = "the push is not a fast-forward";
+                    else if (list.length >= 3000) why = "the diff is past the 3000-file listing cap";
+                    else files = list;
+                  }
+                } else {
+                  why = `a ${context.eventName} runs every lane`;
+                }
+              } catch (e) {
+                why = `listing the changed files failed: ${e.message}`;
+              }
+
+              // GitHub's filter globs: `*` stops at `/` and `**` does not; `?`
+              // and `+` are quantifiers on the character or class before them,
+              // not wildcards of their own. One with nothing to quantify is
+              // taken literally, which is what GitHub does with it too.
+              const compile = (glob) => {
+                let re = "^";
+                let atom = false;
+                for (let i = 0; i < glob.length; i++) {
+                  const c = glob[i];
+                  if (c === "*") {
+                    if (glob[i + 1] === "*") { re += ".*"; i++; } else re += "[^/]*";
+                    atom = false;
+                  } else if ((c === "?" || c === "+") && atom) {
+                    re += c;
+                    atom = false;
+                  } else if (c === "[" && glob.indexOf("]", i) > i) {
+                    const j = glob.indexOf("]", i);
+                    re += glob.slice(i, j + 1);
+                    i = j;
+                    atom = true;
+                  } else {
+                    re += c.replace(/[.+?^${}()|\\]/g, "\\$&");
+                    atom = true;
+                  }
+                }
+                return new RegExp(re + "$");
+              };
+              // Later entries win, so `!` re-excludes what an earlier entry let in.
+              const selects = (patterns, path) => {
+                let hit = false;
+                for (const p of patterns) {
+                  const neg = p.startsWith("!");
+                  if (compile(neg ? p.slice(1) : p).test(path)) hit = !neg;
+                }
+                return hit;
+              };
+              const paths = files === null ? [] : files.flatMap((f) =>
+                f.previous_filename ? [f.filename, f.previous_filename] : [f.filename]);
+              const runs = (filter) => {
+                if (files === null) return true;
+                let ok = true;
+                if (filter.paths) ok = paths.some((p) => selects(filter.paths, p));
+                if (ok && filter["paths-ignore"]) ok = paths.some((p) => !selects(filter["paths-ignore"], p));
+                return ok;
+              };
+
+              const out = {};
+              for (const [lane, filter] of Object.entries(lanes)) out[lane] = runs(filter);
+              core.setOutput("lanes", JSON.stringify(out));
+
+              const on = Object.keys(out).filter((l) => out[l]);
+              const off = Object.keys(out).filter((l) => !out[l]);
+              core.info(files === null
+                ? `every lane runs: ${why}`
+                : `${paths.length} changed path(s): ${on.length} lane(s) run, ${off.length} skipped`);
+              await core.summary
+                .addHeading("Lanes", 3)
+                .addRaw(files === null
+                  ? `Every lane runs: ${why}.\n`
+                  : `${files.length} changed file(s).\n`)
+                .addTable([
+                  [{ data: "Lane", header: true }, { data: "Runs", header: true }],
+                  ...Object.keys(out).map((l) => [l, out[l] ? "yes" : "skipped"]),
+                ])
+                .write();
+            } catch (e) {
+              // A gate that cannot decide runs everything: a bad table entry or
+              // an API shape change must skip no lane, and a failed job here
+              // would skip all of them (a `needs` on a failed job never runs).
+              // Only a table that does not parse, above, is loud instead.
+              core.setOutput("lanes", JSON.stringify(everything));
+              core.warning(`every lane runs: the filter failed (${e.message})`);
+            }
+
+  # The lanes. Each caller job carries the lane's workflow `name:` so a check
+  # reads `Test units / test-units-x86_64` and main-red.yml can name the lane
+  # from the job — and each carries the lane's `permissions:` where it had any,
+  # because a called workflow can only narrow what it is handed.
+
+  lint:
+    name: Lint
+    uses: ./.github/workflows/lint.yml
+    secrets: inherit
+
+  test-units:
+    name: Test units
+    needs: [changes]
+    if: fromJSON(needs.changes.outputs.lanes)['test-units']
+    uses: ./.github/workflows/test-units.yml
+    secrets: inherit
+
+  test-e2e-x86_64:
+    name: Test e2e x86_64
+    needs: [changes]
+    if: fromJSON(needs.changes.outputs.lanes)['test-e2e-x86_64']
+    uses: ./.github/workflows/test-e2e-x86_64.yml
+    secrets: inherit
+
+  test-e2e-arm64:
+    name: Test e2e arm64
+    needs: [changes]
+    if: fromJSON(needs.changes.outputs.lanes)['test-e2e-arm64']
+    uses: ./.github/workflows/test-e2e-arm64.yml
+    secrets: inherit
+
+  test-e2e-wasm:
+    name: Test e2e wasm
+    needs: [changes]
+    if: fromJSON(needs.changes.outputs.lanes)['test-e2e-wasm']
+    uses: ./.github/workflows/test-e2e-wasm.yml
+    secrets: inherit
+
+  test-e2e-other:
+    name: Test e2e other
+    needs: [changes]
+    if: fromJSON(needs.changes.outputs.lanes)['test-e2e-other']
+    uses: ./.github/workflows/test-e2e-other.yml
+    secrets: inherit
+
+  test-e2e-differential:
+    name: Test e2e differential
+    needs: [changes]
+    if: fromJSON(needs.changes.outputs.lanes)['test-e2e-differential']
+    uses: ./.github/workflows/test-e2e-differential.yml
+    secrets: inherit
+
+  test-e2e-selfhost:
+    name: Test e2e self-host
+    needs: [changes]
+    if: fromJSON(needs.changes.outputs.lanes)['test-e2e-selfhost']
+    uses: ./.github/workflows/test-e2e-selfhost.yml
+    secrets: inherit
+
+  test-fernsmith:
+    name: Test fernsmith
+    needs: [changes]
+    if: fromJSON(needs.changes.outputs.lanes)['test-fernsmith']
+    uses: ./.github/workflows/test-fernsmith.yml
+    secrets: inherit
+
+  fuzz-diff:
+    name: Fuzz
+    needs: [changes]
+    if: fromJSON(needs.changes.outputs.lanes)['fuzz-diff']
+    uses: ./.github/workflows/fuzz-diff.yml
+    secrets: inherit
+
+  examples:
+    name: Examples
+    needs: [changes]
+    if: fromJSON(needs.changes.outputs.lanes)['examples']
+    uses: ./.github/workflows/examples.yml
+    secrets: inherit
+
+  perf:
+    name: Perf
+    needs: [changes]
+    if: fromJSON(needs.changes.outputs.lanes)['perf']
+    uses: ./.github/workflows/perf.yml
+    secrets: inherit
+    # Its jobs push refs/notes/perf on main.
+    permissions:
+      contents: write
+
+  bootstrap:
+    name: Bootstrap
+    needs: [changes]
+    if: fromJSON(needs.changes.outputs.lanes)['bootstrap']
+    uses: ./.github/workflows/bootstrap.yml
+    secrets: inherit
+    # Its `release` job requests `contents: write` for the publish path, and
+    # GitHub validates a nested job's permissions against the caller's grant
+    # even for a job the event skips; the lane's own `contents: read` still
+    # narrows its verify jobs.
+    permissions:
+      contents: write
+
+  macos:
+    name: macOS arm64
+    needs: [changes]
+    if: fromJSON(needs.changes.outputs.lanes)['macos']
+    uses: ./.github/workflows/macos.yml
+    secrets: inherit
+
+  docs-build:
+    name: Docs build
+    needs: [changes]
+    if: fromJSON(needs.changes.outputs.lanes)['docs-build']
+    uses: ./.github/workflows/docs-build.yml
+    secrets: inherit
+
+  playground-e2e:
+    name: Playground E2E
+    needs: [changes]
+    if: fromJSON(needs.changes.outputs.lanes)['playground-e2e']
+    uses: ./.github/workflows/playground-e2e.yml
+    secrets: inherit
+
+  vscode-extension:
+    name: VS Code Extension
+    needs: [changes]
+    if: fromJSON(needs.changes.outputs.lanes)['vscode-extension']
+    uses: ./.github/workflows/vscode-extension.yml
+    secrets: inherit
+
+  # One reaper per lane, so the run is cancelled the moment ANY lane concludes
+  # failure rather than when all of them have. `!cancelled()` is load-bearing:
+  # without a status function in the condition, `success()` is implied and a
+  # job that waits on a failed one never runs. Pull requests only — a red main
+  # runs to completion so the failing-job list is the whole set.
+  # TestCancelOnFailureWatchesEveryPRLane pins one of these per lane.
+
+  reap-lint:
+    needs: [lint]
+    if: ${{ !cancelled() && needs.lint.result == 'failure' && github.event_name == 'pull_request' }}
+    uses: ./.github/workflows/cancel-on-failure.yml
+    with:
+      lane: Lint
+    permissions:
+      actions: write
+      contents: read
+      pull-requests: read
+
+  reap-test-units:
+    needs: [test-units]
+    if: ${{ !cancelled() && needs.test-units.result == 'failure' && github.event_name == 'pull_request' }}
+    uses: ./.github/workflows/cancel-on-failure.yml
+    with:
+      lane: Test units
+    permissions:
+      actions: write
+      contents: read
+      pull-requests: read
+
+  reap-test-e2e-x86_64:
+    needs: [test-e2e-x86_64]
+    if: ${{ !cancelled() && needs.test-e2e-x86_64.result == 'failure' && github.event_name == 'pull_request' }}
+    uses: ./.github/workflows/cancel-on-failure.yml
+    with:
+      lane: Test e2e x86_64
+    permissions:
+      actions: write
+      contents: read
+      pull-requests: read
+
+  reap-test-e2e-arm64:
+    needs: [test-e2e-arm64]
+    if: ${{ !cancelled() && needs.test-e2e-arm64.result == 'failure' && github.event_name == 'pull_request' }}
+    uses: ./.github/workflows/cancel-on-failure.yml
+    with:
+      lane: Test e2e arm64
+    permissions:
+      actions: write
+      contents: read
+      pull-requests: read
+
+  reap-test-e2e-wasm:
+    needs: [test-e2e-wasm]
+    if: ${{ !cancelled() && needs.test-e2e-wasm.result == 'failure' && github.event_name == 'pull_request' }}
+    uses: ./.github/workflows/cancel-on-failure.yml
+    with:
+      lane: Test e2e wasm
+    permissions:
+      actions: write
+      contents: read
+      pull-requests: read
+
+  reap-test-e2e-other:
+    needs: [test-e2e-other]
+    if: ${{ !cancelled() && needs.test-e2e-other.result == 'failure' && github.event_name == 'pull_request' }}
+    uses: ./.github/workflows/cancel-on-failure.yml
+    with:
+      lane: Test e2e other
+    permissions:
+      actions: write
+      contents: read
+      pull-requests: read
+
+  reap-test-e2e-differential:
+    needs: [test-e2e-differential]
+    if: ${{ !cancelled() && needs.test-e2e-differential.result == 'failure' && github.event_name == 'pull_request' }}
+    uses: ./.github/workflows/cancel-on-failure.yml
+    with:
+      lane: Test e2e differential
+    permissions:
+      actions: write
+      contents: read
+      pull-requests: read
+
+  reap-test-e2e-selfhost:
+    needs: [test-e2e-selfhost]
+    if: ${{ !cancelled() && needs.test-e2e-selfhost.result == 'failure' && github.event_name == 'pull_request' }}
+    uses: ./.github/workflows/cancel-on-failure.yml
+    with:
+      lane: Test e2e self-host
+    permissions:
+      actions: write
+      contents: read
+      pull-requests: read
+
+  reap-test-fernsmith:
+    needs: [test-fernsmith]
+    if: ${{ !cancelled() && needs.test-fernsmith.result == 'failure' && github.event_name == 'pull_request' }}
+    uses: ./.github/workflows/cancel-on-failure.yml
+    with:
+      lane: Test fernsmith
+    permissions:
+      actions: write
+      contents: read
+      pull-requests: read
+
+  reap-fuzz-diff:
+    needs: [fuzz-diff]
+    if: ${{ !cancelled() && needs.fuzz-diff.result == 'failure' && github.event_name == 'pull_request' }}
+    uses: ./.github/workflows/cancel-on-failure.yml
+    with:
+      lane: Fuzz
+    permissions:
+      actions: write
+      contents: read
+      pull-requests: read
+
+  reap-examples:
+    needs: [examples]
+    if: ${{ !cancelled() && needs.examples.result == 'failure' && github.event_name == 'pull_request' }}
+    uses: ./.github/workflows/cancel-on-failure.yml
+    with:
+      lane: Examples
+    permissions:
+      actions: write
+      contents: read
+      pull-requests: read
+
+  reap-perf:
+    needs: [perf]
+    if: ${{ !cancelled() && needs.perf.result == 'failure' && github.event_name == 'pull_request' }}
+    uses: ./.github/workflows/cancel-on-failure.yml
+    with:
+      lane: Perf
+    permissions:
+      actions: write
+      contents: read
+      pull-requests: read
+
+  reap-bootstrap:
+    needs: [bootstrap]
+    if: ${{ !cancelled() && needs.bootstrap.result == 'failure' && github.event_name == 'pull_request' }}
+    uses: ./.github/workflows/cancel-on-failure.yml
+    with:
+      lane: Bootstrap
+    permissions:
+      actions: write
+      contents: read
+      pull-requests: read
+
+  reap-macos:
+    needs: [macos]
+    if: ${{ !cancelled() && needs.macos.result == 'failure' && github.event_name == 'pull_request' }}
+    uses: ./.github/workflows/cancel-on-failure.yml
+    with:
+      lane: macOS arm64
+    permissions:
+      actions: write
+      contents: read
+      pull-requests: read
+
+  reap-docs-build:
+    needs: [docs-build]
+    if: ${{ !cancelled() && needs.docs-build.result == 'failure' && github.event_name == 'pull_request' }}
+    uses: ./.github/workflows/cancel-on-failure.yml
+    with:
+      lane: Docs build
+    permissions:
+      actions: write
+      contents: read
+      pull-requests: read
+
+  reap-playground-e2e:
+    needs: [playground-e2e]
+    if: ${{ !cancelled() && needs.playground-e2e.result == 'failure' && github.event_name == 'pull_request' }}
+    uses: ./.github/workflows/cancel-on-failure.yml
+    with:
+      lane: Playground E2E
+    permissions:
+      actions: write
+      contents: read
+      pull-requests: read
+
+  reap-vscode-extension:
+    needs: [vscode-extension]
+    if: ${{ !cancelled() && needs.vscode-extension.result == 'failure' && github.event_name == 'pull_request' }}
+    uses: ./.github/workflows/cancel-on-failure.yml
+    with:
+      lane: VS Code Extension
+    permissions:
+      actions: write
+      contents: read
+      pull-requests: read

@@ -17,85 +17,20 @@ name: macOS arm64
 # Pinning to an OLDER `macos-N` label is explicitly not
 # supported.
 #
-# Gated on changes touching the arm64 codegen, prelude, or its
-# tests so we don't burn macOS minutes on unrelated edits. Plus
-# a workflow_dispatch trigger for manual reruns.
+# Gated, in ci.yml's lane table, on changes touching what the
+# binary it executes is built from, so we don't burn macOS minutes
+# on unrelated edits. Plus a workflow_dispatch trigger for manual
+# reruns.
 
+# Called from ci.yml rather than triggered: that is the one workflow a pull
+# request or a push to main launches. It holds the PR-wide lock (one pull
+# request's suite at a time), decides from the changed files whether this lane
+# runs — the lane's path filter lives in its lane table — and cancels the rest
+# of the run when a lane goes red. `workflow_dispatch` stays so the lane can
+# be run on its own, outside that lock.
 on:
-  pull_request:
-    paths:
-      # EVERY internal package, not an enumeration of the ones somebody
-      # thought mattered. 59 of the 71 are transitive dependencies of
-      # cmd/fern, so a change to almost any of them alters the binary this
-      # lane is the only one to EXECUTE — Linux CI cross-compiles Mach-O and
-      # checks it is well-formed, which cannot catch an ABI bug (carry-flag
-      # normalisation, x16 vs x8, syscall numbers, stack alignment).
-      #
-      # The enumeration drifted exactly as `scripts/unit-test-packages` did
-      # before it was derived (#8474). It listed `internal/prelude/**`, which
-      # has not existed since the injector was removed, and omitted
-      # internal/stdlib (every example the lane builds links it) and
-      # internal/platforms — the target-capability gate whose entire job is
-      # to distinguish what darwin provides from what linux does, with the
-      # only darwin lane not running when it changed.
-      #
-      # A prefix cannot go stale the way a list of leaves does, and it also
-      # closes the second hole: `internal/e2e/arm64_darwin_*_test.go` matched
-      # by NAME, so a darwin test added under any other name was invisible.
-      #
-      # The gate still does its job — docs, spec, conformance, scripts and
-      # coreutils sources do not trigger it. It over-triggers on the handful
-      # of internal packages that are not dependencies (lsp, fernsmith,
-      # grammar, sourcelint, bootstrap, selfhostsrc, wasm/playground), which
-      # is the price of a filter that cannot silently under-cover.
-      - "internal/**"
-      # The driver and the example corpus the lane compiles and runs.
-      - "cmd/fern/**"
-      - "examples/**"
-      # This workflow itself + go module declarations.
-      - ".github/workflows/macos.yml"
-      # The lane runs composite actions and installs its toolchain from the
-      # pins, so both change what it actually executes.
-      - ".github/actions/**"
-      - "mise.toml"
-      - "mise.lock"
-      - "go.mod"
-  # Also on main: a rebase-merge replays commits onto a main their PR's CI never
-  # saw, so a coupling between two individually-green PRs exists only in the
-  # merge. Filter mirrors the pull_request one; pinned by TestGateLanesRunOnMain.
-  push:
-    branches: [main]
-    paths:
-      - "internal/**"
-      - "cmd/fern/**"
-      - "examples/**"
-      - ".github/workflows/macos.yml"
-      # The lane runs composite actions and installs its toolchain from the
-      # pins, so both change what it actually executes.
-      - ".github/actions/**"
-      - "mise.toml"
-      - "mise.lock"
-      - "go.mod"
+  workflow_call:
   workflow_dispatch:
-
-# Supersede an in-flight run for the same ref: a new push to the
-# branch / PR (or a new dispatch) cancels the older run instead of
-# letting both sit in the queue. Keyed per-workflow + per-ref so
-# distinct PRs and the main branch never cancel each other.
-#
-# main is the one ref that never cancels: its run finishes and reports
-# even when the next merge lands mid-run. It gets ONE group, not one per
-# SHA. A SHA-keyed group supersedes nothing, so a burst of back-to-back
-# rebase-merges held an uncancellable run each — six of them stacked ~90
-# runs into the queue every open PR was waiting behind (#8124). With one
-# group GitHub keeps at most one main run executing and one pending,
-# cancelling the older pending, so a burst coalesces to its newest
-# commit. The cost is attribution: a red main names a span of merges
-# rather than one. check-sources.yml keeps the per-merge attribution —
-# one ~1-minute job can afford a slot per merge; this lane cannot.
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   test-arm64-darwin:
