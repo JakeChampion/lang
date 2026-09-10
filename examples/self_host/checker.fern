@@ -2809,6 +2809,28 @@ function call_through_fn_value(c: ast.ExprCall, s: Scope): typeinfo.Type {
 // Extracted verbatim from check_expr's ExprCall arm to keep check_expr
 // under the self-host oversized-function compile threshold (#2720); the
 // body is self-contained on c + s.
+// ret_typevar_arg_type: the concrete type a generic call's bare-typevar return
+// takes from the arguments, and whether any parameter named that variable at
+// all. Several parameters may share the one name — `both[T](a: T, b: T): T` —
+// and the readings settle at the WIDER integer one, so `both(1, 2^62)` types
+// the call i64 instead of pinning `T` at the i32 reading of whichever argument
+// came first (#8722 part 4); native settles the same call at i64 through
+// polymorphicIntDefault. wider_int keeps the first reading whenever either side
+// is not an integer, so every non-integer shape types exactly as it did.
+function ret_typevar_arg_type(sig: FuncSig, c: ast.ExprCall, s: Scope): (typeinfo.Type, boolean) {
+  var rt: typeinfo.Type = t_unknown("no parameter names " + sig.ret_type_name);
+  var bound: boolean = false;
+  var k: i32 = 0;
+  while (k < sig.param_type_names.len()) {
+    if (sig.param_type_names[k] == sig.ret_type_name && k < c.args.len()) {
+      var kt: typeinfo.Type = check_expr(c.args[k], s);
+      if (bound) { rt = wider_int(rt, kt); } else { rt = kt; bound = true; }
+    }
+    k = k + 1;
+  }
+  return (rt, bound);
+}
+
 function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
   // A desugared value if/match-expression is a 0-arg call of a
   // 0-param lambda whose single-statement body is a StmtIf / StmtMatch
@@ -3243,13 +3265,8 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
   // (A return type param that appears only nested — `Option[T]` — or in no
   // parameter isn't inferred here and stays unknown, a further slice.)
   if (sig.type_param_count > 0 && is_unknown(sig.ret_type) && sig.ret_type_name.len() > 0) {
-    var k: i32 = 0;
-    while (k < sig.param_type_names.len()) {
-      if (sig.param_type_names[k] == sig.ret_type_name && k < c.args.len()) {
-        return check_expr(c.args[k], s);
-      }
-      k = k + 1;
-    }
+    let (rtv, rtv_bound) = ret_typevar_arg_type(sig, c, s);
+    if (rtv_bound) { return rtv; }
   }
   // The NESTED case that rule leaves open: the return names a type parameter
   // somewhere inside a container rather than being one — `enum2[T](xs: T[]):
@@ -4609,6 +4626,13 @@ function gc_is_typevar_name(n: string, tparams: string[], struct_names: string[]
 // First binding wins; a shape that does not line up contributes nothing rather
 // than guessing, so an unbindable variable simply leaves the return type
 // partially unknown and the caller falls back to the old behaviour.
+//
+// A CONTAINER return (`both[T](a: T, b: T): (T, T)`) keeps first-wins, and must
+// until irlower does: `rewrite_typevars_to_argrefs` encodes a type variable as
+// "$arg<i>" naming the FIRST param declaring it, and every reader of that
+// registry resolves the one position. Widening only the checker's answer there
+// would type the call i64 while the tuple read stays 4-byte — a silent
+// miscompile in place of today's refusal (#8722 part 4).
 function gc_bind_param(r: parser.TypeRef, at: typeinfo.Type, tparams: string[], struct_names: string[], union_names: string[], names: string[], types: typeinfo.Type[]): (string[], typeinfo.Type[]) {
   var ns: string[] = names;
   var ts: typeinfo.Type[] = types;
