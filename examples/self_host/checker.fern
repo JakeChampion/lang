@@ -3116,6 +3116,18 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
         if (name == "values") {
           return t_array(mt.value);
         }
+        // `cleared` returns the receiver's own Map type. Its absence did not
+        // read as a missing method: the dispatch fell through to the user
+        // MethodSig lookup, which types the call `unknown` — so
+        // `var c = m.cleared()` lost its Map tag, `c.len()` mis-dispatched off
+        // the map path, and the answer came back as a buffer figure (56 for a
+        // two-entry map) rather than 0, with no diagnostic (#9038).
+        if (name == "cleared") {
+          if (c.args.len() != 0) {
+            return t_unknown("map.cleared: 0 args");
+          }
+          return recv_ty;
+        }
       },
       _ => {}
     }

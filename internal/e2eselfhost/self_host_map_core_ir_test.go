@@ -30,6 +30,14 @@ var mapCoreIRCases = []struct {
 	{"grow", "import \"core/map\";\nfunction main(): i32 { var m: Map[i32, i32] = map_new(2); var i: i32 = 0; while (i < 50) { m = m.insert(i, i); i = i + 1; } return m.get_or(37, 0); }\n"},
 	// string-valued map. get_or(1, \"\").len() = 5.
 	{"str-val", "import \"core/map\";\nfunction main(): i32 { var m: Map[i32, string] = map_new(8); m = m.insert(1, \"hello\"); return m.get_or(1, \"\").len(); }\n"},
+	// UNANNOTATED `var c = m.cleared()`. The builtin Map dispatch had no
+	// `cleared` arm, so the call fell through to the user-method lookup and
+	// typed `unknown`: `c` lost its Map tag and `c.len()` mis-dispatched off the
+	// map path, answering with a buffer figure (56 here) instead of 0, with no
+	// diagnostic (#9038). The `+ 7` keeps the expected exit distinct from the
+	// 0 a silently-empty answer would also produce. Annotating the destination
+	// hid the bug, so the case must NOT annotate.
+	{"cleared-unannotated", "import \"core/map\";\nfunction main(): i32 { var m: Map[string, i32] = map_new(8); m = m.insert(\"a\", 1); m = m.insert(\"b\", 2); var c = m.cleared(); return c.len() + 7; }\n"},
 	// delete via without (returns (Map, removed)). get_or(\"x\",99)+get_or(\"y\",0) = 99+7 = 106.
 	{"delete", "import \"core/map\";\nfunction main(): i32 { var m: Map[string, i32] = map_new(8); m = m.insert(\"x\", 5); m = m.insert(\"y\", 7); var r = m.without(\"x\"); m = r.0; return m.get_or(\"x\", 99) + m.get_or(\"y\", 0); }\n"},
 }
