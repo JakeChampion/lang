@@ -66,6 +66,30 @@ function main(): i32 {
     if (r == 9000000000000000000) { return 1; }
     return 0;
 }`},
+
+	// TWO parameters declaring one type variable bound it from whichever
+	// argument the return-inference loop reached first, so `second(1, 2^62)`
+	// typed the call at the i32 reading of `1` and the wide argument came back
+	// truncated — refused here as "cannot assign i32 to i64", silently wrong
+	// wherever the destination was not annotated (#8722 part 4). Native settles
+	// the same call at i64. Every argument at the shared variable is now read
+	// and the readings settle at the wider integer one.
+	{"shared-typevar-widest-arg", `pub function second[T](a: T, b: T): T { return b; }
+function main(): i32 {
+    var x: i64 = second(1, 4611686018427387904);
+    if (x == 4611686018427387904) { return 7; }
+    if (x == 0) { return 1; }
+    return 3;
+}`},
+	// The widening reads INTEGERS only: wider_int keeps the first reading when
+	// either side is not one, so a shared variable bound by two strings types
+	// exactly as it did.
+	{"shared-typevar-strings", `pub function second[T](a: T, b: T): T { return b; }
+function main(): i32 {
+    var s: string = second("ab", "cd");
+    if (s == "cd") { return 7; }
+    return 3;
+}`},
 }
 
 // TestSelfHostGenericRetTypeVarIR — a generic call returning an (erased)
