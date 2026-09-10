@@ -110,6 +110,59 @@ function main(): i32 {
 }
 `
 
+// matchScrutineeBigLiteralProgram pins the match half of #8722: a
+// still-polymorphic scrutinee settled at the i32 default before its literal
+// patterns did, so `3 - 2^62` compared as 3 and took the `3` arm on every
+// native engine and in the interpreter, where a wide reading of the scrutinee
+// (the annotated `: i64` spelling) rejects it. The scrutinee now settles at
+// the width its own literals and the patterns select, in both the statement
+// and the expression form. A correct run exits 62; the truncated one exited
+// 157 (both first arms taken).
+const matchScrutineeBigLiteralProgram = `
+function main(): i32 {
+  var c = 0;
+  match (3 - 4611686018427387904) { 3 => { c = c + 1; }, _ => { c = c + 2; } }
+  var m = match (3 - 4611686018427387904) { 3 => 100, _ => 4 };
+  c = c + m;
+  match (7) { 4611686018427387904 => { c = c + 200; }, 7 => { c = c + 8; }, _ => { } }
+  var r = match (4611686018427387904) { 4611686018427387904 => 16, _ => 300 };
+  c = c + r;
+  if (4611686018427387904 != 0) { c = c + 32; }
+  return c;
+}
+`
+
+// annotatedGenericBigLiteralProgram pins the annotated half of #8722: a
+// destination type reaches a generic call's type parameters through the
+// callee's RETURN type, so `(i64, string)` binds A of `pair` and `i64` binds A
+// of `first` whatever B is bound to, and `Option[i64]` binds T of `some`.
+// Before, a tuple or enum destination settled nothing (the parameter
+// defaulted to i32 and the literal truncated on the natives while the
+// interpreter kept it wide) and a scalar one restamped only a single type
+// parameter, so `first(1234567890123, "x")` was refused as E038. A correct
+// run exits 63.
+const annotatedGenericBigLiteralProgram = `
+function pair[A, B](a: A, b: B): (A, B) { return (a, b); }
+function first[A, B](a: A, b: B): A { return a; }
+function some[T](x: T): Option[T] { return Some(x); }
+function main(): i32 {
+  var c = 0;
+  var o: Option[i64] = some(4611686018427387904);
+  match (o) { Some(v) => { if (v / 1000000000000000000 == 4) { c = c + 32; } }, None => { } }
+  var p: (i64, string) = pair(1234567890123, "hello");
+  if (p.0 / 1000000000000 == 1 && p.1 == "hello") { c = c + 1; }
+  var q: i64 = first(1234567890123, "x");
+  if (q / 1000000000000 == 1) { c = c + 2; }
+  var r: (string, i64) = pair("x", 4611686018427387904);
+  if (r.1 / 1000000000000000000 == 4) { c = c + 4; }
+  var s: (i64, i64) = pair(4611686018427387904, 5);
+  if (s.0 / 1000000000000000000 == 4 && s.1 == 5) { c = c + 8; }
+  var t: (i32, i64) = pair(5, 4611686018427387904);
+  if (t.0 == 5 && t.1 / 1000000000000000000 == 4) { c = c + 16; }
+  return c;
+}
+`
+
 func TestInterpUnannotatedBigLiteralWidens(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	run := func(src string, want int, what string) {
@@ -127,6 +180,8 @@ func TestInterpUnannotatedBigLiteralWidens(t *testing.T) {
 	run(compoundBigLiteralProgram, 44, "big-literal compound")
 	run(wideLiteralSiblingsProgram, 63, "big-literal generic call and comparisons")
 	run(compositeBigLiteralProgram, 63, "big-literal tuple and array elements")
+	run(matchScrutineeBigLiteralProgram, 62, "big-literal match scrutinee")
+	run(annotatedGenericBigLiteralProgram, 63, "big-literal annotated generic call")
 }
 
 func TestX86_64UnannotatedBigLiteralWidens(t *testing.T) {
@@ -144,6 +199,12 @@ func TestX86_64UnannotatedBigLiteralWidens(t *testing.T) {
 	}
 	if _, code := compileAndRunX86_64(t, compositeBigLiteralProgram); code != 63 {
 		t.Errorf("x86-64 big-literal tuple and array elements: exit = %d, want 63", code)
+	}
+	if _, code := compileAndRunX86_64(t, matchScrutineeBigLiteralProgram); code != 62 {
+		t.Errorf("x86-64 big-literal match scrutinee: exit = %d, want 62", code)
+	}
+	if _, code := compileAndRunX86_64(t, annotatedGenericBigLiteralProgram); code != 63 {
+		t.Errorf("x86-64 big-literal annotated generic call: exit = %d, want 63", code)
 	}
 }
 
@@ -163,6 +224,12 @@ func TestArm64UnannotatedBigLiteralWidens(t *testing.T) {
 	if _, code := compileAndRunArm64(t, compositeBigLiteralProgram); code != 63 {
 		t.Errorf("arm64 big-literal tuple and array elements: exit = %d, want 63", code)
 	}
+	if _, code := compileAndRunArm64(t, matchScrutineeBigLiteralProgram); code != 62 {
+		t.Errorf("arm64 big-literal match scrutinee: exit = %d, want 62", code)
+	}
+	if _, code := compileAndRunArm64(t, annotatedGenericBigLiteralProgram); code != 63 {
+		t.Errorf("arm64 big-literal annotated generic call: exit = %d, want 63", code)
+	}
 }
 
 func TestWASMUnannotatedBigLiteralWidens(t *testing.T) {
@@ -180,5 +247,11 @@ func TestWASMUnannotatedBigLiteralWidens(t *testing.T) {
 	}
 	if code := runWasm(t, compositeBigLiteralProgram); code != 63 {
 		t.Errorf("wasm big-literal tuple and array elements: exit = %d, want 63", code)
+	}
+	if code := runWasm(t, matchScrutineeBigLiteralProgram); code != 62 {
+		t.Errorf("wasm big-literal match scrutinee: exit = %d, want 62", code)
+	}
+	if code := runWasm(t, annotatedGenericBigLiteralProgram); code != 63 {
+		t.Errorf("wasm big-literal annotated generic call: exit = %d, want 63", code)
 	}
 }
