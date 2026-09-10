@@ -93,6 +93,14 @@ var selfHostEnumFieldDeepDropCases = []struct {
 	// as a leak.
 	{"second-struct-alias", "enum Payload { None, Some(i32[]) }\nstruct Asm { p: Payload, n: i32 }\n@noinline\nfunction step(a: Asm, v: i32): Asm {\n    return Asm { ...a, p: Payload.Some([v]) };\n}\nfunction main(): i32 {\n    var a: Asm = Asm { p: Payload.Some([9, 9, 9]), n: 0 };\n    var b: Asm = Asm { p: a.p, n: 1 };\n    a = step(a, 1);\n    var r: i32 = 0;\n    match (b.p) { Payload.None => { r = 0; }, Payload.Some(g) => { r = g.len(); } }\n    return r + __rc_underflow_count();\n}", false},
 
+	// The same share built by ASSIGNMENT rather than by an initialiser. The
+	// retain arms are position-independent, so refusing the type here while
+	// admitting it above left the identical leak reachable through the commoner
+	// spelling — 120 B, caught in review of the fix for the row above. The
+	// var-init row cannot stand in for it: the two positions are scanned by
+	// different functions.
+	{"second-struct-alias-assigned", "enum Payload { None, Some(i32[]) }\nstruct Asm { p: Payload, n: i32 }\n@noinline\nfunction step(a: Asm, v: i32): Asm {\n    return Asm { ...a, p: Payload.Some([v]) };\n}\nfunction main(): i32 {\n    var a: Asm = Asm { p: Payload.Some([9, 9, 9]), n: 0 };\n    var b: Asm = Asm { p: Payload.None, n: 0 };\n    b = Asm { p: a.p, n: 1 };\n    a = step(a, 1);\n    var r: i32 = 0;\n    match (b.p) { Payload.None => { r = 0; }, Payload.Some(g) => { r = g.len(); } }\n    return r + __rc_underflow_count();\n}", false},
+
 	// Control: the same enum as an ARRAY field, which #8604 fixed and whose walk
 	// now delegates to the new helper. Clean before and after — the refactor must
 	// not have moved it.

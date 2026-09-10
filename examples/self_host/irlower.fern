@@ -61362,9 +61362,18 @@ function structfld_collect_unsafe(e: ast.Expr, acc: string[], borrowable: string
 // balance the `...o` spelling of the same update has always had — and it has it
 // because it reads no field, which is the only reason its type stays admitted.
 //
-// Every other value in the literal still marks, and a fork to a DIFFERENT local
-// (`p = S { f: o.f }`) is not this shape: there the read genuinely creates a
-// second owner, and the read scan must keep refusing the type.
+// A fork to a DIFFERENT local (`p = S { f: o.f }`) does create a second owner —
+// but a COUNTED one, so it takes the same carve-out the `var` spelling of the
+// literal does (structfld_literal_field_value). The retain arms are position-
+// independent: nothing about them distinguishes an assignment's RHS from an
+// initialiser's, so refusing the type here while admitting it there left the
+// identical #8658 leak reachable through `b = Asm { p: a.p, n: 1 }` — measured
+// at 120 B against native's balanced 6/6/0.
+//
+// Every other value in the literal still marks, and so does the functional-
+// update BASE below: `..o` copies o's field pointers into the new box wholesale
+// rather than taking the single-field retain fieldmove_counted_field_alias
+// proves, so the counted-share argument does not reach it.
 function structfld_collect_unsafe_assign(target: string, v: ast.Expr, acc: string[], borrowable: string[], structs: StructTab): string[] {
     var a: string[] = acc;
     match (v) {
@@ -61373,7 +61382,7 @@ function structfld_collect_unsafe_assign(target: string, v: ast.Expr, acc: strin
                 // Only a DIRECT `target.<f>`: a deeper chain reaches a box the
                 // successor does not supersede (selfrebind_field_alias).
                 if (!selfrebind_field_alias(fv, target)) {
-                    a = structfld_collect_unsafe(fv, a, borrowable, structs);
+                    a = structfld_literal_field_value(fv, a, borrowable, structs);
                 }
             }
             if (sl.has_base) { a = structfld_collect_unsafe(sl.base, a, borrowable, structs); }
