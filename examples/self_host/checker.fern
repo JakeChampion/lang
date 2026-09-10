@@ -8055,38 +8055,96 @@ function trait_assoc_req(reqs: parser.TraitReq[], tr: string, field: string, see
 // associated-dispatch arm (resolveTraitMethodForParam + `tm.Assoc`), so
 // `T.nope()` — no bound providing it — stays the E001 native reports.
 function tp_assoc_req(s: Scope, tname: string, field: string): AssocHit {
+  for tr in tp_bound_traits(s, tname) {
+    var h: AssocHit = trait_assoc_req(s.trait_reqs, tr, field, []);
+    if (h.found) {
+      return h;
+    }
+  }
+  return assoc_miss();
+}
+
+// tp_bound_traits lists the traits bounding type parameter `tname` in scope:
+// the `+`-joined spelling split into names, empty for an unbounded or unknown
+// parameter.
+function tp_bound_traits(s: Scope, tname: string): string[] {
+  var out: string[] = [];
   var k: i32 = util.index_of_str(s.tparams, tname);
-  if (k < 0) {
-    return assoc_miss();
+  if (k < 0 || k >= s.tbounds.len()) {
+    return out;
   }
-  var bound: string = "";
-  if (k < s.tbounds.len()) {
-    bound = s.tbounds[k];
-  }
+  var bound: string = s.tbounds[k];
   var start: i32 = 0;
   var i: i32 = 0;
   while (i <= bound.len()) {
     if (i == bound.len() || bound[i] == b'+') {
       if (i > start) {
-        var tr: str = slice_unchecked(bound, start, i);
-        var h: AssocHit = trait_assoc_req(s.trait_reqs, tr, field, []);
-        if (h.found) {
-          return h;
-        }
+        out = out.append(slice_unchecked(bound, start, i) + "");
       }
       start = i + 1;
     }
     i = i + 1;
   }
-  return assoc_miss();
+  return out;
 }
 
-// tpvar_receiver returns the type parameter a method call's RECEIVER was
-// declared with — "" for anything but a bare identifier bound to one.
-function tpvar_receiver(obj: ast.Expr, s: Scope): string {
+// tp_bound_provides reports whether some bound on type parameter `tname` — or
+// a supertrait of one — declares `field`, abstract, defaulted or associated.
+// A bound naming a trait this module cannot see counts as providing it: the
+// rule refuses only what the declarations in hand rule out.
+function tp_bound_provides(s: Scope, tname: string, field: string): boolean {
+  for tr in tp_bound_traits(s, tname) {
+    if (trait_provides(s.trait_reqs, tr, field, [])) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function trait_provides(reqs: parser.TraitReq[], tr: string, field: string, seen: string[]): boolean {
+  var idx: i32 = trait_req_idx(tr, reqs);
+  if (idx < 0) {
+    return true;
+  }
+  var req: parser.TraitReq = reqs[idx];
+  if (util.has_str(seen, req.trait_name)) { return false; }
+  if (util.has_str(req.provided, field)) {
+    return true;
+  }
+  var path: string[] = seen.append(req.trait_name);
+  for supertrait in req.supertraits {
+    if (trait_provides(reqs, supertrait, field, path)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// tp_receiver returns the type parameter a method call's RECEIVER is a value
+// of, or "" when it is not one. A parameter declared `a: T` is recorded as
+// such at its binding; any other receiver — a call through a fn-typed
+// parameter returning `T`, a local annotated `T` or initialised from one —
+// carries the parameter's name in the erased unknown it typed to, and counts
+// only while `T` is a type variable of the enclosing function.
+function tp_receiver(obj: ast.Expr, recv: typeinfo.Type, s: Scope): string {
   match (obj) {
     ast.ExprIdent(id) => {
-      return s.tpvar_of(id.name);
+      var tp: string = s.tpvar_of(id.name);
+      if (tp.len() > 0) {
+        return tp;
+      }
+    },
+    _ => {}
+  }
+  match (recv) {
+    typeinfo.TypeUnknown(u) => {
+      var prefix: string = "type parameter ";
+      if (u.reason.len() > prefix.len() && slice_unchecked(u.reason, 0, prefix.len()) == prefix) {
+        var tp: string = slice_unchecked(u.reason, prefix.len(), u.reason.len()) + "";
+        if (util.index_of_str(s.tparams, tp) >= 0) {
+          return tp;
+        }
+      }
     },
     _ => {}
   }
@@ -8670,11 +8728,13 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
           // at codegen, in the language of an internal invariant
           // (#7221). A receiver method, and a `T.f(...)` written the
           // way it is meant to be, are resolved elsewhere and untouched.
-          var tpn: string = tpvar_receiver(mfa.obj, s);
+          var tpn: string = tp_receiver(mfa.obj, recv, s);
           if (tpn.len() > 0) {
             var tph: AssocHit = tp_assoc_req(s, tpn, mfa.field);
             if (tph.found) {
               out = out.append(dg_at("E021", "\"" + mfa.field + "\" is an associated function of trait " + tph.owner + ", not a method; call it as " + tpn + "." + mfa.field + "(...)", c.line, c.col));
+            } else if (!tp_bound_provides(s, tpn, mfa.field)) {
+              out = out.append(dg_at("E021", "no method \"" + mfa.field + "\" on type parameter " + tpn + "; add a trait bound such as [" + tpn + ": SomeTrait] that provides it", c.line, c.col));
             }
           }
         }

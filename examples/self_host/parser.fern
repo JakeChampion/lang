@@ -193,7 +193,9 @@ pub struct Module { funcs: FuncDecl[], structs: StructDecl[], aliases: TypeAlias
 // assoc_sigs is the callable associated-function set, including DEFAULTS.
 // Keep it separate from required signatures: an impl may omit a default, but
 // a bounded type parameter may still call it through the trait.
-pub struct TraitReq { trait_name: string, methods: string[], req_sigs: FuncDecl[], supertraits: string[], assoc_sigs: FuncDecl[] }
+// provided is every method name the trait declares — abstract, defaulted, or
+// associated — the set a bound on a type parameter makes callable.
+pub struct TraitReq { trait_name: string, methods: string[], req_sigs: FuncDecl[], supertraits: string[], assoc_sigs: FuncDecl[], provided: string[] }
 
 // TraitDecl is the `trait` block as WRITTEN, retained for the formatter
 // (#6773) and, since it is the only record of a trait's TYPE PARAMETERS, for
@@ -18149,6 +18151,7 @@ function parse_trait_decl(p: Par): (TraitDefault[], TraitReq, TraitDecl, Par) {
     var required: string[] = [];
     var required_sigs: FuncDecl[] = [];
     var assoc_sigs: FuncDecl[] = [];
+    var provided: string[] = [];
     var supertraits: string[] = [];
     // The written form, for the formatter: every method in source order (an
     // empty body marks an abstract one), the supertraits with any `mod.`
@@ -18204,6 +18207,7 @@ function parse_trait_decl(p: Par): (TraitDefault[], TraitReq, TraitDecl, Par) {
                 var (fr_func, fr_p) = parse_func_decl(p);
                 p = fr_p;
                 decl_methods = decl_methods.append(fr_func);
+                provided = provided.append(fr_func.name);
                 if (fr_func.params.len() == 0 || fr_func.params[0].name != "self") {
                     assoc_sigs = assoc_sigs.append(fr_func);
                 }
@@ -18229,7 +18233,7 @@ function parse_trait_decl(p: Par): (TraitDefault[], TraitReq, TraitDecl, Par) {
         if (p.peek_punct() == "}") { p = p.advance(); }
     }
     return (defaults,
-            TraitReq { trait_name: simple, methods: required, req_sigs: required_sigs, supertraits: supertraits, assoc_sigs: assoc_sigs },
+            TraitReq { trait_name: simple, methods: required, req_sigs: required_sigs, supertraits: supertraits, assoc_sigs: assoc_sigs, provided: provided },
             TraitDecl { name: tname, type_params: trait_tps.tnames, supertraits: decl_supers, methods: decl_methods, line: tline, col: tcol, is_pub: false },
             p);
 }
