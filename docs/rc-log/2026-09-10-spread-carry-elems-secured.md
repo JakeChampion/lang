@@ -112,6 +112,21 @@ box-only (`struct_lit_holds_borrowed_elems`, next to
 `struct_lit_unretained_borrow_field`). The view leaks its own box and buffers,
 as it did before the carry counted.
 
+## A closure array is not a counted-element array
+
+The differential's seed 301 hung on main after #9014: `fns.with(1, lam)` in
+value form on a `((i32) => i32)[]`. A closure array's slot records its element
+env type where a struct array records its element struct, so the clone's new
+element retain took it for a counted-element array, retained every closure box
+and released the replaced one — and a closure box is leak-only here, released
+by nothing. `arr_expr_counted_elems` now refuses closure and fn arrays
+(`with_on_closure_array`: the interpreter's exit, sanitizer silent; main's
+compiler exits 122 on the seed, #9014's segfaulted).
+
+`checker_modload_run.fern` grew 7.3% under #9014 — the value-block pass's new
+instantiation of `astwalk.map_expr_acc` with `Scope` as the accumulator — so
+its row in `.github/selfhost-driver-sizes.txt` is re-banked here.
+
 ## Measured (self-host x86-64 unless said, 100 rounds)
 
 - The three rows above: all 600 / 600 resp. 700 / 700 at live 0, exits the

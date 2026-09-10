@@ -180,6 +180,18 @@ function round(i: i32): i32 {
     if (v != i + i + 2) { return 0 - 50; }
     return (t + v + junk) % 101;
 }` + spreadCarryElemsMain, leaks: true},
+	// A closure array's `.with` in value form: the clone must not retain or
+	// release the element boxes, which are leak-only. The differential's seed
+	// 301 segfaulted when it did. The array is aliased so the original is read
+	// back through the alias after the clone replaced an element.
+	{name: "with_on_closure_array", src: `function round(i: i32): i32 {
+    var v1: (i32) => i32 = (x: i32): i32 => x + i;
+    var xs: ((i32) => i32)[] = [v1, v1, (x: i32): i32 => x * 2];
+    var ys: ((i32) => i32)[] = xs;
+    var ws: ((i32) => i32)[] = xs.with(1, (x: i32): i32 => x + 10);
+    var f: (i32) => i32 = ys[1];
+    return (f(1) + ws[1](1) + xs[2](3)) % 101;
+}` + spreadCarryElemsMain, leaks: true},
 	// The same borrow through an indexed `var` binding and a `for` over a
 	// parameter's field, stored into a fresh array the caller receives and
 	// releases.

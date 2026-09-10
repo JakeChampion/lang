@@ -26056,6 +26056,11 @@ function arr_expr_counted_elems(obj: ast.Expr, s: LowerState): boolean {
         ast.ExprIdent(id) => {
             var sl: i32 = s.slot_of(id.name);
             if (!s.is_arr_slot(sl)) { return false; }
+            // A closure array's slot records its element env type here, but a
+            // closure box is leak-only: nothing releases one, so a clone must
+            // not count them either (the differential's seed 301 segfaulted on
+            // `fns.with(1, lam)` when it did).
+            if (s.is_closurearr_slot(sl) || s.is_fnarr_slot(sl)) { return false; }
             var et: string = s.struct_type_of_slot(sl);
             return et.len() > 0 && (decl_is_struct(s.frame.structs, et) || is_enum_like_name(et, s.frame.structs));
         },
