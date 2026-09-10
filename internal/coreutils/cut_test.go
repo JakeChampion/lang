@@ -17,6 +17,10 @@ func cutFile(t *testing.T, dir, name, content string) string {
 	return p
 }
 
+func init() {
+	registerCorpus("cut", cutCases)
+}
+
 // cutCases is cut(1)'s corpus.
 //
 // The list grammar is the half with the most corners: overlapping ranges

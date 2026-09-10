@@ -17,6 +17,10 @@ func headFile(t *testing.T, dir, name, content string) string {
 	return p
 }
 
+func init() {
+	registerCorpus("head", headCases)
+}
+
 // headCases is head(1)'s corpus.
 //
 // The counts are the interesting half: `-n` / `-c` take glibc's

@@ -2,6 +2,10 @@ package coreutils
 
 import "testing"
 
+func init() {
+	registerCorpus("logname", lognameCases)
+}
+
 // logname(1) — getlogin(3), which is the name the SESSION was logged in
 // under and not the effective user: after `su` it still says who logged
 // in, and where there is no login it says so rather than falling back to

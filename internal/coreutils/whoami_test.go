@@ -2,6 +2,10 @@ package coreutils
 
 import "testing"
 
+func init() {
+	registerCorpus("whoami", whoamiCases)
+}
+
 // whoami(1) is `id -un` with no options of its own: the effective uid's
 // name, and every operand — including a lone `-`, which most utilities
 // read as stdin — is `extra operand`.

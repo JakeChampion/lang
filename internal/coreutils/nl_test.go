@@ -16,6 +16,10 @@ func nlFile(t *testing.T, dir, name, content string) string {
 	return p
 }
 
+func init() {
+	registerCorpus("nl", nlCases)
+}
+
 // nlCases is nl(1)'s corpus.
 //
 // Three things repay the most cases. The section delimiters, which are

@@ -30,69 +30,25 @@ import (
 // agreeing with GNU, and a failure here says "the two compilers disagree"
 // rather than re-reporting a parity bug in both.
 
-// corpusByUtil maps each utility to its cases — the SAME functions the GNU
+// corpusRegistry holds each utility's cases — the SAME functions the GNU
 // parity gate calls, so this leg cannot quietly test something narrower.
-// A utility missing from here fails TestSelfHostCoreutilsCoverage.
-func corpusByUtil() map[string]func(*testing.T) []invocation {
-	return map[string]func(*testing.T) []invocation{
-		"[":         bracketCases,
-		"arch":      archCases,
-		"b2sum":     b2sumCases,
-		"base32":    base32Cases,
-		"base64":    base64Cases,
-		"basename":  basenameCases,
-		"basenc":    basencCases,
-		"cat":       catCases,
-		"comm":      commCases,
-		"csplit":    csplitCases,
-		"cut":       cutCases,
-		"dirname":   dirnameCases,
-		"echo":      echoCases,
-		"expand":    expandCases,
-		"expr":      exprCases,
-		"factor":    factorCases,
-		"false":     trueFalseCases,
-		"fold":      foldCases,
-		"groups":    groupsCases,
-		"head":      headCases,
-		"hostid":    hostidCases,
-		"id":        idCases,
-		"join":      joinCases,
-		"link":      linkCases,
-		"logname":   lognameCases,
-		"md5sum":    md5sumCases,
-		"nl":        nlCases,
-		"nproc":     nprocCases,
-		"numfmt":    numfmtCases,
-		"od":        odCases,
-		"paste":     pasteCases,
-		"printenv":  printenvCases,
-		"printf":    printfCases,
-		"pwd":       pwdCases,
-		"seq":       seqCases,
-		"sha1sum":   sha1sumCases,
-		"sha224sum": sha224sumCases,
-		"sha256sum": sha256sumCases,
-		"sha384sum": sha384sumCases,
-		"sha512sum": sha512sumCases,
-		"sleep":     sleepCases,
-		"sort":      sortCases,
-		"split":     splitCases,
-		"tac":       tacCases,
-		"tail":      tailCases,
-		"tee":       teeCases,
-		"test":      testCases,
-		"tr":        trCases,
-		"true":      trueFalseCases,
-		"tsort":     tsortCases,
-		"uname":     unameCases,
-		"unexpand":  unexpandCases,
-		"unlink":    unlinkCases,
-		"uniq":      uniqCases,
-		"wc":        wcCases,
-		"whoami":    whoamiCases,
-		"yes":       yesCases,
+//
+// Each utility registers itself from its own internal/coreutils/<util>_test.go
+// rather than being listed here, because a single shared list made every
+// coreutils PR conflict with every other one (#8840). A utility missing from
+// the registry fails TestSelfHostCoreutilsCoverage.
+var corpusRegistry = map[string]func(*testing.T) []invocation{}
+
+// registerCorpus is called from each utility's own test file at init.
+//
+// Two files claiming one utility used to be a duplicate map key, which the
+// compiler refused; splitting the list up costs that check, so it is made
+// again here.
+func registerCorpus(util string, cases func(*testing.T) []invocation) {
+	if _, dup := corpusRegistry[util]; dup {
+		panic("coreutils: registerCorpus called twice for " + util)
 	}
+	corpusRegistry[util] = cases
 }
 
 // utilNames lists the utilities in coreutils/, from the directory rather than
@@ -116,10 +72,9 @@ func utilNames(t *testing.T) []string {
 // TestSelfHostCoreutilsCoverage fails when a utility has no self-host cases,
 // so adding one cannot silently skip this leg.
 func TestSelfHostCoreutilsCoverage(t *testing.T) {
-	corpus := corpusByUtil()
 	for _, util := range utilNames(t) {
-		if _, ok := corpus[util]; !ok {
-			t.Errorf("coreutils/%s.fern has no entry in corpusByUtil — every utility is compiled and run both ways, so add its cases function", util)
+		if _, ok := corpusRegistry[util]; !ok {
+			t.Errorf("coreutils/%s.fern is not in the corpus registry — every utility is compiled and run both ways, so add registerCorpus(%q, ...) to internal/coreutils/%s_test.go", util, util, util)
 		}
 	}
 }
@@ -200,9 +155,8 @@ func selfHostBin(t *testing.T, util string) string {
 // TestSelfHostCoreutilsParity runs every utility's corpus against its
 // self-host build and its native build and requires the two to agree.
 func TestSelfHostCoreutilsParity(t *testing.T) {
-	corpus := corpusByUtil()
 	for _, util := range utilNames(t) {
-		cases, ok := corpus[util]
+		cases, ok := corpusRegistry[util]
 		if !ok {
 			continue // reported by TestSelfHostCoreutilsCoverage
 		}

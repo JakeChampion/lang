@@ -16,6 +16,10 @@ func joinFile(t *testing.T, dir, name, content string) string {
 	return p
 }
 
+func init() {
+	registerCorpus("join", joinCases)
+}
+
 // joinCases is join(1)'s corpus.
 //
 // Two halves repay the most cases. The first is the command line: `-o`

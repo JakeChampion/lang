@@ -2,6 +2,10 @@ package coreutils
 
 import "testing"
 
+func init() {
+	registerCorpus("echo", echoCases)
+}
+
 func echoCases(t *testing.T) []invocation {
 	return []invocation{
 		{name: "no arguments"},

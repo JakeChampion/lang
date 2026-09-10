@@ -7,6 +7,10 @@ import (
 	"testing"
 )
 
+func init() {
+	registerCorpus("tail", tailCases)
+}
+
 // tailCases is tail(1)'s corpus.
 //
 // The counts, the headers and the obsolete form are head's mirrored,

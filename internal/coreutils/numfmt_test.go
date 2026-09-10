@@ -2,6 +2,10 @@ package coreutils
 
 import "testing"
 
+func init() {
+	registerCorpus("numfmt", numfmtCases)
+}
+
 // TestNumfmtParity holds coreutils/numfmt.fern to GNU numfmt.
 //
 // The corpus follows the utility: the options and their diagnostics, the

@@ -2,6 +2,10 @@ package coreutils
 
 import "testing"
 
+func init() {
+	registerCorpus("md5sum", md5sumCases)
+}
+
 // md5sum(1) — MD5. The corpus is `sumCases`, shared with the other
 // six checksum utilities because `coreutils/lib/digest.fern` is one
 // program: what is proved here that the others do not prove is the

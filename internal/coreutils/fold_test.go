@@ -17,6 +17,10 @@ func foldFile(t *testing.T, dir, name, content string) string {
 	return p
 }
 
+func init() {
+	registerCorpus("fold", foldCases)
+}
+
 // foldCases is fold(1)'s corpus.
 //
 // Column counting is where -b differs from the default: a tab jumps to

@@ -17,6 +17,10 @@ func tacFile(t *testing.T, dir, name, content string) string {
 	return p
 }
 
+func init() {
+	registerCorpus("tac", tacCases)
+}
+
 // tacCases is tac(1)'s corpus.
 //
 // Three things carry most of it. The separator is ATTACHED to the record

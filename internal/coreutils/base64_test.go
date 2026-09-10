@@ -5,6 +5,10 @@ import (
 	"testing"
 )
 
+func init() {
+	registerCorpus("base64", base64Cases)
+}
+
 // base64Cases is base64(1)'s corpus.
 //
 // The decoder is where the surprises are, and most of them are shapes a

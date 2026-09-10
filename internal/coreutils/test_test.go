@@ -762,6 +762,10 @@ func condCases(t *testing.T) []invocation {
 	}
 }
 
+func init() {
+	registerCorpus("test", testCases)
+}
+
 // testCases is test(1)'s corpus: the shared one, with the cases that
 // distinguish it from `[` — `test` reads `]` as a string.
 func testCases(t *testing.T) []invocation {

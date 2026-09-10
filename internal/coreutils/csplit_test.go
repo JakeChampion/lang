@@ -37,6 +37,10 @@ func csplitSeed(t *testing.T, dir string) {
 	}
 }
 
+func init() {
+	registerCorpus("csplit", csplitCases)
+}
+
 // csplitCases is csplit(1)'s corpus.
 //
 // Almost all of it is about the two cursors: where a piece ends and

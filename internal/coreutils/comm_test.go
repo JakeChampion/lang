@@ -7,6 +7,10 @@ import (
 	"testing"
 )
 
+func init() {
+	registerCorpus("comm", commCases)
+}
+
 // commCases is comm(1)'s corpus.
 //
 // Two behaviours carry most of the cases. The line ORDER is memcmp over

@@ -40,6 +40,10 @@ func linkTree(t *testing.T, dir string) {
 	}
 }
 
+func init() {
+	registerCorpus("link", linkCases)
+}
+
 func linkCases(t *testing.T) []invocation {
 	return []invocation{
 		// The happy path, and the proof it is a HARD link: the two names

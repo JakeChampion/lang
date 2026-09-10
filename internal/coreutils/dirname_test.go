@@ -2,6 +2,10 @@ package coreutils
 
 import "testing"
 
+func init() {
+	registerCorpus("dirname", dirnameCases)
+}
+
 func dirnameCases(t *testing.T) []invocation {
 	return []invocation{
 		// The name rule: drop the last component and the slashes before

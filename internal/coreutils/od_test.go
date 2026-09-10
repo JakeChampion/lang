@@ -85,6 +85,10 @@ func odExtended() []byte {
 	return out
 }
 
+func init() {
+	registerCorpus("od", odCases)
+}
+
 // odCases is od(1)'s corpus.
 //
 // Three things carry most of it. The first is the column arithmetic:

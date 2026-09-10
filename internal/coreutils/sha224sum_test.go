@@ -2,6 +2,10 @@ package coreutils
 
 import "testing"
 
+func init() {
+	registerCorpus("sha224sum", sha224sumCases)
+}
+
 // sha224sum(1) — SHA-224. The corpus is `sumCases`, shared with the other
 // six checksum utilities because `coreutils/lib/digest.fern` is one
 // program: what is proved here that the others do not prove is the

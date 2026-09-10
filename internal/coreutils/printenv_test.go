@@ -2,6 +2,10 @@ package coreutils
 
 import "testing"
 
+func init() {
+	registerCorpus("printenv", printenvCases)
+}
+
 // printenv(1) — the whole environment in the vector's own order, or the
 // value of each named variable.
 //

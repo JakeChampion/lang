@@ -2,6 +2,10 @@ package coreutils
 
 import "testing"
 
+func init() {
+	registerCorpus("arch", archCases)
+}
+
 // arch(1) is `uname -m` with a different option table: coreutils builds
 // it from the same source with the mode switched, so it declares only
 // --help and --version, takes no operands, and every operand is

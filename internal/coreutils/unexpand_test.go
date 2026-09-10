@@ -7,6 +7,10 @@ import (
 	"testing"
 )
 
+func init() {
+	registerCorpus("unexpand", unexpandCases)
+}
+
 // unexpandCases is unexpand(1)'s corpus.
 //
 // The rule for when a run of blanks becomes a tab is the interesting

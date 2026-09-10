@@ -85,6 +85,10 @@ func tabListCases(stdin string) []invocation {
 	return out
 }
 
+func init() {
+	registerCorpus("expand", expandCases)
+}
+
 // expandCases is expand(1)'s corpus.
 //
 // Beyond the tab list it is the column arithmetic: `\b` moves back a

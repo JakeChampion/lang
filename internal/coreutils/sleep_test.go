@@ -2,6 +2,10 @@ package coreutils
 
 import "testing"
 
+func init() {
+	registerCorpus("sleep", sleepCases)
+}
+
 // Every interval here is zero or a few milliseconds: the corpus asserts
 // what sleep(1) PRINTS and how it exits, and a case that actually paused
 // would only make the gate slower. The one behaviour it cannot cover is a
