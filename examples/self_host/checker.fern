@@ -9929,7 +9929,7 @@ function stmts_assign_diags(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]): ut
   for st in stmts {
     match (st) {
       ast.StmtVar(v) => {
-        if (v.type_name.len() > 0 && !parser.is_destr_marker(v.type_name)) {
+        if (v.type_name.len() > 0 && !parser.is_destr_marker(v.type_name) && !vb_placeholder_decl(v)) {
           var declared: typeinfo.Type = var_declared_type(v, cur);
           var initt: typeinfo.Type = check_expr(v.init, cur);
           if (!mlit_is_desugared(v.init)) {
@@ -15553,6 +15553,51 @@ function vb_local_tag(t: typeinfo.Type): string {
   return "";
 }
 
+// vb_annotation_of spells a value local's type the way a declaration would,
+// for the types vb_local_tag declines: a struct or enum, an array of one, a
+// tuple. A `str` view stays unspelled — nothing writable declares one.
+function vb_annotation_of(t: typeinfo.Type): string {
+  match (t) {
+    typeinfo.TypeStruct(_) => { return type_label(t); },
+    typeinfo.TypeTuple(_) => { return type_label(t); },
+    typeinfo.TypeArray(a) => {
+      if (type_label(a.elem) == "str") { return ""; }
+      return type_label(t);
+    },
+    typeinfo.TypeUnion(u) => {
+      if (u.args.len() == 0) { return ""; }
+      return type_label(t);
+    },
+    _ => { return ""; }
+  }
+  return "";
+}
+
+// vb_wants_annotation reports whether `t` is a composite the destination's
+// spelling may declare the value local with when the stores leave it partial.
+function vb_wants_annotation(t: typeinfo.Type): boolean {
+  match (t) {
+    typeinfo.TypeUnion(_) => { return true; },
+    typeinfo.TypeStruct(_) => { return true; },
+    typeinfo.TypeArray(_) => { return true; },
+    typeinfo.TypeTuple(_) => { return true; },
+    _ => { return false; }
+  }
+  return false;
+}
+
+// vb_placeholder_decl reports whether `v` is a value local the compiler declared
+// with an annotation and the parser's `0` placeholder: the annotation types the
+// slot and the placeholder only zeroes it, so it is not an assignment to check.
+function vb_placeholder_decl(v: ast.StmtVar): boolean {
+  if (!parser.is_value_local_name(v.name) || v.type_name.len() == 0) { return false; }
+  match (v.init) {
+    ast.ExprNumber(n) => { return n.text == "0" && n.suffix.len() == 0 && !n.is_float; },
+    _ => { return false; }
+  }
+  return false;
+}
+
 // vb_zero_of builds the declaration placeholder for a value local of type
 // `tag`. The integer widths carry their suffix: the local is declared
 // unannotated, so a bare `0` is what makes it an i32 — the width and the
@@ -15581,6 +15626,14 @@ function vb_zero_of(tag: string): ast.Expr {
 // Everything else — including a value block whose local the parser already
 // typed correctly — is returned untouched.
 function vb_retype(e: ast.Expr, s: Scope): ast.Expr {
+  return vb_retype_dest(e, s, "");
+}
+
+// vb_retype_dest is vb_retype with the annotation of the binding the block
+// initialises, for a type the stores name only partially — an enum whose
+// arguments the construction leaves open spells `Option`, and only the
+// destination says `Option[i32]`.
+function vb_retype_dest(e: ast.Expr, s: Scope, dest: string): ast.Expr {
   match (e) {
     ast.ExprCall(c) => {
       if (!parser.is_value_block(c)) {
@@ -15596,16 +15649,28 @@ function vb_retype(e: ast.Expr, s: Scope): ast.Expr {
         return e;
       }
       var tag: string = vb_local_tag(want);
-      if (tag.len() == 0) {
-        return e;
-      }
       var nbody: ast.Stmt[] = [];
       match (body[0]) {
         ast.StmtVar(v) => {
           if (type_eq(check_expr(v.init, s), want)) {
             return e;
           }
-          nbody = nbody.append(ast.StmtVar { ...v, init: vb_zero_of(tag) });
+          if (tag.len() > 0) {
+            nbody = nbody.append(ast.StmtVar { ...v, init: vb_zero_of(tag) });
+          } else {
+            // No literal zero exists for the type (a struct, an enum, an
+            // array, a tuple): the local keeps the parser's placeholder and
+            // gains the annotation, so the declaration alone types it — the
+            // arms write the slot before anything reads it (#8777).
+            tag = vb_annotation_of(want);
+            if (tag.len() == 0 && dest.len() > 0 && !parser.is_destr_marker(dest) && vb_wants_annotation(want)) {
+              tag = dest;
+            }
+            if (tag.len() == 0) {
+              return e;
+            }
+            nbody = nbody.append(ast.StmtVar { ...v, type_name: tag });
+          }
         },
         _ => {
           return e;
@@ -15645,7 +15710,11 @@ function vb_expr(e: ast.Expr, s: Scope): ast.Expr {
 function vb_stmt(st: ast.Stmt, s: Scope): ast.Stmt {
   match (st) {
     ast.StmtVar(v) => {
-      return ast.StmtVar { ...v, init: vb_expr(v.init, s) };
+      var init: ast.Expr = vb_expr(v.init, s);
+      if (v.type_name.len() > 0 && !parser.is_destr_marker(v.type_name)) {
+        init = vb_retype_dest(init, s, v.type_name);
+      }
+      return ast.StmtVar { ...v, init: init };
     },
     ast.StmtReturn(r) => {
       return ast.StmtReturn { ...r, value: vb_expr(r.value, s) };

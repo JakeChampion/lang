@@ -12947,6 +12947,16 @@ function dl_itoa(n: i32): string {
 
 struct DeferAcc { stmts: ast.Stmt[], actions: ast.Stmt[], flags: i32[] }
 
+// is_value_local_name reports whether `name` is the local a value-position
+// desugar stores its result into (`__tm<line>_<col>_r` and its siblings, see
+// IfChain.value_local) — a declaration the compiler writes, never the source.
+pub function is_value_local_name(name: string): boolean {
+    var n: i32 = name.len();
+    if (n < 6 || slice_unchecked(name, n - 2, n) != "_r") { return false; }
+    var head: str = slice_unchecked(name, 0, 4);
+    return head == "__tm" || head == "__sm" || head == "__nt" || head == "__na";
+}
+
 // is_value_block reports whether `e` is a value-position `{ … }` block.
 // parse_primary builds one as an immediately-invoked zero-parameter lambda (the
 // general value-block form and the if- / match-expression desugars), and irlower

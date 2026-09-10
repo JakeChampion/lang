@@ -546,6 +546,16 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"tp-method-via-supertrait-and-default-ok", "trait A { function fa(self: Self): i32; }\ntrait B: A { function fb(self: Self): i32; function fd(self: Self): i32 { return 4; } }\nstruct S { v: i32 }\nimpl A for S { function fa(self: Self): i32 { return self.v; } }\nimpl B for S { function fb(self: Self): i32 { return self.v + 1; } }\nfunction viasuper[T: B](x: T): i32 { return x.fa() + x.fb() + x.fd(); }\nfunction main(): i32 { return viasuper(S { v: 1 }); }\n", nil},
 		{"tp-method-via-second-bound-ok", "trait A { function fa(self: Self): i32; }\ntrait C { function fc(self: Self): i32; }\nstruct S { v: i32 }\nimpl A for S { function fa(self: Self): i32 { return self.v; } }\nimpl C for S { function fc(self: Self): i32 { return self.v + 2; } }\nfunction viaplus[T: A + C](x: T): i32 { var y: T = x; var z = x; return y.fc() + z.fa(); }\nfunction main(): i32 { return viaplus(S { v: 1 }); }\n", nil},
 		{"tp-method-on-fn-param-result-ok", "trait C { function fc(self: Self): i32; }\nstruct S { v: i32 }\nimpl C for S { function fc(self: Self): i32 { return self.v + 2; } }\nfunction viafn[T, K: C](xs: T[], key: (T) => K): i32 { return key(xs[0]).fc(); }\nfunction main(): i32 { var ss: S[] = [S { v: 1 }]; return viafn(ss, (q: S): S => q); }\n", nil},
+		// A match EXPRESSION over a tuple scrutinee that evaluates to a struct
+		// (#8777): the desugar routes the arms through a value local, and a
+		// struct has no literal zero to declare it with, so the local kept the
+		// parser's i32 and the arm store was E003. The local is now declared by
+		// annotation with the placeholder, so the shape is clean — for a
+		// struct, an annotated enum destination, an array and a tuple.
+		{"value-local-struct-ok", "struct P { x: i32 }\nfunction main(): i32 { var t: (i32, i32) = (7, 2); var p: P = match (t) { (a, b) => P { x: a } }; return p.x - 7; }\n", nil},
+		{"value-local-enum-dest-ok", "function main(): i32 { var t: (i32, i32) = (7, 2); var o: Option[i32] = match (t) { (a, b) => Some(a + b) }; match (o) { Some(v) => { return v - 9; }, None => { return 5; } } }\n", nil},
+		{"value-local-array-ok", "function main(): i32 { var t: (i32, i32) = (7, 2); var xs: i32[] = match (t) { (a, b) => [a, b, 1] }; return xs.len() - 3; }\n", nil},
+		{"value-local-tuple-ok", "function main(): i32 { var t: (i32, i32) = (7, 2); var u: (i32, i32) = match (t) { (a, b) => (b, a) }; return u.0 - 2; }\n", nil},
 		// E021 object-safety (#4347 slice 4): a `dyn T` param whose trait T is not
 		// object-safe draws E021 — T has an associated function (no self) or a
 		// Self-returning method, neither of which can dispatch through a dyn
@@ -2249,6 +2259,10 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 		{"tp-method-via-supertrait-and-default-ok", "trait A { function fa(self: Self): i32; }\ntrait B: A { function fb(self: Self): i32; function fd(self: Self): i32 { return 4; } }\nstruct S { v: i32 }\nimpl A for S { function fa(self: Self): i32 { return self.v; } }\nimpl B for S { function fb(self: Self): i32 { return self.v + 1; } }\nfunction viasuper[T: B](x: T): i32 { return x.fa() + x.fb() + x.fd(); }\nfunction main(): i32 { return viasuper(S { v: 1 }); }\n"},
 		{"tp-method-via-second-bound-ok", "trait A { function fa(self: Self): i32; }\ntrait C { function fc(self: Self): i32; }\nstruct S { v: i32 }\nimpl A for S { function fa(self: Self): i32 { return self.v; } }\nimpl C for S { function fc(self: Self): i32 { return self.v + 2; } }\nfunction viaplus[T: A + C](x: T): i32 { var y: T = x; var z = x; return y.fc() + z.fa(); }\nfunction main(): i32 { return viaplus(S { v: 1 }); }\n"},
 		{"tp-method-on-fn-param-result-ok", "trait C { function fc(self: Self): i32; }\nstruct S { v: i32 }\nimpl C for S { function fc(self: Self): i32 { return self.v + 2; } }\nfunction viafn[T, K: C](xs: T[], key: (T) => K): i32 { return key(xs[0]).fc(); }\nfunction main(): i32 { var ss: S[] = [S { v: 1 }]; return viafn(ss, (q: S): S => q); }\n"},
+		{"value-local-struct-ok", "struct P { x: i32 }\nfunction main(): i32 { var t: (i32, i32) = (7, 2); var p: P = match (t) { (a, b) => P { x: a } }; return p.x - 7; }\n"},
+		{"value-local-enum-dest-ok", "function main(): i32 { var t: (i32, i32) = (7, 2); var o: Option[i32] = match (t) { (a, b) => Some(a + b) }; match (o) { Some(v) => { return v - 9; }, None => { return 5; } } }\n"},
+		{"value-local-array-ok", "function main(): i32 { var t: (i32, i32) = (7, 2); var xs: i32[] = match (t) { (a, b) => [a, b, 1] }; return xs.len() - 3; }\n"},
+		{"value-local-tuple-ok", "function main(): i32 { var t: (i32, i32) = (7, 2); var u: (i32, i32) = match (t) { (a, b) => (b, a) }; return u.0 - 2; }\n"},
 		{"tp-method-shadowed-by-local-ok", "trait Key { function k_id(self: Self): i32; }\nimpl Key for i32 { function k_id(self: Self): i32 { return self; } }\nfunction direct[K: Key](k: K): i32 { var k: string = \"ab\"; return k.len(); }\nfunction main(): i32 { return direct(3); }\n"},
 	}
 
