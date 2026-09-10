@@ -2037,6 +2037,7 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 		{"mixed-width-narrow-left-mismatch", `function f(a: i32, v: i64): i32 { return a + v; }`},
 		{"mixed-width-narrow-right-mismatch", `function f(a: i32, v: i64): i32 { return v + a; }`},
 		{"mixed-width-call-left-ok", `function g(): i32 { return 1; } function f(v: i64): i64 { return g() + v; }`},
+		{"mixed-width-call-right-ok", `function g(): i32 { return 1; } function f(v: i64): i64 { return v + g(); }`},
 		{"loop-map-return-mismatch", `function f(m: Map[string, i64]): i64 { for (k, v) in m { return k; } return 0; }`},
 		{"loop-map-argument-mismatch", `function take(s: string): i32 { return s.len(); } function f(m: Map[string, i64]): i32 { for (k, v) in m { return take(v); } return 0; }`},
 		{"loop-map-assignment-mismatch", `function f(m: Map[string, i64]): i32 { for (k, v) in m { v = k; } return 0; }`},
