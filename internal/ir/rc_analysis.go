@@ -2565,7 +2565,8 @@ func (b *builder) computeFreeEligible() map[string]bool {
 	reassignedIdent := map[string]bool{}
 	// countedAssign[rhs] marks an `L = <binding>` whose lowering emits the
 	// transfer inc, so L owns a reference of its own and does not inherit the
-	// binding's borrow taint. Populated in the *ast.Assign case below.
+	// binding's borrow taint. Populated in the *ast.Assign case below, and in
+	// the *ast.Var case for a cell cow-in-place initialiser.
 	countedAssign := map[ast.Expr]bool{}
 	markBindings := func(names []string) {
 		for _, n := range names {
@@ -2693,6 +2694,14 @@ func (b *builder) computeFreeEligible() map[string]bool {
 				if id, ok := s.Init.(*ast.Ident); ok && b.paramNamed(id.Name) != nil &&
 					needsRcIncOnAlias(id, b) {
 					seedParamInit[s.Name] = s.Init
+				}
+				// A cow-in-place mutator on a boxcapture cell's element is a
+				// COUNTED seed: the *ast.Var lowering retains the element
+				// when the call hands it back, and a fresh copy arrives
+				// with its own count, so the binding owns a reference on
+				// either path (#8853).
+				if b.isBoxedCellMapCow(s.Init) {
+					countedAssign[s.Init] = true
 				}
 			}
 		case *ast.Assign:

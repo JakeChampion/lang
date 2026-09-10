@@ -8985,8 +8985,38 @@ func (b *builder) stmt(s ast.Stmt) error {
 				b.closureTarget[n.Name] = mc.FuncName
 			}
 		}
+		// A cow-in-place map mutator on a boxcapture cell's own element hands
+		// that element back borrowed when it mutates in place, and a fresh
+		// copy otherwise. Only the first owes this binding a count of its own
+		// — the cell keeps its own, and a later `m = t` releases what it
+		// supersedes as usual — so the element is stashed before the call
+		// and the retain taken when the result is the same pointer (#8853).
+		cellCow := b.isBoxedCellMapCow(n.Init)
+		var cellOldSlot int32
+		if cellCow {
+			cellOldSlot = b.allocSlot()
+			b.locals[fmt.Sprintf("__cell_cow_old_%d", cellOldSlot)] = cellOldSlot
+			if err := b.expr(n.Init.(*ast.Call).Args[0]); err != nil {
+				return err
+			}
+			b.emit(Op{Kind: OpStoreLocal, I32: cellOldSlot})
+		}
 		if err := b.expr(n.Init); err != nil {
 			return err
+		}
+		if cellCow {
+			newSlot := b.allocSlot()
+			b.locals[fmt.Sprintf("__cell_cow_new_%d", newSlot)] = newSlot
+			b.emit(Op{Kind: OpStoreLocal, I32: newSlot})
+			b.emit(Op{Kind: OpLoadLocal, I32: newSlot})
+			b.emit(Op{Kind: OpLoadLocal, I32: cellOldSlot})
+			b.emit(Op{Kind: OpEq, Width: WidthPtr})
+			b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
+			b.emit(Op{Kind: OpLoadLocal, I32: newSlot})
+			b.emitAliasInc(n.Init)
+			b.emit(Op{Kind: OpDrop})
+			b.emit(Op{Kind: OpEnd})
+			b.emit(Op{Kind: OpLoadLocal, I32: newSlot})
 		}
 		idx, ok := b.locals[n.Name]
 		if !ok {
@@ -21635,6 +21665,20 @@ func isCellSelfMapCow(value ast.Expr, cellName string) bool {
 	if cellName == "" {
 		return false
 	}
+	return isMapCowOnCellRead(value, func(recv string) bool { return recv == cellName })
+}
+
+// isBoxedCellMapCow reports whether `value` is a cow-in-place map mutator whose
+// receiver is a read of ANY boxcapture cell — isCellSelfMapCow for a `var`
+// initialiser, which has no cell of its own to compare against.
+func (b *builder) isBoxedCellMapCow(value ast.Expr) bool {
+	if b.info == nil || len(b.info.BoxedCells) == 0 {
+		return false
+	}
+	return isMapCowOnCellRead(value, func(recv string) bool { return b.info.BoxedCells[recv] })
+}
+
+func isMapCowOnCellRead(value ast.Expr, isCell func(string) bool) bool {
 	call, isCall := value.(*ast.Call)
 	if !isCall || len(call.Args) == 0 {
 		return false
@@ -21648,7 +21692,7 @@ func isCellSelfMapCow(value ast.Expr, cellName string) bool {
 		return false
 	}
 	recv, isRecvIdent := idx.Array.(*ast.Ident)
-	return isRecvIdent && recv.Name == cellName
+	return isRecvIdent && isCell(recv.Name)
 }
 
 // sliceUncheckedArgs returns the (source, low, high) of a
