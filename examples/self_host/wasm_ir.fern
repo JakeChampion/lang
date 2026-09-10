@@ -10061,8 +10061,8 @@ pub function emit_wasm_field_reclaim_body(t: string, structs: irlower.StructTab,
                     // when snap == 0: dec if snap == 0, else dec iff
                     // old.field_k != snap.field_k.
                     //
-                    // A carried nested-struct / nested-enum field releases even
-                    // when the cow test matches — the wasm sibling of the x86
+                    // A carried nested-struct / nested-enum / ARRAY field releases
+                    // even when the cow test matches — the wasm sibling of the x86
                     // uniq arm (#6605). The base copy inc'd it for the NEW box's
                     // drop, so the OLD box's reference must be given back or the
                     // inner block is stranded. UNLESS the field is uniquely
@@ -10088,7 +10088,11 @@ pub function emit_wasm_field_reclaim_body(t: string, structs: irlower.StructTab,
                         && irlower.enum_arr_elems_walk_ok(structs, ft)) {
                         dec = "(drop (call $__enum_drop_" + ft + " " + oldf + ")) " + dec;
                     }
-                    if (frk_nest) {
+                    // An ARRAY field is a carry the base copy retains too, so
+                    // it takes the same arm as the nested kinds: pointer-equal
+                    // in old and new means two counted holders unless the
+                    // buffer is unique, in which case no inc was taken.
+                    if (frk_nest || frk == "a") {
                         o = o + "      (if (i32.or (i32.ne " + oldf + " " + newf + ") (i32.eqz (call $__fern_rc_is_unique " + oldf + "))) (then\n";
                         o = o + "        (if (i32.eqz (local.get $snap)) (then " + dec + ")\n";
                         o = o + "          (else (if (i32.ne " + oldf + " " + snapf + ") (then " + dec + "))))))\n";

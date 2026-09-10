@@ -6005,7 +6005,17 @@ pub function field_reclaim_field_ops(s: EmitState, sty: string): RcOp[] {
             || irlower.is_struct_array_field_type(s.struct_decls, fdt)
             || irlower.is_enum_array_field_type(s.struct_decls, fdt);
         if (participates) {
-            var uniq: boolean = fr_struct || fr_enum;
+            // The carries the base copy RETAINS take the uniq arm: a nested struct
+            // or enum, and every array kind. Pointer-equal in old and new then means
+            // two counted holders unless the field is unique, in which case no inc
+            // was taken (an in-place move, or #6653's suppressed retain) and the
+            // pointers coincide for that reason. A string or closure field is
+            // carried uncounted unless routed, so it keeps the cow compare.
+            var uniq: boolean = fr_struct || fr_enum || fr_str_arr || fr_box_arr || fr_fnptr
+                || irlower.is_leaksafe_array_field(fdt)
+                || (fdt == "string[]" && s.has_need("strfldok:arrbuf:" + sty))
+                || irlower.is_struct_array_field_type(s.struct_decls, fdt)
+                || irlower.is_enum_array_field_type(s.struct_decls, fdt);
             var cow: boolean = !uniq;
             // A nested STRUCT field owns rc children of its own, and the box dec
             // below frees only the box — so the children were stranded (#8538).
