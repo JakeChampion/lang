@@ -701,10 +701,11 @@ pub struct LowerFrame {
     // dead_alias_of) — arr_dead_alias_bind's pure half. Threaded read-only.
     dead_alias_ok: string[],
     // spread_sites: this function's base-spread rows (spread_sites_of). A
-    // `T { ...base }` copies every field pointer into a fresh box with NO inc, so a
-    // counted field share of a type it copies would sit behind one release too many.
-    // Seeded once per function because the share is decided mid-expression, with no
-    // body in reach.
+    // self-rebind `base = T { ...base }` copies its array fields into the successor
+    // box with NO inc (the successor takes over the base's count), so a counted
+    // field share of a type it copies would sit behind one release too many. Seeded
+    // once per function because the share is decided mid-expression, with no body
+    // in reach.
     spread_sites: string[],
     type_params: string[],
     // Source facts shared with counted-container return inference. These name
@@ -16265,6 +16266,18 @@ function lower_expr_struct_lit(slit: ast.ExprStructLit, s: LowerState): LowerSta
     // so a NESTED literal in a field value keeps its own retain.
     var slit_selfrebind: string = s.selfrebind;
     var sm: LowerState = s.with_selfrebind("");
+    // base_is_selfrebind: the literal is `srb = T { ...srb, … }`. Its successor
+    // replaces the base in the slot the base occupies, and the consume-rebind's
+    // __field_reclaim_<T> cow-skips a carried field that is pointer-equal in the
+    // old and new boxes, so the base's one count moves with the field: the array
+    // carry below takes no retain here, and only here.
+    var base_is_selfrebind: boolean = false;
+    if (slit.has_base && slit_selfrebind.len() > 0) {
+        match (slit.base) {
+            ast.ExprIdent(bid) => { base_is_selfrebind = bid.name == slit_selfrebind; },
+            _ => {}
+        }
+    }
     // COMPACT functional-update lowering (#4650): when the struct's fields all
     // copy with no per-field rc-inc (struct_copy_eligible), the N unchanged
     // fields are copied by ONE op_struct_copy(base) instead of N inline
@@ -16289,6 +16302,22 @@ function lower_expr_struct_lit(slit: ast.ExprStructLit, s: LowerState): LowerSta
         if (!sm.ok) { return sm; }
         sm = sm.emit(ir.op_struct_copy(ndecl));
         sm = sm.emit(ir.op_store_local(result_slot));
+        // The copy carries every un-overridden ARRAY field counted (see the
+        // per-field path below for why); op_struct_copy is a raw word copy, so
+        // the retains are taken off the result box here.
+        if (!base_is_selfrebind) {
+            var ci: i32 = 0;
+            while (ci < ndecl) {
+                if (util.index_of_str(slit.field_names, decl_field_name_at(s.frame.structs, slit.type_name, ci)) < 0
+                        && field_type_is_array(decl_field_type_at(s.frame.structs, slit.type_name, ci))) {
+                    sm = sm.emit(ir.op_load_local(result_slot));
+                    sm = sm.emit(ir.op_struct_get(ci, struct_field_width(s.frame.structs, slit.type_name, ci)));
+                    sm = sm.retain_tos("base-copy-arr-field");
+                    sm = sm.emit(ir.op_drop());
+                }
+                ci = ci + 1;
+            }
+        }
     } else if (slit.has_base && !base_is_ident) {
         var bscratch: string = "$fub" + util.i32_to_string(sm.locals.len());
         sm = sm.add_local(bscratch);
@@ -16745,13 +16774,21 @@ function lower_expr_struct_lit(slit: ast.ExprStructLit, s: LowerState): LowerSta
             // at the same inner box, and BOTH shallow-drop it on reclamation. So
             // retain it (the inner box read by struct_get is on the stack) with
             // the same Perceus dup as the field-override alias case, or the new
-            // struct's drop would double-free base's inner. Array fields copied
-            // from a base alias-inc via the array gates above (override path); a
-            // base-copied ARRAY field is left as-is here (its prior behaviour),
-            // only the newly-reclaimed nested-struct kind needs the retain.
+            // struct's drop would double-free base's inner.
             var cpft: string = decl_field_type_at(s.frame.structs, slit.type_name, di);
             if (decl_is_struct(s.frame.structs, cpft)) {
                 sm = sm.retain_tos("base-copy-struct-field");
+            }
+            // An ARRAY field COPIED from the base ALIASES base.<field> the same way,
+            // and the new box must hold a count of it: a unique box is taken to own
+            // its fields — a receiver-field append moves the buffer out of it and
+            // pushes in place, the consume-rebind reclaim frees the fields it
+            // replaced — and an uncounted carry made the base's buffer the one they
+            // touched (#8983). Whether the box may then release the field DEEP is
+            // spread_copy_field_counted's question. The self-rebind spread keeps the
+            // base's count instead (base_is_selfrebind).
+            if (field_type_is_array(cpft) && !base_is_selfrebind) {
+                sm = sm.retain_tos("base-copy-arr-field");
             }
             // A DIRECT enum field COPIED from the base (`R { ...base, other: v }`,
             // enum field un-overridden) ALIASES base.<enum> — both boxes point at
@@ -31999,7 +32036,7 @@ pub function lower_block(stmts: ast.Stmt[], s: LowerState): LowerState {
     // its own loop), and block-level reuse donors are struct/tuple boxes
     // (never Option locals) — so each box is freed at most once.
     var reasg: string[] = body_assign_targets(stmts);
-    var rcopt: OptRcFrees = consumed_rcpayload_option_frees(stmts, reasg, s.frame.structs, s.frame.sigs.opt_fresh_ret_fns, true);
+    var rcopt: OptRcFrees = consumed_rcpayload_option_frees(stmts, reasg, s.frame.structs, s.frame.sigs.opt_fresh_ret_fns, true, s.frame.sigs.strfld_ok_types);
     // Consumed ALL-SCALAR enum free, per block (#6127). lower_func runs
     // consumed_scalar_enum_frees over the fn's TOP-LEVEL statements only, so a
     // scalar-payload enum declared inside a loop or an if — `while { var e =
@@ -33565,10 +33602,17 @@ function borrowed_names_of(fn: parser.FuncDecl, own_names: string[]): string[] {
 // is_fresh_struct_init: an init producing a SOLE-OWNER (rc=1) struct value — a
 // direct struct literal of a known struct type. (A struct-returning call is a
 // move too, but this slice reclaims only directly-constructed structs; an aliased
-// or call-bound struct is simply left to leak.)
-function is_fresh_struct_init(e: ast.Expr, structs: StructTab): boolean {
+// or call-bound struct is simply left to leak.) A functional update
+// `T { ...base, … }` qualifies only when every field it CARRIES copies counted
+// (spread_carried_fields_counted): a carried field the box does not own a
+// deep-releasable count of would be freed under the base by the reclaim the
+// credit admits.
+function is_fresh_struct_init(e: ast.Expr, structs: StructTab, sfok: string[]): boolean {
     match (e) {
-        ast.ExprStructLit(slit) => { return decl_is_struct(structs, slit.type_name); },
+        ast.ExprStructLit(slit) => {
+            if (!decl_is_struct(structs, slit.type_name)) { return false; }
+            return !slit.has_base || spread_carried_fields_counted(structs, sfok, slit);
+        },
         _ => { return false; },
     }
 }
@@ -33578,30 +33622,30 @@ function is_fresh_struct_init(e: ast.Expr, structs: StructTab): boolean {
 // ("name@line:col", #7253 step 1) — two `var s` in sibling blocks are two slots
 // under one name, and the struct credit is the one class where letting them
 // share a verdict frees a live box rather than merely leaking.
-function collect_fresh_struct_names(stmts: ast.Stmt[], structs: StructTab, acc: string[]): string[] {
+function collect_fresh_struct_names(stmts: ast.Stmt[], structs: StructTab, acc: string[], sfok: string[]): string[] {
     var a: string[] = acc;
-    for stmt in stmts { a = collect_fresh_in_stmt(stmt, structs, a); }
+    for stmt in stmts { a = collect_fresh_in_stmt(stmt, structs, a, sfok); }
     return a;
 }
 
-function collect_fresh_in_stmt(st: ast.Stmt, structs: StructTab, acc: string[]): string[] {
+function collect_fresh_in_stmt(st: ast.Stmt, structs: StructTab, acc: string[], sfok: string[]): string[] {
     match (st) {
         ast.StmtVar(v) => {
-            if (is_fresh_struct_init(v.init, structs)) { return push_str_unique(acc, reclaim_site_key_of(v.name, v.line, v.col)); }
+            if (is_fresh_struct_init(v.init, structs, sfok)) { return push_str_unique(acc, reclaim_site_key_of(v.name, v.line, v.col)); }
             return acc;
         },
         ast.StmtIf(iff) => {
-            var a: string[] = collect_fresh_struct_names(iff.then_body, structs, acc);
-            return collect_fresh_struct_names(iff.else_body, structs, a);
+            var a: string[] = collect_fresh_struct_names(iff.then_body, structs, acc, sfok);
+            return collect_fresh_struct_names(iff.else_body, structs, a, sfok);
         },
-        ast.StmtWhile(w) => { return collect_fresh_struct_names(w.body, structs, acc); },
-        ast.StmtFor(f) => { return collect_fresh_struct_names(f.body, structs, acc); },
+        ast.StmtWhile(w) => { return collect_fresh_struct_names(w.body, structs, acc, sfok); },
+        ast.StmtFor(f) => { return collect_fresh_struct_names(f.body, structs, acc, sfok); },
         ast.StmtMatch(m) => {
             var a: string[] = acc;
-            for arm in m.arms { a = collect_fresh_struct_names(arm.body, structs, a); }
+            for arm in m.arms { a = collect_fresh_struct_names(arm.body, structs, a, sfok); }
             return a;
         },
-        ast.StmtDefer(d) => { return collect_fresh_in_stmt(d.action, structs, acc); },
+        ast.StmtDefer(d) => { return collect_fresh_in_stmt(d.action, structs, acc, sfok); },
         _ => { return acc; },
     }
 }
@@ -40265,7 +40309,7 @@ function struct_arg_to_handback(stmts: ast.Stmt[], name: string, handback: strin
 // gate, which reads the stamps: whether a self-append is a counted share or an
 // uncounted sink depends on whether the CONTAINER earned its element walk, so
 // the two gates cannot be decided independently.
-function arrstruct_credit_rows(body: ast.Stmt[], structs: StructTab, borrowable: string[], fresh_ret: string[], msites: string[]): string[] {
+function arrstruct_credit_rows(body: ast.Stmt[], structs: StructTab, borrowable: string[], fresh_ret: string[], msites: string[], sfok: string[]): string[] {
     var out: string[] = [];
     // Fresh (<struct-with-array-field>)[] locals (#4365): `var ps: P[] = [P { xs: [..] },
     // ...]` (P routes field-reclaim) — the struct sibling of ARRTUP. Credited
@@ -40276,7 +40320,7 @@ function arrstruct_credit_rows(body: ast.Stmt[], structs: StructTab, borrowable:
     // and no element-field-payload escape (arrstruct_elem_payload_escapes — a bare
     // `keep = ps[i].xs` array-field extraction; a scalar read `ps[i].n`, indexed read
     // `ps[i].xs[j]` and `ps[i].xs.len()` are borrows).
-    var asts: string[] = collect_fresh_arrstruct_names(body, body, structs, fresh_ret, [], msites);
+    var asts: string[] = collect_fresh_arrstruct_names(body, body, structs, fresh_ret, [], msites, sfok);
     var asti: i32 = 0;
     while (asti < asts.len()) {
         // "A|" rows are append-BUILT markers, not candidates.
@@ -40285,10 +40329,10 @@ function arrstruct_credit_rows(body: ast.Stmt[], structs: StructTab, borrowable:
         // same-named bindings no longer share an append-built verdict.
         var asnm: string = reclaim_site_name(asts[asti]);
         if (!(asts[asti].len() > 2 && asts[asti][0] == b'A' && asts[asti][1] == b'|')
-            && !arrstruct_unsafe_for(body, asnm, borrowable, structs, msites)
+            && !arrstruct_unsafe_for(body, asnm, borrowable, structs, msites, sfok)
             && !arrarr_row_escapes(body, asnm)
             && !arrstruct_share_holder_respread(body, asnm, structs, msites)
-            && !arrstruct_elem_payload_escapes(body, asnm, arrstruct_elem_type_of_decl(body, asnm, structs), structs, msites, borrowable)) {
+            && !arrstruct_elem_payload_escapes(body, asnm, arrstruct_elem_type_of_decl(body, asnm, structs), structs, msites, borrowable, sfok)) {
             // arrstruct_unsafe_for subsumes the former body_unsafe_for + the
             // blunt not-reassigned exclusion, validating each rebind
             // individually (#6535) — the self-append is sanctioned, any other
@@ -40298,7 +40342,7 @@ function arrstruct_credit_rows(body: ast.Stmt[], structs: StructTab, borrowable:
             } else {
                 out = out.append("ARRSTRUCT:" + asts[asti]);
             }
-            var apr: string[] = arrstruct_owned_elem_sites(body, asnm, structs, msites, []);
+            var apr: string[] = arrstruct_owned_elem_sites(body, asnm, structs, msites, [], sfok);
             var apri: i32 = 0;
             while (apri < apr.len()) { out = out.append("APOWNED:" + apr[apri]); apri = apri + 1; }
         }
@@ -40308,7 +40352,7 @@ function arrstruct_credit_rows(body: ast.Stmt[], structs: StructTab, borrowable:
 }
 
 function reclaimable_names_of(body: ast.Stmt[], reassigned: string[], structs: StructTab, borrowable: string[], fresh_ret: string[], str_fresh_ret: string[], opt_fresh_ret: SigReg, tup_fresh_ret: string[], msites: string[], recv_borrow: string[], struct_ret_fns: SigReg, params: ast.ParamDecl[], plan_on: boolean, plan_fe: string[], handback: string[], sfok: string[], str_handback_ret: string[]): string[] {
-    var fresh: string[] = collect_fresh_struct_names(body, structs, []);
+    var fresh: string[] = collect_fresh_struct_names(body, structs, [], sfok);
     // Widen with the DISCARDED fresh-ret-call locals (#3457 follow-up): a
     // `var r = f(..)` whose result is read-then-dead, rebound or not. The shared
     // body_unsafe_for gate below still proves non-escape before any is freed.
@@ -40316,7 +40360,7 @@ function reclaimable_names_of(body: ast.Stmt[], reassigned: string[], structs: S
     // The array-of-structs rows come FIRST: their "APOWNED:" stamps say which
     // self-appends are counted shares, which is what decides whether the struct
     // gate below reads an append as a sink.
-    var asrows: string[] = arrstruct_credit_rows(body, structs, borrowable, fresh_ret, msites);
+    var asrows: string[] = arrstruct_credit_rows(body, structs, borrowable, fresh_ret, msites, sfok);
     var out: string[] = [];
     out = reclaimable_fresh_struct(asrows, body, borrowable, fresh, handback, msites, plan_fe, plan_on, recv_borrow, structs, out);
     // SECOND PASS — the counted alias reassign TARGET. reassigned_from_alias refuses
@@ -40640,7 +40684,7 @@ function reclaimable_names_of(body: ast.Stmt[], reassigned: string[], structs: S
     // analysis), so the names it returns are already escape-checked — credit
     // them directly (a body_unsafe_for gate here would reject the consuming
     // match scrutinee, exactly what the block-level analysis handles instead).
-    var ots: string[] = collect_fresh_opttup_names(body, reassigned, false, structs, []);
+    var ots: string[] = collect_fresh_opttup_names(body, reassigned, false, structs, [], sfok);
     out = reclaimable_opttup(ots, out);
     // Fresh Option[<struct-with-array-field>] locals (#4365): `var o: Option[P] =
     // Some(P { xs: [..] })` (P routes field-reclaim) consumed by a borrow-only match —
@@ -40649,7 +40693,7 @@ function reclaimable_names_of(body: ast.Stmt[], reassigned: string[], structs: S
     // struct-field deep-drop __struct_drop_<P> -> struct box dec -> option box dec).
     // collect_fresh_optstruct_names is self-gating (block-level consuming-match analysis),
     // so credit the names it returns directly.
-    var oss: string[] = collect_fresh_optstruct_names(body, reassigned, false, structs, []);
+    var oss: string[] = collect_fresh_optstruct_names(body, reassigned, false, structs, [], sfok);
     out = reclaimable_optstruct(oss, out);
     // Fresh Option[<scalar-arr-of-arr>] locals (#4365): `var o: Option[i32[][]] =
     // Some([[i, i+1], ...])` consumed by a borrow-only match — the arr-of-arr sibling of
@@ -40657,7 +40701,7 @@ function reclaimable_names_of(body: ast.Stmt[], reassigned: string[], structs: S
     // + exit sweep through emit_optarrarr_deep_free (tag-check -> __fern_arrarr_free payload ->
     // option box dec). collect_fresh_optarrarr_names is self-gating (block-level consuming-match
     // analysis), so credit its names directly.
-    var oas: string[] = collect_fresh_optarrarr_names(body, reassigned, false, []);
+    var oas: string[] = collect_fresh_optarrarr_names(body, reassigned, false, [], sfok);
     out = reclaimable_optarrarr(oas, out);
     // REBOUND Option[<flat scalar array>] locals (#6127): `var o: Option[i32[]] =
     // Some([..]); while { o = Some([..]) }`. The simplest payload kind in this
@@ -40669,12 +40713,12 @@ function reclaimable_names_of(body: ast.Stmt[], reassigned: string[], structs: S
     // gate, so the two sets are disjoint and no box is freed twice. It covers
     // the rebound local whether or not a match consumes it — see
     // optarr_rebound_credit_ok for the two proofs.
-    var ofa: string[] = collect_fresh_optarr_names(body, reassigned, false, plan_on, plan_fe, []);
+    var ofa: string[] = collect_fresh_optarr_names(body, reassigned, false, plan_on, plan_fe, [], sfok);
     out = reclaimable_optarr(ofa, out);
     // The non-reassigned, non-match-consumed sibling (#6360) — same tag, same
     // exit sweep; see collect_unmatched_optarr_names for why the two sets
     // cannot overlap.
-    var ufa: string[] = collect_unmatched_optarr_names(body, reassigned, false, opt_fresh_ret, plan_on, plan_fe, []);
+    var ufa: string[] = collect_unmatched_optarr_names(body, reassigned, false, opt_fresh_ret, plan_on, plan_fe, [], sfok);
     out = reclaimable_unmatched_optarr(body, opt_fresh_ret, ufa, out);
     // A vetted alias of one of these shares the box and releases it BOX-ONLY
     // (#7687). Granted here rather than inside reclaimable_unmatched_optarr
@@ -40689,13 +40733,13 @@ function reclaimable_names_of(body: ast.Stmt[], reassigned: string[], structs: S
     out = credit_opt_alias_sites(body, ufs, "OPTSTR:", out);
     // `Option[Option[<rc payload>]]` (#7718) — the two-level release, which the
     // scalar-inner nested sibling's flat dec would strand the inner payload of.
-    var uor: string[] = collect_unmatched_optopt_rc_names(body, reassigned, false, plan_on, plan_fe, []);
+    var uor: string[] = collect_unmatched_optopt_rc_names(body, reassigned, false, plan_on, plan_fe, [], sfok);
     out = reclaimable_optopt_rc(uor, out);
     out = credit_opt_alias_sites(body, uor, "OPTOPTRC:", out);
     // The superseded boxes of a MATCH-CONSUMED, reassigned nested Option (#7716)
     // — assign-path only; see collect_optopt_rebind_names for why this cannot
     // collide with the consuming-match family's own release.
-    var orb: string[] = collect_optopt_rebind_names(body, reassigned, false, []);
+    var orb: string[] = collect_optopt_rebind_names(body, reassigned, false, [], sfok);
     out = reclaimable_optopt_rebind(orb, out);
     // The MATCH-CONSUMED quadrant of the same family (#7710). The array payload
     // kinds are reclaimed whether or not a match consumes them; the string one was
@@ -40703,7 +40747,7 @@ function reclaimable_names_of(body: ast.Stmt[], reassigned: string[], structs: S
     // match (o) { .. }` freed nothing at all — 72 B/round, unbounded, against 0 on
     // native. Same tag and same exit sweep; see collect_fresh_optstr_names for why
     // the two collectors cannot overlap.
-    var mfs: string[] = collect_fresh_optstr_names(body, reassigned, false, opt_fresh_ret, str_fresh_ret, []);
+    var mfs: string[] = collect_fresh_optstr_names(body, reassigned, false, opt_fresh_ret, str_fresh_ret, [], sfok);
     out = reclaimable_optstr(mfs, out);
     // Fresh (<tuple-with-array>)[] locals (#4365): `var xs: (i32, i32[])[] =
     // [(i, [i, i+1]), ...]` — an array whose elements are fresh tuples carrying fresh
@@ -41138,19 +41182,32 @@ function stmt_unsafe_for_ret_ok(st: ast.Stmt, name: string, borrowable: string[]
 
 // spread_copy_field_counted: a field of type `t` of struct `sty`, CARRIED
 // through a `T { ...base, … }` spread, reaches the new box as a COUNTED
-// reference. The base-copy path of lower_expr_struct_lit retains a
-// nested-struct or enum field unconditionally and a STRING field only under
-// `slit_reclaim` — the routing verdict — so the string case asks the very same
-// predicate rather than assuming it. A scalar carries no reference at all.
-// Every other kind — arrays, tuples, maps, options, closures — is copied
-// uncounted.
+// reference the box may release DEEP. The base-copy path of
+// lower_expr_struct_lit retains a nested-struct or enum field and every array
+// field unconditionally, and a STRING field only under `slit_reclaim` — the
+// routing verdict — so the string case asks the very same predicate rather than
+// assuming it. A scalar carries no reference at all. Tuples, maps, options and
+// closures are copied uncounted.
+//
+// Of the arrays only the scalar-element kinds count: a shared string[] or
+// struct[]/enum[] buffer that a later append un-shares is copied with its
+// element children UNSECURED (#8874, the pointer-element contract), so a box
+// carrying one is not sole owner of those children and must not deep-drop
+// them — the same line return_value_is_strictfresh_struct draws for an
+// override. The retain still stands (it is what keeps the append off the
+// base's buffer); the count it takes is released only with the base's.
+//
+// The self-rebind spread `p = T { ...p, … }` carries its arrays uncounted (the
+// successor takes over the base's count), which this predicate need not see:
+// the base box dies in the same rebind, so no second owner of the field is
+// minted.
 //
 // The string clause is not a detail: an unrouted string-fielded type spread as
 // a base mints an uncounted co-owner, and treating that as counted hands two
 // owners one buffer. Claiming it segfaulted gen1 of the per-module emit-all
 // fixpoint while every small-program gate stayed green.
 function spread_copy_field_counted(structs: StructTab, sfok: string[], sty: string, t: string): boolean {
-    if (reuse_field_is_scalar(t) || decl_is_enum(structs, t) || decl_is_struct(structs, t)) { return true; }
+    if (reuse_field_is_scalar(t) || decl_is_enum(structs, t) || decl_is_struct(structs, t) || is_leaksafe_array_field(t)) { return true; }
     return t == "string" && struct_routes_field_reclaim_at(structs, sfok, sty);
 }
 
@@ -42569,7 +42626,7 @@ pub function return_fresh_struct_ret_fns_of(funcs: parser.FuncDecl[], structs: S
         if (fn_returns_fresh_arrtup(fn, structs, str_fresh)) {
             out = out.append("ARRTUPF:" + fn.name);
         }
-        if (fn_returns_fresh_arrstruct(fn, structs)) {
+        if (fn_returns_fresh_arrstruct(fn, structs, sfok)) {
             out = out.append("ARRSTRUCTF:" + fn.name);
         }
         // "STRUCTARRF:<name>" — the same for the SCALAR-FIELD struct arrays the
@@ -42578,7 +42635,7 @@ pub function return_fresh_struct_ret_fns_of(funcs: parser.FuncDecl[], structs: S
         // credit at all, so its exit sweep took the generic shallow buffer dec
         // and stranded every element box — 160 B per round, unbounded, where the
         // byte-identical literal init was flat.
-        if (fn_returns_fresh_structarr(fn, structs)) {
+        if (fn_returns_fresh_structarr(fn, structs, sfok)) {
             out = out.append("STRUCTARRF:" + fn.name);
         }
         // "ARENUMF:<name>|<Enum>" — the array-of-ENUM sibling of the rows above.
@@ -46038,7 +46095,7 @@ function call_init_callee_err_fresh(e: ast.Expr, reg: SigReg): boolean {
 // `nested_ok` is TRUE only from lower_block, and it is what lets a DIRECT ctor
 // take the nested-match lookup. See the comment at the lookup itself for why that
 // is safe there and unsafe at function scope.
-function consumed_rcpayload_option_frees(body: ast.Stmt[], reassigned: string[], structs: StructTab, opt_fresh_reg: SigReg, nested_ok: boolean): OptRcFrees {
+function consumed_rcpayload_option_frees(body: ast.Stmt[], reassigned: string[], structs: StructTab, opt_fresh_reg: SigReg, nested_ok: boolean, sfok: string[]): OptRcFrees {
     var idxs: i32[] = [];
     var vidxs: i32[] = [];
     var names: string[] = [];
@@ -46082,7 +46139,7 @@ function consumed_rcpayload_option_frees(body: ast.Stmt[], reassigned: string[],
                 // so neither can release what the other does.
                 var cand_reassign_ok: boolean = util.index_of_str(reassigned, v.name) < 0
                     || (type_is_scalar_union(cand.ptype)
-                        && opt_rebinds_all_fresh(body, v.name, "optopt", "", struct_tab_empty(), sig_reg_empty(), []));
+                        && opt_rebinds_all_fresh(body, v.name, "optopt", "", struct_tab_empty(), sig_reg_empty(), [], sfok));
                 if (cand.variant != "" && cand_reassign_ok) {
                     // The consuming match may sit one block deeper than `body`
                     // (#6319), so the two kinds of check read different things:
@@ -47363,7 +47420,7 @@ function opttup_payload_escapes(stmts: ast.Stmt[], name: string, inner: string, 
 // 60000 bytes over 100 rounds with ZERO releases emitted. #6225 established the
 // per-rebind discipline for the flat-array kind; this is the same relaxation for
 // the tuple payload.
-function collect_fresh_opttup_names(stmts: ast.Stmt[], fn_reassigned: string[], nested: boolean, structs: StructTab, acc: string[]): string[] {
+function collect_fresh_opttup_names(stmts: ast.Stmt[], fn_reassigned: string[], nested: boolean, structs: StructTab, acc: string[], sfok: string[]): string[] {
     var a: string[] = acc;
     var vi: i32 = 0;
     while (vi < stmts.len()) {
@@ -47372,7 +47429,7 @@ function collect_fresh_opttup_names(stmts: ast.Stmt[], fn_reassigned: string[], 
                 if (opttup_ann_is(v.type_name, structs)
                     && opttup_init_is_fresh(opttup_inner_type(v.type_name), v.init, structs)
                     && (!block_reassigns(stmts, fn_reassigned, nested, v.name)
-                        || opt_rebinds_all_fresh(stmts, v.name, "tup", opttup_inner_type(v.type_name), structs, sig_reg_empty(), []))) {
+                        || opt_rebinds_all_fresh(stmts, v.name, "tup", opttup_inner_type(v.type_name), structs, sig_reg_empty(), [], sfok))) {
                     // The consuming match may sit one block deeper (#6319). No
                     // nested_ok flag is needed here, unlike the scalar and rc-payload
                     // collectors: NOTHING else claims this shape at either scope —
@@ -47392,11 +47449,11 @@ function collect_fresh_opttup_names(stmts: ast.Stmt[], fn_reassigned: string[], 
                     }
                 }
             },
-            ast.StmtIf(f) => { a = collect_fresh_opttup_names(f.then_body, fn_reassigned, true, structs, a); a = collect_fresh_opttup_names(f.else_body, fn_reassigned, true, structs, a); },
-            ast.StmtWhile(w) => { a = collect_fresh_opttup_names(w.body, fn_reassigned, true, structs, a); },
-            ast.StmtFor(fo) => { a = collect_fresh_opttup_names(fo.body, fn_reassigned, true, structs, a); },
+            ast.StmtIf(f) => { a = collect_fresh_opttup_names(f.then_body, fn_reassigned, true, structs, a, sfok); a = collect_fresh_opttup_names(f.else_body, fn_reassigned, true, structs, a, sfok); },
+            ast.StmtWhile(w) => { a = collect_fresh_opttup_names(w.body, fn_reassigned, true, structs, a, sfok); },
+            ast.StmtFor(fo) => { a = collect_fresh_opttup_names(fo.body, fn_reassigned, true, structs, a, sfok); },
             ast.StmtMatch(m) => {
-                for arm in m.arms { a = collect_fresh_opttup_names(arm.body, fn_reassigned, true, structs, a); }
+                for arm in m.arms { a = collect_fresh_opttup_names(arm.body, fn_reassigned, true, structs, a, sfok); }
             },
             _ => {}
         }
@@ -48774,7 +48831,7 @@ function optstruct_ann_is(type_name: string, structs: StructTab): boolean {
 // here bare or qualified. The declaration's own annotation fixes the payload type, so the
 // ident needs no further test. `Err` declines: its payload is E, which this class does not
 // release, so a name whose every binding is not a Some/Ok stays uncredited and leaks.
-function optstruct_init_is_fresh(e: ast.Expr, structs: StructTab): boolean {
+function optstruct_init_is_fresh(e: ast.Expr, structs: StructTab, sfok: string[]): boolean {
     match (e) {
         ast.ExprCall(c) => {
             var ctor: string = "";
@@ -48788,7 +48845,7 @@ function optstruct_init_is_fresh(e: ast.Expr, structs: StructTab): boolean {
                     ast.ExprIdent(_) => { return true; },
                     _ => {}
                 }
-                return is_fresh_struct_init(c.args[0], structs);
+                return is_fresh_struct_init(c.args[0], structs, sfok);
             }
             return false;
         },
@@ -48957,16 +49014,16 @@ function optstruct_payload_escapes(stmts: ast.Stmt[], name: string, sty: string,
 // Some(<struct lit>)/None under an Option[<struct-with-array>] annotation, consumed by
 // exactly one borrow-only match in the same block, not escaping. A reassigned name is
 // admitted when every rebind is itself fresh (opt_rebinds_all_fresh, #6127).
-function collect_fresh_optstruct_names(stmts: ast.Stmt[], fn_reassigned: string[], nested: boolean, structs: StructTab, acc: string[]): string[] {
+function collect_fresh_optstruct_names(stmts: ast.Stmt[], fn_reassigned: string[], nested: boolean, structs: StructTab, acc: string[], sfok: string[]): string[] {
     var a: string[] = acc;
     var vi: i32 = 0;
     while (vi < stmts.len()) {
         match (stmts[vi]) {
             ast.StmtVar(v) => {
                 if (optstruct_ann_is(v.type_name, structs)
-                    && optstruct_init_is_fresh(v.init, structs)
+                    && optstruct_init_is_fresh(v.init, structs, sfok)
                     && (!block_reassigns(stmts, fn_reassigned, nested, v.name)
-                        || opt_rebinds_all_fresh(stmts, v.name, "struct", "", structs, sig_reg_empty(), []))) {
+                        || opt_rebinds_all_fresh(stmts, v.name, "struct", "", structs, sig_reg_empty(), [], sfok))) {
                     // The consuming match may sit one block deeper, or be a match
                     // EXPRESSION in a `return` (#6319 + the IIFE arm) — the same
                     // reader the OPTTUP sibling already uses, which OPTSTRUCT was
@@ -48986,11 +49043,11 @@ function collect_fresh_optstruct_names(stmts: ast.Stmt[], fn_reassigned: string[
                     }
                 }
             },
-            ast.StmtIf(f) => { a = collect_fresh_optstruct_names(f.then_body, fn_reassigned, true, structs, a); a = collect_fresh_optstruct_names(f.else_body, fn_reassigned, true, structs, a); },
-            ast.StmtWhile(w) => { a = collect_fresh_optstruct_names(w.body, fn_reassigned, true, structs, a); },
-            ast.StmtFor(fo) => { a = collect_fresh_optstruct_names(fo.body, fn_reassigned, true, structs, a); },
+            ast.StmtIf(f) => { a = collect_fresh_optstruct_names(f.then_body, fn_reassigned, true, structs, a, sfok); a = collect_fresh_optstruct_names(f.else_body, fn_reassigned, true, structs, a, sfok); },
+            ast.StmtWhile(w) => { a = collect_fresh_optstruct_names(w.body, fn_reassigned, true, structs, a, sfok); },
+            ast.StmtFor(fo) => { a = collect_fresh_optstruct_names(fo.body, fn_reassigned, true, structs, a, sfok); },
             ast.StmtMatch(m) => {
-                for arm in m.arms { a = collect_fresh_optstruct_names(arm.body, fn_reassigned, true, structs, a); }
+                for arm in m.arms { a = collect_fresh_optstruct_names(arm.body, fn_reassigned, true, structs, a, sfok); }
             },
             _ => {}
         }
@@ -49244,9 +49301,9 @@ function optarr_init_is_fresh(e: ast.Expr): boolean {
 //   "arrarr"  Option[<scalar arr-of-arr>]        (OPTARRARR:)
 //   "struct"  Option[<struct-with-array>]        (OPTSTRUCT:)
 //   "tup"     Option[<tuple-with-array>]         (OPTTUP:)
-function opt_assign_is_fresh(e: ast.Expr, kind: string, inner: string, structs: StructTab, opt_fresh_reg: SigReg, str_fresh_ret: string[]): boolean {
+function opt_assign_is_fresh(e: ast.Expr, kind: string, inner: string, structs: StructTab, opt_fresh_reg: SigReg, str_fresh_ret: string[], sfok: string[]): boolean {
     if (kind == "tup") { return opttup_init_is_fresh(inner, e, structs); }
-    if (kind == "struct") { return optstruct_init_is_fresh(e, structs); }
+    if (kind == "struct") { return optstruct_init_is_fresh(e, structs, sfok); }
     if (kind == "arrarr") { return optarrarr_init_is_fresh(e); }
     // A STRING payload's freshness is not a purely syntactic test — a producer
     // call qualifies only through the registry's "f" flag — so this kind is the
@@ -49264,21 +49321,21 @@ function opt_assign_is_fresh(e: ast.Expr, kind: string, inner: string, structs: 
 // One walker for the whole family (#6127). The four collectors are structurally
 // identical and differ only in which freshness predicate they apply, so the
 // recursion belongs in one place; opt_assign_is_fresh carries the difference.
-function opt_rebinds_all_fresh(stmts: ast.Stmt[], name: string, kind: string, inner: string, structs: StructTab, opt_fresh_reg: SigReg, str_fresh_ret: string[]): boolean {
+function opt_rebinds_all_fresh(stmts: ast.Stmt[], name: string, kind: string, inner: string, structs: StructTab, opt_fresh_reg: SigReg, str_fresh_ret: string[], sfok: string[]): boolean {
     for stmt in stmts {
         match (stmt) {
             ast.StmtAssign(a) => {
-                if (a.target == name && !opt_assign_is_fresh(a.value, kind, inner, structs, opt_fresh_reg, str_fresh_ret)) { return false; }
+                if (a.target == name && !opt_assign_is_fresh(a.value, kind, inner, structs, opt_fresh_reg, str_fresh_ret, sfok)) { return false; }
             },
             ast.StmtIf(f) => {
-                if (!opt_rebinds_all_fresh(f.then_body, name, kind, inner, structs, opt_fresh_reg, str_fresh_ret)) { return false; }
-                if (!opt_rebinds_all_fresh(f.else_body, name, kind, inner, structs, opt_fresh_reg, str_fresh_ret)) { return false; }
+                if (!opt_rebinds_all_fresh(f.then_body, name, kind, inner, structs, opt_fresh_reg, str_fresh_ret, sfok)) { return false; }
+                if (!opt_rebinds_all_fresh(f.else_body, name, kind, inner, structs, opt_fresh_reg, str_fresh_ret, sfok)) { return false; }
             },
-            ast.StmtWhile(w) => { if (!opt_rebinds_all_fresh(w.body, name, kind, inner, structs, opt_fresh_reg, str_fresh_ret)) { return false; } },
-            ast.StmtFor(fo) => { if (!opt_rebinds_all_fresh(fo.body, name, kind, inner, structs, opt_fresh_reg, str_fresh_ret)) { return false; } },
+            ast.StmtWhile(w) => { if (!opt_rebinds_all_fresh(w.body, name, kind, inner, structs, opt_fresh_reg, str_fresh_ret, sfok)) { return false; } },
+            ast.StmtFor(fo) => { if (!opt_rebinds_all_fresh(fo.body, name, kind, inner, structs, opt_fresh_reg, str_fresh_ret, sfok)) { return false; } },
             ast.StmtMatch(m) => {
                 for arm in m.arms {
-                    if (!opt_rebinds_all_fresh(arm.body, name, kind, inner, structs, opt_fresh_reg, str_fresh_ret)) { return false; }
+                    if (!opt_rebinds_all_fresh(arm.body, name, kind, inner, structs, opt_fresh_reg, str_fresh_ret, sfok)) { return false; }
                 }
             },
             _ => {}
@@ -49590,7 +49647,7 @@ function unmatched_optopt_init_is_fresh(e: ast.Expr): boolean {
 // collide even so: this releases the OLD value at an assignment and that
 // releases the CURRENT value at the match. A disagreement costs a leak in one
 // direction or the other, never a double release.
-function collect_optopt_rebind_names(stmts: ast.Stmt[], fn_reassigned: string[], nested: boolean, acc: string[]): string[] {
+function collect_optopt_rebind_names(stmts: ast.Stmt[], fn_reassigned: string[], nested: boolean, acc: string[], sfok: string[]): string[] {
     var a: string[] = acc;
     var vi: i32 = 0;
     while (vi < stmts.len()) {
@@ -49599,7 +49656,7 @@ function collect_optopt_rebind_names(stmts: ast.Stmt[], fn_reassigned: string[],
                 if (unmatched_optopt_ann_is(v.type_name)
                     && unmatched_optopt_init_is_fresh(v.init)
                     && block_reassigns(stmts, fn_reassigned, nested, v.name)
-                    && opt_rebinds_all_fresh(stmts, v.name, "optopt", "", struct_tab_empty(), sig_reg_empty(), [])) {
+                    && opt_rebinds_all_fresh(stmts, v.name, "optopt", "", struct_tab_empty(), sig_reg_empty(), [], sfok)) {
                     var mi: i32 = sole_top_level_match_idx(stmts, v.name);
                     if (mi > vi && !match_arms_use_name(stmts[mi], v.name)
                         && !name_used_after(stmts, v.name, mi)
@@ -49608,11 +49665,11 @@ function collect_optopt_rebind_names(stmts: ast.Stmt[], fn_reassigned: string[],
                     }
                 }
             },
-            ast.StmtIf(f) => { a = collect_optopt_rebind_names(f.then_body, fn_reassigned, true, a); a = collect_optopt_rebind_names(f.else_body, fn_reassigned, true, a); },
-            ast.StmtWhile(w) => { a = collect_optopt_rebind_names(w.body, fn_reassigned, true, a); },
-            ast.StmtFor(fo) => { a = collect_optopt_rebind_names(fo.body, fn_reassigned, true, a); },
+            ast.StmtIf(f) => { a = collect_optopt_rebind_names(f.then_body, fn_reassigned, true, a, sfok); a = collect_optopt_rebind_names(f.else_body, fn_reassigned, true, a, sfok); },
+            ast.StmtWhile(w) => { a = collect_optopt_rebind_names(w.body, fn_reassigned, true, a, sfok); },
+            ast.StmtFor(fo) => { a = collect_optopt_rebind_names(fo.body, fn_reassigned, true, a, sfok); },
             ast.StmtMatch(m) => {
-                for arm in m.arms { a = collect_optopt_rebind_names(arm.body, fn_reassigned, true, a); }
+                for arm in m.arms { a = collect_optopt_rebind_names(arm.body, fn_reassigned, true, a, sfok); }
             },
             _ => {}
         }
@@ -49630,7 +49687,7 @@ function reclaimable_optopt_rebind(ns: string[], out: string[]): string[] {
     return out;
 }
 
-function collect_unmatched_optopt_rc_names(stmts: ast.Stmt[], fn_reassigned: string[], nested: boolean, plan_on: boolean, plan_fe: string[], acc: string[]): string[] {
+function collect_unmatched_optopt_rc_names(stmts: ast.Stmt[], fn_reassigned: string[], nested: boolean, plan_on: boolean, plan_fe: string[], acc: string[], sfok: string[]): string[] {
     var a: string[] = acc;
     for stmt in stmts {
         match (stmt) {
@@ -49638,16 +49695,16 @@ function collect_unmatched_optopt_rc_names(stmts: ast.Stmt[], fn_reassigned: str
                 if (nested_opt_inner_freefn(opttup_inner_type(v.type_name) + "") != ""
                     && unmatched_optopt_init_is_fresh(v.init)
                     && (!block_reassigns(stmts, fn_reassigned, nested, v.name)
-                        || opt_rebinds_all_fresh(stmts, v.name, "optopt", "", struct_tab_empty(), sig_reg_empty(), []))
+                        || opt_rebinds_all_fresh(stmts, v.name, "optopt", "", struct_tab_empty(), sig_reg_empty(), [], sfok))
                     && opt_unmatched_esc_ok(stmts, v.name, reclaim_site_key_of(v.name, v.line, v.col), plan_on, plan_fe, opt_alias_bind_sites_of(stmts, v.name))) {
                     a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
                 }
             },
-            ast.StmtIf(f) => { a = collect_unmatched_optopt_rc_names(f.then_body, fn_reassigned, true, plan_on, plan_fe, a); a = collect_unmatched_optopt_rc_names(f.else_body, fn_reassigned, true, plan_on, plan_fe, a); },
-            ast.StmtWhile(w) => { a = collect_unmatched_optopt_rc_names(w.body, fn_reassigned, true, plan_on, plan_fe, a); },
-            ast.StmtFor(fo) => { a = collect_unmatched_optopt_rc_names(fo.body, fn_reassigned, true, plan_on, plan_fe, a); },
+            ast.StmtIf(f) => { a = collect_unmatched_optopt_rc_names(f.then_body, fn_reassigned, true, plan_on, plan_fe, a, sfok); a = collect_unmatched_optopt_rc_names(f.else_body, fn_reassigned, true, plan_on, plan_fe, a, sfok); },
+            ast.StmtWhile(w) => { a = collect_unmatched_optopt_rc_names(w.body, fn_reassigned, true, plan_on, plan_fe, a, sfok); },
+            ast.StmtFor(fo) => { a = collect_unmatched_optopt_rc_names(fo.body, fn_reassigned, true, plan_on, plan_fe, a, sfok); },
             ast.StmtMatch(m) => {
-                for arm in m.arms { a = collect_unmatched_optopt_rc_names(arm.body, fn_reassigned, true, plan_on, plan_fe, a); }
+                for arm in m.arms { a = collect_unmatched_optopt_rc_names(arm.body, fn_reassigned, true, plan_on, plan_fe, a, sfok); }
             },
             _ => {}
         }
@@ -49664,7 +49721,7 @@ function reclaimable_optopt_rc(ns: string[], out: string[]): string[] {
     return out;
 }
 
-function collect_unmatched_optarr_names(stmts: ast.Stmt[], fn_reassigned: string[], nested: boolean, opt_fresh_reg: SigReg, plan_on: boolean, plan_fe: string[], acc: string[]): string[] {
+function collect_unmatched_optarr_names(stmts: ast.Stmt[], fn_reassigned: string[], nested: boolean, opt_fresh_reg: SigReg, plan_on: boolean, plan_fe: string[], acc: string[], sfok: string[]): string[] {
     var a: string[] = acc;
     for stmt in stmts {
         match (stmt) {
@@ -49682,16 +49739,16 @@ function collect_unmatched_optarr_names(stmts: ast.Stmt[], fn_reassigned: string
                 var oa_opt_ok: boolean = unmatched_optopt_ann_is(v.type_name)
                     && unmatched_optopt_init_is_fresh(v.init)
                     && (!block_reassigns(stmts, fn_reassigned, nested, v.name)
-                        || opt_rebinds_all_fresh(stmts, v.name, "optopt", "", struct_tab_empty(), sig_reg_empty(), []));
+                        || opt_rebinds_all_fresh(stmts, v.name, "optopt", "", struct_tab_empty(), sig_reg_empty(), [], sfok));
                 if ((oa_arr_ok || oa_opt_ok) && oa_esc_ok) {
                     a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
                 }
             },
-            ast.StmtIf(f) => { a = collect_unmatched_optarr_names(f.then_body, fn_reassigned, true, opt_fresh_reg, plan_on, plan_fe, a); a = collect_unmatched_optarr_names(f.else_body, fn_reassigned, true, opt_fresh_reg, plan_on, plan_fe, a); },
-            ast.StmtWhile(w) => { a = collect_unmatched_optarr_names(w.body, fn_reassigned, true, opt_fresh_reg, plan_on, plan_fe, a); },
-            ast.StmtFor(fo) => { a = collect_unmatched_optarr_names(fo.body, fn_reassigned, true, opt_fresh_reg, plan_on, plan_fe, a); },
+            ast.StmtIf(f) => { a = collect_unmatched_optarr_names(f.then_body, fn_reassigned, true, opt_fresh_reg, plan_on, plan_fe, a, sfok); a = collect_unmatched_optarr_names(f.else_body, fn_reassigned, true, opt_fresh_reg, plan_on, plan_fe, a, sfok); },
+            ast.StmtWhile(w) => { a = collect_unmatched_optarr_names(w.body, fn_reassigned, true, opt_fresh_reg, plan_on, plan_fe, a, sfok); },
+            ast.StmtFor(fo) => { a = collect_unmatched_optarr_names(fo.body, fn_reassigned, true, opt_fresh_reg, plan_on, plan_fe, a, sfok); },
             ast.StmtMatch(m) => {
-                for arm in m.arms { a = collect_unmatched_optarr_names(arm.body, fn_reassigned, true, opt_fresh_reg, plan_on, plan_fe, a); }
+                for arm in m.arms { a = collect_unmatched_optarr_names(arm.body, fn_reassigned, true, opt_fresh_reg, plan_on, plan_fe, a, sfok); }
             },
             _ => {}
         }
@@ -49738,7 +49795,7 @@ function optarr_rebound_credit_ok(stmts: ast.Stmt[], v: ast.StmtVar, vi: i32, pl
         && !body_unsafe_for(stmts, v.name, [], []);
 }
 
-function collect_fresh_optarr_names(stmts: ast.Stmt[], fn_reassigned: string[], nested: boolean, plan_on: boolean, plan_fe: string[], acc: string[]): string[] {
+function collect_fresh_optarr_names(stmts: ast.Stmt[], fn_reassigned: string[], nested: boolean, plan_on: boolean, plan_fe: string[], acc: string[], sfok: string[]): string[] {
     var a: string[] = acc;
     var vi: i32 = 0;
     while (vi < stmts.len()) {
@@ -49747,16 +49804,16 @@ function collect_fresh_optarr_names(stmts: ast.Stmt[], fn_reassigned: string[], 
                 if (optarr_ann_is(v.type_name)
                     && optarr_init_is_fresh(v.init)
                     && block_reassigns(stmts, fn_reassigned, nested, v.name)
-                    && opt_rebinds_all_fresh(stmts, v.name, "arr", "", struct_tab_empty(), sig_reg_empty(), [])
+                    && opt_rebinds_all_fresh(stmts, v.name, "arr", "", struct_tab_empty(), sig_reg_empty(), [], sfok)
                     && optarr_rebound_credit_ok(stmts, v, vi, plan_on, plan_fe)) {
                     a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
                 }
             },
-            ast.StmtIf(f) => { a = collect_fresh_optarr_names(f.then_body, fn_reassigned, true, plan_on, plan_fe, a); a = collect_fresh_optarr_names(f.else_body, fn_reassigned, true, plan_on, plan_fe, a); },
-            ast.StmtWhile(w) => { a = collect_fresh_optarr_names(w.body, fn_reassigned, true, plan_on, plan_fe, a); },
-            ast.StmtFor(fo) => { a = collect_fresh_optarr_names(fo.body, fn_reassigned, true, plan_on, plan_fe, a); },
+            ast.StmtIf(f) => { a = collect_fresh_optarr_names(f.then_body, fn_reassigned, true, plan_on, plan_fe, a, sfok); a = collect_fresh_optarr_names(f.else_body, fn_reassigned, true, plan_on, plan_fe, a, sfok); },
+            ast.StmtWhile(w) => { a = collect_fresh_optarr_names(w.body, fn_reassigned, true, plan_on, plan_fe, a, sfok); },
+            ast.StmtFor(fo) => { a = collect_fresh_optarr_names(fo.body, fn_reassigned, true, plan_on, plan_fe, a, sfok); },
             ast.StmtMatch(m) => {
-                for arm in m.arms { a = collect_fresh_optarr_names(arm.body, fn_reassigned, true, plan_on, plan_fe, a); }
+                for arm in m.arms { a = collect_fresh_optarr_names(arm.body, fn_reassigned, true, plan_on, plan_fe, a, sfok); }
             },
             _ => {}
         }
@@ -50129,7 +50186,7 @@ function optarrarr_payload_escapes(stmts: ast.Stmt[], name: string): boolean {
 // fresh Some(<arr-of-arr lit>)/None under an Option[<scalar-arr-of-arr>] annotation, consumed
 // by exactly one borrow-only match in the same block, not escaping. A reassigned name is
 // admitted when every rebind is itself fresh (opt_rebinds_all_fresh, #6127).
-function collect_fresh_optarrarr_names(stmts: ast.Stmt[], fn_reassigned: string[], nested: boolean, acc: string[]): string[] {
+function collect_fresh_optarrarr_names(stmts: ast.Stmt[], fn_reassigned: string[], nested: boolean, acc: string[], sfok: string[]): string[] {
     var a: string[] = acc;
     var vi: i32 = 0;
     while (vi < stmts.len()) {
@@ -50138,7 +50195,7 @@ function collect_fresh_optarrarr_names(stmts: ast.Stmt[], fn_reassigned: string[
                 if (optarrarr_ann_is(v.type_name)
                     && optarrarr_init_is_fresh(v.init)
                     && (!block_reassigns(stmts, fn_reassigned, nested, v.name)
-                        || opt_rebinds_all_fresh(stmts, v.name, "arrarr", "", struct_tab_empty(), sig_reg_empty(), []))) {
+                        || opt_rebinds_all_fresh(stmts, v.name, "arrarr", "", struct_tab_empty(), sig_reg_empty(), [], sfok))) {
                     var match_idx: i32 = sole_top_level_match_idx(stmts, v.name);
                     if (match_idx > vi
                         && !match_arms_use_name(stmts[match_idx], v.name)
@@ -50149,11 +50206,11 @@ function collect_fresh_optarrarr_names(stmts: ast.Stmt[], fn_reassigned: string[
                     }
                 }
             },
-            ast.StmtIf(f) => { a = collect_fresh_optarrarr_names(f.then_body, fn_reassigned, true, a); a = collect_fresh_optarrarr_names(f.else_body, fn_reassigned, true, a); },
-            ast.StmtWhile(w) => { a = collect_fresh_optarrarr_names(w.body, fn_reassigned, true, a); },
-            ast.StmtFor(fo) => { a = collect_fresh_optarrarr_names(fo.body, fn_reassigned, true, a); },
+            ast.StmtIf(f) => { a = collect_fresh_optarrarr_names(f.then_body, fn_reassigned, true, a, sfok); a = collect_fresh_optarrarr_names(f.else_body, fn_reassigned, true, a, sfok); },
+            ast.StmtWhile(w) => { a = collect_fresh_optarrarr_names(w.body, fn_reassigned, true, a, sfok); },
+            ast.StmtFor(fo) => { a = collect_fresh_optarrarr_names(fo.body, fn_reassigned, true, a, sfok); },
             ast.StmtMatch(m) => {
-                for arm in m.arms { a = collect_fresh_optarrarr_names(arm.body, fn_reassigned, true, a); }
+                for arm in m.arms { a = collect_fresh_optarrarr_names(arm.body, fn_reassigned, true, a, sfok); }
             },
             _ => {}
         }
@@ -50317,7 +50374,7 @@ function optstr_payload_escapes(stmts: ast.Stmt[], name: string): boolean {
 // Freshness is required for the same reason the unmatched sibling requires it: a
 // string payload is stored uncounted and assignment borrows it, so an aliased
 // payload would be released under a live reference.
-function collect_fresh_optstr_names(stmts: ast.Stmt[], fn_reassigned: string[], nested: boolean, opt_fresh_reg: SigReg, str_fresh_ret: string[], acc: string[]): string[] {
+function collect_fresh_optstr_names(stmts: ast.Stmt[], fn_reassigned: string[], nested: boolean, opt_fresh_reg: SigReg, str_fresh_ret: string[], acc: string[], sfok: string[]): string[] {
     var a: string[] = acc;
     var vi: i32 = 0;
     while (vi < stmts.len()) {
@@ -50326,7 +50383,7 @@ function collect_fresh_optstr_names(stmts: ast.Stmt[], fn_reassigned: string[], 
                 if (unmatched_optstr_ann_is(v.type_name)
                     && unmatched_optstr_init_is_fresh(v.init, opt_fresh_reg, str_fresh_ret)
                     && (!block_reassigns(stmts, fn_reassigned, nested, v.name)
-                        || opt_rebinds_all_fresh(stmts, v.name, "str", "", struct_tab_empty(), opt_fresh_reg, str_fresh_ret))) {
+                        || opt_rebinds_all_fresh(stmts, v.name, "str", "", struct_tab_empty(), opt_fresh_reg, str_fresh_ret, sfok))) {
                     var match_idx: i32 = sole_top_level_match_idx(stmts, v.name);
                     if (match_idx > vi
                         && !match_arms_use_name(stmts[match_idx], v.name)
@@ -50337,11 +50394,11 @@ function collect_fresh_optstr_names(stmts: ast.Stmt[], fn_reassigned: string[], 
                     }
                 }
             },
-            ast.StmtIf(f) => { a = collect_fresh_optstr_names(f.then_body, fn_reassigned, true, opt_fresh_reg, str_fresh_ret, a); a = collect_fresh_optstr_names(f.else_body, fn_reassigned, true, opt_fresh_reg, str_fresh_ret, a); },
-            ast.StmtWhile(w) => { a = collect_fresh_optstr_names(w.body, fn_reassigned, true, opt_fresh_reg, str_fresh_ret, a); },
-            ast.StmtFor(fo) => { a = collect_fresh_optstr_names(fo.body, fn_reassigned, true, opt_fresh_reg, str_fresh_ret, a); },
+            ast.StmtIf(f) => { a = collect_fresh_optstr_names(f.then_body, fn_reassigned, true, opt_fresh_reg, str_fresh_ret, a, sfok); a = collect_fresh_optstr_names(f.else_body, fn_reassigned, true, opt_fresh_reg, str_fresh_ret, a, sfok); },
+            ast.StmtWhile(w) => { a = collect_fresh_optstr_names(w.body, fn_reassigned, true, opt_fresh_reg, str_fresh_ret, a, sfok); },
+            ast.StmtFor(fo) => { a = collect_fresh_optstr_names(fo.body, fn_reassigned, true, opt_fresh_reg, str_fresh_ret, a, sfok); },
             ast.StmtMatch(m) => {
-                for arm in m.arms { a = collect_fresh_optstr_names(arm.body, fn_reassigned, true, opt_fresh_reg, str_fresh_ret, a); }
+                for arm in m.arms { a = collect_fresh_optstr_names(arm.body, fn_reassigned, true, opt_fresh_reg, str_fresh_ret, a, sfok); }
             },
             _ => {}
         }
@@ -50889,13 +50946,13 @@ function structarr_elem_struct_type(type_name: string, structs: StructTab): stri
 // stricter one: a RETURNED literal's counted co-owner is a local of the frame
 // being left, so "every element box is the callee's own" needs the fresh-literal
 // evidence rather than a count.
-function arrstruct_lit_is_fresh(e: ast.Expr, structs: StructTab, bare_ok: boolean): boolean {
+function arrstruct_lit_is_fresh(e: ast.Expr, structs: StructTab, bare_ok: boolean, sfok: string[]): boolean {
     match (e) {
         ast.ExprArray(arr) => {
             if (arr.elements.len() == 0) { return false; }
             var i: i32 = 0;
             while (i < arr.elements.len()) {
-                if (!is_fresh_struct_init(arr.elements[i], structs)) {
+                if (!is_fresh_struct_init(arr.elements[i], structs, sfok)) {
                     if (!bare_ok) { return false; }
                     match (arr.elements[i]) {
                         ast.ExprIdent(_) => {},
@@ -50977,7 +51034,7 @@ function arrstruct_self_store_elem_index(e: ast.Expr, name: string): i32 {
 // then releases. It differs in one way that costs a release rather than a credit:
 // `with` REPLACES, so the superseded element has to be freed at the store
 // (emit_arrstruct_with_store) — `append` displaces nothing.
-function arrstruct_self_store_elem(e: ast.Expr, name: string, structs: StructTab, msites: string[]): boolean {
+function arrstruct_self_store_elem(e: ast.Expr, name: string, structs: StructTab, msites: string[], sfok: string[]): boolean {
     match (e) {
         ast.ExprCall(c) => {
             var eidx: i32 = arrstruct_self_store_elem_index(e, name);
@@ -50994,7 +51051,7 @@ function arrstruct_self_store_elem(e: ast.Expr, name: string, structs: StructTab
                 ast.ExprIdent(_) => { return true; },
                 _ => {}
             }
-            return is_fresh_struct_init(c.args[eidx], structs);
+            return is_fresh_struct_init(c.args[eidx], structs, sfok);
         },
         _ => { return false; }
     }
@@ -51018,7 +51075,7 @@ function arrstruct_self_store_elem(e: ast.Expr, name: string, structs: StructTab
 // inc from the ELEMENT's own credit instead was the bug this replaced — a source
 // with no credit got no inc while the container still dec'd once per push, so a
 // box appended four times was released four times.
-function arrstruct_owned_elem_sites(stmts: ast.Stmt[], name: string, structs: StructTab, msites: string[], acc: string[]): string[] {
+function arrstruct_owned_elem_sites(stmts: ast.Stmt[], name: string, structs: StructTab, msites: string[], acc: string[], sfok: string[]): string[] {
     var a: string[] = acc;
     for stmt in stmts {
         match (stmt) {
@@ -51027,7 +51084,7 @@ function arrstruct_owned_elem_sites(stmts: ast.Stmt[], name: string, structs: St
                 if (v.name == name) { a = arrstruct_lit_elem_sites(v.init, a); }
             },
             ast.StmtAssign(as1) => {
-                if (as1.target == name && arrstruct_self_store_elem(as1.value, name, structs, msites)) {
+                if (as1.target == name && arrstruct_self_store_elem(as1.value, name, structs, msites, sfok)) {
                     match (as1.value) {
                         ast.ExprCall(c) => {
                             match (c.args[arrstruct_self_store_elem_index(as1.value, name)]) {
@@ -51042,13 +51099,13 @@ function arrstruct_owned_elem_sites(stmts: ast.Stmt[], name: string, structs: St
                 }
             },
             ast.StmtIf(f) => {
-                a = arrstruct_owned_elem_sites(f.then_body, name, structs, msites, a);
-                a = arrstruct_owned_elem_sites(f.else_body, name, structs, msites, a);
+                a = arrstruct_owned_elem_sites(f.then_body, name, structs, msites, a, sfok);
+                a = arrstruct_owned_elem_sites(f.else_body, name, structs, msites, a, sfok);
             },
-            ast.StmtWhile(w) => { a = arrstruct_owned_elem_sites(w.body, name, structs, msites, a); },
-            ast.StmtFor(fo) => { a = arrstruct_owned_elem_sites(fo.body, name, structs, msites, a); },
+            ast.StmtWhile(w) => { a = arrstruct_owned_elem_sites(w.body, name, structs, msites, a, sfok); },
+            ast.StmtFor(fo) => { a = arrstruct_owned_elem_sites(fo.body, name, structs, msites, a, sfok); },
             ast.StmtMatch(m) => {
-                for arm in m.arms { a = arrstruct_owned_elem_sites(arm.body, name, structs, msites, a); }
+                for arm in m.arms { a = arrstruct_owned_elem_sites(arm.body, name, structs, msites, a, sfok); }
             },
             _ => {}
         }
@@ -51074,18 +51131,18 @@ function arrstruct_lit_elem_sites(e: ast.Expr, acc: string[]): string[] {
     }
     return a;
 }
-function arrstruct_name_is_appended(stmts: ast.Stmt[], name: string, structs: StructTab, msites: string[]): boolean {
+function arrstruct_name_is_appended(stmts: ast.Stmt[], name: string, structs: StructTab, msites: string[], sfok: string[]): boolean {
     for stmt in stmts {
         match (stmt) {
-            ast.StmtAssign(a) => { if (a.target == name && arrstruct_self_store_elem(a.value, name, structs, msites)) { return true; } },
+            ast.StmtAssign(a) => { if (a.target == name && arrstruct_self_store_elem(a.value, name, structs, msites, sfok)) { return true; } },
             ast.StmtIf(f) => {
-                if (arrstruct_name_is_appended(f.then_body, name, structs, msites)) { return true; }
-                if (arrstruct_name_is_appended(f.else_body, name, structs, msites)) { return true; }
+                if (arrstruct_name_is_appended(f.then_body, name, structs, msites, sfok)) { return true; }
+                if (arrstruct_name_is_appended(f.else_body, name, structs, msites, sfok)) { return true; }
             },
-            ast.StmtWhile(w) => { if (arrstruct_name_is_appended(w.body, name, structs, msites)) { return true; } },
-            ast.StmtFor(fo) => { if (arrstruct_name_is_appended(fo.body, name, structs, msites)) { return true; } },
+            ast.StmtWhile(w) => { if (arrstruct_name_is_appended(w.body, name, structs, msites, sfok)) { return true; } },
+            ast.StmtFor(fo) => { if (arrstruct_name_is_appended(fo.body, name, structs, msites, sfok)) { return true; } },
             ast.StmtMatch(m) => {
-                for arm in m.arms { if (arrstruct_name_is_appended(arm.body, name, structs, msites)) { return true; } }
+                for arm in m.arms { if (arrstruct_name_is_appended(arm.body, name, structs, msites, sfok)) { return true; } }
             },
             _ => {}
         }
@@ -51168,10 +51225,11 @@ function arrstruct_counted_share_holders(stmts: ast.Stmt[], name: string, struct
 }
 
 // arrstruct_share_holder_respread: a holder that took a counted share of `name`
-// is itself used as a struct-literal BASE (`P { ...q, … }`). That copy carries
-// the buffer pointer into a third box with NO inc — the design point
-// expr_unsafe_for's ExprStructLit arm records — so the buffer has three owners
-// at rc 2 and the first two sweeps to run free it between them.
+// is itself used as a struct-literal BASE (`P { ...q, … }`). A self-rebind of the
+// holder carries the buffer pointer into the successor box with NO inc — the
+// design point expr_unsafe_for's ExprStructLit arm records — so a holder whose
+// box outlives that rebind leaves the buffer with three owners at rc 2, and the
+// first two sweeps to run free it between them.
 //
 // The share count being complete is the precondition of granting `name` its
 // rc-gated walk at all, so this is a gate on the credit rather than a
@@ -51289,11 +51347,11 @@ function body_spreads_any(stmts: ast.Stmt[], structs: StructTab, names: string[]
 // sound because this class's own element hazards (an element alias, an element
 // field-payload extraction) are checked separately by arrarr_row_escapes and
 // arrstruct_elem_payload_escapes, applied alongside this gate.
-function arrstruct_unsafe_for(stmts: ast.Stmt[], name: string, borrowable: string[], structs: StructTab, msites: string[]): boolean {
-    for stmt in stmts { if (stmt_arrstruct_unsafe_for(stmt, name, borrowable, structs, msites)) { return true; } }
+function arrstruct_unsafe_for(stmts: ast.Stmt[], name: string, borrowable: string[], structs: StructTab, msites: string[], sfok: string[]): boolean {
+    for stmt in stmts { if (stmt_arrstruct_unsafe_for(stmt, name, borrowable, structs, msites, sfok)) { return true; } }
     return false;
 }
-function stmt_arrstruct_unsafe_for(st: ast.Stmt, name: string, borrowable: string[], structs: StructTab, msites: string[]): boolean {
+function stmt_arrstruct_unsafe_for(st: ast.Stmt, name: string, borrowable: string[], structs: StructTab, msites: string[], sfok: string[]): boolean {
     match (st) {
         ast.StmtVar(v) => {
             if (arrstruct_counted_field_share(v.init, name, structs, msites)) { return false; }
@@ -51309,7 +51367,7 @@ function stmt_arrstruct_unsafe_for(st: ast.Stmt, name: string, borrowable: strin
         },
         ast.StmtAssign(a) => {
             if (a.target == name) {
-                if (arrstruct_self_store_elem(a.value, name, structs, msites)) { return false; }
+                if (arrstruct_self_store_elem(a.value, name, structs, msites, sfok)) { return false; }
                 return true;   // any other reassignment of the candidate
             }
             if (arrstruct_counted_field_share(a.value, name, structs, msites)) { return false; }
@@ -51317,11 +51375,11 @@ function stmt_arrstruct_unsafe_for(st: ast.Stmt, name: string, borrowable: strin
         },
         ast.StmtIf(f) => {
             if (expr_unsafe_for(f.cond, name, borrowable, [])) { return true; }
-            return arrstruct_unsafe_for(f.then_body, name, borrowable, structs, msites) || arrstruct_unsafe_for(f.else_body, name, borrowable, structs, msites);
+            return arrstruct_unsafe_for(f.then_body, name, borrowable, structs, msites, sfok) || arrstruct_unsafe_for(f.else_body, name, borrowable, structs, msites, sfok);
         },
         ast.StmtWhile(w) => {
             if (expr_unsafe_for(w.cond, name, borrowable, [])) { return true; }
-            return arrstruct_unsafe_for(w.body, name, borrowable, structs, msites);
+            return arrstruct_unsafe_for(w.body, name, borrowable, structs, msites, sfok);
         },
         ast.StmtFor(fo) => {
             var iter_unsafe: boolean = true;
@@ -51330,17 +51388,17 @@ function stmt_arrstruct_unsafe_for(st: ast.Stmt, name: string, borrowable: strin
                 _ => { iter_unsafe = expr_unsafe_for(fo.iter, name, borrowable, []); }
             }
             if (iter_unsafe) { return true; }
-            return arrstruct_unsafe_for(fo.body, name, borrowable, structs, msites);
+            return arrstruct_unsafe_for(fo.body, name, borrowable, structs, msites, sfok);
         },
         ast.StmtMatch(m) => {
             if (expr_unsafe_for(m.scrutinee, name, borrowable, [])) { return true; }
             for arm in m.arms {
                 if (arm.has_guard && expr_unsafe_for(arm.guard, name, borrowable, [])) { return true; }
-                if (arrstruct_unsafe_for(arm.body, name, borrowable, structs, msites)) { return true; }
+                if (arrstruct_unsafe_for(arm.body, name, borrowable, structs, msites, sfok)) { return true; }
             }
             return false;
         },
-        ast.StmtDefer(d) => { return stmt_arrstruct_unsafe_for(d.action, name, borrowable, structs, msites); },
+        ast.StmtDefer(d) => { return stmt_arrstruct_unsafe_for(d.action, name, borrowable, structs, msites, sfok); },
         _ => { return stmt_unsafe_for(st, name, borrowable, []); }
     }
     return false;
@@ -51351,21 +51409,21 @@ function stmt_arrstruct_unsafe_for(st: ast.Stmt, name: string, borrowable: strin
 // body built by self-append (arrstruct_producer_ret_local). `fnbody` stays the
 // whole function body so a return nested in a block can still find that local's
 // declaration and its rebinds.
-function body_has_nonfresh_arrstruct_return(stmts: ast.Stmt[], fnbody: ast.Stmt[], structs: StructTab): boolean {
+function body_has_nonfresh_arrstruct_return(stmts: ast.Stmt[], fnbody: ast.Stmt[], structs: StructTab, sfok: string[]): boolean {
     for stmt in stmts {
         match (stmt) {
             ast.StmtReturn(r) => {
-                if (!arrstruct_lit_is_fresh(r.value, structs, false)) {
+                if (!arrstruct_lit_is_fresh(r.value, structs, false, sfok)) {
                     match (r.value) {
-                        ast.ExprIdent(rid) => { if (!arrstruct_producer_ret_local(fnbody, rid.name, structs)) { return true; } },
+                        ast.ExprIdent(rid) => { if (!arrstruct_producer_ret_local(fnbody, rid.name, structs, sfok)) { return true; } },
                         _ => { return true; }
                     }
                 }
             },
-            ast.StmtIf(f) => { if (body_has_nonfresh_arrstruct_return(f.then_body, fnbody, structs) || body_has_nonfresh_arrstruct_return(f.else_body, fnbody, structs)) { return true; } },
-            ast.StmtWhile(w) => { if (body_has_nonfresh_arrstruct_return(w.body, fnbody, structs)) { return true; } },
-            ast.StmtFor(fo) => { if (body_has_nonfresh_arrstruct_return(fo.body, fnbody, structs)) { return true; } },
-            ast.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (body_has_nonfresh_arrstruct_return(m.arms[a].body, fnbody, structs)) { return true; } a = a + 1; } },
+            ast.StmtIf(f) => { if (body_has_nonfresh_arrstruct_return(f.then_body, fnbody, structs, sfok) || body_has_nonfresh_arrstruct_return(f.else_body, fnbody, structs, sfok)) { return true; } },
+            ast.StmtWhile(w) => { if (body_has_nonfresh_arrstruct_return(w.body, fnbody, structs, sfok)) { return true; } },
+            ast.StmtFor(fo) => { if (body_has_nonfresh_arrstruct_return(fo.body, fnbody, structs, sfok)) { return true; } },
+            ast.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (body_has_nonfresh_arrstruct_return(m.arms[a].body, fnbody, structs, sfok)) { return true; } a = a + 1; } },
             _ => {}
         }
     }
@@ -51383,9 +51441,9 @@ function body_has_nonfresh_arrstruct_return(stmts: ast.Stmt[], fnbody: ast.Stmt[
 // appended element must be a fresh struct LITERAL. A bare ident would leave the
 // container's counted co-owner in the frame being left, which is the same reason
 // arrstruct_lit_is_fresh takes bare_ok=false here.
-function arrstruct_producer_ret_local(fnbody: ast.Stmt[], name: string, structs: StructTab): boolean {
-    if (!arrstruct_local_fresh_init(fnbody, name, structs)) { return false; }
-    if (arrstruct_local_foreign_rebind(fnbody, name, structs)) { return false; }
+function arrstruct_producer_ret_local(fnbody: ast.Stmt[], name: string, structs: StructTab, sfok: string[]): boolean {
+    if (!arrstruct_local_fresh_init(fnbody, name, structs, sfok)) { return false; }
+    if (arrstruct_local_foreign_rebind(fnbody, name, structs, sfok)) { return false; }
     return !body_unsafe_for_allow_ret(fnbody, name, [], []);
 }
 
@@ -51394,7 +51452,7 @@ function arrstruct_producer_ret_local(fnbody: ast.Stmt[], name: string, structs:
 // vacuously — that is what an append-built producer starts from. Requiring the
 // declaration to be here is what keeps the soleness proof local: a param, or a
 // name from an enclosing scope, is already owned by someone else.
-function arrstruct_local_fresh_init(stmts: ast.Stmt[], name: string, structs: StructTab): boolean {
+function arrstruct_local_fresh_init(stmts: ast.Stmt[], name: string, structs: StructTab, sfok: string[]): boolean {
     for stmt in stmts {
         match (stmt) {
             ast.StmtVar(v) => {
@@ -51403,7 +51461,7 @@ function arrstruct_local_fresh_init(stmts: ast.Stmt[], name: string, structs: St
                         ast.ExprArray(lit) => {
                             var j: i32 = 0;
                             while (j < lit.elements.len()) {
-                                if (!is_fresh_struct_init(lit.elements[j], structs)) { return false; }
+                                if (!is_fresh_struct_init(lit.elements[j], structs, sfok)) { return false; }
                                 j = j + 1;
                             }
                             return true;
@@ -51413,13 +51471,13 @@ function arrstruct_local_fresh_init(stmts: ast.Stmt[], name: string, structs: St
                 }
             },
             ast.StmtIf(f) => {
-                if (arrstruct_local_fresh_init(f.then_body, name, structs)) { return true; }
-                if (arrstruct_local_fresh_init(f.else_body, name, structs)) { return true; }
+                if (arrstruct_local_fresh_init(f.then_body, name, structs, sfok)) { return true; }
+                if (arrstruct_local_fresh_init(f.else_body, name, structs, sfok)) { return true; }
             },
-            ast.StmtWhile(w) => { if (arrstruct_local_fresh_init(w.body, name, structs)) { return true; } },
-            ast.StmtFor(fo) => { if (arrstruct_local_fresh_init(fo.body, name, structs)) { return true; } },
+            ast.StmtWhile(w) => { if (arrstruct_local_fresh_init(w.body, name, structs, sfok)) { return true; } },
+            ast.StmtFor(fo) => { if (arrstruct_local_fresh_init(fo.body, name, structs, sfok)) { return true; } },
             ast.StmtMatch(m) => {
-                for arm in m.arms { if (arrstruct_local_fresh_init(arm.body, name, structs)) { return true; } }
+                for arm in m.arms { if (arrstruct_local_fresh_init(arm.body, name, structs, sfok)) { return true; } }
             },
             _ => {}
         }
@@ -51431,22 +51489,22 @@ function arrstruct_local_fresh_init(stmts: ast.Stmt[], name: string, structs: St
 // `name.append(<fresh struct literal>)` / `name.with(i, <fresh struct literal>)`.
 // The store INDEX comes from arrstruct_self_store_elem_index so the two spellings
 // stay one question; the element rule is the strict one above.
-function arrstruct_local_foreign_rebind(stmts: ast.Stmt[], name: string, structs: StructTab): boolean {
+function arrstruct_local_foreign_rebind(stmts: ast.Stmt[], name: string, structs: StructTab, sfok: string[]): boolean {
     for stmt in stmts {
         match (stmt) {
             ast.StmtAssign(a) => {
-                if (a.target == name && !arrstruct_fresh_store_elem(a.value, name, structs)) { return true; }
+                if (a.target == name && !arrstruct_fresh_store_elem(a.value, name, structs, sfok)) { return true; }
             },
             ast.StmtIf(f) => {
-                if (arrstruct_local_foreign_rebind(f.then_body, name, structs)) { return true; }
-                if (arrstruct_local_foreign_rebind(f.else_body, name, structs)) { return true; }
+                if (arrstruct_local_foreign_rebind(f.then_body, name, structs, sfok)) { return true; }
+                if (arrstruct_local_foreign_rebind(f.else_body, name, structs, sfok)) { return true; }
             },
-            ast.StmtWhile(w) => { if (arrstruct_local_foreign_rebind(w.body, name, structs)) { return true; } },
-            ast.StmtFor(fo) => { if (arrstruct_local_foreign_rebind(fo.body, name, structs)) { return true; } },
+            ast.StmtWhile(w) => { if (arrstruct_local_foreign_rebind(w.body, name, structs, sfok)) { return true; } },
+            ast.StmtFor(fo) => { if (arrstruct_local_foreign_rebind(fo.body, name, structs, sfok)) { return true; } },
             ast.StmtMatch(m) => {
-                for arm in m.arms { if (arrstruct_local_foreign_rebind(arm.body, name, structs)) { return true; } }
+                for arm in m.arms { if (arrstruct_local_foreign_rebind(arm.body, name, structs, sfok)) { return true; } }
             },
-            ast.StmtDefer(d) => { return arrstruct_local_foreign_rebind([d.action], name, structs); },
+            ast.StmtDefer(d) => { return arrstruct_local_foreign_rebind([d.action], name, structs, sfok); },
             _ => {}
         }
     }
@@ -51455,12 +51513,12 @@ function arrstruct_local_foreign_rebind(stmts: ast.Stmt[], name: string, structs
 
 // arrstruct_fresh_store_elem: the strict half of arrstruct_self_store_elem — the
 // self-store spellings it recognises, with a fresh struct LITERAL element only.
-function arrstruct_fresh_store_elem(e: ast.Expr, name: string, structs: StructTab): boolean {
+function arrstruct_fresh_store_elem(e: ast.Expr, name: string, structs: StructTab, sfok: string[]): boolean {
     match (e) {
         ast.ExprCall(c) => {
             var eidx: i32 = arrstruct_self_store_elem_index(e, name);
             if (eidx < 0) { return false; }
-            return is_fresh_struct_init(c.args[eidx], structs);
+            return is_fresh_struct_init(c.args[eidx], structs, sfok);
         },
         _ => { return false; }
     }
@@ -51488,11 +51546,11 @@ function struct_arr_call_producer(e: ast.Expr, body: ast.Stmt[], fresh_ret: stri
 
 // fn_returns_fresh_arrstruct: the array-of-structs sibling of
 // fn_returns_fresh_arrtup, registered "ARRSTRUCTF:<name>".
-function fn_returns_fresh_arrstruct(fn: parser.FuncDecl, structs: StructTab): boolean {
+function fn_returns_fresh_arrstruct(fn: parser.FuncDecl, structs: StructTab, sfok: string[]): boolean {
     if (fn.receiver_type.len() > 0) { return false; }
     if (arrstruct_elem_struct_type(fn.ret_type, structs) == "") { return false; }
     if (!body_has_return(fn.body)) { return false; }
-    return !body_has_nonfresh_arrstruct_return(fn.body, fn.body, structs);
+    return !body_has_nonfresh_arrstruct_return(fn.body, fn.body, structs, sfok);
 }
 
 // fn_returns_fresh_structarr: the SCALAR-FIELD sibling of the above, registered
@@ -51500,23 +51558,23 @@ function fn_returns_fresh_arrstruct(fn: parser.FuncDecl, structs: StructTab): bo
 // fresh struct-literal array or a local built by self-append and handed back — and
 // only the element-struct test differs, so the two registries are as disjoint as
 // the credits they feed and a function is claimed by exactly one.
-function fn_returns_fresh_structarr(fn: parser.FuncDecl, structs: StructTab): boolean {
+function fn_returns_fresh_structarr(fn: parser.FuncDecl, structs: StructTab, sfok: string[]): boolean {
     if (fn.receiver_type.len() > 0) { return false; }
     if (structarr_elem_struct_type(fn.ret_type, structs) == "") { return false; }
     if (!body_has_return(fn.body)) { return false; }
-    return !body_has_nonfresh_arrstruct_return(fn.body, fn.body, structs);
+    return !body_has_nonfresh_arrstruct_return(fn.body, fn.body, structs, sfok);
 }
 
 // collect_fresh_arrstruct_names: LOCAL names bound from a fresh `(<struct-with-array>)[]`
 // literal (arrstruct_elem_struct_type + arrstruct_lit_is_fresh) anywhere in the body,
 // from an "ARRSTRUCTF:" producer call, or — #6535 — from an EMPTY literal the body
 // then grows by self-append. Escape gates applied by reclaimable_names_of.
-function collect_fresh_arrstruct_names(stmts: ast.Stmt[], body: ast.Stmt[], structs: StructTab, fresh_ret: string[], acc: string[], msites: string[]): string[] {
+function collect_fresh_arrstruct_names(stmts: ast.Stmt[], body: ast.Stmt[], structs: StructTab, fresh_ret: string[], acc: string[], msites: string[], sfok: string[]): string[] {
     var a: string[] = acc;
     for stmt in stmts {
         match (stmt) {
             ast.StmtVar(v) => {
-                if (arrstruct_elem_struct_type(v.type_name, structs) != "" && arrstruct_lit_is_fresh(v.init, structs, true)) { a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col)); }
+                if (arrstruct_elem_struct_type(v.type_name, structs) != "" && arrstruct_lit_is_fresh(v.init, structs, true, sfok)) { a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col)); }
                 // A producer CALL, the "ARRSTRUCTF:" sibling of the ARRTUP arm:
                 // the annotation supplies the element struct type and the registry
                 // proves every returned element box is the callee's own.
@@ -51529,16 +51587,16 @@ function collect_fresh_arrstruct_names(stmts: ast.Stmt[], body: ast.Stmt[], stru
                 // same marker trick the STRUCTARR side uses.
                 else if (arrstruct_elem_struct_type(v.type_name, structs) != ""
                     && arrarr_lit_is_empty(v.init)
-                    && arrstruct_name_is_appended(stmts, v.name, structs, msites)) {
+                    && arrstruct_name_is_appended(stmts, v.name, structs, msites, sfok)) {
                     a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
                     a = push_str_unique(a, "A|" + reclaim_site_key_of(v.name, v.line, v.col));
                 }
             },
-            ast.StmtIf(f) => { a = collect_fresh_arrstruct_names(f.then_body, body, structs, fresh_ret, a, msites); a = collect_fresh_arrstruct_names(f.else_body, body, structs, fresh_ret, a, msites); },
-            ast.StmtWhile(w) => { a = collect_fresh_arrstruct_names(w.body, body, structs, fresh_ret, a, msites); },
-            ast.StmtFor(fo) => { a = collect_fresh_arrstruct_names(fo.body, body, structs, fresh_ret, a, msites); },
+            ast.StmtIf(f) => { a = collect_fresh_arrstruct_names(f.then_body, body, structs, fresh_ret, a, msites, sfok); a = collect_fresh_arrstruct_names(f.else_body, body, structs, fresh_ret, a, msites, sfok); },
+            ast.StmtWhile(w) => { a = collect_fresh_arrstruct_names(w.body, body, structs, fresh_ret, a, msites, sfok); },
+            ast.StmtFor(fo) => { a = collect_fresh_arrstruct_names(fo.body, body, structs, fresh_ret, a, msites, sfok); },
             ast.StmtMatch(m) => {
-                for arm in m.arms { a = collect_fresh_arrstruct_names(arm.body, body, structs, fresh_ret, a, msites); }
+                for arm in m.arms { a = collect_fresh_arrstruct_names(arm.body, body, structs, fresh_ret, a, msites, sfok); }
             },
             _ => {}
         }
@@ -51573,7 +51631,7 @@ function arrstruct_elem_type_of_decl(stmts: ast.Stmt[], name: string, structs: S
 // arrstruct_elem_esc_shape classifies one node for the array-of-structs
 // element escape scan (arrstruct_elem_esc_expr below has the scan's contract);
 // codes as rctuple_esc_shape's.
-function arrstruct_elem_esc_shape(e: ast.Expr, name: string, sty: string, structs: StructTab, msites: string[]): i32 {
+function arrstruct_elem_esc_shape(e: ast.Expr, name: string, sty: string, structs: StructTab, msites: string[], sfok: string[]): i32 {
     match (e) {
         ast.ExprIdent(id) => { if (id.name == name) { return 2; } return 1; },   // bare array escapes
         ast.ExprNumber(_) => { return 1; },
@@ -51621,7 +51679,7 @@ function arrstruct_elem_esc_shape(e: ast.Expr, name: string, sty: string, struct
                     // assumed: a non-store method or an unsanctioned element falls to
                     // the generic tail and still escapes through the bare receiver.
                     if (ident_name_or_empty(cfa.obj) == name
-                        && arrstruct_self_store_elem(e, name, structs, msites)) { return 5; }
+                        && arrstruct_self_store_elem(e, name, structs, msites, sfok)) { return 5; }
                     return 0;
                 },
                 _ => { return 0; }
@@ -51651,17 +51709,17 @@ function arrstruct_elem_esc_shape(e: ast.Expr, name: string, sty: string, struct
 
 // arrstruct_chain_esc: rctuple_chain_esc's array-of-structs sibling — re-scans
 // a code-3 chain's index expressions and call arguments.
-function arrstruct_chain_esc(x: ast.Expr, name: string, sty: string, structs: StructTab, msites: string[], borrowable: string[]): boolean {
+function arrstruct_chain_esc(x: ast.Expr, name: string, sty: string, structs: StructTab, msites: string[], borrowable: string[], sfok: string[]): boolean {
     match (x) {
         ast.ExprCall(c) => {
-            if (arrstruct_chain_esc(c.callee, name, sty, structs, msites, borrowable)) { return true; }
-            for arg in c.args { if (arrstruct_elem_esc_expr(arg, name, sty, structs, msites, borrowable)) { return true; } }
+            if (arrstruct_chain_esc(c.callee, name, sty, structs, msites, borrowable, sfok)) { return true; }
+            for arg in c.args { if (arrstruct_elem_esc_expr(arg, name, sty, structs, msites, borrowable, sfok)) { return true; } }
             return false;
         },
-        ast.ExprFieldAccess(fa) => { return arrstruct_chain_esc(fa.obj, name, sty, structs, msites, borrowable); },
+        ast.ExprFieldAccess(fa) => { return arrstruct_chain_esc(fa.obj, name, sty, structs, msites, borrowable, sfok); },
         ast.ExprIndex(ix) => {
-            if (arrstruct_chain_esc(ix.array, name, sty, structs, msites, borrowable)) { return true; }
-            return arrstruct_elem_esc_expr(ix.index, name, sty, structs, msites, borrowable);
+            if (arrstruct_chain_esc(ix.array, name, sty, structs, msites, borrowable, sfok)) { return true; }
+            return arrstruct_elem_esc_expr(ix.index, name, sty, structs, msites, borrowable, sfok);
         },
         ast.ExprIdent(_) => { return false; },
         _ => { return true; }
@@ -51671,11 +51729,11 @@ function arrstruct_chain_esc(x: ast.Expr, name: string, sty: string, structs: St
 
 // arrstruct_elem_esc_at is the fold visitor: `esc` latches true, and each node
 // answers per its arrstruct_elem_esc_shape code.
-function arrstruct_elem_esc_at(x: ast.Expr, esc: boolean, name: string, sty: string, structs: StructTab, msites: string[], borrowable: string[]): boolean {
+function arrstruct_elem_esc_at(x: ast.Expr, esc: boolean, name: string, sty: string, structs: StructTab, msites: string[], borrowable: string[], sfok: string[]): boolean {
     if (esc) { return true; }
-    var code: i32 = arrstruct_elem_esc_shape(x, name, sty, structs, msites);
+    var code: i32 = arrstruct_elem_esc_shape(x, name, sty, structs, msites, sfok);
     if (code == 2) { return true; }
-    if (code == 3) { return arrstruct_chain_esc(x, name, sty, structs, msites, borrowable); }
+    if (code == 3) { return arrstruct_chain_esc(x, name, sty, structs, msites, borrowable, sfok); }
     if (code == 4) {
         match (x) {
             ast.ExprCall(c) => {
@@ -51718,7 +51776,7 @@ function arrstruct_elem_esc_at(x: ast.Expr, esc: boolean, name: string, sty: str
                     if (ident_name_or_empty(c.args[eai]) == name) {
                         if (!(param_is_borrowable(borrowable, "ELB:" + callee, eai)
                               || param_is_borrowable(borrowable, "CNT:" + callee, eai))) { return true; }
-                    } else if (arrstruct_elem_esc_expr(c.args[eai], name, sty, structs, msites, borrowable)) { return true; }
+                    } else if (arrstruct_elem_esc_expr(c.args[eai], name, sty, structs, msites, borrowable, sfok)) { return true; }
                     eai = eai + 1;
                 }
                 return false;
@@ -51732,7 +51790,7 @@ function arrstruct_elem_esc_at(x: ast.Expr, esc: boolean, name: string, sty: str
         // arrstruct_self_store_elem (a bare ident or a fresh literal) and the
         // hand scan never walked it; preserved exactly.
         match (x) {
-            ast.ExprCall(c) => { return arrstruct_elem_esc_expr(c.args[0], name, sty, structs, msites, borrowable); },
+            ast.ExprCall(c) => { return arrstruct_elem_esc_expr(c.args[0], name, sty, structs, msites, borrowable, sfok); },
             _ => { return true; }
         }
     }
@@ -51746,15 +51804,15 @@ function arrstruct_elem_esc_at(x: ast.Expr, esc: boolean, name: string, sty: str
 // array-field read) and `name[i].f.len()` are borrows; a BARE `name[i]` element (the
 // struct box) or a bare `name` escapes — except as an ARGUMENT at an "ELB:"-flagged
 // param, where the callee is proven to touch no element.
-function arrstruct_elem_esc_expr(e: ast.Expr, name: string, sty: string, structs: StructTab, msites: string[], borrowable: string[]): boolean {
-    function visit(x: ast.Expr, esc: boolean): boolean { return arrstruct_elem_esc_at(x, esc, name, sty, structs, msites, borrowable); }
-    function descend(x: ast.Expr): boolean { return arrstruct_elem_esc_shape(x, name, sty, structs, msites) == 0; }
+function arrstruct_elem_esc_expr(e: ast.Expr, name: string, sty: string, structs: StructTab, msites: string[], borrowable: string[], sfok: string[]): boolean {
+    function visit(x: ast.Expr, esc: boolean): boolean { return arrstruct_elem_esc_at(x, esc, name, sty, structs, msites, borrowable, sfok); }
+    function descend(x: ast.Expr): boolean { return arrstruct_elem_esc_shape(x, name, sty, structs, msites, sfok) == 0; }
     return astwalk.fold_expr_pruned(e, false, visit, descend);
 }
 
-function arrstruct_elem_payload_escapes(stmts: ast.Stmt[], name: string, sty: string, structs: StructTab, msites: string[], borrowable: string[]): boolean {
-    function visit(x: ast.Expr, esc: boolean): boolean { return arrstruct_elem_esc_at(x, esc, name, sty, structs, msites, borrowable); }
-    function descend(x: ast.Expr): boolean { return arrstruct_elem_esc_shape(x, name, sty, structs, msites) == 0; }
+function arrstruct_elem_payload_escapes(stmts: ast.Stmt[], name: string, sty: string, structs: StructTab, msites: string[], borrowable: string[], sfok: string[]): boolean {
+    function visit(x: ast.Expr, esc: boolean): boolean { return arrstruct_elem_esc_at(x, esc, name, sty, structs, msites, borrowable, sfok); }
+    function descend(x: ast.Expr): boolean { return arrstruct_elem_esc_shape(x, name, sty, structs, msites, sfok) == 0; }
     for stmt in stmts {
         if (astwalk.fold_stmt_pruned(stmt, false, visit, descend)) { return true; }
     }
@@ -52323,10 +52381,11 @@ function arrenum_counted_field_share(e: ast.Expr, name: string, structs: StructT
 
 // arrenum_counted_share_holders / arrenum_share_holder_respread: the same
 // precondition the struct sibling needs. A holder that took a counted share and is
-// then used as a struct-literal BASE copies the buffer pointer into a third box
-// with NO inc, so three owners sit at rc 2 and the first two sweeps free it between
-// them. The share count being complete is what the credit rests on, so this is a
-// gate on the credit rather than something the walk could guard against.
+// then self-rebound through a struct-literal BASE copies the buffer pointer into
+// the successor box with NO inc, so three owners can sit at rc 2 and the first two
+// sweeps free it between them. The share count being complete is what the credit
+// rests on, so this is a gate on the credit rather than something the walk could
+// guard against.
 function arrenum_counted_share_holders(stmts: ast.Stmt[], name: string, structs: StructTab, msites: string[], acc: string[], borrowable: string[]): string[] {
     var a: string[] = acc;
     for stmt in stmts {
@@ -58468,7 +58527,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
     // variant arm borrows (not escapes) the payload. The box's array payload is
     // deep-dropped then the box freed right after its match (emit_opt_payload_drop).
     // DISJOINT from enumfrees (that's scalar-payload options) — freed once here.
-    var rcoptfrees: OptRcFrees = consumed_rcpayload_option_frees(fn.body, asg_targets, structs, sg.opt_fresh_ret_fns, false);
+    var rcoptfrees: OptRcFrees = consumed_rcpayload_option_frees(fn.body, asg_targets, structs, sg.opt_fresh_ret_fns, false, sg.strfld_ok_types);
     // Consumed BOX-ONLY option/result frees: the same shape again for a payload
     // kind neither of the two above releases (a struct, an IoError, a Reader) —
     // the box is given back and the payload keeps today's leak (#8806). Disjoint

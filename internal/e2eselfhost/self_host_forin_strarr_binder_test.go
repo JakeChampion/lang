@@ -179,9 +179,11 @@ function round(i: i32): i32 {
 			want: 72,
 		},
 		{
-			// REFUSED: the binder SHADOWS the array. Admitting it would have the
-			// walk read a different value under the same spelling.
-			name: "refused_binder_shadows_array",
+			// The binder SHADOWS the array. The two are distinct bindings
+			// (lexical.fern), so the walk reads the array and the binder each under
+			// its own symbol and the array keeps its deep credit.
+			name:    "binder_shadows_array",
+			balance: true,
 			src: forinBinderDecl + `function round(i: i32): i32 {
     var names: string[] = [mkstr("a"), mkstr("b")];
     var t: i32 = 0;

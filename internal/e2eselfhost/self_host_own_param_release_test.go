@@ -181,9 +181,9 @@ function id(own p: P): P { if (p.n < 0) { return P { ...p, n: 0 }; } return p; }
 		},
 		{
 			// REFUSED reuse (a borrowed string as the override) over a type
-			// with an ARRAY field: the spread copies `xs` uncounted into the
-			// result, so the param's exit release must stay BOX-ONLY
-			// ("OWNRELB:"). The string it carried leaks; nothing dangles.
+			// with an ARRAY field: the spread copies `xs` into the result
+			// COUNTED, so the param's exit release stays deep ("OWNREL:") and
+			// the result's own drop releases its share — every box balances.
 			name: "own_array_spread_refused_reuse",
 			src: `import "std/i32";
 struct A { xs: i32[], s: string, n: i32 }
@@ -192,7 +192,7 @@ function w(i: i32): string { return "s-a-wide-payload-past-any-inline-threshold-
 @noinline
 function relabel(own p: A, t: string): A { return A { ...p, s: t }; }` +
 				ownParamReleaseMain(`var t: string = w(i + 1); var q: A = relabel(A { xs: [i, i + 1], s: w(i), n: i }, t); x = x + q.n + q.s.len() + q.xs[1] + t.len();`),
-			want: 60, wantFrees: 300,
+			want: 60, balance: true,
 		},
 		{
 			// The own-update string override over a COUNTED share: the

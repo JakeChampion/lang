@@ -207,10 +207,11 @@ function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t +
 			want: 34, allocs: 400, frees: 400,
 		},
 		{
-			// REFUSED — two declarations of the same name in the body, so the
-			// init witness could be a shadowed sibling. Same first condition, same
-			// reason, as arr_field_ident_is_frame_built. Unchanged.
-			name: "refused_two_declarations",
+			// Two declarations of the same spelling in sibling blocks. Each is its
+			// own binding (lexical.fern), so the init witness is the declaration's
+			// own literal and the credit resolves for both; same as
+			// arr_field_ident_is_frame_built.
+			name: "two_declarations",
 			src: `struct P { xs: i32[] }
 function mk(i: i32): P {
     if (i % 2 == 0) { var p: P = P { xs: [i, i + 1] }; return p; }
@@ -219,7 +220,7 @@ function mk(i: i32): P {
 }
 function round(i: i32): i32 { var v: P = mk(i); return v.xs.len(); }
 function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
-			want: 34, allocs: 200, frees: 0,
+			want: 34, allocs: 200, frees: 200,
 		},
 		{
 			// REFUSED — a method call on the local moves a field into the
