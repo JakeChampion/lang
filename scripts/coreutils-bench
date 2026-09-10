@@ -147,7 +147,14 @@ done
 # workloads UTIL — one line per workload: `label<TAB>shell?<TAB>template`,
 # where {} stands for the binary under test and {gnu} for the GNU directory.
 # `shell` is y when the template is a pipeline and needs one.
+#
+# A utility with a file under coreutils-bench.d/ is sourced from there
+# with its name in $1; the rest are the arms below.
 workloads() {
+  if [ -f "scripts/coreutils-bench.d/$1.sh" ]; then
+    . "scripts/coreutils-bench.d/$1.sh"
+    return
+  fi
   case "$1" in
     yes)
       printf 'yes | head -c 1G\ty\t{} | {gnu}/head -c 1000000000 > /dev/null\n'
@@ -776,7 +783,7 @@ PY
       printf '%s 40-term and/or chain\tn\t{} %s%s\n' "$1" "$(for i in $(seq 20); do printf 'a = a -a %d -eq %d -o ' "$i" "$i"; done)x = x" "$close"
       ;;
     *)
-      echo "coreutils-bench: no workloads defined for $1 — add a case to workloads()" >&2
+      echo "coreutils-bench: no workloads defined for $1 — add scripts/coreutils-bench.d/$1.sh" >&2
       exit 1
       ;;
   esac
