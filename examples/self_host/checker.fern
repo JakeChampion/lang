@@ -2805,10 +2805,6 @@ function call_through_fn_value(c: ast.ExprCall, s: Scope): typeinfo.Type {
   return t_unknown("call target is not a function value");
 }
 
-// check_call_expr types an ExprCall (plain / closure / method call).
-// Extracted verbatim from check_expr's ExprCall arm to keep check_expr
-// under the self-host oversized-function compile threshold (#2720); the
-// body is self-contained on c + s.
 // ret_typevar_arg_type: the concrete type a generic call's bare-typevar return
 // takes from the arguments, and whether any parameter named that variable at
 // all. Several parameters may share the one name — `both[T](a: T, b: T): T` —
@@ -2831,6 +2827,10 @@ function ret_typevar_arg_type(sig: FuncSig, c: ast.ExprCall, s: Scope): (typeinf
   return (rt, bound);
 }
 
+// check_call_expr types an ExprCall (plain / closure / method call).
+// Extracted verbatim from check_expr's ExprCall arm to keep check_expr
+// under the self-host oversized-function compile threshold (#2720); the
+// body is self-contained on c + s.
 function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
   // A desugared value if/match-expression is a 0-arg call of a
   // 0-param lambda whose single-statement body is a StmtIf / StmtMatch
