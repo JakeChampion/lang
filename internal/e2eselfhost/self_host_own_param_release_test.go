@@ -208,13 +208,16 @@ function bump(own p: P): P { return P { ...p, s: "override-payload-wide-enough-t
 		{
 			// The same with the call result SPREAD again in the caller —
 			// the shape that first exposed the bogus post-call free of an
-			// `own` argument (exit 99 with the type gate alone widened).
+			// `own` argument (exit 99 with the type gate alone widened). The
+			// spread copy `z` holds its own count of `s` (P routes), so `q`
+			// keeps its deep release rather than being demoted for it; one
+			// box per round, the argument temp, is what stays open.
 			name: "call_result_spread_again",
 			src: ownParamReleaseHead + `struct H { s: string, k: i32 }
 @noinline
 function bump(own p: P): P { return P { ...p, s: "override-payload-wide-enough-to-heap-" + w(p.n), n: p.n + 1 }; }` +
 				ownParamReleaseMain(`var h: H = H { s: w(i), k: i }; var q: P = bump(P { s: h.s, n: i }); var z: P = P { ...q, n: 0 }; x = x + q.n + q.s.len() + h.s.len() + z.n;`),
-			want: 51, wantFrees: 600,
+			want: 51, wantFrees: 700,
 		},
 		{
 			// THE USE-AFTER-FREE. `get` returns a field named `s`, which the

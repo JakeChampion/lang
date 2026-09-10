@@ -96,6 +96,19 @@ free. Their comments now say which spread they are about.
 frees to balanced 700/700 at live 0: the result now holds its own count of
 `xs`, so the param's release stays deep and the result's drop pairs with it.
 
+The counted carry also retires two demotions that were written against the
+uncounted one, or the base's own count leaks instead. The fixture
+`alloc_flat_struct_self_update` caught it (`fork_base`: `var b = Buf { ...a, … }`
+printed `grows`, 400/300 per shape census): `derived_anywhere` marked `a`
+NODEEP because a value derived from it was bound elsewhere, and
+`moves_fields_stmts` was asked with `spread_counted = false` at the fresh-local,
+frame-fresh, snapshot-local and receiver-borrow sites, so a spread over `a`
+read as a field move. Both now ask `spread_copy_counted` /
+`spread_carried_fields_counted` for the local's type (`spread_over_counted` for
+the derivation, which also requires every override reading the base to be
+scalar-typed); `recv_borrow_fns_of` takes `sfok` for that. All five shapes of
+the fixture census at allocs == frees, live 0.
+
 ## Next lead
 
 Securing element children on the un-share copy (and releasing them on the last
