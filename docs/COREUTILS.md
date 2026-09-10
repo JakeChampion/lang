@@ -172,8 +172,10 @@ every utility declaring an option bailed the module (#8407). The first green
 run of the leg then found `Writer.close()` answering None to a failing close
 on all three self-host backends, which is the whole of `close_stdout`'s
 decision (#8569). `TestSelfHostCoreutilsCoverage` fails when a utility has no
-entry in `corpusByUtil`, so a new one cannot join the tree without joining
-this leg.
+corpus registered, so a new one cannot join the tree without joining this
+leg. Each `<util>_test.go` registers its own cases from an `init`, rather
+than every utility appending to one map: that map was the file every open
+coreutils PR conflicted on (#8840).
 
 The package is in the unit-test lane (`scripts/unit-test-packages` derives
 the lane from `go list`, so it was covered the moment it existed). It
@@ -240,6 +242,11 @@ internal/coreutils/
                     own digest and calls it
 scripts/coreutils-bench
                     hyperfine: Fern vs GNU vs uutils, one table
+scripts/coreutils-bench.d/
+  <util>.sh         that utility's workloads, sourced by the bench with
+                    the utility name in $1. A `_`-prefixed file is a body
+                    several utilities share (the digests, the base
+                    encodings); each member has its own file sourcing it
 ```
 
 A utility is one file. Shared behaviour goes in `lib/` only once a
@@ -326,9 +333,11 @@ Darwin.
 4. Cases: every option, every option combination that changes behaviour,
    every error path, `--`, `-`, an empty operand, an operand that is not
    valid UTF-8, POSIXLY_CORRECT if the utility reads it, and the write-failure
-   paths once #8265 lands. Run the gate; iterate until it is green.
-5. Add the utility's workloads to `scripts/coreutils-bench` and record its
-   first numbers in the sub-issue. If it is slower than GNU, that is the
+   paths once #8265 lands. Register them with `registerCorpus` from that
+   file's `init`, so the self-host leg runs the same corpus. Run the gate;
+   iterate until it is green.
+5. Add the utility's workloads as `scripts/coreutils-bench.d/<util>.sh` and
+   record its first numbers in the sub-issue. If it is slower than GNU, that is the
    next task, not a footnote.
 6. Any Fern quirk or bug you hit on the way gets an issue and a fix, never a
    workaround. That is the project's standing order and it is doubly so here,
