@@ -105,6 +105,12 @@ function dominators(f: ssa.SFunc, reachable: boolean[]): boolean[] {
     return dom;
 }
 
+// dominates[bi * n + di] holds when block position di dominates position bi.
+// Unreachable positions dominate nothing and are dominated by nothing.
+pub function dominates(f: ssa.SFunc): boolean[] {
+    return dominators(f, reachable_blocks(f));
+}
+
 function available(value: i32, block: i32, pos: i32, nblocks: i32, defs: i32[], positions: i32[], dom: boolean[]): boolean {
     var definition: i32 = defs[value];
     if (definition < 0) { return false; }

@@ -11,6 +11,14 @@ SSA cutover and typed-IR work. Initial integration base: `02ea66e91`.
 
 ## Current implementation checkpoint
 
+The self-hosted pipeline now has a checked-source producer of its pre-RC
+representation: `semsource.fern` builds verified `ssasem` graphs for scalar,
+array, tuple, branch and loop bodies from the checker's resolved types, and
+`ssarc` lowers reducible loops. Produced functions execute inside an
+AST-lowered program on all four native/Wasm targets with balanced heaps.
+Calls, strings, records and enums are explicit refusals; no production
+consumer is switched. See [semantic source](SELFHOST-SEMANTIC-SOURCE.md).
+
 Enum construction and flat guarded payload matches now execute in the typed
 ARM64 pilot. Transactional nominal interfaces, finite generic-instantiation
 proofs, variant-distinct projections and independently verified active-variant

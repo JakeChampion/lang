@@ -14132,6 +14132,17 @@ function module_env(mod: parser.Module): ModuleEnv {
 // statement scope with bind_stmt, and the bind_stmt parity driver replays
 // them: comparing bind_stmt against check_stmt in an empty scope would
 // resolve every annotation to unknown on both sides and compare nothing.
+// expr_type and scope_type are the semantic phase's read-only view of the
+// checker's answers: an expression's resolved type in a scope, and a binding's
+// declared or inferred type after bind_stmt.
+pub function expr_type(e: ast.Expr, s: Scope): typeinfo.Type {
+  return check_expr(e, s);
+}
+
+pub function scope_type(s: Scope, name: string): typeinfo.Type {
+  return s.lookup(name);
+}
+
 pub function module_scopes(mod: parser.Module): Scope[] {
   var env: ModuleEnv = module_env(mod);
   var out: Scope[] = [];

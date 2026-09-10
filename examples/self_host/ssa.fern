@@ -130,6 +130,7 @@ pub function kind_id(name: string): i32 {
 }
 
 pub function kind_name(id: i32): string {
+    if (id < 0) { return semantic_kind_name(id); }
     if (id == 1) { return "const_int"; }
     if (id == 2) { return "const_bool"; }
     if (id == 3) { return "const_i64"; }
@@ -157,6 +158,18 @@ pub function kind_name(id: i32): string {
     if (id == 25) { return "strbuf_take"; }
     if (id == 26) { return "read_file"; }
     if (id == 27) { return "write_file"; }
+    return "invalid";
+}
+
+// Negative ids are the typed semantic phase's operations (ssasem.fern owns
+// them); physical consumers never see them, the printer only names them.
+function semantic_kind_name(id: i32): string {
+    if (id == 0 - 1) { return "array_new"; }
+    if (id == 0 - 2) { return "tuple_new"; }
+    if (id == 0 - 3) { return "array_get"; }
+    if (id == 0 - 4) { return "tuple_get"; }
+    if (id == 0 - 5) { return "record_new"; }
+    if (id == 0 - 6) { return "record_get"; }
     return "invalid";
 }
 
@@ -2932,7 +2945,7 @@ pub function print_func(f: SFunc): string {
         while (k < blk.insts.len()) {
             var ins: SInst = blk.insts[k];
             out = out + "    v" + util.i32_to_string(ins.result) + " = " + kind_name(ins.kind_tag);
-            if (ins.kind_tag == 1 || ins.kind_tag == 2 || ins.kind_tag == 6) {
+            if (ins.kind_tag == 1 || ins.kind_tag == 2 || ins.kind_tag == 6 || ins.kind_tag == 0 - 4 || ins.kind_tag == 0 - 6) {
                 out = out + " " + util.i32_to_string(ins.imm);
             }
             if (ins.kind_tag == 9 || ins.kind_tag == 10 || ins.kind_tag == 11) {

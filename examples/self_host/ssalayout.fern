@@ -1,0 +1,189 @@
+// Structured layout of a reducible control-flow graph: every natural loop is
+// a contiguous span headed by its header, nested loops are contiguous inside
+// their parent, and everything else is in a forward order. Stack-IR emitters
+// need exactly this to place `loop` and `block` labels.
+import "./ssa";
+import "./ssadeps";
+
+// order holds block POSITIONS (indices into f.blocks) in emission order.
+// loop_end[i] is the last order index of the loop headed at order index i,
+// or -1 when order[i] heads no loop. Only reachable blocks are laid out.
+pub struct Layout { ok: boolean, order: i32[], loop_end: i32[] }
+
+struct Loops { n: i32, header: boolean[], members: boolean[] }
+
+function flags(n: i32, bit: boolean): boolean[] {
+    var out: boolean[] = [];
+    var i: i32 = 0;
+    while (i < n) { out = out.append(bit); i = i + 1; }
+    return out;
+}
+
+function block_index(f: ssa.SFunc, id: i32): i32 {
+    var i: i32 = 0;
+    while (i < f.blocks.len()) { if (f.blocks[i].id == id) { return i; } i = i + 1; }
+    return 0 - 1;
+}
+
+function successors(f: ssa.SFunc, bi: i32): i32[] {
+    var t: ssa.STerm = f.blocks[bi].term;
+    if (t.kind_tag == 2) { return [block_index(f, t.target)]; }
+    if (t.kind_tag == 3) {
+        if (t.t == t.f) { return [block_index(f, t.t)]; }
+        return [block_index(f, t.t), block_index(f, t.f)];
+    }
+    return [];
+}
+
+// The natural loop of a back edge: the header plus every block that reaches
+// the edge's source without passing through the header.
+function absorb(f: ssa.SFunc, l: Loops, h: i32, u: i32, reachable: boolean[]): Loops {
+    var members: boolean[] = l.members;
+    var work: i32[] = [u];
+    while (work.len() > 0) {
+        var x: i32 = work[work.len() - 1];
+        work = prefix(work, work.len() - 1);
+        if (x == h || members[h * l.n + x]) { continue; }
+        members = members.with(h * l.n + x, true);
+        for pred in f.blocks[x].preds {
+            var pi: i32 = block_index(f, pred);
+            if (reachable[pi]) { work = work.append(pi); }
+        }
+    }
+    return Loops { ...l, members: members };
+}
+
+function prefix(xs: i32[], n: i32): i32[] {
+    var out: i32[] = [];
+    var i: i32 = 0;
+    while (i < n) { out = out.append(xs[i]); i = i + 1; }
+    return out;
+}
+
+function find_loops(f: ssa.SFunc, reachable: boolean[], dom: boolean[]): Loops {
+    var n: i32 = f.blocks.len();
+    var l: Loops = Loops { n: n, header: flags(n, false), members: flags(n * n, false) };
+    var u: i32 = 0;
+    while (u < n) {
+        if (reachable[u]) {
+            for h in successors(f, u) {
+                if (dom[u * n + h]) {
+                    l = Loops { ...l, header: l.header.with(h, true), members: l.members.with(h * n + h, true) };
+                    l = absorb(f, l, h, u, reachable);
+                }
+            }
+        }
+        u = u + 1;
+    }
+    return l;
+}
+
+// A region is one loop body (or the whole function). Inner loops collapse to
+// their headers while the region is ordered, then expand in place.
+function representative(l: Loops, region: boolean[], root: i32, x: i32): i32 {
+    var h: i32 = 0;
+    while (h < l.n) {
+        if (h != root && region[h] && l.header[h] && l.members[h * l.n + x] && outermost(l, region, root, h)) { return h; }
+        h = h + 1;
+    }
+    return x;
+}
+
+function outermost(l: Loops, region: boolean[], root: i32, h: i32): boolean {
+    var other: i32 = 0;
+    while (other < l.n) {
+        if (other != root && other != h && region[other] && l.header[other] && l.members[other * l.n + h]) { return false; }
+        other = other + 1;
+    }
+    return true;
+}
+
+function pending_edges(f: ssa.SFunc, l: Loops, region: boolean[], root: i32): i32[] {
+    var pending: i32[] = [];
+    var i: i32 = 0;
+    while (i < l.n) { pending = pending.append(0); i = i + 1; }
+    var x: i32 = 0;
+    while (x < l.n) {
+        if (region[x]) {
+            var rx: i32 = representative(l, region, root, x);
+            for y in successors(f, x) {
+                if (!region[y] || y == root) { continue; }
+                var ry: i32 = representative(l, region, root, y);
+                if (rx != ry) { pending = pending.with(ry, pending[ry] + 1); }
+            }
+        }
+        x = x + 1;
+    }
+    return pending;
+}
+
+function release(f: ssa.SFunc, l: Loops, region: boolean[], root: i32, chosen: i32, pending: i32[]): i32[] {
+    var x: i32 = 0;
+    while (x < l.n) {
+        if (region[x] && representative(l, region, root, x) == chosen) {
+            for y in successors(f, x) {
+                if (!region[y] || y == root) { continue; }
+                var ry: i32 = representative(l, region, root, y);
+                if (ry != chosen) { pending = pending.with(ry, pending[ry] - 1); }
+            }
+        }
+        x = x + 1;
+    }
+    return pending;
+}
+
+function next_ready(l: Loops, region: boolean[], root: i32, pending: i32[], done: boolean[]): i32 {
+    var x: i32 = 0;
+    while (x < l.n) {
+        if (region[x] && !done[x] && representative(l, region, root, x) == x && pending[x] == 0) { return x; }
+        x = x + 1;
+    }
+    return 0 - 1;
+}
+
+function row(l: Loops, h: i32): boolean[] {
+    var out: boolean[] = [];
+    var i: i32 = 0;
+    while (i < l.n) { out = out.append(l.members[h * l.n + i]); i = i + 1; }
+    return out;
+}
+
+function irreducible(): Layout { return Layout { ok: false, order: [], loop_end: [] }; }
+
+function complete(l: Loops, region: boolean[], root: i32, done: boolean[]): boolean {
+    var x: i32 = 0;
+    while (x < l.n) {
+        if (region[x] && !done[representative(l, region, root, x)]) { return false; }
+        x = x + 1;
+    }
+    return true;
+}
+
+function region_order(f: ssa.SFunc, l: Loops, region: boolean[], root: i32, out: Layout): Layout {
+    var start: i32 = out.order.len();
+    var pending: i32[] = pending_edges(f, l, region, root);
+    var done: boolean[] = flags(l.n, false);
+    var chosen: i32 = root;
+    while (chosen >= 0) {
+        done = done.with(chosen, true);
+        if (chosen != root && l.header[chosen]) {
+            out = region_order(f, l, row(l, chosen), chosen, out);
+            if (!out.ok) { return out; }
+        } else {
+            out = Layout { ok: true, order: out.order.append(chosen), loop_end: out.loop_end.append(0 - 1) };
+        }
+        pending = release(f, l, region, root, chosen, pending);
+        chosen = next_ready(l, region, root, pending, done);
+    }
+    if (!complete(l, region, root, done)) { return irreducible(); }
+    if (l.header[root]) { out = Layout { ...out, loop_end: out.loop_end.with(start, out.order.len() - 1) }; }
+    return out;
+}
+
+// A failed layout means the reachable graph has a cycle without a single
+// dominating header, which no structured `loop` can express.
+pub function compute(f: ssa.SFunc): Layout {
+    var reachable: boolean[] = ssadeps.reachable_blocks(f);
+    var l: Loops = find_loops(f, reachable, ssadeps.dominates(f));
+    return region_order(f, l, reachable, block_index(f, f.entry), Layout { ok: true, order: [], loop_end: [] });
+}

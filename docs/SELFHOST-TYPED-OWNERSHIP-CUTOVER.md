@@ -46,6 +46,10 @@ remain an incomplete projection and cannot replace complete semantic Types.
    lowerer. Use binding/value identities, exact types, explicit projections and
    containment, resolved call effects and cleanup edges. Do not reconstruct a
    projected child's identity from its container or a runtime helper name.
+   `semsource.fern` is the first slice of this import
+   ([semantic source](SELFHOST-SEMANTIC-SOURCE.md)): scalars, arrays,
+   tuples, branches and loops from checked declarations, verified and
+   physically executed; calls, strings, records and enums are still refused.
 3. Move a complete ownership slice through this boundary, including borrowed
    inputs, counted transfers, shared containers and escaping match payloads.
    Verify edge-sensitive lifetime and counted-unit plans before physical lowering.

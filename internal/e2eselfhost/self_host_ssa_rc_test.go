@@ -184,13 +184,17 @@ function main(): i32 {
     if (!refused(ssarc.lower(f, [], ssaunits.Plan { ...p, steps: [] }), "missing or duplicate entry step")) { return 2; }
     var b = f.graph.blocks[0];
     var first = ssa.SBlock { ...b, insts: b.insts.append(inst(2, 5, [], 0)), term: ssa.STerm { kind_tag: 2, target: 27, value: 0, cond: 0, t: 0, f: 0 } };
-    var cycle = ssa.SBlock { id: 27, preds: [7, 27], insts: [], term: ssa.STerm { kind_tag: 3, target: 0, value: 0, cond: 5, t: 27, f: 37 } };
-    var last = ssa.SBlock { id: 37, preds: [27], insts: [], term: b.term };
-    var graph = ssa.SFunc { ...f.graph, nvals: 6, blocks: [first, cycle, last] };
+    // Two blocks entering each other with neither dominating: a cycle no
+    // single loop label can head.
+    first = ssa.SBlock { ...first, term: ssa.STerm { kind_tag: 3, target: 0, value: 0, cond: 5, t: 27, f: 37 } };
+    var left = ssa.SBlock { id: 27, preds: [7, 37], insts: [], term: ssa.STerm { kind_tag: 2, target: 37, value: 0, cond: 0, t: 0, f: 0 } };
+    var right = ssa.SBlock { id: 37, preds: [7, 27], insts: [], term: ssa.STerm { kind_tag: 3, target: 0, value: 0, cond: 5, t: 27, f: 47 } };
+    var last = ssa.SBlock { id: 47, preds: [37], insts: [], term: b.term };
+    var graph = ssa.SFunc { ...f.graph, nvals: 6, blocks: [first, left, right, last] };
     var cfg = ssasem.Func { ...f, graph: graph, values: f.values.append(typeinfo.TypeBool { tag: 0 }) };
     var cp = ssaunits.plan(cfg, []);
     if (!cp.ok) { eprint(cp.why); return 3; }
-    if (!refused(ssarc.lower(cfg, [], cp), "physical RC needs acyclic graph")) { return 4; }
+    if (!refused(ssarc.lower(cfg, [], cp), "physical RC needs reducible graph")) { return 4; }
     var types: typeinfo.Type[] = [typeinfo.TypeString { tag: 0 }, typeinfo.TypeArray { elem: typeinfo.TypeI32 { width: 64, unsigned: false, is_char: false } }];
     for ty in types {
         var g = ssa.SFunc { name: "unsupported", nparams: 1, nvals: 1, entry: 7, takes_env: false,

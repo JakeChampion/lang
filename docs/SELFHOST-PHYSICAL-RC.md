@@ -10,10 +10,12 @@ ABI, including its target-specific array and tuple layouts.
 
 The input is a `ssasem.Func`, explicit parameter modes and an `ssaunits.Plan`.
 Lowering re-verifies the entire plan against freshly derived semantic facts.
-The physical vocabulary accepts reachable acyclic control-flow graphs with
-32-bit integer/boolean values and recursively nested arrays and tuples.
-It rejects reachable cycles and other physical representations, returning no
-operations or locals on rejection. Strings, wide scalars, nominal schemas,
+The physical vocabulary accepts reachable reducible control-flow graphs with
+32-bit integer/boolean values, scalar operators, and recursively nested
+arrays and tuples. Natural loops become structured `loop` labels through
+`ssalayout.fern` ([semantic source](SELFHOST-SEMANTIC-SOURCE.md)); an
+irreducible cycle and other physical representations are rejected, returning
+no operations or locals. Strings, wide scalars, nominal schemas,
 closures and semantic calls are not admitted by this physical boundary.
 
 Semantic record construction/projection and counted plans are now available,
@@ -116,7 +118,8 @@ the row before loop reinitialization releases it. Its reduced source fails on
 all three targets. Correct replacement needs copied-child supplies,
 replacement drops, alias preservation and parent cleanup together. Neither
 these physical construction/projection operations nor an AST escape exception
-constitutes that fix. Loop lowering, typed frontend import,
-coverage expansion, production cutover and deletion of obsolete ownership
-analyses remain required. Main's enum-return leaks were separately repaired
+constitutes that fix. Loops and the first checked-source producer landed
+with [semantic source](SELFHOST-SEMANTIC-SOURCE.md); coverage expansion,
+production cutover and deletion of obsolete ownership analyses remain
+required. Main's enum-return leaks were separately repaired
 by #8990, with exact heap-balance assertions and no baseline relaxation.
