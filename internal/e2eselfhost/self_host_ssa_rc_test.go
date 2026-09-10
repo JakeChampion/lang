@@ -241,9 +241,9 @@ function main(): i32 {
     var enumPlan = ssaunits.plan(enumFunc, [2]);
     if (!enumPlan.ok) { eprint(enumPlan.why); return 15; }
     if (!ssarc.lower(enumFunc, [2], enumPlan).ok) { return 16; }
-    // The drop walk is expanded inline, so a type that reaches itself through
-    // a reference field has no finite expansion and is refused rather than
-    // emitted.
+    // A type that reaches itself has no finite INLINE expansion, so its
+    // children are released by a per-type helper the walk calls. The call is
+    // what makes the descent finite, so the helper's own body must contain it.
     var selfType: typeinfo.Type = typeinfo.TypeStruct { name: "Node", args: [] };
     var selfSchema = semrecords.Record { ty: selfType, fields: [semrecords.Field { name: "kid", ty: selfType }] };
     var selfGraph = ssa.SFunc { name: "cycle", nparams: 1, nvals: 1, entry: 7, takes_env: false,
@@ -251,7 +251,29 @@ function main(): i32 {
     var selfFunc = ssasem.Func { graph: selfGraph, values: [selfType], params: [selfType], result: selfType, records: [selfSchema], enums: [], calls: [] };
     var selfPlan = ssaunits.plan(selfFunc, [2]);
     if (!selfPlan.ok) { eprint(selfPlan.why); return 17; }
-    if (!refused(ssarc.lower(selfFunc, [2], selfPlan), "recursive type has no physical drop")) { return 18; }
+    var selfLowered = ssarc.lower(selfFunc, [2], selfPlan);
+    if (!selfLowered.ok) { eprint(selfLowered.why); return 18; }
+    var selfHelpers = ssarc.drop_helpers(selfFunc);
+    if (selfHelpers.len() != 1) { return 19; }
+    if (selfHelpers[0].name != "__sem_drop_Node") { eprint(selfHelpers[0].name); return 20; }
+    if (selfHelpers[0].n_params != 1) { return 21; }
+    // n_locals covers the parameter even before a child slot is reserved.
+    if (selfHelpers[0].n_locals < 1) { return 22; }
+    var sawSelfCall: boolean = false;
+    for o in selfHelpers[0].ops {
+        if (ir.render_op(o) == "call_direct __sem_drop_Node/1") { sawSelfCall = true; }
+    }
+    if (!sawSelfCall) { return 23; }
+    // A schema with no reference field needs no helper, so none is emitted:
+    // a body exists exactly when a call to it does.
+    var flatType: typeinfo.Type = typeinfo.TypeStruct { name: "Flat", args: [] };
+    var flatSchema = semrecords.Record { ty: flatType, fields: [semrecords.Field { name: "n", ty: typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false } }] };
+    var flatFunc = ssasem.Func { graph: selfGraph, values: [flatType], params: [flatType], result: flatType, records: [flatSchema], enums: [], calls: [] };
+    if (ssarc.drop_helpers(flatFunc).len() != 0) { return 24; }
+    // Two views of one type merge to a single tail entry rather than two.
+    var merged = ssarc.merge_helpers([], ssarc.drop_helpers(selfFunc).append(ssarc.drop_helpers(selfFunc)[0]));
+    if (merged.len() != 1) { return 25; }
+    if (!merged[0].ok) { eprint(merged[0].why); return 26; }
     return 0;
 }
 `

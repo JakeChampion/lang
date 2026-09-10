@@ -4510,6 +4510,18 @@ function decl_result_wat(fd: parser.FuncDecl, structs: irlower.StructTab): strin
 // fallthrough_filler is the zero the implicit end pops, typed to match the
 // result clause. Derived from the clause rather than re-deciding it, so the two
 // cannot disagree — a mismatch is a wasm validator error at module load.
+// A produced body spells its own result rather than being assumed to return
+// one i32 word: a body whose result is wider would otherwise emit a function
+// whose declared type disagrees with what it returns, and wasm would validate
+// it and hand back a filler word. An unset kind is a producer that forgot,
+// which is a compile-time stop rather than a wrong module.
+function produced_result_wat(r: irlower.LowerResult): string {
+    if (r.result_kind == irlower.result_i32()) { return " (result i32)\n"; }
+    eprint("error: produced body " + r.name + " carries no result kind\n");
+    exit(3);
+    return "";
+}
+
 function fallthrough_filler(result_wat: string): string {
     if (util.contains(result_wat, "i64")) { return "    i64.const 0)\n"; }
     if (util.contains(result_wat, "f64")) { return "    f64.const 0)\n"; }
@@ -4651,10 +4663,10 @@ pub function emit_functions_view(ns: string, mod: parser.Module, cache: irlower.
         fi = fi + 1;
     }
     // Cache entries past the declarations are bodies with no FuncDecl, each
-    // naming the symbol it defines. A produced body's result is one i32 word.
+    // naming the symbol it defines and the shape of the value it returns.
     var xi: i32 = mod.funcs.len();
     while (xi < cache.len()) {
-        parts = parts.append(emit_function_ir_named(ns, cache[xi], cache[xi].name, " (result i32)\n", str_vals, cagg_vals, all_structs, ft, all_funcs, vsigs));
+        parts = parts.append(emit_function_ir_named(ns, cache[xi], cache[xi].name, produced_result_wat(cache[xi]), str_vals, cagg_vals, all_structs, ft, all_funcs, vsigs));
         xi = xi + 1;
     }
     return util.str_join_chunks(parts);

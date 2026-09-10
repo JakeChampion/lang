@@ -13,7 +13,7 @@ import "./typeinfo";
 function empty(why: string): irlower.LowerResult {
     return irlower.LowerResult { ok: false, why: why, ops: [], n_locals: 0,
         n_params: 0, erased_wide: false, arr_slots: [], i64_slots: [],
-        f64_slots: [], str_slots: [], alias_incs: [], name: "" };
+        f64_slots: [], str_slots: [], alias_incs: [], name: "", result_kind: irlower.result_i32() };
 }
 
 // This physical boundary refuses types whose stack representation is not
@@ -117,8 +117,7 @@ function drop_value(r: irlower.LowerResult, slot: i32, t: typeinfo.Type, scratch
         r = emit(r, ir.op_if(0));
         if let typeinfo.TypeArray(a) = t { r = drop_elements(r, slot, a.elem, scratch, f); }
         if let typeinfo.TypeTuple(tup) = t { r = drop_tuple_fields(r, slot, tup, scratch, f); }
-        if let typeinfo.TypeStruct(_) = t { r = drop_record_fields(r, slot, record_fields(t, f), scratch, f); }
-        if let typeinfo.TypeUnion(_) = t { r = drop_variant_fields(r, slot, variants_of(t, f), scratch, f); }
+        if (named(t) != "") { r = helper(r, slot, drop_helper_name(t)); }
         r = emit(r, ir.op_end());
     }
     return helper(r, slot, release_name(t));
@@ -267,39 +266,86 @@ function named(t: typeinfo.Type): string {
     return "";
 }
 
-function seen_name(seen: string[], name: string): boolean {
-    for s in seen { if (s == name) { return true; } }
-    return false;
+// A nominal type's children are released by its own helper rather than by an
+// inline expansion. The descent that would close a cycle is a call, so a type
+// that reaches itself still has a finite lowering. The helper releases the
+// box's CHILDREN ONLY: its caller has already proved __fern_rc_is_unique(box)
+// and releases the box itself once the helper returns.
+//
+// Distinct from the AST path's __struct_drop_<T>, which guards each nested
+// field itself and hands back the box. The two are not interchangeable.
+pub function drop_helper_name(t: typeinfo.Type): string { return "__sem_drop_" + named(t); }
+
+// n_locals starts at n_params: `reserve` only grows it, and a body whose frame
+// is smaller than its parameters puts the prologue's parameter copy below the
+// allocated frame.
+function one_helper(t: typeinfo.Type, f: ssasem.Func): irlower.LowerResult {
+    var r: irlower.LowerResult = irlower.LowerResult { ...empty(""), ok: true,
+        n_params: 1, n_locals: 1, name: drop_helper_name(t) };
+    if let typeinfo.TypeStruct(_) = t { r = drop_record_fields(r, 0, record_fields(t, f), 1, f); }
+    if let typeinfo.TypeUnion(_) = t { r = drop_variant_fields(r, 0, variants_of(t, f), 1, f); }
+    // The one value the caller's `drop` after the call discards.
+    r = emit(r, ir.op_const_i32(0));
+    r = emit(r, ir.op_return());
+    var optimized: ir.OptimizedOps = ir.optimize_ops(r.ops, 1, r.n_locals);
+    return irlower.LowerResult { ...r, ops: optimized.ops, n_locals: optimized.n_locals };
 }
 
-function fields_terminate(fields: semrecords.Field[], f: ssasem.Func, seen: string[]): boolean {
-    for field in fields { if (!drop_terminates(field.ty, f, seen)) { return false; } }
-    return true;
+// One helper per nominal schema the walk can call, gated on has_children —
+// the same predicate that decides whether drop_value emits the call, so every
+// call this function's lowering makes has a body here. A schema the function
+// mentions but never drops yields a body nothing reaches, which the weak
+// linkage discards; the reverse, a call with no body, is what the shared gate
+// rules out. A function's schema set is closed under field reachability, so
+// iterating it also reaches the types the bodies themselves call.
+pub function drop_helpers(f: ssasem.Func): irlower.LowerResult[] {
+    var out: irlower.LowerResult[] = [];
+    for rec in f.records { if (has_children(rec.ty, f)) { out = out.append(one_helper(rec.ty, f)); } }
+    for e in f.enums { if (has_children(e.ty, f)) { out = out.append(one_helper(e.ty, f)); } }
+    return out;
 }
 
-// The drop walk is expanded inline, so a nominal type that reaches itself
-// through a reference field has no finite expansion. Such a type needs a
-// per-type drop helper the walk can call; until it has one, this boundary
-// refuses it rather than emitting an expansion that does not terminate.
-function drop_terminates(t: typeinfo.Type, f: ssasem.Func, seen: string[]): boolean {
-    if let typeinfo.TypeArray(a) = t { return drop_terminates(a.elem, f, seen); }
-    if let typeinfo.TypeTuple(tup) = t {
-        for elem in tup.elements { if (!drop_terminates(elem, f, seen)) { return false; } }
-        return true;
+function named_index(rows: irlower.LowerResult[], name: string): i32 {
+    var i: i32 = 0;
+    while (i < rows.len()) { if (rows[i].name == name) { return i; } i = i + 1; }
+    return 0 - 1;
+}
+
+function replaced(rows: irlower.LowerResult[], at: i32, row: irlower.LowerResult): irlower.LowerResult[] {
+    var out: irlower.LowerResult[] = [];
+    var i: i32 = 0;
+    while (i < rows.len()) {
+        if (i == at) { out = out.append(row); } else { out = out.append(rows[i]); }
+        i = i + 1;
     }
-    var name: string = named(t);
-    if (name == "") { return true; }
-    if (seen_name(seen, name)) { return false; }
-    var deeper: string[] = seen.append(name);
-    if let typeinfo.TypeStruct(_) = t { return fields_terminate(record_fields(t, f), f, deeper); }
-    for v in variants_of(t, f) { if (!fields_terminate(v.fields, f, deeper)) { return false; } }
-    return true;
+    return out;
+}
+
+// Two functions that both mention a type each produce a helper for it, so the
+// tail is merged by symbol. A body lowered from a declaration carries no name,
+// so scanning the whole cache cannot collide with one.
+//
+// The bodies are built from a schema table the whole module shares, so they
+// agree. A disagreement would be a miscompile rather than a preference, and
+// the .weak linkage that lets duplicates co-link would pick one silently — so
+// it becomes a refusal the emit path stops on instead.
+pub function merge_helpers(cache: irlower.LowerResult[], helpers: irlower.LowerResult[]): irlower.LowerResult[] {
+    var out: irlower.LowerResult[] = cache;
+    for h in helpers {
+        var at: i32 = named_index(out, h.name);
+        if (at < 0) { out = out.append(h); }
+        else if (!ir.ops_equal(out[at].ops, h.ops) || out[at].n_params != h.n_params
+                || out[at].n_locals != h.n_locals) {
+            out = replaced(out, at, irlower.LowerResult { ...h, ok: false,
+                why: "conflicting drop helper for " + h.name });
+        }
+    }
+    return out;
 }
 
 function types_error(f: ssasem.Func): string {
     var why: string = schema_types_error(f);
     if (why != "") { return why; }
-    for t in f.values { if (!drop_terminates(t, f, [])) { return "recursive type has no physical drop"; } }
     for t in f.values { if (!supported(t, f)) { return "unsupported physical RC value type"; } }
     if (!supported(f.result, f)) { return "unsupported physical RC result type"; }
     for c in f.calls {
@@ -544,8 +590,16 @@ function region(e: Emit, f: ssasem.Func, p: ssaunits.Plan, l: ssalayout.Layout, 
 // array positions ("ARRF:") and a scalar-element array result ("ARROWN:");
 // every other position keeps the AST caller's leak-mode floor.
 pub function caller_sigs(sg: irlower.FnSigs, name: string, f: ssasem.Func): irlower.FnSigs {
-    var tuples: string[] = without_rows(sg.tuple_fresh_ret_fns, name, ["", "ARRF:"]);
-    var arrays: string[] = without_rows(sg.return_fresh_struct_ret_fns, name, ["ARR:", "ARROWN:"]);
+    var tuples: string[] = without_rows(sg.tuple_fresh_ret_fns, name, ["", "ARRF:", "MAPF:"]);
+    // Every row an AST reader could have written for this result is erased,
+    // including the bare name. A row says the caller may release something;
+    // once this function is lowered here, a row the AST inferred from syntax
+    // describes a body the AST no longer lowered. Erasing one it should have
+    // kept leaks; keeping one this boundary cannot honour double-frees, so the
+    // list errs wide.
+    var arrays: string[] = without_rows(sg.return_fresh_struct_ret_fns, name,
+        ["", "ARR:", "ARROWN:", "SARRC:", "STRARR:", "ENUM:", "STRFLDF:",
+         "FRESHSELF:", "ARRTUPF:", "ARRSTRUCTF:", "STRUCTARRF:", "ARENUMF:"]);
     if let typeinfo.TypeTuple(tup) = f.result {
         tuples = tuples.append(name);
         var flags: string = tuple_flags(tup);
