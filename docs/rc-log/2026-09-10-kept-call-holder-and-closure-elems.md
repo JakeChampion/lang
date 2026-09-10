@@ -15,6 +15,7 @@ main from 54ce1bf:
 | `wasm-wholecompiler-link-x86_64` | the wasm-hosted compiler answers `main did not lower: unknown statement` |
 | `cli-driver-tests-x86_64`, nested-arith | the self-host-built `wasm_ir_run.native` dies on a signal |
 | `diff-selfhost-shard0`, seed 301 | the compiled program segfaults in `__fern_rc_inc` |
+| `test-e2e-selfhost-x86_64` shards 1 and 2 | two emission pins find the helper body's `call __fn___fern_rc_inc`; `all_ops` is 385 bytes over its ceiling |
 
 ## The holder (#9016)
 
@@ -39,12 +40,16 @@ witness next to `NODEEP:` when the reason is a move (`moves_fields_stmts`,
 `optstruct_body_moves_field`) or the new `handed_to_kept_call`: the local, or
 a local bound whole from it (`var alias = result`, chased to a fixpoint),
 appears as a bare-ident argument of a call whose result is kept, bound to a
-value that can hold a struct, assigned to one, or returned. The
-`derived_anywhere` form used for snapshot locals is too wide here: its return
-arm counts `return (p.f.len() + …)`, and the `chain` / `always` / `respread`
-rows leaked under it. The bare-argument form keeps `keepit(p)` bound to an
-`i32` allowed, and `return infer(rebuild(result))` refused. The flip honours
-the witness for the holder; the source's flip is unchanged.
+value that can hold a struct, assigned to one, or returned, and whose callee
+declares a return type that can hold one (`ret_type_fns`; a callee with no
+row, a method, a closure or a generic, does not count). The `derived_anywhere`
+form used for snapshot locals is too wide here: its return arm counts
+`return (p.f.len() + …)`, and the `chain` / `always` / `respread` rows leaked
+under it; without the return-type rule `return rd(p)` with `rd` returning an
+`i32` withheld the deep drop too, and the string-only struct, wasm
+struct-drop, borrow-inference and container-alias rows leaked. The rule keeps
+`keepit(p)` allowed and `return infer(rebuild(result))` refused. The flip
+honours the witness for the holder; the source's flip is unchanged.
 
 ## The closure array (#9017)
 
@@ -57,6 +62,18 @@ the seed died. A struct field of that type is spelled `"fn[]"` and
 `is_enum_array_field_type` admits it the same way, so the value forms on
 `h.hs` and the in-place field forms had the same hole. The exclusion sits in
 `is_counted_elem_array_type`, the one predicate all four sites ask.
+
+## The helper body (three more rows)
+
+`__fern_arr_inc_elems` was written into every x86-64 and arm64 binary, not
+gated on a need like `__fern_arrarr_free` is. Its body calls
+`__fn___fern_rc_inc`, so `TestSelfHostRcAliasIncX86_64/elides-retain-at-move-alias`
+and `TestSelfHostRcMoveOnReturnX86_64/emits-no-inc-on-move`, which grep the
+whole asm for that call, tripped on a program with no array copy in it, and
+`TestSelfHostOperatorOverloadIRX86_64/all_ops` crossed its 18000-byte
+small-output ceiling at 18385. Both backends now mark `arr_inc_elems` at the
+call and emit the body under `has_need`; the root joins
+`all_runtime_need_roots` so a per-module entry unit still links it.
 
 ## Gates
 

@@ -2346,6 +2346,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // are skipped like the deep-free walks skip them; an immortal or tagged
     // element is skipped by rc_inc's own guards. %rbx/%r12/%r13 hold
     // arr/len/i across the per-element call (callee-saved; rc_inc is a leaf).
+    if (s.has_need("arr_inc_elems")) {
     s = s.write("__fn___fern_arr_inc_elems:\n");
     s = s.write("    movq 8(%rsp), %rax\n");        // arr (also the result)
     s = s.write("    testq %rax, %rax\n");
@@ -2378,6 +2379,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    popq %rbx\n");
     s = s.write(".Laie_ret:\n");
     s = s.write("    ret\n");
+    }
     // __fern_alloc_reuse(token@16(%rsp), slots@8(%rsp)) -> %rax = data — the
     // FBIP reuse-degrade primitive (#4350), the self-host twin of native's
     // __fern_alloc_reuse adapted to the arr-box layout (cap@data-16, rc@data-8):
@@ -5796,6 +5798,9 @@ function emit_ir_op_call_direct_helper(o: ir.Op, s: asmcore.EmitState): asmcore.
     // asm-grep contracts (e.g. strarr-elem-alias-excluded). Both free
     // through the freelist, so they need the heap runtime.
     if (o.str == "__fern_arrarr_free") { s = s.need("heap"); s = s.need("arrarr_free"); }
+    // The element retain ahead of an un-share copy: its body calls
+    // __fn___fern_rc_inc, so a binary with no such copy must not carry it.
+    if (o.str == "__fern_arr_inc_elems") { s = s.need("arr_inc_elems"); }
     // The VIEW-aware string[] element walk (#6544) is gated the same way
     // and for the same reason: its body's inner
     // `call __fn___fern_str_view_free` must not appear in a binary that

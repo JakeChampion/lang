@@ -40502,7 +40502,7 @@ function arrstruct_credit_rows(body: ast.Stmt[], structs: StructTab, borrowable:
     return out;
 }
 
-function reclaimable_names_of(body: ast.Stmt[], reassigned: string[], structs: StructTab, borrowable: string[], fresh_ret: string[], str_fresh_ret: string[], opt_fresh_ret: SigReg, tup_fresh_ret: string[], msites: string[], recv_borrow: string[], struct_ret_fns: SigReg, params: ast.ParamDecl[], plan_on: boolean, plan_fe: string[], handback: string[], sfok: string[], str_handback_ret: string[]): string[] {
+function reclaimable_names_of(body: ast.Stmt[], reassigned: string[], structs: StructTab, borrowable: string[], fresh_ret: string[], str_fresh_ret: string[], opt_fresh_ret: SigReg, tup_fresh_ret: string[], msites: string[], recv_borrow: string[], struct_ret_fns: SigReg, ret_type_fns: SigReg, params: ast.ParamDecl[], plan_on: boolean, plan_fe: string[], handback: string[], sfok: string[], str_handback_ret: string[]): string[] {
     var fresh: string[] = collect_fresh_struct_names(body, structs, [], sfok);
     // Widen with the DISCARDED fresh-ret-call locals (#3457 follow-up): a
     // `var r = f(..)` whose result is read-then-dead, rebound or not. The shared
@@ -40583,7 +40583,7 @@ function reclaimable_names_of(body: ast.Stmt[], reassigned: string[], structs: S
         // "NOFLIP:" witnesses a move or derivation reason: a counted field share
         // retains only the literal's field read, so the bind-site flip
         // (mark_enum_arr_share) may cancel the borrow reason and never this one.
-        if (!mv_moves && handed_to_kept_call(body, params, mvnmk, structs)) { mv_moves = true; }
+        if (!mv_moves && handed_to_kept_call(body, params, mvnmk, structs, ret_type_fns)) { mv_moves = true; }
         var mv_noflip: boolean = mv_moves;
         if (!mv_moves && struct_lit_unretained_borrow_field(body, out[mvi], structs)) { mv_moves = true; }
         if (mv_moves) {
@@ -58287,7 +58287,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
     var plan_on: boolean = !rc_plan_disabled();
     var plan_fe: string[] = [];
     if (plan_on) { plan_fe = free_eligible_sites_of(fn, asg_targets, structs, sg.ret_type_fns, sg.noesc_ret_fns); }
-    var reclaim: string[] = reclaimable_names_of(fn.body, asg_targets, structs, sg.borrowable_params, sg.return_fresh_struct_ret_fns, sg.str_fresh_ret_fns, sg.opt_fresh_ret_fns, sg.tuple_fresh_ret_fns, move_sites_of(fn, structs), sg.recv_borrow_fns, sg.struct_ret_fns, fn.params, plan_on, plan_fe, sg.handback_params, sg.strfld_ok_types, sg.str_handback_ret);
+    var reclaim: string[] = reclaimable_names_of(fn.body, asg_targets, structs, sg.borrowable_params, sg.return_fresh_struct_ret_fns, sg.str_fresh_ret_fns, sg.opt_fresh_ret_fns, sg.tuple_fresh_ret_fns, move_sites_of(fn, structs), sg.recv_borrow_fns, sg.struct_ret_fns, sg.ret_type_fns, fn.params, plan_on, plan_fe, sg.handback_params, sg.strfld_ok_types, sg.str_handback_ret);
     // A verified typed region owns its parent units until the exit sweep. Its
     // counted payload returns replace the old consuming-match transfer/drop.
     var enum_plan: enumcontract.Plan = enumcontract.analyze_calls(fn, structs.decls, sg.enum_regions);
@@ -77551,8 +77551,8 @@ function derived_anywhere(fn: parser.FuncDecl, name: string, structs: StructTab,
 // uncounted — element stores are moves — so the caller's deep walk would free
 // them under that result (#9016). A call whose result is dropped, or bound to
 // a scalar, cannot carry the alias out.
-function handed_to_kept_call(body: ast.Stmt[], params: ast.ParamDecl[], name: string, structs: StructTab): boolean {
-    return kept_call_scan(body, holder_aliases(body, [name]), decl_view_of(params, body), structs);
+function handed_to_kept_call(body: ast.Stmt[], params: ast.ParamDecl[], name: string, structs: StructTab, retreg: SigReg): boolean {
+    return kept_call_scan(body, holder_aliases(body, [name]), decl_view_of(params, body), structs, retreg);
 }
 // holder_aliases: `names` plus every local bound whole from one of them
 // (`var alias = name`), to a fixpoint, so a handoff through an alias is the
@@ -77592,50 +77592,67 @@ function alias_binds_in(stmts: ast.Stmt[], names: string[]): string[] {
 function decl_view_of(params: ast.ParamDecl[], body: ast.Stmt[]): parser.FuncDecl {
     return parser.FuncDecl { name: "", receiver_name: "", receiver_type: "", type_params: [], params: params, ret_type: "", body: body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: false, ret_slice: false, async: false, is_const: false, is_pub: false, ret_fn_ret: "", ret_fn_param_types: "" };
 }
-function kept_call_scan(stmts: ast.Stmt[], names: string[], fn: parser.FuncDecl, structs: StructTab): boolean {
+// Every arm asks the callee's declared return type as well as the binding's:
+// a scalar-returning callee cannot carry the holder's boxes out, and a callee
+// with no row (a method, a closure, a generic) never had this witness either.
+function kept_call_scan(stmts: ast.Stmt[], names: string[], fn: parser.FuncDecl, structs: StructTab, retreg: SigReg): boolean {
     for stmt in stmts {
         match (stmt) {
-            ast.StmtVar(v) => { if (dor_type_can_hold(v.type_name, structs) && expr_hands_to_call(v.init, names)) { return true; } },
-            ast.StmtAssign(a) => { if (util.index_of_str(names, a.target) < 0 && dor_type_can_hold(decl_type_in_fn(fn, a.target), structs) && expr_hands_to_call(a.value, names)) { return true; } },
-            ast.StmtReturn(r) => { if (expr_hands_to_call(r.value, names)) { return true; } },
-            ast.StmtIf(f) => { if (kept_call_scan(f.then_body, names, fn, structs) || kept_call_scan(f.else_body, names, fn, structs)) { return true; } },
-            ast.StmtWhile(w) => { if (kept_call_scan(w.body, names, fn, structs)) { return true; } },
-            ast.StmtFor(fo) => { if (kept_call_scan(fo.body, names, fn, structs)) { return true; } },
-            ast.StmtMatch(m) => { for arm in m.arms { if (kept_call_scan(arm.body, names, fn, structs)) { return true; } } },
+            ast.StmtVar(v) => { if (dor_type_can_hold(v.type_name, structs) && expr_hands_to_call(v.init, names, structs, retreg)) { return true; } },
+            ast.StmtAssign(a) => { if (util.index_of_str(names, a.target) < 0 && dor_type_can_hold(decl_type_in_fn(fn, a.target), structs) && expr_hands_to_call(a.value, names, structs, retreg)) { return true; } },
+            ast.StmtReturn(r) => { if (expr_hands_to_call(r.value, names, structs, retreg)) { return true; } },
+            ast.StmtIf(f) => { if (kept_call_scan(f.then_body, names, fn, structs, retreg) || kept_call_scan(f.else_body, names, fn, structs, retreg)) { return true; } },
+            ast.StmtWhile(w) => { if (kept_call_scan(w.body, names, fn, structs, retreg)) { return true; } },
+            ast.StmtFor(fo) => { if (kept_call_scan(fo.body, names, fn, structs, retreg)) { return true; } },
+            ast.StmtMatch(m) => { for arm in m.arms { if (kept_call_scan(arm.body, names, fn, structs, retreg)) { return true; } } },
             _ => {}
         }
     }
     return false;
 }
-function expr_hands_to_call(e: ast.Expr, names: string[]): boolean {
+function expr_hands_to_call(e: ast.Expr, names: string[], structs: StructTab, retreg: SigReg): boolean {
     match (e) {
         ast.ExprCall(c) => {
-            for arg in c.args {
-                match (arg) {
-                    ast.ExprIdent(id) => { if (util.index_of_str(names, id.name) >= 0) { return true; } },
-                    _ => {}
+            if (call_result_can_hold(c, structs, retreg)) {
+                for arg in c.args {
+                    match (arg) {
+                        ast.ExprIdent(id) => { if (util.index_of_str(names, id.name) >= 0) { return true; } },
+                        _ => {}
+                    }
                 }
-                if (expr_hands_to_call(arg, names)) { return true; }
             }
-            return expr_hands_to_call(c.callee, names);
+            for arg in c.args { if (expr_hands_to_call(arg, names, structs, retreg)) { return true; } }
+            return expr_hands_to_call(c.callee, names, structs, retreg);
         },
-        ast.ExprBinary(b) => { return expr_hands_to_call(b.left, names) || expr_hands_to_call(b.right, names); },
-        ast.ExprUnary(u) => { return expr_hands_to_call(u.operand, names); },
-        ast.ExprIndex(ix) => { return expr_hands_to_call(ix.array, names) || expr_hands_to_call(ix.index, names); },
-        ast.ExprFieldAccess(fa) => { return expr_hands_to_call(fa.obj, names); },
+        ast.ExprBinary(b) => { return expr_hands_to_call(b.left, names, structs, retreg) || expr_hands_to_call(b.right, names, structs, retreg); },
+        ast.ExprUnary(u) => { return expr_hands_to_call(u.operand, names, structs, retreg); },
+        ast.ExprIndex(ix) => { return expr_hands_to_call(ix.array, names, structs, retreg) || expr_hands_to_call(ix.index, names, structs, retreg); },
+        ast.ExprFieldAccess(fa) => { return expr_hands_to_call(fa.obj, names, structs, retreg); },
         ast.ExprStructLit(sl) => {
-            if (sl.has_base && expr_hands_to_call(sl.base, names)) { return true; }
-            for fv in sl.field_values { if (expr_hands_to_call(fv, names)) { return true; } }
+            if (sl.has_base && expr_hands_to_call(sl.base, names, structs, retreg)) { return true; }
+            for fv in sl.field_values { if (expr_hands_to_call(fv, names, structs, retreg)) { return true; } }
             return false;
         },
         ast.ExprArray(a) => {
             var i: i32 = 0;
-            while (i < a.elements.len()) { if (expr_hands_to_call(a.elements[i], names)) { return true; } i = i + 1; }
+            while (i < a.elements.len()) { if (expr_hands_to_call(a.elements[i], names, structs, retreg)) { return true; } i = i + 1; }
             return false;
         },
         ast.ExprTuple(t) => {
-            for el in t.elements { if (expr_hands_to_call(el, names)) { return true; } }
+            for el in t.elements { if (expr_hands_to_call(el, names, structs, retreg)) { return true; } }
             return false;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+// call_result_can_hold: the callee is a named function whose declared return
+// type can hold a struct's boxes. "" (no row) is false.
+function call_result_can_hold(c: ast.ExprCall, structs: StructTab, retreg: SigReg): boolean {
+    match (c.callee) {
+        ast.ExprIdent(cid) => {
+            var rt: string = sig_reg_value_of(retreg, cid.name);
+            return rt.len() > 0 && dor_type_can_hold(rt, structs);
         },
         _ => { return false; }
     }

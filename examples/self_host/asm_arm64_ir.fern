@@ -2256,6 +2256,7 @@ function emit_arm64_op_call_direct_helper(o: ir.Op, s: asmcore.EmitState): asmco
     // gating: an unrelated binary must not carry the strarrarr body's
     // inner `bl __fn___fern_str_arr_free` (negative asm-grep contracts).
     if (o.str == "__fern_arrarr_free") { s = s.need("arrarr_free"); }
+    if (o.str == "__fern_arr_inc_elems") { s = s.need("arr_inc_elems"); }
     // The VIEW-aware string[] element walk (#6544), gated the same way:
     // a binary that never reclaims a builtin string[] must not carry a
     // body whose inner `bl __fn___fern_str_view_free` the negative
@@ -4771,6 +4772,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     // copy of a SHARED buffer so both buffers hold a count of each element.
     // Same guard chain as the deep-free walks; x19/x20/x21 hold arr/len/i
     // across the bl (callee-saved, x30 saved too).
+    if (s.has_need("arr_inc_elems")) {
     s = s.write("__fn___fern_arr_inc_elems:\n");
     s = s.write("    ldr x0, [sp]\n");              // arr (also the result)
     s = s.write("    cbz x0, .Laie_ret\n");
@@ -4800,6 +4802,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    ldp x19, x30, [sp], #16\n");
     s = s.write(".Laie_ret:\n");
     s = s.write("    ret\n");
+    }
     // __fern_alloc_reuse(token@[sp,#16], slots@[sp]) -> x0 = data — the
     // FBIP reuse-degrade primitive (#4350), arm64 mirror of the x86
     // __fn___fern_alloc_reuse. Same arr-box layout (cap@data-16, rc@data-8):
