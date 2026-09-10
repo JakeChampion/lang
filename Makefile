@@ -6,7 +6,7 @@ ASMS     := $(addprefix build/,$(addsuffix .s,$(EXAMPLES)))
 BINS     := $(addprefix build/,$(EXAMPLES))
 LANG_SRCS := $(wildcard examples/*.fern) $(wildcard coreutils/*.fern) $(wildcard coreutils/lib/*.fern)
 
-.PHONY: all build test vet deadcode actionlint hooks testnames freeze check-sources selfhost-cli bootstrap distcheck clean examples run-% fmt fmt-check gofmt gofmt-check lint-all
+.PHONY: all build test vet deadcode actionlint hooks testnames freeze check-sources selfhost-cli bootstrap distcheck clean examples run-% fmt fmt-check gofmt gofmt-check lint-all ci-selftest
 
 all: build test
 
