@@ -2674,6 +2674,41 @@ func TestNestedFunctionRecordsCaptures(t *testing.T) {
 	}
 }
 
+// A nested function's name is bound in the scope that declares it and
+// nowhere else. It used to be written into the program-wide signature table
+// under its bare name, so a top-level function sharing the name — declared
+// before or after — resolved to the nested signature at every other call
+// site (#9005: `ssarc.at(p, block, point, target)` drew E004 against a
+// nested `at(x)` in checker.fern).
+func TestNestedFunctionNameDoesNotShadowTopLevel(t *testing.T) {
+	cases := map[string]string{
+		"top-level declared after": `function outer(n: i32): i32 {
+			function at(x: i32): i32 { return x + 1; }
+			return at(n);
+		}
+		function at(p: i32, q: i32): i32 { return p * q; }
+		function main(): i32 { return at(3, 4) + outer(1); }`,
+		"top-level declared before": `function at(p: i32, q: i32): i32 { return p * q; }
+		function outer(n: i32): i32 {
+			function at(x: i32): i32 { return x + 1; }
+			return at(n);
+		}
+		function main(): i32 { return at(3, 4) + outer(1); }`,
+		"nested passed as a value": `function apply(f: (i32) => i32, v: i32): i32 { return f(v); }
+		function outer(n: i32): i32 {
+			function at(x: i32): i32 { return x + n; }
+			return apply(at, 1);
+		}
+		function at(p: i32, q: i32): i32 { return p * q; }
+		function main(): i32 { return at(3, 4) + outer(1); }`,
+	}
+	for name, src := range cases {
+		if err := checkSource(t, src); err != nil {
+			t.Errorf("%s: unexpected error: %v", name, err)
+		}
+	}
+}
+
 // Pointer-shaped captures (string, T[], [T], structs, enums,
 // tuples, function values) all type-check now — their 4-byte
 // heap reference fits in the same env-slot scalars use.

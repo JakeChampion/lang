@@ -13989,9 +13989,6 @@ func (c *checker) checkLocalFunc(fn *ast.FuncDecl, outer *scope) {
 	for _, name := range captureOrder {
 		fn.Captures = append(fn.Captures, ast.Param{Name: name, Type: captured[name]})
 	}
-	// Track the local function's signature so call sites can look it
-	// up by name. Codegen's hoisting pass will rename it later.
-	c.info.FuncSigs[fn.Name] = sig
 }
 
 func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
