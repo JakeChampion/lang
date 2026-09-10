@@ -23,11 +23,12 @@ import (
 // It matters more here than on the struct side because this walk FREES each
 // element box rather than deccing it, so two owners both walking is a double free.
 //
-// TWO PRECONDITIONS, and this class hides them better than any other:
+// TWO FINDINGS, and this class hides them better than any other:
 //
-//   - `respread`: `P { ...q, … }` copies the buffer pointer into a third box with
-//     NO inc, so three owners sit at rc 2. Without the gate: exit 99 at 600 allocs,
-//     600 frees, live_bytes 0.
+//   - `respread`: `P { ...q, … }` used to copy the buffer pointer into a third
+//     box with NO inc, so three owners sat at rc 2 — exit 99 at 600 allocs, 600
+//     frees, live_bytes 0. The base copy now retains the array it carries and the
+//     copy releases it through the same rc-gated walk, so the row balances.
 //   - `moved_ret`: the retain is MOVE-gated (#6726), so at a move site the box
 //     takes over the local's reference and both the inc and the sweep dec are
 //     dropped. `return P { f: xs, … }` is that shape — the return is xs's last use.
@@ -101,8 +102,8 @@ function round(i: i32): i32 {
 			want: 27, balance: true,
 		},
 		{
-			// PRECONDITION 1, the one the census does see: without the respread
-			// gate this is exit 99 at 600/600, live_bytes 0.
+			// The third holder is the spread copy, counted like the other two;
+			// uncounted, this was exit 99 at 600/600, live_bytes 0.
 			name: "respread",
 			src: arrenumShareDecl + `function round(i: i32): i32 {
     var src: E[] = mkv(i);

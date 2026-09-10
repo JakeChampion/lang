@@ -9281,27 +9281,24 @@ function call_diags_struct_lit(sl: ast.ExprStructLit, s: Scope, out: util.Diag[]
   return out;
 }
 
-function call_diags_lambda(lm: ast.ExprLambda, s: Scope, out: util.Diag[]): util.Diag[] {
-  // The lambda body sees the enclosing scope (lexical capture)
-  // plus its own params — bind the params so a reference to one
-  // isn't mis-flagged as E001.
+// lambda_body_scope is the scope a lambda's body is checked in: the enclosing
+// scope (lexical capture) plus the lambda's own parameters, so a reference to
+// one is not an undefined name, with the return type the lambda declares — or
+// unknown when it declares none — so a `return` inside it is checked against
+// the lambda rather than the enclosing function.
+function lambda_body_scope(lm: ast.ExprLambda, s: Scope): Scope {
   var lsc: Scope = s;
   for param in lm.params {
     lsc = lsc.bind(param.name, s.resolve_param(param));
   }
-  // A return inside the lambda returns from the LAMBDA — thread
-  // its declared return type (or unknown when undeclared) so the
-  // E042 return-shape check and the return-value walks don't read
-  // the enclosing function's return type. Mirrors the lambda-body
-  // scope in check_expr's ExprLambda arm.
   if (lm.ret_type.len() > 0) {
-    lsc = lsc.with_ret_type(s.resolve_type(lm.ret_type));
-  } else {
-    lsc = lsc.with_ret_type(t_unknown("no enclosing function"));
+    return lsc.with_ret_type(s.resolve_type(lm.ret_type));
   }
-  out = stmts_call_diags(lm.body, lsc);
+  return lsc.with_ret_type(t_unknown("no enclosing function"));
+}
 
-  return out;
+function call_diags_lambda(lm: ast.ExprLambda, s: Scope, out: util.Diag[]): util.Diag[] {
+  return stmts_call_diags(lm.body, lambda_body_scope(lm, s));
 }
 
 function call_diags_ident(id: ast.ExprIdent, s: Scope, out: util.Diag[]): util.Diag[] {
@@ -9899,16 +9896,7 @@ function assign_stmt_own_lambdas(st: ast.Stmt, cur: Scope, unions: UnionSig[]): 
   function at_lambda(n: ast.Expr, acc: util.Diag[]): util.Diag[] {
     match (n) {
       ast.ExprLambda(lm) => {
-        var lsc: Scope = cur;
-        for param in lm.params {
-          lsc = lsc.bind(param.name, cur.resolve_param(param));
-        }
-        if (lm.ret_type.len() > 0) {
-          lsc = lsc.with_ret_type(cur.resolve_type(lm.ret_type));
-        } else {
-          lsc = lsc.with_ret_type(t_unknown("no enclosing function"));
-        }
-        return util.append_diags(acc, stmts_assign_diags(lm.body, lsc, unions));
+        return util.append_diags(acc, stmts_assign_diags(lm.body, lambda_body_scope(lm, cur), unions));
       },
       _ => { return acc; }
     }
@@ -15708,14 +15696,53 @@ function vb_retype_dest(e: ast.Expr, s: Scope, dest: string): ast.Expr {
   return e;
 }
 
-// vb_expr rewrites every value block one expression holds. map_expr is
-// post-order, so a value block nested inside another is retyped before the
-// store that reads it is typed.
+// vb_expr rewrites every value block one expression holds. The walk claims
+// two node kinds and descends into everything else:
+//
+//   - a value block: its body is rewritten first, so a block nested inside
+//     another is retyped before the store that reads it is typed, and the
+//     block itself is then retyped in the scope it sits in;
+//   - a lambda: its body is rewritten as STATEMENTS in the lambda's own scope.
+//     The value local's type is read off the arm stores, and inside a lambda
+//     those name the lambda's parameters and locals, which the enclosing scope
+//     does not hold; and a `var` inside the lambda supplies the destination
+//     annotation exactly as one outside does.
+//
+// The scope rides the accumulator unchanged: the walk never rebinds it, so
+// every sibling reads the same one.
 function vb_expr(e: ast.Expr, s: Scope): ast.Expr {
-  function at(x: ast.Expr): ast.Expr {
-    return vb_retype(x, s);
+  var (ne, ns, nh) = astwalk.map_expr_acc(e, s, vb_at_stmt, vb_at_expr);
+  return ne;
+}
+
+function vb_at_stmt(st: ast.Stmt, s: Scope): (ast.Stmt, Scope, boolean) {
+  return (st, s, false);
+}
+
+function vb_at_expr(x: ast.Expr, s: Scope): (ast.Expr, Scope, boolean) {
+  match (x) {
+    ast.ExprCall(c) => {
+      if (!parser.is_value_block(c)) {
+        return (x, s, false);
+      }
+      match (c.callee) {
+        ast.ExprLambda(lm) => {
+          var inner: ast.Expr = ast.ExprCall { ...c, callee: ast.ExprLambda { ...lm, body: vb_stmts(lm.body, s) } };
+          return (vb_retype(inner, s), s, true);
+        },
+        _ => {
+          return (x, s, false);
+        }
+      }
+    },
+    ast.ExprLambda(lm) => {
+      return (ast.ExprLambda { ...lm, body: vb_stmts(lm.body, lambda_body_scope(lm, s)) }, s, true);
+    },
+    _ => {
+      return (x, s, false);
+    }
   }
-  return astwalk.map_expr(e, at);
+  return (x, s, false);
 }
 
 function vb_stmt(st: ast.Stmt, s: Scope): ast.Stmt {

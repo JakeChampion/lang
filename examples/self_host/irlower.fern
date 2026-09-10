@@ -5002,14 +5002,6 @@ function enum_arr_field_share_read(fv: ast.Expr, cfft: string, s: LowerState): s
     // leaves out, so it must not double-fire on them.
     if (is_leaksafe_array_field(cfft)) { return ""; }
     if (is_struct_array_field_type(s.frame.structs, cfft)) { return ""; }
-    // A `T { ...base }` anywhere in this function that copies a field of this very
-    // type minted a THIRD owner with no inc before the base copy retained its
-    // array carries, and both this share's rc-gated walks then ran against a
-    // count of two (a flat 700 allocs / 700 frees while __rc_underflow_count
-    // fired). The gate predates the counted carry and stays as a refusal of the
-    // credit, asked by field type because the base may name a local with no slot
-    // yet.
-    if (util.index_of_str(s.frame.spread_sites, "FT:" + cfft) >= 0) { return ""; }
     match (fv) {
         ast.ExprFieldAccess(fa) => {
             match (fa.obj) {
@@ -25774,6 +25766,14 @@ pub function lower_arr_with_value(obj: ast.Expr, idx: ast.Expr, val: ast.Expr, s
     st = lower_expr(obj, st);
     if (!st.ok) { return st; }
     st = st.emit(ir.op_store_local(btmp));
+    // Spill the index too: the store reads it, and so does the release of the
+    // element it replaces.
+    var iscratch: string = "$wci" + util.i32_to_string(st.locals.len());
+    st = st.add_local(iscratch);
+    var itmp: i32 = st.slot_of(iscratch);
+    st = lower_expr(idx, st);
+    if (!st.ok) { return st; }
+    st = st.emit(ir.op_store_local(itmp));
     // clone = base[0 : base.len()] — a fresh, sole-owned full copy.
     st = st.emit(ir.op_load_local(btmp));
     st = st.emit(ir.op_const_i32(0));
@@ -25785,11 +25785,23 @@ pub function lower_arr_with_value(obj: ast.Expr, idx: ast.Expr, val: ast.Expr, s
     st = st.add_local(cscratch);
     var ctmp: i32 = st.slot_of(cscratch);
     st = st.emit(ir.op_store_local(ctmp));
+    if (arr_expr_counted_elems(obj, st)) {
+        // The copy duplicated every element pointer: retain them all, then
+        // give back the count of the one the store below replaces, so the
+        // clone holds exactly the elements it keeps.
+        st = st.emit(ir.op_load_local(ctmp));
+        st = st.emit(ir.op_call_direct("__fern_arr_inc_elems", 1));
+        st = st.emit(ir.op_drop());
+        st = st.emit(ir.op_load_local(ctmp));
+        st = st.emit(ir.op_load_local(itmp));
+        st = st.emit(ir.op_arr_get(32));
+        st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
+        st = st.emit(ir.op_drop());
+    }
     // arr_set into the CLONE (sole-owned: an in-place store is sound). Pops
     // [clone, idx, val] and pushes nothing.
     st = st.emit(ir.op_load_local(ctmp));
-    st = lower_expr(idx, st);
-    if (!st.ok) { return st; }
+    st = st.emit(ir.op_load_local(itmp));
     if (kind == "i64") {
         st = lower_i64(val, st);
         if (!st.ok) { return st; }
@@ -25928,6 +25940,9 @@ pub function lower_field_append_inplace(obj: ast.Expr, val: ast.Expr, key: strin
     st = st.emit(ir.op_call_direct("__fern_rc_is_unique", 1));
     st = st.emit(ir.op_store_local(uniqslot));
     st = fai_bracket_shared_root(st, uniqslot, srcslot, "__fern_arr_share_inc");
+    if (is_counted_elem_array_type(st.frame.structs, decl_field_type_at(st.frame.structs, sty, fidx))) {
+        st = emit_secure_shared_elems(st, srcslot);
+    }
     st = st.emit(ir.op_load_local(srcslot));
     if (kind == "i64") {
         st = lower_i64(val, st);
@@ -25975,14 +25990,66 @@ function fai_bracket_shared_root(s: LowerState, uniqslot: i32, srcslot: i32, fn:
     return st.emit(ir.op_end());
 }
 
+// is_counted_elem_array_type: an array whose elements are rc-headered boxes the
+// release walks account for — a string[], a struct[] or enum[], or a nested
+// T[][] whose elements are inner buffers. A copy of such a buffer duplicates
+// every element pointer, so a copy both holders may release has to retain the
+// elements first. A scalar-element array carries no reference.
+function is_counted_elem_array_type(structs: StructTab, t: string): boolean {
+    return t == "string[]" || is_struct_array_field_type(structs, t)
+        || is_enum_array_field_type(structs, t) || is_nested_array_field_type(structs, t);
+}
+
+// arr_expr_counted_elems: the array RECEIVER `obj` holds rc-boxed elements — a
+// string[], or an array whose element type is a struct or enum: a local slot
+// records that element type as the slot's struct type, a field read names it
+// in the declaration. A clone of such a buffer has to retain its elements.
+function arr_expr_counted_elems(obj: ast.Expr, s: LowerState): boolean {
+    if (expr_is_strarr(obj, s)) { return true; }
+    match (obj) {
+        ast.ExprIdent(id) => {
+            var sl: i32 = s.slot_of(id.name);
+            if (!s.is_arr_slot(sl)) { return false; }
+            var et: string = s.struct_type_of_slot(sl);
+            return et.len() > 0 && (decl_is_struct(s.frame.structs, et) || is_enum_like_name(et, s.frame.structs));
+        },
+        ast.ExprFieldAccess(fa) => {
+            var oty: string = expr_struct_type(fa.obj, s);
+            if (oty.len() == 0) { return false; }
+            return is_counted_elem_array_type(s.frame.structs, decl_field_type(s.frame.structs, oty, fa.field));
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// emit_secure_shared_elems emits `if (!is_unique(src)) { arr_inc_elems(src) }`
+// ahead of an arr_push on a pointer-element buffer: a shared receiver takes
+// arr_push's un-share copy, which duplicates every element pointer, and the
+// retain gives the copy and the original a count of each element apiece. A
+// unique receiver grows in place and its elements change hands with it.
+function emit_secure_shared_elems(s: LowerState, srcslot: i32): LowerState {
+    var st: LowerState = s.emit(ir.op_load_local(srcslot));
+    st = st.emit(ir.op_call_direct("__fern_rc_is_unique", 1));
+    st = st.emit(ir.op_const_i32(0));
+    st = st.emit(ir.op_bin("eq", 0, false));
+    st = st.emit(ir.op_if(0));
+    st = st.emit(ir.op_load_local(srcslot));
+    st = st.emit(ir.op_call_direct("__fern_arr_inc_elems", 1));
+    st = st.emit(ir.op_drop());
+    return st.emit(ir.op_end());
+}
+
 // lower_field_with_inplace is lower_arr_with_value without the clone: the
 // `.with` twin of lower_field_append_inplace, under the same admission and the
 // same share bracket. arr_push carries its own rc == 1 gate; arr_set has none,
 // so the gate is spelled here — a buffer anything else still holds takes the
 // clone (a fresh rc 1 copy, exactly the value form's result), and the identity
-// arm moves the field out of the root as the append does. The overwritten
-// element is left alone deliberately — releasing it here would double-free
-// against a clone form that never released it either (#8310).
+// arm moves the field out of the root as the append does. On the in-place arm
+// the overwritten element is left alone deliberately — releasing it there would
+// double-free against a clone form that never released it either (#8310). The
+// clone arm of a pointer-element field retains every element it copied and
+// gives back the replaced one's count, so the copy holds exactly what it keeps.
 pub function lower_field_with_inplace(obj: ast.Expr, idx: ast.Expr, val: ast.Expr, key: string, s: LowerState): LowerState {
     var kind: string = arr_elem_kind(obj, s);
     var sw: i32 = 32;
@@ -26006,6 +26073,14 @@ pub function lower_field_with_inplace(obj: ast.Expr, idx: ast.Expr, val: ast.Exp
     st = st.emit(ir.op_call_direct("__fern_rc_is_unique", 1));
     st = st.emit(ir.op_store_local(uniqslot));
     st = fai_bracket_shared_root(st, uniqslot, srcslot, "__fern_arr_share_inc");
+    // The index is evaluated before the copy decides, where the shared arm
+    // reads the element it is about to replace.
+    var idxname: string = "$fiwi" + util.i32_to_string(st.locals.len());
+    st = st.add_local(idxname);
+    var idxslot: i32 = st.slot_of(idxname);
+    st = lower_expr(idx, st);
+    if (!st.ok) { return st; }
+    st = st.emit(ir.op_store_local(idxslot));
     // res = src, or a full copy when the buffer has a second holder.
     st = st.emit(ir.op_load_local(srcslot));
     st = st.emit(ir.op_store_local(resslot));
@@ -26020,10 +26095,22 @@ pub function lower_field_with_inplace(obj: ast.Expr, idx: ast.Expr, val: ast.Exp
     st = st.emit(ir.op_arr_len());
     st = st.emit(ir.op_arr_slice(sw));
     st = st.emit(ir.op_store_local(resslot));
+    if (is_counted_elem_array_type(st.frame.structs, decl_field_type_at(st.frame.structs, sty, fidx))) {
+        // The copy duplicated every element pointer: retain them all, then
+        // give back the count of the one the store below replaces, so the
+        // copy holds exactly the elements it keeps.
+        st = st.emit(ir.op_load_local(resslot));
+        st = st.emit(ir.op_call_direct("__fern_arr_inc_elems", 1));
+        st = st.emit(ir.op_drop());
+        st = st.emit(ir.op_load_local(resslot));
+        st = st.emit(ir.op_load_local(idxslot));
+        st = st.emit(ir.op_arr_get(32));
+        st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
+        st = st.emit(ir.op_drop());
+    }
     st = st.emit(ir.op_end());
     st = st.emit(ir.op_load_local(resslot));
-    st = lower_expr(idx, st);
-    if (!st.ok) { return st; }
+    st = st.emit(ir.op_load_local(idxslot));
     if (kind == "i64") {
         st = lower_i64(val, st);
         if (!st.ok) { return st; }
@@ -26069,6 +26156,13 @@ pub function lower_arr_append_value(obj: ast.Expr, val: ast.Expr, s: LowerState)
     st = st.emit(ir.op_load_local(btmp));
     st = st.emit(ir.op_arr_len());
     st = st.emit(ir.op_arr_slice(sw));
+    // The copy duplicated every element pointer: retain them, so the clone
+    // holds its own count of each and a deep release through either buffer
+    // frees an element only when the other has let go. The helper hands the
+    // clone back, so it stays on the operand stack.
+    if (arr_expr_counted_elems(obj, st)) {
+        st = st.emit(ir.op_call_direct("__fern_arr_inc_elems", 1));
+    }
     // grow the CLONE in place (sole-owned: arr_push reuse is sound). Pops
     // [clone, val] and pushes the grown array.
     if (kind == "i64") {
@@ -40379,7 +40473,6 @@ function arrstruct_credit_rows(body: ast.Stmt[], structs: StructTab, borrowable:
         if (!(asts[asti].len() > 2 && asts[asti][0] == b'A' && asts[asti][1] == b'|')
             && !arrstruct_unsafe_for(body, asnm, borrowable, structs, msites, sfok)
             && !arrarr_row_escapes(body, asnm)
-            && !arrstruct_share_holder_respread(body, asnm, structs, msites)
             && !arrstruct_elem_payload_escapes(body, asnm, arrstruct_elem_type_of_decl(body, asnm, structs), structs, msites, borrowable, sfok)) {
             // arrstruct_unsafe_for subsumes the former body_unsafe_for + the
             // blunt not-reassigned exclusion, validating each rebind
@@ -41237,21 +41330,18 @@ function stmt_unsafe_for_ret_ok(st: ast.Stmt, name: string, borrowable: string[]
 // assuming it. A scalar carries no reference at all. Tuples, maps, options and
 // closures are copied uncounted.
 //
-// Of the arrays only the scalar-element kinds count: a shared string[] or
-// struct[]/enum[] buffer that a later append un-shares is copied with its
-// element children UNSECURED (#8874, the pointer-element contract), so a box
-// carrying one is not sole owner of those children and must not deep-drop
-// them — the same line return_value_is_strictfresh_struct draws for an
-// override. The retain still stands (it is what keeps the append off the
-// base's buffer); the count it takes is released only with the base's.
-//
+// Every array kind counts. The release walks are rc-gated per buffer and per
+// element, and the one copy that used to leave a pointer-element buffer's
+// elements shared without a count — arr_push's un-share of a shared receiver —
+// now retains them first (emit_secure_shared_elems), so the last owner's walk
+// frees each element exactly once.
 //
 // The string clause is not a detail: an unrouted string-fielded type spread as
 // a base mints an uncounted co-owner, and treating that as counted hands two
 // owners one buffer. Claiming it segfaulted gen1 of the per-module emit-all
 // fixpoint while every small-program gate stayed green.
 function spread_copy_field_counted(structs: StructTab, sfok: string[], sty: string, t: string): boolean {
-    if (reuse_field_is_scalar(t) || decl_is_enum(structs, t) || decl_is_struct(structs, t) || is_leaksafe_array_field(t)) { return true; }
+    if (reuse_field_is_scalar(t) || decl_is_enum(structs, t) || decl_is_struct(structs, t) || field_type_is_array(t)) { return true; }
     return t == "string" && struct_routes_field_reclaim_at(structs, sfok, sty);
 }
 
@@ -51248,54 +51338,13 @@ function arrstruct_counted_field_share(e: ast.Expr, name: string, structs: Struc
     return false;
 }
 
-// arrstruct_counted_share_holders: the locals bound from a struct literal that
-// took a counted share of `name` (arrstruct_counted_field_share).
-function arrstruct_counted_share_holders(stmts: ast.Stmt[], name: string, structs: StructTab, msites: string[], acc: string[]): string[] {
-    var a: string[] = acc;
-    for stmt in stmts {
-        match (stmt) {
-            ast.StmtVar(v) => { if (arrstruct_counted_field_share(v.init, name, structs, msites)) { a = push_str_unique(a, v.name); } },
-            ast.StmtAssign(asg) => { if (arrstruct_counted_field_share(asg.value, name, structs, msites)) { a = push_str_unique(a, asg.target); } },
-            ast.StmtIf(f) => { a = arrstruct_counted_share_holders(f.then_body, name, structs, msites, a); a = arrstruct_counted_share_holders(f.else_body, name, structs, msites, a); },
-            ast.StmtWhile(w) => { a = arrstruct_counted_share_holders(w.body, name, structs, msites, a); },
-            ast.StmtFor(fo) => { a = arrstruct_counted_share_holders(fo.body, name, structs, msites, a); },
-            ast.StmtMatch(m) => {
-                for arm in m.arms { a = arrstruct_counted_share_holders(arm.body, name, structs, msites, a); }
-            },
-            _ => {}
-        }
-    }
-    return a;
-}
-
-// arrstruct_share_holder_respread: a holder that took a counted share of `name`
-// is itself used as a struct-literal BASE (`P { ...q, … }`). The base copy now
-// retains the buffer it carries, so the third owner is counted; this gate
-// predates that and stays as a refusal of the credit, which costs a leak and
-// never a free.
-//
-// The share count being complete is the precondition of granting `name` its
-// rc-gated walk at all, so this is a gate on the credit rather than a
-// hazard the walk could guard against. Measured as exit 99 at a perfectly flat
-// census: 600 allocs, 600 frees, live_bytes 0, and only __rc_underflow_count()
-// dissenting.
-function arrstruct_share_holder_respread(stmts: ast.Stmt[], name: string, structs: StructTab, msites: string[]): boolean {
-    var holders: string[] = arrstruct_counted_share_holders(stmts, name, structs, msites, []);
-    if (holders.len() == 0) { return false; }
-    return body_spreads_any(stmts, structs, holders);
-}
-
-// spread_sites_of / expr_spread_sites: every `T { ...base, … }` in a body, recorded
-// twice — "N:<base>" when the base is a bare ident, and one "FT:<type>" per field
-// `T` declares. A base spread copies each field pointer into a fresh box with NO
-// inc, so it mints an uncounted co-owner, and every counted-share credit has to
-// refuse in its presence. The two rows answer the two shapes of that question:
-//
-//   - by NAME, for a credit that knows which locals hold the share
-//     (arrstruct/arrenum_share_holder_respread).
-//   - by FIELD TYPE, for one that does not — enum_arr_field_share_read decides
-//     mid-expression, when the dangerous spread may name a local with no slot yet
-//     (`var p: P = P { f: q.f }; var z: P = P { ...p }`).
+// spread_sites_of / expr_spread_sites: every `T { ...base, … }` in a body, as
+// one "FT:<type>" row per field `T` declares. The base copy retains the array,
+// nested-struct and enum fields it carries, but a STRING field only when the
+// type routes field reclaim, so a spread over an unrouted type mints an
+// uncounted co-owner of its string fields, and the string share credit
+// (str_field_share_read) refuses in its presence — asked by field type because
+// it decides mid-expression, when the base may name a local with no slot yet.
 function spread_sites_of(stmts: ast.Stmt[], structs: StructTab, acc: string[]): string[] {
     var a: string[] = acc;
     for stmt in stmts {
@@ -51337,10 +51386,7 @@ function expr_spread_sites(e: ast.Expr, structs: StructTab, acc: string[]): stri
                     for fld in structs.decls[sdi].fields { a = push_str_unique(a, "FT:" + fld.type_name); }
                     sdi = stab_next(structs, sdi, sl.type_name);
                 }
-                match (sl.base) {
-                    ast.ExprIdent(bid) => { a = push_str_unique(a, "N:" + bid.name); },
-                    _ => { a = expr_spread_sites(sl.base, structs, a); }
-                }
+                a = expr_spread_sites(sl.base, structs, a);
             }
             for fv in sl.field_values { a = expr_spread_sites(fv, structs, a); }
         },
@@ -51374,14 +51420,6 @@ function expr_spread_sites(e: ast.Expr, structs: StructTab, acc: string[]): stri
         _ => {}
     }
     return a;
-}
-
-// body_spreads_any: any struct literal in the body whose functional-update base
-// is a bare ident naming one of `names`.
-function body_spreads_any(stmts: ast.Stmt[], structs: StructTab, names: string[]): boolean {
-    var sites: string[] = spread_sites_of(stmts, structs, []);
-    for n in names { if (util.index_of_str(sites, "N:" + n) >= 0) { return true; } }
-    return false;
 }
 
 // body_unsafe_for with exactly one sanctioned reassignment — the self-append
@@ -52420,32 +52458,6 @@ function arrenum_counted_field_share(e: ast.Expr, name: string, structs: StructT
         _ => { return false; }
     }
     return false;
-}
-
-// arrenum_counted_share_holders / arrenum_share_holder_respread: the same
-// precondition the struct sibling needs. The base copy now retains the buffer a
-// spread carries, so a holder used as a base mints a counted owner; the gate
-// predates that and stays as a refusal of the credit, which costs a leak and
-// never a free.
-function arrenum_counted_share_holders(stmts: ast.Stmt[], name: string, structs: StructTab, msites: string[], acc: string[], borrowable: string[]): string[] {
-    var a: string[] = acc;
-    for stmt in stmts {
-        match (stmt) {
-            ast.StmtVar(v) => { if (arrenum_counted_field_share(v.init, name, structs, msites, borrowable)) { a = push_str_unique(a, v.name); } },
-            ast.StmtAssign(asg) => { if (arrenum_counted_field_share(asg.value, name, structs, msites, borrowable)) { a = push_str_unique(a, asg.target); } },
-            ast.StmtIf(f) => { a = arrenum_counted_share_holders(f.then_body, name, structs, msites, a, borrowable); a = arrenum_counted_share_holders(f.else_body, name, structs, msites, a, borrowable); },
-            ast.StmtWhile(w) => { a = arrenum_counted_share_holders(w.body, name, structs, msites, a, borrowable); },
-            ast.StmtFor(fo) => { a = arrenum_counted_share_holders(fo.body, name, structs, msites, a, borrowable); },
-            ast.StmtMatch(m) => { for arm in m.arms { a = arrenum_counted_share_holders(arm.body, name, structs, msites, a, borrowable); } },
-            _ => {}
-        }
-    }
-    return a;
-}
-function arrenum_share_holder_respread(stmts: ast.Stmt[], name: string, structs: StructTab, msites: string[], borrowable: string[]): boolean {
-    var holders: string[] = arrenum_counted_share_holders(stmts, name, structs, msites, [], borrowable);
-    if (holders.len() == 0) { return false; }
-    return body_spreads_any(stmts, structs, holders);
 }
 
 // arrenum_append_escapes: arrenum_escapes with exactly one sanctioned use — the
@@ -78311,8 +78323,7 @@ while (aeni < aens.len()) {
     // only risked their exceptions drifting apart.
     var aeenum: string = arrenum_entry_enum(aens[aeni]);
     var aeblocked: boolean = arrenum_append_escapes(body, aename, structs, aeenum, msites, false, borrowable)
-        || arrenum_append_unsafe_for(body, aename, borrowable, recv_borrow, structs, aeenum, msites)
-        || arrenum_share_holder_respread(body, aename, structs, msites, borrowable);
+        || arrenum_append_unsafe_for(body, aename, borrowable, recv_borrow, structs, aeenum, msites);
     if (!(aens[aeni].len() > 2 && aens[aeni][0] == b'A' && aens[aeni][1] == b'|')
         && aesite.len() > 0 && !aeblocked) {
         out = out.append("ARRENUM:" + aens[aeni]);

@@ -628,6 +628,25 @@ pub function eval_ops(ops: ir.Op[], n_locals: i32, args: i32[], fns: ir.LoweredF
             sp = sp + 1;
             pc = pc + 1;
         }
+        else if (o.kind_tag == 149 && o.str == "__fern_arr_inc_elems") {  // call_direct
+            // Element retain: inc the rc header (base-4) of every element of a
+            // pointer-element array (len at base, elements at base+4+i*4), return
+            // the buffer. Null / sub-heap buffers and elements are skipped.
+            sp = sp - 1;
+            var eb: i32 = stack[sp];
+            if (eb >= 8) {
+                var en: i32 = heap[eb / 4];
+                var ei: i32 = 0;
+                while (ei < en) {
+                    var ee: i32 = heap[(eb + 4 + ei * 4) / 4];
+                    if (ee >= 8) { heap = heap.with((ee - 4) / 4, heap[(ee - 4) / 4] + 1); }
+                    ei = ei + 1;
+                }
+            }
+            stack = stack.with(sp, eb);
+            sp = sp + 1;
+            pc = pc + 1;
+        }
         else if (o.kind_tag == 149 && o.str == "__fern_alloc_reuse") {  // call_direct
             // FBIP reuse-degrade (#4350): pops [token, slots] (slots = total
             // payload words: struct nf+1 incl. the shape word, tuple arity). A

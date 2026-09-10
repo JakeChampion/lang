@@ -8646,6 +8646,26 @@ pub function rc_runtime_helpers(heap_base: i32): string {
     o = o + "    (if (i32.lt_s (local.get $rc) (i32.const 0)) (then (return (i32.const 0))))\n";
     o = o + "    (if (i32.eq (local.get $rc) (i32.const 1)) (then (return (i32.const 1))))\n";
     o = o + "    (i32.const 0))\n";
+    // __fern_arr_inc_elems(a) -> a: one $__fern_rc_inc per element of a
+    // pointer-element array (4-byte slots at [a+8+i*4], len at [a]), the wasm
+    // sibling of the register backends' __fn___fern_arr_inc_elems. irlower
+    // emits it ahead of an un-share copy of a SHARED buffer so both buffers
+    // hold a count of each element. Same guard chain as $__fern_rc_is_unique;
+    // each element goes through rc_inc's own.
+    o = o + "  (func $__fern_arr_inc_elems (param $a i32) (result i32)\n";
+    o = o + "    (local $i i32) (local $n i32)\n";
+    o = o + "    (if (i32.eqz (local.get $a)) (then (return (local.get $a))))\n";
+    o = o + "    (if (i32.and (local.get $a) (i32.const 1)) (then (return (local.get $a))))\n";
+    o = o + "    (if (i32.lt_u (local.get $a) (i32.const " + lo + ")) (then (return (local.get $a))))\n";
+    o = o + "    (if (i32.lt_s (i32.load (i32.sub (local.get $a) (i32.const 8))) (i32.const 0)) (then (return (local.get $a))))\n";
+    o = o + "    (local.set $n (i32.load (local.get $a)))\n";
+    o = o + "    (local.set $i (i32.const 0))\n";
+    o = o + "    (block $aie_done (loop $aie_lp\n";
+    o = o + "      (br_if $aie_done (i32.ge_u (local.get $i) (local.get $n)))\n";
+    o = o + "      (drop (call $__fern_rc_inc (i32.load (i32.add (i32.add (local.get $a) (i32.const 8)) (i32.mul (local.get $i) (i32.const 4))))))\n";
+    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
+    o = o + "      (br $aie_lp)))\n";
+    o = o + "    (local.get $a))\n";
     // __fern_rc_underflow_count() -> i32: the over-release detector.
     o = o + "  (func $__fern_rc_underflow_count (result i32)\n";
     o = o + "    (global.get $__fern_rc_underflow))\n";

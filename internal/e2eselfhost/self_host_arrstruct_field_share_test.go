@@ -31,12 +31,12 @@ import (
 // with one owner gated and the other walking statically, both sweeps free the
 // buffers, at a census that reads allocs == frees at live_bytes 0.
 //
-// `respread` is the case that proves the credit needs its own precondition
-// rather than a guard inside the walk, and it is the reason the underflow guard
-// is asserted on every case here: `P { ...q, … }` copies the buffer pointer into
-// a third box with NO inc, so three owners sit at rc 2. Granting the share
-// without refusing that took it to exit 99 at 600 allocs, 600 frees,
-// live_bytes 0 — nothing in the census dissented.
+// `respread` is the reason the underflow guard is asserted on every case here:
+// `P { ...q, … }` used to copy the buffer pointer into a third box with NO inc,
+// so three owners sat at rc 2 and granting the share took it to exit 99 at 600
+// allocs, 600 frees, live_bytes 0 — nothing in the census dissented. The base
+// copy now retains the array it carries and the copy is a counted holder like
+// the others, so the three walks hand off to the one that finds rc 1.
 //
 // `moved_ret` is the second such precondition, and it cost a red CI to find. The
 // retain is MOVE-gated (#6726): where the analysis says the construction moves
@@ -101,10 +101,10 @@ func arrstructShareCases() []arrstructShareCase {
 			want: 70, balance: true,
 		},
 		{
-			// THE OVER-RELEASE GUARD. `P { ...q, … }` copies q's buffer pointer
-			// with no inc, so the counted share is not the whole story and the
-			// credit must be refused. 99 here is three owners at rc 2 — and the
-			// census stays at 600/600, live_bytes 0, while it double-frees.
+			// THE OVER-RELEASE PROBE. `P { ...q, … }` is a third counted holder
+			// of q's buffer, released by the same rc-gated walk as the other two.
+			// 99 here is the uncounted copy of old: three owners at rc 2, a
+			// census flat at 600/600, live_bytes 0, and a double free.
 			name: "respread",
 			src: arrstructShareDecl + `function round(i: i32): i32 {
     var src: Inner[] = mkv(i);

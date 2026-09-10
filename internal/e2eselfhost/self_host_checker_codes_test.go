@@ -556,6 +556,11 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"value-local-enum-dest-ok", "function main(): i32 { var t: (i32, i32) = (7, 2); var o: Option[i32] = match (t) { (a, b) => Some(a + b) }; match (o) { Some(v) => { return v - 9; }, None => { return 5; } } }\n", nil},
 		{"value-local-array-ok", "function main(): i32 { var t: (i32, i32) = (7, 2); var xs: i32[] = match (t) { (a, b) => [a, b, 1] }; return xs.len() - 3; }\n", nil},
 		{"value-local-tuple-ok", "function main(): i32 { var t: (i32, i32) = (7, 2); var u: (i32, i32) = match (t) { (a, b) => (b, a) }; return u.0 - 2; }\n", nil},
+		// The same locals inside a lambda the programmer wrote: the value
+		// local's type is read off the arm stores, which name the lambda's
+		// own parameter and locals, so the pass has to enter the body in the
+		// lambda's scope — the enclosing one resolves none of them.
+		{"value-local-in-lambda-ok", "struct P { x: i32 }\nfunction main(): i32 { var f = (k: i32): i32 => { var t: (i32, i32) = (k, 2); var p: P = match (t) { (a, b) => P { x: a } }; var o: Option[i32] = match (t) { (a, b) => Some(a + b) }; match (o) { Some(v) => { return p.x + v - k - 9; }, None => { return 5; } } }; return f(7); }\n", nil},
 		// E021 object-safety (#4347 slice 4): a `dyn T` param whose trait T is not
 		// object-safe draws E021 — T has an associated function (no self) or a
 		// Self-returning method, neither of which can dispatch through a dyn
@@ -2263,6 +2268,7 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 		{"value-local-enum-dest-ok", "function main(): i32 { var t: (i32, i32) = (7, 2); var o: Option[i32] = match (t) { (a, b) => Some(a + b) }; match (o) { Some(v) => { return v - 9; }, None => { return 5; } } }\n"},
 		{"value-local-array-ok", "function main(): i32 { var t: (i32, i32) = (7, 2); var xs: i32[] = match (t) { (a, b) => [a, b, 1] }; return xs.len() - 3; }\n"},
 		{"value-local-tuple-ok", "function main(): i32 { var t: (i32, i32) = (7, 2); var u: (i32, i32) = match (t) { (a, b) => (b, a) }; return u.0 - 2; }\n"},
+		{"value-local-in-lambda-ok", "struct P { x: i32 }\nfunction main(): i32 { var f = (k: i32): i32 => { var t: (i32, i32) = (k, 2); var p: P = match (t) { (a, b) => P { x: a } }; var o: Option[i32] = match (t) { (a, b) => Some(a + b) }; match (o) { Some(v) => { return p.x + v - k - 9; }, None => { return 5; } } }; return f(7); }\n"},
 		{"tp-method-shadowed-by-local-ok", "trait Key { function k_id(self: Self): i32; }\nimpl Key for i32 { function k_id(self: Self): i32 { return self; } }\nfunction direct[K: Key](k: K): i32 { var k: string = \"ab\"; return k.len(); }\nfunction main(): i32 { return direct(3); }\n"},
 	}
 

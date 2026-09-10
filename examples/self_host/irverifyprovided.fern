@@ -66,6 +66,7 @@ pub function provided_names(): string[] {
         "__fern_rc_inc",
         "__fern_rc_dec",
         "__fern_rc_is_unique",
+        "__fern_arr_inc_elems",
         "__fern_rc_underflow_get",
         "__fern_arr_share_inc",
         "__fern_arr_share_dec",

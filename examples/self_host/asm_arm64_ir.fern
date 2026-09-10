@@ -4765,6 +4765,41 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    mov x0, #1\n");
     s = s.write(".Lshuniq_ret:\n");
     s = s.write("    ret\n");
+    // __fern_arr_inc_elems(arr) -> arr: one guarded __fn___fern_rc_inc per
+    // element of a pointer-element array, the arm64 sibling of the x86-64
+    // body in asm_ir.emit_ir_runtime. irlower emits it ahead of an un-share
+    // copy of a SHARED buffer so both buffers hold a count of each element.
+    // Same guard chain as the deep-free walks; x19/x20/x21 hold arr/len/i
+    // across the bl (callee-saved, x30 saved too).
+    s = s.write("__fn___fern_arr_inc_elems:\n");
+    s = s.write("    ldr x0, [sp]\n");              // arr (also the result)
+    s = s.write("    cbz x0, .Laie_ret\n");
+    s = s.write("    mov x9, #0x10000\n");
+    s = s.write("    cmp x0, x9\n");
+    s = s.write("    blo .Laie_ret\n");
+    s = s.write("    ldur w1, [x0, #-8]\n");        // rc
+    s = s.write("    tbnz w1, #31, .Laie_ret\n");   // immortal buffer: its elements are too
+    s = s.write("    stp x19, x30, [sp, #-16]!\n");
+    s = s.write("    stp x20, x21, [sp, #-16]!\n");
+    s = s.write("    mov x19, x0\n");               // arr
+    s = s.write("    ldr x20, [x19]\n");            // len @ [arr]
+    s = s.write("    mov x21, #0\n");               // i
+    s = s.write(".Laie_loop:\n");
+    s = s.write("    cmp x21, x20\n");
+    s = s.write("    bge .Laie_done\n");
+    s = s.write("    add x9, x21, #1\n");
+    s = s.write("    ldr x0, [x19, x9, lsl #3]\n"); // element i @ [arr+(i+1)*8]
+    s = s.write("    str x0, [sp, #-16]!\n");
+    s = s.write("    bl __fn___fern_rc_inc\n");
+    s = s.write("    add sp, sp, #16\n");
+    s = s.write("    add x21, x21, #1\n");
+    s = s.write("    b .Laie_loop\n");
+    s = s.write(".Laie_done:\n");
+    s = s.write("    mov x0, x19\n");
+    s = s.write("    ldp x20, x21, [sp], #16\n");
+    s = s.write("    ldp x19, x30, [sp], #16\n");
+    s = s.write(".Laie_ret:\n");
+    s = s.write("    ret\n");
     // __fern_alloc_reuse(token@[sp,#16], slots@[sp]) -> x0 = data — the
     // FBIP reuse-degrade primitive (#4350), arm64 mirror of the x86
     // __fn___fern_alloc_reuse. Same arr-box layout (cap@data-16, rc@data-8):
