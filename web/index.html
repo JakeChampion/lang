@@ -692,21 +692,27 @@
 // CDN; the editor module below consumes this shared boot via
 // window.__fernRuntimeReady instead of instantiating its own.
 (function () {
-  // Which chrome to show is decided HERE, not in the editor module below,
-  // because it does not depend on the editor: the module's static esm.sh
-  // imports are resolved before any of its body runs, so an unreachable CDN
-  // used to leave a docs embed rendering the FULL playground — title,
-  // toolbar, example picker — inside a 180px iframe. Setting the classes
-  // synchronously, before the runtime boot, also means no flash of the
-  // wrong layout on a slow connection.
-  var q0 = new URLSearchParams(location.search);
-  var flag0 = function (n) {
-    return ["1", "true", "yes"].indexOf((q0.get(n) || "").toLowerCase()) >= 0;
+  // THE query-flag reader for this page. It lives here, in the classic
+  // script, rather than in the editor module below, because the module is
+  // not guaranteed to run: its static esm.sh imports are resolved before
+  // any of its body, so an unreachable CDN discards the lot. The module
+  // picks this up rather than declaring a second one — an accepted-values
+  // list in two places is a list that drifts.
+  var params = new URLSearchParams(location.search);
+  window.__fernUrlParams = params;
+  window.__fernUrlFlag = function (name) {
+    return ["1", "true", "yes"].indexOf((params.get(name) || "").toLowerCase()) >= 0;
   };
-  if (flag0("minimal")) {
+
+  // Which chrome to show is decided here for the same reason, and
+  // synchronously, so there is no flash of the wrong layout on a slow
+  // connection. Before this moved, an unreachable CDN left a docs embed
+  // rendering the FULL playground — title, toolbar, example picker —
+  // inside a 180px iframe.
+  if (window.__fernUrlFlag("minimal")) {
     document.body.classList.add("minimal");
   }
-  if (flag0("embed") || flag0("minimal")) {
+  if (window.__fernUrlFlag("embed") || window.__fernUrlFlag("minimal")) {
     document.body.classList.add("embed");
   }
 
@@ -1049,12 +1055,11 @@ const paneTabs = document.querySelectorAll(".pane-tabs .tab");
 //
 // Bonus: an `?autorun=1` flag runs the snippet automatically after
 // boot — handy for "look at this output" docs embeds.
-const urlParams = new URLSearchParams(location.search);
-function urlFlag(name) {
-  return ["1", "true", "yes"].includes(
-    (urlParams.get(name) ?? "").toLowerCase(),
-  );
-}
+// Both defined by the boot script above, which needs them before this
+// module's imports can fail. One parse of the query string, one list of
+// accepted flag values.
+const urlParams = window.__fernUrlParams;
+const urlFlag = window.__fernUrlFlag;
 // `?minimal=1` is the read-only docs variant: the editor is frozen
 // (still syntax-highlighted, but not editable), the Run buttons and
 // the Output/Assembly tab strip are dropped, the panes size to their

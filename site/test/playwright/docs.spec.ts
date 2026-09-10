@@ -282,6 +282,9 @@ test("theme choice on the landing page carries into the docs", async ({
   const before = await page.evaluate(
     () => document.documentElement.dataset.theme,
   );
+  // Pin down that there IS a starting theme, so the flip assertion below
+  // cannot pass vacuously on two undefineds.
+  expect(["dark", "light"]).toContain(before);
   await page.locator("[data-theme-toggle]").click();
   const after = await page.evaluate(
     () => document.documentElement.dataset.theme,
