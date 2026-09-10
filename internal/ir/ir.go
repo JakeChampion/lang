@@ -8923,6 +8923,25 @@ func (b *builder) stmt(s ast.Stmt) error {
 			b.emit(Op{Kind: OpReturn})
 			return nil
 		}
+		// `return m.insert(..)` on a Map this frame holds a slot for: the
+		// cow-in-place branch hands back m's own handle, which the caller
+		// takes as counted, so retain it when the handle is unchanged (a
+		// copy arrives counted). m's slot is released as before — by the
+		// exit sweep when the frame owns it, by its owner otherwise (#8276).
+		if recvSlot, ok := b.selfMapMutationReceiverSlot(n.Value); ok {
+			newSlot := b.allocSlot()
+			b.locals[fmt.Sprintf("__ret_cow_new_%d", newSlot)] = newSlot
+			b.emit(Op{Kind: OpStoreLocal, I32: newSlot})
+			b.emit(Op{Kind: OpLoadLocal, I32: newSlot})
+			b.emit(Op{Kind: OpLoadLocal, I32: recvSlot})
+			b.emit(Op{Kind: OpEq, Width: WidthPtr})
+			b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
+			b.emit(Op{Kind: OpLoadLocal, I32: newSlot})
+			b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
+			b.emit(Op{Kind: OpDrop})
+			b.emit(Op{Kind: OpEnd})
+			b.emit(Op{Kind: OpLoadLocal, I32: newSlot})
+		}
 		if needsRcIncOnAlias(n.Value, b) {
 			// Transfer inc so the caller owns the returned alias and
 			// the callee's exit-sweep dec is balanced. A returned
@@ -19228,6 +19247,24 @@ func isSelfCowRebind(value ast.Expr, targetName string) bool {
 	}
 	recv, ok := call.Args[0].(*ast.Ident)
 	return ok && recv.Name == targetName
+}
+
+// selfMapMutationReceiverSlot is the slot of the Map ident a returned
+// `m.insert(..)` / `m.clear()` mutates, when the frame holds one.
+func (b *builder) selfMapMutationReceiverSlot(value ast.Expr) (int32, bool) {
+	call, ok := value.(*ast.Call)
+	if !ok || !ast.RcFreeEnabled || len(call.Args) == 0 {
+		return 0, false
+	}
+	recv, ok := call.Args[0].(*ast.Ident)
+	if !ok || !isSelfMapMutation(value, recv.Name) {
+		return 0, false
+	}
+	if _, isMap := structOrEnumTypeOfLocal(recv.Name, b); !isMap {
+		return 0, false
+	}
+	slot, ok := b.locals[recv.Name]
+	return slot, ok
 }
 
 // isSelfMapMutation reports whether `value` is a value-returning
