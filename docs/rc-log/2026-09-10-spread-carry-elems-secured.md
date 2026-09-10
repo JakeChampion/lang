@@ -127,6 +127,21 @@ compiler exits 122 on the seed, #9014's segfaulted).
 instantiation of `astwalk.map_expr_acc` with `Scope` as the accumulator — so
 its row in `.github/selfhost-driver-sizes.txt` is re-banked here.
 
+## A string[] element is not a counted element
+
+The checker driver the self-host built died on `for (k, v) in m`
+(`TestSelfHostCheckerDifferentialX86_64/loop-map-shadow`): the retain walk
+ahead of `Scope.bind`'s `s.names.append(name)` touched a string box
+`checker.for_binding` had already released — the pattern-name string it
+stored into the scope's `names` uncounted. That is the string[] field's
+standing gap (#5338's class, the reason `strarrfld_scan` refuses the field's
+release per type rather than walking it), and a walk over the elements is
+exactly what it forbids. `is_counted_elem_array_type` and
+`arr_expr_counted_elems` now admit struct, enum and nested arrays only; a
+string[] copy shares its elements uncounted as it did before, leak and never a
+free. The string[] carry of a spread copy is still counted (the buffer is), and
+its release stays the per-type routed one.
+
 ## Measured (self-host x86-64 unless said, 100 rounds)
 
 - The three rows above: all 600 / 600 resp. 700 / 700 at live 0, exits the
