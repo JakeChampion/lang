@@ -190,9 +190,18 @@ const semsourceRCProgram = `
 }
 @noinline function twice(n: i32): i32 {
     var a: i32[] = fill(n);
-    var x: i32 = first_of(a) + first_of(keep(a, 1));
+    var x: i32 = first_of(a) + first_of(keep(a, 1)) + first_of(a);
     fill(x);
     return x;
+}
+@noinline function grow(limit: i32): i32[] {
+    var cur: i32[] = [0];
+    var i: i32 = 0;
+    while (i < limit) {
+        cur = keep(fill(i), i);
+        i = i + 1;
+    }
+    return cur;
 }
 @noinline function count_down(n: i32): i32 {
     if (n <= 0) { return 0; }
@@ -217,12 +226,15 @@ function main(): i32 {
     var r: i32[] = chain(3);
     print_int(r[0]); print(""); print_int(r[1]); print("");
     print_int(twice(2)); print(""); print_int(count_down(4)); print("");
+    var g: i32[] = grow(3);
+    var h: i32[] = grow(0);
+    print_int(g[0]); print(""); print_int(h[0]); print("");
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }
 `
 
-const semsourceRCWant = "1\n4\n5\n-3\n-2\n2\n0\n1\n5\n8\n12\n0\n3\n3\n4\n4\n"
+const semsourceRCWant = "1\n4\n5\n-3\n-2\n2\n0\n1\n5\n8\n12\n0\n3\n3\n6\n4\n2\n0\n"
 
 const semsourceRCDriver = `import "./semsource"; import "./ssarc"; import "./ssaunits"; import "./ssa";
 import "./parser"; import "./lexer"; import "./irlower"; import "./ir";
@@ -290,7 +302,7 @@ func TestSelfHostSemanticSourceRC(t *testing.T) {
 			if err != nil {
 				t.Fatalf("semantic lowering: %v\n%s", err, diagnostics.String())
 			}
-			for _, name := range []string{"pick", "pair", "boxed", "carry", "count_even", "fill", "first_of", "keep", "chain", "twice", "count_down"} {
+			for _, name := range []string{"pick", "pair", "boxed", "carry", "count_even", "fill", "first_of", "keep", "chain", "twice", "count_down", "grow"} {
 				if !strings.Contains(diagnostics.String(), "produced "+name+"\n") {
 					t.Fatalf("%s was not produced:\n%s", name, diagnostics.String())
 				}

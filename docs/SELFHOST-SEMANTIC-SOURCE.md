@@ -96,8 +96,10 @@ one by hand.
   The fixtures cover loops with `break` / `continue`, nested loops, tuple
   replacement across a branch, projected returns, short-circuit conditions,
   and calls between produced functions: borrowed and counted array
-  arguments, a temporary result moved into a counted parameter, a discarded
-  result, a returned parameter and recursion.
+  arguments, a counted argument retained across a call and moved at its
+  last use, a temporary result moved into a counted parameter, a discarded
+  result, a returned parameter, recursion, and a call result carried into a
+  loop header.
 
 ```sh
 go test ./internal/e2eselfhost -run 'TestSelfHostSemanticSource' -count=1
