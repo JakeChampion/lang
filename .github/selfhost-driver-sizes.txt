@@ -315,18 +315,18 @@
 # Measured after lexical capture contracts and removal of inert null cleanup.
 # Attribution: docs/SELFHOST-LEXICAL-CAPTURE-SIZE.md. Partial drivers now link
 # checked capture resolution; the whole compiler shrinks against its PR parent.
-fern.fern 11540956
-asm_load_run.fern 8325836
-asm_modload_run.fern 7940084
-asm_ir_run.fern 7705020
-asm_run.fern 7298796
-wasm_ir_run.fern 7377260
-wasm_run.fern 7352348
-wasm_runio_run.fern 7318652
-asm_pathprobe_run.fern 6592252
-ssa_lift_scan_run.fern 6410596
-asm_ir_elig_run.fern 5645052
-irlower_run.fern 6405084
-checker_modload_run.fern 2125220
-ssa_emit_run.fern 1723500
-ssa_run.fern 1545404
+fern.fern 11792332
+asm_load_run.fern 8572572
+asm_modload_run.fern 8186708
+asm_ir_run.fern 7955740
+asm_run.fern 7541148
+wasm_ir_run.fern 7619660
+wasm_run.fern 7598828
+wasm_runio_run.fern 7565148
+asm_pathprobe_run.fern 6838236
+ssa_lift_scan_run.fern 6652484
+asm_ir_elig_run.fern 5735372
+irlower_run.fern 6651068
+checker_modload_run.fern 2281060
+ssa_emit_run.fern 1723516
+ssa_run.fern 1545420
