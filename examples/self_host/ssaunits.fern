@@ -50,21 +50,23 @@ function reference(t: typeinfo.Type): boolean {
     if let typeinfo.TypeArray(_) = t { return true; }
     if let typeinfo.TypeTuple(_) = t { return true; }
     if let typeinfo.TypeStruct(_) = t { return true; }
+    if let typeinfo.TypeUnion(_) = t { return true; }
     return false;
 }
-function supported_tuple(tup: typeinfo.TypeTuple, records: semrecords.Record[]): boolean {
-    for t in tup.elements { if (!supported(t, records)) { return false; } }
+function supported_tuple(tup: typeinfo.TypeTuple, f: ssasem.Func): boolean {
+    for t in tup.elements { if (!supported(t, f)) { return false; } }
     return true;
 }
-function supported(t: typeinfo.Type, records: semrecords.Record[]): boolean {
+function supported(t: typeinfo.Type, f: ssasem.Func): boolean {
     if let typeinfo.TypeI32(_) = t { return true; }
     if let typeinfo.TypeBool(_) = t { return true; }
     if let typeinfo.TypeFloat(_) = t { return true; }
     if let typeinfo.TypeVoid(_) = t { return true; }
     if let typeinfo.TypeString(s) = t { return s.tag == 0; }
-    if let typeinfo.TypeArray(a) = t { return supported(a.elem, records); }
-    if let typeinfo.TypeTuple(tup) = t { return supported_tuple(tup, records); }
-    if let typeinfo.TypeStruct(_) = t { return semrecords.find(records, t) >= 0; }
+    if let typeinfo.TypeArray(a) = t { return supported(a.elem, f); }
+    if let typeinfo.TypeTuple(tup) = t { return supported_tuple(tup, f); }
+    if let typeinfo.TypeStruct(_) = t { return semrecords.find(f.records, t) >= 0; }
+    if let typeinfo.TypeUnion(u) = t { return u.args.len() == 0 && semrecords.find_enum(f.enums, t) >= 0; }
     return false;
 }
 function mode_error(params: typeinfo.Type[], modes: i32[]): string {
@@ -79,23 +81,33 @@ function mode_error(params: typeinfo.Type[], modes: i32[]): string {
 }
 // A callee's contract is held to the same representation and mode rules as
 // this function's own parameters: its counted result is a fresh unit here.
-function call_contract_error(c: ssasem.Contract, records: semrecords.Record[]): string {
-    for t in c.params { if (!supported(t, records)) { return "unsupported counted-unit call parameter"; } }
-    if (!supported(c.result, records)) { return "unsupported counted-unit call result"; }
+function call_contract_error(c: ssasem.Contract, f: ssasem.Func): string {
+    for t in c.params { if (!supported(t, f)) { return "unsupported counted-unit call parameter"; } }
+    if (!supported(c.result, f)) { return "unsupported counted-unit call result"; }
     return mode_error(c.params, c.modes);
+}
+// Check the finite schema tables, not recursive nominal field expansion.
+function schema_fields_error(f: ssasem.Func): string {
+    for record in f.records {
+        for field in record.fields {
+            if (!supported(field.ty, f)) { return "unsupported counted record field"; }
+        }
+    }
+    for e in f.enums {
+        for v in e.variants {
+            for field in v.fields { if (!supported(field.ty, f)) { return "unsupported counted variant field"; } }
+        }
+    }
+    return "";
 }
 function contract_error(f: ssasem.Func, modes: i32[]): string {
     if (modes.len() != f.params.len()) { return "parameter mode dimensions"; }
-    for t in f.values { if (!supported(t, f.records)) { return "unsupported counted-unit type"; } }
-    if (!supported(f.result, f.records)) { return "unsupported counted-unit result"; }
-    // Check the finite schema table, not recursive nominal field expansion.
-    for record in f.records {
-        for field in record.fields {
-            if (!supported(field.ty, f.records)) { return "unsupported counted record field"; }
-        }
-    }
+    for t in f.values { if (!supported(t, f)) { return "unsupported counted-unit type"; } }
+    if (!supported(f.result, f)) { return "unsupported counted-unit result"; }
+    var why: string = schema_fields_error(f);
+    if (why != "") { return why; }
     for c in f.calls {
-        var why: string = call_contract_error(c, f.records);
+        why = call_contract_error(c, f);
         if (why != "") { return why; }
     }
     return mode_error(f.params, modes);
@@ -104,9 +116,11 @@ function contract_error(f: ssasem.Func, modes: i32[]): string {
 // operator's result are fresh; only a reference-typed one is a unit of this
 // function's own (a string concatenation), so a scalar operator's result is
 // never owned. A projection or a copy borrows its source.
+function construction(kind: i32): boolean {
+    return kind == ssasem.array_new() || kind == ssasem.tuple_new() || kind == ssasem.record_new() || kind == ssasem.variant_new();
+}
 function fresh_unit(kind: i32): boolean {
-    return kind == 8 || kind == 5 || kind == 9 || kind == ssasem.array_new() || kind == ssasem.tuple_new()
-        || kind == ssasem.record_new() || kind == ssasem.call();
+    return kind == 8 || kind == 5 || kind == 9 || construction(kind) || kind == ssasem.call();
 }
 function owned_values(f: ssasem.Func, modes: i32[]): boolean[] {
     var out: boolean[] = bits(f.graph.nvals);
@@ -139,7 +153,7 @@ function operation_supplies(f: ssasem.Func, ins: ssa.SInst): Supply[] {
     var counted: boolean[] = [];
     if (ins.kind_tag == ssasem.call()) {
         counted = call_supplied(f, ins);
-    } else if (ins.kind_tag == ssasem.array_new() || ins.kind_tag == ssasem.tuple_new() || ins.kind_tag == ssasem.record_new()) {
+    } else if (construction(ins.kind_tag)) {
         for arg in ins.args { counted = counted.append(reference(f.values[arg])); }
     }
     var i: i32 = 0;

@@ -4654,6 +4654,17 @@ function gc_bind_param(r: parser.TypeRef, at: typeinfo.Type, tparams: string[], 
 // exist. An alias whose name collides with a declared struct
 // is silently dropped — collect_struct_sigs runs first and the
 // duplicate-name check would otherwise need a tri-state.
+// declared_union_names is the names-only union set the STRUCT table is built
+// with: type aliases and enums both name a union, and a field typed by either
+// resolves through it. The full UnionSig table (with variants) comes after,
+// once struct names are known.
+function declared_union_names(mod: parser.Module): string[] {
+  var out: string[] = [];
+  for alias in mod.aliases { out = out.append(alias.name); }
+  for ed in mod.enums { out = out.append(ed.name); }
+  return out;
+}
+
 function collect_union_sigs(aliases: parser.TypeAlias[], struct_names: string[]): UnionSig[] {
   var out: UnionSig[] = [];
   for a in aliases {
@@ -13726,12 +13737,8 @@ pub function check_module(raw_mod: parser.Module): ModuleTypes {
   // Union NAMES are needed before the struct sigs so a struct field
   // typed as a union (or union array) resolves rather than going
   // unknown. The full UnionSig table (with variants) still comes after.
-  var alias_names: string[] = [];
-  for alias in mod.aliases {
-    alias_names = alias_names.append(alias.name);
-  }
   var import_paths: string[] = import_paths_of(mod);
-  var structs: StructSig[] = collect_struct_sigs(mod.structs, alias_names);
+  var structs: StructSig[] = collect_struct_sigs(mod.structs, declared_union_names(mod));
   var struct_names: string[] = [];
   for sd in structs {
     struct_names = struct_names.append(sd.name);
@@ -14142,11 +14149,7 @@ pub function check_module(raw_mod: parser.Module): ModuleTypes {
 struct ModuleEnv { sigs: SigTable, structs: StructTable, unions: UnionTable, methods: MethodTable, imports: string[] }
 
 function module_env(mod: parser.Module): ModuleEnv {
-  var alias_names: string[] = [];
-  for alias in mod.aliases {
-    alias_names = alias_names.append(alias.name);
-  }
-  var structs: StructSig[] = collect_struct_sigs(mod.structs, alias_names);
+  var structs: StructSig[] = collect_struct_sigs(mod.structs, declared_union_names(mod));
   var struct_names: string[] = [];
   for sd in structs {
     struct_names = struct_names.append(sd.name);
@@ -14187,6 +14190,24 @@ pub function scope_type(s: Scope, name: string): typeinfo.Type {
 // module, or the empty-named sentinel when there is none.
 pub function struct_sig(s: Scope, name: string): StructSig {
   return s.lookup_struct(name);
+}
+
+// variant_sig is the declared signature of variant `name` of enum `owner`,
+// or the empty-named sentinel when no such variant is declared.
+pub function variant_sig(s: Scope, name: string, owner: string): StructSig {
+  var sig: StructSig = s.lookup_owned_struct(name, owner);
+  if (sig.enum_owner != owner) { return s.lookup_struct(""); }
+  return sig;
+}
+
+pub function union_sig(s: Scope, name: string): UnionSig {
+  return s.lookup_union(name);
+}
+
+// arm_scope is the scope a match arm's body sees: `s` plus the arm's payload
+// bindings, typed as check_stmt types them.
+pub function arm_scope(arm: ast.MatchArm, s: Scope, whole: typeinfo.Type): Scope {
+  return annotate_arm_scope(arm, s, whole);
 }
 
 pub function module_scopes(mod: parser.Module): Scope[] {
@@ -15072,11 +15093,7 @@ function import_paths_of(mod: parser.Module): string[] {
 }
 
 function build_module_tables(mod: parser.Module): ModuleTables {
-  var alias_names: string[] = [];
-  for alias in mod.aliases {
-    alias_names = alias_names.append(alias.name);
-  }
-  var structs: StructSig[] = collect_struct_sigs(mod.structs, alias_names);
+  var structs: StructSig[] = collect_struct_sigs(mod.structs, declared_union_names(mod));
   var struct_names: string[] = [];
   for sd in structs {
     struct_names = struct_names.append(sd.name);

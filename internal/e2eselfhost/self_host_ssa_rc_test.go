@@ -81,7 +81,7 @@ function fixture(): ssasem.Func {
     var graph = ssa.SFunc { name: "produce", nparams: params.len(), nvals: types.len(), entry: 7,
         takes_env: false, blocks: [ssa.SBlock { id: 7, preds: [], insts: ops, term: ret(result) }] };
     if (blocks.len() > 0) { graph = ssa.SFunc { ...graph, blocks: blocks }; }
-    return ssasem.Func { graph: graph, values: types, params: params, result: row, records: [], calls: [] };
+    return ssasem.Func { graph: graph, values: types, params: params, result: row, records: [], enums: [], calls: [] };
 }
 function main(): i32 {
     var f = fixture();
@@ -200,7 +200,7 @@ function main(): i32 {
     var wide: typeinfo.Type = typeinfo.TypeArray { elem: typeinfo.TypeI32 { width: 64, unsigned: false, is_char: false } };
     var g = ssa.SFunc { name: "unsupported", nparams: 1, nvals: 1, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0)], term: ret(0) }] };
-    var typed = ssasem.Func { graph: g, values: [wide], params: [wide], result: wide, records: [], calls: [] };
+    var typed = ssasem.Func { graph: g, values: [wide], params: [wide], result: wide, records: [], enums: [], calls: [] };
     var plan = ssaunits.plan(typed, [2]);
     if (!plan.ok) { eprint(plan.why); return 5; }
     if (!refused(ssarc.lower(typed, [2], plan), "unsupported physical RC value type")) { return 6; }
@@ -213,19 +213,34 @@ function main(): i32 {
     var schema = semrecords.Record { ty: recordType, fields: [semrecords.Field { name: "xs", ty: f.result }] };
     var recordGraph = ssa.SFunc { name: "record", nparams: 1, nvals: 2, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(ssasem.record_new(), 1, [0], 0)], term: ret(1) }] };
-    var genericFunc = ssasem.Func { graph: recordGraph, values: [f.result, wideType], params: [f.result], result: wideType, records: [wideSchema], calls: [] };
+    var genericFunc = ssasem.Func { graph: recordGraph, values: [f.result, wideType], params: [f.result], result: wideType, records: [wideSchema], enums: [], calls: [] };
     var genericPlan = ssaunits.plan(genericFunc, [2]);
     if (!genericPlan.ok) { eprint(genericPlan.why); return 7; }
     if (!refused(ssarc.lower(genericFunc, [2], genericPlan), "unsupported physical RC value type")) { return 8; }
     var wideField = semrecords.Record { ty: recordType, fields: [semrecords.Field { name: "xs", ty: wide }] };
-    var wideFieldFunc = ssasem.Func { graph: recordGraph, values: [wide, recordType], params: [wide], result: recordType, records: [wideField], calls: [] };
+    var wideFieldFunc = ssasem.Func { graph: recordGraph, values: [wide, recordType], params: [wide], result: recordType, records: [wideField], enums: [], calls: [] };
     var wideFieldPlan = ssaunits.plan(wideFieldFunc, [2]);
     if (!wideFieldPlan.ok) { eprint(wideFieldPlan.why); return 9; }
     if (!refused(ssarc.lower(wideFieldFunc, [2], wideFieldPlan), "unsupported physical RC record field type")) { return 10; }
-    var recordFunc = ssasem.Func { graph: recordGraph, values: [f.result, recordType], params: [f.result], result: recordType, records: [schema], calls: [] };
+    var recordFunc = ssasem.Func { graph: recordGraph, values: [f.result, recordType], params: [f.result], result: recordType, records: [schema], enums: [], calls: [] };
     var recordPlan = ssaunits.plan(recordFunc, [2]);
     if (!recordPlan.ok) { eprint(recordPlan.why); return 11; }
     if (!ssarc.lower(recordFunc, [2], recordPlan).ok) { return 12; }
+    // A variant field this vocabulary cannot walk refuses the enum; a plain
+    // enum carrying an array payload lowers.
+    var shapeType: typeinfo.Type = typeinfo.TypeUnion { name: "Shape", args: [] };
+    var enumGraph = ssa.SFunc { name: "enum", nparams: 1, nvals: 2, entry: 7, takes_env: false,
+        blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), ssa.SInst { kind_tag: ssasem.variant_new(), result: 1, args: [0], imm: 0, str: "W" }], term: ret(1) }] };
+    var wideEnum = semrecords.Enum { ty: shapeType, variants: [semrecords.Variant { name: "W", fields: [semrecords.Field { name: "__ev", ty: wide }] }] };
+    var wideEnumFunc = ssasem.Func { graph: enumGraph, values: [wide, shapeType], params: [wide], result: shapeType, records: [], enums: [wideEnum], calls: [] };
+    var wideEnumPlan = ssaunits.plan(wideEnumFunc, [2]);
+    if (!wideEnumPlan.ok) { eprint(wideEnumPlan.why); return 13; }
+    if (!refused(ssarc.lower(wideEnumFunc, [2], wideEnumPlan), "unsupported physical RC variant field type")) { return 14; }
+    var arrayEnum = semrecords.Enum { ty: shapeType, variants: [semrecords.Variant { name: "W", fields: [semrecords.Field { name: "__ev", ty: f.result }] }] };
+    var enumFunc = ssasem.Func { graph: enumGraph, values: [f.result, shapeType], params: [f.result], result: shapeType, records: [], enums: [arrayEnum], calls: [] };
+    var enumPlan = ssaunits.plan(enumFunc, [2]);
+    if (!enumPlan.ok) { eprint(enumPlan.why); return 15; }
+    if (!ssarc.lower(enumFunc, [2], enumPlan).ok) { return 16; }
     return 0;
 }
 `

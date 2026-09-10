@@ -181,10 +181,17 @@ function boolean_value(b: boolean): i32 {
     return 0;
 }
 
-function ident(id: ast.ExprIdent, s: State): Value {
+function ident(e: ast.Expr, id: ast.ExprIdent, s: State): Value {
     var value: i32 = lookup(s, id.name);
-    if (value < 0) { return refused(s, "unbound name is not a semantic value"); }
-    return Value { s: s, id: value };
+    if (value >= 0) { return Value { s: s, id: value }; }
+    var owner: string = union_name(checked(e, s));
+    if (owner != "" && checker.variant_sig(s.scope, id.name, owner).name.len() > 0) { return variant(e, id.name, owner, [], s); }
+    return refused(s, "unbound name is not a semantic value");
+}
+
+function union_name(t: typeinfo.Type): string {
+    if let typeinfo.TypeUnion(u) = t { return u.name; }
+    return "";
 }
 
 function element_type(t: typeinfo.Type): typeinfo.Type {
@@ -308,6 +315,25 @@ function record(e: ast.Expr, sl: ast.ExprStructLit, s: State): Value {
     return define(s, ssasem.record_new(), ids, 0, "", ty);
 }
 
+// A variant literal supplies its payload fields in declaration order; the
+// value is its enum.
+function variant(e: ast.Expr, name: string, owner: string, args: ast.Expr[], s: State): Value {
+    var ty: typeinfo.Type = checked(e, s);
+    var sig: checker.StructSig = checker.variant_sig(s.scope, name, owner);
+    if (sig.name.len() == 0 || !semtypes.concrete(ty, false) || args.len() != sig.field_types.len()) { return refused(s, "unsupported variant literal"); }
+    var ids: i32[] = [];
+    var i: i32 = 0;
+    while (i < args.len()) {
+        var v: Value = expr(args[i], s, sig.field_types[i]);
+        s = v.s;
+        if (!s.ok) { return v; }
+        if (!semtypes.equal(s.values[v.id], sig.field_types[i])) { return refused(s, "variant field type"); }
+        ids = ids.append(v.id);
+        i = i + 1;
+    }
+    return define(s, ssasem.variant_new(), ids, 0, name, ty);
+}
+
 function binary(b: ast.ExprBinary, s: State): Value {
     if (b.op == "&&" || b.op == "||") { return logical(b, s); }
     var left: Value = expr(b.left, s, typeinfo.unchecked());
@@ -357,12 +383,16 @@ function logical(b: ast.ExprBinary, s: State): Value {
 // types, and a result the callee hands over. Only a module function with a
 // contract is a call target; builtins, methods and local function values are
 // outside this boundary.
-function call(c: ast.ExprCall, s: State): Value {
+function call(e: ast.Expr, c: ast.ExprCall, s: State): Value {
     var name: string = "";
     if let ast.ExprIdent(id) = c.callee { name = id.name; }
     if (name == "" || lookup(s, name) >= 0) { return refused(s, "unsupported call target"); }
     var at: i32 = ssasem.find_contract(s.contracts, name);
-    if (at < 0) { return refused(s, "call target has no semantic contract"); }
+    if (at < 0) {
+        var owner: string = union_name(checked(e, s));
+        if (owner != "" && checker.variant_sig(s.scope, name, owner).name.len() > 0) { return variant(e, name, owner, c.args, s); }
+        return refused(s, "call target has no semantic contract");
+    }
     var contract: ssasem.Contract = s.contracts[at];
     if (c.type_argc > 0 || c.args.len() != contract.params.len()) { return refused(s, "call arity"); }
     if (is_void(contract.result)) { return refused(s, "unsupported void call"); }
@@ -386,7 +416,7 @@ function expr(e: ast.Expr, s: State, expected: typeinfo.Type): Value {
         ast.ExprNumber(n) => { return number(n, s); },
         ast.ExprBool(b) => { return define(s, 2, [], boolean_value(b.value), "", t_bool()); },
         ast.ExprString(st) => { return define(s, 5, [], 0, st.value, t_string()); },
-        ast.ExprIdent(id) => { return ident(id, s); },
+        ast.ExprIdent(id) => { return ident(e, id, s); },
         ast.ExprStructLit(sl) => { return record(e, sl, s); },
         ast.ExprArray(a) => { return array(e, a, s, expected); },
         ast.ExprTuple(t) => { return tuple(e, t, s, expected); },
@@ -394,7 +424,7 @@ function expr(e: ast.Expr, s: State, expected: typeinfo.Type): Value {
         ast.ExprFieldAccess(fa) => { return field(fa, s); },
         ast.ExprBinary(b) => { return binary(b, s); },
         ast.ExprUnary(u) => { return unary(u, s); },
-        ast.ExprCall(c) => { return call(c, s); },
+        ast.ExprCall(c) => { return call(e, c, s); },
         _ => { return refused(s, "unsupported expression"); }
     }
 }
@@ -450,12 +480,16 @@ struct Arm { s: State, live: boolean, end: i32, env: i32[] }
 
 // Each arm starts from the environment at the branch, not from its sibling's.
 function arm(body: ast.Stmt[], s: State, entry: i32[], id: i32, pred: i32, join: i32, count: i32, scope: checker.Scope): Arm {
-    s = stmts(body, open(State { ...s, vals: entry }, id, [pred]));
+    return finish_arm(body, open(State { ...s, vals: entry }, id, [pred]), join, count, scope);
+}
+
+function finish_arm(body: ast.Stmt[], s: State, join: i32, count: i32, scope: checker.Scope): Arm {
+    s = stmts(body, s);
     var live: boolean = s.live && s.ok;
     var end: i32 = s.cur.id;
     var env: i32[] = prefix(s.vals, count);
     s = terminate(s, t_br(join));
-    return Arm { s: State { ...s, scope: scope }, live: live, end: end, env: env };
+    return Arm { s: leave(s, count, scope), live: live, end: end, env: env };
 }
 
 function branch(f: ast.StmtIf, s: State): State {
@@ -482,6 +516,123 @@ function branch(f: ast.StmtIf, s: State): State {
     if (e.live) { preds = preds.append(e.end); envs = envs.append(e.env); }
     if (preds.len() == 0) { return s; }
     return merge_env(open(s, join, preds), envs, count);
+}
+
+// ---- match ------------------------------------------------------------------
+
+struct Arms { s: State, preds: i32[], envs: i32[][] }
+
+function collect(arms: Arms, done: Arm): Arms {
+    if (!done.live) { return Arms { ...arms, s: done.s }; }
+    return Arms { s: done.s, preds: arms.preds.append(done.end), envs: arms.envs.append(done.env) };
+}
+
+function qualified(name: string): boolean {
+    var i: i32 = 0;
+    while (i < name.len()) {
+        if (name[i] == b'.') { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// Nested, struct-field, tuple, literal and `@` patterns read a value through
+// no operation this boundary has.
+function pattern_shape_error(pv: ast.PatVariant): string {
+    if (pv.nested.len() > 0 || pv.at_binding != "" || pv.has_lit_cond) { return "unsupported pattern"; }
+    if (pv.tup_kinds.len() > 0 || pv.field_names.len() > 0) { return "unsupported pattern"; }
+    if (qualified(pv.type_name)) { return "unsupported qualified pattern"; }
+    return "";
+}
+
+function pattern_error(a: ast.MatchArm, pv: ast.PatVariant, sig: checker.StructSig): string {
+    if (a.has_guard || a.alt_cont) { return "unsupported match guard"; }
+    var why: string = pattern_shape_error(pv);
+    if (why != "") { return why; }
+    if (sig.name.len() == 0) { return "unknown variant"; }
+    if (pv.binding != "" && 1 + pv.extra_bindings.len() != sig.field_types.len()) { return "pattern arity"; }
+    return "";
+}
+
+// Each named payload position is a projection of the scrutinee, bound for
+// the arm's body; `_` and an absent payload list bind nothing.
+function payloads(pv: ast.PatVariant, scrut: i32, fields: typeinfo.Type[], s: State): State {
+    if (pv.binding == "") { return s; }
+    var names: string[] = [pv.binding];
+    for n in pv.extra_bindings { names = names.append(n); }
+    var k: i32 = 0;
+    while (k < names.len()) {
+        if (names[k] != "_") {
+            var v: Value = define(s, ssasem.variant_get(), [scrut], k, pv.type_name, fields[k]);
+            s = bind(v.s, names[k], v.id);
+        }
+        k = k + 1;
+    }
+    return s;
+}
+
+function variant_arm(a: ast.MatchArm, pv: ast.PatVariant, scrut: i32, owner: string, arms: Arms, entry: i32[], join: i32, count: i32, scope: checker.Scope): Arms {
+    var s: State = arms.s;
+    var sig: checker.StructSig = checker.variant_sig(s.scope, pv.type_name, owner);
+    var why: string = pattern_error(a, pv, sig);
+    if (why != "") { return Arms { ...arms, s: fail(s, why) }; }
+    var pred: i32 = s.cur.id;
+    var id: i32 = s.next_block;
+    var next: i32 = id + 1;
+    s = State { ...s, next_block: next + 1 };
+    var test: Value = define(s, ssasem.variant_is(), [scrut], 0, pv.type_name, t_bool());
+    s = terminate(test.s, t_brif(test.id, id, next));
+    var opened: State = payloads(pv, scrut, sig.field_types, open(State { ...s, vals: entry }, id, [pred]));
+    opened = State { ...opened, scope: checker.arm_scope(a, scope, opened.values[scrut]) };
+    var done: Arm = finish_arm(a.body, opened, join, count, scope);
+    done = Arm { ...done, s: open(State { ...done.s, vals: entry }, next, [pred]) };
+    return collect(arms, done);
+}
+
+function wildcard_arm(a: ast.MatchArm, arms: Arms, entry: i32[], join: i32, count: i32, scope: checker.Scope): Arms {
+    var s: State = arms.s;
+    var pred: i32 = s.cur.id;
+    var id: i32 = s.next_block;
+    s = terminate(State { ...s, next_block: id + 1 }, t_br(id));
+    return collect(arms, arm(a.body, s, entry, id, pred, join, count, scope));
+}
+
+function match_arm(a: ast.MatchArm, scrut: i32, owner: string, arms: Arms, entry: i32[], join: i32, count: i32, scope: checker.Scope): Arms {
+    match (a.pattern) {
+        ast.PatWildcard(_) => { return wildcard_arm(a, arms, entry, join, count, scope); },
+        ast.PatVariant(pv) => { return variant_arm(a, pv, scrut, owner, arms, entry, join, count, scope); }
+    }
+    return Arms { ...arms, s: fail(arms.s, "unsupported pattern") };
+}
+
+// Arms are tested in order; each test's false edge enters the next test.
+// An arm after a wildcard is unreachable and is not produced. Without a
+// wildcard, a scrutinee no arm matches falls through to the join.
+function match_stmt(m: ast.StmtMatch, s: State): State {
+    var scrut: Value = expr(m.scrutinee, s, typeinfo.unchecked());
+    s = scrut.s;
+    if (!s.ok) { return s; }
+    var owner: string = union_name(s.values[scrut.id]);
+    if (owner == "" || checker.union_sig(s.scope, owner).name.len() == 0) { return fail(s, "unsupported match scrutinee"); }
+    var join: i32 = s.next_block;
+    s = State { ...s, next_block: join + 1 };
+    var count: i32 = s.names.len();
+    var entry: i32[] = s.vals;
+    var scope: checker.Scope = s.scope;
+    var arms: Arms = Arms { s: s, preds: [], envs: [] };
+    var i: i32 = 0;
+    while (i < m.arms.len() && arms.s.ok && arms.s.live) {
+        arms = match_arm(m.arms[i], scrut.id, owner, arms, entry, join, count, scope);
+        i = i + 1;
+    }
+    s = arms.s;
+    if (!s.ok) { return s; }
+    if (s.live) {
+        arms = Arms { ...arms, preds: arms.preds.append(s.cur.id), envs: arms.envs.append(prefix(s.vals, count)) };
+        s = terminate(s, t_br(join));
+    }
+    if (arms.preds.len() == 0) { return s; }
+    return merge_env(open(s, join, arms.preds), arms.envs, count);
 }
 
 function current_loop(s: State): Loop { return s.loops[s.loops.len() - 1]; }
@@ -576,7 +727,7 @@ function prefix_loops(xs: Loop[], n: i32): Loop[] {
 // releases it at the call.
 function discard(e: ast.Expr, s: State): State {
     match (e) {
-        ast.ExprCall(c) => { return call(c, s).s; },
+        ast.ExprCall(c) => { return call(e, c, s).s; },
         _ => { return fail(s, "unsupported statement"); }
     }
     return s;
@@ -591,6 +742,7 @@ function stmt(st: ast.Stmt, s: State): State {
         ast.StmtReturn(r) => { return ret(r, s); },
         ast.StmtIf(f) => { return branch(f, s); },
         ast.StmtWhile(w) => { return iterate(w, s); },
+        ast.StmtMatch(m) => { return match_stmt(m, s); },
         ast.StmtBreak(b) => { return leave_loop(s, b.label, true); },
         ast.StmtContinue(c) => { return leave_loop(s, c.label, false); },
         _ => { return fail(s, "unsupported statement"); }
@@ -683,7 +835,7 @@ function renumber(blocks: ssa.SBlock[], map: i32[], values: typeinfo.Type[]): ss
         out = out.append(ssa.SBlock { ...b, insts: insts, term: term });
     }
     var graph: ssa.SFunc = ssa.SFunc { name: "", nparams: 0, nvals: kept.len(), blocks: out, entry: 0, takes_env: false };
-    return ssasem.Func { graph: graph, values: kept, params: [], result: t_void(), records: [], calls: [] };
+    return ssasem.Func { graph: graph, values: kept, params: [], result: t_void(), records: [], enums: [], calls: [] };
 }
 
 // ---- functions --------------------------------------------------------------
@@ -723,7 +875,7 @@ function parameters(fd: parser.FuncDecl, s: State): State {
 
 function refuse(why: string): Produced {
     var graph: ssa.SFunc = ssa.SFunc { name: "", nparams: 0, nvals: 0, blocks: [], entry: 0, takes_env: false };
-    return Produced { ok: false, why: why, func: ssasem.Func { graph: graph, values: [], params: [], result: t_void(), records: [], calls: [] }, modes: [] };
+    return Produced { ok: false, why: why, func: ssasem.Func { graph: graph, values: [], params: [], result: t_void(), records: [], enums: [], calls: [] }, modes: [] };
 }
 
 function initial(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Contract[]): State {
@@ -734,25 +886,39 @@ function initial(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Co
 
 // ---- record schemas ---------------------------------------------------------
 
-struct Schemas { ok: boolean, why: string, records: semrecords.Record[] }
+struct Schemas { ok: boolean, why: string, records: semrecords.Record[], enums: semrecords.Enum[] }
 
-// Every record type a function's values, contracts and result name gets its
-// declaration's schema, and so does every record a schema's field names, to a
-// fixpoint over the finite declaration table. A type this boundary cannot
-// give a schema refuses the function.
+// Every record and enum type a function's values, contracts and result name
+// gets its declaration's schema, and so does every one a schema's fields
+// name, to a fixpoint over the finite declaration table. A type this
+// boundary cannot give a schema refuses the function.
 function schemas(types: typeinfo.Type[], s: State): Schemas {
-    var out: Schemas = Schemas { ok: true, why: "", records: [] };
+    var out: Schemas = Schemas { ok: true, why: "", records: [], enums: [] };
     var pending: typeinfo.Type[] = types;
     var i: i32 = 0;
     while (i < pending.len()) {
+        var nr: i32 = out.records.len();
+        var ne: i32 = out.enums.len();
         out = schema_of(pending[i], s, out);
         if (!out.ok) { return out; }
-        if (out.records.len() > 0 && semtypes.equal(out.records[out.records.len() - 1].ty, pending[i])) {
-            for field in out.records[out.records.len() - 1].fields { pending = pending.append(field.ty); }
-        }
+        pending = named_by_schemas(out, nr, ne, pending);
         i = i + 1;
     }
     return out;
+}
+
+function named_by_schemas(out: Schemas, nr: i32, ne: i32, pending: typeinfo.Type[]): typeinfo.Type[] {
+    while (nr < out.records.len()) {
+        for field in out.records[nr].fields { pending = pending.append(field.ty); }
+        nr = nr + 1;
+    }
+    while (ne < out.enums.len()) {
+        for v in out.enums[ne].variants {
+            for field in v.fields { pending = pending.append(field.ty); }
+        }
+        ne = ne + 1;
+    }
+    return pending;
 }
 
 // Structural types name records inside them; a nominal type is its own.
@@ -769,20 +935,48 @@ function schema_of(t: typeinfo.Type, s: State, out: Schemas): Schemas {
         if (semrecords.find(out.records, t) >= 0) { return out; }
         return record_entry(t, r, s, out);
     }
+    if let typeinfo.TypeUnion(u) = t {
+        if (semrecords.find_enum(out.enums, t) >= 0) { return out; }
+        return enum_entry(t, u, s, out);
+    }
     return out;
+}
+
+function fields_resolved(sig: checker.StructSig): boolean {
+    for t in sig.field_types { if (!semtypes.concrete(t, false)) { return false; } }
+    return true;
+}
+
+function fields_of(sig: checker.StructSig): semrecords.Field[] {
+    var fields: semrecords.Field[] = [];
+    var i: i32 = 0;
+    while (i < sig.field_names.len()) {
+        fields = fields.append(semrecords.Field { name: sig.field_names[i], ty: sig.field_types[i] });
+        i = i + 1;
+    }
+    return fields;
 }
 
 function record_entry(t: typeinfo.Type, r: typeinfo.TypeStruct, s: State, out: Schemas): Schemas {
     var sig: checker.StructSig = record_schema(r.name, s);
     if (sig.name.len() == 0 || r.args.len() > 0) { return Schemas { ...out, ok: false, why: "unsupported record type" }; }
-    var fields: semrecords.Field[] = [];
-    var i: i32 = 0;
-    while (i < sig.field_names.len()) {
-        if (!semtypes.concrete(sig.field_types[i], false)) { return Schemas { ...out, ok: false, why: "unresolved record field type" }; }
-        fields = fields.append(semrecords.Field { name: sig.field_names[i], ty: sig.field_types[i] });
-        i = i + 1;
+    if (!fields_resolved(sig)) { return Schemas { ...out, ok: false, why: "unresolved record field type" }; }
+    return Schemas { ...out, records: out.records.append(semrecords.Record { ty: t, fields: fields_of(sig) }) };
+}
+
+// An enum is a declared union whose every variant is one of its own
+// variant declarations; a union of separately declared structs is not.
+function enum_entry(t: typeinfo.Type, u: typeinfo.TypeUnion, s: State, out: Schemas): Schemas {
+    var sig: checker.UnionSig = checker.union_sig(s.scope, u.name);
+    if (sig.name.len() == 0 || u.args.len() > 0) { return Schemas { ...out, ok: false, why: "unsupported enum type" }; }
+    var variants: semrecords.Variant[] = [];
+    for name in sig.variants {
+        var vs: checker.StructSig = checker.variant_sig(s.scope, name, u.name);
+        if (vs.name.len() == 0) { return Schemas { ...out, ok: false, why: "unsupported enum type" }; }
+        if (!fields_resolved(vs)) { return Schemas { ...out, ok: false, why: "unresolved variant field type" }; }
+        variants = variants.append(semrecords.Variant { name: name, fields: fields_of(vs) });
     }
-    return Schemas { ...out, records: out.records.append(semrecords.Record { ty: t, fields: fields }) };
+    return Schemas { ...out, enums: out.enums.append(semrecords.Enum { ty: t, variants: variants }) };
 }
 
 function contract_types(calls: ssasem.Contract[]): typeinfo.Type[] {
@@ -813,7 +1007,7 @@ function complete(fd: parser.FuncDecl, s: State): Produced {
     var table: Schemas = schemas(named, s);
     if (!table.ok) { return refuse(table.why); }
     var graph: ssa.SFunc = ssa.SFunc { ...f.graph, name: fd.name, nparams: params.len() };
-    f = ssasem.Func { ...f, graph: graph, params: params, result: s.result, records: table.records, calls: s.calls };
+    f = ssasem.Func { ...f, graph: graph, params: params, result: s.result, records: table.records, enums: table.enums, calls: s.calls };
     var analysis: ssasem.Analysis = ssasem.analyze(f);
     if (!analysis.ok) { return refuse("produced graph fails semantic verification: " + analysis.why); }
     return Produced { ok: true, why: "", func: f, modes: modes };

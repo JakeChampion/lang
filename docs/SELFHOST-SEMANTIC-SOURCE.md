@@ -55,13 +55,23 @@ Unsupported constructs refuse the whole function with a reason.
   densely afterwards, parameters keeping their declared positions.
 - Calls of module functions, in expression or statement position, as the
   semantic `call` kind (below).
+- Enum values. A variant literal is `variant_new` named by its variant; a
+  `match` arm's test is `variant_is` and each named payload position a
+  `variant_get` projection of the scrutinee. An enum's schema
+  (`semrecords.Enum`) is its union identity and every variant's field shape,
+  entered into the function's schema table beside the record schemas. Arms
+  are tested in declaration order and each test's false edge enters the next,
+  so an arm after a wildcard is unreachable and is not produced; a scrutinee
+  no arm matches falls through to the join. A guard, a qualified pattern
+  (`Shape.Dot`), a nested, tuple, struct-field, literal or `@` pattern, and a
+  non-enum scrutinee are refused.
 
 Refused, each with its own reason: calls of builtins, methods (including a
 string's), local function values and void functions, floats in expressions,
 integer widths other than i32, division, string ordering, generic records,
-enum variants, record updates, destructuring, labelled loops, `for`, `match`,
-`defer`, closures, receiver methods, generics, external and async functions,
-and a value-returning body that falls through.
+record updates, destructuring, labelled loops, `for`, match guards and the
+pattern shapes above, `defer`, closures, receiver methods, generics, external
+and async functions, and a value-returning body that falls through.
 
 ## Calls
 
@@ -113,8 +123,9 @@ one by hand.
   arguments, a counted argument retained across a call and moved at its
   last use, a temporary result moved into a counted parameter, a discarded
   result, a returned parameter, recursion, a call result carried into a
-  loop header, and the AST-lowered `main` binding, discarding and projecting
-  tuple and array results under `ssarc.caller_sigs`.
+  loop header, the AST-lowered `main` binding, discarding and projecting
+  tuple and array results under `ssarc.caller_sigs`, and the enum shapes
+  above.
 
 ```sh
 go test ./internal/e2eselfhost -run 'TestSelfHostSemanticSource' -count=1
@@ -151,12 +162,15 @@ the contract feed leaks five blocks on the same program.
 The producer does not yet admit void calls, builtins, string methods,
 generic records, record updates, enums, closures, match or destructuring, so
 no production consumer is switched and no AST ownership analysis is deleted.
-Records and strings cross the boundary (`make`, `wrap`, `unwrap`, `tally`,
-`greet` in the executable fixture: a record with a string field and a nested
-record, an `own` record parameter, string concatenation in a loop, string
-equality; balanced on every target), and the AST-lowered `main` receives
-tuple and array results by contract. String and record positions of a
-received tuple, and record results, still rely on the AST caller's own
-syntactic rows. Next: enums, then a production consumer that lowers produced
-functions through this pipeline and feeds `caller_sigs` to the remaining AST
-callers.
+Records, strings and enums cross the boundary (`make`, `wrap`, `unwrap`,
+`tally`, `greet`, `shape`, `measure`, `sum_shapes`, `consume`, `boxed_shape`
+and `hold` in the executable fixture: a record with a string field and a
+nested record, an `own` record parameter, string concatenation in a loop,
+string equality, a four-variant enum matched in a loop and carried across
+iterations, an `own` enum parameter consumed through `if let`, produced-call
+temporaries handed to a counted parameter, and a record with an enum field;
+balanced on every target), and the AST-lowered `main` receives tuple and
+array results by contract. String and record positions of a received tuple,
+and record and enum results, still rely on the AST caller's own syntactic
+rows. Next: a production consumer that lowers produced functions through this
+pipeline and feeds `caller_sigs` to the remaining AST callers.
