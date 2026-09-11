@@ -145,7 +145,13 @@ function assert_buf_end(): i32 {
 // before the first byte: one literal per branch, of which a match
 // begins with one. It is empty where no such set could be proved, and
 // then nothing but the fastmap stands in front of the simulation.
-pub struct Bre { insts: Inst[], classes: u8[], ngroups: i32, nmarks: i32, backref: boolean, err: string, newline_anchor: boolean, first: u8[], empty_ok: boolean, pre: string, pre_bol: boolean, pre_eol: boolean, literal: boolean, alts: string[] }
+//
+// `seen0` is the simulation's generation-stamp array in its cleared
+// state, held here rather than built per search: the stamps are
+// positions, so a cleared one is -1 whatever the search, and the
+// engine's first stamp copies this rather than filling a new array on
+// every line.
+pub struct Bre { insts: Inst[], classes: u8[], ngroups: i32, nmarks: i32, backref: boolean, err: string, newline_anchor: boolean, first: u8[], empty_ok: boolean, pre: string, pre_bol: boolean, pre_eol: boolean, literal: boolean, alts: string[], seen0: i32[] }
 
 // `Syntax` — which glibc dialect a pattern is read in, and whether a
 // newline anchors `$` at match time (the header has the three cases).
@@ -1234,6 +1240,7 @@ pub function bre_compile_syntax(pat: string, syntax: Syntax): Bre {
   var cls: u8[] = [];
   var none_first: u8[] = [];
   var no_alts: string[] = [];
+  var no_seen: i32[] = [];
   var p: P = P { pat: pat, i: 0, nodes: nodes, classes: cls, ngroups: 0, done: 0, err: "", emacs: syntax.emacs };
   var r: (P, i32) = parse_alt(p);
   p = r.0;
@@ -1242,7 +1249,7 @@ pub function bre_compile_syntax(pat: string, syntax: Syntax): Bre {
   }
   if (p.err.len() > 0) {
     var no_insts: Inst[] = [];
-    return Bre { insts: no_insts, classes: p.classes, ngroups: 0, nmarks: 0, backref: false, err: p.err, newline_anchor: syntax.newline_anchor, first: none_first, empty_ok: true, pre: "", pre_bol: false, pre_eol: false, literal: false, alts: no_alts };
+    return Bre { insts: no_insts, classes: p.classes, ngroups: 0, nmarks: 0, backref: false, err: p.err, newline_anchor: syntax.newline_anchor, first: none_first, empty_ok: true, pre: "", pre_bol: false, pre_eol: false, literal: false, alts: no_alts, seen0: no_seen };
   }
   var empty: Inst[] = [];
   var c: C = C { insts: empty, nmarks: 0, err: "" };
@@ -1253,7 +1260,7 @@ pub function bre_compile_syntax(pat: string, syntax: Syntax): Bre {
   c = emit(c, Inst { op: op_match(), a: 0, b: 0 });
   if (c.err.len() > 0) {
     var none: Inst[] = [];
-    return Bre { insts: none, classes: p.classes, ngroups: 0, nmarks: 0, backref: false, err: c.err, newline_anchor: syntax.newline_anchor, first: none_first, empty_ok: true, pre: "", pre_bol: false, pre_eol: false, literal: false, alts: no_alts };
+    return Bre { insts: none, classes: p.classes, ngroups: 0, nmarks: 0, backref: false, err: c.err, newline_anchor: syntax.newline_anchor, first: none_first, empty_ok: true, pre: "", pre_bol: false, pre_eol: false, literal: false, alts: no_alts, seen0: no_seen };
   }
   var fm: (u8[], boolean) = fastmap(c.insts, p.classes);
   var pre: (string, boolean, i32) = prefix_scan(c.insts);
@@ -1264,7 +1271,7 @@ pub function bre_compile_syntax(pat: string, syntax: Syntax): Bre {
   if (pre.0.len() == 0) {
     alts = branch_literals(c.insts);
   }
-  return Bre { insts: c.insts, classes: p.classes, ngroups: p.ngroups, nmarks: c.nmarks, backref: has_backref(p.nodes), err: "", newline_anchor: syntax.newline_anchor, first: fm.0, empty_ok: fm.1, pre: pre.0, pre_bol: pre.1, pre_eol: tail.0, literal: tail.1, alts: alts };
+  return Bre { insts: c.insts, classes: p.classes, ngroups: p.ngroups, nmarks: c.nmarks, backref: has_backref(p.nodes), err: "", newline_anchor: syntax.newline_anchor, first: fm.0, empty_ok: fm.1, pre: pre.0, pre_bol: pre.1, pre_eol: tail.0, literal: tail.1, alts: alts, seen0: fill(c.insts.len(), 0 - 1) };
 }
 
 // ---- the fastmap -----------------------------------------------------------
@@ -2019,20 +2026,26 @@ function zero_width_holds(re: Bre, text: string, in: Inst, pos: i32, lo: i32, hi
 // glibc's re_search; without it the match must begin at `start`, which
 // is re_match. `^` and `$` are unaffected either way: they are asked
 // about the position in `text[lo, hi)`, not about where the scan began.
-// The generation stamp is the position, so it starts at `start` and the
-// stamps are seeded below it.
+// The generation stamp is the position, so it starts at `start` and
+// `re.seen0` is below every one of them.
 function exec_threads_from(re: Bre, text: string, start: i32, lo: i32, hi: i32, unanchored: boolean): BreMatch {
-  var ncap: i32 = re.ngroups * 2;
   var no_pcs: i32[] = [];
   var no_caps: i32[][] = [];
-  var t: Threads = Threads { pcs: no_pcs, caps: no_caps, seen: fill(re.insts.len(), start - 1), match_at: 0 - 1, match_zw: false };
-  t = add_thread(re, t, start, 0, fresh_caps(ncap), start, text, lo, hi, false);
+  var t: Threads = Threads { pcs: no_pcs, caps: no_caps, seen: re.seen0, match_at: 0 - 1, match_zw: false };
+  // One seed vector for the whole search: it is never written through,
+  // since `.with` copies an array a second reference holds, so the
+  // thread seeded at each position can share it rather than allocate
+  // one per position — which for a pattern with no groups was an empty
+  // array per byte.
+  var seed: i32[] = fresh_caps(re.ngroups * 2);
+  t = add_thread(re, t, start, 0, seed, start, text, lo, hi, false);
   var best: i32 = 0 - 1;
-  var best_caps: i32[] = fresh_caps(ncap);
+  var best_caps: i32[] = seed;
   var pos: i32 = start;
   while (true) {
     // The list being stepped is held apart from `t`, so `t` keeps sole
-    // ownership of the stamp array and updates it in place.
+    // ownership of the stamp array — its own copy of `re.seen0` from
+    // the first stamp — and updates it in place.
     var pcs: i32[] = t.pcs;
     var caps: i32[][] = t.caps;
     var empty_pcs: i32[] = [];
@@ -2069,7 +2082,7 @@ function exec_threads_from(re: Bre, text: string, start: i32, lo: i32, hi: i32, 
       // The fastmap gate is the last of `search_range`'s filters: a
       // position no match can begin at is never seeded.
       if (can_start_at(re, text, pos, hi)) {
-        t = add_thread(re, t, pos, 0, fresh_caps(ncap), pos, text, lo, hi, false);
+        t = add_thread(re, t, pos, 0, seed, pos, text, lo, hi, false);
       }
     }
     // Out of threads ends an ANCHORED run, whose only start has died.
