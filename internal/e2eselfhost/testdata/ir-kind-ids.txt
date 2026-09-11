@@ -253,3 +253,5 @@ create_link=262
 create_symlink=263
 read_link=264
 umask=265
+process_alive=271
+rlimit_nofile=272

@@ -10112,6 +10112,10 @@ pub function infer_expr_width(e: ast.Expr, s: LowerState): i32 {
                     // The clock builtins return an i64 timespec reading, so a
                     // binding `var a = monotonic_ns()` width-tracks i64.
                     if (cid.name == "monotonic_ns" || cid.name == "now_unix_ms" || cid.name == "now_ns") { return 64; }
+                    // The descriptor ceiling is an i64 for the same reason the
+                    // clocks are: RLIM_INFINITY normalises to i64 max, which a
+                    // 32-bit binding would read back as -1.
+                    if (cid.name == "rlimit_nofile") { return 64; }
                     if (cid.name == "__load_i64") { return 64; }
                     // The bump high-water mark is i64 (the arena is 16 GiB, so
                     // it passes 2^31 on a long run). Width-tracking it matters
@@ -10499,6 +10503,10 @@ pub function lower_i64(e: ast.Expr, s: LowerState): LowerState {
                     // The clock builtins return an i64 value: lower via the
                     // normal call path (which emits the op + pushes the result).
                     if (cid.name == "monotonic_ns" || cid.name == "now_unix_ms" || cid.name == "now_ns") { return lower_expr(e, s); }
+                    // rlimit_nofile pushes a full-width i64 too, so the normal
+                    // call path is the lowering; the sign-extend below would
+                    // widen an already-wide operand.
+                    if (cid.name == "rlimit_nofile") { return lower_expr(e, s); }
                     if (cid.name == "__load_i64") { return lower_expr(e, s); }
                     // The bump high-water mark is an i64 value: the normal call
                     // path emits op_heap_bump_bytes and pushes the full-width
@@ -12315,6 +12323,8 @@ function is_os_query_call(name: string, argc: i32): boolean {
     if (name == "getgroups" || name == "environ") { return argc == 0; }
     if (name == "getcwd" || name == "cpu_count") { return argc == 0; }
     if (name == "uname_field") { return argc == 1; }
+    if (name == "process_alive") { return argc == 1; }
+    if (name == "rlimit_nofile") { return argc == 0; }
     return false;
 }
 
@@ -12337,6 +12347,9 @@ function is_os_query_call(name: string, argc: i32): boolean {
 //   uname_field(i)      → op_uname_field → one field of the utsname record,
 //                         boxed the same way; getcwd() the working directory.
 //   cpu_count()         → op_cpu_count → a bare i32, no operands.
+//   rlimit_nofile()     → op_rlimit_nofile → the soft RLIMIT_NOFILE as an
+//                         i64, no operands.
+//   process_alive(pid)  → op_process_alive → 0/1, one kill(pid, 0).
 function lower_call_os_query(c: ast.ExprCall, cid: ast.ExprIdent, s: LowerState): LowerState {
     if (cid.name == "geteuid") { return s.emit(ir.op_geteuid()); }
     if (cid.name == "getegid") { return s.emit(ir.op_getegid()); }
@@ -12347,9 +12360,11 @@ function lower_call_os_query(c: ast.ExprCall, cid: ast.ExprIdent, s: LowerState)
     if (cid.name == "hostname") { return s.emit(ir.op_hostname()); }
     if (cid.name == "getcwd") { return s.emit(ir.op_getcwd()); }
     if (cid.name == "cpu_count") { return s.emit(ir.op_cpu_count()); }
+    if (cid.name == "rlimit_nofile") { return s.emit(ir.op_rlimit_nofile()); }
     var a0: LowerState = lower_expr(c.args[0], s);
     if (!a0.ok) { return a0; }
     if (cid.name == "isatty") { return a0.emit(ir.op_isatty()); }
+    if (cid.name == "process_alive") { return a0.emit(ir.op_process_alive()); }
     if (cid.name == "uname_field") { return a0.emit(ir.op_uname_field()); }
     var a1: LowerState = lower_expr(c.args[1], a0);
     if (!a1.ok) { return a1; }

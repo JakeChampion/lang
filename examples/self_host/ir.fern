@@ -644,6 +644,20 @@ pub function op_getcwd(): Op { return op0("getcwd"); }
 // `cpu_count` takes no operands and pushes an i32: how many processing units
 // the process may run on, or 0 where the kernel will not say.
 pub function op_cpu_count(): Op { return op0("cpu_count"); }
+// `process_alive` takes one operand [pid] and pushes 0/1: does a process with
+// that pid exist? kill(pid, 0) underneath — the zero signal runs every check
+// kill(2) makes and delivers nothing, so the errno only ever refines "yes":
+// success and EPERM both mean the process is there (one owned by another user
+// is still a process) and ESRCH means it is gone. A pid of 0 or below is 0
+// without a syscall, since kill(2) reads those as process GROUPS. Native only:
+// neither WASI preview has a process table (#8767).
+pub function op_process_alive(): Op { return op0("process_alive"); }
+// `rlimit_nofile` takes no operands and pushes an i64: the SOFT RLIMIT_NOFILE
+// the kernel is enforcing on this process, what `ulimit -n` prints. An
+// unlimited resource reports i64 max — Linux spells RLIM_INFINITY as all ones
+// and Darwin as i64 max, and neither spelling is a count. Native only: neither
+// WASI preview has resource limits (#8819).
+pub function op_rlimit_nofile(): Op { return op0("rlimit_nofile"); }
 // `wasm_timer_pollable` takes one operand [ns] and pushes an i32. On native it
 // is -1 (no pollable; deadlines ride poll(2)'s timeout arg); on wasm it is a
 // real wasi timer pollable. Portability shim for std/async's with_deadline.
@@ -1541,12 +1555,12 @@ pub function kind_count(): i32 { return 196; }
 // 1..kind_count() sweep requires the id space to stay dense, and moving the
 // last entry into the hole beats renumbering every id above it.
 //
-// Extension tags beyond kind_count() (struct_copy=198 … umask=265): not
+// Extension tags beyond kind_count() (struct_copy=198 … rlimit_nofile=272): not
 // in the 1..kind_count() bijection sweep (ir_kind_run sweeps them separately
 // by name), but nameable so module_emits_op_cached / the backends see them.
 // The id space is NOT dense up here: 253..259 are left for slices in flight,
 // which is why the directory and link family starts at 260.
-// NEXT FREE EXTENSION ID: 266 (re-grep rather than trusting this line — it has
+// NEXT FREE EXTENSION ID: 273 (re-grep rather than trusting this line — it has
 // been stale before, which is the drift the paragraph below is about).
 // ADDING AN EXTENSION TAG: take the next id here AND register it in
 // kind_name + ir_kind_run's two sweep lists, then re-grep the whole tree
@@ -2009,7 +2023,9 @@ function kind_id_len13(name: string): i32 {
     if (c == b'f' && name == "f64_from_bits") { return 17; }
     if (c == b'm' && name == "mapiter_value") { return 136; }
     if (c == b'm' && name == "map_hash_seed") { return 222; }
+    if (c == b'p' && name == "process_alive") { return 271; }
     if (c == b'r' && name == "raw_store_ptr") { return 84; }
+    if (c == b'r' && name == "rlimit_nofile") { return 272; }
     if (c == b's' && name == "str_ends_with") { return 115; }
     if (c == b's' && name == "strbuf_append") { return 118; }
     if (c == b's' && name == "signal_ignore") { return 243; }
@@ -2335,13 +2351,15 @@ function kind_name_4(id: i32): string {
     if (id == 263) { return "create_symlink"; }
     if (id == 264) { return "read_link"; }
     if (id == 265) { return "umask"; }
+    if (id == 271) { return "process_alive"; }
+    if (id == 272) { return "rlimit_nofile"; }
     return "invalid";
 }
 
 // kind_name maps an integer id back to its op-kind tag ("invalid" for an
 // out-of-range / KIND_INVALID id). The inverse of kind_id. A cheap range
 // check routes to the owning chunk; everything past 160 — including the
-// extension tags beyond kind_count() (struct_copy=198 … umask=265)
+// extension tags beyond kind_count() (struct_copy=198 … rlimit_nofile=272)
 // — lives in kind_name_4, whose fallthrough is the "invalid" sentinel.
 pub function kind_name(id: i32): string {
     if (id <= 40) { return kind_name_0(id); }
@@ -2396,7 +2414,8 @@ function pops0(t: i32): boolean {
         || t == 222                                                      // map_hash_seed
         || t == 238 || t == 239 || t == 240                              // geteuid, getegid, hostname
         || t == 246 || t == 247 || t == 248 || t == 249                  // getuid, getgid, getgroups, environ
-        || t == 251 || t == 252;                                         // getcwd, cpu_count
+        || t == 251 || t == 252                                          // getcwd, cpu_count
+        || t == 272;                                                     // rlimit_nofile
 }
 
 function pops1_conv(t: i32): boolean {
@@ -2440,6 +2459,7 @@ function pops1_io(t: i32): boolean {
         || t == 243 || t == 244                                          // signal_ignore, signal_default
         || t == 241 || t == 250                                          // fd_stat, uname_field
         || t == 261 || t == 264 || t == 265                              // remove_dir, read_link, umask
+        || t == 271                                                      // process_alive
         || t == 185 || t == 210 || t == 212                              // random_bytes, arg_at, proc_waitpid
         || t == 188 || t == 189 || t == 190 || t == 191 || t == 192      // timer_fd, wasm_*
         || t == 196 || t == 112 || t == 200 || t == 201 || t == 203;     // tcp_close, tcp_pollable(112), tcp_listen/accept, open_file
