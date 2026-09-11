@@ -297,6 +297,17 @@ coreutils/
                     set consulted from the twenty-FIRST link rather
                     than a depth limit, so a 5000-link chain resolves
                     and a cycle's residue depends on its LENGTH
+  lib/blocks.fern   the SIZE argument du and df share, and the number
+                    it scales: the two alphabets — which are not the
+                    set of letters that scale — and the three
+                    diagnostics a bad spec earns, gnulib's
+                    human_readable with the ceiling rounding both
+                    print under, the unit a bare `-BK` puts after
+                    every number (read off the DIVISOR, so an inode
+                    column under `-BKiB` prints a bare `B` beside a
+                    block column printing `KiB`), and the block-size
+                    environment variables, where the first one SET
+                    wins whether or not it parses
   lib/lines.fern    the two line-boundary scans head and tail share when
                     they hold bytes back — head -n -N because the last
                     N lines are the ones to elide, tail -n N because
@@ -1110,6 +1121,26 @@ anything, the second drains a tree and ignores a missing target — and the
 errno they discard is the whole of what those two utilities report.
 
 ## Known divergences
+
+**`df --sync` does not sync.** GNU calls `sync(2)` before it measures, so its
+numbers are post-writeback. Fern has no such builtin — no `sync`, `fsync` or
+`syncfs` in FuncSigs, and no flush-to-device on `Writer` — so `df.fern` accepts
+the option and does nothing with it, which is what `--no-sync` does. The corpus
+cannot see it: the only filesystems whose numbers are stable enough to diff
+between the GNU leg and the Fern leg are the ones reporting no blocks at all,
+and flushing changes nothing there. #9089 carries the four sync calls and the
+classifications they need; #9102 was filed separately for this caller and is the
+same builtin.
+
+**`df` is Linux-only.** `statfs` answers the counts on every native target, but
+not the device, the mount point or the type NAME, and those come from
+`/proc/self/mountinfo` — which is what GNU reads too, visible as one `openat`
+under strace. Darwin has no such file, so an `arm64-darwin` build compiles and
+then fails on its first line with `cannot read table of mounted file systems`.
+Darwin answers all three from `getfsstat(2)`, whose `struct statfs` carries
+`f_mntfromname`, `f_mntonname` and — the part Linux makes hard —
+`f_fstypename`. #9104 is that primitive, shaped as a list rather than a lookup
+because df deduplicates by device across the whole table.
 
 **`stat` cannot report a birth time, a file's SELinux context, or three of
 statfs's fields.** `stat` and `lstat` lower to `newfstatat(2)`, whose `struct
