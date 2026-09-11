@@ -205,7 +205,7 @@ function main(): i32 {
     if (!plan.ok) { eprint(plan.why); return 5; }
     if (!refused(ssarc.lower(typed, [2], plan), "unsupported physical RC value type")) { return 6; }
     // A record instance with type arguments is named by more than its
-    // declaration, and a schema field this vocabulary cannot walk refuses the
+    // declaration, and a schema field this vocabulary cannot WALK refuses the
     // whole schema; a plain record with an array field lowers.
     var wideType: typeinfo.Type = typeinfo.TypeStruct { name: "Box", args: [wide] };
     var wideSchema = semrecords.Record { ty: wideType, fields: [semrecords.Field { name: "xs", ty: f.result }] };
@@ -217,25 +217,36 @@ function main(): i32 {
     var genericPlan = ssaunits.plan(genericFunc, [2]);
     if (!genericPlan.ok) { eprint(genericPlan.why); return 7; }
     if (!refused(ssarc.lower(genericFunc, [2], genericPlan), "unsupported physical RC value type")) { return 8; }
-    var wideField = semrecords.Record { ty: recordType, fields: [semrecords.Field { name: "xs", ty: wide }] };
-    var wideFieldFunc = ssasem.Func { graph: recordGraph, values: [wide, recordType], params: [wide], result: recordType, records: [wideField], enums: [], calls: [] };
+    // A wide array is not such a field. The walk visits only the REFERENCE
+    // fields, and an array of scalars has no element to visit, so it needs its
+    // own box released and nothing more — even though a wide array VALUE stays
+    // out, as the pin above holds.
+    var wideField = semrecords.Record { ty: recordType, fields: [semrecords.Field { name: "xs", ty: f.result },
+        semrecords.Field { name: "ns", ty: wide }] };
+    var wideFieldFunc = ssasem.Func { graph: g, values: [recordType], params: [recordType], result: recordType, records: [wideField], enums: [], calls: [] };
     var wideFieldPlan = ssaunits.plan(wideFieldFunc, [2]);
     if (!wideFieldPlan.ok) { eprint(wideFieldPlan.why); return 9; }
-    if (!refused(ssarc.lower(wideFieldFunc, [2], wideFieldPlan), "unsupported physical RC record field type")) { return 10; }
+    if (!ssarc.lower(wideFieldFunc, [2], wideFieldPlan).ok) { return 10; }
     var recordFunc = ssasem.Func { graph: recordGraph, values: [f.result, recordType], params: [f.result], result: recordType, records: [schema], enums: [], calls: [] };
     var recordPlan = ssaunits.plan(recordFunc, [2]);
     if (!recordPlan.ok) { eprint(recordPlan.why); return 11; }
     if (!ssarc.lower(recordFunc, [2], recordPlan).ok) { return 12; }
-    // A variant field this vocabulary cannot walk refuses the enum; a plain
-    // enum carrying an array payload lowers.
+    // A variant field this vocabulary cannot walk refuses the enum, and it
+    // refuses on ANY variant, not only the one this graph builds; a wide
+    // payload is walkable for the same reason a wide record field is.
     var shapeType: typeinfo.Type = typeinfo.TypeUnion { name: "Shape", args: [] };
     var enumGraph = ssa.SFunc { name: "enum", nparams: 1, nvals: 2, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), ssa.SInst { kind_tag: ssasem.variant_new(), result: 1, args: [0], imm: 0, str: "W" }], term: ret(1) }] };
-    var wideEnum = semrecords.Enum { ty: shapeType, variants: [semrecords.Variant { name: "W", fields: [semrecords.Field { name: "__ev", ty: wide }] }], layout: semrecords.layout_variant() };
-    var wideEnumFunc = ssasem.Func { graph: enumGraph, values: [wide, shapeType], params: [wide], result: shapeType, records: [], enums: [wideEnum], calls: [] };
+    var wideEnum = semrecords.Enum { ty: shapeType, variants: [semrecords.Variant { name: "W", fields: [semrecords.Field { name: "__ev", ty: f.result }] },
+        semrecords.Variant { name: "N", fields: [semrecords.Field { name: "__ev", ty: wideType }] }], layout: semrecords.layout_variant() };
+    var wideEnumFunc = ssasem.Func { graph: enumGraph, values: [f.result, shapeType], params: [f.result], result: shapeType, records: [wideSchema], enums: [wideEnum], calls: [] };
     var wideEnumPlan = ssaunits.plan(wideEnumFunc, [2]);
     if (!wideEnumPlan.ok) { eprint(wideEnumPlan.why); return 13; }
     if (!refused(ssarc.lower(wideEnumFunc, [2], wideEnumPlan), "unsupported physical RC variant field type")) { return 14; }
+    var walkableEnum = semrecords.Enum { ...wideEnum, variants: [semrecords.Variant { name: "W", fields: [semrecords.Field { name: "__ev", ty: f.result }] },
+        semrecords.Variant { name: "N", fields: [semrecords.Field { name: "__ev", ty: wide }] }] };
+    var walkableEnumFunc = ssasem.Func { ...wideEnumFunc, enums: [walkableEnum] };
+    if (!ssarc.lower(walkableEnumFunc, [2], ssaunits.plan(walkableEnumFunc, [2])).ok) { return 59; }
     var arrayEnum = semrecords.Enum { ty: shapeType, variants: [semrecords.Variant { name: "W", fields: [semrecords.Field { name: "__ev", ty: f.result }] }], layout: semrecords.layout_variant() };
     var enumFunc = ssasem.Func { graph: enumGraph, values: [f.result, shapeType], params: [f.result], result: shapeType, records: [], enums: [arrayEnum], calls: [] };
     var enumPlan = ssaunits.plan(enumFunc, [2]);
@@ -387,6 +398,41 @@ function main(): i32 {
     // The bounds are i32 and the receiver is a string; neither is negotiable.
     var badBound = ssasem.Func { ...sliceFunc, values: [strTy, strTy, i32ty, strTy], params: [strTy, strTy, i32ty], result: i32ty };
     if (ssaunits.plan(badBound, [2, 2, 1]).why != "slice bound type") { return 53; }
+    // A schema field the walk never reads only has to LAY OUT, not lower. A
+    // wide scalar ahead of a reference field shifts nothing, because every
+    // backend takes a field's offset from its index on a uniform 8-byte slot,
+    // so the helper reads the string at field 1 and never touches field 0.
+    var dropGraph = ssa.SFunc { name: "drop", nparams: 1, nvals: 2, entry: 7, takes_env: false,
+        blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(1, 1, [], 0)], term: ret(1) }] };
+    var f64ty: typeinfo.Type = typeinfo.TypeFloat { width: 64, polymorphic: false };
+    var wideRec: typeinfo.Type = typeinfo.TypeStruct { name: "Wide", args: [] };
+    var wideRecSchema = semrecords.Record { ty: wideRec, fields: [semrecords.Field { name: "d", ty: f64ty },
+        semrecords.Field { name: "s", ty: strTy }] };
+    var wideFunc = ssasem.Func { graph: dropGraph, values: [wideRec, i32ty], params: [wideRec], result: i32ty,
+        records: [wideRecSchema], enums: [], calls: [] };
+    var widePlan = ssaunits.plan(wideFunc, [3]);
+    if (!widePlan.ok) { eprint(widePlan.why); return 54; }
+    var wideLowered = ssarc.lower(wideFunc, [3], widePlan);
+    if (!wideLowered.ok) { eprint(wideLowered.why); return 55; }
+    var sawField1: boolean = false;
+    var sawField0: boolean = false;
+    for h in ssarc.drop_helpers(wideFunc) {
+        for o in h.ops {
+            if (ir.render_op(o) == "struct_get 1") { sawField1 = true; }
+            if (ir.render_op(o) == "struct_get 0") { sawField0 = true; }
+        }
+    }
+    if (!sawField1) { return 56; }
+    if (sawField0) { return 57; }
+    // A VALUE of that width stays out. Only a construction needs the per-field
+    // store width, and this boundary withholds it (declaration index -1), so
+    // admitting one would store a double through an i32 slot on wasm.
+    var wideVal = ssasem.Func { graph: dropGraph, values: [f64ty, i32ty], params: [f64ty], result: i32ty,
+        records: [], enums: [], calls: [] };
+    var wideValPlan = ssaunits.plan(wideVal, [1]);
+    if (!wideValPlan.ok) { eprint(wideValPlan.why); return 58; }
+    var wideValWhy: string = ssarc.lower(wideVal, [1], wideValPlan).why;
+    if (wideValWhy != "unsupported physical RC value type") { eprint(wideValWhy); return 60; }
     return 0;
 }
 `

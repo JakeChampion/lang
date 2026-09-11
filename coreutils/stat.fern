@@ -1,0 +1,1320 @@
+// stat.fern — GNU-compatible `stat`.
+//
+//   stat [OPTION]... FILE...
+//
+// Two programs under one name, chosen by `-f`: the status of a FILE,
+// and the status of the FILE SYSTEM it resolves on. Each has its own
+// alphabet of `%` directives and they do not overlap — `%t` is the
+// major device number of `st_rdev` in one and the file system's magic
+// number in the other, `%n` is the only letter meaning the same thing
+// in both.
+//
+// The format grammar is the substance. A directive is
+//
+//     % [flags] [width] [.precision] [H|L] conversion
+//
+// with the flags `#`, `0`, `-`, `+`, ` `, `'` and `I`, a decimal width
+// and a decimal precision, and `H` / `L` selecting the major or minor
+// half of a device number. Each conversion is one of three kinds and
+// takes its modifiers from C's printf for that kind: a string honours
+// width and precision and ignores `0` and `#`; an unsigned number
+// honours width, precision and `0` and ignores `+` and a space; the
+// four epoch-seconds conversions are SIGNED and a precision on one of
+// them is the fractional part rather than a minimum digit count —
+// `%.3Y` of a timespec is `981173106.123`, and of a PRE-epoch one it
+// carries the borrow, so (-315521756 s, 500000000 ns) prints
+// `-315521755.500`. A precision of zero is not a fraction of no digits
+// but the raw seconds, which is `%Y` again.
+//
+// An unknown conversion prints `?` and SWALLOWS its byte: `%q` is `?`
+// and `[%5]` is `[?`, the `]` having been the conversion. Under `H` or
+// `L` it does not — those two only stand in front of `d` and `r`, and
+// anything else gives its byte back as literal text, so `%Hx` is `?`
+// then an `x`. The one directive that is fatal is `%%` wearing a
+// modifier: `stat -c '[%5%]' f` writes its `[`, then
+// `stat: '%5%': invalid directive`, and exits 1.
+//
+// `--format` and `--printf` are the same option with two differences,
+// both measured: `--format` writes a newline after each operand and
+// takes its FORMAT literally, `--printf` writes none and reads
+// backslash escapes (`\a \b \e \f \n \r \t \v \\ \" \NNN \xHH`, with
+// a warning and the backslash dropped for anything else, `\'`
+// included).
+//
+// ## What this build cannot answer
+//
+// Three of the record's fields have no primitive behind them, and the
+// directives that read them are REFUSED rather than answered with a
+// plausible-looking value:
+//
+//   - the file birth time (`%w`, `%W`) needs `statx(2)`; `stat` and
+//     `lstat` lower to `newfstatat(2)`, whose `struct stat` has no
+//     such member (#9096). The default multi-line block and `--terse`
+//     both carry it, so both are refused too.
+//   - the SELinux context of a FILE (`%C`) is an extended attribute,
+//     and there is no `getxattr` (#9098). `lib/selinux.fern` answers
+//     the PROCESS's context, which is a different question. GNU only
+//     puts `%C` in the default block and the terse line when
+//     `is_selinux_enabled()`, so on a kernel without SELinux this
+//     blocks the directive and not a mode.
+//   - `statfs` reports six counts and two limits and drops `f_type`,
+//     `f_fsid` and `f_frsize` on the floor (#9097), which are `-f`'s
+//     `%T` / `%t`, `%i` and `%S`. The default `-f` block and
+//     `-t -f` both carry them.
+//
+// Printing GNU's own "unknown" rendering for these — `-` and `0` for
+// a birth time, a zeroed magic number — would be a fiction on a
+// filesystem that does report them, and the oracle corpus would then
+// be measuring our invention. The refusal names the directive, comes
+// only once the operand has been read (GNU reports a file it cannot
+// stat before it formats anything), and exits 1.
+import "std/string";
+import "std/array";
+import "std/i64";
+import "std/u64";
+import "std/io_buffered";
+import "./lib/gnu";
+import "./lib/tz";
+import "./lib/pwdb";
+import "./lib/canon";
+
+function help_text(): string {
+  var out: string = "";
+  out = out + "Usage: " + gnu.prog() + " [OPTION]... FILE...\n";
+  out = out + "Display file or file system status.\n";
+  out = out + "\n";
+  out = out + "  -L, --dereference     follow links\n";
+  out = out + "  -f, --file-system     display file system status instead of file status\n";
+  out = out + "      --cached=MODE     specify how to use cached attributes;\n";
+  out = out + "                          useful on remote file systems. See MODE below\n";
+  out = out + "  -c  --format=FORMAT   use the specified FORMAT instead of the default;\n";
+  out = out + "                          output a newline after each use of FORMAT\n";
+  out = out + "      --printf=FORMAT   like --format, but interpret backslash escapes,\n";
+  out = out + "                          and do not output a mandatory trailing newline;\n";
+  out = out + "                          if you want a newline, include \\n in FORMAT\n";
+  out = out + "  -t, --terse           print the information in terse form\n";
+  out = out + "      --help        display this help and exit\n";
+  out = out + "      --version     output version information and exit\n";
+  out = out + "\n";
+  out = out + "The MODE argument of --cached can be: always, never, or default.\n";
+  out = out + "\n";
+  out = out + "The valid format sequences for files (without --file-system):\n";
+  out = out + "\n";
+  out = out + "  %a   permission bits in octal (note '#' and '0' printf flags)\n";
+  out = out + "  %A   permission bits and file type in human readable form\n";
+  out = out + "  %b   number of blocks allocated (see %B)\n";
+  out = out + "  %B   the size in bytes of each block reported by %b\n";
+  out = out + "  %d   device number in decimal (st_dev)\n";
+  out = out + "  %D   device number in hex (st_dev)\n";
+  out = out + "  %Hd  major device number in decimal\n";
+  out = out + "  %Ld  minor device number in decimal\n";
+  out = out + "  %f   raw mode in hex\n";
+  out = out + "  %F   file type\n";
+  out = out + "  %g   group ID of owner\n";
+  out = out + "  %G   group name of owner\n";
+  out = out + "  %h   number of hard links\n";
+  out = out + "  %i   inode number\n";
+  out = out + "  %m   mount point\n";
+  out = out + "  %n   file name\n";
+  out = out + "  %N   quoted file name with dereference if symbolic link\n";
+  out = out + "  %o   optimal I/O transfer size hint\n";
+  out = out + "  %s   total size, in bytes\n";
+  out = out + "  %r   device type in decimal (st_rdev)\n";
+  out = out + "  %R   device type in hex (st_rdev)\n";
+  out = out + "  %Hr  major device type in decimal, for character/block device special files\n";
+  out = out + "  %Lr  minor device type in decimal, for character/block device special files\n";
+  out = out + "  %t   major device type in hex, for character/block device special files\n";
+  out = out + "  %T   minor device type in hex, for character/block device special files\n";
+  out = out + "  %u   user ID of owner\n";
+  out = out + "  %U   user name of owner\n";
+  out = out + "  %x   time of last access, human-readable\n";
+  out = out + "  %X   time of last access, seconds since Epoch\n";
+  out = out + "  %y   time of last data modification, human-readable\n";
+  out = out + "  %Y   time of last data modification, seconds since Epoch\n";
+  out = out + "  %z   time of last status change, human-readable\n";
+  out = out + "  %Z   time of last status change, seconds since Epoch\n";
+  out = out + "\n";
+  out = out + "Valid format sequences for file systems:\n";
+  out = out + "\n";
+  out = out + "  %a   free blocks available to non-superuser\n";
+  out = out + "  %b   total data blocks in file system\n";
+  out = out + "  %c   total file nodes in file system\n";
+  out = out + "  %d   free file nodes in file system\n";
+  out = out + "  %f   free blocks in file system\n";
+  out = out + "  %l   maximum length of filenames\n";
+  out = out + "  %n   file name\n";
+  out = out + "  %s   block size (for faster transfers)\n";
+  out = out + "\n";
+  out = out + "This build cannot report the file birth time (%w, %W), a file's\n";
+  out = out + "SELinux context (%C), or the file system's type, ID and fundamental\n";
+  out = out + "block size (%t, %T, %i, %S), so the default output, --terse and\n";
+  out = out + "--file-system without a --format are refused. See JakeChampion/lang\n";
+  out = out + "issues 9096, 9097 and 9098.\n";
+  return out;
+}
+
+// ---- options ----------------------------------------------------------------
+function opt_dereference(): i32 {
+  return 1;
+}
+
+function opt_file_system(): i32 {
+  return 2;
+}
+
+function opt_format(): i32 {
+  return 3;
+}
+
+function opt_printf(): i32 {
+  return 4;
+}
+
+function opt_terse(): i32 {
+  return 5;
+}
+
+function opt_cached(): i32 {
+  return 6;
+}
+
+// ---- the parsed directive ---------------------------------------------------
+// One `%` directive. `mod` is 0, `H` or `L`; `conv` is the conversion
+// byte. `raw` records that the directive carried ANY flag, width or
+// precision, which is the only thing that decides whether `%N` quotes
+// (a bare `%N` is `'f'`, and `%-N`, `%12N` and `%.7N` are all `f`).
+struct Directive {
+  minus: boolean,
+  zero: boolean,
+  hash: boolean,
+  plus: boolean,
+  space: boolean,
+  width: i32,
+  prec: i32,
+  has_prec: boolean,
+  raw: boolean,
+  // How many flag characters other than `-` the directive carried,
+  // occurrences and not distinct letters. Nothing reads it but
+  // `link_tail`, whose rule is a count.
+  plain_flags: i32,
+  mod: i32,
+  conv: i32,
+  // `text` is the directive as written, for the `invalid directive`
+  // diagnostic, which quotes it verbatim.
+  text: string,
+}
+
+// The widest field this implementation will pad to. GNU hands the
+// width straight to `sprintf` into a buffer it sized from the width
+// itself, and `stat -c '%2147483646s' f` SEGFAULTS on coreutils 9.4 —
+// measured, not guessed — so there is no parity to hold past the point
+// where the reference stops being a program. A width that cannot
+// plausibly be wanted is clamped rather than allocated.
+function max_width(): i32 {
+  return 1048576;
+}
+
+// ---- the format scanner -----------------------------------------------------
+// A piece of a scanned format: literal bytes, or a directive.
+struct Piece { literal: string, dir: Directive, is_dir: boolean }
+
+function is_digit_byte(b: i32): boolean {
+  return b >= 48 && b <= 57;
+}
+
+// `scan(fmt)` — the format as a list of pieces. A `%` whose directive
+// is `%%` wearing a modifier is fatal here, before any operand is
+// looked at, which is where GNU reports it too.
+function scan(fmt: string, fs_mode: boolean): Piece[] {
+  var out: Piece[] = [];
+  var lit: u8[] = [];
+  var i: i32 = 0;
+  while (i < fmt.len()) {
+    var b: i32 = fmt[i] as i32;
+    if (b != 37) {
+      lit = lit.append(b as u8);
+      i = i + 1;
+      continue;
+    }
+    // A trailing `%` is a literal `%`.
+    if (i + 1 >= fmt.len()) {
+      lit = lit.append(37 as u8);
+      i = i + 1;
+      continue;
+    }
+    var start: i32 = i;
+    i = i + 1;
+    var d: Directive = Directive { minus: false, zero: false, hash: false, plus: false, space: false, width: 0, prec: 0, has_prec: false, raw: false, plain_flags: 0, mod: 0, conv: 0, text: "" };
+    while (i < fmt.len()) {
+      var f: i32 = fmt[i] as i32;
+      if (f == 45) {
+        d = Directive { ...d, minus: true, raw: true };
+        i = i + 1;
+        continue;
+      }
+      if (f == 48) {
+        d = Directive { ...d, zero: true };
+      } else if (f == 35) {
+        d = Directive { ...d, hash: true };
+      } else if (f == 43) {
+        d = Directive { ...d, plus: true };
+      } else if (f == 32) {
+        d = Directive { ...d, space: true };
+      } else if (f == 39 || f == 73) {} else {
+        // `'` (thousands grouping) and `I` (alternative digits) are
+        // accepted and do nothing in the C locale, as they do in glibc.
+        break;
+      }
+      d = Directive { ...d, raw: true, plain_flags: d.plain_flags + 1 };
+      i = i + 1;
+    }
+    var w: i32 = 0;
+    var saw_width: boolean = false;
+    while (i < fmt.len() && is_digit_byte(fmt[i] as i32)) {
+      if (w < max_width()) {
+        w = w * 10 + (fmt[i] as i32 - 48);
+      }
+      saw_width = true;
+      i = i + 1;
+    }
+    if (saw_width) {
+      if (w > max_width()) {
+        w = max_width();
+      }
+      d = Directive { ...d, width: w, raw: true };
+    }
+    if (i < fmt.len() && fmt[i] as i32 == 46) {
+      i = i + 1;
+      var p: i32 = 0;
+      while (i < fmt.len() && is_digit_byte(fmt[i] as i32)) {
+        if (p < max_width()) {
+          p = p * 10 + (fmt[i] as i32 - 48);
+        }
+        i = i + 1;
+      }
+      if (p > max_width()) {
+        p = max_width();
+      }
+      d = Directive { ...d, prec: p, has_prec: true, raw: true };
+    }
+    if (i < fmt.len()) {
+      var m: i32 = fmt[i] as i32;
+      if (m == 72 || m == 76) {
+        d = Directive { ...d, mod: m };
+        i = i + 1;
+      }
+    }
+    if (i >= fmt.len()) {
+      // `%` plus modifiers and nothing to apply them to: the unknown
+      // directive, with no byte left to resume on.
+      out = flush_literal(out, lit);
+      lit = [];
+      out = out.append(Piece { literal: "", dir: Directive { ...d, conv: 0, mod: 0, text: slice_unchecked(fmt, start, i) + "" }, is_dir: true });
+      continue;
+    }
+    var conv: i32 = fmt[i] as i32;
+    i = i + 1;
+    if (d.mod != 0 && !(!fs_mode && (conv == 100 || conv == 114))) {
+      // `H` and `L` select a half of a device number and only `d` and
+      // `r` have halves — and `-f` has no device numbers at all. The
+      // byte that followed is NOT consumed: `%Hx` is `?` and then a
+      // literal `x`, where a plain unknown conversion swallows its own
+      // byte (`%q` is `?`, not `?q`).
+      i = i - 1;
+      out = flush_literal(out, lit);
+      lit = [];
+      out = out.append(Piece { literal: "", dir: Directive { ...d, conv: 0, mod: 0, text: slice_unchecked(fmt, start, i) + "" }, is_dir: true });
+      continue;
+    }
+    d = Directive { ...d, conv: conv, text: slice_unchecked(fmt, start, i) + "" };
+    if (conv == 37 && !d.raw) {
+      lit = lit.append(37 as u8);
+      continue;
+    }
+    out = flush_literal(out, lit);
+    lit = [];
+    out = out.append(Piece { literal: "", dir: d, is_dir: true });
+  }
+  return flush_literal(out, lit);
+}
+
+function flush_literal(out: Piece[], lit: u8[]): Piece[] {
+  if (lit.len() == 0) {
+    return out;
+  }
+  var empty: Directive = Directive { minus: false, zero: false, hash: false, plus: false, space: false, width: 0, prec: 0, has_prec: false, raw: false, plain_flags: 0, mod: 0, conv: 0, text: "" };
+  return out.append(Piece { literal: string_from_bytes_unchecked(lit), dir: empty, is_dir: false });
+}
+
+// ---- backslash escapes (--printf only) --------------------------------------
+function hex_value(b: i32): i32 {
+  if (b >= 48 && b <= 57) {
+    return b - 48;
+  }
+  if (b >= 97 && b <= 102) {
+    return b - 87;
+  }
+  if (b >= 65 && b <= 70) {
+    return b - 55;
+  }
+  return 0 - 1;
+}
+
+// `unescape(s)` — the backslash table `--printf` reads. An escape the
+// table does not hold is a warning naming it and the backslash
+// dropped, which is GNU's `warning: unrecognized escape '\q'` followed
+// by a literal `q`; a backslash at the end of the format is its own
+// warning and stays.
+function unescape(s: string): string {
+  var out: u8[] = [];
+  var i: i32 = 0;
+  while (i < s.len()) {
+    var b: i32 = s[i] as i32;
+    if (b != 92) {
+      out = out.append(b as u8);
+      i = i + 1;
+      continue;
+    }
+    if (i + 1 >= s.len()) {
+      gnu.error("warning: backslash at end of format");
+      out = out.append(92 as u8);
+      i = i + 1;
+      continue;
+    }
+    var c: i32 = s[i + 1] as i32;
+    i = i + 2;
+    if (c == 97) {
+      out = out.append(7 as u8);
+    } else if (c == 98) {
+      out = out.append(8 as u8);
+    } else if (c == 101) {
+      out = out.append(27 as u8);
+    } else if (c == 102) {
+      out = out.append(12 as u8);
+    } else if (c == 110) {
+      out = out.append(10 as u8);
+    } else if (c == 114) {
+      out = out.append(13 as u8);
+    } else if (c == 116) {
+      out = out.append(9 as u8);
+    } else if (c == 118) {
+      out = out.append(11 as u8);
+    } else if (c == 92) {
+      out = out.append(92 as u8);
+    } else if (c == 34) {
+      out = out.append(34 as u8);
+    } else if (c >= 48 && c <= 55) {
+      // Up to three octal digits, wrapping at a byte: `\777` is 0xff.
+      var v: i32 = c - 48;
+      var n: i32 = 1;
+      while (n < 3 && i < s.len() && s[i] as i32 >= 48 && s[i] as i32 <= 55) {
+        v = v * 8 + (s[i] as i32 - 48);
+        i = i + 1;
+        n = n + 1;
+      }
+      out = out.append((v % 256) as u8);
+    } else if (c == 120) {
+      // `\x` wants at least one hex digit and takes at most two.
+      if (i >= s.len() || hex_value(s[i] as i32) < 0) {
+        gnu.error("warning: unrecognized escape '\\x'");
+        out = out.append(120 as u8);
+      } else {
+        var hv: i32 = hex_value(s[i] as i32);
+        i = i + 1;
+        if (i < s.len() && hex_value(s[i] as i32) >= 0) {
+          hv = hv * 16 + hex_value(s[i] as i32);
+          i = i + 1;
+        }
+        out = out.append(hv as u8);
+      }
+    } else {
+      gnu.error("warning: unrecognized escape '\\" + string_from_bytes_unchecked([c as u8]) + "'");
+      out = out.append(c as u8);
+    }
+  }
+  return string_from_bytes_unchecked(out);
+}
+
+// ---- padding ----------------------------------------------------------------
+function spaces(n: i32): string {
+  var out: u8[] = [];
+  var i: i32 = 0;
+  while (i < n) {
+    out = out.append(32 as u8);
+    i = i + 1;
+  }
+  return string_from_bytes_unchecked(out);
+}
+
+function zeros(n: i32): string {
+  var out: u8[] = [];
+  var i: i32 = 0;
+  while (i < n) {
+    out = out.append(48 as u8);
+    i = i + 1;
+  }
+  return string_from_bytes_unchecked(out);
+}
+
+// A string conversion: precision truncates, width pads, `-` pads on
+// the right. `0` and `#` do nothing, as they do to a C `%s`.
+function out_string(d: Directive, s: string): string {
+  var v: string = s;
+  if (d.has_prec && d.prec < v.len()) {
+    v = slice_unchecked(v, 0, d.prec) + "";
+  }
+  if (v.len() >= d.width) {
+    return v;
+  }
+  if (d.minus) {
+    return v + spaces(d.width - v.len());
+  }
+  return spaces(d.width - v.len()) + v;
+}
+
+// A number already rendered in its base, with `sign` ("", "-", "+" or
+// " ") split off so a `0` fill lands after it. Precision is a minimum
+// digit count and suppresses the `0` fill, as in C.
+function out_digits(d: Directive, sign: string, digits: string): string {
+  var body: string = digits;
+  if (d.has_prec && d.prec > body.len()) {
+    body = zeros(d.prec - body.len()) + body;
+  }
+  var v: string = sign + body;
+  if (v.len() >= d.width) {
+    return v;
+  }
+  var pad: i32 = d.width - v.len();
+  if (d.minus) {
+    return v + spaces(pad);
+  }
+  if (d.zero && !d.has_prec) {
+    return sign + zeros(pad) + body;
+  }
+  return spaces(pad) + v;
+}
+
+function out_unsigned(d: Directive, v: u64): string {
+  // `%.0u` of zero writes nothing, which is C's rule for a zero
+  // precision and reachable through `%.0s` on an empty file.
+  if (d.has_prec && d.prec == 0 && v == 0 as u64) {
+    return out_digits(d, "", "");
+  }
+  return out_digits(d, "", v.to_string());
+}
+
+function out_signed(d: Directive, v: i64): string {
+  var sign: string = "";
+  var mag: u64 = v as u64;
+  if (v < 0 as i64) {
+    sign = "-";
+    mag = (0 as i64 - v) as u64;
+  } else if (d.plus) {
+    sign = "+";
+  } else if (d.space) {
+    sign = " ";
+  }
+  return out_digits(d, sign, mag.to_string());
+}
+
+function hex_digits(v: u64): string {
+  if (v == 0 as u64) {
+    return "0";
+  }
+  var out: u8[] = [];
+  var n: u64 = v;
+  while (n > 0 as u64) {
+    var dgt: i32 = (n % (16 as u64)) as i32;
+    if (dgt < 10) {
+      out = out.append((48 + dgt) as u8);
+    } else {
+      out = out.append((87 + dgt) as u8);
+    }
+    n = n / (16 as u64);
+  }
+  var rev: u8[] = [];
+  var i: i32 = out.len() - 1;
+  while (i >= 0) {
+    rev = rev.append(out[i]);
+    i = i - 1;
+  }
+  return string_from_bytes_unchecked(rev);
+}
+
+function out_hex(d: Directive, v: u64): string {
+  var body: string = hex_digits(v);
+  var prefix: string = "";
+  if (d.hash && v != 0 as u64) {
+    prefix = "0x";
+  }
+  if (d.has_prec && d.prec == 0 && v == 0 as u64) {
+    body = "";
+  }
+  return out_digits(d, prefix, body);
+}
+
+function octal_digits(v: u64): string {
+  if (v == 0 as u64) {
+    return "0";
+  }
+  var out: u8[] = [];
+  var n: u64 = v;
+  while (n > 0 as u64) {
+    out = out.append((48 + (n % (8 as u64)) as i32) as u8);
+    n = n / (8 as u64);
+  }
+  var rev: u8[] = [];
+  var i: i32 = out.len() - 1;
+  while (i >= 0) {
+    rev = rev.append(out[i]);
+    i = i - 1;
+  }
+  return string_from_bytes_unchecked(rev);
+}
+
+// `%a` is a C `%o`, so `#` forces a leading zero — on a value that
+// already starts with one (and on zero itself) it changes nothing.
+function out_octal(d: Directive, v: u64): string {
+  var body: string = octal_digits(v);
+  if (d.has_prec && d.prec == 0 && v == 0 as u64) {
+    body = "";
+  }
+  if (d.hash && !body.starts_with("0")) {
+    body = "0" + body;
+  }
+  return out_digits(d, "", body);
+}
+
+// ---- device numbers ---------------------------------------------------------
+// glibc's `major` / `minor`: the low 8 bits and bits 8..19 of the
+// 32-bit legacy encoding, widened to the 64-bit one by the halves
+// above bit 32.
+function dev_major(dev: u64): u64 {
+  return dev >> 8 as u64 & 0xfff as u64 | dev >> 32 as u64 & 0xfffff000 as u64;
+}
+
+function dev_minor(dev: u64): u64 {
+  return dev & 0xff as u64 | dev >> 12 as u64 & 0xffffff00 as u64;
+}
+
+// ---- the file record --------------------------------------------------------
+function s_ifmt(): u32 {
+  return 0xf000 as u32;
+}
+
+function file_type_name(mode: u32, size: i64): string {
+  var t: u32 = mode & s_ifmt();
+  if (t == 0x8000 as u32) {
+    if (size == 0 as i64) {
+      return "regular empty file";
+    }
+    return "regular file";
+  }
+  if (t == 0x4000 as u32) {
+    return "directory";
+  }
+  if (t == 0xa000 as u32) {
+    return "symbolic link";
+  }
+  if (t == 0x2000 as u32) {
+    return "character special file";
+  }
+  if (t == 0x6000 as u32) {
+    return "block special file";
+  }
+  if (t == 0x1000 as u32) {
+    return "fifo";
+  }
+  if (t == 0xc000 as u32) {
+    return "socket";
+  }
+  return "weird file";
+}
+
+function type_letter(mode: u32): string {
+  var t: u32 = mode & s_ifmt();
+  if (t == 0x4000 as u32) {
+    return "d";
+  }
+  if (t == 0xa000 as u32) {
+    return "l";
+  }
+  if (t == 0x2000 as u32) {
+    return "c";
+  }
+  if (t == 0x6000 as u32) {
+    return "b";
+  }
+  if (t == 0x1000 as u32) {
+    return "p";
+  }
+  if (t == 0xc000 as u32) {
+    return "s";
+  }
+  if (t == 0x8000 as u32) {
+    return "-";
+  }
+  return "?";
+}
+
+// One rwx triple. `extra` is the setuid / setgid / sticky bit for this
+// triple and `hi` / `lo` the letters it takes when the execute bit is
+// set and when it is not.
+function triple(mode: u32, shift: i32, extra: u32, hi: string, lo: string): string {
+  var bits: u32 = mode >> shift as u32 & 7 as u32;
+  var out: string = "-";
+  if ((bits & 4 as u32) != 0 as u32) {
+    out = "r";
+  }
+  var w: string = "-";
+  if ((bits & 2 as u32) != 0 as u32) {
+    w = "w";
+  }
+  var x: string = "-";
+  if ((bits & 1 as u32) != 0 as u32) {
+    x = "x";
+  }
+  if ((mode & extra) != 0 as u32) {
+    if ((bits & 1 as u32) != 0 as u32) {
+      x = hi;
+    } else {
+      x = lo;
+    }
+  }
+  return out + w + x;
+}
+
+function mode_string(mode: u32): string {
+  return type_letter(mode) + triple(mode, 6, 0x800 as u32, "s", "S") + triple(mode, 3, 0x400 as u32, "s", "S") + triple(mode, 0, 0x200 as u32, "t", "T");
+}
+
+// ---- timestamps -------------------------------------------------------------
+function pad2(n: i32): string {
+  if (n < 10) {
+    return "0" + n.to_string();
+  }
+  return n.to_string();
+}
+
+function pad_year(y: i32): string {
+  var mag: i32 = y;
+  var sign: string = "";
+  if (y < 0) {
+    sign = "-";
+    mag = 0 - y;
+  }
+  var s: string = mag.to_string();
+  while (s.len() < 4) {
+    s = "0" + s;
+  }
+  return sign + s;
+}
+
+function pad9(n: i64): string {
+  var s: string = n.to_string();
+  while (s.len() < 9) {
+    s = "0" + s;
+  }
+  return s;
+}
+
+// `%x` / `%y` / `%z`: `nstrftime("%Y-%m-%d %H:%M:%S.%N %z")` in the
+// LOCAL zone, which is `lib/tz.fern`'s tzset.
+function human_time(z: tz.Zone, sec: i64, nsec: i64): string {
+  var dt: DateTime = z.civil(sec);
+  var off: i32 = z.offset_at(sec);
+  var sign: string = "+";
+  var mag: i32 = off;
+  if (off < 0) {
+    sign = "-";
+    mag = 0 - off;
+  }
+  return pad_year(dt.date.year) + "-" + pad2(dt.date.month) + "-" + pad2(dt.date.day) + " " + pad2(dt.time.hour) + ":" + pad2(dt.time.minute) + ":" + pad2(dt.time.second) + "." + pad9(nsec) + " " + sign + pad2(mag / 3600) + pad2(mag / 60 % 60);
+}
+
+// `%X` / `%Y` / `%Z` with a precision: the whole timespec as one
+// signed decimal. A negative second with a non-zero remainder carries,
+// so (-315521755, 250000000) is -315521754.750 and not -315521755.250.
+function epoch_time(d: Directive, sec: i64, nsec: i64): string {
+  if (!d.has_prec || d.prec == 0) {
+    return out_signed(d, sec);
+  }
+  var whole: i64 = sec;
+  var frac: i64 = nsec;
+  var sign: string = "";
+  if (sec < 0 as i64) {
+    sign = "-";
+    if (nsec == 0 as i64) {
+      whole = 0 as i64 - sec;
+    } else {
+      whole = 0 as i64 - (sec + 1 as i64);
+      frac = 1000000000 as i64 - nsec;
+    }
+  } else if (d.plus) {
+    sign = "+";
+  } else if (d.space) {
+    sign = " ";
+  }
+  var f: string = pad9(frac);
+  while (f.len() < d.prec) {
+    f = f + "0";
+  }
+  var digits: string = whole.to_string() + "." + (slice_unchecked(f, 0, d.prec) + "");
+  // The precision is spent on the fraction, so what is left is a plain
+  // width fill — a `0` flag pads after the sign, as it does for a
+  // number with no precision at all.
+  return out_digits(Directive { ...d, has_prec: false }, sign, digits);
+}
+
+// ---- mount point ------------------------------------------------------------
+function parent_of(p: string): string {
+  if (p == "/") {
+    return "/";
+  }
+  var i: i32 = p.len() - 1;
+  while (i > 0 && p[i] as i32 != 47) {
+    i = i - 1;
+  }
+  if (i == 0) {
+    return "/";
+  }
+  return slice_unchecked(p, 0, i) + "";
+}
+
+function dev_of(path: string): Option[i64] {
+  match (stat(path)) {
+    Ok(st) => {
+      return Some(st.dev);
+    },
+    Err(e) => {
+      return None;
+    }
+  }
+}
+
+// `%m` — the mount point the file sits on. GNU canonicalizes the
+// operand first (`stat -c '%m' -` is `failed to canonicalize '-'`),
+// then walks up from the containing directory while `st_dev` stays
+// the same; the last path that still matched is the answer.
+function mount_point(name: string, st: FileStat): Option[string] {
+  var real: string = "";
+  match (canon.canonicalize(name, canon.existing(), false)) {
+    Ok(p) => {
+      real = p;
+    },
+    Err(e) => {
+      return None;
+    }
+  }
+  var cur: string = real;
+  if (!st.is_dir) {
+    cur = parent_of(real);
+  }
+  var dev: i64 = st.dev;
+  while (cur != "/") {
+    var up: string = parent_of(cur);
+    match (dev_of(up)) {
+      Some(d) => {
+        if (d != dev) {
+          return Some(cur);
+        }
+      },
+      None => {
+        return Some(cur);
+      }
+    }
+    cur = up;
+  }
+  return Some("/");
+}
+
+// ---- what a directive is answered from --------------------------------------
+// The record one operand contributes, gathered once so a format naming
+// a field twice costs one syscall.
+struct Item { name: string, st: FileStat, link: string, is_link: boolean }
+
+struct FsItem { name: string, fs: FsStat }
+
+function stat_zero(): FileStat {
+  return FileStat { is_file: false, is_dir: false, size: 0 as i64, mode: 0 as u32, nlink: 0 as u32, uid: 0 as u32, gid: 0 as u32, dev: 0 as i64, rdev: 0 as i64, ino: 0 as i64, blksize: 0 as i64, blocks: 0 as i64, atime: 0 as i64, atime_nsec: 0 as i64, mtime: 0 as i64, mtime_nsec: 0 as i64, ctime: 0 as i64, ctime_nsec: 0 as i64 };
+}
+
+function fsstat_zero(): FsStat {
+  return FsStat { block_size: 0 as i64, blocks: 0 as i64, blocks_free: 0 as i64, blocks_avail: 0 as i64, files: 0 as i64, files_free: 0 as i64, name_max: 0 as i64, path_max: 0 as i64 };
+}
+
+// ---- rendering one directive ------------------------------------------------
+// What one directive contributes. `failed` is raised by the directives
+// that can fail on their own — `%m` is the only one — which print `?`,
+// say so on stderr, and cost the exit status without stopping the run.
+struct Rendered { text: string, failed: boolean }
+
+// The conversion was not one of this mode's. The scanner has already
+// decided which byte the scan resumes on, so nothing but the `?` is
+// left to write.
+function unknown_rendered(): Rendered {
+  return Rendered { text: "?", failed: false };
+}
+
+function ok_rendered(s: string): Rendered {
+  return Rendered { text: s, failed: false };
+}
+
+function render_file(d: Directive, it: Item, z: tz.Zone): Rendered {
+  var st: FileStat = it.st;
+  var c: i32 = d.conv;
+  if (d.mod != 0) {
+    // The scanner only lets `H` and `L` through in front of `d` and
+    // `r`, so the half is all that is left to choose.
+    var dev: u64 = st.dev as u64;
+    if (c == 114) {
+      dev = st.rdev as u64;
+    }
+    if (d.mod == 72) {
+      return ok_rendered(out_unsigned(d, dev_major(dev)));
+    }
+    return ok_rendered(out_unsigned(d, dev_minor(dev)));
+  }
+  if (c == 97) {
+    return ok_rendered(out_octal(d, (st.mode & 0xfff as u32) as u64));
+  }
+  if (c == 65) {
+    return ok_rendered(out_string(d, mode_string(st.mode)));
+  }
+  if (c == 98) {
+    return ok_rendered(out_unsigned(d, st.blocks as u64));
+  }
+  if (c == 66) {
+    return ok_rendered(out_unsigned(d, 512 as u64));
+  }
+  if (c == 100) {
+    return ok_rendered(out_unsigned(d, st.dev as u64));
+  }
+  if (c == 68) {
+    return ok_rendered(out_hex(d, st.dev as u64));
+  }
+  if (c == 102) {
+    return ok_rendered(out_hex(d, st.mode as u64));
+  }
+  if (c == 70) {
+    return ok_rendered(out_string(d, file_type_name(st.mode, st.size)));
+  }
+  if (c == 103) {
+    return ok_rendered(out_unsigned(d, st.gid as u64));
+  }
+  if (c == 71) {
+    return ok_rendered(out_string(d, group_text(st.gid as i64)));
+  }
+  if (c == 104) {
+    return ok_rendered(out_unsigned(d, st.nlink as u64));
+  }
+  if (c == 105) {
+    return ok_rendered(out_unsigned(d, st.ino as u64));
+  }
+  if (c == 109) {
+    match (mount_point(it.name, st)) {
+      Some(mp) => {
+        return ok_rendered(out_string(d, mp));
+      },
+      None => {
+        gnu.error("failed to canonicalize " + gnu.quotea(it.name) + ": No such file or directory");
+        return Rendered { text: "?", failed: true };
+      }
+    }
+  }
+  if (c == 110) {
+    return ok_rendered(out_string(d, it.name));
+  }
+  if (c == 78) {
+    return ok_rendered(quoted_name(d, it));
+  }
+  if (c == 111) {
+    return ok_rendered(out_unsigned(d, st.blksize as u64));
+  }
+  if (c == 114) {
+    return ok_rendered(out_unsigned(d, st.rdev as u64));
+  }
+  if (c == 82) {
+    return ok_rendered(out_hex(d, st.rdev as u64));
+  }
+  if (c == 115) {
+    return ok_rendered(out_unsigned(d, st.size as u64));
+  }
+  if (c == 116) {
+    return ok_rendered(out_hex(d, dev_major(st.rdev as u64)));
+  }
+  if (c == 84) {
+    return ok_rendered(out_hex(d, dev_minor(st.rdev as u64)));
+  }
+  if (c == 117) {
+    return ok_rendered(out_unsigned(d, st.uid as u64));
+  }
+  if (c == 85) {
+    return ok_rendered(out_string(d, user_text(st.uid as i64)));
+  }
+  if (c == 120) {
+    return ok_rendered(out_string(d, human_time(z, st.atime, st.atime_nsec)));
+  }
+  if (c == 88) {
+    return ok_rendered(epoch_time(d, st.atime, st.atime_nsec));
+  }
+  if (c == 121) {
+    return ok_rendered(out_string(d, human_time(z, st.mtime, st.mtime_nsec)));
+  }
+  if (c == 89) {
+    return ok_rendered(epoch_time(d, st.mtime, st.mtime_nsec));
+  }
+  if (c == 122) {
+    return ok_rendered(out_string(d, human_time(z, st.ctime, st.ctime_nsec)));
+  }
+  if (c == 90) {
+    return ok_rendered(epoch_time(d, st.ctime, st.ctime_nsec));
+  }
+  return unknown_rendered();
+}
+
+// `%N`. A BARE `%N` quotes with gnulib's shell-escape-always, which is
+// `gnu.quotea`; a directive carrying any flag, width or precision
+// prints the raw name instead and applies the modifiers to the name
+// and to a link target separately.
+function quoted_name(d: Directive, it: Item): string {
+  if (!d.raw) {
+    if (it.is_link) {
+      return gnu.quotea(it.name) + " -> " + gnu.quotea(it.link);
+    }
+    return gnu.quotea(it.name);
+  }
+  if (it.is_link) {
+    return out_string(d, it.name) + " -> " + out_string(d, it.link) + link_tail(d);
+  }
+  return out_string(d, it.name);
+}
+
+// GNU 9.4 writes a stray `s` after a symlink's target when `%N` carries
+// exactly ONE flag character other than `-`: `%#N`, `%+N`, `%0N`, `% N`,
+// `%'N`, `%IN`, `%#-N` and `%#.5N` all show it, and `%-N`, `%##N`, `%#+N`,
+// `%###N` and a bare width or precision do not. It is the `s` out_string
+// writes over the conversion, reached one byte past where GNU meant to —
+// glibc's own printf does nothing of the kind with any of these formats,
+// so it is GNU's buffer and not the C library's. Measured across the flag
+// space rather than derived; the corpus pins the zero-, one-, two- and
+// three-flag shapes, so a GNU that stops doing it turns that gate red
+// rather than going unnoticed.
+function link_tail(d: Directive): string {
+  if (d.plain_flags == 1) {
+    return "s";
+  }
+  return "";
+}
+
+// `%U` / `%G`: the name behind the numeric id, or the id itself when
+// the database has none — which is what GNU prints for an orphaned
+// file.
+function user_text(uid: i64): string {
+  match (pwdb.user_by_uid(uid)) {
+    Some(u) => {
+      return u.name;
+    },
+    None => {
+      return uid.to_string();
+    }
+  }
+}
+
+function group_text(gid: i64): string {
+  match (pwdb.group_name(gid)) {
+    Some(n) => {
+      return n;
+    },
+    None => {
+      return gid.to_string();
+    }
+  }
+}
+
+function render_fs(d: Directive, it: FsItem): Rendered {
+  var fs: FsStat = it.fs;
+  var c: i32 = d.conv;
+  if (d.mod != 0) {
+    return unknown_rendered();
+  }
+  if (c == 97) {
+    return ok_rendered(out_unsigned(d, fs.blocks_avail as u64));
+  }
+  if (c == 98) {
+    return ok_rendered(out_unsigned(d, fs.blocks as u64));
+  }
+  if (c == 99) {
+    return ok_rendered(out_unsigned(d, fs.files as u64));
+  }
+  if (c == 100) {
+    return ok_rendered(out_unsigned(d, fs.files_free as u64));
+  }
+  if (c == 102) {
+    return ok_rendered(out_unsigned(d, fs.blocks_free as u64));
+  }
+  if (c == 108) {
+    return ok_rendered(out_unsigned(d, fs.name_max as u64));
+  }
+  if (c == 110) {
+    return ok_rendered(out_string(d, it.name));
+  }
+  if (c == 115) {
+    return ok_rendered(out_unsigned(d, fs.block_size as u64));
+  }
+  return unknown_rendered();
+}
+
+// ---- the refusal --------------------------------------------------------------
+// `blocked(d, fs_mode)` — the name of the field this build has no
+// primitive for when `d` reads one, else "". See the header for what
+// stands behind each.
+function blocked(d: Directive, fs_mode: boolean): string {
+  if (d.conv == 0) {
+    return "";
+  }
+  if (fs_mode) {
+    if (d.conv == 105 || d.conv == 83 || d.conv == 116 || d.conv == 84) {
+      return "%" + string_from_bytes_unchecked([d.conv as u8]);
+    }
+    return "";
+  }
+  if (d.conv == 119 || d.conv == 87 || d.conv == 67) {
+    return "%" + string_from_bytes_unchecked([d.conv as u8]);
+  }
+  return "";
+}
+
+// `render_pieces` walks the format for one operand, writing each piece
+// straight into the output buffer, and dies where GNU dies: on `%%`
+// wearing a modifier, and on a directive this build cannot answer. Both
+// leave the text already written in place, which is what makes
+// `stat -c '[%5%]' f` write its `[` before the diagnostic.
+function render_pieces(o: io_buffered.BufWriter, pieces: Piece[], fs_mode: boolean, it: Item, fs: FsItem, z: tz.Zone): (io_buffered.BufWriter, boolean) {
+  var w: io_buffered.BufWriter = o;
+  var failed: boolean = false;
+  var i: i32 = 0;
+  while (i < pieces.len()) {
+    if (!pieces[i].is_dir) {
+      w = gnu.put(w, pieces[i].literal);
+      i = i + 1;
+      continue;
+    }
+    var d: Directive = pieces[i].dir;
+    if (d.conv == 37) {
+      gnu.die(w, gnu.quote(d.text) + ": invalid directive", 1);
+    }
+    var stop: string = blocked(d, fs_mode);
+    if (stop != "") {
+      gnu.die(w, stop + " is not supported on this system", 1);
+    }
+    var r: Rendered = unknown_rendered();
+    if (fs_mode) {
+      r = render_fs(d, fs);
+    } else {
+      r = render_file(d, it, z);
+    }
+    w = gnu.put(w, r.text);
+    if (r.failed) {
+      failed = true;
+    }
+    i = i + 1;
+  }
+  return (w, failed);
+}
+
+// Whether the format asks for a human-readable time, which is the only
+// thing that makes the local zone worth reading off disk.
+function needs_zone(pieces: Piece[]): boolean {
+  var i: i32 = 0;
+  while (i < pieces.len()) {
+    var c: i32 = pieces[i].dir.conv;
+    if (pieces[i].is_dir && (c == 120 || c == 121 || c == 122)) {
+      return true;
+    }
+    i = i + 1;
+  }
+  return false;
+}
+
+// ---- one operand ------------------------------------------------------------
+function stat_of(name: string, deref: boolean): Result[FileStat, IoError] {
+  if (name == "-") {
+    return stdin().stat();
+  }
+  if (deref) {
+    return stat(name);
+  }
+  return lstat(name);
+}
+
+function is_symlink(st: FileStat): boolean {
+  return (st.mode & s_ifmt()) == 0xa000 as u32;
+}
+
+function do_file(o: io_buffered.BufWriter, pieces: Piece[], name: string, deref: boolean, newline: boolean, z: tz.Zone, builtin: string): (io_buffered.BufWriter, boolean) {
+  var w: io_buffered.BufWriter = o;
+  match (stat_of(name, deref)) {
+    Ok(st) => {
+      var link: string = "";
+      var is_link: boolean = is_symlink(st);
+      if (is_link) {
+        match (read_link(name)) {
+          Ok(t) => {
+            link = t;
+          },
+          Err(e) => {
+            is_link = false;
+          }
+        }
+      }
+      if (builtin != "") {
+        gnu.die(w, builtin, 1);
+      }
+      var it: Item = Item { name: name, st: st, link: link, is_link: is_link };
+      var empty_fs: FsItem = FsItem { name: name, fs: fsstat_zero() };
+      var rendered: (io_buffered.BufWriter, boolean) = render_pieces(w, pieces, false, it, empty_fs, z);
+      w = rendered.0;
+      if (newline) {
+        w = gnu.put(w, "\n");
+      }
+      return (w, !rendered.1);
+    },
+    Err(e) => {
+      w = gnu.error_out(w, "cannot statx " + gnu.quotea(name) + ": " + gnu.io_error_text(e));
+      return (w, false);
+    }
+  }
+}
+
+function do_fs(o: io_buffered.BufWriter, pieces: Piece[], name: string, newline: boolean, builtin: string): (io_buffered.BufWriter, boolean) {
+  var w: io_buffered.BufWriter = o;
+  match (statfs(name)) {
+    Ok(fs) => {
+      if (builtin != "") {
+        gnu.die(w, builtin, 1);
+      }
+      var it: FsItem = FsItem { name: name, fs: fs };
+      var empty_st: Item = Item { name: name, st: stat_zero(), link: "", is_link: false };
+      var rendered: (io_buffered.BufWriter, boolean) = render_pieces(w, pieces, true, empty_st, it, tz.utc_zone());
+      w = rendered.0;
+      if (newline) {
+        w = gnu.put(w, "\n");
+      }
+      return (w, !rendered.1);
+    },
+    Err(e) => {
+      w = gnu.error_out(w, "cannot read file system information for " + gnu.quotea(name) + ": " + gnu.io_error_text(e));
+      return (w, false);
+    }
+  }
+}
+
+// ---- main -------------------------------------------------------------------
+function main(): i32 {
+  var opts: gnu.Opt[] = [];
+  opts = opts.append(gnu.flag("L", "dereference", opt_dereference()));
+  opts = opts.append(gnu.flag("f", "file-system", opt_file_system()));
+  opts = opts.append(gnu.valued("c", "format", opt_format()));
+  opts = opts.append(gnu.valued("", "printf", opt_printf()));
+  opts = opts.append(gnu.flag("t", "terse", opt_terse()));
+  opts = opts.append(gnu.valued("", "cached", opt_cached()));
+
+  var deref: boolean = false;
+  var fs_mode: boolean = false;
+  var terse: boolean = false;
+  var format: string = "";
+  var have_format: boolean = false;
+  var escapes: boolean = false;
+  var g: gnu.Getopt = gnu.getopt_new(args(), opts, "stat", help_text(), 1);
+  while (true) {
+    var r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    g = r.1;
+    match (r.0) {
+      Some(m) => {
+        if (m.id == opt_dereference()) {
+          deref = true;
+        } else if (m.id == opt_file_system()) {
+          fs_mode = true;
+        } else if (m.id == opt_terse()) {
+          terse = true;
+        } else if (m.id == opt_format()) {
+          format = m.value;
+          have_format = true;
+          escapes = false;
+        } else if (m.id == opt_printf()) {
+          format = m.value;
+          have_format = true;
+          escapes = true;
+        } else if (m.id == opt_cached()) {
+          // The value is validated and then dropped: `always`, `never`
+          // and `default` all name a statx(2) AT_STATX_ flag this
+          // build has no statx to hand it to, and the answer on a
+          // local filesystem is the same either way.
+          var names: string[] = ["default", "never", "always"];
+          var ignored: i32 = gnu.argmatch(m.value, names, "--cached");
+        }
+      },
+      None => {
+        break;
+      }
+    }
+  }
+
+  var operands: string[] = g.operands();
+  if (operands.len() == 0) {
+    gnu.die_usage("missing operand", 1);
+  }
+
+  // Each of the four built-in layouts names a field no primitive
+  // reports, so there is nothing to render; the refusal waits until the
+  // operand has been read, because GNU reports an operand it cannot stat
+  // before it ever formats one. See the header.
+  var builtin: string = "";
+  if (!have_format) {
+    if (fs_mode && terse) {
+      builtin = "--terse --file-system requires %i, which is not supported on this system";
+    } else if (fs_mode) {
+      builtin = "--file-system requires %t, which is not supported on this system";
+    } else if (terse) {
+      builtin = "--terse requires %W, which is not supported on this system";
+    } else {
+      builtin = "the default output requires %w, which is not supported on this system";
+    }
+  }
+
+  if (escapes) {
+    format = unescape(format);
+  }
+  var pieces: Piece[] = scan(format, fs_mode);
+
+  var z: tz.Zone = tz.utc_zone();
+  if (needs_zone(pieces)) {
+    z = tz.local_zone();
+  }
+  var status: i32 = 0;
+  var o: io_buffered.BufWriter = gnu.out_new();
+  var i: i32 = 0;
+  while (i < operands.len()) {
+    var name: string = operands[i];
+    if (fs_mode && name == "-") {
+      o = gnu.error_out(o, "using '-' to denote standard input does not work in file system mode");
+      status = 1;
+      i = i + 1;
+      continue;
+    }
+    var res: (io_buffered.BufWriter, boolean) = (o, true);
+    if (fs_mode) {
+      res = do_fs(o, pieces, name, !escapes, builtin);
+    } else {
+      res = do_file(o, pieces, name, deref, !escapes, z, builtin);
+    }
+    o = res.0;
+    if (!res.1) {
+      status = 1;
+    }
+    i = i + 1;
+  }
+  gnu.finish(o);
+  return status;
+}

@@ -574,6 +574,25 @@ enum Chain { End, Link(i32, Chain) }
     if (s != "ab") { return 2; }
     return 0;
 }
+// Schema fields the drop walk never reads: each box is built by the AST-lowered
+// main and released by a produced function, so the reference field past the wide
+// one has to land on the same offset under both layouts.
+struct Boxed { d: f64, s: string }
+struct Deep { a: i64, xs: i32[], d: f64, s: string }
+struct Paired { pt: (i32, f64), s: string }
+struct Longs { ns: i64[], s: string }
+enum Span { Empty, Wide(f64, string) }
+@noinline function boxed_len(own b: Boxed): i32 { return b.s.len(); }
+@noinline function deep_len(own d: Deep): i32 { return d.s.len() + d.xs.len(); }
+@noinline function paired_len(own p: Paired): i32 { return p.s.len(); }
+@noinline function longs_len(own l: Longs): i32 { return l.s.len(); }
+@noinline function span_len(own sp: Span): i32 {
+    match (sp) {
+        Wide(_, s) => { return s.len(); },
+        Empty => { return 0; }
+    }
+    return 0 - 1;
+}
 function main(): i32 {
     var a: i32[] = pick(0);
     var b: i32[] = pick(1);
@@ -643,6 +662,11 @@ function main(): i32 {
     print_int(sum_for([])); print("");
     print_int(head_of("abcdef", 3)); print(""); print_int(mid_of(0)); print("");
     print_int(temp_slice(0)); print(""); print_int(scan_slices("abcd")); print("");
+    print_int(boxed_len(Boxed { d: 1.5, s: "abcd" })); print("");
+    print_int(deep_len(Deep { a: 7, xs: [1, 2, 3], d: 2.5, s: "xy" })); print("");
+    print_int(paired_len(Paired { pt: (9, 0.5), s: "abc" })); print("");
+    print_int(longs_len(Longs { ns: [1, 2], s: "hello" })); print("");
+    print_int(span_len(Wide(1.5, "abcde"))); print(""); print_int(span_len(Empty)); print("");
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }
@@ -680,7 +704,7 @@ function main(): i32 {
 // nested_for(3) walks [0,1,2], [1,2,3], [2,3,4] skipping every 1 and breaking
 // at the 4: 2 + (2+3) + (2+3) = 12. copy_words(2) is 2 words of 2 bytes = 4,
 // and an empty array iterates zero times.
-const semsourceRCWant = "1\n4\n5\n-3\n-2\n2\n0\n1\n5\n5\n12\n1\n8\n12\n0\n3\n3\n6\n4\n2\n0\n7\n31\n1\n0\n2\n22\n10\n7\n2\n5\n14\n7\n9\n4\n7\n1\n4\n8\n13\n14\n3\n9\n7\n3\n5\n5\n2\n2\n9\n36\n0\n4\n6\n6\n9\n7\n0\n3\n109\n9\n12\n4\n0\n3\n9\n3\n4\n"
+const semsourceRCWant = "1\n4\n5\n-3\n-2\n2\n0\n1\n5\n5\n12\n1\n8\n12\n0\n3\n3\n6\n4\n2\n0\n7\n31\n1\n0\n2\n22\n10\n7\n2\n5\n14\n7\n9\n4\n7\n1\n4\n8\n13\n14\n3\n9\n7\n3\n5\n5\n2\n2\n9\n36\n0\n4\n6\n6\n9\n7\n0\n3\n109\n9\n12\n4\n0\n3\n9\n3\n4\n4\n5\n3\n5\n5\n0\n"
 
 const semsourceRCDriver = `import "./semsource"; import "./ssarc"; import "./ssaunits"; import "./ssa";
 import "./parser"; import "./lexer"; import "./irlower"; import "./ir";
