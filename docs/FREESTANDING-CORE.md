@@ -53,6 +53,7 @@ costs a silent failure on the first target that lacks it.
 | `fs` | `read_file`, `write_file`, `open_reader`, … | a filesystem |
 | `fsmode` | `write_file_exec`, `access`, `chmod`, `umask` | permission bits on a filesystem entry, and the mask a creation keeps them through |
 | `fsinfo` | `statfs` | a filesystem with a size and a name-length limit, rather than files on one |
+| `fsnode` | `mknod` | a filesystem entry that is neither a file nor a directory: a FIFO, or a character or block device node |
 | `userid` | `geteuid`, `getegid` | a user the process can be |
 | `host` | `hostname` | a node name: uname(2) on Linux, kern.hostname on Darwin; `""` on WASI, which has none |
 | `signal` | `signal_ignore`, `signal_default` | a host that can deliver a signal to a process; a no-op on WASI, which cannot |
@@ -161,6 +162,49 @@ than discovering:
     a kernel would resolve it. That bound is the whole `fs` family's, not
     these five's, but a `ln` or `mkdir` operand is far likelier to be absolute
     than a `read_file` one.
+
+**`truncate` is plain `fs`, and `mknod` is the one that is not.** Both
+create or change an entry, which is why the pair is worth stating
+together. A LENGTH is not a permission bit: a host can serve files, have
+no mode word at all, and still know how long each one is, and both WASI
+previews can set a size through a descriptor — `fd_filestat_set_size` on
+preview 1, `descriptor.set-size` on preview 2. Neither has a PATH-based
+form of it, which is an implementation detail of the backends rather than
+a classification one: the helper opens the entry without CREATE or
+TRUNCATE, sets the size, and drops the descriptor.
+
+**`fsnode` is a fourth split off `fs`, and the absence it names is the
+kind of the entry rather than anything about it.** `fs` is the files and
+the directories. `fsnode` is everything else an entry can be: a FIFO, and
+a character or block device node. Neither WASI preview has a call that
+creates one — preview 1's `path_open` can only make a regular file and
+the component model's `descriptor.open-at` the same — so the question
+cannot be asked there.
+
+It is deliberately NOT `fsmode`, even though `mknod`'s argument is a mode
+word and a wrong-reason-right-answer was available there. What a wasm
+host lacks here is not permission bits; it is the *kind*. And it is not
+`fs`, which would make the call expressible on a target that cannot make
+the entry — and the nearest stand-in is worse than the `geteuid`-answers-0
+failure rather than better: a regular file where a FIFO was asked for
+reads back as the wrong KIND from `stat`, so a program that opened it
+would block forever on a read that a pipe would have answered.
+
+`internal/caps` files it under plain `fs`, beside `truncate`: for a
+dependency grant the question is only whether filesystem reach should be
+visible, and creating an entry is filesystem reach whatever kind it is.
+
+One thing about `mknod` is worth stating rather than discovering, and it
+is not a capability matter. The major / minor pair is Fern's own, packed
+into the target's `dev_t` by each backend, because the two hosted kernels
+disagree about the layout: Linux SPLITS the minor around the major
+(minor[7:0], major[11:0], then minor[19:8] from bit 20) and XNU does not
+(a 24-bit minor under an 8-bit major). A program that computed the word
+itself would be writing a number that means something different on the
+other native target. The packing is lossy, and `mknodat` ignores every
+bit of `dev` above 31, so a pair too wide for the fields cannot be caught
+by the kernel on its own: each backend substitutes an S_IFMT no file type
+uses, for which the kernel answers EINVAL.
 
 **`rename` and `set_file_times` are WASI calls too, and one of them has a
 range WASI cannot express.** They are `path_rename` and
