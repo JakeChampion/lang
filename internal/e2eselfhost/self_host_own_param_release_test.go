@@ -78,6 +78,30 @@ func ownParamReleaseMain(body string) string {
 func ownParamReleaseCases() []ownParamReleaseCase {
 	return []ownParamReleaseCase{
 		{
+			// #8628: one exit returns the param bare, a sibling exit supersedes
+			// it with a spread that OVERRIDES an rc field. The bare return used
+			// to disqualify the whole param from an exit-release row
+			// (struct_returned_bare), so the superseding exit released nothing
+			// and the overridden field's old buffer leaked once per call —
+			// 10002/5000, 360,080 bytes on the issue's own reproducer.
+			//
+			// The row is granted now and the BARE exit alone elides its release
+			// (returned_own_struct_param_slot), which is the move: there is no
+			// return-transfer retain for structs, so eliding the dec is the
+			// whole hand-off. A LOWER free count here is that elision spreading
+			// to the superseding exit; a HIGHER one is the bare exit releasing a
+			// box it just handed the caller, which the underflow check catches
+			// as exit 99.
+			name: "own_bare_ret_sibling_supersedes",
+			src: ownParamReleaseHead + `@noinline
+function flush(own p: P, k: i32): P {
+    if (k < 2) { return p; }
+    return P { ...p, s: w(k), n: 0 };
+}` +
+				ownParamReleaseMain(`var q: P = flush(P { s: w(i), n: i }, i % 4); x = x + q.n + q.s.len();`),
+			want: 63, balance: true,
+		},
+		{
 			// THE BORROWED ROW, half closed. Was 400/100 live 16800 — the
 			// argument temp and the call result both stranded; the result is
 			// released now (400/200 live 12000), the temp is not.
