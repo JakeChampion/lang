@@ -239,6 +239,59 @@ function text_of(e: IoError): string {
   }
 }
 
+// `relative(p, from)` — `p` written relative to `from`, both absolute
+// and already resolved: one `..` per component of `from` past their
+// common prefix, then what is left of `p`. Nothing left on either side
+// is `.`.
+//
+// Shared by `realpath --relative-to` and `ln -r`, which compute the
+// same thing: the text a name has to have to be read from inside
+// another directory.
+pub function relative(p: string, from: string): string {
+  var a: string[] = components(p);
+  var b: string[] = components(from);
+  var same: i32 = 0;
+  while (same < a.len() && same < b.len() && a[same] == b[same]) {
+    same = same + 1;
+  }
+  var out: string = "";
+  var i: i32 = same;
+  while (i < b.len()) {
+    if (out.len() > 0) {
+      out = out + "/";
+    }
+    out = out + "..";
+    i = i + 1;
+  }
+  i = same;
+  while (i < a.len()) {
+    if (out.len() > 0) {
+      out = out + "/";
+    }
+    out = out + a[i];
+    i = i + 1;
+  }
+  if (out.len() == 0) {
+    return ".";
+  }
+  return out;
+}
+
+// The components of an absolute resolved path; the root has none.
+function components(p: string): string[] {
+  var out: string[] = [];
+  var i: i32 = 1;
+  while (i < p.len()) {
+    var start: i32 = i;
+    while (i < p.len() && p[i] as i32 != 47) {
+      i = i + 1;
+    }
+    out = out.append(slice_unchecked(p, start, i) + "");
+    i = i + 1;
+  }
+  return out;
+}
+
 // `p` with its last component removed. The root has no parent and
 // stays put, which is what makes `/..` the root.
 function parent_of(p: string): string {
