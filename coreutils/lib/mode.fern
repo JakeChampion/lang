@@ -20,17 +20,25 @@
 //     change nothing, and `+t`, `a+t` and `o+t` are three spellings of
 //     one thing.
 //
-// `adjust` is the mode arithmetic. Two of its rules decide most of what
-// a caller sees:
+// `adjust` is the mode arithmetic. Three of its rules decide most of
+// what a caller sees:
 //
 //   - A clause with NO who is the one the umask applies to — `+w` adds
 //     write only where the mask allows, and `=rwx` sets `0777 & ~umask`
 //     — and the reduction is skipped for a NUMERIC perm, which names
-//     its bits outright.
+//     its bits outright. `chmod` and `mkdir -m` share that rule
+//     exactly: `chmod =rwx f` under 022 is 0755 and so is `mkdir -m
+//     =rwx d`.
 //   - `=` on a DIRECTORY keeps the set-user-ID and set-group-ID bits
 //     the entry already had; only `-s` takes them off. `a=rwx` on a
 //     setgid directory leaves it setgid, and the sticky bit is NOT
-//     covered by that rule.
+//     covered by that rule. A WHOLE-MODE octal of fewer than five
+//     digits keeps them too, per bit and only where it does not name
+//     one itself: `755` on a 6777 directory is 6755 and `4755` on a
+//     2777 one is 6755, where `00755` and `=755` clear both.
+//   - `X` is the execute bits for a directory or for an entry that
+//     already has one, read AS THE MODE STANDS at that action, and it
+//     carries no bits of its own: `+xX` is `+x` whatever the mode is.
 //
 // `mentioned` — the bits a change named rather than merely left alone —
 // is an output because `mkdir` reads it: whether it needs a chmod after
@@ -64,6 +72,11 @@ pub function s_isvtx(): i32 {
 // S_IRWXUGO, the nine permission bits: 0777.
 pub function s_irwxugo(): i32 {
   return 511;
+}
+
+// S_IXUGO, the three execute bits: 0111.
+pub function s_ixugo(): i32 {
+  return 73;
 }
 
 // S_ISUID | S_ISGID, the pair that travels together: `s` names both,
@@ -166,7 +179,8 @@ function copy_index(b: i32): i32 {
 }
 
 // The bits a perm letter stands for, before the clause's who narrows
-// them; 0 for a byte that is not one.
+// them; 0 for a byte that is not one. `X` is not here: it names bits
+// only when the entry it is applied to says so.
 function perm_bits(b: i32): i32 {
   if (b == 114) {
     // r: 0444
@@ -176,9 +190,9 @@ function perm_bits(b: i32): i32 {
     // w: 0222
     return 146;
   }
-  if (b == 120 || b == 88) {
-    // x and X: 0111
-    return 73;
+  if (b == 120) {
+    // x: 0111
+    return s_ixugo();
   }
   if (b == 115) {
     return setid_bits();
@@ -191,7 +205,7 @@ function perm_bits(b: i32): i32 {
 }
 
 function is_perm(b: i32): boolean {
-  return perm_bits(b) > 0;
+  return b == 88 || perm_bits(b) > 0;
 }
 
 // `compile(spec)` — the MODE, or None when it is not one. The caller
@@ -200,13 +214,18 @@ pub function compile(spec: string): Option[Changes] {
   if (spec.len() == 0) {
     return None;
   }
-  match (whole_octal(spec)) {
-    Some(v) => {
-      var one: Change[] = [];
-      one = one.append(Change { who: all_bits(), explicit: false, op: 61, kind: kind_octal(), bits: v, x_if: false });
-      return Some(Changes { list: one });
-    },
-    None => {}
+  var whole: (i32, i32) = scan_octal(spec, 0);
+  if (whole.0 >= 0 && whole.1 == spec.len()) {
+    // Five digits or more name all twelve bits; fewer name only the
+    // bits they set, which is what a directory's set-user-ID and
+    // set-group-ID survive.
+    var kind: i32 = kind_octal();
+    if (spec.len() >= 5) {
+      kind = kind_num();
+    }
+    var one: Change[] = [];
+    one = one.append(Change { who: all_bits(), explicit: false, op: 61, kind: kind, bits: whole.0, x_if: false });
+    return Some(Changes { list: one });
   }
   var list: Change[] = [];
   var i: i32 = 0;
@@ -294,8 +313,9 @@ function parse_action(spec: string, at: i32, who: i32, explicit: boolean): (Chan
     var b: i32 = spec[i] as i32;
     if (b == 88) {
       xif = true;
+    } else {
+      bits = bits | perm_bits(b);
     }
-    bits = bits | perm_bits(b);
     i = i + 1;
   }
   return (Change { who: who, explicit: explicit, op: op, kind: kind_perm(), bits: bits, x_if: xif }, i);
@@ -316,20 +336,11 @@ function scan_octal(spec: string, at: i32): (i32, i32) {
   return (v, i);
 }
 
-// The whole MODE as an octal number, or None when it is not one. Any
-// number of leading zeros is fine; `010000` and `17777` are not modes.
-function whole_octal(spec: string): Option[i32] {
-  var num: (i32, i32) = scan_octal(spec, 0);
-  if (num.0 < 0 || num.1 != spec.len()) {
-    return None;
-  }
-  return Some(num.0);
-}
-
 // `adjust(c, oldmode, is_dir, mask)` — `oldmode` with `c` applied, under
 // the creation mask `mask`. `is_dir` decides two rules: `X` is execute
-// for a directory whatever its current mode says, and `=` keeps a
-// directory's set-user-ID and set-group-ID bits.
+// for a directory whatever its current mode says, and a directory keeps
+// the set-user-ID and set-group-ID bits a `=` or a short octal does not
+// name.
 pub function (c: Changes) adjust(oldmode: i32, is_dir: boolean, mask: i32): Adjusted {
   var mode: i32 = oldmode & all_bits();
   var mentioned: i32 = 0;
@@ -339,8 +350,8 @@ pub function (c: Changes) adjust(oldmode: i32, is_dir: boolean, mask: i32): Adju
     var ch: Change = c.list[i];
     i = i + 1;
     if (ch.kind == kind_octal()) {
-      mode = ch.bits;
-      mentioned = mentioned | all_bits();
+      mode = whole_mode(ch.bits, mode, is_dir);
+      mentioned = mentioned | ch.bits;
       continue;
     }
     var affected: i32 = all_bits();
@@ -369,6 +380,16 @@ pub function (c: Changes) adjust(oldmode: i32, is_dir: boolean, mask: i32): Adju
   return Adjusted { mode: mode & all_bits(), mentioned: mentioned, touches_setid: touches };
 }
 
+// The mode a whole-mode octal of fewer than five digits leaves: its own
+// bits, plus the set-user-ID and set-group-ID a DIRECTORY had and the
+// digits do not name.
+function whole_mode(bits: i32, mode: i32, is_dir: boolean): i32 {
+  if (!is_dir) {
+    return bits;
+  }
+  return bits | mode & setid_bits() & complement(bits);
+}
+
 // The bits one action names, once the clause's who has narrowed them and
 // the creation mask has taken its share. The mask reaches only a clause
 // that named no who, and not even that one when the perm is NUMERIC:
@@ -380,9 +401,8 @@ function change_value(ch: Change, mode: i32, is_dir: boolean, affected: i32, mas
   var bits: i32 = ch.bits;
   if (ch.kind == kind_copy()) {
     bits = copy_triple(mode, ch.bits);
-  } else if (ch.x_if && !is_dir && (mode & 73) == 0) {
-    // X is execute only where one already is: 0111 off again.
-    bits = bits & complement(73);
+  } else if (ch.x_if && (is_dir || (mode & s_ixugo()) != 0)) {
+    bits = bits | s_ixugo();
   }
   var value: i32 = bits & affected;
   if (ch.explicit) {
@@ -401,4 +421,51 @@ function copy_triple(mode: i32, src: i32): i32 {
     trip = mode >> 3 & 7;
   }
   return trip << 6 | trip << 3 | trip;
+}
+
+// ---- rendering a mode ------------------------------------------------------
+// The two spellings every utility that reports a mode prints: `chmod -v`
+// writes both, `stat` writes each under its own directive, and `ls -l`
+// writes the second after the file type letter.
+function octal_digit(n: i32): string {
+  return n.to_string();
+}
+
+// `octal4(m)` — `0644`, `4755`, `7000`: four digits, always.
+pub function octal4(m: i32): string {
+  var v: i32 = m & all_bits();
+  return octal_digit(v / 512) + octal_digit(v / 64 % 8) + octal_digit(v / 8 % 8) + octal_digit(v % 8);
+}
+
+// One triple. The third character carries two bits at once: the special
+// bit is upper case when the matching execute bit is clear, lower case
+// when it is set — `rwsr-Sr-T`.
+function triple(v: i32, shift: i32, sp: i32, lo: string, hi: string): string {
+  var out: string = "-";
+  if ((v & 4 << shift) != 0) {
+    out = "r";
+  }
+  if ((v & 2 << shift) != 0) {
+    out = out + "w";
+  } else {
+    out = out + "-";
+  }
+  var has_x: boolean = (v & 1 << shift) != 0;
+  var has_sp: boolean = (v & sp) != 0;
+  if (has_sp && has_x) {
+    return out + lo;
+  }
+  if (has_sp) {
+    return out + hi;
+  }
+  if (has_x) {
+    return out + "x";
+  }
+  return out + "-";
+}
+
+// `symbolic(m)` — the nine characters of `rwxr-xr-x`.
+pub function symbolic(m: i32): string {
+  var v: i32 = m & all_bits();
+  return triple(v, 6, s_isuid(), "s", "S") + triple(v, 3, s_isgid(), "s", "S") + triple(v, 0, s_isvtx(), "t", "T");
 }

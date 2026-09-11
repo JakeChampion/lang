@@ -220,6 +220,12 @@ func chmodCases(t *testing.T) []invocation {
 		{name: "a removed octal", args: []string{"-v", "-0777", "x"}, seedTree: chmodFlat},
 		{name: "a removed octal on a directory", args: []string{"-v", "-4000", "sd"}, seedTree: chmodFlat},
 		{name: "an octal is not masked", args: []string{"-v", "+7", "z"}, seedTree: chmodFlat},
+		// A numeric perm ENDS its clause, so a comma may follow it and
+		// another clause carry on from there.
+		{name: "a clause after a numeric perm", args: []string{"-v", "=7,u+r", "f"}, seedTree: chmodFlat},
+		{name: "one after an octal with an operator", args: []string{"-v", "+755,u+r", "z"}, seedTree: chmodFlat},
+		{name: "a numeric perm after a clause", args: []string{"-v", "u+r,=7", "f"}, seedTree: chmodFlat},
+		{name: "two numeric perms", args: []string{"-v", "=7,+7", "z"}, seedTree: chmodFlat},
 
 		// ---- octal modes that are not modes ------------------------------
 		{name: "past the twelve bits", args: []string{"-v", "010000", "f"}, seedTree: chmodFlat},
@@ -306,6 +312,11 @@ func chmodCases(t *testing.T) []invocation {
 		{name: "X removes what is there", args: []string{"-v", "a-X", "x"}, seedTree: chmodFlat},
 		{name: "X removes nothing when nothing is", args: []string{"-v", "-X", "f"}, seedTree: chmodFlat},
 		{name: "any execute bit satisfies X", args: []string{"-v", "a=,g+x,+X", "f"}, seedTree: chmodFlat},
+		// X carries no bits of its own, so an `x` beside it is unaffected
+		// by the condition X is under.
+		{name: "x and X in one action", args: []string{"-v", "a+xX", "f"}, seedTree: chmodFlat},
+		{name: "X before x", args: []string{"-v", "a=Xx", "f"}, seedTree: chmodFlat},
+		{name: "X beside s", args: []string{"-v", "a+Xs", "f"}, seedTree: chmodFlat},
 
 		// ---- symbolic modes that are not modes ---------------------------
 		{name: "an empty mode", args: []string{"-v", "", "f"}, seedTree: chmodFlat},
