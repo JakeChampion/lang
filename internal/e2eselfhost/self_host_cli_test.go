@@ -1011,7 +1011,7 @@ function main(): i32 {
 	// #8739. The parser is permissive: where it cannot read the source it
 	// plants an ExprUnknown and carries on, so every later pass reasons about
 	// the MARKER. `-check` never ran the gate that turns those markers back
-	// into P001/P002, so `var x: i32 = ;` surfaced as the #4346
+	// into P001/P002, so `var x: i32 = ;` surfaced as the #9053
 	// "cannot represent yet" catch-all, and a `= ;` parameter default — which
 	// no walk reached at all — surfaced as E076's non-constant rule, naming a
 	// rule the author had not broken.
@@ -1119,7 +1119,7 @@ function main(): i32 {
 		// `string` parameter is fine — native's argAssignable accepts it.
 		// The self-host had the carve-out on its diagnostic pass but not on
 		// the four typing-side argument checks, so the call's type collapsed
-		// to unknown and the program was refused with the #4346 catch-all,
+		// to unknown and the program was refused with the #9053 catch-all,
 		// i.e. the self-host rejecting what native accepts.
 		//
 		// The gate has to be an EXIT CODE, not a diagnostic code: the

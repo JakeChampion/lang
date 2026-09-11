@@ -1404,7 +1404,7 @@ function report_decl_name_errors(mod: parser.Module): boolean {
 // shared by `-check` and the build path for the reason above. The permissive
 // parser plants an ExprUnknown where it could not read the source, so anything
 // a later pass says about that node describes the marker and not the program:
-// `var x: i32 = ;` reached `-check` as the #4346 "cannot represent yet"
+// `var x: i32 = ;` reached `-check` as the #9053 "cannot represent yet"
 // catch-all, and a `= ;` parameter default reached both paths as E076's
 // non-constant rule, which is not the rule the author broke (#8739).
 //
@@ -1496,7 +1496,7 @@ function check_bundle(b: Bundle, target: string, target_given: boolean): i32 {
     // The capability boundary, when a target was asked for. It runs
     // whatever the checker concluded: the scan is syntactic — a call to a
     // named builtin — so it holds where the partial checker collapses an
-    // expression to TypeUnknown (#4346), and that is exactly where a
+    // expression to TypeUnknown (#9053), and that is exactly where a
     // violation would otherwise go unreported while native names it.
     var caps_violated: boolean = false;
     if (target_given) { caps_violated = capability_violations(merged, target); }
@@ -1510,7 +1510,7 @@ function check_bundle(b: Bundle, target: string, target_given: boolean): i32 {
     }
     // The module is ill-typed but produced no coded diagnostic — an
     // expression collapsed to TypeUnknown on a type the partial checker
-    // can't model yet (#4346). Surface a best-effort hint so `-check`
+    // can't model yet (#9053). Surface a best-effort hint so `-check`
     // never exits 1 silently; the native `fern` remains the full oracle.
     if (mt.diags.len() == 0) {
         var hints: util.Diag[] = checker.ill_typed_hint(merged);

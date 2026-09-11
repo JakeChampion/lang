@@ -215,7 +215,7 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// user function named `pair` resolved the PAYLOAD read to the
 		// function and E043'd ("field access on non-struct value of type
 		// fn") — which broke std/unicode for every program defining `pair`.
-		// The row wants NO codes; the uncoded #4346 unrepresentable-type
+		// The row wants NO codes; the uncoded #9053 unrepresentable-type
 		// note this shape also prints carries none.
 		{"fn-value-shadowed-by-payload-binding", "function pair(): i32 { return 7; }\nfunction main(): i32 {\n    var o: Option[(i32, i32)] = Some((1, 2));\n    match (o) {\n        Some(pair) => { return pair.0 + pair.1; },\n        None => { return 0; }\n    }\n    return 0;\n}\n", nil},
 		// An annotation on a LAMBDA parameter or return, which the two
@@ -303,7 +303,7 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"str-ret-fn-into-str-clean", "function f(t: string): str { return slice_unchecked(t, 0, 3); }\nfunction main(): i32 { var v: str = f(\"abcdef\"); return v.len(); }\n", nil},
 		// #7311's remaining half: string-builtin and free-builtin arity.
 		// These used to fall through to IR lowering and surface as the
-		// whole-function #4346 ineligibility hint; native reports E004 at
+		// whole-function #9053 ineligibility hint; native reports E004 at
 		// the call. The clean row pins the arity constants AND the new
 		// builtin result types (print is void, as_bytes u8[]) — before
 		// them, even `print("a")` marked the function ill-typed under

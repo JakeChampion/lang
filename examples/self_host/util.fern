@@ -732,7 +732,7 @@ pub struct Diag { code: string, message: string, line: i32, col: i32 }
 
 // is_diagnostic_code reports whether `code` is a real diagnostic code: `E` or
 // `P` followed by three digits. The checker also emits the pseudo-code "type"
-// (ill_typed_hint's marker for an expression it cannot represent yet, #4346)
+// (ill_typed_hint's marker for an expression it cannot represent yet, #9053)
 // and leaves `code` empty on the uncoded diagnostics. Neither states that the
 // program is wrong, so neither can reject a build.
 pub function is_diagnostic_code(code: string): boolean {

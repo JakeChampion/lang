@@ -172,7 +172,7 @@ func playgroundInterpExit(t *testing.T, bin string) {
 //
 // The valid program is the same one the compile path uses, imports and all:
 // the verdict has to survive a program that reaches the stdlib, because the
-// checker port is partial (#4346) and ModuleTypes.all_well_typed goes false for
+// checker port is partial (#9053) and ModuleTypes.all_well_typed goes false for
 // a program it merely cannot model. Checking on that flag would fail this case
 // with nothing printed, so the driver's verdict is the diagnostics — and this
 // is the test that pins it.
