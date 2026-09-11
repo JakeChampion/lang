@@ -178,6 +178,26 @@ func TestSelfHostSSAPhysicalRCRejects(t *testing.T) {
 function refused(r: irlower.LowerResult, why: string): boolean {
     return !r.ok && r.why == why && r.ops.len() == 0 && r.n_locals == 0 && r.n_params == 0;
 }
+// The width masks one lowered graph emits, concatenated — "" when it emits
+// none. A contract the planner refuses comes back as its reason instead, so
+// one helper covers both what an operation is allowed to be and what it
+// lowers to.
+function masks(r: irlower.LowerResult): string {
+    if (!r.ok) { return "lower:" + r.why; }
+    var out: string = "";
+    for o in r.ops { if (o.kind_tag == ir.kind_id("int_cast")) { out = out + o.str; } }
+    return out;
+}
+function binary_masks(op: string, t: typeinfo.Type, result: typeinfo.Type): string {
+    var g = ssa.SFunc { name: "bin", nparams: 2, nvals: 3, entry: 7, takes_env: false,
+        blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(6, 1, [], 1),
+            ssa.SInst { kind_tag: 9, result: 2, args: [0, 1], imm: 0, str: op }], term: ret(2) }] };
+    var f = ssasem.Func { graph: g, values: [t, t, result], params: [t, t], result: result,
+        records: [], enums: [], calls: [] };
+    var p = ssaunits.plan(f, [1, 1]);
+    if (!p.ok) { return "plan:" + p.why; }
+    return masks(ssarc.lower(f, [1, 1], p));
+}
 function main(): i32 {
     var f = fixture();
     var p = ssaunits.plan(f, []);
@@ -455,6 +475,22 @@ function main(): i32 {
     if (ssaunits.plan(idxArr, [3, 1]).why != "string index container type") { return 64; }
     var idxBad = ssasem.Func { ...idxFunc, values: [strTy, strTy, i32ty], params: [strTy, strTy] };
     if (ssaunits.plan(idxBad, [3, 2]).why != "string index type") { return 65; }
+    // Add, subtract, multiply and shift-left are the operators whose result can
+    // leave the range its type names, so each masks back to its own width in a
+    // register that is wider than it. Nothing else does: a bitwise op and a
+    // shift right stay inside a range their operands are already in, and a
+    // comparison lands in a boolean.
+    if (binary_masks("+", i32ty, i32ty) != "i32") { eprint(binary_masks("+", i32ty, i32ty)); return 66; }
+    if (binary_masks("*", i32ty, i32ty) != "i32") { return 67; }
+    if (binary_masks(">>", i32ty, i32ty) != "") { return 68; }
+    if (binary_masks("/", i32ty, i32ty) != "") { return 69; }
+    // Negation is the same subtraction, so it wraps for the same reason.
+    var negGraph = ssa.SFunc { name: "neg", nparams: 1, nvals: 2, entry: 7, takes_env: false,
+        blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0),
+            ssa.SInst { kind_tag: 10, result: 1, args: [0], imm: 0, str: "-" }], term: ret(1) }] };
+    var negFunc = ssasem.Func { graph: negGraph, values: [i32ty, i32ty], params: [i32ty], result: i32ty,
+        records: [], enums: [], calls: [] };
+    if (masks(ssarc.lower(negFunc, [1], ssaunits.plan(negFunc, [1]))) != "i32") { return 70; }
     return 0;
 }
 `

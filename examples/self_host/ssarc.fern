@@ -460,11 +460,24 @@ function binary_kind(op: string): string {
     return "ne";
 }
 
+// `+`, `-`, `*` and `<<` are the operators whose result can leave the range its
+// type names; every other one lands inside a range its operands are already in,
+// and a comparison lands in a boolean.
+function wraps(op: string): boolean {
+    return op == "+" || op == "-" || op == "*" || op == "<<";
+}
+
 // Scalar operators are verified i32/boolean contracts; negation is the
 // stack IR's zero-minus form. A string `+` is the runtime's concatenation,
 // a fresh box; string equality reads both operands. The verifier admits no
 // other string operator (ssasem.string_result), so a string binary that is
 // not `+` is `==` or `!=`.
+//
+// The stack IR runs the integer operators in a register WIDER than the type
+// they are written at, so a result that can exceed the width is masked back to
+// it explicitly. The AST lowering has emitted that step since #3581 and this
+// boundary did not, which made a produced `2147483647 + 1` the wide 2147483648
+// instead of INT_MIN.
 function scalar(r: irlower.LowerResult, ins: ssa.SInst, strings: boolean): irlower.LowerResult {
     if (ins.kind_tag == 9 && strings) {
         if (ins.str == "+") { return emit(r, ir.op_str_concat()); }
@@ -472,9 +485,11 @@ function scalar(r: irlower.LowerResult, ins: ssa.SInst, strings: boolean): irlow
         if (ins.str == "!=") { r = emit(r, ir.op_bin("not", 0, false)); }
         return r;
     }
-    if (ins.kind_tag == 9) { return emit(r, ir.op_bin(binary_kind(ins.str), 0, false)); }
-    if (ins.str == "!") { return emit(r, ir.op_bin("not", 0, false)); }
-    return emit(r, ir.op_bin("sub", 0, false));
+    if (ins.kind_tag == 10 && ins.str == "!") { return emit(r, ir.op_bin("not", 0, false)); }
+    if (ins.kind_tag == 9) { r = emit(r, ir.op_bin(binary_kind(ins.str), 0, false)); }
+    else { r = emit(r, ir.op_bin("sub", 0, false)); }
+    if (!wraps(ins.str)) { return r; }
+    return emit(r, ir.op_int_cast("i32"));
 }
 
 // A record box is named by its declaration, a variant box by its variant. The
