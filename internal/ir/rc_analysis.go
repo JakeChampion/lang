@@ -666,13 +666,16 @@ func findReturnsOwnBox(prog *ast.Program, info *checker.Info, pairForm, trmcFunc
 // Removing the refusal measures 11,024 B off self-host driver retention with
 // 219 more frees, takes `pair_form_payload_borrowing_call` from 144 B to 128 B
 // on both backends, and leaves the rc corpus, its leak gates and the
-// conformance census otherwise unmoved. It is still not taken, for the reason
-// the disproof does not supply: five probe shapes — a bare identity function
-// on `string[]` and on `string[][]`, a struct-array return, and a Map with
-// scalar and with `string[]` values, each bound and as a temp — read
-// IDENTICALLY under both compilers. Nothing smaller than the whole driver
-// distinguishes them, so there is no test that would pin the removal, and a
-// credit here has leaked once already.
+// conformance census otherwise unmoved. It is not taken yet, but not for want
+// of a test: the refusal LEAKS in a shape a user writes, and #7914 carries a
+// small deterministic probe — a `string[]` whose elements are built by
+// concatenation past the inline threshold, returned bare from one arm, with
+// the caller still using the array afterwards. It reads 1260/780 with 29,760 B
+// stranded here, against 1260/1260 and 0 B credited. Earlier identity probes
+// read alike only because a string of 7 bytes or fewer is inline and strands
+// nothing at all. What the credit still owes is gate work: the rc corpus leak
+// gates on all three backends, the conformance census, and that probe landed
+// with its no-bare and removed variants as the negative controls.
 //
 // A PROJECTION of a parameter keeps the credit — a different object the callee
 // never owned — and no probe has found a shape where that is unsafe.
