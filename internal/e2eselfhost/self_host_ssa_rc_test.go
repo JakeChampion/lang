@@ -348,6 +348,45 @@ function main(): i32 {
     var badRecvAppend = ssasem.Func { graph: appendGraph, values: [strTy, i32ty, strTy],
         params: [strTy, i32ty], result: strTy, records: [], enums: [], calls: [] };
     if (ssaunits.plan(badRecvAppend, [3, 1]).why != "append container type") { return 45; }
+    // A slice owns its box and borrows the source's bytes, so it is released by
+    // the view helper rather than the ordinary string free — which would skip
+    // the immortal rc sentinel and leak the box on the register backends.
+    // The slice must DIE here, not be returned: a returned value is handed to
+    // the caller, so it has no drop site and would emit no release at all.
+    var sliceGraph = ssa.SFunc { name: "slice", nparams: 3, nvals: 4, entry: 7, takes_env: false,
+        blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(6, 1, [], 1), inst(6, 2, [], 2),
+            ssa.SInst { kind_tag: ssasem.slice(), result: 3, args: [0, 1, 2], imm: 0, str: "" }], term: ret(1) }] };
+    var sliceFunc = ssasem.Func { graph: sliceGraph, values: [strTy, i32ty, i32ty, strTy],
+        params: [strTy, i32ty, i32ty], result: i32ty, records: [], enums: [], calls: [] };
+    var slicePlan = ssaunits.plan(sliceFunc, [2, 1, 1]);
+    if (!slicePlan.ok) { eprint(slicePlan.why); return 46; }
+    var sliceLowered = ssarc.lower(sliceFunc, [2, 1, 1], slicePlan);
+    if (!sliceLowered.ok) { eprint(sliceLowered.why); return 47; }
+    var sawSlice: boolean = false;
+    var sawViewFree: boolean = false;
+    var sawPlainFree: boolean = false;
+    for o in sliceLowered.ops {
+        if (ir.render_op(o) == "str_slice") { sawSlice = true; }
+        if (ir.render_op(o) == "call_direct __fern_str_view_free/1") { sawViewFree = true; }
+        if (ir.render_op(o) == "call_direct __fern_str_free/1") { sawPlainFree = true; }
+    }
+    if (!sawSlice) { return 48; }
+    if (!sawViewFree) { return 49; }
+    if (sawPlainFree) { return 50; }
+    // An ordinary string result keeps the plain free, so the view symbol is
+    // selected per VALUE and not applied to every string.
+    var plainGraph = ssa.SFunc { name: "plain", nparams: 1, nvals: 1, entry: 7, takes_env: false,
+        blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0)], term: ret(0) }] };
+    var plainFunc = ssasem.Func { graph: plainGraph, values: [strTy], params: [strTy], result: strTy,
+        records: [], enums: [], calls: [] };
+    var plainPlan = ssaunits.plan(plainFunc, [3]);
+    if (!plainPlan.ok) { eprint(plainPlan.why); return 51; }
+    for o in ssarc.lower(plainFunc, [3], plainPlan).ops {
+        if (ir.render_op(o) == "call_direct __fern_str_view_free/1") { return 52; }
+    }
+    // The bounds are i32 and the receiver is a string; neither is negotiable.
+    var badBound = ssasem.Func { ...sliceFunc, values: [strTy, strTy, i32ty, strTy], params: [strTy, strTy, i32ty], result: i32ty };
+    if (ssaunits.plan(badBound, [2, 2, 1]).why != "slice bound type") { return 53; }
     return 0;
 }
 `

@@ -536,6 +536,30 @@ enum Chain { End, Link(i32, Chain) }
     for w in words(n) { out = out.append(w); }
     return out.len() + out[0].len();
 }
+// slice_unchecked hands back a box of this function's own over the SOURCE's
+// bytes on the register backends, and a copy on wasm. One release symbol covers
+// both, and the source must outlive the view either way — head slices a
+// borrowed parameter, mid keeps a counted local live across the read, and
+// temp_slice's source is a temporary whose only use is the slice.
+@noinline function head_of(s: string, n: i32): i32 { return slice_unchecked(s, 0, n).len(); }
+@noinline function mid_of(n: i32): i32 {
+    var s: string = grown(n);
+    var v: string = slice_unchecked(s, 1, 4);
+    return v.len() + s.len();
+}
+@noinline function temp_slice(n: i32): i32 { return slice_unchecked(grown(n), 0, 3).len(); }
+@noinline function scan_slices(s: string): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < s.len()) { t = t + slice_unchecked(s, i, i + 1).len(); i = i + 1; }
+    return t;
+}
+@noinline function grown(n: i32): string {
+    var s: string = "abcdef";
+    var i: i32 = 0;
+    while (i < n) { s = s + "gh"; i = i + 1; }
+    return s;
+}
 @noinline function grown_size(n: i32): i32 {
     var s: string = "ab";
     var i: i32 = 0;
@@ -617,6 +641,8 @@ function main(): i32 {
     print_int(shadow_for(lens)); print(""); print_int(temp_for(2)); print("");
     print_int(nested_for(3)); print(""); print_int(copy_words(2)); print("");
     print_int(sum_for([])); print("");
+    print_int(head_of("abcdef", 3)); print(""); print_int(mid_of(0)); print("");
+    print_int(temp_slice(0)); print(""); print_int(scan_slices("abcd")); print("");
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }
@@ -654,7 +680,7 @@ function main(): i32 {
 // nested_for(3) walks [0,1,2], [1,2,3], [2,3,4] skipping every 1 and breaking
 // at the 4: 2 + (2+3) + (2+3) = 12. copy_words(2) is 2 words of 2 bytes = 4,
 // and an empty array iterates zero times.
-const semsourceRCWant = "1\n4\n5\n-3\n-2\n2\n0\n1\n5\n5\n12\n1\n8\n12\n0\n3\n3\n6\n4\n2\n0\n7\n31\n1\n0\n2\n22\n10\n7\n2\n5\n14\n7\n9\n4\n7\n1\n4\n8\n13\n14\n3\n9\n7\n3\n5\n5\n2\n2\n9\n36\n0\n4\n6\n6\n9\n7\n0\n3\n109\n9\n12\n4\n0\n"
+const semsourceRCWant = "1\n4\n5\n-3\n-2\n2\n0\n1\n5\n5\n12\n1\n8\n12\n0\n3\n3\n6\n4\n2\n0\n7\n31\n1\n0\n2\n22\n10\n7\n2\n5\n14\n7\n9\n4\n7\n1\n4\n8\n13\n14\n3\n9\n7\n3\n5\n5\n2\n2\n9\n36\n0\n4\n6\n6\n9\n7\n0\n3\n109\n9\n12\n4\n0\n3\n9\n3\n4\n"
 
 const semsourceRCDriver = `import "./semsource"; import "./ssarc"; import "./ssaunits"; import "./ssa";
 import "./parser"; import "./lexer"; import "./irlower"; import "./ir";
@@ -739,7 +765,7 @@ func TestSelfHostSemanticSourceRC(t *testing.T) {
 			if err != nil {
 				t.Fatalf("semantic lowering: %v\n%s", err, diagnostics.String())
 			}
-			for _, name := range []string{"pick", "pair", "boxed", "carry", "count_even", "fill", "first_of", "keep", "chain", "twice", "count_down", "grow", "make", "wrap", "unwrap", "tally", "greet", "boxed_local", "boxed_carry", "shape", "measure", "sum_shapes", "consume", "boxed_shape", "hold", "mk_node", "node_size", "node_sum", "leaf", "fork", "tree_sum", "build_sum", "chain_len", "chain_build", "mk_s2", "proj", "total", "make_counter", "twice_total", "size_of", "eat_size", "fresh_size", "text_size", "inner_size", "sum_all", "grown_size", "grow_to", "push_temp", "words", "word_bytes", "rows", "row_total", "sum_for", "skip_two", "until_two_for", "first_gt", "shadow_for", "temp_for", "nested_for", "copy_words"} {
+			for _, name := range []string{"pick", "pair", "boxed", "carry", "count_even", "fill", "first_of", "keep", "chain", "twice", "count_down", "grow", "make", "wrap", "unwrap", "tally", "greet", "boxed_local", "boxed_carry", "shape", "measure", "sum_shapes", "consume", "boxed_shape", "hold", "mk_node", "node_size", "node_sum", "leaf", "fork", "tree_sum", "build_sum", "chain_len", "chain_build", "mk_s2", "proj", "total", "make_counter", "twice_total", "size_of", "eat_size", "fresh_size", "text_size", "inner_size", "sum_all", "grown_size", "grow_to", "push_temp", "words", "word_bytes", "rows", "row_total", "sum_for", "skip_two", "until_two_for", "first_gt", "shadow_for", "temp_for", "nested_for", "copy_words", "head_of", "mid_of", "temp_slice", "scan_slices", "grown"} {
 				if !strings.Contains(diagnostics.String(), "produced "+name+"\n") {
 					t.Fatalf("%s was not produced:\n%s", name, diagnostics.String())
 				}

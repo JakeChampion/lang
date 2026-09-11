@@ -121,7 +121,7 @@ function construction(kind: i32): boolean {
 }
 function fresh_unit(kind: i32): boolean {
     return kind == 8 || kind == 5 || kind == 9 || construction(kind) || kind == ssasem.call()
-        || kind == ssasem.append();
+        || kind == ssasem.append() || kind == ssasem.slice();
 }
 function owned_values(f: ssasem.Func, modes: i32[]): boolean[] {
     var out: boolean[] = bits(f.graph.nvals);

@@ -55,6 +55,7 @@ pub function variant_up(): i32 { return 0 - 11; }
 pub function variant_as(): i32 { return 0 - 12; }
 pub function length(): i32 { return 0 - 13; }
 pub function append(): i32 { return 0 - 14; }
+pub function slice(): i32 { return 0 - 15; }
 
 function failed(why: string): Analysis {
     return Analysis { ok: false, why: why, dependencies: [], flow: ssalive.Flow { ok: false, why: why, live_in: [], live_out: [] } };
@@ -283,12 +284,24 @@ function variant_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     return variant_projection_error(ins, f, result);
 }
 
+// A window onto a string's bytes. The register backends hand back a box of
+// their own over the SOURCE's bytes, so the result owns a box and borrows the
+// data — it is anchored to its source like any projection, and released by the
+// helper that frees a view's box without touching the bytes.
+function slice_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
+    if (ins.args.len() != 3) { return "slice arity"; }
+    if (!is_string(result) || !is_string(f.values[ins.args[0]])) { return "slice container type"; }
+    if (!is_i32(f.values[ins.args[1]]) || !is_i32(f.values[ins.args[2]])) { return "slice bound type"; }
+    return "";
+}
+
 // The builtin methods this vocabulary admits: a container's length, and one
 // element pushed onto an array.
-function is_builtin_op(kind: i32): boolean { return kind == length() || kind == append(); }
+function is_builtin_op(kind: i32): boolean { return kind == length() || kind == append() || kind == slice(); }
 
 function builtin_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     if (ins.kind_tag == length()) { return length_error(ins, f, result); }
+    if (ins.kind_tag == slice()) { return slice_error(ins, f, result); }
     return append_error(ins, f, result);
 }
 
@@ -500,7 +513,8 @@ function guard_error(f: Func): string {
 // source exactly as a projection does.
 function projects(kind: i32): boolean {
     return kind == 7 || kind == array_get() || kind == tuple_get() || kind == record_get()
-        || kind == variant_get() || kind == variant_up() || kind == variant_as();
+        || kind == variant_get() || kind == variant_up() || kind == variant_as()
+        || kind == slice();
 }
 
 function borrow_parents(f: Func): i32[] {
