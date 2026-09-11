@@ -4523,8 +4523,11 @@ function main(): i32 {
 // match, first line wins), nsswitch's `hosts:` line with its bracketed
 // actions and compiled-in default, resolv.conf's defaults and caps, the
 // res_search candidate order, and RFC 1035 A queries and replies (a CNAME
-// ahead of its A record, every status). Two live cases run against this
-// machine's own /etc/hosts. Passing suite -> exit 0.
+// ahead of its A record, every status), and the canonical-name lookup
+// `who --lookup` makes: the first name on a matching hosts line, taken
+// from a line of either address family, and the owner of the A record at
+// the end of a CNAME chain. Two live cases run against this machine's
+// own /etc/hosts. Passing suite -> exit 0.
 func TestRunnerCoreutilsResolvExamplePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := langSrcAbs(t, "examples/tests/coreutils_resolv_test.fern")
@@ -4532,7 +4535,7 @@ func TestRunnerCoreutilsResolvExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: coreutils/lib/resolv", "1..28", "# pass 28", "# fail 0"} {
+	for _, w := range []string{"# Suite: coreutils/lib/resolv", "1..32", "# pass 32", "# fail 0"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}

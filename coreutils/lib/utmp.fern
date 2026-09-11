@@ -92,7 +92,7 @@ pub function record_bytes(): i32 {
 }
 
 // One record, reduced to the fields a utility prints or matches on.
-pub struct Entry { kind: i32, pid: i32, line: string, id: string, user: string, host: string, sec: i64 }
+pub struct Entry { kind: i32, pid: i32, line: string, id: string, user: string, host: string, sec: i64, term: i32, exit: i32 }
 
 // The default database. GNU builds against `_PATH_UTMP`, which is
 // /var/run/utmp on Linux — a symlink into /run on any system with a
@@ -104,6 +104,17 @@ pub function default_path(): string {
 // A little-endian unsigned 16-bit field.
 function u16_at(bs: u8[], off: i32): i32 {
   return bs[off] as i32 + bs[off + 1] as i32 * 256;
+}
+
+// A little-endian SIGNED 16-bit field. ut_exit's two halves are C
+// `short`s and `who -d` prints them with %d, so a wait status with the
+// high bit set is a negative number there.
+function i16_at(bs: u8[], off: i32): i32 {
+  var v: i32 = u16_at(bs, off);
+  if (v > 32767) {
+    return v - 65536;
+  }
+  return v;
 }
 
 // A little-endian signed 32-bit field.
@@ -132,7 +143,7 @@ function field_at(bs: u8[], off: i32, width: i32): string {
 }
 
 function entry_at(bs: u8[], off: i32): Entry {
-  return Entry { kind: u16_at(bs, off + 0), pid: i32_at(bs, off + 4), line: field_at(bs, off + 8, 32), id: field_at(bs, off + 40, 4), user: field_at(bs, off + 44, 32), host: field_at(bs, off + 76, 256), sec: i32_at(bs, off + 340) as i64 };
+  return Entry { kind: u16_at(bs, off + 0), pid: i32_at(bs, off + 4), line: field_at(bs, off + 8, 32), id: field_at(bs, off + 40, 4), user: field_at(bs, off + 44, 32), host: field_at(bs, off + 76, 256), sec: i32_at(bs, off + 340) as i64, term: i16_at(bs, off + 332), exit: i16_at(bs, off + 334) };
 }
 
 // Every whole record in `path`, in file order. A missing or unreadable
@@ -184,6 +195,93 @@ pub function read_logins(path: string): Entry[] {
     i = i + 1;
   }
   return out;
+}
+
+// The device file an entry's ut_line names. A line that is already an
+// absolute path is one, and anything else hangs under /dev — which is
+// how `who` and `pinky` find the terminal whose mode is the message
+// status and whose atime is the idle time.
+pub function device_path(line: string): string {
+  if (line.len() > 0 && line[0] as i32 == 47) {
+    return line;
+  }
+  return "/dev/" + line;
+}
+
+// What a terminal's stat says about it: whether it is there at all,
+// whether its group may write to it, and when it was last read.
+pub struct Line { present: boolean, writable: boolean, atime: i64 }
+
+pub function line_info(l: string): Line {
+  match (stat(device_path(l))) {
+    Ok(st) => {
+      // S_IWGRP is 0o20 — the bit `mesg y` sets and `mesg n` clears.
+      return Line { present: true, writable: (st.mode & 32 as u32) != 0 as u32, atime: st.atime };
+    },
+    Err(_) => {
+      return Line { present: false, writable: false, atime: 0 };
+    }
+  }
+}
+
+// The directories a terminal's device node lives in. /dev/pts first
+// because that is where every pseudo-terminal is, and a login on a real
+// console is the rarer case.
+function tty_dirs(): string[] {
+  return ["/dev/pts", "/dev"];
+}
+
+// ttyname(0) minus its /dev/ prefix — the form ut_line carries, which
+// is what `logname` matches a session against and what `who -m` filters
+// on. The descriptor's rdev names the device; the walk finds the entry
+// that has it. A directory that cannot be read contributes nothing.
+//
+// glibc reads the /proc symlink for the descriptor first and falls back
+// to this walk; without a readlink primitive only the second route is
+// available, and it is glibc's own and answers the same name for every
+// terminal a login uses.
+pub function terminal_line(): Option[string] {
+  if (!isatty(0)) {
+    return None;
+  }
+  var want: i64 = 0;
+  match (stdin().stat()) {
+    Ok(st) => {
+      want = st.rdev;
+    },
+    Err(_) => {
+      return None;
+    }
+  }
+  if (want == 0 as i64) {
+    return None;
+  }
+  var dirs: string[] = tty_dirs();
+  var d: i32 = 0;
+  while (d < dirs.len()) {
+    match (read_dir(dirs[d])) {
+      Ok(names) => {
+        var i: i32 = 0;
+        while (i < names.len()) {
+          var path: string = dirs[d] + "/" + names[i];
+          match (stat(path)) {
+            Ok(st) => {
+              // S_IFCHR is 0o020000; a terminal is a character device
+              // and nothing else can share its rdev.
+              if ((st.mode & 61440 as u32) == 8192 as u32 && st.rdev == want) {
+                return Some(slice_unchecked(path, 5, path.len()) + "");
+              }
+            },
+            Err(_) => {}
+          }
+          i = i + 1;
+        }
+      },
+      Err(_) => {}
+    }
+    d = d + 1;
+  }
+  return None;
 }
 
 // The user logged in on terminal `line`, as getlogin(3) asks it: the

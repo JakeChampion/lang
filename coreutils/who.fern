@@ -1,0 +1,540 @@
+// who.fern — GNU-compatible `who`.
+//
+//   who [OPTION]... [ FILE | ARG1 ARG2 ]
+//   -a -b -d -H -l -m -p -q -r -s -t -T/-w -u --lookup
+//
+// The accounting database, printed as columns. Which RECORDS appear is
+// one set of options and which COLUMNS appear is another, and the two
+// are independent: `-b` asks for the boot record and `-u` for the
+// logins, while `-T` adds the message-status column and `-u` also adds
+// the idle and pid ones. With no record option at all the logins are
+// what is printed, which is why plain `who` and `who -u` differ only in
+// the columns.
+//
+// A row is a single format with pieces left out, rather than a format
+// per record type:
+//
+//   NAME.....  M  LINE........ TIME.......  IDLE.. .......PID COMMENT.  EXIT
+//
+// NAME is at least 8 wide and LINE at least 12 — a longer value pushes
+// the rest of its own row right and leaves every other row where it is,
+// so the columns are per-row minimum widths and not a table. The
+// message status is present only under -T, the idle and pid columns only
+// when the mode asked for them, and the exit column only under -d / -a.
+// Trailing blanks are cut, so a row with no comment ends at its last
+// value.
+//
+// The two columns that are not in the record are read off the TERMINAL:
+// stat(/dev/LINE) gives the message status from the group-write bit and
+// the idle time from the atime. A line that is an absolute path is used
+// as it stands, which is the shape that makes the idle column testable
+// at all.
+//
+// -q is a different program: the names on one line and a count, with no
+// columns, no heading and no terminal lookups.
+//
+// -m restricts the output to the terminal on standard input. Two
+// operands mean the same thing — `who am i` is the idiom, and the words
+// are not read, so `who mom likes` is the same request.
+import "std/string";
+import "std/array";
+import "std/io_buffered";
+import "std/time";
+import "./lib/gnu";
+import "./lib/resolv";
+import "./lib/tz";
+import "./lib/utmp";
+
+function opt_all(): i32 {
+  return 1;
+}
+
+function opt_boot(): i32 {
+  return 2;
+}
+
+function opt_count(): i32 {
+  return 3;
+}
+
+function opt_dead(): i32 {
+  return 4;
+}
+
+function opt_heading(): i32 {
+  return 5;
+}
+
+function opt_login(): i32 {
+  return 6;
+}
+
+function opt_lookup(): i32 {
+  return 7;
+}
+
+function opt_mesg(): i32 {
+  return 8;
+}
+
+function opt_mine(): i32 {
+  return 9;
+}
+
+function opt_process(): i32 {
+  return 10;
+}
+
+function opt_runlevel(): i32 {
+  return 11;
+}
+
+function opt_short(): i32 {
+  return 12;
+}
+
+function opt_time(): i32 {
+  return 13;
+}
+
+function opt_users(): i32 {
+  return 14;
+}
+
+function help_text(): string {
+  var out: string = "";
+  out = out + "Usage: " + gnu.prog() + " [OPTION]... [ FILE | ARG1 ARG2 ]\n";
+  out = out + "Print information about users who are currently logged in.\n";
+  out = out + "\n";
+  out = out + "  -a, --all         same as -b -d --login -p -r -t -T -u\n";
+  out = out + "  -b, --boot        time of last system boot\n";
+  out = out + "  -d, --dead        print dead processes\n";
+  out = out + "  -H, --heading     print line of column headings\n";
+  out = out + "  -l, --login       print system login processes\n";
+  out = out + "      --lookup      attempt to canonicalize hostnames via DNS\n";
+  out = out + "  -m                only hostname and user associated with stdin\n";
+  out = out + "  -p, --process     print active processes spawned by init\n";
+  out = out + "  -q, --count       all login names and number of users logged on\n";
+  out = out + "  -r, --runlevel    print current runlevel\n";
+  out = out + "  -s, --short       print only name, line, and time (default)\n";
+  out = out + "  -t, --time        print last system clock change\n";
+  out = out + "  -T, -w, --mesg    add user's message status as +, - or ?\n";
+  out = out + "  -u, --users       list users logged in\n";
+  out = out + "      --message     same as -T\n";
+  out = out + "      --writable    same as -T\n";
+  out = out + "      --help        display this help and exit\n";
+  out = out + "      --version     output version information and exit\n";
+  out = out + "\n";
+  out = out + "If FILE is not specified, use " + utmp.default_path() + ".  /var/log/wtmp as FILE is common.\n";
+  out = out + "If ARG1 ARG2 given, -m presumed: 'am i' or 'mom likes' are usual.\n";
+  return out;
+}
+
+// What the invocation asked for: which records to print, which columns
+// to print them in, and the two whole-output modes.
+struct Mode { users: boolean, boot: boolean, dead: boolean, login: boolean, init: boolean, runlevel: boolean, clock: boolean, idle: boolean, exit_col: boolean, mesg: boolean, heading: boolean, short_output: boolean, count: boolean, mine: boolean, lookup: boolean }
+
+function mode_new(): Mode {
+  return Mode { users: false, boot: false, dead: false, login: false, init: false, runlevel: false, clock: false, idle: false, exit_col: false, mesg: false, heading: false, short_output: false, count: false, mine: false, lookup: false };
+}
+
+function parse_mode(argv: string[]): (Mode, string[]) {
+  // Declaration order is the ambiguity list's order, so `--l` names
+  // `--login` before `--lookup` and `--h` names `--heading` before the
+  // standard `--help`.
+  var opts: gnu.Opt[] = [];
+  opts = opts.append(gnu.flag("a", "all", opt_all()));
+  opts = opts.append(gnu.flag("b", "boot", opt_boot()));
+  opts = opts.append(gnu.flag("q", "count", opt_count()));
+  opts = opts.append(gnu.flag("d", "dead", opt_dead()));
+  opts = opts.append(gnu.flag("H", "heading", opt_heading()));
+  opts = opts.append(gnu.flag("l", "login", opt_login()));
+  opts = opts.append(gnu.flag("", "lookup", opt_lookup()));
+  opts = opts.append(gnu.flag("T", "message", opt_mesg()));
+  opts = opts.append(gnu.flag("", "mesg", opt_mesg()));
+  opts = opts.append(gnu.flag("p", "process", opt_process()));
+  opts = opts.append(gnu.flag("r", "runlevel", opt_runlevel()));
+  opts = opts.append(gnu.flag("s", "short", opt_short()));
+  opts = opts.append(gnu.flag("t", "time", opt_time()));
+  opts = opts.append(gnu.flag("u", "users", opt_users()));
+  opts = opts.append(gnu.flag("w", "writable", opt_mesg()));
+  opts = opts.append(gnu.flag("m", "", opt_mine()));
+  var g: gnu.Getopt = gnu.getopt_new(argv, opts, "who", help_text(), 1);
+  var m: Mode = mode_new();
+  while (true) {
+    var r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    g = r.1;
+    match (r.0) {
+      Some(hit) => {
+        m = apply(m, hit.id);
+      },
+      None => {
+        break;
+      }
+    }
+  }
+  // Asking for no record at all asks for the logins, which is what
+  // makes plain `who` and `who -u` the same rows in different columns.
+  if (!m.users && !m.boot && !m.dead && !m.login && !m.init && !m.runlevel && !m.clock) {
+    m = Mode { ...m, users: true, short_output: true };
+  }
+  return (m, g.operands());
+}
+
+// -s asks for the three-column row, and asking for no record at all is
+// the same request, which is why plain `who` prints one. It is not a
+// last-one-wins flag: `-s -u` and `-u -s` are both short, and `-s -d`
+// and `-d -s` are both long, because the exit column -a and -d turn on
+// carries the idle and pid columns with it whatever -s said.
+function apply(m: Mode, id: i32): Mode {
+  if (id == opt_all()) {
+    return Mode { ...m, users: true, boot: true, dead: true, login: true, init: true, runlevel: true, clock: true, idle: true, exit_col: true, mesg: true };
+  }
+  if (id == opt_boot()) {
+    return Mode { ...m, boot: true };
+  }
+  if (id == opt_count()) {
+    return Mode { ...m, count: true };
+  }
+  if (id == opt_dead()) {
+    return Mode { ...m, dead: true, idle: true, exit_col: true };
+  }
+  if (id == opt_heading()) {
+    return Mode { ...m, heading: true };
+  }
+  if (id == opt_login()) {
+    return Mode { ...m, login: true, idle: true };
+  }
+  if (id == opt_lookup()) {
+    return Mode { ...m, lookup: true };
+  }
+  if (id == opt_mesg()) {
+    return Mode { ...m, mesg: true };
+  }
+  if (id == opt_mine()) {
+    return Mode { ...m, mine: true };
+  }
+  if (id == opt_process()) {
+    return Mode { ...m, init: true };
+  }
+  if (id == opt_runlevel()) {
+    return Mode { ...m, runlevel: true, idle: true };
+  }
+  if (id == opt_short()) {
+    return Mode { ...m, short_output: true };
+  }
+  if (id == opt_time()) {
+    return Mode { ...m, clock: true };
+  }
+  if (id == opt_users()) {
+    return Mode { ...m, users: true, idle: true };
+  }
+  return m;
+}
+
+// ---- the row ----------------------------------------------------------------
+function pad_right(s: string, w: i32): string {
+  var out: string = s;
+  var n: i32 = s.len();
+  while (n < w) {
+    out = out + " ";
+    n = n + 1;
+  }
+  return out;
+}
+
+function pad_left(s: string, w: i32): string {
+  var out: string = "";
+  var n: i32 = s.len();
+  while (n < w) {
+    out = out + " ";
+    n = n + 1;
+  }
+  return out + s;
+}
+
+function trim_right(s: string): string {
+  var n: i32 = s.len();
+  while (n > 0 && s[n - 1] as i32 == 32) {
+    n = n - 1;
+  }
+  if (n == s.len()) {
+    return s;
+  }
+  return slice_unchecked(s, 0, n) + "";
+}
+
+// Whether the row carries the idle and pid columns.
+function long_row(m: Mode): boolean {
+  return m.exit_col || !m.short_output;
+}
+
+// One row of every kind, the pieces the mode does not want left out.
+// `state` is the message status and is only reached under -T.
+function row(m: Mode, user: string, state: string, line: string, at: string, idle: string, pid: string, comment: string, exit_text: string): string {
+  var out: string = pad_right(user, 8);
+  if (m.mesg) {
+    out = out + " " + state + " ";
+  } else {
+    out = out + " ";
+  }
+  out = out + pad_right(line, 12) + " " + pad_right(at, 12);
+  if (m.idle && long_row(m)) {
+    out = out + " " + pad_right(idle, 6);
+  }
+  if (long_row(m)) {
+    out = out + " " + pad_left(pid, 10);
+  }
+  out = out + " " + pad_right(comment, 8);
+  if (m.exit_col) {
+    out = out + " " + exit_text;
+  }
+  return trim_right(out) + "\n";
+}
+
+function heading(m: Mode): string {
+  return row(m, "NAME", " ", "LINE", "TIME", "IDLE", "PID", "COMMENT", "EXIT");
+}
+
+// `%b %e %H:%M` in the C locale: the month's abbreviation, the day
+// blank-padded to two columns, and the hour and minute.
+function time_string(z: tz.Zone, sec: i64): string {
+  var dt: DateTime = z.civil(sec);
+  var name: string = time.month_name(dt.date.month);
+  return slice_unchecked(name, 0, 3) + " " + pad_left(dt.date.day.to_string(), 2) + " " + two(dt.time.hour) + ":" + two(dt.time.minute);
+}
+
+function two(v: i32): string {
+  if (v < 10) {
+    return "0" + v.to_string();
+  }
+  return v.to_string();
+}
+
+// How long since the terminal was last read, in the four spellings who
+// has. A terminal it cannot stat has no answer at all; one whose last
+// read is in the future, more than a day ago, or older than the boot it
+// is counted from, is `old`.
+function idle_string(now: i64, at: i64, boottime: i64): string {
+  if (at == 0 as i64) {
+    return "  ?";
+  }
+  if (boottime < at && now - 86400 as i64 < at && at <= now) {
+    var secs: i64 = now - at;
+    if (secs < 60 as i64) {
+      return "  .";
+    }
+    var hours: i32 = (secs / (3600 as i64)) as i32;
+    var mins: i32 = (secs % (3600 as i64) / (60 as i64)) as i32;
+    return two(hours) + ":" + two(mins);
+  }
+  return " old ";
+}
+
+// ---- the records ------------------------------------------------------------
+// What a row needs beyond the entry itself, gathered once: the zone the
+// times are rendered in, the clock the idle column counts back from, and
+// the boot time seen so far, which only an entry AFTER the boot record
+// is measured against.
+struct Ctx { m: Mode, z: tz.Zone, now: i64, boot: i64 }
+
+function print_user(c: Ctx, e: utmp.Entry): string {
+  var info: utmp.Line = utmp.line_info(e.line);
+  var state: string = "?";
+  var last: i64 = 0;
+  if (info.present) {
+    state = "-";
+    if (info.writable) {
+      state = "+";
+    }
+    last = info.atime;
+  }
+  var comment: string = "";
+  if (e.host.len() > 0) {
+    comment = "(" + host_text(c.m, e.host) + ")";
+  }
+  return row(c.m, e.user, state, e.line, time_string(c.z, e.sec), idle_string(c.now, last, c.boot), e.pid.to_string(), comment, "");
+}
+
+// The host as the comment column shows it. An X display is written on
+// the end of the field after a colon — `build:0.0` — and it is not part
+// of the host name: --lookup canonicalizes what comes BEFORE the colon
+// and the display is put back unchanged.
+//
+// --lookup is getaddrinfo's AI_CANONNAME: the name the host answers to
+// rather than the one the session was opened with. A name that resolves
+// to nothing keeps what the record holds.
+function host_text(m: Mode, host: string): string {
+  var name: string = host;
+  var display: string = "";
+  var colon: i32 = host.index_of(":");
+  if (colon >= 0) {
+    name = slice_unchecked(host, 0, colon) + "";
+    display = ":" + slice_unchecked(host, colon + 1, host.len());
+  }
+  if (m.lookup && name.len() > 0) {
+    match (resolv.canon_host(name)) {
+      Some(canon) => {
+        name = canon;
+      },
+      None => {}
+    }
+  }
+  return name + display;
+}
+
+function print_boottime(c: Ctx, e: utmp.Entry): string {
+  return row(c.m, "", " ", "system boot", time_string(c.z, e.sec), "", "", "", "");
+}
+
+// The run level is two bytes of the pid: the level now, and the one
+// before it, which is reported as `S` when it was none and not at all
+// when the record carries no previous level.
+function print_runlevel(c: Ctx, e: utmp.Entry): string {
+  var curr: i32 = e.pid & 255;
+  var last: i32 = e.pid >> 8 & 255;
+  var line: string = "run-level " + char_text(curr);
+  var comment: string = "";
+  if (last != 0) {
+    if (last == 78) {
+      comment = "last=S";
+    } else {
+      comment = "last=" + char_text(last);
+    }
+  }
+  return row(c.m, "", " ", line, time_string(c.z, e.sec), "", "", comment, "");
+}
+
+function char_text(b: i32): string {
+  if (b == 0) {
+    return "";
+  }
+  var bs: u8[] = [];
+  bs = bs.append(b as u8);
+  return string_from_bytes_unchecked(bs);
+}
+
+function print_login(c: Ctx, e: utmp.Entry): string {
+  return row(c.m, e.user, " ", e.line, time_string(c.z, e.sec), "", e.pid.to_string(), "id=" + e.id, "");
+}
+
+// A dead process keeps its terminal and its id but not its name — the
+// row leaves NAME empty however the record was written — and carries
+// the two halves of the wait status.
+function print_dead(c: Ctx, e: utmp.Entry): string {
+  var exit_text: string = "term=" + e.term.to_string() + " exit=" + e.exit.to_string();
+  return row(c.m, "", " ", e.line, time_string(c.z, e.sec), "", e.pid.to_string(), "id=" + e.id, exit_text);
+}
+
+function print_init(c: Ctx, e: utmp.Entry): string {
+  return row(c.m, "", " ", e.line, time_string(c.z, e.sec), "", e.pid.to_string(), "id=" + e.id, "");
+}
+
+function print_clockchange(c: Ctx, e: utmp.Entry): string {
+  return row(c.m, "", " ", "clock change", time_string(c.z, e.sec), "", "", "", "");
+}
+
+// The one row an entry produces, or "" when the mode asked for none of
+// what it is. The order of the tests is the order who tries them in, and
+// it matters: an entry is printed by the FIRST kind that claims it.
+function print_entry(c: Ctx, e: utmp.Entry): string {
+  if (c.m.users && e.is_login()) {
+    return print_user(c, e);
+  }
+  if (c.m.runlevel && e.kind == utmp.run_lvl()) {
+    return print_runlevel(c, e);
+  }
+  if (c.m.boot && e.kind == utmp.boot_time()) {
+    return print_boottime(c, e);
+  }
+  if (c.m.login && e.kind == utmp.login_process()) {
+    return print_login(c, e);
+  }
+  if (c.m.dead && e.kind == utmp.dead_process()) {
+    return print_dead(c, e);
+  }
+  if (c.m.init && e.kind == utmp.init_process()) {
+    return print_init(c, e);
+  }
+  if (c.m.clock && e.kind == utmp.new_time()) {
+    return print_clockchange(c, e);
+  }
+  return "";
+}
+
+// ---- the two output shapes --------------------------------------------------
+// -q: the login names in file order on one line, then the count. The
+// count line is printed even when there are no names, so the output is
+// never empty.
+function count_output(path: string): string {
+  var entries: utmp.Entry[] = utmp.read_logins(path);
+  var line: string = "";
+  var i: i32 = 0;
+  while (i < entries.len()) {
+    if (i > 0) {
+      line = line + " ";
+    }
+    line = line + entries[i].name();
+    i = i + 1;
+  }
+  return line + "\n# users=" + entries.len().to_string() + "\n";
+}
+
+function scan(m: Mode, path: string): string {
+  var out: string = "";
+  if (m.heading) {
+    out = out + heading(m);
+  }
+  var only: string = "";
+  if (m.mine) {
+    match (utmp.terminal_line()) {
+      Some(l) => {
+        only = l;
+      },
+      None => {
+        return out;
+      }
+    }
+  }
+  var c: Ctx = Ctx { m: m, z: tz.local_zone(), now: now_unix_ms() / (1000 as i64), boot: 0 - 9223372036854775807 as i64 };
+  var entries: utmp.Entry[] = utmp.read_all(path);
+  var i: i32 = 0;
+  while (i < entries.len()) {
+    if (!m.mine || entries[i].line == only) {
+      out = out + print_entry(c, entries[i]);
+    }
+    // The boot time an idle column is measured against is the latest one
+    // seen SO FAR, so a session listed above the boot record it follows
+    // is measured against the boot before it.
+    if (entries[i].kind == utmp.boot_time()) {
+      c = Ctx { ...c, boot: entries[i].sec };
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+function main(): i32 {
+  var parsed: (Mode, string[]) = parse_mode(args());
+  var m: Mode = parsed.0;
+  var operands: string[] = parsed.1;
+  if (operands.len() > 2) {
+    gnu.die_usage("extra operand " + gnu.quote(operands[2]), 1);
+  }
+  var path: string = utmp.default_path();
+  if (operands.len() == 1) {
+    path = operands[0];
+  } else if (operands.len() == 2) {
+    // `who am i`: the words name nothing, they only ask for -m.
+    m = Mode { ...m, mine: true };
+  }
+  var out: string = "";
+  if (m.count) {
+    out = count_output(path);
+  } else {
+    out = scan(m, path);
+  }
+  var o: io_buffered.BufWriter = gnu.put(gnu.out_new(), out);
+  gnu.finish(o);
+  return 0;
+}
