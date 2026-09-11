@@ -221,10 +221,12 @@ coreutils/
                     stdio buffering for the utilities whose write-error
                     wording depends on it (tac)
   lib/bre.fern      regular expressions as glibc compiles them —
-                    POSIX basic for expr, syntax 0 (Emacs) for tac -r,
-                    anchored or searched over a range of a buffer for
-                    nl and csplit, with a literal, a literal-prefix and
-                    a per-alternation-branch fast path ahead of glibc's
+                    POSIX basic for expr, syntax 0 (Emacs) for tac -r
+                    and for ptx's -W and -S, anchored or searched over
+                    a range of a buffer for nl and csplit, forwards for
+                    ptx's context scan and backwards for tac's, with a
+                    literal, a literal-prefix and a
+                    per-alternation-branch fast path ahead of glibc's
                     fastmap and the simulation, and glibc's regerror
                     texts as the diagnostics
   lib/ld.fern       C's `long double` as the TARGET has it, for the
@@ -1462,7 +1464,8 @@ groups are the order of work. Each sub-issue names its group.
   `b2sum` `tee`. Done: `cat`, `tac`, `head`, `tail`, `wc`, `nl`, `cut`,
   `paste`, `join`, `comm`, `uniq`, `sort`, `tr`, `fold`, `fmt`, `expand`,
   `unexpand`,
-  `pr`, `split`, `csplit`, `shuf`, `od`, `base32`, `base64`, `basenc`, `sum`,
+  `pr`, `ptx`, `split`, `csplit`, `shuf`, `od`, `base32`, `base64`, `basenc`,
+  `sum`,
   `tee` and the seven checksum utilities. `tee` wanted signal dispositions (#8792) for `-i`
   and its `--output-error` family: SIG_IGN on SIGINT and SIGPIPE.
   Needs a buffered stdout writer in `std/io_buffered`
