@@ -1139,12 +1139,14 @@ pub struct OptMatch { id: i32, value: string, has_value: boolean, long_form: boo
 pub struct Getopt { argv: string[], opts: Opt[], name: string, help: string, status: i32, in_order: boolean, report_operands: boolean, i: i32, cluster: string, operands: string[], past_dashdash: boolean }
 
 // The ids `next()` reserves for the two standard options; they never
-// reach the caller because `next()` answers them itself.
-function help_id(): i32 {
+// reach the caller because `next()` answers them itself. They are public
+// so a utility can declare a SHORT spelling of one: mktemp's `-V` is a
+// live alias for `--version` that its `--help` does not mention.
+pub function help_id(): i32 {
   return 0 - 1;
 }
 
-function version_id(): i32 {
+pub function version_id(): i32 {
   return 0 - 2;
 }
 
@@ -1363,6 +1365,15 @@ function short_option(g: Getopt): (Option[OptMatch], Getopt) {
     die_usage("invalid option -- '" + slice_unchecked(g.cluster, 0, 1) + "'", g.status);
   }
   var o: Opt = g.opts[k];
+  // A short spelling of --help / --version is answered here exactly as
+  // the long one is, so it short-circuits the rest of the cluster:
+  // `mktemp -Vx` prints the version rather than reaching the invalid x.
+  if (o.id == help_id()) {
+    print_help(g.help, 0, g.status);
+  }
+  if (o.id == version_id()) {
+    print_version(g.name, 0, g.status);
+  }
   if (o.short_arg == 0) {
     return (Some(OptMatch { id: o.id, value: "", has_value: false, long_form: false }), Getopt { ...g, cluster: rest });
   }

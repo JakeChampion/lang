@@ -108,6 +108,20 @@ type invocation struct {
 	// docs/COREUTILS.md's "the same resulting tree". A path that does
 	// not exist compares equal to a path that does not exist.
 	artifacts []string
+	// mask rewrites the one part of a run that two correct
+	// implementations cannot agree on: mktemp's whole answer is a run of
+	// RANDOM characters, so an unmasked case would fail every time. It is
+	// applied to stdout and to the names in the tree comparison — never
+	// to stderr, which carries the template with its X's intact and is
+	// compared byte for byte. The function is the case's own, so it
+	// rewrites the run by POSITION and leaves everything around it —
+	// directory, prefix, suffix, length — under comparison; a byte
+	// outside the alphabet the run is drawn from is left alone so that it
+	// still differs from the reference's.
+	//
+	// Keep it to genuinely unpredictable output. Anything a mask hides
+	// is a thing this corpus no longer proves.
+	mask func(string) string
 	// seedTree is the same requirement for a utility whose output names
 	// cannot be listed in advance: `split` chooses `xaa`, `xab`, … from
 	// the input's length. It gets a fresh working directory per SIDE,
@@ -492,10 +506,17 @@ func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 	}
 	cmd.Env = append(baseEnv(), inv.env...)
 	var workDir string
+	var seeded map[string]bool
 	if inv.seedTree != nil {
 		workDir = t.TempDir()
 		inv.seedTree(t, workDir)
 		cmd.Dir = workDir
+		if inv.mask != nil {
+			seeded = map[string]bool{}
+			for _, e := range readTree(t, workDir) {
+				seeded[e.name] = true
+			}
+		}
 	} else {
 		cmd.Dir = inv.dir
 	}
@@ -598,7 +619,48 @@ func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 	if workDir != "" {
 		res.tree = readTree(t, workDir)
 	}
+	if inv.mask != nil {
+		res.stdout = []byte(inv.mask(string(res.stdout)))
+		// Only what the RUN left behind is masked. A seeded name the
+		// utility never touched is identical on both sides already, and
+		// masking it can only lose signal — `td1` and `td2` both become
+		// `XXX` under a three-character mask, and the comparison then has
+		// two entries under one name.
+		taken := map[string]bool{}
+		for i := range res.tree {
+			if !seeded[res.tree[i].name] {
+				res.tree[i].name = inv.mask(res.tree[i].name)
+			}
+			if taken[res.tree[i].name] {
+				t.Errorf("%s %s: the mask collapses two entries onto %q, so the tree comparison proves nothing — narrow it", bin, quoteArgs(inv.args), res.tree[i].name)
+			}
+			taken[res.tree[i].name] = true
+		}
+		regroup(res.tree)
+	}
 	return res
+}
+
+// regroup re-sorts a masked tree by name and renumbers the hard-link
+// groups in that order. readTree numbers them by walk order, which visits
+// a masked name wherever its UNMASKED spelling sorted to — so two runs
+// that agree about every file still disagree about the numbers. The
+// equivalence the field encodes is what the comparison is about, and that
+// survives; only the order it is read in changes.
+func regroup(es []treeEntry) {
+	sort.Slice(es, func(i, j int) bool { return es[i].name < es[j].name })
+	seen := map[int]int{}
+	for i := range es {
+		if es[i].group == 0 {
+			continue
+		}
+		n, ok := seen[es[i].group]
+		if !ok {
+			n = len(seen) + 1
+			seen[es[i].group] = n
+		}
+		es[i].group = n
+	}
 }
 
 // readTree lists everything under root, deepest paths included, with each
