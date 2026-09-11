@@ -18,14 +18,18 @@ function empty(why: string): irlower.LowerResult {
 
 // This physical boundary refuses types whose stack representation is not
 // implemented here, even when the unit planner knows their abstract
-// ownership: wide scalars, string views, and a record with no schema or with
-// type arguments (its box is named by the bare declaration).
+// ownership: 64-bit scalars, string views, and a record with no schema or with
+// type arguments (its box is named by the bare declaration). A byte is not one
+// of them — it rides the same i32-shaped slot, narrowed by the wrap below.
 function supported_tuple(tup: typeinfo.TypeTuple, f: ssasem.Func): boolean {
     for elem in tup.elements { if (!supported(elem, f)) { return false; } }
     return true;
 }
+function supported_integer(i: typeinfo.TypeI32): boolean {
+    return i.width == 32 || (i.width == 8 && i.unsigned);
+}
 function supported(t: typeinfo.Type, f: ssasem.Func): boolean {
-    if let typeinfo.TypeI32(i) = t { return i.width == 32; }
+    if let typeinfo.TypeI32(i) = t { return supported_integer(i); }
     if let typeinfo.TypeBool(_) = t { return true; }
     if let typeinfo.TypeVoid(_) = t { return true; }
     if let typeinfo.TypeString(_) = t { return ssasem.is_string(t); }
@@ -405,8 +409,11 @@ function validate(f: ssasem.Func, modes: i32[], p: ssaunits.Plan): string {
     return "";
 }
 
-function scalar_op(k: i32): boolean {
-    return k == 1 || k == 2 || k == 5 || k == 6 || k == 7 || k == 8 || k == 9 || k == 10 || k == ssasem.call();
+// Everything that is not a container operation: the constants, a parameter, a
+// copy, a phi, the scalar operators and a call.
+function value_op(k: i32): boolean {
+    return k == 1 || k == 2 || k == 5 || k == 6 || k == 7 || k == 8
+        || ssasem.scalar_op(k) || k == ssasem.call();
 }
 
 function container_op(k: i32): boolean {
@@ -427,7 +434,7 @@ function identity_op(k: i32): boolean {
     return k == ssasem.variant_up() || k == ssasem.variant_as();
 }
 
-function supported_op(k: i32): boolean { return scalar_op(k) || container_op(k); }
+function supported_op(k: i32): boolean { return value_op(k) || container_op(k); }
 
 function frame(f: ssasem.Func): irlower.LowerResult {
     var r: irlower.LowerResult = empty("");
@@ -467,19 +474,23 @@ function wraps(op: string): boolean {
     return op == "+" || op == "-" || op == "*" || op == "<<";
 }
 
-// Scalar operators are verified i32/boolean contracts; negation is the
+// The stack IR runs the integer operators in a register wider than any of these
+// types, so a result that can exceed the type's width is masked back to it
+// explicitly — the same step the AST lowering emits, and what the interpreter's
+// per-width arithmetic does (`2147483647 + 1` is INT_MIN, `255u8 + 1` is 0).
+function wrap_kind(t: typeinfo.Type): string {
+    if (ssasem.is_u8(t)) { return "u8"; }
+    return "i32";
+}
+
+// Scalar operators are verified integer/boolean contracts; negation is the
 // stack IR's zero-minus form. A string `+` is the runtime's concatenation,
 // a fresh box; string equality reads both operands. The verifier admits no
 // other string operator (ssasem.string_result), so a string binary that is
 // not `+` is `==` or `!=`.
-//
-// The stack IR runs the integer operators in a register WIDER than the type
-// they are written at, so a result that can exceed the width is masked back to
-// it explicitly. The AST lowering has emitted that step since #3581 and this
-// boundary did not, which made a produced `2147483647 + 1` the wide 2147483648
-// instead of INT_MIN.
-function scalar(r: irlower.LowerResult, ins: ssa.SInst, strings: boolean): irlower.LowerResult {
-    if (ins.kind_tag == 9 && strings) {
+function scalar(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
+    if (ins.kind_tag == ssasem.cast()) { return cast(r, f, ins); }
+    if (ins.kind_tag == 9 && ssasem.is_string(f.values[ins.args[0]])) {
         if (ins.str == "+") { return emit(r, ir.op_str_concat()); }
         r = emit(r, ir.op_str_eq());
         if (ins.str == "!=") { r = emit(r, ir.op_bin("not", 0, false)); }
@@ -489,7 +500,15 @@ function scalar(r: irlower.LowerResult, ins: ssa.SInst, strings: boolean): irlow
     if (ins.kind_tag == 9) { r = emit(r, ir.op_bin(binary_kind(ins.str), 0, false)); }
     else { r = emit(r, ir.op_bin("sub", 0, false)); }
     if (!wraps(ins.str)) { return r; }
-    return emit(r, ir.op_int_cast("i32"));
+    return emit(r, ir.op_int_cast(wrap_kind(f.values[ins.result])));
+}
+
+// A conversion between the integer types. A widening moves no bits: the
+// operand already holds a value inside the destination's range, because the
+// narrower type's own producing sites keep it there. Only a narrowing masks.
+function cast(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
+    if (!ssasem.is_u8(f.values[ins.result]) || ssasem.is_u8(f.values[ins.args[0]])) { return r; }
+    return emit(r, ir.op_int_cast("u8"));
 }
 
 // A record box is named by its declaration, a variant box by its variant. The
@@ -529,7 +548,7 @@ function instruction(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): ir
     for arg in ins.args { r = emit(r, ir.op_load_local(arg)); }
     if (ins.kind_tag == 1 || ins.kind_tag == 2) { r = emit(r, ir.op_const_i32(ins.imm)); }
     if (ins.kind_tag == 5) { r = emit(r, ir.op_const_str(ins.str)); }
-    if (ins.kind_tag == 9 || ins.kind_tag == 10) { r = scalar(r, ins, ssasem.is_string(f.values[ins.args[0]])); }
+    if (ssasem.scalar_op(ins.kind_tag)) { r = scalar(r, f, ins); }
     if (container_op(ins.kind_tag)) { r = container(r, f, ins); }
     // A call's counted parameters were supplied before its operands were
     // loaded; its result is the unit the callee returns.
