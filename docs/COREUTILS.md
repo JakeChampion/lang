@@ -1366,6 +1366,17 @@ per-entry hook, so it cannot carry `-v`, `-i`, or the per-entry diagnostics
 that decide the exit status. `du`, `ls -R`, `cp -r`, `chmod -R` and `find`
 want the same primitive.
 
+`chmod -R` is the second utility standing on it, and there the gap costs more
+than depth. strace shows GNU descends fd-relative below the top level —
+`fchmodat(4, "sub", …)` against a held descriptor, then `openat(4, "sub",
+O_NOFOLLOW|O_DIRECTORY)` — so renaming an interior directory under a running
+walk cannot redirect a chmod at anything outside the tree. `chmod.fern`
+rebuilds the path per entry, so it can. Nothing in the corpus renames anything
+under a running chmod, and the 326 cases agree on stdout, stderr, exit status
+and the mode of every entry; what is missing is a safety property no case
+asserts, which is why it is recorded here rather than left to the depth
+sentence above.
+
 **Three rm paths are outside the corpus.** `--one-file-system` and
 `--preserve-root=all` only act across a mount point and the harness cannot
 mount one, so they stand in the corpus as the inert invocations that prove
@@ -1549,8 +1560,8 @@ groups are the order of work. Each sub-issue names its group.
   with #9059; `rename`, `chmod` and `set_file_times` have since reached
   the self-hosted COMPILER too — see the paragraph below, and #9085), `mktemp` (done — it needed none of them: `open_exclusive`,
   `create_dir`, `remove_dir`, `remove_file`, `lstat`, `random_bytes` and
-  `env` were all already here, so its banner was stale), `chmod` `chown`
-  `chgrp` `chcon` `runcon`, `stat` `ls` `dir` `vdir` `du` `df`
+  `env` were all already here, so its banner was stale), `chmod` (done),
+  `chown` `chgrp` `chcon` `runcon`, `stat` `ls` `dir` `vdir` `du` `df`
   (full stat, statfs, d_type), `dircolors` (done — it needed none of
   those: `env()` for $SHELL / $TERM / $COLORTERM and no new primitive), `date` (strftime; the timezone half is `lib/tz.fern` now), `timeout` `nice`
   `nohup` `kill` `stdbuf` `chroot` (signals, setpriority, exec), `dd`
