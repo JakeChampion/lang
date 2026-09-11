@@ -263,14 +263,33 @@ function edge(r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan, from: i3
     return r;
 }
 
-// A schema's fields are values a walk reads through this vocabulary too.
+function walkable_tuple(tup: typeinfo.TypeTuple, f: ssasem.Func): boolean {
+    for elem in tup.elements { if (!walkable(elem, f)) { return false; } }
+    return true;
+}
+
+// What a schema field has to satisfy is weaker than what a value has to: the
+// walk visits only the REFERENCE fields, so a scalar one needs no vocabulary
+// here at all, and an array or tuple of scalars needs only its own box
+// released. Asking `supported` of every field instead refuses a function for
+// a field it never reads.
+function walkable(t: typeinfo.Type, f: ssasem.Func): boolean {
+    if let typeinfo.TypeArray(a) = t { return walkable(a.elem, f); }
+    if let typeinfo.TypeTuple(tup) = t { return walkable_tuple(tup, f); }
+    if (reference(t)) { return supported(t, f); }
+    if let typeinfo.TypeI32(_) = t { return true; }
+    if let typeinfo.TypeBool(_) = t { return true; }
+    if let typeinfo.TypeFloat(fl) = t { return fl.width == 32 || fl.width == 64; }
+    return false;
+}
+
 function schema_types_error(f: ssasem.Func): string {
     for record in f.records {
-        for field in record.fields { if (!supported(field.ty, f)) { return "unsupported physical RC record field type"; } }
+        for field in record.fields { if (!walkable(field.ty, f)) { return "unsupported physical RC record field type"; } }
     }
     for e in f.enums {
         for v in e.variants {
-            for field in v.fields { if (!supported(field.ty, f)) { return "unsupported physical RC variant field type"; } }
+            for field in v.fields { if (!walkable(field.ty, f)) { return "unsupported physical RC variant field type"; } }
         }
     }
     return "";
@@ -450,9 +469,12 @@ function scalar(r: irlower.LowerResult, ins: ssa.SInst, strings: boolean): irlow
     return emit(r, ir.op_bin("sub", 0, false));
 }
 
-// A record box is named by its declaration, a variant box by its variant;
-// every field this vocabulary admits is one i32-shaped word, so the backends
-// need no declaration index to pick a store width.
+// A record box is named by its declaration, a variant box by its variant. The
+// -1 declaration index withholds the per-field store width, which only a
+// construction needs and only wasm reads; every value this vocabulary admits
+// is one i32-shaped word, so nothing built here needs a wider store. A schema
+// may name a wider field, but a walk only READS it, at an offset the backends
+// take from the field index alone.
 function container(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
     if (variant_op(ins.kind_tag)) { return variant(r, ins); }
     if (ins.kind_tag == ssasem.array_new()) { return emit(r, ir.op_arr_make(ins.args.len(), 32)); }

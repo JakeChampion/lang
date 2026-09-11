@@ -1254,12 +1254,17 @@ pub function op_mapiter_advance(): Op { return op0("mapiter_advance"); }
 // carries the struct's type name, `i32_imm` the field count (struct_make) or
 // the field index in DECL order (struct_get). `struct_make` pops `i32_imm`
 // field values (field 0 deepest, already reordered by irlower into decl order)
-// and pushes the new struct box; each backend selects its own layout
-// (x86/arm64: `[shape_ptr, f0, f1, …]` 8-byte slots, field i at (i+1)*8; wasm:
-// `[type_id, f0@4, f1@8, …]` 4-byte slots + an rc header). `struct_get` pops
-// [struct] and pushes field `i32_imm`. This first slice covers scalar-field
-// (i32/boolean) structs only and is leak-only (no RC / drop) — exit-code-
-// equivalent to every backend since the value is read before any free; rc-tracked fields + drop specialization are later slices.
+// and pushes the new struct box. `struct_get` pops [struct] and pushes field
+// `i32_imm`. Every backend lays the box out on 8-byte slots — x86/arm64
+// `[shape_ptr, f0, f1, …]` with field i at (i+1)*8, wasm `[type_id, f0, f1, …]`
+// with field i at 8 + i*8 — so a field's offset is its INDEX alone, and an f64
+// or i64 field shifts nothing after it. (The AST emitter's 4-byte
+// `struct_field_off` layout is a different one and retires with wasm.fern.)
+// Reading a WIDE field still needs its width: on wasm the slot holds a pointer
+// in its low 4 bytes, so width 0 selects the i32 load that recovers one, and a
+// double read that way would be its low half. rc-tracked fields and drop
+// specialization are the per-type __struct_drop_<T> / __field_reclaim_<T>
+// bodies each backend emits (#3457).
 // op_struct_make builds a struct / enum-variant box from nfields values on the
 // stack. `decl_index` identifies WHICH decl `type_name` names: the backends read
 // each field's store width off it, and for a variant name two enums share the
