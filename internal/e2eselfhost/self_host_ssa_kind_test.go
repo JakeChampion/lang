@@ -62,7 +62,8 @@ func TestSelfHostSSAKindRegistry(t *testing.T) {
 		"semantic12=variant_as\n" +
 		"semantic13=length\n" +
 		"semantic14=append\n" +
-		"semantic_count=14\n"
+		"semantic15=slice\n" +
+		"semantic_count=15\n"
 
 	cmd := exec.Command(bin)
 	out, _ := cmd.Output()

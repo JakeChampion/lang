@@ -65,9 +65,25 @@ function fields_have_children(fields: semrecords.Field[]): boolean {
 
 // A string box is released by its own helper: its block starts before the
 // value, where an array's starts before the data words.
-function release_name(t: typeinfo.Type): string {
-    if let typeinfo.TypeString(_) = t { return "__fern_str_free"; }
+// A string slice's box is this function's, but its bytes belong to the source.
+// __fern_str_view_free frees the box alone when the rc is the immortal view
+// sentinel and takes the ordinary path otherwise, which is what makes one
+// release symbol correct on both the register backends and wasm (whose slices
+// copy, so the result is an ordinary counted box).
+function release_name(t: typeinfo.Type, view: boolean): string {
+    if let typeinfo.TypeString(_) = t {
+        if (view) { return "__fern_str_view_free"; }
+        return "__fern_str_free";
+    }
     return "__fern_rc_dec";
+}
+
+// Whether `value` is the result of a slice, and so holds a borrowed-byte box.
+function slice_result(f: ssasem.Func, value: i32): boolean {
+    for b in f.graph.blocks {
+        for ins in b.insts { if (ins.result == value && ins.kind_tag == ssasem.slice()) { return true; } }
+    }
+    return false;
 }
 
 function emit(r: irlower.LowerResult, op: ir.Op): irlower.LowerResult {
@@ -120,7 +136,7 @@ function drop_value(r: irlower.LowerResult, slot: i32, t: typeinfo.Type, scratch
         if (named(t) != "") { r = helper(r, slot, drop_helper_name(t)); }
         r = emit(r, ir.op_end());
     }
-    return helper(r, slot, release_name(t));
+    return helper(r, slot, release_name(t, slice_result(f, slot)));
 }
 
 // A variant box carries only its own variant's fields, so the walk selects
@@ -377,7 +393,7 @@ function scalar_op(k: i32): boolean {
 function container_op(k: i32): boolean {
     return k == ssasem.array_new() || k == ssasem.tuple_new() || k == ssasem.record_new()
         || k == ssasem.array_get() || k == ssasem.tuple_get() || k == ssasem.record_get()
-        || k == ssasem.length() || k == ssasem.append() || variant_op(k);
+        || k == ssasem.length() || k == ssasem.append() || k == ssasem.slice() || variant_op(k);
 }
 
 function variant_op(k: i32): boolean {
@@ -449,6 +465,7 @@ function container(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlo
     // The unit planner admits an append only where the receiver's unit is
     // moved, which is exactly the sole-ownership the reclaim-on-grow form needs.
     if (ins.kind_tag == ssasem.append()) { return emit(r, ir.op_arr_push_owned()); }
+    if (ins.kind_tag == ssasem.slice()) { return emit(r, ir.op_str_slice()); }
     if (ins.kind_tag == ssasem.array_get()) { return emit(r, ir.op_arr_get(32)); }
     if (ins.kind_tag == ssasem.tuple_get()) { return emit(r, ir.op_tuple_get(ins.imm)); }
     return emit(r, ir.op_struct_get(ins.imm, 0));
