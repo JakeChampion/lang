@@ -1,0 +1,399 @@
+// pinky.fern — GNU-compatible `pinky`, a lightweight finger.
+//
+//   pinky [OPTION]... [USER]...
+//   -l -b -h -p -s -f -w -i -q
+//
+// Two formats that share nothing but the option letters.
+//
+// The SHORT format is who(1)'s question answered with the passwd
+// database joined on: one row per session, with the user's real name
+// beside the login name. It is the default, and an operand filters the
+// rows to the users named. Its columns switch off from the right and
+// from the middle:
+//
+//   -f  no heading      -w  no Name      -i  no Name, no Where
+//   -q  no Name, no Where, no Idle
+//
+// The LONG format (-l) is a block per user rather than per session, and
+// it ignores the database of logins entirely: the name, the real name,
+// the home directory and the shell out of /etc/passwd, then the user's
+// own ~/.project and ~/.plan verbatim. -b drops the directory and shell,
+// -h the project, -p the plan. It needs an operand — a long format of
+// everyone would be the whole passwd file — and says so.
+//
+// The idle time and the message status come off the terminal, the same
+// stat(/dev/LINE) `who` makes, but they are SPELLED differently here:
+// pinky writes a day count where who writes `old`, five blanks where who
+// writes a dot, and a leading `*` on the line where who puts a `-` in a
+// column of its own.
+import "std/string";
+import "std/array";
+import "std/io_buffered";
+import "std/time";
+import "./lib/gnu";
+import "./lib/pwdb";
+import "./lib/tz";
+import "./lib/utmp";
+
+function opt_long(): i32 {
+  return 1;
+}
+
+function opt_omit_home(): i32 {
+  return 2;
+}
+
+function opt_omit_project(): i32 {
+  return 3;
+}
+
+function opt_omit_plan(): i32 {
+  return 4;
+}
+
+function opt_short(): i32 {
+  return 5;
+}
+
+function opt_omit_heading(): i32 {
+  return 6;
+}
+
+function opt_omit_name(): i32 {
+  return 7;
+}
+
+function opt_omit_where(): i32 {
+  return 8;
+}
+
+function opt_omit_idle(): i32 {
+  return 9;
+}
+
+function help_text(): string {
+  var out: string = "";
+  out = out + "Usage: " + gnu.prog() + " [OPTION]... [USER]...\n";
+  out = out + "\n";
+  out = out + "  -l              produce long format output for the specified USERs\n";
+  out = out + "  -b              omit the user's home directory and shell in long format\n";
+  out = out + "  -h              omit the user's project file in long format\n";
+  out = out + "  -p              omit the user's plan file in long format\n";
+  out = out + "  -s              do short format output, this is the default\n";
+  out = out + "  -f              omit the line of column headings in short format\n";
+  out = out + "  -w              omit the user's full name in short format\n";
+  out = out + "  -i              omit the user's full name and remote host in short format\n";
+  out = out + "  -q              omit the user's full name, remote host and idle time\n";
+  out = out + "                  in short format\n";
+  out = out + "      --help        display this help and exit\n";
+  out = out + "      --version     output version information and exit\n";
+  out = out + "\n";
+  out = out + "A lightweight 'finger' program;  print user information.\n";
+  out = out + "The utmp file will be " + utmp.default_path() + ".\n";
+  return out;
+}
+
+struct Mode { long_format: boolean, home: boolean, project: boolean, plan: boolean, heading: boolean, name: boolean, where: boolean, idle: boolean }
+
+function mode_new(): Mode {
+  return Mode { long_format: false, home: true, project: true, plan: true, heading: true, name: true, where: true, idle: true };
+}
+
+// Each of the four short-format switches drops a suffix of the same
+// list, so -q is -i without the idle column and -i is -w without the
+// host. -s and -l are the one pair where the last one given wins.
+function apply(m: Mode, id: i32): Mode {
+  if (id == opt_long()) {
+    return Mode { ...m, long_format: true };
+  }
+  if (id == opt_short()) {
+    return Mode { ...m, long_format: false };
+  }
+  if (id == opt_omit_home()) {
+    return Mode { ...m, home: false };
+  }
+  if (id == opt_omit_project()) {
+    return Mode { ...m, project: false };
+  }
+  if (id == opt_omit_plan()) {
+    return Mode { ...m, plan: false };
+  }
+  if (id == opt_omit_heading()) {
+    return Mode { ...m, heading: false };
+  }
+  if (id == opt_omit_name()) {
+    return Mode { ...m, name: false };
+  }
+  if (id == opt_omit_where()) {
+    return Mode { ...m, name: false, where: false };
+  }
+  if (id == opt_omit_idle()) {
+    return Mode { ...m, name: false, where: false, idle: false };
+  }
+  return m;
+}
+
+function parse_mode(argv: string[]): (Mode, string[]) {
+  var opts: gnu.Opt[] = [];
+  opts = opts.append(gnu.flag("l", "", opt_long()));
+  opts = opts.append(gnu.flag("b", "", opt_omit_home()));
+  opts = opts.append(gnu.flag("h", "", opt_omit_project()));
+  opts = opts.append(gnu.flag("p", "", opt_omit_plan()));
+  opts = opts.append(gnu.flag("s", "", opt_short()));
+  opts = opts.append(gnu.flag("f", "", opt_omit_heading()));
+  opts = opts.append(gnu.flag("w", "", opt_omit_name()));
+  opts = opts.append(gnu.flag("i", "", opt_omit_where()));
+  opts = opts.append(gnu.flag("q", "", opt_omit_idle()));
+  var g: gnu.Getopt = gnu.getopt_new(argv, opts, "pinky", help_text(), 1);
+  var m: Mode = mode_new();
+  while (true) {
+    var r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    g = r.1;
+    match (r.0) {
+      Some(hit) => {
+        m = apply(m, hit.id);
+      },
+      None => {
+        break;
+      }
+    }
+  }
+  return (m, g.operands());
+}
+
+// ---- columns ----------------------------------------------------------------
+function pad_right(s: string, w: i32): string {
+  var out: string = s;
+  var n: i32 = s.len();
+  while (n < w) {
+    out = out + " ";
+    n = n + 1;
+  }
+  return out;
+}
+
+function pad_left(s: string, w: i32): string {
+  var out: string = "";
+  var n: i32 = s.len();
+  while (n < w) {
+    out = out + " ";
+    n = n + 1;
+  }
+  return out + s;
+}
+
+// The real-name column is cut at its width as well as padded to it,
+// where every other column only pads.
+function fit(s: string, w: i32): string {
+  if (s.len() > w) {
+    return slice_unchecked(s, 0, w) + "";
+  }
+  return pad_right(s, w);
+}
+
+function two(v: i32): string {
+  if (v < 10) {
+    return "0" + v.to_string();
+  }
+  return v.to_string();
+}
+
+function time_string(z: tz.Zone, sec: i64): string {
+  var dt: DateTime = z.civil(sec);
+  var name: string = time.month_name(dt.date.month);
+  return slice_unchecked(name, 0, 3) + " " + pad_left(dt.date.day.to_string(), 2) + " " + two(dt.time.hour) + ":" + two(dt.time.minute);
+}
+
+// How long since the terminal was last read. Under a minute is blank
+// rather than a zero, a day or more is a count of days, and a terminal
+// that cannot be stat'ed at all is the row of question marks.
+function idle_string(now: i64, at: i64, present: boolean): string {
+  if (!present) {
+    return "?????";
+  }
+  var secs: i64 = now - at;
+  if (secs < 60 as i64) {
+    return "     ";
+  }
+  if (secs < 86400 as i64) {
+    var hours: i32 = (secs / (3600 as i64)) as i32;
+    var mins: i32 = (secs % (3600 as i64) / (60 as i64)) as i32;
+    return two(hours) + ":" + two(mins);
+  }
+  return (secs / (86400 as i64)).to_string() + "d";
+}
+
+// ---- the short format -------------------------------------------------------
+function heading(m: Mode): string {
+  var out: string = pad_right("Login", 8);
+  if (m.name) {
+    out = out + " " + pad_right("Name", 19);
+  }
+  out = out + "  " + pad_right("TTY", 8);
+  if (m.idle) {
+    out = out + " " + pad_right("Idle", 6);
+  }
+  out = out + " " + pad_right("When", 12);
+  if (m.where) {
+    out = out + " " + "Where";
+  }
+  return out + "\n";
+}
+
+// One session. The real name is the passwd entry's, right-justified
+// question marks where there is no entry — which is the one column that
+// asks the database anything.
+//
+// The name is the field as it stands, NOT trimmed of trailing blanks the
+// way `users` and `who -q` trim it: a session recorded as `root  ` is
+// looked up under that name, matched against an operand under it, and
+// printed under it. All three are visible where the field is padded with
+// blanks rather than NULs.
+function entry_row(m: Mode, z: tz.Zone, now: i64, e: utmp.Entry): string {
+  var out: string = pad_right(e.user, 8);
+  if (m.name) {
+    match (pwdb.user_by_name(e.user)) {
+      Some(u) => {
+        out = out + " " + fit(u.full_name(), 19);
+      },
+      None => {
+        out = out + " " + pad_left("???", 19);
+      }
+    }
+  }
+  var info: utmp.Line = utmp.line_info(e.line);
+  var state: string = "?";
+  if (info.present) {
+    state = "*";
+    if (info.writable) {
+      state = " ";
+    }
+  }
+  out = out + " " + state + pad_right(e.line, 8);
+  if (m.idle) {
+    out = out + " " + pad_right(idle_string(now, info.atime, info.present), 6);
+  }
+  out = out + " " + pad_right(time_string(z, e.sec), 12);
+  if (m.where && e.host.len() > 0) {
+    out = out + " " + e.host;
+  }
+  return out + "\n";
+}
+
+// Whether a session is one of the users asked about. No operand asks
+// about every user.
+function wanted(names: string[], user: string): boolean {
+  if (names.len() == 0) {
+    return true;
+  }
+  var i: i32 = 0;
+  while (i < names.len()) {
+    if (names[i] == user) {
+      return true;
+    }
+    i = i + 1;
+  }
+  return false;
+}
+
+function short_format(m: Mode, names: string[]): string {
+  var out: string = "";
+  if (m.heading) {
+    out = out + heading(m);
+  }
+  var z: tz.Zone = tz.local_zone();
+  var now: i64 = now_unix_ms() / (1000 as i64);
+  var entries: utmp.Entry[] = utmp.read_logins(utmp.default_path());
+  var i: i32 = 0;
+  while (i < entries.len()) {
+    if (wanted(names, entries[i].user)) {
+      out = out + entry_row(m, z, now, entries[i]);
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+// ---- the long format --------------------------------------------------------
+// A file printed verbatim after its label, and nothing at all — not
+// even the label — when it cannot be OPENED. The distinction is the
+// whole of this function: a DIRECTORY of that name opens and then fails
+// to read, and the label is printed with nothing under it, which is
+// what a program that fopens the path and copies it sees.
+function dot_file(label: string, dir: string, name: string): string {
+  match (open_reader(dir + "/" + name)) {
+    Ok(r) => {
+      var out: string = label;
+      while (true) {
+        match (r.read_chunk(4096)) {
+          Ok(chunk) => {
+            if (chunk.len() == 0) {
+              r.close();
+              return out;
+            }
+            out = out + chunk;
+          },
+          Err(_) => {
+            r.close();
+            return out;
+          }
+        }
+      }
+    },
+    Err(_) => {
+      return "";
+    }
+  }
+}
+
+function long_entry(m: Mode, name: string): string {
+  var out: string = "Login name: " + pad_right(name, 28) + "In real life: ";
+  match (pwdb.user_by_name(name)) {
+    Some(u) => {
+      out = out + " " + u.full_name() + "\n";
+      if (m.home) {
+        out = out + "Directory: " + pad_right(u.dir, 29) + "Shell: " + " " + u.shell + "\n";
+      }
+      if (m.project) {
+        out = out + dot_file("Project: ", u.dir, ".project");
+      }
+      if (m.plan) {
+        out = out + dot_file("Plan:\n", u.dir, ".plan");
+      }
+      return out + "\n";
+    },
+    None => {
+      // No entry: the line ends at the question marks and the block has
+      // no body, not even the blank line that closes one.
+      return out + " ???\n";
+    }
+  }
+}
+
+function long_format(m: Mode, names: string[]): string {
+  var out: string = "";
+  var i: i32 = 0;
+  while (i < names.len()) {
+    out = out + long_entry(m, names[i]);
+    i = i + 1;
+  }
+  return out;
+}
+
+function main(): i32 {
+  var parsed: (Mode, string[]) = parse_mode(args());
+  var m: Mode = parsed.0;
+  var names: string[] = parsed.1;
+  if (m.long_format && names.len() == 0) {
+    gnu.die_usage("no username specified; at least one must be specified when using -l", 1);
+  }
+  var out: string = "";
+  if (m.long_format) {
+    out = long_format(m, names);
+  } else {
+    out = short_format(m, names);
+  }
+  var o: io_buffered.BufWriter = gnu.put(gnu.out_new(), out);
+  gnu.finish(o);
+  return 0;
+}

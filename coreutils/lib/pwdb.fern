@@ -32,9 +32,16 @@
 import "std/string";
 import "std/array";
 
-// One /etc/passwd entry, reduced to the three fields these utilities
-// read. The gecos, home and shell fields are parsed past and dropped.
-pub struct User { name: string, uid: i64, gid: i64 }
+// One /etc/passwd entry. The password field is the only one nothing
+// here reads: it is an `x` on every system with a shadow file, and the
+// hash on one without, and neither is any of these utilities' business.
+//
+// `gecos` is the field finger calls the real name, and it is a
+// comma-separated list whose first element is the name (`full_name`
+// below); `dir` is where `pinky -l` looks for the project and plan
+// files. A line with fewer fields than these leaves the tail empty
+// rather than failing to be an entry.
+pub struct User { name: string, uid: i64, gid: i64, gecos: string, dir: string, shell: string }
 
 // One /etc/group entry: the gid and the name. `members` is not carried —
 // the only consumer walks the file itself (see `group_list`).
@@ -99,7 +106,7 @@ function passwd_entry(line: string): Option[User] {
     Some(uid) => {
       match (parse_id(f[3])) {
         Some(gid) => {
-          return Some(User { name: f[0], uid: uid, gid: gid });
+          return Some(User { name: f[0], uid: uid, gid: gid, gecos: field(f, 4), dir: field(f, 5), shell: field(f, 6) });
         },
         None => {
           return None;
@@ -110,6 +117,45 @@ function passwd_entry(line: string): Option[User] {
       return None;
     }
   }
+}
+
+// A field that may not be there: a truncated line is still an entry,
+// with nothing where the missing fields would be.
+function field(f: string[], i: i32): string {
+  if (i < f.len()) {
+    return f[i];
+  }
+  return "";
+}
+
+// `(u: User) full_name()` — the gecos field as finger reads it: up to
+// the first comma, with `&` standing for the login name with its first
+// letter capitalised. The convention is older than /etc/passwd's other
+// uses of the field and it is what `pinky` prints as the real name.
+pub function (u: User) full_name(): string {
+  var out: string = "";
+  var i: i32 = 0;
+  while (i < u.gecos.len()) {
+    var c: i32 = u.gecos[i] as i32;
+    if (c == 44) {
+      return out;
+    }
+    if (c == 38) {
+      out = out + capitalised(u.name);
+    } else {
+      out = out + slice_unchecked(u.gecos, i, i + 1);
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+function capitalised(name: string): string {
+  if (name.len() == 0) {
+    return name;
+  }
+  var first: string = slice_unchecked(name, 0, 1) + "";
+  return first.to_ascii_upper() + slice_unchecked(name, 1, name.len());
 }
 
 // One /etc/group line as a Group plus its member list, or None.

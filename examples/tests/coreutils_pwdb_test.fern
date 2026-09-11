@@ -40,9 +40,66 @@ function passwd_fixture(): string {
     // of each is the one a lookup finds.
     s = s + "alice:x:2000:2000::/:/bin/sh\n";
     s = s + "bob:x:1000:1000::/:/bin/sh\n";
+    // The gecos field finger reads: a comma-separated list whose first
+    // element is the real name, and `&` standing for the login name
+    // with its first letter capitalised.
+    s = s + "dan:x:1002:1002:Dan Jones,Room 1,x1,x2:/home/dan:/bin/sh\n";
+    s = s + "erin:x:1003:1003:& Smith:/home/erin:/bin/sh\n";
+    s = s + "frank:x:1004:1004:&&:/home/frank:/bin/sh\n";
+    s = s + "gina:x:1005:1005:,nothing before the comma:/home/gina:/bin/sh\n";
+    // A line that stops after the gid is still an entry, with nothing
+    // where the gecos, the directory and the shell would be.
+    s = s + "short:x:1006:1006\n";
     // No trailing newline on the last line.
     s = s + "carol:x:1001:1001::/:/bin/sh";
     return s;
+}
+
+// The tail of the entry pinky prints: the gecos field, the home
+// directory and the shell.
+function user_of(o: Option[pwdb.User]): pwdb.User {
+    match (o) {
+        Some(u) => {
+            return u;
+        },
+        None => {
+            return pwdb.User { name: "", uid: 0 as i64, gid: 0 as i64, gecos: "", dir: "", shell: "" };
+        }
+    }
+}
+
+function test_full_name(): test.TestOutcome {
+    if (user_of(pwdb.user_by_name_in(passwd_fixture(), "dan")).full_name() != "Dan Jones") {
+        return test.fail("the gecos field up to the first comma");
+    }
+    if (user_of(pwdb.user_by_name_in(passwd_fixture(), "erin")).full_name() != "Erin Smith") {
+        return test.fail("& is the login name with its first letter capitalised");
+    }
+    if (user_of(pwdb.user_by_name_in(passwd_fixture(), "frank")).full_name() != "FrankFrank") {
+        return test.fail("every & is expanded, not just the first");
+    }
+    if (user_of(pwdb.user_by_name_in(passwd_fixture(), "gina")).full_name() != "") {
+        return test.fail("a leading comma leaves no name");
+    }
+    if (user_of(pwdb.user_by_name_in(passwd_fixture(), "alice")).full_name() != "Alice") {
+        return test.fail("a gecos with no comma is the whole field");
+    }
+    return test.assert_eq(user_of(pwdb.user_by_name_in(passwd_fixture(), "root")).full_name(), "root");
+}
+
+function test_home_and_shell(): test.TestOutcome {
+    var dan: pwdb.User = user_of(pwdb.user_by_name_in(passwd_fixture(), "dan"));
+    if (dan.dir != "/home/dan" || dan.shell != "/bin/sh") {
+        return test.fail("the directory and the shell");
+    }
+    var short: pwdb.User = user_of(pwdb.user_by_name_in(passwd_fixture(), "short"));
+    if (short.name != "short") {
+        return test.fail("a line that stops after the gid is an entry");
+    }
+    if (short.gecos != "" || short.dir != "" || short.shell != "") {
+        return test.fail("the fields that are not there are empty");
+    }
+    return test.pass();
 }
 
 function group_fixture(): string {
@@ -328,6 +385,8 @@ function main(): i32 {
     r = r.it("an unnamed gid resolves to nothing", test_group_names);
     r = r.it("no gids resolve to no names", test_empty_gid_list);
     r = r.it("parse_id is digits and nothing else", test_parse_id);
+    r = r.it("the gecos field's real name", test_full_name);
+    r = r.it("the home directory and the shell", test_home_and_shell);
     r = r.it("the utmp record's fields", test_utmp_record_fields);
     r = r.it("a partial or missing utmp", test_utmp_partial_and_missing);
     r = r.it("the user on a terminal", test_utmp_user_on_line);
