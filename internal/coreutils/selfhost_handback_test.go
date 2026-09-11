@@ -2,6 +2,7 @@ package coreutils
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,14 +19,16 @@ import (
 // long_option hands that box back INSIDE the tuple it returns (through its
 // alias `var s: Getopt = g`); the freed block sat in the same freelist class
 // as `Cfg` from then on, and the next `Cfg { ...cfg, … }` in uniq's option
-// loop recycled it under the live Getopt. A twelfth field on Getopt is what
-// put the two structs in one class, which is why the short spellings and
-// every 11-field build were fine.
+// loop recycled it under the live Getopt. EQUAL FIELD COUNTS are what put
+// the two structs in one class, which is why every build where they
+// differed was fine.
 //
 // The recipe is the issue's own: uniq compiled by the self-host against a
-// `Getopt` carrying one more field, then a long option that matches. The
-// tree's Getopt is copied, not edited — the field count is the trigger, not
-// the fix, and the gate must keep tripping whatever gnu.fern declares.
+// `Getopt` padded to uniq's `Cfg` field count, then a long option that
+// matches. Both counts are read from the sources rather than written down,
+// so the gate keeps synthesising the collision as either struct grows — and
+// the tree's own gnu.fern is copied, not edited, because the field count is
+// the trigger and not the fix.
 func TestSelfHostUniqLongOptionWithSameFieldCountStructs(t *testing.T) {
 	root := repoRoot(t)
 	work := t.TempDir()
@@ -45,24 +48,21 @@ func TestSelfHostUniqLongOptionWithSameFieldCountStructs(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	src, err := os.ReadFile(filepath.Join(root, "coreutils", "uniq.fern"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	gnuPath := filepath.Join(work, "lib", "gnu.fern")
 	gnu, err := os.ReadFile(gnuPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	decl := "operands: string[], past_dashdash: boolean }"
-	init := "operands: empty, past_dashdash: false };"
-	if !strings.Contains(string(gnu), decl) || !strings.Contains(string(gnu), init) {
-		t.Fatalf("coreutils/lib/gnu.fern no longer declares Getopt the way this recipe patches it; update the two anchors")
-	}
-	patched := strings.Replace(string(gnu), decl, "operands: string[], past_dashdash: boolean, extra: i32 }", 1)
-	patched = strings.Replace(patched, init, "operands: empty, past_dashdash: false, extra: 0 };", 1)
-	if err := os.WriteFile(gnuPath, []byte(patched), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	src, err := os.ReadFile(filepath.Join(root, "coreutils", "uniq.fern"))
-	if err != nil {
-		t.Fatal(err)
+	want := structFields(t, string(src), "struct Cfg {", "uniq.fern")
+	have := structFields(t, string(gnu), "pub struct Getopt {", "gnu.fern")
+	if pad := want - have; pad > 0 {
+		if err := os.WriteFile(gnuPath, []byte(padGetopt(t, string(gnu), pad)), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 	uniqSrc := filepath.Join(work, "uniq.fern")
 	if err := os.WriteFile(uniqSrc, src, 0o644); err != nil {
@@ -94,6 +94,52 @@ func TestSelfHostUniqLongOptionWithSameFieldCountStructs(t *testing.T) {
 				strings.Join(args, " "), want.how(), want.stdout, want.stderr, got.how(), got.stdout, got.stderr)
 		}
 	}
+}
+
+// structFields counts the fields of the one-line struct declaration that
+// starts with `head`. Every struct in this tree is written on one line and
+// no field type here carries a comma, so the count is the commas plus one.
+func structFields(t *testing.T, src, head, where string) int {
+	t.Helper()
+	i := strings.Index(src, head)
+	if i < 0 {
+		t.Fatalf("%s no longer declares `%s`; this gate patches that declaration", where, head)
+	}
+	body := src[i+len(head):]
+	end := strings.Index(body, "}")
+	if end < 0 {
+		t.Fatalf("%s: `%s` is not the one-line declaration this gate reads", where, head)
+	}
+	return strings.Count(body[:end], ",") + 1
+}
+
+// padGetopt adds `pad` fields to Getopt's declaration and to the literal
+// `getopt_new` builds, which is the only one that names every field.
+func padGetopt(t *testing.T, gnu string, pad int) string {
+	t.Helper()
+	var decl, init strings.Builder
+	for i := 0; i < pad; i++ {
+		fmt.Fprintf(&decl, ", pad%d: i32", i)
+		fmt.Fprintf(&init, ", pad%d: 0", i)
+	}
+	out := insertBefore(t, gnu, "pub struct Getopt {", " }", decl.String())
+	return insertBefore(t, out, "return Getopt { argv: argv,", " };", init.String())
+}
+
+// insertBefore splices `text` in just before the first `tail` that follows
+// `head`.
+func insertBefore(t *testing.T, src, head, tail, text string) string {
+	t.Helper()
+	i := strings.Index(src, head)
+	if i < 0 {
+		t.Fatalf("coreutils/lib/gnu.fern no longer contains `%s`; update this gate's anchor", head)
+	}
+	j := strings.Index(src[i:], tail)
+	if j < 0 {
+		t.Fatalf("coreutils/lib/gnu.fern: no `%s` after `%s`", tail, head)
+	}
+	at := i + j
+	return src[:at] + text + src[at:]
 }
 
 func runPatchedUniq(t *testing.T, bin string, args []string) outcome {

@@ -106,30 +106,49 @@ pub function die_usage(msg: string, status: i32): void {
 // `option` is the name with its dashes and no quotes; the list is
 // printed in declaration order, which is the order it is passed in.
 pub function argmatch(v: string, names: string[], option: string): i32 {
+  return argmatch_valued(v, names, one_value_each(names.len()), option);
+}
+
+// `argmatch_valued(v, names, values, option)` — ARGMATCH over a table
+// whose names carry VALUES, so several names can stand for one:
+// rm's `--interactive` takes never / no / none for one and always /
+// yes for another. A prefix matching only names that SHARE a value is
+// then accepted rather than ambiguous (`--interactive=n` is never),
+// and the list prints a run of equal-valued names on one line:
+//
+//     rm: invalid argument 'bogus' for '--interactive'
+//     Valid arguments are:
+//       - 'never', 'no', 'none'
+//       - 'once'
+//       - 'always', 'yes'
+//
+// Returns the VALUE rather than the index; `argmatch` above is this
+// over a table where every name stands for itself.
+pub function argmatch_valued(v: string, names: string[], values: i32[], option: string): i32 {
   var found: i32 = 0 - 1;
   var ambiguous: boolean = false;
   var i: i32 = 0;
   while (i < names.len()) {
     if (names[i] == v) {
-      return i;
+      return values[i];
     }
     if (names[i].starts_with(v)) {
       if (found < 0) {
         found = i;
-      } else {
+      } else if (values[i] != values[found]) {
         ambiguous = true;
       }
     }
     i = i + 1;
   }
   if (found >= 0 && !ambiguous) {
-    return found;
+    return values[found];
   }
   var what: string = "invalid";
   if (ambiguous) {
     what = "ambiguous";
   }
-  return argmatch_die(v, names, option, what);
+  return argmatch_die(v, names, values, option, what);
 }
 
 // `argmatch_exact(v, names, option)` — the same over an option that
@@ -144,19 +163,37 @@ pub function argmatch_exact(v: string, names: string[], option: string): i32 {
     }
     i = i + 1;
   }
-  return argmatch_die(v, names, option, "invalid");
+  return argmatch_die(v, names, one_value_each(names.len()), option, "invalid");
 }
 
-function argmatch_die(v: string, names: string[], option: string, what: string): i32 {
+function argmatch_die(v: string, names: string[], values: i32[], option: string, what: string): i32 {
   error(what + " argument " + quote(v) + " for " + quote(option));
   eprint("Valid arguments are:");
   var i: i32 = 0;
   while (i < names.len()) {
-    eprint("  - " + quote(names[i]));
-    i = i + 1;
+    var line: string = "  - " + quote(names[i]);
+    var j: i32 = i + 1;
+    while (j < names.len() && values[j] == values[i]) {
+      line = line + ", " + quote(names[j]);
+      j = j + 1;
+    }
+    eprint(line);
+    i = j;
   }
   try_help(1);
   return 0;
+}
+
+// The values of a table where no two names share one, so every name
+// prints on its own line and a prefix of several is ambiguous.
+function one_value_each(n: i32): i32[] {
+  var out: i32[] = [];
+  var i: i32 = 0;
+  while (i < n) {
+    out = out.append(i);
+    i = i + 1;
+  }
+  return out;
 }
 
 // `is_option(a)` — whether getopt would treat `a` as an option token.
@@ -1136,7 +1173,7 @@ pub struct OptMatch { id: i32, value: string, has_value: boolean, long_form: boo
 // `Getopt` — the scan state. `cluster` is what is left of a short
 // cluster still being consumed (without its dash); `operands` are
 // the tokens permuted out so far.
-pub struct Getopt { argv: string[], opts: Opt[], name: string, help: string, status: i32, fail: i32, in_order: boolean, report_operands: boolean, i: i32, cluster: string, operands: string[], past_dashdash: boolean }
+pub struct Getopt { argv: string[], opts: Opt[], name: string, help: string, status: i32, fail: i32, in_order: boolean, report_operands: boolean, i: i32, cluster: string, operands: string[], past_dashdash: boolean, hint: string }
 
 // The ids `next()` reserves for the two standard options; they never
 // reach the caller because `next()` answers them itself. They are public
@@ -1164,7 +1201,7 @@ pub function getopt_new(argv: string[], opts: Opt[], name: string, help_text: st
     None => {}
   }
   var empty: string[] = [];
-  return Getopt { argv: argv, opts: all, name: name, help: help_text, status: status, fail: status, in_order: in_order, report_operands: false, i: 1, cluster: "", operands: empty, past_dashdash: false };
+  return Getopt { argv: argv, opts: all, name: name, help: help_text, status: status, fail: status, in_order: in_order, report_operands: false, i: 1, cluster: "", operands: empty, past_dashdash: false, hint: "" };
 }
 
 // `(g).exit_failure(status)` — gnulib's initialize_exit_failure: the
@@ -1175,6 +1212,25 @@ pub function getopt_new(argv: string[], opts: Opt[], name: string, help_text: st
 // `--help > /dev/full` exits 3 where `tty -x` exits 2.
 pub function (g: Getopt) exit_failure(status: i32): Getopt {
   return Getopt { ...g, fail: status };
+}
+
+// `(g).fault_hint(line)` — an extra line printed between a getopt
+// fault and the `Try …` line. rm(1) is the only caller: any of its
+// getopt faults is followed by `Try 'rm ./-x' to remove the file
+// '-x'.` when an argv element that looks like an option names an
+// existing file, on the theory that the typo was a file name.
+pub function (g: Getopt) fault_hint(line: string): Getopt {
+  return Getopt { ...g, hint: line };
+}
+
+// A fault raised by the scan itself, as against a utility's own
+// usage error: the hint above sits between the message and `Try …`.
+function die_fault(g: Getopt, msg: string): void {
+  error(msg);
+  if (g.hint.len() > 0) {
+    eprint(g.hint);
+  }
+  try_help(g.status);
 }
 
 // `(g).in_order()` — stop at the first operand regardless of
@@ -1372,7 +1428,7 @@ function short_option(g: Getopt): (Option[OptMatch], Getopt) {
     k = k + 1;
   }
   if (k == g.opts.len()) {
-    die_usage("invalid option -- '" + slice_unchecked(g.cluster, 0, 1) + "'", g.status);
+    die_fault(g, "invalid option -- '" + slice_unchecked(g.cluster, 0, 1) + "'");
   }
   var o: Opt = g.opts[k];
   // A short spelling of --help / --version is answered here exactly as
@@ -1397,7 +1453,7 @@ function short_option(g: Getopt): (Option[OptMatch], Getopt) {
     var v: string = g.argv[g.i];
     return (Some(OptMatch { id: o.id, value: v, has_value: true, long_form: false }), Getopt { ...g, cluster: "", i: g.i + 1 });
   }
-  die_usage("option requires an argument -- '" + slice_unchecked(g.cluster, 0, 1) + "'", g.status);
+  die_fault(g, "option requires an argument -- '" + slice_unchecked(g.cluster, 0, 1) + "'");
   return (None, g);
 }
 
@@ -1444,15 +1500,15 @@ function long_option(g: Getopt, a: string): (Option[OptMatch], Getopt) {
       k = k + 1;
     }
     if (found < 0) {
-      die_usage("unrecognized option '" + a + "'", g.status);
+      die_fault(g, "unrecognized option '" + a + "'");
     }
     if (ambiguous) {
-      die_usage("option '" + a + "' is ambiguous; possibilities:" + list, g.status);
+      die_fault(g, "option '" + a + "' is ambiguous; possibilities:" + list);
     }
   }
   var o: Opt = g.opts[found];
   if (o.arg == 0 && glued) {
-    die_usage("option '--" + o.long + "' doesn't allow an argument", g.status);
+    die_fault(g, "option '--" + o.long + "' doesn't allow an argument");
   }
   var s: Getopt = g;
   var has: boolean = glued;
@@ -1462,7 +1518,7 @@ function long_option(g: Getopt, a: string): (Option[OptMatch], Getopt) {
       has = true;
       s = Getopt { ...s, i: s.i + 1 };
     } else {
-      die_usage("option '--" + o.long + "' requires an argument", g.status);
+      die_fault(g, "option '--" + o.long + "' requires an argument");
     }
   }
   // The write-failure status is the utility's own `exit_failure`, which

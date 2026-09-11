@@ -1254,6 +1254,32 @@ behaviour is observable either way.
 
 ## Open gaps
 
+**A directory walk is bounded by PATH_MAX (#9074).** Every filesystem builtin
+takes a path, so a recursive walk concatenates one per entry and the kernel
+refuses it past 4096 bytes. GNU's fts is fd-relative (FTS_CWDFD: openat /
+fdopendir / unlinkat against a held descriptor) and has no such bound: on a
+tree built with fd-relative mkdir to 80 levels of 100 characters, `rm -rf`
+removes it in silence while `rm.fern` stops at level 40 with `File name too
+long` and leaves the rest. Shallow ENAMETOOLONG is an ordinary error path both
+sides agree on. `remove_dir_all` is fd-relative already but offers no
+per-entry hook, so it cannot carry `-v`, `-i`, or the per-entry diagnostics
+that decide the exit status. `du`, `ls -R`, `cp -r`, `chmod -R` and `find`
+want the same primitive.
+
+**Three rm paths are outside the corpus.** `--one-file-system` and
+`--preserve-root=all` only act across a mount point and the harness cannot
+mount one, so they stand in the corpus as the inert invocations that prove
+they parse; both were compared against GNU over a real tmpfs by hand,
+including the `--preserve-root=all --no-preserve-root` order in which GNU
+keeps the device check and drops only the `/` failsafe. The write-protected
+prompt needs a file the test user cannot write, which as root does not exist;
+it was compared under uid 65534 by hand, and in the corpus it stands as the
+`---presume-input-tty` cases, which agree either way. And GNU carries a
+fourth prompt wording, `attempt removal of inaccessible directory %s? `, that
+no directory mode from 000 to 555 could reach — the FTS_DNR path answers
+first — so rm.fern does not have it.
+
+
 **`X as usize` means different addresses in the two compilers (#8799).**
 Native reads the cast as a counted buffer's DATA pointer, which is what
 `std/string`'s `bytes()` is written against; the self-host reads it as the
@@ -1414,7 +1440,7 @@ groups are the order of work. Each sub-issue names its group.
   environ, exec), `ln`
   (link, symlink, readlink; `link`, `unlink`, `readlink` and `realpath`
   are done on `read_link()` from #8883, leaving `ln`),
-  `mkdir` `rmdir` `rm` `mv` `cp`
+  `mkdir` `rmdir` `rm` (done) `mv` `cp`
   `install` `touch` `truncate` `mkfifo` `mknod` `sync` (rename,
   utimensat, ftruncate, mknod, fsync; `mkdir` with a mode and `rmdir` are
   primitives now, and `rename`, `chmod` and `set_file_times` landed with
