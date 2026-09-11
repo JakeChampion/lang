@@ -616,14 +616,18 @@ pub function op_environ(): Op { return op0("environ"); }
 // silent success, and a non-empty one is ENOTEMPTY.
 //
 // `create_dir` takes [path, mode] and pushes Result[void, IoError];
-// `remove_dir` takes [path]; `create_link` and `create_symlink` take
-// [target, path]; `read_link` takes [path] and pushes Result[string,
+// `remove_dir` takes [path]; `create_link`, `create_symlink` and `rename`
+// take two paths; `read_link` takes [path] and pushes Result[string,
 // IoError]. Each lowers to the backend's helper of the same name.
 pub function op_create_dir(): Op { return op0("create_dir"); }
 pub function op_remove_dir(): Op { return op0("remove_dir"); }
 pub function op_create_link(): Op { return op0("create_link"); }
 pub function op_create_symlink(): Op { return op0("create_symlink"); }
 pub function op_read_link(): Op { return op0("read_link"); }
+// `rename` takes [old, new] and pushes Result[void, IoError] — rename(2),
+// which moves a directory entry and REPLACES an existing destination of a
+// compatible kind in one step. Neither final component is followed.
+pub function op_rename(): Op { return op0("rename"); }
 
 // `umask` takes one operand [mask] and pushes the mask it replaced —
 // umask(2), which sets and reads in one uninterruptible step. It cannot
@@ -1703,6 +1707,7 @@ function kind_id_len6(name: string): i32 {
     if (c == b'i' && name == "isatty") { return 232; }
     if (c == b'm') { return kind_id_len6_m(name); }
     if (c == b'n' && name == "now_ns") { return 183; }
+    if (c == b'r' && name == "rename") { return 266; }
     if (c == b'r' && name == "return") { return 160; }
     if (c == b's' && name == "str_eq") { return 99; }
     return 0;
@@ -2335,13 +2340,14 @@ function kind_name_4(id: i32): string {
     if (id == 263) { return "create_symlink"; }
     if (id == 264) { return "read_link"; }
     if (id == 265) { return "umask"; }
+    if (id == 266) { return "rename"; }
     return "invalid";
 }
 
 // kind_name maps an integer id back to its op-kind tag ("invalid" for an
 // out-of-range / KIND_INVALID id). The inverse of kind_id. A cheap range
 // check routes to the owning chunk; everything past 160 — including the
-// extension tags beyond kind_count() (struct_copy=198 … umask=265)
+// extension tags beyond kind_count() (struct_copy=198 … rename=266)
 // — lives in kind_name_4, whose fallthrough is the "invalid" sentinel.
 pub function kind_name(id: i32): string {
     if (id <= 40) { return kind_name_0(id); }
@@ -2468,7 +2474,7 @@ function pops2_mem(t: i32): boolean {
 function pops2_io(t: i32): boolean {
     return t == 170 || t == 226                                          // write_file, write_file_exec
         || t == 237                                                      // access (path, mode)
-        || t == 260 || t == 262 || t == 263                              // create_dir, create_link, create_symlink
+        || t == 260 || t == 262 || t == 263 || t == 266                  // create_dir, create_link, create_symlink, rename
         || t == 178 || t == 187                                          // read_chunk, poll
         || t == 193 || t == 194 || t == 195                              // tcp_connect, tcp_send, tcp_recv
         || t == 202 || t == 213;                                         // writer_write, proc_exec

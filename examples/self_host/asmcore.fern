@@ -466,6 +466,7 @@ pub function sysno(t: string, name: string): string {
         if (name == "linkat") { return "265"; }
         if (name == "symlinkat") { return "266"; }
         if (name == "readlinkat") { return "267"; }
+        if (name == "renameat") { return "264"; }
         if (name == "umask") { return "95"; }
         if (name == "kill") { return "62"; }
         if (name == "getrlimit") { return "97"; }
@@ -1599,6 +1600,18 @@ pub function rt_src_create_link(t: string): string {
 // its own and a link to something absent is created without complaint.
 pub function rt_src_create_symlink(t: string): string {
     return "function __fern_create_symlink(target: string, path: string): Result[void, IoError] { var tlen: i32 = target.len(); var targetz: i32 = __raw_alloc(tlen + 1); var j: i32 = 0; while (j < tlen) { __raw_store8(targetz, j, target[j]); j = j + 1; } __raw_store8(targetz, tlen, 0); var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var rc: i32 = __syscall3(" + sysno(t, "symlinkat") + ", targetz, " + at_fdcwd(t) + ", pathz); if (rc < 0) { return Err(__fern_io_error(0 - rc, __raw_string(pathz, plen))); } return Ok(()); }";
+}
+
+// rt_src_rename backs `rename(old, new)` (#9059, syscall-leaf) →
+// Result[void, IoError]. renameat(AT_FDCWD, old, AT_FDCWD, new) — four
+// arguments and no flags word, because a rename never follows either final
+// component. An existing `new` of a compatible kind is replaced in one step,
+// which is what separates it from create_link plus remove_file.
+//
+// Both operands are NUL-terminated here rather than through a shared preamble,
+// for rt_src_create_link's reason (#7351).
+pub function rt_src_rename(t: string): string {
+    return "function __fern_rename(old: string, newp: string): Result[void, IoError] { var olen: i32 = old.len(); var oldz: i32 = __raw_alloc(olen + 1); var j: i32 = 0; while (j < olen) { __raw_store8(oldz, j, old[j]); j = j + 1; } __raw_store8(oldz, olen, 0); var plen: i32 = newp.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, newp[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var rc: i32 = __syscall4(" + sysno(t, "renameat") + ", " + at_fdcwd(t) + ", oldz, " + at_fdcwd(t) + ", pathz); if (rc < 0) { return Err(__fern_io_error(0 - rc, __raw_string(pathz, plen))); } return Ok(()); }";
 }
 
 // rt_src_read_link backs `read_link(path)` (#8883, syscall-leaf) →
@@ -3767,6 +3780,7 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
     if (id.name == "remove_dir") { return ty_option(ty_unknown()); }
     if (id.name == "create_link") { return ty_option(ty_unknown()); }
     if (id.name == "create_symlink") { return ty_option(ty_unknown()); }
+    if (id.name == "rename") { return ty_option(ty_unknown()); }
     if (id.name == "read_link") { return ty_result(ty_string()); }
     // subprocess(cmd, args, stdin) → ProcessResult struct.
     // See asm.fern: returns "unknown" because the struct's
@@ -5718,6 +5732,7 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
         "__fn___fern_create_dir_all",
         "__fn___fern_create_dir", "__fn___fern_remove_dir",
         "__fn___fern_create_link", "__fn___fern_create_symlink",
+        "__fn___fern_rename",
         "__fn___fern_read_link", "__fn___fern_umask",
         "__fn___fern_env", "__fern_stat", "__fn___fern_stat", "__fn___fern_subprocess",
         "__fern_args", "__fern_arg_at", "__fern_strbuf_append",
