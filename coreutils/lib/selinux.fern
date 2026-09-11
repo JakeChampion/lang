@@ -40,21 +40,17 @@ pub function enabled(): boolean {
   }
 }
 
-// `context()` — getcon(3): the process's own security context, which the
-// kernel exposes as this file, NUL-terminated. libselinux reads
-// /proc/thread-self/attr/current; a Fern binary has one thread, for
-// which that is this same file.
+// The attribute's bytes as getcon reports them: the trailing NUL stripped
+// and NOTHING ELSE. Some kernels end the attribute with a newline, and that
+// newline is part of the context — `runcon` with no command prints a blank
+// line after it, and `id -Z` the same. Trimming it agreed with GNU on a host
+// whose file carries no newline and differed by one byte on a host whose
+// file does.
 //
-// The trailing NUL is stripped and NOTHING ELSE. Some kernels end the
-// attribute with a newline, and that newline is part of the context as
-// getcon reports it: `runcon` with no command prints a blank line after
-// it, and `id -Z` the same. Trimming it here made every no-command runcon
-// case differ by one byte on a host whose file carries one, and agree on
-// a host whose file does not.
-// The attribute's bytes as getcon reports them. Separate from the read so
-// that a host whose file carries no newline can still test the case of one
-// that does — runcon has no operand to point at another file, so the
-// oracle corpus only ever sees whatever this machine's kernel wrote.
+// Separate from the read so that either case can be tested wherever the
+// suite runs: neither `runcon` nor `id -Z` has an operand pointing at
+// another file, so the oracle corpus only ever sees what this machine's own
+// kernel wrote.
 pub function trim_context(text: string): string {
   var n: i32 = text.len();
   while (n > 0 && text[n - 1] as i32 == 0) {
@@ -63,6 +59,10 @@ pub function trim_context(text: string): string {
   return slice_unchecked(text, 0, n) + "";
 }
 
+// `context()` — getcon(3): the process's own security context, which the
+// kernel exposes as this file, NUL-terminated. libselinux reads
+// /proc/thread-self/attr/current; a Fern binary has one thread, for which
+// that is this same file.
 pub function context(): Result[string, IoError] {
   match (read_file("/proc/self/attr/current")) {
     Ok(text) => {
