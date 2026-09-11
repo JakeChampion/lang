@@ -129,9 +129,28 @@ pub function argmatch(v: string, names: string[], option: string): i32 {
   if (ambiguous) {
     what = "ambiguous";
   }
+  return argmatch_die(v, names, option, what);
+}
+
+// `argmatch_exact(v, names, option)` — the same over an option that
+// takes no abbreviations: `cksum -a md` is invalid where `--output-error=w`
+// is a unique prefix. The failure is the same text, and there is no
+// `ambiguous` half of it because only an exact name matches.
+pub function argmatch_exact(v: string, names: string[], option: string): i32 {
+  var i: i32 = 0;
+  while (i < names.len()) {
+    if (names[i] == v) {
+      return i;
+    }
+    i = i + 1;
+  }
+  return argmatch_die(v, names, option, "invalid");
+}
+
+function argmatch_die(v: string, names: string[], option: string, what: string): i32 {
   error(what + " argument " + quote(v) + " for " + quote(option));
   eprint("Valid arguments are:");
-  i = 0;
+  var i: i32 = 0;
   while (i < names.len()) {
     eprint("  - " + quote(names[i]));
     i = i + 1;

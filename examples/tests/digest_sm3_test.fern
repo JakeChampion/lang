@@ -1,0 +1,99 @@
+import "std/test";
+import "std/crypto" as crypto;
+import "std/string";
+// examples/tests/digest_sm3_test.fern — std/crypto's streaming SM3 (GB/T
+// 32905-2016) against the standard known-answer vectors ("abc" and the
+// 64-byte "abcd" repetition are the two the standard publishes) plus the
+// empty message, one million 'a', and 7-byte updates that straddle every
+// block boundary offset, cross-checked against the one-shot form.
+//
+// The remaining vectors were taken from GNU coreutils' `cksum -a sm3`,
+// which is what `coreutils/cksum.fern` is held to.
+
+// __pseudo builds the 10,003-byte fixed pattern byte i = (i * 7 + 3) & 255:
+// long enough that 7-byte updates straddle every block boundary offset, and
+// not valid UTF-8, so the hasher is fed raw bytes.
+function __pseudo(): u8[] {
+    var b: u8[] = __alloc_u8(10003);
+    var i: i32 = 0;
+    while (i < 10003) { b = b.with(i, ((i * 7 + 3) & 255) as u8); i = i + 1; }
+    return b;
+}
+
+// __thousand_a is 1000 'a's, the unit of the million-'a' vector.
+function __thousand_a(): string {
+    var b: u8[] = __alloc_u8(1000);
+    var i: i32 = 0;
+    while (i < 1000) { b = b.with(i, 97 as u8); i = i + 1; }
+    return string_from_bytes_unchecked(b);
+}
+
+function test_empty(): test.TestOutcome {
+    return test.assert_eq(crypto.sm3_new().final_hex(), "1ab21d8355cfa17f8e61194831e81a8f22bec8c728fefb747ed035eb5082aa2b");
+}
+
+function test_abc(): test.TestOutcome {
+    return test.assert_eq(crypto.sm3_new().update("abc").final_hex(), "66c7f0f462eeedd9d1f2d46bdc10e4e24167c4875cf2f7a2297da02b8f4ba8e0");
+}
+
+// The standard's second vector: "abcd" sixty-four bytes' worth, which is
+// exactly one block and so pads into a second.
+function test_multiblock(): test.TestOutcome {
+    return test.assert_eq(crypto.sm3_new().update("abcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcd").final_hex(),
+        "debe9ff92275b8a138604889c18e5a4d6fdb70e5387e5765293dcba39c0c5732");
+}
+
+// 56 bytes: the length that forces the padding into a second block by one
+// byte, which is where a length-field off-by-one shows up.
+function test_fiftysix(): test.TestOutcome {
+    return test.assert_eq(crypto.sm3_new().update("abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq").final_hex(),
+        "639b6cc5e64d9e37a390b192df4fa1ea0720ab747ff692b9f38c4e66ad7b8c05");
+}
+
+function test_bytes_len(): test.TestOutcome {
+    return test.assert_eq(crypto.sm3_new().update("abc").final_bytes().len(), 32);
+}
+
+// One million 'a' as 1000 updates of 1000 bytes: 1000 is not a multiple of the
+// block size, so every update leaves a partial block pending.
+function test_million_a_chunked(): test.TestOutcome {
+    var h: crypto.Sm3 = crypto.sm3_new();
+    var chunk: string = __thousand_a();
+    var i: i32 = 0;
+    while (i < 1000) { h = h.update(chunk); i = i + 1; }
+    return test.assert_eq(h.final_hex(), "c8aaf89429554029e231941a2acc0ad61ff2a5acd8fadd25847a3a732b3b02c3");
+}
+
+// 7-byte view slices over the fixed pattern, against the whole message fed as a
+// string and the reference value.
+function test_seven_byte_updates(): test.TestOutcome {
+    var msg: u8[] = __pseudo();
+    var h: crypto.Sm3 = crypto.sm3_new();
+    var i: i32 = 0;
+    while (i + 7 <= 10003) { h = h.update_bytes(msg[i:i + 7]); i = i + 7; }
+    h = h.update_bytes(msg[i:10003]);
+    var chunked: string = h.final_hex();
+    var whole: string = crypto.sm3_new().update(string_from_bytes_unchecked(msg)).final_hex();
+    if (chunked != "c7badae448ca76f384615885c394c4691998ee17da0e0ee68bf404dde5895544") { return test.fail("chunked: " + chunked); }
+    return test.assert_eq(chunked, whole);
+}
+
+// update_bytes takes the same bytes as u8[]; the one-shot helpers agree.
+function test_update_bytes_and_oneshot(): test.TestOutcome {
+    var via_bytes: string = crypto.sm3_new().update_bytes("abc".bytes()).final_hex();
+    if (via_bytes != crypto.sm3_hex("abc")) { return test.fail("one-shot differs: " + via_bytes); }
+    return test.assert_eq(via_bytes, "66c7f0f462eeedd9d1f2d46bdc10e4e24167c4875cf2f7a2297da02b8f4ba8e0");
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/crypto SM3");
+    r = r.it("empty", test_empty);
+    r = r.it("abc", test_abc);
+    r = r.it("multi-block", test_multiblock);
+    r = r.it("56 bytes", test_fiftysix);
+    r = r.it("final_bytes len", test_bytes_len);
+    r = r.it("million a, 1000x1000", test_million_a_chunked);
+    r = r.it("7-byte updates", test_seven_byte_updates);
+    r = r.it("update_bytes + one-shot", test_update_bytes_and_oneshot);
+    return r.finish();
+}
