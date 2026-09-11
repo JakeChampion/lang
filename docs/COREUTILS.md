@@ -1475,7 +1475,7 @@ than depth. strace shows GNU descends fd-relative below the top level —
 O_NOFOLLOW|O_DIRECTORY)` — so renaming an interior directory under a running
 walk cannot redirect a chmod at anything outside the tree. `chmod.fern`
 rebuilds the path per entry, so it can. Nothing in the corpus renames anything
-under a running chmod, and the 326 cases agree on stdout, stderr, exit status
+under a running chmod, and the 333 cases agree on stdout, stderr, exit status
 and the mode of every entry; what is missing is a safety property no case
 asserts, which is why it is recorded here rather than left to the depth
 sentence above.

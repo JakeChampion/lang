@@ -264,9 +264,19 @@ type artifact struct {
 
 func (inv invocation) prep(t *testing.T) {
 	t.Helper()
-	if inv.prepare != nil {
-		inv.prepare(t)
+	if inv.prepare == nil {
+		return
 	}
+	// prepare CREATES files, and the creation mask is process-global. It
+	// is called outside run(), so without this it can land in the window
+	// where a case naming a mask holds it and build the whole fixture
+	// under someone else's — intermittently, and only visibly on the
+	// modes, which is exactly what the corpus compares. Taking the read
+	// side excludes it from that window and still lets prepares run
+	// concurrently with each other. Not reentrant, and never called from
+	// inside run(), which takes the same lock.
+	defer holdMask(nil)()
+	inv.prepare(t)
 }
 
 func (inv invocation) readArtifacts(t *testing.T) []artifact {
