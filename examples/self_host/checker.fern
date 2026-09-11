@@ -14361,7 +14361,7 @@ pub function ill_typed_hint(mod: parser.Module): util.Diag[] {
   var hint_impls: parser.ImplInfo[] = assoc_func_impls(mod.impls, mod.funcs);
   for func in mod.funcs {
     if (!check_func_body(func, build_func_scope(func, env.sigs, env.structs, env.unions, env.methods, env.imports).with_impls(hint_impls, mod.trait_reqs))) {
-      return [dg_at("type", "\"" + func.name + "\": an expression has a type the self-host checker cannot represent yet (enum value, Option/Result, generic, or dyn); it type-checks under the native `fern` — see issue #4346", func.line, func.col)];
+      return [dg_at("type", "\"" + func.name + "\": an expression has a type the self-host checker cannot represent yet (Option/Result, dyn, or an unregistered builtin); it type-checks under the native `fern` — see issue #9053", func.line, func.col)];
     }
   }
   var s: Scope = new_scope_full(env.sigs, env.structs, env.unions, env.methods, env.imports);
@@ -14369,10 +14369,10 @@ pub function ill_typed_hint(mod: parser.Module): util.Diag[] {
     var r: CheckResult = check_stmt(top_stmt, s);
     s = r.scope;
     if (is_unknown(r.ty)) {
-      return [dg_at("type", "a top-level expression has a type the self-host checker cannot represent yet (enum value, Option/Result, generic, or dyn); it type-checks under the native `fern` — see issue #4346", 0, 0)];
+      return [dg_at("type", "a top-level expression has a type the self-host checker cannot represent yet (Option/Result, dyn, or an unregistered builtin); it type-checks under the native `fern` — see issue #9053", 0, 0)];
     }
   }
-  return [dg_at("type", "type checking failed but no specific diagnostic is available (self-host checker limitation, #4346)", 0, 0)];
+  return [dg_at("type", "type checking failed but no specific diagnostic is available (self-host checker limitation, #9053)", 0, 0)];
 }
 
 // =================== VALIDATION ====================
