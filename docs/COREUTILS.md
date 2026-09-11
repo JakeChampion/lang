@@ -995,6 +995,23 @@ redirection that recreates the file) is inside the timed command. It comes from
 the GNU directory for all three implementations, exactly as `yes`'s `head`
 does, so it compresses every ratio equally rather than biasing one.
 
+Group C's `pathchk`, 2026-09-11, Linux x86-64 (GNU coreutils 9.4; uutils 0.0.24 as
+the Debian multi-call binary). The default mode is one `lstat` per name, so the
+one-operand rows are startup and the 200-operand ones are the per-name cost above
+it; `-p` makes no syscall at all, and the last row is the only shape that reaches
+the per-directory `statfs` walk. The box had four contended cores and sigma came
+back larger than several of the means, so these are indicative and comparable only
+down their own columns:
+
+| utility | workload | fern (ms) | gnu (ms) | uutils (ms) | gnu / fern | uutils / fern |
+|---|---|---|---|---|---|---|
+| `pathchk` | one existing path | 1.40 ± 3.70 | 4.48 ± 12.61 | 8.27 ± 12.30 | 3.20× | 5.91× |
+| `pathchk` | 200 existing paths | 1.59 ± 5.57 | 4.31 ± 11.84 | 9.32 ± 11.31 | 2.72× | 5.88× |
+| `pathchk` | 200 missing paths | 3.58 ± 10.83 | 4.69 ± 9.05 | 7.86 ± 10.77 | 1.31× | 2.19× |
+| `pathchk` | `-p` 200 operands | 1.88 ± 5.14 | 4.49 ± 13.99 | 7.50 ± 5.97 | 2.39× | 4.00× |
+| `pathchk` | `--portability` one 4 KiB name | 2.48 ± 8.11 | 4.43 ± 8.51 | 5.40 ± 3.96 | 1.79× | 2.17× |
+| `pathchk` | the component walk | 1.14 ± 1.40 | 2.53 ± 1.89 | 5.30 ± 3.88 | 2.22× | 4.65× |
+
 `sum`, 2026-09-10, Linux x86-64, the same 62 MiB / 8 000 000-line file (GNU
 coreutils 9.4; uutils 0.0.24 as the Debian multi-call binary):
 
@@ -1537,7 +1554,12 @@ groups are the order of work. Each sub-issue names its group.
   (full stat, statfs, d_type), `dircolors` (done — it needed none of
   those: `env()` for $SHELL / $TERM / $COLORTERM and no new primitive), `date` (strftime; the timezone half is `lib/tz.fern` now), `timeout` `nice`
   `nohup` `kill` `stdbuf` `chroot` (signals, setpriority, exec), `dd`
-  `shred` `stty` `uptime` `pathchk`, and `hostid` (done: `hostname()`
+  `shred` `stty` `uptime`, `pathchk` (done — it needed no new primitive:
+  `lstat` is the whole of the default mode and `statfs` from #9062 carries
+  the per-directory `name_max` its component walk holds a name to, which is
+  exactly the caller that builtin's own doc comment predicted; `pathconf` /
+  `statvfs`, which #8384 lists as the blocker, are not needed), and `hostid`
+  (done: `hostname()`
   plus the resolver in `lib/resolv.fern`). The
   sub-issue for each utility names the primitives it is blocked on; the
   primitive gets its own issue when the first utility needs it.
