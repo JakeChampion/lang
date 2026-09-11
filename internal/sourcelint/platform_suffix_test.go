@@ -102,7 +102,7 @@ func TestNoPlatformSuffixOnTestFiles(t *testing.T) {
 			return err
 		}
 		if info.IsDir() {
-			if info.Name() == ".git" || info.Name() == "node_modules" {
+			if info.Name() == ".git" || info.Name() == "node_modules" || isNestedCheckout(root, path) {
 				return filepath.SkipDir
 			}
 			return nil

@@ -530,7 +530,7 @@ func pathPatternMatchesSomething(t *testing.T, root, pattern string) bool {
 		}
 		rel = filepath.ToSlash(rel)
 		if d.IsDir() {
-			if rel == ".git" || rel == "build" || rel == "bin" {
+			if rel == ".git" || rel == "build" || rel == "bin" || isNestedCheckout(root, p) {
 				return filepath.SkipDir
 			}
 			return nil
