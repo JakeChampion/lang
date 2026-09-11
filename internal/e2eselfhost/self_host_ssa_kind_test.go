@@ -17,6 +17,10 @@ import (
 // printing a deterministic report and exiting with the failure count. A kind
 // added to only one direction, or a duplicate id, fails the golden here
 // rather than silently misdispatching a backend once the tag is wired.
+//
+// The negative ids of the typed semantic phase are named from a positional
+// table, so they are printed in order too: inserting a tag anywhere but the
+// tail renames every later one, and this golden is what catches it.
 func TestSelfHostSSAKindRegistry(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -43,7 +47,22 @@ func TestSelfHostSSAKindRegistry(t *testing.T) {
 		"term_none_id=0\n" +
 		"term_none_name_len=0\n" +
 		"ret=1\n" +
-		"brif=3\n"
+		"brif=3\n" +
+		"semantic1=array_new\n" +
+		"semantic2=tuple_new\n" +
+		"semantic3=array_get\n" +
+		"semantic4=tuple_get\n" +
+		"semantic5=record_new\n" +
+		"semantic6=record_get\n" +
+		"semantic7=call\n" +
+		"semantic8=variant_new\n" +
+		"semantic9=variant_is\n" +
+		"semantic10=variant_get\n" +
+		"semantic11=variant_up\n" +
+		"semantic12=variant_as\n" +
+		"semantic13=length\n" +
+		"semantic14=append\n" +
+		"semantic_count=14\n"
 
 	cmd := exec.Command(bin)
 	out, _ := cmd.Output()
