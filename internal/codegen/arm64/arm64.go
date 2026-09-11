@@ -554,8 +554,13 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 		g.usesReaderWriter {
 		g.usesFree = true
 	}
-	if g.usesRemoveDirAll {
+	if g.usesRemoveDirAll || g.usesReadFile {
 		g.usesBoxFree = true
+	}
+	// read_file_bytes grows past a short st_size hint, handing the
+	// outgrown u8[] back through the array dec.
+	if g.usesReadFileBytes {
+		g.usesArrDec = true
 	}
 	if g.usesFree {
 		g.emitFreeRuntime()
@@ -8790,10 +8795,12 @@ func (g *generator) emitReadFileRuntime() {
 		g.emitReadFileRuntime2W()
 		return
 	}
-	// Frame: 64-byte base + 192-byte statbuf scratch = 256.
-	// x19 = path, x20 = fd, x21 = buf base, x22 = size,
-	// x23 = bytes_read.
-	g.emit("stp x29, x30, [sp, #-256]!")
+	// Frame: 64-byte base + 192-byte statbuf scratch + an 8-byte
+	// slot at [sp + 256] that carries a grown buffer across
+	// __fern_box_free = 272.
+	// x19 = path, x20 = fd, x21 = buf base, x22 = capacity,
+	// x23 = bytes_read, x24 = path byte ptr then grown capacity.
+	g.emit("stp x29, x30, [sp, #-272]!")
 	g.emit("mov x29, sp")
 	g.emit("stp x19, x20, [sp, #16]")
 	g.emit("stp x21, x22, [sp, #32]")
@@ -8817,23 +8824,44 @@ func (g *generator) emitReadFileRuntime() {
 	g.emit("tbnz x0, #63, .Lrf_err_close")
 	g.emit("ldr x22, [sp, #%d]", 64+g.statSizeOff()) // st_size
 
-	// L2 rc-header layout — see __fern_strcat. Payload = size data only.
+	// cap = st_size + 1. st_size is only a hint (#9065); the loop
+	// reads to EOF and grows, and the spare byte catches a file
+	// longer than its hint. L2 rc-header layout — see __fern_strcat.
+	g.emit("add x22, x22, #1")
 	g.emit("mov x0, x22")
 	g.emit("bl __fern_alloc_rc1")
 	g.emit("mov x21, x0") // x21 = data ptr (= base+8)
-	g.emitStrLenStore("w22", "x21")
 
-	// Read loop. x23 = bytes_read (cumulative).
+	// Read loop. x22 = capacity, x23 = bytes_read (cumulative).
 	g.emit("mov x23, #0")
 	g.label(".Lrf_loop")
 	g.emit("cmp x23, x22")
-	g.emit("b.ge .Lrf_done")
+	g.emit("b.lo .Lrf_read")
+	// Buffer full and not at EOF: double the capacity, with a page
+	// floor so a /proc file (hint 0, cap 1) gets there in one step.
+	g.emit("lsl x24, x22, #1")
+	g.emit("cmp x24, #4096")
+	g.emit("b.hs .Lrf_grow")
+	g.emit("mov x24, #4096")
+	g.label(".Lrf_grow")
+	g.emit("mov x0, x24")
+	g.emit("bl __fern_alloc_rc1")
+	g.emit("str x0, [sp, #256]") // carry the new buffer across the free
+	g.emit("mov x1, x21")
+	g.emit("mov x2, x23")
+	g.emit("bl __fern_memcpy")
+	g.emit("mov x0, x21")
+	g.emit("mov x1, x22")
+	g.emit("bl __fern_box_free")
+	g.emit("ldr x21, [sp, #256]")
+	g.emit("mov x22, x24")
+	g.label(".Lrf_read")
 	g.emit("mov x0, x20")
 	g.emit("add x1, x21, x23")
 	g.emit("sub x2, x22, x23")
 	g.syscall("read")
 	g.emit("tbnz x0, #63, .Lrf_err_close")
-	g.emit("cbz x0, .Lrf_done") // EOF before end (file shrunk)
+	g.emit("cbz x0, .Lrf_done") // EOF
 	g.emit("add x23, x23, x0")
 	g.emit("b .Lrf_loop")
 
@@ -8841,23 +8869,15 @@ func (g *generator) emitReadFileRuntime() {
 	// close(fd).
 	g.emit("mov x0, x20")
 	g.syscall("close")
-	// Zero the shrink tail [x21+x23, x21+x22): a file that shrank
-	// between fstat and read would otherwise leave alloc slack there,
-	// making the validation below nondeterministic. NUL bytes are
-	// valid UTF-8.
-	g.emit("subs x2, x22, x23")
-	g.emit("b.le .Lrf_validate")
-	g.emit("add x1, x21, x23")
-	g.label(".Lrf_zfill")
-	g.emit("strb wzr, [x1], #1")
-	g.emit("subs x2, x2, #1")
-	g.emit("b.gt .Lrf_zfill")
-	g.label(".Lrf_validate")
+	// __fern_str_dec frees at the size __fern_alloc_rc1 recorded, so
+	// a buffer wider than the content needs no re-fit; only the
+	// length prefix has to name the bytes actually read.
+	g.emitStrLenStore("w23", "x21")
 	// D9 (#5714): the text read validates at the boundary; invalid
 	// content dispatches as Err(InvalidUtf8(path)) via the synthetic
 	// EILSEQ errno. Raw reads go through __fern_read_file_bytes.
 	g.emit("mov x0, x21")
-	g.emit("mov x1, x22")
+	g.emit("mov x1, x23")
 	g.emit("bl %s", AsmFnName("__fern_utf8_valid"))
 	g.emit("cbnz w0, .Lrf_ok")
 	g.emit("mov x21, #%d", g.eilseq()) // EILSEQ
@@ -8898,7 +8918,7 @@ func (g *generator) emitReadFileRuntime() {
 	g.emit("ldp x23, x24, [sp, #48]")
 	g.emit("ldp x21, x22, [sp, #32]")
 	g.emit("ldp x19, x20, [sp, #16]")
-	g.emit("ldp x29, x30, [sp], #256")
+	g.emit("ldp x29, x30, [sp], #272")
 	g.emit("ret")
 	g.sizeDirective("__fern_read_file")
 	g.line(".ltorg")
@@ -8920,10 +8940,13 @@ func (g *generator) emitReadFileRuntime() {
 //
 // Uses callee-saves: x19 = path data, x20 = path len (the
 // original two-word string), x21 = fd, x22 = string buf data
-// ptr, x23 = file size (length), x24 = bytes read.
+// ptr, x23 = buffer capacity, x24 = bytes read, x25 = path byte
+// ptr, then the grown capacity.
 func (g *generator) emitReadFileRuntime2W() {
 	// Frame: 96-byte base (fp/lr + 6 callee-saves + 16 align)
-	// + 192-byte statbuf = 288. Statbuf at [x29 + 96].
+	// + 192-byte statbuf = 288. Statbuf at [x29 + 96];
+	// [x29 + 72] is the spare slot that carries a grown buffer
+	// across __fern_box_free.
 	g.emit("stp x29, x30, [sp, #-288]!")
 	g.emit("mov x29, sp")
 	g.emit("stp x19, x20, [sp, #16]")
@@ -8951,19 +8974,45 @@ func (g *generator) emitReadFileRuntime2W() {
 	g.syscallFstat()
 	g.emit("tbnz x0, #63, .Lrf2w_err_close")
 	g.emit("ldr x23, [x29, #%d]", 96+g.statSizeOff()) // st_size
-	// Allocate exactly st_size bytes for the result string
-	// data — no length prefix (two-word ABI).
+	// cap = st_size + 1. st_size is only a hint (#9065) — a kernel
+	// pseudo-file reports 0 or a page and generates its contents on
+	// the read — so the loop below reads to EOF and grows, and the
+	// spare byte is what distinguishes "file ended" from "hint was
+	// short" while keeping a regular file at one allocation.
+	g.emit("add x23, x23, #1")
 	g.emit("mov x0, x23")
 	// rc-headered alloc (rc=1 @data-8, size @data-4) so the owned Ok(string)
 	// this returns is reclaimed correctly by __fern_str_dec; a plain
 	// __fern_alloc buffer has no header and corrupts the heap (#2817 class).
 	g.emit("bl __fern_alloc_rc1")
 	g.emit("mov x22, x0") // x22 = data ptr (= base+8)
-	// Read loop.
+	// Read loop. x23 = capacity, x24 = bytes read. The two-word ABI
+	// carries the length beside the pointer, so a buffer larger than
+	// the content needs no re-fit: __fern_str_dec frees at the size
+	// __fern_alloc_rc1 recorded.
 	g.emit("mov x24, #0")
 	g.label(".Lrf2w_loop")
 	g.emit("cmp x24, x23")
-	g.emit("b.ge .Lrf2w_done")
+	g.emit("b.lo .Lrf2w_read")
+	// Buffer full and not at EOF: double the capacity, with a page
+	// floor so a /proc file (hint 0, cap 1) gets there in one step.
+	g.emit("lsl x25, x23, #1")
+	g.emit("cmp x25, #4096")
+	g.emit("b.hs .Lrf2w_grow")
+	g.emit("mov x25, #4096")
+	g.label(".Lrf2w_grow")
+	g.emit("mov x0, x25")
+	g.emit("bl __fern_alloc_rc1")
+	g.emit("str x0, [x29, #72]") // carry the new buffer across the free
+	g.emit("mov x1, x22")
+	g.emit("mov x2, x24")
+	g.emit("bl __fern_memcpy")
+	g.emit("mov x0, x22")
+	g.emit("mov x1, x23")
+	g.emit("bl __fern_box_free")
+	g.emit("ldr x22, [x29, #72]")
+	g.emit("mov x23, x25")
+	g.label(".Lrf2w_read")
 	g.emit("mov x0, x21")
 	g.emit("add x1, x22, x24")
 	g.emit("sub x2, x23, x24")
@@ -8976,21 +9025,11 @@ func (g *generator) emitReadFileRuntime2W() {
 	// close(fd).
 	g.emit("mov x0, x21")
 	g.syscall("close")
-	// Zero the shrink tail [x22+x24, x22+x23) so the validation
-	// below is deterministic (NUL bytes are valid UTF-8).
-	g.emit("subs x2, x23, x24")
-	g.emit("b.le .Lrf2w_validate")
-	g.emit("add x1, x22, x24")
-	g.label(".Lrf2w_zfill")
-	g.emit("strb wzr, [x1], #1")
-	g.emit("subs x2, x2, #1")
-	g.emit("b.gt .Lrf2w_zfill")
-	g.label(".Lrf2w_validate")
 	// D9 (#5714): validate at the boundary; invalid content
 	// dispatches as Err(InvalidUtf8(path)) via the synthetic EILSEQ
 	// errno. Raw reads go through __fern_read_file_bytes.
 	g.emit("mov x0, x22")
-	g.emit("mov x1, x23")
+	g.emit("mov x1, x24")
 	g.emit("bl %s", AsmFnName("__fern_utf8_valid"))
 	g.emit("cbnz w0, .Lrf2w_ok")
 	g.emit("mov x22, #%d", g.eilseq()) // EILSEQ
@@ -9002,7 +9041,7 @@ func (g *generator) emitReadFileRuntime2W() {
 	g.emit("bl __fern_alloc_rc1")
 	g.emit("str wzr, [x0]")      // tag = 0 (Ok)
 	g.emit("str x22, [x0, #8]")  // payload data
-	g.emit("str x23, [x0, #16]") // payload len
+	g.emit("str x24, [x0, #16]") // payload len
 	g.emit("b .Lrf2w_return")
 	g.label(".Lrf2w_err_close")
 	g.emit("neg x22, x0") // x22 = errno
@@ -9038,13 +9077,13 @@ func (g *generator) emitReadFileRuntime2W() {
 // emitReadFileBytesRuntime emits
 // `__fern_read_file_bytes(path_data, path_len) →
 // Result[u8[], IoError]` — read_file's raw sibling: the same
-// openat → fstat → read-loop → close pipeline as
+// openat → fstat → grow-to-EOF read-loop → close pipeline as
 // emitReadFileRuntime2W, but the contents land in a fresh
 // `u8[]` from `__alloc_u8` (cap/rc/len header) and Ok carries
-// the array data pointer. A file that shrinks between fstat
-// and read leaves the trailing bytes zero (from __alloc_u8's
-// zero-fill) with len still st_size, matching read_file's
-// short-read behaviour.
+// the array data pointer. st_size is the same hint it is there
+// (#9065); the array's len is the bytes actually read and its
+// capacity stays whatever was allocated, which is what
+// __fern_arr_dec frees with.
 //
 // Result box layout: 16-byte heap obj `{tag:i32 @0, _:i32 @4,
 // payload:ptr @8}` — tag=0 Ok(u8[] data ptr), tag=1
@@ -9056,11 +9095,12 @@ func (g *generator) emitReadFileBytesRuntime() {
 	g.label("__fern_read_file_bytes")
 	// Frame mirrors emitReadFileRuntime2W: 96-byte base (fp/lr
 	// + 6 callee-saves + 16-byte inline spill at [x29+80]) +
-	// 192-byte statbuf at [x29+96] = 288.
+	// 192-byte statbuf at [x29+96] = 288; [x29+72] carries a
+	// grown buffer across the dec of the old one.
 	//
 	// x19 = path_data, x20 = path_len, x21 = fd, x22 = buf data
-	// ptr / errno, x23 = file size, x24 = bytes read,
-	// x25 = path byte ptr.
+	// ptr / errno, x23 = capacity, x24 = bytes read,
+	// x25 = path byte ptr, then the grown capacity.
 	g.emit("stp x29, x30, [sp, #-288]!")
 	g.emit("mov x29, sp")
 	g.emit("stp x19, x20, [sp, #16]")
@@ -9088,28 +9128,51 @@ func (g *generator) emitReadFileBytesRuntime() {
 	g.syscallFstat()
 	g.emit("tbnz x0, #63, .Lrfb_err_close")
 	g.emit("ldr x23, [x29, #%d]", 96+g.statSizeOff()) // st_size
-	// Fresh u8[] of st_size bytes; __alloc_u8 owns the
-	// cap/rc/len header layout and the n==0 empty sentinel.
+	// cap = st_size + 1; the spare byte is the probe that catches a
+	// file longer than its hint (#9065). __alloc_u8 owns the
+	// cap/rc/len header layout.
+	g.emit("add x23, x23, #1")
 	g.emit("mov x0, x23")
 	g.emit("bl __alloc_u8")
 	g.emit("mov x22, x0") // x22 = data ptr
-	// Read loop.
+	// Read loop. x23 = capacity, x24 = bytes read; the header's len
+	// is stamped from x24 once EOF is in.
 	g.emit("mov x24, #0")
 	g.label(".Lrfb_loop")
 	g.emit("cmp x24, x23")
-	g.emit("b.ge .Lrfb_done")
+	g.emit("b.lo .Lrfb_read")
+	// Buffer full and not at EOF: double the capacity, with a page
+	// floor so a /proc file (hint 0, cap 1) gets there in one step.
+	g.emit("lsl x25, x23, #1")
+	g.emit("cmp x25, #4096")
+	g.emit("b.hs .Lrfb_grow")
+	g.emit("mov x25, #4096")
+	g.label(".Lrfb_grow")
+	g.emit("mov x0, x25")
+	g.emit("bl __alloc_u8")
+	g.emit("str x0, [x29, #72]") // carry the new buffer across the dec
+	g.emit("mov x1, x22")
+	g.emit("mov x2, x24")
+	g.emit("bl __fern_memcpy")
+	g.emit("mov x0, x22")
+	g.emit("mov x1, #1") // stride
+	g.emit("bl __fern_arr_dec")
+	g.emit("ldr x22, [x29, #72]")
+	g.emit("mov x23, x25")
+	g.label(".Lrfb_read")
 	g.emit("mov x0, x21")
 	g.emit("add x1, x22, x24")
 	g.emit("sub x2, x23, x24")
 	g.syscall("read")
 	g.emit("tbnz x0, #63, .Lrfb_err_close")
-	g.emit("cbz x0, .Lrfb_done") // EOF before end (file shrunk)
+	g.emit("cbz x0, .Lrfb_done") // EOF
 	g.emit("add x24, x24, x0")
 	g.emit("b .Lrfb_loop")
 	g.label(".Lrfb_done")
 	// close(fd).
 	g.emit("mov x0, x21")
 	g.syscall("close")
+	g.emitArrayLenStore("w24", "x22")
 	// Build Result.Ok(u8[]): 16-byte box {tag=0 @0, data @8}.
 	g.emit("mov x0, #16")
 	g.emit("bl __fern_alloc_rc1")

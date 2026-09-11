@@ -4885,15 +4885,15 @@ func emitWriteFileHelper(w func(string, ...any)) {
 }
 
 // emitReadFileHelper writes read_file(path) -> Result[string, IoError]: open the
-// file read-only, fstat it for the size, read the whole thing into a fresh
-// single-word rc string, UTF-8-validate it (D9, #5714 — invalid content maps to
-// Err(InvalidUtf8(path)) via a synthetic EILSEQ), and return Ok(string) (tag 0,
-// string@8). Any syscall failure maps -errno through __fern_io_error and returns
-// Err(IoError) (tag 1, box@8). The path is NUL-terminated into a heap buffer
-// first. Non-leaf (calls __fern_io_error / __fern_utf8_valid); frame carries a
+// file read-only, fstat it for a size hint, read to EOF into a fresh single-word
+// rc string that grows when the hint runs short (#9065), UTF-8-validate it (D9,
+// #5714 — invalid content maps to Err(InvalidUtf8(path)) via a synthetic EILSEQ),
+// and return Ok(string) (tag 0, string@8). Any syscall failure maps -errno
+// through __fern_io_error and returns Err(IoError) (tag 1, box@8). The path is
+// NUL-terminated into a heap buffer first. Non-leaf (calls __fern_io_error / __fern_utf8_valid); frame carries a
 // 192-byte statbuf scratch plus callee-saved
-// x19=path / x20=fd / x21=data-or-errno / x22=size / x23=bytes_read / x24=path_nul.
-// x0=path.
+// x19=path / x20=fd / x21=data-or-errno / x22=capacity / x23=bytes_read /
+// x24=path_nul then the grown capacity. x0=path.
 func emitReadFileHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("read_file"))
@@ -4942,25 +4942,62 @@ func emitReadFileHelper(w func(string, ...any)) {
 	w("\tsvc #0")
 	w("\ttbnz x0, #63, .Lssa_rf_err_close")
 	w("\tldr x22, [sp, #112]") // st_size
-	// Allocate a single-word rc string of size bytes (+ NUL).
+	// cap = st_size + 1. st_size is only a hint (#9065) — a kernel
+	// pseudo-file reports 0 or a page and generates its contents on
+	// the read — so the loop reads to EOF and grows, and the spare
+	// byte catches a file longer than its hint.
+	w("\tadd x22, x22, #1")
+	// Allocate a single-word rc string of cap bytes (+ NUL).
 	w("\tadrp x3, %s", heapPtrSym)
 	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
 	w("\tldr x4, [x3]")
 	w("\tadd x4, x4, #15")
 	w("\tand x4, x4, #-16")
-	w("\tadd x5, x22, #9") // 8 header + size + 1 NUL
+	w("\tadd x5, x22, #9") // 8 header + cap + 1 NUL
 	w("\tadd x6, x4, x5")
 	w("\tstr x6, [x3]")
 	emitHeapGuardCall(w)
 	w("\tmov w7, #1")
-	w("\tstr w7, [x4]")      // rc = 1
-	w("\tstr w22, [x4, #4]") // len = size
-	w("\tadd x21, x4, #8")   // x21 = string data ptr
-	// Read loop: x23 = cumulative bytes read.
+	w("\tstr w7, [x4]")    // rc = 1
+	w("\tadd x21, x4, #8") // x21 = string data ptr
+	// Read loop: x22 = capacity, x23 = cumulative bytes read.
 	w("\tmov x23, #0")
 	w(".Lssa_rf_loop:")
 	w("\tcmp x23, x22")
-	w("\tb.ge .Lssa_rf_done")
+	w("\tb.lo .Lssa_rf_read")
+	// Buffer full and not at EOF: double the capacity, with a page
+	// floor so a /proc file (hint 0, cap 1) gets there in one step.
+	// This emitter bump-allocates and never frees, so the outgrown
+	// buffer is simply left behind.
+	w("\tlsl x24, x22, #1")
+	w("\tcmp x24, #4096")
+	w("\tb.hs .Lssa_rf_grow")
+	w("\tmov x24, #4096")
+	w(".Lssa_rf_grow:")
+	w("\tadrp x3, %s", heapPtrSym)
+	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
+	w("\tldr x4, [x3]")
+	w("\tadd x4, x4, #15")
+	w("\tand x4, x4, #-16")
+	w("\tadd x5, x24, #9")
+	w("\tadd x6, x4, x5")
+	w("\tstr x6, [x3]")
+	emitHeapGuardCall(w)
+	w("\tmov w7, #1")
+	w("\tstr w7, [x4]")   // rc = 1
+	w("\tadd x5, x4, #8") // new string data ptr
+	w("\tmov x6, #0")
+	w(".Lssa_rf_regrow:")
+	w("\tcmp x6, x23")
+	w("\tb.hs .Lssa_rf_regrown")
+	w("\tldrb w7, [x21, x6]")
+	w("\tstrb w7, [x5, x6]")
+	w("\tadd x6, x6, #1")
+	w("\tb .Lssa_rf_regrow")
+	w(".Lssa_rf_regrown:")
+	w("\tmov x21, x5")
+	w("\tmov x22, x24")
+	w(".Lssa_rf_read:")
 	w("\tmov x0, x20")
 	w("\tadd x1, x21, x23")
 	w("\tsub x2, x22, x23")
@@ -4971,27 +5008,16 @@ func emitReadFileHelper(w func(string, ...any)) {
 	w("\tadd x23, x23, x0")
 	w("\tb .Lssa_rf_loop")
 	w(".Lssa_rf_done:")
-	w("\tstrb wzr, [x21, x22]") // trailing NUL
+	w("\tstrb wzr, [x21, x23]") // trailing NUL
+	w("\tstur w23, [x21, #-4]") // len = bytes read
 	w("\tmov x0, x20")
 	w("\tmov x8, #57") // close
 	w("\tsvc #0")
-	// Zero the shrink tail [x21+x23, x21+x22): a file that shrank
-	// between fstat and read would otherwise leave heap slack there,
-	// making the validation below nondeterministic. NUL bytes are
-	// valid UTF-8.
-	w("\tsubs x2, x22, x23")
-	w("\tb.le .Lssa_rf_val")
-	w("\tadd x1, x21, x23")
-	w(".Lssa_rf_zfill:")
-	w("\tstrb wzr, [x1], #1")
-	w("\tsubs x2, x2, #1")
-	w("\tb.gt .Lssa_rf_zfill")
-	w(".Lssa_rf_val:")
 	// D9 (#5714): the text read validates at the boundary; invalid
 	// content dispatches as Err(InvalidUtf8(path)) via the synthetic
 	// EILSEQ errno. Raw reads go through read_file_bytes.
 	w("\tmov x0, x21")
-	w("\tmov x1, x22")
+	w("\tmov x1, x23")
 	w("\tbl %s", fnLabel("__fern_utf8_valid"))
 	w("\tcbnz w0, .Lssa_rf_okb")
 	w("\tmov x21, #84") // EILSEQ
@@ -5049,16 +5075,15 @@ func emitReadFileHelper(w func(string, ...any)) {
 }
 
 // emitReadFileBytesHelper writes read_file_bytes(path) -> Result[u8[], IoError]:
-// read_file's raw sibling — the same openat/fstat/read-loop/close pipeline, but
+// read_file's raw sibling — the same openat/fstat/grow-to-EOF/close pipeline, but
 // the contents land in a fresh u8[] from __alloc_u8 (16-byte header; cap@-12,
-// rc@-8, len@-4) and Ok carries the array data pointer. A file that shrinks
-// between fstat and read leaves the trailing bytes zero (__alloc_u8 zero-fills)
-// with len still st_size. Any syscall failure maps -errno through
-// __fern_io_error and returns Err(IoError) (tag 1, box@8). The path is
-// NUL-terminated into a heap buffer first. Non-leaf (calls __alloc_u8 /
+// rc@-8, len@-4) and Ok carries the array data pointer. st_size is the same hint
+// it is there (#9065); the array's len is the bytes actually read. Any syscall
+// failure maps -errno through __fern_io_error and returns Err(IoError) (tag 1,
+// box@8). The path is NUL-terminated into a heap buffer first. Non-leaf (calls __alloc_u8 /
 // __fern_io_error); frame carries a 192-byte statbuf scratch plus callee-saved
-// x19=path / x20=fd / x21=data-or-errno / x22=size / x23=bytes_read /
-// x24=path_nul. x0=path.
+// x19=path / x20=fd / x21=data-or-errno / x22=capacity / x23=bytes_read /
+// x24=path_nul then the grown capacity. x0=path.
 func emitReadFileBytesHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("read_file_bytes"))
@@ -5107,16 +5132,42 @@ func emitReadFileBytesHelper(w func(string, ...any)) {
 	w("\tsvc #0")
 	w("\ttbnz x0, #63, .Lssa_rfb_err_close")
 	w("\tldr x22, [sp, #112]") // st_size
-	// Fresh u8[] of size bytes; __alloc_u8 owns the header layout
-	// and the zero-fill.
+	// cap = st_size + 1; the spare byte is the probe that catches a
+	// file longer than its hint (#9065). __alloc_u8 owns the header
+	// layout and the zero-fill.
+	w("\tadd x22, x22, #1")
 	w("\tmov x0, x22")
 	w("\tbl %s", fnLabel("__alloc_u8"))
 	w("\tmov x21, x0") // x21 = array data ptr
-	// Read loop: x23 = cumulative bytes read.
+	// Read loop: x22 = capacity, x23 = cumulative bytes read.
 	w("\tmov x23, #0")
 	w(".Lssa_rfb_loop:")
 	w("\tcmp x23, x22")
-	w("\tb.ge .Lssa_rfb_done")
+	w("\tb.lo .Lssa_rfb_read")
+	// Buffer full and not at EOF: double the capacity, with a page
+	// floor so a /proc file (hint 0, cap 1) gets there in one step.
+	// This emitter bump-allocates and never frees, so the outgrown
+	// buffer is simply left behind.
+	w("\tlsl x24, x22, #1")
+	w("\tcmp x24, #4096")
+	w("\tb.hs .Lssa_rfb_grow")
+	w("\tmov x24, #4096")
+	w(".Lssa_rfb_grow:")
+	w("\tmov x0, x24")
+	w("\tbl %s", fnLabel("__alloc_u8"))
+	w("\tmov x5, x0")
+	w("\tmov x6, #0")
+	w(".Lssa_rfb_regrow:")
+	w("\tcmp x6, x23")
+	w("\tb.hs .Lssa_rfb_regrown")
+	w("\tldrb w7, [x21, x6]")
+	w("\tstrb w7, [x5, x6]")
+	w("\tadd x6, x6, #1")
+	w("\tb .Lssa_rfb_regrow")
+	w(".Lssa_rfb_regrown:")
+	w("\tmov x21, x5")
+	w("\tmov x22, x24")
+	w(".Lssa_rfb_read:")
 	w("\tmov x0, x20")
 	w("\tadd x1, x21, x23")
 	w("\tsub x2, x22, x23")
@@ -5127,6 +5178,7 @@ func emitReadFileBytesHelper(w func(string, ...any)) {
 	w("\tadd x23, x23, x0")
 	w("\tb .Lssa_rfb_loop")
 	w(".Lssa_rfb_done:")
+	w("\tstur w23, [x21, #-4]") // len = bytes read
 	w("\tmov x0, x20")
 	w("\tmov x8, #57") // close
 	w("\tsvc #0")
