@@ -662,3 +662,24 @@ func (c *buildCache[T]) get(key string, build func() (T, error)) (T, error) {
 	e.once.Do(func() { e.val, e.err = build() })
 	return e.val, e.err
 }
+
+// TrackFernSources makes the go command's test cache aware of the Fern sources
+// a test compiles through a CHILD process.
+//
+// `go test` reuses a cached result until something it can see changes: the
+// package's Go files, the environment, the command line, and the files the TEST
+// PROCESS itself opened. It cannot see what a compiler the test exec'd opened.
+// So a suite that hands `coreutils/head.fern` to the `fern` binary keeps
+// reporting its previous result after that file changes — `ok … (cached)`, every
+// subtest PASS, nothing executed (#9087). Reading the closure in the test
+// process puts those files in its testlog, which is what the key is built from.
+//
+// Only `dir`-local imports need this: `std/…` and `core/…` reach the compiler
+// through internal/stdlib's go:embed, so they are already part of the package's
+// build inputs.
+func TrackFernSources(t testing.TB, dir, fernName string) {
+	t.Helper()
+	// The closure walk reads every file it visits, which is the whole point
+	// here; the list it returns is not needed.
+	SelfHostImportClosure(t, dir, fernName)
+}

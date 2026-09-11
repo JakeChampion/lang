@@ -6,7 +6,7 @@ ASMS     := $(addprefix build/,$(addsuffix .s,$(EXAMPLES)))
 BINS     := $(addprefix build/,$(EXAMPLES))
 LANG_SRCS := $(wildcard examples/*.fern) $(wildcard coreutils/*.fern) $(wildcard coreutils/lib/*.fern)
 
-.PHONY: all build test vet deadcode actionlint hooks testnames freeze check-sources selfhost-cli bootstrap distcheck clean examples run-% fmt fmt-check gofmt gofmt-check lint-all ci-selftest
+.PHONY: all build test vet deadcode actionlint hooks testnames freeze check-sources selfhost-cli bootstrap distcheck clean examples run-% fmt fmt-check gofmt gofmt-check lint-all ci-selftest fern-test-cache
 
 all: build test
 
@@ -69,6 +69,13 @@ hooks:
 # tools/testname_gate.sh.
 testnames:
 	./tools/testname_gate.sh
+
+# A `.fern` edit reaches the compiler through a child process, where the go
+# command's test cache cannot see it. Without e2eharness.TrackFernSources the
+# coreutils suites keep reporting their previous result after a source change
+# (#9087), which reads exactly like a pass.
+fern-test-cache:
+	./scripts/check-fern-test-cache
 
 # Run ci.yml's `changes` script against stubbed API responses: the JS copy of
 # GitHub's filter grammar and the job's fail-open rules, pinned the way

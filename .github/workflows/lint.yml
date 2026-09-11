@@ -49,6 +49,12 @@ name: Lint
 #                stubbed API responses (tools/ci-changes-selftest.mjs), so the
 #                path-filter grammar it implements is pinned before it gates a
 #                pull request.
+#   fern-test-cache — `make fern-test-cache`: a `.fern` edit reaches the compiler
+#                through a child process, so the go command's test cache cannot
+#                see it and a suite keeps reporting its previous result after
+#                the source changes — `ok … (cached)`, every subtest PASS,
+#                nothing executed (#9087). The probe perturbs a source and
+#                requires the cached result to fall.
 #   freeze     — `make freeze`: reports the live state of the native-convergence
 #                freeze preconditions, derived from the tree. Fails only when
 #                ground is LOST (an AST emitter returns, a backend loses
@@ -111,6 +117,10 @@ jobs:
       - name: ci changes self-test
         if: ${{ !cancelled() }}
         run: make ci-selftest
+
+      - name: fern test cache
+        if: ${{ !cancelled() }}
+        run: make fern-test-cache
 
       - name: freeze preconditions
         if: ${{ !cancelled() }}

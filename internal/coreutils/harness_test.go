@@ -449,7 +449,12 @@ func fernBin(t *testing.T, util string) string {
 		fernBinDir = dir
 	}
 	fern := e2eharness.BuildLangBinForInterp(t)
-	src := filepath.Join(repoRoot(t), "coreutils", util+".fern")
+	root := repoRoot(t)
+	// The compile below is a child process, so nothing it reads reaches the go
+	// command's test cache on its own: without this the suite reports its last
+	// result after a `.fern` edit, having run nothing (#9087).
+	e2eharness.TrackFernSources(t, filepath.Join(root, "coreutils"), util+".fern")
+	src := filepath.Join(root, "coreutils", util+".fern")
 	bin := filepath.Join(fernBinDir, util)
 	cmd := exec.Command(fern, "-target", fernTarget(t), "-o", bin, src)
 	if out, err := cmd.CombinedOutput(); err != nil {
