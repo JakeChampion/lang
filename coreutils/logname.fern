@@ -23,13 +23,14 @@
 //      user-process entry for that terminal. A descriptor that is not a
 //      terminal ends it here — there is no session to name.
 //
-// Naming the terminal is ttyname(0), which is `lib/tty.fern`.
+// Naming the terminal is ttyname(0), which is `lib/tty.fern`; matching it
+// against ut_line wants it without the `/dev/` prefix, which `who -m`
+// needs too and which lives in lib/utmp.fern beside that field.
 import "std/string";
 import "std/array";
 import "./lib/gnu";
 import "./lib/procfs";
 import "./lib/pwdb";
-import "./lib/tty";
 import "./lib/utmp";
 
 function help_text(): string {
@@ -65,21 +66,6 @@ function login_uid(): Option[i64] {
   }
 }
 
-// ttyname(0) minus its /dev/ prefix — the form utmp's ut_line carries.
-function terminal_line(): Option[string] {
-  match (tty.name_of_stdin()) {
-    Some(path) => {
-      if (path.starts_with("/dev/")) {
-        return Some(slice_unchecked(path, 5, path.len()) + "");
-      }
-      return Some(path);
-    },
-    None => {
-      return None;
-    }
-  }
-}
-
 function login_name(): Option[string] {
   match (login_uid()) {
     Some(uid) => {
@@ -92,7 +78,7 @@ function login_name(): Option[string] {
     },
     None => {}
   }
-  match (terminal_line()) {
+  match (utmp.terminal_line()) {
     Some(line) => {
       return utmp.user_on_line(utmp.default_path(), line);
     },
