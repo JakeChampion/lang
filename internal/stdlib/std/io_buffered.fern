@@ -150,8 +150,7 @@ pub function (b: BufWriter) write_byte(byte: i32): BufWriter {
 
 // `(b).write_u64(n)` — append `n` in decimal. The digits are static
 // one-byte literals, so a digit costs one write_string append and no
-// allocation of its own; that append still copies the buffer once it
-// outgrows the inline form. `n.to_string()` makes a whole string per
+// allocation of its own. `n.to_string()` makes a whole string per
 // call, which is most of what a counting utility's output loop spends.
 pub function (b: BufWriter) write_u64(n: u64): BufWriter {
   var p: u64 = 1 as u64;
