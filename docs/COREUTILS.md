@@ -1076,6 +1076,17 @@ errno they discard is the whole of what those two utilities report.
 
 ## Known divergences
 
+**`dircolors -p` prints GNU 9.4's database.** The text `-p` prints is a data
+file that changes between coreutils releases — the copyright year on its third
+line moves, and entries come and go — so there is no version-independent answer
+to print. `coreutils/dircolors.fern` carries GNU 9.4's, transcribed from that
+binary's own `-p` output (the file grants permission to copy and distribute it
+with its notice preserved, which is why it can be carried at all). `-p` and
+every invocation with no FILE read that text, so against a newer oracle those
+cases fail loudly rather than passing something wrong, as `uname -p` does on an
+unpatched distribution; the fix is to transcribe the newer `dircolors -p`.
+Nothing else in the utility is version-sensitive.
+
 **`od -t fL` prints a canonical value for an encoding x87 never
 produces.** The 80-bit extended format has bit patterns that are not
 values: an unnormal (a non-zero exponent with the stored integer bit
@@ -1253,6 +1264,15 @@ system` and exits 125 where GNU would run the command — the shape `split
 behaviour is observable either way.
 
 ## Open gaps
+
+**Accumulating into an array or a string is quadratic under the self-host
+compiler (#9077).** `xs = xs.append(v)` and `s = s + piece` grow in place under
+native and copy per step in the self-host build, so a corpus cannot hand the
+self-host leg a large accumulation: `dircolors`' large-input cases are sized to
+what the self-host finishes (6000 entries — past a read block on the way in and
+past a pipe buffer on the way out) rather than to what native would take. Found
+when the self-host build of dircolors was SIGKILLed on a case native finishes
+in 0.19 s.
 
 **A directory walk is bounded by PATH_MAX (#9074).** Every filesystem builtin
 takes a path, so a recursive walk concatenates one per entry and the kernel
@@ -1447,8 +1467,9 @@ groups are the order of work. Each sub-issue names its group.
   #9059), `mktemp` (done — it needed none of them: `open_exclusive`,
   `create_dir`, `remove_dir`, `remove_file`, `lstat`, `random_bytes` and
   `env` were all already here, so its banner was stale), `chmod` `chown`
-  `chgrp` `chcon` `runcon`, `stat` `ls` `dir` `vdir` `du` `df` `dircolors`
-  (full stat, statfs, d_type), `date` (strftime; the timezone half is `lib/tz.fern` now), `timeout` `nice`
+  `chgrp` `chcon` `runcon`, `stat` `ls` `dir` `vdir` `du` `df`
+  (full stat, statfs, d_type), `dircolors` (done — it needed none of
+  those: `env()` for $SHELL / $TERM / $COLORTERM and no new primitive), `date` (strftime; the timezone half is `lib/tz.fern` now), `timeout` `nice`
   `nohup` `kill` `stdbuf` `chroot` (signals, setpriority, exec), `dd`
   `shred` `stty` `uptime` `pathchk`, and `hostid` (done: `hostname()`
   plus the resolver in `lib/resolv.fern`). Each primitive is a builtin,

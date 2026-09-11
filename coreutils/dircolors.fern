@@ -1,0 +1,1117 @@
+// dircolors.fern — GNU-compatible `dircolors`.
+//
+//   dircolors                  the built-in database, as shell commands
+//   dircolors FILE             that file instead (`-` is standard input)
+//   -b, --sh, --bourne-shell   Bourne syntax
+//   -c, --csh, --c-shell       C shell syntax
+//   -p, --print-database       the built-in database, verbatim
+//       --print-ls-colors      one escaped line per entry
+//
+// One TEXT serves both jobs. `-p` prints the database below unchanged,
+// and the default LS_COLORS is what the ordinary file parser makes of
+// that same text — which is why the commented-out `#NORMAL 00` lines
+// never become entries and why `-p` output carries TERM lines.
+//
+// The parse is filtered by $TERM and $COLORTERM, so the no-operand
+// output is environment-dependent while `-p` is not. The filter is a
+// four-state machine rather than a flag: a TERM line that does NOT match
+// only closes the section when an ordinary line has been consumed since
+// the one that opened it, so `TERM linux / TERM vt52 / DIR 3` sets di=3
+// and `TERM linux / DIR 2 / TERM vt52 / DIR 3` does not. The same four
+// states decide whether an unknown keyword is a fatal diagnostic or is
+// passed over in silence: outside any section it is ignored.
+//
+// The pattern is fnmatch(3) with flags 0, which `std/glob` is not —
+// there `*` stops at `/`, `**` means something, and a backslash escapes
+// nothing — so the matcher is here.
+import "std/string";
+import "./lib/gnu";
+
+// ---- the built-in database -------------------------------------------------
+//
+// GNU coreutils 9.4's, transcribed from what its own `dircolors -p`
+// prints. The text carries a copyright notice and the permission to
+// copy and distribute it with that notice preserved, which is what
+// keeps it here; nothing was taken from GNU sources.
+//
+// It is VERSION-PINNED: the copyright year in the third line moves with
+// each release, and the entries below it change too, so `dircolors -p`
+// and the no-operand output are compared against a 9.4 oracle. A newer
+// reference fails those cases loudly (docs/COREUTILS.md's version rule,
+// and `uname -p`'s precedent) rather than passing something wrong, and
+// the fix is to transcribe the newer `dircolors -p` here.
+function database(): string {
+  var out: string = "";
+  out = out + "# Configuration file for dircolors, a utility to help you set the\n";
+  out = out + "# LS_COLORS environment variable used by GNU ls with the --color option.\n";
+  out = out + "# Copyright (C) 1996-2023 Free Software Foundation, Inc.\n";
+  out = out + "# Copying and distribution of this file, with or without modification,\n";
+  out = out + "# are permitted provided the copyright notice and this notice are preserved.\n";
+  out = out + "#\n";
+  out = out + "# The keywords COLOR, OPTIONS, and EIGHTBIT (honored by the\n";
+  out = out + "# slackware version of dircolors) are recognized but ignored.\n";
+  out = out + "# Global config options can be specified before TERM or COLORTERM entries\n";
+  out = out + "# ===================================================================\n";
+  out = out + "# Terminal filters\n";
+  out = out + "# ===================================================================\n";
+  out = out + "# Below are TERM or COLORTERM entries, which can be glob patterns, which\n";
+  out = out + "# restrict following config to systems with matching environment variables.\n";
+  out = out + "COLORTERM ?*\n";
+  out = out + "TERM Eterm\n";
+  out = out + "TERM ansi\n";
+  out = out + "TERM *color*\n";
+  out = out + "TERM con[0-9]*x[0-9]*\n";
+  out = out + "TERM cons25\n";
+  out = out + "TERM console\n";
+  out = out + "TERM cygwin\n";
+  out = out + "TERM *direct*\n";
+  out = out + "TERM dtterm\n";
+  out = out + "TERM gnome\n";
+  out = out + "TERM hurd\n";
+  out = out + "TERM jfbterm\n";
+  out = out + "TERM konsole\n";
+  out = out + "TERM kterm\n";
+  out = out + "TERM linux\n";
+  out = out + "TERM linux-c\n";
+  out = out + "TERM mlterm\n";
+  out = out + "TERM putty\n";
+  out = out + "TERM rxvt*\n";
+  out = out + "TERM screen*\n";
+  out = out + "TERM st\n";
+  out = out + "TERM terminator\n";
+  out = out + "TERM tmux*\n";
+  out = out + "TERM vt100\n";
+  out = out + "TERM xterm*\n";
+  out = out + "# ===================================================================\n";
+  out = out + "# Basic file attributes\n";
+  out = out + "# ===================================================================\n";
+  out = out + "# Below are the color init strings for the basic file types.\n";
+  out = out + "# One can use codes for 256 or more colors supported by modern terminals.\n";
+  out = out + "# The default color codes use the capabilities of an 8 color terminal\n";
+  out = out + "# with some additional attributes as per the following codes:\n";
+  out = out + "# Attribute codes:\n";
+  out = out + "# 00=none 01=bold 04=underscore 05=blink 07=reverse 08=concealed\n";
+  out = out + "# Text color codes:\n";
+  out = out + "# 30=black 31=red 32=green 33=yellow 34=blue 35=magenta 36=cyan 37=white\n";
+  out = out + "# Background color codes:\n";
+  out = out + "# 40=black 41=red 42=green 43=yellow 44=blue 45=magenta 46=cyan 47=white\n";
+  out = out + "#NORMAL 00 # no color code at all\n";
+  out = out + "#FILE 00 # regular file: use no color at all\n";
+  out = out + "RESET 0 # reset to \"normal\" color\n";
+  out = out + "DIR 01;34 # directory\n";
+  out = out + "LINK 01;36 # symbolic link. (If you set this to 'target' instead of a\n";
+  out = out + " # numerical value, the color is as for the file pointed to.)\n";
+  out = out + "MULTIHARDLINK 00 # regular file with more than one link\n";
+  out = out + "FIFO 40;33 # pipe\n";
+  out = out + "SOCK 01;35 # socket\n";
+  out = out + "DOOR 01;35 # door\n";
+  out = out + "BLK 40;33;01 # block device driver\n";
+  out = out + "CHR 40;33;01 # character device driver\n";
+  out = out + "ORPHAN 40;31;01 # symlink to nonexistent file, or non-stat'able file ...\n";
+  out = out + "MISSING 00 # ... and the files they point to\n";
+  out = out + "SETUID 37;41 # file that is setuid (u+s)\n";
+  out = out + "SETGID 30;43 # file that is setgid (g+s)\n";
+  out = out + "CAPABILITY 00 # file with capability (very expensive to lookup)\n";
+  out = out + "STICKY_OTHER_WRITABLE 30;42 # dir that is sticky and other-writable (+t,o+w)\n";
+  out = out + "OTHER_WRITABLE 34;42 # dir that is other-writable (o+w) and not sticky\n";
+  out = out + "STICKY 37;44 # dir with the sticky bit set (+t) and not other-writable\n";
+  out = out + "# This is for files with execute permission:\n";
+  out = out + "EXEC 01;32\n";
+  out = out + "# ===================================================================\n";
+  out = out + "# File extension attributes\n";
+  out = out + "# ===================================================================\n";
+  out = out + "# List any file extensions like '.gz' or '.tar' that you would like ls\n";
+  out = out + "# to color below. Put the suffix, a space, and the color init string.\n";
+  out = out + "# (and any comments you want to add after a '#').\n";
+  out = out + "# Suffixes are matched case insensitively, but if you define different\n";
+  out = out + "# init strings for separate cases, those will be honored.\n";
+  out = out + "#\n";
+  out = out + "# If you use DOS-style suffixes, you may want to uncomment the following:\n";
+  out = out + "#.cmd 01;32 # executables (bright green)\n";
+  out = out + "#.exe 01;32\n";
+  out = out + "#.com 01;32\n";
+  out = out + "#.btm 01;32\n";
+  out = out + "#.bat 01;32\n";
+  out = out + "# Or if you want to color scripts even if they do not have the\n";
+  out = out + "# executable bit actually set.\n";
+  out = out + "#.sh 01;32\n";
+  out = out + "#.csh 01;32\n";
+  out = out + "# archives or compressed (bright red)\n";
+  out = out + ".tar 01;31\n";
+  out = out + ".tgz 01;31\n";
+  out = out + ".arc 01;31\n";
+  out = out + ".arj 01;31\n";
+  out = out + ".taz 01;31\n";
+  out = out + ".lha 01;31\n";
+  out = out + ".lz4 01;31\n";
+  out = out + ".lzh 01;31\n";
+  out = out + ".lzma 01;31\n";
+  out = out + ".tlz 01;31\n";
+  out = out + ".txz 01;31\n";
+  out = out + ".tzo 01;31\n";
+  out = out + ".t7z 01;31\n";
+  out = out + ".zip 01;31\n";
+  out = out + ".z 01;31\n";
+  out = out + ".dz 01;31\n";
+  out = out + ".gz 01;31\n";
+  out = out + ".lrz 01;31\n";
+  out = out + ".lz 01;31\n";
+  out = out + ".lzo 01;31\n";
+  out = out + ".xz 01;31\n";
+  out = out + ".zst 01;31\n";
+  out = out + ".tzst 01;31\n";
+  out = out + ".bz2 01;31\n";
+  out = out + ".bz 01;31\n";
+  out = out + ".tbz 01;31\n";
+  out = out + ".tbz2 01;31\n";
+  out = out + ".tz 01;31\n";
+  out = out + ".deb 01;31\n";
+  out = out + ".rpm 01;31\n";
+  out = out + ".jar 01;31\n";
+  out = out + ".war 01;31\n";
+  out = out + ".ear 01;31\n";
+  out = out + ".sar 01;31\n";
+  out = out + ".rar 01;31\n";
+  out = out + ".alz 01;31\n";
+  out = out + ".ace 01;31\n";
+  out = out + ".zoo 01;31\n";
+  out = out + ".cpio 01;31\n";
+  out = out + ".7z 01;31\n";
+  out = out + ".rz 01;31\n";
+  out = out + ".cab 01;31\n";
+  out = out + ".wim 01;31\n";
+  out = out + ".swm 01;31\n";
+  out = out + ".dwm 01;31\n";
+  out = out + ".esd 01;31\n";
+  out = out + "# image formats\n";
+  out = out + ".avif 01;35\n";
+  out = out + ".jpg 01;35\n";
+  out = out + ".jpeg 01;35\n";
+  out = out + ".mjpg 01;35\n";
+  out = out + ".mjpeg 01;35\n";
+  out = out + ".gif 01;35\n";
+  out = out + ".bmp 01;35\n";
+  out = out + ".pbm 01;35\n";
+  out = out + ".pgm 01;35\n";
+  out = out + ".ppm 01;35\n";
+  out = out + ".tga 01;35\n";
+  out = out + ".xbm 01;35\n";
+  out = out + ".xpm 01;35\n";
+  out = out + ".tif 01;35\n";
+  out = out + ".tiff 01;35\n";
+  out = out + ".png 01;35\n";
+  out = out + ".svg 01;35\n";
+  out = out + ".svgz 01;35\n";
+  out = out + ".mng 01;35\n";
+  out = out + ".pcx 01;35\n";
+  out = out + ".mov 01;35\n";
+  out = out + ".mpg 01;35\n";
+  out = out + ".mpeg 01;35\n";
+  out = out + ".m2v 01;35\n";
+  out = out + ".mkv 01;35\n";
+  out = out + ".webm 01;35\n";
+  out = out + ".webp 01;35\n";
+  out = out + ".ogm 01;35\n";
+  out = out + ".mp4 01;35\n";
+  out = out + ".m4v 01;35\n";
+  out = out + ".mp4v 01;35\n";
+  out = out + ".vob 01;35\n";
+  out = out + ".qt 01;35\n";
+  out = out + ".nuv 01;35\n";
+  out = out + ".wmv 01;35\n";
+  out = out + ".asf 01;35\n";
+  out = out + ".rm 01;35\n";
+  out = out + ".rmvb 01;35\n";
+  out = out + ".flc 01;35\n";
+  out = out + ".avi 01;35\n";
+  out = out + ".fli 01;35\n";
+  out = out + ".flv 01;35\n";
+  out = out + ".gl 01;35\n";
+  out = out + ".dl 01;35\n";
+  out = out + ".xcf 01;35\n";
+  out = out + ".xwd 01;35\n";
+  out = out + ".yuv 01;35\n";
+  out = out + ".cgm 01;35\n";
+  out = out + ".emf 01;35\n";
+  out = out + "# https://wiki.xiph.org/MIME_Types_and_File_Extensions\n";
+  out = out + ".ogv 01;35\n";
+  out = out + ".ogx 01;35\n";
+  out = out + "# audio formats\n";
+  out = out + ".aac 00;36\n";
+  out = out + ".au 00;36\n";
+  out = out + ".flac 00;36\n";
+  out = out + ".m4a 00;36\n";
+  out = out + ".mid 00;36\n";
+  out = out + ".midi 00;36\n";
+  out = out + ".mka 00;36\n";
+  out = out + ".mp3 00;36\n";
+  out = out + ".mpc 00;36\n";
+  out = out + ".ogg 00;36\n";
+  out = out + ".ra 00;36\n";
+  out = out + ".wav 00;36\n";
+  out = out + "# https://wiki.xiph.org/MIME_Types_and_File_Extensions\n";
+  out = out + ".oga 00;36\n";
+  out = out + ".opus 00;36\n";
+  out = out + ".spx 00;36\n";
+  out = out + ".xspf 00;36\n";
+  out = out + "# backup files\n";
+  out = out + "*~ 00;90\n";
+  out = out + "*# 00;90\n";
+  out = out + ".bak 00;90\n";
+  out = out + ".crdownload 00;90\n";
+  out = out + ".dpkg-dist 00;90\n";
+  out = out + ".dpkg-new 00;90\n";
+  out = out + ".dpkg-old 00;90\n";
+  out = out + ".dpkg-tmp 00;90\n";
+  out = out + ".old 00;90\n";
+  out = out + ".orig 00;90\n";
+  out = out + ".part 00;90\n";
+  out = out + ".rej 00;90\n";
+  out = out + ".rpmnew 00;90\n";
+  out = out + ".rpmorig 00;90\n";
+  out = out + ".rpmsave 00;90\n";
+  out = out + ".swp 00;90\n";
+  out = out + ".tmp 00;90\n";
+  out = out + ".ucf-dist 00;90\n";
+  out = out + ".ucf-new 00;90\n";
+  out = out + ".ucf-old 00;90\n";
+  out = out + "#\n";
+  out = out + "# Subsequent TERM or COLORTERM entries, can be used to add / override\n";
+  out = out + "# config specific to those matching environment variables.\n";
+  return out;
+}
+
+// ---- fnmatch(3), flags 0 ---------------------------------------------------
+//
+// Byte-wise in the C locale, and none of the FNM_* flags are set: `*`
+// and `?` cross `/`, a leading `.` is not special, and a backslash
+// escapes the byte after it.
+//
+// Two malformed shapes are worth naming because they part ways. A
+// bracket with no closing `]` is NOT an error — glibc restarts the
+// match with the `[` taken as an ordinary byte, so `[[:digit:]` against
+// `[d` matches (a literal `[`, then a bracket holding `:digit`). A
+// character class or collating symbol that is not one IS an error, and
+// the whole match fails however the bracket is negated. A pattern
+// ending in a lone backslash matches nothing.
+function fn_is_space(c: i32): boolean {
+  return c == 32 || c == 9 || c == 10 || c == 11 || c == 12 || c == 13;
+}
+
+// `fn_class(name, c)` — (the name is a class, `c` is in it). glibc
+// fails the whole match on a name that is not one, so the two answers
+// are separate.
+function fn_class(name: string, c: i32): (boolean, boolean) {
+  var alpha: boolean = c >= 65 && c <= 90 || c >= 97 && c <= 122;
+  var digit: boolean = c >= 48 && c <= 57;
+  if (name == "alpha") {
+    return (true, alpha);
+  }
+  if (name == "digit") {
+    return (true, digit);
+  }
+  if (name == "alnum") {
+    return (true, alpha || digit);
+  }
+  if (name == "upper") {
+    return (true, c >= 65 && c <= 90);
+  }
+  if (name == "lower") {
+    return (true, c >= 97 && c <= 122);
+  }
+  if (name == "space") {
+    return (true, fn_is_space(c));
+  }
+  if (name == "blank") {
+    return (true, c == 32 || c == 9);
+  }
+  if (name == "print") {
+    return (true, c >= 32 && c <= 126);
+  }
+  if (name == "graph") {
+    return (true, c > 32 && c <= 126);
+  }
+  if (name == "punct") {
+    return (true, c > 32 && c <= 126 && !alpha && !digit);
+  }
+  if (name == "cntrl") {
+    return (true, c < 32 || c == 127);
+  }
+  if (name == "xdigit") {
+    return (true, digit || c >= 65 && c <= 70 || c >= 97 && c <= 102);
+  }
+  return (false, false);
+}
+
+// One bracket expression starting at `p[i]` (the `[`), matched against
+// byte `ch`. Returns (verdict, next), where verdict is 0 no match, 1
+// match, 2 the pattern is invalid, 3 the bracket never closed and the
+// `[` is an ordinary byte; `next` is the index just past the `]`.
+function fn_bracket(p: string, start: i32, ch: i32): (i32, i32) {
+  var n: i32 = p.len();
+  var i: i32 = start + 1;
+  var negate: boolean = false;
+  if (i < n && (p[i] as i32 == 33 || p[i] as i32 == 94)) {
+    negate = true;
+    i = i + 1;
+  }
+  var hit: boolean = false;
+  var first: boolean = true;
+  while (true) {
+    if (i >= n) {
+      return (3, start);
+    }
+    var c: i32 = p[i] as i32;
+    if (c == 93 && !first) {
+      i = i + 1;
+      break;
+    }
+    first = false;
+    // `[:class:]`, `[.symbol.]`, `[=equivalence=]`.
+    if (c == 91 && i + 1 < n && (p[i + 1] as i32 == 58 || p[i + 1] as i32 == 46 || p[i + 1] as i32 == 61)) {
+      var kind: i32 = p[i + 1] as i32;
+      var body: i32 = i + 2;
+      var j: i32 = body;
+      while (j + 1 < n && !(p[j] as i32 == kind && p[j + 1] as i32 == 93)) {
+        j = j + 1;
+      }
+      if (j + 1 >= n) {
+        return (2, start);
+      }
+      var name: string = slice_unchecked(p, body, j) + "";
+      i = j + 2;
+      if (kind == 58) {
+        var cls: (boolean, boolean) = fn_class(name, ch);
+        if (!cls.0) {
+          return (2, start);
+        }
+        if (cls.1) {
+          hit = true;
+        }
+        continue;
+      }
+      // A collating symbol or an equivalence class is one byte in the
+      // C locale; anything longer names nothing.
+      if (name.len() != 1) {
+        return (2, start);
+      }
+      var lo: i32 = name[0] as i32;
+      // A `[.x.]` may open a range: `[[.a.]-c]`.
+      var r: (i32, boolean) = fn_range(p, i, lo, ch, hit);
+      i = r.0;
+      hit = r.1;
+      continue;
+    }
+    var lo2: i32 = c;
+    if (c == 92) {
+      if (i + 1 >= n) {
+        return (3, start);
+      }
+      lo2 = p[i + 1] as i32;
+      i = i + 2;
+    } else {
+      i = i + 1;
+    }
+    var r2: (i32, boolean) = fn_range(p, i, lo2, ch, hit);
+    i = r2.0;
+    hit = r2.1;
+  }
+  if (negate) {
+    hit = !hit;
+  }
+  if (hit) {
+    return (1, i);
+  }
+  return (0, i);
+}
+
+// `lo` has been read; if a `-` follows that is not the bracket's last
+// byte, read the range's upper bound. Returns (next index, hit).
+function fn_range(p: string, at: i32, lo: i32, ch: i32, hit: boolean): (i32, boolean) {
+  var n: i32 = p.len();
+  var i: i32 = at;
+  if (i + 1 < n && p[i] as i32 == 45 && p[i + 1] as i32 != 93) {
+    var hi: i32 = p[i + 1] as i32;
+    i = i + 2;
+    if (hi == 92 && i < n) {
+      hi = p[i] as i32;
+      i = i + 1;
+    }
+    if (ch >= lo && ch <= hi) {
+      return (i, true);
+    }
+    return (i, hit);
+  }
+  if (ch == lo) {
+    return (i, true);
+  }
+  return (i, hit);
+}
+
+// `fnmatch(pat, s)` — whether `s` matches, with `pi` / `si` the cursors
+// a `*` backtracks over. Returns (matched, valid); an invalid pattern
+// is reported rather than answered so the `*` retry loop stops.
+function fn_match(p: string, pi0: i32, s: string, si0: i32): (boolean, boolean) {
+  var pi: i32 = pi0;
+  var si: i32 = si0;
+  var pn: i32 = p.len();
+  var sn: i32 = s.len();
+  while (pi < pn) {
+    var c: i32 = p[pi] as i32;
+    if (c == 42) {
+      while (pi < pn && p[pi] as i32 == 42) {
+        pi = pi + 1;
+      }
+      if (pi >= pn) {
+        return (true, true);
+      }
+      var k: i32 = si;
+      while (k <= sn) {
+        var r: (boolean, boolean) = fn_match(p, pi, s, k);
+        if (!r.1) {
+          return (false, false);
+        }
+        if (r.0) {
+          return (true, true);
+        }
+        k = k + 1;
+      }
+      return (false, true);
+    }
+    if (c == 63) {
+      if (si >= sn) {
+        return (false, true);
+      }
+      pi = pi + 1;
+      si = si + 1;
+      continue;
+    }
+    if (c == 92) {
+      // A trailing backslash escapes nothing and matches nothing.
+      if (pi + 1 >= pn) {
+        return (false, true);
+      }
+      if (si >= sn || s[si] as i32 != p[pi + 1] as i32) {
+        return (false, true);
+      }
+      pi = pi + 2;
+      si = si + 1;
+      continue;
+    }
+    if (c == 91) {
+      if (si >= sn) {
+        return (false, true);
+      }
+      var b: (i32, i32) = fn_bracket(p, pi, s[si] as i32);
+      if (b.0 == 2) {
+        return (false, false);
+      }
+      if (b.0 == 3) {
+        // Unterminated: the `[` is an ordinary byte from here on.
+        if (s[si] as i32 != 91) {
+          return (false, true);
+        }
+        pi = pi + 1;
+        si = si + 1;
+        continue;
+      }
+      if (b.0 == 0) {
+        return (false, true);
+      }
+      pi = b.1;
+      si = si + 1;
+      continue;
+    }
+    if (si >= sn || s[si] as i32 != c) {
+      return (false, true);
+    }
+    pi = pi + 1;
+    si = si + 1;
+  }
+  return (si == sn, true);
+}
+
+function fnmatch(pat: string, s: string): boolean {
+  var r: (boolean, boolean) = fn_match(pat, 0, s, 0);
+  return r.0 && r.1;
+}
+
+// ---- the keyword table -----------------------------------------------------
+function eq_fold(a: string, b: string): boolean {
+  if (a.len() != b.len()) {
+    return false;
+  }
+  var i: i32 = 0;
+  while (i < a.len()) {
+    var x: i32 = a[i] as i32;
+    var y: i32 = b[i] as i32;
+    if (x >= 65 && x <= 90) {
+      x = x + 32;
+    }
+    if (y >= 65 && y <= 90) {
+      y = y + 32;
+    }
+    if (x != y) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+// `lookup(kw)` — (kind, code): 0 the keyword is not one, 1 an entry
+// under `code`, 2 recognised and contributing nothing.
+//
+// 37 names for 24 two-letter codes, plus the three the slackware
+// dircolors honoured that GNU accepts and does nothing with. The match
+// folds case; the EXTENSION keywords do not reach here, which is why
+// `.GZ` keeps its case and `dIr` does not.
+function lookup(kw: string): (i32, string) {
+  if (eq_fold(kw, "NORMAL") || eq_fold(kw, "NORM")) {
+    return (1, "no");
+  }
+  if (eq_fold(kw, "FILE")) {
+    return (1, "fi");
+  }
+  if (eq_fold(kw, "RESET")) {
+    return (1, "rs");
+  }
+  if (eq_fold(kw, "DIR")) {
+    return (1, "di");
+  }
+  if (eq_fold(kw, "LNK") || eq_fold(kw, "LINK") || eq_fold(kw, "SYMLINK")) {
+    return (1, "ln");
+  }
+  if (eq_fold(kw, "ORPHAN")) {
+    return (1, "or");
+  }
+  if (eq_fold(kw, "MISSING")) {
+    return (1, "mi");
+  }
+  if (eq_fold(kw, "FIFO") || eq_fold(kw, "PIPE")) {
+    return (1, "pi");
+  }
+  if (eq_fold(kw, "SOCK")) {
+    return (1, "so");
+  }
+  if (eq_fold(kw, "BLK") || eq_fold(kw, "BLOCK")) {
+    return (1, "bd");
+  }
+  if (eq_fold(kw, "CHR") || eq_fold(kw, "CHAR")) {
+    return (1, "cd");
+  }
+  if (eq_fold(kw, "DOOR")) {
+    return (1, "do");
+  }
+  if (eq_fold(kw, "EXEC")) {
+    return (1, "ex");
+  }
+  if (eq_fold(kw, "LEFT") || eq_fold(kw, "LEFTCODE")) {
+    return (1, "lc");
+  }
+  if (eq_fold(kw, "RIGHT") || eq_fold(kw, "RIGHTCODE")) {
+    return (1, "rc");
+  }
+  if (eq_fold(kw, "END") || eq_fold(kw, "ENDCODE")) {
+    return (1, "ec");
+  }
+  if (eq_fold(kw, "SUID") || eq_fold(kw, "SETUID")) {
+    return (1, "su");
+  }
+  if (eq_fold(kw, "SGID") || eq_fold(kw, "SETGID")) {
+    return (1, "sg");
+  }
+  if (eq_fold(kw, "STICKY")) {
+    return (1, "st");
+  }
+  if (eq_fold(kw, "OTHER_WRITABLE") || eq_fold(kw, "OWR")) {
+    return (1, "ow");
+  }
+  if (eq_fold(kw, "STICKY_OTHER_WRITABLE") || eq_fold(kw, "OWT")) {
+    return (1, "tw");
+  }
+  if (eq_fold(kw, "CAPABILITY")) {
+    return (1, "ca");
+  }
+  if (eq_fold(kw, "MULTIHARDLINK")) {
+    return (1, "mh");
+  }
+  if (eq_fold(kw, "CLRTOEOL")) {
+    return (1, "cl");
+  }
+  if (eq_fold(kw, "OPTIONS") || eq_fold(kw, "COLOR") || eq_fold(kw, "EIGHTBIT")) {
+    return (2, "");
+  }
+  return (0, "");
+}
+
+// ---- the line grammar ------------------------------------------------------
+//
+// Skip leading whitespace; an empty line or one starting `#` is passed
+// over. The keyword runs to the next whitespace — `#` is not a
+// terminator there, which is how the database's `*# 00;90` line works.
+// Whitespace is skipped; end of line or a `#` there is the missing
+// second token. The argument is then the REST of the line up to a `#`,
+// with trailing whitespace trimmed, so `DIR 01;34 extra` is the one
+// value `01;34 extra`.
+//
+// A NUL byte ends the line for parsing but not for counting: the line
+// it sits on is still one line.
+struct Line { kind: i32, kw: string, arg: string }
+
+function is_space(c: i32): boolean {
+  return c == 32 || c == 9 || c == 11 || c == 12 || c == 13;
+}
+
+// kind 0 nothing here, 1 a keyword and its argument, 2 the argument is
+// missing. The line is `raw[lo, end)` rather than a string of its own:
+// a config of any size arrives as one buffer, and cutting a copy out of
+// it per line costs more than the parse does. `end` is already cut at a
+// NUL by the caller.
+function scan_line(raw: string, lo: i32, end: i32): Line {
+  var i: i32 = lo;
+  while (i < end && is_space(raw[i] as i32)) {
+    i = i + 1;
+  }
+  if (i >= end || raw[i] as i32 == 35) {
+    return Line { kind: 0, kw: "", arg: "" };
+  }
+  var ks: i32 = i;
+  while (i < end && !is_space(raw[i] as i32)) {
+    i = i + 1;
+  }
+  var kw: string = slice_unchecked(raw, ks, i) + "";
+  while (i < end && is_space(raw[i] as i32)) {
+    i = i + 1;
+  }
+  if (i >= end || raw[i] as i32 == 35) {
+    return Line { kind: 2, kw: kw, arg: "" };
+  }
+  var as0: i32 = i;
+  while (i < end && raw[i] as i32 != 35) {
+    i = i + 1;
+  }
+  var ae: i32 = i;
+  while (ae > as0 && is_space(raw[ae - 1] as i32)) {
+    ae = ae - 1;
+  }
+  return Line { kind: 1, kw: kw, arg: slice_unchecked(raw, as0, ae) + "" };
+}
+
+// ---- the parse -------------------------------------------------------------
+struct Entry { item: string, arg: string }
+
+// The four states of the TERM / COLORTERM filter.
+function st_global(): i32 {
+  return 0;
+}
+
+function st_termno(): i32 {
+  return 1;
+}
+
+function st_termsure(): i32 {
+  return 2;
+}
+
+function st_termyes(): i32 {
+  return 3;
+}
+
+struct Parse { entries: Entry[], ok: boolean }
+
+function parse(text: string, name: string, term: string, colorterm: string): Parse {
+  var entries: Entry[] = [];
+  var ok: boolean = true;
+  var state: i32 = st_global();
+  var pos: i32 = 0;
+  var lineno: i32 = 0;
+  // The next NUL at or after the cursor, refreshed only once the cursor
+  // has passed it: searching each line separately would rescan the rest
+  // of the buffer per line.
+  var nul: i32 = __memchr(text, 0, 0);
+  while (pos < text.len()) {
+    var nl: i32 = __memchr(text, 10, pos);
+    var end: i32 = nl;
+    if (nl < 0) {
+      end = text.len();
+    }
+    lineno = lineno + 1;
+    if (nul >= 0 && nul < pos) {
+      nul = __memchr(text, 0, pos);
+    }
+    var cut: i32 = end;
+    if (nul >= 0 && nul < end) {
+      cut = nul;
+    }
+    var line: Line = scan_line(text, pos, cut);
+    if (line.kind == 2) {
+      gnu.error(name + ":" + lineno.to_string() + ": invalid line;  missing second token");
+      ok = false;
+    } else if (line.kind == 1) {
+      var lead: i32 = line.kw[0] as i32;
+      var extension: boolean = lead == 46 || lead == 42;
+      if (!extension && (eq_fold(line.kw, "TERM") || eq_fold(line.kw, "COLORTERM"))) {
+        var value: string = colorterm;
+        if (eq_fold(line.kw, "TERM")) {
+          value = term;
+        }
+        if (state != st_termsure()) {
+          state = st_termno();
+        }
+        if (fnmatch(line.arg, value)) {
+          state = st_termsure();
+        }
+      } else {
+        if (state == st_termsure()) {
+          state = st_termyes();
+        }
+        if (state != st_termno()) {
+          if (extension) {
+            var item: string = line.kw;
+            if (lead == 46) {
+              item = "*" + line.kw;
+            }
+            entries = entries.append(Entry { item: item, arg: line.arg });
+          } else {
+            var hit: (i32, string) = lookup(line.kw);
+            if (hit.0 == 1) {
+              entries = entries.append(Entry { item: hit.1, arg: line.arg });
+            } else if (hit.0 == 0 && state == st_termyes()) {
+              // Outside a matching section an unknown keyword is passed
+              // over in silence; inside one it is fatal.
+              gnu.error(name + ":" + lineno.to_string() + ": unrecognized keyword " + line.kw);
+              ok = false;
+            }
+          }
+        }
+      }
+    }
+    if (nl < 0) {
+      break;
+    }
+    pos = nl + 1;
+  }
+  return Parse { entries: entries, ok: ok };
+}
+
+// ---- the shell escaper -----------------------------------------------------
+//
+// Not a plain escape but a toggle, and the state starts over at each
+// item and each argument. A `\` or a `^` is written through and FLIPS
+// the flag; a `:` or an `=` takes a leading backslash only while the
+// flag is set; a `'` becomes `'\''`; every other byte sets the flag.
+// So `a\:b` comes back unchanged, `a^^:b` gains a backslash and
+// `a^:b` does not.
+function escape_append(out: string, s: string): string {
+  var acc: string = out;
+  var need: boolean = true;
+  var n: i32 = s.len();
+  var i: i32 = 0;
+  var run: i32 = 0;
+  while (i < n) {
+    var c: i32 = s[i] as i32;
+    if (c == 58 || c == 61 || c == 92 || c == 94 || c == 39) {
+      if (i > run) {
+        acc = acc + slice_unchecked(s, run, i);
+        need = true;
+      }
+      if (c == 39) {
+        acc = acc + "'\\''";
+        need = true;
+      } else if (c == 92 || c == 94) {
+        acc = acc + slice_unchecked(s, i, i + 1);
+        need = !need;
+      } else {
+        if (need) {
+          acc = acc + "\\";
+        }
+        acc = acc + slice_unchecked(s, i, i + 1);
+        need = true;
+      }
+      i = i + 1;
+      run = i;
+    } else {
+      i = i + 1;
+    }
+  }
+  if (i > run) {
+    acc = acc + slice_unchecked(s, run, i);
+  }
+  return acc;
+}
+
+// ---- input -----------------------------------------------------------------
+struct Input { text: string, ok: boolean }
+
+// `name` is already rendered the way the diagnostics want it. A read
+// failure and a close failure are reported separately, which is how
+// `dircolors - <&-` says both.
+function read_stream(r: Reader, name: string): Input {
+  var chunks: string[] = [];
+  var ok: boolean = true;
+  while (true) {
+    match (r.read_chunk(65536)) {
+      Ok(chunk) => {
+        if (chunk.len() == 0) {
+          break;
+        }
+        chunks = chunks.append(chunk);
+      },
+      Err(e) => {
+        gnu.error(name + ": read error: " + gnu.io_error_text(e));
+        ok = false;
+        break;
+      }
+    }
+  }
+  match (r.close()) {
+    Some(e) => {
+      gnu.error(name + ": " + gnu.io_error_text(e));
+      ok = false;
+    },
+    None => {}
+  }
+  return Input { text: chunks.join(""), ok: ok };
+}
+
+function read_input(path: string): Input {
+  var name: string = gnu.quotef(path);
+  if (path == "-") {
+    return read_stream(stdin(), name);
+  }
+  // An open failure and a read failure are worded differently — a
+  // directory opens and then fails to read — so the open is made here
+  // rather than inferred from a whole-file read.
+  match (open_reader(path)) {
+    Ok(r) => {
+      return read_stream(r, name);
+    },
+    Err(e) => {
+      gnu.error(name + ": " + gnu.io_error_text(e));
+      exit(1);
+    }
+  }
+  return Input { text: "", ok: false };
+}
+
+// ---- options ---------------------------------------------------------------
+function opt_bourne(): i32 {
+  return 1;
+}
+
+function opt_csh(): i32 {
+  return 2;
+}
+
+function opt_print_db(): i32 {
+  return 3;
+}
+
+function opt_print_ls(): i32 {
+  return 4;
+}
+
+function help_text(): string {
+  var out: string = "";
+  out = out + "Usage: " + gnu.prog() + " [OPTION]... [FILE]\n";
+  out = out + "Write the shell commands that set LS_COLORS, which GNU ls reads.\n";
+  out = out + "\n";
+  out = out + "  -b, --sh, --bourne-shell   write Bourne shell syntax\n";
+  out = out + "  -c, --csh, --c-shell       write C shell syntax\n";
+  out = out + "  -p, --print-database       write the built-in database instead\n";
+  out = out + "      --print-ls-colors      write one escaped line per entry\n";
+  out = out + "      --help        display this help and exit\n";
+  out = out + "      --version     output version information and exit\n";
+  out = out + "\n";
+  out = out + "With no FILE the built-in database is read; `-` reads standard input.\n";
+  out = out + "Without -b or -c the shell is taken from $SHELL. The entries a FILE\n";
+  out = out + "contributes are filtered by its TERM and COLORTERM lines against the\n";
+  out = out + "environment.\n";
+  return out;
+}
+
+// $SHELL names csh when its last path component is exactly `csh` or
+// `tcsh`. A trailing slash is not stripped, so `/bin/csh/` is not one.
+function shell_is_csh(shell: string): boolean {
+  var cut: i32 = shell.last_index_of("/");
+  var base: string = shell;
+  if (cut >= 0) {
+    base = slice_unchecked(shell, cut + 1, shell.len()) + "";
+  }
+  return base == "csh" || base == "tcsh";
+}
+
+// An EMPTY value counts as absent, which is what makes `TERM=` and an
+// unset TERM both the literal string `none`.
+function env_or(name: string, fallback: string): string {
+  match (env(name)) {
+    Some(v) => {
+      if (v.len() == 0) {
+        return fallback;
+      }
+      return v;
+    },
+    None => {}
+  }
+  return fallback;
+}
+
+function main(): i32 {
+  // Declaration order is glibc's ambiguity list: `--=x` names every
+  // candidate but `--sh`, which shares `--bourne-shell`'s id.
+  var opts: gnu.Opt[] = [];
+  opts = opts.append(gnu.flag("b", "bourne-shell", opt_bourne()));
+  opts = opts.append(gnu.flag("", "sh", opt_bourne()));
+  opts = opts.append(gnu.flag("c", "csh", opt_csh()));
+  opts = opts.append(gnu.flag("", "c-shell", opt_csh()));
+  opts = opts.append(gnu.flag("p", "print-database", opt_print_db()));
+  opts = opts.append(gnu.flag("", "print-ls-colors", opt_print_ls()));
+  var g: gnu.Getopt = gnu.getopt_new(args(), opts, "dircolors", help_text(), 1);
+  // 0 unknown, 1 Bourne, 2 csh; the last of -b / -c decides.
+  var syntax: i32 = 0;
+  var print_db: boolean = false;
+  var print_ls: boolean = false;
+  while (true) {
+    var r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    g = r.1;
+    match (r.0) {
+      Some(m) => {
+        if (m.id == opt_bourne()) {
+          syntax = 1;
+        } else if (m.id == opt_csh()) {
+          syntax = 2;
+        } else if (m.id == opt_print_db()) {
+          print_db = true;
+        } else {
+          print_ls = true;
+        }
+      },
+      None => {
+        break;
+      }
+    }
+  }
+
+  // The order the faults are reached in: the shell-syntax exclusion,
+  // then the two print options against each other, then the operand
+  // count, then the shell guess, then the file.
+  if ((print_db || print_ls) && syntax != 0) {
+    gnu.die_usage("the options to output non shell syntax,\nand to select a shell syntax are mutually exclusive", 1);
+  }
+  if (print_db && print_ls) {
+    gnu.die_usage("options --print-database and --print-ls-colors are mutually exclusive", 1);
+  }
+  var operands: string[] = g.operands();
+  // `-p` takes no operand at all, so the FIRST one is the extra one.
+  var limit: i32 = 1;
+  if (print_db) {
+    limit = 0;
+  }
+  if (operands.len() > limit) {
+    gnu.error("extra operand " + gnu.quote(operands[limit]));
+    if (print_db) {
+      eprint("file operands cannot be combined with --print-database (-p)");
+    }
+    gnu.try_help(1);
+  }
+
+  if (print_db) {
+    // puts() per line, which is TWO pieces — the line, then its newline
+    // — and where those fall in the stdio buffer is what decides
+    // whether a failed write is reported with its errno or bare.
+    var od: gnu.Stdio = gnu.stdio_new();
+    var db: string = database();
+    var at: i32 = 0;
+    while (at < db.len()) {
+      var nl: i32 = __memchr(db, 10, at);
+      od = od.fwrite(slice_unchecked(db, at, nl) + "");
+      od = od.fwrite("\n");
+      at = nl + 1;
+    }
+    od.close_stdout();
+    return 0;
+  }
+
+  if (!print_ls && syntax == 0) {
+    match (env("SHELL")) {
+      Some(shell) => {
+        if (shell.len() == 0) {
+          gnu.error("no SHELL environment variable, and no shell type option given");
+          exit(1);
+        }
+        if (shell_is_csh(shell)) {
+          syntax = 2;
+        } else {
+          syntax = 1;
+        }
+      },
+      None => {
+        gnu.error("no SHELL environment variable, and no shell type option given");
+        exit(1);
+      }
+    }
+  }
+
+  var text: string = database();
+  var name: string = "";
+  if (operands.len() == 1) {
+    var input: Input = read_input(operands[0]);
+    if (!input.ok) {
+      return 1;
+    }
+    text = input.text;
+    name = gnu.quotef(operands[0]);
+  }
+
+  // An unset or empty TERM is the literal string `none`; an unset
+  // COLORTERM is the empty string, which `?*` never matches.
+  var p: Parse = parse(text, name, env_or("TERM", "none"), env_or("COLORTERM", ""));
+  if (!p.ok) {
+    return 1;
+  }
+
+  // The whole body is assembled and written as ONE piece, with the
+  // shell syntax around it as one more on each side, because that is
+  // the call sequence at the other end of the buffer: a failure on the
+  // body leaves the suffix pending at close and is reported with its
+  // errno, where `--print-ls-colors` writes one piece and nothing is
+  // pending, so the same failure is a bare `write error`.
+  var o: gnu.Stdio = gnu.stdio_new();
+  // One piece per entry, joined once. Folding them into a single local
+  // with `body = body + piece` is quadratic wherever the append does not
+  // grow the string in place — which the self-host compiler does not yet
+  // do (#9077) — and is the same reason `std/io`'s read_all_stdin
+  // collects chunks rather than folding them.
+  var parts: string[] = [];
+  var i: i32 = 0;
+  if (print_ls) {
+    while (i < p.entries.len()) {
+      var e: Entry = p.entries[i];
+      parts = parts.append("\x1b[" + e.arg + "m" + e.item + "\t" + e.arg + "\x1b[0m\n");
+      i = i + 1;
+    }
+    o = o.fwrite(parts.join(""));
+    o.close_stdout();
+    return 0;
+  }
+  while (i < p.entries.len()) {
+    var en: Entry = p.entries[i];
+    var piece: string = escape_append("", en.item) + "=";
+    piece = escape_append(piece, en.arg) + ":";
+    parts = parts.append(piece);
+    i = i + 1;
+  }
+  var body: string = parts.join("");
+  if (syntax == 2) {
+    o = o.fwrite("setenv LS_COLORS '");
+    o = o.fwrite(body);
+    o = o.fwrite("'\n");
+  } else {
+    o = o.fwrite("LS_COLORS='");
+    o = o.fwrite(body);
+    o = o.fwrite("';\nexport LS_COLORS\n");
+  }
+  o.close_stdout();
+  return 0;
+}

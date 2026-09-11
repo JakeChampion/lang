@@ -1488,11 +1488,17 @@ function long_option(g: Getopt, a: string): (Option[OptMatch], Getopt) {
     while (k < g.opts.len()) {
       var o: Opt = g.opts[k];
       if (o.long.len() > 0 && o.long.starts_with(name)) {
+        // glibc lists the FIRST prefix match plus every later one that
+        // differs from it, so an alias sharing the first one's arity
+        // and value is left out: dircolors' `--=x` names seven of its
+        // eight long options, and the missing one is `--sh`, which is
+        // `--bourne-shell` under another spelling. (glibc also compares
+        // the option's flag pointer; nothing here has one.)
         if (found < 0) {
           found = k;
-          list = list + " '--" + o.long + "'";
+          // The first match starts the list; `list` is still empty here.
+          list = " '--" + o.long + "'";
         } else if (o.arg != g.opts[found].arg || o.id != g.opts[found].id) {
-          // glibc also compares the option's flag pointer; nothing here has one.
           ambiguous = true;
           list = list + " '--" + o.long + "'";
         }
