@@ -1,0 +1,315 @@
+// pathchk.fern — GNU-compatible `pathchk`.
+//
+//   NAME...           diagnose invalid or non-portable file names
+//   -p                check for most POSIX systems
+//   -P                check for empty names and leading "-"
+//   --portability     -p and -P together
+//
+// Three different checks wear one name, and which of them runs is the
+// whole utility:
+//
+//   - The DEFAULT asks the filesystem. `lstat(NAME)` is the entire
+//     test when it succeeds — a path that exists is by construction a
+//     path this system accepts — and its errno is the diagnostic when
+//     it fails with anything but ENOENT (`Not a directory`,
+//     `File name too long`). ENOENT is not a fault: pathchk asks
+//     whether a name COULD be created. Only then does the component
+//     walk below run, because only then has nothing answered.
+//   - `-p` never touches the filesystem at all. POSIX's minimums
+//     (_POSIX_NAME_MAX 14, _POSIX_PATH_MAX 256) and the portable
+//     filename character set, so that a name that passes is a name
+//     every conforming system accepts.
+//   - `-P` is the default's checks PLUS two rules about the SHAPE of
+//     the name — it must not be empty and no component may start with
+//     `-` — which are about the programs that will be handed it rather
+//     than about any filesystem.
+//
+// `-p -P` (`--portability`) is neither of the last two: `-p`'s refusal
+// to look at the filesystem wins, and `-P`'s two shape rules are added
+// to it.
+//
+// The precedence between the checks is measured, not derived, because
+// a name can fail several at once. In order: the empty name, then a
+// leading `-`, then a non-portable character ANYWHERE in the name,
+// then the whole name's length, then a component's. So `-p -P a%b/-c`
+// reports the `-c` its second component starts with rather than the
+// `%` that comes first in the string.
+//
+// The component walk is lazy in the same way GNU's is. Nothing shorter
+// than _POSIX_NAME_MAX can be refused by a conforming filesystem, so a
+// name whose components are all that short is accepted without a single
+// `statfs`; past that, each component is held to the `name_max` of the
+// directory that would contain it, queried per directory as the walk
+// descends and carried forward once the walk leaves the part of the
+// path that exists.
+//
+// Nothing was copied from GNU sources; every rule above was measured
+// against the reference binary.
+import "std/string";
+import "std/array";
+import "./lib/gnu";
+
+function help_text(): string {
+  var out: string = "";
+  out = out + "Usage: " + gnu.prog() + " [OPTION]... NAME...\n";
+  out = out + "Diagnose invalid or non-portable file names.\n";
+  out = out + "\n";
+  out = out + "  -p                  check for most POSIX systems\n";
+  out = out + "  -P                  check for empty names and leading \"-\"\n";
+  out = out + "      --portability   check for all POSIX systems (equivalent to -p -P)\n";
+  out = out + "      --help        display this help and exit\n";
+  out = out + "      --version     output version information and exit\n";
+  return out;
+}
+
+// _POSIX_NAME_MAX / _POSIX_PATH_MAX: the shortest limits a conforming
+// system may impose. A name is held to the second MINUS ONE, since the
+// limit counts the terminating NUL that a length does not.
+function posix_name_max(): i32 {
+  return 14;
+}
+
+function posix_path_max(): i32 {
+  return 256;
+}
+
+// The POSIX portable filename character set, plus the separator: a
+// name built from these is one every conforming system can hold.
+function is_portable(b: i32): boolean {
+  if (b >= 97 && b <= 122) {
+    return true;
+  }
+  if (b >= 65 && b <= 90) {
+    return true;
+  }
+  if (b >= 48 && b <= 57) {
+    return true;
+  }
+  return b == 46 || b == 95 || b == 45 || b == 47;
+}
+
+function is_slash(s: string, i: i32): boolean {
+  return s[i] as i32 == 47;
+}
+
+// The start of the component after `i`, skipping the separator run, or
+// the length of `s` when nothing is left.
+function component_start(s: string, i: i32): i32 {
+  var j: i32 = i;
+  while (j < s.len() && is_slash(s, j)) {
+    j = j + 1;
+  }
+  return j;
+}
+
+// The end of the component beginning at `start`.
+function component_end(s: string, start: i32): i32 {
+  var j: i32 = start;
+  while (j < s.len() && !is_slash(s, j)) {
+    j = j + 1;
+  }
+  return j;
+}
+
+// `-P`: no component may begin with `-`, because a program handed the
+// name would read it as an option. The diagnostic names the whole file
+// name rather than the component that broke the rule.
+function check_leading_dash(name: string): boolean {
+  var i: i32 = 0;
+  while (i < name.len()) {
+    var start: i32 = component_start(name, i);
+    if (start >= name.len()) {
+      return true;
+    }
+    if (name[start] as i32 == 45) {
+      gnu.error("leading '-' in a component of file name " + gnu.quotea(name));
+      return false;
+    }
+    i = component_end(name, start);
+  }
+  return true;
+}
+
+// `-p`: the portable character set over the whole name, then POSIX's
+// two minimum lengths. The character scan runs first and over the
+// whole string, so the earliest offending BYTE is reported even when
+// an earlier component is the one that is too long.
+function check_posix_minimums(name: string): boolean {
+  var i: i32 = 0;
+  while (i < name.len()) {
+    var b: i32 = name[i] as i32;
+    if (!is_portable(b)) {
+      gnu.error("non-portable character " + gnu.quote(slice_unchecked(name, i, i + 1) + "") + " in file name " + gnu.quotea(name));
+      return false;
+    }
+    i = i + 1;
+  }
+  var path_limit: i32 = posix_path_max() - 1;
+  if (name.len() > path_limit) {
+    gnu.error("limit " + path_limit.to_string() + " exceeded by length " + name.len().to_string() + " of file name " + gnu.quotea(name));
+    return false;
+  }
+  i = 0;
+  while (i < name.len()) {
+    var start: i32 = component_start(name, i);
+    if (start >= name.len()) {
+      return true;
+    }
+    var end: i32 = component_end(name, start);
+    if (end - start > posix_name_max()) {
+      gnu.error("limit " + posix_name_max().to_string() + " exceeded by length " + (end - start).to_string() + " of file name component " + gnu.quotea(slice_unchecked(name, start, end) + ""));
+      return false;
+    }
+    i = end;
+  }
+  return true;
+}
+
+// Whether any component is longer than the POSIX minimum. Nothing
+// shorter can be refused by a conforming filesystem, so a name that
+// answers false here needs no query at all.
+function has_long_component(name: string): boolean {
+  var i: i32 = 0;
+  while (i < name.len()) {
+    var start: i32 = component_start(name, i);
+    if (start >= name.len()) {
+      return false;
+    }
+    var end: i32 = component_end(name, start);
+    if (end - start > posix_name_max()) {
+      return true;
+    }
+    i = end;
+  }
+  return false;
+}
+
+// The component walk of the default and `-P` modes, reached only for a
+// name that does not exist: each component is held to the `name_max`
+// of the directory that would contain it. The directory is the text of
+// the name up to that component — `.` for the first component of a
+// relative name, the leading slashes for an absolute one. The first
+// query that fails ends the queries — that is where the path stops
+// existing — and the limit it last answered is carried the rest of the
+// way.
+function check_filesystem_lengths(name: string): boolean {
+  if (!has_long_component(name)) {
+    return true;
+  }
+  var limit: i64 = 0 - 1;
+  var querying: boolean = true;
+  var i: i32 = 0;
+  while (i < name.len()) {
+    var start: i32 = component_start(name, i);
+    if (start >= name.len()) {
+      return true;
+    }
+    var end: i32 = component_end(name, start);
+    if (querying) {
+      var dir: string = ".";
+      if (start > 0) {
+        dir = slice_unchecked(name, 0, start) + "";
+      }
+      match (statfs(dir)) {
+        Ok(fs) => {
+          limit = fs.name_max;
+        },
+        Err(_) => {
+          querying = false;
+        }
+      }
+    }
+    if (limit >= 0 as i64 && (end - start) as i64 > limit) {
+      gnu.error("limit " + limit.to_string() + " exceeded by length " + (end - start).to_string() + " of file name component " + gnu.quotea(slice_unchecked(name, start, end) + ""));
+      return false;
+    }
+    i = end;
+  }
+  return true;
+}
+
+// The default and `-P` modes: the filesystem answers. An existing path
+// is valid by construction, ENOENT leaves the question to the walk
+// above, and every other errno is the diagnostic. The empty name is
+// the one path whose ENOENT IS reported, since there is no component
+// for the walk to hold to anything.
+function check_filesystem(name: string): boolean {
+  match (lstat(name)) {
+    Ok(_) => {
+      return true;
+    },
+    Err(e) => {
+      var text: string = gnu.io_error_text(e);
+      if (name.len() > 0 && text == "No such file or directory") {
+        return check_filesystem_lengths(name);
+      }
+      gnu.error(gnu.quotef(name) + ": " + text);
+      return false;
+    }
+  }
+  return true;
+}
+
+function check_name(name: string, posix: boolean, shape: boolean): boolean {
+  if (posix || shape) {
+    if (name.len() == 0) {
+      gnu.error("empty file name");
+      return false;
+    }
+  }
+  if (shape) {
+    if (!check_leading_dash(name)) {
+      return false;
+    }
+  }
+  if (posix) {
+    return check_posix_minimums(name);
+  }
+  return check_filesystem(name);
+}
+
+function main(): i32 {
+  var argv: string[] = args();
+  var opts: gnu.Opt[] = [gnu.flag("p", "", 1), gnu.flag("P", "", 2), gnu.flag("", "portability", 3)];
+  var g: gnu.Getopt = gnu.getopt_new(argv, opts, "pathchk", help_text(), 1);
+  // The scan does not permute: `pathchk NAME -p` checks NAME in the
+  // default mode and then checks a file called `-p`.
+  g = g.in_order();
+  var posix: boolean = false;
+  var shape: boolean = false;
+  while (true) {
+    var r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    g = r.1;
+    match (r.0) {
+      Some(m) => {
+        if (m.id == 1) {
+          posix = true;
+        } else if (m.id == 2) {
+          shape = true;
+        } else {
+          posix = true;
+          shape = true;
+        }
+      },
+      None => {
+        break;
+      }
+    }
+  }
+  var operands: string[] = g.operands();
+  if (operands.len() == 0) {
+    gnu.die_usage("missing operand", 1);
+  }
+  var ok: boolean = true;
+  var i: i32 = 0;
+  while (i < operands.len()) {
+    if (!check_name(operands[i], posix, shape)) {
+      ok = false;
+    }
+    i = i + 1;
+  }
+  if (ok) {
+    return 0;
+  }
+  return 1;
+}
