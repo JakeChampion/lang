@@ -1,0 +1,2636 @@
+// pr.fern — GNU-compatible `pr`.
+//
+//   pr [+FIRST[:LAST]] [-COLUMN] [OPTION]... [FILE]...
+//
+// Paginate or columnate FILEs for printing: a 66-line page carrying a
+// five-line header (two blanks, the header line, two blanks) and a
+// five-line trailer, with the body split into columns down or across.
+//
+// Four of the reference binary's behaviours are not the obvious reading
+// and are what most of the code below is about:
+//
+//   - The DIGITS of -COLUMN accumulate across the whole option scan, so
+//     `-2 -3` is twenty-three columns and not three.
+//   - Whitespace pr GENERATES (the offset, the line-number field, the
+//     gap between columns) is written with output tabs, while spaces
+//     that came from the input are copied verbatim until -i is given.
+//     A TAB in the input is a third thing again: in one column it is
+//     copied as the byte, and in several it becomes generated
+//     whitespace to the next stop — which is why -i changes it there
+//     and nowhere else — unless the columns are unpadded and separated
+//     by the single TAB that -s and -J leave by default.
+//   - A column's positions are LOCAL: a tab stop, the -e expansion and
+//     the -n separator all count from the column's own first byte, so
+//     the same line lands differently in column 1 and column 2.
+//   - A byte's display WIDTH is not one. In the C locale a backspace is
+//     minus one column and every other non-printable is zero, until -c
+//     or -v replaces it with an escape, whose printed length is then
+//     the width. Truncation, tab stops and the header's centring all
+//     read that width.
+import "std/array";
+import "std/string";
+import "std/io_buffered";
+import "./lib/gnu";
+
+// ---- options ----------------------------------------------------------------
+//
+// The ids, and below them the declaration order the ambiguity lists
+// reveal: `pr --s` names show-control-chars, separator, sep-string and
+// show-nonprinting in that order.
+function opt_pages(): i32 {
+  return 1;
+}
+
+function opt_columns(): i32 {
+  return 2;
+}
+
+function opt_across(): i32 {
+  return 3;
+}
+
+function opt_ctrl(): i32 {
+  return 4;
+}
+
+function opt_double(): i32 {
+  return 5;
+}
+
+function opt_date(): i32 {
+  return 6;
+}
+
+function opt_expand(): i32 {
+  return 7;
+}
+
+function opt_formfeed(): i32 {
+  return 8;
+}
+
+function opt_header(): i32 {
+  return 9;
+}
+
+function opt_outtabs(): i32 {
+  return 10;
+}
+
+function opt_join(): i32 {
+  return 11;
+}
+
+function opt_length(): i32 {
+  return 12;
+}
+
+function opt_merge(): i32 {
+  return 13;
+}
+
+function opt_number(): i32 {
+  return 14;
+}
+
+function opt_firstline(): i32 {
+  return 15;
+}
+
+function opt_indent(): i32 {
+  return 16;
+}
+
+function opt_nowarn(): i32 {
+  return 17;
+}
+
+function opt_sep(): i32 {
+  return 18;
+}
+
+function opt_sepstring(): i32 {
+  return 19;
+}
+
+function opt_omithdr(): i32 {
+  return 20;
+}
+
+function opt_omitpage(): i32 {
+  return 21;
+}
+
+function opt_nonprint(): i32 {
+  return 22;
+}
+
+function opt_width(): i32 {
+  return 23;
+}
+
+function opt_pagewidth(): i32 {
+  return 24;
+}
+
+// `-b` is accepted, has no long spelling, is absent from GNU's own help
+// and does nothing. It is here because refusing it would diverge.
+function opt_balance(): i32 {
+  return 25;
+}
+
+function opt_digit(d: i32): i32 {
+  return 30 + d;
+}
+
+function help_text(): string {
+  var out: string = "";
+  out = out + "Usage: " + gnu.prog() + " [OPTION]... [FILE]...\n";
+  out = out + "Paginate or columnate FILE(s) for printing.\n";
+  out = out + "\n";
+  out = out + "With no FILE, or when FILE is -, read standard input.\n";
+  out = out + "\n";
+  out = out + "  +FIRST_PAGE[:LAST_PAGE], --pages=FIRST_PAGE[:LAST_PAGE]\n";
+  out = out + "                    begin [stop] printing with page FIRST_[LAST_]PAGE\n";
+  out = out + "  -COLUMN, --columns=COLUMN\n";
+  out = out + "                    output COLUMN columns and print columns down,\n";
+  out = out + "                    unless -a is used\n";
+  out = out + "  -a, --across      print columns across rather than down\n";
+  out = out + "  -c, --show-control-chars\n";
+  out = out + "                    use hat notation (^G) and octal backslash notation\n";
+  out = out + "  -d, --double-space\n";
+  out = out + "                    double space the output\n";
+  out = out + "  -D, --date-format=FORMAT\n";
+  out = out + "                    use FORMAT for the header date\n";
+  out = out + "  -e[CHAR[WIDTH]], --expand-tabs[=CHAR[WIDTH]]\n";
+  out = out + "                    expand input CHARs (TABs) to tab WIDTH (8)\n";
+  out = out + "  -F, -f, --form-feed\n";
+  out = out + "                    use form feeds instead of newlines to separate pages\n";
+  out = out + "  -h, --header=HEADER\n";
+  out = out + "                    use a centered HEADER instead of filename\n";
+  out = out + "  -i[CHAR[WIDTH]], --output-tabs[=CHAR[WIDTH]]\n";
+  out = out + "                    replace spaces with CHARs (TABs) to tab WIDTH (8)\n";
+  out = out + "  -J, --join-lines  merge full lines, turns off -W line truncation\n";
+  out = out + "  -l, --length=PAGE_LENGTH\n";
+  out = out + "                    set the page length to PAGE_LENGTH (66) lines\n";
+  out = out + "  -m, --merge       print all files in parallel, one in each column\n";
+  out = out + "  -n[SEP[DIGITS]], --number-lines[=SEP[DIGITS]]\n";
+  out = out + "                    number lines, use DIGITS (5) digits, then SEP (TAB)\n";
+  out = out + "  -N, --first-line-number=NUMBER\n";
+  out = out + "                    start counting with NUMBER at 1st line printed\n";
+  out = out + "  -o, --indent=MARGIN\n";
+  out = out + "                    offset each line with MARGIN (zero) spaces\n";
+  out = out + "  -r, --no-file-warnings\n";
+  out = out + "                    omit warning when a file cannot be opened\n";
+  out = out + "  -s[CHAR], --separator[=CHAR]\n";
+  out = out + "                    separate columns by a single character\n";
+  out = out + "  -S[STRING], --sep-string[=STRING]\n";
+  out = out + "                    separate columns by STRING\n";
+  out = out + "  -t, --omit-header  omit page headers and trailers\n";
+  out = out + "  -T, --omit-pagination\n";
+  out = out + "                    omit page headers and trailers, eliminate any\n";
+  out = out + "                    pagination by form feeds set in input files\n";
+  out = out + "  -v, --show-nonprinting\n";
+  out = out + "                    use octal backslash notation\n";
+  out = out + "  -w, --width=PAGE_WIDTH\n";
+  out = out + "                    set page width to PAGE_WIDTH (72) characters for\n";
+  out = out + "                    multiple text-column output only\n";
+  out = out + "  -W, --page-width=PAGE_WIDTH\n";
+  out = out + "                    set page width to PAGE_WIDTH (72) characters always,\n";
+  out = out + "                    truncate lines\n";
+  out = out + "      --help        display this help and exit\n";
+  out = out + "      --version     output version information and exit\n";
+  return out;
+}
+
+// ---- configuration ----------------------------------------------------------
+struct Cfg { columns: i32, across: boolean, merge: boolean, ctrl: boolean, nonprint: boolean, double_space: boolean, date_fmt: string, has_date: boolean, untabify: boolean, in_tab: i32, in_tab_width: i32, tabify: boolean, out_tab: i32, out_tab_width: i32, form_feed: boolean, header: string, has_header: boolean, join: boolean, page_length: i32, numbering: boolean, num_sep: string, num_digits: i32, num_width: i32, first_line: i32, has_first_line: boolean, offset: i32, nowarn: boolean, sep: string, omit_header: boolean, omit_pagination: boolean, page_width: i32, truncate: boolean, tab_literal: boolean, num_prefix: i32, first_page: u64, last_page: u64, chars_per_column: i32 }
+
+function tab_stop(): i32 {
+  return 8;
+}
+
+// ---- display width ----------------------------------------------------------
+function is_print(b: i32): boolean {
+  return b >= 32 && b < 127;
+}
+
+function octal3(b: i32): string {
+  var d: string = "01234567";
+  var s: string = "\\";
+  s = s + slice_unchecked(d, b / 64 % 8, b / 64 % 8 + 1);
+  s = s + slice_unchecked(d, b / 8 % 8, b / 8 % 8 + 1);
+  s = s + slice_unchecked(d, b % 8, b % 8 + 1);
+  return s;
+}
+
+function byte_string(b: i32): string {
+  return string_from_bytes_unchecked([b as u8]);
+}
+
+// `clump(b, c)` — the bytes a body byte is printed as and the columns it
+// advances. A backspace is minus one column and every other
+// non-printable is zero, which is what -c and -v replace with an escape
+// whose printed length becomes the width.
+function clump(b: i32, c: Cfg): (string, i32) {
+  if (is_print(b)) {
+    return (byte_string(b), 1);
+  }
+  if (c.nonprint) {
+    return (octal3(b), 4);
+  }
+  if (c.ctrl) {
+    if (b < 32 || b == 127) {
+      return ("^" + byte_string(b ^ 64), 2);
+    }
+    return (octal3(b), 4);
+  }
+  if (b == 8) {
+    return (byte_string(b), 0 - 1);
+  }
+  return (byte_string(b), 0);
+}
+
+// ---- the output line --------------------------------------------------------
+//
+// One output line under construction. `pos` is the display column the
+// next byte lands in and `pend` the generated whitespace not written
+// yet: it is flushed by the next visible byte and DROPPED at the end of
+// the line, which is what trims a row whose last column is absent.
+struct Line { buf: string, pos: i32, pend: i32 }
+
+function line_new(): Line {
+  return Line { buf: "", pos: 0, pend: 0 };
+}
+
+// `(l).ws(n, c)` — `n` columns of generated whitespace.
+function (l: Line) ws(n: i32, c: Cfg): Line {
+  if (n <= 0) {
+    return l;
+  }
+  if (c.tabify) {
+    return Line { ...l, pos: l.pos + n, pend: l.pend + n };
+  }
+  return Line { ...l, buf: l.buf + " ".repeat(n), pos: l.pos + n };
+}
+
+// `(l).to(target, c)` — generated whitespace up to column `target`.
+function (l: Line) to(target: i32, c: Cfg): Line {
+  return l.ws(target - l.pos, c);
+}
+
+// `(l).flush(c)` — write the pending whitespace, using an output tab
+// wherever the next stop is still short of where the whitespace ends.
+//
+// Two rules are the reference binary's rather than the obvious ones. A
+// gap of ONE column is always a space, even when a tab would land on
+// it exactly — the loop runs only while more than one column is left.
+// And the tab CHARACTER is written once per stop crossed whatever it
+// is, so `-i,` puts one comma where a tab would have moved eight
+// columns and the rest of the line is off by the difference.
+function (l: Line) flush(c: Cfg): Line {
+  if (l.pend <= 0) {
+    return l;
+  }
+  var p: i32 = l.pos - l.pend;
+  var rem: i32 = l.pend;
+  var out: string = "";
+  var tw: i32 = c.out_tab_width;
+  var stop: boolean = false;
+  while (rem > 1 && p >= 0 && !stop) {
+    var h: i32 = tw - p % tw;
+    if (rem < h) {
+      stop = true;
+    } else {
+      out = out + byte_string(c.out_tab);
+      p = p + h;
+      rem = rem - h;
+    }
+  }
+  if (rem > 0) {
+    out = out + " ".repeat(rem);
+  }
+  return Line { ...l, buf: l.buf + out, pend: 0 };
+}
+
+// `(l).put(s, width, c)` — visible bytes occupying `width` columns.
+function (l: Line) put(s: string, width: i32, c: Cfg): Line {
+  var f: Line = l.flush(c);
+  return Line { ...f, buf: f.buf + s, pos: f.pos + width };
+}
+
+// `(l).space(c)` — one input space. It joins the pending whitespace
+// only once -i has asked for tabification; otherwise it is a byte.
+function (l: Line) space(c: Cfg): Line {
+  if (c.tabify) {
+    return Line { ...l, pos: l.pos + 1, pend: l.pend + 1 };
+  }
+  return Line { ...l, buf: l.buf + " ", pos: l.pos + 1 };
+}
+
+// ---- the input --------------------------------------------------------------
+//
+// One input stream. A line ends at a newline or, once pagination is on,
+// at a form feed; a form feed that ends an EMPTY line is a page break
+// with no line of its own, which is why a leading one makes a blank
+// page and a trailing one makes no page at all.
+struct Src { r: Reader, name: string, is_stdin: boolean, open: boolean, buf: string, pos: i32, eof: boolean, fatal: boolean, ffpend: i32, ffat: i32, mtime: i64, mnsec: i64 }
+
+function read_size(): i32 {
+  return 65536;
+}
+
+function src_closed(): Src {
+  return Src { r: stdin(), name: "", is_stdin: false, open: false, buf: "", pos: 0, eof: true, fatal: false, ffpend: 0, ffat: 0 - 1, mtime: 0 as i64, mnsec: 0 as i64 };
+}
+
+// `src_fill(s)` — more bytes, or eof. A read failure is fatal: GNU stops
+// the whole run on an EISDIR where it only warns about a failed open.
+function src_fill(s0: Src): Src {
+  var s: Src = s0;
+  var rest: string = slice_unchecked(s.buf, s.pos, s.buf.len()) + "";
+  match (s.r.read_chunk(read_size())) {
+    Ok(chunk) => {
+      if (chunk.len() == 0) {
+        return Src { ...s, buf: rest, pos: 0, eof: true, ffat: __memchr(rest, 12, 0) };
+      }
+      var buf: string = rest + chunk;
+      return Src { ...s, buf: buf, pos: 0, ffat: __memchr(buf, 12, 0) };
+    },
+    Err(e) => {
+      gnu.error(gnu.quotef(s.name) + ": " + gnu.io_error_text(e));
+      return Src { ...s, buf: rest, pos: 0, eof: true, fatal: true, ffat: 0 - 1 };
+    }
+  }
+}
+
+// `src_line(s)` — the next line: (src, found, breaks, text). A form
+// feed always ends a line and, when the text before it is empty, counts
+// as a break of its own; at end of input any breaks that are left are
+// discarded, so a file ending in a form feed does not gain a page.
+function src_line(s0: Src): (Src, boolean, i32, string) {
+  var s: Src = Src { ...s0, ffpend: 0 };
+  var breaks: i32 = s0.ffpend;
+  var carry: string = "";
+  while (true) {
+    if (s.pos >= s.buf.len()) {
+      if (s.eof) {
+        if (carry.len() > 0) {
+          return (s, true, breaks, carry);
+        }
+        return (s, false, breaks, "");
+      }
+      s = src_fill(s);
+      continue;
+    }
+    var nl: i32 = __memchr(s.buf, 10, s.pos);
+    // The next form feed is found once per READ rather than once per
+    // line: a buffer holding none would otherwise be scanned to its end
+    // for every line in it, which is quadratic in the block.
+    if (s.ffat >= 0 && s.ffat < s.pos) {
+      s = Src { ...s, ffat: __memchr(s.buf, 12, s.pos) };
+    }
+    var fd: i32 = s.ffat;
+    var end: i32 = nl;
+    var is_ff: boolean = false;
+    if (fd >= 0 && (nl < 0 || fd < nl)) {
+      end = fd;
+      is_ff = true;
+    }
+    if (end < 0) {
+      carry = carry + slice_unchecked(s.buf, s.pos, s.buf.len());
+      s = Src { ...s, pos: s.buf.len() };
+      continue;
+    }
+    var text: string = carry + slice_unchecked(s.buf, s.pos, end);
+    s = Src { ...s, pos: end + 1 };
+    carry = "";
+    if (!is_ff) {
+      return (s, true, breaks, text);
+    }
+    if (text.len() > 0) {
+      return (Src { ...s, ffpend: 1 }, true, breaks, text);
+    }
+    breaks = breaks + 1;
+  }
+  return (s, false, 0, "");
+}
+
+// `trailing_ff(breaks, c)` — what a form feed at the very end of the
+// input leaves behind. There is no page for it to break, so pagination
+// drops it; with -t the byte is ordinary text and ends up on a line of
+// its own, and -T discards it as it discards every other.
+function trailing_ff(breaks: i32, c: Cfg): string {
+  if (breaks <= 0 || !c.omit_header || c.omit_pagination) {
+    return "";
+  }
+  return byte_string(12).repeat(breaks);
+}
+
+// ---- numbers ----------------------------------------------------------------
+// `parse_int(s)` — strtol over the whole string: blanks, a sign, digits
+// and nothing after them. Returns (value, ok); a magnitude past the i64
+// range saturates, which is enough for every band the caller reports.
+function parse_int(s: string): (i64, boolean) {
+  var i: i32 = 0;
+  while (i < s.len() && gnu.is_blank(s[i] as i32)) {
+    i = i + 1;
+  }
+  var neg: boolean = false;
+  if (i < s.len() && (s[i] as i32 == 43 || s[i] as i32 == 45)) {
+    neg = s[i] as i32 == 45;
+    i = i + 1;
+  }
+  var start: i32 = i;
+  var v: i64 = 0 as i64;
+  var sat: boolean = false;
+  while (i < s.len() && gnu.is_digit(s[i] as i32)) {
+    if (v > 900000000000000000 as i64) {
+      sat = true;
+    } else {
+      v = v * (10 as i64) + (s[i] as i32 - 48) as i64;
+    }
+    i = i + 1;
+  }
+  if (i == start || i < s.len()) {
+    return (0 as i64, false);
+  }
+  if (sat) {
+    v = 4000000000 as i64;
+  }
+  if (neg) {
+    v = 0 as i64 - v;
+  }
+  return (v, true);
+}
+
+// The two errno texts gnulib's xstrtol_fatal reports a refused number
+// with, and the band that chooses between them: a value below the
+// option's minimum is ERANGE down to -2^30 and EOVERFLOW past it, while
+// anything above INT_MAX is EOVERFLOW whatever it is.
+function num_fault(v: i64, ok: boolean, min: i64): i32 {
+  if (!ok) {
+    return 1;
+  }
+  if (v >= min && v <= 2147483647 as i64) {
+    return 0;
+  }
+  if (v < min && v >= 0 as i64 - 1073741824 as i64) {
+    return 2;
+  }
+  return 3;
+}
+
+function num_text(status: i32): string {
+  if (status == 2) {
+    return ": Numerical result out of range";
+  }
+  if (status == 3) {
+    return ": Value too large for defined data type";
+  }
+  return "";
+}
+
+// `getnum(value, stem, min)` — one numeric option argument, or the end
+// of the program with gnulib's wording and no `Try …` line.
+function getnum(value: string, stem: string, min: i64): i32 {
+  var r: (i64, boolean) = parse_int(value);
+  var st: i32 = num_fault(r.0, r.1, min);
+  if (st != 0) {
+    gnu.error(stem + ": " + gnu.quote(value) + num_text(st));
+    exit(1);
+  }
+  return r.0 as i32;
+}
+
+// ---- the CHAR / WIDTH grammar of -e, -i and -n ------------------------------
+//
+// `-n:3` is the separator ':' and three digits, `-n3` is three digits
+// with the default separator, and anything else in the WIDTH half is
+// `'-n' extra characters or invalid number in the argument: '3x'`.
+function char_width(value: string, letter: string, defchar: i32, defwidth: i32): (i32, i32) {
+  var ch: i32 = defchar;
+  var rest: string = value;
+  if (value.len() > 0 && !gnu.is_digit(value[0] as i32)) {
+    ch = value[0] as i32;
+    rest = slice_unchecked(value, 1, value.len()) + "";
+  }
+  if (rest.len() == 0) {
+    return (ch, defwidth);
+  }
+  var r: (i64, boolean) = parse_int(rest);
+  var bad: boolean = !r.1 || r.0 < 1 as i64 || r.0 > 2147483647 as i64;
+  var i: i32 = 0;
+  while (i < rest.len()) {
+    if (!gnu.is_digit(rest[i] as i32)) {
+      bad = true;
+    }
+    i = i + 1;
+  }
+  if (bad) {
+    gnu.die_usage("'-" + letter + "' extra characters or invalid number in the argument: " + gnu.quote(rest), 1);
+  }
+  return (ch, r.0 as i32);
+}
+
+// ---- the page range ---------------------------------------------------------
+//
+// `+FIRST[:LAST]` and `--pages=FIRST[:LAST]` share a parser and differ
+// only in what a range that PARSES but is empty means: the `+` form
+// falls through to being a file name, the long option is a fault.
+// Returns (first, last, status): 0 a range, 1 not one, and the fatal
+// wordings are reported here.
+function parse_range(arg: string, what: string): (u64, u64, i32) {
+  var colon: i32 = arg.index_of(":");
+  var head: string = arg;
+  var tail: string = "";
+  if (colon >= 0) {
+    head = slice_unchecked(arg, 0, colon) + "";
+    tail = slice_unchecked(arg, colon + 1, arg.len()) + "";
+  }
+  var f: (u64, i32) = gnu.parse_number(head);
+  if (gnu.count_overflow(f.1)) {
+    gnu.error(what + " argument " + gnu.quote(arg) + " too large");
+    exit(1);
+  }
+  if (f.1 == 1 || head.len() > 0 && head[0] as i32 == 45) {
+    gnu.error("invalid " + what + " argument " + gnu.quote(arg));
+    exit(1);
+  }
+  var last: u64 = 18446744073709551615 as u64;
+  if (colon < 0) {
+    if (f.1 != 0) {
+      return (0 as u64, 0 as u64, 1);
+    }
+  } else {
+    if (f.1 != 0) {
+      return (0 as u64, 0 as u64, 1);
+    }
+    var l: (u64, i32) = gnu.parse_number(tail);
+    if (gnu.count_overflow(l.1)) {
+      gnu.error(what + " argument " + gnu.quote(arg) + " too large");
+      exit(1);
+    }
+    if (l.1 == 1 || tail.len() > 0 && tail[0] as i32 == 45) {
+      gnu.error("invalid " + what + " argument " + gnu.quote(arg));
+      exit(1);
+    }
+    if (l.1 != 0) {
+      gnu.error("invalid suffix in " + what + " argument " + gnu.quote(arg));
+      exit(1);
+    }
+    last = l.0;
+  }
+  if (f.0 == 0 as u64 || last < f.0) {
+    return (0 as u64, 0 as u64, 1);
+  }
+  return (f.0, last, 0);
+}
+
+// ---- the header date --------------------------------------------------------
+//
+// The header carries `strftime(-D or "%Y-%m-%d %H:%M", localtime(t))`,
+// where `t` is the FILE's modification time — the wall clock reaches it
+// only for standard input and for -m, which have no one file to ask.
+// Local time is the zone `TZ` names or `/etc/localtime`, read as the
+// TZif record glibc reads.
+struct Zone { offset: i32, abbrev: string }
+
+function utc_zone(): Zone {
+  return Zone { offset: 0, abbrev: "UTC" };
+}
+
+function be32(s: string, at: i32): i64 {
+  var v: i64 = 0 as i64;
+  var i: i32 = 0;
+  while (i < 4) {
+    v = v * (256 as i64) + (s[at + i] as i32) as i64;
+    i = i + 1;
+  }
+  if (v >= 2147483648 as i64) {
+    v = v - 4294967296 as i64;
+  }
+  return v;
+}
+
+function be_count(s: string, at: i32): i32 {
+  var v: i64 = be32(s, at);
+  if (v < 0 as i64) {
+    return 0;
+  }
+  return v as i32;
+}
+
+function be64(s: string, at: i32): i64 {
+  var v: i64 = 0 as i64;
+  var i: i32 = 0;
+  var neg: boolean = s[at] as i32 >= 128;
+  while (i < 8) {
+    var b: i32 = s[at + i] as i32;
+    if (neg) {
+      b = 255 - b;
+    }
+    v = v * (256 as i64) + b as i64;
+    i = i + 1;
+  }
+  if (neg) {
+    return 0 as i64 - v - 1 as i64;
+  }
+  return v;
+}
+
+// `tz_block(data, at, tsize, t)` — one TZif data block: the transition
+// the instant falls in, and the record it selects. A time before the
+// first transition takes the first record that is not daylight saving,
+// which is glibc's rule.
+function tz_block(data: string, at: i32, tsize: i32, t: i64): (Zone, boolean, boolean) {
+  var isut: i32 = be_count(data, at + 20);
+  var isstd: i32 = be_count(data, at + 24);
+  var leap: i32 = be_count(data, at + 28);
+  var timecnt: i32 = be_count(data, at + 32);
+  var typecnt: i32 = be_count(data, at + 36);
+  var charcnt: i32 = be_count(data, at + 40);
+  var times: i32 = at + 44;
+  var idx: i32 = times + timecnt * tsize;
+  var types: i32 = idx + timecnt;
+  var chars: i32 = types + typecnt * 6;
+  var endp: i32 = chars + charcnt + leap * (tsize + 4) + isstd + isut;
+  if (typecnt <= 0 || endp > data.len()) {
+    return (utc_zone(), false, false);
+  }
+  var sel: i32 = 0 - 1;
+  var past: boolean = true;
+  var i: i32 = 0;
+  while (i < timecnt) {
+    var tt: i64 = 0 as i64;
+    if (tsize == 8) {
+      tt = be64(data, times + i * 8);
+    } else {
+      tt = be32(data, times + i * 4);
+    }
+    if (tt > t) {
+      past = false;
+      i = timecnt;
+    } else {
+      sel = data[idx + i] as i32;
+      i = i + 1;
+    }
+  }
+  if (sel < 0) {
+    sel = 0;
+    var k: i32 = 0;
+    while (k < typecnt) {
+      if (data[types + k * 6 + 4] as i32 == 0) {
+        sel = k;
+        break;
+      }
+      k = k + 1;
+    }
+  }
+  if (sel >= typecnt) {
+    sel = 0;
+  }
+  var off: i32 = be32(data, types + sel * 6) as i32;
+  var name: string = "";
+  var j: i32 = chars + data[types + sel * 6 + 5] as i32;
+  while (j < chars + charcnt && data[j] as i32 != 0) {
+    name = name + byte_string(data[j] as i32);
+    j = j + 1;
+  }
+  return (Zone { offset: off, abbrev: name }, true, past);
+}
+
+// `tz_parse(data, t)` — the TZif record, preferring the 64-bit block a
+// version 2 or 3 file carries after the 32-bit one.
+function tz_parse(data: string, t: i64): (Zone, boolean) {
+  if (data.len() < 44 || !data.starts_with("TZif")) {
+    return (utc_zone(), false);
+  }
+  if (data[4] as i32 != 0) {
+    var footer: string = tz_footer(data);
+    var isut: i32 = be_count(data, 20);
+    var isstd: i32 = be_count(data, 24);
+    var leap: i32 = be_count(data, 28);
+    var timecnt: i32 = be_count(data, 32);
+    var typecnt: i32 = be_count(data, 36);
+    var charcnt: i32 = be_count(data, 40);
+    var second: i32 = 44 + timecnt * 5 + typecnt * 6 + charcnt + leap * 8 + isstd + isut;
+    if (second + 44 <= data.len() && slice_unchecked(data, second, second + 4) == "TZif") {
+      var r: (Zone, boolean, boolean) = tz_block(data, second, 8, t);
+      if (r.1 && r.2 && footer.len() > 0) {
+        var tz: PosixTz = parse_posix_tz(footer);
+        if (tz.ok) {
+          return (posix_zone(tz, t), true);
+        }
+      }
+      return (r.0, r.1);
+    }
+  }
+  var b: (Zone, boolean, boolean) = tz_block(data, 0, 4, t);
+  return (b.0, b.1);
+}
+
+// ---- the POSIX TZ string ----------------------------------------------------
+//
+// A TZif file's transition table stops somewhere around 2037; past its
+// last entry the zone is described by the POSIX string in the file's
+// footer — `EST5EDT,M3.2.0,M11.1.0` — and that is what decides whether
+// a date in 2038 or 2100 is on daylight saving.
+struct Rule { kind: i32, mon: i32, week: i32, day: i32, num: i32, secs: i32 }
+
+struct PosixTz { ok: boolean, std: string, std_off: i32, dst: string, dst_off: i32, has_dst: boolean, start: Rule, end: Rule }
+
+function bad_tz(): PosixTz {
+  var r: Rule = Rule { kind: 0, mon: 0, week: 0, day: 0, num: 0, secs: 0 };
+  return PosixTz { ok: false, std: "", std_off: 0, dst: "", dst_off: 0, has_dst: false, start: r, end: r };
+}
+
+function is_alpha(b: i32): boolean {
+  return b >= 65 && b <= 90 || b >= 97 && b <= 122;
+}
+
+// `tz_name(s, i)` — a zone abbreviation: letters, or anything between
+// angle brackets. Returns (name, next).
+function tz_name(s: string, i0: i32): (string, i32) {
+  var i: i32 = i0;
+  if (i < s.len() && s[i] as i32 == 60) {
+    i = i + 1;
+    var start: i32 = i;
+    while (i < s.len() && s[i] as i32 != 62) {
+      i = i + 1;
+    }
+    var name: string = slice_unchecked(s, start, i) + "";
+    if (i < s.len()) {
+      i = i + 1;
+    }
+    return (name, i);
+  }
+  var st: i32 = i;
+  while (i < s.len() && is_alpha(s[i] as i32)) {
+    i = i + 1;
+  }
+  // POSIX wants three characters at least, and glibc refuses the whole
+  // string rather than the name when it gets fewer.
+  if (i - st < 3) {
+    return ("", i0);
+  }
+  return (slice_unchecked(s, st, i) + "", i);
+}
+
+// `tz_time(s, i)` — `[+-]hh[:mm[:ss]]` in seconds. Returns
+// (seconds, next, found).
+function tz_time(s: string, i0: i32): (i32, i32, boolean) {
+  var i: i32 = i0;
+  var neg: boolean = false;
+  if (i < s.len() && (s[i] as i32 == 43 || s[i] as i32 == 45)) {
+    neg = s[i] as i32 == 45;
+    i = i + 1;
+  }
+  var start: i32 = i;
+  var v: i32 = 0;
+  while (i < s.len() && gnu.is_digit(s[i] as i32)) {
+    v = v * 10 + (s[i] as i32 - 48);
+    i = i + 1;
+  }
+  if (i == start) {
+    return (0, i0, false);
+  }
+  var secs: i32 = v * 3600;
+  var part: i32 = 0;
+  while (part < 2 && i < s.len() && s[i] as i32 == 58) {
+    i = i + 1;
+    var u: i32 = 0;
+    while (i < s.len() && gnu.is_digit(s[i] as i32)) {
+      u = u * 10 + (s[i] as i32 - 48);
+      i = i + 1;
+    }
+    if (part == 0) {
+      secs = secs + u * 60;
+    } else {
+      secs = secs + u;
+    }
+    part = part + 1;
+  }
+  if (neg) {
+    secs = 0 - secs;
+  }
+  return (secs, i, true);
+}
+
+// `tz_rule(s, i)` — `Mm.w.d`, `Jn` or `n`, with the optional `/time`
+// that defaults to two in the morning.
+function tz_rule(s: string, i0: i32): (Rule, i32, boolean) {
+  var i: i32 = i0;
+  var r: Rule = Rule { kind: 0, mon: 0, week: 0, day: 0, num: 0, secs: 7200 };
+  if (i >= s.len()) {
+    return (r, i0, false);
+  }
+  var c: i32 = s[i] as i32;
+  if (c == 77) {
+    i = i + 1;
+    var a: (i32, i32, boolean) = tz_number(s, i);
+    if (!a.2 || a.1 >= s.len() || s[a.1] as i32 != 46) {
+      return (r, i0, false);
+    }
+    var b: (i32, i32, boolean) = tz_number(s, a.1 + 1);
+    if (!b.2 || b.1 >= s.len() || s[b.1] as i32 != 46) {
+      return (r, i0, false);
+    }
+    var d: (i32, i32, boolean) = tz_number(s, b.1 + 1);
+    if (!d.2) {
+      return (r, i0, false);
+    }
+    r = Rule { ...r, kind: 0, mon: a.0, week: b.0, day: d.0 };
+    i = d.1;
+  } else if (c == 74) {
+    var j: (i32, i32, boolean) = tz_number(s, i + 1);
+    if (!j.2) {
+      return (r, i0, false);
+    }
+    r = Rule { ...r, kind: 1, num: j.0 };
+    i = j.1;
+  } else {
+    var n: (i32, i32, boolean) = tz_number(s, i);
+    if (!n.2) {
+      return (r, i0, false);
+    }
+    r = Rule { ...r, kind: 2, num: n.0 };
+    i = n.1;
+  }
+  if (i < s.len() && s[i] as i32 == 47) {
+    var t: (i32, i32, boolean) = tz_time(s, i + 1);
+    if (t.2) {
+      r = Rule { ...r, secs: t.0 };
+      i = t.1;
+    }
+  }
+  return (r, i, true);
+}
+
+function tz_number(s: string, i0: i32): (i32, i32, boolean) {
+  var i: i32 = i0;
+  var v: i32 = 0;
+  while (i < s.len() && gnu.is_digit(s[i] as i32)) {
+    v = v * 10 + (s[i] as i32 - 48);
+    i = i + 1;
+  }
+  return (v, i, i > i0);
+}
+
+// `parse_posix_tz(s)` — the whole string. POSIX writes an offset as the
+// time to ADD to local to reach UTC, so the sign is the other way round
+// from the one a TZif record carries.
+function parse_posix_tz(s: string): PosixTz {
+  var n1: (string, i32) = tz_name(s, 0);
+  if (n1.0.len() == 0) {
+    return bad_tz();
+  }
+  // The offset POSIX requires is optional to glibc, which reads a bare
+  // name as that name at UTC.
+  var o1: (i32, i32, boolean) = tz_time(s, n1.1);
+  var tz: PosixTz = PosixTz { ...bad_tz(), ok: true, std: n1.0, std_off: 0 - o1.0, dst: n1.0, dst_off: 0 - o1.0 };
+  var i: i32 = n1.1;
+  if (o1.2) {
+    i = o1.1;
+  }
+  if (i >= s.len()) {
+    return tz;
+  }
+  if (!(is_alpha(s[i] as i32) || s[i] as i32 == 60)) {
+    return tz;
+  }
+  var n2: (string, i32) = tz_name(s, i);
+  if (n2.0.len() == 0) {
+    return bad_tz();
+  }
+  var dst_off: i32 = tz.std_off + 3600;
+  i = n2.1;
+  var o2: (i32, i32, boolean) = tz_time(s, i);
+  if (o2.2) {
+    dst_off = 0 - o2.0;
+    i = o2.1;
+  }
+  tz = PosixTz { ...tz, dst: n2.0, dst_off: dst_off, has_dst: true };
+  if (i >= s.len() || s[i] as i32 != 44) {
+    return tz;
+  }
+  var r1: (Rule, i32, boolean) = tz_rule(s, i + 1);
+  if (!r1.2 || r1.1 >= s.len() || s[r1.1] as i32 != 44) {
+    return PosixTz { ...tz, has_dst: false };
+  }
+  var r2: (Rule, i32, boolean) = tz_rule(s, r1.1 + 1);
+  if (!r2.2) {
+    return PosixTz { ...tz, has_dst: false };
+  }
+  return PosixTz { ...tz, start: r1.0, end: r2.0 };
+}
+
+// Howard Hinnant's days-from-civil, the inverse of `civil_from_days`.
+function days_from_civil(y0: i64, m: i32, d: i32): i64 {
+  var y: i64 = y0;
+  if (m <= 2) {
+    y = y - 1 as i64;
+  }
+  var era: i64 = floor_div(y, 400 as i64);
+  var yoe: i64 = y - era * (400 as i64);
+  var mp: i64 = ((m + 9) % 12) as i64;
+  var doy: i64 = (153 as i64 * mp + 2 as i64) / (5 as i64) + (d - 1) as i64;
+  var doe: i64 = yoe * (365 as i64) + yoe / (4 as i64) - yoe / (100 as i64) + doy;
+  return era * (146097 as i64) + doe - 719468 as i64;
+}
+
+function days_in_month(y: i64, m: i32): i32 {
+  var len: i32[] = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  if (m == 2 && is_leap(y)) {
+    return 29;
+  }
+  return len[m - 1];
+}
+
+// `rule_local(r, y)` — the local wall-clock instant the rule names in
+// year `y`, as seconds since the epoch.
+function rule_local(r: Rule, y: i64): i64 {
+  var day: i64 = 0 as i64;
+  if (r.kind == 0) {
+    var first: i64 = days_from_civil(y, r.mon, 1);
+    var wd: i32 = floor_mod(first + 4 as i64, 7 as i64) as i32;
+    var delta: i32 = (r.day - wd + 7) % 7;
+    var dom: i32 = 1 + delta + (r.week - 1) * 7;
+    while (dom > days_in_month(y, r.mon)) {
+      dom = dom - 7;
+    }
+    day = days_from_civil(y, r.mon, dom);
+  } else if (r.kind == 1) {
+    var n: i32 = r.num;
+    if (n >= 60 && is_leap(y)) {
+      n = n + 1;
+    }
+    day = days_from_civil(y, 1, 1) + (n - 1) as i64;
+  } else {
+    day = days_from_civil(y, 1, 1) + r.num as i64;
+  }
+  return day * (86400 as i64) + r.secs as i64;
+}
+
+// `posix_zone(tz, t)` — which of the two records `t` falls in. The
+// southern-hemisphere case, where the daylight window wraps the new
+// year, is the `start > end` branch.
+function posix_zone(tz: PosixTz, t: i64): Zone {
+  if (!tz.has_dst) {
+    return Zone { offset: tz.std_off, abbrev: tz.std };
+  }
+  // glibc computes a rule's transition from the start of 1970 for any
+  // year at or before it, so a pre-epoch instant is placed against
+  // 1970's dates rather than its own year's.
+  var y: i64 = civil_from_days(floor_div(t + tz.std_off as i64, 86400 as i64)).0;
+  if (y < 1970 as i64) {
+    y = 1970 as i64;
+  }
+  var s_utc: i64 = rule_local(tz.start, y) - tz.std_off as i64;
+  var e_utc: i64 = rule_local(tz.end, y) - tz.dst_off as i64;
+  var dst: boolean = false;
+  if (s_utc <= e_utc) {
+    dst = t >= s_utc && t < e_utc;
+  } else {
+    dst = !(t >= e_utc && t < s_utc);
+  }
+  if (dst) {
+    return Zone { offset: tz.dst_off, abbrev: tz.dst };
+  }
+  return Zone { offset: tz.std_off, abbrev: tz.std };
+}
+
+// `tz_footer(data)` — the POSIX string a version 2 or 3 file carries
+// between the last two newlines.
+function tz_footer(data: string): string {
+  var end: i32 = data.len();
+  while (end > 0 && data[end - 1] as i32 != 10) {
+    end = end - 1;
+  }
+  if (end <= 1) {
+    return "";
+  }
+  var start: i32 = end - 1;
+  while (start > 0 && data[start - 1] as i32 != 10) {
+    start = start - 1;
+  }
+  return slice_unchecked(data, start, end - 1) + "";
+}
+
+// `zone_for(t)` — the offset and abbreviation local time uses at `t`.
+// A `TZ` holding a POSIX string rather than a zone name (`EST5EDT`) is
+// read as one; anything else that is not a readable TZif file leaves
+// the run on UTC.
+function zone_for(t: i64): Zone {
+  var path: string = "/etc/localtime";
+  var path_tz: string = "";
+  match (env("TZ")) {
+    Some(v) => {
+      var name: string = v;
+      if (name.len() > 0 && name[0] as i32 == 58) {
+        name = slice_unchecked(name, 1, name.len()) + "";
+      }
+      // glibc answers an EMPTY TZ with UTC under the name the
+      // Universal zone carries.
+      if (name.len() == 0) {
+        return Zone { offset: 0, abbrev: "Universal" };
+      }
+      path_tz = name;
+      if (name[0] as i32 == 47) {
+        path = name;
+      } else {
+        path = "/usr/share/zoneinfo/" + name;
+      }
+    },
+    None => {}
+  }
+  // A TZif file is binary, so it comes through a Reader rather than
+  // read_file, which answers EILSEQ for anything that is not UTF-8.
+  var data: string = "";
+  match (open_reader(path)) {
+    Ok(r) => {
+      var reading: boolean = true;
+      while (reading) {
+        match (r.read_chunk(65536)) {
+          Ok(chunk) => {
+            if (chunk.len() == 0) {
+              reading = false;
+            } else {
+              data = data + chunk;
+            }
+          },
+          Err(_) => {
+            reading = false;
+          }
+        }
+      }
+      r.close();
+    },
+    Err(_) => {
+      var direct: PosixTz = parse_posix_tz(path_tz);
+      if (direct.ok) {
+        return posix_zone(direct, t);
+      }
+      // A TZ that is neither a zone file nor a POSIX string is UTC
+      // with no name at all, which is what glibc leaves behind.
+      return Zone { offset: 0, abbrev: "" };
+    }
+  }
+  var z: (Zone, boolean) = tz_parse(data, t);
+  if (z.1) {
+    return z.0;
+  }
+  return utc_zone();
+}
+
+// ---- civil time -------------------------------------------------------------
+struct Tm { year: i64, month: i32, day: i32, hour: i32, min: i32, sec: i32, wday: i32, yday: i32, zone: Zone }
+
+function floor_div(a: i64, b: i64): i64 {
+  var q: i64 = a / b;
+  if (a % b != 0 as i64 && a < 0 as i64 != b < 0 as i64) {
+    q = q - 1 as i64;
+  }
+  return q;
+}
+
+function floor_mod(a: i64, b: i64): i64 {
+  return a - floor_div(a, b) * b;
+}
+
+function is_leap(y: i64): boolean {
+  return y % (4 as i64) == 0 as i64 && (y % (100 as i64) != 0 as i64 || y % (400 as i64) == 0 as i64);
+}
+
+// Howard Hinnant's civil-from-days, with the era trick folding the
+// negative branch into the same closed form.
+function civil_from_days(z0: i64): (i64, i32, i32) {
+  var z: i64 = z0 + 719468 as i64;
+  var era: i64 = floor_div(z, 146097 as i64);
+  var doe: i64 = z - era * (146097 as i64);
+  var yoe: i64 = (doe - doe / (1460 as i64) + doe / (36524 as i64) - doe / (146096 as i64)) / (365 as i64);
+  var y: i64 = yoe + era * (400 as i64);
+  var doy: i64 = doe - (365 as i64 * yoe + yoe / (4 as i64) - yoe / (100 as i64));
+  var mp: i64 = (5 as i64 * doy + 2 as i64) / (153 as i64);
+  var d: i64 = doy - (153 as i64 * mp + 2 as i64) / (5 as i64) + 1 as i64;
+  var m: i64 = mp + 3 as i64;
+  if (m > 12 as i64) {
+    m = m - 12 as i64;
+    y = y + 1 as i64;
+  }
+  return (y, m as i32, d as i32);
+}
+
+function day_of_year(y: i64, m: i32, d: i32): i32 {
+  var cum: i32[] = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334];
+  var n: i32 = cum[m - 1] + d - 1;
+  if (m > 2 && is_leap(y)) {
+    n = n + 1;
+  }
+  return n;
+}
+
+// `break_time(t)` — the broken-down local time of a Unix second.
+function break_time(t: i64): Tm {
+  var z: Zone = zone_for(t);
+  var local: i64 = t + z.offset as i64;
+  var days: i64 = floor_div(local, 86400 as i64);
+  var secs: i64 = local - days * (86400 as i64);
+  var c: (i64, i32, i32) = civil_from_days(days);
+  return Tm { year: c.0, month: c.1, day: c.2, hour: (secs / (3600 as i64)) as i32, min: (secs / (60 as i64) % (60 as i64)) as i32, sec: (secs % (60 as i64)) as i32, wday: floor_mod(days + 4 as i64, 7 as i64) as i32, yday: day_of_year(c.0, c.1, c.2), zone: z };
+}
+
+// ---- strftime ---------------------------------------------------------------
+function pad_num(v: i64, width: i32, zero: boolean): string {
+  var neg: boolean = v < 0 as i64;
+  var mag: string = v.to_string();
+  if (neg) {
+    mag = slice_unchecked(mag, 1, mag.len()) + "";
+  }
+  var fill: string = " ";
+  if (zero) {
+    fill = "0";
+  }
+  var want: i32 = width;
+  if (neg) {
+    want = want - 1;
+  }
+  while (mag.len() < want) {
+    mag = fill + mag;
+  }
+  if (neg) {
+    return "-" + mag;
+  }
+  return mag;
+}
+
+function day_name(i: i32): string {
+  var n: string[] = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+  return n[i];
+}
+
+function month_name(i: i32): string {
+  var n: string[] = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+  return n[i - 1];
+}
+
+function abbrev3(s: string): string {
+  return slice_unchecked(s, 0, 3) + "";
+}
+
+function iso_weeks_in(y: i64): i32 {
+  var p: i64 = floor_mod(y + floor_div(y, 4 as i64) - floor_div(y, 100 as i64) + floor_div(y, 400 as i64), 7 as i64);
+  var q: i64 = y - 1 as i64;
+  var pp: i64 = floor_mod(q + floor_div(q, 4 as i64) - floor_div(q, 100 as i64) + floor_div(q, 400 as i64), 7 as i64);
+  if (p == 4 as i64 || pp == 3 as i64) {
+    return 53;
+  }
+  return 52;
+}
+
+// The ISO 8601 week-based year and week number.
+function iso_week(tm: Tm): (i64, i32) {
+  var wd: i32 = (tm.wday + 6) % 7;
+  var week: i32 = (tm.yday - wd + 10) / 7;
+  var y: i64 = tm.year;
+  if (week < 1) {
+    y = y - 1 as i64;
+    week = iso_weeks_in(y);
+  } else if (week > iso_weeks_in(y)) {
+    y = y + 1 as i64;
+    week = 1;
+  }
+  return (y, week);
+}
+
+function zone_offset_text(off: i32, colons: i32): string {
+  var sign: string = "+";
+  var v: i32 = off;
+  if (v < 0) {
+    sign = "-";
+    v = 0 - v;
+  }
+  var hh: string = pad_num((v / 3600) as i64, 2, true);
+  var mm: string = pad_num((v / 60 % 60) as i64, 2, true);
+  var ss: string = pad_num((v % 60) as i64, 2, true);
+  if (colons == 0) {
+    return sign + hh + mm;
+  }
+  if (colons == 1) {
+    return sign + hh + ":" + mm;
+  }
+  if (colons == 2) {
+    return sign + hh + ":" + mm + ":" + ss;
+  }
+  return sign + hh;
+}
+
+function hour12(h: i32): i32 {
+  var v: i32 = h % 12;
+  if (v == 0) {
+    return 12;
+  }
+  return v;
+}
+
+function meridiem(h: i32, upper: boolean): string {
+  if (h < 12) {
+    if (upper) {
+      return "AM";
+    }
+    return "am";
+  }
+  if (upper) {
+    return "PM";
+  }
+  return "pm";
+}
+
+function lower_ascii(s: string): string {
+  var out: string = "";
+  var i: i32 = 0;
+  while (i < s.len()) {
+    var b: i32 = s[i] as i32;
+    if (b >= 65 && b <= 90) {
+      b = b + 32;
+    }
+    out = out + byte_string(b);
+    i = i + 1;
+  }
+  return out;
+}
+
+function upper_ascii(s: string): string {
+  var out: string = "";
+  var i: i32 = 0;
+  while (i < s.len()) {
+    var b: i32 = s[i] as i32;
+    if (b >= 97 && b <= 122) {
+      b = b - 32;
+    }
+    out = out + byte_string(b);
+    i = i + 1;
+  }
+  return out;
+}
+
+// `conv(c, tm, t, nsec)` — one conversion as (text, known, the width it
+// pads to by default, whether that padding is zeros).
+function conv(c: i32, tm: Tm, t: i64, nsec: i64): (string, boolean, i32, boolean) {
+  if (c == 97) {
+    return (abbrev3(day_name(tm.wday)), true, 0, false);
+  }
+  if (c == 65) {
+    return (day_name(tm.wday), true, 0, false);
+  }
+  if (c == 98 || c == 104) {
+    return (abbrev3(month_name(tm.month)), true, 0, false);
+  }
+  if (c == 66) {
+    return (month_name(tm.month), true, 0, false);
+  }
+  if (c == 99) {
+    return (abbrev3(day_name(tm.wday)) + " " + abbrev3(month_name(tm.month)) + " " + pad_num(tm.day as i64, 2, false) + " " + pad_num(tm.hour as i64, 2, true) + ":" + pad_num(tm.min as i64, 2, true) + ":" + pad_num(tm.sec as i64, 2, true) + " " + tm.year.to_string(), true, 0, false);
+  }
+  if (c == 67) {
+    return (pad_num(floor_div(tm.year, 100 as i64), 2, true), true, 2, true);
+  }
+  if (c == 100) {
+    return (pad_num(tm.day as i64, 2, true), true, 2, true);
+  }
+  if (c == 68 || c == 120) {
+    return (pad_num(tm.month as i64, 2, true) + "/" + pad_num(tm.day as i64, 2, true) + "/" + pad_num(floor_mod(tm.year, 100 as i64), 2, true), true, 0, false);
+  }
+  if (c == 101) {
+    return (pad_num(tm.day as i64, 2, false), true, 2, false);
+  }
+  if (c == 70) {
+    return (pad_num(tm.year, 4, true) + "-" + pad_num(tm.month as i64, 2, true) + "-" + pad_num(tm.day as i64, 2, true), true, 0, false);
+  }
+  if (c == 103) {
+    return (pad_num(floor_mod(iso_week(tm).0, 100 as i64), 2, true), true, 2, true);
+  }
+  if (c == 71) {
+    return (pad_num(iso_week(tm).0, 4, true), true, 4, true);
+  }
+  if (c == 72) {
+    return (pad_num(tm.hour as i64, 2, true), true, 2, true);
+  }
+  if (c == 73) {
+    return (pad_num(hour12(tm.hour) as i64, 2, true), true, 2, true);
+  }
+  if (c == 106) {
+    return (pad_num((tm.yday + 1) as i64, 3, true), true, 3, true);
+  }
+  if (c == 107) {
+    return (pad_num(tm.hour as i64, 2, false), true, 2, false);
+  }
+  if (c == 108) {
+    return (pad_num(hour12(tm.hour) as i64, 2, false), true, 2, false);
+  }
+  if (c == 109) {
+    return (pad_num(tm.month as i64, 2, true), true, 2, true);
+  }
+  if (c == 77) {
+    return (pad_num(tm.min as i64, 2, true), true, 2, true);
+  }
+  if (c == 110) {
+    return ("\n", true, 0, false);
+  }
+  if (c == 78) {
+    return (pad_num(nsec, 9, true), true, 9, true);
+  }
+  if (c == 112) {
+    return (meridiem(tm.hour, true), true, 0, false);
+  }
+  if (c == 80) {
+    return (meridiem(tm.hour, false), true, 0, false);
+  }
+  if (c == 113) {
+    return (((tm.month - 1) / 3 + 1).to_string(), true, 0, false);
+  }
+  if (c == 114) {
+    return (pad_num(hour12(tm.hour) as i64, 2, true) + ":" + pad_num(tm.min as i64, 2, true) + ":" + pad_num(tm.sec as i64, 2, true) + " " + meridiem(tm.hour, true), true, 0, false);
+  }
+  if (c == 82) {
+    return (pad_num(tm.hour as i64, 2, true) + ":" + pad_num(tm.min as i64, 2, true), true, 0, false);
+  }
+  if (c == 115) {
+    return (t.to_string(), true, 0, false);
+  }
+  if (c == 83) {
+    return (pad_num(tm.sec as i64, 2, true), true, 2, true);
+  }
+  if (c == 116) {
+    return ("\t", true, 0, false);
+  }
+  if (c == 84 || c == 88) {
+    return (pad_num(tm.hour as i64, 2, true) + ":" + pad_num(tm.min as i64, 2, true) + ":" + pad_num(tm.sec as i64, 2, true), true, 0, false);
+  }
+  if (c == 117) {
+    var u: i32 = tm.wday;
+    if (u == 0) {
+      u = 7;
+    }
+    return (u.to_string(), true, 0, false);
+  }
+  if (c == 85) {
+    return (pad_num(((tm.yday + 7 - tm.wday) / 7) as i64, 2, true), true, 2, true);
+  }
+  if (c == 86) {
+    return (pad_num(iso_week(tm).1 as i64, 2, true), true, 2, true);
+  }
+  if (c == 119) {
+    return (tm.wday.to_string(), true, 0, false);
+  }
+  if (c == 87) {
+    return (pad_num(((tm.yday + 7 - (tm.wday + 6) % 7) / 7) as i64, 2, true), true, 2, true);
+  }
+  if (c == 121) {
+    return (pad_num(floor_mod(tm.year, 100 as i64), 2, true), true, 2, true);
+  }
+  if (c == 89) {
+    return (pad_num(tm.year, 4, true), true, 4, true);
+  }
+  if (c == 90) {
+    return (tm.zone.abbrev, true, 0, false);
+  }
+  if (c == 122) {
+    return (zone_offset_text(tm.zone.offset, 0), true, 0, false);
+  }
+  if (c == 37) {
+    return ("%", true, 0, false);
+  }
+  return ("", false, 0, false);
+}
+
+// The numeric value behind a padded conversion, so an explicit width
+// can repad it.
+function unpad(s: string): i64 {
+  var i: i32 = 0;
+  var neg: boolean = s.len() > 0 && s[0] as i32 == 45;
+  while (i < s.len() && (s[i] as i32 == 32 || s[i] as i32 == 48 || s[i] as i32 == 45)) {
+    i = i + 1;
+  }
+  var v: i64 = 0 as i64;
+  while (i < s.len() && gnu.is_digit(s[i] as i32)) {
+    v = v * (10 as i64) + (s[i] as i32 - 48) as i64;
+    i = i + 1;
+  }
+  if (neg) {
+    return 0 as i64 - v;
+  }
+  return v;
+}
+
+// `strftime(fmt, t, nsec)` — nstrftime in the C locale: the conversions
+// above with gnulib's `-` `_` `0` `^` `#` flags, an optional field
+// width, the `E` / `O` modifiers (C has no alternative representations,
+// so they are skipped) and the `:` repetitions of `%z`. An unknown
+// conversion is copied out with its percent, as glibc copies it.
+function strftime(fmt: string, t: i64, nsec: i64): string {
+  var tm: Tm = break_time(t);
+  var out: string = "";
+  var i: i32 = 0;
+  while (i < fmt.len()) {
+    var b: i32 = fmt[i] as i32;
+    if (b != 37) {
+      out = out + byte_string(b);
+      i = i + 1;
+      continue;
+    }
+    var start: i32 = i;
+    var j: i32 = i + 1;
+    var pad_dash: boolean = false;
+    var pad_under: boolean = false;
+    var pad_zero: boolean = false;
+    var up: boolean = false;
+    var swap: boolean = false;
+    var colons: i32 = 0;
+    var flagging: boolean = true;
+    while (j < fmt.len() && flagging) {
+      var f: i32 = fmt[j] as i32;
+      if (f == 45) {
+        pad_dash = true;
+        j = j + 1;
+      } else if (f == 95) {
+        pad_under = true;
+        j = j + 1;
+      } else if (f == 48) {
+        pad_zero = true;
+        j = j + 1;
+      } else if (f == 94) {
+        up = true;
+        j = j + 1;
+      } else if (f == 35) {
+        swap = true;
+        j = j + 1;
+      } else {
+        flagging = false;
+      }
+    }
+    var width: i32 = 0;
+    var has_width: boolean = false;
+    while (j < fmt.len() && gnu.is_digit(fmt[j] as i32)) {
+      has_width = true;
+      if (width < 1000) {
+        width = width * 10 + (fmt[j] as i32 - 48);
+      }
+      j = j + 1;
+    }
+    while (j < fmt.len() && fmt[j] as i32 == 58) {
+      colons = colons + 1;
+      j = j + 1;
+    }
+    if (j < fmt.len() && (fmt[j] as i32 == 69 || fmt[j] as i32 == 79)) {
+      j = j + 1;
+    }
+    if (j >= fmt.len()) {
+      out = out + slice_unchecked(fmt, start, fmt.len());
+      i = fmt.len();
+      continue;
+    }
+    var c: i32 = fmt[j] as i32;
+    if (colons > 0 && c != 122) {
+      out = out + slice_unchecked(fmt, start, j + 1);
+      i = j + 1;
+      continue;
+    }
+    var r: (string, boolean, i32, boolean) = conv(c, tm, t, nsec);
+    if (colons > 0) {
+      r = (zone_offset_text(tm.zone.offset, colons), true, 0, false);
+    }
+    if (!r.1) {
+      out = out + slice_unchecked(fmt, start, j + 1);
+      i = j + 1;
+      continue;
+    }
+    var text: string = r.0;
+    if (c == 78 && has_width) {
+      if (width <= 9) {
+        text = slice_unchecked(text, 0, width) + "";
+      } else {
+        text = text + "0".repeat(width - 9);
+      }
+      has_width = false;
+      r = (text, true, 0, false);
+    }
+    var want: i32 = r.2;
+    var zero: boolean = r.3;
+    if (pad_dash) {
+      want = 0;
+    }
+    if (pad_under) {
+      zero = false;
+    }
+    if (pad_zero) {
+      zero = true;
+    }
+    if (has_width && width > want) {
+      want = width;
+    }
+    if (r.2 > 0) {
+      text = pad_num(unpad(text), want, zero);
+    } else if (has_width) {
+      while (text.len() < width) {
+        if (zero) {
+          text = "0" + text;
+        } else {
+          text = " " + text;
+        }
+      }
+    }
+    if (up || swap && c != 90) {
+      text = upper_ascii(text);
+    } else if (swap) {
+      text = lower_ascii(text);
+    }
+    out = out + text;
+    i = j + 1;
+  }
+  return out;
+}
+
+// ---- the header line --------------------------------------------------------
+// The columns a header field occupies: gnulib measures it with
+// mbswidth, so a control byte is worth nothing and every other byte one.
+// -c and -v never reach the header.
+function header_width(s: string): i32 {
+  var w: i32 = 0;
+  var i: i32 = 0;
+  while (i < s.len()) {
+    var b: i32 = s[i] as i32;
+    if (b >= 32 && b != 127) {
+      w = w + 1;
+    }
+    i = i + 1;
+  }
+  return w;
+}
+
+// `header_text(c, name, t, nsec, page)` — date, name and `Page N` with
+// the name centred between them. Each gap keeps a space of its own when
+// the three do not fit, so a narrow page OVERFLOWS rather than shrinks.
+function header_text(c: Cfg, name: string, t: i64, nsec: i64, page: u64): string {
+  var fmt: string = "%Y-%m-%d %H:%M";
+  if (c.has_date) {
+    fmt = c.date_fmt;
+  }
+  var date: string = strftime(fmt, t, nsec);
+  var nm: string = name;
+  if (c.has_header) {
+    nm = c.header;
+  }
+  var tail: string = "Page " + page.to_string();
+  var avail: i32 = c.page_width - header_width(date) - header_width(nm) - tail.len();
+  var lhs: i32 = avail / 2;
+  var rhs: i32 = avail - avail / 2;
+  if (lhs < 1) {
+    lhs = 1;
+  }
+  if (rhs < 1) {
+    rhs = 1;
+  }
+  return date + " ".repeat(lhs) + nm + " ".repeat(rhs) + tail;
+}
+
+// ---- one column -------------------------------------------------------------
+function col_start(c: Cfg, i: i32): i32 {
+  return c.offset + c.num_prefix + i * (c.chars_per_column + c.sep.len());
+}
+
+// `put_sep(l, c)` — the column separator, one column per byte.
+//
+// A SPACE in it joins the generated whitespace rather than ending it,
+// which is why the default separator disappears into the gap's last
+// tab. A TAB does the same only when it is the WHOLE separator and the
+// columns are padded apart; in any longer separator, and wherever the
+// columns are not padded (-s or -J without a width), it is written as
+// the byte.
+function put_sep(l0: Line, c: Cfg): Line {
+  var l: Line = l0;
+  var k: i32 = 0;
+  while (k < c.sep.len()) {
+    var b: i32 = c.sep[k] as i32;
+    if (b == 32 || b == 9 && c.truncate && c.sep.len() == 1) {
+      l = l.space(c);
+    } else {
+      l = l.put(byte_string(b), 1, c);
+    }
+    k = k + 1;
+  }
+  return l;
+}
+
+// `tab_span(b, c)` — the columns a byte advances when it is a tab, or
+// zero. The input tab CHARACTER -e names moves to its own width; a real
+// TAB that is not that character still moves to the eighth column.
+function tab_span(b: i32, c: Cfg): i32 {
+  if (b == c.in_tab) {
+    return c.in_tab_width;
+  }
+  if (b == 9) {
+    return tab_stop();
+  }
+  return 0;
+}
+
+// `put_tab(l, c, cs, span)` — a tab reached at the line's current
+// position. -e turns it into spaces and several columns turn it into
+// generated whitespace; one column, and a layout whose columns are
+// unpadded behind a single-TAB separator, leave the byte alone.
+function put_tab(l0: Line, c: Cfg, cs: i32, span: i32, b: i32): (Line, i32) {
+  var local: i32 = l0.pos - cs;
+  if (local < 0) {
+    local = 0;
+  }
+  var target: i32 = l0.pos + (span - local % span);
+  var l: Line = l0;
+  if (c.untabify) {
+    var n: i32 = target - l.pos;
+    while (n > 0) {
+      l = l.space(c);
+      n = n - 1;
+    }
+    return (l, target);
+  }
+  if (c.columns > 1 && !c.tab_literal) {
+    return (l.to(target, c), target);
+  }
+  var f: Line = l.flush(c);
+  return (Line { ...f, buf: f.buf + byte_string(b), pos: target }, target);
+}
+
+// `put_number(l, c, cs, n)` — the line-number field: the counter right
+// aligned in DIGITS columns, then the separator. A TAB separator is not
+// a byte but a move to the next eighth column of the COLUMN, which is
+// where `num_width` comes from.
+function put_number(l0: Line, c: Cfg, cs: i32, n: i64): Line {
+  var s: string = n.to_string();
+  if (s.len() > c.num_digits) {
+    s = slice_unchecked(s, s.len() - c.num_digits, s.len()) + "";
+  }
+  var l: Line = l0.to(cs + c.num_digits - s.len(), c);
+  l = l.put(s, s.len(), c);
+  if (c.num_sep == "\t") {
+    var target: i32 = cs + c.num_width;
+    if (c.columns > 1 && !c.tab_literal) {
+      return l.to(target, c);
+    }
+    var f: Line = l.flush(c);
+    return Line { ...f, buf: f.buf + "\t", pos: target };
+  }
+  var k: i32 = 0;
+  while (k < c.num_sep.len()) {
+    var r: (string, i32) = clump(c.num_sep[k] as i32, c);
+    l = l.put(r.0, r.1, c);
+    k = k + 1;
+  }
+  return l;
+}
+
+// `put_column(l, c, i, txt, n, numbered)` — column `i` of one row: the
+// gap that carries the separator, the line number when the column takes
+// one, and the text up to the column's own width. The pending
+// whitespace is FLUSHED once the column is positioned, so a column that
+// exists and renders nothing still leaves its gap behind.
+function put_column(l0: Line, c: Cfg, i: i32, txt: string, n: i64, numbered: boolean): Line {
+  var cs: i32 = col_start(c, i);
+  var l: Line = l0;
+  if (i == 0) {
+    l = l.to(cs, c);
+  } else if (c.truncate) {
+    if (l.pos <= cs - c.sep.len()) {
+      l = l.to(cs - c.sep.len(), c);
+      l = put_sep(l, c);
+    }
+  } else {
+    l = put_sep(l, c);
+  }
+  l = l.flush(c);
+  var origin: i32 = l.pos;
+  if (c.truncate) {
+    origin = cs;
+  }
+  var text_start: i32 = origin;
+  if (numbered) {
+    l = put_number(l, c, origin, n);
+    text_start = l.pos;
+  }
+  var limit: i32 = 0;
+  if (c.truncate) {
+    var avail: i32 = c.chars_per_column;
+    if (numbered) {
+      avail = avail - c.num_width;
+      if (avail < 1) {
+        avail = 1;
+      }
+    }
+    limit = text_start + avail;
+  }
+  var k: i32 = 0;
+  while (k < txt.len()) {
+    // A run of ordinary printable bytes is one column each and one
+    // append between them all; only a blank, a tab or a byte the
+    // escapes reach needs looking at on its own.
+    var j: i32 = k;
+    while (j < txt.len()) {
+      var pb: i32 = txt[j] as i32;
+      if (pb < 33 || pb > 126 || pb == c.in_tab) {
+        break;
+      }
+      j = j + 1;
+    }
+    if (j > k) {
+      var width: i32 = j - k;
+      if (c.truncate && l.pos + width > limit) {
+        width = limit - l.pos;
+        if (width <= 0) {
+          return l;
+        }
+        j = k + width;
+      }
+      l = l.put(slice_unchecked(txt, k, j) + "", width, c);
+      k = j;
+      continue;
+    }
+    var b: i32 = txt[k] as i32;
+    var span: i32 = tab_span(b, c);
+    if (span > 0) {
+      var local: i32 = l.pos - origin;
+      if (local < 0) {
+        local = 0;
+      }
+      var target: i32 = l.pos + (span - local % span);
+      if (c.truncate && target > limit) {
+        return l;
+      }
+      var r: (Line, i32) = put_tab(l, c, origin, span, b);
+      l = r.0;
+      k = k + 1;
+      continue;
+    }
+    var cl: (string, i32) = clump(b, c);
+    if (c.truncate && l.pos + cl.1 > limit) {
+      return l;
+    }
+    if (b == 32) {
+      l = l.space(c);
+    } else {
+      l = l.put(cl.0, cl.1, c);
+    }
+    k = k + 1;
+  }
+  return l;
+}
+
+// `row_text(c, texts, nums, numbered)` — one body line. Pending
+// whitespace is never flushed at the end, so a row whose last column is
+// ABSENT carries no trailing pad; a column that exists and renders
+// nothing still does, because its separator is a byte.
+function row_text(c: Cfg, texts: string[], nums: i64[], numbered: boolean): string {
+  var l: Line = line_new();
+  if (c.num_prefix > 0 && nums.len() > 0) {
+    l = l.to(c.offset, c);
+    l = put_number(l, c, c.offset, nums[0]);
+  }
+  var i: i32 = 0;
+  while (i < texts.len()) {
+    var num: i64 = 0 as i64;
+    if (i < nums.len()) {
+      num = nums[i];
+    }
+    var want: boolean = numbered && c.num_prefix == 0;
+    l = put_column(l, c, i, texts[i], num, want);
+    i = i + 1;
+  }
+  return l.buf + "\n";
+}
+
+// ---- the page ---------------------------------------------------------------
+// `wrap32(n)` — the line-number counter is a C int and wraps there.
+function wrap32(n: i64): i64 {
+  var v: i64 = n;
+  while (v > 2147483647 as i64) {
+    v = v - 4294967296 as i64;
+  }
+  while (v < 0 as i64 - 2147483648 as i64) {
+    v = v + 4294967296 as i64;
+  }
+  return v;
+}
+
+// `column_lengths(n, c)` — how many lines each column of a page holds.
+// Down mode balances: the row count is ceil(n / columns) and the first
+// `n mod columns` columns are the full ones.
+function column_lengths(n: i32, c: Cfg): i32[] {
+  var out: i32[] = [];
+  var k: i32 = c.columns;
+  var rows: i32 = (n + k - 1) / k;
+  var full: i32 = n % k;
+  var i: i32 = 0;
+  while (i < k) {
+    var len: i32 = rows;
+    if (full > 0 && i >= full) {
+      len = rows - 1;
+    }
+    if (len < 0) {
+      len = 0;
+    }
+    out = out.append(len);
+    i = i + 1;
+  }
+  return out;
+}
+
+struct Page { text: string, lines: i32 }
+
+// `body_text(c, lines, first_no)` — the rows of one page, and how many
+// output lines they took.
+function body_text(c: Cfg, lines: string[], first_no: i64): Page {
+  var out: string = "";
+  var count: i32 = 0;
+  var n: i32 = lines.len();
+  if (c.columns == 1 && !c.merge) {
+    // One column with nothing to do to the bytes — no number, no
+    // offset, no escaping, no truncation and no tab of either kind —
+    // is the default invocation, and the line goes out as it came in.
+    var verbatim: boolean = !c.numbering && c.offset == 0 && !c.ctrl && !c.nonprint && !c.truncate && !c.untabify && !c.tabify;
+    var i: i32 = 0;
+    while (i < n) {
+      if (verbatim) {
+        out = out + lines[i] + "\n";
+      } else {
+        var l: Line = put_column(line_new(), c, 0, lines[i], wrap32(first_no + i as i64), c.numbering);
+        out = out + l.buf + "\n";
+      }
+      count = count + 1;
+      if (c.double_space) {
+        out = out + "\n";
+        count = count + 1;
+      }
+      i = i + 1;
+    }
+    return Page { text: out, lines: count };
+  }
+  var rows: i32 = (n + c.columns - 1) / c.columns;
+  var lens: i32[] = column_lengths(n, c);
+  var starts: i32[] = [];
+  var acc: i32 = 0;
+  var j: i32 = 0;
+  while (j < c.columns) {
+    starts = starts.append(acc);
+    acc = acc + lens[j];
+    j = j + 1;
+  }
+  var r: i32 = 0;
+  while (r < rows) {
+    var texts: string[] = [];
+    var nums: i64[] = [];
+    var col: i32 = 0;
+    while (col < c.columns) {
+      var idx: i32 = 0 - 1;
+      if (c.across) {
+        idx = r * c.columns + col;
+        if (idx >= n) {
+          idx = 0 - 1;
+        }
+      } else if (r < lens[col]) {
+        idx = starts[col] + r;
+      }
+      if (idx < 0) {
+        col = c.columns;
+      } else {
+        texts = texts.append(lines[idx]);
+        nums = nums.append(wrap32(first_no + idx as i64));
+        col = col + 1;
+      }
+    }
+    out = out + row_text(c, texts, nums, c.numbering);
+    count = count + 1;
+    if (c.double_space && (r + 1 < rows || !c.omit_header || c.across)) {
+      out = out + "\n";
+      count = count + 1;
+    }
+    r = r + 1;
+  }
+  return Page { text: out, lines: count };
+}
+
+// `merge_body(c, rows, first_no)` — the rows of a parallel page, which
+// are already laid out one column per FILE.
+function merge_body(c: Cfg, rows: string[], width: i32, first_no: i64): Page {
+  var out: string = "";
+  var count: i32 = 0;
+  var nrows: i32 = 0;
+  if (width > 0) {
+    nrows = rows.len() / width;
+  }
+  var r: i32 = 0;
+  while (r < nrows) {
+    var texts: string[] = [];
+    var nums: i64[] = [];
+    var col: i32 = 0;
+    while (col < width) {
+      texts = texts.append(rows[r * width + col]);
+      nums = nums.append(wrap32(first_no + r as i64));
+      col = col + 1;
+    }
+    out = out + row_text(c, texts, nums, c.numbering);
+    count = count + 1;
+    if (c.double_space) {
+      out = out + "\n";
+      count = count + 1;
+    }
+    r = r + 1;
+  }
+  return Page { text: out, lines: count };
+}
+
+// `page_text(c, body, page, name, t, nsec)` — the header block, the
+// body and whatever closes the page: five blank lines after padding it
+// out, a single form feed, or nothing at all under -t.
+function page_text(c: Cfg, body: Page, page: u64, name: string, t: i64, nsec: i64): string {
+  if (c.omit_header) {
+    return body.text;
+  }
+  var lead: Line = line_new().to(c.offset, c).flush(c);
+  var head: Line = line_new().to(c.offset, c);
+  head = head.put(header_text(c, name, t, nsec, page), 0, c);
+  var out: string = lead.buf + "\n\n" + head.buf + "\n\n\n" + body.text;
+  if (c.form_feed) {
+    return out + byte_string(12);
+  }
+  var body_lines: i32 = c.page_length - 10;
+  var pad: i32 = body_lines - body.lines;
+  if (pad > 0) {
+    out = out + "\n".repeat(pad);
+  }
+  return out + "\n\n\n\n\n";
+}
+
+// ---- running one job --------------------------------------------------------
+struct Job { o: io_buffered.BufWriter, ok: boolean, fatal: boolean }
+
+function now_seconds(): i64 {
+  return now_unix_ms() / (1000 as i64);
+}
+
+// `open_src(c, name)` — one operand. A failed OPEN is a warning that
+// costs the exit status and not the run; `-` is standard input, whose
+// header carries the wall clock and no name.
+function open_src(c: Cfg, name: string): (Src, boolean) {
+  if (name == "-") {
+    return (Src { r: stdin(), name: "-", is_stdin: true, open: true, buf: "", pos: 0, eof: false, fatal: false, ffpend: 0, ffat: 0 - 1, mtime: now_seconds(), mnsec: 0 as i64 }, true);
+  }
+  var mt: i64 = 0 as i64;
+  var ns: i64 = 0 as i64;
+  match (stat(name)) {
+    Ok(st) => {
+      mt = st.mtime;
+      ns = st.mtime_nsec;
+    },
+    Err(_) => {}
+  }
+  match (open_reader(name)) {
+    Ok(r) => {
+      return (Src { r: r, name: name, is_stdin: false, open: true, buf: "", pos: 0, eof: false, fatal: false, ffpend: 0, ffat: 0 - 1, mtime: mt, mnsec: ns }, true);
+    },
+    Err(e) => {
+      if (!c.nowarn) {
+        gnu.error(gnu.quotef(name) + ": " + gnu.io_error_text(e));
+      }
+      return (src_closed(), false);
+    }
+  }
+}
+
+function rows_per_page(c: Cfg): i32 {
+  var body: i32 = c.page_length;
+  if (!c.omit_header) {
+    body = c.page_length - 10;
+  }
+  if (c.double_space) {
+    body = body / 2;
+  }
+  if (body < 1) {
+    body = 1;
+  }
+  return body;
+}
+
+// `page_warning(c, pages, o)` — GNU's `starting page number N exceeds
+// page count M`, which is a warning: it leaves the exit status alone
+// and an empty file still counts as one page.
+function page_warning(c: Cfg, pages: u64, o0: io_buffered.BufWriter): io_buffered.BufWriter {
+  var total: u64 = pages;
+  if (total == 0 as u64) {
+    total = 1 as u64;
+  }
+  if (c.first_page <= total) {
+    return o0;
+  }
+  return gnu.error_out(o0, "starting page number " + c.first_page.to_string() + " exceeds page count " + total.to_string());
+}
+
+// `run_serial(c, name, o, ok)` — one file paginated on its own: page
+// numbers and line numbers both start again here.
+//
+// A form feed ends the page it is read on, EXCEPT when that page had
+// already filled: the break is then the one the page boundary already
+// made, so a `-l` small enough to split the text where the input does
+// gains no blank page. Without pagination there are no breaks to make —
+// -t copies the byte through at the head of the next line and -T drops
+// it.
+function run_serial(c: Cfg, name: string, o0: io_buffered.BufWriter, ok0: boolean): Job {
+  var opened: (Src, boolean) = open_src(c, name);
+  if (!opened.1) {
+    return Job { o: o0, ok: false, fatal: false };
+  }
+  var s: Src = opened.0;
+  var o: io_buffered.BufWriter = o0;
+  var ok: boolean = ok0;
+  var paginate: boolean = !c.omit_header;
+  var cap: i32 = rows_per_page(c) * c.columns;
+  var page: u64 = 1 as u64;
+  var pages: u64 = 0 as u64;
+  var line_no: i64 = 1 as i64;
+  var rebased: boolean = false;
+  var carry: string = "";
+  var carry_has: boolean = false;
+  var carry_breaks: i32 = 0;
+  var stale: boolean = false;
+  var eof: boolean = false;
+  var fatal: boolean = false;
+  var tail_ff: string = "";
+  var hdr_name: string = name;
+  if (s.is_stdin) {
+    hdr_name = "";
+  }
+
+  while (page <= c.last_page) {
+    var lines: string[] = [];
+    var broke: boolean = false;
+    var first: boolean = true;
+    while (lines.len() < cap && !broke) {
+      if (!carry_has) {
+        if (eof) {
+          break;
+        }
+        var r: (Src, boolean, i32, string) = src_line(s);
+        s = r.0;
+        if (s.fatal) {
+          fatal = true;
+          eof = true;
+          break;
+        }
+        if (!r.1) {
+          eof = true;
+          tail_ff = trailing_ff(r.2, c);
+          break;
+        } else {
+          carry = r.3;
+          carry_breaks = r.2;
+          carry_has = true;
+          if (!paginate) {
+            if (!c.omit_pagination && carry_breaks > 0) {
+              carry = byte_string(12).repeat(carry_breaks) + carry;
+            }
+            carry_breaks = 0;
+          }
+        }
+      }
+      if (first && stale && carry_breaks > 0) {
+        carry_breaks = carry_breaks - 1;
+      }
+      first = false;
+      if (carry_breaks > 0) {
+        carry_breaks = carry_breaks - 1;
+        broke = true;
+      } else {
+        lines = lines.append(carry);
+        carry_has = false;
+      }
+    }
+    if (fatal) {
+      break;
+    }
+    if (lines.len() == 0 && !broke && eof) {
+      break;
+    }
+    stale = lines.len() == cap && !broke;
+    pages = pages + 1 as u64;
+    var printing: boolean = page >= c.first_page;
+    if (printing && !rebased) {
+      rebased = true;
+      if (c.has_first_line) {
+        line_no = c.first_line as i64;
+      }
+    }
+    if (printing) {
+      var body: Page = body_text(c, lines, line_no);
+      o = gnu.put(o, page_text(c, body, page, hdr_name, s.mtime, s.mnsec));
+    }
+    line_no = wrap32(line_no + lines.len() as i64);
+    page = page + 1 as u64;
+    if (eof && !carry_has) {
+      break;
+    }
+  }
+  if (tail_ff.len() > 0) {
+    o = gnu.put(o, tail_ff);
+  }
+  if (!s.is_stdin && s.open) {
+    s.r.close();
+  }
+  if (!fatal) {
+    o = page_warning(c, pages, o);
+  }
+  return Job { o: o, ok: ok && !fatal, fatal: fatal };
+}
+
+// `run_merge(c, names, o, ok)` — every operand in parallel, one per
+// column. The column WIDTH comes from the operand count, so a file that
+// could not be opened still reserves its share; the files that did open
+// are packed into the columns from the left. Several `-` operands are
+// ONE stream read alternately, as GNU's shared stdin is.
+function run_merge(c: Cfg, names: string[], o0: io_buffered.BufWriter, ok0: boolean): Job {
+  var o: io_buffered.BufWriter = o0;
+  var ok: boolean = ok0;
+  var srcs: Src[] = [];
+  var slot: i32[] = [];
+  var stdin_slot: i32 = 0 - 1;
+  var i: i32 = 0;
+  while (i < names.len()) {
+    var opened: (Src, boolean) = open_src(c, names[i]);
+    if (opened.1) {
+      if (opened.0.is_stdin && stdin_slot >= 0) {
+        slot = slot.append(stdin_slot);
+      } else {
+        if (opened.0.is_stdin) {
+          stdin_slot = srcs.len();
+        }
+        slot = slot.append(srcs.len());
+        srcs = srcs.append(opened.0);
+      }
+    } else {
+      ok = false;
+    }
+    i = i + 1;
+  }
+  var width: i32 = slot.len();
+  if (width == 0) {
+    return Job { o: o, ok: ok, fatal: false };
+  }
+  var carry_t: string[] = [];
+  var carry_h: boolean[] = [];
+  var carry_b: i32[] = [];
+  var eofs: boolean[] = [];
+  i = 0;
+  while (i < width) {
+    carry_t = carry_t.append("");
+    carry_h = carry_h.append(false);
+    carry_b = carry_b.append(0);
+    eofs = eofs.append(false);
+    i = i + 1;
+  }
+  var paginate: boolean = !c.omit_header;
+  var rows: i32 = rows_per_page(c);
+  var page: u64 = 1 as u64;
+  var pages: u64 = 0 as u64;
+  var line_no: i64 = 1 as i64;
+  var rebased: boolean = false;
+  var fatal: boolean = false;
+  var now: i64 = now_seconds();
+  var alive: boolean = true;
+
+  while (page <= c.last_page && alive) {
+    var cells: string[] = [];
+    var filled: i32 = 0;
+    var broke: boolean = false;
+    var r: i32 = 0;
+    while (r < rows && !broke) {
+      var row: string[] = [];
+      var any: boolean = false;
+      var col: i32 = 0;
+      while (col < width) {
+        if (!carry_h[col] && !eofs[col]) {
+          var k: i32 = slot[col];
+          var got: (Src, boolean, i32, string) = src_line(srcs[k]);
+          srcs = srcs.with(k, got.0);
+          if (got.0.fatal) {
+            fatal = true;
+            eofs = eofs.with(col, true);
+          } else if (got.1) {
+            var text: string = got.3;
+            var br: i32 = got.2;
+            if (!paginate) {
+              if (!c.omit_pagination && br > 0) {
+                text = byte_string(12).repeat(br) + text;
+              }
+              br = 0;
+            }
+            carry_t = carry_t.with(col, text);
+            carry_b = carry_b.with(col, br);
+            carry_h = carry_h.with(col, true);
+          } else {
+            eofs = eofs.with(col, true);
+          }
+        }
+        var cell: string = "";
+        if (carry_h[col]) {
+          if (carry_b[col] > 0) {
+            carry_b = carry_b.with(col, carry_b[col] - 1);
+            broke = true;
+          } else {
+            cell = carry_t[col];
+            carry_h = carry_h.with(col, false);
+            any = true;
+          }
+        }
+        row = row.append(cell);
+        col = col + 1;
+      }
+      if (fatal) {
+        broke = true;
+      } else if (broke) {
+        var j: i32 = 0;
+        while (j < width) {
+          if (row[j].len() > 0 || !eofs[j]) {
+            if (!carry_h[j] && row[j].len() > 0) {
+              carry_t = carry_t.with(j, row[j]);
+              carry_h = carry_h.with(j, true);
+            }
+          }
+          j = j + 1;
+        }
+      } else if (!any) {
+        alive = false;
+        r = rows;
+      } else {
+        var col2: i32 = 0;
+        while (col2 < width) {
+          cells = cells.append(row[col2]);
+          col2 = col2 + 1;
+        }
+        filled = filled + 1;
+        r = r + 1;
+      }
+    }
+    if (fatal) {
+      break;
+    }
+    if (filled == 0 && !broke) {
+      break;
+    }
+    pages = pages + 1 as u64;
+    var printing: boolean = page >= c.first_page;
+    if (printing && !rebased) {
+      rebased = true;
+      if (c.has_first_line) {
+        line_no = c.first_line as i64;
+      }
+    }
+    if (printing) {
+      var body: Page = merge_body(c, cells, width, line_no);
+      o = gnu.put(o, page_text(c, body, page, "", now, 0 as i64));
+    }
+    line_no = wrap32(line_no + filled as i64);
+    page = page + 1 as u64;
+  }
+  var q: i32 = 0;
+  while (q < srcs.len()) {
+    if (!srcs[q].is_stdin && srcs[q].open) {
+      srcs[q].r.close();
+    }
+    q = q + 1;
+  }
+  if (!fatal) {
+    o = page_warning(c, pages, o);
+  }
+  return Job { o: o, ok: ok && !fatal, fatal: fatal };
+}
+
+// ---- main -------------------------------------------------------------------
+function build_opts(): gnu.Opt[] {
+  var opts: gnu.Opt[] = [];
+  opts = opts.append(gnu.valued("", "pages", opt_pages()));
+  opts = opts.append(gnu.valued("", "columns", opt_columns()));
+  opts = opts.append(gnu.flag("a", "across", opt_across()));
+  opts = opts.append(gnu.flag("c", "show-control-chars", opt_ctrl()));
+  opts = opts.append(gnu.flag("d", "double-space", opt_double()));
+  opts = opts.append(gnu.valued("D", "date-format", opt_date()));
+  opts = opts.append(gnu.optional("e", "expand-tabs", opt_expand()));
+  opts = opts.append(gnu.flag("F", "form-feed", opt_formfeed()));
+  opts = opts.append(gnu.valued("h", "header", opt_header()));
+  opts = opts.append(gnu.optional("i", "output-tabs", opt_outtabs()));
+  opts = opts.append(gnu.flag("J", "join-lines", opt_join()));
+  opts = opts.append(gnu.valued("l", "length", opt_length()));
+  opts = opts.append(gnu.flag("m", "merge", opt_merge()));
+  opts = opts.append(gnu.optional("n", "number-lines", opt_number()));
+  opts = opts.append(gnu.valued("N", "first-line-number", opt_firstline()));
+  opts = opts.append(gnu.valued("o", "indent", opt_indent()));
+  opts = opts.append(gnu.flag("r", "no-file-warnings", opt_nowarn()));
+  opts = opts.append(gnu.optional("s", "separator", opt_sep()));
+  opts = opts.append(gnu.optional("S", "sep-string", opt_sepstring()));
+  opts = opts.append(gnu.flag("t", "omit-header", opt_omithdr()));
+  opts = opts.append(gnu.flag("T", "omit-pagination", opt_omitpage()));
+  opts = opts.append(gnu.flag("v", "show-nonprinting", opt_nonprint()));
+  opts = opts.append(gnu.valued("w", "width", opt_width()));
+  opts = opts.append(gnu.valued("W", "page-width", opt_pagewidth()));
+  opts = opts.append(gnu.flag("f", "", opt_formfeed()));
+  opts = opts.append(gnu.flag("b", "", opt_balance()));
+  var d: i32 = 0;
+  while (d < 10) {
+    opts = opts.append(gnu.flag(slice_unchecked("0123456789", d, d + 1) + "", "", opt_digit(d)));
+    d = d + 1;
+  }
+  return opts;
+}
+
+// gnulib's xstrtoimax over -N, which has no lower bound of its own: the
+// whole int range is accepted and only a magnitude past it is refused.
+function getnum_first_line(value: string): i32 {
+  var r: (i64, boolean) = parse_int(value);
+  var bad: i32 = 0;
+  if (!r.1) {
+    bad = 1;
+  } else if (r.0 > 2147483647 as i64 || r.0 < 0 as i64 - 2147483648 as i64) {
+    bad = 3;
+  }
+  if (bad != 0) {
+    gnu.error("'-N NUMBER' invalid starting line number: " + gnu.quote(value) + num_text(bad));
+    exit(1);
+  }
+  return r.0 as i32;
+}
+
+function main(): i32 {
+  var argv: string[] = args();
+  var g: gnu.Getopt = gnu.getopt_new(argv, build_opts(), "pr", help_text(), 1).return_in_order();
+
+  var columns: i32 = 1;
+  var col_str: string = "";
+  var have_columns: boolean = false;
+  var across: boolean = false;
+  var merge: boolean = false;
+  var ctrl: boolean = false;
+  var nonprint: boolean = false;
+  var double_space: boolean = false;
+  var date_fmt: string = "";
+  var has_date: boolean = false;
+  var untabify: boolean = false;
+  var in_tab: i32 = 9;
+  var in_tab_width: i32 = 8;
+  var want_tabify: boolean = false;
+  var out_tab: i32 = 9;
+  var out_tab_width: i32 = 8;
+  var form_feed: boolean = false;
+  var header: string = "";
+  var has_header: boolean = false;
+  var join: boolean = false;
+  var page_length: i32 = 66;
+  var numbering: boolean = false;
+  var num_sep: string = "\t";
+  var num_digits: i32 = 5;
+  var first_line: i32 = 1;
+  var has_first_line: boolean = false;
+  var offset: i32 = 0;
+  var nowarn: boolean = false;
+  var sep: string = "";
+  var s_given: boolean = false;
+  var s_value: string = "";
+  var big_s_given: boolean = false;
+  var big_s_value: string = "";
+  var omit_header: boolean = false;
+  var omit_pagination: boolean = false;
+  var w_given: boolean = false;
+  var w_value: i32 = 72;
+  var big_w_given: boolean = false;
+  var big_w_value: i32 = 72;
+  var first_page: u64 = 1 as u64;
+  var last_page: u64 = 18446744073709551615 as u64;
+  var have_range: boolean = false;
+  var files: string[] = [];
+
+  while (true) {
+    var res: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    g = res.1;
+    var stop: boolean = false;
+    match (res.0) {
+      Some(m) => {
+        if (m.id == gnu.operand_id()) {
+          var tok: string = m.value;
+          var taken: boolean = false;
+          if (!have_range && tok.len() > 0 && tok[0] as i32 == 43) {
+            var rr: (u64, u64, i32) = parse_range(slice_unchecked(tok, 1, tok.len()) + "", "+");
+            if (rr.2 == 0) {
+              first_page = rr.0;
+              last_page = rr.1;
+              have_range = true;
+              taken = true;
+            }
+          }
+          if (!taken) {
+            files = files.append(tok);
+          }
+        } else if (m.id == opt_pages()) {
+          var rr: (u64, u64, i32) = parse_range(m.value, "--pages");
+          if (rr.2 != 0) {
+            gnu.error("invalid page range " + gnu.quote(m.value));
+            exit(1);
+          }
+          first_page = rr.0;
+          last_page = rr.1;
+          have_range = true;
+        } else if (m.id == opt_columns()) {
+          col_str = m.value;
+          have_columns = true;
+        } else if (m.id >= opt_digit(0) && m.id <= opt_digit(9)) {
+          col_str = col_str + slice_unchecked("0123456789", m.id - opt_digit(0), m.id - opt_digit(0) + 1);
+          have_columns = true;
+        } else if (m.id == opt_across()) {
+          across = true;
+        } else if (m.id == opt_ctrl()) {
+          ctrl = true;
+        } else if (m.id == opt_double()) {
+          double_space = true;
+        } else if (m.id == opt_date()) {
+          date_fmt = m.value;
+          has_date = true;
+        } else if (m.id == opt_expand()) {
+          untabify = true;
+          var e: (i32, i32) = char_width(m.value, "e", 9, 8);
+          in_tab = e.0;
+          in_tab_width = e.1;
+        } else if (m.id == opt_formfeed()) {
+          form_feed = true;
+        } else if (m.id == opt_header()) {
+          header = m.value;
+          has_header = true;
+        } else if (m.id == opt_outtabs()) {
+          want_tabify = true;
+          var it: (i32, i32) = char_width(m.value, "i", 9, 8);
+          out_tab = it.0;
+          out_tab_width = it.1;
+        } else if (m.id == opt_join()) {
+          join = true;
+        } else if (m.id == opt_length()) {
+          page_length = getnum(m.value, "'-l PAGE_LENGTH' invalid number of lines", 1 as i64);
+        } else if (m.id == opt_merge()) {
+          merge = true;
+        } else if (m.id == opt_number()) {
+          numbering = true;
+          var nn: (i32, i32) = char_width(m.value, "n", 9, 5);
+          num_sep = byte_string(nn.0);
+          num_digits = nn.1;
+        } else if (m.id == opt_firstline()) {
+          first_line = getnum_first_line(m.value);
+          has_first_line = true;
+        } else if (m.id == opt_indent()) {
+          offset = getnum(m.value, "'-o MARGIN' invalid line offset", 0 as i64);
+        } else if (m.id == opt_nowarn()) {
+          nowarn = true;
+        } else if (m.id == opt_sep()) {
+          s_given = true;
+          s_value = m.value;
+        } else if (m.id == opt_sepstring()) {
+          big_s_given = true;
+          big_s_value = m.value;
+        } else if (m.id == opt_omithdr()) {
+          omit_header = true;
+        } else if (m.id == opt_omitpage()) {
+          omit_pagination = true;
+          omit_header = true;
+        } else if (m.id == opt_nonprint()) {
+          nonprint = true;
+        } else if (m.id == opt_width()) {
+          w_given = true;
+          w_value = getnum(m.value, "'-w PAGE_WIDTH' invalid number of characters", 1 as i64);
+        } else if (m.id == opt_pagewidth()) {
+          big_w_given = true;
+          big_w_value = getnum(m.value, "'-W PAGE_WIDTH' invalid number of characters", 1 as i64);
+        }
+      },
+      None => {
+        stop = true;
+      }
+    }
+    if (stop) {
+      break;
+    }
+  }
+  var rest: string[] = g.operands();
+  var ri: i32 = 0;
+  while (ri < rest.len()) {
+    files = files.append(rest[ri]);
+    ri = ri + 1;
+  }
+
+  // The column count is validated only once the whole scan is over, so
+  // `pr -0 --help` prints the help where `pr -l 0 --help` does not.
+  if (have_columns) {
+    var cn: (i64, boolean) = parse_int(col_str);
+    var st: i32 = num_fault(cn.0, cn.1, 1 as i64);
+    if (st != 0) {
+      gnu.error("invalid number of columns: " + gnu.quote(col_str) + num_text(st));
+      exit(1);
+    }
+    columns = cn.0 as i32;
+  }
+  if (merge && have_columns) {
+    gnu.error("cannot specify number of columns when printing in parallel");
+    exit(1);
+  }
+  if (merge && across) {
+    gnu.error("cannot specify both printing across and printing in parallel");
+    exit(1);
+  }
+  if (files.len() == 0) {
+    files = files.append("-");
+  }
+  if (merge) {
+    columns = files.len();
+  }
+
+  if (page_length <= 10) {
+    omit_header = true;
+  }
+  var page_width: i32 = 72;
+  if (big_w_given) {
+    page_width = big_w_value;
+  } else if (w_given) {
+    page_width = w_value;
+  }
+  if (big_s_given) {
+    sep = big_s_value;
+  } else if (s_given) {
+    if (s_value.len() > 0) {
+      sep = s_value;
+    } else if (w_given || big_w_given) {
+      sep = "";
+    } else {
+      sep = "\t";
+    }
+  } else if (join) {
+    sep = "\t";
+  } else {
+    sep = " ";
+  }
+  var truncate: boolean = columns > 1;
+  if (s_given && !big_s_given) {
+    truncate = w_given || big_w_given;
+  }
+  if (big_w_given) {
+    truncate = true;
+  }
+  if (join) {
+    truncate = false;
+  }
+  var num_width: i32 = num_digits + 1;
+  if (num_sep == "\t") {
+    num_width = num_digits + tab_stop() - num_digits % tab_stop();
+  }
+  // In parallel mode the line number is a prefix of the whole ROW, so
+  // it comes off the page width before the columns divide it; in column
+  // mode it sits INSIDE the first column's own width.
+  var num_prefix: i32 = 0;
+  if (merge && numbering) {
+    num_prefix = num_width;
+  }
+  var chars_per_column: i32 = (page_width - num_prefix - (columns - 1) * sep.len()) / columns;
+  if (chars_per_column < 1) {
+    gnu.error("page width too narrow");
+    exit(1);
+  }
+  // Where the columns are NOT padded apart and the separator is
+  // exactly one TAB — which is what -s and -J leave by default — the
+  // input's own tabs are left alone as well.
+  var tab_literal: boolean = !truncate && sep == "\t";
+
+  var c: Cfg = Cfg { columns: columns, across: across, merge: merge, ctrl: ctrl, nonprint: nonprint, double_space: double_space, date_fmt: date_fmt, has_date: has_date, untabify: untabify, in_tab: in_tab, in_tab_width: in_tab_width, tabify: want_tabify || columns > 1, out_tab: out_tab, out_tab_width: out_tab_width, form_feed: form_feed, header: header, has_header: has_header, join: join, page_length: page_length, numbering: numbering, num_sep: num_sep, num_digits: num_digits, num_width: num_width, first_line: first_line, has_first_line: has_first_line, offset: offset, nowarn: nowarn, sep: sep, omit_header: omit_header, omit_pagination: omit_pagination, page_width: page_width, truncate: truncate, tab_literal: tab_literal, num_prefix: num_prefix, first_page: first_page, last_page: last_page, chars_per_column: chars_per_column };
+
+  var o: io_buffered.BufWriter = gnu.out_new();
+  var ok: boolean = true;
+  if (merge) {
+    var j: Job = run_merge(c, files, o, ok);
+    o = j.o;
+    ok = j.ok;
+  } else {
+    var i: i32 = 0;
+    while (i < files.len()) {
+      var j: Job = run_serial(c, files[i], o, ok);
+      o = j.o;
+      ok = j.ok;
+      if (j.fatal) {
+        i = files.len();
+      }
+      i = i + 1;
+    }
+  }
+  gnu.finish(o);
+  if (!ok) {
+    return 1;
+  }
+  return 0;
+}
