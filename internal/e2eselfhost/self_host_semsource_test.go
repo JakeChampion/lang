@@ -296,6 +296,10 @@ struct P { n: i32, xs: i32[] }
 struct Q { name: string, p: P }
 @noinline function make(n: i32): P { return P { n: n, xs: [n, n + 1] }; }
 @noinline function wrap(own p: P, tag: string): Q { return Q { name: tag + "!", p: p }; }
+struct S2 { a: i32, b: i32 }
+struct W { s: S2 }
+@noinline function mk_s2(n: i32): S2 { return S2 { a: n, b: n + 1 }; }
+@noinline function proj(q: W): S2 { return q.s; }
 @noinline function unwrap(q: Q): i32 {
     var p: P = q.p;
     if (q.name == "x!") { return p.xs[0]; }
@@ -449,6 +453,15 @@ function main(): i32 {
     print_int(node_sum(3)); print(""); print_int(node_sum(1)); print("");
     print_int(build_sum(1)); print(""); print_int(build_sum(0)); print("");
     print_int(chain_build(2)); print(""); print_int(chain_build(0)); print("");
+    var s2: S2 = mk_s2(4);
+    print_int(s2.a); print("");
+    // A box-only result that is SHARED: proj hands back a retain over w's own
+    // field box, so the row's release must be the box dec alone and the reuse
+    // demand below must fork rather than write through to w.
+    var w: W = W { s: S2 { a: 1, b: 2 } };
+    var d: S2 = proj(w);
+    var c: S2 = S2 { ...d, a: 5 };
+    print_int(w.s.a + c.a + d.b); print("");
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }
@@ -466,7 +479,13 @@ function main(): i32 {
 // chain_build(2): Link(3, Link(2, End)) = 5, plus the shared tail d = 2 → 7;
 // chain_build(0): 1 + 0 = 1. Chain is the recursive DECLARED enum, the layout
 // the compiler's own sources never exercise.
-const semsourceRCWant = "1\n4\n5\n-3\n-2\n2\n0\n1\n5\n5\n12\n1\n8\n12\n0\n3\n3\n6\n4\n2\n0\n7\n31\n1\n0\n2\n22\n10\n7\n2\n5\n14\n7\n9\n4\n7\n1\n"
+// mk_s2(4).a = 4: a struct with no reference field, so the AST caller releases
+// it with the box dec alone.
+// The shared projection is 8: w.s.a stays 1 because the reuse demand on a
+// shared donor forks to a fresh box rather than writing through, c.a = 5 and
+// d.b = 2. This is the path the bare-name row makes reachable, and the guard
+// that keeps it safe lives in the reuse emitters, not in the row's gate.
+const semsourceRCWant = "1\n4\n5\n-3\n-2\n2\n0\n1\n5\n5\n12\n1\n8\n12\n0\n3\n3\n6\n4\n2\n0\n7\n31\n1\n0\n2\n22\n10\n7\n2\n5\n14\n7\n9\n4\n7\n1\n4\n8\n"
 
 const semsourceRCDriver = `import "./semsource"; import "./ssarc"; import "./ssaunits"; import "./ssa";
 import "./parser"; import "./lexer"; import "./irlower"; import "./ir";
@@ -514,6 +533,11 @@ function main(): i32 {
         var state = asmcore.new_state();
         state = asmcore.EmitState { ...state, struct_decls: tab, funcs: mod.funcs };
         state = asm_arm64_ir.emit_body(mod, state, false, cache, base);
+        // The per-type __field_reclaim_<T> / __struct_drop_<T> bodies this unit
+        // needs, in the order the real arm64 module emit uses them. Without it a
+        // struct with a reference field bound in the AST-lowered main leaves an
+        // undefined __fn___struct_drop_<T> at link.
+        state = asm_arm64_ir.emit_arm64_reclaim_drop_bodies(state);
         state = asm_arm64_ir.emit_ir_runtime(state, false);
         print(strbuf_take());
     } else { print(wasm_ir.emit_ir_module_mode(mod, cache, 0, base)); }
@@ -546,7 +570,7 @@ func TestSelfHostSemanticSourceRC(t *testing.T) {
 			if err != nil {
 				t.Fatalf("semantic lowering: %v\n%s", err, diagnostics.String())
 			}
-			for _, name := range []string{"pick", "pair", "boxed", "carry", "count_even", "fill", "first_of", "keep", "chain", "twice", "count_down", "grow", "make", "wrap", "unwrap", "tally", "greet", "boxed_local", "boxed_carry", "shape", "measure", "sum_shapes", "consume", "boxed_shape", "hold", "mk_node", "node_size", "node_sum", "leaf", "fork", "tree_sum", "build_sum", "chain_len", "chain_build"} {
+			for _, name := range []string{"pick", "pair", "boxed", "carry", "count_even", "fill", "first_of", "keep", "chain", "twice", "count_down", "grow", "make", "wrap", "unwrap", "tally", "greet", "boxed_local", "boxed_carry", "shape", "measure", "sum_shapes", "consume", "boxed_shape", "hold", "mk_node", "node_size", "node_sum", "leaf", "fork", "tree_sum", "build_sum", "chain_len", "chain_build", "mk_s2", "proj"} {
 				if !strings.Contains(diagnostics.String(), "produced "+name+"\n") {
 					t.Fatalf("%s was not produced:\n%s", name, diagnostics.String())
 				}

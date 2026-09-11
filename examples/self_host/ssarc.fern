@@ -612,7 +612,27 @@ pub function caller_sigs(sg: irlower.FnSigs, name: string, f: ssasem.Func): irlo
         if (flags != "") { tuples = tuples.append("ARRF:" + name + "|" + flags); }
     }
     if (scalar_array(f.result)) { arrays = arrays.append("ARROWN:" + name); }
+    if (box_only_result(f)) { arrays = arrays.append(name); }
     return irlower.FnSigs { ...sg, tuple_fresh_ret_fns: tuples, return_fresh_struct_ret_fns: arrays };
+}
+
+// A nominal struct result whose release is the box and nothing else.
+//
+// This is the one nominal shape the bare-name row can carry. That row asserts
+// the caller SOLE-owns the result, which this boundary does not promise: a
+// return supplies one counted unit, and a value the function did not build —
+// a projection of a borrowed parameter — is supplied by a retain over a box
+// its caller still owns. The row's exit sweep then runs __struct_drop_<T>
+// with no uniqueness guard, freeing a field buffer the other owner still
+// reads.
+//
+// A schema with no reference field has no field walk for that sweep to run,
+// so the release is the rc-guarded box dec alone and a shared result stays
+// balanced. Every other nominal result keeps the leak floor until it can
+// prove the box is the caller's only one.
+function box_only_result(f: ssasem.Func): boolean {
+    if let typeinfo.TypeStruct(_) = f.result { return !has_children(f.result, f); }
+    return false;
 }
 
 function scalar_array(t: typeinfo.Type): boolean {
