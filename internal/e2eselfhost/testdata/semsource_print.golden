@@ -200,6 +200,30 @@ func borrowed_append {
     ret v2
 }
 
+modes 2 result i32
+v0:i32[] v1:i32 v2:i32 v3:i32 v4:i32 v5:i32 v6:i32 v7:i32 v8:boolean v9:i32 v10:i32
+func loop_sum {
+  b0:
+    v0 = param 0
+    v1 = const_int 0
+    v2 = const_int -1
+    br b1
+  b1:
+    v3 = phi v1 v10
+    v4 = phi v2 v6
+    v5 = const_int 1
+    v6 = binary + v4 v5
+    v7 = length v0
+    v8 = binary < v6 v7
+    brif v8 b2 b3
+  b2:
+    v9 = array_get v0 v6
+    v10 = binary + v3 v9
+    br b1
+  b3:
+    ret v3
+}
+
 modes 3 result i32[]
 v0:i32[] v1:i32 v2:i32[]
 func owned_append {
