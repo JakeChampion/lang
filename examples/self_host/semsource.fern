@@ -407,7 +407,41 @@ function logical(b: ast.ExprBinary, s: State): Value {
 // types, and a result the callee hands over. Only a module function with a
 // contract is a call target; builtins, methods and local function values are
 // outside this boundary.
+// A method call names its callee the way the declaration keyed its contract,
+// and the way every backend labels the body: <Type>.<method>. The receiver is
+// argument 0, because the callee declared it as parameter 0.
+function method_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: State): Value {
+    var recv: Value = expr(fa.obj, s, typeinfo.unchecked());
+    s = recv.s;
+    if (!s.ok) { return recv; }
+    var owner: string = struct_name(s.values[recv.id]);
+    if (owner == "") { owner = union_name(s.values[recv.id]); }
+    // A builtin's receiver is an array, a string or a tuple: it names no
+    // declaration this boundary can hold a contract for.
+    if (owner == "") { return refused(s, "unsupported call target"); }
+    var key: string = owner + "." + fa.field;
+    var at: i32 = ssasem.find_contract(s.contracts, key);
+    if (at < 0) { return refused(s, "call target has no semantic contract"); }
+    var contract: ssasem.Contract = s.contracts[at];
+    if (c.type_argc > 0 || c.args.len() + 1 != contract.params.len()) { return refused(s, "call arity"); }
+    if (is_void(contract.result)) { return refused(s, "unsupported void call"); }
+    if (!semtypes.equal(s.values[recv.id], contract.params[0])) { return refused(s, "call receiver type"); }
+    var ids: i32[] = [recv.id];
+    var i: i32 = 0;
+    while (i < c.args.len()) {
+        var v: Value = expr(c.args[i], s, contract.params[i + 1]);
+        s = v.s;
+        if (!s.ok) { return v; }
+        if (!semtypes.equal(s.values[v.id], contract.params[i + 1])) { return refused(s, "call argument type"); }
+        ids = ids.append(v.id);
+        i = i + 1;
+    }
+    if (ssasem.find_contract(s.calls, key) < 0) { s = State { ...s, calls: s.calls.append(contract) }; }
+    return define(s, ssasem.call(), ids, 0, key, contract.result);
+}
+
 function call(e: ast.Expr, c: ast.ExprCall, s: State): Value {
+    if let ast.ExprFieldAccess(mfa) = c.callee { return method_call(c, mfa, s); }
     var name: string = "";
     if let ast.ExprIdent(id) = c.callee { name = id.name; }
     if (name == "" || lookup(s, name) >= 0) { return refused(s, "unsupported call target"); }

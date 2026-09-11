@@ -301,6 +301,12 @@ struct W { s: S2 }
 struct Counter { n: i32, m: i32 }
 @noinline function (c: Counter) total(): i32 { return c.n + c.m; }
 @noinline function make_counter(n: i32): Counter { return Counter { n: n, m: n + 1 }; }
+// The method CALL is what this exercises: twice_total is itself lowered
+// through the boundary, so the call is produced rather than handed to the AST.
+@noinline function twice_total(n: i32): i32 {
+    var c: Counter = make_counter(n);
+    return c.total() + c.total();
+}
 @noinline function mk_s2(n: i32): S2 { return S2 { a: n, b: n + 1 }; }
 @noinline function proj(q: W): S2 { return q.s; }
 @noinline function unwrap(q: Q): i32 {
@@ -469,6 +475,7 @@ function main(): i32 {
     // it borrows, so the box main owns is still main's to release.
     var ct: Counter = make_counter(6);
     print_int(ct.total()); print("");
+    print_int(twice_total(3)); print("");
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }
@@ -492,7 +499,7 @@ function main(): i32 {
 // shared donor forks to a fresh box rather than writing through, c.a = 5 and
 // d.b = 2. This is the path the bare-name row makes reachable, and the guard
 // that keeps it safe lives in the reuse emitters, not in the row's gate.
-const semsourceRCWant = "1\n4\n5\n-3\n-2\n2\n0\n1\n5\n5\n12\n1\n8\n12\n0\n3\n3\n6\n4\n2\n0\n7\n31\n1\n0\n2\n22\n10\n7\n2\n5\n14\n7\n9\n4\n7\n1\n4\n8\n13\n"
+const semsourceRCWant = "1\n4\n5\n-3\n-2\n2\n0\n1\n5\n5\n12\n1\n8\n12\n0\n3\n3\n6\n4\n2\n0\n7\n31\n1\n0\n2\n22\n10\n7\n2\n5\n14\n7\n9\n4\n7\n1\n4\n8\n13\n14\n"
 
 const semsourceRCDriver = `import "./semsource"; import "./ssarc"; import "./ssaunits"; import "./ssa";
 import "./parser"; import "./lexer"; import "./irlower"; import "./ir";
@@ -577,7 +584,7 @@ func TestSelfHostSemanticSourceRC(t *testing.T) {
 			if err != nil {
 				t.Fatalf("semantic lowering: %v\n%s", err, diagnostics.String())
 			}
-			for _, name := range []string{"pick", "pair", "boxed", "carry", "count_even", "fill", "first_of", "keep", "chain", "twice", "count_down", "grow", "make", "wrap", "unwrap", "tally", "greet", "boxed_local", "boxed_carry", "shape", "measure", "sum_shapes", "consume", "boxed_shape", "hold", "mk_node", "node_size", "node_sum", "leaf", "fork", "tree_sum", "build_sum", "chain_len", "chain_build", "mk_s2", "proj", "total", "make_counter"} {
+			for _, name := range []string{"pick", "pair", "boxed", "carry", "count_even", "fill", "first_of", "keep", "chain", "twice", "count_down", "grow", "make", "wrap", "unwrap", "tally", "greet", "boxed_local", "boxed_carry", "shape", "measure", "sum_shapes", "consume", "boxed_shape", "hold", "mk_node", "node_size", "node_sum", "leaf", "fork", "tree_sum", "build_sum", "chain_len", "chain_build", "mk_s2", "proj", "total", "make_counter", "twice_total"} {
 				if !strings.Contains(diagnostics.String(), "produced "+name+"\n") {
 					t.Fatalf("%s was not produced:\n%s", name, diagnostics.String())
 				}
