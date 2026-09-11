@@ -263,13 +263,12 @@ coreutils/
                     1, which is 384 bytes on x86-64, and uses a `long`
                     and a real struct timeval where it is 0, which is
                     400 on arm64
-  lib/tz.fern       the local time zone as tzset(3) finds it, for the
-                    utilities that print a local timestamp (who, pinky):
-                    TZ read as a FILE name first — absolute, or under
-                    $TZDIR — and as a POSIX rule only when no file
-                    answers, TZif v1/v2/v3 with the footer rule for
-                    times past the transition table, and the POSIX
-                    grammar's three date forms with glibc's clamps
+  lib/tz.fern       the local zone as tzset(3) finds it — the TZif file
+                    $TZ names (absolute, or under $TZDIR), the POSIX
+                    rule in its footer past the transition table, and
+                    the rule string itself when no file answers — with
+                    the offset AND the abbreviation (`EST`, `+0545`) in
+                    force at an instant, for who, pinky and pr's header
   lib/sys.fern      the five fields of the kernel's utsname record, by
                     name, for the utilities that print the record
                     (uname) or one field of it (arch)
