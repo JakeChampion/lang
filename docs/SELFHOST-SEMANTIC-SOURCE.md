@@ -49,8 +49,8 @@ Unsupported constructs refuse the whole function with a reason.
   beside the scalar rules. A string constant and a concatenation are units
   of the function's own, released when dead; a literal's static box is
   immortal to the runtime, so its release is a no-op.
-- The i32 integer operators — arithmetic, division and remainder, the bitwise
-  three, and both shifts — plus i32 comparisons, boolean `==` / `!=`, unary
+- The integer operators — arithmetic, division and remainder, the bitwise
+  three, and both shifts — plus integer comparisons, boolean `==` / `!=`, unary
   `-` and `!`. These are new semantic kinds (the SSA `binary` / `unary` tags)
   whose typing lives in `ssasem.binary_result` / `unary_result`; `ssarc`
   lowers them to the stack IR's `add` … `ne` and `not` / zero-minus. Every one
@@ -58,6 +58,40 @@ Unsupported constructs refuse the whole function with a reason.
   (`docs/INTEGER-SEMANTICS.md`): `x / 0` is 0, `x % 0` is x, `INT_MIN / -1`
   wraps, and a shift count is masked to the operand width. So none of them
   needs a guard, a branch or an abort path here.
+
+  Each runs at ONE width: both operands carry the same integer type and so
+  does the result. Fern has no implicit numeric conversion, so that is the
+  checker's rule too, and an operator over two different widths is refused
+  rather than silently promoted.
+
+- The two integer types are i32 and u8. A byte rides the same i32-shaped slot
+  on every backend, so it costs no new physical representation — what
+  distinguishes it is the range, and `+`, `-`, `*` and `<<` mask their result
+  back to it. **So does an i32's**: the stack IR runs the operators in a
+  register wider than either type, and without the mask a produced
+  `2147483647 + 1` was 2147483648 rather than INT_MIN. The AST lowering has
+  emitted that step since #3581; this boundary did not, and the executable
+  fixture now pins both widths through a comparison (a printed result is
+  truncated on its way out and reads the same either way).
+
+- A cast between the integer types, as the semantic `cast` kind. `e as T`
+  reaches the producer as a unary whose operator names T, and the destination
+  is the checker's type for the whole expression rather than the spelling. A
+  narrowing masks; a widening emits nothing, because the narrower type's own
+  producing sites keep its value in range. A cast to or from anything that is
+  not one of these integers — a float, a string, the `as?` downcast — is
+  refused.
+
+- Integer literals in both bases the lexer writes, decimal and hexadecimal.
+  A suffix names the type outright, which is how a byte literal (`b'x'`)
+  carries its width; an unsuffixed literal has none of its own and takes the
+  integer type of what it is written against, so `var b: u8 = 65` binds a byte
+  and `65` in an i32 position an i32. For an operator, that width is decided
+  BEFORE either operand is produced — from the checker's type for the whole
+  expression, or from whichever operand bears one — so a literal takes it on
+  either side. The value is `util.lit_to_i32`'s, the same one the production
+  lowering reads, and a constant outside its type's range is refused rather
+  than wrapped.
 - `&&` and `||` as control flow: the right operand runs on its own edge and the
   result is a boolean phi.
 - `if` / `else` with binding joins, `while` and `loop` with unlabelled `break`
@@ -86,14 +120,16 @@ Unsupported constructs refuse the whole function with a reason.
   `slice_unchecked` on a string. A slice owns its box and borrows the
   source's bytes, so it is a projection anchored to its source and is
   released by the view helper rather than the ordinary string free.
-- Indexing a string, as one byte handed back in an i32. The receiver is read
-  the way a length's is and the result owns nothing, so — unlike the slice
-  beside it — this is NOT a projection: the byte outlives the string it came
-  from, and nothing has to keep the source alive for it.
+- Indexing a string, as one byte handed back in a u8 — the type the checker
+  gives the expression, so a binding or an operator over it needs no
+  reconciliation. The receiver is read the way a length's is and the result
+  owns nothing, so — unlike the slice beside it — this is NOT a projection:
+  the byte outlives the string it came from, and nothing has to keep the
+  source alive for it.
 
 Refused, each with its own reason: calls of the remaining builtins, local
 function values and void functions, floats in expressions, integer widths
-other than i32, casts, string ordering, generic records,
+other than i32 and u8, string views (`str`), string ordering, generic records,
 destructuring, labelled loops, match guards and the pattern shapes above,
 `defer`, closures, receiver methods, generics, external and async functions,
 and a value-returning body that falls through.
@@ -149,8 +185,17 @@ one by hand.
   last use, a temporary result moved into a counted parameter, a discarded
   result, a returned parameter, recursion, a call result carried into a
   loop header, the AST-lowered `main` binding, discarding and projecting
-  tuple and array results under `ssarc.caller_sigs`, and the enum shapes
+  tuple and array results under `ssarc.caller_sigs`, the byte and cast shapes
+  below, and the enum shapes
   above.
+
+The byte and cast fixtures pin what only an execution can show: a byte
+arithmetic result that wraps at eight bits, an i32 one that wraps at
+thirty-two, a narrowing cast and a widening one, and a byte read out of a
+string, compared, replaced and widened. Both width masks are pinned through a
+COMPARISON rather than a printed value, because a printed result is truncated
+to 32 bits on its way out and reads the same whether the register held the
+wrapped value or the wide one.
 
 ```sh
 go test ./internal/e2eselfhost -run 'TestSelfHostSemanticSource' -count=1
@@ -184,9 +229,10 @@ the contract feed leaks five blocks on the same program.
 
 ## Remaining
 
-The producer does not yet admit casts, integer widths other than i32, floats,
-the remaining builtins, destructuring, closures or generics, so no production
-consumer is switched and no AST ownership analysis is deleted.
+The producer does not yet admit string views, integer widths other than i32
+and u8, floats, the remaining builtins, destructuring, closures or generics,
+so no production consumer is switched and no AST ownership analysis is
+deleted.
 
 Records, strings, enums and struct-unions cross the boundary (`make`, `wrap`,
 `unwrap`, `tally`, `greet`, `shape`, `measure`, `sum_shapes`, `consume`,
@@ -201,32 +247,38 @@ target). The AST-lowered `main` receives tuple and array results by contract.
 String and record positions of a received tuple, and record, enum and union
 results, still rely on the AST caller's own syntactic rows.
 
-Measured against the whole loaded self-hosted compiler, 2,785 of its 7,406
+Measured against the whole loaded self-hosted compiler, 4,171 of its 7,648
 functions produce, plan and physically lower.
 
-Read that number, not the raw refusal histogram: 2,823 of the 4,455 refusals
-are `call target was refused` cascades, so the histogram is dominated by
-functions whose only problem is a refused callee. What is worth counting is
-the LEAF — the first refusal that is not a cascade. The leaves are now led by
-string indexing (507, the whole of `array projection contract`), then callees
-with no semantic contract, unsupported literals, destructuring, record
-literals the schema does not match in order, and the operators that remain:
-mixed widths and string ordering. A further 165 functions produce and plan
-but are refused by the unit planner for an `.append` whose receiver is not
-moved, and 1 by physical RC lowering for an `i64` array element.
+`examples/self_host/semsource_census_run.fern` is the instrument: it loads a
+module tree the way the production compiler does and counts the stage each
+function reaches, tallying refusals by LEAF — the first refusal in a chain
+that is not a `call target was refused` cascade. That distinction is the whole
+point of the report. The raw histogram is dominated by functions whose only
+problem is a refused callee, so it names work that is already done.
 
-The leaf is what to probe against before building: measured deltas have
-repeatedly disagreed with the histogram, most sharply on string indexing,
-which is the largest leaf and was worth +0 until enough of its callers
-lowered.
+The leaf is also what to probe against before building, because measured
+deltas have repeatedly disagreed with even the leaf histogram. String
+indexing was the largest leaf and worth +0 until enough of its callers
+lowered; the byte type below was worth +1,200 because it unblocked three
+leaves at once.
 
-Next, by measured leaf rather than by histogram: the `.append` receiver gate,
-which needs a clone form for a receiver the planner does not move (the
-`op_arr_slice` shape `irlower.lower_arr_append_value` already uses) and
-carries a real cost — the dominant refused shape is a borrowed-parameter
-accumulator in a loop, where a clone is O(n^2) bytes and native escapes it
-with an exemption this vocabulary has no analogue for. Then the wider scalar
-types, which string indexing, the casts, the mixed-width operators and the
-last physical-RC refusal all wait behind. Then a production consumer that
-lowers produced functions through this pipeline and feeds `caller_sigs` to
-the remaining AST callers.
+The leaves are now led by callees with no semantic contract, then bindings
+whose declared type is a string VIEW (`str`) where the producer has an owned
+`string`, record literals, calls of a builtin with no contract here, and
+destructuring. A further 186 functions produce and plan but are refused by the
+unit planner for an `.append` whose receiver is not moved, and 1 by physical
+RC lowering for an `i64` array element.
+
+Next, by measured leaf: `str`, the borrowed string view, which is what
+`slice_unchecked` actually hands back and what every scanning loop in this
+compiler binds. Then i64, which the remaining width refusals, the casts to and
+from it and the last physical-RC refusal all wait behind, and which unlike u8
+needs its own 64-bit slot and constant form. Then record literals. The
+`.append` receiver gate stays deferred: it needs a clone form for a receiver
+the planner does not move (the `op_arr_slice` shape
+`irlower.lower_arr_append_value` already uses) and carries a real cost — the
+dominant refused shape is a borrowed-parameter accumulator in a loop, where a
+clone is O(n^2) bytes and native escapes it with an exemption this vocabulary
+has no analogue for. Then a production consumer that lowers produced functions
+through this pipeline and feeds `caller_sigs` to the remaining AST callers.

@@ -57,6 +57,7 @@ pub function length(): i32 { return 0 - 13; }
 pub function append(): i32 { return 0 - 14; }
 pub function slice(): i32 { return 0 - 15; }
 pub function str_index(): i32 { return 0 - 16; }
+pub function cast(): i32 { return 0 - 17; }
 
 function failed(why: string): Analysis {
     return Analysis { ok: false, why: why, dependencies: [], flow: ssalive.Flow { ok: false, why: why, live_in: [], live_out: [] } };
@@ -73,6 +74,18 @@ function is_i32(t: typeinfo.Type): boolean {
     if let typeinfo.TypeI32(i) = t { return i.width == 32 && !i.unsigned && !i.is_char; }
     return false;
 }
+
+// One unsigned byte. It rides an i32-shaped slot on every backend, so it costs
+// no new physical representation; what distinguishes it is the range, which
+// each operator whose result can leave it wraps back.
+pub function is_u8(t: typeinfo.Type): boolean {
+    if let typeinfo.TypeI32(i) = t { return i.width == 8 && i.unsigned && !i.is_char; }
+    return false;
+}
+
+// The integer types this vocabulary admits. An operator is written for one of
+// them at a time: both operands carry the same type and so does the result.
+pub function is_integer(t: typeinfo.Type): boolean { return is_i32(t) || is_u8(t); }
 
 function is_bool(t: typeinfo.Type): boolean {
     if let typeinfo.TypeBool(_) = t { return true; }
@@ -102,9 +115,18 @@ function copy_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     return "";
 }
 
+// An integer constant carries its value in the instruction's i32 immediate, and
+// the physical form pushes it with no mask, so a narrow type's constant has to
+// be in range HERE rather than be wrapped later.
+function integer_constant_error(ins: ssa.SInst, result: typeinfo.Type): string {
+    if (!is_integer(result)) { return "integer constant type"; }
+    if (is_u8(result) && (ins.imm < 0 || ins.imm > 255)) { return "integer constant range"; }
+    return "";
+}
+
 function constant_error(ins: ssa.SInst, result: typeinfo.Type): string {
     if (ins.args.len() != 0) { return "constant arity"; }
-    if (ins.kind_tag == 1 && !is_i32(result)) { return "integer constant type"; }
+    if (ins.kind_tag == 1) { return integer_constant_error(ins, result); }
     if (ins.kind_tag == 2 && (!is_bool(result) || (ins.imm != 0 && ins.imm != 1))) { return "boolean constant type or value"; }
     if (ins.kind_tag == 5 && !is_string(result)) { return "string constant type"; }
     return "";
@@ -296,13 +318,14 @@ function slice_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     return "";
 }
 
-// One byte of a string, handed back as an i32. The receiver is read the way a
-// length's is, and the result owns nothing and anchors nothing — so unlike a
-// slice this is not a projection, and no rule here has to keep the source
-// alive for it.
+// One byte of a string, handed back as a u8 — the type the checker gives the
+// expression, so a binding or an operator over it needs no reconciliation. The
+// receiver is read the way a length's is, and the result owns nothing and
+// anchors nothing — so unlike a slice this is not a projection, and no rule
+// here has to keep the source alive for it.
 function str_index_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     if (ins.args.len() != 2) { return "string index arity"; }
-    if (!is_i32(result)) { return "string index result type"; }
+    if (!is_u8(result)) { return "string index result type"; }
     if (!is_string(f.values[ins.args[0]])) { return "string index container type"; }
     if (!is_i32(f.values[ins.args[1]])) { return "string index type"; }
     return "";
@@ -359,12 +382,14 @@ function comparison(op: string): boolean {
     return op == "<" || op == "<=" || op == ">" || op == ">=" || op == "==" || op == "!=";
 }
 
-// The i32 integer operators, i32 ordering, and equality on i32 or booleans;
-// string concatenation, a fresh string, and string equality. Other widths,
-// string ordering and operator overloads have no contract yet.
+// The integer operators and orderings at one width, equality on booleans;
+// string concatenation, a fresh string, and string equality. An operator
+// whose operands carry different integer types has no contract here: the
+// conversion is a cast the source has to write. String ordering and operator
+// overloads have none either.
 pub function binary_result(op: string, left: typeinfo.Type, right: typeinfo.Type): typeinfo.Type {
-    if (is_i32(left) && is_i32(right)) {
-        if (integer_op(op)) { return typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false }; }
+    if (is_integer(left) && semtypes.equal(left, right)) {
+        if (integer_op(op)) { return left; }
         if (comparison(op)) { return typeinfo.TypeBool { tag: 0 }; }
     }
     if (is_bool(left) && is_bool(right) && (op == "==" || op == "!=")) { return typeinfo.TypeBool { tag: 0 }; }
@@ -391,11 +416,33 @@ function binary_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     return "";
 }
 
+// A conversion between the integer types. Every narrowing site keeps its value
+// in range, so the operand of a widening already holds the value the wider type
+// names and the conversion moves no bits; a narrowing masks. Both ends are
+// integers, which is what makes that true — a float or a pointer would not be a
+// reinterpretation of the same slot.
+function cast_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
+    if (ins.args.len() != 1) { return "cast arity"; }
+    if (!is_integer(result)) { return "cast result type"; }
+    if (!is_integer(f.values[ins.args[0]])) { return "cast operand type"; }
+    return "";
+}
+
 function unary_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     if (ins.args.len() != 1) { return "unary operator arity"; }
     var want: typeinfo.Type = unary_result(ins.str, f.values[ins.args[0]]);
     if (!semtypes.concrete(want, false) || !semtypes.equal(want, result)) { return "unary operator contract"; }
     return "";
+}
+
+// The operators over one scalar slot: the two written ones, and the conversion
+// between the integer types.
+pub function scalar_op(kind: i32): boolean { return kind == 9 || kind == 10 || kind == cast(); }
+
+function scalar_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
+    if (ins.kind_tag == 9) { return binary_error(ins, f, result); }
+    if (ins.kind_tag == 10) { return unary_error(ins, f, result); }
+    return cast_error(ins, f, result);
 }
 
 // Constructions, projections and calls: the operations whose contract is a
@@ -421,8 +468,7 @@ function instruction_error(ins: ssa.SInst, f: Func): string {
     if (kind == 6) { return parameter_error(ins, f, result); }
     if (kind == 7 || kind == 8) { return copy_error(ins, f, result); }
     if (kind == 1 || kind == 2 || kind == 5) { return constant_error(ins, result); }
-    if (kind == 9) { return binary_error(ins, f, result); }
-    if (kind == 10) { return unary_error(ins, f, result); }
+    if (scalar_op(kind)) { return scalar_error(ins, f, result); }
     return composite_error(ins, f, result);
 }
 

@@ -169,7 +169,7 @@ function semantic_kind_name(id: i32): string {
     var names: string[] = ["array_new", "tuple_new", "array_get", "tuple_get",
         "record_new", "record_get", "call", "variant_new", "variant_is",
         "variant_get", "variant_up", "variant_as", "length", "append", "slice",
-        "str_index"];
+        "str_index", "cast"];
     var at: i32 = 0 - id - 1;
     if (at < 0 || at >= names.len()) { return "invalid"; }
     return names[at];
