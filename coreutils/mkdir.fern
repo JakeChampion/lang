@@ -1,0 +1,439 @@
+// mkdir.fern — GNU-compatible `mkdir`.
+//
+//   mkdir [-m MODE] [-p] [-v] [-Z] [--context[=CTX]] DIRECTORY...
+//
+// One `create_dir` per operand — `mkdir(2)` with nothing folded away,
+// not `create_dir_all`, which forgives an EEXIST that is exactly the
+// question this utility exists to ask.
+//
+// The substance is the MODE and the umask, and the two interact in a way
+// no man page states. `lib/mode.fern` has the grammar; what is mkdir's
+// own is everything below it:
+//
+//   - With no `-m`, the directory gets `0777 & ~umask`.
+//   - With `-m`, the mode is computed from a base of 0777 — NOT from
+//     the default above — and the umask still applies, but only to the
+//     clauses that name no who. `-m 755` is 0755 whatever the mask is,
+//     and `-m a=rx` is 0555, while `-m =rwx` is `0777 & ~umask` and
+//     `-m -w` takes write off only where the mask would have allowed it.
+//   - `-p` gives the ANCESTORS a mode of their own, `(0777 & ~umask) |
+//     0300`: u+w and u+x are forced on so the walk can keep going, and
+//     they are NOT restored afterwards. `-m` never reaches them, which
+//     is what the `--help` line means by "with their file modes
+//     unaffected by any -m option".
+//
+// The third rule is the one that surprises, and it is measured rather
+// than derived: a mode carrying a special bit is created with the group
+// and other WRITE bits held back, and they come back only if a chmod
+// follows. Whether one follows depends on which bits the MODE SPELLED
+// OUT — so `-m 1777` ends at 1777 and `-m +t` ends at 1755, though the
+// two name the same value, and `-m +t,g+w` is 1777 again because the
+// group write bit is now mentioned. `plan_mode` below is that rule.
+//
+// `-p` is otherwise its own walk: an ancestor that already exists is not
+// an error, one that exists and is not a DIRECTORY is, and the final
+// component forgives EEXIST only when what is there is a directory. The
+// two report differently — an ancestor says what a `chdir` into it would
+// have said, and a final component that cannot be stat'ed at all says
+// `cannot stat` instead of `cannot create directory`.
+import "std/string";
+import "std/array";
+import "./lib/gnu";
+import "./lib/mode";
+import "./lib/selinux";
+
+function opt_context(): i32 {
+  return 1;
+}
+
+function opt_mode(): i32 {
+  return 2;
+}
+
+function opt_parents(): i32 {
+  return 3;
+}
+
+function opt_verbose(): i32 {
+  return 4;
+}
+
+function opt_z(): i32 {
+  return 5;
+}
+
+function help_text(): string {
+  var out: string = "";
+  out = out + "Usage: " + gnu.prog() + " [OPTION]... DIRECTORY...\n";
+  out = out + "Create the DIRECTORY(ies), if they do not already exist.\n";
+  out = out + "\n";
+  out = out + "  -m, --mode=MODE   set file mode (as in chmod), not a=rwx - umask\n";
+  out = out + "  -p, --parents     no error if existing, make parent directories as needed,\n";
+  out = out + "                    with their file modes unaffected by any -m option.\n";
+  out = out + "  -v, --verbose     print a message for each created directory\n";
+  out = out + "  -Z                   set SELinux security context of each created directory\n";
+  out = out + "                         to the default type\n";
+  out = out + "      --context[=CTX]  like -Z, or if CTX is specified then set the SELinux\n";
+  out = out + "                         or SMACK security context to CTX\n";
+  out = out + "      --help        display this help and exit\n";
+  out = out + "      --version     output version information and exit\n";
+  return out;
+}
+
+// ---- the mode a directory is created with ----------------------------------
+//
+// `create` is what `mkdir(2)` is given, `finish` the mode the directory
+// is meant to end up with, and `chmod_after` whether one more call is
+// needed to get there.
+struct Plan { create: i32, finish: i32, chmod_after: boolean }
+
+// The default: no `-m`, so the umask does all the work and there is
+// nothing to hold back.
+function plan_default(mask: i32): Plan {
+  var m: i32 = mode.s_irwxugo() & mode.complement(mask);
+  return Plan { create: m, finish: m, chmod_after: false };
+}
+
+// `-m`'s plan. The mode is `mode.adjust` from a base of 0777; what is
+// mkdir's own is the pair of decisions after it.
+//
+// A directory whose mode carries S_ISUID, S_ISGID or S_ISVTX — or whose
+// MODE went near the first two with `+` or `-` — is created without
+// group and other write, so that nothing can enter it during the window
+// between the mkdir and the chmod that finishes it.
+//
+// The chmod only happens when it has to: S_ISUID and S_ISGID are bits
+// mkdir(2) does not set, and the write bits held back are restored only
+// when the MODE MENTIONED them. Nothing restores them otherwise, which
+// is why `-m +t` leaves 1755 where `-m 1777` leaves 1777.
+function plan_mode(c: mode.Changes, mask: i32): Plan {
+  var a: mode.Adjusted = c.adjust(mode.s_irwxugo(), true, mask);
+  var special: i32 = mode.setid_bits() + mode.s_isvtx();
+  if ((a.mode & special) == 0 && !a.touches_setid) {
+    return Plan { create: a.mode, finish: a.mode, chmod_after: false };
+  }
+  var held: i32 = a.mode & mode.complement(mode.w_group_other());
+  var needed: boolean = (a.mode & mode.setid_bits()) != 0 || (a.mentioned & a.mode & mode.w_group_other()) != 0;
+  if (needed) {
+    return Plan { create: held, finish: a.mode, chmod_after: true };
+  }
+  return Plan { create: held, finish: held, chmod_after: false };
+}
+
+// The mode `-p` gives an ancestor: the default with u+w and u+x forced
+// on, since a directory the walk cannot write or search is one it cannot
+// continue through. It is left that way — nothing puts the masked bits
+// back once the child exists.
+function ancestor_mode(mask: i32): i32 {
+  return mode.s_irwxugo() & mode.complement(mask) | 192;
+}
+
+// ---- output ----------------------------------------------------------------
+//
+// `-v` goes through glibc's stdio rather than a plain buffered writer,
+// because what a failed stdout SAYS depends on the buffering: a
+// diagnostic flushes stdout first, so a `-v` line still pending at the
+// close is what turns `write error: No space left on device` into a bare
+// `write error`.
+struct Out { s: gnu.Stdio, ok: boolean }
+
+function announce(o: Out, verbose: boolean, dir: string): Out {
+  if (!verbose) {
+    return o;
+  }
+  return Out { ...o, s: o.s.fwrite(gnu.prog() + ": created directory " + gnu.quotea(dir) + "\n") };
+}
+
+function report(o: Out, msg: string): Out {
+  return Out { s: o.s.report(msg), ok: false };
+}
+
+// The two diagnostics an operand can end in. GNU quotes the name with
+// `quote` here and with `quoteaf` in the `-v` line above, so the same
+// name is `'a\'b'` on stderr and `"a'b"` on stdout.
+function cannot_create(o: Out, dir: string, text: string): Out {
+  return report(o, "cannot create directory " + gnu.quote(dir) + ": " + text);
+}
+
+// ---- the -p walk -----------------------------------------------------------
+struct Cfg { plan: Plan, ancestor: i32, parents: boolean, verbose: boolean }
+
+// Whether the byte at `i` of `s` is a slash.
+function is_slash(s: string, i: i32): boolean {
+  return s[i] as i32 == 47;
+}
+
+// The index one past the last component of `dir` that is not empty, or
+// -1 when every component is. That component is the LAST thing `-p`
+// creates, and everything before it is an ancestor: `a//b//c` has three
+// components and two ancestors, `a//` has one component and none, and
+// `/` has none at all — which is why `mkdir -p /` succeeds silently.
+function last_component_end(dir: string): i32 {
+  var end: i32 = 0 - 1;
+  var start: i32 = 0;
+  var i: i32 = 0;
+  while (i <= dir.len()) {
+    if (i == dir.len() || is_slash(dir, i)) {
+      if (i > start) {
+        end = i;
+      }
+      start = i + 1;
+    }
+    i = i + 1;
+  }
+  return end;
+}
+
+// Whether the component of `dir` spanning [start, stop) is one the walk
+// steps through rather than creates. GNU chdir's into `.` and `..`
+// instead of trying to make them, and an empty component (a doubled
+// slash) is not a name at all.
+function is_traversed(dir: string, start: i32, stop: i32): boolean {
+  var n: i32 = stop - start;
+  if (n == 0) {
+    return true;
+  }
+  if (n == 1) {
+    return dir[start] as i32 == 46;
+  }
+  if (n == 2) {
+    return dir[start] as i32 == 46 && dir[start + 1] as i32 == 46;
+  }
+  return false;
+}
+
+// What a `chdir` into `dir` would have said. GNU walks `-p` by chdir'ing
+// into each ancestor, so an existing ancestor it cannot enter is
+// reported with the chdir's own errno — `Not a directory` for a regular
+// file, `Too many levels of symbolic links` for a loop. Fern has no
+// chdir, and `stat` of `dir/.` asks the kernel the same question: the
+// search permission on `dir` is checked exactly as chdir checks it,
+// capability overrides included, so a directory with no permission bits
+// answers EACCES to an ordinary user and success to root on both sides.
+// The name it asks about is two bytes longer, which is the one way the
+// two can differ: a path within two bytes of PATH_MAX.
+function enterable(dir: string): Option[IoError] {
+  match (stat(dir + "/.")) {
+    Ok(_) => {
+      return None;
+    },
+    Err(e) => {
+      return Some(e);
+    }
+  }
+}
+
+// One ancestor. `Ok` when the walk may continue.
+function make_ancestor(o0: Out, cfg: Cfg, prefix: string): (Out, boolean) {
+  var o: Out = o0;
+  match (create_dir(prefix, cfg.ancestor)) {
+    Ok(_) => {
+      return (announce(o, cfg.verbose, prefix), true);
+    },
+    Err(e) => {
+      var text: string = gnu.io_error_text(e);
+      if (text != "File exists") {
+        return (cannot_create(o, prefix, text), false);
+      }
+      match (enterable(prefix)) {
+        None => {
+          return (o, true);
+        },
+        Some(e2) => {
+          // A name that exists but resolves to nothing is a dangling
+          // symbolic link: the chdir says ENOENT and GNU reports the
+          // mkdir's own EEXIST rather than that.
+          var t2: string = gnu.io_error_text(e2);
+          if (t2 == "No such file or directory") {
+            t2 = text;
+          }
+          return (cannot_create(o, prefix, t2), false);
+        }
+      }
+    }
+  }
+}
+
+// The last component, which is the whole operand: a trailing slash is
+// part of the name mkdir(2) is given and part of what `-v` prints.
+//
+// Under `-p` an existing DIRECTORY here is not an error and gets no
+// mode: `-m` applies to a directory this run created and to nothing
+// else. Anything else that exists is the mkdir's EEXIST, and a name
+// that cannot be stat'ed at all is `cannot stat`, which is the one
+// diagnostic mkdir words with a different verb.
+function make_final(o0: Out, cfg: Cfg, dir: string): Out {
+  var o: Out = o0;
+  match (create_dir(dir, cfg.plan.create)) {
+    Ok(_) => {
+      o = announce(o, cfg.verbose, dir);
+      if (cfg.plan.chmod_after) {
+        match (chmod(dir, cfg.plan.finish)) {
+          Ok(_) => {},
+          Err(e) => {
+            // The one wording here the reference binary has never been
+            // made to print: a directory this process just created is
+            // one it owns and may chmod, even a setgid one it is not in
+            // the group of.
+            return report(o, "cannot change permissions of " + gnu.quote(dir) + ": " + gnu.io_error_text(e));
+          }
+        }
+      }
+      return o;
+    },
+    Err(e) => {
+      var text: string = gnu.io_error_text(e);
+      if (!cfg.parents || text != "File exists") {
+        return cannot_create(o, dir, text);
+      }
+      return existing_final(o, dir, text);
+    }
+  }
+}
+
+// The name the last component asked for is already taken, and `-p` says
+// that is only an error when what is there is not a DIRECTORY.
+//
+// A stat that fails because the name resolves to nothing (a dangling
+// symbolic link) or to something that is not a directory (`mkdir -p
+// file/`) has still answered the question, and the answer is the mkdir's
+// own EEXIST. Any other failure has not answered it, and says so with a
+// verb of its own.
+function existing_final(o: Out, dir: string, text: string): Out {
+  match (stat(dir)) {
+    Ok(st) => {
+      if (st.is_dir) {
+        return o;
+      }
+      return cannot_create(o, dir, text);
+    },
+    Err(e) => {
+      var t: string = gnu.io_error_text(e);
+      if (t == "No such file or directory" || t == "Not a directory") {
+        return cannot_create(o, dir, text);
+      }
+      return report(o, "cannot stat " + gnu.quote(dir) + ": " + t);
+    }
+  }
+}
+
+function make(o0: Out, cfg: Cfg, dir: string): Out {
+  var o: Out = o0;
+  if (cfg.parents) {
+    var last: i32 = last_component_end(dir);
+    var start: i32 = 0;
+    var i: i32 = 0;
+    while (i < last) {
+      if (is_slash(dir, i)) {
+        if (!is_traversed(dir, start, i)) {
+          var step: (Out, boolean) = make_ancestor(o, cfg, slice_unchecked(dir, 0, i) + "");
+          o = step.0;
+          if (!step.1) {
+            return o;
+          }
+        }
+        start = i + 1;
+      }
+      i = i + 1;
+    }
+  }
+  return make_final(o, cfg, dir);
+}
+
+// ---- the option scan -------------------------------------------------------
+struct Scan { mode_text: string, mode_given: boolean, parents: boolean, verbose: boolean }
+
+function scan_options(): (Scan, string[]) {
+  var opts: gnu.Opt[] = [];
+  // Declaration order is visible: `mkdir --=x` lists the long options in
+  // it, and `--context` stands first.
+  opts = opts.append(gnu.optional("", "context", opt_context()));
+  opts = opts.append(gnu.valued("m", "mode", opt_mode()));
+  opts = opts.append(gnu.flag("p", "parents", opt_parents()));
+  opts = opts.append(gnu.flag("v", "verbose", opt_verbose()));
+  opts = opts.append(gnu.flag("Z", "", opt_z()));
+
+  var s: Scan = Scan { mode_text: "", mode_given: false, parents: false, verbose: false };
+  var g: gnu.Getopt = gnu.getopt_new(args(), opts, "mkdir", help_text(), 1);
+  while (true) {
+    var res: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    g = res.1;
+    match (res.0) {
+      Some(m) => {
+        if (m.id == opt_mode()) {
+          s = Scan { ...s, mode_text: m.value, mode_given: true };
+        } else if (m.id == opt_parents()) {
+          s = Scan { ...s, parents: true };
+        } else if (m.id == opt_verbose()) {
+          s = Scan { ...s, verbose: true };
+        } else {
+          security_context(m.has_value);
+        }
+      },
+      None => {
+        break;
+      }
+    }
+  }
+  return (s, g.operands());
+}
+
+// `-Z` and `--context` ask for a security context on each directory.
+// On a kernel with no SELinux there is none to set: GNU says nothing for
+// `-Z` or a bare `--context`, and warns once per occurrence when a CTX
+// was named, then carries on and exits 0.
+//
+// On a kernel that HAS SELinux there is a context to set and no
+// primitive here that can set one, so the option is refused rather than
+// quietly ignored — the same answer `runcon` gives for running a command
+// in a context.
+function security_context(named: boolean): void {
+  if (selinux.enabled()) {
+    gnu.error("setting a security context is not supported on this system");
+    exit(1);
+  }
+  if (named) {
+    gnu.error("warning: ignoring --context; it requires an SELinux/SMACK-enabled kernel");
+  }
+}
+
+function main(): i32 {
+  var scanned: (Scan, string[]) = scan_options();
+  var s: Scan = scanned.0;
+  var operands: string[] = scanned.1;
+  if (operands.len() == 0) {
+    gnu.die_usage("missing operand", 1);
+  }
+
+  // The mask is read the only way POSIX offers — set zero and take the
+  // answer — and left at zero, so every mode below reaches mkdir(2)
+  // exactly as computed.
+  var mask: i32 = umask(0);
+
+  var plan: Plan = plan_default(mask);
+  if (s.mode_given) {
+    match (mode.compile(s.mode_text)) {
+      Some(c) => {
+        plan = plan_mode(c, mask);
+      },
+      None => {
+        // Not a usage error: no `Try …` line follows it.
+        gnu.error("invalid mode " + gnu.quote(s.mode_text));
+        exit(1);
+      }
+    }
+  }
+
+  var cfg: Cfg = Cfg { plan: plan, ancestor: ancestor_mode(mask), parents: s.parents, verbose: s.verbose };
+  var o: Out = Out { s: gnu.stdio_new(), ok: true };
+  var i: i32 = 0;
+  while (i < operands.len()) {
+    o = make(o, cfg, operands[i]);
+    i = i + 1;
+  }
+  o.s.close_stdout();
+  if (o.ok) {
+    return 0;
+  }
+  return 1;
+}

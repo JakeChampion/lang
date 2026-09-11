@@ -1,0 +1,485 @@
+// chmod.fern — GNU-compatible `chmod`.
+//
+//   chmod [OPTION]... MODE[,MODE]... FILE...
+//   chmod [OPTION]... OCTAL-MODE FILE...
+//   chmod [OPTION]... --reference=RFILE FILE...
+//
+// One fchmodat(2) per entry, and under `-R` a depth-first PRE-order walk
+// that visits a directory before its children and takes those children in
+// raw readdir order — GNU hands fts no comparator, so the order the kernel
+// returns is the order `-v` prints and the order the calls happen in.
+//
+// ---- the mode grammar -----------------------------------------------------
+//
+// `lib/mode.fern` is the MODE operand — the grammar, the umask rule, and
+// what a directory keeps through a `=`. It is the same module `mkdir -m`
+// compiles its MODE with, and chmod hands it the two things it alone knows:
+// the entry's current twelve bits and whether the entry is a directory.
+//
+// What is chmod's own is below: the umask COMPLAINT, the mode arriving
+// through the option letters, and the walk.
+//
+// ---- the umask a clause could not clear through ----------------------------
+//
+// A `-` clause the umask stops from clearing everything it named is a
+// DIAGNOSTIC, not a silent narrowing — `chmod -w` on 0777 under 022 leaves
+// 0577 and says so, exiting 1. The test is per file: run the clauses a
+// second time with the umask taken as zero, and complain when the mode that
+// actually landed has a bit that run does not.
+//
+// It is raised ONLY for a mode that arrived through the option letters,
+// which is the spelling the warning exists for: `chmod -w f` complains and
+// `chmod -- -w f` — the identical change, typed as an operand — does not.
+// That is not about the leading `-`, it is about which path the mode came
+// in by: `chmod -- 'a+w,-w' f` is silent and `chmod -x,u+r,-w f` is not.
+//
+// A `--reference` is outside all of that: it writes the reference's twelve
+// bits verbatim, so a directory's setuid and setgid go with them.
+//
+// ---- the mode can arrive as an option ---------------------------------------
+//
+// `chmod -w file` works because every mode character is declared as a short
+// option taking an OPTIONAL argument: the first one in a cluster swallows the
+// rest of it, and the whole argv element becomes the mode string — which is
+// why `-Rw` is `invalid mode: '-Rw'` and not a recursive `-w`. Elements are
+// joined with commas in argv order (`-r -w` is `-r,-w`), and once the mode
+// has come from options the first operand is a FILE rather than a mode.
+//
+// ---- the one thing this cannot do -------------------------------------------
+//
+// GNU's fts is fd-relative — it holds a descriptor on each directory and
+// calls fchmodat against it — so a tree renamed underneath a running
+// `chmod -R` cannot be tricked into chmod'ing something outside it, and a
+// path longer than PATH_MAX is still reachable. The runtime has no
+// fd-relative traversal (#9074 / #9078), so the walk below concatenates
+// paths: it meets ENAMETOOLONG partway down a tree GNU finishes, and a
+// concurrent rename of an interior directory can redirect a chmod to another
+// subtree. Nothing in the corpus renames anything under a running chmod, so
+// the two agree there; the gap is real all the same.
+import "std/array";
+import "./lib/gnu";
+import "./lib/mode";
+
+// ---- options ---------------------------------------------------------------
+function opt_changes(): i32 {
+  return 1;
+}
+
+function opt_silent(): i32 {
+  return 2;
+}
+
+function opt_verbose(): i32 {
+  return 3;
+}
+
+function opt_no_preserve_root(): i32 {
+  return 4;
+}
+
+function opt_preserve_root(): i32 {
+  return 5;
+}
+
+function opt_reference(): i32 {
+  return 6;
+}
+
+function opt_recursive(): i32 {
+  return 7;
+}
+
+// Every byte a mode may start or continue with, declared so `chmod -w` and
+// `chmod -0644` reach the mode instead of getopt's `invalid option`.
+function opt_mode(): i32 {
+  return 8;
+}
+
+function v_quiet(): i32 {
+  return 0;
+}
+
+function v_changes(): i32 {
+  return 1;
+}
+
+function v_all(): i32 {
+  return 2;
+}
+
+struct Settings { verbosity: i32, quiet: boolean, recursive: boolean, preserve_root: boolean }
+
+// What one run has to say about every file: the compiled MODE or the fixed
+// mode `--reference` read, the umask the empty-who clauses are filtered by,
+// and whether the mode came in through the option letters — the only
+// spelling the umask complaint is raised for.
+struct Target { changes: mode.Changes, fixed: i32, has_fixed: boolean, mask: i32, from_option: boolean }
+
+// The whole of the mutable state: the stdio stream `-v` writes through, and
+// the exit status a diagnostic turns to 1.
+struct St { out: gnu.Stdio, status: i32 }
+
+function help_text(): string {
+  var out: string = "";
+  out = out + "Usage: " + gnu.prog() + " [OPTION]... MODE[,MODE]... FILE...\n";
+  out = out + "  or:  " + gnu.prog() + " [OPTION]... OCTAL-MODE FILE...\n";
+  out = out + "  or:  " + gnu.prog() + " [OPTION]... --reference=RFILE FILE...\n";
+  out = out + "Change the mode of each FILE to MODE.\n";
+  out = out + "With --reference, change the mode of each FILE to that of RFILE.\n";
+  out = out + "\n";
+  out = out + "  -c, --changes          like verbose but report only when a change is made\n";
+  out = out + "  -f, --silent, --quiet  suppress most error messages\n";
+  out = out + "  -v, --verbose          output a diagnostic for every file processed\n";
+  out = out + "      --no-preserve-root  do not treat '/' specially (the default)\n";
+  out = out + "      --preserve-root    fail to operate recursively on '/'\n";
+  out = out + "      --reference=RFILE  use RFILE's mode instead of specifying MODE values.\n";
+  out = out + "                         RFILE is always dereferenced if a symbolic link.\n";
+  out = out + "  -R, --recursive        change files and directories recursively\n";
+  out = out + "      --help        display this help and exit\n";
+  out = out + "      --version     output version information and exit\n";
+  out = out + "\n";
+  out = out + "Each MODE is of the form '[ugoa]*([-+=]([rwxXst]*|[ugo]))+|[-+=][0-7]+'.\n";
+  return out;
+}
+
+// The long options in GNU's declaration order, which is visible: the
+// ambiguity list prints candidates in it, so `--r` names '--recursive' before
+// '--reference'. `--help` and `--version` are appended by getopt_new.
+function option_table(): gnu.Opt[] {
+  var opts: gnu.Opt[] = [];
+  opts = opts.append(gnu.flag("c", "changes", opt_changes()));
+  opts = opts.append(gnu.flag("R", "recursive", opt_recursive()));
+  opts = opts.append(gnu.flag("", "no-preserve-root", opt_no_preserve_root()));
+  opts = opts.append(gnu.flag("", "preserve-root", opt_preserve_root()));
+  opts = opts.append(gnu.flag("f", "quiet", opt_silent()));
+  opts = opts.append(gnu.valued("", "reference", opt_reference()));
+  opts = opts.append(gnu.flag("", "silent", opt_silent()));
+  opts = opts.append(gnu.flag("v", "verbose", opt_verbose()));
+  var i: i32 = 0;
+  var letters: string = "rwxXstugoa,+=01234567";
+  while (i < letters.len()) {
+    opts = opts.append(gnu.optional(slice_unchecked(letters, i, i + 1) + "", "", opt_mode()));
+    i = i + 1;
+  }
+  return opts;
+}
+
+struct Parsed { s: Settings, mode: string, has_mode: boolean, reference: string, has_reference: boolean, files: string[] }
+
+function parse(argv: string[]): Parsed {
+  var s: Settings = Settings { verbosity: v_quiet(), quiet: false, recursive: false, preserve_root: false };
+  var mode: string = "";
+  var has_mode: boolean = false;
+  var reference: string = "";
+  var has_reference: boolean = false;
+  var g: gnu.Getopt = gnu.getopt_new(argv, option_table(), "chmod", help_text(), 1);
+  while (true) {
+    var r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    g = r.1;
+    match (r.0) {
+      Some(m) => {
+        if (m.id == opt_changes()) {
+          s = Settings { ...s, verbosity: v_changes() };
+        } else if (m.id == opt_silent()) {
+          s = Settings { ...s, quiet: true };
+        } else if (m.id == opt_verbose()) {
+          s = Settings { ...s, verbosity: v_all() };
+        } else if (m.id == opt_no_preserve_root()) {
+          s = Settings { ...s, preserve_root: false };
+        } else if (m.id == opt_preserve_root()) {
+          s = Settings { ...s, preserve_root: true };
+        } else if (m.id == opt_reference()) {
+          reference = m.value;
+          has_reference = true;
+        } else if (m.id == opt_recursive()) {
+          s = Settings { ...s, recursive: true };
+        } else if (m.id == opt_mode()) {
+          // The WHOLE argv element is the mode, however much of it getopt
+          // already consumed as options: `-vRw` is the mode `-vRw`, and a
+          // fault. A later element is joined on with a comma.
+          var token: string = argv[g.index() - 1];
+          if (has_mode) {
+            mode = mode + "," + token;
+          } else {
+            mode = token;
+          }
+          has_mode = true;
+        }
+      },
+      None => {
+        break;
+      }
+    }
+  }
+  return Parsed { s: s, mode: mode, has_mode: has_mode, reference: reference, has_reference: has_reference, files: g.operands() };
+}
+
+// ---- paths -----------------------------------------------------------------
+// fts trims a RUN of trailing slashes to one before the operand is printed,
+// and leaves `/` and `//` alone: `d///` is `d/`, `///` is `/`.
+function fts_trim(p: string): string {
+  var n: i32 = p.len();
+  if (n > 2 && p[n - 1] as i32 == 47) {
+    while (n > 1 && p[n - 2] as i32 == 47) {
+      n = n - 1;
+    }
+  }
+  return slice_unchecked(p, 0, n) + "";
+}
+
+function child_path(dir: string, name: string): string {
+  if (dir.len() > 0 && dir[dir.len() - 1] as i32 == 47) {
+    return dir + name;
+  }
+  return dir + "/" + name;
+}
+
+function s_ifmt(): u32 {
+  return 61440 as u32;
+}
+
+function is_dir_mode(m: u32): boolean {
+  return (m & s_ifmt()) == 16384 as u32;
+}
+
+function is_link_mode(m: u32): boolean {
+  return (m & s_ifmt()) == 40960 as u32;
+}
+
+// ---- diagnostics -----------------------------------------------------------
+// A diagnostic `-f` silences. The exit status still moves: `-f` suppresses
+// the message, not the failure.
+function fail_quiet(st: St, s: Settings, msg: string): St {
+  if (s.quiet) {
+    return St { ...st, status: 1 };
+  }
+  return St { out: st.out.report(msg), status: 1 };
+}
+
+// A diagnostic `-f` does NOT silence: the root failsafe, a `--reference` that
+// cannot be read, and the umask complaint.
+function fail_loud(st: St, msg: string): St {
+  return St { out: st.out.report(msg), status: 1 };
+}
+
+function say(st: St, s: Settings, line: string): St {
+  if (s.verbosity != v_all()) {
+    return st;
+  }
+  return St { ...st, out: st.out.fwrite(line) };
+}
+
+// The entry could not be reached at all. `-v` adds its own line after the
+// diagnostic, which is why the two are written in this order.
+function unreachable(st0: St, s: Settings, path: string, msg: string): St {
+  var st: St = fail_quiet(st0, s, msg);
+  return say(st, s, gnu.quotea(path) + " could not be accessed\n");
+}
+
+// ---- the root failsafe -----------------------------------------------------
+// Compared by device and inode, so every spelling of `/` is caught — `//`,
+// `/.`, `/tmp/..` — and each one that is not literally `/` says so.
+function is_root_dir(info: FileStat): boolean {
+  match (stat("/")) {
+    Ok(root) => {
+      return info.dev == root.dev && info.ino == root.ino;
+    },
+    Err(_) => {
+      return false;
+    }
+  }
+}
+
+function refuse_root(st0: St, path: string): St {
+  var same: string = "";
+  if (path != "/") {
+    same = " (same as '/')";
+  }
+  var st: St = fail_loud(st0, "it is dangerous to operate recursively on " + gnu.quotea(path) + same);
+  return fail_loud(st, "use --no-preserve-root to override this failsafe");
+}
+
+// ---- one entry -------------------------------------------------------------
+// The mode `t` should end up with, the mode the same clauses reach with the
+// umask taken as zero, and whether the two differ in the direction that is a
+// complaint — a bit the mask stopped a `-` clause from clearing.
+function target_mode(t: Target, old: i32, is_dir: boolean): (i32, i32, boolean) {
+  if (t.has_fixed) {
+    return (t.fixed, t.fixed, false);
+  }
+  var masked: mode.Adjusted = t.changes.adjust(old, is_dir, t.mask);
+  if (!t.from_option) {
+    return (masked.mode, masked.mode, false);
+  }
+  var naive: mode.Adjusted = t.changes.adjust(old, is_dir, 0);
+  return (masked.mode, naive.mode, (masked.mode & mode.complement(naive.mode)) != 0);
+}
+
+function change_one(st0: St, s: Settings, t: Target, path: string, info: FileStat): St {
+  var st: St = st0;
+  var old: i32 = info.mode as i32 & mode.all_bits();
+  var is_dir: boolean = is_dir_mode(info.mode);
+  var r: (i32, i32, boolean) = target_mode(t, old, is_dir);
+  var wanted: i32 = r.0;
+  match (chmod(path, wanted)) {
+    Ok(_) => {
+      if (s.verbosity == v_all() || s.verbosity == v_changes() && wanted != old) {
+        st = St { ...st, out: st.out.fwrite(describe(path, old, wanted)) };
+      }
+    },
+    Err(e) => {
+      st = fail_quiet(st, s, "changing permissions of " + gnu.quotea(path) + ": " + gnu.io_error_text(e));
+      return say(st, s, "failed to change mode of " + gnu.quotea(path) + " from " + mode.octal4(old) + " (" + mode.symbolic(old) + ") to " + mode.octal4(wanted) + " (" + mode.symbolic(wanted) + ")\n");
+    }
+  }
+  if (r.2) {
+    // The one diagnostic that names the file the way a shell would need it
+    // typed rather than always in quotes.
+    st = fail_loud(st, gnu.quotef(path) + ": new permissions are " + mode.symbolic(wanted) + ", not " + mode.symbolic(r.1));
+  }
+  return st;
+}
+
+function describe(path: string, old: i32, wanted: i32): string {
+  if (old == wanted) {
+    return "mode of " + gnu.quotea(path) + " retained as " + mode.octal4(old) + " (" + mode.symbolic(old) + ")\n";
+  }
+  return "mode of " + gnu.quotea(path) + " changed from " + mode.octal4(old) + " (" + mode.symbolic(old) + ") to " + mode.octal4(wanted) + " (" + mode.symbolic(wanted) + ")\n";
+}
+
+// ---- the walk --------------------------------------------------------------
+// `top` marks a command-line operand: only there is a symlink FOLLOWED, and
+// only there is the root failsafe asked. A symlink met below one is neither
+// followed nor changed — Linux has no mode on a symlink to set — and says so
+// under `-v` without touching the exit status.
+function process(st0: St, s: Settings, t: Target, path: string, top: boolean): St {
+  var st: St = st0;
+  if (!top) {
+    match (lstat(path)) {
+      Ok(info) => {
+        if (is_link_mode(info.mode)) {
+          return say(st, s, "neither symbolic link " + gnu.quotea(path) + " nor referent has been changed\n");
+        }
+        return visit(st, s, t, path, info, false);
+      },
+      Err(e) => {
+        return unreachable(st, s, path, "cannot access " + gnu.quotea(path) + ": " + gnu.io_error_text(e));
+      }
+    }
+  }
+  match (stat(path)) {
+    Ok(info) => {
+      return visit(st, s, t, path, info, true);
+    },
+    Err(e) => {
+      // A symlink whose target is not there is its own wording; every other
+      // failure — a loop, a name too long, a component that is not a
+      // directory — is the plain one.
+      if (gnu.io_error_text(e) == "No such file or directory" && names_symlink(path)) {
+        return unreachable(st, s, path, "cannot operate on dangling symlink " + gnu.quotea(path));
+      }
+      return unreachable(st, s, path, "cannot access " + gnu.quotea(path) + ": " + gnu.io_error_text(e));
+    }
+  }
+}
+
+function names_symlink(path: string): boolean {
+  match (lstat(path)) {
+    Ok(info) => {
+      return is_link_mode(info.mode);
+    },
+    Err(_) => {
+      return false;
+    }
+  }
+}
+
+// One entry that was reached. The directory is chmod'ed BEFORE its children
+// are read, which is the order GNU's pre-order walk imposes.
+function visit(st0: St, s: Settings, t: Target, path: string, info: FileStat, top: boolean): St {
+  var st: St = st0;
+  if (top && s.recursive && s.preserve_root && is_dir_mode(info.mode) && is_root_dir(info)) {
+    return refuse_root(st, path);
+  }
+  st = change_one(st, s, t, path, info);
+  if (!s.recursive || !is_dir_mode(info.mode)) {
+    return st;
+  }
+  match (read_dir(path)) {
+    Ok(names) => {
+      var i: i32 = 0;
+      while (i < names.len()) {
+        st = process(st, s, t, child_path(path, names[i]), false);
+        i = i + 1;
+      }
+    },
+    Err(e) => {
+      // A directory whose children cannot be listed has its own wording,
+      // where an entry that could not be STATTED is `cannot access`.
+      st = unreachable(st, s, path, "cannot read directory " + gnu.quotea(path) + ": " + gnu.io_error_text(e));
+    }
+  }
+  return st;
+}
+
+// ---- main ------------------------------------------------------------------
+// The process umask, read the only way POSIX offers: set zero, take the
+// answer, put it back.
+function current_umask(): i32 {
+  var mask: i32 = umask(0);
+  var back: i32 = umask(mask);
+  return mask & mode.all_bits();
+}
+
+function main(): i32 {
+  var p: Parsed = parse(args());
+  var s: Settings = p.s;
+  var files: string[] = p.files;
+  var mode_spec: string = p.mode;
+  // A mode that arrived through the option letters and a --reference are the
+  // one combination chmod refuses outright, ahead of the operand count.
+  if (p.has_reference && p.has_mode) {
+    gnu.die_usage("cannot combine mode and --reference options", 1);
+  }
+  if (!p.has_reference && !p.has_mode) {
+    if (files.len() == 0) {
+      gnu.die_usage("missing operand", 1);
+    }
+    mode_spec = files[0];
+    if (files.len() == 1) {
+      gnu.die_usage("missing operand after " + gnu.quote(mode_spec), 1);
+    }
+    files = array.slice(files, 1, files.len());
+  } else if (files.len() == 0) {
+    gnu.die_usage("missing operand", 1);
+  }
+  var st: St = St { out: gnu.stdio_new(), status: 0 };
+  var t: Target = Target { changes: mode.Changes { list: [] }, fixed: 0, has_fixed: false, mask: current_umask(), from_option: p.has_mode };
+  if (p.has_reference) {
+    match (stat(p.reference)) {
+      Ok(info) => {
+        t = Target { ...t, fixed: info.mode as i32 & mode.all_bits(), has_fixed: true };
+      },
+      Err(e) => {
+        gnu.error("failed to get attributes of " + gnu.quotea(p.reference) + ": " + gnu.io_error_text(e));
+        exit(1);
+      }
+    }
+  } else {
+    match (mode.compile(mode_spec)) {
+      Some(c) => {
+        t = Target { ...t, changes: c };
+      },
+      None => {
+        gnu.die_usage("invalid mode: " + gnu.quote(mode_spec), 1);
+      }
+    }
+  }
+  var i: i32 = 0;
+  while (i < files.len()) {
+    st = process(st, s, t, fts_trim(files[i]), true);
+    i = i + 1;
+  }
+  st.out.close_stdout();
+  return st.status;
+}

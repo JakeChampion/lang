@@ -1,0 +1,1205 @@
+// df.fern — GNU-compatible `df`.
+//
+//   df [OPTION]... [FILE]...
+//
+// How much of each filesystem is used. Two inputs, not one: `statfs(2)`
+// answers the COUNTS, and the kernel's mount table answers the three
+// things statfs does not carry — the device a filesystem was mounted
+// from, where it is mounted, and the NAME of its type. The table is
+// /proc/self/mountinfo, which is what the reference binary reads.
+//
+// Four things about this are not obvious from the synopsis:
+//
+//   - With no operands the table is FILTERED, by four independent rules
+//     rather than one: a type that is a kernel interface rather than a
+//     volume, a filesystem with no blocks at all, a device already
+//     listed, and a mount point something else has since been mounted
+//     over. `-a` turns all four off, and the last two then show as a
+//     row whose measured columns are all `-`.
+//   - With operands nothing is filtered by the table: each operand is
+//     resolved, matched to the mount it lives under, and measured
+//     wherever it points. A `-t` / `-x` / `-l` that rejects the type it
+//     lands on is what makes an operand produce no row at all.
+//   - `Use%` is used / (used + available), not used / size: the
+//     difference is the superuser reserve, which `df` counts as
+//     neither. It rounds UP, and it is `-` when that denominator is
+//     zero rather than a division by it.
+//   - Every column is right-aligned to the widest cell in it except the
+//     four that name things, and `Filesystem` has a minimum of 14
+//     whatever is in it.
+//
+// A filesystem is always measured at the path asked about, never at the
+// mount point: `statfs` on the operand is what makes `df .` right
+// inside a bind mount.
+//
+// Linux only: the mount table has no primitive and no Darwin spelling
+// yet (#9104), so a Darwin build reports that it cannot read it. `--sync`
+// is accepted and does nothing, because flushing needs `sync(2)`, which
+// has no builtin yet (#9102). Every other option is exact.
+import "std/string";
+import "std/array";
+import "std/u64";
+import "std/i64";
+import "./lib/gnu";
+import "./lib/blocks";
+import "./lib/canon";
+
+// ---- options ---------------------------------------------------------------
+// The ids, and the DECLARATION ORDER below them, which is what the
+// ambiguity list for an abbreviated long option is printed in:
+// `--t` is `'--total' '--type'`, `--h` is `'--human-readable' '--help'`.
+function opt_all(): i32 {
+  return 1;
+}
+
+function opt_block_size(): i32 {
+  return 2;
+}
+
+function opt_human(): i32 {
+  return 3;
+}
+
+function opt_si(): i32 {
+  return 4;
+}
+
+function opt_inodes(): i32 {
+  return 5;
+}
+
+function opt_kilo(): i32 {
+  return 6;
+}
+
+function opt_local(): i32 {
+  return 7;
+}
+
+function opt_no_sync(): i32 {
+  return 8;
+}
+
+function opt_output(): i32 {
+  return 9;
+}
+
+function opt_portability(): i32 {
+  return 10;
+}
+
+function opt_sync(): i32 {
+  return 11;
+}
+
+function opt_total(): i32 {
+  return 12;
+}
+
+function opt_type(): i32 {
+  return 13;
+}
+
+function opt_print_type(): i32 {
+  return 14;
+}
+
+function opt_exclude_type(): i32 {
+  return 15;
+}
+
+function opt_verbose(): i32 {
+  return 16;
+}
+
+function declare_options(): gnu.Opt[] {
+  var opts: gnu.Opt[] = [];
+  opts = opts.append(gnu.flag("a", "all", opt_all()));
+  opts = opts.append(gnu.valued("B", "block-size", opt_block_size()));
+  opts = opts.append(gnu.flag("h", "human-readable", opt_human()));
+  opts = opts.append(gnu.flag("H", "si", opt_si()));
+  opts = opts.append(gnu.flag("i", "inodes", opt_inodes()));
+  opts = opts.append(gnu.flag("k", "", opt_kilo()));
+  opts = opts.append(gnu.flag("l", "local", opt_local()));
+  opts = opts.append(gnu.flag("", "no-sync", opt_no_sync()));
+  opts = opts.append(gnu.optional_long("", "output", opt_output()));
+  opts = opts.append(gnu.flag("P", "portability", opt_portability()));
+  opts = opts.append(gnu.flag("", "sync", opt_sync()));
+  opts = opts.append(gnu.flag("", "total", opt_total()));
+  opts = opts.append(gnu.valued("t", "type", opt_type()));
+  opts = opts.append(gnu.flag("T", "print-type", opt_print_type()));
+  opts = opts.append(gnu.valued("x", "exclude-type", opt_exclude_type()));
+  opts = opts.append(gnu.flag("v", "", opt_verbose()));
+  return opts;
+}
+
+function help_text(): string {
+  var out: string = "";
+  out = out + "Usage: df [OPTION]... [FILE]...\n";
+  out = out + "Show information about the file system on which each FILE resides,\n";
+  out = out + "or all file systems by default.\n\n";
+  out = out + "  -a, --all             include pseudo, duplicate, inaccessible file systems\n";
+  out = out + "  -B, --block-size=SIZE  scale sizes by SIZE before printing them\n";
+  out = out + "  -h, --human-readable  print sizes in powers of 1024\n";
+  out = out + "  -H, --si              print sizes in powers of 1000\n";
+  out = out + "  -i, --inodes          list inode information instead of block usage\n";
+  out = out + "  -k                    like --block-size=1K\n";
+  out = out + "  -l, --local           limit listing to local file systems\n";
+  out = out + "      --no-sync         do not invoke sync before getting usage info (default)\n";
+  out = out + "      --output[=FIELD_LIST]  use the output format defined by FIELD_LIST\n";
+  out = out + "  -P, --portability     use the POSIX output format\n";
+  out = out + "      --sync            invoke sync before getting usage info\n";
+  out = out + "      --total           produce a grand total\n";
+  out = out + "  -t, --type=TYPE       limit listing to file systems of type TYPE\n";
+  out = out + "  -T, --print-type      print file system type\n";
+  out = out + "  -x, --exclude-type=TYPE   limit listing to file systems not of type TYPE\n";
+  out = out + "  -v                    (ignored)\n";
+  out = out + "      --help        display this help and exit\n";
+  out = out + "      --version     output version information and exit\n\n";
+  out = out + "FIELD_LIST is a comma-separated list of columns to be included.  Valid\n";
+  out = out + "field names are: 'source', 'fstype', 'itotal', 'iused', 'iavail', 'ipcent',\n";
+  out = out + "'size', 'used', 'avail', 'pcent', 'file' and 'target'.\n";
+  return out;
+}
+
+// ---- fields ----------------------------------------------------------------
+// The twelve columns, in the order a bare `--output` prints them.
+function fld_source(): i32 {
+  return 0;
+}
+
+function fld_fstype(): i32 {
+  return 1;
+}
+
+function fld_itotal(): i32 {
+  return 2;
+}
+
+function fld_iused(): i32 {
+  return 3;
+}
+
+function fld_iavail(): i32 {
+  return 4;
+}
+
+function fld_ipcent(): i32 {
+  return 5;
+}
+
+function fld_size(): i32 {
+  return 6;
+}
+
+function fld_used(): i32 {
+  return 7;
+}
+
+function fld_avail(): i32 {
+  return 8;
+}
+
+function fld_pcent(): i32 {
+  return 9;
+}
+
+function fld_file(): i32 {
+  return 10;
+}
+
+function fld_target(): i32 {
+  return 11;
+}
+
+function field_names(): string[] {
+  return ["source", "fstype", "itotal", "iused", "iavail", "ipcent", "size", "used", "avail", "pcent", "file", "target"];
+}
+
+// A field's minimum column width. Only `source` has one that its header
+// does not already cover, and only the numeric block columns have one
+// that `-h`'s short headers do not: `Size` is four letters in a column
+// five wide.
+function field_min(f: i32): i32 {
+  if (f == fld_source()) {
+    return 14;
+  }
+  if (f == fld_pcent()) {
+    return 4;
+  }
+  if (f == fld_fstype() || f == fld_file() || f == fld_target()) {
+    return 4;
+  }
+  return 5;
+}
+
+// The four columns that name something are left-aligned; every column
+// that holds a measurement is right-aligned.
+function field_left(f: i32): boolean {
+  return f == fld_source() || f == fld_fstype() || f == fld_file() || f == fld_target();
+}
+
+// ---- the mount table -------------------------------------------------------
+// One line of /proc/self/mountinfo, reduced to what a row needs.
+//
+// `devno` is the major:minor the table reports, in the kernel's own
+// st_dev encoding, so it compares directly against `stat().dev`. That
+// comparison is how a mount that something else has since mounted OVER
+// is told from the one actually reachable at that path.
+struct Mount { dev: string, dir: string, kind: string, devno: i64 }
+
+// The kernel's st_dev packing: the low byte of the minor stays put, the
+// major goes above it, and a minor past 255 continues above the major.
+function makedev(major: i64, minor: i64): i64 {
+  return major * (256 as i64) + minor % (256 as i64) + minor / (256 as i64) * (1048576 as i64);
+}
+
+// mountinfo writes a space, a tab, a newline and a backslash in a mount
+// point or a type as three octal digits behind a backslash.
+function unescape(s: string): string {
+  var out: u8[] = [];
+  var i: i32 = 0;
+  while (i < s.len()) {
+    var c: i32 = s[i] as i32;
+    if (c == 92 && i + 3 < s.len() && octal_digit(s[i + 1] as i32) && octal_digit(s[i + 2] as i32) && octal_digit(s[i + 3] as i32)) {
+      var v: i32 = (s[i + 1] as i32 - 48) * 64 + (s[i + 2] as i32 - 48) * 8 + (s[i + 3] as i32 - 48);
+      out = out.append(v as u8);
+      i = i + 4;
+    } else {
+      out = out.append(c as u8);
+      i = i + 1;
+    }
+  }
+  return string_from_bytes_unchecked(out);
+}
+
+function octal_digit(c: i32): boolean {
+  return c >= 48 && c <= 55;
+}
+
+function parse_devno(s: string): i64 {
+  var major: i64 = 0 as i64;
+  var minor: i64 = 0 as i64;
+  var i: i32 = 0;
+  while (i < s.len() && gnu.is_digit(s[i] as i32)) {
+    major = major * (10 as i64) + (s[i] as i32 - 48) as i64;
+    i = i + 1;
+  }
+  if (i < s.len() && s[i] as i32 == 58) {
+    i = i + 1;
+  }
+  while (i < s.len() && gnu.is_digit(s[i] as i32)) {
+    minor = minor * (10 as i64) + (s[i] as i32 - 48) as i64;
+    i = i + 1;
+  }
+  return makedev(major, minor);
+}
+
+// The mount table in the order the kernel lists it, which is the order
+// the rows come out in. A line is
+//
+//   ID PARENT MAJ:MIN ROOT POINT OPTIONS [TAG...] - TYPE SOURCE SUPEROPTS
+//
+// with a variable run of optional tags before the `-`, so the separator
+// is searched for rather than counted to.
+function read_mounts(): Mount[] {
+  var out: Mount[] = [];
+  match (read_file("/proc/self/mountinfo")) {
+    Ok(text) => {
+      var lines: string[] = text.lines();
+      var i: i32 = 0;
+      while (i < lines.len()) {
+        var f: string[] = lines[i].fields();
+        i = i + 1;
+        if (f.len() < 10) {
+          continue;
+        }
+        var sep: i32 = 6;
+        while (sep < f.len() && f[sep] != "-") {
+          sep = sep + 1;
+        }
+        if (sep + 2 >= f.len()) {
+          continue;
+        }
+        out = out.append(Mount { dev: unescape(f[sep + 2]), dir: unescape(f[4]), kind: unescape(f[sep + 1]), devno: parse_devno(f[2]) });
+      }
+    },
+    Err(e) => {
+      gnu.error("cannot read table of mounted file systems: " + gnu.io_error_text(e));
+      exit(1);
+    }
+  }
+  return out;
+}
+
+// A type the default listing leaves out on the strength of its NAME,
+// before anything is measured — the reference binary stats none of
+// these, which is how the list is known at all.
+//
+// `devtmpfs` and `squashfs` are the two that have to be here: both
+// report a real size, so nothing else would drop them. The other three
+// report no blocks and would be dropped for that a step later; they are
+// here because that is where the reference drops them.
+//
+// Every pseudo-filesystem NOT on this list is caught by the blocks
+// rule, a 0-size tmpfs included — so the list is short by construction
+// rather than by omission.
+function dummy_type(kind: string): boolean {
+  return kind == "proc" || kind == "sysfs" || kind == "devtmpfs" || kind == "devpts" || kind == "squashfs";
+}
+
+// What `-l` leaves out. A source naming a host before a colon is the
+// rule that fires for NFS, and the one a probe can confirm: a tmpfs
+// mounted from `host:/export` disappears under `-l` exactly as an NFS
+// mount would. The `//server/share` form needs an SMB type to go with
+// it — the same tmpfs mounted from `//srv/share` stays — and which
+// types those are is not something a machine with no SMB mount can be
+// asked.
+function remote_mount(m: Mount): boolean {
+  var i: i32 = 0;
+  while (i < m.dev.len()) {
+    if (m.dev[i] as i32 == 58) {
+      return true;
+    }
+    i = i + 1;
+  }
+  if (m.dev.len() > 1 && m.dev[0] as i32 == 47 && m.dev[1] as i32 == 47) {
+    return m.kind == "smbfs" || m.kind == "smb3" || m.kind == "cifs";
+  }
+  return false;
+}
+
+// ---- rows ------------------------------------------------------------------
+// One filesystem's numbers. `ok` false is a row that exists in the table
+// and was not measured — a mount something is mounted over, or a second
+// name for a device already listed — and every measured column of it
+// prints `-`.
+struct Usage { ok: boolean, bsize: u64, blocks: u64, bfree: u64, bavail: u64, files: u64, ffree: u64 }
+
+struct Row { dev: string, dir: string, kind: string, file: string, u: Usage, total: boolean }
+
+function no_usage(): Usage {
+  return Usage { ok: false, bsize: 1 as u64, blocks: 0 as u64, bfree: 0 as u64, bavail: 0 as u64, files: 0 as u64, ffree: 0 as u64 };
+}
+
+function usage_of(fs: FsStat): Usage {
+  return Usage { ok: true, bsize: fs.block_size as u64, blocks: fs.blocks as u64, bfree: fs.blocks_free as u64, bavail: fs.blocks_avail as u64, files: fs.files as u64, ffree: fs.files_free as u64 };
+}
+
+// ---- the display unit ------------------------------------------------------
+// `Conf` — everything the option scan decides that a row is rendered
+// under.
+struct Conf { block_size: u64, suffix: string, isuffix: string, human: u64, label: string, inodes: boolean, posix: boolean, print_type: boolean, all: boolean, local: boolean, total: boolean, output: boolean, fields: i32[], include: string[], exclude: string[] }
+
+// The header over the block columns: the block size written the way
+// `-B` would have to be typed to ask for it.
+//
+// A spec that named a unit with no count is echoed back with its own
+// spelling, which is the only way `-BKiB` says `1KiB-blocks` where
+// `-B1MiB` says `1M-blocks`. Every other spec is rendered from the
+// NUMBER, in whichever base divides it further — 102400 is `100K` and
+// 256000 is `256kB`, both exact, and 1024000 divides once in each so
+// the base-1000 reading wins the tie and rounds to `1.1MB`. A block
+// size that lands on a whole number of its unit drops the `.0` that a
+// number in a COLUMN keeps.
+function block_label(size: u64, base: u64, with_b: boolean, bare: boolean): string {
+  if (bare) {
+    return "1" + blocks.unit_text(size, base, with_b);
+  }
+  if (exact_power(size, 1024 as u64) > exact_power(size, 1000 as u64)) {
+    return blocks.human(size, 1024 as u64, false);
+  }
+  return blocks.human(size, 1000 as u64, false) + "B";
+}
+
+// How many times `base` divides `n` exactly.
+function exact_power(n: u64, base: u64): i32 {
+  var e: i32 = 0;
+  var d: u64 = base;
+  while (d <= n && n % d == 0 as u64) {
+    e = e + 1;
+    if (d > n / base) {
+      break;
+    }
+    d = d * base;
+  }
+  return e;
+}
+
+// A count of `from`-byte blocks, in `to`-byte blocks, rounded UP. The
+// two divisible cases are separated out so that a filesystem whose
+// block count times its block size would not fit in 64 bits still
+// scales exactly.
+function rescale(n: u64, from: u64, to: u64): u64 {
+  if (from == to) {
+    return n;
+  }
+  if (from % to == 0 as u64) {
+    return n * (from / to);
+  }
+  if (to % from == 0 as u64) {
+    var d: u64 = to / from;
+    var q: u64 = n / d;
+    if (n % d != 0 as u64) {
+      q = q + 1 as u64;
+    }
+    return q;
+  }
+  var p: u64 = n * from;
+  var r: u64 = p / to;
+  if (p % to != 0 as u64) {
+    r = r + 1 as u64;
+  }
+  return r;
+}
+
+// A block count as a cell: scaled by the human base from its size in
+// BYTES, or divided by the block size and given the unit a bare `-BK`
+// asked for.
+function show_blocks(c: Conf, n: u64, bsize: u64): string {
+  if (c.human > 0 as u64) {
+    return blocks.human(n * bsize, c.human, true);
+  }
+  return rescale(n, bsize, c.block_size).to_string() + c.suffix;
+}
+
+// An inode count as a cell. The block size never divides it — `-BM -i`
+// prints the count itself — but the unit a bare `-BK` names still
+// follows it, read off THIS column's divisor of 1 rather than off the
+// spec: `-BKiB` leaves an inode column printing a bare `B` while the
+// block columns beside it print `KiB`.
+function show_inodes(c: Conf, n: u64): string {
+  if (c.human > 0 as u64) {
+    return blocks.human(n, c.human, true);
+  }
+  return n.to_string() + c.isuffix;
+}
+
+// used / (used + free), rounded up, and `-` rather than a division by
+// zero when there is nothing to be a percentage of.
+function percent(used: u64, avail: u64): string {
+  var total: u64 = used + avail;
+  if (total == 0 as u64) {
+    return "-";
+  }
+  var q: u64 = used * (100 as u64) / total;
+  if (used * (100 as u64) % total != 0 as u64) {
+    q = q + 1 as u64;
+  }
+  return q.to_string() + "%";
+}
+
+// ---- headers ---------------------------------------------------------------
+function header_of(c: Conf, f: i32): string {
+  if (f == fld_source()) {
+    return "Filesystem";
+  }
+  if (f == fld_fstype()) {
+    return "Type";
+  }
+  if (f == fld_itotal()) {
+    return "Inodes";
+  }
+  if (f == fld_iused()) {
+    return "IUsed";
+  }
+  if (f == fld_iavail()) {
+    return "IFree";
+  }
+  if (f == fld_ipcent()) {
+    return "IUse%";
+  }
+  if (f == fld_size()) {
+    if (c.human > 0 as u64) {
+      return "Size";
+    }
+    if (c.posix) {
+      return c.block_size.to_string() + "-blocks";
+    }
+    return c.label + "-blocks";
+  }
+  if (f == fld_used()) {
+    return "Used";
+  }
+  if (f == fld_avail()) {
+    // `Available` is the wide spelling the default and POSIX layouts
+    // use; `--output` and the human-readable layouts abbreviate it.
+    if (c.human > 0 as u64 || c.output) {
+      return "Avail";
+    }
+    return "Available";
+  }
+  if (f == fld_pcent()) {
+    if (c.posix && c.human == 0 as u64) {
+      return "Capacity";
+    }
+    return "Use%";
+  }
+  if (f == fld_file()) {
+    return "File";
+  }
+  return "Mounted on";
+}
+
+// ---- cells -----------------------------------------------------------------
+function cell_of(c: Conf, r: Row, f: i32): string {
+  // The grand total is labelled in the leftmost column that names
+  // something, and the other one then prints `-`.
+  var label_in_source: boolean = has_field(c.fields, fld_source());
+  if (f == fld_source()) {
+    if (r.total) {
+      if (label_in_source) {
+        return "total";
+      }
+      return "-";
+    }
+    return r.dev;
+  }
+  if (f == fld_target()) {
+    if (r.total) {
+      if (label_in_source) {
+        return "-";
+      }
+      return "total";
+    }
+    return r.dir;
+  }
+  if (f == fld_file()) {
+    if (r.total || r.file.len() == 0) {
+      return "-";
+    }
+    return r.file;
+  }
+  if (f == fld_fstype()) {
+    if (r.total || !r.u.ok) {
+      return "-";
+    }
+    return r.kind;
+  }
+  if (!r.u.ok) {
+    return "-";
+  }
+  if (f == fld_itotal()) {
+    return show_inodes(c, r.u.files);
+  }
+  if (f == fld_iused()) {
+    return show_inodes(c, r.u.files - r.u.ffree);
+  }
+  if (f == fld_iavail()) {
+    return show_inodes(c, r.u.ffree);
+  }
+  if (f == fld_ipcent()) {
+    return percent(r.u.files - r.u.ffree, r.u.ffree);
+  }
+  if (f == fld_size()) {
+    return show_blocks(c, r.u.blocks, r.u.bsize);
+  }
+  if (f == fld_used()) {
+    return show_blocks(c, r.u.blocks - r.u.bfree, r.u.bsize);
+  }
+  if (f == fld_avail()) {
+    return show_blocks(c, r.u.bavail, r.u.bsize);
+  }
+  return percent(r.u.blocks - r.u.bfree, r.u.bavail);
+}
+
+function spaces(n: i32): string {
+  var bs: u8[] = [];
+  var i: i32 = 0;
+  while (i < n) {
+    bs = bs.append(32 as u8);
+    i = i + 1;
+  }
+  return string_from_bytes_unchecked(bs);
+}
+
+// ---- the grand total -------------------------------------------------------
+// The total row is a sum of the rows that were measured, in BYTES so
+// that filesystems with different block sizes add up, and then divided
+// back by a block size of one.
+function grand_total(rows: Row[]): Row {
+  var blk: u64 = 0 as u64;
+  var free: u64 = 0 as u64;
+  var avail: u64 = 0 as u64;
+  var files: u64 = 0 as u64;
+  var ffree: u64 = 0 as u64;
+  var i: i32 = 0;
+  while (i < rows.len()) {
+    if (rows[i].u.ok) {
+      blk = blk + rows[i].u.blocks * rows[i].u.bsize;
+      free = free + rows[i].u.bfree * rows[i].u.bsize;
+      avail = avail + rows[i].u.bavail * rows[i].u.bsize;
+      files = files + rows[i].u.files;
+      ffree = ffree + rows[i].u.ffree;
+    }
+    i = i + 1;
+  }
+  return Row { dev: "total", dir: "-", kind: "-", file: "-", u: Usage { ok: true, bsize: 1 as u64, blocks: blk, bfree: free, bavail: avail, files: files, ffree: ffree }, total: true };
+}
+
+// ---- printing --------------------------------------------------------------
+function print_table(c: Conf, rows: Row[]): void {
+  var out: gnu.Stdio = gnu.stdio_new();
+
+  var cells: string[] = [];
+  var widths: i32[] = [];
+  var fi: i32 = 0;
+  while (fi < c.fields.len()) {
+    var h: string = header_of(c, c.fields[fi]);
+    cells = cells.append(h);
+    var w: i32 = field_min(c.fields[fi]);
+    if (h.len() > w) {
+      w = h.len();
+    }
+    widths = widths.append(w);
+    fi = fi + 1;
+  }
+  var ri: i32 = 0;
+  while (ri < rows.len()) {
+    fi = 0;
+    while (fi < c.fields.len()) {
+      var v: string = cell_of(c, rows[ri], c.fields[fi]);
+      cells = cells.append(v);
+      if (v.len() > widths[fi]) {
+        widths = widths.with(fi, v.len());
+      }
+      fi = fi + 1;
+    }
+    ri = ri + 1;
+  }
+
+  var line: i32 = 0;
+  var n: i32 = rows.len() + 1;
+  while (line < n) {
+    var text: string = "";
+    fi = 0;
+    while (fi < c.fields.len()) {
+      var cell: string = cells[line * c.fields.len() + fi];
+      var pad: i32 = widths[fi] - cell.len();
+      if (fi > 0) {
+        text = text + " ";
+      }
+      if (field_left(c.fields[fi])) {
+        text = text + cell;
+        if (fi + 1 < c.fields.len()) {
+          text = text + spaces(pad);
+        }
+      } else {
+        text = text + spaces(pad) + cell;
+      }
+      fi = fi + 1;
+    }
+    out = out.fwrite(text + "\n");
+    line = line + 1;
+  }
+  out.close_stdout();
+}
+
+function has_field(fields: i32[], f: i32): boolean {
+  var i: i32 = 0;
+  while (i < fields.len()) {
+    if (fields[i] == f) {
+      return true;
+    }
+    i = i + 1;
+  }
+  return false;
+}
+
+// ---- selection -------------------------------------------------------------
+function type_listed(names: string[], kind: string): boolean {
+  var i: i32 = 0;
+  while (i < names.len()) {
+    if (names[i] == kind) {
+      return true;
+    }
+    i = i + 1;
+  }
+  return false;
+}
+
+// Whether a mount of this type and locality survives `-t` / `-x` / `-l`.
+function selected(c: Conf, m: Mount): boolean {
+  if (c.local && remote_mount(m)) {
+    return false;
+  }
+  if (c.include.len() > 0 && !type_listed(c.include, m.kind)) {
+    return false;
+  }
+  if (type_listed(c.exclude, m.kind)) {
+    return false;
+  }
+  return true;
+}
+
+// What the pass over the mount table decides about one entry.
+// `duplicate` is a second mount of a device already listed under the
+// SAME name: another view of one filesystem, measured again under `-a`
+// and listed once without it. `alias` is the same device under a
+// DIFFERENT name, or a mount point something else now sits on — those
+// are the rows `-a` prints with every measured column a `-`.
+function state_kept(): i32 {
+  return 0;
+}
+
+function state_duplicate(): i32 {
+  return 1;
+}
+
+function state_alias(): i32 {
+  return 2;
+}
+
+function state_dropped(): i32 {
+  return 3;
+}
+
+// ---- the whole table -------------------------------------------------------
+// Every mount, in the table's own order, filtered.
+//
+// The device an entry is FOR is the one `stat(2)` reports for its mount
+// point, not the one the table records: those differ exactly when
+// something has since been mounted over it, and the numbers a row shows
+// are then the top filesystem's — which is what `statfs` on the mount
+// point answers anyway.
+//
+// Two entries claiming one device is the whole of the deduplication.
+// Under the same name the second is another view of one filesystem;
+// under a different name one of the two is an alias, and the one that
+// is really reachable there wins, the first of them when both are.
+//
+// Without `-a` three more rules drop a row: a type that is a kernel
+// interface, an alias, and — last, because it needs the numbers — a
+// filesystem with no blocks at all, which is a kernel interface that
+// did not declare itself in its name.
+function list_all(c: Conf): Row[] {
+  var mounts: Mount[] = read_mounts();
+  var state: i32[] = [];
+  var seen_key: i64[] = [];
+  var seen_name: string[] = [];
+  var seen_live: boolean[] = [];
+  var seen_row: i32[] = [];
+
+  var i: i32 = 0;
+  while (i < mounts.len()) {
+    var m: Mount = mounts[i];
+    if (!c.all && dummy_type(m.kind)) {
+      state = state.append(state_dropped());
+      i = i + 1;
+      continue;
+    }
+    var key: i64 = 0 as i64;
+    var known: boolean = false;
+    match (stat(m.dir)) {
+      Ok(st) => {
+        key = st.dev;
+        known = true;
+      },
+      Err(_) => {}
+    }
+    if (!known) {
+      state = state.append(state_alias());
+      i = i + 1;
+      continue;
+    }
+    var live: boolean = m.devno == key;
+    var found: i32 = 0 - 1;
+    var j: i32 = 0;
+    while (j < seen_key.len()) {
+      if (seen_key[j] == key) {
+        found = j;
+        break;
+      }
+      j = j + 1;
+    }
+    if (found < 0) {
+      seen_key = seen_key.append(key);
+      seen_name = seen_name.append(m.dev);
+      seen_live = seen_live.append(live);
+      seen_row = seen_row.append(i);
+      state = state.append(state_kept());
+    } else if (seen_name[found] == m.dev) {
+      state = state.append(state_duplicate());
+    } else if (live && !seen_live[found]) {
+      // The stored entry is a mount something has since been mounted
+      // over, and this one is what is actually reachable there.
+      state = state.with(seen_row[found], state_alias());
+      seen_name = seen_name.with(found, m.dev);
+      seen_live = seen_live.with(found, live);
+      seen_row = seen_row.with(found, i);
+      state = state.append(state_kept());
+    } else {
+      state = state.append(state_alias());
+    }
+    i = i + 1;
+  }
+
+  var rows: Row[] = [];
+  i = 0;
+  while (i < mounts.len()) {
+    var mt: Mount = mounts[i];
+    var st: i32 = state[i];
+    i = i + 1;
+    if (st == state_dropped()) {
+      continue;
+    }
+    if (!selected(c, mt)) {
+      continue;
+    }
+    if (!c.all && st != state_kept()) {
+      continue;
+    }
+    var u: Usage = no_usage();
+    if (st != state_alias()) {
+      match (statfs(mt.dir)) {
+        Ok(fs) => {
+          u = usage_of(fs);
+        },
+        Err(_) => {}
+      }
+    }
+    if (!c.all && (!u.ok || u.blocks == 0 as u64)) {
+      continue;
+    }
+    rows = rows.append(Row { dev: mt.dev, dir: mt.dir, kind: mt.kind, file: "", u: u, total: false });
+  }
+  return rows;
+}
+
+// ---- operands --------------------------------------------------------------
+// A mount point matches a path when it IS the path or a directory
+// component of it. `/` matches everything, and `/tmp` does not match
+// `/tmpfile`.
+function under(dir: string, path: string): boolean {
+  if (dir == "/") {
+    return true;
+  }
+  if (path.len() < dir.len()) {
+    return false;
+  }
+  var i: i32 = 0;
+  while (i < dir.len()) {
+    if (path[i] != dir[i]) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return path.len() == dir.len() || path[dir.len()] as i32 == 47;
+}
+
+function drop_trailing_slashes(s: string): string {
+  var n: i32 = s.len();
+  while (n > 1 && s[n - 1] as i32 == 47) {
+    n = n - 1;
+  }
+  return slice_unchecked(s, 0, n) + "";
+}
+
+// Which mount an operand lives on. A BLOCK DEVICE named as the operand
+// is the filesystem mounted FROM it rather than the one the device node
+// itself sits on, which is what makes `df /dev/sda1` answer about the
+// volume. Otherwise it is the mount whose point is the longest prefix
+// of the resolved name, and the LAST such entry when several share it:
+// that is the one on top.
+function find_mount(mounts: Mount[], path: string, is_block: boolean): i32 {
+  if (is_block) {
+    var i: i32 = 0;
+    while (i < mounts.len()) {
+      if (mounts[i].dev == path) {
+        return i;
+      }
+      i = i + 1;
+    }
+  }
+  var best: i32 = 0 - 1;
+  var best_len: i32 = 0 - 1;
+  var j: i32 = 0;
+  while (j < mounts.len()) {
+    if (under(mounts[j].dir, path) && mounts[j].dir.len() >= best_len) {
+      best = j;
+      best_len = mounts[j].dir.len();
+    }
+    j = j + 1;
+  }
+  return best;
+}
+
+function resolve(name: string): string {
+  match (canon.canonicalize(name, canon.existing(), false)) {
+    Ok(p) => {
+      return drop_trailing_slashes(p);
+    },
+    Err(_) => {}
+  }
+  return drop_trailing_slashes(name);
+}
+
+// `S_IFBLK`.
+function is_block_device(mode: u32): boolean {
+  return (mode & 61440 as u32) == 24576 as u32;
+}
+
+// The rows the operands name, and whether any of them failed. A failed
+// operand costs the exit status and not the run, and it also suppresses
+// the `no file systems processed` report: something WAS asked about and
+// it was already diagnosed.
+function list_operands(c: Conf, names: string[]): (Row[], boolean) {
+  var mounts: Mount[] = read_mounts();
+  var rows: Row[] = [];
+  var failed: boolean = false;
+  var i: i32 = 0;
+  while (i < names.len()) {
+    var name: string = names[i];
+    i = i + 1;
+    var mode: u32 = 0 as u32;
+    var have: boolean = false;
+    match (stat(name)) {
+      Ok(st) => {
+        mode = st.mode;
+        have = true;
+      },
+      Err(e) => {
+        gnu.error(gnu.quotef(name) + ": " + gnu.io_error_text(e));
+        failed = true;
+      }
+    }
+    if (!have) {
+      continue;
+    }
+    var path: string = resolve(name);
+    var block: boolean = is_block_device(mode);
+    var idx: i32 = find_mount(mounts, path, block);
+    if (idx < 0) {
+      continue;
+    }
+    var m: Mount = mounts[idx];
+    if (!selected(c, m)) {
+      continue;
+    }
+    // A device operand is measured at the mount point, because the node
+    // itself lives on another filesystem entirely.
+    var probe: string = name;
+    if (block && m.dev == path) {
+      probe = m.dir;
+    }
+    var u: Usage = no_usage();
+    var bad: boolean = false;
+    match (statfs(probe)) {
+      Ok(fs) => {
+        u = usage_of(fs);
+      },
+      Err(e) => {
+        gnu.error(gnu.quotef(name) + ": " + gnu.io_error_text(e));
+        failed = true;
+        bad = true;
+      }
+    }
+    if (bad) {
+      continue;
+    }
+    rows = rows.append(Row { dev: m.dev, dir: m.dir, kind: m.kind, file: name, u: u, total: false });
+  }
+  return (rows, failed);
+}
+
+// ---- the field list --------------------------------------------------------
+// `--output=LIST`, accumulated across every occurrence, so
+// `--output=size --output=used` names two columns and repeating one is
+// the same fault as naming it twice in one list.
+function parse_fields(have: i32[], spec: string): i32[] {
+  var names: string[] = field_names();
+  var out: i32[] = have;
+  var start: i32 = 0;
+  var i: i32 = 0;
+  while (i <= spec.len()) {
+    if (i == spec.len() || spec[i] as i32 == 44) {
+      var word: string = slice_unchecked(spec, start, i) + "";
+      var f: i32 = 0 - 1;
+      var j: i32 = 0;
+      while (j < names.len()) {
+        if (names[j] == word) {
+          f = j;
+          break;
+        }
+        j = j + 1;
+      }
+      if (f < 0) {
+        gnu.die_usage("option --output: field " + gnu.quote(word) + " unknown", 1);
+      }
+      if (has_field(out, f)) {
+        gnu.die_usage("option --output: field " + gnu.quote(word) + " used more than once", 1);
+      }
+      out = out.append(f);
+      start = i + 1;
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+// The columns a layout that is not `--output` prints.
+function default_fields(c: Conf): i32[] {
+  var out: i32[] = [fld_source()];
+  if (c.print_type) {
+    out = out.append(fld_fstype());
+  }
+  if (c.inodes) {
+    out = out.append(fld_itotal());
+    out = out.append(fld_iused());
+    out = out.append(fld_iavail());
+    out = out.append(fld_ipcent());
+  } else {
+    out = out.append(fld_size());
+    out = out.append(fld_used());
+    out = out.append(fld_avail());
+    out = out.append(fld_pcent());
+  }
+  return out.append(fld_target());
+}
+
+function all_fields(): i32[] {
+  return [fld_source(), fld_fstype(), fld_itotal(), fld_iused(), fld_iavail(), fld_ipcent(), fld_size(), fld_used(), fld_avail(), fld_pcent(), fld_file(), fld_target()];
+}
+
+// ---- main ------------------------------------------------------------------
+function main(): i32 {
+  var argv: string[] = args();
+  var opts: gnu.Opt[] = declare_options();
+
+  var unit: blocks.Unit = blocks.default_unit();
+  var all: boolean = false;
+  var inodes: boolean = false;
+  var local: boolean = false;
+  var posix: boolean = false;
+  var print_type: boolean = false;
+  var total: boolean = false;
+  var output: boolean = false;
+  var fields: i32[] = [];
+  var include: string[] = [];
+  var exclude: string[] = [];
+
+  var g: gnu.Getopt = gnu.getopt_new(argv, opts, "df", help_text(), 1);
+  while (true) {
+    var r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    g = r.1;
+    var done: boolean = false;
+    match (r.0) {
+      Some(m) => {
+        if (m.id == opt_all()) {
+          all = true;
+        } else if (m.id == opt_block_size()) {
+          var n: blocks.Num = blocks.parse_num(m.value, false, true, false);
+          if (n.status != blocks.size_ok()) {
+            blocks.die_size(n.status, blocks.option_name(m, "--block-size", "-B"), m.value);
+          }
+          unit = blocks.unit_from(n);
+        } else if (m.id == opt_human()) {
+          unit = blocks.human_unit(1024 as u64);
+        } else if (m.id == opt_si()) {
+          unit = blocks.human_unit(1000 as u64);
+        } else if (m.id == opt_kilo()) {
+          unit = blocks.plain_unit(1024 as u64);
+        } else if (m.id == opt_inodes()) {
+          inodes = true;
+        } else if (m.id == opt_local()) {
+          local = true;
+        } else if (m.id == opt_portability()) {
+          posix = true;
+        } else if (m.id == opt_print_type()) {
+          print_type = true;
+        } else if (m.id == opt_total()) {
+          total = true;
+        } else if (m.id == opt_type()) {
+          include = include.append(m.value);
+        } else if (m.id == opt_exclude_type()) {
+          exclude = exclude.append(m.value);
+        } else if (m.id == opt_output()) {
+          output = true;
+          if (m.has_value) {
+            fields = parse_fields(fields, m.value);
+          }
+        }
+        // The three layouts --output replaces are refused as soon as
+        // both have been seen, whichever came first; -i outranks -P and
+        // -P outranks -T in the wording.
+        if (output && (inodes || posix || print_type)) {
+          var which: string = "-T";
+          if (inodes) {
+            which = "-i";
+          } else if (posix) {
+            which = "-P";
+          }
+          gnu.die_usage("options " + which + " and --output are mutually exclusive", 1);
+        }
+      },
+      None => {
+        done = true;
+      }
+    }
+    if (done) {
+      break;
+    }
+  }
+
+  var i: i32 = 0;
+  while (i < include.len()) {
+    if (type_listed(exclude, include[i])) {
+      gnu.error("file system type " + gnu.quote(include[i]) + " both selected and excluded");
+      exit(1);
+    }
+    i = i + 1;
+  }
+
+  // -P pins the block size itself, so an environment that names one is
+  // ignored there; an explicit option still wins over both.
+  if (!unit.chosen) {
+    if (posix) {
+      unit = blocks.posix_default();
+    } else {
+      unit = blocks.env_unit(["DF_BLOCK_SIZE", "BLOCK_SIZE", "BLOCKSIZE"]);
+    }
+  }
+  var label: string = block_label(unit.block_size, unit.base, unit.with_b, unit.show_suffix);
+  var suffix: string = "";
+  var isuffix: string = "";
+  if (unit.show_suffix) {
+    suffix = blocks.unit_text(unit.block_size, unit.base, unit.with_b);
+    isuffix = blocks.unit_text(1 as u64, unit.base, unit.with_b);
+  }
+
+  var c: Conf = Conf { block_size: unit.block_size, suffix: suffix, isuffix: isuffix, human: unit.human, label: label, inodes: inodes, posix: posix, print_type: print_type, all: all, local: local, total: total, output: output, fields: [], include: include, exclude: exclude };
+  if (output) {
+    if (fields.len() == 0) {
+      fields = all_fields();
+    }
+    c = Conf { ...c, fields: fields };
+  } else {
+    c = Conf { ...c, fields: default_fields(c) };
+  }
+
+  var operands: string[] = g.operands();
+  var rows: Row[] = [];
+  var failed: boolean = false;
+  if (operands.len() > 0) {
+    var got: (Row[], boolean) = list_operands(c, operands);
+    rows = got.0;
+    failed = got.1;
+  } else {
+    rows = list_all(c);
+  }
+
+  if (rows.len() == 0) {
+    if (!failed) {
+      gnu.error("no file systems processed");
+    }
+    return 1;
+  }
+  if (total) {
+    rows = rows.append(grand_total(rows));
+  }
+  print_table(c, rows);
+  if (failed) {
+    return 1;
+  }
+  return 0;
+}
