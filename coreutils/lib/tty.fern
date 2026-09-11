@@ -1,0 +1,116 @@
+// coreutils/lib/tty.fern — ttyname(3) as glibc answers it, for the
+// utilities that name the terminal a descriptor is open on: tty(1)
+// prints it, logname(1) matches it against the utmp database.
+//
+// glibc has two routes and takes them in this order, because they do not
+// always agree:
+//
+//   1. `/proc/self/fd/N` — the kernel's own answer, and the only one
+//      that can tell two device nodes sharing a device number apart.
+//      /dev/ptmx and /dev/pts/ptmx are exactly that pair, so a program
+//      that skips this route answers `/dev/pts/ptmx` where GNU says
+//      `/dev/ptmx`. The link is trusted only when it names an absolute
+//      path that still stats to the SAME character device, since a
+//      descriptor inherited across a mount namespace can leave a link
+//      pointing at a node that is gone or is now something else.
+//   2. Failing that, a walk of /dev/pts and then /dev for a character
+//      device with the descriptor's device number. /dev/pts first
+//      because that is where every pseudo-terminal is and a login on a
+//      real console is the rarer case.
+//
+// A descriptor that is not a terminal has no name and is None, whatever
+// the reason — a closed one, a pipe and a regular file all answer the
+// same, which is what `tty` prints `not a tty` for.
+import "std/string";
+import "std/array";
+
+// The directories the walk searches, in order.
+function dirs(): string[] {
+  return ["/dev/pts", "/dev"];
+}
+
+// S_IFCHR under the S_IFMT mask: a terminal is a character device and
+// nothing else can share its device number.
+function is_char_device(st: FileStat): boolean {
+  return (st.mode & 61440 as u32) == 8192 as u32;
+}
+
+// The path the kernel records for the descriptor, when it still names
+// the same device.
+function proc_name(want: i64): Option[string] {
+  match (read_link("/proc/self/fd/0")) {
+    Ok(target) => {
+      if (target.len() == 0 || target[0] as i32 != 47) {
+        return None;
+      }
+      match (stat(target)) {
+        Ok(st) => {
+          if (is_char_device(st) && st.rdev == want) {
+            return Some(target);
+          }
+        },
+        Err(_) => {}
+      }
+    },
+    Err(_) => {}
+  }
+  return None;
+}
+
+// The first character device under /dev/pts or /dev with that device
+// number. A directory that cannot be read contributes nothing.
+function walk_dev(want: i64): Option[string] {
+  var ds: string[] = dirs();
+  var d: i32 = 0;
+  while (d < ds.len()) {
+    match (read_dir(ds[d])) {
+      Ok(names) => {
+        var i: i32 = 0;
+        while (i < names.len()) {
+          var path: string = ds[d] + "/" + names[i];
+          match (stat(path)) {
+            Ok(st) => {
+              if (is_char_device(st) && st.rdev == want) {
+                return Some(path);
+              }
+            },
+            Err(_) => {}
+          }
+          i = i + 1;
+        }
+      },
+      Err(_) => {}
+    }
+    d = d + 1;
+  }
+  return None;
+}
+
+// `name_of_stdin()` — ttyname(0).
+pub function name_of_stdin(): Option[string] {
+  if (!isatty(0)) {
+    return None;
+  }
+  var want: i64 = 0;
+  match (stdin().stat()) {
+    Ok(st) => {
+      if (!is_char_device(st)) {
+        return None;
+      }
+      want = st.rdev;
+    },
+    Err(_) => {
+      return None;
+    }
+  }
+  if (want == 0 as i64) {
+    return None;
+  }
+  match (proc_name(want)) {
+    Some(path) => {
+      return Some(path);
+    },
+    None => {}
+  }
+  return walk_dev(want);
+}

@@ -4523,8 +4523,11 @@ function main(): i32 {
 // match, first line wins), nsswitch's `hosts:` line with its bracketed
 // actions and compiled-in default, resolv.conf's defaults and caps, the
 // res_search candidate order, and RFC 1035 A queries and replies (a CNAME
-// ahead of its A record, every status). Two live cases run against this
-// machine's own /etc/hosts. Passing suite -> exit 0.
+// ahead of its A record, every status), and the canonical-name lookup
+// `who --lookup` makes: the first name on a matching hosts line, taken
+// from a line of either address family, and the owner of the A record at
+// the end of a CNAME chain. Two live cases run against this machine's
+// own /etc/hosts. Passing suite -> exit 0.
 func TestRunnerCoreutilsResolvExamplePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := langSrcAbs(t, "examples/tests/coreutils_resolv_test.fern")
@@ -4532,7 +4535,7 @@ func TestRunnerCoreutilsResolvExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: coreutils/lib/resolv", "1..28", "# pass 28", "# fail 0"} {
+	for _, w := range []string{"# Suite: coreutils/lib/resolv", "1..32", "# pass 32", "# fail 0"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
@@ -4544,7 +4547,9 @@ func TestRunnerCoreutilsResolvExamplePasses(t *testing.T) {
 // read. internal/coreutils compares those utilities against GNU on the
 // machine that runs them, which cannot reach the rules that depend on
 // what is IN the databases: a malformed line, a repeated name, a gid no
-// group entry claims, getgrouplist's ordering. Those take fixture text
+// group entry claims, getgrouplist's ordering, and the gecos field
+// `pinky` prints as a real name — where `&` stands for the login name
+// and no machine's own passwd file has one. Those take fixture text
 // here. The utmp half pins the record's byte offsets and widths, every
 // one of which is silent when wrong. Passing suite -> exit 0.
 func TestRunnerCoreutilsPwdbExamplePasses(t *testing.T) {
@@ -4554,7 +4559,30 @@ func TestRunnerCoreutilsPwdbExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: coreutils/lib/pwdb + lib/utmp", "1..13", "# pass 13", "# fail 0"} {
+	for _, w := range []string{"# Suite: coreutils/lib/pwdb + lib/utmp", "1..15", "# pass 15", "# fail 0"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `examples/tests/coreutils_selinux_test.fern` covers coreutils/lib/selinux's
+// getcon trim, which the oracle corpus cannot reach: the context comes from
+// /proc/self/attr/current and neither `runcon` nor `id -Z` has an operand
+// pointing anywhere else, so a case only ever sees what THIS machine's kernel
+// wrote. A container under AppArmor writes a NUL and no newline, where the
+// aarch64 runner writes a context ending in one — and a newline there belongs
+// to the context, so runcon with no command prints a blank line after it.
+// Trimming it agreed with GNU on the first host and differed by a byte on the
+// second, in every no-command case at once. Passing suite -> exit 0.
+func TestRunnerCoreutilsSelinuxExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/coreutils_selinux_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: coreutils/lib/selinux", "1..7", "# pass 7", "# fail 0"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}

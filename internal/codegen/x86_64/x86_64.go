@@ -257,6 +257,15 @@ const (
 	sysSymlinkat  = 266
 	sysReadlinkat = 267
 	sysUmask      = 95
+	// The filesystem-metadata primitives: renameat(2) 264,
+	// fchmodat(2) 268 and utimensat(2) 280. Linux's fchmodat takes
+	// THREE arguments, not four: the flags-taking form is fchmodat2
+	// (452), and the one flag it adds — AT_SYMLINK_NOFOLLOW — is
+	// EOPNOTSUPP here anyway, so `chmod` follows a final symlink and
+	// has no flag to pass.
+	sysRenameat  = 264
+	sysFchmodat  = 268
+	sysUtimensat = 280
 	// geteuid(2) / getegid(2): x86-64 syscalls 107 / 108.
 	sysGeteuid = 107
 	sysGetegid = 108
@@ -305,6 +314,20 @@ const (
 	// ioctl(2): x86-64 syscall 16. Backs `__fern_isatty` via TCGETS,
 	// which succeeds only on a terminal.
 	sysIoctl = 16
+	// kill(2): x86-64 syscall 62. Backs `__fern_process_alive`, which
+	// sends signal 0 — every permission and existence check kill(2)
+	// makes, with nothing delivered.
+	sysKill = 62
+	// getrlimit(2): x86-64 syscall 97. Backs `__fern_rlimit_nofile`.
+	// The 64-bit ABI's `struct rlimit` is two u64s, so the ancient
+	// 32-bit truncation the man page warns about does not apply and
+	// prlimit64 would buy nothing here.
+	sysGetrlimit = 97
+	// statfs(2): x86-64 syscall 137. Backs `__fern_statfs`. The 64-bit
+	// `struct statfs` is 120 bytes of `long`-wide words; there is no
+	// statvfs syscall on Linux at all, glibc's being a re-projection of
+	// this one.
+	sysStatfs = 137
 	// rt_sigaction(2): x86-64 syscall 13. Backs `__fern_signal_ignore`
 	// and `__fern_signal_default`.
 	sysRtSigaction = 13
@@ -608,7 +631,8 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	// working buffers (#9001); remove_dir_all also releases its child paths.
 	if g.usesRemoveDirAll || g.usesRemoveFile || g.usesCreateDirAll || g.usesCreateDir ||
 		g.usesRemoveDir || g.usesCreateLink || g.usesCreateSymlink || g.usesTempDir ||
-		g.usesReadDir || g.usesStat || g.usesLstat || g.usesAccess || g.usesReadLink {
+		g.usesReadDir || g.usesStat || g.usesLstat || g.usesAccess || g.usesReadLink ||
+		g.usesRename || g.usesChmod || g.usesSetFileTimes {
 		g.usesFree = true
 	}
 	if g.usesRemoveDirAll {
@@ -784,6 +808,9 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	if g.usesSleepMs {
 		g.emitSleepMsRuntime()
 	}
+	if g.usesSleepNs {
+		g.emitSleepNsRuntime()
+	}
 	if g.usesProcFork {
 		g.emitProcForkRuntime()
 	}
@@ -819,6 +846,15 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	}
 	if g.usesTimerFd {
 		g.emitTimerFdRuntime()
+	}
+	if g.usesStatfs {
+		g.emitStatfsRuntime()
+	}
+	if g.usesRlimitNofile {
+		g.emitRlimitNofileRuntime()
+	}
+	if g.usesProcessAlive {
+		g.emitProcessAliveRuntime()
 	}
 	if g.usesIsatty {
 		g.emitIsattyRuntime()
@@ -900,6 +936,15 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	}
 	if g.usesUmask {
 		g.emitUmaskRuntime()
+	}
+	if g.usesRename {
+		g.emitRenameRuntime()
+	}
+	if g.usesChmod {
+		g.emitChmodRuntime()
+	}
+	if g.usesSetFileTimes {
+		g.emitSetFileTimesRuntime()
 	}
 	if g.usesTempDir {
 		g.emitTempDirRuntime()
@@ -1117,6 +1162,10 @@ type generator struct {
 	// for `ms` milliseconds via `nanosleep(&req, NULL)` (#35); ms <= 0
 	// returns immediately. Void.
 	usesSleepMs bool
+	// usesSleepNs pulls in `__fern_sleep_ns(ns)` — the same sleep at
+	// nanosecond resolution, which is what `nanosleep` takes anyway;
+	// ns <= 0 returns immediately. Void.
+	usesSleepNs bool
 	// usesProcExec pulls in `__fern_proc_exec(path, args)` — execve(2),
 	// the leg that lets a forked child become another program. Shares the
 	// `proc` capability with fork / waitpid and needs the allocator (it
@@ -1146,6 +1195,17 @@ type generator struct {
 	usesWasmPoll          bool
 	usesWasmBlock         bool
 	usesTimerFd           bool
+	// usesStatfs pulls in `__fern_statfs(path)` — statfs(2) projected
+	// onto FsStat, with the errno as an IoError.
+	usesStatfs bool
+	// usesRlimitNofile pulls in `__fern_rlimit_nofile()` — the soft
+	// RLIMIT_NOFILE, or i64 max when the resource is unlimited.
+	usesRlimitNofile bool
+	// usesProcessAlive pulls in `__fern_process_alive(pid)` — kill(pid, 0),
+	// 1 when the process exists (success or EPERM) and 0 when it does not
+	// (ESRCH). A non-positive pid is 0 without a syscall: those spellings
+	// name a process group to kill(2), not a process.
+	usesProcessAlive bool
 	// usesIsatty pulls in `__fern_isatty(fd)` — one TCGETS ioctl,
 	// 1 when it succeeds.
 	usesIsatty bool
@@ -1411,6 +1471,11 @@ type generator struct {
 	usesCreateSymlink bool
 	usesReadLink      bool
 	usesUmask         bool
+	// The filesystem-metadata primitives (#9059): renameat, fchmodat
+	// and utimensat, each one syscall over one or two path operands.
+	usesRename       bool
+	usesChmod        bool
+	usesSetFileTimes bool
 
 	// usesReaderWriter pulls in the full Reader / Writer
 	// runtime bundle (stdin/stdout/stderr + open_reader /
@@ -1685,6 +1750,8 @@ func (g *generator) recordUse(target string) {
 		g.usesNowNs = true
 	case "sleep_ms":
 		g.usesSleepMs = true
+	case "sleep_ns":
+		g.usesSleepNs = true
 	case "proc_exec":
 		g.usesProcExec = true
 		g.usesAlloc = true // NUL-terminated argv copies
@@ -1737,6 +1804,14 @@ func (g *generator) recordUse(target string) {
 	case "timer_fd":
 		// timer_fd(ms) — a timerfd readable after `ms`.
 		g.usesTimerFd = true
+	case "process_alive":
+		g.usesProcessAlive = true
+	case "rlimit_nofile":
+		g.usesRlimitNofile = true
+	case "statfs":
+		g.usesStatfs = true
+		g.usesAlloc = true
+		g.usesIoError = true
 	case "isatty":
 		g.usesIsatty = true
 	case "signal_ignore", "signal_default":
@@ -1797,12 +1872,20 @@ func (g *generator) recordUse(target string) {
 		g.usesReadFile = true
 		g.usesAlloc = true
 		g.usesIoError = true
+		// The read-loop grows past a short st_size hint, which copies
+		// into a bigger block and gives the old one back.
+		g.usesMemcpy = true
+		g.usesBoxFree = true
+		g.usesFree = true
 		g.needFern("__fern_utf8_valid")
 	case "read_file_bytes":
 		g.usesReadFileBytes = true
 		g.usesAlloc = true
 		g.usesAllocU8 = true
 		g.usesIoError = true
+		g.usesMemcpy = true
+		g.usesArrDec = true
+		g.usesFree = true
 	case "write_file":
 		g.usesWriteFile = true
 		g.usesAlloc = true
@@ -1846,6 +1929,18 @@ func (g *generator) recordUse(target string) {
 		g.usesIoError = true
 	case "umask":
 		g.usesUmask = true
+	case "rename":
+		g.usesRename = true
+		g.usesAlloc = true
+		g.usesIoError = true
+	case "chmod":
+		g.usesChmod = true
+		g.usesAlloc = true
+		g.usesIoError = true
+	case "set_file_times":
+		g.usesSetFileTimes = true
+		g.usesAlloc = true
+		g.usesIoError = true
 	case "temp_dir":
 		g.usesTempDir = true
 		g.usesMonotonicNs = true
@@ -3348,6 +3443,8 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_now_ns"
 		case "sleep_ms":
 			target = "__fern_sleep_ms"
+		case "sleep_ns":
+			target = "__fern_sleep_ns"
 		case "proc_exec":
 			target = "__fern_proc_exec"
 		case "proc_fork":
@@ -3364,6 +3461,12 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_poll"
 		case "timer_fd":
 			target = "__fern_timer_fd"
+		case "process_alive":
+			target = "__fern_process_alive"
+		case "rlimit_nofile":
+			target = "__fern_rlimit_nofile"
+		case "statfs":
+			target = "__fern_statfs"
 		case "isatty":
 			target = "__fern_isatty"
 		case "signal_ignore":
@@ -3416,6 +3519,12 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_read_link"
 		case "umask":
 			target = "__fern_umask"
+		case "rename":
+			target = "__fern_rename"
+		case "chmod":
+			target = "__fern_chmod"
+		case "set_file_times":
+			target = "__fern_set_file_times"
 		case "temp_dir":
 			target = "__fern_temp_dir"
 		case "read_dir":
@@ -11023,6 +11132,36 @@ func (g *generator) emitSleepMsRuntime() {
 	g.line(".size __fern_sleep_ms, .-__fern_sleep_ms")
 }
 
+// emitSleepNsRuntime emits `__fern_sleep_ns(ns)` — the same pause with
+// the caller's nanoseconds carried through instead of rounded to a
+// millisecond first (#8528). ns <= 0 returns immediately. The timespec
+// split is by 1e9 rather than 1e3, and the remainder IS tv_nsec.
+func (g *generator) emitSleepNsRuntime() {
+	g.line("")
+	g.line(".globl __fern_sleep_ns")
+	g.line(".type __fern_sleep_ns, @function")
+	g.label("__fern_sleep_ns")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("sub rsp, 32")
+	g.emit("cmp rdi, 0")
+	g.emit("jle .Lsleep_ns_done")
+	g.emit("mov rax, rdi")
+	g.emit("xor edx, edx") // clear high for div
+	g.emit("mov rcx, 1000000000")
+	g.emit("div rcx")            // rax = ns/1e9 (sec), rdx = ns%1e9
+	g.emit("mov [rsp], rax")     // tv_sec
+	g.emit("mov [rsp + 8], rdx") // tv_nsec
+	g.emit("mov rdi, rsp")       // &req
+	g.emit("xor esi, esi")       // rem = NULL
+	g.emitSyscall(sysNanosleep)
+	g.label(".Lsleep_ns_done")
+	g.emit("mov rsp, rbp")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_sleep_ns, .-__fern_sleep_ns")
+}
+
 // emitProcForkRuntime emits `__fern_proc_fork()` — fork(2)
 // (syscall 57, no args). The kernel's return shape is already
 // the builtin's contract: 0 in the child, the child's pid in
@@ -12042,6 +12181,195 @@ func (g *generator) emitTimerFdRuntime() {
 	g.line(".size __fern_timer_fd, .-__fern_timer_fd")
 }
 
+// linuxStatfsFields maps each FsStat field onto the offset it is read
+// from in Linux's 120-byte `struct statfs`, whose every member is a
+// 64-bit word on both supported ISAs:
+//
+//	f_type 0, f_bsize 8, f_blocks 16, f_bfree 24, f_bavail 32,
+//	f_files 40, f_ffree 48, f_fsid 56, f_namelen 64, f_frsize 72
+//
+// `path_max` is absent from the record and is stored separately: Linux
+// has no pathconf syscall, and PATH_MAX is the kernel's own 4096 for
+// every filesystem it mounts.
+var linuxStatfsFields = []struct{ box, src int32 }{
+	{ir.FsStat.BlockSize, 8},
+	{ir.FsStat.Blocks, 16},
+	{ir.FsStat.BlocksFree, 24},
+	{ir.FsStat.BlocksAvail, 32},
+	{ir.FsStat.Files, 40},
+	{ir.FsStat.FilesFree, 48},
+	{ir.FsStat.NameMax, 64},
+}
+
+// linuxPathMax is PATH_MAX, the longest pathname the Linux kernel will
+// resolve. A constant rather than a lookup because Linux has no
+// pathconf syscall and `getconf PATH_MAX` reports this for every
+// filesystem; Darwin, which does have one, asks it (see the arm64
+// emitter).
+const linuxPathMax = 4096
+
+// emitStatfsRuntime emits `__fern_statfs(path) → Result[FsStat, IoError]`
+// — statfs(2) into a 120-byte stack buffer, projected onto FsStat by
+// linuxStatfsFields. System V: rdi = path string value.
+//
+// Built on the same skeleton as __fern_stat: a NUL-terminated heap copy
+// of the path for the syscall, the buffer left live across
+// __fern_alloc_box so the record is copied out after the box exists, and
+// the errno classified against the ORIGINAL path value so the IoError
+// names what the caller asked about.
+func (g *generator) emitStatfsRuntime() {
+	g.line("")
+	g.line(".globl __fern_statfs")
+	g.line(".type __fern_statfs, @function")
+	g.label("__fern_statfs")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx") // pathz
+	g.emit("push r12") // path byte ptr
+	g.emit("push r13") // path len / IoError box
+	g.emit("push r14") // syscall result across the free
+	g.emit("push r15")
+	// 6 pushes ⇒ rsp≡8 mod 16; sub 168 realigns — 120-byte statfs buf
+	// at [rsp..119] + slots:
+	//   [rbp-56] emitStrDataPtr inline-spill scratch
+	//   [rbp-64] original path string value (io_error arg)
+	g.emit("sub rsp, 168")
+	g.emit("mov [rbp - 64], rdi")
+	g.emitStrLen("r13d", "rdi")
+	g.emitStrDataPtr("r12", "rdi", "[rbp - 56]")
+	g.emit("lea edi, [r13 + 1]")
+	g.emit("call __fern_alloc")
+	g.emit("mov rbx, rax")
+	g.emit("xor ecx, ecx")
+	g.label(".Lsfs_cp")
+	g.emit("cmp rcx, r13")
+	g.emit("jae .Lsfs_cpd")
+	g.emit("mov al, [r12 + rcx]")
+	g.emit("mov [rbx + rcx], al")
+	g.emit("add rcx, 1")
+	g.emit("jmp .Lsfs_cp")
+	g.label(".Lsfs_cpd")
+	g.emit("mov byte ptr [rbx + r13], 0")
+	// statfs(pathz, buf)
+	g.emit("mov rdi, rbx")
+	g.emit("mov rsi, rsp")
+	g.emitSyscall(sysStatfs)
+	g.emit("mov r14, rax") // result across the free
+	g.emit("mov rdi, rbx")
+	g.emit("lea rsi, [r13 + 1]")
+	g.emit("call __fern_free")
+	g.emit("mov rax, r14")
+	g.emit("test rax, rax")
+	g.emit("js .Lsfs_err")
+	g.emit(fmt.Sprintf("mov edi, %d", ir.FsStat.Bytes))
+	g.emit("call __fern_alloc_box")
+	for _, f := range linuxStatfsFields {
+		g.emit(fmt.Sprintf("mov r9, [rsp + %d]", f.src))
+		g.emit(fmt.Sprintf("mov [rax + %d], r9", f.box))
+	}
+	g.emit(fmt.Sprintf("mov r9d, %d", linuxPathMax))
+	g.emit(fmt.Sprintf("mov [rax + %d], r9", ir.FsStat.PathMax))
+	g.emit("mov r13, rax")
+	g.emit("mov edi, 16")
+	g.emit("call __fern_alloc_rc1")
+	g.emit("mov dword ptr [rax], 0") // Ok
+	g.emit("mov [rax + 8], r13")
+	g.emit("jmp .Lsfs_return")
+
+	g.label(".Lsfs_err")
+	g.emit("neg rax")
+	g.emit("mov r13, rax")
+	g.emit("mov edi, r13d")
+	g.emit("mov rsi, [rbp - 64]")
+	g.emit("call __fern_io_error")
+	g.emit("mov r13, rax")
+	g.emit("mov edi, 16")
+	g.emit("call __fern_alloc_rc1")
+	g.emit("mov dword ptr [rax], 1") // Err
+	g.emit("mov [rax + 8], r13")
+
+	g.label(".Lsfs_return")
+	g.emit("add rsp, 168")
+	g.emit("pop r15")
+	g.emit("pop r14")
+	g.emit("pop r13")
+	g.emit("pop r12")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_statfs, .-__fern_statfs")
+}
+
+// emitRlimitNofileRuntime emits `__fern_rlimit_nofile()` — the soft
+// RLIMIT_NOFILE, in rax as an i64.
+//
+// `getrlimit(RLIMIT_NOFILE, &rlim)` into a two-u64 buffer on the stack,
+// and `rlim_cur` is the answer. Two paths report i64 max instead: a
+// failing call, which for a resource named in the emitter and a buffer
+// it owns has no reachable errno, and a limit whose top bit is set —
+// Linux spells RLIM_INFINITY as all ones, which is not a count anything
+// could hold.
+func (g *generator) emitRlimitNofileRuntime() {
+	const rlimitNofile = 7 // Linux RLIMIT_NOFILE
+	g.line("")
+	g.line(".globl __fern_rlimit_nofile")
+	g.line(".type __fern_rlimit_nofile, @function")
+	g.label("__fern_rlimit_nofile")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("sub rsp, 32") // struct rlimit { u64 cur; u64 max } + alignment
+	g.emit(fmt.Sprintf("mov edi, %d", rlimitNofile))
+	g.emit("mov rsi, rsp")
+	g.emitSyscall(sysGetrlimit)
+	g.emit("test rax, rax")
+	g.emit("jnz .Lrlim_unlimited")
+	g.emit("mov rax, [rsp]") // rlim_cur
+	g.emit("test rax, rax")
+	g.emit("jns .Lrlim_done")
+	g.label(".Lrlim_unlimited")
+	g.emit("movabs rax, 0x7fffffffffffffff")
+	g.label(".Lrlim_done")
+	g.emit("mov rsp, rbp")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_rlimit_nofile, .-__fern_rlimit_nofile")
+}
+
+// emitProcessAliveRuntime emits `__fern_process_alive(pid)` — 1 when a
+// process with that pid exists, 0 when it does not.
+//
+// `kill(pid, 0)` performs every check a real signal would and delivers
+// nothing, so the errno is the whole answer: 0 and -EPERM both mean the
+// process is there (one owned by another user is still a process) and
+// -ESRCH means it is gone. Nothing else can come back from a zero signal.
+//
+// A non-positive pid answers 0 without a syscall. kill(2) reads 0 as "my
+// process group" and negatives as "the group -pid", so passing one
+// through would answer a different question than the caller asked.
+func (g *generator) emitProcessAliveRuntime() {
+	const eperm = 1
+	g.line("")
+	g.line(".globl __fern_process_alive")
+	g.line(".type __fern_process_alive, @function")
+	g.label("__fern_process_alive")
+	g.emit("cmp edi, 0")
+	g.emit("jle .Lalive_no")
+	g.emit("movsxd rdi, edi")
+	g.emit("xor esi, esi") // sig = 0
+	g.emitSyscall(sysKill)
+	g.emit("test rax, rax")
+	g.emit("je .Lalive_yes")
+	g.emit(fmt.Sprintf("cmp rax, %d", -eperm))
+	g.emit("je .Lalive_yes")
+	g.label(".Lalive_no")
+	g.emit("xor eax, eax")
+	g.emit("ret")
+	g.label(".Lalive_yes")
+	g.emit("mov eax, 1")
+	g.emit("ret")
+	g.line(".size __fern_process_alive, .-__fern_process_alive")
+}
+
 // emitIsattyRuntime emits `__fern_isatty(fd)` — 1 when fd refers to a
 // terminal, 0 otherwise.
 //
@@ -12756,6 +13084,14 @@ func (g *generator) emitIoErrorRuntime() {
 // → close → Result.Ok(string). Syscall errors short-circuit to
 // Result.Err via __fern_io_error.
 //
+// st_size is a HINT, not the length (#9065): a kernel pseudo-file
+// generates its contents on the read and reports 0 (/proc) or a page
+// (/sys), and an ordinary file can change size between the fstat and
+// the read. The loop reads to EOF, growing when the hint runs out,
+// and the string's length is the bytes it actually read. Asking for
+// st_size + 1 is what distinguishes "the file ended" from "the hint
+// was short" without costing a regular file its single allocation.
+//
 // Result box (matches IR):
 //
 //	tag=0 (Ok)  → payload@+8 = string data ptr
@@ -12770,15 +13106,17 @@ func (g *generator) emitReadFileRuntime() {
 	g.label("__fern_read_file")
 	g.emit("push rbp")
 	g.emit("mov rbp, rsp")
-	g.emit("push rbx") // path byte ptr (materialised below)
+	g.emit("push rbx") // path byte ptr, then the new capacity across a grow
 	g.emit("push r12") // fd
 	g.emit("push r13") // buf base
-	g.emit("push r14") // size
+	g.emit("push r14") // capacity
 	g.emit("push r15") // bytes_read
 	// Frame: 168 bytes — 144-byte stat buf (at rsp..rsp+143)
 	// + 8 bytes scratch slot for emitStrDataPtr on the path
 	// at [rbp - 48] + 16 bytes padding. Keeps rsp 16-aligned
-	// at all call sites below.
+	// at all call sites below. [rbp - 64] is the free 8 bytes
+	// between the stat buf and [rbp - 56]; it carries the grown
+	// buffer across __fern_box_free.
 	g.emit("sub rsp, 168")
 	g.emit("mov [rbp - 56], rdi")                // save original path string value for the err path
 	g.emitStrDataPtr("rbx", "rdi", "[rbp - 48]") // path byte ptr for openat
@@ -12799,19 +13137,40 @@ func (g *generator) emitReadFileRuntime() {
 	g.emitSyscall(5)
 	g.emit("test rax, rax")
 	g.emit("js .Lrf_err_close")
+	// cap = st_size + 1. L2 rc-header layout (see __fern_strcat):
+	// payload = data + NUL slack so the box class matches
+	// __fern_str_dec's length+1 free, and the slack byte doubles as
+	// the probe that catches a file longer than its hint.
 	g.emit("mov r14, [rsp + 48]") // st_size
-
-	// L2 rc-header layout (see __fern_strcat): payload = size data + NUL slack
-	// so the box class matches __fern_str_dec's length+1 free.
-	g.emit("lea edi, [r14 + 1]")
+	g.emit("add r14, 1")          // cap
+	g.emit("mov edi, r14d")
 	g.emit("call __fern_alloc_rc1")
 	g.emit("mov r13, rax") // r13 = data ptr (= base+8)
-	g.emitStrLenStore("r14d", "r13")
 
 	g.emit("xor r15, r15") // bytes_read = 0
 	g.label(".Lrf_loop")
 	g.emit("cmp r15, r14")
-	g.emit("jge .Lrf_done")
+	g.emit("jb .Lrf_read")
+	// Buffer full and not at EOF: double the capacity, with a page
+	// floor so a /proc file (hint 0, cap 1) gets there in one step.
+	g.emit("lea rbx, [r14 + r14]")
+	g.emit("cmp rbx, 4096")
+	g.emit("jae .Lrf_grow")
+	g.emit("mov ebx, 4096")
+	g.label(".Lrf_grow")
+	g.emit("mov edi, ebx")
+	g.emit("call __fern_alloc_rc1")
+	g.emit("mov rdi, rax")
+	g.emit("mov rsi, r13")
+	g.emit("mov rdx, r15")
+	g.emit("call __fern_memcpy") // returns dst
+	g.emit("mov [rbp - 64], rax")
+	g.emit("mov rdi, r13")
+	g.emit("mov rsi, r14")
+	g.emit("call __fern_box_free")
+	g.emit("mov r13, [rbp - 64]")
+	g.emit("mov r14, rbx")
+	g.label(".Lrf_read")
 	g.emit("mov edi, r12d")
 	g.emit("lea rsi, [r13 + r15]")
 	g.emit("mov rdx, r14")
@@ -12820,30 +13179,36 @@ func (g *generator) emitReadFileRuntime() {
 	g.emitSyscallPreloaded(sysRead)
 	g.emit("test rax, rax")
 	g.emit("js .Lrf_err_close")
-	g.emit("jz .Lrf_done") // EOF (file shrunk between fstat and read)
+	g.emit("jz .Lrf_done") // EOF
 	g.emit("add r15, rax")
 	g.emit("jmp .Lrf_loop")
 
 	g.label(".Lrf_done")
 	g.emit("mov edi, r12d")
 	g.emitSyscall(3)
-	// Zero the shrink tail [r13+r15, r13+r14): a file that shrank
-	// between fstat and read used to leave alloc slack there, which
-	// would make the validation below nondeterministic. NUL bytes
-	// are valid UTF-8.
-	g.emit("mov rcx, r14")
-	g.emit("sub rcx, r15")
-	g.emit("jle .Lrf_validate")
-	g.emit("lea rdi, [r13 + r15]")
-	g.emit("xor eax, eax")
-	g.emit("cld")
-	g.emit("rep stosb")
-	g.label(".Lrf_validate")
+	// __fern_str_dec frees at length + 1, so the payload has to be
+	// exactly that; re-fit when the hint over- or undershot.
+	g.emit("lea rbx, [r15 + 1]")
+	g.emit("cmp rbx, r14")
+	g.emit("je .Lrf_fitted")
+	g.emit("mov edi, ebx")
+	g.emit("call __fern_alloc_rc1")
+	g.emit("mov rdi, rax")
+	g.emit("mov rsi, r13")
+	g.emit("mov rdx, r15")
+	g.emit("call __fern_memcpy")
+	g.emit("mov [rbp - 64], rax")
+	g.emit("mov rdi, r13")
+	g.emit("mov rsi, r14")
+	g.emit("call __fern_box_free")
+	g.emit("mov r13, [rbp - 64]")
+	g.label(".Lrf_fitted")
+	g.emitStrLenStore("r15d", "r13")
 	// D9 (#5714): the text read validates at the boundary; invalid
 	// content dispatches as Err(InvalidUtf8(path)) via the synthetic
 	// EILSEQ errno. Raw reads go through __fern_read_file_bytes.
 	g.emit("mov rdi, r13")
-	g.emit("mov rsi, r14")
+	g.emit("mov rsi, r15")
 	g.emit("call " + AsmFnName("__fern_utf8_valid"))
 	g.emit("test eax, eax")
 	g.emit("jnz .Lrf_ok")
@@ -12894,12 +13259,12 @@ func (g *generator) emitReadFileRuntime() {
 
 // emitReadFileBytesRuntime emits `__fern_read_file_bytes(path) →
 // Result[u8[], IoError]` — read_file's raw sibling: the same
-// openat → fstat → read-loop → close pipeline, but the contents
-// land in a fresh `u8[]` from `__alloc_u8` (cap/rc/len header)
-// rather than a string box. A file that shrinks between fstat
-// and read leaves the trailing bytes zero (from __alloc_u8's
-// zero-fill) with len still st_size, matching read_file's
-// short-read behaviour.
+// openat → fstat → grow-to-EOF read-loop → close pipeline, but the
+// contents land in a fresh `u8[]` from `__alloc_u8` (cap/rc/len
+// header) rather than a string box. st_size is the same hint it is
+// there (#9065), and the array's len is the bytes actually read; the
+// capacity stays whatever was allocated, which is what
+// __fern_arr_dec frees with.
 func (g *generator) emitReadFileBytesRuntime() {
 	g.line("")
 	g.line(".globl __fern_read_file_bytes")
@@ -12934,10 +13299,10 @@ func (g *generator) emitReadFileBytesRuntime() {
 	g.emitSyscall(5)
 	g.emit("test rax, rax")
 	g.emit("js .Lrfb_err_close")
+	// cap = st_size + 1; the spare byte is the probe that catches a
+	// file longer than its hint. __alloc_u8 owns the header layout.
 	g.emit("mov r14, [rsp + 48]") // st_size
-
-	// Fresh u8[] of st_size bytes; __alloc_u8 owns the header
-	// layout and the size==0 empty sentinel.
+	g.emit("add r14, 1")          // cap
 	g.emit("mov edi, r14d")
 	g.emit("call __alloc_u8")
 	g.emit("mov r13, rax") // r13 = data ptr
@@ -12945,7 +13310,27 @@ func (g *generator) emitReadFileBytesRuntime() {
 	g.emit("xor r15, r15") // bytes_read = 0
 	g.label(".Lrfb_loop")
 	g.emit("cmp r15, r14")
-	g.emit("jge .Lrfb_done")
+	g.emit("jb .Lrfb_read")
+	// Buffer full and not at EOF: double the capacity, with a page
+	// floor so a /proc file (hint 0, cap 1) gets there in one step.
+	g.emit("lea rbx, [r14 + r14]")
+	g.emit("cmp rbx, 4096")
+	g.emit("jae .Lrfb_grow")
+	g.emit("mov ebx, 4096")
+	g.label(".Lrfb_grow")
+	g.emit("mov edi, ebx")
+	g.emit("call __alloc_u8")
+	g.emit("mov rdi, rax")
+	g.emit("mov rsi, r13")
+	g.emit("mov rdx, r15")
+	g.emit("call __fern_memcpy") // returns dst
+	g.emit("mov [rbp - 64], rax")
+	g.emit("mov rdi, r13")
+	g.emit("mov esi, 1") // stride
+	g.emit("call __fern_arr_dec")
+	g.emit("mov r13, [rbp - 64]")
+	g.emit("mov r14, rbx")
+	g.label(".Lrfb_read")
 	g.emit("mov edi, r12d")
 	g.emit("lea rsi, [r13 + r15]")
 	g.emit("mov rdx, r14")
@@ -12954,13 +13339,14 @@ func (g *generator) emitReadFileBytesRuntime() {
 	g.emitSyscallPreloaded(sysRead)
 	g.emit("test rax, rax")
 	g.emit("js .Lrfb_err_close")
-	g.emit("jz .Lrfb_done") // EOF (file shrunk between fstat and read)
+	g.emit("jz .Lrfb_done") // EOF
 	g.emit("add r15, rax")
 	g.emit("jmp .Lrfb_loop")
 
 	g.label(".Lrfb_done")
 	g.emit("mov edi, r12d")
 	g.emitSyscall(3)
+	g.emitArrayLenStore("r15d", "r13")
 	// Result.Ok(u8[]): 16-byte box, tag=0 @0, arr_ptr @8.
 	g.emit("mov edi, 16")
 	g.emit("call __fern_alloc_rc1")
@@ -13726,6 +14112,129 @@ func (g *generator) emitReadLinkRuntime() {
 	g.emit("pop rbp")
 	g.emit("ret")
 	g.line(".size __fern_read_link, .-__fern_read_link")
+}
+
+// emitRenameRuntime emits `__fern_rename(from, to)` —
+// renameat(AT_FDCWD, from, AT_FDCWD, to). An existing `to` of a
+// compatible type is replaced atomically; a rename across filesystems is
+// EXDEV and stays EXDEV, because the copy-then-remove `mv(1)` falls back
+// to is the caller's and folding it in here would move the bytes where
+// the caller asked to move the entry.
+func (g *generator) emitRenameRuntime() {
+	g.emitPathOpRuntime("__fern_rename", "rnam", sysRenameat, 2, false, func() {
+		g.emit("mov edi, -100") // AT_FDCWD
+		g.emit("mov rsi, rbx")
+		g.emit("mov edx, -100")
+		g.emit("mov r10, r14")
+	})
+}
+
+// emitChmodRuntime emits `__fern_chmod(path, mode)` —
+// fchmodat(AT_FDCWD, path, mode). The umask is not consulted: it filters
+// a creation, and this is not one, so the low twelve bits land verbatim.
+func (g *generator) emitChmodRuntime() {
+	g.emitPathOpRuntime("__fern_chmod", "chmd", sysFchmodat, 1, true, func() {
+		g.emit("mov edi, -100") // AT_FDCWD
+		g.emit("mov rsi, rbx")
+		g.emit("mov edx, [rbp - 72]") // mode
+		g.emit("and edx, 4095")
+	})
+}
+
+// emitSetFileTimesRuntime emits `__fern_set_file_times(path, atime_sec,
+// atime_nsec, mtime_sec, mtime_nsec, flags) → Result[void, IoError]` —
+// utimensat(AT_FDCWD, path, times, flags).
+//
+// The two `struct timespec`s are built on the stack in the order the
+// kernel reads them, access time first. `flags` is Fern's word rather
+// than the kernel's: bit 0 becomes AT_SYMLINK_NOFOLLOW, and bits 1 and 2
+// become UTIME_OMIT written into the nanosecond half of the timespec
+// being skipped — an omit is not a flag to utimensat, it is a sentinel
+// value, and the seconds half is then ignored.
+func (g *generator) emitSetFileTimesRuntime() {
+	g.line("")
+	g.line(".globl __fern_set_file_times")
+	g.line(".type __fern_set_file_times, @function")
+	g.label("__fern_set_file_times")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx") // pathz
+	g.emit("push r12") // path byte ptr (copy scratch)
+	g.emit("push r13") // path len / errno / IoError box
+	g.emit("push r14") // flags
+	g.emit("push r15") // syscall result across the free
+	// 6 pushes ⇒ rsp≡8 mod 16; sub 72 realigns. Slots:
+	//   [rbp-48] emitStrDataPtr inline-spill scratch
+	//   [rbp-56] the path string value (io_error arg)
+	//   [rbp-64] path len
+	//   [rbp-96 .. rbp-65] the two timespecs, atime first
+	g.emit("sub rsp, 72")
+	g.emit("mov [rbp - 56], rdi")
+	g.emit("mov r14, r9") // flags, before the path copy clobbers r9
+	g.emit("mov [rbp - 96], rsi")
+	g.emit("mov [rbp - 88], rdx")
+	g.emit("mov [rbp - 80], rcx")
+	g.emit("mov [rbp - 72], r8")
+	// UTIME_OMIT (1<<30 - 2) into the nanosecond half of whichever
+	// timespec the caller asked to leave alone.
+	g.emit("test r14d, 2")
+	g.emit("jz .Lsft_a")
+	g.emit("mov qword ptr [rbp - 96], 0")
+	g.emit("mov qword ptr [rbp - 88], 1073741822")
+	g.label(".Lsft_a")
+	g.emit("test r14d, 4")
+	g.emit("jz .Lsft_m")
+	g.emit("mov qword ptr [rbp - 80], 0")
+	g.emit("mov qword ptr [rbp - 72], 1073741822")
+	g.label(".Lsft_m")
+	g.emitPathzCopy("rbx", "[rbp - 56]", "[rbp - 48]", "sft")
+	g.emit("mov [rbp - 64], r13")
+	g.emit("mov edi, -100") // AT_FDCWD
+	g.emit("mov rsi, rbx")
+	g.emit("lea rdx, [rbp - 96]")
+	// AT_SYMLINK_NOFOLLOW is 0x100; bit 0 of the Fern word selects it.
+	g.emit("xor r10d, r10d")
+	g.emit("test r14d, 1")
+	g.emit("jz .Lsft_go")
+	g.emit("mov r10d, 256")
+	g.label(".Lsft_go")
+	g.emitSyscall(sysUtimensat)
+	g.emit("mov r15, rax")
+	g.emit("mov rdi, rbx")
+	g.emit("mov rsi, [rbp - 64]")
+	g.emit("add rsi, 1")
+	g.emit("call __fern_free")
+	g.emit("mov rax, r15")
+	g.emit("test rax, rax")
+	g.emit("js .Lsft_err")
+	g.emit("mov edi, 16")
+	g.emit("call __fern_alloc_rc1")
+	g.emit("mov dword ptr [rax], 0")     // tag = 0 (Ok)
+	g.emit("mov qword ptr [rax + 8], 0") // unit payload
+	g.emit("jmp .Lsft_ret")
+
+	g.label(".Lsft_err")
+	g.emit("neg rax")
+	g.emit("mov r13, rax")
+	g.emit("mov edi, r13d")
+	g.emit("mov rsi, [rbp - 56]")
+	g.emit("call __fern_io_error")
+	g.emit("mov r13, rax")
+	g.emit("mov edi, 16")
+	g.emit("call __fern_alloc_rc1")
+	g.emit("mov dword ptr [rax], 1") // tag = 1 (Err)
+	g.emit("mov [rax + 8], r13")
+
+	g.label(".Lsft_ret")
+	g.emit("add rsp, 72")
+	g.emit("pop r15")
+	g.emit("pop r14")
+	g.emit("pop r13")
+	g.emit("pop r12")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_set_file_times, .-__fern_set_file_times")
 }
 
 // emitUmaskRuntime emits `__fern_umask(mask) → previous mask`. umask(2)

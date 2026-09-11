@@ -1,0 +1,173 @@
+// readlink.fern — GNU-compatible `readlink`.
+//
+//   readlink [OPTION]... FILE...
+//
+// Two programs under one name. Bare, it is one readlink(2) per operand
+// and prints the bytes the link holds — a link to a name that does not
+// exist prints that name, and a FILE that is not a link at all is a
+// silent failure. With `-f`, `-e` or `-m` it instead canonicalises,
+// which is `realpath`'s work and lives in `lib/canon.fern`; the three
+// differ only in how much of the name has to exist.
+//
+// Diagnostics are off by default — `-s` / `-q` are the default state
+// and `-v` turns them on — so the usual answer to a fault is exit 1
+// and silence. The last of the three mode options wins, and so does
+// the last of the quiet / verbose pair.
+//
+// `-n` drops the delimiter after the output, and is refused with a
+// warning when there is more than one operand, since the delimiter is
+// then what separates the answers. With one operand it drops the NUL
+// `-z` would have written too.
+import "std/string";
+import "std/array";
+import "std/io_buffered";
+import "./lib/gnu";
+import "./lib/canon";
+
+function help_text(): string {
+  var out: string = "";
+  out = out + "Usage: " + gnu.prog() + " [OPTION]... FILE...\n";
+  out = out + "Print value of a symbolic link or canonical file name\n";
+  out = out + "\n";
+  out = out + "  -f, --canonicalize            canonicalize by following every symlink in\n";
+  out = out + "                                every component of the given name recursively;\n";
+  out = out + "                                all but the last component must exist\n";
+  out = out + "  -e, --canonicalize-existing   canonicalize by following every symlink in\n";
+  out = out + "                                every component of the given name recursively,\n";
+  out = out + "                                all components must exist\n";
+  out = out + "  -m, --canonicalize-missing    canonicalize by following every symlink in\n";
+  out = out + "                                every component of the given name recursively,\n";
+  out = out + "                                without requirements on components existence\n";
+  out = out + "  -n, --no-newline              do not output the trailing delimiter\n";
+  out = out + "  -q, --quiet\n";
+  out = out + "  -s, --silent                  suppress most error messages (on by default)\n";
+  out = out + "  -v, --verbose                 report error messages\n";
+  out = out + "  -z, --zero                    end each output line with NUL, not newline\n";
+  out = out + "      --help        display this help and exit\n";
+  out = out + "      --version     output version information and exit\n";
+  return out;
+}
+
+function opt_canonicalize(): i32 {
+  return 1;
+}
+
+function opt_existing(): i32 {
+  return 2;
+}
+
+function opt_missing(): i32 {
+  return 3;
+}
+
+function opt_no_newline(): i32 {
+  return 4;
+}
+
+function opt_quiet(): i32 {
+  return 5;
+}
+
+function opt_silent(): i32 {
+  return 6;
+}
+
+function opt_verbose(): i32 {
+  return 7;
+}
+
+function opt_zero(): i32 {
+  return 8;
+}
+
+// The mode a run is in when no `-f` / `-e` / `-m` was given: the link
+// itself rather than what it resolves to.
+function mode_none(): i32 {
+  return 0 - 1;
+}
+
+function main(): i32 {
+  var opts: gnu.Opt[] = [];
+  opts = opts.append(gnu.flag("f", "canonicalize", opt_canonicalize()));
+  opts = opts.append(gnu.flag("e", "canonicalize-existing", opt_existing()));
+  opts = opts.append(gnu.flag("m", "canonicalize-missing", opt_missing()));
+  opts = opts.append(gnu.flag("n", "no-newline", opt_no_newline()));
+  opts = opts.append(gnu.flag("q", "quiet", opt_quiet()));
+  opts = opts.append(gnu.flag("s", "silent", opt_silent()));
+  opts = opts.append(gnu.flag("v", "verbose", opt_verbose()));
+  opts = opts.append(gnu.flag("z", "zero", opt_zero()));
+
+  var mode: i32 = mode_none();
+  var no_newline: boolean = false;
+  var verbose: boolean = false;
+  var zero: boolean = false;
+  var g: gnu.Getopt = gnu.getopt_new(args(), opts, "readlink", help_text(), 1);
+  while (true) {
+    var r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    g = r.1;
+    match (r.0) {
+      Some(m) => {
+        if (m.id == opt_canonicalize()) {
+          mode = canon.all_but_last();
+        } else if (m.id == opt_existing()) {
+          mode = canon.existing();
+        } else if (m.id == opt_missing()) {
+          mode = canon.missing();
+        } else if (m.id == opt_no_newline()) {
+          no_newline = true;
+        } else if (m.id == opt_verbose()) {
+          verbose = true;
+        } else if (m.id == opt_zero()) {
+          zero = true;
+        } else if (m.id == opt_quiet() || m.id == opt_silent()) {
+          verbose = false;
+        }
+      },
+      None => {
+        break;
+      }
+    }
+  }
+
+  var operands: string[] = g.operands();
+  if (operands.len() == 0) {
+    gnu.die_usage("missing operand", 1);
+  }
+  if (no_newline && operands.len() > 1) {
+    gnu.error("ignoring --no-newline with multiple arguments");
+    no_newline = false;
+  }
+  var term: string = "\n";
+  if (no_newline) {
+    term = "";
+  } else if (zero) {
+    term = "\x00";
+  }
+
+  var status: i32 = 0;
+  var o: io_buffered.BufWriter = gnu.out_new();
+  var i: i32 = 0;
+  while (i < operands.len()) {
+    var name: string = operands[i];
+    var answer: Result[string, IoError] = Err(Unsupported);
+    if (mode == mode_none()) {
+      answer = read_link(name);
+    } else {
+      answer = canon.canonicalize(name, mode, false);
+    }
+    match (answer) {
+      Ok(value) => {
+        o = gnu.put(o, value + term);
+      },
+      Err(e) => {
+        if (verbose) {
+          o = gnu.error_out(o, gnu.quotef(name) + ": " + gnu.io_error_text(e));
+        }
+        status = 1;
+      }
+    }
+    i = i + 1;
+  }
+  gnu.finish(o);
+  return status;
+}

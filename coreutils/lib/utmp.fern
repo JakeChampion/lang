@@ -8,7 +8,8 @@
 // The file is a flat array of fixed-size records with no header, so
 // reading it is a byte offset and a width per field — and the WIDTHS
 // are the whole of the per-system difference. Linux's `struct utmp` and
-// `struct utmpx` are the same 384-byte record:
+// `struct utmpx` are the same record, and everything up to ut_exit is
+// the same on every architecture:
 //
 //   ut_type     i16   @0    what the entry records (see the types below)
 //   ut_pid      i32   @4
@@ -17,10 +18,28 @@
 //   ut_user     [32]  @44
 //   ut_host     [256] @76
 //   ut_exit           @332  two i16
+//
+// The TAIL is not. glibc sizes ut_session and ut_tv by
+// __WORDSIZE_TIME64_COMPAT32, so that a 32-bit and a 64-bit process on
+// the same machine share one file format. Where that macro is 1 — x86-64,
+// which had a 32-bit predecessor — the two fields keep their 32-bit
+// widths and the record is 384 bytes:
+//
 //   ut_session  i32   @336
 //   ut_tv             @340  two i32: seconds, microseconds
 //   ut_addr_v6  [16]  @348
-//   (reserved)  [20]  @364
+//   (reserved)  [20]  @364          384 total
+//
+// Where it is 0 — arm64, which never had one — ut_session is a `long`
+// and ut_tv a real `struct timeval`, and the record is 400 bytes:
+//
+//   ut_session  i64   @336
+//   ut_tv             @344  two i64: seconds, microseconds
+//   ut_addr_v6  [16]  @360
+//   (reserved)  [20]  @376          400 total
+//
+// So the stride and the timestamp's offset and width come from the
+// TARGET, not from the host that compiled this.
 //
 // A char array is NUL-padded but NOT necessarily NUL-terminated: a name
 // exactly 32 bytes long fills the field, so a reader that stops at the
@@ -30,8 +49,23 @@
 // init does not keep one, has no /var/run/utmp at all — and the callers
 // treat that as "nobody is logged in" rather than as an error, which is
 // what GNU does with a file it cannot read.
+//
+// Two rules belong to the record rather than to any one utility, and
+// both are visible in the output of all four:
+//
+//   - A LOGGED-IN user is a `user_process` entry whose ut_user is not
+//     empty. The second half is not redundant — an entry left behind
+//     with its type intact and its name cleared is not a login, and
+//     `users`, `who -q` and `pinky` all skip it while `who` still
+//     prints it as the process it names.
+//   - The name is read with TRAILING SPACES REMOVED, since a system
+//     that pads the field with blanks rather than NULs is one the
+//     record cannot distinguish from one that does not. The line and
+//     the host are NOT trimmed: `who` pads them into columns and
+//     prints what is there.
 import "std/string";
 import "std/array";
+import "./tty";
 
 // The record types this reads. USER_PROCESS is the only one that names
 // a logged-in user; the rest describe the run level, the boot time, an
@@ -73,12 +107,31 @@ pub function dead_process(): i32 {
   return 8;
 }
 
+// `__WORDSIZE_TIME64_COMPAT32` is 1 only on an architecture that had a
+// 32-bit predecessor sharing this file format. Of the targets that have a
+// utmp database at all, x86-64 is that one and arm64 is not.
+function time64_compat32(): boolean {
+  return target_arch() == "x86-64";
+}
+
 pub function record_bytes(): i32 {
-  return 384;
+  if (time64_compat32()) {
+    return 384;
+  }
+  return 400;
+}
+
+// ut_tv.tv_sec: an i32 at 340 where the compat layout applies, an i64 at
+// 344 where it does not.
+function sec_at(bs: u8[], off: i32): i64 {
+  if (time64_compat32()) {
+    return i32_at(bs, off + 340) as i64;
+  }
+  return i64_at(bs, off + 344);
 }
 
 // One record, reduced to the fields a utility prints or matches on.
-pub struct Entry { kind: i32, pid: i32, line: string, id: string, user: string, host: string, sec: i64 }
+pub struct Entry { kind: i32, pid: i32, line: string, id: string, user: string, host: string, sec: i64, term: i32, exit: i32 }
 
 // The default database. GNU builds against `_PATH_UTMP`, which is
 // /var/run/utmp on Linux — a symlink into /run on any system with a
@@ -92,6 +145,17 @@ function u16_at(bs: u8[], off: i32): i32 {
   return bs[off] as i32 + bs[off + 1] as i32 * 256;
 }
 
+// A little-endian SIGNED 16-bit field. ut_exit's two halves are C
+// `short`s and `who -d` prints them with %d, so a wait status with the
+// high bit set is a negative number there.
+function i16_at(bs: u8[], off: i32): i32 {
+  var v: i32 = u16_at(bs, off);
+  if (v > 32767) {
+    return v - 65536;
+  }
+  return v;
+}
+
 // A little-endian signed 32-bit field.
 function i32_at(bs: u8[], off: i32): i32 {
   var v: i64 = bs[off] as i64 + bs[off + 1] as i64 * (256 as i64) + bs[off + 2] as i64 * (65536 as i64) + bs[off + 3] as i64 * (16777216 as i64);
@@ -99,6 +163,17 @@ function i32_at(bs: u8[], off: i32): i32 {
     v = v - 4294967296 as i64;
   }
   return v as i32;
+}
+
+// A little-endian signed 64-bit field.
+function i64_at(bs: u8[], off: i32): i64 {
+  var v: i64 = 0 as i64;
+  var i: i32 = 7;
+  while (i >= 0) {
+    v = v * (256 as i64) + bs[off + i] as i64;
+    i = i - 1;
+  }
+  return v;
 }
 
 // A NUL-padded fixed-width char field, cut at the first NUL or at the
@@ -118,7 +193,7 @@ function field_at(bs: u8[], off: i32, width: i32): string {
 }
 
 function entry_at(bs: u8[], off: i32): Entry {
-  return Entry { kind: u16_at(bs, off + 0), pid: i32_at(bs, off + 4), line: field_at(bs, off + 8, 32), id: field_at(bs, off + 40, 4), user: field_at(bs, off + 44, 32), host: field_at(bs, off + 76, 256), sec: i32_at(bs, off + 340) as i64 };
+  return Entry { kind: u16_at(bs, off + 0), pid: i32_at(bs, off + 4), line: field_at(bs, off + 8, 32), id: field_at(bs, off + 40, 4), user: field_at(bs, off + 44, 32), host: field_at(bs, off + 76, 256), sec: sec_at(bs, off), term: i16_at(bs, off + 332), exit: i16_at(bs, off + 334) };
 }
 
 // Every whole record in `path`, in file order. A missing or unreadable
@@ -136,6 +211,85 @@ pub function read_all(path: string): Entry[] {
     },
     Err(_) => {
       return out;
+    }
+  }
+}
+
+// Whether an entry records a user who is logged in — the rule all four
+// utilities filter on.
+pub function (e: Entry) is_login(): boolean {
+  return e.kind == user_process() && e.user.len() > 0;
+}
+
+// The entry's user name with trailing spaces removed.
+pub function (e: Entry) name(): string {
+  var n: i32 = e.user.len();
+  while (n > 0 && e.user[n - 1] as i32 == 32) {
+    n = n - 1;
+  }
+  if (n == e.user.len()) {
+    return e.user;
+  }
+  return slice_unchecked(e.user, 0, n) + "";
+}
+
+// Every logged-in user's entry in `path`, in file order.
+pub function read_logins(path: string): Entry[] {
+  var all: Entry[] = read_all(path);
+  var out: Entry[] = [];
+  var i: i32 = 0;
+  while (i < all.len()) {
+    if (all[i].is_login()) {
+      out = out.append(all[i]);
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+// The device file an entry's ut_line names. A line that is already an
+// absolute path is one, and anything else hangs under /dev — which is
+// how `who` and `pinky` find the terminal whose mode is the message
+// status and whose atime is the idle time.
+pub function device_path(line: string): string {
+  if (line.len() > 0 && line[0] as i32 == 47) {
+    return line;
+  }
+  return "/dev/" + line;
+}
+
+// What a terminal's stat says about it: whether it is there at all,
+// whether its group may write to it, and when it was last read.
+pub struct Line { present: boolean, writable: boolean, atime: i64 }
+
+pub function line_info(l: string): Line {
+  match (stat(device_path(l))) {
+    Ok(st) => {
+      // S_IWGRP is 0o20, which is 16 — the bit `mesg y` sets and `mesg n`
+      // clears. 32 is 0o40, S_IRGRP, and a terminal at the usual 0620 has
+      // one set and the other clear.
+      return Line { present: true, writable: (st.mode & 16 as u32) != 0 as u32, atime: st.atime };
+    },
+    Err(_) => {
+      return Line { present: false, writable: false, atime: 0 };
+    }
+  }
+}
+
+// ttyname(0) minus its `/dev/` prefix — the form ut_line carries, which
+// is what `logname` matches a session against and what `who -m` filters
+// on. Naming the terminal is `lib/tty.fern`; the prefix is the only part
+// of it that belongs to the record.
+pub function terminal_line(): Option[string] {
+  match (tty.name_of_stdin()) {
+    Some(path) => {
+      if (path.starts_with("/dev/")) {
+        return Some(slice_unchecked(path, 5, path.len()) + "");
+      }
+      return Some(path);
+    },
+    None => {
+      return None;
     }
   }
 }

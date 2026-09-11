@@ -49,6 +49,16 @@ var providedRefusedByPlatform = map[string]bool{
 	"proc_fork":    true,
 	"proc_waitpid": true,
 	"proc_exec":    true,
+	// Liveness of an arbitrary pid, which needs the same process table.
+	"process_alive": true,
+	// `fsinfo` — the size and the length limits of a filesystem, where
+	// `fs` is the files on it. Neither preview has a volume interface,
+	// and a preopen is a capability handle rather than a mount.
+	"statfs": true,
+	// `rlimit` — a kernel-enforced ceiling on a process resource.
+	// Neither WASI preview has one, and every constant that could stand
+	// in would be a measurement a component never took.
+	"rlimit_nofile": true,
 	// The arena mark/release pair: a bump-arena discipline the wasm
 	// allocator does not implement.
 	"__heap_mark":       true,
@@ -63,6 +73,9 @@ var providedRefusedByPlatform = map[string]bool{
 	// for my effective ids" is unanswerable where there are no mode bits.
 	"write_file_exec": true,
 	"access":          true,
+	// `chmod` is the WRITE of it on an entry that already exists, where
+	// write_file_exec only sets a bit on one it is creating.
+	"chmod": true,
 	// `umask` is the process's own half of the same property: the mode
 	// bits a creation is allowed to keep. WASI has no creation mask, and
 	// answering 0 would claim every bit survives.

@@ -40,6 +40,23 @@ set to the utility name, the Fern binary and the GNU binary produce:
   SIGPIPE on both sides, and the harness checks that it does);
 - for utilities that touch the filesystem, the same resulting tree.
 
+A case may also name a `mask`, for the one utility whose correct answer
+differs run to run: `mktemp`'s whole output is a run of random characters.
+The mask rewrites that run BY POSITION on stdout and in the names of the
+entries the run left behind — never on stderr, which carries the template
+with its X's intact — so the directory, the prefix, the suffix, the length,
+the status and the tree all stay under byte comparison and only the
+characters themselves are canonicalised. A seeded name is left alone: it is
+identical on both sides already, and masking `td1` and `td2` under a
+three-character mask would put two entries under one name. The hard-link
+groups are renumbered afterwards, because the walk order a random name sorts
+into is not the same on both sides. What a mask hides is what the corpus
+stops proving, so `mktemp`'s test file states for each case which of the two
+it is under, and the two properties no diff against GNU can see — that the
+characters come from `[0-9A-Za-z]` and actually vary, and that the retry is
+bounded at 62^3 — are Fern-side invariants beside the corpus rather than
+cases in it.
+
 The environment is `LC_ALL=C LANG=C TZ=UTC PATH=/usr/bin:/bin`, plus whatever
 a case adds (`POSIXLY_CORRECT=1`). The C locale is a deliberate choice, not a
 simplification: GNU's quoting, collation, case folding and number formatting
@@ -231,19 +248,62 @@ coreutils/
                     POSIX crc, and sum's bsd and sysv) are std/hash
   lib/pwdb.fern     /etc/passwd and /etc/group as glibc's `files`
                     backend reads them — the lookups by name and by id,
-                    getgrouplist's ordering, and the process's own group
-                    set — for whoami, id, groups and logname
+                    getgrouplist's ordering, the process's own group
+                    set, and the gecos field finger reads as a real name
+                    (`&` is the login name capitalised) — for whoami,
+                    id, groups, logname and pinky
   lib/utmp.fern     the login-accounting record: the fixed-size utmp
-                    entry and the scans over it, for logname today and
-                    users / who / pinky next
+                    entry, the scans over it, and the terminal a ut_line
+                    names — its mode is the message status and its atime
+                    the idle time — for logname, users, who and pinky.
+                    The line itself is lib/tty.fern's ttyname minus the
+                    /dev/ prefix the field does not carry. The record's
+                    TAIL is per-TARGET: glibc keeps ut_session and ut_tv
+                    at 32-bit widths where __WORDSIZE_TIME64_COMPAT32 is
+                    1, which is 384 bytes on x86-64, and uses a `long`
+                    and a real struct timeval where it is 0, which is
+                    400 on arm64
+  lib/tz.fern       the local time zone as tzset(3) finds it, for the
+                    utilities that print a local timestamp (who, pinky):
+                    TZ read as a FILE name first — absolute, or under
+                    $TZDIR — and as a POSIX rule only when no file
+                    answers, TZif v1/v2/v3 with the footer rule for
+                    times past the transition table, and the POSIX
+                    grammar's three date forms with glibc's clamps
   lib/sys.fern      the five fields of the kernel's utsname record, by
                     name, for the utilities that print the record
                     (uname) or one field of it (arch)
   lib/resolv.fern   glibc's IPv4 name lookup — /etc/hosts, the
                     `hosts:` line of nsswitch.conf, resolv.conf and an
-                    RFC 1035 A query — for the utilities that resolve
-                    the machine's own name (hostid; hostname, uname
-                    and who reach for the same pieces)
+                    RFC 1035 A query — and getaddrinfo's AI_CANONNAME
+                    over the same walk, for the utilities that resolve
+                    the machine's own name (hostid) or one a session
+                    recorded (who --lookup)
+  lib/canon.fern    the symbolic-link resolution walk readlink -f/-e/-m
+                    and realpath share: one loop over a name's
+                    components under three existence modes, plus the
+                    no-symlinks variant realpath -s wants. The two
+                    rules that are in no man page live here — a suffix
+                    of `/`, `/.` or `/..` makes the component before it
+                    have to be a searchable directory whatever the mode
+                    says, since a `..` pops lexically and nothing else
+                    ever asks about what it popped; and the loop
+                    detection is a (parent directory, remaining path)
+                    set consulted from the twenty-FIRST link rather
+                    than a depth limit, so a 5000-link chain resolves
+                    and a cycle's residue depends on its LENGTH
+  lib/tty.fern      ttyname(3) as glibc answers it: the /proc/self/fd/N
+                    readlink first, trusted only when it still stats to
+                    the same character device, then a walk of /dev/pts
+                    and /dev by device number, for the utilities that
+                    name the terminal on standard input (tty, logname,
+                    who -m).
+                    /dev/ptmx and /dev/pts/ptmx share a device number,
+                    which is why the order matters
+  lib/selinux.fern  is_selinux_enabled() and getcon(), which are two
+                    files rather than libselinux — the selinuxfs line
+                    of /proc/self/mounts and /proc/self/attr/current —
+                    for id and runcon
   <util>.fern       one program per utility
 internal/coreutils/
   harness_test.go   the oracle harness (this file's "How parity is enforced"),
@@ -360,6 +420,38 @@ Darwin.
    where the whole exercise is to find them.
 
 ## Performance
+
+`shuf`, 2026-09-11, Linux x86-64 (GNU coreutils 9.4; uutils 0.0.24 as the
+Debian multi-call binary), a 62 MiB / 8 000 000-line file. Best of three
+wall-clock runs rather than mean plus sigma: the hyperfine run took longer
+than the box could give it with other agents on the same four cores, and its
+sigma came back larger than its means. Comparable down its own columns only.
+
+| utility | workload | fern (ms) | gnu (ms) | uutils (ms) | gnu / fern | uutils / fern |
+|---|---|---|---|---|---|---|
+| `shuf` | `-i 1-1000000` | 782 | 181 | 193 | 0.23x | 0.25x |
+| `shuf` | a 62 MiB file | 7397 | 4244 | 1130 | 0.57x | 0.15x |
+| `shuf` | a 62 MiB file from a pipe | 4696 | 3780 | 964 | 0.80x | 0.21x |
+| `shuf` | `-n 10` of a 62 MiB file | 1711 | 360 | 200 | 0.21x | 0.12x |
+| `shuf` | `-n 1000000` of a 62 MiB file | 2327 | 1705 | 310 | 0.73x | 0.13x |
+| `shuf` | `-r -n 1000000` of a 62 MiB file | 1263 | 563 | 576 | 0.45x | 0.46x |
+| `shuf` | `-n 10 -i 1-1000000000` | 0.58 | 1.60 | — | 2.76x | — |
+| `shuf` | `-e` 200 operands | 1.07 | 1.67 | 2.82 | 1.56x | 2.65x |
+
+**shuf does not meet this epic's bar.** It wins the two startup rows and
+loses every per-line one, and the cause is per-draw and per-line rather than
+algorithmic: 8 000 000 draws plus their one-byte writes cost Fern 1506 ms
+against GNU's 720, so the generator alone is 2x, and the rest of the `-n 10`
+row is `io_buffered.LineReader` materialising a string per line on the
+reservoir path. That is #8770's per-append floor and #8822's x86-64 emitter.
+Two shapes were fixed before these numbers were taken: the generator state
+used to be rebuilt as a nine-field record per BYTE, and the output block used
+to be a concatenation per line.
+
+The row uutils cannot answer at all is `-n 10 -i 1-1000000000`: it
+materialises the range and dies allocating 24 GB. GNU keeps a sparse map of
+the slots a swap moved, and so does `shuf.fern`, which is the 0.58 ms.
+
 
 `scripts/coreutils-bench` compiles the utilities with `-O` for the host and
 runs each workload under hyperfine for Fern, GNU and (when present) uutils,
@@ -1033,6 +1125,23 @@ buffer boundaries and `^` anchors in the same places. What differs is
 memory — the input's size rather than a block — and that GNU's
 `failed to create temporary file` is unreachable here, so an unwritable
 `$TMPDIR` under an unprivileged user fails on GNU and succeeds on this.
+**`who` and `pinky` under a TZ that names daylight time but no dates.**
+`TZ=ABC1DEF` — a zone name, an offset, a daylight name and nothing more —
+leaves the changeover dates to the implementation, and so does a TZ whose
+dates are malformed (`TZ=EST5EDT,J0,J300`). glibc reads them from
+`/usr/share/zoneinfo/posixrules`, a copy of America/New_York that upstream
+tzdata stopped shipping in 2020 and Debian still carries as a symlink: it
+applies that file's transition times with the TZ string's offsets
+substituted and a correction that moves the spring change by the
+difference between the two standard offsets, and past the file's own table
+(2037) it abandons the TZ string entirely — `TZ=ABC1DEF date -d @2147483647`
+prints `EST -0500`, not the `ABC` the string names. `lib/tz.fern` applies
+the POSIX default dates instead, the United States rule in force since
+2007, which is what glibc itself uses on a system with no posixrules file.
+The two agree on every date between those dates and 2037 and differ
+outside it; the corpus therefore carries no case of that TZ shape, and
+`who_test.go` says so where a reader will meet it.
+
 **`uname -p` and `-i` print the machine name, as Linux distributions'
 GNU does.** Upstream coreutils can answer neither on Linux — the two
 `#if`s in uname.c are a Solaris `sysinfo(2)` and a BSD `sysctl`, and glibc
@@ -1128,7 +1237,48 @@ without it gives. The detection is what keeps that refusal honest rather
 than unconditional; what an SELinux host prints is reproduced from the
 documented behaviour and not from a reference binary.
 
+**`runcon` cannot run a command.** Everything a kernel without SELinux reaches
+is byte-exact — the current context with no operands, `no command specified`,
+the `may be used only on a SELinux kernel` refusal, and the whole non-permuting
+`+r:t:u:l:c` scan including the `multiple roles` family and the `--r` ambiguity
+list. Past the SELinux check nothing is implemented, because three pieces are
+each blocked on a primitive: `execvp(3)` passes the command NAME as the child's
+argv[0] where `proc_exec` forces the resolved path it was handed; `-c` needs
+`getfilecon(3)`, an extended-attribute read with no primitive at all; and
+`security_check_context(3)` reads the kernel's verdict back off the descriptor
+it wrote the context to, which `write_file` cannot do. So a build on an SELinux
+host says `running a command in a security context is not supported on this
+system` and exits 125 where GNU would run the command — the shape `split
+--filter` already uses — with every option still declared, since their getopt
+behaviour is observable either way.
+
 ## Open gaps
+
+**A directory walk is bounded by PATH_MAX (#9074).** Every filesystem builtin
+takes a path, so a recursive walk concatenates one per entry and the kernel
+refuses it past 4096 bytes. GNU's fts is fd-relative (FTS_CWDFD: openat /
+fdopendir / unlinkat against a held descriptor) and has no such bound: on a
+tree built with fd-relative mkdir to 80 levels of 100 characters, `rm -rf`
+removes it in silence while `rm.fern` stops at level 40 with `File name too
+long` and leaves the rest. Shallow ENAMETOOLONG is an ordinary error path both
+sides agree on. `remove_dir_all` is fd-relative already but offers no
+per-entry hook, so it cannot carry `-v`, `-i`, or the per-entry diagnostics
+that decide the exit status. `du`, `ls -R`, `cp -r`, `chmod -R` and `find`
+want the same primitive.
+
+**Three rm paths are outside the corpus.** `--one-file-system` and
+`--preserve-root=all` only act across a mount point and the harness cannot
+mount one, so they stand in the corpus as the inert invocations that prove
+they parse; both were compared against GNU over a real tmpfs by hand,
+including the `--preserve-root=all --no-preserve-root` order in which GNU
+keeps the device check and drops only the `/` failsafe. The write-protected
+prompt needs a file the test user cannot write, which as root does not exist;
+it was compared under uid 65534 by hand, and in the corpus it stands as the
+`---presume-input-tty` cases, which agree either way. And GNU carries a
+fourth prompt wording, `attempt removal of inaccessible directory %s? `, that
+no directory mode from 000 to 555 could reach — the FTS_DNR path answers
+first — so rm.fern does not have it.
+
 
 **`X as usize` means different addresses in the two compilers (#8799).**
 Native reads the cast as a counted buffer's DATA pointer, which is what
@@ -1231,6 +1381,26 @@ gethostname(2) on every backend (#8529) — and got it under its own
 capability rather than a one-off syscall on one backend. A gap met later
 gets an issue and a fix, never a corpus carve-out.
 
+**A failed getcwd carries no errno (#9067).** `getcwd()` is a bare string and
+reports failure as the empty one, where every other filesystem builtin is a
+`Result[T, IoError]` carrying glibc's strerror text. `readlink -f` and
+`realpath` on a RELATIVE operand start at the working directory, and GNU names
+what getcwd(2) said when it will not answer — `No such file or directory` for a
+directory that has been removed, `Permission denied` for one whose ancestor lost
+search permission. `lib/canon.fern` can report only the first, and does. The
+corpus cannot reach either: the harness has no way to put both children in the
+same removed or unsearchable directory.
+
+**`read_file` reads to EOF rather than trusting `st_size` (#9065, fixed).** It
+used to size its buffer from `fstat` and report the string's length as
+`st_size`, so every `/proc` file read empty and every `/sys` file read as a page
+of mostly NUL — and the interpreter disagreed, since Go's `os.ReadFile` grows.
+Four readers were silently wrong on that: `id`'s selinuxfs probe always answered
+false, `id`'s own context came back empty, `logname` never saw
+`/proc/self/loginuid`, and `nproc`'s `/proc/cpuinfo` fallback always counted
+zero CPUs. Fixed in all four backends and the self-host, so a caller needs
+nothing between it and the kernel. A regular file still allocates once.
+
 ## Staging
 
 Utilities are grouped by what they need from the Fern runtime, and the
@@ -1245,8 +1415,8 @@ groups are the order of work. Each sub-issue names its group.
   `sum` `md5sum` `sha1sum` `sha224sum` `sha256sum` `sha384sum` `sha512sum`
   `b2sum` `tee`. Done: `cat`, `tac`, `head`, `tail`, `wc`, `nl`, `cut`,
   `paste`, `join`, `comm`, `uniq`, `sort`, `tr`, `fold`, `expand`, `unexpand`,
-  `split`, `csplit`, `od`, `base32`, `base64`, `basenc`, `sum`, `tee` and the
-  seven checksum utilities. `tee` wanted signal dispositions (#8792) for `-i`
+  `pr`, `split`, `csplit`, `shuf`, `od`, `base32`, `base64`, `basenc`, `sum`,
+  `tee` and the seven checksum utilities. `tee` wanted signal dispositions (#8792) for `-i`
   and its `--output-error` family: SIG_IGN on SIGINT and SIGPIPE.
   Needs a buffered stdout writer in `std/io_buffered`
   (its own header already promises one) and a streaming stdin reader whose
@@ -1262,16 +1432,23 @@ groups are the order of work. Each sub-issue names its group.
   (getcwd), `tty` (ttyname), `nproc` (affinity), `uname` `arch` (uname)
   — those four done, on `getcwd()`, `cpu_count()` and `uname_field(i)`
   under the new `cwd` and `sysinfo` target capabilities —
-  `whoami` `id` `groups` `logname` (done) `users` `who`
-  `pinky` (uid, passwd, utmp), `printenv` (done) `env` (the whole
-  environ, exec), `ln` `readlink`
-  `realpath` (link, symlink, readlink; `link` and `unlink` are done),
-  `mkdir` `rmdir` `rm` `mv` `cp`
-  `install` `touch` `truncate` `mkfifo` `mknod` `mktemp` `sync` (rename,
+  `whoami` `id` `groups` `logname` `users` `who` `pinky` (done — the
+  family needed NO new primitive: utmp is `read_file_bytes`, who's
+  message-status and idle columns are `stat`, and the local timestamp
+  `who` and `pinky` print is `read_file` plus `env`, which is
+  `lib/tz.fern`), `printenv` (done) `env` (the whole
+  environ, exec), `ln`
+  (link, symlink, readlink; `link`, `unlink`, `readlink` and `realpath`
+  are done on `read_link()` from #8883, leaving `ln`),
+  `mkdir` `rmdir` `rm` (done) `mv` `cp`
+  `install` `touch` `truncate` `mkfifo` `mknod` `sync` (rename,
   utimensat, ftruncate, mknod, fsync; `mkdir` with a mode and `rmdir` are
-  primitives now), `chmod` `chown`
+  primitives now, and `rename`, `chmod` and `set_file_times` landed with
+  #9059), `mktemp` (done — it needed none of them: `open_exclusive`,
+  `create_dir`, `remove_dir`, `remove_file`, `lstat`, `random_bytes` and
+  `env` were all already here, so its banner was stale), `chmod` `chown`
   `chgrp` `chcon` `runcon`, `stat` `ls` `dir` `vdir` `du` `df` `dircolors`
-  (full stat, statfs, d_type), `date` (strftime, timezone), `timeout` `nice`
+  (full stat, statfs, d_type), `date` (strftime; the timezone half is `lib/tz.fern` now), `timeout` `nice`
   `nohup` `kill` `stdbuf` `chroot` (signals, setpriority, exec), `dd`
   `shred` `stty` `uptime` `pathchk`, and `hostid` (done: `hostname()`
   plus the resolver in `lib/resolv.fern`). Each primitive is a builtin,

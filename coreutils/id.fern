@@ -35,6 +35,7 @@ import "std/array";
 import "std/io_buffered";
 import "./lib/gnu";
 import "./lib/pwdb";
+import "./lib/selinux";
 
 function opt_context(): i32 {
   return 1;
@@ -88,52 +89,12 @@ function help_text(): string {
   return out;
 }
 
-// ---- SELinux ----------------------------------------------------------------
-//
-// libselinux's is_selinux_enabled() finds the selinuxfs mount and checks
-// it; with no such mount there is no SELinux and every `-Z` is refused.
-// Reading /proc/self/mounts for the filesystem TYPE is that check — the
-// mount point is wherever the system put it, so the type is what to look
-// for rather than a hardcoded /sys/fs/selinux.
-//
-// Asked lazily: it costs an open and a read, and `id -u` — the shape a
-// script runs in a loop — never needs the answer.
-function selinux_enabled(): boolean {
-  match (read_file("/proc/self/mounts")) {
-    Ok(text) => {
-      var lines: string[] = text.lines();
-      var i: i32 = 0;
-      while (i < lines.len()) {
-        var f: string[] = lines[i].fields();
-        if (f.len() >= 3 && f[2] == "selinuxfs") {
-          return true;
-        }
-        i = i + 1;
-      }
-      return false;
-    },
-    Err(_) => {
-      return false;
-    }
-  }
-}
-
-// getcon(3): the process's own security context, which the kernel
-// exposes as this file. The value is NUL-terminated in the file.
+// The process's own context, or "" when there is none to report — which
+// is what makes the composite line omit its ` context=` suffix.
 function process_context(): string {
-  match (read_file_bytes("/proc/self/attr/current")) {
-    Ok(bs) => {
-      var n: i32 = bs.len();
-      while (n > 0 && (bs[n - 1] as i32 == 0 || bs[n - 1] as i32 == 10)) {
-        n = n - 1;
-      }
-      var out: u8[] = [];
-      var i: i32 = 0;
-      while (i < n) {
-        out = out.append(bs[i]);
-        i = i + 1;
-      }
-      return string_from_bytes_unchecked(out);
+  match (selinux.context()) {
+    Ok(c) => {
+      return c;
     },
     Err(_) => {
       return "";
@@ -424,9 +385,12 @@ function check_mode(m: Mode): string {
       exit(1);
     }
   }
-  // The context is read only where it can be printed: the composite
-  // line carries it, and -Z is nothing else.
-  if (only == 0 || m.context) {
+  // The context is read only where it can be printed — the composite
+  // line carries it, and -Z is nothing else — and only on a kernel that
+  // HAS SELinux. /proc/self/attr/current is the whole LSM's interface,
+  // not SELinux's, so an AppArmor box answers it with something like
+  // `kernel`, which is not a context to print.
+  if ((only == 0 || m.context) && selinux.enabled()) {
     return process_context();
   }
   return "";
@@ -436,7 +400,7 @@ function main(): i32 {
   var parsed: (Mode, string[]) = parse_mode(args());
   var m: Mode = parsed.0;
   var operands: string[] = parsed.1;
-  if (m.context && !selinux_enabled()) {
+  if (m.context && !selinux.enabled()) {
     gnu.error("--context (-Z) works only on an SELinux-enabled kernel");
     return 1;
   }

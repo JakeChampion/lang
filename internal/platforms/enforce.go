@@ -41,6 +41,20 @@ var gatedBuiltins = map[string]string{
 	"proc_fork":    "proc",
 	"proc_waitpid": "proc",
 	"proc_exec":    "proc",
+	// A process table with pids in it to ask about, which is the same
+	// host property fork / exec / waitpid need.
+	"process_alive": "proc",
+
+	// A kernel-enforced ceiling on a process resource. Its own
+	// capability rather than `proc`: that one is the authority to have
+	// processes at all, while this is a property a host can lack while
+	// still having them.
+	"rlimit_nofile": "rlimit",
+
+	// The filesystem itself — how large it is and what it will accept as
+	// a name — rather than the files on it, which is `fs`. A host can
+	// serve files and have no volume to measure.
+	"statfs": "fsinfo",
 
 	// One-level bump-arena checkpoint (__heap_mark / __heap_release_to).
 	// Native-only: both natives rewind __fern_heap_ptr and snapshot the
@@ -75,6 +89,7 @@ var gatedBuiltins = map[string]string{
 	"now_ns":              "now",
 	"monotonic_ns":        "now",
 	"sleep_ms":            "now",
+	"sleep_ns":            "now",
 	"wasm_timer_pollable": "now",
 
 	// `timer_fd` is a clock wakeup too, but it is gated on the FD half
@@ -127,6 +142,8 @@ var gatedBuiltins = map[string]string{
 	"create_link":     "fs",
 	"create_symlink":  "fs",
 	"read_link":       "fs",
+	"rename":          "fs",
+	"set_file_times":  "fs",
 	"temp_dir":        "fs",
 
 	// Permission bits on a filesystem entry, which is a separate
@@ -143,6 +160,9 @@ var gatedBuiltins = map[string]string{
 	// permission model has no mask to set, and answering 0 would claim
 	// every bit survives.
 	"umask": "fsmode",
+	// And `chmod` is the WRITE of it on an entry that already exists,
+	// where `write_file_exec` only sets a bit on one it is creating.
+	"chmod": "fsmode",
 
 	// The process's own identity — the effective pair, the real pair,
 	// and the supplementary group set. A host with no users cannot

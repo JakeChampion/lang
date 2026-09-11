@@ -516,11 +516,11 @@ function sole_option(argv: string[]): void {
   }
   var name: string = slice_unchecked(a, 2, a.len()) + "";
   if ("help".starts_with(name)) {
-    gnu.write_out(help_text());
+    gnu.write_out_with(help_text(), failure());
     exit(0);
   }
   if ("version".starts_with(name)) {
-    gnu.write_out("expr (Fern coreutils) " + gnu.version() + "\n");
+    gnu.write_out_with("expr (Fern coreutils) " + gnu.version() + "\n", failure());
     exit(0);
   }
 }

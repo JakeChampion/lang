@@ -197,12 +197,17 @@ var rcResultOwned = map[string]bool{
 	"__fern_create_link":         true,
 	"__fern_create_symlink":      true,
 	"__fern_read_link":           true,
-	// `access` and `write_file_exec` have no `__fern_*` entry in rcsigs
-	// to alias through — both are native-only (E066 refuses them on the
-	// wasm worlds), so they are classified there under the builtin name,
-	// which is why these two are spelled the builtin's way too.
+	"__fern_rename":              true,
+	"__fern_set_file_times":      true,
+	// `access`, `write_file_exec`, `chmod` and `statfs` have no
+	// `__fern_*` entry in rcsigs to alias through — all four are
+	// native-only (E066 refuses them on the wasm worlds), so they are
+	// classified there under the builtin name, which is why they are
+	// spelled the builtin's way here too.
 	"access":          true,
 	"write_file_exec": true,
+	"chmod":           true,
+	"statfs":          true,
 }
 
 // rcResultImmortal: fresh, pointer-shaped, static-sentinel header. The
@@ -282,10 +287,14 @@ var rcOwnedResultBuiltins = map[string]bool{
 	"create_link":                true,
 	"create_symlink":             true,
 	"read_link":                  true,
+	"rename":                     true,
+	"chmod":                      true,
+	"set_file_times":             true,
 	"temp_dir":                   true,
 	"read_dir":                   true,
 	"stat":                       true,
 	"lstat":                      true,
+	"statfs":                     true,
 	"access":                     true,
 }
 
@@ -417,7 +426,8 @@ var rcResultNonPointer = map[string]bool{
 	"__memcpy":         true, "__memset": true, "__store_i32": true,
 	"__store_i64": true, "__store_ptr": true, "__http_entry": true,
 	"__fern_reader_close": true, "__fern_sleep_ms": true,
-	"strbuf_reset": true, "strbuf_append": true,
+	"__fern_sleep_ns": true,
+	"strbuf_reset":    true, "strbuf_append": true,
 
 	// f64.
 	"__fern_abs_f64": true, "__fern_ceil_f64": true, "__fern_cos_f64": true,
@@ -429,7 +439,7 @@ var rcResultNonPointer = map[string]bool{
 	"__fern_arr_push_shared_bytes": true, "__fern_heap_bump_bytes": true,
 	"__fern_idiv_s64": true, "__fern_idiv_u64": true, "__fern_irem_s64": true,
 	"__fern_irem_u64": true, "__fern_monotonic_ns": true, "__fern_now_ns": true,
-	"__fern_now_unix_ms": true, "__load_i64": true,
+	"__fern_now_unix_ms": true, "__load_i64": true, "rlimit_nofile": true,
 
 	// i32 counts, indices, comparisons and booleans.
 	"__fern_str_len": true, "__fern_str_byte": true, "__fern_memchr": true,
@@ -442,7 +452,8 @@ var rcResultNonPointer = map[string]bool{
 	"__ptr_width":   true,
 	"__slice_range": true, "__fern_idiv_s32": true, "__fern_idiv_u32": true,
 	"__fern_irem_s32": true, "__fern_irem_u32": true, "isatty": true,
-	"geteuid": true, "getegid": true, "getuid": true, "getgid": true,
+	"process_alive": true,
+	"geteuid":       true, "getegid": true, "getuid": true, "getgid": true,
 	// The sigaction return, which the caller drops; nothing counted.
 	"signal_default": true, "signal_ignore": true,
 	"__wasi_errno_of_code": true,

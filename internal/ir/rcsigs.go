@@ -279,7 +279,15 @@ var rcInertBuiltins = map[string]bool{
 	"string_from_bytes_unchecked": true,
 
 	"proc_exec": true, "proc_fork": true, "proc_waitpid": true,
-	"sleep_ms": true, "subprocess": true, "timer_fd": true,
+	"sleep_ms": true, "sleep_ns": true, "subprocess": true, "timer_fd": true,
+	// (pid) → boolean. A scalar in, a scalar out. Native-only — E066
+	// refuses it on both wasm worlds, which have no process table — so
+	// like `access` it is classified here under the builtin name rather
+	// than as a wasm runtime helper.
+	"process_alive": true,
+	// No arguments at all, and an i64 out. Native-only for the same
+	// reason: no wasm world has resource limits.
+	"rlimit_nofile": true,
 
 	// (path, contents) → Result. Both strings are read and written
 	// out; neither is retained. Its sibling `write_file` resolves
@@ -293,6 +301,15 @@ var rcInertBuiltins = map[string]bool{
 	// `write_file_exec` it is classified here under the builtin name
 	// rather than as a wasm runtime helper.
 	"access": true,
+	// (path, mode) → Result, and the same shape as `access` from the
+	// writing side. Native-only for the same reason, so it is named here
+	// the same way.
+	"chmod": true,
+	// (path) → Result[FsStat, IoError]. The path is read and NUL-copied
+	// and nothing in the record it fills is a counted reference.
+	// Native-only for the same reason — no wasm world has a volume to
+	// measure — so it too is classified under the builtin name.
+	"statfs": true,
 	// No arguments at all, so there is nothing to move.
 	// (mask) → the previous mask. A scalar in, a scalar out, and
 	// process state in between: nothing to move. Native-only — E066
@@ -395,9 +412,11 @@ var rcInert = map[string]bool{
 	"__fern_remove_file": true, "__fern_rmdir_rec": true,
 	"__fern_create_dir": true, "__fern_remove_dir": true,
 	"__fern_create_link": true, "__fern_create_symlink": true,
-	"__fern_read_link": true,
-	"__fern_round_f64": true, "__fern_sin_f64": true,
-	"__fern_sleep_ms": true,
+	"__fern_read_link":      true,
+	"__fern_rename":         true,
+	"__fern_set_file_times": true,
+	"__fern_round_f64":      true, "__fern_sin_f64": true,
+	"__fern_sleep_ms": true, "__fern_sleep_ns": true,
 	"__fern_sqrt_f64": true, "__fern_stat": true, "__fern_lstat": true,
 	"__fern_stderr": true,
 	"__fern_stdin":  true, "__fern_stdout": true,

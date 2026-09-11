@@ -2723,6 +2723,7 @@ var CallDirectAliases = mergeCodegenAliases(map[string]string{
 	"now_unix_ms":  "__fern_now_unix_ms",
 	"monotonic_ns": "__fern_monotonic_ns",
 	"sleep_ms":     "__fern_sleep_ms",
+	"sleep_ns":     "__fern_sleep_ns",
 
 	// wasm reactor primitives (Preview-2 pollables): a timer
 	// pollable from monotonic-clock.subscribe-duration, a blocking
@@ -2801,6 +2802,8 @@ var CallDirectAliases = mergeCodegenAliases(map[string]string{
 	"create_link":    "__fern_create_link",
 	"create_symlink": "__fern_create_symlink",
 	"read_link":      "__fern_read_link",
+	"rename":         "__fern_rename",
+	"set_file_times": "__fern_set_file_times",
 	"stat":           "__fern_stat",
 	"lstat":          "__fern_lstat",
 	"read_dir":       "__fern_read_dir",

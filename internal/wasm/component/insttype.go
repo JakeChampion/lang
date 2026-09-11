@@ -141,6 +141,32 @@ type fsVocab struct {
 	rIn, rOut uint32 // result<own<stream>, error-code>
 	rUnit     uint32 // result<_, error-code>
 	descType  uint32 // descriptor-type enum (stat-at + read-directory)
+	// wall-clock's `datetime`, declared on first use rather than in the
+	// prelude: both `descriptor-stat` and `new-timestamp` reference it,
+	// and an instance type may export the name only once. See
+	// fsDatetimeOnce.
+	datetime     uint32
+	haveDatetime bool
+}
+
+// fsDatetimeOnce declares `datetime` — the {u64 seconds, u32 nanoseconds}
+// record wasi:filesystem/types re-exports from wasi:clocks/wall-clock — the
+// first time a method needs it, and hands back the same typeidx after that.
+//
+// It is declared inline rather than outer-aliased from the clock interface
+// (which is how the WIT's `use` spells it). Record types match structurally,
+// so an inline declaration of the same shape is accepted — and it keeps a
+// program that only reads timestamps from importing a clock it never asks the
+// time of.
+func fsDatetimeOnce(b *instTypeBuilder, v *fsVocab) uint32 {
+	if !v.haveDatetime {
+		v.datetime = b.defExport(InnerTypeRecord([]RecordField{
+			{Name: "seconds", Valtype: CValtypeU64},
+			{Name: "nanoseconds", Valtype: CValtypeU32},
+		}), "datetime")
+		v.haveDatetime = true
+	}
+	return v.datetime
 }
 
 // fsPrelude emits the descriptor resource, the requested stream aliases,
@@ -236,18 +262,8 @@ func fsViaStream(b *instTypeBuilder, v fsVocab, method string, result uint32) {
 // its three timestamps is a different type and the component fails to
 // instantiate. The reader in wasi_fs_dir.go skips the fields it does
 // not want by offset.
-//
-// `datetime` is declared inline rather than outer-aliased from
-// wasi:clocks/wall-clock (which is how the WIT's `use` spells it).
-// Record types match structurally, so an inline declaration of the same
-// shape is accepted — and it keeps a program that calls `stat` from
-// having to import a clock it never reads.
-func fsStat(b *instTypeBuilder, v fsVocab, atPath, self bool) {
-	datetime := b.defExport(InnerTypeRecord([]RecordField{
-		{Name: "seconds", Valtype: CValtypeU64},
-		{Name: "nanoseconds", Valtype: CValtypeU32},
-	}), "datetime")
-	optDatetime := b.def(InnerTypeOption(byte(datetime)))
+func fsStat(b *instTypeBuilder, v *fsVocab, atPath, self bool) {
+	optDatetime := b.def(InnerTypeOption(byte(fsDatetimeOnce(b, v))))
 	stat := b.defExport(InnerTypeRecord([]RecordField{
 		{Name: "type", Valtype: byte(v.descType)},
 		{Name: "link-count", Valtype: CValtypeU64},
@@ -304,12 +320,6 @@ func fsReadDir(b *instTypeBuilder, v fsVocab) {
 		"[method]directory-entry-stream.read-directory-entry")
 }
 
-// fsPathMutator emits one of the path-mutating methods —
-// `unlink-file-at`, `create-directory-at`, `remove-directory-at`. They
-// share a signature exactly: (borrow<descriptor>, string) ->
-// result<_, error-code>. Note the absent path-flags parameter, which
-// open-at and stat-at both take; these three do not follow symlinks and
-// the WIT gives them no flags argument.
 // fsLinkAt declares `link-at: func(self: borrow<descriptor>, old-path-flags:
 // path-flags, old-path: string, new-descriptor: borrow<descriptor>, new-path:
 // string) -> result<_, error-code>`. It is the one path method with a SECOND
@@ -348,6 +358,48 @@ func fsReadlinkAt(b *instTypeBuilder, v fsVocab) {
 		"[method]descriptor.readlink-at")
 }
 
+// fsRenameAt declares `rename-at: func(self: borrow<descriptor>, old-path:
+// string, new-descriptor: borrow<descriptor>, new-path: string) ->
+// result<_, error-code>`. Like link-at it names a second descriptor, and
+// unlike link-at it takes no path-flags: a rename moves the entry itself, so
+// there is no final symlink to follow or not.
+func fsRenameAt(b *instTypeBuilder, v fsVocab) {
+	b.funcExport(tcpMethodFuncDecl("rename-at",
+		[]string{"self", "old-path", "new-descriptor", "new-path"},
+		[]byte{byte(v.bDesc), CValtypeString, byte(v.bDesc), CValtypeString},
+		byte(v.rUnit)),
+		"[method]descriptor.rename-at")
+}
+
+// fsSetTimesAt declares `set-times-at: func(self: borrow<descriptor>,
+// path-flags: path-flags, path: string, data-access-timestamp: new-timestamp,
+// data-modification-timestamp: new-timestamp) -> result<_, error-code>`.
+//
+// It is the only method here whose arguments carry a VARIANT.
+// `new-timestamp`'s three arms are how preview 2 spells "leave this one
+// alone", "use the host's clock" and a value; it is declared here rather
+// than in the prelude because nothing else references it, so a body that
+// does not ask for this method keeps the type numbering it had.
+func fsSetTimesAt(b *instTypeBuilder, v *fsVocab) {
+	datetime := fsDatetimeOnce(b, v)
+	newTimestamp := b.defExport(InnerTypeVariant([]VariantCase{
+		{Name: "no-change"},
+		{Name: "now"},
+		{Name: "timestamp", HasPayload: true, PayloadValtype: byte(datetime)},
+	}), "new-timestamp")
+	b.funcExport(tcpMethodFuncDecl("set-times-at",
+		[]string{"self", "path-flags", "path", "data-access-timestamp", "data-modification-timestamp"},
+		[]byte{byte(v.bDesc), byte(v.pathFlags), CValtypeString, byte(newTimestamp), byte(newTimestamp)},
+		byte(v.rUnit)),
+		"[method]descriptor.set-times-at")
+}
+
+// fsPathMutator emits one of the path-mutating methods —
+// `unlink-file-at`, `create-directory-at`, `remove-directory-at`. They
+// share a signature exactly: (borrow<descriptor>, string) ->
+// result<_, error-code>. Note the absent path-flags parameter, which
+// open-at and stat-at both take; these three do not follow symlinks and
+// the WIT gives them no flags argument.
 func fsPathMutator(b *instTypeBuilder, v fsVocab, method string) {
 	b.funcExport(tcpMethodFuncDecl(method,
 		[]string{"self", "path"}, []byte{byte(v.bDesc), CValtypeString}, byte(v.rUnit)),

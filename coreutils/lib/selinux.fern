@@ -1,0 +1,75 @@
+// coreutils/lib/selinux.fern — the two questions libselinux answers for
+// the utilities here: whether the kernel has SELinux at all, and what
+// the calling process's own security context is.
+//
+// Neither needs libselinux; both are files.
+//
+// No machine this corpus runs on has SELinux, so the only path the
+// oracle has ever compared is `enabled()` answering false and the
+// refusal each utility gives for it. `context()` IS compared, because
+// /proc/self/attr/current exists and reads `kernel` on a kernel with no
+// policy loaded, which is what `runcon` with no operands prints.
+import "std/string";
+import "std/array";
+
+// `enabled()` — libselinux's is_selinux_enabled(): find the selinuxfs
+// mount and, with no such mount, there is no SELinux. The mount POINT is
+// wherever the system put it, so the filesystem TYPE is what to look for
+// rather than a hardcoded /sys/fs/selinux.
+//
+// Ask it lazily: it costs an open and a read, and the shapes a script
+// runs in a loop — `id -u`, `runcon` with no operands — never need the
+// answer.
+pub function enabled(): boolean {
+  match (read_file("/proc/self/mounts")) {
+    Ok(text) => {
+      var lines: string[] = text.lines();
+      var i: i32 = 0;
+      while (i < lines.len()) {
+        var f: string[] = lines[i].fields();
+        if (f.len() >= 3 && f[2] == "selinuxfs") {
+          return true;
+        }
+        i = i + 1;
+      }
+      return false;
+    },
+    Err(_) => {
+      return false;
+    }
+  }
+}
+
+// The attribute's bytes as getcon reports them: the trailing NUL stripped
+// and NOTHING ELSE. Some kernels end the attribute with a newline, and that
+// newline is part of the context — `runcon` with no command prints a blank
+// line after it, and `id -Z` the same. Trimming it agreed with GNU on a host
+// whose file carries no newline and differed by one byte on a host whose
+// file does.
+//
+// Separate from the read so that either case can be tested wherever the
+// suite runs: neither `runcon` nor `id -Z` has an operand pointing at
+// another file, so the oracle corpus only ever sees what this machine's own
+// kernel wrote.
+pub function trim_context(text: string): string {
+  var n: i32 = text.len();
+  while (n > 0 && text[n - 1] as i32 == 0) {
+    n = n - 1;
+  }
+  return slice_unchecked(text, 0, n) + "";
+}
+
+// `context()` — getcon(3): the process's own security context, which the
+// kernel exposes as this file, NUL-terminated. libselinux reads
+// /proc/thread-self/attr/current; a Fern binary has one thread, for which
+// that is this same file.
+pub function context(): Result[string, IoError] {
+  match (read_file("/proc/self/attr/current")) {
+    Ok(text) => {
+      return Ok(trim_context(text));
+    },
+    Err(e) => {
+      return Err(e);
+    }
+  }
+}
