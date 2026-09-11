@@ -329,6 +329,7 @@ var providedSigs = map[string]providedSig{
 	"chmod":                         {3, rWord},
 	"set_file_times":                {7, rWord},
 	"truncate":                      {3, rWord},
+	"mknod":                         {5, rWord},
 	"umask":                         {1, rWord},
 	"sleep_ms":                      {-1, rVoid},
 	"sleep_ns":                      {-1, rVoid},

@@ -208,6 +208,7 @@ var rcResultOwned = map[string]bool{
 	"access":          true,
 	"write_file_exec": true,
 	"chmod":           true,
+	"mknod":           true,
 	"statfs":          true,
 }
 
@@ -292,6 +293,7 @@ var rcOwnedResultBuiltins = map[string]bool{
 	"chmod":                      true,
 	"set_file_times":             true,
 	"truncate":                   true,
+	"mknod":                      true,
 	"temp_dir":                   true,
 	"read_dir":                   true,
 	"stat":                       true,

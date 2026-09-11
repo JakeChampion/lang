@@ -271,6 +271,10 @@ const (
 	// O_TRUNC having already emptied it, so the fd form could not
 	// express an extend.
 	sysTruncate = 76
+	// mknodat(2) 259. The dev_t it takes is Linux's own packing of a
+	// major / minor pair, derived by measurement — see
+	// emitMknodRuntime.
+	sysMknodat = 259
 	// geteuid(2) / getegid(2): x86-64 syscalls 107 / 108.
 	sysGeteuid = 107
 	sysGetegid = 108
@@ -637,7 +641,8 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	if g.usesRemoveDirAll || g.usesRemoveFile || g.usesCreateDirAll || g.usesCreateDir ||
 		g.usesRemoveDir || g.usesCreateLink || g.usesCreateSymlink || g.usesTempDir ||
 		g.usesReadDir || g.usesStat || g.usesLstat || g.usesAccess || g.usesReadLink ||
-		g.usesRename || g.usesChmod || g.usesSetFileTimes || g.usesTruncate {
+		g.usesRename || g.usesChmod || g.usesSetFileTimes || g.usesTruncate ||
+		g.usesMknod {
 		g.usesFree = true
 	}
 	if g.usesRemoveDirAll {
@@ -950,6 +955,9 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	}
 	if g.usesTruncate {
 		g.emitTruncateRuntime()
+	}
+	if g.usesMknod {
+		g.emitMknodRuntime()
 	}
 	if g.usesSetFileTimes {
 		g.emitSetFileTimesRuntime()
@@ -1486,6 +1494,8 @@ type generator struct {
 	usesSetFileTimes bool
 	// truncate(2) over a path and a length.
 	usesTruncate bool
+	// mknodat(2) over a path, a mode and a major / minor pair.
+	usesMknod bool
 
 	// usesReaderWriter pulls in the full Reader / Writer
 	// runtime bundle (stdin/stdout/stderr + open_reader /
@@ -1949,6 +1959,10 @@ func (g *generator) recordUse(target string) {
 		g.usesIoError = true
 	case "truncate":
 		g.usesTruncate = true
+		g.usesAlloc = true
+		g.usesIoError = true
+	case "mknod":
+		g.usesMknod = true
 		g.usesAlloc = true
 		g.usesIoError = true
 	case "set_file_times":
@@ -3539,6 +3553,8 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_chmod"
 		case "truncate":
 			target = "__fern_truncate"
+		case "mknod":
+			target = "__fern_mknod"
 		case "set_file_times":
 			target = "__fern_set_file_times"
 		case "temp_dir":
@@ -13913,7 +13929,7 @@ func (g *generator) emitPathzCopy(dstReg, srcMem, scratchMem, tag string) {
 // file it was to point at.
 //
 // System V: rdi = first path string value, rsi = the second or the mode.
-func (g *generator) emitPathOpRuntime(name, tag string, sysno, paths int, mode bool, args func()) {
+func (g *generator) emitPathOpRuntime(name, tag string, sysno, paths, scalars int, args func()) {
 	g.line("")
 	g.line(".globl " + name)
 	g.line(".type " + name + ", @function")
@@ -13925,21 +13941,26 @@ func (g *generator) emitPathOpRuntime(name, tag string, sysno, paths int, mode b
 	g.emit("push r13") // path len / errno / IoError box
 	g.emit("push r14") // pathz of the second operand
 	g.emit("push r15") // syscall result across the frees
-	// 6 pushes ⇒ rsp≡8 mod 16; sub 56 realigns. Slots:
+	// 6 pushes ⇒ rsp≡8 mod 16; sub 72 realigns. Slots:
 	//   [rbp-48] emitStrDataPtr inline-spill scratch
 	//   [rbp-56] first operand string value
 	//   [rbp-64] the operand the IoError names
-	//   [rbp-72] mode
+	//   [rbp-72] scalar 1 (a mode, a length, …)
 	//   [rbp-80] first path len
 	//   [rbp-88] second path len
-	g.emit("sub rsp, 56")
+	//   [rbp-96] scalar 2
+	//   [rbp-104] scalar 3
+	g.emit("sub rsp, 72")
 	g.emit("mov [rbp - 56], rdi")
 	g.emit("mov [rbp - 64], rdi")
 	if paths == 2 {
 		g.emit("mov [rbp - 64], rsi")
 		g.emit("mov [rbp - 72], rsi")
-	} else if mode {
-		g.emit("mov [rbp - 72], rsi")
+	} else {
+		// The scalars arrive in rsi / rdx / rcx, after the one path.
+		for i, reg := range []string{"rsi", "rdx", "rcx"}[:scalars] {
+			g.emit(fmt.Sprintf("mov [rbp - %d], %s", []int{72, 96, 104}[i], reg))
+		}
 	}
 	g.emitPathzCopy("rbx", "[rbp - 56]", "[rbp - 48]", tag+"1")
 	g.emit("mov [rbp - 80], r13")
@@ -13982,7 +14003,7 @@ func (g *generator) emitPathOpRuntime(name, tag string, sysno, paths int, mode b
 	g.emit("mov [rax + 8], r13")
 
 	g.label(".L" + tag + "_ret")
-	g.emit("add rsp, 56")
+	g.emit("add rsp, 72")
 	g.emit("pop r15")
 	g.emit("pop r14")
 	g.emit("pop r13")
@@ -13998,7 +14019,7 @@ func (g *generator) emitPathOpRuntime(name, tag string, sysno, paths int, mode b
 // reaches the caller: that is the whole difference from
 // __fern_create_dir_all.
 func (g *generator) emitCreateDirRuntime() {
-	g.emitPathOpRuntime("__fern_create_dir", "cdir", sysMkdirat, 1, true, func() {
+	g.emitPathOpRuntime("__fern_create_dir", "cdir", sysMkdirat, 1, 1, func() {
 		g.emit("mov edi, -100") // AT_FDCWD
 		g.emit("mov rsi, rbx")
 		g.emit("mov edx, [rbp - 72]") // mode
@@ -14010,7 +14031,7 @@ func (g *generator) emitCreateDirRuntime() {
 // unlinkat(AT_FDCWD, path, AT_REMOVEDIR), which is rmdir(2). A
 // non-empty directory is ENOTEMPTY and reaches the caller.
 func (g *generator) emitRemoveDirRuntime() {
-	g.emitPathOpRuntime("__fern_remove_dir", "rdir", 263, 1, false, func() {
+	g.emitPathOpRuntime("__fern_remove_dir", "rdir", 263, 1, 0, func() {
 		g.emit("mov edi, -100") // AT_FDCWD
 		g.emit("mov rsi, rbx")
 		g.emit("mov edx, 512") // AT_REMOVEDIR
@@ -14022,7 +14043,7 @@ func (g *generator) emitRemoveDirRuntime() {
 // a symlink named as the target is linked to itself, which is what
 // link(1) and ln(1) without -L do.
 func (g *generator) emitCreateLinkRuntime() {
-	g.emitPathOpRuntime("__fern_create_link", "clink", sysLinkat, 2, false, func() {
+	g.emitPathOpRuntime("__fern_create_link", "clink", sysLinkat, 2, 0, func() {
 		g.emit("mov edi, -100")
 		g.emit("mov rsi, rbx")
 		g.emit("mov edx, -100")
@@ -14035,7 +14056,7 @@ func (g *generator) emitCreateLinkRuntime() {
 // symlinkat(target, AT_FDCWD, path). `target` is stored verbatim and
 // never resolved.
 func (g *generator) emitCreateSymlinkRuntime() {
-	g.emitPathOpRuntime("__fern_create_symlink", "csym", sysSymlinkat, 2, false, func() {
+	g.emitPathOpRuntime("__fern_create_symlink", "csym", sysSymlinkat, 2, 0, func() {
 		g.emit("mov rdi, rbx")
 		g.emit("mov esi, -100")
 		g.emit("mov rdx, r14")
@@ -14137,7 +14158,7 @@ func (g *generator) emitReadLinkRuntime() {
 // to is the caller's and folding it in here would move the bytes where
 // the caller asked to move the entry.
 func (g *generator) emitRenameRuntime() {
-	g.emitPathOpRuntime("__fern_rename", "rnam", sysRenameat, 2, false, func() {
+	g.emitPathOpRuntime("__fern_rename", "rnam", sysRenameat, 2, 0, func() {
 		g.emit("mov edi, -100") // AT_FDCWD
 		g.emit("mov rsi, rbx")
 		g.emit("mov edx, -100")
@@ -14149,7 +14170,7 @@ func (g *generator) emitRenameRuntime() {
 // fchmodat(AT_FDCWD, path, mode). The umask is not consulted: it filters
 // a creation, and this is not one, so the low twelve bits land verbatim.
 func (g *generator) emitChmodRuntime() {
-	g.emitPathOpRuntime("__fern_chmod", "chmd", sysFchmodat, 1, true, func() {
+	g.emitPathOpRuntime("__fern_chmod", "chmd", sysFchmodat, 1, 1, func() {
 		g.emit("mov edi, -100") // AT_FDCWD
 		g.emit("mov rsi, rbx")
 		g.emit("mov edx, [rbp - 72]") // mode
@@ -14162,9 +14183,59 @@ func (g *generator) emitChmodRuntime() {
 // unmasked: a negative one is the kernel's EINVAL rather than a clamp
 // here, which would resize to something the caller did not ask for.
 func (g *generator) emitTruncateRuntime() {
-	g.emitPathOpRuntime("__fern_truncate", "trnc", sysTruncate, 1, true, func() {
+	g.emitPathOpRuntime("__fern_truncate", "trnc", sysTruncate, 1, 1, func() {
 		g.emit("mov rdi, rbx")
 		g.emit("mov rsi, [rbp - 72]") // length, full 64 bits
+	})
+}
+
+// emitMknodRuntime emits `__fern_mknod(path, mode, major, minor)` —
+// mknodat(AT_FDCWD, path, mode, dev).
+//
+// The major / minor pair is packed into Linux's dev_t here, because the
+// layout is the kernel's and not something a Fern program should be
+// writing. It was derived by measurement — creating nodes with mknod(1)
+// and reading the raw `st_rdev` back:
+//
+//	dev[7:0]   = minor[7:0]
+//	dev[19:8]  = major[11:0]
+//	dev[31:20] = minor[19:8]
+//
+// The minor is SPLIT around the major, and the legacy 8+8 layout agrees
+// with this one for every pair that fits in a byte each — so a wrong
+// packing is invisible until a minor exceeds 255.
+//
+// The mode reaches the kernel whole: its S_IFMT bits pick the type, and
+// the umask filters the rest, which is what a creation should do.
+func (g *generator) emitMknodRuntime() {
+	g.emitPathOpRuntime("__fern_mknod", "mknd", sysMknodat, 1, 3, func() {
+		g.emit("mov edi, -100") // AT_FDCWD
+		g.emit("mov rsi, rbx")
+		g.emit("mov edx, [rbp - 72]") // mode
+		g.emit("mov eax, [rbp - 104]")
+		g.emit("mov ecx, [rbp - 96]")
+		// A pair that does not fit the 12 + 20 bits below would be
+		// packed LOSSILY into a different, valid node. The kernel
+		// ignores every bit of `dev` above 31, so there is nothing to
+		// hand it that it would reject on its own — instead the mode
+		// becomes an S_IFMT no type uses, for which it answers EINVAL.
+		g.emit("mov r11d, eax")
+		g.emit("shr r11d, 20")
+		g.emit("jnz .Lmknd_bad")
+		g.emit("mov r11d, ecx")
+		g.emit("shr r11d, 12")
+		g.emit("jz .Lmknd_dev")
+		g.label(".Lmknd_bad")
+		g.emit("mov edx, 61440") // 0o170000
+		g.label(".Lmknd_dev")
+		g.emit("mov r10d, eax")
+		g.emit("and r10d, 255") // minor[7:0]
+		g.emit("and ecx, 4095")
+		g.emit("shl ecx, 8")
+		g.emit("or r10d, ecx") // major[11:0] << 8
+		g.emit("and eax, 1048320")
+		g.emit("shl eax, 12")
+		g.emit("or r10d, eax") // minor[19:8] << 20
 	})
 }
 

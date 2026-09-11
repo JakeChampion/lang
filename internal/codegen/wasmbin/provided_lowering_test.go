@@ -76,6 +76,11 @@ var providedRefusedByPlatform = map[string]bool{
 	// `chmod` is the WRITE of it on an entry that already exists, where
 	// write_file_exec only sets a bit on one it is creating.
 	"chmod": true,
+	// `fsnode` — an entry that is neither a file nor a directory.
+	// Neither preview has a call that creates a FIFO or a device node,
+	// and a regular file standing in for one would read back as the
+	// wrong kind rather than as a missing one.
+	"mknod": true,
 	// `umask` is the process's own half of the same property: the mode
 	// bits a creation is allowed to keep. WASI has no creation mask, and
 	// answering 0 would claim every bit survives.

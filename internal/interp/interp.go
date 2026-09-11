@@ -1088,6 +1088,7 @@ func New() *Interp {
 	i.Builtins["rename"] = &Builtin{Fn: builtinRename}
 	i.Builtins["chmod"] = &Builtin{Fn: builtinChmod}
 	i.Builtins["truncate"] = &Builtin{Fn: builtinTruncate}
+	i.Builtins["mknod"] = &Builtin{Fn: builtinMknod}
 	i.Builtins["set_file_times"] = &Builtin{Fn: builtinSetFileTimes}
 	i.Builtins["create_dir_all"] = &Builtin{Fn: builtinCreateDirAll}
 	i.Builtins["remove_dir_all"] = &Builtin{Fn: builtinRemoveDirAll}
@@ -3056,6 +3057,40 @@ func builtinTruncate(_ *Interp, args []Value) (Value, error) {
 	// errno in a *PathError whose Op is "truncate", and classifyIoError
 	// reads the bare errno.
 	return ioResult(string(path), syscall.Truncate(string(path), int64(length))), nil
+}
+
+// badSIFMT is an S_IFMT no file type uses, and `mknodat` answers EINVAL
+// for it — measured. Every implementation of this builtin substitutes it
+// for the caller's mode when the major / minor pair does not fit the
+// target's dev_t, so an out-of-range pair is the kernel's own refusal
+// rather than a node silently created with different numbers. The
+// packing is lossy, so there is nothing to hand the kernel that it would
+// reject on its own: it ignores every bit of `dev` above 31.
+const badSIFMT = 0o170000
+
+// builtinMknod creates a FIFO or a device node — mknodat(2). One builtin
+// for both: mkfifo(3) is this call with a fixed type.
+//
+// The dev_t encoding is per-kernel and lives in mknod_linux.go /
+// mknod_darwin.go, which is why the major and minor reach `mknodAt` as
+// the separate pair the caller named rather than as a packed word.
+func builtinMknod(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 4 {
+		return nil, fmt.Errorf("mknod: expected 4 args, got %d", len(args))
+	}
+	path, ok := args[0].(String)
+	if !ok {
+		return nil, fmt.Errorf("mknod: expected string path, got %T", args[0])
+	}
+	var n [3]uint32
+	for i := 1; i < 4; i++ {
+		v, ok := args[i].(Number)
+		if !ok {
+			return nil, fmt.Errorf("mknod: expected number arg %d, got %T", i, args[i])
+		}
+		n[i-1] = uint32(int64(v))
+	}
+	return ioResult(string(path), mknodAt(string(path), n[0], n[1], n[2])), nil
 }
 
 // The bits of set_file_times' `flags` word. They are Fern's own, not the

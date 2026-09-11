@@ -305,6 +305,11 @@ var rcInertBuiltins = map[string]bool{
 	// writing side. Native-only for the same reason, so it is named here
 	// the same way.
 	"chmod": true,
+	// (path, mode, major, minor) → Result. The path is read and
+	// NUL-copied and the three scalars are values. Native-only — no WASI
+	// preview can create a special file — so it is named here the way
+	// `chmod` is.
+	"mknod": true,
 	// (path) → Result[FsStat, IoError]. The path is read and NUL-copied
 	// and nothing in the record it fills is a counted reference.
 	// Native-only for the same reason — no wasm world has a volume to

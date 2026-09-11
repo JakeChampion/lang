@@ -8055,6 +8055,9 @@ pub function builtin_function_names(): string[] {
         // and its LENGTH — truncate(2), which shrinks a file or extends it
         // with a hole
         "truncate",
+        // the entries that are neither a file nor a directory: a FIFO, and a
+        // character or block device node
+        "mknod",
         // the process's own effective ids, which `test -O` / `-G` compare a
         // file's owner against, and the machine's node name
         "geteuid", "getegid", "hostname",

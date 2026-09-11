@@ -184,6 +184,12 @@ var capabilityProfiles = map[string]capabilityProfile{
 	//     interface at all, and a preopen is a capability handle rather
 	//     than a mount, so there is nothing to measure and no limit to
 	//     report.
+	//   - `fsnode` — a filesystem entry that is neither a file nor a
+	//     directory: a FIFO, or a character or block device node. `fs`
+	//     is the files; this is the other things an entry can be.
+	//     Neither preview has a call that creates one, and the nearest
+	//     stand-in — a regular file where a FIFO was asked for — reads
+	//     back as the wrong kind rather than as a missing one.
 	//   - `rlimit` — a kernel-enforced ceiling on a process resource.
 	//     Neither WASI preview has resource limits, and both constants
 	//     that could stand in — "unlimited", or a plausible 1024 — would
@@ -203,7 +209,7 @@ var capabilityProfiles = map[string]capabilityProfile{
 	// reason it grants `host`: a component is never sent a signal, so
 	// there is nothing to ignore and doing nothing is the whole truth.
 	// wasi-http has no process identity, so it does not get it.
-	"hosted-native": {"log", "now", "env", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "fsinfo"},
+	"hosted-native": {"log", "now", "env", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "fsinfo", "fsnode"},
 
 	// CLI-world wasm wires fs (the preview1 fd helpers) and tcp
 	// (wasi:sockets — wasmbin/wasi_tcp.go) but NOT subprocess:

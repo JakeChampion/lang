@@ -11967,6 +11967,20 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
     // the signature and every backend helper reads it as one, so it lowers
     // through lower_i64, which widens an i32 leaf rather than bailing the
     // module off the IR path.
+    // Built-in `mknod(path, mode, major, minor)` — mknodat(2). Four
+    // 32-bit operands in argv order; the backends pack the major / minor
+    // pair into their kernel's dev_t.
+    if (cid.name == "mknod" && c.args.len() == 4) {
+        var mk: LowerState = lower_expr(c.args[0], s);
+        if (!mk.ok) { return mk; }
+        var mi: i32 = 1;
+        while (mi < 4) {
+            mk = lower_expr(c.args[mi], mk);
+            if (!mk.ok) { return mk; }
+            mi = mi + 1;
+        }
+        return mk.emit(ir.op_mknod());
+    }
     if (cid.name == "truncate" && c.args.len() == 2) {
         var tr: LowerState = lower_expr(c.args[0], s);
         if (!tr.ok) { return tr; }
@@ -70696,6 +70710,7 @@ function builtin_opt_ret_type(name: string): string {
     if (name == "rename") { return "Result[void, IoError]"; }
     if (name == "chmod") { return "Result[void, IoError]"; }
     if (name == "truncate") { return "Result[void, IoError]"; }
+    if (name == "mknod") { return "Result[void, IoError]"; }
     if (name == "set_file_times") { return "Result[void, IoError]"; }
     if (name == "read_link") { return "Result[string, IoError]"; }
     if (name == "temp_dir") { return "Result[string, IoError]"; }
