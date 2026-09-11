@@ -558,8 +558,8 @@ func buildReadFileBodyCommon(idxs map[string]uint32, asBytes bool) []byte {
 	if !asBytes {
 		// read_file validates UTF-8 (D9, #5714); read_file_bytes is
 		// the unvalidated escape hatch. The accumulator holds exactly
-		// the bytes read (cur grows to EOF — no fstat-sized shrink
-		// tail to zero-fill), so validation sees only file content.
+		// the bytes read (cur grows to EOF), so validation sees only
+		// file content.
 		body = inst.InstLocalGet(body, 5) // buf
 		body = inst.InstLocalGet(body, 7) // cur
 		body = inst.InstCall(body, idxs["__fern_utf8_valid"])
@@ -826,7 +826,7 @@ func buildReadFileBodyP2Common(idxs map[string]uint32, asBytes bool) []byte {
 	if !asBytes {
 		// read_file validates UTF-8 (D9, #5714); read_file_bytes is
 		// the unvalidated escape hatch. acc_cur is exactly the bytes
-		// streamed to EOF — no stat-sized shrink tail to zero-fill.
+		// streamed to EOF.
 		// The synthetic EILSEQ goes straight to __build_io_error,
 		// bypassing the p2 error-code translator (it maps
 		// wasi:filesystem error-codes, not errnos).

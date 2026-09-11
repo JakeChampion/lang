@@ -11,7 +11,6 @@
 // policy loaded, which is what `runcon` with no operands prints.
 import "std/string";
 import "std/array";
-import "./procfs";
 
 // `enabled()` — libselinux's is_selinux_enabled(): find the selinuxfs
 // mount and, with no such mount, there is no SELinux. The mount POINT is
@@ -22,7 +21,7 @@ import "./procfs";
 // runs in a loop — `id -u`, `runcon` with no operands — never need the
 // answer.
 pub function enabled(): boolean {
-  match (procfs.read("/proc/self/mounts")) {
+  match (read_file("/proc/self/mounts")) {
     Ok(text) => {
       var lines: string[] = text.lines();
       var i: i32 = 0;
@@ -46,7 +45,7 @@ pub function enabled(): boolean {
 // /proc/thread-self/attr/current; a Fern binary has one thread, for
 // which that is this same file.
 pub function context(): Result[string, IoError] {
-  match (procfs.read("/proc/self/attr/current")) {
+  match (read_file("/proc/self/attr/current")) {
     Ok(text) => {
       var n: i32 = text.len();
       while (n > 0 && (text[n - 1] as i32 == 0 || text[n - 1] as i32 == 10)) {

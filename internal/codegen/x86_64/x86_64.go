@@ -1872,12 +1872,20 @@ func (g *generator) recordUse(target string) {
 		g.usesReadFile = true
 		g.usesAlloc = true
 		g.usesIoError = true
+		// The read-loop grows past a short st_size hint, which copies
+		// into a bigger block and gives the old one back.
+		g.usesMemcpy = true
+		g.usesBoxFree = true
+		g.usesFree = true
 		g.needFern("__fern_utf8_valid")
 	case "read_file_bytes":
 		g.usesReadFileBytes = true
 		g.usesAlloc = true
 		g.usesAllocU8 = true
 		g.usesIoError = true
+		g.usesMemcpy = true
+		g.usesArrDec = true
+		g.usesFree = true
 	case "write_file":
 		g.usesWriteFile = true
 		g.usesAlloc = true
@@ -13076,6 +13084,14 @@ func (g *generator) emitIoErrorRuntime() {
 // → close → Result.Ok(string). Syscall errors short-circuit to
 // Result.Err via __fern_io_error.
 //
+// st_size is a HINT, not the length (#9065): a kernel pseudo-file
+// generates its contents on the read and reports 0 (/proc) or a page
+// (/sys), and an ordinary file can change size between the fstat and
+// the read. The loop reads to EOF, growing when the hint runs out,
+// and the string's length is the bytes it actually read. Asking for
+// st_size + 1 is what distinguishes "the file ended" from "the hint
+// was short" without costing a regular file its single allocation.
+//
 // Result box (matches IR):
 //
 //	tag=0 (Ok)  → payload@+8 = string data ptr
@@ -13090,15 +13106,17 @@ func (g *generator) emitReadFileRuntime() {
 	g.label("__fern_read_file")
 	g.emit("push rbp")
 	g.emit("mov rbp, rsp")
-	g.emit("push rbx") // path byte ptr (materialised below)
+	g.emit("push rbx") // path byte ptr, then the new capacity across a grow
 	g.emit("push r12") // fd
 	g.emit("push r13") // buf base
-	g.emit("push r14") // size
+	g.emit("push r14") // capacity
 	g.emit("push r15") // bytes_read
 	// Frame: 168 bytes — 144-byte stat buf (at rsp..rsp+143)
 	// + 8 bytes scratch slot for emitStrDataPtr on the path
 	// at [rbp - 48] + 16 bytes padding. Keeps rsp 16-aligned
-	// at all call sites below.
+	// at all call sites below. [rbp - 64] is the free 8 bytes
+	// between the stat buf and [rbp - 56]; it carries the grown
+	// buffer across __fern_box_free.
 	g.emit("sub rsp, 168")
 	g.emit("mov [rbp - 56], rdi")                // save original path string value for the err path
 	g.emitStrDataPtr("rbx", "rdi", "[rbp - 48]") // path byte ptr for openat
@@ -13119,19 +13137,40 @@ func (g *generator) emitReadFileRuntime() {
 	g.emitSyscall(5)
 	g.emit("test rax, rax")
 	g.emit("js .Lrf_err_close")
+	// cap = st_size + 1. L2 rc-header layout (see __fern_strcat):
+	// payload = data + NUL slack so the box class matches
+	// __fern_str_dec's length+1 free, and the slack byte doubles as
+	// the probe that catches a file longer than its hint.
 	g.emit("mov r14, [rsp + 48]") // st_size
-
-	// L2 rc-header layout (see __fern_strcat): payload = size data + NUL slack
-	// so the box class matches __fern_str_dec's length+1 free.
-	g.emit("lea edi, [r14 + 1]")
+	g.emit("add r14, 1")          // cap
+	g.emit("mov edi, r14d")
 	g.emit("call __fern_alloc_rc1")
 	g.emit("mov r13, rax") // r13 = data ptr (= base+8)
-	g.emitStrLenStore("r14d", "r13")
 
 	g.emit("xor r15, r15") // bytes_read = 0
 	g.label(".Lrf_loop")
 	g.emit("cmp r15, r14")
-	g.emit("jge .Lrf_done")
+	g.emit("jb .Lrf_read")
+	// Buffer full and not at EOF: double the capacity, with a page
+	// floor so a /proc file (hint 0, cap 1) gets there in one step.
+	g.emit("lea rbx, [r14 + r14]")
+	g.emit("cmp rbx, 4096")
+	g.emit("jae .Lrf_grow")
+	g.emit("mov ebx, 4096")
+	g.label(".Lrf_grow")
+	g.emit("mov edi, ebx")
+	g.emit("call __fern_alloc_rc1")
+	g.emit("mov rdi, rax")
+	g.emit("mov rsi, r13")
+	g.emit("mov rdx, r15")
+	g.emit("call __fern_memcpy") // returns dst
+	g.emit("mov [rbp - 64], rax")
+	g.emit("mov rdi, r13")
+	g.emit("mov rsi, r14")
+	g.emit("call __fern_box_free")
+	g.emit("mov r13, [rbp - 64]")
+	g.emit("mov r14, rbx")
+	g.label(".Lrf_read")
 	g.emit("mov edi, r12d")
 	g.emit("lea rsi, [r13 + r15]")
 	g.emit("mov rdx, r14")
@@ -13140,30 +13179,36 @@ func (g *generator) emitReadFileRuntime() {
 	g.emitSyscallPreloaded(sysRead)
 	g.emit("test rax, rax")
 	g.emit("js .Lrf_err_close")
-	g.emit("jz .Lrf_done") // EOF (file shrunk between fstat and read)
+	g.emit("jz .Lrf_done") // EOF
 	g.emit("add r15, rax")
 	g.emit("jmp .Lrf_loop")
 
 	g.label(".Lrf_done")
 	g.emit("mov edi, r12d")
 	g.emitSyscall(3)
-	// Zero the shrink tail [r13+r15, r13+r14): a file that shrank
-	// between fstat and read used to leave alloc slack there, which
-	// would make the validation below nondeterministic. NUL bytes
-	// are valid UTF-8.
-	g.emit("mov rcx, r14")
-	g.emit("sub rcx, r15")
-	g.emit("jle .Lrf_validate")
-	g.emit("lea rdi, [r13 + r15]")
-	g.emit("xor eax, eax")
-	g.emit("cld")
-	g.emit("rep stosb")
-	g.label(".Lrf_validate")
+	// __fern_str_dec frees at length + 1, so the payload has to be
+	// exactly that; re-fit when the hint over- or undershot.
+	g.emit("lea rbx, [r15 + 1]")
+	g.emit("cmp rbx, r14")
+	g.emit("je .Lrf_fitted")
+	g.emit("mov edi, ebx")
+	g.emit("call __fern_alloc_rc1")
+	g.emit("mov rdi, rax")
+	g.emit("mov rsi, r13")
+	g.emit("mov rdx, r15")
+	g.emit("call __fern_memcpy")
+	g.emit("mov [rbp - 64], rax")
+	g.emit("mov rdi, r13")
+	g.emit("mov rsi, r14")
+	g.emit("call __fern_box_free")
+	g.emit("mov r13, [rbp - 64]")
+	g.label(".Lrf_fitted")
+	g.emitStrLenStore("r15d", "r13")
 	// D9 (#5714): the text read validates at the boundary; invalid
 	// content dispatches as Err(InvalidUtf8(path)) via the synthetic
 	// EILSEQ errno. Raw reads go through __fern_read_file_bytes.
 	g.emit("mov rdi, r13")
-	g.emit("mov rsi, r14")
+	g.emit("mov rsi, r15")
 	g.emit("call " + AsmFnName("__fern_utf8_valid"))
 	g.emit("test eax, eax")
 	g.emit("jnz .Lrf_ok")
@@ -13214,12 +13259,12 @@ func (g *generator) emitReadFileRuntime() {
 
 // emitReadFileBytesRuntime emits `__fern_read_file_bytes(path) →
 // Result[u8[], IoError]` — read_file's raw sibling: the same
-// openat → fstat → read-loop → close pipeline, but the contents
-// land in a fresh `u8[]` from `__alloc_u8` (cap/rc/len header)
-// rather than a string box. A file that shrinks between fstat
-// and read leaves the trailing bytes zero (from __alloc_u8's
-// zero-fill) with len still st_size, matching read_file's
-// short-read behaviour.
+// openat → fstat → grow-to-EOF read-loop → close pipeline, but the
+// contents land in a fresh `u8[]` from `__alloc_u8` (cap/rc/len
+// header) rather than a string box. st_size is the same hint it is
+// there (#9065), and the array's len is the bytes actually read; the
+// capacity stays whatever was allocated, which is what
+// __fern_arr_dec frees with.
 func (g *generator) emitReadFileBytesRuntime() {
 	g.line("")
 	g.line(".globl __fern_read_file_bytes")
@@ -13254,10 +13299,10 @@ func (g *generator) emitReadFileBytesRuntime() {
 	g.emitSyscall(5)
 	g.emit("test rax, rax")
 	g.emit("js .Lrfb_err_close")
+	// cap = st_size + 1; the spare byte is the probe that catches a
+	// file longer than its hint. __alloc_u8 owns the header layout.
 	g.emit("mov r14, [rsp + 48]") // st_size
-
-	// Fresh u8[] of st_size bytes; __alloc_u8 owns the header
-	// layout and the size==0 empty sentinel.
+	g.emit("add r14, 1")          // cap
 	g.emit("mov edi, r14d")
 	g.emit("call __alloc_u8")
 	g.emit("mov r13, rax") // r13 = data ptr
@@ -13265,7 +13310,27 @@ func (g *generator) emitReadFileBytesRuntime() {
 	g.emit("xor r15, r15") // bytes_read = 0
 	g.label(".Lrfb_loop")
 	g.emit("cmp r15, r14")
-	g.emit("jge .Lrfb_done")
+	g.emit("jb .Lrfb_read")
+	// Buffer full and not at EOF: double the capacity, with a page
+	// floor so a /proc file (hint 0, cap 1) gets there in one step.
+	g.emit("lea rbx, [r14 + r14]")
+	g.emit("cmp rbx, 4096")
+	g.emit("jae .Lrfb_grow")
+	g.emit("mov ebx, 4096")
+	g.label(".Lrfb_grow")
+	g.emit("mov edi, ebx")
+	g.emit("call __alloc_u8")
+	g.emit("mov rdi, rax")
+	g.emit("mov rsi, r13")
+	g.emit("mov rdx, r15")
+	g.emit("call __fern_memcpy") // returns dst
+	g.emit("mov [rbp - 64], rax")
+	g.emit("mov rdi, r13")
+	g.emit("mov esi, 1") // stride
+	g.emit("call __fern_arr_dec")
+	g.emit("mov r13, [rbp - 64]")
+	g.emit("mov r14, rbx")
+	g.label(".Lrfb_read")
 	g.emit("mov edi, r12d")
 	g.emit("lea rsi, [r13 + r15]")
 	g.emit("mov rdx, r14")
@@ -13274,13 +13339,14 @@ func (g *generator) emitReadFileBytesRuntime() {
 	g.emitSyscallPreloaded(sysRead)
 	g.emit("test rax, rax")
 	g.emit("js .Lrfb_err_close")
-	g.emit("jz .Lrfb_done") // EOF (file shrunk between fstat and read)
+	g.emit("jz .Lrfb_done") // EOF
 	g.emit("add r15, rax")
 	g.emit("jmp .Lrfb_loop")
 
 	g.label(".Lrfb_done")
 	g.emit("mov edi, r12d")
 	g.emitSyscall(3)
+	g.emitArrayLenStore("r15d", "r13")
 	// Result.Ok(u8[]): 16-byte box, tag=0 @0, arr_ptr @8.
 	g.emit("mov edi, 16")
 	g.emit("call __fern_alloc_rc1")

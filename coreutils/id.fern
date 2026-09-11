@@ -387,8 +387,9 @@ function check_mode(m: Mode): string {
   }
   // The context is read only where it can be printed — the composite
   // line carries it, and -Z is nothing else — and only on a kernel that
-  // HAS SELinux: /proc/self/attr/current answers `kernel` on one that
-  // does not, which is not a context to print.
+  // HAS SELinux. /proc/self/attr/current is the whole LSM's interface,
+  // not SELinux's, so an AppArmor box answers it with something like
+  // `kernel`, which is not a context to print.
   if ((only == 0 || m.context) && selinux.enabled()) {
     return process_context();
   }

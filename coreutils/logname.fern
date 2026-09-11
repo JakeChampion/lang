@@ -29,7 +29,6 @@
 import "std/string";
 import "std/array";
 import "./lib/gnu";
-import "./lib/procfs";
 import "./lib/pwdb";
 import "./lib/utmp";
 
@@ -46,7 +45,7 @@ function help_text(): string {
 // The audit login uid, or None when the kernel recorded none. The file
 // holds a decimal number and nothing else; `(uid_t)-1` is the sentinel.
 function login_uid(): Option[i64] {
-  match (procfs.read("/proc/self/loginuid")) {
+  match (read_file("/proc/self/loginuid")) {
     Ok(text) => {
       match (pwdb.parse_id(text.trim() + "")) {
         Some(uid) => {

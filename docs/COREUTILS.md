@@ -282,10 +282,6 @@ coreutils/
                     files rather than libselinux — the selinuxfs line
                     of /proc/self/mounts and /proc/self/attr/current —
                     for id and runcon
-  lib/procfs.fern   reading a kernel pseudo-file, which read_file
-                    cannot do: /proc reports st_size 0 and /sys reports
-                    a page, so the content only comes out of a read to
-                    EOF. Temporary — it goes when #9065 fixes read_file
   <util>.fern       one program per utility
 internal/coreutils/
   harness_test.go   the oracle harness (this file's "How parity is enforced"),
@@ -1315,14 +1311,15 @@ search permission. `lib/canon.fern` can report only the first, and does. The
 corpus cannot reach either: the harness has no way to put both children in the
 same removed or unsearchable directory.
 
-**`read_file` trusts `st_size` (#9065).** The buffer is sized from `fstat` and
-the string's length is reported as `st_size` rather than as the bytes actually
-read, so every `/proc` file reads empty and every `/sys` file reads as a page of
-mostly NUL. The interpreter is correct — Go's `os.ReadFile` grows — so this is
-also an interp/native divergence. It was silently wrong in shipped code:
-`id.fern`'s SELinux detection always answered false, and `logname.fern` never
-saw `/proc/self/loginuid`. Three readers go through `lib/procfs.fern` meanwhile;
-246 callers do not, which is why the fix belongs in `read_file` itself.
+**`read_file` reads to EOF rather than trusting `st_size` (#9065, fixed).** It
+used to size its buffer from `fstat` and report the string's length as
+`st_size`, so every `/proc` file read empty and every `/sys` file read as a page
+of mostly NUL — and the interpreter disagreed, since Go's `os.ReadFile` grows.
+Four readers were silently wrong on that: `id`'s selinuxfs probe always answered
+false, `id`'s own context came back empty, `logname` never saw
+`/proc/self/loginuid`, and `nproc`'s `/proc/cpuinfo` fallback always counted
+zero CPUs. Fixed in all four backends and the self-host, so a caller needs
+nothing between it and the kernel. A regular file still allocates once.
 
 ## Staging
 
