@@ -43,6 +43,14 @@ type invocation struct {
 	args []string
 	// stdin is fed to both processes and closed.
 	stdin string
+	// timeout bounds ONE run, after which the harness kills the child
+	// and the outcome is "did not finish". Zero leaves it unbounded,
+	// which is what every written-down case wants — they all terminate.
+	// The randomized differential sets one because the REFERENCE does
+	// not always terminate: GNU expr never returns from
+	// `expr bba : '\(b\|\|a\)\?*'`, and a sweep that waited would hang
+	// instead of naming the input that hung it.
+	timeout time.Duration
 	// stdinPath, when set, is opened and handed to the child as fd 0
 	// instead of a pipe — `prog < file`. A regular file there is what
 	// lets a utility seek or fstat its input, and a directory is how
@@ -241,12 +249,19 @@ type outcome struct {
 	exit int
 	// signal is the signal name when one killed the process, else "".
 	signal string
+	// overran is set when invocation.timeout ran out and the harness
+	// killed the process, which is not something a signal can be told
+	// from: the kill IS a signal.
+	overran bool
 	// tree is the working directory the run left behind, for a case
 	// that asked for one.
 	tree []treeEntry
 }
 
 func (o outcome) how() string {
+	if o.overran {
+		return "did not finish"
+	}
 	if o.signal != "" {
 		return "killed by " + o.signal
 	}
@@ -685,6 +700,7 @@ func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 	cmd.Stderr = &errBuf
 
 	var out []byte
+	var overran bool
 	switch inv.stdout {
 	case stdoutCaptured:
 		if inv.stdoutPath != "" {
@@ -697,7 +713,7 @@ func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 		// in its Files, which closes that descriptor in the child —
 		// the one way through os/exec to hand a child a closed fd 1.
 		cmd.Stdout = (*os.File)(nil)
-		_ = cmd.Run()
+		overran = inv.runBounded(cmd)
 	case stdoutFull:
 		if runtime.GOOS != "linux" {
 			t.Skip("/dev/full is a Linux device")
@@ -708,7 +724,7 @@ func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 		}
 		defer f.Close()
 		cmd.Stdout = f
-		_ = cmd.Run()
+		overran = inv.runBounded(cmd)
 	}
 	if inv.stdout != stdoutCaptured || inv.stdoutPath != "" || len(inv.follow) > 0 {
 		// Nothing more to read back: either the point is the reaction
@@ -745,7 +761,7 @@ func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 	} else {
 		var outBuf bytes.Buffer
 		cmd.Stdout = &outBuf
-		_ = cmd.Run()
+		overran = inv.runBounded(cmd)
 		out = outBuf.Bytes()
 	}
 
@@ -755,7 +771,7 @@ func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 	if cmd.ProcessState == nil {
 		t.Fatalf("%s %s never ran: the invocation is not one exec can deliver", bin, quoteArgs(inv.args))
 	}
-	res := outcome{stdout: out, stderr: errBuf.Bytes(), exit: cmd.ProcessState.ExitCode()}
+	res := outcome{stdout: out, stderr: errBuf.Bytes(), exit: cmd.ProcessState.ExitCode(), overran: overran}
 	if ws, ok := cmd.ProcessState.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
 		res.signal = ws.Signal().String()
 	}
@@ -970,6 +986,29 @@ func readTreeInto(t *testing.T, root, prefix string, groups map[[2]uint64]int) [
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].name < out[j].name })
 	return out
+}
+
+// runBounded runs cmd and reports whether inv.timeout ran out first, in
+// which case the child was killed.
+func (inv invocation) runBounded(cmd *exec.Cmd) bool {
+	if inv.timeout <= 0 {
+		_ = cmd.Run()
+		return false
+	}
+	if err := cmd.Start(); err != nil {
+		return false
+	}
+	fired := make(chan struct{})
+	timer := time.AfterFunc(inv.timeout, func() {
+		_ = cmd.Process.Kill()
+		close(fired)
+	})
+	_ = cmd.Wait()
+	if timer.Stop() {
+		return false
+	}
+	<-fired
+	return true
 }
 
 // runToFile runs cmd with fd 1 appended to inv.stdoutPath and returns
