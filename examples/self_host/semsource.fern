@@ -903,7 +903,6 @@ function renumber(blocks: ssa.SBlock[], map: i32[], values: typeinfo.Type[]): ss
 // ---- functions --------------------------------------------------------------
 
 function unsupported_declaration(fd: parser.FuncDecl): string {
-    if (fd.receiver_type.len() > 0) { return "unsupported receiver method"; }
     if (fd.type_params.len() > 0 || fd.type_param_count > 0) { return "unsupported generic function"; }
     if (fd.import_iface.len() > 0 || fd.async) { return "unsupported external or async function"; }
     for p in fd.params { if (p.has_default) { return "unsupported default argument"; } }
@@ -918,18 +917,48 @@ function mode(p: ast.ParamDecl, t: typeinfo.Type): i32 {
     return ssaunits.borrow_mode();
 }
 
+// A method's receiver is its parameter 0: the backends already lower it as
+// one, and the unit planner needs it in the same list as the declared
+// parameters, so every walk over a declaration's parameters starts here.
+function decl_param_names(fd: parser.FuncDecl): string[] {
+    var out: string[] = [];
+    if (fd.receiver_name.len() > 0) { out = out.append(fd.receiver_name); }
+    for p in fd.params { out = out.append(p.name); }
+    return out;
+}
+
+// The receiver borrows. Its `own` modifier is parsed and discarded before it
+// reaches FuncDecl, so there is nothing here to read it from; borrowing is
+// what every backend already does with a receiver, and it is the direction
+// that refuses rather than miscompiles if a body tries to consume one.
+function decl_param_mode(fd: parser.FuncDecl, at: i32, t: typeinfo.Type): i32 {
+    if (fd.receiver_name.len() == 0) { return mode(fd.params[at], t); }
+    if (at > 0) { return mode(fd.params[at - 1], t); }
+    if (!reference(t)) { return ssaunits.value_mode(); }
+    return ssaunits.borrow_mode();
+}
+
+// Two types may declare one method name, so a method's contract is keyed by
+// its receiver type the way irlower keys <Type>.<method>. A bare key would
+// let one callee's contract answer for the other.
+function decl_key(fd: parser.FuncDecl): string {
+    if (fd.receiver_type.len() == 0) { return fd.name; }
+    return util.base_type_name(fd.receiver_type) + "." + fd.name;
+}
+
 function result_type(fd: parser.FuncDecl, scope: checker.Scope): typeinfo.Type {
     if (fd.ret_type.len() == 0) { return t_void(); }
     return scope.ret_type;
 }
 
 function parameters(fd: parser.FuncDecl, s: State): State {
+    var names: string[] = decl_param_names(fd);
     var at: i32 = 0;
-    while (at < fd.params.len()) {
-        var ty: typeinfo.Type = checker.scope_type(s.scope, fd.params[at].name);
+    while (at < names.len()) {
+        var ty: typeinfo.Type = checker.scope_type(s.scope, names[at]);
         if (!semtypes.concrete(ty, false)) { return fail(s, "unresolved parameter type"); }
         var p: Value = define(s, 6, [], at, "", ty);
-        s = bind(p.s, fd.params[at].name, p.id);
+        s = bind(p.s, names[at], p.id);
         at = at + 1;
     }
     return s;
@@ -1068,9 +1097,10 @@ function complete(fd: parser.FuncDecl, s: State): Produced {
     var params: typeinfo.Type[] = [];
     var modes: i32[] = [];
     var at: i32 = 0;
-    while (at < fd.params.len()) {
+    var nparams: i32 = decl_param_names(fd).len();
+    while (at < nparams) {
         params = params.append(f.values[at]);
-        modes = modes.append(mode(fd.params[at], f.values[at]));
+        modes = modes.append(decl_param_mode(fd, at, f.values[at]));
         at = at + 1;
     }
     var named: typeinfo.Type[] = f.values.append(s.result);
@@ -1107,13 +1137,16 @@ function contract(fd: parser.FuncDecl, scope: checker.Scope): ssasem.Contract {
     if (!semtypes.concrete(result, true)) { return none; }
     var params: typeinfo.Type[] = [];
     var modes: i32[] = [];
-    for p in fd.params {
-        var ty: typeinfo.Type = checker.scope_type(scope, p.name);
+    var names: string[] = decl_param_names(fd);
+    var at: i32 = 0;
+    while (at < names.len()) {
+        var ty: typeinfo.Type = checker.scope_type(scope, names[at]);
         if (!semtypes.concrete(ty, false)) { return none; }
         params = params.append(ty);
-        modes = modes.append(mode(p, ty));
+        modes = modes.append(decl_param_mode(fd, at, ty));
+        at = at + 1;
     }
-    return ssasem.Contract { name: fd.name, params: params, modes: modes, result: result };
+    return ssasem.Contract { name: decl_key(fd), params: params, modes: modes, result: result };
 }
 
 function contracts(mod: parser.Module, scopes: checker.Scope[]): ssasem.Contract[] {
