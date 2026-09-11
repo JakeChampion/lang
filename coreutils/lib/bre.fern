@@ -1929,7 +1929,10 @@ function exec_threads_from(re: Bre, text: string, start: i32, lo: i32, hi: i32, 
         t = add_thread(re, t, pos, 0, fresh_caps(ncap), pos, text, lo, hi, false);
       }
     }
-    if (t.pcs.len() == 0) {
+    // Out of threads ends an ANCHORED run, whose only start has died.
+    // An unanchored one seeds a new start at every position left, so
+    // there is nothing to conclude from the ones before it dying.
+    if (!unanchored && t.pcs.len() == 0) {
       break;
     }
   }

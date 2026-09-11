@@ -108,6 +108,10 @@ func nlCases(t *testing.T) []invocation {
 		{name: "regex word character", args: []string{"-bp\\w", re}},
 		{name: "regex word start", args: []string{"-bp\\<a", re}},
 		{name: "regex matching empty", args: []string{"-bpx*", re}},
+		// A match the line's first bytes cannot begin: the scan seeds a
+		// start at every position, not only while a thread is alive.
+		{name: "regex negated class", args: []string{"-bp[^a]", re}},
+		{name: "regex class past the first bytes", args: []string{"-bp[c+?|]", re}},
 		{name: "regex on empty lines", args: []string{"-bp^$", s4}},
 		{name: "regex in the header", args: []string{"-hpH", sec}},
 		{name: "regex in the footer", args: []string{"-fpF", sec}},

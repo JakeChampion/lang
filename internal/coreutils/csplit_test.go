@@ -26,6 +26,9 @@ func csplitSeed(t *testing.T, dir string) {
 		// Past one read block in both directions, so the piece boundary
 		// and the buffer's own compaction cross a chunk.
 		"big": strings.Repeat("line\n", 40000) + "MARK\n" + strings.Repeat("line\n", 40000),
+		// A line whose only match begins past its first byte, with more
+		// than one byte before it that no match can begin at.
+		"mid": "xa1\nzz\nq\n",
 	}
 	for name, content := range files {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
@@ -122,6 +125,13 @@ func csplitCases(t *testing.T) []invocation {
 		c("interval", "ten", `/1\{1,2\}/`),
 		c("backreference", "abab", `/\(a\)\1/`),
 		c("case matters", "abab", "/A/"),
+
+		// The scan seeds a match at every position of the line, so a
+		// line whose first bytes can start none of them still has to be
+		// searched to its end.
+		c("a match past the first byte", "mid", "/[0-9]/"),
+		c("a negated class past the first byte", "mid", "/[^xa]/"),
+		c("a class the whole line fails", "mid", "/[A-Z]/"),
 		c("the last delimiter closes", "ten", "/a/b/"),
 		c("the last delimiter closes a digit", "ten", "/5/5/"),
 		c("the last percent closes", "ten", "%5%5%"),
