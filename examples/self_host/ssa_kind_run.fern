@@ -79,6 +79,19 @@ function main(): i32 {
     out = out + "ret=" + util.i32_to_string(ssa.term_id("ret")) + "\n";
     out = out + "brif=" + util.i32_to_string(ssa.term_id("brif")) + "\n";
 
+    // 5. Semantic (negative) ids. ssa.fern names these from a POSITIONAL
+    //    table, so a tag inserted anywhere but the tail silently shifts every
+    //    later name. Walking to the "invalid" sentinel and printing each in
+    //    order makes the golden the pin: appending a tag adds a line, while a
+    //    shift renames them here rather than drifting a printer golden in some
+    //    other test.
+    var sid: i32 = 1;
+    while (ssa.kind_name(0 - sid) != "invalid") {
+        out = out + "semantic" + util.i32_to_string(sid) + "=" + ssa.kind_name(0 - sid) + "\n";
+        sid = sid + 1;
+    }
+    out = out + "semantic_count=" + util.i32_to_string(sid - 1) + "\n";
+
     // Every line above carries its own trailing "\n": emit with `write`.
     write(out);
 
