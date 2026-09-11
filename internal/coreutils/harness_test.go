@@ -130,6 +130,18 @@ type invocation struct {
 	// too, which an `artifacts` list cannot express. Takes precedence
 	// over dir.
 	seedTree func(t *testing.T, dir string)
+	// umask is the file-mode creation mask the child inherits, for a
+	// utility whose answer depends on it. `mkdir` is what needs it: the
+	// mode a directory ends up with is the umask applied to 0777, and
+	// `-m` changes WHICH of its clauses the mask reaches rather than
+	// switching it off.
+	//
+	// A mask is process-global state that a child inherits at fork, so a
+	// case naming one runs with every other case excluded (maskLock) and
+	// the mask is restored before the next one starts. 0 is a real mask
+	// — it is the one under which `mkdir d` is 0777 — so the field is a
+	// pointer and `withMask` writes it.
+	umask *int
 	// crossDev seeds a second working directory on a DIFFERENT
 	// filesystem from the seedTree one, reachable from it under the
 	// name `xdev`. It is the only way a case can reach EXDEV, which is
@@ -550,9 +562,37 @@ func deviceOf(t *testing.T, path string) uint64 {
 	return uint64(st.Dev)
 }
 
+// withMask is the `umask` field of a case that names one.
+func withMask(mask int) *int {
+	return &mask
+}
+
+// maskLock guards the process creation mask, which a child inherits at
+// fork and so cannot be set per-child. A case that names a mask takes
+// the write side, excluding every other case for the length of its run;
+// every other case takes the read side and they still run concurrently.
+// The self-host leg runs its cases in parallel, so without this a case
+// under one mask would seed and create under another's.
+var maskLock sync.RWMutex
+
+// holdMask takes the lock the case needs and returns the release.
+func holdMask(mask *int) func() {
+	if mask == nil {
+		maskLock.RLock()
+		return maskLock.RUnlock
+	}
+	maskLock.Lock()
+	previous := syscall.Umask(*mask)
+	return func() {
+		syscall.Umask(previous)
+		maskLock.Unlock()
+	}
+}
+
 // run executes `bin` with argv[0] = argv0 and reports what happened.
 func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 	t.Helper()
+	defer holdMask(inv.umask)()
 	cmd := exec.Command(bin)
 	cmd.Path = bin
 	cmd.Args = append([]string{argv0}, inv.args...)

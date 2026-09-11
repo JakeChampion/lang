@@ -1,0 +1,404 @@
+// coreutils/lib/mode.fern — the MODE operand of `chmod`, and of every
+// option spelled "as in chmod" (`mkdir -m`, `install -m`, `mknod`).
+//
+//   MODE  := OCTAL | CLAUSE [ "," CLAUSE ]...
+//   OCTAL := [0-7]...                       value at most 07777
+//   CLAUSE:= [ugoa]... ACTION...            at least one ACTION
+//   ACTION:= [-+=] ( [rwxXst]... | [ugo] | [0-7]... )
+//
+// Three rules in that grammar are not in any man page and were measured
+// from the reference binary:
+//
+//   - A numeric PERM (`+7`, `=0`) is accepted only with no who before
+//     it, and it ENDS its clause: `=7,u+r` is two clauses and `=7=7` is
+//     not a mode at all.
+//   - The copy form takes exactly one of `u` / `g` / `o` and only when
+//     what follows it ends the clause or starts another action, so
+//     `u=g+w` is a copy and a change while `u=gr` is refused.
+//   - `s` reaches S_ISUID through `u` and S_ISGID through `g`, and `t`
+//     reaches S_ISVTX through `o`. `u+t`, `g+t` and `o+s` therefore
+//     change nothing, and `+t`, `a+t` and `o+t` are three spellings of
+//     one thing.
+//
+// `adjust` is the mode arithmetic. Two of its rules decide most of what
+// a caller sees:
+//
+//   - A clause with NO who is the one the umask applies to — `+w` adds
+//     write only where the mask allows, and `=rwx` sets `0777 & ~umask`
+//     — and the reduction is skipped for a NUMERIC perm, which names
+//     its bits outright.
+//   - `=` on a DIRECTORY keeps the set-user-ID and set-group-ID bits
+//     the entry already had; only `-s` takes them off. `a=rwx` on a
+//     setgid directory leaves it setgid, and the sticky bit is NOT
+//     covered by that rule.
+//
+// `mentioned` — the bits a change named rather than merely left alone —
+// is an output because `mkdir` reads it: whether it needs a chmod after
+// the directory exists depends on which bits the MODE spelled out, not
+// on the value they add up to. `touches_setid` is the same for whether
+// a change went near S_ISUID / S_ISGID with `+` or `-` at all.
+//
+// Nothing here was copied from GNU sources; the grammar and the
+// arithmetic were derived by running the reference binary over ~22000
+// (spec, umask) pairs and fitting the rules to what it did.
+import "std/string";
+import "std/array";
+
+// The twelve mode bits, by their C names. Fern has no octal literal, so
+// each constant carries its octal spelling in the comment.
+// 04000
+pub function s_isuid(): i32 {
+  return 2048;
+}
+
+// 02000
+pub function s_isgid(): i32 {
+  return 1024;
+}
+
+// 01000
+pub function s_isvtx(): i32 {
+  return 512;
+}
+
+// S_IRWXUGO, the nine permission bits: 0777.
+pub function s_irwxugo(): i32 {
+  return 511;
+}
+
+// S_ISUID | S_ISGID, the pair that travels together: `s` names both,
+// `=` on a directory keeps both, and `mkdir` withholds group and other
+// write from a directory whose mode goes near either.
+pub function setid_bits(): i32 {
+  return s_isuid() + s_isgid();
+}
+
+// CHMOD_MODE_BITS, everything a mode can carry: 07777.
+pub function all_bits(): i32 {
+  return 4095;
+}
+
+// The group and other WRITE bits, 022: what `mkdir` withholds while a
+// directory it is about to chmod exists with no final mode yet.
+pub function w_group_other(): i32 {
+  return 18;
+}
+
+// `complement(m)` — the twelve-bit complement. Fern has no `~`.
+pub function complement(m: i32): i32 {
+  return m ^ all_bits();
+}
+
+// One action of one clause. `kind` says what `bits` holds: the
+// permission bits named (`kind_perm`), which of u/g/o to copy from
+// (`kind_copy`, 0/1/2), a numeric perm's value (`kind_num`), or a whole
+// octal mode (`kind_octal`). `who` is the union of the who masks; when
+// none was written `explicit` is false and the umask applies.
+pub struct Change { who: i32, explicit: boolean, op: i32, kind: i32, bits: i32, x_if: boolean }
+
+// A compiled MODE: the actions of every clause in order, each carrying
+// its own clause's who.
+pub struct Changes { list: Change[] }
+
+// What `adjust` answers: the resulting mode, the bits the MODE named,
+// and whether any `+` or `-` action reached S_ISUID / S_ISGID.
+pub struct Adjusted { mode: i32, mentioned: i32, touches_setid: boolean }
+
+function kind_perm(): i32 {
+  return 0;
+}
+
+function kind_copy(): i32 {
+  return 1;
+}
+
+function kind_num(): i32 {
+  return 2;
+}
+
+function kind_octal(): i32 {
+  return 3;
+}
+
+function is_octal_digit(b: i32): boolean {
+  return b >= 48 && b <= 55;
+}
+
+function is_op(b: i32): boolean {
+  return b == 43 || b == 45 || b == 61;
+}
+
+// The bits a who letter reaches, its own permission triple plus the
+// special bit that travels with it.
+function who_mask(b: i32): i32 {
+  if (b == 117) {
+    // u: 0700 | S_ISUID
+    return 448 + s_isuid();
+  }
+  if (b == 103) {
+    // g: 0070 | S_ISGID
+    return 56 + s_isgid();
+  }
+  if (b == 111) {
+    // o: 0007 | S_ISVTX
+    return 7 + s_isvtx();
+  }
+  // a: everything
+  return all_bits();
+}
+
+function is_who(b: i32): boolean {
+  return b == 117 || b == 103 || b == 111 || b == 97;
+}
+
+// u, g, o as 0, 1, 2 for the copy form; -1 for anything else.
+function copy_index(b: i32): i32 {
+  if (b == 117) {
+    return 0;
+  }
+  if (b == 103) {
+    return 1;
+  }
+  if (b == 111) {
+    return 2;
+  }
+  return 0 - 1;
+}
+
+// The bits a perm letter stands for, before the clause's who narrows
+// them; 0 for a byte that is not one.
+function perm_bits(b: i32): i32 {
+  if (b == 114) {
+    // r: 0444
+    return 292;
+  }
+  if (b == 119) {
+    // w: 0222
+    return 146;
+  }
+  if (b == 120 || b == 88) {
+    // x and X: 0111
+    return 73;
+  }
+  if (b == 115) {
+    return setid_bits();
+  }
+  if (b == 116) {
+    // t: S_ISVTX
+    return s_isvtx();
+  }
+  return 0;
+}
+
+function is_perm(b: i32): boolean {
+  return perm_bits(b) > 0;
+}
+
+// `compile(spec)` — the MODE, or None when it is not one. The caller
+// words the refusal; every utility here says `invalid mode 'SPEC'`.
+pub function compile(spec: string): Option[Changes] {
+  if (spec.len() == 0) {
+    return None;
+  }
+  match (whole_octal(spec)) {
+    Some(v) => {
+      var one: Change[] = [];
+      one = one.append(Change { who: all_bits(), explicit: false, op: 61, kind: kind_octal(), bits: v, x_if: false });
+      return Some(Changes { list: one });
+    },
+    None => {}
+  }
+  var list: Change[] = [];
+  var i: i32 = 0;
+  while (i < spec.len()) {
+    var step: (Change[], i32) = parse_clause(spec, i, list);
+    if (step.1 < 0) {
+      return None;
+    }
+    list = step.0;
+    i = step.1;
+    if (i >= spec.len()) {
+      return Some(Changes { list: list });
+    }
+    // Only a comma separates two clauses, and a MODE may not end on one.
+    if (spec[i] as i32 != 44 || i + 1 >= spec.len()) {
+      return None;
+    }
+    i = i + 1;
+  }
+  return None;
+}
+
+// One clause from `at`, with its actions appended to `list`. The second
+// half of the answer is the index one past the clause, or -1 when what
+// is there is not a clause at all.
+function parse_clause(spec: string, at: i32, list0: Change[]): (Change[], i32) {
+  var list: Change[] = list0;
+  var i: i32 = at;
+  var who: i32 = 0;
+  var explicit: boolean = false;
+  while (i < spec.len() && is_who(spec[i] as i32)) {
+    who = who | who_mask(spec[i] as i32);
+    explicit = true;
+    i = i + 1;
+  }
+  var acts: i32 = 0;
+  while (i < spec.len() && is_op(spec[i] as i32)) {
+    var step: (Change, i32) = parse_action(spec, i, who, explicit);
+    if (step.1 < 0) {
+      return (list, 0 - 1);
+    }
+    list = list.append(step.0);
+    i = step.1;
+    acts = acts + 1;
+    if (step.0.kind == kind_num()) {
+      // A numeric perm ends its clause: `=7,u+r` is two clauses and
+      // `=7=7` is not a mode.
+      break;
+    }
+  }
+  if (acts == 0) {
+    return (list, 0 - 1);
+  }
+  return (list, i);
+}
+
+// One action, `at` standing on its `-`, `+` or `=`. The second half is
+// the index one past it, or -1 for the two refusals an action can be:
+// a numeric perm after a who, and one past 07777.
+function parse_action(spec: string, at: i32, who: i32, explicit: boolean): (Change, i32) {
+  var n: i32 = spec.len();
+  var op: i32 = spec[at] as i32;
+  var i: i32 = at + 1;
+  var refused: Change = Change { who: who, explicit: explicit, op: op, kind: kind_perm(), bits: 0, x_if: false };
+  var src: i32 = 0 - 1;
+  if (i < n) {
+    src = copy_index(spec[i] as i32);
+  }
+  if (src >= 0 && (i + 1 >= n || is_op(spec[i + 1] as i32) || spec[i + 1] as i32 == 44)) {
+    return (Change { who: who, explicit: explicit, op: op, kind: kind_copy(), bits: src, x_if: false }, i + 1);
+  }
+  if (i < n && is_octal_digit(spec[i] as i32)) {
+    if (explicit) {
+      return (refused, 0 - 1);
+    }
+    var num: (i32, i32) = scan_octal(spec, i);
+    if (num.0 < 0) {
+      return (refused, 0 - 1);
+    }
+    return (Change { who: who, explicit: explicit, op: op, kind: kind_num(), bits: num.0, x_if: false }, num.1);
+  }
+  var bits: i32 = 0;
+  var xif: boolean = false;
+  while (i < n && is_perm(spec[i] as i32)) {
+    var b: i32 = spec[i] as i32;
+    if (b == 88) {
+      xif = true;
+    }
+    bits = bits | perm_bits(b);
+    i = i + 1;
+  }
+  return (Change { who: who, explicit: explicit, op: op, kind: kind_perm(), bits: bits, x_if: xif }, i);
+}
+
+// The run of octal digits at `at`, as (value, one past it). The value is
+// -1 for a number past 07777, which is not a mode however it is spelled.
+function scan_octal(spec: string, at: i32): (i32, i32) {
+  var v: i32 = 0;
+  var i: i32 = at;
+  while (i < spec.len() && is_octal_digit(spec[i] as i32)) {
+    v = v * 8 + (spec[i] as i32 - 48);
+    if (v > all_bits()) {
+      return (0 - 1, i);
+    }
+    i = i + 1;
+  }
+  return (v, i);
+}
+
+// The whole MODE as an octal number, or None when it is not one. Any
+// number of leading zeros is fine; `010000` and `17777` are not modes.
+function whole_octal(spec: string): Option[i32] {
+  var num: (i32, i32) = scan_octal(spec, 0);
+  if (num.0 < 0 || num.1 != spec.len()) {
+    return None;
+  }
+  return Some(num.0);
+}
+
+// `adjust(c, oldmode, is_dir, mask)` — `oldmode` with `c` applied, under
+// the creation mask `mask`. `is_dir` decides two rules: `X` is execute
+// for a directory whatever its current mode says, and `=` keeps a
+// directory's set-user-ID and set-group-ID bits.
+pub function (c: Changes) adjust(oldmode: i32, is_dir: boolean, mask: i32): Adjusted {
+  var mode: i32 = oldmode & all_bits();
+  var mentioned: i32 = 0;
+  var touches: boolean = false;
+  var i: i32 = 0;
+  while (i < c.list.len()) {
+    var ch: Change = c.list[i];
+    i = i + 1;
+    if (ch.kind == kind_octal()) {
+      mode = ch.bits;
+      mentioned = mentioned | all_bits();
+      continue;
+    }
+    var affected: i32 = all_bits();
+    if (ch.explicit) {
+      affected = ch.who;
+    }
+    var value: i32 = change_value(ch, mode, is_dir, affected, mask);
+    if (ch.op == 43) {
+      mode = mode | value;
+      mentioned = mentioned | value;
+    } else if (ch.op == 45) {
+      mode = mode & complement(value);
+      mentioned = mentioned | value;
+    } else {
+      var keep: i32 = 0;
+      if (is_dir && ch.kind != kind_num()) {
+        keep = mode & setid_bits();
+      }
+      mode = mode & complement(affected) | value | keep;
+      mentioned = mentioned | affected;
+    }
+    if (ch.op != 61 && (value & setid_bits()) != 0) {
+      touches = true;
+    }
+  }
+  return Adjusted { mode: mode & all_bits(), mentioned: mentioned, touches_setid: touches };
+}
+
+// The bits one action names, once the clause's who has narrowed them and
+// the creation mask has taken its share. The mask reaches only a clause
+// that named no who, and not even that one when the perm is NUMERIC:
+// `+7` names its bits outright.
+function change_value(ch: Change, mode: i32, is_dir: boolean, affected: i32, mask: i32): i32 {
+  if (ch.kind == kind_num()) {
+    return ch.bits & affected;
+  }
+  var bits: i32 = ch.bits;
+  if (ch.kind == kind_copy()) {
+    bits = copy_triple(mode, ch.bits);
+  } else if (ch.x_if && !is_dir && (mode & 73) == 0) {
+    // X is execute only where one already is: 0111 off again.
+    bits = bits & complement(73);
+  }
+  var value: i32 = bits & affected;
+  if (ch.explicit) {
+    return value;
+  }
+  return value & complement(mask & all_bits());
+}
+
+// The rwx triple of u, g or o, replicated into all three positions,
+// which is what `g=u` copies before the who narrows it.
+function copy_triple(mode: i32, src: i32): i32 {
+  var trip: i32 = mode & 7;
+  if (src == 0) {
+    trip = mode >> 6 & 7;
+  } else if (src == 1) {
+    trip = mode >> 3 & 7;
+  }
+  return trip << 6 | trip << 3 | trip;
+}
