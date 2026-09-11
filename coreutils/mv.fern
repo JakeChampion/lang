@@ -1,0 +1,737 @@
+// mv.fern — GNU-compatible `mv`.
+//
+//   mv [-T] SOURCE DEST         one rename, named
+//   mv SOURCE... DIRECTORY      one rename per SOURCE inside DIRECTORY
+//   mv -t DIRECTORY SOURCE...   the same with the directory named first
+//
+// The whole utility is `rename(2)` and the questions asked around it.
+// GNU asks almost none of them up front: it tries the rename FIRST,
+// with RENAME_NOREPLACE so an occupied destination comes back as EEXIST
+// rather than being clobbered, and only then works out what the
+// destination is. That order is visible — `mv a nosuchdir/` says
+// `cannot move 'a' to 'nosuchdir/': Not a directory`, which is the
+// rename's errno and not a stat's, while `mv a b/` with `b` a plain file
+// says `cannot stat 'b/'`, which is a stat's.
+//
+// `rename` here has no RENAME_NOREPLACE, so the EEXIST is reconstructed
+// from an `lstat` of the destination — see `dest_present`, whose one
+// subtlety is that the kernel answers EEXIST for a trailing slash on an
+// existing NON-directory, where the lstat answers ENOTDIR.
+//
+// CROSS-DEVICE MOVES ARE NOT IMPLEMENTED. GNU falls back to a recursive
+// copy-then-unlink on EXDEV, preserving mode, timestamps, ownership,
+// hard-link structure and file type; that needs `chmod`, `set_file_times`,
+// `chown` and `mkfifo`, of which the first two are native-only and the
+// last two do not exist as primitives at all. Until they do, an EXDEV
+// rename here reports the errno — which is exactly what GNU's own
+// `--no-copy` does with it.
+import "std/string";
+import "std/array";
+import "std/io_buffered";
+import "./lib/gnu";
+import "./lib/canon";
+
+// ---- options ---------------------------------------------------------------
+//
+// Declared in GNU's order, which is visible: the ambiguity list prints
+// candidates in it, so `mv --n` names '--no-clobber' before '--no-copy'
+// and '--no-target-directory'.
+function opt_backup(): i32 {
+  return 1;
+}
+
+function opt_context(): i32 {
+  return 2;
+}
+
+function opt_debug(): i32 {
+  return 3;
+}
+
+function opt_force(): i32 {
+  return 4;
+}
+
+function opt_interactive(): i32 {
+  return 5;
+}
+
+function opt_no_clobber(): i32 {
+  return 6;
+}
+
+function opt_no_copy(): i32 {
+  return 7;
+}
+
+function opt_no_target_directory(): i32 {
+  return 8;
+}
+
+function opt_strip_trailing_slashes(): i32 {
+  return 9;
+}
+
+function opt_suffix(): i32 {
+  return 10;
+}
+
+function opt_target_directory(): i32 {
+  return 11;
+}
+
+function opt_update(): i32 {
+  return 12;
+}
+
+function opt_verbose(): i32 {
+  return 13;
+}
+
+// `-u` is its own entry: it is a short option with no long spelling and
+// takes no argument, where `--update` is a long option with an optional
+// one. Two entries, as glibc's two tables have it.
+function opt_update_short(): i32 {
+  return 14;
+}
+
+// What `-i`, `-f` and `-n` set. Only the LAST of the three on the command
+// line counts, which is what one field rather than three flags says.
+// `-f` is the default rather than a fourth state: nothing about a move is
+// different for having asked for it.
+function ask_yes(): i32 {
+  return 0;
+}
+
+function ask_prompt(): i32 {
+  return 1;
+}
+
+function ask_never(): i32 {
+  return 2;
+}
+
+// `--update`'s three modes.
+function update_all(): i32 {
+  return 0;
+}
+
+function update_none(): i32 {
+  return 1;
+}
+
+function update_older(): i32 {
+  return 2;
+}
+
+function update_names(): string[] {
+  return ["all", "none", "older"];
+}
+
+function update_values(): i32[] {
+  return [update_all(), update_none(), update_older()];
+}
+
+function help_text(): string {
+  var out: string = "";
+  out = out + "Usage: " + gnu.prog() + " [OPTION]... [-T] SOURCE DEST\n";
+  out = out + "  or:  " + gnu.prog() + " [OPTION]... SOURCE... DIRECTORY\n";
+  out = out + "  or:  " + gnu.prog() + " [OPTION]... -t DIRECTORY SOURCE...\n";
+  out = out + "Rename SOURCE to DEST, or move every SOURCE into DIRECTORY.\n";
+  out = out + "\n";
+  out = out + "      --backup[=CONTROL]      back up each existing destination\n";
+  out = out + "  -b                          like --backup, taking no argument\n";
+  out = out + "      --debug                 explain how each file is moved; implies -v\n";
+  out = out + "  -f, --force                 do not prompt before overwriting\n";
+  out = out + "  -i, --interactive           prompt before overwriting\n";
+  out = out + "  -n, --no-clobber            do not overwrite an existing file\n";
+  out = out + "      --no-copy               fail rather than copy across filesystems\n";
+  out = out + "      --strip-trailing-slashes  drop any trailing slashes from each SOURCE\n";
+  out = out + "  -S, --suffix=SUFFIX         the simple backup suffix, instead of '~'\n";
+  out = out + "  -t, --target-directory=DIRECTORY  move every SOURCE into DIRECTORY\n";
+  out = out + "  -T, --no-target-directory   treat DEST as a normal file always\n";
+  out = out + "      --update[=UPDATE]       which existing destinations are replaced:\n";
+  out = out + "                                all, none, or older (the default)\n";
+  out = out + "  -u                          like --update=older\n";
+  out = out + "  -v, --verbose               print each move as it is made\n";
+  out = out + "  -Z, --context               give the destination the default SELinux type\n";
+  out = out + "      --help        display this help and exit\n";
+  out = out + "      --version     output version information and exit\n";
+  out = out + "\n";
+  out = out + "Only the LAST of -i, -f and -n on the command line takes effect.\n";
+  out = out + "\n";
+  out = out + "The backup suffix is '~' unless -S or SIMPLE_BACKUP_SUFFIX says otherwise,\n";
+  out = out + "and the control is --backup's argument or VERSION_CONTROL: none/off,\n";
+  out = out + "numbered/t, existing/nil (numbered if a numbered backup is there, else\n";
+  out = out + "simple), simple/never.\n";
+  return out;
+}
+
+// `Cfg` — everything the option scan decided, for the per-operand work.
+struct Cfg { ask: i32, update: i32, strip: boolean, verbose: boolean, backups: boolean, control: i32, suffix: string }
+
+// ---- stat ------------------------------------------------------------------
+// `StatInfo` — the four facts every caller here wants from a stat, and
+// the strerror text when there was none.
+struct StatInfo { ok: boolean, is_dir: boolean, dev: i64, ino: i64, mtime: i64, mtime_nsec: i64, err: string }
+
+function no_stat(text: string): StatInfo {
+  return StatInfo { ok: false, is_dir: false, dev: 0, ino: 0, mtime: 0, mtime_nsec: 0, err: text };
+}
+
+function lstat_info(path: string): StatInfo {
+  match (lstat(path)) {
+    Ok(st) => {
+      return StatInfo { ok: true, is_dir: st.is_dir, dev: st.dev, ino: st.ino, mtime: st.mtime, mtime_nsec: st.mtime_nsec, err: "" };
+    },
+    Err(e) => {
+      return no_stat(gnu.io_error_text(e));
+    }
+  }
+}
+
+function stat_info(path: string): StatInfo {
+  match (stat(path)) {
+    Ok(st) => {
+      return StatInfo { ok: true, is_dir: st.is_dir, dev: st.dev, ino: st.ino, mtime: st.mtime, mtime_nsec: st.mtime_nsec, err: "" };
+    },
+    Err(e) => {
+      return no_stat(gnu.io_error_text(e));
+    }
+  }
+}
+
+// gnulib stats the empty destination as `.` and renames to `.` as well,
+// which is why `mv a ''` is `cannot overwrite directory '' with
+// non-directory` and `mv d ''` is EBUSY rather than either being ENOENT.
+// Only the destination is rewritten this way: `mv '' b` is a plain
+// `cannot stat ''`.
+function dest_path(dest: string): string {
+  if (dest.len() == 0) {
+    return ".";
+  }
+  return dest;
+}
+
+// Whether the destination NAME is taken — what GNU learns from
+// `renameat2(..., RENAME_NOREPLACE)` coming back EEXIST, before it knows
+// anything else about it.
+//
+// The kernel answers EEXIST for a trailing slash on an existing
+// non-directory (`b/` where `b` is a file), where `lstat` answers
+// ENOTDIR; every other ENOTDIR is a component of the path that is not a
+// directory, and the name is genuinely not there. That difference is
+// what makes `mv -n a b/` say `not replacing 'b/'` and `mv -n a b/x` say
+// `cannot stat 'b/x'`.
+function dest_present(dest: string): boolean {
+  var st: StatInfo = lstat_info(dest);
+  if (st.ok) {
+    return true;
+  }
+  if (st.err != "Not a directory") {
+    return false;
+  }
+  var bare: string = gnu.strip_slashes(dest);
+  if (bare == dest) {
+    return false;
+  }
+  return lstat_info(bare).ok;
+}
+
+// The absolute resolved form of `p`, with components that do not exist
+// kept verbatim — gnulib's CAN_MISSING, which is `realpath -m`'s walk.
+function resolved(p: string): string {
+  match (canon.canonicalize(p, canon.missing(), false)) {
+    Ok(r) => {
+      return r;
+    },
+    Err(_) => {
+      return p;
+    }
+  }
+}
+
+// Whether `a` and `b` are the same directory ENTRY: one name, in one
+// directory, whatever route either path took to get there.
+function same_entry(a: string, b: string): boolean {
+  if (gnu.base_name(a) != gnu.base_name(b)) {
+    return false;
+  }
+  var ad: StatInfo = stat_info(gnu.dir_name(a));
+  var bd: StatInfo = stat_info(gnu.dir_name(b));
+  return ad.ok && bd.ok && ad.dev == bd.dev && ad.ino == bd.ino;
+}
+
+// GNU's same-file refusal, which is three rules rather than one:
+//
+//   - The same entry said twice is always refused, backups or not:
+//     `mv -b ./a a`.
+//   - With backups OFF, two names for one inode are refused as well
+//     (`mv a h` on a hard-link pair), and so is a SOURCE whose symbolic
+//     links resolve to the destination entry (`mv sl a` where sl -> a).
+//     Note what the second rule is not: `mv sl h` with sl -> a and h a
+//     second name for a is allowed, because sl resolves to the entry `a`
+//     and not to the entry `h`.
+//   - With backups ON neither of those applies: the destination is about
+//     to be moved aside, so it is no longer in the way.
+function same_file(cfg: Cfg, src: string, dest: string, s: StatInfo, d: StatInfo): boolean {
+  if (same_entry(src, dest)) {
+    return true;
+  }
+  if (cfg.backups) {
+    return false;
+  }
+  if (s.ok && d.ok && s.dev == d.dev && s.ino == d.ino) {
+    return true;
+  }
+  return same_entry(resolved(src), dest);
+}
+
+// ---- one move --------------------------------------------------------------
+// `MoveOut` — one operand's result: the exit contribution and the stdout
+// the caller keeps writing to.
+struct MoveOut { status: i32, out: io_buffered.BufWriter }
+
+// The whole `cannot move …` line for a failed rename. Two errnos are
+// worded as something other than their strerror: EINVAL is always a
+// destination under the source, and a directory in the way of a
+// directory is named as the overwrite it would have been.
+function move_failure(src: string, dest: string, text: string): string {
+  if (text == "Invalid argument") {
+    return "cannot move " + gnu.quotea(src) + " to a subdirectory of itself, " + gnu.quotea(dest);
+  }
+  if (text == "Directory not empty" || text == "File exists") {
+    return "cannot overwrite " + gnu.quotea(dest) + ": " + text;
+  }
+  return "cannot move " + gnu.quotea(src) + " to " + gnu.quotea(dest) + ": " + text;
+}
+
+// `Move` — one operand pair in the two spellings a run needs. GNU tries
+// the rename in the two-operand form BEFORE anything else, including
+// before `--strip-trailing-slashes` touches the operands, so that first
+// question is asked of the names as TYPED and everything after it — the
+// stats, the diagnostics and the rename that finally happens — uses the
+// stripped ones. `mv --strip-trailing-slashes a// c` therefore fails with
+// the ENOTDIR of `a//` while naming `a`, and `mv --strip-trailing-slashes
+// a b/` succeeds because only the first question saw the slash.
+//
+// Without the option, and in the `-t` and three-operand forms where the
+// stripping is already done by the time any rename is tried, the two
+// spellings are the same string.
+struct Move { raw_src: string, raw_dest: string, src: string, dest: string }
+
+// One SOURCE moved to one destination. `allow_into` is whether a
+// destination that is a directory means "inside it" — true only for the
+// two-operand form, and only until the name has been joined once:
+// `mv a deep` with `deep/a` a directory is `cannot overwrite directory
+// 'deep/a' with non-directory`, not a second descent.
+function do_move(cfg: Cfg, m0: Move, allow_into: boolean, o: io_buffered.BufWriter): MoveOut {
+  var w: io_buffered.BufWriter = o;
+  var m: Move = m0;
+  var present: boolean = dest_present(m.raw_dest);
+  if (present && allow_into && stat_info(m.raw_dest).is_dir) {
+    // Only that first rename saw the names as typed: the retry inside
+    // the directory is already past the stripping.
+    var into: string = gnu.join_path(m.dest, gnu.base_name(m.src));
+    return do_move(cfg, Move { raw_src: m.src, raw_dest: into, src: m.src, dest: into }, false, w);
+  }
+
+  // The rename itself, tried before the destination is asked about. Its
+  // errno is kept rather than acted on: a destination that turns out to
+  // exist goes through the whole replace path below and renames again,
+  // and one that does not is this errno and nothing more.
+  var rename_err: string = "File exists";
+  if (!present) {
+    match (rename(m.raw_src, m.raw_dest)) {
+      Ok(_) => {
+        return verbose(cfg, m, "", w);
+      },
+      Err(e) => {
+        rename_err = gnu.io_error_text(e);
+      }
+    }
+    if (rename_err.len() == 0) {
+      rename_err = "File exists";
+    }
+  } else {
+    var skipped: MoveOut = refuse_existing(cfg, m.dest, w);
+    if (skipped.status >= 0) {
+      return skipped;
+    }
+    w = skipped.out;
+  }
+
+  var s: StatInfo = lstat_info(m.src);
+  if (!s.ok) {
+    w = gnu.error_out(w, "cannot stat " + gnu.quotea(m.src) + ": " + s.err);
+    return MoveOut { status: 1, out: w };
+  }
+  var d: StatInfo = lstat_info(dest_path(m.dest));
+  if (!d.ok) {
+    if (d.err != "No such file or directory") {
+      w = gnu.error_out(w, "cannot stat " + gnu.quotea(m.dest) + ": " + d.err);
+      return MoveOut { status: 1, out: w };
+    }
+    // Nothing is in the way, so the rename above is the whole story.
+    w = gnu.error_out(w, move_failure(m.src, m.dest, rename_err));
+    return MoveOut { status: 1, out: w };
+  }
+
+  // The empty destination reaches here having been invisible to
+  // `dest_present`, so the two skips are asked again now that the stat
+  // has found it.
+  var skipped2: MoveOut = refuse_existing(cfg, m.dest, w);
+  if (skipped2.status >= 0) {
+    return skipped2;
+  }
+  return replace_dest(cfg, m, s, d, skipped2.out);
+}
+
+// The destination exists and the rename is going to be made over it:
+// everything from the same-file refusal to the `-v` line, in the order
+// GNU asks it. The prompt sits between the two silent skips and the two
+// type refusals, so `mv -i -T a d` asks before it says the destination is
+// a directory.
+function replace_dest(cfg: Cfg, m: Move, s: StatInfo, d: StatInfo, o: io_buffered.BufWriter): MoveOut {
+  var w: io_buffered.BufWriter = o;
+  if (same_file(cfg, m.src, m.dest, s, d)) {
+    w = gnu.error_out(w, gnu.quotea(m.src) + " and " + gnu.quotea(m.dest) + " are the same file");
+    return MoveOut { status: 1, out: w };
+  }
+  if (cfg.update == update_older() && !newer(s, d)) {
+    return MoveOut { status: 0, out: w };
+  }
+  if (cfg.ask == ask_prompt()) {
+    w = gnu.flush(w);
+    var prompt: Writer = stderr();
+    prompt.write(gnu.prog() + ": overwrite " + gnu.quotea(m.dest) + "? ");
+    if (!gnu.yesno()) {
+      return MoveOut { status: 1, out: w };
+    }
+  }
+  if (s.is_dir && !d.is_dir) {
+    w = gnu.error_out(w, "cannot overwrite non-directory " + gnu.quotea(m.dest) + " with directory " + gnu.quotea(m.src));
+    return MoveOut { status: 1, out: w };
+  }
+  if (!s.is_dir && d.is_dir) {
+    w = gnu.error_out(w, "cannot overwrite directory " + gnu.quotea(m.dest) + " with non-directory");
+    return MoveOut { status: 1, out: w };
+  }
+  var backup: string = "";
+  if (cfg.backups) {
+    backup = gnu.backup_name(m.dest, cfg.control, cfg.suffix);
+    match (rename(dest_path(m.dest), backup)) {
+      Ok(_) => {},
+      Err(e) => {
+        w = gnu.error_out(w, "cannot backup " + gnu.quotea(m.dest) + ": " + gnu.io_error_text(e));
+        return MoveOut { status: 1, out: w };
+      }
+    }
+  }
+  match (rename(m.src, dest_path(m.dest))) {
+    Ok(_) => {},
+    Err(e2) => {
+      w = gnu.error_out(w, move_failure(m.src, m.dest, gnu.io_error_text(e2)));
+      return MoveOut { status: 1, out: w };
+    }
+  }
+  return verbose(cfg, m, backup, w);
+}
+
+// The `-v` line a move that worked prints, naming the operands the way
+// the rest of the run does rather than the way the first rename saw them.
+function verbose(cfg: Cfg, m: Move, backup: string, o: io_buffered.BufWriter): MoveOut {
+  var w: io_buffered.BufWriter = o;
+  if (cfg.verbose) {
+    var line: string = "renamed " + gnu.quotea(m.src) + " -> " + gnu.quotea(m.dest);
+    if (backup.len() > 0) {
+      line = line + " (backup: " + gnu.quotea(backup) + ")";
+    }
+    w = gnu.put(w, line + "\n");
+  }
+  return MoveOut { status: 0, out: w };
+}
+
+// The two ways an occupied destination ends the operand before anything
+// is stat'd: `-n`, which says so and costs the exit status, and
+// `--update=none`, which is the same refusal made silently. A `status`
+// below zero means neither applied and the move goes on.
+function refuse_existing(cfg: Cfg, dest: string, o: io_buffered.BufWriter): MoveOut {
+  if (cfg.ask == ask_never()) {
+    var w: io_buffered.BufWriter = gnu.error_out(o, "not replacing " + gnu.quotea(dest));
+    return MoveOut { status: 1, out: w };
+  }
+  if (cfg.update == update_none()) {
+    return MoveOut { status: 0, out: o };
+  }
+  return MoveOut { status: 0 - 1, out: o };
+}
+
+// Whether the source is strictly newer than the destination, to the
+// nanosecond — `--update=older`'s question. Equal timestamps are not
+// newer, so `mv -u` over a file it was just copied from does nothing.
+function newer(s: StatInfo, d: StatInfo): boolean {
+  if (s.mtime != d.mtime) {
+    return s.mtime > d.mtime;
+  }
+  return s.mtime_nsec > d.mtime_nsec;
+}
+
+// ---- the target directory --------------------------------------------------
+// The check a DIRECTORY operand meets before anything is moved into it:
+// the last of three or more operands, and `-t`'s argument. It follows
+// symbolic links — `mv -t dl a` with dl -> d moves into d — and a name
+// that exists but is not a directory is ENOTDIR, worded as the errno.
+// `what` is the noun the two callers differ by.
+function require_directory(what: string, dir: string): void {
+  var st: StatInfo = stat_info(dir);
+  if (!st.ok) {
+    gnu.error(what + " " + gnu.quotea(dir) + ": " + st.err);
+    exit(1);
+  }
+  if (!st.is_dir) {
+    gnu.error(what + " " + gnu.quotea(dir) + ": Not a directory");
+    exit(1);
+  }
+}
+
+// ---- main ------------------------------------------------------------------
+function option_table(): gnu.Opt[] {
+  var opts: gnu.Opt[] = [];
+  opts = opts.append(gnu.optional_long("b", "backup", opt_backup()));
+  opts = opts.append(gnu.flag("Z", "context", opt_context()));
+  opts = opts.append(gnu.flag("", "debug", opt_debug()));
+  opts = opts.append(gnu.flag("f", "force", opt_force()));
+  opts = opts.append(gnu.flag("i", "interactive", opt_interactive()));
+  opts = opts.append(gnu.flag("n", "no-clobber", opt_no_clobber()));
+  opts = opts.append(gnu.flag("", "no-copy", opt_no_copy()));
+  opts = opts.append(gnu.flag("T", "no-target-directory", opt_no_target_directory()));
+  opts = opts.append(gnu.flag("", "strip-trailing-slashes", opt_strip_trailing_slashes()));
+  opts = opts.append(gnu.valued("S", "suffix", opt_suffix()));
+  opts = opts.append(gnu.valued("t", "target-directory", opt_target_directory()));
+  opts = opts.append(gnu.optional_long("", "update", opt_update()));
+  opts = opts.append(gnu.flag("v", "verbose", opt_verbose()));
+  opts = opts.append(gnu.flag("u", "", opt_update_short()));
+  return opts;
+}
+
+// `Scan` — the option scan's answers, before the environment fills in
+// what no option said.
+struct Scan { cfg: Cfg, backup_given: boolean, control_given: boolean, control_text: string, suffix_given: boolean, target_dir: string, have_target_dir: boolean, no_target_dir: boolean }
+
+function scan_options(argv: string[]): (Scan, string[]) {
+  var cfg: Cfg = Cfg { ask: ask_yes(), update: update_all(), strip: false, verbose: false, backups: false, control: gnu.backup_existing(), suffix: "~" };
+  var s: Scan = Scan { cfg: cfg, backup_given: false, control_given: false, control_text: "", suffix_given: false, target_dir: "", have_target_dir: false, no_target_dir: false };
+  var g: gnu.Getopt = gnu.getopt_new(argv, option_table(), "mv", help_text(), 1);
+  while (true) {
+    var r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    g = r.1;
+    match (r.0) {
+      Some(m) => {
+        s = apply_option(s, m);
+      },
+      None => {
+        break;
+      }
+    }
+  }
+  return (s, g.operands());
+}
+
+function apply_option(s: Scan, m: gnu.OptMatch): Scan {
+  var c: Cfg = s.cfg;
+  if (m.id == opt_backup()) {
+    // `-b` turns backups on and says nothing about the control;
+    // `--backup=CONTROL` says both, and `--backup` alone is `-b`.
+    if (m.has_value) {
+      return Scan { ...s, cfg: Cfg { ...c, backups: true }, backup_given: true, control_given: true, control_text: m.value };
+    }
+    return Scan { ...s, cfg: Cfg { ...c, backups: true }, backup_given: true };
+  }
+  if (m.id == opt_context()) {
+    // Nothing to do where SELinux is not in force, and nothing to do on
+    // a rename anywhere: the entry keeps the context it had. The option
+    // reaches the destination only through the cross-device copy.
+    return s;
+  }
+  if (m.id == opt_debug()) {
+    return Scan { ...s, cfg: Cfg { ...c, verbose: true } };
+  }
+  if (m.id == opt_force()) {
+    return Scan { ...s, cfg: Cfg { ...c, ask: ask_yes() } };
+  }
+  if (m.id == opt_interactive()) {
+    return Scan { ...s, cfg: Cfg { ...c, ask: ask_prompt() } };
+  }
+  if (m.id == opt_no_clobber()) {
+    return Scan { ...s, cfg: Cfg { ...c, ask: ask_never() } };
+  }
+  if (m.id == opt_no_copy()) {
+    // Nothing to switch off: with no cross-device fallback to skip, every
+    // move here already behaves the way this option asks for.
+    return s;
+  }
+  if (m.id == opt_no_target_directory()) {
+    return Scan { ...s, no_target_dir: true };
+  }
+  if (m.id == opt_strip_trailing_slashes()) {
+    return Scan { ...s, cfg: Cfg { ...c, strip: true } };
+  }
+  if (m.id == opt_suffix()) {
+    // A suffix turns backups on by itself, and an unusable one leaves
+    // the default `~` in place rather than being refused.
+    var suf: string = c.suffix;
+    if (gnu.usable_suffix(m.value)) {
+      suf = m.value;
+    }
+    return Scan { ...s, cfg: Cfg { ...c, backups: true, suffix: suf }, backup_given: true, suffix_given: true };
+  }
+  if (m.id == opt_target_directory()) {
+    if (s.have_target_dir) {
+      gnu.error("multiple target directories specified");
+      exit(1);
+    }
+    return Scan { ...s, target_dir: m.value, have_target_dir: true };
+  }
+  if (m.id == opt_update()) {
+    // `--update` alone is `--update=older`; an argument names the mode,
+    // and an empty one is a prefix of all three rather than a default.
+    if (m.has_value) {
+      return Scan { ...s, cfg: Cfg { ...c, update: gnu.argmatch_valued(m.value, update_names(), update_values(), "--update") } };
+    }
+    return Scan { ...s, cfg: Cfg { ...c, update: update_older() } };
+  }
+  if (m.id == opt_update_short()) {
+    return Scan { ...s, cfg: Cfg { ...c, update: update_older() } };
+  }
+  return Scan { ...s, cfg: Cfg { ...c, verbose: true } };
+}
+
+// The suffix and the control no option supplied. Both environment
+// variables are read only when backups are ON, so `VERSION_CONTROL=bogus
+// mv a b` renames without complaint; an empty value of either means the
+// default rather than an empty one.
+function from_environment(s: Scan): Cfg {
+  var c: Cfg = s.cfg;
+  if (!c.backups) {
+    return c;
+  }
+  if (!s.suffix_given) {
+    match (env("SIMPLE_BACKUP_SUFFIX")) {
+      Some(v) => {
+        if (gnu.usable_suffix(v)) {
+          c = Cfg { ...c, suffix: v };
+        }
+      },
+      None => {}
+    }
+  }
+  var control: i32 = gnu.backup_existing();
+  if (s.control_given) {
+    if (s.control_text.len() > 0) {
+      control = gnu.argmatch_valued(s.control_text, gnu.backup_names(), gnu.backup_values(), "backup type");
+    }
+  } else {
+    match (env("VERSION_CONTROL")) {
+      Some(v) => {
+        if (v.len() > 0) {
+          control = gnu.argmatch_valued(v, gnu.backup_names(), gnu.backup_values(), "$VERSION_CONTROL");
+        }
+      },
+      None => {}
+    }
+  }
+  if (control == gnu.backup_none()) {
+    return Cfg { ...c, backups: false, control: control };
+  }
+  return Cfg { ...c, control: control };
+}
+
+function main(): i32 {
+  var scanned: (Scan, string[]) = scan_options(args());
+  var s: Scan = scanned.0;
+  var operands: string[] = scanned.1;
+
+  // The operand count is checked before either conflict: `mv -t d -T`
+  // is `missing file operand`, where `mv -T -t d a` is the conflict.
+  var least: i32 = 2;
+  if (s.have_target_dir) {
+    least = 1;
+  }
+  if (operands.len() < least) {
+    if (operands.len() == 0) {
+      gnu.die_usage("missing file operand", 1);
+    }
+    gnu.die_usage("missing destination file operand after " + gnu.quotea(operands[0]), 1);
+  }
+  if (s.have_target_dir && s.no_target_dir) {
+    // No `Try …` line on this one, unlike every other usage error here.
+    gnu.error("cannot combine --target-directory (-t) and --no-target-directory (-T)");
+    return 1;
+  }
+  if (s.backup_given && s.cfg.ask == ask_never()) {
+    gnu.die_usage("options --backup and --no-clobber are mutually exclusive", 1);
+  }
+  var cfg: Cfg = from_environment(s);
+
+  var o: io_buffered.BufWriter = gnu.out_new();
+  if (s.have_target_dir) {
+    require_directory("target directory", s.target_dir);
+    return finish(move_into(cfg, operands, operands.len(), s.target_dir, o));
+  }
+  if (s.no_target_dir) {
+    if (operands.len() > 2) {
+      gnu.die_usage("extra operand " + gnu.quotea(operands[2]), 1);
+    }
+    return finish(do_move(cfg, pair(cfg, operands[0], operands[1]), false, o));
+  }
+  if (operands.len() == 2) {
+    return finish(do_move(cfg, pair(cfg, operands[0], operands[1]), true, o));
+  }
+  var dir: string = operands[operands.len() - 1];
+  require_directory("target", dir);
+  return finish(move_into(cfg, operands, operands.len() - 1, dir, o));
+}
+
+// An operand as the rest of the program sees it — which is as typed,
+// unless `--strip-trailing-slashes` says otherwise. Everything downstream
+// shows this: `mv --strip-trailing-slashes -v d// b` says
+// `renamed 'd' -> 'b'`.
+function stripped(cfg: Cfg, operand: string): string {
+  if (cfg.strip) {
+    return gnu.strip_slashes(operand);
+  }
+  return operand;
+}
+
+// The two-operand form's `Move`, where the first rename sees the names as
+// typed and everything after it the stripped ones.
+function pair(cfg: Cfg, src: string, dest: string): Move {
+  return Move { raw_src: src, raw_dest: dest, src: stripped(cfg, src), dest: stripped(cfg, dest) };
+}
+
+// `operands[0 .. count)` moved inside `dir`, each under its own last
+// component. A failed operand costs the exit status and not the run.
+function move_into(cfg: Cfg, operands: string[], count: i32, dir: string, o: io_buffered.BufWriter): MoveOut {
+  var w: io_buffered.BufWriter = o;
+  var status: i32 = 0;
+  var i: i32 = 0;
+  while (i < count) {
+    // The stripping is already done by the time any rename is tried in
+    // this form, so both spellings are the same string.
+    var src: string = stripped(cfg, operands[i]);
+    var dest: string = gnu.join_path(dir, gnu.base_name(src));
+    var r: MoveOut = do_move(cfg, Move { raw_src: src, raw_dest: dest, src: src, dest: dest }, false, w);
+    w = r.out;
+    if (r.status != 0) {
+      status = 1;
+    }
+    i = i + 1;
+  }
+  return MoveOut { status: status, out: w };
+}
+
+function finish(r: MoveOut): i32 {
+  gnu.finish(r.out);
+  return r.status;
+}
