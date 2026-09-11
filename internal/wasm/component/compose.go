@@ -56,6 +56,10 @@ var (
 	composeSetTimesAtParams = []byte{
 		0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0x7e, 0x7f, 0x7f, 0x7e, 0x7f, 0x7f,
 	}
+
+	// set-size is a method on the descriptor itself, with no path:
+	// (self, size: i64, ret_ptr) -> ().
+	composeSetSizeParams = []byte{0x7f, 0x7e, 0x7f}
 )
 
 const (
@@ -79,6 +83,7 @@ const (
 	composeReadlinkAtName = "[method]descriptor.readlink-at"
 	composeRenameAtName   = "[method]descriptor.rename-at"
 	composeSetTimesAtName = "[method]descriptor.set-times-at"
+	composeSetSizeName    = "[method]descriptor.set-size"
 )
 
 type p2composer struct {

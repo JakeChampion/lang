@@ -145,6 +145,19 @@ var gatedBuiltins = map[string]string{
 	"rename":          "fs",
 	"set_file_times":  "fs",
 	"temp_dir":        "fs",
+	// Setting a file's LENGTH is a filesystem operation and not a
+	// permission one: a host can have files, no mode word, and still
+	// know how long each one is. Both WASI previews can set a size
+	// through a descriptor, so it is granted there rather than refused.
+	"truncate": "fs",
+
+	// Entries that are neither a file nor a directory: a FIFO, and a
+	// character or block device node. A host can serve files and
+	// directories and have no way to name anything else, which is what
+	// both WASI previews are — neither has a call that creates one, and
+	// a regular file standing in for a FIFO would be the wrong answer
+	// presented as the right one.
+	"mknod": "fsnode",
 
 	// Permission bits on a filesystem entry, which is a separate
 	// capability from having a filesystem: a host can offer files and no

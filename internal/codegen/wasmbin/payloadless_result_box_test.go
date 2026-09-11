@@ -29,9 +29,11 @@ var payloadlessArmBoxSize = map[string]int32{
 	"__fern_reader_close_fd": 8,
 }
 
-// payloadlessArmAbsent names the result-box helpers whose every arm carries
-// a payload — a Result[T, IoError] where both Ok and Err hold a pointer —
-// so there is no uninitialised word for the branchless drop to read.
+// payloadlessArmAbsent names the result-box helpers with no uninitialised
+// word for the branchless drop to read: either every arm carries a payload
+// (a Result[T, IoError] whose Ok and Err both hold a pointer), or the arm
+// that does not goes through emitResultOkPtr, which writes a zero into the
+// payload slot from a local rather than as a literal.
 var payloadlessArmAbsent = map[string]bool{
 	"__fern_read_file":         true,
 	"__fern_read_file_bytes":   true,
@@ -57,6 +59,7 @@ var payloadlessArmAbsent = map[string]bool{
 	"__fern_read_link":         true,
 	"__fern_rename":            true,
 	"__fern_set_file_times":    true,
+	"__fern_truncate":          true,
 }
 
 // zeroStoreAt is the byte sequence for `i32.const 0; i32.store offset=off`.

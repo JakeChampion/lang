@@ -86,6 +86,8 @@ pub function builtin_caps(): BuiltinCap[] {
         BuiltinCap { builtin: "rename", capability: "fs" },
         BuiltinCap { builtin: "chmod", capability: "fs" },
         BuiltinCap { builtin: "set_file_times", capability: "fs" },
+        BuiltinCap { builtin: "truncate", capability: "fs" },
+        BuiltinCap { builtin: "mknod", capability: "fs" },
         // The process file-mode creation mask. Reading it reaches nothing,
         // but SETTING it changes the mode of every file and directory
         // anything creates afterwards, so it sits with the rest of the

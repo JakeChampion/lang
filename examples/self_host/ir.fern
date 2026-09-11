@@ -640,6 +640,24 @@ pub function op_umask(): Op { return op0("umask"); }
 // Refused on wasm, whose filesystem has no permission bits (capability
 // `fsmode`).
 pub function op_chmod(): Op { return op0("chmod"); }
+// `truncate` takes [path, length] — the length an i64 — and pushes
+// Result[void, IoError]: truncate(2), which shrinks a file or extends it with
+// a hole. PATH-based rather than fd-based: no Fern open mode yields a writable
+// descriptor to an existing file without having emptied it first, so an
+// ftruncate form could not express an extend. Provided on wasm, where neither
+// preview has a path form and the helper opens without CREATE or TRUNCATE,
+// sets the size, and releases the descriptor.
+pub function op_truncate(): Op { return op0("truncate"); }
+// `mknod` takes [path, mode, major, minor] and pushes Result[void, IoError]:
+// mknodat(2), which creates a FIFO (S_IFIFO in the mode, no device pair) or a
+// character / block device node. One op, not two — mkfifo(3) is this call with
+// a fixed type.
+//
+// The major and minor are Fern's own pair and each backend packs them into its
+// kernel's dev_t: Linux SPLITS the minor around the major (minor[7:0], then
+// major[11:0], then minor[19:8] from bit 20), and XNU does not. Refused on
+// wasm, where neither preview can create a special file (capability `fsnode`).
+pub function op_mknod(): Op { return op0("mknod"); }
 // `set_file_times` takes [path, atime_sec, atime_nsec, mtime_sec, mtime_nsec,
 // flags] — six operands, the widest op here — and pushes Result[void,
 // IoError]. Each timestamp is a whole second since the epoch plus a
@@ -1613,7 +1631,7 @@ pub function kind_count(): i32 { return 196; }
 // The id space is NOT dense up here: 253..259 are left for slices in flight,
 // which is why the directory and link family starts at 260, and 270 sits
 // between two pairs that landed alongside it.
-// NEXT FREE EXTENSION ID: 273 (re-grep rather than trusting this line — it has
+// NEXT FREE EXTENSION ID: 275 (re-grep rather than trusting this line — it has
 // been stale before, which is the drift the paragraph below is about).
 // ADDING AN EXTENSION TAG: take the next id here AND register it in
 // kind_name + ir_kind_run's two sweep lists, then re-grep the whole tree
@@ -1747,6 +1765,7 @@ function kind_id_len5(name: string): i32 {
     if (c == b'a' && name == "alloc") { return 76; }
     if (c == b'b' && name == "block") { return 152; }
     if (c == b'c' && name == "chmod") { return 268; }
+    if (c == b'm' && name == "mknod") { return 274; }
     if (c == b'd' && name == "div_s") { return 24; }
     if (c == b'd' && name == "div_u") { return 25; }
     if (c == b'f' && name == "fsqrt") { return 57; }
@@ -1893,6 +1912,7 @@ function kind_id_len8_s(name: string): i32 {
 
 function kind_id_len8_t(name: string): i32 {
     if (name == "temp_dir") { return 174; }
+    if (name == "truncate") { return 273; }
     if (name == "timer_fd") { return 188; }
     if (name == "tcp_send") { return 194; }
     if (name == "tcp_recv") { return 195; }
@@ -2423,6 +2443,8 @@ function kind_name_4(id: i32): string {
     if (id == 270) { return "statfs"; }
     if (id == 271) { return "process_alive"; }
     if (id == 272) { return "rlimit_nofile"; }
+    if (id == 273) { return "truncate"; }
+    if (id == 274) { return "mknod"; }
     return "invalid";
 }
 
@@ -2560,6 +2582,7 @@ function pops2_io(t: i32): boolean {
     return t == 170 || t == 226                                          // write_file, write_file_exec
         || t == 237                                                      // access (path, mode)
         || t == 260 || t == 262 || t == 263 || t == 267 || t == 268  // create_dir, create_link, create_symlink, rename, chmod
+        || t == 273                                                      // truncate (path, length)
         || t == 178 || t == 187                                          // read_chunk, poll
         || t == 193 || t == 194 || t == 195                              // tcp_connect, tcp_send, tcp_recv
         || t == 202 || t == 213;                                         // writer_write, proc_exec
@@ -2592,6 +2615,7 @@ pub function op_pops(o: Op): i32 {
     if (t == 245) { return 5; }                       // mismatch: a, ao, b, bo, n
     if (t == 228) { return 6; }                       // syscall5
     if (t == 269) { return 6; }                       // set_file_times: path + two timespecs + flags
+    if (t == 274) { return 4; }                       // mknod: path + mode + major + minor
     // Variadic: the immediate is the count. arr_make / struct_make /
     // tuple_make pop their elements; call_direct pops its arguments.
     if (t == 87 || t == 138 || t == 142 || t == 149) { return o.i32_imm; }

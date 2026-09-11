@@ -65,7 +65,7 @@ pub struct Descriptor {
 // native's own note claims for it.
 function capability_profile(profile: string): string[] {
     if (profile == "hosted-native") {
-        return ["log", "now", "env", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "fsinfo", "subprocess"];
+        return ["log", "now", "env", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "fsinfo", "fsnode", "subprocess"];
     }
     if (profile == "wasi-cli") {
         // fs is preview1's fd helpers and tcp is wasi:sockets; there is no
@@ -292,6 +292,15 @@ pub function gated_builtins(): Gate[] {
         Gate { builtin: "rename", capability: "fs" },
         Gate { builtin: "set_file_times", capability: "fs" },
         Gate { builtin: "temp_dir", capability: "fs" },
+        // Setting a file's LENGTH is filesystem reach and not a permission
+        // one: a host can have files, no mode word, and still know how long
+        // each one is. Both previews can do it through a descriptor.
+        Gate { builtin: "truncate", capability: "fs" },
+        // Entries that are neither a file nor a directory: a FIFO, and a
+        // character or block device node. Neither WASI preview has a call
+        // that creates one, and a regular file standing in for a FIFO would
+        // be the wrong answer presented as the right one.
+        Gate { builtin: "mknod", capability: "fsnode" },
 
         // Permission bits on a filesystem entry, which is a separate
         // capability from having a filesystem: a host can offer files and no

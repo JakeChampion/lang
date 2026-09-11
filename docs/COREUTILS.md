@@ -1699,7 +1699,51 @@ groups are the order of work. Each sub-issue names its group.
   `builtin_function_names()` in the self-hosted parser, and fails naming
   each one that is missing. Lowered: `sleep_ns` (266), `rename` (267),
   `chmod` (268), `set_file_times` (269), `statfs` (270), `process_alive`
-  (271), `rlimit_nofile` (272).
+  (271), `rlimit_nofile` (272), `truncate` (273), `mknod` (274).
+
+  `truncate` is path-based rather than fd-based, and the reason is
+  measured: `open_writer` is `O_WRONLY|O_CREAT|O_TRUNC`, `open_appender`
+  creates too, and `open_exclusive` fails on a file that exists — so no
+  Fern open yields a writable descriptor to an EXISTING file without
+  first emptying it, and an `ftruncate` form could not express
+  `truncate -s +10 file`. It does not create: that is `open_exclusive`
+  followed by this. Neither WASI preview has a path-based set-size —
+  `path_filestat_set_size` is not a preview-1 import, measured against
+  wasmtime rather than read from a header — so both wasm bodies open
+  without CREATE or TRUNCATE, set the size through the descriptor and
+  drop it.
+
+  `mknod` is ONE builtin for both `mkfifo(1)` and `mknod(1)`, since
+  `mkfifo(3)` is this with a fixed type. It is refused on wasm under a
+  new capability `fsnode`: what a wasm host lacks is the KIND, not
+  permission bits, and a regular file standing in for a FIFO is worse
+  than an absent entry rather than better — a program that opened it
+  would block forever on a read a pipe would have answered. Its major /
+  minor pair is Fern's own and each backend packs the target's `dev_t`,
+  because Linux SPLITS the minor around the major (minor[7:0],
+  major[11:0], then minor[19:8] from bit 20) and XNU does not. That
+  layout came from creating nodes with `mknod(1)` and reading `st_rdev`
+  back: the legacy 8+8 encoding agrees for every pair that fits in a
+  byte each, so `(1,3)` and `(255,255)` cannot tell them apart and
+  `(1,256)` can. A second measurement corrected the range — the
+  12 + 20 bit ceiling is the ENCODING's, not the kernel's, since
+  `mknodat` ignores every bit of `dev` above 31 — so an out-of-range
+  pair would land silently on a DIFFERENT valid node, and every backend
+  substitutes an S_IFMT no file type uses to get the kernel's own EINVAL
+  rather than inventing one.
+
+  The third primitive #9089 asked for, `sync`, is NOT landed and its
+  shape is disputed. `syncfs` has no XNU equivalent, and
+  `internal/platforms` grants capabilities per PROFILE with linux,
+  darwin and android all naming `hosted-native` — so the first
+  Linux-only capability needs a per-environment split, which is a
+  platform-layer decision rather than something a primitive should
+  decide on its way past. And `fsync` / `fdatasync` are fd operations:
+  this codebase's own rule is that authority lives on the constructor
+  and not the method, which is why `Reader.stat` is a method and takes
+  no capability, so those two belong on `Reader` / `Writer` beside it
+  and need neither a capability nor a builtin name. #8360 stays blocked;
+  #9102 is the same builtin filed a second time.
 
   That test covers the half that fails SILENTLY — an unknown name is E001
   at the call site, which reads like the program's mistake rather than the

@@ -2343,6 +2343,92 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 			ast.EnumType{Name: "IoError"},
 		}},
 	}
+	// truncate(path, length): Result[void, IoError] — set the length of
+	// an EXISTING file, `truncate(2)`. Shrinking discards the bytes past
+	// `length`; growing extends with a hole that reads as zeros and
+	// costs no blocks.
+	//
+	// PATH-BASED rather than fd-based, and the reason is measurable
+	// rather than stylistic: `open_writer` is O_WRONLY|O_CREAT|O_TRUNC,
+	// `open_appender` creates too, and `open_exclusive` fails on a file
+	// that exists — so there is no way to obtain a writable descriptor
+	// to an existing file without first destroying its contents. An
+	// `ftruncate` form would therefore be unable to express
+	// `truncate -s +10 file`, which is the utility's commonest shape:
+	// the open would zero the file the caller asked to extend.
+	//
+	// It does NOT create. `truncate(2)` answers ENOENT for a missing
+	// path, which is what `truncate -c` wants verbatim; the creating
+	// form is `open_exclusive` (which does not truncate) followed by
+	// this.
+	//
+	// A negative `length` is EINVAL from the kernel rather than being
+	// clamped here, and a length past the filesystem's maximum is EFBIG.
+	// A final symlink IS followed, and a directory operand is EISDIR.
+	//
+	// WASI has this as `path_filestat_set_size` on preview 1 and
+	// `descriptor.set-size-at`'s file form on preview 2, so it is
+	// provided on all four targets rather than refused.
+	c.info.FuncSigs["truncate"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}, ast.NumberType{Width: 64, Signed: true}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.VoidType{},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
+	// mknod(path, mode, major, minor): Result[void, IoError] — create a
+	// FIFO or a device node, `mknodat(AT_FDCWD, path, mode, dev)`.
+	//
+	// One builtin, not two. `mkfifo(3)` is this call with a fixed type,
+	// so shipping a second name for it would be the duplication the
+	// erasure rule exists to prevent: `mkfifo(1)` is `mknod` with
+	// S_IFIFO and a zero device pair.
+	//
+	// `mode` is the FULL st_mode word — the S_IFMT type bits plus the
+	// permission bits — the same word `stat` reports, so a program can
+	// round-trip one entry's mode into a new node:
+	//
+	//	0o010000  S_IFIFO   a named pipe; major and minor unused
+	//	0o020000  S_IFCHR   a character device
+	//	0o060000  S_IFBLK   a block device
+	//
+	// A zero S_IFMT means a regular file, which is `mknodat`'s own
+	// reading of it. S_IFDIR and S_IFSOCK are refused by the kernel
+	// (EPERM / EINVAL) and that errno reaches the caller: a directory is
+	// `create_dir`'s and a socket is `bind`'s.
+	//
+	// Unlike `chmod`, the umask DOES apply: this is a creation, which is
+	// exactly what a mask filters, and it is what `mkfifo(1)` and
+	// `mknod(1)` both do.
+	//
+	// `major` and `minor` are Fern's own pair rather than an encoded
+	// `dev_t`, and each backend packs them into the layout its kernel
+	// wants — Linux's minor is SPLIT around the major, and Darwin's
+	// dev_t is a different shape again, so a program computing the word
+	// itself would be writing a target-specific number. Both are
+	// ignored for a FIFO. Linux's own limits, measured by creating nodes
+	// with mknod(1) and reading `st_rdev` back: major below 4096 and
+	// minor below 1048576, past which the kernel answers EINVAL.
+	//
+	// A character or block node generally needs CAP_MKNOD, so an
+	// unprivileged caller gets EPERM for those and creates a FIFO
+	// freely.
+	//
+	// Neither WASI preview can create a special file of any kind, so
+	// E066 refuses this builtin on that target (capability `fsnode`) —
+	// docs/FREESTANDING-CORE.md.
+	c.info.FuncSigs["mknod"] = &ast.FuncType{
+		Params: []ast.Type{
+			ast.StringType{},
+			ast.NumberType{Width: 32, Signed: true},
+			ast.NumberType{Width: 32, Signed: true},
+			ast.NumberType{Width: 32, Signed: true},
+		},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.VoidType{},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
 	// set_file_times(path, atime_sec, atime_nsec, mtime_sec,
 	// mtime_nsec, flags): Result[void, IoError] — write the access and
 	// modification timestamps of an entry, `utimensat(AT_FDCWD, path,

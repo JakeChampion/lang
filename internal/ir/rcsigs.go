@@ -305,6 +305,11 @@ var rcInertBuiltins = map[string]bool{
 	// writing side. Native-only for the same reason, so it is named here
 	// the same way.
 	"chmod": true,
+	// (path, mode, major, minor) → Result. The path is read and
+	// NUL-copied and the three scalars are values. Native-only — no WASI
+	// preview can create a special file — so it is named here the way
+	// `chmod` is.
+	"mknod": true,
 	// (path) → Result[FsStat, IoError]. The path is read and NUL-copied
 	// and nothing in the record it fills is a counted reference.
 	// Native-only for the same reason — no wasm world has a volume to
@@ -415,6 +420,7 @@ var rcInert = map[string]bool{
 	"__fern_read_link":      true,
 	"__fern_rename":         true,
 	"__fern_set_file_times": true,
+	"__fern_truncate":       true,
 	"__fern_round_f64":      true, "__fern_sin_f64": true,
 	"__fern_sleep_ms": true, "__fern_sleep_ns": true,
 	"__fern_sqrt_f64": true, "__fern_stat": true, "__fern_lstat": true,

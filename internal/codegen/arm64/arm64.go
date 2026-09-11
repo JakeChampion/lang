@@ -174,6 +174,17 @@ var linuxDarwinSysno = map[string][2]int{
 	// passes a zero fourth that Linux ignores, so one body serves both.
 	"renameat": {38, 465},
 	"fchmodat": {53, 467},
+	// truncate(2) — Linux asm-generic 45, Darwin BSD 200. The PATH
+	// form, not ftruncate: no Fern open mode yields a writable
+	// descriptor to an existing file without O_TRUNC having already
+	// emptied it. Same (path, off_t) shape on both, and off_t is one
+	// 64-bit register on arm64 either way.
+	"truncate": {45, 200},
+	// mknodat(2) — Linux asm-generic 33. Darwin has no mknodat at all,
+	// only mknod(2) BSD 14, which takes (path, mode, dev) with no
+	// directory descriptor; the helper branches on g.darwin for that one
+	// difference, and the dev_t layouts differ too.
+	"mknodat": {33, 14},
 	// umask(2) — Linux asm-generic 166, Darwin BSD 60. One argument,
 	// the previous mask returned, and no error return on either.
 	"umask": {166, 60},
@@ -551,7 +562,8 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 		g.usesAccess || g.usesRemoveDirAll || g.usesCreateDirAll ||
 		g.usesCreateDir || g.usesRemoveDir || g.usesCreateLink ||
 		g.usesCreateSymlink || g.usesReadLink || g.usesStatfs ||
-		g.usesRename || g.usesChmod || g.usesSetFileTimes {
+		g.usesRename || g.usesChmod || g.usesSetFileTimes || g.usesTruncate ||
+		g.usesMknod {
 		g.usesAlloc = true
 		g.usesMemcpy = true
 		g.usesIoError = true
@@ -581,8 +593,8 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 		g.usesCreateLink || g.usesCreateSymlink || g.usesReadLink || g.usesTempDir ||
 		g.usesReadDir || g.usesStat || g.usesLstat || g.usesStatfs || g.usesAccess ||
 		g.usesRemoveDirAll ||
-		g.usesRename || g.usesChmod || g.usesSetFileTimes ||
-		g.usesReaderWriter {
+		g.usesRename || g.usesChmod || g.usesSetFileTimes || g.usesTruncate ||
+		g.usesMknod || g.usesReaderWriter {
 		g.usesFree = true
 	}
 	if g.usesRemoveDirAll || g.usesReadFile {
@@ -901,6 +913,12 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	}
 	if g.usesChmod {
 		g.emitChmodRuntime()
+	}
+	if g.usesTruncate {
+		g.emitTruncateRuntime()
+	}
+	if g.usesMknod {
+		g.emitMknodRuntime()
 	}
 	if g.usesSetFileTimes {
 		g.emitSetFileTimesRuntime()
@@ -9983,7 +10001,7 @@ func (g *generator) emitRemoveFileRuntime() {
 // failed to create, not the file it was to point at.
 //
 // (x0, x1) = the first path; (x2, x3) = the second, or x2 = the mode.
-func (g *generator) emitPathOpRuntime(name, tag, sysname string, paths int, mode bool, args func()) {
+func (g *generator) emitPathOpRuntime(name, tag, sysname string, paths, scalars int, args func()) {
 	g.line("")
 	g.line(".global " + name)
 	g.typeDirective(name)
@@ -10004,8 +10022,11 @@ func (g *generator) emitPathOpRuntime(name, tag, sysname string, paths int, mode
 	} else {
 		g.emit("mov x25, x0")
 		g.emit("mov x26, x1")
-		if mode {
-			g.emit("mov x24, x2")
+		// The scalars arrive in x2 / x3 / x4 after the one path.
+		// x23 is the second pathz only when paths == 2, and x22 is
+		// written only on the error path, so both are free here.
+		for i, dst := range []string{"x24", "x23", "x22"}[:scalars] {
+			g.emit("mov %s, x%d", dst, i+2)
 		}
 	}
 	g.emitStrDataPtr2W("x21", "x19", "x20", 80)
@@ -10057,7 +10078,7 @@ func (g *generator) emitPathOpRuntime(name, tag, sysname string, paths int, mode
 // reaches the caller: that is the whole difference from
 // __fern_create_dir_all.
 func (g *generator) emitCreateDirRuntime() {
-	g.emitPathOpRuntime("__fern_create_dir", "cdir", "mkdirat", 1, true, func() {
+	g.emitPathOpRuntime("__fern_create_dir", "cdir", "mkdirat", 1, 1, func() {
 		g.atFdcwd("x0")
 		g.emit("mov x1, x21")
 		g.emit("and x2, x24, #4095")
@@ -10068,7 +10089,7 @@ func (g *generator) emitCreateDirRuntime() {
 // unlinkat(AT_FDCWD, path, AT_REMOVEDIR), which is rmdir(2). A
 // non-empty directory is ENOTEMPTY and reaches the caller.
 func (g *generator) emitRemoveDirRuntime() {
-	g.emitPathOpRuntime("__fern_remove_dir", "rdir", "unlinkat", 1, false, func() {
+	g.emitPathOpRuntime("__fern_remove_dir", "rdir", "unlinkat", 1, 0, func() {
 		g.atFdcwd("x0")
 		g.emit("mov x1, x21")
 		g.emit("mov x2, #%d", g.atRemoveDir())
@@ -10080,7 +10101,7 @@ func (g *generator) emitRemoveDirRuntime() {
 // a symlink named as the target is linked to itself, which is what
 // link(1) and ln(1) without -L do.
 func (g *generator) emitCreateLinkRuntime() {
-	g.emitPathOpRuntime("__fern_create_link", "clink", "linkat", 2, false, func() {
+	g.emitPathOpRuntime("__fern_create_link", "clink", "linkat", 2, 0, func() {
 		g.atFdcwd("x0")
 		g.emit("mov x1, x21")
 		g.atFdcwd("x2")
@@ -10093,7 +10114,7 @@ func (g *generator) emitCreateLinkRuntime() {
 // symlinkat(target, AT_FDCWD, path). `target` is stored verbatim and
 // never resolved.
 func (g *generator) emitCreateSymlinkRuntime() {
-	g.emitPathOpRuntime("__fern_create_symlink", "csym", "symlinkat", 2, false, func() {
+	g.emitPathOpRuntime("__fern_create_symlink", "csym", "symlinkat", 2, 0, func() {
 		g.emit("mov x0, x21")
 		g.atFdcwd("x1")
 		g.emit("mov x2, x23")
@@ -10199,7 +10220,7 @@ func (g *generator) emitReadLinkRuntime() {
 // EXDEV and stays EXDEV, because the copy-then-remove `mv(1)` falls back
 // to is the caller's.
 func (g *generator) emitRenameRuntime() {
-	g.emitPathOpRuntime("__fern_rename", "rnam", "renameat", 2, false, func() {
+	g.emitPathOpRuntime("__fern_rename", "rnam", "renameat", 2, 0, func() {
 		g.atFdcwd("x0")
 		g.emit("mov x1, x21")
 		g.atFdcwd("x2")
@@ -10212,11 +10233,73 @@ func (g *generator) emitRenameRuntime() {
 // filters a creation, and this is not one. The zero fourth argument is
 // Darwin's flags word; Linux's fchmodat has only three and ignores it.
 func (g *generator) emitChmodRuntime() {
-	g.emitPathOpRuntime("__fern_chmod", "chmd", "fchmodat", 1, true, func() {
+	g.emitPathOpRuntime("__fern_chmod", "chmd", "fchmodat", 1, 1, func() {
 		g.atFdcwd("x0")
 		g.emit("mov x1, x21")
 		g.emit("and x2, x24, #4095")
 		g.emit("mov x3, #0")
+	})
+}
+
+// emitTruncateRuntime emits `__fern_truncate(path, length)` —
+// truncate(2). The length is a full 64-bit operand passed through
+// unmasked: a negative one is the kernel's EINVAL rather than a clamp
+// here, which would resize to something the caller did not ask for.
+func (g *generator) emitTruncateRuntime() {
+	g.emitPathOpRuntime("__fern_truncate", "trnc", "truncate", 1, 1, func() {
+		g.emit("mov x0, x21")
+		g.emit("mov x1, x24")
+	})
+}
+
+// emitMknodRuntime emits `__fern_mknod(path, mode, major, minor)` —
+// mknodat(AT_FDCWD, path, mode, dev) on Linux, mknod(path, mode, dev) on
+// Darwin, which has no *at form of the call.
+//
+// The major / minor pair is packed here rather than by the caller,
+// because the layout is the kernel's and the two kernels disagree about
+// it. Linux's was derived by measurement — creating nodes with mknod(1)
+// and reading the raw `st_rdev` back:
+//
+//	dev[7:0]   = minor[7:0]
+//	dev[19:8]  = major[11:0]
+//	dev[31:20] = minor[19:8]
+//
+// The minor is SPLIT around the major, which is what makes a wrong
+// packing invisible until a minor exceeds 255: the legacy 8+8 layout
+// agrees with this one below that. XNU's is the simpler shape — an
+// 8-bit major at the top of a 32-bit word and a 24-bit minor below it —
+// and is unmeasured here, there being no Darwin machine in this
+// repository's dev loop.
+func (g *generator) emitMknodRuntime() {
+	g.emitPathOpRuntime("__fern_mknod", "mknd", "mknodat", 1, 3, func() {
+		if g.darwin {
+			g.emit("mov x0, x21")
+			g.emit("mov x1, x24")
+			g.emit("and x2, x22, #16777215")
+			g.emit("orr x2, x2, x23, lsl #24")
+			return
+		}
+		g.atFdcwd("x0")
+		g.emit("mov x1, x21")
+		g.emit("mov x2, x24")
+		// A pair that does not fit the 12 + 20 bits below would be
+		// packed LOSSILY into a different, valid node. The kernel
+		// ignores every bit of `dev` above 31, so there is nothing to
+		// hand it that it would reject on its own — instead the mode
+		// becomes an S_IFMT no type uses, for which it answers EINVAL.
+		g.emit("lsr w9, w22, #20")
+		g.emit("cbnz w9, .Lmknd_bad")
+		g.emit("lsr w9, w23, #12")
+		g.emit("cbz w9, .Lmknd_dev")
+		g.label(".Lmknd_bad")
+		g.emit("mov w2, #61440") // 0o170000
+		g.label(".Lmknd_dev")
+		g.emit("and x3, x22, #255")
+		g.emit("and x9, x23, #4095")
+		g.emit("orr x3, x3, x9, lsl #8")
+		g.emit("and x9, x22, #1048320")
+		g.emit("orr x3, x3, x9, lsl #12")
 	})
 }
 
@@ -13081,6 +13164,10 @@ type generator struct {
 	usesRename       bool
 	usesChmod        bool
 	usesSetFileTimes bool
+	// truncate(2) over a path and a length.
+	usesTruncate bool
+	// mknodat(2) over a path, a mode and a major / minor pair.
+	usesMknod bool
 	// usesIoError pulls in `__fern_io_error(errno, path)` —
 	// constructs an `IoError` enum box from a Linux errno.
 	// Shared by read_file + write_file + the Reader / Writer
@@ -17345,6 +17432,17 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			// fchmodat on an entry that already exists.
 			target = "__fern_chmod"
 			g.usesChmod = true
+		case "truncate":
+			// truncate(path, length): Result[void, IoError] —
+			// truncate(2) on an entry that already exists.
+			target = "__fern_truncate"
+			g.usesTruncate = true
+		case "mknod":
+			// mknod(path, mode, major, minor): Result[void,
+			// IoError] — mknodat, which creates a FIFO or a
+			// device node.
+			target = "__fern_mknod"
+			g.usesMknod = true
 		case "set_file_times":
 			// set_file_times(path, asec, ansec, msec, mnsec,
 			// flags): Result[void, IoError] — utimensat.

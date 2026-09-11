@@ -693,7 +693,7 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 				case "__fern_create_dir", "__fern_remove_dir",
 					"__fern_create_link", "__fern_create_symlink",
 					"__fern_read_link", "__fern_rename",
-					"__fern_set_file_times":
+					"__fern_set_file_times", "__fern_truncate":
 					// The single-step directory and link
 					// primitives (#8883). Each is one WASI call
 					// behind the same path-normalize chain
@@ -1141,6 +1141,7 @@ var preview2HelperCalls = map[string][]string{
 	"__fern_read_link":         {"__wasi_errno_of_code"},
 	"__fern_rename":            {"__wasi_errno_of_code"},
 	"__fern_set_file_times":    {"__wasi_errno_of_code"},
+	"__fern_truncate":          {"__wasi_errno_of_code"},
 	"__fern_temp_dir":          {"__wasi_errno_of_code"},
 	"__fern_stat":              {"__wasi_errno_of_code"},
 	"__fern_lstat":             {"__wasi_errno_of_code"},
@@ -1188,7 +1189,7 @@ var helperResultBoxCallers = []string{
 	"__fern_create_dir_all",
 	"__fern_create_dir", "__fern_remove_dir", "__fern_create_link",
 	"__fern_create_symlink", "__fern_read_link",
-	"__fern_rename", "__fern_set_file_times",
+	"__fern_rename", "__fern_set_file_times", "__fern_truncate",
 }
 
 // emitPayloadlessResultBox appends the arm of a helper in
@@ -2378,6 +2379,18 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		},
 		results: []byte{encode.ValtypeI32},
 		body:    buildSetFileTimesBody,
+	},
+	"__fern_truncate": {
+		// (path_data, path_len, length: i64) → i32 — heap-form
+		// Result[void, IoError]. Neither preview has a path-based
+		// set-size, so this opens without CREATE or TRUNCATE, sets
+		// the size on the descriptor, and releases it. See
+		// wasi_truncate.go.
+		params: []byte{
+			encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI64,
+		},
+		results: []byte{encode.ValtypeI32},
+		body:    buildTruncateBody,
 	},
 	"__fern_stat": {
 		// (path_data, path_len) → i32 — heap-form

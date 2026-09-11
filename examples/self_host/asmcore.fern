@@ -468,6 +468,8 @@ pub function sysno(t: string, name: string): string {
         if (name == "readlinkat") { return "267"; }
         if (name == "renameat") { return "264"; }
         if (name == "fchmodat") { return "268"; }
+        if (name == "truncate") { return "76"; }
+        if (name == "mknodat") { return "259"; }
         if (name == "utimensat") { return "280"; }
         if (name == "umask") { return "95"; }
         if (name == "kill") { return "62"; }
@@ -517,6 +519,12 @@ pub function sysno(t: string, name: string): string {
         // that does differ.
         if (name == "faccessat") { return "466"; }
         if (name == "fchmodat") { return "467"; }
+        if (name == "truncate") { return "200"; }
+        // XNU has no mknodat — this is mknod(2), which takes no directory
+        // descriptor. The row keeps the Linux spelling so the two tables
+        // pair up (selfhost_sysno_parity_test); rt_src_mknod branches on
+        // the target for the argument shape.
+        if (name == "mknodat") { return "14"; }
         // No utimensat row: XNU has none, and libc builds the call out of
         // setattrlist(2) instead — see rt_src_set_file_times.
         if (name == "setattrlist") { return "221"; }
@@ -588,6 +596,8 @@ pub function sysno(t: string, name: string): string {
     if (name == "ioctl") { return "29"; }
     if (name == "faccessat") { return "439"; }
     if (name == "fchmodat") { return "53"; }
+    if (name == "truncate") { return "45"; }
+    if (name == "mknodat") { return "33"; }
     if (name == "renameat") { return "38"; }
     // No Darwin row: XNU has no utimensat syscall at all — libc builds it out
     // of setattrlistat(2), which is what the native arm64 backend issues
@@ -1708,6 +1718,53 @@ pub function rt_src_read_link(t: string): string {
 // chmod(1) has. One __syscall4 therefore serves both.
 pub function rt_src_chmod(t: string): string {
     return "function __fern_chmod(path: string, mode: i32): Result[void, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var rc: i32 = __syscall4(" + sysno(t, "fchmodat") + ", " + at_fdcwd(t) + ", pathz, mode & 4095, 0); if (rc < 0) { return Err(__fern_io_error(0 - rc, __raw_string(pathz, plen))); } return Ok(()); }";
+}
+
+// rt_src_truncate backs `truncate(path, length)` (syscall-leaf) →
+// Result[void, IoError]. truncate(2) — the PATH form on both targets, which
+// take the same (path, off_t) pair.
+//
+// The length goes out as an i64 argument, the way __fern_reader_seek passes
+// lseek's offset: a file past 2 GiB is exactly what a length argument has to
+// reach, and an i32 here would wrap it. It is NOT clamped — a negative one is
+// the kernel's EINVAL, where a clamp would resize to something the caller did
+// not name.
+pub function rt_src_truncate(t: string): string {
+    return "function __fern_truncate(path: string, length: i64): Result[void, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var rc: i32 = __syscall3(" + sysno(t, "truncate") + ", pathz, length, 0); if (rc < 0) { return Err(__fern_io_error(0 - rc, __raw_string(pathz, plen))); } return Ok(()); }";
+}
+
+// rt_src_mknod backs `mknod(path, mode, major, minor)` (syscall-leaf) →
+// Result[void, IoError]. mknodat(AT_FDCWD, path, mode, dev) on Linux;
+// mknod(path, mode, dev) on Darwin, which has no *at form of the call.
+//
+// The major / minor pair is packed HERE rather than by the caller, because the
+// layout is the kernel's and the two kernels disagree about it. Linux's was
+// derived by measurement — creating nodes with mknod(1) and reading the raw
+// `st_rdev` back: minor[7:0] at the bottom, major[11:0] above it, and
+// minor[19:8] from bit 20. The minor is SPLIT around the major, which is what
+// makes a wrong packing invisible until a minor exceeds 255: the legacy 8+8
+// layout agrees with this one below that. XNU's is the simpler shape, an
+// 8-bit major above a 24-bit minor, and is unmeasured here.
+//
+// The mode reaches the kernel whole: its S_IFMT bits pick the type, and the
+// umask filters the rest — which is what a creation should do, and the whole
+// difference from `chmod`.
+//
+// A pair that does not fit the packing would land LOSSILY on a different,
+// valid node, and the kernel cannot catch that for us: it ignores every bit of
+// `dev` above 31. So an out-of-range pair substitutes an S_IFMT no file type
+// uses, for which mknodat answers EINVAL — the kernel's own refusal rather
+// than a fabricated errno.
+//
+// `dev` is an i64 and the fields are added rather than shifted: the widest
+// pair the encoding holds packs to 0xFFFFFFFF, which is NEGATIVE as an i32 and
+// reaches the syscall sign-extended to a 64-bit all-ones word. The three
+// fields are disjoint, so the sum is the union.
+pub function rt_src_mknod(t: string): string {
+    if (t == "arm64-darwin") {
+        return "function __fern_mknod(path: string, mode: i32, major: i32, minor: i32): Result[void, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var dev: i64 = ((minor & 16777215) as i64) + (((major & 255) as i64) * (16777216 as i64)); var m: i32 = mode; if (major < 0 || major > 255 || minor < 0 || minor > 16777215) { m = 61440; } var rc: i32 = __syscall3(" + sysno(t, "mknodat") + ", pathz, m, dev); if (rc < 0) { return Err(__fern_io_error(0 - rc, __raw_string(pathz, plen))); } return Ok(()); }";
+    }
+    return "function __fern_mknod(path: string, mode: i32, major: i32, minor: i32): Result[void, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var dev: i64 = ((minor & 255) as i64) + (((major & 4095) as i64) * (256 as i64)) + (((minor & 1048320) as i64) * (4096 as i64)); var m: i32 = mode; if (major < 0 || major > 4095 || minor < 0 || minor > 1048575) { m = 61440; } var rc: i32 = __syscall4(" + sysno(t, "mknodat") + ", " + at_fdcwd(t) + ", pathz, m, dev); if (rc < 0) { return Err(__fern_io_error(0 - rc, __raw_string(pathz, plen))); } return Ok(()); }";
 }
 
 // rt_src_set_file_times backs `set_file_times(path, atime_sec, atime_nsec,
@@ -4047,6 +4104,8 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
     if (id.name == "create_symlink") { return ty_option(ty_unknown()); }
     if (id.name == "rename") { return ty_option(ty_unknown()); }
     if (id.name == "chmod") { return ty_option(ty_unknown()); }
+    if (id.name == "truncate") { return ty_option(ty_unknown()); }
+    if (id.name == "mknod") { return ty_option(ty_unknown()); }
     if (id.name == "set_file_times") { return ty_option(ty_unknown()); }
     if (id.name == "read_link") { return ty_result(ty_string()); }
     // subprocess(cmd, args, stdin) → ProcessResult struct.
@@ -6002,7 +6061,8 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
         "__fn___fern_create_link", "__fn___fern_create_symlink",
         "__fn___fern_rename",
         "__fn___fern_read_link", "__fn___fern_umask",
-        "__fn___fern_chmod", "__fn___fern_set_file_times",
+        "__fn___fern_chmod", "__fn___fern_set_file_times", "__fn___fern_truncate",
+        "__fn___fern_mknod",
         "__fn___fern_env", "__fern_stat", "__fn___fern_stat", "__fn___fern_statfs", "__fn___fern_subprocess",
         "__fern_args", "__fern_arg_at", "__fern_strbuf_append",
         // #5623: the IR path's whole-stdin reader, emitted in the entry module's

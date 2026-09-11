@@ -76,6 +76,11 @@ var BuiltinCaps = map[string]string{
 	"rename":          "fs",
 	"chmod":           "fs",
 	"set_file_times":  "fs",
+	"truncate":        "fs",
+	// Creating a FIFO or a device node creates a filesystem entry, so the
+	// package question has none of the target question's subtlety here:
+	// it is filesystem reach.
+	"mknod": "fs",
 	// The process file-mode creation mask. Reading it is ambient
 	// information about the process, but SETTING it changes the mode of
 	// every file and directory anything creates afterwards — a

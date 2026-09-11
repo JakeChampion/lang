@@ -1281,6 +1281,8 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"umask":                         emitUmaskHelper,
 	"rename":                        emitRenameHelper,
 	"chmod":                         emitChmodHelper,
+	"truncate":                      emitTruncateHelper,
+	"mknod":                         emitMknodHelper,
 	"set_file_times":                emitSetFileTimesHelper,
 	"remove_dir_all":                emitRemoveDirAllHelper,
 	"temp_dir":                      emitTempDirHelper,
@@ -3200,6 +3202,8 @@ var runtimeHelperDeps = map[string][]string{
 	"read_link":                     {"__fern_io_error"},
 	"rename":                        {"__fern_io_error"},
 	"chmod":                         {"__fern_io_error"},
+	"truncate":                      {"__fern_io_error"},
+	"mknod":                         {"__fern_io_error"},
 	"set_file_times":                {"__fern_io_error"},
 	"remove_dir_all":                {"__fern_io_error"},
 	"temp_dir":                      {"__fern_io_error"},
@@ -3264,6 +3268,8 @@ var heapUsingHelpers = map[string]bool{
 	"read_link":                     true,
 	"rename":                        true,
 	"chmod":                         true,
+	"truncate":                      true,
+	"mknod":                         true,
 	"set_file_times":                true,
 	"remove_dir_all":                true,
 	"temp_dir":                      true,
@@ -5359,7 +5365,7 @@ func emitSsaResultBox(w func(string, ...any)) {
 // IoError names the operand in x23, which for the two-operand helpers is
 // the SECOND one: `ln` and `link` both report the link they failed to
 // create, not the file it was to point at.
-func emitPathOpHelper(name, tag string, sysno, paths int, args func(w func(string, ...any))) func(func(string, ...any)) {
+func emitPathOpHelper(name, tag string, sysno, paths, scalars int, args func(w func(string, ...any))) func(func(string, ...any)) {
 	return func(w func(string, ...any)) {
 		w("")
 		w("%s:", fnLabel(name))
@@ -5367,14 +5373,21 @@ func emitPathOpHelper(name, tag string, sysno, paths int, args func(w func(strin
 		w("\tmov x29, sp")
 		w("\tstp x19, x20, [sp, #16]")
 		w("\tstp x21, x22, [sp, #32]")
-		w("\tstr x23, [sp, #48]")
+		w("\tstp x23, x24, [sp, #48]")
 		w("\tmov x19, x0") // first path
 		w("\tmov x23, x0") // the operand the IoError names
 		if paths == 2 {
 			w("\tmov x21, x1") // second path
 			w("\tmov x23, x1")
 		} else {
-			w("\tmov w21, w1") // mode (unused by the flag-only helpers)
+			// The scalars, full width: `truncate`'s length is an i64.
+			// The mode-taking helpers mask theirs to 12 bits
+			// themselves, so a garbage upper half costs them nothing.
+			// x22 is the second pathz only when paths == 2 and x24 is
+			// otherwise unused, so both are free here.
+			for i, dst := range []string{"x21", "x22", "x24"}[:scalars] {
+				w("\tmov %s, x%d", dst, i+1)
+			}
 		}
 		emitSsaPathz(w, "x20", "x19", tag+"1")
 		if paths == 2 {
@@ -5398,7 +5411,7 @@ func emitPathOpHelper(name, tag string, sysno, paths int, args func(w func(strin
 		w("\tstr w6, [x0]") // tag = 1 (Err)
 		w("\tstr x19, [x0, #8]")
 		w(".Lssa_%s_ret:", tag)
-		w("\tldr x23, [sp, #48]")
+		w("\tldp x23, x24, [sp, #48]")
 		w("\tldp x21, x22, [sp, #32]")
 		w("\tldp x19, x20, [sp, #16]")
 		w("\tldp x29, x30, [sp], #64")
@@ -5411,7 +5424,7 @@ func emitPathOpHelper(name, tag string, sysno, paths int, args func(w func(strin
 // and EEXIST reaches the caller — the whole difference from
 // create_dir_all.
 func emitCreateDirHelper(w func(string, ...any)) {
-	emitPathOpHelper("create_dir", "cdir", 34, 1, func(w func(string, ...any)) {
+	emitPathOpHelper("create_dir", "cdir", 34, 1, 1, func(w func(string, ...any)) {
 		w("\tmov x0, #100")
 		w("\tneg x0, x0") // AT_FDCWD
 		w("\tmov x1, x20")
@@ -5423,7 +5436,7 @@ func emitCreateDirHelper(w func(string, ...any)) {
 // unlinkat(AT_FDCWD, path, AT_REMOVEDIR), which is rmdir(2). A non-empty
 // directory is ENOTEMPTY and reaches the caller.
 func emitRemoveDirHelper(w func(string, ...any)) {
-	emitPathOpHelper("remove_dir", "rdir", 35, 1, func(w func(string, ...any)) {
+	emitPathOpHelper("remove_dir", "rdir", 35, 1, 0, func(w func(string, ...any)) {
 		w("\tmov x0, #100")
 		w("\tneg x0, x0")
 		w("\tmov x1, x20")
@@ -5436,7 +5449,7 @@ func emitRemoveDirHelper(w func(string, ...any)) {
 // AT_SYMLINK_FOLLOW, so a symlink named as the target is linked to
 // itself.
 func emitCreateLinkHelper(w func(string, ...any)) {
-	emitPathOpHelper("create_link", "clink", 37, 2, func(w func(string, ...any)) {
+	emitPathOpHelper("create_link", "clink", 37, 2, 0, func(w func(string, ...any)) {
 		w("\tmov x0, #100")
 		w("\tneg x0, x0")
 		w("\tmov x1, x20")
@@ -5451,7 +5464,7 @@ func emitCreateLinkHelper(w func(string, ...any)) {
 // Result[void, IoError]: symlinkat(target, AT_FDCWD, path). `target` is
 // stored verbatim and never resolved.
 func emitCreateSymlinkHelper(w func(string, ...any)) {
-	emitPathOpHelper("create_symlink", "csym", 36, 2, func(w func(string, ...any)) {
+	emitPathOpHelper("create_symlink", "csym", 36, 2, 0, func(w func(string, ...any)) {
 		w("\tmov x0, x20")
 		w("\tmov x1, #100")
 		w("\tneg x1, x1")
@@ -5543,7 +5556,7 @@ func emitReadLinkHelper(w func(string, ...any)) {
 // compatible type is replaced atomically, and a rename across
 // filesystems is EXDEV rather than a copy.
 func emitRenameHelper(w func(string, ...any)) {
-	emitPathOpHelper("rename", "rnam", 38, 2, func(w func(string, ...any)) {
+	emitPathOpHelper("rename", "rnam", 38, 2, 0, func(w func(string, ...any)) {
 		w("\tmov x0, #100")
 		w("\tneg x0, x0")
 		w("\tmov x1, x20")
@@ -5558,11 +5571,57 @@ func emitRenameHelper(w func(string, ...any)) {
 // filters a creation, and this is not one — so the low twelve bits land
 // verbatim.
 func emitChmodHelper(w func(string, ...any)) {
-	emitPathOpHelper("chmod", "chmd", 53, 1, func(w func(string, ...any)) {
+	emitPathOpHelper("chmod", "chmd", 53, 1, 1, func(w func(string, ...any)) {
 		w("\tmov x0, #100")
 		w("\tneg x0, x0")
 		w("\tmov x1, x20")
 		w("\tand x2, x21, #4095")
+	})(w)
+}
+
+// emitTruncateHelper writes truncate(path, length) -> Result[void,
+// IoError]: truncate(2). The length reaches the kernel unmasked — a
+// negative one is its EINVAL, where a clamp here would resize to
+// something the caller did not ask for.
+func emitTruncateHelper(w func(string, ...any)) {
+	emitPathOpHelper("truncate", "trnc", 45, 1, 1, func(w func(string, ...any)) {
+		w("\tmov x0, x20")
+		w("\tmov x1, x21")
+	})(w)
+}
+
+// emitMknodHelper writes mknod(path, mode, major, minor) ->
+// Result[void, IoError]: mknodat(AT_FDCWD, path, mode, dev).
+//
+// The major / minor pair is packed into Linux's dev_t here rather than by
+// the caller, because the layout is the kernel's. Measured by creating
+// nodes with mknod(1) and reading the raw `st_rdev` back: minor[7:0] at
+// the bottom, major[11:0] above it, and minor[19:8] from bit 20 — the
+// minor SPLIT around the major, which the legacy 8+8 layout matches for
+// every pair below 256 and diverges from above it.
+func emitMknodHelper(w func(string, ...any)) {
+	emitPathOpHelper("mknod", "mknd", 33, 1, 3, func(w func(string, ...any)) {
+		w("\tmov x0, #100")
+		w("\tneg x0, x0") // AT_FDCWD
+		w("\tmov x1, x20")
+		w("\tmov x2, x21")
+		// A pair that does not fit the 12 + 20 bits below would be
+		// packed LOSSILY into a different, valid node. The kernel
+		// ignores every bit of `dev` above 31, so there is nothing to
+		// hand it that it would reject on its own — instead the mode
+		// becomes an S_IFMT no type uses, for which it answers EINVAL.
+		w("\tlsr w9, w24, #20")
+		w("\tcbnz w9, .Lssa_mknd_bad")
+		w("\tlsr w9, w22, #12")
+		w("\tcbz w9, .Lssa_mknd_dev")
+		w(".Lssa_mknd_bad:")
+		w("\tmov w2, #61440") // 0o170000
+		w(".Lssa_mknd_dev:")
+		w("\tand x3, x24, #255")
+		w("\tand x9, x22, #4095")
+		w("\torr x3, x3, x9, lsl #8")
+		w("\tand x9, x24, #1048320")
+		w("\torr x3, x3, x9, lsl #12")
 	})(w)
 }
 
