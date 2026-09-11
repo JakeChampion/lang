@@ -254,3 +254,4 @@ create_symlink=263
 read_link=264
 umask=265
 sleep_ns=266
+rename=267

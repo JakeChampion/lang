@@ -134,54 +134,6 @@ function under(base: string, p: string): boolean {
   return p.starts_with(base + "/");
 }
 
-// `p` written relative to `from`, both absolute and already resolved:
-// one `..` per component of `from` past their common prefix, then
-// what is left of `p`. Nothing left on either side is `.`.
-function relative(p: string, from: string): string {
-  var a: string[] = components(p);
-  var b: string[] = components(from);
-  var same: i32 = 0;
-  while (same < a.len() && same < b.len() && a[same] == b[same]) {
-    same = same + 1;
-  }
-  var out: string = "";
-  var i: i32 = same;
-  while (i < b.len()) {
-    if (out.len() > 0) {
-      out = out + "/";
-    }
-    out = out + "..";
-    i = i + 1;
-  }
-  i = same;
-  while (i < a.len()) {
-    if (out.len() > 0) {
-      out = out + "/";
-    }
-    out = out + a[i];
-    i = i + 1;
-  }
-  if (out.len() == 0) {
-    return ".";
-  }
-  return out;
-}
-
-// The components of an absolute resolved path; the root has none.
-function components(p: string): string[] {
-  var out: string[] = [];
-  var i: i32 = 1;
-  while (i < p.len()) {
-    var start: i32 = i;
-    while (i < p.len() && p[i] as i32 != 47) {
-      i = i + 1;
-    }
-    out = out.append(slice_unchecked(p, start, i) + "");
-    i = i + 1;
-  }
-  return out;
-}
-
 // One DIR the relative output is measured against, or the end of the
 // program. It is not one operand's failure, so `-q` does not cover it
 // and nothing that follows runs.
@@ -295,7 +247,7 @@ function main(): i32 {
       Ok(p) => {
         var out: string = p;
         if (have_rel_to && (!have_rel_base || under(base, p))) {
-          out = relative(p, from);
+          out = canon.relative(p, from);
         }
         o = gnu.put(o, out + term);
       },

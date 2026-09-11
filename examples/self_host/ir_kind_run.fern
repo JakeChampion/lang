@@ -72,7 +72,7 @@ function main(): i32 {
         "getuid", "getgid", "getgroups", "environ", "uname_field",
         "getcwd", "cpu_count", "signal_ignore", "signal_default",
         "create_dir", "remove_dir", "create_link", "create_symlink",
-        "read_link", "umask", "sleep_ns"
+        "read_link", "umask", "sleep_ns", "rename"
     ];
     var ext_max: i32 = n;
     var ext_ok: i32 = 0;
@@ -175,7 +175,8 @@ function main(): i32 {
         ir.op_signal_ignore(), ir.op_signal_default(),
         ir.op_create_dir(), ir.op_remove_dir(), ir.op_create_link(),
         ir.op_create_symlink(), ir.op_read_link(), ir.op_umask(),
-        ir.op_sleep_ns()
+        ir.op_sleep_ns(),
+        ir.op_rename()
     ];
     var names: string[] = [
         "const_i32", "const_str", "load_local",
@@ -193,7 +194,7 @@ function main(): i32 {
         "mismatch", "getuid", "getgid", "getgroups", "environ",
         "uname_field", "getcwd", "cpu_count", "signal_ignore", "signal_default",
         "create_dir", "remove_dir", "create_link", "create_symlink",
-        "read_link", "umask", "sleep_ns"
+        "read_link", "umask", "sleep_ns", "rename"
     ];
     var tag_ok: i32 = 0;
     var tag_bad: i32 = 0;
