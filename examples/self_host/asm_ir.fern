@@ -199,8 +199,10 @@ function emit_ir_tcp_pollable(s: asmcore.EmitState): asmcore.EmitState {
 // need. It write(2)s the string's own buffer via __raw_data until every byte is
 // out, wrapping the outcome as None / Some(io_error) (#7926); it allocates that
 // Option box, so it needs the heap.
-// __fern_sleep_ms is a Fern runtime function (#2649): asmcore.rt_src_sleep_ms.
-// It writes the timespec into __fern_scratch, so it joins the scratch gate.
+// __fern_sleep_ms is a Fern runtime function (#2649): asmcore.rt_src_sleep_ms,
+// and __fern_sleep_ns its nanosecond-resolution twin (#8528):
+// asmcore.rt_src_sleep_ns. Both write the timespec into __fern_scratch, so they
+// join the scratch gate.
 
 // __fern_proc_fork is a Fern runtime function (#2649): asmcore.rt_src_proc_fork
 // — a bare no-argument fork(2).
@@ -1609,6 +1611,34 @@ function emit_rt_float_transcendentals(s: asmcore.EmitState): asmcore.EmitState 
     s = s.write(".Lfpow_nan:\n    addq $16, %rsp\n" + fc_retbits("0x7ff8000000000000"));
     s = s.write(".size __fern_pow_f64, .-__fern_pow_f64\n");
     return s;
+}
+
+// needs_fs_runtime is the gate on the filesystem runtime bundle: every
+// need whose generated Fern body is emitted from that block.
+function needs_fs_runtime(s: asmcore.EmitState): boolean {
+    return s.has_need("stat") || s.has_need("lstat") || s.has_need("access") || s.has_need("read_file") || s.has_need("read_file_bytes") || s.has_need("remove_file") || s.has_need("create_dir_all") || s.has_need("create_dir") || s.has_need("remove_dir") || s.has_need("create_link") || s.has_need("create_symlink") || s.has_need("rename") || s.has_need("read_link") || s.has_need("umask") || s.has_need("write_file") || s.has_need("write_file_exec") || s.has_need("temp_dir") || s.has_need("read_dir") || s.has_need("remove_dir_all") || s.has_need("open_file") || s.has_need("writer_write") || s.has_need("reader");
+}
+
+// needs_io_error_shapes is __fern_io_error's own gate — needs_fs_runtime
+// minus the four that never build an IoError. The two move together: a
+// filesystem need added to one and not the other leaves the helper
+// referencing a shape label the literal pool never interned.
+function needs_io_error_shapes(s: asmcore.EmitState): boolean {
+    return s.has_need("read_file") || s.has_need("read_file_bytes") || s.has_need("write_file") || s.has_need("write_file_exec") || s.has_need("remove_file")
+            || s.has_need("stat") || s.has_need("lstat") || s.has_need("access") || s.has_need("read_dir") || s.has_need("remove_dir_all")
+            || s.has_need("temp_dir") || s.has_need("create_dir_all")
+            || s.has_need("create_dir") || s.has_need("remove_dir")
+            || s.has_need("create_link") || s.has_need("create_symlink")
+            || s.has_need("rename")
+            || s.has_need("read_link");
+}
+
+// needs_heap_runtime gates the allocator and the RC runtime. `heap` is the
+// need an allocating op marks; the rest are the helpers whose own bodies
+// allocate, so a program that never allocates directly still pulls the
+// runtime in through one of them.
+function needs_heap_runtime(s: asmcore.EmitState): boolean {
+    return s.has_need("heap") || s.has_need("i32_to_string") || s.has_need("u32_to_string") || s.has_need("str_to_i32") || s.has_need("chr") || s.has_need("read_int") || s.has_need("read_all_stdin") || s.has_need("str_read_line") || s.has_need("strbuf") || s.has_need("reader") || s.has_need("write_file") || s.has_need("write_file_exec") || s.has_need("remove_dir_all") || s.has_need("temp_dir") || s.has_need("read_dir") || s.has_need("remove_file") || s.has_need("create_dir_all") || s.has_need("create_dir") || s.has_need("remove_dir") || s.has_need("create_link") || s.has_need("create_symlink") || s.has_need("rename") || s.has_need("read_link") || s.has_need("umask") || s.has_need("env") || s.has_need("environ") || s.has_need("getgroups") || s.has_need("stat") || s.has_need("lstat") || s.has_need("access") || s.has_need("subprocess");
 }
 
 function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
@@ -5034,6 +5064,11 @@ function emit_function_via_ir_named(r: irlower.LowerResult, label_name: string, 
             s = s.write("    popq %rsi\n    popq %rdi\n");
             s = s.write("    pushq %rsi\n    pushq %rdi\n    call __fn___fern_create_link\n    addq $16, %rsp\n    pushq %rax\n");
             s = s.need("heap"); s = s.need("create_link");
+        } else if (o.kind_tag == 267) {  // rename
+            // [oldbox][newbox] (new on top) -> Result[void, IoError].
+            s = s.write("    popq %rsi\n    popq %rdi\n");
+            s = s.write("    pushq %rsi\n    pushq %rdi\n    call __fn___fern_rename\n    addq $16, %rsp\n    pushq %rax\n");
+            s = s.need("heap"); s = s.need("rename");
         } else if (o.kind_tag == 263) {  // create_symlink
             s = s.write("    popq %rsi\n    popq %rdi\n");
             s = s.write("    pushq %rsi\n    pushq %rdi\n    call __fn___fern_create_symlink\n    addq $16, %rsp\n    pushq %rax\n");
@@ -5164,6 +5199,11 @@ function emit_function_via_ir_named(r: irlower.LowerResult, label_name: string, 
             // statement-level drop balances (sleep_ms is void).
             s = s.write("    call __fn___fern_sleep_ms\n    addq $8, %rsp\n    pushq %rax\n");
             s = s.need("sleep_ms");
+        } else if (o.kind_tag == 266) {  // sleep_ns
+            // [ns] -> nanosleep(ns) at full resolution. Same stack ABI as
+            // sleep_ms — one word in, the syscall return pushed for the drop.
+            s = s.write("    call __fn___fern_sleep_ns\n    addq $8, %rsp\n    pushq %rax\n");
+            s = s.need("sleep_ns");
         } else if (o.kind_tag == 125) {  // map_set
             s = emit_ir_op_map_set(o, s);
         } else if (o.kind_tag == 126) {  // map_len
@@ -7803,12 +7843,7 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
     // Pre-intern the IoError variant shapes for __fern_io_error (#4370) —
     // same reasoning as FileStat above; keep the gate in sync with the
     // helper's own (the union of the fs needs).
-    if (s.has_need("read_file") || s.has_need("read_file_bytes") || s.has_need("write_file") || s.has_need("write_file_exec") || s.has_need("remove_file")
-            || s.has_need("stat") || s.has_need("lstat") || s.has_need("access") || s.has_need("read_dir") || s.has_need("remove_dir_all")
-            || s.has_need("temp_dir") || s.has_need("create_dir_all")
-            || s.has_need("create_dir") || s.has_need("remove_dir")
-            || s.has_need("create_link") || s.has_need("create_symlink")
-            || s.has_need("read_link")) {
+    if (needs_io_error_shapes(s)) {
         var ioePre1: asmcore.ShapeRefOut = asmcore.shape_ref(s, "NotFound");
         s = ioePre1.state;
         var ioePre2: asmcore.ShapeRefOut = asmcore.shape_ref(s, "PermissionDenied");
@@ -7892,7 +7927,7 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
     // The freestanding allocator + RC runtime, only when the program allocates.
     // i32.to_string() allocates its box even in an otherwise heap-free program,
     // so its emit-time need pulls the runtime in too (its body calls __fern_alloc).
-    if (s.has_need("heap") || s.has_need("i32_to_string") || s.has_need("u32_to_string") || s.has_need("str_to_i32") || s.has_need("chr") || s.has_need("read_int") || s.has_need("read_all_stdin") || s.has_need("str_read_line") || s.has_need("strbuf") || s.has_need("reader") || s.has_need("write_file") || s.has_need("write_file_exec") || s.has_need("remove_dir_all") || s.has_need("temp_dir") || s.has_need("read_dir") || s.has_need("remove_file") || s.has_need("create_dir_all") || s.has_need("create_dir") || s.has_need("remove_dir") || s.has_need("create_link") || s.has_need("create_symlink") || s.has_need("read_link") || s.has_need("umask") || s.has_need("env") || s.has_need("environ") || s.has_need("getgroups") || s.has_need("stat") || s.has_need("lstat") || s.has_need("access") || s.has_need("subprocess")) { s = emit_ir_runtime(s); }
+    if (needs_heap_runtime(s)) { s = emit_ir_runtime(s); }
     // The f64 transcendental bundle (sin/cos/exp/log/pow). Deliberately NOT
     // inside the heap gate above: a program that only does float maths
     // allocates nothing, and would otherwise `call __fern_sin_f64` with no
@@ -8180,7 +8215,7 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
     // kept identical anyway — the cost is one unused .bss buffer in an x86-only
     // poll program, and a divergence here is a link failure, which is how this
     // list grew the last three entries.
-    if (s.has_need("monotonic_ns") || s.has_need("now_unix_ms") || s.has_need("now_ns") || s.has_need("stat") || s.has_need("lstat") || s.has_need("read_file") || s.has_need("read_file_bytes") || s.has_need("random_i32") || s.has_need("sleep_ms") || s.has_need("poll") || s.has_need("proc_waitpid") || s.has_need("timer_fd") || s.has_need("tcp_listen") || s.has_need("tcp_connect") || s.has_need("print_int") || s.has_need("putchar") || s.has_need("eprint") || s.has_need("read_int") || s.has_need("udp_send") || s.has_need("isatty") || s.has_need("signal_ignore") || s.has_need("signal_default") || s.has_need("access") || s.has_need("geteuid") || s.has_need("getegid") || s.has_need("getuid") || s.has_need("getgid") || s.has_need("getgroups") || s.has_need("environ") || s.has_need("fd_stat")) {
+    if (s.has_need("monotonic_ns") || s.has_need("now_unix_ms") || s.has_need("now_ns") || s.has_need("stat") || s.has_need("lstat") || s.has_need("read_file") || s.has_need("read_file_bytes") || s.has_need("random_i32") || s.has_need("sleep_ms") || s.has_need("sleep_ns") || s.has_need("poll") || s.has_need("proc_waitpid") || s.has_need("timer_fd") || s.has_need("tcp_listen") || s.has_need("tcp_connect") || s.has_need("print_int") || s.has_need("putchar") || s.has_need("eprint") || s.has_need("read_int") || s.has_need("udp_send") || s.has_need("isatty") || s.has_need("signal_ignore") || s.has_need("signal_default") || s.has_need("access") || s.has_need("geteuid") || s.has_need("getegid") || s.has_need("getuid") || s.has_need("getgid") || s.has_need("getgroups") || s.has_need("environ") || s.has_need("fd_stat")) {
         s = s.write("    .section .bss\n    .align 8\n__fern_scratch: .skip 256\n    .text\n");
     }
     // The stdout/stderr leaves (#2649) — plain write(2) calls, allocation-free, so
@@ -8241,7 +8276,7 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
     // additionally calls the monotonic_ns builtin (op-mediated, so recognized in
     // the bundle like any builtin; its __fn___fern_monotonic_ns is emitted above,
     // need-marked by op_temp_dir). Heap-dependent (present above); x86-64-only.
-    if (s.has_need("stat") || s.has_need("lstat") || s.has_need("access") || s.has_need("read_file") || s.has_need("read_file_bytes") || s.has_need("remove_file") || s.has_need("create_dir_all") || s.has_need("create_dir") || s.has_need("remove_dir") || s.has_need("create_link") || s.has_need("create_symlink") || s.has_need("read_link") || s.has_need("umask") || s.has_need("write_file") || s.has_need("write_file_exec") || s.has_need("temp_dir") || s.has_need("read_dir") || s.has_need("remove_dir_all") || s.has_need("open_file") || s.has_need("writer_write") || s.has_need("reader")) {
+    if (needs_fs_runtime(s)) {
         s = s.write("    .text\n");
         var fs_src: string = asmcore.rt_src_io_error("x86_64");
         if (s.has_need("stat")) { fs_src = fs_src + " " + asmcore.rt_src_stat("x86_64"); }
@@ -8255,6 +8290,7 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
         if (s.has_need("remove_dir")) { fs_src = fs_src + " " + asmcore.rt_src_remove_dir("x86_64"); }
         if (s.has_need("create_link")) { fs_src = fs_src + " " + asmcore.rt_src_create_link("x86_64"); }
         if (s.has_need("create_symlink")) { fs_src = fs_src + " " + asmcore.rt_src_create_symlink("x86_64"); }
+        if (s.has_need("rename")) { fs_src = fs_src + " " + asmcore.rt_src_rename("x86_64"); }
         if (s.has_need("read_link")) { fs_src = fs_src + " " + asmcore.rt_src_read_link("x86_64"); }
         if (s.has_need("umask")) { fs_src = fs_src + " " + asmcore.rt_src_umask("x86_64"); }
         if (s.has_need("write_file")) { fs_src = fs_src + " " + asmcore.rt_src_write_file("x86_64"); }
@@ -8372,6 +8408,10 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
     if (s.has_need("sleep_ms")) {
         s = s.write("    .text\n");
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_sleep_ms("x86_64"), all_structs, s);
+    }
+    if (s.has_need("sleep_ns")) {
+        s = s.write("    .text\n");
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_sleep_ns("x86_64"), all_structs, s);
     }
     }
     return peephole_push_pop(strbuf_take());

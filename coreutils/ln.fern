@@ -1,0 +1,877 @@
+// ln.fern — GNU-compatible `ln`.
+//
+//   ln [-T] TARGET LINK_NAME    one link, named
+//   ln TARGET                   one link, named ./$(basename TARGET)
+//   ln TARGET... DIRECTORY      one link per TARGET inside DIRECTORY
+//   ln -t DIRECTORY TARGET...   the same with the directory named first
+//
+// Four forms, and which one an argv is depends on the COUNT: with two
+// operands the last is a plain destination unless it happens to be a
+// directory, with three or more it must be one. `-T` pins the first
+// reading and `-t` the last.
+//
+// The destination is replaced rather than refused under `-f` / `-i` /
+// a backup, and the replacement is GNU's: the new link is made under a
+// temporary name in the destination's directory and RENAMED over it, so
+// a failure leaves the old destination where it was and the backup is
+// the old destination MOVED rather than copied. That is why this needs
+// `rename` and the rest of `link`'s primitives are not enough.
+//
+// Two arrow forms appear in the diagnostics and they are not the same
+// rule. A hard link's `'b' => 'a'` is shown unless the errno is one the
+// destination alone explains (EEXIST / ENOSPC / EROFS / EDQUOT); a
+// symbolic link's `'b' -> 'a'` is shown when the TARGET is what the
+// errno is about (a name too long, or an empty target). Both arrows also
+// spell `-v`.
+import "std/string";
+import "std/array";
+import "std/io_buffered";
+import "./lib/gnu";
+import "./lib/canon";
+
+// ---- options ---------------------------------------------------------------
+//
+// Declared in GNU's order, which is visible: the ambiguity list prints
+// candidates in it, so `ln --n` names '--no-dereference' before
+// '--no-target-directory'.
+function opt_backup(): i32 {
+  return 1;
+}
+
+function opt_directory(): i32 {
+  return 2;
+}
+
+function opt_no_dereference(): i32 {
+  return 3;
+}
+
+function opt_no_target_directory(): i32 {
+  return 4;
+}
+
+function opt_force(): i32 {
+  return 5;
+}
+
+function opt_interactive(): i32 {
+  return 6;
+}
+
+function opt_suffix(): i32 {
+  return 7;
+}
+
+function opt_target_directory(): i32 {
+  return 8;
+}
+
+function opt_logical(): i32 {
+  return 9;
+}
+
+function opt_physical(): i32 {
+  return 10;
+}
+
+function opt_relative(): i32 {
+  return 11;
+}
+
+function opt_symbolic(): i32 {
+  return 12;
+}
+
+function opt_verbose(): i32 {
+  return 13;
+}
+
+// The four backup controls, and the eight names that reach them. Order
+// is gnulib's declaration order, which the invalid-argument list prints.
+function control_none(): i32 {
+  return 0;
+}
+
+function control_simple(): i32 {
+  return 1;
+}
+
+function control_existing(): i32 {
+  return 2;
+}
+
+function control_numbered(): i32 {
+  return 3;
+}
+
+function control_names(): string[] {
+  return ["none", "off", "simple", "never", "existing", "nil", "numbered", "t"];
+}
+
+function control_values(): i32[] {
+  return [control_none(), control_none(), control_simple(), control_simple(), control_existing(), control_existing(), control_numbered(), control_numbered()];
+}
+
+function help_text(): string {
+  var out: string = "";
+  out = out + "Usage: " + gnu.prog() + " [OPTION]... [-T] TARGET LINK_NAME\n";
+  out = out + "  or:  " + gnu.prog() + " [OPTION]... TARGET\n";
+  out = out + "  or:  " + gnu.prog() + " [OPTION]... TARGET... DIRECTORY\n";
+  out = out + "  or:  " + gnu.prog() + " [OPTION]... -t DIRECTORY TARGET...\n";
+  out = out + "Create a link to each TARGET, hard by default.\n";
+  out = out + "\n";
+  out = out + "      --backup[=CONTROL]      back up each existing destination\n";
+  out = out + "  -b                          like --backup, taking no argument\n";
+  out = out + "  -d, -F, --directory         allow a hard link to a directory\n";
+  out = out + "  -f, --force                 remove existing destinations\n";
+  out = out + "  -i, --interactive           prompt before removing a destination\n";
+  out = out + "  -L, --logical               follow a TARGET that is a symbolic link\n";
+  out = out + "  -n, --no-dereference        treat a LINK_NAME that is a symbolic link\n";
+  out = out + "                                to a directory as a normal file\n";
+  out = out + "  -P, --physical              hard-link the symbolic link itself\n";
+  out = out + "  -r, --relative              with -s, store the target relative to the link\n";
+  out = out + "  -s, --symbolic              make symbolic links\n";
+  out = out + "  -S, --suffix=SUFFIX         the simple backup suffix, instead of '~'\n";
+  out = out + "  -t, --target-directory=DIRECTORY  create the links in DIRECTORY\n";
+  out = out + "  -T, --no-target-directory   treat LINK_NAME as a normal file always\n";
+  out = out + "  -v, --verbose               print each link as it is made\n";
+  out = out + "      --help        display this help and exit\n";
+  out = out + "      --version     output version information and exit\n";
+  out = out + "\n";
+  out = out + "The backup suffix is '~' unless -S or SIMPLE_BACKUP_SUFFIX says otherwise,\n";
+  out = out + "and the control is --backup's argument or VERSION_CONTROL: none/off,\n";
+  out = out + "numbered/t, existing/nil (numbered if a numbered backup is there, else\n";
+  out = out + "simple), simple/never.\n";
+  return out;
+}
+
+// `Cfg` — everything the option scan decided, for the per-operand work.
+struct Cfg { symbolic: boolean, force: boolean, interactive: boolean, no_deref: boolean, deref_src: boolean, hard_dir: boolean, relative: boolean, verbose: boolean, backups: boolean, control: i32, suffix: string }
+
+// ---- paths -----------------------------------------------------------------
+function is_slash(c: u8): boolean {
+  return c as i32 == 47;
+}
+
+// The last component of `s`, trailing slashes dropped — GNU's base_name.
+// A name that is nothing but slashes is `/`, and the empty name stays
+// empty.
+function base_name(s: string): string {
+  var end: i32 = s.len();
+  while (end > 0 && is_slash(s[end - 1])) {
+    end = end - 1;
+  }
+  if (end == 0) {
+    if (s.len() > 0) {
+      return "/";
+    }
+    return "";
+  }
+  var start: i32 = end;
+  while (start > 0 && !is_slash(s[start - 1])) {
+    start = start - 1;
+  }
+  return slice_unchecked(s, start, end) + "";
+}
+
+// Everything before base_name's component, `.` when there is none.
+function dir_name(s: string): string {
+  var end: i32 = s.len();
+  while (end > 0 && is_slash(s[end - 1])) {
+    end = end - 1;
+  }
+  if (end == 0) {
+    if (s.len() > 0) {
+      return "/";
+    }
+    return ".";
+  }
+  var i: i32 = end;
+  while (i > 0 && !is_slash(s[i - 1])) {
+    i = i - 1;
+  }
+  if (i == 0) {
+    return ".";
+  }
+  while (i > 0 && is_slash(s[i - 1])) {
+    i = i - 1;
+  }
+  if (i == 0) {
+    return "/";
+  }
+  return slice_unchecked(s, 0, i) + "";
+}
+
+// `dir` and `name` joined with exactly ONE slash however many the
+// directory ends with: `ln -t 'd///' s/f` makes `d/f`, not `d///f`.
+function join_path(dir: string, name: string): string {
+  var end: i32 = dir.len();
+  while (end > 1 && is_slash(dir[end - 1])) {
+    end = end - 1;
+  }
+  var head: string = slice_unchecked(dir, 0, end) + "";
+  if (head.len() > 0 && is_slash(head[head.len() - 1])) {
+    return head + name;
+  }
+  return head + "/" + name;
+}
+
+// The absolute resolved form of `p`, with components that do not exist
+// kept verbatim — gnulib's CAN_MISSING, which is `realpath -m`'s walk and
+// `lib/canon.fern`'s MISSING mode. It refuses nothing, so a path that
+// cannot be resolved comes back as itself made absolute.
+function resolved(p: string): string {
+  match (canon.canonicalize(p, canon.missing(), false)) {
+    Ok(r) => {
+      return r;
+    },
+    Err(_) => {
+      return p;
+    }
+  }
+}
+
+// `--relative`: the text a symbolic link at `dest` should hold to reach
+// `target`, which is `target` said from the link's OWN directory. Both
+// sides are resolved first, so a symbolic link on either path is resolved
+// away and the answer can be `.` or `..`.
+function relativise(target: string, dest: string): string {
+  return canon.relative(resolved(target), resolved(dir_name(dest)));
+}
+
+// ---- stat ------------------------------------------------------------------
+// `StatInfo` — the three facts every caller here wants from a stat, and
+// the strerror text when there was none.
+struct StatInfo { ok: boolean, is_dir: boolean, dev: i64, ino: i64, err: string }
+
+function stat_info(path: string, follow: boolean): StatInfo {
+  if (follow) {
+    match (stat(path)) {
+      Ok(st) => {
+        return StatInfo { ok: true, is_dir: st.is_dir, dev: st.dev, ino: st.ino, err: "" };
+      },
+      Err(e) => {
+        return StatInfo { ok: false, is_dir: false, dev: 0, ino: 0, err: gnu.io_error_text(e) };
+      }
+    }
+  }
+  match (lstat(path)) {
+    Ok(st) => {
+      return StatInfo { ok: true, is_dir: st.is_dir, dev: st.dev, ino: st.ino, err: "" };
+    },
+    Err(e) => {
+      return StatInfo { ok: false, is_dir: false, dev: 0, ino: 0, err: gnu.io_error_text(e) };
+    }
+  }
+}
+
+// Whether `src` and `dest` are the same DIRECTORY ENTRY, not merely the
+// same inode: `ln -f a d/a` relinks a second name to one file silently,
+// where `ln -f ./a a` is the same entry said twice and is refused. The
+// destination is always lstat'd; the source follows its final symbolic
+// link when the link being made would (`-s` or `-L`).
+function same_entry(cfg: Cfg, src: string, dest: string): boolean {
+  var s: StatInfo = stat_info(src, cfg.symbolic || cfg.deref_src);
+  var d: StatInfo = stat_info(dest, false);
+  if (!s.ok || !d.ok || s.dev != d.dev || s.ino != d.ino) {
+    return false;
+  }
+  if (base_name(src) != base_name(dest)) {
+    return false;
+  }
+  var sd: StatInfo = stat_info(dir_name(src), true);
+  var dd: StatInfo = stat_info(dir_name(dest), true);
+  return sd.ok && dd.ok && sd.dev == dd.dev && sd.ino == dd.ino;
+}
+
+// ---- backups ---------------------------------------------------------------
+function is_digit(c: u8): boolean {
+  return c as i32 >= 48 && c as i32 <= 57;
+}
+
+// The N in `NAME.~N~`, or -1 when `entry` is not one of NAME's numbered
+// backups. A leading zero disqualifies it — `b.~09~` is not a backup of
+// `b` and does not raise the next number.
+function numbered_index(entry: string, name: string): i32 {
+  var head: string = name + ".~";
+  if (!entry.starts_with(head) || !entry.ends_with("~")) {
+    return 0 - 1;
+  }
+  var start: i32 = head.len();
+  var end: i32 = entry.len() - 1;
+  if (end <= start) {
+    return 0 - 1;
+  }
+  if (entry[start] as i32 == 48 && end - start > 1) {
+    return 0 - 1;
+  }
+  var n: i32 = 0;
+  var i: i32 = start;
+  while (i < end) {
+    if (!is_digit(entry[i])) {
+      return 0 - 1;
+    }
+    n = n * 10 + (entry[i] as i32 - 48);
+    i = i + 1;
+  }
+  return n;
+}
+
+// The highest N over `dir`'s `NAME.~N~` entries, or -1 when there is
+// none. A DIRECTORY named that way counts: the scan reads names.
+function highest_numbered(dir: string, name: string): i32 {
+  var best: i32 = 0 - 1;
+  match (read_dir(dir)) {
+    Ok(entries) => {
+      var i: i32 = 0;
+      while (i < entries.len()) {
+        var n: i32 = numbered_index(entries[i], name);
+        if (n > best) {
+          best = n;
+        }
+        i = i + 1;
+      }
+    },
+    Err(_) => {}
+  }
+  return best;
+}
+
+// The name the existing `dest` is moved to. `existing` picks numbered
+// only when a numbered backup of this name is already there.
+function backup_name(cfg: Cfg, dest: string): string {
+  var control: i32 = cfg.control;
+  if (control == control_existing()) {
+    if (highest_numbered(dir_name(dest), base_name(dest)) >= 0) {
+      control = control_numbered();
+    } else {
+      control = control_simple();
+    }
+  }
+  if (control == control_numbered()) {
+    // The first numbered backup is `.~1~`, so a directory with none in
+    // it starts there rather than one past the -1 the scan reports.
+    var n: i32 = highest_numbered(dir_name(dest), base_name(dest));
+    if (n < 0) {
+      n = 0;
+    }
+    return dest + ".~" + (n + 1).to_string() + "~";
+  }
+  return dest + cfg.suffix;
+}
+
+// Where `s`'s last component starts — gnulib's last_component, which is
+// NOT base_name: trailing slashes belong to the component here, so
+// `x/`'s last component is `x/` and `/`'s is empty.
+function last_component_start(s: string): i32 {
+  var i: i32 = 0;
+  while (i < s.len() && is_slash(s[i])) {
+    i = i + 1;
+  }
+  var last: i32 = i;
+  var after_slash: boolean = false;
+  while (i < s.len()) {
+    if (is_slash(s[i])) {
+      after_slash = true;
+    } else if (after_slash) {
+      last = i;
+      after_slash = false;
+    }
+    i = i + 1;
+  }
+  return last;
+}
+
+// A suffix is taken only when it IS its own last component, so `-S 'x/y'`,
+// `-S '/x'` and `-S '/'` are ignored and `~` is used. `-S 'x/'` passes the
+// test, and the backup name it builds ends in a slash — which is how
+// `ln -b -S x/ a b` reaches `cannot backup 'b': Not a directory`.
+function usable_suffix(s: string): boolean {
+  return s.len() > 0 && last_component_start(s) == 0;
+}
+
+// ---- linking ---------------------------------------------------------------
+// The errnos a hard link's destination alone explains, which are the ones
+// whose diagnostic does NOT name the target.
+function hard_link_no_arrow(text: string): boolean {
+  return text == "File exists" || text == "No space left on device" || text == "Read-only file system" || text == "Disk quota exceeded";
+}
+
+// The whole `failed to create …` line for a failed link, arrow and all.
+function create_failure(cfg: Cfg, dest: string, shown_target: string, text: string): string {
+  if (cfg.symbolic) {
+    var arrow: string = "";
+    if (text == "File name too long" || shown_target.len() == 0) {
+      arrow = " -> " + gnu.quotea(shown_target);
+    }
+    return "failed to create symbolic link " + gnu.quotea(dest) + arrow + ": " + text;
+  }
+  var harrow: string = "";
+  if (!hard_link_no_arrow(text)) {
+    harrow = " => " + gnu.quotea(shown_target);
+  }
+  return "failed to create hard link " + gnu.quotea(dest) + harrow + ": " + text;
+}
+
+// One link at `path`. `src` is the file a hard link reaches, already
+// followed for `-L`; `text` is what a symbolic link stores.
+function make_link(cfg: Cfg, src: string, text: string, path: string): string {
+  if (cfg.symbolic) {
+    match (create_symlink(text, path)) {
+      Ok(_) => {
+        return "";
+      },
+      Err(e) => {
+        return gnu.io_error_text(e);
+      }
+    }
+  }
+  match (create_link(src, path)) {
+    Ok(_) => {
+      return "";
+    },
+    Err(e) => {
+      return gnu.io_error_text(e);
+    }
+  }
+}
+
+// `TempLink` — a link made under a name of this program's choosing, ready
+// to be renamed over the destination.
+struct TempLink { ok: boolean, path: string, err: string }
+
+// GNU replaces a destination by making the new link beside it and
+// renaming it into place, so a failure leaves the old destination
+// untouched and a backup is the destination MOVED rather than copied.
+// The temporary name is never visible in the resulting tree.
+function temp_link(cfg: Cfg, src: string, text: string, dest: string): TempLink {
+  var dir: string = dir_name(dest);
+  var n: i32 = 0;
+  while (n < 1000) {
+    var path: string = join_path(dir, ".ln-tmp" + n.to_string());
+    var err: string = make_link(cfg, src, text, path);
+    if (err.len() == 0) {
+      return TempLink { ok: true, path: path, err: "" };
+    }
+    if (err != "File exists") {
+      return TempLink { ok: false, path: "", err: err };
+    }
+    n = n + 1;
+  }
+  return TempLink { ok: false, path: "", err: "File exists" };
+}
+
+// glibc's yesno(): one line from stdin, yes when it starts with `y` or
+// `Y` in the C locale. End of input is no.
+function yesno(): boolean {
+  match (read_line()) {
+    Some(l) => {
+      return l.len() > 0 && (l[0] as i32 == 121 || l[0] as i32 == 89);
+    },
+    None => {
+      return false;
+    }
+  }
+}
+
+// `Replaced` — what the occupied-destination path answers: whether the
+// link was made, the backup name if one was taken (which `-v` prints), and
+// the stdout the caller keeps writing to.
+struct Replaced { ok: boolean, backup: string, out: io_buffered.BufWriter }
+
+// The occupied-destination path, reached when the plain link came back
+// EEXIST. `err` is that errno's text, `src` the file a hard link reaches
+// and `text` what a symbolic link stores; `shown` is the operand as typed,
+// which is what a diagnostic names.
+//
+// Without `-f`, `-i` or a backup there is nothing to do but report the
+// EEXIST. With one of them the destination is replaced GNU's way: make the
+// new link beside it, move the old one out, and rename the new one into
+// place — so nothing is lost if any step fails.
+function replace_existing(cfg: Cfg, target: string, src: string, text: string, shown: string, dest: string, err: string, o: io_buffered.BufWriter): Replaced {
+  var w: io_buffered.BufWriter = o;
+  if (err != "File exists" || !cfg.force && !cfg.interactive && !cfg.backups) {
+    w = gnu.error_out(w, create_failure(cfg, dest, shown, err));
+    return Replaced { ok: false, backup: "", out: w };
+  }
+  var dst: StatInfo = stat_info(dest, false);
+  if (dst.ok && dst.is_dir) {
+    w = gnu.error_out(w, gnu.quotef(dest) + ": cannot overwrite directory");
+    return Replaced { ok: false, backup: "", out: w };
+  }
+  if (cfg.force && same_entry(cfg, target, dest)) {
+    w = gnu.error_out(w, gnu.quotea(target) + " and " + gnu.quotea(dest) + " are the same file");
+    return Replaced { ok: false, backup: "", out: w };
+  }
+  if (cfg.interactive) {
+    w = gnu.flush(w);
+    var prompt: Writer = stderr();
+    prompt.write(gnu.prog() + ": replace " + gnu.quotea(dest) + "? ");
+    if (!yesno()) {
+      return Replaced { ok: false, backup: "", out: w };
+    }
+  }
+  var tmp: TempLink = temp_link(cfg, src, text, dest);
+  if (!tmp.ok) {
+    w = gnu.error_out(w, create_failure(cfg, dest, shown, tmp.err));
+    return Replaced { ok: false, backup: "", out: w };
+  }
+  var backup: string = "";
+  if (cfg.backups) {
+    backup = backup_name(cfg, dest);
+    match (rename(dest, backup)) {
+      Ok(_) => {},
+      Err(e) => {
+        var why: string = gnu.io_error_text(e);
+        drop_temp(tmp.path);
+        w = gnu.error_out(w, "cannot backup " + gnu.quotea(dest) + ": " + why);
+        return Replaced { ok: false, backup: "", out: w };
+      }
+    }
+  } else {
+    // The destination has to GO before the temporary name takes its
+    // place: rename(2) does nothing at all when both names already reach
+    // one inode, which is exactly what relinking a second name to the
+    // same file looks like (`ln -f d/a a`), and the temporary name would
+    // survive into the tree. The link is already made, so nothing is lost
+    // between the two calls.
+    drop_temp(dest);
+  }
+  match (rename(tmp.path, dest)) {
+    Ok(_) => {},
+    Err(e) => {
+      var why2: string = gnu.io_error_text(e);
+      drop_temp(tmp.path);
+      w = gnu.error_out(w, create_failure(cfg, dest, shown, why2));
+      return Replaced { ok: false, backup: "", out: w };
+    }
+  }
+  return Replaced { ok: true, backup: backup, out: w };
+}
+
+// Remove a name whose absence is the point and whose errno is not: the
+// temporary link on an abandoned replacement, and the destination the
+// rename is about to recreate. A failure here is reported by the rename
+// that follows, or is moot because the caller is already failing.
+function drop_temp(path: string): void {
+  match (remove_file(path)) {
+    Ok(_) => {},
+    Err(_) => {}
+  }
+}
+
+// `LinkOut` — one operand's result: the exit contribution and the stdout
+// the caller keeps writing to.
+struct LinkOut { status: i32, out: io_buffered.BufWriter }
+
+// One TARGET linked at one destination: the whole per-operand path, from
+// the source's own access check through the replacement dance to the
+// verbose line.
+function do_link(cfg: Cfg, target: string, dest: string, o: io_buffered.BufWriter): LinkOut {
+  var w: io_buffered.BufWriter = o;
+  var text: string = target;
+  if (cfg.symbolic && cfg.relative) {
+    text = relativise(target, dest);
+  }
+  // What the diagnostics and `-v` name is always the operand as typed,
+  // never the path `-L` followed it to.
+  var shown: string = target;
+  if (cfg.symbolic) {
+    shown = text;
+  }
+  var src: string = target;
+  if (!cfg.symbolic) {
+    var st: StatInfo = stat_info(target, cfg.deref_src);
+    if (!st.ok) {
+      w = gnu.error_out(w, "failed to access " + gnu.quotea(target) + ": " + st.err);
+      return LinkOut { status: 1, out: w };
+    }
+    if (st.is_dir && !cfg.hard_dir) {
+      w = gnu.error_out(w, gnu.quotef(target) + ": hard link not allowed for directory");
+      return LinkOut { status: 1, out: w };
+    }
+    if (cfg.deref_src) {
+      // `create_link` is linkat with no AT_SYMLINK_FOLLOW — it links the
+      // link itself — so `-L` follows the source here, on the path,
+      // before the link is made.
+      src = resolved(target);
+    }
+  }
+
+  var err: string = make_link(cfg, src, text, dest);
+  var backup: string = "";
+  if (err.len() > 0) {
+    var r: Replaced = replace_existing(cfg, target, src, text, shown, dest, err, w);
+    w = r.out;
+    if (!r.ok) {
+      return LinkOut { status: 1, out: w };
+    }
+    backup = r.backup;
+  }
+  if (cfg.verbose) {
+    var line: string = "";
+    if (backup.len() > 0) {
+      line = gnu.quotea(backup) + " ~ ";
+    }
+    var arrow: string = " => ";
+    if (cfg.symbolic) {
+      arrow = " -> ";
+    }
+    w = gnu.put(w, line + gnu.quotea(dest) + arrow + gnu.quotea(shown) + "\n");
+  }
+  return LinkOut { status: 0, out: w };
+}
+
+// ---- the target directory --------------------------------------------------
+// The check every DIRECTORY operand meets before a link is made in it —
+// the last of three or more operands, and `-t`'s argument once `-n` has
+// made the stat an lstat. A name that exists but is not a directory is
+// ENOTDIR here, worded as the errno rather than as prose.
+function require_directory(dir: string, follow: boolean): void {
+  var st: StatInfo = stat_info(dir, follow);
+  if (!st.ok) {
+    gnu.error("target " + gnu.quotea(dir) + ": " + st.err);
+    exit(1);
+  }
+  if (!st.is_dir) {
+    gnu.error("target " + gnu.quotea(dir) + ": Not a directory");
+    exit(1);
+  }
+}
+
+// `-t`'s own check, made where the option is READ: it runs before the
+// `--no-target-directory` conflict is noticed and it always follows
+// symbolic links, so `-t` on a link to a directory is accepted here and
+// refused later when `-n` says not to follow it. Its wording is prose
+// where `require_directory`'s is an errno — two messages for one fault
+// reached two ways, which is GNU's.
+function check_target_directory(dir: string): void {
+  var st: StatInfo = stat_info(dir, true);
+  if (!st.ok) {
+    gnu.error("failed to access " + gnu.quotea(dir) + ": " + st.err);
+    exit(1);
+  }
+  if (!st.is_dir) {
+    gnu.error("target " + gnu.quotea(dir) + " is not a directory");
+    exit(1);
+  }
+}
+
+// ---- main ------------------------------------------------------------------
+function option_table(): gnu.Opt[] {
+  var opts: gnu.Opt[] = [];
+  opts = opts.append(gnu.optional_long("b", "backup", opt_backup()));
+  opts = opts.append(gnu.flag("d", "directory", opt_directory()));
+  opts = opts.append(gnu.flag("F", "", opt_directory()));
+  opts = opts.append(gnu.flag("n", "no-dereference", opt_no_dereference()));
+  opts = opts.append(gnu.flag("T", "no-target-directory", opt_no_target_directory()));
+  opts = opts.append(gnu.flag("f", "force", opt_force()));
+  opts = opts.append(gnu.flag("i", "interactive", opt_interactive()));
+  opts = opts.append(gnu.valued("S", "suffix", opt_suffix()));
+  opts = opts.append(gnu.valued("t", "target-directory", opt_target_directory()));
+  opts = opts.append(gnu.flag("L", "logical", opt_logical()));
+  opts = opts.append(gnu.flag("P", "physical", opt_physical()));
+  opts = opts.append(gnu.flag("r", "relative", opt_relative()));
+  opts = opts.append(gnu.flag("s", "symbolic", opt_symbolic()));
+  opts = opts.append(gnu.flag("v", "verbose", opt_verbose()));
+  return opts;
+}
+
+// `Scan` — the option scan's answers, before the environment fills in
+// what no option said.
+struct Scan { cfg: Cfg, control_given: boolean, control_text: string, suffix_given: boolean, target_dir: string, have_target_dir: boolean, no_target_dir: boolean }
+
+function scan_options(argv: string[]): (Scan, string[]) {
+  var cfg: Cfg = Cfg { symbolic: false, force: false, interactive: false, no_deref: false, deref_src: false, hard_dir: false, relative: false, verbose: false, backups: false, control: control_existing(), suffix: "~" };
+  var s: Scan = Scan { cfg: cfg, control_given: false, control_text: "", suffix_given: false, target_dir: "", have_target_dir: false, no_target_dir: false };
+  var g: gnu.Getopt = gnu.getopt_new(argv, option_table(), "ln", help_text(), 1);
+  while (true) {
+    var r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    g = r.1;
+    match (r.0) {
+      Some(m) => {
+        s = apply_option(s, m);
+      },
+      None => {
+        break;
+      }
+    }
+  }
+  return (s, g.operands());
+}
+
+function apply_option(s: Scan, m: gnu.OptMatch): Scan {
+  var c: Cfg = s.cfg;
+  if (m.id == opt_backup()) {
+    // `-b` turns backups on and says nothing about the control;
+    // `--backup=CONTROL` says both, and `--backup` alone is `-b`.
+    if (m.has_value) {
+      return Scan { ...s, cfg: Cfg { ...c, backups: true }, control_given: true, control_text: m.value };
+    }
+    return Scan { ...s, cfg: Cfg { ...c, backups: true } };
+  }
+  if (m.id == opt_directory()) {
+    return Scan { ...s, cfg: Cfg { ...c, hard_dir: true } };
+  }
+  if (m.id == opt_no_dereference()) {
+    return Scan { ...s, cfg: Cfg { ...c, no_deref: true } };
+  }
+  if (m.id == opt_no_target_directory()) {
+    return Scan { ...s, no_target_dir: true };
+  }
+  if (m.id == opt_force()) {
+    return Scan { ...s, cfg: Cfg { ...c, force: true, interactive: false } };
+  }
+  if (m.id == opt_interactive()) {
+    return Scan { ...s, cfg: Cfg { ...c, interactive: true, force: false } };
+  }
+  if (m.id == opt_suffix()) {
+    // A suffix turns backups on by itself, and an unusable one leaves
+    // the default `~` in place rather than being refused.
+    var suf: string = c.suffix;
+    if (usable_suffix(m.value)) {
+      suf = m.value;
+    }
+    return Scan { ...s, cfg: Cfg { ...c, backups: true, suffix: suf }, suffix_given: true };
+  }
+  if (m.id == opt_target_directory()) {
+    if (s.have_target_dir) {
+      gnu.error("multiple target directories specified");
+      exit(1);
+    }
+    check_target_directory(m.value);
+    return Scan { ...s, target_dir: m.value, have_target_dir: true };
+  }
+  if (m.id == opt_logical()) {
+    return Scan { ...s, cfg: Cfg { ...c, deref_src: true } };
+  }
+  if (m.id == opt_physical()) {
+    return Scan { ...s, cfg: Cfg { ...c, deref_src: false } };
+  }
+  if (m.id == opt_relative()) {
+    return Scan { ...s, cfg: Cfg { ...c, relative: true } };
+  }
+  if (m.id == opt_symbolic()) {
+    return Scan { ...s, cfg: Cfg { ...c, symbolic: true } };
+  }
+  return Scan { ...s, cfg: Cfg { ...c, verbose: true } };
+}
+
+// The suffix and the control no option supplied. Both environment
+// variables are read only when backups are ON, so `VERSION_CONTROL=bogus
+// ln a b` links without complaint; an empty value of either means the
+// default rather than an empty one.
+function from_environment(s: Scan): Cfg {
+  var c: Cfg = s.cfg;
+  if (!c.backups) {
+    return c;
+  }
+  if (!s.suffix_given) {
+    match (env("SIMPLE_BACKUP_SUFFIX")) {
+      Some(v) => {
+        if (usable_suffix(v)) {
+          c = Cfg { ...c, suffix: v };
+        }
+      },
+      None => {}
+    }
+  }
+  var control: i32 = control_existing();
+  if (s.control_given) {
+    if (s.control_text.len() > 0) {
+      control = gnu.argmatch_valued(s.control_text, control_names(), control_values(), "backup type");
+    }
+  } else {
+    match (env("VERSION_CONTROL")) {
+      Some(v) => {
+        if (v.len() > 0) {
+          control = gnu.argmatch_valued(v, control_names(), control_values(), "$VERSION_CONTROL");
+        }
+      },
+      None => {}
+    }
+  }
+  if (control == control_none()) {
+    return Cfg { ...c, backups: false, control: control };
+  }
+  return Cfg { ...c, control: control };
+}
+
+function main(): i32 {
+  var scanned: (Scan, string[]) = scan_options(args());
+  var s: Scan = scanned.0;
+  var operands: string[] = scanned.1;
+  if (s.have_target_dir && s.no_target_dir) {
+    gnu.error("cannot combine --target-directory and --no-target-directory");
+    return 1;
+  }
+  var cfg: Cfg = from_environment(s);
+  if (cfg.relative && !cfg.symbolic) {
+    gnu.error("cannot do --relative without --symbolic");
+    return 1;
+  }
+  if (operands.len() == 0) {
+    gnu.die_usage("missing file operand", 1);
+  }
+
+  var o: io_buffered.BufWriter = gnu.out_new();
+  if (s.have_target_dir) {
+    require_directory(s.target_dir, !cfg.no_deref);
+    var r0: LinkOut = link_into(cfg, operands, operands.len(), s.target_dir, o);
+    return finish(r0.out, r0.status);
+  }
+  if (s.no_target_dir) {
+    if (operands.len() == 1) {
+      // quoteaf, not the C-escaping `quote` link(1) uses for the same
+      // fault: a newline in an ln operand reads `'c'$'\n''d'`.
+      gnu.die_usage("missing destination file operand after " + gnu.quotea(operands[0]), 1);
+    }
+    if (operands.len() > 2) {
+      gnu.die_usage("extra operand " + gnu.quotea(operands[2]), 1);
+    }
+    var r1: LinkOut = do_link(cfg, operands[0], operands[1], o);
+    return finish(r1.out, r1.status);
+  }
+  if (operands.len() == 1) {
+    // The 2nd form's destination is the literal `./` + the target's last
+    // component, which is what the diagnostics and `-v` show.
+    var r2: LinkOut = do_link(cfg, operands[0], "./" + base_name(operands[0]), o);
+    return finish(r2.out, r2.status);
+  }
+  if (operands.len() == 2) {
+    var last: string = operands[1];
+    var st: StatInfo = stat_info(last, !cfg.no_deref);
+    if (st.ok && st.is_dir) {
+      var r3: LinkOut = link_into(cfg, operands, 1, last, o);
+      return finish(r3.out, r3.status);
+    }
+    var r4: LinkOut = do_link(cfg, operands[0], last, o);
+    return finish(r4.out, r4.status);
+  }
+  var dir: string = operands[operands.len() - 1];
+  require_directory(dir, !cfg.no_deref);
+  var r5: LinkOut = link_into(cfg, operands, operands.len() - 1, dir, o);
+  return finish(r5.out, r5.status);
+}
+
+// `operands[0 .. count)` linked inside `dir`, each under its own last
+// component. A failed operand costs the exit status and not the run.
+function link_into(cfg: Cfg, operands: string[], count: i32, dir: string, o: io_buffered.BufWriter): LinkOut {
+  var w: io_buffered.BufWriter = o;
+  var status: i32 = 0;
+  var i: i32 = 0;
+  while (i < count) {
+    var r: LinkOut = do_link(cfg, operands[i], join_path(dir, base_name(operands[i])), w);
+    w = r.out;
+    if (r.status != 0) {
+      status = 1;
+    }
+    i = i + 1;
+  }
+  return LinkOut { status: status, out: w };
+}
+
+function finish(o: io_buffered.BufWriter, status: i32): i32 {
+  gnu.finish(o);
+  return status;
+}

@@ -16724,6 +16724,20 @@ func (b *builder) emitStructUpdateReuse(sl *ast.StructLit, sd *ast.StructDecl, t
 		if isPtr && needsRcIncOnAlias(f.Value, b) && !b.rc.moveSites[f.Value] {
 			b.emitAliasInc(f.Value)
 		}
+		// Issue #2763's clone, which the fresh-alloc StructLit lowering
+		// already emits and this path owed as well (#9075): a Map-typed field
+		// initialised by a COW mutator gets back the SAME handle the box
+		// already holds, because __map_cow_inplace mutates in place at
+		// rc<=1 and bumps nothing. Step 4 then deep-drops the replaced
+		// field's old value — that very buffer — and the store leaves the
+		// box pointing at freed memory. Step 4's soundness argument does
+		// not reach this case: it rests on the new value carrying a count
+		// of its own, which an array push leaves behind and the map COW
+		// does not. The decline branch needs the copy for the original
+		// #2763 reason, the old box surviving as an alias of the field.
+		if isMapType(ft) && (isMapMutatorCall(f.Value) || b.isBorrowedMapFieldResultMove(f.Value)) {
+			b.emit(Op{Kind: OpCallDirect, Str: "__map_clone", I32: 1})
+		}
 		ts := b.allocSlot()
 		b.locals[fmt.Sprintf("__reuse_fld_%d", ts)] = ts
 		// Stamp the temp with the field's declared type so the backends

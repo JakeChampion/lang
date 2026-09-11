@@ -221,10 +221,12 @@ coreutils/
                     stdio buffering for the utilities whose write-error
                     wording depends on it (tac)
   lib/bre.fern      regular expressions as glibc compiles them —
-                    POSIX basic for expr, syntax 0 (Emacs) for tac -r,
-                    anchored or searched over a range of a buffer for
-                    nl and csplit, with a literal, a literal-prefix and
-                    a per-alternation-branch fast path ahead of glibc's
+                    POSIX basic for expr, syntax 0 (Emacs) for tac -r
+                    and for ptx's -W and -S, anchored or searched over
+                    a range of a buffer for nl and csplit, forwards for
+                    ptx's context scan and backwards for tac's, with a
+                    literal, a literal-prefix and a
+                    per-alternation-branch fast path ahead of glibc's
                     fastmap and the simulation, and glibc's regerror
                     texts as the diagnostics
   lib/ld.fern       C's `long double` as the TARGET has it, for the
@@ -263,13 +265,12 @@ coreutils/
                     1, which is 384 bytes on x86-64, and uses a `long`
                     and a real struct timeval where it is 0, which is
                     400 on arm64
-  lib/tz.fern       the local time zone as tzset(3) finds it, for the
-                    utilities that print a local timestamp (who, pinky):
-                    TZ read as a FILE name first — absolute, or under
-                    $TZDIR — and as a POSIX rule only when no file
-                    answers, TZif v1/v2/v3 with the footer rule for
-                    times past the transition table, and the POSIX
-                    grammar's three date forms with glibc's clamps
+  lib/tz.fern       the local zone as tzset(3) finds it — the TZif file
+                    $TZ names (absolute, or under $TZDIR), the POSIX
+                    rule in its footer past the transition table, and
+                    the rule string itself when no file answers — with
+                    the offset AND the abbreviation (`EST`, `+0545`) in
+                    force at an instant, for who, pinky and pr's header
   lib/sys.fern      the five fields of the kernel's utsname record, by
                     name, for the utilities that print the record
                     (uname) or one field of it (arch)
@@ -1076,6 +1077,44 @@ errno they discard is the whole of what those two utilities report.
 
 ## Known divergences
 
+**`du --time` renders in UTC.** GNU calls `localtime_r`, which resolves `TZ`
+and then `/etc/localtime`. `lib/tz.fern` can answer that now, but `du.fern`
+was written against a tree that predated it and formats the stamp as UTC,
+printing `UTC` / `+0000` for `%Z` / `%z`. The parity gate pins `TZ=UTC`, so
+the corpus is exact and the divergence is invisible to it — on a machine in
+any other zone every `--time` line is off by the offset. #9076 tracks moving
+it onto the shared module, along with the C-locale strftime `du.fern` carries,
+which is the half `lib/tz.fern` still lacks.
+
+**`du` cannot walk past `PATH_MAX`.** Every filesystem primitive takes a PATH,
+so a component 8 KiB down is `File name too long` where GNU's fts, which opens
+each directory and reads it fd-relative, keeps going. Measured on a 40-level
+tree of 200-byte components: GNU 168, Fern 80 plus one `cannot access` per
+level it could not reach, exit 1 — the same shape an unreadable directory has,
+so it degrades rather than lying. #9078 and #9074 are the same `openat` /
+`fdopendir` / `fstatat` family, which `rm -r`, `ls -R`, `find` and `cp -r` all
+want too.
+
+**`fmt` formats a whole paragraph where GNU formats 997 words at a time.**
+GNU fills a fixed word buffer, lays out what it holds, and re-enters from the
+remainder, so a paragraph past that bound is laid out from state the re-entry
+leaves behind — 38 words come back as [36, 2] after a flush and as [35, 3] when
+they are a paragraph of their own, and nothing in the streams identifies which
+happened. `fmt.fern` formats the paragraph. The first divergence is 999
+one-character words at `-w 75`; nothing under 998 differs, and the corpus holds
+a 996-word paragraph and none above it.
+
+**`dircolors -p` prints GNU 9.4's database.** The text `-p` prints is a data
+file that changes between coreutils releases — the copyright year on its third
+line moves, and entries come and go — so there is no version-independent answer
+to print. `coreutils/dircolors.fern` carries GNU 9.4's, transcribed from that
+binary's own `-p` output (the file grants permission to copy and distribute it
+with its notice preserved, which is why it can be carried at all). `-p` and
+every invocation with no FILE read that text, so against a newer oracle those
+cases fail loudly rather than passing something wrong, as `uname -p` does on an
+unpatched distribution; the fix is to transcribe the newer `dircolors -p`.
+Nothing else in the utility is version-sensitive.
+
 **`od -t fL` prints a canonical value for an encoding x87 never
 produces.** The 80-bit extended format has bit patterns that are not
 values: an unnormal (a non-zero exponent with the stored integer bit
@@ -1254,6 +1293,15 @@ behaviour is observable either way.
 
 ## Open gaps
 
+**Accumulating into an array or a string is quadratic under the self-host
+compiler (#9077).** `xs = xs.append(v)` and `s = s + piece` grow in place under
+native and copy per step in the self-host build, so a corpus cannot hand the
+self-host leg a large accumulation: `dircolors`' large-input cases are sized to
+what the self-host finishes (6000 entries — past a read block on the way in and
+past a pipe buffer on the way out) rather than to what native would take. Found
+when the self-host build of dircolors was SIGKILLed on a case native finishes
+in 0.19 s.
+
 **A directory walk is bounded by PATH_MAX (#9074).** Every filesystem builtin
 takes a path, so a recursive walk concatenates one per entry and the kernel
 refuses it past 4096 bytes. GNU's fts is fd-relative (FTS_CWDFD: openat /
@@ -1414,8 +1462,10 @@ groups are the order of work. Each sub-issue names its group.
   `unexpand` `split` `csplit` `shuf` `od` `base32` `base64` `basenc` `cksum`
   `sum` `md5sum` `sha1sum` `sha224sum` `sha256sum` `sha384sum` `sha512sum`
   `b2sum` `tee`. Done: `cat`, `tac`, `head`, `tail`, `wc`, `nl`, `cut`,
-  `paste`, `join`, `comm`, `uniq`, `sort`, `tr`, `fold`, `expand`, `unexpand`,
-  `pr`, `split`, `csplit`, `shuf`, `od`, `base32`, `base64`, `basenc`, `sum`,
+  `paste`, `join`, `comm`, `uniq`, `sort`, `tr`, `fold`, `fmt`, `expand`,
+  `unexpand`,
+  `pr`, `ptx`, `split`, `csplit`, `shuf`, `od`, `base32`, `base64`, `basenc`,
+  `sum`,
   `tee` and the seven checksum utilities. `tee` wanted signal dispositions (#8792) for `-i`
   and its `--output-error` family: SIG_IGN on SIGINT and SIGPIPE.
   Needs a buffered stdout writer in `std/io_buffered`
@@ -1447,8 +1497,9 @@ groups are the order of work. Each sub-issue names its group.
   #9059), `mktemp` (done — it needed none of them: `open_exclusive`,
   `create_dir`, `remove_dir`, `remove_file`, `lstat`, `random_bytes` and
   `env` were all already here, so its banner was stale), `chmod` `chown`
-  `chgrp` `chcon` `runcon`, `stat` `ls` `dir` `vdir` `du` `df` `dircolors`
-  (full stat, statfs, d_type), `date` (strftime; the timezone half is `lib/tz.fern` now), `timeout` `nice`
+  `chgrp` `chcon` `runcon`, `stat` `ls` `dir` `vdir` `du` `df`
+  (full stat, statfs, d_type), `dircolors` (done — it needed none of
+  those: `env()` for $SHELL / $TERM / $COLORTERM and no new primitive), `date` (strftime; the timezone half is `lib/tz.fern` now), `timeout` `nice`
   `nohup` `kill` `stdbuf` `chroot` (signals, setpriority, exec), `dd`
   `shred` `stty` `uptime` `pathchk`, and `hostid` (done: `hostname()`
   plus the resolver in `lib/resolv.fern`). Each primitive is a builtin,

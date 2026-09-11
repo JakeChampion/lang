@@ -466,6 +466,7 @@ pub function sysno(t: string, name: string): string {
         if (name == "linkat") { return "265"; }
         if (name == "symlinkat") { return "266"; }
         if (name == "readlinkat") { return "267"; }
+        if (name == "renameat") { return "264"; }
         if (name == "umask") { return "95"; }
         if (name == "kill") { return "62"; }
         if (name == "getrlimit") { return "97"; }
@@ -970,6 +971,28 @@ pub function rt_src_sleep_ms(t: string): string {
         return "function __fern_sleep_ms(ms: i32): i32 { if (ms <= 0) { return 0; } var tv: i32 = __raw_scratch(16); __raw_store_ptr(tv, 0, ms / 1000); __raw_store_ptr(tv, 1, (ms % 1000) * 1000); return __syscall5(" + sysno(t, "select") + ", 0, 0, 0, 0, tv); }";
     }
     return "function __fern_sleep_ms(ms: i32): i32 { if (ms <= 0) { return 0; } var ts: i32 = __raw_scratch(16); __raw_store_ptr(ts, 0, ms / 1000); __raw_store_ptr(ts, 1, (ms % 1000) * 1000000); return __syscall3(" + sysno(t, "nanosleep") + ", ts, 0, 0); }";
+}
+
+// rt_src_sleep_ns backs `sleep_ns(ns)` (#8528) — the same two syscalls as
+// rt_src_sleep_ms, with the caller's nanoseconds carried through rather than
+// rounded to a millisecond before the kernel ever sees them.
+//
+// The split is by 1e9 and the remainder IS tv_nsec, so Linux honours the full
+// resolution. Darwin's select still measures its subsecond field in
+// MICROseconds, so the remainder is rounded UP there — which keeps the
+// primitive's only promise, that the pause is never SHORTER than asked, at the
+// finest resolution that target has. Rounding up the last microsecond of a
+// second carries into tv_sec: select rejects a tv_usec of 1000000 with EINVAL
+// rather than pausing at all.
+//
+// The two words go out through __store_i64 rather than __raw_store_ptr: the
+// count is an i64, and the ptr store takes an i32 value, so a second past the
+// i32 range would be truncated on the way into the timespec.
+pub function rt_src_sleep_ns(t: string): string {
+    if (t == "arm64-darwin") {
+        return "function __fern_sleep_ns(ns: i64): i32 { if (ns <= (0 as i64)) { return 0; } var tv: i32 = __raw_scratch(16); var sec: i64 = ns / (1000000000 as i64); var usec: i64 = (ns - sec * (1000000000 as i64) + (999 as i64)) / (1000 as i64); if (usec == (1000000 as i64)) { sec = sec + (1 as i64); usec = 0 as i64; } __store_i64(tv, sec); __store_i64(__raw_addr(tv, 8), usec); return __syscall5(" + sysno(t, "select") + ", 0, 0, 0, 0, tv); }";
+    }
+    return "function __fern_sleep_ns(ns: i64): i32 { if (ns <= (0 as i64)) { return 0; } var ts: i32 = __raw_scratch(16); var sec: i64 = ns / (1000000000 as i64); __store_i64(ts, sec); __store_i64(__raw_addr(ts, 8), ns - sec * (1000000000 as i64)); return __syscall3(" + sysno(t, "nanosleep") + ", ts, 0, 0); }";
 }
 
 // rt_src_poll backs `poll(fds, timeout_ms)` (#2649, syscall-leaf) → the index of
@@ -1599,6 +1622,18 @@ pub function rt_src_create_link(t: string): string {
 // its own and a link to something absent is created without complaint.
 pub function rt_src_create_symlink(t: string): string {
     return "function __fern_create_symlink(target: string, path: string): Result[void, IoError] { var tlen: i32 = target.len(); var targetz: i32 = __raw_alloc(tlen + 1); var j: i32 = 0; while (j < tlen) { __raw_store8(targetz, j, target[j]); j = j + 1; } __raw_store8(targetz, tlen, 0); var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var rc: i32 = __syscall3(" + sysno(t, "symlinkat") + ", targetz, " + at_fdcwd(t) + ", pathz); if (rc < 0) { return Err(__fern_io_error(0 - rc, __raw_string(pathz, plen))); } return Ok(()); }";
+}
+
+// rt_src_rename backs `rename(old, new)` (#9059, syscall-leaf) →
+// Result[void, IoError]. renameat(AT_FDCWD, old, AT_FDCWD, new) — four
+// arguments and no flags word, because a rename never follows either final
+// component. An existing `new` of a compatible kind is replaced in one step,
+// which is what separates it from create_link plus remove_file.
+//
+// Both operands are NUL-terminated here rather than through a shared preamble,
+// for rt_src_create_link's reason (#7351).
+pub function rt_src_rename(t: string): string {
+    return "function __fern_rename(old: string, newp: string): Result[void, IoError] { var olen: i32 = old.len(); var oldz: i32 = __raw_alloc(olen + 1); var j: i32 = 0; while (j < olen) { __raw_store8(oldz, j, old[j]); j = j + 1; } __raw_store8(oldz, olen, 0); var plen: i32 = newp.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, newp[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var rc: i32 = __syscall4(" + sysno(t, "renameat") + ", " + at_fdcwd(t) + ", oldz, " + at_fdcwd(t) + ", pathz); if (rc < 0) { return Err(__fern_io_error(0 - rc, __raw_string(pathz, plen))); } return Ok(()); }";
 }
 
 // rt_src_read_link backs `read_link(path)` (#8883, syscall-leaf) →
@@ -3628,8 +3663,10 @@ function builtin_i32_names(): string[] {
         "tcp_send",
         "tcp_close",
         "tcp_pollable",
-        // See asm.fern for rationale.
+        // sleep_ms(ms) / sleep_ns(ns) are void to a caller, but their op
+        // pushes the syscall return so a statement-level drop balances.
         "sleep_ms",
+        "sleep_ns",
         // signal_ignore(sig) / signal_default(sig) are void to a caller, but
         // their op pushes the syscall return so a statement-level drop
         // balances — the same shape as sleep_ms above.
@@ -3767,6 +3804,7 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
     if (id.name == "remove_dir") { return ty_option(ty_unknown()); }
     if (id.name == "create_link") { return ty_option(ty_unknown()); }
     if (id.name == "create_symlink") { return ty_option(ty_unknown()); }
+    if (id.name == "rename") { return ty_option(ty_unknown()); }
     if (id.name == "read_link") { return ty_result(ty_string()); }
     // subprocess(cmd, args, stdin) → ProcessResult struct.
     // See asm.fern: returns "unknown" because the struct's
@@ -5718,6 +5756,7 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
         "__fn___fern_create_dir_all",
         "__fn___fern_create_dir", "__fn___fern_remove_dir",
         "__fn___fern_create_link", "__fn___fern_create_symlink",
+        "__fn___fern_rename",
         "__fn___fern_read_link", "__fn___fern_umask",
         "__fn___fern_env", "__fern_stat", "__fn___fern_stat", "__fn___fern_subprocess",
         "__fern_args", "__fern_arg_at", "__fern_strbuf_append",
@@ -5745,7 +5784,7 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
         "__fn___fern_tcp_connect", "__fern_tcp_pollable", "__fn___fern_tcp_close",
         "__fn___fern_udp_send", "__fn___fern_tcp_recv", "__fn___fern_tcp_send", "__fn___fern_tcp_listen", "__fn___fern_tcp_accept",
         "__fn___fern_open_res", "__fn___fern_writer_write",
-        "__fern_now_unix_ms", "__fn___fern_sleep_ms", "__fern_map_new",
+        "__fern_now_unix_ms", "__fn___fern_sleep_ms", "__fn___fern_sleep_ns", "__fern_map_new",
         "__fern_map_set", "__fern_map_get", "__fern_map_has", "__fn___fern_map_delete",
         // the shared key search all four of those reach (#2649); the entry owns
         // the single definition, so the per-module link needs it exported like

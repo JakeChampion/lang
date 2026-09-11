@@ -2,6 +2,7 @@ package e2eselfhost
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -10,11 +11,11 @@ import (
 )
 
 // The single-step directory and link primitives (#8883) through the SELF-HOST
-// IR path: create_dir / remove_dir / create_link / create_symlink / read_link,
-// plus `umask` on the native leg.
+// IR path: create_dir / remove_dir / create_link / create_symlink /
+// read_link / rename, plus `umask` on the native leg.
 //
 // The self-host emits these as generated Fern runtime bodies
-// (`asmcore.rt_src_create_dir` and its five siblings), with `sysno`,
+// (`asmcore.rt_src_create_dir` and its six siblings), with `sysno`,
 // `at_fdcwd` and `at_removedir` carrying the whole per-target difference. Every
 // one of those is a constant that produces a plausible syscall when it is
 // wrong — AT_REMOVEDIR is 0x200 on Linux and 0x80 on Darwin, and without it
@@ -24,7 +25,17 @@ import (
 // `internal/e2eselfhost` is PRIMARY for a self-host lowering change
 // (docs/TEST-GATES.md): the fixpoint is self-referential and cannot see a
 // stable miscompile of a construct it does not itself use, and nothing in the
-// compiler calls these six.
+// compiler calls these seven.
+
+// driverStderr is what a failed driver wrote on stderr — the diagnostic a
+// bare exit status hides. exec.Cmd.Output stashes it on the ExitError.
+func driverStderr(err error) []byte {
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
+		return ee.Stderr
+	}
+	return nil
+}
 
 // selfHostDirLinkSource is the probe, parameterised by the directory its paths
 // resolve against — "" for the wasm leg, which runs under its preopen.
@@ -61,9 +72,21 @@ func selfHostDirLinkSource(prefix string, withUmask bool) string {
     match (remove_dir(%[1]q)) { Ok(_) => {}, Err(_) => { return 16; } }
     match (remove_dir(%[1]q)) { Ok(_) => { return 17; }, Err(_) => {} }
 `, p("d"), p("d/nope/deep"), p("f.txt"), p("hard.txt"), p("link"), p("d/inner.txt"))
+	// rename replaces an existing destination in one step, which a
+	// create_link plus remove_file pair cannot: that pair is EEXIST here.
+	src += fmt.Sprintf(`    match (write_file(%[1]q, "moved\n")) { Ok(_) => {}, Err(_) => { return 18; } }
+    match (write_file(%[2]q, "stale\n")) { Ok(_) => {}, Err(_) => { return 19; } }
+    match (rename(%[1]q, %[2]q)) { Ok(_) => {}, Err(_) => { return 20; } }
+    match (read_file(%[1]q)) { Ok(_) => { return 21; }, Err(_) => {} }
+    match (read_file(%[2]q)) {
+        Ok(s) => { if (s != "moved\n") { return 22; } },
+        Err(_) => { return 23; }
+    }
+    match (rename(%[1]q, %[2]q)) { Ok(_) => { return 24; }, Err(_) => {} }
+`, p("g.txt"), p("occupied.txt"))
 	if withUmask {
 		src += `    var prev: i32 = umask(18);
-    if (umask(prev) != 18) { return 18; }
+    if (umask(prev) != 18) { return 25; }
 `
 	}
 	src += `    return 0;
@@ -93,6 +116,16 @@ func selfHostDirLinkTree(t *testing.T, dir string) {
 	if string(got) != "hello\n" {
 		t.Errorf("hard.txt = %q, want %q", got, "hello\n")
 	}
+	if _, err := os.Lstat(filepath.Join(dir, "g.txt")); !os.IsNotExist(err) {
+		t.Errorf("g.txt still exists after rename (lstat err = %v)", err)
+	}
+	got, err = os.ReadFile(filepath.Join(dir, "occupied.txt"))
+	if err != nil {
+		t.Fatalf("read occupied.txt: %v", err)
+	}
+	if string(got) != "moved\n" {
+		t.Errorf("occupied.txt = %q, want %q — rename did not replace it", got, "moved\n")
+	}
 }
 
 func TestSelfHostDirLinkIR(t *testing.T) {
@@ -111,11 +144,12 @@ func TestSelfHostDirLinkIR(t *testing.T) {
 	cmd.Stdin = bytes.NewReader([]byte(src))
 	asm, err := cmd.Output()
 	if err != nil || len(asm) == 0 {
-		t.Fatalf("driver failed: %v", err)
+		t.Fatalf("driver failed: %v\n%s", err, driverStderr(err))
 	}
 	for _, sym := range []string{
 		"__fern_create_dir", "__fern_remove_dir", "__fern_create_link",
 		"__fern_create_symlink", "__fern_read_link", "__fern_umask",
+		"__fern_rename",
 	} {
 		if !bytes.Contains(asm, []byte(sym)) {
 			t.Fatalf("%s did not reach the IR runtime path (absent from the asm)", sym)
@@ -130,10 +164,10 @@ func TestSelfHostDirLinkIR(t *testing.T) {
 	selfHostDirLinkTree(t, work)
 }
 
-// The wasm leg: five of the six are real WASI calls
+// The wasm leg: six of the seven are real WASI calls
 // (path_create_directory / path_remove_directory / path_link /
-// path_symlink / path_readlink), so they are exercised rather than
-// classified out. `umask` is absent — WASI has no file-mode creation mask and
+// path_symlink / path_readlink / path_rename), so they are exercised rather
+// than classified out. `umask` is absent — WASI has no file-mode creation mask and
 // E066 refuses the builtin on that target.
 func TestSelfHostDirLinkWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
@@ -155,7 +189,7 @@ func TestSelfHostDirLinkWasmIR(t *testing.T) {
 	cmd.Stdin = bytes.NewReader([]byte(src))
 	wat, err := cmd.Output()
 	if err != nil || len(wat) == 0 {
-		t.Fatalf("driver failed: %v", err)
+		t.Fatalf("driver failed: %v\n%s", err, driverStderr(err))
 	}
 	work := t.TempDir()
 	watFile := filepath.Join(work, "dirlink_prog.wat")

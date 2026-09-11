@@ -8043,7 +8043,7 @@ pub function builtin_function_names(): string[] {
         "create_dir_all", "stat", "lstat", "access", "temp_dir",
         // the single-step directory and link primitives, each one syscall
         // with nothing folded away
-        "create_dir", "remove_dir", "create_link", "create_symlink", "read_link", "umask",
+        "create_dir", "remove_dir", "create_link", "create_symlink", "read_link", "umask", "rename",
         // the process's own effective ids, which `test -O` / `-G` compare a
         // file's owner against, and the machine's node name
         "geteuid", "getegid", "hostname",
@@ -8056,7 +8056,7 @@ pub function builtin_function_names(): string[] {
         // signal dispositions — SIG_IGN / SIG_DFL for one signal
         "signal_ignore", "signal_default",
         // clocks + randomness + sleep + reactor readiness
-        "now_unix_ms", "now_ns", "monotonic_ns", "sleep_ms", "random_bytes",
+        "now_unix_ms", "now_ns", "monotonic_ns", "sleep_ms", "sleep_ns", "random_bytes",
         "random_i32", "poll", "timer_fd", "wasm_timer_pollable",
         "wasm_pollable_drop", "wasm_block", "wasm_poll",
         // maps + string builder + bytes + the free-function `len(a)` form.

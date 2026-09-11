@@ -1501,6 +1501,10 @@ pub function emit_function_via_ir_named(r: irlower.LowerResult, label_name: stri
             // [targetbox][pathbox] -> Result[void, IoError].
             s = s.need("heap"); s = s.need("create_link");
             s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_create_link\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind_tag == 267) {  // rename
+            // [oldbox][newbox] -> Result[void, IoError].
+            s = s.need("heap"); s = s.need("rename");
+            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_rename\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 263) {  // create_symlink
             s = s.need("heap"); s = s.need("create_symlink");
             s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_create_symlink\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
@@ -1633,10 +1637,14 @@ pub function emit_function_via_ir_named(r: irlower.LowerResult, label_name: stri
             s = s.mark_heap(); s = s.need("strbuf");
             s = s.write("    bl __fern_strbuf_take\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 181) {  // sleep_ms
-            // [ms] -> nanosleep(ms) (asm_arm64.emit_runtime emits __fern_sleep_ms
-            // unconditionally, so no need is set). Push x0 for the drop.
+            // [ms] -> nanosleep(ms). Push x0 for the drop.
             s = s.need("sleep_ms");
             s = s.write("    bl __fn___fern_sleep_ms\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind_tag == 266) {  // sleep_ns
+            // [ns] -> the same pause at full resolution. Same stack ABI as
+            // sleep_ms — one word in, x0 pushed for the drop.
+            s = s.need("sleep_ns");
+            s = s.write("    bl __fn___fern_sleep_ns\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 125) {  // map_set
             s = emit_arm64_op_map_set(o, s);
         } else if (o.kind_tag == 126) {  // map_len
@@ -3455,7 +3463,7 @@ pub function emit_rodata_pools_arm64(s: asmcore.EmitState, darwin: boolean): asm
 }
 
 // emit_rt_clock_and_print emits the FFI call shims, print_int, and the clock / sleep helpers
-// (now_unix_ms, monotonic_ns, now_ns, sleep_ms), which every module gets.
+// (now_unix_ms, monotonic_ns, now_ns, sleep_ms, sleep_ns), which every module gets.
 function emit_rt_clock_and_print(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
     // FFI __c_call<n> shims (#4375): allocation-free arg-marshal + `blr fn`.
     s = emit_ccall_shims_arm64(s);
@@ -3481,7 +3489,7 @@ function emit_rt_clock_and_print(s: asmcore.EmitState, darwin: boolean): asmcore
     // timing program referencing a slot nothing defined. Same gate as asm_ir's.
     var ctgt: string = "arm64-linux";
     if (darwin) { ctgt = "arm64-darwin"; }
-    if (s.has_need("monotonic_ns") || s.has_need("now_unix_ms") || s.has_need("now_ns") || s.has_need("stat") || s.has_need("lstat") || s.has_need("read_file") || s.has_need("read_file_bytes") || s.has_need("random_i32") || s.has_need("sleep_ms") || s.has_need("poll") || s.has_need("proc_waitpid") || s.has_need("timer_fd") || s.has_need("tcp_listen") || s.has_need("tcp_connect") || s.has_need("print_int") || s.has_need("putchar") || s.has_need("eprint") || s.has_need("read_int") || s.has_need("udp_send") || s.has_need("isatty") || s.has_need("signal_ignore") || s.has_need("signal_default") || s.has_need("access") || s.has_need("geteuid") || s.has_need("getegid") || s.has_need("getuid") || s.has_need("getgid") || s.has_need("getgroups") || s.has_need("environ") || s.has_need("fd_stat")) {
+    if (s.has_need("monotonic_ns") || s.has_need("now_unix_ms") || s.has_need("now_ns") || s.has_need("stat") || s.has_need("lstat") || s.has_need("read_file") || s.has_need("read_file_bytes") || s.has_need("random_i32") || s.has_need("sleep_ms") || s.has_need("sleep_ns") || s.has_need("poll") || s.has_need("proc_waitpid") || s.has_need("timer_fd") || s.has_need("tcp_listen") || s.has_need("tcp_connect") || s.has_need("print_int") || s.has_need("putchar") || s.has_need("eprint") || s.has_need("read_int") || s.has_need("udp_send") || s.has_need("isatty") || s.has_need("signal_ignore") || s.has_need("signal_default") || s.has_need("access") || s.has_need("geteuid") || s.has_need("getegid") || s.has_need("getuid") || s.has_need("getgid") || s.has_need("getgroups") || s.has_need("environ") || s.has_need("fd_stat")) {
         s = s.write("    .section .bss\n    .align 8\n__fern_scratch: .skip 256\n    .section .text\n");
     }
     if (s.has_need("read_int")) {
@@ -6569,7 +6577,7 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     // writer_write joined for the same reason once its own result became an
     // Option[IoError] (#7926), and reader_close once it started reporting a
     // failing close instead of discarding it.
-    if (s.has_need("read_file") || s.has_need("read_file_bytes") || s.has_need("write_file") || s.has_need("write_file_exec") || s.has_need("remove_file") || s.has_need("create_dir_all") || s.has_need("create_dir") || s.has_need("remove_dir") || s.has_need("create_link") || s.has_need("create_symlink") || s.has_need("read_link") || s.has_need("umask") || s.has_need("temp_dir") || s.has_need("stat") || s.has_need("lstat") || s.has_need("access") || s.has_need("read_dir") || s.has_need("remove_dir_all") || s.has_need("open_file") || s.has_need("writer_write") || s.has_need("reader")) {
+    if (needs_fs_runtime(s)) {
         var fs_src: string = asmcore.rt_src_io_error(tgt);
         if (s.has_need("stat")) { fs_src = fs_src + " " + asmcore.rt_src_stat(tgt); }
         if (s.has_need("access")) { fs_src = fs_src + " " + asmcore.rt_src_access(tgt); }
@@ -6584,6 +6592,7 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
         if (s.has_need("remove_dir")) { fs_src = fs_src + " " + asmcore.rt_src_remove_dir(tgt); }
         if (s.has_need("create_link")) { fs_src = fs_src + " " + asmcore.rt_src_create_link(tgt); }
         if (s.has_need("create_symlink")) { fs_src = fs_src + " " + asmcore.rt_src_create_symlink(tgt); }
+        if (s.has_need("rename")) { fs_src = fs_src + " " + asmcore.rt_src_rename(tgt); }
         if (s.has_need("read_link")) { fs_src = fs_src + " " + asmcore.rt_src_read_link(tgt); }
         if (s.has_need("umask")) { fs_src = fs_src + " " + asmcore.rt_src_umask(tgt); }
         if (s.has_need("temp_dir")) { fs_src = fs_src + " " + asmcore.rt_src_temp_dir(tgt); }
@@ -6636,6 +6645,11 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     // outside the heap block.
     if (s.has_need("sleep_ms")) {
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_sleep_ms(tgt), s.struct_decls, s);
+    }
+    // sleep_ns: the same two calls, split by 1e9 instead of 1e3 — and on Darwin
+    // the leftover nanoseconds round UP into select's microsecond timeval.
+    if (s.has_need("sleep_ns")) {
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_sleep_ns(tgt), s.struct_decls, s);
     }
     // poll: ppoll over a freshly built pollfd[] on Linux, a bare -1 on Darwin.
     // It allocates, so it is heap-dependent — but emitted here beside the other
@@ -7449,6 +7463,13 @@ function emit_rt_float_transcendentals(s: asmcore.EmitState): asmcore.EmitState 
     s = s.write("    ret\n");
     s = s.write(".size __fern_pow_f64, .-__fern_pow_f64\n");
     return s;
+}
+
+// needs_fs_runtime is the gate on the filesystem runtime bundle: every
+// need whose generated Fern body is emitted from that block, __fern_io_error
+// included — they share one call graph, so they are emitted together.
+function needs_fs_runtime(s: asmcore.EmitState): boolean {
+    return s.has_need("read_file") || s.has_need("read_file_bytes") || s.has_need("write_file") || s.has_need("write_file_exec") || s.has_need("remove_file") || s.has_need("create_dir_all") || s.has_need("create_dir") || s.has_need("remove_dir") || s.has_need("create_link") || s.has_need("create_symlink") || s.has_need("rename") || s.has_need("read_link") || s.has_need("umask") || s.has_need("temp_dir") || s.has_need("stat") || s.has_need("lstat") || s.has_need("access") || s.has_need("read_dir") || s.has_need("remove_dir_all") || s.has_need("open_file") || s.has_need("writer_write") || s.has_need("reader");
 }
 
 pub function emit_ir_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {

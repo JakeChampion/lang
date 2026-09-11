@@ -330,6 +330,52 @@ func TestArm64DarwinMonotonicNs(t *testing.T) {
 	}
 }
 
+// TestArm64DarwinSleepNsCarry covers the last microsecond of every second on
+// arm64-darwin, where `sleep_ns` has to build `select`'s timeval by rounding
+// its nanosecond remainder up. A remainder above 999_999_000 ns rounds to
+// 1_000_000 µs, which is out of range for a timeval: select returns EINVAL
+// without pausing, so the sleep is skipped entirely rather than overshooting.
+// The carry into tv_sec is what keeps the primitive's only promise.
+//
+// Building gates nothing here — this interval compiles either way — so the
+// measurement on Apple Silicon is the whole test.
+func TestArm64DarwinSleepNsCarry(t *testing.T) {
+	bin := buildFernCLI(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "prog.fern")
+	// 999_999_500 ns: under a second, and in the window where ceil(rem/1000)
+	// reaches 1_000_000.
+	prog := "function main(): i32 {\n" +
+		"    var t0: i64 = monotonic_ns();\n" +
+		"    sleep_ns(999999500 as i64);\n" +
+		"    if (monotonic_ns() - t0 < (999999500 as i64)) { return 94; }\n" +
+		"    return 0;\n" +
+		"}\n"
+	if err := os.WriteFile(src, []byte(prog), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	out := filepath.Join(dir, "prog")
+	if o, err := exec.Command(bin, "-target", "arm64-darwin", "-o", out, src).CombinedOutput(); err != nil {
+		t.Fatalf("native arm64-darwin build failed: %v\n%s", err, o)
+	}
+	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
+		t.Skip("execution check only runs on Apple Silicon")
+	}
+	cmd := exec.Command(out)
+	_ = cmd.Run()
+	ps := cmd.ProcessState
+	if ps == nil || !ps.Exited() {
+		t.Fatalf("native Mach-O did not run to a normal exit (state=%v)", ps)
+	}
+	switch code := ps.ExitCode(); code {
+	case 0:
+	case 94:
+		t.Error("sleep_ns(999999500) returned early: tv_usec reached 1000000 and select rejected the timeval")
+	default:
+		t.Errorf("unexpected exit code %d", code)
+	}
+}
+
 // TestArm64DarwinDwarfSymtab guards the -g static symbol table for the
 // arm64-darwin native path (#5537 slice 1, Mach-O): a `-g` build carries an
 // LC_SYMTAB whose entries resolve every function name, while the default build
