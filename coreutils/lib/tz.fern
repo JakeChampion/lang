@@ -1,0 +1,656 @@
+// coreutils/lib/tz.fern — the local time zone, as glibc's tzset finds
+// it, for the utilities that print a timestamp.
+//
+// `who` and `pinky` both render a login time as local wall-clock, which
+// is localtime(3), which is tzset(3) plus a lookup. tzset has two
+// sources and this module is both:
+//
+//   1. The TZ environment variable. An empty value is UTC. Otherwise a
+//      leading `:` is dropped and what is left is tried as a FILE first
+//      — absolute as it stands, relative under $TZDIR (default
+//      /usr/share/zoneinfo) — and only if no file is there is it parsed
+//      as a POSIX rule string. That order is why `TZ=EST5EDT` reads the
+//      zoneinfo file of that name rather than the rule it also spells,
+//      and the two differ before 2007, where the file has the old US
+//      dates and the rule does not.
+//   2. TZ unset: /etc/localtime, the same file format.
+//
+// Anything that fails to parse is UTC, which is what a C program gets
+// when tzset finds nothing it understands.
+//
+// Where this parts from glibc, and why (docs/COREUTILS.md): a TZ string
+// that names a daylight zone but no usable pair of dates — `ABC1DEF`,
+// or `EST5EDT,J0,J300` where the dates are out of range — leaves the
+// dates to the implementation. glibc reads them from
+// /usr/share/zoneinfo/posixrules, a copy of America/New_York that
+// upstream tzdata stopped shipping in 2020 and Debian still carries;
+// this applies the POSIX default dates, which is what glibc itself
+// falls back to where that file is absent.
+//
+// The file is TZif (RFC 8536): a header, a table of transition times
+// with the offset in effect after each, and — from version 2 on — the
+// whole table again with 64-bit times, then a POSIX rule string in a
+// footer that governs every time past the last transition. A zone file
+// ends its table around 2037, so the footer is what answers a question
+// about 2040 and it is not an edge case.
+//
+// Only the UTC offset is read off any of it. The abbreviation (`EST`),
+// the leap-second table and the standard/UT indicators are parsed past:
+// no caller here prints a zone name.
+import "std/string";
+import "std/array";
+import "std/time";
+
+// ---- the zone ---------------------------------------------------------------
+// `Zone` — a transition table plus the rule that takes over past its
+// end. `first` is the offset before the first transition; `times` and
+// `offs` are the same length, `offs[i]` being in effect from `times[i]`
+// until `times[i + 1]`.
+pub struct Zone { times: i64[], offs: i32[], first: i32, rule: Rule }
+
+// `Rule` — a POSIX TZ string: the standard offset, and when DST is
+// observed, the DST offset and the two dates that switch between them.
+// Offsets are SECONDS EAST of Greenwich, the sign localtime adds — the
+// opposite of the sign the TZ string writes, where `EST5` means five
+// hours WEST.
+pub struct Rule { valid: boolean, has_dst: boolean, std_off: i32, dst_off: i32, start: DateRule, end: DateRule }
+
+// `DateRule` — one of POSIX's three ways to name a day of the year,
+// plus the local time of day the change happens at:
+//
+//   kind 0  `Mm.w.d`  the `d`th weekday of week `w` of month `m`,
+//                     with week 5 meaning the last such weekday
+//   kind 1  `Jn`      day n of the year counting from 1 with February
+//                     29 never counted, so a date keeps its number in
+//                     a leap year
+//   kind 2  `n`       day n counting from 0 WITH February 29 counted
+pub struct DateRule { kind: i32, mon: i32, week: i32, day: i32, n: i32, time: i32 }
+
+pub function utc_rule(): Rule {
+  var none: DateRule = DateRule { kind: 2, mon: 0, week: 0, day: 0, n: 0, time: 0 };
+  return Rule { valid: false, has_dst: false, std_off: 0, dst_off: 0, start: none, end: none };
+}
+
+pub function utc_zone(): Zone {
+  var t: i64[] = [];
+  var o: i32[] = [];
+  return Zone { times: t, offs: o, first: 0, rule: utc_rule() };
+}
+
+// `local_zone()` — tzset's answer for this process.
+pub function local_zone(): Zone {
+  match (env("TZ")) {
+    Some(spec) => {
+      if (spec.len() == 0) {
+        return utc_zone();
+      }
+      var name: string = spec;
+      if (name[0] as i32 == 58) {
+        name = slice_unchecked(name, 1, name.len()) + "";
+      }
+      match (read_zone_file(zone_path(name))) {
+        Some(z) => {
+          return z;
+        },
+        None => {}
+      }
+      var r: Rule = parse_posix(name);
+      if (!r.valid) {
+        return utc_zone();
+      }
+      return rule_zone(r);
+    },
+    None => {
+      match (read_zone_file("/etc/localtime")) {
+        Some(z) => {
+          return z;
+        },
+        None => {
+          return utc_zone();
+        }
+      }
+    }
+  }
+}
+
+// A zone that is nothing but a rule: no transitions, so every time is
+// answered by the rule.
+function rule_zone(r: Rule): Zone {
+  var t: i64[] = [];
+  var o: i32[] = [];
+  return Zone { times: t, offs: o, first: r.std_off, rule: r };
+}
+
+// Where a TZ value names a file. An absolute name is itself; a relative
+// one hangs under $TZDIR, which glibc reads and defaults to the compiled
+// -in zoneinfo directory.
+function zone_path(name: string): string {
+  if (name.len() == 0) {
+    return "";
+  }
+  if (name[0] as i32 == 47) {
+    return name;
+  }
+  var dir: string = "/usr/share/zoneinfo";
+  match (env("TZDIR")) {
+    Some(d) => {
+      if (d.len() > 0) {
+        dir = d;
+      }
+    },
+    None => {}
+  }
+  return dir + "/" + name;
+}
+
+// `(z: Zone) offset_at(sec)` — seconds east of Greenwich at that
+// instant. Before the first transition the zone's opening offset
+// stands; past the last one the footer rule does, when there is one.
+pub function (z: Zone) offset_at(sec: i64): i32 {
+  var n: i32 = z.times.len();
+  if (n == 0) {
+    if (z.rule.valid) {
+      return rule_offset(z.rule, sec);
+    }
+    return z.first;
+  }
+  if (sec < z.times[0]) {
+    return z.first;
+  }
+  if (z.rule.valid && sec >= z.times[n - 1]) {
+    return rule_offset(z.rule, sec);
+  }
+  var lo: i32 = 0;
+  var hi: i32 = n - 1;
+  while (lo < hi) {
+    var mid: i32 = lo + (hi - lo + 1) / 2;
+    if (z.times[mid] <= sec) {
+      lo = mid;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  return z.offs[lo];
+}
+
+// ---- TZif -------------------------------------------------------------------
+function be32(bs: u8[], o: i32): i64 {
+  var v: i64 = 0;
+  var i: i32 = 0;
+  while (i < 4) {
+    v = v * (256 as i64) + bs[o + i] as i64;
+    i = i + 1;
+  }
+  return v;
+}
+
+function be32s(bs: u8[], o: i32): i64 {
+  var v: i64 = be32(bs, o);
+  if (v > 2147483647 as i64) {
+    return v - 4294967296 as i64;
+  }
+  return v;
+}
+
+function be64s(bs: u8[], o: i32): i64 {
+  var v: i64 = 0;
+  var i: i32 = 0;
+  while (i < 8) {
+    v = v * (256 as i64) + bs[o + i] as i64;
+    i = i + 1;
+  }
+  return v;
+}
+
+// The six counts of a TZif header, in file order. `-1` in any of them
+// says the header is not there at all.
+struct Counts { isut: i32, isstd: i32, leap: i32, time: i32, type_: i32, chars: i32 }
+
+function read_counts(bs: u8[], off: i32): Counts {
+  var bad: Counts = Counts { isut: 0 - 1, isstd: 0, leap: 0, time: 0, type_: 0, chars: 0 };
+  if (off < 0 || off + 44 > bs.len()) {
+    return bad;
+  }
+  if (bs[off] as i32 != 84 || bs[off + 1] as i32 != 90 || bs[off + 2] as i32 != 105 || bs[off + 3] as i32 != 102) {
+    return bad;
+  }
+  // A count with its high bit set is not a count. Reading them through
+  // i64 and refusing the negatives keeps the arithmetic below in range
+  // rather than wrapping into an offset that passes a length check.
+  var c: Counts = Counts { isut: clamp(be32(bs, off + 20)), isstd: clamp(be32(bs, off + 24)), leap: clamp(be32(bs, off + 28)), time: clamp(be32(bs, off + 32)), type_: clamp(be32(bs, off + 36)), chars: clamp(be32(bs, off + 40)) };
+  if (c.isut < 0 || c.isstd < 0 || c.leap < 0 || c.time < 0 || c.type_ < 0 || c.chars < 0) {
+    return bad;
+  }
+  return c;
+}
+
+// A header count, or -1 for one no file can mean.
+function clamp(v: i64): i32 {
+  if (v > 1073741823 as i64) {
+    return 0 - 1;
+  }
+  return v as i32;
+}
+
+// The byte length of a data block whose transition times are `width`
+// bytes and whose leap records are `width + 4`. Counted in 64 bits: a
+// file whose header claims a billion transitions would overflow the
+// length this is checked against, and the check is what keeps every
+// read below inside the buffer.
+function block_bytes(c: Counts, width: i32): i64 {
+  return c.time as i64 * (width as i64) + c.time as i64 + c.type_ as i64 * (6 as i64) + c.chars as i64 + c.leap as i64 * ((width + 4) as i64) + c.isstd as i64 + c.isut as i64;
+}
+
+// `read_zone_file(path)` — the file at `path` as a Zone, or None when it
+// is missing, unreadable or not TZif.
+function read_zone_file(path: string): Option[Zone] {
+  if (path.len() == 0) {
+    return None;
+  }
+  match (read_file_bytes(path)) {
+    Ok(bs) => {
+      return parse_tzif(bs);
+    },
+    Err(_) => {
+      return None;
+    }
+  }
+}
+
+pub function parse_tzif(bs: u8[]): Option[Zone] {
+  var h1: Counts = read_counts(bs, 0);
+  if (h1.isut < 0 || h1.type_ < 1) {
+    return None;
+  }
+  var version: i32 = bs[4] as i32;
+  var off: i32 = 44;
+  var width: i32 = 4;
+  var c: Counts = h1;
+  var footer: string = "";
+  if (version != 0) {
+    // Version 2 and up repeat everything with 64-bit times; the second
+    // block is the authoritative one and the footer follows it.
+    var first_block: i64 = off as i64 + block_bytes(h1, 4);
+    if (first_block <= bs.len() as i64) {
+      var second: i32 = first_block as i32;
+      var h2: Counts = read_counts(bs, second);
+      if (h2.isut >= 0 && h2.type_ >= 1) {
+        c = h2;
+        off = second + 44;
+        width = 8;
+        var end: i64 = off as i64 + block_bytes(h2, 8);
+        if (end <= bs.len() as i64) {
+          footer = read_footer(bs, end as i32);
+        }
+      }
+    }
+  }
+  if (off as i64 + block_bytes(c, width) > bs.len() as i64) {
+    return None;
+  }
+  // The transition times, then the index into the type table that each
+  // one selects, then the types themselves.
+  var idx_off: i32 = off + c.time * width;
+  var type_off: i32 = idx_off + c.time;
+  var offs: i32[] = [];
+  var isdst: boolean[] = [];
+  var i: i32 = 0;
+  while (i < c.type_) {
+    offs = offs.append(be32s(bs, type_off + i * 6) as i32);
+    isdst = isdst.append(bs[type_off + i * 6 + 4] as i32 != 0);
+    i = i + 1;
+  }
+  var times: i64[] = [];
+  var tofs: i32[] = [];
+  i = 0;
+  while (i < c.time) {
+    var t: i64 = 0;
+    if (width == 8) {
+      t = be64s(bs, off + i * 8);
+    } else {
+      t = be32s(bs, off + i * 4);
+    }
+    var k: i32 = bs[idx_off + i] as i32;
+    if (k >= c.type_) {
+      k = 0;
+    }
+    times = times.append(t);
+    tofs = tofs.append(offs[k]);
+    i = i + 1;
+  }
+  // Before the first transition, localtime uses the first type that is
+  // not daylight saving, and type 0 when every type is.
+  var first: i32 = offs[0];
+  i = 0;
+  while (i < c.type_) {
+    if (!isdst[i]) {
+      first = offs[i];
+      i = c.type_;
+    } else {
+      i = i + 1;
+    }
+  }
+  return Some(Zone { times: times, offs: tofs, first: first, rule: parse_posix(footer) });
+}
+
+// The footer of a version-2 file: a newline, the rule, a newline. An
+// empty rule (the two newlines with nothing between) means the file
+// says nothing about times past its table.
+function read_footer(bs: u8[], start: i32): string {
+  if (start >= bs.len() || bs[start] as i32 != 10) {
+    return "";
+  }
+  var i: i32 = start + 1;
+  var out: u8[] = [];
+  while (i < bs.len() && bs[i] as i32 != 10) {
+    out = out.append(bs[i]);
+    i = i + 1;
+  }
+  return string_from_bytes_unchecked(out);
+}
+
+// ---- the POSIX TZ string ----------------------------------------------------
+// `parse_posix(s)` — `std offset[dst[offset][,start[/time],end[/time]]]`.
+// An unparsable string is `valid: false`, which every caller reads as
+// UTC.
+//
+// The two defaults are the ones that bite: a DST name with no offset of
+// its own means one hour ahead of standard time, and DST with no rules
+// at all means the United States dates, which is what glibc supplies.
+pub function parse_posix(s: string): Rule {
+  var r: Rule = utc_rule();
+  var p: i32 = skip_name(s, 0);
+  if (p <= 0) {
+    return r;
+  }
+  var std: (boolean, i32, i32) = parse_offset(s, p);
+  if (!std.0) {
+    return r;
+  }
+  // A TZ string writes the offset to ADD to local time to get UT, so
+  // `EST5` is five hours west and localtime subtracts five.
+  r = Rule { ...r, valid: true, std_off: 0 - std.1, dst_off: 0 - std.1 };
+  p = std.2;
+  var dst_start: i32 = skip_name(s, p);
+  if (dst_start <= p) {
+    return r;
+  }
+  r = Rule { ...r, has_dst: true, dst_off: r.std_off + 3600 };
+  p = dst_start;
+  if (p < s.len() && s[p] as i32 != 44) {
+    var d: (boolean, i32, i32) = parse_offset(s, p);
+    if (!d.0) {
+      return Rule { ...r, valid: false };
+    }
+    r = Rule { ...r, dst_off: 0 - d.1 };
+    p = d.2;
+  }
+  // A rule that does not parse is not fatal: the offsets stand and the
+  // dates fall back to the default, which is what a TZ string naming a
+  // daylight zone and no dates at all gets.
+  var fallback: Rule = Rule { ...r, start: us_dst_start(), end: us_dst_end() };
+  if (p >= s.len() || s[p] as i32 != 44) {
+    return fallback;
+  }
+  var a: (boolean, DateRule, i32) = parse_date_rule(s, p + 1);
+  if (!a.0 || a.2 >= s.len() || s[a.2] as i32 != 44) {
+    return fallback;
+  }
+  var b: (boolean, DateRule, i32) = parse_date_rule(s, a.2 + 1);
+  if (!b.0) {
+    return fallback;
+  }
+  return Rule { ...r, start: a.1, end: b.1 };
+}
+
+// The POSIX default dates, which are the United States rule in force
+// since 2007: the second Sunday in March and the first in November,
+// both at 02:00 local.
+function us_dst_start(): DateRule {
+  return DateRule { kind: 0, mon: 3, week: 2, day: 0, n: 0, time: 7200 };
+}
+
+function us_dst_end(): DateRule {
+  return DateRule { kind: 0, mon: 11, week: 1, day: 0, n: 0, time: 7200 };
+}
+
+// The zone designation at `p`: three or more letters, or three or more
+// of anything but `>` inside angle brackets. Answers the offset past
+// it, or `p` itself when there is no name there — which is how a
+// two-character quoted name refuses the whole string.
+function skip_name(s: string, p: i32): i32 {
+  if (p >= s.len()) {
+    return p;
+  }
+  if (s[p] as i32 == 60) {
+    var i: i32 = p + 1;
+    while (i < s.len() && s[i] as i32 != 62) {
+      i = i + 1;
+    }
+    if (i >= s.len() || i - p - 1 < 3) {
+      return p;
+    }
+    return i + 1;
+  }
+  var j: i32 = p;
+  while (j < s.len() && is_alpha(s[j] as i32)) {
+    j = j + 1;
+  }
+  if (j - p < 3) {
+    return p;
+  }
+  return j;
+}
+
+function is_alpha(c: i32): boolean {
+  return c >= 65 && c <= 90 || c >= 97 && c <= 122;
+}
+
+function is_digit(c: i32): boolean {
+  return c >= 48 && c <= 57;
+}
+
+// `[+-]hh[:mm[:ss]]` at `p`, as (ok, seconds, next). Every field is
+// CLAMPED rather than refused when it is out of range, which is what
+// glibc does: `TZ=AAA+25` is a 24-hour offset and `AAA+25:59:59` is
+// 24:59:59, neither of them the 25 hours written.
+function parse_offset(s: string, p: i32): (boolean, i32, i32) {
+  var i: i32 = p;
+  var neg: boolean = false;
+  if (i < s.len() && (s[i] as i32 == 43 || s[i] as i32 == 45)) {
+    neg = s[i] as i32 == 45;
+    i = i + 1;
+  }
+  if (i >= s.len() || !is_digit(s[i] as i32)) {
+    return (false, 0, p);
+  }
+  var h: i32 = 0;
+  var n: i32 = 0;
+  while (i < s.len() && is_digit(s[i] as i32) && n < 3) {
+    h = h * 10 + (s[i] as i32 - 48);
+    i = i + 1;
+    n = n + 1;
+  }
+  if (h > 24) {
+    h = 24;
+  }
+  var total: i32 = h * 3600;
+  var k: i32 = 0;
+  while (k < 2 && i < s.len() && s[i] as i32 == 58) {
+    i = i + 1;
+    var v: i32 = 0;
+    var d: i32 = 0;
+    while (i < s.len() && is_digit(s[i] as i32) && d < 2) {
+      v = v * 10 + (s[i] as i32 - 48);
+      i = i + 1;
+      d = d + 1;
+    }
+    if (d == 0) {
+      return (false, 0, p);
+    }
+    if (v > 59) {
+      v = 59;
+    }
+    if (k == 0) {
+      total = total + v * 60;
+    } else {
+      total = total + v;
+    }
+    k = k + 1;
+  }
+  if (neg) {
+    total = 0 - total;
+  }
+  return (true, total, i);
+}
+
+// `Mm.w.d`, `Jn` or `n`, each with an optional `/time` whose default is
+// 02:00:00 local.
+function parse_date_rule(s: string, p: i32): (boolean, DateRule, i32) {
+  var bad: DateRule = DateRule { kind: 2, mon: 0, week: 0, day: 0, n: 0, time: 0 };
+  var i: i32 = p;
+  var out: DateRule = bad;
+  if (i < s.len() && s[i] as i32 == 77) {
+    var m: (boolean, i32, i32) = parse_uint(s, i + 1);
+    if (!m.0 || m.2 >= s.len() || s[m.2] as i32 != 46) {
+      return (false, bad, p);
+    }
+    var w: (boolean, i32, i32) = parse_uint(s, m.2 + 1);
+    if (!w.0 || w.2 >= s.len() || s[w.2] as i32 != 46) {
+      return (false, bad, p);
+    }
+    var d: (boolean, i32, i32) = parse_uint(s, w.2 + 1);
+    if (!d.0) {
+      return (false, bad, p);
+    }
+    if (m.1 < 1 || m.1 > 12 || w.1 < 1 || w.1 > 5 || d.1 > 6) {
+      return (false, bad, p);
+    }
+    out = DateRule { kind: 0, mon: m.1, week: w.1, day: d.1, n: 0, time: 7200 };
+    i = d.2;
+  } else if (i < s.len() && s[i] as i32 == 74) {
+    var j: (boolean, i32, i32) = parse_uint(s, i + 1);
+    if (!j.0 || j.1 < 1 || j.1 > 365) {
+      return (false, bad, p);
+    }
+    out = DateRule { kind: 1, mon: 0, week: 0, day: 0, n: j.1, time: 7200 };
+    i = j.2;
+  } else {
+    var z: (boolean, i32, i32) = parse_uint(s, i);
+    if (!z.0) {
+      return (false, bad, p);
+    }
+    out = DateRule { kind: 2, mon: 0, week: 0, day: 0, n: z.1, time: 7200 };
+    i = z.2;
+  }
+  if (i < s.len() && s[i] as i32 == 47) {
+    var t: (boolean, i32, i32) = parse_offset(s, i + 1);
+    if (!t.0) {
+      return (false, bad, p);
+    }
+    out = DateRule { ...out, time: t.1 };
+    i = t.2;
+  }
+  return (true, out, i);
+}
+
+function parse_uint(s: string, p: i32): (boolean, i32, i32) {
+  var i: i32 = p;
+  var v: i32 = 0;
+  while (i < s.len() && is_digit(s[i] as i32)) {
+    v = v * 10 + (s[i] as i32 - 48);
+    i = i + 1;
+  }
+  if (i == p) {
+    return (false, 0, p);
+  }
+  return (true, v, i);
+}
+
+// ---- applying a rule --------------------------------------------------------
+// `rule_offset(r, sec)` — the offset the rule gives at a UTC instant.
+//
+// Which side of a change an instant falls on is decided in LOCAL time,
+// and the two ends use different offsets to get there: the spring date
+// is a standard-time wall clock and the autumn one a daylight-time wall
+// clock, because each names the clock that is running when the change
+// happens.
+function rule_offset(r: Rule, sec: i64): i32 {
+  if (!r.has_dst) {
+    return r.std_off;
+  }
+  // The year the dates are computed for is the UTC one, not the local
+  // one, so an instant in the last hours of December is measured
+  // against the NEXT year's dates where the zone is west of Greenwich.
+  var year: i32 = year_of(sec);
+  var start: i64 = rule_instant(r.start, year) - r.std_off as i64;
+  var end: i64 = rule_instant(r.end, year) - r.dst_off as i64;
+  var on: boolean = false;
+  if (start <= end) {
+    on = sec >= start && sec < end;
+  } else {
+    // A southern-hemisphere zone, where daylight time spans the turn of
+    // the year and the window is everything OUTSIDE the two dates.
+    on = sec >= start || sec < end;
+  }
+  if (on) {
+    return r.dst_off;
+  }
+  return r.std_off;
+}
+
+// The local-time instant a rule names in `year`, as seconds since the
+// epoch with no offset applied.
+//
+// The day is counted forward from the first of January, and that base
+// does not go BACK past the epoch: a year at or before 1970 is measured
+// from 1970-01-01 as glibc measures it, so the dates a rule names in
+// 1969 are the dates it names in 1970.
+function rule_instant(d: DateRule, year: i32): i64 {
+  var base: i32 = 0;
+  if (year > 1970) {
+    base = epoch_day(year, 1, 1);
+  }
+  var doy: i32 = 1;
+  if (d.kind == 0) {
+    doy = month_week_day(year, d.mon, d.week, d.day);
+  } else if (d.kind == 1) {
+    // February 29 is not counted, so on or after March 1 of a leap year
+    // the calendar day is one later than the number.
+    doy = d.n;
+    if (doy >= 60 && time.is_leap_year(year)) {
+      doy = doy + 1;
+    }
+  } else {
+    doy = d.n + 1;
+  }
+  return (base + doy - 1) as i64 * (86400 as i64) + d.time as i64;
+}
+
+// The day of the year of the `week`th `day`-of-the-week in `mon`, with
+// week 5 meaning the last one in the month.
+function month_week_day(year: i32, mon: i32, week: i32, day: i32): i32 {
+  var wd: i32 = time.date_make(year, mon, 1).weekday();
+  var dom: i32 = 1 + (day - wd + 7) % 7 + (week - 1) * 7;
+  var last: i32 = time.days_in_month(year, mon);
+  while (dom > last) {
+    dom = dom - 7;
+  }
+  return time.date_make(year, mon, dom).day_of_year();
+}
+
+function epoch_day(year: i32, mon: i32, day: i32): i32 {
+  return time.date_make(year, mon, day).days_since(time.date_make(1970, 1, 1));
+}
+
+function year_of(local_sec: i64): i32 {
+  return time.instant_from_unix(local_sec).in_zone(time.timezone_utc()).to_datetime().date.year;
+}
+
+// ---- what a caller prints ---------------------------------------------------
+// `(z: Zone) civil(sec)` — the broken-down local time, which is
+// localtime(3) with the fields nobody here prints left out.
+pub function (z: Zone) civil(sec: i64): DateTime {
+  var off: i32 = z.offset_at(sec);
+  return time.instant_from_unix(sec).in_zone(time.timezone_fixed_offset(off)).to_datetime();
+}

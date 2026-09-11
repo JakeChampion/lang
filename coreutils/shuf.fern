@@ -1,0 +1,878 @@
+// shuf.fern — GNU-compatible `shuf`.
+//
+//   shuf [OPTION]... [FILE]      permute the lines of FILE
+//   shuf -e [OPTION]... [ARG]... permute the operands
+//   shuf -i LO-HI [OPTION]...    permute the numbers LO..HI
+//
+// The whole utility is its random number generator, and with
+// `--random-source=FILE` the output is a function of that file's bytes,
+// so every byte of it is pinned by the corpus. Derived from the
+// reference binary, not from its source:
+//
+//   - The generator holds one pair (num, max) of 64-bit words, num
+//     uniform in [0, max], both zero at the start. A draw of one of `n`
+//     values reads bytes while `max < n - 1` — `num = num * 256 + byte`
+//     and `max = max * 256 + 255`, both WRAPPING, which is visible once
+//     a range needs most of 64 bits — and then splits the state:
+//     `num % n` is the answer, `num / n` and `(max - n + 1) / n` are
+//     what is left for the next draw. Entropy is therefore divided
+//     down rather than thrown away, and ten numbers come out of three
+//     bytes.
+//   - The top `(max + 1) mod n` values of the state would bias the
+//     answer, so a num that lands among them is rejected: what is left
+//     of it, `num % n` over a max one below that count, is the state
+//     the draw is taken again from. Under a source of 0xFF bytes every
+//     draw of a range that is not a power of two rejects, which is why
+//     such a source is exhausted rather than shuffled.
+//   - A permutation is Fisher-Yates forward over the identity: the
+//     i-th line out is v[i] after swapping v[i] with v[i + choose(n-i)].
+//     `-n` stops after that many, so a head count costs that many draws
+//     and no more.
+//   - `-r` permutes nothing: each output line is one choose(n).
+//
+// The source is read lazily and exhausting it is fatal — `'FILE': end
+// of file` — so how many bytes a run draws is observable, and the
+// corpus pins that with truncated sources.
+//
+// The second thing the output depends on is which of two sampling
+// paths runs, and that is decided by fstat(2) of the input: an input
+// LARGER than 8 MiB (a pipe reports no size and counts as larger) with
+// `-n` and without `-r` is sampled by a reservoir — one draw per line
+// after the first `-n` of them, and one more for the read that ends the
+// input — instead of being read whole and permuted. The two consume
+// different draws from the same source, so `shuf -n 3 f` and
+// `shuf -n 3 < f` differ for a large f and agree for a small one.
+import "std/array";
+import "std/u64";
+import "std/io_buffered";
+import "./lib/gnu";
+
+// Option ids in GNU's declaration order, which is the order an
+// ambiguous prefix lists possibilities in (`--r` names --random-source
+// before --repeat).
+function opt_echo(): i32 {
+  return 1;
+}
+
+function opt_range(): i32 {
+  return 2;
+}
+
+function opt_count(): i32 {
+  return 3;
+}
+
+function opt_output(): i32 {
+  return 4;
+}
+
+function opt_source(): i32 {
+  return 5;
+}
+
+function opt_repeat(): i32 {
+  return 6;
+}
+
+function opt_zero(): i32 {
+  return 7;
+}
+
+function help_text(): string {
+  var out: string = "";
+  out = out + "Usage: " + gnu.prog() + " [OPTION]... [FILE]\n";
+  out = out + "  or:  " + gnu.prog() + " -e [OPTION]... [ARG]...\n";
+  out = out + "  or:  " + gnu.prog() + " -i LO-HI [OPTION]...\n";
+  out = out + "Write a random permutation of the input lines to standard output.\n";
+  out = out + "\n";
+  out = out + "With no FILE, or when FILE is -, read standard input.\n";
+  out = out + "\n";
+  out = out + "  -e, --echo                treat each ARG as an input line\n";
+  out = out + "  -i, --input-range=LO-HI   treat each number LO through HI as an input line\n";
+  out = out + "  -n, --head-count=COUNT    output at most COUNT lines\n";
+  out = out + "  -o, --output=FILE         write result to FILE instead of standard output\n";
+  out = out + "      --random-source=FILE  get random bytes from FILE\n";
+  out = out + "  -r, --repeat              output lines can be repeated\n";
+  out = out + "  -z, --zero-terminated     line delimiter is NUL, not newline\n";
+  out = out + "      --help        display this help and exit\n";
+  out = out + "      --version     output version information and exit\n";
+  return out;
+}
+
+// The bytes drawn from the random source per read(2), and the bytes of
+// input read per read(2). Neither is observable: the source is a file
+// of its own and a short read is not an end of file.
+function rand_block(): i32 {
+  return 65536;
+}
+
+function read_size(): i32 {
+  return 262144;
+}
+
+// The block a line-by-line output is accumulated in before it is handed
+// to the writer, which has a block of its own (`gnu.block_bytes`).
+function out_block(): i32 {
+  return 16384;
+}
+
+// An input LARGER than this is sampled by the reservoir rather than
+// read whole, when -n asked for a head count and -r did not ask for
+// repeats. Exactly 8 MiB, and exactly `>`.
+function reservoir_min_input(): i64 {
+  return 8388608 as i64;
+}
+
+// What `-n` means when it was never given: gnulib's SIZE_MAX, which is
+// also the value that turns the reservoir back off when it IS given.
+function count_cap(): u64 {
+  return 18446744073709551615 as u64;
+}
+
+// ---- the random source ------------------------------------------------------
+//
+// `dead` is set by the byte that was not there rather than reported at
+// once, because `-r` has already written lines by then and GNU's exit
+// flushes them before the diagnostic.
+struct Rand { r: Reader, name: string, open: boolean, buf: string, pos: i32, num: u64, max: u64, dead: boolean, why: string }
+
+function rand_closed(): Rand {
+  return Rand { r: stdin(), name: "", open: false, buf: "", pos: 0, num: 0 as u64, max: 0 as u64, dead: false, why: "" };
+}
+
+// The source, opened now. GNU opens it before it draws and after it has
+// read the input, so a missing input file is reported first.
+function rand_open(name: string): Rand {
+  match (open_reader(name)) {
+    Ok(r) => {
+      return Rand { ...rand_closed(), r: r, name: name, open: true };
+    },
+    Err(e) => {
+      gnu.error(gnu.quotef(name) + ": " + gnu.io_error_text(e));
+      exit(1);
+    }
+  }
+  return rand_closed();
+}
+
+function rand_die(s: Rand): void {
+  gnu.error(gnu.quote(s.name) + ": " + s.why);
+  exit(1);
+}
+
+// The next block of source bytes, or `dead`. A short read is not the
+// end: only a read of nothing is.
+function rand_fill(s0: Rand): Rand {
+  match (s0.r.read_chunk(rand_block())) {
+    Ok(chunk) => {
+      if (chunk.len() == 0) {
+        return Rand { ...s0, buf: "", pos: 0, dead: true, why: "end of file" };
+      }
+      return Rand { ...s0, buf: chunk, pos: 0 };
+    },
+    Err(e) => {
+      return Rand { ...s0, buf: "", pos: 0, dead: true, why: "read error: " + gnu.io_error_text(e) };
+    }
+  }
+  return s0;
+}
+
+// A uniform value in [0, n), n >= 1. Drawing one of one value reads
+// nothing, which is why a one-line input never touches the source.
+//
+// The state rides in locals rather than in the struct: a shuffle draws
+// millions of times and rebuilding a nine-field record per BYTE is most
+// of what that costs.
+function rand_choose(s0: Rand, n: u64): (u64, Rand) {
+  var s: Rand = s0;
+  var num: u64 = s.num;
+  var top: u64 = s.max;
+  var pos: i32 = s.pos;
+  var genmax: u64 = n - 1 as u64;
+  while (true) {
+    while (top < genmax) {
+      if (pos >= s.buf.len()) {
+        s = rand_fill(s);
+        if (s.dead) {
+          return (0 as u64, Rand { ...s, num: num, max: top });
+        }
+        pos = 0;
+      }
+      num = num * (256 as u64) + s.buf[pos] as u64;
+      top = top * (256 as u64) + 255 as u64;
+      pos = pos + 1;
+    }
+    var excess: u64 = top - genmax;
+    var unusable: u64 = excess % n;
+    var reduced: u64 = num % n;
+    if (num <= top - unusable) {
+      return (reduced, Rand { ...s, num: num / n, max: excess / n, pos: pos });
+    }
+    num = reduced;
+    top = unusable - 1 as u64;
+  }
+  return (0 as u64, s);
+}
+
+// ---- permutations -----------------------------------------------------------
+//
+// A dense array of n entries is the obvious representation and the
+// wrong one for `-i 1-1000000000 -n 5`, where the permutation touches
+// ten of a billion slots. The sparse form holds only the slots a swap
+// moved, in an open-addressed table of the 2h they can be, and answers
+// `v[k] == k` for the rest.
+function dense_limit(): u64 {
+  return 2147483647 as u64;
+}
+
+function use_dense(n: u64, h: u64): boolean {
+  if (n > dense_limit()) {
+    return false;
+  }
+  return n <= 8388608 as u64 || n / (4 as u64) <= h;
+}
+
+function mix64(k: u64): u64 {
+  var x: u64 = k + 11400714819323198485 as u64;
+  x = (x ^ x >> 30 as u64) * (13787848793156543929 as u64);
+  x = (x ^ x >> 27 as u64) * (10723151780598845931 as u64);
+  return x ^ x >> 31 as u64;
+}
+
+// The first `h` values of the permutation of [0, n) GNU's randperm
+// draws. The array is at least `h` long and may be longer — the dense
+// form hands back the whole vector, whose first h entries are already
+// the answer — so the caller reads `h` of it and not `len()`. A source
+// that ran out leaves `dead` set and the array short; every caller
+// reports that rather than reading it.
+function permutation(rs0: Rand, n: u64, h: u64): (u64[], Rand) {
+  var rs: Rand = rs0;
+  var out: u64[] = [];
+  if (h == 0 as u64) {
+    return (out, rs);
+  }
+  if (use_dense(n, h)) {
+    var v: u64[] = [];
+    var k: u64 = 0 as u64;
+    while (k < n) {
+      v = v.append(k);
+      k = k + 1 as u64;
+    }
+    var i: u64 = 0 as u64;
+    while (i < h) {
+      var got: (u64, Rand) = rand_choose(rs, n - i);
+      rs = got.1;
+      if (rs.dead) {
+        return (out, rs);
+      }
+      var a: i32 = i as i32;
+      var b: i32 = (i + got.0) as i32;
+      var held: u64 = v[a];
+      v = v.with(a, v[b]);
+      v = v.with(b, held);
+      i = i + 1 as u64;
+    }
+    return (v, rs);
+  }
+
+  // Table of 2h slots rounded up to a power of two: one entry per draw
+  // and a load factor of at most one half, which keeps the probe short.
+  var cap: i32 = 16;
+  while (cap as u64 < h && cap < 1073741824) {
+    cap = cap * 2;
+  }
+  if (cap < 1073741824) {
+    cap = cap * 2;
+  }
+  var mask: u64 = (cap - 1) as u64;
+  var keys: u64[] = [];
+  var vals: u64[] = [];
+  var live: i32[] = [];
+  var c: i32 = 0;
+  while (c < cap) {
+    keys = keys.append(0 as u64);
+    vals = vals.append(0 as u64);
+    live = live.append(0);
+    c = c + 1;
+  }
+  var i2: u64 = 0 as u64;
+  while (i2 < h) {
+    var got2: (u64, Rand) = rand_choose(rs, n - i2);
+    rs = got2.1;
+    if (rs.dead) {
+      return (out, rs);
+    }
+    var j: u64 = i2 + got2.0;
+    var si: i32 = (mix64(i2) & mask) as i32;
+    while (live[si] != 0 && keys[si] != i2) {
+      si = ((si + 1) as u64 & mask) as i32;
+    }
+    var sj: i32 = (mix64(j) & mask) as i32;
+    while (live[sj] != 0 && keys[sj] != j) {
+      sj = ((sj + 1) as u64 & mask) as i32;
+    }
+    var vi: u64 = i2;
+    if (live[si] != 0) {
+      vi = vals[si];
+    }
+    var vj: u64 = j;
+    if (live[sj] != 0) {
+      vj = vals[sj];
+    }
+    // Only the half of the swap that lands ABOVE the cursor is worth
+    // recording: i2 is never looked up again, since every later draw
+    // picks from [i, n) with i past it.
+    keys = keys.with(sj, j);
+    vals = vals.with(sj, vi);
+    live = live.with(sj, 1);
+    out = out.append(vj);
+    i2 = i2 + 1 as u64;
+  }
+  return (out, rs);
+}
+
+// ---- numbers ----------------------------------------------------------------
+function is_digit(c: i32): boolean {
+  return c >= 48 && c <= 57;
+}
+
+function is_space(c: i32): boolean {
+  return c == 32 || c >= 9 && c <= 13;
+}
+
+// strtoumax over `text` from `at`: the value, where it stopped, whether
+// it read a digit at all, and whether it overflowed. A leading `-` is
+// refused rather than negated, which is what makes `-i -1-5` a fault
+// and not the range [2^64-1, 5].
+struct Scan { value: u64, at: i32, digits: boolean, over: boolean }
+
+function scan_u64(text: string, from: i32): Scan {
+  var i: i32 = from;
+  while (i < text.len() && is_space(text[i] as i32)) {
+    i = i + 1;
+  }
+  if (i < text.len() && text[i] as i32 == 43) {
+    i = i + 1;
+  }
+  var first: i32 = i;
+  var value: u64 = 0 as u64;
+  var over: boolean = false;
+  while (i < text.len() && is_digit(text[i] as i32)) {
+    match (value.checked_mul(10 as u64)) {
+      Some(m) => {
+        match (m.checked_add((text[i] as i32 - 48) as u64)) {
+          Some(a) => {
+            value = a;
+          },
+          None => {
+            over = true;
+          }
+        }
+      },
+      None => {
+        over = true;
+      }
+    }
+    i = i + 1;
+  }
+  if (i == first) {
+    return Scan { value: 0 as u64, at: from, digits: false, over: false };
+  }
+  return Scan { value: value, at: i, digits: true, over: over };
+}
+
+function range_fatal(text: string, over: boolean): void {
+  var msg: string = "invalid input range: " + gnu.quote(text);
+  if (over) {
+    msg = msg + ": Value too large for defined data type";
+  }
+  gnu.error(msg);
+  exit(1);
+}
+
+// `LO-HI`, GNU's two different strictnesses: LO may stop anywhere so
+// long as the next byte is `-`, HI must reach the end. An overflow in
+// LO is reported before the `-` is looked for; an overflow in HI is
+// reported only once HI has consumed the rest.
+function parse_range(text: string): (u64, u64) {
+  var lo: Scan = scan_u64(text, 0);
+  if (lo.over) {
+    range_fatal(text, true);
+  }
+  if (!lo.digits || lo.at >= text.len() || text[lo.at] as i32 != 45) {
+    range_fatal(text, false);
+  }
+  var hi: Scan = scan_u64(text, lo.at + 1);
+  if (!hi.digits || hi.at != text.len()) {
+    range_fatal(text, false);
+  }
+  if (hi.over) {
+    range_fatal(text, true);
+  }
+  var count: u64 = hi.value - lo.value + 1 as u64;
+  if (lo.value <= hi.value == (count == 0 as u64)) {
+    range_fatal(text, false);
+  }
+  return (lo.value, hi.value);
+}
+
+// `-n`: xstrtoumax with no suffix table. Malformed is fatal; a value
+// past 2^64-1 is DROPPED, leaving the count where it was.
+function parse_count(text: string, held: u64): u64 {
+  var s: Scan = scan_u64(text, 0);
+  if (!s.digits || s.at != text.len()) {
+    gnu.error("invalid line count: " + gnu.quote(text));
+    exit(1);
+  }
+  if (s.over) {
+    return held;
+  }
+  return s.value.min(held);
+}
+
+// ---- input ------------------------------------------------------------------
+//
+// The reservoir decision needs the size before a byte is read, so the
+// input is opened here and handed back with what fstat said. A stream
+// that cannot answer — a pipe, a device, a wasi stdio handle — is
+// treated as larger than any threshold, which is what OFF_T_MAX does
+// for GNU.
+function input_size(r: Reader): i64 {
+  match (r.stat()) {
+    Ok(st) => {
+      if (!st.is_file) {
+        return 9223372036854775807 as i64;
+      }
+      match (r.seek(0 as i64, 1)) {
+        Ok(at) => {
+          if (at >= st.size) {
+            return 0 as i64;
+          }
+          return st.size - at;
+        },
+        Err(_) => {
+          return st.size;
+        }
+      }
+    },
+    Err(_) => {
+      return 9223372036854775807 as i64;
+    }
+  }
+  return 9223372036854775807 as i64;
+}
+
+function open_input(path: string): Reader {
+  if (path == "-") {
+    return stdin();
+  }
+  match (open_reader(path)) {
+    Ok(r) => {
+      return r;
+    },
+    Err(e) => {
+      gnu.error(gnu.quotef(path) + ": " + gnu.io_error_text(e));
+      exit(1);
+    }
+  }
+  return stdin();
+}
+
+function read_fatal(e: IoError): void {
+  gnu.error("read error: " + gnu.io_error_text(e));
+  exit(1);
+}
+
+function slurp(r: Reader): string {
+  var chunks: string[] = [];
+  while (true) {
+    match (r.read_chunk(read_size())) {
+      Ok(chunk) => {
+        if (chunk.len() == 0) {
+          break;
+        }
+        chunks = chunks.append(chunk);
+      },
+      Err(e) => {
+        read_fatal(e);
+      }
+    }
+  }
+  if (chunks.len() == 1) {
+    return chunks[0];
+  }
+  return chunks.join("");
+}
+
+function pack_line(start: i32, len: i32): i64 {
+  return start as i64 << 32 as i64 | len as i64;
+}
+
+function line_start(v: i64): i32 {
+  return (v >> 32 as i64) as i32;
+}
+
+function line_len(v: i64): i32 {
+  return (v & 4294967295 as i64) as i32;
+}
+
+// The records of `text`, the terminator excluded and a missing final
+// one supplied by the output rather than recorded here.
+function split_lines(text: string, term: i32): i64[] {
+  var lines: i64[] = [];
+  var start: i32 = 0;
+  while (start < text.len()) {
+    var end: i32 = __memchr(text, term, start);
+    if (end < 0) {
+      lines = lines.append(pack_line(start, text.len() - start));
+      break;
+    }
+    lines = lines.append(pack_line(start, end - start));
+    start = end + 1;
+  }
+  return lines;
+}
+
+// A line as LineReader hands it over, without its terminator.
+function strip_term(line: string, term: i32): string {
+  if (line.len() > 0 && line[line.len() - 1] as i32 == term) {
+    return slice_unchecked(line, 0, line.len() - 1) + "";
+  }
+  return line + "";
+}
+
+// ---- output -----------------------------------------------------------------
+//
+// -o is opened here and nowhere earlier: GNU's freopen runs after the
+// draws, so a source that ran out leaves the named file untouched,
+// while `-n 0` and a `-r` with nothing to repeat still truncate it.
+function open_output(file: string, have: boolean): io_buffered.BufWriter {
+  if (!have) {
+    return gnu.out_new();
+  }
+  match (open_writer(file)) {
+    Ok(w) => {
+      return io_buffered.buf_writer_new(w, gnu.block_bytes());
+    },
+    Err(e) => {
+      gnu.error(gnu.quotef(file) + ": " + gnu.io_error_text(e));
+      exit(1);
+    }
+  }
+  return gnu.out_new();
+}
+
+struct Args { echo: boolean, range: boolean, lo: u64, hi: u64, count: u64, outfile: string, have_out: boolean, source: string, have_source: boolean, repeat: boolean, term: i32 }
+
+function parse_args(argv: string[]): (Args, string[]) {
+  var opts: gnu.Opt[] = [];
+  opts = opts.append(gnu.flag("e", "echo", opt_echo()));
+  opts = opts.append(gnu.valued("i", "input-range", opt_range()));
+  opts = opts.append(gnu.valued("n", "head-count", opt_count()));
+  opts = opts.append(gnu.valued("o", "output", opt_output()));
+  opts = opts.append(gnu.valued("", "random-source", opt_source()));
+  opts = opts.append(gnu.flag("r", "repeat", opt_repeat()));
+  opts = opts.append(gnu.flag("z", "zero-terminated", opt_zero()));
+
+  var a: Args = Args { echo: false, range: false, lo: 0 as u64, hi: 0 as u64, count: count_cap(), outfile: "", have_out: false, source: "", have_source: false, repeat: false, term: 10 };
+  var g: gnu.Getopt = gnu.getopt_new(argv, opts, "shuf", help_text(), 1);
+  while (true) {
+    var r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    g = r.1;
+    match (r.0) {
+      Some(m) => {
+        if (m.id == opt_echo()) {
+          a = Args { ...a, echo: true };
+        } else if (m.id == opt_range()) {
+          if (a.range) {
+            gnu.error("multiple -i options specified");
+            exit(1);
+          }
+          var bounds: (u64, u64) = parse_range(m.value);
+          a = Args { ...a, range: true, lo: bounds.0, hi: bounds.1 };
+        } else if (m.id == opt_count()) {
+          a = Args { ...a, count: parse_count(m.value, a.count) };
+        } else if (m.id == opt_output()) {
+          if (a.have_out && a.outfile != m.value) {
+            gnu.error("multiple output files specified");
+            exit(1);
+          }
+          a = Args { ...a, outfile: m.value, have_out: true };
+        } else if (m.id == opt_source()) {
+          if (a.have_source && a.source != m.value) {
+            gnu.error("multiple random sources specified");
+            exit(1);
+          }
+          a = Args { ...a, source: m.value, have_source: true };
+        } else if (m.id == opt_repeat()) {
+          a = Args { ...a, repeat: true };
+        } else {
+          a = Args { ...a, term: 0 };
+        }
+      },
+      None => {
+        break;
+      }
+    }
+  }
+  return (a, g.operands());
+}
+
+// Where the bytes come from when --random-source named no file. GNU
+// seeds ISAAC from getrandom(2) and generates; this reads the same
+// kernel pool by name, so the shuffle is unpredictable in the same way
+// and never runs out.
+function default_source(): string {
+  return "/dev/urandom";
+}
+
+function source_for(a: Args): Rand {
+  if (a.have_source) {
+    return rand_open(a.source);
+  }
+  return rand_open(default_source());
+}
+
+// The lines a run draws from. Exactly one shape is filled: `held` for
+// the -e operands and for a reservoir, whose lines are strings of their
+// own; `spans` into `text` for an input read whole, where a line is a
+// range of the one buffer and never a copy; neither for -i, where the
+// line is the number itself.
+struct Lines { text: string, spans: i64[], held: string[], n: u64, boxed: boolean }
+
+function lines_empty(): Lines {
+  var spans: i64[] = [];
+  var held: string[] = [];
+  return Lines { text: "", spans: spans, held: held, n: 0 as u64, boxed: false };
+}
+
+// Gnulib's reservoir: the first `k` lines are kept, and every line after
+// them takes the place of a random one of the k with the probability
+// that keeps the sample uniform. The draw happens BEFORE the read, so
+// the read that ends the input still costs one — which is why a `-n`
+// equal to the line count and a `-n` past it shuffle differently.
+function reservoir_sample(rs0: Rand, r: Reader, term: i32, k: i32): (string[], Rand) {
+  var rs: Rand = rs0;
+  var held: string[] = [];
+  var lr: io_buffered.LineReader = io_buffered.line_reader_new(r, term, read_size());
+  var filled: boolean = true;
+  while (held.len() < k) {
+    var nx: (Option[string], io_buffered.LineReader) = lr.next_line();
+    lr = nx.1;
+    match (nx.0) {
+      Some(line) => {
+        held = held.append(strip_term(line, term));
+      },
+      None => {
+        filled = false;
+        break;
+      }
+    }
+  }
+  var seen: u64 = k as u64;
+  while (filled) {
+    var got: (u64, Rand) = rand_choose(rs, seen + 1 as u64);
+    rs = got.1;
+    if (rs.dead) {
+      break;
+    }
+    var nx2: (Option[string], io_buffered.LineReader) = lr.next_line();
+    lr = nx2.1;
+    match (nx2.0) {
+      Some(line) => {
+        if (got.0 < k as u64) {
+          held = held.with(got.0 as i32, strip_term(line, term));
+        }
+        seen = seen + 1 as u64;
+      },
+      None => {
+        filled = false;
+      }
+    }
+  }
+  match (lr.error()) {
+    Some(e) => {
+      read_fatal(e);
+    },
+    None => {}
+  }
+  return (held, rs);
+}
+
+// The input, by whichever of the two paths its size selects. The
+// reservoir needs the source open before it reads, which is why the
+// generator is threaded through here rather than opened by the caller.
+function read_input(a: Args, path: string, rs0: Rand): (Lines, Rand) {
+  var rs: Rand = rs0;
+  var out: Lines = lines_empty();
+  var r: Reader = open_input(path);
+  if (!a.repeat && a.count != count_cap() && input_size(r) > reservoir_min_input()) {
+    rs = source_for(a);
+    var k: i32 = 1073741823;
+    if (a.count < k as u64) {
+      k = a.count as i32;
+    }
+    var got: (string[], Rand) = reservoir_sample(rs, r, a.term, k);
+    rs = got.1;
+    if (rs.dead) {
+      rand_die(rs);
+    }
+    out = Lines { ...out, held: got.0, n: got.0.len() as u64, boxed: true };
+  } else {
+    var text: string = slurp(r);
+    var spans: i64[] = split_lines(text, a.term);
+    out = Lines { ...out, text: text, spans: spans, n: spans.len() as u64 };
+  }
+  if (path != "-") {
+    r.close();
+  }
+  return (out, rs);
+}
+
+function terminator(a: Args): string {
+  if (a.term == 0) {
+    return "\x00";
+  }
+  return "\n";
+}
+
+// `perm[0 .. head)` written out, each line followed by the delimiter a
+// missing one is supplied as.
+function emit(o0: io_buffered.BufWriter, a: Args, src: Lines, perm: u64[], head: u64): void {
+  var o: io_buffered.BufWriter = o0;
+  var term: string = terminator(a);
+  var i: i32 = 0;
+  if (a.range) {
+    while (i as u64 < head) {
+      o = o.write_u64(a.lo + perm[i]);
+      o = gnu.put(o, term);
+      i = i + 1;
+    }
+  } else if (src.boxed) {
+    while (i as u64 < head) {
+      o = gnu.put(o, src.held[perm[i] as i32] + term);
+      i = i + 1;
+    }
+  } else {
+    // The block is grown inline in a local, which is the only shape a
+    // string append grows in place (#8785), and the range append is
+    // fused rather than materialising each line first (#8784).
+    var buf: string = "";
+    while (i as u64 < head) {
+      var v: i64 = src.spans[perm[i] as i32];
+      buf = buf + slice_unchecked(src.text, line_start(v), line_start(v) + line_len(v));
+      buf = buf + term;
+      if (buf.len() >= out_block()) {
+        o = gnu.put(o, buf);
+        buf = "";
+      }
+      i = i + 1;
+    }
+    if (buf.len() > 0) {
+      o = gnu.put(o, buf);
+    }
+  }
+  gnu.finish(o);
+}
+
+// The `-r` loop: one draw per line written, forever when -n did not say
+// how many. A source that runs out stops it with whatever has been
+// written already flushed, which is what GNU's exit does for it.
+function run_repeat(o0: io_buffered.BufWriter, rs0: Rand, a: Args, src: Lines): void {
+  var o: io_buffered.BufWriter = o0;
+  var rs: Rand = rs0;
+  var written: u64 = 0 as u64;
+  var term: string = terminator(a);
+  while (a.count == count_cap() || written < a.count) {
+    var got: (u64, Rand) = rand_choose(rs, src.n);
+    rs = got.1;
+    if (rs.dead) {
+      o = gnu.flush(o);
+      rand_die(rs);
+    }
+    var j: u64 = got.0;
+    if (a.range) {
+      o = o.write_u64(a.lo + j);
+      o = gnu.put(o, term);
+    } else if (src.boxed) {
+      o = gnu.put(o, src.held[j as i32] + term);
+    } else {
+      var v: i64 = src.spans[j as i32];
+      o = gnu.put(o, slice_unchecked(src.text, line_start(v), line_start(v) + line_len(v)) + term);
+    }
+    written = written + 1 as u64;
+  }
+  gnu.finish(o);
+}
+
+// The operand checks GNU makes after the scan and before it reads
+// anything. -e never reaches them: every operand is data.
+function check_operands(a: Args, operands: string[]): void {
+  if (a.echo && a.range) {
+    gnu.die_usage("cannot combine -e and -i options", 1);
+  }
+  if (a.range) {
+    if (operands.len() > 0) {
+      gnu.die_usage("extra operand " + gnu.quote(operands[0]), 1);
+    }
+  } else if (!a.echo && operands.len() > 1) {
+    gnu.die_usage("extra operand " + gnu.quote(operands[1]), 1);
+  }
+}
+
+function main(): i32 {
+  var argv: string[] = args();
+  var parsed: (Args, string[]) = parse_args(argv);
+  var a: Args = parsed.0;
+  var operands: string[] = parsed.1;
+  check_operands(a, operands);
+
+  // A zero head count is answered without opening the input or the
+  // source; the -o file is still created and truncated.
+  if (a.count == 0 as u64) {
+    gnu.finish(open_output(a.outfile, a.have_out));
+    return 0;
+  }
+
+  var rs: Rand = rand_closed();
+  var src: Lines = lines_empty();
+  if (a.range) {
+    src = Lines { ...src, n: a.hi - a.lo + 1 as u64 };
+  } else if (a.echo) {
+    src = Lines { ...src, held: operands, n: operands.len() as u64, boxed: true };
+  } else {
+    var path: string = "-";
+    if (operands.len() == 1) {
+      path = operands[0];
+    }
+    var got: (Lines, Rand) = read_input(a, path, rs);
+    src = got.0;
+    rs = got.1;
+  }
+
+  var head: u64 = a.count.min(src.n);
+  if (a.repeat) {
+    head = a.count;
+  }
+  if (!rs.open && (a.repeat || head > 0 as u64)) {
+    rs = source_for(a);
+  }
+
+  if (a.repeat) {
+    var w: io_buffered.BufWriter = open_output(a.outfile, a.have_out);
+    if (src.n == 0 as u64) {
+      gnu.error("no lines to repeat");
+      exit(1);
+    }
+    run_repeat(w, rs, a, src);
+    return 0;
+  }
+
+  var pr: (u64[], Rand) = permutation(rs, src.n, head);
+  rs = pr.1;
+  if (rs.dead) {
+    rand_die(rs);
+  }
+  emit(open_output(a.outfile, a.have_out), a, src, pr.0, head);
+  return 0;
+}

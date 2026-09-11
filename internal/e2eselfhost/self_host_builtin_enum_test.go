@@ -20,6 +20,15 @@ var builtinEnumCases = []struct {
 }{
 	{"ioerror-payload", "function classify(e: IoError): i32 { match (e) { NotFound(p) => { return 5; }, Interrupted => { return 1; }, _ => { return 0; } } return 9; } function main(): i32 { var e: IoError = NotFound(\"/x\"); return classify(e); }", 5},
 	{"ioerror-unit", "function classify(e: IoError): i32 { match (e) { NotFound(p) => { return 5; }, Interrupted => { return 1; }, _ => { return 0; } } return 9; } function main(): i32 { var e: IoError = Interrupted; return classify(e); }", 1},
+	// A payload variant reached with NO IoError-typed context to resolve
+	// it against — returned as the function's result, and nested inside
+	// an `Err(...)`. The checker read every IoError variant as a unit
+	// one, so the constructor typed as a VALUE and its own call was
+	// "calling non-function value of type IoError" (#9066). Only
+	// `Interrupted` and `Unsupported` are unit variants.
+	{"ioerror-payload-returned", "function mk(p: string): IoError { return PermissionDenied(p); } function main(): i32 { match (mk(\"/x\")) { PermissionDenied(q) => { return 7; }, _ => { return 0; } } return 9; }", 7},
+	{"ioerror-payload-nested", "function mk(p: string): Result[string, IoError] { return Err(NotFound(p)); } function main(): i32 { match (mk(\"/x\")) { Ok(_) => { return 0; }, Err(e) => { match (e) { NotFound(q) => { return 6; }, _ => { return 1; } } } } return 9; }", 6},
+	{"ioerror-two-payloads", "function mk(a: string, b: string): IoError { return Other(a, b); } function main(): i32 { match (mk(\"/x\", \"boom\")) { Other(p, m) => { if (m == \"boom\") { return 4; } return 3; }, _ => { return 0; } } return 9; }", 4},
 }
 
 // TestSelfHostBuiltinEnumX86_64 — IoError used without a local decl.

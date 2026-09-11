@@ -405,6 +405,9 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 				case "__fern_sleep_ms":
 					// Its subscription buffer is scratch, so no allocator.
 					needs.add("__fern_sleep_ms")
+				case "__fern_sleep_ns":
+					// Same buffer, same absence of an allocator.
+					needs.add("__fern_sleep_ns")
 				case "__fern_wasm_timer_pollable":
 					// wasm reactor timer: subscribe-duration → pollable.
 					needs.add("__fern_wasm_timer_pollable")
@@ -689,7 +692,8 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_create_dir_all")
 				case "__fern_create_dir", "__fern_remove_dir",
 					"__fern_create_link", "__fern_create_symlink",
-					"__fern_read_link":
+					"__fern_read_link", "__fern_rename",
+					"__fern_set_file_times":
 					// The single-step directory and link
 					// primitives (#8883). Each is one WASI call
 					// behind the same path-normalize chain
@@ -1135,6 +1139,8 @@ var preview2HelperCalls = map[string][]string{
 	"__fern_create_link":       {"__wasi_errno_of_code"},
 	"__fern_create_symlink":    {"__wasi_errno_of_code"},
 	"__fern_read_link":         {"__wasi_errno_of_code"},
+	"__fern_rename":            {"__wasi_errno_of_code"},
+	"__fern_set_file_times":    {"__wasi_errno_of_code"},
 	"__fern_temp_dir":          {"__wasi_errno_of_code"},
 	"__fern_stat":              {"__wasi_errno_of_code"},
 	"__fern_lstat":             {"__wasi_errno_of_code"},
@@ -1182,6 +1188,7 @@ var helperResultBoxCallers = []string{
 	"__fern_create_dir_all",
 	"__fern_create_dir", "__fern_remove_dir", "__fern_create_link",
 	"__fern_create_symlink", "__fern_read_link",
+	"__fern_rename", "__fern_set_file_times",
 }
 
 // emitPayloadlessResultBox appends the arm of a helper in
@@ -1578,6 +1585,16 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI64},
 		results: nil,
 		body:    buildSleepMsBody,
+	},
+	"__fern_sleep_ns": {
+		// (ns: i64) → () — the same block at the resolution both WASI
+		// previews already take: poll_oneoff's timeout and
+		// subscribe-duration's argument are both nanoseconds, so wasm
+		// is the one target where sleep_ns is exact. ns <= 0 returns
+		// immediately.
+		params:  []byte{encode.ValtypeI64},
+		results: nil,
+		body:    buildSleepNsBody,
 	},
 	"__fern_wasm_timer_pollable": {
 		// (duration_ns: i64) → pollable handle (i32). The wasm
@@ -2334,6 +2351,33 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildReadLinkBody,
+	},
+	"__fern_rename": {
+		// (from_data, from_len, to_data, to_len) → i32 — heap-form
+		// Result[void, IoError]. path_rename with the preopen on both
+		// sides, so a rename cannot cross one. See wasi_fsmeta.go.
+		params: []byte{
+			encode.ValtypeI32, encode.ValtypeI32,
+			encode.ValtypeI32, encode.ValtypeI32,
+		},
+		results: []byte{encode.ValtypeI32},
+		body:    buildRenameBody,
+	},
+	"__fern_set_file_times": {
+		// (path_data, path_len, atime_sec, atime_nsec, mtime_sec,
+		// mtime_nsec, flags) → i32 — heap-form Result[void, IoError].
+		// path_filestat_set_times; the seconds / nanoseconds pairs
+		// fold into the unsigned nanosecond count WASI takes, and a
+		// pre-1970 one is EOVERFLOW rather than a wrap. See
+		// wasi_fsmeta.go.
+		params: []byte{
+			encode.ValtypeI32, encode.ValtypeI32,
+			encode.ValtypeI64, encode.ValtypeI64,
+			encode.ValtypeI64, encode.ValtypeI64,
+			encode.ValtypeI32,
+		},
+		results: []byte{encode.ValtypeI32},
+		body:    buildSetFileTimesBody,
 	},
 	"__fern_stat": {
 		// (path_data, path_len) → i32 — heap-form

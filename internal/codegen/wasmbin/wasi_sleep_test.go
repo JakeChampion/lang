@@ -90,3 +90,70 @@ function main(): i32 {
 		t.Errorf("preview-2 module still imports preview-1 poll_oneoff")
 	}
 }
+
+// sleep_ns is the same subscription with the caller's nanoseconds used
+// verbatim (#8528) — poll_oneoff's timeout field IS nanoseconds, so wasm is
+// the one target that does not round. The failure this guards is the scale:
+// a body that kept sleep_ms's 1e6 multiplier turns 120 ms into 33 hours, and
+// one that reused the millisecond body outright returns in 120 ns.
+func TestFsSleepNsBlocks(t *testing.T) {
+	src := `function main(): i32 {
+    var a: i64 = monotonic_ns();
+    sleep_ns(120000000 as i64);
+    var b: i64 = monotonic_ns();
+    return ((b - a) / (1000000 as i64)) as i32;
+}`
+	start := time.Now()
+	got := runFsDirProgram(t, src)
+	elapsed := time.Since(start)
+
+	ms, err := strconv.Atoi(got)
+	if err != nil {
+		t.Fatalf("main returned %q, want a millisecond count: %v", got, err)
+	}
+	if ms < 100 {
+		t.Errorf("monotonic delta across sleep_ns(120ms) = %d ms, want >= 100", ms)
+	}
+	if elapsed < 100*time.Millisecond {
+		t.Errorf("the run took %v, so nothing actually blocked", elapsed)
+	}
+	if elapsed > 30*time.Second {
+		t.Errorf("the run took %v, so sleep_ns overslept by an order of magnitude", elapsed)
+	}
+}
+
+// The preview-2 sleep_ns body shares subscribe-duration / block / drop with
+// sleep_ms, and shares the import edge that pulls them in — so a program that
+// sleeps only in nanoseconds has to compose the same way, drop included.
+func TestBuildPreview2WASISleepNsComposesAndDrops(t *testing.T) {
+	src := `
+function main(): i32 {
+    sleep_ns(1000 as i64);
+    return 0;
+}
+`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	bin, err := BuildWithOptions(prog, info, BuildOptions{Preview2WASI: true})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	for _, want := range []struct{ module, name string }{
+		{"wasi:clocks/monotonic-clock@0.2.0", "subscribe-duration"},
+		{"wasi:io/poll@0.2.0", "[method]pollable.block"},
+		{"wasi:io/poll@0.2.0", "[resource-drop]pollable"},
+	} {
+		if !importExists(t, bin, want.module, want.name) {
+			t.Errorf("preview-2 sleep_ns module missing %s::%s", want.module, want.name)
+		}
+	}
+	if importExists(t, bin, "wasi_snapshot_preview1", "poll_oneoff") {
+		t.Errorf("preview-2 module still imports preview-1 poll_oneoff")
+	}
+}

@@ -43,6 +43,11 @@ func tailCases(t *testing.T) []invocation {
 	// skip both cross boundaries; a line that straddles one too.
 	big := catFile(t, dir, "big", seqLines(100000))
 	longLines := catFile(t, dir, "longlines", strings.Repeat(strings.Repeat("y", 5000)+"\n", 10))
+	// One line longer than a read block, so the terminator that ends it
+	// and the terminator before it cannot reach the hold in the same
+	// chunk. `---presume-input-pipe` over a regular file is what makes
+	// the reads full and the case deterministic.
+	straddle := catFile(t, dir, "straddle", strings.Repeat("a", 99999)+"\n"+strings.Repeat("b", 10)+"\n")
 	bigStdin := seqLines(100000)
 
 	// Followed files, one per case: the harness rewrites them.
@@ -129,6 +134,8 @@ func tailCases(t *testing.T) []invocation {
 		{name: "presume pipe lines", args: []string{"---presume-input-pipe", "-n", "2", big}},
 		{name: "presume pipe bytes", args: []string{"---presume-input-pipe", "-c", "2", five}},
 		{name: "presume pipe from start", args: []string{"---presume-input-pipe", "-c", "+3", five}},
+		{name: "presume pipe across a line longer than a read block", args: []string{"---presume-input-pipe", "-n", "2"}, stdinPath: straddle},
+		{name: "presume pipe inside a line longer than a read block", args: []string{"---presume-input-pipe", "-n", "1"}, stdinPath: straddle},
 
 		// -z.
 		{name: "zero terminated", args: []string{"-z", "-n", "2", zeros}},

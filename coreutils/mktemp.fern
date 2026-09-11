@@ -1,0 +1,502 @@
+// mktemp.fern — GNU-compatible `mktemp`.
+//
+//   mktemp [OPTION]... [TEMPLATE]
+//
+// Create a temporary file (or, with `-d`, a directory) at a name nothing
+// else holds and print the name. With no TEMPLATE the name is
+// `tmp.XXXXXXXXXX` and `--tmpdir` is implied.
+//
+// The pieces that are easy to get subtly wrong:
+//
+//   - The X-run is decided by the LAST 'X' in the whole template, not by
+//     the longest run and not per path component. The SUFFIX is
+//     everything after that last X (empty when the template has no X),
+//     and the run is the X's immediately before it — so `fooXXXXbarXXX`
+//     keeps its first four X's literal and replaces the last three, and
+//     the number of random characters is the run's length, not six.
+//   - `--suffix` is CONCATENATED onto the template before every later
+//     check, and the diagnostics name the concatenated string.
+//   - `-t` and `-p`/`--tmpdir` resolve the directory with OPPOSITE
+//     precedence: without `-t` the option argument outranks $TMPDIR,
+//     with `-t` $TMPDIR outranks it. An empty string counts as unset on
+//     both paths, and a bare `--tmpdir` RESETS a directory an earlier
+//     `-p` set while leaving "use a directory" switched on.
+//   - The join is gnulib's file_name_concat, not `dir + "/" + tmpl`: a
+//     trailing run of slashes is dropped, but a directory that is
+//     ENTIRELY slashes is kept verbatim with no separator added, and
+//     interior slashes are never touched (`-p a//b//` gives `a//b/NAME`).
+//   - `-u` is not "print a name and create nothing": it lstat()s each
+//     candidate, retries a name that exists, and reports every errno but
+//     ENOENT through the ordinary creation diagnostic.
+//   - A candidate that already exists is retried at most 238328 times —
+//     62^3, whatever the run length — and the exhaustion is reported as
+//     `File exists`. Measured: with all 238328 three-character names
+//     taken, `mktemp XXX` fails, and it fails about a third of the time
+//     with exactly one name free, which is what a bounded number of
+//     random draws (rather than a sweep) looks like.
+//   - `-V` is a live short option for `--version` that `--help` does not
+//     mention; every other letter is `invalid option`.
+//
+// The modes are the primitives' own: `open_exclusive` is 0600 and
+// `create_dir` is asked for 0700, each masked by the umask as POSIX
+// specifies, which is what GNU's open(…,0600) / mkdir(…,0700) do.
+import "std/string";
+import "std/array";
+import "std/io_buffered";
+import "./lib/gnu";
+
+// ---- options ---------------------------------------------------------------
+// Declaration order is visible: `mktemp --d` lists '--directory' before
+// '--dry-run', and gnu.fern appends --help / --version after these.
+function opt_directory(): i32 {
+  return 1;
+}
+
+function opt_dry_run(): i32 {
+  return 2;
+}
+
+function opt_quiet(): i32 {
+  return 3;
+}
+
+function opt_suffix(): i32 {
+  return 4;
+}
+
+function opt_tmpdir(): i32 {
+  return 5;
+}
+
+function opt_single(): i32 {
+  return 6;
+}
+
+// `-p DIR` / `--tmpdir[=DIR]` is one option with two arities, glibc's
+// two tables: the short spelling requires a value, the long one takes
+// one only when glued. `--tmpdir td1 fooXXX` is therefore two operands
+// and `too many templates`.
+function declare_options(): gnu.Opt[] {
+  var opts: gnu.Opt[] = [];
+  opts = opts.append(gnu.flag("d", "directory", opt_directory()));
+  opts = opts.append(gnu.flag("u", "dry-run", opt_dry_run()));
+  opts = opts.append(gnu.flag("q", "quiet", opt_quiet()));
+  opts = opts.append(gnu.valued("", "suffix", opt_suffix()));
+  opts = opts.append(gnu.valued_optional_long("p", "tmpdir", opt_tmpdir()));
+  opts = opts.append(gnu.flag("t", "", opt_single()));
+  opts = opts.append(gnu.flag("V", "", gnu.version_id()));
+  return opts;
+}
+
+function help_text(): string {
+  var out: string = "";
+  out = out + "Usage: " + gnu.prog() + " [OPTION]... [TEMPLATE]\n";
+  out = out + "Create a temporary file or directory at a name nothing else holds,\n";
+  out = out + "and print that name.\n";
+  out = out + "\n";
+  out = out + "TEMPLATE must end in at least 3 consecutive 'X's, which are replaced\n";
+  out = out + "by random characters. With no TEMPLATE, tmp.XXXXXXXXXX is used and\n";
+  out = out + "--tmpdir is implied. A file is created u+rw and a directory u+rwx,\n";
+  out = out + "each masked by the umask.\n";
+  out = out + "\n";
+  out = out + "  -d, --directory     create a directory rather than a file\n";
+  out = out + "  -u, --dry-run       print a name without creating anything (unsafe)\n";
+  out = out + "  -q, --quiet         say nothing when the file or directory cannot be made\n";
+  out = out + "      --suffix=SUFF   append SUFF to TEMPLATE; it may not contain a slash.\n";
+  out = out + "                        Implied when TEMPLATE does not end in X\n";
+  out = out + "  -p DIR, --tmpdir[=DIR]  read TEMPLATE relative to DIR; with no DIR, to\n";
+  out = out + "                        $TMPDIR if it is set, else /tmp. TEMPLATE may then\n";
+  out = out + "                        not be absolute; it may contain slashes, but only\n";
+  out = out + "                        its last component is created\n";
+  out = out + "  -t                  read TEMPLATE as a single name component, relative to\n";
+  out = out + "                        $TMPDIR if it is set, else the -p directory, else\n";
+  out = out + "                        /tmp [deprecated]\n";
+  out = out + "      --help        display this help and exit\n";
+  out = out + "      --version     output version information and exit\n";
+  return out;
+}
+
+// `Settings` — everything the option scan decides. `tmpdir` is the
+// directory `-p` / `--tmpdir` named, empty for the no-value form, which
+// is why `use_tmpdir` is carried separately: an empty directory counts
+// as unset while still switching the absolute-template check on.
+struct Settings { make_dir: boolean, dry_run: boolean, quiet: boolean, suffix: string, suffix_set: boolean, tmpdir: string, use_tmpdir: boolean, single: boolean }
+
+function settings_new(): Settings {
+  return Settings { make_dir: false, dry_run: false, quiet: false, suffix: "", suffix_set: false, tmpdir: "", use_tmpdir: false, single: false };
+}
+
+function scan(argv: string[]): (Settings, string[]) {
+  var s: Settings = settings_new();
+  var g: gnu.Getopt = gnu.getopt_new(argv, declare_options(), "mktemp", help_text(), 1);
+  while (true) {
+    var r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    g = r.1;
+    match (r.0) {
+      Some(m) => {
+        if (m.id == opt_directory()) {
+          s = Settings { ...s, make_dir: true };
+        } else if (m.id == opt_dry_run()) {
+          s = Settings { ...s, dry_run: true };
+        } else if (m.id == opt_quiet()) {
+          s = Settings { ...s, quiet: true };
+        } else if (m.id == opt_suffix()) {
+          s = Settings { ...s, suffix: m.value, suffix_set: true };
+        } else if (m.id == opt_tmpdir()) {
+          var dir: string = "";
+          if (m.has_value) {
+            dir = m.value;
+          }
+          s = Settings { ...s, tmpdir: dir, use_tmpdir: true };
+        } else if (m.id == opt_single()) {
+          s = Settings { ...s, single: true };
+        }
+      },
+      None => {
+        break;
+      }
+    }
+  }
+  return (s, g.operands());
+}
+
+// ---- the template ----------------------------------------------------------
+function slash(): i32 {
+  return 47;
+}
+
+function upper_x(): i32 {
+  return 88;
+}
+
+function has_slash(s: string): boolean {
+  return __memchr(s, slash(), 0) >= 0;
+}
+
+// Where the derived suffix starts: one past the last 'X'. A template
+// with no X at all has an EMPTY derived suffix rather than being one, so
+// `mktemp a/b` falls through to the X-count fault instead of reporting
+// `a/b` as a suffix containing a separator.
+function suffix_start(s: string): i32 {
+  var i: i32 = s.len();
+  while (i > 0) {
+    if (s[i - 1] as i32 == upper_x()) {
+      return i;
+    }
+    i = i - 1;
+  }
+  return s.len();
+}
+
+// The run of X's ending at `end`.
+function x_run(s: string, end: i32): i32 {
+  var n: i32 = 0;
+  while (n < end && s[end - n - 1] as i32 == upper_x()) {
+    n = n + 1;
+  }
+  return n;
+}
+
+// gnulib's file_name_concat: the last component's trailing slashes go,
+// but a directory that is nothing but slashes is kept as it stands and
+// no separator is added. Interior slashes are never touched.
+function join(dir: string, name: string): string {
+  var end: i32 = dir.len();
+  while (end > 0 && dir[end - 1] as i32 == slash()) {
+    end = end - 1;
+  }
+  if (end == 0) {
+    return dir + name;
+  }
+  return slice_unchecked(dir, 0, end) + "/" + name;
+}
+
+// The directory an environment variable names, ignoring an empty one:
+// `TMPDIR= mktemp` is `/tmp`, exactly as an unset TMPDIR is.
+function env_dir(name: string): string {
+  match (env(name)) {
+    Some(v) => {
+      return v;
+    },
+    None => {}
+  }
+  return "";
+}
+
+// ---- the name --------------------------------------------------------------
+function alphabet(): string {
+  return "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+}
+
+// `n` characters drawn uniformly from the 62-character alphabet. A byte
+// at or above 248 (= 4 * 62) is discarded rather than folded, so no
+// letter is likelier than another.
+function random_run(n: i32): string {
+  var letters: string = alphabet();
+  var out: u8[] = [];
+  var have: i32 = 0;
+  while (have < n) {
+    var chunk: u8[] = random_bytes(n - have + 8);
+    var i: i32 = 0;
+    while (i < chunk.len() && have < n) {
+      var b: i32 = chunk[i] as i32;
+      if (b < 248) {
+        out = out.append(letters[b % 62]);
+        have = have + 1;
+      }
+      i = i + 1;
+    }
+  }
+  return string_from_bytes_unchecked(out);
+}
+
+// How many candidates a run of X's is worth before the attempt is
+// abandoned: 62^3, whatever the run's length.
+function attempt_limit(): i32 {
+  return 238328;
+}
+
+// The mode GNU asks mkdir(2) for: 0700, which the umask then masks.
+// Written as a product because Fern has no octal literal; the file mode
+// is `open_exclusive`'s own 0600.
+function dir_mode(): i32 {
+  return 7 * 64;
+}
+
+// `Attempt` — what one candidate came to: `name` and `ok` on success,
+// otherwise `text` is the strerror the diagnostic reports.
+struct Attempt { name: string, ok: boolean, text: string }
+
+// One candidate, by the mode: -u asks lstat and wants ENOENT, -d makes
+// the directory, and the ordinary path creates the file O_EXCL. `retry`
+// says the name was taken and another should be drawn.
+function try_once(s: Settings, name: string): (Attempt, boolean) {
+  if (s.dry_run) {
+    match (lstat(name)) {
+      Ok(_) => {
+        return (Attempt { name: name, ok: false, text: "File exists" }, true);
+      },
+      Err(e) => {
+        match (e) {
+          NotFound(_) => {
+            return (Attempt { name: name, ok: true, text: "" }, false);
+          },
+          _ => {
+            return (Attempt { name: name, ok: false, text: gnu.io_error_text(e) }, false);
+          }
+        }
+      }
+    }
+  }
+  if (s.make_dir) {
+    match (create_dir(name, dir_mode())) {
+      Ok(_) => {
+        return (Attempt { name: name, ok: true, text: "" }, false);
+      },
+      Err(e) => {
+        match (e) {
+          AlreadyExists(_) => {
+            return (Attempt { name: name, ok: false, text: "File exists" }, true);
+          },
+          _ => {
+            return (Attempt { name: name, ok: false, text: gnu.io_error_text(e) }, false);
+          }
+        }
+      }
+    }
+  }
+  match (open_exclusive(name)) {
+    Ok(w) => {
+      w.close();
+      return (Attempt { name: name, ok: true, text: "" }, false);
+    },
+    Err(e) => {
+      match (e) {
+        AlreadyExists(_) => {
+          return (Attempt { name: name, ok: false, text: "File exists" }, true);
+        },
+        _ => {
+          return (Attempt { name: name, ok: false, text: gnu.io_error_text(e) }, false);
+        }
+      }
+    }
+  }
+}
+
+// Draw names until one lands or the attempts run out.
+function make(s: Settings, head: string, run: i32, tail: string): Attempt {
+  var last: Attempt = Attempt { name: "", ok: false, text: "File exists" };
+  var tries: i32 = 0;
+  while (tries < attempt_limit()) {
+    tries = tries + 1;
+    var r: (Attempt, boolean) = try_once(s, head + random_run(run) + tail);
+    if (!r.1) {
+      return r.0;
+    }
+    last = r.0;
+  }
+  return last;
+}
+
+// Remove what was just created. A failure here is ignored: GNU is
+// already on its way out with the write error it is reporting.
+function undo(s: Settings, name: string): void {
+  if (s.dry_run) {
+    return;
+  }
+  if (s.make_dir) {
+    match (remove_dir(name)) {
+      Ok(_) => {},
+      Err(_) => {}
+    }
+    return;
+  }
+  match (remove_file(name)) {
+    Ok(_) => {},
+    Err(_) => {}
+  }
+}
+
+// `Plan` — the path the name is drawn at, split at the random run:
+// `head` + `run` random characters + `tail`. `path` is the same path with
+// the X's intact, which is what a creation failure names.
+struct Plan { head: string, run: i32, tail: string, path: string }
+
+// The template, its suffix and its X run, with every fault reported in
+// GNU's order: --suffix's must-end-in-X, then a separator in the suffix,
+// then the X count. --suffix is glued on before all three, so the
+// diagnostics name the concatenated string.
+function split_template(s: Settings, template: string): (string, string, i32) {
+  var tmpl: string = template;
+  var suffix: string = "";
+  if (s.suffix_set) {
+    if (!tmpl.ends_with("X")) {
+      gnu.error("with --suffix, template " + gnu.quote(tmpl) + " must end in X");
+      exit(1);
+    }
+    suffix = s.suffix;
+    tmpl = tmpl + suffix;
+  } else {
+    suffix = slice_unchecked(tmpl, suffix_start(tmpl), tmpl.len()) + "";
+  }
+  if (has_slash(suffix)) {
+    gnu.error("invalid suffix " + gnu.quote(suffix) + ", contains directory separator");
+    exit(1);
+  }
+  var run: i32 = x_run(tmpl, tmpl.len() - suffix.len());
+  if (run < 3) {
+    gnu.error("too few X's in template " + gnu.quote(tmpl));
+    exit(1);
+  }
+  return (tmpl, suffix, run);
+}
+
+// Where the name is drawn: the template checked against the rule -t or
+// --tmpdir imposes on it, then joined to the directory they resolve to.
+// The two resolve it with OPPOSITE precedence, and an empty string counts
+// as no directory on both paths.
+function directory(s: Settings, tmpl: string): string {
+  if (s.single) {
+    if (has_slash(tmpl)) {
+      gnu.error("invalid template, " + gnu.quote(tmpl) + ", contains directory separator");
+      exit(1);
+    }
+    var dir: string = "/tmp";
+    if (s.tmpdir.len() > 0) {
+      dir = s.tmpdir;
+    }
+    if (env_dir("TMPDIR").len() > 0) {
+      dir = env_dir("TMPDIR");
+    }
+    return join(dir, tmpl);
+  }
+  if (!s.use_tmpdir) {
+    return tmpl;
+  }
+  if (tmpl.starts_with("/")) {
+    gnu.error("invalid template, " + gnu.quote(tmpl) + "; with --tmpdir, it may not be absolute");
+    exit(1);
+  }
+  var dir: string = "/tmp";
+  if (env_dir("TMPDIR").len() > 0) {
+    dir = env_dir("TMPDIR");
+  }
+  if (s.tmpdir.len() > 0) {
+    dir = s.tmpdir;
+  }
+  return join(dir, tmpl);
+}
+
+function plan(s: Settings, template: string): Plan {
+  var parts: (string, string, i32) = split_template(s, template);
+  var tmpl: string = parts.0;
+  var suffix: string = parts.1;
+  var run: i32 = parts.2;
+  var path: string = directory(s, tmpl);
+  var start: i32 = path.len() - suffix.len() - run;
+  return Plan { head: slice_unchecked(path, 0, start) + "", run: run, tail: slice_unchecked(path, start + run, path.len()) + "", path: path };
+}
+
+// The name on stdout, and the write failure: what was just created is
+// removed again, which is why this is not `gnu.write_out`.
+function emit(s: Settings, name: string): i32 {
+  var o: io_buffered.BufWriter = gnu.out_new();
+  o = o.write_string(name + "\n");
+  var failed: boolean = false;
+  var text: string = "";
+  match (o.error()) {
+    Some(e) => {
+      failed = true;
+      text = gnu.io_error_text(e);
+    },
+    None => {}
+  }
+  if (!failed) {
+    match (o.close()) {
+      Some(e) => {
+        failed = true;
+        text = gnu.io_error_text(e);
+      },
+      None => {}
+    }
+  }
+  if (!failed) {
+    return 0;
+  }
+  undo(s, name);
+  // -q covers the diagnostic of a run that CREATED something; with -u
+  // there is nothing to have lost and the write error is reported.
+  if (!s.quiet || s.dry_run) {
+    gnu.error("write error: " + text);
+  }
+  return 1;
+}
+
+function main(): i32 {
+  var r: (Settings, string[]) = scan(args());
+  var s: Settings = r.0;
+  var operands: string[] = r.1;
+  if (operands.len() > 1) {
+    gnu.die_usage("too many templates", 1);
+  }
+  var template: string = "tmp.XXXXXXXXXX";
+  if (operands.len() == 1) {
+    template = operands[0];
+  } else {
+    // No operand implies --tmpdir as well as the default template.
+    s = Settings { ...s, use_tmpdir: true };
+  }
+  var p: Plan = plan(s, template);
+  var made: Attempt = make(s, p.head, p.run, p.tail);
+  if (!made.ok) {
+    if (!s.quiet) {
+      var noun: string = "file";
+      if (s.make_dir) {
+        noun = "directory";
+      }
+      gnu.error("failed to create " + noun + " via template " + gnu.quote(p.path) + ": " + made.text);
+    }
+    return 1;
+  }
+  return emit(s, made.name);
+}

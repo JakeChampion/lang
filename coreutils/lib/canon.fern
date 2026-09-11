@@ -1,0 +1,318 @@
+// coreutils/lib/canon.fern — the symbolic-link resolution walk
+// `readlink -f/-e/-m` and `realpath` share.
+//
+// One loop over the components of a name, resolving each one against a
+// path built up so far. What separates the modes is only what happens
+// to a component that does NOT resolve:
+//
+//   EXISTING       every component must exist        readlink -e, realpath -e
+//   ALL_BUT_LAST   every component but the last      readlink -f, realpath
+//   MISSING        nothing has to exist              readlink -m, realpath -m
+//
+// and `logical`, which is realpath's `-s`: the links are not read at
+// all, so `..` is applied to the name as written rather than to what
+// the name resolves to.
+//
+// The rules below are the reference binary's, measured against it:
+//
+//   - The answer is absolute. A relative name starts at getcwd().
+//   - `.` is dropped and `..` pops a component off the answer, at the
+//     root too, where it is a no-op.
+//   - A component that is a symbolic link is replaced by its target,
+//     which then goes back through the same loop; an absolute target
+//     restarts the answer at the root.
+//   - A SUFFIX decides how strict the check on a component is. A
+//     component followed by `/` at the end of the name, or by a `.` or
+//     `..` component, has to be a searchable directory whatever mode
+//     is in force — a `..` pops lexically and would otherwise never
+//     ask whether the thing it popped was real. Every other component
+//     is checked by the mode.
+//   - MISSING never refuses anything: a component that is not there,
+//     is not a directory, or sits in a cycle is kept verbatim and the
+//     walk carries on.
+//
+// The loop detection is not a depth limit, and a 5000-link chain
+// resolves. The first twenty links are followed without a thought;
+// from the twenty-first each one stats the directory the link sits in
+// and asks whether this walk has stood at that directory with this
+// remaining path before. Standing there twice is a cycle — and the
+// same link CAN legitimately be met more than once, which is why a
+// count would be wrong.
+import "std/string";
+import "std/array";
+
+// The three modes, in the order they are strict.
+pub function existing(): i32 {
+  return 0;
+}
+
+pub function all_but_last(): i32 {
+  return 1;
+}
+
+pub function missing(): i32 {
+  return 2;
+}
+
+// How many links are followed before the walk starts looking for a
+// cycle. Twenty is the reference implementation's.
+function unchecked_links(): i32 {
+  return 20;
+}
+
+// One (directory, remaining path) pair the walk has already stood at.
+struct Seen { key: string, dev: i64, ino: i64 }
+
+// `canonicalize(name, mode, logical)` — the absolute resolved form of
+// `name`, or the error that stopped the walk. An empty name is ENOENT
+// before anything is looked at, which is what the reference does.
+pub function canonicalize(name: string, mode: i32, logical: boolean): Result[string, IoError] {
+  if (name.len() == 0) {
+    return Err(NotFound(""));
+  }
+  var rname: string = "/";
+  if (name[0] as i32 != 47) {
+    rname = getcwd();
+    if (rname.len() == 0) {
+      // getcwd() carries no errno (#9067). The way it fails is a
+      // working directory that has been removed, which is ENOENT.
+      return Err(NotFound(name));
+    }
+  }
+  var path: string = name;
+  var pos: i32 = 0;
+  var links: i32 = 0;
+  var seen: Seen[] = [];
+  while (pos < path.len()) {
+    while (pos < path.len() && path[pos] as i32 == 47) {
+      pos = pos + 1;
+    }
+    var start: i32 = pos;
+    while (pos < path.len() && path[pos] as i32 != 47) {
+      pos = pos + 1;
+    }
+    if (pos == start) {
+      // Nothing but trailing slashes left.
+      break;
+    }
+    var end: i32 = pos;
+    var comp: string = slice_unchecked(path, start, end) + "";
+    if (comp == ".") {
+      continue;
+    }
+    if (comp == "..") {
+      rname = parent_of(rname);
+      continue;
+    }
+    var parent: string = rname;
+    rname = child_of(rname, comp);
+
+    var target: string = "";
+    var is_link: boolean = false;
+    var err: IoError = Unsupported;
+    if (!logical) {
+      match (read_link(rname)) {
+        Ok(t) => {
+          target = t;
+          is_link = true;
+        },
+        Err(e) => {
+          err = e;
+        }
+      }
+    }
+
+    if (is_link) {
+      if (links < unchecked_links()) {
+        links = links + 1;
+      } else {
+        var here: FileStat = FileStat { is_file: false, is_dir: false, size: 0, mode: 0 as u32, nlink: 0 as u32, uid: 0 as u32, gid: 0 as u32, dev: 0, rdev: 0, ino: 0, blksize: 0, blocks: 0, atime: 0, atime_nsec: 0, mtime: 0, mtime_nsec: 0, ctime: 0, ctime_nsec: 0 };
+        match (stat(parent)) {
+          Ok(st) => {
+            here = st;
+          },
+          Err(e) => {
+            return Err(e);
+          }
+        }
+        // The key is the whole of what is left to resolve, not the
+        // component alone: the same link reached with a different
+        // remainder is a different position in the walk.
+        var key: string = slice_unchecked(path, start, path.len()) + "";
+        if (stood_here(seen, key, here.dev, here.ino)) {
+          if (mode == missing()) {
+            continue;
+          }
+          return Err(Other(rname, eloop_text()));
+        }
+        seen = seen.append(Seen { key: key, dev: here.dev, ino: here.ino });
+      }
+      path = target + (slice_unchecked(path, end, path.len()) + "");
+      pos = 0;
+      if (target.len() > 0 && target[0] as i32 == 47) {
+        rname = "/";
+      } else {
+        rname = parent;
+      }
+      continue;
+    }
+
+    // The component is not a symbolic link, or could not be read.
+    var rest: string = slice_unchecked(path, end, path.len()) + "";
+    var ok: boolean = mode == missing();
+    if (!ok) {
+      if (suffix_needs_dir(rest)) {
+        match (access(rname + "/", 0)) {
+          Ok(_) => {
+            ok = true;
+          },
+          Err(e) => {
+            err = e;
+          }
+        }
+      } else if (!logical) {
+        // EINVAL is `this is not a symbolic link`, which is the
+        // ordinary case and not a fault.
+        ok = text_of(err) == "Invalid argument";
+      } else if (rest.len() > 0) {
+        // Nothing was read, so nothing is known about a component
+        // with more of the name after it; the last one is asked
+        // about directly.
+        ok = true;
+      } else {
+        match (access(rname, 0)) {
+          Ok(_) => {
+            ok = true;
+          },
+          Err(e) => {
+            err = e;
+          }
+        }
+      }
+      if (!ok && mode == all_but_last() && text_of(err) == enoent_text() && all_slashes(rest)) {
+        ok = true;
+      }
+    }
+    if (!ok) {
+      return Err(err);
+    }
+  }
+  return Ok(rname);
+}
+
+// The strerror text for ELOOP. The walk decides a cycle for itself, so
+// there is no errno from the kernel to carry; `lib/gnu.fern` maps the
+// IoError kinds the runtime names to their strerror text the same way.
+function eloop_text(): string {
+  return "Too many levels of symbolic links";
+}
+
+function enoent_text(): string {
+  return "No such file or directory";
+}
+
+// An IoError's strerror text, which is the only thing there is to ask
+// it: the runtime carries the text rather than the number.
+function text_of(e: IoError): string {
+  match (e) {
+    NotFound(_) => {
+      return enoent_text();
+    },
+    PermissionDenied(_) => {
+      return "Permission denied";
+    },
+    AlreadyExists(_) => {
+      return "File exists";
+    },
+    InvalidUtf8(_) => {
+      return "Invalid or incomplete multibyte or wide character";
+    },
+    Interrupted => {
+      return "Interrupted system call";
+    },
+    Unsupported => {
+      return "Operation not supported";
+    },
+    Other(_, msg) => {
+      return msg;
+    }
+  }
+}
+
+// `p` with its last component removed. The root has no parent and
+// stays put, which is what makes `/..` the root.
+function parent_of(p: string): string {
+  var i: i32 = p.len();
+  while (i > 0 && p[i - 1] as i32 != 47) {
+    i = i - 1;
+  }
+  if (i <= 1) {
+    return "/";
+  }
+  return slice_unchecked(p, 0, i - 1) + "";
+}
+
+// `p` with `comp` appended, with exactly one slash between them.
+function child_of(p: string, comp: string): string {
+  if (p.len() == 1) {
+    return "/" + comp;
+  }
+  return p + "/" + comp;
+}
+
+// Whether `rest` — what follows a component, starting at its slash —
+// makes that component have to be a searchable directory. A trailing
+// slash does, and so does a `.` or `..` component anywhere in it: `..`
+// pops without looking, so this is the only place the thing it pops
+// is checked. An ordinary component after it does not, because that
+// one gets a check of its own.
+function suffix_needs_dir(rest: string): boolean {
+  var i: i32 = 0;
+  while (i < rest.len() && rest[i] as i32 == 47) {
+    while (i < rest.len() && rest[i] as i32 == 47) {
+      i = i + 1;
+    }
+    if (i >= rest.len()) {
+      return true;
+    }
+    var c: i32 = rest[i] as i32;
+    i = i + 1;
+    if (c != 46) {
+      return false;
+    }
+    if (i >= rest.len()) {
+      return true;
+    }
+    if (rest[i] as i32 == 46 && (i + 1 >= rest.len() || rest[i + 1] as i32 == 47)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Whether `s` is nothing but slashes, which is how a name's LAST
+// component is told from one with more of the name after it.
+function all_slashes(s: string): boolean {
+  var i: i32 = 0;
+  while (i < s.len()) {
+    if (s[i] as i32 != 47) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+// Whether this walk has already stood at `dev`/`ino` with `key` left
+// to resolve. The list is only ever reached past the twentieth link,
+// so it holds nothing at all for a name that resolves.
+function stood_here(seen: Seen[], key: string, dev: i64, ino: i64): boolean {
+  var i: i32 = 0;
+  while (i < seen.len()) {
+    if (seen[i].dev == dev && seen[i].ino == ino && seen[i].key == key) {
+      return true;
+    }
+    i = i + 1;
+  }
+  return false;
+}

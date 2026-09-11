@@ -168,6 +168,12 @@ var linuxDarwinSysno = map[string][2]int{
 	"linkat":     {37, 471},
 	"symlinkat":  {36, 474},
 	"readlinkat": {78, 473},
+	// renameat(2) / fchmodat(2) — Linux 38 / 53, Darwin BSD 465 / 467.
+	// Identical argument shapes; only AT_FDCWD differs. Linux's fchmodat
+	// takes three arguments where Darwin's takes four, and the helper
+	// passes a zero fourth that Linux ignores, so one body serves both.
+	"renameat": {38, 465},
+	"fchmodat": {53, 467},
 	// umask(2) — Linux asm-generic 166, Darwin BSD 60. One argument,
 	// the previous mask returned, and no error return on either.
 	"umask": {166, 60},
@@ -180,12 +186,29 @@ var linuxDarwinSysno = map[string][2]int{
 	// number differs (TCGETS vs TIOCGETA), and that is an argument the
 	// emitter picks, not part of the call.
 	"ioctl": {29, 54},
+	// kill(2) — Linux asm-generic 129, Darwin BSD 37. Backs
+	// `__fern_process_alive`, which passes signal 0: every check kill(2)
+	// makes, with nothing delivered.
+	"kill": {129, 37},
+	// getrlimit(2) — Linux asm-generic 163 (arm64 asks for the
+	// set/get-rlimit pair), Darwin BSD 194. Identical shape:
+	// (resource, &rlimit) over a two-u64 record. Only the RESOURCE
+	// number differs — RLIMIT_NOFILE is 7 on Linux and 8 on Darwin —
+	// and that is an argument the emitter picks.
+	"getrlimit": {163, 194},
+	// statfs(2) — Linux asm-generic 43, Darwin BSD 345. Both take
+	// (path, buf) and differ only in what they write there: Linux's
+	// record is 120 bytes of 64-bit words, Darwin's is 2168 bytes with
+	// 32-bit block size and two 1024-byte mount-point names. 345 rather
+	// than 157 because arm64 macOS ships only the 64-bit-inode variants,
+	// which is also the one libSystem's `statfs` resolves to.
+	"statfs": {43, 345},
 	// faccessat: Linux's flag-taking form is faccessat2 (439) — the
 	// older faccessat (48) has no flags word and so cannot express
-	// AT_EACCESS. Darwin's faccessat (BSD 467) has taken flags since it
+	// AT_EACCESS. Darwin's faccessat (BSD 466) has taken flags since it
 	// was introduced. Same four-argument shape either way; only the
 	// AT_EACCESS and AT_FDCWD constants differ (see atEaccess/atFdcwd).
-	"faccessat": {439, 467},
+	"faccessat": {439, 466},
 	// geteuid(2) / getegid(2) — Linux asm-generic 175 / 177, Darwin BSD
 	// 25 / 43. Neither takes an argument and neither can fail.
 	"geteuid": {175, 25},
@@ -239,6 +262,11 @@ var f64UnaryIntrinsic = map[string]string{
 
 var linuxOnlySysno = map[string]int{
 	"getrandom": sysGetrandom,
+	// utimensat: XNU has no such syscall at all — libc builds it out of
+	// setattrlistat(2) (BSD 524), which is what __fern_set_file_times
+	// issues inline on Darwin. So this row is Linux's alone rather than
+	// a number whose Darwin twin sits in the other table.
+	"utimensat": 88,
 	// ppoll: Linux-only here; arm64-darwin's readiness path (kqueue)
 	// is deferred, so `__fern_poll` branches to a -1 stub on Darwin
 	// rather than reaching this entry.
@@ -522,7 +550,8 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 		g.usesFdStat || g.usesReaderSeek ||
 		g.usesAccess || g.usesRemoveDirAll || g.usesCreateDirAll ||
 		g.usesCreateDir || g.usesRemoveDir || g.usesCreateLink ||
-		g.usesCreateSymlink || g.usesReadLink {
+		g.usesCreateSymlink || g.usesReadLink || g.usesStatfs ||
+		g.usesRename || g.usesChmod || g.usesSetFileTimes {
 		g.usesAlloc = true
 		g.usesMemcpy = true
 		g.usesIoError = true
@@ -550,12 +579,19 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesReadFile || g.usesReadFileBytes || g.usesWriteFile || g.usesWriteFileExec ||
 		g.usesRemoveFile || g.usesCreateDirAll || g.usesCreateDir || g.usesRemoveDir ||
 		g.usesCreateLink || g.usesCreateSymlink || g.usesReadLink || g.usesTempDir ||
-		g.usesReadDir || g.usesStat || g.usesLstat || g.usesAccess || g.usesRemoveDirAll ||
+		g.usesReadDir || g.usesStat || g.usesLstat || g.usesStatfs || g.usesAccess ||
+		g.usesRemoveDirAll ||
+		g.usesRename || g.usesChmod || g.usesSetFileTimes ||
 		g.usesReaderWriter {
 		g.usesFree = true
 	}
-	if g.usesRemoveDirAll {
+	if g.usesRemoveDirAll || g.usesReadFile {
 		g.usesBoxFree = true
+	}
+	// read_file_bytes grows past a short st_size hint, handing the
+	// outgrown u8[] back through the array dec.
+	if g.usesReadFileBytes {
+		g.usesArrDec = true
 	}
 	if g.usesFree {
 		g.emitFreeRuntime()
@@ -721,6 +757,15 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesTimerFd {
 		g.emitTimerFdRuntime()
 	}
+	if g.usesStatfs {
+		g.emitStatfsRuntime()
+	}
+	if g.usesRlimitNofile {
+		g.emitRlimitNofileRuntime()
+	}
+	if g.usesProcessAlive {
+		g.emitProcessAliveRuntime()
+	}
 	if g.usesIsatty {
 		g.emitIsattyRuntime()
 	}
@@ -778,6 +823,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	}
 	if g.usesSleepMs {
 		g.emitSleepMsRuntime()
+	}
+	if g.usesSleepNs {
+		g.emitSleepNsRuntime()
 	}
 	if g.usesProcFork {
 		g.emitProcForkRuntime()
@@ -847,6 +895,15 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	}
 	if g.usesUmask {
 		g.emitUmaskRuntime()
+	}
+	if g.usesRename {
+		g.emitRenameRuntime()
+	}
+	if g.usesChmod {
+		g.emitChmodRuntime()
+	}
+	if g.usesSetFileTimes {
+		g.emitSetFileTimesRuntime()
 	}
 	if g.usesTempDir {
 		g.emitTempDirRuntime()
@@ -6640,6 +6697,60 @@ func (g *generator) emitSleepMsRuntime() {
 	g.line(".ltorg")
 }
 
+// emitSleepNsRuntime emits `__fern_sleep_ns(ns)` — the same pause with
+// the caller's nanoseconds carried through rather than rounded to a
+// millisecond first (#8528). ns <= 0 returns at once.
+//
+// On Linux the timespec split is by 1e9 and the remainder IS tv_nsec,
+// so the request reaches the kernel unrounded. Darwin has no nanosleep
+// syscall — `select(0, NULL, NULL, NULL, &timeout)` is the sleep, and
+// its timeval is MICROseconds — so the nanosecond remainder is rounded
+// UP to the next microsecond. That keeps the primitive's only promise
+// (the pause is never shorter than asked) at the finest resolution the
+// target has.
+func (g *generator) emitSleepNsRuntime() {
+	g.line("")
+	g.line(".global __fern_sleep_ns")
+	g.typeDirective("__fern_sleep_ns")
+	g.label("__fern_sleep_ns")
+	g.emit("stp x29, x30, [sp, #-16]!")
+	g.emit("mov x29, sp")
+	g.emit("sub sp, sp, #32")
+	g.emit("cmp x0, #0")
+	g.emit("b.le .Lsleep_ns_done")
+	g.emit("ldr x9, =1000000000")
+	g.emit("udiv x10, x0, x9")      // sec
+	g.emit("msub x11, x10, x9, x0") // rem ns
+	g.emit("str x10, [sp]")         // tv_sec
+	if g.darwin {
+		// tv_usec = ceil(rem_ns / 1000)
+		g.emit("mov x12, #999")
+		g.emit("add x11, x11, x12")
+		g.emit("mov x12, #1000")
+		g.emit("udiv x11, x11, x12")
+		g.emit("str x11, [sp, #8]")
+		g.emit("mov x0, #0") // nfds
+		g.emit("mov x1, #0") // readfds
+		g.emit("mov x2, #0") // writefds
+		g.emit("mov x3, #0") // errorfds
+		g.emit("mov x4, sp") // timeout
+		g.emit("mov x16, #%d", darSelect)
+		g.emit("svc #0x80")
+	} else {
+		g.emit("str x11, [sp, #8]") // tv_nsec
+		g.emit("mov x0, sp")        // &req
+		g.emit("mov x1, #0")        // rem = NULL
+		g.emit("mov x8, #%d", sysNanosleep)
+		g.emit("svc #0")
+	}
+	g.label(".Lsleep_ns_done")
+	g.emit("mov sp, x29")
+	g.emit("ldp x29, x30, [sp], #16")
+	g.emit("ret")
+	g.sizeDirective("__fern_sleep_ns")
+	g.line(".ltorg")
+}
+
 // emitProcForkRuntime emits `__fern_proc_fork()` — fork the
 // process, returning 0 in the child, the child's pid in the
 // parent, or -errno on failure (docs/CRASH-ONLY-SERVE.md D2').
@@ -8299,6 +8410,249 @@ func (g *generator) emitTimerFdRuntime() {
 	g.line(".ltorg")
 }
 
+// statfsField is one FsStat field and where it is read from in the
+// platform's `struct statfs`: the box offset, the buffer offset, and the
+// load width.
+type statfsField struct{ box, src, width int32 }
+
+// linuxStatfsFields — Linux's 120-byte record, every member a 64-bit
+// word on both supported ISAs: f_type 0, f_bsize 8, f_blocks 16,
+// f_bfree 24, f_bavail 32, f_files 40, f_ffree 48, f_fsid 56,
+// f_namelen 64, f_frsize 72.
+var linuxStatfsFields = []statfsField{
+	{ir.FsStat.BlockSize, 8, 8},
+	{ir.FsStat.Blocks, 16, 8},
+	{ir.FsStat.BlocksFree, 24, 8},
+	{ir.FsStat.BlocksAvail, 32, 8},
+	{ir.FsStat.Files, 40, 8},
+	{ir.FsStat.FilesFree, 48, 8},
+	{ir.FsStat.NameMax, 64, 8},
+}
+
+// darwinStatfsFields — Darwin's 2168-byte record: f_bsize is a u32 at 0
+// (f_iosize takes 4..7), then five u64 counts. There is no name-length
+// member at all, which is why the Darwin path asks pathconf(2) instead.
+var darwinStatfsFields = []statfsField{
+	{ir.FsStat.BlockSize, 0, 4},
+	{ir.FsStat.Blocks, 8, 8},
+	{ir.FsStat.BlocksFree, 16, 8},
+	{ir.FsStat.BlocksAvail, 24, 8},
+	{ir.FsStat.Files, 32, 8},
+	{ir.FsStat.FilesFree, 40, 8},
+}
+
+// emitStatfsRuntime emits `__fern_statfs(path) → Result[FsStat, IoError]`
+// — the geometry and the length limits of the filesystem `path` resolves
+// on.
+//
+// Linux fills the whole record from one statfs(2), and PATH_MAX is the
+// kernel's own 4096 since there is no pathconf syscall to ask. Darwin's
+// record has the counts and no name length, so both limits come from its
+// real pathconf(2) (BSD 191) — not constants, because a mounted FAT or
+// SMB volume does not answer 255 the way APFS does. A failing pathconf
+// replaces the reported errno, so the Err names the call that actually
+// failed.
+//
+// Frame: a 96-byte base (fp/lr + x19..x25 + the 16-byte inline-spill
+// scratch at [x29+72]) with the statfs buffer above it at [x29+96]. The
+// buffer is inside the frame rather than below sp because the
+// NUL-terminated-path helpers push and pop there.
+func (g *generator) emitStatfsRuntime() {
+	fields := linuxStatfsFields
+	bufSize := 128
+	if g.darwin {
+		fields = darwinStatfsFields
+		bufSize = 2176
+	}
+	frame := 96 + bufSize
+	g.line("")
+	g.line(".global __fern_statfs")
+	g.typeDirective("__fern_statfs")
+	g.label("__fern_statfs")
+	g.emit("sub sp, sp, #%d", frame)
+	g.emit("stp x29, x30, [sp]")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	g.emit("stp x21, x22, [sp, #32]")
+	g.emit("stp x23, x24, [sp, #48]")
+	g.emit("str x25, [sp, #64]")
+	g.emit("mov x19, x0") // path_data (original, for io_error)
+	g.emit("mov x20, x1") // path_len (original, for io_error)
+	g.emitStrDataPtr2W("x21", "x19", "x20", 72)
+	g.emitStrLen2W("w22", "x20")
+	g.emitNulTermPath2W("x21", "x21", "x22")
+	// statfs(pathz, buf)
+	g.emit("mov x0, x21")
+	g.emit("add x1, x29, #96")
+	g.syscall("statfs")
+	g.emit("mov x23, x0") // errno-or-zero, kept across the free
+	if g.darwin {
+		g.emit("tbnz x23, #63, .Lsfs_asked")
+		g.emitDarwinPathconf("x24", "x21", 4) // _PC_NAME_MAX
+		g.emit("tbnz x24, #63, .Lsfs_pcfail_name")
+		g.emitDarwinPathconf("x25", "x21", 5) // _PC_PATH_MAX
+		g.emit("tbnz x25, #63, .Lsfs_pcfail_path")
+		g.emit("b .Lsfs_asked")
+		g.label(".Lsfs_pcfail_name")
+		g.emit("mov x23, x24")
+		g.emit("b .Lsfs_asked")
+		g.label(".Lsfs_pcfail_path")
+		g.emit("mov x23, x25")
+		g.label(".Lsfs_asked")
+	}
+	g.emitFreeNulTermPath2W("x21", "x22")
+	g.emit("tbnz x23, #63, .Lsfs_err")
+	g.emit("mov x0, #%d", ir.FsStat.Bytes)
+	g.emit("bl __fern_alloc_box")
+	// The buffer is still live at [x29+96]; the record is copied out
+	// field by field, widening each to its 8-byte FsStat slot.
+	for _, f := range fields {
+		if f.width == 4 {
+			g.emit("ldr w9, [x29, #%d]", 96+f.src)
+		} else {
+			g.emit("ldr x9, [x29, #%d]", 96+f.src)
+		}
+		g.emit("str x9, [x0, #%d]", f.box)
+	}
+	if g.darwin {
+		g.emit("str x24, [x0, #%d]", ir.FsStat.NameMax)
+		g.emit("str x25, [x0, #%d]", ir.FsStat.PathMax)
+	} else {
+		g.emit("mov x9, #%d", linuxPathMax)
+		g.emit("str x9, [x0, #%d]", ir.FsStat.PathMax)
+	}
+	g.emit("mov x21, x0")
+	g.emit("mov x0, #16")
+	g.emit("bl __fern_alloc_rc1")
+	g.emit("str wzr, [x0]") // tag = 0 (Ok)
+	g.emit("str x21, [x0, #8]")
+	g.emit("b .Lsfs_return")
+
+	g.label(".Lsfs_err")
+	g.emit("neg x0, x23")
+	g.emit("mov x1, x19")
+	g.emit("mov x2, x20")
+	g.emit("bl __fern_io_error")
+	g.emit("mov x19, x0")
+	g.emit("mov x0, #16")
+	g.emit("bl __fern_alloc_rc1")
+	g.emit("mov w9, #1")
+	g.emit("str w9, [x0]") // tag = 1 (Err)
+	g.emit("str x19, [x0, #8]")
+
+	g.label(".Lsfs_return")
+	g.emit("mov sp, x29")
+	g.emit("ldr x25, [sp, #64]")
+	g.emit("ldp x23, x24, [sp, #48]")
+	g.emit("ldp x21, x22, [sp, #32]")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x29, x30, [sp]")
+	g.emit("add sp, sp, #%d", frame)
+	g.emit("ret")
+	g.sizeDirective("__fern_statfs")
+	g.line(".ltorg")
+}
+
+// linuxPathMax is PATH_MAX, the longest pathname the Linux kernel will
+// resolve. A constant rather than a lookup because Linux has no pathconf
+// syscall — glibc computes it from statfs plus constants — and `getconf
+// PATH_MAX` reports this for every filesystem it mounts.
+const linuxPathMax = 4096
+
+// emitDarwinPathconf emits `dstX = pathconf(pathzX, name)` — Darwin BSD
+// 191, which Linux has no equivalent of, so it cannot go in the dual
+// syscall table. Carry-clear is success; the error is negated into
+// Linux's -errno shape the way `syscall` does for the shared calls.
+func (g *generator) emitDarwinPathconf(dstX, pathzX string, name int) {
+	const darPathconf = 191
+	g.emit("mov x0, %s", pathzX)
+	g.emit("mov x1, #%d", name)
+	g.emit("mov x16, #%d", darPathconf)
+	g.emit("svc #0x80")
+	lbl := g.freshLabel("pconf_ok")
+	g.emit("b.cc %s", lbl)
+	g.emit("neg x0, x0")
+	g.label(lbl)
+	g.emit("mov %s, x0", dstX)
+}
+
+// emitRlimitNofileRuntime emits `__fern_rlimit_nofile()` — the soft
+// RLIMIT_NOFILE, in x0 as an i64.
+//
+// `getrlimit(RLIMIT_NOFILE, &rlim)` into a two-u64 buffer on the stack,
+// and `rlim_cur` is the answer. Two paths report i64 max instead: a
+// failing call, which for a resource named in the emitter and a buffer
+// it owns has no reachable errno, and a limit whose top bit is set —
+// Linux spells RLIM_INFINITY as all ones, which is not a count anything
+// could hold. Darwin already spells it i64 max, so both arrive as the
+// same answer.
+func (g *generator) emitRlimitNofileRuntime() {
+	resource := 7 // Linux RLIMIT_NOFILE
+	if g.darwin {
+		resource = 8 // Darwin RLIMIT_NOFILE
+	}
+	g.line("")
+	g.line(".global __fern_rlimit_nofile")
+	g.typeDirective("__fern_rlimit_nofile")
+	g.label("__fern_rlimit_nofile")
+	g.emit("stp x29, x30, [sp, #-16]!")
+	g.emit("mov x29, sp")
+	g.emit("sub sp, sp, #32") // struct rlimit { u64 cur; u64 max }
+	g.emit("mov x0, #%d", resource)
+	g.emit("mov x1, sp")
+	g.syscall("getrlimit")
+	g.emit("cmp x0, #0")
+	g.emit("b.ne .Lrlim_unlimited")
+	g.emit("ldr x0, [sp]") // rlim_cur
+	g.emit("tbz x0, #63, .Lrlim_done")
+	g.label(".Lrlim_unlimited")
+	g.emit("ldr x0, =0x7fffffffffffffff")
+	g.label(".Lrlim_done")
+	g.emit("mov sp, x29")
+	g.emit("ldp x29, x30, [sp], #16")
+	g.emit("ret")
+	g.sizeDirective("__fern_rlimit_nofile")
+	g.line(".ltorg")
+}
+
+// emitProcessAliveRuntime emits `__fern_process_alive(pid)` — 1 when a
+// process with that pid exists, 0 when it does not.
+//
+// `kill(pid, 0)` performs every check a real signal would and delivers
+// nothing, so the errno is the whole answer: 0 and -EPERM both mean the
+// process is there (one owned by another user is still a process) and
+// -ESRCH means it is gone. Nothing else can come back from a zero signal.
+// `syscall` has already normalised Darwin's carry-flag error into Linux's
+// -errno shape, so one comparison covers both.
+//
+// A non-positive pid answers 0 without a syscall. kill(2) reads 0 as "my
+// process group" and negatives as "the group -pid", so passing one
+// through would answer a different question than the caller asked.
+func (g *generator) emitProcessAliveRuntime() {
+	const eperm = 1
+	g.line("")
+	g.line(".global __fern_process_alive")
+	g.typeDirective("__fern_process_alive")
+	g.label("__fern_process_alive")
+	g.emit("cmp w0, #0")
+	g.emit("b.le .Lalive_no")
+	g.emit("sxtw x0, w0")
+	g.emit("mov x1, #0") // sig = 0
+	g.syscall("kill")
+	g.emit("cmp x0, #0")
+	g.emit("b.eq .Lalive_yes")
+	g.emit("cmn x0, #%d", eperm) // x0 + EPERM == 0, i.e. x0 == -EPERM
+	g.emit("b.eq .Lalive_yes")
+	g.label(".Lalive_no")
+	g.emit("mov x0, #0")
+	g.emit("ret")
+	g.label(".Lalive_yes")
+	g.emit("mov x0, #1")
+	g.emit("ret")
+	g.sizeDirective("__fern_process_alive")
+	g.line(".ltorg")
+}
+
 // emitIsattyRuntime emits `__fern_isatty(fd)` — 1 when fd refers to a
 // terminal, 0 otherwise.
 //
@@ -8790,10 +9144,12 @@ func (g *generator) emitReadFileRuntime() {
 		g.emitReadFileRuntime2W()
 		return
 	}
-	// Frame: 64-byte base + 192-byte statbuf scratch = 256.
-	// x19 = path, x20 = fd, x21 = buf base, x22 = size,
-	// x23 = bytes_read.
-	g.emit("stp x29, x30, [sp, #-256]!")
+	// Frame: 64-byte base + 192-byte statbuf scratch + an 8-byte
+	// slot at [sp + 256] that carries a grown buffer across
+	// __fern_box_free = 272.
+	// x19 = path, x20 = fd, x21 = buf base, x22 = capacity,
+	// x23 = bytes_read, x24 = path byte ptr then grown capacity.
+	g.emit("stp x29, x30, [sp, #-272]!")
 	g.emit("mov x29, sp")
 	g.emit("stp x19, x20, [sp, #16]")
 	g.emit("stp x21, x22, [sp, #32]")
@@ -8817,23 +9173,44 @@ func (g *generator) emitReadFileRuntime() {
 	g.emit("tbnz x0, #63, .Lrf_err_close")
 	g.emit("ldr x22, [sp, #%d]", 64+g.statSizeOff()) // st_size
 
-	// L2 rc-header layout — see __fern_strcat. Payload = size data only.
+	// cap = st_size + 1. st_size is only a hint (#9065); the loop
+	// reads to EOF and grows, and the spare byte catches a file
+	// longer than its hint. L2 rc-header layout — see __fern_strcat.
+	g.emit("add x22, x22, #1")
 	g.emit("mov x0, x22")
 	g.emit("bl __fern_alloc_rc1")
 	g.emit("mov x21, x0") // x21 = data ptr (= base+8)
-	g.emitStrLenStore("w22", "x21")
 
-	// Read loop. x23 = bytes_read (cumulative).
+	// Read loop. x22 = capacity, x23 = bytes_read (cumulative).
 	g.emit("mov x23, #0")
 	g.label(".Lrf_loop")
 	g.emit("cmp x23, x22")
-	g.emit("b.ge .Lrf_done")
+	g.emit("b.lo .Lrf_read")
+	// Buffer full and not at EOF: double the capacity, with a page
+	// floor so a /proc file (hint 0, cap 1) gets there in one step.
+	g.emit("lsl x24, x22, #1")
+	g.emit("cmp x24, #4096")
+	g.emit("b.hs .Lrf_grow")
+	g.emit("mov x24, #4096")
+	g.label(".Lrf_grow")
+	g.emit("mov x0, x24")
+	g.emit("bl __fern_alloc_rc1")
+	g.emit("str x0, [sp, #256]") // carry the new buffer across the free
+	g.emit("mov x1, x21")
+	g.emit("mov x2, x23")
+	g.emit("bl __fern_memcpy")
+	g.emit("mov x0, x21")
+	g.emit("mov x1, x22")
+	g.emit("bl __fern_box_free")
+	g.emit("ldr x21, [sp, #256]")
+	g.emit("mov x22, x24")
+	g.label(".Lrf_read")
 	g.emit("mov x0, x20")
 	g.emit("add x1, x21, x23")
 	g.emit("sub x2, x22, x23")
 	g.syscall("read")
 	g.emit("tbnz x0, #63, .Lrf_err_close")
-	g.emit("cbz x0, .Lrf_done") // EOF before end (file shrunk)
+	g.emit("cbz x0, .Lrf_done") // EOF
 	g.emit("add x23, x23, x0")
 	g.emit("b .Lrf_loop")
 
@@ -8841,23 +9218,15 @@ func (g *generator) emitReadFileRuntime() {
 	// close(fd).
 	g.emit("mov x0, x20")
 	g.syscall("close")
-	// Zero the shrink tail [x21+x23, x21+x22): a file that shrank
-	// between fstat and read would otherwise leave alloc slack there,
-	// making the validation below nondeterministic. NUL bytes are
-	// valid UTF-8.
-	g.emit("subs x2, x22, x23")
-	g.emit("b.le .Lrf_validate")
-	g.emit("add x1, x21, x23")
-	g.label(".Lrf_zfill")
-	g.emit("strb wzr, [x1], #1")
-	g.emit("subs x2, x2, #1")
-	g.emit("b.gt .Lrf_zfill")
-	g.label(".Lrf_validate")
+	// __fern_str_dec frees at the size __fern_alloc_rc1 recorded, so
+	// a buffer wider than the content needs no re-fit; only the
+	// length prefix has to name the bytes actually read.
+	g.emitStrLenStore("w23", "x21")
 	// D9 (#5714): the text read validates at the boundary; invalid
 	// content dispatches as Err(InvalidUtf8(path)) via the synthetic
 	// EILSEQ errno. Raw reads go through __fern_read_file_bytes.
 	g.emit("mov x0, x21")
-	g.emit("mov x1, x22")
+	g.emit("mov x1, x23")
 	g.emit("bl %s", AsmFnName("__fern_utf8_valid"))
 	g.emit("cbnz w0, .Lrf_ok")
 	g.emit("mov x21, #%d", g.eilseq()) // EILSEQ
@@ -8898,7 +9267,7 @@ func (g *generator) emitReadFileRuntime() {
 	g.emit("ldp x23, x24, [sp, #48]")
 	g.emit("ldp x21, x22, [sp, #32]")
 	g.emit("ldp x19, x20, [sp, #16]")
-	g.emit("ldp x29, x30, [sp], #256")
+	g.emit("ldp x29, x30, [sp], #272")
 	g.emit("ret")
 	g.sizeDirective("__fern_read_file")
 	g.line(".ltorg")
@@ -8920,10 +9289,13 @@ func (g *generator) emitReadFileRuntime() {
 //
 // Uses callee-saves: x19 = path data, x20 = path len (the
 // original two-word string), x21 = fd, x22 = string buf data
-// ptr, x23 = file size (length), x24 = bytes read.
+// ptr, x23 = buffer capacity, x24 = bytes read, x25 = path byte
+// ptr, then the grown capacity.
 func (g *generator) emitReadFileRuntime2W() {
 	// Frame: 96-byte base (fp/lr + 6 callee-saves + 16 align)
-	// + 192-byte statbuf = 288. Statbuf at [x29 + 96].
+	// + 192-byte statbuf = 288. Statbuf at [x29 + 96];
+	// [x29 + 72] is the spare slot that carries a grown buffer
+	// across __fern_box_free.
 	g.emit("stp x29, x30, [sp, #-288]!")
 	g.emit("mov x29, sp")
 	g.emit("stp x19, x20, [sp, #16]")
@@ -8951,19 +9323,45 @@ func (g *generator) emitReadFileRuntime2W() {
 	g.syscallFstat()
 	g.emit("tbnz x0, #63, .Lrf2w_err_close")
 	g.emit("ldr x23, [x29, #%d]", 96+g.statSizeOff()) // st_size
-	// Allocate exactly st_size bytes for the result string
-	// data — no length prefix (two-word ABI).
+	// cap = st_size + 1. st_size is only a hint (#9065) — a kernel
+	// pseudo-file reports 0 or a page and generates its contents on
+	// the read — so the loop below reads to EOF and grows, and the
+	// spare byte is what distinguishes "file ended" from "hint was
+	// short" while keeping a regular file at one allocation.
+	g.emit("add x23, x23, #1")
 	g.emit("mov x0, x23")
 	// rc-headered alloc (rc=1 @data-8, size @data-4) so the owned Ok(string)
 	// this returns is reclaimed correctly by __fern_str_dec; a plain
 	// __fern_alloc buffer has no header and corrupts the heap (#2817 class).
 	g.emit("bl __fern_alloc_rc1")
 	g.emit("mov x22, x0") // x22 = data ptr (= base+8)
-	// Read loop.
+	// Read loop. x23 = capacity, x24 = bytes read. The two-word ABI
+	// carries the length beside the pointer, so a buffer larger than
+	// the content needs no re-fit: __fern_str_dec frees at the size
+	// __fern_alloc_rc1 recorded.
 	g.emit("mov x24, #0")
 	g.label(".Lrf2w_loop")
 	g.emit("cmp x24, x23")
-	g.emit("b.ge .Lrf2w_done")
+	g.emit("b.lo .Lrf2w_read")
+	// Buffer full and not at EOF: double the capacity, with a page
+	// floor so a /proc file (hint 0, cap 1) gets there in one step.
+	g.emit("lsl x25, x23, #1")
+	g.emit("cmp x25, #4096")
+	g.emit("b.hs .Lrf2w_grow")
+	g.emit("mov x25, #4096")
+	g.label(".Lrf2w_grow")
+	g.emit("mov x0, x25")
+	g.emit("bl __fern_alloc_rc1")
+	g.emit("str x0, [x29, #72]") // carry the new buffer across the free
+	g.emit("mov x1, x22")
+	g.emit("mov x2, x24")
+	g.emit("bl __fern_memcpy")
+	g.emit("mov x0, x22")
+	g.emit("mov x1, x23")
+	g.emit("bl __fern_box_free")
+	g.emit("ldr x22, [x29, #72]")
+	g.emit("mov x23, x25")
+	g.label(".Lrf2w_read")
 	g.emit("mov x0, x21")
 	g.emit("add x1, x22, x24")
 	g.emit("sub x2, x23, x24")
@@ -8976,21 +9374,11 @@ func (g *generator) emitReadFileRuntime2W() {
 	// close(fd).
 	g.emit("mov x0, x21")
 	g.syscall("close")
-	// Zero the shrink tail [x22+x24, x22+x23) so the validation
-	// below is deterministic (NUL bytes are valid UTF-8).
-	g.emit("subs x2, x23, x24")
-	g.emit("b.le .Lrf2w_validate")
-	g.emit("add x1, x22, x24")
-	g.label(".Lrf2w_zfill")
-	g.emit("strb wzr, [x1], #1")
-	g.emit("subs x2, x2, #1")
-	g.emit("b.gt .Lrf2w_zfill")
-	g.label(".Lrf2w_validate")
 	// D9 (#5714): validate at the boundary; invalid content
 	// dispatches as Err(InvalidUtf8(path)) via the synthetic EILSEQ
 	// errno. Raw reads go through __fern_read_file_bytes.
 	g.emit("mov x0, x22")
-	g.emit("mov x1, x23")
+	g.emit("mov x1, x24")
 	g.emit("bl %s", AsmFnName("__fern_utf8_valid"))
 	g.emit("cbnz w0, .Lrf2w_ok")
 	g.emit("mov x22, #%d", g.eilseq()) // EILSEQ
@@ -9002,7 +9390,7 @@ func (g *generator) emitReadFileRuntime2W() {
 	g.emit("bl __fern_alloc_rc1")
 	g.emit("str wzr, [x0]")      // tag = 0 (Ok)
 	g.emit("str x22, [x0, #8]")  // payload data
-	g.emit("str x23, [x0, #16]") // payload len
+	g.emit("str x24, [x0, #16]") // payload len
 	g.emit("b .Lrf2w_return")
 	g.label(".Lrf2w_err_close")
 	g.emit("neg x22, x0") // x22 = errno
@@ -9038,13 +9426,13 @@ func (g *generator) emitReadFileRuntime2W() {
 // emitReadFileBytesRuntime emits
 // `__fern_read_file_bytes(path_data, path_len) →
 // Result[u8[], IoError]` — read_file's raw sibling: the same
-// openat → fstat → read-loop → close pipeline as
+// openat → fstat → grow-to-EOF read-loop → close pipeline as
 // emitReadFileRuntime2W, but the contents land in a fresh
 // `u8[]` from `__alloc_u8` (cap/rc/len header) and Ok carries
-// the array data pointer. A file that shrinks between fstat
-// and read leaves the trailing bytes zero (from __alloc_u8's
-// zero-fill) with len still st_size, matching read_file's
-// short-read behaviour.
+// the array data pointer. st_size is the same hint it is there
+// (#9065); the array's len is the bytes actually read and its
+// capacity stays whatever was allocated, which is what
+// __fern_arr_dec frees with.
 //
 // Result box layout: 16-byte heap obj `{tag:i32 @0, _:i32 @4,
 // payload:ptr @8}` — tag=0 Ok(u8[] data ptr), tag=1
@@ -9056,11 +9444,12 @@ func (g *generator) emitReadFileBytesRuntime() {
 	g.label("__fern_read_file_bytes")
 	// Frame mirrors emitReadFileRuntime2W: 96-byte base (fp/lr
 	// + 6 callee-saves + 16-byte inline spill at [x29+80]) +
-	// 192-byte statbuf at [x29+96] = 288.
+	// 192-byte statbuf at [x29+96] = 288; [x29+72] carries a
+	// grown buffer across the dec of the old one.
 	//
 	// x19 = path_data, x20 = path_len, x21 = fd, x22 = buf data
-	// ptr / errno, x23 = file size, x24 = bytes read,
-	// x25 = path byte ptr.
+	// ptr / errno, x23 = capacity, x24 = bytes read,
+	// x25 = path byte ptr, then the grown capacity.
 	g.emit("stp x29, x30, [sp, #-288]!")
 	g.emit("mov x29, sp")
 	g.emit("stp x19, x20, [sp, #16]")
@@ -9088,28 +9477,51 @@ func (g *generator) emitReadFileBytesRuntime() {
 	g.syscallFstat()
 	g.emit("tbnz x0, #63, .Lrfb_err_close")
 	g.emit("ldr x23, [x29, #%d]", 96+g.statSizeOff()) // st_size
-	// Fresh u8[] of st_size bytes; __alloc_u8 owns the
-	// cap/rc/len header layout and the n==0 empty sentinel.
+	// cap = st_size + 1; the spare byte is the probe that catches a
+	// file longer than its hint (#9065). __alloc_u8 owns the
+	// cap/rc/len header layout.
+	g.emit("add x23, x23, #1")
 	g.emit("mov x0, x23")
 	g.emit("bl __alloc_u8")
 	g.emit("mov x22, x0") // x22 = data ptr
-	// Read loop.
+	// Read loop. x23 = capacity, x24 = bytes read; the header's len
+	// is stamped from x24 once EOF is in.
 	g.emit("mov x24, #0")
 	g.label(".Lrfb_loop")
 	g.emit("cmp x24, x23")
-	g.emit("b.ge .Lrfb_done")
+	g.emit("b.lo .Lrfb_read")
+	// Buffer full and not at EOF: double the capacity, with a page
+	// floor so a /proc file (hint 0, cap 1) gets there in one step.
+	g.emit("lsl x25, x23, #1")
+	g.emit("cmp x25, #4096")
+	g.emit("b.hs .Lrfb_grow")
+	g.emit("mov x25, #4096")
+	g.label(".Lrfb_grow")
+	g.emit("mov x0, x25")
+	g.emit("bl __alloc_u8")
+	g.emit("str x0, [x29, #72]") // carry the new buffer across the dec
+	g.emit("mov x1, x22")
+	g.emit("mov x2, x24")
+	g.emit("bl __fern_memcpy")
+	g.emit("mov x0, x22")
+	g.emit("mov x1, #1") // stride
+	g.emit("bl __fern_arr_dec")
+	g.emit("ldr x22, [x29, #72]")
+	g.emit("mov x23, x25")
+	g.label(".Lrfb_read")
 	g.emit("mov x0, x21")
 	g.emit("add x1, x22, x24")
 	g.emit("sub x2, x23, x24")
 	g.syscall("read")
 	g.emit("tbnz x0, #63, .Lrfb_err_close")
-	g.emit("cbz x0, .Lrfb_done") // EOF before end (file shrunk)
+	g.emit("cbz x0, .Lrfb_done") // EOF
 	g.emit("add x24, x24, x0")
 	g.emit("b .Lrfb_loop")
 	g.label(".Lrfb_done")
 	// close(fd).
 	g.emit("mov x0, x21")
 	g.syscall("close")
+	g.emitArrayLenStore("w24", "x22")
 	// Build Result.Ok(u8[]): 16-byte box {tag=0 @0, data @8}.
 	g.emit("mov x0, #16")
 	g.emit("bl __fern_alloc_rc1")
@@ -9767,6 +10179,165 @@ func (g *generator) emitReadLinkRuntime() {
 	g.emit("add sp, sp, #96")
 	g.emit("ret")
 	g.sizeDirective("__fern_read_link")
+	g.line(".ltorg")
+}
+
+// emitRenameRuntime emits `__fern_rename(from, to)` —
+// renameat(AT_FDCWD, from, AT_FDCWD, to). An existing `to` of a
+// compatible type is replaced atomically; a rename across filesystems is
+// EXDEV and stays EXDEV, because the copy-then-remove `mv(1)` falls back
+// to is the caller's.
+func (g *generator) emitRenameRuntime() {
+	g.emitPathOpRuntime("__fern_rename", "rnam", "renameat", 2, false, func() {
+		g.atFdcwd("x0")
+		g.emit("mov x1, x21")
+		g.atFdcwd("x2")
+		g.emit("mov x3, x23")
+	})
+}
+
+// emitChmodRuntime emits `__fern_chmod(path, mode)` —
+// fchmodat(AT_FDCWD, path, mode, 0). The umask is not consulted: it
+// filters a creation, and this is not one. The zero fourth argument is
+// Darwin's flags word; Linux's fchmodat has only three and ignores it.
+func (g *generator) emitChmodRuntime() {
+	g.emitPathOpRuntime("__fern_chmod", "chmd", "fchmodat", 1, true, func() {
+		g.atFdcwd("x0")
+		g.emit("mov x1, x21")
+		g.emit("and x2, x24, #4095")
+		g.emit("mov x3, #0")
+	})
+}
+
+// emitSetFileTimesRuntime emits `__fern_set_file_times(path_data,
+// path_len, atime_sec, atime_nsec, mtime_sec, mtime_nsec, flags)` in
+// (x0..x6) → Result[void, IoError].
+//
+// On Linux that is utimensat(AT_FDCWD, path, times, flags): two
+// `struct timespec`s on the stack, access time first, with UTIME_OMIT in
+// the nanosecond half of either one the caller asked to leave alone.
+//
+// XNU has no utimensat syscall — libc builds it out of setattrlistat(2),
+// and so does this. The attribute list names only the timestamps that
+// are not omitted, and they are packed into the buffer in ASCENDING
+// ATTRIBUTE-BIT order, which puts ATTR_CMN_MODTIME (0x400) before
+// ATTR_CMN_ACCTIME (0x1000) — the reverse of the timespec order Linux
+// wants. Omitting both leaves an empty list, which setattrlistat accepts
+// and which does nothing, exactly as UTIME_OMIT on both halves does.
+//
+// The two operands are read into the frame before the path copy: they
+// arrive in argument registers that NUL-terminating the path clobbers.
+func (g *generator) emitSetFileTimesRuntime() {
+	g.line("")
+	g.line(".global __fern_set_file_times")
+	g.typeDirective("__fern_set_file_times")
+	g.label("__fern_set_file_times")
+	// Frame: fp/lr (16) + x19..x24 (48) + 16-byte inline-spill scratch
+	// at [x29+80] + the syscall's own operands from [x29+96]: the
+	// timespec pair on Linux, the 24-byte attrlist at +96 with its
+	// attribute buffer at +128 and the buffer's length at +160 on
+	// Darwin.
+	g.emit("sub sp, sp, #176")
+	g.emit("stp x29, x30, [sp]")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	g.emit("stp x21, x22, [sp, #32]")
+	g.emit("stp x23, x24, [sp, #48]")
+	g.emit("mov x19, x0") // path_data
+	g.emit("mov x20, x1") // path_len
+	g.emit("mov x23, x6") // flags
+	if g.darwin {
+		g.emit("mov w9, #0")         // commonattr
+		g.emit("add x10, x29, #128") // buffer cursor
+		g.emit("tbnz x23, #2, .Lsft_no_m")
+		g.emit("orr w9, w9, #0x400") // ATTR_CMN_MODTIME
+		g.emit("stp x4, x5, [x10]")
+		g.emit("add x10, x10, #16")
+		g.label(".Lsft_no_m")
+		g.emit("tbnz x23, #1, .Lsft_no_a")
+		g.emit("orr w9, w9, #0x1000") // ATTR_CMN_ACCTIME
+		g.emit("stp x2, x3, [x10]")
+		g.emit("add x10, x10, #16")
+		g.label(".Lsft_no_a")
+		g.emit("add x11, x29, #128")
+		g.emit("sub x10, x10, x11")
+		g.emit("str x10, [x29, #160]") // the buffer's length
+		g.emit("add x11, x29, #96")
+		g.emit("mov w12, #5") // ATTR_BIT_MAP_COUNT
+		g.emit("strh w12, [x11]")
+		g.emit("strh wzr, [x11, #2]") // reserved
+		g.emit("str w9, [x11, #4]")   // commonattr
+		g.emit("str wzr, [x11, #8]")  // volattr
+		g.emit("str wzr, [x11, #12]") // dirattr
+		g.emit("str wzr, [x11, #16]") // fileattr
+		g.emit("str wzr, [x11, #20]") // forkattr
+	} else {
+		g.emit("stp x2, x3, [x29, #96]")  // atime
+		g.emit("stp x4, x5, [x29, #112]") // mtime
+		// UTIME_OMIT (1<<30 - 2) in the nanosecond half is how
+		// utimensat is told to leave one of the pair alone; the
+		// seconds half is then not read.
+		g.emit("mov x9, #1073741822")
+		g.emit("tbz x23, #1, .Lsft_a")
+		g.emit("stp xzr, x9, [x29, #96]")
+		g.label(".Lsft_a")
+		g.emit("tbz x23, #2, .Lsft_m")
+		g.emit("stp xzr, x9, [x29, #112]")
+		g.label(".Lsft_m")
+	}
+	g.emitStrDataPtr2W("x21", "x19", "x20", 80)
+	g.emitNulTermPath2W("x21", "x21", "x20")
+	g.atFdcwd("x0")
+	g.emit("mov x1, x21")
+	if g.darwin {
+		g.emit("add x2, x29, #96")  // attrlist
+		g.emit("add x3, x29, #128") // attribute buffer
+		g.emit("ldr x4, [x29, #160]")
+		g.emit("and x5, x23, #1") // FSOPT_NOFOLLOW
+		g.emit("mov x16, #524")   // setattrlistat
+		g.emit("svc #0x80")
+		g.emit("b.cc .Lsft_done")
+		g.emit("neg x0, x0")
+		g.label(".Lsft_done")
+	} else {
+		g.emit("add x2, x29, #96")
+		// AT_SYMLINK_NOFOLLOW is 0x100; bit 0 of the Fern word
+		// selects it.
+		g.emit("mov x3, #0")
+		g.emit("tbz x23, #0, .Lsft_go")
+		g.emit("mov x3, #256")
+		g.label(".Lsft_go")
+		g.syscall("utimensat")
+	}
+	g.emitFreeNulTermPath2W("x21", "x20")
+	g.emit("tbnz x0, #63, .Lsft_err")
+	g.emit("mov x0, #16")
+	g.emit("bl __fern_alloc_rc1")
+	g.emit("str wzr, [x0]")     // tag = 0 (Ok)
+	g.emit("str xzr, [x0, #8]") // unit payload
+	g.emit("b .Lsft_return")
+
+	g.label(".Lsft_err")
+	g.emit("neg x22, x0") // errno
+	g.emit("mov x0, x22")
+	g.emit("mov x1, x19")
+	g.emit("mov x2, x20")
+	g.emit("bl __fern_io_error")
+	g.emit("mov x19, x0") // stash the IoError box across the alloc
+	g.emit("mov x0, #16")
+	g.emit("bl __fern_alloc_rc1")
+	g.emit("mov w1, #1")
+	g.emit("str w1, [x0]") // tag = 1 (Err)
+	g.emit("str x19, [x0, #8]")
+
+	g.label(".Lsft_return")
+	g.emit("ldp x23, x24, [sp, #48]")
+	g.emit("ldp x21, x22, [sp, #32]")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x29, x30, [sp]")
+	g.emit("add sp, sp, #176")
+	g.emit("ret")
+	g.sizeDirective("__fern_set_file_times")
 	g.line(".ltorg")
 }
 
@@ -12118,6 +12689,18 @@ type generator struct {
 	// usesTimerFd pulls in `__fern_timer_fd(ms)` — a CLOCK_MONOTONIC
 	// timerfd readable after `ms` (Linux; -1 stub on Darwin).
 	usesTimerFd bool
+	// usesStatfs pulls in `__fern_statfs(path)` — statfs(2) projected
+	// onto FsStat, plus two pathconf(2) calls on Darwin, whose statfs
+	// record has no name-length field.
+	usesStatfs bool
+	// usesRlimitNofile pulls in `__fern_rlimit_nofile()` — the soft
+	// RLIMIT_NOFILE, or i64 max when the resource is unlimited.
+	usesRlimitNofile bool
+	// usesProcessAlive pulls in `__fern_process_alive(pid)` — kill(pid, 0),
+	// 1 when the process exists (success or EPERM) and 0 when it does not
+	// (ESRCH). A non-positive pid is 0 without a syscall: those spellings
+	// name a process group to kill(2), not a process.
+	usesProcessAlive bool
 	// usesIsatty pulls in `__fern_isatty(fd)` — one terminal-attribute
 	// ioctl, 1 when it succeeds.
 	usesIsatty bool
@@ -12371,6 +12954,13 @@ type generator struct {
 	// Linux, or `select(0,…,&timeout)` (BSD 93) on Darwin; ms <= 0
 	// returns immediately. Void.
 	usesSleepMs bool
+	// usesSleepNs pulls in `__fern_sleep_ns(ns)` — the same sleep at the
+	// resolution `nanosleep` already takes. Darwin has no nanosleep
+	// syscall and sleeps through `select`, whose timeval is
+	// microseconds, so the request is rounded UP to the next
+	// microsecond there — never shorter than asked, which is the whole
+	// contract.
+	usesSleepNs bool
 	// usesProcFork / usesProcWaitpid pull in `__fern_proc_fork()` —
 	// clone(SIGCHLD,0,0,0,0) (#220) on Linux (arm64 has no bare fork
 	// syscall) or fork (BSD 2, x1-flag normalised) on Darwin: 0 in
@@ -12475,6 +13065,11 @@ type generator struct {
 	usesCreateSymlink bool
 	usesReadLink      bool
 	usesUmask         bool
+	// The filesystem-metadata primitives (#9059): renameat, fchmodat and
+	// utimensat — on Darwin, setattrlistat in place of the last.
+	usesRename       bool
+	usesChmod        bool
+	usesSetFileTimes bool
 	// usesIoError pulls in `__fern_io_error(errno, path)` —
 	// constructs an `IoError` enum box from a Linux errno.
 	// Shared by read_file + write_file + the Reader / Writer
@@ -13183,6 +13778,8 @@ func (g *generator) prescanOps(ops []ir.Op) {
 			g.usesNowNs = true
 		case "sleep_ms":
 			g.usesSleepMs = true
+		case "sleep_ns":
+			g.usesSleepNs = true
 		case "read_file":
 			g.needFern("__fern_utf8_valid")
 		}
@@ -16380,6 +16977,21 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		case "timer_fd":
 			target = "__fern_timer_fd"
 			g.usesTimerFd = true
+		case "process_alive":
+			// process_alive(pid): kill(pid, 0) — 1 when the process
+			// exists, 0 when it does not.
+			target = "__fern_process_alive"
+			g.usesProcessAlive = true
+		case "rlimit_nofile":
+			// rlimit_nofile(): the soft RLIMIT_NOFILE, i64 in x0.
+			target = "__fern_rlimit_nofile"
+			g.usesRlimitNofile = true
+		case "statfs":
+			// statfs(path): Result[FsStat, IoError].
+			target = "__fern_statfs"
+			g.usesStatfs = true
+			g.usesAlloc = true
+			g.usesIoError = true
 		case "isatty":
 			target = "__fern_isatty"
 			g.usesIsatty = true
@@ -16525,6 +17137,11 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			// or select (Darwin). Void.
 			target = "__fern_sleep_ms"
 			g.usesSleepMs = true
+		case "sleep_ns":
+			// sleep_ns(ns): the same sleep at nanosecond resolution.
+			// Void.
+			target = "__fern_sleep_ns"
+			g.usesSleepNs = true
 		case "proc_exec":
 			target = "__fern_proc_exec"
 			g.usesProcExec = true
@@ -16707,6 +17324,21 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			// umask(mask): the previous mask. Cannot fail.
 			target = "__fern_umask"
 			g.usesUmask = true
+		case "rename":
+			// rename(from, to): Result[void, IoError] —
+			// renameat, which replaces an existing `to`.
+			target = "__fern_rename"
+			g.usesRename = true
+		case "chmod":
+			// chmod(path, mode): Result[void, IoError] —
+			// fchmodat on an entry that already exists.
+			target = "__fern_chmod"
+			g.usesChmod = true
+		case "set_file_times":
+			// set_file_times(path, asec, ansec, msec, mnsec,
+			// flags): Result[void, IoError] — utimensat.
+			target = "__fern_set_file_times"
+			g.usesSetFileTimes = true
 		case "temp_dir":
 			// temp_dir(prefix): Result[string, IoError] —
 			// mkdirat("/tmp/<prefix>-<monotonic_ns>").

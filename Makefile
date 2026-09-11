@@ -15,7 +15,12 @@ build: bin/fern
 # The stdlib sources are baked in with go:embed (internal/stdlib/stdlib.go), so
 # they are inputs to the binary just as the .go files are. Leaving them out made
 # an edit to std/*.fern silently test against the previously embedded copy.
-bin/fern: $(shell find . -name '*.go' -not -path './build/*') $(shell find internal/stdlib -name '*.fern')
+#
+# .claude/worktrees holds whole git worktrees of this repository, so a find over
+# the tree makes every OTHER checkout's sources dependencies of this one's
+# binary — and a scratch file deleted there between the find and the build stops
+# make with "No rule to make target".
+bin/fern: $(shell find . -name '*.go' -not -path './build/*' -not -path './.claude/*') $(shell find internal/stdlib -name '*.fern')
 	@mkdir -p bin
 	go build -o $@ ./cmd/fern
 

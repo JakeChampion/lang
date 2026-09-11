@@ -40,9 +40,66 @@ function passwd_fixture(): string {
     // of each is the one a lookup finds.
     s = s + "alice:x:2000:2000::/:/bin/sh\n";
     s = s + "bob:x:1000:1000::/:/bin/sh\n";
+    // The gecos field finger reads: a comma-separated list whose first
+    // element is the real name, and `&` standing for the login name
+    // with its first letter capitalised.
+    s = s + "dan:x:1002:1002:Dan Jones,Room 1,x1,x2:/home/dan:/bin/sh\n";
+    s = s + "erin:x:1003:1003:& Smith:/home/erin:/bin/sh\n";
+    s = s + "frank:x:1004:1004:&&:/home/frank:/bin/sh\n";
+    s = s + "gina:x:1005:1005:,nothing before the comma:/home/gina:/bin/sh\n";
+    // A line that stops after the gid is still an entry, with nothing
+    // where the gecos, the directory and the shell would be.
+    s = s + "short:x:1006:1006\n";
     // No trailing newline on the last line.
     s = s + "carol:x:1001:1001::/:/bin/sh";
     return s;
+}
+
+// The tail of the entry pinky prints: the gecos field, the home
+// directory and the shell.
+function user_of(o: Option[pwdb.User]): pwdb.User {
+    match (o) {
+        Some(u) => {
+            return u;
+        },
+        None => {
+            return pwdb.User { name: "", uid: 0 as i64, gid: 0 as i64, gecos: "", dir: "", shell: "" };
+        }
+    }
+}
+
+function test_full_name(): test.TestOutcome {
+    if (user_of(pwdb.user_by_name_in(passwd_fixture(), "dan")).full_name() != "Dan Jones") {
+        return test.fail("the gecos field up to the first comma");
+    }
+    if (user_of(pwdb.user_by_name_in(passwd_fixture(), "erin")).full_name() != "Erin Smith") {
+        return test.fail("& is the login name with its first letter capitalised");
+    }
+    if (user_of(pwdb.user_by_name_in(passwd_fixture(), "frank")).full_name() != "FrankFrank") {
+        return test.fail("every & is expanded, not just the first");
+    }
+    if (user_of(pwdb.user_by_name_in(passwd_fixture(), "gina")).full_name() != "") {
+        return test.fail("a leading comma leaves no name");
+    }
+    if (user_of(pwdb.user_by_name_in(passwd_fixture(), "alice")).full_name() != "Alice") {
+        return test.fail("a gecos with no comma is the whole field");
+    }
+    return test.assert_eq(user_of(pwdb.user_by_name_in(passwd_fixture(), "root")).full_name(), "root");
+}
+
+function test_home_and_shell(): test.TestOutcome {
+    var dan: pwdb.User = user_of(pwdb.user_by_name_in(passwd_fixture(), "dan"));
+    if (dan.dir != "/home/dan" || dan.shell != "/bin/sh") {
+        return test.fail("the directory and the shell");
+    }
+    var short: pwdb.User = user_of(pwdb.user_by_name_in(passwd_fixture(), "short"));
+    if (short.name != "short") {
+        return test.fail("a line that stops after the gid is an entry");
+    }
+    if (short.gecos != "" || short.dir != "" || short.shell != "") {
+        return test.fail("the fields that are not there are empty");
+    }
+    return test.pass();
 }
 
 function group_fixture(): string {
@@ -182,33 +239,50 @@ function utmp_fixture_path(): string {
     return "coreutils_pwdb_test_utmp.bin";
 }
 
+// One record, written for the layout the RUNNING TARGET reads.
+//
+// Everything up to ut_exit at 332 is the same everywhere. The tail is not:
+// glibc sizes ut_session and ut_tv by __WORDSIZE_TIME64_COMPAT32, so where
+// that is 1 (x86-64) the two fields keep 32-bit widths and the record is
+// 384 bytes with tv_sec at 340, and where it is 0 (arm64) ut_session is a
+// `long` and ut_tv a real struct timeval, so the record is 400 with tv_sec
+// at 344. `lib/utmp.fern` reads whichever the target uses, so a fixture
+// fixed at 384 pins nothing on a target that reads 400 — it hands the
+// reader one and a bit records instead of two.
+//
+// Each branch spells its own offsets out rather than asking the reader for
+// them, so the two layouts stay independently stated here.
+function put_record(bs: u8[], typ: i32, pid: i64, line: string, id: string, user: string, host: string, sec: i64): u8[] {
+    var out: u8[] = bs;
+    out = put_u16(out, typ);
+    out = put_pad(out, 2);
+    out = put_i32(out, pid);
+    out = put_field(out, line, 32);
+    out = put_field(out, id, 4);
+    out = put_field(out, user, 32);
+    out = put_field(out, host, 256);
+    if (target_arch() == "x86-64") {
+        // ut_exit@332 (two i16) + ut_session@336 (i32), tv_sec@340 (i32),
+        // tv_usec@344, ut_addr_v6@348 and the reserved bytes: 384 total.
+        out = put_pad(out, 8);
+        out = put_i32(out, sec);
+        out = put_pad(out, 4);
+        return put_pad(out, 36);
+    }
+    // ut_exit@332 (two i16), ut_session@336 (i64), tv_sec@344 (i64),
+    // tv_usec@352 (i64), ut_addr_v6@360 and the reserved bytes: 400 total.
+    out = put_pad(out, 12);
+    out = put_i64(out, sec);
+    out = put_pad(out, 8);
+    return put_pad(out, 40);
+}
+
 function utmp_fixture_bytes(): u8[] {
     var bs: u8[] = [];
-    // Record 1: ut_type=7, ut_pid=1234, ut_line="pts/3", ut_id="ts/1",
-    // ut_user="alice", ut_host="10.0.0.1", ut_tv.tv_sec=1788775872.
-    bs = put_u16(bs, 7);
-    bs = put_pad(bs, 2);
-    bs = put_i32(bs, 1234);
-    bs = put_field(bs, "pts/3", 32);
-    bs = put_field(bs, "ts/1", 4);
-    bs = put_field(bs, "alice", 32);
-    bs = put_field(bs, "10.0.0.1", 256);
-    bs = put_pad(bs, 8);
-    bs = put_i32(bs, 1788775872);
-    bs = put_pad(bs, 4);
-    bs = put_pad(bs, 36);
-    // Record 2: a DEAD_PROCESS with no user, which no lookup answers.
-    bs = put_u16(bs, 8);
-    bs = put_pad(bs, 2);
-    bs = put_i32(bs, 99);
-    bs = put_field(bs, "tty1", 32);
-    bs = put_field(bs, "", 4);
-    bs = put_field(bs, "", 32);
-    bs = put_field(bs, "", 256);
-    bs = put_pad(bs, 8);
-    bs = put_i32(bs, 1788775873);
-    bs = put_pad(bs, 4);
-    bs = put_pad(bs, 36);
+    // Record 1: a USER_PROCESS. Record 2: a DEAD_PROCESS with no user,
+    // which no lookup answers.
+    bs = put_record(bs, 7, 1234 as i64, "pts/3", "ts/1", "alice", "10.0.0.1", 1788775872 as i64);
+    bs = put_record(bs, 8, 99 as i64, "tty1", "", "", "", 1788775873 as i64);
     return bs;
 }
 
@@ -222,6 +296,18 @@ function put_i32(bs: u8[], v: i64): u8[] {
     var x: i64 = v;
     var i: i32 = 0;
     while (i < 4) {
+        out = out.append((x % (256 as i64)) as u8);
+        x = x / (256 as i64);
+        i = i + 1;
+    }
+    return out;
+}
+
+function put_i64(bs: u8[], v: i64): u8[] {
+    var out: u8[] = bs;
+    var x: i64 = v;
+    var i: i32 = 0;
+    while (i < 8) {
         out = out.append((x % (256 as i64)) as u8);
         x = x / (256 as i64);
         i = i + 1;
@@ -328,6 +414,8 @@ function main(): i32 {
     r = r.it("an unnamed gid resolves to nothing", test_group_names);
     r = r.it("no gids resolve to no names", test_empty_gid_list);
     r = r.it("parse_id is digits and nothing else", test_parse_id);
+    r = r.it("the gecos field's real name", test_full_name);
+    r = r.it("the home directory and the shell", test_home_and_shell);
     r = r.it("the utmp record's fields", test_utmp_record_fields);
     r = r.it("a partial or missing utmp", test_utmp_partial_and_missing);
     r = r.it("the user on a terminal", test_utmp_user_on_line);

@@ -1,0 +1,209 @@
+// runcon.fern — GNU-compatible `runcon`.
+//
+//   runcon CONTEXT COMMAND [args]
+//   runcon [-c] [-u USER] [-r ROLE] [-t TYPE] [-l RANGE] COMMAND [args]
+//
+// With neither CONTEXT nor COMMAND it prints the calling process's own
+// security context, and that is the one thing it does on a kernel
+// without SELinux — where every other invocation is
+// `runcon may be used only on a SELinux kernel` and exit 125.
+//
+// The argument shape reads oddly until the order is written out. It is:
+//
+//   1. no operands at all      print getcon() and exit 0, whatever
+//                              options were given — `runcon -t x` and
+//                              `runcon --` both print the context
+//   2. no -u -r -t -l -c       the first operand is the CONTEXT
+//   3. nothing left            `no command specified`, with the usage
+//                              line, exit 125
+//   4. no SELinux kernel       the refusal above, WITHOUT a usage line
+//
+// Options do not permute: glibc's optstring is `+r:t:u:l:c`, so the first
+// operand ends the scan and `runcon foo -x` runs `-x`. Giving one of the
+// four valued options twice is `multiple roles` / `multiple types` /
+// `multiple users` / `multiple levelranges`, reported where it is met
+// and so ahead of everything above.
+//
+// Exit status is gnulib's command-runner set: 125 for runcon's own
+// failures, 126 for a command that cannot be invoked, 127 for one that
+// cannot be found.
+//
+// ---- what this does NOT do -------------------------------------------------
+//
+// Running the command is not implemented, because three separate pieces
+// of it are blocked on runtime primitives Fern does not have:
+//
+//   - execvp(3) passes the command NAME as the child's argv[0], and
+//     `proc_exec` forces argv[0] to be the resolved path it was handed,
+//     so the child would see a different argv[0] than GNU gives it;
+//   - `-c` computes the transition context from getfilecon(3) of the
+//     command, an extended-attribute read with no primitive at all;
+//   - security_check_context(3) writes a context into selinuxfs and
+//     reads the kernel's verdict back off the SAME descriptor, which
+//     `write_file` cannot do, so `invalid context: %s` is unreachable.
+//
+// So an invocation that would run something reports
+// `runcon: running a command in a security context is not supported on
+// this system` and exits 125 — after the SELinux check, which means a
+// kernel without SELinux never reaches it and the corpus compares byte
+// for byte. The options are all DECLARED regardless, because their
+// getopt behaviour is observable whether or not the command runs: a
+// required argument, a place in the prefix space, and a position in the
+// ambiguity list.
+import "std/string";
+import "std/array";
+import "./lib/gnu";
+import "./lib/selinux";
+
+function opt_role(): i32 {
+  return 1;
+}
+
+function opt_type(): i32 {
+  return 2;
+}
+
+function opt_user(): i32 {
+  return 3;
+}
+
+function opt_range(): i32 {
+  return 4;
+}
+
+function opt_compute(): i32 {
+  return 5;
+}
+
+// EXIT_CANCELED: runcon itself failed, as against the command failing.
+function canceled(): i32 {
+  return 125;
+}
+
+function help_text(): string {
+  var out: string = "";
+  out = out + "Usage: " + gnu.prog() + " CONTEXT COMMAND [args]\n";
+  out = out + "  or:  " + gnu.prog() + " [ -c ] [-u USER] [-r ROLE] [-t TYPE] [-l RANGE] COMMAND [args]\n";
+  out = out + "Run a program in a different SELinux security context.\n";
+  out = out + "With neither CONTEXT nor COMMAND, print the current security context.\n";
+  out = out + "\n";
+  out = out + "Mandatory arguments to long options are mandatory for short options too.\n";
+  out = out + "  CONTEXT            Complete security context\n";
+  out = out + "  -c, --compute      compute process transition context before modifying\n";
+  out = out + "  -t, --type=TYPE    type (for same role as parent)\n";
+  out = out + "  -u, --user=USER    user identity\n";
+  out = out + "  -r, --role=ROLE    role\n";
+  out = out + "  -l, --range=RANGE  levelrange\n";
+  out = out + "      --help        display this help and exit\n";
+  out = out + "      --version     output version information and exit\n";
+  out = out + "\n";
+  out = out + "Exit status:\n";
+  out = out + "  125  if the " + gnu.prog() + " command itself fails\n";
+  out = out + "  126  if COMMAND is found but cannot be invoked\n";
+  out = out + "  127  if COMMAND cannot be found\n";
+  out = out + "  -    the exit status of COMMAND otherwise\n";
+  return out;
+}
+
+// One diagnostic and exit, with no usage line: the faults runcon reports
+// for itself rather than for how it was called.
+function die(msg: string): void {
+  gnu.error(msg);
+  exit(canceled());
+}
+
+// Which of the four valued options has already been seen. They are
+// tracked separately from their values because an EMPTY value counts:
+// `runcon -r '' -r ''` is `multiple roles`.
+struct Seen { role: boolean, type_: boolean, user: boolean, range: boolean }
+
+function note(seen: Seen, id: i32): Seen {
+  if (id == opt_role()) {
+    if (seen.role) {
+      die("multiple roles");
+    }
+    return Seen { ...seen, role: true };
+  }
+  if (id == opt_type()) {
+    if (seen.type_) {
+      die("multiple types");
+    }
+    return Seen { ...seen, type_: true };
+  }
+  if (id == opt_user()) {
+    if (seen.user) {
+      die("multiple users");
+    }
+    return Seen { ...seen, user: true };
+  }
+  if (seen.range) {
+    die("multiple levelranges");
+  }
+  return Seen { ...seen, range: true };
+}
+
+function any(seen: Seen): boolean {
+  return seen.role || seen.type_ || seen.user || seen.range;
+}
+
+function print_current_context(): i32 {
+  match (selinux.context()) {
+    Ok(c) => {
+      gnu.write_out_with(c + "\n", canceled());
+      return 0;
+    },
+    Err(e) => {
+      die("failed to get current context: " + gnu.io_error_text(e));
+    }
+  }
+  return canceled();
+}
+
+function main(): i32 {
+  var opts: gnu.Opt[] = [];
+  opts = opts.append(gnu.valued("r", "role", opt_role()));
+  opts = opts.append(gnu.valued("t", "type", opt_type()));
+  opts = opts.append(gnu.valued("u", "user", opt_user()));
+  opts = opts.append(gnu.valued("l", "range", opt_range()));
+  opts = opts.append(gnu.flag("c", "compute", opt_compute()));
+
+  var seen: Seen = Seen { role: false, type_: false, user: false, range: false };
+  var compute: boolean = false;
+  var g: gnu.Getopt = gnu.getopt_new(args(), opts, "runcon", help_text(), canceled()).in_order();
+  while (true) {
+    var res: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    g = res.1;
+    match (res.0) {
+      Some(m) => {
+        if (m.id == opt_compute()) {
+          compute = true;
+        } else {
+          seen = note(seen, m.id);
+        }
+      },
+      None => {
+        break;
+      }
+    }
+  }
+
+  var operands: string[] = g.operands();
+  if (operands.len() == 0) {
+    return print_current_context();
+  }
+
+  var first_command: i32 = 0;
+  if (!any(seen) && !compute) {
+    // The lone operand is the CONTEXT, which leaves nothing to run.
+    first_command = 1;
+  }
+  if (first_command >= operands.len()) {
+    gnu.die_usage("no command specified", canceled());
+  }
+
+  if (!selinux.enabled()) {
+    die(gnu.prog() + " may be used only on a SELinux kernel");
+  }
+  die("running a command in a security context is not supported on this system");
+  return canceled();
+}

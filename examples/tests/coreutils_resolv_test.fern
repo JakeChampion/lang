@@ -164,6 +164,82 @@ function names(ss: resolv.Source[]): string {
   return out;
 }
 
+// `canon_host`'s files half: the name a hosts line answers to, which is
+// the FIRST name on it however far along the match was.
+function name_of(o: Option[string]): string {
+  match (o) {
+    Some(v) => {
+      return v;
+    },
+    None => {
+      return "";
+    }
+  }
+}
+
+function test_hosts_canon(): test.TestOutcome {
+  if (name_of(resolv.hosts_canon(hosts_fixture(), "build")) != "build.example.com") {
+    return test.fail("an alias answers with the canonical name");
+  }
+  if (name_of(resolv.hosts_canon(hosts_fixture(), "build.example.com")) != "build.example.com") {
+    return test.fail("the canonical name answers with itself");
+  }
+  if (name_of(resolv.hosts_canon(hosts_fixture(), "VM")) != "VM") {
+    return test.fail("the file's spelling is the answer, not the query's");
+  }
+  if (name_of(resolv.hosts_canon(hosts_fixture(), "vm")) != "VM") {
+    return test.fail("names compare caselessly");
+  }
+  if (name_of(resolv.hosts_canon(hosts_fixture(), "nosuch")) != "") {
+    return test.fail("a name in no line has no canonical form");
+  }
+  if (name_of(resolv.hosts_canon(hosts_fixture(), "nonsense")) != "") {
+    return test.fail("a line that does not open with an address is not a line");
+  }
+  return test.pass();
+}
+
+function test_hosts_canon_takes_ipv6_lines(): test.TestOutcome {
+  // An address lookup skips the IPv6 lines because it wants an A
+  // record; a canonical-name lookup is asked without a family and takes
+  // them, so `ip6-loopback` answers from the `::1` line.
+  return test.assert_eq(name_of(resolv.hosts_canon(hosts_fixture(), "ip6-loopback")), "localhost");
+}
+
+// The wire half: the owner of the A record, which is the end of the
+// CNAME chain and what a resolver reports as the canonical name.
+function canon_of(r: (i32, string)): string {
+  if (r.0 != resolv.success()) {
+    return "";
+  }
+  return r.1;
+}
+
+function test_dns_canon_follows_the_cname(): test.TestOutcome {
+  if (canon_of(resolv.dns_answer_canon(reply(0, 4660), 4660, "vm.example.com")) != "www.example.com") {
+    return test.fail("the A record's owner, not the name asked for");
+  }
+  if (resolv.dns_answer_canon(reply(3, 4660), 4660, "vm.example.com").0 != resolv.notfound()) {
+    return test.fail("NXDOMAIN is notfound here too");
+  }
+  if (resolv.dns_answer_canon(reply(0, 4660), 4661, "vm.example.com").0 != resolv.unavail()) {
+    return test.fail("a reply to another id is unavail");
+  }
+  if (resolv.dns_answer_canon(reply(0, 4660), 4660, "other.example.com").0 != resolv.notfound()) {
+    return test.fail("a chain that never reaches the name asked for is notfound");
+  }
+  return test.pass();
+}
+
+function test_dns_canon_without_a_cname(): test.TestOutcome {
+  // One A record answering the question directly: the canonical name is
+  // the name that was asked for.
+  var m: i32[] = [18, 52, 129, 128, 0, 1, 0, 1, 0, 0, 0, 0];
+  m = m.concat([2, 118, 109, 7, 101, 120, 97, 109, 112, 108, 101, 3, 99, 111, 109, 0, 0, 1, 0, 1]);
+  m = m.concat([192, 12, 0, 1, 0, 1, 0, 0, 0, 60, 0, 4, 93, 184, 216, 34]);
+  return test.assert_eq(canon_of(resolv.dns_answer_canon(bytes(m), 4660, "vm.example.com")), "vm.example.com");
+}
+
 function test_nsswitch_default(): test.TestOutcome {
   if (names(resolv.default_sources()) != "files dns") {
     return test.fail("compiled-in default");
@@ -435,13 +511,11 @@ function scripted(qname: string): (i32, i32) {
 // which one it is decides whether there is a retry at all and whose
 // status is reported.
 function lead(as_is: string, suffixes: string[]): (i32, i32) {
-  return resolv.dns_search(resolv.SearchPlan { as_is: as_is, suffixes: suffixes, leads: true },
-    (q: string): (i32, i32) => { return scripted(q); });
+  return resolv.dns_search(resolv.SearchPlan { as_is: as_is, suffixes: suffixes, leads: true }, 0, (q: string): (i32, i32) => scripted(q));
 }
 
 function trail(as_is: string, suffixes: string[]): (i32, i32) {
-  return resolv.dns_search(resolv.SearchPlan { as_is: as_is, suffixes: suffixes, leads: false },
-    (q: string): (i32, i32) => { return scripted(q); });
+  return resolv.dns_search(resolv.SearchPlan { as_is: as_is, suffixes: suffixes, leads: false }, 0, (q: string): (i32, i32) => scripted(q));
 }
 
 // __res_context_search's reactions to a name that did not answer.
@@ -562,6 +636,10 @@ function main(): i32 {
   r = r.it("hosts: names compare caselessly", test_hosts_case_insensitive);
   r = r.it("hosts: IPv6 lines are skipped", test_hosts_ipv6_lines_are_skipped);
   r = r.it("hosts: misses", test_hosts_misses);
+  r = r.it("hosts: the canonical name of an alias", test_hosts_canon);
+  r = r.it("hosts: a canonical name off an IPv6 line", test_hosts_canon_takes_ipv6_lines);
+  r = r.it("canon: the A record's owner after a CNAME", test_dns_canon_follows_the_cname);
+  r = r.it("canon: an A record answering directly", test_dns_canon_without_a_cname);
   r = r.it("nsswitch: the default is files dns", test_nsswitch_default);
   r = r.it("nsswitch: a plain hosts line", test_nsswitch_plain);
   r = r.it("nsswitch: bracketed actions", test_nsswitch_actions);

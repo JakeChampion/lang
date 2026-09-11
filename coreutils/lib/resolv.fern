@@ -488,22 +488,9 @@ function skip_name(m: u8[], pos: i32): i32 {
 // tried no further, the next one is; NXDOMAIN and a clean answer with no
 // A record are both NOTFOUND, which lets the search list go on.
 pub function dns_answer_a(msg: u8[], id: i32): (i32, i32) {
-  if (msg.len() < 12 || be16(msg, 0) != id) {
-    return (unavail(), 0);
-  }
-  var flags: i32 = be16(msg, 2);
-  if ((flags & 32768) == 0) {
-    return (unavail(), 0);
-  }
-  var rcode: i32 = flags & 15;
-  if (rcode == 3) {
-    return (notfound(), 0);
-  }
-  if (rcode == 2) {
-    return (servfail(), 0);
-  }
-  if (rcode != 0) {
-    return (unavail(), 0);
+  var head: i32 = header_status(msg, id);
+  if (head != success()) {
+    return (head, 0);
   }
   var pos: i32 = 12;
   var qd: i32 = be16(msg, 4);
@@ -533,6 +520,31 @@ pub function dns_answer_a(msg: u8[], id: i32): (i32, i32) {
   return (notfound(), 0);
 }
 
+// The reply's header as an NSS status. A response that is not a reply
+// to `id`, is malformed, or carries an error other than NXDOMAIN is
+// UNAVAIL — the server is tried no further, the next one is; NXDOMAIN is
+// NOTFOUND, which lets the search list go on.
+function header_status(msg: u8[], id: i32): i32 {
+  if (msg.len() < 12 || be16(msg, 0) != id) {
+    return unavail();
+  }
+  var flags: i32 = be16(msg, 2);
+  if ((flags & 32768) == 0) {
+    return unavail();
+  }
+  var rcode: i32 = flags & 15;
+  if (rcode == 3) {
+    return notfound();
+  }
+  if (rcode == 2) {
+    return servfail();
+  }
+  if (rcode != 0) {
+    return unavail();
+  }
+  return success();
+}
+
 // One query to one nameserver over TCP: the message behind a two-byte
 // big-endian length, the reply read until its own length prefix is
 // satisfied. Anything short of a whole reply is UNAVAIL.
@@ -542,23 +554,36 @@ function dns_exchange(ns: i32, qname: string): (i32, i32) {
   if (q.len() == 0) {
     return (notfound(), 0);
   }
+  var r: (i32, u8[]) = dns_exchange_raw(ns, q);
+  if (r.0 != success()) {
+    return (r.0, 0);
+  }
+  return dns_answer_a(r.1, id);
+}
+
+// The reply to one query from one nameserver, as (status, message): a
+// refused connection is REFUSED, anything short of a whole reply is
+// UNAVAIL, and the bytes come back under SUCCESS for the caller to read
+// as an address or as a name.
+function dns_exchange_raw(ns: i32, q: u8[]): (i32, u8[]) {
+  var none: u8[] = [];
   var framed: u8[] = [];
   framed = put16(framed, q.len());
   framed = framed.concat(q);
   var c: i32 = tcp_connect(ns, 53);
   if (c < 0) {
-    return (refused(), 0);
+    return (refused(), none);
   }
   if (tcp_send(c, string_from_bytes_unchecked(framed)) < 0) {
     tcp_close(c);
-    return (unavail(), 0);
+    return (unavail(), none);
   }
   var reply: u8[] = read_framed(c);
   tcp_close(c);
   if (reply.len() == 0) {
-    return (unavail(), 0);
+    return (unavail(), none);
   }
-  return dns_answer_a(reply, id);
+  return (success(), reply);
 }
 
 // The reply body, once its length prefix says it is all there; empty when
@@ -587,7 +612,7 @@ function read_framed(c: i32): u8[] {
 // name is put to the servers in order until one answers, and an address
 // from any server ends the search.
 pub function dns_lookup(rc: ResolvConf, name: string): (i32, i32) {
-  return dns_search(search_plan(name, rc), (q: string): (i32, i32) => dns_lookup_one(rc, q));
+  return dns_search(search_plan(name, rc), 0, (q: string): (i32, i32) => dns_lookup_one(rc, q));
 }
 
 // `dns_search(plan, ask)` — __res_context_search over an `ask` that
@@ -616,10 +641,10 @@ pub function dns_lookup(rc: ResolvConf, name: string): (i32, i32) {
 // Only an address escapes as SUCCESS. The failures collapse to the three
 // NSS statuses, a recorded SERVFAIL reporting as UNAVAIL the way glibc
 // reports its TRY_AGAIN.
-pub function dns_search(plan: SearchPlan, ask: (string) => (i32, i32)): (i32, i32) {
+pub function dns_search[T](plan: SearchPlan, zero: T, ask: (string) => (i32, T)): (i32, T) {
   var saved: i32 = 0 - 1;
   if (plan.leads) {
-    var lead: (i32, i32) = ask(plan.as_is);
+    var lead: (i32, T) = ask(plan.as_is);
     if (lead.0 == success()) {
       return lead;
     }
@@ -629,12 +654,12 @@ pub function dns_search(plan: SearchPlan, ask: (string) => (i32, i32)): (i32, i3
   var last: i32 = notfound();
   var i: i32 = 0;
   while (i < plan.suffixes.len()) {
-    var r: (i32, i32) = ask(plan.suffixes[i]);
+    var r: (i32, T) = ask(plan.suffixes[i]);
     if (r.0 == success()) {
       return r;
     }
     if (r.0 == refused()) {
-      return (unavail(), 0);
+      return (unavail(), zero);
     }
     if (r.0 == servfail()) {
       got_servfail = true;
@@ -647,19 +672,19 @@ pub function dns_search(plan: SearchPlan, ask: (string) => (i32, i32)): (i32, i3
     i = i + 1;
   }
   if (!plan.leads) {
-    var bare: (i32, i32) = ask(plan.as_is);
+    var bare: (i32, T) = ask(plan.as_is);
     if (bare.0 == success()) {
       return bare;
     }
     last = bare.0;
   }
   if (saved >= 0) {
-    return (nss_status(saved), 0);
+    return (nss_status(saved), zero);
   }
   if (got_servfail) {
-    return (unavail(), 0);
+    return (unavail(), zero);
   }
-  return (nss_status(last), 0);
+  return (nss_status(last), zero);
 }
 
 // The DNS leg's two extra statuses collapsed back to the three NSS ones.
@@ -744,6 +769,237 @@ function lookup_source(src: string, name: string): (i32, i32) {
     return dns_lookup(parse_resolv_conf(contents, hostname()), name);
   }
   return (unavail(), 0);
+}
+
+// ---- canonical names --------------------------------------------------------
+// `canon_host(name)` — the name `name` answers to, as
+// `getaddrinfo(name, AI_CANONNAME)` reports it. `who --lookup` prints
+// this in place of what the session recorded.
+//
+// It is the same NSS walk `resolve` makes, carrying a NAME rather than
+// an address: the files backend answers with the first name on the
+// matching line, so an alias resolves to its canonical name, and the DNS
+// backend answers with the owner of the A record, which is the end of
+// the CNAME chain. A name that resolves to nothing has no canonical form
+// and the caller keeps what it had.
+//
+// A numeric address is not looked up at all — getaddrinfo parses it and
+// reports it back — which is why an address in a utmp record survives
+// --lookup unchanged.
+pub function canon_host(name: string): Option[string] {
+  match (parse_ipv4(name)) {
+    Some(_) => {
+      return Some(name);
+    },
+    None => {}
+  }
+  var sources: Source[] = default_sources();
+  match (read_file("/etc/nsswitch.conf")) {
+    Ok(c) => {
+      sources = nsswitch_hosts(c);
+    },
+    Err(_) => {}
+  }
+  var i: i32 = 0;
+  while (i < sources.len()) {
+    var s: Source = sources[i];
+    var r: (i32, string) = canon_source(s.name, name);
+    if (r.0 == success()) {
+      return Some(r.1);
+    }
+    if (s.stops(r.0)) {
+      return None;
+    }
+    i = i + 1;
+  }
+  return None;
+}
+
+function canon_source(src: string, name: string): (i32, string) {
+  if (src == "files") {
+    match (read_file("/etc/hosts")) {
+      Ok(c) => {
+        match (hosts_canon(c, name)) {
+          Some(n) => {
+            return (success(), n);
+          },
+          None => {
+            return (notfound(), "");
+          }
+        }
+      },
+      Err(_) => {
+        return (unavail(), "");
+      }
+    }
+  }
+  if (src == "dns") {
+    var contents: string = "";
+    match (read_file("/etc/resolv.conf")) {
+      Ok(c) => {
+        contents = c;
+      },
+      Err(_) => {}
+    }
+    var rc: ResolvConf = parse_resolv_conf(contents, hostname());
+    return dns_search(search_plan(name, rc), "", (q: string): (i32, string) => dns_canon_one(rc, q));
+  }
+  return (unavail(), "");
+}
+
+// `hosts_canon(contents, name)` — the CANONICAL name of the first
+// /etc/hosts line that names `name`, which is the first name on that
+// line however far along the line the match was. Unlike an address
+// lookup this accepts a line of any address family: getaddrinfo is
+// asked without one, so the `::1` line names `ip6-localhost` for the
+// aliases beside it.
+pub function hosts_canon(contents: string, name: string): Option[string] {
+  var lines: string[] = contents.lines();
+  var i: i32 = 0;
+  while (i < lines.len()) {
+    var f: string[] = strip_comment(lines[i]).fields();
+    i = i + 1;
+    if (f.len() < 2 || !is_address(f[0])) {
+      continue;
+    }
+    var j: i32 = 1;
+    while (j < f.len()) {
+      if (f[j].eq_ignore_ascii_case(name)) {
+        return Some(f[1]);
+      }
+      j = j + 1;
+    }
+  }
+  return None;
+}
+
+// Whether a field is the address a hosts line opens with: a dotted quad,
+// or anything holding a colon, which is the IPv6 form and the only other
+// thing that may stand there.
+function is_address(f: string): boolean {
+  match (parse_ipv4(f)) {
+    Some(_) => {
+      return true;
+    },
+    None => {}
+  }
+  return f.index_of(":") >= 0;
+}
+
+// One canonical-name query against every nameserver in order, the same
+// way `dns_lookup_one` asks for an address.
+function dns_canon_one(rc: ResolvConf, qname: string): (i32, string) {
+  var all_refused: boolean = true;
+  var j: i32 = 0;
+  while (j < rc.nameservers.len()) {
+    var r: (i32, string) = dns_canon_exchange(rc.nameservers[j], qname);
+    if (r.0 != unavail() && r.0 != refused()) {
+      return r;
+    }
+    if (r.0 != refused()) {
+      all_refused = false;
+    }
+    j = j + 1;
+  }
+  if (all_refused && rc.nameservers.len() > 0) {
+    return (refused(), "");
+  }
+  return (unavail(), "");
+}
+
+function dns_canon_exchange(ns: i32, qname: string): (i32, string) {
+  var id: i32 = random_i32() & 65535;
+  var q: u8[] = dns_query_a(id, qname);
+  if (q.len() == 0) {
+    return (notfound(), "");
+  }
+  var r: (i32, u8[]) = dns_exchange_raw(ns, q);
+  if (r.0 != success()) {
+    return (r.0, "");
+  }
+  return dns_answer_canon(r.1, id, qname);
+}
+
+// `dns_answer_canon(msg, id, qname)` — the owner name of the first A
+// record the answer reaches from `qname`, following the CNAME chain the
+// way a resolver builds `h_name`. The statuses are `dns_answer_a`'s.
+pub function dns_answer_canon(msg: u8[], id: i32, qname: string): (i32, string) {
+  var head: i32 = header_status(msg, id);
+  if (head != success()) {
+    return (head, "");
+  }
+  var pos: i32 = 12;
+  var qd: i32 = be16(msg, 4);
+  while (qd > 0) {
+    pos = skip_name(msg, pos) + 4;
+    qd = qd - 1;
+  }
+  var cur: string = qname;
+  var an: i32 = be16(msg, 6);
+  while (an > 0) {
+    var owner: (string, i32) = read_name(msg, pos, 0);
+    pos = owner.1;
+    if (pos + 10 > msg.len()) {
+      return (unavail(), "");
+    }
+    var ty: i32 = be16(msg, pos);
+    var cls: i32 = be16(msg, pos + 2);
+    var rdlen: i32 = be16(msg, pos + 8);
+    pos = pos + 10;
+    if (pos + rdlen > msg.len()) {
+      return (unavail(), "");
+    }
+    if (cls == 1 && owner.0.eq_ignore_ascii_case(cur)) {
+      if (ty == 5) {
+        cur = read_name(msg, pos, 0).0;
+      } else if (ty == 1) {
+        return (success(), cur);
+      }
+    }
+    pos = pos + rdlen;
+    an = an - 1;
+  }
+  return (notfound(), "");
+}
+
+// A domain name at `pos`, labels joined by dots and the root written as
+// the empty string. A compression pointer is followed, bounded by a
+// depth so a message pointing at itself ends rather than spins.
+function read_name(msg: u8[], pos: i32, depth: i32): (string, i32) {
+  var out: string = "";
+  var p: i32 = pos;
+  while (p < msg.len()) {
+    var l: i32 = msg[p] as i32;
+    if (l == 0) {
+      return (out, p + 1);
+    }
+    if ((l & 192) == 192) {
+      if (p + 1 >= msg.len() || depth > 8) {
+        return (out, p + 2);
+      }
+      var target: i32 = (l & 63) << 8 | msg[p + 1] as i32;
+      var rest: string = read_name(msg, target, depth + 1).0;
+      if (out.len() > 0 && rest.len() > 0) {
+        out = out + ".";
+      }
+      return (out + rest, p + 2);
+    }
+    if (p + 1 + l > msg.len()) {
+      return (out, msg.len());
+    }
+    if (out.len() > 0) {
+      out = out + ".";
+    }
+    var label: u8[] = [];
+    var k: i32 = 0;
+    while (k < l) {
+      label = label.append(msg[p + 1 + k]);
+      k = k + 1;
+    }
+    out = out + string_from_bytes_unchecked(label);
+    p = p + 1 + l;
+  }
+  return (out, msg.len());
 }
 
 // `resolve(name)` — the IPv4 address of `name` as gethostbyname would

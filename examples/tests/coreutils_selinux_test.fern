@@ -1,0 +1,64 @@
+import "std/test";
+import "std/string";
+import "../../coreutils/lib/selinux" as selinux;
+
+// examples/tests/coreutils_selinux_test.fern — the process's own security
+// context as getcon(3) reports it.
+//
+// internal/coreutils compares runcon and id against GNU on the machine that
+// runs them, which is the right oracle and cannot reach this rule: the
+// context comes from /proc/self/attr/current, neither utility has an operand
+// pointing anywhere else, and what that file holds is the host's business.
+// A container under AppArmor writes `kernel` with a NUL and no newline; the
+// aarch64 runner writes a context ending in one. The two sides agreed on the
+// first and differed by a byte on the second, in every no-command runcon
+// case at once. So the rule gets a test that supplies the bytes itself.
+
+// getcon strips the terminating NUL and nothing else.
+function test_trailing_nul_goes(): test.TestOutcome {
+    return test.assert_eq(selinux.trim_context("unconfined_u:unconfined_r:unconfined_t:s0\x00"), "unconfined_u:unconfined_r:unconfined_t:s0");
+}
+
+// A newline before the NUL is PART OF THE CONTEXT, not padding: `runcon`
+// with no command prints it, so its output ends in a blank line.
+function test_newline_stays(): test.TestOutcome {
+    return test.assert_eq(selinux.trim_context("unconfined\n\x00"), "unconfined\n");
+}
+
+// The same with no NUL at all, which is what a read to EOF gives on a kernel
+// that does not write one.
+function test_newline_stays_without_a_nul(): test.TestOutcome {
+    return test.assert_eq(selinux.trim_context("unconfined\n"), "unconfined\n");
+}
+
+// A context with no newline is unchanged past its NUL.
+function test_no_newline(): test.TestOutcome {
+    return test.assert_eq(selinux.trim_context("kernel\x00"), "kernel");
+}
+
+// More than one trailing NUL is still only padding.
+function test_several_nuls(): test.TestOutcome {
+    return test.assert_eq(selinux.trim_context("kernel\x00\x00\x00"), "kernel");
+}
+
+// An empty attribute is an empty context, not a fault on an empty slice.
+function test_empty(): test.TestOutcome {
+    return test.assert_eq(selinux.trim_context(""), "");
+}
+
+function test_only_nuls(): test.TestOutcome {
+    return test.assert_eq(selinux.trim_context("\x00\x00"), "");
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("coreutils/lib/selinux");
+    r = r.it("the terminating NUL goes", test_trailing_nul_goes);
+    r = r.it("a newline before the NUL stays", test_newline_stays);
+    r = r.it("a newline with no NUL stays", test_newline_stays_without_a_nul);
+    r = r.it("a context with no newline is unchanged", test_no_newline);
+    r = r.it("several trailing NULs are all padding", test_several_nuls);
+    r = r.it("an empty attribute is an empty context", test_empty);
+    r = r.it("nothing but NULs is an empty context", test_only_nuls);
+    r.finish();
+    return 0;
+}

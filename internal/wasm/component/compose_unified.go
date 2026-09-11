@@ -305,6 +305,12 @@ func Compose(coreBytes []byte, req ComposeRequest, coreExportName string) []byte
 			// memory, so this one needs realloc where the mutators do not.
 			g.add(gImport{iface: fsTypes, name: composeReadlinkAtName, kind: gMemRealloc, params: composePathMutatorParams})
 		}
+		if req.File.Rename {
+			g.add(gImport{iface: fsTypes, name: composeRenameAtName, kind: gMem, params: composeRenameAtParams})
+		}
+		if req.File.SetTimes {
+			g.add(gImport{iface: fsTypes, name: composeSetTimesAtName, kind: gMem, params: composeSetTimesAtParams})
+		}
 		if req.File.Stat {
 			g.add(gImport{iface: fsTypes, name: composeStatAtName, kind: gMem, params: composeStatAtParams})
 		}

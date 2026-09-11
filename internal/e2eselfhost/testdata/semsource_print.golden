@@ -189,7 +189,27 @@ func array_length {
     ret v1
 }
 
-refused unsupported call target
+modes 2 result i32[]
+v0:i32[] v1:i32 v2:i32[]
+plan append receiver is not consumed
+func borrowed_append {
+  b0:
+    v0 = param 0
+    v1 = const_int 1
+    v2 = append v0 v1
+    ret v2
+}
+
+modes 3 result i32[]
+v0:i32[] v1:i32 v2:i32[]
+func owned_append {
+  b0:
+    v0 = param 0
+    v1 = const_int 1
+    v2 = append v0 v1
+    ret v2
+}
+
 refused call target was refused: call target has no semantic contract
 modes 1 result P
 v0:i32 v1:i32 v2:i32 v3:i32[] v4:P

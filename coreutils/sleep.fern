@@ -10,13 +10,9 @@
 // x and exits without pausing, and `sleep x y` reports both, then the
 // one `Try …` line.
 //
-// GRANULARITY. GNU sleeps with nanosleep(2); the runtime here offers
-// `sleep_ms`, so an interval is rounded UP to the next millisecond — the
-// program always sleeps at least what was asked, which is what sleep(1)
-// promises, but `sleep 1e-9` costs a millisecond rather than a
-// nanosecond. Closing that needs a nanosecond sleep primitive in the
-// runtime (four classifications and a helper per backend); it is
-// reported rather than worked around here.
+// GRANULARITY. The interval is summed as a long double and converted to a
+// nanosecond count only at the end, rounded UP so the pause is never
+// shorter than asked — which is all nanosleep(2) itself guarantees.
 import "std/string";
 import "std/array";
 import "./lib/gnu";
@@ -82,20 +78,20 @@ function interval(f: ld.Format, s: string): Option[ld.LD] {
   return Some(f.mul(r.v, f.from_i64(scale)));
 }
 
-// Milliseconds covering `seconds`, rounded up so the sleep is never
+// Nanoseconds covering `seconds`, rounded up so the sleep is never
 // short. Infinity has no count; the caller loops instead.
-function millis_ceil(f: ld.Format, seconds: ld.LD): Option[i64] {
+function nanos_ceil(f: ld.Format, seconds: ld.LD): Option[i64] {
   if (!seconds.is_finite()) {
     return None;
   }
-  var ms: ld.LD = f.mul(seconds, f.from_i64(1000 as i64));
-  match (f.round_to_int(ms, ld.round_up()).as_i64()) {
+  var ns: ld.LD = f.mul(seconds, f.from_i64(1000000000 as i64));
+  match (f.round_to_int(ns, ld.round_up()).as_i64()) {
     Some(v) => {
       return Some(v);
     },
     None => {
-      // Past what a count of milliseconds can hold: sleep in the longest
-      // steps available until the program is killed, as GNU's own
+      // Past what a count of nanoseconds can hold — about 292 years —
+      // so sleep in steps until the program is killed, as GNU's own
       // nanosleep loop would.
       return None;
     }
@@ -103,10 +99,11 @@ function millis_ceil(f: ld.Format, seconds: ld.LD): Option[i64] {
 }
 
 // Sleep until killed: the interval is infinite, or longer than a count of
-// milliseconds can express.
+// nanoseconds can express.
 function sleep_forever(): void {
+  var hour_ns: i64 = 3600 as i64 * (1000000000 as i64);
   while (true) {
-    sleep_ms(2147483647 as i64);
+    sleep_ns(hour_ns);
   }
 }
 
@@ -137,10 +134,10 @@ function main(): i32 {
   if (bad) {
     gnu.try_help(1);
   }
-  match (millis_ceil(f, total)) {
-    Some(ms) => {
-      if (ms > 0 as i64) {
-        sleep_ms(ms);
+  match (nanos_ceil(f, total)) {
+    Some(ns) => {
+      if (ns > 0 as i64) {
+        sleep_ns(ns);
       }
     },
     None => {

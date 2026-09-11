@@ -1,0 +1,292 @@
+// rmdir.fern — GNU-compatible `rmdir`.
+//
+//   rmdir [-p] [-v] [--ignore-fail-on-non-empty] DIRECTORY...
+//
+// One `rmdir(2)` per operand — `remove_dir`, not `remove_dir_all`, which
+// drains a tree and forgives a missing target and so answers none of the
+// questions this utility exists to ask.
+//
+// Three details carry most of the behaviour:
+//
+//   - The diagnostic for a PARENT removed by `-p` says `failed to remove
+//     directory 'x'` where the operand itself says `failed to remove 'x'`.
+//     The extra word is the only thing distinguishing them.
+//   - `-v` announces each removal BEFORE attempting it, so a failing
+//     directory is named on stdout and then again on stderr.
+//   - `--ignore-fail-on-non-empty` forgives ENOTEMPTY and EEXIST outright,
+//     and forgives the errnos that MIGHT mean a non-empty directory
+//     (EACCES, EPERM, EROFS, EBUSY, EEXIST) only after reading the
+//     directory and finding it really is non-empty. `rmdir
+//     --ignore-fail-on-non-empty /` is the reachable case: the root is
+//     EBUSY and not empty, so it is forgiven and the exit status is 0.
+//
+// The parent walk is string surgery on the operand, not a resolved path:
+// trailing slashes are stripped once, then each step drops the last
+// component and any redundant slashes before it, so `a//b` steps to `a`
+// and `./v` steps to `.` — which is EINVAL and reported as such.
+import "std/string";
+import "std/array";
+import "./lib/gnu";
+
+function opt_parents(): i32 {
+  return 1;
+}
+
+function opt_verbose(): i32 {
+  return 2;
+}
+
+function opt_ignore(): i32 {
+  return 3;
+}
+
+function help_text(): string {
+  var out: string = "";
+  out = out + "Usage: " + gnu.prog() + " [OPTION]... DIRECTORY...\n";
+  out = out + "Remove the DIRECTORY(ies), if they are empty.\n";
+  out = out + "\n";
+  out = out + "      --ignore-fail-on-non-empty\n";
+  out = out + "                  ignore each failure to remove a non-empty directory\n";
+  out = out + "  -p, --parents   remove DIRECTORY and its ancestors;\n";
+  out = out + "                    e.g., '" + gnu.prog() + " -p a/b/c' is similar to '" + gnu.prog() + " a/b/c a/b a'\n";
+  out = out + "  -v, --verbose   output a diagnostic for every directory processed\n";
+  out = out + "      --help        display this help and exit\n";
+  out = out + "      --version     output version information and exit\n";
+  return out;
+}
+
+// ---- errno predicates ------------------------------------------------------
+//
+// An IoError carries strerror's TEXT and not the number (lib/gnu.fern's
+// `is_broken_pipe` reads EPIPE the same way), so the two gnulib
+// predicates below ask about the text. Both lists are the errnos
+// themselves: ENOTEMPTY and EEXIST are what a kernel returns for a
+// directory that has entries, and EACCES / EPERM / EROFS / EBUSY /
+// EEXIST are the ones where it MIGHT be the reason.
+function errno_rmdir_non_empty(text: string): boolean {
+  return text == "Directory not empty" || text == "File exists";
+}
+
+function errno_may_be_non_empty(text: string): boolean {
+  return text == "Permission denied" || text == "Operation not permitted" || text == "Read-only file system" || text == "File exists" || text == "Device or resource busy";
+}
+
+// Whether `dir` has entries. A directory that cannot be read is treated
+// as non-empty, which is what gnulib's is_empty_dir does with a failed
+// open: the failure is the reason the removal failed too.
+function is_non_empty_dir(dir: string): boolean {
+  match (read_dir(dir)) {
+    Ok(names) => {
+      return names.len() > 0;
+    },
+    Err(_) => {
+      return true;
+    }
+  }
+}
+
+function ignorable_failure(ignore: boolean, text: string, dir: string): boolean {
+  if (!ignore) {
+    return false;
+  }
+  if (errno_rmdir_non_empty(text)) {
+    return true;
+  }
+  return errno_may_be_non_empty(text) && is_non_empty_dir(dir);
+}
+
+// ---- the ENOTDIR that is really a symlink ----------------------------------
+//
+// `rmdir sym/` is ENOTDIR on Linux whether `sym` points at a directory or
+// not, and GNU replaces the strerror text with `Symbolic link not
+// followed` when it does. The check runs only for a name that ENDS in a
+// slash — `rmdir sym` is a plain `Not a directory` with no stat at all —
+// and a name whose own stat says ENOTDIR (`rmdir regularfile/`) keeps the
+// strerror text, because there the type really is the fault.
+function ends_with_slash(s: string): boolean {
+  return s.len() > 0 && s[s.len() - 1] as i32 == 47;
+}
+
+// `s` without its trailing slashes, keeping one when that is all there
+// is — gnulib's strip_trailing_slashes, which never empties a name.
+function strip_trailing_slashes(s: string): string {
+  var n: i32 = s.len();
+  while (n > 1 && s[n - 1] as i32 == 47) {
+    n = n - 1;
+  }
+  return slice_unchecked(s, 0, n) + "";
+}
+
+function is_symlink_with_slash(dir: string): boolean {
+  if (!ends_with_slash(dir)) {
+    return false;
+  }
+  match (stat(dir)) {
+    Ok(_) => {},
+    Err(e) => {
+      if (gnu.io_error_text(e) == "Not a directory") {
+        return false;
+      }
+    }
+  }
+  match (lstat(strip_trailing_slashes(dir))) {
+    Ok(st) => {
+      // S_IFLNK is 0o120000 under the S_IFMT mask 0o170000.
+      return (st.mode & 61440 as u32) == 40960 as u32;
+    },
+    Err(_) => {
+      return false;
+    }
+  }
+}
+
+// The text after the colon in a removal diagnostic.
+function failure_text(dir: string, e: IoError): string {
+  var text: string = gnu.io_error_text(e);
+  if (text == "Not a directory" && is_symlink_with_slash(dir)) {
+    return "Symbolic link not followed";
+  }
+  return text;
+}
+
+// ---- output ----------------------------------------------------------------
+//
+// `-v` prints through glibc's stdio rather than a plain buffered writer,
+// because what a failed stdout SAYS depends on the buffering: a
+// diagnostic flushes stdout first (gnulib's error()), so a `-v` line
+// small enough to still be pending is what turns `write error: No space
+// left on device` into a bare `write error`. Nothing checks the write —
+// GNU does not look at printf's result either, and a run whose output
+// fails still removes every directory it was asked to.
+struct Out { s: gnu.Stdio, ok: boolean }
+
+function announce(o: Out, verbose: boolean, dir: string): Out {
+  if (!verbose) {
+    return o;
+  }
+  return Out { ...o, s: o.s.fwrite(gnu.prog() + ": removing directory, " + gnu.quotea(dir) + "\n") };
+}
+
+function report(o: Out, msg: string): Out {
+  return Out { s: o.s.report(msg), ok: false };
+}
+
+// ---- the parent walk -------------------------------------------------------
+//
+// Each step drops the last component: find the last slash, step back over
+// it and over any run of slashes before it, and keep what is left. The
+// walk ends when no slash remains — so `a/b` climbs to `a` and stops,
+// while `/a/b` climbs to `/a` and then to the empty name, which is
+// ENOENT, exactly as GNU's pointer surgery leaves it.
+function parent_of(dir: string): Option[string] {
+  var slash: i32 = 0 - 1;
+  var i: i32 = 0;
+  while (i < dir.len()) {
+    if (dir[i] as i32 == 47) {
+      slash = i;
+    }
+    i = i + 1;
+  }
+  if (slash < 0) {
+    return None;
+  }
+  var k: i32 = slash - 1;
+  while (k > 0 && dir[k] as i32 == 47) {
+    k = k - 1;
+  }
+  return Some(slice_unchecked(dir, 0, k + 1) + "");
+}
+
+function remove_parents(o0: Out, dir0: string, verbose: boolean, ignore: boolean): Out {
+  var o: Out = o0;
+  var dir: string = strip_trailing_slashes(dir0);
+  while (true) {
+    match (parent_of(dir)) {
+      Some(up) => {
+        dir = up;
+      },
+      None => {
+        return o;
+      }
+    }
+    o = announce(o, verbose, dir);
+    match (remove_dir(dir)) {
+      Ok(_) => {},
+      Err(e) => {
+        var text: string = failure_text(dir, e);
+        if (ignorable_failure(ignore, text, dir)) {
+          return o;
+        }
+        return report(o, "failed to remove directory " + gnu.quotea(dir) + ": " + text);
+      }
+    }
+  }
+  return o;
+}
+
+function main(): i32 {
+  var opts: gnu.Opt[] = [];
+  opts = opts.append(gnu.flag("", "ignore-fail-on-non-empty", opt_ignore()));
+  // `--path` is a deprecated synonym for `--parents` that the help text
+  // does not mention, and it is visible all the same: it stands ahead of
+  // `--parents` in the `--=x` ambiguity list. `--p` is NOT ambiguous
+  // between the two, because glibc only calls a prefix ambiguous when the
+  // candidates differ in what they DO.
+  opts = opts.append(gnu.flag("", "path", opt_parents()));
+  opts = opts.append(gnu.flag("p", "parents", opt_parents()));
+  opts = opts.append(gnu.flag("v", "verbose", opt_verbose()));
+
+  var parents: boolean = false;
+  var verbose: boolean = false;
+  var ignore: boolean = false;
+  var g: gnu.Getopt = gnu.getopt_new(args(), opts, "rmdir", help_text(), 1);
+  while (true) {
+    var res: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    g = res.1;
+    match (res.0) {
+      Some(m) => {
+        if (m.id == opt_parents()) {
+          parents = true;
+        } else if (m.id == opt_verbose()) {
+          verbose = true;
+        } else {
+          ignore = true;
+        }
+      },
+      None => {
+        break;
+      }
+    }
+  }
+
+  var operands: string[] = g.operands();
+  if (operands.len() == 0) {
+    gnu.die_usage("missing operand", 1);
+  }
+
+  var o: Out = Out { s: gnu.stdio_new(), ok: true };
+  var i: i32 = 0;
+  while (i < operands.len()) {
+    var dir: string = operands[i];
+    o = announce(o, verbose, dir);
+    match (remove_dir(dir)) {
+      Ok(_) => {
+        if (parents) {
+          o = remove_parents(o, dir, verbose, ignore);
+        }
+      },
+      Err(e) => {
+        var text: string = failure_text(dir, e);
+        if (!ignorable_failure(ignore, text, dir)) {
+          o = report(o, "failed to remove " + gnu.quotea(dir) + ": " + text);
+        }
+      }
+    }
+    i = i + 1;
+  }
+  o.s.close_stdout();
+  if (o.ok) {
+    return 0;
+  }
+  return 1;
+}

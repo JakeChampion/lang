@@ -377,7 +377,7 @@ function scalar_op(k: i32): boolean {
 function container_op(k: i32): boolean {
     return k == ssasem.array_new() || k == ssasem.tuple_new() || k == ssasem.record_new()
         || k == ssasem.array_get() || k == ssasem.tuple_get() || k == ssasem.record_get()
-        || k == ssasem.length() || variant_op(k);
+        || k == ssasem.length() || k == ssasem.append() || variant_op(k);
 }
 
 function variant_op(k: i32): boolean {
@@ -446,6 +446,9 @@ function container(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlo
         if (ssasem.is_string(f.values[ins.args[0]])) { return emit(r, ir.op_str_len()); }
         return emit(r, ir.op_arr_len());
     }
+    // The unit planner admits an append only where the receiver's unit is
+    // moved, which is exactly the sole-ownership the reclaim-on-grow form needs.
+    if (ins.kind_tag == ssasem.append()) { return emit(r, ir.op_arr_push_owned()); }
     if (ins.kind_tag == ssasem.array_get()) { return emit(r, ir.op_arr_get(32)); }
     if (ins.kind_tag == ssasem.tuple_get()) { return emit(r, ir.op_tuple_get(ins.imm)); }
     return emit(r, ir.op_struct_get(ins.imm, 0));

@@ -403,16 +403,37 @@ function logical(b: ast.ExprBinary, s: State): Value {
     return define(open(s, join, [rhs_end, skip]), 8, [right.id, short.id], 0, "", t_bool());
 }
 
-// `.len` is the one builtin method with a contract here: it reads a counted
-// array or string and hands back a fresh i32 that owns nothing. Every other
-// builtin, and every local function value, is still outside this boundary.
-function builtin_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s: State): Value {
-    if (fa.field != "len" || c.type_argc > 0 || c.args.len() != 0) { return refused(s, "unsupported call target"); }
+// `.len` reads a counted array or string and hands back a fresh i32 that owns
+// nothing.
+function builtin_length(recv: Value, s: State): Value {
     var t: typeinfo.Type = s.values[recv.id];
     var sized: boolean = ssasem.is_string(t);
     if let typeinfo.TypeArray(_) = t { sized = true; }
     if (!sized) { return refused(s, "unsupported call target"); }
     return define(s, ssasem.length(), [recv.id], 0, "", t_i32());
+}
+
+// `.append` hands the receiver's own unit to the runtime and takes back one:
+// the same box when the push fits, a fresh one when it grew. The element is a
+// value the new array holds.
+function builtin_append(c: ast.ExprCall, recv: Value, s: State): Value {
+    var t: typeinfo.Type = s.values[recv.id];
+    var elem: typeinfo.Type = element_type(t);
+    if (!semtypes.concrete(elem, false)) { return refused(s, "unsupported call target"); }
+    var v: Value = expr(c.args[0], s, elem);
+    s = v.s;
+    if (!s.ok) { return v; }
+    if (!semtypes.equal(s.values[v.id], elem)) { return refused(s, "append element type"); }
+    return define(s, ssasem.append(), [recv.id, v.id], 0, "", t);
+}
+
+// The builtin methods with a contract here. Every other builtin, and every
+// local function value, is still outside this boundary.
+function builtin_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s: State): Value {
+    if (c.type_argc > 0) { return refused(s, "unsupported call target"); }
+    if (fa.field == "len" && c.args.len() == 0) { return builtin_length(recv, s); }
+    if (fa.field == "append" && c.args.len() == 1) { return builtin_append(c, recv, s); }
+    return refused(s, "unsupported call target");
 }
 
 // A call is verified against the callee's declared contract: exact argument

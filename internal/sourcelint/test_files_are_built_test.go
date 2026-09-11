@@ -67,7 +67,8 @@ func TestEveryTestFileIsInSomeBuild(t *testing.T) {
 			return werr
 		}
 		if d.IsDir() {
-			if d.Name() == ".git" || d.Name() == "node_modules" || d.Name() == "testdata" {
+			if d.Name() == ".git" || d.Name() == "node_modules" || d.Name() == "testdata" ||
+				isNestedCheckout(root, path) {
 				return fs.SkipDir
 			}
 			return nil

@@ -1,0 +1,89 @@
+// tty.fern — GNU-compatible `tty`.
+//
+//   tty [-s]   the name of the terminal on standard input
+//
+// ttyname(0) and one write. What makes it worth its own program is the
+// exit status, which POSIX fixes and which is the whole of what `-s` is
+// for: 0 a terminal, 1 not one, 2 a usage error, 3 a failed write.
+//
+// `not a tty` covers every reason ttyname has no answer — a pipe, a
+// regular file, a closed descriptor — because none of them names a
+// terminal and there is nothing else to say about which.
+//
+// Three of those four statuses are gnulib globals rather than one
+// number: `exit_failure` is 3, so `tty --help > /dev/full` exits 3,
+// while a bad option exits 2 through usage(). `exit_failure(3)` on the
+// option scan is what keeps the two apart.
+//
+// ttyname itself is `lib/tty.fern`, shared with logname.
+import "std/string";
+import "./lib/gnu";
+import "./lib/tty";
+
+function opt_silent(): i32 {
+  return 1;
+}
+
+function usage_status(): i32 {
+  return 2;
+}
+
+function write_status(): i32 {
+  return 3;
+}
+
+function help_text(): string {
+  var out: string = "";
+  out = out + "Usage: " + gnu.prog() + " [OPTION]...\n";
+  out = out + "Print the file name of the terminal connected to standard input.\n";
+  out = out + "\n";
+  out = out + "  -s, --silent, --quiet   print nothing, only return an exit status\n";
+  out = out + "      --help        display this help and exit\n";
+  out = out + "      --version     output version information and exit\n";
+  return out;
+}
+
+function main(): i32 {
+  var opts: gnu.Opt[] = [];
+  opts = opts.append(gnu.flag("s", "silent", opt_silent()));
+  // `--quiet` is a second spelling of the same option, and it is absent
+  // from the `--=x` ambiguity list for exactly that reason: glibc names
+  // only the candidates that DIFFER from the first match.
+  opts = opts.append(gnu.flag("", "quiet", opt_silent()));
+
+  var silent: boolean = false;
+  var g: gnu.Getopt = gnu.getopt_new(args(), opts, "tty", help_text(), usage_status()).exit_failure(write_status());
+  while (true) {
+    var res: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    g = res.1;
+    match (res.0) {
+      Some(_) => {
+        silent = true;
+      },
+      None => {
+        break;
+      }
+    }
+  }
+
+  var operands: string[] = g.operands();
+  if (operands.len() > 0) {
+    gnu.die_usage("extra operand " + gnu.quote(operands[0]), usage_status());
+  }
+
+  match (tty.name_of_stdin()) {
+    Some(name) => {
+      if (!silent) {
+        gnu.write_out_with(name + "\n", write_status());
+      }
+      return 0;
+    },
+    None => {
+      if (!silent) {
+        gnu.write_out_with("not a tty\n", write_status());
+      }
+      return 1;
+    }
+  }
+  return 1;
+}
