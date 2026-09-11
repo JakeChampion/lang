@@ -1,5 +1,6 @@
 // coreutils/lib/digest.fern — md5sum, sha1sum, sha224sum, sha256sum,
-// sha384sum, sha512sum and b2sum, which are one program.
+// sha384sum, sha512sum and b2sum, which are one program, and the eight
+// digests cksum reaches through `-a`.
 //
 //   <util> [-bt] [--tag] [-z] [FILE]...
 //   <util> -c [--ignore-missing] [--quiet|--status|-w] [--strict] [FILE]...
@@ -8,7 +9,9 @@
 // The seven differ in four things and nothing else — which digest they
 // run, its length in bits, the word their BSD tag and their diagnostics
 // use, and whether `-l` may resize the digest — so each of the seven
-// files names an `Algo` holding those four and calls `run`.
+// files names an `Algo` holding those four and calls `run`. cksum names
+// one of eight `Algo`s per invocation and drives the pieces rather than
+// `run`, because its output shapes are not these: see `cksum.fern`.
 //
 // Two parts of this are worth reading before changing them, because
 // both were measured off the reference binary rather than reasoned out:
@@ -32,15 +35,24 @@
 //     first form, the `-NNN` of `BLAKE2b-NNN` for the second, where
 //     NNN is C's strtoumax base 0, so `-020` is 16 bits.
 //
+// cksum widens both of those, and `Settings.cksum` is the flag that
+// says so: it reads a base64 digest wherever a hex one is read, it
+// takes the `-NNN` length and the tab-before-paren on EVERY algorithm
+// rather than only on the variable one, and its minimum line is three
+// bytes rather than the digest plus two. `Settings.detect` is its check
+// mode without an `-a`, where each line's tag chooses.
+//
 // Nothing here was copied from GNU sources.
 import "std/string";
 import "std/array";
 import "std/crypto";
+import "std/hex";
+import "std/base64";
 import "std/io_buffered";
 import "./gnu";
 
 // ---- the algorithm --------------------------------------------------------
-// `Algo` — everything one of the seven utilities does not share.
+// `Algo` — everything one digest does not share with another.
 // `kind` selects the crypto state, `bits` is the digest length nothing
 // overrides, `tag` is the BSD prefix and the word in `improperly
 // formatted %s checksum line`, and `variable` is b2sum's alone.
@@ -74,6 +86,10 @@ function k_blake2b(): i32 {
   return 6;
 }
 
+function k_sm3(): i32 {
+  return 7;
+}
+
 pub function algo_md5(): Algo {
   return Algo { name: "md5sum", tag: "MD5", bits: 128, kind: k_md5(), variable: false, rfc: "RFC 1321" };
 }
@@ -102,10 +118,39 @@ pub function algo_blake2b(): Algo {
   return Algo { name: "b2sum", tag: "BLAKE2b", bits: 512, kind: k_blake2b(), variable: true, rfc: "RFC 7693" };
 }
 
+// `algo_crc()` — cksum's default. It is not a digest and no checksum
+// line can be read with it; it exists so that check mode without an
+// `-a` names `CRC` in the diagnostic for every line until a tag names
+// something else.
+pub function algo_crc(): Algo {
+  return Algo { name: "cksum", tag: "CRC", bits: 0, kind: 0 - 1, variable: false, rfc: "" };
+}
+
+// SM3 has no utility of its own: `cksum -a sm3` is the only way to reach it.
+pub function algo_sm3(): Algo {
+  return Algo { name: "cksum", tag: "SM3", bits: 256, kind: k_sm3(), variable: false, rfc: "GB/T 32905-2016" };
+}
+
+// `checkable()` — the algorithms a check line's tag may name, in the
+// order `cksum -a` lists them. crc, sysv and bsd are absent: none of the
+// three is a digest a checksum line can carry.
+pub function checkable(): Algo[] {
+  var all: Algo[] = [];
+  all = all.append(algo_md5());
+  all = all.append(algo_sha1());
+  all = all.append(algo_sha224());
+  all = all.append(algo_sha256());
+  all = all.append(algo_sha384());
+  all = all.append(algo_sha512());
+  all = all.append(algo_blake2b());
+  all = all.append(algo_sm3());
+  return all;
+}
+
 // `Ctx` — the running digest. One variant per crypto state rather than
 // one per utility: SHA-224 and SHA-256 share a state, as do SHA-384
 // and SHA-512.
-enum Ctx { CMd5(crypto.Md5), CSha1(crypto.Sha1), CSha2(crypto.Sha256), CSha5(crypto.Sha512), CB2(crypto.Blake2b) }
+enum Ctx { CMd5(crypto.Md5), CSha1(crypto.Sha1), CSha2(crypto.Sha256), CSha5(crypto.Sha512), CB2(crypto.Blake2b), CSm3(crypto.Sm3) }
 
 function ctx_new(kind: i32, bits: i32): Ctx {
   if (kind == k_md5()) {
@@ -126,6 +171,9 @@ function ctx_new(kind: i32, bits: i32): Ctx {
   if (kind == k_sha512()) {
     return CSha5(crypto.sha512_new());
   }
+  if (kind == k_sm3()) {
+    return CSm3(crypto.sm3_new());
+  }
   return CB2(crypto.blake2b_new(bits / 8));
 }
 
@@ -145,26 +193,34 @@ function ctx_update(c: Ctx, chunk: string): Ctx {
     },
     CB2(h) => {
       return CB2(h.update(chunk));
+    },
+    CSm3(h) => {
+      return CSm3(h.update(chunk));
     }
   }
 }
 
-function ctx_hex(c: Ctx): string {
+// The digest as bytes rather than hex: `cksum --raw` writes them and
+// `--base64` encodes them, and the hex form is one call away.
+function ctx_bytes(c: Ctx): u8[] {
   match (c) {
     CMd5(h) => {
-      return h.final_hex();
+      return h.final_bytes();
     },
     CSha1(h) => {
-      return h.final_hex();
+      return h.final_bytes();
     },
     CSha2(h) => {
-      return h.final_hex();
+      return h.final_bytes();
     },
     CSha5(h) => {
-      return h.final_hex();
+      return h.final_bytes();
     },
     CB2(h) => {
-      return h.final_hex();
+      return h.final_bytes();
+    },
+    CSm3(h) => {
+      return h.final_bytes();
     }
   }
 }
@@ -182,7 +238,21 @@ function read_size(): i32 {
 // -1 until `-b` / `-t` / `--tag` names one, because `--binary and
 // --text are meaningless when verifying` fires on having been named
 // at all, not on the value.
-struct Settings { binary: i32, check: boolean, tag: boolean, zero: boolean, ignore_missing: boolean, status: boolean, warn: boolean, quiet: boolean, strict: boolean, bits: i32 }
+//
+// `detect` and `cksum` are that utility's alone. `detect` is check mode
+// without an `-a`: the TAG of each line names its algorithm, and a line
+// without one is improperly formatted however well-formed the rest of
+// it is.
+// `cksum` is the rest of its half of the grammar: a base64
+// digest is read wherever a hex one is, and a line shorter than the
+// digest plus a blank plus a name is still read — cksum's minimum line
+// is three bytes where the seven want the digest and two more.
+pub struct Settings { binary: i32, check: boolean, tag: boolean, zero: boolean, ignore_missing: boolean, status: boolean, warn: boolean, quiet: boolean, strict: boolean, bits: i32, detect: boolean, cksum: boolean }
+
+// `settings_new(bits)` — the defaults every caller starts from.
+pub function settings_new(bits: i32): Settings {
+  return Settings { binary: 0 - 1, check: false, tag: false, zero: false, ignore_missing: false, status: false, warn: false, quiet: false, strict: false, bits: bits, detect: false, cksum: false };
+}
 
 function opt_binary(): i32 {
   return 1;
@@ -321,7 +391,7 @@ function lower_hex(s: string): string {
 }
 
 // ---- file name escaping ---------------------------------------------------
-function needs_escape(name: string): boolean {
+pub function needs_escape(name: string): boolean {
   var i: i32 = 0;
   while (i < name.len()) {
     var b: i32 = name[i] as i32;
@@ -333,7 +403,7 @@ function needs_escape(name: string): boolean {
   return false;
 }
 
-function escape_name(name: string): string {
+pub function escape_name(name: string): string {
   var bs: u8[] = [];
   var i: i32 = 0;
   while (i < name.len()) {
@@ -357,7 +427,7 @@ function escape_name(name: string): string {
 
 // `shown_name(name)` — the name as a line carries it: escaped, with the
 // leading `\` that marks the line, or bare when nothing needs escaping.
-function shown_name(name: string): string {
+pub function shown_name(name: string): string {
   if (!needs_escape(name)) {
     return name;
   }
@@ -394,7 +464,7 @@ function unescape(name: string): (boolean, string) {
 
 // ---- digesting one input --------------------------------------------------
 // `Sum` — one input's digest, or the failure that stopped it.
-struct Sum { hex: string, err: Option[IoError], failed: boolean }
+pub struct Sum { hex: string, bin: u8[], err: Option[IoError], failed: boolean }
 
 function digest_reader(r: Reader, kind: i32, bits: i32, owned: boolean): Sum {
   var c: Ctx = ctx_new(kind, bits);
@@ -410,19 +480,20 @@ function digest_reader(r: Reader, kind: i32, bits: i32, owned: boolean): Sum {
         if (owned) {
           r.close();
         }
-        return Sum { hex: "", err: Some(e), failed: true };
+        return Sum { hex: "", bin: [], err: Some(e), failed: true };
       }
     }
   }
   if (owned) {
     r.close();
   }
-  return Sum { hex: ctx_hex(c), err: None, failed: false };
+  var bin: u8[] = ctx_bytes(c);
+  return Sum { hex: hex.hex_encode(bin), bin: bin, err: None, failed: false };
 }
 
 // `digest_path(path, kind, bits)` — one operand digested. `-` is
 // standard input, which is never closed.
-function digest_path(path: string, kind: i32, bits: i32): Sum {
+pub function digest_path(path: string, kind: i32, bits: i32): Sum {
   if (path == "-") {
     return digest_reader(stdin(), kind, bits, false);
   }
@@ -431,12 +502,12 @@ function digest_path(path: string, kind: i32, bits: i32): Sum {
       return digest_reader(r, kind, bits, true);
     },
     Err(e) => {
-      return Sum { hex: "", err: Some(e), failed: true };
+      return Sum { hex: "", bin: [], err: Some(e), failed: true };
     }
   }
 }
 
-function sum_error_text(s: Sum): string {
+pub function sum_error_text(s: Sum): string {
   match (s.err) {
     Some(e) => {
       return gnu.io_error_text(e);
@@ -449,7 +520,7 @@ function sum_error_text(s: Sum): string {
 
 // Whether the failure was ENOENT, the one `--ignore-missing` skips: a
 // directory operand still reports `Is a directory` under it.
-function sum_is_missing(s: Sum): boolean {
+pub function sum_is_missing(s: Sum): boolean {
   match (s.err) {
     Some(e) => {
       match (e) {
@@ -470,7 +541,7 @@ function sum_is_missing(s: Sum): boolean {
 // ---- writing a checksum ---------------------------------------------------
 // `tag_prefix(a, bits)` — the BSD tag. b2sum names its length in it,
 // but only when the length is not the default 512.
-function tag_prefix(a: Algo, bits: i32): string {
+pub function tag_prefix(a: Algo, bits: i32): string {
   if (a.variable && bits != a.bits) {
     return a.tag + "-" + bits.to_string();
   }
@@ -479,7 +550,7 @@ function tag_prefix(a: Algo, bits: i32): string {
 
 // The `\` that marks an escaped line goes before the whole line — ahead
 // of the digest, and ahead of the `MD5 (` of a tagged one.
-function sum_line(a: Algo, s: Settings, hex: string, name: string): string {
+pub function sum_line(a: Algo, s: Settings, digest: string, name: string): string {
   var shown: string = name;
   var out: string = "";
   if (!s.zero && needs_escape(name)) {
@@ -487,13 +558,13 @@ function sum_line(a: Algo, s: Settings, hex: string, name: string): string {
     out = "\\";
   }
   if (s.tag) {
-    out = out + tag_prefix(a, s.bits) + " (" + shown + ") = " + hex;
+    out = out + tag_prefix(a, s.bits) + " (" + shown + ") = " + digest;
   } else {
     var mark: string = " ";
     if (s.binary == 1) {
       mark = "*";
     }
-    out = out + hex + " " + mark + shown;
+    out = out + digest + " " + mark + shown;
   }
   if (s.zero) {
     return out + "\x00";
@@ -502,12 +573,70 @@ function sum_line(a: Algo, s: Settings, hex: string, name: string): string {
 }
 
 // ---- the check-line grammar -----------------------------------------------
-// `Line` — one parsed checksum line: the digest in lower case and the
-// unescaped name, or `ok: false` for a line that is not one.
-struct Line { ok: boolean, hex: string, name: string }
+// `Line` — one parsed checksum line: the digest in lower case, the
+// unescaped name, the algorithm the line named and the length it named
+// it at, or `ok: false` for a line that is not one. `algo` is set even
+// on a bad line, because cksum's check mode carries the last tag it
+// recognised into the next line's diagnostic.
+//
+// `fits` is false for the one shape that parses and can never match: see
+// `b64_room`.
+struct Line { ok: boolean, hex: string, name: string, algo: Algo, bits: i32, fits: boolean }
 
-function bad_line(): Line {
-  return Line { ok: false, hex: "", name: "" };
+function bad_line(a: Algo): Line {
+  return Line { ok: false, hex: "", name: "", algo: a, bits: 0, fits: true };
+}
+
+// `base64_len(n)` — `n` bytes in base64, padding included.
+function base64_len(n: i32): i32 {
+  return (n + 2) / 3 * 4;
+}
+
+// `b64_room(n)` — the room a base64 digest needs to land in an n-byte
+// buffer: three bytes for the first four characters and two for every
+// four after them. A digest of 1, 2 or 4 bytes is smaller than its own
+// requirement, so `cksum --base64 -a blake2b -l 8|16|32` writes a line
+// that parses and then never verifies. Measured off the reference over
+// every length from 8 to 200 bits, not reasoned out.
+function b64_room(n: i32): i32 {
+  return 2 * ((n + 2) / 3) + 1;
+}
+
+// `Digest` — a check line's digest field. It is read as base64 when its
+// length is the base64 length of the digest and as hex otherwise, so a
+// two- or four-byte digest — whose hex is the same width as its base64 —
+// is only ever read as base64.
+struct Digest { ok: boolean, hex: string, fits: boolean }
+
+function bad_digest(): Digest {
+  return Digest { ok: false, hex: "", fits: true };
+}
+
+function read_digest(s: Settings, field: string, n: i32): Digest {
+  if (s.cksum && field.len() == base64_len(n)) {
+    match (base64.base64_decode_strict(field)) {
+      Some(bs) => {
+        if (bs.len() != n) {
+          return bad_digest();
+        }
+        return Digest { ok: true, hex: hex.hex_encode(bs), fits: n >= b64_room(n) };
+      },
+      None => {
+        return bad_digest();
+      }
+    }
+  }
+  if (field.len() != n * 2) {
+    return bad_digest();
+  }
+  var k: i32 = 0;
+  while (k < field.len()) {
+    if (!isxdigit(field[k] as i32)) {
+      return bad_digest();
+    }
+    k = k + 1;
+  }
+  return Digest { ok: true, hex: lower_hex(field), fits: true };
 }
 
 // `strtou_base0(s, i)` — C's strtoumax with base 0 over `s` from `i`:
@@ -580,23 +709,22 @@ function in_base(b: i32, base: i32): boolean {
   return isdigit(b);
 }
 
-// `tag_open(a, cs, i)` — the index just past the `(` of a BSD-style
+// `tag_open(a, s, cs, i)` — the index just past the `(` of a BSD-style
 // line, with the digest length that line declares, or -1 when the line
 // does not open one.
-function tag_open(a: Algo, cs: string, i: i32): (i32, i32) {
+//
+// The `-NNN` length and the blank that may stand in for it belong to a
+// VARIABLE digest — and to every algorithm under cksum, whose parser
+// reaches the tag before it knows which one it is: `MD5-64 (f)` names
+// the first eight bytes of an MD5 there and is improperly formatted to
+// md5sum, and `MD5\t(` opens a line for cksum and not for md5sum.
+function tag_open(a: Algo, s: Settings, cs: string, i: i32): (i32, i32) {
   var bits: i32 = a.bits;
-  var k: i32 = 0;
-  while (k < a.tag.len()) {
-    if (at(cs, i + k) != a.tag[k] as i32) {
-      return (0 - 1, bits);
-    }
-    k = k + 1;
+  if (!tag_name_at(a, cs, i)) {
+    return (0 - 1, bits);
   }
   var j: i32 = i + a.tag.len();
-  // b2sum's `-NNN`, and the blank that stands in for it when the digest
-  // is the default length: `BLAKE2b\t (` opens a line, `BLAKE2b-8\t (`
-  // does not, and neither does `MD5\t(`.
-  if (a.variable) {
+  if (a.variable || s.cksum) {
     if (at(cs, j) == 45) {
       var n: (i32, i32) = strtou_base0(cs, j + 1);
       if (n.1 == j + 1) {
@@ -617,19 +745,40 @@ function tag_open(a: Algo, cs: string, i: i32): (i32, i32) {
   return (j + 1, bits);
 }
 
-// `bsd_split(a, cs, start, bits, escaped)` — `NAME) = HEX` from just
-// after the `(`. The name runs to the LAST `)` in the line, so a name
-// holding one is read correctly.
-function bsd_split(a: Algo, cs: string, start: i32, bits: i32, escaped: boolean): Line {
+// `tag_name_at(a, cs, i)` — whether the algorithm's name sits at `i`,
+// case for case, and is ended by something a tag may be followed by: a
+// blank, the `-` of a length, or the `(` itself.
+//
+// It is the whole of cksum's choice of algorithm, which is why the end
+// matters: `MD5 \t(f) = …` is an improperly formatted MD5 line, named
+// as MD5 in the diagnostic and inherited by the next unreadable line,
+// while `MD5\\t(f) = …` — a backslash, not a tab — names no algorithm at
+// all and stays on whatever the last line left.
+function tag_name_at(a: Algo, cs: string, i: i32): boolean {
+  var k: i32 = 0;
+  while (k < a.tag.len()) {
+    if (at(cs, i + k) != a.tag[k] as i32) {
+      return false;
+    }
+    k = k + 1;
+  }
+  var end: i32 = at(cs, i + a.tag.len());
+  return iswhite(end) || end == 45 || end == 40;
+}
+
+// `bsd_split(a, s, cs, start, bits, escaped)` — `NAME) = DIGEST` from
+// just after the `(`. The name runs to the LAST `)` in the line, so a
+// name holding one is read correctly.
+function bsd_split(a: Algo, s: Settings, cs: string, start: i32, bits: i32, escaped: boolean): Line {
   if (bits == 0 || bits % 8 != 0 || bits > a.bits) {
-    return bad_line();
+    return bad_line(a);
   }
   var i: i32 = cs.len() - 1;
   while (i > start && at(cs, i) != 41) {
     i = i - 1;
   }
   if (i < start || at(cs, i) != 41) {
-    return bad_line();
+    return bad_line(a);
   }
   var name: string = slice_unchecked(cs, start, i) + "";
   i = i + 1;
@@ -637,57 +786,53 @@ function bsd_split(a: Algo, cs: string, start: i32, bits: i32, escaped: boolean)
     i = i + 1;
   }
   if (at(cs, i) != 61) {
-    return bad_line();
+    return bad_line(a);
   }
   i = i + 1;
   while (iswhite(at(cs, i))) {
     i = i + 1;
   }
-  if (cs.len() - i != bits / 4) {
-    return bad_line();
+  var d: Digest = read_digest(s, slice_unchecked(cs, i, cs.len()) + "", bits / 8);
+  if (!d.ok) {
+    return bad_line(a);
   }
-  var k: i32 = i;
-  while (k < cs.len()) {
-    if (!isxdigit(at(cs, k))) {
-      return bad_line();
-    }
-    k = k + 1;
-  }
-  return finish_line(slice_unchecked(cs, i, cs.len()) + "", name, escaped);
+  return finish_line(a, d, bits, name, escaped);
 }
 
-// `raw_split(a, cs, i, full_len, escaped)` — `HEX<blank>[ *]NAME`.
+// `raw_split(a, s, cs, i, full_len, escaped)` — `DIGEST<blank>[ *]NAME`.
 //
 // `full_len` is the line's byte length, which is not `cs.len()` when
 // the line holds a NUL: the too-short rule counts the bytes and the
 // mode character is consumed against them, while everything else stops
 // at the NUL as a C string does.
-function raw_split(a: Algo, cs: string, i: i32, full_len: i32, escaped: boolean): Line {
+function raw_split(a: Algo, s: Settings, cs: string, i: i32, full_len: i32, escaped: boolean): Line {
   var n: i32 = 0;
+  var bits: i32 = a.bits;
   if (a.variable) {
     while (isxdigit(at(cs, i + n))) {
       n = n + 1;
     }
     if (n < 2 || n > a.bits / 4 || n % 2 != 0) {
-      return bad_line();
+      return bad_line(a);
     }
+    bits = n * 4;
   } else {
-    n = a.bits / 4;
-    if (full_len - i < n + 2) {
-      return bad_line();
+    // The field runs to the first blank rather than a fixed width: a
+    // base64 digest is narrower than the hex one.
+    while (i + n < cs.len() && !iswhite(at(cs, i + n))) {
+      n = n + 1;
     }
-    var k: i32 = 0;
-    while (k < n) {
-      if (!isxdigit(at(cs, i + k))) {
-        return bad_line();
-      }
-      k = k + 1;
+    if (!s.cksum && full_len - i < a.bits / 4 + 2) {
+      return bad_line(a);
     }
   }
   if (!iswhite(at(cs, i + n))) {
-    return bad_line();
+    return bad_line(a);
   }
-  var hex: string = slice_unchecked(cs, i, i + n) + "";
+  var d: Digest = read_digest(s, slice_unchecked(cs, i, i + n) + "", bits / 8);
+  if (!d.ok) {
+    return bad_line(a);
+  }
   var p: i32 = i + n + 1;
   var c: i32 = at(cs, p);
   if (p + 1 < full_len && (c == 32 || c == 42)) {
@@ -697,23 +842,28 @@ function raw_split(a: Algo, cs: string, i: i32, full_len: i32, escaped: boolean)
   if (p < cs.len()) {
     name = slice_unchecked(cs, p, cs.len()) + "";
   }
-  return finish_line(hex, name, escaped);
+  return finish_line(a, d, bits, name, escaped);
 }
 
-function finish_line(hex: string, raw_name: string, escaped: boolean): Line {
+function finish_line(a: Algo, d: Digest, bits: i32, raw_name: string, escaped: boolean): Line {
   var name: string = raw_name;
   if (escaped) {
     var u: (boolean, string) = unescape(raw_name);
     if (!u.0) {
-      return bad_line();
+      return bad_line(a);
     }
     name = u.1;
   }
-  return Line { ok: true, hex: lower_hex(hex), name: name };
+  return Line { ok: true, hex: d.hex, name: name, algo: a, bits: bits, fits: d.fits };
 }
 
-// `parse_line(a, cs, full_len)` — one checksum line in either shape.
-function parse_line(a: Algo, cs: string, full_len: i32): Line {
+// `parse_line(a, s, cs, full_len)` — one checksum line. `a` is the
+// algorithm in force: the utility's own for the seven, and for cksum the
+// one named by `-a` or, with `detect`, the last tag a line recognised.
+//
+// Under `detect` the tag is the only way in: an untagged line has no
+// algorithm to read it with and is improperly formatted whatever it holds.
+function parse_line(a: Algo, s: Settings, cs: string, full_len: i32): Line {
   var i: i32 = 0;
   while (iswhite(at(cs, i))) {
     i = i + 1;
@@ -723,11 +873,26 @@ function parse_line(a: Algo, cs: string, full_len: i32): Line {
     i = i + 1;
     escaped = true;
   }
-  var t: (i32, i32) = tag_open(a, cs, i);
-  if (t.0 >= 0) {
-    return bsd_split(a, cs, t.0, t.1, escaped);
+  if (s.detect) {
+    var all: Algo[] = checkable();
+    var k: i32 = 0;
+    while (k < all.len()) {
+      if (tag_name_at(all[k], cs, i)) {
+        var d: (i32, i32) = tag_open(all[k], s, cs, i);
+        if (d.0 < 0) {
+          return bad_line(all[k]);
+        }
+        return bsd_split(all[k], s, cs, d.0, d.1, escaped);
+      }
+      k = k + 1;
+    }
+    return bad_line(a);
   }
-  return raw_split(a, cs, i, full_len, escaped);
+  var t: (i32, i32) = tag_open(a, s, cs, i);
+  if (t.0 >= 0) {
+    return bsd_split(a, s, cs, t.0, t.1, escaped);
+  }
+  return raw_split(a, s, cs, i, full_len, escaped);
 }
 
 // ---- check mode -----------------------------------------------------------
@@ -742,10 +907,9 @@ function plural(n: i64, one: string, many: string): string {
 }
 
 // One verified line: the file digested and the verdict reported.
-function check_one(a: Algo, s: Settings, ln: Line, c: Check): Check {
+function check_one(s: Settings, ln: Line, c: Check): Check {
   var st: Check = c;
-  var bits: i32 = ln.hex.len() * 4;
-  var sum: Sum = digest_path(ln.name, a.kind, bits);
+  var sum: Sum = digest_path(ln.name, ln.algo.kind, ln.bits);
   var shown: string = shown_name(ln.name);
   if (sum.failed) {
     if (s.ignore_missing && sum_is_missing(sum)) {
@@ -758,7 +922,15 @@ function check_one(a: Algo, s: Settings, ln: Line, c: Check): Check {
     }
     return st;
   }
-  if (sum.hex == ln.hex) {
+  // The line's length is what is compared, not the whole digest: a
+  // `MD5-64` line names the first eight bytes of an MD5 and verifies
+  // against them. For a variable digest the two are already the same
+  // length, because the digest was computed at the length the line named.
+  var want: string = sum.hex;
+  if (ln.bits / 4 < want.len()) {
+    want = slice_unchecked(want, 0, ln.bits / 4) + "";
+  }
+  if (want == ln.hex && ln.fits) {
     st = Check { ...st, matched: true };
     if (!s.status && !s.quiet) {
       st = Check { ...st, out: gnu.put(st.out, shown + ": OK\n") };
@@ -800,6 +972,11 @@ function check_lines(a: Algo, s: Settings, r: Reader, file: string, o: io_buffer
   var st: Check = Check { properly: 0 as i64, improper: 0 as i64, openfail: 0 as i64, mismatch: 0 as i64, matched: false, out: o };
   var lr: io_buffered.LineReader = io_buffered.line_reader_new(r, 10, read_size());
   var no: i64 = 0 as i64;
+  // The algorithm in force. Under `detect` a recognised tag replaces it
+  // for every line after, the bad ones included: a line whose tag was
+  // read and whose digest was not still names its algorithm in the
+  // warning, and so does the next unreadable line.
+  var cur: Algo = a;
   while (true) {
     var nx: (Option[string], io_buffered.LineReader) = lr.next_line();
     lr = nx.1;
@@ -810,16 +987,17 @@ function check_lines(a: Algo, s: Settings, r: Reader, file: string, o: io_buffer
         if (full.len() == 0 || full[0] as i32 == 35) {
           continue;
         }
-        var ln: Line = parse_line(a, cstring(full), full.len());
+        var ln: Line = parse_line(cur, s, cstring(full), full.len());
+        cur = ln.algo;
         if (!ln.ok) {
           st = Check { ...st, improper: st.improper + 1 as i64 };
           if (s.warn) {
-            st = Check { ...st, out: gnu.error_out(st.out, gnu.quotef(file) + ": " + no.to_string() + ": improperly formatted " + a.tag + " checksum line") };
+            st = Check { ...st, out: gnu.error_out(st.out, gnu.quotef(file) + ": " + no.to_string() + ": improperly formatted " + cur.tag + " checksum line") };
           }
           continue;
         }
         st = Check { ...st, properly: st.properly + 1 as i64 };
-        st = check_one(a, s, ln, st);
+        st = check_one(s, ln, st);
       },
       None => {
         break;
@@ -873,7 +1051,7 @@ function report(s: Settings, st: Check, file: string): (boolean, io_buffered.Buf
 }
 
 // `check_file(a, s, file, o)` — one `-c` operand.
-function check_file(a: Algo, s: Settings, file: string, o: io_buffered.BufWriter): (boolean, io_buffered.BufWriter) {
+pub function check_file(a: Algo, s: Settings, file: string, o: io_buffered.BufWriter): (boolean, io_buffered.BufWriter) {
   if (file == "-") {
     var st: Check = check_lines(a, s, stdin(), "standard input", o);
     return report(s, st, "standard input");
@@ -890,11 +1068,24 @@ function check_file(a: Algo, s: Settings, file: string, o: io_buffered.BufWriter
   }
 }
 
-// ---- b2sum's -l -----------------------------------------------------------
-// `parse_bits(a, v)` — `-l BITS`: gnulib's xstrtoumax in base 10, then
-// the two range rules, each of which names itself on a second line.
+// ---- the -l of b2sum and cksum --------------------------------------------
+// `parse_bits(a, v)` — `-l BITS` in full: the value, then the maximum.
 // Zero selects the default. No `Try …` line follows any of them.
-function parse_bits(a: Algo, v: string): i32 {
+pub function parse_bits(a: Algo, v: string): i32 {
+  var bits: i32 = parse_bits_value(v);
+  check_bits_max(a, bits, v);
+  if (bits == 0) {
+    return a.bits;
+  }
+  return bits;
+}
+
+// `parse_bits_value(v)` — gnulib's xstrtoumax in base 10 and the two
+// rules that do not need to know the algorithm, which is why cksum runs
+// them where it parses the option and leaves the maximum until it knows
+// what `-a` named. Zero comes back as zero: `cksum -l 0` is `-l` unset,
+// and only b2sum reads it as its default length.
+pub function parse_bits_value(v: string): i32 {
   var i: i32 = 0;
   while (i < v.len() && isspace(v[i] as i32)) {
     i = i + 1;
@@ -933,15 +1124,21 @@ function parse_bits(a: Algo, v: string): i32 {
     gnu.error("length is not a multiple of 8");
     exit(1);
   }
-  if (acc > a.bits as u64) {
+  // Saturated at the maximum any algorithm allows, which `check_bits_max`
+  // then reports: nothing above it is a length, so the i32 need not hold it.
+  if (acc > 100000 as u64) {
+    return 100000;
+  }
+  return acc as i32;
+}
+
+// `check_bits_max(a, bits, v)` — the one rule that needs the algorithm.
+pub function check_bits_max(a: Algo, bits: i32, v: string): void {
+  if (bits > a.bits) {
     gnu.error("invalid length: " + gnu.quote(v));
     gnu.error("maximum digest length for " + gnu.quote(a.tag) + " is " + a.bits.to_string() + " bits");
     exit(1);
   }
-  if (acc == 0 as u64) {
-    return a.bits;
-  }
-  return acc as i32;
 }
 
 // ---- the driver -----------------------------------------------------------
@@ -1079,7 +1276,7 @@ function verify(a: Algo, s: Settings, names: string[], o: io_buffered.BufWriter)
 // `run(a)` — the whole program for one algorithm.
 pub function run(a: Algo): i32 {
   var argv: string[] = args();
-  var s: Settings = Settings { binary: 0 - 1, check: false, tag: false, zero: false, ignore_missing: false, status: false, warn: false, quiet: false, strict: false, bits: a.bits };
+  var s: Settings = settings_new(a.bits);
   var g: gnu.Getopt = gnu.getopt_new(argv, options(a), a.name, help_text(a), 1);
   while (true) {
     var r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();

@@ -1,0 +1,623 @@
+// cksum.fern — GNU-compatible `cksum`: checksum and count bytes.
+//
+//   cksum [-a ALGORITHM] [--tag|--untagged] [--base64|--raw] [-z] [FILE]...
+//   cksum -c [-a ALGORITHM] [--ignore-missing] [--quiet|--status|-w]
+//            [--strict] [FILE]...
+//
+// Eleven algorithms behind one `-a`, and they fall into two groups that
+// share nothing but the option table:
+//
+//   - `crc` (the default, the POSIX cksum polynomial), `sysv` and `bsd`
+//     print a checksum, a count and the name, and that is the whole of
+//     them: there is no tag, no base64, no `-c`, and the NAME IS NOT
+//     ESCAPED — a newline in it reaches the output as a newline. They
+//     are `std/hash`.
+//   - the eight digests are `coreutils/lib/digest.fern`, the same
+//     program the seven `*sum` utilities are, so the tagged line, the
+//     name escaping, the check-line grammar, `-l` and every
+//     `--quiet` / `--status` / `--strict` rule come from there. What
+//     this file adds to that module is `-a`'s two extra reading rules:
+//     a base64 digest is read as well as a hex one, and with no `-a`
+//     each check line's TAG chooses the algorithm to verify it with.
+//
+// The tagged line is the default here and `--untagged` is the reversed
+// form the `*sum` utilities write, which is the opposite way round from
+// the seven — and `--tag` still implies binary mode, so `--tag
+// --untagged` writes the `*` that plain `--untagged` does not.
+//
+// `--debug` names GNU's chosen CRC implementation on stderr. A Fern
+// binary has one implementation and no runtime dispatch, so there is
+// nothing to name and it prints nothing; see docs/COREUTILS.md.
+//
+// Nothing here was copied from GNU sources.
+import "std/string";
+import "std/array";
+import "std/hash";
+import "std/hex";
+import "std/base64";
+import "std/io_buffered";
+import "./lib/gnu";
+import "./lib/digest";
+
+// ---- the algorithm table --------------------------------------------------
+// `-a`'s names, in the order the `Valid arguments are:` list prints them.
+// The first three are not digests; `is_digest` is that split.
+function algo_names(): string[] {
+  return ["bsd", "sysv", "crc", "md5", "sha1", "sha224", "sha256", "sha384", "sha512", "blake2b", "sm3"];
+}
+
+function sel_bsd(): i32 {
+  return 0;
+}
+
+function sel_sysv(): i32 {
+  return 1;
+}
+
+function sel_crc(): i32 {
+  return 2;
+}
+
+function sel_blake2b(): i32 {
+  return 9;
+}
+
+function is_digest(sel: i32): boolean {
+  return sel > sel_crc();
+}
+
+function digest_algo(sel: i32): digest.Algo {
+  if (sel == 3) {
+    return digest.algo_md5();
+  }
+  if (sel == 4) {
+    return digest.algo_sha1();
+  }
+  if (sel == 5) {
+    return digest.algo_sha224();
+  }
+  if (sel == 6) {
+    return digest.algo_sha256();
+  }
+  if (sel == 7) {
+    return digest.algo_sha384();
+  }
+  if (sel == 8) {
+    return digest.algo_sha512();
+  }
+  if (sel == sel_blake2b()) {
+    return digest.algo_blake2b();
+  }
+  return digest.algo_sm3();
+}
+
+// ---- the three that are not digests ---------------------------------------
+// `Plain` — the running state of `crc`, `sysv` and `bsd`.
+enum Plain { PCrc(hash.Cksum), PBsd(hash.BsdSum), PSysv(hash.SysvSum) }
+
+function plain_new(sel: i32): Plain {
+  if (sel == sel_bsd()) {
+    return PBsd(hash.bsd_sum_new());
+  }
+  if (sel == sel_sysv()) {
+    return PSysv(hash.sysv_sum_new());
+  }
+  return PCrc(hash.cksum_new());
+}
+
+function plain_update(p: Plain, chunk: string): Plain {
+  match (p) {
+    PCrc(c) => {
+      return PCrc(c.update(chunk));
+    },
+    PBsd(c) => {
+      return PBsd(c.update(chunk));
+    },
+    PSysv(c) => {
+      return PSysv(c.update(chunk));
+    }
+  }
+}
+
+// The two numbers each of the three prints: the checksum, and the count
+// beside it — cksum's is the byte length, sum's are block counts.
+function plain_value(p: Plain): u32 {
+  match (p) {
+    PCrc(c) => {
+      return c.finish();
+    },
+    PBsd(c) => {
+      return c.finish();
+    },
+    PSysv(c) => {
+      return c.finish();
+    }
+  }
+}
+
+function plain_count(p: Plain): u64 {
+  match (p) {
+    PCrc(c) => {
+      return c.len();
+    },
+    PBsd(c) => {
+      return c.blocks();
+    },
+    PSysv(c) => {
+      return c.blocks();
+    }
+  }
+}
+
+// `plain_fields(sel, p)` — the part of the line before the name. bsd's
+// two fields are `%05u %5u`, which is what `sum -r` prints.
+function plain_fields(sel: i32, p: Plain): string {
+  var v: u32 = plain_value(p);
+  var n: u64 = plain_count(p);
+  if (sel == sel_bsd()) {
+    return pad_left(v.to_string(), 5, "0") + " " + pad_left(n.to_string(), 5, " ");
+  }
+  return v.to_string() + " " + n.to_string();
+}
+
+function pad_left(s: string, width: i32, fill: string): string {
+  var out: string = "";
+  var i: i32 = s.len();
+  while (i < width) {
+    out = out + fill;
+    i = i + 1;
+  }
+  return out + s;
+}
+
+// `plain_raw(sel, p)` — `--raw`: the checksum big-endian, four bytes for
+// the CRC and two for the two 16-bit sums.
+function plain_raw(sel: i32, p: Plain): u8[] {
+  var v: u32 = plain_value(p);
+  var out: u8[] = [];
+  if (sel == sel_crc()) {
+    out = out.append(((v >> 24) & 255) as u8);
+    out = out.append(((v >> 16) & 255) as u8);
+  }
+  out = out.append(((v >> 8) & 255) as u8);
+  out = out.append((v & 255) as u8);
+  return out;
+}
+
+// ---- one input ------------------------------------------------------------
+// `Checked` — one operand's answer: the fields a line carries, the raw
+// bytes `--raw` writes, or the error that stopped it.
+struct Checked { fields: string, raw: u8[], err: Option[IoError], failed: boolean }
+
+function plain_reader(r: Reader, sel: i32, owned: boolean): Checked {
+  var p: Plain = plain_new(sel);
+  while (true) {
+    match (r.read_chunk(65536)) {
+      Ok(chunk) => {
+        if (chunk.len() == 0) {
+          break;
+        }
+        p = plain_update(p, chunk);
+      },
+      Err(e) => {
+        if (owned) {
+          r.close();
+        }
+        return Checked { fields: "", raw: [], err: Some(e), failed: true };
+      }
+    }
+  }
+  if (owned) {
+    r.close();
+  }
+  return Checked { fields: plain_fields(sel, p), raw: plain_raw(sel, p), err: None, failed: false };
+}
+
+function plain_path(path: string, sel: i32): Checked {
+  if (path == "-") {
+    return plain_reader(stdin(), sel, false);
+  }
+  match (open_reader(path)) {
+    Ok(r) => {
+      return plain_reader(r, sel, true);
+    },
+    Err(e) => {
+      return Checked { fields: "", raw: [], err: Some(e), failed: true };
+    }
+  }
+}
+
+function checked_error_text(c: Checked): string {
+  match (c.err) {
+    Some(e) => {
+      return gnu.io_error_text(e);
+    },
+    None => {
+      return "";
+    }
+  }
+}
+
+// ---- settings -------------------------------------------------------------
+// `Conf` — cksum's own state around the settings `lib/digest.fern`
+// shares. `specified` is whether `-a` was named at all, which is the
+// whole of check mode's algorithm rule; `named_bits` is whether `-l`
+// named a non-zero length, because `-l 0` is `-l` unset.
+struct Conf { s: digest.Settings, sel: i32, specified: boolean, bits: i32, named_bits: boolean, bits_text: string, raw: boolean, b64: boolean }
+
+function opt_length(): i32 {
+  return 1;
+}
+
+function opt_check(): i32 {
+  return 2;
+}
+
+function opt_ignore_missing(): i32 {
+  return 3;
+}
+
+function opt_quiet(): i32 {
+  return 4;
+}
+
+function opt_status(): i32 {
+  return 5;
+}
+
+function opt_warn(): i32 {
+  return 6;
+}
+
+function opt_strict(): i32 {
+  return 7;
+}
+
+function opt_tag(): i32 {
+  return 8;
+}
+
+function opt_zero(): i32 {
+  return 9;
+}
+
+function opt_algorithm(): i32 {
+  return 10;
+}
+
+function opt_base64(): i32 {
+  return 11;
+}
+
+function opt_debug(): i32 {
+  return 12;
+}
+
+function opt_raw(): i32 {
+  return 13;
+}
+
+function opt_untagged(): i32 {
+  return 14;
+}
+
+function opt_binary(): i32 {
+  return 15;
+}
+
+function opt_text(): i32 {
+  return 16;
+}
+
+// The option table in GNU's declaration order, which the ambiguity list
+// prints candidates in: `--t` names `'--tag'` before `'--text'`, and
+// `--=x` names all sixteen in the order below. `--binary` and `--text`
+// are not in the help text and are options all the same.
+function options(): gnu.Opt[] {
+  var opts: gnu.Opt[] = [];
+  opts = opts.append(gnu.valued("l", "length", opt_length()));
+  opts = opts.append(gnu.flag("c", "check", opt_check()));
+  opts = opts.append(gnu.flag("", "ignore-missing", opt_ignore_missing()));
+  opts = opts.append(gnu.flag("", "quiet", opt_quiet()));
+  opts = opts.append(gnu.flag("", "status", opt_status()));
+  opts = opts.append(gnu.flag("w", "warn", opt_warn()));
+  opts = opts.append(gnu.flag("", "strict", opt_strict()));
+  opts = opts.append(gnu.flag("", "tag", opt_tag()));
+  opts = opts.append(gnu.flag("z", "zero", opt_zero()));
+  opts = opts.append(gnu.valued("a", "algorithm", opt_algorithm()));
+  opts = opts.append(gnu.flag("", "base64", opt_base64()));
+  opts = opts.append(gnu.flag("", "debug", opt_debug()));
+  opts = opts.append(gnu.flag("", "raw", opt_raw()));
+  opts = opts.append(gnu.flag("", "untagged", opt_untagged()));
+  opts = opts.append(gnu.flag("b", "binary", opt_binary()));
+  opts = opts.append(gnu.flag("t", "text", opt_text()));
+  return opts;
+}
+
+function apply(c: Conf, m: gnu.OptMatch): Conf {
+  if (m.id == opt_algorithm()) {
+    return Conf { ...c, sel: gnu.argmatch_exact(m.value, algo_names(), "--algorithm"), specified: true };
+  }
+  if (m.id == opt_length()) {
+    var bits: i32 = digest.parse_bits_value(m.value);
+    return Conf { ...c, bits: bits, named_bits: bits != 0, bits_text: m.value };
+  }
+  if (m.id == opt_check()) {
+    return Conf { ...c, s: digest.Settings { ...c.s, check: true } };
+  }
+  if (m.id == opt_tag()) {
+    return Conf { ...c, s: digest.Settings { ...c.s, tag: true, binary: 1 } };
+  }
+  if (m.id == opt_untagged()) {
+    return Conf { ...c, s: digest.Settings { ...c.s, tag: false } };
+  }
+  if (m.id == opt_binary()) {
+    return Conf { ...c, s: digest.Settings { ...c.s, binary: 1 } };
+  }
+  if (m.id == opt_text()) {
+    return Conf { ...c, s: digest.Settings { ...c.s, binary: 0 } };
+  }
+  if (m.id == opt_zero()) {
+    return Conf { ...c, s: digest.Settings { ...c.s, zero: true } };
+  }
+  if (m.id == opt_base64()) {
+    return Conf { ...c, b64: true };
+  }
+  if (m.id == opt_raw()) {
+    return Conf { ...c, raw: true };
+  }
+  if (m.id == opt_debug()) {
+    return c;
+  }
+  if (m.id == opt_ignore_missing()) {
+    return Conf { ...c, s: digest.Settings { ...c.s, ignore_missing: true } };
+  }
+  if (m.id == opt_status()) {
+    return Conf { ...c, s: digest.Settings { ...c.s, status: true, warn: false, quiet: false } };
+  }
+  if (m.id == opt_warn()) {
+    return Conf { ...c, s: digest.Settings { ...c.s, status: false, warn: true, quiet: false } };
+  }
+  if (m.id == opt_quiet()) {
+    return Conf { ...c, s: digest.Settings { ...c.s, status: false, warn: false, quiet: true } };
+  }
+  return Conf { ...c, s: digest.Settings { ...c.s, strict: true } };
+}
+
+// The combinations GNU refuses, in the order it tests them — `--raw
+// --base64 -t` reports the mutual exclusion and `--raw -t` the text one,
+// so the sequence is observable rather than a choice. The first two and
+// the last carry no `Try …` line; the rest do.
+function validate(c: Conf, operands: i32): void {
+  if (c.named_bits) {
+    if (c.sel != sel_blake2b()) {
+      gnu.error("--length is only supported with --algorithm=blake2b");
+      exit(1);
+    }
+    digest.check_bits_max(digest.algo_blake2b(), c.bits, c.bits_text);
+  }
+  if (c.s.check && c.specified && !is_digest(c.sel)) {
+    gnu.error("--check is not supported with --algorithm={bsd,sysv,crc}");
+    exit(1);
+  }
+  if (c.b64 && c.raw) {
+    gnu.die_usage("--base64 and --raw are mutually exclusive", 1);
+  }
+  if (c.s.tag && c.s.binary == 0) {
+    gnu.die_usage("--text mode is only supported with --untagged", 1);
+  }
+  if (c.s.zero && c.s.check) {
+    gnu.die_usage("the --zero option is not supported when verifying checksums", 1);
+  }
+  if (c.s.binary >= 0 && c.s.check) {
+    gnu.die_usage("the --binary and --text options are meaningless when verifying checksums", 1);
+  }
+  if (!c.s.check) {
+    if (c.s.ignore_missing) {
+      gnu.die_usage("the --ignore-missing option is meaningful only when verifying checksums", 1);
+    }
+    if (c.s.status) {
+      gnu.die_usage("the --status option is meaningful only when verifying checksums", 1);
+    }
+    if (c.s.warn) {
+      gnu.die_usage("the --warn option is meaningful only when verifying checksums", 1);
+    }
+    if (c.s.quiet) {
+      gnu.die_usage("the --quiet option is meaningful only when verifying checksums", 1);
+    }
+    if (c.s.strict) {
+      gnu.die_usage("the --strict option is meaningful only when verifying checksums", 1);
+    }
+  }
+  if (c.raw && operands > 1) {
+    gnu.error("the --raw option is not supported with multiple files");
+    exit(1);
+  }
+}
+
+function help_text(): string {
+  var out: string = "";
+  out = out + "Usage: " + gnu.prog() + " [OPTION]... [FILE]...\n";
+  out = out + "Print or verify checksums.\n";
+  out = out + "By default use the 32 bit CRC algorithm.\n";
+  out = out + "\n";
+  out = out + "With no FILE, or when FILE is -, read standard input.\n";
+  out = out + "\n";
+  out = out + "  -a, --algorithm=TYPE  select the digest type to use.  See DIGEST below.\n";
+  out = out + "      --base64          emit base64-encoded digests, not hexadecimal\n";
+  out = out + "  -c, --check           read checksums from the FILEs and check them\n";
+  out = out + "  -l, --length=BITS     digest length in bits; must not exceed the max for\n";
+  out = out + "                          the blake2 algorithm and must be a multiple of 8\n";
+  out = out + "      --raw             emit a raw binary digest, not hexadecimal\n";
+  out = out + "      --tag             create a BSD-style checksum (the default)\n";
+  out = out + "      --untagged        create a reversed style checksum, without digest type\n";
+  out = out + "  -z, --zero            end each output line with NUL, not newline,\n";
+  out = out + "                          and disable file name escaping\n";
+  out = out + "\n";
+  out = out + "The following five options are useful only when verifying checksums:\n";
+  out = out + "      --ignore-missing  don't fail or report status for missing files\n";
+  out = out + "      --quiet           don't print OK for each successfully verified file\n";
+  out = out + "      --status          don't output anything, status code shows success\n";
+  out = out + "      --strict          exit non-zero for improperly formatted checksum lines\n";
+  out = out + "  -w, --warn            warn about improperly formatted checksum lines\n";
+  out = out + "\n";
+  out = out + "      --debug           indicate which implementation used\n";
+  out = out + "      --help        display this help and exit\n";
+  out = out + "      --version     output version information and exit\n";
+  out = out + "\n";
+  out = out + "DIGEST determines the digest algorithm and default output format:\n";
+  out = out + "  sysv      (equivalent to sum -s)\n";
+  out = out + "  bsd       (equivalent to sum -r)\n";
+  out = out + "  crc       (equivalent to cksum)\n";
+  out = out + "  md5       (equivalent to md5sum)\n";
+  out = out + "  sha1      (equivalent to sha1sum)\n";
+  out = out + "  sha224    (equivalent to sha224sum)\n";
+  out = out + "  sha256    (equivalent to sha256sum)\n";
+  out = out + "  sha384    (equivalent to sha384sum)\n";
+  out = out + "  sha512    (equivalent to sha512sum)\n";
+  out = out + "  blake2b   (equivalent to b2sum)\n";
+  out = out + "  sm3       (only available through cksum)\n";
+  out = out + "\n";
+  out = out + "When checking, the input should be a former output of this program,\n";
+  out = out + "or equivalent standalone program.\n";
+  return out;
+}
+
+// ---- writing --------------------------------------------------------------
+// `digest_text(c, bin)` — the digest as the line carries it.
+function digest_text(c: Conf, bin: u8[]): string {
+  if (c.b64) {
+    return base64.base64_encode(bin);
+  }
+  return hex.hex_encode(bin);
+}
+
+function delim(c: Conf): string {
+  if (c.s.zero) {
+    return "\x00";
+  }
+  return "\n";
+}
+
+// `plain_line(c, sel, fields, name, named)` — the line the three
+// non-digest algorithms write. The name is appended verbatim: only the
+// digests escape one.
+function plain_line(c: Conf, fields: string, name: string, named: boolean): string {
+  if (!named) {
+    return fields + delim(c);
+  }
+  return fields + " " + name + delim(c);
+}
+
+// One operand summed and printed.
+function compute_one(c: Conf, name: string, named: boolean, o: io_buffered.BufWriter): (boolean, io_buffered.BufWriter) {
+  var out: io_buffered.BufWriter = o;
+  if (is_digest(c.sel)) {
+    var a: digest.Algo = digest_algo(c.sel);
+    var sum: digest.Sum = digest.digest_path(name, a.kind, c.s.bits);
+    if (sum.failed) {
+      return (false, gnu.error_out(out, gnu.quotef(name) + ": " + digest.sum_error_text(sum)));
+    }
+    if (c.raw) {
+      return (true, gnu.put(out, string_from_bytes_unchecked(sum.bin)));
+    }
+    return (true, gnu.put(out, digest.sum_line(a, c.s, digest_text(c, sum.bin), name)));
+  }
+  var p: Checked = plain_path(name, c.sel);
+  if (p.failed) {
+    return (false, gnu.error_out(out, gnu.quotef(name) + ": " + checked_error_text(p)));
+  }
+  if (c.raw) {
+    return (true, gnu.put(out, string_from_bytes_unchecked(p.raw)));
+  }
+  return (true, gnu.put(out, plain_line(c, p.fields, name, named)));
+}
+
+function compute(c: Conf, names: string[], named: boolean, o: io_buffered.BufWriter): (boolean, io_buffered.BufWriter) {
+  var out: io_buffered.BufWriter = o;
+  var ok: boolean = true;
+  var i: i32 = 0;
+  while (i < names.len()) {
+    var r: (boolean, io_buffered.BufWriter) = compute_one(c, names[i], named, out);
+    out = r.1;
+    if (!r.0) {
+      ok = false;
+    }
+    i = i + 1;
+  }
+  return (ok, out);
+}
+
+function verify(c: Conf, names: string[], o: io_buffered.BufWriter): (boolean, io_buffered.BufWriter) {
+  var a: digest.Algo = digest.algo_crc();
+  if (c.specified) {
+    a = digest_algo(c.sel);
+  }
+  var out: io_buffered.BufWriter = o;
+  var ok: boolean = true;
+  var i: i32 = 0;
+  while (i < names.len()) {
+    var r: (boolean, io_buffered.BufWriter) = digest.check_file(a, c.s, names[i], out);
+    out = r.1;
+    if (!r.0) {
+      ok = false;
+    }
+    i = i + 1;
+  }
+  return (ok, out);
+}
+
+function main(): i32 {
+  var argv: string[] = args();
+  var c: Conf = Conf { s: digest.settings_new(0), sel: sel_crc(), specified: false, bits: 0, named_bits: false, bits_text: "", raw: false, b64: false };
+  c = Conf { ...c, s: digest.Settings { ...c.s, tag: true, cksum: true } };
+  var g: gnu.Getopt = gnu.getopt_new(argv, options(), "cksum", help_text(), 1);
+  while (true) {
+    var r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    g = r.1;
+    match (r.0) {
+      Some(m) => {
+        c = apply(c, m);
+      },
+      None => {
+        break;
+      }
+    }
+  }
+
+  var names: string[] = g.operands();
+  var named: boolean = names.len() > 0;
+  validate(c, names.len());
+  if (!named) {
+    names = ["-"];
+  }
+  // The digest length the output carries: `-l` when it named one, and
+  // the algorithm's own otherwise. `detect` is check mode with no `-a`,
+  // where each line's tag chooses.
+  var bits: i32 = 0;
+  if (is_digest(c.sel)) {
+    bits = digest_algo(c.sel).bits;
+    if (c.named_bits) {
+      bits = c.bits;
+    }
+  }
+  c = Conf { ...c, s: digest.Settings { ...c.s, bits: bits, detect: c.s.check && !c.specified } };
+
+  var out: io_buffered.BufWriter = gnu.out_new();
+  var ok: boolean = true;
+  if (c.s.check) {
+    var rv: (boolean, io_buffered.BufWriter) = verify(c, names, out);
+    ok = rv.0;
+    out = rv.1;
+  } else {
+    var rc: (boolean, io_buffered.BufWriter) = compute(c, names, named, out);
+    ok = rc.0;
+    out = rc.1;
+  }
+  out = out.flush();
+  gnu.close_stdout(out, false);
+  if (!ok) {
+    return 1;
+  }
+  return 0;
+}

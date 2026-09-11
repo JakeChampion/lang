@@ -53,9 +53,9 @@ unless the harness equalises this. It does, and `coreutils/lib/gnu.fern`
 reproduces the verbatim rule, so `/usr/local/bin/yes -x` says
 `/usr/local/bin/yes: invalid option -- 'x'` exactly as GNU would.
 
-### The two exemptions
+### The three exemptions
 
-Two outputs are ours by design, because their content names the
+Three outputs are ours by design, because their content names the
 implementation:
 
 - `--version` prints `<util> (Fern coreutils) <version>` and nothing else.
@@ -64,6 +64,16 @@ implementation:
 - `--help` is our own text. GNU's is GPL-licensed prose carrying GNU's URLs,
   authors and (in 9.x) terminal hyperlink escapes; reproducing it would be
   copying, and it would be wrong in every particular that matters.
+- `cksum --debug` — "indicate which implementation used" — is silent. GNU's
+  CRC has several implementations and it picks one at startup by asking the
+  CPU (`using pclmul hardware support` where the instruction exists), which
+  is a runtime dispatch a static Fern binary with no CPU detection does not
+  have; claiming the message would say something untrue about our own code,
+  and printing a different one would diverge just the same. Only the CRC
+  reaches it — GNU says nothing under `--debug` for the other ten
+  algorithms, and neither do we, so those ARE in the byte-exact corpus, as
+  is everything else about the option: that it is accepted, that it refuses
+  a value, and that it stands in the ambiguity list.
 
 Exempt is not unchecked. `requireHelp` / `requireVersion` in the harness
 still require the exit status and the stream to match GNU's for each — so
@@ -207,10 +217,16 @@ coreutils/
   lib/tabs.fern     the `-t` tab-stop grammar and lookup expand and
                     unexpand share
   lib/digest.fern   md5sum, sha1sum, sha224sum, sha256sum, sha384sum,
-                    sha512sum and b2sum, which GNU also builds from one
-                    source: the option surface, the file-name escaping
-                    and the check-line grammar, parameterised by the
-                    digest each of the seven names
+                    sha512sum, b2sum and the eight digests of cksum,
+                    which GNU also builds from one source: the option
+                    surface, the file-name escaping and the check-line
+                    grammar, parameterised by the digest each utility
+                    names. cksum widens two rules of that grammar and
+                    the module carries both behind one flag — a base64
+                    digest is read wherever a hex one is, and a line's
+                    TAG chooses the algorithm when no -a did. The three
+                    checksums cksum offers that are NOT digests (the
+                    POSIX crc, and sum's bsd and sysv) are std/hash
   lib/pwdb.fern     /etc/passwd and /etc/group as glibc's `files`
                     backend reads them — the lookups by name and by id,
                     getgrouplist's ordering, and the process's own group
@@ -828,6 +844,51 @@ what the previous one did, so the `rm` that clears the link (and the shell
 redirection that recreates the file) is inside the timed command. It comes from
 the GNU directory for all three implementations, exactly as `yes`'s `head`
 does, so it compresses every ratio equally rather than biasing one.
+
+`cksum`, 2026-09-11, Linux x86-64 (GNU coreutils 9.4; uutils 0.0.24 as
+the Debian multi-call binary). The same 62 MiB / 8 000 000-line file the
+digest table uses, and the `-c` workload is the same 500 small files:
+
+| utility | workload | fern (ms) | gnu (ms) | uutils (ms) | gnu / fern | uutils / fern |
+|---|---|---|---|---|---|---|
+| `cksum` | cksum of a 62 MiB file | 331.23 ± 4.03 | 14.42 ± 2.38 | 199.22 ± 3.22 | 0.04× | 0.60× |
+| `cksum` | cksum of a 62 MiB file from a pipe | 336.44 ± 4.76 | 29.52 ± 4.35 | 224.19 ± 15.89 | 0.09× | 0.67× |
+| `cksum` | `-a sysv` of a 62 MiB file | 114.41 ± 3.83 | 19.58 ± 6.75 | 22.15 ± 4.77 | 0.17× | 0.19× |
+| `cksum` | `-a bsd` of a 62 MiB file | 163.10 ± 22.75 | 142.40 ± 16.26 | 62.44 ± 1.85 | 0.87× | 0.38× |
+| `cksum` | `-a sha256` of a 62 MiB file | 578.89 ± 25.62 | 66.91 ± 7.91 | 65.20 ± 5.26 | 0.12× | 0.11× |
+| `cksum` | `-a sm3` of a 62 MiB file | 560.76 ± 29.56 | 245.05 ± 8.14 | 230.44 ± 6.07 | 0.44× | 0.41× |
+| `cksum` | `-a blake2b` of a 62 MiB file | 228.11 ± 13.55 | 103.72 ± 8.22 | 86.21 ± 11.13 | 0.45× | 0.38× |
+| `cksum` | `--untagged -a md5` of a 62 MiB file | 241.22 ± 7.92 | 122.61 ± 3.55 | 149.09 ± 4.31 | 0.51× | 0.62× |
+| `cksum` | `--raw` of a 62 MiB file | 334.59 ± 23.40 | 11.71 ± 0.80 | 200.86 ± 8.29 | 0.04× | 0.60× |
+| `cksum` | cksum of a small file | 0.31 ± 0.53 | 1.69 ± 0.97 | 1.85 ± 0.34 | 5.54× | 6.04× |
+| `cksum` | `-a sha256 -c` over 500 small files | 10.49 ± 2.20 | 3.68 ± 1.18 | 2.01 ± 0.63 | 0.35× | 0.19× |
+
+**cksum does not meet the epic's bar**, and the three groups of rows fail it
+for three different reasons:
+
+- **The CRC rows are the worst in this document, and the cause is one
+  instruction.** GNU's 14 ms over 62 MiB is 0.23 ns a byte, which no
+  byte-at-a-time loop reaches: it folds the message with `pclmulqdq`, the
+  carry-less multiply, sixteen bytes at a time. `std/hash`'s `Cksum` is the
+  ordinary slice-by-one table, and 331 ms is what that costs. uutils' 199 ms
+  is a table too, so the Fern-to-uutils ratio (0.60×) is the codegen
+  comparison and the 0.04× is not. Closing it needs the instruction, and
+  `pclmulqdq` is inside the Haswell baseline — this is the first workload
+  here that wants a SIMD intrinsic rather than better scalar code.
+- **The digest rows are #8782 again**, unchanged by anything cksum does: the
+  driver is the same `lib/digest.fern` the seven `*sum` utilities run, and
+  raising the read block moves nothing. `sha256` is 0.12× because GNU is on
+  SHA-NI, a hardware instruction, so that row is not a codegen comparison
+  either; `blake2b` at 0.45× and `sm3` at 0.44× are, and they are the same
+  4× gap `b2sum` measures against plain portable C.
+- **`sysv` and `bsd` are the interesting middle.** Both are a sum over every
+  byte with no table, and `bsd` at 0.87× is the closest any throughput row in
+  this document comes to GNU without a hardware instruction on either side.
+  `sysv` at 0.17× is the outlier: GNU's is a plain `sum += *p` that a C
+  compiler auto-vectorises, and nothing in `std/hash` does.
+
+The startup row is the static-binary margin, widened as it is for the seven:
+GNU dlopens libcrypto before it hashes a hundred bytes.
 
 ## The primitives group C is built on
 

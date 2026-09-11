@@ -43,6 +43,7 @@ func corpusByUtil() map[string]func(*testing.T) []invocation {
 		"basename":  basenameCases,
 		"basenc":    basencCases,
 		"cat":       catCases,
+		"cksum":     cksumCases,
 		"comm":      commCases,
 		"csplit":    csplitCases,
 		"cut":       cutCases,
