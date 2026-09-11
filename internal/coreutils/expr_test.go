@@ -650,6 +650,14 @@ func exprCases(t *testing.T) []invocation {
 		{name: "full stdout with a zero value", args: []string{"0"}, stdout: stdoutFull},
 		{name: "full stdout with a syntax error", args: []string{"1", "+"}, stdout: stdoutFull},
 		{name: "full stdout with a bad regexp", args: []string{"abc", ":", `\(`}, stdout: stdoutFull},
+		// --help and --version print text that is ours by design, but a
+		// write that FAILS prints nothing and exits through gnulib's
+		// exit_failure, which expr sets to 3 rather than the 2 a usage
+		// error uses — so these four compare byte for byte.
+		{name: "closed stdout under help", args: []string{"--help"}, stdout: stdoutClosed},
+		{name: "closed stdout under version", args: []string{"--version"}, stdout: stdoutClosed},
+		{name: "full stdout under help", args: []string{"--help"}, stdout: stdoutFull},
+		{name: "full stdout under version", args: []string{"--version"}, stdout: stdoutFull},
 	}
 }
 
