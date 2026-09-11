@@ -23,15 +23,12 @@
 //      user-process entry for that terminal. A descriptor that is not a
 //      terminal ends it here — there is no session to name.
 //
-// Naming the terminal is ttyname(0). glibc reads the /proc symlink for
-// the descriptor and falls back to walking /dev for a character device
-// with the same device number; without a readlink primitive this takes
-// the second route, which is glibc's own and answers the same name for
-// every terminal a login uses.
+// Naming the terminal is ttyname(0), which is `lib/tty.fern`.
 import "std/string";
 import "std/array";
 import "./lib/gnu";
 import "./lib/pwdb";
+import "./lib/tty";
 import "./lib/utmp";
 
 function help_text(): string {
@@ -67,58 +64,19 @@ function login_uid(): Option[i64] {
   }
 }
 
-// The directories a terminal's device node lives in. /dev/pts first
-// because that is where every pseudo-terminal is, and a login on a real
-// console is the rarer case.
-function tty_dirs(): string[] {
-  return ["/dev/pts", "/dev"];
-}
-
 // ttyname(0) minus its /dev/ prefix — the form utmp's ut_line carries.
-// The descriptor's rdev names the device; the walk finds the entry that
-// has it. A directory that cannot be read contributes nothing.
 function terminal_line(): Option[string] {
-  if (!isatty(0)) {
-    return None;
-  }
-  var want: i64 = 0;
-  match (stdin().stat()) {
-    Ok(st) => {
-      want = st.rdev;
+  match (tty.name_of_stdin()) {
+    Some(path) => {
+      if (path.starts_with("/dev/")) {
+        return Some(slice_unchecked(path, 5, path.len()) + "");
+      }
+      return Some(path);
     },
-    Err(_) => {
+    None => {
       return None;
     }
   }
-  if (want == 0 as i64) {
-    return None;
-  }
-  var dirs: string[] = tty_dirs();
-  var d: i32 = 0;
-  while (d < dirs.len()) {
-    match (read_dir(dirs[d])) {
-      Ok(names) => {
-        var i: i32 = 0;
-        while (i < names.len()) {
-          var path: string = dirs[d] + "/" + names[i];
-          match (stat(path)) {
-            Ok(st) => {
-              // S_IFCHR is 0o020000; a terminal is a character device
-              // and nothing else can share its rdev.
-              if ((st.mode & 61440 as u32) == 8192 as u32 && st.rdev == want) {
-                return Some(slice_unchecked(path, 5, path.len()) + "");
-              }
-            },
-            Err(_) => {}
-          }
-          i = i + 1;
-        }
-      },
-      Err(_) => {}
-    }
-    d = d + 1;
-  }
-  return None;
 }
 
 function login_name(): Option[string] {

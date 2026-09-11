@@ -1136,7 +1136,7 @@ pub struct OptMatch { id: i32, value: string, has_value: boolean, long_form: boo
 // `Getopt` — the scan state. `cluster` is what is left of a short
 // cluster still being consumed (without its dash); `operands` are
 // the tokens permuted out so far.
-pub struct Getopt { argv: string[], opts: Opt[], name: string, help: string, status: i32, in_order: boolean, report_operands: boolean, i: i32, cluster: string, operands: string[], past_dashdash: boolean }
+pub struct Getopt { argv: string[], opts: Opt[], name: string, help: string, status: i32, fail: i32, in_order: boolean, report_operands: boolean, i: i32, cluster: string, operands: string[], past_dashdash: boolean }
 
 // The ids `next()` reserves for the two standard options; they never
 // reach the caller because `next()` answers them itself.
@@ -1162,7 +1162,17 @@ pub function getopt_new(argv: string[], opts: Opt[], name: string, help_text: st
     None => {}
   }
   var empty: string[] = [];
-  return Getopt { argv: argv, opts: all, name: name, help: help_text, status: status, in_order: in_order, report_operands: false, i: 1, cluster: "", operands: empty, past_dashdash: false };
+  return Getopt { argv: argv, opts: all, name: name, help: help_text, status: status, fail: status, in_order: in_order, report_operands: false, i: 1, cluster: "", operands: empty, past_dashdash: false };
+}
+
+// `(g).exit_failure(status)` — gnulib's initialize_exit_failure: the
+// code a FAILED WRITE exits with, where `status` above is the code a
+// usage error exits with. They are the same number for almost every
+// utility, because gnulib calls usage() with exit_failure — but tty(1)
+// sets exit_failure to 3 and refuses a bad option with 2, so its
+// `--help > /dev/full` exits 3 where `tty -x` exits 2.
+pub function (g: Getopt) exit_failure(status: i32): Getopt {
+  return Getopt { ...g, fail: status };
 }
 
 // `(g).in_order()` — stop at the first operand regardless of
@@ -1399,6 +1409,12 @@ function long_option(g: Getopt, a: string): (Option[OptMatch], Getopt) {
     k = k + 1;
   }
   if (found < 0) {
+    // The list is not every prefix match: glibc compares each later
+    // candidate against the FIRST one and names only those that differ,
+    // plus that first one. Two spellings of the same option therefore
+    // make no ambiguity and only one of them is listed — `tty --=x`
+    // names `--silent` and not `--quiet`, and `rmdir --p` is `--parents`
+    // even though `--path` matches it too.
     var list: string = "";
     var ambiguous: boolean = false;
     k = 0;
@@ -1407,11 +1423,12 @@ function long_option(g: Getopt, a: string): (Option[OptMatch], Getopt) {
       if (o.long.len() > 0 && o.long.starts_with(name)) {
         if (found < 0) {
           found = k;
+          list = list + " '--" + o.long + "'";
         } else if (o.arg != g.opts[found].arg || o.id != g.opts[found].id) {
           // glibc also compares the option's flag pointer; nothing here has one.
           ambiguous = true;
+          list = list + " '--" + o.long + "'";
         }
-        list = list + " '--" + o.long + "'";
       }
       k = k + 1;
     }
@@ -1437,19 +1454,15 @@ function long_option(g: Getopt, a: string): (Option[OptMatch], Getopt) {
       die_usage("option '--" + o.long + "' requires an argument", g.status);
     }
   }
-  // The write-failure status is the utility's own `exit_failure`, and
-  // for a utility that declares options that is the SAME number as its
-  // usage-error status: gnulib calls usage() with exit_failure, so
-  // printenv's 2 is both, head's 1 is both, and sort's 2 is both. (The
-  // one coreutil where they differ — expr, whose exit_failure is 3
-  // against a usage error's 2 — declares no options and never reaches
-  // this scan; `sole_help_version_with` carries the pair separately for
-  // the utilities that need it.)
+  // The write-failure status is the utility's own `exit_failure`, which
+  // is the usage-error status for almost everything here — gnulib calls
+  // usage() with exit_failure, so printenv's 2 is both and head's 1 is
+  // both — and `exit_failure()` above is how the two that differ say so.
   if (o.id == help_id()) {
-    print_help(g.help, 0, g.status);
+    print_help(g.help, 0, g.fail);
   }
   if (o.id == version_id()) {
-    print_version(g.name, 0, g.status);
+    print_version(g.name, 0, g.fail);
   }
   return (Some(OptMatch { id: o.id, value: value, has_value: has, long_form: true }), s);
 }
