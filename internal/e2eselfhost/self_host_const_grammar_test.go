@@ -87,7 +87,7 @@ func TestSelfHostConstGrammarX86_64(t *testing.T) {
 // constDiagLines keeps only the const-grammar diagnostics, normalising away
 // the leading file path native prints and the self-host does not. Other
 // diagnostics are filtered out: a const-bearing program can also trip the
-// self-host's #4346 "cannot represent yet" note, which is a separate gap and
+// self-host's #9053 "cannot represent yet" note, which is a separate gap and
 // would otherwise mask this comparison.
 func constDiagLines(out string) []string {
 	var keep []string

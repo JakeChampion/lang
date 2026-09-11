@@ -405,7 +405,7 @@ func TestSelfHostBuildGateX86_64(t *testing.T) {
 			wantDiag: "",
 		},
 		{
-			// The uncoded #4346 hint (`error[type]`) is a statement about what
+			// The uncoded #9053 hint (`error[type]`) is a statement about what
 			// this checker can model, not about the program, so it must never
 			// reject a build. `is_diagnostic_code` is what keeps it out.
 			name:     "uncoded-partial-checker-hint-does-not-gate",

@@ -103,7 +103,7 @@ func capsDiagnostics(out string) []string {
 //
 // The COMPILE path is what the two are compared on, not `-check`: the
 // self-host's partial checker cannot yet type a cross-module call at all
-// (#4346), so its `-check` exit code is dominated by that hint for any
+// (#9053), so its `-check` exit code is dominated by that hint for any
 // multi-module program, while the compile path answers exactly the question
 // this gate is about — does a binary come out.
 func TestSelfHostPackageCapabilityDifferentialX86_64(t *testing.T) {

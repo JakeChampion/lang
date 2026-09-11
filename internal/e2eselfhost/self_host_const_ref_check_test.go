@@ -9,7 +9,7 @@ import (
 
 // A bare reference to a top-level `const` had no type in the self-host checker,
 // so `-check` rejected every program that reads one — as un-inferable under
-// #4346, the catch-all for expressions the partial `Type` union cannot model.
+// #9053, the catch-all for expressions the partial `Type` union cannot model.
 // It was not that kind of gap: a const reaches the parser as a zero-parameter
 // FuncDecl carrying `is_const`, so it lands in the SIG table while an ident is
 // resolved against the VALUE scope, and the two never met.

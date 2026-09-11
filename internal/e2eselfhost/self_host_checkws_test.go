@@ -12,7 +12,7 @@ import (
 //
 // The verdicts are what the two compilers must agree on. The explanations are
 // not comparable and are not meant to be: the self-host checker is partial
-// (#4346), so a member both refuse can be refused for differently-worded
+// (#9053), so a member both refuse can be refused for differently-worded
 // reasons — and the two even order the text differently, native printing FAIL
 // before the diagnostic it collected, the self-host printing diagnostics as it
 // finds them and the verdict after.

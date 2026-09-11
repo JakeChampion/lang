@@ -150,7 +150,7 @@ function report_diags(diags: util.Diag[]): boolean {
 // cause.
 //
 // The verdict is the DIAGNOSTICS, not ModuleTypes.all_well_typed. While the
-// checker port is partial (#4346) that flag goes false for a program it merely
+// checker port is partial (#9053) that flag goes false for a program it merely
 // cannot model — measured on `import "std/string"; function main(): i32 {
 // return 12; }`, which yields all_well_typed = false and an empty diag list.
 // Gating on it would fail almost every program that touches the stdlib, with
