@@ -746,14 +746,22 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"struct-lit-order-swapped-ok", "struct P { a: i32, b: string }\nfunction main(): i32 { var p = P { b: \"x\", a: 1 }; return p.a; }\n", nil},
 		{"struct-lit-order-swapped-downstream", "struct P { a: i32, b: string }\nfunction main(): i32 { var p = P { b: \"x\", a: 1 }; var w: i32 = p.b; return 0; }\n", []string{"E003"}},
 		{"struct-lit-order-swapped-value-mismatch", "struct P { a: i32, b: string }\nfunction main(): i32 { var p = P { b: 7, a: 1 }; return p.a; }\n", []string{"E043"}},
-		// A field value is judged AGAINST its declared field type (#9042). The
-		// ACCEPTING half of that cannot be gated here: refusing collapsed the
-		// literal to unknown, which bails the module with an UNCODED
-		// `error[type]`, so a row expecting no codes passes either way. It is
-		// gated by exit status in TestSelfHostCLIX86_64/check-accepts-typed-field.
-		// What this table can hold is the reverse — the widening is
-		// assignability, not a blanket accept, so a NON-member struct at a
-		// union field and a wrong primitive are still E043.
+		// A field value is judged AGAINST its declared field type (#9042).
+		// NEITHER half of that is gated here, and the rows below do not
+		// discriminate it:
+		//
+		// The accepting half bails the module with an UNCODED `error[type]`,
+		// which contributes no code, so a row expecting none passes either way.
+		// The refusing half is reported by call_diags_struct_lit, a separate
+		// coded pass that already resolves by name and already uses the
+		// settles_to / type_assignable pair — it was check_expr's TYPE result
+		// that disagreed with it. So E043 flows whatever check_expr does, and
+		// these rows stay green even against a blanket accept.
+		//
+		// TestSelfHostCLIX86_64/check-accepts-typed-field is the gate that
+		// discriminates the fix, by exit status. What these rows pin is that
+		// the E043 CODE is still produced for the non-member and wrong-primitive
+		// shapes once the widening exists — not the widening itself.
 		{"struct-lit-field-non-member-at-union", "struct Lf { v: i32 }\nstruct Tw { xs: i32[] }\ntype Node = Lf | Tw;\nstruct Holds { t: Node, n: i32 }\nstruct Other { z: i32 }\nfunction mk(n: i32): Holds { return Holds { t: Other { z: n }, n: n }; }\nfunction main(): i32 { return mk(1).n; }\n", []string{"E043"}},
 		{"struct-lit-field-wrong-prim-still-refused", "struct P { a: i32, b: string }\nfunction main(): i32 { var p = P { a: 1, b: 7 }; return p.a; }\n", []string{"E043"}},
 		// A method on an enum or struct-union receiver dispatches under the
