@@ -42,6 +42,7 @@ struct State {
 struct Value { s: State, id: i32 }
 
 function t_i32(): typeinfo.Type { return typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false }; }
+function t_u8(): typeinfo.Type { return typeinfo.TypeI32 { width: 8, unsigned: true, is_char: false }; }
 function t_bool(): typeinfo.Type { return typeinfo.TypeBool { tag: 0 }; }
 function t_string(): typeinfo.Type { return typeinfo.TypeString { tag: 0 }; }
 function t_void(): typeinfo.Type { return typeinfo.TypeVoid { tag: 0 }; }
@@ -170,10 +171,50 @@ function decimal(text: string): boolean {
     return true;
 }
 
-function number(n: ast.ExprNumber, s: State): Value {
-    if (parser.is_unit_literal(n) || n.is_float || !decimal(n.text)) { return refused(s, "unsupported literal"); }
-    if (n.suffix != "" && n.suffix != "i32") { return refused(s, "unsupported literal width"); }
-    return define(s, 1, [], util.lit_to_i32(n.text), "", t_i32());
+function hex_digit(b: i32): boolean {
+    return (b >= 48 && b <= 57) || (b >= 97 && b <= 102) || (b >= 65 && b <= 70);
+}
+
+function hex_digits(text: string, from: i32): boolean {
+    if (from >= text.len()) { return false; }
+    var i: i32 = from;
+    while (i < text.len()) {
+        if (!hex_digit(text[i] as i32)) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+// The two bases the lexer writes: decimal, and hexadecimal behind an `0x`
+// prefix. Digits are never separated, so a well-formed literal is the optional
+// prefix and a run of digits. The value is `util.lit_to_i32`'s, the same one
+// the production lowering reads, and the checker has already proved it fits
+// the type the literal is written at (E047).
+function integer_literal(text: string): boolean {
+    if (text.len() > 2 && text[0] == b'0' && (text[1] == b'x' || text[1] == b'X')) { return hex_digits(text, 2); }
+    return decimal(text);
+}
+
+// A literal's width is the suffix the lexer read, which a byte literal
+// (`b'x'`) carries as much as a written `7u8` does. An unsuffixed decimal is
+// an i32; the other widths have no constant form here yet.
+function literal_type(suffix: string): typeinfo.Type {
+    if (suffix == "u8") { return t_u8(); }
+    if (suffix == "" || suffix == "i32") { return t_i32(); }
+    return typeinfo.unchecked();
+}
+
+// An unsuffixed literal carries no width of its own: it takes the integer type
+// the destination names, the way the checker does — `var b: u8 = 65` binds a
+// byte, and `65` in an i32 position an i32. A suffix names the type outright.
+// Either way the value has to fit what it lands in, which `ssasem` holds the
+// constant to.
+function number(n: ast.ExprNumber, s: State, expected: typeinfo.Type): Value {
+    if (parser.is_unit_literal(n) || n.is_float || !integer_literal(n.text)) { return refused(s, "unsupported literal"); }
+    var ty: typeinfo.Type = literal_type(n.suffix);
+    if (n.suffix == "" && ssasem.is_integer(expected)) { ty = expected; }
+    if (!semtypes.concrete(ty, false)) { return refused(s, "unsupported literal width"); }
+    return define(s, 1, [], util.lit_to_i32(n.text), "", ty);
 }
 
 function boolean_value(b: boolean): i32 {
@@ -270,10 +311,11 @@ function index(ix: ast.ExprIndex, s: State): Value {
     s = at.s;
     if (!s.ok) { return at; }
     if (!is_i32(s.values[at.id])) { return refused(s, "array projection contract"); }
-    // A string's element is one byte, handed back as an i32. Nothing is
-    // borrowed, so this is a read of the source rather than a projection of it.
+    // A string's element is one byte, typed u8 the way the checker types it.
+    // Nothing is borrowed, so this is a read of the source rather than a
+    // projection of it.
     if (ssasem.is_string(s.values[container.id])) {
-        return define(s, ssasem.str_index(), [container.id, at.id], 0, "", t_i32());
+        return define(s, ssasem.str_index(), [container.id, at.id], 0, "", t_u8());
     }
     var elem: typeinfo.Type = element_type(s.values[container.id]);
     if (!semtypes.concrete(elem, false)) { return refused(s, "array projection contract"); }
@@ -419,10 +461,39 @@ function variant(e: ast.Expr, name: string, owner: string, args: ast.Expr[], s: 
     return define(s, ssasem.variant_new(), ids, 0, name, ty);
 }
 
-function binary(b: ast.ExprBinary, s: State): Value {
+// An unsuffixed integer literal names no width of its own, so it cannot be the
+// operand that decides one.
+function width_bearing(e: ast.Expr): boolean {
+    match (e) {
+        ast.ExprNumber(n) => { return n.suffix != ""; },
+        _ => { return true; }
+    }
+    return true;
+}
+
+// The width an operator runs at, decided before either operand is produced so
+// that a literal on EITHER side takes it. An arithmetic result is that width,
+// which the checker's type for the whole expression names; a comparison's is
+// not, so it comes from whichever operand names one.
+function operand_width(e: ast.Expr, b: ast.ExprBinary, s: State): typeinfo.Type {
+    var whole: typeinfo.Type = checked(e, s);
+    if (ssasem.is_integer(whole)) { return whole; }
+    if (width_bearing(b.left)) {
+        var l: typeinfo.Type = checked(b.left, s);
+        if (ssasem.is_integer(l)) { return l; }
+    }
+    if (width_bearing(b.right)) {
+        var r: typeinfo.Type = checked(b.right, s);
+        if (ssasem.is_integer(r)) { return r; }
+    }
+    return typeinfo.unchecked();
+}
+
+function binary(e: ast.Expr, b: ast.ExprBinary, s: State): Value {
     if (b.op == "&&" || b.op == "||") { return logical(b, s); }
-    var left: Value = expr(b.left, s, typeinfo.unchecked());
-    var right: Value = expr(b.right, left.s, typeinfo.unchecked());
+    var want: typeinfo.Type = operand_width(e, b, s);
+    var left: Value = expr(b.left, s, want);
+    var right: Value = expr(b.right, left.s, want);
     s = right.s;
     if (!s.ok) { return right; }
     var ty: typeinfo.Type = ssasem.binary_result(b.op, s.values[left.id], s.values[right.id]);
@@ -430,13 +501,31 @@ function binary(b: ast.ExprBinary, s: State): Value {
     return define(s, 9, [left.id, right.id], 0, b.op, ty);
 }
 
-function unary(u: ast.ExprUnary, s: State): Value {
-    var operand: Value = expr(u.operand, s, typeinfo.unchecked());
+// Negation keeps its operand's type, so a destination width reaches the
+// operand through it; a cast names its own destination and passes none on.
+function unary(e: ast.Expr, u: ast.ExprUnary, s: State, expected: typeinfo.Type): Value {
+    if (parser.is_cast_op(u.op)) { return cast(e, u, s); }
+    var want: typeinfo.Type = typeinfo.unchecked();
+    if (u.op == "-") { want = expected; }
+    var operand: Value = expr(u.operand, s, want);
     s = operand.s;
     if (!s.ok) { return operand; }
     var ty: typeinfo.Type = ssasem.unary_result(u.op, s.values[operand.id]);
     if (!semtypes.concrete(ty, false)) { return refused(s, "operator contract"); }
     return define(s, 10, [operand.id], 0, u.op, ty);
+}
+
+// `e as T` reaches here as a unary whose operator names T. The destination is
+// the checker's type for the whole expression rather than the spelling, so a
+// cast to an alias or to a type this vocabulary does not admit refuses on what
+// the checker resolved instead of on how it was written.
+function cast(e: ast.Expr, u: ast.ExprUnary, s: State): Value {
+    var operand: Value = expr(u.operand, s, typeinfo.unchecked());
+    s = operand.s;
+    if (!s.ok) { return operand; }
+    var ty: typeinfo.Type = checked(e, s);
+    if (!ssasem.is_integer(ty) || !ssasem.is_integer(s.values[operand.id])) { return refused(s, "cast contract"); }
+    return define(s, ssasem.cast(), [operand.id], 0, "", ty);
 }
 
 // Short-circuit operators are control flow: the right operand runs on its
@@ -602,7 +691,7 @@ function expr(e: ast.Expr, s: State, expected: typeinfo.Type): Value {
 
 function produce(e: ast.Expr, s: State, expected: typeinfo.Type): Value {
     match (e) {
-        ast.ExprNumber(n) => { return number(n, s); },
+        ast.ExprNumber(n) => { return number(n, s, expected); },
         ast.ExprBool(b) => { return define(s, 2, [], boolean_value(b.value), "", t_bool()); },
         ast.ExprString(st) => { return define(s, 5, [], 0, st.value, t_string()); },
         ast.ExprIdent(id) => { return ident(e, id, s); },
@@ -611,8 +700,8 @@ function produce(e: ast.Expr, s: State, expected: typeinfo.Type): Value {
         ast.ExprTuple(t) => { return tuple(e, t, s, expected); },
         ast.ExprIndex(ix) => { return index(ix, s); },
         ast.ExprFieldAccess(fa) => { return field(fa, s); },
-        ast.ExprBinary(b) => { return binary(b, s); },
-        ast.ExprUnary(u) => { return unary(u, s); },
+        ast.ExprBinary(b) => { return binary(e, b, s); },
+        ast.ExprUnary(u) => { return unary(e, u, s, expected); },
         ast.ExprCall(c) => { return call(e, c, s); },
         _ => { return refused(s, "unsupported expression"); }
     }

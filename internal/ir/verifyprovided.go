@@ -307,6 +307,7 @@ var providedSigs = map[string]providedSig{
 	"poll":                          {2, rWord},
 	"print":                         {-1, rVoid},
 	"proc_exec":                     {-1, rWord},
+	"proc_exec_as":                  {-1, rWord},
 	"proc_fork":                     {-1, rWord},
 	"proc_waitpid":                  {-1, rWord},
 	"putchar":                       {-1, rVoid},

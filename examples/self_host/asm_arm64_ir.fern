@@ -1139,6 +1139,14 @@ pub function emit_function_via_ir_named(r: irlower.LowerResult, label_name: stri
             // args is on top but param[0] is path, so swap before the call.
             s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n");
             s = s.write("    bl __fn___fern_proc_exec\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind_tag == 280) {  // proc_exec_as
+            // [pathbox, argvbox, envpbox] -> __fern_proc_exec_as(path, argv,
+            // envp), envp on top. Only returns on failure (-errno). No `env`
+            // need: the environment is an operand, not __raw_environ().
+            s = s.need("heap"); s = s.need("proc_exec_as");
+            s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
+            s = s.write("    str x2, [sp, #-16]!\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n");
+            s = s.write("    bl __fn___fern_proc_exec_as\n    add sp, sp, #48\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 182) {  // monotonic_ns
             // no operands; call the Fern-compiled __fn___fern_monotonic_ns
             // (asmcore.rt_src_clock, #2649) -> i64 in x0. A ZERO-ARG helper has
@@ -6802,6 +6810,10 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     // proc_exec: execve over an argv built from the args array.
     if (s.has_need("proc_exec")) {
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_proc_exec(tgt), s.struct_decls, s);
+    }
+    // proc_exec_as: the same execve with the caller's argv and envp.
+    if (s.has_need("proc_exec_as")) {
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_proc_exec_as(tgt), s.struct_decls, s);
     }
     // __fern_map_hash_seed() → core/map's per-process string-hash seed
     // (#6194), drawn once via the Fern __fn___fern_random_i32 and cached in the unit-local
