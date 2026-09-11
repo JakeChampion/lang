@@ -1076,6 +1076,15 @@ errno they discard is the whole of what those two utilities report.
 
 ## Known divergences
 
+**`fmt` formats a whole paragraph where GNU formats 997 words at a time.**
+GNU fills a fixed word buffer, lays out what it holds, and re-enters from the
+remainder, so a paragraph past that bound is laid out from state the re-entry
+leaves behind — 38 words come back as [36, 2] after a flush and as [35, 3] when
+they are a paragraph of their own, and nothing in the streams identifies which
+happened. `fmt.fern` formats the paragraph. The first divergence is 999
+one-character words at `-w 75`; nothing under 998 differs, and the corpus holds
+a 996-word paragraph and none above it.
+
 **`dircolors -p` prints GNU 9.4's database.** The text `-p` prints is a data
 file that changes between coreutils releases — the copyright year on its third
 line moves, and entries come and go — so there is no version-independent answer
@@ -1434,7 +1443,8 @@ groups are the order of work. Each sub-issue names its group.
   `unexpand` `split` `csplit` `shuf` `od` `base32` `base64` `basenc` `cksum`
   `sum` `md5sum` `sha1sum` `sha224sum` `sha256sum` `sha384sum` `sha512sum`
   `b2sum` `tee`. Done: `cat`, `tac`, `head`, `tail`, `wc`, `nl`, `cut`,
-  `paste`, `join`, `comm`, `uniq`, `sort`, `tr`, `fold`, `expand`, `unexpand`,
+  `paste`, `join`, `comm`, `uniq`, `sort`, `tr`, `fold`, `fmt`, `expand`,
+  `unexpand`,
   `pr`, `split`, `csplit`, `shuf`, `od`, `base32`, `base64`, `basenc`, `sum`,
   `tee` and the seven checksum utilities. `tee` wanted signal dispositions (#8792) for `-i`
   and its `--output-error` family: SIG_IGN on SIGINT and SIGPIPE.

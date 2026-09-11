@@ -1,0 +1,994 @@
+// fmt.fern — GNU-compatible `fmt`.
+//
+//   fmt [-WIDTH] [OPTION]... [FILE]...
+//
+// Reformats each paragraph to a GOAL width, breaking lines where a
+// dynamic program says it costs least. The cost function is the whole
+// utility, and every constant below was measured against the reference
+// binary rather than read anywhere:
+//
+//   - costs are in HUNDREDTHS of a squared column, because two of the
+//     terms are integer divisions and the scale decides where they
+//     truncate: a line `n` columns off the goal costs `(10n)^2`, a line
+//     itself costs 4900, a break at a sentence end is worth 2500 back, a
+//     break after a period that does NOT end one costs 360000, and the
+//     two "leave a word stranded" terms are 22500/(len+2) for the word
+//     that ENDS a sentence and 40000/(len+2) for the one after a
+//     sentence's first word;
+//   - a line may reach WIDTH-1 columns and never WIDTH, so the widest
+//     line `-w 75` writes is 74;
+//   - the LAST line of a paragraph is free, which is why the slack in a
+//     paragraph collects at its front;
+//   - the goal defaults to `width * 187 / 200`, not to the 93% `--help`
+//     claims, and `-g` without `-w` sets the width to GOAL + 10;
+//   - ties keep the EARLIER break, so the shorter first line wins.
+//
+// The reader is a state machine over lines rather than a paragraph
+// buffer, and two orderings in it are observable. A tab sets the sticky
+// `tabs` flag that makes every later space run in the OUTPUT reach for
+// tab stops, and the flag is set as the line is SCANNED — so the tab in
+// a line's indent reaches the paragraph before it, and one among that
+// line's words does not. And a paragraph is emitted only once the line
+// that ends it has had its indent read, which is where that ordering
+// comes from.
+//
+// Known divergence: GNU formats at most 997 words of a paragraph at a
+// time — a fixed-size buffer — and then reformats what is left, so its
+// answer for a longer paragraph is not the optimum its own cost function
+// describes. This one formats the whole paragraph. `docs/COREUTILS.md`
+// records it.
+import "std/array";
+import "std/io_buffered";
+import "./lib/gnu";
+
+// Option ids in GNU's declaration order — `fmt --=x` lists
+// `--crown-margin` `--prefix` `--split-only` `--tagged-paragraph`
+// `--uniform-spacing` `--width` `--goal`.
+function opt_crown(): i32 {
+  return 1;
+}
+
+function opt_prefix(): i32 {
+  return 2;
+}
+
+function opt_split(): i32 {
+  return 3;
+}
+
+function opt_tagged(): i32 {
+  return 4;
+}
+
+function opt_uniform(): i32 {
+  return 5;
+}
+
+function opt_width(): i32 {
+  return 6;
+}
+
+function opt_goal(): i32 {
+  return 7;
+}
+
+// The ten digits are declared so glibc hands `-5` to fmt instead of
+// printing `invalid option -- '5'` itself; the obsolete `-WIDTH` form is
+// taken off argv[1] before the scan, so a digit that reaches the loop is
+// one written too late.
+function opt_digit(d: i32): i32 {
+  return 10 + d;
+}
+
+function help_text(): string {
+  var out: string = "";
+  out = out + "Usage: " + gnu.prog() + " [-WIDTH] [OPTION]... [FILE]...\n";
+  out = out + "Reformat each paragraph in the FILE(s), writing to standard output.\n";
+  out = out + "The option -WIDTH is an abbreviated form of --width=DIGITS.\n";
+  out = out + "\n";
+  out = out + "With no FILE, or when FILE is -, read standard input.\n";
+  out = out + "\n";
+  out = out + "  -c, --crown-margin        preserve indentation of first two lines\n";
+  out = out + "  -p, --prefix=STRING       reformat only lines beginning with STRING,\n";
+  out = out + "                              reattaching the prefix to reformatted lines\n";
+  out = out + "  -s, --split-only          split long lines, but do not refill\n";
+  out = out + "  -t, --tagged-paragraph    indentation of first line different from second\n";
+  out = out + "  -u, --uniform-spacing     one space between words, two after sentences\n";
+  out = out + "  -w, --width=WIDTH         maximum line width (default of 75 columns)\n";
+  out = out + "  -g, --goal=WIDTH          goal width (default of 93% of width)\n";
+  out = out + "      --help        display this help and exit\n";
+  out = out + "      --version     output version information and exit\n";
+  return out;
+}
+
+function read_size(): i32 {
+  return 65536;
+}
+
+function block_size(): i32 {
+  return 16384;
+}
+
+function tab_width(): i32 {
+  return 8;
+}
+
+// The widest line fmt will aim for, and the largest number its width
+// parse accepts before the value itself is out of range.
+function max_width_limit(): i32 {
+  return 2500;
+}
+
+function parse_limit(): i64 {
+  return 1073741823 as i64;
+}
+
+// ---- the cost function ------------------------------------------------------
+//
+// Hundredths of a squared column; `short_cost(n)` is `(10n)^2`.
+function line_cost_base(): i64 {
+  return 4900 as i64;
+}
+
+function widow_cost(): i64 {
+  return 40000 as i64;
+}
+
+function orphan_cost(): i64 {
+  return 22500 as i64;
+}
+
+function sentence_bonus(): i64 {
+  return 2500 as i64;
+}
+
+function nobreak_cost(): i64 {
+  return 360000 as i64;
+}
+
+function punct_bonus(): i64 {
+  return 1600 as i64;
+}
+
+function paren_bonus(): i64 {
+  return 1600 as i64;
+}
+
+function short_cost(n: i32): i64 {
+  var d: i64 = n as i64;
+  return 100 as i64 * d * d;
+}
+
+// How much two adjacent lines differing by `n` columns cost, half a
+// short cost.
+function ragged_cost(n: i32): i64 {
+  var d: i64 = n as i64;
+  return 50 as i64 * d * d;
+}
+
+function cost_infinity(): i64 {
+  return 4611686018427387904 as i64;
+}
+
+// ---- words ------------------------------------------------------------------
+//
+// `space` is the columns before the word on its own line and `gap` the
+// columns after it on the line it was read from; `period` is a word
+// ending in `.?!` under any run of `)]'"`; `sentence` is a `period` word
+// that was followed by a newline or two blanks, which is what "ends a
+// sentence" means here; `punct` is any other trailing punctuation;
+// `paren` is an opening bracket or quote at the front.
+struct Word { text: string, length: i32, space: i32, gap: i32, period: boolean, sentence: boolean, punct: boolean, paren: boolean }
+
+function is_blank_byte(c: i32): boolean {
+  return c == 32 || c == 9;
+}
+
+function is_closer(c: i32): boolean {
+  return c == 41 || c == 93 || c == 39 || c == 34;
+}
+
+function is_paren(c: i32): boolean {
+  return c == 40 || c == 91 || c == 96 || c == 39 || c == 34;
+}
+
+function is_end_punct(c: i32): boolean {
+  return c == 46 || c == 63 || c == 33;
+}
+
+// C's ispunct in the C locale: a printable byte that is neither a blank
+// nor alphanumeric.
+function is_punct(c: i32): boolean {
+  if (c < 33 || c > 126) {
+    return false;
+  }
+  if (c >= 48 && c <= 57) {
+    return false;
+  }
+  if (c >= 65 && c <= 90) {
+    return false;
+  }
+  if (c >= 97 && c <= 122) {
+    return false;
+  }
+  return true;
+}
+
+function classify(text: string, gap: i32, at_eol: boolean): Word {
+  var n: i32 = text.len();
+  var e: i32 = n;
+  while (e > 0 && is_closer(text[e - 1] as i32)) {
+    e = e - 1;
+  }
+  var period: boolean = e > 0 && is_end_punct(text[e - 1] as i32);
+  var last: i32 = text[n - 1] as i32;
+  return Word { text: text, length: n, space: 0, gap: gap, period: period, sentence: period && (at_eol || gap >= 2), punct: is_punct(last) && !is_end_punct(last), paren: is_paren(text[0] as i32) };
+}
+
+// ---- settings ---------------------------------------------------------------
+struct Settings { max_width: i32, goal: i32, crown: boolean, tagged: boolean, split: boolean, uniform: boolean, prefix: string, prefix_out: string, prefix_lead: i32 }
+
+// ---- output -----------------------------------------------------------------
+//
+// The emitted text is built up in `buf` and handed to the writer a block
+// at a time; `col` is the column the next byte lands on, which the tab
+// rendering needs, and `tabs` is the sticky flag a tab anywhere in the
+// input sets.
+struct Out { w: io_buffered.BufWriter, buf: string, col: i32, tabs: boolean }
+
+// `spacing(col, n, tabs)` — `n` columns of white space written from
+// column `col`. With the tabs flag set the run reaches for tab stops the
+// way unexpand does: tabs are used only when the LAST stop the run
+// covers is at least two columns past where it starts, so a single blank
+// landing on a stop stays a blank. A run of nothing — which a tagged
+// paragraph's continuation column can ask for, since it may sit left of
+// the prefix — writes nothing.
+function spacing(col: i32, n: i32, tabs: boolean): string {
+  if (n <= 0) {
+    return "";
+  }
+  var target: i32 = col + n;
+  var out: string = "";
+  var c: i32 = col;
+  if (tabs) {
+    var last: i32 = target / tab_width() * tab_width();
+    if (last - c >= 2) {
+      while (c / tab_width() * tab_width() + tab_width() <= last) {
+        out = out + "\t";
+        c = c / tab_width() * tab_width() + tab_width();
+      }
+    }
+  }
+  while (c < target) {
+    out = out + " ";
+    c = c + 1;
+  }
+  return out;
+}
+
+// ---- the paragraph ----------------------------------------------------------
+struct Para { words: Word[], open: boolean, pending: boolean, first_indent: i32, other_indent: i32, p_indent: i32, sticky: i32 }
+
+function para_new(): Para {
+  return Para { words: [], open: false, pending: false, first_indent: 0, other_indent: 0, p_indent: 0, sticky: 0 };
+}
+
+function para_reset(p: Para): Para {
+  return Para { ...p, words: [], open: false, pending: false, first_indent: 0, other_indent: 0, p_indent: 0 };
+}
+
+// `base_cost(ws, s)` — what starting a line at word `s` costs, over and
+// above the line's distance from the goal. The four terms that read the
+// word BEFORE the break are one chain: a sentence that ended there is a
+// bonus, a period that did not end one is the large refusal, other
+// trailing punctuation is a small bonus, and only when none of those
+// holds does a break after a sentence's FIRST word count as a widow.
+// The two that read the word itself are a second chain, where an opening
+// bracket outranks the word's own sentence end.
+function base_cost(ws: Word[], s: i32): i64 {
+  var c: i64 = line_cost_base();
+  if (s > 0) {
+    var prev: Word = ws[s - 1];
+    if (prev.sentence) {
+      c = c - sentence_bonus();
+    } else if (prev.period) {
+      c = c + nobreak_cost();
+    } else if (prev.punct) {
+      c = c - punct_bonus();
+    } else if (s > 1 && ws[s - 2].sentence) {
+      c = c + widow_cost() / ((prev.length + 2) as i64);
+    }
+  }
+  var w: Word = ws[s];
+  if (w.paren) {
+    c = c - paren_bonus();
+  } else if (w.sentence) {
+    c = c + orphan_cost() / ((w.length + 2) as i64);
+  }
+  return c;
+}
+
+// `choose(ws, p, st, lead)` — for each word, the word that starts the
+// next line. A backward dynamic program: a line costs its squared
+// distance from the goal plus, when the line after it is not the last,
+// half the squared difference between the two; the last line of a
+// paragraph is free, which is what lets it run to the width. The three
+// tables are filled BACKWARDS and read by index arithmetic rather than
+// rewritten in place, because rewriting an array element copies it.
+function choose(ws: Word[], p: Para, st: Settings, lead: i32): i32[] {
+  var n: i32 = ws.len();
+  var maxw: i32 = st.max_width - lead;
+  var goal: i32 = st.goal - lead;
+  var rbest: i64[] = [];
+  var rnxt: i32[] = [];
+  var rllen: i32[] = [];
+  var s: i32 = n - 1;
+  while (s >= 0) {
+    var ln: i32 = p.other_indent + ws[s].length;
+    if (s == 0) {
+      ln = p.first_indent + ws[s].length;
+    }
+    var w: i32 = s + 1;
+    var bcost: i64 = cost_infinity();
+    var bnext: i32 = n;
+    var blen: i32 = ln;
+    while (true) {
+      var c: i64 = 0 as i64;
+      var rest: i64 = 0 as i64;
+      if (w != n) {
+        var ri: i32 = n - 1 - w;
+        c = short_cost(goal - ln);
+        if (rnxt[ri] != n) {
+          c = c + ragged_cost(ln - rllen[ri]);
+        }
+        rest = rbest[ri];
+      }
+      if (c + rest < bcost) {
+        bcost = c + rest;
+        bnext = w;
+        blen = ln;
+      }
+      if (w == n) {
+        break;
+      }
+      ln = ln + ws[w].space + ws[w].length;
+      if (ln >= maxw) {
+        break;
+      }
+      w = w + 1;
+    }
+    rbest = rbest.append(bcost + base_cost(ws, s));
+    rnxt = rnxt.append(bnext);
+    rllen = rllen.append(blen);
+    s = s - 1;
+  }
+  var breaks: i32[] = [];
+  var i: i32 = 0;
+  while (i < n) {
+    var j: i32 = rnxt[n - 1 - i];
+    breaks = breaks.append(j);
+    i = j;
+  }
+  return breaks;
+}
+
+// `emit(o, ws, p, st)` — the paragraph, one line per chosen break.
+function emit(o0: Out, ws: Word[], p: Para, st: Settings): Out {
+  var o: Out = o0;
+  var lead: i32 = p.p_indent + st.prefix_out.len();
+  var breaks: i32[] = choose(ws, p, st, lead);
+  // The paragraph is assembled in a LOCAL string, which grows in place;
+  // the same appends through the struct field would copy the whole
+  // buffer once per line (#8785).
+  var buf: string = "";
+  var col: i32 = o.col;
+  var tabs: boolean = o.tabs;
+  var w: io_buffered.BufWriter = gnu.put(o.w, o.buf);
+  var i: i32 = 0;
+  var b: i32 = 0;
+  var first: boolean = true;
+  while (i < ws.len()) {
+    var j: i32 = breaks[b];
+    b = b + 1;
+    if (st.prefix.len() > 0 || st.prefix_lead > 0) {
+      buf = buf + spacing(col, p.p_indent, tabs);
+      col = col + p.p_indent;
+      buf = buf + st.prefix_out;
+      col = col + st.prefix_out.len();
+    }
+    var ind: i32 = p.other_indent;
+    if (first) {
+      ind = p.first_indent;
+    }
+    if (ind > 0) {
+      buf = buf + spacing(col, ind, tabs);
+      col = col + ind;
+    }
+    var k: i32 = i;
+    while (k < j) {
+      if (k > i) {
+        buf = buf + spacing(col, ws[k].space, tabs);
+        col = col + ws[k].space;
+      }
+      buf = buf + ws[k].text;
+      col = col + ws[k].length;
+      k = k + 1;
+    }
+    buf = buf + "\n";
+    col = 0;
+    if (buf.len() >= block_size()) {
+      w = gnu.put(w, buf);
+      buf = "";
+    }
+    first = false;
+    i = j;
+  }
+  return Out { w: gnu.put(w, buf), buf: "", col: col, tabs: tabs };
+}
+
+function flush_para(o0: Out, p0: Para, st: Settings): (Out, Para) {
+  var p: Para = p0;
+  var o: Out = o0;
+  if (!p.open) {
+    return (o, p);
+  }
+  if (p.pending && st.tagged) {
+    // The continuation indent of a one-line tagged paragraph is the last
+    // one any paragraph used, carried as a column of the LINE rather than
+    // of the text after the prefix; when it would repeat the first line's
+    // own indent it falls back to column 3 at the margin and to column 0
+    // anywhere else. Under -p column 0 sits left of the prefix, which is
+    // why such a paragraph's later lines get the whole width to spend.
+    var lead: i32 = p.p_indent + st.prefix_out.len();
+    var first: i32 = p.first_indent + lead;
+    var other: i32 = p.sticky;
+    if (other == first) {
+      other = 0;
+      if (first == 0) {
+        other = 3;
+      }
+    }
+    p = Para { ...p, other_indent: other - lead };
+  }
+  p = Para { ...p, sticky: p.other_indent + p.p_indent + st.prefix_out.len() };
+  if (p.words.len() > 0) {
+    var ws: Word[] = p.words;
+    var last: Word = ws[ws.len() - 1];
+    ws = ws.with(ws.len() - 1, Word { ...last, sentence: true });
+    o = emit(o, ws, p, st);
+  }
+  return (o, para_reset(p));
+}
+
+// ---- reading ----------------------------------------------------------------
+//
+// `Head` — what the start of a line says before its words are read: kind
+// 0 a line the prefix does not match, 1 a line with nothing but blanks,
+// 2 a line with words. `at` and `col` are where the words begin.
+struct Head { kind: i32, p_indent: i32, indent: i32, at: i32, col: i32, pfx: boolean }
+
+function starts_with_at(s: string, at: i32, pre: string): boolean {
+  if (at + pre.len() > s.len()) {
+    return false;
+  }
+  var k: i32 = 0;
+  while (k < pre.len()) {
+    if (s[at + k] as i32 != pre[k] as i32) {
+      return false;
+    }
+    k = k + 1;
+  }
+  return true;
+}
+
+function eat_blanks(line: string, i0: i32, col0: i32, tabs0: boolean): (i32, i32, boolean) {
+  var i: i32 = i0;
+  var col: i32 = col0;
+  var tabs: boolean = tabs0;
+  while (i < line.len() && is_blank_byte(line[i] as i32)) {
+    if (line[i] as i32 == 9) {
+      tabs = true;
+      col = col / tab_width() * tab_width() + tab_width();
+    } else {
+      col = col + 1;
+    }
+    i = i + 1;
+  }
+  return (i, col, tabs);
+}
+
+// `scan_head(line, st, tabs)` — what the start of a line says before its
+// words are read. Under -p the prefix is stripped of its TRAILING blanks
+// for output and the indent is measured from the end of what is left, so
+// `-p '# '` writes `#` and counts the blank after it as indent. A line
+// whose prefix matches but whose own indent is shallower than the
+// prefix's leading blanks is copied rather than formatted — with the
+// prefix still stripped and rewritten.
+// A prefix of nothing but blanks has no text to look for, so it matches
+// the blanks themselves: the line has to open with at least as many, they
+// become the prefix, and whatever blanks follow are the paragraph's
+// indent. A line with fewer is copied, and one with exactly as many and
+// nothing after them is a plain blank line rather than a prefixed one.
+function scan_head_blank_prefix(line: string, st: Settings, tabs0: boolean): (Head, boolean) {
+  var i: i32 = 0;
+  var col: i32 = 0;
+  var tabs: boolean = tabs0;
+  while (col < st.prefix_lead && i < line.len() && is_blank_byte(line[i] as i32)) {
+    if (line[i] as i32 == 9) {
+      tabs = true;
+      col = col / tab_width() * tab_width() + tab_width();
+    } else {
+      col = col + 1;
+    }
+    i = i + 1;
+  }
+  if (col < st.prefix_lead || i >= line.len() && col == st.prefix_lead) {
+    var e: (i32, i32, boolean) = eat_blanks(line, i, col, tabs);
+    if (e.0 >= line.len()) {
+      return (Head { kind: 1, p_indent: 0, indent: 0, at: 0, col: 0, pfx: false }, e.2);
+    }
+    return (Head { kind: 0, p_indent: e.1, indent: 0, at: e.0, col: e.1, pfx: false }, e.2);
+  }
+  // The prefix is that many COLUMNS whatever it took to reach them, so a
+  // tab straddling the boundary leaves the rest of its width as indent.
+  var lead: i32 = st.prefix_lead;
+  var e2: (i32, i32, boolean) = eat_blanks(line, i, col, tabs);
+  i = e2.0;
+  col = e2.1;
+  tabs = e2.2;
+  if (i >= line.len()) {
+    return (Head { kind: 1, p_indent: lead, indent: 0, at: 0, col: 0, pfx: true }, tabs);
+  }
+  return (Head { kind: 2, p_indent: lead, indent: col - lead, at: i, col: col, pfx: true }, tabs);
+}
+
+function scan_head(line: string, st: Settings, tabs0: boolean): (Head, boolean) {
+  if (st.prefix.len() == 0 && st.prefix_lead > 0) {
+    return scan_head_blank_prefix(line, st, tabs0);
+  }
+  var e: (i32, i32, boolean) = eat_blanks(line, 0, 0, tabs0);
+  var i: i32 = e.0;
+  var col: i32 = e.1;
+  var tabs: boolean = e.2;
+  if (st.prefix.len() == 0) {
+    if (i >= line.len()) {
+      return (Head { kind: 1, p_indent: 0, indent: 0, at: 0, col: 0, pfx: false }, tabs);
+    }
+    return (Head { kind: 2, p_indent: 0, indent: col, at: i, col: col, pfx: false }, tabs);
+  }
+  if (i >= line.len()) {
+    return (Head { kind: 1, p_indent: 0, indent: 0, at: 0, col: 0, pfx: false }, tabs);
+  }
+  if (!starts_with_at(line, i, st.prefix)) {
+    return (Head { kind: 0, p_indent: col, indent: 0, at: i, col: col, pfx: false }, tabs);
+  }
+  var lead: i32 = col;
+  i = i + st.prefix.len();
+  col = col + st.prefix.len();
+  var start: i32 = lead + st.prefix_out.len();
+  var e2: (i32, i32, boolean) = eat_blanks(line, i, col, tabs);
+  i = e2.0;
+  col = e2.1;
+  tabs = e2.2;
+  if (i >= line.len()) {
+    return (Head { kind: 1, p_indent: lead, indent: 0, at: 0, col: 0, pfx: true }, tabs);
+  }
+  if (lead < st.prefix_lead) {
+    return (Head { kind: 0, p_indent: lead, indent: col - start, at: i, col: col, pfx: true }, tabs);
+  }
+  return (Head { kind: 2, p_indent: lead, indent: col - start, at: i, col: col, pfx: true }, tabs);
+}
+
+// `scan_body(line, at, col, tabs)` — the words of a line and the columns
+// between them, which is where a tab's width is decided: it reaches the
+// next stop from the column it stands in, in the INPUT.
+function scan_body(line: string, at: i32, col0: i32, tabs0: boolean): (Word[], boolean) {
+  var ws: Word[] = [];
+  var tabs: boolean = tabs0;
+  var i: i32 = at;
+  var col: i32 = col0;
+  while (i < line.len()) {
+    var j: i32 = i;
+    while (j < line.len() && !is_blank_byte(line[j] as i32)) {
+      j = j + 1;
+    }
+    var text: string = slice_unchecked(line, i, j) + "";
+    col = col + (j - i);
+    i = j;
+    var sp: i32 = 0;
+    while (i < line.len() && is_blank_byte(line[i] as i32)) {
+      if (line[i] as i32 == 9) {
+        tabs = true;
+        sp = sp + ((col + sp) / tab_width() * tab_width() + tab_width() - (col + sp));
+      } else {
+        sp = sp + 1;
+      }
+      i = i + 1;
+    }
+    col = col + sp;
+    ws = ws.append(classify(text, sp, i >= line.len()));
+  }
+  return (ws, tabs);
+}
+
+// `add_line(p, ws, uniform)` — the line's words joined to the paragraph.
+// The blanks between two words are the input's, unless -u replaces them
+// with one — two after a sentence; a line boundary is always one blank,
+// or two after a sentence.
+function add_line(p: Para, ws: Word[], uniform: boolean): Para {
+  var out: Word[] = p.words;
+  var k: i32 = 0;
+  while (k < ws.len()) {
+    var sp: i32 = 1;
+    if (k == 0) {
+      if (out.len() == 0) {
+        sp = 0;
+      } else if (out[out.len() - 1].sentence) {
+        sp = 2;
+      }
+    } else {
+      var prev: Word = ws[k - 1];
+      if (uniform) {
+        if (prev.sentence) {
+          sp = 2;
+        }
+      } else {
+        sp = prev.gap;
+      }
+    }
+    out = out.append(Word { ...ws[k], space: sp });
+    k = k + 1;
+  }
+  return Para { ...p, words: out };
+}
+
+// ---- the driver -------------------------------------------------------------
+struct State { o: Out, p: Para, st: Settings, ok: boolean }
+
+function feed(s0: State, line: string, term: boolean): State {
+  var s: State = s0;
+  var r: (Head, boolean) = scan_head(line, s.st, s.o.tabs);
+  var h: Head = r.0;
+  s = State { ...s, o: Out { ...s.o, tabs: r.1 } };
+  if (h.kind == 0) {
+    var f0: (Out, Para) = flush_para(s.o, s.p, s.st);
+    var o0: Out = f0.0;
+    o0 = Out { ...o0, buf: o0.buf + spacing(o0.col, h.p_indent, o0.tabs), col: o0.col + h.p_indent };
+    if (h.pfx) {
+      o0 = Out { ...o0, buf: o0.buf + s.st.prefix_out, col: o0.col + s.st.prefix_out.len() };
+      o0 = Out { ...o0, buf: o0.buf + spacing(o0.col, h.indent, o0.tabs), col: o0.col + h.indent };
+    }
+    var rest: string = slice_unchecked(line, h.at, line.len()) + "";
+    o0 = Out { ...o0, buf: o0.buf + rest, col: o0.col + rest.len() };
+    if (term) {
+      o0 = Out { ...o0, buf: o0.buf + "\n", col: 0 };
+    } else {
+      o0 = Out { ...o0, col: 0 };
+    }
+    return State { ...s, o: drain(o0), p: f0.1 };
+  }
+  if (h.kind == 1) {
+    var f1: (Out, Para) = flush_para(s.o, s.p, s.st);
+    var o1: Out = f1.0;
+    // A blank line the prefix does not carry is copied like any other
+    // unmatched line, so an unterminated one ends the output without a
+    // newline of its own.
+    if (!term && (s.st.prefix.len() > 0 || s.st.prefix_lead > 0) && !h.pfx) {
+      return State { ...s, o: drain(Out { ...o1, col: 0 }), p: f1.1 };
+    }
+    if (h.pfx) {
+      o1 = Out { ...o1, buf: o1.buf + spacing(o1.col, h.p_indent, o1.tabs), col: o1.col + h.p_indent };
+      o1 = Out { ...o1, buf: o1.buf + s.st.prefix_out, col: o1.col + s.st.prefix_out.len() };
+    }
+    o1 = Out { ...o1, buf: o1.buf + "\n", col: 0 };
+    return State { ...s, o: drain(o1), p: f1.1 };
+  }
+  var p: Para = s.p;
+  var o: Out = s.o;
+  if (s.st.split && p.open) {
+    var f2: (Out, Para) = flush_para(o, p, s.st);
+    o = f2.0;
+    p = f2.1;
+  }
+  if (p.open) {
+    if (h.p_indent != p.p_indent) {
+      var f3: (Out, Para) = flush_para(o, p, s.st);
+      o = f3.0;
+      p = f3.1;
+    } else if (p.pending) {
+      if (s.st.tagged && h.indent == p.first_indent) {
+        var f4: (Out, Para) = flush_para(o, p, s.st);
+        o = f4.0;
+        p = f4.1;
+      } else {
+        p = Para { ...p, other_indent: h.indent, pending: false };
+      }
+    } else if (h.indent != p.other_indent) {
+      var f5: (Out, Para) = flush_para(o, p, s.st);
+      o = f5.0;
+      p = f5.1;
+    }
+  }
+  if (!p.open) {
+    p = Para { ...p, first_indent: h.indent, other_indent: h.indent, p_indent: h.p_indent, pending: s.st.crown || s.st.tagged, open: true };
+  }
+  var b: (Word[], boolean) = scan_body(line, h.at, h.col, o.tabs);
+  o = Out { ...o, tabs: b.1 };
+  p = add_line(p, b.0, s.st.uniform);
+  return State { ...s, o: o, p: p };
+}
+
+function drain(o: Out): Out {
+  if (o.buf.len() >= block_size()) {
+    return Out { ...o, w: gnu.put(o.w, o.buf), buf: "" };
+  }
+  return o;
+}
+
+// ---- options ----------------------------------------------------------------
+// `width_of(text)` — a `-w` or `-g` value as gnulib parses it: leading
+// white space and a leading `+` are accepted, a `-` is not, the whole
+// string has to be digits, a value past INT_MAX/2 is an overflow and one
+// past 2500 is out of range. A usage error here prints one line and NO
+// `Try …` line.
+function width_of(text: string): i32 {
+  var i: i32 = 0;
+  while (i < text.len() && (text[i] as i32 == 32 || text[i] as i32 >= 9 && text[i] as i32 <= 13)) {
+    i = i + 1;
+  }
+  if (i < text.len() && text[i] as i32 == 43) {
+    i = i + 1;
+  }
+  var digits: i32 = i;
+  var value: i64 = 0 as i64;
+  var over: boolean = false;
+  while (i < text.len() && gnu.is_digit(text[i] as i32)) {
+    if (value > 200000000 as i64) {
+      over = true;
+    } else {
+      value = value * (10 as i64) + (text[i] as i32 - 48) as i64;
+    }
+    i = i + 1;
+  }
+  if (i == digits || i != text.len()) {
+    gnu.error("invalid width: " + gnu.quote(text));
+    exit(1);
+  }
+  if (over || value > parse_limit()) {
+    gnu.error("invalid width: " + gnu.quote(text) + ": Value too large for defined data type");
+    exit(1);
+  }
+  if (value > max_width_limit() as i64) {
+    gnu.error("invalid width: " + gnu.quote(text) + ": Numerical result out of range");
+    exit(1);
+  }
+  return value as i32;
+}
+
+function digit_of(id: i32): string {
+  return slice_unchecked("0123456789", id - 10, id - 9) + "";
+}
+
+// The goal's own text for its out-of-range diagnostic, which names the
+// number rather than the token it was written as.
+function int_text(v: i32): string {
+  if (v == 0) {
+    return "0";
+  }
+  var out: string = "";
+  var n: i32 = v;
+  while (n > 0) {
+    out = slice_unchecked("0123456789", n % 10, n % 10 + 1) + out;
+    n = n / 10;
+  }
+  return out;
+}
+
+function main(): i32 {
+  var argv: string[] = args();
+
+  // The obsolete `-WIDTH`: only argv[1], and everything after the `-` is
+  // the width text, so `-5x` is an invalid width and not a cluster.
+  var obsolete: string = "";
+  var have_obsolete: boolean = false;
+  if (argv.len() > 1 && argv[1].len() >= 2 && argv[1][0] as i32 == 45 && gnu.is_digit(argv[1][1] as i32)) {
+    obsolete = slice_unchecked(argv[1], 1, argv[1].len()) + "";
+    have_obsolete = true;
+    var rest: string[] = [argv[0]];
+    var k: i32 = 2;
+    while (k < argv.len()) {
+      rest = rest.append(argv[k]);
+      k = k + 1;
+    }
+    argv = rest;
+  }
+
+  var opts: gnu.Opt[] = [];
+  opts = opts.append(gnu.flag("c", "crown-margin", opt_crown()));
+  opts = opts.append(gnu.valued("p", "prefix", opt_prefix()));
+  opts = opts.append(gnu.flag("s", "split-only", opt_split()));
+  opts = opts.append(gnu.flag("t", "tagged-paragraph", opt_tagged()));
+  opts = opts.append(gnu.flag("u", "uniform-spacing", opt_uniform()));
+  opts = opts.append(gnu.valued("w", "width", opt_width()));
+  opts = opts.append(gnu.valued("g", "goal", opt_goal()));
+  var d: i32 = 0;
+  while (d < 10) {
+    opts = opts.append(gnu.flag(slice_unchecked("0123456789", d, d + 1) + "", "", opt_digit(d)));
+    d = d + 1;
+  }
+
+  var crown: boolean = false;
+  var tagged: boolean = false;
+  var split: boolean = false;
+  var uniform: boolean = false;
+  var prefix: string = "";
+  var width: i32 = 75;
+  var have_width: boolean = false;
+  var goal: i32 = 0;
+  var have_goal: boolean = false;
+  if (have_obsolete) {
+    width = width_of(obsolete);
+    have_width = true;
+  }
+
+  var g: gnu.Getopt = gnu.getopt_new(argv, opts, "fmt", help_text(), 1);
+  while (true) {
+    var r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    g = r.1;
+    match (r.0) {
+      Some(m) => {
+        if (m.id == opt_crown()) {
+          crown = true;
+        } else if (m.id == opt_prefix()) {
+          prefix = m.value;
+        } else if (m.id == opt_split()) {
+          split = true;
+        } else if (m.id == opt_tagged()) {
+          tagged = true;
+        } else if (m.id == opt_uniform()) {
+          uniform = true;
+        } else if (m.id == opt_width()) {
+          width = width_of(m.value);
+          have_width = true;
+        } else if (m.id == opt_goal()) {
+          goal = width_of(m.value);
+          have_goal = true;
+        } else {
+          gnu.die_usage("invalid option -- " + digit_of(m.id) + "; -WIDTH is recognized only when it is the first\noption; use -w N instead", 1);
+        }
+      },
+      None => {
+        break;
+      }
+    }
+  }
+
+  if (have_goal) {
+    if (goal > width) {
+      gnu.error("invalid width: " + gnu.quote(int_text(goal)) + ": Numerical result out of range");
+      exit(1);
+    }
+    if (!have_width) {
+      width = goal + 10;
+    }
+  } else {
+    goal = width * 187 / 200;
+  }
+
+  var lead: i32 = 0;
+  while (lead < prefix.len() && prefix[lead] as i32 == 32) {
+    lead = lead + 1;
+  }
+  var text: string = slice_unchecked(prefix, lead, prefix.len()) + "";
+  var last: i32 = text.len();
+  while (last > 0 && text[last - 1] as i32 == 32) {
+    last = last - 1;
+  }
+  var st: Settings = Settings { max_width: width, goal: goal, crown: crown && !split, tagged: tagged && !crown && !split, split: split, uniform: uniform, prefix: text, prefix_out: slice_unchecked(text, 0, last) + "", prefix_lead: lead };
+
+  var files: string[] = g.operands();
+  if (files.len() == 0) {
+    files = files.append("-");
+  }
+  return run(files, st);
+}
+
+// `run(files, st)` — every FILE in turn. A paragraph never spans a file
+// boundary, so one is flushed at the end of each; a line may span two
+// read blocks, so `carry` holds the part that has no terminator yet.
+function run(files: string[], st: Settings): i32 {
+  var s: State = State { o: Out { w: gnu.out_with(block_size()), buf: "", col: 0, tabs: false }, p: para_new(), st: st, ok: true };
+
+  var used_stdin: boolean = false;
+  var fi: i32 = 0;
+  while (fi < files.len()) {
+    var name: string = files[fi];
+    fi = fi + 1;
+    var is_stdin: boolean = name == "-";
+    var r: Reader = stdin();
+    var opened: boolean = true;
+    if (is_stdin) {
+      used_stdin = true;
+    }
+    if (!is_stdin) {
+      match (open_reader(name)) {
+        Ok(f) => {
+          r = f;
+        },
+        Err(e) => {
+          s = State { ...s, o: report(s.o, "cannot open " + gnu.quote(name) + " for reading: " + gnu.io_error_text(e)), ok: false };
+          opened = false;
+        }
+      }
+    }
+    if (opened) {
+      var carry: string = "";
+      while (true) {
+        var piece: string = "";
+        var more: boolean = true;
+        match (r.read_chunk(read_size())) {
+          Ok(c) => {
+            piece = c;
+          },
+          Err(e) => {
+            s = State { ...s, o: report(s.o, "read error"), ok: false };
+            more = false;
+          }
+        }
+        if (!more || piece.len() == 0) {
+          break;
+        }
+        var data: string = piece;
+        if (carry.len() > 0) {
+          data = carry + piece;
+          carry = "";
+        }
+        var i: i32 = 0;
+        while (i < data.len()) {
+          var j: i32 = __memchr(data, 10, i);
+          if (j < 0) {
+            carry = slice_unchecked(data, i, data.len()) + "";
+            break;
+          }
+          s = feed(s, slice_unchecked(data, i, j) + "", true);
+          i = j + 1;
+        }
+      }
+      if (carry.len() > 0) {
+        s = feed(s, carry, false);
+      }
+      if (!is_stdin) {
+        r.close();
+      }
+      var f: (Out, Para) = flush_para(s.o, s.p, s.st);
+      s = State { ...s, o: f.0, p: f.1 };
+    }
+  }
+
+  // gnulib's close_stdin, which only runs when stdin was read at all: a
+  // descriptor that was closed before the program started reports the
+  // read error first and then this, and `fmt FILE <&-` reports neither.
+  if (used_stdin) {
+    match (stdin().close()) {
+      Some(e) => {
+        s = State { ...s, o: report(s.o, "closing standard input: " + gnu.io_error_text(e)), ok: false };
+      },
+      None => {}
+    }
+  }
+
+  var o: Out = s.o;
+  o = Out { ...o, w: gnu.put(o.w, o.buf), buf: "" };
+  gnu.finish(o.w);
+  if (!s.ok) {
+    return 1;
+  }
+  return 0;
+}
+
+// A diagnostic with the buffered output flushed ahead of it, so the two
+// streams stay in the order gnulib's error() puts them in.
+function report(o: Out, msg: string): Out {
+  var w: io_buffered.BufWriter = gnu.put(o.w, o.buf);
+  return Out { ...o, w: gnu.error_out(w, msg), buf: "" };
+}
