@@ -1075,6 +1075,24 @@ errno they discard is the whole of what those two utilities report.
 
 ## Known divergences
 
+**`du --time` renders in UTC.** GNU calls `localtime_r`, which resolves `TZ`
+and then `/etc/localtime`. `lib/tz.fern` can answer that now, but `du.fern`
+was written against a tree that predated it and formats the stamp as UTC,
+printing `UTC` / `+0000` for `%Z` / `%z`. The parity gate pins `TZ=UTC`, so
+the corpus is exact and the divergence is invisible to it — on a machine in
+any other zone every `--time` line is off by the offset. #9076 tracks moving
+it onto the shared module, along with the C-locale strftime `du.fern` carries,
+which is the half `lib/tz.fern` still lacks.
+
+**`du` cannot walk past `PATH_MAX`.** Every filesystem primitive takes a PATH,
+so a component 8 KiB down is `File name too long` where GNU's fts, which opens
+each directory and reads it fd-relative, keeps going. Measured on a 40-level
+tree of 200-byte components: GNU 168, Fern 80 plus one `cannot access` per
+level it could not reach, exit 1 — the same shape an unreadable directory has,
+so it degrades rather than lying. #9078 and #9074 are the same `openat` /
+`fdopendir` / `fstatat` family, which `rm -r`, `ls -R`, `find` and `cp -r` all
+want too.
+
 **`fmt` formats a whole paragraph where GNU formats 997 words at a time.**
 GNU fills a fixed word buffer, lays out what it holds, and re-enters from the
 remainder, so a paragraph past that bound is laid out from state the re-entry
