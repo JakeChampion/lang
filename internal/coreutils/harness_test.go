@@ -575,18 +575,33 @@ func withMask(mask int) *int {
 // under one mask would seed and create under another's.
 var maskLock sync.RWMutex
 
-// holdMask takes the lock the case needs and returns the release.
+// holdMask takes the lock the case needs and returns the release. It does
+// NOT set the mask: the lock is held for the whole run so no other case
+// executes under this one's mask, but the mask itself covers only the
+// child, applied by applyMask below.
+//
+// The harness's own scaffolding — t.TempDir, the seeded tree, and the
+// tree read back afterwards — must be built under the ordinary mask. A
+// case naming 0777 that created its working directory under it produced a
+// 0000 directory, which is invisible as root and `permission denied` for
+// everyone else, so the whole matrix passed here and failed on CI.
 func holdMask(mask *int) func() {
 	if mask == nil {
 		maskLock.RLock()
 		return maskLock.RUnlock
 	}
 	maskLock.Lock()
-	previous := syscall.Umask(*mask)
-	return func() {
-		syscall.Umask(previous)
-		maskLock.Unlock()
+	return maskLock.Unlock
+}
+
+// applyMask sets the case's mask around the child and returns the restore.
+// The caller already holds the write side of maskLock.
+func applyMask(mask *int) func() {
+	if mask == nil {
+		return func() {}
 	}
+	previous := syscall.Umask(*mask)
+	return func() { syscall.Umask(previous) }
 }
 
 // run executes `bin` with argv[0] = argv0 and reports what happened.
@@ -611,6 +626,9 @@ func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 	var seeded map[string]bool
 	if inv.seedTree != nil {
 		workDir = t.TempDir()
+		// Registered after t.TempDir so it runs BEFORE TempDir's own
+		// removal: cleanups are LIFO.
+		t.Cleanup(func() { openTreeForCleanup(workDir) })
 		inv.seedTree(t, workDir)
 		cmd.Dir = workDir
 		if inv.crossDev != nil {
@@ -629,6 +647,12 @@ func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 	} else {
 		cmd.Dir = inv.dir
 	}
+	// The mask covers the CHILD and nothing else. Everything above this
+	// line — the working directory, the seeded tree, the snapshot of it —
+	// is the harness's own and is built under the ordinary mask. What is
+	// below only reads and chmods, neither of which a mask touches, so
+	// restoring at the end of the run is soon enough.
+	defer applyMask(inv.umask)()
 	cmd.Stdin = strings.NewReader(inv.stdin)
 	if inv.tty {
 		pty, err := os.OpenFile("/dev/ptmx", os.O_RDWR, 0)
@@ -798,8 +822,98 @@ func readTree(t *testing.T, root string) []treeEntry {
 // readTreeInto is readTree with each name prefixed and the hard-link
 // groups numbered into a caller's map, so a case spanning two roots
 // reads as one tree.
+// openTreeForCleanup reopens everything under root so t.TempDir's own
+// RemoveAll can get in. A utility under test is entitled to leave a tree
+// nobody may read or enter — that is the point of `chmod -R 0` — and Go
+// reports the failed removal as a test failure, which is a complaint about
+// the harness rather than about the code under test. Best effort: anything
+// that cannot be opened is left for RemoveAll to report.
+func openTreeForCleanup(root string) {
+	_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			// Reached when a directory could not be listed. Open it and
+			// let the walk carry on; the retry below picks up its
+			// contents.
+			_ = os.Chmod(path, 0o700)
+			return nil
+		}
+		if info.Mode()&os.ModeSymlink == 0 {
+			_ = os.Chmod(path, 0o700)
+		}
+		return nil
+	})
+	// One more pass: the first opened the directories that blocked the
+	// walk, so their contents are only visible now.
+	_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err == nil && info.Mode()&os.ModeSymlink == 0 {
+			_ = os.Chmod(path, 0o700)
+		}
+		return nil
+	})
+}
+
+// openTreeForWalk makes every entry under root readable and returns the
+// permission bits each one had, keyed by path, for the ones it changed.
+//
+// A utility can be ASKED to leave an entry nobody may read — `mkdir -m 0`,
+// `chmod 0 f`, or any mode under a mask that takes owner r-x off — and the
+// tree still has to be compared. As root that is invisible, which is why this was missed
+// locally and failed on CI as an ordinary user.
+//
+// It cannot be done inside the walk: filepath.Walk reads a directory's names
+// BEFORE it calls the callback for that directory, so the callback only ever
+// sees the failure. The pass is therefore top-down and ahead of the walk,
+// recording each original mode before opening it, and the walk reports the
+// recorded one. Nothing is restored: the mode has been captured, and
+// t.TempDir's own cleanup has to get in here too.
+func openTreeForWalk(t *testing.T, root string) map[string]uint32 {
+	t.Helper()
+	opened := map[string]uint32{}
+	// The root is the harness's own working directory and its mode is not
+	// part of the comparison (the walk skips "."), but a utility can have
+	// made it unsearchable — `chmod -R 0 .` — and then nothing below it
+	// can be reached at all.
+	_ = os.Chmod(root, 0o700)
+	var descend func(dir string)
+	descend = func(dir string) {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return
+		}
+		for _, entry := range entries {
+			path := filepath.Join(dir, entry.Name())
+			info, err := entry.Info()
+			if err != nil {
+				continue
+			}
+			mode := info.Mode()
+			// A directory has to be readable AND searchable to walk
+			// into; a regular file only readable, since its contents
+			// join the comparison. A symlink is never opened.
+			need := uint32(0o400)
+			if entry.IsDir() {
+				need = 0o500
+			} else if !mode.IsRegular() {
+				continue
+			}
+			if perm := permBits(mode); perm&need != need {
+				opened[path] = perm
+				if err := os.Chmod(path, os.FileMode(perm|0o700)); err != nil {
+					t.Fatalf("open %s so the tree can be read: %v", path, err)
+				}
+			}
+			if entry.IsDir() {
+				descend(path)
+			}
+		}
+	}
+	descend(root)
+	return opened
+}
+
 func readTreeInto(t *testing.T, root, prefix string, groups map[[2]uint64]int) []treeEntry {
 	t.Helper()
+	opened := openTreeForWalk(t, root)
 	var out []treeEntry
 	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -814,6 +928,11 @@ func readTreeInto(t *testing.T, root, prefix string, groups map[[2]uint64]int) [
 		}
 		mode := info.Mode()
 		e := treeEntry{name: prefix + rel, kind: treeKind(mode), mode: permBits(mode)}
+		if was, ok := opened[path]; ok {
+			// Reopened below so the walk could enter it; the mode the
+			// utility actually left is the one recorded here.
+			e.mode = was
+		}
 		switch {
 		case mode&os.ModeSymlink != 0:
 			target, err := os.Readlink(path)
