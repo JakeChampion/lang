@@ -180,6 +180,10 @@ var linuxDarwinSysno = map[string][2]int{
 	// number differs (TCGETS vs TIOCGETA), and that is an argument the
 	// emitter picks, not part of the call.
 	"ioctl": {29, 54},
+	// kill(2) — Linux asm-generic 129, Darwin BSD 37. Backs
+	// `__fern_process_alive`, which passes signal 0: every check kill(2)
+	// makes, with nothing delivered.
+	"kill": {129, 37},
 	// faccessat: Linux's flag-taking form is faccessat2 (439) — the
 	// older faccessat (48) has no flags word and so cannot express
 	// AT_EACCESS. Darwin's faccessat (BSD 467) has taken flags since it
@@ -720,6 +724,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	}
 	if g.usesTimerFd {
 		g.emitTimerFdRuntime()
+	}
+	if g.usesProcessAlive {
+		g.emitProcessAliveRuntime()
 	}
 	if g.usesIsatty {
 		g.emitIsattyRuntime()
@@ -8356,6 +8363,44 @@ func (g *generator) emitTimerFdRuntime() {
 	g.line(".ltorg")
 }
 
+// emitProcessAliveRuntime emits `__fern_process_alive(pid)` — 1 when a
+// process with that pid exists, 0 when it does not.
+//
+// `kill(pid, 0)` performs every check a real signal would and delivers
+// nothing, so the errno is the whole answer: 0 and -EPERM both mean the
+// process is there (one owned by another user is still a process) and
+// -ESRCH means it is gone. Nothing else can come back from a zero signal.
+// `syscall` has already normalised Darwin's carry-flag error into Linux's
+// -errno shape, so one comparison covers both.
+//
+// A non-positive pid answers 0 without a syscall. kill(2) reads 0 as "my
+// process group" and negatives as "the group -pid", so passing one
+// through would answer a different question than the caller asked.
+func (g *generator) emitProcessAliveRuntime() {
+	const eperm = 1
+	g.line("")
+	g.line(".global __fern_process_alive")
+	g.typeDirective("__fern_process_alive")
+	g.label("__fern_process_alive")
+	g.emit("cmp w0, #0")
+	g.emit("b.le .Lalive_no")
+	g.emit("sxtw x0, w0")
+	g.emit("mov x1, #0") // sig = 0
+	g.syscall("kill")
+	g.emit("cmp x0, #0")
+	g.emit("b.eq .Lalive_yes")
+	g.emit("cmn x0, #%d", eperm) // x0 + EPERM == 0, i.e. x0 == -EPERM
+	g.emit("b.eq .Lalive_yes")
+	g.label(".Lalive_no")
+	g.emit("mov x0, #0")
+	g.emit("ret")
+	g.label(".Lalive_yes")
+	g.emit("mov x0, #1")
+	g.emit("ret")
+	g.sizeDirective("__fern_process_alive")
+	g.line(".ltorg")
+}
+
 // emitIsattyRuntime emits `__fern_isatty(fd)` — 1 when fd refers to a
 // terminal, 0 otherwise.
 //
@@ -12175,6 +12220,11 @@ type generator struct {
 	// usesTimerFd pulls in `__fern_timer_fd(ms)` — a CLOCK_MONOTONIC
 	// timerfd readable after `ms` (Linux; -1 stub on Darwin).
 	usesTimerFd bool
+	// usesProcessAlive pulls in `__fern_process_alive(pid)` — kill(pid, 0),
+	// 1 when the process exists (success or EPERM) and 0 when it does not
+	// (ESRCH). A non-positive pid is 0 without a syscall: those spellings
+	// name a process group to kill(2), not a process.
+	usesProcessAlive bool
 	// usesIsatty pulls in `__fern_isatty(fd)` — one terminal-attribute
 	// ioctl, 1 when it succeeds.
 	usesIsatty bool
@@ -16446,6 +16496,11 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		case "timer_fd":
 			target = "__fern_timer_fd"
 			g.usesTimerFd = true
+		case "process_alive":
+			// process_alive(pid): kill(pid, 0) — 1 when the process
+			// exists, 0 when it does not.
+			target = "__fern_process_alive"
+			g.usesProcessAlive = true
 		case "isatty":
 			target = "__fern_isatty"
 			g.usesIsatty = true

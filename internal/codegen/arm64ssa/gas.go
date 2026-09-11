@@ -1291,6 +1291,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"tcp_pollable":                  emitTcpPollableHelper,
 	"poll":                          emitPollHelper,
 	"isatty":                        emitIsattyHelper,
+	"process_alive":                 emitProcessAliveHelper,
 	"signal_ignore":                 emitSignalDispositionHelper("signal_ignore", 1),
 	"signal_default":                emitSignalDispositionHelper("signal_default", 0),
 	"wasm_timer_pollable":           emitWasmTimerPollableHelper,
@@ -1986,6 +1987,35 @@ func emitIsattyHelper(w func(string, ...any)) {
 	w("\tcmp x0, #0")
 	w("\tcset w0, eq")
 	w("\tadd sp, sp, #80")
+	w("\tret")
+}
+
+// emitProcessAliveHelper writes process_alive(pid) -> 0/1: kill(pid, 0), the
+// zero signal that runs every check kill(2) makes and delivers nothing. The
+// errno only refines "yes" — 0 and -EPERM both mean the process exists, since
+// one owned by another user is still a process, and -ESRCH means it is gone.
+//
+// A non-positive pid answers 0 without a syscall: kill(2) reads 0 as "my
+// process group" and a negative as "the group -pid", which is a different
+// question than the caller asked. Leaf — the svc preserves everything but x0.
+func emitProcessAliveHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("process_alive"))
+	w("\tcmp w0, #0")
+	w("\tb.le .Lssa_alive_no")
+	w("\tsxtw x0, w0")
+	w("\tmov x1, #0") // sig = 0
+	w("\tmov x8, #%d", sysKill)
+	w("\tsvc #0")
+	w("\tcmp x0, #0")
+	w("\tb.eq .Lssa_alive_yes")
+	w("\tcmn x0, #1") // x0 + EPERM == 0, i.e. x0 == -EPERM
+	w("\tb.eq .Lssa_alive_yes")
+	w(".Lssa_alive_no:")
+	w("\tmov x0, #0")
+	w("\tret")
+	w(".Lssa_alive_yes:")
+	w("\tmov x0, #1")
 	w("\tret")
 }
 
@@ -7056,8 +7086,10 @@ func oneHalfword(v uint64) bool {
 const (
 	sysClockGettime = 113
 	sysNanosleep    = 101
-	clockRealtime   = 0
-	clockMonotonic  = 1
+	// kill(2), asm-generic 129 — process_alive's zero signal.
+	sysKill        = 129
+	clockRealtime  = 0
+	clockMonotonic = 1
 )
 
 // emitClockHelper writes a clock_gettime(clockID, &ts) reader returning an i64

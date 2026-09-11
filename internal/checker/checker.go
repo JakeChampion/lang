@@ -1833,6 +1833,31 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{ast.StringType{}, ast.ArrayType{Elem: ast.StringType{}}},
 		Result: ast.NumberType{},
 	}
+	// process_alive(pid): boolean — is `pid` a process that currently
+	// exists? `kill(pid, 0)` underneath: signal 0 runs every check kill(2)
+	// would and delivers nothing (#8767).
+	//
+	// The answer is deliberately two-valued rather than a Result, because
+	// the errno only ever refines "yes": success and EPERM both mean the
+	// process is there — a process owned by another user is still a
+	// process — and ESRCH means it is gone. Nothing else can come back
+	// from a zero signal.
+	//
+	// A `pid` of 0 or below is false. Those spellings name a process
+	// GROUP to kill(2), not a process, so passing one through would
+	// answer a different question than the caller asked; the argument
+	// names one process.
+	//
+	// The `proc` capability gates it, beside fork / exec / waitpid: the
+	// question needs a host with a process table and pids to ask about,
+	// and neither WASI preview has one, so E066 refuses it there. It is
+	// not on `signal` — wasi-cli GRANTS that, because ignoring a signal
+	// nothing can deliver is honestly a no-op, and there is no such
+	// honest answer here.
+	c.info.FuncSigs["process_alive"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}},
+		Result: ast.BoolType{},
+	}
 	// temp_dir(prefix): Result[string, IoError] — create a
 	// fresh empty directory and return a path to it.
 	// `prefix` is appended to a random suffix so concurrent

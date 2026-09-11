@@ -305,6 +305,10 @@ const (
 	// ioctl(2): x86-64 syscall 16. Backs `__fern_isatty` via TCGETS,
 	// which succeeds only on a terminal.
 	sysIoctl = 16
+	// kill(2): x86-64 syscall 62. Backs `__fern_process_alive`, which
+	// sends signal 0 — every permission and existence check kill(2)
+	// makes, with nothing delivered.
+	sysKill = 62
 	// rt_sigaction(2): x86-64 syscall 13. Backs `__fern_signal_ignore`
 	// and `__fern_signal_default`.
 	sysRtSigaction = 13
@@ -823,6 +827,9 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	if g.usesTimerFd {
 		g.emitTimerFdRuntime()
 	}
+	if g.usesProcessAlive {
+		g.emitProcessAliveRuntime()
+	}
 	if g.usesIsatty {
 		g.emitIsattyRuntime()
 	}
@@ -1153,6 +1160,11 @@ type generator struct {
 	usesWasmPoll          bool
 	usesWasmBlock         bool
 	usesTimerFd           bool
+	// usesProcessAlive pulls in `__fern_process_alive(pid)` — kill(pid, 0),
+	// 1 when the process exists (success or EPERM) and 0 when it does not
+	// (ESRCH). A non-positive pid is 0 without a syscall: those spellings
+	// name a process group to kill(2), not a process.
+	usesProcessAlive bool
 	// usesIsatty pulls in `__fern_isatty(fd)` — one TCGETS ioctl,
 	// 1 when it succeeds.
 	usesIsatty bool
@@ -1746,6 +1758,8 @@ func (g *generator) recordUse(target string) {
 	case "timer_fd":
 		// timer_fd(ms) — a timerfd readable after `ms`.
 		g.usesTimerFd = true
+	case "process_alive":
+		g.usesProcessAlive = true
 	case "isatty":
 		g.usesIsatty = true
 	case "signal_ignore", "signal_default":
@@ -3375,6 +3389,8 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_poll"
 		case "timer_fd":
 			target = "__fern_timer_fd"
+		case "process_alive":
+			target = "__fern_process_alive"
 		case "isatty":
 			target = "__fern_isatty"
 		case "signal_ignore":
@@ -12081,6 +12097,41 @@ func (g *generator) emitTimerFdRuntime() {
 	g.emit("pop rbp")
 	g.emit("ret")
 	g.line(".size __fern_timer_fd, .-__fern_timer_fd")
+}
+
+// emitProcessAliveRuntime emits `__fern_process_alive(pid)` — 1 when a
+// process with that pid exists, 0 when it does not.
+//
+// `kill(pid, 0)` performs every check a real signal would and delivers
+// nothing, so the errno is the whole answer: 0 and -EPERM both mean the
+// process is there (one owned by another user is still a process) and
+// -ESRCH means it is gone. Nothing else can come back from a zero signal.
+//
+// A non-positive pid answers 0 without a syscall. kill(2) reads 0 as "my
+// process group" and negatives as "the group -pid", so passing one
+// through would answer a different question than the caller asked.
+func (g *generator) emitProcessAliveRuntime() {
+	const eperm = 1
+	g.line("")
+	g.line(".globl __fern_process_alive")
+	g.line(".type __fern_process_alive, @function")
+	g.label("__fern_process_alive")
+	g.emit("cmp edi, 0")
+	g.emit("jle .Lalive_no")
+	g.emit("movsxd rdi, edi")
+	g.emit("xor esi, esi") // sig = 0
+	g.emitSyscall(sysKill)
+	g.emit("test rax, rax")
+	g.emit("je .Lalive_yes")
+	g.emit(fmt.Sprintf("cmp rax, %d", -eperm))
+	g.emit("je .Lalive_yes")
+	g.label(".Lalive_no")
+	g.emit("xor eax, eax")
+	g.emit("ret")
+	g.label(".Lalive_yes")
+	g.emit("mov eax, 1")
+	g.emit("ret")
+	g.line(".size __fern_process_alive, .-__fern_process_alive")
 }
 
 // emitIsattyRuntime emits `__fern_isatty(fd)` — 1 when fd refers to a

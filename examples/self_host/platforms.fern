@@ -197,6 +197,7 @@ pub function gated_builtins(): Gate[] {
         Gate { builtin: "proc_fork", capability: "proc" },
         Gate { builtin: "proc_waitpid", capability: "proc" },
         Gate { builtin: "proc_exec", capability: "proc" },
+        Gate { builtin: "process_alive", capability: "proc" },
 
         // One-level bump-arena checkpoint. Both natives rewind the heap
         // pointer and shadow the freelist heads; wasm's linear-memory

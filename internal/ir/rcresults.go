@@ -443,7 +443,8 @@ var rcResultNonPointer = map[string]bool{
 	"__ptr_width":   true,
 	"__slice_range": true, "__fern_idiv_s32": true, "__fern_idiv_u32": true,
 	"__fern_irem_s32": true, "__fern_irem_u32": true, "isatty": true,
-	"geteuid": true, "getegid": true, "getuid": true, "getgid": true,
+	"process_alive": true,
+	"geteuid":       true, "getegid": true, "getuid": true, "getgid": true,
 	// The sigaction return, which the caller drops; nothing counted.
 	"signal_default": true, "signal_ignore": true,
 	"__wasi_errno_of_code": true,

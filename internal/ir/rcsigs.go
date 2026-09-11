@@ -280,6 +280,11 @@ var rcInertBuiltins = map[string]bool{
 
 	"proc_exec": true, "proc_fork": true, "proc_waitpid": true,
 	"sleep_ms": true, "sleep_ns": true, "subprocess": true, "timer_fd": true,
+	// (pid) → boolean. A scalar in, a scalar out. Native-only — E066
+	// refuses it on both wasm worlds, which have no process table — so
+	// like `access` it is classified here under the builtin name rather
+	// than as a wasm runtime helper.
+	"process_alive": true,
 
 	// (path, contents) → Result. Both strings are read and written
 	// out; neither is retained. Its sibling `write_file` resolves

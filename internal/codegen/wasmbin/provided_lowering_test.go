@@ -49,6 +49,8 @@ var providedRefusedByPlatform = map[string]bool{
 	"proc_fork":    true,
 	"proc_waitpid": true,
 	"proc_exec":    true,
+	// Liveness of an arbitrary pid, which needs the same process table.
+	"process_alive": true,
 	// The arena mark/release pair: a bump-arena discipline the wasm
 	// allocator does not implement.
 	"__heap_mark":       true,

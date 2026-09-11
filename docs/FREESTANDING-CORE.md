@@ -57,7 +57,7 @@ costs a silent failure on the first target that lacks it.
 | `signal` | `signal_ignore`, `signal_default` | a host that can deliver a signal to a process; a no-op on WASI, which cannot |
 | `cabi` | `__c_call0..4` (+ `_f32` / `_f64`) | a C calling convention to call a function pointer through |
 | `tcp` | `tcp_*`, `udp_send` | a network stack |
-| `proc` | `proc_fork`, `proc_exec`, `proc_waitpid` | processes |
+| `proc` | `proc_fork`, `proc_exec`, `proc_waitpid`, `process_alive` | processes |
 | `subprocess` | `subprocess` | interp-only; no compiled target provides it |
 | `arena` | `__heap_mark`, `__heap_release_to` | native-only cursor rewind |
 
@@ -195,6 +195,23 @@ memory-model question rather than a capability one. The two dispositions are
 what a utility needs: `tee -i` is SIG_IGN on SIGINT, and its `--output-error`
 family is SIG_IGN on SIGPIPE so a write to a vanished reader returns EPIPE
 instead of killing the process.
+
+**`process_alive` is `proc`, and the reason it is not `signal` is the
+whole point of the pair.** It is `kill(pid, 0)` underneath — a signal
+send — so filing it beside `signal_ignore` / `signal_default` looks
+natural. But `signal` is GRANTED by wasi-cli, on the argument that a
+world which can deliver no signal makes ignoring one an honest no-op.
+There is no honest answer here. A component has no process table and no
+pids, so "is process 4711 alive" is not a question with a false answer
+available — it is a question that cannot be asked, which is exactly what
+`proc` already means. Refusing it there is the same judgement `userid`
+gets, for the same reason.
+
+Note the package-capability side disagrees about which *dependency*
+grant it needs, and correctly: `internal/caps` files it under
+`subprocess`, beside fork / exec / waitpid, because the pid asked about
+belongs to someone else — reaching outside this process is reach whether
+or not a process is created.
 
 **`sleep_ns` is `now`, like `sleep_ms`, and wasm is where it is most exact.**
 Both previews already count in nanoseconds — preview 1's `poll_oneoff`

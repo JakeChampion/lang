@@ -1059,6 +1059,7 @@ func New() *Interp {
 	i.Builtins["proc_fork"] = &Builtin{Fn: builtinProcFork}
 	i.Builtins["proc_waitpid"] = &Builtin{Fn: builtinProcWaitpid}
 	i.Builtins["proc_exec"] = &Builtin{Fn: builtinProcExec}
+	i.Builtins["process_alive"] = &Builtin{Fn: builtinProcessAlive}
 	i.Builtins["temp_dir"] = &Builtin{Fn: builtinTempDir}
 	i.Builtins["read_dir"] = &Builtin{Fn: builtinReadDir}
 	i.Builtins["stat"] = &Builtin{Fn: builtinStat}
@@ -2761,6 +2762,25 @@ func signalArg(name string, args []Value) (syscall.Signal, bool, error) {
 // would hang where they no-op. 64 rather than 31 because Linux's realtime
 // signals run to 64 and are perfectly real dispositions to set.
 const maxSignal = 64
+
+// builtinProcessAlive mirrors the native `process_alive(pid)` — kill(pid, 0),
+// whose errno only refines "yes": nil and EPERM both mean the process exists,
+// ESRCH means it does not. A pid of 0 or below names a process group rather
+// than a process and is false without asking the kernel.
+func builtinProcessAlive(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("process_alive: expected 1 arg, got %d", len(args))
+	}
+	pid, ok := args[0].(Number)
+	if !ok {
+		return nil, fmt.Errorf("process_alive: expected number pid, got %T", args[0])
+	}
+	if int64(pid) <= 0 {
+		return Bool(false), nil
+	}
+	err := syscall.Kill(int(pid), 0)
+	return Bool(err == nil || err == syscall.EPERM), nil
+}
 
 // builtinSignalIgnore sets one signal's disposition to SIG_IGN.
 //

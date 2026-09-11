@@ -41,6 +41,9 @@ var gatedBuiltins = map[string]string{
 	"proc_fork":    "proc",
 	"proc_waitpid": "proc",
 	"proc_exec":    "proc",
+	// A process table with pids in it to ask about, which is the same
+	// host property fork / exec / waitpid need.
+	"process_alive": "proc",
 
 	// One-level bump-arena checkpoint (__heap_mark / __heap_release_to).
 	// Native-only: both natives rewind __fern_heap_ptr and snapshot the
