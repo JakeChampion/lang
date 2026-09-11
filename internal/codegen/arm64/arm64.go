@@ -14170,15 +14170,36 @@ func (g *generator) emitFunc(fn *ast.FuncDecl, irFn *ir.Func) error {
 	// string slot, `data` lives at `slotOffsets[i] + 8` and
 	// `len` at `slotOffsets[i]` — natural for `stp data, len,
 	// [x29, slotOffsets[i]]`.
+	//
+	// Slots are ordered most-accessed-first rather than by index, so the
+	// single-instruction window nearest x29 goes to the slots that use it
+	// most — see frameSlotOrder.
+	accesses := make([]int, numSlots)
+	for _, op := range irFn.Ops {
+		switch op.Kind {
+		case ir.OpLoadLocal, ir.OpStoreLocal, ir.OpTeeLocal:
+			if op.I32 >= 0 && int(op.I32) < numSlots {
+				accesses[op.I32]++
+			}
+		}
+	}
+	// Every parameter is also written once by the prologue spill.
+	for i := range fn.Params {
+		if i < numSlots {
+			accesses[i]++
+		}
+	}
+	order := frameSlotOrder(accesses, len(fn.Params))
+
 	g.slotOffsets = make([]int32, numSlots)
 	cumLocals := int32(0)
-	for i := 0; i < numSlots; i++ {
+	for _, slot := range order {
 		sz := int32(8)
-		if g.slotIsString(int32(i)) {
+		if g.slotIsString(int32(slot)) {
 			sz = 16
 		}
 		cumLocals += sz
-		g.slotOffsets[i] = -cumLocals
+		g.slotOffsets[slot] = -cumLocals
 	}
 	localsSize := int(cumLocals)
 	if localsSize%16 != 0 {
@@ -14216,10 +14237,8 @@ func (g *generator) emitFunc(fn *ast.FuncDecl, irFn *ir.Func) error {
 	//   stp x29, x30, [sp, #-16]!  ; save fp/lr, sp -= 16
 	//   mov x29, sp                ; fp = sp (points at saved pair)
 	//   sub sp, sp, #localsSize    ; allocate locals below the pair
-	// Slot i lives at [x29, #-(i+1)*8] OR equivalently [sp,
-	// #localsSize - (i+1)*8]. We use the [sp, #N] form so all
-	// local accesses are positive offsets — easier to reason
-	// about and avoids the negative-offset encoding edge cases.
+	// Slots live below x29 at the negative offsets frameSlotOrder assigned;
+	// sp is not a usable base because the operand stack moves it.
 	// Unwind rules for the frame this prologue builds (#7901). Pinned from
 	// aarch64-linux-gnu-as on the same three instructions: the CFA starts at
 	// sp+0 — the CIE's initial rule, with NO rule for the return address,
@@ -14256,29 +14275,29 @@ func (g *generator) emitFunc(fn *ast.FuncDecl, irFn *ir.Func) error {
 		if _, isStr := p.Type.(ast.StringType); isStr && ast.UseTwoWordStrings(8) {
 			// data half: from register regIdx, stored at off+8
 			if regIdx < regArgs {
-				g.emit("stur x%d, [x29, #%d]", regIdx, off+8)
+				g.frameStore(fmt.Sprintf("x%d", regIdx), off+8)
 			} else {
 				g.emit("ldr x9, [x29, #%d]", 16+8*stackIdx)
-				g.emit("stur x9, [x29, #%d]", off+8)
+				g.frameStore("x9", off+8)
 				stackIdx++
 			}
 			regIdx++
 			// len half: from register regIdx, stored at off
 			if regIdx < regArgs {
-				g.emit("stur x%d, [x29, #%d]", regIdx, off)
+				g.frameStore(fmt.Sprintf("x%d", regIdx), off)
 			} else {
 				g.emit("ldr x9, [x29, #%d]", 16+8*stackIdx)
-				g.emit("stur x9, [x29, #%d]", off)
+				g.frameStore("x9", off)
 				stackIdx++
 			}
 			regIdx++
 			continue
 		}
 		if regIdx < regArgs {
-			g.emit("stur x%d, [x29, #%d]", regIdx, off)
+			g.frameStore(fmt.Sprintf("x%d", regIdx), off)
 		} else {
 			g.emit("ldr x9, [x29, #%d]", 16+8*stackIdx)
-			g.emit("stur x9, [x29, #%d]", off)
+			g.frameStore("x9", off)
 			stackIdx++
 		}
 		regIdx++
@@ -14422,6 +14441,42 @@ func (g *generator) frameAddrX16(off int32) {
 	} else {
 		g.emit("add x16, x29, x16")
 	}
+}
+
+// frameSlotOrder returns the slot indices in the order they should be laid out
+// below x29, nearest first. `accesses[i]` is how many times slot i is read or
+// written; nParams is how many leading slots are parameters.
+//
+// Only `ldur` / `stur` reach -256..255 from x29 in one instruction; past that
+// frameLoad and frameStore must materialise the address into x16 first and
+// every access costs two. Ordering by descending access count spends that near
+// window on the slots that use it most.
+//
+// Parameters stay ahead of body locals and each region is sorted only within
+// itself. The self-host arm64 emitter addresses a multi-slot value as a base
+// slot plus a fixed run (examples/self_host/asm_arm64_ir.fern), so only a
+// permutation that keeps the two regions contiguous can be mirrored there.
+// Ties break by slot index — a stable sort over an index-ordered seed — so the
+// layout is a deterministic function of the IR.
+func frameSlotOrder(accesses []int, nParams int) []int {
+	order := make([]int, len(accesses))
+	for i := range order {
+		order[i] = i
+	}
+	if nParams > len(order) {
+		nParams = len(order)
+	}
+	if nParams < 0 {
+		nParams = 0
+	}
+	byUse := func(region []int) {
+		sort.SliceStable(region, func(a, b int) bool {
+			return accesses[region[a]] > accesses[region[b]]
+		})
+	}
+	byUse(order[:nParams])
+	byUse(order[nParams:])
+	return order
 }
 
 func (g *generator) frameLoad(reg string, off int32) {
