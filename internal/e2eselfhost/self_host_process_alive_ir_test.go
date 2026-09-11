@@ -76,19 +76,6 @@ const processAliveWasmProbe = `function main(): i32 {
     return 1;
 }`
 
-// runSelfHostDriverStdin feeds src to a self-host driver binary and returns
-// what it wrote to stdout.
-func runSelfHostDriverStdin(t *testing.T, runner []string, driverBin, src string, args ...string) []byte {
-	t.Helper()
-	cmd := runX86_64Bin(runner, driverBin, args...)
-	cmd.Stdin = strings.NewReader(src)
-	out, err := cmd.Output()
-	if err != nil || len(out) == 0 {
-		t.Fatalf("self-host driver failed: %v\n%s", err, out)
-	}
-	return out
-}
-
 // TestSelfHostProcessAliveIRX86_64 compiles the probe through the production
 // x86-64 IR driver and runs it.
 func TestSelfHostProcessAliveIRX86_64(t *testing.T) {

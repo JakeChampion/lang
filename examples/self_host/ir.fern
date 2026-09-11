@@ -1621,6 +1621,13 @@ pub function kind_count(): i32 { return 196; }
 // merge. It has now happened TWICE on the same pair of branches:
 // write_file_exec moved 224 -> 225 -> 226 as raw_arr_box then memchr
 // landed underneath it.
+// The COUNTS have their own version of this, and it bit three times in a
+// row on 266..272. Three branches were each cut from a base holding none
+// of the others' ops, so each moved ext_ok up from 59 — and git merged
+// those cleanly to a single number that was wrong every time. Nothing
+// conflicts, because both sides wrote the same digits for different
+// reasons. Assign ids AND settle the counts against ir_kind_run's own
+// report after merging, never by adding up what each branch claimed.
 pub function kind_id(name: string): i32 {
     var n: i32 = name.len();
     if (n == 2) { return kind_id_len2(name); }

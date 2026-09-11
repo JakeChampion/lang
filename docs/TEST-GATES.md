@@ -559,9 +559,14 @@ Worth knowing so you do not assume coverage you do not have:
    covered, reaching the compiler through `internal/stdlib`'s `go:embed`. Use
    `-count=1` for anything this does not cover, above all a mutation run: a
    cached PASS on a mutant is indistinguishable from a test that cannot catch
-   it. `internal/e2eselfhost` is covered only INCIDENTALLY — `CachedDriverBin`
-   reads `examples/self_host`'s closure to build its own key, and that read is
-   what reaches the testlog — so a build-cache change could take the test-cache
+   it. TWO surfaces are compiled through a child process and both needed it:
+   the utility's own source in `fernBin`, and **the compiler itself** in
+   `selfHostCompiler` — a stale hit on the latter means
+   `TestSelfHostCoreutilsParity`, the gate `sleep_ns` slipped past, exercises a
+   stale COMPILER. `make fern-test-cache` probes both. `internal/e2eselfhost`
+   is covered only INCIDENTALLY — `CachedDriverBin` reads
+   `examples/self_host`'s closure to build its own key, and that read is what
+   reaches the testlog — so a build-cache change could take the test-cache
    protection with it without anything saying so.
 8. **A `-run` name that matches nothing is exit 0.** Deleting a test does not
    remove it from the workflow that names it, so the lane keeps listing

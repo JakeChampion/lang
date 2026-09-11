@@ -398,6 +398,19 @@ func selfHostStdTestCases(t *testing.T, failing string) []selfHostStdTestCase {
 	}
 }
 
+// runSelfHostDriverStdin feeds src to a self-host driver binary and returns
+// what it wrote to stdout.
+func runSelfHostDriverStdin(t *testing.T, runner []string, driverBin, src string, args ...string) []byte {
+	t.Helper()
+	cmd := runX86_64Bin(runner, driverBin, args...)
+	cmd.Stdin = strings.NewReader(src)
+	out, err := cmd.Output()
+	if err != nil || len(out) == 0 {
+		t.Fatalf("self-host driver failed: %v\n%s", err, out)
+	}
+	return out
+}
+
 // buildBinArm64 assembles+links arm64 asm into dir/name and returns its
 // path. Now a thin alias for the harness helper, which routes HUGE asm
 // (the aarch64 stage-2 self-compile, the native-mmc driver) through the
