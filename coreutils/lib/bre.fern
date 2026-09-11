@@ -1022,8 +1022,10 @@ function parse_group(p0: P): (P, i32) {
 
 // ---- compilation -----------------------------------------------------------
 // `C` — the emitter: the instruction list, the mark slots handed to star
-// loops, and the first error (only the instruction budget can fail here).
-struct C { insts: Inst[], nmarks: i32, err: string }
+// loops, the first error (only the instruction budget can fail here),
+// and whether an empty alternation branch is demoted here (compile_alt,
+// compile_rep).
+struct C { insts: Inst[], nmarks: i32, err: string, demote: boolean }
 
 // `emit` returns the emitter alone rather than the emitter and the index
 // it wrote at, and a caller that needs the index reads `c.insts.len()`
@@ -1089,11 +1091,35 @@ function compile_node(c0: C, nodes: Node[], node: i32): C {
   return compile_rep(c, nodes, n);
 }
 
+// `A\|B`, with `A` laid out first so the search tries it first.
+//
+// A branch that compiles to NOTHING is the exception: glibc gives it the
+// LOWER priority of the pair, so `\(\|a\)a*` over `aa` reports `a` for
+// the group rather than the empty first branch (#9051). The pair is
+// binary and `parse_alt` nests it to the LEFT, which is what makes the
+// demotion local: in `\(\|z\|a\)` the empty branch trades places with
+// `z` alone and still outranks `a`, and glibc reports the empty group
+// there. Nothing here inspects the branch to decide — the left one is
+// laid out and the swap happens when it turns out to have emitted no
+// instruction, so the rule cannot drift from what the emitter does.
+//
+// `demote` is off inside a counted repetition, where the rule does not
+// hold — compile_rep says what glibc does there instead.
 function compile_alt(c0: C, nodes: Node[], n: Node): C {
   var split: i32 = c0.insts.len();
   var c: C = emit(c0, Inst { op: op_split(), a: 0, b: 0 });
-  c = patch_a(c, split, c.insts.len());
+  var first: i32 = c.insts.len();
+  c = patch_a(c, split, first);
   c = compile_node(c, nodes, n.a);
+  if (c.demote && c.insts.len() == first && c.err.len() == 0) {
+    // The empty branch is the fall-through past `B`, so it needs
+    // neither a slot of its own nor a jump around one.
+    c = compile_node(c, nodes, n.b);
+    if (c.err.len() > 0) {
+      return c;
+    }
+    return patch_b(c, split, c.insts.len());
+  }
   var jump: i32 = c.insts.len();
   c = emit(c, Inst { op: op_jmp(), a: 0, b: 0 });
   c = patch_b(c, split, c.insts.len());
@@ -1113,15 +1139,25 @@ function compile_alt(c0: C, nodes: Node[], n: Node): C {
 // whole instruction array (#8498), which makes `\(ab\)\{32767\}`
 // quadratic. Splicing appends into one array in one loop, which grows in
 // place.
+//
+// The body compiles with compile_alt's empty-branch demotion OFF,
+// because inside a counted repetition glibc's answer is not a branch
+// order at all: over `a`, `\(\|a\)\{1,2\}` reports `a` — the demoted
+// order reports the empty group — while over `aa`, `\(\|a\)\{1,2\}a*`
+// reports `a`, which only the demoted order gives. The same two
+// counts disagree again at `\{2\}` and `\{2,3\}`. Nothing static
+// reproduces that, so the copies keep the order the pattern was
+// written in and the family stays as divergent as it has always been
+// (#9092).
 function compile_rep(c0: C, nodes: Node[], n: Node): C {
-  var c: C = compile_copies(c0, nodes, n.a, rep_min(n));
+  var c: C = compile_copies(C { ...c0, demote: false }, nodes, n.a, rep_min(n));
   if (c.err.len() > 0) {
-    return c;
+    return C { ...c, demote: c0.demote };
   }
   if (n.c < 0) {
-    return compile_star(c, nodes, n.a);
+    return C { ...compile_star(c, nodes, n.a), demote: c0.demote };
   }
-  return compile_optionals(c, nodes, n.a, n.c - rep_min(n));
+  return C { ...compile_optionals(c, nodes, n.a, n.c - rep_min(n)), demote: c0.demote };
 }
 
 function compile_copies(c0: C, nodes: Node[], body: i32, times: i32): C {
@@ -1129,7 +1165,7 @@ function compile_copies(c0: C, nodes: Node[], body: i32, times: i32): C {
     return c0;
   }
   var empty: Inst[] = [];
-  var one: C = compile_node(C { insts: empty, nmarks: 0, err: "" }, nodes, body);
+  var one: C = compile_node(C { insts: empty, nmarks: 0, err: "", demote: c0.demote }, nodes, body);
   if (one.err.len() > 0) {
     return C { ...c0, err: one.err };
   }
@@ -1252,7 +1288,7 @@ pub function bre_compile_syntax(pat: string, syntax: Syntax): Bre {
     return Bre { insts: no_insts, classes: p.classes, ngroups: 0, nmarks: 0, backref: false, err: p.err, newline_anchor: syntax.newline_anchor, first: none_first, empty_ok: true, pre: "", pre_bol: false, pre_eol: false, literal: false, alts: no_alts, seen0: no_seen };
   }
   var empty: Inst[] = [];
-  var c: C = C { insts: empty, nmarks: 0, err: "" };
+  var c: C = C { insts: empty, nmarks: 0, err: "", demote: true };
   // No `Save` pair around the whole program: the match is anchored, so
   // group 0 always spans 0 to the end, and a pattern with no groups of
   // its own then carries no capture vector at all.
@@ -1543,12 +1579,14 @@ function find_literal(text: string, lit: string, lo: i32, hi: i32): i32 {
 //
 // Without a backreference the pattern is a regular language, and a
 // Thompson simulation runs it in ONE left-to-right pass: every thread
-// advances together, a program counter is entered at most once per
-// position — which is also what stops an empty loop from going round
-// for ever — and the last position at which a thread reaches `Match` is
-// the longest match. The captures reported are the ones carried by the
-// highest-priority thread to reach each program counter, which is the
-// greedy order the compiler laid the branches out in.
+// advances together, a program counter is entered once per position —
+// which is also what stops an empty loop from going round for ever, and
+// a second time only where a path that crossed no zero-width assertion
+// overtakes one that did (`add_thread`) — and the last position at which
+// a thread reaches `Match` is the longest match. The captures reported
+// are the ones carried by the highest-priority thread to reach each
+// program counter, which is the greedy order the compiler laid the
+// branches out in.
 //
 // A backreference is not regular: whether it matches depends on what an
 // earlier group captured, so a thread cannot be merged with another at
@@ -1969,10 +2007,25 @@ function exec_backtrack(re: Bre, text: string, start: i32, lo: i32, hi: i32): Br
 // `Threads` — one position's thread list: the program counters waiting
 // on a byte, each with its captures, plus the generation stamp that
 // keeps a program counter from being entered twice at one position.
-// `match_at` is the index of this position's match thread, or -1, and
-// `match_zw` whether it reached the end through a trailing zero-width
-// assertion (see step): such a thread yields to a later one that did not.
-struct Threads { pcs: i32[], caps: i32[][], seen: i32[], match_at: i32, match_zw: boolean }
+// `match_at` is the index of this position's match thread, or -1;
+// `add_thread` reaches back into it when a later path turns out to be
+// the one glibc reports.
+struct Threads { pcs: i32[], caps: i32[][], seen: i32[], match_at: i32 }
+
+// The stamp for a program counter entered on a path that has crossed a
+// zero-width assertion since it last consumed a byte.
+//
+// It is held apart from the plain generation because such a path can be
+// OVERTAKEN: between equally long matches glibc prefers the one whose
+// last step to the end crossed no assertion (see step), so a later path
+// that crossed none has to be let through a program counter this one
+// already claimed — the end node is often several jumps past the
+// assertion, and every one of them is claimed. Stamps are positions, so
+// the plain ones are 0 and up and these are -2 and down, either way
+// clear of the cleared -1.
+function zw_stamp(gen: i32): i32 {
+  return 0 - gen - 2;
+}
 
 // The epsilon closure from `pc`: every program counter reachable
 // without consuming a byte, in priority order, stopping at each one
@@ -1983,50 +2036,74 @@ struct Threads { pcs: i32[], caps: i32[][], seen: i32[], match_at: i32, match_zw
 // instruction of the closure, which a pattern like `\(a*\)\{3200\}`
 // walks in full at every position.
 function add_thread(re: Bre, t0: Threads, gen: i32, pc: i32, caps: i32[], pos: i32, text: string, lo: i32, hi: i32, zw: boolean): Threads {
-  if (t0.seen[pc] == gen) {
-    if (!zw && t0.match_zw && re.insts[pc].op == op_match()) {
-      return Threads { ...t0, caps: t0.caps.with(t0.match_at, caps), match_zw: false };
-    }
+  var seen: i32 = t0.seen[pc];
+  if (seen == gen) {
     return t0;
+  }
+  // `over`: this program counter was claimed at this position by a path
+  // that had crossed an assertion, and this one has not. It walks the
+  // same ground again only to reach the end node; the threads waiting on
+  // a byte stay as they are, since they are in priority order and this
+  // path does not outrank them. A pc is therefore entered at most twice
+  // per position, and the second entry stamps it plainly.
+  //
+  // A path carrying no assertion — the overwhelming majority — reaches
+  // the zw stamp only past a sign test, which a cleared -1 and every
+  // plain stamp fail.
+  var mark: i32 = gen;
+  var over: boolean = false;
+  if (zw) {
+    mark = zw_stamp(gen);
+    if (seen == mark) {
+      return t0;
+    }
+  } else if (seen < 0 - 1 && seen == zw_stamp(gen)) {
+    over = true;
   }
   var in: Inst = re.insts[pc];
   if (in.op == op_jmp()) {
-    return add_thread(re, stamp(t0, pc, gen), gen, in.a, caps, pos, text, lo, hi, zw);
+    return add_thread(re, stamp(t0, pc, mark), gen, in.a, caps, pos, text, lo, hi, zw);
   }
   if (in.op == op_split()) {
-    return add_thread(re, add_thread(re, stamp(t0, pc, gen), gen, in.a, caps, pos, text, lo, hi, zw), gen, in.b, caps, pos, text, lo, hi, zw);
+    return add_thread(re, add_thread(re, stamp(t0, pc, mark), gen, in.a, caps, pos, text, lo, hi, zw), gen, in.b, caps, pos, text, lo, hi, zw);
   }
   if (in.op == op_save()) {
-    return add_thread(re, stamp(t0, pc, gen), gen, pc + 1, caps.with(in.a, pos), pos, text, lo, hi, zw);
+    return add_thread(re, stamp(t0, pc, mark), gen, pc + 1, caps.with(in.a, pos), pos, text, lo, hi, zw);
   }
   // `Mark` and `Progress` guard the backtracker's empty star loops; the
   // generation stamp already does that job here.
   if (in.op == op_mark() || in.op == op_progress()) {
-    return add_thread(re, stamp(t0, pc, gen), gen, pc + 1, caps, pos, text, lo, hi, zw);
+    return add_thread(re, stamp(t0, pc, mark), gen, pc + 1, caps, pos, text, lo, hi, zw);
   }
   if (in.op == op_bol() || in.op == op_eol() || in.op == op_assert()) {
     if (!zero_width_holds(re, text, in, pos, lo, hi)) {
-      return stamp(t0, pc, gen);
+      return stamp(t0, pc, mark);
     }
-    return add_thread(re, stamp(t0, pc, gen), gen, pc + 1, caps, pos, text, lo, hi, true);
+    return add_thread(re, stamp(t0, pc, mark), gen, pc + 1, caps, pos, text, lo, hi, true);
   }
   if (in.op == op_match()) {
-    return append_match_thread(stamp(t0, pc, gen), pc, caps, zw);
+    if (over) {
+      return Threads { ...stamp(t0, pc, mark), caps: t0.caps.with(t0.match_at, caps) };
+    }
+    return append_match_thread(stamp(t0, pc, mark), pc, caps);
   }
-  return append_thread(stamp(t0, pc, gen), pc, caps);
+  if (over) {
+    return stamp(t0, pc, mark);
+  }
+  return append_thread(stamp(t0, pc, mark), pc, caps);
 }
 
-function stamp(t: Threads, pc: i32, gen: i32): Threads {
-  return Threads { ...t, seen: t.seen.with(pc, gen) };
+function stamp(t: Threads, pc: i32, mark: i32): Threads {
+  return Threads { ...t, seen: t.seen.with(pc, mark) };
 }
 
 function append_thread(t: Threads, pc: i32, caps: i32[]): Threads {
   return Threads { ...t, pcs: t.pcs.append(pc), caps: t.caps.append(caps) };
 }
 
-function append_match_thread(t: Threads, pc: i32, caps: i32[], zw: boolean): Threads {
+function append_match_thread(t: Threads, pc: i32, caps: i32[]): Threads {
   var at: i32 = t.pcs.len();
-  return Threads { ...t, pcs: t.pcs.append(pc), caps: t.caps.append(caps), match_at: at, match_zw: zw };
+  return Threads { ...t, pcs: t.pcs.append(pc), caps: t.caps.append(caps), match_at: at };
 }
 
 function zero_width_holds(re: Bre, text: string, in: Inst, pos: i32, lo: i32, hi: i32): boolean {
@@ -2051,7 +2128,7 @@ function zero_width_holds(re: Bre, text: string, in: Inst, pos: i32, lo: i32, hi
 function exec_threads_from(re: Bre, text: string, start: i32, lo: i32, hi: i32, unanchored: boolean): BreMatch {
   var no_pcs: i32[] = [];
   var no_caps: i32[][] = [];
-  var t: Threads = Threads { pcs: no_pcs, caps: no_caps, seen: re.seen0, match_at: 0 - 1, match_zw: false };
+  var t: Threads = Threads { pcs: no_pcs, caps: no_caps, seen: re.seen0, match_at: 0 - 1 };
   // One seed vector for the whole search: it is never written through,
   // since `.with` copies an array a second reference holds, so the
   // thread seeded at each position can share it rather than allocate
@@ -2070,7 +2147,7 @@ function exec_threads_from(re: Bre, text: string, start: i32, lo: i32, hi: i32, 
     var caps: i32[][] = t.caps;
     var empty_pcs: i32[] = [];
     var empty_caps: i32[][] = [];
-    t = Threads { ...t, pcs: empty_pcs, caps: empty_caps, match_at: 0 - 1, match_zw: false };
+    t = Threads { ...t, pcs: empty_pcs, caps: empty_caps, match_at: 0 - 1 };
     var found: boolean = false;
     var k: i32 = 0;
     while (k < pcs.len()) {
