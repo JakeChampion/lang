@@ -380,6 +380,14 @@ func csplitCases(t *testing.T) []invocation {
 		c("missing file beats a bad pattern", "nosuch", "xyz"),
 		c("missing file beats a bad regexp", "nosuch", "/x"),
 		c("missing file beats a bad repeat", "nosuch", "5", "{x}"),
+		// An empty operand is two different faults depending on its
+		// position, and which one fires is observable: an empty FILE is
+		// an open failure and an empty PATTERN is a parse failure, so
+		// the pair of them reports the open.
+		c("an empty file operand", "", "2"),
+		c("an empty pattern operand", "ten", ""),
+		c("an empty pattern after a valid one", "ten", "2", ""),
+		c("an empty file beats an empty pattern", "", ""),
 		c("a bad option beats the file", "-n", "x", "nosuch", "5"),
 		c("a bad format beats the file", "-b", "%s", "nosuch", "5"),
 		c("a bad format beats a bad pattern", "-b", "%s", "ten", "zzz"),
