@@ -180,8 +180,12 @@ Versions: the corpus is held to GNU coreutils **9.4 or newer**. Benchmarks
 compare against both GNU coreutils and Rust uutils, recording their actual
 versions. Install missing comparison implementations before measuring.
 A case whose behaviour changed between versions records the version it needs in a
-comment and is the exception, not the pattern — the utilities done so far
-have no such case.
+comment and is the exception, not the pattern. There is exactly one such case:
+`numfmt`'s buffer-length refusal is GNU <= 9.4 behaviour, pinned by a comment in
+both `coreutils/numfmt.fern` and its corpus, and #8765 holds the open question
+of whether Fern should follow 9.5+ instead. Nothing forces that today — every
+CI runner and this container ship 9.4 — so it is a future-GNU decision rather
+than a live divergence.
 
 ### The self-host leg
 
