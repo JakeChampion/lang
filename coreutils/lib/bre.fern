@@ -1782,6 +1782,26 @@ function (re: Bre) match_at(text: string, start: i32, hi: i32): i32 {
   return m.end;
 }
 
+// `(re).search_from(text, lo, hi)` — glibc's `re_search` over
+// `text[lo, hi)` with a POSITIVE range: the match starting nearest the
+// beginning, tried from `lo` up to `hi`, as (start, end), or (-1, -1).
+// `^` and `$` mean the ends of `text[0, hi)` as `search_range` has
+// them, so a caller scanning a buffer for every match in turn asks with
+// bounds rather than with a cut-out suffix.
+pub function (re: Bre) search_from(text: string, lo: i32, hi: i32): (i32, i32) {
+  var start: i32 = lo;
+  while (start <= hi) {
+    if (can_start_at(re, text, start, hi)) {
+      var end: i32 = re.match_at(text, start, hi);
+      if (end >= 0) {
+        return (start, end);
+      }
+    }
+    start = start + 1;
+  }
+  return (0 - 1, 0 - 1);
+}
+
 // `(re).search_back(text, hi)` — glibc's `re_search` over `text[0, hi)`
 // with a negative range: the match starting nearest the end, tried from
 // `hi - 1` down to 0, as (start, end), or (-1, -1). The position `hi`
