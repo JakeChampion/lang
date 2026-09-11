@@ -76,6 +76,7 @@ var BuiltinCaps = map[string]string{
 	"rename":          "fs",
 	"chmod":           "fs",
 	"set_file_times":  "fs",
+	"truncate":        "fs",
 	// The process file-mode creation mask. Reading it is ambient
 	// information about the process, but SETTING it changes the mode of
 	// every file and directory anything creates afterwards — a

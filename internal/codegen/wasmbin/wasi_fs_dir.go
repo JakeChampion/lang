@@ -161,7 +161,7 @@ const (
 	// this descriptor, which remove_dir_all needs on every level it
 	// descends into.
 	wasiRightPathUnlink    int64 = 0x4000000
-	wasiRightPathRemoveDir int64 = 0x8000000
+	wasiRightPathRemoveDir int64 = 0x2000000
 	wasiRightFdDirRead           = wasiRightFdRead | wasiRightFdSeek |
 		wasiRightFdReaddir | wasiRightPathOpen |
 		wasiRightPathUnlink | wasiRightPathRemoveDir

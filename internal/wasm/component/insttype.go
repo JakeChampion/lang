@@ -394,6 +394,18 @@ func fsSetTimesAt(b *instTypeBuilder, v *fsVocab) {
 		"[method]descriptor.set-times-at")
 }
 
+// fsSetSize declares `set-size: func(self: borrow<descriptor>, size:
+// filesize) -> result<_, error-code>`. `filesize` is a plain u64, so unlike
+// every other method here it names no path: preview 2 has no path-based
+// set-size, which is why `truncate` opens a descriptor of its own.
+func fsSetSize(b *instTypeBuilder, v fsVocab) {
+	b.funcExport(tcpMethodFuncDecl("set-size",
+		[]string{"self", "size"},
+		[]byte{byte(v.bDesc), CValtypeU64},
+		byte(v.rUnit)),
+		"[method]descriptor.set-size")
+}
+
 // fsPathMutator emits one of the path-mutating methods —
 // `unlink-file-at`, `create-directory-at`, `remove-directory-at`. They
 // share a signature exactly: (borrow<descriptor>, string) ->

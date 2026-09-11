@@ -174,6 +174,12 @@ var linuxDarwinSysno = map[string][2]int{
 	// passes a zero fourth that Linux ignores, so one body serves both.
 	"renameat": {38, 465},
 	"fchmodat": {53, 467},
+	// truncate(2) — Linux asm-generic 45, Darwin BSD 200. The PATH
+	// form, not ftruncate: no Fern open mode yields a writable
+	// descriptor to an existing file without O_TRUNC having already
+	// emptied it. Same (path, off_t) shape on both, and off_t is one
+	// 64-bit register on arm64 either way.
+	"truncate": {45, 200},
 	// umask(2) — Linux asm-generic 166, Darwin BSD 60. One argument,
 	// the previous mask returned, and no error return on either.
 	"umask": {166, 60},
@@ -551,7 +557,7 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 		g.usesAccess || g.usesRemoveDirAll || g.usesCreateDirAll ||
 		g.usesCreateDir || g.usesRemoveDir || g.usesCreateLink ||
 		g.usesCreateSymlink || g.usesReadLink || g.usesStatfs ||
-		g.usesRename || g.usesChmod || g.usesSetFileTimes {
+		g.usesRename || g.usesChmod || g.usesSetFileTimes || g.usesTruncate {
 		g.usesAlloc = true
 		g.usesMemcpy = true
 		g.usesIoError = true
@@ -581,7 +587,7 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 		g.usesCreateLink || g.usesCreateSymlink || g.usesReadLink || g.usesTempDir ||
 		g.usesReadDir || g.usesStat || g.usesLstat || g.usesStatfs || g.usesAccess ||
 		g.usesRemoveDirAll ||
-		g.usesRename || g.usesChmod || g.usesSetFileTimes ||
+		g.usesRename || g.usesChmod || g.usesSetFileTimes || g.usesTruncate ||
 		g.usesReaderWriter {
 		g.usesFree = true
 	}
@@ -901,6 +907,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	}
 	if g.usesChmod {
 		g.emitChmodRuntime()
+	}
+	if g.usesTruncate {
+		g.emitTruncateRuntime()
 	}
 	if g.usesSetFileTimes {
 		g.emitSetFileTimesRuntime()
@@ -10220,6 +10229,17 @@ func (g *generator) emitChmodRuntime() {
 	})
 }
 
+// emitTruncateRuntime emits `__fern_truncate(path, length)` —
+// truncate(2). The length is a full 64-bit operand passed through
+// unmasked: a negative one is the kernel's EINVAL rather than a clamp
+// here, which would resize to something the caller did not ask for.
+func (g *generator) emitTruncateRuntime() {
+	g.emitPathOpRuntime("__fern_truncate", "trnc", "truncate", 1, true, func() {
+		g.emit("mov x0, x21")
+		g.emit("mov x1, x24")
+	})
+}
+
 // emitSetFileTimesRuntime emits `__fern_set_file_times(path_data,
 // path_len, atime_sec, atime_nsec, mtime_sec, mtime_nsec, flags)` in
 // (x0..x6) → Result[void, IoError].
@@ -13081,6 +13101,8 @@ type generator struct {
 	usesRename       bool
 	usesChmod        bool
 	usesSetFileTimes bool
+	// truncate(2) over a path and a length.
+	usesTruncate bool
 	// usesIoError pulls in `__fern_io_error(errno, path)` —
 	// constructs an `IoError` enum box from a Linux errno.
 	// Shared by read_file + write_file + the Reader / Writer
@@ -17345,6 +17367,11 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			// fchmodat on an entry that already exists.
 			target = "__fern_chmod"
 			g.usesChmod = true
+		case "truncate":
+			// truncate(path, length): Result[void, IoError] —
+			// truncate(2) on an entry that already exists.
+			target = "__fern_truncate"
+			g.usesTruncate = true
 		case "set_file_times":
 			// set_file_times(path, asec, ansec, msec, mnsec,
 			// flags): Result[void, IoError] — utimensat.

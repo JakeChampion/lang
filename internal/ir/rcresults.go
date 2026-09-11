@@ -199,6 +199,7 @@ var rcResultOwned = map[string]bool{
 	"__fern_read_link":           true,
 	"__fern_rename":              true,
 	"__fern_set_file_times":      true,
+	"__fern_truncate":            true,
 	// `access`, `write_file_exec`, `chmod` and `statfs` have no
 	// `__fern_*` entry in rcsigs to alias through — all four are
 	// native-only (E066 refuses them on the wasm worlds), so they are
@@ -290,6 +291,7 @@ var rcOwnedResultBuiltins = map[string]bool{
 	"rename":                     true,
 	"chmod":                      true,
 	"set_file_times":             true,
+	"truncate":                   true,
 	"temp_dir":                   true,
 	"read_dir":                   true,
 	"stat":                       true,

@@ -1281,6 +1281,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"umask":                         emitUmaskHelper,
 	"rename":                        emitRenameHelper,
 	"chmod":                         emitChmodHelper,
+	"truncate":                      emitTruncateHelper,
 	"set_file_times":                emitSetFileTimesHelper,
 	"remove_dir_all":                emitRemoveDirAllHelper,
 	"temp_dir":                      emitTempDirHelper,
@@ -3200,6 +3201,7 @@ var runtimeHelperDeps = map[string][]string{
 	"read_link":                     {"__fern_io_error"},
 	"rename":                        {"__fern_io_error"},
 	"chmod":                         {"__fern_io_error"},
+	"truncate":                      {"__fern_io_error"},
 	"set_file_times":                {"__fern_io_error"},
 	"remove_dir_all":                {"__fern_io_error"},
 	"temp_dir":                      {"__fern_io_error"},
@@ -3264,6 +3266,7 @@ var heapUsingHelpers = map[string]bool{
 	"read_link":                     true,
 	"rename":                        true,
 	"chmod":                         true,
+	"truncate":                      true,
 	"set_file_times":                true,
 	"remove_dir_all":                true,
 	"temp_dir":                      true,
@@ -5374,7 +5377,10 @@ func emitPathOpHelper(name, tag string, sysno, paths int, args func(w func(strin
 			w("\tmov x21, x1") // second path
 			w("\tmov x23, x1")
 		} else {
-			w("\tmov w21, w1") // mode (unused by the flag-only helpers)
+			// The second scalar, full width: `truncate`'s length is
+			// an i64. The mode-taking helpers mask it to 12 bits
+			// themselves, so a garbage upper half costs them nothing.
+			w("\tmov x21, x1")
 		}
 		emitSsaPathz(w, "x20", "x19", tag+"1")
 		if paths == 2 {
@@ -5563,6 +5569,17 @@ func emitChmodHelper(w func(string, ...any)) {
 		w("\tneg x0, x0")
 		w("\tmov x1, x20")
 		w("\tand x2, x21, #4095")
+	})(w)
+}
+
+// emitTruncateHelper writes truncate(path, length) -> Result[void,
+// IoError]: truncate(2). The length reaches the kernel unmasked — a
+// negative one is its EINVAL, where a clamp here would resize to
+// something the caller did not ask for.
+func emitTruncateHelper(w func(string, ...any)) {
+	emitPathOpHelper("truncate", "trnc", 45, 1, func(w func(string, ...any)) {
+		w("\tmov x0, x20")
+		w("\tmov x1, x21")
 	})(w)
 }
 

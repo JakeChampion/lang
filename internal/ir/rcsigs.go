@@ -415,6 +415,7 @@ var rcInert = map[string]bool{
 	"__fern_read_link":      true,
 	"__fern_rename":         true,
 	"__fern_set_file_times": true,
+	"__fern_truncate":       true,
 	"__fern_round_f64":      true, "__fern_sin_f64": true,
 	"__fern_sleep_ms": true, "__fern_sleep_ns": true,
 	"__fern_sqrt_f64": true, "__fern_stat": true, "__fern_lstat": true,

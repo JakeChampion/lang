@@ -2343,6 +2343,39 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 			ast.EnumType{Name: "IoError"},
 		}},
 	}
+	// truncate(path, length): Result[void, IoError] — set the length of
+	// an EXISTING file, `truncate(2)`. Shrinking discards the bytes past
+	// `length`; growing extends with a hole that reads as zeros and
+	// costs no blocks.
+	//
+	// PATH-BASED rather than fd-based, and the reason is measurable
+	// rather than stylistic: `open_writer` is O_WRONLY|O_CREAT|O_TRUNC,
+	// `open_appender` creates too, and `open_exclusive` fails on a file
+	// that exists — so there is no way to obtain a writable descriptor
+	// to an existing file without first destroying its contents. An
+	// `ftruncate` form would therefore be unable to express
+	// `truncate -s +10 file`, which is the utility's commonest shape:
+	// the open would zero the file the caller asked to extend.
+	//
+	// It does NOT create. `truncate(2)` answers ENOENT for a missing
+	// path, which is what `truncate -c` wants verbatim; the creating
+	// form is `open_exclusive` (which does not truncate) followed by
+	// this.
+	//
+	// A negative `length` is EINVAL from the kernel rather than being
+	// clamped here, and a length past the filesystem's maximum is EFBIG.
+	// A final symlink IS followed, and a directory operand is EISDIR.
+	//
+	// WASI has this as `path_filestat_set_size` on preview 1 and
+	// `descriptor.set-size-at`'s file form on preview 2, so it is
+	// provided on all four targets rather than refused.
+	c.info.FuncSigs["truncate"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}, ast.NumberType{Width: 64, Signed: true}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.VoidType{},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
 	// set_file_times(path, atime_sec, atime_nsec, mtime_sec,
 	// mtime_nsec, flags): Result[void, IoError] — write the access and
 	// modification timestamps of an entry, `utimensat(AT_FDCWD, path,

@@ -292,6 +292,10 @@ pub function gated_builtins(): Gate[] {
         Gate { builtin: "rename", capability: "fs" },
         Gate { builtin: "set_file_times", capability: "fs" },
         Gate { builtin: "temp_dir", capability: "fs" },
+        // Setting a file's LENGTH is filesystem reach and not a permission
+        // one: a host can have files, no mode word, and still know how long
+        // each one is. Both previews can do it through a descriptor.
+        Gate { builtin: "truncate", capability: "fs" },
 
         // Permission bits on a filesystem entry, which is a separate
         // capability from having a filesystem: a host can offer files and no

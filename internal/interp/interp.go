@@ -1087,6 +1087,7 @@ func New() *Interp {
 	i.Builtins["umask"] = &Builtin{Fn: builtinUmask}
 	i.Builtins["rename"] = &Builtin{Fn: builtinRename}
 	i.Builtins["chmod"] = &Builtin{Fn: builtinChmod}
+	i.Builtins["truncate"] = &Builtin{Fn: builtinTruncate}
 	i.Builtins["set_file_times"] = &Builtin{Fn: builtinSetFileTimes}
 	i.Builtins["create_dir_all"] = &Builtin{Fn: builtinCreateDirAll}
 	i.Builtins["remove_dir_all"] = &Builtin{Fn: builtinRemoveDirAll}
@@ -3033,6 +3034,28 @@ func builtinChmod(_ *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("chmod: expected number mode, got %T", args[1])
 	}
 	return ioResult(string(path), syscall.Chmod(string(path), uint32(int(mode))&0o7777)), nil
+}
+
+// builtinTruncate sets the length of an existing file — truncate(2).
+// Path-based rather than fd-based: no Fern open mode yields a writable
+// descriptor to an existing file without truncating it first, so an
+// ftruncate form could not express an EXTEND.
+func builtinTruncate(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("truncate: expected 2 args, got %d", len(args))
+	}
+	path, ok := args[0].(String)
+	if !ok {
+		return nil, fmt.Errorf("truncate: expected string path, got %T", args[0])
+	}
+	length, ok := args[1].(Number)
+	if !ok {
+		return nil, fmt.Errorf("truncate: expected number length, got %T", args[1])
+	}
+	// syscall.Truncate rather than os.Truncate: os.Truncate wraps the
+	// errno in a *PathError whose Op is "truncate", and classifyIoError
+	// reads the bare errno.
+	return ioResult(string(path), syscall.Truncate(string(path), int64(length))), nil
 }
 
 // The bits of set_file_times' `flags` word. They are Fern's own, not the

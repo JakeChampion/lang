@@ -266,6 +266,11 @@ const (
 	sysRenameat  = 264
 	sysFchmodat  = 268
 	sysUtimensat = 280
+	// truncate(2) 76 — the PATH form, not ftruncate(2) 77. No Fern open
+	// mode yields a writable descriptor to an existing file without
+	// O_TRUNC having already emptied it, so the fd form could not
+	// express an extend.
+	sysTruncate = 76
 	// geteuid(2) / getegid(2): x86-64 syscalls 107 / 108.
 	sysGeteuid = 107
 	sysGetegid = 108
@@ -632,7 +637,7 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	if g.usesRemoveDirAll || g.usesRemoveFile || g.usesCreateDirAll || g.usesCreateDir ||
 		g.usesRemoveDir || g.usesCreateLink || g.usesCreateSymlink || g.usesTempDir ||
 		g.usesReadDir || g.usesStat || g.usesLstat || g.usesAccess || g.usesReadLink ||
-		g.usesRename || g.usesChmod || g.usesSetFileTimes {
+		g.usesRename || g.usesChmod || g.usesSetFileTimes || g.usesTruncate {
 		g.usesFree = true
 	}
 	if g.usesRemoveDirAll {
@@ -942,6 +947,9 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	}
 	if g.usesChmod {
 		g.emitChmodRuntime()
+	}
+	if g.usesTruncate {
+		g.emitTruncateRuntime()
 	}
 	if g.usesSetFileTimes {
 		g.emitSetFileTimesRuntime()
@@ -1476,6 +1484,8 @@ type generator struct {
 	usesRename       bool
 	usesChmod        bool
 	usesSetFileTimes bool
+	// truncate(2) over a path and a length.
+	usesTruncate bool
 
 	// usesReaderWriter pulls in the full Reader / Writer
 	// runtime bundle (stdin/stdout/stderr + open_reader /
@@ -1935,6 +1945,10 @@ func (g *generator) recordUse(target string) {
 		g.usesIoError = true
 	case "chmod":
 		g.usesChmod = true
+		g.usesAlloc = true
+		g.usesIoError = true
+	case "truncate":
+		g.usesTruncate = true
 		g.usesAlloc = true
 		g.usesIoError = true
 	case "set_file_times":
@@ -3523,6 +3537,8 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_rename"
 		case "chmod":
 			target = "__fern_chmod"
+		case "truncate":
+			target = "__fern_truncate"
 		case "set_file_times":
 			target = "__fern_set_file_times"
 		case "temp_dir":
@@ -14138,6 +14154,17 @@ func (g *generator) emitChmodRuntime() {
 		g.emit("mov rsi, rbx")
 		g.emit("mov edx, [rbp - 72]") // mode
 		g.emit("and edx, 4095")
+	})
+}
+
+// emitTruncateRuntime emits `__fern_truncate(path, length)` —
+// truncate(2). The length is a full 64-bit operand passed through
+// unmasked: a negative one is the kernel's EINVAL rather than a clamp
+// here, which would resize to something the caller did not ask for.
+func (g *generator) emitTruncateRuntime() {
+	g.emitPathOpRuntime("__fern_truncate", "trnc", sysTruncate, 1, true, func() {
+		g.emit("mov rdi, rbx")
+		g.emit("mov rsi, [rbp - 72]") // length, full 64 bits
 	})
 }
 

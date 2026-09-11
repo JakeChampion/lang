@@ -74,7 +74,7 @@ function main(): i32 {
         "create_dir", "remove_dir", "create_link", "create_symlink",
         "read_link", "umask", "sleep_ns", "rename",
         "chmod", "set_file_times", "statfs",
-        "process_alive", "rlimit_nofile"
+        "process_alive", "rlimit_nofile", "truncate"
     ];
     var ext_max: i32 = n;
     var ext_ok: i32 = 0;
@@ -180,7 +180,7 @@ function main(): i32 {
         ir.op_sleep_ns(),
         ir.op_rename(),
         ir.op_chmod(), ir.op_set_file_times(), ir.op_statfs(),
-        ir.op_process_alive(), ir.op_rlimit_nofile()
+        ir.op_process_alive(), ir.op_rlimit_nofile(), ir.op_truncate()
     ];
     var names: string[] = [
         "const_i32", "const_str", "load_local",
@@ -200,7 +200,7 @@ function main(): i32 {
         "create_dir", "remove_dir", "create_link", "create_symlink",
         "read_link", "umask", "sleep_ns", "rename",
         "chmod", "set_file_times", "statfs",
-        "process_alive", "rlimit_nofile"
+        "process_alive", "rlimit_nofile", "truncate"
     ];
     var tag_ok: i32 = 0;
     var tag_bad: i32 = 0;

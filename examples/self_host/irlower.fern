@@ -11963,6 +11963,17 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
     // every backend helper reads them as one, so they lower through
     // lower_i64, which widens an i32 leaf rather than bailing the module
     // off the IR path; the path and the flags word stay 32-bit.
+    // Built-in `truncate(path, length)` — truncate(2). The length is i64 in
+    // the signature and every backend helper reads it as one, so it lowers
+    // through lower_i64, which widens an i32 leaf rather than bailing the
+    // module off the IR path.
+    if (cid.name == "truncate" && c.args.len() == 2) {
+        var tr: LowerState = lower_expr(c.args[0], s);
+        if (!tr.ok) { return tr; }
+        tr = lower_i64(c.args[1], tr);
+        if (!tr.ok) { return tr; }
+        return tr.emit(ir.op_truncate());
+    }
     if (cid.name == "set_file_times" && c.args.len() == 6) {
         var sft: LowerState = lower_expr(c.args[0], s);
         if (!sft.ok) { return sft; }
@@ -70684,6 +70695,7 @@ function builtin_opt_ret_type(name: string): string {
     if (name == "create_symlink") { return "Result[void, IoError]"; }
     if (name == "rename") { return "Result[void, IoError]"; }
     if (name == "chmod") { return "Result[void, IoError]"; }
+    if (name == "truncate") { return "Result[void, IoError]"; }
     if (name == "set_file_times") { return "Result[void, IoError]"; }
     if (name == "read_link") { return "Result[string, IoError]"; }
     if (name == "temp_dir") { return "Result[string, IoError]"; }

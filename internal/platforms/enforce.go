@@ -145,6 +145,12 @@ var gatedBuiltins = map[string]string{
 	"rename":          "fs",
 	"set_file_times":  "fs",
 	"temp_dir":        "fs",
+	// Setting a file's LENGTH is a filesystem operation and not a
+	// permission one: a host can have files, no mode word, and still
+	// know how long each one is. Both WASI previews provide it
+	// (`path_filestat_set_size` / `descriptor.set-size`), so it is
+	// granted there rather than refused.
+	"truncate": "fs",
 
 	// Permission bits on a filesystem entry, which is a separate
 	// capability from having a filesystem: a host can offer files and no

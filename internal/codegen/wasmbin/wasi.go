@@ -237,6 +237,17 @@ var importSpecs = map[string]importSpec{
 		},
 		results: nil,
 	},
+	"wasi_descriptor_set_size_p2": {
+		// Preview-2: wasi:filesystem/types@0.2.0::
+		//   [method]descriptor.set-size lowered to
+		//   (self: i32, size: i64, retptr: i32) -> (). retptr holds
+		//   result<_, error-code>: disc @ +0 (0=ok), error-code at
+		//   emptyOkErrorCodeOff on the error arm.
+		module:  "wasi:filesystem/types@0.2.0",
+		name:    "[method]descriptor.set-size",
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI64, encode.ValtypeI32},
+		results: nil,
+	},
 	"wasi_descriptor_drop_p2": {
 		// (handle) → (). Drops a descriptor resource — the own<descriptor>
 		// open-at returned — which is what releases the host's file
@@ -611,6 +622,16 @@ var importSpecs = map[string]importSpec{
 			encode.ValtypeI32, // fdflags
 			encode.ValtypeI32, // retptr_newfd
 		},
+		results: []byte{encode.ValtypeI32},
+	},
+	"wasi_fd_filestat_set_size": {
+		// (fd, size: u64) → errno. Sets the file's length, extending
+		// with a hole or discarding the tail. Preview 1 has no
+		// path-based form — `path_filestat_set_size` is not a defined
+		// import — so `truncate` opens, sets, and closes.
+		module:  "wasi_snapshot_preview1",
+		name:    "fd_filestat_set_size",
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI64},
 		results: []byte{encode.ValtypeI32},
 	},
 	"wasi_fd_close": {
@@ -2091,6 +2112,20 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 			in.add("wasi_path_filestat_set_times")
 		}
 	}
+	if helpers.set["__fern_truncate"] {
+		// Neither preview has a path-based set-size, so both arms
+		// open a descriptor, set the size on it, and release it.
+		if opts.Preview2WASI {
+			in.add("wasi_get_directories_p2")
+			in.add("wasi_descriptor_open_at_p2")
+			in.add("wasi_descriptor_set_size_p2")
+			in.add("wasi_descriptor_drop_p2")
+		} else {
+			in.add("wasi_path_open")
+			in.add("wasi_fd_filestat_set_size")
+			in.add("wasi_fd_close")
+		}
+	}
 	if helpers.set["__fern_open_reader"] {
 		if opts.Preview2WASI {
 			// open_reader opens via the get-directories → open-at →
@@ -2696,6 +2731,7 @@ var preview2HelperBodyOverrides = map[string]func(map[string]uint32) []byte{
 	"__fern_read_link":           buildReadLinkBodyP2,
 	"__fern_rename":              buildRenameBodyP2,
 	"__fern_set_file_times":      buildSetFileTimesBodyP2,
+	"__fern_truncate":            buildTruncateBodyP2,
 	"__fern_temp_dir":            buildTempDirBodyP2,
 	"__fern_stat":                buildStatBodyP2,
 	"__fern_lstat":               buildLstatBodyP2,

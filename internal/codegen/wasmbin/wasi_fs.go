@@ -63,15 +63,16 @@ const (
 	errnoNoTsup  int32 = 58 // ENOTSUP → Unsupported
 )
 
-// WASI preview-1 RIGHTS bitset values. We only need
-// RIGHT_FD_READ (and inheriting variant) for read_file; write
-// support adds RIGHT_FD_WRITE later.
+// WASI preview-1 RIGHTS bitset values, by their index in the witx
+// `rights` flags record: fd_datasync 0, fd_read 1, fd_seek 2, fd_write 6,
+// path_open 13, fd_filestat_set_size 22.
 const (
-	wasiRightFdRead    int64 = 0x02
-	wasiRightFdSeek    int64 = 0x01
-	wasiRightFdWrite   int64 = 0x40
-	wasiRightPathOpen  int64 = 0x2000
-	wasiRightFdAllRead       = wasiRightFdRead | wasiRightFdSeek | wasiRightPathOpen
+	wasiRightFdRead            int64 = 0x02
+	wasiRightFdSeek            int64 = 0x04
+	wasiRightFdWrite           int64 = 0x40
+	wasiRightPathOpen          int64 = 0x2000
+	wasiRightFdFilestatSetSize int64 = 0x400000
+	wasiRightFdAllRead               = wasiRightFdRead | wasiRightFdSeek | wasiRightPathOpen
 )
 
 // WASI preview-1 `oflags` bits for path_open.
