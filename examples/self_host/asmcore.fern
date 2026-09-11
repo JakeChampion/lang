@@ -506,7 +506,9 @@ pub function sysno(t: string, name: string): string {
         // faccessat cannot, so the Linux rows are faccessat2 instead. Same
         // four-argument shape either way — see at_eaccess for the constant
         // that does differ.
-        if (name == "faccessat") { return "467"; }
+        if (name == "faccessat") { return "466"; }
+        if (name == "fchmodat") { return "467"; }
+        if (name == "renameat") { return "465"; }
         if (name == "geteuid") { return "25"; }
         if (name == "getegid") { return "43"; }
         if (name == "getuid") { return "24"; }
@@ -562,6 +564,12 @@ pub function sysno(t: string, name: string): string {
     if (name == "timerfd_settime") { return "86"; }
     if (name == "ioctl") { return "29"; }
     if (name == "faccessat") { return "439"; }
+    if (name == "fchmodat") { return "53"; }
+    if (name == "renameat") { return "38"; }
+    // No Darwin row: XNU has no utimensat syscall at all — libc builds it out
+    // of setattrlistat(2), which is what the native arm64 backend issues
+    // inline for that target rather than through a number here.
+    if (name == "utimensat") { return "88"; }
     if (name == "geteuid") { return "175"; }
     if (name == "getegid") { return "177"; }
     if (name == "getuid") { return "174"; }

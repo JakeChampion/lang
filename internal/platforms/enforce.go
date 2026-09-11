@@ -127,6 +127,8 @@ var gatedBuiltins = map[string]string{
 	"create_link":     "fs",
 	"create_symlink":  "fs",
 	"read_link":       "fs",
+	"rename":          "fs",
+	"set_file_times":  "fs",
 	"temp_dir":        "fs",
 
 	// Permission bits on a filesystem entry, which is a separate
@@ -143,6 +145,9 @@ var gatedBuiltins = map[string]string{
 	// permission model has no mask to set, and answering 0 would claim
 	// every bit survives.
 	"umask": "fsmode",
+	// And `chmod` is the WRITE of it on an entry that already exists,
+	// where `write_file_exec` only sets a bit on one it is creating.
+	"chmod": "fsmode",
 
 	// The process's own identity — the effective pair, the real pair,
 	// and the supplementary group set. A host with no users cannot

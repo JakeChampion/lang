@@ -1278,6 +1278,9 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"create_symlink":                emitCreateSymlinkHelper,
 	"read_link":                     emitReadLinkHelper,
 	"umask":                         emitUmaskHelper,
+	"rename":                        emitRenameHelper,
+	"chmod":                         emitChmodHelper,
+	"set_file_times":                emitSetFileTimesHelper,
 	"remove_dir_all":                emitRemoveDirAllHelper,
 	"temp_dir":                      emitTempDirHelper,
 	"read_dir":                      emitReadDirHelper,
@@ -3133,6 +3136,9 @@ var runtimeHelperDeps = map[string][]string{
 	"create_link":                   {"__fern_io_error"},
 	"create_symlink":                {"__fern_io_error"},
 	"read_link":                     {"__fern_io_error"},
+	"rename":                        {"__fern_io_error"},
+	"chmod":                         {"__fern_io_error"},
+	"set_file_times":                {"__fern_io_error"},
 	"remove_dir_all":                {"__fern_io_error"},
 	"temp_dir":                      {"__fern_io_error"},
 	"read_dir":                      {"__fern_io_error"},
@@ -3194,6 +3200,9 @@ var heapUsingHelpers = map[string]bool{
 	"create_link":                   true,
 	"create_symlink":                true,
 	"read_link":                     true,
+	"rename":                        true,
+	"chmod":                         true,
+	"set_file_times":                true,
 	"remove_dir_all":                true,
 	"temp_dir":                      true,
 	"read_dir":                      true,
@@ -5409,6 +5418,100 @@ func emitReadLinkHelper(w func(string, ...any)) {
 	w("\tstr x19, [x0, #8]")
 	w(".Lssa_rlnk_ret:")
 	w("\tadd sp, sp, #4096")
+	w("\tldp x21, x22, [sp, #32]")
+	w("\tldp x19, x20, [sp, #16]")
+	w("\tldp x29, x30, [sp], #64")
+	w("\tret")
+}
+
+// emitRenameHelper writes rename(from, to) -> Result[void, IoError]:
+// renameat(AT_FDCWD, from, AT_FDCWD, to). An existing `to` of a
+// compatible type is replaced atomically, and a rename across
+// filesystems is EXDEV rather than a copy.
+func emitRenameHelper(w func(string, ...any)) {
+	emitPathOpHelper("rename", "rnam", 38, 2, func(w func(string, ...any)) {
+		w("\tmov x0, #100")
+		w("\tneg x0, x0")
+		w("\tmov x1, x20")
+		w("\tmov x2, #100")
+		w("\tneg x2, x2")
+		w("\tmov x3, x22")
+	})(w)
+}
+
+// emitChmodHelper writes chmod(path, mode) -> Result[void, IoError]:
+// fchmodat(AT_FDCWD, path, mode). The umask is not consulted — it
+// filters a creation, and this is not one — so the low twelve bits land
+// verbatim.
+func emitChmodHelper(w func(string, ...any)) {
+	emitPathOpHelper("chmod", "chmd", 53, 1, func(w func(string, ...any)) {
+		w("\tmov x0, #100")
+		w("\tneg x0, x0")
+		w("\tmov x1, x20")
+		w("\tand x2, x21, #4095")
+	})(w)
+}
+
+// emitSetFileTimesHelper writes set_file_times(path, atime_sec,
+// atime_nsec, mtime_sec, mtime_nsec, flags) -> Result[void, IoError]:
+// utimensat(AT_FDCWD, path, times, flags).
+//
+// The two `struct timespec`s go on the stack in the kernel's order,
+// access time first. `flags` is Fern's word rather than the kernel's:
+// bit 0 becomes AT_SYMLINK_NOFOLLOW, and bits 1 and 2 become UTIME_OMIT
+// in the nanosecond half of the timespec being skipped — an omit is a
+// sentinel value to utimensat, not a flag, and the seconds half is then
+// not read.
+//
+// Non-leaf (calls __fern_io_error), so the path, the flags and the
+// address of the pair live in callee-saved registers across the copy.
+func emitSetFileTimesHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("set_file_times"))
+	w("\tstp x29, x30, [sp, #-64]!")
+	w("\tmov x29, sp")
+	w("\tstp x19, x20, [sp, #16]")
+	w("\tstp x21, x22, [sp, #32]")
+	w("\tsub sp, sp, #32") // the timespec pair
+	w("\tmov x19, x0")     // path
+	w("\tmov x21, x5")     // flags
+	w("\tstp x1, x2, [sp]")
+	w("\tstp x3, x4, [sp, #16]")
+	w("\tmov x6, #1073741822") // UTIME_OMIT
+	w("\ttbz x21, #1, .Lssa_sft_a")
+	w("\tstp xzr, x6, [sp]")
+	w(".Lssa_sft_a:")
+	w("\ttbz x21, #2, .Lssa_sft_m")
+	w("\tstp xzr, x6, [sp, #16]")
+	w(".Lssa_sft_m:")
+	w("\tmov x22, sp") // &times, across the path copy
+	emitSsaPathz(w, "x20", "x19", "sftp")
+	w("\tmov x0, #100")
+	w("\tneg x0, x0") // AT_FDCWD
+	w("\tmov x1, x20")
+	w("\tmov x2, x22")
+	w("\tmov x3, #0")
+	w("\ttbz x21, #0, .Lssa_sft_go")
+	w("\tmov x3, #256") // AT_SYMLINK_NOFOLLOW
+	w(".Lssa_sft_go:")
+	w("\tmov x8, #88") // utimensat
+	w("\tsvc #0")
+	w("\ttbnz x0, #63, .Lssa_sft_err")
+	emitSsaResultBox(w)
+	w("\tstr wzr, [x0]")     // tag = 0 (Ok)
+	w("\tstr xzr, [x0, #8]") // unit payload
+	w("\tb .Lssa_sft_ret")
+	w(".Lssa_sft_err:")
+	w("\tneg x0, x0")
+	w("\tmov x1, x19")
+	w("\tbl %s", fnLabel("__fern_io_error"))
+	w("\tmov x19, x0")
+	emitSsaResultBox(w)
+	w("\tmov w6, #1")
+	w("\tstr w6, [x0]") // tag = 1 (Err)
+	w("\tstr x19, [x0, #8]")
+	w(".Lssa_sft_ret:")
+	w("\tadd sp, sp, #32")
 	w("\tldp x21, x22, [sp, #32]")
 	w("\tldp x19, x20, [sp, #16]")
 	w("\tldp x29, x30, [sp], #64")

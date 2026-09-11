@@ -2155,6 +2155,112 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 			ast.EnumType{Name: "IoError"},
 		}},
 	}
+	// rename(from, to): Result[void, IoError] — move the directory
+	// entry `from` to `to`, `renameat(AT_FDCWD, from, AT_FDCWD, to)`.
+	// Nothing is copied: the inode keeps its mode, its times and every
+	// other link to it, and an existing `to` of a compatible type is
+	// replaced ATOMICALLY, so no window exists in which neither name
+	// resolves.
+	//
+	// A rename across filesystems is EXDEV and stays EXDEV — the
+	// copy-then-remove `mv(1)` falls back to is the caller's, not this
+	// builtin's. Folding it in here would move the bytes where the
+	// caller asked to move the entry, and would make the fallback
+	// unobservable.
+	//
+	// The other errnos a caller has to separate: ENOENT for a missing
+	// `from`, ENOTEMPTY or EEXIST for a non-empty directory at `to`,
+	// ENOTDIR / EISDIR for a type mismatch between the two, and EINVAL
+	// when `to` is under `from`. The `IoError` names `to`, the operand
+	// the failure is about.
+	//
+	// There is no no-replace or exchange flag. `renameat2` is Linux's
+	// alone — Darwin spells the pair `renameatx_np` and WASI has
+	// neither — and a flag one target honours and two refuse belongs to
+	// the capability system, not to an argument.
+	c.info.FuncSigs["rename"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}, ast.StringType{}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.VoidType{},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
+	// chmod(path, mode): Result[void, IoError] — set the permission
+	// bits of an EXISTING entry, `fchmodat(AT_FDCWD, path, mode, 0)`.
+	// The process umask does not apply: a mask filters a creation, and
+	// this is not one, so `mode` lands verbatim.
+	//
+	// Only the low twelve bits are meaningful — the nine rwx bits plus
+	// setuid, setgid and the sticky bit — and the rest are masked away
+	// here rather than reaching the kernel, which would answer EINVAL.
+	//
+	// A final symlink IS followed, which is what `chmod(1)` does: a
+	// symlink has no mode of its own to set on Linux, and
+	// `AT_SYMLINK_NOFOLLOW` answers EOPNOTSUPP there rather than doing
+	// something useful, so there is no honest nofollow form to offer.
+	//
+	// `write_file_exec` is the creating sibling — it sets a bit on a
+	// file it is making. This is the only way to change the mode of
+	// something already there. WASI has no permission bits at all, so
+	// E066 refuses this builtin on that target (capability `fsmode`) —
+	// docs/FREESTANDING-CORE.md.
+	c.info.FuncSigs["chmod"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}, ast.NumberType{Width: 32, Signed: true}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.VoidType{},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
+	// set_file_times(path, atime_sec, atime_nsec, mtime_sec,
+	// mtime_nsec, flags): Result[void, IoError] — write the access and
+	// modification timestamps of an entry, `utimensat(AT_FDCWD, path,
+	// times, flags)`.
+	//
+	// Each timestamp is a whole second count since the Unix epoch plus
+	// a nanosecond remainder in [0, 1e9), which is the shape `stat`
+	// hands them back in: `cp -p` is a `stat` feeding this with no
+	// arithmetic in between. One nanosecond count instead would cap the
+	// range at 1678–2262, and `touch -t 300012312359` is inside GNU's
+	// and outside that.
+	//
+	// `flags` is Fern's own word, translated by each backend into the
+	// kernel's:
+	//
+	//	1  do not follow a final symlink (AT_SYMLINK_NOFOLLOW)
+	//	2  leave the access time as it is (UTIME_OMIT in atime_nsec)
+	//	4  leave the modification time as it is (UTIME_OMIT in mtime_nsec)
+	//
+	// The two omit bits are how `touch -a` and `touch -m` write one
+	// timestamp without disturbing the other: reading the other first
+	// and writing it back is a race, and it round-trips a value the
+	// caller never asked to set. A timestamp whose omit bit is set is
+	// not read, so passing 0 for both of its halves is fine.
+	//
+	// Setting both omit bits does nothing and is not an error — that is
+	// `utimensat`'s own answer.
+	//
+	// An out-of-range `atime_nsec` / `mtime_nsec` is EINVAL from the
+	// kernel rather than being normalised here: a nanosecond field that
+	// silently carried into the seconds would write a time the caller
+	// did not name.
+	//
+	// WASI has this as `path_filestat_set_times`, but its timestamps
+	// are UNSIGNED nanoseconds, so a pre-1970 time is refused there
+	// rather than wrapped — docs/FREESTANDING-CORE.md.
+	c.info.FuncSigs["set_file_times"] = &ast.FuncType{
+		Params: []ast.Type{
+			ast.StringType{},
+			ast.NumberType{Width: 64, Signed: true},
+			ast.NumberType{Width: 64, Signed: true},
+			ast.NumberType{Width: 64, Signed: true},
+			ast.NumberType{Width: 64, Signed: true},
+			ast.NumberType{Width: 32, Signed: true},
+		},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.VoidType{},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
 	// umask(mask): the process file-mode creation mask — `umask(2)`,
 	// which SETS the mask and returns the previous one in a single
 	// uninterruptible step. There is no read-only form in POSIX, so

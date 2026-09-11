@@ -55,6 +55,8 @@ var payloadlessArmAbsent = map[string]bool{
 	"__fern_create_link":       true,
 	"__fern_create_symlink":    true,
 	"__fern_read_link":         true,
+	"__fern_rename":            true,
+	"__fern_set_file_times":    true,
 }
 
 // zeroStoreAt is the byte sequence for `i32.const 0; i32.store offset=off`.

@@ -293,6 +293,10 @@ var rcInertBuiltins = map[string]bool{
 	// `write_file_exec` it is classified here under the builtin name
 	// rather than as a wasm runtime helper.
 	"access": true,
+	// (path, mode) → Result, and the same shape as `access` from the
+	// writing side. Native-only for the same reason, so it is named here
+	// the same way.
+	"chmod": true,
 	// No arguments at all, so there is nothing to move.
 	// (mask) → the previous mask. A scalar in, a scalar out, and
 	// process state in between: nothing to move. Native-only — E066
@@ -395,8 +399,10 @@ var rcInert = map[string]bool{
 	"__fern_remove_file": true, "__fern_rmdir_rec": true,
 	"__fern_create_dir": true, "__fern_remove_dir": true,
 	"__fern_create_link": true, "__fern_create_symlink": true,
-	"__fern_read_link": true,
-	"__fern_round_f64": true, "__fern_sin_f64": true,
+	"__fern_read_link":      true,
+	"__fern_rename":         true,
+	"__fern_set_file_times": true,
+	"__fern_round_f64":      true, "__fern_sin_f64": true,
 	"__fern_sleep_ms": true,
 	"__fern_sqrt_f64": true, "__fern_stat": true, "__fern_lstat": true,
 	"__fern_stderr": true,

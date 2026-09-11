@@ -689,7 +689,8 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_create_dir_all")
 				case "__fern_create_dir", "__fern_remove_dir",
 					"__fern_create_link", "__fern_create_symlink",
-					"__fern_read_link":
+					"__fern_read_link", "__fern_rename",
+					"__fern_set_file_times":
 					// The single-step directory and link
 					// primitives (#8883). Each is one WASI call
 					// behind the same path-normalize chain
@@ -1135,6 +1136,8 @@ var preview2HelperCalls = map[string][]string{
 	"__fern_create_link":       {"__wasi_errno_of_code"},
 	"__fern_create_symlink":    {"__wasi_errno_of_code"},
 	"__fern_read_link":         {"__wasi_errno_of_code"},
+	"__fern_rename":            {"__wasi_errno_of_code"},
+	"__fern_set_file_times":    {"__wasi_errno_of_code"},
 	"__fern_temp_dir":          {"__wasi_errno_of_code"},
 	"__fern_stat":              {"__wasi_errno_of_code"},
 	"__fern_lstat":             {"__wasi_errno_of_code"},
@@ -1182,6 +1185,7 @@ var helperResultBoxCallers = []string{
 	"__fern_create_dir_all",
 	"__fern_create_dir", "__fern_remove_dir", "__fern_create_link",
 	"__fern_create_symlink", "__fern_read_link",
+	"__fern_rename", "__fern_set_file_times",
 }
 
 // emitPayloadlessResultBox appends the arm of a helper in
@@ -2334,6 +2338,33 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildReadLinkBody,
+	},
+	"__fern_rename": {
+		// (from_data, from_len, to_data, to_len) → i32 — heap-form
+		// Result[void, IoError]. path_rename with the preopen on both
+		// sides, so a rename cannot cross one. See wasi_fsmeta.go.
+		params: []byte{
+			encode.ValtypeI32, encode.ValtypeI32,
+			encode.ValtypeI32, encode.ValtypeI32,
+		},
+		results: []byte{encode.ValtypeI32},
+		body:    buildRenameBody,
+	},
+	"__fern_set_file_times": {
+		// (path_data, path_len, atime_sec, atime_nsec, mtime_sec,
+		// mtime_nsec, flags) → i32 — heap-form Result[void, IoError].
+		// path_filestat_set_times; the seconds / nanoseconds pairs
+		// fold into the unsigned nanosecond count WASI takes, and a
+		// pre-1970 one is EOVERFLOW rather than a wrap. See
+		// wasi_fsmeta.go.
+		params: []byte{
+			encode.ValtypeI32, encode.ValtypeI32,
+			encode.ValtypeI64, encode.ValtypeI64,
+			encode.ValtypeI64, encode.ValtypeI64,
+			encode.ValtypeI32,
+		},
+		results: []byte{encode.ValtypeI32},
+		body:    buildSetFileTimesBody,
 	},
 	"__fern_stat": {
 		// (path_data, path_len) → i32 — heap-form

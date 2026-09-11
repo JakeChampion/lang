@@ -63,6 +63,9 @@ var providedRefusedByPlatform = map[string]bool{
 	// for my effective ids" is unanswerable where there are no mode bits.
 	"write_file_exec": true,
 	"access":          true,
+	// `chmod` is the WRITE of it on an entry that already exists, where
+	// write_file_exec only sets a bit on one it is creating.
+	"chmod": true,
 	// `umask` is the process's own half of the same property: the mode
 	// bits a creation is allowed to keep. WASI has no creation mask, and
 	// answering 0 would claim every bit survives.

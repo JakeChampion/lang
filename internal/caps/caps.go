@@ -73,6 +73,9 @@ var BuiltinCaps = map[string]string{
 	"create_link":     "fs",
 	"create_symlink":  "fs",
 	"read_link":       "fs",
+	"rename":          "fs",
+	"chmod":           "fs",
+	"set_file_times":  "fs",
 	// The process file-mode creation mask. Reading it is ambient
 	// information about the process, but SETTING it changes the mode of
 	// every file and directory anything creates afterwards — a

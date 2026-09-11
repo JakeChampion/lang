@@ -398,6 +398,50 @@ var importSpecs = map[string]importSpec{
 		},
 		results: nil,
 	},
+	"wasi_descriptor_rename_at_p2": {
+		// Preview-2: [method]descriptor.rename-at lowered to
+		//   (self, old_ptr, old_len, new-descriptor, new_ptr, new_len,
+		//    retptr) -> ().
+		// retptr holds `result<_, error-code>` — the empty-ok shape,
+		// discriminant at +0 and error-code at emptyOkErrorCodeOff.
+		// The new-descriptor is a borrow, and the only one this
+		// backend has is the preopen itself.
+		module: "wasi:filesystem/types@0.2.0",
+		name:   "[method]descriptor.rename-at",
+		params: []byte{
+			encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32,
+			encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32,
+			encode.ValtypeI32,
+		},
+		results: nil,
+	},
+	"wasi_descriptor_set_times_at_p2": {
+		// Preview-2: [method]descriptor.set-times-at lowered to
+		//   (self, path-flags, path_ptr, path_len,
+		//    atim-disc, atim-sec: i64, atim-nsec,
+		//    mtim-disc, mtim-sec: i64, mtim-nsec, retptr) -> ().
+		//
+		// Each timestamp is a `new-timestamp`, the first
+		// variant-with-a-record-payload in this table: a variant
+		// flattens to its discriminant followed by the JOIN of its
+		// arms, and `no-change` / `now` carry nothing while
+		// `timestamp(datetime)` carries {u64 seconds, u32
+		// nanoseconds} — so three core params, of which the two
+		// payload words are ignored on the no-change arm. The
+		// discriminants are 0 no-change, 1 now, 2 timestamp.
+		//
+		// retptr holds the same empty-ok `result<_, error-code>` the
+		// path mutators use.
+		module: "wasi:filesystem/types@0.2.0",
+		name:   "[method]descriptor.set-times-at",
+		params: []byte{
+			encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32,
+			encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI64,
+			encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI64,
+			encode.ValtypeI32, encode.ValtypeI32,
+		},
+		results: nil,
+	},
 	"wasi_descriptor_remove_directory_at_p2": {
 		// Preview-2: [method]descriptor.remove-directory-at, the same
 		// (self, path_ptr, path_len, retptr) -> () lowering as the
@@ -617,6 +661,34 @@ var importSpecs = map[string]importSpec{
 		params: []byte{
 			encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32,
 			encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32,
+			encode.ValtypeI32,
+		},
+		results: []byte{encode.ValtypeI32},
+	},
+	"wasi_path_rename": {
+		// (old_fd, old_path_ptr, old_path_len, new_fd, new_path_ptr,
+		// new_path_len) → errno. Moves the entry; an existing
+		// destination of a compatible type is replaced. Both
+		// descriptors are the preopen, so a rename cannot cross one.
+		module: "wasi_snapshot_preview1",
+		name:   "path_rename",
+		params: []byte{
+			encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32,
+			encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32,
+		},
+		results: []byte{encode.ValtypeI32},
+	},
+	"wasi_path_filestat_set_times": {
+		// (fd, lookupflags, path_ptr, path_len, atim: i64, mtim: i64,
+		// fstflags) → errno. The timestamps are UNSIGNED nanoseconds
+		// since the epoch, and `fstflags` names which of the pair the
+		// call writes — an omitted one is simply not named, so its
+		// value is not read.
+		module: "wasi_snapshot_preview1",
+		name:   "path_filestat_set_times",
+		params: []byte{
+			encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32,
+			encode.ValtypeI32, encode.ValtypeI64, encode.ValtypeI64,
 			encode.ValtypeI32,
 		},
 		results: []byte{encode.ValtypeI32},
@@ -2003,6 +2075,22 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 			in.add("wasi_path_readlink")
 		}
 	}
+	if helpers.set["__fern_rename"] {
+		if opts.Preview2WASI {
+			in.add("wasi_get_directories_p2")
+			in.add("wasi_descriptor_rename_at_p2")
+		} else {
+			in.add("wasi_path_rename")
+		}
+	}
+	if helpers.set["__fern_set_file_times"] {
+		if opts.Preview2WASI {
+			in.add("wasi_get_directories_p2")
+			in.add("wasi_descriptor_set_times_at_p2")
+		} else {
+			in.add("wasi_path_filestat_set_times")
+		}
+	}
 	if helpers.set["__fern_open_reader"] {
 		if opts.Preview2WASI {
 			// open_reader opens via the get-directories → open-at →
@@ -2605,6 +2693,8 @@ var preview2HelperBodyOverrides = map[string]func(map[string]uint32) []byte{
 	"__fern_create_link":         buildCreateLinkBodyP2,
 	"__fern_create_symlink":      buildCreateSymlinkBodyP2,
 	"__fern_read_link":           buildReadLinkBodyP2,
+	"__fern_rename":              buildRenameBodyP2,
+	"__fern_set_file_times":      buildSetFileTimesBodyP2,
 	"__fern_temp_dir":            buildTempDirBodyP2,
 	"__fern_stat":                buildStatBodyP2,
 	"__fern_lstat":               buildLstatBodyP2,
