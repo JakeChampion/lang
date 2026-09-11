@@ -2809,16 +2809,19 @@ func builtinRlimitNofile(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 0 {
 		return nil, fmt.Errorf("rlimit_nofile: expected 0 args, got %d", len(args))
 	}
-	var lim syscall.Rlimit
-	if err := syscall.Getrlimit(syscall.RLIMIT_NOFILE, &lim); err != nil {
+	cur, err := nofileSoft()
+	if err == syscall.ENOSYS {
+		return nil, fmt.Errorf("rlimit_nofile: no getrlimit(2) on %s", runtime.GOOS)
+	}
+	if err != nil {
 		// Only EFAULT and EINVAL are defined, and neither can happen
-		// against a named resource and a buffer this function owns.
+		// against a named resource and a buffer nofileSoft owns.
 		return Number(math.MaxInt64), nil
 	}
-	if lim.Cur > math.MaxInt64 {
+	if cur > math.MaxInt64 {
 		return Number(math.MaxInt64), nil
 	}
-	return Number(int64(lim.Cur)), nil
+	return Number(int64(cur)), nil
 }
 
 // builtinProcessAlive mirrors the native `process_alive(pid)` — kill(pid, 0),
