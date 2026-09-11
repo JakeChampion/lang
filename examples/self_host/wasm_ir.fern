@@ -1652,6 +1652,14 @@ pub function wasm_unsupported_builtin(mod: parser.Module): string {
         // that is not executable, which is the failure the builtin exists to
         // remove.
         if (util.index_of_str(ids, "write_file_exec") >= 0) { return "write_file_exec"; }
+        // statfs (#9062) — the SIZE and the length limits of a filesystem.
+        // Neither preview has a volume interface: preview 1's
+        // path_filestat_get is per-file, the component model has no volume,
+        // and a preopen is a capability handle rather than a mount, so it has
+        // no length limit to report either. An endpoint rather than a
+        // zero-filled record, which would claim a filesystem with no blocks
+        // and no name length — a measurement nobody took.
+        if (util.index_of_str(ids, "statfs") >= 0) { return "statfs"; }
         // proc_fork / proc_waitpid / proc_exec (#5686) — the crash-only trio.
         // A wasm component is a single instance with no process model: there is
         // nothing to fork and no child to reap. Same endpoint treatment as
@@ -1704,6 +1712,9 @@ pub function wasm_unsupported_message(name: string): string {
     }
     if (name == "rlimit_nofile") {
         return "error: rlimit_nofile is not supported on the wasm target (neither WASI preview enforces resource limits, so there is no ceiling to report)\n";
+    }
+    if (name == "statfs") {
+        return "error: statfs is not supported on the wasm target (neither preview has a volume to measure: a preopen is a capability handle, not a mount, so it reports neither a size nor a name-length limit)\n";
     }
     if (is_raw_floor_builtin(name)) {
         return "error: " + name + " is not supported on the wasm target (a raw-memory / syscall floor intrinsic: wasm has neither a raw address space nor syscalls — these back the register backends' runtime helpers, which wasm serves with hand-written WAT)\n";

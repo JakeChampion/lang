@@ -1055,6 +1055,24 @@ pub function op_stat(): Op { return op0("stat"); }
 // FileStat shape pointer — only the flags word each backend passes to
 // fstatat / path_filestat_get differs (#7982).
 pub function op_lstat(): Op { return op0("lstat"); }
+// `statfs` pops a path string value and describes the FILESYSTEM that path
+// resolves on, where `stat` describes the entry: a fresh
+// Result[FsStat, IoError] holding the six `statfs(2)` counts plus the two
+// length limits a path on that filesystem is held to (#9062). Same one-arg
+// VALUE shape as `stat`, and the same shape-pointer story — the box's shape is
+// the interned "FsStat" name.
+//
+// The two limits come from different places per OS and the op hides that:
+// Linux's record carries `f_namelen` and Linux has no pathconf syscall at all,
+// so `path_max` is the kernel's own 4096; Darwin's record has no name-length
+// member, so BOTH limits are real `pathconf(2)` calls there (see
+// asmcore.rt_src_statfs).
+//
+// Refused on wasm rather than deferred: neither preview has a volume to
+// measure, and a zero-filled record would claim a filesystem with no blocks
+// and no name length — a measurement nobody took. wasm_unsupported_builtin
+// names it, and `platforms.fern`'s `fsinfo` gate refuses it as E066.
+pub function op_statfs(): Op { return op0("statfs"); }
 // `subprocess` pops a stdin string, an args string[], and a cmd string (TOS
 // order stdin/args/cmd), spawns the child, pipes its streams, and pushes a fresh
 // ProcessResult struct {stdout, stderr, exit_code} (a VALUE op — three args
@@ -1588,7 +1606,8 @@ pub function kind_count(): i32 { return 196; }
 // in the 1..kind_count() bijection sweep (ir_kind_run sweeps them separately
 // by name), but nameable so module_emits_op_cached / the backends see them.
 // The id space is NOT dense up here: 253..259 are left for slices in flight,
-// which is why the directory and link family starts at 260.
+// which is why the directory and link family starts at 260, and 270 sits
+// between two pairs that landed alongside it.
 // NEXT FREE EXTENSION ID: 273 (re-grep rather than trusting this line — it has
 // been stale before, which is the drift the paragraph below is about).
 // ADDING AN EXTENSION TAG: take the next id here AND register it in
@@ -1750,6 +1769,7 @@ function kind_id_len6(name: string): i32 {
     if (c == b'r' && name == "rename") { return 267; }
     if (c == b'r' && name == "return") { return 160; }
     if (c == b's' && name == "str_eq") { return 99; }
+    if (c == b's' && name == "statfs") { return 270; }
     return 0;
 }
 
@@ -2388,6 +2408,7 @@ function kind_name_4(id: i32): string {
     if (id == 267) { return "rename"; }
     if (id == 268) { return "chmod"; }
     if (id == 269) { return "set_file_times"; }
+    if (id == 270) { return "statfs"; }
     if (id == 271) { return "process_alive"; }
     if (id == 272) { return "rlimit_nofile"; }
     return "invalid";
@@ -2497,7 +2518,7 @@ function pops1_io(t: i32): boolean {
         || t == 243 || t == 244                                          // signal_ignore, signal_default
         || t == 241 || t == 250                                          // fd_stat, uname_field
         || t == 261 || t == 264 || t == 265                              // remove_dir, read_link, umask
-        || t == 271                                                      // process_alive
+        || t == 270 || t == 271                                          // statfs, process_alive
         || t == 185 || t == 210 || t == 212                              // random_bytes, arg_at, proc_waitpid
         || t == 188 || t == 189 || t == 190 || t == 191 || t == 192      // timer_fd, wasm_*
         || t == 196 || t == 112 || t == 200 || t == 201 || t == 203;     // tcp_close, tcp_pollable(112), tcp_listen/accept, open_file
@@ -4179,6 +4200,9 @@ pub function op_allocates(tag: i32): boolean {
     if (tag == 176) { return true; }
     // stat boxes a fresh FileStat struct + a Result wrapper, so it needs the heap.
     if (tag == 175) { return true; }
+    // statfs boxes a fresh FsStat struct + a Result wrapper, and heap-builds the
+    // NUL-terminated path it hands the kernel.
+    if (tag == 270) { return true; }
     // fd_stat boxes the same pair; reader_seek boxes its Result[i64, IoError].
     if (tag == 241 || tag == 242) { return true; }
     // subprocess boxes a fresh ProcessResult struct + its two stdout/stderr

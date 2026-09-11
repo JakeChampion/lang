@@ -296,6 +296,36 @@ function main(): i32 { var e: Expr = Add { l: 40, r: 2 }; return eval(e); }`, 42
 		`function main(): i32 { match (stat("`+filepath.Join(dir, "no_such_stat_zzz")+`")) { Ok(fs) => { return 1; }, Err(e) => { return 99; } } }`,
 		99)
 
+	// statfs — BSD 345, whose record shares NOTHING with Linux's: f_bsize is a
+	// u32 at 0 with f_iosize beside it at 4, the five counts are u64 from 8,
+	// and there is no name-length member at all, so both limits come from real
+	// pathconf(2) calls (BSD 191) that Linux has no equivalent of. The block
+	// size carries the width trap: read 64 bits wide it drags f_iosize into the
+	// high half, which is a plausible-looking multi-terabyte answer rather than
+	// a fault, so the ceiling is the assertion that catches it. The host's own
+	// numbers are not available here (this case is generated on Linux and run
+	// on the macOS runner), so the rest is the nesting the record must satisfy.
+	runCase("statfs",
+		`function main(): i32 {
+  match (statfs("`+dir+`")) {
+    Ok(fs) => {
+      if (fs.block_size <= (0 as i64)) { return 1; }
+      if (fs.block_size > (1048576 as i64)) { return 2; }
+      if (fs.blocks <= (0 as i64)) { return 3; }
+      if (fs.blocks_free > fs.blocks) { return 4; }
+      if (fs.blocks_avail > fs.blocks_free) { return 5; }
+      if (fs.files_free > fs.files) { return 6; }
+      if (fs.name_max <= (0 as i64)) { return 8; }
+      if (fs.name_max > (4096 as i64)) { return 9; }
+      if (fs.path_max <= (0 as i64)) { return 10; }
+      match (statfs("`+filepath.Join(dir, "no_such_statfs_zzz", "x")+`")) { Ok(g) => { return 11; }, Err(e) => {} }
+      return 7;
+    },
+    Err(e) => { return 12; }
+  }
+}`,
+		7)
+
 	// remove_file — unlinkat(35) -> Darwin 472, AT_FDCWD -2. Full file
 	// lifecycle: write a file, delete it, then stat must report it gone
 	// (the Err arm). Returns 7 iff write + remove + the "now gone" stat
