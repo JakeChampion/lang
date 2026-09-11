@@ -128,7 +128,7 @@ they are not on PATH. Wall time, so compare within one run only.
 | `lib/gnu.fern` | the GNU conventions every utility shares |
 | `std/hash` | the three checksums that are not digests — the POSIX CRC-32 and `sum`'s BSD and System V sums — which `cksum -a` reaches and `sum` will |
 | `lib/pwdb.fern` | `/etc/passwd` and `/etc/group` as glibc's `files` backend reads them: the lookups by name and id, getgrouplist's ordering, the process's own group set, and the gecos field finger reads as a real name (`&` is the login name capitalised) |
-| `lib/utmp.fern` | the login-accounting record for the four utilities that read it — the entry, the scans, and the terminal a ut_line names, which is `lib/tty.fern`'s ttyname minus the `/dev/` prefix the field does not carry — for `logname`, `users`, `who` and `pinky` |
+| `lib/utmp.fern` | the login-accounting record for the four utilities that read it — the entry, the scans, and the terminal a ut_line names, which is `lib/tty.fern`'s ttyname minus the `/dev/` prefix the field does not carry — for `logname`, `users`, `who` and `pinky`. The record's tail is per-TARGET: 384 bytes where glibc's `__WORDSIZE_TIME64_COMPAT32` is 1 (x86-64) and 400 where it is 0 (arm64), since `ut_session` and `ut_tv` change width with it |
 | `lib/tz.fern` | the local time zone as tzset finds it — TZ as a file name before a POSIX rule, TZif v1/v2/v3 with its footer rule, and the POSIX grammar's three date forms — for `who` and `pinky` |
 | `lib/sys.fern` | the five fields of the kernel's utsname record, by name, for `uname` and `arch` |
 | `lib/base.fern` | the one encoder / decoder `base64`, `base32` and `basenc` drive, parameterised by alphabet, block and padding |

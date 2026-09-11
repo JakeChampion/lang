@@ -8,7 +8,8 @@
 // The file is a flat array of fixed-size records with no header, so
 // reading it is a byte offset and a width per field — and the WIDTHS
 // are the whole of the per-system difference. Linux's `struct utmp` and
-// `struct utmpx` are the same 384-byte record:
+// `struct utmpx` are the same record, and everything up to ut_exit is
+// the same on every architecture:
 //
 //   ut_type     i16   @0    what the entry records (see the types below)
 //   ut_pid      i32   @4
@@ -17,10 +18,28 @@
 //   ut_user     [32]  @44
 //   ut_host     [256] @76
 //   ut_exit           @332  two i16
+//
+// The TAIL is not. glibc sizes ut_session and ut_tv by
+// __WORDSIZE_TIME64_COMPAT32, so that a 32-bit and a 64-bit process on
+// the same machine share one file format. Where that macro is 1 — x86-64,
+// which had a 32-bit predecessor — the two fields keep their 32-bit
+// widths and the record is 384 bytes:
+//
 //   ut_session  i32   @336
 //   ut_tv             @340  two i32: seconds, microseconds
 //   ut_addr_v6  [16]  @348
-//   (reserved)  [20]  @364
+//   (reserved)  [20]  @364          384 total
+//
+// Where it is 0 — arm64, which never had one — ut_session is a `long`
+// and ut_tv a real `struct timeval`, and the record is 400 bytes:
+//
+//   ut_session  i64   @336
+//   ut_tv             @344  two i64: seconds, microseconds
+//   ut_addr_v6  [16]  @360
+//   (reserved)  [20]  @376          400 total
+//
+// So the stride and the timestamp's offset and width come from the
+// TARGET, not from the host that compiled this.
 //
 // A char array is NUL-padded but NOT necessarily NUL-terminated: a name
 // exactly 32 bytes long fills the field, so a reader that stops at the
@@ -88,8 +107,27 @@ pub function dead_process(): i32 {
   return 8;
 }
 
+// `__WORDSIZE_TIME64_COMPAT32` is 1 only on an architecture that had a
+// 32-bit predecessor sharing this file format. Of the targets that have a
+// utmp database at all, x86-64 is that one and arm64 is not.
+function time64_compat32(): boolean {
+  return target_arch() == "x86-64";
+}
+
 pub function record_bytes(): i32 {
-  return 384;
+  if (time64_compat32()) {
+    return 384;
+  }
+  return 400;
+}
+
+// ut_tv.tv_sec: an i32 at 340 where the compat layout applies, an i64 at
+// 344 where it does not.
+function sec_at(bs: u8[], off: i32): i64 {
+  if (time64_compat32()) {
+    return i32_at(bs, off + 340) as i64;
+  }
+  return i64_at(bs, off + 344);
 }
 
 // One record, reduced to the fields a utility prints or matches on.
@@ -127,6 +165,17 @@ function i32_at(bs: u8[], off: i32): i32 {
   return v as i32;
 }
 
+// A little-endian signed 64-bit field.
+function i64_at(bs: u8[], off: i32): i64 {
+  var v: i64 = 0 as i64;
+  var i: i32 = 7;
+  while (i >= 0) {
+    v = v * (256 as i64) + bs[off + i] as i64;
+    i = i - 1;
+  }
+  return v;
+}
+
 // A NUL-padded fixed-width char field, cut at the first NUL or at the
 // field's end, whichever comes first.
 function field_at(bs: u8[], off: i32, width: i32): string {
@@ -144,7 +193,7 @@ function field_at(bs: u8[], off: i32, width: i32): string {
 }
 
 function entry_at(bs: u8[], off: i32): Entry {
-  return Entry { kind: u16_at(bs, off + 0), pid: i32_at(bs, off + 4), line: field_at(bs, off + 8, 32), id: field_at(bs, off + 40, 4), user: field_at(bs, off + 44, 32), host: field_at(bs, off + 76, 256), sec: i32_at(bs, off + 340) as i64, term: i16_at(bs, off + 332), exit: i16_at(bs, off + 334) };
+  return Entry { kind: u16_at(bs, off + 0), pid: i32_at(bs, off + 4), line: field_at(bs, off + 8, 32), id: field_at(bs, off + 40, 4), user: field_at(bs, off + 44, 32), host: field_at(bs, off + 76, 256), sec: sec_at(bs, off), term: i16_at(bs, off + 332), exit: i16_at(bs, off + 334) };
 }
 
 // Every whole record in `path`, in file order. A missing or unreadable

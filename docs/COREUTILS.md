@@ -240,7 +240,12 @@ coreutils/
                     names — its mode is the message status and its atime
                     the idle time — for logname, users, who and pinky.
                     The line itself is lib/tty.fern's ttyname minus the
-                    /dev/ prefix the field does not carry
+                    /dev/ prefix the field does not carry. The record's
+                    TAIL is per-TARGET: glibc keeps ut_session and ut_tv
+                    at 32-bit widths where __WORDSIZE_TIME64_COMPAT32 is
+                    1, which is 384 bytes on x86-64, and uses a `long`
+                    and a real struct timeval where it is 0, which is
+                    400 on arm64
   lib/tz.fern       the local time zone as tzset(3) finds it, for the
                     utilities that print a local timestamp (who, pinky):
                     TZ read as a FILE name first — absolute, or under
