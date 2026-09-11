@@ -69,6 +69,15 @@ function array_length(xs: i32[]): i32 { return xs.len(); }
 // function's to hand over, so the golden records the move gate rather than a
 // call-site refusal.
 function borrowed_append(xs: i32[]): i32[] { return xs.append(1); }
+// The produced for-loop's shape, pinned: the index is a const -1 carried by the
+// header phi, the advance is the FIRST thing in the header, and the test comes
+// after it. An advance moved below the body would still pass every value test
+// and hang on the first continue.
+function loop_sum(xs: i32[]): i32 {
+    var t: i32 = 0;
+    for x in xs { t = t + x; }
+    return t;
+}
 @noinline function owned_append(own xs: i32[]): i32[] { return xs.append(1); }
 function refused_transitive(n: i32): i32 { return refused_call(n); }
 struct P { n: i32, xs: i32[] }
@@ -475,6 +484,58 @@ enum Chain { End, Link(i32, Chain) }
     while (i < rs.len()) { total = total + rs[i][0]; i = i + 1; }
     return total;
 }
+// A produced for over an array. The index advances at the TOP of the loop,
+// so skip_two's continue — which branches to the header — re-runs the advance
+// instead of skipping it and spinning forever.
+@noinline function sum_for(xs: i32[]): i32 {
+    var t: i32 = 0;
+    for x in xs { t = t + x; }
+    return t;
+}
+@noinline function skip_two(xs: i32[]): i32 {
+    var t: i32 = 0;
+    for x in xs { if (x == 2) { continue; } t = t + x; }
+    return t;
+}
+@noinline function until_two_for(xs: i32[]): i32 {
+    var t: i32 = 0;
+    for x in xs { if (x == 2) { break; } t = t + x; }
+    return t;
+}
+@noinline function first_gt(xs: i32[], k: i32): i32 {
+    for x in xs { if (x > k) { return x; } }
+    return 0 - 1;
+}
+// The loop binding shadows an outer name, which the exit must restore.
+@noinline function shadow_for(xs: i32[]): i32 {
+    var x: i32 = 100;
+    var t: i32 = 0;
+    for x in xs { t = t + x; }
+    return t + x;
+}
+// A counted temporary iterable: produced once, released after the exit.
+@noinline function temp_for(n: i32): i32 {
+    var t: i32 = 0;
+    for x in fill(n) { t = t + x; }
+    return t;
+}
+// Nested loops, with continue and break in the inner one, over a reference
+// element borrowed from the outer container.
+@noinline function nested_for(n: i32): i32 {
+    var t: i32 = 0;
+    for r in rows(n) {
+        for v in r { if (v == 1) { continue; } if (v == 4) { break; } t = t + v; }
+    }
+    return t;
+}
+// A reference element retained into an owned array, consumed inside the
+// boundary: an AST caller holding a string[] result would hit the documented
+// caller_sigs leak floor, which has nothing to do with this loop.
+@noinline function copy_words(n: i32): i32 {
+    var out: string[] = [];
+    for w in words(n) { out = out.append(w); }
+    return out.len() + out[0].len();
+}
 @noinline function grown_size(n: i32): i32 {
     var s: string = "ab";
     var i: i32 = 0;
@@ -551,6 +612,11 @@ function main(): i32 {
     print_int(g.len()); print(""); print_int(sum_all(g)); print("");
     print_int(sum_all(grow_to(0))); print(""); print_int(push_temp(1)); print("");
     print_int(row_total(4)); print(""); print_int(word_bytes(3)); print("");
+    print_int(sum_for(lens)); print(""); print_int(skip_two(lens)); print("");
+    print_int(until_two_for(lens)); print(""); print_int(first_gt(lens, 2)); print("");
+    print_int(shadow_for(lens)); print(""); print_int(temp_for(2)); print("");
+    print_int(nested_for(3)); print(""); print_int(copy_words(2)); print("");
+    print_int(sum_for([])); print("");
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }
@@ -582,7 +648,13 @@ function main(): i32 {
 // grow_to(9) is [0..8]: 9 long, summing to 36; grow_to(0) is empty.
 // push_temp(1) pushes onto [1, 2, 3] for 4. row_total(4) reads element 0 of
 // fill(0..3) = 0+1+2+3 = 6; word_bytes(3) is three "wx" at 2 bytes = 6.
-const semsourceRCWant = "1\n4\n5\n-3\n-2\n2\n0\n1\n5\n5\n12\n1\n8\n12\n0\n3\n3\n6\n4\n2\n0\n7\n31\n1\n0\n2\n22\n10\n7\n2\n5\n14\n7\n9\n4\n7\n1\n4\n8\n13\n14\n3\n9\n7\n3\n5\n5\n2\n2\n9\n36\n0\n4\n6\n6\n"
+// The for-loop tail runs over lens = fill(2) = [2, 3, 4]: sum 9; skip_two drops
+// the 2 for 7; until_two_for breaks at once for 0; first_gt past 2 is 3;
+// shadow_for is 9 plus the outer x of 100; temp_for(2) sums [2, 3, 4] again.
+// nested_for(3) walks [0,1,2], [1,2,3], [2,3,4] skipping every 1 and breaking
+// at the 4: 2 + (2+3) + (2+3) = 12. copy_words(2) is 2 words of 2 bytes = 4,
+// and an empty array iterates zero times.
+const semsourceRCWant = "1\n4\n5\n-3\n-2\n2\n0\n1\n5\n5\n12\n1\n8\n12\n0\n3\n3\n6\n4\n2\n0\n7\n31\n1\n0\n2\n22\n10\n7\n2\n5\n14\n7\n9\n4\n7\n1\n4\n8\n13\n14\n3\n9\n7\n3\n5\n5\n2\n2\n9\n36\n0\n4\n6\n6\n9\n7\n0\n3\n109\n9\n12\n4\n0\n"
 
 const semsourceRCDriver = `import "./semsource"; import "./ssarc"; import "./ssaunits"; import "./ssa";
 import "./parser"; import "./lexer"; import "./irlower"; import "./ir";
@@ -667,7 +739,7 @@ func TestSelfHostSemanticSourceRC(t *testing.T) {
 			if err != nil {
 				t.Fatalf("semantic lowering: %v\n%s", err, diagnostics.String())
 			}
-			for _, name := range []string{"pick", "pair", "boxed", "carry", "count_even", "fill", "first_of", "keep", "chain", "twice", "count_down", "grow", "make", "wrap", "unwrap", "tally", "greet", "boxed_local", "boxed_carry", "shape", "measure", "sum_shapes", "consume", "boxed_shape", "hold", "mk_node", "node_size", "node_sum", "leaf", "fork", "tree_sum", "build_sum", "chain_len", "chain_build", "mk_s2", "proj", "total", "make_counter", "twice_total", "size_of", "eat_size", "fresh_size", "text_size", "inner_size", "sum_all", "grown_size", "grow_to", "push_temp", "words", "word_bytes", "rows", "row_total"} {
+			for _, name := range []string{"pick", "pair", "boxed", "carry", "count_even", "fill", "first_of", "keep", "chain", "twice", "count_down", "grow", "make", "wrap", "unwrap", "tally", "greet", "boxed_local", "boxed_carry", "shape", "measure", "sum_shapes", "consume", "boxed_shape", "hold", "mk_node", "node_size", "node_sum", "leaf", "fork", "tree_sum", "build_sum", "chain_len", "chain_build", "mk_s2", "proj", "total", "make_counter", "twice_total", "size_of", "eat_size", "fresh_size", "text_size", "inner_size", "sum_all", "grown_size", "grow_to", "push_temp", "words", "word_bytes", "rows", "row_total", "sum_for", "skip_two", "until_two_for", "first_gt", "shadow_for", "temp_for", "nested_for", "copy_words"} {
 				if !strings.Contains(diagnostics.String(), "produced "+name+"\n") {
 					t.Fatalf("%s was not produced:\n%s", name, diagnostics.String())
 				}

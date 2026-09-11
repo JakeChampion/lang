@@ -843,6 +843,72 @@ function iterate(w: ast.StmtWhile, s: State): State {
     return merge_env(open(s, exit_id, preds), envs, count);
 }
 
+// The index binding of a produced `for`. A Fern identifier cannot contain a
+// space, so this names a slot no user binding can collide with or read.
+function index_name(): string { return "for index"; }
+
+// `for x in xs` is an index loop over the array. The iterable is produced ONCE
+// before the header. The index starts one before the first element and the
+// advance runs at the TOP of the loop, after the header: `continue` branches to
+// the header, so an advance at the bottom would be skipped and the loop would
+// never terminate. The element is a projection of the container, so it borrows
+// and its unit obligations are the container's.
+function iterate_array(fo: ast.StmtFor, s: State): State {
+    if (fo.label != "") { return fail(s, "unsupported labelled loop"); }
+    if (fo.var_name == "" || util.contains(fo.var_name, ",")) { return fail(s, "unsupported loop binding"); }
+    var it: Value = expr(fo.iter, s, typeinfo.unchecked());
+    s = it.s;
+    if (!s.ok) { return s; }
+    var elem: typeinfo.Type = element_type(s.values[it.id]);
+    if (!semtypes.concrete(elem, false)) { return fail(s, "unsupported iterable"); }
+    var before: i32 = s.names.len();
+    var outer: checker.Scope = s.scope;
+    var start: Value = define(s, 1, [], 0 - 1, "", t_i32());
+    s = bind(start.s, index_name(), start.id);
+
+    var pred: i32 = s.cur.id;
+    var header: i32 = s.next_block;
+    var body_id: i32 = header + 1;
+    var exit_id: i32 = header + 2;
+    s = State { ...s, next_block: exit_id + 1 };
+    var count: i32 = s.names.len();
+    var scope: checker.Scope = s.scope;
+    s = terminate(s, t_br(header));
+    s = header_phis(open(s, header, [pred]), count);
+    s = State { ...s, loops: s.loops.append(Loop { header: header, exit: exit_id, entry_count: count, breaks: [], continues: [] }) };
+
+    // advance, then test: both live in the header, so a continue re-runs them.
+    var one: Value = define(s, 1, [], 1, "", t_i32());
+    var step: Value = define(one.s, 9, [lookup(one.s, index_name()), one.id], 0, "+", t_i32());
+    s = replace(step.s, index_name(), step.id);
+    var n: Value = define(s, ssasem.length(), [it.id], 0, "", t_i32());
+    var test: Value = define(n.s, 9, [step.id, n.id], 0, "<", t_bool());
+    s = test.s;
+    if (!s.ok) { return s; }
+    var cond_end: i32 = s.cur.id;
+    // The env the exit and the body both start from is the ADVANCED one, not
+    // the header's phis: the header rebinds the index, which a while loop's
+    // condition never does.
+    var advanced: i32[] = s.vals;
+    s = terminate(s, t_brif(test.id, body_id, exit_id));
+
+    var opened: State = open(State { ...s, vals: advanced }, body_id, [cond_end]);
+    var item: Value = define(opened, ssasem.array_get(), [it.id, step.id], 0, "", elem);
+    var latch: Arm = finish_arm(fo.body, bind(item.s, fo.var_name, item.id), header, count, scope);
+    s = latch.s;
+    if (!s.ok) { return s; }
+    var l: Loop = current_loop(s);
+    s = State { ...s, loops: prefix_loops(s.loops, s.loops.len() - 1) };
+    var back: Exit[] = l.continues;
+    if (latch.live) { back = back.append(Exit { block: latch.end, env: latch.env }); }
+    s = complete_header(s, header, back);
+    var preds: i32[] = [cond_end];
+    var envs: i32[][] = [advanced];
+    for e in l.breaks { preds = preds.append(e.block); envs = envs.append(e.env); }
+    s = merge_env(open(s, exit_id, preds), envs, count);
+    return leave(s, before, outer);
+}
+
 function prefix_loops(xs: Loop[], n: i32): Loop[] {
     var out: Loop[] = [];
     var i: i32 = 0;
@@ -872,6 +938,7 @@ function stmt(st: ast.Stmt, s: State): State {
         ast.StmtMatch(m) => { return match_stmt(m, s); },
         ast.StmtBreak(b) => { return leave_loop(s, b.label, true); },
         ast.StmtContinue(c) => { return leave_loop(s, c.label, false); },
+        ast.StmtFor(fo) => { return iterate_array(fo, s); },
         _ => { return fail(s, "unsupported statement"); }
     }
 }
