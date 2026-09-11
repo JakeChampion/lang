@@ -375,6 +375,28 @@ func exprCases(t *testing.T) []invocation {
 		{name: "leading empty alternative", args: []string{"ab", ":", `\|a`}},
 		{name: "two empty alternatives", args: []string{"ab", ":", `a\|\|b`}},
 		{name: "empty alternative on empty", args: []string{"", ":", `a\|`}},
+		// An alternation branch that compiles to NOTHING is tried after the
+		// branch beside it rather than where it was written (#9051), so
+		// `\(\|a\)a*` over `aa` reports `a` for the group. The pairing is
+		// binary and nests to the LEFT, which keeps the demotion local: in
+		// `\(\|z\|a\)` the empty branch trades places with `z` alone, still
+		// outranks `a`, and the group comes back empty.
+		{name: "empty branch yields to the branch beside it", args: []string{"aa", ":", `\(\|a\)a*`}},
+		{name: "empty branch yields to a longer neighbour", args: []string{"aaa", ":", `\(\|aa\|a\)a*`}},
+		{name: "empty branch yields to a shorter neighbour", args: []string{"aaa", ":", `\(\|a\|aa\)a*`}},
+		{name: "empty branch outranks all but its neighbour", args: []string{"aa", ":", `\(\|z\|a\)a*`}},
+		{name: "empty branch after a failing neighbour", args: []string{"aa", ":", `\(z\|\|a\)a*`}},
+		{name: "empty branch last is already last", args: []string{"aaa", ":", `\(aa\|a\|\)a*`}},
+		{name: "empty branch demoted under a star", args: []string{"aa", ":", `\(\|a\)*a*`}},
+		{name: "empty branch demoted inside a nested alternation", args: []string{"aa", ":", `\(\(\|a\)\|b\)a*`}},
+		{name: "empty branch demoted inside a nested group", args: []string{"aa", ":", `\(\(\|a\)a*\)a*`}},
+		{name: "an alternation of empty branches is not an empty branch", args: []string{"aa", ":", `\(\|\|a\)a*`}},
+		{name: "an empty group is not an empty branch", args: []string{"aa", ":", `\(\(\)\|a\)a*`}},
+		{name: "a branch that could match more keeps its place", args: []string{"aa", ":", `\(b*\|a\)a*`}},
+		{name: "a zero interval is an empty branch", args: []string{"aa", ":", `\(a\{0\}\|a\)a*`}},
+		{name: "two zero intervals are an empty branch", args: []string{"aa", ":", `\(x\{0\}x\{0\}\|a\)a*`}},
+		{name: "the longest overall outranks the demotion", args: []string{"aab", ":", `\(\|a\)\(aab\|a\)`}},
+		{name: "empty branches in sequence", args: []string{"aaa", ":", `\(\|a\)\(\|a\)\(\|a\)a*`}},
 		{name: "group alternation captures the last", args: []string{"ab", ":", `\(a\|b\)*`}},
 		{name: "unset group in an alternation", args: []string{"b", ":", `\(a\)\|\(b\)`}},
 		{name: "set group in an alternation", args: []string{"ab", ":", `\(a\)\|\(b\)`}},

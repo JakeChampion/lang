@@ -1022,8 +1022,10 @@ function parse_group(p0: P): (P, i32) {
 
 // ---- compilation -----------------------------------------------------------
 // `C` — the emitter: the instruction list, the mark slots handed to star
-// loops, and the first error (only the instruction budget can fail here).
-struct C { insts: Inst[], nmarks: i32, err: string }
+// loops, the first error (only the instruction budget can fail here),
+// and whether an empty alternation branch is demoted here (compile_alt,
+// compile_rep).
+struct C { insts: Inst[], nmarks: i32, err: string, demote: boolean }
 
 // `emit` returns the emitter alone rather than the emitter and the index
 // it wrote at, and a caller that needs the index reads `c.insts.len()`
@@ -1089,11 +1091,35 @@ function compile_node(c0: C, nodes: Node[], node: i32): C {
   return compile_rep(c, nodes, n);
 }
 
+// `A\|B`, with `A` laid out first so the search tries it first.
+//
+// A branch that compiles to NOTHING is the exception: glibc gives it the
+// LOWER priority of the pair, so `\(\|a\)a*` over `aa` reports `a` for
+// the group rather than the empty first branch (#9051). The pair is
+// binary and `parse_alt` nests it to the LEFT, which is what makes the
+// demotion local: in `\(\|z\|a\)` the empty branch trades places with
+// `z` alone and still outranks `a`, and glibc reports the empty group
+// there. Nothing here inspects the branch to decide — the left one is
+// laid out and the swap happens when it turns out to have emitted no
+// instruction, so the rule cannot drift from what the emitter does.
+//
+// `demote` is off inside a counted repetition, where the rule does not
+// hold — compile_rep says what glibc does there instead.
 function compile_alt(c0: C, nodes: Node[], n: Node): C {
   var split: i32 = c0.insts.len();
   var c: C = emit(c0, Inst { op: op_split(), a: 0, b: 0 });
-  c = patch_a(c, split, c.insts.len());
+  var first: i32 = c.insts.len();
+  c = patch_a(c, split, first);
   c = compile_node(c, nodes, n.a);
+  if (c.demote && c.insts.len() == first && c.err.len() == 0) {
+    // The empty branch is the fall-through past `B`, so it needs
+    // neither a slot of its own nor a jump around one.
+    c = compile_node(c, nodes, n.b);
+    if (c.err.len() > 0) {
+      return c;
+    }
+    return patch_b(c, split, c.insts.len());
+  }
   var jump: i32 = c.insts.len();
   c = emit(c, Inst { op: op_jmp(), a: 0, b: 0 });
   c = patch_b(c, split, c.insts.len());
@@ -1113,15 +1139,25 @@ function compile_alt(c0: C, nodes: Node[], n: Node): C {
 // whole instruction array (#8498), which makes `\(ab\)\{32767\}`
 // quadratic. Splicing appends into one array in one loop, which grows in
 // place.
+//
+// The body compiles with compile_alt's empty-branch demotion OFF,
+// because inside a counted repetition glibc's answer is not a branch
+// order at all: over `a`, `\(\|a\)\{1,2\}` reports `a` — the demoted
+// order reports the empty group — while over `aa`, `\(\|a\)\{1,2\}a*`
+// reports `a`, which only the demoted order gives. The same two
+// counts disagree again at `\{2\}` and `\{2,3\}`. Nothing static
+// reproduces that, so the copies keep the order the pattern was
+// written in and the family stays as divergent as it has always been
+// (#9092).
 function compile_rep(c0: C, nodes: Node[], n: Node): C {
-  var c: C = compile_copies(c0, nodes, n.a, rep_min(n));
+  var c: C = compile_copies(C { ...c0, demote: false }, nodes, n.a, rep_min(n));
   if (c.err.len() > 0) {
-    return c;
+    return C { ...c, demote: c0.demote };
   }
   if (n.c < 0) {
-    return compile_star(c, nodes, n.a);
+    return C { ...compile_star(c, nodes, n.a), demote: c0.demote };
   }
-  return compile_optionals(c, nodes, n.a, n.c - rep_min(n));
+  return C { ...compile_optionals(c, nodes, n.a, n.c - rep_min(n)), demote: c0.demote };
 }
 
 function compile_copies(c0: C, nodes: Node[], body: i32, times: i32): C {
@@ -1129,7 +1165,7 @@ function compile_copies(c0: C, nodes: Node[], body: i32, times: i32): C {
     return c0;
   }
   var empty: Inst[] = [];
-  var one: C = compile_node(C { insts: empty, nmarks: 0, err: "" }, nodes, body);
+  var one: C = compile_node(C { insts: empty, nmarks: 0, err: "", demote: c0.demote }, nodes, body);
   if (one.err.len() > 0) {
     return C { ...c0, err: one.err };
   }
@@ -1252,7 +1288,7 @@ pub function bre_compile_syntax(pat: string, syntax: Syntax): Bre {
     return Bre { insts: no_insts, classes: p.classes, ngroups: 0, nmarks: 0, backref: false, err: p.err, newline_anchor: syntax.newline_anchor, first: none_first, empty_ok: true, pre: "", pre_bol: false, pre_eol: false, literal: false, alts: no_alts, seen0: no_seen };
   }
   var empty: Inst[] = [];
-  var c: C = C { insts: empty, nmarks: 0, err: "" };
+  var c: C = C { insts: empty, nmarks: 0, err: "", demote: true };
   // No `Save` pair around the whole program: the match is anchored, so
   // group 0 always spans 0 to the end, and a pattern with no groups of
   // its own then carries no capture vector at all.
