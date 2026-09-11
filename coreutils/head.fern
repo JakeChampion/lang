@@ -28,6 +28,13 @@
 //
 // A count error prints one line and exits 1 with NO `Try …` line —
 // unlike an option error, which prints one.
+//
+// Either elision over a regular file is answered by seeking rather
+// than by streaming the whole input: the byte cut is arithmetic on the
+// size, and the line cut is found by reading blocks backwards from the
+// end, so the cost is the elision's size and not the file's. Anything
+// that cannot seek — a pipe, a terminal, `---presume-input-pipe` —
+// streams as before.
 import "std/string";
 import "std/array";
 import "std/io_buffered";
@@ -139,7 +146,7 @@ function count_of(value: string, lines: boolean): Count {
 
 // ---- the obsolete -NUM form ------------------------------------------------
 // `Settings` — everything the option scan decides.
-struct Settings { count: Count, lines: boolean, header: i32, term: i32 }
+struct Settings { count: Count, lines: boolean, header: i32, term: i32, presume: boolean }
 
 // header: 0 auto (one file bare, several with headers), 1 never, 2 always.
 function header_auto(): i32 {
@@ -245,6 +252,211 @@ function copy_head(r: Reader, o: gnu.Stream, s: Settings, name: string): gnu.Str
         return gnu.stream_fail(out, "error reading " + gnu.quotea(name) + ": " + gnu.io_error_text(e));
       }
     }
+  }
+  return out;
+}
+
+// ---- the seekable elision --------------------------------------------------
+// `Region` — the span of a seekable input an elision works over: the
+// descriptor's current offset and the size fstat reports.
+struct Region { ok: boolean, start: i64, end: i64 }
+
+function no_region(): Region {
+  return Region { ok: false, start: 0 as i64, end: 0 as i64 };
+}
+
+// `seekable_region(r, s)` — the span an elision may seek over, or
+// ok=false for an input that has to be streamed.
+//
+// A size is only usable when it is a regular file's AND larger than one
+// block (`is_file` is S_ISREG, and the one field of the record every
+// backend fills): that second half is what keeps a /proc or /sys file — regular,
+// and reporting 0 or a bare block while holding other content — on the
+// streaming path, where the bytes it actually yields are the answer.
+// `---presume-input-pipe` refuses the seek outright, and a descriptor
+// that cannot report its offset (a pipe answers `Illegal seek`) is not
+// one either.
+function seekable_region(r: Reader, s: Settings): Region {
+  if (s.presume) {
+    return no_region();
+  }
+  var size: i64 = 0 as i64;
+  var blk: i64 = 0 as i64;
+  match (r.stat()) {
+    Ok(st) => {
+      if (!st.is_file) {
+        return no_region();
+      }
+      size = st.size;
+      blk = st.blksize;
+    },
+    Err(_) => {
+      return no_region();
+    }
+  }
+  // gnulib's ST_BLKSIZE: a descriptor reporting nothing usable is read
+  // in DEV_BSIZE blocks.
+  if (blk <= 0 as i64) {
+    blk = 512 as i64;
+  }
+  if (size <= blk) {
+    return no_region();
+  }
+  var cur: i64 = 0 as i64;
+  match (r.seek(0 as i64, 1)) {
+    Ok(p) => {
+      cur = p;
+    },
+    Err(_) => {
+      return no_region();
+    }
+  }
+  // Already at or past the end: the streaming path reaches EOF at once
+  // and writes the same nothing.
+  if (cur >= size) {
+    return no_region();
+  }
+  return Region { ok: true, start: cur, end: size };
+}
+
+// `copy_span(r, o, name, at, n)` — `n` bytes of the input from offset
+// `at`, which is where a seekable elision writes its prefix.
+function copy_span(r: Reader, o: gnu.Stream, name: string, at: i64, n: i64): gnu.Stream {
+  var out: gnu.Stream = o;
+  match (r.seek(at, 0)) {
+    Ok(_) => {},
+    Err(e) => {
+      return gnu.stream_fail(out, gnu.quotef(name) + ": cannot seek to offset " + at.to_string() + ": " + gnu.io_error_text(e));
+    }
+  }
+  var left: i64 = n;
+  while (left > 0 as i64) {
+    var want: i32 = read_size();
+    if (left < want as i64) {
+      want = left as i32;
+    }
+    match (r.read_chunk(want)) {
+      Ok(chunk) => {
+        if (chunk.len() == 0) {
+          return out;
+        }
+        out = gnu.stream_put(out, chunk);
+        left = left - chunk.len() as i64;
+      },
+      Err(e) => {
+        return gnu.stream_fail(out, "error reading " + gnu.quotea(name) + ": " + gnu.io_error_text(e));
+      }
+    }
+  }
+  return out;
+}
+
+// `read_at(r, o, name, at, n)` — `n` bytes at offset `at`, short only
+// at end of input, as (stream, bytes, ok).
+function read_at(r: Reader, o: gnu.Stream, name: string, at: i64, n: i32): (gnu.Stream, string, boolean) {
+  match (r.seek(at, 0)) {
+    Ok(_) => {},
+    Err(e) => {
+      return (gnu.stream_fail(o, gnu.quotef(name) + ": cannot seek to offset " + at.to_string() + ": " + gnu.io_error_text(e)), "", false);
+    }
+  }
+  var got: string = "";
+  while (got.len() < n) {
+    match (r.read_chunk(n - got.len())) {
+      Ok(chunk) => {
+        if (chunk.len() == 0) {
+          return (o, got, true);
+        }
+        if (got.len() == 0) {
+          got = chunk;
+        } else {
+          got = got + chunk;
+        }
+      },
+      Err(e) => {
+        return (gnu.stream_fail(o, "error reading " + gnu.quotea(name) + ": " + gnu.io_error_text(e)), "", false);
+      }
+    }
+  }
+  return (o, got, true);
+}
+
+// `elide_bytes_seekable(r, o, s, name, reg)` — everything but the last
+// `n` bytes of a seekable input: the cut is arithmetic on the size, so
+// the bytes that are kept are copied once and the elided ones are never
+// read at all.
+function elide_bytes_seekable(r: Reader, o: gnu.Stream, s: Settings, name: string, reg: Region): gnu.Stream {
+  var span: i64 = reg.end - reg.start;
+  if (s.count.n >= span as u64) {
+    return o;
+  }
+  return copy_span(r, o, name, reg.start, span - s.count.n as i64);
+}
+
+// `elide_lines_seekable(r, o, s, name, reg)` — everything but the last
+// `n` lines of a seekable input: blocks are read BACKWARDS from the end
+// and their terminators counted until the one that ends the last kept
+// line is found, then the prefix is copied. Only the elided tail is
+// scanned, where the streaming path tallies every byte of the input.
+//
+// `skip` is how many terminators lie between the cut and the end: one
+// per elided line, less the one an unterminated final line does not
+// carry. Below zero the cut is the end itself (`-n -0` over an input
+// that does not end in a terminator); running out of terminators with
+// `skip` still positive means the input holds no more lines than were
+// to be elided, and nothing is written.
+function elide_lines_seekable(r: Reader, o: gnu.Stream, s: Settings, name: string, reg: Region): gnu.Stream {
+  var out: gnu.Stream = o;
+  var span: i64 = reg.end - reg.start;
+  // A line is at least one byte, so an elision of the span's own size
+  // takes every line with it — which is also what holds the count, a
+  // uintmax, inside an offset below.
+  if (s.count.n >= span as u64) {
+    return out;
+  }
+  var skip: i64 = s.count.n as i64;
+  var block: i64 = read_size() as i64;
+  // The first block read is the short one, so every later read lands on
+  // a block boundary measured from the start of the span.
+  var want: i64 = span % block;
+  if (want == 0 as i64) {
+    want = block;
+  }
+  var pos: i64 = reg.end - want;
+  var first: boolean = true;
+  while (true) {
+    var rb: (gnu.Stream, string, boolean) = read_at(r, out, name, pos, want as i32);
+    out = rb.0;
+    if (!rb.2) {
+      return out;
+    }
+    var buf: string = rb.1;
+    if (first) {
+      if (buf.len() > 0 && buf[buf.len() - 1] as i32 != s.term) {
+        skip = skip - 1 as i64;
+      }
+      if (skip < 0 as i64) {
+        return copy_span(r, out, name, reg.start, span);
+      }
+      first = false;
+    }
+    var j: i32 = buf.len() - 1;
+    while (j >= 0) {
+      j = __rmemchr(buf, s.term, j);
+      if (j < 0) {
+        break;
+      }
+      if (skip == 0 as i64) {
+        return copy_span(r, out, name, reg.start, pos + j as i64 + 1 as i64 - reg.start);
+      }
+      skip = skip - 1 as i64;
+      j = j - 1;
+    }
+    if (pos <= reg.start) {
+      return out;
+    }
+    pos = pos - block;
+    want = block;
   }
   return out;
 }
@@ -393,7 +605,12 @@ function head_file(path: string, o: gnu.Stream, s: Settings, show: boolean): gnu
     out = gnu.stream_header(out, name);
   }
   if (s.count.elide) {
-    if (s.lines) {
+    var reg: Region = seekable_region(r, s);
+    if (reg.ok && s.lines) {
+      out = elide_lines_seekable(r, out, s, name, reg);
+    } else if (reg.ok) {
+      out = elide_bytes_seekable(r, out, s, name, reg);
+    } else if (s.lines) {
       out = copy_elide_lines(r, out, s, name);
     } else {
       out = copy_elide_bytes(r, out, s, name);
@@ -423,7 +640,7 @@ function main(): i32 {
     d = d + 1;
   }
 
-  var s: Settings = Settings { count: Count { n: 10 as u64, elide: false }, lines: true, header: header_auto(), term: 10 };
+  var s: Settings = Settings { count: Count { n: 10 as u64, elide: false }, lines: true, header: header_auto(), term: 10, presume: false };
 
   // The obsolete form is argv[1] and nowhere else; the rest of the
   // scan then runs over argv with that token removed.
@@ -455,6 +672,8 @@ function main(): i32 {
           s = Settings { ...s, header: header_always() };
         } else if (m.id == opt_zero()) {
           s = Settings { ...s, term: 0 };
+        } else if (m.id == opt_presume()) {
+          s = Settings { ...s, presume: true };
         } else if (m.id == opt_digit()) {
           gnu.die_usage("invalid trailing option -- " + gnu.digit_option(scan), 1);
         }
