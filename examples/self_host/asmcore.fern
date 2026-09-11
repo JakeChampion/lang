@@ -1167,6 +1167,44 @@ pub function rt_src_isatty(t: string): string {
     return "function __fern_isatty(fd: i32): i32 { var buf: i32 = __raw_scratch(80); if (__syscall3(" + sysno(t, "ioctl") + ", fd, " + req + ", buf) == 0) { return 1; } return 0; }";
 }
 
+// rt_src_process_alive backs `process_alive(pid)` (syscall-leaf) -> 1 when a
+// process with that pid exists, 0 when it does not.
+//
+// `kill(pid, 0)` performs every check a real signal would and delivers
+// nothing, so the errno is the whole answer: 0 and -EPERM both mean the
+// process is there — one owned by another user is still a process — and
+// -ESRCH means it is gone. Nothing else can come back from a zero signal.
+// Darwin's carry-flag error is already normalised to Linux's -errno shape by
+// the time the helper sees it (darwinize rewrites the `ldr x8` syscall
+// sequence), so one comparison covers all three targets.
+//
+// A non-positive pid answers 0 without a syscall: kill(2) reads 0 as "my
+// process group" and a negative as "the group -pid", which is a different
+// question than the caller asked.
+pub function rt_src_process_alive(t: string): string {
+    return "function __fern_process_alive(pid: i32): i32 { if (pid <= 0) { return 0; } var rc: i32 = __syscall3(" + sysno(t, "kill") + ", pid, 0, 0); if (rc == 0) { return 1; } if (rc == (0 - 1)) { return 1; } return 0; }";
+}
+
+// rt_src_rlimit_nofile backs `rlimit_nofile()` (syscall-leaf) -> the SOFT
+// RLIMIT_NOFILE as an i64, what `ulimit -n` prints.
+//
+// `getrlimit(RLIMIT_NOFILE, &rlim)` over a two-u64 record in the shared
+// scratch buffer; `rlim_cur` is its first word. The RESOURCE number is the
+// only per-target difference — 7 on Linux, 8 on Darwin — and it is an
+// argument, not part of the call's shape, which is why one body serves all
+// three.
+//
+// Two paths answer i64 max instead. A failing call has no reachable errno for
+// a resource this helper names and a buffer it owns, and a limit with its top
+// bit set is Linux's RLIM_INFINITY (all ones), which is not a count anything
+// could hold; Darwin already spells RLIM_INFINITY i64 max, so both arrive as
+// the same answer.
+pub function rt_src_rlimit_nofile(t: string): string {
+    var resource: string = "7";
+    if (t == "arm64-darwin") { resource = "8"; }
+    return "function __fern_rlimit_nofile(): i64 { var imax: i64 = 9223372036854775807 as i64; var buf: i32 = __raw_scratch(16); var rc: i32 = __syscall3(" + sysno(t, "getrlimit") + ", " + resource + ", buf, 0); if (rc != 0) { return imax; } var cur: i64 = __load_i64(buf); if (cur < (0 as i64)) { return imax; } return cur; }";
+}
+
 // rt_src_signal_disposition backs `signal_ignore(sig)` / `signal_default(sig)`
 // (syscall-leaf) -> the sigaction return, dropped by the caller.
 //
@@ -3642,6 +3680,10 @@ function builtin_i32_names(): string[] {
         // isatty(fd) -> boolean, which the self-host carries in an
         // integer slot like every other 0/1 value.
         "isatty",
+        // process_alive(pid) -> boolean, carried in the same integer slot
+        // as isatty's; rlimit_nofile() -> i64, in one like the clocks'.
+        "process_alive",
+        "rlimit_nofile",
         // geteuid() / getegid() / getuid() / getgid() -> the process's
         // effective and real ids. u32 in native's signature; an integer
         // slot here, like every other id.
@@ -5768,6 +5810,8 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
         "__fern_strbuf_reset", "__fern_strbuf_take",
         // crash-only supervision (#5686): the entry owns fork / wait4.
         "__fn___fern_proc_fork", "__fn___fern_proc_waitpid", "__fn___fern_proc_exec",
+        // one pid's liveness, and this process's descriptor ceiling.
+        "__fn___fern_process_alive", "__fn___fern_rlimit_nofile",
         // random_bytes and random_i32 are Fern on BOTH register backends now
         // (#2649), so only the stack-ABI symbols exist; the register-ABI
         // __fern_random_bytes / __fern_random_i32 are gone.

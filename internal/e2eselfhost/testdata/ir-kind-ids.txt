@@ -255,3 +255,5 @@ read_link=264
 umask=265
 sleep_ns=266
 rename=267
+process_alive=271
+rlimit_nofile=272

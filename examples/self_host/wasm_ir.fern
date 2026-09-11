@@ -1622,6 +1622,8 @@ function is_raw_floor_builtin(name: string): boolean {
 // nothing at all.
 //
 //   - subprocess — child-process spawning, unsupportable on wasm/WASI (#4320).
+//   - process_alive / rlimit_nofile — a process table to ask about pids in,
+//     and a kernel-enforced resource ceiling. Neither preview has either.
 //   - timer_fd — the native fd-based CLOCK_MONOTONIC timerfd. wasm has no file
 //     descriptors to poll, and its analog already exists and lowers:
 //     wasm_timer_pollable, which returns a wasi:io/poll pollable instead of an
@@ -1657,6 +1659,16 @@ pub function wasm_unsupported_builtin(mod: parser.Module): string {
         if (util.index_of_str(ids, "proc_fork") >= 0) { return "proc_fork"; }
         if (util.index_of_str(ids, "proc_waitpid") >= 0) { return "proc_waitpid"; }
         if (util.index_of_str(ids, "proc_exec") >= 0) { return "proc_exec"; }
+        // process_alive (#8767) — the same missing process table. A component
+        // is one instance with no pids to ask about, which is why
+        // platforms.fern withholds it on the `proc` capability; naming it here
+        // keeps the wasm drivers that bypass that gate from reporting an
+        // unknown op instead of the feature.
+        if (util.index_of_str(ids, "process_alive") >= 0) { return "process_alive"; }
+        // rlimit_nofile (#8819) — neither WASI preview enforces a resource
+        // limit, and every constant that could stand in (a plausible 1024, or
+        // "unlimited") would be a measurement a component never took.
+        if (util.index_of_str(ids, "rlimit_nofile") >= 0) { return "rlimit_nofile"; }
         // FFI __c_call<n>(...) (#4375) is written directly as a builtin call, so
         // its callee ident is collected here. Wasm has no C ABI — there is no
         // __c_call runtime on any wasm path — so reject it with a clean diagnostic
@@ -1685,6 +1697,12 @@ pub function wasm_unsupported_message(name: string): string {
     }
     if (name == "proc_fork" || name == "proc_waitpid" || name == "proc_exec") {
         return "error: " + name + " is not supported on the wasm target (a component has no process model to fork, exec into, or reap)\n";
+    }
+    if (name == "process_alive") {
+        return "error: process_alive is not supported on the wasm target (a component has no process table, so there are no pids to ask about)\n";
+    }
+    if (name == "rlimit_nofile") {
+        return "error: rlimit_nofile is not supported on the wasm target (neither WASI preview enforces resource limits, so there is no ceiling to report)\n";
     }
     if (is_raw_floor_builtin(name)) {
         return "error: " + name + " is not supported on the wasm target (a raw-memory / syscall floor intrinsic: wasm has neither a raw address space nor syscalls — these back the register backends' runtime helpers, which wasm serves with hand-written WAT)\n";

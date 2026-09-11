@@ -8033,6 +8033,9 @@ pub function builtin_function_names(): string[] {
         // tcp_serve_supervised is the stdlib caller of the first and last;
         // asm_modload_run's batched per-module orchestrator uses all three.
         "proc_fork", "proc_waitpid", "proc_exec",
+        // Liveness of one pid — kill(pid, 0), the zero signal that runs
+        // every check kill(2) makes and delivers nothing (#8767).
+        "process_alive",
         // stdin / readers
         "stdin", "stdout", "stderr", "isatty", "read_line", "read_int", "read_all_stdin",
         // the two halves of the compile target's name, literals once compiled
@@ -8053,6 +8056,9 @@ pub function builtin_function_names(): string[] {
         // the kernel's utsname record, the working directory and how many
         // processing units the process may use
         "uname_field", "getcwd", "cpu_count",
+        // The kernel-enforced ceiling on this process's open descriptors,
+        // which `ulimit -n` prints (#8819).
+        "rlimit_nofile",
         // signal dispositions — SIG_IGN / SIG_DFL for one signal
         "signal_ignore", "signal_default",
         // clocks + randomness + sleep + reactor readiness

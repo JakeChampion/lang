@@ -4742,6 +4742,17 @@ function emit_function_via_ir_named(r: irlower.LowerResult, label_name: string, 
             // [fd] IS param[0] already; the stack ABI needs no marshalling.
             s = s.write("    call __fn___fern_isatty\n    addq $8, %rsp\n    pushq %rax\n");
             s = s.need("isatty");
+        } else if (o.kind_tag == 271) {  // process_alive
+            // [pid]; __fern_process_alive(pid) -> 1 when a process with that
+            // pid exists, else 0. [pid] IS param[0] already; the stack ABI
+            // needs no marshalling.
+            s = s.write("    call __fn___fern_process_alive\n    addq $8, %rsp\n    pushq %rax\n");
+            s = s.need("process_alive");
+        } else if (o.kind_tag == 272) {  // rlimit_nofile
+            // no args -> __fern_rlimit_nofile() -> the soft RLIMIT_NOFILE as a
+            // full-width i64 in %rax.
+            s = s.write("    call __fn___fern_rlimit_nofile\n    pushq %rax\n");
+            s = s.need("rlimit_nofile");
         } else if (o.kind_tag == 243 || o.kind_tag == 244) {  // signal_ignore / signal_default
             // [sig]; __fern_signal_{ignore,default}(%rdi=sig) -> the sigaction
             // return, pushed so the statement-level drop balances. [sig] IS
@@ -8215,7 +8226,7 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
     // kept identical anyway — the cost is one unused .bss buffer in an x86-only
     // poll program, and a divergence here is a link failure, which is how this
     // list grew the last three entries.
-    if (s.has_need("monotonic_ns") || s.has_need("now_unix_ms") || s.has_need("now_ns") || s.has_need("stat") || s.has_need("lstat") || s.has_need("read_file") || s.has_need("read_file_bytes") || s.has_need("random_i32") || s.has_need("sleep_ms") || s.has_need("sleep_ns") || s.has_need("poll") || s.has_need("proc_waitpid") || s.has_need("timer_fd") || s.has_need("tcp_listen") || s.has_need("tcp_connect") || s.has_need("print_int") || s.has_need("putchar") || s.has_need("eprint") || s.has_need("read_int") || s.has_need("udp_send") || s.has_need("isatty") || s.has_need("signal_ignore") || s.has_need("signal_default") || s.has_need("access") || s.has_need("geteuid") || s.has_need("getegid") || s.has_need("getuid") || s.has_need("getgid") || s.has_need("getgroups") || s.has_need("environ") || s.has_need("fd_stat")) {
+    if (s.has_need("monotonic_ns") || s.has_need("now_unix_ms") || s.has_need("now_ns") || s.has_need("stat") || s.has_need("lstat") || s.has_need("read_file") || s.has_need("read_file_bytes") || s.has_need("random_i32") || s.has_need("sleep_ms") || s.has_need("sleep_ns") || s.has_need("poll") || s.has_need("proc_waitpid") || s.has_need("timer_fd") || s.has_need("tcp_listen") || s.has_need("tcp_connect") || s.has_need("print_int") || s.has_need("putchar") || s.has_need("eprint") || s.has_need("read_int") || s.has_need("udp_send") || s.has_need("isatty") || s.has_need("rlimit_nofile") || s.has_need("signal_ignore") || s.has_need("signal_default") || s.has_need("access") || s.has_need("geteuid") || s.has_need("getegid") || s.has_need("getuid") || s.has_need("getgid") || s.has_need("getgroups") || s.has_need("environ") || s.has_need("fd_stat")) {
         s = s.write("    .section .bss\n    .align 8\n__fern_scratch: .skip 256\n    .text\n");
     }
     // The stdout/stderr leaves (#2649) — plain write(2) calls, allocation-free, so
@@ -8323,6 +8334,14 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
     if (s.has_need("isatty")) {
         s = s.write("    .text\n");
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_isatty("x86_64"), all_structs, s);
+    }
+    if (s.has_need("process_alive")) {
+        s = s.write("    .text\n");
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_process_alive("x86_64"), all_structs, s);
+    }
+    if (s.has_need("rlimit_nofile")) {
+        s = s.write("    .text\n");
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_rlimit_nofile("x86_64"), all_structs, s);
     }
     if (s.has_need("signal_ignore")) {
         s = s.write("    .text\n");

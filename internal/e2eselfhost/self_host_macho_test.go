@@ -359,6 +359,37 @@ function main(): i32 { var e: Expr = Add { l: 40, r: 2 }; return eval(e); }`, 42
 			`if (monotonic_ns() - t0 < (999999500 as i64)) { return 1; } return 7; }`,
 		7)
 
+	// process_alive — kill(pid, 0) on Darwin is BSD sysno 37, and the trap's
+	// carry-flag error has to reach the helper already normalised to -errno or
+	// every pid reads dead. launchd is pid 1 on every macOS, and Darwin's pid
+	// ceiling is five digits, so 4194304 can never be a process. The
+	// non-positive spellings name process groups and answer false with no
+	// syscall at all.
+	runCase("process_alive",
+		`function main(): i32 {
+  if (!process_alive(1)) { return 90; }
+  if (process_alive(4194304)) { return 91; }
+  if (process_alive(0)) { return 92; }
+  if (process_alive(0 - 1)) { return 93; }
+  return 7;
+}`,
+		7)
+
+	// rlimit_nofile — getrlimit is BSD sysno 194 and RLIMIT_NOFILE is 8 here,
+	// not Linux's 7. A failing call (wrong syscall number) normalises to i64
+	// max and an unclamped RLIM_INFINITY reads negative, so the range is what
+	// separates a real ceiling from both. It does NOT pin the resource id: a
+	// wrong one still answers some plausible ceiling, and only the Linux legs
+	// compare against a limit the harness itself imposed.
+	runCase("rlimit_nofile",
+		`function main(): i32 {
+  var n: i64 = rlimit_nofile();
+  if (n < (4 as i64)) { return 90; }
+  if (n > (1000000 as i64)) { return 91; }
+  return 7;
+}`,
+		7)
+
 	// subprocess — fork/exec on Darwin: pipe() (sysno 42, two fds in
 	// x0/x1) instead of pipe2, fork() (sysno 2, x1 child-flag) instead of
 	// clone, dup3->dup2 (90) / execve (59) / wait4 (7) via darwin_sysno.
