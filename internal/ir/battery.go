@@ -29,7 +29,7 @@ func OptimizeProgram(prog *Program, ptrW int32) {
 	// constants for the cleanup to fold; the second catches the direct
 	// calls defunctionalisation has just made out of indirect ones, which
 	// the first could not see. ir.inlineMaxUnitOps is the whole-program
-	// size ceiling above which the pass declines.
+	// size ceiling above which the pass narrows to tiny call-free callees.
 	Inline(prog)
 	// Defunctionalise + ElideClosurePair turn indirect closure calls into
 	// direct ones wherever the closure flow is monomorphic enough to prove
