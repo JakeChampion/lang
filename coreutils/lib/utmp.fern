@@ -30,6 +30,20 @@
 // init does not keep one, has no /var/run/utmp at all — and the callers
 // treat that as "nobody is logged in" rather than as an error, which is
 // what GNU does with a file it cannot read.
+//
+// Two rules belong to the record rather than to any one utility, and
+// both are visible in the output of all four:
+//
+//   - A LOGGED-IN user is a `user_process` entry whose ut_user is not
+//     empty. The second half is not redundant — an entry left behind
+//     with its type intact and its name cleared is not a login, and
+//     `users`, `who -q` and `pinky` all skip it while `who` still
+//     prints it as the process it names.
+//   - The name is read with TRAILING SPACES REMOVED, since a system
+//     that pads the field with blanks rather than NULs is one the
+//     record cannot distinguish from one that does not. The line and
+//     the host are NOT trimmed: `who` pads them into columns and
+//     prints what is there.
 import "std/string";
 import "std/array";
 
@@ -138,6 +152,38 @@ pub function read_all(path: string): Entry[] {
       return out;
     }
   }
+}
+
+// Whether an entry records a user who is logged in — the rule all four
+// utilities filter on.
+pub function (e: Entry) is_login(): boolean {
+  return e.kind == user_process() && e.user.len() > 0;
+}
+
+// The entry's user name with trailing spaces removed.
+pub function (e: Entry) name(): string {
+  var n: i32 = e.user.len();
+  while (n > 0 && e.user[n - 1] as i32 == 32) {
+    n = n - 1;
+  }
+  if (n == e.user.len()) {
+    return e.user;
+  }
+  return slice_unchecked(e.user, 0, n) + "";
+}
+
+// Every logged-in user's entry in `path`, in file order.
+pub function read_logins(path: string): Entry[] {
+  var all: Entry[] = read_all(path);
+  var out: Entry[] = [];
+  var i: i32 = 0;
+  while (i < all.len()) {
+    if (all[i].is_login()) {
+      out = out.append(all[i]);
+    }
+    i = i + 1;
+  }
+  return out;
 }
 
 // The user logged in on terminal `line`, as getlogin(3) asks it: the

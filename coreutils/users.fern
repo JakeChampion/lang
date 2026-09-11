@@ -1,0 +1,74 @@
+// users.fern — GNU-compatible `users`.
+//
+//   users [OPTION]... [FILE]
+//
+// The login names in the accounting database, sorted, separated by
+// single spaces, on one line. A name appears once per session, so two
+// logins by the same user print it twice; `users` counts terminals, not
+// people.
+//
+// FILE is the database to read and defaults to /var/run/utmp; the usual
+// other one is /var/log/wtmp, which is the same record format and holds
+// the history rather than the present. There is no option of its own —
+// only the two standard ones — and a second operand is `extra operand`.
+//
+// An empty database prints NOTHING, not an empty line: the newline is a
+// terminator for the list rather than a line of its own. A database
+// that cannot be read at all is empty too, with no diagnostic and exit
+// 0 — `users /nonexistent` and `users /etc` are both silent successes,
+// which is the whole of this utility's error handling.
+//
+// The sort is strcmp over the raw bytes, so it is ASCII order in the C
+// locale and digits sort before capitals before lowercase.
+import "std/string";
+import "std/array";
+import "std/sort";
+import "std/io_buffered";
+import "./lib/gnu";
+import "./lib/utmp";
+
+function help_text(): string {
+  var out: string = "";
+  out = out + "Usage: " + gnu.prog() + " [OPTION]... [FILE]\n";
+  out = out + "Output who is currently logged in according to FILE.\n";
+  out = out + "If FILE is not specified, use " + utmp.default_path() + ".  /var/log/wtmp as FILE is common.\n";
+  out = out + "\n";
+  out = out + "      --help        display this help and exit\n";
+  out = out + "      --version     output version information and exit\n";
+  return out;
+}
+
+function main(): i32 {
+  var operands: string[] = gnu.parse_standard_options_only(args(), "users", help_text(), 1);
+  if (operands.len() > 1) {
+    gnu.die_usage("extra operand " + gnu.quote(operands[1]), 1);
+  }
+  var path: string = utmp.default_path();
+  if (operands.len() == 1) {
+    path = operands[0];
+  }
+  var entries: utmp.Entry[] = utmp.read_logins(path);
+  var names: string[] = [];
+  var i: i32 = 0;
+  while (i < entries.len()) {
+    names = names.append(entries[i].name());
+    i = i + 1;
+  }
+  names = names.sort_by(sort.string_cmp);
+  if (names.len() == 0) {
+    gnu.finish(gnu.out_new());
+    return 0;
+  }
+  var line: string = "";
+  i = 0;
+  while (i < names.len()) {
+    if (i > 0) {
+      line = line + " ";
+    }
+    line = line + names[i];
+    i = i + 1;
+  }
+  var o: io_buffered.BufWriter = gnu.put(gnu.out_new(), line + "\n");
+  gnu.finish(o);
+  return 0;
+}
